@@ -4,7 +4,7 @@
     For example, an initial state has no stored values.
     Builds on: IncrementalSig. *)
 
-From Stdlib Require Import List Bool PArith NArith Lia.
+From Stdlib Require Import List Bool PArith NArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Code MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -1676,6 +1676,318 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     Qed.
   End DemandState.
 
+  Module EditMetadata.
+    Module InvFacts := Inventory.
+
+    (** Editing removes exactly the influence buckets of invalidated keys. *)
+    Lemma edit_infl_eq : forall p p' ch st x,
+      infl_at (edit p p' ch st) x =
+        if mem x (invalidate_keys p p' ch st) then [] else infl_at st x.
+    Proof.
+      intros p p' ch st x; unfold edit.
+      destruct (invalidate_keys p p' ch st) as [|y bad]; [reflexivity|].
+      unfold infl_at; cbn [inc_influence]; rewrite InvFacts.raw_get_remove_keys.
+      change (InvFacts.Bindings.mem x (y :: bad)) with (mem x (y :: bad)).
+      destruct (mem x (y :: bad)); reflexivity.
+    Qed.
+
+    (** Editing removes exactly the co-write buckets of invalidated keys. *)
+    Lemma edit_cowrite_eq : forall p p' ch st x,
+      cowrite_at (edit p p' ch st) x =
+        if mem x (invalidate_keys p p' ch st) then [] else cowrite_at st x.
+    Proof.
+      intros p p' ch st x; unfold edit.
+      destruct (invalidate_keys p p' ch st) as [|y bad]; [reflexivity|].
+      unfold cowrite_at; cbn [inc_cowrites]; rewrite InvFacts.raw_get_remove_keys.
+      change (InvFacts.Bindings.mem x (y :: bad)) with (mem x (y :: bad)).
+      destruct (mem x (y :: bad)); reflexivity.
+    Qed.
+
+    (** No snapshot is touched by the empty invalidation list. *)
+    Lemma retire_snapshot_nil : forall ss, retire_snapshot [] ss = ss.
+    Proof.
+      intros [owner writes live]; unfold retire_snapshot; cbn [snapshot_owner snapshot_writes].
+      assert (Htouch : existsb (fun x => mem x []) writes = false).
+      { induction writes; cbn [existsb mem]; assumption || reflexivity. }
+      rewrite Htouch; destruct live; reflexivity.
+    Qed.
+
+    (** Every snapshot remains present at its identifier, with its live bit updated. *)
+    Lemma snapshot_get_edit : forall p p' ch st id,
+      snapshot_get id (edit p p' ch st) =
+        option_map (retire_snapshot (invalidate_keys p p' ch st)) (snapshot_get id st).
+    Proof.
+      intros p p' ch st id; unfold edit.
+      destruct (invalidate_keys p p' ch st) as [|x bad].
+      - destruct (snapshot_get id st) as [ss|]; cbn [option_map];
+          [now rewrite retire_snapshot_nil|reflexivity].
+      - unfold snapshot_get; cbn [inc_snapshots]; apply PTrie.get_map.
+    Qed.
+
+    (** An edited snapshot has one original payload at the same identifier. *)
+    Lemma snapshot_get_edit_inv : forall p p' ch st id ss',
+      snapshot_get id (edit p p' ch st) = Some ss' ->
+      exists ss, snapshot_get id st = Some ss /\
+        ss' = retire_snapshot (invalidate_keys p p' ch st) ss.
+    Proof.
+      intros p p' ch st id ss' Hget; rewrite snapshot_get_edit in Hget.
+      destruct (snapshot_get id st) as [ss|] eqn:Hbefore in Hget; cbn [option_map] in Hget;
+        [|discriminate Hget].
+      injection Hget as <-; exists ss; split; [exact Hbefore|reflexivity].
+    Qed.
+
+    (** The snapshot inventory is mapped without adding or deleting identifiers. *)
+    Lemma snapshots_edit_perm : forall p p' ch st,
+      Permutation (snapshots (edit p p' ch st))
+        (map (fun entry => (fst entry, retire_snapshot (invalidate_keys p p' ch st) (snd entry)))
+          (snapshots st)).
+    Proof.
+      intros p p' ch st; unfold edit.
+      destruct (invalidate_keys p p' ch st) as [|x bad].
+      - assert (Hmap : map (fun entry => (fst entry, retire_snapshot [] (snd entry)))
+          (snapshots st) = snapshots st).
+        { transitivity (map (fun entry => entry) (snapshots st)).
+          - apply map_ext; intros [id ss]; cbn [fst snd]; now rewrite retire_snapshot_nil.
+          - apply map_id. }
+        rewrite Hmap; reflexivity.
+      - unfold snapshots; cbn [inc_snapshots]; apply trie_map_elements_perm.
+    Qed.
+
+    (** Raw stored-key inventory can only shrink, even for malformed input values. *)
+    Lemma stored_edit_subset : forall p p' ch st x,
+      In x (stored (edit p p' ch st)) -> In x (stored st).
+    Proof.
+      intros p p' ch st x; unfold edit.
+      destruct (invalidate_keys p p' ch st) as [|y bad]; [tauto|].
+      unfold stored; cbn [inc_values]; apply InvFacts.raw_keys_remove_subset.
+    Qed.
+
+    (** Retirement preserves every recorded write key. *)
+    Lemma snapshot_keys_edit_subset : forall p p' ch st x,
+      In x (snapshot_keys (edit p p' ch st)) -> In x (snapshot_keys st).
+    Proof.
+      intros p p' ch st x Hin; unfold snapshot_keys in *.
+      apply in_flat_map in Hin as [[id ss'] [Hin Hx]].
+      apply (proj1 (PTrie.elements_spec _ _ id ss')) in Hin.
+      change (snapshot_get id (edit p p' ch st) = Some ss') in Hin.
+      apply snapshot_get_edit_inv in Hin as [ss [Hget ->]].
+      apply in_flat_map; exists (id, ss); split; [|exact Hx].
+      unfold snapshots; apply (proj2 (PTrie.elements_spec _ _ id ss)); exact Hget.
+    Qed.
+
+    (** Edits retain read entries of every retained key, including changed-row entries. *)
+    Lemma edit_infl_keeps : forall p p' ch st x, dom (edit p p' ch st) x ->
+      infl_at (edit p p' ch st) x = infl_at st x.
+    Proof.
+      intros p p' ch st x Hdom; rewrite edit_infl_eq.
+      apply (proj1 (edit_dom_keys p p' ch st x)) in Hdom as [_ Hkeep].
+      destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem; [|reflexivity].
+      exfalso; apply Hkeep; apply (proj1 (mem_spec x _)); exact Hmem.
+    Qed.
+
+    (** A live snapshot propagates invalidation to each of its stored write keys. *)
+    Lemma invalidate_snapshot : forall p p' ch st id ss x y,
+      snapshot_get id st = Some ss -> snapshot_live ss = true ->
+      In x (snapshot_writes ss) -> In x (invalidate_keys p p' ch st) ->
+      In y (snapshot_writes ss) -> dom st y -> In y (invalidate_keys p p' ch st).
+    Proof.
+      intros p p' ch st id ss x y Hget Hlive Hx Hbad Hy Hdom.
+      eapply (invalidate_keys_footprint p p' ch st (snapshot_footprint ss) x y).
+      - unfold edit_footprints; apply in_or_app; right; apply in_or_app; right.
+        apply in_map_iff; exists (id, ss); split; [reflexivity|].
+        apply filter_In; split; [|exact Hlive].
+        apply (proj2 (PTrie.elements_spec _ _ id ss)); exact Hget.
+      - exact Hx.
+      - exact Hbad.
+      - exact Hy.
+      - exact Hdom.
+    Qed.
+
+    (** A touched live snapshot has all its writes in the invalidation closure. *)
+    Lemma snapshot_touch_all : forall p p' ch st id ss, Core.state_core st ->
+      snapshot_get id st = Some ss -> snapshot_live ss = true ->
+      existsb (fun x => mem x (invalidate_keys p p' ch st)) (snapshot_writes ss) = true ->
+      forall x, In x (snapshot_writes ss) -> mem x (invalidate_keys p p' ch st) = true.
+    Proof.
+      intros p p' ch st id ss [_ [_ [_ [Hstored Hcounts]]]] Hget Hlive Htouch x Hx.
+      apply existsb_exists in Htouch as [y [Hy Hmem]].
+      apply (proj2 (mem_spec x _)).
+      eapply invalidate_snapshot; [exact Hget|exact Hlive|exact Hy| |exact Hx|].
+      - apply (proj1 (mem_spec y _)); exact Hmem.
+      - exact (Hstored id ss Hget Hlive x Hx).
+    Qed.
+
+    (** The retained per-key count agrees with retiring its whole shared snapshot. *)
+    Lemma retire_snapshot_count : forall p p' ch st id ss x, Core.state_core st ->
+      snapshot_get id st = Some ss ->
+      (if mem x (invalidate_keys p p' ch st) then 0 else
+        if snapshot_live ss then length (filter (S.key_eqb x) (snapshot_writes ss)) else 0) =
+      (if snapshot_live (retire_snapshot (invalidate_keys p p' ch st) ss)
+        then length (filter (S.key_eqb x) (snapshot_writes ss)) else 0).
+    Proof.
+      intros p p' ch st id ss x Hcore Hget.
+      unfold retire_snapshot; cbn [snapshot_live].
+      destruct (snapshot_live ss) eqn:Hlive;
+        [|destruct (mem x (invalidate_keys p p' ch st)); reflexivity].
+      destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem;
+        destruct (existsb (fun y => mem y (invalidate_keys p p' ch st))
+          (snapshot_writes ss)) eqn:Htouch; cbn; try reflexivity.
+      - symmetry; apply (histogram_count_zero S.key_eqb key_eqb_true); intro Hx.
+        assert (Htrue : existsb (fun y => mem y (invalidate_keys p p' ch st))
+          (snapshot_writes ss) = true).
+        { apply existsb_exists; exists x; split; assumption. }
+        congruence.
+      - apply (histogram_count_zero S.key_eqb key_eqb_true); intro Hx.
+        pose proof (snapshot_touch_all p p' ch st id ss Hcore Hget Hlive Htouch x Hx).
+        congruence.
+    Qed.
+
+    (** Editing preserves the five independent representation fields. *)
+    Lemma state_core_edit : forall p p' ch st,
+      Core.state_core st -> Core.state_core (edit p p' ch st).
+    Proof.
+      intros p p' ch st Hcore.
+      pose proof Hcore as [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]].
+      unfold Core.state_core; split.
+      - unfold edit; destruct (invalidate_keys p p' ch st) as [|x bad]; cbn [inc_values].
+        + exact Hcanonical.
+        + apply InvFacts.remove_keys_canonical; exact Hcanonical.
+      - split.
+        + intros id ss' Hget.
+          apply snapshot_get_edit_inv in Hget as [ss [Hget ->]]; exact (Howner id ss Hget).
+        + split.
+          * intros x id Hin; rewrite edit_infl_eq in Hin.
+            destruct (mem x (invalidate_keys p p' ch st)); [contradiction|].
+            destruct (Hrefs x id Hin) as [ss Hget].
+            exists (retire_snapshot (invalidate_keys p p' ch st) ss).
+            rewrite snapshot_get_edit, Hget; reflexivity.
+          * split.
+            -- intros id ss' Hget Hactive x Hx.
+               apply snapshot_get_edit_inv in Hget as [ss [Hget ->]].
+               cbn [retire_snapshot snapshot_live] in Hactive.
+               apply andb_true_iff in Hactive as [Hactive Htouch].
+               apply negb_true_iff in Htouch.
+               apply (proj2 (edit_dom_keys p p' ch st x)); split.
+               ++ exact (Hlive id ss Hget Hactive x Hx).
+               ++ intro Hbad.
+                  assert (Htrue : existsb (fun y => mem y (invalidate_keys p p' ch st))
+                    (snapshot_writes ss) = true).
+                  { apply existsb_exists; exists x; split; [exact Hx|].
+                    apply (proj2 (mem_spec x _)); exact Hbad. }
+                  congruence.
+            -- intros x id; rewrite edit_cowrite_eq, snapshot_get_edit.
+               destruct (snapshot_get id st) as [ss|] eqn:Hget; cbn [option_map].
+               ++ change (length (filter (Pos.eqb id)
+                    (if mem x (invalidate_keys p p' ch st) then [] else cowrite_at st x)) =
+                    if snapshot_live (retire_snapshot (invalidate_keys p p' ch st) ss)
+                    then length (filter (S.key_eqb x) (snapshot_writes ss)) else 0).
+                  rewrite <- (retire_snapshot_count p p' ch st id ss x Hcore Hget).
+                  destruct (mem x (invalidate_keys p p' ch st)); [reflexivity|].
+                  pose proof (Hcounts x id) as Hcount; now rewrite Hget in Hcount.
+               ++ destruct (mem x (invalidate_keys p p' ch st)); [reflexivity|].
+                  pose proof (Hcounts x id) as Hcount; now rewrite Hget in Hcount.
+    Qed.
+
+    (** Editing preserves the complete released representation invariant. *)
+    Lemma state_ok_edit : forall p p' ch st, state_ok st -> state_ok (edit p p' ch st).
+    Proof.
+      intros p p' ch st Hstate; apply Core.state_core_ok; apply state_core_edit.
+      apply Core.state_ok_core; exact Hstate.
+    Qed.
+
+    (** Visiting a snapshot removes its writes, memberships and live status. *)
+    Lemma edit_snapshot_visit : forall p p' ch st id ss, state_ok st ->
+      In (id, ss) (snapshots st) -> snapshot_live ss = true ->
+      (exists x, In x (snapshot_writes ss) /\ In x (invalidated p p' ch st)) ->
+      (forall x, In x (snapshot_writes ss) -> ~ dom (edit p p' ch st) x) /\
+      (forall x, ~ In id (cowrite_at (edit p p' ch st) x)) /\
+      (forall ss', In (id, ss') (snapshots (edit p p' ch st)) -> snapshot_live ss' = false).
+    Proof.
+      intros p p' ch st id ss Hstate Hin Hlive [x [Hx Hbad]].
+      pose proof (Core.state_ok_core st Hstate) as Hcore.
+      pose proof (proj2 (Core.snapshot_get_elements st id ss) Hin) as Hget.
+      assert (Htouch : existsb (fun y => mem y (invalidate_keys p p' ch st))
+        (snapshot_writes ss) = true).
+      { apply existsb_exists; exists x; split; [exact Hx|].
+        apply (proj2 (mem_spec x _)); exact Hbad. }
+      pose proof (snapshot_touch_all p p' ch st id ss Hcore Hget Hlive Htouch) as Hall.
+      split.
+      - intros y Hy Hdom; apply (proj1 (edit_dom_keys p p' ch st y)) in Hdom as [_ Hkeep].
+        apply Hkeep; apply (proj1 (mem_spec y _)); apply Hall; exact Hy.
+      - split.
+        + intro y; rewrite edit_cowrite_eq.
+          destruct (mem y (invalidate_keys p p' ch st)) eqn:Hmem;
+            [intros Hmember; contradiction|].
+          intro Hmember.
+          pose proof (proj2 (histogram_count_pos Pos.eqb Pos.eqb_eq id (cowrite_at st y))
+            Hmember) as Hpositive.
+          destruct Hcore as [_ [_ [_ [_ Hcounts]]]].
+          rewrite (Hcounts y id), Hget, Hlive in Hpositive.
+          apply (proj1 (histogram_count_pos S.key_eqb key_eqb_true y (snapshot_writes ss)))
+            in Hpositive.
+          pose proof (Hall y Hpositive); congruence.
+        + intros ss' Hnew.
+          apply (proj2 (Core.snapshot_get_elements (edit p p' ch st) id ss')) in Hnew.
+          rewrite snapshot_get_edit, Hget in Hnew; cbn [option_map] in Hnew.
+          injection Hnew as <-; cbn [retire_snapshot snapshot_live].
+          rewrite Hlive, Htouch; reflexivity.
+    Qed.
+
+    (** Snapshot retirement never increases the live occurrence total. *)
+    Lemma snapshot_mass_edit_le : forall p p' ch st,
+      snapshot_mass (edit p p' ch st) <= snapshot_mass st.
+    Proof.
+      intros p p' ch st; unfold snapshot_mass; rewrite !finite_fold_choice.
+      rewrite (finite_sum_perm _ _ _ _ (snapshots_edit_perm p p' ch st)), finite_sum_map.
+      apply finite_sum_mono; intros [id [owner writes live]] Hin.
+      cbn [fst snd retire_snapshot snapshot_live snapshot_writes].
+      destruct live;
+        destruct (existsb (fun x => mem x (invalidate_keys p p' ch st)) writes); cbn; lia.
+    Qed.
+
+    (** Editing never widens the stored or recorded key inventories. *)
+    Lemma kwidth_edit : forall p p' ch st, kwidth (edit p p' ch st) <= kwidth st.
+    Proof.
+      intros p p' ch st; unfold kwidth; apply finite_max_bound.
+      intros x Hin; apply finite_max_member; apply in_app_iff.
+      apply in_app_iff in Hin as [Hin|Hin].
+      - left; eapply stored_edit_subset; exact Hin.
+      - right; eapply snapshot_keys_edit_subset; exact Hin.
+    Qed.
+
+    (** Editing releases each invalidated key and all its counted read entries. *)
+    Lemma infl_mass_edit : forall p p' ch st, state_ok st ->
+      infl_mass (edit p p' ch st) +
+        fold_right Nat.add 0%nat (map (fun x => infl_deg st x + 1) (invalidated p p' ch st)) <=
+      infl_mass st.
+    Proof.
+      intros p p' ch st Hstate.
+      pose proof Hstate as [Hstored [Hnodup Hrest]].
+      pose proof (state_ok_edit p p' ch st Hstate) as [Hstored' [Hnodup' Hrest']].
+      assert (Hboth : NoDup (stored (edit p p' ch st) ++ invalidate_keys p p' ch st)).
+      { apply NoDup_app; [exact Hnodup'|apply invalidate_keys_nodup|].
+        intros x Hin Hbad; apply (proj1 (Hstored' x)) in Hin.
+        apply (proj1 (edit_dom_keys p p' ch st x)) in Hin as [_ Hkeep]; contradiction. }
+      assert (Hsub : incl (stored (edit p p' ch st) ++ invalidate_keys p p' ch st) (stored st)).
+      { intros x Hin; apply in_app_iff in Hin as [Hin|Hin].
+        - eapply stored_edit_subset; exact Hin.
+        - apply (proj2 (Hstored x)); eapply invalidate_keys_dom; exact Hin. }
+      pose proof (finite_sum_incl_nodup _ (fun x => infl_deg st x + 1) _ _ Hboth Hsub) as Hsum.
+      rewrite finite_sum_app in Hsum.
+      assert (Hretained :
+        finite_sum (fun x => infl_deg (edit p p' ch st) x + 1) (stored (edit p p' ch st)) =
+        finite_sum (fun x => infl_deg st x + 1) (stored (edit p p' ch st))).
+      { apply finite_sum_ext; intros x Hin; unfold infl_deg.
+        rewrite edit_infl_keeps; [reflexivity|apply (proj1 (Hstored' x)); exact Hin]. }
+      pose proof (snapshot_mass_edit_le p p' ch st) as Hsnap.
+      change (finite_sum (fun x => infl_deg (edit p p' ch st) x + 1)
+        (stored (edit p p' ch st)) + snapshot_mass (edit p p' ch st) +
+        finite_sum (fun x => infl_deg st x + 1) (invalidate_keys p p' ch st) <=
+        finite_sum (fun x => infl_deg st x + 1) (stored st) + snapshot_mass st).
+      rewrite Hretained; lia.
+    Qed.
+  End EditMetadata.
+
   Lemma state_ok_init : state_ok init.
   Proof.
     apply Core.state_core_ok; exact Core.state_core_init.
@@ -1686,7 +1998,9 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exact DemandState.state_ok_demand.
   Qed.
   Lemma state_ok_edit : forall p p' ch st, state_ok st -> state_ok (edit p p' ch st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact EditMetadata.state_ok_edit.
+  Qed.
 
   Definition width (p : S.prog) (_ : state) : nat :=
     S.kw p + N.to_nat (S.row_work p 0).
@@ -1779,10 +2093,14 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     infl_mass (edit p p' ch st) +
       fold_right Nat.add 0%nat (map (fun x => infl_deg st x + 1) (invalidated p p' ch st)) <=
     infl_mass st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact EditMetadata.infl_mass_edit.
+  Qed.
   (** Editing never widens the state. *)
   Lemma kwidth_edit : forall p p' ch st, kwidth (edit p p' ch st) <= kwidth st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact EditMetadata.kwidth_edit.
+  Qed.
   (** Editing pays for the influence mass that it releases and for the changed rows. *)
   Lemma T_edit_le : forall p p' ch st, S.wf p -> S.wf p' -> state_ok st ->
     (forall r, In r ch -> In r (S.rows p) \/ In r (S.rows p')) ->
@@ -1950,7 +2268,9 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   (** Edits retain read entries of every retained key, including changed-row entries. *)
   Lemma edit_infl_keeps : forall p p' ch st x, dom (edit p p' ch st) x ->
     infl_at (edit p p' ch st) x = infl_at st x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact EditMetadata.edit_infl_keeps.
+  Qed.
   (** Visiting a snapshot removes all its writes and retires every co-write membership. *)
   Lemma edit_snapshot_visit : forall p p' ch st id ss, state_ok st ->
     In (id, ss) (snapshots st) -> snapshot_live ss = true ->
@@ -1958,7 +2278,9 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     (forall x, In x (snapshot_writes ss) -> ~ dom (edit p p' ch st) x) /\
     (forall x, ~ In id (cowrite_at (edit p p' ch st) x)) /\
     (forall ss', In (id, ss') (snapshots (edit p p' ch st)) -> snapshot_live ss' = false).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact EditMetadata.edit_snapshot_visit.
+  Qed.
 
   (** The stored key list enumerates the domain once. *)
   Lemma stored_spec : forall st x, state_ok st -> (In x (stored st) <-> dom st x).

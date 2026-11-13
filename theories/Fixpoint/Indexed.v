@@ -1034,3 +1034,192 @@ Proof.
     apply in_map_iff in Hin as [[q a] [Heq Hin]]; cbn in Heq; subst q.
     apply PTrie.elements_spec in Hin; rewrite Hget in Hin; discriminate Hin.
 Qed.
+
+(** ** Weighted trie inventories *)
+
+(** Permuting occurrences preserves their total weight. *)
+Lemma finite_sum_perm : forall A (f : A -> nat) xs ys,
+  Permutation xs ys -> finite_sum f xs = finite_sum f ys.
+Proof.
+  intros A f xs ys Hperm.
+  induction Hperm as [|x xs ys Hperm IH|x y xs|xs ys zs Hxy IHxy Hyz IHyz].
+  - reflexivity.
+  - change (f x + finite_sum f xs = f x + finite_sum f ys); now rewrite IH.
+  - change (f y + (f x + finite_sum f xs) = f x + (f y + finite_sum f xs)); lia.
+  - exact (eq_trans IHxy IHyz).
+Qed.
+
+(** Concatenation adds the two occurrence totals. *)
+Lemma finite_sum_app : forall A (f : A -> nat) xs ys,
+  finite_sum f (xs ++ ys) = finite_sum f xs + finite_sum f ys.
+Proof.
+  intros A f xs; induction xs as [|x xs IH]; intro ys; [reflexivity|].
+  change (f x + finite_sum f (xs ++ ys) =
+    (f x + finite_sum f xs) + finite_sum f ys); rewrite IH; lia.
+Qed.
+
+(** Pointwise larger nonnegative weights have a larger total. *)
+Lemma finite_sum_mono : forall A (f g : A -> nat) xs,
+  (forall x, In x xs -> f x <= g x) -> finite_sum f xs <= finite_sum g xs.
+Proof.
+  intros A f g xs; induction xs as [|x xs IH]; intro Hle; [reflexivity|].
+  change (f x + finite_sum f xs <= g x + finite_sum g xs).
+  pose proof (Hle x (or_introl eq_refl)) as Hhead.
+  assert (Htail : finite_sum f xs <= finite_sum g xs).
+  { apply IH; intros y Hy; apply Hle; now right. }
+  lia.
+Qed.
+
+(** A duplicate-free sub-support can charge each of its weights to one containing occurrence. *)
+Lemma finite_sum_incl_nodup : forall A (f : A -> nat) xs ys,
+  NoDup xs -> incl xs ys -> finite_sum f xs <= finite_sum f ys.
+Proof.
+  intros A f xs ys Hnodup; revert ys.
+  induction Hnodup as [|x xs Hnot Hnodup IH]; intros ys Hincl; [cbn; lia|].
+  destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [before [after ->]].
+  assert (Hrest : incl xs (before ++ after)).
+  { intros y Hy; specialize (Hincl y (or_intror Hy)).
+    apply in_app_iff in Hincl as [Hin|Hin]; apply in_app_iff.
+    - now left.
+    - destruct Hin as [<-|Hin]; [contradiction|now right]. }
+  pose proof (IH (before ++ after) Hrest) as Hsum.
+  rewrite finite_sum_app in Hsum.
+  rewrite finite_sum_app.
+  change (f x + finite_sum f xs <= finite_sum f before + (f x + finite_sum f after)).
+  lia.
+Qed.
+
+(** Zeroing selected weights equals deleting those occurrences from the sum. *)
+Lemma finite_sum_filter_indicator : forall A (f : A -> nat) (test : A -> bool) xs,
+  finite_sum (fun x => if test x then 0 else f x) xs =
+    finite_sum f (filter (fun x => negb (test x)) xs).
+Proof.
+  intros A f test xs; induction xs as [|x xs IH]; [reflexivity|].
+  change ((if test x then 0 else f x) +
+    finite_sum (fun y => if test y then 0 else f y) xs =
+    finite_sum f (if negb (test x) then x :: filter (fun y => negb (test y)) xs
+      else filter (fun y => negb (test y)) xs)).
+  destruct (test x); cbn [negb]; [exact IH|].
+  change (f x + finite_sum (fun y => if test y then 0 else f y) xs =
+    f x + finite_sum f (filter (fun y => negb (test y)) xs)); now rewrite IH.
+Qed.
+
+(** Trie inventories contain no duplicate binding pair. *)
+Lemma trie_elements_nodup_pairs : forall A (m : PTrieCode.t A),
+  NoDup (PTrieCode.elements m).
+Proof.
+  intros A m; apply NoDup_map_inv with (f := @fst positive A).
+  apply PTrie.elements_nodup.
+Qed.
+
+(** Equal lookup observations give the same binding occurrences up to permutation. *)
+Lemma trie_elements_agree : forall A (m n : PTrieCode.t A),
+  (forall q, PTrieCode.get q m = PTrieCode.get q n) ->
+  Permutation (PTrieCode.elements m) (PTrieCode.elements n).
+Proof.
+  intros A m n Hget; apply NoDup_Permutation;
+    [apply trie_elements_nodup_pairs|apply trie_elements_nodup_pairs|].
+  intros [q a]; rewrite !PTrie.elements_spec, Hget; reflexivity.
+Qed.
+
+(** Setting a trie key replaces exactly its old occurrence in the inventory. *)
+Lemma trie_elements_set_perm : forall A p (a : A) m,
+  Permutation (PTrieCode.elements (PTrieCode.set p a m))
+    ((p, a) :: filter (fun entry => negb (Pos.eqb (fst entry) p)) (PTrieCode.elements m)).
+Proof.
+  intros A p a m; apply NoDup_Permutation.
+  - apply trie_elements_nodup_pairs.
+  - constructor.
+    + intro Hin; apply filter_In in Hin as [_ Hne].
+      cbn [fst] in Hne; rewrite Pos.eqb_refl in Hne; discriminate Hne.
+    + apply NoDup_filter; apply trie_elements_nodup_pairs.
+  - intros [q b]; rewrite PTrie.elements_spec; cbn [In]; rewrite filter_In; cbn [fst].
+    destruct (Pos.eq_dec q p) as [->|Hneq].
+    + rewrite PTrie.get_set_same, Pos.eqb_refl; cbn [negb]; split.
+      * intro Heq; injection Heq as <-; now left.
+      * intros [Heq|[_ Hfalse]]; [inversion Heq; reflexivity|discriminate Hfalse].
+    + rewrite PTrie.get_set_other by exact Hneq.
+      rewrite (proj2 (Pos.eqb_neq q p) Hneq); cbn [negb].
+      rewrite <- PTrie.elements_spec; split.
+      * intro Hin; right; split; [exact Hin|reflexivity].
+      * intros [Heq|[Hin _]]; [congruence|exact Hin].
+Qed.
+
+(** The trie total counts each stored payload weight once. *)
+Definition trie_sum {A} (f : A -> nat) (m : PTrieCode.t A) : nat :=
+  finite_sum (fun entry => f (snd entry)) (PTrieCode.elements m).
+
+(** An update adds its new weight and removes the previous weight at exactly that key. *)
+Lemma trie_sum_set : forall A (f : A -> nat) p a m,
+  trie_sum f (PTrieCode.set p a m) +
+    match PTrieCode.get p m with Some old => f old | None => 0 end =
+  f a + trie_sum f m.
+Proof.
+  intros A f p a m.
+  assert (Hnew : trie_sum f (PTrieCode.set p a m) = f a +
+    finite_sum (fun entry => f (snd entry))
+      (filter (fun entry => negb (Pos.eqb (fst entry) p)) (PTrieCode.elements m))).
+  { unfold trie_sum; rewrite (finite_sum_perm _ _ _ _ (trie_elements_set_perm A p a m)).
+    reflexivity. }
+  destruct (PTrieCode.get p m) as [old|] eqn:Hold.
+  - assert (Hsame : trie_sum f (PTrieCode.set p old m) = trie_sum f m).
+    { apply finite_sum_perm; apply trie_elements_agree; intro q.
+      destruct (Pos.eq_dec q p) as [->|Hneq].
+      - rewrite PTrie.get_set_same, Hold; reflexivity.
+      - apply PTrie.get_set_other; exact Hneq. }
+    assert (Hprevious : trie_sum f (PTrieCode.set p old m) = f old +
+      finite_sum (fun entry => f (snd entry))
+        (filter (fun entry => negb (Pos.eqb (fst entry) p)) (PTrieCode.elements m))).
+    { unfold trie_sum; rewrite (finite_sum_perm _ _ _ _ (trie_elements_set_perm A p old m)).
+      reflexivity. }
+    lia.
+  - assert (Hfilter :
+      filter (fun entry => negb (Pos.eqb (fst entry) p)) (PTrieCode.elements m) =
+      PTrieCode.elements m).
+    { transitivity (filter (fun _ => true) (PTrieCode.elements m)); [|apply filter_true].
+      apply filter_ext_in; intros [q b] Hin; cbn [fst].
+      destruct (Pos.eqb q p) eqn:Hqp; [|reflexivity].
+      apply Pos.eqb_eq in Hqp; subst q; apply PTrie.elements_spec in Hin.
+      rewrite Hold in Hin; discriminate Hin. }
+    rewrite Hfilter in Hnew; unfold trie_sum in *; lia.
+Qed.
+
+(** Mapped inventory entries are precisely mapped original payloads at the same path. *)
+Lemma trie_map_elements_iff : forall A B (f : A -> B) m path b,
+  In (path, b) (PTrieCode.elements (PTrieCode.map f m)) <->
+    exists a, In (path, a) (PTrieCode.elements m) /\ b = f a.
+Proof.
+  intros A B f m path b; rewrite PTrie.elements_spec, PTrie.get_map; split.
+  - destruct (PTrieCode.get path m) as [a|] eqn:Hget; cbn [option_map]; intro Heq.
+    + injection Heq as <-; exists a; split; [|reflexivity].
+      apply (proj2 (PTrie.elements_spec A m path a)); exact Hget.
+    + discriminate Heq.
+  - intros [a [Hin ->]].
+    apply (proj1 (PTrie.elements_spec A m path a)) in Hin; now rewrite Hin.
+Qed.
+
+(** Mapping payloads preserves the complete identifier inventory, including multiplicities. *)
+Lemma trie_map_elements_perm : forall A B (f : A -> B) m,
+  Permutation (PTrieCode.elements (PTrieCode.map f m))
+    (map (fun entry => (fst entry, f (snd entry))) (PTrieCode.elements m)).
+Proof.
+  intros A B f m; apply NoDup_Permutation.
+  - eapply NoDup_map_inv; apply PTrie.elements_nodup.
+  - apply (@NoDup_map_inv _ _ fst).
+    rewrite map_map.
+    change (NoDup (map fst (PTrieCode.elements m))); apply PTrie.elements_nodup.
+  - intros [path b]; rewrite trie_map_elements_iff; split.
+    + intros [a [Hin ->]]; apply in_map_iff; exists (path, a); split; [reflexivity|exact Hin].
+    + intros Hin; apply in_map_iff in Hin as [[q a] [Heq Hin]].
+      cbn [fst snd] in Heq; injection Heq as <- <-; exists a; split; [exact Hin|reflexivity].
+Qed.
+
+(** A pointwise submap retains only entries of the original inventory. *)
+Lemma trie_submap_elements : forall A (small large : PTrieCode.t A),
+  (forall path a, PTrieCode.get path small = Some a -> PTrieCode.get path large = Some a) ->
+  incl (PTrieCode.elements small) (PTrieCode.elements large).
+Proof.
+  intros A small large Hsub [path a] Hin.
+  apply (proj2 (PTrie.elements_spec A large path a)); apply Hsub.
+  apply (proj1 (PTrie.elements_spec A small path a)); exact Hin.
+Qed.
