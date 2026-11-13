@@ -1832,6 +1832,23 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     - exact (PayloadBounds.payload_top_bits w).
   Qed.
 
+  Local Lemma table_truth_bits : forall decision,
+    interval_bits (interval_truth decision) <= 1.
+  Proof.
+    intros [[|]|]; cbn [interval_truth interval_bits Z.size_nat Pos.size_nat]; lia.
+  Qed.
+
+  Local Lemma table_bool_not_bits : forall a,
+    interval_bits (interval_bool_not a) <= 1.
+  Proof.
+    intro a.
+    unfold interval_bool_not.
+    destruct (interval_finite_helper a) as [[lo hi]|];
+      try (destruct (Z.eqb lo 0); destruct (Z.eqb hi 0);
+        destruct (Z.eqb lo 1); destruct (Z.eqb hi 1));
+      apply table_truth_bits.
+  Qed.
+
   Local Lemma table_clip_time : forall w a,
     (T_interval_clip w a <= (W.k_payload_clip + 1) *
       N.of_nat (W.psize w a + 1))%N.
