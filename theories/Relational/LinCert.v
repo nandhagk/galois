@@ -1121,10 +1121,152 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
       time_unfold ListDef.T_map. time_cbn. nia.
   Qed.
 
-  Definition c_lc : N := 1. (* STUB *)
+  (** Scaling visits each coefficient once and charges its multiplication. *)
+  Lemma T_scale_terms_bounded : forall m xs b,
+    (forall x a, In (x, a) xs -> (Z.size_nat a <= b)%nat) ->
+    (T_scale_terms m xs <=
+      16 * N.of_nat ((length xs + 1) * (Z.size_nat m + 1) * (b + 1)))%N.
+  Proof.
+    intros m xs b Hbits. time_unfold T_scale_terms.
+    lazymatch goal with
+    | |- context [ListDef.T_map ?f ?Tf xs] =>
+      assert (Hmap : (ListDef.T_map f Tf xs <=
+        (12 * N.of_nat ((Z.size_nat m + 1) * (b + 1)) + 1) *
+        N.of_nat (length xs) + 1)%N);
+      [ apply T_map_members; intros [x a] Hin;
+        specialize (Hbits x a Hin); pose proof (T_Z_mul_bilinear m a);
+        time_simpl; time_cbn_all; nia
+      | nia ]
+    end.
+  Qed.
+
+  (** A row's coefficient envelope bounds all of its scaling callbacks. *)
+  Lemma T_scale_row : forall p m,
+    (T_scale_terms m (lhs p) <=
+      16 * N.of_nat ((length (lhs p) + 1) *
+        (Z.size_nat m + 1) * (row_bits p + 1)))%N.
+  Proof.
+    intros p m. apply T_scale_terms_bounded. intros x a Hin.
+    exact (row_bits_coefficient p x a Hin).
+  Qed.
+
+  (** Admissibility tests inspect only the multiplier's sign. *)
+  Lemma T_allowed_le : forall p m, (T_allowed p m <= 6)%N.
+  Proof.
+    intros p m. time_unfold T_allowed. pose proof (Z.T_leb_le 0 m).
+    destruct (lrel p); time_simpl; time_cbn_all; lia.
+  Qed.
+
+  (** Equality provenance tests charge at most the multiplier's digits. *)
+  Lemma T_equality_used_le : forall p m,
+    (T_equality_used p m <= N.of_nat (Z.size_nat m) + 3)%N.
+  Proof.
+    intros p m. time_unfold T_equality_used. pose proof (Z.T_eqb_le m 0).
+    destruct (lrel p); time_simpl; time_cbn_all; lia.
+  Qed.
+
+  (** Every partial right-hand-side accumulator consists of two nonnegative sums. *)
+  Lemma combine_rows_nonnegative : forall P ms s, combine_rows P ms = Some s ->
+    (0 <= fst (lc_sums s))%Z /\ (0 <= snd (lc_sums s))%Z.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] s Hsum;
+      cbn [combine_rows] in Hsum; try discriminate.
+    - inversion Hsum; cbn [lc_sums fst snd]; lia.
+    - destruct (allowed p m); [|discriminate].
+      destruct (combine_rows ps ns) as [u|] eqn:Hu; [|discriminate].
+      inversion Hsum; subst s. cbn [lc_sums].
+      specialize (IH ns u Hu). destruct (lc_sums u) as [a b].
+      cbn [fst snd] in IH. apply lc_add_signed_nonnegative; tauto.
+  Qed.
+
+  (** Total input bit mass bounds both right-hand-side accumulators together. *)
+  Lemma combine_rows_sums_size : forall P ms s, combine_rows P ms = Some s ->
+    (Z.size_nat (fst (lc_sums s)) + Z.size_nat (snd (lc_sums s)) <= csize P ms)%nat.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] s Hsum;
+      cbn [combine_rows] in Hsum; try discriminate.
+    - inversion Hsum. cbn [lc_sums fst snd csize Z.size_nat]. lia.
+    - destruct (allowed p m); [|discriminate].
+      destruct (combine_rows ps ns) as [u|] eqn:Hu; [|discriminate].
+      specialize (IH ns u Hu).
+      pose proof (combine_rows_nonnegative ps ns u Hu) as [Ha Hb].
+      inversion Hsum; subst s. cbn [lc_sums csize].
+      destruct (lc_sums u) as [a b]. cbn [fst snd] in *.
+      pose proof (lc_add_signed_size (m * rhs p) a b Ha Hb).
+      pose proof (lc_size_mul m (rhs p)). pose proof (row_bits_rhs p). nia.
+  Qed.
+
+  (** Row combination carries the set-bit potential across its recursive sums. *)
+  Lemma T_combine_rows_ones : forall P ms,
+    (T_combine_rows P ms +
+      match combine_rows P ms with Some s => lc_pair_ones (lc_sums s) | None => 0 end <=
+      96 * N.of_nat (csize P ms + 1))%N.
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns];
+      time_unfold T_combine_rows; cbn [combine_rows csize].
+    - unfold lc_pair_ones, lc_ones_Z. time_cbn. lia.
+    - time_cbn. lia.
+    - time_cbn. lia.
+    - specialize (IH ns). pose proof (T_allowed_le p m) as Hallowed.
+      destruct (allowed p m) eqn:Hallow; [|time_cbn; nia].
+      destruct (combine_rows ps ns) as [s|] eqn:Hsum; [|time_cbn_all; nia].
+      pose proof (combine_rows_nonnegative ps ns s Hsum) as [Ha Hb].
+      pose proof (T_scale_row p m) as Hscale.
+      pose proof (T_equality_used_le p m) as Hequal.
+      pose proof (T_Z_mul_bilinear m (rhs p)) as Hmul.
+      pose proof (lc_size_mul m (rhs p)) as Hbits.
+      pose proof (row_bits_rhs p) as Hrhs.
+      pose proof (Datatypes.T_app_le (scale_terms m (lhs p)) (lc_terms s)) as Happ.
+      unfold scale_terms in Happ. rewrite length_map in Happ.
+      destruct (lc_sums s) as [a b] eqn:Hsums.
+      cbn [fst snd] in Ha, Hb.
+      pose proof (T_lc_add_signed_ones (m * rhs p) a b Ha Hb) as Hadd.
+      set (w := (length (lhs p) + 1) *
+        (row_key_bits p + (Z.size_nat m + 1) * (row_bits p + 1))).
+      assert (Hw : (1 <= w)%nat) by (unfold w; nia).
+      assert (HscaleW : (T_scale_terms m (lhs p) <= 16 * N.of_nat w)%N)
+        by (unfold w; nia).
+      assert (HmulW : (Z.T_mul m (rhs p) <= 8 * N.of_nat w)%N)
+        by (unfold w; nia).
+      assert (HaddW : (T_lc_add_signed (m * rhs p) (a, b) +
+        lc_pair_ones (lc_add_signed (m * rhs p) (a, b)) <=
+        16 * N.of_nat w + lc_pair_ones (a, b))%N) by (unfold w; nia).
+      assert (HequalW : (T_equality_used p m <= 4 * N.of_nat w)%N)
+        by (unfold w; nia).
+      assert (HappW : (Datatypes.T_app (scale_terms m (lhs p)) (lc_terms s) <=
+        2 * N.of_nat w)%N) by (unfold w, scale_terms; nia).
+      clear Hscale Hmul Hadd Hequal Happ Hbits Hrhs Ha Hb Hallow.
+      cbn [lc_sums] in *. rewrite ?Hsums in *. clear Hsum Hsums.
+      time_simpl. time_cbn_all. fold w. lia.
+  Qed.
+
+  (** Finishing a combination subtracts its two stored right-hand-side sums once. *)
+  Lemma T_finish_sum_le : forall s,
+    (T_finish_sum s <= 3 * N.of_nat
+      (Z.size_nat (fst (lc_sums s)) + Z.size_nat (snd (lc_sums s))) + 10)%N.
+  Proof.
+    intro s. time_unfold T_finish_sum.
+    pose proof (Z.T_sub_le (fst (lc_sums s)) (snd (lc_sums s))).
+    time_simpl. lia.
+  Qed.
+
+  (** Raw combination has linear cost in the certificate-weighted input size. *)
+  Lemma T_combine_weighted : forall P ms,
+    (T_combine P ms <= 112 * N.of_nat (csize P ms + 1))%N.
+  Proof.
+    intros P ms. pose proof (T_combine_rows_ones P ms) as Hrows.
+    time_unfold T_combine. destruct (combine_rows P ms) as [s|] eqn:Hsum.
+    - pose proof (T_finish_sum_le s) as Hfinish.
+      pose proof (combine_rows_sums_size P ms s Hsum) as Hsize. nia.
+    - nia.
+  Qed.
+
+  Definition c_lc : N := (512 + 4 * X.c_key + 16 * PTrieT.c_trie)%N.
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P ms. pose proof (T_combine_weighted P ms). unfold c_lc. nia.
+  Qed.
   (** Entailment checking charges the certificate and conclusion. *)
   Lemma T_check_entails_le : forall P c k,
     (T_check_entails P c k <= c_lc * N.of_nat
