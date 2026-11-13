@@ -4,7 +4,7 @@
     For example, meeting disjoint finite intervals returns bottom.
     Builds on: IntervalSig and ThresholdsSig. *)
 
-From Stdlib Require Import ZArith NArith Bool List Lia.
+From Stdlib Require Import ZArith Zpow_facts NArith Bool List Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig.
 Import List.ListNotations.
@@ -2178,6 +2178,472 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
     destruct (Z.eqb z 1); cbn [fst snd]; [exact Hstrict | lia].
   Qed.
 
+  (** A positive integer's bit count is bounded by its value. *)
+  Lemma shift_positive_bits_value : forall p, Pos.size_nat p <= Pos.to_nat p.
+  Proof.
+    induction p as [p IH|p IH|]; cbn [Pos.size_nat];
+      rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1; lia.
+  Qed.
+
+  (** The positive and natural bit-count representations agree. *)
+  Lemma shift_positive_size_value : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p.
+  Proof.
+    induction p as [p IH|p IH|]; cbn [Pos.size Pos.size_nat];
+      rewrite ?Pos2Nat.inj_succ, ?IH; reflexivity.
+  Qed.
+
+  (** Nonnegative integer bit counts are bounded by their natural values. *)
+  Lemma shift_nonnegative_bits : forall z, (0 <= z)%Z -> Z.size_nat z <= Z.to_nat z.
+  Proof.
+    intros [|p|p] Hz; cbn [Z.size_nat Z.to_nat]; try lia.
+    apply shift_positive_bits_value.
+  Qed.
+
+  (** Converting a natural does not create more bits than its value. *)
+  Lemma shift_of_nat_bits : forall n, Z.size_nat (Z.of_nat n) <= n.
+  Proof.
+    intro n. pose proof (shift_nonnegative_bits (Z.of_nat n) (Nat2Z.is_nonneg n)) as Hbits.
+    now rewrite Nat2Z.id in Hbits.
+  Qed.
+
+  (** A nonnegative integer below a power of two fits within its exponent. *)
+  Lemma shift_bits_below_pow : forall z n,
+    (0 <= z < 2 ^ Z.of_nat n)%Z -> Z.size_nat z <= n.
+  Proof.
+    intros [|z|z] n Hrange; cbn [Z.size_nat]; try lia.
+    now apply Zpower2_Psize.
+  Qed.
+
+  (** A power of two uses its exponent plus one bit. *)
+  Lemma shift_pow2_bits : forall n, (0 <= n)%Z ->
+    Z.size_nat (2 ^ n) <= Z.to_nat n + 1.
+  Proof.
+    intros n Hn. apply shift_bits_below_pow. split.
+    - pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn) as Hpositive; lia.
+    - rewrite Nat2Z.inj_add, Z2Nat.id by exact Hn.
+      apply Z.pow_lt_mono_r; lia.
+  Qed.
+
+  (** A nonnegative all-ones mask fits within its requested width. *)
+  Lemma shift_ones_bits : forall n, (0 <= n)%Z -> Z.size_nat (Z.ones n) <= Z.to_nat n.
+  Proof.
+    intros n Hn. apply shift_bits_below_pow. rewrite Z2Nat.id by exact Hn.
+    rewrite Z.ones_equiv. pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn) as Hpositive.
+    lia.
+  Qed.
+
+  (** A nonnegative shift adds at most the shift amount and one bit. *)
+  Lemma shift_left_bits : forall x n, (0 <= n)%Z ->
+    Z.size_nat (Z.shiftl x n) <= Z.size_nat x + Z.to_nat n + 1.
+  Proof.
+    intros x n Hn. rewrite Z.shiftl_mul_pow2 by exact Hn.
+    pose proof (integer_mul_bits x (2 ^ n)) as Hproduct.
+    pose proof (shift_pow2_bits n Hn) as Hpower. lia.
+  Qed.
+
+  (** The integer logarithm is bounded by the input's bit count, including negative inputs. *)
+  Lemma shift_log2_value : forall z,
+    (0 <= Z.log2 z <= Z.of_nat (Z.size_nat z))%Z.
+  Proof.
+    intros [|[p|p|]|p]; cbn [Z.log2 Z.size_nat Pos.size_nat]; try lia.
+    all: rewrite <- (positive_nat_Z (Pos.size p)), shift_positive_size_value; lia.
+  Qed.
+
+  (** The logarithm's own bit count also fits the input bit count. *)
+  Lemma shift_log2_bits : forall z, Z.size_nat (Z.log2 z) <= Z.size_nat z.
+  Proof.
+    intro z. pose proof (shift_log2_value z) as [Hnonnegative Hupper].
+    pose proof (shift_nonnegative_bits (Z.log2 z) Hnonnegative) as Hbits.
+    pose proof (Z2Nat.id (Z.log2 z) Hnonnegative) as Hvalue. lia.
+  Qed.
+
+  (** Absolute-value conversion agrees with natural conversion on nonnegative integers. *)
+  Lemma shift_abs_N_nat : forall z, (0 <= z)%Z ->
+    Z.abs_N z = N.of_nat (Z.to_nat z).
+  Proof.
+    intros [|p|p] Hz; cbn [Z.abs_N Z.to_nat]; try reflexivity; try lia.
+  Qed.
+
+  (** Computing a positive bit count is bounded by the square of the input bit count. *)
+  Lemma shift_positive_size_time : forall p,
+    (Fun.Pos.T_size p <= N.of_nat ((Pos.size_nat p + 1) ^ 2))%N.
+  Proof.
+    induction p as [p IH|p IH|]; unfold Fun.Pos.T_size; fold Fun.Pos.T_size;
+      cbn beta iota zeta.
+    all: try pose proof (Std.Pos.T_succ_le (Pos.size p)) as Hsucc.
+    all: try pose proof (shift_positive_bits_value (Pos.size p)) as Hbits.
+    all: try rewrite shift_positive_size_value in Hbits.
+    all: cbn [Pos.size_nat] in *; rewrite !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *;
+      nia.
+  Qed.
+
+  (** Computing an integer logarithm has a quadratic bit-count bound. *)
+  Lemma shift_log2_time : forall z,
+    (Fun.Z.T_log2 z <= 2 * N.of_nat ((Z.size_nat z + 1) ^ 2))%N.
+  Proof.
+    intros [|[p|p|]|p]; unfold Fun.Z.T_log2; cbn beta iota zeta;
+      try pose proof (shift_positive_size_time p) as Hsize;
+      cbn [Z.size_nat Pos.size_nat] in *;
+      rewrite !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Constructing a positive from a natural has a quadratic value bound. *)
+  Lemma shift_of_succ_nat_time : forall n,
+    (Op.Pos.T_of_succ_nat n <= N.of_nat ((n + 1) ^ 2))%N.
+  Proof.
+    induction n as [|n IH]; unfold Op.Pos.T_of_succ_nat; fold Op.Pos.T_of_succ_nat;
+      cbn beta iota zeta.
+    - reflexivity.
+    - pose proof (Std.Pos.T_succ_le (Pos.of_succ_nat n)) as Hsucc.
+      pose proof (shift_positive_bits_value (Pos.of_succ_nat n)) as Hbits.
+      rewrite SuccNat2Pos.id_succ in Hbits.
+      rewrite !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** The integer conversion has the same quadratic value budget. *)
+  Lemma shift_of_nat_time : forall n,
+    (Op.Z.T_of_nat n <= 2 * N.of_nat ((n + 1) ^ 2))%N.
+  Proof.
+    intros [|n]; unfold Op.Z.T_of_nat; cbn beta iota zeta;
+      [change (1 <= 2)%N; lia|].
+    pose proof (shift_of_succ_nat_time n) as Hpositive.
+    rewrite !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** Reading an integer's bit count traverses its binary representation. *)
+  Lemma shift_integer_size_time : forall z,
+    (Word.Z.T_size_nat z <= N.of_nat (Z.size_nat z) + 1)%N.
+  Proof.
+    intros [|p|p]; unfold Word.Z.T_size_nat; cbn beta iota zeta;
+      cbn [Z.size_nat]; try lia; pose proof (Std.Pos.T_size_nat_le p) as Hsize; lia.
+  Qed.
+
+  (** Comparing unary bit counts takes at most the first count plus one step. *)
+  Lemma shift_nat_max_time : forall n m,
+    (Nat.T_max n m <= N.of_nat n + 1)%N.
+  Proof.
+    induction n as [|n IH]; intros [|m]; unfold Nat.T_max; fold Nat.T_max;
+      cbn beta iota zeta; try lia.
+    pose proof (IH m) as Htail. rewrite Nat2N.inj_succ. lia.
+  Qed.
+
+  (** Endpoint size inspection adds one constructor branch. *)
+  Lemma shift_bound_size_time : forall b,
+    (T_code_bnd_bits b <= N.of_nat (bnd_bits b) + 2)%N.
+  Proof.
+    intros [|z|]; unfold T_code_bnd_bits; cbn beta iota zeta; cbn [bnd_bits]; try lia.
+    pose proof (shift_integer_size_time z) as Hbits. lia.
+  Qed.
+
+  (** Computing the interval bit count is linear in the maximum endpoint bit count. *)
+  Lemma shift_interval_size_time : forall a,
+    (T_code_itv_bits a <= 8 * N.of_nat (size a + 1))%N.
+  Proof.
+    intros [|lo hi]; unfold T_code_itv_bits; cbn beta iota zeta; try nia.
+    pose proof (shift_bound_size_time lo) as Hlo.
+    pose proof (shift_bound_size_time hi) as Hhi.
+    pose proof (shift_nat_max_time (code_bnd_bits lo) (code_bnd_bits hi)) as Hmax.
+    pose proof (endpoint_sizes lo hi) as [Hlobits Hhibits].
+    change (Nat.T_max (code_bnd_bits lo) (code_bnd_bits hi) <=
+      N.of_nat (bnd_bits lo) + 1)%N in Hmax.
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Forming an all-ones mask has a linear bound in its nonnegative width. *)
+  Lemma shift_ones_time : forall n, (0 <= n)%Z ->
+    (Word.Z.T_ones n <= 16 * N.of_nat (Z.to_nat n + 1))%N.
+  Proof.
+    intros n Hn. pose proof (Std.Z.T_shiftl_le 1 n) as Hshift.
+    pose proof (Std.Z.T_pred_le (Z.shiftl 1 n)) as Hpred.
+    pose proof (shift_pow2_bits n Hn) as Hbits. rewrite <- Z.shiftl_1_l in Hbits.
+    change (Std.Z.T_shiftl 1 n <= 6 * Z.abs_N n + 1)%N in Hshift.
+    rewrite shift_abs_N_nat in Hshift by exact Hn.
+    unfold Word.Z.T_ones. rewrite Nat2N.inj_add. nia.
+  Qed.
+  (** Integer disjunction stores no more than the operand bit bounds and one mask bit. *)
+  Lemma bitor_result_bits : forall a b, size (bitor a b) <= size a + size b + 1.
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      cbn [bitor size itv_bits bnd_bits top]; try lia.
+    destruct ((0 <=? la)%Z && (0 <=? lb)%Z); cbn [size itv_bits bnd_bits top]; try lia.
+    pose proof (integer_max_bits ha hb) as Hmax.
+    pose proof (shift_log2_value (Z.max ha hb)) as [Hlog0 Hlog].
+    pose proof (shift_ones_bits (Z.log2 (Z.max ha hb) + 1) ltac:(lia)) as Hones.
+    pose proof (Z2Nat.id (Z.log2 (Z.max ha hb) + 1) ltac:(lia)) as Hwidth.
+    change (Z.size_nat 0) with 0. cbn [Nat.max]. lia.
+  Qed.
+
+  (** Disjunction pays for endpoint comparison, logarithm and mask construction. *)
+  Lemma bitor_time_quadratic : forall a b,
+    (T_bitor a b <= 8192 * N.of_nat (binary_work a b))%N.
+  Proof.
+    assert (Hsmall : forall n, (1 <= 8192 * N.of_nat ((n + 1) ^ 2))%N).
+    { intro n. rewrite Nat.pow_2_r, Nat2N.inj_mul, Nat2N.inj_add. nia. }
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      unfold T_bitor, binary_work; fold size; cbn beta iota zeta; try apply Hsmall.
+    set (s := size (I (Fin la) (Fin ha)) + size (I (Fin lb) (Fin hb)) + 1).
+    set (budget := N.of_nat (s ^ 2)).
+    assert (Hs : 1 <= s) by (unfold s; lia).
+    assert (Hbudget : (1 <= budget /\ N.of_nat s <= budget)%N).
+    { unfold budget. rewrite Nat.pow_2_r, Nat2N.inj_mul. nia. }
+    pose proof (endpoint_sizes (Fin la) (Fin ha)) as [Hla Hha].
+    pose proof (endpoint_sizes (Fin lb) (Fin hb)) as [Hlb Hhb].
+    cbn [bnd_bits] in Hla, Hha, Hlb, Hhb.
+    set (h := Z.max ha hb).
+    assert (Hh : Z.size_nat h + 1 <= s).
+    { pose proof (integer_max_bits ha hb) as Hmax. unfold h, s; lia. }
+    assert (Hmax : (Std.Z.T_max ha hb <= 5 * budget)%N).
+    { pose proof (Std.Z.T_max_le ha hb) as Htime. unfold s in Hh.
+      assert (Hbits : Z.size_nat ha + 1 <= s) by (unfold s; lia). lia. }
+    assert (Hlog : (Fun.Z.T_log2 h <= 2 * budget)%N).
+    { eapply N.le_trans; [apply shift_log2_time|]. unfold budget.
+      apply N.mul_le_mono_l. rewrite !Nat.pow_2_r, !Nat2N.inj_mul.
+      apply N.mul_le_mono; lia. }
+    pose proof (shift_log2_value h) as [Hlog0 Hlogvalue].
+    assert (Hadd : (Std.Z.T_add (Z.log2 h) 1 <= 4 * budget)%N).
+    { pose proof (Std.Z.T_add_le (Z.log2 h) 1) as Htime.
+      pose proof (shift_log2_bits h) as Hbits.
+      change (Std.Z.T_add (Z.log2 h) 1 <=
+        3 * N.of_nat (Z.size_nat (Z.log2 h) + 1) + 1)%N in Htime.
+      rewrite Nat2N.inj_add in Htime. lia. }
+    assert (Hones : (Word.Z.T_ones (Z.log2 h + 1) <= 32 * budget)%N).
+    { pose proof (shift_ones_time (Z.log2 h + 1) ltac:(lia)) as Htime.
+      pose proof (Z2Nat.id (Z.log2 h + 1) ltac:(lia)) as Hvalue.
+      rewrite Nat2N.inj_add in Htime. lia. }
+    pose proof (Std.Z.T_leb_le 0 la) as Htesta.
+    pose proof (Std.Z.T_leb_le 0 lb) as Htestb.
+    pose proof (Std.Datatypes.T_andb_le (0 <=? la)%Z (0 <=? lb)%Z) as Hand.
+    change (Std.Z.T_leb 0 la <= 4)%N in Htesta.
+    change (Std.Z.T_leb 0 lb <= 4)%N in Htestb.
+    fold h s budget. destruct ((0 <=? la)%Z && (0 <=? lb)%Z); lia.
+  Qed.
+  (** Computing the dynamic cutoff fits the quadratic operand bit budget. *)
+  Lemma shift_preparation_time : forall a b,
+    (T_code_itv_bits a + T_code_itv_bits b +
+      Std.Nat.T_add (code_itv_bits a) (code_itv_bits b) +
+      Std.Nat.T_add (code_itv_bits a + code_itv_bits b) 1 +
+      Op.Z.T_of_nat (code_itv_bits a + code_itv_bits b + 1) <=
+      128 * N.of_nat (binary_work a b))%N.
+  Proof.
+    intros a b. pose proof (shift_interval_size_time a) as Ha.
+    pose proof (shift_interval_size_time b) as Hb.
+    pose proof (Std.Nat.T_add_le (code_itv_bits a) (code_itv_bits b)) as Hsum.
+    pose proof (Std.Nat.T_add_le (code_itv_bits a + code_itv_bits b) 1) as Hsucc.
+    pose proof (shift_of_nat_time (code_itv_bits a + code_itv_bits b + 1)) as Hconvert.
+    change (code_itv_bits a) with (size a) in *.
+    change (code_itv_bits b) with (size b) in *.
+    unfold binary_work. fold size.
+    rewrite !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Shifting by a bounded nonnegative count fits a quadratic bit budget. *)
+  Lemma shift_left_time : forall x n k,
+    1 <= k -> Z.size_nat x <= k -> (0 <= n <= Z.of_nat k)%Z ->
+    (Std.Z.T_shiftl x n <= 16 * N.of_nat (k ^ 2))%N.
+  Proof.
+    intros x n k Hk Hbits [Hn Hnk].
+    pose proof (Std.Z.T_shiftl_le x n) as Htime.
+    rewrite shift_abs_N_nat in Htime by exact Hn.
+    pose proof (Z2Nat.id n Hn) as Hcount.
+    assert (Hproduct :
+      ((N.of_nat (Z.size_nat x) + 5) * N.of_nat (Z.to_nat n) <=
+       (N.of_nat k + 5) * N.of_nat k)%N).
+    { apply N.mul_le_mono; lia. }
+    rewrite Nat.pow_2_r, Nat2N.inj_mul. nia.
+  Qed.
+
+  (** The cutoff keeps every computed shift result within a linear endpoint bit bound. *)
+  Lemma shl_result_bits : forall a b, size (shl a b) <= 2 * (size a + size b + 1).
+  Proof.
+    intros [|[|la|] [|ha|]] [|[|lb|] [|hb|]];
+      unfold shl; cbn beta iota zeta; cbn [size itv_bits bnd_bits top]; try lia.
+    all: destruct ((0 <=? la)%Z && (0 <=? lb)%Z) eqn:Hnonnegative;
+      cbn [size itv_bits bnd_bits top]; try lia.
+    apply andb_true_iff in Hnonnegative as [Hla Hlb].
+    apply Z.leb_le in Hla, Hlb.
+    destruct ((lb <=? hb)%Z &&
+      (hb <=? Z.of_nat
+        (code_itv_bits (I (Fin la) (Fin ha)) + code_itv_bits (I (Fin lb) (Fin hb)) + 1))%Z)
+      eqn:Hcutoff; cbn [size itv_bits bnd_bits]; try lia.
+    apply andb_true_iff in Hcutoff as [Hordered Hupper].
+    apply Z.leb_le in Hordered, Hupper.
+    pose proof (shift_left_bits la lb Hlb) as Hlow.
+    pose proof (shift_left_bits ha hb ltac:(lia)) as Hhigh.
+    pose proof (Z2Nat.id lb Hlb) as Hlbvalue.
+    pose proof (Z2Nat.id hb ltac:(lia)) as Hhbvalue.
+    cbn [code_itv_bits code_bnd_bits] in Hupper.
+    apply Nat.max_lub; lia.
+  Qed.
+
+  (** Shift transfer charges size inspection and only shifts below the checked cutoff. *)
+  Lemma shl_time_quadratic : forall a b,
+    (T_shl a b <= 8192 * N.of_nat (binary_work a b))%N.
+  Proof.
+    intros a b. pose proof (shift_preparation_time a b) as Hprepare.
+    unfold binary_work in Hprepare |- *. fold size in Hprepare |- *.
+    set (s := size a + size b + 1) in *.
+    set (budget := N.of_nat (s ^ 2)) in *.
+    assert (Hs : 1 <= s) by (unfold s; lia).
+    assert (Hbudget : (1 <= budget /\ N.of_nat s <= budget)%N).
+    { unfold budget. rewrite Nat.pow_2_r, Nat2N.inj_mul. nia. }
+    unfold T_shl.
+    change (code_itv_bits a) with (size a) in *.
+    change (code_itv_bits b) with (size b) in *.
+    fold s in Hprepare |- *.
+    destruct a as [|[|la|] ha], b as [|[|lb|] hb]; cbn beta iota zeta; try lia.
+    pose proof (Std.Z.T_leb_le 0 la) as Htesta.
+    pose proof (Std.Z.T_leb_le 0 lb) as Htestb.
+    pose proof (Std.Datatypes.T_andb_le (0 <=? la)%Z (0 <=? lb)%Z) as Hand.
+    change (Std.Z.T_leb 0 la <= 4)%N in Htesta.
+    change (Std.Z.T_leb 0 lb <= 4)%N in Htestb.
+    destruct ((0 <=? la)%Z && (0 <=? lb)%Z) eqn:Hnonnegative; try lia.
+    apply andb_true_iff in Hnonnegative as [Hla Hlb].
+    apply Z.leb_le in Hla, Hlb.
+    destruct ha as [|ha|], hb as [|hb|]; cbn beta iota zeta; try lia.
+    pose proof (endpoint_sizes (Fin la) (Fin ha)) as [Hlabits Hhabits].
+    pose proof (endpoint_sizes (Fin lb) (Fin hb)) as [Hlbbits Hhbbits].
+    cbn [bnd_bits] in Hlabits, Hhabits, Hlbbits, Hhbbits.
+    assert (Hla_s : Z.size_nat la <= s) by (unfold s; lia).
+    assert (Hha_s : Z.size_nat ha <= s) by (unfold s; lia).
+    assert (Hlb_s : Z.size_nat lb <= s) by (unfold s; lia).
+    assert (Hhb_s : Z.size_nat hb <= s) by (unfold s; lia).
+    pose proof (Std.Z.T_leb_le lb hb) as Hcompare.
+    pose proof (Std.Z.T_leb_le hb (Z.of_nat s)) as Hcutoff.
+    pose proof (Std.Datatypes.T_andb_le (lb <=? hb)%Z (hb <=? Z.of_nat s)%Z) as Hchecked.
+    destruct ((lb <=? hb)%Z && (hb <=? Z.of_nat s)%Z) eqn:Hbounds; try lia.
+    apply andb_true_iff in Hbounds as [Hordered Hupper].
+    apply Z.leb_le in Hordered, Hupper.
+    pose proof (shift_left_time la lb s Hs Hla_s ltac:(lia)) as Hlow.
+    pose proof (shift_left_time ha hb s Hs Hha_s ltac:(lia)) as Hhigh.
+    fold budget in Hlow, Hhigh. lia.
+  Qed.
+  (** Repeated multiplication by two has constant cost per produced bit. *)
+  Lemma shift_pow2_time : forall z,
+    (Word.Z.T_pow 2 z <= 5 * Z.abs_N z + 2)%N.
+  Proof.
+    intros [|p|p]; unfold Word.Z.T_pow, Word.Z.T_pow_pos;
+      cbn beta iota zeta; try nia.
+    pose proof (Std.Pos.T_iter_le (Z.mul 2)
+      (fun x => Std.Z.T_mul 2 x) (fun _ => True) 3 1%Z p
+      ltac:(easy) ltac:(intros; apply Std.Z.T_mul_two_le) ltac:(constructor)) as Hiter.
+    change (Z.abs_N (Z.pos p)) with (N.pos p). nia.
+  Qed.
+
+  (** Signed split boundaries fit the width plus three bookkeeping bits. *)
+  Lemma split_power_bits : forall w,
+    Z.size_nat (2 ^ Z.pos w) <= Pos.to_nat w + 1 /\
+    Z.size_nat (2 ^ (Z.pos w - 1)) <= Pos.to_nat w + 1 /\
+    Z.size_nat (2 ^ Z.pos w - 1) <= Pos.to_nat w + 3 /\
+    Z.size_nat (2 ^ (Z.pos w - 1) - 1) <= Pos.to_nat w + 3.
+  Proof.
+    intro w. pose proof (shift_pow2_bits (Z.pos w) ltac:(lia)) as Hmodulus.
+    pose proof (shift_pow2_bits (Z.pos w - 1) ltac:(lia)) as Hhalf.
+    pose proof (Z2Nat.id (Z.pos w - 1) ltac:(lia)) as Hhalfwidth.
+    pose proof (positive_nat_Z w) as Hwidth.
+    change (Z.to_nat (Z.pos w)) with (Pos.to_nat w) in Hmodulus.
+    pose proof (integer_sub_bits (2 ^ Z.pos w) 1) as Hmoduluscap.
+    pose proof (integer_sub_bits (2 ^ (Z.pos w - 1)) 1) as Hhalfcap.
+    change (Z.size_nat 1) with 1 in Hmoduluscap, Hhalfcap. lia.
+  Qed.
+
+  (** Both signed split ranges have linear width-sized endpoints. *)
+  Lemma split_range_bits : forall w,
+    size (I (Fin 0) (Fin (2 ^ (Z.pos w - 1) - 1))) <= Pos.to_nat w + 3 /\
+    size (I (Fin (2 ^ (Z.pos w - 1))) (Fin (2 ^ Z.pos w - 1))) <= Pos.to_nat w + 3.
+  Proof.
+    intro w. pose proof (split_power_bits w) as [Hmodulus [Hhalf [Hmoduluscap Hhalfcap]]].
+    unfold size, itv_bits, bnd_bits. change (Z.size_nat 0) with 0. lia.
+  Qed.
+
+  (** Preparing the two powers and their predecessor boundaries has a linear width cost. *)
+  Lemma split_power_time : forall w,
+    (Word.Z.T_pow 2 (Z.pos w) + Std.Z.T_sub (Z.pos w) 1 +
+      Word.Z.T_pow 2 (Z.pos w - 1) + Std.Z.T_sub (2 ^ (Z.pos w - 1)) 1 +
+      Std.Z.T_sub (2 ^ Z.pos w) 1 <= 64 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    intro w. pose proof (shift_pow2_time (Z.pos w)) as Hmodulus.
+    pose proof (shift_pow2_time (Z.pos w - 1)) as Hhalf.
+    rewrite !shift_abs_N_nat in Hmodulus, Hhalf by lia.
+    change (Z.to_nat (Z.pos w)) with (Pos.to_nat w) in Hmodulus.
+    pose proof (Z2Nat.id (Z.pos w - 1) ltac:(lia)) as Hhalfwidth.
+    pose proof (positive_nat_Z w) as Hwidth.
+    pose proof (shift_positive_bits_value w) as Hwidthbits.
+    pose proof (Std.Z.T_sub_le (Z.pos w) 1) as Hdecrement.
+    pose proof (Std.Z.T_sub_le (2 ^ (Z.pos w - 1)) 1) as Hhalfcap.
+    pose proof (Std.Z.T_sub_le (2 ^ Z.pos w) 1) as Hmoduluscap.
+    pose proof (split_power_bits w) as [Hmodulusbits [Hhalfbits _]].
+    change (Z.size_nat 1) with 1 in Hdecrement, Hhalfcap, Hmoduluscap.
+    change (Z.size_nat (Z.pos w)) with (Pos.size_nat w) in Hdecrement.
+    rewrite !Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** A scalar meet wrapper retains the tight threshold-independent endpoint bound. *)
+  Lemma split_meet_time : forall a b,
+    (T_meet a b <= 33 * (T.c_thresholds + 1) * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. pose proof (ScalarTime.T_interval_meet_le a b) as Htime.
+    change (T_interval_meet a b <=
+      ScalarTime.c_scalar * N.of_nat (size a + size b + 1))%N in Htime.
+    unfold T_meet, ScalarTime.c_scalar in *. rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The scalar meet only selects endpoints already present in its inputs. *)
+  Lemma split_meet_bits : forall a b, size (meet a b) <= size a + size b.
+  Proof.
+    intros a b. exact (ScalarTime.interval_meet_bits a b).
+  Qed.
+
+  (** Meeting a split range fits the common width and operand budget. *)
+  Lemma split_meet_width_time : forall w a r, size r <= Pos.to_nat w + 3 ->
+    (T_meet a r <=
+      132 * ((T.c_thresholds + 1) * N.of_nat (Pos.to_nat w + size a + 1)))%N.
+  Proof.
+    intros w a r Hr. eapply N.le_trans; [apply split_meet_time|].
+    replace (132 * ((T.c_thresholds + 1) * N.of_nat (Pos.to_nat w + size a + 1)))%N
+      with ((33 * (T.c_thresholds + 1)) *
+        (4 * N.of_nat (Pos.to_nat w + size a + 1)))%N by ring.
+    apply N.mul_le_mono_l. rewrite !Nat2N.inj_add. lia.
+  Qed.
+
+  (** Translating the high range by the modulus has a linear width and operand cost. *)
+  Lemma split_sub_width_time : forall w a r, size r <= Pos.to_nat w + 3 ->
+    (T_sub (meet a r) (abst (2 ^ Z.pos w)) <=
+      40 * N.of_nat (Pos.to_nat w + size a + 1))%N.
+  Proof.
+    intros w a r Hr. pose proof (sub_time_linear (meet a r) (abst (2 ^ Z.pos w))) as Htime.
+    pose proof (split_meet_bits a r) as Hmeet.
+    pose proof (split_power_bits w) as [Hmodulus _].
+    assert (Hpoint : size (abst (2 ^ Z.pos w)) = Z.size_nat (2 ^ Z.pos w)).
+    { unfold size, abst, itv_bits, bnd_bits. apply Nat.max_id. }
+    rewrite Hpoint in Htime. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** Signed splitting pays for two ranges and their finite translation. *)
+  Lemma signed_split_time_quadratic : forall w a,
+    (T_signed_split w a <= 8192 * (T.c_thresholds + 1) *
+      N.of_nat ((Pos.to_nat w + size a + 1) ^ 2))%N.
+  Proof.
+    intros w a. set (s := Pos.to_nat w + size a + 1).
+    set (budget := ((T.c_thresholds + 1) * N.of_nat s)%N).
+    assert (Hs : 1 <= s) by (unfold s; lia).
+    assert (Hbudget : (1 <= budget /\ N.of_nat s <= budget)%N) by (unfold budget; nia).
+    pose proof (split_power_time w) as Hpower.
+    pose proof (split_range_bits w) as [Hlowrange Hhighrange].
+    pose proof (split_meet_width_time w a
+      (I (Fin 0) (Fin (2 ^ (Z.pos w - 1) - 1))) Hlowrange) as Hlow.
+    pose proof (split_meet_width_time w a
+      (I (Fin (2 ^ (Z.pos w - 1))) (Fin (2 ^ Z.pos w - 1))) Hhighrange) as Hhigh.
+    pose proof (split_sub_width_time w a
+      (I (Fin (2 ^ (Z.pos w - 1))) (Fin (2 ^ Z.pos w - 1))) Hhighrange) as Htranslate.
+    fold s budget in Hlow, Hhigh. fold s in Htranslate.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= budget)%N).
+    { assert (Hpart : (N.of_nat (Pos.to_nat w + 1) <= N.of_nat s)%N) by (unfold s; lia).
+      lia. }
+    eapply N.le_trans with (512 * budget)%N.
+    - unfold T_signed_split, T_abst. cbn beta iota zeta. lia.
+    - fold s. unfold budget. rewrite Nat.pow_2_r, Nat2N.inj_mul. nia.
+  Qed.
+
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -2351,10 +2817,14 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Bitwise disjunction has the published quadratic endpoint bound. *)
   Lemma T_bitor_le : forall a b, (T_bitor a b <= c_interval * N.of_nat ((binary_work a
     b)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (bitor_time_quadratic a b). unfold c_interval. nia.
+  Qed.
   (** Shift transfer has the published quadratic endpoint bound. *)
   Lemma T_shl_le : forall a b, (T_shl a b <= c_interval * N.of_nat ((binary_work a b)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (shl_time_quadratic a b). unfold c_interval. nia.
+  Qed.
   (** Comparison charges linear endpoint comparisons. *)
   Lemma T_cmp_le : forall c a b, (T_cmp c a b <= c_interval * N.of_nat ((size a + size b +
     1)%nat))%N.
@@ -2418,7 +2888,9 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Signed splitting charges the width and endpoints. *)
   Lemma T_signed_split_le : forall w a, (T_signed_split w a <=
     c_interval * N.of_nat (((Pos.to_nat w + size a + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact signed_split_time_quadratic.
+  Qed.
   (** Threshold widening charges a search path and endpoint bit sizes. *)
   Lemma T_widen_thresholds_le : forall ts a b, (T_widen ts a b <=
     c_interval * N.of_nat
@@ -2503,7 +2975,9 @@ Module IntervalT (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) <: INTERVAL_ALL L T.
   (** Cutoff shifting keeps the published quadratic endpoint bound. *)
   Lemma T3_shl : forall a b,
     (T_shl a b <= k_interval_arith * N.of_nat (binary_work a b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact shl_time_quadratic.
+  Qed.
   (** Addition retains every sum of represented operands. *)
   Lemma F6_add_sound : forall a b x y, in_itv a x -> in_itv b y ->
     in_itv (add a b) (x + y).
