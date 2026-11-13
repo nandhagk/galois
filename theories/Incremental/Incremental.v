@@ -798,7 +798,17 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
 
   Lemma demand_rejected : forall p pol roots fuel st why st',
     demand p pol roots fuel st = (DemandRejected why, st') -> st' = st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol roots fuel st why st'; unfold demand.
+    destruct (forallb (present st) roots); [discriminate|].
+    set (xs := discovery_keys p roots st).
+    set (rs := region_for p st xs).
+    destruct (Sol.run (R.mk p (frozen_for_rows p rs st) rs) pol fuel) as [m|m|reason].
+    - destruct (Checker.check_rows p rs (restore (frozen_for_rows p rs st) m));
+        intro Hresult; inversion Hresult; reflexivity.
+    - discriminate.
+    - intro Hresult; inversion Hresult; reflexivity.
+  Qed.
 
   Lemma edit_inv : forall p p' ch st, S.wf p' -> edit_covers p p' ch -> inv p st ->
     inv p' (edit p p' ch st).
