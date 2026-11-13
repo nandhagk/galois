@@ -5941,6 +5941,20 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         as [d [Hd Hle]]. exists d. now split.
   Qed.
 
+  Lemma fw_closed_at_success : forall m, dbm_wf m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true ->
+    forall k, RelationalPathBounds.closed_at (entry (fw m)) k.
+  Proof.
+    intros m Hwf Hscan k i j.
+    destruct (entry (fw m) i k) as [a|] eqn:Hik;
+      destruct (entry (fw m) k j) as [z|] eqn:Hkj;
+      cbn [RelationalPathBounds.plus RelationalPathBounds.below];
+      try (destruct (entry (fw m) i j); exact I).
+    destruct (proj2 (fw_closed_success m Hwf Hscan) i j k a z Hik Hkj)
+      as [d [Hd Hle]]. rewrite Hd.
+    cbn [RelationalPathBounds.below]. exact Hle.
+  Qed.
+
   (** A coherent triangle transports a unary half-bound across one edge. *)
   Lemma unary_half_transport : forall m, coherent m ->
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
@@ -6198,6 +6212,29 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
       pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
       lia.
+  Qed.
+
+  Lemma tclose_half_pair : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall k, RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (half_unary (fw m) (flip k)) (half_unary (fw m) k)).
+  Proof.
+    intros m m' Hwf Hresult k. unfold half_unary.
+    rewrite flip_involutive.
+    destruct (entry (fw m) (flip k) k) as [a|] eqn:Ha;
+      destruct (entry (fw m) k (flip k)) as [b|] eqn:Hb;
+      cbn [option_map RelationalPathBounds.plus RelationalPathBounds.below];
+      try exact I.
+    assert (Hfirst : entry (tighten (fw m)) k (flip k) = Some (even_bound b)).
+    { rewrite entry_tighten_unary_option by (apply wf_fw; exact Hwf).
+      now rewrite Hb. }
+    assert (Hsecond : entry (tighten (fw m)) (flip k) k = Some (even_bound a)).
+    { pose proof (entry_tighten_unary_option (fw m) (wf_fw m Hwf) (flip k)) as Hopt.
+      rewrite flip_involutive, Ha in Hopt. exact Hopt. }
+    pose proof (tclose_pair_nonnegative m m' Hwf Hresult k
+      (even_bound b) (even_bound a) Hfirst Hsecond) as Hpair.
+    unfold even_bound in Hpair.
+    cbn [RelationalPathBounds.below]. lia.
   Qed.
 
   Lemma tclose_strong_clause : forall m m', dbm_wf m ->
