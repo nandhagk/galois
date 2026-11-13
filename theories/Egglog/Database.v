@@ -10885,6 +10885,31 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (wf_index_complete db Hbase s f perm k o Hslot Hrow).
   Qed.
 
+  Lemma public_row_kind_ok : forall db, database_wf db ->
+    forall f k o, row (view db) f k o -> kind_ok db f k o.
+  Proof.
+    intros db Hbase f k o Hrow. unfold kind_ok.
+    split; [intros i Hid; exact (wf_row_ids db Hbase f k o i Hrow Hid) |].
+    split; [exact (wf_row_slots db Hbase f k o Hrow) |].
+    exact (wf_row_kind db Hbase f k o Hrow).
+  Qed.
+
+  Lemma public_row_id_bound : forall db, database_wf db ->
+    forall f k o i, row (view db) f k o -> row_ids k o i -> (i < next_id db)%positive.
+  Proof.
+    intros db Hbase f k o i Hrow Hid.
+    pose proof (wf_row_ids db Hbase f k o i Hrow Hid) as Hallocated.
+    unfold next_id, allocated in *. lia.
+  Qed.
+
+  Lemma public_queue_allocated : forall db, database_wf db ->
+    forall x, In x (queue db) -> allocated db x.
+  Proof.
+    intros db Hbase x Hin.
+    pose proof (wf_queue_allocated db Hbase) as Hqueue.
+    rewrite Forall_forall in Hqueue. exact (Hqueue x Hin).
+  Qed.
+
   (** Active repair states expose cache metadata directly, without a public wf conversion. *)
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
