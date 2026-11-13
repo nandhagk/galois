@@ -2003,19 +2003,25 @@ Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     | Reached P => Reached (flat_map atom_rows (F.atoms_of g es) ++ map normalize_row P)
     end.
 
+  (** Affine range production and checking share the same prepared source rows. *)
+  Definition range_linear (P : list (lcons X.t)) (f : lin X.t) : bnd * bnd :=
+    let prepared := map normalize_row P in
+    let xs := variables (LCons _ (coef f) REq 0 :: prepared) in
+    let r := karr_target (equality_basis xs prepared) 1
+      (KRow (map (fun x => coefficient x (coef f)) xs) 0
+        (repeat 0%Z (length prepared)) 1) in
+    let z := (- kright r / kscale r + cst f)%Z in
+    match entail_cert prepared (LCons _ (coef f) REq (z - cst f)%Z) with
+    | Some _ => (Fin z, Fin z)
+    | None => (NegInf, PosInf)
+    end.
+
   Definition range (e : term L.op X.t) (s : t) : bnd * bnd :=
     match s, F.lin_of e with
-    | Reached P, Some (f, NoWrap) =>
-      let xs := variables (LCons _ (coef f) REq 0 :: P) in
-      let r := karr_target (equality_basis xs P) 1
-        (KRow (map (fun x => coefficient x (coef f)) xs) 0 (repeat 0%Z (length P)) 1) in
-      let z := (- kright r / kscale r + cst f)%Z in
-      match entail_cert P (LCons _ (coef f) REq (z - cst f)%Z) with
-      | Some _ => (Fin z, Fin z)
-      | None => (NegInf, PosInf)
-      end
+    | Reached P, Some (f, NoWrap) => range_linear P f
     | _, _ => (NegInf, PosInf)
     end.
+
 End KarrCode.
 
 Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
@@ -6255,26 +6261,39 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       apply normalize_row_sat.
       now apply (proj1 (Forall_forall _ _) Hmodels).
   Qed.
+  (** Every bound checked against prepared rows holds for the original affine state. *)
+  Lemma range_linear_sound : forall P f v, Forall (sat v) P ->
+    in_bnd (fst (range_linear P f)) (snd (range_linear P f)) (eval_lin v f).
+  Proof.
+    intros P f v Hmodels. unfold range_linear.
+    set (prepared := map normalize_row P).
+    assert (Hprepared : Forall (sat v) prepared).
+    { unfold prepared. now apply normalize_rows_sat. }
+    set (xs := variables (LCons X.t (coef f) REq 0 :: prepared)).
+    set (r := karr_target (equality_basis xs prepared) 1
+      (KRow (map (fun x => coefficient x (coef f)) xs) 0
+        (repeat 0%Z (length prepared)) 1)).
+    set (z := (- kright r / kscale r + cst f)%Z).
+    destruct (entail_cert prepared (LCons X.t (coef f) REq (z - cst f)%Z))
+      as [certificate|] eqn:Hcertificate; [|split; exact I].
+    pose proof (C.check_entails_sound prepared _ certificate
+      (entail_cert_checked prepared _ certificate Hcertificate) v Hprepared) as Hbound.
+    cbn [sat lrel lhs rhs] in Hbound.
+    change (z <= eval_lin v f <= z)%Z. unfold eval_lin. lia.
+  Qed.
+
+  (** Linearization transfers the prepared affine range back to the expression value. *)
   Lemma range_sound : forall e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
   Proof.
-    intros e [| P] st c Hmodels Heval; [contradiction |]. unfold range.
-    destruct (F.lin_of e) as [[f wrapping] |] eqn:Hform; [destruct wrapping |];
+    intros e [|P] st c Hmodels Heval; [contradiction|]. unfold range.
+    destruct (F.lin_of e) as [[f wrapping]|] eqn:Hform; [destruct wrapping|];
       try solve [split; exact I].
-    set (xs := variables (LCons X.t (coef f) REq 0 :: P)).
-    set (r := karr_target (equality_basis xs P) 1
-      (KRow (map (fun x => coefficient x (coef f)) xs) 0 (repeat 0%Z (length P)) 1)).
-    set (z := (- kright r / kscale r + cst f)%Z).
-    destruct (entail_cert P (LCons X.t (coef f) REq (z - cst f)%Z)) as [k |]
-      eqn:Hcert; [| split; exact I].
-    pose proof (C.check_entails_sound P _ k (entail_cert_checked P _ k Hcert)
-      (fun y => N.num (st y)) Hmodels) as Hbound.
     pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
-    cbn [sat lrel lhs rhs] in Hbound.
-    cbn [wrap_into] in Hvalue. unfold eval_lin in Hvalue.
-    change (z <= N.num c <= z)%Z. lia.
+    cbn [wrap_into] in Hvalue. rewrite Hvalue. now apply range_linear_sound.
   Qed.
+
   Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
   Proof.
     intros P v. reflexivity.
@@ -6368,6 +6387,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   TimeFun assign.
   TimeFun atom_rows.
   TimeFun assume.
+  TimeFun range_linear.
   TimeFun range.
 
   (** The aggregate coefficient list has exactly the concrete-update evaluation. *)

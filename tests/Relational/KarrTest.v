@@ -6,7 +6,7 @@
 
 From Stdlib Require Import List ZArith.
 From Galois.Base Require Import Key.
-From Galois.Domains Require Import LangSig ZLang.
+From Galois.Domains Require Import LangSig ValueSig ZLang.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinCertSig Linearize LinCert Karr.
 Import List.ListNotations.
@@ -317,6 +317,41 @@ Example exchanged_negative_trace_entries_are_independent_augmented_minors :
   forallb (fun z => existsb (Z.eqb z)
     (karr_signed_minors 8 (map karr_row_entries exchanged_negative_seeds)))
     (snd (karr_bareiss_record 3 1 exchanged_negative_seeds)) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Repeated source coefficients are merged before a finite affine query is certified. *)
+Example range_merges_repeated_source_coefficients :
+  Equalities.range_linear
+    [LCons _ [(1%positive, 3); (1%positive, -1)] REq 6]
+    (Lin _ [(1%positive, 1)] 1) = (Fin 4, Fin 4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A raw duplicate chain is shared by elimination and the final certificate check. *)
+Example range_checks_a_prepared_duplicate_chain :
+  Equalities.range_linear
+    [LCons _ [(1%positive, 1); (2%positive, -1); (2%positive, -1)] REq 0;
+     LCons _ [(2%positive, 1); (2%positive, 1)] REq 6]
+    (Lin _ [(1%positive, 2)] 1) = (Fin 13, Fin 13).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A query outside the equality span retains the unbounded result. *)
+Example range_keeps_an_undetermined_query_unbounded :
+  Equalities.range_linear
+    [LCons _ [(1%positive, 3); (1%positive, -1)] REq 6]
+    (Lin _ [(2%positive, 1)] 0) = (NegInf, PosInf).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An empty source still certifies a constant affine form. *)
+Example range_certifies_an_empty_source_constant :
+  Equalities.range_linear [] (Lin _ [] 7) = (Fin 7, Fin 7).
 Proof.
   vm_compute. reflexivity.
 Qed.
