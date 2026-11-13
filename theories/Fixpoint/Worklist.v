@@ -5018,6 +5018,58 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     pose proof (height_debt_bound p rk h (prepare p pol)) as Hdebt; lia.
   Qed.
 
+  (** An individual configured head fits within the total advertised round allowance. *)
+  Lemma head_allowance_le_rounds : forall p pol c,
+    head_allowance p pol c <= rounds p pol.
+  Proof.
+    intros p pol c; unfold head_allowance.
+    destruct (trie_get c (heads pol)) as [cfg|] eqn:Hhead; [|lia].
+    assert (Hin : In (c, cfg) (PTrieCode.elements (heads pol))).
+    { now apply PTrie.elements_spec. }
+    assert (Hpart : N.to_nat (delay cfg) + B.wmax p (wp pol) + 2 <=
+      fold_right Nat.add 0 (List.map
+        (fun ch => N.to_nat (delay (snd ch)) + B.wmax p (wp pol) + 2)
+        (PTrieCode.elements (heads pol)))).
+    { revert Hin; induction (PTrieCode.elements (heads pol)) as [|[d value] rest IH];
+        intro Hin; [contradiction|].
+      cbn [List.map fold_right snd]; destruct Hin as [Heq|Hin].
+      - injection Heq as <- <-; lia.
+      - specialize (IH Hin); lia. }
+    unfold rounds; lia.
+  Qed.
+
+  (** Binary counter width is bounded by the logarithm of any natural upper bound. *)
+  Lemma counter_bits_le : forall n bound, N.to_nat n <= bound ->
+    N.size_nat n <= Nat.log2 bound + 1.
+  Proof.
+    intros [|n] bound Hbound; [cbn [N.size_nat]; lia|].
+    cbn [N.size_nat N.to_nat] in *; rewrite pos_size_log2.
+    apply Nat.add_le_mono_r, Nat.log2_le_mono; exact Hbound.
+  Qed.
+
+  (** Bounded counters and invariant values fit one strict-head work unit. *)
+  Lemma strict_head_work_bound : forall p pol s x a,
+    invariant p pol s -> B.inv p a ->
+    N.to_nat (counter s (S.key_code x)) <= rounds p pol ->
+    (strict_head_work pol s x a <= head_unit p pol)%N.
+  Proof.
+    intros p pol s x a Hinv Ha Hcounter.
+    pose proof (counter_bits_le _ _ Hcounter) as Hbits.
+    pose proof (B.wunits_le p (look s x) (proj1 (proj2 Hinv) x)) as Hold.
+    pose proof (B.wunits_le p a Ha) as Hnew.
+    assert (Hwiden : (L.c_lat * N.of_nat
+      ((L.wunits (look s x) + L.wunits a + 1) * L.wsize (wp pol)) <=
+      L.c_lat * N.of_nat ((2 * B.wunits p + 1) * L.wsize (wp pol)))%N).
+    { apply N.mul_le_mono_l.
+      assert ((L.wunits (look s x) + L.wunits a + 1) * L.wsize (wp pol) <=
+        (2 * B.wunits p + 1) * L.wsize (wp pol)) by (apply Nat.mul_le_mono_r; lia).
+      lia. }
+    unfold strict_head_work, head_unit.
+    destruct (L.leb a (look s x)); [lia|].
+    destruct (trie_get (S.key_code x) (heads pol)); lia.
+  Qed.
+
+
   (** * Stable segments and row visits *)
 
   (** Every support priority lies below the sentinel used for all-head rows. *)
@@ -6080,6 +6132,47 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       + specialize (IH x Hin); lia.
   Qed.
 
+  (** A strict update to a configured head contributes at least one head event. *)
+  Lemma head_events_update_positive : forall p pol s x a cfg,
+    trie_get (S.key_code x) (heads pol) = Some cfg -> L.leb a (look s x) = false ->
+    1 <= head_events pol s (update_one p pol s (x, a)).
+  Proof.
+    intros p pol s x a cfg Hhead Hstrict.
+    assert (Hin : In (S.key_code x, cfg) (PTrieCode.elements (heads pol))).
+    { now apply PTrie.elements_spec. }
+    pose proof (head_sum_member (positive * head_cfg)
+      (fun ch => N.to_nat (counter (update_one p pol s (x, a)) (fst ch) -
+        counter s (fst ch))) (PTrieCode.elements (heads pol)) (S.key_code x, cfg) Hin)
+      as Hpart.
+    change (N.to_nat (counter (update_one p pol s (x, a)) (S.key_code x) -
+      counter s (S.key_code x)) <= head_events pol s (update_one p pol s (x, a))) in Hpart.
+    rewrite (counter_update_head p pol s x a cfg Hhead Hstrict) in Hpart.
+    assert (Hdelta : (N.succ (counter s (S.key_code x)) - counter s (S.key_code x) = 1)%N)
+      by lia.
+    rewrite Hdelta in Hpart; exact Hpart.
+  Qed.
+
+  (** One output's strict policy work is charged to its actual configured-head events. *)
+  Lemma strict_head_work_event : forall p pol s x a,
+    invariant p pol s -> B.inv p a ->
+    N.to_nat (counter s (S.key_code x)) <= rounds p pol ->
+    (strict_head_work pol s x a <=
+      N.of_nat (head_events pol s (update_one p pol s (x, a))) * head_unit p pol)%N.
+  Proof.
+    intros p pol s x a Hinv Ha Hcounter.
+    destruct (L.leb a (look s x)) eqn:Hstable.
+    - unfold strict_head_work; rewrite Hstable; apply N.le_0_l.
+    - destruct (trie_get (S.key_code x) (heads pol)) as [cfg|] eqn:Hhead.
+      + pose proof (head_events_update_positive p pol s x a cfg Hhead Hstable) as Hevent.
+        assert (HeventN : (1 <= N.of_nat
+          (head_events pol s (update_one p pol s (x, a))))%N) by lia.
+        eapply N.le_trans; [apply strict_head_work_bound; eassumption|].
+        rewrite <- (N.mul_1_l (head_unit p pol)) at 1; now apply N.mul_le_mono_r.
+      + unfold strict_head_work; rewrite Hstable, Hhead; apply N.le_0_l.
+  Qed.
+
+
+
   (** Zero head events force unchanged head counters when counters are monotone. *)
   Lemma head_events_zero_stable : forall pol s t,
     (forall c, (counter s c <= counter t c)%N) -> head_events pol s t = 0 ->
@@ -6471,16 +6564,490 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     assert (Hconstant : (2 <= k_loop)%N) by (unfold k_loop; nia).
     nia.
   Qed.
+  (** Appending lists adds their nonnegative occurrence sums. *)
+  Lemma credit_sum_app : forall A (f : A -> nat) xs ys,
+    fold_right Nat.add 0 (List.map f (xs ++ ys)) =
+      fold_right Nat.add 0 (List.map f xs) + fold_right Nat.add 0 (List.map f ys).
+  Proof.
+    intros A f xs; induction xs as [|x xs IH]; intro ys; cbn [app List.map fold_right].
+    - reflexivity.
+    - rewrite IH; lia.
+  Qed.
+
+  (** A duplicate-free included list cannot carry more weight than its containing list. *)
+  Lemma credit_sum_incl : forall A (f : A -> nat) xs ys,
+    NoDup xs -> incl xs ys ->
+    fold_right Nat.add 0 (List.map f xs) <= fold_right Nat.add 0 (List.map f ys).
+  Proof.
+    intros A f xs; induction xs as [|x xs IH]; intros ys Hnodup Hincl.
+    - cbn; lia.
+    - inversion Hnodup as [|? ? Hfresh Htail]; subst.
+      destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [before [after ->]].
+      assert (Hincl_tail : incl xs (before ++ after)).
+      { intros y Hy; specialize (Hincl y (or_intror Hy)).
+        apply in_app_iff in Hincl; apply in_app_iff.
+        destruct Hincl as [Hin|[Heq|Hin]].
+        - now left.
+        - subst y; contradiction.
+        - now right. }
+      specialize (IH (before ++ after) Htail Hincl_tail).
+      rewrite credit_sum_app in IH |- *; cbn [List.map fold_right]; lia.
+  Qed.
+
+  (** Distinct program head allowances form a subset of the policy's advertised rounds. *)
+  Lemma support_head_allowance : forall p pol,
+    fold_right Nat.add 0 (List.map (head_allowance p pol) (key_support p)) <= rounds p pol.
+  Proof.
+    intros p pol.
+    set (selected := filter (fun c => match trie_get c (heads pol) with
+      | Some _ => true | None => false end) (key_support p)).
+    assert (Hselected :
+      fold_right Nat.add 0 (List.map (head_allowance p pol) (key_support p)) =
+      fold_right Nat.add 0 (List.map (head_allowance p pol) selected)).
+    { unfold selected; rewrite incidence_sum_filter.
+      f_equal; apply map_ext; intro c; unfold head_allowance.
+      destruct (trie_get c (heads pol)); reflexivity. }
+    assert (Hnodup : NoDup selected).
+    { unfold selected; apply NoDup_filter; unfold key_support; apply NoDup_nodup. }
+    assert (Hincl : incl selected (List.map fst (PTrieCode.elements (heads pol)))).
+    { intros c Hin; unfold selected in Hin; apply filter_In in Hin as [_ Hpresent].
+      destruct (trie_get c (heads pol)) as [cfg|] eqn:Hhead; [|discriminate].
+      apply in_map_iff; exists (c, cfg); split; [reflexivity|].
+      now apply PTrie.elements_spec. }
+    pose proof (credit_sum_incl positive (head_allowance p pol) selected
+      (List.map fst (PTrieCode.elements (heads pol))) Hnodup Hincl) as Hsum.
+    assert (Hpolicy :
+      fold_right Nat.add 0 (List.map (head_allowance p pol)
+        (List.map fst (PTrieCode.elements (heads pol)))) + 1 = rounds p pol).
+    { unfold rounds; rewrite map_map.
+      assert (Hmap : List.map (fun ch => head_allowance p pol (fst ch))
+        (PTrieCode.elements (heads pol)) =
+        List.map (fun ch => N.to_nat (delay (snd ch)) + B.wmax p (wp pol) + 2)
+          (PTrieCode.elements (heads pol))).
+      { apply map_ext_in; intros [c cfg] Hin; cbn [fst snd]; unfold head_allowance.
+        apply PTrie.elements_spec in Hin.
+        change (trie_get c (heads pol) = Some cfg) in Hin; now rewrite Hin. }
+      rewrite Hmap; lia. }
+    rewrite Hselected; lia.
+  Qed.
+
+  (** Numbered reader weight is exactly the source-row occurrence weight. *)
+  Lemma weighted_degree_reader_weight : forall p c,
+    weighted_degree p c = reader_weight p c.
+  Proof.
+    intros p c; unfold weighted_degree, source_readers; rewrite incidence_sum_filter.
+    transitivity (fold_right Nat.add 0 (List.map (fun id =>
+      match source_row p id with
+      | Some r => if existsb (fun y => Pos.eqb c (S.key_code y)) (S.deps p r)
+        then length (S.deps p r) + length (S.sides p r) + 1 else 0
+      | None => 0
+      end) (row_ids p))).
+    - f_equal; apply map_ext; intro id; unfold weight.
+      destruct (source_row p id) as [r|]; [|reflexivity].
+      destruct (existsb (fun y => Pos.eqb c (S.key_code y)) (S.deps p r)); reflexivity.
+    - rewrite incidence_numbered_rows; reflexivity.
+  Qed.
+
+  (** Every numbered reader has at least one unit of declared row weight. *)
+  Lemma degree_le_weighted : forall p c, degree p c <= weighted_degree p c.
+  Proof.
+    intros p c.
+    assert (Hsum : forall ids, (forall id, In id ids -> 1 <= weight p id) ->
+      length ids <= fold_right Nat.add 0 (List.map (weight p) ids)).
+    { intro ids; induction ids as [|id ids IH]; intro Hweights; [reflexivity|].
+      cbn [length List.map fold_right].
+      pose proof (Hweights id (or_introl eq_refl)) as Hhead.
+      specialize (IH (fun other Hin => Hweights other (or_intror Hin))); lia. }
+    apply Hsum; intros id Hin.
+    apply source_readers_spec in Hin as [r [x [Hrow _]]].
+    unfold weight; rewrite Hrow; lia.
+  Qed.
+
+  (** Remaining update allowance is evaluated only on declared program support. *)
+  Definition head_remainder p pol s c := head_allowance p pol c - N.to_nat (counter s c).
+
+  (** Each remaining strict update reserves both reader weight and queue work. *)
+  Definition head_debt p pol s := fold_right Nat.add 0 (List.map
+    (fun c => head_remainder p pol s c * (weighted_degree p c + degree p c)) (key_support p)).
+
+  (** Remaining head counts reserve independent counter and widening-parameter work. *)
+  Definition head_left p pol s :=
+    fold_right Nat.add 0 (List.map (head_remainder p pol s) (key_support p)).
+
+  (** Every support counter lies within its policy and invariant widening allowance. *)
+  Definition head_capped p pol s := forall c, In c (key_support p) ->
+    N.to_nat (counter s c) <= head_allowance p pol c.
+
+  (** The public all-head potential separates row work, reader debt and head policy work. *)
+  Lemma all_head_phi_debt : forall p pol s,
+    all_head_phi p pol s = (k_credit * N.of_nat (queue_credit p s + head_debt p pol s) *
+      unit p + queue_phi p s + k_credit * N.of_nat (head_left p pol s) * head_unit p pol)%N.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Counter monotonicity transports an endpoint cap back to every earlier prefix. *)
+  Lemma head_capped_mono : forall p pol s t,
+    (forall c, (counter s c <= counter t c)%N) -> head_capped p pol t -> head_capped p pol s.
+  Proof.
+    intros p pol s t Hmono Hcap c Hin.
+    pose proof (Hmono c); specialize (Hcap c Hin); lia.
+  Qed.
+
+  (** Every reachable support counter respects its advertised head allowance. *)
+  Lemma reachable_head_capped : forall p pol s, S.wf p -> prio_ok p pol ->
+    reachable p pol s -> head_capped p pol s.
+  Proof.
+    intros p pol s Hwf Hprio [xs Hpath]; exact (proj2 (W6_rounds p pol xs s Hwf Hprio Hpath)).
+  Qed.
+
+  (** Other support codes retain their remaining head-update allowance. *)
+  Lemma head_remainder_other : forall p pol s x a c, c <> S.key_code x ->
+    head_remainder p pol (update_one p pol s (x, a)) c = head_remainder p pol s c.
+  Proof.
+    intros p pol s x a c Hneq; unfold head_remainder.
+    now rewrite counter_update_other by exact Hneq.
+  Qed.
+
+  (** A capped strict head update consumes exactly one remaining allowance. *)
+  Lemma head_remainder_strict : forall p pol s x a cfg,
+    trie_get (S.key_code x) (heads pol) = Some cfg -> L.leb a (look s x) = false ->
+    N.to_nat (counter (update_one p pol s (x, a)) (S.key_code x)) <=
+      head_allowance p pol (S.key_code x) ->
+    head_remainder p pol s (S.key_code x) =
+      head_remainder p pol (update_one p pol s (x, a)) (S.key_code x) + 1.
+  Proof.
+    intros p pol s x a cfg Hhead Hstrict Hcap.
+    pose proof (counter_update_head p pol s x a cfg Hhead Hstrict) as Hcounter.
+    unfold head_remainder; rewrite Hcounter, N2Nat.inj_succ in Hcap |- *; lia.
+  Qed.
+
+  (** Strict head updates release one weighted reader allowance. *)
+  Lemma head_debt_strict : forall p pol s x a cfg,
+    In (S.key_code x) (key_support p) ->
+    trie_get (S.key_code x) (heads pol) = Some cfg -> L.leb a (look s x) = false ->
+    head_capped p pol (update_one p pol s (x, a)) ->
+    head_debt p pol (update_one p pol s (x, a)) +
+      weighted_degree p (S.key_code x) + degree p (S.key_code x) = head_debt p pol s.
+  Proof.
+    intros p pol s x a cfg Hsupport Hhead Hstrict Hcap.
+    pose proof (head_remainder_strict p pol s x a cfg Hhead Hstrict
+      (Hcap (S.key_code x) Hsupport)) as Hdecrease.
+    set (next := update_one p pol s (x, a)) in *.
+    set (c := S.key_code x) in *.
+    assert (Hother : forall d, In d (key_support p) -> d <> c ->
+      head_remainder p pol s d * (weighted_degree p d + degree p d) =
+      head_remainder p pol next d * (weighted_degree p d + degree p d)).
+    { intros d _ Hneq; unfold next; now rewrite head_remainder_other by exact Hneq. }
+    pose proof (credit_sum_change positive Pos.eq_dec
+      (fun d => head_remainder p pol s d * (weighted_degree p d + degree p d))
+      (fun d => head_remainder p pol next d * (weighted_degree p d + degree p d))
+      (key_support p) c (NoDup_nodup Pos.eq_dec _) Hsupport Hother) as Hsum.
+    cbn beta in Hsum; fold (head_debt p pol s) (head_debt p pol next) in Hsum.
+    clear -Hsum Hdecrease; nia.
+  Qed.
+
+  (** Strict head updates release one independent policy-work allowance. *)
+  Lemma head_left_strict : forall p pol s x a cfg,
+    In (S.key_code x) (key_support p) ->
+    trie_get (S.key_code x) (heads pol) = Some cfg -> L.leb a (look s x) = false ->
+    head_capped p pol (update_one p pol s (x, a)) ->
+    head_left p pol (update_one p pol s (x, a)) + 1 = head_left p pol s.
+  Proof.
+    intros p pol s x a cfg Hsupport Hhead Hstrict Hcap.
+    pose proof (head_remainder_strict p pol s x a cfg Hhead Hstrict
+      (Hcap (S.key_code x) Hsupport)) as Hdecrease.
+    set (next := update_one p pol s (x, a)) in *.
+    set (c := S.key_code x) in *.
+    assert (Hother : forall d, In d (key_support p) -> d <> c ->
+      head_remainder p pol s d = head_remainder p pol next d).
+    { intros d _ Hneq; unfold next; now rewrite head_remainder_other by exact Hneq. }
+    pose proof (credit_sum_change positive Pos.eq_dec
+      (head_remainder p pol s) (head_remainder p pol next)
+      (key_support p) c (NoDup_nodup Pos.eq_dec _) Hsupport Hother) as Hsum.
+    fold (head_left p pol s) (head_left p pol next) in Hsum; lia.
+  Qed.
+
+  (** Only an unarmed strict change can create reader-weight queue credit. *)
+  Lemma queue_credit_update_bound : forall p pol s x a, prepared p pol s ->
+    queue_credit p (update_one p pol s (x, a)) <= queue_credit p s +
+      if L.leb a (look s x) then 0 else
+        match trie_get (S.key_code x) (ws_armed s) with
+        | Some _ => 0 | None => weighted_degree p (S.key_code x)
+        end.
+  Proof.
+    intros p pol s x a Hprepared; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)); [lia|].
+    set (c := S.key_code x).
+    set (ac := P.update pol c (counter s c) (look s x) a).
+    set (base := WorklistState (PTrieCode.set c (x, fst ac) (ws_store s))
+      (PTrieCode.set c (snd ac) (ws_counters s)) (ws_queue s) (ws_live s)
+      (ws_rows s) (ws_readers s) (ws_armed s) (ws_ranks s)).
+    destruct (trie_get c (ws_armed s)) as [[]|].
+    - change (queue_credit p s <= queue_credit p s + 0); lia.
+    - change (queue_credit p (enqueue p pol (readers s c) base) <=
+        queue_credit p s + weighted_degree p c).
+      destruct (proj1 Hprepared) as [_ Hreaders].
+      eapply Nat.le_trans; [apply queue_credit_enqueue|].
+      + rewrite Hreaders; intros id Hin; unfold source_readers in Hin.
+        now apply filter_In in Hin.
+      + change (queue_credit p s + fold_right Nat.add 0
+          (List.map (weight p) (readers s c)) <= queue_credit p s + weighted_degree p c).
+        unfold weighted_degree; now rewrite Hreaders.
+  Qed.
+
+  (** Weighted remaining head allowance pays every newly scanned reader bucket. *)
+  Lemma head_credit_update : forall p pol s x a,
+    all_heads p pol -> prepared p pol s -> In (S.key_code x) (key_support p) ->
+    head_capped p pol (update_one p pol s (x, a)) ->
+    queue_credit p (update_one p pol s (x, a)) +
+      head_debt p pol (update_one p pol s (x, a)) + push_work p s x a <=
+      queue_credit p s + head_debt p pol s.
+  Proof.
+    intros p pol s x a Hheads Hprepared Hsupport Hcap.
+    pose proof (queue_credit_update_bound p pol s x a Hprepared) as Hqueue.
+    destruct (L.leb a (look s x)) eqn:Hstable.
+    - assert (Hsame : update_one p pol s (x, a) = s).
+      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      rewrite Hsame; unfold push_work; rewrite Hstable; lia.
+    - destruct (Hheads (S.key_code x) Hsupport) as [cfg Hhead].
+      pose proof (head_debt_strict p pol s x a cfg Hsupport Hhead Hstable Hcap) as Hdebt.
+      unfold push_work; rewrite Hstable.
+      destruct (trie_get (S.key_code x) (ws_armed s)); lia.
+  Qed.
+
+  (** A strict head clock is paid by the independent remaining policy-work allowance. *)
+  Lemma head_work_credit : forall p pol s x a,
+    all_heads p pol -> invariant p pol s -> B.inv p a ->
+    In (S.key_code x) (key_support p) -> head_capped p pol (update_one p pol s (x, a)) ->
+    (k_update * strict_head_work pol s x a +
+      k_credit * N.of_nat (head_left p pol (update_one p pol s (x, a))) * head_unit p pol <=
+      k_credit * N.of_nat (head_left p pol s) * head_unit p pol)%N.
+  Proof.
+    intros p pol s x a Hheads Hinv Ha Hsupport Hcap.
+    assert (Hbefore : head_capped p pol s).
+    { eapply head_capped_mono; [exact (counter_update_mono p pol s (x, a))|exact Hcap]. }
+    assert (Hcounter : N.to_nat (counter s (S.key_code x)) <= rounds p pol).
+    { eapply Nat.le_trans; [apply Hbefore; exact Hsupport|apply head_allowance_le_rounds]. }
+    pose proof (strict_head_work_bound p pol s x a Hinv Ha Hcounter) as Hwork.
+    assert (Hcoeff : (k_update <= k_credit)%N) by (unfold k_credit; lia).
+    destruct (L.leb a (look s x)) eqn:Hstable.
+    - assert (Hsame : update_one p pol s (x, a) = s).
+      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      rewrite Hsame; unfold strict_head_work; rewrite Hstable; nia.
+    - destruct (Hheads (S.key_code x) Hsupport) as [cfg Hhead].
+      pose proof (head_left_strict p pol s x a cfg Hsupport Hhead Hstable Hcap) as Hleft.
+      assert (HleftN : (N.of_nat (head_left p pol (update_one p pol s (x, a))) + 1 =
+        N.of_nat (head_left p pol s))%N) by lia.
+      assert (Hcharge : (k_update * strict_head_work pol s x a <=
+        k_credit * head_unit p pol)%N) by now apply N.mul_le_mono.
+      rewrite <- HleftN; clear -Hcharge; nia.
+  Qed.
+
+  (** One capped output callback spends only its ordinary unit after both head refunds. *)
+  Lemma T_update_all_heads : forall p pol s x a,
+    S.wf p -> prio_ok p pol -> all_heads p pol -> invariant p pol s ->
+    B.inv p a -> In (S.key_code x) (key_support p) ->
+    head_capped p pol (update_one p pol s (x, a)) ->
+    (T_update_one p pol s (x, a) + all_head_phi p pol (update_one p pol s (x, a)) <=
+      k_update * unit p + all_head_phi p pol s)%N.
+  Proof.
+    intros p pol s x a Hwf Hprio Hheads Hinv Ha Hsupport Hcap.
+    pose proof (T_update_queue_bound p pol s x a Hwf Hprio Hinv Ha Hsupport) as Hcost.
+    pose proof (head_credit_update p pol s x a Hheads (proj2 (proj2 Hinv))
+      Hsupport Hcap) as Hcredit.
+    pose proof (head_work_credit p pol s x a Hheads Hinv Ha Hsupport Hcap) as Hhead.
+    assert (HcreditN : (N.of_nat (queue_credit p (update_one p pol s (x, a))) +
+      N.of_nat (head_debt p pol (update_one p pol s (x, a))) +
+      N.of_nat (push_work p s x a) <=
+      N.of_nat (queue_credit p s) + N.of_nat (head_debt p pol s))%N) by lia.
+    rewrite !all_head_phi_debt, !Nat2N.inj_add.
+    rewrite Nat2N.inj_add in Hcost.
+    set (next := update_one p pol s (x, a)) in *.
+    set (before := (N.of_nat (queue_credit p s) + N.of_nat (head_debt p pol s))%N) in *.
+    set (after := (N.of_nat (queue_credit p next) + N.of_nat (head_debt p pol next))%N) in *.
+    set (push := N.of_nat (push_work p s x a)) in *.
+    assert (Hscale : (k_credit * (after + push) * unit p <=
+      k_credit * before * unit p)%N).
+    { apply N.mul_le_mono_r; now apply N.mul_le_mono_l. }
+    assert (Hcoeff : (k_update <= k_credit)%N) by (unfold k_credit; lia).
+    assert (Hpush : (k_update * push * unit p <= k_credit * push * unit p)%N).
+    { apply N.mul_le_mono_r; now apply N.mul_le_mono_r. }
+    clear -Hcost Hscale Hpush Hhead; nia.
+  Qed.
+
+  (** Endpoint caps justify every intermediate output in an all-head callback fold. *)
+  Lemma output_cost_all_heads : forall p pol outs s,
+    S.wf p -> prio_ok p pol -> all_heads p pol -> invariant p pol s ->
+    Forall (fun xa => B.inv p (snd xa) /\ In (S.key_code (fst xa)) (key_support p)) outs ->
+    head_capped p pol (fold_left (update_one p pol) outs s) ->
+    (output_cost p pol outs s + all_head_phi p pol (fold_left (update_one p pol) outs s) <=
+      k_update * N.of_nat (length outs) * unit p + all_head_phi p pol s)%N.
+  Proof.
+    intros p pol outs; induction outs as [|[x a] outs IH];
+      intros s Hwf Hprio Hheads Hinv Houts Hcap.
+    - unfold output_cost; cbn [fold_left snd length]; nia.
+    - inversion Houts as [|? ? [Ha Hsupport] Htail]; subst.
+      cbn [fold_left] in Hcap.
+      assert (Hnextcap : head_capped p pol (update_one p pol s (x, a))).
+      { eapply head_capped_mono.
+        - exact (counter_fold_mono p pol outs (update_one p pol s (x, a))).
+        - exact Hcap. }
+      pose proof (T_update_all_heads p pol s x a
+        Hwf Hprio Hheads Hinv Ha Hsupport Hnextcap) as Hhead.
+      specialize (IH (update_one p pol s (x, a)) Hwf Hprio Hheads
+        (F9_update_inv p pol s x a Hwf Hprio Hinv Ha Hsupport) Htail Hcap).
+      rewrite output_cost_cons; cbn [fold_left length]; rewrite Nat2N.inj_succ; nia.
+  Qed.
+
+  (** Pop refunds queue potential and leaves every remaining head allowance unchanged. *)
+  Lemma T_pop_all_heads : forall p pol s pr id q1,
+    structural p pol s -> Q.pop (ws_queue s) = Some (pr, id, q1) ->
+    (Q.T_pop (ws_queue s) + all_head_phi p pol (after_pop p s id q1) +
+      k_credit * N.of_nat (weight p id) * unit p <=
+      all_head_phi p pol s + 2 * Q.c_pq * unit p)%N.
+  Proof.
+    intros p pol s pr id q1 Hstruct Hpop.
+    pose proof (T_queue_pop_bound p pol s Hstruct) as Hcost; rewrite Hpop in Hcost.
+    pose proof (queue_credit_pop p pol s pr id q1 Hstruct Hpop) as Hcredit.
+    rewrite !all_head_phi_debt, Hcredit, !Nat2N.inj_add.
+    change (head_debt p pol (after_pop p s id q1)) with (head_debt p pol s).
+    change (head_left p pol (after_pop p s id q1)) with (head_left p pol s).
+    change (queue_phi p (after_pop p s id q1)) with
+      (Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 3) q1).
+    clear -Hcost; nia.
+  Qed.
+
+  (** A continuing all-head row is paid by its popped weight and consumed head allowances. *)
+  Lemma T_step_all_heads : forall p pol s s1,
+    S.wf p -> prio_ok p pol -> all_heads p pol -> invariant p pol s ->
+    head_capped p pol s1 -> step p pol s = inl s1 ->
+    (T_step p pol s + all_head_phi p pol s1 + c_loopN <= all_head_phi p pol s)%N.
+  Proof.
+    intros p pol s s1 Hwf Hprio Hheads Hinv Hcap Hstep.
+    unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|discriminate].
+    destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    change (T_step p pol s + all_head_phi p pol
+      (fold_left (update_one p pol) ((S.target p r, a) :: ss) (after_pop p s id q1)) +
+      c_loopN <= all_head_phi p pol s)%N.
+    change (head_capped p pol
+      (fold_left (update_one p pol) ((S.target p r, a) :: ss) (after_pop p s id q1))) in Hcap.
+    assert (Hsource : source_row p id = Some r).
+    { rewrite <- (proj1 (proj1 (proj2 (proj2 Hinv))) id); exact Hrow. }
+    destruct (source_row_member p id r Hsource) as [Hid Hr].
+    pose proof (after_pop_invariant p pol s pr id q1 Hinv Hpop) as Hafter.
+    pose proof (eval_outputs_invariant p pol s r a ss Hwf Hinv Hr Heval) as Houts.
+    pose proof (output_cost_all_heads p pol ((S.target p r, a) :: ss)
+      (after_pop p s id q1) Hwf Hprio Hheads Hafter Houts Hcap) as Houtput.
+    pose proof (T_step_weighted p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval)
+      as Htime.
+    pose proof (T_pop_all_heads p pol s pr id q1 (proj1 Hinv) Hpop) as Hpop_time.
+    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
+    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
+    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
+    { unfold weight; now rewrite Hsource. }
+    set (budget := (N.of_nat (weight p id) * unit p)%N).
+    assert (Houtput_bound : (k_update * N.of_nat (length ((S.target p r, a) :: ss)) *
+      unit p <= k_update * budget)%N).
+    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+      cbn [length]; rewrite Hweight; lia. }
+    destruct (time_unit_bounds p) as [Hu _].
+    assert (Hu_budget : (unit p <= budget)%N).
+    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
+      apply N.mul_le_mono_r; rewrite Hweight; lia. }
+    assert (Hpayment :
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget +
+        k_update * budget + 2 * Q.c_pq * unit p + c_loopN <= k_credit * budget)%N).
+    { unfold k_credit; clear -Hu Hu_budget; nia. }
+    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
+      N.of_nat (weight p id) * unit p)%N with
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N in Htime
+      by (unfold budget; ring).
+    replace (k_credit * N.of_nat (weight p id) * unit p)%N with
+      (k_credit * budget)%N in Hpop_time by (unfold budget; ring).
+    clear -Houtput Houtput_bound Htime Hpop_time Hpayment; lia.
+  Qed.
+
+  (** Remaining head policy credit is at most the total advertised round allowance. *)
+  Lemma head_left_bound : forall p pol s, head_left p pol s <= rounds p pol.
+  Proof.
+    intros p pol s; unfold head_left.
+    eapply Nat.le_trans; [apply (incidence_sum_bound positive _ (head_allowance p pol))|].
+    - intros c _; unfold head_remainder; lia.
+    - apply support_head_allowance.
+  Qed.
+
+  (** Weighted head debt is at most twice the source-weighted head allowance. *)
+  Lemma head_debt_bound : forall p pol s,
+    head_debt p pol s <= 2 * fold_right Nat.add 0 (List.map
+      (fun c => head_allowance p pol c * reader_weight p c) (key_support p)).
+  Proof.
+    intros p pol s; unfold head_debt.
+    rewrite <- credit_sum_scale.
+    apply incidence_sum_bound; intros c _.
+    pose proof (degree_le_weighted p c) as Hdegree.
+    rewrite weighted_degree_reader_weight in Hdegree |- *.
+    replace (2 * (head_allowance p pol c * reader_weight p c)) with
+      (head_allowance p pol c * (2 * reader_weight p c)) by ring.
+    apply Nat.mul_le_mono; [unfold head_remainder; lia|lia].
+  Qed.
+
+  (** Every all-head potential fits the public source-weighted work expression. *)
+  Lemma all_head_phi_bound : forall p pol s,
+    (all_head_phi p pol s <= 2 * k_credit * all_head_work p pol + queue_phi p s)%N.
+  Proof.
+    intros p pol s.
+    pose proof (queue_credit_le_D p s) as Hqueue.
+    pose proof (head_debt_bound p pol s) as Hdebt.
+    pose proof (head_left_bound p pol s) as Hleft.
+    set (weighted := fold_right Nat.add 0 (List.map
+      (fun c => head_allowance p pol c * reader_weight p c) (key_support p))) in *.
+    assert (HordinaryN : (N.of_nat (queue_credit p s) + N.of_nat (head_debt p pol s) <=
+      2 * (N.of_nat (D p) + N.of_nat weighted))%N) by lia.
+    assert (Hordinary : (k_credit *
+      (N.of_nat (queue_credit p s) + N.of_nat (head_debt p pol s)) * unit p <=
+      2 * k_credit * (N.of_nat (D p) + N.of_nat weighted) * unit p)%N).
+    { eapply N.le_trans; [apply N.mul_le_mono_r; apply N.mul_le_mono_l;
+        exact HordinaryN|].
+      replace (k_credit * (2 * (N.of_nat (D p) + N.of_nat weighted)) * unit p)%N with
+        (2 * k_credit * (N.of_nat (D p) + N.of_nat weighted) * unit p)%N by ring.
+      reflexivity. }
+    assert (Hpolicy : (k_credit * N.of_nat (head_left p pol s) * head_unit p pol <=
+      k_credit * N.of_nat (rounds p pol) * head_unit p pol)%N).
+    { apply N.mul_le_mono_r; apply N.mul_le_mono_l; lia. }
+    rewrite all_head_phi_debt; unfold all_head_work; fold (head_unit p pol) weighted.
+    rewrite !Nat2N.inj_add.
+    replace (2 * k_credit * (N.of_nat (prep p) +
+      (N.of_nat (D p) + N.of_nat weighted) * unit p +
+      N.of_nat (rounds p pol) * head_unit p pol))%N with
+      (2 * k_credit * N.of_nat (prep p) +
+        2 * k_credit * (N.of_nat (D p) + N.of_nat weighted) * unit p +
+        2 * (k_credit * N.of_nat (rounds p pol) * head_unit p pol))%N by ring.
+    clear -Hordinary Hpolicy; lia.
+  Qed.
+
   (** All-head credit decreases per callback without the stable-segment lemma. *)
   Lemma W7_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
     reachable p pol s -> step p pol s = inl s1 ->
     (T_step p pol s + all_head_phi p pol s1 + c_loopN <= all_head_phi p pol s)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s s1 Hwf Hprio Hheads Hreachable Hstep.
+    apply (T_step_all_heads p pol s s1 Hwf Hprio Hheads).
+    - now apply reachable_invariant.
+    - apply reachable_head_capped; [exact Hwf|exact Hprio|].
+      eapply reachable_step; eassumption.
+    - exact Hstep.
+  Qed.
   (** The independent widening fallback needs weighted degree absorbed by its public budget. *)
   Lemma W7_all_heads_initial : forall p pol, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (all_head_phi p pol (prepare p pol) <=
       2 * k_credit * all_head_work p pol + queue_phi p (prepare p pol))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol Hwf Hprio Hheads; apply all_head_phi_bound.
+  Qed.
   (** Solved candidates satisfy every row. *)
   Lemma run_post : forall p pol fuel m, fits p pol -> run p pol fuel = Solved m ->
     S.post_solution p (look_or S.key_code L.bot m).
@@ -6563,6 +7130,78 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     clear -Hcost Hprepare Hcount Hinitial; nia.
   Qed.
 
+  (** The fallback work includes preparation and a complete queue's row incidence. *)
+  Lemma driver_all_head_work_bounds : forall p pol,
+    (N.of_nat (prep p) <= all_head_work p pol)%N /\
+    (N.of_nat (C p) * unit p <= all_head_work p pol)%N /\
+    (N.of_nat (C p + D p) * unit p <= 2 * all_head_work p pol)%N.
+  Proof.
+    intros p pol.
+    assert (Hd : (N.of_nat (D p) * unit p <= all_head_work p pol)%N).
+    { unfold all_head_work; rewrite Nat2N.inj_add; nia. }
+    pose proof (visits_C_le_D p) as Hcd.
+    assert (Hc : (N.of_nat (C p) * unit p <= N.of_nat (D p) * unit p)%N).
+    { apply N.mul_le_mono_r; lia. }
+    split; [unfold all_head_work; lia|]; split; [lia|].
+    rewrite Nat2N.inj_add; nia.
+  Qed.
+
+  Lemma driver_all_head_absorb : forall b bits,
+    (k_prepare * (2 * b + 1) + 2 * k_credit * b + 2 * k_prepare * b +
+      k_loop * (b + 1) + c_loopN + c_loopN * (bits + 1) + 2 <=
+      c_wl * (b + bits + 1))%N.
+  Proof.
+    intros b bits.
+    assert (Hb : (4 * k_prepare + 2 * k_credit + k_loop <= c_wl)%N).
+    { unfold c_wl; nia. }
+    assert (Hbits : (c_loopN <= c_wl)%N) by (unfold c_wl; nia).
+    assert (Hone : (k_prepare + k_loop + 2 * c_loopN + 2 <= c_wl)%N).
+    { unfold c_wl; nia. }
+    replace (k_prepare * (2 * b + 1) + 2 * k_credit * b + 2 * k_prepare * b +
+      k_loop * (b + 1) + c_loopN + c_loopN * (bits + 1) + 2)%N with
+      ((4 * k_prepare + 2 * k_credit + k_loop) * b + c_loopN * bits +
+        (k_prepare + k_loop + 2 * c_loopN + 2))%N by ring.
+    replace (c_wl * (b + bits + 1))%N with (c_wl * b + c_wl * bits + c_wl)%N by ring.
+    repeat apply N.add_le_mono; try assumption; apply N.mul_le_mono_r; assumption.
+  Qed.
+
+  Lemma T_run_all_head_budget : forall p pol fuel,
+    S.wf p -> prio_ok p pol -> all_heads p pol ->
+    (T_run p pol fuel <= c_wl *
+      (all_head_work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
+  Proof.
+    intros p pol fuel Hwf Hprio Hheads.
+    destruct (driver_all_head_work_bounds p pol) as [Hprep [Hcount Hincidence]].
+    pose proof (W7_all_heads_initial p pol Hwf Hprio Hheads) as Hinitial.
+    pose proof (W1_queue_phi p pol Hwf Hprio) as Hphi.
+    assert (Hqueue : (queue_phi p (prepare p pol) <=
+      2 * k_prepare * all_head_work p pol)%N).
+    { eapply N.le_trans; [exact Hphi|].
+      replace (k_prepare * N.of_nat (C p + D p) * unit p)%N with
+        (k_prepare * (N.of_nat (C p + D p) * unit p))%N by ring.
+      replace (2 * k_prepare * all_head_work p pol)%N with
+        (k_prepare * (2 * all_head_work p pol))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hcontinue : forall s s1, reachable p pol s -> step p pol s = inl s1 ->
+      (T_step p pol s + c_loopN + all_head_phi p pol s1 <= all_head_phi p pol s)%N).
+    { intros; pose proof (W7_all_heads_credit p pol s s1 Hwf Hprio Hheads
+        ltac:(assumption) ltac:(assumption)); lia. }
+    assert (Hstop : forall s result, reachable p pol s -> step p pol s = inr result ->
+      (T_step p pol s + c_loopN <= all_head_phi p pol s +
+        (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN))%N).
+    { intros s result Hreachable Hstep.
+      pose proof (proj2 (W7_stop p pol s result Hwf Hprio Hreachable Hstep)) as Hcost.
+      pose proof (driver_all_head_queue p pol s); lia. }
+    pose proof (T_run_credit p pol fuel (all_head_phi p pol)
+      (k_loop * (N.of_nat (C p) * unit p + 1) + c_loopN)%N Hcontinue Hstop) as Hcost.
+    pose proof (W1_prepare p pol Hwf Hprio) as Hprepare.
+    rewrite Nat2N.inj_add in Hcost; change (N.of_nat 1) with 1%N in Hcost.
+    set (w := all_head_work p pol) in *.
+    set (queued_work := (N.of_nat (C p) * unit p)%N) in *.
+    eapply N.le_trans; [|apply driver_all_head_absorb].
+    clear -Hcost Hprepare Hcount Hprep Hinitial Hqueue; nia.
+  Qed.
+
   Lemma T_run_le : forall p pol fuel, fits p pol ->
     (T_run p pol fuel <= c_wl * (work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -6622,7 +7261,7 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma T_run_all_heads_le : forall p pol fuel, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (T_run p pol fuel <= c_wl *
       (all_head_work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. intros; apply T_run_all_head_budget; assumption. Qed.
   Lemma run_bigO : bigO
     (fun x : S.prog * policy L.wparam => fits (fst x) (snd x))
     (fun x => work (fst x) (snd x))
