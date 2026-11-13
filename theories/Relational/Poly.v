@@ -7530,6 +7530,319 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. cbn [N.of_nat] in *. nia.
   Qed.
 
+  (** The scalar FM charge is the natural-number term of the frozen recurrence. *)
+  Lemma poly_fm_charge_nat : forall count dim mlen keys bits,
+    N.of_nat ((count + 1)^2 * (dim + mlen + 1) * (keys + bits + 1)^2) =
+      (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros count dim mlen keys bits. unfold poly_clock_span.
+    rewrite !Nat2N.inj_mul, !poly_nat_square, !N.pow_2_r. ring.
+  Qed.
+
+  (** Every nonempty-stage charge has at least one unit of work. *)
+  Lemma poly_fm_charge_positive : forall count dim mlen keys bits,
+    (1 <= N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N.
+  Proof.
+    intros count dim mlen keys bits.
+    assert (Hcount : (1 <= N.of_nat (count + 1))%N) by lia.
+    assert (Hsquare : (1 <= N.of_nat (count + 1)^2)%N).
+    { rewrite N.pow_2_r.
+      change (1 * 1 <= N.of_nat (count + 1) * N.of_nat (count + 1))%N.
+      now apply N.mul_le_mono. }
+    change (1 * 1 <= N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N.
+    apply N.mul_le_mono; [exact Hsquare|apply poly_span_positive].
+  Qed.
+
+  (** One public recurrence equation separates the current charge from the future work. *)
+  Lemma poly_fmcost_clock_step : forall fuel count dim mlen keys bits,
+    N.of_nat (fmcost dim mlen (S fuel) count (keys + bits)) =
+      (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits +
+        N.of_nat (fmcost dim mlen fuel (count^2 / 4 + count)
+          (2 * (keys + bits) + 1)))%N.
+  Proof.
+    intros fuel count dim mlen keys bits.
+    change (N.of_nat ((count + 1)^2 * (dim + mlen + 1) * (keys + bits + 1)^2 +
+      fmcost dim mlen fuel (count^2 / 4 + count) (2 * (keys + bits) + 1)) =
+      (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits +
+        N.of_nat (fmcost dim mlen fuel (count^2 / 4 + count)
+          (2 * (keys + bits) + 1)))%N).
+    rewrite Nat2N.inj_add, poly_fm_charge_nat. reflexivity.
+  Qed.
+
+  Definition poly_run_search_factor : N :=
+    (poly_step_factor + poly_terminal_factor + 16)%N.
+
+  (** A spare recurrence stage pays for the final certificate scan over all generated rows. *)
+  Lemma T_poly_run_search_bounded : forall xs P c vars rows dim mlen keys bits count,
+    length vars <= dim ->
+    Forall (poly_source_envelope dim (keys + bits)) (c :: P) ->
+    length P <= mlen -> mlen <= count -> length rows <= count ->
+    Forall (poly_reduced_row vars) rows ->
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      T_find_certificate P c (poly_run X.encode X.eqb xs rows) <=
+      poly_run_search_factor * N.of_nat
+        (fmcost dim mlen (S (length xs)) count (keys + bits)))%N.
+  Proof.
+    intro xs. induction xs as [|x xs IH];
+      intros P c vars rows dim mlen keys bits count
+        Hdim Hsource HP HM HR Hsupport Henvelopes.
+    - assert (Hterminal_rows : Forall (fun r =>
+        C.row_bits (poly_constraint r) <= keys + bits /\
+        length (poly_multipliers r) <= mlen /\
+        Forall (fun m => Z.size_nat m <= keys + bits + 1) (poly_multipliers r)) rows).
+      { eapply Forall_impl; [|exact Henvelopes].
+        intros r (Hn & Hd & Hk & Hb & Hm & Hu). split; [lia|]. split; [exact Hm|].
+        eapply Forall_impl; [|exact Hu]. intros z Hz.
+        change (Z.size_nat z <= bits + 1) in Hz.
+        change (Z.size_nat z <= keys + bits + 1). lia. }
+      pose proof (T_find_certificate_bounded P c rows count dim mlen (keys + bits)
+        Hsource HP HM HR Hterminal_rows) as Hterminal.
+      set (work := (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N).
+      assert (Hwork : (1 <= work)%N).
+      { unfold work. apply poly_fm_charge_positive. }
+      assert (Hterminal_work : (T_find_certificate P c rows <=
+        poly_terminal_factor * work)%N).
+      { unfold work, poly_clock_span. rewrite !N.mul_assoc. exact Hterminal. }
+      cbn [length poly_run]. rewrite poly_fmcost_clock_step.
+      time_unfold (@T_poly_run). time_cbn. fold work.
+      clear -Hterminal_work Hwork. clearbody work.
+      unfold poly_run_search_factor. nia.
+    - set (next := poly_step X.encode X.eqb x rows).
+      set (next_count := count^2 / 4 + count).
+      assert (Hnext_count : length next <= next_count).
+      { pose proof (poly_step_rows X.t X.encode X.eqb x rows) as Hstep_rows.
+        pose proof (poly_rows_recurrence_mono (length rows) count HR).
+        unfold next, next_count. lia. }
+      assert (Hnext_mlen : mlen <= next_count) by (unfold next_count; lia).
+      assert (Hnext_support : Forall (poly_reduced_row vars) next).
+      { unfold next. now apply poly_step_reduced. }
+      assert (Hnext_envelopes :
+        Forall (poly_row_envelope dim mlen keys (2 * bits + 1)) next).
+      { unfold next. now apply poly_step_envelopes with (vars := vars). }
+      assert (Hnext_source : Forall (poly_source_envelope dim (keys + (2 * bits + 1)))
+        (c :: P)).
+      { eapply Forall_impl; [|exact Hsource]. intros r Hr.
+        eapply poly_source_envelope_mono; [exact Hr|lia|lia]. }
+      pose proof (IH P c vars next dim mlen keys (2 * bits + 1) next_count
+        Hdim Hnext_source HP Hnext_mlen Hnext_count Hnext_support Hnext_envelopes)
+        as Hrecursive.
+      pose proof (poly_fmcost_params_mono (S (length xs))
+        dim dim mlen mlen next_count next_count
+        (keys + (2 * bits + 1)) (2 * (keys + bits) + 1)
+        (Nat.le_refl _) (Nat.le_refl _) (Nat.le_refl _) ltac:(lia)) as Hfuture.
+      assert (Hrecursive_total :
+        (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs next +
+          T_find_certificate P c (poly_run X.encode X.eqb xs next) <=
+          poly_run_search_factor * N.of_nat
+            (fmcost dim mlen (S (length xs)) next_count (2 * (keys + bits) + 1)))%N).
+      { eapply N.le_trans; [exact Hrecursive|]. apply N.mul_le_mono_l.
+        clear -Hfuture. lia. }
+      pose proof (T_poly_step_bounded x rows dim mlen keys bits Henvelopes) as Hstep.
+      set (work := (N.of_nat (count + 1)^2 * poly_clock_span dim mlen keys bits)%N).
+      assert (Hhead : (T_poly_step X.encode X.T_encode X.eqb X.T_eqb x rows <=
+        poly_step_factor * work)%N).
+      { eapply N.le_trans; [exact Hstep|]. unfold work. rewrite N.mul_assoc.
+        apply N.mul_le_mono_r, N.mul_le_mono_l, N.pow_le_mono_l. lia. }
+      assert (Hwork : (1 <= work)%N).
+      { unfold work. apply poly_fm_charge_positive. }
+      change (T_poly_run X.encode X.T_encode X.eqb X.T_eqb (x :: xs) rows +
+        T_find_certificate P c (poly_run X.encode X.eqb xs next) <=
+        poly_run_search_factor * N.of_nat
+          (fmcost dim mlen (S (S (length xs))) count (keys + bits)))%N.
+      rewrite poly_fmcost_clock_step. fold work next_count.
+      time_unfold (@T_poly_run). time_simpl.
+      change (fun u : X.t => X.T_encode u) with X.T_encode.
+      change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+      fold next. clear -Hrecursive_total Hhead Hwork. clearbody work.
+      unfold poly_run_search_factor in Hrecursive_total |- *. nia.
+  Qed.
+
+  (** The frozen normal-input budget is shared by setup, elimination, and checking. *)
+  Definition poly_entail_budget (P : list (lcons X.t)) (c : lcons X.t) : nat :=
+    fmcost (n P + length (lhs c)) (length P + 1)
+      (n P + length (lhs c)) (length P + 1)
+      (ell P + C.row_bits c + C.row_key_bits c).
+
+  Lemma poly_entail_budget_positive : forall P c,
+    (1 <= N.of_nat (poly_entail_budget P c))%N.
+  Proof.
+    intros P c. unfold poly_entail_budget.
+    pose proof (poly_fmcost_positive (n P + length (lhs c)) (length P + 1)
+      (n P + length (lhs c)) (length P + 1)
+      (ell P + C.row_bits c + C.row_key_bits c)). lia.
+  Qed.
+
+  (** A nonempty source list supplies the additional terminal-checking recurrence stage. *)
+  Lemma T_poly_entail_nonempty_tail : forall P c,
+    normal P -> normal [c] -> P <> [] ->
+    (T_poly_run X.encode X.T_encode X.eqb X.T_eqb
+        (poly_variables X.encode (c :: P))
+        (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P)) +
+      T_find_certificate P c
+        (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
+          (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))) <=
+      poly_run_search_factor * N.of_nat (poly_entail_budget P c))%N.
+  Proof.
+    intros P c HP Hc Hnonempty.
+    set (dim := n P + length (lhs c)).
+    set (mlen := length P + 1).
+    set (keys := poly_entail_keys P c).
+    set (bits := poly_entail_bits P c).
+    set (vars := poly_entail_vars P c).
+    set (xs := poly_variables X.encode (c :: P)).
+    set (rows := poly_initial X.encode
+      ((poly_negate c, true) :: map (fun r => (r, false)) P)).
+    assert (Hdim : length vars <= dim) by apply poly_entail_vars_length.
+    assert (Hsource : Forall (poly_source_envelope dim (keys + bits)) (c :: P)).
+    { pose proof (poly_entail_source_envelopes P c HP) as Hsource.
+      rewrite <- poly_entail_width in Hsource. exact Hsource. }
+    assert (Hlength : length rows = mlen).
+    { unfold rows, mlen. rewrite poly_initial_length. cbn [length].
+      rewrite length_map. lia. }
+    assert (Hsupport : Forall (poly_reduced_row vars) rows)
+      by apply poly_entail_initial_reduced.
+    assert (Henvelopes : Forall (poly_row_envelope dim mlen keys bits) rows)
+      by now apply poly_entail_initial_envelopes.
+    pose proof (T_poly_run_search_bounded xs P c vars rows dim mlen keys bits mlen
+      Hdim Hsource ltac:(unfold mlen; lia) (Nat.le_refl _) ltac:(lia)
+      Hsupport Henvelopes) as Hrun.
+    pose proof (poly_entail_spare_fuel P c Hnonempty) as Hfuel.
+    pose proof (poly_fmcost_fuel_mono (S (length xs)) dim Hfuel
+      dim mlen mlen (keys + bits)) as Hbudget.
+    eapply N.le_trans; [exact Hrun|]. apply N.mul_le_mono_l.
+    unfold poly_entail_budget. fold dim mlen.
+    rewrite <- poly_entail_width. fold keys bits.
+    clear -Hbudget. lia.
+  Qed.
+
+  (** With no source rows, elimination retains the exact single complemented target or removes it. *)
+  Lemma poly_entail_empty_shape : forall xs c, normal [c] ->
+    length (poly_run X.encode X.eqb xs
+      (poly_initial X.encode [(poly_negate c, true)])) <= 1 /\
+    Forall (fun r => C.row_bits (poly_constraint r) <= C.row_bits c /\
+      poly_multipliers r = [1%Z])
+      (poly_run X.encode X.eqb xs
+        (poly_initial X.encode [(poly_negate c, true)])).
+  Proof.
+    intros xs c Hnormal. unfold normal in Hnormal. apply Forall_inv in Hnormal.
+    assert (Hbits : C.row_bits (poly_normal_row X.encode (poly_negate c)) <= C.row_bits c).
+    { eapply Nat.le_trans; [apply poly_normal_row_bits, poly_negate_row_normal; exact Hnormal|].
+      rewrite poly_negate_row_bits. reflexivity. }
+    change (length (poly_run X.encode X.eqb xs
+      [PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true]) <= 1 /\
+      Forall (fun r => C.row_bits (poly_constraint r) <= C.row_bits c /\
+        poly_multipliers r = [1%Z])
+        (poly_run X.encode X.eqb xs
+          [PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true])).
+    destruct (poly_run_single_inequality xs
+      (PolyRow X.t (poly_normal_row X.encode (poly_negate c)) [1%Z] true)
+      eq_refl) as [Hkeep | Hdrop]; rewrite ?Hkeep, ?Hdrop.
+    - split; [reflexivity|]. constructor; [split; [exact Hbits|reflexivity]|constructor].
+    - split; [cbn [length]; lia|constructor].
+  Qed.
+
+  (** A unit certificate uses the linear base of the recurrence for an empty source list. *)
+  Lemma T_poly_entail_empty_tail : forall c, normal [c] ->
+    (T_poly_run X.encode X.T_encode X.eqb X.T_eqb
+        (poly_variables X.encode [c])
+        (poly_initial X.encode [(poly_negate c, true)]) +
+      T_find_certificate [] c
+        (poly_run X.encode X.eqb (poly_variables X.encode [c])
+          (poly_initial X.encode [(poly_negate c, true)])) <=
+      (poly_run_factor + poly_terminal_factor) *
+        N.of_nat (poly_entail_budget [] c))%N.
+  Proof.
+    intros c Hc.
+    assert (HP : normal []) by constructor.
+    set (dim := n [] + length (lhs c)).
+    set (keys := poly_entail_keys [] c).
+    set (bits := poly_entail_bits [] c).
+    set (vars := poly_entail_vars [] c).
+    set (xs := poly_variables X.encode [c]).
+    set (rows := poly_initial X.encode [(poly_negate c, true)]).
+    assert (Hdim : length vars <= dim) by apply poly_entail_vars_length.
+    assert (Hsupport : Forall (poly_reduced_row vars) rows)
+      by apply poly_entail_initial_reduced.
+    assert (Henvelopes : Forall (poly_row_envelope dim 1 keys bits) rows)
+      by now apply poly_entail_initial_envelopes.
+    assert (Hlength : length rows = 1) by reflexivity.
+    assert (Hbudget : poly_entail_budget [] c = fmcost dim 1 dim 1 (keys + bits)).
+    { unfold poly_entail_budget. fold dim. rewrite <- poly_entail_width. reflexivity. }
+    pose proof (T_poly_run_bounded xs vars rows dim 1 keys bits
+      Hdim Hsupport Henvelopes) as Hrun. rewrite Hlength in Hrun.
+    pose proof (poly_entail_fuel [] c) as Hfuel.
+    pose proof (poly_fmcost_fuel_mono (length xs) dim Hfuel
+      dim 1 1 (keys + bits)) as Hrun_budget.
+    assert (Hrun_total : (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs rows <=
+      poly_run_factor * N.of_nat (poly_entail_budget [] c))%N).
+    { eapply N.le_trans; [exact Hrun|]. apply N.mul_le_mono_l.
+      rewrite Hbudget. clear -Hrun_budget. lia. }
+    assert (Hsource : poly_source_envelope dim (keys + bits) c).
+    { pose proof (poly_entail_source_envelopes [] c HP) as Hsource.
+      rewrite <- poly_entail_width in Hsource. exact (Forall_inv Hsource). }
+    destruct (poly_entail_empty_shape xs c Hc) as [Hcount Hshape].
+    assert (Hterminal_rows : Forall (fun r =>
+      C.row_bits (poly_constraint r) <= keys + bits /\
+      poly_multipliers r = [1%Z]) (poly_run X.encode X.eqb xs rows)).
+    { eapply Forall_impl; [|exact Hshape]. intros r [Hb Hm]. split; [|exact Hm].
+      unfold bits, poly_entail_bits. cbn [map fold_right]. lia. }
+    pose proof (T_find_certificate_empty_bounded c (poly_run X.encode X.eqb xs rows)
+      1 dim (keys + bits) Hsource Hcount Hterminal_rows) as Hterminal.
+    assert (Hterminal_base : (T_find_certificate [] c (poly_run X.encode X.eqb xs rows) <=
+      poly_terminal_factor * N.of_nat (fmcost dim 1 0 1 (keys + bits)))%N).
+    { change (T_find_certificate [] c (poly_run X.encode X.eqb xs rows) <=
+        poly_terminal_factor * N.of_nat (2 * (dim + 1 + 1) * (keys + bits + 1)))%N.
+      replace (dim + 1 + 1) with (dim + 2) by lia.
+      rewrite !Nat2N.inj_mul. change (N.of_nat 2) with 2%N.
+      rewrite !N.mul_assoc. exact Hterminal. }
+    pose proof (poly_fmcost_fuel_mono 0 dim (Nat.le_0_l _)
+      dim 1 1 (keys + bits)) as Hterminal_budget.
+    assert (Hterminal_total : (T_find_certificate [] c (poly_run X.encode X.eqb xs rows) <=
+      poly_terminal_factor * N.of_nat (poly_entail_budget [] c))%N).
+    { eapply N.le_trans; [exact Hterminal_base|]. apply N.mul_le_mono_l.
+      rewrite Hbudget. clear -Hterminal_budget. lia. }
+    change (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      T_find_certificate [] c (poly_run X.encode X.eqb xs rows) <=
+      (poly_run_factor + poly_terminal_factor) * N.of_nat (poly_entail_budget [] c))%N.
+    rewrite N.mul_add_distr_r. now apply N.add_le_mono.
+  Qed.
+
+  Definition poly_entail_factor : N :=
+    (poly_setup_factor + poly_run_search_factor + poly_run_factor +
+      poly_terminal_factor + 8)%N.
+
+  (** Normal-input certificate production follows its frozen cost envelope. *)
+  Lemma T_poly_entail_bounded : forall P c, normal P -> normal [c] ->
+    (T_entail_cert P c <= poly_entail_factor *
+      N.of_nat (poly_entail_budget P c))%N.
+  Proof.
+    intros P c HP Hc.
+    set (input := (poly_negate c, true) :: map (fun r => (r, false)) P).
+    set (xs := poly_variables X.encode (c :: P)).
+    set (rows := poly_initial X.encode input).
+    set (work := N.of_nat (poly_entail_budget P c)).
+    pose proof (poly_entail_budget_positive P c) as Hpositive. fold work in Hpositive.
+    pose proof (T_poly_entail_setup_bounded P c HP Hc) as Hsetup.
+    change (T_poly_negate c + ListDef.T_map (fun r => (r, false)) (fun _ => 1%N) P +
+      T_poly_variables X.encode X.T_encode (c :: P) +
+      T_poly_initial X.encode X.T_encode input <= poly_setup_factor * work)%N in Hsetup.
+    assert (Htail : (T_poly_run X.encode X.T_encode X.eqb X.T_eqb xs rows +
+      T_find_certificate P c (poly_run X.encode X.eqb xs rows) <=
+      (poly_run_search_factor + poly_run_factor + poly_terminal_factor) * work)%N).
+    { destruct P as [|p P].
+      - eapply N.le_trans; [apply T_poly_entail_empty_tail; exact Hc|].
+        fold work. apply N.mul_le_mono_r. lia.
+      - eapply N.le_trans; [apply T_poly_entail_nonempty_tail; [exact HP|exact Hc|discriminate]|].
+        fold work. apply N.mul_le_mono_r. lia. }
+    time_unfold T_entail_cert. time_simpl.
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    change (fun x y : X.t => X.T_eqb x y) with X.T_eqb.
+    fold input xs rows. fold work.
+    unfold poly_entail_factor.
+    clear -Hsetup Htail Hpositive. clearbody work. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -7571,7 +7884,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_poly : N := (poly_subst_factor + poly_fm_factor + 1)%N.
+  Definition c_poly : N := (poly_subst_factor + poly_fm_factor + poly_entail_factor + 1)%N.
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_poly * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
@@ -7598,7 +7911,11 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       N.of_nat (fmcost (n P + length (lhs c)) (length P + 1)
         (n P + length (lhs c)) (length P + 1)
         (ell P + C.row_bits c + C.row_key_bits c)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c HP Hc.
+    eapply N.le_trans; [apply T_poly_entail_bounded; assumption|].
+    unfold poly_entail_budget. apply N.mul_le_mono_r. unfold c_poly. lia.
+  Qed.
   (** Assignment charges row normalization and one elimination after linearization. *)
   Lemma F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) = N.of_nat (terms s * (nell s + 1) +
