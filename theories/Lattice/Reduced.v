@@ -24,7 +24,9 @@ Module Reduced (A B : BLATTICE) (R : REDUCER A B) <: BLATTICE.
   Module P := Product A B.
 
   Local Lemma reduce_lower_pair x : P.leb (R.reduce x) x = true.
-  Proof. destruct x as [a b]; unfold P.leb; apply andb_true_iff; apply R.reduce_lower. Qed.
+  Proof.
+    destruct x as [a b]; unfold P.leb; apply andb_true_iff; apply R.reduce_lower.
+  Qed.
 
   Local Lemma reduce_mono_pair x y : P.leb x y = true -> P.leb (R.reduce x) (R.reduce y) = true.
   Proof.
@@ -33,12 +35,18 @@ Module Reduced (A B : BLATTICE) (R : REDUCER A B) <: BLATTICE.
   Qed.
 
   Local Lemma reduce_idem_pair x : P.leb (R.reduce x) (R.reduce (R.reduce x)) = true.
-  Proof. destruct x as [a b]; unfold P.leb; apply andb_true_iff; apply R.reduce_idem. Qed.
+  Proof.
+    destruct x as [a b]; unfold P.leb; apply andb_true_iff; apply R.reduce_idem.
+  Qed.
 
   Local Lemma leb_pair x y : leb x y = P.leb (R.reduce x) y.
-  Proof. reflexivity. Qed.
+  Proof.
+    reflexivity.
+  Qed.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. intro a; rewrite leb_pair; apply reduce_lower_pair. Qed.
+  Proof.
+    intro a; rewrite leb_pair; apply reduce_lower_pair.
+  Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof.
     intros a b c Hab Hbc. rewrite !leb_pair in *.
@@ -46,20 +54,35 @@ Module Reduced (A B : BLATTICE) (R : REDUCER A B) <: BLATTICE.
     eapply P.leb_trans; [apply reduce_mono_pair; exact Hab|exact Hbc].
   Qed.
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. intro a; rewrite leb_pair; eapply P.leb_trans; [apply reduce_lower_pair|apply P.bot_least]. Qed.
+  Proof.
+    intro a; rewrite leb_pair; eapply P.leb_trans; [apply reduce_lower_pair|apply P.bot_least].
+  Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. apply P.is_bot_bot. Qed.
+  Proof.
+    apply P.is_bot_bot.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof.
     intros a b Ha. rewrite leb_pair. eapply P.leb_trans; [apply reduce_lower_pair|].
     apply P.is_bot_least; exact Ha.
   Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. intros a b; rewrite leb_pair; apply reduce_mono_pair, P.join_ub_l. Qed.
+  Proof.
+    intros a b; rewrite leb_pair; apply reduce_mono_pair, P.join_ub_l.
+  Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. intros a b; rewrite leb_pair; apply reduce_mono_pair, P.join_ub_r. Qed.
+  Proof.
+    intros a b; rewrite leb_pair; apply reduce_mono_pair, P.join_ub_r.
+  Qed.
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. intros a; rewrite leb_pair; unfold P.leb, top; cbn; rewrite A.top_greatest, B.top_greatest; reflexivity. Qed.
+  Proof.
+    intros a;
+    rewrite leb_pair;
+    unfold P.leb, top;
+    cbn;
+    rewrite A.top_greatest, B.top_greatest;
+    reflexivity.
+  Qed.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
   Proof.
     intros a b; rewrite leb_pair; eapply P.leb_trans; [apply reduce_lower_pair|].

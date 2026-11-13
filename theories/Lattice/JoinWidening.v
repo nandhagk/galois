@@ -19,11 +19,17 @@ Module JoinWidening (L : LATTICE) (H : HEIGHT L) <: WIDENING L.
   Include JoinWideningCode L.
   Definition wrank (_ : wparam) (a : L.t) := H.height - H.rank a.
   Lemma widen_ub_l : forall p a b, L.leb a (widen p a b) = true.
-  Proof. intros p a b; unfold widen; destruct (L.leb b a); auto using L.leb_refl, L.join_ub_l. Qed.
+  Proof.
+    intros p a b; unfold widen; destruct (L.leb b a); auto using L.leb_refl, L.join_ub_l.
+  Qed.
   Lemma widen_ub_r : forall p a b, L.leb b (widen p a b) = true.
-  Proof. intros p a b; unfold widen; destruct (L.leb b a) eqn:Hab; auto using L.join_ub_r. Qed.
+  Proof.
+    intros p a b; unfold widen; destruct (L.leb b a) eqn:Hab; auto using L.join_ub_r.
+  Qed.
   Lemma widen_stable : forall p a b, L.leb b a = true -> widen p a b = a.
-  Proof. intros p a b Hab; unfold widen; rewrite Hab; reflexivity. Qed.
+  Proof.
+    intros p a b Hab; unfold widen; rewrite Hab; reflexivity.
+  Qed.
   Lemma wrank_widen : forall p a b, L.is_bot a = false -> L.leb b a = false ->
     wrank p (widen p a b) < wrank p a.
   Proof.
@@ -42,7 +48,9 @@ Module JoinWidening (L : LATTICE) (H : HEIGHT L) <: WIDENING L.
   Qed.
   Lemma narrow_between : forall a b, L.leb b a = true ->
     L.leb b (narrow a b) = true /\ L.leb (narrow a b) a = true.
-  Proof. intros a b Hab; split; cbn [narrow]; auto using L.leb_refl. Qed.
+  Proof.
+    intros a b Hab; split; cbn [narrow]; auto using L.leb_refl.
+  Qed.
 End JoinWidening.
 
 Module JoinWideningT (L : LATTICE_T) (H : HEIGHT L) <: WIDENING_T L.

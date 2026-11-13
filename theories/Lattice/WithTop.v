@@ -54,7 +54,9 @@ Module WithTop (L : LATTICE) <: TOP_LATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros [a|]; cbn; try reflexivity; apply L.bot_least. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. apply L.is_bot_bot. Qed.
+  Proof.
+    apply L.is_bot_bot.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof.
     intros [a|] [b|] Hbot; cbn in *; try discriminate; try reflexivity.

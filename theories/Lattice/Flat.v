@@ -72,9 +72,13 @@ Module Flat (K : KEY) <: BLATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intros [|a|]; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. reflexivity. Qed.
+  Proof.
+    reflexivity.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. intros [|a|] b Hbot; cbn in *; try discriminate; reflexivity. Qed.
+  Proof.
+    intros [|a|] b Hbot; cbn in *; try discriminate; reflexivity.
+  Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros [|a|] [|b|]; cbn [leb join flat_leb flat_join]; try reflexivity;
@@ -170,7 +174,9 @@ Module FlatHeight (K : KEY)
   Proof. intros [|a|]; cbv [rank height]; auto. Qed.
   (** The flat order never lowers rank. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
-  Proof. intros [|a|] [|b|]; cbn [Lat.leb flat_leb rank]; intros; try discriminate; lia. Qed.
+  Proof.
+    intros [|a|] [|b|]; cbn [Lat.leb flat_leb rank]; intros; try discriminate; lia.
+  Qed.
   Lemma rank_strict : forall a b, flat_leb K.eqb a b = true -> flat_leb K.eqb b a = false ->
     rank a < rank b.
   Proof.

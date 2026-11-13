@@ -30,7 +30,9 @@ Module Product (A B : LATTICE) <: LATTICE.
   Lemma bot_least : forall a, leb bot a = true.
   Proof. intro x; unfold leb, bot; cbn; rewrite A.bot_least, B.bot_least; reflexivity. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. unfold is_bot, bot; cbn; rewrite A.is_bot_bot, B.is_bot_bot; reflexivity. Qed.
+  Proof.
+    unfold is_bot, bot; cbn; rewrite A.is_bot_bot, B.is_bot_bot; reflexivity.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof.
     intros a b Hbot. unfold is_bot in Hbot. apply andb_true_iff in Hbot.
@@ -89,8 +91,10 @@ Module ProductHeight (A B : LATTICE) (HA : HEIGHT A) (HB : HEIGHT B)
 
   (** The sum of component ranks is bounded by the sum of their heights. *)
   Lemma rank_le : forall a, rank a <= height.
-  Proof. intro a; unfold rank, height; pose proof (HA.rank_le (fst a));
-    pose proof (HB.rank_le (snd a)); lia. Qed.
+  Proof.
+    intro a; unfold rank, height; pose proof (HA.rank_le (fst a));
+    pose proof (HB.rank_le (snd a)); lia.
+    Qed.
   (** Componentwise inclusion never lowers the rank sum. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
   Proof.
