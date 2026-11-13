@@ -8870,6 +8870,49 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       exact (snapshot_id_width st id ss Hstate Hin).
   Qed.
 
+  Lemma T_invalid_next_amort_raw : forall st x pending seen bad done snapshots,
+    state_ok st ->
+    invalid_snapshot_origin st
+      {| invalid_pending := pending; invalid_seen := seen;
+         invalid_bad := bad; invalid_done := x :: done;
+         invalid_snapshots := snapshots |} ->
+    (T_invalid_next st x pending seen bad done snapshots +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (invalid_snapshot_mass
+          (invalid_next st x pending seen bad done snapshots)) <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1) +
+      4 * N.of_nat (length (infl_at st x) + 1) +
+      (64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) + 2) *
+        N.of_nat (length (infl_at st x ++ cowrite_at st x)) +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (kwidth st + 1) *
+        N.of_nat (invalid_snapshot_mass
+          {| invalid_pending := pending; invalid_seen := seen;
+             invalid_bad := bad; invalid_done := x :: done;
+             invalid_snapshots := snapshots |}) + 1)%N.
+  Proof.
+    intros st x pending seen bad done snapshots Hstate Horigin.
+    pose (rest := {| invalid_pending := pending; invalid_seen := seen;
+      invalid_bad := bad; invalid_done := x :: done;
+      invalid_snapshots := snapshots |}).
+    pose proof (T_invalid_next_le st x pending seen bad done snapshots) as Htime.
+    pose proof (T_invalid_snapshot_fold_amort st
+      (infl_at st x ++ cowrite_at st x) rest Hstate Horigin) as Hfold.
+    assert (Hwidth : forall id, In id (infl_at st x ++ cowrite_at st x) ->
+      Pos.size_nat id <= kwidth st).
+    { intros id Hin; now apply (invalid_refs_width st x id Hstate). }
+    specialize (Hfold Hwidth).
+    cbn beta zeta in Htime.
+    unfold invalid_next, infl_at, cowrite_at in Hfold |- *.
+    unfold infl_at, cowrite_at in Htime.
+    unfold rest in Hfold.
+    cbn [invalid_snapshots] in *.
+    lia.
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
