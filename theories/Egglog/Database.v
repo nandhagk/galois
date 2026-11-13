@@ -1162,7 +1162,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     changed db = true -> changed (snd (make f k db)) = true.
   Proof. Admitted. (* STUB *)
   Lemma changed_union : forall i j db, changed db = true -> changed (union i j db) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db Hchanged. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; [reflexivity | exact Hchanged].
+  Qed.
   Lemma changed_rebuild : forall db, changed db = true -> changed (rebuild db) = true.
   Proof. Admitted. (* STUB *)
   (** Find and lookup leave the change flag alone. *)
@@ -1182,7 +1186,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** A union raises the flag only when it adds an equality. *)
   Lemma union_changed : forall i j db, wf db -> changed db = false ->
     changed (union i j db) = true -> ~ same (view db) i j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db Hwf Hquiet Hchanged Hsame. unfold union in Hchanged.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+        (wf_forest db Hwf) Hunion) as [Hdifferent _].
+      apply Hdifferent. exact (proj1 (same_repr db i j Hwf) Hsame).
+    - change (changed db = true) in Hchanged. congruence.
+  Qed.
   (** A make raises the flag only when it allocates. *)
   Lemma make_changed : forall f k db, wf db -> changed db = false ->
     changed (snd (make f k db)) = true ->
@@ -1212,12 +1224,29 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma union_same : forall i j db k l, wf db ->
     (same (view (union i j db)) k l <->
       clos_refl_sym_trans positive (fun a b => same (view db) a b \/ (a, b) = (i, j)) k l).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db k l Hwf. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - apply equality_log_cons.
+    - change (equality_log (runtime_equalities (db_runtime db)) k l <->
+        clos_refl_sym_trans positive
+          (fun a b => equality_log (runtime_equalities (db_runtime db)) a b \/
+            (a, b) = (i, j)) k l).
+      rewrite <- equality_log_cons. symmetry. apply equality_log_redundant.
+      apply (proj2 (same_repr db i j Hwf)).
+      exact (proj1 (UnionFind.union_none i j (db_forest db) forest
+        (wf_forest db Hwf) Hunion)).
+  Qed.
 
   (** Union queues equality work without changing rows. *)
   Lemma union_rows : forall i j db, wf db ->
     row (view (union i j db)) = row (view db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db _. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
 
   (** Rebuilding canonicalizes every row and empties pending work. *)
   Lemma rebuild_canonical : forall db, wf db ->
@@ -1316,7 +1345,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma layout_union : forall i j db, wf db ->
     kind (view (union i j db)) = kind (view db) /\ slots (union i j db) = slots db /\
     ids (union i j db) = ids db /\ pending (union i j db) <= pending db + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db _. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |].
+    - split; [reflexivity |]. split; [reflexivity |]. split; [reflexivity |].
+      change (S (pending db) <= pending db + 1). lia.
+    - split; [reflexivity |]. split; [reflexivity |]. split; [reflexivity |].
+      change (pending db <= pending db + 1). lia.
+  Qed.
 
   (** Rebuilding keeps layout and allocation. *)
   Lemma layout_rebuild : forall db, wf db ->
@@ -1340,7 +1377,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** A quiet union already holds in the old view. *)
   Lemma union_quiet : forall i j db, wf db -> changed db = false ->
     changed (union i j db) = false -> same (view db) i j.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db Hwf _ Hquiet. unfold union in Hquiet.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - discriminate Hquiet.
+    - apply (proj2 (same_repr db i j Hwf)).
+      exact (proj1 (UnionFind.union_none i j (db_forest db) forest
+        (wf_forest db Hwf) Hunion)).
+  Qed.
 
   (** A quiet make reuses a constructor row. *)
   Lemma make_quiet : forall f k db, wf db -> changed db = false ->
@@ -1368,7 +1413,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
-  Proof. Admitted. (* OPEN: establish equality-log extension and representative preservation. *)
+  Proof.
+    intros M nu db i j Hwf Hsat Hequal.
+    eapply sat_union_view with (w := view db) (i := i) (j := j).
+    - exact (proj1 (layout_union i j db Hwf)).
+    - exact (union_rows i j db Hwf).
+    - intros a b Hsame.
+      pose proof (proj1 (union_same i j db a b Hwf) Hsame) as Hclosure.
+      eapply equality_closure_mono; [| exact Hclosure].
+      intros x y [Hold | Hpair].
+      + now left.
+      + right. now injection Hpair as -> ->.
+    - exact Hsat.
+    - exact Hequal.
+  Qed.
 
   (** Make updates its output meaning and keeps every other identifier meaning. *)
   Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
