@@ -624,6 +624,26 @@ Module RelationalPathBounds.
       apply plus_mono; [exact Hcycle'|apply below_refl].
   Qed.
 
+  (** A nonnegative inserted cycle keeps each existing zero diagonal. *)
+  Lemma edge_extension_zero : forall A (r : A -> A -> option Z) source target weight,
+    (forall p, closed_at r p) ->
+    below (Some 0%Z) (plus (r target source) (Some weight)) ->
+    forall k, r k k = Some 0%Z ->
+      edge_extension r source target weight k k = Some 0%Z.
+  Proof.
+    intros A r source target weight Hr Hcycle k Hdiag.
+    unfold edge_extension. rewrite Hdiag.
+    apply minimum_when_below.
+    replace (plus (r k source) (plus (Some weight) (r target k))) with
+      (plus (plus (r target k) (r k source)) (Some weight)).
+    2: { destruct (r k source), (r target k); cbn [plus];
+           try reflexivity; f_equal; lia. }
+    eapply (below_trans (Some 0%Z)
+      (plus (r target source) (Some weight)) _);
+      [exact Hcycle|].
+    apply plus_mono; [apply Hr|apply below_refl].
+  Qed.
+
   Lemma floyd_closes_pivot : forall A (r : A -> A -> option Z) k,
     r k k = Some 0%Z -> closed_at (floyd r k) k.
   Proof.
