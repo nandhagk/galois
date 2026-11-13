@@ -790,11 +790,139 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
         exact (IHresults (fst (refine_checked request n m)) requests Hnext Hrequests' Htail).
   Qed.
 
+  (** A clean accumulated flag means that the incoming flag was also clean. *)
+  Lemma refine_children_flag_false : forall ns qs m bad,
+    snd ((fix go ns qs m bad :=
+      match ns, qs with
+      | n :: ns, q :: qs =>
+        let result := refine_checked q n m in
+        go ns qs (fst result) (orb bad (snd result))
+      | _, _ => (m, bad)
+      end) ns qs m bad) = false -> bad = false.
+  Proof.
+    induction ns as [|n ns IH]; intros qs m bad Hflag; destruct qs as [|q qs];
+      cbn in Hflag; try exact Hflag.
+    apply IH in Hflag. now apply orb_false_iff in Hflag as [Hbad _].
+  Qed.
+
+  (** Clean child refinements preserve clean bindings across the ordered child loop. *)
+  Lemma refine_children_nonbot : forall ns,
+    list_all _ (fun n => forall q m,
+      M.existsb V.is_bot m = false -> snd (refine_checked q n m) = false ->
+      M.existsb V.is_bot (fst (refine_checked q n m)) = false) ns ->
+    forall qs m bad, M.existsb V.is_bot m = false ->
+    snd ((fix go ns qs m bad :=
+      match ns, qs with
+      | n :: ns, q :: qs =>
+        let result := refine_checked q n m in
+        go ns qs (fst result) (orb bad (snd result))
+      | _, _ => (m, bad)
+      end) ns qs m bad) = false ->
+    M.existsb V.is_bot (fst ((fix go ns qs m bad :=
+      match ns, qs with
+      | n :: ns, q :: qs =>
+        let result := refine_checked q n m in
+        go ns qs (fst result) (orb bad (snd result))
+      | _, _ => (m, bad)
+      end) ns qs m bad)) = false.
+  Proof.
+    intros ns Hchildren. induction Hchildren as [|n Hn ns Hns IH];
+      intros qs m bad Hclean Hflag; destruct qs as [|r qs];
+      cbn in Hflag |- *; try exact Hclean.
+    pose proof (refine_children_flag_false ns qs
+      (fst (refine_checked r n m)) (orb bad (snd (refine_checked r n m))) Hflag)
+      as Hstart.
+    apply orb_false_iff in Hstart as [_ Hchild].
+    apply IH; [now apply Hn|exact Hflag].
+  Qed.
+
+  (** A checked refinement with a clean flag introduces no recognized bottom binding. *)
+  Lemma refine_checked_nonbot : forall q n m,
+    M.existsb V.is_bot m = false -> snd (refine_checked q n m) = false ->
+    M.existsb V.is_bot (fst (refine_checked q n m)) = false.
+  Proof.
+    intros q n. revert q. induction n as [x a|o a ns IH]; intros q m Hclean Hflag.
+    - cbn [refine_checked fst snd] in Hflag |- *. now apply map_set_nonbot.
+    - cbn [refine_checked] in Hflag |- *.
+      eapply refine_children_nonbot; [exact IH|exact Hclean|exact Hflag].
+  Qed.
+
+  (** Pointwise descent composes through each child in the refinement loop. *)
+  Lemma refine_children_lower : forall ns,
+    list_all _ (fun n => forall q m x,
+      V.leb (read (fst (refine_checked q n m)) x) (read m x) = true) ns ->
+    forall qs m bad x,
+    V.leb (read (fst ((fix go ns qs m bad :=
+      match ns, qs with
+      | n :: ns, q :: qs =>
+        let result := refine_checked q n m in
+        go ns qs (fst result) (orb bad (snd result))
+      | _, _ => (m, bad)
+      end) ns qs m bad)) x) (read m x) = true.
+  Proof.
+    intros ns Hchildren. induction Hchildren as [|n Hn ns Hns IH];
+      intros qs m bad x; destruct qs as [|r qs]; cbn; try apply V.leb_refl.
+    eapply V.leb_trans with (b := read (fst (refine_checked r n m)) x).
+    - apply IH.
+    - apply Hn.
+  Qed.
+
+  (** Every checked refinement decreases each lookup in the value order. *)
+  Lemma refine_pointwise_lower : forall q n m x,
+    V.leb (read (fst (refine_checked q n m)) x) (read m x) = true.
+  Proof.
+    intros q n. revert q. induction n as [y a|o a ns IH]; intros q m x.
+    - cbn [refine_checked fst]. unfold read at 1.
+      destruct (X.eqb_spec x y) as [Heq|Hneq].
+      + subst x. rewrite M.get_set_same. apply V.meet_lb_l.
+      + rewrite M.get_set_other by exact Hneq. apply V.leb_refl.
+    - cbn [refine_checked]. apply refine_children_lower. exact IH.
+  Qed.
+
+  (** The ordered refinement fold retains compatible stores and leaves its flag clear. *)
+  Lemma refine_many_covers : forall st ns qs cs,
+    Forall2 (fun n c => exists e,
+      ann_covers st n e /\ eval_term L.eval st e = Some c) ns cs ->
+    Forall2 V.gamma qs cs -> forall m, gamma (Reached m) st ->
+    let result := fold_left (fun result nq =>
+      let next := refine_checked (snd nq) (fst nq) (fst result) in
+      (fst next, orb (snd result) (snd next))) (combine ns qs) (m, false) in
+    gamma (Reached (fst result)) st /\ snd result = false.
+  Proof.
+    intros st ns qs cs Hresults. revert qs.
+    induction Hresults as [|n c ns cs Hresult Hresults IH];
+      intros qs Hrequests m Hgamma.
+    - inversion Hrequests; subst. cbn. split; [exact Hgamma|reflexivity].
+    - inversion Hrequests as [|request value requests values Hrequest Hrequests']; subst.
+      destruct Hresult as [e [Hcover Heval]].
+      destruct (refine_checked_covers n m st e request c
+        (proj2 Hgamma) Hcover Heval Hrequest) as [Hmodel Hflag].
+      cbn [combine fold_left fst snd]. rewrite Hflag. cbn [orb].
+      apply IH; [exact Hrequests'|]. split; [|exact Hmodel].
+      apply refine_checked_nonbot; [exact (proj1 Hgamma)|exact Hflag].
+  Qed.
+
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
     gamma (assume g es s) st.
-  Proof. Admitted. (* CONVERT: assume_sound: The variable refine_sound was not found. *)
+  Proof.
+    intros g es [|m] st cs Hgamma Heval Hholds; [contradiction|].
+    set (ns := map (annotate m) es).
+    set (qs := V.guard g (map root ns)).
+    assert (Hcovers : Forall2 (ann_covers st) ns es).
+    { unfold ns. clear Heval qs ns. induction es as [|e es IH]; cbn [map]; constructor.
+      - apply annotate_covers. exact (proj2 Hgamma).
+      - exact IH. }
+    pose proof (ann_children_results st ns es cs Hcovers Heval) as Hresults.
+    pose proof (ann_results_roots st ns cs Hresults) as Hroots.
+    pose proof (V.guard_sound g (map root ns) cs Hroots Hholds) as Hrequests.
+    change (Forall2 V.gamma qs cs) in Hrequests.
+    destruct (refine_many_covers st ns qs cs Hresults Hrequests m Hgamma)
+      as [Hmodel Hflag].
+    cbn [assume]. fold ns. fold qs. cbn beta zeta in Hflag, Hmodel.
+    rewrite Hflag. exact Hmodel.
+  Qed.
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
