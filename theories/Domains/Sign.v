@@ -594,12 +594,350 @@ Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
         sign_endpoint_compare.
   Qed.
 
+  (** The public flag interpretation exposes the three signed classes. *)
+  Local Lemma sign_gamma_cases w a z : W.pgamma w a z <->
+    (Word.signed w z < 0 -> neg a = true) /\
+    (Word.signed w z = 0 -> zero a = true) /\
+    (0 < Word.signed w z -> pos a = true).
+  Proof.
+    rewrite W.F1_gamma. unfold W.sign_gamma, L.signed.
+    destruct (Word.signed w z <? 0) eqn:Hneg.
+    - apply Z.ltb_lt in Hneg. split; intros H; intuition lia.
+    - apply Z.ltb_ge in Hneg. destruct (Word.signed w z =? 0) eqn:Hzero.
+      + apply Z.eqb_eq in Hzero. split; intros H; intuition lia.
+      + apply Z.eqb_neq in Hzero. split.
+        * intros H. intuition lia.
+        * intros [_ [_ Hp]]. apply Hp. lia.
+  Qed.
+
+  (** Signed endpoints contain every represented signed interpretation. *)
+  Local Lemma sign_bounds w a z : W.pgamma w a z ->
+    sign_lo w a <= Word.signed w z <= sign_hi w a.
+  Proof.
+    destruct a as [n q p]. intros Hg. apply sign_gamma_cases in Hg as [Hn [Hq Hp]].
+    pose proof (signed_range w z). pose proof (half_pos w).
+    destruct n, q, p; unfold sign_lo, sign_hi, sign_numeric_lo, sign_numeric_hi;
+      cbn in *; lia.
+  Qed.
+
+  (** Unsigned endpoints contain the normalized representation of every admitted word. *)
+  Local Lemma sign_unsigned_bounds w a z : W.pgamma w a z ->
+    sign_ulo w a <= wrap w z <= sign_uhi w a.
+  Proof.
+    destruct a as [n q p]. intros Hg.
+    pose proof (sign_bounds w (Sgn n q p) z Hg) as Hbounds.
+    apply sign_gamma_cases in Hg as [Hn [Hq Hp]].
+    pose proof (wrap_is_word w z) as [Hlo Hhi].
+    pose proof (half_pos w). pose proof (modulus_half w).
+    rewrite signed_value in Hn, Hq, Hp, Hbounds.
+    destruct (wrap w z <? half w) eqn:Hhalf;
+      [apply Z.ltb_lt in Hhalf|apply Z.ltb_ge in Hhalf];
+      destruct n, q, p; unfold sign_ulo, sign_uhi, sign_numeric_ulo, sign_numeric_uhi;
+      cbn in *; lia.
+  Qed.
+
+  (** A one-bit Boolean uses the negative and zero sign flags. *)
+  Local Lemma sign_gamma_boolean s (b : bool) :
+    W.pgamma 1%positive s (if b then 1 else 0) <->
+    (if b then neg s = true else zero s = true).
+  Proof.
+    rewrite W.F1_gamma. destruct b; reflexivity.
+  Qed.
+
+  Local Lemma sign_boolean_sound b :
+    W.pgamma 1%positive (sign_boolean b) (if b then 1 else 0).
+  Proof.
+    apply sign_gamma_boolean. destruct b; reflexivity.
+  Qed.
+
+  Local Lemma sign_bool_top_sound (b : bool) :
+    W.pgamma 1%positive sign_bool_top (if b then 1 else 0).
+  Proof.
+    apply sign_gamma_boolean. destruct b; reflexivity.
+  Qed.
+
+  Local Lemma sign_bool_not_sound s (b : bool) :
+    W.pgamma 1%positive s (if b then 1 else 0) ->
+    W.pgamma 1%positive (sign_bool_not s) (if negb b then 1 else 0).
+  Proof.
+    rewrite !sign_gamma_boolean. destruct b; exact (fun H => H).
+  Qed.
+
+  (** Ordered endpoint separation decides a strict comparison soundly. *)
+  Local Lemma sign_cmp_lt_sound lo hi lo' hi' x y :
+    lo <= x <= hi -> lo' <= y <= hi' ->
+    W.pgamma 1%positive (sign_cmp_lt lo hi lo' hi') (if x <? y then 1 else 0).
+  Proof.
+    intros Hx Hy. unfold sign_cmp_lt, sign_numeric_cmp_lt.
+    destruct (hi <? lo') eqn:Htrue.
+    - apply Z.ltb_lt in Htrue.
+      rewrite (proj2 (Z.ltb_lt x y) ltac:(lia)). apply (sign_boolean_sound true).
+    - destruct (hi' <=? lo) eqn:Hfalse; [|apply sign_bool_top_sound].
+      apply Z.leb_le in Hfalse.
+      rewrite (proj2 (Z.ltb_ge x y) ltac:(lia)). apply (sign_boolean_sound false).
+  Qed.
+
+  (** Ordered endpoint separation decides a non-strict comparison soundly. *)
+  Local Lemma sign_cmp_le_sound lo hi lo' hi' x y :
+    lo <= x <= hi -> lo' <= y <= hi' ->
+    W.pgamma 1%positive (sign_cmp_le lo hi lo' hi') (if x <=? y then 1 else 0).
+  Proof.
+    intros Hx Hy. unfold sign_cmp_le, sign_numeric_cmp_le.
+    destruct (hi <=? lo') eqn:Htrue.
+    - apply Z.leb_le in Htrue.
+      rewrite (proj2 (Z.leb_le x y) ltac:(lia)). apply (sign_boolean_sound true).
+    - destruct (hi' <? lo) eqn:Hfalse; [|apply sign_bool_top_sound].
+      apply Z.ltb_lt in Hfalse.
+      rewrite (proj2 (Z.leb_gt x y) ltac:(lia)). apply (sign_boolean_sound false).
+  Qed.
+
+  (** Disjoint or coincident singleton endpoints decide equality soundly. *)
+  Local Lemma sign_cmp_eq_sound lo hi lo' hi' x y :
+    lo <= x <= hi -> lo' <= y <= hi' ->
+    W.pgamma 1%positive (sign_cmp_eq lo hi lo' hi') (if x =? y then 1 else 0).
+  Proof.
+    intros Hx Hy. unfold sign_cmp_eq, sign_numeric_cmp_eq.
+    destruct ((hi <? lo') || (hi' <? lo)) eqn:Hfalse.
+    - apply orb_true_iff in Hfalse as [Hfalse|Hfalse]; apply Z.ltb_lt in Hfalse;
+        rewrite (proj2 (Z.eqb_neq x y) ltac:(lia)); apply (sign_boolean_sound false).
+    - destruct ((lo =? hi) && (lo' =? hi') && (lo =? lo')) eqn:Htrue;
+        [|apply sign_bool_top_sound].
+      apply andb_true_iff in Htrue as [Hbounds Heq].
+      apply andb_true_iff in Hbounds as [Hlo Hlo'].
+      apply Z.eqb_eq in Hlo, Hlo', Heq.
+      rewrite (proj2 (Z.eqb_eq x y) ltac:(lia)). apply (sign_boolean_sound true).
+  Qed.
+
+  Local Lemma sign_signed_eq w x y :
+    (wrap w x =? wrap w y) = (Word.signed w x =? Word.signed w y).
+  Proof.
+    apply Bool.eq_true_iff_eq. rewrite !Z.eqb_eq. split.
+    - intro Heq. rewrite <- (signed_wrap w x), <- (signed_wrap w y). now rewrite Heq.
+    - apply signed_inj.
+  Qed.
+
+  (** Every numeric comparison keeps the evaluator's one-bit result. *)
+  Local Lemma sign_cmp_sound o w a b x y rw z :
+    (o = bveq \/ o = bvne \/ o = bvult \/ o = bvule \/ o = bvslt \/ o = bvsle) ->
+    W.pgamma w a x -> W.pgamma w b y ->
+    eval_op o [(w, x); (w, y)] = Some (rw, z) -> W.pgamma rw (sign_cmp o w a b) z.
+  Proof.
+    intros Ho Ha Hb Heval.
+    pose proof (sign_bounds w a x Ha) as Hx. pose proof (sign_bounds w b y Hb) as Hy.
+    pose proof (sign_unsigned_bounds w a x Ha) as Hux.
+    pose proof (sign_unsigned_bounds w b y Hb) as Huy.
+    destruct Ho as [-> | [-> | [-> | [-> | [-> | ->]]]]].
+    - pose proof (eq_trans (eq_sym (eval_op_cmp bveq w x y _ eq_refl)) Heval) as Hr.
+      cbn [eval_comparison_tag] in Hr. inversion Hr; subst rw z.
+      unfold sign_cmp, sign_numeric_cmp. rewrite sign_signed_eq.
+      now apply sign_cmp_eq_sound.
+    - pose proof (eq_trans (eq_sym (eval_op_cmp bvne w x y _ eq_refl)) Heval) as Hr.
+      cbn [eval_comparison_tag] in Hr. inversion Hr; subst rw z.
+      unfold sign_cmp, sign_numeric_cmp. apply sign_bool_not_sound.
+      rewrite sign_signed_eq. now apply sign_cmp_eq_sound.
+    - pose proof (eq_trans (eq_sym (eval_op_cmp bvult w x y _ eq_refl)) Heval) as Hr.
+      cbn [eval_comparison_tag] in Hr. inversion Hr; subst rw z.
+      unfold sign_cmp, sign_numeric_cmp. rewrite wult_value. now apply sign_cmp_lt_sound.
+    - pose proof (eq_trans (eq_sym (eval_op_cmp bvule w x y _ eq_refl)) Heval) as Hr.
+      cbn [eval_comparison_tag] in Hr. inversion Hr; subst rw z.
+      unfold sign_cmp, sign_numeric_cmp. rewrite wule_value. now apply sign_cmp_le_sound.
+    - pose proof (eq_trans (eq_sym (eval_op_cmp bvslt w x y _ eq_refl)) Heval) as Hr.
+      cbn [eval_comparison_tag] in Hr. inversion Hr; subst rw z.
+      unfold sign_cmp, sign_numeric_cmp. rewrite wslt_value. now apply sign_cmp_lt_sound.
+    - pose proof (eq_trans (eq_sym (eval_op_cmp bvsle w x y _ eq_refl)) Heval) as Hr.
+      cbn [eval_comparison_tag] in Hr. inversion Hr; subst rw z.
+      unfold sign_cmp, sign_numeric_cmp. rewrite wsle_value. now apply sign_cmp_le_sound.
+  Qed.
+
+  (** A unary operand relation supplies the entry's normalized concrete argument. *)
+  Local Lemma sign_unary_sound o f rw w a cs z :
+    (forall w a x target z, L.is_word w x -> W.pgamma w a x ->
+      eval_op o [(w, x)] = Some (target, z) -> W.pgamma target (f a) z) ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) [(w, a)] cs ->
+    eval_op o cs = Some (rw, z) -> W.pgamma rw (f a) z.
+  Proof.
+    intros Hf Hxs Heval.
+    inversion Hxs as [|? [v x] ? ? Hhead Hnil]; subst. inversion Hnil; subst.
+    destruct Hhead as [Hw [Hx Ha]]. cbn in Hw, Hx, Ha. subst v.
+    now apply (Hf w a x).
+  Qed.
+
+  (** A binary operand relation supplies both normalized concrete arguments. *)
+  Local Lemma sign_binary_sound o f rw w v a b cs z :
+    (forall w v a b x y target z,
+      L.is_word w x -> L.is_word v y -> W.pgamma w a x -> W.pgamma v b y ->
+      eval_op o [(w, x); (v, y)] = Some (target, z) -> W.pgamma target (f w a b) z) ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) [(w, a); (v, b)] cs ->
+    eval_op o cs = Some (rw, z) -> W.pgamma rw (f w a b) z.
+  Proof.
+    intros Hf Hxs Heval.
+    inversion Hxs as [|? [wx x] ? ? Hhead Htail]; subst.
+    inversion Htail as [|? [vy y] ? ? Hhead' Hnil]; subst. inversion Hnil; subst.
+    destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]].
+    cbn in Hwx, Hvy, Hx, Hy, Ha, Hb. subst wx vy. now apply (Hf w v a b x y).
+  Qed.
+
+  (** Selection returns one branch and the payload join contains both branches. *)
+  Local Lemma sign_select_sound rw w v u a b d cs z :
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) [(w, a); (v, b); (u, d)] cs ->
+    eval_op bvite cs = Some (rw, z) -> W.pgamma rw (W.pjoin rw b d) z.
+  Proof.
+    intros Hxs Heval.
+    inversion Hxs as [|? [wx x] ? ? Hhead Htail]; subst.
+    inversion Htail as [|? [vy y] ? ? Hhead' Htail']; subst.
+    inversion Htail' as [|? [ut t] ? ? Hhead'' Hnil]; subst. inversion Hnil; subst.
+    destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]],
+      Hhead'' as [Hut [Ht Hd]].
+    cbn in Hwx, Hvy, Hut, Hx, Hy, Ht, Ha, Hb, Hd. subst wx vy ut.
+    destruct (eval_op_ite_width w v u x y t (rw, z) Heval) as [Hw Hvu]. subst w u.
+    rewrite eval_op_ite in Heval.
+    destruct (wrap 1%positive x =? 1); inversion Heval; subst rw z.
+    - rewrite (wrap_id v y Hy). eapply W.pgamma_mono; [apply W.pjoin_ub_l|exact Hb].
+    - rewrite (wrap_id v t Ht). eapply W.pgamma_mono; [apply W.pjoin_ub_r|exact Hd].
+  Qed.
+
+  (** Zero extension interprets the original unsigned word as a nonnegative signed value. *)
+  Local Lemma sign_zext_sound extra w a x target z :
+    L.is_word w x -> W.pgamma w a x ->
+    eval_op (bvzext extra) [(w, x)] = Some (target, z) ->
+    W.pgamma target (Sgn false true true) z.
+  Proof.
+    intros Hx Ha Heval. rewrite eval_zext_value in Heval. inversion Heval; subst target z.
+    rewrite W.F1_gamma. unfold W.sign_gamma, L.signed. rewrite (wrap_id w x Hx).
+    assert (Hs : Word.signed (w + extra)%positive x = x).
+    { apply signed_id. pose proof (half_pos (w + extra)%positive).
+      assert (Hm : modulus w <= half (w + extra)%positive).
+      { change (2 ^ Zpos w <= 2 ^ (Zpos (w + extra) - 1)).
+        rewrite Pos2Z.inj_add. apply Z.pow_le_mono_r; lia. }
+      destruct Hx. lia. }
+    rewrite Hs, (proj2 (Z.ltb_ge x 0) (proj1 Hx)).
+    destruct (x =? 0); reflexivity.
+  Qed.
+
+  (** Sign extension preserves the original signed interpretation at the larger width. *)
+  Local Lemma sign_sext_sound extra w a x target z :
+    L.is_word w x -> W.pgamma w a x ->
+    eval_op (bvsext extra) [(w, x)] = Some (target, z) -> W.pgamma target a z.
+  Proof.
+    intros Hx Ha Heval. rewrite eval_sext_value in Heval. inversion Heval; subst target z.
+    rewrite W.F1_gamma in *. unfold W.sign_gamma, L.signed in *. rewrite signed_wrap.
+    assert (Hs : Word.signed (w + extra)%positive (Word.signed w x) = Word.signed w x).
+    { apply signed_id. pose proof (signed_range w x).
+      assert (Hhalf : half w <= half (w + extra)%positive).
+      { change (2 ^ (Zpos w - 1) <= 2 ^ (Zpos (w + extra) - 1)).
+        rewrite Pos2Z.inj_add. apply Z.pow_le_mono_r; lia. }
+      lia. }
+    now rewrite Hs.
+  Qed.
+
+  (** Complement dispatch agrees with the payload's wrapped-integer contract. *)
+  Local Lemma sign_not_sound w a x target z :
+    L.is_word w x -> W.pgamma w a x ->
+    eval_op bvnot [(w, x)] = Some (target, z) -> W.pgamma target (W.sign_not a) z.
+  Proof.
+    intros Hx Ha Heval. rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval.
+    cbn [eval_unary_tag] in Heval. inversion Heval; subst target z.
+    rewrite wnot_lnot, (wrap_id w x Hx). now apply W.F3_sign_not_sound.
+  Qed.
+
+  (** Negation dispatch agrees with the payload's modular-negation contract. *)
+  Local Lemma sign_neg_sound w a x target z :
+    L.is_word w x -> W.pgamma w a x ->
+    eval_op bvneg [(w, x)] = Some (target, z) -> W.pgamma target (W.sign_neg a) z.
+  Proof.
+    intros Hx Ha Heval. rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
+    cbn [eval_unary_tag] in Heval. inversion Heval; subst target z.
+    now apply W.F4_sign_neg_sound.
+  Qed.
+
+  (** Conjunction checks equal operand widths before applying the payload law. *)
+  Local Lemma sign_and_sound w v a b x y target z :
+    L.is_word w x -> L.is_word v y -> W.pgamma w a x -> W.pgamma v b y ->
+    eval_op bvand [(w, x); (v, y)] = Some (target, z) ->
+    W.pgamma target (W.sign_and a b) z.
+  Proof.
+    intros Hx Hy Ha Hb Heval.
+    pose proof (eval_op_fun2_width bvand BAnd w v x y (target, z) eq_refl Heval) as Hw.
+    subst v. rewrite (eval_op_fun2 bvand w x y BAnd eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst target z.
+    rewrite <- (wrap_id w (wand w x y)) by apply wand_is_word.
+    unfold wand. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
+    now apply W.F5_sign_and_sound.
+  Qed.
+
+  (** Disjunction checks equal operand widths before applying the payload law. *)
+  Local Lemma sign_or_sound w v a b x y target z :
+    L.is_word w x -> L.is_word v y -> W.pgamma w a x -> W.pgamma v b y ->
+    eval_op bvor [(w, x); (v, y)] = Some (target, z) ->
+    W.pgamma target (W.sign_or a b) z.
+  Proof.
+    intros Hx Hy Ha Hb Heval.
+    pose proof (eval_op_fun2_width bvor BOr w v x y (target, z) eq_refl Heval) as Hw.
+    subst v. rewrite (eval_op_fun2 bvor w x y BOr eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst target z.
+    rewrite <- (wrap_id w (wor w x y)) by apply wor_is_word.
+    unfold wor. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
+    now apply W.F6_sign_or_sound.
+  Qed.
+
+  (** Exclusive disjunction checks equal widths before applying the payload law. *)
+  Local Lemma sign_xor_sound w v a b x y target z :
+    L.is_word w x -> L.is_word v y -> W.pgamma w a x -> W.pgamma v b y ->
+    eval_op bvxor [(w, x); (v, y)] = Some (target, z) ->
+    W.pgamma target (W.sign_xor a b) z.
+  Proof.
+    intros Hx Hy Ha Hb Heval.
+    pose proof (eval_op_fun2_width bvxor BXor w v x y (target, z) eq_refl Heval) as Hw.
+    subst v. rewrite (eval_op_fun2 bvxor w x y BXor eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst target z.
+    rewrite <- (wrap_id w (wxor w x y)) by apply wxor_is_word.
+    unfold wxor. rewrite (wrap_id w x Hx), (wrap_id w y Hy).
+    now apply W.F7_sign_xor_sound.
+  Qed.
+
   (** A forward word entry retains each concrete result at its checked width. *)
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted. (* CONVERT: sign_table_laws: No product even after head-reduction. *)
+  Proof.
+    intros o rw wps cs z r Hf Hxs Heval. unfold L.eval_op in Heval.
+    destruct o; destruct wps as [|[w a] [|[v b] [|[u d] [|wp rest]]]];
+      cbn [wfwd] in Hf; try discriminate; injection Hf as <-.
+    all: first
+      [eapply (sign_unary_sound _ W.sign_not); [|exact Hxs|exact Heval]
+      |eapply (sign_unary_sound _ W.sign_neg); [|exact Hxs|exact Heval]
+      |eapply (sign_binary_sound _ (fun _ => W.sign_and)); [|exact Hxs|exact Heval]
+      |eapply (sign_binary_sound _ (fun _ => W.sign_or)); [|exact Hxs|exact Heval]
+      |eapply (sign_binary_sound _ (fun _ => W.sign_xor)); [|exact Hxs|exact Heval]
+      |match type of Heval with eval_op ?o _ = _ =>
+        eapply (sign_binary_sound o (sign_cmp_sym o)); [|exact Hxs|exact Heval]
+       end
+      |eapply sign_select_sound; [exact Hxs|exact Heval]
+      |eapply (sign_unary_sound _ (fun _ => Sgn false true true));
+        [|exact Hxs|exact Heval]
+      |eapply (sign_unary_sound _ (fun a => a)); [|exact Hxs|exact Heval]].
+    all: intros.
+    all: try first
+      [eapply sign_zext_sound; eassumption
+      |eapply sign_sext_sound; eassumption
+      |eapply sign_not_sound; eassumption
+      |eapply sign_neg_sound; eassumption
+      |eapply sign_and_sound; [| | | |eassumption]; eassumption
+      |eapply sign_or_sound; [| | | |eassumption]; eassumption
+      |eapply sign_xor_sound; [| | | |eassumption]; eassumption].
+    all: match goal with
+      | He : eval_op ?k [(?w, ?x); (?v, ?y)] = Some (?t, ?z) |- _ =>
+        let Hw := fresh "Hw" in
+        assert (Hw : w = v) by
+          (eapply (eval_op_cmp_width k _ w v x y (t, z)); eauto; reflexivity);
+        subst v; rewrite sign_cmp_sym_agrees; eapply (sign_cmp_sound k);
+          [tauto|eassumption|eassumption|exact He]
+      end.
+  Qed.
   (** A backward word entry retains each concrete operand in its original position. *)
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
