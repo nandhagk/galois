@@ -43,59 +43,92 @@ End ReducedCode.
 Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
     (K : ROUNDS) <: REDUCED L A B R K.
   Include ReducedCode L A B R K.
+  Module P := Product L A B.
   Definition wrank (p : wparam) (a : t) : nat :=
     A.wrank (fst p) (fst a) + B.wrank (snd p) (snd a).
   Definition gamma (a : t) (c : L.val) : Prop := A.gamma (fst a) c /\ B.gamma (snd a) c.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    exact P.leb_refl.
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    exact P.leb_trans.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    exact P.bot_least.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_bot.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_least.
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    exact P.join_ub_l.
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    exact P.join_ub_r.
+  Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* CONVERT: slots2_top: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    exact P.top_greatest.
+  Qed.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.meet_lb_l.
+  Qed.
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    exact P.widen_ub_l.
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    exact P.widen_ub_r.
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.widen_stable.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    exact P.wrank_widen.
+  Qed.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* CONVERT: slots2_wrank: The reference slots_reduce was not found in the current environment. *)
+  Proof.
+    exact P.wrank_widen_le.
+  Qed.
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* CONVERT: slots2_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    exact P.narrow_between.
+  Qed.
 
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted. (* CONVERT: slots2_gamma_laws: The variable slots_leb was not found in the current environment. *)
+  Proof.
+    exact P.gamma_mono.
+  Qed.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof.
@@ -109,34 +142,126 @@ Module Reduced (L : LANG) (A B : VALUE_DOMAIN L) (R : VALUE_REDUCER L A B)
   Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.gamma_meet.
+  Qed.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_sound.
+  Qed.
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_below.
+  Qed.
+
+  (** One reduction round preserves every value shared by the two components. *)
+  Lemma step_sound : forall x c, gamma x c -> gamma (R.reduce x) c.
+  Proof.
+    intros [a b] c [Ha Hb]. exact (R.reduce_sound a b c Ha Hb).
+  Qed.
+
+  (** Every finite sequence of reduction rounds preserves shared concrete values. *)
+  Lemma iter_sound : forall n x c, gamma x c -> gamma (Nat.iter n R.reduce x) c.
+  Proof.
+    intros n x c Hgamma. induction n as [|n IH].
+    - exact Hgamma.
+    - apply step_sound. exact IH.
+  Qed.
+
+  (** Repeated reduction descends in each original coordinate. *)
+  Lemma iter_lower : forall n x,
+    A.leb (fst (Nat.iter n R.reduce x)) (fst x) = true /\
+    B.leb (snd (Nat.iter n R.reduce x)) (snd x) = true.
+  Proof.
+    intro n. induction n as [|n IH]; intros [a b].
+    - split; [apply A.leb_refl|apply B.leb_refl].
+    - change (A.leb (fst (R.reduce (Nat.iter n R.reduce (a, b)))) a = true /\
+        B.leb (snd (R.reduce (Nat.iter n R.reduce (a, b)))) b = true).
+      destruct (IH (a, b)) as [Ha Hb].
+      destruct (Nat.iter n R.reduce (a, b)) as [u v] eqn:Hiter.
+      destruct (R.reduce_lower u v) as [Hu Hv]. cbn [fst snd] in Ha, Hb.
+      split; [eapply A.leb_trans|eapply B.leb_trans]; eassumption.
+  Qed.
+
+  (** Bottom normalization preserves the meaning of the completed reduction. *)
+  Lemma red_sound : forall x c, gamma x c -> gamma (red x) c.
+  Proof.
+    intros x c Hgamma. unfold red. apply P.normalize_sound.
+    now apply iter_sound.
+  Qed.
+
+  (** Completed reduction descends in both original coordinates. *)
+  Lemma red_components_lower : forall x,
+    A.leb (fst (red x)) (fst x) = true /\ B.leb (snd (red x)) (snd x) = true.
+  Proof.
+    intro x. unfold red.
+    destruct (P.normalize_components_lower (Nat.iter K.rounds R.reduce x)) as [Hna Hnb].
+    destruct (iter_lower K.rounds x) as [Ha Hb].
+    split; [eapply A.leb_trans|eapply B.leb_trans]; eassumption.
+  Qed.
+
+  (** Completed reduction refines the original product. *)
+  Lemma red_lower : forall x, leb (red x) x = true.
+  Proof.
+    intro x. destruct (red_components_lower x) as [Ha Hb].
+    now apply P.components_below.
+  Qed.
+
+  (** Mapping reduction preserves the concrete value at every list position. *)
+  Lemma map_red_sound : forall xs cs,
+    Forall2 gamma xs cs -> Forall2 gamma (map red xs) cs.
+  Proof.
+    intros xs cs Hfacts. induction Hfacts as [|x c xs cs Hhead Htail IH]; cbn [map].
+    - constructor.
+    - constructor; [now apply red_sound|exact IH].
+  Qed.
+
+  (** Mapping reduction after a positional refinement keeps every result below its input. *)
+  Lemma map_red_refines : forall ys xs,
+    Forall2 (fun y x => leb y x = true) ys xs ->
+    Forall2 (fun y x => leb y x = true) (map red ys) xs.
+  Proof.
+    intros ys xs Hbelow. induction Hbelow as [|y x ys xs Hhead Htail IH]; cbn [map].
+    - constructor.
+    - constructor; [|exact IH]. eapply leb_trans; [apply red_lower|exact Hhead].
+  Qed.
+
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
+  Proof.
+    intros o xs cs c Hfacts Heval. apply red_sound.
+    exact (P.forward_sound o xs cs c Hfacts Heval).
+  Qed.
   (** Backward transfer retains operands consistent with the abstract result. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
+  Proof.
+    intros o r xs cs c Hfacts Heval Hr. apply map_red_sound.
+    exact (P.backward_sound o r xs cs c Hfacts Heval Hr).
+  Qed.
   (** Backward transfer refines each operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. apply map_red_refines. apply P.backward_refines.
+  Qed.
   (** Guard transfer retains operands satisfying the concrete guard. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted. (* CONVERT: product_laws: The variable product_arguments was not found in the current *)
+  Proof.
+    intros g xs cs Hfacts Hholds. apply map_red_sound.
+    exact (P.guard_sound g xs cs Hfacts Hholds).
+  Qed.
   (** Guard transfer refines each operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. apply map_red_refines. apply P.guard_refines.
+  Qed.
 End Reduced.
 
 Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
@@ -239,27 +364,43 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     red x = let result := Nat.iter K.rounds R.reduce x in
       if orb (A.is_bot (fst result)) (B.is_bot (snd result))
       then (A.bot, B.bot) else result.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_is_bot : forall a b,
     is_bot (a, b) = orb (A.is_bot a) (B.is_bot b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_leb : forall a b,
     leb a b = orb (is_bot a) (andb (A.leb (fst a) (fst b)) (B.leb (snd a) (snd b))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_wunits : forall a b, wunits (a, b) = A.wunits a + B.wunits b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F2_gamma : forall a b c,
     gamma (a, b) c <-> A.gamma a c /\ B.gamma b c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F3_red_sound : forall x c, gamma x c -> gamma (red x) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact red_sound.
+  Qed.
   Lemma F4_red_lower : forall a b,
     A.leb (fst (red (a, b))) a = true /\ B.leb (snd (red (a, b))) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. exact (red_components_lower (a, b)).
+  Qed.
   Lemma F5_widen : forall p a b,
     widen p a b = if is_bot b then a
       else (A.widen (fst p) (fst a) (fst b), B.widen (snd p) (snd a) (snd b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma T1_red_steps : forall x,
     (T_red x <= k_red *
       (fold_right N.add 0
