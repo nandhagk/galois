@@ -1,51 +1,432 @@
-(** * Polyhedral placeholders
+(** * Certified polyhedral states
 
-    These modules provide the polyhedral state interface.
-    For example, certificate production returns no certificate.
-    Builds on: PolySig. *)
+    Fourier-Motzkin elimination tracks combinations of the input constraints.
+    For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
+    Builds on: PolySig, LinCertSig and the concrete binary trie. *)
 From Stdlib Require Import List ZArith QArith.
 From Argent Require Import Time Std.
-From Galois.Base Require Import KeySig.
+From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import LinForm LinearizeSig NumStateSig LinCertSig PolySig.
 Local Open Scope nat_scope.
 
+Module Z.
+  TimeFun Z.sgn.
+End Z.
+
+Module List.
+  TimeFun List.find.
+  TimeFun List.flat_map.
+End List.
+
+(** A strict flag belongs to an inequality and records a positive strict summand. *)
+Record poly_row (X : Type) := PolyRow {
+  poly_constraint : lcons X;
+  poly_multipliers : list Z;
+  poly_strict : bool
+}.
+
+Arguments poly_constraint {X} _.
+Arguments poly_multipliers {X} _.
+Arguments poly_strict {X} _.
+TimeFun poly_constraint.
+TimeFun poly_multipliers.
+TimeFun poly_strict.
+
+(** Repeated keys are summed before a row participates in elimination. *)
+Definition poly_add_term {X} (encode : X -> positive)
+    (acc : PTrieCode.t (X * Z)) (p : X * Z) : PTrieCode.t (X * Z) :=
+  let key := encode (fst p) in
+  let old := match PTrieCode.get key acc with Some q => snd q | None => 0%Z end in
+  PTrieCode.set key (fst p, (old + snd p)%Z) acc.
+
+TimeFun poly_add_term.
+
+Definition poly_normal_coef {X} (encode : X -> positive) (xs : list (X * Z))
+    : list (X * Z) :=
+  PTrieCode.fold_values
+    (fun acc p => if Z.eqb (snd p) 0 then acc else p :: acc)
+    (fold_left (poly_add_term encode) xs PTrieCode.empty) nil.
+
+TimeFun poly_normal_coef.
+
+Definition poly_normal_row {X} (encode : X -> positive) (r : lcons X) : lcons X :=
+  LCons X (poly_normal_coef encode (lhs r)) (lrel r) (rhs r).
+
+TimeFun poly_normal_row.
+
+Definition poly_coefficient {X} (eqb : X -> X -> bool) (x : X) (r : lcons X) : Z :=
+  fold_right (fun p z => if eqb (fst p) x then (snd p + z)%Z else z) 0%Z (lhs r).
+
+TimeFun poly_coefficient.
+
+Definition poly_scale_coef {X} (a : Z) (xs : list (X * Z)) : list (X * Z) :=
+  map (fun p => (fst p, (a * snd p)%Z)) xs.
+
+TimeFun poly_scale_coef.
+
+Fixpoint poly_weighted (a : Z) (ms : list Z) (b : Z) (ns : list Z) : list Z :=
+  match ms, ns with
+  | m :: ms, n :: ns => (a * m + b * n)%Z :: poly_weighted a ms b ns
+  | _, _ => nil
+  end.
+
+TimeFun poly_weighted.
+
+Definition poly_eq_used {X} (a : Z) (r : lcons X) : bool :=
+  match lrel r with REq => true | RLe => Z.eqb a 0 end.
+
+TimeFun poly_eq_used.
+
+(** Only equality rows can carry a negative multiplier in an elimination step. *)
+Definition poly_add_rows {X} (encode : X -> positive)
+    (a : Z) (p : poly_row X) (b : Z) (q : poly_row X) : poly_row X :=
+  let r := poly_constraint p in
+  let s := poly_constraint q in
+  PolyRow X
+    (LCons X
+      (poly_normal_coef encode (poly_scale_coef a (lhs r) ++ poly_scale_coef b (lhs s)))
+      (if poly_eq_used a r && poly_eq_used b s then REq else RLe)
+      (a * rhs r + b * rhs s)%Z)
+    (poly_weighted a (poly_multipliers p) b (poly_multipliers q))
+    (((0 <? a)%Z && poly_strict p) || ((0 <? b)%Z && poly_strict q)).
+
+TimeFun poly_add_rows.
+
+Definition poly_pad_row {X} (r : poly_row X) : poly_row X :=
+  PolyRow X (poly_constraint r) (0%Z :: poly_multipliers r) (poly_strict r).
+
+TimeFun poly_pad_row.
+
+(** The initial multiplier vectors are the rows of the identity matrix. *)
+Fixpoint poly_initial {X} (encode : X -> positive) (P : list (lcons X * bool))
+    : list (poly_row X) :=
+  match P with
+  | nil => nil
+  | p :: ps =>
+    PolyRow X (poly_normal_row encode (fst p))
+      (1%Z :: map (fun _ => 0%Z) ps) (snd p) ::
+      map poly_pad_row (poly_initial encode ps)
+  end.
+
+TimeFun poly_initial.
+
+Definition poly_pivot {X} (eqb : X -> X -> bool) (x : X) (r : poly_row X) : bool :=
+  match lrel (poly_constraint r) with
+  | REq => negb (Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0)
+  | RLe => false
+  end.
+
+TimeFun poly_pivot.
+
+Definition poly_cancel {X} (encode : X -> positive) (eqb : X -> X -> bool)
+    (x : X) (p r : poly_row X) : poly_row X :=
+  let a := poly_coefficient eqb x (poly_constraint p) in
+  let b := poly_coefficient eqb x (poly_constraint r) in
+  if Z.eqb b 0 then r
+  else poly_add_rows encode (- Z.sgn a * b)%Z p (Z.abs a) r.
+
+TimeFun poly_cancel.
+
+(** An equality pivot eliminates directly; otherwise every opposite-sign pair is combined. *)
+Definition poly_step {X} (encode : X -> positive) (eqb : X -> X -> bool)
+    (x : X) (P : list (poly_row X)) : list (poly_row X) :=
+  match find (poly_pivot eqb x) P with
+  | Some p => map (poly_cancel encode eqb x p) P
+  | None =>
+    let pos := filter (fun r => (0 <? poly_coefficient eqb x (poly_constraint r))%Z) P in
+    let neg := filter (fun r => (poly_coefficient eqb x (poly_constraint r) <? 0)%Z) P in
+    filter (fun r => Z.eqb (poly_coefficient eqb x (poly_constraint r)) 0) P ++
+      flat_map (fun p => map (fun q =>
+        poly_add_rows encode (- poly_coefficient eqb x (poly_constraint q))%Z p
+          (poly_coefficient eqb x (poly_constraint p)) q) neg) pos
+  end.
+
+TimeFun poly_step.
+
+Definition poly_variables {X} (encode : X -> positive) (P : list (lcons X)) : list X :=
+  PTrieCode.fold_values (fun acc x => x :: acc)
+    (fold_left (fun acc r =>
+      fold_left (fun acc p => PTrieCode.set (encode (fst p)) (fst p) acc) (lhs r) acc)
+      P PTrieCode.empty) nil.
+
+TimeFun poly_variables.
+
+Fixpoint poly_run {X} (encode : X -> positive) (eqb : X -> X -> bool)
+    (xs : list X) (P : list (poly_row X)) : list (poly_row X) :=
+  match xs with
+  | nil => P
+  | x :: xs => poly_run encode eqb xs (poly_step encode eqb x P)
+  end.
+
+TimeFun poly_run.
+
+Definition poly_contradiction {X} (r : poly_row X) : bool :=
+  let c := poly_constraint r in
+  match lhs c with
+  | nil =>
+    match lrel c with
+    | REq => negb (Z.eqb (rhs c) 0)
+    | RLe => (rhs c <? 0)%Z || (poly_strict r && (rhs c <=? 0)%Z)
+    end
+  | _ :: _ => false
+  end.
+
+TimeFun poly_contradiction.
+
+Definition poly_negate {X} (r : lcons X) : lcons X :=
+  LCons X (poly_scale_coef (-1)%Z (lhs r)) RLe (- rhs r)%Z.
+
+TimeFun poly_negate.
+
+Definition poly_substitute {X} (encode : X -> positive) (eqb : X -> X -> bool)
+    (x : X) (f : lin X) (r : lcons X) : lcons X :=
+  let a := poly_coefficient eqb x r in
+  LCons X
+    (poly_normal_coef encode
+      (filter (fun p => negb (eqb (fst p) x)) (lhs r) ++ poly_scale_coef a (coef f)))
+    (lrel r) (rhs r - a * cst f)%Z.
+
+TimeFun poly_substitute.
+
+Definition poly_lower (z : Z) (b : bnd) : bnd :=
+  match b with NegInf => Fin z | Fin n => Fin (Z.max z n) | PosInf => PosInf end.
+
+TimeFun poly_lower.
+
+Definition poly_upper (z : Z) (b : bnd) : bnd :=
+  match b with PosInf => Fin z | Fin n => Fin (Z.min z n) | NegInf => NegInf end.
+
+TimeFun poly_upper.
+
 Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: POLY_OPS X L F C.
   Definition t := reach (list (lcons X.t)).
   Definition wparam := unit.
-  (* STUB-CODE *)
-  Definition leb (_ _ : t) := false.
-  (* STUB-CODE *)
+  Definition subst (x : X.t) (f : lin X.t) (r : lcons X.t) : lcons X.t :=
+    poly_substitute X.encode X.eqb x f r.
+
+  Definition fm_elim (x : X.t) (P : list (lcons X.t)) : list (tracked X.t) :=
+    map (fun r => Tracked X.t (poly_constraint r) (poly_multipliers r))
+      (poly_step X.encode X.eqb x
+        (poly_initial X.encode (map (fun r => (r, false)) P))).
+
+  Definition candidate (P : list (lcons X.t)) (c : lcons X.t) (r : poly_row X.t)
+      : option cert :=
+    if poly_contradiction r then
+      match poly_multipliers r with
+      | sc :: ms =>
+        let k := Cert ms (if C.check_empty P ms then 1%Z else sc) false in
+        if C.check_entails P c k then Some k else None
+      | nil => None
+      end
+    else None.
+
+  Fixpoint find_certificate (P : list (lcons X.t)) (c : lcons X.t)
+      (rs : list (poly_row X.t)) : option cert :=
+    match rs with
+    | nil => None
+    | r :: rs =>
+      match candidate P c r with
+      | Some k => Some k
+      | None => find_certificate P c rs
+      end
+    end.
+
+  (** The complement is strict over Q; subtracting one would lose rational countermodels. *)
+  Definition entail_cert (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
+    let input := (poly_negate c, true) :: map (fun r => (r, false)) P in
+    find_certificate P c
+      (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
+        (poly_initial X.encode input)).
+
+  Definition entails_row (P : list (lcons X.t)) (r : lcons X.t) : bool :=
+    match entail_cert P r with Some k => C.check_entails P r k | None => false end.
+
+  Definition keep_row (P : list (lcons X.t)) (r : lcons X.t) : bool :=
+    match lrel r with
+    | RLe => entails_row P r
+    | REq => entails_row P (LCons X.t (lhs r) RLe (rhs r)) &&
+        entails_row P (poly_negate r)
+    end.
+
   Definition bot : t := Unreached.
-  (* STUB-CODE *)
-  Definition is_bot (_ : t) := false.
-  (* STUB-CODE *)
-  Definition join (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
+  Definition is_bot (s : t) : bool :=
+    match s with
+    | Unreached => true
+    | Reached P => entails_row P (LCons X.t nil RLe (-1)%Z)
+    end.
+
+  Definition leb (a b : t) : bool :=
+    match a, b with
+    | Unreached, _ => true
+    | _, Unreached => is_bot a
+    | Reached P, Reached Q => forallb (keep_row P) Q
+    end.
+
+  Definition join (a b : t) : t :=
+    match a, b with
+    | Unreached, _ => b
+    | _, Unreached => a
+    | Reached P, Reached Q => Reached (filter (keep_row Q) P ++ filter (keep_row P) Q)
+    end.
+
   Definition top : t := Reached nil.
-  (* STUB-CODE *)
-  Definition meet (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition widen (_ : wparam) (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition narrow (_ _ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition assign (_ : X.t) (_ : term L.op X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition havoc (_ : X.t) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition assume (_ : L.guard) (_ : list (term L.op X.t)) (_ : t) : t := Unreached.
-  (* STUB-CODE *)
-  Definition range (_ : term L.op X.t) (_ : t) : bnd * bnd := (NegInf, PosInf).
-  (* STUB-CODE *)
-  Definition subst (_ : X.t) (_ : lin X.t) (r : lcons X.t) := r.
-  (* STUB-CODE *)
-  Definition fm_elim (_ : X.t) (_ : list (lcons X.t)) : list (tracked X.t) := nil.
-  (* STUB-CODE *)
-  Definition entail_cert (_ : list (lcons X.t)) (_ : lcons X.t) : option cert := None.
+  Definition meet (a b : t) : t :=
+    match a, b with
+    | Reached P, Reached Q => Reached (P ++ Q)
+    | _, _ => Unreached
+    end.
+
+  Definition widen (_ : wparam) (a b : t) : t :=
+    match a, b with
+    | Unreached, _ => if is_bot b then Unreached else b
+    | _, Unreached => a
+    | Reached P, Reached Q => Reached (filter (keep_row Q) P)
+    end.
+
+  Definition narrow (_ : t) (b : t) : t := b.
+
+  Definition checked_projection (P : list (lcons X.t)) (x : X.t) (r : tracked X.t)
+      : bool :=
+    forallb (fun p => negb (X.eqb (fst p) x)) (lhs (row_of r)) &&
+      C.check_entails P (row_of r) (Cert (mults_of r) 1 false).
+
+  Definition havoc (x : X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached P => Reached (map row_of (filter (checked_projection P x) (fm_elim x P)))
+    end.
+
+  Definition tmp_encode (x : option X.t) : positive :=
+    match x with None => xH | Some y => xO (X.encode y) end.
+
+  Definition tmp_eqb (x y : option X.t) : bool :=
+    match x, y with
+    | None, None => true
+    | Some a, Some b => X.eqb a b
+    | _, _ => false
+    end.
+
+  Definition rename_old (x y : X.t) : option X.t :=
+    if X.eqb y x then None else Some y.
+
+  Definition rename_row (f : X.t -> option X.t) (r : lcons X.t) : lcons (option X.t) :=
+    LCons (option X.t) (map (fun p => (f (fst p), snd p)) (lhs r)) (lrel r) (rhs r).
+
+  Fixpoint untag (xs : list (option X.t * Z)) : option (list (X.t * Z)) :=
+    match xs with
+    | nil => Some nil
+    | (None, _) :: _ => None
+    | (Some x, z) :: xs =>
+      match untag xs with Some ys => Some ((x, z) :: ys) | None => None end
+    end.
+
+  Definition assignment_row (x : X.t) (f : lin X.t) : lcons (option X.t) :=
+    LCons (option X.t)
+      ((Some x, 1%Z) :: map (fun p => (rename_old x (fst p), (- snd p)%Z)) (coef f))
+      REq (cst f).
+
+  Definition assigned_candidate (P : list (lcons X.t)) (x : X.t) (f : lin X.t)
+      (r : poly_row (option X.t)) : option (lcons X.t) :=
+    match untag (lhs (poly_constraint r)), poly_multipliers r with
+    | Some xs, _ :: ms =>
+      let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+      if C.check_entails P (subst x f c) (Cert ms 1 false) then Some c else None
+    | _, _ => None
+    end.
+
+  Definition assign_linear (x : X.t) (f : lin X.t) (P : list (lcons X.t))
+      : list (lcons X.t) :=
+    flat_map (fun r => match assigned_candidate P x f r with
+      | Some c => c :: nil | None => nil end)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x f, false) ::
+           map (fun r => (rename_row (rename_old x) r, false)) P))).
+
+  Definition assign (x : X.t) (e : term L.op X.t) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached P =>
+      match F.lin_of e with
+      | Some (f, NoWrap) => Reached (assign_linear x f P)
+      | _ => havoc x s
+      end
+    end.
+
+  Definition atom_row (a : atom X.t) : option (lcons X.t) :=
+    match alw a, arw a with
+    | NoWrap, NoWrap =>
+      let cs := poly_normal_coef X.encode
+        (coef (al a) ++ poly_scale_coef (-1)%Z (coef (ar a))) in
+      let b := (cst (ar a) - cst (al a))%Z in
+      Some (match acmp a with
+        | CEq => LCons X.t cs REq b
+        | CLe => LCons X.t cs RLe b
+        | CLt => LCons X.t cs RLe (b - 1)%Z
+        end)
+    | _, _ => None
+    end.
+
+  Definition assume (g : L.guard) (es : list (term L.op X.t)) (s : t) : t :=
+    match s with
+    | Unreached => Unreached
+    | Reached P => Reached
+        (flat_map (fun a => match atom_row a with Some r => r :: nil | None => nil end)
+          (F.atoms_of g es) ++ P)
+    end.
+
+  Definition range_row (f : lin X.t) : lcons (option X.t) :=
+    LCons (option X.t)
+      ((None, 1%Z) :: map (fun p => (Some (fst p), (- snd p)%Z)) (coef f))
+      REq (cst f).
+
+  Definition range_update (a b : Z) (is_eq : bool) (bounds : bnd * bnd) : bnd * bnd :=
+    if (0 <? a)%Z then
+      (if is_eq then poly_lower (- ((- b) / a))%Z (fst bounds) else fst bounds,
+       poly_upper (b / a)%Z (snd bounds))
+    else if (a <? 0)%Z then
+      (poly_lower (- (b / (- a)))%Z (fst bounds),
+       if is_eq then poly_upper ((- b) / (- a))%Z (snd bounds) else snd bounds)
+    else bounds.
+
+  Definition range_candidate (P : list (lcons X.t)) (f : lin X.t)
+      (bounds : bnd * bnd) (r : poly_row (option X.t)) : bnd * bnd :=
+    let c := poly_constraint r in
+    if forallb (fun p => match fst p with None => true | Some _ => false end) (lhs c) then
+      let a := poly_coefficient tmp_eqb None c in
+      let conclusion := LCons X.t (poly_scale_coef a (coef f)) (lrel c)
+        (rhs c - a * cst f)%Z in
+      match poly_multipliers r with
+      | _ :: ms =>
+        if C.check_entails P conclusion (Cert ms 1 false) then
+          range_update a (rhs c)
+            (match lrel c with REq => true | RLe => false end) bounds
+        else bounds
+      | nil => bounds
+      end
+    else bounds.
+
+  Definition range_linear (P : list (lcons X.t)) (f : lin X.t) : bnd * bnd :=
+    let input := range_row f :: map (rename_row (@Some X.t)) P in
+    let vars := poly_variables X.encode (LCons X.t (coef f) REq (cst f) :: P) in
+    fold_left (range_candidate P f)
+      (poly_run tmp_encode tmp_eqb (map (@Some X.t) vars)
+        (poly_initial tmp_encode (map (fun r => (r, false)) input))) (NegInf, PosInf).
+
+  Definition range (e : term L.op X.t) (s : t) : bnd * bnd :=
+    match s with
+    | Unreached => (NegInf, PosInf)
+    | Reached P =>
+      match F.lin_of e with
+      | Some (f, NoWrap) => range_linear P f
+      | Some (_, WrapTo lo hi) => if (lo <=? hi)%Z then (Fin lo, Fin hi) else (NegInf, PosInf)
+      | None => (NegInf, PosInf)
+      end
+    end.
 End PolyCode.
 
 Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
@@ -155,21 +536,39 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
         (length (prows s) + 2) (nell s + F.bits_e e + 1) + N.to_nat (F.T_lin_of e).
   Definition range_bits (e : term L.op X.t) (s : t) : nat := range_work e s.
-  TimeFun bot.
-  TimeFun top.
-  TimeFun meet.
-  TimeFun leb.
-  TimeFun join.
-  TimeFun is_bot.
-  TimeFun widen.
-  TimeFun narrow.
-  TimeFun assign.
-  TimeFun havoc.
-  TimeFun assume.
-  TimeFun range.
   TimeFun subst.
   TimeFun fm_elim.
+  TimeFun candidate.
+  TimeFun find_certificate.
   TimeFun entail_cert.
+  TimeFun entails_row.
+  TimeFun keep_row.
+  TimeFun bot.
+  TimeFun is_bot.
+  TimeFun leb.
+  TimeFun join.
+  TimeFun top.
+  TimeFun meet.
+  TimeFun widen.
+  TimeFun narrow.
+  TimeFun checked_projection.
+  TimeFun havoc.
+  TimeFun tmp_encode.
+  TimeFun tmp_eqb.
+  TimeFun rename_old.
+  TimeFun rename_row.
+  TimeFun untag.
+  TimeFun assignment_row.
+  TimeFun assigned_candidate.
+  TimeFun assign_linear.
+  TimeFun assign.
+  TimeFun atom_row.
+  TimeFun assume.
+  TimeFun range_row.
+  TimeFun range_update.
+  TimeFun range_candidate.
+  TimeFun range_linear.
+  TimeFun range.
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
@@ -195,7 +594,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: assume_work omits the number of emitted atoms. *)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -228,13 +627,13 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (length (prows s) + 3)^2 *
       (n (prows s) + terms s + tsize e + length (prows s) + 3) *
       (nell s + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: x=1, e=Leaf 1, s=[x<=0] gives 2804+t = 3204+t. *)
   (** Havoc charges row normalization and one elimination of the selected variable. *)
   Lemma F_havoc_work : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
       (length (prows s) + 1)^2 * (n (prows s) + terms s + length (prows s) + 1) *
       (nell s + X.bits x + 1)^2.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: x=1, s=[x<=0] gives 404 = 504. *)
   (** Assumption charges every emitted atom and the bits of its merged coefficients. *)
   Lemma F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) =
@@ -242,7 +641,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (fold_right Nat.add 0%nat (map tsize es) + 1) *
         (F.bits_es g es + Nat.log2 (fold_right Nat.add 0%nat (map tsize es)) + 1)) +
       F.T_atoms_of g es)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: empty P and two Leaf 1 operands give 3+t = 6+t. *)
   Definition k_cert : N := 1%N. (* STUB *)
   Lemma T_entail_cert_raw : forall P c,
     (T_entail_cert P c <= k_cert * N.of_nat
@@ -314,8 +713,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
   Proof. Admitted. (* STUB *)
-  (* STUB-CODE *)
-  Definition keep (_ : list (lcons X.t)) (_ : lcons X.t) : bool := false.
+  Definition keep (P : list (lcons X.t)) (r : lcons X.t) : bool := keep_row P r.
   TimeFun keep.
   Definition entails (P : list (lcons X.t)) (r : lcons X.t) : bool :=
     match entail_cert P r with Some k => C.check_entails P r k | None => false end.
