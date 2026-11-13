@@ -624,6 +624,41 @@ Proof.
   split; intro Heq; subst; contradiction.
 Qed.
 
+(** Pointwise inclusion of generators preserves their equivalence closures. *)
+Lemma equality_closure_mono : forall (R S : positive -> positive -> Prop),
+  (forall a b, R a b -> S a b) ->
+  forall a b, clos_refl_sym_trans positive R a b -> clos_refl_sym_trans positive S a b.
+Proof.
+  intros R S Hinclude a b Hrelated. induction Hrelated as
+    [a b Hedge|a|a b Hrelated IH|a b c Hleft IHleft Hright IHright].
+  - apply rst_step. exact (Hinclude a b Hedge).
+  - apply rst_refl.
+  - now apply rst_sym.
+  - eapply rst_trans; eassumption.
+Qed.
+
+(** Pointwise equivalent generators have pointwise equivalent closures. *)
+Lemma equality_closure_equiv : forall (R S : positive -> positive -> Prop),
+  (forall a b, R a b <-> S a b) ->
+  forall a b, clos_refl_sym_trans positive R a b <-> clos_refl_sym_trans positive S a b.
+Proof.
+  intros R S Hequiv a b. split; intro Hrelated.
+  - eapply equality_closure_mono; [|exact Hrelated].
+    intros x y Hedge. exact (proj1 (Hequiv x y) Hedge).
+  - eapply equality_closure_mono; [|exact Hrelated].
+    intros x y Hedge. exact (proj2 (Hequiv x y) Hedge).
+Qed.
+
+(** The log's old equality relation can be replaced by an equivalent forest observation. *)
+Lemma equality_log_cons_transport : forall edges i j (R : positive -> positive -> Prop),
+  (forall a b, equality_log edges a b <-> R a b) ->
+  forall a b, equality_log ((i, j) :: edges) a b <->
+    clos_refl_sym_trans positive (fun x y => R x y \/ (x, y) = (i, j)) a b.
+Proof.
+  intros edges i j R Hequiv a b. rewrite equality_log_cons.
+  apply equality_closure_equiv. intros x y. now rewrite Hequiv.
+Qed.
+
 End EqualityLogFacts.
 
 (** * Declaration tables built in source order *)
