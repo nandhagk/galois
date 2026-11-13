@@ -5104,6 +5104,51 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     assert (value = 0)%Z by lia. now subst value.
   Qed.
 
+  (** A closed lower relation remains below every Floyd round. *)
+  Lemma fw_round_above_closed : forall u current k,
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall a b, RelationalPathBounds.below (u a b) (entry current a b)) ->
+    u k k = Some 0%Z -> pivot_present k current = true ->
+    forall a b, RelationalPathBounds.below
+      (u a b) (entry (fw_round k current) a b).
+  Proof.
+    intros u current k Hclosed Hbelow Hzero Hpresent a b.
+    rewrite (entry_fw_present k current Hpresent a b).
+    apply (RelationalPathBounds.floyd_above_closed K.t path_key_dec
+      u (entry current) k Hclosed Hbelow Hzero a b).
+  Qed.
+
+  Lemma fw_pivots_above_closed : forall ks current u,
+    (forall k, In k ks -> In (K.encode k) (support current)) ->
+    (forall k, In k ks -> u k k = Some 0%Z) ->
+    (forall p, RelationalPathBounds.closed_at u p) ->
+    (forall a b, RelationalPathBounds.below (u a b) (entry current a b)) ->
+    forall a b, RelationalPathBounds.below
+      (u a b) (entry (fw_pivots ks current) a b).
+  Proof.
+    induction ks as [|k ks IH]; intros current u Hsupport Hzero Hclosed Hbelow a b.
+    - exact (Hbelow a b).
+    - assert (Hpresent : pivot_present k current = true).
+      { apply pivot_present_support. apply Hsupport. now left. }
+      assert (Hnext : forall x y, RelationalPathBounds.below
+        (u x y) (entry (fw_round k current) x y)).
+      { intros x y. eapply fw_round_above_closed;
+          [exact Hclosed|exact Hbelow|apply Hzero; now left|exact Hpresent]. }
+      assert (Haccept : nonnegative k (fw_round k current) = true).
+      { unfold nonnegative. destruct (entry (fw_round k current) k k) as [z|]
+          eqn:Hentry; [|reflexivity].
+        pose proof (Hnext k k) as Hbound. rewrite (Hzero k (or_introl eq_refl)),
+          Hentry in Hbound.
+        apply Z.leb_le. exact Hbound. }
+      cbn [fw_pivots]. rewrite Haccept.
+      apply IH.
+      + intros q Hq. apply (proj2 (support_round k current (K.encode q))).
+        apply Hsupport. now right.
+      + intros q Hq. apply Hzero. now right.
+      + exact Hclosed.
+      + exact Hnext.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
