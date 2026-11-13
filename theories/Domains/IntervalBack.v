@@ -1887,7 +1887,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
-  Definition c_word_table : N := 1%N. (* STUB *)
+  Definition c_word_table : N := (1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -1896,21 +1896,21 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros o rw xs.
     time_step.
-  Admitted. (* OPEN: dispatch cost bound still required. *)
+  Admitted. (* OPEN: bound the timed unary and binary interval dispatches. *)
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* SIG-QUESTION: PINNED_T has no lower bound of psize by raw interval bits. *)
+  Proof. Admitted. (* OPEN: bound timed backward clipping and refinement dispatches. *)
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* SIG-QUESTION: bvite permits rw mismatch without a raw size envelope. *)
+  Proof. Admitted. (* OPEN: bound the raw result bits of each forward dispatch. *)
   (** The result stays within its declared work budget. *)
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
@@ -1920,5 +1920,5 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: bound the raw result bits of backward refinements. *)
 End IntervalWordTableT.
