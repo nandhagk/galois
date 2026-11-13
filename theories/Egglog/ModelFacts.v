@@ -131,6 +131,34 @@ Module UnionFindFacts (U : UNION_FIND).
   Qed.
 End UnionFindFacts.
 
+Module ConcreteUnionFindFacts.
+  (** Every stored key occurs in its own representative class; absent keys are singletons. *)
+  Lemma size_of_positive : forall u x, 1 <= UnionFind.size_of u x.
+  Proof.
+    intros u x. unfold UnionFind.size_of.
+    destruct (PTrieCode.get x (UnionFind.parents u)) as [parent |] eqn:Hget; [| lia].
+    assert (Hsupport : In x (UnionFind.support u)).
+    { unfold UnionFind.support. apply in_map_iff. exists (x, parent).
+      split; [reflexivity | now apply PTrie.elements_spec]. }
+    assert (Hclass : In x (filter
+      (fun y => Pos.eqb (UnionFind.repr u y) (UnionFind.repr u x)) (UnionFind.support u))).
+    { apply filter_In. split; [exact Hsupport | apply Pos.eqb_refl]. }
+    destruct (filter (fun y => Pos.eqb (UnionFind.repr u y) (UnionFind.repr u x))
+      (UnionFind.support u)); [contradiction | cbn; lia].
+  Qed.
+
+  (** A class is bounded by membership, with one reserved for an absent singleton. *)
+  Lemma size_of_card_bound : forall u x, UnionFind.wf u ->
+    UnionFind.size_of u x <= Nat.max 1 (UnionFind.card u).
+  Proof.
+    intros u x Hwf.
+    destruct (PTrieCode.get x (UnionFind.parents u)) as [parent |] eqn:Hget.
+    - eapply Nat.le_trans; [apply UnionFind.size_of_le_card; [exact Hwf |] | apply Nat.le_max_r].
+      unfold UnionFind.mem. rewrite Hget. discriminate.
+    - unfold UnionFind.size_of. rewrite Hget. apply Nat.le_max_l.
+  Qed.
+End ConcreteUnionFindFacts.
+
 Section ModelFacts.
 Context {V : Type} (prim : positive -> list V -> option V)
   (merge : positive -> V -> V -> V).
