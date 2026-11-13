@@ -342,10 +342,14 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|lo hi] b Hbot; [reflexivity|discriminate].
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
@@ -360,7 +364,9 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|lo [|hi|]]; reflexivity.
+  Qed.
 
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
   Proof.
@@ -370,17 +376,78 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
   (** Meet is below its right operand. *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|la ha] [|lb hb]; cbn; try reflexivity.
+    destruct (bounds_nonempty (bound_max la lb) (bound_min ha hb)); cbn; [|reflexivity].
+    apply andb_true_iff. split; [apply bound_max_upper_r|apply bound_min_lower_r].
+  Qed.
+
+  (** The widened lower endpoint covers the candidate endpoint. *)
+  Lemma widen_lower_next : forall ts old next,
+    bound_leb (widen_lower ts old next) next = true.
+  Proof.
+    intros ts old next. unfold widen_lower.
+    destruct (bound_leb old next) eqn:Hle; [exact Hle|].
+    destruct next as [|z|]; cbn; try reflexivity.
+    destruct (T.below ts z) as [u|] eqn:Hbelow; cbn; [|reflexivity].
+    apply Z.leb_le. exact (proj2 (T.below_sound ts z u Hbelow)).
+  Qed.
+
+  (** The widened lower endpoint covers the previous endpoint. *)
+  Lemma widen_lower_old : forall ts old next,
+    bound_leb (widen_lower ts old next) old = true.
+  Proof.
+    intros ts old next. destruct (bound_leb old next) eqn:Hle.
+    - unfold widen_lower. rewrite Hle. apply bound_leb_refl.
+    - eapply bound_leb_trans with (b := next); [apply widen_lower_next|].
+      destruct (bound_leb_total old next) as [Horder|Horder]; congruence.
+  Qed.
+
+  (** The widened upper endpoint covers the candidate endpoint. *)
+  Lemma widen_upper_next : forall ts old next,
+    bound_leb next (widen_upper ts old next) = true.
+  Proof.
+    intros ts old next. unfold widen_upper.
+    destruct (bound_leb next old) eqn:Hle; [exact Hle|].
+    destruct next as [|z|]; cbn; try reflexivity.
+    destruct (T.above ts z) as [u|] eqn:Habove; cbn; [|reflexivity].
+    apply Z.leb_le. exact (proj2 (T.above_sound ts z u Habove)).
+  Qed.
+
+  (** The widened upper endpoint covers the previous endpoint. *)
+  Lemma widen_upper_old : forall ts old next,
+    bound_leb old (widen_upper ts old next) = true.
+  Proof.
+    intros ts old next. destruct (bound_leb next old) eqn:Hle.
+    - unfold widen_upper. rewrite Hle. apply bound_leb_refl.
+    - eapply bound_leb_trans with (b := next); [|apply widen_upper_next].
+      destruct (bound_leb_total old next) as [Horder|Horder]; congruence.
+  Qed.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable widen_lower_old was not found in the current environment. *)
+  Proof.
+    intros p a b. unfold widen, interval_stable_widen.
+    destruct (interval_leb b a); [apply leb_refl|].
+    destruct a as [|la ha], b as [|lb hb]; cbn; try reflexivity;
+      try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply widen_lower_old|apply widen_upper_old].
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* CONVERT: interval_laws: The variable widen_lower_next was not found in the current *)
+  Proof.
+    intros p a b. unfold widen, interval_stable_widen.
+    destruct (interval_leb b a) eqn:Hstable; [exact Hstable|].
+    destruct a as [|la ha], b as [|lb hb]; cbn; try reflexivity;
+      try (now rewrite !bound_leb_refl).
+    apply andb_true_iff. split; [apply widen_lower_next|apply widen_upper_next].
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hstable. unfold leb in Hstable.
+    unfold widen, interval_stable_widen. now rewrite Hstable.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
@@ -405,9 +472,24 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
     + unfold narrow_bound. destruct ha; try assumption; apply bound_leb_refl.
   Qed.
 
+  (** Endpoint membership agrees with the reflected order on finite bounds. *)
+  Lemma in_bnd_order : forall lo hi z,
+    in_bnd lo hi z <->
+      bound_leb lo (Fin z) = true /\ bound_leb (Fin z) hi = true.
+  Proof.
+    intros [|lo|] [|hi|] z; unfold in_bnd; cbn [bound_leb]; rewrite ?Z.leb_le;
+      intuition congruence.
+  Qed.
+
   (** Abstract inclusion entails concrete inclusion. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted. (* CONVERT: interval_gamma_laws: Unable to unify "bound_leb ?a ?c = true" with *)
+  Proof.
+    intros [|la ha] [|lb hb] z Hle Ha;
+      cbn [leb interval_leb gamma in_itv] in *; try contradiction; try discriminate.
+    apply andb_true_iff in Hle as [Hlower Hupper].
+    apply in_bnd_order in Ha as [Hlo Hhi]. apply in_bnd_order. split;
+      eapply bound_leb_trans; eassumption.
+  Qed.
   (** Bottom describes no concrete value. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
   Proof.
@@ -415,10 +497,28 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
   (** Top describes every concrete value. *)
   Lemma gamma_top : forall c, gamma top c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro c. split; trivial.
+  Qed.
   (** Meet retains values described by both operands. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted. (* CONVERT: interval_meet_sound: Not an inductive product. *)
+  Proof.
+    intros [|la ha] [|lb hb] z Ha Hb;
+      cbn [gamma in_itv] in Ha, Hb; try contradiction.
+    apply in_bnd_order in Ha as [Hla Hha].
+    apply in_bnd_order in Hb as [Hlb Hhb].
+    assert (Hlo : bound_leb (bound_max la lb) (Fin z) = true).
+    { apply bound_max_least; assumption. }
+    assert (Hhi : bound_leb (Fin z) (bound_min ha hb) = true).
+    { apply bound_min_greatest; assumption. }
+    assert (Hordered : bound_leb (bound_max la lb) (bound_min ha hb) = true).
+    { eapply bound_leb_trans; eassumption. }
+    assert (Hnonempty : bounds_nonempty (bound_max la lb) (bound_min ha hb) = true).
+    { destruct (bound_max la lb), (bound_min ha hb); cbn in *;
+        try discriminate; assumption. }
+    unfold meet, interval_meet. rewrite Hnonempty.
+    apply in_bnd_order. split; assumption.
+  Qed.
   (** A positive bottom test excludes every concrete value. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
   Proof.
@@ -426,7 +526,9 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
   Qed.
   (** Every value below a recognized bottom is recognized as bottom. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|la ha] [|lb hb]; cbn; intros; congruence.
+  Qed.
   (** Forward transfer contains every successful concrete result. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
