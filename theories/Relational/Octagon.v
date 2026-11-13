@@ -3994,6 +3994,18 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (K.eqb a i), (K.eqb b j); reflexivity.
   Qed.
 
+  (** Twin insertion changes precisely its two signed coordinates. *)
+  Lemma entry_add_cons_coordinates : forall i j d m a b,
+    entry (add_cons i j d m) a b =
+      if same_coordinate a b i j then Some (lower_bound d (entry m i j))
+      else if same_coordinate a b (flip j) (flip i)
+        then Some (lower_bound d (entry m (flip j) (flip i)))
+        else entry m a b.
+  Proof.
+    intros i j d m a b. unfold add_cons.
+    now rewrite !entry_put_coordinate.
+  Qed.
+
   Lemma coordinate_flip : forall a b i j,
     same_coordinate (flip b) (flip a) i j =
     same_coordinate a b (flip j) (flip i).
