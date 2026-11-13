@@ -229,6 +229,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Include INCREMENTAL_SPEC L S RS R Sol Checker.
   Include SourceBindingFacts L S Checker.
   Include SourceRowFacts L S.
+  Module TopFacts := SourceTopFacts L Top S.
 
   (** Initialization has no stored value at any key. *)
   Lemma value_init : forall x, value init x = None.
@@ -970,9 +971,81 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     - inversion Hrun; subst; exact Hleast.
   Qed.
 
+  (** State-domain closedness is the Boolean support condition of the shared helper. *)
+  Lemma present_support_closed : forall p st,
+    closed p (dom st) -> TopFacts.support_closed p (present st).
+  Proof.
+    intros p st Hclosed r y x Hr Hy HE Hx; apply (proj2 (present_spec st x)).
+    exact (Hclosed r y x Hr Hy (proj1 (present_spec st y) HE) Hx).
+  Qed.
+
+  (** A closed partial post-solution extends to a global one by top outside its domain. *)
+  Lemma top_extend_state_post : forall p kept s,
+    S.wf p -> closed p (dom kept) ->
+    (forall r y, In r (S.rows p) -> In y (S.writes p r) -> dom kept y ->
+      row_ok L.leb s (S.target p r) (S.eval p r s) = true) ->
+    S.post_solution p (TopFacts.top_extend (present kept) s).
+  Proof.
+    intros p kept s Hwf Hclosed Hpost; apply TopFacts.top_extend_post.
+    - exact Hwf.
+    - apply present_support_closed; exact Hclosed.
+    - intros r y Hr Hy HE; exact (Hpost r y Hr Hy (proj1 (present_spec kept y) HE)).
+  Qed.
+
+  (** A sound stored lookup has a global post-solution extension. *)
+  Lemma inv_top_post : forall p st, S.wf p -> inv p st ->
+    S.post_solution p (TopFacts.top_extend (present st) (look st)).
+  Proof.
+    intros p st Hwf [Hclosed Hpost]; apply top_extend_state_post; assumption.
+  Qed.
+
+  (** Exact deletion preserves the old-program closure on the edited domain. *)
+  Lemma edit_closed_old : forall p p' ch st, inv p st -> closed p (dom (edit p p' ch st)).
+  Proof.
+    intros p p' ch st Hinv r y x Hr Hy Hnew Hx.
+    apply (proj2 (edit_dom_keys p p' ch st x)).
+    apply (proj1 (edit_dom_keys p p' ch st y)) in Hnew.
+    exact (invalidate_keys_closed_old p p' ch st Hinv r y x Hr Hy Hnew Hx).
+  Qed.
+
+  (** A retained old write excludes its row from the changed list. *)
+  Lemma retained_old_row_unchanged : forall p p' ch st r y,
+    In r (S.rows p) -> In y (S.writes p r) -> dom st y ->
+    ~ In y (invalidate_keys p p' ch st) -> ~ In r ch.
+  Proof.
+    intros p p' ch st r y Hr Hy Hdom Hkeep Hchanged; apply Hkeep.
+    eapply invalidate_keys_changed; [exact Hchanged|left; split; eassumption|exact Hdom].
+  Qed.
+
+  (** New global post-solutions satisfy unchanged old rows touching retained keys. *)
+  Lemma new_post_retained_old : forall p p' ch st s,
+    edit_covers p p' ch -> S.post_solution p' s ->
+    forall r y, In r (S.rows p) -> In y (S.writes p r) -> dom (edit p p' ch st) y ->
+      row_ok L.leb s (S.target p r) (S.eval p r s) = true.
+  Proof.
+    intros p p' ch st s Hcovers Hpost r y Hr Hy Hnew.
+    apply (proj1 (edit_dom_keys p p' ch st y)) in Hnew as [Hdom Hkeep].
+    pose proof (retained_old_row_unchanged p p' ch st r y Hr Hy Hdom Hkeep) as Hunchanged.
+    destruct (Hcovers r Hunchanged) as [Hrows Hbody].
+    destruct (Hbody Hr) as [Htarget [Hdeps [Hsides Heval]]].
+    rewrite Htarget, Heval; apply Hpost; apply (proj1 Hrows); exact Hr.
+  Qed.
+
   Lemma edit_least : forall p p' ch st, S.wf p -> edit_covers p p' ch ->
     inv p st -> least_on p st -> least_on p' (edit p p' ch st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p p' ch st Hwf Hcovers Hinv Hleast s Hpost x v Hvalue.
+    assert (Hpatched : S.post_solution p
+      (TopFacts.top_extend (present (edit p p' ch st)) s)).
+    { apply top_extend_state_post; [exact Hwf|apply edit_closed_old; exact Hinv|].
+      exact (new_post_retained_old p p' ch st s Hcovers Hpost). }
+    pose proof (Hleast (TopFacts.top_extend (present (edit p p' ch st)) s) Hpatched x v
+      (edit_keeps p p' ch st x v Hvalue)) as Hbound.
+    assert (Hpresent : present (edit p p' ch st) x = true).
+    { apply (proj2 (present_spec (edit p p' ch st) x)); exists v; exact Hvalue. }
+    rewrite (TopFacts.top_extend_on (present (edit p p' ch st)) s x Hpresent) in Hbound.
+    exact Hbound.
+  Qed.
 
   Lemma from_scratch_agrees : forall p st s x v, S.wf p -> S.monotone p ->
     inv p st -> least_on p st -> least_solution p s -> value st x = Some v ->
