@@ -969,6 +969,67 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   Qed.
 
 
+  (** Appending a one bit to a nonnegative double has constant cost. *)
+  Lemma T_Z_add_double_one : forall q, (0 <= q)%Z ->
+    (Z.T_add (2 * q) 1 <= 3)%N.
+  Proof.
+    intros [|p|p] Hq.
+    - change (1 <= 3)%N. lia.
+    - change (Z.T_add (Z.pos (xO p)) 1 <= 3)%N.
+      time_unfold Z.T_add. time_unfold Pos.T_add. time_cbn. lia.
+    - lia.
+  Qed.
+
+  (** Positive division charges numerator digits times denominator digits. *)
+  Lemma T_Z_pos_div_bilinear : forall a b, (0 < b)%Z ->
+    (Z.T_pos_div_eucl a b <=
+      32 * N.of_nat (Pos.size_nat a) * (N.of_nat (Z.size_nat b) + 1))%N.
+  Proof.
+    intros a b Hb. induction a as [a IH|a IH|]; time_unfold Z.T_pos_div_eucl;
+      cbn [Pos.size_nat].
+    - destruct (Z.pos_div_eucl_sizes a b Hb) as (Hq0 & Hr0 & Hq & Hr).
+      destruct (Z.pos_div_eucl a b) as [q r]. cbn [fst snd] in *.
+      pose proof (Z.T_mul_two_le r). pose proof (Z.T_mul_two_le q).
+      pose proof (T_Z_add_double_one r Hr0). pose proof (T_Z_add_double_one q Hq0).
+      pose proof (Z.T_ltb_le (2 * r + 1) b). pose proof (Z.T_sub_le (2 * r + 1) b).
+      pose proof (Z.size_nat_succ_double r Hr0).
+      destruct (2 * r + 1 <? b)%Z; lia.
+    - destruct (Z.pos_div_eucl_sizes a b Hb) as (Hq0 & Hr0 & Hq & Hr).
+      destruct (Z.pos_div_eucl a b) as [q r]. cbn [fst snd] in *.
+      pose proof (Z.T_mul_two_le r). pose proof (Z.T_mul_two_le q).
+      pose proof (T_Z_add_double_one q Hq0).
+      pose proof (Z.T_ltb_le (2 * r) b). pose proof (Z.T_sub_le (2 * r) b).
+      pose proof (Z.size_nat_double r Hr0).
+      destruct (2 * r <? b)%Z; lia.
+    - pose proof (Z.T_leb_le 2 b). cbn [Z.size_nat Pos.size_nat] in *. lia.
+  Qed.
+
+  (** Correcting signs adds only a linear quotient/remainder cost. *)
+  Lemma T_Z_div_eucl_bilinear : forall a b,
+    (Z.T_div_eucl a b <=
+      64 * (N.of_nat (Z.size_nat a) + 1) * (N.of_nat (Z.size_nat b) + 1))%N.
+  Proof.
+    intros [|a|a] [|b|b]; time_unfold Z.T_div_eucl; cbn [Z.size_nat];
+      try lia;
+      pose proof (T_Z_pos_div_bilinear a _ (eq_refl : (0 < Z.pos b)%Z));
+      destruct (Z.pos_div_eucl_sizes a (Z.pos b) eq_refl) as (Hq0 & Hr0 & Hq & Hr);
+      destruct (Z.pos_div_eucl a (Z.pos b)) as [q r]; cbn [fst snd Z.size_nat] in *;
+      pose proof (Z.T_opp_le q); pose proof (Z.T_opp_le r);
+      pose proof (Z.T_opp_le (q + 1)); pose proof (Z.T_add_le q 1);
+      pose proof (Z.T_add_le (Z.pos b) r); pose proof (Z.T_add_le (Z.neg b) r);
+      pose proof (Z.T_sub_le (Z.pos b) r);
+      destruct r; cbn [Z.size_nat Pos.size_nat] in *; nia.
+  Qed.
+
+  (** Integer division has a bilinear bit-cost bound, including zero divisors. *)
+  Lemma T_Z_div_bilinear : forall a b,
+    (Z.T_div a b <=
+      65 * N.of_nat (Z.size_nat a + 1) * N.of_nat (Z.size_nat b + 1))%N.
+  Proof.
+    intros a b. time_unfold Z.T_div.
+    pose proof (T_Z_div_eucl_bilinear a b). time_cbn_all. nia.
+  Qed.
+
   Definition c_lc : N := 1. (* STUB *)
   Lemma T_combine_le : forall P ms, (T_combine P ms <= c_lc * N.of_nat ((csize P ms +
     1)%nat))%N.
