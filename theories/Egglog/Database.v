@@ -999,6 +999,73 @@ Proof.
     destruct (Hbounded h g j Hget). lia.
 Qed.
 
+Definition database_rank_groups_fresh (start : N)
+    (groups : PTrieCode.t (N * N)) : Prop :=
+  forall f g j, PTrieCode.get f groups = Some (g, j) -> (g < start)%N.
+
+Lemma database_rank_groups_fresh_empty :
+  database_rank_groups_fresh 0%N PTrieCode.empty.
+Proof.
+  intros f g j Hget. rewrite PTrie.get_empty in Hget. discriminate.
+Qed.
+
+Lemma database_rank_groups_fresh_step : forall start groups f,
+  database_rank_groups_fresh start groups ->
+  let place := match PTrieCode.get f groups with
+    | Some position => position | None => (start, 0%N) end in
+  database_rank_groups_fresh (N.succ start)
+    (PTrieCode.set f (fst place, N.succ (snd place)) groups).
+Proof.
+  intros start groups f Hfresh place h g j Hget.
+  destruct (Pos.eq_dec h f) as [-> | Hne].
+  - rewrite PTrie.get_set_same in Hget. injection Hget as <- <-.
+    unfold place. destruct (PTrieCode.get f groups) as [[rank offset] |] eqn:Hprior;
+      cbn [fst snd].
+    + pose proof (Hfresh f rank offset Hprior). lia.
+    + lia.
+  - rewrite PTrie.get_set_other in Hget by exact Hne.
+    pose proof (Hfresh h g j Hget). lia.
+Qed.
+
+Definition database_rank_groups_unique (groups : PTrieCode.t (N * N)) : Prop :=
+  forall f h g j k, PTrieCode.get f groups = Some (g, j) ->
+    PTrieCode.get h groups = Some (g, k) -> f = h.
+
+Lemma database_rank_groups_unique_empty :
+  database_rank_groups_unique PTrieCode.empty.
+Proof.
+  intros f h g j k Hget _. rewrite PTrie.get_empty in Hget. discriminate.
+Qed.
+
+Lemma database_rank_groups_unique_step : forall start groups f,
+  database_rank_groups_fresh start groups -> database_rank_groups_unique groups ->
+  let place := match PTrieCode.get f groups with
+    | Some position => position | None => (start, 0%N) end in
+  database_rank_groups_unique
+    (PTrieCode.set f (fst place, N.succ (snd place)) groups).
+Proof.
+  intros start groups f Hfresh Hunique place h k g j l Hh Hk.
+  destruct (Pos.eq_dec h f) as [-> | Hhf];
+    destruct (Pos.eq_dec k f) as [-> | Hkf]; [reflexivity | | |].
+  - rewrite PTrie.get_set_same in Hh.
+    rewrite PTrie.get_set_other in Hk by exact Hkf.
+    injection Hh as Hrank _. unfold place in Hrank.
+    destruct (PTrieCode.get f groups) as [[rank offset] |] eqn:Hprior;
+      cbn [fst] in Hrank.
+    + subst g. exact (Hunique f k rank offset l Hprior Hk).
+    + subst g. pose proof (Hfresh k start l Hk). lia.
+  - rewrite PTrie.get_set_other in Hh by exact Hhf.
+    rewrite PTrie.get_set_same in Hk.
+    injection Hk as Hrank _. unfold place in Hrank.
+    destruct (PTrieCode.get f groups) as [[rank offset] |] eqn:Hprior;
+      cbn [fst] in Hrank.
+    + subst g. exact (Hunique h f rank j offset Hh Hprior).
+    + subst g. pose proof (Hfresh h start j Hh). lia.
+  - rewrite PTrie.get_set_other in Hh by exact Hhf.
+    rewrite PTrie.get_set_other in Hk by exact Hkf.
+    exact (Hunique h k g j l Hh Hk).
+Qed.
+
 Lemma database_rank_slots_from_bound : forall kinds start groups sl,
   database_rank_groups_bounded start groups ->
   forall n d g j, nth_error (database_rank_slots_from kinds start groups sl) n =
