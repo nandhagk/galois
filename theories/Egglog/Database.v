@@ -10302,6 +10302,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (length (snd e) + 1) * (slots_of db (fst e) + 1).
   Definition bucket (db : t) (x : positive) : list use_entry :=
     map snd (filter (fun xe => Pos.eqb (fst xe) x) (uses_entries db)).
+  Lemma bucket_member : forall db x e, In e (bucket db x) <-> uses db x e.
+  Proof.
+    intros db x e. unfold bucket, uses. split.
+    - intros Hmember. apply in_map_iff in Hmember as [[y entry] [Heq Hfilter]].
+      apply filter_In in Hfilter as [Hin Hkey]. cbn [snd fst] in *.
+      apply Pos.eqb_eq in Hkey. subst y entry. exact Hin.
+    - intro Huse. apply in_map_iff. exists (x, e). split; [reflexivity |].
+      apply filter_In. split; [exact Huse |]. cbn [fst]. apply Pos.eqb_refl.
+  Qed.
   Definition use_credit (B : N) (db : t) (xe : positive * use_entry) : nat :=
     N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe)))) *
         entry_weight db (snd xe).
