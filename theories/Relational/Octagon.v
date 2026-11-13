@@ -6907,6 +6907,47 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         twin_path path_sum twin_prefix] in *; try exact I; lia.
   Qed.
 
+  Lemma fw_below_candidate_on_full_scan : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    forall a b, RelationalPathBounds.below (entry (fw direct) a b)
+      (entry (increment_matrix i j d seed) a b).
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    intros Hscan a b.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    pose proof (fw_closed_at_success direct Hwfdirect Hscan) as Hclosed.
+    pose proof (fw_below_incremental_seed m i j d Hwf Hscan) as Hseed.
+    change (forall x y, RelationalPathBounds.below
+      (entry (fw direct) x y) (entry seed x y)) in Hseed.
+    destruct (fw_success_path_invariant direct Hwfdirect Hscan)
+      as [Hbelow_direct _ _ _].
+    destruct (add_cons_inserted_bounds m i j d) as [Hfirst Hsecond].
+    assert (Hedge1 : RelationalPathBounds.below
+      (entry (fw direct) i j) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hfirst]. }
+    assert (Hedge2 : RelationalPathBounds.below
+      (entry (fw direct) (flip j) (flip i)) (Some d)).
+    { eapply RelationalPathBounds.below_trans;
+        [apply Hbelow_direct|exact Hsecond]. }
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (entry seed) i j d Hclosed Hseed Hedge1) as Hone.
+    pose proof (closed_below_edge_extension (entry (fw direct))
+      (RelationalPathBounds.edge_extension (entry seed) i j d)
+      (flip j) (flip i) d Hclosed Hone Hedge2 a b) as Htwo.
+    pose proof (fw_mixed_cycle m i j d Hwf Hscan) as Hmixed.
+    change (RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry seed j (flip j))
+        (entry seed (flip i) i))) in Hmixed.
+    rewrite (incremental_sequential_extension seed i j d Hmixed a b).
+    exact Htwo.
+  Qed.
+
   (** A coherent triangle transports a unary half-bound across one edge. *)
   Lemma unary_half_transport : forall m, coherent m ->
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
