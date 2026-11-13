@@ -7985,14 +7985,188 @@ Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
     <: WORKLIST_LEAST_PLAN L LB S P Q G W Sched B V.
   Definition widening_free (pol : policy L.wparam) : Prop :=
     forall c, trie_get c (heads pol) = None.
+  Definition store_below (u : S.key -> L.t) (s : V.state) : Prop :=
+    forall x, L.leb (V.look s x) (u x) = true.
+
+  Definition state_below (p : S.prog) (pol : policy L.wparam)
+      (u : S.key -> L.t) (s : V.state) : Prop :=
+    V.prepared p pol s /\ store_below u s.
+
+  (** Every successful numbered lookup names a row in the program. *)
+  Lemma source_row_listed : forall p id r,
+    V.source_row p id = Some r -> In r (S.rows p).
+  Proof.
+    intros p id r Hrow.
+    replace id with (Pos.of_succ_nat (Pos.to_nat id - 1)) in Hrow.
+    - rewrite V.F1_numbering in Hrow; eapply nth_error_In; exact Hrow.
+    - apply SuccNat2Pos.inv; pose proof (Pos2Nat.is_pos id); lia.
+  Qed.
+
+  (** Every prepared row lookup names a row in the program. *)
+  Lemma row_at_listed : forall p pol s id r,
+    V.prepared p pol s -> V.row_at s id = Some r -> In r (S.rows p).
+  Proof.
+    intros p pol s id r Hprepared Hrow.
+    destruct Hprepared as [[Hrows _] _].
+    apply (source_row_listed p id r); now rewrite <- Hrows.
+  Qed.
+
+  (** Preparation has the least possible store for every policy. *)
+  Lemma prepare_below : forall p pol u, state_below p pol u (V.prepare p pol).
+  Proof.
+    intros p pol u; split; [apply V.F4_metadata|].
+    intro x; rewrite V.F4_bottom; apply L.bot_least.
+  Qed.
+
+  (** A policy with no heads writes the join on each strict update. *)
+  Lemma update_store : forall p pol s x a, widening_free pol ->
+    ws_store (V.update_one p pol s (x, a)) =
+    if L.leb a (V.look s x) then ws_store s
+    else PTrieCode.set (S.key_code x) (x, L.join (V.look s x) a) (ws_store s).
+  Proof.
+    intros p pol s x a Hfree; rewrite V.F6_indexed.
+    destruct (L.leb a (V.look s x)) eqn:Hcovered; [reflexivity|].
+    rewrite P.update_spec, Hcovered, Hfree.
+    destruct (trie_get (S.key_code x) (ws_armed s)); cbn [fst snd ws_store V.arm].
+    - reflexivity.
+    - exact (proj1 (V.F5_fields p pol (V.readers s (S.key_code x))
+        (WorklistState (PTrieCode.set (S.key_code x)
+          (x, L.join (V.look s x) a) (ws_store s))
+          (PTrieCode.set (S.key_code x) (V.counter s (S.key_code x)) (ws_counters s))
+          (ws_queue s) (ws_live s) (ws_rows s) (ws_readers s) (ws_armed s) (ws_ranks s)))).
+  Qed.
+
+  (** A bounded contribution keeps every stored value below the post-solution. *)
+  Lemma update_below : forall p pol u s x a,
+    widening_free pol -> store_below u s -> L.leb a (u x) = true ->
+    store_below u (V.update_one p pol s (x, a)).
+  Proof.
+    intros p pol u s x a Hfree Hstore Ha y.
+    unfold V.look in *; rewrite update_store by exact Hfree.
+    unfold V.look.
+    destruct (L.leb a (look_or S.key_code L.bot (ws_store s) x));
+      [apply Hstore|].
+    destruct (S.key_eqb_spec y x) as [->|Hneq]; unfold look_or.
+    - rewrite PTrie.get_set_same; apply LB.join_least; [apply Hstore|exact Ha].
+    - rewrite PTrie.get_set_other; [apply Hstore|].
+      intro Hcodes; apply Hneq, S.key_code_inj, Hcodes.
+  Qed.
+
+  (** Bounded contributions keep the prepared state and its store bound. *)
+  Lemma updates_below : forall p pol u outs,
+    widening_free pol ->
+    Forall (fun xa => L.leb (snd xa) (u (fst xa)) = true) outs ->
+    forall s, state_below p pol u s ->
+      state_below p pol u (fold_left (V.update_one p pol) outs s).
+  Proof.
+    intros p pol u outs Hfree Houts.
+    induction Houts as [|[x a] rest Ha Hrest IH]; intros s [Hprepared Hstore];
+      cbn [fold_left].
+    - split; assumption.
+    - apply IH; split.
+      + apply V.F6_prepared; exact Hprepared.
+      + apply update_below; assumption.
+  Qed.
+
+  (** Pointwise side comparison transfers the post-solution bounds to smaller outputs. *)
+  Lemma sides_below : forall (u : S.key -> L.t) (ss ts : list (S.key * L.t)),
+    Forall2 (fun xa yb => fst xa = fst yb /\ L.leb (snd xa) (snd yb) = true) ss ts ->
+    forallb (fun yb => L.leb (snd yb) (u (fst yb))) ts = true ->
+    Forall (fun xa => L.leb (snd xa) (u (fst xa)) = true) ss.
+  Proof.
+    intros u ss ts Hrel; induction Hrel as [|[x a] [y b] ss ts Hhead Htail IH];
+      intro Hbounds; cbn [forallb fst snd] in *.
+    - constructor.
+    - apply andb_true_iff in Hbounds as [Hb Hbounds].
+      destruct Hhead as [Hkey Hab]; subst y; constructor.
+      + eapply L.leb_trans; eassumption.
+      + apply IH; exact Hbounds.
+  Qed.
+
+  (** A listed monotone row evaluated below a post-solution emits bounded values. *)
+  Lemma outputs_below : forall p r u s a ss,
+    S.monotone p -> In r (S.rows p) -> S.post_solution p u -> store_below u s ->
+    V.eval_row p r (ws_store s) = Some (a, ss) ->
+    Forall (fun xa => L.leb (snd xa) (u (fst xa)) = true) ((S.target p r, a) :: ss).
+  Proof.
+    intros p r u s a ss Hmono Hr Hpost Hstore Heval.
+    rewrite V.F3_eval in Heval.
+    specialize (Hmono r (look_or S.key_code L.bot (ws_store s)) u Hr Hstore).
+    specialize (Hpost r Hr); rewrite Heval in Hmono.
+    destruct (S.eval p r u) as [[b ts]|] eqn:Hout; cbn [out_leb] in Hmono;
+      [|contradiction Hmono].
+    destruct Hmono as [Hprimary Hsides]; cbn [row_ok] in Hpost.
+    apply andb_true_iff in Hpost as [Htarget Hsides_bound]; constructor.
+    - cbn [fst snd]; eapply L.leb_trans; eassumption.
+    - eapply sides_below; eassumption.
+  Qed.
+
+  (** One callback keeps the bound or returns a bounded candidate. *)
+  Lemma step_below : forall p pol u,
+    S.monotone p -> widening_free pol -> S.post_solution p u -> forall s,
+    state_below p pol u s ->
+    match V.step p pol s with
+    | inl s1 => state_below p pol u s1
+    | inr result => match result with
+        | Solved m | OutOfFuel m => forall x,
+            L.leb (look_or S.key_code L.bot m x) (u x) = true
+        | Rejected _ => True
+        end
+    end.
+  Proof.
+    intros p pol u Hmono Hfree Hpost s [Hprepared Hstore].
+    rewrite V.F7_indexed.
+    destruct (Q.pop (ws_queue s)) as [[[rank id] q]|] eqn:Hpop; [|exact Hstore].
+    destruct (V.row_at s id) as [r|] eqn:Hrow; [|exact I].
+    destruct (V.eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|exact I].
+    apply updates_below; [exact Hfree| |].
+    - eapply outputs_below; [exact Hmono| |exact Hpost|exact Hstore|exact Heval].
+      eapply row_at_listed; eassumption.
+    - split.
+      + eapply V.F7_pop_prepared; eassumption.
+      + exact Hstore.
+  Qed.
+
+  (** Continuing callback paths carry the prepared and bounded state invariant. *)
+  Lemma path_below : forall p pol u s xs last,
+    S.monotone p -> widening_free pol -> S.post_solution p u ->
+    state_below p pol u s -> wl_path (V.step p pol) s xs last ->
+    state_below p pol u last.
+  Proof.
+    intros p pol u s xs last Hmono Hfree Hpost Hbelow Hpath.
+    induction Hpath as [s|s s1 xs last Hstep Hpath IH].
+    - exact Hbelow.
+    - apply IH.
+      pose proof (step_below p pol u Hmono Hfree Hpost s Hbelow) as Hnext.
+      now rewrite Hstep in Hnext.
+  Qed.
   (** Widening-free reachable stores lie below every post-solution of a monotone system. *)
   Lemma F10_least : forall p pol s s', S.wf p -> S.monotone p -> widening_free pol ->
     V.reachable p pol s -> S.post_solution p s' ->
     forall x, L.leb (V.look s x) (s' x) = true.
-  Proof. Admitted. (* PLAN-DEFECT: V only guarantees bottom preparation under prio_ok. *)
+  Proof.
+    intros p pol s u Hwf Hmono Hfree [xs Hpath] Hpost x.
+    pose proof (path_below p pol u (V.prepare p pol) xs s Hmono Hfree Hpost
+      (prepare_below p pol u) Hpath) as [_ Hstore].
+    exact (Hstore x).
+  Qed.
   (** A solved widening-free candidate lies below every post-solution. *)
   Lemma run_least : forall p pol fuel m s', S.wf p -> S.monotone p ->
     widening_free pol -> V.run p pol fuel = Solved m -> S.post_solution p s' ->
     forall x, L.leb (look_or S.key_code L.bot m x) (s' x) = true.
-  Proof. Admitted. (* SIG-QUESTION: abstract V lacks unconditional bottom initialization. *)
+  Proof.
+    intros p pol fuel m u Hwf Hmono Hfree Hrun Hpost x.
+    rewrite V.F8_run, loopN_fuel in Hrun.
+    destruct (loop_fuel (V.step p pol) (N.to_nat fuel) (V.prepare p pol))
+      as [last|result] eqn:Hloop; [discriminate Hrun|].
+    destruct result as [candidate|candidate|reason];
+      try discriminate Hrun.
+    injection Hrun as Hcandidate; subst candidate.
+    destruct (loop_fuel_stop_path (V.step p pol) (N.to_nat fuel)
+      (V.prepare p pol) (Solved m) Hloop) as [xs [last [Hpath [Hstep _]]]].
+    pose proof (path_below p pol u (V.prepare p pol) xs last Hmono Hfree Hpost
+      (prepare_below p pol u) Hpath) as Hbelow.
+    pose proof (step_below p pol u Hmono Hfree Hpost last Hbelow) as Hresult.
+    rewrite Hstep in Hresult; exact (Hresult x).
+  Qed.
 End WorklistLeast.
