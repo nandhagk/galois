@@ -801,31 +801,48 @@ Module ThresholdsT <: THRESHOLDS_ALL.
     clear Heqbudget Hlog Hsortedlength. nia.
   Qed.
 
-  Definition c_thresholds : N := 1%N. (* STUB *)
+  Definition c_thresholds : N := 1024%N.
   Definition k_sort : N := 256%N.
   Definition k_dedup : N := 4%N.
   Definition k_build : N := 64%N.
   Definition k_search : N := 16%N.
 
+  (** Preparation charges comparison sorting and the largest stored integer. *)
   Lemma T_make_le : forall zs,
     (T_make zs <= c_thresholds * N.of_nat (length zs *
       (Nat.log2 (length zs) + 1) + 1) * N.of_nat (zb zs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_thresholds. apply make_time.
+  Qed.
 
+  (** Upper lookup charges a path and the stored thresholds' bit sizes. *)
   Lemma T_above_le : forall t z,
     (T_above t z <= c_thresholds * N.of_nat ((depth t + 1)%nat) *
       N.of_nat ((tree_bits t + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros t z. unfold c_thresholds.
+    pose proof (above_time t (tree_bits t) z
+      (proj1 (zb_spec (vals t) (tree_bits t)) (Nat.le_refl _))) as Htime. nia.
+  Qed.
 
+  (** Lower lookup charges a path and the stored thresholds' bit sizes. *)
   Lemma T_below_le : forall t z,
     (T_below t z <= c_thresholds * N.of_nat ((depth t + 1)%nat) *
       N.of_nat ((tree_bits t + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros t z. unfold c_thresholds.
+    pose proof (below_time t (tree_bits t) z
+      (proj1 (zb_spec (vals t) (tree_bits t)) (Nat.le_refl _))) as Htime. nia.
+  Qed.
 
+  (** Threshold preparation has the published comparison-sort complexity. *)
   Lemma make_bigO : (bigO (fun _ => True)
     (fun zs => N.of_nat
       (((length zs * (Nat.log2 (length zs) + 1) + 1) * (zb zs + 1))%nat)) T_make)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold bigO. exists c_thresholds. intros zs _. rewrite Nat2N.inj_mul.
+    pose proof (T_make_le zs). nia.
+  Qed.
 
   (** Merge sort orders every input list. *)
   Lemma F1_msort_sorted : forall zs, Sorted Z.le (msort zs).
