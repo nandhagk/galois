@@ -3841,7 +3841,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
 
   Local Lemma table_not_time : forall rw u,
     (T_interval_not rw u <=
-      10000 * N.of_nat ((Pos.to_nat rw + interval_bits u + 1) ^ 2))%N.
+      1000 * N.of_nat ((Pos.to_nat rw + interval_bits u + 1) ^ 2))%N.
   Proof.
     intros rw u.
     pose proof (PayloadBounds.payload_modulus_time rw) as Hmodulus.
@@ -3897,7 +3897,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
 
   Local Lemma table_neg_time : forall rw u,
     (T_interval_neg rw u <=
-      10000 * N.of_nat ((Pos.to_nat rw + interval_bits u + 1) ^ 2))%N.
+      1000 * N.of_nat ((Pos.to_nat rw + interval_bits u + 1) ^ 2))%N.
   Proof.
     intros rw u.
     pose proof (PayloadBounds.payload_modulus_time rw) as Hmodulus.
@@ -5198,7 +5198,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
 
   Local Lemma table_udiv_time : forall rw u v,
-    (T_interval_udiv rw u v <= 10000 * N.of_nat
+    (T_interval_udiv rw u v <= 2000 * N.of_nat
       ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
   Proof.
     intros rw u v.
@@ -5294,7 +5294,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
 
   Local Lemma table_urem_time : forall rw u v,
-    (T_interval_urem rw u v <= 10000 * N.of_nat
+    (T_interval_urem rw u v <= 2000 * N.of_nat
       ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
   Proof.
     intros rw u v.
@@ -5455,7 +5455,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros rw w a.
     apply table_unary_dispatch_time.
-    apply table_not_time.
+    pose proof (table_not_time rw (interval_clip w a)). nia.
   Qed.
 
   Local Lemma table_neg_dispatch_time : forall rw w a,
@@ -5465,7 +5465,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros rw w a.
     apply table_unary_dispatch_time.
-    apply table_neg_time.
+    pose proof (table_neg_time rw (interval_clip w a)). nia.
   Qed.
 
   Local Lemma table_rewrap_dispatch_time : forall rw w a,
@@ -5849,7 +5849,8 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros rw wa a wb b.
     apply table_binary_small_dispatch_time.
-    apply table_udiv_time.
+    pose proof (table_udiv_time rw (interval_clip wa a)
+      (interval_clip wb b)). nia.
   Qed.
 
   Local Lemma table_urem_dispatch_time : forall rw wa a wb b,
@@ -5861,7 +5862,8 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros rw wa a wb b.
     apply table_binary_small_dispatch_time.
-    apply table_urem_time.
+    pose proof (table_urem_time rw (interval_clip wa a)
+      (interval_clip wb b)). nia.
   Qed.
 
   Lemma T_wfwd_le : forall o rw xs,
