@@ -2478,6 +2478,33 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     time_cbn. lia.
   Qed.
 
+  (** An insertion step eagerly pays the value encoder even when its edge is absent. *)
+  Lemma T_insert_step_st_encode_ge : forall ix n v,
+    Pos.ltb (next ix) n = false ->
+    (V.T_encode v <= T_insert_step_st (ix, n) (Val v))%N.
+  Proof.
+    intros ix n v Hrange. time_unfold T_insert_step_st. cbn beta iota zeta.
+    rewrite Hrange. time_unfold T_encode_cell. time_cbn. lia.
+  Qed.
+
+  (** The insertion wrapper retains the eager value-encoding charge. *)
+  Lemma T_insert_step_encode_ge : forall ix n v,
+    Pos.ltb (next ix) n = false ->
+    (V.T_encode v <= T_insert_step ix n (Val v))%N.
+  Proof.
+    intros ix n v Hrange. pose proof (T_insert_step_st_encode_ge ix n v Hrange) as Hstep.
+    time_unfold T_insert_step. time_cbn. lia.
+  Qed.
+
+  (** A removal step also pays the encoder before observing that an edge is absent. *)
+  Lemma T_remove_step_st_encode_ge : forall ix n v,
+    Pos.ltb (next ix) n = false ->
+    (V.T_encode v <= T_remove_step_st (ix, n) (Val v))%N.
+  Proof.
+    intros ix n v Hrange. time_unfold T_remove_step_st. cbn beta iota zeta.
+    rewrite Hrange. time_unfold T_encode_cell. time_cbn. lia.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
@@ -2494,7 +2521,7 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
 
   Lemma T_insert_step_le : forall ix n c,
     (T_insert_step ix n c <= 4 * c_map * N.of_nat (width ix [c] + 1) + 4)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: eager Val encoding contributes V.T_encode; the fixed trie-only coefficient omits V.c_key. *)
 
   (** Edge maps use the shared binary trie contracts. *)
   Lemma c_map_source : c_map = PTrieT.c_trie.
@@ -2511,13 +2538,13 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma T_insert_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
     (T_insert_step_st (fold_left insert_step_st pre (start ix)) c <=
       4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: even the empty valid prefix eagerly pays V.T_encode, which is absent from the fixed trie-only coefficient. *)
 
   (** Each removal step uses the width of the complete original walk. *)
   Lemma T_remove_step_st_le : forall ix r pre c suf, inv ix -> r = pre ++ c :: suf ->
     (T_remove_step_st (fold_left remove_step_st pre (start ix)) c <=
       4 * c_map * N.of_nat (width ix r + 1) + 4)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: even an absent edge in the empty valid prefix eagerly pays V.T_encode, omitted by the fixed trie-only coefficient. *)
 
   (** Initialization and both finishing passes fit the original walk budget. *)
   Lemma T_walk_ends : forall r ix, inv ix ->
