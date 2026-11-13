@@ -189,3 +189,68 @@ Example raw_word_guard :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Signed affine arithmetic preserves negative scalars and a final negative constant. *)
+Example signed_scaled_subtraction :
+  Signed.lin_of
+    (Node (BOp bvsub)
+      [Node (BOp bvmul) [Node (BConst 8%positive (-2)%Z) []; Leaf 1%positive];
+       Node (BConst 8%positive 3%Z) []]) =
+    Some (Lin positive [(1%positive, (-2)%Z)] (-3)%Z, WrapTo (-128)%Z 127%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A known width does not make a product of two variable forms affine. *)
+Example known_width_nonlinear_product :
+  Unsigned.lin_of
+    (Node (BOp bvmul)
+      [Node (BOp bvadd) [Leaf 1%positive; Node (BConst 8%positive 0%Z) []];
+       Leaf 2%positive]) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The smallest signed width uses the inclusive interval from minus one through zero. *)
+Example signed_width_one_addition :
+  Signed.lin_of
+    (Node (BOp bvadd) [Leaf 1%positive; Node (BConst 1%positive 1%Z) []]) =
+    Some (Lin positive [(1%positive, 1%Z)] 1%Z, WrapTo (-1)%Z 0%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A false non-strict word comparison reverses its operands into a strict inequality. *)
+Example unsigned_false_le_guard :
+  Unsigned.atoms_of (BTruth false)
+    [Node (BOp bvule) [Leaf 1%positive; Leaf 2%positive]] =
+    [Atom positive (Lin positive [(2%positive, 1%Z)] 0%Z) NoWrap CLt
+      (Lin positive [(1%positive, 1%Z)] 0%Z) NoWrap].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Module IntegersTimed := ZLinearizeT PosKeyT.
+Module UnsignedTimed := BitsLinearizeUT PosKeyT.
+Module SignedTimed := BitsLinearizeST PosKeyT.
+
+(** The derived integer clock charges recursive arithmetic beyond the variable leaf. *)
+Example integer_clock_grows_with_syntax :
+  N.ltb (IntegersTimed.T_lin_of (Leaf 1%positive))
+    (IntegersTimed.T_lin_of
+      (Node ZAdd [Leaf 1%positive; Node (ZConst 1%Z) []])) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Both word clocks charge the extra work needed to construct wider wrap intervals. *)
+Example word_clocks_charge_width :
+  (N.ltb
+     (UnsignedTimed.T_lin_of (Node (BConst 8%positive 0%Z) []))
+     (UnsignedTimed.T_lin_of (Node (BConst 16%positive 0%Z) [])),
+   N.ltb
+     (SignedTimed.T_lin_of (Node (BConst 8%positive 0%Z) []))
+     (SignedTimed.T_lin_of (Node (BConst 16%positive 0%Z) []))) = (true, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
