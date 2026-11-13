@@ -4,11 +4,11 @@
     For example, joining distinct singleton values returns top.
     Builds on: ConstSig and the concrete language operations. *)
 
-From Stdlib Require Import List ZArith Bool Lia.
-From Argent Require Import Time Std BigO.
+From Stdlib Require Import List ZArith NArith Bool Lia.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Fun Op Testbit Arith.
-From Galois.Domains Require Import ConstSig LangSig WordSig.
-Import List.ListNotations.
+From Galois.Domains Require Import ConstSig LangSig WordSig BitsLang.
+Import List.ListNotations WordAlgebra.
 
 Module ConstWordFast.
   Definition wrap_fast (w : positive) (z : Z) : Z := Z.land z (Z.ones (Zpos w)).
@@ -436,67 +436,159 @@ Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
   Definition wsize (_ : wparam) : nat := 0.
   Definition wunits (_ : t) : nat := 0.
 
-  Definition c_val : N := 1%N. (* STUB *)
+  (** Collecting singleton payloads visits at most one cell per operand. *)
+  Local Lemma points_time_bound : forall xs,
+    (T_points xs <= N.of_nat (length xs + 1))%N.
+  Proof.
+    induction xs as [|[|a|] xs IH]; time_unfold T_points; time_cbn;
+      rewrite ?Nat2N.inj_succ, ?Nat2N.inj_add in *; time_cbn_all; lia.
+  Qed.
+
+  (** Bottom recognition charges one constant-time test per visited operand. *)
+  Local Lemma bot_scan_time_bound : forall xs,
+    (List.T_existsb is_bot T_is_bot xs <= 3 * N.of_nat (length xs + 1))%N.
+  Proof.
+    induction xs as [|x xs IH].
+    - time_step.
+    - time_unfold List.T_existsb. time_simpl. time_cbn.
+      try time_unfold T_is_bot.
+      change (List.T_existsb is_bot (fun _ : t => 1%N) xs <=
+        3 * N.of_nat (length xs + 1))%N in IH.
+      rewrite ?Nat2N.inj_succ, ?Nat2N.inj_add in *; time_cbn_all.
+      lia.
+  Qed.
+
+  Definition c_val : N := (E.c_eq + L.c_lang + 8)%N.
   Definition c_lat : N := c_val.
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat, c_val. lia.
+  Qed.
   Lemma T_leb_le : forall a b, (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; time_unfold T_leb; time_cbn; cbn [size]; unfold c_val;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (E.T_eqb_le a b). rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   Lemma T_join_le : forall a b, (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply T_leb_le.
+  Qed.
   Lemma T_meet_le : forall a b, (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply T_leb_le.
+  Qed.
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. time_unfold T_is_bot. unfold c_val.
+    rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|a|] [|b|]; time_unfold T_widen; time_unfold T_join;
+      time_cbn; cbn [size wsize]; unfold c_val;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (E.T_eqb_le a b). rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   Lemma T_narrow_le : forall a b, (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. time_unfold T_narrow. unfold c_val.
+    rewrite ?Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma T_forward_le : forall o xs, (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. pose proof (points_time_bound xs) as Hpoints.
+    pose proof (bot_scan_time_bound xs) as Hscan.
+    change (List.T_existsb is_bot (fun x => T_is_bot x) xs <=
+      3 * N.of_nat (length xs + 1))%N in Hscan.
+    time_unfold T_forward. time_cbn. unfold work, t, c_val in *.
+    destruct (points xs) as [cs|] eqn:Hcollect.
+    - pose proof (L.T_eval_le o cs) as Heval.
+      destruct (@existsb (flat L.val) is_bot xs);
+        rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+    - destruct (@existsb (flat L.val) is_bot xs);
+        rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   Lemma T_backward_le : forall o r xs,
     (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. time_unfold T_backward. unfold c_val.
+    rewrite ?Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma T_guard_le : forall g xs, (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. time_unfold T_guard. unfold c_val.
+    rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma forward_size : forall o xs,
     (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. unfold forward, work, t, c_val.
+    destruct (@existsb (flat L.val) is_bot xs); destruct (points xs) as [cs|];
+      try destruct (L.eval o cs); cbn [size];
+      rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma meet_size : forall a b,
     (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; cbn [meet size]; try destruct (E.eqb a b);
+      cbn [size]; unfold c_val; rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma join_size : forall a b,
     (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a|] [|b|]; cbn [join size]; try destruct (E.eqb a b);
+      cbn [size]; unfold c_val; rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma widen_size : forall p a b,
     (N.of_nat (size (widen p a b)) <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen, wsize. rewrite Nat.add_0_r. apply join_size.
+  Qed.
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. unfold backward, work, t, c_val.
+    destruct (points xs); rewrite ?Nat2N.inj_add; time_cbn; nia.
+  Qed.
   Lemma guard_size : forall g xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
       c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold guard, gwork, t, c_val.
+    rewrite ?Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma work_sizes : forall o xs, fold_right Nat.add 0%nat (map size xs) <= work o xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. unfold work, t. destruct (points xs); lia.
+  Qed.
   Lemma gwork_sizes : forall g xs, fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold gwork, t. lia.
+  Qed.
 
-  Definition c_const : N := 1%N. (* STUB *)
+  Definition c_const : N := 1%N.
   Lemma T_point_le : forall a, (T_point a <= c_const)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. time_unfold T_point. unfold c_const. lia.
+  Qed.
   Lemma T_abst_le : forall c, (T_abst c <= c_const)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro c. time_unfold T_abst. unfold c_const. lia.
+  Qed.
   Lemma forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat ((work (fst ox) (snd ox))%nat))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [o xs] _. cbn [fst snd].
+    pose proof (T_forward_le o xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
 
-  Definition k_const_points : N := 1%N. (* STUB *)
-  Definition k_const_forward : N := 1%N. (* STUB *)
+  Definition k_const_points : N := 1%N.
+  Definition k_const_forward : N := 8%N.
   Lemma F1_gamma : forall a c, gamma a c <-> flat_gamma a c.
   Proof.
     reflexivity.
@@ -528,12 +620,24 @@ Module ConstT (L : LANG_T) (E : VAL_EQ_T L) <: CONST_ALL L E.
   Qed.
   Lemma T1_points : forall xs,
     (T_points xs <= k_const_points * N.of_nat (length xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro xs. unfold k_const_points. rewrite N.mul_1_l. apply points_time_bound.
+  Qed.
   Lemma T2_forward_points : forall o xs cs, points xs = Some cs ->
     (T_forward o xs <= k_const_forward *
       (N.of_nat (length xs) + L.T_eval o cs +
        match L.eval o cs with Some c => T_abst c | None => 0 end + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs cs Hcollect. pose proof (points_time_bound xs) as Hpoints.
+    pose proof (bot_scan_time_bound xs) as Hscan.
+    change (List.T_existsb is_bot (fun x => T_is_bot x) xs <=
+      3 * N.of_nat (length xs + 1))%N in Hscan.
+    time_unfold T_forward. time_cbn. rewrite Hcollect.
+    unfold t in *.
+    destruct (@existsb (flat L.val) is_bot xs); destruct (L.eval o cs);
+      unfold k_const_forward in *;
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
+  Qed.
 End ConstT.
 
 Module ConstWord (L : WORD_LANGUAGE) <: CONST_WORD_PAYLOAD L.
@@ -833,43 +937,6 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
     - right. exact (const_is_sound w b y c Hb Htest).
   Qed.
 
-  (** Bitwise conjunction with zero returns zero. *)
-  Local Lemma const_zero_bits : forall w x, is_word w x -> wand w 0 x = 0.
-  Proof.
-    intros w x Hx. apply (word_ext w); [apply wand_is_word|apply zero_is_word|].
-    intros i Hi. rewrite testbit_wand by (auto using zero_is_word; lia).
-    now rewrite !Z.bits_0.
-  Qed.
-
-  (** Bitwise disjunction with the all-ones word returns that word. *)
-  Local Lemma const_ones_bits : forall w x,
-    is_word w x -> wor w (modulus w - 1) x = modulus w - 1.
-  Proof.
-    intros w x Hx. apply (word_ext w); [apply wor_is_word|apply ones_is_word|].
-    intros i Hi. rewrite testbit_wor by (auto using ones_is_word; lia).
-    rewrite all_ones_bits by exact Hi.
-    destruct (i <? Zpos w) eqn:Hlow; cbn; [reflexivity|].
-    apply Z.ltb_ge in Hlow. exact (word_bits_high w x i Hx Hlow).
-  Qed.
-
-  (** Multiplication, shifts and unsigned remainder preserve a zero left operand. *)
-  Local Lemma const_zero_ops : forall w y, is_word w y ->
-    wmul w 0 y = 0 /\ wshl w 0 y = 0 /\ wlshr w 0 y = 0 /\
-    washr w 0 y = 0 /\ wurem w 0 y = 0.
-  Proof.
-    intros w y Hy.
-    assert (Hpow : 2 ^ wrap w y <> 0).
-    { pose proof (wrap_is_word w y) as [Hnonnegative Hupper].
-      apply Z.pow_nonzero; lia. }
-    rewrite wmul_value, wshl_value, wlshr_value, washr_value, wurem_mod.
-    rewrite wrap_0, msb_zero, signed_zero, Z.mul_0_l, wrap_0.
-    rewrite Z.div_0_l by exact Hpow. rewrite wrap_0.
-    split; [reflexivity|].
-    destruct (Zpos w <=? wrap w y); cbn; repeat split; try reflexivity.
-    all: destruct (Z.eq_dec (wrap w y) 0) as [-> | Hz];
-      [reflexivity|now apply Z.mod_0_l].
-  Qed.
-
   (** Each successful shortcut is an annihilator for the concrete operation. *)
   Local Lemma shortcut_at_width : forall o w a b x y rw z c,
     is_word w x -> is_word w y -> W.pgamma w a x -> W.pgamma w b y ->
@@ -935,48 +1002,6 @@ Module ConstWordTable (L : WORD_LANGUAGE) (W : CONST_WORD_PAYLOAD L) <: CONST_WO
             [reflexivity|exact Heval]
         end. }
     subst v. exact (shortcut_at_width o w a b x y rw z k Hx Hy Ha Hb Heval Hshortcut).
-  Qed.
-
-  (** Adding and then subtracting the same operand recovers a word. *)
-  Local Lemma const_add_inverse : forall w x y,
-    is_word w x -> wsub w (wadd w x y) y = x.
-  Proof.
-    intros w x y Hx. rewrite wsub_value, wadd_value, wrap_sub, wrap_wrap, <- wrap_sub.
-    replace (x + y - y) with x by ring. now apply wrap_id.
-  Qed.
-
-  (** Adding back a subtracted operand recovers a word. *)
-  Local Lemma const_sub_inverse_left : forall w x y,
-    is_word w x -> wadd w (wsub w x y) y = x.
-  Proof.
-    intros w x y Hx. rewrite wadd_value, wsub_value, wrap_add, wrap_wrap, <- wrap_add.
-    replace (x - y + y) with x by ring. now apply wrap_id.
-  Qed.
-
-  (** Subtracting the difference recovers the right operand. *)
-  Local Lemma const_sub_inverse_right : forall w x y,
-    is_word w y -> wsub w x (wsub w x y) = y.
-  Proof.
-    intros w x y Hy. rewrite !wsub_value, wrap_sub, wrap_wrap, <- wrap_sub.
-    replace (x - (x - y)) with y by ring. now apply wrap_id.
-  Qed.
-
-  (** Applying xor with the same word twice recovers the first word. *)
-  Local Lemma const_xor_inverse : forall w x y,
-    is_word w x -> wxor w (wxor w x y) y = x.
-  Proof.
-    intros w x y Hx. rewrite <- wxor_assoc, wxor_self.
-    apply (word_ext w); [apply wxor_is_word|exact Hx|].
-    intros i Hi. rewrite testbit_wxor by (auto using zero_is_word; lia).
-    now rewrite Z.bits_0, xorb_false_r.
-  Qed.
-
-  (** Word negation is an involution on normalized words. *)
-  Local Lemma const_neg_inverse : forall w x,
-    is_word w x -> wneg w (wneg w x) = x.
-  Proof.
-    intros w x Hx. rewrite !wneg_value, wrap_opp.
-    replace (- - x) with x by ring. now apply wrap_id.
   Qed.
 
   (** Applying an inverse to a known operand retains its computed preimage. *)
