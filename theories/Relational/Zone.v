@@ -4014,6 +4014,29 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     now apply edge_extension_after_insert.
   Qed.
 
+  (** The one-edge formula lies below every bound of the inserted matrix. *)
+  Lemma edge_extension_below_insert : forall base i j d,
+    entry base i i = Some 0%Z -> entry base j j = Some 0%Z ->
+    forall a b,
+      RelationalPathBounds.below
+        (RelationalPathBounds.edge_extension (entry base) i j d a b)
+        (entry (add_cons i j d base) a b).
+  Proof.
+    intros base i j d Hii Hjj a b.
+    unfold RelationalPathBounds.edge_extension.
+    rewrite entry_add_cons.
+    destruct (K.eqb_spec a i) as [Ha|Ha];
+      [subst a|apply RelationalPathBounds.minimum_l].
+    destruct (K.eqb_spec b j) as [Hb|Hb];
+      [subst b|apply RelationalPathBounds.minimum_l].
+    rewrite Hii, Hjj. cbn [RelationalPathBounds.plus].
+    replace (0 + (d + 0))%Z with d by lia.
+    destruct (entry base i j) as [old|];
+      cbn [lower_bound RelationalPathBounds.minimum RelationalPathBounds.below].
+    - rewrite (Z.min_comm old d). lia.
+    - lia.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
