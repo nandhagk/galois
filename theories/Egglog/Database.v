@@ -8570,9 +8570,44 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
         Forall2 (cell_rel (same (view current))) (fst ko) k) srcs /\
       output_equiv current o (merged current f (map snd srcs)).
+
+  (** Every key is related to itself by the actual equality log. *)
+  Lemma key_related_refl : forall db (k : list (cell V.t)), Forall2 (cell_rel (same (view db))) k k.
+  Proof.
+    intros db k. induction k as [| c rest IH].
+    - constructor.
+    - constructor; [| exact IH]. destruct c as [i | v].
+      + constructor. apply equality_log_refl.
+      + constructor.
+  Qed.
+
+  (** Canonicalizing an output preserves its class whenever identifiers agree with their roots. *)
+  Lemma output_equiv_canon : forall db o,
+    (forall i, same (view db) i (repr db i)) ->
+    output_equiv db o (option_map (canon db) o).
+  Proof.
+    intros db [[i | v] |] Hrepr; cbn [output_equiv option_map canon].
+    - constructor. apply Hrepr.
+    - constructor.
+    - constructor.
+  Qed.
+
+  (** A singleton group supplies the unchanged source row and its canonicalized output. *)
+  Lemma lineage_initial_from_repr : forall db,
+    (forall i, same (view db) i (repr db i)) -> lineage db db.
+  Proof.
+    intros db Hrepr f k o Hrow. exists [(k, o)]. split; [discriminate |]. split.
+    - constructor; [| constructor]. cbn [fst snd]. split; [exact Hrow | apply key_related_refl].
+    - cbn [map snd merged fold_left]. now apply output_equiv_canon.
+  Qed.
+
   (** Singleton source groups establish lineage before the first repair. *)
   Lemma F20_lineage_initial : forall db, inv db -> lineage db db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hinv. apply lineage_initial_from_repr. intro i.
+    apply (proj2 (inv_on_same_repr db [] i (repr db i) Hinv)).
+    symmetry. exact (inv_on_repr_idem db [] i Hinv).
+  Qed.
 
   (** Actual repair flattens source groups through canonicalization and lattice merging. *)
   Lemma F21_lineage_step : forall initial s s', state_inv s ->
