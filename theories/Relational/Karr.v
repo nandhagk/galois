@@ -960,6 +960,91 @@ Proof.
       setoid_rewrite Hvalue. ring.
 Qed.
 
+(** Equally long prefixes can be evaluated independently of their suffixes. *)
+Lemma karr_eval_app : forall qs zs, length qs = length zs -> forall ps ts,
+  (karr_eval (qs ++ ps) (zs ++ ts) == karr_eval qs zs + karr_eval ps ts)%Q.
+Proof.
+  intro qs. induction qs as [|q qs IH]; intros [|z zs] Hlength ps ts;
+    cbn [length] in Hlength; try discriminate.
+  - cbn [app karr_eval]. ring.
+  - cbn [app karr_eval]. setoid_rewrite (IH zs ltac:(lia) ps ts). ring.
+Qed.
+
+(** Zero coordinate values annihilate every coefficient vector. *)
+Lemma karr_eval_zero_values : forall n zs,
+  (karr_eval (repeat 0%Q n) zs == 0)%Q.
+Proof.
+  intro n. induction n as [|n IH]; intros [|z zs]; cbn [repeat karr_eval]; try ring.
+  setoid_rewrite IH. ring.
+Qed.
+
+(** Zero coefficients evaluate to zero for any finite coordinate values. *)
+Lemma karr_eval_zero_coefficients : forall qs n,
+  (karr_eval qs (repeat 0%Z n) == 0)%Q.
+Proof.
+  intro qs. induction qs as [|q qs IH]; intros [|n]; cbn [repeat karr_eval]; try ring.
+  change (0 * q + karr_eval qs (repeat 0%Z n) == 0)%Q.
+  setoid_rewrite IH. ring.
+Qed.
+
+(** Negating every coefficient negates its rational evaluation. *)
+Lemma karr_eval_opp : forall qs zs,
+  (karr_eval qs (map Z.opp zs) == - karr_eval qs zs)%Q.
+Proof.
+  intro qs. induction qs as [|q qs IH]; intros [|z zs];
+    cbn [map karr_eval]; try ring.
+  rewrite inject_Z_opp. setoid_rewrite IH. ring.
+Qed.
+
+(** A left seed tests only the first block and its homogeneous coordinate. *)
+Lemma karr_eval_hull_left : forall qs zs, length qs = length zs ->
+  forall q tail b n,
+  (karr_eval ((qs ++ [q]) ++ tail) (zs ++ (- b)%Z :: repeat 0%Z n) ==
+    karr_eval qs zs - inject_Z b * q)%Q.
+Proof.
+  intros qs zs Hlength q tail b n. rewrite <- app_assoc.
+  setoid_rewrite (karr_eval_app qs zs Hlength (q :: tail)
+    ((- b)%Z :: repeat 0%Z n)).
+  cbn [karr_eval]. rewrite inject_Z_opp.
+  setoid_rewrite karr_eval_zero_coefficients. ring.
+Qed.
+
+(** A right seed compares the two coordinate blocks and their homogeneous values. *)
+Lemma karr_eval_hull_right : forall qs ps zs,
+  length qs = length zs -> length ps = length zs -> forall q p b,
+  (karr_eval ((qs ++ [q]) ++ (ps ++ [p]))
+    (map Z.opp zs ++ b :: zs ++ [b]) ==
+    - karr_eval qs zs + inject_Z b * q +
+      karr_eval ps zs + inject_Z b * p)%Q.
+Proof.
+  intros qs ps zs Hleft Hright q p b. rewrite <- app_assoc.
+  assert (Hopp : length qs = length (map Z.opp zs)) by now rewrite length_map.
+  setoid_rewrite (karr_eval_app qs (map Z.opp zs) Hopp
+    (q :: ps ++ [p]) (b :: zs ++ [b])).
+  cbn [karr_eval]. setoid_rewrite karr_eval_opp.
+  setoid_rewrite (karr_eval_app ps zs Hright [p] [b]).
+  cbn [karr_eval]. ring.
+Qed.
+
+(** Homogeneous seed equations remain homogeneous after guarded elimination. *)
+Lemma karr_bareiss_zero_right : forall n d rows,
+  Forall (fun r => length (kcoeff r) = n) rows ->
+  Forall (fun r => kright r = 0%Z) rows ->
+  Forall (fun r => kright r = 0%Z) (karr_bareiss n d rows).
+Proof.
+  intros n d rows Hwidth Hzero.
+  assert (Hmodels : Forall (karr_models (repeat 0%Q n)) rows).
+  { apply Forall_forall. intros r Hin. unfold karr_models.
+    rewrite (proj1 (Forall_forall _ _) Hzero r Hin).
+    setoid_rewrite karr_eval_zero_values. reflexivity. }
+  pose proof (proj2 (karr_bareiss_models n d rows (repeat 0%Q n)
+    (repeat_length 0%Q n) Hwidth) Hmodels) as Hbasis.
+  apply Forall_forall. intros r Hin.
+  pose proof (proj1 (Forall_forall _ _) Hbasis r Hin) as Hmodel.
+  unfold karr_models in Hmodel. setoid_rewrite karr_eval_zero_values in Hmodel.
+  apply (proj1 (inject_Z_injective _ _)). symmetry. exact Hmodel.
+Qed.
+
 Lemma karr_values_ne_app : forall A (tr : trie_ne A) acc,
   karr_values_ne tr acc = karr_values_ne tr [] ++ acc.
 Proof.
@@ -3647,6 +3732,296 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
       now apply entails_of_target_certificate with (k := k).
   Qed.
 
+
+  (** Left models use equal ordinary values and opposite homogeneous values. *)
+  Definition hull_values_left (xs : list X.t) (v : X.t -> Q) : list Q :=
+    (map v xs ++ [1%Q]) ++ (map v xs ++ [-1%Q]).
+
+  (** Right models set the first coordinate block to zero. *)
+  Definition hull_values_right (xs : list X.t) (v : X.t -> Q) : list Q :=
+    (repeat 0%Q (length xs) ++ [0%Q]) ++ (map v xs ++ [-1%Q]).
+
+  Lemma hull_values_left_length : forall xs v,
+    length (hull_values_left xs v) = 2 * length xs + 2.
+  Proof.
+    intros xs v. unfold hull_values_left. rewrite !length_app, !length_map.
+    cbn [length]. lia.
+  Qed.
+
+  Lemma hull_values_right_length : forall xs v,
+    length (hull_values_right xs v) = 2 * length xs + 2.
+  Proof.
+    intros xs v. unfold hull_values_right.
+    rewrite !length_app, repeat_length, length_map. cbn [length]. lia.
+  Qed.
+
+  Lemma hull_left_width : forall xs total index rows,
+    Forall (fun r => length (kcoeff r) = 2 * length xs + 2)
+      (hull_left xs total index rows).
+  Proof.
+    intros xs total index rows. revert index.
+    induction rows as [|r rows IH]; intro index; [constructor|].
+    cbn [hull_left]. destruct (lrel r); [constructor|]; [|apply IH|apply IH].
+    cbn [kcoeff]. rewrite length_app. cbn [length].
+    unfold dense. rewrite length_map, repeat_length. lia.
+  Qed.
+
+  Lemma hull_right_width : forall xs total index rows,
+    Forall (fun r => length (kcoeff r) = 2 * length xs + 2)
+      (hull_right xs total index rows).
+  Proof.
+    intros xs total index rows. revert index.
+    induction rows as [|r rows IH]; intro index; [constructor|].
+    cbn [hull_right]. destruct (lrel r); [constructor|]; [|apply IH|apply IH].
+    cbn [kcoeff]. rewrite length_app. cbn [length]. rewrite length_app.
+    unfold dense. rewrite !length_map. cbn [length]. lia.
+  Qed.
+
+  Lemma hull_left_zero_right : forall xs total index rows,
+    Forall (fun r => kright r = 0%Z) (hull_left xs total index rows).
+  Proof.
+    intros xs total index rows. revert index.
+    induction rows as [|r rows IH]; intro index; [constructor|].
+    cbn [hull_left]. destruct (lrel r); [constructor|]; auto.
+  Qed.
+
+  Lemma hull_right_zero_right : forall xs total index rows,
+    Forall (fun r => kright r = 0%Z) (hull_right xs total index rows).
+  Proof.
+    intros xs total index rows. revert index.
+    induction rows as [|r rows IH]; intro index; [constructor|].
+    cbn [hull_right]. destruct (lrel r); [constructor|]; auto.
+  Qed.
+
+  (** Normalizing repeated coefficients preserves rational satisfaction. *)
+  Lemma normalize_row_sat_Q : forall v r,
+    satQ v (normalize_row r) <-> satQ v r.
+  Proof.
+    intros v r. unfold satQ. cbn [normalize_row lhs lrel rhs].
+    change ((match lrel r with
+      | REq => (karr_eval_coef_Q v (normalize_coef (lhs r)) == inject_Z (rhs r))%Q
+      | RLe => (karr_eval_coef_Q v (normalize_coef (lhs r)) <= inject_Z (rhs r))%Q
+      end) <->
+      match lrel r with
+      | REq => (karr_eval_coef_Q v (lhs r) == inject_Z (rhs r))%Q
+      | RLe => (karr_eval_coef_Q v (lhs r) <= inject_Z (rhs r))%Q
+      end).
+    destruct (lrel r); setoid_rewrite normalize_coef_eval_Q; reflexivity.
+  Qed.
+
+  Lemma normalize_rows_equality_models_Q : forall rows v,
+    Forall (fun r => lrel r = REq -> satQ v r) rows ->
+    Forall (fun r => lrel r = REq -> satQ v r) (map normalize_row rows).
+  Proof.
+    intros rows v Hmodels. rewrite Forall_map. apply Forall_forall.
+    intros r Hin Hrel. apply normalize_row_sat_Q.
+    apply (proj1 (Forall_forall _ _) Hmodels r Hin). exact Hrel.
+  Qed.
+
+  Lemma hull_left_models_left : forall xs total rows index v,
+    NoDup xs ->
+    (forall r, In r rows -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    Forall (fun r => lrel r = REq -> satQ v r) rows ->
+    Forall (karr_models (hull_values_left xs v)) (hull_left xs total index rows).
+  Proof.
+    intros xs total rows. induction rows as [|r rows IH];
+      intros index v Hunique Hsupport Hmodels; [constructor|].
+    inversion Hmodels as [|r' rows' Hmodel Htail]; subst r' rows'.
+    cbn [hull_left]. destruct (lrel r) eqn:Hrel.
+    - constructor.
+      + assert (Heval : (karr_eval (map v xs) (dense xs r) == inject_Z (rhs r))%Q).
+        { apply (proj2 (dense_equality_models_Q xs r v Hrel Hunique
+            (Hsupport r (or_introl eq_refl)))). apply Hmodel. auto. }
+        unfold karr_models, hull_values_left. cbn [kcoeff kright].
+        assert (Hlength : length (map v xs) = length (dense xs r)).
+        { unfold dense. now rewrite !length_map. }
+        setoid_rewrite (karr_eval_hull_left (map v xs) (dense xs r) Hlength
+          1%Q (map v xs ++ [-1%Q]) (rhs r) (S (length xs))).
+        setoid_rewrite Heval. change (inject_Z (rhs r) - inject_Z (rhs r) * 1 == 0)%Q.
+        ring.
+      + apply IH; [exact Hunique| |exact Htail].
+        intros p Hin x z Hterm. exact (Hsupport p (or_intror Hin) x z Hterm).
+    - apply IH; [exact Hunique| |exact Htail].
+      intros p Hin x z Hterm. exact (Hsupport p (or_intror Hin) x z Hterm).
+  Qed.
+
+  Lemma hull_left_models_right : forall xs total rows index v,
+    Forall (karr_models (hull_values_right xs v)) (hull_left xs total index rows).
+  Proof.
+    intros xs total rows. induction rows as [|r rows IH]; intros index v;
+      [constructor|].
+    cbn [hull_left]. destruct (lrel r); [constructor|]; [|apply IH|apply IH].
+    unfold karr_models, hull_values_right. cbn [kcoeff kright].
+    assert (Hlength : length (repeat 0%Q (length xs)) = length (dense xs r)).
+    { unfold dense. now rewrite repeat_length, length_map. }
+    setoid_rewrite (karr_eval_hull_left (repeat 0%Q (length xs)) (dense xs r)
+      Hlength 0%Q (map v xs ++ [-1%Q]) (rhs r) (S (length xs))).
+    setoid_rewrite karr_eval_zero_values.
+    change (0 - inject_Z (rhs r) * 0 == 0)%Q. ring.
+  Qed.
+
+  Lemma hull_right_models_left : forall xs total rows index v,
+    Forall (karr_models (hull_values_left xs v)) (hull_right xs total index rows).
+  Proof.
+    intros xs total rows. induction rows as [|r rows IH]; intros index v;
+      [constructor|].
+    cbn [hull_right]. destruct (lrel r); [constructor|]; [|apply IH|apply IH].
+    unfold karr_models, hull_values_left. cbn [kcoeff kright].
+    assert (Hlength : length (map v xs) = length (dense xs r)).
+    { unfold dense. now rewrite !length_map. }
+    setoid_rewrite (karr_eval_hull_right (map v xs) (map v xs) (dense xs r)
+      Hlength Hlength 1%Q (-1)%Q (rhs r)).
+    change (- karr_eval (map v xs) (dense xs r) + inject_Z (rhs r) * 1 +
+      karr_eval (map v xs) (dense xs r) + inject_Z (rhs r) * (-1) == 0)%Q.
+    ring.
+  Qed.
+
+  Lemma hull_right_models_right : forall xs total rows index v,
+    NoDup xs ->
+    (forall r, In r rows -> forall x z, In (x, z) (lhs r) -> In x xs) ->
+    Forall (fun r => lrel r = REq -> satQ v r) rows ->
+    Forall (karr_models (hull_values_right xs v)) (hull_right xs total index rows).
+  Proof.
+    intros xs total rows. induction rows as [|r rows IH];
+      intros index v Hunique Hsupport Hmodels; [constructor|].
+    inversion Hmodels as [|r' rows' Hmodel Htail]; subst r' rows'.
+    cbn [hull_right]. destruct (lrel r) eqn:Hrel.
+    - constructor.
+      + assert (Heval : (karr_eval (map v xs) (dense xs r) == inject_Z (rhs r))%Q).
+        { apply (proj2 (dense_equality_models_Q xs r v Hrel Hunique
+            (Hsupport r (or_introl eq_refl)))). apply Hmodel. auto. }
+        unfold karr_models, hull_values_right. cbn [kcoeff kright].
+        assert (Hleft : length (repeat 0%Q (length xs)) = length (dense xs r)).
+        { unfold dense. now rewrite repeat_length, length_map. }
+        assert (Hright : length (map v xs) = length (dense xs r)).
+        { unfold dense. now rewrite !length_map. }
+        setoid_rewrite (karr_eval_hull_right (repeat 0%Q (length xs))
+          (map v xs) (dense xs r) Hleft Hright 0%Q (-1)%Q (rhs r)).
+        setoid_rewrite karr_eval_zero_values. setoid_rewrite Heval.
+        change (-0 + inject_Z (rhs r) * 0 + inject_Z (rhs r) +
+          inject_Z (rhs r) * (-1) == 0)%Q. ring.
+      + apply IH; [exact Hunique| |exact Htail].
+        intros p Hin x z Hterm. exact (Hsupport p (or_intror Hin) x z Hterm).
+    - apply IH; [exact Hunique| |exact Htail].
+      intros p Hin x z Hterm. exact (Hsupport p (or_intror Hin) x z Hterm).
+  Qed.
+
+  Lemma hull_seed_width : forall xs total left_index right_index P Q,
+    Forall (fun r => length (kcoeff r) = 2 * length xs + 2)
+      (hull_left xs total left_index P ++ hull_right xs total right_index Q).
+  Proof.
+    intros xs total left_index right_index P Q. apply Forall_app. split.
+    - apply hull_left_width.
+    - apply hull_right_width.
+  Qed.
+
+  Lemma hull_seed_zero_right : forall xs total left_index right_index P Q,
+    Forall (fun r => kright r = 0%Z)
+      (hull_left xs total left_index P ++ hull_right xs total right_index Q).
+  Proof.
+    intros xs total left_index right_index P Q. apply Forall_app. split.
+    - apply hull_left_zero_right.
+    - apply hull_right_zero_right.
+  Qed.
+
+  (** Every equality model of the left input extends to a model of all hull seeds. *)
+  Lemma hull_seed_models_left : forall A B v,
+    let P := map normalize_row A in
+    let Q := map normalize_row B in
+    let xs := variables (P ++ Q) in
+    Forall (fun r => lrel r = REq -> satQ v r) A ->
+    Forall (karr_models (hull_values_left xs v))
+      (hull_left xs (length A + length B) 0 P ++
+        hull_right xs (length A + length B) (length A) Q).
+  Proof.
+    intros A B v P Q xs Hmodels. apply Forall_app. split.
+    - apply hull_left_models_left.
+      + apply variables_nodup.
+      + intros r Hin x z Hterm. apply variables_contains with (r := r) (z := z).
+        * apply in_or_app. left. exact Hin.
+        * exact Hterm.
+      + apply normalize_rows_equality_models_Q. exact Hmodels.
+    - apply hull_right_models_left.
+  Qed.
+
+  (** Every equality model of the right input extends to a model of all hull seeds. *)
+  Lemma hull_seed_models_right : forall A B v,
+    let P := map normalize_row A in
+    let Q := map normalize_row B in
+    let xs := variables (P ++ Q) in
+    Forall (fun r => lrel r = REq -> satQ v r) B ->
+    Forall (karr_models (hull_values_right xs v))
+      (hull_left xs (length A + length B) 0 P ++
+        hull_right xs (length A + length B) (length A) Q).
+  Proof.
+    intros A B v P Q xs Hmodels. apply Forall_app. split.
+    - apply hull_left_models_right.
+    - apply hull_right_models_right.
+      + apply variables_nodup.
+      + intros r Hin x z Hterm. apply variables_contains with (r := r) (z := z).
+        * apply in_or_app. right. exact Hin.
+        * exact Hterm.
+      + apply normalize_rows_equality_models_Q. exact Hmodels.
+  Qed.
+
+  Lemma hull_basis_models_left : forall A B v,
+    let P := map normalize_row A in
+    let Q := map normalize_row B in
+    let xs := variables (P ++ Q) in
+    Forall (fun r => lrel r = REq -> satQ v r) A ->
+    Forall (karr_models (hull_values_left xs v))
+      (karr_bareiss (2 * length xs + 2) 1
+        (hull_left xs (length A + length B) 0 P ++
+          hull_right xs (length A + length B) (length A) Q)).
+  Proof.
+    intros A B v P Q xs Hmodels. apply (proj2 (karr_bareiss_models
+      (2 * length xs + 2) 1 _ (hull_values_left xs v)
+      (hull_values_left_length xs v) (hull_seed_width xs _ _ _ P Q))).
+    exact (hull_seed_models_left A B v Hmodels).
+  Qed.
+
+  Lemma hull_basis_models_right : forall A B v,
+    let P := map normalize_row A in
+    let Q := map normalize_row B in
+    let xs := variables (P ++ Q) in
+    Forall (fun r => lrel r = REq -> satQ v r) B ->
+    Forall (karr_models (hull_values_right xs v))
+      (karr_bareiss (2 * length xs + 2) 1
+        (hull_left xs (length A + length B) 0 P ++
+          hull_right xs (length A + length B) (length A) Q)).
+  Proof.
+    intros A B v P Q xs Hmodels. apply (proj2 (karr_bareiss_models
+      (2 * length xs + 2) 1 _ (hull_values_right xs v)
+      (hull_values_right_length xs v) (hull_seed_width xs _ _ _ P Q))).
+    exact (hull_seed_models_right A B v Hmodels).
+  Qed.
+
+  Lemma hull_basis_width : forall A B,
+    let P := map normalize_row A in
+    let Q := map normalize_row B in
+    let xs := variables (P ++ Q) in
+    Forall (fun r => length (kcoeff r) = 2 * length xs + 2)
+      (karr_bareiss (2 * length xs + 2) 1
+        (hull_left xs (length A + length B) 0 P ++
+          hull_right xs (length A + length B) (length A) Q)).
+  Proof.
+    intros A B P Q xs. apply karr_echelon_width, karr_bareiss_echelon.
+    apply hull_seed_width.
+  Qed.
+
+  Lemma hull_basis_zero_right : forall A B,
+    let P := map normalize_row A in
+    let Q := map normalize_row B in
+    let xs := variables (P ++ Q) in
+    Forall (fun r => kright r = 0%Z)
+      (karr_bareiss (2 * length xs + 2) 1
+        (hull_left xs (length A + length B) 0 P ++
+          hull_right xs (length A + length B) (length A) Q)).
+  Proof.
+    intros A B P Q xs. apply karr_bareiss_zero_right.
+    - apply hull_seed_width.
+    - apply hull_seed_zero_right.
+  Qed.
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
