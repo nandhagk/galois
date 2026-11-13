@@ -104,6 +104,28 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
   TimeFun lits.
   TimeFun mine.
 
+  (** Each syntax node also pays the two units charged by its parent's fold. *)
+  Lemma lits_acc_time : forall e acc,
+    (T_lits_acc e acc + 2 <= (L.c_lang + 4) * N.of_nat (tsize e))%N.
+  Proof.
+    intro e. induction e as [x|o es IH]; intro acc.
+    - time_unfold T_lits_acc. cbn [tsize]. nia.
+    - assert (Hfold : forall acc,
+        (Std.List.T_fold_right
+          (fun e acc => lits_acc e acc) (fun e acc => 1 + T_lits_acc e acc)%N acc es <=
+         (L.c_lang + 4) * N.of_nat (fold_right Nat.add 0%nat (map tsize es)) + 1)%N).
+      { clear acc. revert IH. induction es as [|e es IHes]; intros IH acc.
+        - time_unfold Std.List.T_fold_right. cbn [map fold_right]. nia.
+        - inversion IH as [|e' IHe es' IHrest]; subst.
+          pose proof (IHes IHrest acc) as Hrest.
+          pose proof (IHe (fold_right (fun e acc => lits_acc e acc) acc es)) as Hhead.
+          time_unfold Std.List.T_fold_right. cbn [map fold_right].
+          rewrite Nat2N.inj_add. nia. }
+      time_unfold T_lits_acc.
+      pose proof (Hfold acc) as Hchildren. pose proof (L.T_literal_le o) as Hliteral.
+      cbn [tsize]. rewrite Nat2N.inj_succ. nia.
+  Qed.
+
   Definition c_mining : N := 1%N. (* STUB *)
 
   Definition seeds es extra := flat_map lits es ++ extra.
@@ -121,7 +143,7 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
       T.T_make (expanded es extra) + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Definition k_mining : N := 1%N. (* STUB *)
+  Definition k_mining : N := (L.c_lang + 4)%N.
 
   (** Accumulator collection preserves the public literal order. *)
   Lemma F3_lits_acc : forall e acc, lits_acc e acc = lits e ++ acc.
@@ -129,9 +151,12 @@ Module MiningT (X : KEY_T) (L : LANG_T) (T : THRESHOLDS_T)
     apply lits_acc_spec.
   Qed.
 
+  (** Accumulator collection charges only the syntax nodes it visits. *)
   Lemma T1_lits_acc : forall e acc,
     (T_lits_acc e acc <= k_mining * N.of_nat (tsize e))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e acc. unfold k_mining. pose proof (lits_acc_time e acc). nia.
+  Qed.
 
   Lemma F1_mine : forall es extra, mine es extra = T.make (expanded es extra).
   Proof. Admitted. (* STUB *)
