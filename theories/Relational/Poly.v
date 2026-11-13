@@ -3293,6 +3293,170 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         apply poly_add_rows_multiplier_bits; try assumption. now rewrite poly_size_opp.
   Qed.
 
+  (** The right-hand side fits the declared row width. *)
+  Lemma poly_row_rhs_bits : forall r, Z.size_nat (rhs r) <= C.row_bits r.
+  Proof.
+    intro r. unfold C.row_bits. apply poly_max_base.
+  Qed.
+
+  (** Every stored key fits the row's declared key width. *)
+  Lemma poly_row_key_member : forall r p, In p (lhs r) ->
+    Pos.size_nat (X.encode (fst p)) <= C.row_key_bits r.
+  Proof.
+    intros r p Hin. unfold C.row_key_bits.
+    exact (poly_max_member _ (fun p => Pos.size_nat (X.encode (fst p))) 0 (lhs r) p Hin).
+  Qed.
+
+  (** Normalization preserves the width bound of a row with unique keys. *)
+  Lemma poly_normal_row_bits : forall r,
+    NoDup (map fst (lhs r)) -> C.row_bits (poly_normal_row X.encode r) <= C.row_bits r.
+  Proof.
+    intros r Hunique. unfold C.row_bits at 1. cbn [poly_normal_row lhs rhs].
+    apply poly_max_bound; [apply poly_row_rhs_bits|].
+    apply Forall_forall. intros [x a] Hin. cbn [snd].
+    pose proof (poly_coef_member x a (poly_normal_coef X.encode (lhs r))
+      (poly_normal_coef_nodup _ _ _) Hin) as Hcoef.
+    rewrite coef_of_normal in Hcoef. rewrite <- Hcoef, coef_of_poly_coefficient.
+    now apply poly_row_coefficient_bits.
+  Qed.
+
+  (** Normalization retains only input keys and therefore does not increase key width. *)
+  Lemma poly_normal_row_key_bits : forall r,
+    C.row_key_bits (poly_normal_row X.encode r) <= C.row_key_bits r.
+  Proof.
+    intro r. unfold C.row_key_bits at 1. cbn [poly_normal_row lhs].
+    apply poly_max_bound; [lia|]. apply Forall_forall. intros p Hin.
+    pose proof (poly_normal_coef_keys _ _ _ _ Hin) as Hkey.
+    apply in_map_iff in Hkey as [q [Heq Hq]]. rewrite <- Heq.
+    now apply poly_row_key_member.
+  Qed.
+
+  (** Combining equally bounded coefficients uses at most twice the width and one carry bit. *)
+  Lemma poly_weighted_value_bits : forall a b u v bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    Z.size_nat u <= bits -> Z.size_nat v <= bits ->
+    Z.size_nat (a * u + b * v) <= 2 * bits + 1.
+  Proof.
+    intros a b u v bits Ha Hb Hu Hv.
+    pose proof (poly_size_mul a u) as Hleft.
+    pose proof (poly_size_mul b v) as Hright.
+    pose proof (poly_size_add (a * u) (b * v)) as Hsum. lia.
+  Qed.
+
+  (** A normalized weighted row bounds every coefficient and its right-hand side. *)
+  Lemma poly_add_rows_bits : forall a p b q bits,
+    NoDup (map fst (lhs (poly_constraint p))) ->
+    NoDup (map fst (lhs (poly_constraint q))) ->
+    C.row_bits (poly_constraint p) <= bits -> C.row_bits (poly_constraint q) <= bits ->
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    C.row_bits (poly_constraint (poly_add_rows X.encode a p b q)) <= 2 * bits + 1.
+  Proof.
+    intros a p b q bits Hnp Hnq Hp Hq Ha Hb.
+    unfold C.row_bits at 1. cbn [poly_add_rows poly_constraint lhs rhs].
+    apply poly_max_bound.
+    - apply poly_weighted_value_bits; try assumption.
+      + eapply Nat.le_trans; [apply poly_row_rhs_bits|exact Hp].
+      + eapply Nat.le_trans; [apply poly_row_rhs_bits|exact Hq].
+    - apply Forall_forall. intros [x z] Hin. cbn [snd].
+      pose proof (poly_coef_member x z
+        (poly_normal_coef X.encode (poly_scale_coef a (lhs (poly_constraint p)) ++
+          poly_scale_coef b (lhs (poly_constraint q))))
+        (poly_normal_coef_nodup _ _ _) Hin) as Hcoef.
+      rewrite coef_of_normal, coef_of_app, !coef_of_scale in Hcoef. rewrite <- Hcoef.
+      apply poly_weighted_value_bits; try assumption.
+      + rewrite coef_of_poly_coefficient. eapply Nat.le_trans;
+          [apply poly_row_coefficient_bits; exact Hnp|exact Hp].
+      + rewrite coef_of_poly_coefficient. eapply Nat.le_trans;
+          [apply poly_row_coefficient_bits; exact Hnq|exact Hq].
+  Qed.
+
+  (** A normalized weighted row introduces no key beyond either input row. *)
+  Lemma poly_add_rows_key_bits : forall a p b q keys,
+    C.row_key_bits (poly_constraint p) <= keys ->
+    C.row_key_bits (poly_constraint q) <= keys ->
+    C.row_key_bits (poly_constraint (poly_add_rows X.encode a p b q)) <= keys.
+  Proof.
+    intros a p b q keys Hp Hq. unfold C.row_key_bits at 1.
+    cbn [poly_add_rows poly_constraint lhs]. apply poly_max_bound; [lia|].
+    apply Forall_forall. intros r Hin.
+    pose proof (poly_normal_coef_keys _ _ _ _ Hin) as Hkey.
+    unfold poly_scale_coef in Hkey. rewrite map_app, !map_map in Hkey.
+    cbn [fst] in Hkey. apply in_app_or in Hkey as [Hkey|Hkey].
+    - apply in_map_iff in Hkey as [s [Heq Hs]]. rewrite <- Heq.
+      eapply Nat.le_trans; [apply poly_row_key_member; exact Hs|exact Hp].
+    - apply in_map_iff in Hkey as [s [Heq Hs]]. rewrite <- Heq.
+      eapply Nat.le_trans; [apply poly_row_key_member; exact Hs|exact Hq].
+  Qed.
+
+  (** Equality cancellation respects the same arithmetic and key-width envelopes. *)
+  Lemma poly_cancel_sizes : forall x p r bits keys,
+    NoDup (map fst (lhs (poly_constraint p))) ->
+    NoDup (map fst (lhs (poly_constraint r))) ->
+    C.row_bits (poly_constraint p) <= bits -> C.row_bits (poly_constraint r) <= bits ->
+    C.row_key_bits (poly_constraint p) <= keys ->
+    C.row_key_bits (poly_constraint r) <= keys ->
+    C.row_bits (poly_constraint (poly_cancel X.encode X.eqb x p r)) <= 2 * bits + 1 /\
+      C.row_key_bits (poly_constraint (poly_cancel X.encode X.eqb x p r)) <= keys.
+  Proof.
+    intros x p r bits keys Hnp Hnr Hp Hr Hkp Hkr. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0).
+    - split; lia.
+    - split.
+      + apply poly_add_rows_bits; try assumption.
+        * eapply Nat.le_trans; [apply poly_size_sign_mul|].
+          eapply Nat.le_trans; [apply poly_row_coefficient_bits; exact Hnr|exact Hr].
+        * rewrite poly_size_abs. eapply Nat.le_trans;
+            [apply poly_row_coefficient_bits; exact Hnp|exact Hp].
+      + apply poly_add_rows_key_bits; assumption.
+  Qed.
+
+  (** A single elimination step satisfies the coefficient and key-width recurrence. *)
+  Lemma poly_step_sizes : forall x rows bits keys,
+    Forall (fun r => NoDup (map fst (lhs (poly_constraint r))) /\
+      C.row_bits (poly_constraint r) <= bits /\
+      C.row_key_bits (poly_constraint r) <= keys) rows ->
+    Forall (fun r => C.row_bits (poly_constraint r) <= 2 * bits + 1 /\
+      C.row_key_bits (poly_constraint r) <= keys) (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros x rows bits keys Hrows. rewrite Forall_forall in Hrows.
+    unfold poly_step. destruct (find (poly_pivot X.eqb x) rows) as [pivot|] eqn:Hpivot.
+    - apply find_some in Hpivot as [Hpivot _].
+      destruct (Hrows pivot Hpivot) as [Hnp [Hp Hkp]].
+      apply Forall_map, Forall_forall. intros r Hin.
+      destruct (Hrows r Hin) as [Hnr [Hr Hkr]]. apply poly_cancel_sizes; assumption.
+    - apply Forall_app. split.
+      + apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+        destruct (Hrows r Hin) as [Hnr [Hr Hkr]]. split; lia.
+      + apply Forall_forall. intros r Hin. apply in_flat_map in Hin as [p [Hp Hin]].
+        apply filter_In in Hp as [Hp _]. apply in_map_iff in Hin as [q [Heq Hq]].
+        apply filter_In in Hq as [Hq _]. subst r.
+        destruct (Hrows p Hp) as [Hnp [Hbp Hkp]].
+        destruct (Hrows q Hq) as [Hnq [Hbq Hkq]]. split.
+        * apply poly_add_rows_bits; try assumption.
+          -- rewrite poly_size_opp. eapply Nat.le_trans;
+               [apply poly_row_coefficient_bits; exact Hnq|exact Hbq].
+          -- eapply Nat.le_trans; [apply poly_row_coefficient_bits; exact Hnp|exact Hbp].
+        * apply poly_add_rows_key_bits; assumption.
+  Qed.
+
+  (** Initial normalization fits the maximum widths of normal input rows. *)
+  Lemma poly_initial_sizes : forall P, normal P ->
+    Forall (fun r => NoDup (map fst (lhs (poly_constraint r))) /\
+      C.row_bits (poly_constraint r) <= fold_right Nat.max 0 (map C.row_bits P) /\
+      C.row_key_bits (poly_constraint r) <= fold_right Nat.max 0 (map C.row_key_bits P))
+      (poly_initial X.encode (map (fun p => (p, false)) P)).
+  Proof.
+    intros P Hnormal. apply Forall_forall. intros r Hin.
+    destruct (poly_initial_source P r Hin) as [p [Hp Hrow]]. rewrite Hrow.
+    assert (Hnp : NoDup (map fst (lhs p))).
+    { unfold normal in Hnormal. exact (proj1 (Forall_forall _ _) Hnormal p Hp). }
+    split; [apply poly_normal_coef_nodup|]. split.
+    - eapply Nat.le_trans; [apply poly_normal_row_bits; exact Hnp|].
+      exact (poly_max_member _ C.row_bits 0 P p Hp).
+    - eapply Nat.le_trans; [apply poly_normal_row_key_bits|].
+      exact (poly_max_member _ C.row_key_bits 0 P p Hp).
+  Qed.
+
   Definition prows (s : t) : list (lcons X.t) :=
     match s with Unreached => nil | Reached P => P end.
   Definition wunits (_ : t) : nat := 0.
@@ -3534,7 +3698,27 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
 
   Lemma ell_fm_le : forall x P, normal P ->
     ell (map row_of (fm_elim x P)) <= 2 * ell P + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x P Hnormal.
+    pose proof (poly_step_sizes x _ _ _ (poly_initial_sizes P Hnormal)) as Hstep.
+    unfold fm_elim, ell. rewrite !map_map. cbn [row_of].
+    assert (Hbits : fold_right Nat.max 0
+      (map (fun r => C.row_bits (poly_constraint r))
+        (poly_step X.encode X.eqb x
+          (poly_initial X.encode (map (fun r => (r, false)) P)))) <=
+      2 * fold_right Nat.max 0 (map C.row_bits P) + 1).
+    { apply poly_max_bound; [lia|]. apply Forall_forall. intros r Hin.
+      exact (proj1 (proj1 (Forall_forall _ _) Hstep r Hin)). }
+    assert (Hkeys : fold_right Nat.max 0
+      (map (fun r => C.row_key_bits (poly_constraint r))
+        (poly_step X.encode X.eqb x
+          (poly_initial X.encode (map (fun r => (r, false)) P)))) <=
+      fold_right Nat.max 0 (map C.row_key_bits P)).
+    { apply poly_max_bound; [lia|]. apply Forall_forall. intros r Hin.
+      exact (proj2 (proj1 (Forall_forall _ _) Hstep r Hin)). }
+    lia.
+  Qed.
+
   Lemma subst_sat : forall v x f r, sat v (subst x f r) <->
     sat (upd X.eqb v x (eval_lin v f)) r.
   Proof.
