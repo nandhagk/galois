@@ -612,6 +612,141 @@ Module CongruenceCRT.
     destruct (Z.abs b <? Z.abs a); repeat split; lia.
   Qed.
 
+  (** Each state component has a linear input-bit bound. *)
+  Lemma state_component_sizes : forall n s, state_budget n s ->
+    (Z.size_nat (crt_r1 s) <= n /\ Z.size_nat (crt_r2 s) <= n /\
+     Z.size_nat (crt_u1 s) <= 3 * n + 1 /\ Z.size_nat (crt_v1 s) <= 3 * n + 1 /\
+     Z.size_nat (crt_u2 s) <= 3 * n + 1 /\ Z.size_nat (crt_v2 s) <= 3 * n + 1)%nat.
+  Proof.
+    intros n s [_ [Hmeasure [Hu1 [Hv1 [Hu2 Hv2]]]]].
+    unfold remainder_bits in Hmeasure.
+    destruct (crt_r2 s <? crt_r1 s); repeat split; lia.
+  Qed.
+
+  (** Quotients stay on the left of multiplication, so quotient bits pay the repeated work. *)
+  Lemma coefficient_multiply_time : forall n delta q x,
+    (1 <= delta <= n)%nat -> (Z.size_nat q <= 2 * delta)%nat ->
+    (Z.size_nat x <= 3 * n + 1)%nat ->
+    (Z.T_mul q x <= 32 * N.of_nat (n + 1) * N.of_nat delta)%N.
+  Proof.
+    intros n delta q x [Hpositive Hdelta] Hq Hx.
+    apply time_of_nat_le in Hpositive. apply time_of_nat_le in Hdelta.
+    apply time_of_nat_le in Hq. apply time_of_nat_le in Hx.
+    pose proof (Z.T_mul_le q x) as Hmultiply.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. time_cbn_all.
+    eapply N.le_trans; [exact Hmultiply|].
+    eapply N.le_trans with (m := ((3 * N.of_nat delta) * (8 * (N.of_nat n + 1)))%N).
+    - apply N.mul_le_mono; lia.
+    - nia.
+  Qed.
+
+  Lemma coefficient_subtract_time : forall n x y,
+    (Z.size_nat x <= 3 * n + 1)%nat -> (Z.size_nat y <= 5 * n + 1)%nat ->
+    (Z.T_sub x y <= 32 * N.of_nat (n + 1))%N.
+  Proof.
+    intros n x y Hx Hy. pose proof (Z.T_sub_le x y) as Hsubtract.
+    apply time_of_nat_le in Hx. apply time_of_nat_le in Hy.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. time_cbn_all. lia.
+  Qed.
+
+  Lemma division_time_budget : forall n delta a b, 0 <= a -> 0 < b ->
+    (Z.size_nat a <= n)%nat ->
+    (Z.size_nat a - Z.size_nat b + 2 <= 3 * delta)%nat ->
+    (T_div_aligned a b <= 768 * N.of_nat (n + 1) * N.of_nat delta)%N.
+  Proof.
+    intros n delta a b Ha Hb Hsize Halignment.
+    pose proof (T_div_aligned_le a b Ha Hb) as Hdivision.
+    apply time_of_nat_le in Hsize. apply time_of_nat_le in Halignment.
+    unfold k_div in Hdivision.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. time_cbn_all.
+    eapply N.le_trans; [exact Hdivision|].
+    change (256 * ((N.of_nat (Z.size_nat a - Z.size_nat b) + 2) *
+      (N.of_nat (Z.size_nat a) + 1)) <=
+      768 * (N.of_nat n + 1) * N.of_nat delta)%N.
+    replace (768 * (N.of_nat n + 1) * N.of_nat delta)%N with
+      (256 * ((3 * N.of_nat delta) * (N.of_nat n + 1)))%N by nia.
+    apply N.mul_le_mono_l. apply N.mul_le_mono; lia.
+  Qed.
+
+  (** The bit-length decrease pays the entire state transition. *)
+  Lemma next_time_budget : forall n s, state_budget n s -> crt_r1 s <> 0 ->
+    (T_next s <= 1024 * N.of_nat (n + 1) *
+      N.of_nat (remainder_bits s - remainder_bits (next s)))%N.
+  Proof.
+    intros n s Hstate Hnonzero.
+    destruct Hstate as [Hnonnegative Hrest].
+    destruct Hrest as [Hmeasure Hcoefficients].
+    destruct (next_bit_budget s Hnonnegative Hnonzero) as [Hdrop [Hquotient Halignment]].
+    destruct (state_component_sizes n s (conj Hnonnegative (conj Hmeasure Hcoefficients)))
+      as [Hr1 [Hr2 [Hu1 [Hv1 [Hu2 Hv2]]]]].
+    set (delta := (remainder_bits s - remainder_bits (next s))%nat) in *.
+    assert (Hdelta : (1 <= delta <= n)%nat) by (unfold delta; lia).
+    destruct Hnonnegative as [Hnonnegative1 Hnonnegative2].
+    pose proof (division_time_budget n delta (crt_r2 s) (crt_r1 s)
+      Hnonnegative2 ltac:(lia) Hr2 Halignment) as Hdivision.
+    pose proof (coefficient_multiply_time n delta (crt_r2 s / crt_r1 s)
+      (crt_r1 s) Hdelta Hquotient ltac:(lia)) as Hmulr.
+    pose proof (coefficient_multiply_time n delta (crt_r2 s / crt_r1 s)
+      (crt_u1 s) Hdelta Hquotient Hu1) as Hmulu.
+    pose proof (coefficient_multiply_time n delta (crt_r2 s / crt_r1 s)
+      (crt_v1 s) Hdelta Hquotient Hv1) as Hmulv.
+    pose proof (integer_multiply_size (crt_r2 s / crt_r1 s) (crt_r1 s)) as Hprodr.
+    pose proof (integer_multiply_size (crt_r2 s / crt_r1 s) (crt_u1 s)) as Hprodu.
+    pose proof (integer_multiply_size (crt_r2 s / crt_r1 s) (crt_v1 s)) as Hprodv.
+    pose proof (coefficient_subtract_time n (crt_r2 s)
+      ((crt_r2 s / crt_r1 s) * crt_r1 s) ltac:(lia) ltac:(lia)) as Hsubr.
+    pose proof (coefficient_subtract_time n (crt_u2 s)
+      ((crt_r2 s / crt_r1 s) * crt_u1 s) Hu2 ltac:(lia)) as Hsubu.
+    pose proof (coefficient_subtract_time n (crt_v2 s)
+      ((crt_r2 s / crt_r1 s) * crt_v1 s) Hv2 ltac:(lia)) as Hsubv.
+    assert (Hpositive : (1 <= N.of_nat delta)%N).
+    { change (N.of_nat 1 <= N.of_nat delta)%N. apply time_of_nat_le. lia. }
+    assert (Hwidth : (1 <= N.of_nat (n + 1))%N).
+    { rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. lia. }
+    assert (Hunit : (N.of_nat (n + 1) <= N.of_nat (n + 1) * N.of_nat delta)%N) by nia.
+    assert (Hproduct : (1 <= N.of_nat (n + 1) * N.of_nat delta)%N) by nia.
+    time_unfold T_next. rewrite div_aligned_all, div_eucl_pair. cbn [fst].
+    unfold T_crt_r1, T_crt_r2, T_crt_u1, T_crt_u2, T_crt_v1, T_crt_v2.
+    unfold Datatypes.T_fst. lia.
+  Qed.
+
+  (** The proof argument of the dependent branch has no observable timing effect. *)
+  Lemma nonzero_step_time : forall s, crt_r1 s <> 0 ->
+    T_step s = (2 + Z.T_eqb (crt_r1 s) 0 + T_next s)%N.
+  Proof.
+    intros [r1 u1 v1 r2 u2 v2] Hnonzero. destruct r1; [contradiction| |];
+      time_unfold T_step; cbn [crt_r1 Z.eqb]; unfold T_crt_r1; lia.
+  Qed.
+
+  Lemma step_time_budget : forall n s, state_budget n s -> crt_r1 s <> 0 ->
+    (T_step s <= 2048 * N.of_nat (n + 1) *
+      N.of_nat (remainder_bits s - remainder_bits (next s)))%N.
+  Proof.
+    intros n s Hstate Hnonzero. rewrite nonzero_step_time by exact Hnonzero.
+    pose proof (next_time_budget n s Hstate Hnonzero) as Hnext.
+    pose proof (Z.T_eqb_le (crt_r1 s) 0) as Hcompare.
+    destruct (state_component_sizes n s Hstate) as [Hr1 Hrest].
+    destruct Hstate as [Hnonnegative [Hmeasure Hcoefficients]].
+    destruct (next_bit_budget s Hnonnegative Hnonzero) as [Hdrop Hbits].
+    assert (Hpositive : (1 <= N.of_nat (remainder_bits s - remainder_bits (next s)))%N).
+    { change (N.of_nat 1 <= N.of_nat (remainder_bits s - remainder_bits (next s)))%N.
+      apply time_of_nat_le. lia. }
+    apply time_of_nat_le in Hr1.
+    assert (Hunit : (N.of_nat (n + 1) <= N.of_nat (n + 1) *
+      N.of_nat (remainder_bits s - remainder_bits (next s)))%N) by nia.
+    rewrite Nat2N.inj_add in *. change (N.of_nat 1) with 1%N in *. lia.
+  Qed.
+
+  Lemma zero_step_time : forall s, crt_r1 s = 0 -> (T_step s <= 6)%N.
+  Proof.
+    intros [r1 u1 v1 r2 u2 v2] Hzero. cbn [crt_r1] in Hzero. subst r1.
+    pose proof (Z.T_eqb_le 0 0).
+    time_unfold T_step. cbn [crt_r1 Z.eqb].
+    unfold T_crt_r1, T_crt_u2, T_crt_v2, T_crt_r2.
+    change (Z.size_nat 0) with 0%nat in *. time_cbn_all. lia.
+  Qed.
+
+
   (** The full Euclidean coefficient chain has quadratic input-bit work. *)
   Lemma T_extgcd_le : forall a b,
     (T_extgcd a b <= k_gcd *
