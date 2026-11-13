@@ -5,7 +5,7 @@
     Builds on: Syntax, Model and Stdlib lists. *)
 
 From Stdlib Require Import List PArith NArith PeanoNat Lia Relations.Relation_Operators Sorting.Permutation.
-From Argent Require Import Loop.
+From Argent Require Import Time Loop.
 From Galois.Base Require Import UnionFindSig KeySig MapSig Trie UnionFind Loop.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
@@ -1311,6 +1311,48 @@ Module LoopNFacts.
   Proof.
     intros S R step fuel s r Hfuel Hstop. unfold loopN. apply loop_stop.
     destruct fuel as [| p]; [lia |]. cbn [loopN_step]. now rewrite Hstop.
+  Qed.
+
+  (** The accessibility loop is monotone in the supplied callback clock. *)
+  Lemma T_loop_mono : forall S R (lt : S -> S -> Prop)
+      (step : forall s, {s1 : S | lt s1 s} + R) (T_step T_step' : S -> N),
+    (forall s, (T_step s <= T_step' s)%N) -> forall s (Hacc : Acc lt s),
+    (T_loop lt step T_step s Hacc <= T_loop lt step T_step' s Hacc)%N.
+  Proof.
+    intros S R lt step T_step T_step' Hmono s Hacc.
+    induction Hacc as [s Hacc IH] using Acc_ind_dep.
+    time_unfold @T_loop. cbn [Acc_inv].
+    destruct (step s) as [[s1 Hlt] | r].
+    - specialize (IH s1 Hlt). specialize (Hmono s). lia.
+    - specialize (Hmono s). lia.
+  Qed.
+
+  (** The binary driver's local clock adds identical overhead to either callback bound. *)
+  Lemma T_loopN_step_mono : forall S R (step : S -> S + R) (T_step T_step' : S -> N),
+    (forall s, (T_step s <= T_step' s)%N) -> forall fs,
+    (T_loopN_step step T_step fs <= T_loopN_step step T_step' fs)%N.
+  Proof.
+    intros S R step T_step T_step' Hmono [[| p] s]; time_unfold @T_loopN_step.
+    - lia.
+    - specialize (Hmono s). destruct (step s); lia.
+  Qed.
+
+  (** Raising a pointwise callback bound raises the actual derived binary-loop clock. *)
+  Lemma T_loopN_mono : forall S R (step : S -> S + R) (T_step T_step' : S -> N),
+    (forall s, (T_step s <= T_step' s)%N) -> forall fuel s,
+    (T_loopN step T_step fuel s <= T_loopN step T_step' fuel s)%N.
+  Proof.
+    intros S R step T_step T_step' Hmono fuel s. time_unfold @T_loopN.
+    apply N.add_le_mono_l. apply T_loop_mono. now apply T_loopN_step_mono.
+  Qed.
+
+  (** Pointwise-equal callback clocks give exactly equal loop clocks without extensionality. *)
+  Lemma T_loopN_clock_ext : forall S R (step : S -> S + R) (T_step T_step' : S -> N),
+    (forall s, T_step s = T_step' s) -> forall fuel s,
+    T_loopN step T_step fuel s = T_loopN step T_step' fuel s.
+  Proof.
+    intros S R step T_step T_step' Hequal fuel s. apply N.le_antisymm;
+      apply T_loopN_mono; intro current; now rewrite Hequal.
   Qed.
 
 End LoopNFacts.
