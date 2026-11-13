@@ -689,6 +689,7 @@ Module DatabaseUses.
   Include OccurrenceBucketCode PosKeyT DatabaseUseMap.
   TimeFun bucket add transfer register.
 End DatabaseUses.
+Module DatabaseUsesFacts := OccurrenceBucketFacts PosKeyT DatabaseUseMap.
 
 Definition database_filter_uses {A} (x : positive)
     (bindings : list (positive * list A)) : list A :=
@@ -9796,6 +9797,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     flat_map (fun binding => map (pair (fst binding)) (snd binding))
       (map (fun binding => (fst binding, snd (snd binding)))
         (PTrieCode.elements (row_uses (db_row_store db)))).
+  Lemma uses_entries_facts : forall db,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    uses_entries db = DatabaseUsesFacts.entries (row_uses (db_row_store db)).
+  Proof.
+    intros db Hwf. unfold uses_entries, DatabaseUsesFacts.entries.
+    rewrite DatabaseUseMap.elements_trie.
+    f_equal. apply map_ext_in.
+    intros [code [label entries]] Hin. cbn [fst snd].
+    apply PTrie.elements_spec in Hin. unfold DatabaseUseMap.wf in Hwf.
+    specialize (Hwf code label entries Hin). unfold PosKeyT.encode in Hwf.
+    subst code. reflexivity.
+  Qed.
   Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
