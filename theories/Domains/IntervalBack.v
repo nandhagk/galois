@@ -4520,6 +4520,45 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     - rewrite Z.max_l by lia. lia.
   Qed.
 
+  Local Lemma table_mask_time : forall h,
+    (T_interval_mask h <= 100 * N.of_nat ((Z.size_nat h + 1) ^ 2))%N.
+  Proof.
+    intro h.
+    pose proof (WordTime.integer_log2_time_bound h) as Hlog_time.
+    pose proof (WordTime.integer_log2_size h) as Hlog_bits.
+    pose proof (table_log2_value h) as [Hlog_nonneg Hlog_value].
+    pose proof (Std.Z.T_eqb_le h 0) as Heqb.
+    pose proof (Std.Z.T_add_le (Z.log2 h) 1) as Hadd.
+    pose proof (table_ones_time (Z.log2 h + 1) ltac:(lia)) as Hones.
+    pose proof (Z2Nat.id (Z.log2 h + 1) ltac:(lia)) as Hlognat_id.
+    assert (Hlognat :
+      (Z.to_nat (Z.log2 h + 1) <= Z.size_nat h + 1)%nat) by lia.
+    set (s := Z.size_nat h + 1).
+    assert (Hspos : (1 <= s)%nat) by (unfold s; lia).
+    assert (Hsquare : (s <= s ^ 2)%nat)
+      by (clear - Hspos; rewrite Nat.pow_2_r; nia).
+    assert (Hlinear :
+      (1 + Z.size_nat h + 1 + 3 * (Z.size_nat (Z.log2 h) + 1) + 1 +
+       16 * (Z.to_nat (Z.log2 h + 1) + 1) <= 50 * s)%nat)
+      by (unfold s; lia).
+    assert (Hlinear_sq :
+      (1 + Z.size_nat h + 1 + 3 * (Z.size_nat (Z.log2 h) + 1) + 1 +
+       16 * (Z.to_nat (Z.log2 h + 1) + 1) <= 50 * s ^ 2)%nat)
+      by (clear - Hlinear Hsquare; lia).
+    pose proof (table_nat_to_N_le _ _ Hlinear_sq) as HlinearN.
+    repeat (rewrite Nat2N.inj_add in HlinearN ||
+      rewrite Nat2N.inj_mul in HlinearN).
+    cbn [N.of_nat] in HlinearN.
+    unfold T_interval_mask.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (h =? 0)%Z; cbn beta iota zeta;
+      repeat rewrite Nat2N.inj_add in Heqb, Hadd, Hones;
+      try rewrite Nat.pow_2_r in HlinearN;
+      try rewrite Nat.pow_2_r in Hlog_time;
+      rewrite Nat.mul_1_r;
+      lia.
+  Qed.
+
   Local Lemma table_and_time : forall rw u v,
     (T_interval_and rw u v <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
