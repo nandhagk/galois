@@ -1441,6 +1441,24 @@ Fixpoint database_group_of (f : positive) (sl : list (positive * list nat))
   | _, _ => None
   end.
 
+Lemma database_group_of_witness : forall f sl positions g,
+  database_group_of f sl positions = Some g ->
+  exists n perm offset, nth_error sl n = Some (f, perm) /\
+    nth_error positions n = Some (true, g, offset).
+Proof.
+  intros f sl. induction sl as [|[head layout] rest IH];
+    intros positions g Hgroup; destruct positions as [|[[flag rank] offset] tail];
+    cbn [database_group_of] in Hgroup; try discriminate.
+  destruct flag.
+  - destruct (Pos.eqb f head) eqn:Hsame.
+    + apply Pos.eqb_eq in Hsame. subst head. injection Hgroup as <-.
+      exists 0%nat, layout, offset. split; reflexivity.
+    + destruct (IH tail g Hgroup) as [n [perm [j [Hslot Hposition]]]].
+      exists (S n), perm, j. split; [exact Hslot | exact Hposition].
+  - destruct (IH tail g Hgroup) as [n [perm [j [Hslot Hposition]]]].
+    exists (S n), perm, j. split; [exact Hslot | exact Hposition].
+Qed.
+
 (** A group's stored slots are listed in their original slot order. *)
 Fixpoint database_group_slots (s : N) (d : bool) (g : N)
     (positions : list (bool * N * N)) : list N :=
