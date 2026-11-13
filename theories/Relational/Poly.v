@@ -2971,6 +2971,291 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - rewrite (poly_Q_scale_le_zero _ _ HpositiveQ). lra.
   Qed.
 
+  (** An equality contribution never supplies a positive strict summand. *)
+  Lemma poly_eq_used_nonstrict : forall a r,
+    poly_eq_nonstrict r -> poly_eq_used a (poly_constraint r) = true ->
+    ((0 <? a)%Z && poly_strict r) = false.
+  Proof.
+    intros a r Hnonstrict Hused. unfold poly_eq_nonstrict in Hnonstrict.
+    unfold poly_eq_used in Hused. destruct (lrel (poly_constraint r)).
+    - rewrite (Hnonstrict eq_refl). apply andb_false_r.
+    - apply Z.eqb_eq in Hused. subst a. reflexivity.
+  Qed.
+
+  Lemma poly_add_rows_eq_nonstrict : forall a p b q,
+    poly_eq_nonstrict p -> poly_eq_nonstrict q ->
+    poly_eq_nonstrict (poly_add_rows X.encode a p b q).
+  Proof.
+    intros a p b q Hp Hq Hrel.
+    cbn [poly_add_rows poly_constraint lrel] in Hrel.
+    destruct (poly_eq_used a (poly_constraint p) && poly_eq_used b (poly_constraint q))
+      eqn:Hused; [|discriminate].
+    apply andb_true_iff in Hused as [Ha Hb]. cbn [poly_add_rows poly_strict].
+    rewrite (poly_eq_used_nonstrict a p Hp Ha), (poly_eq_used_nonstrict b q Hq Hb).
+    reflexivity.
+  Qed.
+
+  Lemma poly_cancel_eq_nonstrict : forall x p r,
+    poly_eq_nonstrict p -> poly_eq_nonstrict r ->
+    poly_eq_nonstrict (poly_cancel X.encode X.eqb x p r).
+  Proof.
+    intros x p r Hp Hr. unfold poly_cancel.
+    destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0); [exact Hr|].
+    now apply poly_add_rows_eq_nonstrict.
+  Qed.
+
+  (** Elimination preserves the convention that equality rows are not strict. *)
+  Lemma poly_step_eq_nonstrict : forall x rows,
+    Forall poly_eq_nonstrict rows ->
+    Forall poly_eq_nonstrict (poly_step X.encode X.eqb x rows).
+  Proof.
+    intros x rows Hflags. unfold poly_step.
+    destruct (find (poly_pivot X.eqb x) rows) as [p|] eqn:Hfind.
+    - apply find_some in Hfind as [Hp _]. apply Forall_map.
+      apply Forall_forall. intros r Hr. apply poly_cancel_eq_nonstrict.
+      + exact (proj1 (Forall_forall _ _) Hflags p Hp).
+      + exact (proj1 (Forall_forall _ _) Hflags r Hr).
+    - apply Forall_app. split; apply Forall_forall; intros r Hin.
+      + apply filter_In in Hin as [Hin _].
+        exact (proj1 (Forall_forall _ _) Hflags r Hin).
+      + apply in_flat_map in Hin as [p [Hp Hin]].
+        apply in_map_iff in Hin as [q [Hsame Hq]]. subst r.
+        apply filter_In in Hp as [Hp _]. apply filter_In in Hq as [Hq _].
+        apply poly_add_rows_eq_nonstrict.
+        * exact (proj1 (Forall_forall _ _) Hflags p Hp).
+        * exact (proj1 (Forall_forall _ _) Hflags q Hq).
+  Qed.
+
+  Lemma poly_run_eq_nonstrict : forall xs rows,
+    Forall poly_eq_nonstrict rows ->
+    Forall poly_eq_nonstrict (poly_run X.encode X.eqb xs rows).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros rows Hflags; [exact Hflags|].
+    cbn [poly_run]. apply IH. now apply poly_step_eq_nonstrict.
+  Qed.
+
+  Lemma poly_initial_eq_nonstrict : forall rows,
+    Forall (fun p => lrel (fst p) = REq -> snd p = false) rows ->
+    Forall poly_eq_nonstrict (poly_initial X.encode rows).
+  Proof.
+    intro rows. induction rows as [|[r flag] rows IH]; intro Hflags; [constructor|].
+    inversion Hflags as [|p rows' Hhead Htail]; subst p rows'.
+    cbn [poly_initial fst snd]. constructor.
+    - intros Hrel. cbn [poly_constraint poly_normal_row lrel] in Hrel.
+      cbn [poly_strict]. apply Hhead. exact Hrel.
+    - apply Forall_map. change (Forall poly_eq_nonstrict (poly_initial X.encode rows)).
+      now apply IH.
+  Qed.
+
+  Lemma poly_entailment_initial_nonstrict : forall P c,
+    Forall poly_eq_nonstrict
+      (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P)).
+  Proof.
+    intros P c. apply poly_initial_eq_nonstrict. constructor.
+    - cbn [fst poly_negate lrel]. discriminate.
+    - apply Forall_map. apply Forall_forall. intros r Hin Hrel. reflexivity.
+  Qed.
+
+  (** Normalization changes neither equality nor strict/non-strict rational models. *)
+  Lemma poly_normalize_satQ : forall v c ms flag,
+    poly_satQ v (PolyRow X.t (poly_normal_row X.encode c) ms flag) <->
+      poly_satQ v (PolyRow X.t c ms flag).
+  Proof.
+    intros v c ms flag. unfold poly_satQ.
+    cbn [poly_constraint poly_strict poly_normal_row lhs lrel rhs].
+    destruct (lrel c); [|destruct flag]; now setoid_rewrite normalize_coef_eval_Q.
+  Qed.
+
+  (** Initial multiplier vectors do not change the models of their flagged source rows. *)
+  Lemma poly_initial_models_Q : forall v rows,
+    Forall (poly_satQ v) (poly_initial X.encode rows) <->
+      Forall (fun p => poly_satQ v (PolyRow X.t (fst p) nil (snd p))) rows.
+  Proof.
+    intros v rows. induction rows as [|[r flag] rows IH].
+    - split; intro H; constructor.
+    - cbn [poly_initial fst snd]. rewrite !Forall_cons_iff, Forall_map.
+      change ((poly_satQ v (PolyRow X.t (poly_normal_row X.encode r) nil flag) /\
+        Forall (poly_satQ v) (poly_initial X.encode rows)) <->
+        (poly_satQ v (PolyRow X.t r nil flag) /\
+        Forall (fun p => poly_satQ v (PolyRow X.t (fst p) nil (snd p))) rows)).
+      rewrite poly_normalize_satQ, IH. reflexivity.
+  Qed.
+
+  (** A model of the strict-complement input satisfies the source and falsifies its target. *)
+  Lemma poly_entailment_initial_models_Q : forall P c v,
+    lrel c = RLe ->
+    Forall (poly_satQ v)
+      (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P)) ->
+    Forall (satQ v) P /\ ~ satQ v c.
+  Proof.
+    intros P c v Htarget Hmodels. apply poly_initial_models_Q in Hmodels.
+    inversion Hmodels as [|p rows Hhead Htail]; subst p rows. split.
+    - rewrite Forall_map in Htail. exact Htail.
+    - unfold poly_satQ in Hhead.
+      cbn [fst snd poly_constraint poly_strict poly_negate lhs lrel rhs] in Hhead.
+      setoid_rewrite eval_coef_scale_Q in Hhead. rewrite inject_Z_opp in Hhead.
+      change ((-1) * poly_eval_coef_Q v (lhs c) < - inject_Z (rhs c))%Q in Hhead.
+      intro Hmodel. unfold satQ in Hmodel. rewrite Htarget in Hmodel.
+      change (poly_eval_coef_Q v (lhs c) <= inject_Z (rhs c))%Q in Hmodel. lra.
+  Qed.
+
+  (** With no equality pivot, every row involving the eliminated variable is an inequality. *)
+  Lemma poly_no_pivot_inequality : forall x rows r,
+    find (poly_pivot X.eqb x) rows = None -> In r rows ->
+    poly_coefficient X.eqb x (poly_constraint r) <> 0%Z ->
+    lrel (poly_constraint r) = RLe.
+  Proof.
+    intros x rows r Hnone Hin Hnonzero.
+    pose proof (find_none (poly_pivot X.eqb x) rows Hnone r Hin) as Hp.
+    unfold poly_pivot in Hp. destruct (lrel (poly_constraint r)) eqn:Hrel; [|reflexivity].
+    apply negb_false_iff, Z.eqb_eq in Hp. contradiction.
+  Qed.
+
+  (** Positive combinations of inequalities retain the disjunction of their strict flags. *)
+  Lemma poly_positive_pair_shape : forall a p b r,
+    lrel (poly_constraint p) = RLe -> lrel (poly_constraint r) = RLe ->
+    (0 < a)%Z -> (0 < b)%Z ->
+    lrel (poly_constraint (poly_add_rows X.encode a p b r)) = RLe /\
+      poly_strict (poly_add_rows X.encode a p b r) = (poly_strict p || poly_strict r).
+  Proof.
+    intros a p b r Hp Hr Ha Hb.
+    assert (Hazero : Z.eqb a 0 = false) by (apply Z.eqb_neq; lia).
+    assert (Hapos : Z.ltb 0 a = true) by now apply Z.ltb_lt.
+    assert (Hbpos : Z.ltb 0 b = true) by now apply Z.ltb_lt.
+    split.
+    - unfold poly_add_rows. cbn [poly_constraint lrel]. unfold poly_eq_used.
+      now rewrite Hp, Hr, Hazero.
+    - unfold poly_add_rows. cbn [poly_strict]. now rewrite Hapos, Hbpos.
+  Qed.
+
+  (** An opposite-sign pair is exactly the compatibility constraint between its endpoints. *)
+  Lemma poly_pair_bounds_compatible : forall v x p r,
+    lrel (poly_constraint p) = RLe -> lrel (poly_constraint r) = RLe ->
+    (0 < poly_coefficient X.eqb x (poly_constraint p))%Z ->
+    (poly_coefficient X.eqb x (poly_constraint r) < 0)%Z ->
+    poly_satQ v (poly_add_rows X.encode
+      (- poly_coefficient X.eqb x (poly_constraint r)) p
+      (poly_coefficient X.eqb x (poly_constraint p)) r) ->
+    poly_bounds_compatible (poly_bound_Q v x r) (poly_bound_Q v x p).
+  Proof.
+    intros v x p r Hprel Hrrel Hpositive Hnegative Hsat.
+    set (a := poly_coefficient X.eqb x (poly_constraint p)) in *.
+    set (b := poly_coefficient X.eqb x (poly_constraint r)) in *.
+    assert (Hfactor : (0 < inject_Z (-b) * inject_Z a)%Q).
+    { apply Qmult_lt_0_compat; apply poly_inject_positive; lia. }
+    destruct (poly_positive_pair_shape (-b)%Z p a r Hprel Hrrel ltac:(lia) Hpositive)
+      as [Hrel Hflag].
+    assert (Hres : (poly_residual_Q v
+      (poly_constraint (poly_add_rows X.encode (-b) p a r)) ==
+      (inject_Z (-b) * inject_Z a) * (poly_endpoint_Q v x r - poly_endpoint_Q v x p))%Q).
+    { eapply Qeq_trans; [apply poly_residual_add_Q|].
+      setoid_rewrite (poly_endpoint_residual_Q v x p ltac:(unfold a in Hpositive; lia)).
+      setoid_rewrite (poly_endpoint_residual_Q v x r ltac:(unfold b in Hnegative; lia)).
+      fold a b. rewrite !inject_Z_opp. ring. }
+    apply (proj1 (poly_satQ_residual _ _)) in Hsat. rewrite Hrel, Hflag in Hsat.
+    unfold poly_bounds_compatible, poly_bound_Q. cbn [fst snd].
+    rewrite orb_comm in Hsat.
+    destruct (poly_strict r || poly_strict p); setoid_rewrite Hres in Hsat.
+    - apply (proj1 (poly_Q_scale_lt_zero _ _ Hfactor)) in Hsat. lra.
+    - apply (proj1 (poly_Q_scale_le_zero _ _ Hfactor)) in Hsat. lra.
+  Qed.
+
+  (** A model after eliminating one coordinate extends to a model before elimination. *)
+  Lemma poly_step_model_lift : forall x rows v,
+    Forall poly_eq_nonstrict rows ->
+    Forall (poly_satQ v) (poly_step X.encode X.eqb x rows) ->
+    exists q : Q, Forall (poly_satQ (upd X.eqb v x q)) rows.
+  Proof.
+    intros x rows v Hnonstrict Hmodels.
+    unfold poly_step in Hmodels.
+    destruct (find (poly_pivot X.eqb x) rows) as [p|] eqn:Hfind.
+    - destruct (find_some (poly_pivot X.eqb x) rows Hfind) as [Hin Hpivot].
+      destruct (poly_pivot_info x p Hpivot) as [Hrel Hnonzero].
+      pose proof (proj1 (Forall_forall _ _) Hnonstrict p Hin) as Hpstrict.
+      set (q := poly_endpoint_Q v x p).
+      assert (Hpmodel : poly_satQ (upd X.eqb v x q) p).
+      { apply (proj2 (poly_satQ_residual _ _)). rewrite Hrel.
+        setoid_rewrite (poly_endpoint_update_Q v x q p Hnonzero). unfold q. ring. }
+      exists q. rewrite Forall_map in Hmodels. apply Forall_forall. intros r Hr.
+      apply (proj1 (poly_cancel_satQ _ x p r Hpivot Hpstrict Hpmodel)).
+      apply (proj2 (poly_satQ_update_zero v x q _ (poly_cancel_zero x p r))).
+      now apply (proj1 (Forall_forall _ _) Hmodels).
+    - set (pos := filter (fun r => (0 <? poly_coefficient X.eqb x (poly_constraint r))%Z) rows)
+        in *.
+      set (neg := filter (fun r => (poly_coefficient X.eqb x (poly_constraint r) <? 0)%Z) rows)
+        in *.
+      assert (Hcompatible : forall lo hi,
+        In lo (map (poly_bound_Q v x) neg) -> In hi (map (poly_bound_Q v x) pos) ->
+        poly_bounds_compatible lo hi).
+      { intros lo hi Hlo Hhi.
+        apply in_map_iff in Hlo as [lower [Hsame Hlower]]. subst lo.
+        apply in_map_iff in Hhi as [upper [Hsame Hupper]]. subst hi.
+        unfold neg in Hlower. apply filter_In in Hlower as [Hlower Hnegative].
+        unfold pos in Hupper. apply filter_In in Hupper as [Hupper Hpositive].
+        apply Z.ltb_lt in Hnegative, Hpositive.
+        apply poly_pair_bounds_compatible.
+        - apply poly_no_pivot_inequality with (x := x) (rows := rows); try assumption; lia.
+        - apply poly_no_pivot_inequality with (x := x) (rows := rows); try assumption; lia.
+        - exact Hpositive.
+        - exact Hnegative.
+        - apply (proj1 (Forall_forall _ _) Hmodels).
+          apply in_or_app. right. apply in_flat_map. exists upper. split.
+          + unfold pos. apply filter_In. split; [exact Hupper|now apply Z.ltb_lt].
+          + apply in_map_iff. exists lower. split; [reflexivity|].
+            unfold neg. apply filter_In. split;
+              [exact Hlower|now apply Z.ltb_lt]. }
+      destruct (poly_Q_interval_model (map (poly_bound_Q v x) neg)
+        (map (poly_bound_Q v x) pos) Hcompatible) as [q [Hlower Hupper]].
+      exists q. apply Forall_forall. intros r Hin.
+      destruct (Z.eqb (poly_coefficient X.eqb x (poly_constraint r)) 0) eqn:Hzero.
+      + apply Z.eqb_eq in Hzero.
+        apply (proj2 (poly_satQ_update_zero v x q r Hzero)).
+        apply (proj1 (Forall_forall _ _) Hmodels). apply in_or_app. left.
+        apply filter_In. split; [exact Hin|now apply Z.eqb_eq].
+      + apply Z.eqb_neq in Hzero.
+        assert (Hrel : lrel (poly_constraint r) = RLe).
+        { now apply poly_no_pivot_inequality with (x := x) (rows := rows). }
+        destruct (Z.ltb 0 (poly_coefficient X.eqb x (poly_constraint r))) eqn:Hpositive.
+        * apply Z.ltb_lt in Hpositive.
+          apply (proj2 (poly_upper_satQ v x q r Hrel Hpositive)).
+          apply (proj1 (Forall_forall _ _) Hupper). apply in_map.
+          unfold pos. apply filter_In. split; [exact Hin|now apply Z.ltb_lt].
+        * apply Z.ltb_ge in Hpositive.
+          assert (Hnegative : (poly_coefficient X.eqb x (poly_constraint r) < 0)%Z) by lia.
+          apply (proj2 (poly_lower_satQ v x q r Hrel Hnegative)).
+          apply (proj1 (Forall_forall _ _) Hlower). apply in_map.
+          unfold neg. apply filter_In. split; [exact Hin|now apply Z.ltb_lt].
+  Qed.
+
+  (** Reversing the finite elimination sequence reconstructs a rational source model. *)
+  Lemma poly_run_model_lift : forall xs rows v,
+    Forall poly_eq_nonstrict rows ->
+    Forall (poly_satQ v) (poly_run X.encode X.eqb xs rows) ->
+    exists w : X.t -> Q, Forall (poly_satQ w) rows.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros rows v Hnonstrict Hmodels.
+    - exists v. exact Hmodels.
+    - cbn [poly_run] in Hmodels.
+      destruct (IH (poly_step X.encode X.eqb x rows) v
+        (poly_step_eq_nonstrict x rows Hnonstrict) Hmodels) as [w Hstep].
+      destruct (poly_step_model_lift x rows w Hnonstrict Hstep) as [q Hsource].
+      exists (upd X.eqb w x q). exact Hsource.
+  Qed.
+
+  (** Failure of the checked producer reconstructs a rational counterexample to its target. *)
+  Lemma poly_failed_certificate_model_Q : forall P c,
+    lrel c = RLe -> entail_cert P c = None ->
+    exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
+  Proof.
+    intros P c Hrel Hnone.
+    destruct (poly_run_model_lift (poly_variables X.encode (c :: P))
+      (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))
+      (fun _ => 0%Q) (poly_entailment_initial_nonstrict P c)
+      (poly_entail_terminal_model_Q P c Hrel Hnone)) as [v Hmodels].
+    exists v. now apply poly_entailment_initial_models_Q.
+  Qed.
+
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
@@ -3687,7 +3972,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma fm_complete_Q : forall P c, lrel c = RLe -> entail_cert P c = None ->
     exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact poly_failed_certificate_model_Q.
+  Qed.
   Lemma fm_rows_le : forall x P, length (fm_elim x P) <= (length P)^2 / 4 + length P.
   Proof.
     intros x P. unfold fm_elim. rewrite length_map.
