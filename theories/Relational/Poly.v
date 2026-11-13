@@ -3405,10 +3405,128 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - pose proof (filter_length_le f xs). lia.
   Qed.
 
+  (** Reached states denote their simultaneous rational solutions. *)
+  Definition poly_models_Q (s : t) (v : X.t -> Q) : Prop :=
+    match s with Unreached => False | Reached P => Forall (satQ v) P end.
+
+  Lemma entails_row_sound_Q : forall P r v,
+    entails_row P r = true -> Forall (satQ v) P -> satQ v r.
+  Proof.
+    intros P r v Hchecked Hmodels. unfold entails_row in Hchecked.
+    destruct (entail_cert P r) as [k|] eqn:Hcertificate; [|discriminate].
+    apply C.check_entails_sound_Q with (P := P) (k := k); try assumption.
+    exact (proj2 (entail_cert_returned P r k Hcertificate)).
+  Qed.
+
+  Lemma entails_row_complete_Q : forall P r, lrel r = RLe ->
+    (forall v : X.t -> Q, Forall (satQ v) P -> satQ v r) -> entails_row P r = true.
+  Proof.
+    intros P r Hrel Hsemantic. unfold entails_row.
+    destruct (entail_cert P r) as [k|] eqn:Hcertificate.
+    - exact (proj1 (entail_cert_returned P r k Hcertificate)).
+    - destruct (poly_failed_certificate_model_Q P r Hrel Hcertificate)
+        as [v [Hmodels Hfalse]]. exfalso. exact (Hfalse (Hsemantic v Hmodels)).
+  Qed.
+
+  (** Equality is equivalent to its two non-strict inequality directions over Q. *)
+  Lemma poly_row_eq_split_Q : forall v r, lrel r = REq ->
+    (satQ v r <-> satQ v (LCons X.t (lhs r) RLe (rhs r)) /\ satQ v (poly_negate r)).
+  Proof.
+    intros v r Hrel. unfold satQ. cbn [lhs lrel rhs poly_negate]. rewrite Hrel.
+    change ((poly_eval_coef_Q v (lhs r) == inject_Z (rhs r))%Q <->
+      (poly_eval_coef_Q v (lhs r) <= inject_Z (rhs r))%Q /\
+      (poly_eval_coef_Q v (poly_scale_coef (-1)%Z (lhs r)) <= inject_Z (- rhs r))%Q).
+    setoid_rewrite eval_coef_scale_Q. rewrite inject_Z_opp.
+    change ((poly_eval_coef_Q v (lhs r) == inject_Z (rhs r))%Q <->
+      (poly_eval_coef_Q v (lhs r) <= inject_Z (rhs r))%Q /\
+      ((-1) * poly_eval_coef_Q v (lhs r) <= - inject_Z (rhs r))%Q).
+    split; [intro H; split; lra|intros [Hleft Hright]; lra].
+  Qed.
+
+  Lemma keep_row_sound_Q : forall P r v,
+    keep_row P r = true -> Forall (satQ v) P -> satQ v r.
+  Proof.
+    intros P r v Hkeep Hmodels. unfold keep_row in Hkeep.
+    destruct (lrel r) eqn:Hrel.
+    - apply andb_true_iff in Hkeep as [Hleft Hright].
+      apply (proj2 (poly_row_eq_split_Q v r Hrel)). split.
+      + now apply entails_row_sound_Q with (P := P).
+      + now apply entails_row_sound_Q with (P := P).
+    - now apply entails_row_sound_Q with (P := P).
+  Qed.
+
+  Lemma keep_row_complete_Q : forall P r,
+    (forall v : X.t -> Q, Forall (satQ v) P -> satQ v r) -> keep_row P r = true.
+  Proof.
+    intros P r Hsemantic. unfold keep_row. destruct (lrel r) eqn:Hrel.
+    - apply andb_true_iff. split; apply entails_row_complete_Q; [reflexivity| |reflexivity|].
+      + intros v Hmodels. exact (proj1 (proj1 (poly_row_eq_split_Q v r Hrel)
+          (Hsemantic v Hmodels))).
+      + intros v Hmodels. exact (proj2 (proj1 (poly_row_eq_split_Q v r Hrel)
+          (Hsemantic v Hmodels))).
+    - apply entails_row_complete_Q; [exact Hrel|exact Hsemantic].
+  Qed.
+
+  Lemma keep_row_iff_Q : forall P r,
+    keep_row P r = true <-> forall v : X.t -> Q, Forall (satQ v) P -> satQ v r.
+  Proof.
+    intros P r. split.
+    - intros Hkeep v Hmodels. now apply keep_row_sound_Q with (P := P).
+    - apply keep_row_complete_Q.
+  Qed.
+
+  Lemma is_bot_sound_Q : forall s v, is_bot s = true -> ~ poly_models_Q s v.
+  Proof.
+    intros [|P] v Hbot Hmodels; [exact Hmodels|].
+    pose proof (entails_row_sound_Q P (LCons X.t nil RLe (-1)%Z) v Hbot Hmodels) as Hfalse.
+    change (0 <= -1)%Q in Hfalse. lra.
+  Qed.
+
+  Lemma is_bot_complete_Q : forall s,
+    (forall v : X.t -> Q, ~ poly_models_Q s v) -> is_bot s = true.
+  Proof.
+    intros [|P] Hempty; [reflexivity|].
+    apply entails_row_complete_Q; [reflexivity|].
+    intros v Hmodels. exfalso. exact (Hempty v Hmodels).
+  Qed.
+
+  (** Boolean inclusion preserves every rational model. *)
+  Lemma leb_sound_Q : forall a b, leb a b = true ->
+    forall v : X.t -> Q, poly_models_Q a v -> poly_models_Q b v.
+  Proof.
+    intros [|P] [|Q] Hle v Hmodels; cbn [poly_models_Q] in *; try contradiction.
+    - exact (is_bot_sound_Q (Reached P) v Hle Hmodels).
+    - apply Forall_forall. intros r Hin. apply keep_row_sound_Q with (P := P).
+      + exact (proj1 (forallb_forall _ _) Hle r Hin).
+      + exact Hmodels.
+  Qed.
+
+  (** Every rational semantic inclusion is recognized by Boolean inclusion. *)
+  Lemma leb_complete_Q : forall a b,
+    (forall v : X.t -> Q, poly_models_Q a v -> poly_models_Q b v) -> leb a b = true.
+  Proof.
+    intros [|P] [|Q] Hsemantic; [reflexivity|reflexivity| |].
+    - apply is_bot_complete_Q. intros v Hmodels. exact (Hsemantic v Hmodels).
+    - apply forallb_forall. intros r Hin. apply keep_row_complete_Q.
+      intros v Hmodels. exact (proj1 (Forall_forall _ _) (Hsemantic v Hmodels) r Hin).
+  Qed.
+
+  Lemma leb_iff_Q : forall a b,
+    leb a b = true <-> forall v : X.t -> Q, poly_models_Q a v -> poly_models_Q b v.
+  Proof.
+    intros a b. split; [apply leb_sound_Q|apply leb_complete_Q].
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. apply leb_complete_Q. intros v Hmodels. exact Hmodels.
+  Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c Hab Hbc. apply leb_complete_Q. intros v Hmodels.
+    apply leb_sound_Q with (a := b); [exact Hbc|].
+    now apply leb_sound_Q with (a := a).
+  Qed.
   Lemma bot_least : forall a, leb bot a = true.
   Proof.
     destruct a; reflexivity.
@@ -3418,19 +3536,49 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     reflexivity.
   Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hbot. apply leb_complete_Q. intros v Hmodels.
+    exfalso. exact (is_bot_sound_Q a v Hbot Hmodels).
+  Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
+      cbn [poly_models_Q join] in *; try contradiction; try exact Hmodels.
+    apply Forall_app. split; apply Forall_forall; intros r Hin;
+      apply filter_In in Hin as [Hin Hkeep].
+    - exact (proj1 (Forall_forall _ _) Hmodels r Hin).
+    - now apply keep_row_sound_Q with (P := P).
+  Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
+      cbn [poly_models_Q join] in *; try contradiction; try exact Hmodels.
+    apply Forall_app. split; apply Forall_forall; intros r Hin;
+      apply filter_In in Hin as [Hin Hkeep].
+    - now apply keep_row_sound_Q with (P := Q).
+    - exact (proj1 (Forall_forall _ _) Hmodels r Hin).
+  Qed.
   Lemma top_greatest : forall a, leb a top = true.
   Proof.
     destruct a; reflexivity.
   Qed.
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
+      cbn [poly_models_Q widen] in *; try contradiction; try exact Hmodels.
+    apply Forall_forall. intros r Hin. apply filter_In in Hin as [Hin _].
+    exact (proj1 (Forall_forall _ _) Hmodels r Hin).
+  Qed.
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|P] [|Q]; apply leb_complete_Q; intros v Hmodels;
+      cbn [poly_models_Q widen] in *; try contradiction.
+    - destruct (is_bot (Reached Q)) eqn:Hbot.
+      + exfalso. exact (is_bot_sound_Q (Reached Q) v Hbot Hmodels).
+      + exact Hmodels.
+    - apply Forall_forall. intros r Hin. apply filter_In in Hin as [_ Hkeep].
+      now apply keep_row_sound_Q with (P := Q).
+  Qed.
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof.
     intros p [|P] [|Q] Hle; cbn [widen]; try reflexivity.
@@ -3451,7 +3599,9 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hle. split; [|exact Hle]. apply leb_complete_Q. intros v Hmodels. exact Hmodels.
+  Qed.
   Lemma ngamma_mono : forall a b v, leb a b = true -> ngamma a v -> ngamma b v.
   Proof.
     intros [|P] [|Q] v Hle Hmodels; cbn [ngamma] in *; try contradiction.
