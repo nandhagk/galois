@@ -1948,6 +1948,43 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     - exact (PayloadBounds.payload_top_bits rw).
   Qed.
 
+  Local Lemma table_and_bits : forall rw wa wb a b,
+    interval_bits (interval_and rw (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_and rw
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [Ha_nonneg [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [Hb_nonneg [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_and interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    apply table_checked_bits.
+    destruct (Z.le_gt_cases ha hb) as [Hcase|Hcase].
+    - rewrite Z.min_l by lia. lia.
+    - rewrite Z.min_r by lia. lia.
+  Qed.
+
+  Local Lemma table_concat_bits : forall rw wa wb a b,
+    interval_bits (interval_concat rw wb (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_concat rw wb
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [_ [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [_ [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_concat interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    apply table_checked_bits.
+    pose proof (Word.modulus_pos wb).
+    nia.
+  Qed.
+
   Local Lemma table_bool_not_bits : forall a,
     interval_bits (interval_bool_not a) <= 1.
   Proof.
