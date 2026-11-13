@@ -5,7 +5,7 @@
     Builds on: Octagon, keyed trie maps and the integer language. *)
 
 From Stdlib Require Import List ZArith.
-From Galois.Base Require Import Key Map.
+From Galois.Base Require Import Key Map Trie.
 From Galois.Domains Require Import ZLang.
 From Galois.States Require Import EnvSig.
 From Galois.Relational Require Import Linearize Octagon.
@@ -132,6 +132,42 @@ Example incremental_closure_composes_path :
      Oct.entry closed (Oct.flip z) (Oct.flip positive_x))
   | Unreached => (None, None)
   end = (Some 7%Z, Some 7%Z).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition repeated_label_row (target : OctKey.t) : OctMap.t Z :=
+  PTrieCode.set (OctKey.encode target) (positive_y, 1%Z) PTrieCode.empty.
+
+Definition repeated_label_matrix : Oct.dbm :=
+  let z := (3%positive, true) in
+  PTrieCode.set (OctKey.encode positive_x) (positive_y, repeated_label_row positive_y)
+    (PTrieCode.set (OctKey.encode positive_y) (positive_y, repeated_label_row z)
+      (PTrieCode.set (OctKey.encode (Oct.flip z))
+        (positive_y, repeated_label_row (Oct.flip positive_y))
+        (PTrieCode.set (OctKey.encode (Oct.flip positive_y))
+          (positive_y, repeated_label_row (Oct.flip positive_x)) PTrieCode.empty))).
+
+(** The raw codes form a coherent matrix although all stored labels name one pivot. *)
+Example repeated_label_matrix_coherent : forall i j,
+  Oct.entry repeated_label_matrix i j =
+  Oct.entry repeated_label_matrix (Oct.flip j) (Oct.flip i).
+Proof.
+  intros [p s] [q t].
+  destruct p as [p|p|]; try destruct p as [p|p|];
+    destruct q as [q|q|]; try destruct q as [q|q|];
+    destruct s, t; vm_compute; fold @trie_get; rewrite ?PTrie.get_empty; reflexivity.
+Qed.
+
+(** Label-based pivot enumeration does not preserve coherence on this raw input. *)
+Example repeated_label_closure_asymmetric :
+  let z := (3%positive, true) in
+  match Oct.tclose repeated_label_matrix with
+  | Reached closed =>
+    (Oct.entry closed positive_x z,
+     Oct.entry closed (Oct.flip z) (Oct.flip positive_x))
+  | Unreached => (None, None)
+  end = (Some 2%Z, None).
 Proof.
   vm_compute. reflexivity.
 Qed.

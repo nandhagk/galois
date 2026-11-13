@@ -1568,7 +1568,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma coh_assume : forall g es s, coh s -> coh (assume g es s).
   Proof. Admitted. (* STUB *)
   Lemma coh_tclose : forall m, coherent m -> coh (tclose m).
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: raw coherent entries may have repeated labels; keys then omits a signed twin pivot. OctagonTest.repeated_label_closure_asymmetric gives output bounds 2 and infinity from coherent input. A dbm_wf premise is needed for this label-based closure plan. *)
   Lemma coh_incr_close : forall i j d m, coherent m -> coh (incr_close i j d m).
   Proof. Admitted. (* STUB *)
   Lemma F_add_cons_twins : forall i j d m,
