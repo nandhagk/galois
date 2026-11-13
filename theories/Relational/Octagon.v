@@ -4157,6 +4157,27 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     unfold fresh. now rewrite M.get_set_same.
   Qed.
 
+  Lemma entry_tighten_exact : forall m, dbm_wf m -> forall i j,
+    entry (tighten m) i j =
+      if K.eqb j (flip i) then option_map even_bound (entry m i j)
+      else entry m i j.
+  Proof.
+    intros m Hwf i j. destruct (K.eqb_spec j (flip i)) as [Heq|Hne].
+    - subst j.
+      destruct (entry m i (flip i)) as [d|] eqn:Hentry.
+      + now apply entry_tighten_unary.
+      + destruct (entry (tighten m) i (flip i)) as [z|] eqn:Hnext;
+          [|reflexivity].
+        exfalso.
+        assert (Hraw : raw_entry (tighten m) (K.encode i) (K.encode (flip i)) <>
+          None).
+        { rewrite raw_entry_get, Hnext. discriminate. }
+        apply (proj1 (raw_tighten_presence m (K.encode i)
+          (K.encode (flip i)))) in Hraw.
+        rewrite raw_entry_get, Hentry in Hraw. exact (Hraw eq_refl).
+    - now apply entry_tighten_other.
+  Qed.
+
   Lemma coherent_tighten : forall m, coherent m -> coherent (tighten m).
   Proof.
     intros m Hcoh i j.
