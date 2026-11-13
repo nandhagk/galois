@@ -133,12 +133,120 @@ Module Indexed (L : LATTICE) (S : SYSTEM L) <: INDEXED L S.
     eapply S.sides_count; [exact (proj1 Hwf)| |exact Heval].
     exact (listed_original p r Hwf Hin).
   Qed.
+
+  (** Every row number is at least the starting number of its suffix. *)
+  Lemma number_from_lower : forall rs id r,
+    In r (number_from id rs) -> Pos.to_nat id <= Pos.to_nat (fst r).
+  Proof.
+    induction rs as [|head rest IH]; intros id r Hin.
+    - contradiction.
+    - cbn [number_from] in Hin; destruct Hin as [<-|Hin].
+      + cbn; lia.
+      + specialize (IH (Pos.succ id) r Hin).
+        rewrite Pos2Nat.inj_succ in IH; lia.
+  Qed.
+
+  (** A row number identifies its occurrence in the numbered list. *)
+  Lemma number_from_inj : forall rs id a b,
+    In a (number_from id rs) -> In b (number_from id rs) ->
+    fst a = fst b -> a = b.
+  Proof.
+    induction rs as [|head rest IH]; intros id a b Ha Hb Hcode.
+    - contradiction.
+    - cbn [number_from] in Ha, Hb.
+      destruct Ha as [<-|Ha]; destruct Hb as [<-|Hb].
+      + reflexivity.
+      + pose proof (number_from_lower rest (Pos.succ id) b Hb) as Hlower.
+        cbn [fst] in Hcode; rewrite <- Hcode, Pos2Nat.inj_succ in Hlower; lia.
+      + pose proof (number_from_lower rest (Pos.succ id) a Ha) as Hlower.
+        cbn [fst] in Hcode; rewrite Hcode, Pos2Nat.inj_succ in Hlower; lia.
+      + exact (IH (Pos.succ id) a b Ha Hb Hcode).
+  Qed.
+
+  (** Numbered rows have distinct codes within each prepared program. *)
   Lemma row_code_inj : forall p a b, wf p -> In a (rows p) -> In b (rows p) ->
     row_code a = row_code b -> a = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b [_ Hprepare] Ha Hb Hcode.
+    unfold rows in Ha, Hb; rewrite Hprepare in Ha, Hb.
+    eapply number_from_inj; [exact Ha|exact Hb|exact Hcode].
+  Qed.
+
+  (** Inserting all declared keys retains precisely their codes. *)
+  Lemma key_set_lookup : forall xs seen x,
+    trie_get (key_code x)
+      (fold_left (fun acc y => PTrieCode.set (key_code y) tt acc) xs seen) = Some tt <->
+    In x xs \/ trie_get (key_code x) seen = Some tt.
+  Proof.
+    induction xs as [|y ys IH]; intros seen x; cbn [fold_left In].
+    - tauto.
+    - rewrite IH.
+      destruct (key_eqb_spec x y) as [Heq|Hneq].
+      + subst y; rewrite PTrie.get_set_same; cbn; tauto.
+      + rewrite PTrie.get_set_other.
+        * cbn; intuition congruence.
+        * intro Hcode; apply Hneq, key_code_inj, Hcode.
+  Qed.
+
+  (** A bucket fold adds its row exactly at the enumerated key codes. *)
+  Lemma bucket_fold_spec : forall entries idx code (r q : row),
+    In q (match trie_get code
+      (fold_right (fun entry acc =>
+        let previous := match trie_get (fst entry) acc with Some rs => rs | None => nil end in
+        PTrieCode.set (fst entry) (r :: previous) acc) idx entries) with
+      | Some rs => rs
+      | None => nil
+      end) <->
+    (q = r /\ In (code, tt) entries) \/
+    In q (match trie_get code idx with Some rs => rs | None => nil end).
+  Proof.
+    induction entries as [|[other []] entries IH]; intros idx code r q.
+    - cbn; tauto.
+    - cbn [fold_right fst].
+      destruct (Pos.eq_dec code other) as [->|Hneq].
+      + rewrite PTrie.get_set_same; cbn [In].
+        rewrite IH; intuition congruence.
+      + rewrite PTrie.get_set_other by exact Hneq.
+        rewrite IH; cbn [In]; intuition congruence.
+  Qed.
+
+  (** Indexing one row adds it at exactly its declared writes. *)
+  Lemma index_row_spec : forall p r idx x q,
+    In q (match trie_get (key_code x) (index_row p r idx) with
+      | Some rs => rs
+      | None => nil
+      end) <->
+    (q = r /\ In x (S.target p (snd r) :: S.sides p (snd r))) \/
+    In q (match trie_get (key_code x) idx with Some rs => rs | None => nil end).
+  Proof.
+    intros p r idx x q; unfold index_row.
+    rewrite bucket_fold_spec, PTrie.elements_spec, key_set_lookup, PTrie.get_empty.
+    intuition discriminate.
+  Qed.
+
+  (** Folding the write index preserves all and only the listed writer occurrences. *)
+  Lemma write_index_spec : forall p rs x r,
+    In r (match trie_get (key_code x) (fold_right (index_row p) Empty rs) with
+      | Some found => found
+      | None => nil
+      end) <->
+    In r rs /\ In x (S.target p (snd r) :: S.sides p (snd r)).
+  Proof.
+    intros p rs; induction rs as [|head rest IH]; intros x r.
+    - rewrite PTrie.get_empty; cbn; tauto.
+    - cbn [fold_right]; rewrite index_row_spec, IH.
+      cbn [In]; intuition congruence.
+  Qed.
+
+  (** A prepared index lists exactly the rows that may write the requested key. *)
   Lemma rows_of_spec : forall p x r, wf p ->
     (In r (rows_of p x) <-> In r (rows p) /\ In x (writes p r)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x r [_ Hprepare].
+    rewrite Hprepare; unfold rows_of, rows, writes, target, sides.
+    cbn [prepare program numbered_rows write_index].
+    apply write_index_spec.
+  Qed.
   Lemma prepare_program : forall p, program (prepare p) = p.
   Proof.
     reflexivity.
