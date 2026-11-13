@@ -137,9 +137,35 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
   Proof.
     intros inv k. pose proof (T_alarm_core inv k). unfold c_alarms. nia.
   Qed.
+
+  (** Every check contributes one unit even when its operands and key have zero work. *)
+  Lemma check_work_positive : forall inv k, 1 <= check_work inv k.
+  Proof.
+    intros. unfold check_work. lia.
+  Qed.
+
+  (** Filtering charges each check's work and a bounded list-cell overhead. *)
+  Lemma filter_checks_time : forall inv ks,
+    (List.T_filter (alarm inv) (T_alarm inv) ks <=
+      (k_alarm + 1) * N.of_nat
+        ((fold_right Nat.add 0 (map (check_work inv) ks))%nat) + 1)%N.
+  Proof.
+    intros inv ks. induction ks as [|k ks IH].
+    - time_step.
+    - pose proof (T_alarm_core inv k).
+      pose proof (check_work_positive inv k). time_step.
+  Qed.
+
   Lemma T_alarms_le : forall inv ks, (T_alarms inv ks <=
     c_alarms * N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks) + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros inv ks. pose proof (filter_checks_time inv ks).
+    unfold T_alarms, c_alarms. rewrite Nat2N.inj_add. time_cbn.
+    change (1 + List.T_filter (alarm inv) (T_alarm inv) ks <=
+      2 * k_alarm *
+        (N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks))%nat) + 1))%N.
+    assert (Hk : (1 <= k_alarm)%N) by (unfold k_alarm; lia). nia.
+  Qed.
 End AlarmsT.
 
 Module AlarmsPoint (N X : KEY) (MN : MAP N) (L : LANG)
