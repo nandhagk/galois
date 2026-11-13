@@ -4,8 +4,8 @@
     For example, a missing invariant uses the bottom state.
     Builds on: AlarmsSig. *)
 
-From Stdlib Require Import List NArith.
-From Argent Require Import Time Std.
+From Stdlib Require Import List NArith Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import StateSig.
@@ -95,13 +95,18 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
   TimeFun inv_at.
   TimeFun alarm.
   TimeFun alarms.
-  Definition c_alarms : N := 1%N. (* STUB *)
+  (** One check pays for lookup, operand evaluation and its safety test. *)
+  Definition k_alarm : N := (MN.c_map + S.c_state + C.c_checks + 16)%N.
+  Definition c_alarms : N := (2 * k_alarm)%N.
   Definition check_work inv (k : check N.t L.op X.t C.kd) : nat :=
     let s := inv_at inv (site k) in
     fold_right Nat.add 0 (map (fun e => S.eval_work e s + 1) (args k)) +
     C.work (ckind k) (map (fun e => S.eval e s) (args k)) + N.bits (site k) + 1.
   Lemma T_inv_at_le : forall inv n, (T_inv_at inv n <= c_alarms * N.of_nat ((N.bits n + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros inv n. pose proof (MN.T_get_le S.t n inv).
+    unfold T_inv_at, c_alarms, k_alarm. rewrite Nat2N.inj_add. time_cbn. nia.
+  Qed.
   Lemma T_alarm_le : forall inv k, (T_alarm inv k <= c_alarms * N.of_nat (check_work inv k))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_alarms_le : forall inv ks, (T_alarms inv ks <=
