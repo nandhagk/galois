@@ -10329,6 +10329,50 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + left. split; [exact Huse |].
         intro Heq. subst y. contradiction.
   Qed.
+  Lemma pop_loser_coverage : forall db x db', inv db ->
+    db_pop_loser db = Some (x, db') ->
+    forall f k o i, row (view db') f k o -> row_ids k o i ->
+      exists y k0, repr db' y = repr db' i /\ uses db' y (f, k0) /\
+        located db' f k0 = Some k /\ (y = repr db' i \/ In y (queue db')).
+  Proof.
+    intros db x db' Hinv Hpop f k o i Hrow Hids.
+    assert (Hstore : row_store_ok db).
+    { unfold inv, inv_on, forest_ok in Hinv. tauto. }
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold row_store_ok, database_row_store_ok in Hstore. tauto. }
+    destruct (db_pop_loser_preserves db x db' Hpop) as [Hforest Hview].
+    assert (Hrepr : forall z, repr db' z = repr db z).
+    { intro z. unfold repr. now rewrite Hforest. }
+    assert (Huf : UnionFind.wf (db_forest db)).
+    { apply inv_on_forest_wf with (work := []). exact Hinv. }
+    unfold inv, inv_on in Hinv.
+    destruct Hinv as [_ [_ [Hcover _]]].
+    rewrite Hview in Hrow.
+    destruct (Hcover f k o i Hrow Hids) as [y [k0 [Hroot [Huse [Hloc Hplace]]]]].
+    destruct (Pos.eq_dec y x) as [-> | Hne].
+    - exists (repr db x), k0. repeat split.
+      + rewrite !Hrepr. transitivity (repr db x); [| exact Hroot].
+        unfold repr. apply UnionFind.repr_idem.
+        exact Huf.
+      + apply (pop_loser_uses_transfer db x db' Hmap Hpop).
+        right. split; [| exact Huse].
+        rewrite (UnionFind.find_repr x (db_forest db) Huf). reflexivity.
+      + unfold located, locate in *. rewrite (pop_loser_locate db x db' f k0 Hpop).
+        exact Hloc.
+      + left. rewrite !Hrepr. exact Hroot.
+    - exists y, k0. repeat split.
+      + now rewrite !Hrepr.
+      + apply (pop_loser_uses_transfer db x db' Hmap Hpop).
+        left. split; assumption.
+      + unfold located, locate in *. rewrite (pop_loser_locate db x db' f k0 Hpop).
+        exact Hloc.
+      + destruct Hplace as [Hroot_y | Hqueue].
+        * left. now rewrite Hrepr.
+        * right. rewrite (pop_loser_queue db x db' Hpop) in Hqueue.
+          destruct Hqueue as [Heq | Htail].
+          -- exfalso. apply Hne. symmetry. exact Heq.
+          -- exact Htail.
+  Qed.
   Definition use_credit (B : N) (db : t) (xe : positive * use_entry) : nat :=
     N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe)))) *
         entry_weight db (snd xe).
