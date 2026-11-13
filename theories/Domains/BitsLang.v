@@ -1027,6 +1027,120 @@ Module WordTime.
     destruct tag; time_unfold T_eval_binary_tag; time_cbn_all; lia.
   Qed.
 
+  (** Checked result widths fit the operator metadata and all operand widths. *)
+  Lemma result_width_size_bound o ws rw : result_width o ws = Some rw ->
+    (Pos.to_nat rw <= op_widths o + fold_right Nat.add 0 (map Pos.to_nat ws) + 1)%nat.
+  Proof.
+    destruct o; destruct ws as [|a [|b [|c [|d rest]]]];
+      cbn [result_width op_widths map fold_right]; try discriminate;
+      repeat match goal with
+      | |- (if ?test then _ else _) = _ -> _ => destruct test; try discriminate
+      end; intros H; inversion H; subst;
+      rewrite ?Pos2Nat.inj_add, ?SuccNat2Pos.id_succ; cbn [Pos.to_nat]; try lia.
+    change (Pos.to_nat (Pos.of_nat (S (hi - lo))) <=
+      hi + lo + (Pos.to_nat a + 0) + 1)%nat.
+    rewrite Nat2Pos.id by lia. lia.
+  Qed.
+
+  (** Unary addition iteration has linear cost in the positive multiplier and seed. *)
+  Lemma positive_add_iter_time_bound p a :
+    (Op.Pos.T_iter_op Nat.add Nat.T_add p a + 4 * N.of_nat a <=
+      4 * N.of_nat (Pos.to_nat p * (a + 1)))%N.
+  Proof.
+    revert a. induction p as [p IH|p IH|]; intro a.
+    - specialize (IH (a + a)%nat). pose proof (Nat.T_add_le a a) as Hadd.
+      pose proof (Nat.T_add_le a (Pos.iter_op Nat.add p (a + a)%nat)) as Haddlast.
+      time_unfold (@Op.Pos.T_iter_op).
+      rewrite ?Pos2Nat.inj_xI, ?Nat2N.inj_mul, ?Nat2N.inj_add in *.
+      time_cbn_all. rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *. nia.
+    - specialize (IH (a + a)%nat). pose proof (Nat.T_add_le a a) as Hadd.
+      time_unfold (@Op.Pos.T_iter_op).
+      rewrite ?Pos2Nat.inj_xO, ?Nat2N.inj_mul, ?Nat2N.inj_add in *.
+      time_cbn_all. rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *. nia.
+    - time_unfold (@Op.Pos.T_iter_op). rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add.
+      time_cbn_all. nia.
+  Qed.
+
+  (** Converting a positive width to unary costs linear time in its value. *)
+  Lemma positive_to_nat_time_bound p :
+    (Op.Pos.T_to_nat p <= 8 * N.of_nat (Pos.to_nat p + 1))%N.
+  Proof.
+    pose proof (positive_add_iter_time_bound p 1) as Hiter.
+    change (1 + Op.Pos.T_iter_op Nat.add Nat.T_add p 1%nat <=
+      8 * N.of_nat (Pos.to_nat p + 1))%N.
+    rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
+  (** Unary subtraction costs at most one step per left operand successor. *)
+  Lemma natural_sub_time_bound n m : (Op.Nat.T_sub n m <= N.of_nat n + 1)%N.
+  Proof.
+    revert m. induction n as [|n IH]; intros [|m]; time_step.
+  Qed.
+
+  (** Unary less-than comparison is bounded by its left operand. *)
+  Lemma natural_ltb_time_bound n m : (Op.Nat.T_ltb n m <= N.of_nat n + 3)%N.
+  Proof.
+    pose proof (Nat.T_leb_le (S n) m). time_unfold Op.Nat.T_ltb. time_cbn_all. lia.
+  Qed.
+
+  (** Constructing a positive from unary input has a quadratic upper bound. *)
+  Lemma positive_of_nat_time_bound n :
+    (Op.Pos.T_of_nat n <= 4 * N.of_nat ((n + 1) ^ 2))%N.
+  Proof.
+    induction n as [|n IH]; [time_step|]. destruct n as [|n]; [time_step|].
+    pose proof (Pos.T_succ_le (Pos.of_nat (S n))) as Hsucc.
+    pose proof (positive_size_value (Pos.of_nat (S n))) as Hsize.
+    rewrite Nat2Pos.id in Hsize by lia. apply time_of_nat_le in Hsize.
+    time_unfold Op.Pos.T_of_nat.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
+  (** Width checking includes all metadata conversions in its quadratic budget. *)
+  Lemma result_width_time_bound o ws :
+    (T_result_width o ws <=
+      128 * N.of_nat (((op_widths o +
+        fold_right Nat.add 0 (map Pos.to_nat ws) + 1) ^ 2)%nat))%N.
+  Proof.
+    destruct o; destruct ws as [|a [|b [|c [|d rest]]]].
+    all: time_unfold T_result_width; cbn [op_widths map fold_right]; time_simpl.
+    all: match goal with
+    | |- (_ <= 128 * N.of_nat ((?base ^ 2)%nat))%N =>
+        set (budget := N.of_nat ((base ^ 2)%nat));
+        assert (Hpositive : (1 <= budget)%N)
+          by (unfold budget; apply (time_square_floor 1 base); lia)
+    end.
+    all: try (time_cbn_all; lia).
+    all: try assert (Ha : (N.of_nat (Pos.to_nat a + 1) <= budget)%N)
+      by (unfold budget; apply time_square_floor; lia).
+    all: try assert (Hb : (N.of_nat (Pos.to_nat b + 1) <= budget)%N)
+      by (unfold budget; apply time_square_floor; lia).
+    all: try assert (Hc : (N.of_nat (Pos.to_nat c + 1) <= budget)%N)
+      by (unfold budget; apply time_square_floor; lia).
+    all: try assert (Hextra : (N.of_nat (Pos.to_nat extra + 1) <= budget)%N)
+      by (unfold budget; apply time_square_floor; lia).
+    all: try assert (Htarget : (N.of_nat (Pos.to_nat target + 1) <= budget)%N)
+      by (unfold budget; apply time_square_floor; lia).
+    all: try assert (Hhi : (N.of_nat (hi + 1) <= budget)%N)
+      by (unfold budget; apply time_square_floor; lia).
+    all: try assert (Hlo : (N.of_nat (lo + 1) <= budget)%N)
+      by (unfold budget; apply time_square_floor; lia).
+    all: try assert (Hconstruct : (Op.Pos.T_of_nat (S (hi - lo)) <= 16 * budget)%N)
+      by (unfold budget; eapply (time_square_scale _ 4 _ _ 2);
+        [apply positive_of_nat_time_bound|lia]).
+    all: try pose proof (time_of_nat_le _ _ (positive_size_value a)) as Hsizea;
+      try pose proof (time_of_nat_le _ _ (positive_size_value b)) as Hsizeb;
+      try pose proof (time_of_nat_le _ _ (positive_size_value c)) as Hsizec;
+      try pose proof (time_of_nat_le _ _ (positive_size_value extra)) as Hsizeextra;
+      try pose proof (time_of_nat_le _ _ (positive_size_value target)) as Hsizetarget;
+      try pose proof (positive_to_nat_time_bound a) as Hconvert;
+      try pose proof (natural_ltb_time_bound hi (Pos.to_nat a)) as Hlt;
+      try pose proof (natural_sub_time_bound hi lo) as Hsub.
+    all: clearbody budget; try time_unfold Pos.T_leb; time_pose.
+    all: repeat match goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end; rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
+  Qed.
+
 End WordTime.
 
 
