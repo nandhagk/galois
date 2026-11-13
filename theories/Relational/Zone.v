@@ -2247,10 +2247,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     intros i j d m. unfold c_zone. time_step.
   Qed.
-  Lemma T_close_le : forall m, dbm_wf m ->
-    (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
-      N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
   Definition closed (m : dbm) : Prop :=
     (forall i, In (K.encode i) (support m) -> entry m i i = Some 0%Z) /\
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
@@ -5481,5 +5477,149 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     assert (Hrounds : (rounds <= k_zone * rounds)%N).
     { replace rounds with (1 * rounds)%N at 1 by ring. now apply N.mul_le_mono_r. }
     rewrite N.mul_add_distr_l. lia.
+  Qed.
+  (** Early exit records no more rounds than the supplied pivot list. *)
+  Lemma fw_trace_length : forall ks m, length (fw_trace ks m) <= length ks.
+  Proof.
+    intro ks. induction ks as [|k ks IH]; intro m.
+    - cbn [fw_trace length]. lia.
+    - rewrite fw_trace_nonnegative. cbn [length].
+      destruct (nonnegative k (fw_round k m)); cbn [length].
+      + pose proof (IH (fw_round k m)). lia.
+      + lia.
+  Qed.
+
+  (** Traced keys come from the pivot list and every traced matrix retains raw support sizes. *)
+  Lemma fw_trace_resources : forall ks m k a, In (k, a) (fw_trace ks m) ->
+    In k ks /\ supp a = supp m /\ b a = b m.
+  Proof.
+    intro ks. induction ks as [|p ks IH]; intros m k a Hin.
+    - contradiction.
+    - rewrite fw_trace_nonnegative in Hin. cbn [In] in Hin.
+      destruct Hin as [Heq|Hin].
+      + injection Heq as Hkey Hstate. subst k a. split; [now left|]. now split.
+      + destruct (nonnegative p (fw_round p m)); [|contradiction].
+        destruct (IH (fw_round p m) k a Hin) as [Hkey [Hsupport Hbits]].
+        destruct (supp_fw_round p m) as [Hround_support Hround_bits].
+        split; [now right|]. split; congruence.
+  Qed.
+
+  (** At most one support-sized family of quadratic allowances fits a cubic allowance. *)
+  Lemma quadratic_cubic_budget : forall n count payload, count <= n + 1 ->
+    ((n + 1)^2 * payload) * count <= (n + 1)^3 * payload.
+  Proof.
+    intros n count payload Hcount.
+    replace (((n + 1)^2 * payload) * count) with
+      ((count * (n + 1)^2) * payload) by ring.
+    apply Nat.mul_le_mono_r.
+    change (count * (n + 1)^2 <= (n + 1) * (n + 1)^2).
+    now apply Nat.mul_le_mono_r.
+  Qed.
+
+  (** Preserved support and logarithmic entry growth bound every performed round uniformly. *)
+  Lemma traced_round_time_le : forall m k a, dbm_wf m ->
+    In (k, a) (fw_trace (keys m) m) ->
+    (T_fw_round k a <= 2 * k_zone * N.of_nat
+      ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
+  Proof.
+    intros m k a Hwf Hin.
+    destruct (fw_trace_resources (keys m) m k a Hin) as [Hkey [Hsupport Hbits]].
+    assert (Hkey_bits : K.bits k <= b m).
+    { unfold K.bits. apply support_bits. now apply keys_support. }
+    pose proof (bits_fw_trace_le (keys m) m k a Hwf Hin) as Hell.
+    eapply N.le_trans; [apply T_fw_round_raw|].
+    replace (2 * k_zone * N.of_nat
+      ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1)))%N with
+      (k_zone * (2 * N.of_nat
+        ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1))))%N by ring.
+    apply N.mul_le_mono_l.
+    replace (2 * N.of_nat
+      ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1)))%N with
+      (N.of_nat (2 * ((supp m + 1)^2 *
+        (b m + ell m + Nat.log2 (supp m) + 1))))
+      by (rewrite Nat2N.inj_mul; reflexivity).
+    apply time_of_nat_le. rewrite Hsupport, Hbits.
+    replace (2 * ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1))) with
+      ((supp m + 1)^2 * (2 * (b m + ell m + Nat.log2 (supp m) + 1))) by ring.
+    apply Nat.mul_le_mono_l. lia.
+  Qed.
+
+  (** Summing the performed rounds needs only one additional factor of support size. *)
+  Lemma trace_cost_cubic : forall m, dbm_wf m ->
+    (trace_cost (keys m) m <= 2 * k_zone * N.of_nat
+      ((supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)))%N.
+  Proof.
+    intros m Hwf.
+    set (xs := fw_trace (keys m) m).
+    set (units := (supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1)).
+    assert (Hpoint : forall km, In km xs ->
+      (T_fw_round (fst km) (snd km) <= 2 * k_zone * N.of_nat units)%N).
+    { intros [k a] Hin. cbn [fst snd]. unfold units.
+      unfold xs in Hin. now apply traced_round_time_le. }
+    assert (Hsum : (fold_right N.add 0%N
+      (map (fun km => T_fw_round (fst km) (snd km)) xs) <=
+      (2 * k_zone * N.of_nat units) * N.of_nat (length xs))%N).
+    { pose proof (time_sum_bound (K.t * dbm) xs
+        (fun km => T_fw_round (fst km) (snd km)) (fun _ => 1%nat)
+        (2 * k_zone * N.of_nat units)%N) as Hbound.
+      assert (Hcallback : forall km, In km xs ->
+        (T_fw_round (fst km) (snd km) <=
+          (2 * k_zone * N.of_nat units) * N.of_nat 1)%N).
+      { intros km Hin. change (T_fw_round (fst km) (snd km) <=
+          (2 * k_zone * N.of_nat units) * 1)%N.
+        rewrite N.mul_1_r. now apply Hpoint. }
+      specialize (Hbound Hcallback). now rewrite sum_weight_one in Hbound. }
+    assert (Hlength : length xs <= supp m).
+    { unfold xs. eapply Nat.le_trans; [apply fw_trace_length|]. now apply keys_le. }
+    assert (Hunits : units * length xs <=
+      (supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)).
+    { unfold units. apply quadratic_cubic_budget. lia. }
+    pose proof (time_of_nat_le _ _ Hunits) as Hcast.
+    rewrite (Nat2N.inj_mul units (length xs)) in Hcast.
+    unfold trace_cost. fold xs.
+    eapply N.le_trans; [exact Hsum|].
+    replace ((2 * k_zone * N.of_nat units) * N.of_nat (length xs))%N with
+      (2 * k_zone * (N.of_nat units * N.of_nat (length xs)))%N by ring.
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** The public closure coefficient covers round updates and additive traversal overhead. *)
+  Lemma c_zone_closure_coefficient :
+    (2 * k_zone + 128 * (M.c_map + 1) <= c_zone)%N.
+  Proof.
+    unfold k_zone, c_zone. nia.
+  Qed.
+
+  (** Full closure has cubic support work and the promised logarithmic entry-bit allowance. *)
+  Lemma T_close_le : forall m, dbm_wf m ->
+    (T_close m <= c_zone * N.of_nat (((supp m + 1)^3)%nat) *
+      N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
+  Proof.
+    intros m Hwf.
+    replace (c_zone * N.of_nat ((supp m + 1)^3) *
+      N.of_nat (b m + ell m + Nat.log2 (supp m) + 1))%N with
+      (c_zone * N.of_nat ((supp m + 1)^3 *
+        (b m + ell m + Nat.log2 (supp m) + 1)))%N
+      by (rewrite (Nat2N.inj_mul ((supp m + 1)^3)
+        (b m + ell m + Nat.log2 (supp m) + 1)); ring).
+    pose proof (T_close_additive m Hwf) as Htime.
+    pose proof (trace_cost_cubic m Hwf) as Htrace.
+    set (work := N.of_nat ((supp m + 1)^3 *
+      (b m + ell m + Nat.log2 (supp m) + 1))) in *.
+    assert (Hinitial_nat : (supp m + 1)^2 * (b m + ell m + 1) <=
+      (supp m + 1)^3 * (b m + ell m + Nat.log2 (supp m) + 1)).
+    { eapply Nat.le_trans with
+        ((supp m + 1)^2 * (b m + ell m + Nat.log2 (supp m) + 1)).
+      - apply Nat.mul_le_mono_l. lia.
+      - pose proof (quadratic_cubic_budget (supp m) 1
+          (b m + ell m + Nat.log2 (supp m) + 1) ltac:(lia)) as Hdegree.
+        now rewrite Nat.mul_1_r in Hdegree. }
+    pose proof (time_of_nat_le _ _ Hinitial_nat) as Hinitial.
+    change (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) <= work)%N in Hinitial.
+    pose proof (N.mul_le_mono_l _ _ (128 * (M.c_map + 1))%N Hinitial) as Hframe.
+    pose proof (N.mul_le_mono_r _ _ work c_zone_closure_coefficient) as Hbudget.
+    rewrite N.mul_add_distr_r in Hbudget.
+    set (initial_work := N.of_nat ((supp m + 1)^2 * (b m + ell m + 1))) in *.
+    clear Hinitial_nat Hinitial. clearbody work initial_work. lia.
   Qed.
 End ZoneT.
