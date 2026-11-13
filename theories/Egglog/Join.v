@@ -732,6 +732,90 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
       right. split; [exact Hanswer|]. eapply prefix_before_next; eassumption.
   Qed.
 
+  (** Reading aligned lists preserves both their column relation and their node relation. *)
+  Lemma aligned_nth : forall (A B C : Type) (P : A -> B -> Prop)
+      (Q : A * B -> C -> Prop) cs ixs ns da db dc,
+    Forall2 P cs ixs -> Forall2 Q (combine cs ixs) ns ->
+    forall j, j < length cs ->
+    P (nth j cs da) (nth j ixs db) /\
+    Q (nth j cs da, nth j ixs db) (nth j ns dc).
+  Proof.
+    intros A B C P Q cs ixs ns da db dc Hcols. revert ns.
+    induction Hcols as [|lv ix cs ixs Hcolumn Hcols IH]; intros [|n ns] Hnodes j Hbound.
+    - cbn [length] in Hbound. lia.
+    - inversion Hnodes.
+    - inversion Hnodes.
+    - apply Forall2_cons_iff in Hnodes as [Hnode Hnodes].
+      destruct j as [|j].
+      + exact (conj Hcolumn Hnode).
+      + cbn [nth]. apply (IH ns Hnodes j). cbn [length] in Hbound. lia.
+  Qed.
+
+  (** Every in-range node keeps the full plan column invariant and its represented prefix. *)
+  Lemma nodes_ok_at : forall p ixs lvl pre ns j, nodes_ok p ixs lvl pre ns ->
+    j < length (cols p) ->
+    let lv := nth j (cols p) [] in
+    let ix := nth j ixs I.empty in
+    let n := nth j ns 1%positive in
+    (lv <> [] /\ StronglySorted lt lv /\ Forall (fun i => i < nvars p) lv /\
+      I.wf (length lv) ix) /\
+    exists u, project (filter (fun i => Nat.ltb i lvl) lv) (rev pre) = Some u /\
+      I.node ix n u.
+  Proof.
+    intros p ixs lvl pre ns j [[_ [Hcols _]] [_ [_ Hnodes]]] Hbound.
+    exact (aligned_nth _ _ _ _ _ _ _ _ [] I.empty 1%positive Hcols Hnodes j Hbound).
+  Qed.
+
+  (** A successful full probe contains a successful child lookup at every participant. *)
+  Lemma advance_columns_probe : forall cs ixs lvl ns c ns' j,
+    advance_columns cs ixs lvl ns c = Some ns' -> j < length cs ->
+    existsb (Nat.eqb lvl) (nth j cs []) = true ->
+    exists m, I.child (nth j ixs I.empty) (nth j ns 1%positive) c = Some m.
+  Proof.
+    induction cs as [|lv cs IH]; intros ixs lvl ns c ns' j Hstep Hbound Hpart.
+    - cbn [length] in Hbound. lia.
+    - destruct ixs as [|ix ixs], ns as [|n ns];
+        cbn [advance_columns] in Hstep; try discriminate.
+      destruct (if existsb (Nat.eqb lvl) lv then I.child ix n c else Some n)
+        as [m|] eqn:Hhead;
+        destruct (advance_columns cs ixs lvl ns c) as [ms|] eqn:Htail; try discriminate.
+      destruct j as [|j].
+      + cbn [nth] in Hpart |- *. rewrite Hpart in Hhead. exists m. exact Hhead.
+      + cbn [nth] in Hpart |- *. eapply IH; [exact Htail| |exact Hpart].
+        cbn [length] in Hbound. lia.
+  Qed.
+
+  (** A successful extension appears in the selected pivot's child enumeration. *)
+  Lemma advance_chosen_child : forall p ixs lvl pre ns j c ns',
+    nodes_ok p ixs lvl pre ns -> choose_index p ixs lvl ns = Some j ->
+    advance_nodes p ixs lvl ns c = Some ns' ->
+    In c (I.children (nth j ixs I.empty) (nth j ns 1%positive)).
+  Proof.
+    intros p ixs lvl pre ns j c ns' Hnodes Hchoose Hstep.
+    destruct (choose_index_min p ixs lvl pre ns j Hnodes Hchoose) as [Hpart _].
+    apply filter_In in Hpart as [Hrange Hpart]. apply in_seq in Hrange.
+    destruct (nodes_ok_at p ixs lvl pre ns j Hnodes ltac:(lia))
+      as [[_ [_ [_ Hwf]]] [u [_ Hnode]]].
+    apply (proj2 (proj1 (I.children_spec _ _ _ u c Hwf Hnode))).
+    unfold advance_nodes in Hstep.
+    destruct (Nat.leb (S lvl) (level_count p)); [|discriminate].
+    eapply (advance_columns_probe (cols p) ixs lvl ns c ns' j);
+      [exact Hstep|lia|exact Hpart].
+  Qed.
+
+  (** The selected pivot enumerates each next cell only once. *)
+  Lemma chosen_children_nodup : forall p ixs lvl pre ns j,
+    nodes_ok p ixs lvl pre ns -> choose_index p ixs lvl ns = Some j ->
+    NoDup (I.children (nth j ixs I.empty) (nth j ns 1%positive)).
+  Proof.
+    intros p ixs lvl pre ns j Hnodes Hchoose.
+    destruct (choose_index_min p ixs lvl pre ns j Hnodes Hchoose) as [Hpart _].
+    apply filter_In in Hpart as [Hrange _]. apply in_seq in Hrange.
+    destruct (nodes_ok_at p ixs lvl pre ns j Hnodes ltac:(lia))
+      as [[_ [_ [_ Hwf]]] [u [_ Hnode]]].
+    exact (proj2 (I.children_spec _ _ _ u (Id 1%positive) Hwf Hnode)).
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
