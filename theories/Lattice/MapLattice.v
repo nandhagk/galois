@@ -207,9 +207,68 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
     - right. apply M.codes_spec; exact Hin.
   Qed.
 
+  (** A shared scalar rate absorbs traversal, callbacks, and the outer call. *)
+  Local Lemma relational_budget (cm rate nodes values budget base callbacks clock : N) :
+    (1 <= rate -> 1 <= budget -> nodes + values <= budget ->
+      base <= rate -> callbacks <= 2 * rate * values ->
+      clock <= cm * (base * nodes + callbacks) ->
+      1 + clock <= 16 * (cm + 1) * rate * budget)%N.
+  Proof.
+    intros Hrate Hpositive Hsize Hbase Hcallbacks Hclock.
+    assert (Hnodes : (base * nodes <= rate * nodes)%N).
+    { apply N.mul_le_mono_r; exact Hbase. }
+    assert (Hweighted : (rate * (nodes + values) <= rate * budget)%N).
+    { apply N.mul_le_mono_l; exact Hsize. }
+    assert (Hinside : (base * nodes + callbacks <= 2 * rate * budget)%N).
+    { clear - Hnodes Hweighted Hcallbacks. nia. }
+    assert (Hbody : (clock <= cm * (2 * rate * budget))%N).
+    { eapply N.le_trans; [exact Hclock |]. apply N.mul_le_mono_l; exact Hinside. }
+    assert (Hunit : (1 <= rate * budget)%N).
+    { clear - Hrate Hpositive. nia. }
+    replace (cm * (2 * rate * budget))%N with (2 * cm * (rate * budget))%N in Hbody by ring.
+    replace (16 * (cm + 1) * rate * budget)%N with
+      (16 * cm * (rate * budget) + 16 * (rate * budget))%N by ring.
+    remember (rate * budget)%N as units eqn:Hunits in Hunit, Hbody |- *.
+    clear - Hunit Hbody. nia.
+  Qed.
+
+  (** Comparison charges both skeletons and every compared stored value. *)
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. time_unfold @T_leb.
+    set (rate := (4 * (L.c_lat + 1) * N.of_nat (L.size L.bot + 1))%N).
+    lazymatch goal with
+    | |- context [M.T_forall2b ?f ?Tf a b] =>
+        pose proof (M.T_forall2b_sum_le L.t L.t f Tf a b) as Hclock;
+        assert (Hcallback : forall p, In p (M.codes a ++ M.codes b) ->
+          (Tf (M.find p a) (M.find p b) <= rate *
+            N.of_nat (lookup_size a p + lookup_size b p))%N) by
+          (intros p Hin; clear Hclock; pose proof (union_present a b p Hin) as Hpresent;
+           unfold rate, lookup_size; destruct (M.find p a) as [x |], (M.find p b) as [y |];
+           time_cbn; try (destruct Hpresent; contradiction);
+           lazymatch goal with
+           | |- context [L.T_leb ?v ?w] => pose proof (L.T_leb_le v w)
+           end;
+           rewrite !Nat2N.inj_add in *; nia);
+        pose proof (union_charge_bound (fun p => Tf (M.find p a) (M.find p b))
+          rate a b Hcallback) as Hsum
+    end.
+    time_cbn_all. fold rate in Hsum.
+    assert (Hrate : (1 <= rate)%N).
+    { unfold rate. clear Hclock Hsum Hcallback. rewrite Nat2N.inj_add. nia. }
+    assert (Hbase : (1 + L.T_leb L.bot L.bot + 1 <= rate)%N).
+    { pose proof (L.T_leb_le L.bot L.bot) as Hempty.
+      unfold rate. clear - Hempty. rewrite !Nat2N.inj_add in *. nia. }
+    assert (Hbudget : (N.of_nat (M.nodes a + M.nodes b + 1) +
+      N.of_nat (value_size a + value_size b) <= N.of_nat (size a + size b + 1))%N).
+    { rewrite !size_values. rewrite !Nat2N.inj_add. lia. }
+    replace c_lat with (16 * (M.c_map + 1) * rate)%N by (unfold c_lat, rate; ring).
+    eapply relational_budget; [exact Hrate | | exact Hbudget | exact Hbase | exact Hsum |].
+    - lia.
+    - exact Hclock.
+  Qed.
+  (** Joining charges the component joins over both raw maps' stored codes. *)
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -232,6 +291,7 @@ Module MapLatticeT (K : KEY_T) (M : MAP_T K) (L : LATTICE_T) <: LATTICE_T.
     assert (Hbot : (1 <= N.of_nat (L.size L.bot + 1))%N) by lia.
     rewrite !Nat2N.inj_add in *. nia.
   Qed.
+  (** Bottom testing charges each stored value once, together with its skeleton. *)
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof.
