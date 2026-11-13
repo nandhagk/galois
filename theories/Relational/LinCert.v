@@ -589,11 +589,139 @@ Module LinCert (X : KEY) <: LINCERT X.
     - exfalso. exact (empty_row_sound s Hempty v Hsat).
     - exact (check_row_sound s c k Hcheck v Hsat).
   Qed.
+  (** One admissible weighted row preserves rational satisfaction of the partial sum. *)
+  Lemma combine_cons_sat_Q : forall p m s v,
+    allowed p m = true -> satQ v p -> satQ v (finish_sum s) ->
+    satQ v (finish_sum (LCSum _ (scale_terms m (lhs p) ++ lc_terms s)
+      (lc_add_signed (m * rhs p)%Z (lc_sums s)) (equality_used p m && lc_equal s))).
+  Proof.
+    intros p m s v Hallowed Hp Hs.
+    pose proof (eval_coef_app_Q v (scale_terms m (lhs p)) (lc_terms s)) as Happ.
+    pose proof (eval_coef_scale_Q m (lhs p) v) as Hscaled.
+    unfold satQ, finish_sum in *.
+    cbn [lhs lrel rhs lc_terms lc_sums lc_equal] in *.
+    rewrite add_signed_value, inject_Z_plus, inject_Z_mult.
+    unfold allowed, equality_used in *. destruct (lrel p); destruct (lc_equal s);
+      cbn [andb] in *.
+    - nra.
+    - nra.
+    - apply Z.leb_le in Hallowed. rewrite Zle_Qle in Hallowed.
+      pose proof (Qmult_le_compat_r _ _ (inject_Z m) Hp Hallowed) as Hweighted.
+      destruct (m =? 0)%Z eqn:Hzero; cbn [andb].
+      + apply Z.eqb_eq in Hzero. subst m.
+        change (eval_coefQ v (scale_terms 0 (lhs p) ++ lc_terms s) ==
+          inject_Z (fst (lc_sums s) - snd (lc_sums s)) +
+          inject_Z 0 * inject_Z (rhs p))%Q.
+        change (eval_coefQ v (scale_terms 0 (lhs p)) ==
+          inject_Z 0 * eval_coefQ v (lhs p))%Q in Hscaled.
+        change (eval_coefQ v (scale_terms 0 (lhs p) ++ lc_terms s) ==
+          eval_coefQ v (scale_terms 0 (lhs p)) + eval_coefQ v (lc_terms s))%Q in Happ.
+        setoid_rewrite Happ. setoid_rewrite Hscaled. setoid_rewrite Hs. ring.
+      + change (eval_coefQ v (scale_terms m (lhs p) ++ lc_terms s) <=
+          inject_Z (fst (lc_sums s) - snd (lc_sums s)) +
+          inject_Z m * inject_Z (rhs p))%Q.
+        setoid_rewrite Happ. setoid_rewrite Hscaled. nra.
+    - apply Z.leb_le in Hallowed. rewrite Zle_Qle in Hallowed.
+      pose proof (Qmult_le_compat_r _ _ (inject_Z m) Hp Hallowed) as Hweighted.
+      destruct (m =? 0)%Z; cbn [andb];
+        change (eval_coefQ v (scale_terms m (lhs p) ++ lc_terms s) <=
+          inject_Z (fst (lc_sums s) - snd (lc_sums s)) +
+          inject_Z m * inject_Z (rhs p))%Q;
+        setoid_rewrite Happ; setoid_rewrite Hscaled; nra.
+  Qed.
+
+  (** Successful combination of satisfied rows preserves every rational model. *)
+  Lemma combine_rows_sat_Q : forall P ms s, combine_rows P ms = Some s ->
+    forall v, Forall (satQ v) P -> satQ v (finish_sum s).
+  Proof.
+    induction P as [|p ps IH]; intros [|m ns] s Hcombine v Hmodels;
+      cbn [combine_rows] in Hcombine; try discriminate.
+    - inversion Hcombine; subst. reflexivity.
+    - destruct (allowed p m) eqn:Hallowed; [|discriminate].
+      destruct (combine_rows ps ns) as [tail|] eqn:Htail; [|discriminate].
+      inversion Hcombine; subst s.
+      inversion Hmodels as [|p' ps' Hp Hps]; subst.
+      apply combine_cons_sat_Q; [exact Hallowed|exact Hp|].
+      exact (IH ns tail Htail v Hps).
+  Qed.
+
+  (** The exported combination retains every rational model of its input. *)
+  Lemma combine_valid_Q : forall P ms s, combine P ms = Some s ->
+    forall v, Forall (satQ v) P -> satQ v s.
+  Proof.
+    intros P ms s Hcombine v Hmodels. unfold combine in Hcombine.
+    destruct (combine_rows P ms) as [sum|] eqn:Hsum; [|discriminate].
+    inversion Hcombine; subst s. exact (combine_rows_sat_Q P ms sum Hsum v Hmodels).
+  Qed.
+
+  (** An accepted zero-left-hand-side contradiction has no rational model. *)
+  Lemma empty_row_sound_Q : forall s, empty_row s = true -> forall v, ~ satQ v s.
+  Proof.
+    intros s Hempty v Hsat. unfold empty_row in Hempty.
+    apply andb_true_iff in Hempty as [Hzero Hrhs].
+    pose proof (proj1 (linear_zero_spec (lhs s)) Hzero) as Hcoef.
+    pose proof (eval_coef_zero_Q (lhs s) v Hcoef) as Hvalue.
+    unfold satQ in Hsat. destruct (lrel s).
+    - apply negb_true_iff, Z.eqb_neq in Hrhs.
+      assert (Hz : (inject_Z (rhs s) == inject_Z 0)%Q).
+      { transitivity (eval_coefQ v (lhs s)); [symmetry; exact Hsat|exact Hvalue]. }
+      apply (proj1 (inject_Z_injective (rhs s) 0)) in Hz. contradiction.
+    - apply Z.ltb_lt in Hrhs. rewrite Zlt_Qlt in Hrhs.
+      setoid_rewrite Hvalue in Hsat. exact (Qlt_not_le _ _ Hrhs Hsat).
+  Qed.
+
+  (** Accepted scaled coefficients give the same scaled rational evaluation. *)
+  Lemma linear_equal_eval_Q : forall sc xs ys (v : X.t -> Q),
+    linear_equal sc xs ys = true ->
+    (eval_coefQ v xs == inject_Z sc * eval_coefQ v ys)%Q.
+  Proof.
+    intros sc xs ys v Heq.
+    pose proof (proj1 (linear_equal_spec sc xs ys) Heq) as Hcoef.
+    transitivity (eval_coefQ v (scale_terms sc ys)).
+    - apply eval_coef_ext_Q. intro x. rewrite coef_of_scale. apply Hcoef.
+    - apply eval_coef_scale_Q.
+  Qed.
+
+  (** A cut-free checked bound follows over the rational numbers. *)
+  Lemma check_row_sound_Q : forall s c k, check_row s c k = true -> cut k = false ->
+    forall v, satQ v s -> satQ v c.
+  Proof.
+    intros s c k Hcheck Hcut v Hsat. unfold check_row in Hcheck.
+    apply andb_true_iff in Hcheck as [Hleft Hrhs].
+    apply andb_true_iff in Hleft as [Hscale Hcoef].
+    apply Z.ltb_lt in Hscale. rewrite Zlt_Qlt in Hscale.
+    change (0 < inject_Z (scale k))%Q in Hscale.
+    assert (Hnonzero : ~ (inject_Z (scale k) == 0)%Q).
+    { intro Hz. setoid_rewrite Hz in Hscale. exact (Qlt_irrefl _ Hscale). }
+    pose proof (linear_equal_eval_Q _ _ _ v Hcoef) as Heval.
+    unfold eval_coefQ in Heval. unfold satQ in *.
+    destruct (lrel c), (lrel s); try discriminate.
+    - apply Z.eqb_eq in Hrhs.
+      apply (proj1 (Qmult_inj_l _ _ (inject_Z (scale k)) Hnonzero)).
+      setoid_rewrite <- Heval. rewrite <- inject_Z_mult, <- Hrhs. exact Hsat.
+    - rewrite Hcut in Hrhs. apply Z.leb_le in Hrhs.
+      rewrite Zle_Qle, inject_Z_mult in Hrhs.
+      apply (proj1 (Qmult_le_l _ _ (inject_Z (scale k)) Hscale)).
+      setoid_rewrite <- Heval. setoid_rewrite Hsat. exact Hrhs.
+    - rewrite Hcut in Hrhs. apply Z.leb_le in Hrhs.
+      rewrite Zle_Qle, inject_Z_mult in Hrhs.
+      apply (proj1 (Qmult_le_l _ _ (inject_Z (scale k)) Hscale)).
+      setoid_rewrite <- Heval. exact (Qle_trans _ _ _ Hsat Hrhs).
+  Qed.
+
+
   (** Certificates without integer cuts also entail their rational conclusion. *)
   Lemma check_entails_sound_Q : forall P c k,
     check_entails P c k = true -> cut k = false ->
     forall v, Forall (satQ v) P -> satQ v c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c k Hcheck Hcut v Hmodels. unfold check_entails in Hcheck.
+    destruct (combine P (mults k)) as [s|] eqn:Hsum; [|discriminate].
+    pose proof (combine_valid_Q P (mults k) s Hsum v Hmodels) as Hsat.
+    destruct (empty_row s) eqn:Hempty.
+    - exfalso. exact (empty_row_sound_Q s Hempty v Hsat).
+    - exact (check_row_sound_Q s c k Hcheck Hcut v Hsat).
+  Qed.
   (** Accepted contradictions exclude every integer model. *)
   Lemma check_empty_sound : forall P ms, check_empty P ms = true ->
     forall v, ~ Forall (sat v) P.
@@ -730,5 +858,7 @@ Module LinCertT (X : KEY_T) <: LINCERT_ALL X.
   (** Combination without cuts is valid over rational stores. *)
   Lemma combine_sound_Q : forall P ms s, combine P ms = Some s ->
     forall v, Forall (satQ v) P -> satQ v s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact combine_valid_Q.
+  Qed.
 End LinCertT.
