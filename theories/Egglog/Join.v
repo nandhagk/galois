@@ -1852,6 +1852,17 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Lemma T_run_go : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= T_go (nvars p) p ixs (map I.root ixs) [] [] +
       c_join * N.of_nat (length ixs + 1) * N.of_nat (wmax p ixs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs _.
+    pose proof (T_run_initial_le p ixs) as Hinitial.
+    assert (Hwidth : (1 <= N.of_nat (wmax p ixs + 1))%N) by lia.
+    assert (Hroot_budget : (4 * (I.c_ix + 1) * N.of_nat (length ixs + 1) <=
+      c_join * N.of_nat (length ixs + 1) * N.of_nat (wmax p ixs + 1))%N).
+    { unfold c_join. eapply N.le_trans with
+        (m := (4096 * (I.c_ix + 1) * N.of_nat (length ixs + 1))%N).
+      - apply N.mul_le_mono_r. apply N.mul_le_mono_r. lia.
+      - rewrite <- N.mul_1_r at 1. apply N.mul_le_mono_l. exact Hwidth. }
+    time_unfold T_go. lia.
+  Qed.
 
 End JoinT.
