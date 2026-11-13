@@ -1831,6 +1831,30 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         * exact Hupdated.
   Qed.
 
+  (** Reordering contributions preserves every tuple's multiplicity. *)
+  Lemma tuple_multiplicity_permutation : forall u first second,
+    Permutation first second -> tuple_multiplicity u first = tuple_multiplicity u second.
+  Proof.
+    intros u first second Hperm. unfold tuple_multiplicity.
+    apply Permutation_length. now apply filter_permutation.
+  Qed.
+
+  (** The cache invariant depends on contribution multiplicity, not enumeration order. *)
+  Lemma slot_cache_permutation : forall state s arity first second,
+    Permutation first second -> slot_cache_ok state s arity first ->
+    slot_cache_ok state s arity second.
+  Proof.
+    intros state s arity first second Hperm [Hall [Hnew [Hfull [Hdelta Hcounts]]]].
+    split; [exact Hall |]. split; [exact Hnew |]. split.
+    - intro u. split.
+      + intro Hmember. eapply Permutation_in; [exact Hperm | now apply Hfull].
+      + intro Hin. apply Hfull. eapply Permutation_in;
+          [apply Permutation_sym; exact Hperm | exact Hin].
+    - split.
+      + intros u Hmember. eapply Permutation_in; [exact Hperm | now apply Hdelta].
+      + intro u. rewrite Hcounts. now apply tuple_multiplicity_permutation.
+  Qed.
+
   (** Index maintenance keeps the complete model view unchanged. *)
   Lemma slots_update_view : forall b f u db, view (slots_update b f u db) = view db.
   Proof.
@@ -1975,6 +1999,122 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     eapply slot_cache_snapshot.
     - exact (slots_update_snapshot_other db b f u s g perm Hgroups Hslot Hdifferent).
     - exact Hcache.
+  Qed.
+
+  (** A row enumeration contributes one projected tuple for each row of the selected function. *)
+  Definition row_contributions (f : positive) (perm : list nat)
+      (rows : list ((positive * list (cell V.t)) * option (cell V.t))) :=
+    map (fun r => permute perm (snd (fst r) ++ option_list (snd r)))
+      (filter (fun r => Pos.eqb (fst (fst r)) f) rows).
+
+  (** A contributed tuple has a source row with the selected function and projection. *)
+  Lemma row_contributions_member : forall f perm rows u,
+    In u (row_contributions f perm rows) <->
+      exists k o, In ((f, k), o) rows /\ u = permute perm (k ++ option_list o).
+  Proof.
+    intros f perm rows u. unfold row_contributions. split.
+    - intro Hin. apply in_map_iff in Hin. destruct Hin as [[[g k] o] [Hvalue Hin]].
+      apply filter_In in Hin as [Hin Hfunction]. cbn [fst] in Hfunction.
+      apply Pos.eqb_eq in Hfunction. subst g. exists k, o. split; [exact Hin |].
+      symmetry. exact Hvalue.
+    - intros [k [o [Hin Hvalue]]]. apply in_map_iff. exists ((f, k), o).
+      split; [symmetry; exact Hvalue |]. apply filter_In.
+      split; [exact Hin | apply Pos.eqb_refl].
+  Qed.
+
+  (** Row permutations induce permutations of their projected contributions. *)
+  Lemma row_contributions_permutation : forall f perm first second,
+    Permutation first second ->
+    Permutation (row_contributions f perm first) (row_contributions f perm second).
+  Proof.
+    intros f perm first second Hperm. unfold row_contributions.
+    apply Permutation_map. now apply filter_permutation.
+  Qed.
+
+  (** A row of the selected function contributes its projected tuple once. *)
+  Lemma row_contributions_same : forall f perm k o rows,
+    row_contributions f perm (((f, k), o) :: rows) =
+      permute perm (k ++ option_list o) :: row_contributions f perm rows.
+  Proof.
+    intros f perm k o rows. unfold row_contributions. cbn [filter map fst snd].
+    now rewrite Pos.eqb_refl.
+  Qed.
+
+  (** Rows of another function do not contribute to the selected projection multiset. *)
+  Lemma row_contributions_other : forall f g perm k o rows, f <> g ->
+    row_contributions g perm (((f, k), o) :: rows) = row_contributions g perm rows.
+  Proof.
+    intros f g perm k o rows Hdifferent. unfold row_contributions.
+    cbn [filter map fst snd]. apply Pos.eqb_neq in Hdifferent. now rewrite Hdifferent.
+  Qed.
+
+  (** Enumerating the actual row map agrees with the public row predicate. *)
+  Lemma row_elements_member : forall db f k o, RowMap.wf (runtime_rows (db_runtime db)) ->
+    (In ((f, k), o) (RowMap.elements (runtime_rows (db_runtime db))) <-> row (view db) f k o).
+  Proof.
+    intros db f k o Hmap. change (In ((f, k), o)
+      (RowMap.elements (runtime_rows (db_runtime db))) <->
+      RowMap.get (f, k) (runtime_rows (db_runtime db)) = Some o).
+    now apply RowMap.elements_spec.
+  Qed.
+
+  (** A well-formed count equals multiplicity in the actual row projection multiset. *)
+  Lemma wf_slot_projection_count : forall db s f perm u, wf db ->
+    slot_of db s = Some (f, perm) ->
+    N.to_nat (runtime_projection_count (db_runtime db) s u) =
+      tuple_multiplicity u
+        (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db s f perm u Hwf Hslot.
+    destruct (wf_projection_counts db Hwf s f perm u Hslot)
+      as [rs [Hdistinct [Hmembers Hcount]]].
+    change (N.to_nat (stored_projection_count db s u) = tuple_multiplicity u
+      (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db))))).
+    rewrite Hcount. symmetry.
+    unfold tuple_multiplicity, row_contributions. eapply filtered_projection_witness_length.
+    - exact Tuples.eqb_spec.
+    - apply RowFacts.elements_nodup_pairs. now apply wf_row_map.
+    - exact Hdistinct.
+    - intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
+  Qed.
+
+  (** Every cached member in a declared slot has a source in the actual projection multiset. *)
+  Lemma wf_slot_cache_sound : forall db s f perm, wf db ->
+    slot_of db s = Some (f, perm) -> forall new u,
+    I.mem (runtime_slot_index (db_runtime db) s new) u ->
+    In u (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db s f perm Hwf Hslot new u Hmember.
+    assert (Hinside : (s < runtime_slot_bound (db_runtime db))%N).
+    { eapply slot_of_inside_bound; eassumption. }
+    rewrite <- (index_runtime_slot db s new Hinside) in Hmember.
+    destruct (wf_index_sound db Hwf s new u Hmember)
+      as [g [other [k [o [Hentry [Hrow Hvalue]]]]]].
+    rewrite Hslot in Hentry. injection Hentry as <- <-.
+    apply row_contributions_member. exists k, o. split; [| exact Hvalue].
+    apply row_elements_member; [now apply wf_row_map | exact Hrow].
+  Qed.
+
+  (** Every declared slot in a well-formed database has the complete multiset cache invariant. *)
+  Lemma wf_slot_cache : forall db s f perm, wf db -> slot_of db s = Some (f, perm) ->
+    slot_cache_ok (db_runtime db) s (length perm)
+      (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db s f perm Hwf Hslot.
+    assert (Hinside : (s < runtime_slot_bound (db_runtime db))%N).
+    { eapply slot_of_inside_bound; eassumption. }
+    assert (Harity : forall new, I.wf (length perm) (runtime_slot_index (db_runtime db) s new)).
+    { intro new. rewrite <- (index_runtime_slot db s new Hinside).
+      exact (wf_index_arity db Hwf s new f perm Hslot). }
+    split; [apply Harity |]. split; [apply Harity |]. split.
+    - intro u. split; [now apply wf_slot_cache_sound with (f := f) (perm := perm) |].
+      intro Hin. apply row_contributions_member in Hin as [k [o [Hrow ->]]].
+      apply row_elements_member in Hrow; [| now apply wf_row_map].
+      rewrite <- (index_runtime_slot db s false Hinside).
+      exact (wf_index_complete db Hwf s f perm k o Hslot Hrow).
+    - split.
+      + now apply wf_slot_cache_sound with (f := f) (perm := perm).
+      + intro u. now apply wf_slot_projection_count.
   Qed.
 
   (** A direct row write replaces one map binding and leaves all other bindings intact. *)
