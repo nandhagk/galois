@@ -1307,6 +1307,21 @@ Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
     rewrite raw_keys_codes by exact Hcanonical; apply PTrie.elements_nodup.
   Qed.
 
+  Lemma valid_keys_raw : forall m, canonical m -> valid_keys m = raw_keys m.
+  Proof.
+    intros m Hcanonical; unfold valid_keys, raw_keys; f_equal.
+    assert (Hfilter : forall (cells : list (positive * (S.key * L.t))),
+      (forall path x v, In (path, (x, v)) cells -> path = S.key_code x) ->
+      filter (fun binding => Pos.eqb (fst binding)
+        (S.key_code (fst (snd binding)))) cells = cells).
+    { intros cells; induction cells as [|[path [x v]] rest IH]; intro Hall.
+      - reflexivity.
+      - cbn [filter]; rewrite (Hall path x v (or_introl eq_refl)), Pos.eqb_refl.
+        f_equal; apply IH; intros q y w Hin; apply (Hall q y w); now right. }
+    apply Hfilter; intros path x v Hin.
+    apply PTrie.elements_spec in Hin; exact (Hcanonical path x v Hin).
+  Qed.
+
   (** A duplicate-free mapped list identifies equal fibers uniquely. *)
   Lemma nodup_map_fiber : forall A B (f : A -> B) xs a b,
     NoDup (map f xs) -> In a xs -> In b xs -> f a = f b -> a = b.
