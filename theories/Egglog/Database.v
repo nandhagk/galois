@@ -11016,6 +11016,66 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct new; assumption.
   Qed.
 
+  Lemma inv_base_reverse : forall db, inv_on db [] -> database_wf db.
+  Proof.
+    intros db Hinv.
+    pose proof Hinv as Hfacts. unfold inv_on in Hfacts.
+    destruct Hfacts as (_ & _ & _ & Hscheduled & _ & _ & _ & Hforest & Hkind & _ &
+      Hpending_length & Hqueue_allocated).
+    assert (Hcore : core_bridge db) by (unfold forest_ok in Hforest; tauto).
+    destruct Hcore as [Hmembers [Hcount [Hlog [Hrowmap [Hkindbound Hmaxname]]]]].
+    assert (Hmetadata : metadata_ok db) by (exact (forest_metadata db Hforest)).
+    assert (Hgroups : runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty).
+    { unfold metadata_ok in Hmetadata. tauto. }
+    assert (Hslotbound : runtime_slot_bound (db_runtime db) =
+      N.of_nat (length (slots db))).
+    { unfold metadata_ok in Hmetadata. tauto. }
+    assert (Hprojection : projection_counts_ok db).
+    { unfold forest_ok in Hforest. tauto. }
+    assert (Hhistory : database_history db).
+    { unfold forest_ok in Hforest. tauto. }
+    unfold database_wf.
+    split; [exact (forest_uf_wf db Hforest) |].
+    split; [exact Hmembers |].
+    split; [exact Hcount |].
+    split; [exact (forest_width_bound db Hforest) |].
+    split; [exact (forest_same_repr db Hforest) |].
+    split; [exact Hlog |].
+    split; [exact Hrowmap |].
+    split.
+    { intros f k o Hrow. exact (proj2 (proj2 (Hkind f k o Hrow))). }
+    split.
+    { intros f k o i Hrow Hid. exact (proj1 (Hkind f k o Hrow) i Hid). }
+    split.
+    { intros f k o Hrow. exact (proj1 (proj2 (Hkind f k o Hrow))). }
+    split; [exact Hkindbound |].
+    split; [exact Hslotbound |].
+    split; [exact (forest_pending_count db Hforest) |].
+    split.
+    { apply Forall_forall. intros x Hin. exact (Hqueue_allocated x Hin). }
+    split.
+    { intro Hquiet. assert (Hempty : queue db = []).
+      { destruct (queue db) as [|x rest]; [reflexivity |].
+        cbn [length] in Hpending_length. lia. }
+      intros f k o Hrow i Hid.
+      destruct (Pos.eq_dec (repr db i) i) as [Hequal | Hnonroot]; [exact Hequal |].
+      destruct (Hscheduled f k o i Hrow Hid Hnonroot) as [k0 [Hwork _]].
+      unfold scheduled in Hwork. rewrite Hempty in Hwork.
+      destruct Hwork as [Hnone | [x [Hnone _]]]; contradiction. }
+    split.
+    { intros s new u Hmem. exact (inv_index_sound db [] Hinv s new u Hmem). }
+    split.
+    { intros s f perm k o Hslot Hrow.
+      exact (inv_index_complete db [] Hinv s f perm k o Hslot Hrow). }
+    split.
+    { intros s new f perm Hslot.
+      exact (inv_index_arity db [] Hinv s new f perm Hslot). }
+    split; [exact Hgroups |].
+    split; [exact Hprojection |].
+    split; [exact Hmaxname | exact Hhistory].
+  Qed.
+
   (** Active and queued repair states expose their forest invariant directly. *)
   Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
   Proof.
