@@ -1719,6 +1719,101 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - exact (Hnew i Hin).
   Qed.
 
+  (** Cache updates leave the stored pending-work counter unchanged. *)
+  Lemma slots_update_npending : forall b f u db,
+    db_npending (slots_update b f u db) = db_npending db.
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
+
+  (** Replacing one row does not change the stored pending-work counter. *)
+  Lemma row_replace_npending : forall f k previous o db,
+    db_npending (row_replace f k previous o db) = db_npending db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace, row_write;
+      cbn [database_set_runtime db_npending]; now rewrite !slots_update_npending.
+  Qed.
+
+  (** Cache correctness is the only remaining obligation for a well-kinded canonical row update. *)
+  Lemma row_replace_wf_from_caches : forall db f k previous o,
+    wf db -> kind_ok db f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    (forall s new u, I.mem (index s new (row_replace f k previous o db)) u ->
+      exists g perm args output,
+        slot_of (row_replace f k previous o db) s = Some (g, perm) /\
+        row (view (row_replace f k previous o db)) g args output /\
+        u = permute perm (args ++ option_list output)) ->
+    (forall s g perm args output,
+      slot_of (row_replace f k previous o db) s = Some (g, perm) ->
+      row (view (row_replace f k previous o db)) g args output ->
+      I.mem (index s false (row_replace f k previous o db))
+        (permute perm (args ++ option_list output))) ->
+    (forall s new g perm,
+      slot_of (row_replace f k previous o db) s = Some (g, perm) ->
+      I.wf (length perm) (index s new (row_replace f k previous o db))) ->
+    projection_counts_ok (row_replace f k previous o db) ->
+    wf (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hwf Hkind Hcanonical Hsound Hcomplete Harity Hcounts.
+    assert (Hruntime :
+      (runtime_equalities (db_runtime (row_replace f k previous o db)),
+       runtime_queue (db_runtime (row_replace f k previous o db)),
+       runtime_function_slots (db_runtime (row_replace f k previous o db)),
+       runtime_max_name (db_runtime (row_replace f k previous o db)),
+       runtime_slot_bound (db_runtime (row_replace f k previous o db))) =
+      (runtime_equalities (db_runtime db), runtime_queue (db_runtime db),
+       runtime_function_slots (db_runtime db), runtime_max_name (db_runtime db),
+       runtime_slot_bound (db_runtime db))).
+    { exact (row_replace_preserves _
+        (fun state => (runtime_equalities state, runtime_queue state,
+          runtime_function_slots state, runtime_max_name state, runtime_slot_bound state))
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f k previous o db). }
+    injection Hruntime as Hlog Hqueue Hgroups Hmax Hbound.
+    change (runtime_equalities (db_runtime (row_replace f k previous o db)) =
+      runtime_equalities (db_runtime db)) in Hlog.
+    change (runtime_queue (db_runtime (row_replace f k previous o db)) =
+      runtime_queue (db_runtime db)) in Hqueue.
+    change (runtime_function_slots (db_runtime (row_replace f k previous o db)) =
+      runtime_function_slots (db_runtime db)) in Hgroups.
+    change (runtime_max_name (db_runtime (row_replace f k previous o db)) =
+      runtime_max_name (db_runtime db)) in Hmax.
+    change (runtime_slot_bound (db_runtime (row_replace f k previous o db)) =
+      runtime_slot_bound (db_runtime db)) in Hbound.
+    unfold wf, database_wf. split.
+    { rewrite row_replace_forest. exact (wf_forest db Hwf). }
+    split.
+    { intro i. rewrite row_replace_forest. unfold allocated. rewrite row_replace_ids.
+      exact (wf_forest_members db Hwf i). }
+    split.
+    { rewrite row_replace_forest, row_replace_ids. exact (wf_forest_count db Hwf). }
+    split.
+    { rewrite row_replace_forest, row_replace_ids. exact (wf_forest_width db Hwf). }
+    split.
+    { intros i j. rewrite row_replace_same. unfold repr. rewrite row_replace_forest.
+      exact (wf_equalities db Hwf i j). }
+    split.
+    { rewrite Hlog. unfold allocated. rewrite row_replace_ids. exact (wf_log_allocated db Hwf). }
+    split.
+    { rewrite row_replace_map. apply RowMap.wf_set. exact (wf_row_map db Hwf). }
+    split; [exact (row_replace_kinds db f k previous o Hwf Hkind) |].
+    split; [exact (row_replace_allocated db f k previous o Hwf Hkind) |].
+    split; [exact (row_replace_fits db f k previous o Hwf Hkind) |].
+    split.
+    { intros g output Houtput. rewrite row_replace_kind in Houtput. rewrite Hmax.
+      exact (wf_kind_bound db Hwf g output Houtput). }
+    split.
+    { rewrite Hbound, row_replace_slots. exact (wf_slot_bound db Hwf). }
+    split.
+    { rewrite row_replace_npending, row_replace_pending. exact (wf_pending_count db Hwf). }
+    split.
+    { rewrite Hqueue. unfold allocated. rewrite row_replace_ids. exact (wf_queue_allocated db Hwf). }
+    split; [exact (row_replace_canonical db f k previous o Hwf Hcanonical) |].
+    split; [exact Hsound |]. split; [exact Hcomplete |]. split; [exact Harity |].
+    split; [rewrite Hgroups, row_replace_slots; exact (wf_group_table db Hwf) | exact Hcounts].
+  Qed.
+
   (** Allocating a forest member leaves the stored rows, kinds and equality log unchanged. *)
   Lemma allocate_id_view : forall i db, view (allocate_id i db) = view db.
   Proof.
