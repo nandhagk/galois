@@ -2586,6 +2586,74 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     rewrite Hrange. time_unfold T_encode_cell. time_cbn. lia.
   Qed.
 
+  (** Normalized mutation charges fit a coefficient that includes the value encoder. *)
+  Lemma mutation_step_budget : forall trie_cost key_cost bits,
+    (1 <= bits ->
+      96 + 16 * bits + 4 * trie_cost * bits + (key_cost + 1) * bits <=
+      128 * (trie_cost + key_cost + 1) * bits)%N.
+  Proof.
+    intros trie_cost key_cost bits Hbits.
+    replace (96 + 16 * bits + 4 * trie_cost * bits + (key_cost + 1) * bits)%N
+      with (96 + 17 * bits + 4 * (trie_cost * bits) + key_cost * bits)%N by ring.
+    replace (128 * (trie_cost + key_cost + 1) * bits)%N
+      with (128 * bits + 128 * (trie_cost * bits) + 128 * (key_cost * bits))%N by ring.
+    lia.
+  Qed.
+
+  (** An insertion step has a width bound on every state, including malformed counts. *)
+  Lemma T_insert_step_budget : forall st c bound,
+    Pos.size_nat (next (fst st)) <= bound -> cell_bits V.encode c <= bound ->
+    (T_insert_step_st st c <=
+      128 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (bound + 1))%N.
+  Proof.
+    intros [ix n] c bound Hcounter Hcell. cbn [fst] in Hcounter.
+    set (bits := N.of_nat (bound + 1)).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    pose proof (mutation_step_budget PTrieT.c_trie V.c_key bits Hbits) as Hbudget.
+    pose proof (T_node_guard_le ix n) as Hguard.
+    assert (Hguard' : (Pos.T_ltb (next ix) n <= bits + 4)%N) by (unfold bits; lia).
+    time_unfold T_insert_step_st. cbn beta iota zeta. fold bits.
+    destruct (Pos.ltb (next ix) n) eqn:Hrange.
+    - time_unfold T_next. time_unfold @T_index_counter. time_cbn.
+      clear Hguard Hcounter Hcell. clearbody bits.
+      set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost. lia.
+    - apply Pos.ltb_ge in Hrange.
+      assert (Hnode : Pos.size_nat n <= bound).
+      { eapply Nat.le_trans; [apply positive_bits_mono; exact Hrange | exact Hcounter]. }
+      assert (Hcode : Pos.size_nat (encode_cell c) = cell_bits V.encode c)
+        by (destruct c; reflexivity).
+      assert (Hread : (T_read_node ix n <= PTrieT.c_trie * bits + 2)%N).
+      { eapply N.le_trans; [apply T_read_node_le |].
+        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+      assert (Hencode : (T_encode_cell c <= (V.c_key + 1) * bits)%N).
+      { eapply N.le_trans; [apply T_encode_cell_le |].
+        apply N.mul_le_mono_l. unfold bits. lia. }
+      assert (Hget : (PTrieCode.T_get (encode_cell c)
+        (node_edges (read_node ix n)) <= PTrieT.c_trie * bits)%N).
+      { eapply N.le_trans; [apply PTrieT.T_get_le |].
+        apply N.mul_le_mono_l. rewrite Hcode. unfold bits. lia. }
+      assert (Hset : forall edge : index_edge (cell V.t),
+        (PTrieCode.T_set (encode_cell c) edge (node_edges (read_node ix n)) <=
+          PTrieT.c_trie * bits)%N).
+      { intro edge. eapply N.le_trans; [apply PTrieT.T_set_le |].
+        apply N.mul_le_mono_l. rewrite Hcode. unfold bits. lia. }
+      assert (Hwrite : forall nd counter,
+        (T_write_node ix n nd counter <= PTrieT.c_trie * bits + 3)%N).
+      { intros nd counter. eapply N.le_trans; [apply T_write_node_le |].
+        apply N.add_le_mono_r, N.mul_le_mono_l. unfold bits. lia. }
+      assert (Hincrement : forall count,
+        (T_bounded_succ (next ix) count <= 2 * bits + 5)%N).
+      { intro count. eapply N.le_trans; [apply T_bounded_succ_le |]. unfold bits. lia. }
+      pose proof (Pos.T_succ_le (next ix)) as Hsucc.
+      assert (Hsucc' : (Pos.T_succ (next ix) <= bits)%N) by (unfold bits; lia).
+      time_unfold T_next. time_unfold @T_index_counter.
+      destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+        time_pose; time_simpl; time_cbn;
+        clear Hguard Hcounter Hcell Hnode Hcode Hsucc Hset Hwrite Hincrement;
+        clearbody bits;
+        set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost; lia.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
