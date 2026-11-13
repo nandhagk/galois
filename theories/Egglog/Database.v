@@ -5864,6 +5864,262 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact (proj2 (proj2 Hresult)).
   Qed.
 
+  (** Pending identifiers are distinct old roots that no longer represent their classes. *)
+  Definition queue_valid (db : t) : Prop :=
+    NoDup (runtime_queue (db_runtime db)) /\
+      Forall (fun x => repr db x <> x) (runtime_queue (db_runtime db)).
+
+  (** Queue observations and representatives completely determine queue validity. *)
+  Lemma queue_valid_frame : forall db db',
+    runtime_queue (db_runtime db') = runtime_queue (db_runtime db) ->
+    (forall x, repr db' x = repr db x) -> queue_valid db -> queue_valid db'.
+  Proof.
+    intros db db' Hqueue Hrepr [Hdistinct Hnonroots]. unfold queue_valid.
+    rewrite Hqueue. split; [exact Hdistinct |].
+    eapply Forall_impl; [| exact Hnonroots]. intros x Hnonroot. now rewrite Hrepr.
+  Qed.
+
+  (** A fresh database has no pending roots. *)
+  Lemma queue_valid_init : forall ds sl, queue_valid (init ds sl).
+  Proof.
+    intros ds sl. split; constructor.
+  Qed.
+
+  (** Union keeps every old queued loser nonrepresentative and prepends a previously absent root. *)
+  Lemma queue_valid_union : forall db i j,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (union i j db).
+  Proof.
+    intros db i j Hforest [Hdistinct Hnonroots]. rewrite Forall_forall in Hnonroots.
+    unfold queue_valid, union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    assert (Htail : Forall (fun x => UnionFind.repr forest x <> x)
+      (runtime_queue (db_runtime db))).
+    { apply Forall_forall. intros x Hin.
+      pose proof (ForestFacts.union_keeps_nonrepresentative i j (db_forest db) x Hforest
+        (Hnonroots x Hin)) as Hstable. rewrite Hunion in Hstable. exact Hstable. }
+    destruct roots as [[winner loser] |].
+    - change (NoDup (loser :: runtime_queue (db_runtime db)) /\
+        Forall (fun x => UnionFind.repr forest x <> x) (loser :: runtime_queue (db_runtime db))).
+      split.
+      + constructor; [| exact Hdistinct]. intro Hin.
+        apply (Hnonroots loser Hin).
+        exact (ForestFacts.union_loser_was_representative i j (db_forest db)
+          winner loser forest Hforest Hunion).
+      + constructor; [| exact Htail].
+        exact (ForestFacts.union_loser_is_nonrepresentative i j (db_forest db)
+          winner loser forest Hforest Hunion).
+    - change (NoDup (runtime_queue (db_runtime db)) /\
+        Forall (fun x => UnionFind.repr forest x <> x) (runtime_queue (db_runtime db))).
+      now split.
+  Qed.
+
+  (** Singleton addition changes neither queued identifiers nor their representatives. *)
+  Lemma queue_valid_allocate : forall db i,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (allocate_id i db).
+  Proof.
+    intros db i Hforest Hqueue. eapply (queue_valid_frame db); [reflexivity | | exact Hqueue].
+    intro x. apply UnionFind.repr_add. exact Hforest.
+  Qed.
+
+  (** Path compression preserves queue validity because it preserves every representative. *)
+  Lemma queue_valid_find : forall db i,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (snd (find i db)).
+  Proof.
+    intros db i Hforest Hqueue. eapply (queue_valid_frame db); [reflexivity | | exact Hqueue].
+    intro x. apply UnionFind.find_same. exact Hforest.
+  Qed.
+
+  (** Slot maintenance changes neither the queue nor the forest. *)
+  Lemma queue_valid_slots_update : forall db add f u,
+    queue_valid db -> queue_valid (slots_update add f u db).
+  Proof.
+    intros db add f u Hqueue. eapply (queue_valid_frame db); [| | exact Hqueue].
+    - apply slots_update_preserves. intros. reflexivity.
+    - intro x. unfold repr. now rewrite slots_update_forest.
+  Qed.
+
+  (** Row replacement changes neither the queue nor the forest. *)
+  Lemma queue_valid_row_replace : forall db f k previous o,
+    queue_valid db -> queue_valid (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hqueue. eapply (queue_valid_frame db); [| | exact Hqueue].
+    - exact (row_replace_preserves _ (@runtime_queue (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f k previous o db).
+    - intro x. unfold repr. now rewrite row_replace_forest.
+  Qed.
+
+  (** Row deletion retains every pending identifier and its nonrepresentative status. *)
+  Lemma queue_valid_row_delete : forall db f k,
+    queue_valid db -> queue_valid (row_delete f k db).
+  Proof.
+    intros db f k Hqueue. eapply (queue_valid_frame db); [| | exact Hqueue].
+    - exact (row_delete_preserves _ (@runtime_queue (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    - intro x. unfold repr. now rewrite row_delete_forest.
+  Qed.
+
+  (** Advancing only clears cache and change observations. *)
+  Lemma queue_valid_advance : forall db, queue_valid db -> queue_valid (advance db).
+  Proof.
+    intros db Hqueue. eapply (queue_valid_frame db); [reflexivity | | exact Hqueue]. reflexivity.
+  Qed.
+
+  (** Removing the queue head retains distinctness and the nonrepresentative property. *)
+  Lemma queue_valid_pop : forall db i db',
+    queue_valid db -> db_pop_loser db = Some (i, db') -> queue_valid db'.
+  Proof.
+    intros db i db' Hvalid Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| head rest] eqn:Hqueue; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'.
+    unfold queue_valid in Hvalid. rewrite Hqueue in Hvalid.
+    destruct Hvalid as [Hdistinct Hnonroots].
+    change (NoDup rest /\ Forall (fun x => repr db x <> x) rest).
+    inversion Hdistinct; inversion Hnonroots; subst. now split.
+  Qed.
+
+  (** Distinct allocated queue identifiers fit within the interval without a public-wf premise. *)
+  Lemma queue_length_le_ids_from_members : forall db,
+    NoDup (runtime_queue (db_runtime db)) ->
+    (forall x, In x (runtime_queue (db_runtime db)) -> allocated db x) ->
+    pending db <= N.to_nat (ids db).
+  Proof.
+    intros db Hdistinct Hallocated.
+    assert (Hkeys : NoDup (map Pos.to_nat (runtime_queue (db_runtime db)))).
+    { apply NoDup_map_NoDup_ForallPairs; [| exact Hdistinct].
+      intros x y Hx Hy Hequal. now apply Pos2Nat.inj. }
+    assert (Hinclude : incl (map Pos.to_nat (runtime_queue (db_runtime db)))
+      (seq 1 (N.to_nat (ids db)))).
+    { intros n Hin. apply in_map_iff in Hin as [x [Hequal Hin]]. subst n.
+      pose proof (Hallocated x Hin) as Hbound. unfold allocated in Hbound.
+      assert (Hnatural : Pos.to_nat x <= N.to_nat (ids db)) by lia.
+      pose proof (Pos2Nat.is_pos x). apply in_seq. lia. }
+    assert (Hlength : length (map Pos.to_nat (runtime_queue (db_runtime db))) <=
+      length (seq 1 (N.to_nat (ids db)))).
+    { apply NoDup_incl_length; assumption. }
+    rewrite length_map, length_seq in Hlength. exact Hlength.
+  Qed.
+
+  (** Public row and allocation invariants supply the queue's allocated-member premise. *)
+  Lemma queue_length_le_ids : forall db, wf db -> queue_valid db ->
+    pending db <= N.to_nat (ids db).
+  Proof.
+    intros db Hwf [Hdistinct Hnonroots]. apply queue_length_le_ids_from_members; [exact Hdistinct |].
+    pose proof (wf_queue_allocated db Hwf) as Hallocated. now rewrite Forall_forall in Hallocated.
+  Qed.
+
+  (** An explicitly consistent binary queue counter inherits the same interval bound. *)
+  Lemma queue_counter_le_ids_from_members : forall db,
+    NoDup (runtime_queue (db_runtime db)) ->
+    (forall x, In x (runtime_queue (db_runtime db)) -> allocated db x) ->
+    db_npending db = N.of_nat (pending db) -> (db_npending db <= ids db)%N.
+  Proof.
+    intros db Hdistinct Hallocated Hcount.
+    pose proof (queue_length_le_ids_from_members db Hdistinct Hallocated) as Hbound.
+    rewrite Hcount. lia.
+  Qed.
+
+  (** The exact binary queue counter is bounded by the identifier allocation counter. *)
+  Lemma queue_counter_le_ids : forall db, wf db -> queue_valid db ->
+    (db_npending db <= ids db)%N.
+  Proof.
+    intros db Hwf Hqueue. pose proof (queue_length_le_ids db Hwf Hqueue) as Hbound.
+    rewrite (wf_pending_count db Hwf). lia.
+  Qed.
+
+  (** Put preserves the forest and queue invariants even inside a repair batch. *)
+  Lemma put_queue_state : forall db f k o,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (put f k o db)) /\ queue_valid (put f k o db).
+  Proof.
+    intros db f k o Hforest Hqueue. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : UnionFind.wf (db_forest next) /\ queue_valid next).
+    { unfold next. destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+        try (now split). split.
+      - rewrite union_forest. now apply UnionFind.wf_union.
+      - now apply queue_valid_union. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |]. split.
+      + rewrite row_replace_forest. exact (proj1 Hnext).
+      + apply queue_valid_row_replace. exact (proj2 Hnext).
+    - split.
+      + rewrite row_replace_forest. exact (proj1 Hnext).
+      + apply queue_valid_row_replace. exact (proj2 Hnext).
+  Qed.
+
+  Lemma queue_valid_put : forall db f k o,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (put f k o db).
+  Proof.
+    intros db f k o Hforest Hqueue. exact (proj2 (put_queue_state db f k o Hforest Hqueue)).
+  Qed.
+
+  (** Constructor reuse or allocation keeps the same valid pending-root queue. *)
+  Lemma make_queue_state : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (snd (make f k db))) /\ queue_valid (snd (make f k db)).
+  Proof.
+    intros db f k Hforest Hqueue.
+    assert (Hfresh : UnionFind.wf (db_forest (allocate_id (N.succ_pos (ids db)) db)) /\
+      queue_valid (allocate_id (N.succ_pos (ids db)) db)).
+    { split; [now apply UnionFind.wf_add | now apply queue_valid_allocate]. }
+    unfold make. destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      try (exact (conj Hforest Hqueue)).
+    all: destruct (kind_get f db) as [[| |m] |]; cbn [snd]; try exact Hfresh.
+    all: split; [rewrite row_replace_forest; exact (proj1 Hfresh) |].
+    all: apply queue_valid_row_replace; exact (proj2 Hfresh).
+  Qed.
+
+  Lemma queue_valid_make : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (snd (make f k db)).
+  Proof.
+    intros db f k Hforest Hqueue. exact (proj2 (make_queue_state db f k Hforest Hqueue)).
+  Qed.
+
+  (** Repair keeps the structural queue invariant without assuming public quietness. *)
+  Lemma repair_queue_state : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (repair_current f k db)) /\ queue_valid (repair_current f k db).
+  Proof.
+    intros db f k Hforest Hqueue. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [now split |].
+    apply put_queue_state.
+    - now rewrite row_delete_forest.
+    - now apply queue_valid_row_delete.
+  Qed.
+
+  Lemma queue_valid_repair : forall db f k,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (repair_current f k db).
+  Proof.
+    intros db f k Hforest Hqueue. exact (proj2 (repair_queue_state db f k Hforest Hqueue)).
+  Qed.
+
+  (** Both completed and exhausted rebuilds preserve distinct queued nonrepresentatives. *)
+  Lemma rebuild_queue_state : forall db,
+    UnionFind.wf (db_forest db) -> queue_valid db ->
+    UnionFind.wf (db_forest (rebuild db)) /\ queue_valid (rebuild db).
+  Proof.
+    intros db Hforest Hqueue. apply (rebuild_preserves (fun current =>
+      UnionFind.wf (db_forest current) /\ queue_valid current)).
+    - intros current f k [Hforest' Hqueue']. now apply repair_queue_state.
+    - intros current i next [Hforest' Hqueue'] Hpop. split.
+      + now rewrite (proj1 (db_pop_loser_preserves current i next Hpop)).
+      + eapply queue_valid_pop; eassumption.
+    - now split.
+  Qed.
+
+  Lemma queue_valid_rebuild : forall db,
+    UnionFind.wf (db_forest db) -> queue_valid db -> queue_valid (rebuild db).
+  Proof.
+    intros db Hforest Hqueue. exact (proj2 (rebuild_queue_state db Hforest Hqueue)).
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
