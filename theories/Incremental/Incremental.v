@@ -9633,6 +9633,27 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     apply Nat.mul_le_mono_r; exact Hlength.
   Qed.
 
+  Lemma invalid_flat_map_budget {A B : Type} (f : A -> list B) (Tf : A -> N)
+      (budget : A -> N) : forall xs,
+    (forall x, In x xs ->
+      (Tf x + N.of_nat (length (f x)) + 2 <= budget x)%N) ->
+    (List.T_flat_map f Tf xs <=
+      fold_right (fun x total => budget x + total)%N 1%N xs)%N.
+  Proof.
+    intro xs; induction xs as [|x rest IH]; intro Hbudget.
+    - time_step.
+    - pose proof (Hbudget x (or_introl eq_refl)) as Hhead.
+      pose proof (IH (fun y Hy => Hbudget y (or_intror Hy))) as Htail.
+      pose proof (Datatypes.T_app_le (f x) (flat_map f rest)) as Happ.
+      time_unfold @List.T_flat_map; time_cbn; nia.
+  Qed.
+
+  Lemma T_row_writes_from_keys : forall p r,
+    (T_row_writes p r <= T_row_keys p r)%N.
+  Proof.
+    intros p r; unfold T_row_keys; time_simpl; time_cbn; lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
