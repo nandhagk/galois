@@ -86,34 +86,105 @@ Module TrieMap (K : KEY) <: MAP K.
   Qed.
 
   Lemma wf_empty : forall A, wf (@empty A).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A p k a Hget. unfold empty in Hget.
+    rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
   Lemma wf_set : forall A k (a : A) m, wf m -> wf (set k a m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k a m Hwf p q b Hget. unfold set in Hget.
+    destruct (Pos.eq_dec p (K.encode k)) as [->|Hneq].
+    - rewrite PTrie.get_set_same in Hget. inversion Hget. reflexivity.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq.
+      exact (Hwf p q b Hget).
+  Qed.
   Lemma wf_remove : forall A k (m : t A), wf m -> wf (remove k m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k m Hwf p q a Hget. unfold remove in Hget.
+    destruct (Pos.eq_dec p (K.encode k)) as [->|Hneq].
+    - rewrite PTrie.get_remove_same in Hget. discriminate.
+    - rewrite PTrie.get_remove_other in Hget by exact Hneq.
+      exact (Hwf p q a Hget).
+  Qed.
   Lemma wf_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
     wf m1 -> wf m2 -> wf (merge f m1 m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f m1 m2 Hleft Hright p k c Hget. unfold merge in Hget.
+    rewrite PTrie.get_merge in Hget by reflexivity.
+    destruct (PTrieCode.get p m1) as [[ka a]|] eqn:Hfirst;
+      destruct (PTrieCode.get p m2) as [[kb b]|] eqn:Hsecond;
+      cbn [option_map] in Hget; try discriminate.
+    - destruct (f (Some a) (Some b)); inversion Hget; subst.
+      eapply Hleft. exact Hfirst.
+    - destruct (f (Some a) None); inversion Hget; subst.
+      eapply Hleft. exact Hfirst.
+    - destruct (f None (Some b)); inversion Hget; subst.
+      eapply Hright. exact Hsecond.
+  Qed.
   Lemma get_empty : forall A k, get k (@empty A) = None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k. unfold get, empty. rewrite PTrie.get_empty. reflexivity.
+  Qed.
   Lemma get_set_same : forall A k (a : A) m, get k (set k a m) = Some a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k a m. unfold get, set. rewrite PTrie.get_set_same. reflexivity.
+  Qed.
   Lemma get_set_other : forall A k q (a : A) m,
     k <> q -> get k (set q a m) = get k m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k q a m Hneq. unfold get, set.
+    rewrite PTrie.get_set_other; [reflexivity|].
+    intro Hcode. apply Hneq, K.encode_inj. exact Hcode.
+  Qed.
   Lemma get_remove_same : forall A k (m : t A), get k (remove k m) = None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k m. unfold get, remove. rewrite PTrie.get_remove_same. reflexivity.
+  Qed.
   Lemma get_remove_other : forall A k q (m : t A),
     k <> q -> get k (remove q m) = get k m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k q m Hneq. unfold get, remove.
+    rewrite PTrie.get_remove_other; [reflexivity|].
+    intro Hcode. apply Hneq, K.encode_inj. exact Hcode.
+  Qed.
   Lemma get_merge : forall A B C (f : option A -> option B -> option C) m1 m2 k,
     f None None = None -> get k (merge f m1 m2) = f (get k m1) (get k m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f m1 m2 k Hnone. unfold get, merge.
+    rewrite PTrie.get_merge by reflexivity.
+    destruct (PTrieCode.get (K.encode k) m1) as [[ka a]|];
+      destruct (PTrieCode.get (K.encode k) m2) as [[kb b]|];
+      cbn [option_map snd]; try (rewrite Hnone; reflexivity).
+    - destruct (f (Some a) (Some b)); reflexivity.
+    - destruct (f (Some a) None); reflexivity.
+    - destruct (f None (Some b)); reflexivity.
+  Qed.
   Lemma elements_spec : forall A (m : t A) k a, wf m ->
     (In (k, a) (elements m) <-> get k m = Some a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m k a Hwf. rewrite elements_trie. split.
+    - intro Hin. apply in_map_iff in Hin as [[p [q b]] [Heq Hin]].
+      cbn [snd] in Heq. inversion Heq; subst q b.
+      apply PTrie.elements_spec in Hin. unfold get.
+      rewrite (Hwf p k a Hin), Hin. reflexivity.
+    - intro Hget. unfold get in Hget.
+      destruct (PTrieCode.get (K.encode k) m) as [[q b]|] eqn:Hraw;
+        cbn [option_map snd] in Hget; try discriminate.
+      inversion Hget; subst b.
+      assert (Hkey : q = k) by (apply K.encode_inj; exact (Hwf _ _ _ Hraw)).
+      subst q. apply in_map_iff. exists (K.encode k, (k, a)).
+      split; [reflexivity|apply PTrie.elements_spec; exact Hraw].
+  Qed.
   Lemma elements_nodup : forall A (m : t A), wf m -> NoDup (List.map fst (elements m)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m Hwf.
+    assert (Hcodes : List.map K.encode (List.map fst (elements m)) = codes m).
+    { unfold codes. rewrite elements_trie, !List.map_map.
+      apply map_ext_in. intros [p [k a]] Hin. cbn [fst snd].
+      apply PTrie.elements_spec in Hin. exact (Hwf _ _ _ Hin). }
+    apply (NoDup_map_inv K.encode). rewrite Hcodes.
+    apply PTrie.elements_nodup.
+  Qed.
   Lemma fold_spec : forall A B (f : B -> K.t -> A -> B) m b,
     fold f m b = fold_left (fun acc ka => f acc (fst ka) (snd ka)) (elements m) b.
   Proof.
@@ -125,45 +196,128 @@ Module TrieMap (K : KEY) <: MAP K.
   Qed.
   Lemma ext : forall A (m n : t A), wf m -> wf n ->
     (forall k, get k m = get k n) -> m = n.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m n Hleft Hright Hget. apply PTrie.ext. intro p.
+    destruct (PTrieCode.get p m) as [[k a]|] eqn:Hfirst;
+      destruct (PTrieCode.get p n) as [[q b]|] eqn:Hsecond; try reflexivity.
+    - pose proof (Hleft p k a Hfirst) as Hk.
+      pose proof (Hright p q b Hsecond) as Hq.
+      assert (Hkey : k = q) by (apply K.encode_inj; congruence).
+      subst q. specialize (Hget k). unfold get in Hget.
+      rewrite Hk, Hfirst, Hsecond in Hget. inversion Hget. reflexivity.
+    - specialize (Hget k). unfold get in Hget.
+      rewrite (Hleft p k a Hfirst), Hfirst, Hsecond in Hget. discriminate.
+    - specialize (Hget q). unfold get in Hget.
+      rewrite (Hright p q b Hsecond), Hfirst, Hsecond in Hget. discriminate.
+  Qed.
   Lemma get_find : forall A k (m : t A), get k m = find (K.encode k) m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma find_empty : forall A p, find p (@empty A) = None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A p. unfold find, empty. rewrite PTrie.get_empty. reflexivity.
+  Qed.
   Lemma find_set : forall A p k (a : A) m,
   find p (set k a m) = if Pos.eqb p (K.encode k) then Some a else find p m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A p k a m. unfold find, set.
+    destruct (Pos.eqb_spec p (K.encode k)) as [->|Hneq].
+    - rewrite PTrie.get_set_same. reflexivity.
+    - rewrite PTrie.get_set_other by exact Hneq. reflexivity.
+  Qed.
   Lemma find_remove : forall A p k (m : t A),
   find p (remove k m) = if Pos.eqb p (K.encode k) then None else find p m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A p k m. unfold find, remove.
+    destruct (Pos.eqb_spec p (K.encode k)) as [->|Hneq].
+    - rewrite PTrie.get_remove_same. reflexivity.
+    - rewrite PTrie.get_remove_other by exact Hneq. reflexivity.
+  Qed.
   Lemma find_merge : forall A B C (f : option A -> option B -> option C) m1 m2 p,
   f None None = None -> find p (merge f m1 m2) = f (find p m1) (find p m2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f m1 m2 p Hnone. unfold find, merge.
+    rewrite PTrie.get_merge by reflexivity.
+    destruct (PTrieCode.get p m1) as [[ka a]|];
+      destruct (PTrieCode.get p m2) as [[kb b]|];
+      cbn [option_map snd]; try (rewrite Hnone; reflexivity).
+    - destruct (f (Some a) (Some b)); reflexivity.
+    - destruct (f (Some a) None); reflexivity.
+    - destruct (f None (Some b)); reflexivity.
+  Qed.
   Lemma forall2b_spec : forall A B (f : option A -> option B -> bool) m1 m2,
   f None None = true ->
   (forall2b f m1 m2 = true <-> forall p, f (find p m1) (find p m2) = true).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B f m1 m2 Hnone. unfold forall2b, find.
+    apply PTrie.forall2b_spec. exact Hnone.
+  Qed.
   Lemma existsb_spec : forall A (f : A -> bool) m,
   existsb f m = true <-> exists p a, find p m = Some a /\ f a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A f m. unfold existsb. rewrite PTrie.existsb_spec. split.
+    - intros [p [[k a] [Hget Hf]]]. exists p, a. unfold find.
+      rewrite Hget. split; assumption || reflexivity.
+    - intros [p [a [Hfind Hf]]]. unfold find in Hfind.
+      destruct (PTrieCode.get p m) as [[k b]|] eqn:Hget;
+        cbn [option_map snd] in Hfind; try discriminate.
+      inversion Hfind; subst b. exists p, (k, a). split; assumption.
+  Qed.
   Lemma wf_find : forall A (m : t A) p a, wf m -> find p m = Some a ->
   exists k, K.encode k = p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m p a Hwf Hfind. unfold find in Hfind.
+    destruct (PTrieCode.get p m) as [[k b]|] eqn:Hget;
+      cbn [option_map snd] in Hfind; try discriminate.
+    exists k. exact (Hwf _ _ _ Hget).
+  Qed.
   Lemma nodes_empty : forall A, nodes (@empty A) = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma nodes_set : forall A k (a : A) m, nodes (set k a m) <= nodes m + K.bits k.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k a m. apply PTrie.nodes_set.
+  Qed.
   Lemma nodes_remove : forall A k (m : t A), nodes (remove k m) <= nodes m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k m. apply PTrie.nodes_remove.
+  Qed.
   Lemma nodes_merge : forall A B C (f : option A -> option B -> option C) m1 m2,
   nodes (merge f m1 m2) <= nodes m1 + nodes m2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f m1 m2. apply PTrie.nodes_merge.
+  Qed.
+
+  (** Consistent labels give the same binding weight as the stored trie codes. *)
+  Lemma weight_trie : forall A (m : t A), wf m -> weight m = PTrie.weight m.
+  Proof.
+    intros A m Hwf. unfold weight, PTrie.weight.
+    rewrite elements_trie, List.map_map.
+    f_equal. apply map_ext_in. intros [p [k a]] Hin. cbn [fst snd].
+    apply PTrie.elements_spec in Hin.
+    rewrite (Hwf p k a Hin). reflexivity.
+  Qed.
+
   Lemma nodes_le_weight : forall A (m : t A), wf m -> nodes m <= weight m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m Hwf. rewrite weight_trie by exact Hwf.
+    apply PTrie.nodes_le_weight.
+  Qed.
   Lemma codes_spec : forall A (m : t A) p, In p (codes m) <-> find p m <> None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m p. unfold codes, find. rewrite in_map_iff. split.
+    - intros [[q [k a]] [Heq Hin]] Hnone. cbn [fst] in Heq. subst q.
+      apply PTrie.elements_spec in Hin. rewrite Hin in Hnone. discriminate.
+    - intro Hnonempty. destruct (PTrieCode.get p m) as [[k a]|] eqn:Hget.
+      + exists (p, (k, a)). split; [reflexivity|apply PTrie.elements_spec; exact Hget].
+      + contradiction.
+  Qed.
   Lemma codes_nodup : forall A (m : t A), NoDup (codes m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A m. apply PTrie.elements_nodup.
+  Qed.
   Lemma nodes_le_codes : forall A (m : t A),
     nodes m <= fold_right Nat.add 0 (List.map (fun p => Pos.size_nat p + 1) (codes m)).
   Proof.
