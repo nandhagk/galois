@@ -3066,14 +3066,6 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
     intros ix. time_step root; unfold c_ix; lia.
   Qed.
 
-  Lemma T_insert_le : forall a r ix, wf a ix ->
-    (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_remove_le : forall a r ix, wf a ix ->
-    (T_remove r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
-  Proof. Admitted. (* STUB *)
-
   (** Every permitted node fits the counter component of the original walk width. *)
   Lemma node_bits_width : forall ix r n, (n <= next ix)%positive ->
     Pos.size_nat n <= width ix r.
@@ -4024,7 +4016,28 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
      T_insert_finish r ix (fold_left insert_step_st r (start ix)) +
      T_remove_finish r ix (fold_left remove_step_st r (start ix)) <=
       k_walk * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r ix Hvalid.
+    pose proof (T_insert_finish_budget r ix Hvalid) as Hinsert.
+    pose proof (T_remove_finish_budget r ix Hvalid) as Hremove.
+    rewrite T_start_exact. unfold k_walk.
+    set (cost := (PTrieT.c_trie + V.c_key + 1)%N) in *.
+    set (amount := N.of_nat (length r + 1)) in *.
+    set (bits := N.of_nat (width ix r + 1)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hamount : (1 <= amount)%N) by (unfold amount; lia).
+    assert (Hbits : (1 <= bits)%N) by (unfold bits; lia).
+    assert (Hunit : (1 <= cost * amount * bits)%N).
+    { replace 1%N with (1 * 1 * 1)%N by reflexivity.
+      apply N.mul_le_mono; [apply N.mul_le_mono |]; assumption. }
+    assert (Hbudget : (2 + 224 * cost * amount * bits + 224 * cost * amount * bits <=
+      512 * cost * amount * bits)%N).
+    { replace (2 + 224 * cost * amount * bits + 224 * cost * amount * bits)%N
+        with (2 + 448 * (cost * amount * bits))%N by ring.
+      replace (512 * cost * amount * bits)%N with (512 * (cost * amount * bits))%N by ring.
+      lia. }
+    clear Hvalid. clearbody cost amount bits. lia.
+  Qed.
 
   (** Insertion follows its named state walk. *)
   Lemma F_insert_steps : forall r ix, inv ix ->
@@ -4044,12 +4057,52 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Lemma T_insert_steps : forall r ix, inv ix ->
     (T_insert r ix <= N.of_nat (length r + 1) *
       ((4 * c_map + k_walk) * N.of_nat (width ix r + 1) + 4))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r ix Hvalid. eapply N.le_trans; [apply T_insert_total_budget; exact Hvalid |].
+    unfold c_map, k_walk.
+    replace (N.of_nat (length r + 1) *
+      ((4 * PTrieT.c_trie + 512 * (PTrieT.c_trie + V.c_key + 1)) *
+        N.of_nat (width ix r + 1) + 4))%N with
+      (512 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (length r + 1) *
+        N.of_nat (width ix r + 1) +
+        N.of_nat (length r + 1) * (4 * PTrieT.c_trie * N.of_nat (width ix r + 1) + 4))%N by ring.
+    apply N.le_add_r.
+  Qed.
 
   (** Removal aggregates the path-step charges. *)
   Lemma T_remove_steps : forall r ix, inv ix ->
     (T_remove r ix <= N.of_nat (length r + 1) *
       ((4 * c_map + k_walk) * N.of_nat (width ix r + 1) + 4))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros r ix Hvalid. eapply N.le_trans; [apply T_remove_total_budget; exact Hvalid |].
+    unfold c_map, k_walk.
+    replace (N.of_nat (length r + 1) *
+      ((4 * PTrieT.c_trie + 512 * (PTrieT.c_trie + V.c_key + 1)) *
+        N.of_nat (width ix r + 1) + 4))%N with
+      (512 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (length r + 1) *
+        N.of_nat (width ix r + 1) +
+        N.of_nat (length r + 1) * (4 * PTrieT.c_trie * N.of_nat (width ix r + 1) + 4))%N by ring.
+    apply N.le_add_r.
+  Qed.
+
+  (** The direct insertion walk bound fits the public coefficient. *)
+  Lemma T_insert_le : forall a r ix, wf a ix ->
+    (T_insert r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
+  Proof.
+    intros a r ix [Hvalid _].
+    eapply N.le_trans; [apply T_insert_total_budget; exact Hvalid |].
+    unfold c_ix. apply N.mul_le_mono_r. apply N.mul_le_mono_r.
+    apply N.mul_le_mono_r. lia.
+  Qed.
+
+  (** The direct removal walk bound fits the public coefficient. *)
+  Lemma T_remove_le : forall a r ix, wf a ix ->
+    (T_remove r ix <= c_ix * N.of_nat (length r + 1) * N.of_nat (width ix r + 1))%N.
+  Proof.
+    intros a r ix [Hvalid _].
+    eapply N.le_trans; [apply T_remove_total_budget; exact Hvalid |].
+    unfold c_ix. apply N.mul_le_mono_r. apply N.mul_le_mono_r.
+    apply N.mul_le_mono_r. lia.
+  Qed.
 
 End IndexT.
