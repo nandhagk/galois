@@ -2212,7 +2212,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Qed.
   (** Numeric transfers pay for map operations and the two key equality tests. *)
   Definition c_num : N :=
-    (262144 * (M.c_map + K.c_key + X.c_key + 1) *
+    (16777216 * (M.c_map + K.c_key + X.c_key + 1) *
       (M.c_map + K.c_key + X.c_key + 1))%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
@@ -5621,5 +5621,91 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     rewrite N.mul_add_distr_r in Hbudget.
     set (initial_work := N.of_nat ((supp m + 1)^2 * (b m + ell m + 1))) in *.
     clear Hinitial_nat Hinitial. clearbody work initial_work. lia.
+  Qed.
+
+  (** Range arithmetic combines key, entry, source-form and accumulation bits. *)
+  Definition range_payload (e : term L.op X.t) (m : dbm) : nat :=
+    b m + ell m + F.bits_e e + Nat.log2 (tsize e) + 1.
+
+  (** The interval arithmetic charge is the square of its combined bit allowance. *)
+  Definition range_unit (e : term L.op X.t) (m : dbm) : N :=
+    N.of_nat ((range_payload e m ^ 2)%nat).
+
+  (** Every range arithmetic allowance contains one unit for fixed work. *)
+  Lemma range_payload_positive : forall e m, 1 <= range_payload e m.
+  Proof.
+    intros e m. unfold range_payload. lia.
+  Qed.
+
+  (** A positive squared allowance also pays for linear arithmetic. *)
+  Lemma range_unit_linear : forall e m,
+    (N.of_nat (range_payload e m) <= range_unit e m)%N.
+  Proof.
+    intros e m. unfold range_unit. apply time_of_nat_le.
+    pose proof (range_payload_positive e m) as Hpositive.
+    cbn [Nat.pow]. rewrite Nat.mul_1_r.
+    replace (range_payload e m) with (range_payload e m * 1) at 1 by lia.
+    apply Nat.mul_le_mono; [apply Nat.le_refl|exact Hpositive].
+  Qed.
+
+  (** The arithmetic charge is nonzero on every source term and state. *)
+  Lemma range_unit_positive : forall e m, (1 <= range_unit e m)%N.
+  Proof.
+    intros e m. eapply N.le_trans; [|apply range_unit_linear].
+    change (N.of_nat 1%nat <= N.of_nat (range_payload e m))%N.
+    apply time_of_nat_le. apply range_payload_positive.
+  Qed.
+
+  (** Every mentioned key fits the maximum charged by its linear form. *)
+  Lemma form_bits_key : forall f p,
+    In p (coef f) -> X.bits (fst p) <= F.form_bits f.
+  Proof.
+    intros [cs c] p. unfold F.form_bits. cbn [coef cst].
+    induction cs as [|q cs IH]; intros Hin; [contradiction|].
+    cbn in Hin |- *. destruct Hin as [Heq|Hin].
+    - subst q. pose proof (Nat.le_max_l
+        (X.bits (fst p) + Z.size_nat (snd p))
+        (fold_right Nat.max (Z.size_nat c)
+          (map (fun p => X.bits (fst p) + Z.size_nat (snd p)) cs))). lia.
+    - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
+  Qed.
+
+  (** A source form's suffix accumulators retain the same logarithmic bit allowance. *)
+  Lemma form_fragment_abs : forall e m f r cs,
+    F.lin_of e = Some (f, r) -> incl cs (coef f) -> length cs <= tsize e ->
+    rel_bounds_abs (2 ^ range_bits e (Reached m))
+      (rel_form_bounds (variable_bounds m) (Lin X.t cs (cst f))).
+  Proof.
+    intros e m f r cs Hlin Hincl Hcount.
+    destruct (F.lin_of_size e f r Hlin) as [_ Hbits].
+    eapply rel_bounds_abs_mono with
+      (lower := (length cs + 1) * 2 ^ F.bits_e e * 2 ^ ell m).
+    - unfold range_bits, ells. apply affine_magnitude_allowance; [exact Hcount|].
+      destruct e; cbn [tsize]; lia.
+    - apply rel_form_bounds_abs.
+      + cbn [cst]. apply zbits_abs_bound.
+        eapply Nat.le_trans; [exact (form_bits_constant f)|]. lia.
+      + cbn [coef]. apply Forall_forall. intros p Hin. apply zbits_abs_bound.
+        eapply Nat.le_trans; [exact (form_bits_coefficient f p (Hincl p Hin))|]. lia.
+      + apply variable_bounds_abs.
+      + pose proof (Nat.pow_nonzero 2 (F.bits_e e) ltac:(lia)). lia.
+      + pose proof (Nat.pow_nonzero 2 (ell m) ltac:(lia)). lia.
+  Qed.
+
+  (** Two sparse lookups and a sign change charge the queried key length. *)
+  Lemma T_variable_bounds_small : forall m x,
+    (T_variable_bounds m x <=
+      64 * (M.c_map + 1) * N.of_nat ((X.bits x + 1)%nat))%N.
+  Proof.
+    intros m x.
+    pose proof (T_entry_small m (Some x) None) as Hlower.
+    pose proof (T_entry_small m None (Some x)) as Hupper.
+    rewrite some_key_bits in Hlower, Hupper.
+    change (K.bits None) with 1%nat in Hlower, Hupper.
+    set (key_bits := X.bits x) in *. clearbody key_bits.
+    time_unfold (@T_variable_bounds). time_simpl. time_cbn.
+    time_cases; time_simpl; time_cbn;
+      try match goal with |- context [Z.T_opp ?z] => pose proof (Z.T_opp_le z) end;
+      rewrite ?Nat2N.inj_add in *; nia.
   Qed.
 End ZoneT.
