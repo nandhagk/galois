@@ -2803,7 +2803,13 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply Hcoh.
   Qed.
   Lemma coh_tclose : forall m, coherent m -> coh (tclose m).
-  Proof. Admitted. (* PLAN-DEFECT: raw coherent entries may have repeated labels; keys then omits a signed twin pivot. OctagonTest.repeated_label_closure_asymmetric gives output bounds 2 and infinity from coherent input. A dbm_wf premise is needed for this label-based closure plan. *)
+  Proof. Admitted.
+  (* PLAN-DEFECT: coherence does not require signed support symmetry.
+     OctagonTest.isolated_positive_row_wf/coherent give a well-formed coherent
+     matrix containing only an empty positive row; closure creates its zero
+     diagonal while the negative twin remains absent. Thus dbm_wf alone does
+     not repair this plan. The repeated-label fixture supplies a separate raw
+     pivot-enumeration obstruction. *)
   Lemma F_add_cons_twins : forall i j d m,
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
   Proof. Admitted. (* PLAN-DEFECT: incoherent twins -100 and -2 stay unequal when d = 0. *)
@@ -3193,7 +3199,11 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Qed.
   Lemma tclose_tight : forall m m', dbm_wf m -> coherent m ->
     tclose m = Reached m' -> tightly_closed m'.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted.
+  (* PLAN-DEFECT: a well-formed coherent singleton empty row has asymmetric
+     signed support. The support-preserving closure materializes only its own
+     zero diagonal, so the result is not coherent and hence not tightly closed.
+     See OctagonTest.isolated_positive_row_closure_asymmetric. *)
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
     same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   Proof. Admitted. (* STUB *)

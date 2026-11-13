@@ -19,6 +19,60 @@ Module Oct := OctagonCode PosKeyCode OctKey OctMap ZLangCode Forms.
 Definition positive_x := (1%positive, true).
 Definition positive_y := (2%positive, true).
 
+Module OctLawKey := PairKey PosKey BoolKey.
+Module OctLawMap := TrieMap OctLawKey.
+
+Definition isolated_positive_row : Oct.dbm :=
+  OctMap.set positive_x OctMap.empty OctMap.empty.
+
+(** A consistent empty row has no finite entry, hence its matrix is coherent. *)
+Example isolated_positive_row_entries : forall i j,
+  Oct.entry isolated_positive_row i j = None.
+Proof.
+  intros i j. unfold Oct.entry, isolated_positive_row.
+  change ((match OctLawMap.get i
+    (OctLawMap.set positive_x (@OctLawMap.empty Z) OctLawMap.empty) with
+    | Some row => OctLawMap.get j row | None => None end) = None).
+  rewrite OctLawMap.get_find, OctLawMap.find_set.
+  destruct (Pos.eqb (OctLawKey.encode i) (OctLawKey.encode positive_x)).
+  - apply OctLawMap.get_empty.
+  - now rewrite OctLawMap.find_empty.
+Qed.
+
+Example isolated_positive_row_coherent : forall i j,
+  Oct.entry isolated_positive_row i j =
+  Oct.entry isolated_positive_row (Oct.flip j) (Oct.flip i).
+Proof.
+  intros i j. now rewrite !isolated_positive_row_entries.
+Qed.
+
+(** The counterexample satisfies both outer and inner map well-formedness. *)
+Example isolated_positive_row_wf :
+  OctLawMap.wf isolated_positive_row /\
+  forall p row, OctLawMap.find p isolated_positive_row = Some row -> OctLawMap.wf row.
+Proof.
+  split.
+  - apply OctLawMap.wf_set, OctLawMap.wf_empty.
+  - intros p row Hrow.
+    change (OctLawMap.find p
+      (OctLawMap.set positive_x (@OctLawMap.empty Z) OctLawMap.empty) = Some row) in Hrow.
+    rewrite OctLawMap.find_set, OctLawMap.find_empty in Hrow.
+    destruct (Pos.eqb p (OctLawKey.encode positive_x)); [|discriminate].
+    injection Hrow as <-. apply OctLawMap.wf_empty.
+Qed.
+
+(** Closing an isolated signed row materializes only its own zero diagonal. *)
+Example isolated_positive_row_closure_asymmetric :
+  match Oct.tclose isolated_positive_row with
+  | Reached closed =>
+    (Oct.entry closed positive_x positive_x,
+     Oct.entry closed (Oct.flip positive_x) (Oct.flip positive_x))
+  | Unreached => (None, None)
+  end = (Some 0%Z, None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Adding a weaker bound does not discard either existing signed constraint. *)
 Example insertion_keeps_stronger_twins :
   let m := Oct.put positive_x positive_y (-100)%Z
