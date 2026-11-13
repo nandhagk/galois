@@ -5149,6 +5149,48 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + exact Hnext.
   Qed.
 
+  Lemma direct_seed_support : forall m i j d p,
+    In p (support (add_cons i j d m)) <->
+      In p (support (add_cons j j 0%Z (add_cons i i 0%Z m))).
+  Proof.
+    intros m i j d p. rewrite !support_add_cons. tauto.
+  Qed.
+
+  (** Successful incremental closure bounds the full Floyd matrix below it. *)
+  Lemma incremental_candidate_below_fw : forall m i j d,
+    dbm_wf m -> tightly_closed m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall a b, RelationalPathBounds.below
+      (entry (increment_matrix i j d seed) a b) (entry (fw direct) a b).
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    assert (Hclosed : forall p, RelationalPathBounds.closed_at (entry next) p).
+    { unfold next, seed. now apply incremental_candidate_closed. }
+    assert (Hbelow : forall x y,
+      RelationalPathBounds.below (entry next x y) (entry direct x y)).
+    { intros x y. unfold next, seed, direct.
+      now apply incremental_candidate_below_direct. }
+    assert (Hzero : forall k, In k (keys direct) -> entry next k k = Some 0%Z).
+    { intros k Hkey. unfold next.
+      apply (incremental_candidate_zero_support m i j d Hwf Htight Hscan).
+      change (In (K.encode k) (support seed)).
+      apply (proj1 (direct_seed_support m i j d (K.encode k))).
+      unfold direct in Hkey. now apply keys_support. }
+    intros a b. unfold fw. rewrite pivot_keys_eq_keys.
+    apply fw_pivots_above_closed.
+    - intros k Hkey. now apply keys_support.
+    - exact Hzero.
+    - exact Hclosed.
+    - exact Hbelow.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
