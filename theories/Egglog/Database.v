@@ -9897,6 +9897,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply DatabaseUsesFacts.wf_transfer. exact Hmap.
   Qed.
 
+  Lemma pop_loser_nuses_count : forall db x db',
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    N.to_nat (db_nuses db) = length (uses_entries db) ->
+    db_pop_loser db = Some (x, db') ->
+    N.to_nat (db_nuses db') = length (uses_entries db').
+  Proof.
+    intros db x db' Hmap Hcount Hpop.
+    unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest]; [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'.
+    rewrite (uses_entries_facts db Hmap) in Hcount.
+    rewrite uses_entries_facts by (apply DatabaseUsesFacts.wf_transfer; exact Hmap).
+    change (N.to_nat (db_nuses db) =
+      DatabaseUsesFacts.count (DatabaseUses.transfer i
+        (fst (UnionFindCode.find i (db_forest db))) (row_uses (db_row_store db)))).
+    rewrite DatabaseUsesFacts.count_transfer by exact Hmap.
+    exact Hcount.
+  Qed.
+
   (** Located historical keys resolve to stored rows of declared functions. *)
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
