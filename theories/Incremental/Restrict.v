@@ -4,7 +4,7 @@
     For example, selecting no source rows still retains any seed rows.
     Builds on: RestrictSig. *)
 
-From Stdlib Require Import List Arith PArith NArith Lia.
+From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -526,3 +526,311 @@ Module RestrictT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L).
 
   End Impl.
 End RestrictT.
+
+(** * Finite footprint closure
+
+    Each successful iteration removes one pending occurrence and inserts its allowed outputs.
+    A budget equal to the input occurrence count therefore suffices for saturation. *)
+
+Record footprint_result (K A : Type) := {
+  footprint_seen : list K;
+  footprint_selected : list A;
+  footprint_pending : list A
+}.
+
+Arguments footprint_seen {K A}.
+Arguments footprint_selected {K A}.
+Arguments footprint_pending {K A}.
+
+Section Closure.
+  Context {K A : Type}.
+  Variable eqb : K -> K -> bool.
+  Variable triggers outputs : A -> list K.
+  Variable allowed : K -> bool.
+
+  Definition footprint_mem (x : K) (seen : list K) : bool := existsb (eqb x) seen.
+
+  Definition footprint_put (x : K) (seen : list K) : list K :=
+    if allowed x && negb (footprint_mem x seen) then x :: seen else seen.
+
+  Fixpoint footprint_adds (xs seen : list K) : list K :=
+    match xs with
+    | [] => seen
+    | x :: xs' => footprint_adds xs' (footprint_put x seen)
+    end.
+
+  Definition footprint_active (seen : list K) (a : A) : bool :=
+    existsb (fun x => footprint_mem x seen) (triggers a).
+
+  Fixpoint footprint_pick (seen : list K) (pending : list A) : option (A * list A) :=
+    match pending with
+    | [] => None
+    | a :: rest =>
+      if footprint_active seen a then Some (a, rest)
+      else match footprint_pick seen rest with
+        | None => None
+        | Some (b, rest') => Some (b, a :: rest')
+        end
+    end.
+
+  Fixpoint footprint_close (fuel : nat) (seen : list K) (pending : list A)
+      : footprint_result K A :=
+    match fuel with
+    | O => {| footprint_seen := seen; footprint_selected := []; footprint_pending := pending |}
+    | S fuel' =>
+      match footprint_pick seen pending with
+      | None =>
+        {| footprint_seen := seen; footprint_selected := []; footprint_pending := pending |}
+      | Some (a, rest) =>
+        let result := footprint_close fuel' (footprint_adds (outputs a) seen) rest in
+        {| footprint_seen := footprint_seen result;
+           footprint_selected := a :: footprint_selected result;
+           footprint_pending := footprint_pending result |}
+      end
+    end.
+
+  Definition footprint_run (seen : list K) (pending : list A) : footprint_result K A :=
+    footprint_close (length pending) seen pending.
+
+  Hypothesis eqb_spec : forall x y, eqb x y = true <-> x = y.
+
+  (** Boolean membership reflects key membership. *)
+  Lemma footprint_mem_spec : forall x seen, footprint_mem x seen = true <-> In x seen.
+  Proof.
+    intros x seen; unfold footprint_mem; rewrite existsb_exists; split.
+    - intros [y [Hy Heq]]; apply eqb_spec in Heq; subst y; exact Hy.
+    - intro Hx; exists x; split; [exact Hx | apply eqb_spec; reflexivity].
+  Qed.
+
+  (** Inserting one allowed key preserves all previous keys. *)
+  Lemma footprint_put_spec : forall x y seen,
+    In y (footprint_put x seen) <-> In y seen \/ (y = x /\ allowed x = true).
+  Proof.
+    intros x y seen; unfold footprint_put.
+    destruct (allowed x) eqn:Hallowed; cbn.
+    - destruct (footprint_mem x seen) eqn:Hmem; cbn.
+      + apply footprint_mem_spec in Hmem; split.
+        * intro Hy; left; exact Hy.
+        * intros [Hy | [-> _]]; assumption.
+      + cbn; intuition congruence.
+    - split; [intro Hy; left; exact Hy | intros [Hy | [_ Hfalse]]].
+      + exact Hy.
+      + discriminate Hfalse.
+  Qed.
+
+  (** Adding a list inserts precisely its allowed keys. *)
+  Lemma footprint_adds_spec : forall xs seen y,
+    In y (footprint_adds xs seen) <-> In y seen \/ (In y xs /\ allowed y = true).
+  Proof.
+    induction xs as [|x xs IH]; intros seen y; cbn [footprint_adds].
+    - cbn; tauto.
+    - rewrite IH, footprint_put_spec; cbn; split.
+      + intros [[Hy | [-> Hallowed]] | [Hy Hallowed]]; tauto.
+      + intros [Hy | [[-> | Hy] Hallowed]]; tauto.
+  Qed.
+
+  (** Adding keys keeps a duplicate-free accumulator duplicate-free. *)
+  Lemma footprint_adds_nodup : forall xs seen,
+    NoDup seen -> NoDup (footprint_adds xs seen).
+  Proof.
+    induction xs as [|x xs IH]; intros seen Hseen; cbn [footprint_adds].
+    - exact Hseen.
+    - apply IH; unfold footprint_put.
+      destruct (allowed x && negb (footprint_mem x seen)) eqn:Hadd.
+      + apply andb_true_iff in Hadd as [_ Hmem]; apply negb_true_iff in Hmem.
+        constructor; [|exact Hseen].
+        intro Hin; apply footprint_mem_spec in Hin; congruence.
+      + exact Hseen.
+  Qed.
+
+  (** A footprint is active precisely when one trigger is present. *)
+  Lemma footprint_active_spec : forall seen a,
+    footprint_active seen a = true <-> exists x, In x (triggers a) /\ In x seen.
+  Proof.
+    intros seen a; unfold footprint_active; rewrite existsb_exists; split.
+    - intros [x [Hx Hmem]]; exists x; split; [exact Hx | apply footprint_mem_spec; exact Hmem].
+    - intros [x [Hx Hmem]]; exists x; split; [exact Hx | apply footprint_mem_spec; exact Hmem].
+  Qed.
+
+  (** Growing the accumulated keys preserves activation. *)
+  Lemma footprint_active_mono : forall seen seen' a,
+    incl seen seen' -> footprint_active seen a = true -> footprint_active seen' a = true.
+  Proof.
+    intros seen seen' a Hinc Hactive; apply footprint_active_spec in Hactive.
+    destruct Hactive as [x [Htrigger Hseen]]; apply footprint_active_spec.
+    exists x; split; [exact Htrigger | apply Hinc; exact Hseen].
+  Qed.
+
+  (** Selection removes exactly one activated occurrence, without comparing items. *)
+  Lemma footprint_pick_some : forall seen pending a rest,
+    footprint_pick seen pending = Some (a, rest) ->
+    footprint_active seen a = true /\ Permutation pending (a :: rest).
+  Proof.
+    intros seen pending; induction pending as [|b pending IH]; intros a rest Hpick.
+    - discriminate Hpick.
+    - cbn [footprint_pick] in Hpick; destruct (footprint_active seen b) eqn:Hactive.
+      + inversion Hpick; subst; split; [exact Hactive | apply Permutation_refl].
+      + destruct (footprint_pick seen pending) as [[c remaining]|] eqn:Hrest;
+          [|discriminate Hpick].
+        inversion Hpick; subst; destruct (IH _ _ eq_refl) as [Hc Hperm].
+        split; [exact Hc |].
+        eapply Permutation_trans; [apply perm_skip; exact Hperm | apply perm_swap].
+  Qed.
+
+  (** A failed selection means that every pending footprint is inactive. *)
+  Lemma footprint_pick_none : forall seen pending,
+    footprint_pick seen pending = None ->
+    forall a, In a pending -> footprint_active seen a = false.
+  Proof.
+    intros seen pending; induction pending as [|b pending IH]; intros Hpick a Hin.
+    - contradiction Hin.
+    - cbn [footprint_pick] in Hpick; destruct (footprint_active seen b) eqn:Hactive;
+        [discriminate Hpick |].
+      destruct (footprint_pick seen pending) as [[c rest]|] eqn:Hrest;
+        [discriminate Hpick |].
+      destruct Hin as [<- | Hin]; [exact Hactive | apply IH; assumption].
+  Qed.
+
+  (** Saturation never removes an accumulated key. *)
+  Lemma footprint_close_seed : forall fuel seen pending,
+    incl seen (footprint_seen (footprint_close fuel seen pending)).
+  Proof.
+    induction fuel as [|fuel IH]; intros seen pending; cbn [footprint_close]; [apply incl_refl |].
+    destruct (footprint_pick seen pending) as [[a rest]|] eqn:Hpick;
+      cbn [footprint_seen]; [|apply incl_refl].
+    intros x Hx; apply IH; apply footprint_adds_spec; left; exact Hx.
+  Qed.
+
+  (** Selected and remaining items partition the original occurrences. *)
+  Lemma footprint_close_partition : forall fuel seen pending,
+    Permutation pending
+      (footprint_selected (footprint_close fuel seen pending) ++
+       footprint_pending (footprint_close fuel seen pending)).
+  Proof.
+    induction fuel as [|fuel IH]; intros seen pending; cbn [footprint_close];
+      [apply Permutation_refl |].
+    destruct (footprint_pick seen pending) as [[a rest]|] eqn:Hpick;
+      cbn [footprint_selected footprint_pending]; [|apply Permutation_refl].
+    apply footprint_pick_some in Hpick as [_ Hperm].
+    eapply Permutation_trans; [exact Hperm | apply perm_skip; apply IH].
+  Qed.
+
+  (** Every selected item remains active at the final accumulator. *)
+  Lemma footprint_close_selected : forall fuel seen pending a,
+    In a (footprint_selected (footprint_close fuel seen pending)) ->
+    footprint_active (footprint_seen (footprint_close fuel seen pending)) a = true.
+  Proof.
+    induction fuel as [|fuel IH]; intros seen pending a Hin; cbn [footprint_close] in *;
+      [contradiction Hin |].
+    destruct (footprint_pick seen pending) as [[b rest]|] eqn:Hpick;
+      cbn [footprint_selected footprint_seen] in *; [|contradiction Hin].
+    destruct Hin as [<- | Hin]; [|apply IH; exact Hin].
+    apply footprint_pick_some in Hpick as [Hactive _].
+    eapply footprint_active_mono; [|exact Hactive].
+    intros x Hx; apply footprint_close_seed; apply footprint_adds_spec; left; exact Hx.
+  Qed.
+
+  (** All allowed outputs of a selected item remain accumulated. *)
+  Lemma footprint_close_outputs : forall fuel seen pending a x,
+    In a (footprint_selected (footprint_close fuel seen pending)) ->
+    In x (outputs a) -> allowed x = true ->
+    In x (footprint_seen (footprint_close fuel seen pending)).
+  Proof.
+    induction fuel as [|fuel IH]; intros seen pending a x Hin Houtput Hallowed;
+      cbn [footprint_close] in *; [contradiction Hin |].
+    destruct (footprint_pick seen pending) as [[b rest]|] eqn:Hpick;
+      cbn [footprint_selected footprint_seen] in *; [|contradiction Hin].
+    destruct Hin as [<- | Hin].
+    - apply footprint_close_seed; apply footprint_adds_spec; right; split; assumption.
+    - eapply IH; eassumption.
+  Qed.
+
+  (** Every accumulated key is a seed or an allowed selected output. *)
+  Lemma footprint_close_provenance : forall fuel seen pending x,
+    In x (footprint_seen (footprint_close fuel seen pending)) ->
+    In x seen \/ exists a, In a (footprint_selected (footprint_close fuel seen pending)) /\
+      In x (outputs a) /\ allowed x = true.
+  Proof.
+    induction fuel as [|fuel IH]; intros seen pending x Hin; cbn [footprint_close] in *.
+    - left; exact Hin.
+    - destruct (footprint_pick seen pending) as [[a rest]|] eqn:Hpick;
+        cbn [footprint_selected footprint_seen] in *; [|left; exact Hin].
+      destruct (IH _ _ _ Hin) as [Hseed | [b [Hb Houtput]]].
+      + apply footprint_adds_spec in Hseed as [Hseed | Houtput].
+        * left; exact Hseed.
+        * right; exists a; split; [left; reflexivity | exact Houtput].
+      + right; exists b; split; [right; exact Hb | exact Houtput].
+  Qed.
+
+  (** Saturation preserves duplicate-free accumulated keys. *)
+  Lemma footprint_close_nodup : forall fuel seen pending,
+    NoDup seen -> NoDup (footprint_seen (footprint_close fuel seen pending)).
+  Proof.
+    induction fuel as [|fuel IH]; intros seen pending Hseen; cbn [footprint_close];
+      [exact Hseen |].
+    destruct (footprint_pick seen pending) as [[a rest]|]; cbn [footprint_seen];
+      [apply IH; apply footprint_adds_nodup; exact Hseen | exact Hseen].
+  Qed.
+
+  (** One unit of fuel per pending occurrence suffices for final inactivity. *)
+  Lemma footprint_close_inactive : forall fuel seen pending,
+    length pending <= fuel -> forall a,
+    In a (footprint_pending (footprint_close fuel seen pending)) ->
+    footprint_active (footprint_seen (footprint_close fuel seen pending)) a = false.
+  Proof.
+    induction fuel as [|fuel IH]; intros seen pending Hfuel a Hin.
+    - destruct pending; [contradiction Hin | cbn in Hfuel; lia].
+    - cbn [footprint_close] in *.
+      destruct (footprint_pick seen pending) as [[b rest]|] eqn:Hpick;
+        cbn [footprint_pending footprint_seen] in *.
+      + apply IH with (pending := rest); [|exact Hin].
+        apply footprint_pick_some in Hpick as [_ Hperm].
+        apply Permutation_length in Hperm; cbn in Hperm; lia.
+      + eapply footprint_pick_none; eassumption.
+  Qed.
+
+  (** The selected count and remaining count sum to the initial footprint count. *)
+  Lemma footprint_close_count : forall fuel seen pending,
+    length (footprint_selected (footprint_close fuel seen pending)) +
+    length (footprint_pending (footprint_close fuel seen pending)) = length pending.
+  Proof.
+    intros fuel seen pending; pose proof (footprint_close_partition fuel seen pending) as Hperm.
+    apply Permutation_length in Hperm; rewrite length_app in Hperm; symmetry; exact Hperm.
+  Qed.
+
+  (** Full saturation includes every allowed output of an activated input footprint. *)
+  Lemma footprint_run_closed : forall seen pending a x,
+    In a pending -> footprint_active (footprint_seen (footprint_run seen pending)) a = true ->
+    In x (outputs a) -> allowed x = true ->
+    In x (footprint_seen (footprint_run seen pending)).
+  Proof.
+    intros seen pending a x Ha Hactive Houtput Hallowed; unfold footprint_run in *.
+    pose proof (footprint_close_partition (length pending) seen pending) as Hperm.
+    apply (Permutation_in _ Hperm) in Ha; apply in_app_iff in Ha as [Ha | Ha].
+    - eapply footprint_close_outputs; eassumption.
+    - pose proof (footprint_close_inactive (length pending) seen pending
+        (le_n _) a Ha) as Hinactive; congruence.
+  Qed.
+
+  (** Allowed seeds produce an entirely allowed final accumulator. *)
+  Lemma footprint_close_allowed : forall fuel seen pending,
+    (forall x, In x seen -> allowed x = true) ->
+    forall x, In x (footprint_seen (footprint_close fuel seen pending)) -> allowed x = true.
+  Proof.
+    intros fuel seen pending Hseen x Hin.
+    apply footprint_close_provenance in Hin as [Hin | [a [_ [_ Hallowed]]]].
+    - apply Hseen; exact Hin.
+    - exact Hallowed.
+  Qed.
+End Closure.
+
+TimeFun footprint_seen.
+TimeFun footprint_selected.
+TimeFun footprint_pending.
+TimeFun footprint_mem.
+TimeFun footprint_put.
+TimeFun footprint_adds.
+TimeFun footprint_active.
+TimeFun footprint_pick.
+TimeFun footprint_close.
+TimeFun footprint_run.

@@ -118,3 +118,34 @@ Example restriction_seed_acceptance :
 Proof.
   vm_compute; reflexivity.
 Qed.
+
+(** * Shared finite closure observations *)
+
+Definition fp_example :=
+  footprint_run Nat.eqb (@fst (list nat) (list nat)) (@snd (list nat) (list nat))
+    (fun _ => true) [1] [([2], [3]); ([1], [2]); ([5], [6])].
+
+Example fp_skipped_then_activated :
+  footprint_seen fp_example = [3; 2; 1] /\
+  footprint_selected fp_example = [([1], [2]); ([2], [3])] /\
+  footprint_pending fp_example = [([5], [6])].
+Proof.
+  vm_compute; repeat split; reflexivity.
+Qed.
+
+Example fp_duplicate_occurrences :
+  let result := footprint_run Nat.eqb (@fst (list nat) (list nat))
+    (@snd (list nat) (list nat)) (fun _ => true) [1] [([1], [2]); ([1], [2])] in
+  footprint_seen result = [2; 1] /\ length (footprint_selected result) = 2.
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
+
+Example fp_disallowed_output :
+  let result := footprint_run Nat.eqb (@fst (list nat) (list nat))
+    (@snd (list nat) (list nat)) (fun x => negb (Nat.eqb x 2))
+    [1] [([1], [2]); ([2], [3])] in
+  footprint_seen result = [1] /\ footprint_pending result = [([2], [3])].
+Proof.
+  vm_compute; split; reflexivity.
+Qed.
