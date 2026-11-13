@@ -727,6 +727,18 @@ Proof.
     specialize (IH (S r) b vs tail Hxs eq_refl). cbn [length]. lia.
 Qed.
 
+(** A bounded binary counter fits within the bound's logarithmic bit width. *)
+Lemma heap_counter_width (n : N) (P : nat) :
+  N.to_nat n <= P -> N.size_nat n <= Nat.log2 P + 1.
+Proof.
+  destruct n as [|p]; intro Hbound; [cbn [N.size_nat]; lia |].
+  change (Pos.to_nat p <= P) in Hbound.
+  change (Pos.size_nat p <= Nat.log2 P + 1). apply Pos.size_nat_least.
+  pose proof (Pos2Nat.is_pos p) as Hpositive.
+  pose proof (proj2 (Nat.log2_spec P ltac:(lia))) as Hpower.
+  replace (Nat.log2 P + 1) with (S (Nat.log2 P)) by lia. lia.
+Qed.
+
 Module Heap <: PQ.
   Include HeapCode.
   Definition prio (q : t) (x : positive) := PTrieCode.get x (live q).
@@ -1421,15 +1433,99 @@ Module HeapT <: PQ_ALL.
           repeat rewrite N.mul_add_distr_l in *; lia.
   Qed.
 
+  Local Lemma heap_roots_from_entries w h :
+    (forall e, In e (heap_entries h) ->
+      N.size_nat (fst e) + Pos.size_nat (snd e) <= w) ->
+    heap_roots_bounded w h.
+  Proof.
+    induction h as [|[tr|] hs IH]; intro Hwidth; constructor.
+    - unfold heap_root_bounded. apply Hwidth.
+      rewrite heap_entries_cons. apply in_or_app. left. apply heap_root_in.
+    - apply IH. intros e Hin. apply Hwidth.
+      rewrite heap_entries_cons. apply in_or_app. right. exact Hin.
+    - exact I.
+    - apply IH. exact Hwidth.
+  Qed.
+
+  Local Lemma heap_remove_min_clock w h :
+    heap_forest_valid 0 h ->
+    (forall e, In e (heap_entries h) ->
+      N.size_nat (fst e) + Pos.size_nat (snd e) <= w) ->
+    (T_heap_remove_min h <=
+      192 * N.of_nat (w + 1) * N.of_nat (length h + 1))%N.
+  Proof.
+    intros Hvalid Hwidth.
+    pose proof (heap_select_clock w h (heap_roots_from_entries w h Hwidth)) as Hselect_clock.
+    pose proof (heap_select_entries h) as Hentries.
+    time_unfold @T_heap_remove_min.
+    destruct (heap_select h) as [[[e cs] rest]|] eqn:Hselect.
+    - destruct Hentries as [Hin Hcount].
+      pose proof (heap_select_length h (HeapTree e cs) rest Hselect) as Hrest_length.
+      pose proof (heap_select_rank_bounds 0 h e cs rest Hvalid Hselect) as Hrank.
+      assert (Hrest : heap_roots_bounded w rest).
+      { apply heap_roots_from_entries. intros a Ha. apply Hwidth.
+        apply (proj2 (Hin a)). right. exact Ha. }
+      assert (Hchildren : heap_roots_bounded w (rev_append (map (@Some heap_tree) cs) [])).
+      { apply heap_roots_from_entries. intros a Ha. apply Hwidth.
+        apply (proj2 (Hin a)). left. apply (proj2 (heap_entries_children e cs a)).
+        right. exact Ha. }
+      pose proof (heap_meld_clock w (rev_append (map (@Some heap_tree) cs) [])
+        rest None Hchildren Hrest I) as Hmeld.
+      pose proof (ListDef.T_map_le (@Some heap_tree) (fun _ => 1%N) 1%N cs
+        (fun _ => N.le_refl 1)) as Hmap.
+      pose proof (List.T_rev_append_le (map (@Some heap_tree) cs) []) as Hreverse.
+      assert (Hchildren_length :
+        length (rev_append (map (@Some heap_tree) cs) []) = length cs).
+      { rewrite heap_children_eq, length_map, length_rev. reflexivity. }
+      rewrite Hchildren_length in Hmeld.
+      rewrite length_map in Hreverse.
+      time_simpl; time_cbn.
+      apply time_of_nat_le in Hrest_length.
+      destruct Hrank as [_ Hrank]. cbn [Nat.add] in Hrank.
+      assert (Hchild_length : (N.of_nat (length cs) + 1 <= N.of_nat (length h))%N) by lia.
+      assert (Hwidth_positive : (1 <= N.of_nat (w + 1))%N) by
+        (rewrite Nat2N.inj_add; lia).
+      repeat rewrite Nat2N.inj_add in Hselect_clock, Hmeld |- *.
+      nia.
+    - assert (Hwidth_positive : (1 <= N.of_nat (w + 1))%N) by
+        (rewrite Nat2N.inj_add; lia).
+      rewrite !Nat2N.inj_add in Hselect_clock |- *. nia.
+  Qed.
+
   Lemma T1_insert : forall P w p x q,
     (wf q -> bounded w q -> (pending q < P)%nat ->
     (N.size_nat p + Pos.size_nat x <= w)%nat ->
     T_insert p x (forest q) <= k_insert * N.of_nat (unit_pq P w))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P w p x q Hwf Hbounded Hpending Hentry.
+    assert (Hforest : heap_roots_bounded w (forest q)).
+    { apply heap_roots_from_entries. intros [a k] Hin. apply Hbounded. exact Hin. }
+    assert (Hroot : heap_root_bounded w (HeapTree (p, x) [])).
+    { exact Hentry. }
+    pose proof (heap_insert_clock w (forest q) (HeapTree (p, x) []) Hroot Hforest) as Hclock.
+    pose proof (F2_ranks P q Hwf ltac:(lia)) as Hrank.
+    unfold ranks in Hrank. apply time_of_nat_le in Hrank.
+    time_unfold @T_insert.
+    unfold k_insert, unit_pq. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *.
+    nia.
+  Qed.
   Lemma T2_remove_min : forall P w q,
     (wf q -> bounded w q -> (pending q <= P)%nat ->
     T_remove_min (forest q) <= k_remove * N.of_nat (unit_pq P w))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P w q Hwf Hbounded Hpending.
+    assert (Hvalid : heap_forest_valid 0 (forest q)).
+    { exact (proj1 Hwf). }
+    assert (Hwidth : forall e, In e (heap_entries (forest q)) ->
+      N.size_nat (fst e) + Pos.size_nat (snd e) <= w).
+    { intros [p x] Hin. apply Hbounded. exact Hin. }
+    pose proof (heap_remove_min_clock w (forest q) Hvalid Hwidth) as Hclock.
+    pose proof (F2_ranks P q Hwf Hpending) as Hrank.
+    unfold ranks in Hrank. apply time_of_nat_le in Hrank.
+    time_unfold @T_remove_min.
+    unfold k_remove, unit_pq. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *.
+    nia.
+  Qed.
   Lemma T3_skip_credit : forall P w q q1,
     (wf q -> bounded w q -> (pending q <= P)%nat -> pop_step q = inl q1 ->
     T_pop_step q + c_loopN + phi P w q1 <= phi P w q)%N.
