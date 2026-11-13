@@ -9830,6 +9830,41 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply lineage_pop_loser; eassumption.
   Qed.
 
+  (** Forest agreement supplies a singleton lineage witness without an active-state invariant. *)
+  Lemma lineage_initial_forest : forall db, forest_agrees db -> lineage db db.
+  Proof.
+    intros db Hforest. apply lineage_initial_from_repr.
+    intro i. now apply forest_agrees_id.
+  Qed.
+
+  (** The actual bounded rebuild loop preserves every existing source-group witness. *)
+  Lemma lineage_rebuild : forall initial db,
+    forest_agrees db -> lineage initial db -> lineage initial (rebuild db).
+  Proof.
+    intros initial db Hforest Hlineage.
+    assert (Hresult : forest_agrees (rebuild db) /\ lineage initial (rebuild db)).
+    { apply (rebuild_preserves
+        (fun current => forest_agrees current /\ lineage initial current)).
+      - intros current f k [Hcurrent Hsources]. split.
+        + now apply forest_agrees_repair.
+        + now apply lineage_repair_current.
+      - intros current i next [Hcurrent Hsources] Hpop.
+        destruct (db_pop_loser_preserves current i next Hpop) as [Hforest_frame Hview].
+        split.
+        + eapply forest_agrees_frame;
+            [exact Hforest_frame | now rewrite Hview | exact Hcurrent].
+        + exact (lineage_pop_loser initial current i next Hpop Hsources).
+      - split; assumption. }
+    exact (proj2 Hresult).
+  Qed.
+
+  (** Rebuilding a well-formed database retains groups of its actual original rows. *)
+  Lemma rebuild_lineage : forall db, wf db -> lineage db (rebuild db).
+  Proof.
+    intros db Hwf. pose proof (forest_agrees_initial db Hwf) as Hforest.
+    apply lineage_rebuild; [exact Hforest | now apply lineage_initial_forest].
+  Qed.
+
   (** Actual repair flattens source groups through canonicalization and lattice merging. *)
   Lemma F21_lineage_step : forall initial s s', state_inv s ->
     rstep s = inl s' -> lineage initial (fst s) -> lineage initial (fst s').
