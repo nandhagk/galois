@@ -6662,10 +6662,47 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     time_simpl. time_cbn. nia.
   Qed.
 
+  (** Every recorded index or activity counter is included in the exact watermark maximum. *)
+  Lemma recorded_counters_wmark : forall db p, In p (db_index_counters db) ->
+    (Npos p <= wmark db)%N.
+  Proof.
+    intros db p Hin. unfold wmark. apply fold_max_member.
+    apply in_app_iff. left. now apply in_map.
+  Qed.
+
+  (** Every recorded cell has a tagged encoding whose width is covered by the watermark. *)
+  Lemma recorded_cells_wmark : forall db c, In c (db_written_cells db) ->
+    cell_bits V.encode c <= N.size_nat (wmark db).
+  Proof.
+    intros db c Hin.
+    assert (Hbound : (Npos (db_cell_code c) <= wmark db)%N).
+    { unfold wmark. apply fold_max_member.
+      apply in_app_iff. right. apply in_app_iff. right. apply in_map_iff.
+      exists c. split; [destruct c; reflexivity | exact Hin]. }
+    pose proof (N_width_mono _ _ Hbound) as Hwidth.
+    change (Pos.size_nat (db_cell_code c) <= N.size_nat (wmark db)) in Hwidth.
+    now rewrite db_cell_code_bits in Hwidth.
+  Qed.
+
+  (** Genuine construction histories bound public indexes without requiring row consistency. *)
+  Lemma metadata_wmark_index : forall db s new, metadata_ok db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
+  Proof.
+    intros db s new Hmetadata.
+    destruct (metadata_public_index db s new Hmetadata) as [Hcounter Hhistory]. split.
+    - now apply recorded_counters_wmark.
+    - eapply index_history_cell_bits; [exact Hhistory |].
+      intros c Hin. exact (recorded_cells_wmark db c Hin).
+  Qed.
+
   (** The high-water mark covers every stored cell encoding. *)
   Lemma wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
     In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db f k o c Hwf Hrow Hin. apply recorded_cells_wmark.
+    exact (wf_recorded_rows db Hwf f k o c Hrow Hin).
+  Qed.
 
   (** The high-water mark covers every declared function name. *)
   Lemma wmark_names : forall db f, wf db -> kind (view db) f <> None ->
@@ -6911,7 +6948,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma wmark_index : forall db s new, wf db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\
     I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new Hwf. apply metadata_wmark_index. exact (wf_metadata db Hwf).
+  Qed.
 
   (** Insertion never reduces the spending unit. *)
   Lemma unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
@@ -7116,10 +7155,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (* STUB-CODE *)
   Definition located (_ : t) (_ : positive) (_ : list (cell V.t))
       : option (list (cell V.t)) := None.
-  (** Located keys resolve to stored rows of declared functions. *)
+  (** Repair retains located rows, cache metadata and an exact stored pending count. *)
   Definition forest_ok (db : t) : Prop :=
-    forall f k0 k, located db f k0 = Some k ->
-      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
+    (forall f k0 k, located db f k0 = Some k ->
+      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None) /\
+    metadata_ok db /\ db_npending db = N.of_nat (pending db).
   Definition k_credit : N := 1. (* STUB *)
   Definition k_loop : N := 1. (* STUB *)
   Definition k_active : N := 1. (* STUB *)
@@ -7138,7 +7178,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_forest_located : forall db f k0 k, forest_ok db -> located db f k0 = Some k ->
     exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
   Proof.
-    intros db f k0 k Hforest Hlocated. exact (Hforest f k0 k Hlocated).
+    intros db f k0 k Hforest Hlocated. exact (proj1 Hforest f k0 k Hlocated).
+  Qed.
+
+  (** The repair invariant retains independent cache metadata throughout an active batch. *)
+  Lemma forest_metadata : forall db, forest_ok db -> metadata_ok db.
+  Proof.
+    intros db [_ [Hmetadata _]]. exact Hmetadata.
+  Qed.
+
+  (** The repair invariant equates the stored pending count with the queue observation. *)
+  Lemma forest_pending_count : forall db, forest_ok db ->
+    db_npending db = N.of_nat (pending db).
+  Proof.
+    intros db [_ [_ Hpending]]. exact Hpending.
   Qed.
 
   (** Active entries retain coverage after their loser has left the queue. *)
@@ -7163,6 +7216,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall f k o, row (view db) f k o -> kind_ok db f k o) /\
     NoDup (queue db) /\ pending db = length (queue db) /\
     (forall x, In x (queue db) -> allocated db x).
+
+  (** Active repair states expose cache metadata directly, without a public wf conversion. *)
+  Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
+  Proof.
+    intros db work Hinv. apply forest_metadata. unfold inv_on in Hinv. tauto.
+  Qed.
+
+  (** Active repair states expose the exact stored queue count directly. *)
+  Lemma inv_on_pending_count : forall db work, inv_on db work ->
+    db_npending db = N.of_nat (pending db).
+  Proof.
+    intros db work Hinv. apply forest_pending_count. unfold inv_on in Hinv. tauto.
+  Qed.
+
   Definition output_equiv (db : t) (a b : option (cell V.t)) : Prop :=
     match a, b with
     | None, None => True
@@ -7368,11 +7435,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** The counter of the empty index is recorded. *)
   Lemma F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hinv. exact (proj1 (inv_on_metadata db [] Hinv)).
+  Qed.
 
   (** The maintained invariant gives the slot facts that an update reads. *)
   Lemma F_slots_ok : forall db work, inv_on db work -> slots_ok db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work Hinv. split; [exact (inv_on_metadata db work Hinv) |].
+    intros s f perm new Hslot.
+    destruct Hinv as (_ & _ & _ & _ & Hindexes & _).
+    specialize (Hindexes s f perm Hslot). destruct new; tauto.
+  Qed.
   (** A slot update keeps those facts. *)
   Lemma F_slots_ok_update : forall db b f u, slots_ok db ->
     slots_fit db f (length u) -> slots_ok (slots_update b f u db).
@@ -7770,7 +7844,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_wmark_index : forall db s new, inv db ->
     (Npos (I.next (index s new db)) <= wmark db)%N /\
     I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db s new Hinv. apply metadata_wmark_index. exact (inv_on_metadata db [] Hinv).
+  Qed.
 
   (** Class sizes come from the size-based union-find. *)
   Lemma F_uf_bridge : forall db work x, inv_on db work ->
