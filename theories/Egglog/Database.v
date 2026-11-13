@@ -1387,6 +1387,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - constructor. reflexivity.
   Qed.
 
+  (** Every optional output compares equal to itself. *)
+  Lemma output_eqb_refl : forall o, output_eqb o o = true.
+  Proof.
+    intro o. destruct (output_eqb_spec o o); [reflexivity | congruence].
+  Qed.
+
   (** Every row after a replacement is either an old row or the requested binding. *)
   Lemma row_replace_sources : forall f k previous o db g args output,
     row (view (row_replace f k previous o db)) g args output ->
@@ -1907,10 +1913,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros f k db. unfold lookup.
     destruct (Pos.compare (runtime_max_name (db_runtime db)) f); reflexivity.
   Qed.
-  (** An insertion raises the flag only when its row was not represented. *)
-  Lemma put_changed : forall f k o db, wf db -> kind_ok db f k o -> changed db = false ->
-    changed (put f k o db) = true -> ~ present_put (view db) f (map (canon db) k) o.
-  Proof. Admitted. (* STUB *)
   (** A union raises the flag only when it adds an equality. *)
   Lemma union_changed : forall i j db, wf db -> changed db = false ->
     changed (union i j db) = true -> ~ same (view db) i j.
@@ -1936,12 +1938,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Rebuilding a canonical database that is closed under congruence leaves the flag alone. *)
   Lemma rebuild_quiet : forall db, wf db -> canonical db ->
     (forall i j, cong db i j -> same (view db) i j) -> changed (rebuild db) = changed db.
-  Proof. Admitted. (* STUB *)
-
-  (** A quiet insertion already has its requested row represented. *)
-  Lemma put_quiet : forall f k o db, wf db -> kind_ok db f k o ->
-    changed db = false -> changed (put f k o db) = false ->
-    view (put f k o db) = view db /\ present_put (view db) f (map (canon db) k) o.
   Proof. Admitted. (* STUB *)
 
   (** Make reuses a canonical constructor output or allocates a fresh identifier. *)
@@ -2291,12 +2287,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + repeat split; reflexivity.
   Qed.
 
-  (** Insertion keeps layout and allocation and queues at most one loser. *)
-  Lemma layout_put : forall f k o db, wf db ->
-    kind (view (put f k o db)) = kind (view db) /\ slots (put f k o db) = slots db /\
-    ids (put f k o db) = ids db /\ pending (put f k o db) <= pending db + 1.
-  Proof. Admitted. (* STUB *)
-
   (** Make keeps layout and returns an allocated identifier. *)
   Lemma layout_make : forall f k db, wf db ->
     kind (view (snd (make f k db))) = kind (view db) /\
@@ -2422,6 +2412,41 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db previous co Hwf.
     destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
     exact (proj1 (layout_union a b db Hwf)).
+  Qed.
+
+  (** Conflict resolution preserves layout and allocation and queues at most one loser. *)
+  Lemma output_conflict_layout : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db ->
+    let next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end in
+    kind (view next) = kind (view db) /\ slots next = slots db /\ ids next = ids db /\
+    pending next <= pending db + 1.
+  Proof.
+    intros db previous co Hwf.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+      try solve [repeat split; lia].
+    exact (layout_union a b db Hwf).
+  Qed.
+
+  (** A union with a clear result flag leaves the complete model view unchanged. *)
+  Lemma union_quiet_view : forall i j db, changed (union i j db) = false ->
+    view (union i j db) = view db.
+  Proof.
+    intros i j db Hquiet. unfold union in Hquiet |- *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; [discriminate Hquiet | reflexivity].
+  Qed.
+
+  (** Quiet output-conflict resolution preserves the model view. *)
+  Lemma output_conflict_quiet_view : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)),
+    let next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end in
+    changed next = false -> view next = view db.
+  Proof.
+    intros db previous co. cbn zeta. intro Hquiet.
+    destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try reflexivity.
+    exact (union_quiet_view a b db Hquiet).
   Qed.
 
   (** Every equality from an output conflict follows from the old relation and that conflict. *)
@@ -2598,6 +2623,116 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - destruct (output_eqb before updated); [exact Hsame |].
       now rewrite row_replace_same.
     - now rewrite row_replace_same.
+  Qed.
+
+  (** Insertion keeps layout and allocation and queues at most one loser. *)
+  Lemma layout_put : forall f k o db, wf db ->
+    kind (view (put f k o db)) = kind (view db) /\ slots (put f k o db) = slots db /\
+    ids (put f k o db) = ids db /\ pending (put f k o db) <= pending db + 1.
+  Proof.
+    intros f k o db Hwf. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hlayout : kind (view next) = kind (view db) /\ slots next = slots db /\
+      ids next = ids db /\ pending next <= pending db + 1).
+    { apply output_conflict_layout. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hlayout |].
+      now rewrite row_replace_kind, row_replace_slots, row_replace_ids, row_replace_pending.
+    - now rewrite row_replace_kind, row_replace_slots, row_replace_ids, row_replace_pending.
+  Qed.
+
+  (** Combining an already represented output leaves the stored output unchanged. *)
+  Lemma combine_out_le : forall db f o before, out_le db f o before ->
+    combine db f (Some before) (option_map (canon db) o) = before.
+  Proof.
+    intros db f o before Hle.
+    destruct o as [[i | v] |]; destruct before as [[j | w] |];
+      cbn [out_le cell_le option_map canon] in Hle; try contradiction; try reflexivity;
+      try solve [unfold combine; destruct (kind (view db) f) as [[| |m] |]; reflexivity].
+    destruct Hle as [m [Hkind Hmerge]]. unfold combine. rewrite Hkind.
+    cbn [option_map canon]. rewrite V.merge_comm, Hmerge. reflexivity.
+  Qed.
+
+  (** A represented insertion only performs its possible identifier conflict union. *)
+  Lemma put_present_operation : forall db f k o before, wf db ->
+    row (view db) f (map (canon db) k) before -> out_le db f o before ->
+    put f k o db =
+      match before, option_map (canon db) o with
+      | Some (Id a), Some (Id b) => union a b db | _, _ => db end.
+  Proof.
+    intros db f k o before Hwf Hrow Hle. unfold put.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    change (row_get f (map (canon db) k) db = Some before) in Hrow. rewrite Hrow.
+    rewrite combine_output_correct, (combine_out_le db f o before Hle), output_eqb_refl.
+    reflexivity.
+  Qed.
+
+  (** An insertion raises the flag only when its row was not represented. *)
+  Lemma put_changed : forall f k o db, wf db -> kind_ok db f k o -> changed db = false ->
+    changed (put f k o db) = true -> ~ present_put (view db) f (map (canon db) k) o.
+  Proof.
+    intros f k o db Hwf _ Hquiet Hchanged [before [Hrow Hle]].
+    rewrite (put_present_operation db f k o before Hwf Hrow Hle) in Hchanged.
+    destruct o as [[i | v] |]; destruct before as [[j | w] |];
+      try solve [change (changed db = true) in Hchanged; congruence].
+    change (changed (union j (repr db i) db) = true) in Hchanged.
+    apply (union_changed j (repr db i) db Hwf Hquiet Hchanged).
+    apply (proj2 (same_repr db j (repr db i) Hwf)).
+    rewrite (repr_idem db i Hwf). symmetry.
+    exact (proj1 (same_repr db i j Hwf) Hle).
+  Qed.
+
+  (** A quiet, unchanged output already contains the kind-correct requested output. *)
+  Lemma quiet_output_le : forall db f k o before, wf db -> kind_ok db f k o ->
+    old db f (map (canon db) k) = Some before ->
+    before = combine db f (Some before) (option_map (canon db) o) ->
+    changed db = false ->
+    changed (match before, option_map (canon db) o with
+      | Some (Id a), Some (Id b) => union a b db | _, _ => db end) = false ->
+    out_le db f o before.
+  Proof.
+    intros db f k o before Hwf [_ [_ Hshape]] Hprevious Hequal Hquiet Hnext.
+    pose proof (wf_row_kind db Hwf f (map (canon db) k) before Hprevious) as Hbefore.
+    destruct (kind (view db) f) as [[| |m] |] eqn:Hkind in Hshape, Hbefore;
+      destruct o as [[i | v] |]; destruct before as [[j | w] |];
+      cbn in Hshape, Hbefore; try contradiction.
+    - exact I.
+    - change (changed (union j (repr db i) db) = false) in Hnext.
+      pose proof (union_quiet j (repr db i) db Hwf Hquiet Hnext) as Hsame.
+      apply (proj2 (same_repr db i j Hwf)).
+      pose proof (proj1 (same_repr db j (repr db i) Hwf) Hsame) as Hrepr.
+      rewrite (repr_idem db i Hwf) in Hrepr. symmetry. exact Hrepr.
+    - exists m. split; [exact Hkind |].
+      unfold combine in Hequal. rewrite Hkind in Hequal. cbn [option_map canon] in Hequal.
+      injection Hequal as Hequal. rewrite V.merge_comm. symmetry. exact Hequal.
+  Qed.
+
+  (** A quiet insertion already has its requested row represented. *)
+  Lemma put_quiet : forall f k o db, wf db -> kind_ok db f k o ->
+    changed db = false -> changed (put f k o db) = false ->
+    view (put f k o db) = view db /\ present_put (view db) f (map (canon db) k) o.
+  Proof.
+    intros f k o db Hwf Hkind Hquiet Hnew. unfold put in Hnew |- *.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf) in Hnew |- *.
+    rewrite combine_output_correct in Hnew |- *. fold (old db f (map (canon db) k)) in Hnew |- *.
+    remember (old db f (map (canon db) k)) as previous eqn:Hprevious in Hnew |- *.
+    set (co := option_map (canon db) o) in Hnew |- *.
+    set (updated := combine db f previous co) in Hnew |- *.
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end) in Hnew |- *.
+    destruct previous as [before |].
+    - destruct (output_eqb_spec before updated) as [Hequal | Hdifferent].
+      + split.
+        * exact (output_conflict_quiet_view db (Some before) co Hnew).
+        * exists before. split; [exact (eq_sym Hprevious) |].
+          exact (quiet_output_le db f k o before Hwf Hkind (eq_sym Hprevious)
+            Hequal Hquiet Hnew).
+      + rewrite row_replace_changed in Hnew. discriminate Hnew.
+    - rewrite row_replace_changed in Hnew. discriminate Hnew.
   Qed.
 
   (** Canonicalization preserves every cell's denotation in a satisfying model. *)
