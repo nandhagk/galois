@@ -755,13 +755,16 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
       N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
   Proof. Admitted. (* STUB *)
   (* Gamma, widening and multiplication laws now live in KNOWN_BITS_LAWS. *)
-  Lemma T1_mul_step : forall w a b i r,
+  (** One staged product step at an index within the width charges its index, accumulator
+      and raw masks. *)
+  Lemma T1_mul_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
     (T_mul_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
         tnum_bits r + 1))%N.
   Proof. Admitted. (* STUB *)
-  (** Accumulating work charges width, index and all stored masks. *)
-  Lemma T2_acc_step : forall w a b i r,
+  (** One accumulating step at an index within the width charges the width, its index and
+      its accumulator. *)
+  Lemma T2_acc_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
     (T_acc_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
         tnum_bits r + 1))%N.
