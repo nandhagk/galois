@@ -3892,6 +3892,32 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - now rewrite Z.min_id.
   Qed.
 
+  (** For distinct endpoints the incremental merge has the closed-base one-edge formula. *)
+  Lemma incremental_candidate_extension : forall m i j d, closed m -> i <> j ->
+    forall a b,
+      entry (M.merge
+        (increment_row i d (row_of (M.get j
+          (add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))))))
+        (add_cons i j d (add_cons j j 0%Z (add_cons i i 0%Z m))) M.empty) a b =
+      RelationalPathBounds.edge_extension
+        (entry (add_cons j j 0%Z (add_cons i i 0%Z m))) i j d a b.
+  Proof.
+    intros m i j d Hclosed Hdistinct a b.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    assert (Hjj : entry base j j = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    change (entry (M.merge (increment_row i d (row_of (M.get j (add_cons i j d base))))
+      (add_cons i j d base) M.empty) a b =
+      RelationalPathBounds.edge_extension (entry base) i j d a b).
+    rewrite entry_increment_extension.
+    now apply edge_extension_after_insert.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
