@@ -536,7 +536,7 @@ Module Zone (X : KEY) (K : KEY with Definition t := option X.t
       with Definition encode := option_code X.encode)
     (M : MAP K) (L : LANG) (N : NUM_VIEW L) (F : LINEARIZE X L N) <: ZONE X K M L N F.
   Include ZoneCode X K M L F.
-  (* STUB-CODE *)
+  (** Rank counts finite entries at stored codes, independently of labels. *)
   Definition wrank (_ : wparam) (s : t) : nat :=
     match s with
     | Unreached => 0
@@ -1595,9 +1595,6 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       (M.c_map + K.c_key + X.c_key + 1))%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_havoc_le : forall x s,
-    (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
@@ -3433,4 +3430,262 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
       | None => 0
       end.
 
+  (** A variable key adds one constructor bit to the underlying variable encoding. *)
+  Lemma some_key_bits : forall x, K.bits (Some x) = X.bits x + 1.
+  Proof.
+    intro x. change (S (X.bits x) = X.bits x + 1). lia.
+  Qed.
+
+  (** Forgetting one column charges only a key removal at each present row. *)
+  Lemma T_forget_row_le : forall x a b,
+    (T_forget_row x a b <= (M.c_map + 4) * N.of_nat
+      (option_weight (fun _ : M.t Z => (K.bits (Some x) + 1)%nat) a + 1))%N.
+  Proof.
+    intros x [row|] b; cbn [option_weight]; time_step.
+  Qed.
+
+  (** Removing an outer binding leaves only codes from the original support. *)
+  Lemma removed_codes_support : forall m k p,
+    In p (M.codes (M.remove k m)) -> In p (support m).
+  Proof.
+    intros m k p Hp. apply M.codes_spec in Hp. rewrite M.find_remove in Hp.
+    destruct (Pos.eqb p (K.encode k)); [contradiction|].
+    apply support_spec. left. now apply M.codes_spec.
+  Qed.
+
+  (** The havoc traversal charges one source node and one key cost per surviving row. *)
+  Lemma havoc_code_work_bound : forall m x,
+    code_work (fun _ : M.t Z => (K.bits (Some x) + 1)%nat) (M.remove (Some x) m) <=
+      supp m * (b m + X.bits x + 4).
+  Proof.
+    intros m x.
+    pose proof (codes_support_length (M.t Z) (M.remove (Some x) m) m
+      (removed_codes_support m (Some x))) as Hcount.
+    pose proof (nodes_support (M.t Z) (M.remove (Some x) m) m
+      (removed_codes_support m (Some x))) as Hnodes.
+    pose proof (stored_weight_uniform (M.t Z)
+      (fun _ : M.t Z => (K.bits (Some x) + 1)%nat) (M.remove (Some x) m)
+      (K.bits (Some x) + 1) ltac:(intros; apply Nat.le_refl)) as Hweight.
+    unfold code_work. rewrite some_key_bits in *. nia.
+  Qed.
+
+  (** A small concrete coefficient suffices for the raw havoc implementation. *)
+  Lemma T_havoc_small : forall x m,
+    (T_havoc x (Reached m) <= 32 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat ((supp m + 1) * (b m + X.bits x + 4) + 1))%N.
+  Proof.
+    intros x m.
+    assert (Hcallback : forall a b,
+      (T_forget_row x a b <= (M.c_map + 4) * N.of_nat
+        (option_weight (fun _ : M.t Z => (K.bits (Some x) + 1)%nat) a +
+          option_weight (fun _ : M.t Z => 0%nat) b + 1))%N).
+    { intros a b. rewrite option_weight_zero, Nat.add_0_r. apply T_forget_row_le. }
+    pose proof (T_merge_code_work (M.t Z) (M.t Z) (M.t Z) (forget_row x)
+      (fun a b => T_forget_row x a b)
+      (fun _ : M.t Z => (K.bits (Some x) + 1)%nat) (fun _ : M.t Z => 0)
+      (M.remove (Some x) m) M.empty (M.c_map + 4)%N Hcallback) as Hmerge.
+    rewrite code_work_empty in Hmerge.
+    pose proof (havoc_code_work_bound m x) as Hwork.
+    set (work := N.of_nat ((supp m + 1) * (b m + X.bits x + 4) + 1)).
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    assert (Hmerge' : (M.T_merge (forget_row x)
+      (fun a b => T_forget_row x a b) (M.remove (Some x) m) M.empty <=
+      M.c_map * (M.c_map + 5) * 2 * work)%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      replace (M.c_map + 4 + 1)%N with (M.c_map + 5)%N by ring.
+      apply N.mul_le_mono_l. unfold work. apply time_of_nat_le. nia. }
+    assert (Hremove : (M.T_remove (Some x) m <= M.c_map * work)%N).
+    { eapply N.le_trans; [apply M.T_remove_le|].
+      apply N.mul_le_mono_l. unfold work. rewrite some_key_bits.
+      apply time_of_nat_le. nia. }
+    assert (Hsum : (1 + (M.T_remove (Some x) m +
+      M.T_merge (forget_row x) (fun a b => T_forget_row x a b)
+        (M.remove (Some x) m) M.empty) <=
+      (1 + M.c_map + M.c_map * (M.c_map + 5) * 2) * work)%N).
+    { rewrite !N.mul_add_distr_r. rewrite N.mul_1_l. lia. }
+    assert (Hcoefficient : (1 + M.c_map + M.c_map * (M.c_map + 5) * 2 <=
+      32 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    unfold T_havoc. cbn beta iota zeta.
+    eapply N.le_trans; [exact Hsum|].
+    apply N.mul_le_mono_r. exact Hcoefficient.
+  Qed.
+
+  Lemma T_havoc_le : forall x s,
+    (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
+  Proof.
+    intros x [|m].
+    - assert (Hconstant : (1 <= c_num)%N) by (unfold c_num; nia).
+      assert (Hwork : (1 <= N.of_nat (havoc_work x Unreached + 1))%N) by lia.
+      unfold T_havoc. cbn beta iota zeta. nia.
+    - pose proof (T_havoc_small x m) as Htime.
+      assert (Hwork : (supp m + 1) * (b m + X.bits x + 4) + 1 <=
+        4 * (havoc_work x (Reached m) + 1)).
+      { unfold havoc_work, ns, bs, ells, skels. cbn [Nat.pow]. nia. }
+      assert (Hcast : (N.of_nat ((supp m + 1) * (b m + X.bits x + 4) + 1) <=
+        4 * N.of_nat (havoc_work x (Reached m) + 1))%N).
+      { replace (4 * N.of_nat (havoc_work x (Reached m) + 1))%N with
+          (N.of_nat (4 * (havoc_work x (Reached m) + 1)))
+          by (rewrite Nat2N.inj_mul; reflexivity).
+        apply time_of_nat_le. exact Hwork. }
+      assert (Hcoefficient : (32 * (M.c_map + 1) * (M.c_map + 1) * 4 <= c_num)%N).
+      { unfold c_num. nia. }
+      eapply N.le_trans; [exact Htime|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hcast|].
+      rewrite N.mul_assoc. apply N.mul_le_mono_r. exact Hcoefficient.
+  Qed.
+
+  (** A pivot callback charges finite source rows with their own sparse update work. *)
+  Lemma T_round_row_le : forall k pivot a b,
+    (T_round_row k pivot a b <= row_time_factor *
+      N.of_nat (option_weight (pivot_row_work k pivot) a + 1))%N.
+  Proof.
+    intros k pivot [row|] ignored.
+    - cbn [option_weight]. unfold pivot_row_work.
+      destruct (M.get k row) as [a|] eqn:Ha.
+      + assert (Hcallback : forall old next,
+          (T_via_bound a old next <= 8 * N.of_nat
+            (option_weight (fun _ : Z => 0%nat) old +
+             option_weight (fun z => (Z.size_nat a + Z.size_nat z + 1)%nat) next + 1))%N).
+        { intros old next. rewrite option_weight_zero. apply T_via_bound_le. }
+        pose proof (T_merge_code_work Z Z Z (via_bound a)
+          (fun x y => T_via_bound a x y) (fun _ : Z => 0)
+          (fun z => Z.size_nat a + Z.size_nat z + 1) row pivot 8%N Hcallback) as Hmerge.
+        pose proof (M.T_get_le Z k row) as Hget.
+        set (lookup_bits := K.bits k + 1) in *.
+        set (source_work := code_work (fun _ : Z => 0) row) in *.
+        set (pivot_work := code_work (fun z => Z.size_nat a + Z.size_nat z + 1) pivot) in *.
+        clearbody lookup_bits source_work pivot_work. clear Hcallback.
+        unfold T_round_row. cbn beta iota zeta. rewrite Ha. cbn beta iota zeta.
+        set (get_clock := M.T_get k row) in *.
+        set (merge_clock := M.T_merge (via_bound a)
+          (fun x y => T_via_bound a x y) row pivot) in *.
+        clearbody get_clock merge_clock. clear Ha.
+        unfold row_time_factor.
+        repeat rewrite Nat2N.inj_add in Hget.
+        repeat rewrite Nat2N.inj_add in Hmerge.
+        repeat rewrite Nat2N.inj_add.
+        set (work := (N.of_nat lookup_bits + N.of_nat source_work +
+          N.of_nat pivot_work + 1)%N).
+        match goal with
+        | |- N.le ?clock _ => change (clock <= 32 * (M.c_map + 1) * work)%N
+        end.
+        assert (Hunit : (1 <= work)%N) by (unfold work; lia).
+        assert (Hget_work : (get_clock <= M.c_map * work)%N).
+        { eapply N.le_trans; [exact Hget|]. apply N.mul_le_mono_l.
+          unfold work. lia. }
+        assert (Hmerge_work : (merge_clock <= M.c_map * (8 + 1) * 2 * work)%N).
+        { eapply N.le_trans; [exact Hmerge|]. apply N.mul_le_mono_l.
+          unfold work. lia. }
+        assert (Hbudget : ((M.c_map + M.c_map * (8 + 1) * 2 + 1) * work <=
+          32 * (M.c_map + 1) * work)%N).
+        { apply N.mul_le_mono_r. lia. }
+        repeat rewrite N.mul_add_distr_r in Hbudget.
+        rewrite N.mul_1_l in Hbudget.
+        clear Hget Hmerge. clearbody work. lia.
+      + pose proof (M.T_get_le Z k row) as Hget.
+        set (lookup_bits := K.bits k + 1) in *.
+        set (source_work := code_work (fun _ : Z => 0) row) in *.
+        clearbody lookup_bits source_work.
+        unfold T_round_row. cbn beta iota zeta. rewrite Ha. cbn beta iota zeta.
+        set (get_clock := M.T_get k row) in *. clearbody get_clock. clear Ha.
+        unfold row_time_factor.
+        repeat rewrite Nat2N.inj_add in Hget.
+        repeat rewrite Nat2N.inj_add.
+        set (work := (N.of_nat lookup_bits + N.of_nat source_work + 0 + 1)%N).
+        match goal with
+        | |- N.le ?clock _ => change (clock <= 32 * (M.c_map + 1) * work)%N
+        end.
+        assert (Hunit : (1 <= work)%N) by (unfold work; lia).
+        assert (Hget_work : (get_clock <= M.c_map * work)%N).
+        { eapply N.le_trans; [exact Hget|]. apply N.mul_le_mono_l.
+          unfold work. lia. }
+        assert (Hbudget : ((M.c_map + 1) * work <= 32 * (M.c_map + 1) * work)%N).
+        { apply N.mul_le_mono_r. lia. }
+        rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
+        clear Hget. clearbody work. lia.
+    - unfold row_time_factor. time_step.
+  Qed.
+
+  (** An incremental callback charges the inserted-bound addition once for each finite row. *)
+  Lemma T_increment_row_le : forall i d exit a b,
+    (T_increment_row i d exit a b <= row_time_factor *
+      N.of_nat (option_weight (increment_row_work i d exit) a + 1))%N.
+  Proof.
+    intros i d exit [row|] ignored.
+    - cbn [option_weight]. unfold increment_row_work.
+      destruct (M.get i row) as [a|] eqn:Ha.
+      + assert (Hcallback : forall old next,
+          (T_via_bound (a + d)%Z old next <= 8 * N.of_nat
+            (option_weight (fun _ : Z => 0%nat) old +
+             option_weight (fun z =>
+               (Z.size_nat (a + d)%Z + Z.size_nat z + 1)%nat) next + 1))%N).
+        { intros old next. rewrite option_weight_zero. apply T_via_bound_le. }
+        pose proof (T_merge_code_work Z Z Z (via_bound (a + d)%Z)
+          (fun x y => T_via_bound (a + d)%Z x y) (fun _ : Z => 0)
+          (fun z => Z.size_nat (a + d)%Z + Z.size_nat z + 1) row exit 8%N Hcallback)
+          as Hmerge.
+        pose proof (M.T_get_le Z i row) as Hget. pose proof (Z.T_add_le a d) as Hadd.
+        set (key_bits := K.bits i) in *.
+        set (edge_bits := Z.size_nat d) in *.
+        set (prefix_bits := Z.size_nat a) in *.
+        set (source_work := code_work (fun _ : Z => 0) row) in *.
+        set (exit_work := code_work
+          (fun z => Z.size_nat (a + d)%Z + Z.size_nat z + 1) exit) in *.
+        clearbody key_bits edge_bits prefix_bits source_work exit_work. clear Hcallback.
+        unfold T_increment_row. cbn beta iota zeta. rewrite Ha. cbn beta iota zeta.
+        set (get_clock := M.T_get i row) in *.
+        set (add_clock := Z.T_add a d) in *.
+        set (merge_clock := M.T_merge (via_bound (a + d)%Z)
+          (fun x y => T_via_bound (a + d)%Z x y) row exit) in *.
+        clearbody get_clock add_clock merge_clock. clear Ha.
+        unfold row_time_factor.
+        repeat rewrite Nat2N.inj_add in Hget.
+        repeat rewrite Nat2N.inj_add in Hadd.
+        repeat rewrite Nat2N.inj_add in Hmerge.
+        repeat rewrite Nat2N.inj_add.
+        set (work := (N.of_nat key_bits + N.of_nat edge_bits + 1 +
+          N.of_nat source_work + (N.of_nat prefix_bits + N.of_nat exit_work) + 1)%N).
+        match goal with
+        | |- N.le ?clock _ => change (clock <= 32 * (M.c_map + 1) * work)%N
+        end.
+        assert (Hunit : (1 <= work)%N) by (unfold work; lia).
+        assert (Hget_work : (get_clock <= M.c_map * work)%N).
+        { eapply N.le_trans; [exact Hget|]. apply N.mul_le_mono_l.
+          unfold work. lia. }
+        assert (Hadd_work : (add_clock <= 3 * work)%N).
+        { unfold work. lia. }
+        assert (Hmerge_work : (merge_clock <= M.c_map * (8 + 1) * 2 * work)%N).
+        { eapply N.le_trans; [exact Hmerge|]. apply N.mul_le_mono_l.
+          unfold work. lia. }
+        assert (Hbudget : ((M.c_map + 3 + M.c_map * (8 + 1) * 2 + 1) * work <=
+          32 * (M.c_map + 1) * work)%N).
+        { apply N.mul_le_mono_r. lia. }
+        repeat rewrite N.mul_add_distr_r in Hbudget.
+        rewrite N.mul_1_l in Hbudget.
+        clear Hget Hadd Hmerge. clearbody work. lia.
+      + pose proof (M.T_get_le Z i row) as Hget.
+        set (key_bits := K.bits i) in *.
+        set (edge_bits := Z.size_nat d) in *.
+        set (source_work := code_work (fun _ : Z => 0) row) in *.
+        clearbody key_bits edge_bits source_work.
+        unfold T_increment_row. cbn beta iota zeta. rewrite Ha. cbn beta iota zeta.
+        set (get_clock := M.T_get i row) in *. clearbody get_clock. clear Ha.
+        unfold row_time_factor.
+        repeat rewrite Nat2N.inj_add in Hget.
+        repeat rewrite Nat2N.inj_add.
+        set (work := (N.of_nat key_bits + N.of_nat edge_bits + 1 +
+          N.of_nat source_work + 0 + 1)%N).
+        match goal with
+        | |- N.le ?clock _ => change (clock <= 32 * (M.c_map + 1) * work)%N
+        end.
+        assert (Hunit : (1 <= work)%N) by (unfold work; lia).
+        assert (Hget_work : (get_clock <= M.c_map * work)%N).
+        { eapply N.le_trans; [exact Hget|]. apply N.mul_le_mono_l.
+          unfold work. lia. }
+        assert (Hbudget : ((M.c_map + 1) * work <= 32 * (M.c_map + 1) * work)%N).
+        { apply N.mul_le_mono_r. lia. }
+        rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
+        clear Hget. clearbody work. lia.
+    - unfold row_time_factor. time_step.
+  Qed.
 End ZoneT.
