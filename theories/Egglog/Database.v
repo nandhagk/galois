@@ -10530,7 +10530,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** The public potential is the weighted occurrence credit. *)
   Lemma F2_potential : forall B db, (potential B db = k_loop * rebuild_potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
 
   (** The unit charges identifier traversal and cell encoding widths. *)
   Lemma F3_unit : forall db,
