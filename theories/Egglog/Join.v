@@ -1143,11 +1143,16 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
 
   Lemma work_root : forall p ixs,
     work p ixs = work_at p ixs 0 (map I.root ixs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs. unfold work, work_at. now rewrite Nat.sub_0_r.
+  Qed.
 
   Lemma work_at_done : forall p ixs l ns, nvars p <= l ->
     work_at p ixs l ns = 1 + nvars p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l ns Hdone. unfold work_at.
+    replace (nvars p - l) with 0 by lia. reflexivity.
+  Qed.
 
   Lemma work_at_step : forall p ixs l pre ns j, nodes_ok p ixs l pre ns ->
     l < nvars p -> choose p ixs l ns = Some j ->
@@ -1158,11 +1163,17 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
           | None => 0
           | Some ns' => work_at p ixs (S l) ns'
           end) (I.children (nth j ixs I.empty) (nth j ns 1%positive))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns j _ Hlevel Hchoose.
+    unfold work_at. replace (nvars p - l) with (S (nvars p - S l)) by lia.
+    cbn [recursive_work]. unfold choose in Hchoose. now rewrite Hchoose.
+  Qed.
 
   Lemma run_go : forall p ixs,
     run p ixs = go (nvars p) p ixs (map I.root ixs) [] [].
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma T_go_le : forall p ixs l pre ns acc, nodes_ok p ixs l pre ns ->
     (T_go (nvars p - l) p ixs ns pre acc <=
