@@ -5077,6 +5077,33 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + apply Hold.
   Qed.
 
+  (** The scan and seed zeros fix every candidate support diagonal at zero. *)
+  Lemma incremental_candidate_zero_support : forall m i j d,
+    dbm_wf m -> tightly_closed m ->
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    matrix_ok (increment_matrix i j d seed) = true ->
+    forall k, In (K.encode k) (support seed) ->
+      entry (increment_matrix i j d seed) k k = Some 0%Z.
+  Proof.
+    intros m i j d Hwf Htight. cbn beta iota zeta.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intros Hscan k Hsupport.
+    pose proof (incremental_seed_zero_support m i j Htight k Hsupport)
+      as Hseed.
+    change (entry seed k k = Some 0%Z) in Hseed.
+    pose proof (increment_entry_below i j d seed k k) as Hbound.
+    rewrite Hseed in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [value [Hvalue Hle]].
+    change (entry next k k = Some value) in Hvalue.
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfnext : dbm_wf next).
+    { unfold next. now apply increment_wf. }
+    pose proof (matrix_ok_diagonal next k value Hwfnext Hscan Hvalue) as Hz.
+    assert (value = 0)%Z by lia. now subst value.
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
