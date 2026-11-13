@@ -1643,6 +1643,101 @@ Proof.
   apply (proj1 (inject_Z_injective _ _)). symmetry. exact Hmodel.
 Qed.
 
+(** One coordinate of a finite integer combination of dense rows. *)
+Definition karr_weighted_entry (rows : list karr_row) (weights : list Z) (i : nat) : Z :=
+  fold_right Z.add 0%Z
+    (map (fun rm => (snd rm * karr_nth i (kcoeff (fst rm)))%Z)
+      (List.combine rows weights)).
+
+(** A coordinate zero in every source row is zero in every weighted combination. *)
+Lemma karr_weighted_entry_zero : forall rows weights i,
+  Forall (fun r => karr_nth i (kcoeff r) = 0%Z) rows ->
+  karr_weighted_entry rows weights i = 0%Z.
+Proof.
+  intros rows weights i Hzero. revert weights.
+  induction Hzero as [|r rows Hhead Htail IH]; intros [|m weights]; try reflexivity.
+  change ((m * karr_nth i (kcoeff r) + karr_weighted_entry rows weights i)%Z = 0%Z).
+  rewrite Hhead, IH. lia.
+Qed.
+
+(** Later rows have zero coefficients at every preceding row's pivot. *)
+Lemma karr_ordered_later_zero : forall p rows i a,
+  karr_ordered (p :: rows) ->
+  Forall (fun r => exists j b, karr_first (kcoeff r) = Some (j, b)) rows ->
+  karr_first (kcoeff p) = Some (i, a) ->
+  Forall (fun r => karr_nth i (kcoeff r) = 0%Z) rows.
+Proof.
+  intros p rows i a Hordered Hnonzero Hfirst.
+  inversion Hordered as [|p' rows' Htail Hbefore]; subst p' rows'.
+  apply Forall_forall. intros r Hr.
+  destruct (proj1 (Forall_forall _ _) Hnonzero r Hr) as [j [b Hrfirst]].
+  apply karr_first_before with (i := j) (a := b); [exact Hrfirst|].
+  now apply Hbefore with (a := a) (q := r) (b := b).
+Qed.
+
+(** Ordered rows with nonzero pivots admit only the trivial zero combination. *)
+Lemma karr_ordered_zero_weights : forall rows weights,
+  karr_ordered rows ->
+  Forall (fun r => exists i a, karr_first (kcoeff r) = Some (i, a)) rows ->
+  length weights = length rows ->
+  (forall i, karr_weighted_entry rows weights i = 0%Z) ->
+  Forall (fun m => m = 0%Z) weights.
+Proof.
+  intros rows weights Hordered. revert weights.
+  induction Hordered as [|p rows Hordered IH Hbefore];
+    intros [|m weights] Hnonzero Hlength Hzero;
+    cbn [length] in Hlength; try discriminate; [constructor|].
+  inversion Hnonzero as [|p' rows' Hp Htail]; subst p' rows'.
+  destruct Hp as [i [a Hfirst]].
+  assert (Hlater : Forall (fun r => karr_nth i (kcoeff r) = 0%Z) rows).
+  { apply karr_ordered_later_zero with (p := p) (a := a); [now constructor| |];
+      assumption. }
+  pose proof (Hzero i) as Hcoordinate.
+  change ((m * karr_nth i (kcoeff p) + karr_weighted_entry rows weights i)%Z = 0%Z)
+    in Hcoordinate.
+  rewrite (karr_first_nth _ _ _ Hfirst),
+    (karr_weighted_entry_zero rows weights i Hlater) in Hcoordinate.
+  assert (Hproduct : (m * a)%Z = 0%Z) by lia.
+  apply Z.mul_eq_0 in Hproduct as [Hm|Ha].
+  - subst m. constructor; [reflexivity|]. apply IH; [exact Htail|lia|].
+    intro j. pose proof (Hzero j) as Hj.
+    change (karr_weighted_entry rows weights j = 0%Z) in Hj. exact Hj.
+  - exfalso. exact (karr_first_nonzero _ _ _ Hfirst Ha).
+Qed.
+
+(** Filtering rows preserves their strict pivot order. *)
+Lemma karr_ordered_filter : forall test rows,
+  karr_ordered rows -> karr_ordered (filter test rows).
+Proof.
+  intros test rows Hordered.
+  induction Hordered as [|p rows Hordered IH Hbefore]; cbn [filter]; [constructor|].
+  destruct (test p); [constructor|exact IH]; [exact IH|].
+  intros i a q j b Hp Hq Hfirst. apply filter_In in Hq as [Hq _].
+  now apply Hbefore with (a := a) (q := q) (b := b).
+Qed.
+
+(** A coefficient list with no first nonzero entry consists entirely of zeros. *)
+Lemma karr_first_none_zero : forall zs,
+  karr_first zs = None -> forallb (Z.eqb 0) zs = true.
+Proof.
+  intro zs. induction zs as [|z zs IH]; intro Hnone; [reflexivity|].
+  cbn [karr_first] in Hnone. destruct (Z.eqb z 0) eqn:Hzero; [|discriminate].
+  apply Z.eqb_eq in Hzero. subst z.
+  destruct (karr_first zs) as [[i a]|] eqn:Hfirst; [discriminate|].
+  change (forallb (Z.eqb 0) zs = true). now apply IH.
+Qed.
+
+(** Every nonzero dense row has an actual first pivot. *)
+Lemma karr_nonzero_has_first : forall r, karr_zero r = false ->
+  exists i a, karr_first (kcoeff r) = Some (i, a).
+Proof.
+  intros r Hnonzero. destruct (karr_first (kcoeff r)) as [[i a]|] eqn:Hfirst.
+  - exists i, a. reflexivity.
+  - unfold karr_zero in Hnonzero.
+    rewrite (karr_first_none_zero _ Hfirst) in Hnonzero. discriminate.
+Qed.
+
+
 Module KarrCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: KARR_OPS X L F C.
   Definition t := reach (list (lcons X.t)).
@@ -5218,9 +5313,6 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros p P. reflexivity.
   Qed.
-  Lemma join_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
-    forall i r, nth_error P i = Some r -> ~ in_span (firstn i P ++ skipn (S i) P) r.
-  Proof. Admitted. (* STUB *)
   Lemma leb_complete_span : forall a b,
     Forall (in_span a) b -> leb (Reached a) (Reached b) = true.
   Proof.
@@ -5881,6 +5973,325 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros A B P Hjoin. change (Reached (affine_hull A B) = Reached P) in Hjoin.
     injection Hjoin as Hsame. subst P. apply affine_hull_span.
   Qed.
+
+  (** A list recognized as all zero is its explicit zero block. *)
+  Lemma hull_zero_list : forall zs, forallb (Z.eqb 0) zs = true ->
+    zs = repeat 0%Z (length zs).
+  Proof.
+    intro zs. induction zs as [|z zs IH]; intro Hzero; [reflexivity|].
+    cbn [forallb] in Hzero. apply andb_true_iff in Hzero as [Hz Htail].
+    apply Z.eqb_eq in Hz. subst z. cbn [length repeat]. f_equal. exact (IH Htail).
+  Qed.
+
+  (** Suffixes of an all-zero list are also all zero. *)
+  Lemma hull_zero_skipn : forall n zs, forallb (Z.eqb 0) zs = true ->
+    forallb (Z.eqb 0) (skipn n zs) = true.
+  Proof.
+    intro n. induction n as [|n IH]; intros zs Hzero; [exact Hzero|].
+    destruct zs as [|z zs]; [reflexivity|].
+    cbn [forallb] in Hzero. apply andb_true_iff in Hzero as [_ Htail].
+    cbn [skipn]. now apply IH.
+  Qed.
+
+  (** A returned hull row has a nonzero output block. *)
+  Lemma checked_hull_row_suffix_nonzero : forall xs A B r c,
+    checked_hull_row xs A B r = Some c ->
+    forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r)) = false.
+  Proof.
+    intros xs A B r c Hrow. unfold checked_hull_row in Hrow.
+    remember (LCons X.t (sparse xs (skipn (S (length xs)) (kcoeff r))) REq
+      (karr_nth (length xs) (skipn (S (length xs)) (kcoeff r)))) as candidate
+      eqn:Hcandidate in Hrow.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) &&
+      negb (forallb (Z.eqb 0) (skipn (S (length xs)) (kcoeff r))) &&
+      C.check_entails A candidate (Cert (firstn (length A) (kweight r)) 1 false) &&
+      C.check_entails B candidate (Cert (skipn (length A) (kweight r)) 1 false))
+      eqn:Hcheck; [|discriminate].
+    apply andb_true_iff in Hcheck as [Hcheck _].
+    apply andb_true_iff in Hcheck as [Hcheck _].
+    apply andb_true_iff in Hcheck as [_ Hcheck]. now apply negb_true_iff.
+  Qed.
+
+  (** Every returned hull row comes from a dense row with an actual nonzero pivot. *)
+  Lemma checked_hull_row_first : forall xs A B r c,
+    checked_hull_row xs A B r = Some c ->
+    exists i a, karr_first (kcoeff r) = Some (i, a).
+  Proof.
+    intros xs A B r c Hrow. apply karr_nonzero_has_first.
+    unfold karr_zero. destruct (forallb (Z.eqb 0) (kcoeff r)) eqn:Hzero; [|reflexivity].
+    pose proof (hull_zero_skipn (S (length xs)) _ Hzero) as Hsuffix.
+    rewrite (checked_hull_row_suffix_nonzero _ _ _ _ _ Hrow) in Hsuffix. discriminate.
+  Qed.
+
+  (** Sparse extraction faithfully reconstructs the complete nonzero lifted row. *)
+  Lemma checked_hull_row_embedding : forall xs A B r c,
+    NoDup xs ->
+    (forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs) ->
+    hull_tracks A B xs 0 r -> checked_hull_row xs A B r = Some c ->
+    kcoeff r = repeat 0%Z (S (length xs)) ++ (dense xs c ++ [rhs c]).
+  Proof.
+    intros xs A B r c Hunique Hsupport Htracks Hrow.
+    destruct (checked_hull_row_certificates xs A B r c Hunique Hsupport Htracks Hrow)
+      as [_ [Hweights [Hpositive [Hcoefficient Hrhs]]]].
+    pose proof (checked_hull_row_shape _ _ _ _ _ Hrow) as Hshape.
+    assert (Hrelation : lrel c = REq) by now rewrite Hshape.
+    rewrite Hrelation in Hrhs.
+    destruct Htracks as [_ Hcoords]. cbn [repeat app] in Hcoords.
+    destruct (hull_coordinates_parts xs A B (kweight r)) as [Hprefix Hsuffix].
+    pose proof (checked_hull_row_aux_zero _ _ _ _ _ Hrow) as Hzero.
+    rewrite Hcoords, Hprefix in Hzero. apply hull_zero_list in Hzero.
+    rewrite length_app, length_map in Hzero. cbn [length] in Hzero.
+    replace (length xs + 1) with (S (length xs)) in Hzero by lia.
+    rewrite Hcoords. unfold hull_coordinates. rewrite Hzero. apply f_equal.
+    apply f_equal2.
+    - unfold dense. apply map_ext. intro x. specialize (Hcoefficient x).
+      change (C.comb_coef B (skipn (length A) (kweight r)) x =
+        (1 * coefficient x (lhs c))%Z) in Hcoefficient. lia.
+    - f_equal. lia.
+  Qed.
+
+  (** Retained dense rows are the successful positions of an optional row emitter. *)
+  Definition hull_kept (emit : karr_row -> option (lcons X.t)) (rows : list karr_row)
+      : list karr_row :=
+    filter (fun r => match emit r with Some _ => true | None => false end) rows.
+
+  (** Output observations align position by position with the retained dense rows. *)
+  Lemma hull_emit_observations : forall emit entry rows,
+    (forall r, In r rows -> forall c, emit r = Some c ->
+      forall i, karr_nth i (kcoeff r) = entry c i) ->
+    Forall2 (fun r c => forall i, karr_nth i (kcoeff r) = entry c i)
+      (hull_kept emit rows) (present (map emit rows)).
+  Proof.
+    intros emit entry rows. induction rows as [|r rows IH]; intro Hobserve; [constructor|].
+    cbn [hull_kept filter map present flat_map]. destruct (emit r) as [c|] eqn:Hrow.
+    - constructor.
+      + exact (Hobserve r (or_introl eq_refl) c Hrow).
+      + apply IH. intros s Hs d Hd i. exact (Hobserve s (or_intror Hs) d Hd i).
+    - apply IH. intros s Hs d Hd i. exact (Hobserve s (or_intror Hs) d Hd i).
+  Qed.
+
+  (** Retained positions have pivots whenever every successful emitted row does. *)
+  Lemma hull_emit_firsts : forall emit rows,
+    (forall r, In r rows -> forall c, emit r = Some c ->
+      exists i a, karr_first (kcoeff r) = Some (i, a)) ->
+    Forall (fun r => exists i a, karr_first (kcoeff r) = Some (i, a)) (hull_kept emit rows).
+  Proof.
+    intros emit rows Hfirst. apply Forall_forall. intros r Hr.
+    unfold hull_kept in Hr. apply filter_In in Hr as [Hr Hkeep].
+    destruct (emit r) as [c|] eqn:Hrow; [|discriminate].
+    now apply Hfirst with (c := c).
+  Qed.
+
+  (** Aligned emitted observations have equally many dense and sparse rows. *)
+  Lemma hull_observations_length : forall (entry : lcons X.t -> nat -> Z) rows cs,
+    Forall2 (fun r c => forall i, karr_nth i (kcoeff r) = entry c i) rows cs ->
+    length rows = length cs.
+  Proof.
+    intros entry rows cs Hobserve. induction Hobserve; cbn; congruence.
+  Qed.
+
+  (** Weighted sums commute with positionwise dense-to-sparse observations. *)
+  Lemma hull_weighted_observations : forall entry rows cs,
+    Forall2 (fun r c => forall i, karr_nth i (kcoeff r) = entry c i) rows cs ->
+    forall weights i, karr_weighted_entry rows weights i =
+      row_sum cs weights (fun c => entry c i).
+  Proof.
+    intros entry rows cs Hobserve.
+    induction Hobserve as [|r c rows cs Hhead Htail IH]; intros [|m weights] i;
+      try reflexivity.
+    change ((m * karr_nth i (kcoeff r) + karr_weighted_entry rows weights i)%Z =
+      (m * entry c i + row_sum cs weights (fun c => entry c i))%Z).
+    now rewrite Hhead, IH.
+  Qed.
+
+  (** Optional extraction preserves independence whenever it preserves all dense coordinates. *)
+  Lemma hull_ordered_output_weights : forall emit entry rows weights,
+    karr_ordered rows ->
+    (forall r, In r rows -> forall c, emit r = Some c ->
+      (exists i a, karr_first (kcoeff r) = Some (i, a)) /\
+      (forall i, karr_nth i (kcoeff r) = entry c i)) ->
+    length weights = length (present (map emit rows)) ->
+    (forall i, row_sum (present (map emit rows)) weights (fun c => entry c i) = 0%Z) ->
+    Forall (fun m => m = 0%Z) weights.
+  Proof.
+    intros emit entry rows weights Hordered Hemit Hlength Hzero.
+    assert (Hobserve : Forall2
+      (fun r c => forall i, karr_nth i (kcoeff r) = entry c i)
+      (hull_kept emit rows) (present (map emit rows))).
+    { apply hull_emit_observations. intros r Hr c Hc. exact (proj2 (Hemit r Hr c Hc)). }
+    apply karr_ordered_zero_weights with (rows := hull_kept emit rows).
+    - unfold hull_kept. now apply karr_ordered_filter.
+    - apply hull_emit_firsts. intros r Hr c Hc. exact (proj1 (Hemit r Hr c Hc)).
+    - rewrite (hull_observations_length _ _ _ Hobserve). exact Hlength.
+    - intro i. rewrite (hull_weighted_observations _ _ _ Hobserve). apply Hzero.
+  Qed.
+
+  (** A weighted sum is zero when every source contributes zero to its entry. *)
+  Lemma hull_row_sum_entries_zero : forall rows weights entry,
+    Forall (fun r => entry r = 0%Z) rows -> row_sum rows weights entry = 0%Z.
+  Proof.
+    intros rows weights entry Hzero. revert weights.
+    induction Hzero as [|r rows Hhead Htail IH]; intros [|m weights]; try reflexivity.
+    change ((m * entry r + row_sum rows weights entry)%Z = 0%Z).
+    rewrite Hhead, IH. ring.
+  Qed.
+
+  (** Zero coefficient and RHS combinations give zero at every augmented coordinate. *)
+  Lemma hull_sum_dense_zero : forall xs rows weights,
+    (forall x, C.comb_coef rows weights x = 0%Z) -> C.comb_rhs rows weights = 0%Z ->
+    forall i, row_sum rows weights
+      (fun r => karr_nth i (dense xs r ++ [rhs r])) = 0%Z.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros rows weights Hcoef Hrhs [|i].
+    - change (C.comb_rhs rows weights = 0%Z). exact Hrhs.
+    - apply hull_row_sum_entries_zero. apply Forall_forall. intros r _.
+      destruct i; reflexivity.
+    - change (C.comb_coef rows weights x = 0%Z). apply Hcoef.
+    - change (row_sum rows weights
+        (fun r => karr_nth i (dense xs r ++ [rhs r])) = 0%Z).
+      now apply IH.
+  Qed.
+
+  (** Adding a zero prefix preserves zero weighted sums at every coordinate. *)
+  Lemma hull_sum_prefix_zero : forall n xs rows weights,
+    (forall x, C.comb_coef rows weights x = 0%Z) -> C.comb_rhs rows weights = 0%Z ->
+    forall i, row_sum rows weights
+      (fun r => karr_nth i (repeat 0%Z n ++ (dense xs r ++ [rhs r]))) = 0%Z.
+  Proof.
+    intro n. induction n as [|n IH]; intros xs rows weights Hcoef Hrhs i.
+    - now apply hull_sum_dense_zero.
+    - destruct i as [|i].
+      + apply hull_row_sum_entries_zero. apply Forall_forall. intros r _. reflexivity.
+      + change (row_sum rows weights
+          (fun r => karr_nth i (repeat 0%Z n ++ (dense xs r ++ [rhs r]))) = 0%Z).
+        now apply IH.
+  Qed.
+
+  (** One output row is observed in the complete lifted coordinate system. *)
+  Definition hull_output_entry (xs : list X.t) (r : lcons X.t) (i : nat) : Z :=
+    karr_nth i (repeat 0%Z (S (length xs)) ++ (dense xs r ++ [rhs r])).
+
+  (** Every zero integer combination of affine-hull output rows has only zero multipliers. *)
+  Lemma hull_affine_zero_weights : forall A B weights,
+    length weights = length (affine_hull A B) ->
+    (forall x, C.comb_coef (affine_hull A B) weights x = 0%Z) ->
+    C.comb_rhs (affine_hull A B) weights = 0%Z ->
+    Forall (fun m => m = 0%Z) weights.
+  Proof.
+    intros A B weights Hlength Hcoef Hrhs.
+    set (xs := variables (map normalize_row A ++ map normalize_row B)).
+    set (rows := karr_bareiss (2 * length xs + 2) 1
+      (hull_left xs (length A + length B) 0 (map normalize_row A) ++
+       hull_right xs (length A + length B) (length A) (map normalize_row B))).
+    assert (Hunique : NoDup xs) by apply variables_nodup.
+    assert (Hsupport : forall s, In s (A ++ B) -> forall x z,
+      In (x, z) (lhs (normalize_row s)) -> In x xs).
+    { intros s Hs x z Hterm. unfold xs.
+      apply variables_contains with (r := normalize_row s) (z := z); [|exact Hterm].
+      rewrite <- map_app. now apply in_map. }
+    assert (Hordered : karr_ordered rows).
+    { unfold rows. apply karr_echelon_ordered with (n := 2 * length xs + 2).
+      apply karr_bareiss_echelon. apply hull_seed_width. }
+    apply hull_ordered_output_weights with (emit := checked_hull_row xs A B)
+      (entry := hull_output_entry xs) (rows := rows).
+    - exact Hordered.
+    - intros r Hr c Hrow. split.
+      + now apply checked_hull_row_first with (xs := xs) (A := A) (B := B) (c := c).
+      + intro i. rewrite (checked_hull_row_embedding xs A B r c Hunique Hsupport).
+        * reflexivity.
+        * exact (proj1 (Forall_forall _ _) (hull_basis_tracks xs A B) r Hr).
+        * exact Hrow.
+    - exact Hlength.
+    - intro i. change (row_sum (affine_hull A B) weights
+        (fun c => hull_output_entry xs c i) = 0%Z).
+      unfold hull_output_entry. now apply hull_sum_prefix_zero.
+  Qed.
+
+  (** Removing an existing list position decreases length by exactly one. *)
+  Lemma hull_others_length : forall (P : list (lcons X.t)) i r, nth_error P i = Some r ->
+    S (length (firstn i P ++ skipn (S i) P)) = length P /\
+      i <= length (firstn i P ++ skipn (S i) P).
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|i] r Hnth;
+      cbn [nth_error] in Hnth; try discriminate.
+    - cbn [firstn skipn app length]. split; lia.
+    - destruct (IH i r Hnth) as [Hlength Hbound].
+      change (S (S (length (firstn i P ++ skipn (S i) P))) = S (length P) /\
+        S i <= S (length (firstn i P ++ skipn (S i) P))). split; lia.
+  Qed.
+
+  (** Inserting a multiplier at an existing prefix boundary increases its length by one. *)
+  Lemma hull_insert_length : forall i (weights : list Z) m, i <= length weights ->
+    length (firstn i weights ++ m :: skipn i weights) = S (length weights).
+  Proof.
+    intro i. induction i as [|i IH]; intros [|w weights] m Hbound;
+      cbn [firstn skipn app length] in *; try reflexivity; try lia.
+    now rewrite IH by lia.
+  Qed.
+
+  (** Inserting one multiplier separates its contribution from all remaining positions. *)
+  Lemma hull_insert_sum : forall P i r weights m entry,
+    nth_error P i = Some r -> i <= length weights ->
+    row_sum P (firstn i weights ++ m :: skipn i weights) entry =
+      (m * entry r + row_sum (firstn i P ++ skipn (S i) P) weights entry)%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|i] r weights m entry Hnth Hbound;
+      cbn [nth_error] in Hnth; try discriminate.
+    - injection Hnth as Hsame. subst r. reflexivity.
+    - destruct weights as [|w weights]; [cbn [length] in Hbound; lia|].
+      cbn [length] in Hbound.
+      change ((w * entry p + row_sum P
+        (firstn i weights ++ m :: skipn i weights) entry)%Z =
+        (m * entry r + (w * entry p +
+          row_sum (firstn i P ++ skipn (S i) P) weights entry))%Z).
+      rewrite (IH i r weights m entry Hnth ltac:(lia)). ring.
+  Qed.
+
+
+  (** Every emitted equality is independent of all other emitted rows. *)
+  Lemma join_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
+    forall i r, nth_error P i = Some r -> ~ in_span (firstn i P ++ skipn (S i) P) r.
+  Proof.
+    intros A B P Hjoin i r Hnth Hspan.
+    change (Reached (affine_hull A B) = Reached P) in Hjoin.
+    injection Hjoin as Hsame. subst P.
+    assert (Hrelation : lrel r = REq).
+    { pose proof (join_eq A B (affine_hull A B) eq_refl) as Hrelations.
+      apply (proj1 (Forall_forall _ _) Hrelations). now apply nth_error_In with (n := i). }
+    destruct (span_equality_certificate _ r Hspan Hrelation)
+      as [weights [sc [Hweights [Hpositive [Hcoefficient Hrhs]]]]].
+    rewrite Hrelation in Hrhs.
+    pose proof (equality_weights_length _ _ Hweights) as Hweight_length.
+    destruct (hull_others_length _ _ _ Hnth) as [Hremoved Hprefix].
+    assert (Hbound : i <= length weights) by lia.
+    set (all_weights := firstn i weights ++ (-sc)%Z :: skipn i weights).
+    assert (Hlength : length all_weights = length (affine_hull A B)).
+    { unfold all_weights. rewrite hull_insert_length by exact Hbound. lia. }
+    assert (Hcoefficients : forall x,
+      C.comb_coef (affine_hull A B) all_weights x = 0%Z).
+    { intro x. change (row_sum (affine_hull A B) all_weights
+        (fun s => C.coef_of x (lhs s)) = 0%Z).
+      unfold all_weights. rewrite (hull_insert_sum _ _ _ _ _ _ Hnth Hbound).
+      change ((-sc * C.coef_of x (lhs r) +
+        C.comb_coef (firstn i (affine_hull A B) ++ skipn (S i) (affine_hull A B))
+          weights x)%Z = 0%Z).
+      rewrite Hcoefficient. ring. }
+    assert (Hright : C.comb_rhs (affine_hull A B) all_weights = 0%Z).
+    { change (row_sum (affine_hull A B) all_weights rhs = 0%Z).
+      unfold all_weights. rewrite (hull_insert_sum _ _ _ _ _ _ Hnth Hbound).
+      change ((-sc * rhs r +
+        C.comb_rhs (firstn i (affine_hull A B) ++ skipn (S i) (affine_hull A B))
+          weights)%Z = 0%Z).
+      rewrite Hrhs. ring. }
+    pose proof (hull_affine_zero_weights A B all_weights Hlength Hcoefficients Hright)
+      as Hzero.
+    assert (Hmember : In (-sc)%Z all_weights).
+    { unfold all_weights. apply in_or_app. right. now left. }
+    pose proof (proj1 (Forall_forall _ _) Hzero (-sc)%Z Hmember) as Hfalse.
+    change ((-sc)%Z = 0%Z) in Hfalse. change (0 < sc)%Z in Hpositive. lia.
+  Qed.
+
   Lemma span_trans : forall a b c, Forall (in_span a) b -> Forall (in_span b) c ->
     Forall (in_span a) c.
   Proof.
