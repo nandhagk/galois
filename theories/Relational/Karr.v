@@ -1642,8 +1642,7 @@ End KarrCode.
 Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     (F : LINEARIZE X L N) (C : LINCERT X) <: KARR X L N F C.
   Include KarrCode X L F C.
-  (* STUB-CODE *)
-  Definition wrank (_ : wparam) (s : t) : nat :=
+   Definition wrank (_ : wparam) (s : t) : nat :=
     match s with Unreached => 0 | Reached P => length P end.
   Definition ngamma (s : t) (v : X.t -> Z) : Prop :=
     match s with Unreached => False | Reached P => Forall (sat v) P end.
@@ -4753,27 +4752,82 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply coefficient_sign_abs.
   Qed.
 
+  (** Equality span witnesses hold under models of the source equalities alone. *)
+  Lemma in_span_eq_sound_Q : forall P r,
+    in_span P r -> lrel r = REq -> forall v,
+    Forall (fun s => lrel s = REq -> satQ v s) P -> satQ v r.
+  Proof.
+    intros P r Hspan Hrel v Hmodels.
+    destruct (span_equality_certificate P r Hspan Hrel) as [ms [sc Hcert]].
+    now apply equality_certificate_sound_Q with (P := P) (ms := ms) (sc := sc).
+  Qed.
+
+  (** Every frozen span witness is recognized by the raw-row inclusion test. *)
+  Lemma entails_of_span : forall P r, in_span P r -> entails P r = true.
+  Proof.
+    intros P r [Hin | [ms [s [sc [Hcombine [Hrel [Hscale [Heval Hright]]]]]]]].
+    - unfold entails. apply orb_true_iff. left. apply existsb_exists.
+      exists r. split; [exact Hin |apply row_eqb_refl].
+    - apply entails_complete_Q. intros v Hmodels.
+      apply equality_certificate_sound_Q with (P := P) (ms := ms) (sc := sc); [|exact Hmodels].
+      now apply span_combination_certificate with (s := s).
+  Qed.
+
+
   (** Join emits equality rows. *)
   Lemma join_eq : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (fun r => lrel r = REq) P.
   Proof. Admitted. (* STUB *)
 
   Lemma wrank_rows : forall p P, wrank p (Reached P) = length P.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p P. reflexivity.
+  Qed.
   Lemma join_independent : forall a b P, join (Reached a) (Reached b) = Reached P ->
     forall i r, nth_error P i = Some r -> ~ in_span (firstn i P ++ skipn (S i) P) r.
   Proof. Admitted. (* STUB *)
   Lemma leb_complete_span : forall a b,
     Forall (in_span a) b -> leb (Reached a) (Reached b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hspan. unfold leb. destruct (contradiction a); [reflexivity |].
+    apply forallb_forall. intros r Hin. apply entails_of_span.
+    now apply (proj1 (Forall_forall _ _) Hspan).
+  Qed.
   Definition false_row : lcons X.t := LCons X.t nil REq 1%Z.
+
+  Lemma span_false_contradiction : forall P,
+    in_span P false_row -> exists ms, contradiction P = Some ms.
+  Proof.
+    intros P Hfalse. destruct (contradiction P) as [ms |] eqn:Hempty.
+    - exists ms. reflexivity.
+    - exfalso. destruct (contradiction_none_model_Q P Hempty) as [v Hmodels].
+      pose proof (in_span_eq_sound_Q P false_row Hfalse eq_refl v Hmodels) as Hbad.
+      cbn [false_row satQ lhs rhs lrel fold_right inject_Z Qeq] in Hbad. discriminate.
+  Qed.
   (** Successful inclusion gives span inclusion or an infeasible left system. *)
   Lemma leb_sound_span : forall a b, leb (Reached a) (Reached b) = true ->
     Forall (in_span a) b \/ in_span a false_row.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hle. unfold leb in Hle.
+    destruct (contradiction a) as [ms |] eqn:Hempty.
+    - right. now apply span_of_contradiction with (ms := ms).
+    - left. apply Forall_forall. intros r Hin.
+      pose proof (proj1 (forallb_forall _ _) Hle r Hin) as Hentails.
+      unfold entails in Hentails. apply orb_true_iff in Hentails as [Hliteral | Hcert].
+      + apply existsb_exists in Hliteral as [s [Hmember Hsame]].
+        apply row_eqb_sound in Hsame. subst s. now left.
+      + destruct (entail_cert a r) as [k |] eqn:Hsome; [|discriminate].
+        unfold entail_cert in Hsome. rewrite Hempty in Hsome.
+        destruct (target_certificate a r) as [candidate |] eqn:Htarget; [|discriminate].
+        apply span_of_certificate with (ms := mults candidate) (sc := scale candidate).
+        now apply target_certificate_equality.
+  Qed.
   (** An infeasible equality system is below every equality system. *)
   Lemma leb_false : forall a b, in_span a false_row -> leb (Reached a) (Reached b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hfalse. destruct (span_false_contradiction a Hfalse) as [ms Hempty].
+    unfold leb. now rewrite Hempty.
+  Qed.
   Lemma join_span : forall a b P, join (Reached a) (Reached b) = Reached P ->
     Forall (in_span a) P /\ Forall (in_span b) P.
   Proof. Admitted. (* STUB *)
