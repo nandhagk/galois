@@ -5568,6 +5568,89 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
     nia.
   Qed.
+
+  (** The input-cell width sum separates tuple payloads from list bookkeeping. *)
+  Definition tuple_cell_bits (k : list (cell V.t)) : nat :=
+    fold_right (fun c n => cell_bits V.encode c + n) 0 k.
+
+  (** Cell encoding has exactly the public tagged-cell width. *)
+  Lemma db_cell_code_bits : forall c,
+    Pos.size_nat (db_cell_code c) = cell_bits V.encode c.
+  Proof.
+    intros [i | v]; reflexivity.
+  Qed.
+
+  (** Self-delimiting glue adds at most twice the first code's width. *)
+  Lemma glue_width_bound : forall a b,
+    Pos.size_nat (glue a b) <= 2 * Pos.size_nat a + Pos.size_nat b.
+  Proof.
+    intro a. induction a as [a IH | a IH |]; intro b; cbn [glue Pos.size_nat].
+    - specialize (IH b). lia.
+    - specialize (IH b). lia.
+    - lia.
+  Qed.
+
+  (** The generated glue clock charges exactly one step per bit of its first code. *)
+  Lemma T_glue_bits : forall a b, T_glue a b = N.of_nat (Pos.size_nat a).
+  Proof.
+    intro a. induction a as [a IH | a IH |]; intro b; time_unfold T_glue;
+      cbn [Pos.size_nat]; rewrite ?Nat2N.inj_succ, ?IH; lia.
+  Qed.
+
+  (** Tuple codes have width linear in the sum of their tagged cell widths. *)
+  Lemma db_tuple_code_bits : forall k,
+    Pos.size_nat (db_tuple_code k) <= 2 * tuple_cell_bits k + 1.
+  Proof.
+    intro k. induction k as [| c rest IH]; [reflexivity |].
+    change (Pos.size_nat (glue (db_cell_code c) (db_tuple_code rest)) <=
+      2 * (cell_bits V.encode c + tuple_cell_bits rest) + 1).
+    pose proof (glue_width_bound (db_cell_code c) (db_tuple_code rest)) as Hglue.
+    rewrite db_cell_code_bits in Hglue. lia.
+  Qed.
+
+  (** Row-key width is linear in the function name and tuple payload widths. *)
+  Lemma db_row_code_bits : forall f k,
+    Pos.size_nat (db_row_code f k) <= 2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1.
+  Proof.
+    intros f k. pose proof (glue_width_bound f (db_tuple_code k)) as Hglue.
+    pose proof (db_tuple_code_bits k) as Htuple.
+    change (Pos.size_nat (glue f (db_tuple_code k)) <=
+      2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1). lia.
+  Qed.
+
+  (** Cell encoding pays the value encoder only in the value branch. *)
+  Lemma T_db_cell_code_bound : forall c,
+    (T_db_cell_code c <= (V.c_key + 2) * N.of_nat (cell_bits V.encode c + 1))%N.
+  Proof.
+    intros [i | v].
+    - time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
+    - pose proof (V.T_encode_le v) as Hencode.
+      change (V.T_encode v <= V.c_key * N.of_nat (Pos.size_nat (V.encode v) + 1))%N in Hencode.
+      time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
+  Qed.
+
+  (** The generated list-code walk pays once for every cell and its delimiter bits. *)
+  Lemma T_list_cell_code_bound : forall k,
+    (T_list_code db_cell_code (fun c => T_db_cell_code c) k <=
+      (V.c_key + 6) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intro k. induction k as [| c rest IH].
+    - time_unfold @T_list_code. cbn [tuple_cell_bits fold_right length]. nia.
+    - pose proof (T_db_cell_code_bound c) as Hcell.
+      pose proof (T_glue_bits (db_cell_code c) (list_code db_cell_code rest)) as Hglue.
+      rewrite db_cell_code_bits in Hglue. time_unfold @T_list_code.
+      unfold tuple_cell_bits in *. cbn [fold_right length] in *. nia.
+  Qed.
+
+  (** Tuple encoding adds only its wrapper to the linear list-code walk. *)
+  Lemma T_db_tuple_code_bound : forall k,
+    (T_db_tuple_code k <=
+      (V.c_key + 8) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intro k. pose proof (T_list_cell_code_bound k) as Hlist.
+    time_unfold T_db_tuple_code. nia.
+  Qed.
+
   (** Initialization starts without amortized debt. *)
   Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   Proof. Admitted. (* STUB *)
