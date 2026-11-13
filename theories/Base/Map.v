@@ -4,7 +4,7 @@
     For example, enumeration returns the client key stored by insertion.
     Builds on: KeySig, TrieSig and Argent time interfaces. *)
 
-From Stdlib Require Import List Bool NArith Lia Sorting.Sorted.
+From Stdlib Require Import List Bool NArith PeanoNat Lia Sorting.Sorted.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig TrieSig MapSig.
 From Galois.Base Require Import Trie.
@@ -326,13 +326,105 @@ Module TrieMap (K : KEY) <: MAP K.
     rewrite List.map_map.
     exact (PTrie.nodes_le_weight (K.t * A) m).
   Qed.
+
+  (** Codes distinguish stored labels even on carriers whose labels are inconsistent. *)
+  Definition binding_labels {A} (m : t A) : list (positive * K.t) :=
+    List.map (fun pka => (fst pka, fst (snd pka))) (PTrieCode.elements m).
+
+  Lemma binding_labels_spec : forall A (m : t A) p k,
+    In (p, k) (binding_labels m) <-> exists a, PTrieCode.get p m = Some (k, a).
+  Proof.
+    intros A m p k. unfold binding_labels. rewrite in_map_iff. split.
+    - intros [[q [j a]] [Heq Hin]]. cbn [fst snd] in Heq.
+      inversion Heq; subst q j. exists a. apply PTrie.elements_spec. exact Hin.
+    - intros [a Hget]. exists (p, (k, a)).
+      split; [reflexivity|apply PTrie.elements_spec; exact Hget].
+  Qed.
+
+  Lemma binding_labels_nodup : forall A (m : t A), NoDup (binding_labels m).
+  Proof.
+    intros A m. apply (NoDup_map_inv fst).
+    unfold binding_labels. rewrite List.map_map. apply PTrie.elements_nodup.
+  Qed.
+
+  Lemma weight_labels : forall A (m : t A),
+    weight m = fold_right Nat.add 0
+      (List.map (fun pk => K.bits (snd pk) + 1) (binding_labels m)).
+  Proof.
+    intros A m. unfold weight, binding_labels.
+    rewrite elements_trie, !List.map_map. reflexivity.
+  Qed.
+
+  (** Appending lists adds their nonnegative binding weights. *)
+  Lemma sum_map_app {X} (f : X -> nat) xs ys :
+    fold_right Nat.add 0 (List.map f (xs ++ ys)) =
+      fold_right Nat.add 0 (List.map f xs) + fold_right Nat.add 0 (List.map f ys).
+  Proof.
+    induction xs as [|x xs IH]; cbn [List.map app fold_right]; [reflexivity|].
+    rewrite IH. lia.
+  Qed.
+
+  (** Inclusion bounds a sum when the smaller list has no repeated binding. *)
+  Lemma sum_map_incl {X} (f : X -> nat) xs ys :
+    NoDup xs -> incl xs ys ->
+    fold_right Nat.add 0 (List.map f xs) <= fold_right Nat.add 0 (List.map f ys).
+  Proof.
+    intro Hnodup. revert ys.
+    induction Hnodup as [|x xs Hnotin Hnodup IH]; intros ys Hincl.
+    - cbn [List.map fold_right]. lia.
+    - destruct (in_split x ys (Hincl x (or_introl eq_refl)))
+        as [before [after Hys]]. subst ys.
+      assert (Htail : incl xs (before ++ after)).
+      { intros y Hy. specialize (Hincl y (or_intror Hy)).
+        apply in_app_iff in Hincl as [Hbefore|Hrest].
+        - apply in_app_iff. left. exact Hbefore.
+        - destruct Hrest as [Heq|Hafter].
+          + subst y. contradiction.
+          + apply in_app_iff. right. exact Hafter. }
+      specialize (IH _ Htail). rewrite sum_map_app in IH |- *.
+      cbn [List.map fold_right] in *. lia.
+  Qed.
+
   Lemma weight_set : forall A k (a : A) m, weight (set k a m) <= weight m + K.bits k + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k a m.
+    assert (Hincl : incl (binding_labels (set k a m))
+      ((K.encode k, k) :: binding_labels m)).
+    { intros [p q] Hin. apply binding_labels_spec in Hin as [b Hget].
+      unfold set in Hget. destruct (Pos.eq_dec p (K.encode k)) as [->|Hneq].
+      - rewrite PTrie.get_set_same in Hget. inversion Hget; subst. left. reflexivity.
+      - right. apply binding_labels_spec. exists b.
+        rewrite PTrie.get_set_other in Hget by exact Hneq. exact Hget. }
+    pose proof (sum_map_incl (fun pk => K.bits (snd pk) + 1) _ _
+      (binding_labels_nodup A (set k a m)) Hincl) as Hsum.
+    rewrite !weight_labels. cbn [List.map fold_right snd] in Hsum. lia.
+  Qed.
   Lemma weight_remove : forall A k (m : t A), weight (remove k m) <= weight m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A k m. rewrite !weight_labels. apply sum_map_incl.
+    - apply binding_labels_nodup.
+    - intros [p q] Hin. apply binding_labels_spec in Hin as [a Hget].
+      unfold remove in Hget. destruct (Pos.eq_dec p (K.encode k)) as [->|Hneq].
+      + rewrite PTrie.get_remove_same in Hget. discriminate.
+      + apply binding_labels_spec. exists a.
+        rewrite PTrie.get_remove_other in Hget by exact Hneq. exact Hget.
+  Qed.
   Lemma weight_merge_l : forall A B C (f : option A -> option B -> option C) m1 m2,
     (forall b, f None b = None) -> weight (merge f m1 m2) <= weight m1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros A B C f m1 m2 Hnone. rewrite !weight_labels. apply sum_map_incl.
+    - apply binding_labels_nodup.
+    - intros [p k] Hin. apply binding_labels_spec in Hin as [c Hget].
+      unfold merge in Hget. rewrite PTrie.get_merge in Hget by reflexivity.
+      destruct (PTrieCode.get p m1) as [[q a]|] eqn:Hleft;
+        destruct (PTrieCode.get p m2) as [[r b]|] eqn:Hright;
+        cbn [option_map] in Hget; try discriminate.
+      + destruct (f (Some a) (Some b)); inversion Hget; subst.
+        apply binding_labels_spec. exists a. exact Hleft.
+      + destruct (f (Some a) None); inversion Hget; subst.
+        apply binding_labels_spec. exists a. exact Hleft.
+      + rewrite Hnone in Hget. discriminate.
+  Qed.
 End TrieMap.
 
 Module TrieMapT (K : KEY_T) <: MAP_T K.
