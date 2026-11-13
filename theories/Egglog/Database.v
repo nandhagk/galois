@@ -441,6 +441,34 @@ Proof.
   revert IH. time_simpl. intro IH. time_cbn_all. nia.
 Qed.
 
+(** * Projection costs *)
+
+(** A skip pays for the cells it consumes and one final call. *)
+Lemma T_slot_skip_remaining_le : forall C gap (u : list C),
+  (T_slot_skip gap u + N.of_nat (length (slot_skip gap u)) <=
+    N.of_nat (length u + 1))%N.
+Proof.
+  intros C gap. induction gap as [| gap IH]; intros [| c u].
+  - time_step.
+  - time_step.
+  - time_step.
+  - pose proof (IH u) as Htail. time_step.
+Qed.
+
+(** Every original rank lies below the rank immediately after the permutation. *)
+Lemma slot_rank_positions_upper : forall first perm p rank,
+  In (p, rank) (slot_rank_positions first perm) ->
+  Pos.to_nat rank < Pos.to_nat first + length perm.
+Proof.
+  intros first perm. revert first.
+  induction perm as [| q perm IH]; intros first p rank Hin; cbn [slot_rank_positions] in Hin.
+  - contradiction.
+  - apply slot_rank_insert_in in Hin. destruct Hin as [Heq | Hin].
+    + inversion Heq; subst. cbn [length]. lia.
+    + specialize (IH (Pos.succ first) p rank Hin).
+      rewrite Pos2Nat.inj_succ in IH. cbn [length]. lia.
+Qed.
+
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
   row_history : list ((positive * list C) * positive);
