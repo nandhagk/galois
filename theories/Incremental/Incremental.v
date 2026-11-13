@@ -9445,6 +9445,76 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     rewrite Hkept in Hsum; symmetry; exact Hsum.
   Qed.
 
+  Lemma invalid_loop_empty : forall st current
+      (H : Acc (invalid_lt st) current),
+    invalid_pending current = [] ->
+    Argent.Loop.loop (invalid_lt st) (invalid_checked_step st) current H = current.
+  Proof.
+    intros st [pending seen bad done snapshots] H Hempty.
+    destruct pending as [|x pending]; [|discriminate Hempty].
+    destruct H.
+    cbn [Argent.Loop.loop Acc_inv invalid_checked_step].
+    reflexivity.
+  Qed.
+
+  Lemma invalid_walk_empty_snapshots : forall p p' ch st,
+    invalidate p p' ch st = [] ->
+    invalid_snapshots (invalid_walk p p' ch st) = inc_snapshots st.
+  Proof.
+    intros p p' ch st Hempty.
+    assert (Hbad : invalid_bad (invalid_initial p p' ch st) = []).
+    { destruct (invalid_bad (invalid_initial p p' ch st)) as [|x rest]
+        eqn:Hinitial; [reflexivity|].
+      exfalso.
+      assert (Hin0 : In x (invalid_bad (invalid_initial p p' ch st))).
+      { rewrite Hinitial; now left. }
+      pose proof (invalid_walk_bad_keeps p p' ch st x Hin0) as Hin.
+      unfold invalidate, invalidate_keys in Hempty; rewrite Hempty in Hin.
+      contradiction. }
+    assert (Hperm : invalid_queue_perm (invalid_initial p p' ch st)).
+    { unfold invalid_initial; apply invalid_seed_fold_queue_perm.
+      unfold invalid_queue_perm.
+      cbn [invalid_pending invalid_done invalid_bad app]; constructor. }
+    assert (Hpending : invalid_pending (invalid_initial p p' ch st) = []).
+    { unfold invalid_queue_perm in Hperm; rewrite Hbad in Hperm.
+      pose proof (Permutation_length Hperm) as Hlength.
+      rewrite length_app in Hlength; cbn [length] in Hlength.
+      apply length_zero_iff_nil; lia. }
+    unfold invalid_walk.
+    rewrite (invalid_loop_empty st (invalid_initial p p' ch st)
+      (invalid_accessible st (invalid_initial p p' ch st)) Hpending).
+    unfold invalid_initial; rewrite invalid_seed_fold_snapshots.
+    reflexivity.
+  Qed.
+
+  Lemma invalid_snapshot_mass_edit : forall p p' ch st,
+    invalid_snapshot_mass (invalid_walk p p' ch st) =
+      snapshot_mass (edit p p' ch st).
+  Proof.
+    intros p p' ch st; unfold edit.
+    destruct (invalid_walk p p' ch st)
+      as [pending seen bad done snapshots] eqn:Hwalk.
+    destruct bad as [|x bad].
+    - pose proof (invalid_walk_empty_snapshots p p' ch st) as Hsnap.
+      assert (Hempty : invalidate p p' ch st = []).
+      { unfold invalidate, invalidate_keys; rewrite Hwalk; reflexivity. }
+      specialize (Hsnap Hempty); rewrite Hwalk in Hsnap.
+      cbn [invalid_snapshots] in Hsnap.
+      unfold invalid_snapshot_mass; cbn [invalid_snapshots].
+      rewrite Hsnap; symmetry; apply DemandAccounting.snapshot_mass_sum.
+    - unfold invalid_snapshot_mass; cbn [invalid_snapshots inc_snapshots].
+      rewrite DemandAccounting.snapshot_mass_sum; reflexivity.
+  Qed.
+
+  Lemma invalid_walk_mass_partition : forall p p' ch st, state_ok st ->
+    snapshot_mass st = invalid_snapshot_mass (invalid_walk p p' ch st) +
+      finite_sum (fun x => length (cowrite_at st x)) (invalidate p p' ch st).
+  Proof.
+    intros p p' ch st Hstate.
+    rewrite invalid_snapshot_mass_edit.
+    exact (snapshot_mass_partition p p' ch st Hstate).
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
