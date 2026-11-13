@@ -829,6 +829,193 @@ Module Index (V : VALUE) <: INDEX V.
     - rewrite read_node_mark_other by exact Hneq. intuition congruence.
   Qed.
 
+  Lemma terminal_put_edge : forall ix n code edge degree counter q,
+    node_terminal (read_node
+      (write_node ix n
+        (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree
+          (node_terminal (read_node ix n))) counter) q) =
+      node_terminal (read_node ix q).
+  Proof.
+    intros ix n code edge degree counter q. destruct (Pos.eq_dec q n) as [-> | Hneq].
+    - rewrite read_node_write_same. reflexivity.
+    - now rewrite read_node_write_other.
+  Qed.
+
+  Lemma child_put_edge_other : forall ix n code edge degree counter q c,
+    table_ok ix ->
+    table_ok (write_node ix n
+      (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) ->
+    (q <> n \/ encode_cell c <> code) ->
+    child (write_node ix n
+      (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) q c = child ix q c.
+  Proof.
+    intros ix n code edge degree counter q c Htable Htable' Hother.
+    rewrite !child_raw by assumption.
+    destruct (Pos.eq_dec q n) as [-> | Hneq].
+    - rewrite read_node_write_same. cbn [node_edges].
+      rewrite PTrie.get_set_other by tauto. reflexivity.
+    - rewrite read_node_write_other by exact Hneq. reflexivity.
+  Qed.
+
+  Lemma child_put_edge_same : forall ix n c edge degree counter,
+    table_ok (write_node ix n
+      (IndexNode (PTrieCode.set (encode_cell c) edge (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) ->
+    child (write_node ix n
+      (IndexNode (PTrieCode.set (encode_cell c) edge (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) n c = Some (edge_child edge).
+  Proof.
+    intros ix n c edge degree counter Htable.
+    rewrite child_raw by exact Htable. rewrite read_node_write_same. cbn [node_edges].
+    rewrite PTrie.get_set_same. reflexivity.
+  Qed.
+
+  Lemma child_put_edge_existing : forall ix n code old edge degree counter,
+    table_ok ix ->
+    table_ok (write_node ix n
+      (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) ->
+    PTrieCode.get code (node_edges (read_node ix n)) = Some old ->
+    edge_child edge = edge_child old -> forall q c,
+    child (write_node ix n
+      (IndexNode (PTrieCode.set code edge (node_edges (read_node ix n))) degree
+        (node_terminal (read_node ix n))) counter) q c = child ix q c.
+  Proof.
+    intros ix n code old edge degree counter Htable Htable' Hget Hchild q c.
+    destruct (Pos.eq_dec q n) as [-> | Hnode].
+    - destruct (Pos.eq_dec (encode_cell c) code) as [Hcode | Hcode].
+      + rewrite !child_raw by assumption. rewrite read_node_write_same. cbn [node_edges].
+        rewrite Hcode, PTrie.get_set_same, Hget, Hchild. reflexivity.
+      + apply child_put_edge_other; auto.
+    - apply child_put_edge_other; auto.
+  Qed.
+
+  Lemma seek_extensional : forall ix ix',
+    (forall n c, child ix' n c = child ix n c) ->
+    forall r n, seek ix' n r = seek ix n r.
+  Proof.
+    intros ix ix' Hchild r. induction r as [| c r IH]; intro n; cbn [seek].
+    - reflexivity.
+    - rewrite Hchild. destruct (child ix n c); [apply IH | reflexivity].
+  Qed.
+
+  Lemma contains_from_extensional : forall ix ix',
+    (forall n c, child ix' n c = child ix n c) ->
+    (forall n, node_terminal (read_node ix' n) = node_terminal (read_node ix n)) ->
+    forall r n, contains_from n r ix' = contains_from n r ix.
+  Proof.
+    intros ix ix' Hchild Hterminal r n. unfold contains_from.
+    rewrite (seek_extensional ix ix' Hchild).
+    destruct (seek ix n r); [apply Hterminal | reflexivity].
+  Qed.
+
+  Lemma contains_from_empty_node : forall ix n r, read_node ix n = empty_node ->
+    contains_from n r ix = false.
+  Proof.
+    intros ix n [| c r] Hempty; unfold contains_from; cbn [seek].
+    - rewrite Hempty. reflexivity.
+    - unfold child. destruct (Pos.ltb (next ix) n); [reflexivity |].
+      rewrite Hempty. cbn [empty_node node_edges]. rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
+  Lemma contains_from_cons : forall ix n c r,
+    contains_from n (c :: r) ix =
+      match child ix n c with Some m => contains_from m r ix | None => false end.
+  Proof.
+    intros ix n c r. unfold contains_from. cbn [seek].
+    destruct (child ix n c); reflexivity.
+  Qed.
+
+  (** Connecting a fresh empty child introduces no tuple before its terminal is marked. *)
+  Lemma fresh_edge_membership : forall ix n c degree, edge_shape ix -> table_ok ix ->
+    (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = None ->
+    forall r q, (q <= next ix)%positive ->
+    contains_from q r
+      (write_node ix n
+        (IndexNode (PTrieCode.set (encode_cell c) (IndexEdge c (Pos.succ (next ix)) 1%N)
+          (node_edges (read_node ix n))) degree (node_terminal (read_node ix n)))
+        (Pos.succ (next ix))) = contains_from q r ix.
+  Proof.
+    intros ix n c degree Hshape Htable Hnode Hget.
+    set (out := write_node ix n
+      (IndexNode (PTrieCode.set (encode_cell c) (IndexEdge c (Pos.succ (next ix)) 1%N)
+        (node_edges (read_node ix n))) degree (node_terminal (read_node ix n)))
+      (Pos.succ (next ix))).
+    assert (Htable' : table_ok out).
+    { unfold out. apply table_ok_write; [exact Htable | |].
+      - eapply Pos.le_trans; [exact Hnode | apply Pos.lt_le_incl, Pos.lt_succ_diag_r].
+      - apply Pos.lt_le_incl, Pos.lt_succ_diag_r. }
+    assert (Hfresh : read_node out (Pos.succ (next ix)) = empty_node).
+    { unfold out. rewrite read_node_write_other.
+      - apply read_node_above_counter; [exact Htable | apply Pos.lt_succ_diag_r].
+      - intro Heq. rewrite <- Heq in Hnode.
+        pose proof (Pos.lt_succ_diag_r (next ix)) as Hlt.
+        apply Pos.lt_nle in Hlt. contradiction. }
+    assert (Hnew : child out n c = Some (Pos.succ (next ix))).
+    { unfold out. apply child_put_edge_same. exact Htable'. }
+    assert (Hold : child ix n c = None).
+    { rewrite child_raw by exact Htable. now rewrite Hget. }
+    assert (Hother : forall q d, q <> n \/ encode_cell d <> encode_cell c ->
+      child out q d = child ix q d).
+    { intros q d Hdiff. unfold out. apply child_put_edge_other; assumption. }
+    induction r as [| d r IH]; intros q Hbound.
+    - change (node_terminal (read_node out q) = node_terminal (read_node ix q)).
+      unfold out. apply terminal_put_edge.
+    - rewrite !contains_from_cons.
+      destruct (Pos.eq_dec q n) as [Hnode' | Hnode'];
+        destruct (Pos.eq_dec (encode_cell d) (encode_cell c)) as [Hcode | Hcode].
+      + subst q. apply encode_cell_inj in Hcode. subst d. rewrite Hnew, Hold.
+        now apply contains_from_empty_node.
+      + rewrite Hother by tauto.
+        destruct (child ix q d) as [m |] eqn:Hchild; [| reflexivity].
+        apply IH. exact (proj2 (child_forward ix q d m Hshape Hchild)).
+      + rewrite Hother by tauto.
+        destruct (child ix q d) as [m |] eqn:Hchild; [| reflexivity].
+        apply IH. exact (proj2 (child_forward ix q d m Hshape Hchild)).
+      + rewrite Hother by tauto.
+        destruct (child ix q d) as [m |] eqn:Hchild; [| reflexivity].
+        apply IH. exact (proj2 (child_forward ix q d m Hshape Hchild)).
+  Qed.
+
+  Lemma insert_step_membership : forall st c r q, shape (fst st) ->
+    (q <= next (fst st))%positive ->
+    contains_from q r (fst (insert_step_st st c)) = contains_from q r (fst st).
+  Proof.
+    intros [ix n] c r q [Hshape [Htable Hparents]] Hbound.
+    unfold insert_step_st. destruct (Pos.ltb (next ix) n) eqn:Hguard; [reflexivity |].
+    apply Pos.ltb_ge in Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; cbn [fst].
+    - apply contains_from_extensional.
+      + apply child_put_edge_existing with (old := edge); try assumption; try reflexivity.
+        apply table_ok_write; [exact Htable | exact Hguard | apply Pos.le_refl].
+      + apply terminal_put_edge.
+    - apply fresh_edge_membership; assumption.
+  Qed.
+
+  Lemma shape_insert_walk : forall r st, shape (fst st) ->
+    shape (fst (fold_left insert_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros st Hshape; cbn [fold_left]; [exact Hshape |].
+    apply IH. now apply shape_insert_step.
+  Qed.
+
+  Lemma insert_walk_membership : forall walk st r q, shape (fst st) ->
+    (q <= next (fst st))%positive ->
+    contains_from q r (fst (fold_left insert_step_st walk st)) =
+      contains_from q r (fst st).
+  Proof.
+    induction walk as [| c walk IH]; intros st r q Hshape Hbound;
+      cbn [fold_left]; [reflexivity |].
+    rewrite IH.
+    - now apply insert_step_membership.
+    - now apply shape_insert_step.
+    - eapply Pos.le_trans; [exact Hbound | apply insert_step_counter_mono].
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
