@@ -9654,6 +9654,106 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     intros p r; unfold T_row_keys; time_simpl; time_cbn; lia.
   Qed.
 
+  Lemma T_row_writes_changed_le : forall p r st total width_total,
+    S.wf p -> In r (S.rows p) ->
+    length (row_keys p r) <= total -> width p st + 1 <= width_total ->
+    (T_row_writes p r <=
+      4 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat total * N.of_nat width_total)%N.
+  Proof.
+    intros p r st total width_total Hwf Hr Hlen Hwidth.
+    pose proof (T_row_keys_le p st r Hwf Hr) as Hkeys.
+    pose proof (nat_to_N_le _ _ Hlen) as HlenN.
+    pose proof (nat_to_N_le _ _ Hwidth) as HwidthN.
+    eapply N.le_trans; [apply T_row_writes_from_keys|].
+    eapply N.le_trans; [exact Hkeys|].
+    apply N.mul_le_mono; [|exact HwidthN].
+    apply N.mul_le_mono; [|exact HlenN].
+    apply N.mul_le_mono; lia.
+  Qed.
+
+  Definition invalid_changed_row_work (p p' : S.prog) (r : S.row) : nat :=
+    length (S.writes p r) + length (S.writes p' r) +
+      length (S.deps p r) + length (S.deps p' r) + 1.
+
+  Lemma invalid_changed_row_arithmetic : forall base row widthN first second app output,
+    (1 <= base)%N -> (1 <= row)%N -> (1 <= widthN)%N ->
+    (first <= 4 * base * row * widthN)%N ->
+    (second <= 4 * base * row * widthN)%N ->
+    (app <= row + 1)%N -> (output <= row)%N ->
+    (1 + (first + second + app) + output + 2 <=
+      32 * base * row * widthN)%N.
+  Proof.
+    intros base row widthN first second app output
+      Hbase Hrow Hwidth Hfirst Hsecond Happ Houtput.
+    assert (Hscale : (row <= base * row * widthN)%N).
+    { assert (Hfirst_scale : (1 * row <= base * row)%N).
+      { apply N.mul_le_mono_r; exact Hbase. }
+      assert (Hsecond_scale : (base * row * 1 <= base * row * widthN)%N).
+      { apply N.mul_le_mono_l; exact Hwidth. }
+      lia. }
+    set (q := (base * row * widthN)%N) in Hscale.
+    replace (4 * base * row * widthN)%N with (4 * q)%N
+      in Hfirst by (unfold q; ring).
+    replace (4 * base * row * widthN)%N with (4 * q)%N
+      in Hsecond by (unfold q; ring).
+    replace (32 * base * row * widthN)%N with (32 * q)%N
+      by (unfold q; ring).
+    lia.
+  Qed.
+
+  Lemma T_invalid_changed_row_le : forall p p' r st,
+    S.wf p -> S.wf p' -> In r (S.rows p) -> In r (S.rows p') ->
+    let row := invalid_changed_row_work p p' r in
+    let width_total := width p st + width p' st + kwidth st + 1 in
+    (1 + (T_row_writes p r + T_row_writes p' r +
+      Datatypes.T_app (row_writes p r) (row_writes p' r)) +
+      N.of_nat (length (row_writes p r ++ row_writes p' r)) + 2 <=
+      32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat row * N.of_nat width_total)%N.
+  Proof.
+    intros p p' r st Hwf Hwf' Hr Hr'; cbn beta zeta.
+    set (row := invalid_changed_row_work p p' r).
+    set (width_total := width p st + width p' st + kwidth st + 1).
+    assert (Hlen : length (row_keys p r) <= row).
+    { unfold row, invalid_changed_row_work, row_keys.
+      change (row_writes p r) with (S.writes p r).
+      rewrite length_app; lia. }
+    assert (Hlen' : length (row_keys p' r) <= row).
+    { unfold row, invalid_changed_row_work, row_keys.
+      change (row_writes p' r) with (S.writes p' r).
+      rewrite length_app; lia. }
+    assert (Hwidth : width p st + 1 <= width_total) by (unfold width_total; lia).
+    assert (Hwidth' : width p' st + 1 <= width_total) by (unfold width_total; lia).
+    pose proof (T_row_writes_changed_le p r st row width_total
+      Hwf Hr Hlen Hwidth) as Hfirst.
+    pose proof (T_row_writes_changed_le p' r st row width_total
+      Hwf' Hr' Hlen' Hwidth') as Hsecond.
+    pose proof (Datatypes.T_app_le (row_writes p r) (row_writes p' r)) as Happ.
+    assert (Happ' : (Datatypes.T_app (row_writes p r) (row_writes p' r) <=
+      N.of_nat row + 1)%N).
+    { eapply N.le_trans; [exact Happ|].
+      apply nat_to_N_le in Hlen.
+      unfold row_keys in Hlen; rewrite length_app in Hlen.
+      cbn [length] in Hlen.
+      lia. }
+    assert (Houtput : (N.of_nat (length (row_writes p r ++ row_writes p' r)) <=
+      N.of_nat row)%N).
+    { apply nat_to_N_le.
+      unfold row, invalid_changed_row_work.
+      change (row_writes p r) with (S.writes p r).
+      change (row_writes p' r) with (S.writes p' r).
+      rewrite length_app; lia. }
+    assert (Hbase : (1 <= S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) by lia.
+    assert (Hrow : (1 <= N.of_nat row)%N)
+      by (unfold row, invalid_changed_row_work; lia).
+    assert (HwidthN : (1 <= N.of_nat width_total)%N)
+      by (unfold width_total; lia).
+    eapply invalid_changed_row_arithmetic;
+      [exact Hbase|exact Hrow|exact HwidthN|
+       exact Hfirst|exact Hsecond|exact Happ'|exact Houtput].
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
