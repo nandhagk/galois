@@ -9517,6 +9517,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** A historical row key resolves to its current stored key. *)
   Definition located (db : t) (f : positive) (k : list (cell V.t))
       : option (list (cell V.t)) := locate f k db.
+  (** Parent links and use entries refer to the historical row inventory. *)
+  Definition row_store_ok (db : t) : Prop :=
+    let store := db_row_store db in
+    let recorded r := In r (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history store))) in
+    let size r := match PTrieCode.get r (row_weights store) with
+      | Some n => n | None => 1%N end in
+    (forall r p, PTrieCode.get r (row_links store) = Some p ->
+      recorded r /\ recorded p /\
+      (p <> r -> (1 <= size r)%N /\ (2 * size r <= size p)%N)) /\
+    (forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
+      exists r, PTrieCode.get (db_row_code f k) (row_history store) = Some ((f, k), r)).
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
@@ -9524,7 +9536,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     metadata_ok db /\ db_npending db = N.of_nat (pending db) /\
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
-    UnionFind.width (db_forest db) <= N.size_nat (ids db).
+    UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
+    row_store_ok db.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
 
@@ -9854,7 +9867,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Merged row groups at least double the losing group. *)
   Lemma F_row_by_size : forall db work r, inv_on db work -> row_parent db r <> r ->
     (1 <= row_size db r)%N /\ (2 * row_size db r <= row_size db (row_parent db r))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work r Hinv Hparent.
+    unfold inv_on in Hinv. destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
+    unfold forest_ok in Hforest. destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore).
+    unfold row_store_ok in Hstore. destruct Hstore as [Hlinks _].
+    unfold row_parent in Hparent |- *.
+    destruct (PTrieCode.get r (row_links (db_row_store db))) as [p |] eqn:Hlink;
+      [| contradiction].
+    exact (proj2 (proj2 (Hlinks r p Hlink)) Hparent).
+  Qed.
   (** A row group holds at most one row per assignment of its identifier positions. *)
   Lemma F_row_group : forall db work f k r d, inv_on db work -> row_id db f k = Some r ->
     row_parent db (row_up db d r) = row_up db d r ->
