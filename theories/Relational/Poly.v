@@ -6335,6 +6335,204 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
 
+
+  (** Every stored variable agrees with the trie address where it is stored. *)
+  Definition poly_variable_addressed (m : ptrie X.t) : Prop :=
+    forall key x, PTrieCode.get key m = Some x -> X.encode x = key.
+
+  (** An empty variable table satisfies address agreement. *)
+  Lemma poly_variable_addressed_empty : poly_variable_addressed PTrieCode.empty.
+  Proof.
+    intros key x Hget. rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
+
+  (** Storing a variable at its own address preserves address agreement. *)
+  Lemma poly_variable_addressed_set : forall m x,
+    poly_variable_addressed m ->
+    poly_variable_addressed (PTrieCode.set (X.encode x) x m).
+  Proof.
+    intros m x Haddressed key y Hget.
+    destruct (Pos.eq_dec key (X.encode x)) as [Hsame|Hother].
+    - subst key. rewrite PTrie.get_set_same in Hget. injection Hget as Heq. now subst y.
+    - rewrite PTrie.get_set_other in Hget by exact Hother. now apply Haddressed in Hget.
+  Qed.
+
+  (** Scanning a coefficient list preserves address agreement. *)
+  Lemma poly_variable_terms_addressed : forall (terms : list (X.t * Z)) m,
+    poly_variable_addressed m ->
+    poly_variable_addressed
+      (fold_left (fun acc p => PTrieCode.set (X.encode (fst p)) (fst p) acc) terms m).
+  Proof.
+    intro terms. induction terms as [|p terms IH]; intros m Haddressed; cbn [fold_left].
+    - exact Haddressed.
+    - apply IH. now apply poly_variable_addressed_set.
+  Qed.
+
+  (** Scanning complete rows preserves address agreement. *)
+  Lemma poly_variable_rows_addressed : forall rows m,
+    poly_variable_addressed m ->
+    poly_variable_addressed (fold_left (fun acc r =>
+      fold_left (fun acc p => PTrieCode.set (X.encode (fst p)) (fst p) acc)
+        (lhs r) acc) rows m).
+  Proof.
+    intro rows. induction rows as [|r rows IH]; intros m Haddressed; cbn [fold_left].
+    - exact Haddressed.
+    - apply IH. now apply poly_variable_terms_addressed.
+  Qed.
+
+  (** Distinct addresses imply distinct stored variables. *)
+  Lemma poly_variable_values_nodup : forall m,
+    poly_variable_addressed m -> NoDup (map snd (PTrieCode.elements m)).
+  Proof.
+    intros m Haddressed. apply NoDup_map_inv with (f := X.encode). rewrite map_map.
+    assert (Hkeys : map (fun p => X.encode (snd p)) (PTrieCode.elements m) =
+      map fst (PTrieCode.elements m)).
+    { apply map_ext_in. intros [key x] Hin. cbn [fst snd]. apply Haddressed.
+      exact (proj1 (PTrie.elements_spec _ m key x) Hin). }
+    rewrite Hkeys. apply PTrie.elements_nodup.
+  Qed.
+
+  (** A cons fold reverses its input in front of its initial accumulator. *)
+  Lemma poly_variable_cons_fold : forall (xs acc : list X.t),
+    fold_left (fun acc x => x :: acc) xs acc = rev xs ++ acc.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intro acc; cbn [fold_left rev].
+    - reflexivity.
+    - rewrite IH, <- app_assoc. reflexivity.
+  Qed.
+
+  (** This proof model names the actual table built by the variable collector. *)
+  Definition poly_variable_table (rows : list (lcons X.t)) : ptrie X.t :=
+    fold_left (fun acc r =>
+      fold_left (fun acc p => PTrieCode.set (X.encode (fst p)) (fst p) acc)
+        (lhs r) acc) rows PTrieCode.empty.
+
+  (** The executable variable list is the reverse enumeration of the constructed table. *)
+  Lemma poly_variables_shape : forall rows,
+    poly_variables X.encode rows = rev (map snd (PTrieCode.elements (poly_variable_table rows))).
+  Proof.
+    intro rows. unfold poly_variables, poly_variable_table. rewrite PTrieT.F9_fold_values.
+    rewrite (poly_fold_values_list _ _ (fun acc x => x :: acc) _ nil).
+    now rewrite poly_variable_cons_fold, app_nil_r.
+  Qed.
+
+  (** Each executable elimination coordinate occurs only once. *)
+  Lemma poly_variables_nodup : forall rows, NoDup (poly_variables X.encode rows).
+  Proof.
+    intro rows. rewrite poly_variables_shape. apply NoDup_rev.
+    apply poly_variable_values_nodup. unfold poly_variable_table.
+    apply poly_variable_rows_addressed. apply poly_variable_addressed_empty.
+  Qed.
+
+  (** Reading an updated variable table yields the new variable or a previous binding. *)
+  Lemma poly_variable_set_origin : forall m x key y,
+    PTrieCode.get key (PTrieCode.set (X.encode x) x m) = Some y ->
+    y = x \/ PTrieCode.get key m = Some y.
+  Proof.
+    intros m x key y Hget. destruct (Pos.eq_dec key (X.encode x)) as [Hsame|Hother].
+    - subst key. rewrite PTrie.get_set_same in Hget. left. injection Hget as Heq. symmetry. exact Heq.
+    - rewrite PTrie.get_set_other in Hget by exact Hother. now right.
+  Qed.
+
+  (** Every variable retained after scanning terms came from those terms or the input table. *)
+  Lemma poly_variable_terms_origin : forall (terms : list (X.t * Z)) m key x,
+    PTrieCode.get key
+      (fold_left (fun acc p => PTrieCode.set (X.encode (fst p)) (fst p) acc) terms m) =
+      Some x -> In x (map fst terms) \/ PTrieCode.get key m = Some x.
+  Proof.
+    intro terms. induction terms as [|p terms IH]; intros m key x Hget;
+      cbn [fold_left] in Hget.
+    - now right.
+    - destruct (IH _ _ _ Hget) as [Hin|Hprior].
+      + left. now right.
+      + destruct (poly_variable_set_origin m (fst p) key x Hprior) as [Hsame|Hbefore].
+        * left. left. symmetry. exact Hsame.
+        * now right.
+  Qed.
+
+  (** Every variable retained after scanning rows came from a source row or the input table. *)
+  Lemma poly_variable_rows_origin : forall rows m key x,
+    PTrieCode.get key (fold_left (fun acc r =>
+      fold_left (fun acc p => PTrieCode.set (X.encode (fst p)) (fst p) acc)
+        (lhs r) acc) rows m) = Some x ->
+    (exists r, In r rows /\ In x (map fst (lhs r))) \/ PTrieCode.get key m = Some x.
+  Proof.
+    intro rows. induction rows as [|r rows IH]; intros m key x Hget;
+      cbn [fold_left] in Hget.
+    - now right.
+    - destruct (IH _ _ _ Hget) as [[s [Hs Hterm]]|Hprior].
+      + left. exists s. split; [now right|exact Hterm].
+      + destruct (poly_variable_terms_origin (lhs r) m key x Hprior) as [Hterm|Hbefore].
+        * left. exists r. split; [now left|exact Hterm].
+        * now right.
+  Qed.
+
+  (** The executable variable list introduces no variable outside the raw source rows. *)
+  Lemma poly_variables_support : forall rows x,
+    In x (poly_variables X.encode rows) -> exists r, In r rows /\ In x (map fst (lhs r)).
+  Proof.
+    intros rows x Hin. rewrite poly_variables_shape in Hin.
+    apply (proj2 (in_rev _ _)) in Hin.
+    apply in_map_iff in Hin as [[key y] [Hsame Hin]]. cbn [snd] in Hsame. subst y.
+    apply (proj1 (PTrie.elements_spec _ _ _ _)) in Hin.
+    unfold poly_variable_table in Hin.
+    destruct (poly_variable_rows_origin rows PTrieCode.empty key x Hin) as [Hsource|Hempty].
+    - exact Hsource.
+    - rewrite PTrie.get_empty in Hempty. discriminate.
+  Qed.
+
+  (** Every executable coordinate belongs to the declared source variable collection. *)
+  Lemma poly_variables_in_vars_of : forall rows,
+    incl (poly_variables X.encode rows) (vars_of rows).
+  Proof.
+    intros rows x Hx. destruct (poly_variables_support rows x Hx) as [r [Hr Hterm]].
+    now apply poly_vars_of_contains with (r := r).
+  Qed.
+
+  (** The executable coordinate count fits the declared source dimension. *)
+  Lemma poly_variables_count : forall rows,
+    length (poly_variables X.encode rows) <= length (vars_of rows).
+  Proof.
+    intro rows. apply NoDup_incl_length; [apply poly_variables_nodup|].
+    apply poly_variables_in_vars_of.
+  Qed.
+
+  (** Entailment coordinates use only target occurrences and declared source variables. *)
+  Lemma poly_entail_variables_incl : forall P c,
+    incl (poly_variables X.encode (c :: P)) (map fst (lhs c) ++ vars_of P).
+  Proof.
+    intros P c x Hx. destruct (poly_variables_support (c :: P) x Hx)
+      as [r [[Hsame|Hr] Hterm]].
+    - subst r. apply in_or_app. now left.
+    - apply in_or_app. right. now apply poly_vars_of_contains with (r := r).
+  Qed.
+
+  (** The actual entailment fuel excludes the extra source-row count in the public budget. *)
+  Lemma poly_entail_variables_count : forall P c,
+    length (poly_variables X.encode (c :: P)) <= length (vars_of P) + length (lhs c).
+  Proof.
+    intros P c. assert (Hcount : length (poly_variables X.encode (c :: P)) <=
+      length (map fst (lhs c) ++ vars_of P)).
+    { apply NoDup_incl_length; [apply poly_variables_nodup|].
+      apply poly_entail_variables_incl. }
+    rewrite length_app, length_map in Hcount. lia.
+  Qed.
+
+  (** The actual number of eliminations fits the frozen public fuel. *)
+  Lemma poly_entail_fuel : forall P c,
+    length (poly_variables X.encode (c :: P)) <= n P + length (lhs c).
+  Proof.
+    intros P c. pose proof (poly_entail_variables_count P c). unfold n. lia.
+  Qed.
+
+  (** A nonempty source list leaves one extra cost stage for checking terminal candidates. *)
+  Lemma poly_entail_spare_fuel : forall P c, P <> [] ->
+    S (length (poly_variables X.encode (c :: P))) <= n P + length (lhs c).
+  Proof.
+    intros P c Hnonempty. pose proof (poly_entail_variables_count P c) as Hcount.
+    unfold n. destruct P; [contradiction|]. cbn [length]. lia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
