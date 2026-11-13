@@ -10910,6 +10910,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite Forall_forall in Hqueue. exact (Hqueue x Hin).
   Qed.
 
+  Lemma public_inv_forward : forall db, database_wf db -> database_idle_ok db ->
+    slot_rank_ok db -> inv_on db [].
+  Proof.
+    intros db Hbase Hidle Hrank. unfold inv_on.
+    split; [intros f k o; exact (public_rows_member db f k o Hbase) |].
+    split; [exact (public_rows_distinct db Hbase) |].
+    split.
+    { intros f k o i Hrow Hid. eapply database_idle_coverage; eassumption. }
+    split.
+    { intros f k o i Hrow Hid Hnonroot.
+      eapply database_idle_scheduled; eassumption. }
+    split.
+    { intros s f perm Hslot. exact (public_slot_inv db Hbase s f perm Hslot). }
+    split.
+    { intros f k o i Hrow Hid. exact (public_row_id_bound db Hbase f k o i Hrow Hid). }
+    split; [intros e Hin; contradiction |].
+    split; [exact (forest_ok_public db Hbase Hidle Hrank) |].
+    split.
+    { intros f k o Hrow. exact (public_row_kind_ok db Hbase f k o Hrow). }
+    split; [exact (database_idle_queue_distinct db Hidle) |].
+    split; [reflexivity |].
+    intros x Hin. exact (public_queue_allocated db Hbase x Hin).
+  Qed.
+
   (** Active repair states expose cache metadata directly, without a public wf conversion. *)
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
