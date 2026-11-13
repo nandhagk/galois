@@ -189,6 +189,7 @@ Module ReducedHeight (A B : BLATTICE) (R : REDUCER A B)
                          andb (A.leb (fst r) (fst y)) (B.leb (snd r) (snd y))))
     <: HEIGHT Lat.
   Definition rank (x : Lat.t) := H.rank (R.reduce x).
+  Module Red := Reduced A B R.
   Definition height := H.height.
 
   Lemma rank_le : forall a, rank a <= height.
@@ -196,9 +197,21 @@ Module ReducedHeight (A B : BLATTICE) (R : REDUCER A B)
 
   (** Reduction preserves the rank order of comparable pairs. *)
   Lemma rank_mono : forall a b, Lat.leb a b = true -> rank a <= rank b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hab. apply H.rank_mono.
+    eapply Red.P.leb_trans; [apply Red.reduce_idem_pair|].
+    apply Red.reduce_mono_pair. exact Hab.
+  Qed.
 
   Lemma rank_strict : forall a b, Lat.leb a b = true -> Lat.leb b a = false ->
     rank a < rank b.
-  Proof. Admitted. (* CONVERT: reduced_height: the dictionary carrier changed *)
+  Proof.
+    intros a b Hab Hba. apply H.rank_strict.
+    - eapply Red.P.leb_trans; [apply Red.reduce_idem_pair|].
+      apply Red.reduce_mono_pair. exact Hab.
+    - destruct (P.leb (R.reduce b) (R.reduce a)) eqn:Hred; auto.
+      assert (Hcontra : Lat.leb b a = true).
+      { eapply Red.P.leb_trans; [exact Hred|apply Red.reduce_lower_pair]. }
+      congruence.
+  Qed.
 End ReducedHeight.
