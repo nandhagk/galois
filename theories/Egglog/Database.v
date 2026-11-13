@@ -469,6 +469,26 @@ Proof.
       rewrite Pos2Nat.inj_succ in IH. cbn [length]. lia.
 Qed.
 
+Local Opaque PTrieT.c_trie.
+
+(** The tuple walk charges consumed cells once and one bounded trie write per selected rank. *)
+Lemma T_slot_pick_ranked_le : forall C steps (u : list C) picked bits,
+  Forall (fun q => Pos.size_nat (snd q) <= bits) steps ->
+  (T_slot_pick_ranked steps u picked <= N.of_nat (length u + 1) +
+    (PTrieT.c_trie + 2) * N.of_nat (length steps) * N.of_nat (bits + 1))%N.
+Proof.
+  intros C steps. induction steps as [| [gap rank] steps IH]; intros u picked bits Hbits.
+  - time_step.
+  - inversion Hbits as [| q qs Hrank Hrest]; subst.
+    pose proof (T_slot_skip_remaining_le C gap u) as Hskip.
+    time_unfold (@T_slot_pick_ranked). time_simpl. time_cbn.
+    destruct (slot_skip gap u) as [| c suffix] eqn:Hsuffix.
+    + time_cbn_all. nia.
+    + pose proof (IH (c :: suffix) (PTrieCode.set rank c picked) bits Hrest) as Htail.
+      pose proof (PTrieT.T_set_le C rank c picked) as Hset.
+      time_cbn_all. rewrite ?Nat2N.inj_add in *. time_lin.
+Qed.
+
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
   row_history : list ((positive * list C) * positive);
