@@ -4897,6 +4897,31 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - exact Hnew_cycle.
   Qed.
 
+  (** The four candidate paths equal two sequential edge extensions. *)
+  Lemma incremental_sequential_extension : forall m i j d,
+    RelationalPathBounds.below (Some 0%Z)
+      (twin_path d (Some 0%Z) (entry m j (flip j))
+        (entry m (flip i) i)) ->
+    forall a b, entry (increment_matrix i j d m) a b =
+      RelationalPathBounds.edge_extension
+        (RelationalPathBounds.edge_extension (entry m) i j d)
+        (flip j) (flip i) d a b.
+  Proof.
+    intros m i j d Hmixed a b. rewrite entry_increment.
+    unfold RelationalPathBounds.edge_extension, edge_path, twin_path,
+      path_sum, edge_prefix, twin_prefix, bound_meet.
+    destruct (entry m a b) as [old|];
+      destruct (entry m a i) as [left|];
+      destruct (entry m j b) as [right|];
+      destruct (entry m a (flip j)) as [tleft|];
+      destruct (entry m (flip i) b) as [tright|];
+      destruct (entry m j (flip j)) as [cross|];
+      destruct (entry m (flip i) i) as [back|];
+      cbn [RelationalPathBounds.minimum RelationalPathBounds.plus
+        RelationalPathBounds.below twin_path path_sum twin_prefix] in *;
+      try reflexivity; try (f_equal; lia).
+  Qed.
+
   Lemma coherent_entry : forall m, coherent m ->
     forall a b, entry m a b = entry m (flip b) (flip a).
   Proof.
