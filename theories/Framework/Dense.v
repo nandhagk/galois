@@ -246,34 +246,61 @@ Module DenseT (P : TYPE) (N : KEY_T) (E : TYPE)
   (** Enumerating rows costs linear time in the output length. *)
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p _; unfold c_sys; time_step.
+    pose proof (ListDef.T_map_le (@Seed N.t E.t) (fun _ => 1%N) 1%N
+      (C.entries p) (fun _ => N.le_refl 1)) as Hseed.
+    pose proof (ListDef.T_map_le (@Flow N.t E.t) (fun _ => 1%N) 1%N
+      (C.edges p) (fun _ => N.le_refl 1)) as Hflow.
+    unfold rows; rewrite length_app; rewrite !length_map in *; nia.
+  Qed.
   (** Target lookup fits the row budget. *)
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
     (T_target p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [n|e] _ _; unfold c_sys; time_step.
+  Qed.
   (** Starting a row fits the row budget. *)
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [n|e] _ _; unfold c_sys, row_work; time_step.
+  Qed.
   (** Resuming a frame that a listed row reaches pays for the sizes of the lookup values. *)
   Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
     (forall y, L.size (look y) <= s) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) ->
     (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look s n q acc x f _ _ Hsize _ _.
+    pose proof (T.flow_work_mono p (L.size (look x)) s (Hsize x)) as Hmono.
+    unfold c_sys, row_work; time_step.
+  Qed.
   (** Dependency enumeration pays for every key occurrence. *)
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) * N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [n|e] _ _; unfold c_sys; time_step.
+  Qed.
   (** Side enumeration pays for every key occurrence. *)
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) * N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r _ _; unfold c_sys; time_step.
+  Qed.
   (** Row output sizes fit the transfer budget. *)
   Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
     (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
     (N.of_nat (L.size a) <= row_work p s)%N /\
     Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [n|e] look s a ss _ _ Hsize Heval.
+    - rewrite eval_seed in Heval; inversion Heval; subst; split; [|constructor].
+      eapply N.le_trans; [apply T.boundary_size_le|].
+      apply T.flow_work_mono; lia.
+    - rewrite eval_flow in Heval; inversion Heval; subst; split; [|constructor].
+      eapply N.le_trans; [apply T.transfer_size_le|].
+      apply T.flow_work_mono; apply Hsize.
+  Qed.
 End DenseT.
