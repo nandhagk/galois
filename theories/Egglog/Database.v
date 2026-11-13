@@ -6960,6 +6960,108 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + now apply cong_same.
   Qed.
 
+  (** Every relation row survives repair at its old or normalized key. *)
+  Lemma repair_relation_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args, row (view db) g args None ->
+    exists args', row (view (repair_current f key db)) g args' None /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args'.
+  Proof.
+    intros db f key Hagrees Htyped g args Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args)) (RowKeys.encode (f, key)))
+      as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      exists (normal_key db key). split; [now apply repair_relation_target |].
+      eapply key_rel_mono_forward; [| now apply forest_agrees_normal_key].
+      intros i j Hij. now apply repair_current_same_preserves.
+    - assert (Hother : (g, args) <> (f, key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      exists args. split; [| apply key_same_refl_forward].
+      unfold repair_current. destruct (row_get f key db) as [before |]; [| exact Hrow].
+      destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+        (output_eqb (option_map (normal_cell db) before) before)); [exact Hrow |].
+      apply put_relation_keeps. apply row_delete_binding. now split.
+  Qed.
+
+  (** Every lattice row survives repair below its old or normalized target value. *)
+  Lemma repair_lattice_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args a m, kind (view db) g = Some (OLat m) ->
+    row (view db) g args (Some (Val a)) ->
+    exists args' b, row (view (repair_current f key db)) g args' (Some (Val b)) /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args' /\
+      V.merge m a b = b.
+  Proof.
+    intros db f key Hagrees Htyped g args a m Hkind Hrow.
+    destruct (Pos.eq_dec (RowKeys.encode (g, args)) (RowKeys.encode (f, key)))
+      as [Hequal | Hdifferent].
+    - apply RowKeys.encode_inj in Hequal. injection Hequal as Hfun Hkey. subst g args.
+      destruct (repair_lattice_target db f key a m Hagrees Htyped Hkind Hrow)
+        as [b [Htarget Hle]].
+      exists (normal_key db key), b. split; [exact Htarget |]. split; [| exact Hle].
+      eapply key_rel_mono_forward; [| now apply forest_agrees_normal_key].
+      intros i j Hij. now apply repair_current_same_preserves.
+    - assert (Hother : (g, args) <> (f, key)).
+      { intro Hequal. apply Hdifferent. now rewrite Hequal. }
+      unfold repair_current. destruct (row_get f key db) as [before |].
+      + destruct (andb (Pos.eqb (db_tuple_code (normal_key db key)) (db_tuple_code key))
+          (output_eqb (option_map (normal_cell db) before) before)).
+        * exists args, a. split; [exact Hrow |]. split;
+            [apply key_same_refl_forward | apply V.merge_idem].
+        * assert (Hdeleted : row (view (row_delete f key db)) g args (Some (Val a))).
+          { apply row_delete_binding. now split. }
+          assert (Hdeleted_kind : kind (view (row_delete f key db)) g = Some (OLat m))
+            by now rewrite row_delete_kind.
+          destruct (put_lattice_keeps (row_delete f key db) f (normal_key db key)
+            (option_map (normal_cell db) before) g args a m Hdeleted_kind Hdeleted)
+            as [b [Htarget Hle]].
+          exists args, b. split; [exact Htarget |]. split;
+            [apply key_same_refl_forward | exact Hle].
+      + exists args, a. split; [exact Hrow |]. split;
+          [apply key_same_refl_forward | apply V.merge_idem].
+  Qed.
+
+  (** A typed output contains its own canonicalized value under forest agreement. *)
+  Lemma row_output_canon_le : forall db f key output, forest_agrees db ->
+    kind_ok db f key output -> out_le db f (option_map (canon db) output) output.
+  Proof.
+    intros db f key [[i | a] |] Hagrees [_ [_ Hshape]].
+    - cbn [out_le option_map canon cell_le]. apply equality_log_sym.
+      now apply forest_agrees_id.
+    - cbn [out_le option_map canon cell_le].
+      destruct (kind (view db) f) as [[| |m] |] eqn:Hkind in Hshape; try contradiction.
+      exists m. split; [exact Hkind | apply V.merge_idem].
+    - exact I.
+  Qed.
+
+  (** Actual repair retains each old row with related keys and a greater output. *)
+  Lemma repair_row_forward : forall db f key, forest_agrees db ->
+    (forall g args output, row (view db) g args output -> kind_ok db g args output) ->
+    forall g args output, row (view db) g args output ->
+    exists args' output', row (view (repair_current f key db)) g args' output' /\
+      Forall2 (cell_rel (same (view (repair_current f key db)))) args args' /\
+      out_le (repair_current f key db) g
+        (option_map (canon (repair_current f key db)) output) output'.
+  Proof.
+    intros db f key Hagrees Htyped g args [[i | a] |] Hrow.
+    - destruct (repair_constructor_forward db f key Hagrees Htyped g args i Hrow)
+        as [args' [j [Htarget [Hkeys Hsame]]]].
+      exists args', (Some (Id j)). split; [exact Htarget |]. split; [exact Hkeys |].
+      cbn [out_le option_map canon cell_le]. eapply equality_log_trans with (b := i).
+      + apply equality_log_sym. apply forest_agrees_id. now apply forest_agrees_repair.
+      + exact Hsame.
+    - destruct (Htyped g args (Some (Val a)) Hrow) as [_ [_ Hshape]].
+      destruct (kind (view db) g) as [[| |m] |] eqn:Hkind in Hshape; try contradiction.
+      destruct (repair_lattice_forward db f key Hagrees Htyped g args a m Hkind Hrow)
+        as [args' [b [Htarget [Hkeys Hle]]]].
+      exists args', (Some (Val b)). split; [exact Htarget |]. split; [exact Hkeys |].
+      cbn [out_le option_map canon cell_le]. exists m. split; [| exact Hle].
+      now rewrite (proj1 (repair_current_layout db f key)).
+    - destruct (repair_relation_forward db f key Hagrees Htyped g args Hrow)
+        as [args' [Htarget Hkeys]].
+      exists args', None. split; [exact Htarget |]. split; [exact Hkeys | exact I].
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
@@ -9482,7 +9584,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exists k' o', row (view (fst s')) f k' o' /\
       Forall2 (cell_rel (same (view (fst s')))) k k' /\
       out_le (fst s') f (option_map (canon (fst s')) o) o'.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] next f k o Hinv Hstep Hrow.
+    change (inv_on db work) in Hinv. cbn [fst] in Hrow.
+    assert (Hagrees : forest_agrees db).
+    { split; [exact (inv_on_forest_wf db work Hinv) |].
+      intros i j. exact (inv_on_same_repr db work i j Hinv). }
+    assert (Htyped : forall g args output, row (view db) g args output -> kind_ok db g args output).
+    { unfold inv_on in Hinv. tauto. }
+    destruct work as [| [g args] rest].
+    - change (db_rstep (db, []) = inl next) in Hstep. cbn [db_rstep fst snd] in Hstep.
+      destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst next. cbn [fst].
+      destruct (db_pop_loser_preserves db x current Hpop) as [Hforest Hview].
+      exists k, o. split; [now rewrite Hview |]. split.
+      + rewrite Hview. apply key_same_refl_forward.
+      + pose proof (row_output_canon_le db f k o Hagrees (Htyped f k o Hrow)) as Hout.
+        unfold out_le, canon, repr in Hout |- *. now rewrite Hview, Hforest.
+    - change (db_rstep (db, (g, args) :: rest) = inl next) in Hstep.
+      cbn [db_rstep fst snd] in Hstep. injection Hstep as Hnext. subst next. cbn [fst].
+      exact (repair_row_forward db g args Hagrees Htyped f k o Hrow).
+  Qed.
 
   (** Empty active and pending schedules leave no noncanonical row occurrence. *)
   Lemma inv_quiet_canonical : forall db, inv db -> queue db = [] -> canonical db.
