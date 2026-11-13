@@ -969,6 +969,59 @@ Proof.
   - eapply IH; eassumption.
 Qed.
 
+Definition database_rank_groups_bounded (start : N)
+    (groups : PTrieCode.t (N * N)) : Prop :=
+  forall f g j, PTrieCode.get f groups = Some (g, j) ->
+    (g <= start)%N /\ (j <= start)%N.
+
+Lemma database_rank_groups_bounded_empty :
+  database_rank_groups_bounded 0%N PTrieCode.empty.
+Proof.
+  intros f g j Hget. rewrite PTrie.get_empty in Hget. discriminate.
+Qed.
+
+Lemma database_rank_groups_bounded_step : forall start groups f,
+  database_rank_groups_bounded start groups ->
+  let place := match PTrieCode.get f groups with
+    | Some position => position | None => (start, 0%N) end in
+  database_rank_groups_bounded (N.succ start)
+    (PTrieCode.set f (fst place, N.succ (snd place)) groups).
+Proof.
+  intros start groups f Hbounded place h g j Hget.
+  destruct (Pos.eq_dec h f) as [-> | Hne].
+  - rewrite PTrie.get_set_same in Hget.
+    injection Hget as <- <-. unfold place.
+    destruct (PTrieCode.get f groups) as [[rank count] |] eqn:Hprior;
+      cbn [fst snd].
+    + destruct (Hbounded f rank count Hprior). lia.
+    + lia.
+  - rewrite PTrie.get_set_other in Hget by exact Hne.
+    destruct (Hbounded h g j Hget). lia.
+Qed.
+
+Lemma database_rank_slots_from_bound : forall kinds start groups sl,
+  database_rank_groups_bounded start groups ->
+  forall n d g j, nth_error (database_rank_slots_from kinds start groups sl) n =
+    Some (d, g, j) ->
+    (g <= start + N.of_nat n)%N /\ (j <= start + N.of_nat n)%N.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[f perm] rest IH]; intros start groups Hbounded n d g j Hentry;
+    destruct n as [|n]; cbn [nth_error database_rank_slots_from] in Hentry;
+    try discriminate.
+  - destruct (PTrieCode.get f groups) as [[rank offset] |] eqn:Hprior.
+    + injection Hentry as <- <- <-. cbn [fst snd].
+      destruct (Hbounded f rank offset Hprior). lia.
+    + injection Hentry as <- <- <-. cbn [fst snd]. lia.
+  - specialize (IH (N.succ start)
+      (PTrieCode.set f
+        (fst (match PTrieCode.get f groups with Some p => p | None => (start, 0%N) end),
+         N.succ (snd (match PTrieCode.get f groups with
+           Some p => p | None => (start, 0%N) end))) groups)).
+    specialize (IH (database_rank_groups_bounded_step start groups f Hbounded)).
+    specialize (IH n d g j Hentry). rewrite Nat2N.inj_succ. lia.
+Qed.
+
 Definition database_rank_offset (groups : PTrieCode.t (N * N)) (f : positive) : N :=
   match PTrieCode.get f groups with Some (_, j) => j | None => 0%N end.
 
