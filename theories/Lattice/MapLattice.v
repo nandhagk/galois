@@ -50,9 +50,23 @@ Module MapLattice (K : KEY) (M : MAP K) (L : LATTICE) <: LATTICE.
     intro a; apply leb_read; intro k; unfold read, bot; rewrite M.find_empty; apply L.bot_least.
   Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold is_bot, bot. apply Bool.negb_true_iff.
+    destruct (M.existsb (fun a => negb (L.is_bot a)) M.empty) eqn:Hex; auto.
+    apply M.existsb_spec in Hex. destruct Hex as [k [a [Hfind _]]].
+    rewrite M.find_empty in Hfind. discriminate.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hbot. apply leb_read; intro k. unfold read.
+    destruct (M.find k a) as [v|] eqn:Hfind; cbn [default].
+    - apply L.is_bot_least. destruct (L.is_bot v) eqn:Hv; auto.
+      unfold is_bot in Hbot. apply Bool.negb_true_iff in Hbot.
+      assert (Hex : M.existsb (fun x => negb (L.is_bot x)) a = true).
+      { apply M.existsb_spec. exists k, v. rewrite Hfind, Hv. auto. }
+      congruence.
+    - apply L.bot_least.
+  Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
   Proof.
     intros a b; apply leb_read; intro k; unfold read, join.
