@@ -4513,6 +4513,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite PTrie.get_empty in Hrow. discriminate.
   Qed.
 
+  Lemma database_idle_ok_init : forall ds sl, database_idle_ok (init ds sl).
+  Proof.
+    intros ds sl. unfold database_idle_ok.
+    split; [apply database_row_store_ok_init |].
+    split; [constructor |].
+    split.
+    - intros f k o i Hrow _. exfalso. exact (init_rows_empty ds sl f k o Hrow).
+    - split.
+      + intros f k o i Hrow _ _. exfalso. exact (init_rows_empty ds sl f k o Hrow).
+      + intros f k0 k Hloc. unfold db_locate in Hloc.
+        cbn [init db_row_store row_history] in Hloc.
+        rewrite PTrie.get_empty in Hloc. discriminate.
+  Qed.
+
   (** Empty rows and empty construction histories establish the history invariant initially. *)
   Lemma database_history_init : forall ds sl, database_history (init ds sl).
   Proof.
