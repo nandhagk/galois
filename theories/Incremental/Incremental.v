@@ -36,6 +36,7 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
       with Definition key_code := S.key_code)
     (R : RESTRICT_OPS L S RS) (Sol : SOLVER_OPS L RS) (Checker : CHECK_OPS L S)
     <: INCREMENTAL_OPS L S RS R Sol Checker.
+  Include SourceBindingsCode L S Checker.
   Definition state := incremental_state S.key L.t.
   Definition init : state :=
     {| inc_values := PTrieCode.empty; inc_influence := PTrieCode.empty;
@@ -56,12 +57,6 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
       {| snapshot_owner := owner; snapshot_writes := writes ++ previous; snapshot_live := true |}
       st.
 
-  Definition lookup (m : kmap S.key L.t) (x : S.key) : option L.t :=
-    match PTrieCode.get (S.key_code x) m with
-    | Some (stored_key, v) => if S.key_eqb x stored_key then Some v else None
-    | None => None
-    end.
-
   Definition value (st : state) (x : S.key) : option L.t :=
     lookup (inc_values st) x.
 
@@ -69,7 +64,6 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
     match value st x with Some _ => true | None => false end.
 
   Definition missing (st : state) (x : S.key) : bool := negb (present st x).
-  Definition mem (x : S.key) (xs : list S.key) : bool := existsb (S.key_eqb x) xs.
   Definition row_writes (p : S.prog) (r : S.row) : list S.key :=
     S.target p r :: S.sides p r.
   Definition row_keys (p : S.prog) (r : S.row) : list S.key :=
@@ -97,12 +91,6 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
       : list S.row :=
     region_for p st (discovery_keys p roots st).
 
-  Fixpoint unique (xs : list S.key) : list S.key :=
-    match xs with
-    | [] => []
-    | x :: rest => if mem x rest then unique rest else x :: unique rest
-    end.
-
   Definition freeze_values (st : state) (xs : list S.key) : list (S.key * L.t) :=
     flat_map (fun x =>
       match value st x with Some v => [(x, v)] | None => [] end) xs.
@@ -115,33 +103,11 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
       : list (S.key * L.t) :=
     frozen_for_rows p (discovery_region p roots st) st.
 
-  (** This is exactly the released [checked] fold when [fz = frozen p roots st]. *)
-  Definition restore (fz : list (S.key * L.t)) (m : kmap S.key L.t)
-      : kmap S.key L.t :=
-    fold_left (fun acc xv => PTrieCode.set (S.key_code (fst xv)) xv acc) fz m.
-
-  (** Inserting bottom is intentional: it makes an otherwise unknown root present. *)
-  Fixpoint fill (xs : list S.key) (m base : kmap S.key L.t) : kmap S.key L.t :=
-    match xs with
-    | [] => base
-    | x :: rest =>
-        PTrieCode.set (S.key_code x) (x, Checker.look m x) (fill rest m base)
-    end.
-
   Definition merge_discovered (st : state) (xs : list S.key) (m : kmap S.key L.t) : state :=
     {| inc_values := fill xs m (inc_values st);
        inc_influence := inc_influence st;
        inc_cowrites := inc_cowrites st;
        inc_snapshots := inc_snapshots st |}.
-
-  Fixpoint prune_values (cells : list (positive * (S.key * L.t)))
-      (m : kmap S.key L.t) : kmap S.key L.t :=
-    match cells with
-    | [] => m
-    | (path, (x, v)) :: rest =>
-        let remaining := if Pos.eqb path (S.key_code x) then m else PTrieCode.remove path m in
-        prune_values rest remaining
-    end.
 
   (** Validation makes dropping malformed cells observationally invisible at every key.
       The inventory is read once from the original map; pruning does not re-enumerate. *)
@@ -218,6 +184,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     (Least : SOLVER_LEAST L LB RS Sol) <: INCREMENTAL L LB Top S RS R Sol Checker Least.
   Include IncrementalCode L S RS R Sol Checker.
   Include INCREMENTAL_SPEC L S RS R Sol Checker.
+  Include SourceBindingFacts L S Checker.
+  Include SourceRowFacts L S.
 
   (** Initialization has no stored value at any key. *)
   Lemma value_init : forall x, value init x = None.
@@ -253,15 +221,6 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     destruct (value st x); cbn; split; intro H; congruence.
   Qed.
 
-  Lemma mem_spec : forall x xs, mem x xs = true <-> In x xs.
-  Proof.
-    intros x xs; unfold mem; rewrite existsb_exists; split.
-    - intros [y [Hy Heq]].
-      destruct (S.key_eqb_spec x y) as [->|Hneq]; [exact Hy|discriminate Heq].
-    - intro Hx; exists x; split; [exact Hx|].
-      destruct (S.key_eqb_spec x x); congruence.
-  Qed.
-
   Lemma active_spec : forall p st known r,
     active p st known r = true <->
     exists x, In x (row_writes p r) /\ value st x = None /\ In x known.
@@ -274,11 +233,6 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       exists x; split; [exact Hx|apply andb_true_iff; split].
       + now apply missing_spec.
       + now apply mem_spec.
-  Qed.
-
-  Lemma key_eqb_true : forall x y, S.key_eqb x y = true <-> x = y.
-  Proof.
-    intros x y; destruct (S.key_eqb_spec x y); split; intro H; congruence.
   Qed.
 
   Lemma discovery_seed_spec : forall st roots x,
@@ -375,63 +329,6 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intro Hvalue; injection Hvalue as <-; reflexivity.
   Qed.
 
-  Lemma lookup_set : forall m x y v,
-    lookup (PTrieCode.set (S.key_code y) (y, v) m) x =
-      if S.key_eqb x y then Some v else lookup m x.
-  Proof.
-    intros m x y v; destruct (S.key_eqb_spec x y) as [->|Hneq].
-    - unfold lookup; rewrite PTrie.get_set_same.
-      destruct (S.key_eqb_spec y y); congruence.
-    - unfold lookup; rewrite PTrie.get_set_other; [reflexivity|].
-      intro Hcode; apply Hneq, S.key_code_inj, Hcode.
-  Qed.
-
-  Lemma lookup_remove : forall m path x,
-    lookup (PTrieCode.remove path m) x =
-      if Pos.eqb (S.key_code x) path then None else lookup m x.
-  Proof.
-    intros m path x; destruct (Pos.eqb (S.key_code x) path) eqn:Hpath.
-    - apply Pos.eqb_eq in Hpath; unfold lookup.
-      rewrite Hpath, PTrie.get_remove_same; reflexivity.
-    - apply Pos.eqb_neq in Hpath; unfold lookup.
-      rewrite PTrie.get_remove_other by exact Hpath; reflexivity.
-  Qed.
-
-  Lemma malformed_lookup : forall original path y v x,
-    PTrieCode.get path original = Some (y, v) ->
-    Pos.eqb path (S.key_code y) = false -> S.key_code x = path ->
-    lookup original x = None.
-  Proof.
-    intros original path y v x Hget Hbad Hpath; subst path.
-    unfold lookup; rewrite Hget.
-    destruct (S.key_eqb_spec x y) as [->|Hneq]; [|reflexivity].
-    rewrite Pos.eqb_refl in Hbad; discriminate Hbad.
-  Qed.
-
-  Lemma prune_values_lookup : forall cells original current,
-    (forall path y v, In (path, (y, v)) cells ->
-      PTrieCode.get path original = Some (y, v)) ->
-    (forall x, lookup current x = lookup original x) ->
-    forall x, lookup (prune_values cells current) x = lookup original x.
-  Proof.
-    induction cells as [|[path [y v]] rest IH]; intros original current Hcells Hagree x.
-    - exact (Hagree x).
-    - cbn [prune_values].
-      destruct (Pos.eqb path (S.key_code y)) eqn:Hvalid.
-      + apply (IH original current).
-        * intros q z w Hin; apply Hcells; now right.
-        * exact Hagree.
-      + apply (IH original (PTrieCode.remove path current)).
-        * intros q z w Hin; apply Hcells; now right.
-        * intro z; rewrite lookup_remove.
-          destruct (Pos.eqb (S.key_code z) path) eqn:Hpath.
-          -- symmetry; eapply malformed_lookup.
-             ++ apply Hcells; now left.
-             ++ exact Hvalid.
-             ++ now apply Pos.eqb_eq.
-          -- exact (Hagree z).
-  Qed.
-
   Lemma normalize_values_value : forall st x,
     value (normalize_values st) x = value st x.
   Proof.
@@ -441,23 +338,13 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     - intro y; reflexivity.
   Qed.
 
-  Lemma fill_lookup : forall xs m base x,
-    lookup (fill xs m base) x =
-      if mem x xs then Some (Checker.look m x) else lookup base x.
-  Proof.
-    induction xs as [|y rest IH]; intros m base x; cbn [fill mem].
-    - reflexivity.
-    - rewrite lookup_set, IH.
-      change (mem x (y :: rest)) with (S.key_eqb x y || mem x rest)%bool.
-      destruct (S.key_eqb_spec x y) as [->|Hneq]; reflexivity.
-  Qed.
-
   Lemma merge_old_value : forall st xs m x v,
     (forall y, In y xs -> value st y = None) -> value st x = Some v ->
     value (merge_discovered st xs m) x = Some v.
   Proof.
     intros st xs m x v Hmissing Hvalue.
     unfold value, merge_discovered; cbn [inc_values]; rewrite fill_lookup.
+    change (Bindings.mem x xs) with (mem x xs).
     destruct (mem x xs) eqn:Hmem; [|exact Hvalue].
     apply mem_spec in Hmem; specialize (Hmissing x Hmem); congruence.
   Qed.
@@ -475,6 +362,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st xs m x; unfold dom, value, merge_discovered; cbn [inc_values].
     rewrite fill_lookup.
+    change (Bindings.mem x xs) with (mem x xs).
     destruct (mem x xs) eqn:Hmem.
     - split.
       + intros _; right; now apply mem_spec.
@@ -482,7 +370,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     - split.
       + intros [v Hv]; left; exists v; exact Hv.
       + intros [[v Hv]|Hin]; [exists v; exact Hv|].
-        apply mem_spec in Hin; congruence.
+        pose proof (proj2 (mem_spec x xs) Hin) as Htrue.
+        change (mem x xs = true) in Htrue; congruence.
   Qed.
 
   Lemma merge_new_look : forall st xs m x,
@@ -490,28 +379,6 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Proof.
     intros st xs m x Hin; unfold look, value, merge_discovered; cbn [inc_values].
     rewrite fill_lookup, (proj2 (mem_spec x xs) Hin); reflexivity.
-  Qed.
-
-  Lemma unique_spec : forall xs x, In x (unique xs) <-> In x xs.
-  Proof.
-    induction xs as [|y rest IH]; intro x; cbn [unique].
-    - reflexivity.
-    - destruct (mem y rest) eqn:Hmem.
-      + rewrite IH; cbn [In]; split; [now right|].
-        intros [->|Hin]; [now apply mem_spec in Hmem|exact Hin].
-      + cbn [In]; rewrite IH; reflexivity.
-  Qed.
-
-  Lemma unique_nodup : forall xs, NoDup (unique xs).
-  Proof.
-    induction xs as [|x rest IH]; cbn [unique].
-    - constructor.
-    - destruct (mem x rest) eqn:Hmem; [exact IH|].
-      constructor; [|exact IH].
-      intro Hin.
-      pose proof (proj1 (unique_spec rest x) Hin) as Hrest.
-      pose proof (proj2 (mem_spec x rest) Hrest) as Htrue.
-      congruence.
   Qed.
 
   Lemma freeze_values_spec : forall st xs x v,
@@ -542,49 +409,6 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     apply unique_spec, in_flat_map; exists r; auto.
   Qed.
 
-  Lemma raw_set : forall m x y v,
-    look_or S.key_code L.bot (PTrieCode.set (S.key_code y) (y, v) m) x =
-      if S.key_eqb x y then v else look_or S.key_code L.bot m x.
-  Proof.
-    intros m x y v; destruct (S.key_eqb_spec x y) as [->|Hneq].
-    - unfold look_or; rewrite PTrie.get_set_same; reflexivity.
-    - unfold look_or; rewrite PTrie.get_set_other; [reflexivity|].
-      intro Hcode; apply Hneq, S.key_code_inj, Hcode.
-  Qed.
-
-  (** Coherent later seed updates cannot disturb a value already restored. *)
-  Lemma restore_preserves : forall fz m x v,
-    (forall y w, In (y, w) fz -> y = x -> w = v) ->
-    look_or S.key_code L.bot m x = v ->
-    look_or S.key_code L.bot (restore fz m) x = v.
-  Proof.
-    induction fz as [|[y w] rest IH]; intros m x v Hcoherent Hlook.
-    - exact Hlook.
-    - cbn [restore fold_left fst].
-      apply IH.
-      + intros z a Hin Heq; apply (Hcoherent z a); [now right|exact Heq].
-      + rewrite raw_set.
-        destruct (S.key_eqb_spec x y) as [->|Hneq]; [|exact Hlook].
-        apply (Hcoherent y w); [now left|reflexivity].
-  Qed.
-
-  Lemma restore_hit : forall fz m x v,
-    (forall w, In (x, w) fz -> w = v) -> In (x, v) fz ->
-    look_or S.key_code L.bot (restore fz m) x = v.
-  Proof.
-    induction fz as [|[y w] rest IH]; intros m x v Hcoherent Hin.
-    - contradiction.
-    - cbn [restore fold_left fst].
-      destruct Hin as [Heq|Hin].
-      + inversion Heq; subst y w.
-        apply restore_preserves.
-        * intros z a Hz ->; apply Hcoherent; now right.
-        * rewrite raw_set; destruct (S.key_eqb_spec x x); congruence.
-      + apply IH.
-        * intros a Ha; apply Hcoherent; now right.
-        * exact Hin.
-  Qed.
-
   (** The authoritative checker sees each frozen old value exactly after restoration. *)
   Lemma restored_old_support : forall p rs st m r x v,
     In r rs -> In x (row_keys p r) -> value st x = Some v ->
@@ -595,36 +419,6 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     - intros w Hw; apply frozen_for_rows_sound in Hw.
       rewrite Hvalue in Hw; injection Hw as Heq; symmetry; exact Heq.
     - eapply frozen_for_rows_complete; eauto.
-  Qed.
-
-  Lemma forallb_same : forall A (xs : list A) f g,
-    (forall x, In x xs -> f x = g x) -> forallb f xs = forallb g xs.
-  Proof.
-    intros A xs; induction xs as [|x rest IH]; intros f g Hagree; cbn [forallb].
-    - reflexivity.
-    - rewrite (Hagree x (or_introl eq_refl)); f_equal.
-      apply IH; intros y Hy; apply Hagree; now right.
-  Qed.
-
-  (** Row checking only observes the row's declared read and write support. *)
-  Lemma row_look_transport : forall p r a b,
-    S.wf p -> In r (S.rows p) ->
-    (forall x, In x (row_keys p r) -> a x = b x) ->
-    row_ok L.leb a (S.target p r) (S.eval p r a) =
-      row_ok L.leb b (S.target p r) (S.eval p r b).
-  Proof.
-    intros p r a b Hwf Hr Hagree.
-    assert (Heval : S.eval p r a = S.eval p r b).
-    { apply S.reads_within; [exact Hwf|exact Hr|].
-      intros x Hx; apply Hagree; unfold row_keys; apply in_or_app; now right. }
-    rewrite Heval.
-    destruct (S.eval p r b) as [[v ss]|] eqn:Hout; cbn [row_ok]; [|reflexivity].
-    assert (Htarget : a (S.target p r) = b (S.target p r)).
-    { apply Hagree; unfold row_keys, row_writes; apply in_or_app; left; now left. }
-    rewrite Htarget; f_equal; apply forallb_same.
-    intros [x w] Hside; cbn [fst snd]; rewrite Hagree; [reflexivity|].
-    unfold row_keys, row_writes; apply in_or_app; left; right.
-    eapply S.sides_within; eauto.
   Qed.
 
   Lemma clear_buckets_value : forall xs st x,
@@ -652,7 +446,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intros p st xs rs m x; unfold finish_demand.
     rewrite record_rows_value, clear_buckets_value.
     unfold value, merge_discovered; cbn [inc_values].
-    rewrite !fill_lookup; destruct (mem x xs); [reflexivity|].
+    rewrite !fill_lookup; change (Bindings.mem x xs) with (mem x xs).
+    destruct (mem x xs); [reflexivity|].
     exact (normalize_values_value st x).
   Qed.
 
@@ -867,6 +662,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   TimeFun prune_values.
   TimeFun canonical_values.
   TimeFun normalize_values.
+  TimeFun remove_keys.
   TimeFun remove_buckets.
   TimeFun clear_new_buckets.
   TimeFun push_entry.
@@ -1246,6 +1042,5 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Lemma region_new : forall p roots st r,
     In r (region p roots st) -> exists y, In y (S.writes p r) /\ ~ dom st y.
   Proof. Admitted. (* STUB *)
-
 
 End IncrementalT.

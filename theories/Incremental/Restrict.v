@@ -2,12 +2,14 @@
 
     A restricted program stores the original program, frozen values and selected rows.
     For example, selecting no source rows still retains any seed rows.
-    Builds on: RestrictSig. *)
+    Shared footprint and binding helpers support checked demand and invalidation.
+    Builds on: RestrictSig, SystemSig, CheckSig, MapSig and Trie. *)
 
 From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop.
+From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Fixpoint Require Import Query SystemSig.
+From Galois.Fixpoint Require Import Query SystemSig CheckSig.
 From Galois.Incremental Require Import RestrictSig.
 
 Import List.ListNotations.
@@ -532,6 +534,18 @@ End RestrictT.
     Each successful iteration removes one pending occurrence and inserts its allowed outputs.
     A budget equal to the input occurrence count therefore suffices for saturation. *)
 
+(** An edit footprint invalidates its stored outputs when any trigger is removed. *)
+Record edit_footprint (K : Type) := {
+  edit_triggers : list K;
+  edit_outputs : list K
+}.
+
+Arguments edit_triggers {K}.
+Arguments edit_outputs {K}.
+
+TimeFun edit_triggers.
+TimeFun edit_outputs.
+
 Record footprint_result (K A : Type) := {
   footprint_seen : list K;
   footprint_selected : list A;
@@ -834,3 +848,274 @@ TimeFun footprint_active.
 TimeFun footprint_pick.
 TimeFun footprint_close.
 TimeFun footprint_run.
+
+(** * Shared keyed bindings for checked regions *)
+
+Module SourceBindingsCode (L : LATTICE_OPS) (S : SYSTEM_OPS L)
+    (Checker : CHECK_OPS L S).
+  (** Validated lookup ignores a cell whose payload key differs from the query. *)
+  Definition lookup (m : kmap S.key L.t) (x : S.key) : option L.t :=
+    match PTrieCode.get (S.key_code x) m with
+    | Some (stored_key, v) => if S.key_eqb x stored_key then Some v else None
+    | None => None
+    end.
+
+  (** Boolean membership uses the source system key comparison. *)
+  Definition mem (x : S.key) (xs : list S.key) : bool := existsb (S.key_eqb x) xs.
+
+  (** Key deduplication retains one occurrence of every listed key. *)
+  Fixpoint unique (xs : list S.key) : list S.key :=
+    match xs with
+    | [] => []
+    | x :: rest => if mem x rest then unique rest else x :: unique rest
+    end.
+
+  (** Seed restoration overwrites the candidate at every listed frozen key. *)
+  Definition restore (fz : list (S.key * L.t)) (m : kmap S.key L.t)
+      : kmap S.key L.t :=
+    fold_left (fun acc xv => PTrieCode.set (S.key_code (fst xv)) xv acc) fz m.
+
+  (** Filling stores every requested key explicitly, including bottom values. *)
+  Fixpoint fill (xs : list S.key) (m base : kmap S.key L.t) : kmap S.key L.t :=
+    match xs with
+    | [] => base
+    | x :: rest =>
+        PTrieCode.set (S.key_code x) (x, Checker.look m x) (fill rest m base)
+    end.
+
+  (** Pruning removes only cells whose stored path disagrees with their payload key. *)
+  Fixpoint prune_values (cells : list (positive * (S.key * L.t)))
+      (m : kmap S.key L.t) : kmap S.key L.t :=
+    match cells with
+    | [] => m
+    | (path, (x, v)) :: rest =>
+        let remaining := if Pos.eqb path (S.key_code x) then m else PTrieCode.remove path m in
+        prune_values rest remaining
+    end.
+
+  (** Removing a key list deletes its encoded cells from any payload trie. *)
+  Definition remove_keys {A} (xs : list S.key) (m : PTrieCode.t A) : PTrieCode.t A :=
+    fold_left (fun acc x => PTrieCode.remove (S.key_code x) acc) xs m.
+
+End SourceBindingsCode.
+
+Module SourceBindingFacts (L : LATTICE) (S : SYSTEM L)
+    (Checker : CHECK_OPS L S).
+  Module Bindings := SourceBindingsCode L S Checker.
+
+  (** The source key comparison reflects equality. *)
+  Lemma key_eqb_true : forall x y, S.key_eqb x y = true <-> x = y.
+  Proof.
+    intros x y; destruct (S.key_eqb_spec x y); split; intro H; congruence.
+  Qed.
+
+  (** Boolean key membership reflects list membership. *)
+  Lemma mem_spec : forall x xs, Bindings.mem x xs = true <-> In x xs.
+  Proof.
+    intros x xs; unfold Bindings.mem; rewrite existsb_exists; split.
+    - intros [y [Hy Heq]].
+      destruct (S.key_eqb_spec x y) as [->|Hneq]; [exact Hy|discriminate Heq].
+    - intro Hx; exists x; split; [exact Hx|].
+      destruct (S.key_eqb_spec x x); congruence.
+  Qed.
+
+  (** Inserting a canonical cell changes exactly its own validated lookup. *)
+  Lemma lookup_set : forall m x y v,
+    Bindings.lookup (PTrieCode.set (S.key_code y) (y, v) m) x =
+      if S.key_eqb x y then Some v else Bindings.lookup m x.
+  Proof.
+    intros m x y v; destruct (S.key_eqb_spec x y) as [->|Hneq].
+    - unfold Bindings.lookup; rewrite PTrie.get_set_same.
+      destruct (S.key_eqb_spec y y); congruence.
+    - unfold Bindings.lookup; rewrite PTrie.get_set_other; [reflexivity|].
+      intro Hcode; apply Hneq, S.key_code_inj, Hcode.
+  Qed.
+
+  (** Removing a trie path changes exactly queries with that encoded path. *)
+  Lemma lookup_remove : forall m path x,
+    Bindings.lookup (PTrieCode.remove path m) x =
+      if Pos.eqb (S.key_code x) path then None else Bindings.lookup m x.
+  Proof.
+    intros m path x; destruct (Pos.eqb (S.key_code x) path) eqn:Hpath.
+    - apply Pos.eqb_eq in Hpath; unfold Bindings.lookup.
+      rewrite Hpath, PTrie.get_remove_same; reflexivity.
+    - apply Pos.eqb_neq in Hpath; unfold Bindings.lookup.
+      rewrite PTrie.get_remove_other by exact Hpath; reflexivity.
+  Qed.
+
+  (** A mismatched payload is absent from validated lookup at its stored path. *)
+  Lemma malformed_lookup : forall original path y v x,
+    PTrieCode.get path original = Some (y, v) ->
+    Pos.eqb path (S.key_code y) = false -> S.key_code x = path ->
+    Bindings.lookup original x = None.
+  Proof.
+    intros original path y v x Hget Hbad Hpath; subst path.
+    unfold Bindings.lookup; rewrite Hget.
+    destruct (S.key_eqb_spec x y) as [->|Hneq]; [|reflexivity].
+    rewrite Pos.eqb_refl in Hbad; discriminate Hbad.
+  Qed.
+
+  (** Pruning malformed original cells preserves every validated lookup. *)
+  Lemma prune_values_lookup : forall cells original current,
+    (forall path y v, In (path, (y, v)) cells ->
+      PTrieCode.get path original = Some (y, v)) ->
+    (forall x, Bindings.lookup current x = Bindings.lookup original x) ->
+    forall x, Bindings.lookup (Bindings.prune_values cells current) x = Bindings.lookup original x.
+  Proof.
+    induction cells as [|[path [y v]] rest IH]; intros original current Hcells Hagree x.
+    - exact (Hagree x).
+    - cbn [Bindings.prune_values].
+      destruct (Pos.eqb path (S.key_code y)) eqn:Hvalid.
+      + apply (IH original current).
+        * intros q z w Hin; apply Hcells; now right.
+        * exact Hagree.
+      + apply (IH original (PTrieCode.remove path current)).
+        * intros q z w Hin; apply Hcells; now right.
+        * intro z; rewrite lookup_remove.
+          destruct (Pos.eqb (S.key_code z) path) eqn:Hpath.
+          -- symmetry; eapply malformed_lookup.
+             ++ apply Hcells; now left.
+             ++ exact Hvalid.
+             ++ now apply Pos.eqb_eq.
+          -- exact (Hagree z).
+  Qed.
+
+  (** Filling returns the candidate value exactly at the listed keys. *)
+  Lemma fill_lookup : forall xs m base x,
+    Bindings.lookup (Bindings.fill xs m base) x =
+      if Bindings.mem x xs then Some (Checker.look m x) else Bindings.lookup base x.
+  Proof.
+    induction xs as [|y rest IH]; intros m base x; cbn [Bindings.fill Bindings.mem].
+    - reflexivity.
+    - rewrite lookup_set, IH.
+      change (Bindings.mem x (y :: rest)) with (S.key_eqb x y || Bindings.mem x rest)%bool.
+      destruct (S.key_eqb_spec x y) as [->|Hneq]; reflexivity.
+  Qed.
+
+  (** Deduplication preserves key membership. *)
+  Lemma unique_spec : forall xs x, In x (Bindings.unique xs) <-> In x xs.
+  Proof.
+    induction xs as [|y rest IH]; intro x; cbn [Bindings.unique].
+    - reflexivity.
+    - destruct (Bindings.mem y rest) eqn:Hmem.
+      + rewrite IH; cbn [In]; split; [now right|].
+        intros [->|Hin]; [now apply mem_spec in Hmem|exact Hin].
+      + cbn [In]; rewrite IH; reflexivity.
+  Qed.
+
+  (** Deduplication lists each key at most once. *)
+  Lemma unique_nodup : forall xs, NoDup (Bindings.unique xs).
+  Proof.
+    induction xs as [|x rest IH]; cbn [Bindings.unique].
+    - constructor.
+    - destruct (Bindings.mem x rest) eqn:Hmem; [exact IH|].
+      constructor; [|exact IH].
+      intro Hin.
+      pose proof (proj1 (unique_spec rest x) Hin) as Hrest.
+      pose proof (proj2 (mem_spec x rest) Hrest) as Htrue.
+      congruence.
+  Qed.
+
+  (** A canonical insertion supplies its value to raw candidate lookup. *)
+  Lemma raw_set : forall m x y v,
+    look_or S.key_code L.bot (PTrieCode.set (S.key_code y) (y, v) m) x =
+      if S.key_eqb x y then v else look_or S.key_code L.bot m x.
+  Proof.
+    intros m x y v; destruct (S.key_eqb_spec x y) as [->|Hneq].
+    - unfold look_or; rewrite PTrie.get_set_same; reflexivity.
+    - unfold look_or; rewrite PTrie.get_set_other; [reflexivity|].
+      intro Hcode; apply Hneq, S.key_code_inj, Hcode.
+  Qed.
+
+  (** Coherent later seed updates preserve an already restored value. *)
+  Lemma restore_preserves : forall fz m x v,
+    (forall y w, In (y, w) fz -> y = x -> w = v) ->
+    look_or S.key_code L.bot m x = v ->
+    look_or S.key_code L.bot (Bindings.restore fz m) x = v.
+  Proof.
+    induction fz as [|[y w] rest IH]; intros m x v Hcoherent Hlook.
+    - exact Hlook.
+    - cbn [Bindings.restore fold_left fst].
+      apply IH.
+      + intros z a Hin Heq; apply (Hcoherent z a); [now right|exact Heq].
+      + rewrite raw_set.
+        destruct (S.key_eqb_spec x y) as [->|Hneq]; [|exact Hlook].
+        apply (Hcoherent y w); [now left|reflexivity].
+  Qed.
+
+  (** A coherent seed list restores every listed value exactly. *)
+  Lemma restore_hit : forall fz m x v,
+    (forall w, In (x, w) fz -> w = v) -> In (x, v) fz ->
+    look_or S.key_code L.bot (Bindings.restore fz m) x = v.
+  Proof.
+    induction fz as [|[y w] rest IH]; intros m x v Hcoherent Hin.
+    - contradiction.
+    - cbn [Bindings.restore fold_left fst].
+      destruct Hin as [Heq|Hin].
+      + inversion Heq; subst y w.
+        apply restore_preserves.
+        * intros z a Hz ->; apply Hcoherent; now right.
+        * rewrite raw_set; destruct (S.key_eqb_spec x x); congruence.
+      + apply IH.
+        * intros a Ha; apply Hcoherent; now right.
+        * exact Hin.
+  Qed.
+
+  (** Encoded key comparison agrees with the source key comparison. *)
+  Lemma key_code_eqb : forall x y,
+    Pos.eqb (S.key_code x) (S.key_code y) = S.key_eqb x y.
+  Proof.
+    intros x y; destruct (S.key_eqb_spec x y) as [->|Hneq].
+    - apply Pos.eqb_refl.
+    - apply Pos.eqb_neq; intro Hcodes; apply Hneq; apply S.key_code_inj; exact Hcodes.
+  Qed.
+
+  (** Deleting a key list removes exactly its validated bindings. *)
+  Lemma lookup_remove_keys : forall bad m x,
+    Bindings.lookup (Bindings.remove_keys bad m) x =
+      if Bindings.mem x bad then None else Bindings.lookup m x.
+  Proof.
+    induction bad as [|y bad IH]; intros m x.
+    - reflexivity.
+    - change (Bindings.lookup (Bindings.remove_keys bad (PTrieCode.remove (S.key_code y) m)) x =
+        if (S.key_eqb x y || Bindings.mem x bad)%bool then None else Bindings.lookup m x).
+      rewrite IH, lookup_remove, key_code_eqb.
+      destruct (S.key_eqb x y), (Bindings.mem x bad); reflexivity.
+  Qed.
+
+End SourceBindingFacts.
+
+(** * Agreement on declared row support *)
+
+Module SourceRowFacts (L : LATTICE) (S : SYSTEM L).
+  (** Pointwise Boolean agreement on a list preserves its universal check. *)
+  Lemma forallb_same : forall A (xs : list A) f g,
+    (forall x, In x xs -> f x = g x) -> forallb f xs = forallb g xs.
+  Proof.
+    intros A xs; induction xs as [|x rest IH]; intros f g Hagree; cbn [forallb].
+    - reflexivity.
+    - rewrite (Hagree x (or_introl eq_refl)); f_equal.
+      apply IH; intros y Hy; apply Hagree; now right.
+  Qed.
+
+  (** A listed row observes only its declared reads and writes. *)
+  Lemma row_look_transport : forall p r a b,
+    S.wf p -> In r (S.rows p) ->
+    (forall x, In x (S.writes p r ++ S.deps p r) -> a x = b x) ->
+    row_ok L.leb a (S.target p r) (S.eval p r a) =
+      row_ok L.leb b (S.target p r) (S.eval p r b).
+  Proof.
+    intros p r a b Hwf Hr Hagree.
+    assert (Heval : S.eval p r a = S.eval p r b).
+    { apply S.reads_within; [exact Hwf|exact Hr|].
+      intros x Hx; apply Hagree; apply in_or_app; now right. }
+    rewrite Heval.
+    destruct (S.eval p r b) as [[v ss]|] eqn:Hout; cbn [row_ok]; [|reflexivity].
+    assert (Htarget : a (S.target p r) = b (S.target p r)).
+    { apply Hagree; unfold S.writes; apply in_or_app; left; now left. }
+    rewrite Htarget; f_equal; apply forallb_same.
+    intros [x w] Hside; cbn [fst snd]; rewrite Hagree; [reflexivity|].
+    unfold S.writes; apply in_or_app; left; right.
+    eapply S.sides_within; eauto.
+  Qed.
+End SourceRowFacts.
