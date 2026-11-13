@@ -3,7 +3,7 @@
     Fourier-Motzkin elimination tracks combinations of the input constraints.
     For example, eliminating x from x + y <= 3 and -x <= -1 gives y <= 2.
     Builds on: PolySig, LinCertSig and the concrete binary trie. *)
-From Stdlib Require Import List ZArith QArith.
+From Stdlib Require Import List ZArith NArith QArith.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -522,15 +522,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition k_poly : N := 1. (* STUB *)
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
     terms s * (nell s + 1) +
-      (length (prows s) + 3)^2 * (n (prows s) + tsize e + length (prows s) + 3) *
+      (length (prows s) + 3)^2 *
+      (n (prows s) + terms s + tsize e + length (prows s) + 3) *
       (nell s + X.bits x + F.bits_e e + 1)^2 + N.to_nat (F.T_lin_of e).
   Definition havoc_work (x : X.t) (s : t) : nat :=
     terms s * (nell s + 1) +
-      (length (prows s) + 1)^2 * (n (prows s) + length (prows s) + 1) *
+      (length (prows s) + 1)^2 * (n (prows s) + terms s + length (prows s) + 1) *
       (nell s + X.bits x + 1)^2.
   Definition assume_work (g : L.guard) (es : list (term L.op X.t)) (s : t) : nat :=
-    (length (prows s) + 1) * (fold_right Nat.add 0%nat (map tsize es) + 1) *
-      (F.bits_es g es + 1) + N.to_nat (F.T_atoms_of g es).
+    (length (prows s) + 1) * (length (F.atoms_of g es) + 1) *
+      (fold_right Nat.add 0%nat (map tsize es) + 1) *
+      (F.bits_es g es + Nat.log2 (fold_right Nat.add 0%nat (map tsize es)) + 1) +
+      N.to_nat (F.T_atoms_of g es).
   Definition range_work (e : term L.op X.t) (s : t) : nat :=
     terms s * (nell s + 1) +
       fmcost (n (prows s) + tsize e) (length (prows s) + 2) (n (prows s) + tsize e)
@@ -594,7 +597,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* SIG-QUESTION: assume_work omits the number of emitted atoms. *)
+  Proof. Admitted. (* STUB *)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -627,13 +630,17 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (length (prows s) + 3)^2 *
       (n (prows s) + terms s + tsize e + length (prows s) + 3) *
       (nell s + X.bits x + F.bits_e e + 1)^2) + F.T_lin_of e)%N.
-  Proof. Admitted. (* PLAN-DEFECT: x=1, e=Leaf 1, s=[x<=0] gives 2804+t = 3204+t. *)
+  Proof.
+    intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   (** Havoc charges row normalization and one elimination of the selected variable. *)
   Lemma F_havoc_work : forall x s,
     havoc_work x s = terms s * (nell s + 1) +
       (length (prows s) + 1)^2 * (n (prows s) + terms s + length (prows s) + 1) *
       (nell s + X.bits x + 1)^2.
-  Proof. Admitted. (* PLAN-DEFECT: x=1, s=[x<=0] gives 404 = 504. *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assumption charges every emitted atom and the bits of its merged coefficients. *)
   Lemma F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) =
@@ -641,7 +648,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (fold_right Nat.add 0%nat (map tsize es) + 1) *
         (F.bits_es g es + Nat.log2 (fold_right Nat.add 0%nat (map tsize es)) + 1)) +
       F.T_atoms_of g es)%N.
-  Proof. Admitted. (* PLAN-DEFECT: empty P and two Leaf 1 operands give 3+t = 6+t. *)
+  Proof.
+    intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   Definition k_cert : N := 1%N. (* STUB *)
   Lemma T_entail_cert_raw : forall P c,
     (T_entail_cert P c <= k_cert * N.of_nat
