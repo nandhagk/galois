@@ -411,9 +411,10 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     else bounds.
 
   Definition range_linear (P : list (lcons X.t)) (f : lin X.t) : bnd * bnd :=
-    let input := range_row f :: map (rename_row (@Some X.t)) P in
-    let vars := poly_variables X.encode (LCons X.t (coef f) REq (cst f) :: P) in
-    fold_left (range_candidate P f)
+    let rows := map (poly_normal_row X.encode) P in
+    let input := range_row f :: map (rename_row (@Some X.t)) rows in
+    let vars := poly_variables X.encode (LCons X.t (coef f) REq (cst f) :: rows) in
+    fold_left (range_candidate rows f)
       (poly_run tmp_encode tmp_eqb (map (@Some X.t) vars)
         (poly_initial tmp_encode (map (fun r => (r, false)) input))) (NegInf, PosInf).
 
@@ -804,6 +805,106 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     rewrite normalize_coef_eval. reflexivity.
   Qed.
 
+  (** A valid lower endpoint can be intersected with the existing interval. *)
+  Lemma lower_sound : forall lo hi b z, (b <= z)%Z -> in_bnd lo hi z ->
+    in_bnd (poly_lower b lo) hi z.
+  Proof.
+    intros lo hi b z Hbound [Hlo Hhi]. split; [| exact Hhi].
+    destruct lo; cbn [poly_lower] in *; [exact Hbound | | contradiction].
+    apply Z.max_lub; assumption.
+  Qed.
+
+  (** A valid upper endpoint can be intersected with the existing interval. *)
+  Lemma upper_sound : forall lo hi b z, (z <= b)%Z -> in_bnd lo hi z ->
+    in_bnd lo (poly_upper b hi) z.
+  Proof.
+    intros lo hi b z Hbound [Hlo Hhi]. split; [exact Hlo |].
+    destruct hi; cbn [poly_upper] in *; [contradiction | | exact Hbound].
+    apply Z.min_glb; assumption.
+  Qed.
+
+  (** Floor division by a positive coefficient gives a valid integer upper bound. *)
+  Lemma positive_division_upper : forall a b z,
+    (0 < a)%Z -> (a * z <= b)%Z -> (z <= b / a)%Z.
+  Proof.
+    intros a b z Hpos Hbound.
+    pose proof (Z.div_mod b a ltac:(lia)) as Hdiv.
+    pose proof (Z.mod_pos_bound b a Hpos) as Hmod. nia.
+  Qed.
+
+  (** Endpoint rounding retains every integer satisfying the projected row. *)
+  Lemma range_update_sound : forall a b (is_eq : bool) bounds z,
+    (if is_eq then (a * z = b)%Z else (a * z <= b)%Z) ->
+    in_bnd (fst bounds) (snd bounds) z ->
+    in_bnd (fst (range_update a b is_eq bounds))
+      (snd (range_update a b is_eq bounds)) z.
+  Proof.
+    intros a b is_eq [lo hi] z Hrow Hbounds. unfold range_update.
+    destruct (0 <? a)%Z eqn:Hpos.
+    - apply Z.ltb_lt in Hpos. destruct is_eq; cbn [fst snd] in *.
+      + apply lower_sound.
+        * assert (Hdiv : (-z <= (-b) / a)%Z).
+          { apply positive_division_upper; [exact Hpos | nia]. }
+          lia.
+        * apply upper_sound; [apply positive_division_upper; [exact Hpos | lia] |].
+          exact Hbounds.
+      + apply upper_sound; [now apply positive_division_upper | exact Hbounds].
+    - destruct (a <? 0)%Z eqn:Hneg; [| exact Hbounds].
+      apply Z.ltb_lt in Hneg. destruct is_eq; cbn [fst snd] in *.
+      + apply lower_sound.
+        * assert (Hdiv : (-z <= b / (-a))%Z).
+          { apply positive_division_upper; nia. }
+          lia.
+        * apply upper_sound; [apply positive_division_upper; nia | exact Hbounds].
+      + apply lower_sound; [| exact Hbounds].
+        assert (Hdiv : (-z <= b / (-a))%Z).
+        { apply positive_division_upper; nia. }
+        lia.
+  Qed.
+
+  (** A checked projected constraint gives a valid bound on the queried form. *)
+  Lemma range_candidate_sound : forall P f bounds r v,
+    Forall (sat v) P -> in_bnd (fst bounds) (snd bounds) (eval_lin v f) ->
+    in_bnd (fst (range_candidate P f bounds r))
+      (snd (range_candidate P f bounds r)) (eval_lin v f).
+  Proof.
+    intros P f bounds r v Hmodels Hbounds. unfold range_candidate.
+    destruct (forallb (fun p => match fst p with None => true | Some _ => false end)
+      (lhs (poly_constraint r))); [| exact Hbounds].
+    destruct (poly_multipliers r) as [|m ms]; [exact Hbounds |].
+    set (a := poly_coefficient tmp_eqb None (poly_constraint r)).
+    destruct (C.check_entails P
+      (LCons X.t (poly_scale_coef a (coef f)) (lrel (poly_constraint r))
+        (rhs (poly_constraint r) - a * cst f)%Z) (Cert ms 1 false)) eqn:Hcheck;
+      [| exact Hbounds].
+    pose proof (C.check_entails_sound P _ (Cert ms 1 false) Hcheck v Hmodels) as Hrow.
+    apply range_update_sound; [| exact Hbounds]. unfold sat in Hrow.
+    cbn [lhs lrel rhs] in Hrow. rewrite eval_coef_scale in Hrow.
+    unfold eval_lin. destruct (lrel (poly_constraint r)); nia.
+  Qed.
+
+  (** Repeated checked bound updates retain the value of the queried form. *)
+  Lemma range_fold_sound : forall P f rs bounds v,
+    Forall (sat v) P -> in_bnd (fst bounds) (snd bounds) (eval_lin v f) ->
+    in_bnd (fst (fold_left (range_candidate P f) rs bounds))
+      (snd (fold_left (range_candidate P f) rs bounds)) (eval_lin v f).
+  Proof.
+    intros P f rs. induction rs as [|r rs IH]; intros bounds v Hmodels Hbounds;
+      cbn [fold_left]; [exact Hbounds |].
+    apply IH; [exact Hmodels |]. now apply range_candidate_sound.
+  Qed.
+
+  (** The interval for an affine form contains its value in every input model. *)
+  Lemma range_linear_sound : forall P f v, Forall (sat v) P ->
+    in_bnd (fst (range_linear P f)) (snd (range_linear P f)) (eval_lin v f).
+  Proof.
+    intros P f v Hmodels. unfold range_linear.
+    apply range_fold_sound; [| split; exact I].
+    apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+    apply normalize_row_sat. exact (proj1 (Forall_forall _ _) Hmodels s Hin).
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof. Admitted. (* STUB *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
@@ -906,7 +1007,20 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Lemma range_sound : forall e s st c,
     ngamma s (fun y => N.num (st y)) -> eval_term L.eval st e = Some c ->
     in_bnd (fst (range e s)) (snd (range e s)) (N.num c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e [|P] st c Hmodels Heval; [contradiction |]. unfold range.
+    destruct (F.lin_of e) as [[f wrapping]|] eqn:Hform; [destruct wrapping |].
+    - pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
+      cbn [wrap_into] in Hvalue. rewrite Hvalue. now apply range_linear_sound.
+    - destruct (lo <=? hi)%Z eqn:Hvalid; [| split; exact I].
+      apply Z.leb_le in Hvalid.
+      pose proof (F.lin_sound st e c f (WrapTo lo hi) Heval Hform) as Hvalue.
+      cbn [wrap_into] in Hvalue.
+      pose proof (Z.mod_pos_bound (eval_lin (fun y => N.num (st y)) f - lo)
+        (hi - lo + 1) ltac:(lia)) as Hmod.
+      change (lo <= N.num c <= hi)%Z. lia.
+    - split; exact I.
+  Qed.
   Lemma ngamma_reached : forall P v, ngamma (Reached P) v <-> Forall (sat v) P.
   Proof.
     intros P v. reflexivity.

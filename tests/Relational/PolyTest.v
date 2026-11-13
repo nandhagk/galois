@@ -150,3 +150,21 @@ Example range_rounds_lower :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Range checking merges repeated keys and removes canceled source variables once. *)
+Example range_repeated_source_keys :
+  FixturePoly.range_linear
+    [LCons _ [(1%positive, 3); (1%positive, -1);
+      (2%positive, 7); (2%positive, -7)] RLe 5]
+    (Lin _ [(1%positive, 1)] 0) = (NegInf, Fin 2).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A raw equality with repeated keys retains its exact queried value. *)
+Example range_repeated_equality :
+  FixturePoly.range_linear [LCons _ [(1%positive, 3); (1%positive, -1)] REq 6]
+    (Lin _ [(1%positive, 1)] 1) = (Fin 4, Fin 4).
+Proof.
+  vm_compute. reflexivity.
+Qed.
