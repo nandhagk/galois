@@ -10979,6 +10979,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db work Hinv. apply forest_metadata. unfold inv_on in Hinv. tauto.
   Qed.
 
+  Lemma inv_index_sound : forall db work, inv_on db work -> forall s new u,
+    I.mem (index s new db) u ->
+    exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
+      u = permute perm (k ++ option_list o).
+  Proof.
+    intros db work Hinv s new u Hmem.
+    destruct (indexed_slot_exists db s new u (inv_on_metadata db work Hinv) Hmem)
+      as [f [perm Hslot]].
+    pose proof Hinv as Hfacts. unfold inv_on in Hfacts.
+    destruct Hfacts as (_ & _ & _ & _ & Hslots & _).
+    destruct (Hslots s f perm Hslot) as [_ [_ [Hfull Hnew]]].
+    assert (Hmem_full : I.mem (index s false db) u).
+    { destruct new; [exact (Hnew u Hmem) | exact Hmem]. }
+    destruct (proj1 (Hfull u) Hmem_full) as [k [o [Hrow Hu]]].
+    exists f, perm, k, o. repeat split; assumption.
+  Qed.
+
+  Lemma inv_index_complete : forall db work, inv_on db work -> forall s f perm k o,
+    slot_of db s = Some (f, perm) -> row (view db) f k o ->
+    I.mem (index s false db) (permute perm (k ++ option_list o)).
+  Proof.
+    intros db work Hinv s f perm k o Hslot Hrow.
+    unfold inv_on in Hinv. destruct Hinv as (_ & _ & _ & _ & Hslots & _).
+    destruct (Hslots s f perm Hslot) as [_ [_ [Hfull _]]].
+    apply (proj2 (Hfull (permute perm (k ++ option_list o)))).
+    exists k, o. now split.
+  Qed.
+
+  Lemma inv_index_arity : forall db work, inv_on db work -> forall s new f perm,
+    slot_of db s = Some (f, perm) -> I.wf (length perm) (index s new db).
+  Proof.
+    intros db work Hinv s new f perm Hslot.
+    unfold inv_on in Hinv. destruct Hinv as (_ & _ & _ & _ & Hslots & _).
+    destruct (Hslots s f perm Hslot) as [Hall [Hnew _]].
+    destruct new; assumption.
+  Qed.
+
   (** Active and queued repair states expose their forest invariant directly. *)
   Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
   Proof.
