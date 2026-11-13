@@ -30,6 +30,7 @@ Definition definition_blocks {K G} (p : func positive K G) (x : positive) : list
 TimeFun definition_blocks.
 
 Record rename_state (K G : Type) := RenameState {
+  rename_bodies : ptrie (block positive K G);
   rename_stack : list (positive * renaming);
   renamed_blocks : list (positive * block positive K G);
   renamed_envs : list (positive * renaming);
@@ -223,8 +224,9 @@ Module Type BUILD_PLAN (O : OPS)
   Parameter T0_indexes : forall p,
     (T_def_index p + T_live_sets (L.live_in p) <= k_place *
       N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
-  (** One placement search charges seed and discovered-frontier incidences. *)
-  Parameter T1_place_var : forall p x,
+  (** One placement search for a variable of the universe charges seed and
+      discovered-frontier incidences. *)
+  Parameter T1_place_var : forall p x, In x (U.universe (R.prepare p)) ->
     (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <= k_place *
       N.of_nat (length (definition_blocks p x) +
         fold_right (fun b n => (1 + length (frontier_row (frontiers p) b) + n)%nat)

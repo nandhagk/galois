@@ -40,6 +40,20 @@ Definition cert_ids (c : cert) : list positive :=
   flat_map (fun row => fst row :: snd row) (snd c).
 TimeFun cert_ids.
 
+(** Indexed bodies of both functions and the two certificate tables. *)
+Record check_tables (K G : Type) := CheckTables {
+  source_bodies : ptrie (block positive K G);
+  target_bodies : ptrie (block positive K G);
+  cert_envs : ptrie renaming;
+  cert_rows : ptrie (list positive)
+}.
+
+Arguments CheckTables {K G}.
+Arguments source_bodies {K G}.
+Arguments target_bodies {K G}.
+Arguments cert_envs {K G}.
+Arguments cert_rows {K G}.
+
 Definition cfg_graph {E} (vs : list positive) (es : list E)
     (src dst : E -> positive) : digraph :=
   Digraph vs (fold_right (fun e rows =>
@@ -67,6 +81,10 @@ Module Type LANG_SSA_LINK (O : OPS) (K : KEY with Definition t := O.K)
   (** The core node inventory lists the first block of each identifier in block order. *)
   Parameter nodes_agree : forall p,
     C.nodes (R.prepare p) = map fst (first_blocks (blocks _ _ _ p)).
+  (** Every presented block edge is an exit edge of a listed block. *)
+  Parameter edges_syntax : forall p e, In e (C.edges (R.prepare p)) ->
+    exists body, In (C.src (R.prepare p) e, body) (blocks _ _ _ p) /\
+      In (C.dst (R.prepare p) e) (exit_targets (term _ _ _ body)).
   (** Core paths and language paths agree when identifiers are distinct and targets listed. *)
   Parameter paths_agree : forall p a route b, NoDup (map fst (blocks _ _ _ p)) ->
     targets_listed p ->
@@ -211,28 +229,36 @@ Module Type VALIDATE_PLAN (O : OPS)
     (DG : DIGRAPH_T) (D : DOM_T)
     (B : LANG_SSA_LINK O K G Q R E C S)
     (Import V : VALIDATE_T O K G P Q R E C S DG D B).
-  Parameter check_entry : P.t -> P.t -> cert -> bool.
-  Parameter check_block : P.t -> P.t -> cert -> positive -> bool.
+  Parameter tables : P.t -> P.t -> cert -> check_tables O.K O.G.
+  Parameter check_entry : P.t -> P.t -> cert -> check_tables O.K O.G -> bool.
+  Parameter check_block : check_tables O.K O.G -> positive -> bool.
   Parameter check_code : list (positive * O.K * list positive) ->
     list (positive * O.K * list positive) -> renaming -> list positive -> option renaming.
-  Parameter check_edge : P.t -> P.t -> cert -> positive -> positive -> renaming -> bool.
+  Parameter check_edge : check_tables O.K O.G -> positive -> positive -> renaming -> bool.
   Parameter dom_cert : P.t -> ptrie positive * list positive.
   Parameter T_graph : P.t -> N.
-  Parameter T_check_entry : P.t -> P.t -> cert -> N.
-  Parameter T_check_block : P.t -> P.t -> cert -> positive -> N.
+  Parameter T_tables : P.t -> P.t -> cert -> N.
+  Parameter T_check_entry : P.t -> P.t -> cert -> check_tables O.K O.G -> N.
+  Parameter T_check_block : check_tables O.K O.G -> positive -> N.
   Parameter T_check_code : list (positive * O.K * list positive) ->
     list (positive * O.K * list positive) -> renaming -> list positive -> N.
-  Parameter T_check_edge : P.t -> P.t -> cert -> positive -> positive -> renaming -> N.
+  Parameter T_check_edge : check_tables O.K O.G -> positive -> positive -> renaming -> N.
   Parameter T_dom_cert : P.t -> N.
   Parameter k_entry k_code k_edge k_blocks k_ssa : N.
   Definition agrees (rho : renaming) (xs : list positive) (ss si : env O.C) :=
     forall x, In x xs -> exists y, lookup x rho = Some y /\ lookup y ss = lookup x si.
   Definition code_defs (xs : list (positive * O.K * list positive)) :=
     map (fun i => fst (fst i)) xs.
+  (** The tables keep the first block and the first certificate row of each identifier. *)
+  Parameter F0_tables : forall p s c b,
+    trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
+    trie_get b (target_bodies (tables p s c)) = find_block b (blocks _ _ _ s) /\
+    trie_get b (cert_envs (tables p s c)) = lookup b (fst c) /\
+    index_row (cert_rows (tables p s c)) b = cert_live c b.
   (** Acceptance checks the entry and every listed source block. *)
   Parameter F1_checks : forall p s c, check p s c = true ->
-    check_entry p s c = true /\ forall b body, In (b, body) (blocks _ _ _ p) ->
-      check_block p s c b = true.
+    check_entry p s c (tables p s c) = true /\ forall b body,
+      In (b, body) (blocks _ _ _ p) -> check_block (tables p s c) b = true.
   (** Statement checking carries the extended variable relation through equal operations. *)
   Parameter F2_code_sim : forall ic sc rho rho' live ss si,
     check_code ic sc rho live = Some rho' -> agrees rho live ss si ->
@@ -243,7 +269,7 @@ Module Type VALIDATE_PLAN (O : OPS)
     end.
   (** Checked outgoing copies re-establish the destination's entry relation. *)
   Parameter F3_edge_sim : forall p s c b target rho ss si sa ia sb ib sx ix choice,
-    check p s c = true -> check_edge p s c b target rho = true ->
+    check p s c = true -> check_edge (tables p s c) b target rho = true ->
     find_block b (blocks _ _ _ s) = Some sb ->
     find_block b (blocks _ _ _ p) = Some ib ->
     edge_choice (term _ _ _ sb) choice = Some (target, sx) ->
@@ -282,7 +308,7 @@ Module Type VALIDATE_PLAN (O : OPS)
         N.of_nat (function_width s + 1))%N.
   (** Entry checking charges both input lists and the indexed certificate row. *)
   Parameter T2b_entry : forall p s c,
-    (T_check_entry p s c <= k_entry *
+    (T_check_entry p s c (tables p s c) <= k_entry *
       N.of_nat (length (inputs _ _ _ p) + length (inputs _ _ _ s) +
         length (cert_live c (entry _ _ _ p)) + 1) *
       N.of_nat (check_width p s c + 1))%N.
@@ -300,20 +326,28 @@ Module Type VALIDATE_PLAN (O : OPS)
   Parameter T2d_edge : forall p s c b target rho ib sb,
     find_block b (blocks _ _ _ p) = Some ib ->
     find_block b (blocks _ _ _ s) = Some sb ->
-    (T_check_edge p s c b target rho <= k_edge *
+    (T_check_edge (tables p s c) b target rho <= k_edge *
       N.of_nat (length rho + length (exit_uses (term _ _ _ ib)) +
         length (exit_uses (term _ _ _ sb)) + length (cert_live c target) + 1) *
       N.of_nat (check_width p s c +
         vertex_width (flat_map (fun xy => [fst xy; snd xy]) rho) + 1))%N.
-  (** Translation checking indexes the certificate, checks the entry and every source block. *)
+  (** Indexing reads both functions and the certificate once. *)
+  Parameter T0_tables : forall p s c,
+    (T_tables p s c <= k_blocks *
+      N.of_nat (function_size p + function_size s + cert_size c + 1) *
+      N.of_nat (check_width p s c + 1))%N.
+  (** Translation checking indexes once, checks the entry and the first block of each
+      identifier. *)
   Parameter T2_checks : forall p s c,
-    (T_check p s c <= k_blocks * N.of_nat (cert_size c + function_size s + 1) *
-      N.of_nat (check_width p s c + 1) + T_check_entry p s c +
-      fold_right N.add 0%N (map (fun item => T_check_block p s c (fst item)) (blocks _ _ _ p)))%N.
+    (T_check p s c <= T_tables p s c +
+      k_blocks * N.of_nat (function_size p + 1) * N.of_nat (check_width p s c + 1) +
+      T_check_entry p s c (tables p s c) +
+      fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
+        (first_blocks (blocks _ _ _ p))))%N.
   (** One block check charges its two bodies, its operands, its exit and its operators. *)
   Parameter T2a_block : forall p s c b ib,
     find_block b (blocks _ _ _ p) = Some ib ->
-    (T_check_block p s c b <= k_code *
+    (T_check_block (tables p s c) b <= k_code *
       N.of_nat (length (block_defs ib) + length (exit_uses (term _ _ _ ib)) +
         length (code _ _ _ ib) +
         fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (code _ _ _ ib) + 1) *

@@ -221,7 +221,8 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Parameter universe : program V.t -> D.t -> list (positive * list (cell V.t)).
   Definition active_value (p : program V.t) (db : D.t) (v : V.t) : Prop :=
     In (Lit v) (program_terms p) \/
-    exists f k o, row (D.view db) f k o /\ In (Val v) (k ++ option_list o).
+    exists s u, N.to_nat s < length (D.slots db) /\ I.mem (D.index s false db) u /\
+      In (Val v) u.
   (** The finite universe contains exactly declared relational tuples over active values. *)
   Parameter universe_spec : forall p db, D.wf db -> relational_fragment p = true ->
     prim_free p = true -> no_ids db ->
@@ -391,6 +392,11 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     forall i, D.allocated db i -> nu' i = nu i.
   Definition derived (p : program V.t) (initial current : D.t) : Prop :=
     forall f k o, row (D.view current) f k o -> derives V.prim p (D.view initial) f k.
+  (** Two identifiers that occur in rows and are equal in the view are identical. *)
+  Definition row_ids_unique (w : Model.view (V := V.t)) : Prop :=
+    forall f k o f' k' o' i j, row w f k o -> row w f' k' o' ->
+      In (Id i) (k ++ option_list o) -> In (Id j) (k' ++ option_list o') ->
+      same w i j -> i = j.
 
   (** Every checked plan binding satisfies the source rule body. *)
   Parameter F1_plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
@@ -427,6 +433,7 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   (** A quiet application of a matched rule is already present. *)
   Parameter F5_apply_quiet_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
+    row_ids_unique (D.view db) ->
     D.changed db = false -> D.changed (apply (actions V.t r) s db) = false ->
     present V.prim V.merge (D.view db) s (actions V.t r).
   (** Rows and equalities persist up to the current identifier equality. *)
@@ -477,11 +484,12 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   Parameter F13_herbrand_size : forall p db,
     relational_fragment p = true -> prim_free p = true ->
     herbrand p db = length (universe p db) /\ NoDup (universe p db).
-  (** Every traced relational round stays within the initial finite universe. *)
+  (** Every row that a traced relational round adds lies in the initial finite universe. *)
   Parameter F14_universe_rows : forall p cp lim db nv current f k o,
     plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
     prim_free p = true -> no_ids db ->
     In (nv, current) (trace p cp lim db) -> row (D.view current) f k o ->
+    ~ row (D.view db) f k o ->
     In (f, k) (universe p db).
 
   (** A fixed unit above the result's unit turns scaled database credit into credit at that unit. *)
@@ -517,7 +525,10 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
         length (bindings cp c db) *
           (length (post V.t c) + 1 +
            fold_right (fun a n => match a with
-             | Make _ _ args | Put _ args _ => (length args + 2) * (length args + 2) + n
+             | Make _ f args | Put f args _ =>
+                 (length args + 2) * (length args + 2) *
+                   (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1)
+                 + n
              | Union _ _ => 1 + n
              | Let _ _ args => length args + 1 + n
              end) 0 (actions V.t (nth (N.to_nat (rule_ix V.t c)) (rules V.t p)
@@ -563,14 +574,14 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   (** The planner gives every well-sorted program a plan of the checked shape. *)
   Parameter F28_plan_shape : forall p, program_ok p -> check_shape p (plan p) = true.
   (** A checked plan lays out each slot of a declared function within its row width. *)
-  Parameter F29_shape_slots : forall p cp f ss out perm, plans_ok p cp ->
-    program_sorts p f = Some ss -> program_kind p f = Some out ->
-    In (f, perm) (Syntax.slots V.t cp) ->
-    NoDup perm /\ Forall (fun i => i < length ss +
-      match out_sort out with
-      | Some _ => 1
-      | None => 0
-      end) perm.
+  Parameter F29_shape_slots : forall p cp f perm, plans_ok p cp ->
+    In (f, perm) (Syntax.slots V.t cp) -> exists ss out,
+      program_sorts p f = Some ss /\ program_kind p f = Some out /\
+      NoDup perm /\ Forall (fun i => i < length ss +
+        match out_sort out with
+        | Some _ => 1
+        | None => 0
+        end) perm.
   (** Plan checking pays for the sort check, the shape check and a constant. *)
   Parameter T4_check_plan_split : forall p cp,
     (T_check_plan p cp <= T_check_program p + T_check_shape p cp + k_check)%N.
@@ -595,15 +606,35 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
         N.of_nat (round_work p cp nv db + D.pending db + 1) +
       N.of_nat U * D.potential B db)%N.
 
-  (** The traced driver aggregates rounds without increasing the public budget. *)
-  Parameter T2_run_trace : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
-    (T_run p cp lim db <=
+  (** A driver call pays for its round, the limit test, the flag test and advancing. *)
+  Parameter T2a_driver_le : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
+    loaded p cp db ->
+    (T_driver p cp lim (nv, db) <= T_round p cp nv db + k_driver *
+      N.of_nat (length (Syntax.slots V.t cp) +
+        N.size_nat (D.ids (round p cp nv db)) + 1))%N.
+  (** The binary loop pays each driver call that it makes and its fuel counter. *)
+  Parameter T2b_loop_trace : forall p cp lim db,
+    (T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) <=
+      fold_right N.add 0 (map (fun st => T_driver p cp lim st + c_loopN)
+        (firstn (N.to_nat (max_iter lim)) (trace p cp lim db))) +
+      c_loopN * N.of_nat (N.size_nat (max_iter lim) + 1))%N.
+  (** Applying a checked rule pays each action at the result's unit and transfers credit. *)
+  Parameter T2c_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    (D.ids (apply (actions V.t r) s db) <= B)%N ->
+    D.unit (apply (actions V.t r) s db) <= U ->
+    (T_apply (actions V.t r) s Ts db +
+      N.of_nat U * D.potential B (apply (actions V.t r) s db) <=
       c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
-        (fold_right N.add 0 (map (fun start =>
-          N.of_nat (round_work p cp (fst start) (snd start) + 1)) (trace p cp lim db)) +
-         N.of_nat (D.pending db + 1)) +
-      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
+        N.of_nat ((fold_right (fun a n => match a with
+          | Make _ f args | Put f args _ => ((length args + 2) * (length args + 2) *
+              (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n)%nat
+          | Union _ _ => (1 + n)%nat
+          | Let _ _ args => (length args + 1 + n)%nat
+          end) 0%nat (actions V.t r) + 1)%nat) +
+      fold_right N.add 0 (map Ts (flat_map term_vars (flat_map action_terms (actions V.t r)))) +
+      action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
       N.of_nat U * D.potential B db)%N.
   (** The wrapper pays for its binary driver, final rebuild and result construction. *)
   Parameter T3_driver_wrapper : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
