@@ -9619,6 +9619,74 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         Hleft_value Hright_value). constructor.
   Qed.
 
+  (** A candidate reinsertion binding has a source group in any coarsened target forest. *)
+  Lemma lineage_reinsert_sources : forall initial db after f k before output,
+    forest_agrees db -> forest_agrees after ->
+    kind (view after) = kind (view db) ->
+    (forall i j, same (view db) i j -> same (view after) i j) ->
+    lineage initial db -> row (view db) f k before ->
+    output = combine_output (row_delete f k db) f
+      (row_get f (normal_key db k) (row_delete f k db))
+      (option_map (normal_cell db) before) ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
+        Forall2 (cell_rel (same (view after))) (fst ko) (normal_key db k)) srcs /\
+      output_equiv after output (merged after f (map snd srcs)).
+  Proof.
+    intros initial db after f k before output Hforest Hafter Hkind Hsame
+      Hlineage Hbefore Houtput.
+    pose proof (lineage_row_normalized initial db after f k before
+      (f_equal (fun kinds => kinds f) Hkind) Hsame Hforest Hafter Hlineage Hbefore)
+      as Hnormalized.
+    destruct (row_get f (normal_key db k) (row_delete f k db)) as [oldout |]
+      eqn:Hprevious.
+    - pose proof (proj1 (row_delete_binding f k db f (normal_key db k) oldout)
+        Hprevious) as [Hexisting _].
+      change (output = combine (row_delete f k db) f (Some oldout)
+        (option_map (normal_cell db) before)) in Houtput.
+      assert (Hkind_delete : kind (view after) f = kind (view (row_delete f k db)) f).
+      { now rewrite Hkind, row_delete_kind. }
+      rewrite <- (combine_kind_frame (row_delete f k db) after f (Some oldout)
+        (option_map (normal_cell db) before) Hkind_delete) in Houtput. subst output.
+      eapply (lineage_sources_combine initial after f (normal_key db k) oldout
+        (option_map (normal_cell db) before)); [| exact Hnormalized].
+      exact (lineage_row_coarsen initial db after f (normal_key db k) oldout
+        (f_equal (fun kinds => kinds f) Hkind) Hsame
+        (fun i => forest_agrees_id db i Hforest)
+        (fun i => forest_agrees_id after i Hafter) Hlineage Hexisting).
+    - change (output = option_map (normal_cell db) before) in Houtput.
+      now subst output.
+  Qed.
+
+  (** Actual row repair preserves lineage using only forest agreement and prior source groups. *)
+  Lemma lineage_repair_current : forall initial db f k,
+    forest_agrees db -> lineage initial db -> lineage initial (repair_current f k db).
+  Proof.
+    intros initial db f k Hforest Hlineage.
+    pose proof (forest_agrees_repair db f k Hforest) as Hafter.
+    assert (Hsame : forall i j, same (view db) i j ->
+      same (view (repair_current f k db)) i j).
+    { intros i j Hij. exact (repair_current_same_preserves db f k i j Hij). }
+    pose proof (proj1 (repair_current_layout db f k)) as Hkind.
+    unfold repair_current in Hafter, Hsame, Hkind |- *.
+    destruct (row_get f k db) as [before |] eqn:Hbefore; [| exact Hlineage].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)); [exact Hlineage |].
+    set (after := put f (normal_key db k) (option_map (normal_cell db) before)
+      (row_delete f k db)) in Hafter, Hsame, Hkind |- *.
+    intros g args output Hrow. apply put_row_sources_raw in Hrow as [Hold | Hnew].
+    - apply row_delete_binding in Hold. exact (lineage_row_coarsen initial db after
+        g args output (f_equal (fun kinds => kinds g) Hkind) Hsame
+        (fun i => forest_agrees_id db i Hforest)
+        (fun i => forest_agrees_id after i Hafter) Hlineage (proj1 Hold)).
+    - rewrite row_delete_normal_key, (normal_key_idempotent db k (proj1 Hforest)) in Hnew.
+      rewrite row_delete_normal_output,
+        (normal_output_idempotent db before (proj1 Hforest)) in Hnew.
+      destruct Hnew as [Hname [Hkey Houtput]]. subst g args.
+      eapply (lineage_reinsert_sources initial db after f k before output);
+        eassumption.
+  Qed.
+
   (** Lineage depends on the current view and representatives, not scheduling metadata. *)
   Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
     view db' = view db -> lineage initial db -> lineage initial db'.
@@ -9651,7 +9719,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Actual repair flattens source groups through canonicalization and lattice merging. *)
   Lemma F21_lineage_step : forall initial s s', state_inv s ->
     rstep s = inl s' -> lineage initial (fst s) -> lineage initial (fst s').
-  Proof. Admitted. (* OPEN: active repair needs equality transport and source-group merging. *)
+  Proof.
+    intros initial [db work] next Hinv Hstep Hlineage.
+    destruct work as [| [f k] rest].
+    - exact (lineage_schedule initial db next Hstep Hlineage).
+    - change (db_rstep (db, (f, k) :: rest) = inl next) in Hstep.
+      cbn [db_rstep fst snd] in Hstep. injection Hstep as Hnext. subst next. cbn [fst].
+      apply lineage_repair_current; [| exact Hlineage].
+      exact (inv_on_forest_agrees db ((f, k) :: rest) Hinv).
+  Qed.
 
   (** Related cells normalize to the same already canonical target cell. *)
   Lemma related_cell_canonical : forall db work c d, inv_on db work ->
