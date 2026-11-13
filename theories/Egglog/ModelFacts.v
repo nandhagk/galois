@@ -4,10 +4,46 @@
     For example, equal identifiers in a satisfying view have the same denotation.
     Builds on: Syntax, Model and Stdlib lists. *)
 
-From Stdlib Require Import List PArith Relations.Relation_Operators.
+From Stdlib Require Import List PArith NArith Lia Relations.Relation_Operators.
+From Galois.Base Require Import UnionFindSig.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
 Import List.ListNotations.
+
+Module UnionFindFacts (U : UNION_FIND).
+  (** Redirecting one class identifies precisely its old class and the winning class. *)
+  Lemma redirect_eq_cases : forall (r : positive -> positive) winner loser a b,
+    (if Pos.eqb (r a) loser then winner else r a) =
+      (if Pos.eqb (r b) loser then winner else r b) <->
+    r a = r b \/ (r a = loser /\ r b = winner) \/
+      (r a = winner /\ r b = loser).
+  Proof.
+    intros r winner loser a b.
+    destruct (Pos.eqb (r a) loser) eqn:Ha; destruct (Pos.eqb (r b) loser) eqn:Hb.
+    - apply Pos.eqb_eq in Ha, Hb. intuition congruence.
+    - apply Pos.eqb_eq in Ha. apply Pos.eqb_neq in Hb. intuition congruence.
+    - apply Pos.eqb_neq in Ha. apply Pos.eqb_eq in Hb. intuition congruence.
+    - apply Pos.eqb_neq in Ha, Hb. intuition congruence.
+  Qed.
+
+  (** Union relates old classmates and the two orientations of the requested class pair. *)
+  Lemma union_eq_cases : forall i j u a b, U.wf u ->
+    U.repr (snd (U.union i j u)) a = U.repr (snd (U.union i j u)) b <->
+    U.repr u a = U.repr u b \/
+      (U.repr u a = U.repr u i /\ U.repr u b = U.repr u j) \/
+      (U.repr u a = U.repr u j /\ U.repr u b = U.repr u i).
+  Proof.
+    intros i j u a b Hwf.
+    destruct (U.union i j u) as [roots u'] eqn:Hunion.
+    destruct roots as [[winner loser] |]; cbn [snd].
+    - destruct (U.union_some i j u winner loser u' Hwf Hunion)
+        as [_ [Hroots Hrepr]].
+      rewrite (Hrepr a), (Hrepr b), redirect_eq_cases.
+      destruct Hroots as [[-> ->] | [-> ->]]; tauto.
+    - destruct (U.union_none i j u u' Hwf Hunion) as [Hij Hrepr].
+      rewrite (Hrepr a), (Hrepr b). intuition congruence.
+  Qed.
+End UnionFindFacts.
 
 Section ModelFacts.
 Context {V : Type} (prim : positive -> list V -> option V)
