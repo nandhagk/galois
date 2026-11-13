@@ -112,6 +112,8 @@ Module Type EXTRACT_SPEC (V : VALUE) (I : INDEX V) (D : DATABASE V I)
   Definition ctor_inventory (cs : list (positive * N)) (db : D.t) : Prop :=
     NoDup (map fst cs) /\
     (forall f, kind (D.view db) f = Some OId <-> In f (map fst cs)) /\
+    (forall f k i, row (D.view db) f k (Some (Id i)) ->
+      kind (D.view db) f = Some OId) /\
     forall f s, In (f, s) cs -> exists perm,
       D.slot_of db s = Some (f, perm) /\
       forall k o, row (D.view db) f k o ->

@@ -344,13 +344,15 @@ Module Type VALIDATE_PLAN (O : OPS)
       T_check_entry p s c (tables p s c) +
       fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
         (first_blocks (blocks _ _ _ p))))%N.
-  (** One block check charges its two bodies, its operands, its exit and its operators. *)
+  (** One block check charges its two bodies, its operands, its live row, its exit and its
+      operators. *)
   Parameter T2a_block : forall p s c b ib,
     find_block b (blocks _ _ _ p) = Some ib ->
     (T_check_block (tables p s c) b <= k_code *
       N.of_nat (length (block_defs ib) + length (exit_uses (term _ _ _ ib)) +
         length (code _ _ _ ib) +
-        fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (code _ _ _ ib) + 1) *
+        fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (code _ _ _ ib) +
+        length (cert_live c b) + 1) *
       N.of_nat (check_width p s c + 1) +
       k_code * N.of_nat (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat
         (code _ _ _ ib) +

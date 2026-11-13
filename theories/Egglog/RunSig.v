@@ -378,6 +378,29 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   Definition query_vars (r : rule V.t) : list positive := flat_map atom_vars (query V.t r).
   Parameter T_apply : list (action V.t) -> Model.env (V := V.t) ->
     (positive -> N) -> D.t -> N.
+  (** A round builds a keyed environment for each binding. *)
+  Parameter bind_env : cplan V.t -> list (cell V.t) -> Model.env (V := V.t).
+  Parameter T_bind_env : cplan V.t -> list (cell V.t) -> positive -> N.
+  (** Each job pairs a plan with one binding in round order. *)
+  Parameter jobs : program V.t -> compiled V.t -> bool -> D.t ->
+    list (cplan V.t * list (cell V.t)).
+  Definition job_rule (p : program V.t) (c : cplan V.t) : rule V.t :=
+    nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []).
+  Fixpoint apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
+      (db : D.t) : D.t :=
+    match js with
+    | [] => db
+    | (c, b) :: rest =>
+        apply_jobs p rest (apply (actions V.t (job_rule p c)) (bind_env c b) db)
+    end.
+  Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
+      (db : D.t) : N :=
+    match js with
+    | [] => 0%N
+    | (c, b) :: rest =>
+        (T_apply (actions V.t (job_rule p c)) (bind_env c b) (T_bind_env c b) db +
+          T_apply_jobs p rest (apply (actions V.t (job_rule p c)) (bind_env c b) db))%N
+    end.
   Parameter driver : program V.t -> compiled V.t -> limits ->
     (bool * D.t) -> (bool * D.t) + (stop * D.t).
   Parameter T_driver : program V.t -> compiled V.t -> limits -> (bool * D.t) -> N.
@@ -414,7 +437,8 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
     env_allocated db s ->
     D.wf (apply (actions V.t r) s db) /\ loaded p cp (apply (actions V.t r) s db) /\
-    (D.ids db <= D.ids (apply (actions V.t r) s db))%N.
+    (D.ids db <= D.ids (apply (actions V.t r) s db))%N /\
+    D.unit db <= D.unit (apply (actions V.t r) s db).
   (** A database match gives a model match. *)
   Parameter F4a_match_model : forall (M : model (V := V.t)) nu p cp db q s,
     D.wf db -> loaded p cp db -> sat V.merge M nu (D.view db) ->
@@ -521,7 +545,9 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     round_work p cp nv db =
       length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
-        J.work (join V.t c) (map (source_index db) (sources V.t c)) +
+        (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
+           length (sources V.t c) + 2) *
+          (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (length (post V.t c) + 1 +
            fold_right (fun a n => match a with
@@ -565,6 +591,20 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r -> In b (bindings cp c db) ->
     rule_env (program_sorts p) (program_kind p) r (env_of c b) /\ env_allocated db (env_of c b).
 
+  (** The keyed environment agrees with the plan's binding environment. *)
+  Parameter F30_bind_env : forall c b x, bind_env c b x = env_of c b x.
+  (** A keyed lookup pays for the bits of its variable. *)
+  Parameter T6_bind_env_le : forall c b x,
+    (T_bind_env c b x <= k_driver * N.of_nat (Pos.size_nat x + 1))%N.
+  (** Every job is a binding of a plan in its round. *)
+  Parameter F31_jobs : forall p cp nv db c b, In (c, b) (jobs p cp nv db) ->
+    In c (if nv then naive V.t cp else seminaive V.t cp) /\
+    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c) /\
+    In b (bindings cp c db).
+  (** A round applies its jobs in order and rebuilds once. *)
+  Parameter F32_round_jobs : forall p cp nv db,
+    round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
+
   Parameter check_shape : program V.t -> compiled V.t -> bool.
   Parameter T_check_shape : program V.t -> compiled V.t -> N.
   Parameter k_check : N.
@@ -597,6 +637,17 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
       else if andb nv (negb (D.changed next)) then inr (Saturated, next)
       else inl (negb (D.changed next), D.advance next).
+
+  (** A round pays for its joins, applications, rebuild and per-binding work. *)
+  Parameter T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
+    loaded p cp db ->
+    (T_round p cp nv db <=
+      fold_right N.add 0 (map (fun c =>
+        J.T_run (join V.t c) (map (source_index db) (sources V.t c)))
+        (if nv then naive V.t cp else seminaive V.t cp)) +
+      T_apply_jobs p (jobs p cp nv db) db +
+      D.T_rebuild (apply_jobs p (jobs p cp nv db) db) +
+      k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N.
 
   (** Each round pays its action work and transfers the database potential. *)
   Parameter T1_round_le : forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
@@ -634,7 +685,7 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
           | Let _ _ args => (length args + 1 + n)%nat
           end) 0%nat (actions V.t r) + 1)%nat) +
       fold_right N.add 0 (map Ts (flat_map term_vars (flat_map action_terms (actions V.t r)))) +
-      action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
+      c_run * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
       N.of_nat U * D.potential B db)%N.
   (** The wrapper pays for its binary driver, final rebuild and result construction. *)
   Parameter T3_driver_wrapper : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->

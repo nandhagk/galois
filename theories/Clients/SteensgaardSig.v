@@ -197,7 +197,16 @@ Module Type STEENSGAARD_ALL (V : VALUE_T with Definition t := positive)
 
 Module Type STEENSGAARD_SOUND (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
-    (A : STEENSGAARD V I J D R) (L : POINTER_LINK) (Q : POINTER_QUOTIENT).
+    (A : STEENSGAARD V I J D R) (L : POINTER_LINK).
+  (** Every reachable concrete pointer is included in every saturated unification result. *)
+  Parameter concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
+    pointer_reachable (L.initial q) (L.step q) s -> forall x a,
+      trie_get x (L.memory s) = Some a -> A.points db x a = true.
+End STEENSGAARD_SOUND.
+
+Module Type STEENSGAARD_EXACT (V : VALUE with Definition t := positive)
+    (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
+    (A : STEENSGAARD V I J D R) (Q : POINTER_QUOTIENT).
   Definition source_relation q f x y :=
     (f = 1%positive /\ (In (Addr x y) (constraints q) \/ In (x, y) (initial_pointers q))) \/
     (f = 2%positive /\ In (Copy x y) (constraints q)) \/
@@ -232,10 +241,4 @@ Module Type STEENSGAARD_SOUND (V : VALUE with Definition t := positive)
   (** Saturated query answers are exactly the source congruence approximation. *)
   Parameter solve_exact : forall q lim db, A.solve q lim = (Saturated, db) ->
     forall x a, A.points db x a = true <-> pointer_congruence q (Deref (Cell x)) (Cell a).
-
-  (** Every reachable concrete pointer is included in every saturated unification result. *)
-  Parameter concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
-    pointer_reachable (L.initial q) (L.step q) s -> forall x a,
-      trie_get x (L.memory s) = Some a -> A.points db x a = true.
-  (* SIG-QUESTION: the exact source-congruence quotient needs a provider. *)
-End STEENSGAARD_SOUND.
+End STEENSGAARD_EXACT.
