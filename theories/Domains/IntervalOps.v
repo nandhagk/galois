@@ -812,6 +812,277 @@ Module IntervalOpsSound (T : THRESHOLDS) (Scalar : INTERVAL_SCALAR_OPS T).
           pose proof (Z.mod_pos_bound x y ltac:(destruct Hwordy; lia)).
           pose proof (Z.mod_le x y (proj1 Hwordx) ltac:(destruct Hwordy; lia)). lia.
   Qed.
+  (** Complementing a normalized word reverses its position in the unsigned range. *)
+  Theorem interval_complement_word w x :
+    is_word w x -> wnot w x = modulus w - 1 - x.
+  Proof.
+    intro Hword. rewrite wnot_lnot, (wrap_id w x Hword), lnot_value.
+    rewrite <- (wrap_add_modulus w (- x - 1) 1).
+    replace (- x - 1 + 1 * modulus w) with (modulus w - 1 - x) by ring.
+    apply wrap_id. destruct Hword. split; lia.
+  Qed.
+
+  (** Complement contains every complemented represented word. *)
+  Theorem interval_not_sound w a x :
+    interval_pgamma w a x -> interval_pgamma w (interval_not w a) (wnot w x).
+  Proof.
+    intro Ha. unfold interval_not.
+    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
+      [|apply interval_top_sound, wnot_is_word].
+    pose proof (interval_finite_sound w a lo hi x Ha Hfinite).
+    rewrite wnot_lnot, (wrap_id w x (proj1 Ha)), lnot_value.
+    rewrite <- (wrap_add_modulus w (- x - 1) 1).
+    replace (- x - 1 + 1 * modulus w) with (modulus w - 1 - x) by ring.
+    apply interval_checked_wrap_sound. lia.
+  Qed.
+
+  Local Lemma wand_words w x y :
+    is_word w x -> is_word w y -> wand w x y = Z.land x y.
+  Proof.
+    intros Hx Hy. apply (word_ext w); [apply wand_is_word| |].
+    - apply word_of_bits. intros i Hi. rewrite Z.land_spec.
+      rewrite (word_bits_high w x i Hx Hi). reflexivity.
+    - intros i Hi. rewrite testbit_wand by assumption. symmetry. apply Z.land_spec.
+  Qed.
+
+  Local Lemma wor_words w x y :
+    is_word w x -> is_word w y -> wor w x y = Z.lor x y.
+  Proof.
+    intros Hx Hy. apply (word_ext w); [apply wor_is_word| |].
+    - apply word_of_bits. intros i Hi. rewrite Z.lor_spec.
+      rewrite (word_bits_high w x i Hx Hi), (word_bits_high w y i Hy Hi). reflexivity.
+    - intros i Hi. rewrite testbit_wor by assumption. symmetry. apply Z.lor_spec.
+  Qed.
+
+  Local Lemma wxor_words w x y :
+    is_word w x -> is_word w y -> wxor w x y = Z.lxor x y.
+  Proof.
+    intros Hx Hy. apply (word_ext w); [apply wxor_is_word| |].
+    - apply word_of_bits. intros i Hi. rewrite Z.lxor_spec.
+      rewrite (word_bits_high w x i Hx Hi), (word_bits_high w y i Hy Hi). reflexivity.
+    - intros i Hi. rewrite testbit_wxor by assumption. symmetry. apply Z.lxor_spec.
+  Qed.
+
+  (** Conjunction is bounded by either represented nonnegative operand. *)
+  Theorem interval_and_sound w a b x y :
+    interval_pgamma w a x -> interval_pgamma w b y ->
+    interval_pgamma w (interval_and w a b) (wand w x y).
+  Proof.
+    intros Ha Hb. unfold interval_and.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
+      try (apply interval_top_sound, wand_is_word).
+    pose proof (interval_finite_sound w a la ha x Ha Hfa).
+    pose proof (interval_finite_sound w b lb hb y Hb Hfb).
+    destruct Ha as [Hwordx _], Hb as [Hwordy _].
+    apply interval_checked_sound; [apply wand_is_word|].
+    rewrite wand_words by assumption.
+    pose proof (Z.sub_land_same_l x y) as Hx.
+    pose proof (Z.sub_land_same_l y x) as Hy. rewrite Z.land_comm in Hy.
+    assert (Hnonnegx : 0 <= Z.land x (Z.lnot y)).
+    { apply Z.land_nonneg. left. exact (proj1 Hwordx). }
+    assert (Hnonnegy : 0 <= Z.land y (Z.lnot x)).
+    { apply Z.land_nonneg. left. exact (proj1 Hwordy). }
+    assert (Hnonneg : 0 <= Z.land x y).
+    { apply Z.land_nonneg. left. exact (proj1 Hwordx). }
+    split; [exact Hnonneg|]. apply Z.min_glb; lia.
+  Qed.
+
+  Local Lemma interval_mask_covers x y hi :
+    0 <= x <= hi -> 0 <= y <= hi ->
+    0 <= Z.lor x y <= interval_mask hi /\ 0 <= Z.lxor x y <= interval_mask hi.
+  Proof.
+    intros Hx Hy. unfold interval_mask. destruct (Z.eqb hi 0) eqn:Hzero.
+    - apply Z.eqb_eq in Hzero.
+      assert (Hxzero : x = 0) by lia. assert (Hyzero : y = 0) by lia.
+      subst x y. cbn. lia.
+    - set (n := Z.log2 hi + 1).
+      assert (Hn : 0 <= n) by (unfold n; pose proof (Z.log2_nonneg hi); lia).
+      assert (Hmask : 0 <= Z.ones n).
+      { rewrite Z.ones_equiv. pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn). lia. }
+      assert (Hlogx : Z.log2 x < n) by
+        (unfold n; pose proof (Z.log2_le_mono x hi ltac:(lia)); lia).
+      assert (Hlogy : Z.log2 y < n) by
+        (unfold n; pose proof (Z.log2_le_mono y hi ltac:(lia)); lia).
+      assert (Hor : Z.lor (Z.lor x y) (Z.ones n) = Z.ones n).
+      { rewrite <- Z.lor_assoc, Z.lor_ones_low by lia. apply Z.lor_ones_low; lia. }
+      assert (Hlor : 0 <= Z.lor x y) by (apply Z.lor_nonneg; lia).
+      assert (Hmaskdiff : 0 <= Z.land (Z.ones n) (Z.lnot (Z.lor x y))).
+      { apply Z.land_nonneg. now left. }
+      pose proof (Z.sub_lor_l_same_l (Z.ones n) (Z.lor x y)) as Hdiff.
+      rewrite Hor in Hdiff.
+      assert (Hand : 0 <= Z.land x y) by (apply Z.land_nonneg; lia).
+      pose proof (Z.sub_lor_land x y) as Hxor.
+      assert (Hxor_nonneg : 0 <= Z.lxor x y) by (apply Z.lxor_nonneg; lia).
+      lia.
+  Qed.
+
+  (** The enclosing mask contains both disjunction and exclusive disjunction results. *)
+  Theorem interval_or_xor_sound w a b x y :
+    interval_pgamma w a x -> interval_pgamma w b y ->
+    interval_pgamma w (interval_or_xor w a b) (wor w x y) /\
+    interval_pgamma w (interval_or_xor w a b) (wxor w x y).
+  Proof.
+    intros Ha Hb. unfold interval_or_xor.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
+      try (split; apply interval_top_sound; first [apply wor_is_word|apply wxor_is_word]).
+    pose proof (interval_finite_sound w a la ha x Ha Hfa).
+    pose proof (interval_finite_sound w b lb hb y Hb Hfb).
+    destruct Ha as [Hwordx _], Hb as [Hwordy _].
+    pose proof (proj1 Hwordx). pose proof (proj1 Hwordy).
+    pose proof (interval_mask_covers x y (Z.max ha hb)
+      ltac:(pose proof (Z.le_max_l ha hb); lia)
+      ltac:(pose proof (Z.le_max_r ha hb); lia)) as [Hor Hxor].
+    split; apply interval_checked_sound; try apply wor_is_word; try apply wxor_is_word.
+    - now rewrite wor_words by assumption.
+    - now rewrite wxor_words by assumption.
+  Qed.
+
+  (** A decision contains its Boolean result whenever each decided case is justified. *)
+  Theorem interval_truth_sound : forall w decision value,
+    (decision = Some true -> value = true) -> (decision = Some false -> value = false) ->
+    interval_pgamma w (interval_truth decision) (if value then 1 else 0).
+  Proof.
+    intros w [[|]|] value Htrue Hfalse; destruct value; cbn in *;
+      try (exfalso; specialize (Htrue eq_refl); discriminate);
+      try (exfalso; specialize (Hfalse eq_refl); discriminate);
+      split; try apply one_is_word; try apply zero_is_word; split; reflexivity.
+  Qed.
+
+  (** Boolean complement retains every complemented Boolean input. *)
+  Theorem interval_bool_not_sound : forall w a (b : bool),
+    interval_pgamma w a (if b then 1 else 0) ->
+    interval_pgamma w (interval_bool_not a) (if negb b then 1 else 0).
+  Proof.
+    intros w a b Ha. unfold interval_bool_not.
+    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
+      [|apply interval_truth_sound; discriminate].
+    pose proof (interval_finite_sound w a lo hi (if b then 1 else 0) Ha Hfinite) as Hbounds.
+    destruct (Z.eqb lo 0 && Z.eqb hi 0)%bool eqn:Hzero.
+    - apply andb_true_iff in Hzero as [Hlo Hhi]. apply Z.eqb_eq in Hlo. apply Z.eqb_eq in Hhi.
+      destruct b; cbn in Hbounds; [lia|].
+      apply interval_truth_sound; [reflexivity|discriminate].
+    - destruct (Z.eqb lo 1 && Z.eqb hi 1)%bool eqn:Hone.
+      + apply andb_true_iff in Hone as [Hlo Hhi]. apply Z.eqb_eq in Hlo. apply Z.eqb_eq in Hhi.
+        destruct b; cbn in Hbounds; [|lia].
+        apply interval_truth_sound; [discriminate|reflexivity].
+      + apply interval_truth_sound; discriminate.
+  Qed.
+
+  (** Strict comparison contains every comparison of represented unsigned integers. *)
+  Theorem interval_ult_sound : forall wa wb a b x y w,
+    interval_pgamma wa a x -> interval_pgamma wb b y ->
+    interval_pgamma w (interval_ult a b) (if Z.ltb x y then 1 else 0).
+  Proof.
+    intros wa wb a b x y w Ha Hb. unfold interval_ult.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
+      try (apply interval_truth_sound; discriminate).
+    pose proof (interval_finite_sound wa a la ha x Ha Hfa) as Hax.
+    pose proof (interval_finite_sound wb b lb hb y Hb Hfb) as Hby.
+    destruct (Z.ltb ha lb) eqn:Htrue.
+    - apply Z.ltb_lt in Htrue. apply interval_truth_sound; [|discriminate].
+      intros _. apply Z.ltb_lt. lia.
+    - destruct (Z.leb hb la) eqn:Hfalse.
+      + apply Z.leb_le in Hfalse. apply interval_truth_sound; [discriminate|].
+        intros _. apply Z.ltb_ge. lia.
+      + apply interval_truth_sound; discriminate.
+  Qed.
+
+  (** Non-strict comparison contains every comparison of represented unsigned integers. *)
+  Theorem interval_ule_sound : forall wa wb a b x y w,
+    interval_pgamma wa a x -> interval_pgamma wb b y ->
+    interval_pgamma w (interval_ule a b) (if Z.leb x y then 1 else 0).
+  Proof.
+    intros wa wb a b x y w Ha Hb. unfold interval_ule.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
+      try (apply interval_truth_sound; discriminate).
+    pose proof (interval_finite_sound wa a la ha x Ha Hfa) as Hax.
+    pose proof (interval_finite_sound wb b lb hb y Hb Hfb) as Hby.
+    destruct (Z.leb ha lb) eqn:Htrue.
+    - apply Z.leb_le in Htrue. apply interval_truth_sound; [|discriminate].
+      intros _. apply Z.leb_le. lia.
+    - destruct (Z.ltb hb la) eqn:Hfalse.
+      + apply Z.ltb_lt in Hfalse. apply interval_truth_sound; [discriminate|].
+        intros _. apply Z.leb_gt. lia.
+      + apply interval_truth_sound; discriminate.
+  Qed.
+
+  (** Equality contains every equality test of represented integers. *)
+  Theorem interval_eq_sound : forall wa wb a b x y w,
+    interval_pgamma wa a x -> interval_pgamma wb b y ->
+    interval_pgamma w (interval_eq a b) (if Z.eqb x y then 1 else 0).
+  Proof.
+    intros wa wb a b x y w Ha Hb. unfold interval_eq.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
+      try (apply interval_truth_sound; discriminate).
+    pose proof (interval_finite_sound wa a la ha x Ha Hfa) as Hax.
+    pose proof (interval_finite_sound wb b lb hb y Hb Hfb) as Hby.
+    destruct (Z.ltb ha lb || Z.ltb hb la)%bool eqn:Hdisjoint.
+    - assert (Hneq : x <> y).
+      { apply orb_true_iff in Hdisjoint as [Hdisjoint|Hdisjoint];
+          apply Z.ltb_lt in Hdisjoint; lia. }
+      apply interval_truth_sound; [discriminate|]. intros _. now apply Z.eqb_neq.
+    - destruct (Z.eqb la ha && Z.eqb lb hb && Z.eqb la lb)%bool eqn:Hpoint.
+      + repeat rewrite andb_true_iff in Hpoint. destruct Hpoint as [[Ha' Hb'] Hab].
+        apply Z.eqb_eq in Ha'. apply Z.eqb_eq in Hb'. apply Z.eqb_eq in Hab.
+        apply interval_truth_sound; [intros _; apply Z.eqb_eq; lia|discriminate].
+      + apply interval_truth_sound; discriminate.
+  Qed.
+
+  (** Bounded left shifts contain every modular product by the corresponding power of two. *)
+  Theorem interval_shl_sound w a b x y :
+    interval_pgamma w a x -> interval_pgamma w b y ->
+    interval_pgamma w (interval_shl w a b) (wshl w x y).
+  Proof.
+    intros Ha Hb. unfold interval_shl.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
+      try (apply interval_top_sound, wshl_is_word).
+    pose proof (interval_finite_sound w a la ha x Ha Hfa) as Hax.
+    pose proof (interval_finite_sound w b lb hb y Hb Hfb) as Hby.
+    destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w))%bool eqn:Hrange;
+      [|apply interval_top_sound, wshl_is_word].
+    repeat rewrite andb_true_iff in Hrange. destruct Hrange as [[Hla Hlb] Hhb].
+    apply Z.leb_le in Hla. apply Z.leb_le in Hlb. apply Z.ltb_lt in Hhb.
+    assert (Hpowlo : 2 ^ lb <= 2 ^ y) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpowhi : 2 ^ y <= 2 ^ hb) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpowpos : 0 < 2 ^ lb) by (apply Z.pow_pos_nonneg; lia).
+    rewrite wshl_value, (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)).
+    assert (Hshift : (Zpos w <=? y) = false) by (apply Z.leb_gt; lia).
+    rewrite Hshift. apply interval_checked_wrap_sound. nia.
+  Qed.
+
+  (** Bounded logical right shifts contain every represented quotient by a power of two. *)
+  Theorem interval_lshr_sound w a b x y :
+    interval_pgamma w a x -> interval_pgamma w b y ->
+    interval_pgamma w (interval_lshr w a b) (wlshr w x y).
+  Proof.
+    intros Ha Hb. unfold interval_lshr.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Hfa;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hfb;
+      try (apply interval_top_sound, wlshr_is_word).
+    pose proof (interval_finite_sound w a la ha x Ha Hfa) as Hax.
+    pose proof (interval_finite_sound w b lb hb y Hb Hfb) as Hby.
+    destruct (Z.leb 0 la && Z.leb 0 lb && Z.ltb hb (Zpos w))%bool eqn:Hrange;
+      [|apply interval_top_sound, wlshr_is_word].
+    repeat rewrite andb_true_iff in Hrange. destruct Hrange as [[Hla Hlb] Hhb].
+    apply Z.leb_le in Hla. apply Z.leb_le in Hlb. apply Z.ltb_lt in Hhb.
+    assert (Hpowlo : 2 ^ lb <= 2 ^ y) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpowhi : 2 ^ y <= 2 ^ hb) by (apply Z.pow_le_mono_r; lia).
+    assert (Hpowpos : 0 < 2 ^ lb) by (apply Z.pow_pos_nonneg; lia).
+    apply interval_checked_sound; [apply wlshr_is_word|].
+    rewrite wlshr_value, (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)).
+    assert (Hshift : (Zpos w <=? y) = false) by (apply Z.leb_gt; lia).
+    rewrite Hshift. split.
+    - eapply (Z.le_trans _ (x / 2 ^ hb));
+        [apply Z.div_le_mono; lia|apply Z.div_le_compat_l; lia].
+    - eapply (Z.le_trans _ (x / 2 ^ lb));
+        [apply Z.div_le_compat_l; lia|apply Z.div_le_mono; lia].
+  Qed.
 End IntervalOpsSound.
 
 Module IntervalOpsT (T : THRESHOLDS_T) (Scalar : INTERVAL_SCALAR_T T).
