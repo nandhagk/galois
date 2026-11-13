@@ -570,6 +570,60 @@ Module RelationalPathBounds.
       apply plus_mono; [apply below_refl|exact Hcycle].
   Qed.
 
+  (** A one-edge update uses an old prefix and suffix around the inserted edge. *)
+  Definition edge_extension {A : Type} (r : A -> A -> option Z)
+      (source target : A) (weight : Z) (i j : A) : option Z :=
+    minimum (r i j) (plus (r i source) (plus (Some weight) (r target j))).
+
+  (** A nonnegative new-edge cycle keeps the rank-one update triangle closed. *)
+  Lemma edge_extension_closed : forall A (r : A -> A -> option Z) source target weight,
+    (forall p, closed_at r p) ->
+    below (Some 0%Z) (plus (r target source) (Some weight)) ->
+    forall p, closed_at (edge_extension r source target weight) p.
+  Proof.
+    intros A r source target weight Hr Hcycle p i j.
+    unfold closed_at, edge_extension.
+    rewrite plus_minimum_r, !plus_minimum_l, !minimum_glb.
+    split; split.
+    - eapply below_trans; [apply minimum_l|apply Hr].
+    - eapply below_trans; [apply minimum_r|].
+      replace (plus (r i p) (plus (r p source) (plus (Some weight) (r target j))))
+        with (plus (plus (r i p) (r p source))
+          (plus (Some weight) (r target j)))
+        by (rewrite plus_assoc; reflexivity).
+      apply plus_mono; [apply Hr|apply below_refl].
+    - eapply below_trans; [apply minimum_r|].
+      replace (plus (plus (r i source) (plus (Some weight) (r target p)))
+        (r p j)) with
+        (plus (r i source)
+          (plus (Some weight) (plus (r target p) (r p j))))
+        by (rewrite !plus_assoc; reflexivity).
+      apply plus_mono; [apply below_refl|].
+      apply plus_mono; [apply below_refl|apply Hr].
+    - assert (Hcycle' : below (Some 0%Z)
+        (plus (r target p) (plus (r p source) (Some weight)))).
+      { eapply (below_trans (Some 0%Z)
+          (plus (r target source) (Some weight)) _).
+        - exact Hcycle.
+        - rewrite <- plus_assoc. apply plus_mono;
+            [apply Hr|apply below_refl]. }
+      eapply below_trans; [apply minimum_r|].
+      replace (plus
+        (plus (r i source) (plus (Some weight) (r target p)))
+        (plus (r p source) (plus (Some weight) (r target j)))) with
+        (plus (plus (r i source) (Some weight))
+          (plus (plus (r target p) (plus (r p source) (Some weight)))
+            (r target j))).
+      2: { destruct (r i source), (r target p), (r p source), (r target j);
+             cbn [plus]; try reflexivity; f_equal; lia. }
+      replace (plus (r i source) (plus (Some weight) (r target j))) with
+        (plus (plus (r i source) (Some weight))
+          (plus (Some 0%Z) (r target j)))
+        by (rewrite plus_zero_l, plus_assoc; reflexivity).
+      apply plus_mono; [apply below_refl|].
+      apply plus_mono; [exact Hcycle'|apply below_refl].
+  Qed.
+
   Lemma floyd_closes_pivot : forall A (r : A -> A -> option Z) k,
     r k k = Some 0%Z -> closed_at (floyd r k) k.
   Proof.
