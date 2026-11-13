@@ -6350,12 +6350,6 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
       + pose proof (reachable_head_counter p pol last c cfg Hwf Hreach Hhead); lia.
       + rewrite (reachable_nonhead_counter p pol last c Hwf Hreach Hhead); reflexivity.
   Qed.
-  (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
-  Lemma W7_trace : forall p pol xs last, fits p pol ->
-    wl_path (step p pol) (prepare p pol) xs last ->
-    (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
-      k_loop * work p pol + queue_phi p (prepare p pol))%N.
-  Proof. Admitted. (* STUB *)
   (** Every continuing callback preserves the monotonicity of every encoded counter. *)
   Lemma counter_step_mono : forall p pol s s1 c, step p pol s = inl s1 ->
     (counter s c <= counter s1 c)%N.
@@ -6807,6 +6801,168 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     unfold k_fuel; rewrite N.mul_1_l; lia.
   Qed.
 
+  (** Concatenating state prefixes adds their existing callback clocks. *)
+  Lemma trace_cost_app : forall p pol xs ys,
+    (trace_cost p pol (xs ++ ys) = trace_cost p pol xs + trace_cost p pol ys)%N.
+  Proof.
+    intros p pol xs ys; unfold trace_cost; rewrite map_app, fold_right_app.
+    induction (List.map (T_step p pol) xs) as [|cost costs IH];
+      cbn [fold_right] in *; lia.
+  Qed.
+
+  (** A nonempty state prefix pays its first callback and its remaining suffix. *)
+  Lemma trace_cost_cons : forall p pol s xs,
+    (trace_cost p pol (s :: xs) = T_step p pol s + trace_cost p pol xs)%N.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Section TraceComposition.
+    Variable Hround : forall p pol s xs last,
+      fits p pol -> reachable p pol s -> wl_path (step p pol) s xs last ->
+      stable_segment p pol xs ->
+      (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
+        k_round * N.of_nat (C p + D p) * unit p + queue_phi p s)%N.
+
+    (** A positive-event callback and its following stable interval fit two event allowances. *)
+    Lemma trace_event_allowance : forall p pol s before after suffix last prefix,
+      wl_path (step p pol) s prefix before -> step p pol before = inl after ->
+      wl_path (step p pol) after suffix last -> 0 < head_events pol before after ->
+      head_events pol before after + head_events pol after last <= head_events pol s last /\
+      2 * head_events pol after last + head_events pol before after + 2 <=
+        2 * head_events pol s last + 1.
+    Proof.
+      intros p pol s before after suffix last prefix Hprefix Hevent Hsuffix Hpositive.
+      assert (Hrest : forall c, (counter before c <= counter last c)%N).
+      { intro c; pose proof (counter_step_mono p pol before after c Hevent).
+        pose proof (counter_path_mono p pol after suffix last c Hsuffix); lia. }
+      pose proof (head_events_add pol s before last
+        (fun c => counter_path_mono p pol s prefix before c Hprefix) Hrest) as Hadd1.
+      pose proof (head_events_add pol before after last
+        (fun c => counter_step_mono p pol before after c Hevent)
+        (fun c => counter_path_mono p pol after suffix last c Hsuffix)) as Hadd2.
+      lia.
+    Qed.
+
+    (** Every finite prefix is charged by its positive head events and one final stable sweep. *)
+    Lemma path_trace_bound_fuel : forall p pol fuel s xs last,
+      length xs <= fuel -> fits p pol -> reachable p pol s ->
+      wl_path (step p pol) s xs last ->
+      (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
+        N.of_nat (2 * head_events pol s last + 1) *
+          (k_round * N.of_nat (C p + D p) * unit p) +
+        N.of_nat (head_events pol s last) * (k_round * head_unit p pol) +
+        queue_phi p s)%N.
+    Proof.
+      intros p pol fuel; induction fuel as [|fuel IH];
+        intros s xs last Hlength Hfits Hreach Hpath.
+      - assert (Hnil : xs = []) by (apply length_zero_iff_nil; lia).
+        subst xs; inversion Hpath; subst.
+        cbn [trace_cost List.map fold_right length]; lia.
+      - destruct (path_first_event p pol s xs last Hpath) as [Hstable|
+          [prefix [before [after [suffix [Hxs [Hprefix [Hevent
+            [Hsuffix [Hstable Hpositive]]]]]]]]]].
+        + pose proof (Hround p pol s xs last Hfits Hreach Hpath Hstable) as Hcost.
+          assert (Hone : (1 <= N.of_nat (2 * head_events pol s last + 1))%N) by lia.
+          assert (Hrow : (1 * (k_round * N.of_nat (C p + D p) * unit p) <=
+            N.of_nat (2 * head_events pol s last + 1) *
+              (k_round * N.of_nat (C p + D p) * unit p))%N).
+          { now apply N.mul_le_mono_r. }
+          nia.
+        + pose proof (reachable_path p pol s prefix before Hreach Hprefix) as Hbefore.
+          pose proof (reachable_step p pol before after Hbefore Hevent) as Hafter.
+          assert (Hsuffix_length : length suffix <= fuel).
+          { rewrite Hxs, length_app in Hlength; cbn [length] in Hlength; lia. }
+          pose proof (IH after suffix last Hsuffix_length Hfits Hafter Hsuffix) as Htail.
+          pose proof (Hround p pol s prefix before Hfits Hreach Hprefix Hstable) as Hprefix_cost.
+          pose proof (W5_boundary p pol before after Hfits Hbefore Hevent Hpositive)
+            as Hboundary.
+          destruct (trace_event_allowance p pol s before after suffix last prefix
+            Hprefix Hevent Hsuffix Hpositive) as [Hevents Hcoefficients].
+          assert (HeventsN : (N.of_nat (head_events pol before after) +
+            N.of_nat (head_events pol after last) <= N.of_nat (head_events pol s last))%N)
+            by lia.
+          assert (HcoefficientsN : (N.of_nat (2 * head_events pol after last + 1) +
+            N.of_nat (head_events pol before after) + 1 <=
+            N.of_nat (2 * head_events pol s last + 1))%N) by lia.
+          assert (Hrow : ((N.of_nat (2 * head_events pol after last + 1) +
+            N.of_nat (head_events pol before after) + 1) *
+              (k_round * N.of_nat (C p + D p) * unit p) <=
+            N.of_nat (2 * head_events pol s last + 1) *
+              (k_round * N.of_nat (C p + D p) * unit p))%N).
+          { now apply N.mul_le_mono_r. }
+          assert (Hheads : ((N.of_nat (head_events pol before after) +
+            N.of_nat (head_events pol after last)) * (k_round * head_unit p pol) <=
+            N.of_nat (head_events pol s last) * (k_round * head_unit p pol))%N).
+          { now apply N.mul_le_mono_r. }
+          rewrite Hxs, trace_cost_app, trace_cost_cons, length_app.
+          cbn [length]; rewrite Nat2N.inj_add, Nat2N.inj_succ.
+          clear Hevents Hcoefficients HeventsN HcoefficientsN; nia.
+    Qed.
+
+    (** The event budget applies without an auxiliary length bound. *)
+    Lemma path_trace_bound : forall p pol s xs last,
+      fits p pol -> reachable p pol s -> wl_path (step p pol) s xs last ->
+      (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
+        N.of_nat (2 * head_events pol s last + 1) *
+          (k_round * N.of_nat (C p + D p) * unit p) +
+        N.of_nat (head_events pol s last) * (k_round * head_unit p pol) +
+        queue_phi p s)%N.
+    Proof.
+      intros p pol s xs last Hfits Hreach Hpath.
+      apply (path_trace_bound_fuel p pol (length xs) s xs last); assumption || lia.
+    Qed.
+
+    (** Reachable head allowances bound complete trace prefixes with an independent constant. *)
+    Lemma T_trace_rounds : forall p pol xs last, fits p pol ->
+      wl_path (step p pol) (prepare p pol) xs last ->
+      (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
+        2 * k_round * work p pol + queue_phi p (prepare p pol))%N.
+    Proof.
+      intros p pol xs last Hfits Hpath.
+      assert (Hinitial : reachable p pol (prepare p pol)) by (exists []; constructor).
+      pose proof (path_trace_bound p pol (prepare p pol) xs last Hfits Hinitial Hpath)
+        as Hcost.
+      destruct Hfits as [Hwf [Hcuts Hprio]].
+      pose proof (proj1 (W6_rounds p pol xs last Hwf Hprio Hpath)) as Hrounds.
+      assert (Hrow_coefficient : (N.of_nat
+        (2 * head_events pol (prepare p pol) last + 1) <= 2 * N.of_nat (rounds p pol))%N)
+        by lia.
+      assert (Hhead_coefficient : (N.of_nat (head_events pol (prepare p pol) last) <=
+        2 * N.of_nat (rounds p pol))%N) by lia.
+      assert (Hrow : (N.of_nat (2 * head_events pol (prepare p pol) last + 1) *
+          (k_round * N.of_nat (C p + D p) * unit p) <=
+        (2 * N.of_nat (rounds p pol)) * (k_round * N.of_nat (C p + D p) * unit p))%N).
+      { now apply N.mul_le_mono_r. }
+      assert (Hheads : (N.of_nat (head_events pol (prepare p pol) last) *
+          (k_round * head_unit p pol) <=
+        (2 * N.of_nat (rounds p pol)) * (k_round * head_unit p pol))%N).
+      { now apply N.mul_le_mono_r. }
+      assert (Hwork : (N.of_nat (rounds p pol) * (N.of_nat (C p + D p) * unit p) +
+        N.of_nat (rounds p pol) * head_unit p pol <= work p pol)%N).
+      { unfold work; fold (head_unit p pol); rewrite Nat2N.inj_mul; nia. }
+      assert (Hscaled : (2 * k_round *
+        (N.of_nat (rounds p pol) * (N.of_nat (C p + D p) * unit p) +
+          N.of_nat (rounds p pol) * head_unit p pol) <= 2 * k_round * work p pol)%N).
+      { now apply N.mul_le_mono_l. }
+      clear Hrounds Hrow_coefficient Hhead_coefficient Hwork; nia.
+    Qed.
+  End TraceComposition.
+
+  (** W7 charges arbitrary finite prefixes by partitioning at strict head events. *)
+  Lemma W7_trace : forall p pol xs last, fits p pol ->
+    wl_path (step p pol) (prepare p pol) xs last ->
+    (trace_cost p pol xs + c_loopN * N.of_nat (length xs) + queue_phi p last <=
+      k_loop * work p pol + queue_phi p (prepare p pol))%N.
+  Proof.
+    intros p pol xs last Hfits Hpath.
+    pose proof (T_trace_rounds W5_round_strong p pol xs last Hfits Hpath) as Hcost.
+    assert (Hcoefficient : (2 * k_round <= k_loop)%N) by (unfold k_loop; nia).
+    assert (Hwork : (2 * k_round * work p pol <= k_loop * work p pol)%N).
+    { now apply N.mul_le_mono_r. }
+    lia.
+  Qed.
+
   (** The advertised work contains preparation and at least one complete row round. *)
   Lemma driver_work_bounds : forall p pol,
     (N.of_nat (prep p) <= work p pol)%N /\
@@ -7030,12 +7186,74 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     { unfold k_loop; nia. }
     nia.
   Qed.
+  (** Every worklist callback has at least its generated dispatch cost. *)
+  Lemma T_step_positive : forall p pol s, (1 <= T_step p pol s)%N.
+  Proof.
+    intros p pol s; unfold T_step; apply N.le_add_r.
+  Qed.
+
+  (** The explicit binary-clock bound fits the independent loop constant. *)
+  Lemma driver_prefix_absorb : forall w phi bits queued,
+    (queued <= w)%N ->
+    (6 * (2 * k_round * w + phi) +
+      (2 * Q.c_pq + c_loopN + 3) * (queued + 1) + bits + 3 <=
+      k_loop * (w + phi + bits + 1))%N.
+  Proof.
+    intros w phi bits queued Hqueued.
+    assert (Hw : (12 * k_round + 2 * Q.c_pq + c_loopN + 3 <= k_loop)%N).
+    { unfold k_loop; nia. }
+    assert (Hphi : (6 <= k_loop)%N) by (unfold k_loop; nia).
+    assert (Hone : (2 * Q.c_pq + c_loopN + 6 <= k_loop)%N).
+    { unfold k_loop; nia. }
+    assert (Hqueue : ((2 * Q.c_pq + c_loopN + 3) * queued <=
+      (2 * Q.c_pq + c_loopN + 3) * w)%N) by now apply N.mul_le_mono_l.
+    assert (Hwork : ((12 * k_round + 2 * Q.c_pq + c_loopN + 3) * w <=
+      k_loop * w)%N) by now apply N.mul_le_mono_r.
+    assert (Hpotential : (6 * phi <= k_loop * phi)%N) by now apply N.mul_le_mono_r.
+    assert (Hbits : (bits <= k_loop * bits)%N).
+    { rewrite <- (N.mul_1_l bits) at 1; apply N.mul_le_mono_r; lia. }
+    clear Hw Hphi; nia.
+  Qed.
+
+  (** Independent prefix and stopping budgets bound the generated binary worklist clock. *)
+  Lemma T_loop_from_rounds : forall p pol fuel, fits p pol ->
+    (T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *
+      (work p pol + queue_phi p (prepare p pol) +
+        N.of_nat (N.size_nat fuel) + 1))%N.
+  Proof.
+    intros p pol fuel Hfits.
+    assert (Hprefix : forall xs last,
+      wl_path (step p pol) (prepare p pol) xs last ->
+      (fold_right N.add 0%N (List.map (T_step p pol) xs) + queue_phi p last <=
+        2 * k_round * work p pol + queue_phi p (prepare p pol))%N).
+    { intros xs last Hpath.
+      pose proof (T_trace_rounds W5_round_strong p pol xs last Hfits Hpath) as Hcost.
+      change (trace_cost p pol xs + queue_phi p last <=
+        2 * k_round * work p pol + queue_phi p (prepare p pol))%N; lia. }
+    assert (Hstop : forall xs last result,
+      wl_path (step p pol) (prepare p pol) xs last -> step p pol last = inr result ->
+      (T_step p pol last <= (2 * Q.c_pq + c_loopN + 3) *
+        (N.of_nat (C p) * unit p + 1) + queue_phi p last)%N).
+    { intros xs last result Hpath Hlast.
+      pose proof (T_stop_budget p pol last result (proj1 Hfits) (proj2 (proj2 Hfits))
+        ltac:(now exists xs) Hlast) as Hcost; lia. }
+    pose proof (T_loopN_prefix_bound (step p pol) (T_step p pol) (queue_phi p)
+      (prepare p pol) fuel
+      (2 * k_round * work p pol + queue_phi p (prepare p pol))%N
+      ((2 * Q.c_pq + c_loopN + 3) * (N.of_nat (C p) * unit p + 1))%N
+      (T_step_positive p pol) Hprefix Hstop) as Hclock.
+    eapply N.le_trans; [exact Hclock|apply driver_prefix_absorb].
+    exact (proj1 (proj2 (proj2 (driver_work_bounds p pol)))).
+  Qed.
+
   (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
   Lemma W7_loop : forall p pol fuel, fits p pol ->
     (T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *
       (work p pol + queue_phi p (prepare p pol) +
         N.of_nat (N.size_nat fuel) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; apply T_loop_from_rounds; assumption.
+  Qed.
   (** Fuel is chosen from the row-visit budget and includes the final empty pop. *)
   Lemma W7_fuel : forall p pol,
     (fuel_for p pol = k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
@@ -7667,7 +7885,23 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
   Lemma T_run_le : forall p pol fuel, fits p pol ->
     (T_run p pol fuel <= c_wl * (work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel Hfits.
+    destruct (driver_work_bounds p pol) as [Hprep [Hqueue [Hcount Hvisits]]].
+    pose proof (W1_prepare p pol (proj1 Hfits) (proj2 (proj2 Hfits))) as Hprepare.
+    pose proof (W1_queue_phi p pol (proj1 Hfits) (proj2 (proj2 Hfits))) as Hphi.
+    pose proof (W7_loop p pol fuel Hfits) as Hloop.
+    pose proof (T_run_additive p pol fuel) as Hrun.
+    assert (Hqueue_phi : (queue_phi p (prepare p pol) <= k_prepare * work p pol)%N).
+    { eapply N.le_trans; [exact Hphi|].
+      replace (k_prepare * N.of_nat (C p + D p) * unit p)%N with
+        (k_prepare * (N.of_nat (C p + D p) * unit p))%N by ring.
+      apply N.mul_le_mono_l; exact Hqueue. }
+    set (w := work p pol) in *.
+    set (queued_work := (N.of_nat (C p) * unit p)%N) in *.
+    eapply N.le_trans; [|apply driver_global_absorb].
+    clear -Hprep Hcount Hprepare Hqueue_phi Hloop Hrun; nia.
+  Qed.
   Lemma run_enough : forall p pol fuel, fits p pol -> (fuel_for p pol <= fuel)%N ->
     exists m, run p pol fuel = Solved m.
   Proof.
@@ -7724,12 +7958,18 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   Lemma T_run_all_heads_le : forall p pol fuel, S.wf p -> prio_ok p pol -> all_heads p pol ->
     (T_run p pol fuel <= c_wl *
       (all_head_work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
-  Proof. intros; apply T_run_all_head_budget; assumption. Qed.
+  Proof.
+    intros; apply T_run_all_head_budget; assumption.
+  Qed.
   Lemma run_bigO : bigO
     (fun x : S.prog * policy L.wparam => fits (fst x) (snd x))
     (fun x => work (fst x) (snd x))
     (fun x => T_run (fst x) (snd x) (fuel_for (fst x) (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists (2 * c_wl)%N; intros [p pol] Hfits; cbn [fst snd] in *.
+    pose proof (T_run_le p pol (fuel_for p pol) Hfits) as Hrun.
+    pose proof (fuel_for_bits_le p pol) as Hbits; nia.
+  Qed.
 End WorklistT.
 
 Module WorklistLeast (L : WLATTICE_T) (LB : LUB L) (S : SYSTEM_T L)
