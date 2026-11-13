@@ -3144,9 +3144,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       rewrite M.find_empty in Hentry. discriminate.
     - intros changed k ignored Hchanged. now apply tighten_row_bits.
   Qed.
-  Lemma T3_strengthen : forall m, dbm_wf m ->
-    (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
-  Proof. Admitted. (* STUB *)
   Definition strongly_closed (m : dbm) : Prop :=
     coherent m /\
     (forall i, In (K.encode i) (support m) -> entry m i i = Some 0%Z) /\
@@ -6469,4 +6466,332 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     { replace rounds with (1 * rounds)%N at 1 by ring. now apply N.mul_le_mono_r. }
     rewrite N.mul_add_distr_l. lia.
   Qed.
+  (** A label-bounded fold charges the exact raw label sum, without a wf premise. *)
+  Lemma T_fold_label_weight : forall (A B : Type) (step : B -> K.t -> A -> B)
+      (clock : B -> K.t -> A -> N) m seed c,
+    (forall acc k a, (clock acc k a <= c * N.of_nat (K.bits k + 1))%N) ->
+    (M.T_fold step clock m seed <= M.c_map *
+      (N.of_nat (M.nodes m + 1) + c * N.of_nat (M.weight m)))%N.
+  Proof.
+    intros A B step clock m seed c Hbound.
+    pose proof (M.T_fold_sum_le A B step clock m seed) as Hclock.
+    pose proof (fold_potential_time (K.t * A)%type B
+      (fun acc ka => step acc (fst ka) (snd ka))
+      (fun acc ka => clock acc (fst ka) (snd ka))
+      (fun _ => 0%N) (fun ka => (c * N.of_nat (K.bits (fst ka) + 1))%N)
+      (M.elements m) seed 0%N
+      ltac:(intros acc [k a]; cbn [fst snd]; rewrite !N.add_0_r; apply Hbound)) as Hsum.
+    cbn beta zeta in Hsum. rewrite ?N.add_0_r, ?N.add_0_l in Hsum.
+    assert (Hlabels : (fold_right N.add 0%N
+      (map (fun ka => (c * N.of_nat (K.bits (fst ka) + 1))%N) (M.elements m)) <=
+      c * N.of_nat (M.weight m))%N).
+    { change (fold_right N.add 0%N
+        (map (fun ka => (c * N.of_nat (K.bits (fst ka) + 1))%N) (M.elements m)) <=
+        c * N.of_nat (sum_weight (fun ka => (K.bits (fst ka) + 1)%nat) (M.elements m)))%N.
+      apply time_sum_bound. intros ka Hka. apply N.le_refl. }
+    eapply N.le_trans; [exact Hclock|]. apply N.mul_le_mono_l.
+    apply N.add_le_mono_l. eapply N.le_trans; [exact Hsum|exact Hlabels].
+  Qed.
+
+  (** The diagonal check pays for raw labels even when several labels name the same code. *)
+  Lemma T_matrix_ok_small : forall m,
+    (T_matrix_ok m <= 128 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat (M.weight m + supp m * (b m + 1) + 1))%N.
+  Proof.
+    intro m. unfold T_matrix_ok. time_simpl.
+    match goal with
+    | |- context [M.T_fold ?f ?tf m true] =>
+      assert (Hcallback : forall acc k row,
+        (tf acc k row <= 64 * (M.c_map + 1) * N.of_nat (K.bits k + 1))%N)
+        by (intros acc k row; pose proof (T_nonnegative_small k m);
+          pose proof (Std.Datatypes.T_andb_le acc (nonnegative k m));
+          time_simpl; rewrite ?Nat2N.inj_add in *; nia);
+      pose proof (T_fold_label_weight (M.t Z) bool f tf m true
+        (64 * (M.c_map + 1))%N Hcallback) as Hfold;
+      set (fold_clock := M.T_fold f tf m true) in *
+    end.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    set (work := N.of_nat (M.weight m + supp m * (b m + 1) + 1)).
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    assert (Hnode_work : (N.of_nat (M.nodes m + 1) <= work)%N) by (unfold work; lia).
+    assert (Hlabel_work : (N.of_nat (M.weight m) <= work)%N) by (unfold work; lia).
+    assert (Hfold' : (fold_clock <=
+      M.c_map * (64 * (M.c_map + 1) + 1) * work)%N).
+    { eapply N.le_trans; [exact Hfold|].
+      replace (M.c_map * (64 * (M.c_map + 1) + 1) * work)%N with
+        (M.c_map * ((64 * (M.c_map + 1) + 1) * work))%N by ring.
+      apply N.mul_le_mono_l.
+      pose proof (N.mul_le_mono_l _ _ (64 * (M.c_map + 1))%N Hlabel_work).
+      rewrite N.mul_add_distr_r, N.mul_1_l. lia. }
+    assert (Hcoefficient : (M.c_map * (64 * (M.c_map + 1) + 1) + 1 <=
+      128 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite N.mul_add_distr_r, N.mul_1_l in Hbudget.
+    clearbody work fold_clock. clear - Hfold' Hpositive Hbudget. lia.
+  Qed.
+
+
+  (** Payload bounds lift monotonically to the sparse map work measure. *)
+  Lemma code_work_mono : forall (A : Type) (f g : A -> nat) (m : M.t A),
+    (forall p a, M.find p m = Some a -> f a <= g a) ->
+    code_work f m <= code_work g m.
+  Proof.
+    intros A f g m Hbound. unfold code_work, stored_weight.
+    assert (Hsum : sum_weight (fun p => option_weight f (M.find p m)) (M.codes m) <=
+      sum_weight (fun p => option_weight g (M.find p m)) (M.codes m)).
+    { apply sum_weight_mono. intros p Hp.
+      destruct (M.find p m) as [a|] eqn:Ha; cbn [option_weight].
+      - now apply (Hbound p a).
+      - lia. }
+    lia.
+  Qed.
+
+  (** Both unary maps contain only codes already supported by the source matrix. *)
+  Lemma collect_unary_support : forall m,
+    (forall p, In p (M.codes (fst (M.fold (unary_maps m) m (M.empty, M.empty)))) ->
+      In p (support m)) /\
+    (forall p, In p (M.codes (snd (M.fold (unary_maps m) m (M.empty, M.empty)))) ->
+      In p (support m)).
+  Proof.
+    intro m. destruct (collect_unary_origins m) as [Hleft Hright]. split.
+    - intros p Hp. apply M.codes_spec in Hp.
+      destruct (M.find p (fst (M.fold (unary_maps m) m (M.empty, M.empty))))
+        as [d|] eqn:Hfind; [|contradiction].
+      destruct (Hleft p d Hfind) as [k [Hkey Hsource]]. subst p.
+      apply support_find. left. unfold entry in Hsource. rewrite M.get_find in Hsource.
+      destruct (M.find (K.encode k) m); congruence.
+    - intros p Hp. apply M.codes_spec in Hp.
+      destruct (M.find p (snd (M.fold (unary_maps m) m (M.empty, M.empty))))
+        as [d|] eqn:Hfind; [|contradiction].
+      destruct (Hright p d Hfind) as [k [Hkey Hsource]]. subst p.
+      apply support_find. right. exists (K.encode k).
+      rewrite raw_entry_get, Hsource. discriminate.
+  Qed.
+
+  Lemma collect_unary_bits : forall m,
+    (forall p d, M.find p (fst (M.fold (unary_maps m) m (M.empty, M.empty))) = Some d ->
+      Z.size_nat d <= ell m) /\
+    (forall p d, M.find p (snd (M.fold (unary_maps m) m (M.empty, M.empty))) = Some d ->
+      Z.size_nat d <= ell m).
+  Proof.
+    intro m. destruct (collect_unary_origins m) as [Hleft Hright]. split.
+    - intros p d Hd. destruct (Hleft p d Hd) as [k [Hkey Hsource]].
+      eapply ell_entry. rewrite raw_entry_get. exact Hsource.
+    - intros p d Hd. destruct (Hright p d Hd) as [k [Hkey Hsource]].
+      eapply ell_entry. rewrite raw_entry_get. exact Hsource.
+  Qed.
+
+  (** Collecting a unary payload performs only key operations, independently of its bit length. *)
+  Lemma T_unary_maps_le : forall m acc k ignored,
+    (T_unary_maps m acc k ignored <=
+      64 * (M.c_map + 1) * N.of_nat (K.bits k + 1))%N.
+  Proof.
+    intros m acc k ignored. pose proof (flip_bits k) as Hbits.
+    pose proof (T_flip_le k) as Hflip.
+    pose proof (T_entry_small m k (flip k)) as Hentry.
+    pose proof (Std.Datatypes.T_fst_le acc) as Hfst.
+    pose proof (Std.Datatypes.T_snd_le acc) as Hsnd.
+    unfold T_unary_maps. time_simpl.
+    destruct (entry m k (flip k)) as [d|].
+    - pose proof (M.T_set_le Z k d (fst acc)) as Hleft.
+      pose proof (M.T_set_le Z (flip k) d (snd acc)) as Hright.
+      time_simpl. rewrite ?Nat2N.inj_add in *. first [time_lin|nia].
+    - time_simpl. rewrite ?Nat2N.inj_add in *. first [time_lin|nia].
+  Qed.
+
+  (** The average callback charges its prefix only at finite unary suffixes. *)
+  Lemma T_strengthen_bound_le : forall a old unary,
+    (T_strengthen_bound a old unary <= 32 * N.of_nat
+      (option_weight (fun b => (Z.size_nat a + Z.size_nat b + 1)%nat) unary + 1))%N.
+  Proof.
+    intros a old [b|]; cbn [option_weight].
+    - pose proof (zbits_add_sum a b). pose proof (zbits_div2 (a + b)%Z). time_step.
+    - time_step.
+  Qed.
+
+  Local Definition strengthening_row_work (unaries : M.t Z) (a : Z) : nat :=
+    code_work (fun b => (Z.size_nat a + Z.size_nat b + 1)%nat) unaries.
+
+  Lemma T_strengthen_outer_le : forall unaries old unary,
+    (T_strengthen_outer unaries old unary <= 128 * (M.c_map + 1) * N.of_nat
+      (option_weight (code_work (fun _ : Z => 0%nat)) old +
+        option_weight (strengthening_row_work unaries) unary + 1))%N.
+  Proof.
+    intros unaries [row|] [a|]; cbn [option_weight].
+    - assert (Hcallback : forall old next,
+        (T_strengthen_bound a old next <= 32 * N.of_nat
+          (option_weight (fun _ : Z => 0%nat) old +
+            option_weight (fun b => (Z.size_nat a + Z.size_nat b + 1)%nat) next + 1))%N).
+      { intros old next. rewrite option_weight_zero. apply T_strengthen_bound_le. }
+      pose proof (T_merge_code_work Z Z Z (strengthen_bound a)
+        (fun old next => T_strengthen_bound a old next) (fun _ : Z => 0)
+        (fun b => (Z.size_nat a + Z.size_nat b + 1)%nat) row unaries 32%N Hcallback) as Hmerge.
+      unfold strengthening_row_work.
+      set (work := N.of_nat (code_work (fun _ : Z => 0) row +
+        code_work (fun b => (Z.size_nat a + Z.size_nat b + 1)%nat) unaries + 1)) in *.
+      assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+      assert (Hcoefficient : (M.c_map * (32 + 1) * 2 + 2 <=
+        128 * (M.c_map + 1))%N) by lia.
+      pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+      rewrite N.mul_add_distr_r in Hbudget.
+      unfold T_strengthen_outer. time_simpl. clearbody work.
+      clear - Hmerge Hpositive Hbudget. lia.
+    - unfold T_strengthen_outer. time_simpl. nia.
+    - unfold T_strengthen_outer. time_simpl. nia.
+    - unfold T_strengthen_outer. time_simpl. nia.
+  Qed.
+
+
+  Local Definition strengthening_work (m : dbm) : nat :=
+    M.weight m + (supp m + 1)^2 * (b m + ell m + 1) + 1.
+
+  Lemma strengthening_scalar_bound : forall n bb ee,
+    n * (bb + 1) + n + n * (n * (bb + 2 * ee + 3)) <=
+      4 * (n + 1)^2 * (bb + ee + 1).
+  Proof.
+    intros n bb ee. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** The outer merge charges source rows and a quadratic number of unary averages. *)
+  Lemma strengthening_maps_work_bound : forall m,
+    code_work (code_work (fun _ : Z => 0)) m +
+      code_work
+        (strengthening_row_work (snd (M.fold (unary_maps m) m (M.empty, M.empty))))
+        (fst (M.fold (unary_maps m) m (M.empty, M.empty))) + 1 <=
+      8 * ((supp m + 1)^2 * (b m + ell m + 1)).
+  Proof.
+    intro m.
+    set (base := (supp m + 1)^2 * (b m + ell m + 1)).
+    assert (Hpositive : 1 <= base) by (unfold base; cbn [Nat.pow]; nia).
+    assert (Hsource : code_work (code_work (fun _ : Z => 0)) m <= 2 * base).
+    { pose proof (matrix_code_work_le m) as Hmatrix.
+      change (code_work (code_work Z.size_nat) m <= base + skel m) in Hmatrix.
+      assert (Hzero : code_work (code_work (fun _ : Z => 0)) m <=
+        code_work (code_work Z.size_nat) m).
+      { apply code_work_mono. intros p row Hrow. apply code_work_mono.
+        intros q z Hz. lia. }
+      assert (Hskel : skel m <= base).
+      { eapply Nat.le_trans; [apply skel_le|].
+        unfold base. apply Nat.mul_le_mono_l. lia. }
+      lia. }
+    destruct (collect_unary_support m) as [HsupportL HsupportR].
+    destruct (collect_unary_bits m) as [HbitsL HbitsR].
+    set (unaries := M.fold (unary_maps m) m (M.empty, M.empty)) in *.
+    pose proof (codes_support_length Z (fst unaries) m HsupportL) as Hcount.
+    pose proof (nodes_support Z (fst unaries) m HsupportL) as Hnodes.
+    assert (Hrowwork : forall p a, M.find p (fst unaries) = Some a ->
+      strengthening_row_work (snd unaries) a <=
+        supp m * (b m + 2 * ell m + 3)).
+    { intros p a Ha. unfold strengthening_row_work.
+      eapply Nat.le_trans.
+      - apply code_work_bits_bound; [exact HsupportR|exact HbitsR].
+      - apply Nat.mul_le_mono_l. pose proof (HbitsL p a Ha). lia. }
+    pose proof (stored_weight_uniform Z (strengthening_row_work (snd unaries))
+      (fst unaries) (supp m * (b m + 2 * ell m + 3)) Hrowwork) as Hstored.
+    assert (Hstored' : stored_weight (strengthening_row_work (snd unaries)) (fst unaries) <=
+      supp m * (supp m * (b m + 2 * ell m + 3))).
+    { eapply Nat.le_trans; [exact Hstored|].
+      apply Nat.mul_le_mono_r. exact Hcount. }
+    assert (Hunaries : code_work (strengthening_row_work (snd unaries)) (fst unaries) <=
+      4 * base).
+    { pose proof (strengthening_scalar_bound (supp m) (b m) (ell m)) as Hscalar.
+      replace (4 * (supp m + 1)^2 * (b m + ell m + 1)) with
+        (4 * base) in Hscalar by (unfold base; ring).
+      unfold code_work. lia. }
+    lia.
+  Qed.
+
+  (** Collection charges raw labels, while the merge charges only distinct supported codes. *)
+  Lemma T_strengthen_small : forall m,
+    (T_strengthen m <= 4096 * (M.c_map + 1) * (M.c_map + 1) *
+      N.of_nat (strengthening_work m))%N.
+  Proof.
+    intro m.
+    pose proof (T_fold_label_weight (M.t Z) (M.t Z * M.t Z)%type (unary_maps m)
+      (fun acc k row => T_unary_maps m acc k row) m (M.empty, M.empty)
+      (64 * (M.c_map + 1))%N (T_unary_maps_le m)) as Hfold.
+    set (unaries := M.fold (unary_maps m) m (M.empty, M.empty)).
+    pose proof (T_merge_code_work (M.t Z) Z (M.t Z)
+      (strengthen_outer (snd unaries))
+      (fun old unary => T_strengthen_outer (snd unaries) old unary)
+      (code_work (fun _ : Z => 0)) (strengthening_row_work (snd unaries))
+      m (fst unaries) (128 * (M.c_map + 1))%N
+      (T_strengthen_outer_le (snd unaries))) as Hmerge.
+    pose proof (strengthening_maps_work_bound m) as Hmaps. fold unaries in Hmaps.
+    pose proof (time_of_nat_le _ _ Hmaps) as HmapsN. rewrite Nat2N.inj_mul in HmapsN.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    set (work := N.of_nat (strengthening_work m)) in *.
+    assert (Hpositive : (1 <= work)%N) by (unfold work, strengthening_work; lia).
+    assert (Hbase_work :
+      (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) <= work)%N).
+    { unfold work, strengthening_work. lia. }
+    assert (Hnode_work : (N.of_nat (M.nodes m + 1) <= work)%N).
+    { unfold work. apply time_of_nat_le. unfold strengthening_work. cbn [Nat.pow]. nia. }
+    assert (Hlabel_work : (N.of_nat (M.weight m) <= work)%N).
+    { unfold work, strengthening_work. lia. }
+    assert (Hfold' : (M.T_fold (unary_maps m)
+      (fun acc k row => T_unary_maps m acc k row) m (M.empty, M.empty) <=
+      M.c_map * (64 * (M.c_map + 1) + 1) * work)%N).
+    { eapply N.le_trans; [exact Hfold|].
+      replace (M.c_map * (64 * (M.c_map + 1) + 1) * work)%N with
+        (M.c_map * ((64 * (M.c_map + 1) + 1) * work))%N by ring.
+      apply N.mul_le_mono_l.
+      pose proof (N.mul_le_mono_l _ _ (64 * (M.c_map + 1))%N Hlabel_work).
+      rewrite N.mul_add_distr_r, N.mul_1_l. lia. }
+    assert (Hmerge' : (M.T_merge (strengthen_outer (snd unaries))
+      (fun old unary => T_strengthen_outer (snd unaries) old unary) m (fst unaries) <=
+      16 * M.c_map * (128 * (M.c_map + 1) + 1) * work)%N).
+    { eapply N.le_trans; [exact Hmerge|].
+      replace (16 * M.c_map * (128 * (M.c_map + 1) + 1) * work)%N with
+        (M.c_map * (128 * (M.c_map + 1) + 1) * 2 * (8 * work))%N by ring.
+      apply N.mul_le_mono_l.
+      eapply N.le_trans; [exact HmapsN|].
+      apply N.mul_le_mono_l. exact Hbase_work. }
+    assert (Hcoefficient : (M.c_map * (64 * (M.c_map + 1) + 1) +
+      16 * M.c_map * (128 * (M.c_map + 1) + 1) + 4 <=
+      4096 * (M.c_map + 1) * (M.c_map + 1))%N) by nia.
+    pose proof (N.mul_le_mono_r _ _ work Hcoefficient) as Hbudget.
+    rewrite !N.mul_add_distr_r in Hbudget.
+    pose proof (Std.Datatypes.T_fst_le unaries) as Hfst.
+    pose proof (Std.Datatypes.T_snd_le unaries) as Hsnd.
+    unfold T_strengthen. time_simpl. fold unaries.
+    match goal with
+    | |- context [M.T_fold ?step ?callback m ?seed] =>
+      assert (Hfold_actual : (M.T_fold step callback m seed <=
+        M.c_map * (64 * (M.c_map + 1) + 1) * work)%N) by exact Hfold';
+      set (fold_cost := M.T_fold step callback m seed) in *
+    end.
+    match goal with
+    | |- context [M.T_merge ?step ?callback m ?right] =>
+      assert (Hmerge_actual : (M.T_merge step callback m right <=
+        16 * M.c_map * (128 * (M.c_map + 1) + 1) * work)%N) by exact Hmerge';
+      set (merge_cost := M.T_merge step callback m right) in *
+    end.
+    clearbody work fold_cost merge_cost.
+    clear - Hfold_actual Hmerge_actual Hfst Hsnd Hpositive Hbudget. lia.
+  Qed.
+
+  Lemma T3_strengthen : forall m, dbm_wf m ->
+    (T_strengthen m <= k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
+  Proof.
+    intros m Hwf. pose proof (T_strengthen_small m) as Hclock.
+    pose proof (weight_le m Hwf) as Hweight.
+    assert (Hwork : strengthening_work m <=
+      3 * ((supp m + 1)^2 * (b m + ell m + 1))).
+    { unfold strengthening_work. cbn [Nat.pow]. nia. }
+    pose proof (time_of_nat_le _ _ Hwork) as Hcast. rewrite Nat2N.inj_mul in Hcast.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hcast|].
+    replace (4096 * (M.c_map + 1) * (M.c_map + 1) *
+      (N.of_nat 3 * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1))))%N with
+      ((4096 * (M.c_map + 1) * (M.c_map + 1) * 3) *
+        N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N by (cbn [N.of_nat]; ring).
+    apply N.mul_le_mono_r. unfold k_octagon. nia.
+  Qed.
+
+
 End OctagonT.
