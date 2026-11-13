@@ -76,23 +76,27 @@ Module Disjunction (L : LATTICE) (C : CAP) <: DISJUNCTION L C.
 
   (** Bottom projects to the empty list. *)
   Lemma bot_raw : proj1_sig bot = [].
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
 
   (** The bottom test recognizes exactly the empty projected list. *)
   Lemma is_bot_spec xs : is_bot xs = true <-> proj1_sig xs = [].
-  Proof. Admitted. (* STUB *)
+  Proof. destruct xs as [[|x xs] H]; cbn; split; congruence. Qed.
 
   (** Joining clips the concatenation of the projected operands. *)
   Lemma join_clip xs ys : join xs ys = clip (proj1_sig xs ++ proj1_sig ys).
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
 
   (** Clipping preserves a raw list that already fits the cap. *)
   Lemma clip_small xs : length xs <= C.k -> proj1_sig (clip xs) = xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro Hbound. change (compact xs = xs). unfold compact. destruct C.k as [|k].
+    - destruct xs; cbn in *; [reflexivity|lia].
+    - apply Nat.leb_le in Hbound. rewrite Hbound. reflexivity.
+  Qed.
 
   (** At cap zero clipping discards every raw alternative. *)
   Lemma clip_zero xs : C.k = 0 -> proj1_sig (clip xs) = [].
-  Proof. Admitted. (* STUB *)
+  Proof. intro Hcap; change (compact xs = []); unfold compact; rewrite Hcap; reflexivity. Qed.
 
   Lemma leb_refl xs : leb xs xs = true.
   Proof.
@@ -155,7 +159,11 @@ Module Disjunction (L : LATTICE) (C : CAP) <: DISJUNCTION L C.
   (** With a positive cap clipping covers every raw alternative. *)
   Lemma clip_covers xs : 0 < C.k ->
     forall x, In x xs -> exists y, In y (proj1_sig (clip xs)) /\ L.leb x y = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    change (0 < C.k -> forall x, In x xs -> exists y, In y (compact xs) /\ L.leb x y = true).
+    destruct C.k as [|k] eqn:Hcap; [lia|]. intro Hpositive.
+    apply raw_leb_spec. exact (compact_covers k xs Hcap).
+  Qed.
   Local Lemma zero_empty (xs : t) : C.k = 0 -> proj1_sig xs = [].
   Proof.
     destruct xs as [[|x xs] Hbound]; cbn; [reflexivity |].
