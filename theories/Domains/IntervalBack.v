@@ -3967,6 +3967,85 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     lia.
   Qed.
 
+  Local Lemma table_signed_time : forall w u,
+    (T_interval_signed w u <= 10000 * N.of_nat
+      ((Pos.to_nat w + interval_bits u + 1) ^ 2))%N.
+  Proof.
+    intros w u.
+    pose proof (table_half_time w) as Hhalf_time.
+    pose proof (PayloadBounds.payload_modulus_time w) as Hmodulus_time.
+    pose proof (PayloadBounds.payload_modulus_bits w) as Hmodulus_bits.
+    assert (Hhalf_bits : Z.size_nat (Word.half w) <= Pos.to_nat w).
+    { apply PayloadBounds.payload_word_bits. unfold Word.is_word.
+      pose proof (Word.half_pos w). pose proof (Word.modulus_half w). lia. }
+    destruct u as [|[|lo|] [|hi|]];
+      unfold T_interval_signed, T_interval_finite_helper,
+        interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      try (repeat rewrite Nat2N.inj_add in *;
+        repeat rewrite Nat2N.inj_mul in *; nia).
+    pose proof (Std.Z.T_ltb_le hi (Word.half w)) as Hltb.
+    pose proof (Std.Z.T_leb_le (Word.half w) lo) as Hleb.
+    pose proof (Nat.le_max_l (Z.size_nat lo) (Z.size_nat hi)) as Hlo.
+    pose proof (Nat.le_max_r (Z.size_nat lo) (Z.size_nat hi)) as Hhi.
+    set (s := Pos.to_nat w + Nat.max (Z.size_nat lo) (Z.size_nat hi) + 1).
+    assert (Hhalf_nat : ((Pos.to_nat w + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    assert (Hbits_nat :
+      (Z.size_nat lo + Z.size_nat hi + Pos.to_nat w + 1 <= 3 * s ^ 2)%nat)
+      by (unfold s; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hhalf_nat) as HhalfN.
+    pose proof (table_nat_to_N_le _ _ Hbits_nat) as HbitsN.
+    rewrite Nat2N.inj_mul in HbitsN.
+    repeat rewrite Nat2N.inj_add in HbitsN.
+    set (budget := N.of_nat (s ^ 2)) in *.
+    assert (Hpositive : (1 <= budget)%N)
+      by (unfold budget, s; rewrite Nat.pow_2_r; nia).
+    assert (Hhalf_budget : (Word.T_half w <= 100 * budget)%N).
+    { rewrite Nat.pow_2_r in HhalfN.
+      rewrite Nat.mul_1_r in Hhalf_time.
+      clear - Hhalf_time HhalfN.
+      nia. }
+    assert (Hltb_budget : (Z.T_ltb hi (Word.half w) <= 3 * budget + 4)%N).
+    { clear - Hltb HbitsN. lia. }
+    pose proof (table_nat_to_N_le _ _ Hhalf_bits) as Hhalf_bitsN.
+    assert (Hleb_budget : (Z.T_leb (Word.half w) lo <= 3 * budget + 4)%N).
+    { clear - Hleb HbitsN Hhalf_bitsN.
+      repeat rewrite Nat2N.inj_add in Hleb, Hhalf_bitsN.
+      lia. }
+    destruct (hi <? Word.half w)%Z; time_cbn_all;
+      try (clear - Hpositive Hhalf_budget Hltb_budget; lia).
+    destruct (Word.half w <=? lo)%Z; time_cbn_all;
+      try (clear - Hpositive Hhalf_budget Hltb_budget Hleb_budget; lia).
+    pose proof (Std.Z.T_sub_le lo (Word.modulus w)) as Hsub_lo.
+    pose proof (Std.Z.T_sub_le hi (Word.modulus w)) as Hsub_hi.
+    unfold Word.modulus in Hsub_lo, Hsub_hi.
+    replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) in Hsub_lo, Hsub_hi
+      by reflexivity.
+    pose proof (table_nat_to_N_le _ _ Hmodulus_bits) as HmodbitsN.
+    rewrite Nat2N.inj_add in HmodbitsN.
+    assert (Hmod_budget : (Word.T_modulus w <= 15 * budget + 3)%N)
+      by (clear - Hmodulus_time HbitsN; lia).
+    assert (Hsub_lo_budget : (Z.T_sub lo (Word.modulus w) <= 30 * budget + 3)%N).
+    { clear - Hsub_lo HmodbitsN HbitsN Hpositive.
+      rewrite Nat2N.inj_add in Hsub_lo.
+      unfold Word.modulus.
+      replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) by reflexivity.
+      lia. }
+    assert (Hsub_hi_budget : (Z.T_sub hi (Word.modulus w) <= 30 * budget + 3)%N).
+    { clear - Hsub_hi HmodbitsN HbitsN Hpositive.
+      rewrite Nat2N.inj_add in Hsub_hi.
+      unfold Word.modulus.
+      replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) by reflexivity.
+      lia. }
+    clear - Hpositive Hhalf_budget Hltb_budget Hleb_budget Hmod_budget
+      Hsub_lo_budget Hsub_hi_budget.
+    unfold Word.modulus in Hsub_lo_budget, Hsub_hi_budget.
+    replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) in Hsub_lo_budget,
+      Hsub_hi_budget by reflexivity.
+    lia.
+  Qed.
+
   Local Lemma table_add_time : forall rw u v,
     (T_interval_add rw u v <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
