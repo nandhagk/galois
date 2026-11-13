@@ -526,6 +526,29 @@ Module Index (V : VALUE) <: INDEX V.
     - exists suf. apply Hmembers. now left.
   Qed.
 
+  Lemma child_cell_bound : forall ix n c m, valid ix -> child ix n c = Some m ->
+    cell_bits V.encode c <= index_cell_width ix.
+  Proof.
+    intros ix n c m [Hedges _] Hchild.
+    unfold child in Hchild. destruct (Pos.ltb (next ix) n); [discriminate |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| discriminate].
+    destruct (Hedges n (encode_cell c) edge Hget) as [Hcode [_ [Hbits _]]].
+    apply encode_cell_inj in Hcode. now rewrite <- Hcode.
+  Qed.
+
+  Lemma seek_cell_bound : forall ix r n m c, valid ix -> seek ix n r = Some m ->
+    In c r -> cell_bits V.encode c <= index_cell_width ix.
+  Proof.
+    intros ix r. induction r as [| d r IH]; intros n m c Hvalid Hseek Hin.
+    - contradiction.
+    - cbn [seek] in Hseek.
+      destruct (child ix n d) as [child_node |] eqn:Hchild; [| discriminate].
+      destruct Hin as [<- | Hin].
+      + eapply child_cell_bound; eassumption.
+      + eapply IH; eassumption.
+  Qed.
+
   Lemma seek_live_nonempty : forall ix pre n m, valid ix -> pre <> [] ->
     seek ix n pre = Some m -> exists suf, contains_from m suf ix = true.
   Proof.
@@ -673,7 +696,12 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   (** Every stored cell fits the recorded cell width. *)
   Lemma max_cell_bits_mem : forall a ix u c, wf a ix -> mem ix u -> In c u ->
     cell_bits V.encode c <= max_cell_bits ix.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix u c [Hvalid _] Hmem Hin.
+    unfold mem, contains, contains_from in Hmem.
+    destruct (seek ix (root ix) u) as [n |] eqn:Hseek; [| discriminate].
+    eapply seek_cell_bound; eassumption.
+  Qed.
 
   Lemma width_le : forall ix r,
     width ix r <= Pos.size_nat (next ix + Pos.of_nat (length r)) +
