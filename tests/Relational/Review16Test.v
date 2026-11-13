@@ -35,6 +35,51 @@ Proof.
   vm_compute. split; reflexivity.
 Qed.
 
+(** Dropping raw zone entries decreases rank even when stored row labels repeat. *)
+Example zone_raw_codes_widen :
+  let r := PTrieCode.set 4%positive (None, 7%Z) PTrieCode.empty in
+  let m := PTrieCode.set 2%positive (None, r)
+    (PTrieCode.set 8%positive (None, r) PTrieCode.empty) in
+  let a := Reached m in
+  (Zones.wrank 0 a,
+   Zones.wrank 0 (Zones.widen 0 a Zones.top),
+   Zones.leb a (Zones.widen 0 a Zones.top)) = (2%nat, 0%nat, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Dropping raw signed entries also counts their codes independently of labels. *)
+Example octagon_raw_codes_widen :
+  let label := (1%positive, true) in
+  let r := PTrieCode.set 4%positive (label, 7%Z) PTrieCode.empty in
+  let m := PTrieCode.set 2%positive (label, r)
+    (PTrieCode.set 8%positive (label, r) PTrieCode.empty) in
+  let a := Reached m in
+  (Octagons.wrank 0 a,
+   Octagons.wrank 0 (Octagons.widen 0 a Octagons.top),
+   Octagons.leb a (Octagons.widen 0 a Octagons.top)) = (2%nat, 0%nat, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An empty stored zone row has no rank unit and stable widening retains it exactly. *)
+Example zone_empty_row_stable :
+  let a := Reached (ZoneMap.set (Some 1%positive) ZoneMap.empty ZoneMap.empty) in
+  Zones.wrank 0 a = 0%nat /\ Zones.leb Zones.top a = true /\
+  Zones.widen 0 a Zones.top = a.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
+(** An empty stored signed row is likewise stable without normalizing its representation. *)
+Example octagon_empty_row_stable :
+  let a := Reached (OctMap.set (1%positive, true) OctMap.empty OctMap.empty) in
+  Octagons.wrank 0 a = 0%nat /\ Octagons.leb Octagons.top a = true /\
+  Octagons.widen 0 a Octagons.top = a.
+Proof.
+  vm_compute. repeat split; reflexivity.
+Qed.
+
 (** Zone rank counts entries even when raw stored labels repeat at different codes. *)
 Example zone_raw_codes_rank :
   let r := PTrieCode.set 4%positive (None, 7%Z) PTrieCode.empty in
