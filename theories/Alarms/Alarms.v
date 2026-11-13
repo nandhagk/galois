@@ -117,7 +117,11 @@ Module AlarmsPoint (N X : KEY) (MN : MAP N) (L : LANG)
   Lemma alarm_on_exact_error : forall inv k cs,
     Forall2 (fun e c => CP.point (S.eval e (inv_at inv (site k))) = Some c) (args k) cs ->
     ~ C.safe (ckind k) cs -> alarm inv k = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros inv k cs Hpoints Hunsafe. unfold alarm.
+    eapply CP.may_fail_point; [|exact Hunsafe].
+    clear Hunsafe. induction Hpoints; cbn; constructor; assumption.
+  Qed.
 End AlarmsPoint.
 
 Module AlarmsAnalysis (P : TYPE) (N : KEY) (E : TYPE) (G : CFG_OPS P N E)
