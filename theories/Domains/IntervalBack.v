@@ -1898,6 +1898,56 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         * exact (PayloadBounds.payload_top_bits rw).
   Qed.
 
+  Local Lemma table_add_bits : forall rw wa wb a b,
+    interval_bits (interval_add rw (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_add rw
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [_ [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [_ [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_add interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    apply table_checked_bits. lia.
+  Qed.
+
+  Local Lemma table_sub_bits : forall rw wa wb a b,
+    interval_bits (interval_sub rw (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_sub rw
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [_ [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [_ [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_sub interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    apply table_checked_bits. lia.
+  Qed.
+
+  Local Lemma table_mul_bits : forall rw wa wb a b,
+    interval_bits (interval_mul rw (interval_clip wa a) (interval_clip wb b)) <=
+      Pos.to_nat rw.
+  Proof.
+    intros rw wa wb a b.
+    change (interval_bits (interval_mul rw
+      (PayloadBounds.interval_clip wa a) (PayloadBounds.interval_clip wb b)) <= Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape wa a)
+      as [Ha|[la [ha [Ha [Ha_nonneg [Ha_order _]]]]]];
+      destruct (PayloadBounds.interval_clip_shape wb b)
+      as [Hb|[lb [hb [Hb [Hb_nonneg [Hb_order _]]]]]];
+      rewrite Ha, Hb; cbn [interval_mul interval_finite_helper];
+      try exact (PayloadBounds.payload_top_bits rw).
+    destruct (Z.leb 0 la && Z.leb 0 lb).
+    - apply table_checked_bits. nia.
+    - exact (PayloadBounds.payload_top_bits rw).
+  Qed.
+
   Local Lemma table_bool_not_bits : forall a,
     interval_bits (interval_bool_not a) <= 1.
   Proof.
