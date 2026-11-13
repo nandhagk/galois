@@ -230,18 +230,21 @@ Module OctagonCode (X : KEY_OPS) (K : KEY_OPS with Definition t := (X.t * bool)%
     | None => old
     end.
 
-  Definition strengthen_row (m : dbm) (unaries : M.t Z) (changed : dbm)
-      (k : K.t) (a : Z) : dbm :=
-    match M.get k m with
-    | Some row => M.set k (M.merge (strengthen_bound a) row unaries) changed
-    | None => changed
+  Definition strengthen_outer (unaries : M.t Z)
+      (old : option (M.t Z)) (unary : option Z) : option (M.t Z) :=
+    match old with
+    | Some row =>
+      Some (match unary with
+        | Some a => M.merge (strengthen_bound a) row unaries
+        | None => row
+        end)
+    | None => None
     end.
 
-  (** The final merge preserves outer labels even on matrices with inconsistent labels. *)
+  (** The outer merge follows raw codes and preserves the original matrix's labels. *)
   Definition strengthen (m : dbm) : dbm :=
     let unaries := M.fold (unary_maps m) m (M.empty, M.empty) in
-    M.merge replace_row m
-      (M.fold (strengthen_row m (snd unaries)) (fst unaries) M.empty).
+    M.merge (strengthen_outer (snd unaries)) m (fst unaries).
 
   Definition tclose (m : dbm) : t :=
     let ks := pivot_keys m in
@@ -714,39 +717,25 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
     intros v i j a b Ha Hb. rewrite !vl_flip in *. apply div2_lower. lia.
   Qed.
 
-  Lemma strengthen_row_models : forall m v unaries changed k a,
-    models m v -> models changed v ->
-    (vl v (flip k) - vl v k <= a)%Z ->
-    (forall j b, M.get j unaries = Some b -> (vl v j - vl v (flip j) <= b)%Z) ->
-    models (strengthen_row m unaries changed k a) v.
-  Proof.
-    intros m v unaries changed k a Hmodel Hchanged Ha Hunaries. unfold strengthen_row.
-    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
-    apply set_row_models; [exact Hchanged|]. intros j d Hentry.
-    rewrite M.get_merge in Hentry by reflexivity.
-    unfold strengthen_bound in Hentry. destruct (M.get j unaries) as [b|] eqn:Hb.
-    - inversion Hentry; subst d. apply lower_bound_holds.
-      + apply strengthen_bound_holds; [exact Ha|now apply Hunaries].
-      + intros z Hz. eapply row_models; [exact Hmodel|exact Hrow|exact Hz].
-    - eapply row_models; [exact Hmodel|exact Hrow|exact Hentry].
-  Qed.
-
   (** Strengthening adds only constraints implied by the validated unary maps. *)
   Lemma strengthen_models : forall m v, models m v -> models (strengthen m) v.
   Proof.
     intros m v Hmodel. unfold strengthen.
     remember (M.fold (unary_maps m) m (M.empty, M.empty)) as unaries eqn:Hunaries.
     pose proof (collect_unary_models m v Hmodel) as Hsound. rewrite <- Hunaries in Hsound.
-    pose proof (collect_unary_wf m) as Hwf. rewrite <- Hunaries in Hwf.
-    destruct Hsound as [Hleft Hright]. destruct Hwf as [Hwf_left Hwf_right].
-    apply replace_models; [exact Hmodel|].
-    apply (fold_invariant_elements _ _ (fun changed => models changed v)).
-    - apply empty_models.
-    - intros changed k a Hin Hchanged. apply strengthen_row_models.
-      + exact Hmodel.
-      + exact Hchanged.
-      + apply Hleft. exact (proj1 (M.elements_spec _ _ _ _ Hwf_left) Hin).
-      + exact Hright.
+    destruct Hsound as [Hleft Hright].
+    intros i j d Hentry. unfold entry in Hentry.
+    rewrite M.get_merge in Hentry by reflexivity.
+    destruct (M.get i m) as [row|] eqn:Hrow; cbn [strengthen_outer] in Hentry;
+      [|discriminate Hentry].
+    destruct (M.get i (fst unaries)) as [a|] eqn:Ha.
+    - rewrite M.get_merge in Hentry by reflexivity. unfold strengthen_bound in Hentry.
+      destruct (M.get j (snd unaries)) as [b|] eqn:Hb.
+      + inversion Hentry; subst d. apply lower_bound_holds.
+        * apply strengthen_bound_holds; [now apply Hleft|now apply Hright].
+        * intros old Hold. eapply row_models; [exact Hmodel|exact Hrow|exact Hold].
+      + eapply row_models; [exact Hmodel|exact Hrow|exact Hentry].
+    - eapply row_models; [exact Hmodel|exact Hrow|exact Hentry].
   Qed.
 
   (** A row bounds all signed differences measured from its source literal. *)
@@ -1838,7 +1827,7 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   TimeFun tighten_row.
   TimeFun unary_maps.
   TimeFun strengthen_bound.
-  TimeFun strengthen_row.
+  TimeFun strengthen_outer.
   TimeFun edge_prefix.
   TimeFun twin_prefix.
   TimeFun increment_row.
@@ -2284,25 +2273,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     intros changed k ignored Hchanged. now apply tighten_row_wf.
   Qed.
 
-  Lemma strengthen_row_wf : forall m unaries changed k a,
-    dbm_wf m -> M.wf unaries -> dbm_wf changed ->
-    dbm_wf (strengthen_row m unaries changed k a).
-  Proof.
-    intros m unaries changed k a Hwf Hunaries Hchanged. unfold strengthen_row.
-    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
-    apply dbm_set_wf; [exact Hchanged|]. apply M.wf_merge; [|exact Hunaries].
-    destruct Hwf as [_ Hrows]. rewrite M.get_find in Hrow.
-    exact (Hrows (K.encode k) row Hrow).
-  Qed.
-
   Lemma strengthen_wf : forall m, dbm_wf m -> dbm_wf (strengthen m).
   Proof.
-    intros m Hwf. unfold strengthen. apply replace_wf; [exact Hwf|].
-    apply (fold_invariant _ _ dbm_wf); [apply dbm_empty_wf|].
-    intros changed k a Hchanged. apply strengthen_row_wf.
-    - exact Hwf.
-    - exact (proj2 (collect_unary_wf m)).
-    - exact Hchanged.
+    intros m [Houter Hrows]. unfold strengthen.
+    remember (M.fold (unary_maps m) m (M.empty, M.empty)) as unaries eqn:Hunaries.
+    pose proof (collect_unary_wf m) as Hwf. rewrite <- Hunaries in Hwf.
+    destruct Hwf as [Hleft Hright]. split.
+    - now apply M.wf_merge.
+    - intros p row Hrow. rewrite M.find_merge in Hrow by reflexivity.
+      destruct (M.find p m) as [old|] eqn:Hold; cbn [strengthen_outer] in Hrow;
+        [|discriminate Hrow].
+      destruct (M.find p (fst unaries)) as [a|]; injection Hrow as <-.
+      + apply M.wf_merge; [exact (Hrows p old Hold)|exact Hright].
+      + exact (Hrows p old Hold).
   Qed.
 
   Lemma increment_wf : forall i j d m, dbm_wf m ->
