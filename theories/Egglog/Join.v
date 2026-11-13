@@ -906,6 +906,53 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
         * exact Hnext_prefix.
   Qed.
 
+  (** Different next cells describe disjoint assignment prefixes. *)
+  Lemma next_prefix_unique : forall lvl (pre : list (cell V.t)) c d b,
+    firstn (S lvl) b = rev (c :: pre) ->
+    firstn (S lvl) b = rev (d :: pre) -> c = d.
+  Proof.
+    intros lvl pre c d b Hc Hd.
+    assert (Heq : rev (c :: pre) = rev (d :: pre)) by congruence.
+    apply (f_equal (@rev (cell V.t))) in Heq. rewrite !rev_involutive in Heq.
+    now injection Heq.
+  Qed.
+
+  (** Disjoint next-cell branches preserve duplicate-free enumeration. *)
+  Lemma enumerate_nodup : forall fuel p ixs lvl pre ns acc,
+    fuel + lvl = nvars p -> nodes_ok p ixs lvl pre ns -> NoDup acc ->
+    (forall b, answer p ixs b -> firstn lvl b = rev pre -> ~ In b acc) ->
+    NoDup (enumerate fuel p ixs ns pre acc).
+  Proof.
+    induction fuel as [|fuel IH]; intros p ixs lvl pre ns acc Hfuel Hnodes Hacc Hfresh.
+    - assert (Hlevel : lvl = nvars p) by lia. subst lvl.
+      cbn [enumerate]. constructor; [|exact Hacc]. apply Hfresh.
+      + eapply nodes_ok_answer. exact Hnodes.
+      + apply firstn_all2. rewrite length_rev. pose proof (proj1 (proj2 Hnodes)). lia.
+    - pose proof (proj1 (proj2 Hnodes)) as Hlength.
+      cbn [enumerate]. rewrite Hlength.
+      destruct (choose_index p ixs lvl ns) as [j|] eqn:Hchoose; [|exact Hacc].
+      eapply (@fold_left_nodup_disjoint (cell V.t) (list (cell V.t)) _
+        (fun c b => answer p ixs b /\ firstn (S lvl) b = rev (c :: pre))).
+      + eapply chosen_children_nodup; eassumption.
+      + exact Hacc.
+      + intros c b _ [Hanswer Hprefix]. apply Hfresh; [exact Hanswer|].
+        eapply prefix_before_next; eassumption.
+      + intros c d b [_ Hc] [_ Hd]. eapply next_prefix_unique; eassumption.
+      + intros c out b _ Hbody. cbn beta in Hbody.
+        destruct (advance_nodes p ixs lvl ns c) as [nodes|] eqn:Hstep;
+          [|left; exact Hbody].
+        eapply enumerate_sound; [| |exact Hbody].
+        * lia.
+        * eapply advance_nodes_ok; eassumption.
+      + intros c out _ Hout Hfresh_cell. cbn beta.
+        destruct (advance_nodes p ixs lvl ns c) as [nodes|] eqn:Hstep; [|exact Hout].
+        eapply (IH p ixs (S lvl) (c :: pre) nodes out).
+        * lia.
+        * eapply advance_nodes_ok; eassumption.
+        * exact Hout.
+        * intros b Hanswer Hprefix. apply Hfresh_cell. split; assumption.
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
@@ -1068,7 +1115,11 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     NoDup acc ->
     (forall b, answer p ixs b -> firstn l b = rev pre -> ~ In b acc) ->
     NoDup (go (nvars p - l) p ixs ns pre acc).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns acc Hnodes Hacc Hfresh.
+    eapply enumerate_nodup; [|exact Hnodes|exact Hacc|exact Hfresh].
+    pose proof (proj1 (proj2 (proj2 Hnodes))) as Hlevel. lia.
+  Qed.
 
   Lemma work_root : forall p ixs,
     work p ixs = work_at p ixs 0 (map I.root ixs).
