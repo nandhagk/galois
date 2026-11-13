@@ -2831,7 +2831,8 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     set (budget := N.of_nat budget_nat).
     set (coeff := (Scalar.c_scalar + 1)%N).
     assert (Hbudget : (1 <= budget)%N).
-    { unfold budget, budget_nat, s. rewrite Nat.pow_2_r. nia. }
+    { clear - s budget_nat budget. unfold budget, budget_nat, s.
+      rewrite Nat.pow_2_r. nia. }
     assert (Hcoeff : (1 <= coeff)%N) by (unfold coeff; lia).
     assert (Hsmall_nat :
       (interval_bits a + interval_bits b + 1 <= budget_nat)%nat).
@@ -3673,6 +3674,60 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
 
   Definition c_word_table : N := (1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N.
+
+  Local Lemma table_bwd2_time : forall o rw wa a wb b q,
+    (2 + T_interval_clip wa a + T_interval_clip wb b +
+      T_interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize rw q + W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros o rw wa a wb b q.
+    pose proof (table_clip_time wa a) as Hclip_a.
+    pose proof (table_clip_time wb b) as Hclip_b.
+    pose proof (table_clip_bits wa a) as Hbits_a.
+    pose proof (table_clip_bits wb b) as Hbits_b.
+    pose proof (table_raw_size rw q) as Hbits_q.
+    pose proof (table_assume_pair_time o wa (interval_clip wa a)
+      (interval_clip wb b) q) as Hpair.
+    set (s := Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1).
+    set (small := Pos.to_nat wa + interval_bits (interval_clip wa a) +
+      interval_bits (interval_clip wb b) + 1).
+    set (budget_nat := s ^ 2 + W.psize rw q + W.psize wa a + W.psize wb b).
+    set (budget := N.of_nat budget_nat).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget, budget_nat, s. rewrite Nat.pow_2_r. nia. }
+    assert (Hsmall : (small <= 2 * s)%nat) by (unfold small, s; lia).
+    assert (Hsquare : (small ^ 2 <= 4 * s ^ 2)%nat).
+    { clear - Hsmall. rewrite !Nat.pow_2_r. nia. }
+    assert (Hpair_nat :
+      (small ^ 2 + interval_bits q <= 4 * budget_nat)%nat).
+    { clear - Hsquare Hbits_q. unfold budget_nat. nia. }
+    pose proof (table_nat_to_N_le _ _ Hpair_nat) as HpairN.
+    rewrite Nat2N.inj_mul in HpairN.
+    assert (Hclip_a_nat : (W.psize wa a + 1 <= 2 * budget_nat)%nat).
+    { clear - s budget_nat budget. unfold budget_nat, s.
+      rewrite Nat.pow_2_r. nia. }
+    assert (Hclip_b_nat : (W.psize wb b + 1 <= 2 * budget_nat)%nat).
+    { clear - s budget_nat budget. unfold budget_nat, s.
+      rewrite Nat.pow_2_r. nia. }
+    pose proof (table_nat_to_N_le _ _ Hclip_a_nat) as Hclip_aN.
+    pose proof (table_nat_to_N_le _ _ Hclip_b_nat) as Hclip_bN.
+    rewrite Nat2N.inj_mul in Hclip_aN, Hclip_bN.
+    assert (Hpair_budget :
+      (T_interval_assume_pair o wa (interval_clip wa a) (interval_clip wb b) q <=
+        40000 * (Scalar.c_scalar + 1) * budget)%N).
+    { clear - Hpair HpairN. unfold budget, small in *. nia. }
+    assert (Hclip_a_budget :
+      (T_interval_clip wa a <= 2 * (W.k_payload_clip + 1) * budget)%N).
+    { clear - Hclip_a Hclip_aN. unfold budget. nia. }
+    assert (Hclip_b_budget :
+      (T_interval_clip wb b <= 2 * (W.k_payload_clip + 1) * budget)%N).
+    { clear - Hclip_b Hclip_bN. unfold budget. nia. }
+    clear - Hbudget Hpair_budget Hclip_a_budget Hclip_b_budget.
+    unfold c_word_table.
+    nia.
+  Qed.
 
   Local Lemma table_bwd1_time : forall rw w q a,
     (2 + T_interval_clip w a +
