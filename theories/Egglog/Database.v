@@ -489,6 +489,25 @@ Proof.
       time_cbn_all. rewrite ?Nat2N.inj_add in *. time_lin.
 Qed.
 
+(** Reading consecutive ranks pays their common upper bit width at each step. *)
+Lemma T_slot_read_ranked_le : forall C remaining rank (picked : PTrieCode.t C) limit,
+  Pos.to_nat rank + remaining <= Pos.to_nat limit ->
+  (T_slot_read_ranked remaining rank picked <=
+    (PTrieT.c_trie + 2) * N.of_nat (remaining + 1) * N.of_nat (Pos.size_nat limit + 1))%N.
+Proof.
+  intros C remaining. induction remaining as [| remaining IH];
+    intros rank picked limit Hrange.
+  - time_step.
+  - assert (Hrank : Pos.size_nat rank <= Pos.size_nat limit).
+    { apply Pos.size_nat_monotone. apply Pos2Nat.inj_lt. lia. }
+    assert (Hnext : Pos.to_nat (Pos.succ rank) + remaining <= Pos.to_nat limit).
+    { rewrite Pos2Nat.inj_succ. lia. }
+    pose proof (IH (Pos.succ rank) picked limit Hnext) as Htail.
+    pose proof (PTrieT.T_get_le C rank picked) as Hget.
+    time_step.
+    all: rewrite ?Nat2N.inj_add in *; time_lin.
+Qed.
+
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
   row_history : list ((positive * list C) * positive);
