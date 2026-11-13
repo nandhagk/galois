@@ -8479,6 +8479,51 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     end.
   Qed.
 
+  Lemma T_invalid_seed_one_le : forall st acc x,
+    (T_invalid_seed_one st acc x <=
+      20 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1))%N.
+  Proof.
+    intros st acc x.
+    pose proof (T_value_small_le st x) as Hvalue.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le unit (S.key_code x) (invalid_seen acc)) as Hget.
+    pose proof (PTrieT.T_set_le unit (S.key_code x) tt (invalid_seen acc)) as Hset.
+    unfold PTrieT.T_get in Hget; unfold PTrieT.T_set in Hset.
+    unfold T_invalid_seed_one, T_present, PTrieCode.T_get, PTrieCode.T_set,
+      S.key_bits in *.
+    destruct (present st x);
+      destruct (PTrieCode.get (S.key_code x) (invalid_seen acc)) as [[]|];
+      time_simpl; time_cbn; nia.
+  Qed.
+
+  Lemma T_invalid_seed_fold_le : forall st xs acc,
+    (List.T_fold_left (invalid_seed_one st)
+      (fun current x => T_invalid_seed_one st current x) xs acc <=
+      24 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 1)%N.
+  Proof.
+    intros st xs acc.
+    destruct (fold_left_inv_time (invalid_seed_one st)
+      (fun current x => T_invalid_seed_one st current x)
+      (fun _ => True)
+      (fun x => (20 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1))%N) xs acc I) as [_ Hfold].
+    { intros current x _ _; split; [exact I|apply T_invalid_seed_one_le]. }
+    assert (Hsum : forall ys,
+      (fold_right (fun x total =>
+        20 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (S.key_bits x + 1) + 2 + total)%N 1%N ys <=
+        24 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) ys) + 1)%N).
+    { induction ys as [|x rest IH]; [cbn; lia|].
+      unfold finite_sum in *; cbn [map fold_right].
+      rewrite Nat2N.inj_add.
+      pose proof (Pos2Nat.is_pos (S.key_code x)) as Hpositive.
+      unfold S.key_bits in *; nia. }
+    eapply N.le_trans; [exact Hfold|apply Hsum].
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
