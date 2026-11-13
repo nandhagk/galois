@@ -4305,6 +4305,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now rewrite flip_involutive.
   Qed.
 
+  Lemma entry_strengthen_unary : forall m, dbm_wf m -> forall i,
+    entry (strengthen m) i (flip i) = entry m i (flip i).
+  Proof.
+    intros m Hwf i. rewrite entry_strengthen_exact by exact Hwf.
+    rewrite flip_involutive.
+    destruct (entry m i (flip i)) as [a|]; [|reflexivity].
+    cbn [strengthen_bound lower_bound].
+    replace (a + a)%Z with (2 * a)%Z by lia.
+    rewrite Z.div2_div.
+    replace (2 * a)%Z with (a * 2)%Z by ring.
+    rewrite Z.div_mul by lia. now rewrite Z.min_id.
+  Qed.
+
   Lemma coherent_strengthen : forall m, coherent m -> coherent (strengthen m).
   Proof.
     intros m Hcoh i j.
