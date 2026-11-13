@@ -1121,3 +1121,128 @@ Proof.
     pose proof (proj1 (proj1 (linear_bits_components X key_bits g
       (linear_bits key_bits g)) (Nat.le_refl _))). lia.
 Qed.
+
+(** Addition keeps exactly the coefficient occurrences of both operands. *)
+Lemma linear_length_add : forall X (f g : lin X),
+  length (coef (linear_add f g)) = length (coef f) + length (coef g).
+Proof.
+  intros X f g. cbn [linear_add coef]. apply length_app.
+Qed.
+
+(** Scaling preserves the number of coefficient occurrences. *)
+Lemma linear_length_scale : forall X a (f : lin X),
+  length (coef (linear_scale a f)) = length (coef f).
+Proof.
+  intros X a f. cbn [linear_scale coef]. apply length_map.
+Qed.
+
+(** Subtraction keeps exactly the coefficient occurrences of both operands. *)
+Lemma linear_length_sub : forall X (f g : lin X),
+  length (coef (linear_sub f g)) = length (coef f) + length (coef g).
+Proof.
+  intros X f g. unfold linear_sub. rewrite linear_length_add, linear_length_scale.
+  reflexivity.
+Qed.
+
+(** A recognized product keeps at most the coefficient occurrences of its two inputs. *)
+Lemma linear_length_mul : forall X (f g h : lin X),
+  linear_mul f g = Some h -> length (coef h) <= length (coef f) + length (coef g).
+Proof.
+  intros X f g h Hmul. unfold linear_mul in Hmul.
+  destruct (coef f) as [|p ps] eqn:Hleft.
+  - inversion Hmul; subst h. rewrite linear_length_scale. cbn [length]. lia.
+  - destruct (coef g) as [|q qs] eqn:Hright; [|discriminate].
+    inversion Hmul; subst h. rewrite linear_length_scale, Hleft. cbn [length]. lia.
+Qed.
+
+(** Each integer operator pays for its output with its input forms and literal payload. *)
+Lemma zlinear_op_size : forall X (key_bits : X -> nat) o fs f,
+  zlinear_op o fs = Some f ->
+  length (coef f) <= fold_right Nat.add 0 (map (fun g => length (coef g)) fs) /\
+  linear_bits key_bits f <= zoperator_bits o + 1 +
+    fold_right Nat.add 0 (map (linear_bits key_bits) fs).
+Proof.
+  intros X key_bits o fs f Hlin.
+  destruct o; destruct fs as [|f1 [|f2 [|f3 fs]]];
+    cbn [zlinear_op] in Hlin; try discriminate;
+    cbn [map fold_right zoperator_bits].
+  - inversion Hlin; subst f. split.
+    + rewrite linear_length_add. lia.
+    + pose proof (linear_bits_add X key_bits f1 f2). lia.
+  - inversion Hlin; subst f. split.
+    + rewrite linear_length_sub. lia.
+    + pose proof (linear_bits_sub X key_bits f1 f2). lia.
+  - split.
+    + pose proof (linear_length_mul X f1 f2 f Hlin). lia.
+    + pose proof (linear_bits_mul X key_bits f1 f2 f Hlin). lia.
+  - inversion Hlin; subst f. split.
+    + cbn [linear_const coef length]. lia.
+    + unfold linear_bits. cbn [linear_const coef cst map fold_right]. lia.
+Qed.
+
+(** The nested term induction principle supplies the same child facts as [Forall]. *)
+Lemma all_children_forall : forall A (P : A -> Prop) xs,
+  list_all A P xs -> Forall P xs.
+Proof.
+  intros A P xs H. induction H as [|x Hx xs Hxs IH]; constructor; assumption.
+Qed.
+
+(** Sequencing successful optional results preserves pointwise bounds on their summed sizes. *)
+Lemma sequence_map_bound : forall A B (f : A -> option B) (input : A -> nat)
+    (output : B -> nat) xs ys,
+  Forall (fun x => forall y, f x = Some y -> output y <= input x) xs ->
+  sequence (map f xs) = Some ys ->
+  fold_right Nat.add 0 (map output ys) <= fold_right Nat.add 0 (map input xs).
+Proof.
+  intros A B f input output xs ys Hbounds. revert ys.
+  induction Hbounds as [|x xs Hhead Htail IH]; intros ys Hseq.
+  - cbn [map sequence] in Hseq. inversion Hseq. cbn [map fold_right]. lia.
+  - cbn [map sequence] in Hseq.
+    destruct (f x) as [y|] eqn:Hvalue; [|discriminate].
+    destruct (sequence (map f xs)) as [zs|] eqn:Hrest; [|discriminate].
+    inversion Hseq; subst ys. specialize (Hhead y eq_refl). specialize (IH zs eq_refl).
+    cbn [map fold_right]. lia.
+Qed.
+
+(** Every term has at least one syntax node. *)
+Lemma term_size_pos : forall K X (e : term K X), 1 <= tsize e.
+Proof.
+  intros K X [x|o es]; cbn [tsize]; lia.
+Qed.
+
+(** The syntax mass includes at least one unit for every syntax node. *)
+Lemma term_mass_size : forall K X key_bits operator_bits (e : term K X),
+  tsize e <= term_mass key_bits operator_bits e.
+Proof.
+  intros K X key_bits operator_bits e. induction e as [x|o es IH].
+  - cbn [tsize term_mass]. lia.
+  - cbn [tsize term_mass].
+    assert (Hsum : fold_right Nat.add 0 (map tsize es) <=
+      fold_right Nat.add 0 (map (term_mass key_bits operator_bits) es)).
+    { induction IH as [|e He es Hes IHes]; cbn [map fold_right]; lia. }
+    lia.
+Qed.
+
+(** Successful integer recognition has linear coefficient count and syntactic bit size. *)
+Lemma zlinear_form_size : forall X (key_bits : X -> nat) e f,
+  zlinear_form e = Some f ->
+  length (coef f) <= tsize e /\
+  linear_bits key_bits f <= term_mass key_bits zoperator_bits e.
+Proof.
+  intros X key_bits e. induction e as [x|o es IH]; intros f Hlin.
+  - cbn [zlinear_form] in Hlin. inversion Hlin; subst f.
+    change (1 <= 1 /\ Nat.max (key_bits x + 1) 0 <= key_bits x + 1).
+    rewrite Nat.max_0_r. split; lia.
+  - cbn [zlinear_form] in Hlin. apply all_children_forall in IH.
+    destruct (sequence (map zlinear_form es)) as [fs|] eqn:Hforms; [|discriminate].
+    assert (Hlength : fold_right Nat.add 0 (map (fun g => length (coef g)) fs) <=
+      fold_right Nat.add 0 (map tsize es)).
+    { eapply sequence_map_bound; [|exact Hforms].
+      eapply Forall_impl; [|exact IH]. intros e He g Hg. exact (proj1 (He g Hg)). }
+    assert (Hbits : fold_right Nat.add 0 (map (linear_bits key_bits) fs) <=
+      fold_right Nat.add 0 (map (term_mass key_bits zoperator_bits) es)).
+    { eapply sequence_map_bound; [|exact Hforms].
+      eapply Forall_impl; [|exact IH]. intros e He g Hg. exact (proj2 (He g Hg)). }
+    destruct (zlinear_op_size X key_bits o fs f Hlin) as [Hcoef Hform].
+    cbn [tsize term_mass]. split; lia.
+Qed.
