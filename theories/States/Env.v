@@ -5,7 +5,7 @@
     Builds on: EnvSig and the keyed map operations. *)
 
 From Stdlib Require Import List Bool NArith Arith Lia Permutation.
-From Argent Require Import Time Std.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig.
 From Galois.States Require Import EnvSig.
@@ -1085,11 +1085,97 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     fold_right Nat.add 0 (map (tcost_s s) es) +
       V.gwork g (roots s es) +
       fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.
-  Definition c_lat : N := 1%N. (* STUB *)
+  (** Pointwise time bounds sum over a list of charged values. *)
+  Lemma time_sum_bound : forall {A} (f : A -> N) (w : A -> nat) xs c,
+    (forall x, In x xs -> (f x <= c * N.of_nat (w x))%N) ->
+    (fold_right N.add 0 (map f xs) <=
+      c * N.of_nat (fold_right Nat.add 0%nat (map w xs)))%N.
+  Proof.
+    intros A f w xs c. induction xs as [|x xs IH]; intro Hbound.
+    - cbn. lia.
+    - specialize (IH (fun y Hy => Hbound y (or_intror Hy))).
+      specialize (Hbound x (or_introl eq_refl)).
+      cbn [map fold_right]. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Mapping adds one traversal unit per list cell and its final empty cell. *)
+  Lemma time_map_sum : forall {A B} (f : A -> B) Tf (xs : list A),
+    ListDef.T_map f Tf xs =
+    (fold_right N.add 0 (map Tf xs) + N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f Tf xs. induction xs as [|x xs IH].
+    - reflexivity.
+    - cbn [map fold_right length]. unfold ListDef.T_map at 1.
+      fold (@ListDef.T_map A B f Tf). rewrite IH, Nat2N.inj_succ. nia.
+  Qed.
+
+  (** Reading cached roots costs two units per annotated child. *)
+  Lemma time_roots : forall ns,
+    ListDef.T_map root T_root ns = (2 * N.of_nat (length ns) + 1)%N.
+  Proof.
+    intro ns. rewrite time_map_sum. induction ns as [|n ns IH].
+    - reflexivity.
+    - cbn [map fold_right length]. unfold T_root in *.
+      rewrite Nat2N.inj_succ. nia.
+  Qed.
+
+  (** Every term carries a positive annotation charge. *)
+  Lemma tcost_positive : forall m e, 1 <= tcost m e.
+  Proof.
+    intros m [x|o es]; cbn [tcost]; lia.
+  Qed.
+
+  (** Child term charges cover the length of the child list. *)
+  Lemma tcost_lengths : forall m es,
+    length es <= fold_right Nat.add 0%nat (map (tcost m) es).
+  Proof.
+    intros m es. induction es as [|e es IH]; cbn; [lia|].
+    pose proof (tcost_positive m e). lia.
+  Qed.
+
+  (** Each annotation keeps three units to pay its parent traversal. *)
+  Lemma annotate_time_reserve : forall m e,
+    (T_annotate m e + 3 <= (M.c_map + V.c_val + 8) * N.of_nat (tcost m e))%N.
+  Proof.
+    intro m. induction e as [x|o es IH].
+    - unfold T_annotate, T_read. cbn [tcost].
+      pose proof (M.T_get_le V.t x m) as Hget. rewrite Nat2N.inj_add. cbn [N.of_nat].
+      nia.
+    - assert (Hkids :
+        (fold_right N.add 0 (map (T_annotate m) es) +
+          3 * N.of_nat (length es) <=
+          (M.c_map + V.c_val + 8) *
+            N.of_nat (fold_right Nat.add 0%nat (map (tcost m) es)))%N).
+      { induction IH as [|e He es Hes IHes]; cbn [map fold_right length]; [lia|].
+        rewrite Nat2N.inj_add, Nat2N.inj_succ. nia. }
+      pose proof (V.T_forward_le o (map root (map (annotate m) es))) as Hforward.
+      unfold T_annotate at 1. fold T_annotate. cbn beta zeta.
+      rewrite time_map_sum, time_roots, length_map.
+      cbn [tcost]. rewrite map_map in Hforward |- *.
+      repeat rewrite Nat2N.inj_add in Hforward.
+      repeat rewrite Nat2N.inj_add.
+      change (N.of_nat 1) with 1%N in Hforward |- *.
+      change (fun e : term L.op X.t => T_annotate m e) with (T_annotate m). nia.
+  Qed.
+
+  Definition c_lat : N :=
+    (64 * (M.c_map + 1) * (V.c_val + 1) * (V.c_val + 1) *
+      (N.of_nat (V.size V.top) + 1))%N.
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
-  Definition c_state : N := 1%N. (* STUB *)
-  Definition c_env : N := 1%N. (* STUB *)
+  Proof.
+    unfold c_lat. nia.
+  Qed.
+  Definition env_refine_factor : N :=
+    (2 * M.c_map + 2 * V.c_val * (V.c_val + 1) + 16)%N.
+  Definition c_state : N :=
+    (c_lat + 64 * env_refine_factor + 64 * (M.c_map + V.c_val + 8))%N.
+  Definition c_env : N := c_state.
+
+  (** The state constant covers both annotation and key operations. *)
+  Lemma state_annotation_factor : (M.c_map + V.c_val + 8 <= c_state)%N.
+  Proof.
+    unfold c_state. nia.
+  Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -1120,7 +1206,10 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma T_annotate_le : forall m e,
     (T_annotate m e <= c_env * N.of_nat (tcost m e))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m e. pose proof (annotate_time_reserve m e) as Htime.
+    pose proof state_annotation_factor as Hfactor. unfold c_env. nia.
+  Qed.
   Lemma T_assume_env_le : forall g es s,
     (T_assume g es s <= c_env * N.of_nat
       (fold_right Nat.add 0%nat (map (tcost_s s) es) + V.gwork g (roots s es) +
