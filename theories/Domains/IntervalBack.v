@@ -4537,6 +4537,59 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_signed_compare_time : forall rw strict u v,
+    (T_interval_signed_compare rw strict u v <= 10000 * N.of_nat
+      ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
+  Proof.
+    intros rw strict u v.
+    pose proof (table_signed_time rw u) as Hu.
+    pose proof (table_signed_time rw v) as Hv.
+    set (s := Pos.to_nat rw + interval_bits u + interval_bits v + 1).
+    assert (Hsu_sq :
+      ((Pos.to_nat rw + interval_bits u + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    assert (Hsv_sq :
+      ((Pos.to_nat rw + interval_bits v + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    pose proof (table_nat_to_N_le _ _ Hsu_sq) as HsuN.
+    pose proof (table_nat_to_N_le _ _ Hsv_sq) as HsvN.
+    assert (Hs : (1 <= s)%nat)
+      by (unfold s; pose proof (Pos2Nat.is_pos rw); lia).
+    assert (Hsqpos : (1 <= s ^ 2)%nat)
+      by (rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hsqpos) as Hpositive.
+    unfold T_interval_signed_compare.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (interval_signed rw u) as [[la ha]|] eqn:Hsu;
+      [destruct (interval_signed rw v) as [[lb hb]|] eqn:Hsv|];
+      destruct strict; cbn beta iota zeta.
+    all: try (clear - Hu Hv HsuN HsvN Hpositive; lia).
+    all: pose proof (table_signed_endpoint_bits rw u la ha Hsu) as Hbu;
+      pose proof (table_signed_endpoint_bits rw v lb hb Hsv) as Hbv;
+      pose proof (Std.Z.T_ltb_le ha lb) as Hltb;
+      pose proof (Std.Z.T_leb_le ha lb) as Hleb;
+      pose proof (Std.Z.T_leb_le hb la) as Hleb2;
+      pose proof (Std.Z.T_ltb_le hb la) as Hltb2.
+    all: assert (Hsq : (s <= s ^ 2)%nat)
+      by (rewrite Nat.pow_2_r; nia).
+    all: assert (HcmpNat :
+      (Z.size_nat ha + Z.size_nat lb + Z.size_nat hb +
+        Z.size_nat la + 4 <= 20 * s ^ 2)%nat)
+      by (unfold s in *; lia).
+    all: pose proof (table_nat_to_N_le _ _ HcmpNat) as HcmpN.
+    all: rewrite Nat2N.inj_mul in HcmpN.
+    all: repeat rewrite Nat2N.inj_add in HcmpN.
+    all: destruct (ha <? lb)%Z; destruct (ha <=? lb)%Z;
+      cbn beta iota zeta;
+      clear - Hu Hv HsuN HsvN Hpositive HcmpN Hltb Hleb Hleb2 Hltb2;
+      change (N.of_nat 20) with 20%N in HcmpN;
+      change (N.of_nat 4) with 4%N in HcmpN;
+      rewrite Nat.mul_1_r in Hu, Hv, HsuN, HsvN;
+      rewrite Nat.pow_2_r in HcmpN;
+      rewrite Nat.mul_1_r;
+      lia.
+  Qed.
+
   Local Lemma table_unary_dispatch_time : forall rw w a cost,
     (cost <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits (interval_clip w a) + 1) ^ 2))%N ->
@@ -4806,6 +4859,55 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     apply table_mul_time.
   Qed.
 
+  Local Lemma table_signed_compare_dispatch_time : forall rw wa a wb b strict,
+    (5 + T_interval_clip wa a + T_interval_clip wb b +
+      T_interval_signed_compare wa strict
+        (interval_clip wa a) (interval_clip wb b) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros rw wa a wb b strict.
+    pose proof (table_signed_compare_time wa strict
+      (interval_clip wa a) (interval_clip wb b)) as Htime.
+    pose proof (table_clip_time wa a) as Hclip_a.
+    pose proof (table_clip_time wb b) as Hclip_b.
+    pose proof (table_clip_bits wa a) as Hbits_a.
+    pose proof (table_clip_bits wb b) as Hbits_b.
+    set (small := Pos.to_nat wa + interval_bits (interval_clip wa a) +
+      interval_bits (interval_clip wb b) + 1).
+    set (s := Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1).
+    set (budget_nat := s ^ 2 + W.psize wa a + W.psize wb b).
+    assert (Hbase : (small <= 2 * s)%nat) by (unfold small, s; lia).
+    assert (Hsquare : (small ^ 2 <= 4 * budget_nat)%nat).
+    { unfold budget_nat. clear - Hbase. rewrite !Nat.pow_2_r. nia. }
+    assert (Hclip_a_nat : (W.psize wa a + 1 <= budget_nat)%nat)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    assert (Hclip_b_nat : (W.psize wb b + 1 <= budget_nat)%nat)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hsquare) as HsquareN.
+    pose proof (table_nat_to_N_le _ _ Hclip_a_nat) as Hclip_aN.
+    pose proof (table_nat_to_N_le _ _ Hclip_b_nat) as Hclip_bN.
+    rewrite Nat2N.inj_mul in HsquareN.
+    assert (Hbudget : (1 <= N.of_nat budget_nat)%N)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    assert (Hclip_a_budget :
+      (T_interval_clip wa a <=
+        (W.k_payload_clip + 1) * N.of_nat budget_nat)%N)
+      by (clear - Hclip_a Hclip_aN; nia).
+    assert (Hclip_b_budget :
+      (T_interval_clip wb b <=
+        (W.k_payload_clip + 1) * N.of_nat budget_nat)%N)
+      by (clear - Hclip_b Hclip_bN; nia).
+    assert (Hsigned_budget :
+      (T_interval_signed_compare wa strict (interval_clip wa a)
+        (interval_clip wb b) <= 40000 * N.of_nat budget_nat)%N)
+      by (clear - Htime HsquareN; unfold small in *; nia).
+    clear - Hclip_a_budget Hclip_b_budget Hsigned_budget Hbudget.
+    unfold c_word_table.
+    nia.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -4966,6 +5068,18 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     all: try (match goal with
     | |- context [T_interval_mul _ _ _] =>
         pose proof (table_mul_dispatch_time rw wa a wb b) as Htime;
+        match goal with
+        | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
+            replace budget with
+              (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+                W.psize wa a + W.psize wb b)%nat)
+              by (rewrite Nat.pow_2_r; nia)
+        end;
+        eapply N.le_trans; [|exact Htime]; lia
+    end).
+    all: try (match goal with
+    | |- context [T_interval_signed_compare ?wa ?strict _ _] =>
+        pose proof (table_signed_compare_dispatch_time rw wa a wb b strict) as Htime;
         match goal with
         | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
             replace budget with
