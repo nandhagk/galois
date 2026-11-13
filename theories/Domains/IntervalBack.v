@@ -4853,22 +4853,21 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     lia.
   Qed.
 
-  Local Lemma table_lshr_time : forall rw wa a wb b,
-    (T_interval_lshr rw (interval_clip wa a) (interval_clip wb b) <=
+  Local Lemma table_lshr_time : forall rw u wb b,
+    (T_interval_lshr rw u (interval_clip wb b) <=
       2000 * N.of_nat
-        ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        ((Pos.to_nat rw + interval_bits u +
           interval_bits (interval_clip wb b) + 1) ^ 2))%N.
   Proof.
-    intros rw wa a wb b.
-    change (T_interval_lshr rw (PayloadBounds.interval_clip wa a)
-      (PayloadBounds.interval_clip wb b) <= 2000 * N.of_nat
-        ((Pos.to_nat rw + interval_bits (PayloadBounds.interval_clip wa a) +
+    intros rw u wb b.
+    change (T_interval_lshr rw u (PayloadBounds.interval_clip wb b) <=
+      2000 * N.of_nat
+        ((Pos.to_nat rw + interval_bits u +
           interval_bits (PayloadBounds.interval_clip wb b) + 1) ^ 2))%N.
-    destruct (PayloadBounds.interval_clip_shape wa a) as
-      [Ha|[la [ha [Ha [Hla [Horder_a _]]]]]];
+    destruct u as [|[|la|] [|ha|]];
       destruct (PayloadBounds.interval_clip_shape wb b) as
       [Hb|[lb [hb [Hb [Hlb [Horder_b _]]]]]];
-      rewrite Ha, Hb;
+      rewrite Hb;
       unfold T_interval_lshr, T_interval_finite_helper, interval_finite_helper;
       time_simpl; time_cbn; time_pose; time_cbn_all;
       try (match goal with |- context [T_interval_top _] =>
@@ -5916,7 +5915,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
           W.psize wa a + W.psize wb b)%nat))%N.
   Proof.
     intros rw wa a wb b.
-    pose proof (table_lshr_time rw wa a wb b) as Hlshr.
+    pose proof (table_lshr_time rw (interval_clip wa a) wb b) as Hlshr.
     assert (Hpositive :
       (1 <= N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
         interval_bits (interval_clip wb b) + 1) ^ 2))%N).
