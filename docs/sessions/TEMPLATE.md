@@ -3,8 +3,13 @@ You are one of {N} parallel sessions on the Rocq library Galois. Budget: 6 hours
 Deliverable: a git format-patch series and one handoff file. Nothing else is read.
 
 ## 1. Bootstrap (never install Nix, never build Rocq)
-  gh release download {TAG} -R nandhagk/galois -D ~/assets   # or curl the URLs below
-  cd ~/assets && sha256sum -c SHA256SUMS
+  mkdir -p ~/assets && cd ~/assets
+  u=https://github.com/nandhagk/galois/releases/download/{TAG}
+  # gh can fail without a GitHub token. curl needs no token and runs when gh fails.
+  # A gh error is harmless when sha256sum passes.
+  gh release download {TAG} -R nandhagk/galois || curl -fsSL --retry 3 --remote-name-all \
+    $u/SHA256SUMS $u/galois-env.sh $u/galois-toolchain.tar.zst $u/galois-dune-cache.tar.zst
+  sha256sum -c SHA256SUMS
   tar --zstd -xPf galois-toolchain.tar.zst                    # fills /nix/store
   source ~/assets/galois-env.sh   # PATH, ROCQPATH, DUNE_CACHE*, GALOIS_JOBS=4, GALOIS_NO_SYSTEMD=1
   mkdir -p ~/.cache/galois && tar --zstd -xf galois-dune-cache.tar.zst -C ~/.cache/galois
@@ -24,6 +29,9 @@ Single file: just vo theories/<Pkg>/<File>.v
   to construct its Boolean subtype proof, which extraction erases.
 - No Axiom, admit, give_up, Abort. Admitted only with a tag from section 5.
 - Do not change a definition fixed by a Sig. Replace code bodies only where marked STUB-CODE.
+- The Sig wins when a definition in your files contradicts a statement of the Sig. Replace the
+  body, even without a STUB-CODE mark, and record the change in the handoff. Use SIG-QUESTION
+  when no body can satisfy the statement.
 - Extra lemmas, helper definitions and internal modules in your own files are free.
 - Follow AGENTS.md and docs/design/rules.md (R1-R13; patterns V1-V11 work, F1-F6 fail).
 - Read the landed sources for proofs at commit 87192fe: git show 87192fe:<path>.
@@ -48,7 +56,8 @@ Single file: just vo theories/<Pkg>/<File>.v
 Chain: {CHAIN}
 Cut line: after "{CUT}". Everything before it must be closed. Work after it may slip.
 For each item: prove, run just vo on the file, commit (one item per commit), go on.
-Every 90 minutes: run the full check in the background and write a checkpoint (section 6).
+Write a checkpoint every 15 minutes (section 6).
+Run the full check in the background every 90 minutes.
 Stop new proofs at 5h15; spend the rest on the final check and the deliverable.
 
 ## 5. When stuck
@@ -62,13 +71,20 @@ Stop new proofs at 5h15; spend the rest on the final check and the deliverable.
 - Never weaken a statement, add a hypothesis to a Sig lemma, or edit outside your paths.
 
 ## 6. Checkpoint
-  mkdir -p ~/out/patches
+Write a checkpoint every 15 minutes. A checkpoint runs no build. Commit the items that you
+closed since the last checkpoint, and then run these commands. <n> counts the checkpoints
+from 01.
+  mkdir -p ~/out/patches && rm -f ~/out/patches/*.patch
+  git format-patch {BASE_SHA}..HEAD -o ~/out/patches
+  cp -n docs/sessions/HANDOFF.md ~/out/HANDOFF-{ID}.md   # then bring it up to date
+  tar -czf ~/{ID}-checkpoint-<n>.tar.gz -C ~/out .
+Save ~/{ID}-checkpoint-<n>.tar.gz with the library skill after each checkpoint. The owner
+fetches the latest archive if the session ends early.
+Every 90 minutes, and before the final deliverable, run the full check as well.
   just session-check                     # fmt, build, tests, lint, frozen
   just admits > /tmp/admits.txt
   just owned {ID} {BASE_SHA}..HEAD       # must print nothing
-  git format-patch {BASE_SHA}..HEAD -o ~/out/patches
-  cp docs/sessions/HANDOFF.md ~/out/HANDOFF-{ID}.md   # then fill it in
-Re-run these whenever you checkpoint; the last run is the deliverable.
+The last checkpoint after a passing full check supplies the deliverable.
 
 ## 7. Final deliverable
 ~/out/patches/*.patch (series from {BASE_SHA}) and ~/out/HANDOFF-{ID}.md, filled in:
