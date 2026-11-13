@@ -498,31 +498,186 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
   (** * Enumeration and cached metadata *)
 
+  (** Binary succession agrees with numbering the corresponding natural interval. *)
+  Lemma ids_from_seq : forall n start,
+    wl_ids_from n (Pos.of_succ_nat start) =
+      List.map Pos.of_succ_nat (seq start n).
+  Proof.
+    intro n; induction n as [|n IH]; intro start; cbn [wl_ids_from seq List.map].
+    - reflexivity.
+    - rewrite <- SuccNat2Pos.inj_succ; now rewrite IH.
+  Qed.
+
   (** Binary enumeration retains the original observable identifiers and occurrence order. *)
   Lemma F0_row_ids : forall p,
     row_ids p = List.map Pos.of_succ_nat (seq 0 (C p)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; apply (ids_from_seq (C p) 0).
+  Qed.
+
   (** Projecting a prepared state retains every lookup in the original store. *)
   Lemma F0_view_look : forall s x, reference_look (wl_view s) x = look s x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
   (** Projecting a prepared state retains every strict-update counter. *)
   Lemma F0_view_counter : forall s c, reference_counter (wl_view s) c = counter s c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
   (** Numbered lookup agrees with the corresponding original row occurrence. *)
   Lemma F1_numbering : forall p n,
     source_row p (Pos.of_succ_nat n) = nth_error (S.rows p) n.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n; unfold source_row; rewrite SuccNat2Pos.id_succ.
+    now replace (Datatypes.S n - 1) with n by lia.
+  Qed.
+
   (** Reader buckets retain every reading row occurrence once. *)
   Lemma F2_readers : forall p c,
     source_readers p c = filter (fun id => match source_row p id with
       | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
       | None => false
       end) (row_ids p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
   (** Evaluation observes the current store through the system's public evaluator. *)
   Lemma F3_eval : forall p r m,
     eval_row p r m = S.eval p r (look_or S.key_code L.bot m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** There is one identifier per source row occurrence. *)
+  Lemma row_ids_length : forall p, length (row_ids p) = C p.
+  Proof.
+    intro p; rewrite F0_row_ids, length_map, length_seq; reflexivity.
+  Qed.
+
+  (** Numbered row occurrences have distinct identifiers even when rows repeat. *)
+  Lemma row_ids_nodup : forall p, NoDup (row_ids p).
+  Proof.
+    intro p; rewrite F0_row_ids.
+    pose proof (seq_NoDup (C p) 0) as Hids.
+    induction Hids as [|n ns Hfresh Hids IH]; cbn [List.map].
+    - constructor.
+    - constructor; [|exact IH].
+      intros [m [Heq Hin]]%in_map_iff; apply SuccNat2Pos.inj in Heq.
+      subst m; now apply Hfresh.
+  Qed.
+
+  (** The row identifiers are exactly the positive numbers up to the row count. *)
+  Lemma row_ids_member : forall p id,
+    In id (row_ids p) <-> Pos.to_nat id <= C p.
+  Proof.
+    intros p id; rewrite F0_row_ids, in_map_iff; split.
+    - intros [n [<- Hin]]; apply in_seq in Hin; rewrite SuccNat2Pos.id_succ; lia.
+    - intro Hid; exists (Pos.to_nat id - 1); split.
+      + apply SuccNat2Pos.inv; pose proof (Pos2Nat.is_pos id); lia.
+      + apply in_seq; pose proof (Pos2Nat.is_pos id); lia.
+  Qed.
+
+  (** Successful source lookup identifies a listed row and its numbered occurrence. *)
+  Lemma source_row_member : forall p id r,
+    source_row p id = Some r -> In id (row_ids p) /\ In r (S.rows p).
+  Proof.
+    intros p id r Hrow; unfold source_row in Hrow; split.
+    - apply row_ids_member; unfold C.
+      assert (Hlt : Pos.to_nat id - 1 < length (S.rows p)).
+      { apply nth_error_Some; congruence. }
+      pose proof (Pos2Nat.is_pos id); lia.
+    - eapply nth_error_In; exact Hrow.
+  Qed.
+
+  (** Every enumerated row identifier has a source row. *)
+  Lemma source_row_total : forall p id, In id (row_ids p) ->
+    exists r, source_row p id = Some r.
+  Proof.
+    intros p id Hid; apply row_ids_member in Hid; unfold source_row.
+    destruct (nth_error (S.rows p) (Pos.to_nat id - 1)) as [r|] eqn:Hrow.
+    - now exists r.
+    - apply nth_error_None in Hrow; unfold C in Hid.
+      pose proof (Pos2Nat.is_pos id); lia.
+  Qed.
+
+  (** A reader bucket names exactly the source occurrences that declare that read code. *)
+  Lemma source_readers_spec : forall p c id,
+    In id (source_readers p c) <-> exists r x,
+      source_row p id = Some r /\ In x (S.deps p r) /\ S.key_code x = c.
+  Proof.
+    intros p c id; unfold source_readers; rewrite filter_In; split.
+    - intros [Hid Hread]; destruct (source_row p id) as [r|] eqn:Hrow;
+        [|discriminate].
+      apply existsb_exists in Hread as [x [Hin Heq]].
+      apply Pos.eqb_eq in Heq; exists r, x; repeat split; assumption || congruence.
+    - intros [r [x [Hrow [Hin Heq]]]]; split.
+      + exact (proj1 (source_row_member p id r Hrow)).
+      + rewrite Hrow; apply existsb_exists; exists x; split; [exact Hin|].
+        apply Pos.eqb_eq; symmetry; exact Heq.
+  Qed.
+
+  (** The declared key support contains exactly the codes of listed reads and writes. *)
+  Lemma key_support_spec : forall p c,
+    In c (key_support p) <-> exists r x,
+      In r (S.rows p) /\ In x (S.writes p r ++ S.deps p r) /\ S.key_code x = c.
+  Proof.
+    intros p c; unfold key_support; rewrite nodup_In, in_map_iff; split.
+    - intros [x [Heq Hin]]; apply in_flat_map in Hin as [r [Hrow Hkey]].
+      exists r, x; repeat split; assumption.
+    - intros [r [x [Hrow [Hkey Heq]]]]; exists x; split; [exact Heq|].
+      apply in_flat_map; exists r; now split.
+  Qed.
+
+  (** A guarded enqueue update reads immutable row and rank tables from the input state. *)
+  Definition enqueue_pair (s : state) (ql : Q.t * ptrie Datatypes.unit) id :=
+    match trie_get id (snd ql), row_at s id with
+    | None, Some r =>
+      (Q.push (N.pos (match trie_get id (ws_ranks s) with
+        | Some rank => rank | None => 1%positive end)) id (fst ql),
+       PTrieCode.set id tt (snd ql))
+    | _, _ => ql
+    end.
+
+  (** A fold can introduce only identifiers passed to its individual queue updates. *)
+  Lemma queue_fold_support {A : Type} (update : A -> positive -> A) (queue : A -> Q.t) :
+    (forall acc y id pr, Q.prio (queue (update acc y)) id = Some pr ->
+      (exists old, Q.prio (queue acc) id = Some old) \/ id = y) ->
+    forall ids acc id pr, Q.prio (queue (fold_left update ids acc)) id = Some pr ->
+      (exists old, Q.prio (queue acc) id = Some old) \/ In id ids.
+  Proof.
+    intros Hupdate ids; induction ids as [|y ids IH]; intros acc id pr Hprio.
+    - left; now exists pr.
+    - cbn [fold_left] in Hprio.
+      destruct (IH (update acc y) id pr Hprio) as [[old Hold]|Hin].
+      + destruct (Hupdate acc y id old Hold) as [Hprior|Heq].
+        * now left.
+        * right; left; symmetry; exact Heq.
+      + right; now right.
+  Qed.
+
+  (** Enqueue can add only identifiers from its requested list, without cache assumptions. *)
+  Lemma enqueue_support : forall p pol ids s id pr,
+    Q.prio (ws_queue (enqueue p pol ids s)) id = Some pr ->
+      (exists old, Q.prio (ws_queue s) id = Some old) \/ In id ids.
+  Proof.
+    intros p pol ids s id pr Hprio.
+    change (Q.prio (fst (fold_left (enqueue_pair s) ids (ws_queue s, ws_live s))) id =
+      Some pr) in Hprio.
+    eapply (queue_fold_support (enqueue_pair s) (@fst Q.t (ptrie Datatypes.unit)))
+      in Hprio; [exact Hprio|].
+    intros [q live] y target out Hpush; unfold enqueue_pair in Hpush.
+    cbn [fst snd] in Hpush |- *.
+    destruct (trie_get y live), (row_at s y);
+      try (left; now exists out).
+    cbn [fst snd] in Hpush.
+    destruct (Pos.eq_dec y target) as [Heq|Hneq].
+    - right; symmetry; exact Heq.
+    - rewrite Q.prio_push_other in Hpush by exact Hneq; left; now exists out.
+  Qed.
 
   (** * Identifier and priority widths *)
 
