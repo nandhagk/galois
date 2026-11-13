@@ -1223,6 +1223,17 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       if output_eqb before updated then next else row_replace f ck previous updated next
     | None => row_replace f ck previous updated next
     end.
+
+  (** Repair one current row, discarding its old projections before inserting its normal form. *)
+  Definition repair_current (f : positive) (k : list (cell V.t)) (db : t) : t :=
+    match row_get f k db with
+    | None => db
+    | Some o =>
+      let ck := normal_key db k in
+      let co := option_map (normal_cell db) o in
+      if andb (Pos.eqb (db_tuple_code ck) (db_tuple_code k)) (output_eqb co o)
+      then db else put f ck co (row_delete f k db)
+    end.
   (* STUB-CODE *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
       : (t * list (positive * list (cell V.t))) + t := inr (fst s).
@@ -4615,6 +4626,123 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - apply put_same_sources_raw.
   Qed.
 
+  (** The semantic loop needs only a valid forest whose representatives keep their meaning. *)
+  Definition model_forest (M : model (V := V.t)) (nu : positive -> carrier M) (db : t) : Prop :=
+    UnionFind.wf (db_forest db) /\ forall i, nu (repr db i) = nu i.
+
+  (** A satisfying public database starts with the weaker semantic forest invariant. *)
+  Lemma model_forest_initial : forall M nu db,
+    wf db -> sat V.merge M nu (view db) -> model_forest M nu db.
+  Proof.
+    intros M nu db Hwf Hsat. split; [exact (wf_forest db Hwf) |].
+    intro i. pose proof (canon_den M nu db Hwf Hsat (Id i)) as Hden.
+    now injection Hden.
+  Qed.
+
+  (** The actual find-based cell normalizer preserves denotations under the semantic invariant. *)
+  Lemma model_forest_normal : forall M nu db, model_forest M nu db ->
+    forall c, den nu (normal_cell db c) = den nu c.
+  Proof.
+    intros M nu db [Hforest Hmeaning] [i | v]; cbn [normal_cell den]; [| reflexivity].
+    rewrite (UnionFind.find_repr i (db_forest db) Hforest). f_equal. exact (Hmeaning i).
+  Qed.
+
+  (** Row and scheduling updates that retain the forest also retain its interpretation. *)
+  Lemma model_forest_unchanged : forall M nu db db',
+    db_forest db' = db_forest db -> model_forest M nu db -> model_forest M nu db'.
+  Proof.
+    intros M nu db db' Hequal. unfold model_forest, repr. now rewrite Hequal.
+  Qed.
+
+  (** Linking identifiers with equal interpretations preserves representative meanings. *)
+  Lemma model_forest_union : forall M nu db i j,
+    model_forest M nu db -> nu i = nu j -> model_forest M nu (union i j db).
+  Proof.
+    intros M nu db i j [Hforest Hmeaning] Hequal. split.
+    - rewrite union_forest. now apply UnionFind.wf_union.
+    - intro x. unfold repr in Hmeaning |- *. rewrite union_forest.
+      destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+      destruct roots as [[winner loser] |]; cbn [snd].
+      + destruct (UnionFind.union_some i j (db_forest db) winner loser forest Hforest Hunion)
+          as [_ [Hroots Hrepr]].
+        assert (Hjoined : nu winner = nu loser).
+        { destruct Hroots as [[-> ->] | [-> ->]]; rewrite !Hmeaning; congruence. }
+        rewrite (Hrepr x). destruct (Pos.eqb (UnionFind.repr (db_forest db) x) loser) eqn:Hloser.
+        * apply Pos.eqb_eq in Hloser. rewrite Hjoined, <- Hloser. exact (Hmeaning x).
+        * exact (Hmeaning x).
+      + rewrite (proj2 (UnionFind.union_none i j (db_forest db) forest Hforest Hunion) x).
+        exact (Hmeaning x).
+  Qed.
+
+  (** A true row supplies equal meanings for every constructor conflict raised by put. *)
+  Lemma put_model_forest : forall M nu db f k o,
+    model_forest M nu db -> sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
+    model_forest M nu (put f k o db).
+  Proof.
+    intros M nu db f k o Hmodel Hsat Hholds.
+    pose proof (model_forest_normal M nu db Hmodel) as Hnormal.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    assert (Hcanonical : holds M nu (view db) f ck co).
+    { eapply (@holds_transport V.t M nu nu (view db) (view db) f k ck o co).
+      - reflexivity.
+      - unfold ck, normal_key. rewrite map_map. apply map_ext. exact Hnormal.
+      - unfold co. destruct o as [c |]; cbn [option_map]; [now rewrite Hnormal | reflexivity].
+      - exact Hholds. }
+    assert (Hprevious : forall before, previous = Some before -> holds M nu (view db) f ck before).
+    { intros before Hlookup. exact (proj1 Hsat f ck before Hlookup). }
+    assert (Hnext : model_forest M nu (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end)).
+    { destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |]; try exact Hmodel.
+      apply model_forest_union; [exact Hmodel |].
+      pose proof (Hprevious (Some (Id a)) eq_refl) as Hold.
+      unfold holds in Hold, Hcanonical.
+      destruct (kind (view db) f) as [[| |m] |]; try contradiction; congruence. }
+    unfold put. fold ck co previous.
+    set (updated := combine_output db f previous co).
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      eapply model_forest_unchanged; [apply row_replace_forest | exact Hnext].
+    - eapply model_forest_unchanged; [apply row_replace_forest | exact Hnext].
+  Qed.
+
+  (** The removed source still justifies its normalized row in the restricted view. *)
+  Lemma deleted_normal_row_holds : forall M nu db f k o,
+    model_forest M nu db -> sat V.merge M nu (view db) -> row (view db) f k o ->
+    holds M nu (view (row_delete f k db)) f
+      (normal_key db k) (option_map (normal_cell db) o).
+  Proof.
+    intros M nu db f k o Hmodel Hsat Hrow.
+    pose proof (model_forest_normal M nu db Hmodel) as Hnormal.
+    eapply (@holds_transport V.t M nu nu (view db) (view (row_delete f k db)) f k
+      (normal_key db k) o (option_map (normal_cell db) o)).
+    - now rewrite row_delete_kind.
+    - unfold normal_key. rewrite map_map. apply map_ext. exact Hnormal.
+    - destruct o as [c |]; cbn [option_map]; [now rewrite Hnormal | reflexivity].
+    - exact (proj1 Hsat f k o Hrow).
+  Qed.
+
+  (** Actual row repair preserves both satisfaction and the invariant needed by the next repair. *)
+  Lemma repair_current_semantic : forall M nu db f k,
+    model_forest M nu db -> sat V.merge M nu (view db) ->
+    model_forest M nu (repair_current f k db) /\
+      sat V.merge M nu (view (repair_current f k db)).
+  Proof.
+    intros M nu db f k Hmodel Hsat. unfold repair_current.
+    destruct (row_get f k db) as [o |] eqn:Hrow; [| now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [now split |].
+    assert (Hdeleted : model_forest M nu (row_delete f k db)).
+    { eapply model_forest_unchanged; [apply row_delete_forest | exact Hmodel]. }
+    pose proof (row_delete_sat M nu f k db Hsat) as Hrestricted.
+    pose proof (deleted_normal_row_holds M nu db f k o Hmodel Hsat Hrow) as Hholds.
+    split.
+    - now apply put_model_forest.
+    - apply put_sat_normal_meaning; [exact Hrestricted | | exact Hholds].
+      now apply model_forest_normal.
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
@@ -4647,6 +4775,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun allocate_id.
   TimeFun make.
   TimeFun put.
+  TimeFun repair_current.
   TimeFun db_rstep.
   TimeFun db_rebuild_fuel.
   TimeFun rebuild.
