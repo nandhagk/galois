@@ -8226,6 +8226,217 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite <- poly_raw_width. lia.
   Qed.
 
+  (** Each linear-form entry fits the form's combined key and coefficient width. *)
+  Lemma poly_form_entry_bits : forall f p, In p (coef f) ->
+    X.bits (fst p) + Z.size_nat (snd p) <= F.form_bits f.
+  Proof.
+    intros f p Hin. unfold F.form_bits.
+    exact (poly_max_member _ (fun p => X.bits (fst p) + Z.size_nat (snd p))
+      (Z.size_nat (cst f)) (coef f) p Hin).
+  Qed.
+
+  (** The constant of a linear form fits the same width used for its entries. *)
+  Lemma poly_form_constant_bits : forall f, Z.size_nat (cst f) <= F.form_bits f.
+  Proof.
+    intro f. unfold F.form_bits. apply poly_max_base.
+  Qed.
+
+  (** Atom subtraction preserves source entry widths before equal keys are merged. *)
+  Lemma poly_atom_input_sizes : forall a bits,
+    F.form_bits (al a) + F.form_bits (ar a) <= bits ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= bits /\
+      Z.size_nat (snd p) <= bits)
+      (coef (al a) ++ poly_scale_coef (-1)%Z (coef (ar a))).
+  Proof.
+    intros a bits Hbits. apply Forall_app. split.
+    - apply Forall_forall. intros p Hin.
+      pose proof (poly_form_entry_bits (al a) p Hin). unfold X.bits in *. split; lia.
+    - unfold poly_scale_coef. apply Forall_map, Forall_forall. intros p Hin.
+      pose proof (poly_form_entry_bits (ar a) p Hin). cbn [fst snd].
+      replace (-1 * snd p)%Z with (- snd p)%Z by ring.
+      rewrite poly_size_opp. unfold X.bits in *. split; lia.
+  Qed.
+
+  (** Normalizing an atom fits its source lengths and logarithmic merged width. *)
+  Lemma T_poly_atom_normal_bounded : forall a count bits,
+    length (coef (al a)) + length (coef (ar a)) <= count ->
+    F.form_bits (al a) + F.form_bits (ar a) <= bits ->
+    (T_poly_normal_coef X.encode X.T_encode
+      (coef (al a) ++ poly_scale_coef (-1)%Z (coef (ar a))) <=
+      (2 * poly_log_normal_factor) * N.of_nat (count + 1) *
+        N.of_nat (bits + Nat.log2 count + 1))%N.
+  Proof.
+    intros a count bits Hlength Hbits.
+    pose proof (T_poly_normal_log _ bits bits (poly_atom_input_sizes a bits Hbits))
+      as Hnormal.
+    assert (Hcount : length (coef (al a) ++ poly_scale_coef (-1)%Z (coef (ar a))) <= count).
+    { unfold poly_scale_coef. rewrite length_app, length_map. exact Hlength. }
+    pose proof (Nat.log2_le_mono _ _ Hcount) as Hlog.
+    eapply N.le_trans; [exact Hnormal|].
+    replace ((2 * poly_log_normal_factor) * N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N with
+      (poly_log_normal_factor * N.of_nat (count + 1) *
+        (2 * N.of_nat (bits + Nat.log2 count + 1)))%N by ring.
+    apply N.mul_le_mono.
+    - apply N.mul_le_mono_l. lia.
+    - lia.
+  Qed.
+
+  Definition poly_atom_factor : N := (2 * poly_log_normal_factor + 128)%N.
+
+  (** Converting one unwrapped atom pays for its normalization and integer differences. *)
+  Lemma T_poly_atom_row_bounded : forall a count bits,
+    length (coef (al a)) + length (coef (ar a)) <= count ->
+    F.form_bits (al a) + F.form_bits (ar a) <= bits ->
+    (T_atom_row a <= poly_atom_factor * N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N.
+  Proof.
+    intros a count bits Hlength Hbits.
+    pose proof (T_poly_atom_normal_bounded a count bits Hlength Hbits) as Hnormal.
+    assert (Hright : Forall (fun p => Z.size_nat (snd p) <= bits) (coef (ar a))).
+    { apply Forall_forall. intros p Hin.
+      pose proof (poly_form_entry_bits (ar a) p Hin). lia. }
+    pose proof (T_poly_scale_coef_bounded (-1)%Z (coef (ar a)) bits Hright) as Hscale.
+    pose proof (Datatypes.T_app_le (coef (al a))
+      (poly_scale_coef (-1)%Z (coef (ar a)))) as Happ.
+    pose proof (Z.T_sub_le (cst (ar a)) (cst (al a))) as Hsub.
+    pose proof (Z.T_sub_le (cst (ar a) - cst (al a)) 1) as Hstrict.
+    pose proof (poly_form_constant_bits (al a)) as Hleftbits.
+    pose proof (poly_form_constant_bits (ar a)) as Hrightbits.
+    assert (Hdifference : Z.size_nat (cst (ar a) - cst (al a)) <= bits + 1).
+    { replace (cst (ar a) - cst (al a))%Z with
+        (cst (ar a) + - cst (al a))%Z by ring.
+      pose proof (poly_size_add (cst (ar a)) (- cst (al a))).
+      rewrite poly_size_opp in *. lia. }
+    set (work := (N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N).
+    assert (Hcount_work : (N.of_nat (count + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_r (N.of_nat (count + 1))) at 1.
+      apply N.mul_le_mono_l. lia. }
+    assert (Hbits_work : (N.of_nat (bits + 1) <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_l (N.of_nat (bits + 1))) at 1.
+      apply N.mul_le_mono; lia. }
+    assert (Hpositive : (1 <= work)%N) by lia.
+    assert (Hnormal_total : (T_poly_normal_coef X.encode X.T_encode
+      (coef (al a) ++ poly_scale_coef (-1)%Z (coef (ar a))) <=
+      (2 * poly_log_normal_factor) * work)%N).
+    { unfold work. replace ((2 * poly_log_normal_factor) *
+        (N.of_nat (count + 1) * N.of_nat (bits + Nat.log2 count + 1)))%N with
+        ((2 * poly_log_normal_factor) * N.of_nat (count + 1) *
+          N.of_nat (bits + Nat.log2 count + 1))%N by ring. exact Hnormal. }
+    assert (Hscale_total : (T_poly_scale_coef (-1)%Z (coef (ar a)) <= 32 * work)%N).
+    { change (T_poly_scale_coef (-1)%Z (coef (ar a)) <=
+        16 * N.of_nat ((length (coef (ar a)) + 1) * 2 * (bits + 1)))%N in Hscale.
+      rewrite !Nat2N.inj_mul in Hscale. change (N.of_nat 2) with 2%N in Hscale.
+      eapply N.le_trans; [exact Hscale|].
+      replace (16 * (N.of_nat (length (coef (ar a)) + 1) * 2 *
+        N.of_nat (bits + 1)))%N with
+        (32 * (N.of_nat (length (coef (ar a)) + 1) * N.of_nat (bits + 1)))%N by ring.
+      apply N.mul_le_mono_l. unfold work. apply N.mul_le_mono; lia. }
+    assert (Happ_total : (Datatypes.T_app (coef (al a))
+      (poly_scale_coef (-1)%Z (coef (ar a))) <= work)%N) by lia.
+    assert (Hsub_total : (Z.T_sub (cst (ar a)) (cst (al a)) <= 3 * work)%N).
+    { assert (Hlinear : (Z.T_sub (cst (ar a)) (cst (al a)) <=
+        3 * N.of_nat (bits + 1))%N) by lia.
+      eapply N.le_trans; [exact Hlinear|]. now apply N.mul_le_mono_l. }
+    assert (Hstrict_total : (Z.T_sub (cst (ar a) - cst (al a)) 1 <= 9 * work)%N).
+    { change (Z.size_nat 1) with 1 in Hstrict.
+      assert (Hlinear : (Z.T_sub (cst (ar a) - cst (al a)) 1 <=
+        9 * N.of_nat (bits + 1))%N) by lia.
+      eapply N.le_trans; [exact Hlinear|]. now apply N.mul_le_mono_l. }
+    replace (poly_atom_factor * N.of_nat (count + 1) *
+      N.of_nat (bits + Nat.log2 count + 1))%N with (poly_atom_factor * work)%N
+      by (unfold work; ring).
+    time_unfold T_atom_row.
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    destruct (alw a), (arw a), (acmp a); time_simpl.
+    all: clear -Hnormal_total Hscale_total Happ_total Hsub_total Hstrict_total Hpositive.
+    all: clearbody work; unfold poly_atom_factor; rewrite N.mul_add_distr_r; lia.
+  Qed.
+  (** Emitting zero or one item per source keeps the output count below the input count. *)
+  Lemma poly_optional_flat_map_length : forall (A B : Type) (f : A -> option B) xs,
+    length (flat_map (fun x => match f x with Some y => [y] | None => [] end) xs) <=
+      length xs.
+  Proof.
+    intros A B f xs. induction xs as [|x xs IH]; cbn [flat_map length]; [lia|].
+    destruct (f x); cbn [app length]; lia.
+  Qed.
+
+  (** A flat map emitting at most one item pays a constant append charge per callback. *)
+  Lemma poly_T_optional_flat_map : forall (A B : Type) (f : A -> option B)
+      (T_f : A -> N) k xs,
+    (forall x, In x xs -> (T_f x <= k)%N) ->
+    (List.T_flat_map (fun x => match f x with Some y => [y] | None => [] end)
+      (fun x => (1 + T_f x)%N) xs <=
+      (k + 4) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f k xs. induction xs as [|x xs IH]; intro Hcallback.
+    - time_unfold List.T_flat_map. cbn [length]. lia.
+    - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+      specialize (IH (fun y Hy => Hcallback y (or_intror Hy))).
+      pose proof (Datatypes.T_app_le
+        (match f x with Some y => [y] | None => [] end)
+        (flat_map (fun y => match f y with Some z => [z] | None => [] end) xs)) as Happ.
+      assert (Hlength : length (match f x with Some y => [y] | None => [] end) <= 1).
+      { destruct (f x); cbn [length]; lia. }
+      time_unfold List.T_flat_map. cbn [length]. time_simpl. nia.
+  Qed.
+
+  Definition poly_assume_factor : N := (poly_atom_factor + 16)%N.
+
+  (** Assumption work charges every atom conversion and adds the linearizer's own clock. *)
+  Lemma T_poly_assume_bounded : forall g es s,
+    (T_assume g es s <= poly_assume_factor *
+      N.of_nat ((length (F.atoms_of g es) + 1) *
+        (fold_right Nat.add 0%nat (map tsize es) + 1) *
+        (F.bits_es g es + Nat.log2 (fold_right Nat.add 0%nat (map tsize es)) + 1)) +
+      F.T_atoms_of g es)%N.
+  Proof.
+    intros g es s.
+    set (count := fold_right Nat.add 0%nat (map tsize es)).
+    set (bits := F.bits_es g es).
+    assert (Hatom : forall a, In a (F.atoms_of g es) ->
+      (T_atom_row a <= poly_atom_factor * N.of_nat (count + 1) *
+        N.of_nat (bits + Nat.log2 count + 1))%N).
+    { intros a Hin. destruct (F.atoms_of_size g es) as [_ Hsizes].
+      destruct (proj1 (Forall_forall _ _) Hsizes a Hin) as [Hlength Hbits].
+      apply T_poly_atom_row_bounded; [exact Hlength|]. unfold bits. lia. }
+    pose proof (poly_T_optional_flat_map _ _ atom_row T_atom_row
+      (poly_atom_factor * N.of_nat (count + 1) *
+        N.of_nat (bits + Nat.log2 count + 1))%N (F.atoms_of g es) Hatom) as Hflat.
+    pose proof (poly_optional_flat_map_length _ _ atom_row (F.atoms_of g es)) as Hlength.
+    destruct s as [|P]; time_unfold T_assume; fold count bits.
+    - unfold poly_assume_factor, poly_atom_factor.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add. cbn [N.of_nat]. nia.
+    - pose proof (Datatypes.T_app_le
+        (flat_map (fun a => match atom_row a with Some r => [r] | None => [] end)
+          (F.atoms_of g es)) P) as Happ.
+      time_simpl. unfold poly_assume_factor.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *; cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** The owner's pinned assumption work covers conversion and the original linearizer clock. *)
+  Lemma T_poly_assume_contract : forall g es s,
+    (T_assume g es s <= (poly_assume_factor + 1) *
+      N.of_nat (assume_work g es s + 1))%N.
+  Proof.
+    intros g es s. pose proof (T_poly_assume_bounded g es s) as Htime.
+    set (work := (length (F.atoms_of g es) + 1) *
+      (fold_right Nat.add 0%nat (map tsize es) + 1) *
+      (F.bits_es g es + Nat.log2 (fold_right Nat.add 0%nat (map tsize es)) + 1)) in *.
+    assert (Hwork : (N.of_nat work + F.T_atoms_of g es <=
+      N.of_nat (assume_work g es s))%N).
+    { unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id.
+      apply N.add_le_mono_r.
+      replace ((length (prows s) + 1) * (length (F.atoms_of g es) + 1) *
+        (fold_right Nat.add 0%nat (map tsize es) + 1) *
+        (F.bits_es g es + Nat.log2 (fold_right Nat.add 0%nat (map tsize es)) + 1))
+        with ((length (prows s) + 1) * work) by (unfold work; nia).
+      rewrite Nat2N.inj_mul. nia. }
+    rewrite Nat2N.inj_add. cbn [N.of_nat].
+    clearbody work. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -8244,7 +8455,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_num : N := 1. (* STUB *)
+  Definition c_num : N := (poly_assume_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -8253,7 +8464,10 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof. Admitted. (* STUB *)
   Lemma T_assume_le : forall g es s,
     (T_assume g es s <= c_num * N.of_nat (assume_work g es s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es s. eapply N.le_trans; [apply T_poly_assume_contract|].
+    apply N.mul_le_mono_r. unfold c_num. lia.
+  Qed.
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
