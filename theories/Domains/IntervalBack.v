@@ -4639,6 +4639,29 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     lia.
   Qed.
 
+  Local Lemma table_shift_power_bounds : forall rw wb b lb hb,
+    interval_clip wb b = I (Fin lb) (Fin hb) ->
+    Z.ltb hb (Z.pos rw) = true ->
+    (Word.Z.T_pow 2 lb <= 8 * N.of_nat (Pos.to_nat rw + 1))%N /\
+    (Word.Z.T_pow 2 hb <= 8 * N.of_nat (Pos.to_nat rw + 1))%N /\
+    Z.size_nat (2 ^ lb) <= Pos.to_nat rw + 1 /\
+    Z.size_nat (2 ^ hb) <= Pos.to_nat rw + 1.
+  Proof.
+    intros rw wb b lb hb Hclip Hlt.
+    change (PayloadBounds.interval_clip wb b = I (Fin lb) (Fin hb)) in Hclip.
+    destruct (PayloadBounds.interval_clip_shape wb b) as
+      [Hbot|[lo [hi [Hshape [Hnonneg [Hordered _]]]]]].
+    - rewrite Hbot in Hclip. discriminate.
+    - rewrite Hshape in Hclip.
+      inversion Hclip; subst lo hi.
+      apply Z.ltb_lt in Hlt.
+      assert (Hlb : (0 <= lb <= Z.pos rw)%Z) by lia.
+      assert (Hhb : (0 <= hb <= Z.pos rw)%Z) by lia.
+      repeat split;
+        try (apply WordTime.word_power_time_bound; lia);
+        apply WordTime.word_power_size_bound; lia.
+  Qed.
+
   Local Lemma table_and_time : forall rw u v,
     (T_interval_and rw u v <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
