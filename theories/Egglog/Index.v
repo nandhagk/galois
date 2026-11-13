@@ -636,6 +636,110 @@ Module Index (V : VALUE) <: INDEX V.
     - split; [now apply table_ok_insert_step |].
       now apply parents_unique_insert_step.
   Qed.
+
+  Lemma stored_edge_drop : forall ix n code degree terminal counter q key out,
+    stored_edge
+      (write_node ix n
+        (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree terminal)
+        counter) q key out <->
+      (q <> n \/ key <> code) /\ stored_edge ix q key out.
+  Proof.
+    intros ix n code degree terminal counter q key out.
+    unfold stored_edge. destruct (Pos.eq_dec q n) as [-> | Hnode].
+    - rewrite read_node_write_same. cbn [node_edges].
+      destruct (Pos.eq_dec key code) as [-> | Hkey].
+      + rewrite PTrie.get_remove_same. intuition discriminate.
+      + rewrite PTrie.get_remove_other by exact Hkey. intuition congruence.
+    - rewrite read_node_write_other by exact Hnode. intuition congruence.
+  Qed.
+
+  Lemma shape_drop : forall ix n code degree terminal counter,
+    shape ix -> (n <= counter)%positive -> (next ix <= counter)%positive ->
+    shape
+      (write_node ix n
+        (IndexNode (PTrieCode.remove code (node_edges (read_node ix n))) degree terminal)
+        counter).
+  Proof.
+    intros ix n code degree terminal counter [Hedges [Htable Hparents]] Hnode Hcounter.
+    split.
+    - intros q key out Hget. apply stored_edge_drop in Hget as [_ Hget].
+      destruct (Hedges q key out Hget) as [Hcode [Hbelow Habove]].
+      split; [exact Hcode |]. split; [exact Hbelow |].
+      change (edge_child out <= counter)%positive. eapply Pos.le_trans; eassumption.
+    - split.
+      + now apply table_ok_write.
+      + intros q key out q' key' out' Hget Hget' Hchild.
+        apply stored_edge_drop in Hget as [_ Hget].
+        apply stored_edge_drop in Hget' as [_ Hget'].
+        eapply Hparents; eassumption.
+  Qed.
+
+  Lemma table_ok_remove_step : forall st c, table_ok (fst st) ->
+    table_ok (fst (remove_step_st st c)).
+  Proof.
+    intros [ix n] c Htable. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard; [exact Htable |].
+    apply Pos.ltb_ge in Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |]; [| exact Htable].
+    destruct (N.eqb (edge_count edge) 1%N); cbn [fst];
+      apply table_ok_write; try assumption; apply Pos.le_refl.
+  Qed.
+
+  Lemma shape_remove_step : forall st c, shape (fst st) ->
+    shape (fst (remove_step_st st c)).
+  Proof.
+    intros [ix n] c [Hshape [Htable Hparents]]. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n) eqn:Hguard; [exact (conj Hshape (conj Htable Hparents)) |].
+    apply Pos.ltb_ge in Hguard.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| exact (conj Hshape (conj Htable Hparents))].
+    destruct (N.eqb (edge_count edge) 1%N); cbn [fst].
+    - apply shape_drop;
+        [exact (conj Hshape (conj Htable Hparents)) | exact Hguard | apply Pos.le_refl].
+    - split.
+      + apply edge_shape_put; try exact Hshape; try apply Pos.le_refl.
+        * exact (proj1 (Hshape n (encode_cell c) edge Hget)).
+        * exact (proj2 (Hshape n (encode_cell c) edge Hget)).
+      + split.
+        * apply table_ok_write; [exact Htable | exact Hguard | apply Pos.le_refl].
+        * apply parents_unique_put; [exact Hparents |].
+          intros q key out Hout Hchild. cbn [edge_child] in Hchild.
+          eapply Hparents; [exact Hout | exact Hget | exact Hchild].
+  Qed.
+
+  Lemma edges_ok_remove_step : forall st c, edges_ok (fst st) ->
+    edges_ok (fst (remove_step_st st c)).
+  Proof.
+    intros [ix n] c Hedges. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [exact Hedges |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| exact Hedges].
+    destruct (N.eqb (edge_count edge) 1%N) eqn:Hone; cbn [fst].
+    - intros q key out Hout. apply stored_edge_drop in Hout as [_ Hout].
+      exact (Hedges q key out Hout).
+    - intros q key out Hout. apply stored_edge_put in Hout as [[-> [-> ->]] | [_ Hout]].
+      + destruct (Hedges n (encode_cell c) edge Hget) as [Hcode [Hbounds [Hbits Hcount]]].
+        split; [exact Hcode |]. split; [exact Hbounds |]. split; [exact Hbits |].
+        change (0 < N.pred (edge_count edge) < Npos (next ix))%N.
+        change (0 < edge_count edge < Npos (next ix))%N in Hcount.
+        apply N.eqb_neq in Hone. lia.
+      + exact (Hedges q key out Hout).
+  Qed.
+
+  Lemma shape_remove_walk : forall r st, shape (fst st) ->
+    shape (fst (fold_left remove_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros st Hshape; cbn [fold_left]; [exact Hshape |].
+    apply IH. now apply shape_remove_step.
+  Qed.
+
+  Lemma edges_ok_remove_walk : forall r st, edges_ok (fst st) ->
+    edges_ok (fst (fold_left remove_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros st Hedges; cbn [fold_left]; [exact Hedges |].
+    apply IH. now apply edges_ok_remove_step.
+  Qed.
   (** The initial node counter starts at one. *)
   Lemma next_empty : next empty = 1%positive.
   Proof.
