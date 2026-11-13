@@ -7,7 +7,7 @@
 From Stdlib Require Import ZArith Zpow_facts NArith List Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op.
-From Galois.Domains Require Import IntervalOps ThresholdsSig IntervalSig ValueSig WordSig.
+From Galois.Domains Require Import IntervalOps ThresholdsSig IntervalSig ValueSig WordSig BitsLang.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -4471,6 +4471,53 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     rewrite !Nat2N.inj_add in Hbudget.
     rewrite Nat.pow_2_r, Nat2N.inj_mul.
     nia.
+  Qed.
+
+  Local Lemma table_pow2_bits : forall n, (0 <= n)%Z ->
+    Z.size_nat (2 ^ n) <= Z.to_nat n + 1.
+  Proof.
+    intros n Hn. apply PayloadBounds.payload_bits_below_pow. split.
+    - pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn). lia.
+    - rewrite Nat2Z.inj_add, Z2Nat.id by exact Hn.
+      apply Z.pow_lt_mono_r; lia.
+  Qed.
+
+  Local Lemma table_abs_N_nat : forall n, (0 <= n)%Z ->
+    Z.abs_N n = N.of_nat (Z.to_nat n).
+  Proof.
+    intros [|p|p] Hn; cbn [Z.abs_N Z.to_nat]; try reflexivity; lia.
+  Qed.
+
+  Local Lemma table_ones_time : forall n, (0 <= n)%Z ->
+    (Word.Z.T_ones n <= 16 * N.of_nat (Z.to_nat n + 1))%N.
+  Proof.
+    intros n Hn.
+    pose proof (Std.Z.T_shiftl_le 1 n) as Hshift.
+    pose proof (Std.Z.T_pred_le (Z.shiftl 1 n)) as Hpred.
+    pose proof (table_pow2_bits n Hn) as Hbits.
+    rewrite <- Z.shiftl_1_l in Hbits.
+    change (Std.Z.T_shiftl 1 n <= 6 * Z.abs_N n + 1)%N in Hshift.
+    rewrite table_abs_N_nat in Hshift by exact Hn.
+    unfold Word.Z.T_ones.
+    rewrite Nat2N.inj_add.
+    nia.
+  Qed.
+
+  Local Lemma table_log2_value : forall z,
+    (0 <= Z.log2 z <= Z.of_nat (Z.size_nat z))%Z.
+  Proof.
+    intros [|[p|p|]|p]; cbn [Z.log2 Z.size_nat Pos.size_nat]; try lia.
+    all: rewrite <- (positive_nat_Z (Pos.size p)),
+      WordTime.positive_size_correct; lia.
+  Qed.
+
+  Local Lemma table_zmax_bits : forall x y,
+    Z.size_nat (Z.max x y) <= Z.size_nat x + Z.size_nat y.
+  Proof.
+    intros x y.
+    destruct (Z.le_gt_cases x y) as [Hle|Hgt].
+    - rewrite Z.max_r by lia. lia.
+    - rewrite Z.max_l by lia. lia.
   Qed.
 
   Local Lemma table_and_time : forall rw u v,
