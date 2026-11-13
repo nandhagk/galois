@@ -2315,7 +2315,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Local Lemma table_assume_rewrap_time : forall rw a q,
     (T_interval_assume_rewrap rw a q <=
       100 * (Scalar.c_scalar + 1) *
-      N.of_nat ((Pos.to_nat rw + interval_bits a + interval_bits q + 1) ^ 2))%N.
+      N.of_nat ((Pos.to_nat rw + interval_bits a + 1) ^ 2 + interval_bits q))%N.
   Proof.
     intros rw a q.
     pose proof (PayloadBounds.payload_modulus_time rw) as Hmodulus_time.
@@ -3096,6 +3096,37 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
 
   Definition c_word_table : N := (1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N.
+
+  Local Lemma table_bwd1_time : forall rw w q a,
+    (2 + T_interval_clip w a +
+      T_interval_assume_rewrap rw (interval_clip w a) q <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 +
+          W.psize rw q + W.psize w a)%nat))%N.
+  Proof.
+    intros rw w q a.
+    pose proof (table_clip_time w a) as Hclip.
+    pose proof (table_assume_rewrap_time rw (interval_clip w a) q) as Hrewrap.
+    pose proof (table_clip_bits w a) as Hbits.
+    pose proof (table_raw_size rw q) as Hq.
+    pose proof (Pos2Nat.is_pos rw) as Hrw.
+    assert (Hbudget :
+      (N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip w a) + 1) ^ 2 +
+        interval_bits q) <=
+       N.of_nat ((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 +
+        W.psize rw q + W.psize w a))%N).
+    { assert (Hsquare :
+        ((Pos.to_nat rw + interval_bits (interval_clip w a) + 1) ^ 2 <=
+         (Pos.to_nat rw + Pos.to_nat w + 1) ^ 2)%nat)
+        by (apply Nat.pow_le_mono_l; lia).
+      lia. }
+    assert (Hpositive :
+      (1 <= N.of_nat ((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 +
+        W.psize rw q + W.psize w a))%N).
+    { rewrite Nat.pow_2_r. rewrite !Nat2N.inj_add, !Nat2N.inj_mul. nia. }
+    unfold c_word_table.
+    nia.
+  Qed.
 
   Local Lemma table_ite_dispatch_time : forall rw wc c wa a wb b,
     (T_wfwd bvite rw [(wc, c); (wa, a); (wb, b)] <= c_word_table * N.of_nat
