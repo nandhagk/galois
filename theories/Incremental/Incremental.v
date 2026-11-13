@@ -267,8 +267,9 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
     let initial := fold_left (discovery_seed_one st) roots empty_discovery in
     match loopN (discovery_step p st) fuel initial with
     | inl _ => None
-    | inr result => Some (rev (discovery_missing result),
-        rev (discovery_rows result), rev (discovery_frozen result))
+    | inr result => Some (rev_append (discovery_missing result) [],
+        rev_append (discovery_rows result) [],
+        rev_append (discovery_frozen result) [])
     end.
 
   Definition active (p : S.prog) (st : state) (known : list S.key) (r : S.row) : bool :=
@@ -684,6 +685,22 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Module InvFacts := SourceBindingInventory L S Checker.
   Local Opaque loopN.
   Local Opaque invalid_accessible.
+
+  Lemma discovery_rev_equation : forall p roots fuel st,
+    discovery p roots fuel st =
+      match loopN (discovery_step p st) fuel
+        (fold_left (discovery_seed_one st) roots empty_discovery) with
+      | inl _ => None
+      | inr result => Some (rev (discovery_missing result),
+          rev (discovery_rows result), rev (discovery_frozen result))
+      end.
+  Proof.
+    intros p roots fuel st; unfold discovery.
+    destruct (loopN (discovery_step p st) fuel
+      (fold_left (discovery_seed_one st) roots empty_discovery));
+      [reflexivity|].
+    now rewrite <- !rev_alt.
+  Qed.
 
   Lemma fill_local_eq_fill : forall xs m base,
     fill_local xs m base = fill xs m base.
@@ -1146,7 +1163,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     NoDup ks /\ (forall x, In x ks -> value st x = None).
   Proof.
     intros p roots fuel st ks rs fz Hrun.
-    unfold discovery in Hrun.
+    rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_missing_valid st initial).
     { unfold initial; apply discovery_seed_missing_valid.
@@ -1181,7 +1198,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       ks = rev (discovery_missing finished) /\
       discovery_balanced finished.
   Proof.
-    intros p roots fuel st ks rs fz Hrun; unfold discovery in Hrun.
+    intros p roots fuel st ks rs fz Hrun; rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_balanced initial).
     { unfold initial; apply discovery_seed_balanced.
@@ -1289,7 +1306,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     forall r, In r rs -> In r (S.rows p).
   Proof.
     intros p roots fuel st ks rs fz Hwf Hrun.
-    unfold discovery in Hrun.
+    rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_rows_listed p initial).
     { unfold initial, discovery_rows_listed.
@@ -1450,7 +1467,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery p roots fuel st = Some (ks, rs, fz) ->
     forall r, In r rs -> exists y, In y (S.writes p r) /\ value st y = None.
   Proof.
-    intros p roots fuel st ks rs fz Hwf Hrun; unfold discovery in Hrun.
+    intros p roots fuel st ks rs fz Hwf Hrun; rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_state_new p st initial).
     { unfold initial, discovery_state_new; split.
@@ -1681,7 +1698,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     forall r x, In r rs -> In x (row_keys p r) ->
       dom st x \/ In x ks.
   Proof.
-    intros p roots fuel st ks rs fz Hrun; unfold discovery in Hrun.
+    intros p roots fuel st ks rs fz Hrun; rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_support_state p st initial).
     { unfold initial; apply discovery_seed_support_state.
@@ -1812,7 +1829,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     rewrite Hloop in Hqueued.
     exists finished; split; [exact Hloop|].
     intros x Hx.
-    unfold discovery in Hrun; rewrite Hloop in Hrun; cbn in Hrun.
+    rewrite discovery_rev_equation in Hrun; rewrite Hloop in Hrun; cbn in Hrun.
     injection Hrun as Hks _ _; subst ks.
     apply in_rev in Hx.
     destruct (Hqueued x Hx) as [Hbad|Hdone];
@@ -2005,7 +2022,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       (discovery_done_rows p) (discovery_done_rows p) Hstep fuel
       (fold_left (discovery_seed_one st) roots empty_discovery) Hinitial) as Hdone.
     rewrite Hloop in Hdone.
-    unfold discovery in Hrun; rewrite Hloop in Hrun; cbn in Hrun.
+    rewrite discovery_rev_equation in Hrun; rewrite Hloop in Hrun; cbn in Hrun.
     injection Hrun as _ Hrs _; subst rs.
     assert (Hraw : In r (discovery_rows finished)).
     { apply (Hdone x); [exact (Hprocessed x Hx)|exact Hr]. }
@@ -2076,7 +2093,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery p roots fuel st = Some (ks, rs, fz) ->
     forall x v, In (x, v) fz -> value st x = Some v.
   Proof.
-    intros p roots fuel st ks rs fz Hrun; unfold discovery in Hrun.
+    intros p roots fuel st ks rs fz Hrun; rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_frozen_valid st initial).
     { unfold initial; apply discovery_seed_frozen_valid.
@@ -2208,7 +2225,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         (fold_left (discovery_seed_one st) roots empty_discovery) = inr finished /\
         PTrieCode.get (S.key_code x) (discovery_seen finished) = Some tt.
   Proof.
-    intros p roots fuel st ks rs fz Hrun r x Hr Hx; unfold discovery in Hrun.
+    intros p roots fuel st ks rs fz Hrun r x Hr Hx; rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_rows_marked p initial).
     { unfold initial, discovery_rows_marked.
@@ -2250,7 +2267,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       In (x, v) fz.
   Proof.
     intros p roots fuel st ks rs fz Hrun.
-    pose proof Hrun as Hdiscovery; unfold discovery in Hrun.
+    pose proof Hrun as Hdiscovery; rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_seen_frozen st initial).
     { unfold initial; apply discovery_seed_seen_frozen.
@@ -2840,7 +2857,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intros p roots fuel st ks rs fz x Hrun Hin.
     destruct (value st x) as [v|] eqn:Hvalue;
       [left; exists v; exact Hvalue|right].
-    unfold discovery in Hrun.
+    rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : In x (discovery_missing initial)).
     { unfold initial; now apply discovery_seed_roots. }
@@ -2962,7 +2979,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     discovery p roots fuel st = Some (ks, rs, fz) -> In x ks ->
     In x roots \/ exists r, In r rs /\ In x (row_keys p r).
   Proof.
-    intros p roots fuel st ks rs fz x Hrun Hx; unfold discovery in Hrun.
+    intros p roots fuel st ks rs fz x Hrun Hx; rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : discovery_source_state p roots initial).
     { unfold initial; apply discovery_seed_source. }
@@ -6452,7 +6469,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     Lemma frozen_nodup : forall p roots st, NoDup (map fst (frozen p roots st)).
     Proof.
       intros p roots st; unfold frozen, discovery_view.
-      unfold discovery.
+      rewrite discovery_rev_equation.
       set (initial := fold_left (discovery_seed_one st) roots empty_discovery).
       assert (Hinitial : frozen_unique initial).
       { unfold initial; apply discovery_seed_frozen_unique.
@@ -7210,7 +7227,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     unfold region, discovery_view.
     destruct (discovery p roots (view_fuel p roots) st) as [[[ks rs] fz]|]
       eqn:Hrun; cbn in Hin |- *; [|contradiction].
-    unfold discovery in Hrun.
+    rewrite discovery_rev_equation in Hrun.
     set (initial := fold_left (discovery_seed_one st) roots empty_discovery) in *.
     assert (Hinitial : frozen_source_state p initial).
     { unfold initial, frozen_source_state; rewrite discovery_seed_frozen_empty.
@@ -7880,7 +7897,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       (fold_left (discovery_seed_one st) roots empty_discovery) Hinitial) as Hperm.
     rewrite Hloop in Hperm; cbn in Hperm.
     assert (Hmissing : discovery_missing finished = rev ks).
-    { unfold discovery in Hrun; rewrite Hloop in Hrun.
+    { rewrite discovery_rev_equation in Hrun; rewrite Hloop in Hrun.
       cbn in Hrun; injection Hrun as Hks _ _; subst ks.
       now rewrite rev_involutive. }
     unfold discovery_queue_perm in Hperm.
@@ -8046,7 +8063,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     assert (Hparts : ks = rev (discovery_missing finished) /\
       rs = rev (discovery_rows finished) /\
       fz = rev (discovery_frozen finished)).
-    { unfold discovery in Hrun; rewrite Hloop in Hrun.
+    { rewrite discovery_rev_equation in Hrun; rewrite Hloop in Hrun.
       cbn in Hrun; injection Hrun as <- <- <-; repeat split; reflexivity. }
     destruct Hparts as [Hks [Hrs Hfz]].
     destruct (discovery_views p roots fuel st ks rs fz Hwf Hrun)
@@ -8105,7 +8122,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     destruct (discovery_done_charge p roots fuel st ks rs fz finished
       Hwf Hrun Hperm Hnodup) as [Hbits Hlen].
     assert (Hraw : rs = rev (discovery_rows finished)).
-    { unfold discovery in Hrun; rewrite Hloop in Hrun.
+    { rewrite discovery_rev_equation in Hrun; rewrite Hloop in Hrun.
       cbn in Hrun; now injection Hrun as _ <- _. }
     assert (Hregion : finite_sum (fun r => length (row_keys p r))
       (discovery_rows finished) =
@@ -8209,12 +8226,14 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
 
   Lemma discovery_loop_clock : forall p st initial finished fuel, S.wf p ->
     (exists n, loop_fuel (discovery_step p st) n initial = inr finished) ->
-    (T_loopN (discovery_step p st) (T_discovery_step p st) fuel initial <=
+    (T_loopN (discovery_step p st)
+      (fun current => T_discovery_step p st current) fuel initial <=
       discovery_potential p st finished initial +
         c_loopN * N.of_nat (N.size_nat fuel + 1))%N.
   Proof.
     intros p st initial finished fuel Hwf Hfinished.
-    pose proof (T_loopN_amort _ _ (discovery_step p st) (T_discovery_step p st)
+    pose proof (T_loopN_amort _ _ (discovery_step p st)
+      (fun current => T_discovery_step p st current)
       (fun acc => exists n, loop_fuel (discovery_step p st) n acc = inr finished)
       (discovery_potential p st finished) (fun _ => 0%N) fuel initial)
       as Hamort.
@@ -8257,6 +8276,17 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     { destruct (loopN (discovery_step p st) fuel initial); reflexivity. }
     cbn beta in Hamort.
     rewrite Hzero in Hamort; lia.
+  Qed.
+
+  Lemma discovery_clock_arithmetic : forall Q T U F BF seed loop spent,
+    (U <= Q)%N -> (1 <= U)%N -> (F <= BF)%N ->
+    (seed <= 24 * T + 1)%N ->
+    (spent <= 512 * Q + 512 * T)%N ->
+    (loop <= spent + 128 * U + 8 * (F + 1))%N ->
+    (1 + seed + loop <= 1024 * Q + 1024 * T + 1024 * BF)%N.
+  Proof.
+    intros Q T U F BF seed loop spent Hsub Hunit Hfuel Hseed Hspent Hloop.
+    lia.
   Qed.
 
 
