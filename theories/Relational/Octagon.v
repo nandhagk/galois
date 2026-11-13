@@ -4517,6 +4517,13 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       try exact I; lia.
   Qed.
 
+  Lemma bound_meet_below_right : forall a b,
+    RelationalPathBounds.below (bound_meet a b) b.
+  Proof.
+    intros [a|] [b|]; cbn [bound_meet RelationalPathBounds.below];
+      try exact I; lia.
+  Qed.
+
   Lemma increment_entry_below : forall i j d m a b,
     RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
       (entry m a b).
@@ -4525,6 +4532,33 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     repeat (eapply RelationalPathBounds.below_trans;
       [apply bound_meet_below_left|]).
     apply RelationalPathBounds.below_refl.
+  Qed.
+
+  (** The candidate diagonal is bounded by either inserted signed edge. *)
+  Lemma increment_below_first_edge : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (edge_path d (entry m a i) (entry m j b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    apply bound_meet_below_right.
+  Qed.
+
+  Lemma increment_below_second_edge : forall i j d m a b,
+    RelationalPathBounds.below (entry (increment_matrix i j d m) a b)
+      (edge_path d (entry m a (flip j)) (entry m (flip i) b)).
+  Proof.
+    intros i j d m a b. rewrite entry_increment.
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    eapply RelationalPathBounds.below_trans;
+      [apply bound_meet_below_left|].
+    apply bound_meet_below_right.
   Qed.
 
   (** A successful matrix scan checks every stored row label. *)
