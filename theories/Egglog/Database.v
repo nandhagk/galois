@@ -3075,16 +3075,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [reflexivity |]. apply init_projection_counts.
   Qed.
 
-  (** Kind-correct insertion keeps the database well formed. *)
-  Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
-  Proof. Admitted. (* STUB *)
-
-  (** Constructor allocation keeps the database well formed. *)
-  Lemma wf_make : forall f k db, wf db ->
-    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
-    wf (snd (make f k db)).
-  Proof. Admitted. (* STUB *)
-
   (** Rebuilding keeps the database well formed. *)
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
   Proof. Admitted. (* STUB *)
@@ -4329,6 +4319,29 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + exact Hprevious.
       + exact Hnormal.
       + exact (canon_row_fixed db k o Hwf).
+  Qed.
+
+  (** Exact projection multiplicities complete well-formed canonical row replacement. *)
+  Lemma row_replace_wf : replacement_preserves_wf.
+  Proof.
+    intros db f k previous o Hwf Hprevious Hkind Hcanonical.
+    destruct (row_replace_cache_correct db f k previous o Hwf Hprevious
+      (proj1 (proj2 Hkind))) as [Hsound [Hcomplete [Harity Hcounts]]].
+    apply row_replace_wf_from_caches; assumption.
+  Qed.
+
+  (** Kind-correct insertion keeps the database well formed. *)
+  Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
+  Proof.
+    exact (wf_put_from_replacement row_replace_wf).
+  Qed.
+
+  (** Constructor allocation keeps the database well formed. *)
+  Lemma wf_make : forall f k db, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    wf (snd (make f k db)).
+  Proof.
+    exact (wf_make_from_replacement row_replace_wf).
   Qed.
 
 End Database.
