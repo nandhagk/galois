@@ -6270,7 +6270,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition k_active : N := 1. (* STUB *)
   Definition k_queue : N := 1. (* STUB *)
   Definition k_stop : N := 1. (* STUB *)
-  Definition k_driver : N := 1. (* STUB *)
+  Definition k_driver : N := 512.
 
   Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
     In (x, e) (uses_entries db).
@@ -6822,7 +6822,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma T9_rebuild_driver : forall db,
     (T_rebuild db <= T_rebuild_fuel db +
       T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db.
+    assert (Hcallback : forall s, (T_db_rstep s <= T_rstep s)%N).
+    { intro s. time_unfold T_rstep. lia. }
+    pose proof (LoopNFacts.T_loopN_mono _ _ db_rstep T_db_rstep T_rstep Hcallback
+      (db_rebuild_fuel db) (db, [])) as Hloop.
+    time_unfold T_rebuild. time_unfold T_rebuild_fuel.
+    unfold rebuild_fuel, rstep in *. cbn beta zeta.
+    change (T_loopN db_rstep (fun s => T_db_rstep s) (db_rebuild_fuel db) (db, []) <=
+      T_loopN (fun s : repair_state => db_rstep s) T_rstep
+        (db_rebuild_fuel db) (db, []))%N in Hloop.
+    destruct (loopN db_rstep (db_rebuild_fuel db) (db, []));
+      time_simpl; unfold k_driver; lia.
+  Qed.
 
   (** Slot lookup charges its binary slot code. *)
   Lemma T10_index : forall s new db,
