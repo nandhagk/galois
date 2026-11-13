@@ -256,3 +256,81 @@ Proof.
 Qed.
 
 End ModelFacts.
+
+(** * Giving a fresh constructor output its meaning *)
+
+Section FreshConstructor.
+Context {V : Type} (merge : positive -> V -> V -> V).
+Context (M : model (V := V)) (nu : positive -> carrier M).
+
+(** Changing one absent identifier leaves the denotation of a tuple unchanged. *)
+Local Lemma fresh_map_den : forall i (nu' : positive -> carrier M) cs,
+  (forall j, j <> i -> nu' j = nu j) -> ~ In (Id i) cs ->
+  map (den nu') cs = map (den nu) cs.
+Proof.
+  intros i nu' cs Hkeep Habsent.
+  apply map_ext_in. intros [j | v] Hin; cbn [den].
+  - f_equal. apply Hkeep. intro Heq. subst j. exact (Habsent Hin).
+  - reflexivity.
+Qed.
+
+(** A row without the changed identifier keeps its truth and output meaning. *)
+Local Lemma fresh_holds_preserved : forall i (nu' : positive -> carrier M) w w' f k o,
+  (forall j, j <> i -> nu' j = nu j) ->
+  kind w' = kind w -> ~ In (Id i) (k ++ option_list o) ->
+  holds M nu w f k o -> holds M nu' w' f k o.
+Proof.
+  intros i nu' w w' f k o Hkeep Hkind Habsent Hholds.
+  assert (Hargs : ~ In (Id i) k).
+  { intro Hin. apply Habsent. apply in_or_app. now left. }
+  pose proof (fresh_map_den i nu' k Hkeep Hargs) as Hden.
+  unfold holds in *. rewrite Hkind, Hden.
+  destruct (kind w f) as [[| |m] |]; destruct o as [[j | v] |];
+    try exact Hholds.
+  assert (Hneq : j <> i).
+  { intro Heq. subst j. apply Habsent. apply in_or_app. right. now left. }
+  now rewrite (Hkeep j Hneq).
+Qed.
+
+(** A fresh singleton output can be assigned the constructor value while preserving a model. *)
+Lemma sat_fresh_constructor_view : forall w w' f k i,
+  sat merge M nu w -> kind w' = kind w ->
+  (forall g args o, row w g args o -> ~ In (Id i) (args ++ option_list o)) ->
+  (forall a b, same w a b -> (a = i <-> b = i)) ->
+  (forall a b, same w' a b <-> same w a b \/ (a = i /\ b = i)) ->
+  (forall g args o, row w' g args o <->
+    row w g args o \/ (g = f /\ args = k /\ o = Some (Id i))) ->
+  kind w f = Some OId -> ~ In (Id i) k ->
+  exists nu', (forall j, j <> i -> nu' j = nu j) /\
+    nu' i = con M f (map (den nu) k) /\ sat merge M nu' w'.
+Proof.
+  intros w w' f k i [Hrows [Hsame Hlat]] Hkind Hrow_absent Hsingleton Hsame_new
+    Hrows_new Hconstructor Hargs.
+  set (nu' := fun j =>
+    if Pos.eqb j i then con M f (map (den nu) k) else nu j).
+  assert (Hkeep : forall j, j <> i -> nu' j = nu j).
+  { intros j Hneq. unfold nu'. destruct (Pos.eqb_spec j i); congruence. }
+  assert (Hfresh : nu' i = con M f (map (den nu) k)).
+  { unfold nu'. now rewrite Pos.eqb_refl. }
+  exists nu'. split; [exact Hkeep |]. split; [exact Hfresh |]. split.
+  - intros g args o Hrow. apply Hrows_new in Hrow as [Hrow | [-> [-> ->]]].
+    + eapply fresh_holds_preserved; [exact Hkeep | exact Hkind | |].
+      * exact (Hrow_absent g args o Hrow).
+      * exact (Hrows g args o Hrow).
+    + unfold holds. rewrite Hkind, Hconstructor.
+      rewrite (fresh_map_den i nu' k Hkeep Hargs). symmetry. exact Hfresh.
+  - split.
+    + intros a b Hrelated. apply Hsame_new in Hrelated as [Hrelated | [-> ->]].
+      * destruct (Pos.eqb_spec a i) as [Ha | Ha].
+        -- assert (Hb : b = i) by (apply (proj1 (Hsingleton a b Hrelated)); exact Ha).
+           now subst a b.
+        -- assert (Hb : b <> i).
+           { intro Heq. apply Ha. apply (proj2 (Hsingleton a b Hrelated)). exact Heq. }
+           rewrite (Hkeep a Ha), (Hkeep b Hb). exact (Hsame a b Hrelated).
+      * reflexivity.
+    + intros g m args a b Hmerge Hleft Hright.
+      apply (Hlat g m args a b); [| exact Hleft | exact Hright].
+      now rewrite <- Hkind.
+Qed.
+
+End FreshConstructor.
