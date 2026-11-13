@@ -3,7 +3,7 @@
     Integer elimination tracks the input multipliers used by every produced row.
     For example, eliminating x from x + y = 2 and x = 1 gives y = 1.
     Builds on: KarrSig and the binary trie code. *)
-From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring Psatz Permutation.
+From Stdlib Require Import List ZArith NArith QArith Qfield Bool Lia Ring ArithRing Psatz Permutation.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -7860,6 +7860,251 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - pose proof (Hf x (or_introl eq_refl)) as Hhead.
       specialize (IH (fun y Hy => Hf y (or_intror Hy))).
       time_unfold List.T_forallb. cbn [length]. time_simpl. nia.
+  Qed.
+
+
+  (** Checking a row's common divisor scans both tracked vectors once. *)
+  Lemma T_karr_exact_one_bounded : forall dim mlen bits r,
+    karr_row_envelope dim mlen bits r ->
+    (T_karr_exact 1 r <=
+      256 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits r [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    set (work := N.of_nat ((bits + 1)^2)).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    assert (Hcoefftime : (List.T_forallb (karr_divisible 1) (T_karr_divisible 1)
+      (kcoeff r) <= (64 * work + 2) * N.of_nat (length (kcoeff r)) + 1)%N).
+    { apply karr_T_forallb_members. intros z Hz. apply T_karr_divisible_one_bounded.
+      exact (proj1 (Forall_forall _ _) Hcoeff z Hz). }
+    assert (Hmulttime : (List.T_forallb (karr_divisible 1) (T_karr_divisible 1)
+      (kweight r) <= (64 * work + 2) * N.of_nat (length (kweight r)) + 1)%N).
+    { apply karr_T_forallb_members. intros z Hz. apply T_karr_divisible_one_bounded.
+      exact (proj1 (Forall_forall _ _) Hmult z Hz). }
+    pose proof (T_karr_divisible_one_bounded (kright r) bits Hrhs) as Hrighttime.
+    pose proof (T_karr_divisible_one_bounded (kscale r) bits Hscale) as Hscaletime.
+    pose proof (T_karr_zero_test 1) as Hdivisor.
+    fold work in Hrighttime, Hscaletime |- *.
+    time_unfold T_karr_exact. time_simpl.
+    change (fun z : Z => T_karr_divisible 1 z) with (T_karr_divisible 1).
+    rewrite !Nat2N.inj_add. cbn [N.of_nat].
+    clear -Hdim Hmlen Hcoefftime Hmulttime Hrighttime Hscaletime Hpositive Hdivisor.
+    clearbody work. nia.
+  Qed.
+
+  (** Applying the exact quotient scans both vectors and the scalar fields once. *)
+  Lemma T_karr_quotient_one_bounded : forall dim mlen bits r,
+    karr_row_envelope dim mlen bits r ->
+    (T_karr_quotient 1 r <=
+      256 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits r [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    set (work := N.of_nat ((bits + 1)^2)).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    assert (Hcoefftime : (ListDef.T_map (fun z => (z / 1)%Z)
+      (fun z => (1 + Z.T_div z 1)%N) (kcoeff r) <=
+      (65 * work + 1) * N.of_nat (length (kcoeff r)) + 1)%N).
+    { apply karr_T_map_members. intros z Hz.
+      pose proof (T_karr_division_one_bounded z bits
+        (proj1 (Forall_forall _ _) Hcoeff z Hz)) as Hdiv.
+      fold work in Hdiv. lia. }
+    assert (Hmulttime : (ListDef.T_map (fun z => (z / 1)%Z)
+      (fun z => (1 + Z.T_div z 1)%N) (kweight r) <=
+      (65 * work + 1) * N.of_nat (length (kweight r)) + 1)%N).
+    { apply karr_T_map_members. intros z Hz.
+      pose proof (T_karr_division_one_bounded z bits
+        (proj1 (Forall_forall _ _) Hmult z Hz)) as Hdiv.
+      fold work in Hdiv. lia. }
+    pose proof (T_karr_division_one_bounded (kright r) bits Hrhs) as Hrighttime.
+    pose proof (T_karr_division_one_bounded (kscale r) bits Hscale) as Hscaletime.
+    fold work in Hrighttime, Hscaletime |- *.
+    time_unfold T_karr_quotient. time_simpl.
+    rewrite !Nat2N.inj_add. cbn [N.of_nat].
+    clear -Hdim Hmlen Hcoefftime Hmulttime Hrighttime Hscaletime Hpositive.
+    clearbody work. nia.
+  Qed.
+
+  (** Guarding exact division is bounded by the sum of its check and quotient paths. *)
+  Lemma T_karr_divide_one_bounded : forall dim mlen bits r,
+    karr_row_envelope dim mlen bits r ->
+    (T_karr_divide 1 r <=
+      1024 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits r Hrow.
+    pose proof (T_karr_exact_one_bounded dim mlen bits r Hrow) as Hcheck.
+    pose proof (T_karr_quotient_one_bounded dim mlen bits r Hrow) as Hdivide.
+    pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hpositive.
+    time_unfold T_karr_divide. destruct (karr_exact 1 r); time_simpl;
+      rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
+  (** The first reduction charges two cross products and exact division by one. *)
+  Lemma T_karr_reduce_one_bounded : forall dim mlen bits a b p r,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    (T_karr_reduce 1 a b p r <=
+      8192 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits a b p r Ha Hb Hp Hr.
+    pose proof (karr_reduce_one_envelope dim mlen bits a b p r Ha Hb Hp Hr) as Hraw.
+    unfold karr_reduce in Hraw. rewrite karr_divide_one in Hraw.
+    pose proof (T_karr_divide_one_bounded dim mlen (2 * bits + 1) _ Hraw) as Hdivide.
+    replace ((2 * bits + 1 + 1)^2) with (4 * (bits + 1)^2) in Hdivide
+      by (clear -bits; cbn [Nat.pow]; nia).
+    destruct Hp as [Hpd [Hpc [Hpr [Hpm [Hpw Hps]]]]].
+    destruct Hr as [Hrd [Hrc [Hrr [Hrm [Hrw Hrs]]]]].
+    pose proof (T_karr_cross_bounded a b (kcoeff r) (kcoeff p) bits Ha Hb Hrc Hpc)
+      as Hcoefftime.
+    pose proof (T_karr_cross_bounded a b (kweight r) (kweight p) bits Ha Hb Hrw Hpw)
+      as Hmulttime.
+    pose proof (T_karr_cross_entry_bounded a b (kright r) (kright p) bits Ha Hb Hrr Hpr)
+      as Hrighttime.
+    pose proof (T_karr_cross_entry_bounded a b (kscale r) (kscale p) bits Ha Hb Hrs Hps)
+      as Hscaletime.
+    rewrite Nat2N.inj_mul in Hdivide.
+    set (work := N.of_nat ((bits + 1)^2)) in *.
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    time_unfold T_karr_reduce. time_simpl.
+    clear -Hcoefftime Hmulttime Hrighttime Hscaletime Hdivide Hrd Hrm Hpositive.
+    clearbody work. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Reading a leading coefficient has a fixed record-and-list dispatch cost. *)
+  Lemma T_karr_head_bounded : forall r, (T_karr_head r <= 4)%N.
+  Proof.
+    intros [zs rhs ms sc]. time_unfold T_karr_head. cbn [kcoeff].
+    destruct zs; time_simpl; lia.
+  Qed.
+
+  (** Removing a coefficient uses a fixed number of field reads and one list dispatch. *)
+  Lemma T_karr_tail_bounded : forall r, (T_karr_tail r <= 8)%N.
+  Proof.
+    intros [zs rhs ms sc]. time_unfold T_karr_tail. time_unfold (@List.T_tl).
+    cbn [kcoeff kright kweight kscale]. destruct zs; time_simpl; lia.
+  Qed.
+
+  (** Restoring a zero coefficient has a constant construction charge. *)
+  Lemma T_karr_restore_bounded : forall r, (T_karr_restore r <= 8)%N.
+  Proof.
+    intros [zs rhs ms sc]. time_unfold T_karr_restore. time_simpl. lia.
+  Qed.
+
+  (** Pivot discovery tests each visited head against zero in constant time. *)
+  Lemma T_karr_pivot_bounded : forall rows,
+    (T_karr_pivot rows <= 16 * N.of_nat (length rows + 1))%N.
+  Proof.
+    intro rows. induction rows as [|r rows IH].
+    - time_unfold T_karr_pivot. cbn [length]. lia.
+    - pose proof (T_karr_head_bounded r) as Hhead.
+      pose proof (T_karr_zero_test (karr_head r)) as Hzero.
+      time_unfold T_karr_pivot. destruct (Z.eqb (karr_head r) 0).
+      + destruct (karr_pivot rows) as [[p rest]|]; time_simpl;
+          cbn [length]; rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+      + time_simpl. cbn [length]. rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** A projection reduction removes the coordinate just eliminated by its cross product. *)
+  Definition karr_projection_step (a : Z) (p r : karr_row) : karr_row :=
+    karr_tail (karr_reduce 1 a (karr_head r) p r).
+
+  TimeFun karr_projection_step.
+
+  (** One mapped row update includes its head read, reduction and tail removal. *)
+  Lemma T_karr_projection_step_bounded : forall dim mlen bits a p r,
+    Z.size_nat a <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    (T_karr_projection_step a p r <=
+      16384 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits a p r Ha Hp Hr.
+    pose proof (T_karr_reduce_one_bounded dim mlen bits a (karr_head r) p r Ha
+      (karr_head_bits dim mlen bits r Hr) Hp Hr) as Hreduce.
+    pose proof (T_karr_head_bounded r) as Hhead.
+    pose proof (T_karr_tail_bounded (karr_reduce 1 a (karr_head r) p r)) as Htail.
+    set (work := (N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hbits. nia. }
+    replace (8192 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+      (8192 * work)%N in Hreduce by (unfold work; ring).
+    replace (16384 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+      (16384 * work)%N by (unfold work; ring).
+    time_unfold T_karr_projection_step. time_simpl.
+    clear -Hreduce Hhead Htail Hpositive. clearbody work. nia.
+  Qed.
+
+  (** The zero-column recursion has constant dispatch cost. *)
+  Lemma T_karr_bareiss_zero_bounded : forall previous rows,
+    (T_karr_bareiss 0 previous rows <= 4)%N.
+  Proof.
+    intros previous rows. time_unfold T_karr_bareiss. lia.
+  Qed.
+
+  (** One full projection column charges its row updates and two list traversals. *)
+  Lemma T_karr_bareiss_one_bounded : forall dim mlen bits rows,
+    Forall (karr_row_envelope dim mlen bits) rows ->
+    (T_karr_bareiss 1 1 rows <= 32768 * N.of_nat (length rows + 1) *
+      N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits rows Hrows.
+    set (work := (N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hbits. nia. }
+    pose proof (T_karr_pivot_bounded rows) as Hpivot_time.
+    replace (32768 * N.of_nat (length rows + 1) * N.of_nat (dim + mlen + 1) *
+      N.of_nat ((bits + 1)^2))%N with (32768 * N.of_nat (length rows + 1) * work)%N
+      by (unfold work; ring).
+    time_unfold T_karr_bareiss.
+    destruct (karr_pivot rows) as [[p rest]|] eqn:Hpivot.
+    - destruct (karr_pivot_some _ _ _ Hpivot) as [_ Hperm].
+      assert (Hpermuted : Forall (karr_row_envelope dim mlen bits) (p :: rest)).
+      { eapply Permutation_Forall; [exact Hperm|exact Hrows]. }
+      inversion Hpermuted as [|q qs Hp Hrest]; subst q qs.
+      pose proof (Permutation_length Hperm) as Hlength. cbn [length] in Hlength.
+      pose proof (T_karr_head_bounded p) as Hhead.
+      assert (Hstep : forall r, In r rest ->
+        (T_karr_projection_step (karr_head p) p r <= 16384 * work)%N).
+      { intros r Hr.
+        replace (16384 * work)%N with (16384 * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N by (unfold work; ring).
+        apply T_karr_projection_step_bounded.
+        - now apply karr_head_bits with (dim := dim) (mlen := mlen).
+        - exact Hp.
+        - exact (proj1 (Forall_forall _ _) Hrest r Hr). }
+      pose proof (karr_T_map_members karr_row karr_row
+        (karr_projection_step (karr_head p) p) (T_karr_projection_step (karr_head p) p)
+        (16384 * work)%N rest Hstep) as Hstep_map.
+      pose proof (karr_T_map_members karr_row karr_row karr_restore T_karr_restore 8
+        (map (karr_projection_step (karr_head p) p) rest)
+        (fun r _ => T_karr_restore_bounded r)) as Hrestore.
+      rewrite length_map in Hrestore.
+      pose proof (T_karr_bareiss_zero_bounded (karr_head p)
+        (map (karr_projection_step (karr_head p) p) rest)) as Hbase.
+      change (fun r => karr_tail (karr_reduce 1 (karr_head p) (karr_head r) p r)) with
+        (karr_projection_step (karr_head p) p).
+      time_simpl.
+      lazymatch goal with
+      | |- context [ListDef.T_map (karr_projection_step (karr_head p) p) ?Tf rest] =>
+        change Tf with (T_karr_projection_step (karr_head p) p)
+      end.
+      change (fun r : karr_row => T_karr_restore r) with T_karr_restore.
+      cbn [karr_bareiss].
+      clear -Hpositive Hpivot_time Hlength Hhead Hstep_map Hrestore Hbase.
+      clearbody work. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+    - pose proof (karr_T_map_members karr_row karr_row karr_tail T_karr_tail 8 rows
+        (fun r _ => T_karr_tail_bounded r)) as Htail.
+      pose proof (karr_T_map_members karr_row karr_row karr_restore T_karr_restore 8
+        (map karr_tail rows) (fun r _ => T_karr_restore_bounded r)) as Hrestore.
+      rewrite length_map in Hrestore.
+      pose proof (T_karr_bareiss_zero_bounded 1 (map karr_tail rows)) as Hbase.
+      time_simpl. change (fun r : karr_row => T_karr_tail r) with T_karr_tail.
+      change (fun r : karr_row => T_karr_restore r) with T_karr_restore.
+      cbn [karr_bareiss].
+      clear -Hpositive Hpivot_time Htail Hrestore Hbase. clearbody work.
+      rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.
 
 
