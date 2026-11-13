@@ -6121,7 +6121,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) +
          fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
            (length P + 1) (nell (Reached (c :: P)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: raw duplicate chains exceed this envelope; see handoff. *)
   Lemma fm_mults_size : forall x P r, normal P -> In r (fm_elim x P) ->
     length (mults_of r) = length P /\
     Forall (fun m => Z.size_nat m <= ell P + 1) (mults_of r).
