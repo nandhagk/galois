@@ -1478,7 +1478,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     wf db -> lat_closed V.merge M (view db) -> os <> [] -> (forall i, nu (repr db i) = nu i) ->
     Forall (holds M nu (view db) f k) os ->
     holds M nu (view db) f k (merged db f os).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu db f k os _ Hlat Hnonempty Hrepr Hrows.
+    assert (Hcanonical : Forall (holds M nu (view db) f k)
+      (map (option_map (canon db)) os)).
+    { apply Forall_map. eapply Forall_impl; [| exact Hrows].
+      intros o Ho.
+      exact (holds_output_rename M nu (repr db) Hrepr (view db) f k o Ho). }
+    unfold merged.
+    destruct (map (option_map (canon db)) os) as [| o rest] eqn:Houtputs.
+    - destruct os; [contradiction | discriminate].
+    - inversion Hcanonical as [| o0 rest0 Ho Hrest]; subst.
+      clear Houtputs Hnonempty Hrows Hcanonical. revert o Ho.
+      induction Hrest as [| next rest Hnext Hrest IH]; intros acc Hacc;
+        cbn [fold_left].
+      + exact Hacc.
+      + apply IH. unfold combine.
+        eapply (holds_combine V.merge M nu (view db) f k (Some acc) next Hlat).
+        * intros previous Heq. inversion Heq; subst. exact Hacc.
+        * exact Hnext.
+  Qed.
 
   (** Repair preserves satisfaction through its collision, lattice and index branches. *)
   Lemma F19_rstep_sat : forall (M : model (V := V.t)) nu s s',
