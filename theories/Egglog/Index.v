@@ -478,9 +478,75 @@ Module Index (V : VALUE) <: INDEX V.
     intros a ix _. reflexivity.
   Qed.
 
+  (** Seeking a concatenated tuple first reaches its prefix node. *)
+  Lemma seek_append : forall ix pre n suf,
+    seek ix n (pre ++ suf) =
+      match seek ix n pre with Some m => seek ix m suf | None => None end.
+  Proof.
+    intros ix pre. induction pre as [| c pre IH]; intros n suf; cbn [app seek].
+    - reflexivity.
+    - destruct (child ix n c); [apply IH | reflexivity].
+  Qed.
+
+  Lemma node_member_suffix : forall ix n pre suf, node ix n pre ->
+    (mem ix (pre ++ suf) <-> contains_from n suf ix = true).
+  Proof.
+    intros ix n pre suf Hnode. unfold node in Hnode.
+    unfold mem, contains, contains_from. rewrite seek_append, Hnode. reflexivity.
+  Qed.
+
+  Lemma child_node : forall ix n pre c m, node ix n pre ->
+    (child ix n c = Some m <-> node ix m (pre ++ [c])).
+  Proof.
+    intros ix n pre c m Hnode. unfold node in *.
+    rewrite seek_append, Hnode. cbn [seek].
+    destruct (child ix n c); split; congruence.
+  Qed.
+
+  Lemma encode_cell_inj : forall c d, encode_cell c = encode_cell d -> c = d.
+  Proof.
+    intros [i | v] [j | w] Heq; cbn [encode_cell] in Heq; try discriminate.
+    - injection Heq as Heq. now subst j.
+    - injection Heq as Heq. apply V.encode_inj in Heq. now subst w.
+  Qed.
+
+  (** Positive cached suffix counts witness a live continuation below every edge. *)
+  Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
+    exists suf, contains_from m suf ix = true.
+  Proof.
+    intros ix n c m [Hedges [_ [_ [_ [_ Hcounts]]]]] Hchild.
+    unfold child in Hchild. destruct (Pos.ltb (next ix) n); [discriminate |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| discriminate].
+    injection Hchild as <-.
+    pose proof (Hedges n (encode_cell c) edge Hget) as [_ [_ [_ [Hpositive _]]]].
+    destruct (Hcounts n (encode_cell c) edge Hget) as [suffixes [_ [Hmembers Hcount]]].
+    destruct suffixes as [| suf suffixes].
+    - cbn [length N.of_nat] in Hcount. rewrite Hcount in Hpositive. discriminate.
+    - exists suf. apply Hmembers. now left.
+  Qed.
+
+  Lemma seek_live_nonempty : forall ix pre n m, valid ix -> pre <> [] ->
+    seek ix n pre = Some m -> exists suf, contains_from m suf ix = true.
+  Proof.
+    intros ix pre. induction pre as [| c pre IH]; intros n m Hvalid Hnonempty Hseek.
+    - contradiction.
+    - cbn [seek] in Hseek.
+      destruct (child ix n c) as [child_node |] eqn:Hchild; [| discriminate].
+      destruct pre as [| d pre].
+      + cbn [seek] in Hseek. injection Hseek as <-.
+        eapply child_live; eassumption.
+      + eapply IH; [exact Hvalid | discriminate | exact Hseek].
+  Qed.
+
   Lemma node_live : forall a ix n pre, wf a ix -> node ix n pre -> pre <> [] ->
     exists suf, mem ix (pre ++ suf).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix n pre [Hvalid _] Hnode Hnonempty.
+    destruct (seek_live_nonempty ix pre (root ix) n Hvalid Hnonempty Hnode)
+      as [suf Hmember].
+    exists suf. now apply (node_member_suffix ix n pre suf Hnode).
+  Qed.
 
   Lemma node_fun : forall a ix n m pre, wf a ix ->
     node ix n pre -> node ix m pre -> n = m.
@@ -491,16 +557,61 @@ Module Index (V : VALUE) <: INDEX V.
   Lemma child_spec : forall a ix n pre c, wf a ix -> node ix n pre ->
     (forall m, child ix n c = Some m <-> node ix m (pre ++ [c])) /\
     (child ix n c = None <-> ~ exists suf, mem ix (pre ++ c :: suf)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix n pre c Hwf Hnode. split.
+    - intro m. now apply child_node.
+    - split.
+      + intros Hchild [suf Hmember].
+        apply (node_member_suffix ix n pre (c :: suf) Hnode) in Hmember.
+        unfold contains_from in Hmember. cbn [seek] in Hmember.
+        rewrite Hchild in Hmember. discriminate.
+      + intro Habsent. destruct (child ix n c) as [m |] eqn:Hchild; [| reflexivity].
+        exfalso. apply Habsent.
+        destruct (child_live ix n c m (proj1 Hwf) Hchild) as [suf Hmember].
+        exists suf. apply (node_member_suffix ix n pre (c :: suf) Hnode).
+        unfold contains_from. cbn [seek]. rewrite Hchild. exact Hmember.
+  Qed.
 
   Lemma children_spec : forall a ix n pre c, wf a ix -> node ix n pre ->
     (In c (children ix n) <-> exists m, child ix n c = Some m) /\
     NoDup (children ix n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix n pre c [[Hedges _] _] _.
+    unfold children, child. destruct (Pos.ltb (next ix) n).
+    - split; [split; [contradiction | intros [m Hm]; discriminate] | constructor].
+    - assert (Hcode : forall entry,
+        In entry (PTrieCode.elements (node_edges (read_node ix n))) ->
+        encode_cell (edge_cell (snd entry)) = fst entry).
+      { intros [code edge] Hin. cbn [fst snd].
+        apply PTrie.elements_spec in Hin. exact (proj1 (Hedges n code edge Hin)). }
+      split.
+      + split.
+        * intro Hin. apply in_map_iff in Hin as [[code edge] [Heq Hin]].
+          cbn [snd] in Heq. subst c.
+          pose proof (Hcode (code, edge) Hin) as Hencode. cbn [fst snd] in Hencode.
+          apply PTrie.elements_spec in Hin. rewrite Hencode, Hin.
+          now exists (edge_child edge).
+        * intros [m Hchild].
+          destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+            as [edge |] eqn:Hget; [| discriminate].
+          apply in_map_iff. exists (encode_cell c, edge). split.
+          -- cbn [snd]. apply encode_cell_inj. exact (proj1 (Hedges n _ _ Hget)).
+          -- now apply PTrie.elements_spec.
+      + apply NoDup_map_inv with (f := encode_cell). rewrite map_map.
+        replace (map (fun x => encode_cell (edge_cell (snd x)))
+          (PTrieCode.elements (node_edges (read_node ix n)))) with
+          (map fst (PTrieCode.elements (node_edges (read_node ix n)))).
+        * apply PTrie.elements_nodup.
+        * symmetry. apply map_ext_in. exact Hcode.
+  Qed.
 
   Lemma degree_spec : forall a ix n pre, wf a ix -> node ix n pre ->
     N.to_nat (degree ix n) = length (children ix n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a ix n pre [[_ [Hdegree _]] _] _.
+    unfold degree, children. destruct (Pos.ltb (next ix) n); [reflexivity |].
+    rewrite length_map. exact (proj1 (Hdegree n)).
+  Qed.
 
 End Index.
 
