@@ -10089,6 +10089,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   Definition state_inv (s : repair_state) : Prop := inv_on (fst s) (snd s).
 
+  Lemma inv_init : forall ds sl, inv (init ds sl).
+  Proof.
+    intros ds sl. unfold inv, inv_on.
+    split.
+    - intros f k o. split.
+      + intro Hin. change (In ((f, k), o) []) in Hin. contradiction.
+      + intro Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow).
+    - split; [constructor |]. split.
+      + intros f k o i Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow).
+      + split.
+        * intros f k o i Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow).
+        * split.
+          -- intros s f perm Hslot. rewrite !index_init_empty.
+             split; [apply I.wf_empty |]. split; [apply I.wf_empty |]. split.
+             ++ intro u. split.
+                ** intro Hmem. exfalso. exact (I.mem_empty u Hmem).
+                ** intros [k [o [Hrow _]]].
+                   exfalso. exact (init_rows_empty ds sl f k o Hrow).
+             ++ intros u Hmem. exact Hmem.
+          -- split.
+             ++ intros f k o i Hrow. exfalso. exact (init_rows_empty ds sl f k o Hrow).
+             ++ split.
+                ** intros e Hwork. contradiction.
+                ** split; [apply forest_ok_init |]. split.
+                   --- intros f k o Hrow. exfalso.
+                       exact (init_rows_empty ds sl f k o Hrow).
+                   --- split; [constructor |]. split; [reflexivity |].
+                       intros x Hqueue. contradiction.
+  Qed.
+
   Definition entry_weight (db : t) (e : use_entry) : nat :=
     (length (snd e) + 1) * (slots_of db (fst e) + 1).
   Definition bucket (db : t) (x : positive) : list use_entry :=
