@@ -899,7 +899,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
 
   Lemma edit_keeps : forall p p' ch st x v,
     value (edit p p' ch st) x = Some v -> value st x = Some v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p p' ch st x v Hvalue; rewrite edit_value_keys in Hvalue.
+    destruct (mem x (invalidate_keys p p' ch st)); [discriminate Hvalue|exact Hvalue].
+  Qed.
 
   Lemma demand_least : forall p pol roots fuel st o st', S.wf p -> S.monotone p ->
     Least.widening_free pol -> inv p st -> least_on p st ->
