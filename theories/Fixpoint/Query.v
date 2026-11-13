@@ -70,6 +70,24 @@ Definition out_leb {K A} (leb : A -> A -> bool)
   | _, _ => False
   end.
 
+(** An invariant bounds each actual fold callback and is retained by the final state. *)
+Lemma fold_left_inv_time {St X : Type} (f : St -> X -> St) (T_f : St -> X -> N)
+    (Inv : St -> Prop) (budget : X -> N) : forall xs a,
+  Inv a ->
+  (forall st x, Inv st -> In x xs ->
+    Inv (f st x) /\ (T_f st x <= budget x)%N) ->
+  Inv (fold_left f xs a) /\
+  (List.T_fold_left f T_f xs a <=
+    fold_right (fun x total => budget x + 2 + total)%N 1%N xs)%N.
+Proof.
+  induction xs as [|x xs IH]; intros a Hinv Hstep.
+  - split; [exact Hinv|time_step].
+  - destruct (Hstep a x Hinv (or_introl eq_refl)) as [Hnext Hcost].
+    destruct (IH (f a x) Hnext
+      (fun st y Hst Hin => Hstep st y Hst (or_intror Hin))) as [Hfinal Htail].
+    split; [exact Hfinal|time_step].
+Qed.
+
 (** A continuing prefix can be extended by its next continuing callback. *)
 Lemma loop_fuel_succ_inl {St R : Type} (step : St -> St + R) :
   forall n s s1 s2, loop_fuel step n s = inl s1 -> step s1 = inl s2 ->
