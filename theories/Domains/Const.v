@@ -1459,6 +1459,121 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
       cbn [map fold_right]. lia.
   Qed.
 
+  (** A flat payload stores raw bits only in its singleton case. *)
+  Local Definition payload_bits (a : W.p) : nat :=
+    match a with FVal z => Z.size_nat z | _ => 0 end.
+  (** The operand width budget sums the numeric tags. *)
+  Local Definition operand_widths (xs : list (positive * W.p)) : nat :=
+    fold_right Nat.add 0 (map (fun wp => Pos.to_nat (fst wp)) xs).
+  (** The raw payload budget sums the declared sizes. *)
+  Local Definition operand_payloads (xs : list (positive * W.p)) : nat :=
+    fold_right Nat.add 0 (map (fun wp => W.psize (fst wp) (snd wp)) xs).
+  (** The declared payload size separates its width and raw integer bits. *)
+  Local Lemma psize_bits w a : W.psize w a = Pos.to_nat w + payload_bits a + 1.
+  Proof.
+    apply W.F_psize_const.
+  Qed.
+  (** Normalization bounds the stored bits by the operand width. *)
+  Local Lemma normalise_bits w a : (payload_bits (normalise w a) <= Pos.to_nat w)%nat.
+  Proof.
+    destruct a as [|z|]; cbn [normalise payload_bits]; try lia.
+    unfold wrap_fast. rewrite ConstWordFast.wrap_fast_agrees.
+    apply WordTime.word_wrap_size_bound.
+  Qed.
+  (** Normalization preserves the sum of operand widths. *)
+  Local Lemma normalise_widths xs : operand_widths (normalise_operands xs) = operand_widths xs.
+  Proof.
+    unfold operand_widths, normalise_operands. rewrite map_map.
+    reflexivity.
+  Qed.
+  (** Normalization preserves the operand-list length. *)
+  Local Lemma normalise_length xs : length (normalise_operands xs) = length xs.
+  Proof.
+    unfold normalise_operands. apply length_map.
+  Qed.
+  (** Each list cell adds normalization and five traversal ticks. *)
+  Local Lemma normalise_list_succ w a xs :
+    T_normalise_operands ((w, a) :: xs) =
+      (T_normalise_operands xs + T_normalise w a + 5)%N.
+  Proof.
+    time_unfold T_normalise_operands. unfold ListDef.T_map.
+    unfold Datatypes.T_fst, Datatypes.T_snd. time_cbn. nia.
+  Qed.
+  (** List normalization reads the raw payload budget linearly. *)
+  Local Lemma normalise_list_time xs :
+    (T_normalise_operands xs <= 128 * N.of_nat (operand_payloads xs + 1))%N.
+  Proof.
+    induction xs as [|[w a] xs IH].
+    - time_unfold T_normalise_operands. unfold ListDef.T_map, operand_payloads.
+      time_cbn. lia.
+    - rewrite normalise_list_succ.
+      pose proof (normalise_time w a) as Hhead.
+      assert (Hpositive : (1 <= W.psize w a)%nat) by (rewrite psize_bits; lia).
+      change (T_normalise_operands xs + T_normalise w a + 5 <=
+        128 * N.of_nat (W.psize w a + operand_payloads xs + 1))%N.
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+  (** Projecting operand payloads takes two ticks per list cell. *)
+  Local Lemma points_map_time xs :
+    (ListDef.T_map snd (fun wp : positive * W.p => Datatypes.T_snd wp) xs <=
+      2 * N.of_nat (length xs) + 1)%N.
+  Proof.
+    apply (ListDef.T_map_le snd (fun wp : positive * W.p => Datatypes.T_snd wp) 1 xs).
+    intro wp. apply Datatypes.T_snd_le.
+  Qed.
+  (** Positive operand widths pay for the number of list cells. *)
+  Local Lemma width_count xs : (length xs <= operand_widths xs)%nat.
+  Proof.
+    induction xs as [|[w a] xs IH]; cbn [length operand_widths map fold_right fst snd].
+    - lia.
+    - pose proof (Pos2Nat.is_pos w). unfold operand_widths in IH. lia.
+  Qed.
+  (** Two width-bounded payloads fit a common squared work budget. *)
+  Local Lemma meet_input_budget b rw a c :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat ->
+    (payload_bits a <= b)%nat -> (payload_bits c <= b)%nat ->
+    (N.of_nat (W.psize rw a + W.psize rw c + 1) <=
+      7 * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Ha Hc.
+    assert (Hnat : (W.psize rw a + W.psize rw c + 1 <= 7 * (b ^ 2))%nat).
+    { rewrite !psize_bits. cbn [Nat.pow]. nia. }
+    pose proof (time_of_nat_le _ _ Hnat) as Hcast.
+    rewrite Nat2N.inj_mul in Hcast. exact Hcast.
+  Qed.
+  (** A payload meet scales the common work budget by its payload constant. *)
+  Local Lemma meet_time_budget b rw a c :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat ->
+    (payload_bits a <= b)%nat -> (payload_bits c <= b)%nat ->
+    (W.T_pmeet rw a c <= (7 * W.c_payload) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Ha Hc. pose proof (W.T_pmeet_le rw a c) as Htime.
+    pose proof (meet_input_budget b rw a c Hb Hrw Ha Hc) as Hsize.
+    assert (Hscaled : (W.c_payload * N.of_nat (W.psize rw a + W.psize rw c + 1) <=
+      W.c_payload * (7 * N.of_nat (b ^ 2)))%N).
+    { apply N.mul_le_mono_l. exact Hsize. }
+    nia.
+  Qed.
+  (** A meet result remains bounded when read at another bounded operand width. *)
+  Local Lemma meet_size_budget b rw target a c :
+    (1 <= b)%nat -> (Pos.to_nat rw <= b)%nat -> (Pos.to_nat target <= b)%nat ->
+    (payload_bits a <= b)%nat -> (payload_bits c <= b)%nat ->
+    (N.of_nat (W.psize target (W.pmeet rw a c)) <=
+      (8 * (W.c_payload + 1)) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hb Hrw Htarget Ha Hc. pose proof (W.pmeet_size rw a c) as Hmeet.
+    pose proof (meet_input_budget b rw a c Hb Hrw Ha Hc) as Hsize.
+    assert (Hscaled : (W.c_payload * N.of_nat (W.psize rw a + W.psize rw c + 1) <=
+      W.c_payload * (7 * N.of_nat (b ^ 2)))%N).
+    { apply N.mul_le_mono_l. exact Hsize. }
+    pose proof (WordTime.time_square_floor (Pos.to_nat target) b Htarget Hb) as Hwidth.
+    assert (Hresult : (N.of_nat (W.psize rw (W.pmeet rw a c)) <=
+      7 * W.c_payload * N.of_nat (b ^ 2))%N) by nia.
+    clear Hmeet Hscaled Hsize.
+    rewrite !psize_bits, ?Nat2N.inj_add in Hresult |- *.
+    nia.
+  Qed.
+
   Definition c_word_table : N := (524288 * (W.c_payload + 1))%N.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
