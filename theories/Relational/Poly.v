@@ -4962,6 +4962,216 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     split; [exact Hkey|]. cbn [snd] in Hz. pose proof (poly_size_mul a z). lia.
   Qed.
 
+  (** Monotone factor bounds turn a binary product clock into a square envelope. *)
+  Lemma poly_clock_product_bound : forall cost factor a b size left right,
+    (cost <= factor * a * b)%N -> (a <= left * size)%N ->
+    (b <= right * size)%N ->
+    (cost <= (factor * left * right) * (size * size))%N.
+  Proof.
+    intros cost factor a b size left right Hcost Ha Hb.
+    eapply N.le_trans; [exact Hcost|].
+    replace (factor * a * b)%N with (factor * (a * b))%N by ring.
+    replace ((factor * left * right) * (size * size))%N with
+      (factor * ((left * size) * (right * size)))%N by ring.
+    apply N.mul_le_mono_l. now apply N.mul_le_mono.
+  Qed.
+
+  (** Conversion preserves a natural-number square as one binary product. *)
+  Lemma poly_nat_square : forall n,
+    N.of_nat (n^2) = (N.of_nat n * N.of_nat n)%N.
+  Proof.
+    intro n. change (N.of_nat (n * (n * 1)) = (N.of_nat n * N.of_nat n)%N).
+    rewrite Nat.mul_1_r. apply Nat2N.inj_mul.
+  Qed.
+
+  (** A positive extent is bounded by its square. *)
+  Lemma poly_nat_square_ge : forall n, 1 <= n ->
+    (N.of_nat n <= N.of_nat (n^2))%N.
+  Proof.
+    intros n Hpositive. rewrite poly_nat_square.
+    replace (N.of_nat n) with (N.of_nat n * 1)%N at 1 by ring.
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** The two public row sizes pay for the whole aggregate-first substitution. *)
+  Definition poly_subst_extent (f : lin X.t) (r : lcons X.t) : nat :=
+    C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1.
+
+  (** The substitution extent is positive even when both coefficient lists are empty. *)
+  Lemma poly_subst_extent_positive : forall f r, 1 <= poly_subst_extent f r.
+  Proof.
+    intros f r. unfold poly_subst_extent. lia.
+  Qed.
+
+  (** The extent bounds all original list lengths and arithmetic widths together. *)
+  Lemma poly_subst_extent_inputs : forall f r,
+    length (lhs r) + length (coef f) + C.row_key_bits r +
+      C.row_key_bits (LCons X.t (coef f) REq (cst f)) + C.row_bits r +
+      C.row_bits (LCons X.t (coef f) REq (cst f)) + 3 <= poly_subst_extent f r.
+  Proof.
+    intros f r. pose proof (poly_lsize_parts r) as [Hr _].
+    pose proof (poly_lsize_parts (LCons X.t (coef f) REq (cst f))) as [Hf _].
+    change (length (coef f) + C.row_key_bits (LCons X.t (coef f) REq (cst f)) +
+      C.row_bits (LCons X.t (coef f) REq (cst f)) + 1 <=
+      C.lsize (LCons X.t (coef f) REq (cst f))) in Hf.
+    unfold poly_subst_extent. lia.
+  Qed.
+
+  (** Looking up the substituted coefficient fits the square of the input extent. *)
+  Lemma T_poly_subst_coefficient : forall x f r,
+    (T_poly_coefficient X.eqb X.T_eqb x r <=
+      2 * (poly_coefficient_factor + 4) * N.of_nat ((poly_subst_extent f r)^2))%N.
+  Proof.
+    intros x f r. pose proof (poly_subst_extent_inputs f r) as Hinputs.
+    pose proof (T_poly_coefficient_bounded x r _ _ (poly_row_entry_sizes r)) as Htime.
+    assert (Hlength : (N.of_nat (length (lhs r) + 1) <=
+      1 * N.of_nat (poly_subst_extent f r))%N) by lia.
+    assert (Hwidth : (N.of_nat (C.row_key_bits r + 2 * C.row_bits r +
+      length (lhs r) + 1) <= 2 * N.of_nat (poly_subst_extent f r))%N) by lia.
+    pose proof (poly_clock_product_bound _ _ _ _ _ _ _ Htime Hlength Hwidth) as Hbound.
+    rewrite <- poly_nat_square in Hbound.
+    replace ((poly_coefficient_factor + 4) * 1 * 2)%N with
+      (2 * (poly_coefficient_factor + 4))%N in Hbound by ring.
+    exact Hbound.
+  Qed.
+
+  (** Scaling pays one form-size factor and one source-size factor. *)
+  Lemma T_poly_subst_scale : forall x f r,
+    (T_poly_scale_coef (poly_coefficient X.eqb x r) (coef f) <=
+      16 * N.of_nat ((poly_subst_extent f r)^2))%N.
+  Proof.
+    intros x f r. set (a := poly_coefficient X.eqb x r).
+    set (fr := LCons X.t (coef f) REq (cst f)).
+    pose proof (poly_raw_row_coefficient_bits x r) as Ha. fold a in Ha.
+    pose proof (poly_lsize_parts r) as [Hr _].
+    pose proof (poly_lsize_parts fr) as [_ [Hform _]].
+    change ((length (coef f) + 1) * (C.row_bits fr + 1) <= C.lsize fr) in Hform.
+    assert (Hbits : Forall (fun p => Z.size_nat (snd p) <= C.row_bits fr) (coef f)).
+    { apply Forall_forall. intros p Hin. exact (poly_row_entry_bits fr p Hin). }
+    pose proof (T_poly_scale_coef_bounded a (coef f) (C.row_bits fr) Hbits) as Htime.
+    replace (16 * N.of_nat ((length (coef f) + 1) * (Z.size_nat a + 1) *
+      (C.row_bits fr + 1)))%N with
+      (16 * N.of_nat ((length (coef f) + 1) * (C.row_bits fr + 1)) *
+        N.of_nat (Z.size_nat a + 1))%N in Htime by (rewrite !Nat2N.inj_mul; ring).
+    assert (Hleft : (N.of_nat ((length (coef f) + 1) * (C.row_bits fr + 1)) <=
+      1 * N.of_nat (poly_subst_extent f r))%N).
+    { unfold poly_subst_extent. fold fr. lia. }
+    assert (Hright : (N.of_nat (Z.size_nat a + 1) <=
+      1 * N.of_nat (poly_subst_extent f r))%N).
+    { unfold poly_subst_extent. fold fr. lia. }
+    pose proof (poly_clock_product_bound _ _ _ _ _ _ _ Htime Hleft Hright) as Hbound.
+    rewrite <- poly_nat_square in Hbound. exact Hbound.
+  Qed.
+
+  (** Raw normalization of the substitution list fits four extent factors. *)
+  Lemma T_poly_subst_normal : forall x f r,
+    (T_poly_normal_coef X.encode X.T_encode (poly_subst_input x f r) <=
+      4 * poly_raw_normal_factor * N.of_nat ((poly_subst_extent f r)^2))%N.
+  Proof.
+    intros x f r. set (fr := LCons X.t (coef f) REq (cst f)).
+    pose proof (poly_subst_extent_inputs f r) as Hinputs. fold fr in Hinputs.
+    pose proof (poly_subst_input_length x f r) as Hlength.
+    pose proof (T_poly_normal_raw (poly_subst_input x f r)
+      (C.row_key_bits r + C.row_key_bits fr)
+      (length (lhs r) + C.row_bits r + C.row_bits fr)
+      (poly_subst_input_sizes x f r)) as Htime.
+    assert (Hleft : (N.of_nat (length (poly_subst_input x f r) + 1) <=
+      1 * N.of_nat (poly_subst_extent f r))%N) by lia.
+    assert (Hright : (N.of_nat (C.row_key_bits r + C.row_key_bits fr +
+      2 * (length (lhs r) + C.row_bits r + C.row_bits fr) +
+      2 * length (poly_subst_input x f r) + 1) <=
+      4 * N.of_nat (poly_subst_extent f r))%N) by lia.
+    pose proof (poly_clock_product_bound _ _ _ _ _ _ _ Htime Hleft Hright) as Hbound.
+    rewrite <- poly_nat_square in Hbound.
+    replace (poly_raw_normal_factor * 1 * 4)%N with
+      (4 * poly_raw_normal_factor)%N in Hbound by ring. exact Hbound.
+  Qed.
+
+  (** Filtering the source is also bounded by the shared square envelope. *)
+  Lemma T_poly_subst_filter : forall x f r,
+    (List.T_filter (poly_without_key x) (T_poly_without_key x) (lhs r) <=
+      (X.c_key + 8) * N.of_nat ((poly_subst_extent f r)^2))%N.
+  Proof.
+    intros x f r. pose proof (T_poly_without_filter_le x r) as Htime.
+    pose proof (poly_nat_square_ge _ (poly_subst_extent_positive f r)) as Hsquare.
+    eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l.
+    unfold poly_subst_extent in *. lia.
+  Qed.
+
+  (** Appending the two input pieces pays only for the surviving source list. *)
+  Lemma T_poly_subst_app : forall x f r,
+    (Datatypes.T_app (filter (poly_without_key x) (lhs r))
+      (poly_scale_coef (poly_coefficient X.eqb x r) (coef f)) <=
+      N.of_nat ((poly_subst_extent f r)^2))%N.
+  Proof.
+    intros x f r. pose proof (poly_subst_extent_inputs f r) as Hinputs.
+    pose proof (poly_nat_square_ge _ (poly_subst_extent_positive f r)) as Hsquare.
+    pose proof (filter_length_le (poly_without_key x) (lhs r)) as Hlength.
+    pose proof (Datatypes.T_app_le (filter (poly_without_key x) (lhs r))
+      (poly_scale_coef (poly_coefficient X.eqb x r) (coef f))) as Htime. lia.
+  Qed.
+
+  (** The right-hand-side product and subtraction fit fixed multiples of the same square. *)
+  Lemma T_poly_subst_arithmetic : forall x f r,
+    (Z.T_mul (poly_coefficient X.eqb x r) (cst f) <=
+      8 * N.of_nat ((poly_subst_extent f r)^2))%N /\
+    (Z.T_sub (rhs r) (poly_coefficient X.eqb x r * cst f) <=
+      12 * N.of_nat ((poly_subst_extent f r)^2))%N.
+  Proof.
+    intros x f r. set (a := poly_coefficient X.eqb x r).
+    pose proof (poly_subst_extent_inputs f r) as Hinputs.
+    pose proof (poly_raw_row_coefficient_bits x r) as Ha. fold a in Ha.
+    pose proof (poly_row_rhs_bits r) as Hr.
+    pose proof (poly_row_rhs_bits (LCons X.t (coef f) REq (cst f))) as Hf.
+    change (Z.size_nat (cst f) <= C.row_bits (LCons X.t (coef f) REq (cst f))) in Hf.
+    pose proof (poly_T_Z_mul_bilinear a (cst f)) as Hmul.
+    assert (Hleft : (N.of_nat (Z.size_nat a + 1) <=
+      1 * N.of_nat (poly_subst_extent f r))%N) by lia.
+    assert (Hright : (N.of_nat (Z.size_nat (cst f) + 1) <=
+      1 * N.of_nat (poly_subst_extent f r))%N) by lia.
+    pose proof (poly_clock_product_bound _ _ _ _ _ _ _ Hmul Hleft Hright) as Hbound.
+    rewrite <- poly_nat_square in Hbound. split; [exact Hbound|].
+    pose proof (Z.T_sub_le (rhs r) (a * cst f)) as Hsub.
+    pose proof (poly_size_mul a (cst f)) as Hproduct.
+    pose proof (poly_nat_square_ge _ (poly_subst_extent_positive f r)) as Hsquare.
+    assert (Hlinear : (Z.T_sub (rhs r) (a * cst f) <=
+      12 * N.of_nat (poly_subst_extent f r))%N) by lia.
+    eapply N.le_trans; [exact Hlinear|]. now apply N.mul_le_mono_l.
+  Qed.
+
+  (** Substitution fits a quadratic bound even when its raw inputs repeat keys. *)
+  Lemma T_poly_subst_bounded : forall x f r,
+    (T_subst x f r <= poly_subst_factor * N.of_nat
+      ((C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
+  Proof.
+    intros x f r. set (a := poly_coefficient X.eqb x r).
+    set (mass := N.of_nat ((poly_subst_extent f r)^2)).
+    pose proof (T_poly_subst_coefficient x f r) as Hcoefficient.
+    pose proof (T_poly_subst_scale x f r) as Hscale.
+    pose proof (T_poly_subst_normal x f r) as Hnormal.
+    pose proof (T_poly_subst_filter x f r) as Hfilter.
+    pose proof (T_poly_subst_app x f r) as Happ.
+    destruct (T_poly_subst_arithmetic x f r) as [Hmul Hsub].
+    fold mass in Hcoefficient, Hscale, Hnormal, Hfilter, Happ, Hmul, Hsub.
+    fold a in Hscale, Happ, Hmul, Hsub.
+    assert (Hmass : (1 <= mass)%N).
+    { unfold mass. pose proof (poly_subst_extent_positive f r) as Hpositive.
+      pose proof (poly_nat_square_ge _ Hpositive). lia. }
+    change (T_subst x f r <= poly_subst_factor * mass)%N.
+    time_unfold T_subst. time_unfold (@T_poly_substitute).
+    change (fun p => negb (X.eqb (fst p) x)) with (poly_without_key x).
+    fold a. fold (poly_subst_input x f r). time_simpl.
+    lazymatch goal with
+    | |- context [List.T_filter (poly_without_key x) ?Tf (lhs r)] =>
+      change Tf with (T_poly_without_key x)
+    end.
+    change (fun u v : X.t => X.T_eqb u v) with X.T_eqb.
+    change (fun u : X.t => X.T_encode u) with X.T_encode.
+    change (filter (poly_without_key x) (lhs r) ++ poly_scale_coef a (coef f))
+      with (poly_subst_input x f r).
+    unfold poly_subst_factor. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
@@ -5003,11 +5213,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_poly : N := 1. (* STUB *)
+  Definition c_poly : N := poly_subst_factor.
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_poly * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x f r. pose proof (T_poly_subst_bounded x f r) as Hsubst.
+    eapply N.le_trans; [exact Hsubst|]. unfold c_poly. apply N.mul_le_mono_l.
+    assert (Hsquare : (C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1)^2 <=
+      (X.bits x + C.lsize (LCons X.t (coef f) REq (cst f)) + C.lsize r + 1)^2).
+    { apply Nat.pow_le_mono_l. lia. }
+    lia.
+  Qed.
+
   Lemma T_fm_elim_le : forall x P, normal P ->
     (T_fm_elim x P <= c_poly * N.of_nat (((length P + 1)^2)%nat) *
       N.of_nat ((n P + length P + 1)%nat) * N.of_nat (((ell P + 1)^2)%nat))%N.
