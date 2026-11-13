@@ -2749,12 +2749,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       pose proof (support_bits m (K.encode k) Hkey). lia. }
     unfold M.weight. nia.
   Qed.
-  Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
-    supp m' <= supp m + 4 /\
-    b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j) + 1) /\
-    ell m' <= Nat.max (ell m) (Z.size_nat d) + 4 /\
-    M.weight m' <= M.weight m + 4 * (Nat.max (K.bits i) (K.bits j) + 2).
-  Proof. Admitted. (* STUB *)
 
   (** Widening units cover the squared support size. *)
   Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
@@ -3401,11 +3395,383 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     (T_tclose m <= T_fw m + k_octagon * N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
       if diag_ok (fw m) then T_tighten (fw m) + T_strengthen (tighten (fw m)) else 0)%N.
   Proof. Admitted. (* STUB *)
+  (** A replacement row has the same finite coordinates as its validated source row. *)
+  Definition tightened_rows (m changed : dbm) : Prop :=
+    forall p row, M.find p changed = Some row ->
+      forall q, M.find q row <> None <-> raw_entry m p q <> None.
+
+  Lemma tighten_row_presence : forall m changed k ignored,
+    tightened_rows m changed -> tightened_rows m (tighten_row m changed k ignored).
+  Proof.
+    intros m changed k ignored Hchanged. unfold tighten_row.
+    destruct (M.get k changed); [exact Hchanged|].
+    destruct (M.get k m) as [row|] eqn:Hrow; [|exact Hchanged].
+    destruct (M.get (flip k) row) as [d|] eqn:Hbound; [|exact Hchanged].
+    intros p fresh Hfresh q. rewrite M.find_set in Hfresh.
+    destruct (Pos.eqb p (K.encode k)) eqn:Hkey.
+    - apply Pos.eqb_eq in Hkey. subst p. injection Hfresh as <-.
+      unfold raw_entry. rewrite <- (M.get_find (M.t Z) k m), Hrow. cbn [row_of].
+      rewrite M.find_set. destruct (Pos.eqb q (K.encode (flip k))) eqn:Hcolumn.
+      + apply Pos.eqb_eq in Hcolumn. subst q. rewrite <- M.get_find, Hbound.
+        split; discriminate.
+      + reflexivity.
+    - now apply (Hchanged p fresh Hfresh q).
+  Qed.
+
+  Lemma collected_tighten_presence : forall m,
+    tightened_rows m (M.fold (tighten_row m) m M.empty).
+  Proof.
+    intro m. apply (fold_invariant _ _ (tightened_rows m)).
+    - intros p row Hrow. rewrite M.find_empty in Hrow. discriminate.
+    - intros changed k ignored Hchanged. now apply tighten_row_presence.
+  Qed.
+
+  Lemma find_tighten_presence : forall m p,
+    M.find p (tighten m) <> None <-> M.find p m <> None.
+  Proof.
+    intros m p. unfold tighten. rewrite M.find_merge by reflexivity.
+    destruct (M.find p m), (M.find p (M.fold (tighten_row m) m M.empty));
+      cbn [replace_row]; split; congruence.
+  Qed.
+
+  Lemma raw_tighten_presence : forall m p q,
+    raw_entry (tighten m) p q <> None <-> raw_entry m p q <> None.
+  Proof.
+    intros m p q. unfold raw_entry at 1, tighten.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p m) as [row|] eqn:Hrow; cbn [replace_row row_of].
+    - destruct (M.find p (M.fold (tighten_row m) m M.empty)) as [fresh|] eqn:Hfresh;
+        cbn [row_of].
+      + now apply (collected_tighten_presence m p fresh Hfresh q).
+      + unfold raw_entry. now rewrite Hrow.
+    - unfold raw_entry. now rewrite Hrow.
+  Qed.
+
+  Lemma support_tighten : forall m p,
+    In p (support (tighten m)) <-> In p (support m).
+  Proof.
+    intros m p. rewrite !support_find, find_tighten_presence.
+    split; intros [Hrow|[q Hentry]].
+    - now left.
+    - right. exists q. exact (proj1 (raw_tighten_presence m q p) Hentry).
+    - now left.
+    - right. exists q. exact (proj2 (raw_tighten_presence m q p) Hentry).
+  Qed.
+
+  Lemma find_strengthen_presence : forall m p,
+    M.find p (strengthen m) <> None <-> M.find p m <> None.
+  Proof.
+    intros m p. unfold strengthen. rewrite M.find_merge by reflexivity.
+    destruct (M.find p m); cbn [strengthen_outer]; split; congruence.
+  Qed.
+
+  (** Strengthening introduces only pairs supplied by the two validated unary maps. *)
+  Lemma raw_strengthen_presence : forall m p q,
+    raw_entry (strengthen m) p q <> None <->
+    raw_entry m p q <> None \/
+    (M.find p m <> None /\
+      M.find p (fst (M.fold (unary_maps m) m (M.empty, M.empty))) <> None /\
+      M.find q (snd (M.fold (unary_maps m) m (M.empty, M.empty))) <> None).
+  Proof.
+    intros m p q. unfold raw_entry, strengthen.
+    rewrite M.find_merge by reflexivity.
+    destruct (M.find p m) as [row|]; cbn [strengthen_outer row_of].
+    - destruct (M.find p (fst (M.fold (unary_maps m) m (M.empty, M.empty)))).
+      + rewrite M.find_merge by reflexivity.
+        destruct (M.find q row),
+          (M.find q (snd (M.fold (unary_maps m) m (M.empty, M.empty))));
+          cbn [strengthen_bound]; intuition congruence.
+      + intuition congruence.
+    - rewrite M.find_empty. intuition congruence.
+  Qed.
+
+  Lemma support_strengthen : forall m p,
+    In p (support (strengthen m)) <-> In p (support m).
+  Proof.
+    intros m p. rewrite !support_find, find_strengthen_presence.
+    split; intros [Hrow|[q Hentry]].
+    - now left.
+    - apply raw_strengthen_presence in Hentry.
+      destruct Hentry as [Hentry|[Hrow [Hleft Hright]]].
+      + right. now exists q.
+      + pose proof (collect_unary_origins m) as [_ Horigins].
+        destruct (M.find p (snd (M.fold (unary_maps m) m (M.empty, M.empty))))
+          as [d|] eqn:Hfound; [|contradiction].
+        destruct (Horigins p d Hfound) as [k [Hcode Hsource]].
+        right. exists (K.encode k). subst p.
+        rewrite raw_entry_get, Hsource. discriminate.
+    - now left.
+    - right. exists q. apply raw_strengthen_presence. now left.
+  Qed.
+
+
   (** Tightening and strengthening keep the support. *)
   Lemma supp_tighten_strengthen : forall m,
     supp (tighten m) = supp m /\ b (tighten m) = b m /\
     supp (strengthen m) = supp m /\ b (strengthen m) = b m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro m. pose proof (support_sizes (tighten m) m (support_tighten m)) as [Hst Hbt].
+    pose proof (support_sizes (strengthen m) m (support_strengthen m)) as [Hss Hbs].
+    repeat split; assumption.
+  Qed.
+  (** The incremental merge is named here only to state raw-coordinate invariants. *)
+  Local Definition increment_matrix (i j : K.t) (d : Z) (m : dbm) : dbm :=
+    M.merge
+      (increment_row i j d (row_of (M.get j m)) (row_of (M.get (flip i) m))
+        (entry m j (flip j)) (entry m (flip i) i)) m M.empty.
+
+  Local Definition relax_value (prefix old exit : option Z) : option Z :=
+    match prefix with Some a => via_bound a old exit | None => old end.
+
+  Lemma find_relax_row : forall prefix row exit q,
+    M.find q (relax_row prefix row exit) =
+    relax_value prefix (M.find q row) (M.find q exit).
+  Proof.
+    intros [a|] row exit q; [|reflexivity].
+    unfold relax_row, relax_value. now rewrite M.find_merge by reflexivity.
+  Qed.
+
+  (** Every incremental candidate uses only prefix and suffix data from the same seed. *)
+  Lemma raw_entry_increment : forall i j d m p q,
+    raw_entry (increment_matrix i j d m) p q =
+    relax_value (twin_prefix d (raw_entry m p (K.encode (flip j))) (entry m (flip i) i))
+      (relax_value (twin_prefix d (raw_entry m p (K.encode i)) (entry m j (flip j)))
+        (relax_value (edge_prefix d (raw_entry m p (K.encode (flip j))))
+          (relax_value (edge_prefix d (raw_entry m p (K.encode i)))
+            (raw_entry m p q) (raw_entry m (K.encode j) q))
+          (raw_entry m (K.encode (flip i)) q))
+        (raw_entry m (K.encode (flip i)) q))
+      (raw_entry m (K.encode j) q).
+  Proof.
+    intros i j d m p q. unfold increment_matrix, raw_entry at 1.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m) as [row|] eqn:Hrow; cbn [increment_row row_of].
+    - rewrite !find_relax_row. unfold raw_entry. rewrite Hrow.
+      cbn [row_of]. now rewrite !M.get_find.
+    - unfold raw_entry. rewrite Hrow. cbn [row_of].
+      rewrite !M.find_empty. reflexivity.
+  Qed.
+
+  Lemma relax_value_presence : forall prefix old exit,
+    relax_value prefix old exit <> None <->
+    old <> None \/ (prefix <> None /\ exit <> None).
+  Proof.
+    intros [a|] [z|] [b|]; cbn [relax_value via_bound]; intuition congruence.
+  Qed.
+
+  Lemma find_increment_presence : forall i j d m p,
+    M.find p (increment_matrix i j d m) <> None <-> M.find p m <> None.
+  Proof.
+    intros i j d m p. unfold increment_matrix.
+    rewrite M.find_merge by reflexivity. rewrite M.find_empty.
+    destruct (M.find p m); cbn [increment_row]; split; congruence.
+  Qed.
+
+  Lemma raw_increment_columns : forall i j d m p q,
+    raw_entry (increment_matrix i j d m) p q <> None ->
+    raw_entry m p q <> None \/
+    raw_entry m (K.encode j) q <> None \/ raw_entry m (K.encode (flip i)) q <> None.
+  Proof.
+    intros i j d m p q. rewrite raw_entry_increment, !relax_value_presence. tauto.
+  Qed.
+
+  Lemma raw_increment_retains : forall i j d m p q,
+    raw_entry m p q <> None -> raw_entry (increment_matrix i j d m) p q <> None.
+  Proof.
+    intros i j d m p q. rewrite raw_entry_increment, !relax_value_presence. tauto.
+  Qed.
+
+  (** The four candidate paths preserve the seed's raw support exactly. *)
+  Lemma support_increment : forall i j d m p,
+    In p (support (increment_matrix i j d m)) <-> In p (support m).
+  Proof.
+    intros i j d m p. rewrite !support_find. split.
+    - intros [Hrow|[q Hentry]].
+      + left. now apply find_increment_presence in Hrow.
+      + apply raw_increment_columns in Hentry. right.
+        destruct Hentry as [Hentry|[Hentry|Hentry]].
+        * now exists q.
+        * now exists (K.encode j).
+        * now exists (K.encode (flip i)).
+    - intros [Hrow|[q Hentry]].
+      + left. now apply find_increment_presence.
+      + right. exists q. now apply raw_increment_retains.
+  Qed.
+
+  (** Inserting both signed twins adds only the four signed endpoint codes. *)
+  Lemma support_add_cons : forall i j d m p,
+    In p (support (add_cons i j d m)) <->
+    p = K.encode i \/ p = K.encode j \/ p = K.encode (flip i) \/
+      p = K.encode (flip j) \/ In p (support m).
+  Proof.
+    intros i j d m p. unfold add_cons. rewrite !support_put. tauto.
+  Qed.
+
+  Lemma support_signed_endpoints : forall i j ma mb,
+    (forall p, In p (support ma) ->
+      p = K.encode i \/ p = K.encode j \/ p = K.encode (flip i) \/
+        p = K.encode (flip j) \/ In p (support mb)) ->
+    supp ma <= supp mb + 4 /\
+    b ma <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j) + 1).
+  Proof.
+    intros i j ma mb Hsupport. split.
+    - assert (Hincl : incl (support ma)
+        (K.encode i :: K.encode j :: K.encode (flip i) :: K.encode (flip j) :: support mb)).
+      { intros p Hin. destruct (Hsupport p Hin) as [Heq|[Heq|[Heq|[Heq|Hin']]]];
+          cbn; intuition congruence. }
+      pose proof (NoDup_incl_length (support_nodup ma) Hincl) as Hlength.
+      unfold supp. cbn in Hlength. lia.
+    - unfold b at 1. apply maximum_bound. intros p Hin.
+      pose proof (Nat.le_max_l (K.bits i) (K.bits j)) as Hi.
+      pose proof (Nat.le_max_r (K.bits i) (K.bits j)) as Hj.
+      pose proof (Nat.le_max_r (b mb) (Nat.max (K.bits i) (K.bits j) + 1)) as Hright.
+      destruct (Hsupport p Hin) as [Heq|[Heq|[Heq|[Heq|Hin']]]].
+      + subst p.
+        change (K.bits i <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j) + 1)). lia.
+      + subst p.
+        change (K.bits j <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j) + 1)). lia.
+      + subst p.
+        change (K.bits (flip i) <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j) + 1)).
+        pose proof (flip_bits i). lia.
+      + subst p.
+        change (K.bits (flip j) <= Nat.max (b mb) (Nat.max (K.bits i) (K.bits j) + 1)).
+        pose proof (flip_bits j). lia.
+      + eapply Nat.le_trans; [exact (support_bits mb p Hin')|apply Nat.le_max_l].
+  Qed.
+
+  Local Definition bound_bits (upper : nat) (bound : option Z) : Prop :=
+    forall z, bound = Some z -> Z.size_nat z <= upper.
+
+  Lemma edge_prefix_bits : forall d a upper,
+    Z.size_nat d <= upper -> bound_bits upper a ->
+    bound_bits (upper + 2) (edge_prefix d a).
+  Proof.
+    intros d [a|] upper Hd Ha z Hentry; cbn [edge_prefix] in Hentry; [|discriminate].
+    injection Hentry as <-.
+    pose proof (zbits_add_bound a d upper (Ha a eq_refl) Hd). lia.
+  Qed.
+
+  Lemma twin_prefix_bits : forall d a cross upper,
+    Z.size_nat d <= upper -> bound_bits upper a -> bound_bits upper cross ->
+    bound_bits (upper + 2) (twin_prefix d a cross).
+  Proof.
+    intros d [a|] [cross|] upper Hd Ha Hcross z Hentry;
+      cbn [twin_prefix] in Hentry; try discriminate.
+    injection Hentry as <-.
+    replace (a + d + cross + d)%Z with ((a + d) + (cross + d))%Z by ring.
+    replace (upper + 2) with ((upper + 1) + 1) by lia.
+    apply zbits_add_bound.
+    - apply zbits_add_bound; [apply Ha; reflexivity|exact Hd].
+    - apply zbits_add_bound; [apply Hcross; reflexivity|exact Hd].
+  Qed.
+
+  Lemma relax_value_bits : forall prefix old exit upper,
+    bound_bits (upper + 2) prefix -> bound_bits (upper + 3) old ->
+    bound_bits upper exit -> bound_bits (upper + 3) (relax_value prefix old exit).
+  Proof.
+    intros [a|] old [b|] upper Ha Hold Hb z Hentry; cbn [relax_value via_bound] in Hentry.
+    - injection Hentry as <-. apply lower_bound_size; [|exact Hold].
+      replace (upper + 3) with ((upper + 2) + 1) by lia.
+      apply zbits_add_bound; [apply Ha; reflexivity|].
+      pose proof (Hb b eq_refl). lia.
+    - now apply Hold.
+    - now apply Hold.
+    - now apply Hold.
+  Qed.
+
+  (** Five old or inserted edge weights require at most three additional bits. *)
+  Lemma ell_increment : forall i j d m upper,
+    ell m <= upper -> Z.size_nat d <= upper ->
+    ell (increment_matrix i j d m) <= upper + 3.
+  Proof.
+    intros i j d m upper Hm Hd.
+    assert (Hraw : forall p q, bound_bits upper (raw_entry m p q)).
+    { intros p q z Hentry. pose proof (ell_entry m p q z Hentry). lia. }
+    assert (Hentry : forall a b, bound_bits upper (entry m a b)).
+    { intros a b. rewrite <- raw_entry_get. apply Hraw. }
+    apply ell_bound. intros p q.
+    change (bound_bits (upper + 3) (raw_entry (increment_matrix i j d m) p q)).
+    rewrite raw_entry_increment. apply relax_value_bits.
+    - apply twin_prefix_bits; auto.
+    - apply relax_value_bits.
+      + apply twin_prefix_bits; auto.
+      + apply relax_value_bits.
+        * apply edge_prefix_bits; auto.
+        * apply relax_value_bits.
+          -- apply edge_prefix_bits; auto.
+          -- intros old Hold. pose proof (Hraw p q old Hold). lia.
+          -- apply Hraw.
+        * apply Hraw.
+      + apply Hraw.
+    - apply Hraw.
+  Qed.
+
+  Lemma weight_put : forall i j d m,
+    M.weight (put i j d m) <= M.weight m + K.bits i + 1.
+  Proof.
+    intros i j d m. unfold put. apply M.weight_set.
+  Qed.
+
+  Lemma weight_add_cons : forall i j d m,
+    M.weight (add_cons i j d m) <= M.weight m + K.bits i + K.bits (flip j) + 2.
+  Proof.
+    intros i j d m. unfold add_cons.
+    eapply Nat.le_trans; [apply weight_put|].
+    pose proof (weight_put (flip j) (flip i)
+      (lower_bound d (entry m (flip j) (flip i))) m). lia.
+  Qed.
+
+  Lemma weight_increment : forall i j d m,
+    M.weight (increment_matrix i j d m) <= M.weight m.
+  Proof.
+    intros i j d m. unfold increment_matrix. apply M.weight_merge_l. reflexivity.
+  Qed.
+
+  (** Incremental closure grows support only at signed endpoints and bounds each new path. *)
+  Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
+    supp m' <= supp m + 4 /\
+    b m' <= Nat.max (b m) (Nat.max (K.bits i) (K.bits j) + 1) /\
+    ell m' <= Nat.max (ell m) (Z.size_nat d) + 4 /\
+    M.weight m' <= M.weight m + 4 * (Nat.max (K.bits i) (K.bits j) + 2).
+  Proof.
+    intros i j d m m' Hclose. unfold incr_close in Hclose.
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)) in *.
+    change ((if matrix_ok (increment_matrix i j d seed) then
+      if matrix_ok (strengthen (tighten (increment_matrix i j d seed))) then
+        Reached (strengthen (tighten (increment_matrix i j d seed))) else Unreached
+      else Unreached) = Reached m') in Hclose.
+    set (next := increment_matrix i j d seed) in *.
+    destruct (matrix_ok next); [|discriminate].
+    destruct (matrix_ok (strengthen (tighten next))); [|discriminate].
+    injection Hclose as <-.
+    assert (Hsupport : forall p, In p (support (strengthen (tighten next))) ->
+      p = K.encode i \/ p = K.encode j \/ p = K.encode (flip i) \/
+        p = K.encode (flip j) \/ In p (support m)).
+    { intros p Hin. apply (proj1 (support_strengthen (tighten next) p)) in Hin.
+      apply (proj1 (support_tighten next p)) in Hin.
+      unfold next in Hin. apply (proj1 (support_increment i j d seed p)) in Hin.
+      unfold seed in Hin. rewrite !support_add_cons in Hin. tauto. }
+    destruct (support_signed_endpoints i j (strengthen (tighten next)) m Hsupport)
+      as [Hcount Hbits]. split; [exact Hcount|]. split; [exact Hbits|]. split.
+    - pose proof (bits_strengthen_le (tighten next)) as Hstrengthen.
+      pose proof (bits_tighten_le next) as Htighten.
+      assert (Hnext : ell next <= Nat.max (ell m) (Z.size_nat d) + 3).
+      { unfold next. apply ell_increment; [|apply Nat.le_max_r].
+        unfold seed. apply ell_add_cons; [|cbn [Z.size_nat]; lia].
+        apply ell_add_cons; [apply Nat.le_max_l|cbn [Z.size_nat]; lia]. }
+      lia.
+    - eapply Nat.le_trans; [apply weight_strengthen|].
+      eapply Nat.le_trans; [apply weight_tighten|].
+      unfold next. eapply Nat.le_trans; [apply weight_increment|].
+      unfold seed.
+      pose proof (weight_add_cons j j 0%Z (add_cons i i 0%Z m)) as Hj.
+      pose proof (weight_add_cons i i 0%Z m) as Hi.
+      pose proof (flip_bits i). pose proof (flip_bits j).
+      pose proof (Nat.le_max_l (K.bits i) (K.bits j)).
+      pose proof (Nat.le_max_r (K.bits i) (K.bits j)). lia.
+  Qed.
+
+
   Definition option_weight {A : Type} (w : A -> nat) (a : option A) : nat :=
     match a with Some x => w x | None => 0 end.
 
