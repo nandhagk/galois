@@ -1345,6 +1345,48 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite row_write_binding, !slots_update_view; reflexivity.
   Qed.
 
+  (** Row replacement exposes the function, key and output equalities separately. *)
+  Lemma row_replace_rows : forall f k previous o db g args output,
+    row (view (row_replace f k previous o db)) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      (g = f /\ args = k /\ o = output).
+  Proof.
+    intros f k previous o db g args output. rewrite row_replace_binding. split.
+    - intros [Hold | [Hkey Houtput]]; [now left |].
+      right. injection Hkey as -> ->. repeat split; congruence.
+    - intros [Hold | [-> [-> Houtput]]]; [now left |].
+      right. split; congruence.
+  Qed.
+
+  (** Retaining an existing row satisfies the same replacement equation at that key. *)
+  Lemma row_unchanged_binding : forall db f k o, old db f k = Some o ->
+    forall g args output, row (view db) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      (g = f /\ args = k /\ o = output).
+  Proof.
+    intros db f k o Hbinding g args output.
+    destruct (RowKeys.eqb_spec (g, args) (f, k)) as [Hkey | Hneq].
+    - injection Hkey as -> ->. split.
+      + intro Hrow. right. repeat split.
+        change (old db f k = Some output) in Hrow. congruence.
+      + intros [[_ Hfalse] | [_ [_ Heq]]]; [contradiction |].
+        subst output. exact Hbinding.
+    - split.
+      + intro Hrow. left. split; assumption.
+      + intros [[Hrow _] | [-> [-> _]]]; [exact Hrow | contradiction].
+  Qed.
+
+  (** The executable optional-cell equality test reflects exact output equality. *)
+  Lemma output_eqb_spec : forall a b, reflect (a = b) (output_eqb a b).
+  Proof.
+    intros [c |] [d |].
+    - change (reflect (Some c = Some d) (Cells.eqb c d)).
+      destruct (Cells.eqb_spec c d); constructor; congruence.
+    - constructor. discriminate.
+    - constructor. discriminate.
+    - constructor. reflexivity.
+  Qed.
+
   (** Every row after a replacement is either an old row or the requested binding. *)
   Lemma row_replace_sources : forall f k previous o db g args output,
     row (view (row_replace f k previous o db)) g args output ->
@@ -1661,21 +1703,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     change (row_get f k db = Some o1) in Hfirst.
     change (row_get f k db = Some o2) in Hsecond. congruence.
   Qed.
-
-  (** Insertion changes precisely the canonical key and combines its output. *)
-  Lemma put_rows : forall f k o db, wf db -> kind_ok db f k o ->
-    let ck := map (canon db) k in let co := option_map (canon db) o in
-    forall f' k' o', row (view (put f k o db)) f' k' o' <->
-      (row (view db) f' k' o' /\ (f', k') <> (f, ck)) \/
-      (f' = f /\ k' = ck /\ combine db f (old db f ck) co = o').
-  Proof. Admitted. (* STUB *)
-
-  (** Identifier output conflicts add precisely their equality closure. *)
-  Lemma put_same : forall f k o db i j, wf db -> kind_ok db f k o ->
-    (same (view (put f k o db)) i j <->
-      clos_refl_sym_trans positive
-        (fun a b => same (view db) a b \/ conflict db f k o a b) i j).
-  Proof. Admitted. (* STUB *)
 
   (** A raised change flag stays raised until the database advances. *)
   Lemma changed_put : forall f k o db, changed db = true -> changed (put f k o db) = true.
@@ -2062,6 +2089,42 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     right. injection Hpair as -> ->. split; reflexivity.
   Qed.
 
+  (** The logged equality relation is closed under equivalence reasoning. *)
+  Lemma same_closed : forall db R,
+    (forall a b, R a b -> same (view db) a b) ->
+    forall i j, clos_refl_sym_trans positive R i j -> same (view db) i j.
+  Proof.
+    intros db R Hgenerators i j Hclosure.
+    induction Hclosure as [i j Hstep | i | i j Hstep IH | i j k Hleft IHleft Hright IHright].
+    - exact (Hgenerators i j Hstep).
+    - apply equality_log_refl.
+    - now apply equality_log_sym.
+    - eapply equality_log_trans; eassumption.
+  Qed.
+
+  (** An output conflict adds exactly the equivalence closure of its two outputs. *)
+  Lemma output_conflict_same : forall db
+      (previous : option (option (cell V.t))) (co : option (cell V.t)), wf db -> forall i j,
+    same (view (match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end)) i j <->
+    clos_refl_sym_trans positive
+      (fun x y => same (view db) x y \/
+        (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j.
+  Proof.
+    intros db previous co Hwf i j. split.
+    - apply output_conflict_same_sources. exact Hwf.
+    - intro Hclosure.
+      destruct previous as [[[a | v] |] |]; destruct co as [[b | w] |];
+        try solve [refine (same_closed db _ _ i j Hclosure);
+          intros x y [Hold | [Ha Hb]]; [exact Hold | congruence]].
+      apply (proj2 (union_same a b db i j Hwf)).
+      eapply equality_closure_mono; [| exact Hclosure].
+      intros x y [Hold | [Ha Hb]]; [now left |].
+      right. injection Ha as ->. injection Hb as ->. reflexivity.
+  Qed.
+
   (** Insertion retains the declaration table through conflicts and row replacement. *)
   Lemma put_kind_effect : forall db f k o, wf db ->
     kind (view (put f k o db)) = kind (view db).
@@ -2131,6 +2194,55 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - destruct (output_eqb before updated); [apply Hsame |].
       rewrite row_replace_same. apply Hsame.
     - rewrite row_replace_same. apply Hsame.
+  Qed.
+
+  (** Insertion changes precisely the canonical key and combines its output. *)
+  Lemma put_rows : forall f k o db, wf db -> kind_ok db f k o ->
+    let ck := map (canon db) k in let co := option_map (canon db) o in
+    forall f' k' o', row (view (put f k o db)) f' k' o' <->
+      (row (view db) f' k' o' /\ (f', k') <> (f, ck)) \/
+      (f' = f /\ k' = ck /\ combine db f (old db f ck) co = o').
+  Proof.
+    intros f k o db Hwf _. cbn zeta. intros g args output. unfold put.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    rewrite combine_output_correct. fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous eqn:Hprevious.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)).
+    { apply output_conflict_rows. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb_spec before updated) as [Hequal | Hdifferent].
+      + rewrite Hrows, <- Hequal. apply row_unchanged_binding. exact (eq_sym Hprevious).
+      + now rewrite row_replace_rows, Hrows.
+    - now rewrite row_replace_rows, Hrows.
+  Qed.
+
+  (** Identifier output conflicts add precisely their equality closure. *)
+  Lemma put_same : forall f k o db i j, wf db -> kind_ok db f k o ->
+    (same (view (put f k o db)) i j <->
+      clos_refl_sym_trans positive
+        (fun a b => same (view db) a b \/ conflict db f k o a b) i j).
+  Proof.
+    intros f k o db i j Hwf _. unfold put, conflict.
+    rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
+    fold (old db f (map (canon db) k)).
+    remember (old db f (map (canon db) k)) as previous.
+    remember (option_map (canon db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hsame : same (view next) i j <->
+      clos_refl_sym_trans positive
+        (fun x y => same (view db) x y \/
+          (previous = Some (Some (Id x)) /\ co = Some (Id y))) i j).
+    { apply output_conflict_same. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hsame |].
+      now rewrite row_replace_same.
+    - now rewrite row_replace_same.
   Qed.
 
   (** Canonicalization preserves every cell's denotation in a satisfying model. *)
