@@ -1812,6 +1812,13 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   TimeFun wfwd.
   TimeFun wbwd.
 
+  Module PayloadBounds := IntervalPayloadT L T Scalar.
+
+  Local Lemma table_clip_bits : forall w a, interval_bits (interval_clip w a) <= Pos.to_nat w.
+  Proof.
+    exact PayloadBounds.payload_clip_bits.
+  Qed.
+
   Local Lemma table_clip_time : forall w a,
     (T_interval_clip w a <= (W.k_payload_clip + 1) *
       N.of_nat (W.psize w a + 1))%N.
@@ -1827,6 +1834,56 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     unfold Word.modulus.
     replace (2 ^ Z.pos w)%Z with (Z.pow_pos 2 w) by reflexivity.
     rewrite Nat2N.inj_add in *.
+    nia.
+  Qed.
+
+  Local Lemma table_raw_size : forall w a, interval_bits a <= W.psize w a.
+  Proof.
+    intros w a.
+    rewrite W.F_psize.
+    lia.
+  Qed.
+
+  Local Lemma table_ite_size : forall rw wa wb a b,
+    W.psize rw (Scalar.interval_join (interval_clip wa a) (interval_clip wb b)) <=
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2.
+  Proof.
+    intros rw wa wb a b.
+    pose proof (PayloadBounds.payload_raw_join_bits
+      (interval_clip wa a) (interval_clip wb b)) as Hjoin.
+    pose proof (table_clip_bits wa a) as Ha.
+    pose proof (table_clip_bits wb b) as Hb.
+    pose proof (Pos2Nat.is_pos rw) as Hr.
+    rewrite W.F_psize.
+    rewrite Nat.pow_2_r.
+    nia.
+  Qed.
+
+  Local Lemma table_ite_time : forall rw wa wb a b,
+    (T_interval_clip wa a + T_interval_clip wb b +
+      Scalar.T_interval_join (interval_clip wa a) (interval_clip wb b) <=
+      8 * (W.k_payload_clip + Scalar.c_scalar + 1) *
+      N.of_nat ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        W.psize wa a + W.psize wb b))%N.
+  Proof.
+    intros rw wa wb a b.
+    pose proof (table_clip_time wa a) as Ha.
+    pose proof (table_clip_time wb b) as Hb.
+    pose proof (table_clip_bits wa a) as Hbits_a.
+    pose proof (table_clip_bits wb b) as Hbits_b.
+    pose proof (Scalar.T_interval_join_le (interval_clip wa a) (interval_clip wb b))
+      as Hjoin.
+    pose proof (Pos2Nat.is_pos rw) as Hr.
+    assert (Hjoin' :
+      (Scalar.T_interval_join (interval_clip wa a) (interval_clip wb b) <=
+        Scalar.c_scalar * N.of_nat (Pos.to_nat wa + Pos.to_nat wb + 1))%N).
+    { rewrite !Nat2N.inj_add in *.
+      nia. }
+    assert (Hwidth :
+      (N.of_nat (Pos.to_nat wa + Pos.to_nat wb + 1) <=
+        N.of_nat ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2))%N).
+    { rewrite Nat.pow_2_r, !Nat2N.inj_add, !Nat2N.inj_mul. nia. }
+    rewrite !Nat2N.inj_add in *.
     nia.
   Qed.
 
