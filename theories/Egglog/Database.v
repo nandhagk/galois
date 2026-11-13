@@ -676,6 +676,59 @@ Fixpoint database_slot_groups (next : N) (prepared : list (positive * database_s
   end.
 TimeFun database_slot_groups.
 
+(** Reading a missing function group gives its empty slot list. *)
+Definition database_group_entries (f : positive)
+    (groups : PTrieCode.t (list (N * database_slot_layout))) : list (N * database_slot_layout) :=
+  match PTrieCode.get f groups with Some slots => slots | None => [] end.
+
+(** A prepared list entry receives its offset from the starting slot number. *)
+Definition database_slot_member (next : N) (prepared : list (positive * database_slot_layout))
+    (f : positive) (s : N) (layout : database_slot_layout) : Prop :=
+  exists n, nth_error prepared n = Some (f, layout) /\ s = (next + N.of_nat n)%N.
+
+(** Prepending to one function group adds exactly its new numbered layout. *)
+Lemma database_group_add_member : forall f g next block groups s layout,
+  In (s, layout) (database_group_entries f
+    (PTrieCode.set g ((next, block) :: database_group_entries g groups) groups)) <->
+  In (s, layout) (database_group_entries f groups) \/
+    (f = g /\ s = next /\ layout = block).
+Proof.
+  intros f g next block groups s layout. unfold database_group_entries.
+  destruct (Pos.eq_dec f g) as [-> | Hdifferent].
+  - rewrite PTrie.get_set_same. cbn [In]. intuition congruence.
+  - rewrite PTrie.get_set_other by exact Hdifferent. intuition congruence.
+Qed.
+
+(** Numbering a nonempty prepared list separates its head from the incremented tail. *)
+Lemma database_slot_member_cons : forall next g block rest f s layout,
+  database_slot_member next ((g, block) :: rest) f s layout <->
+    (f = g /\ s = next /\ layout = block) \/
+    database_slot_member (N.succ next) rest f s layout.
+Proof.
+  intros next g block rest f s layout. unfold database_slot_member. split.
+  - intros [n [Hentry Hslot]]. destruct n as [| n].
+    + cbn [nth_error] in Hentry. injection Hentry as Hfunction Hlayout.
+      left. split; [congruence |]. split; [cbn in Hslot; lia | congruence].
+    + right. exists n. split; [exact Hentry |]. rewrite Nat2N.inj_succ in Hslot. lia.
+  - intros [[-> [-> ->]] | [n [Hentry Hslot]]].
+    + exists 0. split; [reflexivity | lia].
+    + exists (S n). split; [exact Hentry |]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Group construction adds exactly the numbered entries of the prepared input. *)
+Lemma database_slot_groups_member : forall prepared next groups f s layout,
+  In (s, layout) (database_group_entries f (database_slot_groups next prepared groups)) <->
+    In (s, layout) (database_group_entries f groups) \/
+      database_slot_member next prepared f s layout.
+Proof.
+  induction prepared as [| [g block] rest IH]; intros next groups f s layout.
+  - cbn [database_slot_groups]. unfold database_slot_member. split.
+    + intro Hin. now left.
+    + intros [Hin | [n [Hentry _]]]; [exact Hin | destruct n; discriminate].
+  - cbn [database_slot_groups]. fold (database_group_entries g groups).
+    rewrite IH, database_group_add_member, database_slot_member_cons. tauto.
+Qed.
+
 Definition runtime_set_rows {C X} (rows : PTrieCode.t ((positive * list C) * option C))
     (state : database_runtime C X) : database_runtime C X :=
   DatabaseRuntime (runtime_allocated state) (runtime_changed state) (runtime_declarations state) (runtime_kinds state) rows
