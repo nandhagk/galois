@@ -45,8 +45,9 @@ Module Direct <: LOCAL_SYSTEM_OPS PairOps.
 End Direct.
 
 Module R := RestrictCode PairOps Direct.
+Module RestrictedOps := R.RS.
 Module View.
-  Include R.RS.
+  Include RestrictedOps.
   Include SYSTEM_SPEC PairOps.
 End View.
 
