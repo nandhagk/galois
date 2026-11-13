@@ -1,7 +1,7 @@
-(** * Placeholder restricted systems
+(** * Seeded restrictions of local systems
 
     A restricted program stores the original program, frozen values and selected rows.
-    For example, selecting no rows retains an empty row list.
+    For example, selecting no source rows still retains any seed rows.
     Builds on: RestrictSig. *)
 
 From Stdlib Require Import List PArith NArith.
@@ -69,33 +69,128 @@ Module Restricted (L : LATTICE) (S : LOCAL_SYSTEM L) <: SYSTEM L.
   (* spec: wf *)
   Definition wf (p : prog) : Prop := S.wf (original _ _ _ _ p) /\
     Forall (fun r => In r (S.rows (original _ _ _ _ p))) (selected _ _ _ _ p).
+
+  (** Original rows occur exactly where they occur in the selected list. *)
+  Lemma rows_original : forall p r,
+    In (inl r) (rows p) <-> In r (selected _ _ _ _ p).
+  Proof.
+    intros p r; unfold rows; rewrite in_app_iff; split.
+    - intros [Hin|Hin]; apply in_map_iff in Hin as [row [Heq Hin]].
+      + injection Heq as Heq; subst row; exact Hin.
+      + discriminate Heq.
+    - intro Hin; left; apply in_map; exact Hin.
+  Qed.
+
+  (** Seed rows occur exactly where their bindings occur in the seed list. *)
+  Lemma rows_seed : forall p xv,
+    In (inr xv) (rows p) <-> In xv (seeds _ _ _ _ p).
+  Proof.
+    intros p xv; unfold rows; rewrite in_app_iff; split.
+    - intros [Hin|Hin]; apply in_map_iff in Hin as [row [Heq Hin]].
+      + discriminate Heq.
+      + injection Heq as Heq; subst row; exact Hin.
+    - intro Hin; right; apply in_map; exact Hin.
+  Qed.
+
+  (** Well-formed restrictions select only rows declared by their source program. *)
+  Lemma original_listed : forall p r, wf p -> In (inl r) (rows p) ->
+    In r (S.rows (original _ _ _ _ p)).
+  Proof.
+    intros p r [_ Hselected] Hin.
+    apply rows_original in Hin; rewrite Forall_forall in Hselected.
+    exact (Hselected r Hin).
+  Qed.
+
+  (** Restricting an original row preserves its complete evaluation. *)
+  Lemma eval_original : forall p r look,
+    eval p (inl r) look = S.eval (original _ _ _ _ p) r look.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A seed returns its frozen value and produces no side contributions. *)
+  Lemma eval_seed : forall p x v look, eval p (inr (x, v)) look = Some (v, []).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Seed rows terminate before they can reach a read frame. *)
+  Lemma seed_no_ask : forall p xv look n q acc x f,
+    loop_fuel (eval_step (resume p) look) n (start p (inr xv), nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) -> False.
+  Proof.
+    intros p [y v] look [|n] q acc x f Hrun Hask.
+    - inversion Hrun; subst; discriminate Hask.
+    - discriminate Hrun.
+  Qed.
+
   (** Codes distinguish all system keys. *)
   Lemma key_code_inj : forall a b, key_code a = key_code b -> a = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact S.key_code_inj.
+  Qed.
+
   (** Key equality decides equality of system keys. *)
   Lemma key_eqb_spec : forall a b, reflect (a = b) (key_eqb a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact S.key_eqb_spec.
+  Qed.
+
   (** Declared rows finish within their dependency-derived fuel. *)
   Lemma eval_total : forall p r look,
     wf p -> In r (rows p) -> eval p r look <> None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [r|[x v]] look Hwf Hin.
+    - rewrite eval_original; apply S.eval_total.
+      + exact (proj1 Hwf).
+      + exact (original_listed p r Hwf Hin).
+    - rewrite eval_seed; discriminate.
+  Qed.
+
   (** A row observes its declared dependencies. *)
   Lemma reads_within : forall p r s u, wf p -> In r (rows p) ->
     (forall x, In x (deps p r) -> s x = u x) -> eval p r s = eval p r u.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [r|[x v]] s u Hwf Hin Hagree.
+    - rewrite !eval_original; apply S.reads_within.
+      + exact (proj1 Hwf).
+      + exact (original_listed p r Hwf Hin).
+      + exact Hagree.
+    - rewrite !eval_seed; reflexivity.
+  Qed.
+
   (** A row asks only its declared dependencies. *)
   Lemma asks_within : forall p r look n q acc x f, wf p -> In r (rows p) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) -> In x (deps p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [r|xv] look n q acc x f Hwf Hin Hrun Hask.
+    - exact (S.asks_within (original _ _ _ _ p) r look n q acc x f
+        (proj1 Hwf) (original_listed p r Hwf Hin) Hrun Hask).
+    - exfalso; exact (seed_no_ask p xv look n q acc x f Hrun Hask).
+  Qed.
+
   (** Side contributions use declared side keys. *)
   Lemma sides_within : forall p r look a ss x b, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> In (x, b) ss -> In x (sides p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [r|[y v]] look a ss x b Hwf Hin Heval Hside.
+    - rewrite eval_original in Heval.
+      exact (S.sides_within (original _ _ _ _ p) r look a ss x b
+        (proj1 Hwf) (original_listed p r Hwf Hin) Heval Hside).
+    - rewrite eval_seed in Heval; inversion Heval; subst; contradiction.
+  Qed.
+
   (** Side contributions fit the declared occurrence budget. *)
   Lemma sides_count : forall p r look a ss, wf p -> In r (rows p) ->
     eval p r look = Some (a, ss) -> length ss <= length (sides p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [r|[x v]] look a ss Hwf Hin Heval.
+    - rewrite eval_original in Heval.
+      exact (S.sides_count (original _ _ _ _ p) r look a ss
+        (proj1 Hwf) (original_listed p r Hwf Hin) Heval).
+    - rewrite eval_seed in Heval; inversion Heval; subst; reflexivity.
+  Qed.
 
 End Restricted.
 
@@ -174,24 +269,53 @@ Module Restrict (L : LATTICE) (S : LOCAL_SYSTEM L).
     Module C := RestrictCode L S.
     Include C.Code.
     Include RESTRICT_SPEC L S RS.
-  Lemma restrict_post : forall p fz rs s, RS.post_solution (mk p fz rs) s ->
-    (forall r, In r rs -> row_ok L.leb s (S.target p r) (S.eval p r s) = true) /\
-    (forall x v, In (x, v) fz -> L.leb v (s x) = true).
-  Proof. Admitted. (* STUB *)
 
-  Lemma restrict_complete : forall p fz rs s, S.post_solution p s ->
-    (forall r, In r rs -> In r (S.rows p)) ->
-    (forall x v, In (x, v) fz -> L.leb v (s x) = true) ->
-    RS.post_solution (mk p fz rs) s.
-  Proof. Admitted. (* STUB *)
+    (** Restricted post-solutions accept every selected row and every frozen value. *)
+    Lemma restrict_post : forall p fz rs s, RS.post_solution (mk p fz rs) s ->
+      (forall r, In r rs -> row_ok L.leb s (S.target p r) (S.eval p r s) = true) /\
+      (forall x v, In (x, v) fz -> L.leb v (s x) = true).
+    Proof.
+      intros p fz rs s Hpost; split.
+      - intros r Hin.
+        pose proof (Hpost (inl r) (proj2 (RS.rows_original (mk p fz rs) r) Hin)) as Hrow.
+        rewrite RS.eval_original in Hrow; exact Hrow.
+      - intros x v Hin.
+        pose proof (Hpost (inr (x, v))
+          (proj2 (RS.rows_seed (mk p fz rs) (x, v)) Hin)) as Hseed.
+        rewrite RS.eval_seed in Hseed; apply Bool.andb_true_iff in Hseed as [Hseed _].
+        exact Hseed.
+    Qed.
 
-  Lemma mk_monotone : forall p fz rs, S.monotone p ->
-    (forall r, In r rs -> In r (S.rows p)) -> RS.monotone (mk p fz rs).
-  Proof. Admitted. (* STUB *)
+    (** A source post-solution above the seeds satisfies every restricted row. *)
+    Lemma restrict_complete : forall p fz rs s, S.post_solution p s ->
+      (forall r, In r rs -> In r (S.rows p)) ->
+      (forall x v, In (x, v) fz -> L.leb v (s x) = true) ->
+      RS.post_solution (mk p fz rs) s.
+    Proof.
+      intros p fz rs s Hpost Hlisted Hseeds [r|[x v]] Hin.
+      - apply RS.rows_original in Hin; rewrite RS.eval_original.
+        exact (Hpost r (Hlisted r Hin)).
+      - apply RS.rows_seed in Hin; rewrite RS.eval_seed.
+        apply Bool.andb_true_iff; split; [exact (Hseeds x v Hin)|reflexivity].
+    Qed.
 
-  Lemma mk_wf : forall p fz rs, S.wf p ->
-    (forall r, In r rs -> In r (S.rows p)) -> RS.wf (mk p fz rs).
-  Proof. Admitted. (* STUB *)
+    (** Source monotonicity transfers to selected rows and constant seed rows. *)
+    Lemma mk_monotone : forall p fz rs, S.monotone p ->
+      (forall r, In r rs -> In r (S.rows p)) -> RS.monotone (mk p fz rs).
+    Proof.
+      intros p fz rs Hmono Hlisted [r|[x v]] s u Hin Hbelow.
+      - apply RS.rows_original in Hin; rewrite !RS.eval_original.
+        exact (Hmono r s u (Hlisted r Hin) Hbelow).
+      - rewrite !RS.eval_seed; split; [apply L.leb_refl|constructor].
+    Qed.
+
+    (** Selecting declared source rows establishes the restricted well-formedness invariant. *)
+    Lemma mk_wf : forall p fz rs, S.wf p ->
+      (forall r, In r rs -> In r (S.rows p)) -> RS.wf (mk p fz rs).
+    Proof.
+      intros p fz rs Hwf Hlisted; split; [exact Hwf|].
+      apply Forall_forall; exact Hlisted.
+    Qed.
 
   End Impl.
 End Restrict.
@@ -221,9 +345,13 @@ Module RestrictT (L : LATTICE_T) (S : LOCAL_SYSTEM_T L).
         (map (fun xv => S.key_bits (fst xv) + L.size (snd xv) + 1) fz) + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma restrict_writes : forall p fz rs s r, RS.post_solution (mk p fz rs) s ->
-    In r rs -> row_ok L.leb s (S.target p r) (S.eval p r s) = true.
-  Proof. Admitted. (* STUB *)
+    (** Restricted post-solutions accept every primary and side write of a selected row. *)
+    Lemma restrict_writes : forall p fz rs s r, RS.post_solution (mk p fz rs) s ->
+      In r rs -> row_ok L.leb s (S.target p r) (S.eval p r s) = true.
+    Proof.
+      intros p fz rs s r Hpost Hin.
+      exact (proj1 (restrict_post p fz rs s Hpost) r Hin).
+    Qed.
 
   End Impl.
 End RestrictT.
