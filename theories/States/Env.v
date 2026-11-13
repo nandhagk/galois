@@ -483,14 +483,79 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     - apply Nat.lt_le_incl. now apply wrank_widen.
   Qed.
 
+  (** Narrowing ordered maps without bottom bindings cannot introduce a bottom binding. *)
+  Lemma narrow_map_nonbot : forall a b,
+    M.existsb V.is_bot a = false -> M.existsb V.is_bot b = false ->
+    M.forall2b option_leb b a = true ->
+    let m := M.merge (fun x y => match x, y with
+      | None, None => None
+      | Some x, None => Some x
+      | None, Some y => Some y
+      | Some x, Some y => Some (V.narrow x y)
+      end) a b in
+    M.existsb V.is_bot m = false.
+  Proof.
+    intros a b Ha Hb Hba m. pose proof (proj1 (map_leb_spec b a) Hba) as Hpoint.
+    apply map_nonbot_spec. intros p v Hfind. unfold m in Hfind.
+    rewrite M.find_merge in Hfind by reflexivity. specialize (Hpoint p).
+    destruct (M.find p a) as [x|] eqn:Hx, (M.find p b) as [y|] eqn:Hy;
+      cbn [option_value] in Hpoint; try discriminate.
+    - injection Hfind as Hvalue. subst v.
+      destruct (V.is_bot (V.narrow x y)) eqn:Hbad; [|reflexivity].
+      pose proof (V.is_bot_below y (V.narrow x y)
+        (proj1 (V.narrow_between x y Hpoint)) Hbad) as Hybot.
+      pose proof (proj1 (map_nonbot_spec b) Hb p y Hy) as Hyclean. congruence.
+    - injection Hfind as Hvalue. subst v. exact (proj1 (map_nonbot_spec a) Ha p x Hx).
+    - injection Hfind as Hvalue. subst v. exact (proj1 (map_nonbot_spec b) Hb p y Hy).
+  Qed.
+
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* CONVERT: env_lift_weak: The reference env_lift_reduce was not found in the current *)
+  Proof.
+    intros a b Hba. unfold narrow. destruct (is_bot b) eqn:Hb.
+    - split; [apply leb_refl|exact Hba].
+    - unfold leb in Hba. rewrite Hb in Hba. cbn in Hba.
+      apply andb_true_iff in Hba as [Ha Hba]. apply negb_true_iff in Ha.
+      destruct a as [|a], b as [|b]; try discriminate.
+      cbn [is_bot] in Ha, Hb. cbn in Hba.
+      set (m := M.merge (fun x y => match x, y with
+        | None, None => None
+        | Some x, None => Some x
+        | None, Some y => Some y
+        | Some x, Some y => Some (V.narrow x y)
+        end) a b).
+      assert (Hm : M.existsb V.is_bot m = false) by
+        exact (narrow_map_nonbot a b Ha Hb Hba).
+      pose proof (proj1 (map_leb_spec b a) Hba) as Hpoint.
+      change (leb (Reached b) (Reached m) = true /\ leb (Reached m) (Reached a) = true).
+      split.
+      + apply leb_reached_intro; [exact Hm|]. intro p. specialize (Hpoint p).
+        unfold m. rewrite M.find_merge by reflexivity.
+        destruct (M.find p a) as [x|], (M.find p b) as [y|];
+          cbn [option_value] in *; try apply V.leb_refl; try exact Hpoint.
+        exact (proj1 (V.narrow_between x y Hpoint)).
+      + apply leb_reached_intro; [exact Ha|]. intro p. specialize (Hpoint p).
+        unfold m. rewrite M.find_merge by reflexivity.
+        destruct (M.find p a) as [x|], (M.find p b) as [y|];
+          cbn [option_value] in *; try apply V.leb_refl; try apply V.top_greatest.
+        exact (proj2 (V.narrow_between x y Hpoint)).
+  Qed.
 
   (** Abstract inclusion entails inclusion of concrete environments. *)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
-  Proof. Admitted. (* CONVERT: meaning_laws: The variable lat was not found in the current environment. *)
+  Proof.
+    intros [|a] [|b] st Hle Hgamma; try contradiction.
+    - destruct Hgamma as [Hclean Hpoint]. unfold leb in Hle. cbn [is_bot] in Hle.
+      rewrite Hclean in Hle. discriminate.
+    - destruct Hgamma as [Hclean Hpoint]. unfold leb in Hle. cbn [is_bot] in Hle.
+      rewrite Hclean in Hle. cbn in Hle.
+      apply andb_true_iff in Hle as [Hnonbot Horder]. apply negb_true_iff in Hnonbot.
+      split; [exact Hnonbot|]. intro x.
+      apply (V.gamma_mono (read a x) (read b x) (st x)); [|apply Hpoint].
+      unfold read. rewrite !M.get_find.
+      exact (proj1 (map_leb_spec a b) Horder (X.encode x)).
+  Qed.
   (** Bottom describes no concrete environment. *)
   Lemma gamma_bot : forall st, ~ gamma bot st.
   Proof.
@@ -498,7 +563,10 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
   Qed.
   (** Top describes every concrete environment. *)
   Lemma gamma_top : forall st, gamma top st.
-  Proof. Admitted. (* CONVERT: top_full: No product even after head-reduction. *)
+  Proof.
+    intro st. split; [apply map_empty_nonbot|]. intro x.
+    unfold read. rewrite M.get_empty. apply V.gamma_top.
+  Qed.
   (** Assignment contains each successful concrete update. *)
   Lemma assign_sound : forall x e s st c,
     gamma s st -> eval_term L.eval st e = Some c ->
