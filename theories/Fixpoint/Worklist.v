@@ -1004,6 +1004,116 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     cbn [N.size_nat]; lia.
   Qed.
 
+  (** Turning on one previously absent entry increases a duplicate-free live count once. *)
+  Lemma filter_count_set : forall ids id (before after : positive -> bool),
+    NoDup ids -> In id ids -> before id = false -> after id = true ->
+    (forall other, other <> id -> after other = before other) ->
+    length (filter after ids) = Datatypes.S (length (filter before ids)).
+  Proof.
+    intros ids; induction ids as [|first ids IH]; intros id before after Hnodup Hin Hb Ha Hsame.
+    - contradiction.
+    - inversion Hnodup as [|first' ids' Hfresh Htail]; subst.
+      destruct Hin as [Heq|Hin].
+      + subst first; cbn [filter]; rewrite Hb, Ha; cbn [length].
+        f_equal; f_equal; apply filter_ext_in; intros other Hother.
+        apply Hsame; intro Heq; subst other; contradiction.
+      + assert (Hneq : first <> id) by (intro Heq; subst first; contradiction).
+        cbn [filter]; rewrite (Hsame first Hneq).
+        destruct (before first); cbn [length];
+          rewrite (IH id before after Htail Hin Hb Ha Hsame); reflexivity.
+  Qed.
+
+  (** The live count over source identifiers follows an absent guarded push. *)
+  Lemma queue_count_push : forall p q id pr,
+    In id (row_ids p) -> Q.prio q id = None ->
+    length (filter (fun c => match Q.prio (Q.push pr id q) c with
+      Some _ => true | None => false end) (row_ids p)) =
+    Datatypes.S (length (filter (fun c => match Q.prio q c with
+      Some _ => true | None => false end) (row_ids p))).
+  Proof.
+    intros p q id pr Hin Hnone; eapply filter_count_set.
+    - apply row_ids_nodup.
+    - exact Hin.
+    - now rewrite Hnone.
+    - now rewrite Q.prio_push.
+    - intros other Hother; now rewrite Q.prio_push_other by congruence.
+  Qed.
+
+  (** A completely empty queue satisfies every structural bound. *)
+  Lemma structural_empty : forall p pol s, ws_queue s = Q.empty -> structural p pol s.
+  Proof.
+    intros p pol s Hempty; unfold structural; rewrite Hempty.
+    split; [apply Q.wf_empty|]; split; [apply Q.fits_empty|].
+    split; [rewrite Q.pending_empty; lia|]; split.
+    - rewrite Q.size_empty; cbn [N.to_nat].
+      induction (row_ids p) as [|id ids IH]; [reflexivity|].
+      cbn [filter]; rewrite Q.prio_empty; exact IH.
+    - intros pr id Hprio; rewrite Q.prio_empty in Hprio; discriminate.
+  Qed.
+
+  (** An absent source row is inserted with its declared rank and within the row cap. *)
+  Lemma enqueue_push_structural : forall p pol s id r,
+    prio_ok p pol -> structural p pol s -> prepared p pol s ->
+    In id (row_ids p) -> source_row p id = Some r -> Q.prio (ws_queue s) id = None ->
+    structural p pol (enqueue_push s id (row_rank p pol r)).
+  Proof.
+    intros p pol s id r Hprio Hstruct Hprepared Hin Hsource Hnone.
+    destruct Hstruct as [Hwf [Hfits [Hpending [Hcount Hsupport]]]].
+    assert (Hexact : Q.pending (ws_queue s) = N.to_nat (Q.size (ws_queue s))).
+    { exact (proj1 (proj2 (proj2 (proj2 Hprepared)))). }
+    assert (Hnewcount : N.to_nat (Q.size (Q.push (N.pos (row_rank p pol r)) id (ws_queue s))) =
+      length (filter (fun c => match
+        Q.prio (Q.push (N.pos (row_rank p pol r)) id (ws_queue s)) c with
+        Some _ => true | None => false end) (row_ids p))).
+    { rewrite Q.size_push by exact Hwf; rewrite Hnone, N2Nat.inj_succ, Hcount.
+      symmetry; now apply queue_count_push. }
+    unfold structural, enqueue_push; cbn [ws_queue].
+    split; [now apply Q.wf_push|]; split.
+    - apply Q.fits_push; [exact Hwf|exact Hfits|].
+      now apply row_queue_width.
+    - split.
+      + rewrite (queue_exact_push _ _ _ Hwf Hexact Hnone), Hnewcount.
+        rewrite <- row_ids_length; apply filter_length_le.
+      + split; [exact Hnewcount|].
+        intros pr other Hother; destruct (Pos.eq_dec other id) as [->|Hneq].
+        * rewrite Q.prio_push, Hnone in Hother; injection Hother as <-.
+          split; [exact Hin|]; exists r; now split.
+        * rewrite Q.prio_push_other in Hother by congruence.
+          exact (Hsupport pr other Hother).
+  Qed.
+
+  (** One guarded enqueue retains the complete invariant. *)
+  Lemma enqueue_single_invariant : forall p pol id s,
+    prio_ok p pol -> invariant p pol s -> In id (row_ids p) ->
+    invariant p pol (enqueue p pol [id] s).
+  Proof.
+    intros p pol id s Hprio Hinv Hin.
+    pose proof Hinv as [Hstruct [Hvalues Hprepared]].
+    rewrite enqueue_single.
+    destruct (trie_get id (ws_live s)) as [u|] eqn:Hlive;
+      destruct (row_at s id) as [r|] eqn:Hrow; try exact Hinv.
+    pose proof (proj2 (proj2 (proj2 (proj2 (proj2 Hprepared)))) id r Hrow) as Hrank.
+    rewrite Hrank.
+    assert (Hnone : Q.prio (ws_queue s) id = None).
+    { apply live_absent; [exact (proj1 (proj2 Hprepared))|exact Hlive]. }
+    split.
+    - eapply enqueue_push_structural; try eassumption.
+      rewrite <- (proj1 (proj1 Hprepared) id); exact Hrow.
+    - split; [exact Hvalues|now apply prepared_push].
+  Qed.
+
+  (** Every enqueue prefix stays within the same structural and client bounds. *)
+  Lemma enqueue_invariant : forall p pol ids s, S.wf p -> prio_ok p pol ->
+    invariant p pol s -> (forall id, In id ids -> In id (row_ids p)) ->
+    invariant p pol (enqueue p pol ids s).
+  Proof.
+    intros p pol ids; induction ids as [|id ids IH]; intros s Hwf Hprio Hinv Hids.
+    - now rewrite enqueue_nil.
+    - rewrite enqueue_cons; apply IH; try assumption.
+      + apply enqueue_single_invariant; try assumption; apply Hids; now left.
+      + intros other Hother; apply Hids; now right.
+  Qed.
+
   (** Preparation starts at bottom and zero counters and establishes queue and value invariants. *)
   Lemma F4_prepare : forall p pol, S.wf p -> prio_ok p pol ->
     invariant p pol (prepare p pol) /\
@@ -1336,6 +1446,138 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
 
 
+  (** The source-row live count drops once after a successful pop. *)
+  Lemma queue_count_pop : forall p q pr id q1,
+    Q.wf q -> Q.pop q = Some (pr, id, q1) -> In id (row_ids p) ->
+    length (filter (fun c => match Q.prio q c with Some _ => true | None => false end)
+      (row_ids p)) = Datatypes.S (length (filter
+      (fun c => match Q.prio q1 c with Some _ => true | None => false end) (row_ids p))).
+  Proof.
+    intros p q pr id q1 Hwf Hpop Hin.
+    destruct (Q.pop_min q pr id q1 Hwf Hpop) as [Hid [Hmin [Hnone Hother]]].
+    eapply filter_count_set.
+    - apply row_ids_nodup.
+    - exact Hin.
+    - now rewrite Hnone.
+    - now rewrite Hid.
+    - intros other Hneq; now rewrite Hother by exact Hneq.
+  Qed.
+
+  (** Popping preserves the row cap, rank support and declared queue width. *)
+  Lemma after_pop_structural : forall p pol s pr id q1,
+    structural p pol s -> Q.pop (ws_queue s) = Some (pr, id, q1) ->
+    structural p pol (after_pop p s id q1).
+  Proof.
+    intros p pol s pr id q1 [Hwf [Hfits [Hpending [Hcount Hsupport]]]] Hpop.
+    destruct (Q.pop_min _ _ _ _ Hwf Hpop) as [Hid [Hmin [Hnone Hother]]].
+    pose proof (proj1 (Hsupport pr id Hid)) as Hin.
+    pose proof (queue_count_pop p _ _ _ _ Hwf Hpop Hin) as Hcount_pop.
+    pose proof (Q.size_pop _ _ _ _ Hwf Hpop) as Hsize.
+    pose proof (Q.pending_pop _ _ _ _ Hwf Hpop) as Hpending_pop.
+    unfold structural; cbn [after_pop ws_queue].
+    split; [eapply Q.wf_pop; eassumption|]; split.
+    - eapply Q.fits_pop; eassumption.
+    - split; [lia|]; split.
+      + rewrite Hsize, N2Nat.inj_succ in Hcount; lia.
+      + intros rank other Hprio.
+        assert (Hneq : other <> id) by (intro Heq; subst other; congruence).
+        rewrite Hother in Hprio by exact Hneq; now apply Hsupport in Hprio.
+  Qed.
+
+  (** A pop retains invariant values and the prepared metadata. *)
+  Lemma after_pop_invariant : forall p pol s pr id q1,
+    invariant p pol s -> Q.pop (ws_queue s) = Some (pr, id, q1) ->
+    invariant p pol (after_pop p s id q1).
+  Proof.
+    intros p pol s pr id q1 [Hstruct [Hvalues Hprepared]] Hpop.
+    split; [eapply after_pop_structural; eassumption|].
+    split; [exact Hvalues|eapply F7_pop_prepared; eassumption].
+  Qed.
+
+  (** Replacing a stored value and its counter affects no queue or metadata property. *)
+  Lemma stored_value_invariant : forall p pol s x a count,
+    invariant p pol s -> B.inv p a ->
+    invariant p pol (WorklistState
+      (PTrieCode.set (S.key_code x) (x, a) (ws_store s))
+      (PTrieCode.set (S.key_code x) count (ws_counters s))
+      (ws_queue s) (ws_live s) (ws_rows s) (ws_readers s) (ws_armed s) (ws_ranks s)).
+  Proof.
+    intros p pol s x a count [Hstruct [Hvalues Hprepared]] Ha.
+    split; [exact Hstruct|]; split; [|exact Hprepared].
+    intro y; unfold look, look_or; cbn [ws_store]; rewrite trie_get_set.
+    destruct (Pos.eqb (S.key_code y) (S.key_code x)); [exact Ha|exact (Hvalues y)].
+  Qed.
+
+  (** Any invariant contribution preserves the full state invariant. *)
+  Lemma update_invariant : forall p pol s x a, S.wf p -> prio_ok p pol ->
+    invariant p pol s -> B.inv p a -> invariant p pol (update_one p pol s (x, a)).
+  Proof.
+    intros p pol s x a Hwf Hprio Hinv Ha.
+    pose proof Hinv as [Hstruct [Hvalues Hprepared]].
+    pose (ac := P.update pol (S.key_code x) (counter s (S.key_code x)) (look s x) a).
+    pose (base := WorklistState (PTrieCode.set (S.key_code x) (x, fst ac) (ws_store s))
+      (PTrieCode.set (S.key_code x) (snd ac) (ws_counters s))
+      (ws_queue s) (ws_live s) (ws_rows s) (ws_readers s) (ws_armed s) (ws_ranks s)).
+    assert (Hbase : invariant p pol base).
+    { unfold base; apply stored_value_invariant; [exact Hinv|].
+      unfold ac; apply policy_update_inv; [apply Hvalues|exact Ha]. }
+    assert (Hshape : update_one p pol s (x, a) =
+      if L.leb a (look s x) then s else
+      match trie_get (S.key_code x) (ws_armed s) with
+      | Some _ => base | None => arm (S.key_code x) (enqueue p pol (readers s (S.key_code x)) base)
+      end) by reflexivity.
+    pose proof (F6_prepared p pol s (x, a) Hprepared) as Hfinal.
+    rewrite Hshape in Hfinal |- *.
+    destruct (L.leb a (look s x)); [exact Hinv|].
+    destruct (trie_get (S.key_code x) (ws_armed s)); [exact Hbase|].
+    assert (Henqueue : invariant p pol (enqueue p pol (readers s (S.key_code x)) base)).
+    { apply enqueue_invariant; try assumption.
+      intros id Hid; rewrite (proj2 (proj1 Hprepared)) in Hid.
+      apply source_readers_spec in Hid as [r [y [Hsource _]]].
+      exact (proj1 (source_row_member p id r Hsource)). }
+    destruct Henqueue as [Hqueue [Hvals Hprep]].
+    split; [exact Hqueue|]; split; [exact Hvals|exact Hfinal].
+  Qed.
+
+  (** Sequential primary and side contributions retain the full invariant. *)
+  Lemma fold_invariant : forall p pol outs s, S.wf p -> prio_ok p pol ->
+    invariant p pol s -> Forall (fun xa => B.inv p (snd xa)) outs ->
+    invariant p pol (fold_left (update_one p pol) outs s).
+  Proof.
+    intros p pol outs; induction outs as [|[x a] outs IH]; intros s Hwf Hprio Hinv Houts.
+    - exact Hinv.
+    - inversion Houts; subst; cbn [fold_left]; apply IH; try assumption.
+      now apply update_invariant.
+  Qed.
+
+  (** Every old queue entry stays live while contributions are processed. *)
+  Lemma update_queue_retains : forall p pol s x a id pr,
+    Q.prio (ws_queue s) id = Some pr ->
+    exists next, Q.prio (ws_queue (update_one p pol s (x, a))) id = Some next.
+  Proof.
+    intros p pol s x a id pr Hprio; rewrite F6_indexed; cbn beta iota zeta.
+    destruct (L.leb a (look s x)); [now exists pr|].
+    destruct (trie_get (S.key_code x) (ws_armed s)); [now exists pr|].
+    eapply enqueue_retains; exact Hprio.
+  Qed.
+
+  (** A strict key change leaves every declared reader live. *)
+  Lemma update_reader_live : forall p pol s x a id,
+    prepared p pol s -> L.leb a (look s x) = false ->
+    In id (readers s (S.key_code x)) ->
+    exists pr, Q.prio (ws_queue (update_one p pol s (x, a))) id = Some pr.
+  Proof.
+    intros p pol s x a id Hprepared Hstrict Hreader.
+    rewrite F6_indexed; cbn beta iota zeta; rewrite Hstrict.
+    destruct (trie_get (S.key_code x) (ws_armed s)) as [[]|] eqn:Harmed.
+    - exact (proj1 (proj2 (proj2 (proj2 (proj2 Hprepared))))
+        (S.key_code x) id Harmed Hreader).
+    - pose proof Hreader as Hsource.
+      rewrite (proj2 (proj1 Hprepared)) in Hsource.
+      apply source_readers_spec in Hsource as [r [y [Hsource _]]].
+      eapply enqueue_contains with (r := r); [exact Hprepared|exact Hreader|exact Hsource].
+  Qed.
+
   (** Every state reached by the public solver satisfies its internal preparation duties. *)
   Lemma F9_reachable_prepared : forall p pol s, reachable p pol s -> prepared p pol s.
   Proof.
@@ -1361,12 +1603,32 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Every continuing callback keeps the structural and client value invariants. *)
   Lemma F9_step_inv : forall p pol s s1, S.wf p -> prio_ok p pol -> invariant p pol s ->
     step p pol s = inl s1 -> invariant p pol s1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s s1 Hwf Hprio Hinv Hstep.
+    pose proof Hinv as [Hstruct [Hvalues Hprepared]].
+    unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop; [|discriminate].
+    destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    assert (Hr : In r (S.rows p)).
+    { rewrite (proj1 (proj1 Hprepared)) in Hrow.
+      exact (proj2 (source_row_member p id r Hrow)). }
+    change (S.eval p r (look s) = Some (a, ss)) in Heval.
+    destruct (B.inv_rows p r (look s) a ss Hwf Hr Hvalues Heval) as [Ha Hss].
+    apply (fold_invariant p pol ((S.target p r, a) :: ss) (after_pop p s id q));
+      try assumption.
+    - eapply after_pop_invariant; eassumption.
+    - constructor; assumption.
+  Qed.
   (** Each intermediate primary or side update keeps the same invariant. *)
   Lemma F9_update_inv : forall p pol s x a, S.wf p -> prio_ok p pol -> invariant p pol s ->
     B.inv p a -> In (S.key_code x) (key_support p) ->
     invariant p pol (update_one p pol s (x, a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s x a Hwf Hprio Hinv Ha Hkey.
+    now apply update_invariant.
+  Qed.
   (** Reachable states satisfy every row outside their queue. *)
   Lemma F9_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
   Proof. Admitted. (* STUB *)
