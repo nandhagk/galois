@@ -8614,6 +8614,93 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rstep s = inl s' -> lineage initial (fst s) -> lineage initial (fst s').
   Proof. Admitted. (* STUB *)
 
+  (** Related cells normalize to the same already canonical target cell. *)
+  Lemma related_cell_canonical : forall db work c d, inv_on db work ->
+    cell_rel (same (view db)) c d -> canon db d = d -> canon db c = d.
+  Proof.
+    intros db work c d Hinv Hrelated Hfixed.
+    transitivity (canon db d); [| exact Hfixed].
+    destruct Hrelated as [i j Hsame | v]; [| reflexivity].
+    cbn [canon]. f_equal. exact (proj1 (inv_on_same_repr db work i j Hinv) Hsame).
+  Qed.
+
+  (** A key related to a canonical key normalizes exactly to that key. *)
+  Lemma related_key_canonical : forall db work before after, inv_on db work ->
+    Forall2 (cell_rel (same (view db))) before after ->
+    map (canon db) after = after -> map (canon db) before = after.
+  Proof.
+    intros db work before after Hinv Hrelated. induction Hrelated as
+      [| c d before after Hcell Htail IH]; intro Hfixed.
+    - reflexivity.
+    - cbn [map] in Hfixed |- *. injection Hfixed as Hhead Hrest. f_equal.
+      + exact (related_cell_canonical db work c d Hinv Hcell Hhead).
+      + exact (IH Hrest).
+  Qed.
+
+  (** Canonical stored rows are unchanged by key and output normalization. *)
+  Lemma canonical_row_identity : forall db f k o, canonical db -> row (view db) f k o ->
+    map (canon db) k = k /\ option_map (canon db) o = o.
+  Proof.
+    intros db f k o Hcanonical Hrow.
+    assert (Hcells : forall c, In c (k ++ option_list o) -> canon db c = c).
+    { intros [i | v] Hin; cbn [canon]; [| reflexivity]. f_equal.
+      exact (Hcanonical f k o Hrow i Hin). }
+    split.
+    - transitivity (map (fun c => c) k).
+      + apply map_ext_in. intros c Hin. apply Hcells. apply in_or_app. now left.
+      + apply map_id.
+    - destruct o as [c |]; [| reflexivity]. cbn [option_map]. f_equal.
+      apply Hcells. apply in_or_app. right. now left.
+  Qed.
+
+  (** Normalizing an optional output twice has the same result as normalizing it once. *)
+  Lemma canon_output_idempotent : forall db work o, inv_on db work ->
+    option_map (canon db) (option_map (canon db) o) = option_map (canon db) o.
+  Proof.
+    intros db work [[i | v] |] Hinv; cbn [option_map canon]; try reflexivity.
+    now rewrite (inv_on_repr_idem db work i Hinv).
+  Qed.
+
+  (** Combining another output retains a canonical accumulator or produces a value cell. *)
+  Lemma combine_output_fixed : forall db f acc next,
+    option_map (canon db) acc = acc ->
+    option_map (canon db) (combine db f (Some acc) next) = combine db f (Some acc) next.
+  Proof.
+    intros db f acc next Hfixed. unfold combine.
+    destruct acc as [[i | v] |]; destruct next as [[j | w] |];
+      destruct (kind (view db) f) as [[| |m] |];
+      cbn [option_map canon] in *; try exact Hfixed; reflexivity.
+  Qed.
+
+  (** Merging a group produces an output already fixed by canonicalization. *)
+  Lemma merged_output_fixed : forall db work f os, inv_on db work ->
+    option_map (canon db) (merged db f os) = merged db f os.
+  Proof.
+    intros db work f os Hinv.
+    assert (Hfold : forall rest acc, option_map (canon db) acc = acc ->
+      option_map (canon db)
+        (fold_left (fun current next => combine db f (Some current) next) rest acc) =
+      fold_left (fun current next => combine db f (Some current) next) rest acc).
+    { intro rest. induction rest as [| next rest IH]; intros acc Hfixed; cbn [fold_left].
+      - exact Hfixed.
+      - apply IH. now apply combine_output_fixed. }
+    destruct os as [| first rest]; [reflexivity |]. unfold merged. cbn [map].
+    apply Hfold. exact (canon_output_idempotent db work first Hinv).
+  Qed.
+
+  (** Equivalent canonical outputs are equal under the active representative agreement. *)
+  Lemma output_equiv_fixed_equal : forall db work a b, inv_on db work ->
+    option_map (canon db) a = a -> option_map (canon db) b = b ->
+    output_equiv db a b -> a = b.
+  Proof.
+    intros db work [c |] [d |] Hinv Hleft Hright Hrelated;
+      cbn [output_equiv] in Hrelated; try contradiction; [| reflexivity].
+    cbn [option_map] in Hleft, Hright. injection Hleft as Hleft_cell.
+    injection Hright as Hright_cell. f_equal. transitivity (canon db c).
+    - symmetry. exact Hleft_cell.
+    - exact (related_cell_canonical db work c d Hinv Hrelated Hright_cell).
+  Qed.
+
   (** Stopped lineage gives the exact public output equation for each original group. *)
   Lemma F22_lineage_done : forall initial s r, inv initial -> state_inv s ->
     rstep s = inr r -> lineage initial r ->
@@ -8621,7 +8708,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exists srcs, srcs <> [] /\
       Forall (fun ko => row (view initial) f (fst ko) (snd ko) /\
         map (canon r) (fst ko) = k) srcs /\ o = merged r f (map snd srcs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros initial s r _ Hstate Hstop Hlineage f k o Hrow.
+    destruct (F13_rstep_done s r Hstate Hstop) as (_ & _ & Hinv & Hcanonical & _).
+    destruct (Hlineage f k o Hrow) as [srcs [Hnonempty [Hsources Houtput]]].
+    destruct (canonical_row_identity r f k o Hcanonical Hrow) as [Hkey Hout].
+    exists srcs. split; [exact Hnonempty |]. split.
+    - rewrite Forall_forall in Hsources |- *. intros [args output] Hin.
+      destruct (Hsources (args, output) Hin) as [Hsource Hrelated].
+      cbn [fst snd] in Hsource, Hrelated |- *. split; [exact Hsource |].
+      exact (related_key_canonical r [] args k Hinv Hrelated Hkey).
+    - eapply (output_equiv_fixed_equal r []); [exact Hinv | exact Hout | | exact Houtput].
+      exact (merged_output_fixed r [] f (map snd srcs) Hinv).
+  Qed.
 
 
   (** Insertion changes its forest only by the single optional output-conflict union. *)
