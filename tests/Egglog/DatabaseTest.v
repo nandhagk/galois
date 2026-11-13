@@ -112,7 +112,7 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
-(** One active repair adds a fresh occurrence while consuming its scheduled entry. *)
+(** One active repair consumes its entry while retaining the historical occurrence count. *)
 Definition one_repair_queued :=
   let empty := FixtureDatabase.init [Decl 2%positive [SId] ORel] [] in
   let first := snd (FixtureDatabase.make 9%positive [] empty) in
@@ -120,7 +120,7 @@ Definition one_repair_queued :=
   let stored := FixtureDatabase.put 2%positive [Id 2%positive] None second in
   FixtureDatabase.union 1%positive 2%positive stored.
 
-Example one_repair_inventory_growth :
+Example one_repair_inventory_stable :
   match FixtureDatabase.db_rstep (one_repair_queued, []) with
   | inr _ => False
   | inl (popped, work) =>
@@ -135,7 +135,7 @@ Example one_repair_inventory_growth :
         UnionFind.size_of (db_forest repaired) 1%positive,
         FixtureDatabase.row_get 2%positive [Id 1%positive] repaired) =
       (0%N, 1, 1%N, Some None, 1%positive,
-        0%N, 0, 2%N, 2, 2, Some None)
+        0%N, 0, 1%N, 2, 2, Some None)
     end
   end.
 Proof.

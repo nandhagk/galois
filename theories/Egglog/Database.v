@@ -1953,7 +1953,17 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       let ck := normal_key db k in
       let co := option_map (normal_cell db) o in
       if andb (Pos.eqb (db_tuple_code ck) (db_tuple_code k)) (output_eqb co o)
-      then db else put f ck co (row_delete f k db)
+      then db else
+        let updated := put f ck co (row_delete f k db) in
+        let store := db_row_store updated in
+        database_set_nuses (db_nuses db)
+          (database_set_row_store
+            {| row_history := row_history store;
+               row_links := row_links store;
+               row_weights := row_weights store;
+               row_keys := row_keys store;
+               row_fresh := row_fresh store;
+               row_uses := row_uses (db_row_store db) |} updated)
     end.
 
   (** An active historical key resolves before its current row is repaired. *)
@@ -8938,6 +8948,143 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply wmark_put.
   Qed.
 
+  Lemma register_row_uses_counters_incl : forall f k o db,
+    incl (db_index_counters db) (db_index_counters (register_row_uses f k o db)).
+  Proof.
+    intros f k o db p Hin. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_index_counters]; [exact Hin | now right].
+  Qed.
+
+  Lemma row_replace_counters_incl : forall f k previous o db,
+    incl (db_index_counters db) (db_index_counters (row_replace f k previous o db)).
+  Proof.
+    intros f k [before |] o db; unfold row_replace.
+    - eapply incl_tran with (m := db_index_counters
+        (slots_update false f (k ++ option_list before) db)).
+      + apply slots_update_counters_incl.
+      +
+      eapply incl_tran with (m := db_index_counters
+        (row_write f k o (slots_update true f (k ++ option_list o)
+          (slots_update false f (k ++ option_list before) db)))).
+        * change (incl (db_index_counters (slots_update false f
+          (k ++ option_list before) db))
+          (db_index_counters (slots_update true f (k ++ option_list o)
+            (slots_update false f (k ++ option_list before) db)))).
+          apply slots_update_counters_incl.
+        * apply register_row_uses_counters_incl.
+    - eapply incl_tran with (m := db_index_counters
+        (row_write f k o (slots_update true f (k ++ option_list o) db))).
+      + change (incl (db_index_counters db)
+          (db_index_counters (slots_update true f (k ++ option_list o) db))).
+        apply slots_update_counters_incl.
+      + apply register_row_uses_counters_incl.
+  Qed.
+
+  Lemma row_delete_counters_incl : forall f k db,
+    incl (db_index_counters db) (db_index_counters (row_delete f k db)).
+  Proof.
+    intros f k db. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| apply incl_refl].
+    change (incl (db_index_counters db)
+      (db_index_counters (slots_update false f (k ++ option_list before) db))).
+    apply slots_update_counters_incl.
+  Qed.
+
+  Lemma put_counters_incl : forall f k o db,
+    incl (db_index_counters db) (db_index_counters (put f k o db)).
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : db_index_counters next = db_index_counters db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[pair |] forest]; [destruct pair |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + now rewrite Hnext.
+      + rewrite <- Hnext. apply row_replace_counters_incl.
+    - rewrite <- Hnext. apply row_replace_counters_incl.
+  Qed.
+
+  Lemma row_replace_written_incl : forall f k previous o db,
+    incl (db_written_cells db) (db_written_cells (row_replace f k previous o db)).
+  Proof.
+    intros f k [before |] o db c Hin; rewrite row_replace_written;
+      apply in_or_app; right; [apply in_or_app; now right | exact Hin].
+  Qed.
+
+  Lemma put_written_incl : forall f k o db,
+    incl (db_written_cells db) (db_written_cells (put f k o db)).
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : db_written_cells next = db_written_cells db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[pair |] forest]; [destruct pair |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + now rewrite Hnext.
+      + rewrite <- Hnext. apply row_replace_written_incl.
+    - rewrite <- Hnext. apply row_replace_written_incl.
+  Qed.
+
+  Lemma row_replace_decl_names : forall f k previous o db,
+    decl_names (row_replace f k previous o db) = decl_names db.
+  Proof.
+    intros f k previous o db. unfold decl_names.
+    apply (row_replace_preserves (list positive)
+      (fun state => map fst (PTrieCode.elements (runtime_kinds state)))); reflexivity.
+  Qed.
+
+  Lemma row_delete_decl_names : forall f k db,
+    decl_names (row_delete f k db) = decl_names db.
+  Proof.
+    intros f k db. unfold decl_names.
+    apply (row_delete_preserves (list positive)
+      (fun state => map fst (PTrieCode.elements (runtime_kinds state)))); reflexivity.
+  Qed.
+
+  Lemma put_decl_names : forall f k o db, decl_names (put f k o db) = decl_names db.
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : decl_names next = decl_names db).
+    { unfold next, decl_names. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[pair |] forest]; [destruct pair |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + exact Hnext.
+      + rewrite row_replace_decl_names. exact Hnext.
+    - rewrite row_replace_decl_names. exact Hnext.
+  Qed.
+
+  Lemma row_delete_nuses : forall f k db, db_nuses (row_delete f k db) = db_nuses db.
+  Proof.
+    intros f k db. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| reflexivity].
+    change (db_nuses (slots_update false f (k ++ option_list before) db) = db_nuses db).
+    apply slots_update_nuses.
+  Qed.
+
   (** Every fresh constructor branch combines increasing allocation with optional row recording. *)
   Lemma unit_make_fresh_monotone : forall f k previous db,
     let i := N.succ_pos (ids db) in
@@ -9346,7 +9493,37 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (row_get f k db) as [o |]; [| reflexivity].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
-    eapply Nat.le_trans; [apply unit_row_delete_monotone | apply unit_put_monotone].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k) (option_map (normal_cell db) o) deleted).
+    set (store := db_row_store updated).
+    set (restored := database_set_nuses (db_nuses db)
+      (database_set_row_store
+        {| row_history := row_history store; row_links := row_links store;
+           row_weights := row_weights store; row_keys := row_keys store;
+           row_fresh := row_fresh store; row_uses := row_uses (db_row_store db) |}
+        updated)).
+    change (unit db <= unit restored).
+    eapply Nat.le_trans with (m := unit deleted).
+    - unfold deleted. apply unit_row_delete_monotone.
+    - apply unit_monotone.
+      + change (ids deleted <= ids updated)%N.
+        destruct (put_layout_raw deleted f (normal_key db k)
+          (option_map (normal_cell db) o)) as [_ [_ Hids]].
+        unfold updated. rewrite Hids. reflexivity.
+      + apply wmark_monotone.
+        * change (ids deleted <= ids updated)%N.
+          destruct (put_layout_raw deleted f (normal_key db k)
+            (option_map (normal_cell db) o)) as [_ [_ Hids]].
+          unfold updated. rewrite Hids. reflexivity.
+        * change (db_nuses deleted <= db_nuses db)%N.
+          unfold deleted. rewrite row_delete_nuses. reflexivity.
+        * change (decl_names restored = decl_names deleted).
+          change (decl_names updated = decl_names deleted).
+          apply put_decl_names.
+        * change (incl (db_index_counters deleted) (db_index_counters updated)).
+          apply put_counters_incl.
+        * change (incl (db_written_cells deleted) (db_written_cells updated)).
+          apply put_written_incl.
   Qed.
 
   Lemma move_row_identity_unit : forall f old current db,
@@ -11761,6 +11938,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (row_get f k db) as [o |]; [| left; reflexivity].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) o) o)); [left; reflexivity |].
+    cbn [database_set_nuses database_set_row_store db_forest].
     destruct (put_forest_effect f (normal_key db k) (option_map (normal_cell db) o)
       (row_delete f k db)) as [Hsame | [i [j Hunion]]].
     - left. now rewrite Hsame, row_delete_forest.
