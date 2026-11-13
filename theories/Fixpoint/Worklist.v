@@ -295,6 +295,9 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   TimeFun step.
   TimeFun run.
 
+  (** Use the proved loop equations without expanding its accessibility proof. *)
+  Local Opaque loopN.
+
   Definition C (p : S.prog) : nat := length (S.rows p).
   Definition D (p : S.prog) : nat := fold_right Nat.add 0
     (List.map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
@@ -2178,9 +2181,170 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     intros p pol s x a Hwf Hprio Hinv Ha Hkey.
     now apply update_invariant.
   Qed.
+  (** An update covers the supplied contribution. *)
+  Lemma look_update_covers : forall p pol s x a,
+    L.leb a (look (update_one p pol s (x, a)) x) = true.
+  Proof.
+    intros p pol s x a; rewrite <- raw_value_look, raw_value_update_same.
+    apply (proj2 (P.update_ub _ _ _ _ _)).
+  Qed.
+
+  (** Every lookup grows monotonically while contributions are processed. *)
+  Lemma look_update_mono : forall p pol s x a y,
+    L.leb (look s y) (look (update_one p pol s (x, a)) y) = true.
+  Proof.
+    intros p pol s x a y; rewrite <- !raw_value_look.
+    destruct (Pos.eq_dec (S.key_code y) (S.key_code x)) as [Heq|Hneq].
+    - rewrite Heq, raw_value_update_same, raw_value_look.
+      apply (proj1 (P.update_ub _ _ _ _ _)).
+    - rewrite raw_value_update_other by exact Hneq; apply L.leb_refl.
+  Qed.
+
+  Lemma look_fold_mono : forall p pol outs s x,
+    L.leb (look s x) (look (fold_left (update_one p pol) outs s) x) = true.
+  Proof.
+    intros p pol outs; induction outs as [|[y a] outs IH]; intros s x.
+    - apply L.leb_refl.
+    - cbn [fold_left]; eapply L.leb_trans; [apply look_update_mono|apply IH].
+  Qed.
+
+  (** The final store covers every output occurrence, including repeated keys. *)
+  Lemma fold_outputs_cover : forall p pol outs s x a, In (x, a) outs ->
+    L.leb a (look (fold_left (update_one p pol) outs s) x) = true.
+  Proof.
+    intros p pol outs; induction outs as [|[y b] outs IH]; intros s x a Hin.
+    - contradiction.
+    - cbn [fold_left]; destruct Hin as [Heq|Hin].
+      + inversion Heq; subst; eapply L.leb_trans.
+        * apply look_update_covers.
+        * apply look_fold_mono.
+      + now apply IH.
+  Qed.
+
+  (** Increasing lookups preserves acceptance of a fixed row result. *)
+  Lemma row_ok_lookup_mono : forall (before after : S.key -> L.t) target out,
+    (forall x, L.leb (before x) (after x) = true) ->
+    row_ok L.leb before target out = true -> row_ok L.leb after target out = true.
+  Proof.
+    intros before after target [[a ss]|] Hmono Hrow; [|discriminate].
+    cbn [row_ok] in Hrow |- *; apply andb_true_iff in Hrow as [Hmain Hsides].
+    apply andb_true_iff; split.
+    - eapply L.leb_trans; [exact Hmain|apply Hmono].
+    - apply forallb_forall; intros [x b] Hin; cbn [fst snd].
+      eapply L.leb_trans; [|apply Hmono].
+      apply (proj1 (forallb_forall _ _) Hsides (x, b) Hin).
+  Qed.
+
+  (** An absent reader cannot have been live before a contribution. *)
+  Lemma update_outside_before : forall p pol s x a id,
+    Q.prio (ws_queue (update_one p pol s (x, a))) id = None ->
+    Q.prio (ws_queue s) id = None.
+  Proof.
+    intros p pol s x a id Hnone.
+    destruct (Q.prio (ws_queue s) id) as [pr|] eqn:Hprio; [|reflexivity].
+    destruct (update_queue_retains p pol s x a id pr Hprio) as [next Hnext]; congruence.
+  Qed.
+
+  (** Every declared dependency of an absent reader retains its old value. *)
+  Lemma update_outside_reads : forall p pol s x a id r,
+    prepared p pol s -> source_row p id = Some r ->
+    Q.prio (ws_queue (update_one p pol s (x, a))) id = None ->
+    forall y, In y (S.deps p r) ->
+      look (update_one p pol s (x, a)) y = look s y.
+  Proof.
+    intros p pol s x a id r Hprepared Hsource Hnone y Hy.
+    destruct (L.leb a (look s x)) eqn:Hstrict.
+    - rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstrict.
+    - assert (Hneq : S.key_code y <> S.key_code x).
+      { intro Heq.
+        assert (Hreader : In id (readers s (S.key_code x))).
+        { rewrite (proj2 (proj1 Hprepared)); apply source_readers_spec.
+          exists r, y; split; [exact Hsource|]; split; [exact Hy|exact Heq]. }
+        destruct (update_reader_live p pol s x a id Hprepared Hstrict Hreader)
+          as [pr Hprio]; congruence. }
+      rewrite <- !raw_value_look; now rewrite raw_value_update_other.
+  Qed.
+
+  (** A reader absent after a fold was absent throughout, with unchanged dependencies. *)
+  Lemma fold_outside_reads : forall p pol outs s id r,
+    prepared p pol s -> source_row p id = Some r ->
+    Q.prio (ws_queue (fold_left (update_one p pol) outs s)) id = None ->
+    Q.prio (ws_queue s) id = None /\
+    (forall y, In y (S.deps p r) ->
+      look (fold_left (update_one p pol) outs s) y = look s y).
+  Proof.
+    intros p pol outs; induction outs as [|[x a] outs IH]; intros s id r Hp Hr Hnone.
+    - split; [exact Hnone|intros; reflexivity].
+    - cbn [fold_left] in Hnone |- *.
+      destruct (IH (update_one p pol s (x, a)) id r
+        (F6_prepared p pol s (x, a) Hp) Hr Hnone) as [Hbefore Hreads].
+      split.
+      + eapply update_outside_before; exact Hbefore.
+      + intros y Hy; rewrite (Hreads y Hy).
+        eapply update_outside_reads; eassumption.
+  Qed.
+
+  (** A continuing callback establishes acceptance of every row left outside its queue. *)
+  Lemma accepted_step : forall p pol s s1, S.wf p -> prepared p pol s ->
+    accepted p s -> step p pol s = inl s1 -> accepted p s1.
+  Proof.
+    intros p pol s s1 Hwf Hprepared Haccepted Hstep.
+    unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr popped] q]|] eqn:Hpop; [|discriminate].
+    destruct (row_at s popped) as [producer|] eqn:Hrow; [|discriminate].
+    destruct (eval_row p producer (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    intros id r Hsource Hnone.
+    pose proof (F7_pop_prepared p pol s pr popped q Hprepared Hpop) as Hafter.
+    destruct (fold_outside_reads p pol ((S.target p producer, a) :: ss)
+      (after_pop p s popped q) id r Hafter Hsource Hnone) as [Hbefore Hreads].
+    assert (Hr : In r (S.rows p)) by exact (proj2 (source_row_member p id r Hsource)).
+    assert (Hequal : S.eval p r
+      (look (fold_left (update_one p pol) ((S.target p producer, a) :: ss)
+        (after_pop p s popped q))) = S.eval p r (look s)).
+    { apply S.reads_within; [exact Hwf|exact Hr|].
+      intros y Hy; exact (Hreads y Hy). }
+    change (row_ok L.leb
+      (look (fold_left (update_one p pol) ((S.target p producer, a) :: ss)
+        (after_pop p s popped q))) (S.target p r)
+      (S.eval p r (look (fold_left (update_one p pol) ((S.target p producer, a) :: ss)
+        (after_pop p s popped q)))) = true).
+    rewrite Hequal.
+    destruct (Pos.eq_dec id popped) as [->|Hother].
+    - rewrite (proj1 (proj1 Hprepared)), Hsource in Hrow; injection Hrow as <-.
+      change (S.eval p r (look s) = Some (a, ss)) in Heval; rewrite Heval.
+      cbn [row_ok]; apply andb_true_iff; split.
+      + apply (fold_outputs_cover p pol ((S.target p r, a) :: ss)
+          (after_pop p s popped q) (S.target p r) a); now left.
+      + apply forallb_forall; intros [x b] Hin; cbn [fst snd].
+        apply (fold_outputs_cover p pol ((S.target p r, a) :: ss)
+          (after_pop p s popped q) x b); now right.
+    - destruct (Q.pop_min _ _ _ _ (proj1 (proj2 (proj2 Hprepared))) Hpop)
+        as [Hlive [Hmin [Hgone Hrest]]].
+      change (Q.prio q id = None) in Hbefore; rewrite Hrest in Hbefore by exact Hother.
+      eapply row_ok_lookup_mono; [|exact (Haccepted id r Hsource Hbefore)].
+      intro x; apply (look_fold_mono p pol ((S.target p producer, a) :: ss)
+        (after_pop p s popped q) x).
+  Qed.
+
   (** Reachable states satisfy every row outside their queue. *)
   Lemma F9_accepted : forall p pol s, S.wf p -> reachable p pol s -> accepted p s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s Hwf [xs Hpath].
+    assert (Hinitial : accepted p (prepare p pol)).
+    { intros id r Hsource Hnone.
+      destruct (prepare_queued p pol id (proj1 (source_row_member p id r Hsource)))
+        as [pr Hprio]; congruence. }
+    assert (Hpres : forall start ys last,
+      wl_path (step p pol) start ys last -> prepared p pol start ->
+      accepted p start -> accepted p last).
+    { intros start ys last Hys; induction Hys as [st|st st1 zs final Hstep Hys IH];
+        intros Hp Ha; [exact Ha|].
+      apply IH.
+      - exact (proj1 (F7_prepared p pol st st1 Hp Hstep)).
+      - eapply accepted_step; eassumption. }
+    eapply Hpres; [exact Hpath|apply F4_metadata|exact Hinitial].
+  Qed.
 
 
 
@@ -3960,12 +4124,161 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
 
   (** * Driver outcomes and global bounds *)
 
+  (** A solved callback exposes its exact store and an empty live queue. *)
+  Lemma step_solved_queue : forall p pol s m,
+    step p pol s = inr (Solved m) -> Q.pop (ws_queue s) = None /\ m = ws_store s.
+  Proof.
+    intros p pol s m Hstep; unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop.
+    - destruct (row_at s id) as [r|]; [|discriminate].
+      destruct (eval_row p r (ws_store s)) as [[a ss]|]; discriminate.
+    - injection Hstep as <-; now split.
+  Qed.
+
+  (** A legal reachable state can stop only by solving its empty queue. *)
+  Lemma step_stop_solved : forall p pol s result,
+    S.wf p -> invariant p pol s -> step p pol s = inr result ->
+    result = Solved (ws_store s) /\ Q.pop (ws_queue s) = None.
+  Proof.
+    intros p pol s result Hwf [Hstruct [Hvalues Hprepared]] Hstep.
+    pose proof Hstruct as [Hqueue [Hfits [Hpending [Hcount Hsupport]]]].
+    unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q]|] eqn:Hpop.
+    - pose proof (proj1 (Q.pop_min _ _ _ _ Hqueue Hpop)) as Hlive.
+      destruct (Hsupport pr id Hlive) as [Hin [r [Hsource Hrank]]].
+      rewrite (proj1 (proj1 Hprepared)), Hsource in Hstep.
+      destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [discriminate|].
+      exfalso; eapply S.eval_total; [exact Hwf|exact (proj2 (source_row_member p id r Hsource))|].
+      exact Heval.
+    - injection Hstep as <-; now split.
+  Qed.
+
+  (** Empty programs prepare the actual empty queue. *)
+  Lemma prepare_empty_queue : forall p pol, C p = 0 -> ws_queue (prepare p pol) = Q.empty.
+  Proof.
+    intros p pol Hempty.
+    assert (Hrows : S.rows p = []) by (apply length_zero_iff_nil; exact Hempty).
+    unfold prepare, row_ids; rewrite Hrows; reflexivity.
+  Qed.
+
+  Lemma prepare_empty_step : forall p pol, C p = 0 ->
+    step p pol (prepare p pol) = inr (Solved (ws_store (prepare p pol))).
+  Proof.
+    intros p pol Hempty; unfold step; rewrite prepare_empty_queue by exact Hempty.
+    rewrite (proj2 (Q.pop_none Q.empty Q.wf_empty) Q.prio_empty); reflexivity.
+  Qed.
+
+  (** An empty program has no continuing path and retains its initial state. *)
+  Lemma reachable_empty : forall p pol s, C p = 0 -> reachable p pol s -> s = prepare p pol.
+  Proof.
+    intros p pol s Hempty [xs Hpath]; inversion Hpath; subst; [reflexivity|].
+    pose proof (prepare_empty_step p pol Hempty); congruence.
+  Qed.
+
+  (** Solved public outcomes expose a reachable final callback. *)
+  Lemma run_solved_path : forall p pol fuel m, run p pol fuel = Solved m ->
+    exists s, reachable p pol s /\ step p pol s = inr (Solved m).
+  Proof.
+    intros p pol fuel m Hrun; unfold run in Hrun; rewrite loopN_fuel in Hrun.
+    destruct (loop_fuel (step p pol) (N.to_nat fuel) (prepare p pol))
+      as [s|result] eqn:Hloop; [discriminate|].
+    subst result.
+    destruct (loop_fuel_stop_path (step p pol) (N.to_nat fuel) (prepare p pol)
+      (Solved m) Hloop) as [xs [last [Hpath [Hstop Hlength]]]].
+    exists last; split; [now exists xs|exact Hstop].
+  Qed.
+
+  (** The stopping branch performs only a pop and constant field access. *)
+  Lemma T_step_empty : forall p pol s, Q.pop (ws_queue s) = None ->
+    (T_step p pol s = Q.T_pop (ws_queue s) + 3)%N.
+  Proof.
+    intros p pol s Hempty; unfold T_step; rewrite Hempty; time_simpl; time_cbn; ring.
+  Qed.
+
+  (** Width zero gives an input-independent cost for the actual empty queue. *)
+  Lemma T_pop_empty_le : (Q.T_pop Q.empty <= Q.c_pq)%N.
+  Proof.
+    assert (Hpop : Q.pop Q.empty = None).
+    { apply (proj2 (Q.pop_none Q.empty Q.wf_empty)); apply Q.prio_empty. }
+    pose proof (Q.T_pop_amort 1 0 Q.empty Q.wf_empty (Q.fits_empty 0)
+      ltac:(rewrite Q.pending_empty; lia)) as Hcost.
+    rewrite Hpop, Q.phi_empty in Hcost.
+    change (Q.T_pop Q.empty + 0 <= Q.c_pq * 1 + 0)%N in Hcost; lia.
+  Qed.
+
+  (** The final callback has a bound independent of the public loop constant. *)
+  Lemma T_stop_budget : forall p pol s result, S.wf p -> prio_ok p pol ->
+    reachable p pol s -> step p pol s = inr result ->
+    (T_step p pol s + c_loopN <=
+      (2 * Q.c_pq + c_loopN + 3) * (N.of_nat (C p) * unit p + 1) + queue_phi p s)%N.
+  Proof.
+    intros p pol s result Hwf Hprio Hreachable Hstop.
+    pose proof (reachable_invariant p pol s Hwf Hprio Hreachable) as Hinv.
+    destruct (step_stop_solved p pol s result Hwf Hinv Hstop) as [Hresult Hempty].
+    rewrite (T_step_empty p pol s Hempty).
+    destruct (Nat.eq_dec (C p) 0) as [Hzero|Hpositive].
+    - rewrite (reachable_empty p pol s Hzero Hreachable),
+        (prepare_empty_queue p pol Hzero).
+      pose proof T_pop_empty_le; lia.
+    - pose proof (T_queue_pop_bound p pol s (proj1 Hinv)) as Hpop.
+      rewrite Hempty in Hpop.
+      assert (Hcount : (1 <= N.of_nat (C p))%N) by lia.
+      nia.
+  Qed.
+
+  (** The public wrapper adds only constant work to preparation and its binary loop. *)
+  Lemma T_run_additive : forall p pol fuel,
+    (T_run p pol fuel <= T_prepare p pol +
+      T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) + 2)%N.
+  Proof.
+    intros p pol fuel; unfold T_run.
+    change (fun st => T_step p pol st) with (T_step p pol).
+    destruct (loopN (step p pol) fuel (prepare p pol)); time_simpl; time_cbn; lia.
+  Qed.
+
+  (** Any reachable-state credit can pay the binary driver with a separate stop reserve. *)
+  Lemma T_run_credit : forall p pol fuel (Phi : state -> N) stop,
+    (forall s s1, reachable p pol s -> step p pol s = inl s1 ->
+      (T_step p pol s + c_loopN + Phi s1 <= Phi s)%N) ->
+    (forall s result, reachable p pol s -> step p pol s = inr result ->
+      (T_step p pol s + c_loopN <= Phi s + stop)%N) ->
+    (T_run p pol fuel <= T_prepare p pol + Phi (prepare p pol) + stop +
+      c_loopN * N.of_nat (N.size_nat fuel + 1) + 2)%N.
+  Proof.
+    intros p pol fuel Phi stop Hcontinue Hstop.
+    pose proof (T_loopN_amort state (outcome (kmap S.key L.t))
+      (step p pol) (T_step p pol) (reachable p pol)
+      (fun s => (Phi s + stop)%N) (fun _ => 0%N) fuel (prepare p pol)) as Hloop.
+    assert (Hgo : forall s s1, reachable p pol s -> step p pol s = inl s1 ->
+      reachable p pol s1 /\
+      (T_step p pol s + c_loopN + (Phi s1 + stop) <= Phi s + stop)%N).
+    { intros s s1 Hreachable Hstep; split.
+      - eapply reachable_step; eassumption.
+      - pose proof (Hcontinue s s1 Hreachable Hstep); lia. }
+    assert (Hdone : forall s result, reachable p pol s -> step p pol s = inr result ->
+      (T_step p pol s + c_loopN + 0 <= Phi s + stop)%N).
+    { intros s result Hreachable Hstep; pose proof (Hstop s result Hreachable Hstep); lia. }
+    assert (Hinitial : reachable p pol (prepare p pol)) by (exists []; constructor).
+    specialize (Hloop Hgo Hdone Hinitial).
+    destruct (loopN (step p pol) fuel (prepare p pol)); cbn beta iota in Hloop;
+      pose proof (T_run_additive p pol fuel); lia.
+  Qed.
+
   (** Stopping callbacks must solve and must fit the final driver budget. *)
   Lemma W7_stop : forall p pol s result, S.wf p -> prio_ok p pol -> reachable p pol s ->
     step p pol s = inr result ->
     (exists m, result = Solved m) /\
     (T_step p pol s <= k_loop * (N.of_nat (C p) * unit p + 1) + queue_phi p s)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol s result Hwf Hprio Hreachable Hstop.
+    pose proof (reachable_invariant p pol s Hwf Hprio Hreachable) as Hinv.
+    destruct (step_stop_solved p pol s result Hwf Hinv Hstop) as [Hresult Hempty].
+    split; [now exists (ws_store s)|].
+    pose proof (T_stop_budget p pol s result Hwf Hprio Hreachable Hstop) as Hcost.
+    assert (Hconstant : (2 * Q.c_pq + c_loopN + 3 <= k_loop)%N).
+    { unfold k_loop; nia. }
+    nia.
+  Qed.
   (** Binary fuel charges the loop from finite-prefix accounting and the final callback. *)
   Lemma W7_loop : forall p pol fuel, fits p pol ->
     (T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) <= k_loop *
@@ -3975,12 +4288,16 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Fuel is chosen from the row-visit budget and includes the final empty pop. *)
   Lemma W7_fuel : forall p pol,
     (fuel_for p pol = k_fuel * N.of_nat ((C p + D p) * rounds p pol + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
   (** W7 connects the derived solver time to preparation and the derived binary-loop time. *)
   Lemma W7_run : forall p pol fuel,
     (T_run p pol fuel <= k_loop * (T_prepare p pol +
       T_loopN (step p pol) (T_step p pol) fuel (prepare p pol) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel; pose proof (T_run_additive p pol fuel) as Hcost.
+    assert (Hconstant : (2 <= k_loop)%N) by (unfold k_loop; nia).
+    nia.
+  Qed.
   (** All-head credit decreases per callback without the stable-segment lemma. *)
   Lemma W7_all_heads_credit : forall p pol s s1, S.wf p -> prio_ok p pol -> all_heads p pol ->
     reachable p pol s -> step p pol s = inl s1 ->
@@ -3994,17 +4311,48 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
   (** Solved candidates satisfy every row. *)
   Lemma run_post : forall p pol fuel m, fits p pol -> run p pol fuel = Solved m ->
     S.post_solution p (look_or S.key_code L.bot m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel m [Hwf [Hcuts Hprio]] Hrun.
+    destruct (run_solved_path p pol fuel m Hrun) as [s [Hreachable Hstop]].
+    destruct (step_solved_queue p pol s m Hstop) as [Hempty ->].
+    pose proof (F9_reachable_prepared p pol s Hreachable) as Hprepared.
+    pose proof (proj1 (Q.pop_none (ws_queue s)
+      (proj1 (proj2 (proj2 Hprepared)))) Hempty) as Hnone.
+    intros r Hr; apply In_nth_error in Hr as [n Hnth].
+    eapply (F9_accepted p pol s Hwf Hreachable (Pos.of_succ_nat n) r).
+    - now rewrite F1_numbering.
+    - apply Hnone.
+  Qed.
   (** Solved candidates satisfy the client value budget. *)
   Lemma run_inv : forall p pol fuel m, S.wf p -> run p pol fuel = Solved m ->
     forall x, B.inv p (look_or S.key_code L.bot m x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel m Hwf Hrun x.
+    destruct (run_solved_path p pol fuel m Hrun) as [s [Hreachable Hstop]].
+    destruct (step_solved_queue p pol s m Hstop) as [Hempty ->].
+    eapply F9_reachable_inv; eassumption.
+  Qed.
   Lemma T_run_le : forall p pol fuel, fits p pol ->
     (T_run p pol fuel <= c_wl * (work p pol + N.of_nat (N.size_nat fuel) + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma run_enough : forall p pol fuel, fits p pol -> (fuel_for p pol <= fuel)%N ->
     exists m, run p pol fuel = Solved m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol fuel Hfits Hfuel; unfold run; rewrite loopN_fuel.
+    destruct (loop_fuel (step p pol) (N.to_nat fuel) (prepare p pol))
+      as [s|result] eqn:Hloop.
+    - destruct (loop_fuel_path (step p pol) (N.to_nat fuel) (prepare p pol) s Hloop)
+        as [xs [Hpath Hlength]].
+      pose proof (W7_visits p pol xs s Hfits Hpath) as Hbound.
+      rewrite Hlength, N2Nat.id in Hbound; unfold fuel_for in Hfuel; lia.
+    - destruct (loop_fuel_stop_path (step p pol) (N.to_nat fuel) (prepare p pol)
+        result Hloop) as [xs [last [Hpath [Hstop Hlength]]]].
+      destruct Hfits as [Hwf [Hcuts Hprio]].
+      assert (Hinv : invariant p pol last).
+      { apply reachable_invariant; [exact Hwf|exact Hprio|now exists xs]. }
+      destruct (step_stop_solved p pol last result Hwf Hinv Hstop) as [-> Hempty].
+      now exists (ws_store last).
+  Qed.
   Lemma T_run_height_le : forall p pol fuel (rk : L.t -> nat) h,
     S.wf p -> prio_ok p pol -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
