@@ -8,7 +8,7 @@ From Stdlib Require Import List Bool PArith NArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Code MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig.
+From Galois.Fixpoint Require Import Query SystemSig SolverSig CheckSig PolicySig Indexed.
 From Galois.Incremental Require Import RestrictSig Restrict IncrementalSig.
 
 Import List.ListNotations.
@@ -1198,11 +1198,493 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     (forall id ss, In (id, ss) (snapshots st) ->
     Pos.size_nat id <= kwidth st).
 
+  (** The independent representation fields determine mass and identifier widths. *)
+  Module Inventory := SourceBindingInventory L S Checker.
+
+  Module Core.
+    Definition state_core (st : state) : Prop :=
+      Inventory.canonical (inc_values st) /\
+      (forall id ss, snapshot_get id st = Some ss ->
+        id = S.key_code (snapshot_owner ss) /\
+        In (snapshot_owner ss) (snapshot_writes ss)) /\
+      (forall x id, In id (infl_at st x) ->
+        exists ss, snapshot_get id st = Some ss) /\
+      (forall id ss, snapshot_get id st = Some ss -> snapshot_live ss = true ->
+        forall x, In x (snapshot_writes ss) -> dom st x) /\
+      (forall x id, length (filter (Pos.eqb id) (cowrite_at st x)) =
+        match snapshot_get id st with
+        | Some ss => if snapshot_live ss
+            then length (filter (S.key_eqb x) (snapshot_writes ss)) else 0
+        | None => 0
+        end).
+
+    Lemma snapshot_get_elements : forall st id ss,
+      snapshot_get id st = Some ss <-> In (id, ss) (snapshots st).
+    Proof.
+      intros st id ss; unfold snapshot_get, snapshots; symmetry.
+      apply PTrie.elements_spec.
+    Qed.
+
+    Lemma snapshot_ids_nodup : forall st, NoDup (map fst (snapshots st)).
+    Proof.
+      intro st; unfold snapshots; apply PTrie.elements_nodup.
+    Qed.
+
+    (** The public occurrence fold selects one unique snapshot. *)
+    Lemma snapshot_count_lookup : forall st x id,
+      fold_right (fun iss n =>
+        if (Pos.eqb id (fst iss) && snapshot_live (snd iss))%bool then
+          length (filter (S.key_eqb x) (snapshot_writes (snd iss))) + n else n)
+        0 (snapshots st) =
+      match snapshot_get id st with
+      | Some ss => if snapshot_live ss
+          then length (filter (S.key_eqb x) (snapshot_writes ss)) else 0
+      | None => 0
+      end.
+    Proof.
+      intros st x id; rewrite finite_fold_choice.
+      unfold snapshot_get, snapshots.
+      rewrite <- (trie_selected_sum _ (inc_snapshots st) id
+        (fun ss => if snapshot_live ss
+          then length (filter (S.key_eqb x) (snapshot_writes ss)) else 0)).
+      apply finite_sum_ext; intros [q ss] Hin; cbn [fst snd].
+      destruct (Pos.eqb id q), (snapshot_live ss); reflexivity.
+    Qed.
+
+    Lemma state_ok_core : forall st, state_ok st -> state_core st.
+    Proof.
+      intros st [Hstored [Hnodup [Howner [Hrefs [Hlive [Hcounts [Hmass Hwidth]]]]]]].
+      split; [apply Inventory.canonical_of_inventory; assumption|].
+      split.
+      - intros id ss Hget; apply Howner; now apply snapshot_get_elements.
+      - split.
+        + intros x id Hin; destruct (Hrefs x id Hin) as [ss Hss].
+          exists ss; now apply snapshot_get_elements.
+        + split.
+          * intros id ss Hget; apply Hlive with (id := id).
+            now apply snapshot_get_elements.
+          * intros x id; rewrite Hcounts; apply snapshot_count_lookup.
+    Qed.
+
+    (** Exact occurrence counts imply that every co-write identifier resolves. *)
+    Lemma core_cowrite_ids : forall st, state_core st -> forall x,
+      incl (cowrite_at st x) (map fst (snapshots st)).
+    Proof.
+      intros st [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]] x id Hin.
+      destruct (snapshot_get id st) as [ss|] eqn:Hget.
+      - apply in_map_iff; exists (id, ss); split; [reflexivity|].
+        now apply snapshot_get_elements.
+      - pose proof (Hcounts x id) as Hzero; rewrite Hget in Hzero.
+        assert (Hfilter : In id (filter (Pos.eqb id) (cowrite_at st x))).
+        { apply filter_In; split; [exact Hin|apply Pos.eqb_refl]. }
+        apply length_zero_iff_nil in Hzero; rewrite Hzero in Hfilter; contradiction.
+    Qed.
+
+    (** The representation's mass equation follows by counting each occurrence once. *)
+    Lemma state_core_mass : forall st, state_core st ->
+      snapshot_mass st =
+        fold_right Nat.add 0 (map (fun x => length (cowrite_at st x)) (stored st)).
+    Proof.
+      intros st Hcore.
+      pose proof Hcore as [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]].
+      assert (Hbucket : forall x, length (cowrite_at st x) =
+        finite_sum (fun entry => if snapshot_live (snd entry)
+          then length (filter (S.key_eqb x) (snapshot_writes (snd entry))) else 0)
+          (snapshots st)).
+      { intro x.
+        rewrite <- (histogram_length Pos.eqb Pos.eqb_eq (map fst (snapshots st))
+          (cowrite_at st x) (snapshot_ids_nodup st) (core_cowrite_ids st Hcore x)).
+        change (finite_sum (fun id => length (filter (Pos.eqb id) (cowrite_at st x)))
+          (map fst (snapshots st)) =
+          finite_sum (fun entry => if snapshot_live (snd entry)
+            then length (filter (S.key_eqb x) (snapshot_writes (snd entry))) else 0)
+            (snapshots st)).
+        rewrite finite_sum_map; apply finite_sum_ext; intros [id ss] Hin; cbn [fst snd].
+        rewrite Hcounts, (proj2 (snapshot_get_elements st id ss) Hin); reflexivity. }
+      unfold snapshot_mass; rewrite finite_fold_choice; symmetry.
+      change (finite_sum (fun x => length (cowrite_at st x)) (stored st) =
+        finite_sum (fun entry => if snapshot_live (snd entry)
+          then length (snapshot_writes (snd entry)) else 0) (snapshots st)).
+      transitivity (finite_sum (fun x => finite_sum
+        (fun entry => if snapshot_live (snd entry)
+          then length (filter (S.key_eqb x) (snapshot_writes (snd entry))) else 0)
+        (snapshots st)) (stored st)).
+      - apply finite_sum_ext; intros x Hin; apply Hbucket.
+      - rewrite finite_sum_swap; apply finite_sum_ext; intros [id ss] Hin; cbn [fst snd].
+        destruct (snapshot_live ss) eqn:Hss.
+        + apply histogram_length; [exact Inventory.key_eqb_true| |].
+          * apply Inventory.raw_keys_nodup; exact Hcanonical.
+          * intros x Hx; apply (proj2 (Inventory.raw_keys_dom _ Hcanonical x)).
+            exact (Hlive id ss (proj2 (snapshot_get_elements st id ss) Hin) Hss x Hx).
+        + apply finite_sum_zero.
+    Qed.
+
+    (** Snapshot ownership places every identifier within the recorded key width. *)
+    Lemma state_core_width : forall st, state_core st -> forall id ss,
+      In (id, ss) (snapshots st) -> Pos.size_nat id <= kwidth st.
+    Proof.
+      intros st [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]] id ss Hin.
+      destruct (Howner id ss (proj2 (snapshot_get_elements st id ss) Hin)) as [Hid Hwrite].
+      rewrite Hid; change (S.key_bits (snapshot_owner ss) <= kwidth st).
+      unfold kwidth; apply finite_max_member; apply in_or_app; right.
+      unfold snapshot_keys; apply in_flat_map; exists (id, ss); auto.
+    Qed.
+
+    Lemma state_core_ok : forall st, state_core st -> state_ok st.
+    Proof.
+      intros st Hcore.
+      pose proof Hcore as [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]].
+      split; [intro x; apply Inventory.raw_keys_dom; exact Hcanonical|].
+      split; [apply Inventory.raw_keys_nodup; exact Hcanonical|].
+      split.
+      - intros id ss Hin; apply Howner; now apply snapshot_get_elements.
+      - split.
+        + intros x id Hin; destruct (Hrefs x id Hin) as [ss Hget].
+          exists ss; now apply snapshot_get_elements.
+        + split.
+          * intros id ss Hin; apply Hlive with (id := id).
+            now apply snapshot_get_elements.
+          * split.
+            -- intros x id; rewrite Hcounts, snapshot_count_lookup; reflexivity.
+            -- split; [now apply state_core_mass|now apply state_core_width].
+    Qed.
+
+    (** In particular, empty maps satisfy all independent fields. *)
+    Lemma state_core_init : state_core init.
+    Proof.
+      split; [apply Inventory.canonical_empty|].
+      split.
+      - intros id ss Hget; unfold snapshot_get, init in Hget; cbn [inc_snapshots] in Hget.
+        rewrite PTrie.get_empty in Hget; discriminate Hget.
+      - split.
+        + intros x id Hin; unfold infl_at, init in Hin; cbn [inc_influence] in Hin.
+          rewrite PTrie.get_empty in Hin; contradiction.
+        + split.
+          * intros id ss Hget; unfold snapshot_get, init in Hget;
+              cbn [inc_snapshots] in Hget.
+            rewrite PTrie.get_empty in Hget; discriminate Hget.
+          * intros x id; unfold cowrite_at, snapshot_get, init;
+              cbn [inc_cowrites inc_snapshots].
+            now rewrite !PTrie.get_empty.
+    Qed.
+  End Core.
+
+  Module Buckets.
+    Definition bucket_at (buckets : PTrieCode.t (list positive)) (x : S.key)
+        : list positive :=
+      match PTrieCode.get (S.key_code x) buckets with
+      | Some entries => entries
+      | None => []
+      end.
+
+    (** One push prepends its identifier exactly at the selected key. *)
+    Lemma push_entry_at : forall y id buckets x,
+      bucket_at (push_entry y id buckets) x =
+        if S.key_eqb x y then id :: bucket_at buckets x else bucket_at buckets x.
+    Proof.
+      intros y id buckets x; unfold push_entry, bucket_at.
+      destruct (S.key_eqb_spec x y) as [->|Hneq].
+      - rewrite PTrie.get_set_same; reflexivity.
+      - rewrite PTrie.get_set_other; [reflexivity|].
+        intro Heq; apply Hneq; now apply S.key_code_inj.
+    Qed.
+
+    (** A row's metadata update preserves the raw value map. *)
+    Lemma record_row_values : forall p r st,
+      inc_values (record_row p r st) = inc_values st.
+    Proof.
+      reflexivity.
+    Qed.
+
+    (** Recording any row list preserves the raw value map. *)
+    Lemma record_rows_values : forall p rs st,
+      inc_values (record_rows p rs st) = inc_values st.
+    Proof.
+      intros p rs; induction rs as [|r rest IH]; intro st; cbn [record_rows fold_left].
+      - reflexivity.
+      - change (inc_values (record_rows p rest (record_row p r st)) = inc_values st).
+        rewrite IH, record_row_values; reflexivity.
+    Qed.
+  End Buckets.
+
+  Module DemandState.
+    (** Prepending one identifier per listed key preserves exact occurrence counts. *)
+    Lemma push_entries_count : forall ys id buckets x q,
+      length (filter (Pos.eqb q) (Buckets.bucket_at
+        (fold_left (fun acc y => push_entry y id acc) ys buckets) x)) =
+      length (filter (Pos.eqb q) (Buckets.bucket_at buckets x)) +
+        if Pos.eqb q id then length (filter (S.key_eqb x) ys) else 0.
+    Proof.
+      induction ys as [|y rest IH]; intros id buckets x q.
+      - cbn [fold_left filter length]; destruct (Pos.eqb q id); lia.
+      - cbn [fold_left]; rewrite IH, Buckets.push_entry_at.
+        cbn [filter]; destruct (S.key_eqb x y); cbn [filter];
+          destruct (Pos.eqb q id); cbn [length]; lia.
+    Qed.
+
+    (** New bucket occurrences carry the recorded identifier; all others were already present. *)
+    Lemma push_entries_members : forall ys id buckets x q,
+      In q (Buckets.bucket_at
+        (fold_left (fun acc y => push_entry y id acc) ys buckets) x) ->
+      q = id \/ In q (Buckets.bucket_at buckets x).
+    Proof.
+      induction ys as [|y rest IH]; intros id buckets x q Hin.
+      - right; exact Hin.
+      - cbn [fold_left] in Hin; apply IH in Hin as [Heq|Hin]; [now left|].
+        rewrite Buckets.push_entry_at in Hin; destruct (S.key_eqb x y).
+        + destruct Hin as [Heq|Hin]; [left; now symmetry|now right].
+        + now right.
+    Qed.
+
+    (** An absent value cannot have a live co-write membership. *)
+    Lemma core_cowrite_absent : forall st x,
+      Core.state_core st -> value st x = None -> cowrite_at st x = [].
+    Proof.
+      intros st x [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]] Hnone.
+      destruct (cowrite_at st x) as [|id rest] eqn:Hbucket; [reflexivity|].
+      assert (Hpositive : 0 < length (filter (Pos.eqb id) (cowrite_at st x))).
+      { apply (proj2 (histogram_count_pos Pos.eqb Pos.eqb_eq id _)); rewrite Hbucket; now left. }
+      rewrite Hcounts in Hpositive.
+      destruct (snapshot_get id st) as [ss|] eqn:Hget; [|lia].
+      destruct (snapshot_live ss) eqn:Hss; [|lia].
+      apply (proj1 (histogram_count_pos S.key_eqb Inventory.key_eqb_true x _)) in Hpositive.
+      destruct (Hlive id ss Hget Hss x Hpositive) as [v Hvalue].
+      rewrite Hnone in Hvalue; discriminate Hvalue.
+    Qed.
+
+    (** This proof abbreviation is the existing preparation performed by finish_demand. *)
+    Definition prepared_state (st : state) xs m : state :=
+      clear_new_buckets xs (merge_discovered (normalize_values st) xs m).
+
+    Lemma prepared_value : forall st xs m x,
+      value (prepared_state st xs m) x =
+        if Bindings.mem x xs then Some (Checker.look m x) else value st x.
+    Proof.
+      intros st xs m x; unfold prepared_state.
+      rewrite clear_buckets_value; unfold value, merge_discovered; cbn [inc_values].
+      rewrite fill_lookup; destruct (Bindings.mem x xs); [reflexivity|].
+      exact (normalize_values_value st x).
+    Qed.
+
+    Lemma prepared_dom : forall st xs m x,
+      dom (prepared_state st xs m) x <-> dom st x \/ In x xs.
+    Proof.
+      intros st xs m x; rewrite <- (merge_dom st xs m x).
+      unfold dom; rewrite prepared_value.
+      unfold value, merge_discovered; cbn [inc_values]; rewrite fill_lookup; reflexivity.
+    Qed.
+
+    Lemma prepared_snapshot_get : forall st xs m id,
+      snapshot_get id (prepared_state st xs m) = snapshot_get id st.
+    Proof.
+      reflexivity.
+    Qed.
+
+    Lemma prepared_infl : forall st xs m x,
+      infl_at (prepared_state st xs m) x =
+        if Inventory.Bindings.mem x xs then [] else infl_at st x.
+    Proof.
+      intros st xs m x; unfold infl_at, prepared_state, clear_new_buckets,
+        merge_discovered, normalize_values; cbn [inc_influence].
+      change (match PTrieCode.get (S.key_code x)
+        (Inventory.Bindings.remove_keys xs (inc_influence st)) with
+        | Some ids => ids | None => [] end =
+        if Inventory.Bindings.mem x xs then [] else infl_at st x).
+      rewrite Inventory.raw_get_remove_keys; destruct (Inventory.Bindings.mem x xs); reflexivity.
+    Qed.
+
+    Lemma prepared_cowrite : forall st xs m x,
+      cowrite_at (prepared_state st xs m) x =
+        if Inventory.Bindings.mem x xs then [] else cowrite_at st x.
+    Proof.
+      intros st xs m x; unfold cowrite_at, prepared_state, clear_new_buckets,
+        merge_discovered, normalize_values; cbn [inc_cowrites].
+      change (match PTrieCode.get (S.key_code x)
+        (Inventory.Bindings.remove_keys xs (inc_cowrites st)) with
+        | Some ids => ids | None => [] end =
+        if Inventory.Bindings.mem x xs then [] else cowrite_at st x).
+      rewrite Inventory.raw_get_remove_keys; destruct (Inventory.Bindings.mem x xs); reflexivity.
+    Qed.
+
+    Lemma prepared_core : forall st xs m, Core.state_core st ->
+      (forall x, In x xs -> value st x = None) -> Core.state_core (prepared_state st xs m).
+    Proof.
+      intros st xs m Hcore Hfresh.
+      pose proof Hcore as [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]].
+      split.
+      - apply Inventory.fill_canonical; apply Inventory.prune_values_canonical.
+      - split.
+        + intros id ss Hget; rewrite prepared_snapshot_get in Hget; now apply Howner.
+        + split.
+          * intros x id Hin; rewrite prepared_infl in Hin.
+            destruct (Inventory.Bindings.mem x xs); [contradiction|].
+            destruct (Hrefs x id Hin) as [ss Hss]; exists ss; now rewrite prepared_snapshot_get.
+          * split.
+            -- intros id ss Hget Hss x Hx; rewrite prepared_snapshot_get in Hget.
+               apply (proj2 (prepared_dom st xs m x)); left; exact (Hlive id ss Hget Hss x Hx).
+            -- intros x id; rewrite prepared_cowrite, prepared_snapshot_get.
+               destruct (Inventory.Bindings.mem x xs) eqn:Hmem; [|exact (Hcounts x id)].
+               pose proof (core_cowrite_absent st x Hcore
+                 (Hfresh x (proj1 (Inventory.mem_spec x xs) Hmem))) as Hempty.
+               rewrite <- (Hcounts x id), Hempty; reflexivity.
+    Qed.
+
+    Definition previous_writes (st : state) id : list S.key :=
+      match snapshot_get id st with
+      | Some ss => if snapshot_live ss then snapshot_writes ss else []
+      | None => []
+      end.
+
+    Definition recorded_snapshot (st : state) owner writes : incremental_snapshot S.key :=
+      {| snapshot_owner := owner;
+         snapshot_writes := writes ++ previous_writes st (S.key_code owner);
+         snapshot_live := true |}.
+
+    Lemma record_row_snapshot_get : forall p r st q,
+      snapshot_get q (record_row p r st) =
+        if Pos.eqb q (S.key_code (S.target p r))
+        then Some (recorded_snapshot st (S.target p r) (row_writes p r))
+        else snapshot_get q st.
+    Proof.
+      intros p r st q; unfold snapshot_get, record_row, snapshot_record, snapshot_set.
+      cbn [inc_snapshots]; destruct (Pos.eqb q (S.key_code (S.target p r))) eqn:Hq.
+      - apply Pos.eqb_eq in Hq; subst q; rewrite PTrie.get_set_same; reflexivity.
+      - apply Pos.eqb_neq in Hq; rewrite PTrie.get_set_other by exact Hq; reflexivity.
+    Qed.
+
+    Lemma previous_writes_dom : forall st id, Core.state_core st ->
+      forall x, In x (previous_writes st id) -> dom st x.
+    Proof.
+      intros st id [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]] x Hin.
+      unfold previous_writes in Hin; destruct (snapshot_get id st) as [ss|] eqn:Hget;
+        [|contradiction].
+      destruct (snapshot_live ss) eqn:Hss; [|contradiction].
+      exact (Hlive id ss Hget Hss x Hin).
+    Qed.
+
+    Lemma previous_writes_count : forall st, Core.state_core st -> forall x id,
+      length (filter (Pos.eqb id) (cowrite_at st x)) =
+        length (filter (S.key_eqb x) (previous_writes st id)).
+    Proof.
+      intros st [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]] x id.
+      rewrite Hcounts; unfold previous_writes; destruct (snapshot_get id st) as [ss|];
+        [destruct (snapshot_live ss)|]; reflexivity.
+    Qed.
+
+    (** Recording one row preserves all independent representation fields. *)
+    Lemma record_row_core : forall p r st, Core.state_core st ->
+      (forall x, In x (row_writes p r) -> dom st x) ->
+      Core.state_core (record_row p r st).
+    Proof.
+      intros p r st Hcore Hwrites.
+      pose proof Hcore as [Hcanonical [Howner [Hrefs [Hlive Hcounts]]]].
+      split; [rewrite Buckets.record_row_values; exact Hcanonical|].
+      split.
+      - intros id ss Hget; rewrite record_row_snapshot_get in Hget.
+        destruct (Pos.eqb id (S.key_code (S.target p r))) eqn:Hid.
+        + apply Pos.eqb_eq in Hid; inversion Hget; subst ss; cbn [recorded_snapshot].
+          split; [exact Hid|apply in_or_app; left; unfold row_writes; now left].
+        + exact (Howner id ss Hget).
+      - split.
+        + intros x id Hin.
+          change (In id (Buckets.bucket_at
+            (fold_left (fun acc y => push_entry y (S.key_code (S.target p r)) acc)
+              (S.deps p r) (inc_influence st)) x)) in Hin.
+          apply push_entries_members in Hin as [Heq|Hin].
+          * subst id; exists (recorded_snapshot st (S.target p r) (row_writes p r)).
+            rewrite record_row_snapshot_get, Pos.eqb_refl; reflexivity.
+          * destruct (Hrefs x id Hin) as [ss Hss].
+            destruct (Pos.eqb id (S.key_code (S.target p r))) eqn:Hid.
+            -- exists (recorded_snapshot st (S.target p r) (row_writes p r)).
+               now rewrite record_row_snapshot_get, Hid.
+            -- exists ss; now rewrite record_row_snapshot_get, Hid.
+        + split.
+          * intros id ss Hget Hss x Hx.
+            unfold dom; rewrite record_row_value; rewrite record_row_snapshot_get in Hget.
+            destruct (Pos.eqb id (S.key_code (S.target p r))) eqn:Hid.
+            -- inversion Hget; subst ss; cbn [recorded_snapshot] in Hx.
+               apply in_app_iff in Hx as [Hx|Hx].
+               ++ exact (Hwrites x Hx).
+               ++ exact (previous_writes_dom st _ Hcore x Hx).
+            -- exact (Hlive id ss Hget Hss x Hx).
+          * intros x id.
+            change (length (filter (Pos.eqb id) (Buckets.bucket_at
+              (fold_left (fun acc y => push_entry y (S.key_code (S.target p r)) acc)
+                (row_writes p r) (inc_cowrites st)) x)) =
+              match snapshot_get id (record_row p r st) with
+              | Some ss => if snapshot_live ss
+                  then length (filter (S.key_eqb x) (snapshot_writes ss)) else 0
+              | None => 0
+              end).
+            rewrite push_entries_count, record_row_snapshot_get.
+            change (Buckets.bucket_at (inc_cowrites st) x) with (cowrite_at st x).
+            destruct (Pos.eqb id (S.key_code (S.target p r))) eqn:Hid.
+            -- apply Pos.eqb_eq in Hid; subst id;
+                 cbn [recorded_snapshot snapshot_live snapshot_writes].
+               rewrite filter_app, length_app, (previous_writes_count st Hcore).
+               lia.
+            -- cbn; rewrite Hcounts; lia.
+    Qed.
+
+    Lemma record_rows_core : forall p rs st, Core.state_core st ->
+      (forall r, In r rs -> forall x, In x (row_writes p r) -> dom st x) ->
+      Core.state_core (record_rows p rs st).
+    Proof.
+      intros p rs; induction rs as [|r rest IH]; intros st Hcore Hwrites.
+      - exact Hcore.
+      - change (Core.state_core (record_rows p rest (record_row p r st))).
+        apply IH.
+        + apply record_row_core; [exact Hcore|].
+          intros x Hx; apply (Hwrites r); [now left|exact Hx].
+        + intros q Hq x Hx; unfold dom; rewrite record_row_value.
+          apply (Hwrites q); [now right|exact Hx].
+    Qed.
+
+    (** Finite discovery supplies every newly recorded row write without semantic premises. *)
+    Lemma finish_demand_core : forall p roots st m, Core.state_core st ->
+      Core.state_core (finish_demand p st (discovery_keys p roots st)
+        (discovery_region p roots st) m).
+    Proof.
+      intros p roots st m Hcore.
+      change (Core.state_core (record_rows p (discovery_region p roots st)
+        (prepared_state st (discovery_keys p roots st) m))).
+      apply record_rows_core.
+      - apply prepared_core; [exact Hcore|].
+        intros x Hx; exact (discovery_keys_missing p roots st x Hx).
+      - intros r Hr x Hx; apply (proj2 (prepared_dom st _ m x)).
+        apply (discovery_region_support p roots st r x Hr).
+        apply in_or_app; now left.
+    Qed.
+
+    (** Every demand outcome preserves the exact released representation invariant. *)
+    Lemma state_ok_demand : forall p pol roots fuel st o st', state_ok st ->
+      demand p pol roots fuel st = (o, st') -> state_ok st'.
+    Proof.
+      intros p pol roots fuel st o st' Hstate Hrun; unfold demand in Hrun.
+      destruct (forallb (present st) roots); [inversion Hrun; subst; exact Hstate|].
+      cbv zeta in Hrun; fold (discovery_region p roots st) in Hrun.
+      fold (frozen_pairs p roots st) in Hrun.
+      destruct (Sol.run (R.mk p (frozen_pairs p roots st) (discovery_region p roots st))
+        pol fuel) as [m|m|why] eqn:Hsolver.
+      - destruct (Checker.check_rows p (discovery_region p roots st)
+          (restore (frozen_pairs p roots st) m)) eqn:Hcheck.
+        + inversion Hrun; subst; apply Core.state_core_ok, finish_demand_core.
+          now apply Core.state_ok_core.
+        + inversion Hrun; subst; exact Hstate.
+      - inversion Hrun; subst; exact Hstate.
+      - inversion Hrun; subst; exact Hstate.
+    Qed.
+  End DemandState.
+
   Lemma state_ok_init : state_ok init.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply Core.state_core_ok; exact Core.state_core_init.
+  Qed.
   Lemma state_ok_demand : forall p pol roots fuel st o st', state_ok st ->
     demand p pol roots fuel st = (o, st') -> state_ok st'.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact DemandState.state_ok_demand.
+  Qed.
   Lemma state_ok_edit : forall p p' ch st, state_ok st -> state_ok (edit p p' ch st).
   Proof. Admitted. (* STUB *)
 

@@ -4,7 +4,7 @@
     For example, repeated writes by one row occupy one index entry per key.
     Builds on: Fixpoint.IndexedSig and Base.Trie. *)
 
-From Stdlib Require Import List PArith Arith NArith Bool Lia.
+From Stdlib Require Import List PArith Arith NArith Bool Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -801,3 +801,236 @@ Module IndexedT (L : LATTICE_T) (S : SYSTEM_T L) <: INDEXED_T L S.
     - apply N.mul_le_mono_r; unfold c_idx, k_prepare_row; lia.
   Qed.
 End IndexedT.
+
+(** ** Finite inventory accounting shared by demand and edit *)
+
+Import List.ListNotations.
+
+Definition finite_sum {A} (f : A -> nat) (xs : list A) : nat :=
+  fold_right Nat.add 0 (map f xs).
+
+Definition finite_max {A} (f : A -> nat) (xs : list A) : nat :=
+  fold_right Nat.max 0 (map f xs).
+
+(** Every member's weight fits the maximum of the list. *)
+Lemma finite_max_member : forall A (f : A -> nat) xs x,
+  In x xs -> f x <= finite_max f xs.
+Proof.
+  intros A f xs; induction xs as [|y xs IH]; intros x Hin.
+  - contradiction.
+  - cbn [finite_max map fold_right]; destruct Hin as [->|Hin].
+    + apply Nat.le_max_l.
+    + eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** A bound on every member bounds the maximum of the list. *)
+Lemma finite_max_bound : forall A (f : A -> nat) xs n,
+  (forall x, In x xs -> f x <= n) -> finite_max f xs <= n.
+Proof.
+  intros A f xs; induction xs as [|x xs IH]; intros n Hbound.
+  - change (0 <= n); apply Nat.le_0_l.
+  - cbn [finite_max map fold_right]; apply Nat.max_lub.
+    + apply Hbound; now left.
+    + apply IH; intros y Hy; apply Hbound; now right.
+Qed.
+
+(** Equal summands on the enumerated support have equal sums. *)
+Lemma finite_sum_ext : forall A (f g : A -> nat) xs,
+  (forall x, In x xs -> f x = g x) -> finite_sum f xs = finite_sum g xs.
+Proof.
+  intros A f g xs; induction xs as [|x xs IH]; intro Heq; cbn [finite_sum map fold_right].
+  - reflexivity.
+  - rewrite (Heq x (or_introl eq_refl)); f_equal; apply IH.
+    intros y Hy; apply Heq; now right.
+Qed.
+
+(** The zero summand has zero total. *)
+Lemma finite_sum_zero : forall A (xs : list A), finite_sum (fun _ => 0) xs = 0.
+Proof.
+  intros A xs; induction xs; cbn [finite_sum map fold_right]; assumption || reflexivity.
+Qed.
+
+(** Unit weights count the list length. *)
+Lemma finite_sum_one : forall A (xs : list A), finite_sum (fun _ => 1) xs = length xs.
+Proof.
+  intros A xs; induction xs as [|x xs IH].
+  - reflexivity.
+  - change (S (finite_sum (fun _ : A => 1) xs) = S (length xs)); now rewrite IH.
+Qed.
+
+(** Pointwise addition distributes over finite sums. *)
+Lemma finite_sum_plus : forall A (f g : A -> nat) xs,
+  finite_sum (fun x => f x + g x) xs = finite_sum f xs + finite_sum g xs.
+Proof.
+  intros A f g xs; induction xs as [|x xs IH].
+  - reflexivity.
+  - change ((f x + g x) + finite_sum (fun y => f y + g y) xs =
+      (f x + finite_sum f xs) + (g x + finite_sum g xs)).
+    rewrite IH; lia.
+Qed.
+
+(** The order of two finite sums can be exchanged. *)
+Lemma finite_sum_swap : forall A B (f : A -> B -> nat) xs ys,
+  finite_sum (fun x => finite_sum (f x) ys) xs =
+  finite_sum (fun y => finite_sum (fun x => f x y) xs) ys.
+Proof.
+  intros A B f xs; induction xs as [|x xs IH]; intro ys.
+  - change (0 = finite_sum (fun _ : B => 0) ys); symmetry; apply finite_sum_zero.
+  - change (finite_sum (f x) ys + finite_sum (fun a => finite_sum (f a) ys) xs =
+      finite_sum (fun y => f x y + finite_sum (fun a => f a y) xs) ys).
+    rewrite finite_sum_plus, IH; reflexivity.
+Qed.
+
+(** Filtering counts the unit weights of the entries that pass. *)
+Lemma filter_length_sum : forall A (test : A -> bool) xs,
+  length (filter test xs) = finite_sum (fun x => if test x then 1 else 0) xs.
+Proof.
+  intros A test xs; induction xs as [|x xs IH]; cbn [filter finite_sum map fold_right].
+  - reflexivity.
+  - destruct (test x); cbn [length]; rewrite IH; reflexivity.
+Qed.
+
+Section Histograms.
+  Context {A : Type} (eqb : A -> A -> bool).
+  Hypothesis eqb_true : forall x y, eqb x y = true <-> x = y.
+
+  (** An item's histogram count is positive exactly when the item occurs. *)
+  Lemma histogram_count_pos : forall x items,
+    0 < length (filter (eqb x) items) <-> In x items.
+  Proof.
+    intros x items; split.
+    - intro Hpositive; destruct (filter (eqb x) items) as [|y rest] eqn:Hfilter.
+      + cbn in Hpositive; lia.
+      + assert (Hin : In y (filter (eqb x) items)) by (rewrite Hfilter; now left).
+        apply filter_In in Hin as [Hin Heq].
+        apply (proj1 (eqb_true x y)) in Heq; subst y; exact Hin.
+    - intro Hin.
+      assert (Hfilter : In x (filter (eqb x) items)).
+      { apply filter_In; split; [exact Hin|apply (proj2 (eqb_true x x)); reflexivity]. }
+      destruct (filter (eqb x) items); cbn in *; [contradiction|lia].
+  Qed.
+
+  (** An absent item has zero histogram count. *)
+  Lemma histogram_count_zero : forall x items, ~ In x items ->
+    length (filter (eqb x) items) = 0.
+  Proof.
+    intros x items Habsent.
+    destruct (length (filter (eqb x) items)) eqn:Hlength; [reflexivity|].
+    exfalso; apply Habsent; apply (proj1 (histogram_count_pos x items)); lia.
+  Qed.
+
+  (** An absent item contributes no unit weight on a support. *)
+  Lemma histogram_unit_absent : forall support x, ~ In x support ->
+    finite_sum (fun y => if eqb y x then 1 else 0) support = 0.
+  Proof.
+    induction support as [|y support IH]; intros x Habsent.
+    - reflexivity.
+    - change ((if eqb y x then 1 else 0) +
+        finite_sum (fun z => if eqb z x then 1 else 0) support = 0).
+      destruct (eqb y x) eqn:Heq.
+      + apply (proj1 (eqb_true y x)) in Heq; subst y; exfalso; apply Habsent; now left.
+      + apply IH; intro Hin; apply Habsent; now right.
+  Qed.
+
+  (** A duplicate-free support contributes one unit for each of its members. *)
+  Lemma histogram_unit_once : forall support x, NoDup support -> In x support ->
+    finite_sum (fun y => if eqb y x then 1 else 0) support = 1.
+  Proof.
+    intros support x Hnodup; induction Hnodup as [|y support Habsent Hnodup IH]; intro Hin.
+    - contradiction.
+    - change ((if eqb y x then 1 else 0) +
+        finite_sum (fun z => if eqb z x then 1 else 0) support = 1).
+      destruct Hin as [->|Hin].
+      + rewrite (proj2 (eqb_true x x) eq_refl), histogram_unit_absent;
+          [reflexivity|exact Habsent].
+      + destruct (eqb y x) eqn:Heq.
+        * apply (proj1 (eqb_true y x)) in Heq; subst y; contradiction.
+        * apply IH; exact Hin.
+  Qed.
+
+  (** Summing a histogram on a duplicate-free support counts every included occurrence. *)
+  Lemma histogram_length : forall support items, NoDup support -> incl items support ->
+    fold_right Nat.add 0
+      (map (fun key => length (filter (eqb key) items)) support) = length items.
+  Proof.
+    intros support items Hnodup Hincl.
+    change (finite_sum (fun key => length (filter (eqb key) items)) support = length items).
+    transitivity
+      (finite_sum (fun key => finite_sum (fun item => if eqb key item then 1 else 0) items)
+        support).
+    - apply finite_sum_ext; intros key Hkey; apply filter_length_sum.
+    - rewrite finite_sum_swap.
+      transitivity (finite_sum (fun _ : A => 1) items).
+      + apply finite_sum_ext; intros item Hitem; apply histogram_unit_once;
+          [exact Hnodup|apply Hincl; exact Hitem].
+      + apply finite_sum_one.
+  Qed.
+End Histograms.
+
+(** Mapping a finite support composes its weight function. *)
+Lemma finite_sum_map : forall A B (f : B -> nat) (g : A -> B) xs,
+  finite_sum f (map g xs) = finite_sum (fun x => f (g x)) xs.
+Proof.
+  intros A B f g xs; unfold finite_sum; now rewrite map_map.
+Qed.
+
+(** A conditional fold is a sum of conditional nonnegative weights. *)
+Lemma finite_fold_choice : forall A (test : A -> bool) (weight : A -> nat) xs,
+  fold_right (fun x n => if test x then weight x + n else n) 0 xs =
+    finite_sum (fun x => if test x then weight x else 0) xs.
+Proof.
+  intros A test weight xs; induction xs as [|x xs IH].
+  - reflexivity.
+  - cbn [fold_right finite_sum map]; destruct (test x); now rewrite IH.
+Qed.
+
+(** An absent identifier contributes nothing to an inventory sum. *)
+Lemma selected_sum_miss : forall A (weight : A -> nat) xs id,
+  ~ In id (map fst xs) ->
+  finite_sum (fun entry => if Pos.eqb id (fst entry) then weight (snd entry) else 0) xs = 0.
+Proof.
+  intros A weight xs; induction xs as [|[q a] xs IH]; intros id Habsent.
+  - reflexivity.
+  - change ((if Pos.eqb id q then weight a else 0) +
+      finite_sum (fun entry => if Pos.eqb id (fst entry)
+        then weight (snd entry) else 0) xs = 0).
+    destruct (Pos.eqb id q) eqn:Heq.
+    + apply Pos.eqb_eq in Heq; subst q; exfalso; apply Habsent; now left.
+    + apply IH; intro Hin; apply Habsent; now right.
+Qed.
+
+(** A unique listed identifier contributes precisely its stored payload weight. *)
+Lemma selected_sum_hit : forall A (weight : A -> nat) xs id a,
+  NoDup (map fst xs) -> In (id, a) xs ->
+  finite_sum (fun entry => if Pos.eqb id (fst entry) then weight (snd entry) else 0) xs =
+    weight a.
+Proof.
+  intros A weight xs; induction xs as [|[q b] xs IH]; intros id a Hnodup Hin.
+  - contradiction.
+  - inversion Hnodup as [|? ? Habsent Htail]; subst.
+    change ((if Pos.eqb id q then weight b else 0) +
+      finite_sum (fun entry => if Pos.eqb id (fst entry)
+        then weight (snd entry) else 0) xs = weight a).
+    destruct Hin as [Heq|Hin].
+    + inversion Heq; subst q b; rewrite Pos.eqb_refl.
+      rewrite selected_sum_miss by exact Habsent; lia.
+    + assert (Hneq : Pos.eqb id q = false).
+      { apply Pos.eqb_neq; intro Heq; subst q; apply Habsent.
+        apply in_map_iff; exists (id, a); auto. }
+      rewrite Hneq; apply IH; assumption.
+Qed.
+
+(** A trie inventory sum selected by one identifier is its lookup weight. *)
+Lemma trie_selected_sum : forall A (m : PTrieCode.t A) id (weight : A -> nat),
+  finite_sum
+    (fun entry => if Pos.eqb id (fst entry) then weight (snd entry) else 0)
+    (PTrieCode.elements m) =
+  match PTrieCode.get id m with Some a => weight a | None => 0 end.
+Proof.
+  intros A m id weight; destruct (PTrieCode.get id m) as [a|] eqn:Hget.
+  - apply selected_sum_hit; [apply PTrie.elements_nodup|].
+    now apply PTrie.elements_spec.
+  - apply selected_sum_miss; intros Hin.
+    apply in_map_iff in Hin as [[q a] [Heq Hin]]; cbn in Heq; subst q.
+    apply PTrie.elements_spec in Hin; rewrite Hget in Hin; discriminate Hin.
+Qed.

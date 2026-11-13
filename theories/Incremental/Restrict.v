@@ -1202,3 +1202,257 @@ Module SourceTopFacts (L : LATTICE) (Top : HAS_TOP L) (S : SYSTEM L).
       congruence.
   Qed.
 End SourceTopFacts.
+
+(** ** Canonical inventories for validated source bindings *)
+
+Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
+    (Checker : CHECK_OPS L S).
+  Include SourceBindingFacts L S Checker.
+
+  Definition canonical (m : kmap S.key L.t) : Prop :=
+    forall path x v, PTrieCode.get path m = Some (x, v) -> path = S.key_code x.
+
+  Definition raw_keys (m : kmap S.key L.t) : list S.key :=
+    map (fun binding => fst (snd binding)) (PTrieCode.elements m).
+
+  (** Guarded lookup accepts exactly a payload carrying the queried key. *)
+  Lemma raw_lookup_cell : forall m x v,
+    Bindings.lookup m x = Some v <->
+    PTrieCode.get (S.key_code x) m = Some (x, v).
+  Proof.
+    intros m x v; unfold Bindings.lookup.
+    destruct (PTrieCode.get (S.key_code x) m) as [[y w]|] eqn:Hget.
+    - destruct (S.key_eqb_spec x y) as [->|Hneq].
+      + split; intro Heq; now inversion Heq.
+      + split; intro Heq; [discriminate Heq|congruence].
+    - split; intro Heq; discriminate Heq.
+  Qed.
+
+  (** Every canonical inventory key is present, and every present key is listed. *)
+  Lemma raw_keys_dom : forall m, canonical m -> forall x,
+    In x (raw_keys m) <-> exists v, Bindings.lookup m x = Some v.
+  Proof.
+    intros m Hcanonical x; unfold raw_keys; split.
+    - intros Hin; apply in_map_iff in Hin as [[path [y v]] [Heq Hin]].
+      cbn in Heq; subst y; apply PTrie.elements_spec in Hin.
+      pose proof (Hcanonical path x v Hin) as Hpath; subst path.
+      exists v; now apply raw_lookup_cell.
+    - intros [v Hlookup]; apply raw_lookup_cell in Hlookup.
+      apply in_map_iff; exists (S.key_code x, (x, v)); split; [reflexivity|].
+      now apply PTrie.elements_spec.
+  Qed.
+
+  (** Encoding a canonical key inventory recovers the distinct trie paths. *)
+  Lemma raw_keys_codes : forall m, canonical m ->
+    map S.key_code (raw_keys m) = map fst (PTrieCode.elements m).
+  Proof.
+    intros m Hcanonical; unfold raw_keys; rewrite map_map; apply map_ext_in.
+    intros [path [x v]] Hin; cbn; symmetry; apply (Hcanonical path x v).
+    now apply PTrie.elements_spec.
+  Qed.
+
+  Lemma raw_keys_nodup : forall m, canonical m -> NoDup (raw_keys m).
+  Proof.
+    intros m Hcanonical; apply NoDup_map_inv with (f := S.key_code).
+    rewrite raw_keys_codes by exact Hcanonical; apply PTrie.elements_nodup.
+  Qed.
+
+  (** A duplicate-free mapped list identifies equal fibers uniquely. *)
+  Lemma nodup_map_fiber : forall A B (f : A -> B) xs a b,
+    NoDup (map f xs) -> In a xs -> In b xs -> f a = f b -> a = b.
+  Proof.
+    intros A B f xs; induction xs as [|head rest IH]; intros a b Hnodup Ha Hb Heq.
+    - contradiction.
+    - inversion Hnodup as [|? ? Hnot Hrest]; subst.
+      destruct Ha as [->|Ha], Hb as [->|Hb]; [reflexivity| | |].
+      + exfalso; apply Hnot; rewrite Heq; now apply in_map.
+      + exfalso; apply Hnot; rewrite <- Heq; now apply in_map.
+      + eapply IH; eauto.
+  Qed.
+
+  (** The public inventory/domain and uniqueness laws already force canonical cells. *)
+  Lemma canonical_of_inventory : forall m,
+    (forall x, In x (raw_keys m) <-> exists v, Bindings.lookup m x = Some v) ->
+    NoDup (raw_keys m) -> canonical m.
+  Proof.
+    intros m Hdom Hnodup path x v Hget.
+    assert (Hin : In (path, (x, v)) (PTrieCode.elements m)).
+    { now apply PTrie.elements_spec. }
+    assert (Hx : In x (raw_keys m)).
+    { unfold raw_keys; apply in_map_iff; exists (path, (x, v)); auto. }
+    apply Hdom in Hx as [w Hw]; apply raw_lookup_cell in Hw.
+    assert (Hother : In (S.key_code x, (x, w)) (PTrieCode.elements m)).
+    { now apply PTrie.elements_spec. }
+    pose proof (nodup_map_fiber _ _ (fun binding => fst (snd binding))
+      (PTrieCode.elements m) (path, (x, v)) (S.key_code x, (x, w))
+      Hnodup Hin Hother eq_refl) as Heq.
+    now inversion Heq.
+  Qed.
+
+  Lemma canonical_empty : canonical (@PTrieCode.empty (S.key * L.t)).
+  Proof.
+    intros path x v Hget; rewrite PTrie.get_empty in Hget; discriminate Hget.
+  Qed.
+
+  (** Pruning removes cells without changing any surviving raw payload. *)
+  Lemma prune_values_submap : forall cells m path xv,
+    PTrieCode.get path (Bindings.prune_values cells m) = Some xv ->
+    PTrieCode.get path m = Some xv.
+  Proof.
+    induction cells as [|[q [x v]] rest IH]; intros m path xv Hget.
+    - exact Hget.
+    - cbn [Bindings.prune_values] in Hget.
+      destruct (Pos.eqb q (S.key_code x)) eqn:Hvalid.
+      + exact (IH m path xv Hget).
+      + apply IH in Hget.
+        destruct (Pos.eqb path q) eqn:Hpath.
+        * apply Pos.eqb_eq in Hpath; subst path.
+          rewrite PTrie.get_remove_same in Hget; discriminate Hget.
+        * apply Pos.eqb_neq in Hpath.
+          now rewrite PTrie.get_remove_other in Hget by exact Hpath.
+  Qed.
+
+  Lemma prune_values_absent : forall cells m path,
+    PTrieCode.get path m = None ->
+    PTrieCode.get path (Bindings.prune_values cells m) = None.
+  Proof.
+    intros cells m path Hnone.
+    destruct (PTrieCode.get path (Bindings.prune_values cells m)) as [xv|] eqn:Hget.
+    - apply prune_values_submap in Hget; rewrite Hnone in Hget; discriminate Hget.
+    - reflexivity.
+  Qed.
+
+  (** Every malformed listed cell is removed, independently of the starting payload. *)
+  Lemma prune_values_deletes : forall cells path x v m,
+    In (path, (x, v)) cells -> Pos.eqb path (S.key_code x) = false ->
+    PTrieCode.get path (Bindings.prune_values cells m) = None.
+  Proof.
+    induction cells as [|[q [y w]] rest IH]; intros path x v m Hin Hbad.
+    - contradiction.
+    - cbn [Bindings.prune_values]; destruct Hin as [Heq|Hin].
+      + inversion Heq; subst q y w; rewrite Hbad.
+        apply prune_values_absent; apply PTrie.get_remove_same.
+      + destruct (Pos.eqb q (S.key_code y)); eapply IH; eauto.
+  Qed.
+
+  Lemma prune_values_canonical : forall m,
+    canonical (Bindings.prune_values (PTrieCode.elements m) m).
+  Proof.
+    intros m path x v Hget.
+    pose proof (prune_values_submap _ _ _ _ Hget) as Horiginal.
+    apply PTrie.elements_spec in Horiginal.
+    destruct (Pos.eqb path (S.key_code x)) eqn:Hpath.
+    - now apply Pos.eqb_eq.
+    - pose proof (prune_values_deletes _ path x v m Horiginal Hpath) as Hnone.
+      rewrite Hnone in Hget; discriminate Hget.
+  Qed.
+
+  Lemma prune_values_raw_keys_subset : forall cells m x,
+    In x (raw_keys (Bindings.prune_values cells m)) -> In x (raw_keys m).
+  Proof.
+    intros cells m x Hin; unfold raw_keys in *.
+    apply in_map_iff in Hin as [[path [y v]] [Heq Hin]].
+    apply in_map_iff; exists (path, (y, v)); split; [exact Heq|].
+    apply PTrie.elements_spec; apply prune_values_submap with (cells := cells).
+    now apply PTrie.elements_spec.
+  Qed.
+
+  (** Filling arbitrary candidate values stores only canonical payloads. *)
+  Lemma fill_canonical : forall xs m base,
+    canonical base -> canonical (Bindings.fill xs m base).
+  Proof.
+    induction xs as [|y rest IH]; intros m base Hcanonical path x v Hget.
+    - exact (Hcanonical path x v Hget).
+    - cbn [Bindings.fill] in Hget.
+      destruct (Pos.eqb path (S.key_code y)) eqn:Hpath.
+      + apply Pos.eqb_eq in Hpath; subst path.
+        rewrite PTrie.get_set_same in Hget; inversion Hget; reflexivity.
+      + apply Pos.eqb_neq in Hpath.
+        rewrite PTrie.get_set_other in Hget by exact Hpath.
+        exact (IH m base Hcanonical path x v Hget).
+  Qed.
+
+  Lemma fill_raw_keys : forall xs m base, canonical base -> forall x,
+    In x (raw_keys (Bindings.fill xs m base)) <-> In x xs \/ In x (raw_keys base).
+  Proof.
+    intros xs m base Hcanonical x.
+    rewrite (raw_keys_dom (Bindings.fill xs m base)
+      (fill_canonical xs m base Hcanonical) x); split.
+    - intros [v Hget]; rewrite fill_lookup in Hget.
+      destruct (Bindings.mem x xs) eqn:Hmem.
+      + left; now apply mem_spec.
+      + right; apply (proj2 (raw_keys_dom base Hcanonical x)); now exists v.
+    - intros [Hin|Hin].
+      + exists (Checker.look m x); rewrite fill_lookup.
+        rewrite (proj2 (mem_spec x xs) Hin); reflexivity.
+      + apply (proj1 (raw_keys_dom base Hcanonical x)) in Hin as [v Hget].
+        destruct (Bindings.mem x xs) eqn:Hmem.
+        * exists (Checker.look m x); now rewrite fill_lookup, Hmem.
+        * exists v; now rewrite fill_lookup, Hmem.
+  Qed.
+
+  (** Raw deletion changes only the selected trie path. *)
+  Lemma raw_remove : forall A path (m : PTrieCode.t A) q,
+    PTrieCode.get q (PTrieCode.remove path m) =
+      if Pos.eqb q path then None else PTrieCode.get q m.
+  Proof.
+    intros A path m q; destruct (Pos.eqb q path) eqn:Hpath.
+    - apply Pos.eqb_eq in Hpath; subst q; apply PTrie.get_remove_same.
+    - apply Pos.eqb_neq in Hpath; now apply PTrie.get_remove_other.
+  Qed.
+
+  Lemma raw_remove_keys : forall A bad (m : PTrieCode.t A) path,
+    PTrieCode.get path (Bindings.remove_keys bad m) =
+      if existsb (fun x => Pos.eqb path (S.key_code x)) bad
+      then None else PTrieCode.get path m.
+  Proof.
+    intros A bad; induction bad as [|y rest IH]; intros m path.
+    - reflexivity.
+    - change (PTrieCode.get path
+        (Bindings.remove_keys rest (PTrieCode.remove (S.key_code y) m)) =
+        if (Pos.eqb path (S.key_code y) ||
+          existsb (fun x => Pos.eqb path (S.key_code x)) rest)%bool
+        then None else PTrieCode.get path m).
+      rewrite IH, raw_remove.
+      destruct (Pos.eqb path (S.key_code y)),
+        (existsb (fun x => Pos.eqb path (S.key_code x)) rest); reflexivity.
+  Qed.
+
+  Lemma raw_get_remove_keys : forall A bad (m : PTrieCode.t A) x,
+    PTrieCode.get (S.key_code x) (Bindings.remove_keys bad m) =
+      if Bindings.mem x bad then None else PTrieCode.get (S.key_code x) m.
+  Proof.
+    intros A bad m x; rewrite raw_remove_keys; unfold Bindings.mem.
+    assert (Htest : existsb (fun y => Pos.eqb (S.key_code x) (S.key_code y)) bad =
+      existsb (S.key_eqb x) bad).
+    { induction bad as [|y rest IH]; cbn [existsb]; [reflexivity|].
+      now rewrite key_code_eqb, IH. }
+    now rewrite Htest.
+  Qed.
+
+  Lemma remove_keys_submap : forall A bad (m : PTrieCode.t A) path a,
+    PTrieCode.get path (Bindings.remove_keys bad m) = Some a ->
+    PTrieCode.get path m = Some a.
+  Proof.
+    intros A bad m path a Hget; rewrite raw_remove_keys in Hget.
+    destruct (existsb (fun x => Pos.eqb path (S.key_code x)) bad);
+      [discriminate Hget|exact Hget].
+  Qed.
+
+  Lemma remove_keys_canonical : forall bad m,
+    canonical m -> canonical (Bindings.remove_keys bad m).
+  Proof.
+    intros bad m Hcanonical path x v Hget; apply (Hcanonical path x v).
+    now apply remove_keys_submap in Hget.
+  Qed.
+
+  Lemma raw_keys_remove_subset : forall bad m x,
+    In x (raw_keys (Bindings.remove_keys bad m)) -> In x (raw_keys m).
+  Proof.
+    intros bad m x Hin; unfold raw_keys in *.
+    apply in_map_iff in Hin as [[path [y v]] [Heq Hin]].
+    apply in_map_iff; exists (path, (y, v)); split; [exact Heq|].
+    apply PTrie.elements_spec; apply remove_keys_submap with (bad := bad).
+    now apply PTrie.elements_spec.
+  Qed.
+End SourceBindingInventory.
