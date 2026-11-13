@@ -1045,6 +1045,37 @@ Proof.
   apply (proj1 (inject_Z_injective _ _)). symmetry. exact Hmodel.
 Qed.
 
+(** A final negative unit coordinate interprets the last coefficient as a right-hand side. *)
+Lemma karr_eval_extra_rhs : forall qs zs,
+  length zs = S (length qs) ->
+  (karr_eval (qs ++ [(-1)%Q]) zs ==
+    karr_eval qs zs - inject_Z (karr_nth (length qs) zs))%Q.
+Proof.
+  intro qs. induction qs as [|q qs IH]; intros [|z zs] Hlength;
+    cbn [length] in Hlength; try discriminate.
+  - assert (Hzs : zs = []) by (apply length_zero_iff_nil; lia). subst zs.
+    change (inject_Z z * (-1) + 0 == 0 - inject_Z z)%Q. ring.
+  - change (inject_Z z * q + karr_eval (qs ++ [(-1)%Q]) zs ==
+      inject_Z z * q + karr_eval qs zs - inject_Z (karr_nth (length qs) zs))%Q.
+    setoid_rewrite (IH zs ltac:(lia)). ring.
+Qed.
+
+(** Zero auxiliary coefficients make their concrete coordinate values irrelevant. *)
+Lemma karr_eval_zero_prefix : forall aux out zs,
+  length aux <= length zs ->
+  forallb (Z.eqb 0) (firstn (length aux) zs) = true ->
+  (karr_eval (aux ++ out) zs == karr_eval out (skipn (length aux) zs))%Q.
+Proof.
+  intro aux. induction aux as [|q aux IH]; intros out [|z zs] Hlength Hzero;
+    try reflexivity.
+  - cbn [length] in Hlength. lia.
+  - cbn [length firstn forallb] in Hzero.
+    apply andb_true_iff in Hzero as [Hz Htail]. apply Z.eqb_eq in Hz. subst z.
+    change (0 * q + karr_eval (aux ++ out) zs ==
+      karr_eval out (skipn (length aux) zs))%Q.
+    setoid_rewrite (IH out zs ltac:(cbn [length] in Hlength; lia) Htail). ring.
+Qed.
+
 Lemma karr_values_ne_app : forall A (tr : trie_ne A) acc,
   karr_values_ne tr acc = karr_values_ne tr [] ++ acc.
 Proof.
@@ -4022,6 +4053,108 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - apply hull_seed_width.
     - apply hull_seed_zero_right.
   Qed.
+
+  Lemma hull_sparse_eval_Q : forall xs zs v,
+    (karr_eval (map v xs) zs == karr_eval_coef_Q v (sparse xs zs))%Q.
+  Proof.
+    intros xs zs v. unfold sparse. setoid_rewrite eval_coef_nonzero_Q.
+    apply dense_combine_eval_Q.
+  Qed.
+
+  (** A successful hull output is satisfied by every lifted model with its zero auxiliaries. *)
+  Lemma checked_hull_row_sound_Q : forall xs a b r c aux v,
+    length aux = S (length xs) -> length (kcoeff r) = 2 * length xs + 2 ->
+    kright r = 0%Z ->
+    karr_models (aux ++ (map v xs ++ [(-1)%Q])) r ->
+    checked_hull_row xs a b r = Some c -> satQ v c.
+  Proof.
+    intros xs a b r c aux v Haux Hwidth Hright Hmodel Hrow.
+    unfold checked_hull_row in Hrow.
+    set (zs := skipn (S (length xs)) (kcoeff r)) in *.
+    remember (LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs)) as output.
+    destruct (forallb (Z.eqb 0) (firstn (S (length xs)) (kcoeff r)) &&
+      negb (forallb (Z.eqb 0) zs) &&
+      C.check_entails a output (Cert (firstn (length a) (kweight r)) 1 false) &&
+      C.check_entails b output (Cert (skipn (length a) (kweight r)) 1 false))
+      eqn:Hchecked; [|discriminate].
+    injection Hrow as Hsame. subst c.
+    apply andb_true_iff in Hchecked as [Hchecked _].
+    apply andb_true_iff in Hchecked as [Hchecked _].
+    apply andb_true_iff in Hchecked as [Hzero _].
+    assert (Haux_width : length aux <= length (kcoeff r)) by lia.
+    assert (Haux_zero : forallb (Z.eqb 0) (firstn (length aux) (kcoeff r)) = true).
+    { now rewrite Haux. }
+    pose proof (karr_eval_zero_prefix aux (map v xs ++ [(-1)%Q])
+      (kcoeff r) Haux_width Haux_zero) as Hsplit.
+    rewrite Haux in Hsplit. fold zs in Hsplit.
+    unfold karr_models in Hmodel. rewrite Hright in Hmodel.
+    assert (Htail : (karr_eval (map v xs ++ [(-1)%Q]) zs == 0)%Q).
+    { eapply Qeq_trans; [symmetry; exact Hsplit |exact Hmodel]. }
+    assert (Hzs : length zs = S (length (map v xs))).
+    { unfold zs. rewrite length_skipn, Hwidth, length_map. lia. }
+    pose proof (karr_eval_extra_rhs (map v xs) zs Hzs) as Hdefect.
+    rewrite length_map in Hdefect.
+    assert (Hvalue : (karr_eval (map v xs) zs == inject_Z (karr_nth (length xs) zs))%Q).
+    { setoid_rewrite Htail in Hdefect. nra. }
+    subst output. change (karr_eval_coef_Q v (sparse xs zs) ==
+      inject_Z (karr_nth (length xs) zs))%Q.
+    setoid_rewrite <- hull_sparse_eval_Q. exact Hvalue.
+  Qed.
+
+  (** Optional output collection can use an invariant restricted to its actual input list. *)
+  Lemma present_forall_in : forall A B (f : A -> option B) (R : B -> Prop) rs,
+    (forall r, In r rs -> forall c, f r = Some c -> R c) ->
+    Forall R (present (map f rs)).
+  Proof.
+    intros A B f R rs. induction rs as [|r rs IH]; intro Hresult; [constructor |].
+    cbn [present map flat_map]. destruct (f r) as [c |] eqn:Hsome.
+    - constructor.
+      + apply Hresult with (r := r); [now left |exact Hsome].
+      + apply IH. intros s Hin d Hd. apply Hresult with (r := s); [now right |exact Hd].
+    - apply IH. intros s Hin d Hd. apply Hresult with (r := s); [now right |exact Hd].
+  Qed.
+
+  (** Every left equality model extends through the lifted hull construction. *)
+  Lemma affine_hull_sound_Q_left : forall a b v,
+    Forall (fun r => lrel r = REq -> satQ v r) a -> Forall (satQ v) (affine_hull a b).
+  Proof.
+    intros a b v Hmodels.
+    set (xs := variables (map normalize_row a ++ map normalize_row b)).
+    pose proof (hull_basis_models_left a b v Hmodels) as Hbasis.
+    pose proof (hull_basis_width a b) as Hwidth.
+    pose proof (hull_basis_zero_right a b) as Hright.
+    fold xs in Hbasis, Hwidth, Hright.
+    unfold affine_hull. fold xs. apply present_forall_in. intros r Hin c Hrow.
+    apply checked_hull_row_sound_Q with (xs := xs) (a := a) (b := b) (r := r)
+      (aux := map v xs ++ [1%Q]).
+    - rewrite length_app, length_map. cbn [length]. lia.
+    - exact (proj1 (Forall_forall _ _) Hwidth r Hin).
+    - exact (proj1 (Forall_forall _ _) Hright r Hin).
+    - exact (proj1 (Forall_forall _ _) Hbasis r Hin).
+    - exact Hrow.
+  Qed.
+
+  (** Every right equality model extends through the lifted hull construction. *)
+  Lemma affine_hull_sound_Q_right : forall a b v,
+    Forall (fun r => lrel r = REq -> satQ v r) b -> Forall (satQ v) (affine_hull a b).
+  Proof.
+    intros a b v Hmodels.
+    set (xs := variables (map normalize_row a ++ map normalize_row b)).
+    pose proof (hull_basis_models_right a b v Hmodels) as Hbasis.
+    pose proof (hull_basis_width a b) as Hwidth.
+    pose proof (hull_basis_zero_right a b) as Hright.
+    fold xs in Hbasis, Hwidth, Hright.
+    unfold affine_hull. fold xs. apply present_forall_in. intros r Hin c Hrow.
+    apply checked_hull_row_sound_Q with (xs := xs) (a := a) (b := b) (r := r)
+      (aux := repeat 0%Q (length xs) ++ [0%Q]).
+    - rewrite length_app, repeat_length. cbn [length]. lia.
+    - exact (proj1 (Forall_forall _ _) Hwidth r Hin).
+    - exact (proj1 (Forall_forall _ _) Hright r Hin).
+    - exact (proj1 (Forall_forall _ _) Hbasis r Hin).
+    - exact Hrow.
+  Qed.
+
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
@@ -4070,18 +4203,35 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     destruct b; unfold leb; now rewrite Hempty.
   Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a] [|b]; try reflexivity.
+    - apply leb_refl.
+    - unfold join, leb. destruct (contradiction a); [reflexivity |].
+      apply forallb_forall. intros r Hin. apply entails_complete_Q. intros v Hmodels.
+      exact (proj1 (Forall_forall _ _) (affine_hull_sound_Q_left a b v Hmodels) r Hin).
+  Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a] [|b]; try reflexivity.
+    - apply leb_refl.
+    - unfold join, leb. destruct (contradiction b); [reflexivity |].
+      apply forallb_forall. intros r Hin. apply entails_complete_Q. intros v Hmodels.
+      exact (proj1 (Forall_forall _ _) (affine_hull_sound_Q_right a b v Hmodels) r Hin).
+  Qed.
   Lemma top_greatest : forall a, leb a top = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb, top.
     destruct (contradiction P); reflexivity.
   Qed.
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a); [apply leb_refl |apply join_ub_l].
+  Qed.
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (leb b a) eqn:Hle;
+      [exact Hle |apply join_ub_r].
+  Qed.
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof.
     intros p a b Hle. unfold widen. now rewrite Hle.
