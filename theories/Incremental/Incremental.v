@@ -770,7 +770,21 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
 
   Lemma demand_covers : forall p pol roots fuel st st', inv p st ->
     demand p pol roots fuel st = (Done, st') -> forall x, In x roots -> dom st' x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol roots fuel st st' Hinv Hrun x Hx; unfold demand in Hrun.
+    destruct (forallb (present st) roots) eqn:Hready.
+    - inversion Hrun; subst; apply present_spec.
+      exact ((proj1 (@forallb_forall _ _ _) Hready) x Hx).
+    - cbv zeta in Hrun.
+      fold (discovery_region p roots st) in Hrun.
+      fold (frozen_pairs p roots st) in Hrun.
+      destruct (Sol.run (R.mk p (frozen_pairs p roots st) (discovery_region p roots st))
+        pol fuel) as [m|m|why] eqn:Hsolver; [|discriminate Hrun|discriminate Hrun].
+      destruct (Checker.check_rows p (discovery_region p roots st)
+        (restore (frozen_pairs p roots st) m)) eqn:Hcheck; [|discriminate Hrun].
+      inversion Hrun; subst; apply (proj2 (finish_demand_dom p st _ _ _ x)).
+      apply discovery_roots; exact Hx.
+  Qed.
 
   Lemma demand_noop : forall p pol roots fuel st,
     (forall x, In x roots -> dom st x) -> demand p pol roots fuel st = (Done, st).
