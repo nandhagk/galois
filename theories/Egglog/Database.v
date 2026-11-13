@@ -10482,6 +10482,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db db' Hpositions Hkinds Hslots Hrank.
     unfold slot_rank_ok in *. now rewrite Hpositions, Hkinds, Hslots.
   Qed.
+  Lemma slot_rank_ok_union : forall db i j,
+    slot_rank_ok db -> slot_rank_ok (union i j db).
+  Proof.
+    intros db i j Hrank. unfold slot_rank_ok, union in *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; exact Hrank.
+  Qed.
+  Lemma slot_rank_ok_allocate_id : forall db i,
+    slot_rank_ok db -> slot_rank_ok (allocate_id i db).
+  Proof.
+    intros db i Hrank. eapply slot_rank_ok_frame;
+      [reflexivity | reflexivity | reflexivity | exact Hrank].
+  Qed.
+  Lemma slot_rank_ok_advance : forall db,
+    slot_rank_ok db -> slot_rank_ok (advance db).
+  Proof.
+    intros db Hrank. eapply slot_rank_ok_frame;
+      [reflexivity | reflexivity | reflexivity | exact Hrank].
+  Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
