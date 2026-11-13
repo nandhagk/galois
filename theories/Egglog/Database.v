@@ -1263,6 +1263,137 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros b f u db. unfold slots_update.
     destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
   Qed.
+
+  (** Index maintenance preserves the allocated interval. *)
+  Lemma slots_update_ids : forall b f u db, ids (slots_update b f u db) = ids db.
+  Proof.
+    intros b f u db. apply slots_update_preserves. intros. reflexivity.
+  Qed.
+
+  (** Index maintenance preserves the pending equality queue. *)
+  Lemma slots_update_pending : forall b f u db,
+    pending (slots_update b f u db) = pending db.
+  Proof.
+    intros b f u db.
+    exact (slots_update_preserves _ (fun state => length (runtime_queue state))
+      (fun all new counts state => eq_refl) b f u db).
+  Qed.
+
+  (** Index maintenance retains the requested slot layout. *)
+  Lemma slots_update_slots : forall b f u db, slots (slots_update b f u db) = slots db.
+  Proof.
+    intros b f u db. apply slots_update_preserves. intros. reflexivity.
+  Qed.
+
+  (** A direct row write replaces one map binding and leaves all other bindings intact. *)
+  Lemma row_write_binding : forall f k o db g args output,
+    row (view (row_write f k o db)) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      ((g, args) = (f, k) /\ output = o).
+  Proof.
+    intros f k o db g args output.
+    change (RowMap.get (g, args)
+      (RowMap.set (f, k) o (runtime_rows (db_runtime db))) = Some output <->
+      (RowMap.get (g, args) (runtime_rows (db_runtime db)) = Some output /\
+        (g, args) <> (f, k)) \/ ((g, args) = (f, k) /\ output = o)).
+    apply RowFacts.set_binding_iff.
+  Qed.
+
+  (** Maintaining the index caches does not change the row-write specification. *)
+  Lemma row_replace_binding : forall f k previous o db g args output,
+    row (view (row_replace f k previous o db)) g args output <->
+      (row (view db) g args output /\ (g, args) <> (f, k)) \/
+      ((g, args) = (f, k) /\ output = o).
+  Proof.
+    intros f k [before |] o db g args output; unfold row_replace;
+      rewrite row_write_binding, !slots_update_view; reflexivity.
+  Qed.
+
+  (** A row-table write retains the declaration table. *)
+  Lemma row_write_kind : forall f k o db,
+    kind (view (row_write f k o db)) = kind (view db).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the equality log. *)
+  Lemma row_write_same : forall f k o db,
+    same (view (row_write f k o db)) = same (view db).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the allocation counter. *)
+  Lemma row_write_ids : forall f k o db, ids (row_write f k o db) = ids db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the pending queue. *)
+  Lemma row_write_pending : forall f k o db, pending (row_write f k o db) = pending db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the slot list. *)
+  Lemma row_write_slots : forall f k o db, slots (row_write f k o db) = slots db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A row-table write retains the identifier forest. *)
+  Lemma row_write_forest : forall f k o db, db_forest (row_write f k o db) = db_forest db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A replacement leaves the declared function kinds unchanged. *)
+  Lemma row_replace_kind : forall f k previous o db,
+    kind (view (row_replace f k previous o db)) = kind (view db).
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_kind, !slots_update_view; reflexivity.
+  Qed.
+
+  (** A replacement leaves the recorded equality relation unchanged. *)
+  Lemma row_replace_same : forall f k previous o db,
+    same (view (row_replace f k previous o db)) = same (view db).
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_same, !slots_update_view; reflexivity.
+  Qed.
+
+  (** Replacing a row does not allocate identifiers. *)
+  Lemma row_replace_ids : forall f k previous o db,
+    ids (row_replace f k previous o db) = ids db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_ids, !slots_update_ids; reflexivity.
+  Qed.
+
+  (** Replacing a row does not enqueue equality work. *)
+  Lemma row_replace_pending : forall f k previous o db,
+    pending (row_replace f k previous o db) = pending db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_pending, !slots_update_pending; reflexivity.
+  Qed.
+
+  (** Replacing a row preserves its slot layout. *)
+  Lemma row_replace_slots : forall f k previous o db,
+    slots (row_replace f k previous o db) = slots db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_slots, !slots_update_slots; reflexivity.
+  Qed.
+
+  (** Replacing a row leaves the identifier forest untouched. *)
+  Lemma row_replace_forest : forall f k previous o db,
+    db_forest (row_replace f k previous o db) = db_forest db.
+  Proof.
+    intros f k [before |] o db; unfold row_replace;
+      rewrite row_write_forest, !slots_update_forest; reflexivity.
+  Qed.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
