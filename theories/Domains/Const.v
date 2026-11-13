@@ -1331,13 +1331,146 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
   TimeFun backward_two.
   TimeFun wfwd.
   TimeFun wbwd.
+
+  (** Normalizing one payload reads its raw representation linearly. *)
+  Local Lemma normalise_time w a : (T_normalise w a <= 64 * N.of_nat (W.psize w a))%N.
+  Proof.
+    rewrite W.F_psize_const. destruct a as [|z|]; time_unfold T_normalise;
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (ConstWordFast.wrap_fast_time w z) as Htime.
+    time_unfold T_wrap_fast. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+  (** A normalized flat payload stores at most one word of raw bits. *)
+  Local Lemma normalise_size w a :
+    (W.psize w (normalise w a) <= 2 * Pos.to_nat w + 1)%nat.
+  Proof.
+    rewrite W.F_psize_const. destruct a as [|z|]; cbn [normalise]; try lia.
+    unfold wrap_fast. rewrite ConstWordFast.wrap_fast_agrees.
+    pose proof (WordTime.word_wrap_size_bound w z). lia.
+  Qed.
+  (** Testing a normalized constant reads only its bounded word bits. *)
+  Local Lemma normalise_const_is_time w a z :
+    (T_const_is (normalise w a) z <= 2 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    destruct a as [|x|]; cbn [normalise]; time_unfold T_const_is; time_cbn;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (Z.T_eqb_le (wrap_fast w x) z) as Hcompare.
+    assert (Hsize : (N.of_nat (Z.size_nat (wrap_fast w x)) <= N.of_nat (Pos.to_nat w))%N).
+    { apply time_of_nat_le. unfold wrap_fast. rewrite ConstWordFast.wrap_fast_agrees.
+      apply WordTime.word_wrap_size_bound. }
+    nia.
+  Qed.
+  (** Constructing the all-ones value charges the numeric width linearly. *)
+  Local Lemma ones_time w :
+    (T_modulus w + Z.T_sub (modulus w) 1 <= 32 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    pose proof (WordTime.word_modulus_time_bound w) as Hmod.
+    pose proof (Z.T_sub_le (modulus w) 1) as Hsub.
+    pose proof (time_of_nat_le _ _ (WordTime.word_modulus_size_bound w)) as Hsize.
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+  (** A shortcut reads two raw payloads and performs bounded width work. *)
+  Local Lemma shortcut_time o a b :
+    (T_shortcut o a b <= 256 * N.of_nat
+      (W.psize (fst a) (snd a) + W.psize (fst b) (snd b) +
+        Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1))%N.
+  Proof.
+    destruct a as [w a], b as [v b].
+    pose proof (normalise_time w a) as Ha.
+    pose proof (normalise_time v b) as Hb.
+    pose proof (normalise_const_is_time w a 0) as Ha0.
+    pose proof (normalise_const_is_time v b 0) as Hb0.
+    pose proof (normalise_const_is_time w a (modulus w - 1)) as Ha1.
+    pose proof (normalise_const_is_time v b (modulus w - 1)) as Hb1.
+    pose proof (ones_time w) as Hones.
+    time_unfold T_shortcut. unfold Datatypes.T_fst, Datatypes.T_snd, Datatypes.T_orb.
+    destruct o; time_cbn; rewrite ?Nat2N.inj_add in *; time_cbn_all;
+      repeat match goal with |- context [if ?test then _ else _] => destruct test end; nia.
+  Qed.
+  (** The linear shortcut charge fits its declared quadratic width budget. *)
+  Local Lemma shortcut_quadratic_time o a b :
+    (T_shortcut o a b <= 512 * N.of_nat
+      (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2 +
+        W.psize (fst a) (snd a) + W.psize (fst b) (snd b))%nat))%N.
+  Proof.
+    eapply N.le_trans; [apply shortcut_time|].
+    apply N.mul_le_mono; [lia|]. apply time_of_nat_le. cbn [Nat.pow]. nia.
+  Qed.
+  (** A shortcut returns zero or an all-ones value at the first operand width. *)
+  Local Lemma shortcut_result_size o a b z : shortcut o a b = Some z ->
+    (Z.size_nat z <= Pos.to_nat (fst a))%nat.
+  Proof.
+    destruct a as [w a], b as [v b]. unfold shortcut. cbn [fst snd].
+    destruct o; repeat match goal with
+      |- context [if ?test then _ else _] => destruct test
+      end; intros H; try discriminate; injection H as <-; cbn [fst Z.size_nat]; try lia.
+    apply WordTime.word_size_bound. unfold is_word.
+    pose proof (modulus_pos w). lia.
+  Qed.
+  (** Forward dispatch adds one tick to its possible binary shortcut. *)
+  Local Lemma wfwd_clock_shape o rw xs :
+    (T_wfwd o rw xs <= 1 + match xs with [a; b] => T_shortcut o a b | _ => 0 end)%N.
+  Proof.
+    destruct o; destruct xs as [|a [|b [|c rest]]];
+      time_unfold T_wfwd; time_cbn; lia.
+  Qed.
+  (** Forward table evaluation fits a linear width and raw-payload budget. *)
+  Local Lemma wfwd_linear_time o rw xs :
+    (T_wfwd o rw xs <= 512 * N.of_nat
+      (Pos.to_nat rw + fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) +
+        fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs) + 1))%N.
+  Proof.
+    eapply N.le_trans; [apply wfwd_clock_shape|].
+    destruct xs as [|a [|b [|c rest]]]; time_cbn;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (shortcut_time o a b).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+  (** The declared quadratic table work contains the corresponding linear charge. *)
+  Local Lemma table_linear_work rw xs :
+    (N.of_nat
+      (Pos.to_nat rw + fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) +
+        fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs) + 1) <=
+      N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) + 1)^2 +
+        fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs)))%N.
+  Proof.
+    apply time_of_nat_le. cbn [Nat.pow]. nia.
+  Qed.
+  (** Forward dispatch returns top or a successful binary shortcut value. *)
+  Local Lemma wfwd_result_shape o rw xs r : wfwd o rw xs = Some r ->
+    r = FTop \/ exists a b z, xs = [a; b] /\ shortcut o a b = Some z /\ r = FVal z.
+  Proof.
+    unfold wfwd. destruct o; destruct xs as [|a [|b [|c rest]]];
+      try discriminate; destruct (shortcut _ a b) as [z|] eqn:Hshortcut;
+      intros H; injection H as <-.
+    all: first [solve [right; eauto 8]|now left].
+  Qed.
+  (** A forward result fits within the result width and operand budget. *)
+  Local Lemma wfwd_linear_size o rw xs r : wfwd o rw xs = Some r ->
+    (W.psize rw r <= Pos.to_nat rw +
+      fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs) +
+      fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs) + 1)%nat.
+  Proof.
+    intros Hentry. apply wfwd_result_shape in Hentry.
+    destruct Hentry as [->|[a [b [z [-> [Hshortcut ->]]]]]]; rewrite W.F_psize_const.
+    - cbn. lia.
+    - pose proof (shortcut_result_size o a b z Hshortcut).
+      cbn [map fold_right]. lia.
+  Qed.
+
   Definition c_word_table : N := (524288 * (W.c_payload + 1))%N.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs. eapply N.le_trans; [apply wfwd_linear_time|].
+    eapply N.le_trans.
+    - apply N.mul_le_mono_l, table_linear_work.
+    - apply N.mul_le_mono_r. unfold c_word_table. nia.
+  Qed.
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -1403,7 +1536,10 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     k_const_word * N.of_nat
       (((Pos.to_nat (fst a) + Pos.to_nat (fst b) + 1) ^ 2 +
         W.psize (fst a) (snd a) + W.psize (fst b) (snd b))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o a b. eapply N.le_trans; [apply shortcut_quadratic_time|].
+    apply N.mul_le_mono_r. unfold k_const_word. nia.
+  Qed.
   Lemma T2_backward_one : forall o rw q xs,
     (T_backward_one o rw q xs <= k_const_word * N.of_nat
       (((Pos.to_nat rw +
@@ -1424,7 +1560,12 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs r Hentry.
+    eapply N.le_trans; [apply time_of_nat_le; eapply wfwd_linear_size; exact Hentry|].
+    eapply N.le_trans; [apply table_linear_work|].
+    unfold c_word_table. nia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
