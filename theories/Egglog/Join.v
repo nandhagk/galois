@@ -1524,6 +1524,81 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
     time_unfold T_run. time_unfold T_level_count. time_cbn. nia.
   Qed.
 
+  (** Pivot selection adds only the plan projection and its own call to the column scan. *)
+  Lemma T_choose_index_overhead : forall p ixs lvl ns,
+    (T_choose_index p ixs lvl ns <= T_choose_columns (cols p) ixs ns lvl 0 + 2)%N.
+  Proof.
+    intros [vars cs] ixs lvl ns.
+    time_unfold T_choose_index. time_unfold T_columns. time_cbn. lia.
+  Qed.
+
+  (** The advance wrapper pays the unary level guard and the two plan projections. *)
+  Lemma T_advance_nodes_overhead : forall p ixs lvl ns c,
+    (T_advance_nodes p ixs lvl ns c <=
+      T_advance_columns (cols p) ixs lvl ns c + N.of_nat (lvl + 5))%N.
+  Proof.
+    intros [vars cs] ixs lvl ns c.
+    pose proof (Nat.T_leb_le (S lvl) vars) as Hguard.
+    time_unfold T_advance_nodes. time_unfold T_level_count. time_unfold T_columns.
+    destruct vars as [|vars].
+    - time_cbn. lia.
+    - time_cbn. destruct (Nat.leb lvl vars); lia.
+  Qed.
+
+  (** The complete pivot scan fits the common factor times the number of columns. *)
+  Lemma T_choose_index_le : forall p ixs lvl pre ns, nodes_ok p ixs lvl pre ns ->
+    (T_choose_index p ixs lvl ns <=
+      64 * scan_factor p ixs * N.of_nat (length (cols p) + 1))%N.
+  Proof.
+    intros p ixs lvl pre ns Hnodes.
+    destruct (nodes_ok_lengths p ixs lvl pre ns Hnodes) as [Hix Hns].
+    pose proof (plan_column_lengths p ixs (proj1 Hnodes)) as Hlengths.
+    pose proof (proj1 (proj2 (proj2 Hnodes))) as Hlevel.
+    pose proof (nodes_degree_widths p ixs lvl pre ns Hnodes) as Hwidths.
+    pose proof (T_choose_columns_le (cols p) ixs ns lvl 0 (nvars p) (wmax p ixs + 1)
+      Hix Hns Hlengths Hlevel Hwidths) as Hscan.
+    assert (Hscaled : (T_choose_columns (cols p) ixs ns lvl 0 <=
+      32 * scan_factor p ixs * N.of_nat (length (cols p) + 1))%N).
+    { eapply N.le_trans; [exact Hscan|].
+      replace (32 * scan_factor p ixs * N.of_nat (length (cols p) + 1))%N with
+        (16 * (I.c_ix + 1) * N.of_nat (length (cols p) + 1) *
+          (2 * N.of_nat (wmax p ixs + 1)) *
+          N.of_nat ((nvars p + 1) * (nvars p + 1)))%N by (unfold scan_factor; ring).
+      apply N.mul_le_mono_r. apply N.mul_le_mono_l. lia. }
+    pose proof (T_choose_index_overhead p ixs lvl ns) as Hwrapper.
+    destruct (scan_factor_covers p ixs) as [Hfactor _].
+    assert (Hcolumns : (1 <= N.of_nat (length (cols p) + 1))%N) by lia.
+    nia.
+  Qed.
+
+  (** Every candidate probe fits the same factor when the candidate fits the stored width. *)
+  Lemma T_advance_nodes_le : forall p ixs lvl pre ns c, nodes_ok p ixs lvl pre ns ->
+    cell_bits V.encode c <= wmax p ixs ->
+    (T_advance_nodes p ixs lvl ns c <=
+      64 * scan_factor p ixs * N.of_nat (length (cols p) + 1))%N.
+  Proof.
+    intros p ixs lvl pre ns c Hnodes Hbits.
+    destruct (nodes_ok_lengths p ixs lvl pre ns Hnodes) as [Hix Hns].
+    pose proof (plan_column_lengths p ixs (proj1 Hnodes)) as Hlengths.
+    pose proof (proj1 (proj2 (proj2 Hnodes))) as Hlevel.
+    pose proof (probe_widths p ixs c Hbits) as Hwidths.
+    pose proof (T_advance_columns_le (cols p) ixs ns lvl c (nvars p)
+      (2 * wmax p ixs + 1) Hix Hns Hlengths Hlevel Hwidths) as Hscan.
+    assert (Hscaled : (T_advance_columns (cols p) ixs lvl ns c <=
+      32 * scan_factor p ixs * N.of_nat (length (cols p) + 1))%N).
+    { eapply N.le_trans; [exact Hscan|].
+      replace (32 * scan_factor p ixs * N.of_nat (length (cols p) + 1))%N with
+        (16 * (I.c_ix + 1) * N.of_nat (length (cols p) + 1) *
+          (2 * N.of_nat (wmax p ixs + 1)) *
+          N.of_nat ((nvars p + 1) * (nvars p + 1)))%N by (unfold scan_factor; ring).
+      apply N.mul_le_mono_r. apply N.mul_le_mono_l. lia. }
+    pose proof (T_advance_nodes_overhead p ixs lvl ns c) as Hwrapper.
+    destruct (scan_factor_covers p ixs) as [Hfactor [_ [Hvars _]]].
+    assert (Hcolumns : (1 <= N.of_nat (length (cols p) + 1))%N) by lia.
+    assert (Hguard : (N.of_nat (lvl + 5) <= 5 * scan_factor p ixs)%N) by lia.
+    nia.
+  Qed.
+
   Definition c_join : N := 1. (* STUB *)
   Lemma T_run_le : forall p ixs, wf_plan p ixs ->
     (T_run p ixs <= c_join * N.of_nat (work p ixs + length ixs + 2) * N.of_nat (wmax p ixs + 1) *
