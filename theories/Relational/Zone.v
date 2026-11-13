@@ -4565,6 +4565,38 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     unfold nonnegative. now rewrite Hentry, Hdiag.
   Qed.
 
+  (** Full closure of a nonnegative self-edge agrees with the seeded base. *)
+  Lemma close_self_nonnegative : forall m i d, dbm_wf m -> closed m ->
+    (0 <= d)%Z ->
+    exists final, close (add_cons i i d m) = Reached final /\
+      forall a b, entry final a b =
+        entry (add_cons i i 0%Z (add_cons i i 0%Z m)) a b.
+  Proof.
+    intros m i d Hwf Hclosed Hd.
+    set (base := add_cons i i 0%Z (add_cons i i 0%Z m)).
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hdiag : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    assert (Hcycle : RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base i i) (Some d))).
+    { rewrite Hdiag. cbn [RelationalPathBounds.plus RelationalPathBounds.below]. lia. }
+    destruct (direct_cycle_close_success m i i d Hwf Hclosed Hcycle)
+      as [final [Hfull Hlower]].
+    exists final. split; [exact Hfull|]. intros a b.
+    apply RelationalPathBounds.below_antisym.
+    - pose proof (direct_close_below_extension m i i d final Hwf Hfull a b)
+        as Hupper.
+      change (RelationalPathBounds.below (entry final a b)
+        (RelationalPathBounds.edge_extension (entry base) i i d a b)) in Hupper.
+      now rewrite (nonnegative_self_extension base i d Hbase Hd a b) in Hupper.
+    - pose proof (Hlower a b) as Hlower_ab.
+      change (RelationalPathBounds.below
+        (RelationalPathBounds.edge_extension (entry base) i i d a b)
+        (entry final a b)) in Hlower_ab.
+      now rewrite (nonnegative_self_extension base i d Hbase Hd a b) in Hlower_ab.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
