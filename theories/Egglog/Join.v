@@ -285,6 +285,124 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
     induction Hcols as [|lv ix cs ixs Hwf Hcols IH]; constructor; [tauto|exact IH].
   Qed.
 
+  (** Projection reads the selected head before the remaining positions. *)
+  Lemma project_cons : forall i lv b,
+    project (i :: lv) b =
+      match nth_error b i, project lv b with
+      | Some c, Some cs => Some (c :: cs)
+      | _, _ => None
+      end.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Successful projection returns one cell for each selected position. *)
+  Lemma project_length : forall lv b u, project lv b = Some u -> length u = length lv.
+  Proof.
+    induction lv as [|i lv IH]; intros b u Hproject.
+    - injection Hproject as <-. reflexivity.
+    - rewrite project_cons in Hproject.
+      destruct (nth_error b i), (project lv b) as [tail|] eqn:Htail; try discriminate.
+      injection Hproject as <-. cbn [length]. f_equal. eapply IH. exact Htail.
+  Qed.
+
+  (** Concatenating column lists concatenates their successful projections. *)
+  Lemma project_append : forall lv rest b,
+    project (lv ++ rest) b =
+      match project lv b, project rest b with
+      | Some u, Some v => Some (u ++ v)
+      | _, _ => None
+      end.
+  Proof.
+    induction lv as [|i lv IH]; intros rest b.
+    - cbn [app]. destruct (project rest b); reflexivity.
+    - cbn [app]. rewrite !project_cons, IH.
+      destruct (nth_error b i), (project lv b), (project rest b); reflexivity.
+  Qed.
+
+  (** Equal reads on the selected positions give equal projections. *)
+  Lemma project_ext : forall lv b d,
+    (forall i, In i lv -> nth_error b i = nth_error d i) -> project lv b = project lv d.
+  Proof.
+    induction lv as [|i lv IH]; intros b d Hread; [reflexivity|].
+    rewrite !project_cons, (Hread i (or_introl eq_refl)).
+    rewrite (IH b d); [reflexivity|]. intros j Hj. apply Hread. right. exact Hj.
+  Qed.
+
+  (** Taking an assignment prefix preserves every selected position below its length. *)
+  Lemma project_firstn : forall lv b lvl, Forall (fun i => i < lvl) lv ->
+    project lv (firstn lvl b) = project lv b.
+  Proof.
+    intros lv b lvl Hrange. apply project_ext. intros i Hi.
+    rewrite nth_error_firstn. apply Forall_forall with (x := i) in Hrange; [|exact Hi].
+    assert (Hlt : Nat.ltb i lvl = true) by (apply Nat.ltb_lt; exact Hrange).
+    now rewrite Hlt.
+  Qed.
+
+  (** Appending cells leaves all existing selected positions unchanged. *)
+  Lemma project_extend : forall lv b d, Forall (fun i => i < length b) lv ->
+    project lv (b ++ d) = project lv b.
+  Proof.
+    intros lv b d Hrange. apply project_ext. intros i Hi.
+    rewrite nth_error_app1; [reflexivity|]. rewrite Forall_forall in Hrange.
+    exact (Hrange i Hi).
+  Qed.
+
+  (** A suffix strictly after a level contributes neither a prefix cell nor a participant. *)
+  Lemma later_columns : forall lv lvl, Forall (fun i => lvl < i) lv ->
+    filter (fun i => Nat.ltb i lvl) lv = [] /\
+    filter (fun i => Nat.ltb i (S lvl)) lv = [] /\
+    existsb (Nat.eqb lvl) lv = false.
+  Proof.
+    intros lv lvl Hrange. induction Hrange as [|i lv Hlt Hrange [IHlow [IHnext IHeq]]].
+    - repeat split; reflexivity.
+    - assert (Hlow : Nat.ltb i lvl = false) by (apply Nat.ltb_ge; lia).
+      assert (Hnext : Nat.ltb i (S lvl) = false) by (apply Nat.ltb_ge; lia).
+      assert (Heq : Nat.eqb lvl i = false) by (apply Nat.eqb_neq; lia).
+      cbn [filter existsb]. rewrite Hlow, Hnext, Heq, IHlow, IHnext, IHeq.
+      repeat split; reflexivity.
+  Qed.
+
+  (** Increasing columns add the current level at the end of their bound prefix. *)
+  Lemma filter_level_succ : forall lv, StronglySorted lt lv -> forall lvl,
+    filter (fun i => Nat.ltb i (S lvl)) lv =
+      filter (fun i => Nat.ltb i lvl) lv ++
+        if existsb (Nat.eqb lvl) lv then [lvl] else [].
+  Proof.
+    intros lv Hsorted. induction Hsorted as [|i lv Hsorted IH Hafter]; intro lvl.
+    - reflexivity.
+    - destruct (Nat.lt_trichotomy i lvl) as [Hlt|[Heq|Hgt]].
+      + assert (Hlow : Nat.ltb i lvl = true) by (apply Nat.ltb_lt; lia).
+        assert (Hnext : Nat.ltb i (S lvl) = true) by (apply Nat.ltb_lt; lia).
+        assert (Heq : Nat.eqb lvl i = false) by (apply Nat.eqb_neq; lia).
+        cbn [filter existsb]. rewrite Hlow, Hnext, Heq, IH. reflexivity.
+      + subst i. destruct (later_columns lv lvl Hafter) as [Hlow [Hnext Heq]].
+        assert (Hsucc : Nat.ltb lvl (S lvl) = true) by (apply Nat.ltb_lt; lia).
+        cbn [filter existsb]. rewrite Nat.ltb_irrefl, Nat.eqb_refl, Hsucc, Hlow, Hnext.
+        reflexivity.
+      + assert (Hlater : Forall (fun j => lvl < j) (i :: lv)).
+        { constructor; [exact Hgt|]. eapply Forall_impl; [|exact Hafter]. intros j Hj. lia. }
+        destruct (later_columns _ _ Hlater) as [Hlow [Hnext Heq]].
+        rewrite Hlow, Hnext, Heq. reflexivity.
+  Qed.
+
+  (** Extending the assignment appends its cell exactly in participating columns. *)
+  Lemma project_next : forall lv lvl b c u, StronglySorted lt lv -> length b = lvl ->
+    project (filter (fun i => Nat.ltb i lvl) lv) b = Some u ->
+    project (filter (fun i => Nat.ltb i (S lvl)) lv) (b ++ [c]) =
+      Some (if existsb (Nat.eqb lvl) lv then u ++ [c] else u).
+  Proof.
+    intros lv lvl b c u Hsorted Hlength Hproject.
+    rewrite filter_level_succ by exact Hsorted. rewrite project_append.
+    rewrite project_extend.
+    - rewrite Hproject. destruct (existsb (Nat.eqb lvl) lv).
+      + rewrite project_cons, nth_error_app2 by lia.
+        rewrite Hlength, Nat.sub_diag. reflexivity.
+      + change (Some (u ++ []) = Some u). now rewrite app_nil_r.
+    - apply Forall_forall. intros i Hi. apply filter_In in Hi as [_ Hlt].
+      apply Nat.ltb_lt in Hlt. lia.
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
