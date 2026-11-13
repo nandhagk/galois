@@ -131,6 +131,9 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
     forall i j, entry m i j = entry m (bar j) (bar i).
   Definition coh (s : t) : Prop :=
     match s with Unreached => True | Reached m => coherent m end.
+  (** The support of a sign-closed matrix holds both signs of each of its keys. *)
+  Definition bar_closed (m : dbm) : Prop :=
+    forall i, In (K.encode i) (support m) -> In (K.encode (bar i)) (support m).
   Definition same_entries (a b : t) : Prop :=
     match a, b with
     | Reached ma, Reached mb => forall i j, entry ma i j = entry mb i j
@@ -190,12 +193,17 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   Parameter coh_havoc : forall x s, coh s -> coh (havoc x s).
   (** Assumption keeps coherence. *)
   Parameter coh_assume : forall g es s, coh s -> coh (assume g es s).
-  (** Tight closure keeps coherence. *)
-  Parameter coh_tclose : forall m, coherent m -> coh (tclose m).
+  (** Tight closure keeps coherence on a well-formed sign-closed matrix. *)
+  Parameter coh_tclose : forall m, dbm_wf m -> coherent m -> bar_closed m -> coh (tclose m).
   (** Incremental closure writes both twins and keeps coherence. *)
   Parameter coh_incr_close : forall i j d m, coherent m -> coh (incr_close i j d m).
-  (** Constraint insertion writes both signed twins. *)
-  Parameter F_add_cons_twins : forall i j d m,
+  (** Constraint insertion keeps coherence. *)
+  Parameter coherent_add_cons : forall i j d m, coherent m -> coherent (add_cons i j d m).
+  (** Constraint insertion adds both signs of both keys. *)
+  Parameter bar_closed_add_cons : forall i j d m,
+    bar_closed m -> bar_closed (add_cons i j d m).
+  (** Constraint insertion writes both signed twins of a coherent matrix. *)
+  Parameter F_add_cons_twins : forall i j d m, coherent m ->
     entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
   (** Inserting both signed twins keeps a well-formed matrix well formed. *)
   Parameter wf_add_cons : forall i j d m, dbm_wf m -> dbm_wf (add_cons i j d m).
@@ -248,14 +256,16 @@ Module Type OCTAGON_PLAN (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool
   (** Incremental closure retains models satisfying its new bound. *)
   Parameter incr_close_sound : forall i j d m v,
     models m v -> (vl v j - vl v i <= d)%Z -> ngamma (incr_close i j d m) v.
-  (** Successful integer closure is tightly closed. *)
-  Parameter tclose_tight : forall m m', dbm_wf m -> coherent m ->
+  (** A strongly closed matrix is sign-closed. *)
+  Parameter bar_closed_strong : forall m, strongly_closed m -> bar_closed m.
+  (** Successful integer closure of a sign-closed matrix is tightly closed. *)
+  Parameter tclose_tight : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
     tclose m = Reached m' -> tightly_closed m'.
   (** Incremental closure agrees with tight closure on tightly closed input. *)
   Parameter incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
     same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   (** Successful tight closure bounds finite entry growth. *)
-  Parameter bits_tclose_le : forall m m', tclose m = Reached m' ->
+  Parameter bits_tclose_le : forall m m', dbm_wf m -> tclose m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
   (** State size charges all stored numeric data. *)
   Parameter F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.

@@ -3243,7 +3243,7 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
     same_entries (incr_close i j d m) (close (add_cons i j d m)).
   Proof. Admitted. (* STUB *)
-  Lemma bits_close_le : forall m m', close m = Reached m' ->
+  Lemma bits_close_le : forall m m', dbm_wf m -> close m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)

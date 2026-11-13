@@ -2012,6 +2012,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     forall i j, entry m i j = entry m (bar j) (bar i).
   Definition coh (s : t) : Prop :=
     match s with Unreached => True | Reached m => coherent m end.
+  (** The support of a sign-closed matrix holds both signs of each of its keys. *)
+  Definition bar_closed (m : dbm) : Prop :=
+    forall i, In (K.encode i) (support m) -> In (K.encode (bar i)) (support m).
   Definition same_entries (a b : t) : Prop :=
     match a, b with
     | Reached ma, Reached mb => forall i j, entry ma i j = entry mb i j
@@ -2785,18 +2788,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (X.eqb (fst i) x), (X.eqb (fst j) x); try reflexivity.
     apply Hcoh.
   Qed.
-  Lemma coh_tclose : forall m, coherent m -> coh (tclose m).
-  Proof. Admitted. (* PLAN-DEFECT: coherence does not require signed support symmetry. *)
-  (* Coherence does not require signed support symmetry.
-     OctagonTest.isolated_positive_row_wf/coherent give a well-formed coherent
-     matrix containing only an empty positive row; closure creates its zero
-     diagonal while the negative twin remains absent. Thus dbm_wf alone does
-     not repair this plan. The repeated-label fixture supplies a separate raw
-     pivot-enumeration obstruction. *)
-  Lemma F_add_cons_twins : forall i j d m,
-    entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
-  Proof. Admitted. (* PLAN-DEFECT: incoherent twins -100 and -2 stay unequal when d = 0. *)
-
   (** Retrieving a row, with an empty fallback, preserves map consistency. *)
   Lemma row_of_wf : forall m k,
     dbm_wf m -> M.wf (row_of (M.get k m)).
@@ -3170,17 +3161,10 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma tclose_tight : forall m m', dbm_wf m -> coherent m ->
-    tclose m = Reached m' -> tightly_closed m'.
-  Proof. Admitted. (* PLAN-DEFECT: a well-formed coherent empty row may lack signed support symmetry. *)
-  (* A well-formed coherent singleton empty row has asymmetric
-     signed support. The support-preserving closure materializes only its own
-     zero diagonal, so the result is not coherent and hence not tightly closed.
-     See OctagonTest.isolated_positive_row_closure_asymmetric. *)
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> tightly_closed m ->
     same_entries (incr_close i j d m) (tclose (add_cons i j d m)).
   Proof. Admitted. (* STUB *)
-  Lemma bits_tclose_le : forall m m', tclose m = Reached m' ->
+  Lemma bits_tclose_le : forall m m', dbm_wf m -> tclose m = Reached m' ->
     ell m' <= ell m + Nat.log2 (supp m) + 1.
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
@@ -3354,6 +3338,43 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         intros d Hdiag. apply Hnonnegative. now rewrite (entry_fw_present k m Hpresent).
     - exists ps. eapply RelationalPathBounds.invariant_ext; [|exact Hinv].
       intros i j. symmetry. now apply entry_fw_absent.
+  Qed.
+
+  (** A successful scan processes every supported pivot in the loop. *)
+  Lemma fw_pivots_success_path_invariant : forall ks initial m ps,
+    RelationalPathBounds.invariant (entry initial) (entry m) ps ->
+    (forall k, In k ks -> In (K.encode k) (support m)) ->
+    (forall k, In k ks -> nonnegative k (fw_pivots ks m) = true) ->
+    RelationalPathBounds.invariant (entry initial) (entry (fw_pivots ks m))
+      (rev ks ++ ps).
+  Proof.
+    induction ks as [|k ks IH]; intros initial m ps Hinv Hsupport Hscan.
+    - exact Hinv.
+    - cbn [fw_pivots].
+      assert (Hpresent : pivot_present k m = true).
+      { apply pivot_present_support, Hsupport. now left. }
+      destruct (nonnegative k (fw_round k m)) eqn:Hnext.
+      + assert (Hsuccess : forall d, entry (fw_round k m) k k = Some d -> (0 <= d)%Z).
+        { intros d Hd. unfold nonnegative in Hnext. rewrite Hd in Hnext.
+          now apply Z.leb_le. }
+        assert (Hround : RelationalPathBounds.invariant (entry initial)
+          (entry (fw_round k m)) (k :: ps)).
+        { eapply RelationalPathBounds.invariant_ext.
+          - intros i j. symmetry. now apply entry_fw_present.
+          - eapply RelationalPathBounds.invariant_successful_round;
+              [exact Hinv|].
+            intros d Hd. apply Hsuccess.
+            now rewrite (entry_fw_present k m Hpresent k k). }
+        replace (rev (k :: ks) ++ ps) with (rev ks ++ k :: ps)
+          by (cbn [rev]; rewrite <- app_assoc; reflexivity).
+        apply IH; [exact Hround| |].
+        * intros p Hp. rewrite support_round.
+          apply Hsupport. now right.
+        * intros p Hp. specialize (Hscan p (or_intror Hp)).
+          cbn [fw_pivots] in Hscan. now rewrite Hnext in Hscan.
+      + specialize (Hscan k (or_introl eq_refl)).
+        cbn [fw_pivots] in Hscan. rewrite Hnext in Hscan.
+        congruence.
   Qed.
 
   (** Every recorded state precedes the first rejected pivot cycle. *)
@@ -3972,6 +3993,35 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     rewrite <- Hsame. now apply coherent_put_twins.
   Qed.
 
+  (** Constraint insertion adds both signs of both keys. *)
+  Lemma bar_closed_add_cons : forall i j d m,
+    bar_closed m -> bar_closed (add_cons i j d m).
+  Proof.
+    intros i j d m Hclosed k Hin. apply support_add_cons in Hin. apply support_add_cons.
+    change (bar k) with (flip k).
+    destruct Hin as [Hk | [Hk | [Hk | [Hk | Hk]]]].
+    - apply K.encode_inj in Hk. subst k. right. right. now left.
+    - apply K.encode_inj in Hk. subst k. right. right. right. now left.
+    - apply K.encode_inj in Hk. subst k. rewrite flip_involutive. now left.
+    - apply K.encode_inj in Hk. subst k. rewrite flip_involutive. right. now left.
+    - right. right. right. right. now apply Hclosed.
+  Qed.
+
+  (** Constraint insertion writes both signed twins of a coherent matrix. *)
+  Lemma F_add_cons_twins : forall i j d m, coherent m ->
+    entry (add_cons i j d m) i j = entry (add_cons i j d m) (bar j) (bar i).
+  Proof.
+    intros i j d m Hcoh. exact (coherent_add_cons i j d m Hcoh i j).
+  Qed.
+
+  (** A strongly closed matrix is sign-closed. *)
+  Lemma bar_closed_strong : forall m, strongly_closed m -> bar_closed m.
+  Proof.
+    intros m [Hcoh [Hdiag _]] i Hin.
+    pose proof (Hdiag i Hin) as Hzero. rewrite (Hcoh i i) in Hzero.
+    exact (entry_source_support m (bar i) (bar i) 0%Z Hzero).
+  Qed.
+
   (** A tightened replacement changes only its unary coordinate. *)
   Definition tightened_other (m changed : dbm) : Prop :=
     forall i row, M.get i changed = Some row ->
@@ -4009,6 +4059,137 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + exact (collected_tighten_other m i fresh Hfresh j Hother).
       + unfold entry. now rewrite Hrow.
     - unfold entry. now rewrite Hrow.
+  Qed.
+
+  (** Once a unary row is rounded, later callbacks leave that row intact. *)
+  Lemma tighten_row_fixed : forall m changed i fresh k ignored,
+    M.get i changed = Some fresh ->
+    M.get i (tighten_row m changed k ignored) = Some fresh.
+  Proof.
+    intros m changed i fresh k ignored Hfresh. unfold tighten_row.
+    destruct (K.eqb_spec k i) as [Heq|Hne].
+    - subst k. now rewrite Hfresh.
+    - destruct (M.get k changed) as [row|] eqn:Hrow; [exact Hfresh|].
+      destruct (M.get k m) as [row|] eqn:Hsource; [|exact Hfresh].
+      destruct (M.get (flip k) row) as [d|] eqn:Hunary; [|exact Hfresh].
+      rewrite M.get_set_other by congruence. exact Hfresh.
+  Qed.
+
+  (** Visiting a source row rounds its unary entry exactly once. *)
+  Lemma tighten_row_target : forall m changed i row d ignored,
+    M.get i m = Some row -> M.get (flip i) row = Some d ->
+    (M.get i changed = None \/
+      M.get i changed = Some (M.set (flip i) (even_bound d) row)) ->
+    M.get i (tighten_row m changed i ignored) =
+      Some (M.set (flip i) (even_bound d) row).
+  Proof.
+    intros m changed i row d ignored Hrow Hd [Hnone|Hfixed].
+    - unfold tighten_row. now rewrite Hnone, Hrow, Hd, M.get_set_same.
+    - now apply tighten_row_fixed.
+  Qed.
+
+  Lemma tighten_row_unvisited : forall m changed i k ignored,
+    i <> k -> M.get i changed = None ->
+    M.get i (tighten_row m changed k ignored) = None.
+  Proof.
+    intros m changed i k ignored Hne Hnone. unfold tighten_row.
+    destruct (M.get k changed) as [row|]; [exact Hnone|].
+    destruct (M.get k m) as [row|]; [|exact Hnone].
+    destruct (M.get (flip k) row) as [d|]; [|exact Hnone].
+    rewrite M.get_set_other by exact Hne. exact Hnone.
+  Qed.
+
+  (** Tightening rounds every finite unary entry to its even predecessor. *)
+  Lemma entry_tighten_unary : forall m, dbm_wf m -> forall i d,
+    entry m i (flip i) = Some d ->
+    entry (tighten m) i (flip i) = Some (even_bound d).
+  Proof.
+    intros m [Houter Hrows] i d Hentry.
+    unfold entry in Hentry.
+    destruct (M.get i m) as [row|] eqn:Hrow; [|discriminate].
+    assert (Hin : In (i, row) (M.elements m)).
+    { apply (proj2 (M.elements_spec (M.t Z) m i row Houter)). exact Hrow. }
+    apply in_split in Hin. destruct Hin as [before [after Helems]].
+    set (fresh := M.set (flip i) (even_bound d) row).
+    assert (Hstep : forall changed k ignored,
+      (M.get i changed = None \/ M.get i changed = Some fresh) ->
+      M.get i (tighten_row m changed k ignored) = None \/
+        M.get i (tighten_row m changed k ignored) = Some fresh).
+    { intros changed k ignored [Hnone|Hfixed].
+      - destruct (K.eqb_spec k i) as [Heq|Hne].
+        + subst k. right. unfold fresh.
+          eapply tighten_row_target; eauto.
+        + left. apply tighten_row_unvisited; congruence.
+      - right. now apply tighten_row_fixed. }
+    assert (Hfold : forall xs changed,
+      (M.get i changed = None \/ M.get i changed = Some fresh) ->
+      M.get i (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv))
+        xs changed) = None \/
+      M.get i (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv))
+        xs changed) = Some fresh).
+    { induction xs as [|[k ignored] xs IH]; intros changed Hchanged;
+        cbn [fold_left]; [exact Hchanged|].
+      apply IH, Hstep, Hchanged. }
+    assert (Hbefore : M.get i
+      (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv)) before M.empty) = None \/
+      M.get i
+      (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv)) before M.empty) =
+        Some fresh).
+    { apply Hfold. left. apply M.get_empty. }
+    assert (Hafter : forall xs changed,
+      M.get i changed = Some fresh ->
+      M.get i (fold_left (fun acc kv => tighten_row m acc (fst kv) (snd kv))
+        xs changed) = Some fresh).
+    { induction xs as [|[k ignored] xs IH]; intros changed Hfixed;
+        cbn [fold_left]; [exact Hfixed|].
+      apply IH. now apply tighten_row_fixed. }
+    assert (Hcollected : M.get i (M.fold (tighten_row m) m M.empty) = Some fresh).
+    { rewrite M.fold_spec, Helems, fold_left_app. cbn [fold_left].
+      apply Hafter. eapply tighten_row_target; eauto. }
+    unfold entry at 1, tighten. rewrite M.get_merge by reflexivity.
+    rewrite Hrow, Hcollected. cbn [replace_row].
+    unfold fresh. now rewrite M.get_set_same.
+  Qed.
+
+  Lemma entry_tighten_exact : forall m, dbm_wf m -> forall i j,
+    entry (tighten m) i j =
+      if K.eqb j (flip i) then option_map even_bound (entry m i j)
+      else entry m i j.
+  Proof.
+    intros m Hwf i j. destruct (K.eqb_spec j (flip i)) as [Heq|Hne].
+    - subst j.
+      destruct (entry m i (flip i)) as [d|] eqn:Hentry.
+      + now apply entry_tighten_unary.
+      + destruct (entry (tighten m) i (flip i)) as [z|] eqn:Hnext;
+          [|reflexivity].
+        exfalso.
+        assert (Hraw : raw_entry (tighten m) (K.encode i) (K.encode (flip i)) <>
+          None).
+        { rewrite raw_entry_get, Hnext. discriminate. }
+        apply (proj1 (raw_tighten_presence m (K.encode i)
+          (K.encode (flip i)))) in Hraw.
+        rewrite raw_entry_get, Hentry in Hraw. exact (Hraw eq_refl).
+    - now apply entry_tighten_other.
+  Qed.
+
+  Lemma tighten_unary_even : forall m, dbm_wf m -> forall i d,
+    entry (tighten m) i (flip i) = Some d -> (d mod 2 = 0)%Z.
+  Proof.
+    intros m Hwf i d Hentry.
+    rewrite entry_tighten_exact in Hentry by exact Hwf.
+    destruct (K.eqb_spec (flip i) (flip i)) as [_|Hne]; [|contradiction].
+    destruct (entry m i (flip i)) as [a|] eqn:Hsource; [|discriminate].
+    inversion Hentry; subst d. unfold even_bound.
+    replace (2 * Z.div2 a)%Z with (Z.div2 a * 2)%Z by ring.
+    now rewrite Z.mod_mul by lia.
+  Qed.
+
+  Lemma entry_tighten_unary_option : forall m, dbm_wf m -> forall i,
+    entry (tighten m) i (flip i) = option_map even_bound (entry m i (flip i)).
+  Proof.
+    intros m Hwf i. rewrite entry_tighten_exact by exact Hwf.
+    destruct (K.eqb_spec (flip i) (flip i)) as [_|Hne];
+      [reflexivity|contradiction].
   Qed.
 
   Lemma coherent_tighten : forall m, coherent m -> coherent (tighten m).
@@ -4053,6 +4234,54 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     apply K.encode_inj in Hkey. now subst k.
   Qed.
 
+  (** Unary collection reads exactly the source matrix's finite unary entries. *)
+  Lemma collect_unary_left_exact : forall m, dbm_wf m -> forall i,
+    M.get i (fst (M.fold (unary_maps m) m (M.empty, M.empty))) =
+      entry m i (flip i).
+  Proof.
+    intros m [Houter Hrows] i.
+    destruct (entry m i (flip i)) as [d|] eqn:Hunary.
+    - assert (Hfixed : forall acc k ignored,
+        M.get i (fst acc) = Some d ->
+        M.get i (fst (unary_maps m acc k ignored)) = Some d).
+      { intros [left right] k ignored Hget. unfold unary_maps.
+        destruct (entry m k (flip k)) as [z|] eqn:Hentry; [|exact Hget].
+        cbn [fst]. destruct (K.eqb_spec k i) as [Heq|Hne].
+        + subst k. rewrite Hunary in Hentry. inversion Hentry; subst z.
+          now rewrite M.get_set_same.
+        + rewrite M.get_set_other by congruence. exact Hget. }
+      assert (Hhit : forall acc ignored,
+        M.get i (fst (unary_maps m acc i ignored)) = Some d).
+      { intros [left right] ignored. unfold unary_maps. rewrite Hunary.
+        cbn [fst]. now rewrite M.get_set_same. }
+      assert (Htail : forall xs acc,
+        M.get i (fst acc) = Some d ->
+        M.get i (fst (fold_left (fun state kv =>
+          unary_maps m state (fst kv) (snd kv)) xs acc)) = Some d).
+      { induction xs as [|[k ignored] xs IH]; intros acc Hget;
+          cbn [fold_left]; [exact Hget|].
+        apply IH, Hfixed, Hget. }
+      unfold entry in Hunary.
+      destruct (M.get i m) as [row|] eqn:Hrow; [|discriminate].
+      assert (Hin : In (i, row) (M.elements m)).
+      { apply (proj2 (M.elements_spec (M.t Z) m i row Houter)). exact Hrow. }
+      apply in_split in Hin. destruct Hin as [before [after Helems]].
+      rewrite M.fold_spec, Helems, fold_left_app. cbn [fold_left].
+      apply Htail, Hhit.
+    - assert (Hstep : forall acc k ignored,
+        M.get i (fst acc) = None ->
+        M.get i (fst (unary_maps m acc k ignored)) = None).
+      { intros [left right] k ignored Hget. unfold unary_maps.
+        destruct (entry m k (flip k)) as [z|] eqn:Hentry; [|exact Hget].
+        cbn [fst]. destruct (K.eqb_spec k i) as [Heq|Hne].
+        + subst k. congruence.
+        + rewrite M.get_set_other by congruence. exact Hget. }
+      apply (fold_invariant _ _
+        (fun acc => M.get i (fst acc) = None));
+        [cbn [fst]; apply M.get_empty|].
+      intros acc k ignored Hget. now apply Hstep.
+  Qed.
+
   (** The strengthened entry is the minimum with its collected unary average. *)
   Lemma entry_strengthen : forall m i j,
     entry (strengthen m) i j =
@@ -4075,6 +4304,70 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       + unfold entry. now rewrite Hrow.
   Qed.
 
+  (** Strengthening uses the source matrix's two unary bounds. *)
+  Lemma entry_strengthen_exact : forall m, dbm_wf m -> forall i j,
+    entry (strengthen m) i j =
+      match entry m i (flip i) with
+      | Some a => strengthen_bound a (entry m i j) (entry m (flip j) j)
+      | None => entry m i j
+      end.
+  Proof.
+    intros m Hwf i j. rewrite entry_strengthen.
+    pose proof (collect_unary_twins m (flip j)) as Hright.
+    rewrite flip_involutive in Hright. rewrite <- Hright.
+    rewrite !collect_unary_left_exact by exact Hwf.
+    now rewrite flip_involutive.
+  Qed.
+
+  Lemma entry_strengthen_unary : forall m, dbm_wf m -> forall i,
+    entry (strengthen m) i (flip i) = entry m i (flip i).
+  Proof.
+    intros m Hwf i. rewrite entry_strengthen_exact by exact Hwf.
+    rewrite flip_involutive.
+    destruct (entry m i (flip i)) as [a|]; [|reflexivity].
+    cbn [strengthen_bound lower_bound].
+    replace (a + a)%Z with (2 * a)%Z by lia.
+    rewrite Z.div2_div.
+    replace (2 * a)%Z with (a * 2)%Z by ring.
+    rewrite Z.div_mul by lia. now rewrite Z.min_id.
+  Qed.
+
+  Lemma strengthen_below_old : forall m, dbm_wf m -> forall i j,
+    RelationalPathBounds.below (entry (strengthen m) i j) (entry m i j).
+  Proof.
+    intros m Hwf i j. rewrite entry_strengthen_exact by exact Hwf.
+    destruct (entry m i (flip i)) as [a|]; [|apply RelationalPathBounds.below_refl].
+    destruct (entry m (flip j) j) as [z|];
+      destruct (entry m i j) as [old|]; cbn [strengthen_bound lower_bound
+        RelationalPathBounds.below]; try exact I; lia.
+  Qed.
+
+  (** Strengthening enforces the unary average at every finite unary pair. *)
+  Lemma strengthen_strong_clause : forall m, dbm_wf m ->
+    forall i j a z,
+      entry (strengthen m) i (flip i) = Some a ->
+      entry (strengthen m) (flip j) j = Some z ->
+      exists d, entry (strengthen m) i j = Some d /\ (2 * d <= a + z)%Z.
+  Proof.
+    intros m Hwf i j a z Hleft Hright.
+    rewrite entry_strengthen_unary in Hleft by exact Hwf.
+    assert (Hright' : entry (strengthen m) (flip j) (flip (flip j)) = Some z).
+    { now rewrite flip_involutive. }
+    rewrite entry_strengthen_unary in Hright' by exact Hwf.
+    rewrite flip_involutive in Hright'.
+    rewrite entry_strengthen_exact by exact Hwf.
+    rewrite Hleft, Hright'. cbn [strengthen_bound].
+    destruct (entry m i j) as [old|];
+      [exists (Z.min (Z.div2 (a + z)) old)|exists (Z.div2 (a + z))];
+      split; [reflexivity| |reflexivity|].
+    - pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      rewrite Z.div2_div. lia.
+    - pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      rewrite Z.div2_div. lia.
+  Qed.
+
   Lemma coherent_strengthen : forall m, coherent m -> coherent (strengthen m).
   Proof.
     intros m Hcoh i j.
@@ -4088,6 +4381,38 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
       (M.get j (snd (M.fold (unary_maps m) m (M.empty, M.empty)))) as [b|];
       cbn [strengthen_bound]; try reflexivity.
     now rewrite Z.add_comm.
+  Qed.
+
+  (** Reversing a chain and flipping its endpoints preserves its weight. *)
+  Lemma coherent_chain_pair : forall m i j ks,
+    coherent m ->
+    RelationalPathBounds.chain (entry m) i ks j =
+      RelationalPathBounds.chain (entry m) (bar j) (map bar (rev ks)) (bar i).
+  Proof.
+    intros m i j ks Hcoh. revert i.
+    induction ks as [|k ks IH]; intro i.
+    - cbn [RelationalPathBounds.chain rev map]. apply Hcoh.
+    - cbn [RelationalPathBounds.chain].
+      cbn [rev]. rewrite map_app.
+      cbn [map]. rewrite RelationalPathBounds.chain_app.
+      cbn [RelationalPathBounds.chain].
+      rewrite <- (IH k), (Hcoh i k).
+      apply RelationalPathBounds.plus_comm.
+  Qed.
+
+  (** A sign-closed pivot set contains the paired chain of every witness. *)
+  Lemma coherent_path_pair : forall m ps i j d,
+    coherent m -> (forall k, In k ps -> In (bar k) ps) ->
+    RelationalPathBounds.path_witness (entry m) ps i j d ->
+    RelationalPathBounds.path_witness (entry m) ps (bar j) (bar i) d.
+  Proof.
+    intros m ps i j d Hcoh Hbar [Hzero|[ks [Hks Hchain]]].
+    - left. destruct Hzero as [Heq Hd]. subst j d. now split.
+    - right. exists (map bar (rev ks)). split.
+      + intros k Hin. apply in_map_iff in Hin.
+        destruct Hin as [p [Heq Hp]]. subst k.
+        apply Hbar, Hks. now apply in_rev.
+      + rewrite <- (coherent_chain_pair m i j ks Hcoh). exact Hchain.
   Qed.
 
 
@@ -5528,6 +5853,451 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma fw_keys : forall m, fw m = fw_pivots (keys m) m.
   Proof.
     intro m. unfold fw. now rewrite pivot_keys_eq_keys.
+  Qed.
+
+  (** A successful full scan leaves every original support key processed. *)
+  Lemma fw_success_path_invariant : forall m, dbm_wf m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true ->
+    RelationalPathBounds.invariant (entry m) (entry (fw m)) (rev (keys m)).
+  Proof.
+    intros m Hwf Hscan. rewrite fw_keys in Hscan |- *.
+    replace (rev (keys m)) with (rev (keys m) ++ nil) by now rewrite app_nil_r.
+    apply fw_pivots_success_path_invariant.
+    - apply RelationalPathBounds.invariant_initial.
+    - intros k Hkey. now apply keys_support.
+    - intros k Hkey. rewrite forallb_forall in Hscan.
+      now apply Hscan.
+  Qed.
+
+  (** Paired shortest paths make a successful full Floyd result coherent. *)
+  Lemma coherent_fw_success : forall m, dbm_wf m -> coherent m -> bar_closed m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true -> coherent (fw m).
+  Proof.
+    intros m Hwf Hcoh Hbar Hscan.
+    pose proof (fw_success_path_invariant m Hwf Hscan) as Hinv.
+    destruct Hinv as [Hbelow Hclosed Hzero Hpath].
+    assert (Hkeys : forall k, In k (rev (keys m)) -> In (bar k) (rev (keys m))).
+    { intros k Hk. apply in_rev in Hk. apply in_rev.
+      rewrite rev_involutive.
+      apply (proj2 (keys_support_iff m (bar k) Hwf)).
+      apply Hbar, (proj1 (keys_support_iff m k Hwf)). exact Hk. }
+    assert (Hpair : forall i j,
+      RelationalPathBounds.below (entry (fw m) (bar j) (bar i)) (entry (fw m) i j)).
+    { intros i j. destruct (entry (fw m) i j) as [d|] eqn:Hentry;
+        [|destruct (entry (fw m) (bar j) (bar i)); exact I].
+      pose proof (coherent_path_pair m (rev (keys m)) i j d Hcoh Hkeys
+        (Hpath i j d Hentry)) as Hpaired.
+      destruct Hpaired as [[Heq Hd]|[ks [Hks Hchain]]].
+      - subst d. rewrite <- Heq.
+        assert (Hsupport : In (K.encode (bar j)) (support m)).
+        { apply Hbar. apply (proj1 (fw_support m (K.encode j))).
+          eapply entry_target_support. exact Hentry. }
+        rewrite (Hzero (bar j)).
+        + cbn [RelationalPathBounds.below]. lia.
+        + apply in_rev. rewrite rev_involutive.
+          apply (proj2 (keys_support_iff m (bar j) Hwf)).
+          exact Hsupport.
+      - pose proof (RelationalPathBounds.chain_bound K.t (entry m) (entry (fw m))
+          (rev (keys m)) Hbelow Hclosed ks (bar j) (bar i) Hks) as Hbound.
+        now rewrite Hchain in Hbound. }
+    assert (Hbarbar : forall x, bar (bar x) = x).
+    { intro x. exact (flip_involutive x). }
+    intros i j. apply RelationalPathBounds.below_antisym.
+    - pose proof (Hpair (bar j) (bar i)) as Hreverse.
+      now rewrite !Hbarbar in Hreverse.
+    - exact (Hpair i j).
+  Qed.
+
+  (** A completed successful scan has zero diagonals and every triangle bound. *)
+  Lemma fw_closed_success : forall m, dbm_wf m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true ->
+    (forall i, In (K.encode i) (support (fw m)) -> entry (fw m) i i = Some 0%Z) /\
+    (forall i j k a z, entry (fw m) i k = Some a ->
+      entry (fw m) k j = Some z ->
+      exists d, entry (fw m) i j = Some d /\ (d <= a + z)%Z).
+  Proof.
+    intros m Hwf Hscan.
+    pose proof (fw_success_path_invariant m Hwf Hscan) as Hinv.
+    destruct Hinv as [_ Hclosed Hzero _]. split.
+    - intros i Hsupport. apply Hzero.
+      apply in_rev. rewrite rev_involutive.
+      apply (proj2 (keys_support_iff m i Hwf)).
+      apply (proj1 (fw_support m (K.encode i))). exact Hsupport.
+    - intros i j k a z Hik Hkj.
+      assert (Hkey : In k (rev (keys m))).
+      { apply in_rev. rewrite rev_involutive.
+        apply (proj2 (keys_support_iff m k Hwf)).
+        apply (proj1 (fw_support m (K.encode k))).
+        eapply entry_target_support. exact Hik. }
+      pose proof (Hclosed k Hkey i j) as Hbound.
+      rewrite Hik, Hkj in Hbound. cbn [RelationalPathBounds.plus] in Hbound.
+      destruct (RelationalPathBounds.below_finite _ _ Hbound)
+        as [d [Hd Hle]]. exists d. now split.
+  Qed.
+
+  Lemma fw_closed_at_success : forall m, dbm_wf m ->
+    forallb (fun k => nonnegative k (fw m)) (keys m) = true ->
+    forall k, RelationalPathBounds.closed_at (entry (fw m)) k.
+  Proof.
+    intros m Hwf Hscan k i j.
+    destruct (entry (fw m) i k) as [a|] eqn:Hik;
+      destruct (entry (fw m) k j) as [z|] eqn:Hkj;
+      cbn [RelationalPathBounds.plus RelationalPathBounds.below];
+      try (destruct (entry (fw m) i j); exact I).
+    destruct (proj2 (fw_closed_success m Hwf Hscan) i j k a z Hik Hkj)
+      as [d [Hd Hle]]. rewrite Hd.
+    cbn [RelationalPathBounds.below]. exact Hle.
+  Qed.
+
+  (** A coherent triangle transports a unary half-bound across one edge. *)
+  Lemma unary_half_transport : forall m, coherent m ->
+    (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
+      exists d, entry m i j = Some d /\ (d <= a + z)%Z) ->
+    forall i k a b c, entry m i k = Some a ->
+      entry m k (flip k) = Some b -> entry m i (flip i) = Some c ->
+      (Z.div2 c <= a + Z.div2 b)%Z.
+  Proof.
+    intros m Hcoh Htri i k a b c Hik Hkb Hic.
+    destruct (Htri i (flip k) k a b Hik Hkb) as [d [Hikbar Hd]].
+    assert (Hbar : entry m (flip k) (flip i) = Some a).
+    { change (entry m (bar k) (bar i) = Some a).
+      rewrite <- (Hcoh i k). exact Hik. }
+    destruct (Htri i (flip i) (flip k) d a Hikbar Hbar)
+      as [c' [Hic' Hc']].
+    rewrite Hic in Hic'. inversion Hic'; subst c'.
+    rewrite !Z.div2_div.
+    pose proof (Z.div_mod c 2 ltac:(lia)) as Hcdiv.
+    pose proof (Z.mod_pos_bound c 2 ltac:(lia)) as Hcrem.
+    pose proof (Z.div_mod b 2 ltac:(lia)) as Hbdiv.
+    pose proof (Z.mod_pos_bound b 2 ltac:(lia)) as Hbrem.
+    lia.
+  Qed.
+
+  Definition half_unary (m : dbm) (i : K.t) : option Z :=
+    option_map Z.div2 (entry m i (flip i)).
+
+  Definition strong_view (m : dbm) (i j : K.t) : option Z :=
+    RelationalPathBounds.minimum (entry m i j)
+      (RelationalPathBounds.plus (half_unary m i) (half_unary m (flip j))).
+
+  Lemma even_half_sum : forall a b,
+    Z.div2 (even_bound a + even_bound b) = (Z.div2 a + Z.div2 b)%Z.
+  Proof.
+    intros a b. unfold even_bound. rewrite Z.div2_div.
+    replace (2 * Z.div2 a + 2 * Z.div2 b)%Z with
+      ((Z.div2 a + Z.div2 b) * 2)%Z by ring.
+    now rewrite Z.div_mul by lia.
+  Qed.
+
+  (** Tightening and strengthening implement the unary-half minimum. *)
+  Lemma strengthen_tighten_view : forall m, dbm_wf m -> forall i j,
+    entry (strengthen (tighten m)) i j = strong_view m i j.
+  Proof.
+    intros m Hwf i j.
+    destruct (K.eqb_spec j (flip i)) as [Heq|Hne].
+    - subst j. rewrite entry_strengthen_unary by (apply wf_tighten; exact Hwf).
+      rewrite entry_tighten_unary_option by exact Hwf.
+      unfold strong_view, half_unary. rewrite flip_involutive.
+      destruct (entry m i (flip i)) as [a|] eqn:Hunary;
+        cbn [option_map RelationalPathBounds.plus RelationalPathBounds.minimum];
+        [|reflexivity].
+      unfold even_bound.
+      rewrite Z.div2_div.
+      pose proof (Z.div_mod a 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound a 2 ltac:(lia)) as Hmod.
+      rewrite Z.min_r by lia. f_equal. lia.
+    - rewrite entry_strengthen_exact by (apply wf_tighten; exact Hwf).
+      rewrite entry_tighten_unary_option by exact Hwf.
+      pose proof (entry_tighten_unary_option m Hwf (flip j)) as Hright.
+      rewrite flip_involutive in Hright. rewrite Hright.
+      rewrite entry_tighten_other by exact Hne.
+      unfold strong_view, half_unary. rewrite flip_involutive.
+      destruct (entry m i (flip i)) as [a|],
+        (entry m (flip j) j) as [b|], (entry m i j) as [old|];
+        cbn [option_map RelationalPathBounds.plus RelationalPathBounds.minimum
+          strengthen_bound lower_bound]; try reflexivity.
+      + rewrite even_half_sum. f_equal. apply Z.min_comm.
+      + now rewrite even_half_sum.
+  Qed.
+
+  Lemma half_unary_transport : forall m, coherent m ->
+    (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
+      exists d, entry m i j = Some d /\ (d <= a + z)%Z) ->
+    forall i k, RelationalPathBounds.below (half_unary m i)
+      (RelationalPathBounds.plus (entry m i k) (half_unary m k)).
+  Proof.
+    intros m Hcoh Htri i k. unfold half_unary.
+    destruct (entry m i k) as [a|] eqn:Hik;
+      destruct (entry m k (flip k)) as [b|] eqn:Hkb;
+      cbn [option_map RelationalPathBounds.plus RelationalPathBounds.below];
+      try (destruct (entry m i (flip i)); exact I).
+    destruct (Htri i (flip k) k a b Hik Hkb) as [d [Hikbar Hd]].
+    assert (Hbar : entry m (flip k) (flip i) = Some a).
+    { change (entry m (bar k) (bar i) = Some a).
+      rewrite <- (Hcoh i k). exact Hik. }
+    destruct (Htri i (flip i) (flip k) d a Hikbar Hbar)
+      as [c [Hic Hc]].
+    rewrite Hic. cbn [option_map RelationalPathBounds.below].
+    exact (unary_half_transport m Hcoh Htri i k a b c Hik Hkb Hic).
+  Qed.
+
+  (** Unary strengthening preserves every triangle when opposite halves are consistent. *)
+  Lemma strong_view_triangle : forall m, coherent m ->
+    (forall k, RelationalPathBounds.closed_at (entry m) k) ->
+    (forall i k, RelationalPathBounds.below (half_unary m i)
+      (RelationalPathBounds.plus (entry m i k) (half_unary m k))) ->
+    (forall k, RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (half_unary m (flip k)) (half_unary m k))) ->
+    forall i j k, RelationalPathBounds.below (strong_view m i j)
+      (RelationalPathBounds.plus (strong_view m i k) (strong_view m k j)).
+  Proof.
+    intros m Hcoh Hclosed Htransport Hpair i j k.
+    unfold strong_view.
+    rewrite RelationalPathBounds.plus_minimum_l.
+    rewrite !RelationalPathBounds.plus_minimum_r.
+    apply RelationalPathBounds.minimum_glb. split;
+      apply RelationalPathBounds.minimum_glb; split.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_l.
+      + apply Hclosed.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_r.
+      + pose proof (Htransport (flip j) (flip k)) as Hstep.
+        assert (Hmirror : entry m (flip j) (flip k) = entry m k j).
+        { change (entry m (bar j) (bar k) = entry m k j).
+          symmetry. apply Hcoh. }
+        rewrite Hmirror in Hstep.
+        eapply RelationalPathBounds.below_trans.
+        * apply RelationalPathBounds.plus_mono;
+            [apply RelationalPathBounds.below_refl|exact Hstep].
+        * rewrite !RelationalPathBounds.plus_assoc.
+          rewrite (RelationalPathBounds.plus_comm (entry m k j)
+            (half_unary m (flip k))).
+          apply RelationalPathBounds.below_refl.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_r.
+      + eapply RelationalPathBounds.below_trans.
+        * apply RelationalPathBounds.plus_mono;
+            [apply Htransport|apply RelationalPathBounds.below_refl].
+        * rewrite RelationalPathBounds.plus_assoc.
+          apply RelationalPathBounds.below_refl.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_r.
+      + eapply RelationalPathBounds.below_trans.
+        * replace (RelationalPathBounds.plus (half_unary m i)
+            (half_unary m (flip j))) with
+            (RelationalPathBounds.plus
+              (RelationalPathBounds.plus (half_unary m i) (Some 0%Z))
+              (half_unary m (flip j)))
+            by (rewrite RelationalPathBounds.plus_zero_r; reflexivity).
+          apply RelationalPathBounds.plus_mono;
+            [apply RelationalPathBounds.plus_mono;
+              [apply RelationalPathBounds.below_refl|apply Hpair]|
+             apply RelationalPathBounds.below_refl].
+        * rewrite !RelationalPathBounds.plus_assoc.
+          rewrite (RelationalPathBounds.plus_comm (half_unary m k)
+            (half_unary m (flip j))).
+          apply RelationalPathBounds.below_refl.
+  Qed.
+
+  (** A successful tight closure is coherent after both numeric passes. *)
+  Lemma coherent_tclose_reached : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
+    tclose m = Reached m' -> coherent m'.
+  Proof.
+    intros m m' Hwf Hcoh Hbar Hresult.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m)) eqn:Hscan;
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    apply coherent_strengthen, coherent_tighten.
+    now apply coherent_fw_success.
+  Qed.
+
+  (** Successful closure leaves every stored unary bound even. *)
+  Lemma tclose_unary_even : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i d, entry m' i (flip i) = Some d -> (d mod 2 = 0)%Z.
+  Proof.
+    intros m m' Hwf Hresult i d Hentry.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m));
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    rewrite entry_strengthen_unary in Hentry.
+    - eapply tighten_unary_even; [apply wf_fw; exact Hwf|exact Hentry].
+    - apply wf_tighten, wf_fw. exact Hwf.
+  Qed.
+
+  (** Successful final diagonal checking leaves every supported diagonal zero. *)
+  Lemma tclose_zero_diag : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i, In (K.encode i) (support m') -> entry m' i i = Some 0%Z.
+  Proof.
+    intros m m' Hwf Hresult i Hsupport.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m)) eqn:Hfirst;
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)) eqn:Hsecond; [|discriminate].
+    inversion Hresult; subst m'.
+    assert (Hsource : In (K.encode i) (support (fw m))).
+    { apply (proj1 (support_tighten (fw m) (K.encode i))).
+      apply (proj1 (support_strengthen (tighten (fw m)) (K.encode i))).
+      exact Hsupport. }
+    pose proof (proj1 (fw_closed_success m Hwf Hfirst) i Hsource) as Hzero.
+    assert (Hne : i <> flip i).
+    { intros Heq. destruct i as [x s]. destruct s; discriminate. }
+    assert (Htight : entry (tighten (fw m)) i i = Some 0%Z).
+    { rewrite entry_tighten_other by exact Hne. exact Hzero. }
+    pose proof (strengthen_below_old (tighten (fw m))
+      (wf_tighten (fw m) (wf_fw m Hwf)) i i) as Hbelow.
+    rewrite Htight in Hbelow.
+    destruct (RelationalPathBounds.below_finite _ _ Hbelow)
+      as [d [Hd Hle]].
+    rewrite forallb_forall in Hsecond.
+    assert (Hkey : In i (keys m)).
+    { apply (proj2 (keys_support_iff m i Hwf)).
+      apply (proj1 (fw_support m (K.encode i))). exact Hsource. }
+    pose proof (Hsecond i Hkey) as Hnonnegative.
+    unfold nonnegative in Hnonnegative. rewrite Hd in Hnonnegative.
+    apply Z.leb_le in Hnonnegative. assert (d = 0)%Z by lia.
+    now subst d.
+  Qed.
+
+  (** A zero output diagonal rules out a negative tightened unary pair. *)
+  Lemma tclose_pair_nonnegative : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i a z,
+      entry (tighten (fw m)) i (flip i) = Some a ->
+      entry (tighten (fw m)) (flip i) i = Some z -> (0 <= a + z)%Z.
+  Proof.
+    intros m m' Hwf Hresult i a z Hleft Hright.
+    pose proof Hresult as Hresult0.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m));
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    assert (Hsupport : In (K.encode i) (support (strengthen (tighten (fw m))))).
+    { apply (proj2 (support_strengthen (tighten (fw m)) (K.encode i))).
+      eapply entry_source_support. exact Hleft. }
+    pose proof (tclose_zero_diag m (strengthen (tighten (fw m))) Hwf Hresult0
+      i Hsupport) as Hdiag.
+    rewrite entry_strengthen_exact in Hdiag by (apply wf_tighten, wf_fw; exact Hwf).
+    rewrite Hleft, Hright in Hdiag.
+    cbn [strengthen_bound lower_bound] in Hdiag.
+    destruct (entry (tighten (fw m)) i i) as [old|] eqn:Hold;
+      inversion Hdiag; subst; clear Hdiag.
+    - pose proof (Z.le_min_l (Z.div2 (a + z)) old) as Hmin.
+      rewrite Z.div2_div in *.
+      pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      lia.
+    - rewrite Z.div2_div in *.
+      pose proof (Z.div_mod (a + z) 2 ltac:(lia)) as Hdiv.
+      pose proof (Z.mod_pos_bound (a + z) 2 ltac:(lia)) as Hmod.
+      lia.
+  Qed.
+
+  Lemma tclose_half_pair : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall k, RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (half_unary (fw m) (flip k)) (half_unary (fw m) k)).
+  Proof.
+    intros m m' Hwf Hresult k. unfold half_unary.
+    rewrite flip_involutive.
+    destruct (entry (fw m) (flip k) k) as [a|] eqn:Ha;
+      destruct (entry (fw m) k (flip k)) as [b|] eqn:Hb;
+      cbn [option_map RelationalPathBounds.plus RelationalPathBounds.below];
+      try exact I.
+    assert (Hfirst : entry (tighten (fw m)) k (flip k) = Some (even_bound b)).
+    { rewrite entry_tighten_unary_option by (apply wf_fw; exact Hwf).
+      now rewrite Hb. }
+    assert (Hsecond : entry (tighten (fw m)) (flip k) k = Some (even_bound a)).
+    { pose proof (entry_tighten_unary_option (fw m) (wf_fw m Hwf) (flip k)) as Hopt.
+      rewrite flip_involutive, Ha in Hopt. exact Hopt. }
+    pose proof (tclose_pair_nonnegative m m' Hwf Hresult k
+      (even_bound b) (even_bound a) Hfirst Hsecond) as Hpair.
+    unfold even_bound in Hpair.
+    cbn [RelationalPathBounds.below]. lia.
+  Qed.
+
+  (** Successful tight closure preserves every triangle inequality. *)
+  Lemma tclose_triangle : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
+    tclose m = Reached m' ->
+    forall i j k a z, entry m' i k = Some a -> entry m' k j = Some z ->
+      exists d, entry m' i j = Some d /\ (d <= a + z)%Z.
+  Proof.
+    intros m m' Hwf Hcoh Hbar Hresult i j k a z Hik Hkj.
+    pose proof Hresult as Hresult0.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun p => nonnegative p (fw m)) (keys m)) eqn:Hfirst;
+      [|discriminate].
+    destruct (forallb (fun p => nonnegative p (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    pose proof (coherent_fw_success m Hwf Hcoh Hbar Hfirst) as Hcoh_fw.
+    pose proof (proj2 (fw_closed_success m Hwf Hfirst)) as Htri_fw.
+    pose proof (strong_view_triangle (fw m) Hcoh_fw
+      (fw_closed_at_success m Hwf Hfirst)
+      (half_unary_transport (fw m) Hcoh_fw Htri_fw)
+      (tclose_half_pair m (strengthen (tighten (fw m))) Hwf Hresult0)
+      i j k) as Hbound.
+    rewrite (strengthen_tighten_view (fw m) (wf_fw m Hwf)) in Hik, Hkj |- *.
+    rewrite Hik, Hkj in Hbound. cbn [RelationalPathBounds.plus] in Hbound.
+    destruct (RelationalPathBounds.below_finite _ _ Hbound)
+      as [d [Hd Hle]]. exists d. now split.
+  Qed.
+
+  Lemma tclose_strong_clause : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i j a z, entry m' i (flip i) = Some a ->
+      entry m' (flip j) j = Some z ->
+      exists d, entry m' i j = Some d /\ (2 * d <= a + z)%Z.
+  Proof.
+    intros m m' Hwf Hresult i j a z Hleft Hright.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m));
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    eapply strengthen_strong_clause;
+      [apply wf_tighten, wf_fw; exact Hwf|exact Hleft|exact Hright].
+  Qed.
+
+  (** A successful integer closure is coherent, closed, strong and unary-even. *)
+  Lemma tclose_tight : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
+    tclose m = Reached m' -> tightly_closed m'.
+  Proof.
+    intros m m' Hwf Hcoh Hbar Hresult.
+    unfold tightly_closed, strongly_closed. split.
+    - split.
+      + eapply coherent_tclose_reached; eauto.
+      + split.
+        * eapply tclose_zero_diag; eauto.
+        * split.
+          -- eapply tclose_triangle; eauto.
+          -- eapply tclose_strong_clause; eauto.
+    - eapply tclose_unary_even; eauto.
+  Qed.
+
+  Lemma coh_tclose : forall m, dbm_wf m -> coherent m -> bar_closed m -> coh (tclose m).
+  Proof.
+    intros m Hwf Hcoh Hbar.
+    destruct (tclose m) as [|m'] eqn:Hresult; [exact I|].
+    exact (proj1 (proj1 (tclose_tight m m' Hwf Hcoh Hbar Hresult))).
   Qed.
 
   (** Original and final key lists cover the same supported vertices. *)
