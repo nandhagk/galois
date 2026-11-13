@@ -2447,6 +2447,72 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       repeat rewrite Nat2N.inj_add in *; nia.
   Qed.
 
+  Local Lemma table_singleton_bits : forall a c,
+    Scalar.interval_singleton a = Some c -> Z.size_nat c <= interval_bits a.
+  Proof.
+    intros a c Hpoint.
+    unfold Scalar.interval_singleton, Scalar.interval_finite in Hpoint.
+    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
+      try discriminate.
+    destruct (Z.eqb lo hi) eqn:Heq; [|discriminate].
+    inversion Hpoint; subst c.
+    exact (proj1 (table_finite_bits a lo hi Hfinite)).
+  Qed.
+
+  Local Lemma table_exclude_time : forall a c,
+    (T_interval_exclude a c <=
+      100 * (Scalar.c_scalar + 1) *
+      N.of_nat (interval_bits a + Z.size_nat c + 1))%N.
+  Proof.
+    intros a c.
+    destruct a as [|[|lo|] [|hi|]];
+      unfold T_interval_exclude, T_interval_finite_helper,
+        interval_finite_helper;
+      time_simpl; time_cbn; time_pose; time_cbn_all;
+      try (repeat rewrite Nat2N.inj_add in *; nia).
+    pose proof (Std.Z.T_eqb_le lo c) as Hlo_time.
+    pose proof (Std.Z.T_eqb_le hi c) as Hhi_time.
+    pose proof (Std.Z.T_add_le c 1) as Hadd_time.
+    pose proof (Std.Z.T_sub_le c 1) as Hsub_time.
+    pose proof (table_integer_add_bits c 1) as Hadd_bits.
+    pose proof (table_integer_sub_bits c 1) as Hsub_bits.
+    pose proof (Scalar.T_interval_meet_le
+      (I (Fin lo) (Fin hi)) (I (Fin (c + 1)) PosInf)) as Hadd_meet.
+    pose proof (Scalar.T_interval_meet_le
+      (I (Fin lo) (Fin hi)) (I NegInf (Fin (c - 1)))) as Hsub_meet.
+    cbn [interval_bits] in *.
+    rewrite Nat.max_0_r in Hadd_meet.
+    pose proof (Nat.le_max_l (Z.size_nat lo) (Z.size_nat hi)) as Hlo_bits.
+    pose proof (Nat.le_max_r (Z.size_nat lo) (Z.size_nat hi)) as Hhi_bits.
+    cbn [Z.size_nat Pos.size_nat] in Hadd_bits, Hsub_bits.
+    destruct (Z.eqb lo c); destruct (Z.eqb hi c); time_cbn_all;
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  Local Lemma table_assume_neq_time : forall a b,
+    (T_interval_assume_neq a b <=
+      1000 * (Scalar.c_scalar + 1) *
+      N.of_nat (interval_bits a + interval_bits b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (Scalar.T_interval_singleton_le a) as Hsingleton_a.
+    pose proof (Scalar.T_interval_singleton_le b) as Hsingleton_b.
+    unfold T_interval_assume_neq.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (Scalar.interval_singleton b) as [cb|] eqn:Hb;
+      destruct (Scalar.interval_singleton a) as [ca|] eqn:Ha;
+      time_cbn_all;
+      try (pose proof (table_exclude_time a cb) as Hexclude_a;
+        unfold T_interval_exclude in Hexclude_a; time_cbn_all;
+        pose proof (table_singleton_bits b cb Hb) as Hcb;
+        pose proof (table_nat_to_N_le _ _ Hcb) as HcbN);
+      try (pose proof (table_exclude_time b ca) as Hexclude_b;
+        unfold T_interval_exclude in Hexclude_b; time_cbn_all;
+        pose proof (table_singleton_bits a ca Ha) as Hca;
+        pose proof (table_nat_to_N_le _ _ Hca) as HcaN);
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
@@ -2986,18 +3052,6 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       rewrite table_swap_bits;
       try (pose proof (table_assume_ult_bits b a); lia);
       pose proof (table_assume_ule_bits b a); lia.
-  Qed.
-
-  Local Lemma table_singleton_bits : forall a c,
-    Scalar.interval_singleton a = Some c -> Z.size_nat c <= interval_bits a.
-  Proof.
-    intros a c Hpoint.
-    unfold Scalar.interval_singleton, Scalar.interval_finite in Hpoint.
-    destruct (interval_finite_helper a) as [[lo hi]|] eqn:Hfinite;
-      try discriminate.
-    destruct (Z.eqb lo hi) eqn:Heq; [|discriminate].
-    inversion Hpoint; subst c.
-    exact (proj1 (table_finite_bits a lo hi Hfinite)).
   Qed.
 
   Local Lemma table_exclude_bits : forall a c,
