@@ -1223,3 +1223,12 @@ Proof.
   apply (proj2 (PTrie.elements_spec A large path a)); apply Hsub.
   apply (proj1 (PTrie.elements_spec A small path a)); exact Hin.
 Qed.
+
+(** Flattening lists counts every occurrence in every component. *)
+Lemma finite_flat_map_length : forall A B (f : A -> list B) xs,
+  length (flat_map f xs) = finite_sum (fun x => length (f x)) xs.
+Proof.
+  intros A B f xs; induction xs as [|x xs IH]; cbn [flat_map finite_sum map fold_right].
+  - reflexivity.
+  - rewrite length_app, IH; reflexivity.
+Qed.

@@ -4,7 +4,7 @@
     For example, an initial state has no stored values.
     Builds on: IncrementalSig. *)
 
-From Stdlib Require Import List Bool PArith NArith Lia Sorting.Permutation.
+From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Code MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
@@ -1988,6 +1988,492 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     Qed.
   End EditMetadata.
 
+  Module DemandAccounting.
+    Definition snapshot_weight (ss : incremental_snapshot S.key) : nat :=
+      if snapshot_live ss then length (snapshot_writes ss) else 0.
+
+    (** The public live snapshot mass is the weighted raw trie inventory. *)
+    Lemma snapshot_mass_sum : forall st,
+      snapshot_mass st = trie_sum snapshot_weight (inc_snapshots st).
+    Proof.
+      intro st; unfold snapshot_mass, snapshots, trie_sum, finite_sum.
+      induction (PTrieCode.elements (inc_snapshots st)) as [|[id ss] rest IH].
+      - reflexivity.
+      - cbn [map fold_right snd]; rewrite IH; unfold snapshot_weight.
+        destruct (snapshot_live ss); reflexivity.
+    Qed.
+
+    (** Recording a snapshot adds exactly its new write occurrences to the live mass. *)
+    Lemma snapshot_record_mass : forall owner writes st,
+      snapshot_mass (snapshot_record owner writes st) =
+        snapshot_mass st + length writes.
+    Proof.
+      intros owner writes st; rewrite !snapshot_mass_sum.
+      unfold snapshot_record, snapshot_set, snapshot_get; cbn [inc_snapshots].
+      pose proof (trie_sum_set _ snapshot_weight (S.key_code owner)
+        {| snapshot_owner := owner;
+           snapshot_writes := writes ++
+             match PTrieCode.get (S.key_code owner) (inc_snapshots st) with
+             | Some ss => if snapshot_live ss then snapshot_writes ss else []
+             | None => []
+             end;
+           snapshot_live := true |} (inc_snapshots st)) as Hsum.
+      cbn [snapshot_weight snapshot_live snapshot_writes] in Hsum.
+      rewrite length_app in Hsum.
+      destruct (PTrieCode.get (S.key_code owner) (inc_snapshots st)) as [ss|] eqn:Hget.
+      - destruct (snapshot_live ss) eqn:Hlive.
+        all: change (snapshot_weight ss) with
+          (if snapshot_live ss then length (snapshot_writes ss) else 0) in Hsum.
+        all: rewrite Hlive in Hsum; cbn [length] in Hsum; lia.
+      - cbn [length] in Hsum; lia.
+    Qed.
+
+    (** A recorded snapshot retains only old keys and its newly supplied writes. *)
+    Lemma snapshot_record_keys : forall owner writes st x,
+      In x (snapshot_keys (snapshot_record owner writes st)) ->
+        In x (snapshot_keys st) \/ In x writes.
+    Proof.
+      intros owner writes st x Hin; unfold snapshot_keys, snapshots in *.
+      apply in_flat_map in Hin as [[id ss] [Hentry Hx]]; cbn [snd] in Hx.
+      apply PTrie.elements_spec in Hentry.
+      unfold snapshot_record, snapshot_set, snapshot_get in Hentry.
+      cbn [inc_snapshots] in Hentry.
+      destruct (Pos.eq_dec id (S.key_code owner)) as [->|Hneq].
+      - rewrite PTrie.get_set_same in Hentry; injection Hentry as <-.
+        cbn [snapshot_writes] in Hx; apply in_app_iff in Hx as [Hx|Hx]; [now right|].
+        destruct (PTrieCode.get (S.key_code owner) (inc_snapshots st)) as [old|] eqn:Hold;
+          [|contradiction].
+        destruct (snapshot_live old); [|contradiction].
+        left; apply in_flat_map; exists (S.key_code owner, old); split; [|exact Hx].
+        now apply PTrie.elements_spec.
+      - rewrite PTrie.get_set_other in Hentry by exact Hneq.
+        left; apply in_flat_map; exists (id, ss); split; [|exact Hx].
+        now apply PTrie.elements_spec.
+    Qed.
+
+    (** Recording a row adds precisely its declared write occurrences to snapshot mass. *)
+    Lemma record_row_mass : forall p r st,
+      snapshot_mass (record_row p r st) = snapshot_mass st + length (S.writes p r).
+    Proof.
+      intros p r st; change (snapshot_mass
+        (snapshot_record (S.target p r) (row_writes p r) st) =
+        snapshot_mass st + length (S.writes p r)).
+      rewrite snapshot_record_mass; reflexivity.
+    Qed.
+
+    (** Recording rows adds their declared write lengths without duplicating prior mass. *)
+    Lemma record_rows_mass : forall p rs st,
+      snapshot_mass (record_rows p rs st) = snapshot_mass st +
+        finite_sum (fun r => length (S.writes p r)) rs.
+    Proof.
+      intros p rs; induction rs as [|r rest IH]; intro st.
+      - cbn [record_rows fold_left finite_sum map fold_right]; lia.
+      - change (snapshot_mass (record_rows p rest (record_row p r st)) =
+          snapshot_mass st +
+            (length (S.writes p r) + finite_sum (fun row => length (S.writes p row)) rest)).
+        rewrite IH, record_row_mass; lia.
+    Qed.
+
+    (** Every snapshot key newly retained by a row list occurs in one of its declared writes. *)
+    Lemma record_rows_keys : forall p rs st x,
+      In x (snapshot_keys (record_rows p rs st)) ->
+      In x (snapshot_keys st) \/ exists r, In r rs /\ In x (S.writes p r).
+    Proof.
+      intros p rs; induction rs as [|r rest IH]; intros st x Hin.
+      - now left.
+      - change (In x (snapshot_keys (record_rows p rest (record_row p r st)))) in Hin.
+        apply IH in Hin as [Hin|[row [Hrow Hx]]].
+        + change (In x (snapshot_keys
+            (snapshot_record (S.target p r) (row_writes p r) st))) in Hin.
+          apply snapshot_record_keys in Hin as [Hin|Hin]; [now left|].
+          right; exists r; split; [now left|exact Hin].
+        + right; exists row; split; [now right|exact Hx].
+    Qed.
+
+    (** Every demand returns its old state or the checked finalization of its discovered region. *)
+    Lemma demand_state_cases : forall p pol roots fuel st o st',
+      demand p pol roots fuel st = (o, st') -> st' = st \/
+      exists m, st' = finish_demand p st (discovery_keys p roots st) (region p roots st) m.
+    Proof.
+      intros p pol roots fuel st o st' Hrun; unfold demand in Hrun.
+      destruct (forallb (present st) roots); [inversion Hrun; subst; now left|].
+      cbv zeta in Hrun; fold (discovery_region p roots st) in Hrun.
+      fold (frozen_pairs p roots st) in Hrun.
+      destruct (Sol.run (R.mk p (frozen_pairs p roots st) (discovery_region p roots st))
+        pol fuel) as [m|m|why].
+      - destruct (Checker.check_rows p (discovery_region p roots st)
+          (restore (frozen_pairs p roots st) m)).
+        + inversion Hrun; subst; right; eexists; reflexivity.
+        + inversion Hrun; subst; now left.
+      - inversion Hrun; subst; now left.
+      - inversion Hrun; subst; now left.
+    Qed.
+
+    (** Finalization changes the raw value map only by canonicalization and filling. *)
+    Lemma finish_values : forall p st xs rs m,
+      inc_values (finish_demand p st xs rs m) = fill xs m (canonical_values st).
+    Proof.
+      intros p st xs rs m; unfold finish_demand; rewrite Buckets.record_rows_values; reflexivity.
+    Qed.
+
+    (** Every final stored key is new or survives canonicalization of the old map. *)
+    Lemma finish_stored_keys : forall p st xs rs m x,
+      In x (stored (finish_demand p st xs rs m)) <->
+        In x xs \/ In x (Inventory.raw_keys (canonical_values st)).
+    Proof.
+      intros p st xs rs m x; unfold stored; rewrite finish_values.
+      apply Inventory.fill_raw_keys; apply Inventory.prune_values_canonical.
+    Qed.
+
+    (** The repaired and filled value map has a duplicate-free key inventory. *)
+    Lemma finish_stored_nodup : forall p st xs rs m,
+      NoDup (stored (finish_demand p st xs rs m)).
+    Proof.
+      intros p st xs rs m; unfold stored; rewrite finish_values.
+      apply Inventory.raw_keys_nodup; apply Inventory.fill_canonical.
+      apply Inventory.prune_values_canonical.
+    Qed.
+
+    (** Canonicalization keeps only payload keys already counted in the old inventory. *)
+    Lemma canonical_keys_old : forall st x,
+      In x (Inventory.raw_keys (canonical_values st)) -> In x (stored st).
+    Proof.
+      intros st x Hin; apply Inventory.prune_values_raw_keys_subset in Hin; exact Hin.
+    Qed.
+
+    (** Finalization adds at most one stored key per supplied key occurrence. *)
+    Lemma finish_stored_length : forall p st xs rs m,
+      length (stored (finish_demand p st xs rs m)) <= length (stored st) + length xs.
+    Proof.
+      intros p st xs rs m.
+      assert (Hincl : incl (stored (finish_demand p st xs rs m)) (xs ++ stored st)).
+      { intros x Hx; apply finish_stored_keys in Hx; apply in_app_iff.
+        destruct Hx as [Hx|Hx]; [now left|right; now apply canonical_keys_old]. }
+      pose proof (finite_sum_incl_nodup _ (fun _ => 1) _ _
+        (finish_stored_nodup p st xs rs m) Hincl) as Hsum.
+      rewrite !finite_sum_one, length_app in Hsum; lia.
+    Qed.
+
+    Definition bucket_mass (keys : list S.key) (buckets : PTrieCode.t (list positive)) : nat :=
+      finite_sum (fun x => length (Buckets.bucket_at buckets x)) keys.
+
+    Definition influence_sum (st : state) : nat :=
+      bucket_mass (stored st) (inc_influence st).
+
+    (** One bucket push increases a duplicate-free support's mass by at most one. *)
+    Lemma push_entry_mass : forall keys y id buckets, NoDup keys ->
+      bucket_mass keys (push_entry y id buckets) <= bucket_mass keys buckets + 1.
+    Proof.
+      intros keys y id buckets Hnodup.
+      assert (Hunit : finite_sum (fun x => if S.key_eqb x y then 1 else 0) keys <= 1).
+      { destruct (mem y keys) eqn:Hmem.
+        - apply mem_spec in Hmem.
+          rewrite (histogram_unit_once S.key_eqb key_eqb_true keys y Hnodup Hmem); lia.
+        - rewrite (histogram_unit_absent S.key_eqb key_eqb_true keys y); [lia|].
+          intro Hin; pose proof (proj2 (mem_spec y keys) Hin) as Htrue.
+          change (mem y keys = true) in Htrue; congruence. }
+      unfold bucket_mass.
+      eapply Nat.le_trans with (m := finite_sum
+        (fun x => length (Buckets.bucket_at buckets x) + if S.key_eqb x y then 1 else 0) keys).
+      - apply finite_sum_mono; intros x Hx; rewrite Buckets.push_entry_at.
+        destruct (S.key_eqb x y); cbn [length]; lia.
+      - rewrite finite_sum_plus; lia.
+    Qed.
+
+    (** A list of bucket pushes increases supported mass by at most its occurrence length. *)
+    Lemma push_entries_mass : forall keys ys id buckets, NoDup keys ->
+      bucket_mass keys (fold_left (fun acc x => push_entry x id acc) ys buckets) <=
+        bucket_mass keys buckets + length ys.
+    Proof.
+      intros keys ys; induction ys as [|y rest IH]; intros id buckets Hnodup.
+      - cbn [fold_left length]; lia.
+      - cbn [fold_left length].
+        pose proof (IH id (push_entry y id buckets) Hnodup) as Hrest.
+        pose proof (push_entry_mass keys y id buckets Hnodup) as Hhead; lia.
+    Qed.
+
+    (** Recording rows charges at most one influence entry for each dependency occurrence. *)
+    Lemma record_rows_influence : forall p rs st keys, NoDup keys ->
+      bucket_mass keys (inc_influence (record_rows p rs st)) <=
+        bucket_mass keys (inc_influence st) + finite_sum (fun r => length (S.deps p r)) rs.
+    Proof.
+      intros p rs; induction rs as [|r rest IH]; intros st keys Hnodup.
+      - cbn [record_rows fold_left finite_sum map fold_right]; lia.
+      - change (bucket_mass keys (inc_influence (record_rows p rest (record_row p r st))) <=
+          bucket_mass keys (inc_influence st) +
+            (length (S.deps p r) + finite_sum (fun row => length (S.deps p row)) rest)).
+        pose proof (IH (record_row p r st) keys Hnodup) as Hrest.
+        pose proof (push_entries_mass keys (S.deps p r) (S.key_code (S.target p r))
+          (inc_influence st) Hnodup) as Hhead.
+        change (bucket_mass keys (inc_influence (record_row p r st)) <=
+          bucket_mass keys (inc_influence st) + length (S.deps p r)) in Hhead.
+        lia.
+    Qed.
+
+    (** Clearing new buckets zeros precisely the selected key buckets. *)
+    Lemma bucket_at_remove : forall xs buckets x,
+      Buckets.bucket_at (remove_buckets xs buckets) x =
+        if mem x xs then [] else Buckets.bucket_at buckets x.
+    Proof.
+      intros xs buckets x; unfold Buckets.bucket_at.
+      change (match PTrieCode.get (S.key_code x) (Inventory.Bindings.remove_keys xs buckets) with
+        | Some entries => entries | None => [] end =
+        if mem x xs then [] else
+          match PTrieCode.get (S.key_code x) buckets with Some entries => entries | None => [] end).
+      rewrite Inventory.raw_get_remove_keys.
+      change (Inventory.Bindings.mem x xs) with (mem x xs).
+      destruct (mem x xs); reflexivity.
+    Qed.
+
+    (** Clearing new keys and pruning malformed values cannot increase old counted bucket mass. *)
+    Lemma prepared_influence : forall st xs m,
+      bucket_mass (Inventory.raw_keys (fill xs m (canonical_values st)))
+        (remove_buckets xs (inc_influence st)) <= influence_sum st.
+    Proof.
+      intros st xs m.
+      set (keys := Inventory.raw_keys (fill xs m (canonical_values st))).
+      assert (Hcanonical : Inventory.canonical (canonical_values st)).
+      { apply Inventory.prune_values_canonical. }
+      assert (Hnodup : NoDup keys).
+      { apply Inventory.raw_keys_nodup; now apply Inventory.fill_canonical. }
+      assert (Hclear : bucket_mass keys (remove_buckets xs (inc_influence st)) =
+        finite_sum (fun x => if mem x xs then 0
+          else length (Buckets.bucket_at (inc_influence st) x)) keys).
+      { unfold bucket_mass; apply finite_sum_ext; intros x Hx; rewrite bucket_at_remove.
+        destruct (mem x xs); reflexivity. }
+      rewrite Hclear, finite_sum_filter_indicator; unfold influence_sum, bucket_mass.
+      apply finite_sum_incl_nodup; [now apply NoDup_filter|].
+      intros x Hx; apply filter_In in Hx as [Hx Hnot]; apply negb_true_iff in Hnot.
+      unfold keys in Hx; apply (proj1 (Inventory.fill_raw_keys xs m _ Hcanonical x)) in Hx.
+      destruct Hx as [Hx|Hx].
+      - pose proof (proj2 (mem_spec x xs) Hx) as Htrue.
+        change (mem x xs = true) in Htrue; congruence.
+      - now apply canonical_keys_old.
+    Qed.
+
+    (** Recording metadata does not change the public raw stored-key inventory. *)
+    Lemma record_rows_stored : forall p rs st,
+      stored (record_rows p rs st) = stored st.
+    Proof.
+      intros p rs st; unfold stored; rewrite Buckets.record_rows_values; reflexivity.
+    Qed.
+
+    (** Finalization charges all influence growth to its dependency occurrences. *)
+    Lemma finish_influence : forall p st xs rs m,
+      influence_sum (finish_demand p st xs rs m) <= influence_sum st +
+        finite_sum (fun r => length (S.deps p r)) rs.
+    Proof.
+      intros p st xs rs m; unfold finish_demand, influence_sum at 1.
+      rewrite record_rows_stored.
+      eapply Nat.le_trans.
+      - apply record_rows_influence.
+        change (NoDup (Inventory.raw_keys (fill xs m (canonical_values st)))).
+        apply Inventory.raw_keys_nodup; apply Inventory.fill_canonical.
+        apply Inventory.prune_values_canonical.
+      - pose proof (prepared_influence st xs m) as Hbase.
+        change (bucket_mass (Inventory.raw_keys (fill xs m (canonical_values st)))
+          (remove_buckets xs (inc_influence st)) +
+          finite_sum (fun r => length (S.deps p r)) rs <=
+          influence_sum st + finite_sum (fun r => length (S.deps p r)) rs).
+        lia.
+    Qed.
+
+    (** Every footprint selected during discovery appears in the final filtered region. *)
+    Lemma discovery_selected_region : forall p roots st r,
+      In r (footprint_selected (plan p roots st)) -> In r (region p roots st).
+    Proof.
+      intros p roots st r Hr; apply region_for_spec; split.
+      - pose proof (footprint_close_partition S.key_eqb (row_writes p) (row_keys p)
+          (missing st) (length (S.rows p)) (discovery_seed st roots)
+          (S.rows p)) as Hpartition.
+        change (Permutation (S.rows p) (footprint_selected (plan p roots st) ++
+          footprint_pending (plan p roots st))) in Hpartition.
+        eapply Permutation_in; [apply Permutation_sym; exact Hpartition|].
+        apply in_app_iff; now left.
+      - pose proof (footprint_close_selected S.key_eqb (row_writes p) (row_keys p)
+          (missing st) key_eqb_true (length (S.rows p)) (discovery_seed st roots)
+          (S.rows p) r Hr) as Hactive.
+        apply (footprint_active_spec S.key_eqb (row_writes p) key_eqb_true) in Hactive.
+        destruct Hactive as [x [Hx Hseen]]; exists x; repeat split; [exact Hx| |exact Hseen].
+        eapply discovery_keys_missing; exact Hseen.
+    Qed.
+
+    (** Every discovered key is a root or a declared read or write of a discovered row. *)
+    Lemma discovery_keys_provenance : forall p roots st x,
+      In x (discovery_keys p roots st) -> In x roots \/
+        exists r, In r (region p roots st) /\ In x (row_keys p r).
+    Proof.
+      intros p roots st x Hx.
+      apply (footprint_close_provenance S.key_eqb (row_writes p) (row_keys p)
+        (missing st) key_eqb_true (length (S.rows p)) (discovery_seed st roots)
+        (S.rows p)) in Hx.
+      destruct Hx as [Hx|[r [Hr [Hx Hmissing]]]].
+      - left; apply discovery_seed_spec in Hx; tauto.
+      - right; exists r; split; [now apply discovery_selected_region|exact Hx].
+    Qed.
+
+    (** Discovery accumulates each key at most once. *)
+    Lemma discovery_keys_nodup : forall p roots st, NoDup (discovery_keys p roots st).
+    Proof.
+      intros p roots st; unfold discovery_keys, plan, footprint_run.
+      apply (footprint_close_nodup S.key_eqb (row_writes p) (row_keys p)
+        (missing st) key_eqb_true).
+      unfold discovery_seed; apply (footprint_adds_nodup S.key_eqb (missing st)
+        key_eqb_true); constructor.
+    Qed.
+
+    (** Roots and discovered row occurrences pay for every accumulated key. *)
+    Lemma discovery_keys_length : forall p roots st,
+      length (discovery_keys p roots st) <= length roots +
+        finite_sum (fun r => length (S.deps p r)) (region p roots st) +
+        finite_sum (fun r => length (S.writes p r)) (region p roots st).
+    Proof.
+      intros p roots st.
+      assert (Hincl : incl (discovery_keys p roots st)
+        (roots ++ flat_map (row_keys p) (region p roots st))).
+      { intros x Hx; apply discovery_keys_provenance in Hx; apply in_app_iff.
+        destruct Hx as [Hx|[r [Hr Hx]]]; [now left|].
+        right; apply in_flat_map; exists r; auto. }
+      pose proof (finite_sum_incl_nodup _ (fun _ => 1) _ _
+        (discovery_keys_nodup p roots st) Hincl) as Hlength.
+      rewrite !finite_sum_one, length_app, finite_flat_map_length in Hlength.
+      assert (Hrows : finite_sum (fun r => length (row_keys p r)) (region p roots st) =
+        finite_sum (fun r => length (S.deps p r)) (region p roots st) +
+        finite_sum (fun r => length (S.writes p r)) (region p roots st)).
+      { rewrite <- finite_sum_plus; apply finite_sum_ext; intros r Hr.
+        change (length (S.writes p r ++ S.deps p r) =
+          length (S.deps p r) + length (S.writes p r)).
+        rewrite length_app; lia. }
+      lia.
+    Qed.
+
+    (** A demand records snapshot keys only from its discovered rows. *)
+    Lemma snapshot_keys_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+      demand p pol roots fuel st = (o, st') -> forall x, In x (snapshot_keys st') ->
+      In x (snapshot_keys st) \/ exists r, In r (region p roots st) /\ In x (S.writes p r).
+    Proof.
+      intros p pol roots fuel st o st' Hwf Hinv Hrun x Hx.
+      apply demand_state_cases in Hrun as [->|[m ->]]; [now left|].
+      unfold finish_demand in Hx; apply record_rows_keys in Hx; exact Hx.
+    Qed.
+
+    (** Demand counts stay within roots, dependency occurrences and shared write occurrences. *)
+    Lemma demand_record_counts : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+      demand p pol roots fuel st = (o, st') ->
+      let reads := fold_right Nat.add 0 (map (fun r => length (S.deps p r)) (region p roots st)) in
+      let writes := fold_right Nat.add 0
+        (map (fun r => length (S.writes p r)) (region p roots st)) in
+      length (stored st') <= length (stored st) + length roots + reads + writes /\
+      fold_right Nat.add 0 (map (fun x => length (infl_at st' x)) (stored st')) <=
+        fold_right Nat.add 0 (map (fun x => length (infl_at st x)) (stored st)) + reads /\
+      snapshot_mass st' <= snapshot_mass st + writes.
+    Proof.
+      intros p pol roots fuel st o st' Hwf Hinv Hrun; cbv zeta.
+      change (length (stored st') <= length (stored st) + length roots +
+        finite_sum (fun r => length (S.deps p r)) (region p roots st) +
+        finite_sum (fun r => length (S.writes p r)) (region p roots st) /\
+        influence_sum st' <= influence_sum st +
+          finite_sum (fun r => length (S.deps p r)) (region p roots st) /\
+        snapshot_mass st' <= snapshot_mass st +
+          finite_sum (fun r => length (S.writes p r)) (region p roots st)).
+      apply demand_state_cases in Hrun as [->|[m ->]]; [repeat split; lia|].
+      split.
+      - pose proof (finish_stored_length p st (discovery_keys p roots st)
+          (region p roots st) m) as Hstored.
+        pose proof (discovery_keys_length p roots st) as Hkeys; lia.
+      - split; [apply finish_influence|].
+        unfold finish_demand; rewrite record_rows_mass; apply Nat.le_refl.
+    Qed.
+
+    (** Stored demand keys come from the previous inventory, roots, or discovered row supports. *)
+    Lemma demand_stored_provenance : forall p pol roots fuel st o st',
+      demand p pol roots fuel st = (o, st') -> forall x, In x (stored st') ->
+      In x (stored st) \/ In x roots \/
+        exists r, In r (region p roots st) /\ In x (row_keys p r).
+    Proof.
+      intros p pol roots fuel st o st' Hrun x Hx.
+      apply demand_state_cases in Hrun as [->|[m ->]]; [now left|].
+      apply finish_stored_keys in Hx as [Hx|Hx].
+      - right; now apply discovery_keys_provenance.
+      - left; now apply canonical_keys_old.
+    Qed.
+
+    (** The root width budget includes its program seed. *)
+    Lemma roots_budget_base : forall p roots,
+      S.kw p <= fold_right Nat.max (S.kw p) (map S.key_bits roots).
+    Proof.
+      intros p roots; induction roots as [|x roots IH]; cbn [map fold_right]; [lia|].
+      eapply Nat.le_trans; [exact IH|apply Nat.le_max_r].
+    Qed.
+
+    (** Each root fits the root width budget. *)
+    Lemma roots_budget_member : forall p roots x, In x roots ->
+      S.key_bits x <= fold_right Nat.max (S.kw p) (map S.key_bits roots).
+    Proof.
+      intros p roots; induction roots as [|y roots IH]; intros x Hx; [contradiction|].
+      cbn [map fold_right]; destruct Hx as [->|Hx]; [apply Nat.le_max_l|].
+      eapply Nat.le_trans; [apply IH; exact Hx|apply Nat.le_max_r].
+    Qed.
+
+    (** Old inventory keys, roots and declared region keys fit the next width bound. *)
+    Lemma demand_key_bound : forall p roots st x, S.wf p ->
+      (In x (stored st ++ snapshot_keys st) \/ In x roots \/
+        exists r, In r (region p roots st) /\ In x (row_keys p r)) ->
+      S.key_bits x <= Nat.max (kwidth st)
+        (fold_right Nat.max (S.kw p) (map S.key_bits roots)).
+    Proof.
+      intros p roots st x Hwf [Hold|[Hroot|[r [Hr Hx]]]].
+      - eapply Nat.le_trans; [apply finite_max_member; exact Hold|apply Nat.le_max_l].
+      - eapply Nat.le_trans; [apply roots_budget_member; exact Hroot|apply Nat.le_max_r].
+      - eapply Nat.le_trans; [eapply S.key_bits_le; [exact Hwf| |exact Hx]|].
+        + now apply region_rows in Hr.
+        + eapply Nat.le_trans; [apply roots_budget_base|apply Nat.le_max_r].
+    Qed.
+
+    (** Demand widens the raw inventory only to program keys and explicit roots. *)
+    Lemma kwidth_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+      demand p pol roots fuel st = (o, st') ->
+      kwidth st' <= Nat.max (kwidth st)
+        (fold_right Nat.max (S.kw p) (map S.key_bits roots)).
+    Proof.
+      intros p pol roots fuel st o st' Hwf Hinv Hrun.
+      apply finite_max_bound; intros x Hx; apply demand_key_bound; [exact Hwf|].
+      apply in_app_iff in Hx as [Hx|Hx].
+      - apply (demand_stored_provenance p pol roots fuel st o st' Hrun) in Hx.
+        destruct Hx as [Hx|Hx]; [left; apply in_app_iff; now left|now right].
+      - apply (snapshot_keys_demand p pol roots fuel st o st' Hwf Hinv Hrun) in Hx.
+        destruct Hx as [Hx|[r [Hr Hx]]].
+        + left; apply in_app_iff; now right.
+        + right; right; exists r; split; [exact Hr|].
+          apply in_app_iff; now left.
+    Qed.
+
+    (** The three demand counters imply the public influence-mass growth bound. *)
+    Lemma infl_mass_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
+      demand p pol roots fuel st = (o, st') ->
+      infl_mass st' <= infl_mass st + 2 * (length roots + fold_right Nat.add 0
+        (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st))).
+    Proof.
+      intros p pol roots fuel st o st' Hwf Hinv Hrun.
+      pose proof (demand_record_counts p pol roots fuel st o st' Hwf Hinv Hrun) as Hcounts.
+      cbv zeta in Hcounts; destruct Hcounts as [Hstored [Hreads Hwrites]].
+      assert (Hcharge : finite_sum
+        (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st) =
+        finite_sum (fun r => length (S.deps p r)) (region p roots st) +
+        finite_sum (fun r => length (S.writes p r)) (region p roots st)).
+      { rewrite <- finite_sum_plus; apply finite_sum_ext; intros r Hr.
+        change (length (S.deps p r) + length (S.sides p r) + 1 =
+          length (S.deps p r) + S (length (S.sides p r))); lia. }
+      unfold infl_mass.
+      change (finite_sum (fun x => infl_deg st' x + 1) (stored st') + snapshot_mass st' <=
+        finite_sum (fun x => infl_deg st x + 1) (stored st) + snapshot_mass st +
+        2 * (length roots + finite_sum
+          (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st))).
+      rewrite Hcharge, !finite_sum_plus, !finite_sum_one.
+      unfold finite_sum, infl_deg in *; lia.
+    Qed.
+  End DemandAccounting.
+
   Lemma state_ok_init : state_ok init.
   Proof.
     apply Core.state_core_ok; exact Core.state_core_init.
@@ -2082,12 +2568,16 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     demand p pol roots fuel st = (o, st') ->
     infl_mass st' <= infl_mass st + 2 * (length roots + fold_right Nat.add 0%nat
       (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact DemandAccounting.infl_mass_demand.
+  Qed.
   (** Demand widens the state only to program keys and roots. *)
   Lemma kwidth_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (o, st') ->
     kwidth st' <= Nat.max (kwidth st) (fold_right Nat.max (S.kw p) (map S.key_bits roots)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact DemandAccounting.kwidth_demand.
+  Qed.
   (** Editing releases the stored key and the entries of every invalidated key. *)
   Lemma infl_mass_edit : forall p p' ch st, state_ok st ->
     infl_mass (edit p p' ch st) +
@@ -2254,7 +2744,9 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Lemma snapshot_keys_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (o, st') -> forall x, In x (snapshot_keys st') ->
     In x (snapshot_keys st) \/ exists r, In r (region p roots st) /\ In x (S.writes p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact DemandAccounting.snapshot_keys_demand.
+  Qed.
   (** Demand records keys, read entries and shared write occurrences within their exact charges. *)
   Lemma demand_record_counts : forall p pol roots fuel st o st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (o, st') ->
@@ -2264,7 +2756,9 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     fold_right Nat.add 0 (map (fun x => length (infl_at st' x)) (stored st')) <=
       fold_right Nat.add 0 (map (fun x => length (infl_at st x)) (stored st)) + reads /\
     snapshot_mass st' <= snapshot_mass st + writes.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact DemandAccounting.demand_record_counts.
+  Qed.
   (** Edits retain read entries of every retained key, including changed-row entries. *)
   Lemma edit_infl_keeps : forall p p' ch st x, dom (edit p p' ch st) x ->
     infl_at (edit p p' ch st) x = infl_at st x.
