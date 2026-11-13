@@ -708,8 +708,8 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     | TBot | TAny => 0
     | TVal w p => 1 + W.pwrank q w p
     end.
-  Definition k_untag : N := 1%N. (* STUB *)
-  Definition k_retag : N := 1%N. (* STUB *)
+  Definition k_untag : N := 1%N.
+  Definition k_retag : N := 1%N.
   Definition tagged_gamma (a : tagged W.p) (c : positive * Z) : Prop :=
     match a with
     | TBot => False
@@ -747,12 +747,25 @@ Module TaggedWordPlan (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
         split; [exact Hwidth|]. split; [exact Hword|exact Hp].
       + apply IH; [exact Hps|lia].
   Qed.
+  (** Untagging charges at most one call per operand and one final call. *)
   Lemma T1_untag : forall xs,
     (T_untag xs <= k_untag * N.of_nat ((length xs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_untag. induction xs as [|x xs IH].
+    - time_step.
+    - destruct x as [|w p|]; time_unfold T_untag; cbn [length];
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all; lia.
+  Qed.
+
+  (** Retagging charges one call per paired position and one final call. *)
   Lemma T2_retag : forall ws ps,
     (T_retag ws ps <= k_retag * N.of_nat ((length ws + length ps + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold k_retag. induction ws as [|w ws IH]; intros [|p ps];
+      time_unfold T_retag; cbn [length];
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; time_cbn; try lia.
+    specialize (IH ps). rewrite ?Nat2N.inj_add in IH. time_cbn_all. lia.
+  Qed.
 End TaggedWordPlan.
 
 Module WordDomain (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) (T : WORD_TABLE L W).
