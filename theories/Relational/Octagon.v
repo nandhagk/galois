@@ -6948,6 +6948,44 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     exact Htwo.
   Qed.
 
+  Lemma matrix_ok_of_all_nonnegative : forall m,
+    (forall k, nonnegative k m = true) -> matrix_ok m = true.
+  Proof.
+    intros m Hnonnegative. unfold matrix_ok.
+    apply (fold_invariant _ _ (fun ok => ok = true)); [reflexivity|].
+    intros ok k row Hok. rewrite Hok, Hnonnegative. reflexivity.
+  Qed.
+
+  (** A successful full Floyd scan makes the incremental scan pass. *)
+  Lemma full_scan_implies_incremental_scan : forall m i j d, dbm_wf m ->
+    let direct := add_cons i j d m in
+    let seed := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    forallb (fun k => nonnegative k (fw direct)) (keys direct) = true ->
+    matrix_ok (increment_matrix i j d seed) = true.
+  Proof.
+    intros m i j d Hwf. cbn beta iota zeta.
+    set (direct := add_cons i j d m).
+    set (seed := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (next := increment_matrix i j d seed). intro Hscan.
+    assert (Hwfdirect : dbm_wf direct).
+    { unfold direct. now apply add_cons_wf. }
+    pose proof (proj1 (fw_closed_success direct Hwfdirect Hscan)) as Hzero.
+    apply matrix_ok_of_all_nonnegative. intro k. unfold nonnegative.
+    destruct (entry next k k) as [value|] eqn:Hentry; [|reflexivity].
+    assert (Hsupport : In (K.encode k) (support (fw direct))).
+    { apply (proj2 (fw_support direct (K.encode k))).
+      apply (proj2 (direct_seed_support m i j d (K.encode k))).
+      apply (proj1 (support_increment i j d seed (K.encode k))).
+      eapply entry_source_support. exact Hentry. }
+    pose proof (Hzero k Hsupport) as Hdiag.
+    pose proof (fw_below_candidate_on_full_scan m i j d Hwf Hscan k k)
+      as Hbound.
+    change (RelationalPathBounds.below
+      (entry (fw direct) k k) (entry next k k)) in Hbound.
+    rewrite Hdiag, Hentry in Hbound.
+    apply Z.leb_le. exact Hbound.
+  Qed.
+
   (** A coherent triangle transports a unary half-bound across one edge. *)
   Lemma unary_half_transport : forall m, coherent m ->
     (forall i j k a z, entry m i k = Some a -> entry m k j = Some z ->
