@@ -403,6 +403,66 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
       apply Nat.ltb_lt in Hlt. lia.
   Qed.
 
+  (** Each plan column is increasing and has an index of the matching arity. *)
+  Lemma plan_columns_wf : forall p ixs, wf_plan p ixs ->
+    Forall2 (fun lv ix => StronglySorted lt lv /\ I.wf (length lv) ix) (cols p) ixs.
+  Proof.
+    intros p ixs [_ [Hcols _]].
+    induction Hcols as [|lv ix cs ixs Hwf Hcols IH]; constructor; [tauto|exact IH].
+  Qed.
+
+  (** Successful column probes preserve the represented projections of the extended prefix. *)
+  Lemma advance_columns_preserves : forall cs ixs lvl ns c ns' b,
+    length b = lvl ->
+    Forall2 (fun lv ix => StronglySorted lt lv /\ I.wf (length lv) ix) cs ixs ->
+    Forall2 (fun lvix n => exists u,
+      project (filter (fun i => Nat.ltb i lvl) (fst lvix)) b = Some u /\
+      I.node (snd lvix) n u) (combine cs ixs) ns ->
+    advance_columns cs ixs lvl ns c = Some ns' ->
+    Forall2 (fun lvix n => exists u,
+      project (filter (fun i => Nat.ltb i (S lvl)) (fst lvix)) (b ++ [c]) = Some u /\
+      I.node (snd lvix) n u) (combine cs ixs) ns'.
+  Proof.
+    intros cs ixs lvl ns c ns' b Hlength Hcols. revert ns ns'.
+    induction Hcols as [|lv ix cs ixs [Hsorted Hwf] Hcols IH];
+      intros [|n ns] ns' Hnodes Hstep; cbn [advance_columns] in Hstep; try discriminate.
+    - injection Hstep as <-. constructor.
+    - apply Forall2_cons_iff in Hnodes as [[u [Hproject Hnode]] Hnodes].
+      cbn [fst snd] in Hproject, Hnode.
+      destruct (if existsb (Nat.eqb lvl) lv then I.child ix n c else Some n)
+        as [m|] eqn:Hhead;
+        destruct (advance_columns cs ixs lvl ns c) as [ms|] eqn:Htail; try discriminate.
+      injection Hstep as <-. cbn [combine]. constructor.
+      + exists (if existsb (Nat.eqb lvl) lv then u ++ [c] else u). split.
+        * cbn [fst]. apply project_next; assumption.
+        * cbn [snd]. destruct (existsb (Nat.eqb lvl) lv) eqn:Hpart.
+          -- apply (proj1 (proj1 (I.child_spec (length lv) ix n u c Hwf Hnode) m)).
+             exact Hhead.
+          -- injection Hhead as <-. exact Hnode.
+      + exact (IH ns ms Hnodes Htail).
+  Qed.
+
+  (** A successful full probe advances a represented assignment by one variable. *)
+  Lemma advance_nodes_ok : forall p ixs lvl pre ns c ns', nodes_ok p ixs lvl pre ns ->
+    advance_nodes p ixs lvl ns c = Some ns' ->
+    nodes_ok p ixs (S lvl) (c :: pre) ns'.
+  Proof.
+    intros p ixs lvl pre ns c ns' [Hwf [Hlength [Hlevel Hnodes]]] Hstep.
+    unfold advance_nodes in Hstep.
+    destruct (Nat.leb (S lvl) (level_count p)) eqn:Hbound; [|discriminate].
+    apply Nat.leb_le in Hbound. change (S lvl <= nvars p) in Hbound.
+    split; [exact Hwf|]. split; [cbn [length]; lia|]. split; [exact Hbound|].
+    change (Forall2 (fun lvix n => exists u,
+      project (filter (fun i => Nat.ltb i (S lvl)) (fst lvix))
+        (rev pre ++ [c]) = Some u /\ I.node (snd lvix) n u)
+      (combine (cols p) ixs) ns').
+    eapply advance_columns_preserves.
+    - rewrite length_rev. exact Hlength.
+    - apply plan_columns_wf. exact Hwf.
+    - exact Hnodes.
+    - exact Hstep.
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
@@ -501,7 +561,10 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Lemma step_ok : forall p ixs l pre ns c ns', wf_plan p ixs ->
     nodes_ok p ixs l pre ns -> advance p ixs l ns c = Some ns' ->
     nodes_ok p ixs (S l) (c :: pre) ns'.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns c ns' _ Hnodes Hstep.
+    eapply advance_nodes_ok; eassumption.
+  Qed.
 
   Lemma advance_none : forall p ixs l pre ns c, wf_plan p ixs ->
     nodes_ok p ixs l pre ns -> advance p ixs l ns c = None ->
