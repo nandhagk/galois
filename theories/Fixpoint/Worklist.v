@@ -366,7 +366,8 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     (128 * (c_lookup + P.c_pol + Q.c_pq + c_loopN + 1))%N.
   Definition k_update : N :=
     (512 * (c_lookup + P.c_pol + Q.c_pq + c_loopN + 1))%N.
-  Definition k_credit : N := 1%N. (* STUB *)
+  Definition k_credit : N :=
+    (64 * (k_eval + k_update + c_step + S.c_sys + PTrieT.c_trie + Q.c_pq + c_loopN + 1))%N.
   Definition k_round : N := 1%N. (* STUB *)
   Definition k_loop : N :=
     (64 * (k_prepare + k_eval + k_update + k_credit + k_round +
@@ -2582,6 +2583,18 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     exact (proj1 (F4_prepare p pol Hwf Hprio)).
   Qed.
 
+  (** Every emitted primary or side occurrence has a declared write key. *)
+  Lemma eval_outputs_writes : forall p r m a ss x b,
+    S.wf p -> In r (S.rows p) -> eval_row p r m = Some (a, ss) ->
+    In (x, b) ((S.target p r, a) :: ss) -> In x (S.writes p r).
+  Proof.
+    intros p r m a ss x b Hwf Hr Heval Hin.
+    destruct Hin as [Hequal|Hin].
+    - injection Hequal as <- <-; now left.
+    - right; rewrite F3_eval in Heval.
+      exact (S.sides_within p r (look_or S.key_code L.bot m) a ss x b Hwf Hr Heval Hin).
+  Qed.
+
   (** * Operation costs and height credit *)
 
   (** Structural work pays for a key traversal, an identifier traversal and one call. *)
@@ -3352,18 +3365,624 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
     assert (Hloop : (c_step + 2 <= k_loop)%N) by (unfold k_loop; nia).
     clear -Hcost Hloop; nia.
   Qed.
+  (** Pointwise bounds are preserved by finite natural-number sums. *)
+  Lemma incidence_sum_bound : forall A (f g : A -> nat) xs,
+    (forall x, In x xs -> f x <= g x) ->
+    fold_right Nat.add 0 (List.map f xs) <= fold_right Nat.add 0 (List.map g xs).
+  Proof.
+    intros A f g xs; induction xs as [|x xs IH]; intros Hbound.
+    - reflexivity.
+    - cbn [List.map fold_right].
+      pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+      assert (Htail : forall y, In y xs -> f y <= g y).
+      { intros y Hy; apply Hbound; now right. }
+      specialize (IH Htail); lia.
+  Qed.
+
+  (** Finite sums distribute over pointwise addition. *)
+  Lemma incidence_sum_plus : forall A (f g : A -> nat) xs,
+    fold_right Nat.add 0 (List.map (fun x => f x + g x) xs) =
+      fold_right Nat.add 0 (List.map f xs) + fold_right Nat.add 0 (List.map g xs).
+  Proof.
+    intros A f g xs; induction xs; cbn [List.map fold_right]; lia.
+  Qed.
+
+  (** Finite incidence sums may be transposed without changing their value. *)
+  Lemma incidence_sum_swap : forall A B (f : A -> B -> nat) xs ys,
+    fold_right Nat.add 0 (List.map
+      (fun x => fold_right Nat.add 0 (List.map (f x) ys)) xs) =
+    fold_right Nat.add 0 (List.map
+      (fun y => fold_right Nat.add 0 (List.map (fun x => f x y) xs)) ys).
+  Proof.
+    intros A B f xs; induction xs as [|x xs IH]; intro ys.
+    - induction ys; cbn [List.map fold_right] in *; lia.
+    - cbn [List.map fold_right]; rewrite incidence_sum_plus, IH; reflexivity.
+  Qed.
+
+  (** Filtering a finite sum is equivalent to assigning zero to excluded occurrences. *)
+  Lemma incidence_sum_filter : forall A (test : A -> bool) (f : A -> nat) xs,
+    fold_right Nat.add 0 (List.map f (filter test xs)) =
+      fold_right Nat.add 0 (List.map (fun x => if test x then f x else 0) xs).
+  Proof.
+    intros A test f xs; induction xs as [|x xs IH]; [reflexivity|].
+    cbn [filter List.map fold_right]; destruct (test x); cbn [List.map fold_right]; lia.
+  Qed.
+
+  (** A fixed contribution summed over selected codes is their count times that contribution. *)
+  Lemma incidence_sum_constant : forall A (test : A -> bool) xs k,
+    fold_right Nat.add 0 (List.map (fun x => if test x then k else 0) xs) =
+      length (filter test xs) * k.
+  Proof.
+    intros A test xs; induction xs as [|x xs IH]; intro k; [reflexivity|].
+    cbn [List.map fold_right filter]; destruct (test x); cbn [length]; rewrite IH; lia.
+  Qed.
+
+  (** Adding one per occurrence converts a bucket length into its weighted sum. *)
+  Lemma incidence_sum_length : forall A (f : A -> nat) xs,
+    fold_right Nat.add 0 (List.map f xs) + length xs =
+      fold_right Nat.add 0 (List.map (fun x => f x + 1) xs).
+  Proof.
+    intros A f xs; induction xs; cbn [List.map fold_right length]; lia.
+  Qed.
+
+  (** Summing indexed lookups over the complete index interval reproduces the source sum. *)
+  Lemma incidence_sum_nth : forall A (f : A -> nat) xs,
+    fold_right Nat.add 0 (List.map (fun n =>
+      match nth_error xs n with Some x => f x | None => 0 end) (seq 0 (length xs))) =
+    fold_right Nat.add 0 (List.map f xs).
+  Proof.
+    intros A f xs; induction xs as [|x xs IH]; [reflexivity|].
+    cbn [length seq List.map fold_right nth_error].
+    rewrite <- seq_shift, map_map; f_equal; exact IH.
+  Qed.
+
+  (** Numbered row occurrences preserve sums over the original occurrence list. *)
+  Lemma incidence_numbered_rows : forall p (f : S.row -> nat),
+    fold_right Nat.add 0 (List.map (fun id =>
+      match source_row p id with Some r => f r | None => 0 end) (row_ids p)) =
+    fold_right Nat.add 0 (List.map f (S.rows p)).
+  Proof.
+    intros p f; transitivity (fold_right Nat.add 0 (List.map (fun n =>
+      match nth_error (S.rows p) n with Some r => f r | None => 0 end)
+      (seq 0 (length (S.rows p))))).
+    - rewrite F0_row_ids, map_map; f_equal; apply map_ext; intro n.
+      now rewrite F1_numbering.
+    - apply incidence_sum_nth.
+  Qed.
+
+  (** A row matches at most one distinct support code per declared dependency occurrence. *)
+  Lemma incidence_codes_count : forall p r,
+    length (filter (fun c => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r))
+      (key_support p)) <= length (S.deps p r).
+  Proof.
+    intros p r; rewrite <- (length_map S.key_code (S.deps p r)).
+    apply NoDup_incl_length.
+    - apply NoDup_filter; unfold key_support; apply NoDup_nodup.
+    - intros c Hin; apply filter_In in Hin as [_ Hread].
+      apply existsb_exists in Hread as [x [Hin Hequal]].
+      apply Pos.eqb_eq in Hequal; apply in_map_iff; exists x; split; [congruence|exact Hin].
+  Qed.
+
+  (** Weighted reader degree plus degree charges one weighted unit per reading occurrence. *)
+  Lemma incidence_bucket : forall p c,
+    weighted_degree p c + degree p c =
+    fold_right Nat.add 0 (List.map (fun id =>
+      if match source_row p id with
+        | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+        | None => false
+        end then weight p id + 1 else 0) (row_ids p)).
+  Proof.
+    intros p c; unfold weighted_degree, degree; rewrite incidence_sum_length.
+    unfold source_readers; apply incidence_sum_filter.
+  Qed.
+
+  (** Distinct source codes charge at most the public weighted dependency incidence budget. *)
+  Lemma support_incidence_bound : forall p,
+    fold_right Nat.add 0 (List.map
+      (fun c => weighted_degree p c + degree p c) (key_support p)) <= DW p.
+  Proof.
+    intro p.
+    assert (Hswap :
+      fold_right Nat.add 0 (List.map
+        (fun c => weighted_degree p c + degree p c) (key_support p)) =
+      fold_right Nat.add 0 (List.map (fun id =>
+        fold_right Nat.add 0 (List.map (fun c =>
+          if match source_row p id with
+            | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+            | None => false
+            end then weight p id + 1 else 0) (key_support p))) (row_ids p))).
+    { transitivity (fold_right Nat.add 0 (List.map (fun c =>
+        fold_right Nat.add 0 (List.map (fun id =>
+          if match source_row p id with
+            | Some r => existsb (fun x => Pos.eqb c (S.key_code x)) (S.deps p r)
+            | None => false
+            end then weight p id + 1 else 0) (row_ids p))) (key_support p))).
+      - f_equal; apply map_ext; intro c; apply incidence_bucket.
+      - apply incidence_sum_swap. }
+    rewrite Hswap.
+    transitivity (fold_right Nat.add 0 (List.map (fun id =>
+      match source_row p id with
+      | Some r => (length (S.deps p r) + 1) *
+          (length (S.deps p r) + length (S.sides p r) + 1)
+      | None => 0
+      end) (row_ids p))).
+    - apply incidence_sum_bound; intros id Hid.
+      destruct (source_row_total p id Hid) as [r Hrow].
+      rewrite Hrow; unfold weight; rewrite Hrow, incidence_sum_constant.
+      pose proof (incidence_codes_count p r); nia.
+    - rewrite incidence_numbered_rows; reflexivity.
+  Qed.
+
+  (** A single changed member accounts for the entire difference of two finite sums. *)
+  Lemma credit_sum_change : forall A (eq_dec : forall x y : A, {x = y} + {x <> y})
+      (f g : A -> nat) xs x, NoDup xs -> In x xs ->
+    (forall y, In y xs -> y <> x -> f y = g y) ->
+    fold_right Nat.add 0 (List.map f xs) + g x =
+      fold_right Nat.add 0 (List.map g xs) + f x.
+  Proof.
+    intros A eq_dec f g xs; induction xs as [|y ys IH]; intros x Hnodup Hin Hother.
+    - contradiction.
+    - inversion Hnodup as [|? ? Hfresh Htail]; subst.
+      destruct (eq_dec y x) as [->|Hneq].
+      + assert (Hsum : List.map f ys = List.map g ys).
+        { apply map_ext_in; intros z Hz; apply Hother; [now right|].
+          intro Heq; subst z; contradiction. }
+        cbn [List.map fold_right]; rewrite Hsum; lia.
+      + assert (Hxin : In x ys) by (destruct Hin; [congruence|assumption]).
+        pose proof (IH x Htail Hxin
+          (fun z Hz Hne => Hother z (or_intror Hz) Hne)) as Hsum.
+        cbn [List.map fold_right]; rewrite (Hother y (or_introl eq_refl) Hneq); lia.
+  Qed.
+
+  (** A guarded insertion creates at most the selected row's weighted queue credit. *)
+  Lemma queue_credit_enqueue_single : forall p pol s id, In id (row_ids p) ->
+    queue_credit p (enqueue p pol [id] s) <= queue_credit p s + weight p id.
+  Proof.
+    intros p pol s id Hid; rewrite enqueue_single.
+    destruct (trie_get id (ws_live s)) as [[]|]; [lia|].
+    destruct (row_at s id) as [r|]; [|lia].
+    set (rank := match trie_get id (ws_ranks s) with
+      | Some rank => rank | None => 1%positive end).
+    unfold queue_credit, enqueue_push; cbn [ws_queue].
+    pose proof (credit_sum_change positive Pos.eq_dec
+      (fun other => match Q.prio (Q.push (N.pos rank) id (ws_queue s)) other with
+        | Some _ => weight p other | None => 0 end)
+      (fun other => match Q.prio (ws_queue s) other with
+        | Some _ => weight p other | None => 0 end)
+      (row_ids p) id (row_ids_nodup p) Hid) as Hsum.
+    assert (Hother : forall other, In other (row_ids p) -> other <> id ->
+      match Q.prio (Q.push (N.pos rank) id (ws_queue s)) other with
+      | Some _ => weight p other | None => 0 end =
+      match Q.prio (ws_queue s) other with Some _ => weight p other | None => 0 end).
+    { intros other _ Hneq; now rewrite Q.prio_push_other by congruence. }
+    specialize (Hsum Hother); cbn beta in Hsum; rewrite Q.prio_push in Hsum.
+    destruct (Q.prio (ws_queue s) id); lia.
+  Qed.
+
+  (** Enqueue creates no more credit than the weights of its supplied occurrences. *)
+  Lemma queue_credit_enqueue : forall p pol ids s,
+    (forall id, In id ids -> In id (row_ids p)) ->
+    queue_credit p (enqueue p pol ids s) <= queue_credit p s +
+      fold_right Nat.add 0 (List.map (weight p) ids).
+  Proof.
+    intros p pol ids; induction ids as [|id ids IH]; intros s Hids.
+    - rewrite enqueue_nil; cbn; lia.
+    - rewrite enqueue_cons; cbn [List.map fold_right].
+      pose proof (queue_credit_enqueue_single p pol s id (Hids id (or_introl eq_refl)))
+        as Hhead.
+      specialize (IH (enqueue p pol [id] s)
+        (fun other Hin => Hids other (or_intror Hin))); lia.
+  Qed.
+
+  (** A successful pop consumes exactly the popped row's weighted queue credit. *)
+  Lemma queue_credit_pop : forall p pol s pr id q1, structural p pol s ->
+    Q.pop (ws_queue s) = Some (pr, id, q1) ->
+    queue_credit p s = queue_credit p (after_pop p s id q1) + weight p id.
+  Proof.
+    intros p pol s pr id q1 [Hwf [_ [_ [_ Hsupport]]]] Hpop.
+    destruct (Q.pop_min _ _ _ _ Hwf Hpop) as [Hid [_ [Hnone Hother]]].
+    pose proof (proj1 (Hsupport pr id Hid)) as Hin.
+    unfold queue_credit; cbn [after_pop ws_queue].
+    pose proof (credit_sum_change positive Pos.eq_dec
+      (fun other => match Q.prio (ws_queue s) other with
+        | Some _ => weight p other | None => 0 end)
+      (fun other => match Q.prio q1 other with
+        | Some _ => weight p other | None => 0 end)
+      (row_ids p) id (row_ids_nodup p) Hin) as Hsum.
+    assert (Hsame : forall other, In other (row_ids p) -> other <> id ->
+      match Q.prio (ws_queue s) other with Some _ => weight p other | None => 0 end =
+      match Q.prio q1 other with Some _ => weight p other | None => 0 end).
+    { intros other _ Hneq; now rewrite Hother by exact Hneq. }
+    specialize (Hsum Hsame); cbn beta in Hsum; rewrite Hid, Hnone in Hsum; lia.
+  Qed.
+
+  (** Rank debt reserves reader weight and one queue operation per remaining strict increase. *)
+  Definition height_debt (p : S.prog) (rk : L.t -> nat) (h : nat) (s : state) : nat :=
+    fold_right Nat.add 0 (List.map
+      (fun c => (h - rk (raw_value s c)) * (weighted_degree p c + degree p c))
+      (key_support p)).
+
+  (** The public height potential is the sum of weighted row credit and rank debt. *)
+  Lemma height_phi_debt : forall p rk h s,
+    height_phi p rk h s =
+      (k_credit * N.of_nat (queue_credit p s + height_debt p rk h s) * unit p +
+        queue_phi p s)%N.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Queue operations preserve every rank-debt term because they leave the store unchanged. *)
+  Lemma height_debt_after_pop : forall p rk h s id q,
+    height_debt p rk h (after_pop p s id q) = height_debt p rk h s.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A strict invariant increase consumes at least one complete reader incidence allowance. *)
+  Lemma height_debt_strict_update : forall p pol rk h s x a,
+    invariant p pol s -> B.inv p a -> In (S.key_code x) (key_support p) ->
+    (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
+      rk a < rk b /\ rk b <= h) -> L.leb a (look s x) = false ->
+    height_debt p rk h (update_one p pol s (x, a)) +
+      weighted_degree p (S.key_code x) + degree p (S.key_code x) <=
+      height_debt p rk h s.
+  Proof.
+    intros p pol rk h s x a Hinv Ha Hsupport Hrank Hstrict.
+    set (c := S.key_code x).
+    set (next := update_one p pol s (x, a)).
+    set (old := look s x).
+    set (value := fst (P.update pol c (counter s c) old a)).
+    change (L.leb a old = false) in Hstrict.
+    assert (Hvalue : raw_value next c = value) by apply raw_value_update_same.
+    assert (Hold : raw_value s c = old) by apply raw_value_look.
+    assert (Hold_inv : B.inv p old) by exact (proj1 (proj2 Hinv) x).
+    assert (Hvalue_inv : B.inv p value) by (unfold value; now apply policy_update_inv).
+    destruct (P.update_ub pol c (counter s c) old a) as [Hup Hcontribution].
+    fold value in Hup, Hcontribution.
+    assert (Hback : L.leb value old = false).
+    { destruct (L.leb value old) eqn:Hback; [|reflexivity].
+      pose proof (L.leb_trans a value old Hcontribution Hback); congruence. }
+    destruct (Hrank old value Hold_inv Hvalue_inv Hup Hback) as [Hgrow Hcap].
+    assert (Hdebt : h - rk value + 1 <= h - rk old) by lia.
+    assert (Hother : forall d, In d (key_support p) -> d <> c ->
+      (h - rk (raw_value s d)) * (weighted_degree p d + degree p d) =
+      (h - rk (raw_value next d)) * (weighted_degree p d + degree p d)).
+    { intros d _ Hneq; unfold next; now rewrite raw_value_update_other by exact Hneq. }
+    pose proof (credit_sum_change positive Pos.eq_dec
+      (fun d => (h - rk (raw_value s d)) * (weighted_degree p d + degree p d))
+      (fun d => (h - rk (raw_value next d)) * (weighted_degree p d + degree p d))
+      (key_support p) c (NoDup_nodup Pos.eq_dec _) Hsupport Hother) as Hsum.
+    cbn beta in Hsum; fold (height_debt p rk h s) (height_debt p rk h next) in Hsum.
+    rewrite Hold, Hvalue in Hsum; fold c next; clear -Hsum Hdebt; nia.
+  Qed.
+
+  (** Every reader push is paid by rank debt after accounting for new queued row weight. *)
+  Lemma height_credit_update : forall p pol rk h s x a,
+    invariant p pol s -> B.inv p a -> In (S.key_code x) (key_support p) ->
+    (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
+      rk a < rk b /\ rk b <= h) ->
+    queue_credit p (update_one p pol s (x, a)) +
+      height_debt p rk h (update_one p pol s (x, a)) + push_work p s x a <=
+      queue_credit p s + height_debt p rk h s.
+  Proof.
+    intros p pol rk h s x a Hinv Ha Hsupport Hrank.
+    destruct (L.leb a (look s x)) eqn:Hstable.
+    - assert (Hsame : update_one p pol s (x, a) = s).
+      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      rewrite Hsame; unfold push_work; rewrite Hstable; lia.
+    - pose proof (height_debt_strict_update p pol rk h s x a Hinv Ha Hsupport Hrank Hstable)
+        as Hdebt.
+      set (c := S.key_code x) in *.
+      set (ac := P.update pol c (counter s c) (look s x) a).
+      set (base := WorklistState (PTrieCode.set c (x, fst ac) (ws_store s))
+        (PTrieCode.set c (snd ac) (ws_counters s)) (ws_queue s) (ws_live s)
+        (ws_rows s) (ws_readers s) (ws_armed s) (ws_ranks s)).
+      assert (Hshape : update_one p pol s (x, a) =
+        match trie_get c (ws_armed s) with
+        | Some _ => base | None => arm c (enqueue p pol (readers s c) base)
+        end).
+      { rewrite F6_indexed; cbn beta iota zeta; now rewrite Hstable. }
+      unfold push_work; rewrite Hstable; fold c.
+      destruct (trie_get c (ws_armed s)) as [[]|] eqn:Harmed.
+      + assert (Hqueue : queue_credit p (update_one p pol s (x, a)) = queue_credit p s).
+        { rewrite Hshape; reflexivity. }
+        rewrite Hqueue; lia.
+      + assert (Hqueue : queue_credit p (update_one p pol s (x, a)) <=
+          queue_credit p s + weighted_degree p c).
+        { rewrite Hshape.
+          change (queue_credit p (enqueue p pol (readers s c) base) <=
+            queue_credit p s + weighted_degree p c).
+          destruct (proj1 (proj2 (proj2 Hinv))) as [_ Hreaders].
+          eapply Nat.le_trans; [apply queue_credit_enqueue|].
+          - rewrite Hreaders; intros id Hin; unfold source_readers in Hin.
+            now apply filter_In in Hin.
+          - change (queue_credit p s +
+              fold_right Nat.add 0 (List.map (weight p) (readers s c)) <=
+              queue_credit p s + weighted_degree p c).
+            unfold weighted_degree; now rewrite Hreaders. }
+        lia.
+  Qed.
+
+  (** Widening-free policies have no strict-head timing allowance. *)
+  Lemma strict_head_work_free : forall pol s x a, widening_free pol ->
+    strict_head_work pol s x a = 0%N.
+  Proof.
+    intros pol s x a Hfree; unfold strict_head_work.
+    destruct (L.leb a (look s x)); [reflexivity|now rewrite Hfree].
+  Qed.
+
+  (** One output callback spends only its ordinary unit after credit refunds. *)
+  Lemma T_update_height : forall p pol rk h s x a,
+    S.wf p -> prio_ok p pol -> widening_free pol -> invariant p pol s ->
+    B.inv p a -> In (S.key_code x) (key_support p) -> (k_update <= k_credit)%N ->
+    (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
+      rk a < rk b /\ rk b <= h) ->
+    (T_update_one p pol s (x, a) + height_phi p rk h (update_one p pol s (x, a)) <=
+      k_update * unit p + height_phi p rk h s)%N.
+  Proof.
+    intros p pol rk h s x a Hwf Hprio Hfree Hinv Ha Hsupport Hcoeff Hrank.
+    pose proof (T_update_queue_bound p pol s x a Hwf Hprio Hinv Ha Hsupport) as Hcost.
+    rewrite strict_head_work_free in Hcost by exact Hfree.
+    pose proof (height_credit_update p pol rk h s x a Hinv Ha Hsupport Hrank) as Hcredit.
+    assert (HcreditN : (N.of_nat (queue_credit p (update_one p pol s (x, a))) +
+      N.of_nat (height_debt p rk h (update_one p pol s (x, a))) +
+      N.of_nat (push_work p s x a) <=
+      N.of_nat (queue_credit p s) + N.of_nat (height_debt p rk h s))%N) by lia.
+    rewrite !height_phi_debt, !Nat2N.inj_add.
+    rewrite Nat2N.inj_add in Hcost.
+    set (next := update_one p pol s (x, a)) in *.
+    set (before := (N.of_nat (queue_credit p s) + N.of_nat (height_debt p rk h s))%N)
+      in *.
+    set (after := (N.of_nat (queue_credit p next) +
+      N.of_nat (height_debt p rk h next))%N) in *.
+    set (push := N.of_nat (push_work p s x a)) in *.
+    assert (Hscale : (k_credit * (after + push) * unit p <=
+      k_credit * before * unit p)%N).
+    { apply N.mul_le_mono_r; now apply N.mul_le_mono_l. }
+    assert (Hpush : (k_update * push * unit p <= k_credit * push * unit p)%N).
+    { apply N.mul_le_mono_r; now apply N.mul_le_mono_r. }
+    clear -Hcost Hscale Hpush; nia.
+  Qed.
+
+  (** Every emitted occurrence receives one ordinary callback unit along its actual state. *)
+  Lemma output_cost_height : forall p pol rk h outs s,
+    S.wf p -> prio_ok p pol -> widening_free pol -> invariant p pol s ->
+    Forall (fun xa => B.inv p (snd xa) /\ In (S.key_code (fst xa)) (key_support p)) outs ->
+    (k_update <= k_credit)%N ->
+    (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
+      rk a < rk b /\ rk b <= h) ->
+    (output_cost p pol outs s +
+      height_phi p rk h (fold_left (update_one p pol) outs s) <=
+      k_update * N.of_nat (length outs) * unit p + height_phi p rk h s)%N.
+  Proof.
+    intros p pol rk h outs; induction outs as [|[x a] outs IH];
+      intros s Hwf Hprio Hfree Hinv Houts Hcoeff Hrank.
+    - unfold output_cost; cbn [fold_left snd length]; nia.
+    - inversion Houts as [|? ? [Ha Hsupport] Htail]; subst.
+      pose proof (T_update_height p pol rk h s x a
+        Hwf Hprio Hfree Hinv Ha Hsupport Hcoeff Hrank) as Hhead.
+      specialize (IH (update_one p pol s (x, a)) Hwf Hprio Hfree
+        (F9_update_inv p pol s x a Hwf Hprio Hinv Ha Hsupport) Htail Hcoeff Hrank).
+      rewrite output_cost_cons; cbn [fold_left length]; rewrite Nat2N.inj_succ; nia.
+  Qed.
+
+
+  (** Every evaluated output has an invariant value and a declared support encoding. *)
+  Lemma eval_outputs_invariant : forall p pol s r a ss,
+    S.wf p -> invariant p pol s -> In r (S.rows p) ->
+    eval_row p r (ws_store s) = Some (a, ss) ->
+    Forall (fun xa => B.inv p (snd xa) /\ In (S.key_code (fst xa)) (key_support p))
+      ((S.target p r, a) :: ss).
+  Proof.
+    intros p pol s r a ss Hwf Hinv Hr Heval.
+    assert (Hlook : forall x, B.inv p (look s x)) by exact (proj1 (proj2 Hinv)).
+    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
+    destruct (B.inv_rows p r (look s) a ss Hwf Hr Hlook Hsystem) as [Ha Hss].
+    assert (Hvalues : Forall (fun xa => B.inv p (snd xa)) ((S.target p r, a) :: ss)).
+    { constructor; assumption. }
+    apply Forall_forall; intros [x b] Hin; cbn [fst snd]; split.
+    - rewrite Forall_forall in Hvalues; exact (Hvalues (x, b) Hin).
+    - apply key_support_spec; exists r, x; split; [exact Hr|]; split; [|reflexivity].
+      apply in_or_app; left; eapply eval_outputs_writes; eassumption.
+  Qed.
+
+  (** A popped row pays its evaluator and bookkeeping in proportion to its declared weight. *)
+  Lemma T_step_weighted : forall p pol s pr id q1 r a ss,
+    S.wf p -> invariant p pol s -> Q.pop (ws_queue s) = Some (pr, id, q1) ->
+    source_row p id = Some r -> eval_row p r (ws_store s) = Some (a, ss) ->
+    (T_step p pol s <= Q.T_pop (ws_queue s) +
+      output_cost p pol ((S.target p r, a) :: ss) (after_pop p s id q1) +
+      16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
+        N.of_nat (weight p id) * unit p)%N.
+  Proof.
+    intros p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval.
+    destruct (source_row_member p id r Hsource) as [Hid Hr].
+    pose proof (T_step_accounting p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval)
+      as Hstep.
+    pose proof (W2_eval p pol r s Hwf Hr Hinv) as Heval_cost.
+    pose proof (S.T_target_le p r Hwf Hr) as Htarget.
+    pose proof (T_row_at_bits s id) as Hrow.
+    pose proof (row_ids_bits p id Hid) as Hidbits.
+    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
+    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
+    destruct (time_unit_bounds p) as [Hu [_ [Hids [_ Hwork]]]].
+    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
+    { unfold weight; now rewrite Hsource. }
+    assert (Hwidth : (N.of_nat (S.kw p + Nat.log2 (C p) + 1) <= unit p)%N).
+    { assert (Hnat : S.kw p + Nat.log2 (C p) + 1 <=
+        (Nat.log2 (C p) + 1) * (S.kw p + Nat.log2 (C p) + 4)) by nia.
+      unfold unit; lia. }
+    set (budget := (N.of_nat (weight p id) * unit p)%N).
+    assert (Hu_budget : (unit p <= budget)%N).
+    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
+      apply N.mul_le_mono_r; rewrite Hweight; lia. }
+    assert (Hone_budget : (1 <= budget)%N) by lia.
+    assert (Hchunk : (N.of_nat ((length (S.deps p r) + 1) *
+      (S.kw p + Nat.log2 (C p) + 1)) <= budget)%N).
+    { unfold budget; rewrite Nat2N.inj_mul; apply N.mul_le_mono; [rewrite Hweight; lia|].
+      exact Hwidth. }
+    assert (Heval_bound : (T_eval_row p r (ws_store s) <= k_eval * budget)%N).
+    { unfold budget; rewrite N.mul_assoc, Hweight; exact Heval_cost. }
+    assert (Htarget_bound : (S.T_target p r <= S.c_sys * budget)%N).
+    { eapply N.le_trans; [exact Htarget|]; apply N.mul_le_mono_l; lia. }
+    assert (Hrow_bound : (T_row_at s id <= 2 * (PTrieT.c_trie + 2) * budget)%N).
+    { assert (Hbits : (N.of_nat (Pos.size_nat id + 1) <= 2 * budget)%N) by lia.
+      eapply N.le_trans; [exact Hrow|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hbits|]; nia. }
+    assert (Hclear_bound : (c_step * N.of_nat ((length (S.deps p r) + 1) *
+      (S.kw p + Nat.log2 (C p) + 1)) <= c_step * budget)%N).
+    { now apply N.mul_le_mono_l. }
+    assert (Hsides_bound : (N.of_nat (length ss) <= budget)%N).
+    { assert (Hlen : (N.of_nat (length ss) <= N.of_nat (weight p id))%N)
+        by (rewrite Hweight; lia).
+      unfold budget; clear -Hlen Hu; nia. }
+    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
+      N.of_nat (weight p id) * unit p)%N with
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N
+      by (unfold budget; ring).
+    assert (Hfixed : (c_step <= c_step * budget)%N).
+    { rewrite <- (N.mul_1_r c_step) at 1; now apply N.mul_le_mono_l. }
+    assert (Hsum : (k_eval * budget + S.c_sys * budget +
+      2 * (2 * (PTrieT.c_trie + 2) * budget) + c_step * budget + budget +
+      c_step * budget <=
+      16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N).
+    { replace (k_eval * budget + S.c_sys * budget +
+        2 * (2 * (PTrieT.c_trie + 2) * budget) + c_step * budget + budget +
+        c_step * budget)%N with
+        ((k_eval + S.c_sys + 4 * (PTrieT.c_trie + 2) + 2 * c_step + 1) * budget)%N
+        by ring.
+      apply N.mul_le_mono_r; lia. }
+    clear -Hstep Heval_bound Htarget_bound Hrow_bound Hclear_bound Hsides_bound Hfixed Hsum;
+      lia.
+  Qed.
+
+  (** Pop refunds queue potential and consumes exactly one weighted row allowance. *)
+  Lemma T_pop_height : forall p pol rk h s pr id q1,
+    structural p pol s -> Q.pop (ws_queue s) = Some (pr, id, q1) ->
+    (Q.T_pop (ws_queue s) + height_phi p rk h (after_pop p s id q1) +
+      k_credit * N.of_nat (weight p id) * unit p <=
+      height_phi p rk h s + 2 * Q.c_pq * unit p)%N.
+  Proof.
+    intros p pol rk h s pr id q1 Hstruct Hpop.
+    pose proof (T_queue_pop_bound p pol s Hstruct) as Hcost; rewrite Hpop in Hcost.
+    pose proof (queue_credit_pop p pol s pr id q1 Hstruct Hpop) as Hcredit.
+    rewrite !height_phi_debt, height_debt_after_pop, Hcredit, !Nat2N.inj_add.
+    change (queue_phi p (after_pop p s id q1)) with
+      (Q.phi (C p + 1) (S.kw p + Nat.log2 (C p) + 3) q1).
+    clear -Hcost; nia.
+  Qed.
+
+  (** A continuing row spends less than the credit removed by its pop. *)
+  Lemma T_step_height : forall p pol rk h s s1,
+    S.wf p -> prio_ok p pol -> widening_free pol ->
+    (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
+      rk a < rk b /\ rk b <= h) ->
+    invariant p pol s -> step p pol s = inl s1 ->
+    (T_step p pol s + height_phi p rk h s1 + c_loopN <= height_phi p rk h s)%N.
+  Proof.
+    intros p pol rk h s s1 Hwf Hprio Hfree Hrank Hinv Hstep.
+    unfold step in Hstep.
+    destruct (Q.pop (ws_queue s)) as [[[pr id] q1]|] eqn:Hpop; [|discriminate].
+    destruct (row_at s id) as [r|] eqn:Hrow; [|discriminate].
+    destruct (eval_row p r (ws_store s)) as [[a ss]|] eqn:Heval; [|discriminate].
+    injection Hstep as <-.
+    change (T_step p pol s + height_phi p rk h
+      (fold_left (update_one p pol) ((S.target p r, a) :: ss) (after_pop p s id q1)) +
+      c_loopN <= height_phi p rk h s)%N.
+    assert (Hsource : source_row p id = Some r).
+    { rewrite <- (proj1 (proj1 (proj2 (proj2 Hinv))) id); exact Hrow. }
+    destruct (source_row_member p id r Hsource) as [Hid Hr].
+    pose proof (after_pop_invariant p pol s pr id q1 Hinv Hpop) as Hafter.
+    pose proof (eval_outputs_invariant p pol s r a ss Hwf Hinv Hr Heval) as Houts.
+    assert (Hcoeff : (k_update <= k_credit)%N) by (unfold k_credit; nia).
+    pose proof (output_cost_height p pol rk h ((S.target p r, a) :: ss)
+      (after_pop p s id q1) Hwf Hprio Hfree Hafter Houts Hcoeff Hrank) as Houtput.
+    pose proof (T_step_weighted p pol s pr id q1 r a ss Hwf Hinv Hpop Hsource Heval)
+      as Htime.
+    pose proof (T_pop_height p pol rk h s pr id q1 (proj1 Hinv) Hpop) as Hpop_time.
+    pose proof Heval as Hsystem; change (S.eval p r (look s) = Some (a, ss)) in Hsystem.
+    pose proof (S.sides_count p r (look s) a ss Hwf Hr Hsystem) as Hsides.
+    assert (Hweight : weight p id = length (S.deps p r) + length (S.sides p r) + 1).
+    { unfold weight; now rewrite Hsource. }
+    set (budget := (N.of_nat (weight p id) * unit p)%N).
+    assert (Houtput_bound : (k_update * N.of_nat (length ((S.target p r, a) :: ss)) *
+      unit p <= k_update * budget)%N).
+    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+      cbn [length]; rewrite Hweight; lia. }
+    destruct (time_unit_bounds p) as [Hu _].
+    assert (Hu_budget : (unit p <= budget)%N).
+    { unfold budget; rewrite <- (N.mul_1_l (unit p)) at 1.
+      apply N.mul_le_mono_r; rewrite Hweight; lia. }
+    assert (Hpayment :
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget +
+        k_update * budget + 2 * Q.c_pq * unit p + c_loopN <= k_credit * budget)%N).
+    { unfold k_credit; clear -Hu Hu_budget; nia. }
+    replace (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) *
+      N.of_nat (weight p id) * unit p)%N with
+      (16 * (k_eval + c_step + S.c_sys + PTrieT.c_trie + 1) * budget)%N in Htime
+      by (unfold budget; ring).
+    replace (k_credit * N.of_nat (weight p id) * unit p)%N with
+      (k_credit * budget)%N in Hpop_time by (unfold budget; ring).
+    clear -Houtput Houtput_bound Htime Hpop_time Hpayment; lia.
+  Qed.
+
+  (** Scaling each term scales its finite sum by the same factor. *)
+  Lemma credit_sum_scale : forall A (f : A -> nat) xs k,
+    fold_right Nat.add 0 (List.map (fun x => k * f x) xs) =
+      k * fold_right Nat.add 0 (List.map f xs).
+  Proof.
+    intros A f xs; induction xs as [|x xs IH]; intros k; cbn [List.map fold_right].
+    - nia.
+    - rewrite IH; nia.
+  Qed.
+
+  (** Complete row numbering preserves the total declared occurrence weight. *)
+  Lemma row_weight_sum : forall p,
+    fold_right Nat.add 0 (List.map (weight p) (row_ids p)) = D p.
+  Proof.
+    intro p; unfold weight, D; apply incidence_numbered_rows.
+  Qed.
+
+  (** A live subset of the numbered rows never carries more than the total row weight. *)
+  Lemma queue_credit_le_D : forall p s, queue_credit p s <= D p.
+  Proof.
+    intros p s; unfold queue_credit; rewrite <- row_weight_sum.
+    apply incidence_sum_bound; intros id _; destruct (Q.prio (ws_queue s) id); lia.
+  Qed.
+
+  (** Remaining rank debt is bounded by height times the declared incidence budget. *)
+  Lemma height_debt_bound : forall p rk h s, height_debt p rk h s <= h * DW p.
+  Proof.
+    intros p rk h s; unfold height_debt.
+    eapply Nat.le_trans.
+    - apply (incidence_sum_bound positive _
+        (fun c => h * (weighted_degree p c + degree p c))).
+      intros c _; nia.
+    - rewrite credit_sum_scale; apply Nat.mul_le_mono_l; apply support_incidence_bound.
+  Qed.
+
   (** W4 spends weighted rank credit for each callback in a widening-free run. *)
   Lemma W4_credit : forall p pol rk h s s1, S.wf p -> prio_ok p pol -> widening_free pol ->
     (forall a b, B.inv p a -> B.inv p b -> L.leb a b = true -> L.leb b a = false ->
       rk a < rk b /\ rk b <= h) ->
     reachable p pol s -> step p pol s = inl s1 ->
     (T_step p pol s + height_phi p rk h s1 + c_loopN <= height_phi p rk h s)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol rk h s s1 Hwf Hprio Hfree Hrank Hreachable Hstep.
+    apply (T_step_height p pol rk h s s1 Hwf Hprio Hfree Hrank).
+    - now apply reachable_invariant.
+    - exact Hstep.
+  Qed.
   (** Weighted source credit fits the public weighted incidence budget. *)
   Lemma W4_initial : forall p pol rk h, S.wf p -> prio_ok p pol -> widening_free pol ->
     (height_phi p rk h (prepare p pol) <=
       k_credit * N.of_nat (D p + h * DW p) * unit p + queue_phi p (prepare p pol))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol rk h Hwf Hprio Hfree; rewrite height_phi_debt.
+    apply N.add_le_mono_r; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+    pose proof (queue_credit_le_D p (prepare p pol)) as Hqueue.
+    pose proof (height_debt_bound p rk h (prepare p pol)) as Hdebt; lia.
+  Qed.
 
   (** * Stable segments and row visits *)
 
@@ -3582,17 +4201,6 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         now split.
   Qed.
 
-  (** Every emitted primary or side occurrence has a declared write key. *)
-  Lemma eval_outputs_writes : forall p r m a ss x b,
-    S.wf p -> In r (S.rows p) -> eval_row p r m = Some (a, ss) ->
-    In (x, b) ((S.target p r, a) :: ss) -> In x (S.writes p r).
-  Proof.
-    intros p r m a ss x b Hwf Hr Heval Hin.
-    destruct Hin as [Hequal|Hin].
-    - injection Hequal as <- <-; now left.
-    - right; rewrite F3_eval in Heval.
-      exact (S.sides_within p r (look_or S.key_code L.bot m) a ss x b Hwf Hr Heval Hin).
-  Qed.
 
   (** A residual live item retains its original queue priority. *)
   Lemma pop_residual_live : forall q pr id q1 j pj, Q.wf q ->
