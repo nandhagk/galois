@@ -4,7 +4,7 @@
     For example, joining upper bounds 3 and 5 retains the weaker bound 5.
     Builds on: OctagonSig, keyed map laws and numeric linearization. *)
 
-From Stdlib Require Import List ZArith Lia.
+From Stdlib Require Import List ZArith NArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig MapSig Code Key.
 From Galois.Lattice Require Import LatticeSig.
@@ -515,11 +515,171 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
   Proof.
     intros p a b Hle. unfold widen. now rewrite Hle.
   Qed.
+  (** A row contributes the distinct pairs formed from its actual stored codes. *)
+  Definition row_entry_codes (m : dbm) (p : positive) : list (positive * positive) :=
+    match M.find p m with
+    | Some row => map (pair p) (M.codes row)
+    | None => nil
+    end.
+
+  (** Finite-entry counting ignores stored labels at both map levels. *)
+  Definition entry_codes (m : dbm) : list (positive * positive) :=
+    flat_map (row_entry_codes m) (M.codes m).
+
+  (** The first coordinate of every row entry is its outer stored code. *)
+  Lemma row_entry_first : forall m p pq, In pq (row_entry_codes m p) -> fst pq = p.
+  Proof.
+    intros m p pq Hin. unfold row_entry_codes in Hin.
+    destruct (M.find p m) as [row|]; [|contradiction].
+    apply in_map_iff in Hin. destruct Hin as [q [Heq Hin]]. now subst pq.
+  Qed.
+
+  (** Pairing distinct column codes with one row code preserves distinctness. *)
+  Lemma paired_codes_nodup : forall (p : positive) (qs : list positive),
+    NoDup qs -> NoDup (map (pair p) qs).
+  Proof.
+    intros p qs Hcodes. induction Hcodes as [|q qs Hfresh Hcodes IH].
+    - constructor.
+    - cbn. constructor; [|exact IH]. intro Hin. apply in_map_iff in Hin.
+      destruct Hin as [r [Heq Hr]]. injection Heq as Heq. subst r. exact (Hfresh Hr).
+  Qed.
+
+  (** Distinct outer codes yield disjoint lists of finite-entry coordinates. *)
+  Lemma rows_entry_nodup : forall m ps, NoDup ps ->
+    NoDup (flat_map (row_entry_codes m) ps).
+  Proof.
+    intros m ps Hcodes. induction Hcodes as [|p ps Hfresh Hcodes IH].
+    - constructor.
+    - cbn [flat_map]. apply NoDup_app; [|exact IH|].
+      + unfold row_entry_codes. destruct (M.find p m) as [row|].
+        * apply paired_codes_nodup, M.codes_nodup.
+        * constructor.
+      + intros pq Hfirst Htail. apply in_flat_map in Htail.
+        destruct Htail as [q [Hq Hentry]].
+        pose proof (row_entry_first m p pq Hfirst) as Hp.
+        pose proof (row_entry_first m q pq Hentry) as Hsame.
+        apply Hfresh. rewrite <- Hp, Hsame. exact Hq.
+  Qed.
+
+  (** No finite raw-code coordinate is counted twice. *)
+  Lemma entry_codes_nodup : forall m, NoDup (entry_codes m).
+  Proof.
+    intro m. unfold entry_codes. apply rows_entry_nodup, M.codes_nodup.
+  Qed.
+
+  (** A coordinate occurs exactly when its raw entry is finite. *)
+  Lemma entry_codes_spec : forall m p q,
+    In (p, q) (entry_codes m) <-> raw_entry m p q <> None.
+  Proof.
+    intros m p q. split.
+    - intro Hin. unfold entry_codes in Hin. apply in_flat_map in Hin.
+      destruct Hin as [i [Hi Hin]]. unfold row_entry_codes in Hin.
+      destruct (M.find i m) as [row|] eqn:Hrow; [|contradiction].
+      apply in_map_iff in Hin. destruct Hin as [j [Heq Hj]].
+      injection Heq as Hip Hjq. subst i j.
+      unfold raw_entry. rewrite Hrow. cbn [row_of]. now apply M.codes_spec.
+    - intro Hentry. unfold raw_entry in Hentry.
+      destruct (M.find p m) as [row|] eqn:Hrow; cbn [row_of] in Hentry.
+      + unfold entry_codes. apply in_flat_map. exists p. split.
+        * apply M.codes_spec. rewrite Hrow. discriminate.
+        * unfold row_entry_codes. rewrite Hrow. apply in_map_iff. exists q.
+          split; [reflexivity|now apply M.codes_spec].
+      + rewrite M.find_empty in Hentry. contradiction.
+  Qed.
+
+  (** The flattened coordinate count is the released widening rank. *)
+  Lemma entry_codes_rank : forall p m, length (entry_codes m) = wrank p (Reached m).
+  Proof.
+    intros p m. unfold entry_codes, wrank.
+    induction (M.codes m) as [|q qs IH].
+    - reflexivity.
+    - cbn [flat_map map fold_right]. rewrite length_app, IH.
+      unfold row_entry_codes. destruct (M.find q m); cbn; rewrite ?length_map; reflexivity.
+  Qed.
+
+  (** Every finite entry retained by widening was already finite in the old matrix. *)
+  Lemma widen_codes_incl : forall ma mb,
+    incl (entry_codes (M.merge row_widen ma mb)) (entry_codes ma).
+  Proof.
+    intros ma mb [p q] Hin. apply entry_codes_spec in Hin. apply entry_codes_spec.
+    rewrite raw_entry_widen in Hin.
+    destruct (raw_entry ma p q) as [d|]; [discriminate|].
+    cbn [bound_widen] in Hin. contradiction.
+  Qed.
+
+  (** A failed finite Boolean scan provides a member on which its predicate fails. *)
+  Lemma forallb_failure : forall (A : Type) (test : A -> bool) xs,
+    forallb test xs = false -> exists x, In x xs /\ test x = false.
+  Proof.
+    intros A test xs. induction xs as [|x xs IH]; intro Hfalse.
+    - discriminate Hfalse.
+    - cbn in Hfalse. destruct (test x) eqn:Hx.
+      + destruct (IH Hfalse) as [y [Hy Htest]]. exists y. split; [now right|exact Htest].
+      + exists x. split; [now left|exact Hx].
+  Qed.
+
+  (** Failure of entrywise inclusion identifies an old finite bound that widening discards. *)
+  Lemma leb_failure_entry : forall ma mb,
+    leb (Reached mb) (Reached ma) = false ->
+    exists p q, raw_entry ma p q <> None /\
+      bound_leb (raw_entry mb p q) (raw_entry ma p q) = false.
+  Proof.
+    intros ma mb Hfalse.
+    destruct (forallb (fun pq =>
+      bound_leb (raw_entry mb (fst pq) (snd pq)) (raw_entry ma (fst pq) (snd pq)))
+      (entry_codes ma)) eqn:Hscan.
+    - assert (Htrue : leb (Reached mb) (Reached ma) = true).
+      { apply leb_entries. intros p q.
+        destruct (raw_entry ma p q) as [d|] eqn:Hentry.
+        - rewrite forallb_forall in Hscan.
+          assert (Hin : In (p, q) (entry_codes ma)).
+          { apply entry_codes_spec. rewrite Hentry. discriminate. }
+          specialize (Hscan (p, q) Hin). cbn in Hscan. now rewrite Hentry in Hscan.
+        - destruct (raw_entry mb p q); reflexivity. }
+      congruence.
+    - apply forallb_failure in Hscan. destruct Hscan as [[p q] [Hin Hfailed]].
+      exists p, q. split; [now apply entry_codes_spec|exact Hfailed].
+  Qed.
+
+  (** An unstable finite old bound is dropped by the widening callback. *)
+  Lemma bound_widen_drops : forall a b,
+    bound_leb b a = false -> bound_widen a b = None.
+  Proof.
+    intros [a|] [b|]; cbn [bound_leb bound_widen]; try congruence.
+    intro Hle. now rewrite Hle.
+  Qed.
+
+  (** Every unstable widening removes at least one distinct stored coordinate. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|ma] [|mb] Hbot Hunstable; try discriminate.
+    unfold widen. rewrite Hunstable.
+    change (wrank p (Reached (M.merge row_widen ma mb)) < wrank p (Reached ma)).
+    destruct (leb_failure_entry ma mb Hunstable) as [i [j [Hfinite Hfailed]]].
+    assert (Hmissing : ~ In (i, j) (entry_codes (M.merge row_widen ma mb))).
+    { intro Hin. apply entry_codes_spec in Hin. rewrite raw_entry_widen in Hin.
+      rewrite (bound_widen_drops _ _ Hfailed) in Hin. contradiction. }
+    assert (Hlength : length ((i, j) :: entry_codes (M.merge row_widen ma mb)) <=
+      length (entry_codes ma)).
+    { apply NoDup_incl_length.
+      - constructor; [exact Hmissing|apply entry_codes_nodup].
+      - intros pq [Hpq | Hin].
+        + subst pq. now apply entry_codes_spec.
+        + exact (widen_codes_incl ma mb pq Hin). }
+    change (S (length (entry_codes (M.merge row_widen ma mb))) <=
+      length (entry_codes ma)) in Hlength.
+    rewrite (entry_codes_rank p (M.merge row_widen ma mb)) in Hlength.
+    rewrite (entry_codes_rank p ma) in Hlength. exact Hlength.
+  Qed.
+
+  (** Stable widening preserves rank and unstable widening strictly lowers it. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hbot. destruct (leb b a) eqn:Hstable.
+    - rewrite (widen_stable p a b Hstable). reflexivity.
+    - apply Nat.lt_le_incl. now apply wrank_widen.
+  Qed.
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
   Proof.
@@ -771,9 +931,145 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         end
     | Unreached => False
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ma mb i j. cbn [join].
+    change (entry (M.merge row_join ma mb) i j = bound_join (entry ma i j) (entry mb i j)).
+    rewrite <- !raw_entry_get. apply raw_entry_join.
+  Qed.
+  (** Deduplication retains exactly the input and accumulator members. *)
+  Lemma dedup_membership : forall (A : Type) (eqb : A -> A -> bool),
+    (forall x y, eqb x y = true <-> x = y) -> forall xs acc x,
+    In x (fold_left (fun seen y => if existsb (eqb y) seen then seen else y :: seen)
+      xs acc) <-> In x xs \/ In x acc.
+  Proof.
+    intros A eqb Heq xs. induction xs as [|a xs IH]; intros acc x.
+    - cbn. tauto.
+    - cbn [fold_left]. destruct (existsb (eqb a) acc) eqn:Hseen.
+      + assert (Ha : In a acc).
+        { apply existsb_exists in Hseen. destruct Hseen as [y [Hy Hay]].
+          apply Heq in Hay. now subst y. }
+        rewrite IH. cbn [In]. split.
+        * tauto.
+        * intros [[Hax | Hin] | Hin].
+          -- subst x. now right.
+          -- now left.
+          -- now right.
+      + rewrite IH. cbn [In]. tauto.
+  Qed.
+
+  (** Deduplication preserves a duplicate-free accumulator. *)
+  Lemma dedup_nodup : forall (A : Type) (eqb : A -> A -> bool),
+    (forall x y, eqb x y = true <-> x = y) -> forall xs acc,
+    NoDup acc ->
+    NoDup (fold_left (fun seen y => if existsb (eqb y) seen then seen else y :: seen)
+      xs acc).
+  Proof.
+    intros A eqb Heq xs. induction xs as [|a xs IH]; intros acc Hacc.
+    - exact Hacc.
+    - cbn [fold_left]. destruct (existsb (eqb a) acc) eqn:Hseen; apply IH.
+      + exact Hacc.
+      + constructor; [|exact Hacc]. intro Ha.
+        assert (Hfound : existsb (eqb a) acc = true).
+        { apply existsb_exists. exists a. split; [exact Ha|apply Heq; reflexivity]. }
+        congruence.
+  Qed.
+
+  (** Support contains every outer code and every code of a stored row. *)
+  Lemma support_spec : forall m p,
+    In p (support m) <-> In p (M.codes m) \/ In p (flat_map M.codes (rows m)).
+  Proof.
+    intros m p. unfold support.
+    rewrite (dedup_membership positive Pos.eqb Pos.eqb_eq), in_app_iff.
+    cbn. tauto.
+  Qed.
+
+  (** A list maximum bounds each selected member. *)
+  Lemma maximum_member : forall (A : Type) (f : A -> nat) xs x,
+    In x xs -> f x <= fold_right Nat.max 0 (map f xs).
+  Proof.
+    intros A f xs. induction xs as [|a xs IH]; intros x Hin.
+    - contradiction.
+    - cbn in Hin |- *. destruct Hin as [Hax | Hin].
+      + subst x. apply Nat.le_max_l.
+      + eapply Nat.le_trans; [exact (IH x Hin)|apply Nat.le_max_r].
+  Qed.
+
+  (** A uniform bound on summands bounds their sum by length times that bound. *)
+  Lemma sum_members_bound : forall (A : Type) (f : A -> nat) xs upper,
+    (forall x, In x xs -> f x <= upper) ->
+    fold_right Nat.add 0 (map f xs) <= length xs * upper.
+  Proof.
+    intros A f xs. induction xs as [|a xs IH]; intros upper Hbound.
+    - cbn. lia.
+    - cbn. assert (Ha : f a <= upper) by (apply Hbound; now left).
+      assert (Htail : fold_right Nat.add 0 (map f xs) <= length xs * upper).
+      { apply IH. intros x Hin. apply Hbound. now right. }
+      lia.
+  Qed.
+
+  (** Every supported code fits the matrix key-bit bound. *)
+  Lemma support_bits : forall m p, In p (support m) -> Pos.size_nat p <= b m.
+  Proof.
+    intros m p Hin. unfold b. now apply maximum_member.
+  Qed.
+
+  (** Distinct stored codes inject into any support containing them. *)
+  Lemma codes_support_length : forall A (r : M.t A) m,
+    (forall p, In p (M.codes r) -> In p (support m)) -> length (M.codes r) <= supp m.
+  Proof.
+    intros A r m Hin. unfold supp. apply NoDup_incl_length.
+    - apply M.codes_nodup.
+    - exact Hin.
+  Qed.
+
+  (** A map whose codes lie in the support has a bounded skeleton. *)
+  Lemma nodes_support : forall A (r : M.t A) m,
+    (forall p, In p (M.codes r) -> In p (support m)) ->
+    M.nodes r <= supp m * (b m + 1).
+  Proof.
+    intros A r m Hin.
+    pose proof (M.nodes_le_codes A r) as Hnodes.
+    pose proof (codes_support_length A r m Hin) as Hlength.
+    assert (Hsum : fold_right Nat.add 0
+      (map (fun p => Pos.size_nat p + 1) (M.codes r)) <=
+      length (M.codes r) * (b m + 1)).
+    { apply sum_members_bound. intros p Hp.
+      pose proof (support_bits m p (Hin p Hp)). lia. }
+    nia.
+  Qed.
+
+  (** Row collection retains at most one row for each outer code. *)
+  Lemma rows_length : forall m, length (rows m) <= length (M.codes m).
+  Proof.
+    intro m. unfold rows. induction (M.codes m) as [|p ps IH].
+    - reflexivity.
+    - cbn. destruct (M.find p m); cbn; lia.
+  Qed.
+
+  (** Every successful raw row lookup is present in the row collection. *)
+  Lemma row_in_rows : forall m p row, M.find p m = Some row -> In row (rows m).
+  Proof.
+    intros m p row Hrow. unfold rows. apply in_flat_map. exists p. split.
+    - apply M.codes_spec. rewrite Hrow. discriminate.
+    - rewrite Hrow. now left.
+  Qed.
+
+  (** The stored codes cover the skeleton even when labels do not match their codes. *)
   Lemma skel_le : forall m, skel m <= (supp m + 1)^2 * (b m + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro m.
+    assert (Houter : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (nodes_support (M.t Z) m m Houter) as Hnodes.
+    pose proof (codes_support_length (M.t Z) m m Houter) as Hlength.
+    pose proof (rows_length m) as Hrows.
+    assert (Hsum : fold_right Nat.add 0 (map M.nodes (rows m)) <=
+      length (rows m) * (supp m * (b m + 1))).
+    { apply sum_members_bound. intros row Hrow. apply nodes_support.
+      intros p Hp. apply support_spec. right. apply in_flat_map.
+      exists row. now split. }
+    unfold skel. cbn [Nat.pow]. nia.
+  Qed.
   Lemma weight_le : forall m, dbm_wf m -> M.weight m <= supp m * (b m + 1).
   Proof. Admitted. (* STUB *)
   Lemma grow_incr_close : forall i j d m m', incr_close i j d m = Reached m' ->
@@ -785,7 +1081,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
 
   (** Widening units cover the squared support size. *)
   Lemma F_wunits : forall s, wunits s = (ns s + 1) ^ 2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assumption work charges incremental closure for every emitted atom. *)
   Lemma F_assume_work : forall g es s,
     (N.of_nat (assume_work g es s) =
@@ -794,7 +1092,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         (bs s + ells s + F.bits_es g es + 2 * length (F.atoms_of g es) + 1) +
         length (F.atoms_of g es) * labs s) +
       F.T_atoms_of g es)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   (** Assignment work pays for linearization and quadratic matrix updates. *)
   Lemma F_assign_work : forall x e s,
     (N.of_nat (assign_work x e s) =
@@ -802,16 +1102,31 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
         (bs s + ells s + X.bits x + F.bits_e e + lin_bits e + 1) + skels s + labs s +
         (tsize e + 1) * (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) +
       F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e s. unfold assign_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   Lemma F_havoc_work : forall x s,
     havoc_work x s = (ns s + 1)^2 * (bs s + X.bits x + ells s + 1) + skels s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma coh_top : coh top.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j. unfold entry. now rewrite !M.get_empty.
+  Qed.
   Lemma coh_join : forall a b, coh a -> coh b -> coh (join a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|ma] [|mb] Ha Hb; cbn [coh join] in *; try assumption; try exact I.
+    intros i j. rewrite <- !raw_entry_get, !raw_entry_join, !raw_entry_get.
+    now rewrite (Ha i j), (Hb i j).
+  Qed.
   Lemma coh_widen : forall p a b, coh a -> coh b -> coh (widen p a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Ha Hb. unfold widen. destruct (leb b a); [exact Ha|].
+    destruct a as [|ma], b as [|mb]; cbn [coh] in *; try assumption; try exact I.
+    intros i j. rewrite <- !raw_entry_get, !raw_entry_widen, !raw_entry_get.
+    now rewrite (Ha i j), (Hb i j).
+  Qed.
   Lemma coh_assign : forall x e s, coh s -> coh (assign x e s).
   Proof. Admitted. (* STUB *)
   Lemma coh_havoc : forall x s, coh s -> coh (havoc x s).
@@ -887,15 +1202,21 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Range work charges the numeric query and its linearization. *)
   Lemma F_range_work : forall e s, (N.of_nat (range_work e s) =
     N.of_nat ((tsize e + 1) *
       (bs s + ells s + F.bits_e e + Nat.log2 (tsize e) + 1)^2) + F.T_lin_of e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e s. unfold range_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
+  Qed.
   Lemma F_range_bits : forall e s,
     range_bits e s = ells s + F.bits_e e + Nat.log2 (tsize e) + 2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Fixpoint fw_trace (ks : list K.t) (m : dbm) : list (K.t * dbm) :=
     match ks with
     | nil => nil
@@ -909,9 +1230,57 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     end.
   TimeFun fw_trace.
   (** A round keeps the support and its key bits. *)
+  (** Reflected key equality supplies the Boolean test used by deduplication. *)
+  Lemma key_eqb_true : forall x y, K.eqb x y = true <-> x = y.
+  Proof.
+    intros x y. destruct (K.eqb_spec x y); split; congruence.
+  Qed.
+
+  (** Consistent stored labels name codes actually present in their map. *)
+  Lemma elements_code : forall A (m : M.t A) k, M.wf m ->
+    In k (map fst (M.elements m)) -> In (K.encode k) (M.codes m).
+  Proof.
+    intros A m k Hwf Hin. apply in_map_iff in Hin.
+    destruct Hin as [[q value] [Hq Hin]]. cbn in Hq. subst q.
+    apply M.codes_spec. rewrite <- (M.get_find A k m).
+    pose proof (proj1 (M.elements_spec A m k value Hwf) Hin) as Hget.
+    rewrite Hget. discriminate.
+  Qed.
+
+  (** Pivot collection keeps each key once. *)
+  Lemma keys_nodup : forall m, NoDup (keys m).
+  Proof.
+    intro m. unfold keys. apply (dedup_nodup K.t K.eqb key_eqb_true).
+    constructor.
+  Qed.
+
+  (** Injective encoding preserves distinct pivot keys. *)
+  Lemma encoded_keys_nodup : forall ks, NoDup ks -> NoDup (map K.encode ks).
+  Proof.
+    intros ks Hkeys. induction Hkeys as [|k ks Hfresh Hkeys IH].
+    - constructor.
+    - cbn. constructor; [|exact IH]. intro Hin. apply in_map_iff in Hin.
+      destruct Hin as [q [Hcode Hq]]. apply K.encode_inj in Hcode.
+      subst q. exact (Hfresh Hq).
+  Qed.
+
+  (** Each consistent pivot label names a code in the matrix support. *)
   Lemma keys_support : forall m k, dbm_wf m -> In k (keys m) ->
     In (K.encode k) (support m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m k [Houter Hrows] Hkey. unfold keys in Hkey.
+    rewrite (dedup_membership K.t K.eqb key_eqb_true) in Hkey.
+    destruct Hkey as [Hkey | Hempty]; [|contradiction].
+    apply in_app_iff in Hkey. apply support_spec. destruct Hkey as [Hkey | Hkey].
+    - left. now apply elements_code.
+    - right. apply in_flat_map in Hkey.
+      destruct Hkey as [[i row] [Hrow Hkey]]. cbn in Hkey.
+      pose proof (proj1 (M.elements_spec (M.t Z) m i row Houter) Hrow) as Hget.
+      rewrite M.get_find in Hget.
+      apply in_flat_map. exists row. split.
+      + exact (row_in_rows m (K.encode i) row Hget).
+      + apply elements_code; [exact (Hrows (K.encode i) row Hget)|exact Hkey].
+  Qed.
   Lemma bits_fw_round_step : forall k m, ell (fw_round k m) <= ell m + 1.
   Proof. Admitted. (* STUB *)
   Lemma bits_fw_trace_le : forall ks m k a, dbm_wf m ->
@@ -928,7 +1297,13 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   (** A consistent matrix has no more pivot keys than codes in its support. *)
   Lemma keys_le : forall m, dbm_wf m -> length (keys m) <= supp m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m Hwf. unfold supp.
+    rewrite <- (length_map K.encode (keys m)). apply NoDup_incl_length.
+    - apply encoded_keys_nodup, keys_nodup.
+    - intros p Hin. apply in_map_iff in Hin. destruct Hin as [k [Hcode Hkey]].
+      subst p. now apply keys_support.
+  Qed.
   (** Floyd-Warshall runs the traced rounds over the pivot keys. *)
   Lemma F_fw : forall m, fw m =
     fold_left (fun a km => fw_round (fst km) a) (fw_trace (keys m) m) m.
