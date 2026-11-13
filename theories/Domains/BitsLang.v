@@ -408,6 +408,289 @@ Module WordTime.
     rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
   Qed.
 
+  (** Magnitude bit length gives a strict symmetric power-of-two bound. *)
+  Lemma integer_magnitude_bound z :
+    (- (2 ^ Z.of_nat (Z.size_nat z)) < z < 2 ^ Z.of_nat (Z.size_nat z))%Z.
+  Proof.
+    destruct z as [|p|p]; [cbn; lia| |]; cbn [Z.size_nat];
+      pose proof (Pos.size_nat_upper p) as Hupper;
+      apply Nat2Z.inj_lt in Hupper;
+      rewrite positive_nat_Z, Nat2Z.inj_pow in Hupper; lia.
+  Qed.
+
+  (** Addition increases the combined magnitude budget by at most one bit. *)
+  Lemma integer_add_size x y :
+    (Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+  Proof.
+    apply integer_abs_size_bound.
+    pose proof (integer_magnitude_bound x) as Hx.
+    pose proof (integer_magnitude_bound y) as Hy.
+    assert (Hxp : (0 < 2 ^ Z.of_nat (Z.size_nat x))%Z) by
+      (apply Z.pow_pos_nonneg; lia).
+    assert (Hyp : (0 < 2 ^ Z.of_nat (Z.size_nat y))%Z) by
+      (apply Z.pow_pos_nonneg; lia).
+    rewrite !Nat2Z.inj_add. change (Z.of_nat 1%nat) with 1%Z.
+    rewrite !Z.pow_add_r by lia. rewrite Z.pow_1_r. nia.
+  Qed.
+
+  (** Subtraction uses the same combined magnitude budget as addition. *)
+  Lemma integer_sub_size x y :
+    (Z.size_nat (x - y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+  Proof.
+    pose proof (integer_add_size x (- y)) as Hsize.
+    rewrite integer_opp_size in Hsize. exact Hsize.
+  Qed.
+
+  (** A product fits within the sum of its factors' magnitude bit lengths. *)
+  Lemma integer_mul_size x y :
+    (Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y)%nat.
+  Proof.
+    destruct x, y; cbn [Z.mul Z.size_nat]; try lia; apply Pos.size_nat_mul.
+  Qed.
+
+  (** Complement charges wrapping and two width-bounded subtractions. *)
+  Lemma word_not_time_bound w x :
+    (T_wnot w x <= 128 * N.of_nat ((Pos.to_nat w + Z.size_nat x + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w x) as Hwrap.
+    pose proof (word_modulus_time_bound w) as Hmodulus.
+    pose proof (Z.T_sub_le (modulus w) 1) as Hones.
+    pose proof (Z.T_sub_le (modulus w - 1) (wrap w x)) as Hsub.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsize.
+    pose proof (time_of_nat_le _ _ (word_modulus_size_bound w)) as Hmodsize.
+    pose proof (time_of_nat_le _ _
+      (Z.size_nat_mono (modulus w - 1) (modulus w)
+        ltac:(pose proof (modulus_pos w); lia))) as Honessize.
+    time_unfold T_wnot.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Modular negation preserves the raw magnitude budget before wrapping. *)
+  Lemma word_neg_time_bound w x :
+    (T_wneg w x <= 128 * N.of_nat ((Pos.to_nat w + Z.size_nat x + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w (- x)) as Hwrap.
+    pose proof (Z.T_opp_le x) as Hopp. rewrite integer_opp_size in Hwrap.
+    time_unfold T_wneg.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Every unary operator charges a quadratic width and raw-input budget. *)
+  Lemma word_unary_time_bound tag w x :
+    (T_eval_unary_tag tag w x <=
+      512 * N.of_nat ((Pos.to_nat w + Z.size_nat x + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_not_time_bound w x) as Hnot.
+    pose proof (word_neg_time_bound w x) as Hneg.
+    pose proof (word_clz_time_bound w x) as Hclz.
+    pose proof (word_ctz_time_bound w x) as Hctz.
+    pose proof (word_popcount_time_bound w x) as Hcount.
+    destruct tag; time_unfold T_eval_unary_tag;
+      rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Modular addition charges a combined operand bit budget. *)
+  Lemma word_add_time_bound w x y :
+    (T_wadd w x y <=
+      512 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    pose proof (Z.T_add_le x y) as Hadd.
+    pose proof (word_wrap_time_bound w (x + y)) as Hwrap.
+    pose proof (time_of_nat_le _ _ (integer_add_size x y)) as Hsize.
+    time_unfold T_wadd.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Modular subtraction charges a combined operand bit budget. *)
+  Lemma word_sub_time_bound w x y :
+    (T_wsub w x y <=
+      512 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    pose proof (Z.T_sub_le x y) as Hsub.
+    pose proof (word_wrap_time_bound w (x - y)) as Hwrap.
+    pose proof (time_of_nat_le _ _ (integer_sub_size x y)) as Hsize.
+    time_unfold T_wsub.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Modular multiplication charges the product computation and its bounded result size. *)
+  Lemma word_mul_time_bound w x y :
+    (T_wmul w x y <=
+      128 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    pose proof (Z.T_mul_le x y) as Hmul.
+    pose proof (word_wrap_time_bound w (x * y)) as Hwrap.
+    pose proof (time_of_nat_le _ _ (integer_mul_size x y)) as Hsize.
+    time_unfold T_wmul.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Bitwise conjunction normalizes both inputs before its linear bit traversal. *)
+  Lemma word_and_time_bound w x y :
+    (T_wand w x y <=
+      256 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w x) as Hx.
+    pose proof (word_wrap_time_bound w y) as Hy.
+    pose proof (Z.T_land_le (wrap w x) (wrap w y)) as Hland.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsx.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w y)) as Hsy.
+    time_unfold T_wand.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Bitwise disjunction normalizes both inputs before its linear bit traversal. *)
+  Lemma word_or_time_bound w x y :
+    (T_wor w x y <=
+      256 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w x) as Hx.
+    pose proof (word_wrap_time_bound w y) as Hy.
+    pose proof (Z.T_lor_le (wrap w x) (wrap w y)) as Hlor.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsx.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w y)) as Hsy.
+    time_unfold T_wor.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Exclusive disjunction normalizes both inputs before its linear bit traversal. *)
+  Lemma word_xor_time_bound w x y :
+    (T_wxor w x y <=
+      256 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    pose proof (word_wrap_time_bound w x) as Hx.
+    pose proof (word_wrap_time_bound w y) as Hy.
+    pose proof (Z.T_lxor_le (wrap w x) (wrap w y)) as Hlxor.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsx.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w y)) as Hsy.
+    time_unfold T_wxor.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Division of normalized words uses a quadratic width budget. *)
+  Lemma integer_div_word_time_bound w a b : is_word w a -> is_word w b ->
+    (Z.T_div a b <= 64 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Ha Hb. pose proof (Z.T_div_le a b) as Hdiv.
+    pose proof (time_of_nat_le _ _ (word_size_bound w a Ha)) as Hsa.
+    pose proof (time_of_nat_le _ _ (word_size_bound w b Hb)) as Hsb.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Remainder of normalized words uses the same quadratic width budget. *)
+  Lemma integer_mod_word_time_bound w a b : is_word w a -> is_word w b ->
+    (Z.T_modulo a b <= 64 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros Ha Hb. pose proof (Z.T_modulo_le a b) as Hmod.
+    pose proof (time_of_nat_le _ _ (word_size_bound w a Ha)) as Hsa.
+    pose proof (time_of_nat_le _ _ (word_size_bound w b Hb)) as Hsb.
+    rewrite ?Nat2N.inj_pow, ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
+
+  (** Increasing a natural work budget preserves a quadratic clock bound. *)
+  Lemma time_square_weaken t c a b :
+    (t <= c * N.of_nat (a ^ 2))%N -> (a <= b)%nat ->
+    (t <= c * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Htime Hsize. eapply N.le_trans; [exact Htime|].
+    apply N.mul_le_mono_l, time_of_nat_le, Nat.pow_le_mono_l. exact Hsize.
+  Qed.
+
+  (** Scaling the input budget squares the corresponding coefficient. *)
+  Lemma time_square_scale t c a b k :
+    (t <= c * N.of_nat (a ^ 2))%N -> (a <= k * b)%nat ->
+    (t <= (c * N.of_nat (k ^ 2)) * N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Htime Hsize. eapply N.le_trans with (m := (c * N.of_nat ((k * b) ^ 2))%N).
+    - eapply time_square_weaken; eassumption.
+    - rewrite Nat.pow_mul_l, Nat2N.inj_mul, N.mul_assoc. reflexivity.
+  Qed.
+
+  (** A positive squared work budget also pays any smaller linear charge. *)
+  Lemma time_square_floor a b : (a <= b)%nat -> (1 <= b)%nat ->
+    (N.of_nat a <= N.of_nat (b ^ 2))%N.
+  Proof.
+    intros Hsmall Hpositive. apply time_of_nat_le. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** Unsigned division normalizes both operands and handles zero divisors directly. *)
+  Lemma word_udiv_time_bound w x y :
+    (T_wudiv w x y <=
+      512 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2)).
+    assert (Hx : (T_wrap w x <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_wrap_time_bound|lia]. }
+    assert (Hy : (T_wrap w y <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_wrap_time_bound|lia]. }
+    pose proof (word_modulus_time_bound w) as Hmodulus.
+    pose proof (Z.T_sub_le (modulus w) 1) as Hones.
+    pose proof (Z.T_eqb_le (wrap w y) 0) as Heq.
+    assert (Hdiv : (Z.T_div (wrap w x) (wrap w y) <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken;
+        [apply integer_div_word_time_bound; apply wrap_is_word|lia]. }
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsx.
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w y)) as Hsy.
+    pose proof (time_of_nat_le _ _ (word_modulus_size_bound w)) as Hmodsize.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= budget)%N).
+    { unfold budget. apply time_square_floor; lia. }
+    clearbody budget.
+    time_unfold T_wudiv. destruct (wrap w y =? 0)%Z;
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
+  Qed.
+
+  (** Unsigned remainder normalizes both operands and handles zero divisors directly. *)
+  Lemma word_urem_time_bound w x y :
+    (T_wurem w x y <=
+      512 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2)).
+    assert (Hx : (T_wrap w x <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_wrap_time_bound|lia]. }
+    assert (Hy : (T_wrap w y <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_wrap_time_bound|lia]. }
+    pose proof (Z.T_eqb_le (wrap w y) 0) as Heq.
+    assert (Hmod : (Z.T_modulo (wrap w x) (wrap w y) <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken;
+        [apply integer_mod_word_time_bound; apply wrap_is_word|lia]. }
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w y)) as Hsy.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= budget)%N).
+    { unfold budget. apply time_square_floor; lia. }
+    clearbody budget.
+    time_unfold T_wurem. destruct (wrap w y =? 0)%Z;
+      rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
+  Qed.
+
+  (** Comparison dispatch charges normalized unsigned or signed views of both operands. *)
+  Lemma word_comparison_time_bound tag w x y :
+    (T_eval_comparison_tag tag w x y <=
+      512 * N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2))%N.
+  Proof.
+    set (budget := N.of_nat ((Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1) ^ 2)).
+    assert (Hx : (T_wrap w x <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_wrap_time_bound|lia]. }
+    assert (Hy : (T_wrap w y <= 64 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_wrap_time_bound|lia]. }
+    assert (Hsignedx : (T_signed w x <= 128 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_signed_time_bound|lia]. }
+    assert (Hsignedy : (T_signed w y <= 128 * budget)%N).
+    { unfold budget. eapply time_square_weaken; [apply word_signed_time_bound|lia]. }
+    pose proof (time_of_nat_le _ _ (word_wrap_size_bound w x)) as Hsx.
+    pose proof (time_of_nat_le _ _ (word_signed_size_bound w x)) as Hssx.
+    pose proof (Z.T_eqb_le (wrap w x) (wrap w y)) as Heq.
+    pose proof (Z.T_ltb_le (wrap w x) (wrap w y)) as Hult.
+    pose proof (Z.T_leb_le (wrap w x) (wrap w y)) as Hule.
+    pose proof (Z.T_ltb_le (signed w x) (signed w y)) as Hslt.
+    pose proof (Z.T_leb_le (signed w x) (signed w y)) as Hsle.
+    assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= budget)%N).
+    { unfold budget. apply time_square_floor; lia. }
+    clearbody budget.
+    destruct tag; time_unfold T_eval_comparison_tag;
+      try time_unfold T_wult; try time_unfold T_wule;
+      try time_unfold T_wslt; try time_unfold T_wsle;
+      time_simpl; rewrite ?Nat2N.inj_add in *; time_cbn_all; lia.
+  Qed.
+
 End WordTime.
 
 
