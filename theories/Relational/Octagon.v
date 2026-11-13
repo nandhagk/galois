@@ -3470,11 +3470,6 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     destruct (wf_raw_entry_keys a p q d Hawf Hraw) as [i [j [Hi [Hj Hentry]]]].
     exact (path_invariant_entry_bits m (entry a) ps Hpath i j d Hentry).
   Qed.
-  Lemma T0_fw : forall m, dbm_wf m ->
-    (T_fw m <= k_octagon * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
-      fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
-        (fw_trace (keys m) m))))%N.
-  Proof. Admitted. (* STUB *)
   Lemma supp_fw_round : forall k m,
     supp (fw_round k m) = supp m /\ b (fw_round k m) = b m.
   Proof.
@@ -6326,5 +6321,152 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - intros k Hin. unfold K.bits. apply support_bits. now apply keys_support.
     - apply N.mul_le_mono_l, time_of_nat_le.
       pose proof (keys_le m Hwf) as Hlength. cbn [Nat.pow]. nia.
+  Qed.
+  (** Collecting and deduplicating pivot labels fits the initial quadratic key budget. *)
+  Lemma T_pivot_keys_le : forall m, dbm_wf m ->
+    (T_pivot_keys m <= 64 * (M.c_map + 1) *
+      N.of_nat ((supp m + 1)^2 * (b m + 1)))%N.
+  Proof.
+    intros m Hwf.
+    assert (Hsupport : forall p, In p (M.codes m) -> In p (support m)).
+    { intros p Hp. apply support_spec. now left. }
+    pose proof (elements_support_length (M.t Z) m m (proj1 Hwf) Hsupport) as Hlength.
+    pose proof (pivot_inputs_length m Hwf) as Hinputs.
+    set (rowwork := N.of_nat ((supp m + 1) * (b m + 1))).
+    set (work := N.of_nat ((supp m + 1)^2 * (b m + 1))).
+    assert (Hpositive : 1 <= (supp m + 1)^2 * (b m + 1))
+      by (cbn [Nat.pow]; nia).
+    pose proof (time_of_nat_le _ _ Hpositive) as Hunit.
+    change (1 <= work)%N in Hunit.
+    assert (Hrowunit : (N.of_nat (supp m) + 1 <= rowwork)%N).
+    { replace (N.of_nat (supp m) + 1)%N with (N.of_nat (supp m + 1))
+        by (rewrite Nat2N.inj_add; reflexivity).
+      unfold rowwork. apply time_of_nat_le. nia. }
+    assert (Hrowwork : (rowwork <= work)%N).
+    { unfold rowwork, work. apply time_of_nat_le. cbn [Nat.pow]. nia. }
+    assert (Hrowprod : (rowwork * N.of_nat (length (M.elements m)) <= work)%N).
+    { unfold rowwork, work. rewrite <- Nat2N.inj_mul.
+      apply time_of_nat_le. cbn [Nat.pow]. nia. }
+    pose proof (T_element_keys_le (M.t Z) m m (proj1 Hwf) Hsupport) as Houter.
+    assert (Houter_work : (M.T_elements m + ListDef.T_map (@fst K.t (M.t Z))
+      (fun p => Datatypes.T_fst p) (M.elements m) + 1 <= (M.c_map + 4) * work)%N).
+    { eapply N.le_trans; [exact Houter|]. now apply N.mul_le_mono_l. }
+    pose proof (T_remember_fold_le (pivot_inputs m) (M.empty, nil) (b m)
+      (fun k Hin => pivot_inputs_bits m k Hwf Hin)) as Hremember.
+    assert (Hremember_work : (List.T_fold_left remember_key
+      (fun a k => T_remember_key a k) (pivot_inputs m) (M.empty, nil) <=
+      16 * (M.c_map + 1) * work)%N).
+    { eapply N.le_trans; [exact Hremember|]. apply N.mul_le_mono_l.
+      unfold work. apply time_of_nat_le. now apply Nat.mul_le_mono_r. }
+    assert (Happ_work : (Datatypes.T_app (map fst (M.elements m))
+      (flat_map (fun kv => map fst (M.elements (snd kv))) (M.elements m)) <= work)%N).
+    { eapply N.le_trans; [apply Datatypes.T_app_le|]. rewrite length_map.
+      replace (N.of_nat (length (M.elements m)) + 1)%N with
+        (N.of_nat (length (M.elements m) + 1)) by (rewrite Nat2N.inj_add; reflexivity).
+      unfold work. apply time_of_nat_le. cbn [Nat.pow]. nia. }
+    unfold T_pivot_keys. cbn beta iota zeta.
+    match goal with
+    | |- context [List.T_flat_map ?f ?tf (M.elements m)] =>
+      assert (Hrows : Forall (fun kv =>
+        (tf kv <= (M.c_map + 5) * rowwork)%N /\ length (f kv) <= supp m)
+        (M.elements m));
+      [ apply Forall_forall; intros [k row] Hin;
+        destruct (elements_row_support m k row Hwf Hin) as [Hrow Hrow_support]; split;
+        [ pose proof (T_element_keys_le Z row m Hrow Hrow_support) as Hrow_clock;
+          fold rowwork in Hrow_clock;
+          cbv beta delta [Datatypes.T_fst] in Hrow_clock;
+          cbn beta iota zeta; time_simpl; cbn [fst snd];
+          replace ((M.c_map + 5) * rowwork)%N with
+            ((M.c_map + 4) * rowwork + rowwork)%N by ring; lia
+        | cbn [snd]; rewrite length_map; now apply elements_support_length ]
+      | pose proof (flat_map_clock_members (K.t * M.t Z) K.t f tf
+          ((M.c_map + 5) * rowwork)%N (supp m) (M.elements m) Hrows) as Hflat;
+        assert (Hper : ((M.c_map + 5) * rowwork + N.of_nat (supp m) + 2 <=
+          (M.c_map + 7) * rowwork)%N);
+        [ replace ((M.c_map + 7) * rowwork)%N with
+            ((M.c_map + 5) * rowwork + 2 * rowwork)%N by ring; lia
+        | assert (Hflat_work : (List.T_flat_map f tf (M.elements m) <=
+            (M.c_map + 8) * work)%N);
+          [ eapply N.le_trans; [exact Hflat|];
+            eapply N.le_trans with
+              ((M.c_map + 7) * rowwork * N.of_nat (length (M.elements m)) + 1)%N;
+            [ apply N.add_le_mono_r, N.mul_le_mono_r; exact Hper
+            | replace ((M.c_map + 7) * rowwork * N.of_nat (length (M.elements m)) + 1)%N
+                with ((M.c_map + 7) * (rowwork * N.of_nat (length (M.elements m))) + 1)%N
+                by ring;
+              eapply N.le_trans with ((M.c_map + 7) * work + 1)%N;
+              [ apply N.add_le_mono_r, N.mul_le_mono_l; exact Hrowprod
+              | replace ((M.c_map + 8) * work)%N with
+                  ((M.c_map + 7) * work + work)%N by ring; lia ] ]
+          | clear Hrows Hflat Hper ] ] ]
+    end.
+    assert (Hbudget : ((M.c_map + 4 + (M.c_map + 8) + 1 +
+      16 * (M.c_map + 1) + 4) * work <= 64 * (M.c_map + 1) * work)%N).
+    { apply N.mul_le_mono_r. lia. }
+    repeat rewrite N.mul_add_distr_r in Hbudget.
+    rewrite N.mul_add_distr_r in Houter_work, Hflat_work.
+    cbv beta delta [Datatypes.T_fst Datatypes.T_snd] in Houter_work, Hflat_work.
+    time_simpl. fold (pivot_inputs m).
+    match goal with
+    | |- N.le ?clock _ => change (clock <= 64 * (M.c_map + 1) * work)%N
+    end.
+    clear Houter Hremember Hlength Hinputs Hpositive Hrowunit Hrowwork Hrowprod.
+    clearbody rowwork work. lia.
+  Qed.
+
+  (** Floyd-Warshall adds only collection and diagonal checks to its exact round trace. *)
+  Lemma T_fw_additive : forall m, dbm_wf m ->
+    (T_fw m <= trace_cost (keys m) m + 128 * (M.c_map + 1) *
+      N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)))%N.
+  Proof.
+    intros m Hwf.
+    set (work := N.of_nat ((supp m + 1)^2 * (b m + ell m + 1))).
+    replace (128 * (M.c_map + 1) * work)%N with
+      (128 * ((M.c_map + 1) * work))%N by ring.
+    assert (Hpositive : 1 <= (supp m + 1)^2 * (b m + ell m + 1))
+      by (cbn [Nat.pow]; nia).
+    pose proof (time_of_nat_le _ _ Hpositive) as Hunit.
+    change (1 <= work)%N in Hunit.
+    assert (Hcollect : (T_pivot_keys m <= 64 * ((M.c_map + 1) * work))%N).
+    { eapply N.le_trans; [now apply T_pivot_keys_le|].
+      replace (64 * ((M.c_map + 1) * work))%N with
+        (64 * (M.c_map + 1) * work)%N by ring.
+      apply N.mul_le_mono_l. unfold work. apply time_of_nat_le, Nat.mul_le_mono_l. lia. }
+    pose proof (scan_budget_keys m Hwf) as Hscan.
+    change (scan_budget (keys m) <= 20 * (M.c_map + 1) * work)%N in Hscan.
+    replace (20 * (M.c_map + 1) * work)%N with (20 * ((M.c_map + 1) * work))%N
+      in Hscan by ring.
+    pose proof (T_fw_pivots_trace (keys m) m) as Hloop.
+    assert (Hkeyunit : (1 <= (M.c_map + 1) * work)%N).
+    { change (1 * 1 <= (M.c_map + 1) * work)%N. apply N.mul_le_mono; lia. }
+    set (rounds := trace_cost (keys m) m) in *.
+    set (keywork := ((M.c_map + 1) * work)%N) in *.
+    clear Hpositive Hunit. clearbody work keywork rounds.
+    unfold T_fw. cbn beta iota zeta. rewrite pivot_keys_eq_keys. time_simpl. lia.
+  Qed.
+
+  (** The plan coefficient covers the additive collection and scan coefficient. *)
+  Lemma k_octagon_trace_coefficient : (128 * (M.c_map + 1) <= k_octagon)%N.
+  Proof.
+    unfold k_octagon. nia.
+  Qed.
+
+  (** Floyd-Warshall pays for pivot collection and the rounds recorded in its trace. *)
+  Lemma T0_fw : forall m, dbm_wf m ->
+    (T_fw m <= k_octagon * (N.of_nat ((supp m + 1)^2 * (b m + ell m + 1)) +
+      fold_right N.add 0%N (map (fun km => T_fw_round (fst km) (snd km))
+        (fw_trace (keys m) m))))%N.
+  Proof.
+    intros m Hwf. pose proof (T_fw_additive m Hwf) as Htime.
+    set (work := N.of_nat ((supp m + 1)^2 * (b m + ell m + 1))) in *.
+    change (T_fw m <= k_octagon * (work + trace_cost (keys m) m))%N.
+    set (rounds := trace_cost (keys m) m) in *.
+    pose proof k_octagon_trace_coefficient as Hcoefficient.
+    assert (Hconstant : (1 <= k_octagon)%N) by lia.
+    assert (Hframe : (128 * (M.c_map + 1) * work <= k_octagon * work)%N)
+      by (now apply N.mul_le_mono_r).
+    assert (Hrounds : (rounds <= k_octagon * rounds)%N).
+    { replace rounds with (1 * rounds)%N at 1 by ring. now apply N.mul_le_mono_r. }
+    rewrite N.mul_add_distr_l. lia.
   Qed.
 End OctagonT.
