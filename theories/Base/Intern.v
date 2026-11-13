@@ -271,8 +271,38 @@ Definition group_by {K V} (encode : K -> positive) (key : V -> K) (xs : list V) 
 
 TimeFun group_by.
 
+(** ** Group lookup proofs *)
+
+(** Collection adds the matching values in reverse order before the previous bucket. *)
+Local Lemma find_collect_groups {K V} (encode : K -> positive) (key : V -> K) k xs groups :
+  find_group encode k (collect_groups encode key xs groups) =
+    app (rev (filter (fun a => Pos.eqb (encode (key a)) (encode k)) xs))
+      (find_group encode k groups).
+Proof.
+  revert groups. induction xs as [|x rest IH]; intro groups; [reflexivity|].
+  cbn [collect_groups]. rewrite IH. cbn [filter].
+  destruct (Pos.eqb (encode (key x)) (encode k)) eqn:Hkey.
+  - apply Pos.eqb_eq in Hkey. unfold find_group at 1.
+    rewrite Hkey, PTrie.get_set_same. cbn [rev].
+    rewrite <- app_assoc. reflexivity.
+  - apply Pos.eqb_neq in Hkey. unfold find_group at 1.
+    rewrite PTrie.get_set_other by congruence. reflexivity.
+Qed.
+
 (** Group lookup returns the input values whose keys have the same encoding. *)
 Lemma find_group_by {K V} (encode : K -> positive) (key : V -> K) k xs :
   find_group encode k (group_by encode key xs) =
   filter (fun a => Pos.eqb (encode (key a)) (encode k)) xs.
-Proof. Admitted. (* CONVERT: find_group_by: The reference Map.get_map was not found. *)
+Proof.
+  pose proof (find_collect_groups encode key k xs PTrieCode.empty) as Hcollect.
+  unfold find_group in Hcollect. rewrite PTrie.get_empty, app_nil_r in Hcollect.
+  unfold group_by, find_group. rewrite PTrie.get_map.
+  destruct (PTrieCode.get (encode k)
+    (collect_groups encode key xs PTrieCode.empty)) as [bucket|] eqn:Hget;
+    cbn [option_map] in *.
+  - rewrite rev_append_rev, app_nil_r, Hcollect, rev_involutive. reflexivity.
+  - apply (f_equal (@rev V)) in Hcollect.
+    rewrite rev_involutive in Hcollect. exact Hcollect.
+Qed.
+
+(** ** End group lookup proofs *)
