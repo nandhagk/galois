@@ -1852,6 +1852,52 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     apply table_positive_bits.
   Qed.
 
+  Local Lemma table_not_bits : forall rw w a,
+    interval_bits (interval_not rw (interval_clip w a)) <= Pos.to_nat rw.
+  Proof.
+    intros rw w a.
+    change (interval_bits (interval_not rw (PayloadBounds.interval_clip w a)) <=
+      Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape w a)
+      as [Hbot|[lo [hi [Hshape [_ [Hordered _]]]]]].
+    - rewrite Hbot. cbn [interval_not interval_finite_helper].
+      exact (PayloadBounds.payload_top_bits rw).
+    - rewrite Hshape. cbn [interval_not interval_finite_helper].
+      apply table_checked_bits. lia.
+  Qed.
+
+  Local Lemma table_rewrap_bits : forall rw w a,
+    interval_bits (interval_rewrap rw (interval_clip w a)) <= Pos.to_nat rw.
+  Proof.
+    intros rw w a.
+    change (interval_bits (interval_rewrap rw (PayloadBounds.interval_clip w a)) <=
+      Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape w a)
+      as [Hbot|[lo [hi [Hshape [_ [Hordered _]]]]]].
+    - rewrite Hbot. cbn [interval_rewrap interval_finite_helper].
+      exact (PayloadBounds.payload_top_bits rw).
+    - rewrite Hshape. cbn [interval_rewrap interval_finite_helper].
+      apply table_checked_bits. exact Hordered.
+  Qed.
+
+  Local Lemma table_neg_bits : forall rw w a,
+    interval_bits (interval_neg rw (interval_clip w a)) <= Pos.to_nat rw.
+  Proof.
+    intros rw w a.
+    change (interval_bits (interval_neg rw (PayloadBounds.interval_clip w a)) <=
+      Pos.to_nat rw).
+    destruct (PayloadBounds.interval_clip_shape w a)
+      as [Hbot|[lo [hi [Hshape [_ [Hordered _]]]]]].
+    - rewrite Hbot. cbn [interval_neg interval_finite_helper].
+      exact (PayloadBounds.payload_top_bits rw).
+    - rewrite Hshape. cbn [interval_neg interval_finite_helper].
+      destruct (Z.eqb hi 0).
+      + cbn [interval_bits Z.size_nat]. lia.
+      + destruct (Z.ltb 0 lo).
+        * apply table_checked_bits. lia.
+        * exact (PayloadBounds.payload_top_bits rw).
+  Qed.
+
   Local Lemma table_bool_not_bits : forall a,
     interval_bits (interval_bool_not a) <= 1.
   Proof.
