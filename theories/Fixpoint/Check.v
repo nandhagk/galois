@@ -1,10 +1,12 @@
 (** * Full solution checking
 
-    The checker evaluates each row and checks every value written by the row. *)
+    The checker evaluates each row and checks every value written by the row.
+    For example, a side contribution above its stored value rejects the candidate.
+    Builds on: Fixpoint.Query, Fixpoint.SystemSig and Base.MapSig. *)
 
-From Stdlib Require Import List NArith.
+From Stdlib Require Import List NArith Lia.
 From Argent Require Import Time Tactics Std.
-From Galois.Base Require Import MapSig.
+From Galois.Base Require Import MapSig Trie.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig CheckSig.
 
@@ -48,11 +50,33 @@ Module CheckT (L : LATTICE_T) (S : SYSTEM_T L) <: CHECK_T L S.
   TimeFun check_rows.
   TimeFun check.
 
-  Definition c_chk : N := 1. (* STUB *)
+  Definition c_lookup : N := (S.c_sys + PTrieT.c_trie + 2)%N.
 
+  Definition c_chk : N := (128 * (c_lookup + S.c_sys + L.c_lat + 1))%N.
+
+  (** A lookup pays once for the key encoding and once for trie traversal. *)
+  Lemma T_look_bound : forall m x,
+    (T_look m x <= c_lookup * N.of_nat (S.key_bits x + 1))%N.
+  Proof.
+    intros m x.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le (S.key * L.t) (S.key_code x) m) as Hget.
+    unfold T_look, T_look_or, PTrieT.T_get in *.
+    unfold c_lookup, S.key_bits in *.
+    rewrite !Nat2N.inj_add in *.
+    time_cbn_all.
+    nia.
+  Qed.
+
+  (** The public checker constant includes the lookup bound. *)
   Lemma T_look_le : forall m x,
     (T_look m x <= c_chk * N.of_nat (S.key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m x.
+    pose proof (T_look_bound m x) as Hlook.
+    unfold c_chk.
+    nia.
+  Qed.
   Lemma T_check_rows_le : forall p rs m B, S.wf p ->
     (forall r, In r rs -> In r (S.rows p)) ->
     (forall x, L.size (look m x) <= B) ->
