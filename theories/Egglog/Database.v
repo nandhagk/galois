@@ -5266,6 +5266,76 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros f k db. apply row_delete_preserves; intros; reflexivity.
   Qed.
 
+  (** A forest representative is fixed by the guarded executable normalizer. *)
+  Lemma normal_cell_root : forall db i, UnionFind.wf (db_forest db) ->
+    normal_cell db (Id (repr db i)) = Id (repr db i).
+  Proof.
+    intros db i Hforest. unfold repr. cbn [normal_cell].
+    destruct (N.compare (runtime_allocated (db_runtime db))
+      (Npos (UnionFind.repr (db_forest db) i))); try reflexivity;
+      f_equal; rewrite (UnionFind.find_repr _ _ Hforest);
+      now apply UnionFind.repr_idem.
+  Qed.
+
+  (** The allocation guard and representative lookup together form an idempotent normalizer. *)
+  Lemma normal_cell_idempotent : forall db c, UnionFind.wf (db_forest db) ->
+    normal_cell db (normal_cell db c) = normal_cell db c.
+  Proof.
+    intros db [i | v] Hforest; [| reflexivity].
+    remember (normal_cell db (Id i)) as normalized eqn:Hnormal.
+    unfold normal_cell in Hnormal.
+    destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hbound.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+      subst normalized. now apply normal_cell_root.
+    - subst normalized. unfold normal_cell. now rewrite Hbound.
+    - rewrite (UnionFind.find_repr i (db_forest db) Hforest) in Hnormal.
+      subst normalized. now apply normal_cell_root.
+  Qed.
+
+  (** Normalizing a key twice retains the first normalized key. *)
+  Lemma normal_key_idempotent : forall db k, UnionFind.wf (db_forest db) ->
+    normal_key db (normal_key db k) = normal_key db k.
+  Proof.
+    intros db k Hforest. unfold normal_key. rewrite map_map. apply map_ext.
+    intro c. now apply normal_cell_idempotent.
+  Qed.
+
+  (** Normalizing an optional output twice retains the first normalized output. *)
+  Lemma normal_output_idempotent : forall db o, UnionFind.wf (db_forest db) ->
+    option_map (normal_cell db) (option_map (normal_cell db) o) =
+      option_map (normal_cell db) o.
+  Proof.
+    intros db [c |] Hforest; cbn [option_map]; [| reflexivity].
+    f_equal. now apply normal_cell_idempotent.
+  Qed.
+
+  (** Deleting a row preserves the forest and allocation guard used to normalize cells. *)
+  Lemma row_delete_normal_cell : forall db f k c,
+    normal_cell (row_delete f k db) c = normal_cell db c.
+  Proof.
+    intros db f k [i | v]; cbn [normal_cell]; [| reflexivity].
+    rewrite row_delete_forest.
+    rewrite (row_delete_preserves _ (@runtime_allocated (cell V.t) I.t)
+      (fun rows state => eq_refl) (fun all new counts state => eq_refl) f k db).
+    reflexivity.
+  Qed.
+
+  (** Deletion preserves executable key normalization pointwise. *)
+  Lemma row_delete_normal_key : forall db f k args,
+    normal_key (row_delete f k db) args = normal_key db args.
+  Proof.
+    intros db f k args. unfold normal_key. apply map_ext.
+    intro c. apply row_delete_normal_cell.
+  Qed.
+
+  (** Deletion preserves executable optional-output normalization. *)
+  Lemma row_delete_normal_output : forall db f k o,
+    option_map (normal_cell (row_delete f k db)) o = option_map (normal_cell db) o.
+  Proof.
+    intros db f k [c |]; cbn [option_map]; [| reflexivity].
+    now rewrite row_delete_normal_cell.
+  Qed.
+
   (** A present deletion uses the finite-map removal of precisely the selected row key. *)
   Lemma row_delete_map_present : forall f k db o, row_get f k db = Some o ->
     runtime_rows (db_runtime (row_delete f k db)) =
