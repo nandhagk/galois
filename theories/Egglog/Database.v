@@ -9889,7 +9889,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db x db' Hmap Hpop y e.
     unfold db_pop_loser in Hpop.
-    destruct (runtime_queue (db_runtime db)) as [|i rest]; [discriminate |].
+    destruct (runtime_queue (db_runtime db)) as [|i rest] eqn:Hqueue;
+      [discriminate |].
     injection Hpop as Hname Hstate. subst x db'.
     unfold uses. rewrite !uses_entries_facts.
     - apply DatabaseUsesFacts.entries_transfer. exact Hmap.
@@ -10021,6 +10022,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           split; [exact Hcounts |].
           split; [exact Hhistory |].
           exact Hcore.
+  Qed.
+
+  Lemma pop_loser_queue : forall db x db',
+    db_pop_loser db = Some (x, db') -> queue db = x :: queue db'.
+  Proof.
+    intros db x db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest] eqn:Hqueue;
+      [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'.
+    unfold queue. cbn [db_runtime database_set_pending database_set_runtime
+      runtime_set_union runtime_queue]. now rewrite Hqueue.
+  Qed.
+
+  Lemma pop_loser_rows : forall db x db', db_pop_loser db = Some (x, db') ->
+    rows db' = rows db.
+  Proof.
+    intros db x db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [|i rest]; [discriminate |].
+    injection Hpop as Hname Hstate. subst x db'. reflexivity.
   Qed.
 
   (** Located historical keys resolve to stored rows of declared functions. *)
