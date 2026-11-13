@@ -959,3 +959,64 @@ Module UnionFindCodeFacts.
   Qed.
 
 End UnionFindCodeFacts.
+
+Section FilteredProjectionFacts.
+
+(** Filtering retains a permutation because each source occurrence is treated alike. *)
+Lemma filter_permutation : forall A (test : A -> bool) xs ys,
+  Permutation xs ys -> Permutation (filter test xs) (filter test ys).
+Proof.
+  intros A test xs ys Hperm. induction Hperm; cbn [filter].
+  - constructor.
+  - destruct (test x); [now constructor | exact IHHperm].
+  - destruct (test x), (test y); cbn; try apply Permutation_refl.
+    apply perm_swap.
+  - eapply Permutation_trans; eassumption.
+Qed.
+
+(** Counting a projected value can be performed directly on the source rows. *)
+Lemma filtered_projection_count : forall A B (test : A -> bool)
+  (project : A -> B) (eqb : B -> B -> bool) u rows,
+  length (filter (eqb u) (map project (filter test rows))) =
+    length (filter (fun r => andb (test r) (eqb u (project r))) rows).
+Proof.
+  intros A B test project eqb u rows.
+  induction rows as [|r rows IH]; cbn [filter map length]; [reflexivity |].
+  destruct (test r); cbn [filter map length andb].
+  - destruct (eqb u (project r)); cbn [length]; now rewrite IH.
+  - exact IH.
+Qed.
+
+(** A duplicate-free source provides an exact finite witness for a projection count. *)
+Lemma filtered_projection_witness : forall A B (test : A -> bool)
+  (project : A -> B) (eqb : B -> B -> bool),
+  (forall x y, reflect (x = y) (eqb x y)) -> forall u rows,
+  NoDup rows -> exists rs,
+    NoDup rs /\
+    (forall r, In r rs <-> In r rows /\ test r = true /\ project r = u) /\
+    length (filter (eqb u) (map project (filter test rows))) = length rs.
+Proof.
+  intros A B test project eqb Hreflect u rows Hnodup.
+  exists (filter (fun r => andb (test r) (eqb u (project r))) rows).
+  split; [now apply NoDup_filter |]. split.
+  - intro r. rewrite filter_In, Bool.andb_true_iff.
+    destruct (Hreflect u (project r)); intuition congruence.
+  - apply filtered_projection_count.
+Qed.
+
+(** Every duplicate-free witness for the same source rows has the counted length. *)
+Lemma filtered_projection_witness_length : forall A B (test : A -> bool)
+  (project : A -> B) (eqb : B -> B -> bool),
+  (forall x y, reflect (x = y) (eqb x y)) -> forall u rows rs,
+  NoDup rows -> NoDup rs ->
+  (forall r, In r rs <-> In r rows /\ test r = true /\ project r = u) ->
+  length (filter (eqb u) (map project (filter test rows))) = length rs.
+Proof.
+  intros A B test project eqb Hreflect u rows rs Hrows Hrs Hmembers.
+  destruct (filtered_projection_witness A B test project eqb Hreflect u rows Hrows)
+    as [witness [Hnodup [Hwitness Hcount]]].
+  rewrite Hcount. apply Permutation_length, NoDup_Permutation; try assumption.
+  intro r. rewrite Hwitness, Hmembers. reflexivity.
+Qed.
+
+End FilteredProjectionFacts.
