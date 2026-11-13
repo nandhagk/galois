@@ -6004,6 +6004,24 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     now subst d.
   Qed.
 
+  Lemma tclose_strong_clause : forall m m', dbm_wf m ->
+    tclose m = Reached m' ->
+    forall i j a z, entry m' i (flip i) = Some a ->
+      entry m' (flip j) j = Some z ->
+      exists d, entry m' i j = Some d /\ (2 * d <= a + z)%Z.
+  Proof.
+    intros m m' Hwf Hresult i j a z Hleft Hright.
+    unfold tclose in Hresult. rewrite pivot_keys_eq_keys in Hresult.
+    rewrite <- fw_keys in Hresult.
+    destruct (forallb (fun k => nonnegative k (fw m)) (keys m));
+      [|discriminate].
+    destruct (forallb (fun k => nonnegative k (strengthen (tighten (fw m))))
+      (keys m)); [|discriminate].
+    inversion Hresult; subst m'.
+    eapply strengthen_strong_clause;
+      [apply wf_tighten, wf_fw; exact Hwf|exact Hleft|exact Hright].
+  Qed.
+
   (** Original and final key lists cover the same supported vertices. *)
   Lemma keys_fw_membership : forall m k, dbm_wf m ->
     (In k (keys m) <-> In k (keys (fw m))).
