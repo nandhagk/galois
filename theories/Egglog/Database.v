@@ -69,6 +69,26 @@ Proof.
   pose proof (database_of_succ_nat_amort n). lia.
 Qed.
 
+(** A run of low one bits witnesses the carry cost of a binary multiplicity. *)
+Fixpoint database_carry_value (n : nat) : positive :=
+  match n with O => xH | S k => xI (database_carry_value k) end.
+
+(** Incrementing an all-ones positive visits every bit. *)
+Lemma database_carry_positive_time : forall n,
+  Pos.T_succ (database_carry_value n) = (N.of_nat n + 1)%N.
+Proof.
+  intro n. induction n as [|n IH]; cbn [database_carry_value]; time_unfold Pos.T_succ.
+  - reflexivity.
+  - rewrite IH. lia.
+Qed.
+
+(** The natural-number increment retains the full carry cost. *)
+Lemma database_carry_successor_time : forall n,
+  N.T_succ (Npos (database_carry_value n)) = (N.of_nat n + 2)%N.
+Proof.
+  intro n. time_unfold N.T_succ. rewrite database_carry_positive_time. lia.
+Qed.
+
 (** Sorted positions retain their original positive ranks in a projection. *)
 Record database_slot_layout := {
   ranked_positions : list (nat * positive);
@@ -4783,6 +4803,57 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun advance.
   TimeFun changed.
   TimeFun ids.
+
+  (** Every insertion pays the actual binary increment of the stored projection count. *)
+  Lemma T_slot_update_one_count_succ_ge : forall s u state,
+    (N.T_succ (runtime_projection_count state s u) <=
+      T_slot_update_one true s u state)%N.
+  Proof.
+    intros s u state. unfold runtime_projection_count.
+    time_unfold T_slot_update_one. cbn beta iota zeta. lia.
+  Qed.
+
+  (** A non-final deletion pays the predecessor of its stored projection count. *)
+  Lemma T_slot_update_one_count_pred_ge : forall s u state,
+    runtime_projection_count state s u <> 0%N ->
+    runtime_projection_count state s u <> 1%N ->
+    (N.T_pred (runtime_projection_count state s u) <=
+      T_slot_update_one false s u state)%N.
+  Proof.
+    intros s u state Hnonzero Hnotone.
+    time_unfold T_slot_update_one. cbn beta iota zeta.
+    fold (runtime_projection_count state s u).
+    destruct (runtime_projection_count state s u) as [|p]; [contradiction |].
+    destruct p; [lia | lia | contradiction].
+  Qed.
+
+  (** All-ones multiplicities force an arbitrarily long carry inside one slot update. *)
+  Lemma T_slot_update_one_carry_ge : forall n s u state,
+    runtime_projection_count state s u = Npos (database_carry_value n) ->
+    (N.of_nat n + 2 <= T_slot_update_one true s u state)%N.
+  Proof.
+    intros n s u state Hcount.
+    pose proof (T_slot_update_one_count_succ_ge s u state) as Htime.
+    rewrite Hcount, database_carry_successor_time in Htime. exact Htime.
+  Qed.
+
+  (** A nonempty slot walk pays projection, one update, and its updated-state continuation. *)
+  Lemma T_slot_update_many_cons : forall b u s layout rest state,
+    T_slot_update_many b u ((s, layout) :: rest) state =
+      (1 + T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) state +
+       T_slot_update_many b u rest
+         (slot_update_one b s (project_slot_layout layout u) state))%N.
+  Proof.
+    intros b u s layout rest state. time_unfold T_slot_update_many. ring.
+  Qed.
+
+  (** The empty slot walk performs only its entry call. *)
+  Lemma T_slot_update_many_nil : forall b u state,
+    T_slot_update_many b u [] state = 1%N.
+  Proof.
+    intros b u state. time_unfold T_slot_update_many. reflexivity.
+  Qed.
   Definition c_db : N :=
     4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
 
