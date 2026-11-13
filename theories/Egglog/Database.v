@@ -4,7 +4,8 @@
     For example, an initialized database supplies indexes on request.
     Builds on: DatabaseSig. *)
 
-From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
+From Stdlib Require Import List PArith NArith Bool Lia Relations.Relation_Operators
+  Sorting.Permutation Sorting.Sorted.
 From Argent Require Import Time Std Loop.
 From Galois.Base Require Import Code Loop UnionFind Trie.
 From Galois.Egglog Require Import ValueSig IndexSig Syntax Model DatabaseSig.
@@ -114,6 +115,74 @@ Definition project_slot_layout {C : Type} (layout : database_slot_layout) (u : l
     (slot_pick_ranked (projection_steps layout) u PTrieCode.empty).
 
 TimeFun project_slot_layout.
+
+(** * Prepared projection facts *)
+
+(** Sorting one pair retains precisely that pair and the old entries. *)
+Lemma slot_rank_insert_in : forall p ps q,
+  In q (slot_rank_insert p ps) <-> q = p \/ In q ps.
+Proof.
+  intros p ps. induction ps as [| a ps IH]; intro q; cbn [slot_rank_insert].
+  - cbn. intuition congruence.
+  - destruct (Nat.leb (fst p) (fst a)); cbn [In].
+    + intuition congruence.
+    + rewrite IH. intuition congruence.
+Qed.
+
+(** Insertion adds one ranked position. *)
+Lemma slot_rank_insert_length : forall p ps,
+  length (slot_rank_insert p ps) = S (length ps).
+Proof.
+  intros p ps. induction ps as [| a ps IH]; cbn [slot_rank_insert].
+  - reflexivity.
+  - destruct (Nat.leb (fst p) (fst a)); cbn [length]; congruence.
+Qed.
+
+(** Ranking preserves the number of requested positions. *)
+Lemma slot_rank_positions_length : forall rank perm,
+  length (slot_rank_positions rank perm) = length perm.
+Proof.
+  intros rank perm. revert rank. induction perm as [| p perm IH]; intro rank.
+  - reflexivity.
+  - cbn [slot_rank_positions length]. rewrite slot_rank_insert_length, IH. reflexivity.
+Qed.
+
+(** Replacing positions with gaps preserves their number. *)
+Lemma slot_position_gaps_length : forall previous ps,
+  length (slot_position_gaps previous ps) = length ps.
+Proof.
+  intros previous ps. revert previous. induction ps as [| [p rank] ps IH]; intro previous.
+  - reflexivity.
+  - cbn [slot_position_gaps length]. now rewrite IH.
+Qed.
+
+(** A stored gap is the truncated difference of its endpoint positions. *)
+Lemma slot_position_difference_sub : forall position previous,
+  slot_position_difference position previous = position - previous.
+Proof.
+  intros position previous. revert position.
+  induction previous as [| previous IH]; intros [| position]; cbn; auto.
+Qed.
+
+(** Scanning a gap returns the corresponding list suffix. *)
+Lemma slot_skip_spec : forall C gap (u : list C), slot_skip gap u = skipn gap u.
+Proof.
+  intros C gap. induction gap as [| gap IH]; intros [| c u]; cbn; auto.
+Qed.
+
+(** A scan leaves bindings of ranks outside its steps unchanged. *)
+Lemma slot_pick_ranked_other : forall C steps (u : list C) picked rank,
+  ~ In rank (map snd steps) ->
+  PTrieCode.get rank (slot_pick_ranked steps u picked) = PTrieCode.get rank picked.
+Proof.
+  intros C steps. induction steps as [| [gap r] steps IH]; intros u picked rank Habsent.
+  - reflexivity.
+  - cbn [slot_pick_ranked]. destruct (slot_skip gap u) as [| c rest].
+    + reflexivity.
+    + rewrite IH.
+      * apply PTrie.get_set_other. intro Heq. apply Habsent. cbn. now left.
+      * intro Hin. apply Habsent. cbn. now right.
+Qed.
 
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
@@ -558,13 +627,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma put_sat : forall (M : model (V := V.t)) nu db f k o, wf db -> kind_ok db f k o ->
     sat V.merge M nu (view db) -> holds M nu (view db) f k o ->
     sat V.merge M nu (view (put f k o db)).
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: missing row/kind state and unmarked view/old groundwork. *)
 
   (** A justified identifier union keeps the model. *)
   Lemma union_sat : forall (M : model (V := V.t)) nu db i j, wf db ->
     sat V.merge M nu (view db) -> nu i = nu j ->
     sat V.merge M nu (view (union i j db)).
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: unmarked view/repr/wf groundwork does not expose the forest. *)
 
   (** Make updates its output meaning and keeps every other identifier meaning. *)
   Lemma make_sat : forall (M : model (V := V.t)) nu db f k, wf db ->
@@ -574,7 +643,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     let '(i, db') := make f k db in
     exists nu', (forall j, j <> i -> nu' j = nu j) /\
       nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (view db').
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: missing allocation/row state and fresh-singleton invariant. *)
 
 End Database.
 
