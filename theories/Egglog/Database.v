@@ -9528,7 +9528,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       recorded r /\ recorded p /\
       (p <> r -> (1 <= size r)%N /\ (2 * size r <= size p)%N)) /\
     (forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
-      exists r, PTrieCode.get (db_row_code f k) (row_history store) = Some ((f, k), r)).
+      exists r, PTrieCode.get (db_row_code f k) (row_history store) = Some ((f, k), r)) /\
+    N.to_nat (db_nuses db) = length (uses_entries db) /\
+    (forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
+      (r < row_fresh store)%positive /\
+      (match PTrieCode.get r (row_links store) with
+       | Some parent => parent | None => r end < row_fresh store)%positive /\
+      In (row_fresh store) (db_index_counters db)) /\
+    (forall x f k c, In (f, k) (DatabaseUses.bucket x (row_uses store)) ->
+      In c k -> In c (db_written_cells db)).
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
@@ -9887,11 +9896,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F_row_counter : forall db work f k r, inv_on db work -> row_id db f k = Some r ->
     (r < next_row db)%positive /\ (row_parent db r < next_row db)%positive /\
     In (next_row db) (index_counters db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work f k r Hinv Hrow.
+    unfold inv_on, forest_ok in Hinv.
+    destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
+    destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
+    unfold row_store_ok in Hstore.
+    destruct Hstore as (_ & _ & _ & Hcounter & _).
+    unfold row_id in Hrow.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key id] |] eqn:Hget; [| discriminate].
+    cbn [option_map snd] in Hrow. injection Hrow as <-.
+    exact (Hcounter f k key id Hget).
+  Qed.
   (** The keys of use entries are written cells. *)
   Lemma F_entry_cells : forall db work x f k c, inv_on db work -> uses db x (f, k) ->
     In c k -> In c (written_cells db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work x f k c Hinv Huse Hcell.
+    unfold inv_on, forest_ok in Hinv.
+    destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
+    destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
+    unfold row_store_ok in Hstore.
+    destruct Hstore as (_ & _ & _ & _ & Hcells).
+    apply (Hcells x f k c); [| exact Hcell].
+    change (In (f, k) (get_uses x db)). rewrite get_uses_bucket.
+    unfold bucket.
+    unfold uses in Huse.
+    apply in_map_iff. exists (x, (f, k)). split; [reflexivity |].
+    apply filter_In. split; [exact Huse |]. now rewrite Pos.eqb_refl.
+  Qed.
   (** Resolution reads the key once and follows the chain at the stored width. *)
   Lemma T_locate_le : forall db work x f k, inv_on db work -> uses db x (f, k) ->
     (T_locate f k db <= k_locate * N.of_nat (length k + 1) * N.of_nat (unit db))%N.
@@ -11802,7 +11836,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Stored counters agree with the occurrence inventory and pending queue. *)
   Lemma F15_counts : forall db work, inv_on db work ->
     N.to_nat (nuses db) = length (uses_entries db) /\ N.of_nat (pending db) = npending db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work Hinv. split.
+    - unfold inv_on, forest_ok in Hinv.
+      destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
+      destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
+      unfold row_store_ok in Hstore. destruct Hstore as (_ & _ & Hcount & _).
+      exact Hcount.
+    - assert (Hforest : forest_ok db) by (unfold inv_on in Hinv; tauto).
+      symmetry. exact (forest_pending_count db Hforest).
+  Qed.
 
   (** The declaration inventory contains precisely the names with a kind. *)
   Lemma F_decl_names : forall db f, inv db ->
