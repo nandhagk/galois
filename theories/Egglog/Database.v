@@ -1066,6 +1066,46 @@ Proof.
     exact (Hunique h k g j l Hh Hk).
 Qed.
 
+Lemma database_rank_slots_from_owner : forall kinds start groups sl,
+  database_rank_groups_fresh start groups -> database_rank_groups_unique groups ->
+  forall f g j, PTrieCode.get f groups = Some (g, j) ->
+  forall n h perm d offset,
+    nth_error sl n = Some (h, perm) ->
+    nth_error (database_rank_slots_from kinds start groups sl) n =
+      Some (d, g, offset) -> h = f.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[head layout] rest IH];
+    intros start groups Hfresh Hunique f g j Howner n h perm d offset Hslot Hrank;
+    destruct n as [|n]; cbn [nth_error database_rank_slots_from] in Hslot, Hrank;
+    try discriminate.
+  - injection Hslot as <- <-.
+    destruct (PTrieCode.get head groups) as [[rank count] |] eqn:Hhead.
+    + injection Hrank as _ Hrank _.
+      cbn [fst] in Hrank. subst rank.
+      symmetry. eapply Hunique; [exact Howner | exact Hhead].
+    + injection Hrank as _ Hrank _.
+      cbn [fst] in Hrank. subst g.
+      pose proof (Hfresh f start j Howner). lia.
+  - set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head
+      (fst place, N.succ (snd place)) groups).
+    assert (Hupdated : exists count, PTrieCode.get f updated = Some (g, count)).
+    { destruct (Pos.eq_dec f head) as [-> | Hne].
+      - exists (N.succ j). unfold updated, place.
+        rewrite PTrie.get_set_same, Howner. reflexivity.
+      - exists j. unfold updated.
+        rewrite PTrie.get_set_other by exact Hne. exact Howner. }
+    destruct Hupdated as [count Hupdated].
+    eapply IH with (start := N.succ start) (groups := updated) (j := count).
+    + unfold updated, place. now apply database_rank_groups_fresh_step.
+    + unfold updated, place. now apply database_rank_groups_unique_step.
+    + exact Hupdated.
+    + exact Hslot.
+    + exact Hrank.
+Qed.
+
 Lemma database_rank_slots_from_bound : forall kinds start groups sl,
   database_rank_groups_bounded start groups ->
   forall n d g j, nth_error (database_rank_slots_from kinds start groups sl) n =
