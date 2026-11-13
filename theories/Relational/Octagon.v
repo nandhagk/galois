@@ -1893,14 +1893,132 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Proof. Admitted. (* STUB *)
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_octagon : N := 1. (* STUB *)
+  (** Signed literal encodings add the Boolean sign bit to the doubled variable code. *)
+  Lemma literal_bits : forall x sign,
+    K.bits (x, sign) = 2 * X.bits x + (if sign then 1 else 0).
+  Proof.
+    intros x sign.
+    change (Pos.size_nat (glue (X.encode x) (BoolKeyCode.encode sign)) =
+      2 * Pos.size_nat (X.encode x) + (if sign then 1 else 0)).
+    rewrite glue_bits. destruct sign; cbn [BoolKeyCode.encode Pos.size_nat]; lia.
+  Qed.
+
+  Lemma flip_bits : forall i, K.bits (flip i) <= K.bits i + 1.
+  Proof.
+    intros [x sign]. unfold flip. cbn [fst snd]. rewrite !literal_bits.
+    destruct sign; cbn [negb]; lia.
+  Qed.
+
+  Lemma signed_bits_le : forall x sign, K.bits (x, sign) <= 2 * X.bits x + 1.
+  Proof.
+    intros x sign. rewrite literal_bits. destruct sign; lia.
+  Qed.
+
+  Definition c_octagon : N := (65536 * (M.c_map + 1) * (M.c_map + 1))%N.
+
+  Lemma T_flip_le : forall i, (T_flip i <= 4)%N.
+  Proof.
+    intro i. time_step.
+  Qed.
+
+  Lemma T_lower_bound_le : forall d old,
+    (T_lower_bound d old <= N.of_nat (Z.size_nat d) + 5)%N.
+  Proof.
+    intros d [z|]; time_step.
+  Qed.
+
+  Lemma T_put_le : forall i j d m,
+    (T_put i j d m <=
+      16 * (M.c_map + 1) * N.of_nat (K.bits i + K.bits j + 1))%N.
+  Proof.
+    intros i j d m.
+    pose proof (M.T_get_le (M.t Z) i m) as Hget.
+    pose proof (T_row_of_le (M.get i m)) as Hrow.
+    pose proof (M.T_set_le Z j d (row_of (M.get i m))) as Hcolumn.
+    pose proof (M.T_set_le (M.t Z) i
+      (M.set j d (row_of (M.get i m))) m) as Houter.
+    unfold T_put. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma T_entry_small : forall m i j,
+    (T_entry m i j <=
+      8 * (M.c_map + 1) * N.of_nat (K.bits i + K.bits j + 1))%N.
+  Proof.
+    intros m i j. pose proof (M.T_get_le (M.t Z) i m) as Houter.
+    unfold T_entry. time_simpl. destruct (M.get i m) as [row|].
+    - pose proof (M.T_get_le Z j row) as Hcolumn.
+      time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    - time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Both signed insertions fit one common key-and-payload allowance. *)
+  Lemma T_add_cons_small : forall i j d m,
+    (T_add_cons i j d m <= 256 * (M.c_map + 1) * N.of_nat
+      (K.bits i + K.bits j + Z.size_nat d + 1))%N.
+  Proof.
+    intros i j d m.
+    set (w := N.of_nat (K.bits i + K.bits j + Z.size_nat d + 1)).
+    set (c := (M.c_map + 1)%N).
+    assert (Hw : (1 <= w)%N) by (unfold w; lia).
+    assert (Hc : (1 <= c)%N) by (unfold c; lia).
+    assert (Hkeys : (N.of_nat (K.bits i + K.bits j + 1) <= w)%N)
+      by (unfold w; lia).
+    assert (Hflipped :
+      (N.of_nat (K.bits (flip j) + K.bits (flip i) + 1) <= 3 * w)%N).
+    { pose proof (flip_bits i). pose proof (flip_bits j). unfold w. lia. }
+    assert (Hput : forall z n, (T_put i j z n <= 16 * c * w)%N).
+    { intros z n. eapply N.le_trans; [apply T_put_le|].
+      fold c. apply N.mul_le_mono_l. exact Hkeys. }
+    assert (Hputbar : forall z n, (T_put (flip j) (flip i) z n <= 48 * c * w)%N).
+    { intros z n. eapply N.le_trans; [apply T_put_le|]. fold c.
+      replace (48 * c * w)%N with (16 * c * (3 * w))%N by ring.
+      apply N.mul_le_mono_l. exact Hflipped. }
+    assert (Hentry : forall n, (T_entry n i j <= 8 * c * w)%N).
+    { intro n. eapply N.le_trans; [apply T_entry_small|].
+      fold c. apply N.mul_le_mono_l. exact Hkeys. }
+    assert (Hentrybar : forall n, (T_entry n (flip j) (flip i) <= 24 * c * w)%N).
+    { intro n. eapply N.le_trans; [apply T_entry_small|]. fold c.
+      replace (24 * c * w)%N with (8 * c * (3 * w))%N by ring.
+      apply N.mul_le_mono_l. exact Hflipped. }
+    assert (Hlower : forall old, (T_lower_bound d old <= 6 * w)%N).
+    { intro old. eapply N.le_trans; [apply T_lower_bound_le|]. unfold w. lia. }
+    unfold T_add_cons. time_simpl.
+    repeat match goal with
+    | |- context [T_put i j ?z ?n] =>
+      let H := fresh "Hputclock" in pose proof (Hput z n) as H;
+      let clock := fresh "clock" in set (clock := T_put i j z n) in *
+    | |- context [T_put (flip j) (flip i) ?z ?n] =>
+      let H := fresh "Hputclock" in pose proof (Hputbar z n) as H;
+      let clock := fresh "clock" in set (clock := T_put (flip j) (flip i) z n) in *
+    | |- context [T_entry ?n i j] =>
+      let H := fresh "Hentryclock" in pose proof (Hentry n) as H;
+      let clock := fresh "clock" in set (clock := T_entry n i j) in *
+    | |- context [T_entry ?n (flip j) (flip i)] =>
+      let H := fresh "Hentryclock" in pose proof (Hentrybar n) as H;
+      let clock := fresh "clock" in set (clock := T_entry n (flip j) (flip i)) in *
+    | |- context [T_lower_bound d ?old] =>
+      let H := fresh "Hlowerclock" in pose proof (Hlower old) as H;
+      let clock := fresh "clock" in set (clock := T_lower_bound d old) in *
+    | |- context [T_flip ?k] =>
+      let H := fresh "Hflipclock" in pose proof (T_flip_le k) as H;
+      let clock := fresh "clock" in set (clock := T_flip k) in *
+    end.
+    nia.
+  Qed.
+
   Lemma T_entry_le : forall m i j,
     (T_entry m i j <= c_octagon * N.of_nat (K.bits i + K.bits j + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m i j. eapply N.le_trans; [apply T_entry_small|].
+    apply N.mul_le_mono_r. unfold c_octagon. nia.
+  Qed.
   Lemma T_add_cons_le : forall i j d m,
     (T_add_cons i j d m <= c_octagon * N.of_nat
       (K.bits i + K.bits j + Z.size_nat d + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j d m. eapply N.le_trans; [apply T_add_cons_small|].
+    apply N.mul_le_mono_r. unfold c_octagon. nia.
+  Qed.
   Lemma T_tclose_le : forall m, dbm_wf m ->
     (T_tclose m <= c_octagon * N.of_nat (((supp m + 1)^3)%nat) *
     N.of_nat ((b m + ell m + Nat.log2 (supp m) + 1)%nat))%N.
