@@ -9581,6 +9581,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Initialization has no historical keys, links or registered occurrences. *)
   Lemma row_store_ok_init : forall ds sl, row_store_ok (init ds sl).
   Proof. apply database_row_store_ok_init. Qed.
+  (** Static core facts survive while a popped batch still has active entries. *)
+  Definition core_bridge (db : t) : Prop :=
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) /\
+    count (db_forest db) = ids db /\
+    Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db)) /\
+    RowMap.wf (runtime_rows (db_runtime db)) /\
+    (forall f output, kind (view db) f = Some output ->
+      (f <= runtime_max_name (db_runtime db))%positive) /\
+    (runtime_max_name (db_runtime db) = 1%positive \/
+      kind (view db) (runtime_max_name (db_runtime db)) <> None).
+  Lemma database_wf_core_bridge : forall db, database_wf db -> core_bridge db.
+  Proof.
+    intros db Hwf. unfold core_bridge.
+    split; [exact (wf_forest_members db Hwf) |].
+    split; [exact (wf_forest_count db Hwf) |].
+    split; [exact (wf_log_allocated db Hwf) |].
+    split; [exact (wf_row_map db Hwf) |].
+    split; [exact (wf_kind_bound db Hwf) |].
+    exact (wf_max_name_attained db Hwf).
+  Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
@@ -9589,7 +9610,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
-    row_store_ok db /\ projection_counts_ok db /\ database_history db.
+    row_store_ok db /\ projection_counts_ok db /\ database_history db /\ core_bridge db.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
 
