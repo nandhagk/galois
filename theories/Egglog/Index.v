@@ -962,9 +962,6 @@ Module Index (V : VALUE) <: INDEX V.
                 exfalso. exact (empty_no_edge n code edge Hget).
   Qed.
 
-  Lemma wf_insert : forall a r ix, wf a ix -> length r = a -> wf a (insert r ix).
-  Proof. Admitted. (* STUB *)
-
   Lemma wf_remove : forall a r ix, wf a ix -> wf a (remove r ix).
   Proof. Admitted. (* STUB *)
 
@@ -2523,6 +2520,152 @@ Module Index (V : VALUE) <: INDEX V.
     rewrite Hpath in Hpresent. now apply pending_insert_finish.
   Qed.
 
+  Definition edge_counts_positive (ix : t) : Prop := forall n code edge,
+    stored_edge ix n code edge -> (0 < edge_count edge)%N.
+
+  Definition edge_cells_bounded (ix : t) (bound : nat) : Prop := forall n code edge,
+    stored_edge ix n code edge -> cell_bits V.encode (edge_cell edge) <= bound.
+
+  Lemma insertion_cursor_bound : forall ix n c, shape ix -> (n <= next ix)%positive ->
+    (snd (insert_step_st (ix, n) c) <= next (fst (insert_step_st (ix, n) c)))%positive.
+  Proof.
+    intros ix n c Hshape Hbound.
+    pose proof (shape_insert_step (ix, n) c Hshape) as Hshape'.
+    exact (proj2 (child_forward _ n c _ (proj1 Hshape')
+      (insert_step_child ix n c (proj1 (proj2 Hshape)) Hbound))).
+  Qed.
+
+  Lemma positive_insert_step : forall ix n c, shape ix -> pending_insert_counts ix n ->
+    (n <= next ix)%positive -> edge_counts_positive ix ->
+    edge_counts_positive (fst (insert_step_st (ix, n) c)).
+  Proof.
+    intros ix n c Hshape Hcounts Hbound Hpositive q code out Hout.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    unfold insert_step_st in Hout. rewrite Hguard in Hout.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; cbn [fst] in Hout.
+    - apply stored_edge_put in Hout as [[-> [-> ->]] | [_ Hout]].
+      + cbn [edge_count]. rewrite bounded_succ_small.
+        * lia.
+        * apply N.lt_le_incl. eapply pending_current_count_bound; eassumption.
+      + exact (Hpositive q code out Hout).
+    - apply stored_edge_put in Hout as [[-> [-> ->]] | [_ Hout]].
+      + reflexivity.
+      + exact (Hpositive q code out Hout).
+  Qed.
+
+  Lemma positive_insert_walk : forall r st, shape (fst st) ->
+    pending_insert_counts (fst st) (snd st) -> (snd st <= next (fst st))%positive ->
+    edge_counts_positive (fst st) -> edge_counts_positive (fst (fold_left insert_step_st r st)).
+  Proof.
+    induction r as [| c r IH]; intros [ix n] Hshape Hcounts Hbound Hpositive;
+      cbn [fold_left]; [exact Hpositive |].
+    apply IH.
+    - apply shape_insert_step. exact Hshape.
+    - apply pending_insert_step; assumption.
+    - now apply insertion_cursor_bound.
+    - apply positive_insert_step; assumption.
+  Qed.
+
+  Lemma positive_mark_terminal : forall ix cursor present bits, edge_counts_positive ix ->
+    edge_counts_positive (mark_terminal ix cursor present bits).
+  Proof.
+    intros ix cursor present bits Hpositive n code edge Hget.
+    unfold stored_edge in Hget. rewrite mark_node_edges in Hget. now apply Hpositive in Hget.
+  Qed.
+
+  Lemma positive_insert : forall ix r, shape ix -> counted_edges ix ->
+    edge_counts_positive ix -> edge_counts_positive (insert r ix).
+  Proof.
+    intros ix r Hshape Hcounts Hpositive. unfold insert, insert_finish.
+    destruct (contains r ix); [exact Hpositive |].
+    apply positive_mark_terminal, positive_insert_walk;
+      [exact Hshape | | apply Pos.le_1_l | exact Hpositive].
+    now apply pending_insert_start.
+  Qed.
+
+  Lemma cells_insert_step : forall st c bound, edge_cells_bounded (fst st) bound ->
+    cell_bits V.encode c <= bound -> edge_cells_bounded (fst (insert_step_st st c)) bound.
+  Proof.
+    intros [ix n] c bound Hcells Hcell q code out Hout.
+    unfold insert_step_st in Hout. destruct (Pos.ltb (next ix) n).
+    - exact (Hcells q code out Hout).
+    - destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+        cbn [fst] in Hout;
+        apply stored_edge_put in Hout as [[-> [-> ->]] | [_ Hout]].
+      + exact Hcell.
+      + exact (Hcells q code out Hout).
+      + exact Hcell.
+      + exact (Hcells q code out Hout).
+  Qed.
+
+  Lemma cells_insert_walk : forall r st bound, edge_cells_bounded (fst st) bound ->
+    Forall (fun c => cell_bits V.encode c <= bound) r ->
+    edge_cells_bounded (fst (fold_left insert_step_st r st)) bound.
+  Proof.
+    induction r as [| c r IH]; intros st bound Hcells Hbounds;
+      cbn [fold_left]; [exact Hcells |].
+    inversion Hbounds as [| head tail Hhead Htail]; subst.
+    apply IH; [now apply cells_insert_step | exact Htail].
+  Qed.
+
+  Lemma cells_mark_terminal : forall ix cursor present bits bound,
+    edge_cells_bounded ix bound -> edge_cells_bounded (mark_terminal ix cursor present bits) bound.
+  Proof.
+    intros ix cursor present bits bound Hcells n code edge Hget.
+    unfold stored_edge in Hget. rewrite mark_node_edges in Hget. now apply Hcells in Hget.
+  Qed.
+
+  Lemma stored_cell_width_insert : forall ix r, edge_cells_bounded ix (index_cell_width ix) ->
+    edge_cells_bounded (insert r ix) (index_cell_width (insert r ix)).
+  Proof.
+    intros ix r Hcells. unfold insert, insert_finish.
+    destruct (contains r ix); [exact Hcells |].
+    set (st := fold_left insert_step_st r (start ix)).
+    set (bound := Nat.max (index_cell_width ix) (tuple_bits r)).
+    change (edge_cells_bounded (mark_terminal (fst st) (snd st) true bound) bound).
+    apply cells_mark_terminal. unfold st. apply cells_insert_walk.
+    - intros n code edge Hget. unfold bound.
+      eapply Nat.le_trans; [exact (Hcells n code edge Hget) | apply Nat.le_max_l].
+    - apply Forall_forall. intros c Hin. unfold bound.
+      eapply Nat.le_trans; [exact (tuple_bits_member r c Hin) | apply Nat.le_max_r].
+  Qed.
+
+  Lemma edges_ok_insert : forall ix r, valid ix -> edges_ok (insert r ix).
+  Proof.
+    intros ix r Hvalid. pose proof (valid_shape ix Hvalid) as Hshape.
+    destruct Hvalid as [Hedges [_ [_ [_ [_ Hcounts]]]]].
+    assert (Hpositive : edge_counts_positive ix).
+    { intros n code edge Hget. exact (proj1 (proj2 (proj2 (proj2 (Hedges n code edge Hget))))). }
+    assert (Hcells : edge_cells_bounded ix (index_cell_width ix)).
+    { intros n code edge Hget. exact (proj1 (proj2 (proj2 (Hedges n code edge Hget)))). }
+    pose proof (shape_insert ix r Hshape) as Hshape'.
+    pose proof (counted_edges_insert ix r Hshape Hcounts) as Hcounts'.
+    pose proof (positive_insert ix r Hshape Hcounts Hpositive) as Hpositive'.
+    pose proof (stored_cell_width_insert ix r Hcells) as Hcells'.
+    intros n code edge Hget. destruct ((proj1 Hshape') n code edge Hget) as [Hcode Hbounds].
+    split; [exact Hcode |]. split; [exact Hbounds |]. split; [now apply Hcells' in Hget |].
+    split; [now apply Hpositive' in Hget |]. eapply counted_edges_upper; eassumption.
+  Qed.
+
+  Lemma valid_insert : forall ix r, valid ix -> valid (insert r ix).
+  Proof.
+    intros ix r Hvalid. pose proof Hvalid as Hfields.
+    destruct Hfields as [_ [Hdegrees [_ [_ [_ Hcounts]]]]].
+    pose proof (valid_shape ix Hvalid) as Hshape.
+    pose proof (shape_insert ix r Hshape) as Hshape'.
+    split; [now apply edges_ok_insert |]. split; [now apply degrees_ok_insert |].
+    split; [exact (proj1 (proj2 Hshape')) |]. split; [now apply shape_paths_unique |].
+    split; [exact (proj2 (proj2 Hshape')) |]. now apply counted_edges_insert.
+  Qed.
+
+  Lemma wf_insert : forall a r ix, wf a ix -> length r = a -> wf a (insert r ix).
+  Proof.
+    intros a r ix [Hvalid Harity] Hlength. split; [now apply valid_insert |].
+    intros u Hmember. apply (insert_membership ix r u (valid_shape ix Hvalid)) in Hmember.
+    destruct Hmember as [-> | Hmember]; [exact Hlength | now apply Harity].
+  Qed.
+
 End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
@@ -3375,7 +3518,9 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
   Qed.
 
   Lemma insert_path : forall ix r, inv ix -> inv (insert r ix).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ix r Hinv. now apply valid_insert.
+  Qed.
 
   Lemma remove_path : forall ix r, inv ix -> inv (remove r ix).
   Proof. Admitted. (* STUB *)
