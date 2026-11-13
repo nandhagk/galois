@@ -448,13 +448,186 @@ Module Interval (L : Z_LANGUAGE) (T : THRESHOLDS) <: INTERVAL L T.
     intros p a b Hstable. unfold leb in Hstable.
     unfold widen, interval_stable_widen. now rewrite Hstable.
   Qed.
+
+  Definition lower_count (ts : list Z) (z : Z) : nat :=
+    length (filter (fun u => Z.ltb u z) ts).
+
+  Definition upper_count (ts : list Z) (z : Z) : nat :=
+    length (filter (fun u => Z.ltb z u) ts).
+
+  Definition lower_rank (ts : list Z) (b : bnd) : nat :=
+    match b with
+    | NegInf => 0
+    | Fin z => S (lower_count ts z)
+    | PosInf => S (length ts)
+    end.
+
+  Definition upper_rank (ts : list Z) (b : bnd) : nat :=
+    match b with
+    | NegInf => S (length ts)
+    | Fin z => S (upper_count ts z)
+    | PosInf => 0
+    end.
+
+  (** Counting thresholds below a value never exceeds the list length. *)
+  Lemma lower_count_bounded : forall ts z, lower_count ts z <= length ts.
+  Proof.
+    intros ts z. unfold lower_count. induction ts as [|u us IH]; cbn; [lia|].
+    destruct (Z.ltb u z); cbn; lia.
+  Qed.
+
+  (** Counting thresholds above a value never exceeds the list length. *)
+  Lemma upper_count_bounded : forall ts z, upper_count ts z <= length ts.
+  Proof.
+    intros ts z. unfold upper_count. induction ts as [|u us IH]; cbn; [lia|].
+    destruct (Z.ltb z u); cbn; lia.
+  Qed.
+
+  (** Increasing the query can only add thresholds below it. *)
+  Lemma lower_count_monotone : forall ts x y, (x <= y)%Z ->
+    lower_count ts x <= lower_count ts y.
+  Proof.
+    intros ts x y Hxy. unfold lower_count.
+    induction ts as [|u us IH]; cbn; [lia|].
+    destruct (Z.ltb u x) eqn:Hux, (Z.ltb u y) eqn:Huy; cbn; lia.
+  Qed.
+
+  (** Increasing the query can only remove thresholds above it. *)
+  Lemma upper_count_monotone : forall ts x y, (x <= y)%Z ->
+    upper_count ts y <= upper_count ts x.
+  Proof.
+    intros ts x y Hxy. unfold upper_count.
+    induction ts as [|u us IH]; cbn; [lia|].
+    destruct (Z.ltb y u) eqn:Hyu, (Z.ltb x u) eqn:Hxu; cbn; lia.
+  Qed.
+
+  (** A listed threshold strictly below the old endpoint consumes a rank unit. *)
+  Lemma lower_count_strict : forall ts x y, In x ts -> (x < y)%Z ->
+    lower_count ts x < lower_count ts y.
+  Proof.
+    intros ts x y Hin Hxy. unfold lower_count.
+    induction ts as [|u us IH]; cbn in *; [contradiction|].
+    destruct Hin as [Heq|Hin].
+    - subst u. rewrite Z.ltb_irrefl.
+      assert (Hlt : Z.ltb x y = true) by (apply Z.ltb_lt; exact Hxy).
+      rewrite Hlt. cbn.
+      pose proof (lower_count_monotone us x y ltac:(lia)) as Hmono.
+      unfold lower_count in Hmono. lia.
+    - specialize (IH Hin).
+      destruct (Z.ltb u x) eqn:Hux, (Z.ltb u y) eqn:Huy; cbn in *; lia.
+  Qed.
+
+  (** A listed threshold strictly above the old endpoint consumes a rank unit. *)
+  Lemma upper_count_strict : forall ts x y, In y ts -> (x < y)%Z ->
+    upper_count ts y < upper_count ts x.
+  Proof.
+    intros ts x y Hin Hxy. unfold upper_count.
+    induction ts as [|u us IH]; cbn in *; [contradiction|].
+    destruct Hin as [Heq|Hin].
+    - subst u. rewrite Z.ltb_irrefl.
+      assert (Hlt : Z.ltb x y = true) by (apply Z.ltb_lt; exact Hxy).
+      rewrite Hlt. cbn.
+      pose proof (upper_count_monotone us x y ltac:(lia)) as Hmono.
+      unfold upper_count in Hmono. lia.
+    - specialize (IH Hin).
+      destruct (Z.ltb y u) eqn:Hyu, (Z.ltb x u) eqn:Hxu; cbn in *; lia.
+  Qed.
+
+  (** A threshold does not count itself among strictly lower entries. *)
+  Lemma lower_count_member_bound : forall ts x, In x ts -> lower_count ts x < length ts.
+  Proof.
+    intros ts x Hin. induction ts as [|u us IH]; cbn in Hin; [contradiction|].
+    unfold lower_count in *. cbn. destruct Hin as [Heq|Hin].
+    - subst u. rewrite Z.ltb_irrefl.
+      pose proof (lower_count_bounded us x) as Hbound. unfold lower_count in Hbound. lia.
+    - specialize (IH Hin). destruct (Z.ltb u x); cbn; lia.
+  Qed.
+
+  (** A threshold does not count itself among strictly higher entries. *)
+  Lemma upper_count_member_bound : forall ts x, In x ts -> upper_count ts x < length ts.
+  Proof.
+    intros ts x Hin. induction ts as [|u us IH]; cbn in Hin; [contradiction|].
+    unfold upper_count in *. cbn. destruct Hin as [Heq|Hin].
+    - subst u. rewrite Z.ltb_irrefl.
+      pose proof (upper_count_bounded us x) as Hbound. unfold upper_count in Hbound. lia.
+    - specialize (IH Hin). destruct (Z.ltb x u); cbn; lia.
+  Qed.
+
+  (** Lower-endpoint rank respects the bound order. *)
+  Lemma lower_rank_monotone : forall ts a b, bound_leb a b = true ->
+    lower_rank ts a <= lower_rank ts b.
+  Proof.
+    intros ts [|x|] [|y|] Hle; cbn in *; try discriminate; try lia.
+    - apply Z.leb_le in Hle. pose proof (lower_count_monotone ts x y Hle). lia.
+    - pose proof (lower_count_bounded ts x). lia.
+  Qed.
+
+  (** Upper-endpoint rank reverses the bound order. *)
+  Lemma upper_rank_monotone : forall ts a b, bound_leb a b = true ->
+    upper_rank ts b <= upper_rank ts a.
+  Proof.
+    intros ts [|x|] [|y|] Hle; cbn in *; try discriminate; try lia.
+    - pose proof (upper_count_bounded ts y). lia.
+    - apply Z.leb_le in Hle. pose proof (upper_count_monotone ts x y Hle). lia.
+  Qed.
+
+  (** Moving a lower endpoint outward strictly decreases its rank. *)
+  Lemma widen_lower_progress : forall ts old next,
+    bound_leb old next = false ->
+    lower_rank (T.vals ts) (widen_lower ts old next) < lower_rank (T.vals ts) old.
+  Proof.
+    intros ts [|x|] [|y|] Hmove; cbn in Hmove; try discriminate;
+      unfold widen_lower; cbn [bound_leb]; try rewrite Hmove;
+      cbn [lower_rank]; try lia.
+    - destruct (T.below ts y) as [u|] eqn:Hbelow; cbn [lower_rank]; [|lia].
+      destruct (T.below_sound ts y u Hbelow) as [Hin Hu].
+      apply Z.leb_gt in Hmove.
+      pose proof (lower_count_strict (T.vals ts) u x Hin ltac:(lia)). lia.
+    - destruct (T.below ts y) as [u|] eqn:Hbelow; cbn [lower_rank]; [|lia].
+      destruct (T.below_sound ts y u Hbelow) as [Hin Hu].
+      pose proof (lower_count_member_bound (T.vals ts) u Hin). lia.
+  Qed.
+
+  (** Moving an upper endpoint outward strictly decreases its rank. *)
+  Lemma widen_upper_progress : forall ts old next,
+    bound_leb next old = false ->
+    upper_rank (T.vals ts) (widen_upper ts old next) < upper_rank (T.vals ts) old.
+  Proof.
+    intros ts [|x|] [|y|] Hmove; cbn in Hmove; try discriminate;
+      unfold widen_upper; cbn [bound_leb]; try rewrite Hmove;
+      cbn [upper_rank]; try lia.
+    - destruct (T.above ts y) as [u|] eqn:Habove; cbn [upper_rank]; [|lia].
+      destruct (T.above_sound ts y u Habove) as [Hin Hu].
+      pose proof (upper_count_member_bound (T.vals ts) u Hin). lia.
+    - destruct (T.above ts y) as [u|] eqn:Habove; cbn [upper_rank]; [|lia].
+      destruct (T.above_sound ts y u Habove) as [Hin Hu].
+      apply Z.leb_gt in Hmove.
+      pose proof (upper_count_strict (T.vals ts) x u Hin ltac:(lia)). lia.
+  Qed.
+
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|la ha] [|lb hb] Hbot Hmove; try discriminate.
+    unfold leb in Hmove. unfold widen, interval_stable_widen. rewrite Hmove.
+    change (upper_rank (T.vals p) (widen_upper p ha hb) +
+      lower_rank (T.vals p) (widen_lower p la lb) <
+      upper_rank (T.vals p) ha + lower_rank (T.vals p) la).
+    cbn [interval_leb] in Hmove. apply andb_false_iff in Hmove as [Hlower|Hupper].
+    - pose proof (widen_lower_progress p la lb Hlower) as Hstrict.
+      pose proof (upper_rank_monotone (T.vals p) _ _ (widen_upper_old p ha hb)) as Hstable.
+      lia.
+    - pose proof (lower_rank_monotone (T.vals p) _ _ (widen_lower_old p la lb)) as Hstable.
+      pose proof (widen_upper_progress p ha hb Hupper) as Hstrict. lia.
+  Qed.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hbot. destruct (leb b a) eqn:Hstable.
+    - rewrite (widen_stable p a b Hstable). lia.
+    - pose proof (wrank_widen p a b Hbot Hstable). lia.
+  Qed.
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
