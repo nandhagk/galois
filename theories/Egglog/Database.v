@@ -50,6 +50,35 @@ Proof.
   - pose proof (database_positive_succ_amort p). lia.
 Qed.
 
+(** Computing a binary size amortizes the carries in its binary result. *)
+Lemma database_positive_size_amort : forall p,
+  (Pos.T_size p + database_positive_credit (Pos.size p) <=
+    4 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  intro p. induction p as [p IH | p IH |]; time_unfold Pos.T_size;
+    cbn [Pos.size Pos.size_nat].
+  - pose proof (database_positive_succ_amort (Pos.size p)). lia.
+  - pose proof (database_positive_succ_amort (Pos.size p)). lia.
+  - cbn [database_positive_credit]. lia.
+Qed.
+
+(** The natural wrapper for size adds a single constant call. *)
+Lemma database_N_size_time : forall n,
+  (N.T_size n <= 4 * N.of_nat (N.size_nat n) + 1)%N.
+Proof.
+  intros [| p]; time_unfold N.T_size; cbn [N.size_nat]; [lia |].
+  pose proof (database_positive_size_amort p). lia.
+Qed.
+
+(** Binary multiplication pays the measured operand widths, retaining the actual clock. *)
+Lemma database_N_mul_time : forall n m,
+  (N.T_mul n m <= N.of_nat (N.size_nat n) *
+    (N.of_nat (N.size_nat n) + 2 * N.of_nat (N.size_nat m) + 2) + 1)%N.
+Proof.
+  intros [| p] [| q]; time_unfold N.T_mul; cbn [N.size_nat]; try lia.
+  pose proof (Pos.T_mul_le p q). lia.
+Qed.
+
 (** Unary conversion shares the same carry credit as dense slot numbering. *)
 Lemma database_of_succ_nat_amort : forall n,
   (Pos.T_of_succ_nat n + database_positive_credit (Pos.of_succ_nat n) <=
