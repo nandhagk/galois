@@ -3191,6 +3191,106 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - exact (fresh_extension_sat M nu db db' f k i Hwf Hfresh Hextension Hkind Hargs Hsat).
   Qed.
 
+  (** Normalizing a row tuple is the same as normalizing its key and optional output. *)
+  Lemma canon_row_tuple : forall db k o,
+    map (canon db) (k ++ option_list o) =
+      map (canon db) k ++ option_list (option_map (canon db) o).
+  Proof.
+    intros db k [c |]; rewrite map_app; reflexivity.
+  Qed.
+
+  (** Every identifier in a normalized tuple is already its own representative. *)
+  Lemma canon_key_fixed : forall db k, wf db ->
+    forall i, In (Id i) (map (canon db) k) -> repr db i = i.
+  Proof.
+    intros db k Hwf i Hin. apply in_map_iff in Hin as [c [Hcell Hin]].
+    destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+    injection Hcell as <-. apply repr_idem. exact Hwf.
+  Qed.
+
+  (** Normalization preserves allocation, tuple length and the declared output shape. *)
+  Lemma kind_ok_canon : forall db f k o, wf db -> kind_ok db f k o ->
+    kind_ok db f (map (canon db) k) (option_map (canon db) o).
+  Proof.
+    intros db f k o Hwf [Hids [Hfits Hkind]]. unfold kind_ok. split.
+    - intros i Hin. rewrite <- canon_row_tuple in Hin.
+      exact (canon_key_allocated db (k ++ option_list o) Hwf Hids i Hin).
+    - split.
+      + rewrite <- canon_row_tuple, length_map. exact Hfits.
+      + destruct o as [[i | v] |]; exact Hkind.
+  Qed.
+
+  (** A fresh constructor row has allocated cells, the required slots and its declared kind. *)
+  Lemma fresh_constructor_kind_ok : forall db f k, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    kind (view db) f = Some OId ->
+    kind_ok (allocate_id (N.succ_pos (ids db)) db) f (map (canon db) k)
+      (Some (Id (N.succ_pos (ids db)))).
+  Proof.
+    intros db f k Hwf Hargs Hfits Hkind. unfold kind_ok. split.
+    - intros i Hin. apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
+      + apply allocate_next_monotone. exact (canon_key_allocated db k Hwf Hargs i Hin).
+      + cbn [option_list In] in Hin. destruct Hin as [Heq | Hfalse]; [| contradiction].
+        injection Heq as <-. unfold allocated. rewrite allocate_id_ids. lia.
+    - split.
+      + unfold slots_fit in *. rewrite allocate_id_slots, length_app, length_map.
+        cbn [option_list length]. replace (length k + 1) with (S (length k)) by lia.
+        exact Hfits.
+      + rewrite allocate_id_view, Hkind. exact I.
+  Qed.
+
+  (** The fresh singleton and every normalized key identifier remain canonical after allocation. *)
+  Lemma fresh_constructor_canonical : forall db k, wf db ->
+    forall i, In (Id i)
+      (map (canon db) k ++ option_list (Some (Id (N.succ_pos (ids db))))) ->
+    repr (allocate_id (N.succ_pos (ids db)) db) i = i.
+  Proof.
+    intros db k Hwf i Hin. rewrite (allocate_next_repr db Hwf i).
+    apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
+    - exact (canon_key_fixed db k Hwf i Hin).
+    - cbn [option_list In] in Hin. destruct Hin as [Heq | Hfalse]; [| contradiction].
+      injection Heq as <-. apply UnionFindCodeFacts.repr_absent. now apply allocate_next_absent.
+  Qed.
+
+  (** The common row-update obligation used by put and fresh constructor allocation. *)
+  Definition replacement_preserves_wf : Prop :=
+    forall db f k previous o, wf db -> old db f k = previous -> kind_ok db f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    wf (row_replace f k previous o db).
+
+  (** Every non-reuse make branch follows from fresh allocation and the common row update. *)
+  Lemma wf_make_fresh_from_replacement : replacement_preserves_wf ->
+    forall db f k previous, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    old db f (map (canon db) k) = previous ->
+    wf (match kind_get f db with
+      | Some OId => row_replace f (map (canon db) k) previous
+          (Some (Id (N.succ_pos (ids db)))) (allocate_id (N.succ_pos (ids db)) db)
+      | _ => allocate_id (N.succ_pos (ids db)) db
+      end).
+  Proof.
+    intros Hreplace db f k previous Hwf Hargs Hfits Hprevious.
+    destruct (kind_get f db) as [[| |m] |] eqn:Hkind; try now apply wf_allocate_next.
+    apply Hreplace.
+    - now apply wf_allocate_next.
+    - exact Hprevious.
+    - apply fresh_constructor_kind_ok; assumption.
+    - apply fresh_constructor_canonical. exact Hwf.
+  Qed.
+
+  (** Constructor well-formedness reduces to the proved allocation and one row replacement. *)
+  Lemma wf_make_from_replacement : replacement_preserves_wf ->
+    forall f k db, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    wf (snd (make f k db)).
+  Proof.
+    intros Hreplace f k db Hwf Hargs Hfits. unfold make.
+    rewrite (normal_key_correct db k Hwf). fold (ids db).
+    destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |] eqn:Hprevious;
+      cbn [snd]; [exact Hwf | | |];
+      apply wf_make_fresh_from_replacement; assumption.
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
