@@ -1942,6 +1942,28 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_ite_dispatch_size : forall rw wc c wa a wb b,
+    (N.of_nat (W.psize rw (Scalar.interval_join (interval_clip wa a) (interval_clip wb b))) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize wc c + W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros rw wc c wa a wb b.
+    pose proof (table_ite_size rw wa wb a b) as Hsize.
+    assert (Hbudget_nat :
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 <=
+       (Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        W.psize wc c + W.psize wa a + W.psize wb b)%nat).
+    { apply Nat.le_trans with
+        (m := (Pos.to_nat rw + Pos.to_nat wc + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2).
+      - apply Nat.pow_le_mono_l. lia.
+      - lia. }
+    unfold c_word_table.
+    assert (Hcoefficient : (1 <= 1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N)
+      by nia.
+    nia.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
