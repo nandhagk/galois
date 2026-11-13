@@ -6863,6 +6863,84 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_l | apply fold_max_base].
   Qed.
 
+  (** Fuel arithmetic factors through the logarithmic allocation and watermark widths. *)
+  Lemma rebuild_fuel_scalar_budget : forall a w l : N,
+    (a <= l)%N -> (a <= w)%N -> (1 <= l)%N ->
+    ((a + 2) * (a + 2 * w + 6) + 7 * a + 5 * w + 32 <=
+      128 * l * (w + 1))%N.
+  Proof.
+    intros a w l Hal Haw Hl.
+    assert (Hleft : (a + 2 <= 3 * l)%N) by lia.
+    assert (Hright : (a + 2 * w + 6 <= 6 * (w + 1))%N) by lia.
+    pose proof (N.mul_le_mono _ _ _ _ Hleft Hright) as Hproduct.
+    assert (Hla : (a <= l * (w + 1))%N) by nia.
+    assert (Hlw : (w <= l * (w + 1))%N) by nia.
+    assert (Hlone : (1 <= l * (w + 1))%N) by nia.
+    nia.
+  Qed.
+
+  (** Constructing the exact binary fuel uses one database unit of operand widths. *)
+  Lemma T_db_rebuild_fuel_unit : forall db,
+    (db_npending db <= wmark db)%N ->
+    (T_db_rebuild_fuel db <= 128 * N.of_nat (unit db))%N.
+  Proof.
+    intros db Hpending.
+    pose proof (N_width_mono _ _ (wmark_ids db)) as Hids.
+    pose proof (N_width_mono _ _ (wmark_nuses db)) as Huses.
+    pose proof (N_width_mono _ _ Hpending) as Hpending_width.
+    pose proof (slot_width_log (ids db)) as Hlog.
+    pose proof (database_counter_bits_value (N.size (ids db))) as Hsize.
+    rewrite N_size_value in Hsize.
+    assert (Ha : N.size_nat (N.size (ids db) + 2) <= N.size_nat (ids db) + 2).
+    { pose proof (database_counter_bits_value (N.size (ids db) + 2)) as Hwidth.
+      rewrite N2Nat.inj_add, N_size_value in Hwidth. cbn in Hwidth. lia. }
+    assert (Hb : N.size_nat (db_nuses db + 1) <= N.size_nat (wmark db) + 1).
+    { pose proof (N_successor_width (db_nuses db)). lia. }
+    assert (Hab : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1)) <=
+      N.size_nat (ids db) + N.size_nat (wmark db) + 3).
+    { pose proof (N_product_width (N.size (ids db) + 2) (db_nuses db + 1)). lia. }
+    assert (Habp : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1) +
+      db_npending db) <= N.size_nat (ids db) + 2 * N.size_nat (wmark db) + 5).
+    { pose proof (N_sum_width ((N.size (ids db) + 2) * (db_nuses db + 1))
+        (db_npending db)). lia. }
+    pose proof (database_N_size_time (ids db)) as Htime_size.
+    assert (Htime_a : (N.T_add (N.size (ids db)) 2 <=
+      N.of_nat (N.size_nat (ids db)) + 3)%N).
+    { pose proof (N.T_add_le (N.size (ids db)) 2) as Htime.
+      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    assert (Htime_b : (N.T_add (db_nuses db) 1 <=
+      N.of_nat (N.size_nat (wmark db)) + 2)%N).
+    { pose proof (N.T_add_le (db_nuses db) 1) as Htime.
+      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    assert (Htime_product : (N.T_mul (N.size (ids db) + 2) (db_nuses db + 1) <=
+      (N.of_nat (N.size_nat (ids db)) + 2) *
+        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) + 1)%N).
+    { pose proof (database_N_mul_time (N.size (ids db) + 2) (db_nuses db + 1)) as Htime.
+      clear - Htime Ha Hb. nia. }
+    assert (Htime_pending : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1))
+      (db_npending db) <= N.of_nat (N.size_nat (ids db)) +
+        2 * N.of_nat (N.size_nat (wmark db)) + 4)%N).
+    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1))
+        (db_npending db)) as Htime. lia. }
+    assert (Htime_last : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1) +
+      db_npending db) 1 <= N.of_nat (N.size_nat (ids db)) +
+        2 * N.of_nat (N.size_nat (wmark db)) + 7)%N).
+    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1) +
+        db_npending db) 1) as Htime. cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    eapply N.le_trans with (m :=
+      ((N.of_nat (N.size_nat (ids db)) + 2) *
+        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) +
+        7 * N.of_nat (N.size_nat (ids db)) + 5 * N.of_nat (N.size_nat (wmark db)) + 32)%N).
+    - time_unfold T_db_rebuild_fuel. time_unfold @T_db_runtime.
+      time_unfold @T_runtime_allocated. time_unfold @T_db_nuses. time_unfold @T_db_npending.
+      fold (ids db). nia.
+    - pose proof (rebuild_fuel_scalar_budget (N.of_nat (N.size_nat (ids db)))
+        (N.of_nat (N.size_nat (wmark db)))
+        (N.of_nat (N.to_nat (N.log2 (ids db)) + 1))) as Hscalar.
+      specialize (Hscalar ltac:(lia) ltac:(lia) ltac:(lia)).
+      clear - Hscalar. unfold unit. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
+
   (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
   Lemma T_normal_cell_id : forall db i,
     (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
@@ -8033,7 +8111,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Fuel construction uses stored binary counters. *)
   Lemma T7b_fuel : forall db, inv db ->
     (T_rebuild_fuel db <= k_driver * N.of_nat (unit db))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hinv.
+    assert (Hpending : (db_npending db <= wmark db)%N).
+    { eapply N.le_trans; [exact (inv_on_pending_bound db [] Hinv) | apply wmark_ids]. }
+    pose proof (T_db_rebuild_fuel_unit db Hpending) as Hfuel.
+    pose proof (unit_positive db) as Hpositive.
+    time_unfold T_rebuild_fuel. unfold k_driver. nia.
+  Qed.
 
   (** The [T_loopN_amort] driver retains the final database credit. *)
   Lemma T8a_loop_final : forall B U db, inv db -> (ids (rebuild db) <= B)%N ->
