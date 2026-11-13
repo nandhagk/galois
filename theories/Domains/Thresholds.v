@@ -204,6 +204,44 @@ Module Thresholds <: THRESHOLDS.
     - cbn [In]. rewrite IH. reflexivity.
   Qed.
 
+  (** Deduplicating a weakly ordered list makes its order strict. *)
+  Lemma dedup_ordered : forall zs, StronglySorted Z.le zs ->
+    StronglySorted Z.lt (dedup_sorted zs).
+  Proof.
+    induction zs as [|a zs IH]; intro Hsort; [constructor|].
+    destruct zs as [|b zs]; [repeat constructor|].
+    destruct (StronglySorted_inv Hsort) as [Htail Hall].
+    destruct (StronglySorted_inv Htail) as [Hrest Hallb].
+    change (StronglySorted Z.lt (if Z.eqb a b then dedup_sorted (b :: zs)
+      else a :: dedup_sorted (b :: zs))).
+    destruct (Z.eqb a b) eqn:Heq; [now apply IH|].
+    apply Z.eqb_neq in Heq.
+    pose proof (Forall_inv Hall) as Hab.
+    assert (Hlt : (a < b)%Z) by lia.
+    constructor; [now apply IH|].
+    apply Forall_forall. intros z Hin.
+    apply (proj1 (dedup_vals (b :: zs) z)) in Hin.
+    destruct Hin as [<-|Hin]; [exact Hlt|].
+    rewrite Forall_forall in Hallb. specialize (Hallb z Hin). lia.
+  Qed.
+
+  (** Strictly ordered integer lists contain no duplicate values. *)
+  Lemma ordered_nodup : forall zs, StronglySorted Z.lt zs -> NoDup zs.
+  Proof.
+    intros zs Hsort. induction Hsort as [|z zs Hsort IH Hall]; constructor.
+    - intro Hin. rewrite Forall_forall in Hall. specialize (Hall z Hin). lia.
+    - exact IH.
+  Qed.
+
+  (** Sorting and deduplication never increase the original list length. *)
+  Lemma prepared_length : forall zs, length (dedup_sorted (msort zs)) <= length zs.
+  Proof.
+    intro zs. apply NoDup_incl_length.
+    - apply ordered_nodup, dedup_ordered, sort_fuel_sorted. lia.
+    - intros z Hin. apply (proj1 (dedup_vals (msort zs) z)) in Hin.
+      eapply Permutation_in; [apply Permutation_sym, sort_fuel_perm|exact Hin].
+  Qed.
+
   (** The median splits a nonempty list into balanced smaller pieces. *)
   Lemma median_split (xs : list Z) : xs <> [] ->
     exists x rhs, skipn (length xs / 2) xs = x :: rhs /\
@@ -240,6 +278,46 @@ Module Thresholds <: THRESHOLDS.
       now rewrite Hskip in Hsplit.
   Qed.
 
+  (** A list below a power-of-two capacity yields at most that many tree levels. *)
+  Lemma build_capacity : forall fuel zs h, length zs < 2 ^ h ->
+    depth (build fuel zs) <= h.
+  Proof.
+    induction fuel as [|fuel IH]; intros zs h Hcapacity; [cbn; lia|].
+    destruct zs as [|z zs]; [cbn; lia|].
+    destruct h as [|h]; [cbn in Hcapacity; lia|].
+    destruct (median_split (z :: zs) ltac:(discriminate))
+      as [pivot [rhs [Hskip [Hleft [Hlength Hbalance]]]]].
+    cbn [build]. rewrite Hskip. cbn [depth].
+    change (length (z :: zs) < 2 * 2 ^ h) in Hcapacity.
+    apply le_n_S, Nat.max_lub; apply IH; nia.
+  Qed.
+
+  (** Median construction has logarithmic depth, even when fuel is truncated. *)
+  Lemma build_depth : forall fuel zs,
+    depth (build fuel zs) <= Nat.log2 (length zs) + 1.
+  Proof.
+    intros fuel zs. destruct zs as [|z zs].
+    - destruct fuel; reflexivity || cbn; lia.
+    - replace (Nat.log2 (length (z :: zs)) + 1)
+        with (S (Nat.log2 (length (z :: zs)))) by lia.
+      apply build_capacity.
+      apply (proj2 (Nat.log2_spec (length (z :: zs)) ltac:(cbn; lia))).
+  Qed.
+
+  (** All fuel values covering the list produce the same median tree. *)
+  Lemma build_fuel_eq : forall fuel fuel' zs, length zs <= fuel -> length zs <= fuel' ->
+    build fuel zs = build fuel' zs.
+  Proof.
+    induction fuel as [|fuel IH]; intros fuel' zs Hfuel Hfuel'; destruct fuel'.
+    - reflexivity.
+    - destruct zs; [reflexivity|cbn in Hfuel; lia].
+    - destruct zs; [reflexivity|cbn in Hfuel'; lia].
+    - destruct zs as [|z zs]; [reflexivity|].
+      destruct (median_split (z :: zs) ltac:(discriminate))
+        as [pivot [rhs [Hskip [Hleft [Hlength Hbalance]]]]].
+      cbn [build]. rewrite Hskip. f_equal; apply IH; lia.
+  Qed.
+
   (** Construction retains precisely the supplied thresholds. *)
   Lemma make_vals : forall zs x, In x (vals (make zs)) <-> In x zs.
   Proof.
@@ -250,10 +328,16 @@ Module Thresholds <: THRESHOLDS.
   Qed.
   (** Construction orders and deduplicates thresholds. *)
   Lemma make_ordered : forall zs, ordered (make zs).
-  Proof. Admitted. (* CONVERT: threshold_index_ordered: The variable threshold_of_list_wf was not found. *)
+  Proof.
+    intro zs. unfold ordered, make. rewrite build_vals by lia.
+    apply dedup_ordered, sort_fuel_sorted. lia.
+  Qed.
   (** Construction produces a logarithmic-depth tree. *)
   Lemma make_depth : forall zs, depth (make zs) <= Nat.log2 (length zs) + 1.
-  Proof. Admitted. (* CONVERT: threshold_depth_bound: The variable build_depth was not found. *)
+  Proof.
+    intro zs. unfold make. eapply Nat.le_trans; [apply build_depth|].
+    apply Nat.add_le_mono_r, Nat.log2_le_mono, prepared_length.
+  Qed.
   (** Upper search returns the least eligible threshold or proves none exists. *)
   Lemma above_spec : forall t z, ordered t ->
     match above t z with
