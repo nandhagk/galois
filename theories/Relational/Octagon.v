@@ -4073,6 +4073,20 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - now apply add_zero_own_diagonal.
   Qed.
 
+  (** Tight triangle closure holds at every signed key, including absent labels. *)
+  Lemma tightly_closed_at_every_key : forall m, tightly_closed m ->
+    forall p, RelationalPathBounds.closed_at (entry m) p.
+  Proof.
+    intros m [[Hcoh [Hzero [Htriangle Hstrong]]] Heven] p a b.
+    destruct (entry m a p) as [left|] eqn:Hleft;
+      destruct (entry m p b) as [right|] eqn:Hright;
+      cbn [RelationalPathBounds.plus RelationalPathBounds.below];
+      try (destruct (entry m a b); exact I).
+    destruct (Htriangle a b p left right Hleft Hright)
+      as [value [Hvalue Hle]]. rewrite Hvalue.
+    cbn [RelationalPathBounds.below]. exact Hle.
+  Qed.
+
   Lemma coordinate_flip : forall a b i j,
     same_coordinate (flip b) (flip a) i j =
     same_coordinate a b (flip j) (flip i).
