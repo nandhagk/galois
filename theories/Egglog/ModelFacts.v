@@ -4,7 +4,7 @@
     For example, equal identifiers in a satisfying view have the same denotation.
     Builds on: Syntax, Model and Stdlib lists. *)
 
-From Stdlib Require Import List PArith NArith PeanoNat Lia Relations.Relation_Operators.
+From Stdlib Require Import List PArith NArith PeanoNat Lia Relations.Relation_Operators Sorting.Permutation.
 From Galois.Base Require Import UnionFindSig KeySig MapSig Trie UnionFind.
 From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
@@ -733,6 +733,65 @@ Module FiniteMapFacts (K : KEY) (M : MAP K).
     - intro q. destruct (K.eqb_spec q k) as [->|Hneq].
       + rewrite M.get_set_same. symmetry. exact Hvalue.
       + apply M.get_set_other. exact Hneq.
+  Qed.
+
+  (** Removing a key preserves precisely the bindings at every other key. *)
+  Lemma remove_binding_iff : forall A k (m : M.t A) q out,
+    M.get q (M.remove k m) = Some out <-> M.get q m = Some out /\ q <> k.
+  Proof.
+    intros A k m q out. destruct (K.eqb_spec q k) as [-> | Hneq].
+    - rewrite M.get_remove_same. split; [discriminate | tauto].
+    - rewrite M.get_remove_other by exact Hneq. tauto.
+  Qed.
+
+  (** Distinct enumerated keys also make the complete binding pairs distinct. *)
+  Lemma elements_nodup_pairs : forall A (m : M.t A), M.wf m -> NoDup (M.elements m).
+  Proof.
+    intros A m Hwf. apply NoDup_map_inv with (f := @fst K.t A).
+    exact (M.elements_nodup A m Hwf).
+  Qed.
+
+  (** A replacement removes its optional old binding and adds its new binding to one shared remainder. *)
+  Lemma set_elements_decomposition : forall A (m : M.t A) k previous v,
+    M.wf m -> M.get k m = previous ->
+    exists rest,
+      Permutation (M.elements m) (option_list (option_map (pair k) previous) ++ rest) /\
+      Permutation (M.elements (M.set k v m)) ((k, v) :: rest) /\
+      NoDup (map fst rest) /\ ~ In k (map fst rest).
+  Proof.
+    intros A m k previous v Hwf Hprevious.
+    set (rest := M.elements (M.remove k m)).
+    assert (Hremove : M.wf (M.remove k m)) by (now apply M.wf_remove).
+    assert (Hdistinct : NoDup (map fst rest)) by (apply M.elements_nodup; exact Hremove).
+    assert (Hrest : forall q out, In (q, out) rest <-> M.get q m = Some out /\ q <> k).
+    { intros q out. unfold rest. rewrite M.elements_spec by exact Hremove.
+      apply remove_binding_iff. }
+    assert (Habsent : ~ In k (map fst rest)).
+    { intro Hin. apply in_map_iff in Hin. destruct Hin as [[q out] [Heq Hin]].
+      cbn [fst] in Heq. subst q. apply Hrest in Hin. tauto. }
+    assert (Hpairdistinct : NoDup rest).
+    { apply NoDup_map_inv with (f := @fst K.t A). exact Hdistinct. }
+    assert (Hnewdistinct : forall value, NoDup ((k, value) :: rest)).
+    { intro value. constructor; [| exact Hpairdistinct]. intro Hin.
+      apply Habsent. apply in_map with (f := @fst K.t A) in Hin. exact Hin. }
+    exists rest. split.
+    - apply NoDup_Permutation.
+      + now apply elements_nodup_pairs.
+      + destruct previous; cbn [option_map option_list app];
+          [apply Hnewdistinct | exact Hpairdistinct].
+      + intros [q out]. rewrite M.elements_spec by exact Hwf.
+        destruct previous as [before |]; cbn [option_map option_list app In]; rewrite Hrest.
+        * destruct (K.eqb_spec q k) as [-> | Hneq].
+          -- rewrite Hprevious. intuition congruence.
+          -- intuition congruence.
+        * split; [intro Hget; split; [exact Hget | congruence] | tauto].
+    - split.
+      + apply NoDup_Permutation.
+        * apply elements_nodup_pairs. now apply M.wf_set.
+        * apply Hnewdistinct.
+        * intros [q out]. rewrite M.elements_spec by (now apply M.wf_set).
+          rewrite set_binding_iff. cbn [In]. rewrite Hrest. intuition congruence.
+      + split; assumption.
   Qed.
 
 End FiniteMapFacts.
