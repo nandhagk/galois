@@ -107,8 +107,36 @@ Module AlarmsT (N X : KEY_T) (MN : MAP_T N) (L : LANG_T)
     intros inv n. pose proof (MN.T_get_le S.t n inv).
     unfold T_inv_at, c_alarms, k_alarm. rewrite Nat2N.inj_add. time_cbn. nia.
   Qed.
+
+  (** Operand mapping charges each evaluation and its list cell. *)
+  Lemma eval_map_time : forall s es,
+    (ListDef.T_map (fun e => S.eval e s) (fun e => 1 + S.T_eval e s) es <=
+      (S.c_state + 2) * N.of_nat
+        ((fold_right Nat.add 0 (map (fun e => S.eval_work e s + 1) es))%nat) + 1)%N.
+  Proof.
+    intros s es. induction es as [|e es IH].
+    - time_step.
+    - pose proof (S.T_eval_le e s). time_step.
+  Qed.
+
+  (** The single-check bound reserves part of the reporting constant for filtering. *)
+  Lemma T_alarm_core : forall inv k,
+    (T_alarm inv k <= k_alarm * N.of_nat (check_work inv k))%N.
+  Proof.
+    intros inv k.
+    pose proof (eval_map_time (inv_at inv (site k)) (args k)) as Hmap.
+    pose proof (MN.T_get_le S.t (site k) inv) as Hget.
+    pose proof (C.T_may_fail_le (ckind k)
+      (map (fun e => S.eval e (inv_at inv (site k))) (args k))) as Hcheck.
+    unfold T_alarm, T_inv_at, T_site, T_ckind, T_args.
+    unfold check_work, k_alarm. time_cbn.
+    rewrite !Nat2N.inj_add in *. time_cbn_all. nia.
+  Qed.
+
   Lemma T_alarm_le : forall inv k, (T_alarm inv k <= c_alarms * N.of_nat (check_work inv k))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros inv k. pose proof (T_alarm_core inv k). unfold c_alarms. nia.
+  Qed.
   Lemma T_alarms_le : forall inv ks, (T_alarms inv ks <=
     c_alarms * N.of_nat ((fold_right Nat.add 0 (map (check_work inv) ks) + 1)%nat))%N.
   Proof. Admitted. (* STUB *)
