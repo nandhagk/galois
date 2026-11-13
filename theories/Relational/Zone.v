@@ -3667,6 +3667,33 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
         reflexivity.
   Qed.
 
+  (** A closed matrix bounds every two-edge route through any pivot. *)
+  Lemma closed_at_every_key : forall m, closed m ->
+    forall k, RelationalPathBounds.closed_at (entry m) k.
+  Proof.
+    intros m [_ Htriangle] k i j.
+    unfold RelationalPathBounds.closed_at.
+    destruct (entry m i k) as [a|] eqn:Hik;
+      destruct (entry m k j) as [z|] eqn:Hkj.
+    - destruct (Htriangle i j k a z Hik Hkj) as [d [Hentry Hle]].
+      rewrite Hentry. cbn [RelationalPathBounds.plus RelationalPathBounds.below]. exact Hle.
+    - destruct (entry m i j); exact I.
+    - destruct (entry m i j); exact I.
+    - destruct (entry m i j); exact I.
+  Qed.
+
+  (** A closed matrix bounds every chain of its own entries. *)
+  Lemma closed_chain_bound : forall m, closed m ->
+    forall ks i j, RelationalPathBounds.below
+      (entry m i j) (chain_weight m i ks j).
+  Proof.
+    intros m Hclosed ks i j. rewrite chain_weight_path.
+    eapply (RelationalPathBounds.chain_bound K.t (entry m) (entry m) ks).
+    - intros a b. apply RelationalPathBounds.below_refl.
+    - intros k _. now apply closed_at_every_key.
+    - intros k Hk. exact Hk.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
