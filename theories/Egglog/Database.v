@@ -1106,6 +1106,64 @@ Proof.
     + exact Hrank.
 Qed.
 
+Lemma database_rank_slots_from_same_rank : forall kinds start groups sl,
+  database_rank_groups_fresh start groups -> database_rank_groups_unique groups ->
+  forall n m f h first second d e g j k,
+    nth_error sl n = Some (f, first) ->
+    nth_error sl m = Some (h, second) ->
+    nth_error (database_rank_slots_from kinds start groups sl) n = Some (d, g, j) ->
+    nth_error (database_rank_slots_from kinds start groups sl) m = Some (e, g, k) ->
+    f = h.
+Proof.
+  intros kinds start groups sl. revert start groups.
+  induction sl as [|[head layout] rest IH];
+    intros start groups Hfresh Hunique n m f h first second d e g j k
+      Hslot_f Hslot_h Hrank_f Hrank_h;
+    destruct n as [|n]; destruct m as [|m];
+    cbn [nth_error database_rank_slots_from] in *; try discriminate.
+  - injection Hslot_f as <- <-. injection Hslot_h as <- <-. reflexivity.
+  - injection Hslot_f as <- <-.
+    set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head
+      (fst place, N.succ (snd place)) groups).
+    assert (Howner : PTrieCode.get head updated = Some (g, N.succ (snd place))).
+    { unfold updated, place. rewrite PTrie.get_set_same.
+      injection Hrank_f as _ Hgroup _. now rewrite Hgroup. }
+    symmetry. eapply database_rank_slots_from_owner with
+      (start := N.succ start) (groups := updated) (j := N.succ (snd place))
+      (n := m) (perm := second) (d := e) (offset := k).
+    + unfold updated, place. now apply database_rank_groups_fresh_step.
+    + unfold updated, place. now apply database_rank_groups_unique_step.
+    + exact Howner.
+    + exact Hslot_h.
+    + exact Hrank_h.
+  - injection Hslot_h as <- <-.
+    set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head
+      (fst place, N.succ (snd place)) groups).
+    assert (Howner : PTrieCode.get head updated = Some (g, N.succ (snd place))).
+    { unfold updated, place. rewrite PTrie.get_set_same.
+      injection Hrank_h as _ Hgroup _. now rewrite Hgroup. }
+    eapply database_rank_slots_from_owner with
+      (start := N.succ start) (groups := updated) (j := N.succ (snd place))
+      (n := n) (perm := first) (d := d) (offset := j).
+    + unfold updated, place. now apply database_rank_groups_fresh_step.
+    + unfold updated, place. now apply database_rank_groups_unique_step.
+    + exact Howner.
+    + exact Hslot_f.
+    + exact Hrank_f.
+  - set (place := match PTrieCode.get head groups with
+      | Some position => position | None => (start, 0%N) end).
+    set (updated := PTrieCode.set head
+      (fst place, N.succ (snd place)) groups).
+    eapply IH with (start := N.succ start) (groups := updated);
+      [unfold updated, place; now apply database_rank_groups_fresh_step |
+       unfold updated, place; now apply database_rank_groups_unique_step |
+       exact Hslot_f | exact Hslot_h | exact Hrank_f | exact Hrank_h].
+Qed.
+
 Lemma database_rank_slots_from_bound : forall kinds start groups sl,
   database_rank_groups_bounded start groups ->
   forall n d g j, nth_error (database_rank_slots_from kinds start groups sl) n =
