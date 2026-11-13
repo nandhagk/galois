@@ -8065,6 +8065,91 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - lia.
   Qed.
 
+  (** A prepared slot pays its projection and mutation using the final recorded width. *)
+  Lemma T_slot_update_prepared : forall db b f u s perm current, slots_ok db ->
+    slot_of db s = Some (f, perm) -> slots_fit db f (length u) ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat (wmark (slots_update b f u db))) ->
+    slot_snapshot current s = slot_snapshot (db_runtime db) s ->
+    (T_project_slot_layout (prepare_slot_layout perm) u +
+      T_slot_update_one b s (project_slot_layout (prepare_slot_layout perm) u) current <=
+      256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (length u + 1) *
+        N.of_nat (N.size_nat (wmark (slots_update b f u db)) + 1))%N.
+  Proof.
+    intros db b f u s perm current [Hmetadata Harity] Hslot Hfits Hcells Hsnapshot.
+    set (bits := N.size_nat (wmark (slots_update b f u db))) in *.
+    assert (Hin : In (f, perm) (slots db)) by (eapply nth_error_In; exact Hslot).
+    destruct (Hfits perm Hin) as [Hdistinct Hpositions].
+    pose proof (fitting_permutation_length perm (length u) Hdistinct Hpositions) as Hperm_length.
+    assert (Hprojection : project_slot_layout (prepare_slot_layout perm) u = permute perm u)
+      by (now apply project_slot_layout_correct).
+    assert (Hquery_length : length (project_slot_layout (prepare_slot_layout perm) u) <= length u).
+    { rewrite Hprojection, permute_length by exact Hpositions. exact Hperm_length. }
+    assert (Hquery_cells : forall c, In c (project_slot_layout (prepare_slot_layout perm) u) ->
+      cell_bits V.encode c <= bits).
+    { intros c Hmember. rewrite Hprojection in Hmember. apply Hcells.
+      exact (permute_member perm u c Hmember). }
+    assert (Hindex : forall new, runtime_slot_index current s new = index s new db).
+    { intro new. rewrite (slot_snapshot_index _ _ s Hsnapshot).
+      symmetry. apply index_runtime_slot. eapply slots_metadata_inside; eassumption. }
+    pose proof (wmark_slots_update b f u db) as Hmono.
+    assert (Hone : (T_slot_update_one b s
+      (project_slot_layout (prepare_slot_layout perm) u) current <=
+      128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (length u + 1) * N.of_nat (bits + 1))%N).
+    { apply T_slot_update_one_width with (arity := length perm).
+      - intro new. rewrite Hindex. exact (Harity s f perm new Hslot).
+      - exact Hquery_length.
+      - exact Hquery_cells.
+      - unfold bits. apply N_width_mono.
+        pose proof (metadata_slot_number db s f perm Hmetadata Hslot). lia.
+      - unfold bits. apply N_width_mono. rewrite (slot_snapshot_count _ _ s Hsnapshot).
+        pose proof (metadata_updates_wmark db Hmetadata) as Hupdates.
+        destruct Hmetadata as (_ & _ & _ & _ & _ & Hcounts & _).
+        specialize (Hcounts s (project_slot_layout (prepare_slot_layout perm) u)). lia.
+      - intro new. rewrite Hindex. unfold bits.
+        apply slots_update_query_width; assumption. }
+    assert (Hrank_order : (Npos (Pos.of_succ_nat (length perm)) <=
+      Npos (Pos.of_succ_nat (length u)))%N).
+    { change (Pos.of_succ_nat (length perm) <= Pos.of_succ_nat (length u))%positive.
+      apply Pos2Nat.inj_le. rewrite !SuccNat2Pos.id_succ. lia. }
+    assert (Hrank_bits : Pos.size_nat (Pos.of_succ_nat (length perm)) <= bits).
+    { unfold bits. change (N.size_nat (Npos (Pos.of_succ_nat (length perm))) <=
+        N.size_nat (wmark (slots_update b f u db))).
+      apply N_width_mono. eapply N.le_trans; [exact Hrank_order | apply slots_update_rank_wmark]. }
+    set (factor := (N.of_nat (length u + 1) * N.of_nat (bits + 1))%N).
+    assert (Hmeasure : (N.of_nat (length perm + 1) *
+      N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1) <= factor)%N).
+    { unfold factor. apply N.mul_le_mono; lia. }
+    assert (Hscaled : ((2 * PTrieT.c_trie + 10) *
+      (N.of_nat (length perm + 1) *
+       N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1)) <=
+      (2 * PTrieT.c_trie + 10) * factor)%N) by (now apply N.mul_le_mono_l).
+    pose proof (T_project_slot_layout_le (cell V.t) perm u) as Hproject.
+    assert (Hinput : (N.of_nat (length u + 1) <= factor)%N) by (unfold factor; nia).
+    assert (Hproject_factor : (T_project_slot_layout (prepare_slot_layout perm) u <=
+      (2 * PTrieT.c_trie + 11) * factor)%N).
+    { eapply N.le_trans; [exact Hproject |].
+      replace ((2 * PTrieT.c_trie + 11) * factor)%N with
+        (factor + (2 * PTrieT.c_trie + 10) * factor)%N by ring.
+      apply N.add_le_mono; [exact Hinput |].
+      replace ((2 * PTrieT.c_trie + 10) * N.of_nat (length perm + 1) *
+        N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1))%N with
+        ((2 * PTrieT.c_trie + 10) * (N.of_nat (length perm + 1) *
+          N.of_nat (Pos.size_nat (Pos.of_succ_nat (length perm)) + 1)))%N by ring.
+      exact Hscaled. }
+    assert (Hproject_budget : (T_project_slot_layout (prepare_slot_layout perm) u <=
+      16 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N).
+    { eapply N.le_trans; [exact Hproject_factor |]. apply N.mul_le_mono_r. lia. }
+    replace (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length u + 1) * N.of_nat (bits + 1))%N with
+      (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N in Hone by (unfold factor; ring).
+    replace (256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (length u + 1) * N.of_nat (bits + 1))%N with
+      (256 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N by (unfold factor; ring).
+    clearbody factor. clear -Hone Hproject_budget. nia.
+  Qed.
+
   (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
   Lemma F_slot_place : forall db work s f perm, inv_on db work ->
     slot_of db s = Some (f, perm) ->
