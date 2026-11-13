@@ -4178,6 +4178,18 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     - now apply entry_tighten_other.
   Qed.
 
+  Lemma tighten_unary_even : forall m, dbm_wf m -> forall i d,
+    entry (tighten m) i (flip i) = Some d -> (d mod 2 = 0)%Z.
+  Proof.
+    intros m Hwf i d Hentry.
+    rewrite entry_tighten_exact in Hentry by exact Hwf.
+    destruct (K.eqb_spec (flip i) (flip i)) as [_|Hne]; [|contradiction].
+    destruct (entry m i (flip i)) as [a|] eqn:Hsource; [|discriminate].
+    inversion Hentry; subst d. unfold even_bound.
+    replace (2 * Z.div2 a)%Z with (Z.div2 a * 2)%Z by ring.
+    now rewrite Z.mod_mul by lia.
+  Qed.
+
   Lemma coherent_tighten : forall m, coherent m -> coherent (tighten m).
   Proof.
     intros m Hcoh i j.
