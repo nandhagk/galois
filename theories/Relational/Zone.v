@@ -3235,16 +3235,8 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     exact incr_close_models.
   Qed.
-  Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
-    (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
-    (forall ks d, chain_weight m i ks j = Some d ->
-       exists d', entry m' i j = Some d' /\ (d' <= d)%Z).
-  Proof. Admitted. (* STUB *)
   Lemma incr_close_eq : forall m i j d, dbm_wf m -> closed m ->
     same_entries (incr_close i j d m) (close (add_cons i j d m)).
-  Proof. Admitted. (* STUB *)
-  Lemma bits_close_le : forall m m', dbm_wf m -> close m = Reached m' ->
-    ell m' <= ell m + Nat.log2 (supp m) + 1.
   Proof. Admitted. (* STUB *)
   (** State size charges all stored numeric data. *)
   Lemma F_size : forall s, size s = (ns s + 1)^2 * (bs s + ells s + 1) + skels s.
@@ -3564,6 +3556,157 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
   Proof.
     intro m. unfold pivot_keys, keys. apply remember_fold_keys.
     intro k. rewrite M.get_empty. cbn [In]. tauto.
+  Qed.
+
+  (** Every supported code has its key in a well-formed pivot enumeration. *)
+  Lemma keys_cover : forall m k, dbm_wf m ->
+    In (K.encode k) (support m) -> In k (keys m).
+  Proof.
+    intros m k [Houter Hrows] Hsupport. unfold keys.
+    rewrite (dedup_membership K.t K.eqb key_eqb_true).
+    left. apply in_app_iff. apply support_find in Hsupport.
+    destruct Hsupport as [Hrow|[p Hraw]].
+    - left. destruct (M.find (K.encode k) m) as [row|] eqn:Hfound;
+        [|contradiction].
+      apply in_map_iff. exists (k, row). split; [reflexivity|].
+      apply (proj2 (M.elements_spec (M.t Z) m k row Houter)).
+      now rewrite M.get_find.
+    - right. unfold raw_entry in Hraw.
+      destruct (M.find p m) as [row|] eqn:Hrow; cbn [row_of] in Hraw.
+      + destruct (M.wf_find (M.t Z) m p row Houter Hrow) as [i Hi].
+        apply in_flat_map. exists (i, row). split.
+        * apply (proj2 (M.elements_spec (M.t Z) m i row Houter)).
+          now rewrite M.get_find, Hi.
+        * cbn [snd]. destruct (M.find (K.encode k) row) as [z|] eqn:Hentry;
+            [|contradiction].
+          apply in_map_iff. exists (k, z). split; [reflexivity|].
+          apply (proj2 (M.elements_spec Z row k z (Hrows p row Hrow))).
+          now rewrite M.get_find.
+      + rewrite M.find_empty in Hraw. contradiction.
+  Qed.
+
+  (** A successful pivot loop closes every supported pivot in its input list. *)
+  Lemma close_pivots_path_invariant : forall ks initial current ps final,
+    (forall k, In k ks -> In (K.encode k) (support current)) ->
+    RelationalPathBounds.invariant (entry initial) (entry current) ps ->
+    close_pivots ks current = Reached final ->
+    RelationalPathBounds.invariant (entry initial) (entry final) (rev ks ++ ps).
+  Proof.
+    induction ks as [|k ks IH]; intros initial current ps final Hsupport Hinv Hresult.
+    - cbn [close_pivots] in Hresult. injection Hresult as <-.
+      exact Hinv.
+    - cbn [close_pivots] in Hresult.
+      destruct (nonnegative k (fw_round k current)) eqn:Haccept;
+        [|discriminate].
+      assert (Hpresent : pivot_present k current = true).
+      { apply pivot_present_support, Hsupport. now left. }
+      assert (Hnext : RelationalPathBounds.invariant (entry initial)
+        (entry (fw_round k current)) (k :: ps)).
+      { eapply RelationalPathBounds.invariant_ext.
+        - intros i j. symmetry. now apply entry_fw_present.
+        - eapply RelationalPathBounds.invariant_successful_round;
+            [exact Hinv|].
+          intros z Hz. rewrite <- (entry_fw_present k current Hpresent k k) in Hz.
+          unfold nonnegative in Haccept. rewrite Hz in Haccept.
+          now apply Z.leb_le. }
+      replace (rev (k :: ks) ++ ps) with (rev ks ++ k :: ps)
+        by (cbn [rev]; now rewrite <- app_assoc).
+      eapply IH; [|exact Hnext|exact Hresult].
+      intros q Hq. apply (proj2 (support_round k current (K.encode q))).
+      apply Hsupport. now right.
+  Qed.
+
+  (** Successful closure gives a path invariant over all original keys. *)
+  Lemma close_path_invariant : forall m final, dbm_wf m ->
+    close m = Reached final ->
+    RelationalPathBounds.invariant (entry m) (entry final) (rev (keys m)).
+  Proof.
+    intros m final Hwf Hclose. unfold close in Hclose.
+    rewrite pivot_keys_eq_keys in Hclose.
+    destruct (close_pivots (keys m) m) as [|result] eqn:Hrun;
+      [discriminate|].
+    destruct (forallb (fun k => nonnegative k result) (keys m));
+      [|discriminate].
+    injection Hclose as <-.
+    rewrite <- (app_nil_r (rev (keys m))).
+    eapply close_pivots_path_invariant; [|apply RelationalPathBounds.invariant_initial|exact Hrun].
+    intros k Hkey. now apply keys_support.
+  Qed.
+
+  (** Every successful pivot loop retains well-formed matrix labels. *)
+  Lemma close_pivots_wf : forall ks m result, dbm_wf m ->
+    close_pivots ks m = Reached result -> dbm_wf result.
+  Proof.
+    induction ks as [|k ks IH]; intros m result Hwf Hresult.
+    - cbn [close_pivots] in Hresult. now injection Hresult as <-.
+    - cbn [close_pivots] in Hresult.
+      destruct (nonnegative k (fw_round k m)); [|discriminate].
+      exact (IH (fw_round k m) result (wf_fw_round k m Hwf) Hresult).
+  Qed.
+
+  (** Successful closure keeps the matrix well formed. *)
+  Lemma close_result_wf : forall m result, dbm_wf m ->
+    close m = Reached result -> dbm_wf result.
+  Proof.
+    intros m result Hwf Hclose. unfold close in Hclose.
+    destruct (close_pivots (pivot_keys m) m) as [|final] eqn:Hrun;
+      [discriminate|].
+    destruct (forallb (fun k => nonnegative k final) (pivot_keys m));
+      [|discriminate].
+    injection Hclose as <-. exact (close_pivots_wf (pivot_keys m) m final Hwf Hrun).
+  Qed.
+
+  (** The public chain weight is the option-valued path sum. *)
+  Lemma chain_weight_path : forall m i ks j,
+    chain_weight m i ks j = RelationalPathBounds.chain (entry m) i ks j.
+  Proof.
+    intros m i ks. revert i. induction ks as [|k ks IH]; intros i j.
+    - reflexivity.
+    - cbn [chain_weight RelationalPathBounds.chain]. rewrite IH.
+      destruct (entry m i k), (RelationalPathBounds.chain (entry m) k ks j);
+        reflexivity.
+  Qed.
+
+  (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
+  Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
+    (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
+    (forall ks d, chain_weight m i ks j = Some d ->
+       exists d', entry m' i j = Some d' /\ (d' <= d)%Z).
+  Proof.
+    intros m m' i j Hwf Hclose Hne.
+    destruct (close_path_invariant m m' Hwf Hclose)
+      as [Hbelow Hclosed Hzero Hpath]. split.
+    - intros d Hentry. destruct (Hpath i j d Hentry) as [[Heq _]|[ks [_ Hchain]]].
+      + contradiction.
+      + exists ks. now rewrite chain_weight_path.
+    - intros ks d Hchain.
+      rewrite chain_weight_path in Hchain.
+      assert (Hincl : incl ks (rev (keys m))).
+      { intros k Hk. apply in_rev. rewrite rev_involutive.
+        apply (keys_cover m k Hwf).
+        eapply (RelationalPathBounds.chain_sources K.t (entry m)
+          (fun q => In (K.encode q) (support m))).
+        - intros p q z Hz. now apply (entry_source_support m p q z).
+        - exact Hchain.
+        - now right. }
+      pose proof (RelationalPathBounds.chain_bound K.t (entry m) (entry m')
+        (rev (keys m)) Hbelow Hclosed ks i j Hincl) as Hbound.
+      rewrite Hchain in Hbound. destruct (entry m' i j) as [d'|] eqn:Hentry;
+        cbn [RelationalPathBounds.below] in Hbound; [|contradiction].
+      exists d'. now split.
+  Qed.
+
+  (** Successful closure fits the support-sensitive entry-bit budget. *)
+  Lemma bits_close_le : forall m m', dbm_wf m -> close m = Reached m' ->
+    ell m' <= ell m + Nat.log2 (supp m) + 1.
+  Proof.
+    intros m m' Hwf Hclose.
+    pose proof (close_path_invariant m m' Hwf Hclose) as Hpath.
+    pose proof (close_result_wf m m' Hwf Hclose) as Hfinal.
+    apply ell_bound. intros p q d Hraw.
+    destruct (wf_raw_entry_keys m' p q d Hfinal Hraw) as [i [j [_ [_ Hentry]]]].
+    exact (path_invariant_entry_bits m (entry m') (rev (keys m))
+      Hpath i j d Hentry).
   Qed.
 
   (** A consistent matrix has no more pivot keys than codes in its support. *)
