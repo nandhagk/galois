@@ -1069,6 +1069,149 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
       time_step advance_columns.
   Qed.
 
+  (** Membership scans fit the square of the plan's column and level bound. *)
+  Lemma T_existsb_level_le : forall lvl lv L, lvl <= L -> length lv <= L ->
+    (List.T_existsb (Nat.eqb lvl) (Nat.T_eqb lvl) lv <=
+      4 * N.of_nat ((L + 1) * (L + 1)))%N.
+  Proof.
+    intros lvl lv L Hlevel Hlength.
+    pose proof (@List.T_existsb_le nat (Nat.eqb lvl) (Nat.T_eqb lvl)
+      (N.of_nat lvl + 1)%N lv (fun i => Nat.T_eqb_le lvl i)) as Hscan.
+    nia.
+  Qed.
+
+  (** A common per-operation budget gives a linear bound for pivot selection. *)
+  Lemma T_choose_columns_budget : forall cs ixs ns lvl pos K,
+    length cs = length ixs -> length cs = length ns ->
+    Forall (fun lv => (List.T_existsb (Nat.eqb lvl) (Nat.T_eqb lvl) lv <= K)%N) cs ->
+    Forall2 (fun ix n => (I.T_degree ix n <= K)%N /\
+      forall d, (N.T_leb (I.degree ix n) d <= K)%N) ixs ns ->
+    (T_choose_columns cs ixs ns lvl pos <= (3 * K + 3) * N.of_nat (length cs + 1))%N.
+  Proof.
+    induction cs as [| lv cs IH]; intros [| ix ixs] [| n ns] lvl pos K
+      Hix Hns Hscans Hoperations;
+      cbn [length] in Hix, Hns; try discriminate.
+    - time_step choose_columns.
+    - apply Forall_cons_iff in Hscans as [Hscan Hscans].
+      change (List.T_existsb (Nat.eqb lvl) (fun i => Nat.T_eqb lvl i) lv <= K)%N in Hscan.
+      apply Forall2_cons_iff in Hoperations as [[Hdegree Hcompare] Hoperations].
+      pose proof (IH ixs ns lvl (S pos) K ltac:(lia) ltac:(lia)
+        Hscans Hoperations) as Htail.
+      unfold T_choose_columns at 1. time_cbn. fold T_choose_columns.
+      destruct (existsb (Nat.eqb lvl) lv).
+      + destruct (choose_columns cs ixs ns lvl (S pos)) as [[j d] |].
+        * pose proof (Hcompare d). time_cbn. nia.
+        * time_cbn. nia.
+      + time_cbn. nia.
+  Qed.
+
+  (** A common per-operation budget gives a linear bound for all column probes. *)
+  Lemma T_advance_columns_budget : forall cs ixs ns lvl c K,
+    length cs = length ixs -> length cs = length ns ->
+    Forall (fun lv => (List.T_existsb (Nat.eqb lvl) (Nat.T_eqb lvl) lv <= K)%N) cs ->
+    (forall ix n, In ix ixs -> (I.T_child ix n c <= K)%N) ->
+    (T_advance_columns cs ixs lvl ns c <= (2 * K + 3) * N.of_nat (length cs + 1))%N.
+  Proof.
+    induction cs as [| lv cs IH]; intros [| ix ixs] [| n ns] lvl c K
+      Hix Hns Hscans Hoperations;
+      cbn [length] in Hix, Hns; try discriminate.
+    - time_step advance_columns.
+    - apply Forall_cons_iff in Hscans as [Hscan Hscans].
+      change (List.T_existsb (Nat.eqb lvl) (fun i => Nat.T_eqb lvl i) lv <= K)%N in Hscan.
+      pose proof (Hoperations ix n (or_introl eq_refl)) as Hchild.
+      assert (Hrest : forall ix' n', In ix' ixs -> (I.T_child ix' n' c <= K)%N).
+      { intros ix' n' Hin. exact (Hoperations ix' n' (or_intror Hin)). }
+      pose proof (IH ixs ns lvl c K ltac:(lia) ltac:(lia) Hscans Hrest) as Htail.
+      unfold T_advance_columns at 1. time_cbn. fold T_advance_columns.
+      destruct (existsb (Nat.eqb lvl) lv); time_cbn; nia.
+  Qed.
+
+  (** The scan factor covers scalar work, membership scans, degree reads and widths. *)
+  Lemma scan_factor_bounds : forall L W,
+    let unit := ((I.c_ix + 1) * N.of_nat (W + 1) *
+      N.of_nat ((L + 1) * (L + 1)))%N in
+    (1 <= unit /\ N.of_nat ((L + 1) * (L + 1)) <= unit /\
+      I.c_ix * N.of_nat (W + 1) <= unit /\ N.of_nat (W + 1) <= unit)%N.
+  Proof.
+    intros L W unit.
+    assert (Hsquare : (1 <= N.of_nat ((L + 1) * (L + 1)))%N) by nia.
+    assert (Hwidth : (1 <= N.of_nat (W + 1))%N) by lia.
+    assert (Hproduct : (1 <= (I.c_ix + 1) * N.of_nat (W + 1))%N) by nia.
+    assert (Hbase : ((I.c_ix + 1) * N.of_nat (W + 1) <= unit)%N).
+    { unfold unit. rewrite <- N.mul_1_r at 1. now apply N.mul_le_mono_l. }
+    assert (Hscan : (N.of_nat ((L + 1) * (L + 1)) <= unit)%N).
+    { unfold unit. rewrite <- N.mul_1_l at 1. now apply N.mul_le_mono_r. }
+    split; [lia |]. split; [exact Hscan |]. split.
+    - eapply N.le_trans; [| exact Hbase]. apply N.mul_le_mono_r. lia.
+    - eapply N.le_trans; [| exact Hbase]. rewrite <- N.mul_1_l at 1.
+      apply N.mul_le_mono_r. lia.
+  Qed.
+
+  (** Pivot selection pays once for each aligned column and its degree comparison. *)
+  Lemma T_choose_columns_le : forall cs ixs ns lvl pos L W,
+    length cs = length ixs -> length cs = length ns ->
+    Forall (fun lv => length lv <= L) cs -> lvl <= L ->
+    Forall2 (fun ix n => I.width ix [] <= W /\ N.size_nat (I.degree ix n) <= W) ixs ns ->
+    (T_choose_columns cs ixs ns lvl pos <=
+      16 * (I.c_ix + 1) * N.of_nat (length cs + 1) * N.of_nat (W + 1) *
+        N.of_nat ((L + 1) * (L + 1)))%N.
+  Proof.
+    intros cs ixs ns lvl pos L W Hix Hns Hlengths Hlevel Hwidths.
+    set (unit := ((I.c_ix + 1) * N.of_nat (W + 1) *
+      N.of_nat ((L + 1) * (L + 1)))%N).
+    destruct (scan_factor_bounds L W) as [Hone [Hsquare [Hdegree Hwidth]]].
+    fold unit in Hone, Hsquare, Hdegree, Hwidth.
+    assert (Hscans : Forall (fun lv =>
+      (List.T_existsb (Nat.eqb lvl) (Nat.T_eqb lvl) lv <= 4 * unit)%N) cs).
+    { eapply Forall_impl; [| exact Hlengths]. intros lv Hlength.
+      pose proof (T_existsb_level_le lvl lv L Hlevel Hlength). lia. }
+    assert (Hoperations : Forall2 (fun ix n => (I.T_degree ix n <= 4 * unit)%N /\
+      forall d, (N.T_leb (I.degree ix n) d <= 4 * unit)%N) ixs ns).
+    { eapply Forall2_impl; [| exact Hwidths]. intros ix n [Hix_width Hbits]. split.
+      - eapply N.le_trans; [apply I.T_degree_le |].
+        eapply N.le_trans with (m := (I.c_ix * N.of_nat (W + 1))%N); [| lia].
+        apply N.mul_le_mono_l. lia.
+      - intro d. pose proof (N.T_leb_le (I.degree ix n) d). lia. }
+    pose proof (T_choose_columns_budget cs ixs ns lvl pos (4 * unit)%N
+      Hix Hns Hscans Hoperations) as Hcost.
+    replace (16 * (I.c_ix + 1) * N.of_nat (length cs + 1) * N.of_nat (W + 1) *
+      N.of_nat ((L + 1) * (L + 1)))%N with
+      (16 * unit * N.of_nat (length cs + 1))%N by (unfold unit; ring).
+    clearbody unit. nia.
+  Qed.
+
+  (** Advancing pays for every aligned column, including after a failed child lookup. *)
+  Lemma T_advance_columns_le : forall cs ixs ns lvl c L W,
+    length cs = length ixs -> length cs = length ns ->
+    Forall (fun lv => length lv <= L) cs -> lvl <= L ->
+    Forall (fun ix => I.width ix [c] <= W) ixs ->
+    (T_advance_columns cs ixs lvl ns c <=
+      16 * (I.c_ix + 1) * N.of_nat (length cs + 1) * N.of_nat (W + 1) *
+        N.of_nat ((L + 1) * (L + 1)))%N.
+  Proof.
+    intros cs ixs ns lvl c L W Hix Hns Hlengths Hlevel Hwidths.
+    set (unit := ((I.c_ix + 1) * N.of_nat (W + 1) *
+      N.of_nat ((L + 1) * (L + 1)))%N).
+    destruct (scan_factor_bounds L W) as [Hone [Hsquare [Hchild Hwidth]]].
+    fold unit in Hone, Hsquare, Hchild, Hwidth.
+    assert (Hscans : Forall (fun lv =>
+      (List.T_existsb (Nat.eqb lvl) (Nat.T_eqb lvl) lv <= 4 * unit)%N) cs).
+    { eapply Forall_impl; [| exact Hlengths]. intros lv Hlength.
+      pose proof (T_existsb_level_le lvl lv L Hlevel Hlength). lia. }
+    assert (Hoperations : forall ix n, In ix ixs -> (I.T_child ix n c <= 4 * unit)%N).
+    { intros ix n Hin. rewrite Forall_forall in Hwidths.
+      pose proof (Hwidths ix Hin) as Hix_width.
+      eapply N.le_trans; [apply I.T_child_le |].
+      eapply N.le_trans with (m := (I.c_ix * N.of_nat (W + 1))%N); [| lia].
+      apply N.mul_le_mono_l. lia. }
+    pose proof (T_advance_columns_budget cs ixs ns lvl c (4 * unit)%N
+      Hix Hns Hscans Hoperations) as Hcost.
+    replace (16 * (I.c_ix + 1) * N.of_nat (length cs + 1) * N.of_nat (W + 1) *
+      N.of_nat ((L + 1) * (L + 1)))%N with
+      (16 * unit * N.of_nat (length cs + 1))%N by (unfold unit; ring).
+    clearbody unit. nia.
+  Qed.
+
   (** This proof-only recursion counts every column probe and every surviving subtree. *)
   Fixpoint recursive_work (fuel : nat) (p : jplan) (ixs : list I.t) (lvl : nat)
       (ns : list positive) {struct fuel} : nat :=
