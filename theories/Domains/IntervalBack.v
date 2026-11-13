@@ -1838,6 +1838,20 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     intros [[|]|]; cbn [interval_truth interval_bits Z.size_nat Pos.size_nat]; lia.
   Qed.
 
+  Local Lemma table_positive_bits : forall p, Pos.size_nat p <= Pos.to_nat p.
+  Proof.
+    induction p as [p IH|p IH|]; cbn [Pos.size_nat];
+      rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1; lia.
+  Qed.
+
+  Local Lemma table_counts_bits : forall w,
+    interval_bits (interval_counts w) <= Pos.to_nat w.
+  Proof.
+    intro w.
+    cbn [interval_counts interval_bits Z.size_nat].
+    apply table_positive_bits.
+  Qed.
+
   Local Lemma table_bool_not_bits : forall a,
     interval_bits (interval_bool_not a) <= 1.
   Proof.
