@@ -1847,6 +1847,11 @@ Module WorklistT (L : WLATTICE_T) (S : SYSTEM_T L) (P : POLICY_T L)
         * intro c; now rewrite prepare_eq, enqueue_counter, prepare_seed_counter.
         * intros id Hin; now apply prepare_queued.
   Qed.
+  (** Preparation starts at bottom independently of priority validity. *)
+  Lemma F4_bottom : forall p pol x, look (prepare p pol) x = L.bot.
+  Proof.
+    intros p pol x; now rewrite prepare_eq, enqueue_look, prepare_seed_look.
+  Qed.
   (** Enqueue changes the queue alone and guards every push by live absence. *)
   Lemma F5_enqueue : forall p pol ids s,
     wl_store (reference_enqueue p pol ids s) = wl_store s /\

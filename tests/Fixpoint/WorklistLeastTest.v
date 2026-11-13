@@ -187,7 +187,7 @@ Module RepeatedSides <: SYSTEM LeastBool.
 End RepeatedSides.
 
 Module LeastPolicy := Policy LeastBool.
-Module LeastProof := WorklistLeast LeastBool LeastBoolLub RepeatedSides LeastPolicy HeapCode.
+Module LeastProof := WorklistCodeLeast LeastBool LeastBoolLub RepeatedSides LeastPolicy HeapCode.
 Module LeastSolver := LeastProof.V.
 
 (** The certificate implements the frozen interface for its concrete solver instance. *)

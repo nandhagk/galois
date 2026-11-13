@@ -43,7 +43,7 @@ Proof.
   - exact Hinv.
 Qed.
 
-Module WorklistLeast (L : WLATTICE) (LB : LUB L) (S : SYSTEM L)
+Module WorklistCodeLeast (L : WLATTICE) (LB : LUB L) (S : SYSTEM L)
     (P : POLICY L) (Q : PQ_OPS).
   Module V := WorklistCode L S P Q.
 
@@ -242,4 +242,4 @@ Module WorklistLeast (L : WLATTICE) (LB : LUB L) (S : SYSTEM L)
     Qed.
   End Certificate.
   Include Certificate.
-End WorklistLeast.
+End WorklistCodeLeast.
