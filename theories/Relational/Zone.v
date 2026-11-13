@@ -381,6 +381,158 @@ Module RelationalPathBounds.
     apply minimum_when_below. rewrite plus_comm.
     pose proof (Hp k k) as Hcycle. now rewrite Hkk in Hcycle.
   Qed.
+  (** A chain lists internal vertices and always contains at least one original edge. *)
+  Fixpoint chain {A : Type} (e : A -> A -> option Z) (i : A)
+      (ks : list A) (j : A) : option Z :=
+    match ks with
+    | nil => e i j
+    | k :: rest => plus (e i k) (chain e k rest j)
+    end.
+
+  Lemma chain_app : forall A (e : A -> A -> option Z) before after i k j,
+    chain e i (before ++ k :: after) j =
+      plus (chain e i before k) (chain e k after j).
+  Proof.
+    intros A e before. induction before as [|p before IH]; intros after i k j.
+    - reflexivity.
+    - cbn [chain app]. rewrite IH, plus_assoc. reflexivity.
+  Qed.
+
+  (** Triangle closure bounds every chain through the processed vertices. *)
+  Lemma chain_bound : forall A (e r : A -> A -> option Z) processed,
+    (forall i j, below (r i j) (e i j)) ->
+    (forall k, In k processed -> closed_at r k) ->
+    forall ks i j, incl ks processed -> below (r i j) (chain e i ks j).
+  Proof.
+    intros A e r processed Hmono Hclosed ks.
+    induction ks as [|k ks IH]; intros i j Hks.
+    - apply Hmono.
+    - cbn [chain]. eapply below_trans.
+      + exact (Hclosed k (Hks k (or_introl eq_refl)) i j).
+      + apply plus_mono; [apply Hmono|].
+        apply IH. intros p Hp. apply Hks. now right.
+  Qed.
+
+  (** Summing a finite chain charges its number of original edges. *)
+  Lemma chain_abs : forall A (e : A -> A -> option Z) upper,
+    (forall i j z, e i j = Some z -> Z.abs_nat z <= upper) ->
+    forall ks i j z, chain e i ks j = Some z ->
+      Z.abs_nat z <= (length ks + 1) * upper.
+  Proof.
+    intros A e upper Hbound ks. induction ks as [|k ks IH]; intros i j z Hchain.
+    - cbn [chain] in Hchain. pose proof (Hbound i j z Hchain). cbn [length]. lia.
+    - cbn [chain] in Hchain. apply plus_value in Hchain.
+      destruct Hchain as [a [b [Hfirst [Hrest Hz]]]]. subst z.
+      pose proof (Hbound i k a Hfirst) as Ha.
+      pose proof (IH k j b Hrest) as Hb.
+      pose proof (rel_abs_add a b) as Hsum. cbn [length]. nia.
+  Qed.
+
+  (** Every prefix vertex is the source of an original edge. *)
+  Lemma chain_sources : forall A (e : A -> A -> option Z) (P : A -> Prop),
+    (forall i j z, e i j = Some z -> P i) ->
+    forall ks i j z, chain e i ks j = Some z ->
+      forall x, In x (i :: ks) -> P x.
+  Proof.
+    intros A e P Hsource ks. induction ks as [|k ks IH]; intros i j z Hchain x Hx.
+    - destruct Hx as [Heq|Hx]; [subst x|contradiction].
+      eapply Hsource. exact Hchain.
+    - cbn [chain] in Hchain. apply plus_value in Hchain.
+      destruct Hchain as [a [b [Hfirst [Hrest Hz]]]].
+      destruct Hx as [Heq|Hx].
+      + subst x. eapply Hsource. exact Hfirst.
+      + exact (IH k j b Hrest x Hx).
+  Qed.
+
+  (** A suffix of a minimum chain is itself minimum once its first pivot is closed. *)
+  Lemma path_suffix_exact : forall A (e r : A -> A -> option Z) processed,
+    (forall i j, below (r i j) (e i j)) ->
+    (forall k, In k processed -> closed_at r k) ->
+    forall i k j ks a b, In k processed -> incl ks processed ->
+      e i k = Some a -> chain e k ks j = Some b ->
+      r i j = Some (a + b)%Z -> r k j = Some b.
+  Proof.
+    intros A e r processed Hmono Hclosed i k j ks a b Hk Hks Hfirst Hrest Hentry.
+    pose proof (Hmono i k) as Hprefix. rewrite Hfirst in Hprefix.
+    destruct (below_finite _ a Hprefix) as [a' [Ha' Hlea]].
+    pose proof (chain_bound A e r processed Hmono Hclosed ks k j Hks) as Hsuffix.
+    rewrite Hrest in Hsuffix.
+    destruct (below_finite _ b Hsuffix) as [b' [Hb' Hleb]].
+    pose proof (Hclosed k Hk i j) as Htriangle.
+    rewrite Hentry, Ha', Hb' in Htriangle. cbn [below plus] in Htriangle.
+    assert (Hb : b' = b) by lia. now subst b'.
+  Qed.
+
+  (** A minimum chain can erase every repeat before its final endpoint. *)
+  Lemma simple_minimum_chain : forall A
+      (decide : forall x y : A, {x = y} + {x <> y})
+      (e r : A -> A -> option Z) processed,
+    (forall i j, below (r i j) (e i j)) ->
+    (forall k, In k processed -> closed_at r k) ->
+    (forall k, In k processed -> r k k = Some 0%Z) ->
+    forall ks i j d, incl ks processed ->
+      r i j = Some d -> chain e i ks j = Some d ->
+      exists shortened, incl shortened ks /\ NoDup (i :: shortened) /\
+        chain e i shortened j = Some d.
+  Proof.
+    intros A decide e r processed Hmono Hclosed Hzero.
+    assert (Hall : forall n ks, length ks < n ->
+      forall i j d, incl ks processed ->
+        r i j = Some d -> chain e i ks j = Some d ->
+        exists shortened, incl shortened ks /\ NoDup (i :: shortened) /\
+          chain e i shortened j = Some d).
+    { induction n as [|n IH]; intros ks Hlength i j d Hks Hentry Hchain.
+      - lia.
+      - destruct (in_dec decide i ks) as [Hloop|Hfresh].
+        + apply in_split in Hloop. destruct Hloop as [before [after Heq]]. subst ks.
+          assert (Hi : In i processed).
+          { apply Hks. apply in_or_app. right. now left. }
+          assert (Hbefore : incl before processed).
+          { intros x Hx. apply Hks. apply in_or_app. now left. }
+          assert (Hafter : incl after processed).
+          { intros x Hx. apply Hks. apply in_or_app. right. now right. }
+          rewrite chain_app in Hchain. apply plus_value in Hchain.
+          destruct Hchain as [cycle [rest [Hcycle [Hrest Hd]]]].
+          pose proof (chain_bound A e r processed Hmono Hclosed before i i Hbefore)
+            as Hcycle_bound.
+          rewrite (Hzero i Hi), Hcycle in Hcycle_bound. cbn [below] in Hcycle_bound.
+          pose proof (chain_bound A e r processed Hmono Hclosed after i j Hafter)
+            as Hrest_bound.
+          rewrite Hentry, Hrest in Hrest_bound. cbn [below] in Hrest_bound.
+          assert (Hsame : rest = d) by lia.
+          assert (Hshort : length after < n).
+          { rewrite length_app in Hlength. cbn [length] in Hlength. lia. }
+          assert (Hafter_value : chain e i after j = Some d).
+          { now rewrite <- Hsame. }
+          destruct (IH after Hshort i j d Hafter Hentry Hafter_value)
+            as [shortened [Hincl [Hnodup Hvalue]]].
+          exists shortened. split.
+          * intros x Hx. apply in_or_app. right. right. now apply Hincl.
+          * now split.
+        + destruct ks as [|k rest].
+          * exists nil. split; [intros x Hx; contradiction|].
+            split; [constructor; [intro Hx; contradiction|constructor]|exact Hchain].
+          * cbn [chain] in Hchain. apply plus_value in Hchain.
+            destruct Hchain as [a [b [Hfirst [Hrest Hd]]]].
+            assert (Hk : In k processed) by (apply Hks; now left).
+            assert (Hrest_incl : incl rest processed).
+            { intros x Hx. apply Hks. now right. }
+            assert (Hcurrent : r i j = Some (a + b)%Z) by (now rewrite <- Hd).
+            pose proof (path_suffix_exact A e r processed Hmono Hclosed
+              i k j rest a b Hk Hrest_incl Hfirst Hrest Hcurrent) as Hsuffix.
+            assert (Hshort : length rest < n) by (cbn [length] in Hlength; lia).
+            destruct (IH rest Hshort k j b Hrest_incl Hsuffix Hrest)
+              as [shortened [Hincl [Hnodup Hvalue]]].
+            exists (k :: shortened). split.
+            -- intros x [Hx|Hx]; [now left|right; now apply Hincl].
+            -- split.
+               ++ constructor; [|exact Hnodup]. intro Hx. apply Hfresh.
+                  destruct Hx as [Hx|Hx]; [now left|right; now apply Hincl].
+               ++ cbn [chain]. rewrite Hfirst, Hvalue. cbn [plus]. f_equal. lia. }
+    intros ks i j d Hks Hentry Hchain.
+    exact (Hall (S (length ks)) ks ltac:(lia) i j d Hks Hentry Hchain).
+  Qed.
+
 End RelationalPathBounds.
 
 
