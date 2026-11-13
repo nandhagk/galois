@@ -155,7 +155,7 @@ Module Type UNION_FIND_PLAN (Import U : UNION_FIND_T).
     (forall y, In y path -> mem u y /\ repr u y = r /\ y <> r) -> ranked (compress r path u) rk.
   (** Linking by class size admits an updated ghost rank at the winning root. *)
   Parameter F6_link : forall u rk w l, wf u -> ranked u rk ->
-    is_root u w -> is_root u l -> w <> l ->
+    mem u w -> mem u l -> is_root u w -> is_root u l -> w <> l ->
     size_of u l <= size_of u w ->
     ranked (link w l u) (fun x => if Pos.eqb x w then Nat.max (rk w) (S (rk l)) else rk x).
   (* T: time chain; T_find_le follows from T3, T4 and F4, T_union_le from T_find_le twice and T5 *)
