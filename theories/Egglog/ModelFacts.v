@@ -1276,3 +1276,178 @@ Module LoopNFacts.
   Qed.
 
 End LoopNFacts.
+
+(** * Stored occurrence buckets *)
+
+Module OccurrenceBucketCode (K : KEY_OPS) (M : MAP_OPS K).
+
+  (** An absent bucket contributes no occurrence. *)
+  Definition bucket {A} (owner : K.t) (m : M.t (list A)) : list A :=
+    match M.get owner m with Some occurrences => occurrences | None => [] end.
+
+  (** Registration retains one entry for each occurrence, including repeated entries. *)
+  Definition add {A} (owner : K.t) (entry : A) (m : M.t (list A)) : M.t (list A) :=
+    M.set owner (entry :: bucket owner m) m.
+
+  (** Transfer visits the source bucket and leaves the total occurrence inventory unchanged. *)
+  Definition transfer {A} (source target : K.t) (m : M.t (list A)) : M.t (list A) :=
+    if K.eqb source target then m else
+      M.set target (rev_append (bucket source m) (bucket target m)) (M.remove source m).
+
+  (** Each supplied occurrence is registered once without deduplication. *)
+  Fixpoint register {A} (occurrences : list (K.t * A)) (m : M.t (list A)) : M.t (list A) :=
+    match occurrences with
+    | [] => m
+    | (owner, entry) :: rest => register rest (add owner entry m)
+    end.
+
+End OccurrenceBucketCode.
+
+Module OccurrenceBucketFacts (K : KEY) (M : MAP K).
+  Include OccurrenceBucketCode K M.
+  Module Maps := FiniteMapFacts K M.
+
+  Section Inventory.
+  Context {A : Type}.
+
+  (** The specification enumeration labels every stored occurrence with its bucket owner. *)
+  Definition entries (m : M.t (list A)) : list (K.t * A) :=
+    flat_map (fun binding => map (pair (fst binding)) (snd binding)) (M.elements m).
+
+  (** Forgetting bucket owners still retains the complete multiset of entries. *)
+  Definition inventory (m : M.t (list A)) : list A := flat_map snd (M.elements m).
+
+  Definition count (m : M.t (list A)) : nat := length (entries m).
+
+  (** Registration and transfer preserve the public map invariant. *)
+  Lemma wf_add : forall owner (entry : A) (m : M.t (list A)),
+    M.wf m -> M.wf (add owner entry m).
+  Proof.
+    intros owner entry m Hwf. unfold add. now apply M.wf_set.
+  Qed.
+
+  Lemma wf_transfer : forall source target (m : M.t (list A)),
+    M.wf m -> M.wf (transfer source target m).
+  Proof.
+    intros source target m Hwf. unfold transfer. destruct (K.eqb source target); [exact Hwf |].
+    apply M.wf_set. now apply M.wf_remove.
+  Qed.
+
+  Lemma wf_register : forall (occurrences : list (K.t * A)) (m : M.t (list A)),
+    M.wf m -> M.wf (register occurrences m).
+  Proof.
+    induction occurrences as [| [owner entry] rest IH]; intros m Hwf; cbn [register].
+    - exact Hwf.
+    - apply IH. now apply wf_add.
+  Qed.
+
+  (** Enumerated membership is exactly membership in the owner's keyed bucket. *)
+  Lemma entries_member : forall m owner entry, M.wf m ->
+    (In (owner, entry) (entries m) <-> In entry (bucket owner m)).
+  Proof.
+    intros m owner entry Hwf. unfold entries. rewrite in_flat_map. split.
+    - intros [[key occurrences] [Hbinding Hin]].
+      apply in_map_iff in Hin as [value [Hequal Hin]]. cbn [fst snd] in Hequal, Hin.
+      injection Hequal as -> ->. apply M.elements_spec in Hbinding; [| exact Hwf].
+      unfold bucket. now rewrite Hbinding.
+    - unfold bucket. destruct (M.get owner m) as [occurrences |] eqn:Hget;
+        [| contradiction]. intro Hin. exists (owner, occurrences). split.
+      + now apply M.elements_spec.
+      + cbn [fst snd]. now apply in_map.
+  Qed.
+
+  (** Dropping the owner labels preserves every entry and every repetition. *)
+  Lemma entries_inventory : forall m, map snd (entries m) = inventory m.
+  Proof.
+    intro m. unfold entries, inventory. induction (M.elements m) as [| [owner occurrences] rest IH].
+    - reflexivity.
+    - cbn [flat_map fst snd]. rewrite map_app, map_map, IH.
+      change (map (fun x : A => x) occurrences ++ flat_map snd rest =
+        occurrences ++ flat_map snd rest). now rewrite map_id.
+  Qed.
+
+  Lemma inventory_length : forall m, length (inventory m) = count m.
+  Proof.
+    intro m. unfold count. rewrite <- entries_inventory, length_map. reflexivity.
+  Qed.
+
+  (** One optional map binding contributes precisely its optional bucket contents. *)
+  Lemma optional_inventory : forall (owner : K.t) (previous : option (list A)),
+    flat_map snd (option_list (option_map (pair owner) previous)) =
+      match previous with Some occurrences => occurrences | None => [] end.
+  Proof.
+    intros owner [occurrences |]; cbn [option_list option_map flat_map snd]; now rewrite ?app_nil_r.
+  Qed.
+
+  (** Replacing one bucket retains exactly the same inventory outside that bucket. *)
+  Lemma inventory_set_decomposition : forall m owner occurrences, M.wf m ->
+    exists rest,
+      Permutation (inventory m) (bucket owner m ++ rest) /\
+      Permutation (inventory (M.set owner occurrences m)) (occurrences ++ rest).
+  Proof.
+    intros m owner occurrences Hwf.
+    destruct (Maps.set_elements_decomposition _ m owner (M.get owner m) occurrences Hwf eq_refl)
+      as [rest [Hbefore [Hafter _]]]. exists (flat_map snd rest). split.
+    - assert (Hflat : Permutation (inventory m)
+        (flat_map snd (option_list (option_map (pair owner) (M.get owner m)) ++ rest))).
+      { unfold inventory. now apply Permutation_flat_map. }
+      rewrite flat_map_app, optional_inventory in Hflat. exact Hflat.
+    - unfold inventory. change (Permutation (flat_map snd (M.elements (M.set owner occurrences m)))
+        (flat_map snd ((owner, occurrences) :: rest))). now apply Permutation_flat_map.
+  Qed.
+
+  (** Each registration increases the exact inventory count by one, even for a duplicate entry. *)
+  Lemma count_add : forall owner entry m, M.wf m -> count (add owner entry m) = S (count m).
+  Proof.
+    intros owner entry m Hwf.
+    destruct (inventory_set_decomposition m owner (entry :: bucket owner m) Hwf)
+      as [rest [Hbefore Hafter]].
+    apply Permutation_length in Hbefore. apply Permutation_length in Hafter.
+    rewrite !length_app in Hbefore, Hafter. cbn [length] in Hafter.
+    unfold add. rewrite <- !inventory_length. lia.
+  Qed.
+
+  (** A registration adds exactly its selected owner-entry pair. *)
+  Lemma entries_add : forall m owner entry query value, M.wf m ->
+    (In (query, value) (entries (add owner entry m)) <->
+      In (query, value) (entries m) \/ (query = owner /\ value = entry)).
+  Proof.
+    intros m owner entry query value Hwf.
+    rewrite !entries_member by (try exact Hwf; now apply wf_add).
+    unfold add, bucket. destruct (K.eqb_spec query owner) as [-> | Hdifferent].
+    - rewrite M.get_set_same. cbn [In]. intuition congruence.
+    - rewrite M.get_set_other by exact Hdifferent. intuition congruence.
+  Qed.
+
+  (** Repeated registration increases the count by exactly the number of supplied occurrences. *)
+  Lemma count_register : forall occurrences m, M.wf m ->
+    count (register occurrences m) = length occurrences + count m.
+  Proof.
+    induction occurrences as [| [owner entry] rest IH]; intros m Hwf; cbn [register length].
+    - reflexivity.
+    - rewrite IH by (now apply wf_add). rewrite count_add by exact Hwf. lia.
+  Qed.
+
+  (** Every supplied pair remains represented, including pairs repeated in the input list. *)
+  Lemma entries_register : forall occurrences m query value, M.wf m ->
+    (In (query, value) (entries (register occurrences m)) <->
+      In (query, value) (entries m) \/ In (query, value) occurrences).
+  Proof.
+    induction occurrences as [| [owner entry] rest IH]; intros m query value Hwf;
+      cbn [register In].
+    - tauto.
+    - rewrite IH by (now apply wf_add). rewrite entries_add by exact Hwf.
+      intuition congruence.
+  Qed.
+
+  (** A stored binary count can be maintained using only the number of new occurrences. *)
+  Lemma register_count_consistent : forall occurrences m n,
+    M.wf m -> N.to_nat n = count m ->
+    N.to_nat (n + N.of_nat (length occurrences)) = count (register occurrences m).
+  Proof.
+    intros occurrences m n Hwf Hcount.
+    rewrite N2Nat.inj_add, Nat2N.id, count_register by exact Hwf. lia.
+  Qed.
+
+  End Inventory.
+End OccurrenceBucketFacts.
