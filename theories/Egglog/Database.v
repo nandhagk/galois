@@ -491,10 +491,11 @@ TimeFun db_slot_store.
 
 Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   Definition t := database_state (cell V.t).
-  (** Projection preparation is stored while group and index construction remain placeholders. *)
+  (** Initialization retains the empty index counter and prepares supplied projections.
+      Group and index construction remain placeholders. *)
   (* STUB-CODE *)
   Definition init (_ : list decl) (sl : list (positive * list nat)) : t :=
-    DatabaseState UnionFindCode.empty 0%N 0%N 0%N [] []
+    DatabaseState UnionFindCode.empty 0%N 0%N 1%N [] [1%positive]
       {| row_history := []; row_links := []; row_weights := []; row_keys := [];
          row_fresh := 1 |}
       {| prepared_slots := prepare_slot_layouts sl;

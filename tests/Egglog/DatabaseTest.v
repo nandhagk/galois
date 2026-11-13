@@ -1,7 +1,8 @@
-(** * Prepared database projections
+(** * Database initialization and prepared projections
 
     Slot preparation records sorted positions and restores the requested projection order.
     For example, positions [2; 0; 1] project [10; 20; 30] to [30; 10; 20].
+    Initialization also retains the empty index's positive counter.
     Builds on: Database and the code towers of ValueSig and Index. *)
 
 From Stdlib Require Import List PArith NArith.
@@ -19,6 +20,20 @@ End FixtureValue.
 
 Module FixtureIndex := IndexCode FixtureValue.
 Module FixtureDatabase := DatabaseCode FixtureValue FixtureIndex.
+
+(** Even without slots, the empty index's next counter must be retained. *)
+Example init_empty_index_counter :
+  db_index_counters (FixtureDatabase.init [] []) = [1%positive].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The empty database's watermark includes that positive counter. *)
+Example init_empty_watermark :
+  db_wmark (FixtureDatabase.init [] []) = 1%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
 (** Preparation retains the original ranks after sorting absolute positions. *)
 Example slot_sorted_positions :
