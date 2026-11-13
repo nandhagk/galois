@@ -4,7 +4,7 @@
     For example, a forward transfer pairs the two component results.
     Builds on: ProductSig and lattice products. *)
 
-From Stdlib Require Import List NArith Bool Lia.
+From Stdlib Require Import List NArith Bool Lia PeanoNat.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Lattice Require Import Product.
 From Galois.Domains Require Import LangSig ValueSig ProductSig.
@@ -529,6 +529,73 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
     - unfold size at 1. cbn [fst snd]. lia.
   Qed.
 
+  Local Lemma wide_budget : forall budget,
+    (16 * (k_core * k_core * budget) + 16 * (k_core * budget) + 32 * budget <=
+      c_val * budget)%N.
+  Proof.
+    intro budget. replace
+      (16 * (k_core * k_core * budget) + 16 * (k_core * budget) + 32 * budget)%N with
+      ((16 * k_core * k_core + 16 * k_core + 32) * budget)%N by ring.
+    apply N.mul_le_mono_r. pose proof (proj1 core_bounds). unfold c_val. nia.
+  Qed.
+
+  (** Truncating a pair of lists cannot increase either component's size sum. *)
+  Lemma combine_size_bound : forall xs ys,
+    (fold_right Nat.add 0%nat (map size (combine xs ys)) <=
+      fold_right Nat.add 0%nat (map A.size xs) +
+      fold_right Nat.add 0%nat (map B.size ys))%nat.
+  Proof.
+    intro xs. induction xs as [|a xs IH]; intros [|b ys];
+      cbn [combine map fold_right]; try lia.
+    unfold size at 1. cbn [fst snd]. pose proof (IH ys). lia.
+  Qed.
+
+  (** Each normalized list entry can add at most one closed bottom pair. *)
+  Lemma normalize_list_size_bound : forall xs,
+    (fold_right Nat.add 0%nat (map size (map normalize xs)) <=
+      fold_right Nat.add 0%nat (map size xs) +
+      length xs * (A.size A.bot + B.size B.bot))%nat.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; cbn [map fold_right length].
+    - lia.
+    - pose proof (normalize_size_bound x). rewrite Nat.mul_succ_l. lia.
+  Qed.
+
+  Lemma paired_size_bound : forall xs ys,
+    (fold_right Nat.add 0%nat (map size (map normalize (combine xs ys))) <=
+      fold_right Nat.add 0%nat (map A.size xs) +
+      fold_right Nat.add 0%nat (map B.size ys) +
+      length xs * (A.size A.bot + B.size B.bot))%nat.
+  Proof.
+    intros xs ys. pose proof (normalize_list_size_bound (combine xs ys)) as Hnormal.
+    pose proof (combine_size_bound xs ys) as Hpair.
+    assert (Hlength : (length (combine xs ys) <= length xs)%nat).
+    { rewrite length_combine. apply Nat.le_min_l. }
+    assert (Hbottom : (length (combine xs ys) * (A.size A.bot + B.size B.bot) <=
+      length xs * (A.size A.bot + B.size B.bot))%nat).
+    { now apply Nat.mul_le_mono_r. }
+    lia.
+  Qed.
+
+  Local Lemma paired_size_budget : forall xs ys budget,
+    (N.of_nat (fold_right Nat.add 0%nat (map A.size xs)) <= k_core * budget)%N ->
+    (N.of_nat (fold_right Nat.add 0%nat (map B.size ys)) <= k_core * budget)%N ->
+    (N.of_nat (length xs) <= budget)%N ->
+    (N.of_nat (fold_right Nat.add 0%nat (map size (map normalize (combine xs ys)))) <=
+      c_val * budget)%N.
+  Proof.
+    intros xs ys budget Ha Hb Hlength.
+    pose proof (nat_bound _ _ (paired_size_bound xs ys)) as Hsize.
+    assert (Hbottom : (N.of_nat (length xs) * N.of_nat (A.size A.bot + B.size B.bot) <=
+      k_core * budget)%N).
+    { rewrite (N.mul_comm (N.of_nat (length xs))). apply N.mul_le_mono.
+      - exact (proj2 (proj2 (proj2 core_bounds))).
+      - exact Hlength. }
+    pose proof (basic_budget budget) as Htotal.
+    rewrite !Nat2N.inj_add, Nat2N.inj_mul in Hsize.
+    rewrite Nat2N.inj_add in Hbottom. lia.
+  Qed.
+
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -564,7 +631,31 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
   Qed.
   Lemma T_meet_le : forall a b,
     (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a b] [c d]. set (budget := N.of_nat (size (a, b) + size (c, d) + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Ha : (A.T_meet a c <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.T_meet_le|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hb : (B.T_meet b d <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.T_meet_le|exact core_B|]. unfold size. cbn. lia. }
+    assert (Hsa : (N.of_nat (A.size (A.meet a c)) <= k_core * budget)%N).
+    { eapply scale_callback; [apply A.meet_size|exact core_A|]. unfold size. cbn. lia. }
+    assert (Hsb : (N.of_nat (B.size (B.meet b d)) <= k_core * budget)%N).
+    { eapply scale_callback; [apply B.meet_size|exact core_B|]. unfold size. cbn. lia. }
+    assert (Hraw : (N.of_nat (size (A.meet a c, B.meet b d) + 1) <=
+      2 * (k_core * budget) + budget)%N).
+    { unfold size. cbn [fst snd]. rewrite !Nat2N.inj_add. lia. }
+    assert (Hnormal : (T_normalize (A.meet a c, B.meet b d) <=
+      8 * (k_core * k_core * budget) + 4 * (k_core * budget))%N).
+    { eapply N.le_trans; [apply normalize_time_bound|].
+      replace (8 * (k_core * k_core * budget) + 4 * (k_core * budget))%N with
+        (4 * k_core * (2 * (k_core * budget) + budget))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (wide_budget budget) as Htotal.
+    time_unfold T_meet. time_unfold @T_product_pair.
+    time_cbn. time_pose. unfold product_pair. cbn [fst snd]. lia.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
   Proof.
@@ -708,11 +799,29 @@ Module ProductT (L : LANG_T) (A B : VALUE_DOMAIN_T L) <: PRODUCT_ALL L A B.
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o [a b] xs. set (budget := N.of_nat (work o xs + size (a, b) + 1)).
+    unfold backward, product_backward. cbn [fst snd]. apply paired_size_budget.
+    - eapply scale_callback; [apply A.backward_size|exact core_A|].
+      unfold work, size. cbn [fst snd]. lia.
+    - eapply scale_callback; [apply B.backward_size|exact core_B|].
+      unfold work, size. cbn [fst snd]. lia.
+    - pose proof (Forall2_length (A.backward_refines o a (map fst xs))) as Hlength.
+      rewrite length_map in Hlength. rewrite Hlength.
+      unfold budget, work, t. rewrite !Nat2N.inj_add. lia.
+  Qed.
   Lemma guard_size : forall g xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
       c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. set (budget := N.of_nat (gwork g xs + 1)).
+    unfold guard, product_guard. apply paired_size_budget.
+    - eapply scale_callback; [apply A.guard_size|exact core_A|]. unfold gwork. lia.
+    - eapply scale_callback; [apply B.guard_size|exact core_B|]. unfold gwork. lia.
+    - pose proof (Forall2_length (A.guard_refines g (map fst xs))) as Hlength.
+      rewrite length_map in Hlength. rewrite Hlength.
+      unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia.
+  Qed.
   Lemma work_sizes : forall o xs,
     fold_right Nat.add 0%nat (map size xs) <= work o xs.
   Proof.
