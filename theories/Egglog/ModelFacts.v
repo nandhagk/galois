@@ -1449,5 +1449,132 @@ Module OccurrenceBucketFacts (K : KEY) (M : MAP K).
     rewrite N2Nat.inj_add, Nat2N.id, count_register by exact Hwf. lia.
   Qed.
 
+  (** An empty map has no stored occurrences and therefore needs a zero count. *)
+  Lemma entries_empty : entries (@M.empty (list A)) = [].
+  Proof.
+    destruct (entries (@M.empty (list A))) as [| [owner entry] rest] eqn:Hentries;
+      [reflexivity |]. exfalso.
+    assert (Hin : In (owner, entry) (entries (@M.empty (list A)))).
+    { rewrite Hentries. now left. }
+    apply (entries_member _ owner entry (M.wf_empty (list A))) in Hin.
+    unfold bucket in Hin. rewrite M.get_empty in Hin. contradiction.
+  Qed.
+
+  Lemma count_empty : count (@M.empty (list A)) = 0.
+  Proof.
+    unfold count. now rewrite entries_empty.
+  Qed.
+
+  (** Registration adds precisely one value to the complete occurrence multiset. *)
+  Lemma inventory_add : forall owner entry m, M.wf m ->
+    Permutation (inventory (add owner entry m)) (entry :: inventory m).
+  Proof.
+    intros owner entry m Hwf. unfold add.
+    destruct (inventory_set_decomposition m owner (entry :: bucket owner m) Hwf)
+      as [rest [Hbefore Hafter]].
+    eapply Permutation_trans; [exact Hafter |].
+    apply perm_skip. now apply Permutation_sym.
+  Qed.
+
+  (** Removing a bucket partitions the inventory into that bucket and the exact remaining map. *)
+  Lemma inventory_remove_decomposition : forall m owner, M.wf m ->
+    Permutation (inventory m) (bucket owner m ++ inventory (M.remove owner m)).
+  Proof.
+    intros m owner Hwf.
+    pose proof (Maps.remove_elements_decomposition _ m owner (M.get owner m) Hwf eq_refl) as Hparts.
+    assert (Hflat : Permutation (inventory m)
+      (flat_map snd (option_list (option_map (pair owner) (M.get owner m)) ++
+        M.elements (M.remove owner m)))).
+    { unfold inventory. now apply Permutation_flat_map. }
+    rewrite flat_map_app, optional_inventory in Hflat. exact Hflat.
+  Qed.
+
+  (** Reversing a source bucket while appending does not change any occurrence multiplicity. *)
+  Lemma reverse_append_inventory : forall (first second : list A),
+    Permutation (rev_append first second) (first ++ second).
+  Proof.
+    intro first. induction first as [| entry first IH]; intro second; cbn [rev_append app].
+    - reflexivity.
+    - eapply Permutation_trans; [exact (IH (entry :: second)) |].
+      apply Permutation_sym. apply Permutation_middle.
+  Qed.
+
+  Lemma reverse_append_member : forall (first second : list A) entry,
+    In entry (rev_append first second) <-> In entry first \/ In entry second.
+  Proof.
+    intros first second entry. pose proof (reverse_append_inventory first second) as Hperm. split.
+    - intro Hin. apply in_app_iff. eapply Permutation_in; eassumption.
+    - intro Hin. eapply Permutation_in; [apply Permutation_sym; exact Hperm |].
+      now apply in_app_iff.
+  Qed.
+
+  (** Moving a bucket changes ownership but preserves the complete multiset of entries. *)
+  Lemma inventory_transfer : forall source target m, M.wf m ->
+    Permutation (inventory (transfer source target m)) (inventory m).
+  Proof.
+    intros source target m Hwf. unfold transfer.
+    destruct (K.eqb_spec source target) as [Hequal | Hdifferent]; [reflexivity |].
+    set (removed := M.remove source m).
+    assert (Hremoved : M.wf removed) by (unfold removed; now apply M.wf_remove).
+    assert (Htarget : bucket target removed = bucket target m).
+    { unfold removed, bucket. now rewrite M.get_remove_other by congruence. }
+    pose proof (inventory_remove_decomposition m source Hwf) as Hsource. fold removed in Hsource.
+    destruct (inventory_set_decomposition removed target
+      (rev_append (bucket source m) (bucket target m)) Hremoved)
+      as [rest [Hbefore Hafter]]. rewrite Htarget in Hbefore.
+    eapply Permutation_trans; [exact Hafter |].
+    eapply Permutation_trans.
+    - apply Permutation_app_tail. apply reverse_append_inventory.
+    - replace ((bucket source m ++ bucket target m) ++ rest)
+        with (bucket source m ++ (bucket target m ++ rest)) by (now rewrite app_assoc).
+      apply Permutation_sym. eapply Permutation_trans; [exact Hsource |].
+      now apply Permutation_app_head.
+  Qed.
+
+  (** Transfer needs no change to the exact stored occurrence count. *)
+  Lemma count_transfer : forall source target m, M.wf m ->
+    count (transfer source target m) = count m.
+  Proof.
+    intros source target m Hwf. pose proof (inventory_transfer source target m Hwf) as Hperm.
+    apply Permutation_length in Hperm. now rewrite !inventory_length in Hperm.
+  Qed.
+
+  (** A transfer preserves every other owner and moves precisely the source occurrences to the target. *)
+  Lemma bucket_transfer_member : forall source target (m : M.t (list A)) query value,
+    In value (bucket query (transfer source target m)) <->
+      (In value (bucket query m) /\ query <> source) \/
+      (query = target /\ In value (bucket source m)).
+  Proof.
+    intros source target m query value. unfold transfer.
+    destruct (K.eqb_spec source target) as [-> | Hdifferent].
+    - destruct (K.eqb_spec query target) as [-> | Hquery]; intuition congruence.
+    - unfold bucket at 1. destruct (K.eqb_spec query target) as [-> | Htarget].
+      + rewrite M.get_set_same, reverse_append_member. intuition congruence.
+      + rewrite M.get_set_other by exact Htarget.
+        destruct (K.eqb_spec query source) as [-> | Hsource].
+        * rewrite M.get_remove_same. cbn [In]. intuition congruence.
+        * rewrite M.get_remove_other by exact Hsource. fold (bucket query m). intuition congruence.
+  Qed.
+
+  (** The labeled specification inventory exposes exactly the same transfer relation. *)
+  Lemma entries_transfer : forall source target m query value, M.wf m ->
+    (In (query, value) (entries (transfer source target m)) <->
+      (In (query, value) (entries m) /\ query <> source) \/
+      (query = target /\ In (source, value) (entries m))).
+  Proof.
+    intros source target m query value Hwf.
+    rewrite (entries_member (transfer source target m) query value
+      (wf_transfer source target m Hwf)).
+    rewrite (entries_member m query value Hwf), (entries_member m source value Hwf).
+    apply bucket_transfer_member.
+  Qed.
+
+  (** No bucket contains more occurrences than the complete stored inventory. *)
+  Lemma bucket_length_le_count : forall m owner, M.wf m -> length (bucket owner m) <= count m.
+  Proof.
+    intros m owner Hwf. pose proof (inventory_remove_decomposition m owner Hwf) as Hperm.
+    apply Permutation_length in Hperm. rewrite length_app, inventory_length in Hperm. lia.
+  Qed.
+
   End Inventory.
 End OccurrenceBucketFacts.
