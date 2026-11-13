@@ -4303,6 +4303,21 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         end;
         eapply N.le_trans; [|exact Htime]; lia
     end).
+    all: try (match goal with
+    | |- context [Scalar.T_interval_join _ _] =>
+        pose proof (table_ite_dispatch_time rw wa a wb b wc c) as Htime;
+        match goal with
+        | |- (?lhs <= c_word_table * N.of_nat ?budget)%N =>
+            replace lhs with (T_wfwd bvite rw [(wa, a); (wb, b); (wc, c)])
+              by reflexivity;
+            replace budget with
+              (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb +
+                Pos.to_nat wc + 1) ^ 2 +
+                W.psize wa a + W.psize wb b + W.psize wc c)%nat)
+              by (rewrite Nat.pow_2_r; nia)
+        end;
+        exact Htime
+    end).
   Admitted. (* OPEN: bound the timed unary and binary interval dispatches. *)
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
