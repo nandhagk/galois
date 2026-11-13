@@ -1254,9 +1254,39 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
       if andb (Pos.eqb (db_tuple_code ck) (db_tuple_code k)) (output_eqb co o)
       then db else put f ck co (row_delete f k db)
     end.
-  (* STUB-CODE *)
+  (** Enumerate current rows that contain an occurrence of a queued loser. *)
+  Definition db_get_uses (i : positive) (db : t) : list (positive * list (cell V.t)) :=
+    fold_right (fun entry work =>
+      let stored := snd entry in
+      if existsb (fun c => match c with
+          | Id j => Pos.eqb i j
+          | Val _ => false
+          end) (snd (fst stored) ++ option_list (snd stored))
+      then fst stored :: work else work) []
+      (PTrieCode.elements (runtime_rows (db_runtime db))).
+
+  (** Popping the scheduling queue leaves the represented database view unchanged. *)
+  Definition db_pop_loser (db : t) : option (positive * t) :=
+    match runtime_queue (db_runtime db) with
+    | [] => None
+    | i :: rest => Some (i,
+        database_set_pending (N.pred (db_npending db))
+          (database_set_runtime
+            (runtime_set_union (runtime_changed (db_runtime db))
+              (runtime_equalities (db_runtime db)) rest (db_runtime db)) db))
+    end.
+
+  (** Repair active rows before taking the next pending equality. *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
-      : (t * list (positive * list (cell V.t))) + t := inr (fst s).
+      : (t * list (positive * list (cell V.t))) + t :=
+    match snd s with
+    | (f, k) :: rest => inl (repair_current f k (fst s), rest)
+    | [] =>
+      match db_pop_loser (fst s) with
+      | None => inr (fst s)
+      | Some (i, db) => inl (db, db_get_uses i (fst s))
+      end
+    end.
   Definition db_rebuild_fuel (db : t) : N :=
     ((N.size (runtime_allocated (db_runtime db)) + 2) * (db_nuses db + 1) + db_npending db + 1)%N.
   Definition rebuild (db : t) :=
@@ -3527,7 +3557,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Canonical databases without pending work rebuild to themselves. *)
   Lemma rebuild_idle : forall db, wf db -> canonical db -> pending db = 0 -> rebuild db = db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hwf Hcanonical Hpending. unfold rebuild.
+    rewrite (LoopNFacts.loopN_stop _ _ db_rstep (db_rebuild_fuel db) (db, []) db).
+    - reflexivity.
+    - unfold db_rebuild_fuel. lia.
+    - unfold pending in Hpending.
+      destruct (runtime_queue (db_runtime db)) as [| i rest] eqn:Hqueue;
+        [| discriminate].
+      cbn [db_rstep fst snd]. unfold db_pop_loser. now rewrite Hqueue.
+  Qed.
 
   (** Related keys whose identifiers are already representatives are equal cell by cell. *)
   Lemma canonical_keys_equal : forall db (k1 k2 : list (cell V.t)), wf db ->
@@ -3738,11 +3777,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db f k o i Hwf. exact (wf_row_ids db Hwf f k o i).
   Qed.
-
-  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
-  Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
-    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
-  Proof. Admitted. (* STUB *)
 
   (** The executable output merge is the frozen public combination operation. *)
   Lemma combine_output_correct : forall db f previous o,
@@ -4763,6 +4797,58 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       now apply model_forest_normal.
   Qed.
 
+  (** Queue removal changes neither rows, equality evidence, kinds nor the forest. *)
+  Lemma db_pop_loser_preserves : forall db i db', db_pop_loser db = Some (i, db') ->
+    db_forest db' = db_forest db /\ view db' = view db.
+  Proof.
+    intros db i db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'. split; reflexivity.
+  Qed.
+
+  (** Every continuing callback preserves the weaker semantic invariant. *)
+  Lemma db_rstep_semantic_continue : forall M nu s s',
+    model_forest M nu (fst s) /\ sat V.merge M nu (view (fst s)) ->
+    db_rstep s = inl s' ->
+    model_forest M nu (fst s') /\ sat V.merge M nu (view (fst s')).
+  Proof.
+    intros M nu [db work] s' [Hmodel Hsat] Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep.
+    - destruct (db_pop_loser db) as [[i db'] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hnext. subst s'. cbn [fst].
+      destruct (db_pop_loser_preserves db i db' Hpop) as [Hforest Hview].
+      split; [eapply model_forest_unchanged; eassumption | now rewrite Hview].
+    - injection Hstep as Hnext. subst s'. cbn [fst].
+      now apply repair_current_semantic.
+  Qed.
+
+  (** A stopped callback returns the database whose semantic invariant it carries. *)
+  Lemma db_rstep_semantic_stop : forall M nu s db',
+    model_forest M nu (fst s) /\ sat V.merge M nu (view (fst s)) ->
+    db_rstep s = inr db' -> model_forest M nu db' /\ sat V.merge M nu (view db').
+  Proof.
+    intros M nu [db work] db' Hsemantic Hstep.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hstep; [| discriminate].
+    destruct (db_pop_loser db) as [[i next] |]; [discriminate |].
+    injection Hstep as Hnext. now subst db'.
+  Qed.
+
+  (** Rebuilding keeps every satisfying model and identifier interpretation. *)
+  Lemma rebuild_sat : forall (M : model (V := V.t)) nu db, wf db ->
+    sat V.merge M nu (view db) -> sat V.merge M nu (view (rebuild db)).
+  Proof.
+    intros M nu db Hwf Hsat.
+    pose proof (LoopNFacts.loopN_preserves _ _ db_rstep
+      (fun s => model_forest M nu (fst s) /\ sat V.merge M nu (view (fst s)))
+      (fun result => model_forest M nu result /\ sat V.merge M nu (view result))
+      (db_rstep_semantic_continue M nu) (db_rstep_semantic_stop M nu)
+      (db_rebuild_fuel db) (db, [])
+      (conj (model_forest_initial M nu db Hwf Hsat) Hsat)) as Hloop.
+    unfold rebuild.
+    destruct (loopN db_rstep (db_rebuild_fuel db) (db, [])) as [s | result];
+      exact (proj2 Hloop).
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
@@ -4796,6 +4882,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun make.
   TimeFun put.
   TimeFun repair_current.
+  TimeFun db_get_uses db_pop_loser.
   TimeFun db_rstep.
   TimeFun db_rebuild_fuel.
   TimeFun rebuild.

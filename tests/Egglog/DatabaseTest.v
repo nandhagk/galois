@@ -214,3 +214,37 @@ Example layout_work_large_positions :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Rebuild repairs identifier occurrences and joins lattice rows whose keys become equal. *)
+Example rebuild_moves_keys_and_joins_values :
+  let db := FixtureDatabase.init
+    [Decl 1%positive [SVal] OId; Decl 2%positive [SId] ORel;
+     Decl 3%positive [SId] (OLat 1%positive)]
+    [(2%positive, [0]); (3%positive, [0])] in
+  let first := FixtureDatabase.make 1%positive [Val 1%positive] db in
+  let second := FixtureDatabase.make 1%positive [Val 2%positive] (snd first) in
+  let relation := FixtureDatabase.put 2%positive [Id (fst second)] None (snd second) in
+  let left := FixtureDatabase.put 3%positive [Id (fst first)] (Some (Val 4%positive)) relation in
+  let right := FixtureDatabase.put 3%positive [Id (fst second)] (Some (Val 8%positive)) left in
+  let result := FixtureDatabase.rebuild
+    (FixtureDatabase.union (fst first) (fst second) (FixtureDatabase.advance right)) in
+  (FixtureDatabase.row_get 2%positive [Id 1%positive] result,
+   FixtureDatabase.row_get 2%positive [Id 2%positive] result,
+   FixtureDatabase.row_get 3%positive [Id 1%positive] result,
+   FixtureDatabase.row_get 3%positive [Id 2%positive] result,
+   FixtureDatabase.row_get 1%positive [Val 2%positive] result,
+   runtime_queue (db_runtime result), db_npending result, FixtureDatabase.changed result) =
+    (Some None, None, Some (Some (Val 8%positive)), None,
+     Some (Some (Id 1%positive)), [], 0%N, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A database with no queued work is returned byte-for-byte by the loop. *)
+Example rebuild_empty_queue_identity :
+  let db := FixtureDatabase.put 3%positive [Val 2%positive] (Some (Val 4%positive))
+    (FixtureDatabase.init [Decl 3%positive [SVal] (OLat 1%positive)] [(3%positive, [0])]) in
+  FixtureDatabase.rebuild db = db.
+Proof.
+  vm_compute. reflexivity.
+Qed.
