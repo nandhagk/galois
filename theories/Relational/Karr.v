@@ -1776,6 +1776,711 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     now apply dense_eval_Q.
   Qed.
 
+  (** A mathematical weighted sum over the original rows. *)
+  Definition row_sum (P : list (lcons X.t)) (ms : list Z)
+      (entry : lcons X.t -> Z) : Z :=
+    fold_right Z.add 0%Z
+      (map (fun pm => (snd pm * entry (fst pm))%Z) (List.combine P ms)).
+
+  (** Source inequalities have zero weight in equality elimination. *)
+  Definition equality_weights (P : list (lcons X.t)) (ms : list Z) : Prop :=
+    Forall2 (fun p m => lrel p = RLe -> m = 0%Z) P ms.
+
+  (** Removed columns remain zero in the full original coordinate system. *)
+  Definition row_tracks (P : list (lcons X.t)) (xs : list X.t)
+      (target : lcons X.t) (offset : nat) (r : karr_row) : Prop :=
+    equality_weights P (kweight r) /\
+    repeat 0%Z offset ++ kcoeff r =
+      map (fun x => (C.comb_coef P (kweight r) x +
+        kscale r * coefficient x (lhs target))%Z) xs /\
+    kright r = (C.comb_rhs P (kweight r) + kscale r * rhs target)%Z.
+
+  Lemma equality_weights_length : forall P ms,
+    equality_weights P ms -> length P = length ms.
+  Proof.
+    intros P ms Hweights. induction Hweights; cbn; congruence.
+  Qed.
+
+  Lemma equality_weights_admissible : forall P ms,
+    equality_weights P ms -> C.admissible P ms.
+  Proof.
+    intros P ms Hweights. split; [now apply equality_weights_length |].
+    induction Hweights; constructor; auto. intro Hle. specialize (H Hle). lia.
+  Qed.
+
+  Lemma equality_weights_comb_eq : forall P ms,
+    equality_weights P ms -> C.comb_eq P ms = true.
+  Proof.
+    intros P ms Hweights. induction Hweights as [|p m P ms Hhead Htail IH];
+      [reflexivity |].
+    change ((match lrel p with REq => true | RLe => Z.eqb m 0 end &&
+      C.comb_eq P ms) = true).
+    rewrite IH. destruct (lrel p) eqn:Hrel; [reflexivity |].
+    rewrite (Hhead eq_refl). reflexivity.
+  Qed.
+
+  Lemma row_sum_scale : forall P ms entry a,
+    row_sum P (map (fun z => (a * z)%Z) ms) entry = (a * row_sum P ms entry)%Z.
+  Proof.
+    intro P. induction P as [| p P IH]; intros [|m ms] entry a;
+      unfold row_sum in *; cbn [List.combine map fold_right fst snd]; try ring.
+    rewrite IH. ring.
+  Qed.
+
+  Lemma row_sum_cross : forall P ms ns entry a b,
+    length ms = length ns ->
+    row_sum P (karr_cross a b ms ns) entry =
+      (a * row_sum P ms entry - b * row_sum P ns entry)%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] [|n ns] entry a b Hlength;
+      cbn [length] in Hlength; try discriminate;
+      unfold row_sum in *; cbn [karr_cross List.combine map fold_right fst snd]; try ring.
+    rewrite IH by lia. ring.
+  Qed.
+
+  Lemma comb_coef_scale : forall P ms a x,
+    C.comb_coef P (map (fun z => (a * z)%Z) ms) x = (a * C.comb_coef P ms x)%Z.
+  Proof.
+    intros P ms a x.
+    change (row_sum P (map (fun z => (a * z)%Z) ms)
+      (fun r => C.coef_of x (lhs r)) =
+      (a * row_sum P ms (fun r => C.coef_of x (lhs r)))%Z).
+    apply row_sum_scale.
+  Qed.
+
+  Lemma comb_rhs_scale : forall P ms a,
+    C.comb_rhs P (map (fun z => (a * z)%Z) ms) = (a * C.comb_rhs P ms)%Z.
+  Proof.
+    intros P ms a.
+    change (row_sum P (map (fun z => (a * z)%Z) ms) rhs =
+      (a * row_sum P ms rhs)%Z).
+    apply row_sum_scale.
+  Qed.
+
+  Lemma comb_coef_cross : forall P ms ns a b x,
+    length ms = length ns ->
+    C.comb_coef P (karr_cross a b ms ns) x =
+      (a * C.comb_coef P ms x - b * C.comb_coef P ns x)%Z.
+  Proof.
+    intros P ms ns a b x Hlength.
+    change (row_sum P (karr_cross a b ms ns) (fun r => C.coef_of x (lhs r)) =
+      (a * row_sum P ms (fun r => C.coef_of x (lhs r)) -
+       b * row_sum P ns (fun r => C.coef_of x (lhs r)))%Z).
+    now apply row_sum_cross.
+  Qed.
+
+  Lemma comb_rhs_cross : forall P ms ns a b,
+    length ms = length ns ->
+    C.comb_rhs P (karr_cross a b ms ns) =
+      (a * C.comb_rhs P ms - b * C.comb_rhs P ns)%Z.
+  Proof.
+    intros P ms ns a b Hlength.
+    change (row_sum P (karr_cross a b ms ns) rhs =
+      (a * row_sum P ms rhs - b * row_sum P ns rhs)%Z).
+    now apply row_sum_cross.
+  Qed.
+
+  Lemma equality_weights_cross : forall P ms ns a b,
+    equality_weights P ms -> equality_weights P ns ->
+    equality_weights P (karr_cross a b ms ns).
+  Proof.
+    intros P ms ns a b Hms. revert ns.
+    induction Hms as [|p m P ms Hhead Htail IH]; intros ns Hns;
+      inversion Hns as [|p' n P' ns' Hhead' Htail']; subst; cbn [karr_cross].
+    - constructor.
+    - constructor; [|now apply IH]. intro Hle.
+      rewrite (Hhead Hle), (Hhead' Hle). ring.
+  Qed.
+
+  Lemma equality_weights_factor : forall P ms factor,
+    factor <> 0%Z -> equality_weights P (map (fun z => (factor * z)%Z) ms) ->
+    equality_weights P ms.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] factor Hnonzero Hweights;
+      inversion Hweights as [|p' m' P' ms' Hhead Htail]; subst.
+    - constructor.
+    - constructor; [|now apply IH with (factor := factor)].
+      intro Hle. specialize (Hhead Hle). nia.
+  Qed.
+
+  Lemma scale_list_injective : forall factor xs ys,
+    factor <> 0%Z ->
+    map (fun z => (factor * z)%Z) xs = map (fun z => (factor * z)%Z) ys -> xs = ys.
+  Proof.
+    intros factor xs. induction xs as [|x xs IH]; intros [|y ys] Hnonzero Hsame;
+      cbn [map] in Hsame; try discriminate; [reflexivity |].
+    injection Hsame as Hhead Htail. f_equal; [nia | now apply IH].
+  Qed.
+
+  Lemma scale_zero_prefix : forall factor offset zs,
+    map (fun z => (factor * z)%Z) (repeat 0%Z offset ++ zs) =
+      repeat 0%Z offset ++ map (fun z => (factor * z)%Z) zs.
+  Proof.
+    intros factor offset. induction offset as [|offset IH]; intro zs;
+      cbn [repeat app map]; [reflexivity |].
+    rewrite Z.mul_0_r, IH. reflexivity.
+  Qed.
+
+  Lemma cross_zero_prefix : forall a b offset xs ys,
+    karr_cross a b (repeat 0%Z offset ++ xs) (repeat 0%Z offset ++ ys) =
+      repeat 0%Z offset ++ karr_cross a b xs ys.
+  Proof.
+    intros a b offset. induction offset as [|offset IH]; intros xs ys;
+      cbn [repeat app karr_cross]; [reflexivity |].
+    rewrite !Z.mul_0_r, Z.sub_0_r, IH. reflexivity.
+  Qed.
+
+  Lemma cross_coordinate_map : forall xs (f g : X.t -> Z) a b,
+    karr_cross a b (map f xs) (map g xs) =
+      map (fun x => (a * f x - b * g x)%Z) xs.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros f g a b; cbn; [reflexivity |].
+    now rewrite IH.
+  Qed.
+
+  Lemma row_tracks_factor : forall P xs target offset factor r s,
+    factor <> 0%Z -> karr_multiple factor r s -> row_tracks P xs target offset s ->
+    row_tracks P xs target offset r.
+  Proof.
+    intros P xs target offset factor r s Hnonzero Hmultiple Htracks.
+    destruct Hmultiple as [Hcoeff [Hright [Hweight Hscale]]].
+    destruct Htracks as [Hweights [Hcoordinates Hrhs]].
+    split.
+    - apply equality_weights_factor with (factor := factor); [exact Hnonzero |].
+      now rewrite Hweight.
+    - split.
+      + apply scale_list_injective with (factor := factor); [exact Hnonzero |].
+        rewrite scale_zero_prefix, Hcoeff, Hcoordinates, map_map.
+        apply map_ext. intro x. rewrite <- Hweight, comb_coef_scale, <- Hscale. ring.
+      + rewrite <- Hweight, comb_rhs_scale, <- Hscale, <- Hright in Hrhs. nia.
+  Qed.
+
+  Lemma row_tracks_divide : forall P xs target offset divisor r,
+    row_tracks P xs target offset r ->
+    row_tracks P xs target offset (karr_divide divisor r).
+  Proof.
+    intros P xs target offset divisor r Htracks.
+    destruct (karr_divide_factor divisor r) as [factor [Hnonzero Hmultiple]].
+    now apply row_tracks_factor with (factor := factor) (s := r).
+  Qed.
+
+  Lemma row_tracks_reduce : forall P xs target offset divisor a b p r,
+    row_tracks P xs target offset p -> row_tracks P xs target offset r ->
+    row_tracks P xs target offset (karr_reduce divisor a b p r).
+  Proof.
+    intros P xs target offset divisor a b p r Hp Hr.
+    unfold karr_reduce. apply row_tracks_divide.
+    destruct Hp as [Hpw [Hpc Hpr]]. destruct Hr as [Hrw [Hrc Hrr]].
+    assert (Hlength : length (kweight r) = length (kweight p)).
+    { rewrite <- (equality_weights_length _ _ Hrw),
+        <- (equality_weights_length _ _ Hpw). reflexivity. }
+    split.
+    - cbn [kweight]. now apply equality_weights_cross.
+    - cbn [kcoeff kweight kright kscale]. split.
+      + rewrite <- cross_zero_prefix, Hrc, Hpc, cross_coordinate_map.
+        apply map_ext. intro x. rewrite comb_coef_cross by exact Hlength. ring.
+      + rewrite comb_rhs_cross by exact Hlength. rewrite Hrr, Hpr. ring.
+  Qed.
+
+  Lemma zero_prefix_succ : forall offset zs,
+    repeat 0%Z (S offset) ++ zs = repeat 0%Z offset ++ 0%Z :: zs.
+  Proof.
+    intro offset. induction offset as [|offset IH]; intro zs; [reflexivity |].
+    change (0%Z :: (repeat 0%Z (S offset) ++ zs) =
+      0%Z :: (repeat 0%Z offset ++ 0%Z :: zs)).
+    f_equal. apply IH.
+  Qed.
+
+  Lemma row_tracks_tail : forall P xs target offset r zs,
+    row_tracks P xs target offset r -> kcoeff r = 0%Z :: zs ->
+    row_tracks P xs target (S offset) (karr_tail r).
+  Proof.
+    intros P xs target offset r zs [Hweights [Hcoordinates Hrhs]] Hcoeff.
+    unfold row_tracks. cbn [karr_tail kweight kcoeff kright kscale].
+    split; [exact Hweights |]. split; [|exact Hrhs].
+    rewrite Hcoeff. cbn [tl]. rewrite zero_prefix_succ. now rewrite <- Hcoeff.
+  Qed.
+
+  Lemma row_tracks_restore : forall P xs target offset r,
+    row_tracks P xs target (S offset) r ->
+    row_tracks P xs target offset (karr_restore r).
+  Proof.
+    intros P xs target offset r [Hweights [Hcoordinates Hrhs]].
+    unfold row_tracks. cbn [karr_restore kweight kcoeff kright kscale].
+    split; [exact Hweights |]. split; [|exact Hrhs].
+    now rewrite <- zero_prefix_succ.
+  Qed.
+
+  Lemma divide_scale_zero : forall divisor r,
+    kscale r = 0%Z -> kscale (karr_divide divisor r) = 0%Z.
+  Proof.
+    intros divisor r Hzero.
+    destruct (karr_divide_factor divisor r) as [factor [Hnonzero Hmultiple]].
+    destruct Hmultiple as [_ [_ [_ Hscale]]]. rewrite Hzero in Hscale. nia.
+  Qed.
+
+  Lemma reduce_scale_zero : forall divisor a b p r,
+    kscale p = 0%Z -> kscale r = 0%Z ->
+    kscale (karr_reduce divisor a b p r) = 0%Z.
+  Proof.
+    intros divisor a b p r Hp Hr. unfold karr_reduce. apply divide_scale_zero.
+    cbn [kscale]. rewrite Hp, Hr. ring.
+  Qed.
+
+  Lemma reduce_scale_nonzero : forall divisor a b p r,
+    a <> 0%Z -> kscale p = 0%Z -> kscale r <> 0%Z ->
+    kscale (karr_reduce divisor a b p r) <> 0%Z.
+  Proof.
+    intros divisor a b p r Ha Hp Hr Hzero. unfold karr_reduce in Hzero.
+    destruct (karr_divide_factor divisor
+      (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+        (a * kright r - b * kright p)%Z
+        (karr_cross a b (kweight r) (kweight p))
+        (a * kscale r - b * kscale p)%Z)) as [factor [_ Hmultiple]].
+    destruct Hmultiple as [_ [_ [_ Hscale]]].
+    rewrite Hzero in Hscale. cbn [kscale] in Hscale. rewrite Hp in Hscale. nia.
+  Qed.
+
+  Lemma equality_weights_scale : forall P ms factor,
+    equality_weights P ms ->
+    equality_weights P (map (fun z => (factor * z)%Z) ms).
+  Proof.
+    intros P ms factor Hweights.
+    induction Hweights as [|p m P ms Hhead Htail IH]; cbn [map]; constructor; auto.
+    intro Hle. rewrite (Hhead Hle). ring.
+  Qed.
+
+  Lemma comb_coef_zero : forall P ms x,
+    (forall r, In r P -> coefficient x (lhs r) = 0%Z) -> C.comb_coef P ms x = 0%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] x Hzero;
+      try reflexivity.
+    change ((m * coefficient x (lhs p) + C.comb_coef P ms x)%Z = 0%Z).
+    rewrite Hzero by now left. rewrite IH; [ring |].
+    intros r Hin. apply Hzero. now right.
+  Qed.
+
+  Lemma row_tracks_zero_coeff : forall P xs target r,
+    row_tracks P xs target 0 r ->
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    karr_zero r = true ->
+    forall x, (C.comb_coef P (kweight r) x +
+      kscale r * coefficient x (lhs target) = 0)%Z.
+  Proof.
+    intros P xs target r [_ [Hcoordinates _]] Hsupport Hzero x.
+    cbn [repeat app] in Hcoordinates. unfold karr_zero in Hzero.
+    assert (Hdec : {In x xs} + {~ In x xs}).
+    { apply in_dec. intros a b. destruct (X.eqb_spec a b); auto. }
+    destruct Hdec as [Hin | Habsent].
+    - assert (Hz : Z.eqb 0 (C.comb_coef P (kweight r) x +
+        kscale r * coefficient x (lhs target)) = true).
+      { apply (proj1 (forallb_forall _ _) Hzero).
+        rewrite Hcoordinates. apply in_map_iff. exists x.
+        split; [reflexivity |exact Hin]. }
+      apply Z.eqb_eq in Hz. lia.
+    - assert (Hcoeff : forall s, In s (target :: P) -> coefficient x (lhs s) = 0%Z).
+      { intros s Hrow. apply coefficient_absent. intro Hin.
+        apply in_map_iff in Hin as [[y z] [Hsame Hin]]. cbn [fst] in Hsame.
+        subst y. apply Habsent. now apply Hsupport with (s := s) (z := z). }
+      rewrite Hcoeff by now left. rewrite comb_coef_zero; [ring |].
+      intros s Hin. apply Hcoeff. now right.
+  Qed.
+
+  (** A zero target residual reconstructs an exact certificate accepted by every checker. *)
+  Lemma row_tracks_check_entails : forall P xs target r,
+    row_tracks P xs target 0 r ->
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    karr_zero r = true -> kscale r <> 0%Z ->
+    (match lrel target with
+     | REq => kright r = 0%Z
+     | RLe => (0 <= (if (kscale r <? 0)%Z then -1 else 1) * kright r)%Z
+     end) ->
+    C.check_entails P target
+      (Cert (map (fun z => (-(if (kscale r <? 0)%Z then -1 else 1) * z)%Z)
+        (kweight r)) (Z.abs (kscale r)) false) = true.
+  Proof.
+    intros P xs target r Htracks Hsupport Hzero Hnonzero Hright.
+    pose proof (row_tracks_zero_coeff P xs target r Htracks Hsupport Hzero) as Hcoeff.
+    destruct Htracks as [Hweights [_ Hrhs]].
+    set (sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z) in *.
+    assert (Hsign : (sign * kscale r = Z.abs (kscale r))%Z).
+    { apply coefficient_sign_abs. }
+    apply C.check_entails_complete.
+    - apply equality_weights_admissible. now apply equality_weights_scale.
+    - destruct (kscale r); cbn in *; lia.
+    - intro x. rewrite comb_coef_scale. specialize (Hcoeff x).
+      change ((-sign * C.comb_coef P (kweight r) x)%Z =
+        (Z.abs (kscale r) * coefficient x (lhs target))%Z).
+      nia.
+    - destruct (lrel target) eqn:Hrel.
+      + split.
+        * apply equality_weights_comb_eq. now apply equality_weights_scale.
+        * rewrite comb_rhs_scale. nia.
+      + rewrite comb_rhs_scale. nia.
+  Qed.
+
+  (** A contradictory tracked equality is accepted by every empty-system checker. *)
+  Lemma row_tracks_check_empty : forall P xs target r,
+    row_tracks P xs target 0 r ->
+    (forall s, In s (target :: P) ->
+      forall x z, In (x, z) (lhs s) -> In x xs) ->
+    karr_zero r = true -> kscale r = 0%Z -> kright r <> 0%Z ->
+    C.check_empty P (kweight r) = true.
+  Proof.
+    intros P xs target r Htracks Hsupport Hzero Hscale Hnonzero.
+    pose proof (row_tracks_zero_coeff P xs target r Htracks Hsupport Hzero) as Hcoeff.
+    destruct Htracks as [Hweights [_ Hrhs]].
+    apply C.check_empty_complete.
+    - now apply equality_weights_admissible.
+    - intro x. specialize (Hcoeff x). rewrite Hscale in Hcoeff. lia.
+    - right. split; [now apply equality_weights_comb_eq |].
+      rewrite Hscale in Hrhs. lia.
+  Qed.
+
+  Lemma equality_weights_zero : forall P,
+    equality_weights P (repeat 0%Z (length P)).
+  Proof.
+    intro P. induction P as [|p P IH]; cbn [length repeat]; constructor; auto.
+  Qed.
+
+  Lemma row_sum_zero : forall P entry,
+    row_sum P (repeat 0%Z (length P)) entry = 0%Z.
+  Proof.
+    intro P. induction P as [|p P IH]; intro entry; [reflexivity |].
+    change ((0 * entry p + row_sum P (repeat 0%Z (length P)) entry)%Z = 0%Z).
+    rewrite IH. ring.
+  Qed.
+
+  Lemma row_sum_unit : forall P index p entry,
+    nth_error P index = Some p -> row_sum P (karr_unit (length P) index) entry = entry p.
+  Proof.
+    intro P. induction P as [|r P IH]; intros [|index] p entry Hnth;
+      cbn [nth_error] in Hnth; try discriminate.
+    - injection Hnth as Hsame. subst p.
+      change ((1 * entry r + row_sum P (repeat 0%Z (length P)) entry)%Z = entry r).
+      rewrite row_sum_zero. ring.
+    - change ((0 * entry r + row_sum P (karr_unit (length P) index) entry)%Z = entry p).
+      rewrite (IH _ _ _ Hnth). ring.
+  Qed.
+
+  Lemma equality_weights_unit : forall P index p,
+    nth_error P index = Some p -> lrel p = REq ->
+    equality_weights P (karr_unit (length P) index).
+  Proof.
+    intro P. induction P as [|r P IH]; intros [|index] p Hnth Hrel;
+      cbn [nth_error] in Hnth; try discriminate.
+    - injection Hnth as Hsame. subst p. cbn [length karr_unit]. constructor.
+      + intro Hle. congruence.
+      + apply equality_weights_zero.
+    - cbn [length karr_unit]. constructor; [auto |]. now apply IH with (p := p).
+  Qed.
+
+  Lemma comb_coef_unit : forall P index p x,
+    nth_error P index = Some p ->
+    C.comb_coef P (karr_unit (length P) index) x = coefficient x (lhs p).
+  Proof.
+    intros P index p x Hnth.
+    change (row_sum P (karr_unit (length P) index)
+      (fun r => coefficient x (lhs r)) = coefficient x (lhs p)).
+    exact (row_sum_unit P index p (fun r => coefficient x (lhs r)) Hnth).
+  Qed.
+
+  Lemma comb_rhs_unit : forall P index p,
+    nth_error P index = Some p -> C.comb_rhs P (karr_unit (length P) index) = rhs p.
+  Proof.
+    intros P index p Hnth.
+    change (row_sum P (karr_unit (length P) index) rhs = rhs p).
+    exact (row_sum_unit P index p rhs Hnth).
+  Qed.
+
+  Lemma seed_rows_member : forall xs total rows index r,
+    In r (seed_rows xs total index rows) ->
+    exists i p, nth_error rows i = Some p /\ lrel p = REq /\
+      r = KRow (dense xs p) (rhs p) (karr_unit total (index + i)) 0%Z.
+  Proof.
+    intros xs total rows. induction rows as [|p rows IH]; intros index r Hin;
+      [contradiction |].
+    cbn [seed_rows] in Hin. destruct (lrel p) eqn:Hrel.
+    - cbn [In] in Hin. destruct Hin as [Hsame | Hin].
+      + subst r. exists 0, p. split; [reflexivity |]. split; [exact Hrel |].
+        now rewrite Nat.add_0_r.
+      + destruct (IH _ _ Hin) as [i [q [Hnth [Heq Hrow]]]].
+        exists (S i), q. split; [exact Hnth |]. split; [exact Heq |].
+        replace (index + S i) with (S index + i) by lia. exact Hrow.
+    - destruct (IH _ _ Hin) as [i [q [Hnth [Heq Hrow]]]].
+      exists (S i), q. split; [exact Hnth |]. split; [exact Heq |].
+      replace (index + S i) with (S index + i) by lia. exact Hrow.
+  Qed.
+
+  Lemma seed_rows_tracks : forall P xs target,
+    Forall (row_tracks P xs target 0)
+      (seed_rows xs (length P) 0 (map normalize_row P)).
+  Proof.
+    intros P xs target. apply Forall_forall. intros r Hin.
+    destruct (seed_rows_member _ _ _ _ _ Hin) as [i [p [Hnth [Hrel Hrow]]]].
+    rewrite nth_error_map in Hnth.
+    destruct (nth_error P i) as [q |] eqn:Hq; [|discriminate].
+    injection Hnth as Hsame. subst p. subst r. cbn [Nat.add] in *.
+    split.
+    - cbn [kweight]. apply equality_weights_unit with (p := q);
+        [exact Hq | exact Hrel].
+    - cbn [repeat app kcoeff kweight kright kscale]. split.
+      + unfold dense. cbn [normalize_row lhs]. apply map_ext. intro x.
+        rewrite normalize_coef_coefficient, (comb_coef_unit _ _ _ _ Hq). ring.
+      + cbn [normalize_row rhs]. rewrite (comb_rhs_unit _ _ _ Hq). ring.
+  Qed.
+
+  Lemma target_initial_tracks : forall P xs target,
+    row_tracks P xs target 0
+      (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1).
+  Proof.
+    intros P xs target. split; [apply equality_weights_zero |].
+    cbn [repeat app kcoeff kweight kright kscale]. split.
+    - unfold dense. apply map_ext. intro x.
+      change (coefficient x (lhs target) =
+        (row_sum P (repeat 0%Z (length P)) (fun r => coefficient x (lhs r)) +
+          1 * coefficient x (lhs target))%Z).
+      rewrite row_sum_zero. ring.
+    - change (rhs target = (row_sum P (repeat 0%Z (length P)) rhs + 1 * rhs target)%Z).
+      rewrite row_sum_zero. ring.
+  Qed.
+
+  Lemma row_tracks_width : forall P xs target offset r,
+    row_tracks P xs target offset r -> offset + length (kcoeff r) = length xs.
+  Proof.
+    intros P xs target offset r [_ [Hcoordinates _]].
+    pose proof (f_equal (@length Z) Hcoordinates) as Hlength.
+    now rewrite length_app, repeat_length, length_map in Hlength.
+  Qed.
+
+  Lemma row_tracks_tail_head : forall P xs target offset r,
+    row_tracks P xs target offset r -> offset < length xs -> karr_head r = 0%Z ->
+    row_tracks P xs target (S offset) (karr_tail r).
+  Proof.
+    intros P xs target offset r Htracks Hroom Hzero.
+    pose proof (row_tracks_width _ _ _ _ _ Htracks) as Hwidth.
+    destruct (kcoeff r) as [|a zs] eqn:Hcoeff; [cbn [length] in Hwidth; lia |].
+    unfold karr_head in Hzero. rewrite Hcoeff in Hzero. subst a.
+    now apply row_tracks_tail with (zs := zs).
+  Qed.
+
+  Lemma target_tracks : forall P xs target rs previous r,
+    Forall (row_tracks P xs target 0) rs -> row_tracks P xs target 0 r ->
+    row_tracks P xs target 0 (karr_target rs previous r).
+  Proof.
+    intros P xs target rs. induction rs as [|p rs IH]; intros previous r Hbasis Hrow;
+      [exact Hrow |].
+    inversion Hbasis as [|p' rs' Hp Hrest]; subst p' rs'.
+    cbn [karr_target]. destruct (karr_first (kcoeff p)) as [[i a] |].
+    - apply IH; [exact Hrest |]. now apply row_tracks_reduce.
+    - now apply IH.
+  Qed.
+
+  Lemma target_scale_nonzero : forall rs previous r,
+    Forall (fun p => kscale p = 0%Z) rs -> kscale r <> 0%Z ->
+    kscale (karr_target rs previous r) <> 0%Z.
+  Proof.
+    intro rs. induction rs as [|p rs IH]; intros previous r Hbasis Hrow;
+      [exact Hrow |].
+    inversion Hbasis as [|p' rs' Hp Hrest]; subst p' rs'.
+    cbn [karr_target]. destruct (karr_first (kcoeff p)) as [[i a] |] eqn:Hfirst.
+    - apply IH; [exact Hrest |]. apply reduce_scale_nonzero.
+      + now apply karr_first_nonzero with (zs := kcoeff p) (i := i).
+      + exact Hp.
+      + exact Hrow.
+    - now apply IH.
+  Qed.
+
+  Lemma seed_rows_scale_zero : forall xs total index rows,
+    Forall (fun r => kscale r = 0%Z) (seed_rows xs total index rows).
+  Proof.
+    intros xs total index rows. revert index.
+    induction rows as [|p rows IH]; intro index; [constructor |].
+    cbn [seed_rows]. destruct (lrel p); [constructor |]; auto.
+  Qed.
+
+  Lemma bareiss_scale_zero : forall cols previous rs,
+    Forall (fun r => kscale r = 0%Z) rs ->
+    Forall (fun r => kscale r = 0%Z) (karr_bareiss cols previous rs).
+  Proof.
+    intro cols. induction cols as [|cols IH]; intros previous rs Hrows;
+      [exact Hrows |].
+    cbn [karr_bareiss]. destruct (karr_pivot rs) as [[p rest] |] eqn:Hpivot.
+    - destruct (karr_pivot_some _ _ _ Hpivot) as [_ Hperm].
+      assert (Hordered : Forall (fun r => kscale r = 0%Z) (p :: rest)).
+      { eapply Permutation_Forall; [exact Hperm |exact Hrows]. }
+      inversion Hordered as [|p' rest' Hp Hrest]; subst p' rest'.
+      constructor; [exact Hp |]. apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      change (kscale s = 0%Z).
+      assert (Hreduced : Forall (fun r => kscale r = 0%Z)
+        (map (fun r => karr_tail (karr_reduce previous (karr_head p)
+          (karr_head r) p r)) rest)).
+      { apply Forall_forall. intros t Ht.
+        apply in_map_iff in Ht as [q [Hsame Hq]]. subst t.
+        change (kscale (karr_reduce previous (karr_head p) (karr_head q) p q) = 0%Z).
+        apply reduce_scale_zero; [exact Hp |].
+        now apply (proj1 (Forall_forall _ _) Hrest). }
+      exact (proj1 (Forall_forall _ _) (IH _ _ Hreduced) s Hin).
+    - apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      change (kscale s = 0%Z).
+      assert (Htails : Forall (fun r => kscale r = 0%Z) (map karr_tail rs)).
+      { apply Forall_forall. intros t Ht.
+        apply in_map_iff in Ht as [q [Hsame Hq]]. subst t.
+        change (kscale q = 0%Z).
+        exact (proj1 (Forall_forall _ _) Hrows q Hq). }
+      exact (proj1 (Forall_forall _ _) (IH _ _ Htails) s Hin).
+  Qed.
+
+  Lemma row_tracks_restore_map : forall P xs target offset rs,
+    Forall (row_tracks P xs target (S offset)) rs ->
+    Forall (row_tracks P xs target offset) (map karr_restore rs).
+  Proof.
+    intros P xs target offset rs Htracks. apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [s [Hsame Hin]]. subst r. apply row_tracks_restore.
+    now apply (proj1 (Forall_forall _ _) Htracks).
+  Qed.
+
+  Lemma bareiss_tracks : forall cols P xs target offset previous rs,
+    offset + cols <= length xs -> Forall (row_tracks P xs target offset) rs ->
+    Forall (row_tracks P xs target offset) (karr_bareiss cols previous rs).
+  Proof.
+    intro cols. induction cols as [|cols IH];
+      intros P xs target offset previous rs Hroom Hrows; [exact Hrows |].
+    cbn [karr_bareiss]. destruct (karr_pivot rs) as [[p rest] |] eqn:Hpivot.
+    - destruct (karr_pivot_some _ _ _ Hpivot) as [_ Hperm].
+      assert (Hordered : Forall (row_tracks P xs target offset) (p :: rest)).
+      { eapply Permutation_Forall; [exact Hperm |exact Hrows]. }
+      inversion Hordered as [|p' rest' Hp Hrest]; subst p' rest'.
+      constructor; [exact Hp |]. apply row_tracks_restore_map. apply IH; [lia |].
+      apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply row_tracks_tail_head; [|lia |apply karr_reduce_head_zero].
+      apply row_tracks_reduce; [exact Hp |].
+      now apply (proj1 (Forall_forall _ _) Hrest).
+    - apply row_tracks_restore_map. apply IH; [lia |].
+      pose proof (karr_pivot_none _ Hpivot) as Hheads.
+      apply Forall_forall. intros r Hin.
+      apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
+      apply row_tracks_tail_head; [|lia |].
+      + now apply (proj1 (Forall_forall _ _) Hrows).
+      + now apply (proj1 (Forall_forall _ _) Hheads).
+  Qed.
+
+  Lemma equality_basis_tracks : forall P xs target,
+    Forall (row_tracks P xs target 0) (equality_basis xs P).
+  Proof.
+    intros P xs target. unfold equality_basis. apply bareiss_tracks; [lia |].
+    apply seed_rows_tracks.
+  Qed.
+
+  Lemma equality_basis_scale_zero : forall P xs,
+    Forall (fun r => kscale r = 0%Z) (equality_basis xs P).
+  Proof.
+    intros P xs. unfold equality_basis. apply bareiss_scale_zero. apply seed_rows_scale_zero.
+  Qed.
+
+  Lemma reduced_target_tracks : forall P xs target,
+    row_tracks P xs target 0
+      (karr_target (equality_basis xs P) 1
+        (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)).
+  Proof.
+    intros P xs target. apply target_tracks; [apply equality_basis_tracks |].
+    apply target_initial_tracks.
+  Qed.
+
+  Lemma reduced_target_scale_nonzero : forall P xs target,
+    kscale (karr_target (equality_basis xs P) 1
+      (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)) <> 0%Z.
+  Proof.
+    intros P xs target. apply target_scale_nonzero; [apply equality_basis_scale_zero |].
+    discriminate.
+  Qed.
+
+  (** Passing the producer's residual guard is sufficient for every lawful checker. *)
+  Lemma target_certificate_complete : forall P target k,
+    target_certificate P target = Some k -> C.check_entails P target k = true.
+  Proof.
+    intros P target k Hcert. unfold target_certificate in Hcert.
+    set (xs := variables (target :: P)) in *.
+    set (r := karr_target (equality_basis xs P) 1
+      (KRow (dense xs target) (rhs target) (repeat 0%Z (length P)) 1)) in *.
+    set (sign := if (kscale r <? 0)%Z then (-1)%Z else 1%Z) in *.
+    destruct (karr_zero r && negb (Z.eqb (kscale r) 0) &&
+      match lrel target with
+      | REq => Z.eqb (kright r) 0
+      | RLe => (0 <=? sign * kright r)%Z
+      end) eqn:Hguard; [|discriminate].
+    injection Hcert as Hsame. subst k.
+    apply andb_true_iff in Hguard as [Hleft Hright].
+    apply andb_true_iff in Hleft as [Hzero Hscale].
+    apply negb_true_iff, Z.eqb_neq in Hscale.
+    apply row_tracks_check_entails with (xs := xs).
+    - apply reduced_target_tracks.
+    - intros s Hs x z Hin. apply variables_contains with (r := s) (z := z);
+        assumption.
+    - exact Hzero.
+    - exact Hscale.
+    - destruct (lrel target); [now apply Z.eqb_eq |now apply Z.leb_le].
+  Qed.
+
+  Lemma entails_of_target_certificate : forall P target k,
+    target_certificate P target = Some k -> entails P target = true.
+  Proof.
+    intros P target k Htarget. unfold entails. apply orb_true_iff. right.
+    unfold entail_cert. destruct (contradiction P) as [ms |] eqn:Hempty.
+    - assert (Hcheck : C.check_entails P target (Cert ms 1 false) = true).
+      { apply C.check_entails_empty. now apply contradiction_checked in Hempty. }
+      now rewrite Hcheck.
+    - rewrite Htarget, (target_certificate_complete _ _ _ Htarget). reflexivity.
+  Qed.
+
+  Lemma empty_certificate_accepts_row : forall P rs r,
+    In r rs -> karr_zero r = true -> kright r <> 0%Z ->
+    C.check_empty P (kweight r) = true ->
+    exists ms, empty_certificate P rs = Some ms.
+  Proof.
+    intros P rs. induction rs as [|p rs IH]; intros r Hin Hzero Hnonzero Hcheck;
+      [contradiction |].
+    cbn [empty_certificate].
+    destruct (karr_zero p && negb (Z.eqb (kright p) 0) &&
+      C.check_empty P (kweight p)) eqn:Hp.
+    - exists (kweight p). reflexivity.
+    - destruct Hin as [Hsame | Hin].
+      + subst p. apply Z.eqb_neq in Hnonzero.
+        rewrite Hzero, Hnonzero, Hcheck in Hp. discriminate.
+      + now apply IH with (r := r).
+  Qed.
+
+  Lemma contradiction_of_zero_row : forall P r,
+    In r (equality_basis (variables P) P) -> karr_zero r = true -> kright r <> 0%Z ->
+    exists ms, contradiction P = Some ms.
+  Proof.
+    intros P r Hin Hzero Hnonzero. unfold contradiction.
+    apply empty_certificate_accepts_row with (r := r); try assumption.
+    apply row_tracks_check_empty with (xs := variables P)
+      (target := LCons X.t [] REq 0%Z); try assumption.
+    - now apply (proj1 (Forall_forall _ _) (equality_basis_tracks P (variables P)
+        (LCons X.t [] REq 0%Z))).
+    - intros s Hs x z Hterm. destruct Hs as [Hsame | Hs].
+      + subst s. contradiction.
+      + now apply variables_contains with (r := s) (z := z).
+    - now apply (proj1 (Forall_forall _ _) (equality_basis_scale_zero P (variables P))).
+  Qed.
+
+  Lemma contradiction_none_no_false_row : forall P r,
+    contradiction P = None -> In r (equality_basis (variables P) P) ->
+    karr_zero r = true -> kright r = 0%Z.
+  Proof.
+    intros P r Hnone Hin Hzero. destruct (Z.eq_dec (kright r) 0) as [Hz | Hnz];
+      [exact Hz |].
+    destruct (contradiction_of_zero_row _ _ Hin Hzero Hnz) as [ms Hsome].
+    rewrite Hnone in Hsome. discriminate.
+  Qed.
+
   Lemma leb_refl  : forall a, leb a a = true.
   Proof.
     intros [| P]; [reflexivity |]. unfold leb.
