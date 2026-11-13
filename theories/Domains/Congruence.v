@@ -820,6 +820,97 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
     pose proof (one_is_word w) as Hword. unfold is_word in Hword. split; lia.
   Qed.
 
+  Local Lemma cong_modulus_log_bound w m : 0 < m < modulus w ->
+    0 <= Z.log2 m < Zpos w.
+  Proof.
+    intros [Hpositive Hsmall]. split; [apply Z.log2_nonneg|].
+    apply (proj1 (Z.log2_lt_pow2 m (Zpos w) Hpositive)). exact Hsmall.
+  Qed.
+
+  Local Lemma cong_proper_divisor_log m n :
+    0 < m -> 0 < n -> (n | m) -> m <> n -> Z.log2 n < Z.log2 m.
+  Proof.
+    intros Hm Hn [k Hk] Hdifferent.
+    assert (Hpositive : 0 < k) by nia.
+    assert (Hnotone : k <> 1) by (intro Heq; subst k; nia).
+    assert (Hfactor : 2 <= k) by lia.
+    assert (Hdouble : 2 * n <= m) by nia.
+    pose proof (Z.log2_le_mono (2 * n) m Hdouble).
+    rewrite Z.log2_double in * by exact Hn. lia.
+  Qed.
+
+  Local Lemma cong_same_modulus_reverse m r s :
+    raw_leb (C m r) (C m s) = true ->
+    raw_leb (C m s) (C m r) = true.
+  Proof.
+    intros Hle. apply cong_raw_leb_spec in Hle as [Hm [k Hk]].
+    apply cong_raw_leb_spec. split; [exact Hm|exists (-k); nia].
+  Qed.
+
+
+  (** Raw rank is the decreasing dual of the old increasing height. *)
+  Definition raw_wrank (w : positive) (a : congr) : nat :=
+    match a with
+    | CBot => Pos.to_nat w + 2
+    | C m _ => if m =? 0 then Pos.to_nat w + 1 else Z.to_nat (Z.log2 m)
+    end.
+
+  (** Every strongly canonical rank fits the requested bound. *)
+  Lemma raw_wrank_bound : forall w a, strong_canonical w a ->
+    (raw_wrank w a <= Pos.to_nat w + 2)%nat.
+  Proof.
+    intros w [| m r] Ha; [reflexivity |].
+    destruct Ha as [[-> Hr] | [Hm Hr]]; cbn [raw_wrank].
+    - change (Pos.to_nat w + 1 <= Pos.to_nat w + 2)%nat. lia.
+    - rewrite (proj2 (Z.eqb_neq m 0)) by lia.
+      pose proof (cong_modulus_log_bound w m Hm) as Hlog.
+      assert (Hwidth : (Z.to_nat (Z.log2 m) < Z.to_nat (Zpos w))%nat).
+      { apply Z2Nat.inj_lt; lia. }
+      rewrite Z2Nat.inj_pos in Hwidth. lia.
+  Qed.
+
+  (** Nonbottom canonical ranks are strictly below the bottom rank. *)
+  Lemma raw_wrank_nonbottom : forall w m r, strong_canonical w (C m r) ->
+    (raw_wrank w (C m r) < Pos.to_nat w + 2)%nat.
+  Proof.
+    intros w m r Hcanonical.
+    destruct Hcanonical as [[-> Hr] | [Hm Hr]]; cbn [raw_wrank].
+    - change (Pos.to_nat w + 1 < Pos.to_nat w + 2)%nat. lia.
+    - rewrite (proj2 (Z.eqb_neq m 0)) by lia.
+      pose proof (cong_modulus_log_bound w m Hm) as Hlog.
+      assert (Hwidth : (Z.to_nat (Z.log2 m) < Z.to_nat (Zpos w))%nat).
+      { apply Z2Nat.inj_lt; lia. }
+      rewrite Z2Nat.inj_pos in Hwidth. lia.
+  Qed.
+
+  (** A proper raw enlargement strictly decreases the normalized rank. *)
+  Lemma raw_wrank_strict : forall w a b,
+    strong_canonical w a -> strong_canonical w b ->
+    raw_leb a b = true -> raw_leb b a = false ->
+    (raw_wrank w b < raw_wrank w a)%nat.
+  Proof.
+    intros w [| m r] [| n s] Ha Hb Hle Hstrict; try discriminate.
+    - apply raw_wrank_nonbottom. exact Hb.
+    - pose proof Hle as Horder.
+      apply cong_raw_leb_spec in Hle as [Hdivisor Hresidue].
+      destruct Ha as [[-> Hr] | [Hm Hr]], Hb as [[-> Hs] | [Hn Hs]];
+        cbn [raw_wrank]; rewrite ?Z.eqb_refl.
+      + pose proof (cong_same_modulus_reverse 0 r s Horder). congruence.
+      + rewrite (proj2 (Z.eqb_neq n 0)) by lia.
+        pose proof (cong_modulus_log_bound w n Hn) as Hlog.
+        assert (Hwidth : (Z.to_nat (Z.log2 n) < Z.to_nat (Zpos w))%nat).
+        { apply Z2Nat.inj_lt; lia. }
+        rewrite Z2Nat.inj_pos in Hwidth. lia.
+      + destruct Hdivisor as [k Hk]. nia.
+      + rewrite (proj2 (Z.eqb_neq m 0)), (proj2 (Z.eqb_neq n 0)) by lia.
+        assert (Hdifferent : m <> n).
+        { intro Hequal. subst n.
+          pose proof (cong_same_modulus_reverse m r s Horder). congruence. }
+        apply Z2Nat.inj_lt; [apply Z.log2_nonneg | apply Z.log2_nonneg |].
+        apply cong_proper_divisor_log; try lia. exact Hdivisor.
+  Qed.
+
+
   (** Widening contains both payloads. *)
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
   Proof.
@@ -841,11 +932,30 @@ Module Congruence (L : WORD_LANGUAGE) <: CONGRUENCE L.
   (** An unstable nonbottom widening strictly lowers the rank. *)
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted. (* CONVERT: cong_height: In environment *)
+  Proof.
+    intros q w a b Hnonbottom Hunstable.
+    unfold pwiden. rewrite Hunstable.
+    assert (Hreverse : pleb w (pjoin w a b) a = false).
+    { destruct (pleb w (pjoin w a b) a) eqn:Hreverse; [| reflexivity].
+      assert (Horder : pleb w b a = true).
+      { eapply cong_raw_leb_trans;
+          [exact (proj2 (cong_join_upper w a b)) | exact Hreverse]. }
+      congruence. }
+    change (raw_wrank w (congr_norm w (pjoin w a b)) <
+      raw_wrank w (congr_norm w a))%nat.
+    apply raw_wrank_strict; try apply cong_norm_canonical.
+    - exact (proj1 (cong_join_upper w a b)).
+    - exact Hreverse.
+  Qed.
   (** Nonbottom widening does not increase rank. *)
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted. (* CONVERT: cong_height: In environment *)
+  Proof.
+    intros q w a b Hnonbottom.
+    destruct (pleb w b a) eqn:Hstable.
+    - unfold pwiden. rewrite Hstable. reflexivity.
+    - pose proof (pwrank_widen q w a b Hnonbottom Hstable). lia.
+  Qed.
   (** Narrowing lies between ordered inputs. *)
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
@@ -1171,21 +1281,34 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Proof. Admitted. (* STUB *)
   (** Normalization produces a canonical representation. *)
   Lemma F3_norm_canonical : forall w a, canonical w (congr_norm w a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (cong_norm_canonical w a) as Hcanonical.
+    destruct (congr_norm w a) as [| m r]; [exact I |].
+    destruct Hcanonical as [[Hm Hr] | [Hm Hr]].
+    - left. split; assumption.
+    - right. split; [lia | exact Hr].
+  Qed.
   (** Normalization is idempotent. *)
   Lemma F4_norm_idempotent : forall w a,
     congr_norm w (congr_norm w a) = congr_norm w a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply cong_norm_idempotent.
+  Qed.
   (** Chinese remainder meet retains each shared integer. *)
   Lemma F5_crt_meet_sound : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
   Proof. Admitted. (* STUB *)
   (** The requested congruence rank is bounded by width plus two. *)
   Lemma F13_wrank_le : forall w a, (congr_wrank w a <= Pos.to_nat w + 2)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. change (raw_wrank w (congr_norm w a) <= Pos.to_nat w + 2)%nat.
+    apply raw_wrank_bound. apply cong_norm_canonical.
+  Qed.
   (** Payload widening uses the normalized congruence rank. *)
   Lemma F14_pwrank : forall q w a, pwrank q w a = congr_wrank w a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a. reflexivity.
+  Qed.
   (** Gcd-based joining has the published quadratic arithmetic bound. *)
   Lemma T1_join : forall w a b,
     (T_pjoin w a b <= k_congr_gcd *
