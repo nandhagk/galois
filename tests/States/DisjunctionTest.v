@@ -103,3 +103,8 @@ Example partition_stray_widens_first_nonnull :
     (Parts.widen TLeaf (Parts.join (Parts.inject 1%nat (interval_state 0 0))
       (Parts.inject 2%nat State.bot)) (Parts.inject 3%nat (interval_state 5 5))) = true.
 Proof. vm_compute. reflexivity. Qed.
+
+Example widening_empty_returns_candidate :
+  proj1_sig (D2.widen TLeaf D2.bot (Shared2.clip [interval_state 0 0])) =
+    [interval_state 0 0].
+Proof. vm_compute. reflexivity. Qed.

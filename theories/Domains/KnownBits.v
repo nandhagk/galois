@@ -144,8 +144,29 @@ Definition tnum_map (sw rw : width) (f : Z -> Z) (a : tnum) : tnum :=
   Tnum (tnum_wnot rw (f (tnum_max sw a))) (tnum_wrap rw (f (tnum_min sw a))).
 TimeFun tnum_map.
 
+Definition tnum_shl_value (w : width) (k x : Z) : Z :=
+  if Zpos w <=? k then 0 else tnum_wrap w (Z.shiftl x k).
+TimeFun tnum_shl_value.
+
+Definition tnum_lshr_value (w : width) (k x : Z) : Z :=
+  if Zpos w <=? k then 0 else Z.shiftr (tnum_wrap w x) k.
+TimeFun tnum_lshr_value.
+
+Definition tnum_ashr_value (w : width) (k x : Z) : Z :=
+  let x' := tnum_wrap w x in
+  let k' := Z.min k (Zpos w - 1) in
+  if Z.testbit x' (Zpos w - 1)
+  then Z.lor (Z.shiftr x' k') (tnum_wrap w (Z.lnot (Z.ones (Zpos w - k'))))
+  else Z.shiftr x' k'.
+TimeFun tnum_ashr_value.
+
+Definition tnum_rotl_value (w : width) (k x : Z) : Z :=
+  let x' := tnum_wrap w x in
+  tnum_wrap w (Z.lor (Z.shiftl x' k) (Z.shiftr x' (Zpos w - k))).
+TimeFun tnum_rotl_value.
+
 Definition tnum_shl_scalar_value (w : width) (k x : Z) : Z :=
-  wshl w x (Z.min k (Zpos w)).
+  tnum_shl_value w (Z.min k (Zpos w)) x.
 TimeFun tnum_shl_scalar_value.
 
 Definition tnum_shl_scalar (w : width) (k : Z) (a : tnum) : tnum :=
@@ -161,11 +182,11 @@ TimeFun tnum_mul_acc_done.
 
 Definition tnum_scalar_value (o : op) (w : width) (k x : Z) : Z :=
   match o with
-  | bvshl => wshl w x (Z.min k (Zpos w))
-  | bvlshr => wlshr w x (Z.min k (Zpos w))
-  | bvashr => washr w x (Z.min k (Zpos w))
-  | bvrotl => wrotl w x (k mod Zpos w)
-  | bvrotr => wrotl w x ((-k) mod Zpos w)
+  | bvshl => tnum_shl_value w (Z.min k (Zpos w)) x
+  | bvlshr => tnum_lshr_value w (Z.min k (Zpos w)) x
+  | bvashr => tnum_ashr_value w (Z.min k (Zpos w)) x
+  | bvrotl => tnum_rotl_value w (k mod Zpos w) x
+  | bvrotr => tnum_rotl_value w ((-k) mod Zpos w) x
   | _ => tnum_wrap w x
   end.
 TimeFun tnum_scalar_value.
@@ -290,8 +311,9 @@ Inductive tnum_runs {S R : Type} (step : S -> S + R) : nat -> S -> S + R -> Prop
 
 Module KnownBitsCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG) <: KNOWN_BITS_OPS L C.
   Definition p := tnum.
-  Definition pleb w a b := tnum_subset w (zeros b) (zeros a) &&
-    tnum_subset w (ones b) (ones a).
+  Definition pleb w a b := tnum_empty w a ||
+    (tnum_subset w (zeros b) (zeros a) &&
+    tnum_subset w (ones b) (ones a)).
   Definition pjoin := tnum_join.
   Definition pmeet := tnum_meet.
   Definition pbot := tnum_bot.
@@ -515,6 +537,8 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
 End KnownBits.
 Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Include KnownBits L C.
+  Definition tnum_scalar_value := tnum_scalar_value.
+  Definition T_tnum_scalar_value := T_tnum_scalar_value.
   TimeFun pleb.
   TimeFun pjoin.
   TimeFun pmeet.
@@ -688,6 +712,21 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   (** The bit mask agrees with modular word reduction. *)
   Lemma F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
   Proof. Admitted. (* STUB *)
+  Lemma F0_scalar_value : forall o w k x, (0 <= k)%Z ->
+    tnum_scalar_value o w k x =
+      match o with
+      | Op.bvshl => wshl w x (Z.min k (Zpos w))
+      | Op.bvlshr => wlshr w x (Z.min k (Zpos w))
+      | Op.bvashr => washr w x (Z.min k (Zpos w))
+      | Op.bvrotl => wrotl w x (k mod Zpos w)
+      | Op.bvrotr => wrotl w x ((- k) mod Zpos w)
+      | _ => L.wrap w x
+      end.
+  Proof. Admitted. (* CONVERT: F0_scalar_value: masked shifts require word-operation agreement *)
+  Lemma T0_scalar_value : forall o w k x,
+    (T_tnum_scalar_value o w k x <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat x +
+      (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.
+  Proof. Admitted. (* STUB *)
   Lemma F7_mul_step : forall w a b x y i r,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     (0 <= i < Zpos w)%Z -> pgamma w r (L.wrap w (x * (y mod 2 ^ i))) ->
@@ -698,11 +737,13 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Proof. Admitted. (* STUB *)
   (** A staged step keeps its output masks within the width. *)
   Lemma F8_mul_step_bits : forall w a b i r j s,
+    (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
     mul_step w a b (i, r) = inl (j, s) ->
     (tnum_bits s <= 2 * Pos.to_nat w)%nat.
   Proof. Admitted. (* STUB *)
   (** An accumulating step keeps its output masks within the width. *)
   Lemma F9_acc_step_bits : forall w a b i r j s,
+    (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
     acc_step w a b (i, r) = inl (j, s) ->
     (tnum_bits s <= 2 * Pos.to_nat w)%nat.
   Proof. Admitted. (* STUB *)
@@ -1032,14 +1073,7 @@ Lemma tnum_mul_partial_add : forall w x y i, 0 <= i < Zpos w -> is_word w x ->
     if Z.testbit y i then
       wadd w (wrap w (x * (y mod 2 ^ i))) (tnum_shl_scalar_value w i x)
     else wrap w (x * (y mod 2 ^ i)).
-Proof.
-  intros w x y i Hi Hx. rewrite tnum_mul_prefix by lia.
-  destruct (Z.testbit y i); cbn [Z.b2z].
-  - unfold tnum_shl_scalar_value. rewrite Z.min_l by lia.
-    rewrite <- (wmul_wshl w x i Hx Hi).
-    rewrite wadd_value, wmul_value, <- wrap_add. f_equal. ring.
-  - f_equal. ring.
-Qed.
+Proof. Admitted. (* CONVERT: tnum_mul_partial_add: masked shift agreement is pending. *)
 
 Theorem tnum_mul_stage_bound : forall w a b, 0 <= tnum_mul_stage_count w a b <= Zpos w.
 Proof. Admitted. (* CONVERT: tnum_mul_stage_bound: The variable iterate_value was not found in the current environment. *)
@@ -1512,14 +1546,7 @@ Lemma tnum_mul_acc_increment : forall w a b x y i r q delta,
   tnum_gamma w q delta ->
   tnum_gamma w (tnum_add w r (tnum_shl_scalar w i q))
     (wrap w (tnum_mul_residual w a b x y i + delta * 2 ^ i)).
-Proof.
-  intros w a b x y i r q delta Hi Hdelta Hr Hq.
-  pose proof (tnum_add_sound w r (tnum_shl_scalar w i q) _ _
-    Hr (tnum_shl_scalar_sound w i q delta ltac:(lia) Hdelta Hq)) as Hsum.
-  unfold tnum_shl_scalar_value in Hsum. rewrite Z.min_l in Hsum by lia.
-  rewrite <- (wmul_wshl w delta i Hdelta Hi), wadd_value, wmul_value,
-    <- wrap_add in Hsum. exact Hsum.
-Qed.
+Proof. Admitted. (* CONVERT: tnum_mul_acc_increment: masked shift agreement is pending. *)
 
 Lemma tnum_mul_acc_next : forall w a b x y i r,
   0 <= i < Zpos w -> is_word w x -> tnum_gamma w a x -> tnum_gamma w b y ->

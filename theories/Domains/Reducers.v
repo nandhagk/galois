@@ -98,7 +98,9 @@ Module IntervalCongrCode (L : WORD_LANGUAGE_OPS) (A0 : WORD_PAYLOAD_OPS L with D
   Definition to_right (x : A.t * B.t) : A.t * B.t :=
     match x with
     | (TVal w a, TVal v b) =>
-      if Pos.eqb w v then (TVal w a, TVal v (B0.pmeet w b (interval_congr a))) else x
+      if Pos.eqb w v
+      then (TVal w a, TVal v (B0.pmeet w b (interval_congr (interval_word_clip w a))))
+      else x
     | _ => x
     end.
   Definition reduce (x : A.t * B.t) : A.t * B.t := to_right (to_left x).
@@ -141,7 +143,7 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
     (TVal w (A0.pmeet w a (congr_interval w a b)), TVal w b).
   Proof. Admitted. (* STUB *)
   Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
-    (TVal w a, TVal w (B0.pmeet w b (interval_congr a))).
+    (TVal w a, TVal w (B0.pmeet w b (interval_congr (interval_word_clip w a)))).
   Proof. Admitted. (* STUB *)
   Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     to_left x = x /\ to_right x = x.

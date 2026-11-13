@@ -155,8 +155,8 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   TimeFun assume.
   TimeFun eval.
   Definition c_rel_env : N := 1. (* STUB *)
-  Definition c_lat : N := R.c_lat + E.c_lat + P.c_lat + 1.
-  Definition c_state : N := R.c_num + E.c_state + RR.c_refine + 1.
+  Definition c_lat : N := 1. (* STUB *)
+  Definition c_state : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_leb_le : forall a b,
@@ -202,6 +202,19 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma eval_work_components : forall e r s, eval_work e (r, s) =
     R.range_work e r + R.range_bits e r + E.eval_work e s + V.size (E.eval e s) + 1.
+  Proof. reflexivity. Qed.
+  Lemma assign_work_components : forall x e r s,
+    assign_work x e (r, s) = R.assign_work x e r + E.assign_work x e s.
+  Proof. reflexivity. Qed.
+  Lemma havoc_work_components : forall x r s,
+    havoc_work x (r, s) = R.havoc_work x r + E.havoc_work x s.
+  Proof. reflexivity. Qed.
+  Lemma assume_work_components : forall g es r s,
+    assume_work g es (r, s) = R.assume_work g es r + E.assume_work g es s.
+  Proof. reflexivity. Qed.
+  Lemma wunits_components : forall r s, wunits (r, s) = R.wunits r + E.wunits s.
+  Proof. reflexivity. Qed.
+  Lemma wsize_components : forall p, wsize p = R.wsize (fst p) + E.wsize (snd p).
   Proof. reflexivity. Qed.
   Lemma c_lat_pair : (P.c_lat <= c_lat)%N.
   Proof. Admitted. (* STUB *)

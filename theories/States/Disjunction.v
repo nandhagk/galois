@@ -55,11 +55,13 @@ Module StateDisjunctionCode (X : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L
     destruct a as [old Hbound].
     destruct (leb b (exist _ old Hbound)) eqn:Hstable.
     - exact (exist _ old Hbound).
-    - destruct (forallb S.is_bot old) eqn:Hbottom.
-      + exact (P.clip [S.top]).
-      + refine (exist _ (replace_first S.is_bot
+    - destruct (is_bot (exist _ old Hbound)) eqn:Hempty.
+      + exact b.
+      + destruct (forallb S.is_bot old) eqn:Hbottom.
+        * exact (P.clip [S.top]).
+        * refine (exist _ (replace_first S.is_bot
           (fun x => S.widen p x (collapse (x :: uncovered S.leb old (proj1_sig b)))) old) _).
-        now rewrite replace_first_length.
+          now rewrite replace_first_length.
   Defined.
   Definition narrow (a _ : t) := a.
 
@@ -215,6 +217,19 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     fold_right Nat.add 0%nat (map (fun s =>
       S.eval_work e s + V.size (S.eval e s) + 1) (proj1_sig d)).
 
+  Lemma assign_work_alternatives : forall x e d, assign_work x e d =
+    fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
+  Proof. reflexivity. Qed.
+  Lemma havoc_work_alternatives : forall x d, havoc_work x d =
+    fold_right Nat.add 0%nat (map (fun s => S.havoc_work x s + 1) (proj1_sig d)).
+  Proof. reflexivity. Qed.
+  Lemma assume_work_alternatives : forall g es d, assume_work g es d =
+    fold_right Nat.add 0%nat (map (fun s => S.assume_work g es s + 1) (proj1_sig d)).
+  Proof. reflexivity. Qed.
+  Lemma eval_work_alternatives : forall e d, eval_work e d =
+    fold_right Nat.add 0%nat (map (fun s =>
+      S.eval_work e s + V.size (S.eval e s) + 1) (proj1_sig d)).
+  Proof. reflexivity. Qed.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_leb_le : forall a b,
@@ -277,9 +292,14 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  Definition eval_joins (e : term L.op X.t) (xs : list S.t) : N :=
+    fst (fold_left (fun acc s =>
+      ((fst acc + V.T_join (snd acc) (S.eval e s) + 1)%N,
+       V.join (snd acc) (S.eval e s))) xs (0%N, V.bot)).
   Definition k_disjunction : N := 1%N. (* STUB *)
   Lemma F2_widen : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
+    if is_bot a then proj1_sig b else
     if forallb S.is_bot (proj1_sig a) then [S.top] else
     replace_first S.is_bot
       (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))))
@@ -300,7 +320,7 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma T1_widen : forall p a b,
     (T_widen p a b <= k_disjunction *
-      (T_leb b a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
+      (T_leb b a + T_is_bot a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
        fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) +
        fold_right N.add 0%N (map (fun y => fold_right N.add 0%N
          (map (fun x => S.T_leb y x + 1) (proj1_sig a))) (proj1_sig b)) +
@@ -308,6 +328,17 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
          let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
          T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
          (proj1_sig a))))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma F7_eval : forall e d,
+    eval e d = fold_left (fun a s => V.join a (S.eval e s)) (proj1_sig d) V.bot.
+  Proof. reflexivity. Qed.
+  Lemma T2_eval : forall e d, (T_eval e d <= k_disjunction *
+    (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1) (proj1_sig d)) +
+     eval_joins e (proj1_sig d) + 1))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T3_eval_joins : forall e xs, length xs <= C.k ->
+    (eval_joins e xs <= k_disjunction * N.of_nat (fold_right Nat.add 0%nat
+      (map (fun s => (V.size (S.eval e s) + 1)%nat) xs) + 1))%N.
   Proof. Admitted. (* STUB *)
 End StateDisjunctionT.
 

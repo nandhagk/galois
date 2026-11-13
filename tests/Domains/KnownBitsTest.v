@@ -73,3 +73,7 @@ Example tnum_raw_widen_stable :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example contradictory_mask_is_least :
+  MaskCode.pleb 2%positive (Tnum 1 1) (Tnum 2 0) = true.
+Proof. vm_compute. reflexivity. Qed.

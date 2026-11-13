@@ -109,3 +109,8 @@ Module IPinTime <: INTERVAL_CONGR_PIN WordLanguage ITTime GTTime
   IDomainTime.Domain GDomainTime.Domain IRT := IRT.
 Module BPinTime <: INTERVAL_BITS_PIN WordLanguage Config ITTime KTTime
   IDomainTime.Domain KDomainTime.Domain BRT := BRT.
+
+Example clipped_interval_singleton_congruence :
+  snd (IR.to_right (TVal 4%positive (I (Fin 15) (Fin 20)), TVal 4%positive (C 1 0))) =
+    TVal 4%positive (C 0 15).
+Proof. vm_compute. reflexivity. Qed.
