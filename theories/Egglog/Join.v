@@ -955,14 +955,34 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
 
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs b Hwf Hin.
+    destruct (enumerate_sound (nvars p) p ixs 0 [] (map I.root ixs) [] b
+      ltac:(lia) (nodes_ok_initial p ixs Hwf) Hin) as [Hempty|[Hanswer _]].
+    - contradiction.
+    - exact Hanswer.
+  Qed.
 
   Lemma run_complete : forall p ixs b, wf_plan p ixs ->
     answer p ixs b -> In b (run p ixs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs b Hwf Hanswer.
+    apply (enumerate_complete (nvars p) p ixs 0 [] (map I.root ixs) [] b).
+    - lia.
+    - apply nodes_ok_initial. exact Hwf.
+    - exact Hanswer.
+    - reflexivity.
+  Qed.
 
   Lemma run_nodup : forall p ixs, wf_plan p ixs -> NoDup (run p ixs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs Hwf.
+    apply (enumerate_nodup (nvars p) p ixs 0 [] (map I.root ixs) []).
+    - lia.
+    - apply nodes_ok_initial. exact Hwf.
+    - constructor.
+    - intros b _ _ Hempty. contradiction.
+  Qed.
 
 End Join.
 
