@@ -126,14 +126,17 @@ End SteensgaardT.
 Module SteensgaardSound (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D)
     (A : STEENSGAARD V I J D R) (L : POINTER_LINK) <: STEENSGAARD_SOUND V I J D R A L.
+  (** The source congruence contains every seed and is closed under its pointer rules. *)
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
   Proof. Admitted. (* STUB *)
 
+  (** Every inclusion-derived pointer belongs to the source congruence. *)
   Lemma F2_inclusion_unifies : forall q x a, may_points q x a ->
     pointer_congruence q (Deref (Cell x)) (Cell a).
   Proof. Admitted. (* STUB *)
 
+  (** Each concrete instruction preserves coverage by the source congruence. *)
   Lemma F6_step_covered : forall q instruction before after,
     In instruction (constraints q) ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
@@ -141,6 +144,7 @@ Module SteensgaardSound (V : VALUE with Definition t := positive)
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) after.
   Proof. Admitted. (* STUB *)
 
+  (** Every reachable concrete pointer is included in every saturated unification result. *)
   Lemma concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
     pointer_reachable (L.initial q) (L.step q) s -> forall x a,
       trie_get x (L.memory s) = Some a -> A.points db x a = true.

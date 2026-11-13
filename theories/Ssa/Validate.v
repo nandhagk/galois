@@ -202,7 +202,8 @@ Module ValidateT (O : OPS)
       fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
         (first_blocks (blocks _ _ _ p))))%N.
   Proof. Admitted. (* STUB *)
-  (** One block check charges its two bodies, its operands, its live row, its exit and its operators. *)
+  (** One block check charges its two bodies, its operands, its live row, its exit and its
+      operators. *)
   Lemma T2a_block : forall p s c b ib,
     find_block b (blocks _ _ _ p) = Some ib ->
     (T_check_block (tables p s c) b <= k_code *

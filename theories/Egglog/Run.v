@@ -513,23 +513,28 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       else inl (negb (D.changed next), D.advance next).
   Proof. Admitted. (* STUB *)
 
+  (** The keyed environment gives the binding environment's value for every variable. *)
   Lemma F30_bind_env : forall c b x, bind_env c b x = env_of c b x.
   Proof. Admitted. (* STUB *)
 
+  (** A lookup in the keyed environment pays for the bits of its variable. *)
   Lemma T6_bind_env_le : forall c b x,
     (T_bind_env c b x <= k_driver * N.of_nat (Pos.size_nat x + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** Each round job uses one selected plan and one of its database bindings. *)
   Lemma F31_jobs : forall p cp nv db c b, In (c, b) (jobs p cp nv db) ->
     In c (if nv then naive V.t cp else seminaive V.t cp) /\
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c) /\
     In b (bindings cp c db).
   Proof. Admitted. (* STUB *)
 
+  (** A round applies its jobs in order and rebuilds the resulting database once. *)
   Lemma F32_round_jobs : forall p cp nv db,
     round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
   Proof. Admitted. (* STUB *)
 
+  (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
   Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
     loaded p cp db ->
     (T_round p cp nv db <=
