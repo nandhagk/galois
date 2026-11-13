@@ -4071,6 +4071,57 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - exact I.
   Qed.
 
+  (** A nonnegative new-edge cycle lets full closure finish above the one-edge formula. *)
+  Lemma inserted_cycle_close_success : forall m i j d, dbm_wf m -> closed m ->
+    let base := add_cons j j 0%Z (add_cons i i 0%Z m) in
+    let seed := add_cons i j d base in
+    RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (entry base j i) (Some d)) ->
+    exists final, close seed = Reached final /\
+      forall a b, RelationalPathBounds.below
+        (RelationalPathBounds.edge_extension (entry base) i j d a b)
+        (entry final a b).
+  Proof.
+    intros m i j d Hwf Hclosed. cbn beta iota zeta.
+    set (base := add_cons j j 0%Z (add_cons i i 0%Z m)).
+    set (seed := add_cons i j d base).
+    intro Hcycle.
+    assert (Hbase : closed base).
+    { unfold base. apply closed_add_zero, closed_add_zero. exact Hclosed. }
+    assert (Hwfbase : dbm_wf base).
+    { unfold base. apply add_cons_wf, add_cons_wf. exact Hwf. }
+    assert (Hwfseed : dbm_wf seed).
+    { unfold seed. now apply add_cons_wf. }
+    assert (Hii : entry base i i = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons.
+      right. right. rewrite support_add_cons. now left. }
+    assert (Hjj : entry base j j = Some 0%Z).
+    { apply (proj1 Hbase). unfold base. rewrite support_add_cons. now left. }
+    set (u := RelationalPathBounds.edge_extension (entry base) i j d).
+    assert (Hglobal : forall p, RelationalPathBounds.closed_at u p).
+    { unfold u. eapply RelationalPathBounds.edge_extension_closed;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle]. }
+    assert (Hbelow : forall a b,
+      RelationalPathBounds.below (u a b) (entry seed a b)).
+    { intros a b. unfold u, seed.
+      now apply edge_extension_below_insert. }
+    assert (Hzero : forall k, In k (keys seed) -> u k k = Some 0%Z).
+    { intros k Hkey. unfold u.
+      apply RelationalPathBounds.edge_extension_zero;
+        [apply closed_at_every_key; exact Hbase|exact Hcycle|].
+      apply (proj1 Hbase). assert (Hsupport : In (K.encode k) (support seed)).
+      { now apply keys_support. }
+      unfold seed in Hsupport. rewrite support_add_cons in Hsupport.
+      destruct Hsupport as [Hcode|[Hcode|Hcode]].
+      - apply K.encode_inj in Hcode. subst k.
+        unfold base. rewrite support_add_cons. right. right.
+        rewrite support_add_cons. now left.
+      - apply K.encode_inj in Hcode. subst k.
+        unfold base. rewrite support_add_cons. now left.
+      - exact Hcode. }
+    exact (close_above_closed seed u Hwfseed Hglobal Hbelow Hzero).
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
