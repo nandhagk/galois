@@ -463,6 +463,118 @@ Module Join (V : VALUE) (I : INDEX V) <: JOIN V I.
     - exact Hstep.
   Qed.
 
+  (** Positions before a level form an initial segment of an increasing column. *)
+  Lemma filter_before_prefix : forall lv, StronglySorted lt lv -> forall lvl,
+    exists rest, lv = filter (fun i => Nat.ltb i lvl) lv ++ rest.
+  Proof.
+    intros lv Hsorted. induction Hsorted as [|i lv Hsorted IH Hafter]; intro lvl.
+    - exists []. reflexivity.
+    - destruct (Nat.ltb i lvl) eqn:Hlow.
+      + destruct (IH lvl) as [rest Hrest]. exists rest.
+        cbn [filter]. rewrite Hlow. cbn [app]. now rewrite <- Hrest.
+      + apply Nat.ltb_ge in Hlow.
+        assert (Hlater : Forall (fun j => lvl < j) lv).
+        { eapply Forall_impl; [|exact Hafter]. intros j Hj. lia. }
+        destruct (later_columns lv lvl Hlater) as [Htail _].
+        exists (i :: lv). cbn [filter].
+        assert (Hfalse : Nat.ltb i lvl = false) by (apply Nat.ltb_ge; exact Hlow).
+        now rewrite Hfalse, Htail.
+  Qed.
+
+  (** A projected column prefix is an initial segment of its full projection. *)
+  Lemma project_prefix : forall lv b lvl full pre, StronglySorted lt lv ->
+    project lv b = Some full ->
+    project (filter (fun i => Nat.ltb i lvl) lv) b = Some pre ->
+    exists suf, full = pre ++ suf.
+  Proof.
+    intros lv b lvl full pre Hsorted Hfull Hpre.
+    destruct (filter_before_prefix lv Hsorted lvl) as [rest Hrest].
+    rewrite Hrest, project_append, Hpre in Hfull.
+    destruct (project rest b) as [suf|]; [|discriminate].
+    injection Hfull as <-. exists suf. reflexivity.
+  Qed.
+
+  (** Filtering to a level leaves only positions inside that prefix. *)
+  Lemma filter_positions : forall lv lvl,
+    Forall (fun i => i < lvl) (filter (fun i => Nat.ltb i lvl) lv).
+  Proof.
+    intros lv lvl. apply Forall_forall. intros i Hi.
+    apply filter_In in Hi as [_ Hlt]. now apply Nat.ltb_lt in Hlt.
+  Qed.
+
+  (** A participating column in a full answer extends its current projection by the next cell. *)
+  Lemma project_next_answer : forall lv lvl b c u full v, StronglySorted lt lv ->
+    length b = lvl -> project (filter (fun i => Nat.ltb i lvl) lv) b = Some u ->
+    existsb (Nat.eqb lvl) lv = true -> firstn (S lvl) full = b ++ [c] ->
+    project lv full = Some v -> exists suf, v = u ++ c :: suf.
+  Proof.
+    intros lv lvl b c u full v Hsorted Hlength Hproject Hpart Hprefix Hfull.
+    pose proof (project_next lv lvl b c u Hsorted Hlength Hproject) as Hnext.
+    rewrite Hpart in Hnext.
+    assert (Hproject_full :
+      project (filter (fun i => Nat.ltb i (S lvl)) lv) full = Some (u ++ [c])).
+    { rewrite <- (project_firstn _ full (S lvl) (filter_positions lv (S lvl))).
+      now rewrite Hprefix. }
+    destruct (project_prefix lv full (S lvl) v (u ++ [c]) Hsorted Hfull Hproject_full)
+      as [suf Hsuf].
+    exists suf. rewrite Hsuf, <- app_assoc. reflexivity.
+  Qed.
+
+  (** Every column probe succeeds for a cell belonging to a full extending answer. *)
+  Lemma advance_columns_complete : forall cs ixs lvl ns c b full,
+    length b = lvl ->
+    Forall2 (fun lv ix => StronglySorted lt lv /\ I.wf (length lv) ix) cs ixs ->
+    Forall2 (fun lvix n => exists u,
+      project (filter (fun i => Nat.ltb i lvl) (fst lvix)) b = Some u /\
+      I.node (snd lvix) n u) (combine cs ixs) ns ->
+    Forall2 (fun lv ix => exists u, project lv full = Some u /\ I.mem ix u) cs ixs ->
+    firstn (S lvl) full = b ++ [c] ->
+    exists ns', advance_columns cs ixs lvl ns c = Some ns'.
+  Proof.
+    intros cs ixs lvl ns c b full Hlength Hcols. revert ns.
+    induction Hcols as [|lv ix cs ixs [Hsorted Hwf] Hcols IH];
+      intros [|n ns] Hnodes Hanswer Hprefix.
+    - exists []. reflexivity.
+    - inversion Hnodes.
+    - inversion Hnodes.
+    - apply Forall2_cons_iff in Hnodes as [[u [Hproject Hnode]] Hnodes].
+      apply Forall2_cons_iff in Hanswer as [[v [Hfull Hmem]] Hanswer].
+      cbn [fst snd] in Hproject, Hnode.
+      destruct (IH ns Hnodes Hanswer Hprefix) as [ms Htail].
+      cbn [advance_columns]. rewrite Htail.
+      destruct (existsb (Nat.eqb lvl) lv) eqn:Hpart.
+      + destruct (project_next_answer lv lvl b c u full v Hsorted Hlength Hproject
+          Hpart Hprefix Hfull) as [suf Hsuf].
+        rewrite Hsuf in Hmem.
+        destruct (IF.child_of_member (length lv) ix n u c suf Hwf Hnode Hmem)
+          as [m Hchild].
+        rewrite Hchild. exists (m :: ms). reflexivity.
+      + exists (n :: ms). reflexivity.
+  Qed.
+
+  (** An answer extending the next cell supplies a successful full probe. *)
+  Lemma advance_nodes_complete : forall p ixs lvl pre ns c full,
+    nodes_ok p ixs lvl pre ns -> answer p ixs full ->
+    firstn (S lvl) full = rev (c :: pre) ->
+    exists ns', advance_nodes p ixs lvl ns c = Some ns'.
+  Proof.
+    intros p ixs lvl pre ns c full [Hwf [Hlength [Hlevel Hnodes]]]
+      [Hfull_length Hanswer] Hprefix.
+    assert (Hbound : S lvl <= nvars p).
+    { apply (f_equal (@length (cell V.t))) in Hprefix.
+      rewrite length_firstn, length_rev in Hprefix. cbn [length] in Hprefix. lia. }
+    unfold advance_nodes.
+    assert (Hguard : Nat.leb (S lvl) (level_count p) = true).
+    { apply Nat.leb_le. exact Hbound. }
+    rewrite Hguard.
+    eapply advance_columns_complete.
+    - rewrite length_rev. exact Hlength.
+    - apply plan_columns_wf. exact Hwf.
+    - exact Hnodes.
+    - exact Hanswer.
+    - exact Hprefix.
+  Qed.
+
   Lemma run_sound : forall p ixs b, wf_plan p ixs ->
     In b (run p ixs) -> answer p ixs b.
   Proof. Admitted. (* STUB *)
@@ -569,7 +681,12 @@ Module JoinT (V : VALUE_T) (I : INDEX_T V) <: JOIN_ALL V I.
   Lemma advance_none : forall p ixs l pre ns c, wf_plan p ixs ->
     nodes_ok p ixs l pre ns -> advance p ixs l ns c = None ->
     forall b, firstn (S l) b = rev (c :: pre) -> ~ answer p ixs b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p ixs l pre ns c _ Hnodes Hnone b Hprefix Hanswer.
+    destruct (advance_nodes_complete p ixs l pre ns c b Hnodes Hanswer Hprefix)
+      as [ns' Hsome].
+    unfold advance in Hnone. congruence.
+  Qed.
 
   Lemma go_sound : forall p ixs l pre ns acc b, nodes_ok p ixs l pre ns ->
     In b (go (nvars p - l) p ixs ns pre acc) ->
