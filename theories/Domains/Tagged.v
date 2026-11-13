@@ -425,11 +425,27 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   (** The operation stays within the declared work budget. *)
   Lemma T_meet_le : forall a b, (T_meet a b <= c_base * N.of_nat ((bsize a + bsize b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|] [|v q|]; time_unfold T_meet; time_cbn;
+      unfold bsize, tagged_size, c_base;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (width_compare_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.T_pmeet_le w p q).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_narrow_le : forall a b, (T_narrow a b <= c_base * N.of_nat ((bsize a + bsize b +
     1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|] [|v q|]; time_unfold T_narrow; time_cbn;
+      unfold bsize, tagged_size, c_base;
+      rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (width_compare_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.T_pnarrow_le w p q).
+    rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_is_bot_le : forall a, (T_is_bot a <= c_base * N.of_nat ((bsize a + 1)%nat))%N.
   Proof.
@@ -451,15 +467,40 @@ Module TaggedT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   (** The operation stays within the declared work budget. *)
   Lemma meet_size_le : forall a b,
     (N.of_nat (bsize (meet a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w p|] [|v q|]; unfold meet, bsize, tagged_size, c_base;
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    destruct (Pos.eqb w v) eqn:Hsame; [|time_cbn; nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.pmeet_size w p q).
+    time_cbn. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma join_size_le : forall a b,
     (N.of_nat (bsize (join a b)) <= c_base * N.of_nat (bsize a + bsize b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold join. destruct (is_bot a).
+    { unfold c_base. rewrite ?Nat2N.inj_add. time_cbn. nia. }
+    destruct (is_bot b).
+    { unfold c_base. rewrite ?Nat2N.inj_add. time_cbn. nia. }
+    destruct a as [|w p|], b as [|v q|]; unfold bsize, tagged_size, c_base;
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    destruct (Pos.eqb w v) eqn:Hsame; [|time_cbn; nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.pjoin_size w p q).
+    time_cbn. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma widen_size_le : forall p a b,
     (N.of_nat (bsize (widen p a b)) <= c_base * N.of_nat (bsize a + bsize b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros param a b. unfold widen. destruct (leb b a).
+    { unfold c_base. rewrite ?Nat2N.inj_add. time_cbn. nia. }
+    destruct a as [|w p|], b as [|v q|]; unfold bsize, tagged_size, wsize, c_base;
+      time_cbn; rewrite ?Nat2N.inj_add; time_cbn; try nia.
+    destruct (W.pis_bot w p); [time_cbn; nia|].
+    destruct (Pos.eqb w v) eqn:Hsame; [|time_cbn; nia].
+    apply Pos.eqb_eq in Hsame. subst v. pose proof (W.pwiden_size param w p q).
+    time_cbn. rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+  Qed.
   (** The operation stays within the declared work budget. *)
   Lemma T_abst_le : forall v,
     (T_abst v <= c_base * N.of_nat (abst_work v + 1))%N.
