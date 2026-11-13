@@ -8426,6 +8426,280 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       clear -Hflat_total Happ_total Hmap_total Hlin Hpositive. clearbody work. nia.
   Qed.
 
+
+
+  (** Repeating a zero has one constructor charge per vector position. *)
+  Lemma T_karr_repeat_zero_bounded : forall total,
+    (@ListDef.T_repeat Z 0%Z total <= N.of_nat total + 1)%N.
+  Proof.
+    intro total. induction total as [|total IH]; time_unfold (@ListDef.T_repeat);
+      time_simpl; lia.
+  Qed.
+
+  (** The unit-vector constructor is linear in its requested total width. *)
+  Lemma T_karr_unit_bounded : forall total index,
+    (T_karr_unit total index <= 4 * N.of_nat (total + 1))%N.
+  Proof.
+    intro total. induction total as [|total IH]; intros [|index]; time_unfold T_karr_unit.
+    - cbn [length]. lia.
+    - cbn [length]. lia.
+    - pose proof (T_karr_repeat_zero_bounded total) as Hrepeat.
+      time_simpl. rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+    - pose proof (IH index) as Htail.
+      time_simpl. rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** This callback is the actual lookup performed for one dense coordinate. *)
+  Definition karr_dense_lookup (r : lcons X.t) (x : X.t) : Z := coefficient x (lhs r).
+
+  TimeFun karr_dense_lookup.
+
+  Definition karr_lookup_factor : N := (8 * (karr_coefficient_factor + 4) + 16)%N.
+
+  (** A dense lookup pays the raw row scan within a common matrix budget. *)
+  Lemma T_karr_dense_lookup_bounded : forall r x dim bits,
+    length (lhs r) <= dim -> C.row_bits r <= bits -> X.bits x <= bits ->
+    (T_karr_dense_lookup r x <= karr_lookup_factor *
+      N.of_nat (dim + 1) * N.of_nat (bits + dim + 1))%N.
+  Proof.
+    intros r x dim bits Hdim Hbits Hx.
+    assert (Hentries : Forall (fun p => Z.size_nat (snd p) <= bits) (lhs r)).
+    { apply Forall_forall. intros p Hp. pose proof (karr_row_entry_bits r p Hp). lia. }
+    pose proof (T_karr_coefficient_bounded x (lhs r) bits Hentries) as Hcoef.
+    assert (Hwidth : X.bits x + 2 * bits + length (lhs r) + 1 <= 3 * (bits + dim + 1))
+      by lia.
+    assert (Hscaled : (T_coefficient x (lhs r) <=
+      3 * (karr_coefficient_factor + 4) * N.of_nat (dim + 1) *
+        N.of_nat (bits + dim + 1))%N).
+    { eapply N.le_trans; [exact Hcoef|].
+      assert (Htransport : (N.of_nat (X.bits x + 2 * bits + length (lhs r) + 1) <=
+        3 * N.of_nat (bits + dim + 1))%N).
+      { replace (3 * N.of_nat (bits + dim + 1))%N with
+          (N.of_nat (3 * (bits + dim + 1))) by (rewrite Nat2N.inj_mul; reflexivity). lia. }
+      replace (3 * (karr_coefficient_factor + 4) * N.of_nat (dim + 1) *
+        N.of_nat (bits + dim + 1))%N with
+        (((karr_coefficient_factor + 4) * N.of_nat (dim + 1)) *
+          (3 * N.of_nat (bits + dim + 1)))%N by ring.
+      apply N.mul_le_mono.
+      - apply N.mul_le_mono_l. lia.
+      - exact Htransport. }
+    set (work := (N.of_nat (dim + 1) * N.of_nat (bits + dim + 1))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. assert (Hd : (1 <= N.of_nat (dim + 1))%N) by lia.
+      assert (Hb : (1 <= N.of_nat (bits + dim + 1))%N) by lia. nia. }
+    replace (3 * (karr_coefficient_factor + 4) * N.of_nat (dim + 1) *
+      N.of_nat (bits + dim + 1))%N with
+      (3 * (karr_coefficient_factor + 4) * work)%N in Hscaled by (unfold work; ring).
+    replace (karr_lookup_factor * N.of_nat (dim + 1) *
+      N.of_nat (bits + dim + 1))%N with (karr_lookup_factor * work)%N
+      by (unfold work; ring).
+    time_unfold T_karr_dense_lookup. time_simpl. unfold karr_lookup_factor.
+    clear -Hscaled Hpositive. clearbody work. nia.
+  Qed.
+
+  Definition karr_dense_factor : N := (karr_lookup_factor + 8)%N.
+
+  (** Constructing dense coefficients scans the source row once per coordinate. *)
+  Lemma T_karr_dense_bounded : forall xs r dim bits,
+    length xs <= dim -> length (lhs r) <= dim -> C.row_bits r <= bits ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    (T_dense xs r <= karr_dense_factor * N.of_nat (dim + 1)^2 *
+      N.of_nat (bits + dim + 1))%N.
+  Proof.
+    intros xs r dim bits Hxs Hrow Hbits Hkeys.
+    pose proof (karr_T_map_members X.t Z (karr_dense_lookup r) (T_karr_dense_lookup r)
+      (karr_lookup_factor * N.of_nat (dim + 1) * N.of_nat (bits + dim + 1))%N xs
+      ltac:(intros x Hx; apply T_karr_dense_lookup_bounded; [exact Hrow|exact Hbits|];
+        exact (proj1 (Forall_forall _ _) Hkeys x Hx))) as Hmap.
+    time_unfold T_dense.
+    change (fun x => coefficient x (lhs r)) with (karr_dense_lookup r).
+    time_simpl.
+    lazymatch goal with
+    | |- context [ListDef.T_map (karr_dense_lookup r) ?Tf xs] =>
+      change Tf with (T_karr_dense_lookup r)
+    end.
+    set (work := (N.of_nat (dim + 1) * N.of_nat (bits + dim + 1))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. assert (Hd : (1 <= N.of_nat (dim + 1))%N) by lia.
+      assert (Hb : (1 <= N.of_nat (bits + dim + 1))%N) by lia. nia. }
+    replace (karr_lookup_factor * N.of_nat (dim + 1) *
+      N.of_nat (bits + dim + 1))%N with (karr_lookup_factor * work)%N in Hmap
+      by (unfold work; ring).
+    replace (karr_dense_factor * N.of_nat (dim + 1)^2 *
+      N.of_nat (bits + dim + 1))%N with
+      (karr_dense_factor * N.of_nat (dim + 1) * work)%N
+      by (unfold work; rewrite N.pow_2_r; ring).
+    unfold karr_dense_factor. clear -Hmap Hxs Hpositive. clearbody work.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  Definition karr_seed_factor : N := (karr_dense_factor + 32)%N.
+
+  (** Matrix initialization charges every source header, dense scan and unit vector. *)
+  Lemma T_karr_seed_rows_bounded : forall xs total index P dim bits,
+    length xs <= dim -> total <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun r => length (lhs r) <= dim /\ C.row_bits r <= bits) P ->
+    (T_seed_rows xs total index P <= karr_seed_factor *
+      N.of_nat (length P + 1) * N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|p P IH]; intros index dim bits Hxs Htotal Hkeys Hrows.
+    - time_unfold T_seed_rows. cbn [length]. unfold karr_seed_factor.
+      rewrite !N.pow_2_r, !Nat2N.inj_add. cbn [N.of_nat]. nia.
+    - inversion Hrows as [|q qs [Hrow Hbits] Htail]; subst q qs.
+      pose proof (IH (S index) dim bits Hxs Htotal Hkeys Htail) as Hrest.
+      pose proof (T_karr_dense_bounded xs p dim bits Hxs Hrow Hbits Hkeys) as Hdense.
+      pose proof (T_karr_unit_bounded total index) as Hunit.
+      set (work := (N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N).
+      assert (Hextent : (N.of_nat (dim + 1) <= work)%N).
+      { unfold work. rewrite N.pow_2_r.
+        assert (Hfirst : (1 <= N.of_nat (dim + 1))%N) by lia.
+        assert (Hsecond : (1 <= N.of_nat (bits + dim + 1))%N) by lia. nia. }
+      assert (Hpositive : (1 <= work)%N) by (eapply N.le_trans; [|exact Hextent]; lia).
+      assert (Hunit_total : (T_karr_unit total index <= 4 * work)%N).
+      { eapply N.le_trans; [exact Hunit|]. apply N.mul_le_mono_l. lia. }
+      replace (karr_seed_factor * N.of_nat (length P + 1) * N.of_nat (dim + 1)^2 *
+        N.of_nat (bits + dim + 1))%N with
+        (karr_seed_factor * N.of_nat (length P + 1) * work)%N in Hrest
+        by (unfold work; ring).
+      replace (karr_dense_factor * N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N
+        with (karr_dense_factor * work)%N in Hdense by (unfold work; ring).
+      replace (karr_seed_factor * N.of_nat (length (p :: P) + 1) *
+        N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N with
+        (karr_seed_factor * N.of_nat (length (p :: P) + 1) * work)%N
+        by (unfold work; ring).
+      time_unfold T_seed_rows. destruct (lrel p); time_simpl; cbn [length];
+        unfold karr_seed_factor in *;
+        clear -Hrest Hdense Hunit_total Hpositive;
+        clearbody work; rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
+  (** Flattening source rows counts exactly the stored coefficient occurrences. *)
+  Lemma karr_flat_source_length : forall P,
+    length (flat_map lhs P) = terms (Reached P).
+  Proof.
+    intro P. induction P as [|p P IH]; [reflexivity|].
+    cbn [flat_map terms rows_of map fold_right]. rewrite length_app, IH. reflexivity.
+  Qed.
+
+  (** Flattening transfers common source widths to every raw coefficient occurrence. *)
+  Lemma karr_flat_source_sizes : forall P keys bits,
+    Forall (fun r => C.row_key_bits r <= keys /\ C.row_bits r <= bits) P ->
+    Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys /\
+      Z.size_nat (snd p) <= bits) (flat_map lhs P).
+  Proof.
+    intros P keys bits Hrows. apply Forall_forall. intros p Hin.
+    apply in_flat_map in Hin as [r [Hr Hp]].
+    destruct (proj1 (Forall_forall _ _) Hrows r Hr) as [Hkey Hbits].
+    pose proof (karr_row_key_member r p Hp).
+    pose proof (karr_row_entry_bits r p Hp). split; lia.
+  Qed.
+
+  (** Source flattening visits row headers and copies each occurrence once. *)
+  Lemma T_karr_flat_source_bounded : forall P,
+    (List.T_flat_map (@lhs X.t) (@T_lhs X.t) P <=
+      4 * N.of_nat (terms (Reached P) + length P + 1))%N.
+  Proof.
+    intro P. induction P as [|p P IH].
+    - time_unfold List.T_flat_map. cbn [terms rows_of map fold_right length]. lia.
+    - pose proof (Datatypes.T_app_le (lhs p) (flat_map lhs P)) as Happ.
+      time_unfold List.T_flat_map. time_simpl.
+      change (terms (Reached (p :: P))) with (length (lhs p) + terms (Reached P)).
+      cbn [length]. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  Definition karr_variables_factor : N := (4 * (karr_add_factor + 1) + 64)%N.
+
+  (** Raw coordinate collection has the same logarithmic coefficient-width budget. *)
+  Lemma T_karr_variables_raw : forall P keys bits,
+    Forall (fun r => C.row_key_bits r <= keys /\ C.row_bits r <= bits) P ->
+    (T_variables P <= karr_variables_factor *
+      N.of_nat (terms (Reached P) + length P + 1) *
+        N.of_nat (keys + bits + Nat.log2 (terms (Reached P)) + 1))%N.
+  Proof.
+    intros P keys bits Hrows.
+    pose proof (karr_flat_source_sizes P keys bits Hrows) as Hsizes.
+    assert (Hempty : karr_accum_magnitude PTrieCode.empty (0 * 2 ^ bits)).
+    { intros key p Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+    pose proof (T_karr_accum_log (flat_map lhs P) PTrieCode.empty keys bits 0
+      (terms (Reached P)) Hsizes Hempty ltac:(rewrite karr_flat_source_length; lia)) as Haccum.
+    set (tr := fold_left add_term (flat_map lhs P) PTrieCode.empty).
+    assert (Hkeys : Forall (fun p => Pos.size_nat (X.encode (fst p)) <= keys)
+      (flat_map lhs P)).
+    { eapply Forall_impl; [|exact Hsizes]. intros p [Hp _]. exact Hp. }
+    pose proof (karr_accum_nodes (flat_map lhs P) PTrieCode.empty keys Hkeys) as Hnodes.
+    change (PTrie.nodes tr <= length (flat_map lhs P) * keys) in Hnodes.
+    rewrite karr_flat_source_length in Hnodes, Haccum.
+    pose proof (T_karr_values_bounded (X.t * Z) tr) as Hvalues.
+    pose proof (karr_values_length (X.t * Z) tr) as Hlength.
+    pose proof (T_karr_flat_source_bounded P) as Hflat.
+    assert (Hmap : (ListDef.T_map (@fst X.t Z) (@Datatypes.T_fst X.t Z) (karr_values tr) <=
+      2 * N.of_nat (length (karr_values tr)) + 1)%N).
+    { change (ListDef.T_map (@fst X.t Z) (@Datatypes.T_fst X.t Z) (karr_values tr) <=
+        (1 + 1) * N.of_nat (length (karr_values tr)) + 1)%N.
+      apply karr_T_map_members. intros [x z] _. time_unfold (@Datatypes.T_fst). lia. }
+    set (mass := terms (Reached P) + length P + 1).
+    set (width := keys + bits + Nat.log2 (terms (Reached P)) + 1).
+    set (work := N.of_nat (mass * width)).
+    assert (Hwidth : 1 <= width) by (unfold width; lia).
+    assert (Hmass : 1 <= mass) by (unfold mass; lia).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. clear -Hwidth Hmass. nia. }
+    assert (Hheaders : mass <= mass * width) by (clear -Hwidth mass; nia).
+    assert (Hnodes_total : PTrie.nodes tr + 1 <= mass * width).
+    { unfold mass, width. clear -Hnodes bits. nia. }
+    assert (Hfold_product :
+      (N.of_nat (terms (Reached P)) *
+        N.of_nat (keys + 2 * bits + Nat.log2 (terms (Reached P)) + 2) <=
+        2 * work)%N).
+    { assert (Hcount : (N.of_nat (terms (Reached P)) <= N.of_nat mass)%N)
+        by (unfold mass; lia).
+      assert (Hdouble :
+        (N.of_nat (keys + 2 * bits + Nat.log2 (terms (Reached P)) + 2) <=
+          2 * N.of_nat width)%N).
+      { replace (2 * N.of_nat width)%N with (N.of_nat (2 * width))
+          by (rewrite Nat2N.inj_mul; reflexivity). unfold width. lia. }
+      replace (2 * work)%N with (N.of_nat mass * (2 * N.of_nat width))%N
+        by (unfold work; rewrite Nat2N.inj_mul; ring).
+      now apply N.mul_le_mono. }
+    assert (Haccum_total :
+      (List.T_fold_left add_term T_add_term (flat_map lhs P) PTrieCode.empty <=
+        2 * (karr_add_factor + 1) * work + 1)%N).
+    { eapply N.le_trans; [exact Haccum|]. apply N.add_le_mono_r.
+      replace ((karr_add_factor + 1) * N.of_nat (terms (Reached P)) *
+        N.of_nat (keys + 2 * bits + Nat.log2 (terms (Reached P)) + 2))%N with
+        ((karr_add_factor + 1) * (N.of_nat (terms (Reached P)) *
+          N.of_nat (keys + 2 * bits + Nat.log2 (terms (Reached P)) + 2)))%N by ring.
+      replace (2 * (karr_add_factor + 1) * work)%N with
+        ((karr_add_factor + 1) * (2 * work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hvalues_total : (T_karr_values tr <= 4 * work)%N).
+    { eapply N.le_trans; [exact Hvalues|]. apply N.mul_le_mono_l. unfold work. lia. }
+    assert (Hmap_total :
+      (ListDef.T_map (@fst X.t Z) (@Datatypes.T_fst X.t Z) (karr_values tr) <=
+        3 * work)%N).
+    { assert (Hcount : (N.of_nat (length (karr_values tr)) <= work)%N)
+        by (unfold work; lia).
+      clear -Hmap Hcount Hpositive. nia. }
+    assert (Hflat_total : (List.T_flat_map (@lhs X.t) (@T_lhs X.t) P <= 4 * work)%N).
+    { eapply N.le_trans; [exact Hflat|]. apply N.mul_le_mono_l.
+      change (N.of_nat mass <= work)%N. unfold work. lia. }
+    replace (karr_variables_factor * N.of_nat (terms (Reached P) + length P + 1) *
+      N.of_nat (keys + bits + Nat.log2 (terms (Reached P)) + 1))%N with
+      (karr_variables_factor * work)%N
+      by (unfold work, mass, width; rewrite Nat2N.inj_mul; ring).
+    time_unfold T_variables. fold tr. time_simpl.
+    change (fun (m : ptrie (X.t * Z)) (p : X.t * Z) => T_add_term m p) with T_add_term.
+    change (fun _ : lcons X.t => 1%N) with (@T_lhs X.t).
+    change (fun _ : X.t * Z => 1%N) with (@Datatypes.T_fst X.t Z).
+    replace (karr_variables_factor * N.of_nat mass * N.of_nat width)%N with
+      (karr_variables_factor * work)%N by (unfold work; rewrite Nat2N.inj_mul; ring).
+    unfold karr_variables_factor.
+    clear -Haccum_total Hvalues_total Hmap_total Hflat_total Hpositive.
+    clearbody work. nia.
+  Qed.
+
   Definition c_lat : N := 1. (* STUB *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
