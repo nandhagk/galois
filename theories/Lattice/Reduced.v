@@ -6,7 +6,7 @@
 
 From Stdlib Require Import Bool Arith NArith Lia.
 From Argent Require Import Time Tactics Std.
-From Galois.Lattice Require Import LatticeSig.
+From Galois.Lattice Require Import LatticeSig Product.
 
 Module ReducedCode (A B : BLATTICE_OPS) (R : REDUCER_OPS A B) <: BLATTICE_OPS.
   Definition t := (A.t * B.t)%type.
@@ -21,26 +21,55 @@ End ReducedCode.
 
 Module Reduced (A B : BLATTICE) (R : REDUCER A B) <: BLATTICE.
   Include ReducedCode A B R.
+  Module P := Product A B.
+
+  Local Lemma reduce_lower_pair x : P.leb (R.reduce x) x = true.
+  Proof. destruct x as [a b]; unfold P.leb; apply andb_true_iff; apply R.reduce_lower. Qed.
+
+  Local Lemma reduce_mono_pair x y : P.leb x y = true -> P.leb (R.reduce x) (R.reduce y) = true.
+  Proof.
+    destruct x as [a b], y as [c d]; unfold P.leb; cbn.
+    rewrite !andb_true_iff. intros [Ha Hb]. apply R.reduce_mono; assumption.
+  Qed.
+
+  Local Lemma reduce_idem_pair x : P.leb (R.reduce x) (R.reduce (R.reduce x)) = true.
+  Proof. destruct x as [a b]; unfold P.leb; apply andb_true_iff; apply R.reduce_idem. Qed.
+
+  Local Lemma leb_pair x y : leb x y = P.leb (R.reduce x) y.
+  Proof. reflexivity. Qed.
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intro a; rewrite leb_pair; apply reduce_lower_pair. Qed.
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c Hab Hbc. rewrite !leb_pair in *.
+    eapply P.leb_trans; [apply reduce_idem_pair|].
+    eapply P.leb_trans; [apply reduce_mono_pair; exact Hab|exact Hbc].
+  Qed.
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intro a; rewrite leb_pair; eapply P.leb_trans; [apply reduce_lower_pair|apply P.bot_least]. Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof. apply P.is_bot_bot. Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Ha. rewrite leb_pair. eapply P.leb_trans; [apply reduce_lower_pair|].
+    apply P.is_bot_least; exact Ha.
+  Qed.
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intros a b; rewrite leb_pair; apply reduce_mono_pair, P.join_ub_l. Qed.
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intros a b; rewrite leb_pair; apply reduce_mono_pair, P.join_ub_r. Qed.
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof. intros a; rewrite leb_pair; unfold P.leb, top; cbn; rewrite A.top_greatest, B.top_greatest; reflexivity. Qed.
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; rewrite leb_pair; eapply P.leb_trans; [apply reduce_lower_pair|].
+    unfold P.leb, meet; cbn; rewrite A.meet_lb_l, B.meet_lb_l; reflexivity.
+  Qed.
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; rewrite leb_pair; eapply P.leb_trans; [apply reduce_lower_pair|].
+    unfold P.leb, meet; cbn; rewrite A.meet_lb_r, B.meet_lb_r; reflexivity.
+  Qed.
 End Reduced.
 
 Module ReducedT (A B : BLATTICE_T) (SA : JOIN_SIZE A) (SB : JOIN_SIZE B)
