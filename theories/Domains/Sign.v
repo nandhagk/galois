@@ -1112,35 +1112,106 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   TimeFun sign_cmp_sym.
   TimeFun wfwd.
   TimeFun wbwd.
-  Definition c_sign_table : N := 1%N. (* STUB *)
-  Definition c_word_table : N := 1%N. (* STUB *)
+  Definition c_sign_table : N := (S.c_sign + 1024)%N.
+  Definition c_word_table : N := (c_sign_table + 1)%N.
   (** The bounded flag comparison keeps every numeric comparator result. *)
   Lemma F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
   Proof.
     exact sign_cmp_sym_agrees.
   Qed.
+  (** The symbolic endpoints use only three bounded width classes. *)
+  Local Lemma sign_cmp_sym_ticks : forall o w a b,
+    (T_sign_cmp_sym o w a b <= 512)%N.
+  Proof.
+    intros o w [a b c] [d e f].
+    destruct o; try solve [vm_compute; easy].
+    all: destruct w as [w|[w|w|]|]; destruct a, b, c, d, e, f; vm_compute; easy.
+  Qed.
+
+  (** Entry dispatch inspects at most three operands and makes one payload call. *)
+  Local Lemma sign_entry_ticks : forall o rw xs,
+    (T_wfwd o rw xs <= c_sign_table)%N.
+  Proof.
+    intros o rw xs. unfold c_sign_table.
+    destruct xs as [|[w a] xs].
+    - destruct o; time_unfold T_wfwd; time_cbn; lia.
+    - destruct xs as [|[v b] xs].
+      + pose proof (S.T_sign_not_le a) as Hnot.
+        pose proof (S.T_sign_neg_le a) as Hneg.
+        destruct o; time_unfold T_wfwd; time_cbn; lia.
+      + destruct xs as [|[u c] xs].
+        * pose proof (S.T_sign_and_le a b) as Hand.
+          pose proof (S.T_sign_or_le a b) as Hor.
+          pose proof (S.T_sign_xor_le a b) as Hxor.
+          pose proof (sign_cmp_sym_ticks o w a b) as Hcompare.
+          destruct o; time_unfold T_wfwd; time_cbn; lia.
+        * destruct xs as [|x xs].
+          -- pose proof (S.T_pjoin_const rw b c) as Hjoin.
+             destruct o; time_unfold T_wfwd; time_cbn; lia.
+          -- destruct o; time_unfold T_wfwd; time_cbn; lia.
+  Qed.
+
+  Local Lemma table_square_bounds : forall width operands,
+    (N.of_nat width <= N.of_nat ((width + operands + 1) ^ 2) /\
+      1 <= N.of_nat ((width + operands + 1) ^ 2))%N.
+  Proof.
+    intros width operands.
+    assert (Hsize : (width <= (width + operands + 1) ^ 2)%nat).
+    { cbn [Nat.pow]. nia. }
+    assert (Hpositive : (1 <= (width + operands + 1) ^ 2)%nat).
+    { cbn [Nat.pow]. nia. }
+    split; lia.
+  Qed.
+  Local Lemma word_table_scale : forall budget, (budget <= c_word_table * budget)%N.
+  Proof.
+    intro budget. replace budget with (1 * budget)%N at 1 by ring.
+    apply N.mul_le_mono_r. unfold c_word_table, c_sign_table. lia.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs. eapply N.le_trans; [apply sign_entry_ticks|].
+    replace c_sign_table with (c_sign_table * 1)%N at 1 by ring.
+    apply N.mul_le_mono; [unfold c_word_table; lia|].
+    pose proof (proj2 (table_square_bounds (Pos.to_nat rw)
+      (fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs)))) as Hpositive.
+    rewrite Nat2N.inj_add. lia.
+  Qed.
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         S.psize rw q +
         fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs. time_unfold T_wbwd.
+    replace 1%N with (1 * 1)%N at 1 by reflexivity. apply N.mul_le_mono.
+    - unfold c_word_table, c_sign_table. lia.
+    - pose proof (proj2 (table_square_bounds (Pos.to_nat rw)
+        (fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs)))) as Hpositive.
+      rewrite !Nat2N.inj_add. lia.
+  Qed.
   Lemma T_sign_entry_le : forall o rw xs, (T_wfwd o rw xs <= c_sign_table)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact sign_entry_ticks.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (S.psize rw r) <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs r Hentry. rewrite S.psize_width.
+    pose proof (proj1 (table_square_bounds (Pos.to_nat rw)
+      (fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) xs)))) as Hsize.
+    eapply N.le_trans; [exact Hsize|].
+    eapply N.le_trans; [|apply word_table_scale]. rewrite Nat2N.inj_add. lia.
+  Qed.
   (** The result stays within its declared work budget. *)
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
@@ -1150,5 +1221,7 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         S.psize rw q +
         fold_right Nat.add 0 (map (fun x => S.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs ys Hentry. discriminate Hentry.
+  Qed.
 End SignTableT.
