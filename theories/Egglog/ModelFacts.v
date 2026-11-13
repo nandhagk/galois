@@ -43,6 +43,53 @@ Module UnionFindFacts (U : UNION_FIND).
     - destruct (U.union_none i j u u' Hwf Hunion) as [Hij Hrepr].
       rewrite (Hrepr a), (Hrepr b). intuition congruence.
   Qed.
+
+  (** Union preserves every equality already represented by its input forest. *)
+  Lemma union_old : forall i j u a b, U.wf u -> U.repr u a = U.repr u b ->
+    U.repr (snd (U.union i j u)) a = U.repr (snd (U.union i j u)) b.
+  Proof.
+    intros i j u a b Hwf Heq.
+    apply (proj2 (union_eq_cases i j u a b Hwf)). now left.
+  Qed.
+
+  (** Union always identifies its requested endpoints. *)
+  Lemma union_requested : forall i j u, U.wf u ->
+    U.repr (snd (U.union i j u)) i = U.repr (snd (U.union i j u)) j.
+  Proof.
+    intros i j u Hwf. apply (proj2 (union_eq_cases i j u i j Hwf)).
+    right. left. split; reflexivity.
+  Qed.
+
+  (** Forest union adds exactly the equality closure of the requested pair. *)
+  Lemma union_same_closure : forall i j u a b, U.wf u ->
+    (U.repr (snd (U.union i j u)) a = U.repr (snd (U.union i j u)) b <->
+      clos_refl_sym_trans positive
+        (fun x y => U.repr u x = U.repr u y \/ (x, y) = (i, j)) a b).
+  Proof.
+    intros i j u a b Hwf. split.
+    - intro Heq. apply (proj1 (union_eq_cases i j u a b Hwf)) in Heq.
+      destruct Heq as [Heq | [[Ha Hb] | [Ha Hb]]].
+      + apply rst_step. now left.
+      + eapply rst_trans with (y := i).
+        * apply rst_step. now left.
+        * eapply rst_trans with (y := j).
+          -- apply rst_step. right. reflexivity.
+          -- apply rst_step. left. symmetry. exact Hb.
+      + eapply rst_trans with (y := j).
+        * apply rst_step. now left.
+        * eapply rst_trans with (y := i).
+          -- apply rst_sym. apply rst_step. right. reflexivity.
+          -- apply rst_step. left. symmetry. exact Hb.
+    - intro Hclosure.
+      induction Hclosure as
+        [x y Hstep | x | x y Hstep IH | x y z Hleft IHleft Hright IHright].
+      + destruct Hstep as [Heq | Hpair].
+        * exact (union_old i j u x y Hwf Heq).
+        * inversion Hpair; subst. exact (union_requested i j u Hwf).
+      + reflexivity.
+      + symmetry. exact IH.
+      + exact (eq_trans IHleft IHright).
+  Qed.
 End UnionFindFacts.
 
 Section ModelFacts.
