@@ -8857,6 +8857,19 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       lia.
   Qed.
 
+  Lemma invalid_refs_width : forall st x id, state_ok st ->
+    In id (infl_at st x ++ cowrite_at st x) -> Pos.size_nat id <= kwidth st.
+  Proof.
+    intros st x id Hstate Hin; apply in_app_iff in Hin as [Hread|Hwrite].
+    - destruct (infl_snapshot_pin st x id Hstate Hread) as [ss Hsnapshot].
+      exact (snapshot_id_width st id ss Hstate Hsnapshot).
+    - pose proof (Core.core_cowrite_ids st (Core.state_ok_core st Hstate)
+        x id Hwrite) as Hsnapshot.
+      apply in_map_iff in Hsnapshot as [[id' ss] [Heq Hin]].
+      cbn [fst] in Heq; subst id'.
+      exact (snapshot_id_width st id ss Hstate Hin).
+  Qed.
+
   Lemma infl_mass_weight : forall st, state_ok st ->
     infl_mass st = finite_sum (fun x =>
       infl_deg st x + length (cowrite_at st x) + 1) (stored st).
