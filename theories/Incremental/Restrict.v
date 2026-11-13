@@ -1083,6 +1083,22 @@ Module SourceBindingFacts (L : LATTICE) (S : SYSTEM L)
       destruct (S.key_eqb x y), (Bindings.mem x bad); reflexivity.
   Qed.
 
+  (** Restoring bounded seeds preserves a pointwise bound on the raw candidate lookup. *)
+  Lemma restore_below : forall fz m upper,
+    (forall x, L.leb (look_or S.key_code L.bot m x) (upper x) = true) ->
+    (forall x v, In (x, v) fz -> L.leb v (upper x) = true) ->
+    forall x, L.leb (look_or S.key_code L.bot (Bindings.restore fz m) x) (upper x) = true.
+  Proof.
+    induction fz as [|[y v] rest IH]; intros m upper Hmap Hseeds x.
+    - exact (Hmap x).
+    - cbn [Bindings.restore fold_left fst].
+      apply IH.
+      + intro z; rewrite raw_set.
+        destruct (S.key_eqb_spec z y) as [->|Hneq].
+        * apply (Hseeds y v); now left.
+        * exact (Hmap z).
+      + intros z w Hin; apply (Hseeds z w); now right.
+  Qed.
 End SourceBindingFacts.
 
 (** * Agreement on declared row support *)
@@ -1119,3 +1135,70 @@ Module SourceRowFacts (L : LATTICE) (S : SYSTEM L).
     eapply S.sides_within; eauto.
   Qed.
 End SourceRowFacts.
+
+(** * Global extensions of checked supports *)
+
+Module SourceTopFacts (L : LATTICE) (Top : HAS_TOP L) (S : SYSTEM L).
+  Module Rows := SourceRowFacts L S.
+
+  (** The Boolean support contains every write and read of a row touching it. *)
+  Definition support_closed (p : S.prog) (E : S.key -> bool) : Prop :=
+    forall r y x, In r (S.rows p) -> In y (S.writes p r) -> E y = true ->
+      In x (S.writes p r ++ S.deps p r) -> E x = true.
+
+  Definition top_extend (E : S.key -> bool) (s : S.key -> L.t) (x : S.key) : L.t :=
+    if E x then s x else Top.top.
+
+  (** Supported keys retain their supplied values. *)
+  Lemma top_extend_on : forall E s x, E x = true -> top_extend E s x = s x.
+  Proof.
+    intros E s x HE; unfold top_extend; now rewrite HE.
+  Qed.
+
+  (** Unsupported keys receive top. *)
+  Lemma top_extend_off : forall E s x, E x = false -> top_extend E s x = Top.top.
+  Proof.
+    intros E s x HE; unfold top_extend; now rewrite HE.
+  Qed.
+
+  (** A row with no supported write is accepted when all its targets receive top. *)
+  Lemma top_extend_row_absent : forall p E s r,
+    S.wf p -> In r (S.rows p) ->
+    (forall x, In x (S.writes p r) -> E x = false) ->
+    row_ok L.leb (top_extend E s) (S.target p r) (S.eval p r (top_extend E s)) = true.
+  Proof.
+    intros p E s r Hwf Hr Habsent.
+    destruct (S.eval p r (top_extend E s)) as [[a ss]|] eqn:Hout.
+    - cbn [row_ok]; apply andb_true_iff; split.
+      + unfold top_extend.
+        rewrite (Habsent (S.target p r) (or_introl eq_refl)); apply Top.top_greatest.
+      + apply (proj2 (@forallb_forall _ _ _)); intros [x b] Hside; cbn [fst snd].
+        assert (Hx : In x (S.writes p r)).
+        { unfold S.writes; right; eapply S.sides_within; eassumption. }
+        unfold top_extend; rewrite (Habsent x Hx); apply Top.top_greatest.
+    - exfalso; apply (S.eval_total p r (top_extend E s) Hwf Hr); exact Hout.
+  Qed.
+
+  (** Accepted rows touching a closed support suffice for a global top extension. *)
+  Lemma top_extend_post : forall p E s,
+    S.wf p -> support_closed p E ->
+    (forall r y, In r (S.rows p) -> In y (S.writes p r) -> E y = true ->
+      row_ok L.leb s (S.target p r) (S.eval p r s) = true) ->
+    S.post_solution p (top_extend E s).
+  Proof.
+    intros p E s Hwf Hclosed Hpost r Hr.
+    destruct (existsb E (S.writes p r)) eqn:Hactive.
+    - apply existsb_exists in Hactive as [y [Hy HE]].
+      pose proof (Hpost r y Hr Hy HE) as Hrow.
+      assert (Hagree : forall x, In x (S.writes p r ++ S.deps p r) ->
+        s x = top_extend E s x).
+      { intros x Hx; symmetry; apply top_extend_on; exact (Hclosed r y x Hr Hy HE Hx). }
+      rewrite (Rows.row_look_transport p r s (top_extend E s) Hwf Hr Hagree) in Hrow.
+      exact Hrow.
+    - apply top_extend_row_absent; [exact Hwf|exact Hr|].
+      intros x Hx; destruct (E x) eqn:HE; [|reflexivity].
+      assert (Hexists : existsb E (S.writes p r) = true).
+      { apply existsb_exists; exists x; split; assumption. }
+      congruence.
+  Qed.
+End SourceTopFacts.
