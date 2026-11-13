@@ -2513,6 +2513,87 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       repeat rewrite Nat2N.inj_add in *; nia.
   Qed.
 
+  Local Lemma table_assume_sub_time : forall a b q,
+    (T_interval_assume_sub a b q <=
+      1000 * (Scalar.c_scalar + 1) *
+      N.of_nat (interval_bits a + interval_bits b + interval_bits q + 1))%N.
+  Proof.
+    intros a b q.
+    unfold T_interval_assume_sub.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (interval_finite_helper a) as [[la ha]|] eqn:Ha;
+      destruct (interval_finite_helper b) as [[lb hb]|] eqn:Hb;
+      destruct (interval_finite_helper q) as [[lq hq]|] eqn:Hq;
+      time_cbn_all;
+      try (repeat rewrite Nat2N.inj_add in *; nia).
+    destruct (table_finite_bits b lb hb Hb) as [Hlb Hhb].
+    pose proof (Std.Z.T_leb_le hb la) as Horder_time.
+    destruct (Z.leb hb la) eqn:Horder; time_cbn_all;
+      try (repeat rewrite Nat2N.inj_add in *; nia).
+    destruct (table_finite_bits a la ha Ha) as [Hla Hha].
+    destruct (table_finite_bits q lq hq Hq) as [Hlq Hhq].
+    pose proof (table_integer_add_bits lq lb) as Hll.
+    pose proof (table_integer_add_bits hq hb) as Hhh.
+    pose proof (table_integer_sub_bits la hq) as Hlh.
+    pose proof (table_integer_sub_bits ha lq) as Hhl.
+    pose proof (Std.Z.T_add_le lq lb) as Hll_time.
+    pose proof (Std.Z.T_add_le hq hb) as Hhh_time.
+    pose proof (Std.Z.T_sub_le la hq) as Hlh_time.
+    pose proof (Std.Z.T_sub_le ha lq) as Hhl_time.
+    pose proof (Scalar.T_interval_meet_le a
+      (I (Fin (lq + lb)) (Fin (hq + hb)))) as Ha_meet.
+    pose proof (Scalar.T_interval_meet_le b
+      (I (Fin (la - hq)) (Fin (ha - lq)))) as Hb_meet.
+    cbn [interval_bits] in Ha_meet, Hb_meet.
+    cbn [Z.size_nat Pos.size_nat] in Hll, Hhh, Hlh, Hhl.
+    set (budget_nat := interval_bits a + interval_bits b + interval_bits q + 1).
+    set (budget := N.of_nat budget_nat).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget, budget_nat; lia).
+    assert (Hraw_a :
+      (Nat.max (Z.size_nat (lq + lb)) (Z.size_nat (hq + hb)) <= budget_nat)%nat)
+      by (unfold budget_nat; apply Nat.max_lub; lia).
+    assert (Hraw_b :
+      (Nat.max (Z.size_nat (la - hq)) (Z.size_nat (ha - lq)) <= budget_nat)%nat)
+      by (unfold budget_nat; apply Nat.max_lub; lia).
+    assert (Ha_time :
+      (Scalar.T_interval_meet a (I (Fin (lq + lb)) (Fin (hq + hb))) <=
+        Scalar.c_scalar * N.of_nat (2 * budget_nat + 1))%N).
+    { eapply N.le_trans; [exact Ha_meet|].
+      apply N.mul_le_mono_l. repeat rewrite <- Nat2N.inj_add.
+      apply table_nat_to_N_le. unfold budget_nat. lia. }
+    assert (Hb_time :
+      (Scalar.T_interval_meet b (I (Fin (la - hq)) (Fin (ha - lq))) <=
+        Scalar.c_scalar * N.of_nat (2 * budget_nat + 1))%N).
+    { eapply N.le_trans; [exact Hb_meet|].
+      apply N.mul_le_mono_l. repeat rewrite <- Nat2N.inj_add.
+      apply table_nat_to_N_le. unfold budget_nat. lia. }
+    assert (HhbN : (N.of_nat (Z.size_nat hb) <= budget)%N)
+      by (unfold budget; apply table_nat_to_N_le; unfold budget_nat; lia).
+    assert (HllN : (N.of_nat (Z.size_nat lq + Z.size_nat lb) <= budget)%N)
+      by (unfold budget; apply table_nat_to_N_le; unfold budget_nat; lia).
+    assert (HhhN : (N.of_nat (Z.size_nat hq + Z.size_nat hb) <= budget)%N)
+      by (unfold budget; apply table_nat_to_N_le; unfold budget_nat; lia).
+    assert (HlhN : (N.of_nat (Z.size_nat la + Z.size_nat hq) <= budget)%N)
+      by (unfold budget; apply table_nat_to_N_le; unfold budget_nat; lia).
+    assert (HhlN : (N.of_nat (Z.size_nat ha + Z.size_nat lq) <= budget)%N)
+      by (unfold budget; apply table_nat_to_N_le; unfold budget_nat; lia).
+    assert (Horder_cost : (Z.T_leb hb la <= 5 * budget)%N).
+    { clear - Horder_time HhbN Hbudget. nia. }
+    assert (Hll_cost : (Z.T_add lq lb <= 5 * budget)%N).
+    { clear - Hll_time HllN Hbudget. nia. }
+    assert (Hhh_cost : (Z.T_add hq hb <= 5 * budget)%N).
+    { clear - Hhh_time HhhN Hbudget. nia. }
+    assert (Hlh_cost : (Z.T_sub la hq <= 7 * budget)%N).
+    { clear - Hlh_time HlhN Hbudget. nia. }
+    assert (Hhl_cost : (Z.T_sub ha lq <= 7 * budget)%N).
+    { clear - Hhl_time HhlN Hbudget. nia. }
+    clear Ha_meet Hb_meet Horder_time Hll_time Hhh_time Hlh_time Hhl_time.
+    unfold budget in *.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul in Ha_time, Hb_time.
+    clear - Hbudget Ha_time Hb_time Horder_cost Hll_cost Hhh_cost Hlh_cost Hhl_cost.
+    nia.
+  Qed.
+
   Local Lemma table_neg_raw_bits : forall w a,
     interval_bits (interval_neg w a) <= 3 * Pos.to_nat w + 2 * interval_bits a + 4.
   Proof.
@@ -3223,11 +3304,20 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     pose proof (table_raw_size rw q) as Hq.
     pose proof (Pos2Nat.is_pos rw) as Hr.
     pose proof (Pos2Nat.is_pos w) as Hw.
-    rewrite W.F_psize.
-    rewrite Nat.pow_2_r.
-    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *.
-    assert (Hcoeff : (1 <= 1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N)
+    set (budget_nat := (Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 +
+      W.psize rw q + W.psize w a).
+    assert (Hsquare :
+      (Pos.to_nat w <= (Pos.to_nat rw + Pos.to_nat w + 1) ^ 2)%nat)
+      by (rewrite Nat.pow_2_r; nia).
+    assert (Hsize_nat :
+      (1 + W.psize w (interval_assume_rewrap rw (interval_clip w a) q) <=
+        4 * budget_nat)%nat).
+    { rewrite W.F_psize. unfold budget_nat. lia. }
+    pose proof (table_nat_to_N_le _ _ Hsize_nat) as Hsize_N.
+    rewrite Nat2N.inj_mul in Hsize_N.
+    assert (Hcoeff : (4 <= 1000000 * (W.k_payload_clip + Scalar.c_scalar + 1))%N)
       by nia.
+    clear - Hsize_N Hcoeff.
     nia.
   Qed.
 
