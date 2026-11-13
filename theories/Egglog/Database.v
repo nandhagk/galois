@@ -1725,6 +1725,66 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + split; [exact Hcount |]. split; assumption.
   Qed.
 
+  (** Every stored row cell occurs in the concrete write history. *)
+  Definition recorded_rows (db : t) : Prop :=
+    forall f k o c, row (view db) f k o -> In c (k ++ option_list o) ->
+      In c (db_written_cells db).
+
+  (** The history invariant combines cache construction with coverage of current rows. *)
+  Definition database_history (db : t) : Prop := metadata_ok db /\ recorded_rows db.
+
+  (** Retaining rows and extending their history preserves cell coverage. *)
+  Lemma recorded_rows_transport : forall db db',
+    (forall f k o, row (view db') f k o -> row (view db) f k o) ->
+    incl (db_written_cells db) (db_written_cells db') ->
+    recorded_rows db -> recorded_rows db'.
+  Proof.
+    intros db db' Hrows Hwritten Hrecorded f k o c Hrow Hin.
+    apply Hwritten. exact (Hrecorded f k o c (Hrows f k o Hrow) Hin).
+  Qed.
+
+  (** Allocation changes neither the row cells nor the cache histories. *)
+  Lemma database_history_allocate_id : forall db i, database_history db ->
+    database_history (allocate_id i db).
+  Proof.
+    intros db i [Hmetadata Hrows]. split.
+    - now apply metadata_allocate_id.
+    - exact Hrows.
+  Qed.
+
+  (** Union preserves row cells and every independently maintained cache history. *)
+  Lemma database_history_union : forall db i j, database_history db ->
+    database_history (union i j db).
+  Proof.
+    intros db i j [Hmetadata Hrows]. split.
+    - now apply metadata_union.
+    - unfold union.
+      destruct (UnionFindCode.union i j (db_forest db)) as [[pair |] forest].
+      + destruct pair as [winner loser]. exact Hrows.
+      + exact Hrows.
+  Qed.
+
+  (** Advancing clears delta membership while retaining all stored-cell coverage. *)
+  Lemma database_history_advance : forall db, database_history db ->
+    database_history (advance db).
+  Proof.
+    intros db [Hmetadata Hrows]. split; [now apply metadata_advance | exact Hrows].
+  Qed.
+
+  (** Both guarded index branches retain a recorded counter and a construction history. *)
+  Lemma metadata_public_index : forall db s new, metadata_ok db ->
+    In (I.next (index s new db)) (db_index_counters db) /\
+    database_index_history I.empty I.insert I.remove (db_written_cells db) (index s new db).
+  Proof.
+    intros db s new (Hone & _ & _ & Hnext & Hhistory & _).
+    unfold index. destruct (N.compare s (runtime_slot_bound (db_runtime db))).
+    - rewrite I.next_empty. split; [exact Hone | apply database_index_history_empty].
+    - change (In (I.next (runtime_slot_index (db_runtime db) s new)) (db_index_counters db) /\
+        database_index_history I.empty I.insert I.remove (db_written_cells db)
+          (runtime_slot_index (db_runtime db) s new)). split; [apply Hnext | apply Hhistory].
+    - rewrite I.next_empty. split; [exact Hone | apply database_index_history_empty].
+  Qed.
+
   (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
   Definition database_wf (db : t) : Prop :=
     (UnionFind.wf (db_forest db)) /\
@@ -3067,6 +3127,43 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - right. injection Hkey as -> ->. repeat split; assumption.
   Qed.
 
+  (** A row replacement records its new tuple and retains every earlier written cell. *)
+  Lemma row_replace_written : forall db f k previous o,
+    db_written_cells (row_replace f k previous o db) =
+      (k ++ option_list o) ++
+        match previous with
+        | Some before => (k ++ option_list before) ++ db_written_cells db
+        | None => db_written_cells db
+        end.
+  Proof.
+    intros db f k [before |] o; unfold row_replace, row_write;
+      cbn [database_set_runtime db_written_cells]; rewrite !slots_update_written_cells;
+      reflexivity.
+  Qed.
+
+  (** Replacement covers the new row by its recording and every retained row by its old history. *)
+  Lemma row_replace_recorded_rows : forall db f k previous o, recorded_rows db ->
+    recorded_rows (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hrecorded g args output c Hrow Hin.
+    rewrite row_replace_written.
+    apply row_replace_sources in Hrow as [Hold | [-> [-> ->]]].
+    - apply in_or_app. right. destruct previous as [before |].
+      + apply in_or_app. right. exact (Hrecorded g args output c Hold Hin).
+      + exact (Hrecorded g args output c Hold Hin).
+    - apply in_or_app. now left.
+  Qed.
+
+  (** A fitting new contribution preserves the complete row and cache history invariant. *)
+  Lemma database_history_row_replace : forall db f k previous o,
+    database_history db -> slots_fit db f (length (k ++ option_list o)) ->
+    database_history (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o [Hmetadata Hrows] Hfits. split.
+    - now apply metadata_row_replace.
+    - now apply row_replace_recorded_rows.
+  Qed.
+
   (** Replacing an absent key adds one row and preserves every old row. *)
   Lemma row_replace_fresh : forall f k previous o db, old db f k = None ->
     forall g args output, row (view (row_replace f k previous o db)) g args output <->
@@ -3620,6 +3717,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     change (row_get f k (init ds sl) = Some o) in Hrow.
     unfold row_get in Hrow. cbn [init db_runtime runtime_rows] in Hrow.
     rewrite PTrie.get_empty in Hrow. discriminate.
+  Qed.
+
+  (** Empty rows and empty construction histories establish the history invariant initially. *)
+  Lemma database_history_init : forall ds sl, database_history (init ds sl).
+  Proof.
+    intros ds sl. split; [apply metadata_init |].
+    intros f k o c Hrow _. exfalso. exact (init_rows_empty ds sl f k o Hrow).
   Qed.
 
   (** Every declared function fits the maximum name recorded by initialization. *)
@@ -5002,6 +5106,34 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - split; [| tauto]. intro Hrow. split; [exact Hrow |].
       intro Hequal. inversion Hequal; subst.
       change (row_get f k db = Some output) in Hrow. congruence.
+  Qed.
+
+  (** Deleting a contribution retains the complete preexisting write history. *)
+  Lemma row_delete_written : forall db f k,
+    incl (db_written_cells db) (db_written_cells (row_delete f k db)).
+  Proof.
+    intros db f k c Hin. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| exact Hin].
+    change (In c (db_written_cells (slots_update false f (k ++ option_list before) db))).
+    rewrite slots_update_written_cells. apply in_or_app. now right.
+  Qed.
+
+  (** Deletion only retains rows whose cells were already recorded. *)
+  Lemma row_delete_recorded_rows : forall db f k, recorded_rows db ->
+    recorded_rows (row_delete f k db).
+  Proof.
+    intros db f k Hrecorded.
+    eapply recorded_rows_transport; [| apply row_delete_written | exact Hrecorded].
+    intros g args output Hrow. now apply row_delete_binding in Hrow as [Hrow _].
+  Qed.
+
+  (** Deletion preserves the complete row and cache history invariant. *)
+  Lemma database_history_row_delete : forall db f k, database_history db ->
+    database_history (row_delete f k db).
+  Proof.
+    intros db f k [Hmetadata Hrows]. split.
+    - now apply metadata_row_delete.
+    - now apply row_delete_recorded_rows.
   Qed.
 
   (** Removing a stored row preserves every satisfying interpretation without a quietness premise. *)
