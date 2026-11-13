@@ -5,7 +5,7 @@
     Builds on: Syntax, Model and Stdlib lists. *)
 
 From Stdlib Require Import List PArith.
-From Galois.Egglog Require Import Syntax Model.
+From Galois.Egglog Require Import Syntax Model DatabaseSig.
 
 Import List.ListNotations.
 
@@ -114,6 +114,46 @@ Proof.
   - constructor.
     + now apply atom_holds_model.
     + exact IH.
+Qed.
+
+(** A represented expression has exactly the meaning of its representing cell. *)
+Lemma represents_den : forall w c e,
+  sat merge M nu w -> represents w c e -> den nu c = denote M e.
+Proof.
+  intros w c e Hsat Hrep.
+  induction Hrep as [v | f k i j args Hrow Hsame Hargs IHargs].
+  - reflexivity.
+  - assert (Hden : map (den nu) k = map (denote M) args).
+    { clear Hrow Hsame.
+      induction IHargs as [| c0 e0 ks es Hr Hhead Htail Hall IH]; cbn [map].
+      - reflexivity.
+      - now rewrite Hhead, IH. }
+    cbn [den denote].
+    rewrite (sat_same w i j Hsat Hsame), <- (sat_constructor w f k j Hsat Hrow), Hden.
+    reflexivity.
+Qed.
+
+(** Constructor congruence equates identifiers in every satisfying model. *)
+Lemma fd_congruence_den : forall w i j,
+  sat merge M nu w -> fd_congruence w i j -> nu i = nu j.
+Proof.
+  intros w i j Hsat Hcong.
+  induction Hcong as
+    [i j Hsame | f k1 k2 i j Hrow1 Hrow2 Hcells IHcells |
+     i j Hcong IH | i j k Hleft IHleft Hright IHright].
+  - exact (sat_same w i j Hsat Hsame).
+  - assert (Hden : map (den nu) k1 = map (den nu) k2).
+    { clear Hrow1 Hrow2.
+      induction IHcells as [| c d ks ds Hr Hhead Htail Hall IH]; cbn [map].
+      - reflexivity.
+      - assert (Hcell_den : den nu c = den nu d).
+        { destruct Hhead as [i0 j0 Hr0 Heq | v]; cbn [den]; congruence. }
+        now rewrite Hcell_den, IH. }
+    rewrite <- (sat_constructor w f k1 i Hsat Hrow1),
+      <- (sat_constructor w f k2 j Hsat Hrow2), Hden.
+    reflexivity.
+  - symmetry. exact IH.
+  - exact (eq_trans IHleft IHright).
 Qed.
 
 End ModelFacts.
