@@ -5985,6 +5985,65 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
     exact (unary_half_transport m Hcoh Htri i k a b c Hik Hkb Hic).
   Qed.
 
+  (** Unary strengthening preserves every triangle when opposite halves are consistent. *)
+  Lemma strong_view_triangle : forall m, coherent m ->
+    (forall k, RelationalPathBounds.closed_at (entry m) k) ->
+    (forall i k, RelationalPathBounds.below (half_unary m i)
+      (RelationalPathBounds.plus (entry m i k) (half_unary m k))) ->
+    (forall k, RelationalPathBounds.below (Some 0%Z)
+      (RelationalPathBounds.plus (half_unary m (flip k)) (half_unary m k))) ->
+    forall i j k, RelationalPathBounds.below (strong_view m i j)
+      (RelationalPathBounds.plus (strong_view m i k) (strong_view m k j)).
+  Proof.
+    intros m Hcoh Hclosed Htransport Hpair i j k.
+    unfold strong_view.
+    rewrite RelationalPathBounds.plus_minimum_l.
+    rewrite !RelationalPathBounds.plus_minimum_r.
+    apply RelationalPathBounds.minimum_glb. split;
+      apply RelationalPathBounds.minimum_glb; split.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_l.
+      + apply Hclosed.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_r.
+      + pose proof (Htransport (flip j) (flip k)) as Hstep.
+        assert (Hmirror : entry m (flip j) (flip k) = entry m k j).
+        { change (entry m (bar j) (bar k) = entry m k j).
+          symmetry. apply Hcoh. }
+        rewrite Hmirror in Hstep.
+        eapply RelationalPathBounds.below_trans.
+        * apply RelationalPathBounds.plus_mono;
+            [apply RelationalPathBounds.below_refl|exact Hstep].
+        * rewrite !RelationalPathBounds.plus_assoc.
+          rewrite (RelationalPathBounds.plus_comm (entry m k j)
+            (half_unary m (flip k))).
+          apply RelationalPathBounds.below_refl.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_r.
+      + eapply RelationalPathBounds.below_trans.
+        * apply RelationalPathBounds.plus_mono;
+            [apply Htransport|apply RelationalPathBounds.below_refl].
+        * rewrite RelationalPathBounds.plus_assoc.
+          apply RelationalPathBounds.below_refl.
+    - eapply RelationalPathBounds.below_trans.
+      + apply RelationalPathBounds.minimum_r.
+      + eapply RelationalPathBounds.below_trans.
+        * replace (RelationalPathBounds.plus (half_unary m i)
+            (half_unary m (flip j))) with
+            (RelationalPathBounds.plus
+              (RelationalPathBounds.plus (half_unary m i) (Some 0%Z))
+              (half_unary m (flip j)))
+            by (rewrite RelationalPathBounds.plus_zero_r; reflexivity).
+          apply RelationalPathBounds.plus_mono;
+            [apply RelationalPathBounds.plus_mono;
+              [apply RelationalPathBounds.below_refl|apply Hpair]|
+             apply RelationalPathBounds.below_refl].
+        * rewrite !RelationalPathBounds.plus_assoc.
+          rewrite (RelationalPathBounds.plus_comm (half_unary m k)
+            (half_unary m (flip j))).
+          apply RelationalPathBounds.below_refl.
+  Qed.
+
   (** A successful tight closure is coherent after both numeric passes. *)
   Lemma coherent_tclose_reached : forall m m', dbm_wf m -> coherent m -> bar_closed m ->
     tclose m = Reached m' -> coherent m'.
