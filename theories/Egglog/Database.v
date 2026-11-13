@@ -1531,6 +1531,45 @@ Proof.
            rewrite Nat2N.inj_succ in Hnumber. lia.
 Qed.
 
+Lemma database_group_slots_app : forall first second start d g,
+  database_group_slots start d g (first ++ second) =
+    database_group_slots start d g first ++
+      database_group_slots (start + N.of_nat (length first)) d g second.
+Proof.
+  induction first as [|[[flag rank] offset] rest IH];
+    intros second start d g; cbn [app database_group_slots length].
+  - now rewrite N.add_0_r.
+  - rewrite IH. rewrite Nat2N.inj_succ.
+    replace (N.succ start + N.of_nat (length rest))%N with
+      (start + N.succ (N.of_nat (length rest)))%N by lia.
+    destruct (andb (Bool.eqb flag d) (N.eqb rank g)); reflexivity.
+Qed.
+
+Lemma database_group_slots_nth : forall positions n d g offset,
+  nth_error positions n = Some (d, g, offset) ->
+  nth_error (database_group_slots 0%N d g positions)
+    (length (database_group_slots 0%N d g (firstn n positions))) =
+    Some (N.of_nat n).
+Proof.
+  intros positions n d g offset Hposition.
+  assert (Hbelow : n < length positions).
+  { apply nth_error_Some. congruence. }
+  rewrite <- (firstn_skipn n positions) at 1.
+  rewrite database_group_slots_app.
+  rewrite nth_error_app2 by lia.
+  replace (length (database_group_slots 0 d g (firstn n positions)) -
+    length (database_group_slots 0 d g (firstn n positions))) with 0%nat by lia.
+  rewrite firstn_length_le by lia.
+  assert (Hhead : nth_error (skipn n positions) 0 = Some (d, g, offset)).
+  { rewrite nth_error_skipn, Nat.add_0_r. exact Hposition. }
+  destruct (skipn n positions) as [|[[flag rank] value] rest] eqn:Hskip;
+    cbn [nth_error] in Hhead; [discriminate |].
+  injection Hhead as <- <- <-.
+  cbn [database_group_slots nth_error].
+  destruct flag; cbn [Bool.eqb]; rewrite N.eqb_refl; cbn [andb nth_error].
+  all: now rewrite N.add_0_l.
+Qed.
+
 (** A maximum comparison reads no more bits than its current declaration name. *)
 Lemma T_database_positive_max_le : forall p q,
   (Pos.T_max p q <= N.of_nat (Pos.size_nat p) + 2)%N.
