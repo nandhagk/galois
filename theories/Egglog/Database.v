@@ -5565,6 +5565,66 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + now right.
   Qed.
 
+  (** Put leaves every row outside its actually normalized insertion key unchanged. *)
+  Lemma put_other_rows : forall db f k o g args output,
+    (g, args) <> (f, normal_key db k) ->
+    (row (view (put f k o db)) g args output <-> row (view db) g args output).
+  Proof.
+    intros db f k o g args output Hother. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hrows : row (view next) = row (view db)) by apply output_conflict_rows_raw.
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + now rewrite Hrows.
+      + rewrite row_replace_binding, Hrows. tauto.
+    - rewrite row_replace_binding, Hrows. tauto.
+  Qed.
+
+  (** Every added repair row is the normalized, merged image of its actual removed row. *)
+  Lemma repair_current_row_sources : forall db f k,
+    UnionFind.wf (db_forest db) -> forall g args output,
+    row (view (repair_current f k db)) g args output ->
+    row (view db) g args output \/
+    exists before, row (view db) f k before /\ g = f /\ args = normal_key db k /\
+      output = combine_output (row_delete f k db) f
+        (row_get f (normal_key db k) (row_delete f k db))
+        (option_map (normal_cell db) before).
+  Proof.
+    intros db f k Hforest g args output Hrow. unfold repair_current in Hrow.
+    destruct (row_get f k db) as [before |] eqn:Hbefore; [| now left].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)); [now left |].
+    apply put_row_sources_raw in Hrow as [Hold | Hnew].
+    - left. apply row_delete_binding in Hold. exact (proj1 Hold).
+    - right. exists before. split; [exact Hbefore |].
+      rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest) in Hnew.
+      rewrite row_delete_normal_output, (normal_output_idempotent db before Hforest) in Hnew.
+      exact Hnew.
+  Qed.
+
+  (** Repair preserves every row away from both the removed key and its normal form. *)
+  Lemma repair_current_keeps : forall db f k g args output,
+    UnionFind.wf (db_forest db) -> row (view db) g args output ->
+    (g, args) <> (f, k) -> (g, args) <> (f, normal_key db k) ->
+    row (view (repair_current f k db)) g args output.
+  Proof.
+    intros db f k g args output Hforest Hrow Hremoved Hnormalized. unfold repair_current.
+    destruct (row_get f k db) as [before |]; [| exact Hrow].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)); [exact Hrow |].
+    assert (Hother : (g, args) <>
+      (f, normal_key (row_delete f k db) (normal_key db k))).
+    { rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest).
+      exact Hnormalized. }
+    apply (proj2 (put_other_rows (row_delete f k db) f (normal_key db k)
+      (option_map (normal_cell db) before) g args output Hother)).
+    apply row_delete_binding. split; assumption.
+  Qed.
+
   (** Put logs only old equalities and conflicts at its actually normalized key. *)
   Lemma put_same_sources_raw : forall db f k o i j,
     same (view (put f k o db)) i j ->
