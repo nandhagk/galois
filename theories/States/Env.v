@@ -1131,25 +1131,37 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
 
   Lemma F_wunits_unreached : wunits Unreached = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_wunits_reached : forall m, wunits (Reached m) = length (M.codes m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_bot : bot = Unreached.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_top : top = Reached M.empty.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_join_map : forall a b, join_map a b =
     M.merge (fun x y => match x, y with
       | Some a, Some b => let v := V.join a b in if V.is_bot v then None else Some v
       | _, _ => None
       end) a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_join : forall a b, join a b =
     match a, b with
     | Unreached, s | s, Unreached => s
     | Reached a, Reached b => Reached (join_map a b)
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Definition k_env_widen : N := 1%N. (* STUB *)
   Lemma F_widen : forall p a b, widen p a b =
     if leb b a then a else
@@ -1160,7 +1172,9 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
         | _, _ => None
         end) a b)
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma T_widen_split : forall p a b,
     (T_widen p a b <= T_leb b a + k_env_widen *
       (1 + if leb b a then 0 else
@@ -1189,25 +1203,35 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
         | Some a, Some b => Some (V.narrow a b)
         end) a b)
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_eval : forall e s, eval e s =
     match s with Unreached => V.bot | Reached m => root (annotate m e) end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_assign : forall x e s, assign x e s =
     match s with
     | Unreached => Unreached
     | Reached m => Reached (M.set x (eval e s) m)
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_havoc : forall x s, havoc x s =
     match s with
     | Unreached => Unreached
     | Reached m => Reached (M.set x V.top m)
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_refine_leaf : forall q x a m, refine_checked q (ALeaf x a) m =
     let v := V.meet (read m x) q in (M.set x v m, V.is_bot v).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_refine_node : forall q o a ns m, refine_checked q (ANode o a ns) m =
     let qs := V.backward o q (map root ns) in
     (fix children ns qs m bad :=
@@ -1217,10 +1241,14 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
         children ns qs (fst result) (orb bad (snd result))
       | _, _ => (m, bad)
       end) ns qs m false.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_refine : forall q n m,
     refine q n m = fst (refine_checked q n m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_assume : forall g es s, assume g es s =
     match s with
     | Unreached => Unreached
@@ -1232,9 +1260,13 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
         (fst next, orb (snd result) (snd next))) (combine ns qs) (m, false) in
       if snd result then Unreached else Reached (fst result)
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_rsize : forall s g es, rsize s g es = assume_size s g es.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Fixpoint ann_work (n : ann L.op X.t V.t) : nat :=
     match n with
     | ALeaf x _ => X.bits x + 1
@@ -1248,10 +1280,24 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Definition k_env_refine : N := 1%N. (* STUB *)
   (** Annotation records the work of its term. *)
   Lemma F_ann_work : forall m e, ann_work (annotate m e) = tcost m e.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    fix IH 2. intros m [x|o es]; [reflexivity|].
+    cbn [annotate ann_work tcost]. rewrite !map_map.
+    assert (Hkids : map (fun e => ann_work (annotate m e)) es = map (tcost m) es).
+    { induction es as [|e es IHes]; cbn; [reflexivity|].
+      rewrite (IH m e), IHes. reflexivity. }
+    now rewrite Hkids.
+  Qed.
   (** Annotation keeps the shape of its term. *)
   Lemma F_ann_size : forall m e, ann_size (annotate m e) = tsize e.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    fix IH 2. intros m [x|o es]; [reflexivity|].
+    cbn [annotate ann_size tsize]. rewrite map_map.
+    assert (Hkids : map (fun e => ann_size (annotate m e)) es = map tsize es).
+    { induction es as [|e es IHes]; cbn; [reflexivity|].
+      rewrite (IH m e), IHes. reflexivity. }
+    now rewrite Hkids.
+  Qed.
   (** Checked refinement charges cached transfers, leaf lookups and the requests it meets. *)
   Lemma T2_refine_checked : forall q n m,
     (T_refine_checked q n m <= k_env_refine *
@@ -1282,59 +1328,156 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma annotate_sound : forall m st e c,
     models m st -> eval_term L.eval st e = Some c ->
     ann_models st (annotate m e) e /\ V.gamma (root (annotate m e)) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m st e c Hmodel Heval. split.
+    - change (ann_covers st (annotate m e) e). now apply annotate_covers.
+    - eapply annotate_value_sound; eassumption.
+  Qed.
   Lemma refine_sound : forall m st e n q c,
     models m st -> ann_models st n e -> eval_term L.eval st e = Some c ->
     V.gamma q c -> models (refine q n m) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m st e n q c Hmodel Hcover Heval Hq.
+    change (ann_covers st n e) in Hcover.
+    exact (proj1 (refine_checked_covers n m st e q c Hmodel Hcover Heval Hq)).
+  Qed.
   Lemma refine_lower : forall q n m x,
     V.leb (read (refine q n m) x) (read m x) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact refine_pointwise_lower.
+  Qed.
   Lemma join_models : forall a b st,
     models a st \/ models b st -> models (join_map a b) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b st [Hmodel|Hmodel] x; specialize (Hmodel x).
+    all: unfold read in Hmodel |- *; unfold join_map;
+      rewrite M.get_merge by reflexivity.
+    all: destruct (M.get x a) as [va|], (M.get x b) as [vb|];
+      cbn in Hmodel |- *; try apply V.gamma_top.
+    all: destruct (V.is_bot (V.join va vb)); [apply V.gamma_top|].
+    - eapply V.gamma_mono; [apply V.join_ub_l|exact Hmodel].
+    - eapply V.gamma_mono; [apply V.join_ub_r|exact Hmodel].
+  Qed.
+  (** Injective key encoding preserves uniqueness of a key list. *)
+  Lemma env_encode_nodup : forall xs,
+    NoDup xs -> NoDup (map X.encode xs).
+  Proof.
+    intros xs Hnd. induction Hnd; cbn; constructor; [|assumption].
+    intros Hin. apply in_map_iff in Hin. destruct Hin as [y [Heq Hy]].
+    apply X.encode_inj in Heq. subst y. contradiction.
+  Qed.
+
+  (** Consistent map codes enumerate the encodings of their stored keys. *)
+  Lemma env_codes_elements : forall (m : M.t V.t), M.wf m ->
+    Permutation (M.codes m) (map (fun xa => X.encode (fst xa)) (M.elements m)).
+  Proof.
+    intros m Hwf. apply NoDup_Permutation.
+    - apply M.codes_nodup.
+    - rewrite <- map_map. apply env_encode_nodup. now apply M.elements_nodup.
+    - intro code. rewrite M.codes_spec, in_map_iff. split.
+      + intros Hbound. destruct (M.find code m) as [a|] eqn:Hfind; [|contradiction].
+        destruct (M.wf_find V.t m code a Hwf Hfind) as [x Hcode].
+        exists (x, a). split; [exact Hcode|].
+        apply (proj2 (M.elements_spec V.t m x a Hwf)).
+        rewrite M.get_find, Hcode. exact Hfind.
+      + intros [[x a] [Hcode Hin]]. cbn in Hcode.
+        rewrite <- Hcode, <- M.get_find.
+        rewrite (proj1 (M.elements_spec V.t m x a Hwf) Hin). discriminate.
+  Qed.
+
+  (** Consistent maps sum stored-value measures equally by codes or by bindings. *)
+  Lemma env_codes_sum : forall (m : M.t V.t) (f : V.t -> nat), M.wf m ->
+    fold_right Nat.add 0 (map (fun code =>
+      match M.find code m with Some a => f a | None => 0 end) (M.codes m)) =
+    fold_right Nat.add 0 (map (fun xa => f (snd xa)) (M.elements m)).
+  Proof.
+    intros m f Hwf.
+    rewrite (rank_sum_permutation _ _ _ (env_codes_elements m Hwf)), map_map.
+    f_equal. apply map_ext_in. intros [x a] Hin. cbn.
+    rewrite <- M.get_find, (proj1 (M.elements_spec V.t m x a Hwf) Hin). reflexivity.
+  Qed.
+
   Lemma wrank_env : forall p m, M.wf m -> wrank p (Reached m) =
     fold_right Nat.add 0
       (map (fun kv => V.wrank p (snd kv)) (M.elements m)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p m Hwf. unfold wrank. now apply env_codes_sum.
+  Qed.
   Lemma F_is_bot_env : forall m, is_bot (Reached m) = M.existsb V.is_bot m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_leb_env : forall a b, leb a b = orb (is_bot a)
     (andb (negb (is_bot b)) (match a, b with
       | Reached ma, Reached mb => M.forall2b (fun x y =>
           V.leb (match x with Some v => v | None => V.top end)
                 (match y with Some v => v | None => V.top end)) ma mb
       | _, _ => false end)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|a] [|b]; try reflexivity. unfold leb.
+    assert (Hcallback : forall x y, option_leb x y =
+      V.leb (match x with Some v => v | None => V.top end)
+        (match y with Some v => v | None => V.top end)).
+    { intros [x|] [y|]; cbn [option_leb]; try reflexivity;
+      symmetry; apply V.top_greatest. }
+    assert (Hiff : M.forall2b option_leb a b = true <->
+      M.forall2b (fun x y =>
+        V.leb (match x with Some v => v | None => V.top end)
+          (match y with Some v => v | None => V.top end)) a b = true).
+    { rewrite M.forall2b_spec by reflexivity.
+      rewrite M.forall2b_spec by apply V.leb_refl.
+      split; intros H c; [rewrite <- Hcallback|rewrite Hcallback]; apply H. }
+    destruct (M.forall2b option_leb a b) eqn:Hleft;
+      destruct (M.forall2b (fun x y =>
+        V.leb (match x with Some v => v | None => V.top end)
+          (match y with Some v => v | None => V.top end)) a b) eqn:Hright;
+      try reflexivity; exfalso; intuition discriminate.
+  Qed.
   Lemma tcost_leaf : forall m x, tcost m (Leaf x) = X.bits x + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma tcost_node : forall m o es, tcost m (Node o es) =
     fold_right Nat.add 0 (map (tcost m) es) +
     V.work o (map (fun e => root (annotate m e)) es) + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Environment size agrees with its raw stored-value measure. *)
   Lemma F_size : forall s, size s = esize s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Environment widening parameters use the value-domain parameter size. *)
   Lemma F_wsize : forall p, wsize p = V.wsize p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assignment work charges annotation and the current environment. *)
   Lemma F_assign_work : forall x e s, assign_work x e s =
     match s with
     | Unreached => tsize e + X.bits x + 1
     | Reached m => tcost m e + esize s + X.bits x + 1
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Havoc work charges the environment and the selected key. *)
   Lemma F_havoc_work : forall x s, havoc_work x s = esize s + X.bits x + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Evaluation work charges its cached forward pass. *)
   Lemma F_eval_work : forall e s, eval_work e s =
     match s with Unreached => tsize e + 1 | Reached m => tcost m e + 1 end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assumption work charges the forward pass, guard and checked refinement. *)
   Lemma F_assume_work : forall g es s, assume_work g es s =
     fold_right Nat.add 0 (map (tcost_s s) es) + V.gwork g (roots s es) +
       fold_right Nat.add 0 (map tsize es) * (rsize s g es + 1) + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 End EnvT.
