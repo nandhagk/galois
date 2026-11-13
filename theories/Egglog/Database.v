@@ -3863,7 +3863,57 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun advance.
   TimeFun changed.
   TimeFun ids.
-  Definition c_db : N := 1. (* STUB *)
+  Definition c_db : N :=
+    4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
+
+  (** The database coefficient dominates the trie work and every constant observation cost. *)
+  Lemma c_db_trie_budget : (128 * (PTrieT.c_trie + 1) <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. nia.
+  Qed.
+
+  (** Every database operation has room for its fixed record-construction overhead. *)
+  Lemma c_db_constant_budget : (128 <= c_db)%N.
+  Proof.
+    pose proof c_db_trie_budget. nia.
+  Qed.
+
+  (** The positive bit count agrees with the natural length of the positive size code. *)
+  Lemma positive_size_nat : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p.
+  Proof.
+    intro p. induction p; cbn [Pos.size Pos.size_nat];
+      rewrite ?Pos2Nat.inj_succ, ?IHp; reflexivity.
+  Qed.
+
+  (** Binary slot width fits its logarithmic public query size, including zero. *)
+  Lemma slot_width_log : forall s, N.size_nat s <= N.to_nat (N.log2 s) + 1.
+  Proof.
+    intros [| [p | p |]]; cbn [N.size_nat N.log2 N.to_nat Pos.size_nat];
+      rewrite ?positive_size_nat; lia.
+  Qed.
+
+  (** The positive slot encoding adds at most one bit to the queried number. *)
+  Lemma slot_code_bits : forall s, Pos.size_nat (N.succ_pos s) <= N.size_nat s + 1.
+  Proof.
+    intros [| p]; [cbn; lia |].
+    cbn [N.succ_pos N.size_nat]. induction p; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** A guarded slot lookup pays only the query's bits and one trie access. *)
+  Lemma T_index_bits : forall s new db,
+    (T_index s new db <= 16 * (PTrieT.c_trie + 1) * N.of_nat (N.size_nat s + 1))%N.
+  Proof.
+    intros s new db. pose proof (N.T_compare_le s (runtime_slot_bound (db_runtime db))) as Hcompare.
+    pose proof (N.T_succ_pos_le s) as Hsucc.
+    pose proof (slot_code_bits s) as Hbits.
+    pose proof (PTrieT.T_get_le I.t (N.succ_pos s)
+      (if new then runtime_new_indexes (db_runtime db) else runtime_all_indexes (db_runtime db))) as Hget.
+    time_unfold T_index. time_unfold @T_db_runtime. time_unfold @T_runtime_slot_bound.
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))); try nia.
+    destruct new; time_unfold @T_runtime_new_indexes; time_unfold @T_runtime_all_indexes;
+      cbn in Hget; nia.
+  Qed.
   (** Initialization starts without amortized debt. *)
   Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
   Proof. Admitted. (* STUB *)
@@ -3908,11 +3958,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Slot lookup pays for the slot code. *)
   Lemma T_index_le : forall s new db,
     (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s new db. pose proof (T_index_bits s new db) as Htime.
+    pose proof (slot_width_log s) as Hwidth. pose proof c_db_trie_budget as Hcoefficient.
+    nia.
+  Qed.
 
   (** Advancing visits every slot. *)
   Lemma T_advance_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_advance. time_unfold @T_runtime_set_indexes.
+    time_unfold @T_runtime_set_changed. time_unfold @T_database_set_runtime.
+    time_simpl. time_cbn. nia.
+  Qed.
 
   (** The high-water mark covers every stored cell encoding. *)
   Lemma wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
@@ -3971,11 +4030,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** The change flag is stored. *)
   Lemma T_changed_le : forall db, (T_changed db <= c_db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_changed. time_unfold @T_db_runtime. time_unfold @T_runtime_changed. nia.
+  Qed.
 
   (** The allocation counter is stored. *)
   Lemma T_ids_le : forall db, (T_ids db <= c_db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_ids. time_unfold @T_db_runtime. time_unfold @T_runtime_allocated. nia.
+  Qed.
 
   Definition use_entry := (positive * list (cell V.t))%type.
   Definition stored_row := (use_entry * option (cell V.t))%type.
