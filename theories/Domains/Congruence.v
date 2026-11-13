@@ -2369,6 +2369,28 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
       destruct (Z.abs m =? 0), (modulus w <=? Z.abs m); lia.
   Qed.
 
+  (** Intersecting a class modulus with the word modulus preserves a quadratic budget. *)
+  Lemma wrap_class_time_budget : forall w m r n,
+    (Pos.to_nat w + Z.size_nat m + Z.size_nat r + 1 <= n)%nat ->
+    (T_wrap_class w m r <= 1024 * N.of_nat (n ^ 2))%N.
+  Proof.
+    intros w m r n Hinput.
+    pose proof (WordTime.word_modulus_size_bound w) as Hmodsize.
+    pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+    pose proof (integer_gcd_size m (modulus w)) as Hgcdbits.
+    pose proof (gcd_time_budget (2 * n) m (modulus w) ltac:(lia)) as Hgcd.
+    pose proof (normalization_time_budget w (C (Z.gcd m (modulus w)) r)
+      (2 * n) ltac:(cbn [congr_bits]; lia)) as Hnormalize.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    assert (Hwidth : (N.of_nat (Pos.to_nat w + 1) <= N.of_nat n)%N).
+    { apply time_of_nat_le. lia. }
+    time_unfold T_wrap_class.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
+
   (** Strong canonicality bounds both stored integers by the word width. *)
   Lemma canonical_bits : forall w a, strong_canonical w a ->
     (congr_bits a <= 2 * Pos.to_nat w)%nat.
@@ -2727,22 +2749,112 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   (** Negation has the published quadratic arithmetic bound. *)
   Lemma T_congr_neg_le : forall w a,
     (T_congr_neg w a <= c_congruence * N.of_nat (((Pos.to_nat w + congr_bits a + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. remember (Pos.to_nat w + congr_bits a + 1)%nat as n eqn:Hn.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnormalize.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    unfold c_congruence. time_unfold T_congr_neg.
+    destruct (congr_norm w a) as [|m r] eqn:Hform; cbn beta iota zeta; [lia|].
+    pose proof (normalized_bits w a) as Hbits. rewrite Hform in Hbits.
+    cbn [congr_bits] in Hbits.
+    pose proof (Z.T_opp_le r) as Hopp.
+    pose proof (wrap_class_time_budget w m (-r) (3 * n)
+      ltac:(rewrite WordTime.integer_opp_size; lia)) as Hwrap.
+    rewrite Nat.pow_mul_l, Nat2N.inj_mul in Hwrap. cost_constants. lia.
+  Qed.
   (** Addition has the published quadratic arithmetic bound. *)
   Lemma T_congr_add_le : forall w a b,
     (T_congr_add w a b <= c_congruence *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    remember (Pos.to_nat w + congr_bits a + congr_bits b + 1)%nat as n eqn:Hn.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    unfold c_congruence. time_unfold T_congr_add.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
+    pose proof (normalized_bits w a) as Ha. rewrite Haform in Ha.
+    pose proof (normalized_bits w b) as Hb. rewrite Hbform in Hb.
+    cbn [congr_bits] in Ha, Hb.
+    pose proof (integer_gcd_size m p) as Hgcdbits.
+    pose proof (WordTime.integer_add_size r s) as Hsumbits.
+    pose proof (gcd_time_budget (4 * n) m p ltac:(lia)) as Hgcd.
+    pose proof (add_time_budget (4 * n) r s ltac:(lia)) as Hadd.
+    pose proof (wrap_class_time_budget w (Z.gcd m p) (r + s) (5 * n)
+      ltac:(lia)) as Hwrap.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
   (** Subtraction has the published quadratic arithmetic bound. *)
   Lemma T_congr_sub_le : forall w a b,
     (T_congr_sub w a b <= c_congruence *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    remember (Pos.to_nat w + congr_bits a + congr_bits b + 1)%nat as n eqn:Hn.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    unfold c_congruence. time_unfold T_congr_sub.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
+    pose proof (normalized_bits w a) as Ha. rewrite Haform in Ha.
+    pose proof (normalized_bits w b) as Hb. rewrite Hbform in Hb.
+    cbn [congr_bits] in Ha, Hb.
+    pose proof (integer_gcd_size m p) as Hgcdbits.
+    pose proof (WordTime.integer_sub_size r s) as Hdifference.
+    pose proof (gcd_time_budget (4 * n) m p ltac:(lia)) as Hgcd.
+    pose proof (sub_time_budget (4 * n) r s ltac:(lia)) as Hsubtract.
+    pose proof (wrap_class_time_budget w (Z.gcd m p) (r - s) (5 * n)
+      ltac:(lia)) as Hwrap.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
   (** Multiplication has the published quadratic arithmetic bound. *)
   Lemma T_congr_mul_le : forall w a b,
     (T_congr_mul w a b <= c_congruence *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    remember (Pos.to_nat w + congr_bits a + congr_bits b + 1)%nat as n eqn:Hn.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    unfold c_congruence. time_unfold T_congr_mul.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
+    pose proof (normalized_bits w a) as Ha. rewrite Haform in Ha.
+    pose proof (normalized_bits w b) as Hb. rewrite Hbform in Hb.
+    cbn [congr_bits] in Ha, Hb.
+    pose proof (WordTime.integer_mul_size m p) as Hmp.
+    pose proof (WordTime.integer_mul_size m s) as Hms.
+    pose proof (WordTime.integer_mul_size p r) as Hpr.
+    pose proof (WordTime.integer_mul_size r s) as Hrs.
+    pose proof (integer_gcd_size (m * s) (p * r)) as Hgcdinner.
+    pose proof (integer_gcd_size (m * p) (Z.gcd (m * s) (p * r))) as Hgcdouter.
+    pose proof (mul_time_budget (4 * n) m p ltac:(lia)) as T_mp.
+    pose proof (mul_time_budget (4 * n) m s ltac:(lia)) as T_ms.
+    pose proof (mul_time_budget (4 * n) p r ltac:(lia)) as T_pr.
+    pose proof (mul_time_budget (4 * n) r s ltac:(lia)) as T_rs.
+    pose proof (gcd_time_budget (4 * n) (m * s) (p * r) ltac:(lia)) as Tgcdinner.
+    pose proof (gcd_time_budget (8 * n) (m * p) (Z.gcd (m * s) (p * r))
+      ltac:(lia)) as Tgcdouter.
+    pose proof (wrap_class_time_budget w (Z.gcd (m * p) (Z.gcd (m * s) (p * r)))
+      (r * s) (9 * n) ltac:(lia)) as Hwrap.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
   (** Shift transfer has the published quadratic arithmetic bound. *)
   Lemma T_congr_shl_le : forall w a b,
     (T_congr_shl w a b <= c_congruence *
@@ -2752,19 +2864,57 @@ Module CongruenceT (L : WORD_LANGUAGE_T) <: CONGRUENCE_ALL L.
   Lemma T_congr_urem_le : forall w a b,
     (T_congr_urem w a b <= c_congruence *
       N.of_nat (((Pos.to_nat w + congr_bits a + congr_bits b + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    remember (Pos.to_nat w + congr_bits a + congr_bits b + 1)%nat as n eqn:Hn.
+    pose proof (normalization_time_budget w a n ltac:(lia)) as Hnorma.
+    pose proof (normalization_time_budget w b n ltac:(lia)) as Hnormb.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    unfold c_congruence. time_unfold T_congr_urem.
+    destruct (congr_norm w a) as [|m r] eqn:Haform;
+      destruct (congr_norm w b) as [|p s] eqn:Hbform; cbn beta iota zeta; try lia.
+    destruct p; cbn beta iota zeta; try lia.
+    pose proof (normalized_bits w a) as Ha. rewrite Haform in Ha.
+    pose proof (normalized_bits w b) as Hb. rewrite Hbform in Hb.
+    cbn [congr_bits Z.size_nat] in Ha, Hb.
+    pose proof (integer_gcd_size m s) as Hgcdbits.
+    pose proof (gcd_time_budget (4 * n) m s ltac:(lia)) as Hgcd.
+    pose proof (normalization_time_budget w (C (Z.gcd m s) r) (5 * n)
+      ltac:(cbn [congr_bits]; lia)) as Hnormalize.
+    rewrite !Nat.pow_mul_l, !Nat2N.inj_mul in *. cost_constants. lia.
+  Qed.
   (** Projection charges both source and target widths. *)
   Lemma T_congr_project_le : forall source target a,
     (T_congr_project source target a <=
     c_congruence * N.of_nat
       (((Pos.to_nat source + Pos.to_nat target + congr_bits a + 1) ^ 2)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros source target a.
+    remember (Pos.to_nat source + Pos.to_nat target + congr_bits a + 1)%nat as n eqn:Hn.
+    pose proof (normalization_time_budget source a n ltac:(lia)) as Hnormalize.
+    assert (Hpositive : (1 <= n)%nat) by lia.
+    pose proof (linear_le_square n Hpositive) as Hlinear.
+    assert (Hone : (1 <= N.of_nat n)%N).
+    { change (N.of_nat 1 <= N.of_nat n)%N. now apply time_of_nat_le. }
+    unfold c_congruence. time_unfold T_congr_project.
+    destruct (congr_norm source a) as [|m r] eqn:Hform; cbn beta iota zeta; [lia|].
+    pose proof (normalized_bits source a) as Hbits. rewrite Hform in Hbits.
+    cbn [congr_bits] in Hbits.
+    pose proof (wrap_class_time_budget target m r (2 * n) ltac:(lia)) as Hwrap.
+    rewrite Nat.pow_mul_l, Nat2N.inj_mul in Hwrap. cost_constants. lia.
+  Qed.
   (** Congruence multiplication has the published quadratic width bound. *)
   Lemma mul_bigO : (bigO (fun _ => True)
     (fun x : positive * (congr * congr) => N.of_nat
       (((Pos.to_nat (fst x) + congr_bits (fst (snd x)) + congr_bits (snd (snd x)) + 1) ^ 2)%nat))
     (fun x => T_congr_mul (fst x) (fst (snd x)) (snd (snd x))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_congruence. intros [w [a b]] _. cbn [fst snd].
+    pose proof (T_congr_mul_le w a b). nia.
+  Qed.
   (** Normalization produces a canonical representation. *)
   Lemma F3_norm_canonical : forall w a, canonical w (congr_norm w a).
   Proof.
