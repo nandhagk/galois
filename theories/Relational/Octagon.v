@@ -570,6 +570,180 @@ Module Octagon (X : KEY) (K : KEY with Definition t := (X.t * bool)%type
       + exact Hright.
   Qed.
 
+  (** A row bounds all signed differences measured from its source literal. *)
+  Definition row_holds (v : X.t -> Z) (i : K.t) (row : M.t Z) : Prop :=
+    forall j d, M.get j row = Some d -> (vl v j - vl v i <= d)%Z.
+
+  Lemma row_of_holds : forall m v i, models m v ->
+    row_holds v i (row_of (M.get i m)).
+  Proof.
+    intros m v i Hmodel j d Hentry. rewrite get_row_of in Hentry.
+    apply (Hmodel i j d). exact Hentry.
+  Qed.
+
+  (** Relaxation retains values below the old bound and the proposed path bound. *)
+  Lemma via_bound_holds : forall value a old next,
+    (forall d, old = Some d -> (value <= d)%Z) ->
+    (forall z, next = Some z -> (value <= a + z)%Z) ->
+    forall d, via_bound a old next = Some d -> (value <= d)%Z.
+  Proof.
+    intros value a old [z|] Hold Hnext d Hentry; cbn [via_bound] in Hentry.
+    - inversion Hentry; subst d. apply lower_bound_holds.
+      + apply Hnext. reflexivity.
+      + exact Hold.
+    - now apply Hold.
+  Qed.
+
+  (** A satisfied prefix can be composed with every bound in its exit row. *)
+  Lemma relax_row_holds : forall v i k prefix row exit,
+    row_holds v i row -> row_holds v k exit ->
+    (forall a, prefix = Some a -> (vl v k - vl v i <= a)%Z) ->
+    row_holds v i (relax_row prefix row exit).
+  Proof.
+    intros v i k [a|] row exit Hrow Hexit Hprefix j d Hentry.
+    - cbn [relax_row] in Hentry. rewrite M.get_merge in Hentry by reflexivity.
+      eapply via_bound_holds; [| |exact Hentry].
+      + intros old Hold. now apply Hrow.
+      + intros z Hz. pose proof (Hprefix a eq_refl).
+        pose proof (Hexit j z Hz). lia.
+    - now apply Hrow.
+  Qed.
+
+  (** One sparse Floyd-Warshall merge adds only two-edge consequences. *)
+  Lemma round_merge_models : forall k m v, models m v ->
+    models (M.merge (round_row k (row_of (M.get k m))) m M.empty) v.
+  Proof.
+    intros k m v Hmodel i j d Hentry. unfold entry in Hentry.
+    rewrite M.get_merge in Hentry by reflexivity. rewrite M.get_empty in Hentry.
+    destruct (M.get i m) as [row|] eqn:Hrow; cbn [round_row] in Hentry.
+    - assert (Hcurrent : row_holds v i row).
+      { exact (row_models m v i row Hmodel Hrow). }
+      exact (relax_row_holds v i k (M.get k row) row (row_of (M.get k m))
+        Hcurrent (row_of_holds m v k Hmodel) (fun a Ha => Hcurrent k a Ha) j d Hentry).
+    - discriminate Hentry.
+  Qed.
+
+  (** Materializing a zero walk and relaxing through it preserves every model. *)
+  Lemma fw_round_models : forall k m v, models m v -> models (fw_round k m) v.
+  Proof.
+    intros k m v Hmodel. unfold fw_round. apply round_merge_models.
+    destruct (pivot_present k m); [|exact Hmodel].
+    apply models_put; [exact Hmodel|]. apply lower_bound_holds; [lia|].
+    intros d Hd. now apply Hmodel.
+  Qed.
+
+  (** Every completed prefix of the pivot loop preserves the original model. *)
+  Lemma fw_pivots_models : forall ks m v, models m v -> models (fw_pivots ks m) v.
+  Proof.
+    intro ks. induction ks as [|k ks IH]; intros m v Hmodel; cbn [fw_pivots].
+    - exact Hmodel.
+    - pose proof (fw_round_models k m v Hmodel) as Hnext.
+      destruct (nonnegative k (fw_round k m)); [now apply IH|exact Hnext].
+  Qed.
+
+  Lemma fw_models : forall m v, models m v -> models (fw m) v.
+  Proof.
+    intros m v Hmodel. unfold fw. now apply fw_pivots_models.
+  Qed.
+
+  (** A matrix with a concrete model cannot have a negative diagonal. *)
+  Lemma nonnegative_models : forall k m v, models m v -> nonnegative k m = true.
+  Proof.
+    intros k m v Hmodel. unfold nonnegative.
+    destruct (entry m k k) as [d|] eqn:Hentry; [|reflexivity].
+    apply Z.leb_le. specialize (Hmodel k k d Hentry). lia.
+  Qed.
+
+  Lemma nonnegative_list_models : forall ks m v, models m v ->
+    forallb (fun k => nonnegative k m) ks = true.
+  Proof.
+    intros ks m v Hmodel. apply forallb_forall.
+    intros k Hin. now apply (nonnegative_models k m v).
+  Qed.
+
+  (** Closure, integer tightening and strengthening all retain the same store. *)
+  Lemma tclose_models : forall m v, models m v -> ngamma (tclose m) v.
+  Proof.
+    intros m v Hmodel. unfold tclose.
+    pose proof (fw_pivots_models (pivot_keys m) m v Hmodel) as Hclosed.
+    pose proof (tighten_models _ v Hclosed) as Htight.
+    pose proof (strengthen_models _ v Htight) as Hnext.
+    rewrite (nonnegative_list_models (pivot_keys m) _ v Hclosed).
+    rewrite (nonnegative_list_models (pivot_keys m) _ v Hnext). exact Hnext.
+  Qed.
+
+  Lemma matrix_ok_models : forall m v, models m v -> matrix_ok m = true.
+  Proof.
+    intros m v Hmodel. unfold matrix_ok.
+    apply (fold_invariant _ _ (fun ok => ok = true)); [reflexivity|].
+    intros ok k row Hok. rewrite Hok, (nonnegative_models k m v Hmodel). reflexivity.
+  Qed.
+
+  (** The four new path shapes use a new signed edge, its twin, or both. *)
+  Lemma increment_models : forall i j d m v,
+    models m v -> (vl v j - vl v i <= d)%Z ->
+    models (M.merge
+      (increment_row i j d (row_of (M.get j m)) (row_of (M.get (flip i) m))
+        (entry m j (flip j)) (entry m (flip i) i)) m M.empty) v.
+  Proof.
+    intros i j d m v Hmodel Hnew a b bound Hentry.
+    assert (Htwin : (vl v (flip i) - vl v (flip j) <= d)%Z).
+    { rewrite !vl_flip. lia. }
+    unfold entry in Hentry. rewrite M.get_merge in Hentry by reflexivity.
+    rewrite M.get_empty in Hentry.
+    destruct (M.get a m) as [row|] eqn:Hrow; [|discriminate Hentry].
+    cbn [increment_row] in Hentry.
+    assert (Hcurrent : row_holds v a row).
+    { exact (row_models m v a row Hmodel Hrow). }
+    assert (Hexit1 : row_holds v j (row_of (M.get j m))) by now apply row_of_holds.
+    assert (Hexit2 : row_holds v (flip i) (row_of (M.get (flip i) m)))
+      by now apply row_of_holds.
+    assert (Hfirst : forall z, edge_prefix d (M.get i row) = Some z ->
+      (vl v j - vl v a <= z)%Z).
+    { intros z Hz. unfold edge_prefix in Hz.
+      destruct (M.get i row) as [prefix|] eqn:Hprefix; [|discriminate Hz].
+      inversion Hz; subst z. pose proof (Hcurrent i prefix Hprefix). lia. }
+    assert (Hsecond : forall z, edge_prefix d (M.get (flip j) row) = Some z ->
+      (vl v (flip i) - vl v a <= z)%Z).
+    { intros z Hz. unfold edge_prefix in Hz.
+      destruct (M.get (flip j) row) as [prefix|] eqn:Hprefix; [|discriminate Hz].
+      inversion Hz; subst z. pose proof (Hcurrent (flip j) prefix Hprefix). lia. }
+    assert (Hmixed1 : forall z,
+      twin_prefix d (M.get i row) (entry m j (flip j)) = Some z ->
+      (vl v (flip i) - vl v a <= z)%Z).
+    { intros z Hz. unfold twin_prefix in Hz.
+      destruct (M.get i row) as [prefix|] eqn:Hprefix; [|discriminate Hz].
+      destruct (entry m j (flip j)) as [cross|] eqn:Hcross; [|discriminate Hz].
+      inversion Hz; subst z. pose proof (Hcurrent i prefix Hprefix).
+      pose proof (Hmodel j (flip j) cross Hcross). lia. }
+    assert (Hmixed2 : forall z,
+      twin_prefix d (M.get (flip j) row) (entry m (flip i) i) = Some z ->
+      (vl v j - vl v a <= z)%Z).
+    { intros z Hz. unfold twin_prefix in Hz.
+      destruct (M.get (flip j) row) as [prefix|] eqn:Hprefix; [|discriminate Hz].
+      destruct (entry m (flip i) i) as [cross|] eqn:Hcross; [|discriminate Hz].
+      inversion Hz; subst z. pose proof (Hcurrent (flip j) prefix Hprefix).
+      pose proof (Hmodel (flip i) i cross Hcross). lia. }
+    pose proof (relax_row_holds _ _ _ _ _ _ Hcurrent Hexit1 Hfirst) as Hrow1.
+    pose proof (relax_row_holds _ _ _ _ _ _ Hrow1 Hexit2 Hsecond) as Hrow2.
+    pose proof (relax_row_holds _ _ _ _ _ _ Hrow2 Hexit2 Hmixed1) as Hrow3.
+    pose proof (relax_row_holds _ _ _ _ _ _ Hrow3 Hexit1 Hmixed2) as Hrow4.
+    exact (Hrow4 b bound Hentry).
+  Qed.
+
+  (** Incremental closure preserves each store satisfying the inserted inequality. *)
+  Lemma incr_close_models : forall i j d m v,
+    models m v -> (vl v j - vl v i <= d)%Z -> ngamma (incr_close i j d m) v.
+  Proof.
+    intros i j d m v Hmodel Hnew.
+    assert (Hseed : models (add_cons j j 0%Z (add_cons i i 0%Z m)) v).
+    { apply models_add_cons; [|lia]. apply models_add_cons; [exact Hmodel|lia]. }
+    pose proof (increment_models i j d _ v Hseed Hnew) as Hnext.
+    pose proof (strengthen_models _ v (tighten_models _ v Hnext)) as Htight.
+    unfold incr_close.
+    rewrite (matrix_ok_models _ v Hnext), (matrix_ok_models _ v Htight). exact Htight.
+  Qed.
+
   (** Raw entry lookup ignores labels and also treats an absent row as empty. *)
   Definition raw_entry (m : dbm) (p q : positive) : option Z :=
     M.find q (row_of (M.find p m)).
@@ -1433,7 +1607,9 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Definition tightly_closed (m : dbm) : Prop := strongly_closed m /\
     (forall i d, entry m i (bar i) = Some d -> (d mod 2 = 0)%Z).
   Lemma fw_implied : forall m v, models m v -> models (fw m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact fw_models.
+  Qed.
   Lemma strengthen_implied : forall m v, models m v -> models (strengthen m) v.
   Proof.
     exact strengthen_models.
@@ -1449,12 +1625,19 @@ Module OctagonT (X : KEY_T) (K : KEY_T with Definition t := (X.t * bool)%type
   Lemma wf_strengthen : forall m, dbm_wf m -> dbm_wf (strengthen m).
   Proof. Admitted. (* STUB *)
   Lemma tclose_sound : forall m v, models m v -> ngamma (tclose m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact tclose_models.
+  Qed.
   Lemma tclose_bot : forall m, tclose m = Unreached -> forall v, ~ models m v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros m Hbot v Hmodel. pose proof (tclose_models m v Hmodel) as Hclosed.
+    rewrite Hbot in Hclosed. exact Hclosed.
+  Qed.
   Lemma incr_close_sound : forall i j d m v,
     models m v -> (vl v j - vl v i <= d)%Z -> ngamma (incr_close i j d m) v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact incr_close_models.
+  Qed.
   Lemma tclose_tight : forall m m', dbm_wf m -> coherent m ->
     tclose m = Reached m' -> tightly_closed m'.
   Proof. Admitted. (* STUB *)
