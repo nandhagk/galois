@@ -1916,6 +1916,55 @@ Module Index (V : VALUE) <: INDEX V.
     - eapply remove_no_add; eassumption.
   Qed.
 
+  (** A stored count of one permits only one live suffix below that edge. *)
+  Lemma counted_edge_singleton : forall ix n code edge,
+    counted_edges ix -> stored_edge ix n code edge -> edge_count edge = 1%N ->
+    forall r s, contains_from (edge_child edge) r ix = true ->
+      contains_from (edge_child edge) s ix = true -> r = s.
+  Proof.
+    intros ix n code edge Hcounts Hget Hone r s Hr Hs.
+    destruct (Hcounts n code edge Hget) as [suffixes [_ [Hmembers Hcount]]].
+    assert (Hlength : length suffixes = 1).
+    { apply Nat2N.inj. rewrite <- Hcount. exact Hone. }
+    destruct suffixes as [| suffix suffixes]; [discriminate |].
+    destruct suffixes as [| second suffixes]; [| discriminate].
+    apply Hmembers in Hr, Hs. cbn [In] in Hr, Hs. intuition congruence.
+  Qed.
+
+  (** Losing a member after changing just one arc exposes the exact traversed arc. *)
+  Lemma edge_deletion_loss : forall ix ix' n c m, child ix n c = Some m ->
+    (forall q d, q <> n \/ encode_cell d <> encode_cell c -> child ix' q d = child ix q d) ->
+    (forall q, node_terminal (read_node ix' q) = node_terminal (read_node ix q)) ->
+    forall u q, contains_from q u ix = true -> contains_from q u ix' = false ->
+    exists pre suf, u = pre ++ c :: suf /\ seek ix q pre = Some n /\
+      contains_from m suf ix = true.
+  Proof.
+    intros ix ix' n c m Htarget Hother Hterminal u.
+    induction u as [| d u IH]; intros q Hmember Hmissing.
+    - change (node_terminal (read_node ix q) = true) in Hmember.
+      change (node_terminal (read_node ix' q) = false) in Hmissing.
+      rewrite Hterminal in Hmissing. congruence.
+    - rewrite contains_from_cons in Hmember, Hmissing.
+      destruct (child ix q d) as [p |] eqn:Hchild; [| discriminate].
+      destruct (Pos.eq_dec q n) as [Hnode | Hnode];
+        destruct (Pos.eq_dec (encode_cell d) (encode_cell c)) as [Hcode | Hcode].
+      + subst q. apply encode_cell_inj in Hcode. subst d.
+        rewrite Htarget in Hchild. injection Hchild as <-.
+        exists [], u. repeat split; assumption || reflexivity.
+      + rewrite Hother in Hmissing by tauto. rewrite Hchild in Hmissing.
+        destruct (IH p Hmember Hmissing) as [pre [suf [Htuple [Hseek Hsuffix]]]].
+        exists (d :: pre), suf. split; [cbn [app]; now rewrite Htuple |].
+        split; [cbn [seek]; now rewrite Hchild | exact Hsuffix].
+      + rewrite Hother in Hmissing by tauto. rewrite Hchild in Hmissing.
+        destruct (IH p Hmember Hmissing) as [pre [suf [Htuple [Hseek Hsuffix]]]].
+        exists (d :: pre), suf. split; [cbn [app]; now rewrite Htuple |].
+        split; [cbn [seek]; now rewrite Hchild | exact Hsuffix].
+      + rewrite Hother in Hmissing by tauto. rewrite Hchild in Hmissing.
+        destruct (IH p Hmember Hmissing) as [pre [suf [Htuple [Hseek Hsuffix]]]].
+        exists (d :: pre), suf. split; [cbn [app]; now rewrite Htuple |].
+        split; [cbn [seek]; now rewrite Hchild | exact Hsuffix].
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
