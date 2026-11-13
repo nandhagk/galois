@@ -239,3 +239,34 @@ Example source_contradiction_equality_certificate :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Signed preparation merges long alternating updates while retaining the constant. *)
+Definition prepared_zero_form : lin positive :=
+  Lin _ (repeat (2%positive, 1) 8 ++
+    concat (repeat [(2%positive, -1); (2%positive, 1)] 8) ++
+    repeat (2%positive, -1) 8) 7.
+
+Example signed_preparation_cancels_alternating_units :
+  poly_prepare_form PosKeyCode.encode prepared_zero_form = Lin _ [] 7.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** This fixture supplies a raw affine form to exercise the public assignment path. *)
+Module PreparedFixtureLinearize.
+  Definition lin_of (_ : term ZLangCode.op positive) : option (lin positive * wrapr) :=
+    Some (prepared_zero_form, NoWrap).
+  Definition atoms_of (_ : ZLangCode.guard) (_ : list (term ZLangCode.op positive))
+      : list (atom positive) := [].
+End PreparedFixtureLinearize.
+
+Module PreparedFixturePoly :=
+  PolyCode PosKeyCode ZLangCode PreparedFixtureLinearize FixtureCertificate.
+
+(** The same prepared form reaches both the assignment row and its final checker. *)
+Example assignment_uses_the_prepared_zero_form :
+  PreparedFixturePoly.assign 1%positive (Leaf 2%positive) (Reached []) =
+    Reached [equal_x 7].
+Proof.
+  vm_compute. reflexivity.
+Qed.

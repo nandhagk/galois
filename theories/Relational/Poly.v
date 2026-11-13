@@ -754,6 +754,453 @@ Proof.
       apply in_map_iff in Hin as [q [Hsame Hq]]. subst r. apply poly_add_rows_unique.
 Qed.
 
+(** The original key accompanies its two nonnegative coefficient sums. *)
+Definition poly_signed_add_term {A} (encode : A -> positive)
+    (tr : ptrie (A * (Z * Z))) (p : A * Z) : ptrie (A * (Z * Z)) :=
+  let key := encode (fst p) in
+  let previous := match PTrieCode.get key tr with
+    | Some q => snd q | None => (0%Z, 0%Z) end in
+  PTrieCode.set key (fst p, lc_add_signed (snd p) previous) tr.
+
+TimeFun poly_signed_add_term.
+
+(** Finishing a stored coefficient performs its only signed subtraction. *)
+Definition poly_signed_value {A} (p : A * (Z * Z)) : A * Z :=
+  let sums := snd p in (fst p, (fst sums - snd sums)%Z).
+
+TimeFun poly_signed_value.
+
+Definition poly_signed_keep {A} (acc : list (A * Z)) (p : A * (Z * Z))
+    : list (A * Z) :=
+  let q := poly_signed_value p in
+  if Z.eqb (snd q) 0 then acc else q :: acc.
+
+TimeFun poly_signed_keep.
+
+(** Affine preparation emits one nonzero coefficient at each occupied key. *)
+Definition poly_signed_normal_coef {A} (encode : A -> positive) (xs : list (A * Z))
+    : list (A * Z) :=
+  PTrieCode.fold_values poly_signed_keep
+    (fold_left (poly_signed_add_term encode) xs PTrieCode.empty) nil.
+
+TimeFun poly_signed_normal_coef.
+
+Definition poly_prepare_form {A} (encode : A -> positive) (f : lin A) : lin A :=
+  Lin A (poly_signed_normal_coef encode (coef f)) (cst f).
+
+TimeFun poly_prepare_form.
+
+(** Value projection commutes with a single trie update. *)
+Lemma poly_signed_map_set : forall A B (f : A -> B) key value tr,
+  PTrieCode.map f (PTrieCode.set key value tr) =
+    PTrieCode.set key (f value) (PTrieCode.map f tr).
+Proof.
+  intros A B f key value tr. apply PTrie.ext. intro q. rewrite PTrie.get_map.
+  destruct (Pos.eq_dec q key) as [Heq|Hneq].
+  - subst q. rewrite !PTrie.get_set_same. reflexivity.
+  - rewrite !PTrie.get_set_other by exact Hneq. rewrite PTrie.get_map. reflexivity.
+Qed.
+
+(** A signed pair denotes ordinary addition after projection. *)
+Lemma poly_signed_value_add : forall A (x : A) a sums,
+  poly_signed_value (x, lc_add_signed a sums) =
+    (x, (fst sums - snd sums + a)%Z).
+Proof.
+  intros A x a [p n]. unfold poly_signed_value, lc_add_signed.
+  destruct (0 <=? a)%Z; cbn [fst snd]; f_equal; ring.
+Qed.
+
+(** Erasing the signed representation gives the existing coefficient insertion. *)
+Lemma poly_signed_add_erases : forall A (encode : A -> positive) tr p,
+  PTrieCode.map poly_signed_value (poly_signed_add_term encode tr p) =
+    poly_add_term encode (PTrieCode.map poly_signed_value tr) p.
+Proof.
+  intros A encode tr [x a]. unfold poly_signed_add_term, poly_add_term.
+  cbn [fst snd]. rewrite poly_signed_map_set, PTrie.get_map.
+  destruct (PTrieCode.get (encode x) tr) as [[y sums]|];
+    cbn [option_map fst snd]; rewrite poly_signed_value_add;
+    unfold poly_signed_value; cbn [fst snd]; reflexivity.
+Qed.
+
+(** Erasing after accumulation agrees exactly with ordinary normalization. *)
+Lemma poly_signed_fold_erases : forall A (encode : A -> positive) xs tr,
+  PTrieCode.map poly_signed_value (fold_left (poly_signed_add_term encode) xs tr) =
+    fold_left (poly_add_term encode) xs (PTrieCode.map poly_signed_value tr).
+Proof.
+  intros A encode xs. induction xs as [|p xs IH]; intro tr; cbn [fold_left].
+  - reflexivity.
+  - rewrite IH, poly_signed_add_erases. reflexivity.
+Qed.
+
+(** A trie node folds its left values, optional value, and right values in order. *)
+Lemma poly_signed_fold_node : forall A B (step : B -> A -> B) l o r b,
+  PTrieCode.fold_values step (PTrieCode.node l o r) b =
+    PTrieCode.fold_values step r
+      (match o with Some a => step (PTrieCode.fold_values step l b) a
+       | None => PTrieCode.fold_values step l b end).
+Proof.
+  intros A B step l o r b. destruct l, o, r; reflexivity.
+Qed.
+
+Lemma poly_signed_fold_empty : forall A B (step : B -> A -> B) b,
+  PTrieCode.fold_values step PTrieCode.empty b = b.
+Proof.
+  reflexivity.
+Qed.
+
+(** Mapping trie values before a fold composes the folding callback. *)
+Lemma poly_signed_fold_map : forall A B D (f : A -> B) (step : D -> B -> D) tr b,
+  PTrieCode.fold_values step (PTrieCode.map f tr) b =
+    PTrieCode.fold_values (fun acc p => step acc (f p)) tr b.
+Proof.
+  intros A B D f step [|tr] b; [reflexivity|].
+  change (PTrieCode.fold_values step
+    (PTrieCode.filter_ne (fun a => Some (f a)) tr) b =
+      PTrieCode.fold_values_ne (fun acc p => step acc (f p)) tr b).
+  revert b. induction tr as [r IHr|a|a r IHr|l IHl|l IHl r IHr|
+    l IHl a|l IHl a r IHr]; intro b;
+    cbn [PTrieCode.filter_ne PTrieCode.filter_value PTrieCode.fold_values_ne];
+    rewrite poly_signed_fold_node;
+    rewrite ?poly_signed_fold_empty, ?IHl, ?IHr; reflexivity.
+Qed.
+
+(** The faster preparer returns exactly the existing canonical coefficient list. *)
+Lemma poly_signed_normal_eq : forall A (encode : A -> positive) xs,
+  poly_signed_normal_coef encode xs = poly_normal_coef encode xs.
+Proof.
+  intros A encode xs. unfold poly_signed_normal_coef, poly_normal_coef.
+  pose proof (poly_signed_fold_erases A encode xs PTrieCode.empty) as Hfold.
+  change (PTrieCode.map poly_signed_value
+    (fold_left (poly_signed_add_term encode) xs PTrieCode.empty) =
+      fold_left (poly_add_term encode) xs PTrieCode.empty) in Hfold.
+  rewrite <- Hfold.
+  rewrite poly_signed_fold_map. reflexivity.
+Qed.
+
+(** Preparation preserves the affine constant. *)
+Lemma poly_prepare_form_constant : forall A (encode : A -> positive) f,
+  cst (poly_prepare_form encode f) = cst f.
+Proof.
+  reflexivity.
+Qed.
+
+(** Prepared forms have no repeated coefficient key. *)
+Lemma poly_prepare_form_nodup : forall A (encode : A -> positive) f,
+  NoDup (map fst (coef (poly_prepare_form encode f))).
+Proof.
+  intros A encode f. cbn [poly_prepare_form coef].
+  rewrite poly_signed_normal_eq. apply poly_normal_coef_nodup.
+Qed.
+
+(** Prepared forms contain no explicit zero coefficient. *)
+Lemma poly_prepare_form_nonzero : forall A (encode : A -> positive) f,
+  Forall (fun p => snd p <> 0%Z) (coef (poly_prepare_form encode f)).
+Proof.
+  intros A encode f. cbn [poly_prepare_form coef].
+  rewrite poly_signed_normal_eq. apply Forall_forall. intros p Hp.
+  exact (poly_normal_coef_nonzero A encode (coef f) p Hp).
+Qed.
+
+(** Preparation retains only keys occurring in the original affine form. *)
+Lemma poly_prepare_form_support : forall A (encode : A -> positive) f p,
+  In p (coef (poly_prepare_form encode f)) -> In (fst p) (map fst (coef f)).
+Proof.
+  intros A encode f p Hp. cbn [poly_prepare_form coef] in Hp.
+  rewrite poly_signed_normal_eq in Hp. now apply poly_normal_coef_keys in Hp.
+Qed.
+
+
+Module PolySignedAffineClock (X : KEY_T).
+  Module SignedCert := LinCertT X.
+
+  Definition poly_signed_pairs (tr : ptrie (X.t * (Z * Z))) : ptrie (Z * Z) :=
+    PTrieCode.map (@snd X.t (Z * Z)) tr.
+
+  (** Discarding stored keys gives the checked linear-certificate accumulator. *)
+  Lemma poly_signed_add_pairs : forall tr p,
+    poly_signed_pairs (poly_signed_add_term X.encode tr p) =
+      SignedCert.insert_term (poly_signed_pairs tr) p.
+  Proof.
+    intros tr [x a]. unfold poly_signed_pairs, poly_signed_add_term,
+      SignedCert.insert_term. cbn [fst snd].
+    rewrite poly_signed_map_set, PTrie.get_map.
+    destruct (PTrieCode.get (X.encode x) tr); reflexivity.
+  Qed.
+
+  Lemma poly_signed_fold_pairs : forall xs tr,
+    poly_signed_pairs (fold_left (poly_signed_add_term X.encode) xs tr) =
+      fold_left SignedCert.insert_term xs (poly_signed_pairs tr).
+  Proof.
+    intro xs. induction xs as [|p xs IH]; intro tr; cbn [fold_left]; [reflexivity|].
+    rewrite IH, poly_signed_add_pairs. reflexivity.
+  Qed.
+
+  Lemma poly_signed_gather_pairs : forall xs,
+    poly_signed_pairs (fold_left (poly_signed_add_term X.encode) xs PTrieCode.empty) =
+      SignedCert.gather xs.
+  Proof.
+    intro xs. rewrite poly_signed_fold_pairs. reflexivity.
+  Qed.
+
+  Definition poly_signed_good (tr : ptrie (X.t * (Z * Z))) : Prop :=
+    SignedCert.lc_trie_good (poly_signed_pairs tr).
+
+  Definition poly_signed_potential (tr : ptrie (X.t * (Z * Z))) : N :=
+    SignedCert.lc_trie_sum SignedCert.lc_pair_ones (poly_signed_pairs tr).
+
+  Definition poly_signed_insert_factor : N :=
+    (2 * X.c_key + 4 * PTrieT.c_trie + 64)%N.
+
+  Lemma poly_signed_add_good : forall tr p,
+    poly_signed_good tr -> poly_signed_good (poly_signed_add_term X.encode tr p).
+  Proof.
+    intros tr p Hgood. unfold poly_signed_good in *.
+    rewrite poly_signed_add_pairs. now apply SignedCert.insert_term_good.
+  Qed.
+
+  (** The signed insertion clock telescopes the same set-bit potential as LinCert. *)
+  Lemma T_poly_signed_add_potential : forall tr x a, poly_signed_good tr ->
+    (T_poly_signed_add_term X.encode X.T_encode tr (x, a) +
+      poly_signed_potential (poly_signed_add_term X.encode tr (x, a)) <=
+      poly_signed_insert_factor * N.of_nat (X.bits x + Z.size_nat a + 1) +
+        poly_signed_potential tr)%N.
+  Proof.
+    intros tr x a Hgood. unfold poly_signed_good in Hgood.
+    set (previous := match PTrieCode.get (X.encode x) tr with
+      | Some q => snd q | None => (0%Z, 0%Z) end).
+    assert (Hprevious_value :
+      (match PTrieCode.get (X.encode x) (poly_signed_pairs tr) with
+       | Some z => z | None => (0%Z, 0%Z) end) = previous).
+    { unfold poly_signed_pairs. rewrite PTrie.get_map.
+      destruct (PTrieCode.get (X.encode x) tr); reflexivity. }
+    pose proof (SignedCert.lc_previous_nonnegative _ (X.encode x) Hgood) as Hsigns.
+    rewrite Hprevious_value in Hsigns. destruct Hsigns as [Hp Hn].
+    pose proof (SignedCert.lc_previous_ones (poly_signed_pairs tr) (X.encode x)) as Hprevious.
+    rewrite Hprevious_value in Hprevious.
+    pose proof (SignedCert.lc_trie_sum_set SignedCert.lc_pair_ones (X.encode x)
+      (lc_add_signed a previous) (poly_signed_pairs tr)) as Hset.
+    assert (Hinsert_value : SignedCert.insert_term (poly_signed_pairs tr) (x, a) =
+      PTrieCode.set (X.encode x) (lc_add_signed a previous) (poly_signed_pairs tr)).
+    { unfold SignedCert.insert_term. cbn [fst snd]. rewrite Hprevious_value. reflexivity. }
+    rewrite <- Hinsert_value in Hset.
+    unfold poly_signed_potential. rewrite poly_signed_add_pairs.
+    pose proof (X.T_encode_le x) as Hencode.
+    pose proof (PTrieT.T_get_le (X.t * (Z * Z)) (X.encode x) tr) as Hget.
+    pose proof (PTrieT.T_set_le (X.t * (Z * Z)) (X.encode x)
+      (x, lc_add_signed a previous) tr) as Hput.
+    pose proof (SignedCert.T_lc_add_signed_pair a previous Hp Hn) as Hadd.
+    time_unfold (@T_poly_signed_add_term). cbn [fst snd]. fold previous.
+    unfold poly_signed_insert_factor, X.bits in *. time_simpl.
+    destruct (PTrieCode.get (X.encode x) tr); time_simpl; nia.
+  Qed.
+
+  (** Folding insertion charges only the raw incoming bit mass. *)
+  Lemma T_poly_signed_accum_weighted : forall xs tr, poly_signed_good tr ->
+    (List.T_fold_left (poly_signed_add_term X.encode)
+      (T_poly_signed_add_term X.encode X.T_encode) xs tr +
+      poly_signed_potential (fold_left (poly_signed_add_term X.encode) xs tr) <=
+      (poly_signed_insert_factor + 2) * SignedCert.lc_terms_weight xs +
+        poly_signed_potential tr + 1)%N.
+  Proof.
+    induction xs as [|[x a] xs IH]; intros tr Hgood;
+      time_unfold List.T_fold_left; cbn [fold_left SignedCert.lc_terms_weight].
+    - lia.
+    - specialize (IH (poly_signed_add_term X.encode tr (x, a))
+        (poly_signed_add_good tr (x, a) Hgood)).
+      pose proof (T_poly_signed_add_potential tr x a Hgood) as Hinsert.
+      unfold X.bits in Hinsert. nia.
+  Qed.
+
+  (** Trie skeleton growth is bounded by the encodings of the incoming keys. *)
+  Lemma poly_signed_accum_nodes : forall xs tr,
+    (N.of_nat (PTrie.nodes (fold_left (poly_signed_add_term X.encode) xs tr)) <=
+      N.of_nat (PTrie.nodes tr) + SignedCert.lc_terms_weight xs)%N.
+  Proof.
+    induction xs as [|[x a] xs IH]; intro tr;
+      cbn [fold_left SignedCert.lc_terms_weight]; [lia|].
+    specialize (IH (poly_signed_add_term X.encode tr (x, a))).
+    pose proof (PTrie.nodes_set (X.t * (Z * Z)) (X.encode x)
+      (x, lc_add_signed a (match PTrieCode.get (X.encode x) tr with
+        | Some q => snd q | None => (0%Z, 0%Z) end)) tr) as Hnodes.
+    change (PTrie.nodes (poly_signed_add_term X.encode tr (x, a)) <=
+      PTrie.nodes tr + Pos.size_nat (X.encode x)) in Hnodes. lia.
+  Qed.
+
+  Fixpoint poly_signed_sum_ne (f : Z * Z -> N) (tr : trie_ne (X.t * (Z * Z))) : N :=
+    match tr with
+    | N001 r => poly_signed_sum_ne f r
+    | N010 p => f (snd p)
+    | N011 p r => f (snd p) + poly_signed_sum_ne f r
+    | N100 l => poly_signed_sum_ne f l
+    | N101 l r => poly_signed_sum_ne f l + poly_signed_sum_ne f r
+    | N110 l p => poly_signed_sum_ne f l + f (snd p)
+    | N111 l p r => poly_signed_sum_ne f l + f (snd p) + poly_signed_sum_ne f r
+    end%N.
+
+  Definition poly_signed_sum (f : Z * Z -> N) (tr : ptrie (X.t * (Z * Z))) : N :=
+    match tr with Empty => 0 | Nodes n => poly_signed_sum_ne f n end%N.
+
+  (** Projecting stored keys does not change the signed-pair mass. *)
+  Lemma poly_signed_sum_pairs : forall f tr,
+    SignedCert.lc_trie_sum f (poly_signed_pairs tr) = poly_signed_sum f tr.
+  Proof.
+    intros f [|tr]; [reflexivity|]. unfold poly_signed_pairs, PTrieCode.map,
+      PTrieCode.filter_map, poly_signed_sum.
+    induction tr as [r IHr|p|p r IHr|l IHl|l IHl r IHr|l IHl p|l IHl p r IHr];
+      cbn [PTrieCode.filter_ne PTrieCode.filter_value poly_signed_sum_ne];
+      rewrite SignedCert.lc_trie_sum_node; rewrite ?IHl, ?IHr;
+      cbn [SignedCert.lc_trie_sum SignedCert.lc_option_sum]; lia.
+  Qed.
+
+  (** Final subtraction and zero testing charge the two stored widths once. *)
+  Lemma T_poly_signed_keep_bounded : forall (acc : list (X.t * Z)) (p : X.t * (Z * Z)),
+    (T_poly_signed_keep acc p <= 16 * SignedCert.lc_pair_bits (snd p))%N.
+  Proof.
+    intros acc [x [a b]]. pose proof (Z.T_sub_le a b) as Hsub.
+    pose proof (Z.T_eqb_le (a - b) 0) as Heq.
+    pose proof (poly_size_add a (-b)) as Hbits. rewrite poly_size_opp in Hbits.
+    change (Z.size_nat (a - b) <= Nat.max (Z.size_nat a) (Z.size_nat b) + 1) in Hbits.
+    time_unfold (@T_poly_signed_keep). time_unfold (@T_poly_signed_value).
+    unfold SignedCert.lc_pair_bits. cbn [poly_signed_value fst snd]. time_simpl. lia.
+  Qed.
+
+  (** Finishing a nonempty trie traverses every node and stored pair once. *)
+  Lemma T_poly_signed_finish_ne : forall tr acc,
+    (PTrieT.T_fold_values_ne (@poly_signed_keep X.t) (@T_poly_signed_keep X.t) tr acc <=
+      32 * (N.of_nat (PTrie.nodes_ne tr) +
+        poly_signed_sum_ne SignedCert.lc_pair_bits tr))%N.
+  Proof.
+    induction tr as [r IHr|p|p r IHr|l IHl|l IHl r IHr|l IHl p|l IHl p r IHr];
+      intro acc.
+    - specialize (IHr acc).
+      time_unfold (@PTrieT.T_fold_values_ne). cbn [PTrie.nodes_ne poly_signed_sum_ne]. lia.
+    - pose proof (T_poly_signed_keep_bounded acc p).
+      time_unfold (@PTrieT.T_fold_values_ne). cbn [PTrie.nodes_ne poly_signed_sum_ne]. lia.
+    - pose proof (T_poly_signed_keep_bounded acc p).
+      specialize (IHr (poly_signed_keep acc p)).
+      time_unfold (@PTrieT.T_fold_values_ne). cbn [PTrie.nodes_ne poly_signed_sum_ne]. lia.
+    - specialize (IHl acc).
+      time_unfold (@PTrieT.T_fold_values_ne). cbn [PTrie.nodes_ne poly_signed_sum_ne]. lia.
+    - specialize (IHl acc).
+      specialize (IHr (PTrieCode.fold_values_ne poly_signed_keep l acc)).
+      time_unfold (@PTrieT.T_fold_values_ne). cbn [PTrie.nodes_ne poly_signed_sum_ne]. lia.
+    - specialize (IHl acc).
+      pose proof (T_poly_signed_keep_bounded
+        (PTrieCode.fold_values_ne poly_signed_keep l acc) p).
+      time_unfold (@PTrieT.T_fold_values_ne). cbn [PTrie.nodes_ne poly_signed_sum_ne]. lia.
+    - specialize (IHl acc).
+      pose proof (T_poly_signed_keep_bounded
+        (PTrieCode.fold_values_ne poly_signed_keep l acc) p).
+      specialize (IHr (poly_signed_keep (PTrieCode.fold_values_ne poly_signed_keep l acc) p)).
+      time_unfold (@PTrieT.T_fold_values_ne). cbn [PTrie.nodes_ne poly_signed_sum_ne]. lia.
+  Qed.
+
+  Lemma T_poly_signed_finish : forall tr acc,
+    (PTrieT.T_fold_values (@poly_signed_keep X.t) (@T_poly_signed_keep X.t) tr acc <=
+      32 * (N.of_nat (PTrie.nodes tr) + poly_signed_sum SignedCert.lc_pair_bits tr + 1))%N.
+  Proof.
+    intros [|tr] acc.
+    - time_unfold (@PTrieT.T_fold_values). cbn [PTrie.nodes poly_signed_sum]. lia.
+    - pose proof (T_poly_signed_finish_ne tr acc).
+      time_unfold (@PTrieT.T_fold_values). cbn [PTrie.nodes poly_signed_sum]. lia.
+  Qed.
+
+  Definition poly_signed_normal_factor : N := (poly_signed_insert_factor + 72)%N.
+
+  (** The signed preparer is linear in raw occurrence bit mass, including cancellation. *)
+  Lemma T_poly_signed_normal_weighted : forall xs,
+    (T_poly_signed_normal_coef X.encode X.T_encode xs <=
+      poly_signed_normal_factor * (SignedCert.lc_terms_weight xs + 1))%N.
+  Proof.
+    intro xs. set (tr := fold_left (poly_signed_add_term X.encode) xs PTrieCode.empty).
+    assert (Hempty : poly_signed_good PTrieCode.empty).
+    { exact SignedCert.lc_empty_good. }
+    pose proof (T_poly_signed_accum_weighted xs PTrieCode.empty Hempty) as Haccum.
+    change (List.T_fold_left (poly_signed_add_term X.encode)
+      (T_poly_signed_add_term X.encode X.T_encode) xs PTrieCode.empty +
+      poly_signed_potential tr <=
+      (poly_signed_insert_factor + 2) * SignedCert.lc_terms_weight xs + 0 + 1)%N in Haccum.
+    pose proof (poly_signed_accum_nodes xs PTrieCode.empty) as Hnodes.
+    change (N.of_nat (PTrie.nodes tr) <= 0 + SignedCert.lc_terms_weight xs)%N in Hnodes.
+    pose proof (SignedCert.gather_storage xs) as Hstorage.
+    rewrite <- poly_signed_gather_pairs, poly_signed_sum_pairs in Hstorage.
+    fold tr in Hstorage. pose proof (T_poly_signed_finish tr nil) as Hfinish.
+    time_unfold (@T_poly_signed_normal_coef).
+    change (fun acc p => T_poly_signed_add_term X.encode X.T_encode acc p)
+      with (T_poly_signed_add_term X.encode X.T_encode).
+    change (fun acc p => T_poly_signed_keep acc p) with (@T_poly_signed_keep X.t).
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    fold tr. unfold poly_signed_normal_factor. time_simpl. nia.
+  Qed.
+
+  Lemma poly_signed_terms_uniform : forall xs bits,
+    Forall (fun p => X.bits (fst p) + Z.size_nat (snd p) <= bits) xs ->
+    (SignedCert.lc_terms_weight xs <= N.of_nat (length xs) * N.of_nat (bits + 1))%N.
+  Proof.
+    intro xs. induction xs as [|[x a] xs IH]; intros bits Hwidth.
+    - cbn [SignedCert.lc_terms_weight length]. lia.
+    - inversion Hwidth as [|p ps Hhead Htail]; subst p ps.
+      specialize (IH bits Htail). unfold X.bits in Hhead.
+      cbn [fst snd SignedCert.lc_terms_weight length] in *. rewrite Nat2N.inj_succ. nia.
+  Qed.
+
+  Definition poly_prepare_factor : N := (poly_signed_normal_factor + 8)%N.
+
+  (** Preparing an affine form fits its original list length and coefficient/key widths. *)
+  Lemma T_poly_prepare_form_bounded : forall f bits,
+    Forall (fun p => X.bits (fst p) + Z.size_nat (snd p) <= bits) (coef f) ->
+    (T_poly_prepare_form X.encode X.T_encode f <=
+      poly_prepare_factor * N.of_nat (length (coef f) + 1) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros f bits Hwidth.
+    pose proof (T_poly_signed_normal_weighted (coef f)) as Hnormal.
+    pose proof (poly_signed_terms_uniform (coef f) bits Hwidth) as Hmass.
+    assert (Hwidth_positive : (1 <= N.of_nat (bits + 1))%N) by lia.
+    time_unfold (@T_poly_prepare_form). time_simpl.
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    unfold poly_prepare_factor. rewrite Nat2N.inj_add.
+    change (N.of_nat 1) with 1%N. nia.
+  Qed.
+End PolySignedAffineClock.
+
+Module PolySignedAffineLinearize (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
+    (F : LINEARIZE_T X L N).
+  Module Clock := PolySignedAffineClock X.
+
+  Lemma poly_signed_max_forall : forall (A : Type) (measure : A -> nat) base xs,
+    Forall (fun p => measure p <= fold_right Nat.max base (map measure xs)) xs.
+  Proof.
+    intros A measure base xs. induction xs as [|p xs IH]; cbn [map fold_right].
+    - constructor.
+    - constructor; [apply Nat.le_max_l|].
+      eapply Forall_impl; [|exact IH]. intros q Hq.
+      eapply Nat.le_trans; [exact Hq|apply Nat.le_max_r].
+  Qed.
+
+  (** The linearizer's raw width contract pays the signed preparation pass directly. *)
+  Lemma T_poly_prepare_lin_of : forall e f wrapping,
+    F.lin_of e = Some (f, wrapping) ->
+    (T_poly_prepare_form X.encode X.T_encode f <=
+      Clock.poly_prepare_factor * N.of_nat (tsize e + 1) *
+        N.of_nat (F.bits_e e + 1))%N.
+  Proof.
+    intros e f wrapping Hlinear.
+    destruct (F.lin_of_size e f wrapping Hlinear) as [Hlength Hwidth].
+    pose proof (poly_signed_max_forall (X.t * Z)
+      (fun p => X.bits (fst p) + Z.size_nat (snd p)) (Z.size_nat (cst f)) (coef f))
+      as Hentries.
+    change (Forall (fun p => X.bits (fst p) + Z.size_nat (snd p) <=
+      F.form_bits f) (coef f)) in Hentries.
+    assert (Hbits : Forall (fun p => X.bits (fst p) + Z.size_nat (snd p) <=
+      F.bits_e e) (coef f)).
+    { eapply Forall_impl; [|exact Hentries]. intros p Hp.
+      change (X.bits (fst p) + Z.size_nat (snd p) <= F.form_bits f) in Hp.
+      change (X.bits (fst p) + Z.size_nat (snd p) <= F.bits_e e). lia. }
+    eapply N.le_trans; [apply Clock.T_poly_prepare_form_bounded; exact Hbits|].
+    apply N.mul_le_mono_r, N.mul_le_mono_l. lia.
+  Qed.
+End PolySignedAffineLinearize.
+
 Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     (C : LINCERT_OPS X) <: POLY_OPS X L F C.
   Definition t := reach (list (lcons X.t)).
@@ -932,7 +1379,8 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     | Unreached => Unreached
     | Reached P =>
       match F.lin_of e with
-      | Some (f, NoWrap) => Reached (assign_linear x f P)
+      | Some (f, NoWrap) =>
+        Reached (assign_linear x (poly_prepare_form X.encode f) P)
       | _ => havoc x s
       end
     end.
@@ -1244,6 +1692,14 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - intros acc [x a]. cbn [snd]. destruct (Z.eqb a 0) eqn:Hzero.
       + apply Z.eqb_eq in Hzero. subst a. cbn [fst snd]. ring.
       + change (a * v x + eval_coef v acc = eval_coef v acc + a * v x)%Z. ring.
+  Qed.
+
+  (** Every valuation gives the same value to the original and prepared form. *)
+  Lemma poly_prepare_form_eval : forall (v : X.t -> Z) f,
+    eval_lin v (poly_prepare_form X.encode f) = eval_lin v f.
+  Proof.
+    intros v f. unfold eval_lin. cbn [poly_prepare_form coef cst].
+    rewrite poly_signed_normal_eq, normalize_coef_eval. reflexivity.
   Qed.
 
   (** Concatenation adds the evaluations of both coefficient lists. *)
@@ -3868,7 +4324,9 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - destruct wrapping.
       + pose proof (F.lin_sound st e c f NoWrap Heval Hform) as Hvalue.
         cbn [wrap_into] in Hvalue.
-        pose proof (assign_linear_sound x f P (fun y => N.num (st y)) Hmodels) as Hpost.
+        pose proof (assign_linear_sound x (poly_prepare_form X.encode f) P
+          (fun y => N.num (st y)) Hmodels) as Hpost.
+        rewrite poly_prepare_form_eval in Hpost.
         apply Forall_forall. intros r Hin.
         apply sat_pointwise with
           (v := upd X.eqb (fun y => N.num (st y)) x
