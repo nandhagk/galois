@@ -9377,6 +9377,90 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hlineage.
   Qed.
 
+  (** An identifier accumulator is retained by every subsequent combine input. *)
+  Lemma combine_id_exact : forall db f i next,
+    combine db f (Some (Some (Id i))) next = Some (Id i).
+  Proof.
+    intros db f i [[j | v] |]; unfold combine;
+      destruct (kind (view db) f) as [[| |m] |]; reflexivity.
+  Qed.
+
+  (** An absent-output accumulator is retained by every subsequent combine input. *)
+  Lemma combine_none_exact : forall db f next, combine db f (Some None) next = None.
+  Proof.
+    intros db f [[j | v] |]; unfold combine;
+      destruct (kind (view db) f) as [[| |m] |]; reflexivity.
+  Qed.
+
+  (** Lattice combining merges value inputs and ignores inputs of other shapes. *)
+  Lemma combine_lattice_value : forall db f m value next,
+    kind (view db) f = Some (OLat m) ->
+    combine db f (Some (Some (Val value))) next =
+      match next with
+      | Some (Val other) => Some (Val (V.merge m value other))
+      | _ => Some (Val value)
+      end.
+  Proof.
+    intros db f m value [[i | other] |] Hkind; unfold combine; now rewrite Hkind.
+  Qed.
+
+  (** Folding from an identifier output preserves that exact identifier. *)
+  Lemma fold_combine_id : forall db f outputs i,
+    fold_left (fun acc next => combine db f (Some acc) next) outputs (Some (Id i)) =
+      Some (Id i).
+  Proof.
+    intros db f outputs. induction outputs as [| next rest IH]; intro i; cbn [fold_left].
+    - reflexivity.
+    - rewrite combine_id_exact. apply IH.
+  Qed.
+
+  (** Folding from an absent output retains absence. *)
+  Lemma fold_combine_none : forall db f outputs,
+    fold_left (fun acc next => combine db f (Some acc) next) outputs None = None.
+  Proof.
+    intros db f outputs. induction outputs as [| next rest IH]; cbn [fold_left].
+    - reflexivity.
+    - now rewrite combine_none_exact.
+  Qed.
+
+  (** A fixed lattice prefix can be merged before or after folding the remaining inputs. *)
+  Lemma fold_lattice_merge : forall db f m outputs prefix seed result,
+    kind (view db) f = Some (OLat m) ->
+    fold_left (fun acc next => combine db f (Some acc) next) outputs (Some (Val seed)) =
+      Some (Val result) ->
+    fold_left (fun acc next => combine db f (Some acc) next) outputs
+      (Some (Val (V.merge m prefix seed))) = Some (Val (V.merge m prefix result)).
+  Proof.
+    intros db f m outputs. induction outputs as [| next rest IH];
+      intros prefix seed result Hkind Hresult; cbn [fold_left] in Hresult |- *.
+    - injection Hresult as Hvalue. subst result. reflexivity.
+    - rewrite (combine_lattice_value db f m seed next Hkind) in Hresult.
+      rewrite (combine_lattice_value db f m (V.merge m prefix seed) next Hkind).
+      destruct next as [[i | value] |]; cbn in Hresult |- *.
+      + eapply IH; eassumption.
+      + rewrite <- (V.merge_assoc m prefix seed value). eapply IH; eassumption.
+      + eapply IH; eassumption.
+  Qed.
+
+  (** Concatenating two value-producing groups merges their independently folded values. *)
+  Lemma merged_lattice_append : forall db f m left right a b,
+    kind (view db) f = Some (OLat m) ->
+    merged db f left = Some (Val a) -> merged db f right = Some (Val b) ->
+    merged db f (left ++ right) = Some (Val (V.merge m a b)).
+  Proof.
+    intros db f m left right a b Hkind Hleft Hright.
+    destruct left as [| first rest]; [discriminate |].
+    destruct right as [| second tail]; [discriminate |].
+    unfold merged in Hleft, Hright |- *. cbn [app map] in Hleft, Hright |- *.
+    rewrite map_app, fold_left_app, Hleft.
+    destruct second as [[i | value] |].
+    - cbn [option_map canon] in Hright. rewrite fold_combine_id in Hright. discriminate.
+    - cbn [map option_map canon fold_left] in Hright |- *.
+      rewrite (combine_lattice_value db f m a (Some (Val value)) Hkind).
+      eapply fold_lattice_merge; eassumption.
+    - cbn [option_map] in Hright. rewrite fold_combine_none in Hright. discriminate.
+  Qed.
+
   (** Lineage depends on the current view and representatives, not scheduling metadata. *)
   Lemma lineage_frame : forall initial db db', db_forest db' = db_forest db ->
     view db' = view db -> lineage initial db -> lineage initial db'.
