@@ -1,4 +1,4 @@
-(** * Placeholder database operations
+(** * Stored database operations
 
     Databases store rows and identifier equalities.
     For example, an initialized database supplies indexes on request.
@@ -768,6 +768,74 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | Some old, _, _ => old
     | None, _, _ => o
     end.
+
+  Definition slot_index_get (s : positive) (indexes : PTrieCode.t I.t) : I.t :=
+    match PTrieCode.get s indexes with Some ix => ix | None => I.empty end.
+  Definition projection_table_get (s : positive)
+      (counts : PTrieCode.t (PTrieCode.t (list (cell V.t) * N))) :=
+    match PTrieCode.get s counts with Some table => table | None => PTrieCode.empty end.
+
+  (** Projection counts keep a shared tuple until its last contributing row is removed. *)
+  Definition slot_update_one (add : bool) (s : N) (u : list (cell V.t))
+      (state : database_runtime (cell V.t) I.t) :=
+    let code := N.succ_pos s in
+    let tuple_code := db_tuple_code u in
+    let table := projection_table_get code (runtime_projection_counts state) in
+    let count := match PTrieCode.get tuple_code table with
+      | Some (_, n) => n | None => 0%N end in
+    let all := slot_index_get code (runtime_all_indexes state) in
+    let new := slot_index_get code (runtime_new_indexes state) in
+    if add then
+      runtime_set_indexes
+        (PTrieCode.set code (I.insert u all) (runtime_all_indexes state))
+        (PTrieCode.set code (I.insert u new) (runtime_new_indexes state))
+        (PTrieCode.set code (PTrieCode.set tuple_code (u, N.succ count) table)
+          (runtime_projection_counts state)) state
+    else match count with
+      | N0 => state
+      | Npos xH =>
+        runtime_set_indexes
+          (PTrieCode.set code (I.remove u all) (runtime_all_indexes state))
+          (PTrieCode.set code (I.remove u new) (runtime_new_indexes state))
+          (PTrieCode.set code (PTrieCode.remove tuple_code table)
+            (runtime_projection_counts state)) state
+      | _ =>
+        runtime_set_indexes (runtime_all_indexes state) (runtime_new_indexes state)
+          (PTrieCode.set code (PTrieCode.set tuple_code (u, N.pred count) table)
+            (runtime_projection_counts state)) state
+      end.
+
+  Fixpoint slot_update_many (add : bool) (u : list (cell V.t))
+      (layouts : list (N * database_slot_layout))
+      (state : database_runtime (cell V.t) I.t) :=
+    match layouts with
+    | [] => state
+    | (s, layout) :: rest =>
+      slot_update_many add u rest
+        (slot_update_one add s (project_slot_layout layout u) state)
+    end.
+
+  Definition slots_update (add : bool) (f : positive) (u : list (cell V.t)) (db : t)
+      : t :=
+    match PTrieCode.get f (runtime_function_slots (db_runtime db)) with
+    | None => db
+    | Some layouts => database_set_runtime (slot_update_many add u layouts (db_runtime db)) db
+    end.
+
+  Definition row_write (f : positive) (k : list (cell V.t)) (o : option (cell V.t))
+      (db : t) : t :=
+    database_set_runtime
+      (runtime_set_rows
+        (PTrieCode.set (db_row_code f k) ((f, k), o) (runtime_rows (db_runtime db)))
+        (runtime_set_changed true (db_runtime db))) db.
+
+  Definition row_replace (f : positive) (k : list (cell V.t))
+      (previous : option (option (cell V.t))) (o : option (cell V.t)) (db : t) : t :=
+    let without := match previous with
+      | None => db
+      | Some before => slots_update false f (k ++ option_list before) db
+      end in
+    row_write f k o (slots_update true f (k ++ option_list o) without).
   (** Initialization stores declarations, slots, empty rows and index caches. *)
   (* STUB-CODE *)
   Definition init (ds : list decl) (sl : list (positive * list nat)) : t :=
@@ -793,10 +861,6 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | Lt => (None, db)
     | _ => (row_get f (normal_key db k) db, db)
     end.
-  (* STUB-CODE *)
-  Definition make (i : positive) (_ : list (cell V.t)) (db : t) : positive * t := (i, db).
-  (* STUB-CODE *)
-  Definition put (_ : positive) (_ : list (cell V.t)) (_ : option (cell V.t)) (db : t) := db.
   Definition union (i j : positive) (db : t) :=
     let result := UnionFindCode.union i j (db_forest db) in
     let next := database_set_forest (snd result) db in
@@ -807,6 +871,37 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
         (database_set_runtime
           (runtime_set_union true ((i, j) :: runtime_equalities (db_runtime db))
             (loser :: runtime_queue (db_runtime db)) (db_runtime db)) next)
+    end.
+  Definition make (f : positive) (k : list (cell V.t)) (db : t) : positive * t :=
+    let ck := normal_key db k in
+    let previous := row_get f ck db in
+    match previous with
+    | Some (Some (Id j)) => (fst (UnionFindCode.find j (db_forest db)), db)
+    | _ =>
+      let i := N.succ_pos (runtime_allocated (db_runtime db)) in
+      let fresh := database_set_forest (UnionFindCode.add i (db_forest db))
+        (database_set_runtime
+          (runtime_set_allocated (Npos i) (runtime_set_changed true (db_runtime db))) db) in
+      let next := match kind_get f db with
+        | Some OId => row_replace f ck previous (Some (Id i)) fresh
+        | _ => fresh
+        end in
+      (i, next)
+    end.
+  Definition put (f : positive) (k : list (cell V.t)) (o : option (cell V.t))
+      (db : t) : t :=
+    let ck := normal_key db k in
+    let co := option_map (normal_cell db) o in
+    let previous := row_get f ck db in
+    let updated := combine_output db f previous co in
+    let next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db
+      end in
+    match previous with
+    | Some before =>
+      if output_eqb before updated then next else row_replace f ck previous updated next
+    | None => row_replace f ck previous updated next
     end.
   (* STUB-CODE *)
   Definition db_rstep (s : t * list (positive * list (cell V.t)))
@@ -839,9 +934,6 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
   (* STUB-CODE *)
   Definition rank_slots (_ : list decl) (_ : list (positive * list nat))
       : list (bool * N * N) := [].
-  (* STUB-CODE *)
-  Definition slots_update (_ : bool) (_ : positive) (_ : list (cell V.t)) (db : t) : t := db.
-
 End DatabaseCode.
 
 Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
@@ -927,6 +1019,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Module Tuples := ListKey Cells.
   Module RowKeys := PairKey PosKey Tuples.
   Module RowMap := TrieMap RowKeys.
+  Module RowFacts := FiniteMapFacts RowKeys RowMap.
   Module ForestFacts := UnionFindFacts UnionFind.
 
   (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
@@ -1082,6 +1175,94 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_wf. tauto.
   Qed.
   Definition wf : t -> Prop := database_wf.
+
+  (** Executable cell normalization returns the public representative-based cell. *)
+  Lemma normal_cell_correct : forall db c, wf db -> normal_cell db c = canon db c.
+  Proof.
+    intros db [i | v] Hwf; cbn [normal_cell canon repr].
+    - f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
+    - reflexivity.
+  Qed.
+
+  (** Executable key normalization agrees with the public canonical key. *)
+  Lemma normal_key_correct : forall db k, wf db ->
+    normal_key db k = map (canon db) k.
+  Proof.
+    intros db k Hwf. unfold normal_key. apply map_ext.
+    intro c. exact (normal_cell_correct db c Hwf).
+  Qed.
+
+  (** Executable output normalization agrees with the public canonical output. *)
+  Lemma normal_output_correct : forall db o, wf db ->
+    option_map (normal_cell db) o = option_map (canon db) o.
+  Proof.
+    intros db [c |] Hwf; cbn [option_map].
+    - now rewrite (normal_cell_correct db c Hwf).
+    - reflexivity.
+  Qed.
+
+  (** A slot update preserves every observation independent of the three index caches. *)
+  Lemma slot_update_one_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall b s u state, observe (slot_update_one b s u state) = observe state.
+  Proof.
+    intros A observe Hkeep b s u state. unfold slot_update_one.
+    destruct b; [apply Hkeep |].
+    destruct (PTrieCode.get (db_tuple_code u)
+      (projection_table_get (N.succ_pos s) (runtime_projection_counts state)))
+      as [[tuple n] |]; [| reflexivity].
+    destruct n as [| p]; [reflexivity |]. destruct p; apply Hkeep.
+  Qed.
+
+  (** Updating a function's prepared layouts preserves the same non-index observations. *)
+  Lemma slot_update_many_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall b u layouts state, observe (slot_update_many b u layouts state) = observe state.
+  Proof.
+    intros A observe Hkeep b u layouts.
+    induction layouts as [| [s layout] rest IH]; intro state; cbn [slot_update_many].
+    - reflexivity.
+    - rewrite IH. apply slot_update_one_preserves. exact Hkeep.
+  Qed.
+
+  (** The database wrapper exposes exactly the preserved runtime observation. *)
+  Lemma slots_update_preserves : forall (A : Type)
+      (observe : database_runtime (cell V.t) I.t -> A),
+    (forall all new counts state,
+      observe (runtime_set_indexes all new counts state) = observe state) ->
+    forall b f u db,
+      observe (db_runtime (slots_update b f u db)) = observe (db_runtime db).
+  Proof.
+    intros A observe Hkeep b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))) as [layouts |].
+    - apply slot_update_many_preserves. exact Hkeep.
+    - reflexivity.
+  Qed.
+
+  (** Index maintenance keeps the complete model view unchanged. *)
+  Lemma slots_update_view : forall b f u db, view (slots_update b f u db) = view db.
+  Proof.
+    intros b f u db.
+    exact (slots_update_preserves _
+      (fun state =>
+        {| row := fun g k o =>
+             option_map snd (PTrieCode.get (db_row_code g k) (runtime_rows state)) = Some o;
+           same := equality_log (runtime_equalities state);
+           kind := fun g => PTrieCode.get g (runtime_kinds state) |})
+      (fun all new counts state => eq_refl) b f u db).
+  Qed.
+
+  (** Index maintenance leaves the identifier forest in place. *)
+  Lemma slots_update_forest : forall b f u db,
+    db_forest (slots_update b f u db) = db_forest db.
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
     (same (view db) i j <-> repr db i = repr db j).
@@ -1454,12 +1635,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition num_slots (db : t) : nat := length (slots db).
   TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
   TimeFun normal_cell normal_key output_eqb combine_output.
+  TimeFun slot_index_get projection_table_get slot_update_one slot_update_many.
+  TimeFun slots_update row_write row_replace.
   TimeFun init.
   TimeFun find.
   TimeFun lookup.
+  TimeFun union.
   TimeFun make.
   TimeFun put.
-  TimeFun union.
   TimeFun db_rstep.
   TimeFun db_rebuild_fuel.
   TimeFun rebuild.
@@ -1705,7 +1888,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   TimeFun locate.
   TimeFun rank_slots.
-  TimeFun slots_update.
   Definition k_locate : N := 1. (* STUB *)
   Definition k_repair : N := 1. (* STUB *)
   Definition k_pop : N := 1. (* STUB *)

@@ -6,6 +6,7 @@
     Builds on: Database and the code towers of ValueSig and Index. *)
 
 From Stdlib Require Import List PArith NArith.
+From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax Index Database DatabaseSig.
 
 Import List.ListNotations.
@@ -20,6 +21,77 @@ End FixtureValue.
 
 Module FixtureIndex := IndexCode FixtureValue.
 Module FixtureDatabase := DatabaseCode FixtureValue FixtureIndex.
+
+(** Constructor allocation reuses an existing key and allocates once for each new key. *)
+Example make_reuses_constructor :
+  let db := FixtureDatabase.init [Decl 2%positive [SVal] OId] [] in
+  let first := FixtureDatabase.make 2%positive [Val 3%positive] db in
+  let again := FixtureDatabase.make 2%positive [Val 3%positive] (snd first) in
+  let next := FixtureDatabase.make 2%positive [Val 4%positive] (snd again) in
+  (fst first, fst again, fst next, FixtureDatabase.ids (snd next)) =
+    (1%positive, 1%positive, 2%positive, 2%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An undeclared make still returns an allocated identifier without adding a row. *)
+Example make_undeclared_allocates :
+  let result := FixtureDatabase.make 9%positive [] (FixtureDatabase.init [] []) in
+  (fst result, FixtureDatabase.ids (snd result), FixtureDatabase.changed (snd result),
+   FixtureDatabase.row_get 9%positive [] (snd result)) =
+    (1%positive, 1%N, true, None).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Lattice writes retain the join and leave a redundant insertion quiet. *)
+Example put_lattice_join :
+  let db := FixtureDatabase.init [Decl 3%positive [SVal] (OLat 1%positive)] [] in
+  let first := FixtureDatabase.put 3%positive [Val 2%positive] (Some (Val 4%positive)) db in
+  let quiet := FixtureDatabase.put 3%positive [Val 2%positive] (Some (Val 1%positive))
+    (FixtureDatabase.advance first) in
+  let next := FixtureDatabase.put 3%positive [Val 2%positive] (Some (Val 8%positive)) quiet in
+  (FixtureDatabase.row_get 3%positive [Val 2%positive] quiet,
+   FixtureDatabase.changed quiet,
+   FixtureDatabase.row_get 3%positive [Val 2%positive] next,
+   FixtureDatabase.changed next) =
+    (Some (Some (Val 4%positive)), false, Some (Some (Val 8%positive)), true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Constructor output conflicts queue a loser and preserve allocation and stored keys. *)
+Example put_constructor_conflict :
+  let db := FixtureDatabase.init [Decl 2%positive [SVal] OId] [] in
+  let first := FixtureDatabase.make 2%positive [Val 3%positive] db in
+  let second := FixtureDatabase.make 2%positive [Val 4%positive] (snd first) in
+  let result := FixtureDatabase.put 2%positive [Val 3%positive] (Some (Id (fst second)))
+    (FixtureDatabase.advance (snd second)) in
+  (FixtureDatabase.ids result, FixtureDatabase.changed result, db_npending result,
+   fst (FixtureDatabase.find (fst second) result),
+   FixtureDatabase.row_get 2%positive [Val 3%positive] result) =
+    (2%N, true, 1%N, 1%positive, Some (Some (Id 1%positive))).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Shared projections retain both contributions when one row's output changes. *)
+Example put_projection_multiplicity :
+  let db := FixtureDatabase.init
+    [Decl 3%positive [SVal; SVal] (OLat 1%positive)] [(3%positive, [0])] in
+  let first := FixtureDatabase.put 3%positive [Val 2%positive; Val 3%positive]
+    (Some (Val 4%positive)) db in
+  let second := FixtureDatabase.put 3%positive [Val 2%positive; Val 5%positive]
+    (Some (Val 6%positive)) first in
+  let result := FixtureDatabase.put 3%positive [Val 2%positive; Val 3%positive]
+    (Some (Val 8%positive)) second in
+  let table := FixtureDatabase.projection_table_get 1%positive
+    (runtime_projection_counts (db_runtime result)) in
+  PTrieCode.get (FixtureDatabase.db_tuple_code [Val 2%positive]) table =
+    Some ([Val 2%positive], 2%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
 (** Initialization retains declared output kinds and gives the first declaration priority. *)
 Example init_declared_kinds :
