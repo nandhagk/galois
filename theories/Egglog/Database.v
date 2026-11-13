@@ -701,7 +701,8 @@ Record database_state (C X : Type) := DatabaseState {
   db_index_counters : list positive;
   db_row_store : database_row_store C;
   db_slot_store : database_slot_store C;
-  db_runtime : database_runtime C X
+  db_runtime : database_runtime C X;
+  db_cache_updates : N
 }.
 
 Arguments DatabaseState {C X}.
@@ -714,6 +715,7 @@ Arguments db_index_counters {C X}.
 Arguments db_row_store {C X}.
 Arguments db_slot_store {C X}.
 Arguments db_runtime {C X}.
+Arguments db_cache_updates {C X}.
 
 TimeFun db_forest.
 TimeFun db_nuses.
@@ -724,6 +726,7 @@ TimeFun db_index_counters.
 TimeFun db_row_store.
 TimeFun db_slot_store.
 TimeFun db_runtime.
+TimeFun db_cache_updates.
 
 (** Earlier declarations override later declarations, as in [lookup_kind]. *)
 Definition database_kinds (ds : list decl) : PTrieCode.t output :=
@@ -1039,20 +1042,34 @@ TimeFun runtime_set_indexes.
 Definition database_set_runtime {C X} (state : database_runtime C X)
     (db : database_state C X) : database_state C X :=
   DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
-    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) state.
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) state
+    (db_cache_updates db).
 TimeFun database_set_runtime.
 
 Definition database_set_forest {C X} (forest : UnionFindCode.t)
     (db : database_state C X) : database_state C X :=
   DatabaseState forest (db_nuses db) (db_npending db) (db_wmark db)
-    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db).
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db)
+    (db_cache_updates db).
 TimeFun database_set_forest.
 
 Definition database_set_pending {C X} (pending : N)
     (db : database_state C X) : database_state C X :=
   DatabaseState (db_forest db) (db_nuses db) pending (db_wmark db)
-    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db).
+    (db_written_cells db) (db_index_counters db) (db_row_store db) (db_slot_store db) (db_runtime db)
+    (db_cache_updates db).
 TimeFun database_set_pending.
+
+(** Each cache call records its actual update counter, input rank, index counters and cells. *)
+Definition database_record_cache {C X} (u : list C) (counters : list positive)
+    (db : database_state C X) : database_state C X :=
+  let next := N.succ_pos (db_cache_updates db) in
+  let rank := Pos.of_succ_nat (length u) in
+  DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+    (u ++ db_written_cells db)
+    (next :: rank :: (counters ++ db_index_counters db))
+    (db_row_store db) (db_slot_store db) (db_runtime db) (Npos next).
+TimeFun database_record_cache.
 
 (** A ghost operation records whether a tuple was inserted or removed from an index. *)
 Definition database_index_step {C X : Type} (insert remove : list C -> X -> X)
@@ -1222,12 +1239,25 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
         (slot_update_one add s (project_slot_layout layout u) state)
     end.
 
+  (** A second group pass records the counters of the indexes produced by this cache call. *)
+  Fixpoint slot_updated_counters (layouts : list (N * database_slot_layout))
+      (state : database_runtime (cell V.t) I.t) : list positive :=
+    match layouts with
+    | [] => []
+    | (s, _) :: rest =>
+      let code := N.succ_pos s in
+      I.next (slot_index_get code (runtime_all_indexes state)) ::
+      I.next (slot_index_get code (runtime_new_indexes state)) ::
+      slot_updated_counters rest state
+    end.
+
   Definition slots_update (add : bool) (f : positive) (u : list (cell V.t)) (db : t)
       : t :=
-    match PTrieCode.get f (runtime_function_slots (db_runtime db)) with
-    | None => db
-    | Some layouts => database_set_runtime (slot_update_many add u layouts (db_runtime db)) db
-    end.
+    let layouts := match PTrieCode.get f (runtime_function_slots (db_runtime db)) with
+      | None => [] | Some layouts => layouts end in
+    let state := slot_update_many add u layouts (db_runtime db) in
+    database_record_cache u (slot_updated_counters layouts state)
+      (database_set_runtime state db).
 
   Definition row_write (f : positive) (k : list (cell V.t)) (o : option (cell V.t))
       (db : t) : t :=
@@ -1271,7 +1301,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
          projection_counts := [] |}
       (DatabaseRuntime 0%N false ds (database_kinds ds) PTrieCode.empty sl [] []
         PTrieCode.empty PTrieCode.empty PTrieCode.empty
-        (database_slot_groups 0 prepared PTrieCode.empty) (database_max_name ds) bound).
+        (database_slot_groups 0 prepared PTrieCode.empty) (database_max_name ds) bound) 0%N.
   Definition find (i : positive) (db : t) : positive * t :=
     let result := UnionFindCode.find i (db_forest db) in
     (fst result, database_set_forest (snd result) db).
@@ -1522,6 +1552,149 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (s : N) (new : bool) : I.t :=
     slot_index_get (N.succ_pos s)
       (if new then runtime_new_indexes state else runtime_all_indexes state).
+
+  (** Metadata records cache activity and index construction independently of the row map. *)
+  Definition metadata_ok (db : t) : Prop :=
+    In 1%positive (db_index_counters db) /\
+    In (N.succ_pos (N.of_nat (length (slots db)))) (db_index_counters db) /\
+    (forall p, db_cache_updates db = Npos p -> In p (db_index_counters db)) /\
+    (forall s new, In (I.next (runtime_slot_index (db_runtime db) s new))
+      (db_index_counters db)) /\
+    (forall s new, database_index_history I.empty I.insert I.remove (db_written_cells db)
+      (runtime_slot_index (db_runtime db) s new)) /\
+    (forall s u, (runtime_projection_count (db_runtime db) s u <= db_cache_updates db)%N) /\
+    (runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty) /\
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)).
+
+  (** These observations determine metadata validity and omit the row store and forest. *)
+  Definition metadata_snapshot (db : t) :=
+    (db_cache_updates db, db_written_cells db, db_index_counters db,
+     runtime_slots (db_runtime db), runtime_slot_bound (db_runtime db),
+     runtime_function_slots (db_runtime db), runtime_all_indexes (db_runtime db),
+     runtime_new_indexes (db_runtime db), runtime_projection_counts (db_runtime db)).
+
+  (** Equal metadata observations transfer all construction and counter witnesses. *)
+  Lemma metadata_snapshot_ok : forall db db',
+    metadata_snapshot db = metadata_snapshot db' -> metadata_ok db -> metadata_ok db'.
+  Proof.
+    intros db db' Hsame Hmetadata. unfold metadata_snapshot in Hsame.
+    injection Hsame as Hupdates Hwritten Hcounters Hslots Hbound Hgroups Hall Hnew Hcounts.
+    unfold metadata_ok, slots, runtime_slot_index, runtime_projection_count in *.
+    now rewrite <- Hupdates, <- Hwritten, <- Hcounters, <- Hslots, <- Hbound,
+      <- Hgroups, <- Hall, <- Hnew, <- Hcounts.
+  Qed.
+
+  (** Each touched slot contributes both final index counters to the recorded list. *)
+  Lemma slot_updated_counters_member : forall layouts state s layout,
+    In (s, layout) layouts -> forall new,
+    In (I.next (runtime_slot_index state s new)) (slot_updated_counters layouts state).
+  Proof.
+    intro layouts. induction layouts as [|[t block] rest IH]; intros state s layout Hin new.
+    - contradiction.
+    - destruct Hin as [Hequal | Hin].
+      + injection Hequal as -> ->. cbn [slot_updated_counters runtime_slot_index].
+        destruct new; [right; now left | now left].
+      + cbn [slot_updated_counters]. right. right. now apply (IH state s layout).
+  Qed.
+
+  (** Initial caches have empty histories, zero counts and their root counter recorded. *)
+  Lemma metadata_init : forall ds sl, metadata_ok (init ds sl).
+  Proof.
+    intros ds sl.
+    assert (Hempty : forall s new,
+      runtime_slot_index (db_runtime (init ds sl)) s new = I.empty).
+    { intros s new. unfold runtime_slot_index, slot_index_get.
+      cbn [init db_runtime runtime_new_indexes runtime_all_indexes].
+      destruct new; now rewrite PTrie.get_empty. }
+    unfold metadata_ok. split.
+    - destruct sl; now left.
+    - split.
+      + destruct sl; [now left | right; now left].
+      + split.
+        * intros p Hzero. discriminate Hzero.
+        * split.
+          -- intros s new. rewrite Hempty, I.next_empty. destruct sl; now left.
+          -- split.
+             ++ intros s new. rewrite Hempty. apply database_index_history_empty.
+             ++ split.
+                ** intros s u. unfold runtime_projection_count, projection_table_get.
+                   cbn [init db_runtime runtime_projection_counts db_cache_updates].
+                   rewrite PTrie.get_empty. cbn. rewrite PTrie.get_empty. reflexivity.
+                ** split; reflexivity.
+  Qed.
+
+  (** Changing only the forest preserves all cache metadata. *)
+  Lemma metadata_set_forest : forall db forest, metadata_ok db ->
+    metadata_ok (database_set_forest forest db).
+  Proof.
+    intros db forest. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Changing only the pending counter preserves all cache metadata. *)
+  Lemma metadata_set_pending : forall db count, metadata_ok db ->
+    metadata_ok (database_set_pending count db).
+  Proof.
+    intros db count. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Writing the row table leaves the independently maintained cache metadata intact. *)
+  Lemma metadata_row_write : forall db f k o, metadata_ok db ->
+    metadata_ok (row_write f k o db).
+  Proof.
+    intros db f k o. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Erasing the row table also preserves the cache metadata observations. *)
+  Lemma metadata_row_erase : forall db f k, metadata_ok db ->
+    metadata_ok (row_erase f k db).
+  Proof.
+    intros db f k. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Allocating an identifier does not alter the cache histories or counters. *)
+  Lemma metadata_allocate_id : forall db i, metadata_ok db ->
+    metadata_ok (allocate_id i db).
+  Proof.
+    intros db i. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** Forest compression changes none of the cache metadata observations. *)
+  Lemma metadata_find : forall db i, metadata_ok db -> metadata_ok (snd (find i db)).
+  Proof.
+    intros db i. apply metadata_snapshot_ok. reflexivity.
+  Qed.
+
+  (** A union changes its forest and queue while retaining all cache metadata. *)
+  Lemma metadata_union : forall db i j, metadata_ok db -> metadata_ok (union i j db).
+  Proof.
+    intros db i j Hmetadata. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [[pair |] forest].
+    - destruct pair as [winner loser].
+      eapply metadata_snapshot_ok; [reflexivity | exact Hmetadata].
+    - eapply metadata_snapshot_ok; [reflexivity | exact Hmetadata].
+  Qed.
+
+  (** Advancing starts an empty delta history and retains every other metadata fact. *)
+  Lemma metadata_advance : forall db, metadata_ok db -> metadata_ok (advance db).
+  Proof.
+    intros db (Hone & Hslots & Hcounter & Hnext & Hhistory & Hcount & Hgroups & Hbound).
+    unfold metadata_ok.
+    split; [exact Hone |]. split; [exact Hslots |]. split; [exact Hcounter |].
+    split.
+    - intros s new. destruct new; [| exact (Hnext s false)].
+      unfold runtime_slot_index, slot_index_get.
+      cbn [advance database_set_runtime runtime_set_changed runtime_set_indexes
+        db_runtime runtime_new_indexes db_index_counters].
+      rewrite PTrie.get_empty, I.next_empty. exact Hone.
+    - split.
+      + intros s new. destruct new; [| exact (Hhistory s false)].
+        unfold runtime_slot_index, slot_index_get.
+        cbn [advance database_set_runtime runtime_set_changed runtime_set_indexes
+          db_runtime runtime_new_indexes db_written_cells].
+        rewrite PTrie.get_empty. apply database_index_history_empty.
+      + split; [exact Hcount |]. split; assumption.
+  Qed.
 
   (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
   Definition database_wf (db : t) : Prop :=
@@ -1975,6 +2148,133 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         unfold slot_index_get; now rewrite PTrie.get_set_same.
   Qed.
 
+  (** One contribution changes each count by at most one, including missing removals. *)
+  Lemma slot_update_one_count_le : forall b s u state v,
+    (runtime_projection_count (slot_update_one b s u state) s v <=
+      N.succ (runtime_projection_count state s v))%N.
+  Proof.
+    intros b s u state v.
+    destruct (Pos.eq_dec (db_tuple_code v) (db_tuple_code u)) as [Hequal | Hdifferent].
+    - apply Tuples.encode_inj in Hequal. subst v. rewrite slot_update_one_count_same.
+      destruct b; lia.
+    - rewrite slot_update_one_count_other; [lia |].
+      intro Hequal. subst v. contradiction.
+  Qed.
+
+  (** A duplicate-free group spends at most one count increment per slot. *)
+  Lemma slot_update_many_count_le : forall b u layouts state limit,
+    NoDup (map fst layouts) ->
+    (forall s v, (runtime_projection_count state s v <= limit)%N) ->
+    forall s v, (runtime_projection_count (slot_update_many b u layouts state) s v <=
+      N.succ limit)%N.
+  Proof.
+    intros b u layouts state limit Hnodup Hcount s v.
+    destruct (in_dec N.eq_dec s (map fst layouts)) as [Hin | Hmissing].
+    - apply in_map_iff in Hin. destruct Hin as [[t layout] [Hequal Hmember]].
+      cbn [fst] in Hequal. subst t.
+      rewrite (slot_snapshot_count _ _ s
+        (slot_update_many_snapshot_member b u layouts Hnodup state s layout Hmember)).
+      pose proof (slot_update_one_count_le b s (project_slot_layout layout u) state v).
+      specialize (Hcount s v). lia.
+    - rewrite (slot_snapshot_count _ _ s
+        (slot_update_many_snapshot_other b u layouts state s Hmissing)).
+      specialize (Hcount s v). lia.
+  Qed.
+
+  (** A single slot update extends a history using only cells in the recorded set. *)
+  Lemma slot_update_one_history : forall written b s u state,
+    (b = true -> incl u written) ->
+    (forall t new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index state t new)) ->
+    forall t new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index (slot_update_one b s u state) t new).
+  Proof.
+    intros written b s u state Hcells Hhistory t new.
+    destruct (N.eq_dec t s) as [Hequal | Hdifferent].
+    - subst t. rewrite slot_update_one_index. destruct b.
+      + apply database_index_history_insert; [apply Hhistory | apply Hcells; reflexivity].
+      + destruct (runtime_projection_count state s u) as [|p]; [apply Hhistory |].
+        destruct p; try apply Hhistory. apply database_index_history_remove. apply Hhistory.
+    - rewrite (slot_snapshot_index _ _ t
+        (slot_update_one_snapshot_other b s u state t Hdifferent)).
+      apply Hhistory.
+  Qed.
+
+  (** A finite group update extends every affected construction history. *)
+  Lemma slot_update_many_history : forall written b u layouts state,
+    (b = true -> forall s layout, In (s, layout) layouts ->
+      incl (project_slot_layout layout u) written) ->
+    (forall s new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index state s new)) ->
+    forall s new, database_index_history I.empty I.insert I.remove written
+      (runtime_slot_index (slot_update_many b u layouts state) s new).
+  Proof.
+    intros written b u layouts. induction layouts as [|[s layout] rest IH];
+      intros state Hcells Hhistory t new; cbn [slot_update_many].
+    - apply Hhistory.
+    - apply IH.
+      + intros Hb q block Hin. apply (Hcells Hb q block). now right.
+      + apply slot_update_one_history; [| exact Hhistory].
+        intro Hb. apply (Hcells Hb s layout). now left.
+  Qed.
+
+  (** Recording a duplicate-free cache pass maintains honest histories and count bounds. *)
+  Lemma metadata_record_group : forall db b u layouts,
+    metadata_ok db -> NoDup (map fst layouts) ->
+    (b = true -> forall s layout, In (s, layout) layouts ->
+      incl (project_slot_layout layout u) u) ->
+    metadata_ok
+      (database_record_cache u
+        (slot_updated_counters layouts (slot_update_many b u layouts (db_runtime db)))
+        (database_set_runtime (slot_update_many b u layouts (db_runtime db)) db)).
+  Proof.
+    intros db b u layouts
+      (Hone & Hslots & Hcounter & Hnext & Hhistory & Hcount & Hgroups & Hbound)
+      Hnodup Hcells.
+    set (state := slot_update_many b u layouts (db_runtime db)).
+    assert (Hframe : (runtime_slots state, runtime_function_slots state, runtime_slot_bound state) =
+      (runtime_slots (db_runtime db), runtime_function_slots (db_runtime db),
+       runtime_slot_bound (db_runtime db))).
+    { exact (slot_update_many_preserves _
+        (fun current => (runtime_slots current, runtime_function_slots current, runtime_slot_bound current))
+        (fun all new counts current => eq_refl) b u layouts (db_runtime db)). }
+    injection Hframe as Hlayout Hfunctions Hlimit.
+    assert (Hwritten : incl (db_written_cells db) (u ++ db_written_cells db)).
+    { intros c Hin. apply in_or_app. now right. }
+    unfold metadata_ok, slots.
+    cbn [database_record_cache database_set_runtime db_cache_updates db_written_cells
+      db_index_counters db_runtime slots].
+    split.
+    - right. right. apply in_or_app. now right.
+    - split.
+      + rewrite Hlayout. right. right. apply in_or_app. now right.
+      + split.
+        * intros p Hequal. injection Hequal as Hequal. subst p. now left.
+        * split.
+          -- intros s new. right. right. apply in_or_app.
+             destruct (in_dec N.eq_dec s (map fst layouts)) as [Hin | Hmissing].
+             ++ left. apply in_map_iff in Hin. destruct Hin as [[t layout] [Hequal Hmember]].
+                cbn [fst] in Hequal. subst t.
+                exact (slot_updated_counters_member layouts state s layout Hmember new).
+             ++ right. unfold state.
+                rewrite (slot_snapshot_index _ _ s
+                  (slot_update_many_snapshot_other b u layouts (db_runtime db) s Hmissing)).
+                apply Hnext.
+          -- split.
+             ++ apply slot_update_many_history.
+                ** intros Hb s layout Hin c Hcell. apply in_or_app. left.
+                   exact (Hcells Hb s layout Hin c Hcell).
+                ** intros s new. eapply database_index_history_weaken;
+                     [exact Hwritten | apply Hhistory].
+             ++ split.
+                ** intros s v. rewrite N.succ_pos_spec.
+                   exact (slot_update_many_count_le b u layouts (db_runtime db)
+                     (db_cache_updates db) Hnodup Hcount s v).
+                ** split.
+                   --- rewrite Hfunctions, Hlayout. exact Hgroups.
+                   --- rewrite Hlimit, Hlayout. exact Hbound.
+  Qed.
+
   (** A tuple's multiplicity counts distinct row contributions with the same projection. *)
   Definition tuple_multiplicity (u : list (cell V.t))
       (tuples : list (list (cell V.t))) : nat :=
@@ -2219,6 +2519,23 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
   Qed.
 
+  (** Every cache call records its input cells, including a missing function group. *)
+  Lemma slots_update_written_cells : forall b f u db,
+    db_written_cells (slots_update b f u db) = u ++ db_written_cells db.
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db))); reflexivity.
+  Qed.
+
+  (** The maintained update counter measures actual calls to the cache wrapper. *)
+  Lemma slots_update_cache_updates : forall b f u db,
+    db_cache_updates (slots_update b f u db) = N.succ (db_cache_updates db).
+  Proof.
+    intros b f u db. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db)));
+      apply N.succ_pos_spec.
+  Qed.
+
   (** A fitting projection returns one cell for every requested position. *)
   Lemma permute_length : forall perm u,
     Forall (fun p => p < length u) perm -> length (permute perm u) = length perm.
@@ -2229,6 +2546,63 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       assert (Hpresent : nth_error u p <> None) by (now apply nth_error_Some).
       destruct (nth_error u p); [| contradiction]. cbn [option_list app length].
       now rewrite IH.
+  Qed.
+
+  (** A projection only selects cells that occur in its input tuple. *)
+  Lemma permute_member : forall perm u c, In c (permute perm u) -> In c u.
+  Proof.
+    intros perm u c Hin. unfold permute in Hin. apply in_flat_map in Hin.
+    destruct Hin as [position [_ Hin]].
+    destruct (nth_error u position) as [found |] eqn:Hfound;
+      cbn [option_list In] in Hin; [| contradiction].
+    destruct Hin as [Hequal | Hin]; [subst found | contradiction].
+    eapply nth_error_In. exact Hfound.
+  Qed.
+
+  (** Actual prepared groups satisfy the independent metadata preservation contract. *)
+  Lemma metadata_slots_update : forall db b f u, metadata_ok db ->
+    (b = true -> slots_fit db f (length u)) -> metadata_ok (slots_update b f u db).
+  Proof.
+    intros db b f u Hmetadata Hfits.
+    pose proof Hmetadata as Hfacts.
+    destruct Hfacts as (_ & _ & _ & _ & _ & _ & Hgroups & _).
+    set (layouts := database_group_entries f (runtime_function_slots (db_runtime db))).
+    change (metadata_ok
+      (database_record_cache u
+        (slot_updated_counters layouts (slot_update_many b u layouts (db_runtime db)))
+        (database_set_runtime (slot_update_many b u layouts (db_runtime db)) db))).
+    apply metadata_record_group; [exact Hmetadata | |].
+    - unfold layouts. rewrite Hgroups. apply database_prepared_group_nodup.
+    - intros Hb s layout Hin. unfold layouts in Hin. rewrite Hgroups in Hin.
+      apply database_prepared_group_member in Hin.
+      destruct Hin as [perm [Hslot Hequal]]. subst layout.
+      assert (Hmember : In (f, perm) (slots db)) by (eapply nth_error_In; exact Hslot).
+      destruct (Hfits Hb perm Hmember) as [_ Hpositions].
+      rewrite project_slot_layout_correct by exact Hpositions.
+      intros c Hcell. exact (permute_member perm u c Hcell).
+  Qed.
+
+  (** Replacing a row composes metadata preservation for its old and new contributions. *)
+  Lemma metadata_row_replace : forall db f k previous o, metadata_ok db ->
+    slots_fit db f (length (k ++ option_list o)) ->
+    metadata_ok (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hmetadata Hnew. unfold row_replace.
+    apply metadata_row_write. destruct previous as [before |].
+    - apply metadata_slots_update.
+      + apply metadata_slots_update; [exact Hmetadata | discriminate].
+      + intros _. unfold slots_fit. rewrite slots_update_slots. exact Hnew.
+    - apply metadata_slots_update; [exact Hmetadata | intros _; exact Hnew].
+  Qed.
+
+  (** Deleting a row needs no projection fit premise to preserve the metadata. *)
+  Lemma metadata_row_delete : forall db f k, metadata_ok db ->
+    metadata_ok (row_delete f k db).
+  Proof.
+    intros db f k Hmetadata. unfold row_delete.
+    destruct (row_get f k db) as [output |]; [| exact Hmetadata].
+    apply metadata_row_erase. apply metadata_slots_update;
+      [exact Hmetadata | discriminate].
   Qed.
 
   (** A prepared group changes its own slot exactly once by the declared projection. *)
@@ -5325,7 +5699,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition num_slots (db : t) : nat := length (slots db).
   TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
   TimeFun normal_cell normal_key output_eqb combine_output.
-  TimeFun slot_index_get projection_table_get slot_update_one slot_update_many.
+  TimeFun slot_index_get projection_table_get slot_update_one slot_update_many slot_updated_counters.
   TimeFun slots_update row_write row_replace row_erase row_delete.
   TimeFun init.
   TimeFun find.
@@ -5630,7 +6004,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Find adds only the fixed record-wrapper work to the actual forest clock. *)
   Lemma T_find_overhead : forall i db,
-    (T_find i db = UnionFindT.T_find i (db_forest db) + 13)%N.
+    (T_find i db = UnionFindT.T_find i (db_forest db) + 14)%N.
   Proof.
     intros i db. time_unfold T_find. time_unfold @T_database_set_forest.
     time_simpl. time_cbn. nia.
