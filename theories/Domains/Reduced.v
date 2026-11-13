@@ -4,8 +4,7 @@
     For example, backward transfer reduces each paired result.
     Builds on: ProductSig and value products. *)
 
-From Stdlib Require Import List Arith.
-From Stdlib Require Import NArith.
+From Stdlib Require Import List Arith NArith Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig ProductSig Product.
@@ -267,6 +266,7 @@ End Reduced.
 Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     (R : VALUE_REDUCER_T L A B) (K : ROUNDS) <: REDUCED_ALL L A B R K.
   Include Reduced L A B R K.
+  Module PT := ProductT L A B.
 
   TimeFun bot.
   TimeFun is_bot.
@@ -289,31 +289,60 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     A.gwork g (map fst xs) + B.gwork g (map snd xs) + length xs.
   Definition wsize (p : wparam) : nat := A.wsize (fst p) + B.wsize (snd p).
   Definition wunits (_ : t) : nat := 0.
-  Definition c_val : N := 1%N. (* STUB *)
+  Definition k_growth : N := (R.c_reduce + 1)%N.
+  Definition k_iter : N := (k_growth ^ N.of_nat K.rounds)%N.
+  Definition k_rounds : N := N.of_nat (K.rounds + 1).
+  Definition c_red : N := (16 * (PT.k_core + R.c_reduce + 1) * k_iter)%N.
+  Definition k_red_budget : N := (c_red * k_rounds)%N.
+  Definition c_val : N := (k_red_budget * (PT.c_val + 1) + PT.c_val + 16)%N.
   Definition c_lat : N := c_val.
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
-  Definition c_red : N := 1%N. (* STUB *)
+  Proof.
+    unfold c_lat, c_val. lia.
+  Qed.
+
+  Local Lemma product_constant_le : (PT.c_val <= c_val)%N.
+  Proof.
+    unfold c_val. lia.
+  Qed.
 
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply PT.T_leb_le|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply PT.T_join_le|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma T_meet_le : forall a b,
     (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply PT.T_meet_le|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. eapply N.le_trans; [apply PT.T_is_bot_le|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. eapply N.le_trans; [apply PT.T_widen_le|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply PT.T_narrow_le|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma T_forward_le : forall o xs,
     (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -328,14 +357,23 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma meet_size : forall a b,
     (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply PT.meet_size|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma join_size : forall a b,
     (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply PT.join_size|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma widen_size : forall p a b,
     (N.of_nat (size (widen p a b)) <=
       c_val * N.of_nat (size a + size b + wsize p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. eapply N.le_trans; [apply PT.widen_size|].
+    apply N.mul_le_mono_r. exact product_constant_le.
+  Qed.
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
@@ -346,10 +384,14 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma work_sizes : forall o xs,
     fold_right Nat.add 0%nat (map size xs) <= work o xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact PT.work_sizes.
+  Qed.
   Lemma gwork_sizes : forall g xs,
     fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact PT.gwork_sizes.
+  Qed.
   Lemma T_red_le : forall a b,
     (T_red (a, b) <= c_red * N.of_nat (K.rounds + 1) *
       N.of_nat ((A.size a + B.size b + 1)%nat))%N.
