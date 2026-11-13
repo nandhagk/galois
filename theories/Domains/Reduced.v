@@ -472,6 +472,202 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
     time_unfold T_red. lia.
   Qed.
 
+  Local Lemma sum_N_app : forall xs ys,
+    fold_right N.add 0%N (xs ++ ys) =
+      (fold_right N.add 0%N xs + fold_right N.add 0%N ys)%N.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intro ys; cbn [app fold_right].
+    - lia.
+    - rewrite IH. lia.
+  Qed.
+
+  (** The iterator clock sums every intermediate reducer call and its control cost. *)
+  Lemma iter_clock_steps : forall n x,
+    Nat.T_iter n R.reduce (fun x => R.T_reduce x) x =
+      (N.of_nat n + 2 + fold_right N.add 0%N
+        (map (fun i => R.T_reduce (Nat.iter i R.reduce x) + 1)%N (seq 0 n)))%N.
+  Proof.
+    intro n. induction n as [|n IH]; intro x.
+    - rewrite iter_clock_zero. reflexivity.
+    - rewrite iter_clock_succ, IH, seq_S, map_app, sum_N_app, time_of_nat_succ.
+      cbn [Nat.add map fold_right]. lia.
+  Qed.
+
+  Local Lemma sum_clock_length {X : Type} (clock : X -> N) xs :
+    (N.of_nat (length xs) <= fold_right N.add 0%N (map (fun x => clock x + 1)%N xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [length map fold_right].
+    - lia.
+    - rewrite time_of_nat_succ. lia.
+  Qed.
+
+  (** The reduction wrapper charges only the configured calls and final bottom tests. *)
+  Lemma red_time_steps : forall x,
+    (T_red x <= 16 *
+      (fold_right N.add 0
+        (map (fun n => R.T_reduce (Nat.iter n R.reduce x) + 1)
+          (seq 0 K.rounds)) +
+       A.T_is_bot (fst (Nat.iter K.rounds R.reduce x)) +
+       B.T_is_bot (snd (Nat.iter K.rounds R.reduce x)) + 1))%N.
+  Proof.
+    intro x. pose proof (iter_clock_steps K.rounds x) as Hiter.
+    pose proof (sum_clock_length (fun n => R.T_reduce (Nat.iter n R.reduce x))
+      (seq 0 K.rounds)) as Hlength. rewrite length_seq in Hlength.
+    assert (Hnormal : (T_normalize (Nat.iter K.rounds R.reduce x) <=
+      A.T_is_bot (fst (Nat.iter K.rounds R.reduce x)) +
+      B.T_is_bot (snd (Nat.iter K.rounds R.reduce x)) + 8)%N).
+    { time_unfold T_normalize. time_unfold @T_product_normalize.
+      time_unfold @T_product_is_bot. time_cbn. time_pose.
+      destruct (product_is_bot A.is_bot B.is_bot (Nat.iter K.rounds R.reduce x)); lia. }
+    time_unfold T_red. lia.
+  Qed.
+
+  (** Final normalization adds only the closed pair of bottom sizes. *)
+  Lemma red_size_bound : forall x,
+    (N.of_nat (size (red x)) <= k_red_budget * N.of_nat (size x + 1))%N.
+  Proof.
+    intro x. set (budget := (k_rounds * k_iter * N.of_nat (size x + 1))%N).
+    assert (Hinput : (k_iter * N.of_nat (size x + 1) <= budget)%N).
+    { unfold budget. replace (k_iter * N.of_nat (size x + 1))%N with
+        (1 * (k_iter * N.of_nat (size x + 1)))%N at 1 by ring.
+      replace (k_rounds * k_iter * N.of_nat (size x + 1))%N with
+        (k_rounds * (k_iter * N.of_nat (size x + 1)))%N by ring.
+      apply N.mul_le_mono_r. exact rounds_positive. }
+    assert (Hbudget : (1 <= budget)%N).
+    { eapply N.le_trans; [apply (iter_budget_pos K.rounds x)|exact Hinput]. }
+    pose proof (iter_size_bound K.rounds x) as Hiter.
+    fold k_iter in Hiter. rewrite Nat2N.inj_add in Hiter.
+    pose proof (nat_bound _ _ (PT.normalize_size_bound (Nat.iter K.rounds R.reduce x)))
+      as Hsize.
+    change (N.of_nat (size (red x)) <= N.of_nat
+      (size (Nat.iter K.rounds R.reduce x) + A.size A.bot + B.size B.bot))%N in Hsize.
+    rewrite !Nat2N.inj_add in Hsize.
+    assert (Hbottom : (N.of_nat (A.size A.bot) + N.of_nat (B.size B.bot) <=
+      PT.k_core * budget)%N).
+    { eapply N.le_trans with (m := PT.k_core).
+      - unfold PT.k_core. rewrite Nat2N.inj_add. lia.
+      - replace PT.k_core with (PT.k_core * 1)%N at 1 by ring.
+        now apply N.mul_le_mono_l. }
+    pose proof (red_budget budget) as Htotal.
+    replace (k_red_budget * N.of_nat (size x + 1))%N with
+      (16 * (PT.k_core + R.c_reduce + 1) * budget)%N
+      by (unfold k_red_budget, c_red, budget; ring).
+    lia.
+  Qed.
+
+  (** Summing the affine reduction budget charges input sizes and list length. *)
+  Lemma reduction_budget_sum : forall xs,
+    fold_right N.add 0%N (map (fun x => k_red_budget * N.of_nat (size x + 1))%N xs) =
+      (k_red_budget * (N.of_nat (fold_right Nat.add 0%nat (map size xs)) +
+        N.of_nat (length xs)))%N.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; cbn [map fold_right length].
+    - change (0 = k_red_budget * (0 + 0))%N. ring.
+    - rewrite IH, !Nat2N.inj_add. change (N.of_nat 1) with 1%N.
+      rewrite time_of_nat_succ. ring.
+  Qed.
+
+  (** Reducing a result list preserves the same total affine size budget. *)
+  Lemma reduction_sizes_sum : forall xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (map red xs))) <=
+      k_red_budget * (N.of_nat (fold_right Nat.add 0%nat (map size xs)) +
+        N.of_nat (length xs)))%N.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; cbn [map fold_right length].
+    - lia.
+    - rewrite !Nat2N.inj_add, time_of_nat_succ.
+      pose proof (red_size_bound x) as Hhead. rewrite Nat2N.inj_add in Hhead.
+      replace (k_red_budget *
+        (N.of_nat (size x) + N.of_nat (fold_right Nat.add 0%nat (map size xs)) +
+          (N.of_nat (length xs) + 1)))%N with
+        (k_red_budget * (N.of_nat (size x) + 1) +
+          k_red_budget * (N.of_nat (fold_right Nat.add 0%nat (map size xs)) +
+            N.of_nat (length xs)))%N by ring. lia.
+  Qed.
+
+  (** Mapping reduction adds one list tick per result. *)
+  Lemma reduction_map_time : forall xs,
+    (ListDef.T_map red (fun x => T_red x) xs <=
+      k_red_budget * (N.of_nat (fold_right Nat.add 0%nat (map size xs)) +
+        N.of_nat (length xs)) + N.of_nat (length xs) + 1)%N.
+  Proof.
+    intro xs. pose proof (PT.map_time_sum red (fun x => T_red x)
+      (fun x => k_red_budget * N.of_nat (size x + 1))%N xs red_time_bound) as Htime.
+    rewrite reduction_budget_sum in Htime. exact Htime.
+  Qed.
+
+  Local Lemma composed_budget : forall budget,
+    (k_red_budget * (PT.c_val + 1) * budget + PT.c_val * budget + 16 * budget <=
+      c_val * budget)%N.
+  Proof.
+    intro budget. unfold c_val. replace
+      (k_red_budget * (PT.c_val + 1) * budget + PT.c_val * budget + 16 * budget)%N with
+      ((k_red_budget * (PT.c_val + 1) + PT.c_val + 16) * budget)%N by ring.
+    reflexivity.
+  Qed.
+
+  (** Forward transfer pays for the plain product and its final reduction. *)
+  Lemma forward_time_parts : forall o xs,
+    (T_forward o xs <= PT.T_forward o xs + T_red (PT.forward o xs) + 1)%N.
+  Proof.
+    intros o xs. time_unfold T_forward. time_unfold PT.T_forward.
+    unfold PT.forward. lia.
+  Qed.
+
+  (** Backward transfer pays for the plain product and a reduction of each result. *)
+  Lemma backward_time_parts : forall o r xs,
+    (T_backward o r xs <= PT.T_backward o r xs +
+      ListDef.T_map red (fun x => T_red x) (PT.backward o r xs) + 1)%N.
+  Proof.
+    intros o r xs. time_unfold T_backward. time_unfold PT.T_backward.
+    unfold PT.backward. lia.
+  Qed.
+
+  (** Guard transfer pays for the plain product and a reduction of each result. *)
+  Lemma guard_time_parts : forall g xs,
+    (T_guard g xs <= PT.T_guard g xs +
+      ListDef.T_map red (fun x => T_red x) (PT.guard g xs) + 1)%N.
+  Proof.
+    intros g xs. time_unfold T_guard. time_unfold PT.T_guard.
+    unfold PT.guard. lia.
+  Qed.
+  Local Lemma scalar_reduction_budget : forall x budget,
+    (1 <= budget)%N -> (N.of_nat (size x) <= PT.c_val * budget)%N ->
+    (T_red x <= k_red_budget * (PT.c_val + 1) * budget)%N /\
+    (N.of_nat (size (red x)) <= k_red_budget * (PT.c_val + 1) * budget)%N.
+  Proof.
+    intros x budget Hbudget Hsize.
+    assert (Hplus : (N.of_nat (size x + 1) <= (PT.c_val + 1) * budget)%N).
+    { rewrite Nat2N.inj_add, N.mul_add_distr_r. lia. }
+    assert (Hscaled : (k_red_budget * N.of_nat (size x + 1) <=
+      k_red_budget * (PT.c_val + 1) * budget)%N).
+    { replace (k_red_budget * (PT.c_val + 1) * budget)%N with
+        (k_red_budget * ((PT.c_val + 1) * budget))%N by ring.
+      now apply N.mul_le_mono_l. }
+    split; eapply N.le_trans;
+      [apply red_time_bound|exact Hscaled|apply red_size_bound|exact Hscaled].
+  Qed.
+
+  Local Lemma list_reduction_budget : forall xs budget,
+    (N.of_nat (fold_right Nat.add 0%nat (map size xs)) <= PT.c_val * budget)%N ->
+    (N.of_nat (length xs) <= budget)%N ->
+    (ListDef.T_map red (fun x => T_red x) xs <=
+      k_red_budget * (PT.c_val + 1) * budget + budget + 1)%N /\
+    (N.of_nat (fold_right Nat.add 0%nat (map size (map red xs))) <=
+      k_red_budget * (PT.c_val + 1) * budget)%N.
+  Proof.
+    intros xs budget Hsize Hlength.
+    assert (Hscaled : (k_red_budget *
+      (N.of_nat (fold_right Nat.add 0%nat (map size xs)) + N.of_nat (length xs)) <=
+      k_red_budget * (PT.c_val + 1) * budget)%N).
+    { replace (k_red_budget * (PT.c_val + 1) * budget)%N with
+        (k_red_budget * ((PT.c_val + 1) * budget))%N by ring.
+      apply N.mul_le_mono_l. rewrite N.mul_add_distr_r. lia. }
+    split.
+    - pose proof (reduction_map_time xs). lia.
+    - eapply N.le_trans; [apply reduction_sizes_sum|exact Hscaled].
+  Qed.
+
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -510,16 +706,66 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Qed.
   Lemma T_forward_le : forall o xs,
     (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. set (budget := N.of_nat (work o xs + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    pose proof (PT.T_forward_le o xs) as Hproduct.
+    change (PT.T_forward o xs <= PT.c_val * budget)%N in Hproduct.
+    assert (Hsize : (N.of_nat (size (PT.forward o xs)) <= PT.c_val * budget)%N).
+    { exact (PT.forward_size o xs). }
+    destruct (scalar_reduction_budget _ budget Hbudget Hsize) as [Hred Hredsize].
+    pose proof (forward_time_parts o xs) as Hparts.
+    pose proof (composed_budget budget) as Htotal. lia.
+  Qed.
   Lemma T_backward_le : forall o r xs,
     (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. set (budget := N.of_nat (work o xs + size r + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    pose proof (PT.T_backward_le o r xs) as Hproduct.
+    change (PT.T_backward o r xs <= PT.c_val * budget)%N in Hproduct.
+    assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
+      (map size (PT.backward o r xs))) <= PT.c_val * budget)%N).
+    { exact (PT.backward_size o r xs). }
+    assert (Hlength : (N.of_nat (length (PT.backward o r xs)) <= budget)%N).
+    { pose proof (Forall2_length (PT.backward_refines o r xs)) as Heq.
+      rewrite Heq. unfold budget, work, t. rewrite !Nat2N.inj_add. lia. }
+    destruct (list_reduction_budget _ budget Hsize Hlength) as [Hred Hredsize].
+    pose proof (backward_time_parts o r xs) as Hparts.
+    pose proof (composed_budget budget) as Htotal. lia.
+  Qed.
   Lemma T_guard_le : forall g xs,
     (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. set (budget := N.of_nat (gwork g xs + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    pose proof (PT.T_guard_le g xs) as Hproduct.
+    change (PT.T_guard g xs <= PT.c_val * budget)%N in Hproduct.
+    assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
+      (map size (PT.guard g xs))) <= PT.c_val * budget)%N).
+    { exact (PT.guard_size g xs). }
+    assert (Hlength : (N.of_nat (length (PT.guard g xs)) <= budget)%N).
+    { pose proof (Forall2_length (PT.guard_refines g xs)) as Heq.
+      rewrite Heq. unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia. }
+    destruct (list_reduction_budget _ budget Hsize Hlength) as [Hred Hredsize].
+    pose proof (guard_time_parts g xs) as Hparts.
+    pose proof (composed_budget budget) as Htotal. lia.
+  Qed.
   Lemma forward_size : forall o xs,
     (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. set (budget := N.of_nat (work o xs + 1)).
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_add. lia. }
+    assert (Hsize : (N.of_nat (size (PT.forward o xs)) <= PT.c_val * budget)%N).
+    { exact (PT.forward_size o xs). }
+    destruct (scalar_reduction_budget _ budget Hbudget Hsize) as [Hred Hredsize].
+    pose proof (composed_budget budget) as Htotal.
+    change (N.of_nat (size (red (PT.forward o xs))) <= c_val * budget)%N. lia.
+  Qed.
   Lemma meet_size : forall a b,
     (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -542,11 +788,35 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Lemma backward_size : forall o r xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
       c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. set (budget := N.of_nat (work o xs + size r + 1)).
+    assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
+      (map size (PT.backward o r xs))) <= PT.c_val * budget)%N).
+    { exact (PT.backward_size o r xs). }
+    assert (Hlength : (N.of_nat (length (PT.backward o r xs)) <= budget)%N).
+    { pose proof (Forall2_length (PT.backward_refines o r xs)) as Heq.
+      rewrite Heq. unfold budget, work, t. rewrite !Nat2N.inj_add. lia. }
+    destruct (list_reduction_budget _ budget Hsize Hlength) as [Hred Hredsize].
+    pose proof (composed_budget budget) as Htotal.
+    change (N.of_nat (fold_right Nat.add 0%nat (map size (map red (PT.backward o r xs)))) <=
+      c_val * budget)%N. lia.
+  Qed.
   Lemma guard_size : forall g xs,
     (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
       c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. set (budget := N.of_nat (gwork g xs + 1)).
+    assert (Hsize : (N.of_nat (fold_right Nat.add 0%nat
+      (map size (PT.guard g xs))) <= PT.c_val * budget)%N).
+    { exact (PT.guard_size g xs). }
+    assert (Hlength : (N.of_nat (length (PT.guard g xs)) <= budget)%N).
+    { pose proof (Forall2_length (PT.guard_refines g xs)) as Heq.
+      rewrite Heq. unfold budget, gwork, t. rewrite !Nat2N.inj_add. lia. }
+    destruct (list_reduction_budget _ budget Hsize Hlength) as [Hred Hredsize].
+    pose proof (composed_budget budget) as Htotal.
+    change (N.of_nat (fold_right Nat.add 0%nat (map size (map red (PT.guard g xs)))) <=
+      c_val * budget)%N. lia.
+  Qed.
   Lemma work_sizes : forall o xs,
     fold_right Nat.add 0%nat (map size xs) <= work o xs.
   Proof.
@@ -566,9 +836,13 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
   Lemma forward_bigO : (bigO (fun _ => True)
     (fun ox => N.of_nat (work (fst ox) (snd ox)))
     (fun ox => T_forward (fst ox) (snd ox)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val. intros [o xs] _. cbn [fst snd].
+    pose proof (T_forward_le o xs) as Htime.
+    rewrite Nat2N.inj_add in Htime. time_cbn_all. exact Htime.
+  Qed.
 
-  Definition k_red : N := 1%N. (* STUB *)
+  Definition k_red : N := 16%N.
   Lemma F1_red_eq : forall x,
     red x = let result := Nat.iter K.rounds R.reduce x in
       if orb (A.is_bot (fst result)) (B.is_bot (snd result))
@@ -617,5 +891,7 @@ Module ReducedT (L : LANG_T) (A B : VALUE_DOMAIN_T L)
           (seq 0 K.rounds)) +
        A.T_is_bot (fst (Nat.iter K.rounds R.reduce x)) +
        B.T_is_bot (snd (Nat.iter K.rounds R.reduce x)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact red_time_steps.
+  Qed.
 End ReducedT.
