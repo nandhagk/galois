@@ -187,8 +187,16 @@ Module PolicyT (L : WLATTICE_T) <: POLICY_T L.
   Include Policy L.
   TimeFun update.
 
-  Definition c_pol : N := 1%N. (* STUB *)
+  Definition c_pol : N := (16 * (PTrieT.c_trie + 1))%N.
 
+  (** Counter comparison costs at most one traversal of its first argument. *)
+  Local Lemma T_counter_ltb_le : forall n m,
+    (N.T_ltb n m <= N.of_nat (N.size_nat n) + 3)%N.
+  Proof.
+    intros n m; pose proof (N.T_compare_le n m); time_step.
+  Qed.
+
+  (** Updating pays for the selected lattice operation, lookup and counter operations. *)
   Lemma T_update_le : forall pol x cnt a b,
     (T_update pol x cnt a b <= c_pol *
       (N.of_nat (Pos.size_nat x) + L.c_lat * N.of_nat (L.size a + L.size b + 1) +
@@ -198,5 +206,34 @@ Module PolicyT (L : WLATTICE_T) <: POLICY_T L.
               N.of_nat ((L.wunits a + L.wunits b + 1) * L.wsize (wp pol))
           | None => 0
           end) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros pol x cnt a b.
+    pose proof (L.T_leb_le b a) as Hleb.
+    replace (L.size b + L.size a + 1) with (L.size a + L.size b + 1) in Hleb by lia.
+    pose proof (L.T_join_le a b) as Hjoin.
+    pose proof (L.T_widen_le (wp pol) a b) as Hwiden.
+    replace ((L.wunits a + L.wunits b) * L.wsize (wp pol) +
+      (L.size a + L.size b + L.wsize (wp pol) + 1)) with
+      ((L.size a + L.size b + 1) +
+        (L.wunits a + L.wunits b + 1) * L.wsize (wp pol)) in Hwiden by nia.
+    rewrite Nat2N.inj_add, N.mul_add_distr_l in Hwiden.
+    pose proof (PTrieT.T_get_le head_cfg x (heads pol)) as Hget.
+    unfold PTrieT.T_get in Hget; rewrite Nat2N.inj_add in Hget.
+    pose proof (N.T_succ_le cnt) as Hsucc.
+    remember (L.c_lat * N.of_nat (L.size a + L.size b + 1))%N
+      as value_work eqn:Hvalue_work in *.
+    remember (L.c_lat *
+      N.of_nat ((L.wunits a + L.wunits b + 1) * L.wsize (wp pol)))%N
+      as widen_work eqn:Hwiden_work in *.
+    clear Hvalue_work Hwiden_work.
+    unfold T_update, c_pol, T_heads, T_delay, T_wp.
+    destruct (L.leb b a) eqn:Hcovered.
+    - clear -Hleb; time_cbn_all; nia.
+    - destruct (trie_get x (heads pol)) as [h |] eqn:Hhead.
+      + pose proof (T_counter_ltb_le cnt (delay h)) as Htest.
+        destruct (N.ltb cnt (delay h)).
+        * clear -Hleb Hjoin Hget Hsucc Htest; time_cbn_all; nia.
+        * clear -Hleb Hwiden Hget Hsucc Htest; time_cbn_all; nia.
+      + clear -Hleb Hjoin Hget; time_cbn_all; nia.
+  Qed.
 End PolicyT.
