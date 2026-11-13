@@ -2849,6 +2849,130 @@ Module Index (V : VALUE) <: INDEX V.
       apply Hsingle in Hsuffix. subst pre suf. contradiction.
   Qed.
 
+  Lemma remove_step_terminals : forall st c q,
+    node_terminal (read_node (fst (remove_step_st st c)) q) =
+      node_terminal (read_node (fst st) q).
+  Proof.
+    intros [ix n] c q. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [reflexivity |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |]; [| reflexivity].
+    destruct (N.eqb (edge_count edge) 1%N); cbn [fst].
+    - apply terminal_drop_edge.
+    - apply terminal_put_edge.
+  Qed.
+
+  Lemma remove_walk_terminals : forall r st q,
+    node_terminal (read_node (fst (fold_left remove_step_st r st)) q) =
+      node_terminal (read_node (fst st) q).
+  Proof.
+    induction r as [| c r IH]; intros st q; cbn [fold_left]; [reflexivity |].
+    rewrite IH. apply remove_step_terminals.
+  Qed.
+
+  Lemma reaches_extensional : forall ix ix',
+    (forall n c, child ix' n c = child ix n c) -> forall source target,
+    (reaches ix' source target <-> reaches ix source target).
+  Proof.
+    intros ix ix' Hchildren source target. split; intros [path Hpath]; exists path.
+    - now rewrite (seek_extensional ix ix' Hchildren) in Hpath.
+    - now rewrite (seek_extensional ix ix' Hchildren).
+  Qed.
+
+  Lemma remove_kept_children : forall ix n c edge, table_ok ix ->
+    (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = Some edge ->
+    edge_count edge <> 1%N -> forall q d,
+    child (fst (remove_step_st (ix, n) c)) q d = child ix q d.
+  Proof.
+    intros ix n c edge Htable Hbound Hget Hcount q d.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    assert (Hone : N.eqb (edge_count edge) 1%N = false) by now apply N.eqb_neq.
+    unfold remove_step_st. rewrite Hguard, Hget, Hone. cbn [fst].
+    eapply child_put_edge_existing with (old := edge); try assumption; try reflexivity.
+    apply table_ok_write; [exact Htable | exact Hbound | apply Pos.le_refl].
+  Qed.
+
+  Lemma remove_dropped_child : forall ix n c edge, table_ok ix ->
+    (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = Some edge ->
+    edge_count edge = 1%N -> child (fst (remove_step_st (ix, n) c)) n c = None.
+  Proof.
+    intros ix n c edge Htable Hbound Hget Hcount.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    unfold remove_step_st. rewrite Hguard, Hget, Hcount. cbn [N.eqb fst].
+    apply child_drop_edge_same, table_ok_write;
+      [exact Htable | exact Hbound | apply Pos.le_refl].
+  Qed.
+
+  Lemma remove_dropped_other : forall ix n c edge, table_ok ix ->
+    (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = Some edge ->
+    edge_count edge = 1%N -> forall q d, q <> n \/ encode_cell d <> encode_cell c ->
+    child (fst (remove_step_st (ix, n) c)) q d = child ix q d.
+  Proof.
+    intros ix n c edge Htable Hbound Hget Hcount q d Hdiff.
+    assert (Hguard : Pos.ltb (next ix) n = false) by now apply Pos.ltb_ge.
+    unfold remove_step_st. rewrite Hguard, Hget, Hcount. cbn [N.eqb fst].
+    apply child_drop_edge_other; [exact Htable | | exact Hdiff].
+    apply table_ok_write; [exact Htable | exact Hbound | apply Pos.le_refl].
+  Qed.
+
+  Lemma pending_remove_kept_selected : forall ix n c edge, shape ix ->
+    pending_remove_counts ix n -> (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = Some edge ->
+    (0 < edge_count edge)%N -> edge_count edge <> 1%N ->
+    pending_remove_edge (fst (remove_step_st (ix, n) c))
+      (snd (remove_step_st (ix, n) c))
+      (IndexEdge (edge_cell edge) (edge_child edge) (N.pred (edge_count edge))).
+  Proof.
+    intros ix n c edge Hshape Hcounts Hbound Hget Hpositive Hcount.
+    assert (Hchild : child ix n c = Some (edge_child edge)).
+    { rewrite child_raw by exact (proj1 (proj2 Hshape)). now rewrite Hget. }
+    pose proof (remove_step_pointer ix n c (edge_child edge) Hchild) as Hpointer.
+    pose proof (remove_kept_children ix n c edge (proj1 (proj2 Hshape)) Hbound Hget Hcount)
+      as Hchildren.
+    destruct (pending_remove_current ix n (encode_cell c) edge Hshape Hcounts Hget)
+      as [suffixes [Hnodup [Hmembers Hnumber]]].
+    exists suffixes, true. split; [exact Hnodup |]. split.
+    - intro r. cbn [edge_child].
+      rewrite (contains_from_extensional ix _ Hchildren (remove_step_terminals (ix, n) c)
+        r (edge_child edge)). apply Hmembers.
+    - split.
+      + cbn [edge_child]. rewrite Hpointer.
+        split; [intros _; apply reaches_self | reflexivity].
+      + cbn [edge_count]. rewrite Hnumber. lia.
+  Qed.
+
+  Lemma pending_remove_kept_other : forall ix n c edge q code out, shape ix ->
+    pending_remove_counts ix n -> (n <= next ix)%positive ->
+    PTrieCode.get (encode_cell c) (node_edges (read_node ix n)) = Some edge ->
+    edge_count edge <> 1%N -> stored_edge ix q code out ->
+    (q <> n \/ code <> encode_cell c) ->
+    pending_remove_edge (fst (remove_step_st (ix, n) c)) (snd (remove_step_st (ix, n) c)) out.
+  Proof.
+    intros ix n c edge q code out Hshape Hcounts Hbound Hget Hcount Hout Hdiff.
+    assert (Hchild : child ix n c = Some (edge_child edge)).
+    { rewrite child_raw by exact (proj1 (proj2 Hshape)). now rewrite Hget. }
+    pose proof (remove_step_pointer ix n c (edge_child edge) Hchild) as Hpointer.
+    pose proof (remove_kept_children ix n c edge (proj1 (proj2 Hshape)) Hbound Hget Hcount)
+      as Hchildren.
+    assert (Hneq : edge_child out <> edge_child edge).
+    { intro Heq. destruct (stored_child_parent ix q code out n c (edge_child edge)
+        (proj2 (proj2 Hshape)) Hout Hchild Heq) as [Hnode Hcode]. tauto. }
+    destruct (Hcounts q code out Hout)
+      as [suffixes [pending [Hnodup [Hmembers [Hpending Hnumber]]]]].
+    exists suffixes, pending. split; [exact Hnodup |]. split.
+    - intro r.
+      rewrite (contains_from_extensional ix _ Hchildren (remove_step_terminals (ix, n) c)
+        r (edge_child out)). apply Hmembers.
+    - split; [| exact Hnumber]. rewrite Hpointer.
+      rewrite (reaches_extensional ix _ Hchildren),
+        (reaches_parent ix n c (edge_child edge) (edge_child out)
+          (proj2 (proj2 Hshape)) Hchild Hneq).
+      exact Hpending.
+  Qed.
+
 End Index.
 
 Module IndexT (V : VALUE_T) <: INDEX_ALL V.
