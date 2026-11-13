@@ -3768,6 +3768,22 @@ Module ZoneT (X : KEY_T) (K : KEY_T with Definition t := option X.t
     - intros k Hk. exact Hk.
   Qed.
 
+  (** The sparse row merge implements the minimum of the old entry and one new-edge path. *)
+  Lemma entry_increment_extension : forall seed i j d a b,
+    entry (M.merge (increment_row i d (row_of (M.get j seed))) seed M.empty) a b =
+    RelationalPathBounds.edge_extension (entry seed) i j d a b.
+  Proof.
+    intros seed i j d a b. rewrite entry_increment.
+    unfold RelationalPathBounds.edge_extension.
+    destruct (entry seed a i) as [prefix|];
+      destruct (entry seed j b) as [suffix|];
+      destruct (entry seed a b) as [old|];
+      cbn [via_bound lower_bound RelationalPathBounds.minimum
+        RelationalPathBounds.plus]; try reflexivity.
+    - f_equal. rewrite Z.min_comm. f_equal. lia.
+    - f_equal. lia.
+  Qed.
+
   (** Every finite off-diagonal closure entry is attained by a minimum input chain. *)
   Lemma close_shortest : forall m m' i j, dbm_wf m -> close m = Reached m' -> i <> j ->
     (forall d, entry m' i j = Some d -> exists ks, chain_weight m i ks j = Some d) /\
