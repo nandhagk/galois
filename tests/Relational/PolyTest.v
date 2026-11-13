@@ -168,3 +168,74 @@ Example range_repeated_equality :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** A raw chain keeps its original certificate indices after shared normalization. *)
+Definition raw_certificate_chain : list (lcons positive) :=
+  [LCons _ [(1%positive, 1); (2%positive, -1); (2%positive, -1)] REq 0;
+   LCons _ [(2%positive, 1); (3%positive, -1); (3%positive, -1)] REq 0;
+   LCons _ [(3%positive, 1)] RLe 0].
+
+Example raw_chain_certificate_checked :
+  (match FixturePoly.entail_cert raw_certificate_chain (upper_x 0) with
+   | Some k => FixtureCertificate.check_entails raw_certificate_chain (upper_x 0) k
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Canceled source coordinates do not affect the shared normalized entailment engine. *)
+Example entail_canceled_source_keys :
+  (let P := [LCons _ [(1%positive, 1); (1%positive, -1); (2%positive, 1)] RLe 0] in
+   let c := LCons _ [(2%positive, 1)] RLe 0 in
+   match FixturePoly.entail_cert P c with
+   | Some k => FixtureCertificate.check_entails P c k
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Target normalization preserves acceptance against its original repeated occurrences. *)
+Example entail_repeated_target_checked :
+  (let c := LCons _ [(2%positive, 1); (2%positive, -1); (1%positive, 2)] RLe 4 in
+   match FixturePoly.entail_cert [upper_x 2] c with
+   | Some k => FixtureCertificate.check_entails [upper_x 2] c k
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An empty source can certify a tautology whose raw coefficients cancel. *)
+Example empty_source_canceled_target :
+  FixturePoly.entail_cert [] (LCons _ [(1%positive, 1); (1%positive, -1)] RLe 0) =
+    Some (Cert [] 1 false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A direct equality target retains its exact equality certificate. *)
+Example direct_equality_certificate :
+  FixturePoly.entail_cert [equal_x 2] (equal_x 2) = Some (Cert [1] 1 false).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A one-sided inequality cannot certify an equality conclusion. *)
+Example direct_equality_rejects_halfspace :
+  FixturePoly.entail_cert [upper_x 0] (equal_x 0) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A source contradiction certifies an equality with the canonical positive scale. *)
+Example source_contradiction_equality_certificate :
+  (let P := [equal_x 0; equal_x 1] in
+   match FixturePoly.entail_cert P (equal_y 7) with
+   | Some k => FixtureCertificate.check_entails P (equal_y 7) k
+   | None => false
+   end) = true.
+Proof.
+  vm_compute. reflexivity.
+Qed.

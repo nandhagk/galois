@@ -766,14 +766,38 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
       (poly_step X.encode X.eqb x
         (poly_initial X.encode (map (fun r => (r, false)) P))).
 
-  Definition candidate (P : list (lcons X.t)) (c : lcons X.t) (r : poly_row X.t)
-      : option cert :=
+  (** Normalize each source once while preserving its certificate index. *)
+  Definition poly_normal_rows (P : list (lcons X.t)) : list (lcons X.t) :=
+    map (poly_normal_row X.encode) P.
+
+  (** Equality targets require zero weights on inequality sources. *)
+  Definition poly_source_equal (P : list (lcons X.t)) (ms : list Z) : bool :=
+    forallb (fun pm => match lrel (fst pm) with
+      | REq => true | RLe => Z.eqb (snd pm) 0 end) (List.combine P ms).
+
+  (** Source contradictions use scale one; other rows retain their target scale. *)
+  Definition poly_canonical_scale (sc : Z) : Z :=
+    if Z.eqb sc 0 then 1%Z else sc.
+
+  (** The equality branch demands exact right-hand-side and equality-weight data. *)
+  Definition poly_canonical_guard (P : list (lcons X.t)) (c : lcons X.t)
+      (r : poly_row X.t) (sc : Z) (ms : list Z) : bool :=
+    Z.eqb sc 0 || ((0 <? sc)%Z &&
+      match lrel c with
+      | RLe => true
+      | REq => Z.eqb (rhs (poly_constraint r)) 0 && poly_source_equal P ms
+      end).
+
+  Definition candidate (P : list (lcons X.t)) (c : lcons X.t)
+      (r : poly_row X.t) : option cert :=
     if poly_contradiction r then
       match poly_multipliers r with
+      | [] => None
       | sc :: ms =>
-        let k := Cert ms (if C.check_empty P ms then 1%Z else sc) false in
-        if C.check_entails P c k then Some k else None
-      | nil => None
+        if poly_canonical_guard P c r sc ms then
+          let k := Cert ms (poly_canonical_scale sc) false in
+          if C.check_entails P c k then Some k else None
+        else None
       end
     else None.
 
@@ -789,14 +813,17 @@ Module PolyCode (X : KEY_OPS) (L : LANG_OPS) (F : LINEARIZE_OPS X L)
     end.
 
   (** The complement is strict over Q; subtracting one would lose rational countermodels. *)
-  Definition entail_cert (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
-    let input := (poly_negate c, true) :: map (fun r => (r, false)) P in
+  Definition entail_engine (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
     find_certificate P c
       (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
-        (poly_initial X.encode input)).
+        (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
 
-  Definition entails_row (P : list (lcons X.t)) (r : lcons X.t) : bool :=
-    match entail_cert P r with Some k => C.check_entails P r k | None => false end.
+  (** The private engine checks normalized rows; proofs transport acceptance to raw inputs. *)
+  Definition entail_cert (P : list (lcons X.t)) (c : lcons X.t) : option cert :=
+    entail_engine (poly_normal_rows P) (poly_normal_row X.encode c).
+
+  Definition entails_row (P : list (lcons X.t)) (c : lcons X.t) : bool :=
+    match entail_cert P c with Some _ => true | None => false end.
 
   Definition keep_row (P : list (lcons X.t)) (r : lcons X.t) : bool :=
     match lrel r with
@@ -1022,12 +1049,12 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     C.check_entails P c k = true /\ cut k = false.
   Proof.
     intros P c r k Hresult. unfold candidate in Hresult.
-    destruct (poly_contradiction r); [| discriminate].
-    destruct (poly_multipliers r) as [|sc ms]; [discriminate |].
-    destruct (C.check_entails P c
-      (Cert ms (if C.check_empty P ms then 1%Z else sc) false)) eqn:Hcheck;
-      [| discriminate].
-    injection Hresult as Hsame. subst k. split; [exact Hcheck | reflexivity].
+    destruct (poly_contradiction r); [|discriminate].
+    destruct (poly_multipliers r) as [|sc ms]; [discriminate|].
+    destruct (poly_canonical_guard P c r sc ms); [|discriminate].
+    destruct (C.check_entails P c (Cert ms (poly_canonical_scale sc) false)) eqn:Hcheck;
+      [|discriminate].
+    injection Hresult as Hsame. subst k. split; [exact Hcheck|reflexivity].
   Qed.
 
   (** Searching candidates preserves their checker result and cut flag. *)
@@ -1039,45 +1066,6 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     destruct (candidate P c r) as [j|] eqn:Hcandidate.
     - injection Hresult as Hsame. subst j. now apply candidate_returned with (r := r).
     - now apply IH.
-  Qed.
-
-  (** Every produced entailment certificate is checked and is valid without cuts. *)
-  Lemma entail_cert_returned : forall P c k, entail_cert P c = Some k ->
-    C.check_entails P c k = true /\ cut k = false.
-  Proof.
-    intros P c k Hresult. unfold entail_cert in Hresult.
-    now apply find_certificate_returned in Hresult.
-  Qed.
-
-  (** Successful row inclusion retains every integer model of its input. *)
-  Lemma entails_row_sound : forall P r v,
-    entails_row P r = true -> Forall (sat v) P -> sat v r.
-  Proof.
-    intros P r v Hcheck Hmodels. unfold entails_row in Hcheck.
-    destruct (entail_cert P r) as [k|]; [| discriminate].
-    exact (C.check_entails_sound P r k Hcheck v Hmodels).
-  Qed.
-
-  (** Splitting an equality into two inequalities preserves its meaning. *)
-  Lemma keep_row_sound : forall P r v,
-    keep_row P r = true -> Forall (sat v) P -> sat v r.
-  Proof.
-    intros P r v Hkeep Hmodels. unfold keep_row in Hkeep.
-    destruct (lrel r) eqn:Hrel.
-    - apply andb_true_iff in Hkeep as [Hupper Hlower].
-      pose proof (entails_row_sound P _ v Hupper Hmodels) as Hle.
-      pose proof (entails_row_sound P _ v Hlower Hmodels) as Hge.
-      unfold sat, poly_negate in Hle, Hge. cbn [lhs lrel rhs] in Hle, Hge.
-      rewrite eval_coef_scale in Hge. unfold sat. rewrite Hrel. lia.
-    - exact (entails_row_sound P r v Hkeep Hmodels).
-  Qed.
-
-  (** A state recognized as bottom has no integer model. *)
-  Lemma is_bot_sound : forall s v, is_bot s = true -> ~ ngamma s v.
-  Proof.
-    intros [|P] v Hbot Hmodels; [exact Hmodels |].
-    pose proof (entails_row_sound P _ v Hbot Hmodels) as Hfalse.
-    cbn [sat lrel lhs rhs eval_coef fold_right] in Hfalse. lia.
   Qed.
 
   (** A coefficient list that omits the updated key keeps its evaluation. *)
@@ -2237,6 +2225,224 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     apply C.check_entails_complete; try assumption. rewrite Htarget. nia.
   Qed.
 
+  (** Exact combination premises survive row normalization in both directions. *)
+  Definition poly_exact_entail (P : list (lcons X.t)) (c : lcons X.t)
+      (ms : list Z) (sc : Z) : Prop :=
+    C.admissible P ms /\ (0 < sc)%Z /\
+    (forall x, C.comb_coef P ms x = (sc * C.coef_of x (lhs c))%Z) /\
+    match lrel c with
+    | REq => C.comb_eq P ms = true /\ C.comb_rhs P ms = (sc * rhs c)%Z
+    | RLe => (C.comb_rhs P ms <= sc * rhs c)%Z
+    end.
+
+  Definition poly_exact_empty (P : list (lcons X.t)) (ms : list Z) : Prop :=
+    C.admissible P ms /\ (forall x, C.comb_coef P ms x = 0%Z) /\
+    ((C.comb_rhs P ms < 0)%Z \/
+      (C.comb_eq P ms = true /\ C.comb_rhs P ms <> 0%Z)).
+
+  Definition poly_certificate_valid (P : list (lcons X.t)) (c : lcons X.t)
+      (k : cert) : Prop :=
+    cut k = false /\ (poly_exact_empty P (mults k) \/
+      poly_exact_entail P c (mults k) (scale k)).
+
+  Lemma poly_source_equal_spec : forall P ms,
+    poly_source_equal P ms = C.comb_eq P ms.
+  Proof. reflexivity. Qed.
+
+  Lemma poly_normal_rows_admissible : forall P ms,
+    C.admissible (poly_normal_rows P) ms <-> C.admissible P ms.
+  Proof.
+    intro P. induction P as [|p P IH]; intro ms; [reflexivity|].
+    destruct ms as [|m ms].
+    - split; intros [Hlength _]; cbn [poly_normal_rows map length] in Hlength; discriminate.
+    - change (C.admissible (poly_normal_row X.encode p :: poly_normal_rows P) (m :: ms) <->
+        C.admissible (p :: P) (m :: ms)).
+      rewrite !poly_admissible_cons, IH. reflexivity.
+  Qed.
+
+  Lemma poly_normal_rows_coef : forall P ms x,
+    C.comb_coef (poly_normal_rows P) ms x = C.comb_coef P ms x.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] x; try reflexivity.
+    change (C.comb_coef (poly_normal_row X.encode p :: poly_normal_rows P) (m :: ms) x =
+      C.comb_coef (p :: P) (m :: ms) x).
+    rewrite !poly_comb_coef_cons. cbn [poly_normal_row lhs].
+    rewrite coef_of_normal, IH. reflexivity.
+  Qed.
+
+  Lemma poly_normal_rows_rhs : forall P ms,
+    C.comb_rhs (poly_normal_rows P) ms = C.comb_rhs P ms.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms]; try reflexivity.
+    change (C.comb_rhs (poly_normal_row X.encode p :: poly_normal_rows P) (m :: ms) =
+      C.comb_rhs (p :: P) (m :: ms)).
+    rewrite !poly_comb_rhs_cons. cbn [poly_normal_row rhs]. now rewrite IH.
+  Qed.
+
+  Lemma poly_normal_rows_eq : forall P ms,
+    C.comb_eq (poly_normal_rows P) ms = C.comb_eq P ms.
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms]; try reflexivity.
+    change (C.comb_eq (poly_normal_row X.encode p :: poly_normal_rows P) (m :: ms) =
+      C.comb_eq (p :: P) (m :: ms)).
+    rewrite !poly_comb_eq_cons. cbn [poly_normal_row lrel]. now rewrite IH.
+  Qed.
+
+  Lemma poly_exact_empty_normalized : forall P ms,
+    poly_exact_empty (poly_normal_rows P) ms <-> poly_exact_empty P ms.
+  Proof.
+    intros P ms. unfold poly_exact_empty.
+    rewrite poly_normal_rows_admissible, poly_normal_rows_rhs, poly_normal_rows_eq.
+    split; intros [Ha [Hcoef Hrhs]]; split; [exact Ha| |exact Ha|];
+      split; [|exact Hrhs| |exact Hrhs].
+    - intro x. specialize (Hcoef x). now rewrite poly_normal_rows_coef in Hcoef.
+    - intro x. rewrite poly_normal_rows_coef. apply Hcoef.
+  Qed.
+
+  Lemma poly_exact_entail_normalized : forall P c ms sc,
+    poly_exact_entail (poly_normal_rows P) (poly_normal_row X.encode c) ms sc <->
+      poly_exact_entail P c ms sc.
+  Proof.
+    intros P c ms sc. split; intros [Ha [Hs [Hcoef Hrhs]]].
+    - split; [exact (proj1 (poly_normal_rows_admissible P ms) Ha)|].
+      split; [exact Hs|]. split.
+      + intro x. specialize (Hcoef x). cbn [poly_normal_row lhs] in Hcoef.
+        now rewrite poly_normal_rows_coef, coef_of_normal in Hcoef.
+      + cbn [poly_normal_row lrel rhs] in Hrhs.
+        now rewrite poly_normal_rows_eq, poly_normal_rows_rhs in Hrhs.
+    - split; [exact (proj2 (poly_normal_rows_admissible P ms) Ha)|].
+      split; [exact Hs|]. split.
+      + intro x. cbn [poly_normal_row lhs].
+        rewrite poly_normal_rows_coef, coef_of_normal. apply Hcoef.
+      + cbn [poly_normal_row lrel rhs].
+        now rewrite poly_normal_rows_eq, poly_normal_rows_rhs.
+  Qed.
+
+  Lemma poly_certificate_valid_normalized : forall P c k,
+    poly_certificate_valid (poly_normal_rows P) (poly_normal_row X.encode c) k <->
+      poly_certificate_valid P c k.
+  Proof.
+    intros P c k. unfold poly_certificate_valid.
+    rewrite poly_exact_empty_normalized, poly_exact_entail_normalized. reflexivity.
+  Qed.
+
+  Lemma poly_certificate_valid_checked : forall P c k,
+    poly_certificate_valid P c k -> C.check_entails P c k = true /\ cut k = false.
+  Proof.
+    intros P c [ms sc cutflag] [Hcut [Hempty|Hentail]];
+      cbn [cut mults scale] in *; subst cutflag; split; try reflexivity.
+    - apply C.check_entails_empty. destruct Hempty as [Ha [Hcoef Hrhs]].
+      now apply C.check_empty_complete.
+    - destruct Hentail as [Ha [Hs [Hcoef Hrhs]]].
+      now apply C.check_entails_complete.
+  Qed.
+
+  Lemma poly_canonical_certificate_data : forall P c r sc ms,
+    poly_tracks (poly_negate c :: P) r -> poly_target_strict r ->
+    poly_multipliers r = sc :: ms -> poly_contradiction r = true ->
+    poly_canonical_guard P c r sc ms = true ->
+    poly_certificate_valid P c (Cert ms (poly_canonical_scale sc) false).
+  Proof.
+    intros P c r sc ms Htracks Hstrict Hweights Hcontra Hguard.
+    destruct (poly_target_data P c r sc ms Htracks Hweights
+      (poly_contradiction_empty r Hcontra)) as [Ha [Hnonnegative [Hcoef [Hrhs Heq]]]].
+    split; [reflexivity|]. cbn [mults scale].
+    unfold poly_canonical_guard in Hguard.
+    destruct (Z.eqb sc 0) eqn:Hzero.
+    - apply Z.eqb_eq in Hzero. subst sc. left. split; [exact Ha|]. split.
+      + intro x. specialize (Hcoef x). lia.
+      + destruct (lrel (poly_constraint r)) eqn:Hrel.
+        * right. destruct (Heq eq_refl) as [_ Hused]. split; [exact Hused|].
+          pose proof (poly_contradiction_eq_rhs r Hrel Hcontra). lia.
+        * left. assert (Hflag : poly_strict r = false) by exact (Hstrict 0%Z ms Hweights).
+          pose proof (poly_contradiction_nonstrict_rhs r Hrel Hflag Hcontra). lia.
+    - cbn [orb] in Hguard. apply andb_true_iff in Hguard as [Hpositive Hrelation].
+      apply Z.ltb_lt in Hpositive. right. unfold poly_exact_entail, poly_canonical_scale.
+      rewrite Hzero. split; [exact Ha|]. split; [exact Hpositive|]. split; [exact Hcoef|].
+      assert (Hrowrel : lrel (poly_constraint r) = RLe).
+      { destruct (lrel (poly_constraint r)); [|reflexivity].
+        destruct (Heq eq_refl) as [Hz _]. lia. }
+      destruct (lrel c) eqn:Htarget.
+      + apply andb_true_iff in Hrelation as [Hrhszero Hused]. apply Z.eqb_eq in Hrhszero.
+        rewrite poly_source_equal_spec in Hused. split; [exact Hused|]. lia.
+      + pose proof (poly_contradiction_le_rhs r Hrowrel Hcontra). lia.
+  Qed.
+
+  Lemma poly_candidate_valid : forall P c r k,
+    poly_tracks (poly_negate c :: P) r -> poly_target_strict r ->
+    candidate P c r = Some k -> poly_certificate_valid P c k.
+  Proof.
+    intros P c r k Htracks Hstrict Hresult. unfold candidate in Hresult.
+    destruct (poly_contradiction r) eqn:Hcontra; [|discriminate].
+    destruct (poly_multipliers r) as [|sc ms] eqn:Hweights; [discriminate|].
+    destruct (poly_canonical_guard P c r sc ms) eqn:Hguard; [|discriminate].
+    destruct (C.check_entails P c (Cert ms (poly_canonical_scale sc) false)); [|discriminate].
+    injection Hresult as Hsame. subst k.
+    now apply poly_canonical_certificate_data with (r := r).
+  Qed.
+
+  Lemma poly_find_certificate_valid : forall P c rows k,
+    Forall (poly_tracks (poly_negate c :: P)) rows -> Forall poly_target_strict rows ->
+    find_certificate P c rows = Some k -> poly_certificate_valid P c k.
+  Proof.
+    intros P c rows. induction rows as [|r rows IH]; intros k Htracks Hstrict Hresult;
+      cbn [find_certificate] in Hresult; [discriminate|].
+    inversion Htracks as [|? ? Hr Hrs]; subst.
+    inversion Hstrict as [|? ? Hflag Hflags]; subst.
+    destruct (candidate P c r) as [found|] eqn:Hhead.
+    - injection Hresult as Hsame. subst found. now apply poly_candidate_valid with (r := r).
+    - now apply IH.
+  Qed.
+
+  Lemma poly_entail_engine_valid : forall P c k,
+    entail_engine P c = Some k -> poly_certificate_valid P c k.
+  Proof.
+    intros P c k Hresult. unfold entail_engine in Hresult.
+    eapply poly_find_certificate_valid; [apply poly_entailment_tracks|apply poly_entailment_target_strict|].
+    exact Hresult.
+  Qed.
+
+  Lemma entail_cert_returned : forall P c k,
+    entail_cert P c = Some k -> C.check_entails P c k = true /\ cut k = false.
+  Proof.
+    intros P c k Hresult. unfold entail_cert in Hresult.
+    apply poly_entail_engine_valid in Hresult.
+    exact (poly_certificate_valid_checked P c k
+      (proj1 (poly_certificate_valid_normalized P c k) Hresult)).
+  Qed.
+
+  (** Successful row inclusion retains every integer model of its input. *)
+  Lemma entails_row_sound : forall P r v,
+    entails_row P r = true -> Forall (sat v) P -> sat v r.
+  Proof.
+    intros P r v Hresult Hmodels. unfold entails_row in Hresult.
+    destruct (entail_cert P r) as [k|] eqn:Hcertificate; [|discriminate].
+    exact (C.check_entails_sound P r k
+      (proj1 (entail_cert_returned P r k Hcertificate)) v Hmodels).
+  Qed.
+
+  (** Splitting an equality into two inequalities preserves its meaning. *)
+  Lemma keep_row_sound : forall P r v,
+    keep_row P r = true -> Forall (sat v) P -> sat v r.
+  Proof.
+    intros P r v Hkeep Hmodels. unfold keep_row in Hkeep.
+    destruct (lrel r) eqn:Hrel.
+    - apply andb_true_iff in Hkeep as [Hupper Hlower].
+      pose proof (entails_row_sound P _ v Hupper Hmodels) as Hle.
+      pose proof (entails_row_sound P _ v Hlower Hmodels) as Hge.
+      unfold sat, poly_negate in Hle, Hge. cbn [lhs lrel rhs] in Hle, Hge.
+      rewrite eval_coef_scale in Hge. unfold sat. rewrite Hrel. lia.
+    - exact (entails_row_sound P r v Hkeep Hmodels).
+  Qed.
+
+  (** A state recognized as bottom has no integer model. *)
+  Lemma is_bot_sound : forall s v, is_bot s = true -> ~ ngamma s v.
+  Proof.
+    intros [|P] v Hbot Hmodels; [exact Hmodels |].
+    pose proof (entails_row_sound P _ v Hbot Hmodels) as Hfalse.
+    cbn [sat lrel lhs rhs eval_coef fold_right] in Hfalse. lia.
+  Qed.
+
   (** Every contradictory producer row is accepted by the certificate search. *)
   Lemma poly_candidate_complete : forall P c r,
     lrel c = RLe -> poly_tracks (poly_negate c :: P) r -> poly_target_strict r ->
@@ -2247,21 +2453,18 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     { destruct (proj1 Htracks) as [Hlength _]. rewrite Hweights in Hlength.
       cbn [length] in Hlength. discriminate. }
     assert (Hnonnegative : (0 <= sc)%Z).
-    { pose proof (proj1 Htracks) as Hadmissible. rewrite Hweights in Hadmissible.
-      apply poly_admissible_cons in Hadmissible as [Hhead _]. apply Hhead. reflexivity. }
-    destruct (C.check_empty P ms) eqn:Hempty.
-    - assert (Hcheck : C.check_entails P c (Cert ms 1%Z false) = true).
-      { apply C.check_entails_empty. exact Hempty. }
-      exists (Cert ms 1%Z false). unfold candidate.
-      now rewrite Hcontra, Hweights, Hempty, Hcheck.
-    - assert (Hpositive : (0 < sc)%Z).
-      { destruct (Z.eq_dec sc 0) as [Hzero|Hnonzero]; [|lia]. subst sc.
-        pose proof (poly_zero_target_empty P c r ms Htracks Hstrict Hweights Hcontra).
-        congruence. }
-      pose proof (poly_positive_target_checked P c r sc ms
-        Htarget Htracks Hweights Hpositive Hcontra) as Hcheck.
-      exists (Cert ms sc false). unfold candidate.
-      now rewrite Hcontra, Hweights, Hempty, Hcheck.
+    { pose proof (proj1 Htracks) as Ha. rewrite Hweights in Ha.
+      apply poly_admissible_cons in Ha as [Hhead _]. apply Hhead. reflexivity. }
+    assert (Hguard : poly_canonical_guard P c r sc ms = true).
+    { unfold poly_canonical_guard. rewrite Htarget.
+      destruct (Z.eqb sc 0) eqn:Hzero; [reflexivity|].
+      apply Z.eqb_neq in Hzero. cbn [orb]. rewrite andb_true_r.
+      apply Z.ltb_lt. lia. }
+    pose proof (poly_canonical_certificate_data P c r sc ms
+      Htracks Hstrict Hweights Hcontra Hguard) as Hvalid.
+    pose proof (proj1 (poly_certificate_valid_checked _ _ _ Hvalid)) as Hcheck.
+    exists (Cert ms (poly_canonical_scale sc) false). unfold candidate.
+    now rewrite Hcontra, Hweights, Hguard, Hcheck.
   Qed.
 
   Lemma poly_find_certificate_complete : forall P c rows r k,
@@ -2278,7 +2481,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
 
   (** Search failure means the final projected system contains no contradictory row. *)
   Lemma poly_entailment_no_contradiction : forall P c,
-    lrel c = RLe -> entail_cert P c = None ->
+    lrel c = RLe -> entail_engine P c = None ->
     Forall (fun r => poly_contradiction r = false)
       (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
         (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
@@ -2293,7 +2496,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
     destruct (poly_candidate_complete P c r Htarget Htracks Hstrict Hcontra)
       as [k Hcandidate].
     destruct (poly_find_certificate_complete P c _ r k Hin Hcandidate) as [found Hfound].
-    unfold entail_cert in Hnone. rewrite Hnone in Hfound. discriminate.
+    unfold entail_engine in Hnone. rewrite Hnone in Hfound. discriminate.
   Qed.
 
   (** A valid lower endpoint can be intersected with the existing interval. *)
@@ -2797,7 +3000,7 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
 
   (** A failed entailment search leaves a terminal system modeled by the zero store. *)
   Lemma poly_entail_terminal_model_Q : forall P c,
-    lrel c = RLe -> entail_cert P c = None ->
+    lrel c = RLe -> entail_engine P c = None ->
     Forall (poly_satQ (fun _ => 0%Q))
       (poly_run X.encode X.eqb (poly_variables X.encode (c :: P))
         (poly_initial X.encode ((poly_negate c, true) :: map (fun r => (r, false)) P))).
@@ -3286,8 +3489,8 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Qed.
 
   (** Failure of the checked producer reconstructs a rational counterexample to its target. *)
-  Lemma poly_failed_certificate_model_Q : forall P c,
-    lrel c = RLe -> entail_cert P c = None ->
+  Lemma poly_engine_failed_model_Q : forall P c,
+    lrel c = RLe -> entail_engine P c = None ->
     exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
   Proof.
     intros P c Hrel Hnone.
@@ -3296,6 +3499,33 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
       (fun _ => 0%Q) (poly_entailment_initial_nonstrict P c)
       (poly_entail_terminal_model_Q P c Hrel Hnone)) as [v Hmodels].
     exists v. now apply poly_entailment_initial_models_Q.
+  Qed.
+
+  Lemma poly_normal_row_models_Q : forall v c,
+    satQ v (poly_normal_row X.encode c) <-> satQ v c.
+  Proof.
+    intros v c. change (poly_satQ v (PolyRow X.t (poly_normal_row X.encode c) [] false) <->
+      poly_satQ v (PolyRow X.t c [] false)). apply poly_normalize_satQ.
+  Qed.
+
+  Lemma poly_normal_rows_models_Q : forall v P,
+    Forall (satQ v) (poly_normal_rows P) <-> Forall (satQ v) P.
+  Proof.
+    intros v P. unfold poly_normal_rows. rewrite Forall_map.
+    split; intro Hmodels; eapply Forall_impl; [|exact Hmodels| |exact Hmodels].
+    - intros c Hc. exact (proj1 (poly_normal_row_models_Q v c) Hc).
+    - intros c Hc. exact (proj2 (poly_normal_row_models_Q v c) Hc).
+  Qed.
+
+  Lemma poly_failed_certificate_model_Q : forall P c,
+    lrel c = RLe -> entail_cert P c = None ->
+    exists v : X.t -> Q, Forall (satQ v) P /\ ~ satQ v c.
+  Proof.
+    intros P c Hrel Hnone. unfold entail_cert in Hnone.
+    destruct (poly_engine_failed_model_Q (poly_normal_rows P)
+      (poly_normal_row X.encode c) Hrel Hnone) as [v [Hmodels Hfalse]].
+    exists v. split; [exact (proj1 (poly_normal_rows_models_Q v P) Hmodels)|].
+    intro Hc. apply Hfalse. exact (proj2 (poly_normal_row_models_Q v c) Hc).
   Qed.
 
 
@@ -3409,23 +3639,23 @@ Module Poly (X : KEY) (L : LANG) (N : NUM_VIEW L)
   Definition poly_models_Q (s : t) (v : X.t -> Q) : Prop :=
     match s with Unreached => False | Reached P => Forall (satQ v) P end.
 
-  Lemma entails_row_sound_Q : forall P r v,
-    entails_row P r = true -> Forall (satQ v) P -> satQ v r.
+  Lemma entails_row_sound_Q : forall P c v,
+    entails_row P c = true -> Forall (satQ v) P -> satQ v c.
   Proof.
-    intros P r v Hchecked Hmodels. unfold entails_row in Hchecked.
-    destruct (entail_cert P r) as [k|] eqn:Hcertificate; [|discriminate].
-    apply C.check_entails_sound_Q with (P := P) (k := k); try assumption.
-    exact (proj2 (entail_cert_returned P r k Hcertificate)).
+    intros P c v Hresult Hmodels. unfold entails_row in Hresult.
+    destruct (entail_cert P c) as [k|] eqn:Hcertificate; [|discriminate].
+    destruct (entail_cert_returned P c k Hcertificate) as [Hcheck Hcut].
+    now apply C.check_entails_sound_Q with (P := P) (k := k).
   Qed.
 
-  Lemma entails_row_complete_Q : forall P r, lrel r = RLe ->
-    (forall v : X.t -> Q, Forall (satQ v) P -> satQ v r) -> entails_row P r = true.
+  Lemma entails_row_complete_Q : forall P c,
+    lrel c = RLe -> (forall v : X.t -> Q, Forall (satQ v) P -> satQ v c) ->
+    entails_row P c = true.
   Proof.
-    intros P r Hrel Hsemantic. unfold entails_row.
-    destruct (entail_cert P r) as [k|] eqn:Hcertificate.
-    - exact (proj1 (entail_cert_returned P r k Hcertificate)).
-    - destruct (poly_failed_certificate_model_Q P r Hrel Hcertificate)
-        as [v [Hmodels Hfalse]]. exfalso. exact (Hfalse (Hsemantic v Hmodels)).
+    intros P c Hrel Hsemantic. unfold entails_row.
+    destruct (entail_cert P c) as [k|] eqn:Hcertificate; [reflexivity|].
+    destruct (poly_failed_certificate_model_Q P c Hrel Hcertificate)
+      as [v [Hmodels Hfalse]]. exfalso. exact (Hfalse (Hsemantic v Hmodels)).
   Qed.
 
   (** Equality is equivalent to its two non-strict inequality directions over Q. *)
@@ -4496,8 +4726,13 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition range_bits (e : term L.op X.t) (s : t) : nat := range_work e s.
   TimeFun subst.
   TimeFun fm_elim.
+  TimeFun poly_normal_rows.
+  TimeFun poly_source_equal.
+  TimeFun poly_canonical_scale.
+  TimeFun poly_canonical_guard.
   TimeFun candidate.
   TimeFun find_certificate.
+  TimeFun entail_engine.
   TimeFun entail_cert.
   TimeFun entails_row.
   TimeFun keep_row.
@@ -6449,7 +6684,6 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
 
-
   (** Every stored variable agrees with the trie address where it is stored. *)
   Definition poly_variable_addressed (m : ptrie X.t) : Prop :=
     forall key x, PTrieCode.get key m = Some x -> X.encode x = key.
@@ -6815,7 +7049,59 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       time_simpl; nia.
   Qed.
 
-  Definition poly_candidate_factor : N := (16 * C.c_lc + 32)%N.
+  Definition poly_canonical_eq_entry (pm : lcons X.t * Z) : bool :=
+    match lrel (fst pm) with REq => true | RLe => Z.eqb (snd pm) 0 end.
+  TimeFun poly_canonical_eq_entry.
+
+  Lemma T_poly_canonical_eq_entry_bounded : forall pm,
+    (T_poly_canonical_eq_entry pm <= 6)%N.
+  Proof.
+    intro pm. pose proof (T_poly_zero_test (snd pm)) as Hzero.
+    time_unfold T_poly_canonical_eq_entry. destruct (lrel (fst pm)); time_simpl; lia.
+  Qed.
+
+  Lemma T_poly_source_equal_bounded : forall P ms,
+    (T_poly_source_equal P ms <= 12 * N.of_nat (length P + 1))%N.
+  Proof.
+    intros P ms. pose proof (List.T_combine_le P ms) as Hcombine.
+    pose proof (List.T_forallb_le poly_canonical_eq_entry T_poly_canonical_eq_entry 6
+      (List.combine P ms) T_poly_canonical_eq_entry_bounded) as Hscan.
+    assert (Hlength : length (List.combine P ms) <= length P).
+    { rewrite length_combine. apply Nat.le_min_l. }
+    time_unfold T_poly_source_equal. time_simpl.
+    lazymatch goal with
+    | |- context [List.T_forallb ?f ?Tf (List.combine P ms)] =>
+        change f with poly_canonical_eq_entry;
+        change Tf with T_poly_canonical_eq_entry
+    end.
+    lia.
+  Qed.
+
+  Lemma T_poly_canonical_scale_bounded : forall sc,
+    (T_poly_canonical_scale sc <= 3)%N.
+  Proof.
+    intro sc. pose proof (T_poly_zero_test sc).
+    time_unfold T_poly_canonical_scale. time_simpl. lia.
+  Qed.
+
+  Lemma poly_positive_zero_clock : forall sc, (Z.T_ltb 0 sc <= 4)%N.
+  Proof.
+    intro sc. pose proof (Z.T_ltb_le 0 sc) as Hcompare.
+    exact Hcompare.
+  Qed.
+
+  Lemma T_poly_canonical_guard_bounded : forall P c r sc ms,
+    (T_poly_canonical_guard P c r sc ms <= 32 * N.of_nat (length P + 1))%N.
+  Proof.
+    intros P c r sc ms.
+    pose proof (T_poly_zero_test sc) as Hzero.
+    pose proof (poly_positive_zero_clock sc) as Hpositive.
+    pose proof (T_poly_zero_test (rhs (poly_constraint r))) as Hrhs.
+    pose proof (T_poly_source_equal_bounded P ms) as Hequalities.
+    time_unfold T_poly_canonical_guard. destruct (lrel c); time_simpl; lia.
+  Qed.
+
+  Definition poly_candidate_factor : N := (8 * C.c_lc + 80)%N.
 
   Lemma T_candidate_bounded : forall P c r dim mlen bits,
     Forall (poly_source_envelope dim bits) (c :: P) ->
@@ -6835,6 +7121,13 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       eapply N.le_trans; [exact Hsquare|]. unfold work.
       rewrite <- (N.mul_1_l (N.of_nat (bits + 1)^2)) at 1.
       apply N.mul_le_mono_r. nia. }
+    assert (Hcount_work : (N.of_nat (mlen + 1) <= work)%N).
+    { replace work with (N.of_nat (mlen + 1) *
+        (N.of_nat (dim + mlen + 1) * N.of_nat (bits + 1)^2))%N by (unfold work; ring).
+      rewrite <- (N.mul_1_r (N.of_nat (mlen + 1))) at 1.
+      apply N.mul_le_mono_l.
+      change (1 * 1 <= N.of_nat (dim + mlen + 1) * N.of_nat (bits + 1)^2)%N.
+      apply N.mul_le_mono; [lia|rewrite N.pow_2_r; nia]. }
     replace (poly_candidate_factor * N.of_nat (mlen + 1) *
       N.of_nat (dim + mlen + 1) * N.of_nat (bits + 1)^2)%N
       with (poly_candidate_factor * work)%N by (unfold work; ring).
@@ -6845,22 +7138,17 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       [unfold poly_candidate_factor; time_simpl; clearbody work; nia|].
     cbn [length] in Hlength. inversion Hmult as [|? ? Hsc Hms]; subst.
     assert (Htail : length ms <= mlen) by lia.
-    pose proof (poly_empty_measure_envelope P ms dim mlen bits
-      (Forall_inv_tail Hsource) HP Htail Hms) as Hempty_size.
-    pose proof (C.T_check_empty_le P ms) as Hempty.
-    assert (Hempty_clock : (C.T_check_empty P ms <= 8 * C.c_lc * work)%N).
-    { eapply N.le_trans; [exact Hempty|]. unfold work.
-      assert (Htransport : (N.of_nat (C.csize P ms + 1) <=
-        N.of_nat (8 * (mlen + 1) * (dim + mlen + 1) * (bits + 1)^2))%N) by lia.
-      rewrite !Nat2N.inj_mul, Nat2N.inj_pow in Htransport.
-      change (N.of_nat 2) with 2%N in Htransport.
-      change (N.of_nat 8) with 8%N in Htransport.
-      apply N.mul_le_mono_l with (p := C.c_lc) in Htransport. nia. }
-    set (sc' := if C.check_empty P ms then 1%Z else sc).
-    assert (Hsc' : Z.size_nat sc' <= bits + 1).
-    { unfold sc'. destruct (C.check_empty P ms); [change (1 <= bits + 1); lia|exact Hsc]. }
+    pose proof (T_poly_canonical_guard_bounded P c r sc ms) as Hguard.
+    assert (Hguard_total : (T_poly_canonical_guard P c r sc ms <= 32 * work)%N).
+    { eapply N.le_trans; [exact Hguard|]. apply N.mul_le_mono_l.
+      eapply N.le_trans; [|exact Hcount_work]. lia. }
+    pose proof (T_poly_canonical_scale_bounded sc) as Hscale_clock.
+    set (sc' := poly_canonical_scale sc).
+    assert (Hscale : Z.size_nat sc' <= bits + 1).
+    { unfold sc', poly_canonical_scale. destruct (Z.eqb sc 0);
+        [change (1 <= bits + 1); lia|exact Hsc]. }
     pose proof (poly_checker_measure_envelope P c ms sc' dim mlen bits
-      Hsource HP Htail Hms Hsc') as Hcheck_size.
+      Hsource HP Htail Hms Hscale) as Hcheck_size.
     pose proof (C.T_check_entails_le P c (Cert ms sc' false)) as Hcheck.
     cbn [mults scale] in Hcheck.
     assert (Hcheck_clock : (C.T_check_entails P c (Cert ms sc' false) <=
@@ -6873,9 +7161,10 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       change (N.of_nat 2) with 2%N in Htransport.
       change (N.of_nat 8) with 8%N in Htransport.
       apply N.mul_le_mono_l with (p := C.c_lc) in Htransport. nia. }
-    fold sc'. unfold poly_candidate_factor. time_simpl.
-    clear -Hcontradiction Hempty_clock Hcheck_clock Hwork.
-    clearbody work. nia.
+    fold sc'. destruct (poly_canonical_guard P c r sc ms);
+      unfold poly_candidate_factor; time_simpl.
+    all: clear -Hcontradiction Hguard_total Hscale_clock Hcheck_clock Hwork;
+      clearbody work; nia.
   Qed.
 
   Lemma T_find_certificate_members : forall P c rows k,
@@ -6890,7 +7179,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         cbn [length]; rewrite Nat2N.inj_succ; time_simpl; nia.
   Qed.
 
-  Definition poly_terminal_factor : N := (16 * C.c_lc + 40)%N.
+  Definition poly_terminal_factor : N := (8 * C.c_lc + 88)%N.
 
   Lemma T_find_certificate_bounded : forall P c rows count dim mlen bits,
     Forall (poly_source_envelope dim bits) (c :: P) ->
@@ -6924,12 +7213,12 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         pose proof (N.mul_le_mono_l _ _ poly_candidate_factor Hwork). nia.
       - rewrite N.pow_2_r. ring_simplify. lia. }
     unfold poly_terminal_factor, poly_candidate_factor in *.
-    replace ((16 * C.c_lc + 40) * N.of_nat (count + 1)^2 *
+    replace ((8 * C.c_lc + 88) * N.of_nat (count + 1)^2 *
       N.of_nat (dim + mlen + 1) * N.of_nat (bits + 1)^2)%N
-      with ((16 * C.c_lc + 40) * N.of_nat (count + 1)^2 * span)%N
+      with ((8 * C.c_lc + 88) * N.of_nat (count + 1)^2 * span)%N
       by (unfold span; ring).
     assert (Hscan' : (T_find_certificate P c rows <=
-      ((16 * C.c_lc + 32) * N.of_nat (mlen + 1) * span + 1) *
+      ((8 * C.c_lc + 80) * N.of_nat (mlen + 1) * span + 1) *
         N.of_nat (length rows) + 1)%N) by (unfold span; nia).
     assert (Hpositive : (1 <= N.of_nat (count + 1)^2 * span)%N)
       by (clear -Hspan; change (1 * 1 <= N.of_nat (count + 1)^2 * span)%N;
@@ -6997,8 +7286,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   Lemma T_candidate_empty_bounded : forall c r dim bits,
-    poly_source_envelope dim bits c ->
-    C.row_bits (poly_constraint r) <= bits ->
+    poly_source_envelope dim bits c -> C.row_bits (poly_constraint r) <= bits ->
     poly_multipliers r = [1%Z] ->
     (T_candidate [] c r <= poly_candidate_factor *
       N.of_nat (dim + 2) * N.of_nat (bits + 1))%N.
@@ -7006,12 +7294,11 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros c r dim bits Hsource Hrow Hmult.
     pose proof (poly_lsize_envelope c dim bits Hsource) as Hconclusion.
     pose proof (T_poly_contradiction_bounded r bits Hrow) as Hcontradiction.
+    pose proof (T_poly_canonical_guard_bounded [] c r 1 []) as Hguard.
+    change (T_poly_canonical_guard [] c r 1 [] <= 32)%N in Hguard.
+    pose proof (T_poly_canonical_scale_bounded 1) as Hscale.
     set (work := (N.of_nat (dim + 2) * N.of_nat (bits + 1))%N).
     assert (Hwork : (N.of_nat (bits + 1) <= work)%N) by (unfold work; nia).
-    pose proof (C.T_check_empty_le [] []) as Hempty.
-    change (C.T_check_empty [] [] <= C.c_lc * 1)%N in Hempty.
-    assert (Hscale : (if C.check_empty [] [] then 1%Z else 1%Z) = 1%Z)
-      by (destruct (C.check_empty [] []); reflexivity).
     pose proof (C.T_check_entails_le [] c (Cert [] 1 false)) as Hcheck.
     change (C.T_check_entails [] c (Cert [] 1 false) <=
       C.c_lc * N.of_nat (2 * (C.lsize c + 1 + 1)))%N in Hcheck.
@@ -7024,11 +7311,13 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         N.of_nat (4 * (dim + 2) * (bits + 1)))%N) by lia.
       rewrite !Nat2N.inj_mul in Htransport. unfold work.
       apply N.mul_le_mono_l with (p := C.c_lc) in Htransport. nia. }
-    time_unfold T_candidate. destruct (poly_contradiction r); [rewrite Hmult, Hscale|];
+    time_unfold T_candidate. destruct (poly_contradiction r); [rewrite Hmult|];
       unfold poly_candidate_factor; time_simpl.
-    all: replace ((16 * C.c_lc + 32) * N.of_nat (dim + 2) * N.of_nat (bits + 1))%N
-      with ((16 * C.c_lc + 32) * work)%N by (unfold work; ring).
-    all: clear -Hcontradiction Hempty Hcheck_clock Hwork; clearbody work; nia.
+    all: replace ((8 * C.c_lc + 80) * N.of_nat (dim + 2) * N.of_nat (bits + 1))%N
+      with ((8 * C.c_lc + 80) * work)%N by (unfold work; ring).
+    all: try change (poly_canonical_scale 1) with 1%Z.
+    all: try (destruct (poly_canonical_guard [] c r 1 []); time_simpl).
+    all: clear -Hcontradiction Hguard Hscale Hcheck_clock Hwork; clearbody work; nia.
   Qed.
 
   Lemma T_find_certificate_empty_bounded : forall c rows count dim bits,
@@ -7054,11 +7343,11 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       - apply N.mul_le_mono; [nia|exact Hcount].
       - nia. }
     unfold poly_terminal_factor, poly_candidate_factor in *.
-    replace ((16 * C.c_lc + 40) * N.of_nat (count + 1) *
+    replace ((8 * C.c_lc + 88) * N.of_nat (count + 1) *
       N.of_nat (dim + 2) * N.of_nat (bits + 1))%N
-      with ((16 * C.c_lc + 40) * N.of_nat (count + 1) * span)%N by (unfold span; ring).
+      with ((8 * C.c_lc + 88) * N.of_nat (count + 1) * span)%N by (unfold span; ring).
     assert (Hscan' : (T_find_certificate [] c rows <=
-      ((16 * C.c_lc + 32) * span + 1) * N.of_nat (length rows) + 1)%N)
+      ((8 * C.c_lc + 80) * span + 1) * N.of_nat (length rows) + 1)%N)
       by (unfold span; nia).
     assert (Hpositive : (1 <= N.of_nat (count + 1) * span)%N)
       by (clear -Hspan; change (1 * 1 <= N.of_nat (count + 1) * span)%N;
@@ -7719,9 +8008,12 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         poly_terminal_factor * work)%N).
       { unfold work, poly_clock_span. rewrite !N.mul_assoc. exact Hterminal. }
       cbn [length poly_run]. rewrite poly_fmcost_clock_step.
-      time_unfold (@T_poly_run). time_cbn. fold work.
+      fold work.
+      eapply N.le_trans with (m := (poly_run_search_factor * work)%N).
+      2: { apply N.mul_le_mono_l. apply N.le_add_r. }
+      time_unfold (@T_poly_run). time_cbn.
       clear -Hterminal_work Hwork. clearbody work.
-      unfold poly_run_search_factor. nia.
+      unfold poly_run_search_factor. rewrite !N.mul_add_distr_r. lia.
     - set (next := poly_step X.encode X.eqb x rows).
       set (next_count := count^2 / 4 + count).
       assert (Hnext_count : length next <= next_count).
@@ -7927,8 +8219,8 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       poly_terminal_factor + 8)%N.
 
   (** Normal-input certificate production follows its frozen cost envelope. *)
-  Lemma T_poly_entail_bounded : forall P c, normal P -> normal [c] ->
-    (T_entail_cert P c <= poly_entail_factor *
+  Lemma T_poly_entail_engine_bounded : forall P c, normal P -> normal [c] ->
+    (T_entail_engine P c <= poly_entail_factor *
       N.of_nat (poly_entail_budget P c))%N.
   Proof.
     intros P c HP Hc.
@@ -7949,7 +8241,7 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         fold work. apply N.mul_le_mono_r. lia.
       - eapply N.le_trans; [apply T_poly_entail_nonempty_tail; [exact HP|exact Hc|discriminate]|].
         fold work. apply N.mul_le_mono_r. lia. }
-    time_unfold T_entail_cert. time_simpl.
+    time_unfold T_entail_engine. time_simpl.
     change (fun x : X.t => X.T_encode x) with X.T_encode.
     change (fun x y : X.t => X.T_eqb x y) with X.T_eqb.
     fold input xs rows. fold work.
@@ -8956,6 +9248,458 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - rewrite Nat.add_succ_r. pose proof (Nat.log2_succ_le (a + b)). lia.
   Qed.
 
+  (** A doubled initial bit width changes every stage charge by at most four. *)
+  Lemma poly_fmcost_double_width : forall fuel dim mlen rows bits,
+    fmcost dim mlen fuel rows (2 * bits + 1) <=
+      4 * fmcost dim mlen fuel rows bits.
+  Proof.
+    intro fuel. induction fuel as [|fuel IH]; intros dim mlen rows bits.
+    - change ((rows + 1) * (dim + mlen + 1) * (2 * bits + 1 + 1) <=
+        4 * ((rows + 1) * (dim + mlen + 1) * (bits + 1))). nia.
+    - change ((rows + 1)^2 * (dim + mlen + 1) * (2 * bits + 1 + 1)^2 +
+        fmcost dim mlen fuel (rows^2 / 4 + rows) (2 * (2 * bits + 1) + 1) <=
+        4 * ((rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2 +
+          fmcost dim mlen fuel (rows^2 / 4 + rows) (2 * bits + 1))).
+      specialize (IH dim mlen (rows^2 / 4 + rows) (2 * bits + 1)).
+      assert (Hsquare : (2 * bits + 1 + 1)^2 = 4 * (bits + 1)^2)
+        by (cbn [Nat.pow]; nia).
+      rewrite Hsquare.
+      rewrite (Nat.mul_add_distr_l 4
+        ((rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2)
+        (fmcost dim mlen fuel (rows^2 / 4 + rows) (2 * bits + 1))).
+      apply Nat.add_le_mono; [nia|exact IH].
+  Qed.
+
+  Lemma poly_vars_fold_nodup : forall xs acc,
+    NoDup acc -> NoDup (fold_left
+      (fun acc y => if existsb (X.eqb y) acc then acc else y :: acc) xs acc).
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intros acc Hunique; [exact Hunique|].
+    cbn [fold_left]. apply IH. destruct (existsb (X.eqb x) acc) eqn:Hpresent;
+      [exact Hunique|]. constructor; [|exact Hunique]. intro Hin.
+    assert (Htrue : existsb (X.eqb x) acc = true).
+    { apply existsb_exists. exists x. split; [exact Hin|apply poly_key_eqb_refl]. }
+    congruence.
+  Qed.
+
+  Lemma poly_vars_fold_support : forall xs acc x,
+    In x (fold_left
+      (fun acc y => if existsb (X.eqb y) acc then acc else y :: acc) xs acc) ->
+    In x acc \/ In x xs.
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros acc x Hin; cbn [fold_left] in Hin.
+    - now left.
+    - destruct (IH _ x Hin) as [Hhead|Htail].
+      + destruct (existsb (X.eqb y) acc); [now left|].
+        destruct Hhead as [Hsame|Hhead]; [right; now left|now left].
+      + right. now right.
+  Qed.
+
+  Lemma poly_vars_of_nodup : forall P, NoDup (vars_of P).
+  Proof.
+    intro P. unfold vars_of. apply poly_vars_fold_nodup. constructor.
+  Qed.
+
+  Lemma poly_vars_of_support : forall P x,
+    In x (vars_of P) -> exists r, In r P /\ In x (map fst (lhs r)).
+  Proof.
+    intros P x Hin. unfold vars_of in Hin.
+    apply poly_vars_fold_support in Hin as [Hempty|Hin]; [contradiction|].
+    now apply in_flat_map in Hin.
+  Qed.
+
+  Lemma poly_normal_row_keys : forall r x,
+    In x (map fst (lhs (poly_normal_row X.encode r))) -> In x (map fst (lhs r)).
+  Proof.
+    intros r x Hin. apply in_map_iff in Hin as [p [Hsame Hp]]. subst x.
+    cbn [poly_normal_row lhs] in Hp. now apply poly_normal_coef_keys in Hp.
+  Qed.
+
+  Lemma poly_normal_rows_length : forall P, length (poly_normal_rows P) = length P.
+  Proof. intro P. unfold poly_normal_rows. apply length_map. Qed.
+
+  Lemma poly_normal_rows_normal : forall P, normal (poly_normal_rows P).
+  Proof.
+    intro P. unfold normal, poly_normal_rows. apply Forall_map, Forall_forall.
+    intros r Hr. cbn [poly_normal_row lhs]. apply poly_normal_coef_nodup.
+  Qed.
+
+  Lemma poly_normal_row_length : forall r,
+    length (lhs (poly_normal_row X.encode r)) <= length (lhs r).
+  Proof.
+    intro r. cbn [poly_normal_row lhs]. apply poly_normal_length.
+  Qed.
+
+  Lemma poly_normal_rows_variables : forall P,
+    incl (vars_of (poly_normal_rows P)) (vars_of P).
+  Proof.
+    intros P x Hin. destruct (poly_vars_of_support _ _ Hin) as [r [Hr Hx]].
+    unfold poly_normal_rows in Hr. apply in_map_iff in Hr as [p [Hsame Hp]]. subst r.
+    apply poly_vars_of_contains with (r := p); [exact Hp|].
+    now apply poly_normal_row_keys in Hx.
+  Qed.
+
+  Lemma poly_normal_rows_n : forall P, n (poly_normal_rows P) <= n P.
+  Proof.
+    intro P. unfold n. rewrite poly_normal_rows_length. apply Nat.add_le_mono_l.
+    apply NoDup_incl_length; [apply poly_vars_of_nodup|apply poly_normal_rows_variables].
+  Qed.
+
+  Lemma poly_normal_entail_dimension : forall P c,
+    n (poly_normal_rows P) + length (lhs (poly_normal_row X.encode c)) <=
+      n P + length (lhs c).
+  Proof.
+    intros P c. apply Nat.add_le_mono; [apply poly_normal_rows_n|apply poly_normal_row_length].
+  Qed.
+
+  (** Normal sources do not gain width when they cross the normalized engine boundary. *)
+  Lemma poly_normal_rows_ell : forall P, normal P -> ell (poly_normal_rows P) <= ell P.
+  Proof.
+    intros P Hnormal. unfold ell. apply Nat.add_le_mono.
+    - apply poly_max_bound; [lia|]. unfold poly_normal_rows. apply Forall_map, Forall_forall.
+      intros r Hr. eapply Nat.le_trans.
+      + apply poly_normal_row_bits. exact (proj1 (Forall_forall _ _) Hnormal r Hr).
+      + exact (poly_max_member _ C.row_bits 0 P r Hr).
+    - apply poly_max_bound; [lia|]. unfold poly_normal_rows. apply Forall_map, Forall_forall.
+      intros r Hr. eapply Nat.le_trans; [apply poly_normal_row_key_bits|].
+      exact (poly_max_member _ C.row_key_bits 0 P r Hr).
+  Qed.
+
+  Lemma poly_normal_entail_width_normal : forall P c, normal P -> normal [c] ->
+    ell (poly_normal_rows P) + C.row_bits (poly_normal_row X.encode c) +
+      C.row_key_bits (poly_normal_row X.encode c) <=
+      ell P + C.row_bits c + C.row_key_bits c.
+  Proof.
+    intros P c HP Hc. pose proof (poly_normal_rows_ell P HP) as Hrows.
+    pose proof (poly_normal_row_bits c (Forall_inv Hc)) as Hbits.
+    pose proof (poly_normal_row_key_bits c) as Hkeys. lia.
+  Qed.
+
+  (** Raw sources and the target share the same global logarithmic width. *)
+  Lemma poly_normal_entail_width_raw : forall P c,
+    ell (poly_normal_rows P) + C.row_bits (poly_normal_row X.encode c) +
+      C.row_key_bits (poly_normal_row X.encode c) <=
+      2 * nell (Reached (c :: P)) + 1.
+  Proof.
+    intros P c.
+    destruct (poly_raw_normal_widths (c :: P) c (or_introl eq_refl)) as [Hck Hcb].
+    assert (Hrows_bits : fold_right Nat.max 0 (map C.row_bits (poly_normal_rows P)) <=
+      poly_raw_bits (c :: P)).
+    { apply poly_max_bound; [lia|]. unfold poly_normal_rows. apply Forall_map, Forall_forall.
+      intros r Hr. exact (proj2 (poly_raw_normal_widths (c :: P) r (or_intror Hr))). }
+    assert (Hrows_keys : fold_right Nat.max 0 (map C.row_key_bits (poly_normal_rows P)) <=
+      poly_raw_keys (c :: P)).
+    { apply poly_max_bound; [lia|]. unfold poly_normal_rows. apply Forall_map, Forall_forall.
+      intros r Hr. exact (proj1 (poly_raw_normal_widths (c :: P) r (or_intror Hr))). }
+    unfold ell. rewrite <- poly_raw_width. lia.
+  Qed.
+
+  Lemma poly_normal_entail_budget_normal : forall P c, normal P -> normal [c] ->
+    poly_entail_budget (poly_normal_rows P) (poly_normal_row X.encode c) <=
+      poly_entail_budget P c.
+  Proof.
+    intros P c HP Hc. unfold poly_entail_budget. rewrite poly_normal_rows_length.
+    pose proof (poly_normal_entail_dimension P c) as Hdim.
+    pose proof (poly_normal_entail_width_normal P c HP Hc) as Hbits.
+    apply poly_fmcost_mono; lia.
+  Qed.
+
+  Lemma poly_normal_entail_budget_raw : forall P c,
+    poly_entail_budget (poly_normal_rows P) (poly_normal_row X.encode c) <=
+      4 * fmcost (n P + length (lhs c)) (length P + 1)
+        (n P + length (lhs c)) (length P + 1) (nell (Reached (c :: P))).
+  Proof.
+    intros P c. unfold poly_entail_budget. rewrite poly_normal_rows_length.
+    pose proof (poly_normal_entail_dimension P c) as Hdim.
+    pose proof (poly_normal_entail_width_raw P c) as Hbits.
+    eapply Nat.le_trans; [|apply poly_fmcost_double_width].
+    apply poly_fmcost_mono; lia.
+  Qed.
+
+  (** A uniform normal-row envelope also bounds a complete row-map normalization. *)
+  Lemma T_poly_normal_rows_bounded : forall P dim keys bits,
+    Forall (poly_input_envelope dim keys bits) P ->
+    (T_poly_normal_rows P <= (poly_normal_row_factor + 4) * N.of_nat (length P + 1) *
+      N.of_nat (dim + 1) * N.of_nat (keys + bits + 1))%N.
+  Proof.
+    intros P dim keys bits Hrows.
+    set (entry_work := (N.of_nat (dim + 1) * N.of_nat (keys + bits + 1))%N).
+    assert (Hpositive : (1 <= entry_work)%N).
+    { unfold entry_work. change (1 * 1 <= N.of_nat (dim + 1) *
+        N.of_nat (keys + bits + 1))%N. apply N.mul_le_mono; lia. }
+    assert (Hcallback : forall r, In r P ->
+      (T_poly_normal_row X.encode X.T_encode r <= poly_normal_row_factor * entry_work)%N).
+    { intros r Hr. unfold entry_work. rewrite N.mul_assoc.
+      apply T_poly_normal_row_bounded. exact (proj1 (Forall_forall _ _) Hrows r Hr). }
+    pose proof (poly_T_map_members _ _ (poly_normal_row X.encode)
+      (T_poly_normal_row X.encode X.T_encode) (poly_normal_row_factor * entry_work)%N P
+      Hcallback) as Hmap.
+    pose proof (poly_clock_linear_count_bound poly_normal_row_factor 1
+      (N.of_nat (length P)) (N.of_nat (length P + 1)) entry_work ltac:(lia) Hpositive)
+      as Hlinear.
+    assert (Hmap_total : (ListDef.T_map (poly_normal_row X.encode)
+      (T_poly_normal_row X.encode X.T_encode) P <=
+      (poly_normal_row_factor + 2) * N.of_nat (length P + 1) * entry_work)%N).
+    { eapply N.le_trans; [exact Hmap|].
+      replace (poly_normal_row_factor + 1 + 1)%N with
+        (poly_normal_row_factor + 2)%N in Hlinear by lia. exact Hlinear. }
+    assert (Hmass : (1 <= N.of_nat (length P + 1) * entry_work)%N).
+    { change (1 * 1 <= N.of_nat (length P + 1) * entry_work)%N.
+      apply N.mul_le_mono; [lia|exact Hpositive]. }
+    time_unfold T_poly_normal_rows. time_simpl.
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    change (1 + ListDef.T_map (poly_normal_row X.encode)
+      (T_poly_normal_row X.encode X.T_encode) P <=
+      (poly_normal_row_factor + 4) * N.of_nat (length P + 1) *
+        N.of_nat (dim + 1) * N.of_nat (keys + bits + 1))%N.
+    replace ((poly_normal_row_factor + 4) * N.of_nat (length P + 1) *
+      N.of_nat (dim + 1) * N.of_nat (keys + bits + 1))%N with
+      ((poly_normal_row_factor + 4) * N.of_nat (length P + 1) * entry_work)%N
+      by (unfold entry_work; ring).
+    clear -Hmap_total Hmass. clearbody entry_work. nia.
+  Qed.
+
+  (** The unflagged inputs satisfy the same dimensions and widths as initialization. *)
+  Lemma poly_entail_plain_envelopes : forall P c, normal P -> normal [c] ->
+    Forall (poly_input_envelope (n P + length (lhs c))
+      (poly_entail_keys P c) (poly_entail_bits P c)) (c :: P).
+  Proof.
+    intros P c HP Hc. constructor.
+    - unfold poly_input_envelope. split; [exact (Forall_inv Hc)|].
+      split; [lia|]. unfold poly_entail_keys, poly_entail_bits. split; lia.
+    - apply Forall_forall. intros r Hr. unfold poly_input_envelope. split.
+      + exact (proj1 (Forall_forall _ _) HP r Hr).
+      + split.
+        * pose proof (poly_row_dimension P r HP Hr). unfold n. lia.
+        * pose proof (poly_max_member _ C.row_key_bits 0 P r Hr).
+          pose proof (poly_max_member _ C.row_bits 0 P r Hr).
+          unfold poly_entail_keys, poly_entail_bits. split; lia.
+  Qed.
+
+  Definition poly_entail_normalize_factor : N := (2 * poly_normal_row_factor + 16)%N.
+
+  Lemma T_poly_entail_normalize_normal : forall P c, normal P -> normal [c] ->
+    (T_poly_normal_rows P + T_poly_normal_row X.encode X.T_encode c <=
+      poly_entail_normalize_factor * N.of_nat (poly_entail_budget P c))%N.
+  Proof.
+    intros P c HP Hc.
+    set (dim := n P + length (lhs c)).
+    set (mlen := length P + 1).
+    set (keys := poly_entail_keys P c).
+    set (bits := poly_entail_bits P c).
+    set (count := (N.of_nat (mlen + 1)^2)%N).
+    set (entry_work := (N.of_nat (dim + 1) * N.of_nat (keys + bits + 1))%N).
+    set (work := (count * entry_work)%N).
+    pose proof (poly_entail_plain_envelopes P c HP Hc) as Henvelopes.
+    pose proof (T_poly_normal_rows_bounded P dim keys bits (Forall_inv_tail Henvelopes)) as Hrows.
+    pose proof (T_poly_normal_row_bounded c dim keys bits (Forall_inv Henvelopes)) as Htarget.
+    assert (Hcount : (N.of_nat (length P + 1) <= count)%N).
+    { unfold count, mlen. rewrite N.pow_2_r. nia. }
+    assert (Hcount_positive : (1 <= count)%N) by (eapply N.le_trans; [|exact Hcount]; lia).
+    assert (Hrows_total : (T_poly_normal_rows P <= (poly_normal_row_factor + 4) * work)%N).
+    { eapply N.le_trans; [exact Hrows|]. unfold work, entry_work.
+      rewrite !N.mul_assoc. apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_l.
+      exact Hcount. }
+    assert (Hentry : (entry_work <= work)%N).
+    { unfold work. rewrite <- (N.mul_1_l entry_work) at 1.
+      now apply N.mul_le_mono_r. }
+    assert (Htarget_total : (T_poly_normal_row X.encode X.T_encode c <=
+      poly_normal_row_factor * work)%N).
+    { eapply N.le_trans; [exact Htarget|].
+      replace (poly_normal_row_factor * N.of_nat (dim + 1) *
+        N.of_nat (keys + bits + 1))%N with
+        (poly_normal_row_factor * entry_work)%N by (unfold entry_work; ring).
+      now apply N.mul_le_mono_l. }
+    assert (Hsum : (T_poly_normal_rows P + T_poly_normal_row X.encode X.T_encode c <=
+      poly_entail_normalize_factor * work)%N).
+    { unfold poly_entail_normalize_factor. clear -Hrows_total Htarget_total.
+      clearbody work. nia. }
+    assert (Hwork_bound : (work <= N.of_nat (poly_entail_budget P c))%N).
+    { pose proof (poly_fmcost_initial_charge dim mlen (keys + bits)) as Hmeasure.
+      replace work with (N.of_nat ((mlen + 1)^2 * (dim + 1) * (keys + bits + 1))).
+      - unfold poly_entail_budget. fold dim mlen. rewrite <- poly_entail_width. fold keys bits.
+        clear -Hmeasure. lia.
+      - unfold work, count, entry_work.
+        rewrite !Nat2N.inj_mul, poly_nat_square, N.pow_2_r. ring. }
+    eapply N.le_trans; [exact Hsum|]. now apply N.mul_le_mono_l.
+  Qed.
+
+  Definition poly_entail_wrapper_factor : N :=
+    (poly_entail_factor + poly_entail_normalize_factor + 8)%N.
+
+  (** The new wrapper preserves the existing normal-input public envelope. *)
+  Lemma T_poly_entail_bounded : forall P c, normal P -> normal [c] ->
+    (T_entail_cert P c <= poly_entail_wrapper_factor *
+      N.of_nat (poly_entail_budget P c))%N.
+  Proof.
+    intros P c HP Hc.
+    assert (Hnormal_P : normal (poly_normal_rows P)) by apply poly_normal_rows_normal.
+    assert (Hnormal_c : normal [poly_normal_row X.encode c]).
+    { change (normal (poly_normal_rows [c])). apply poly_normal_rows_normal. }
+    pose proof (T_poly_entail_engine_bounded (poly_normal_rows P) (poly_normal_row X.encode c)
+      Hnormal_P Hnormal_c) as Hengine.
+    pose proof (poly_normal_entail_budget_normal P c HP Hc) as Hbudget.
+    assert (Hengine_total : (T_entail_engine (poly_normal_rows P) (poly_normal_row X.encode c) <=
+      poly_entail_factor * N.of_nat (poly_entail_budget P c))%N).
+    { eapply N.le_trans; [exact Hengine|]. apply N.mul_le_mono_l. clear -Hbudget. lia. }
+    pose proof (T_poly_entail_normalize_normal P c HP Hc) as Hnormalize.
+    pose proof (poly_entail_budget_positive P c) as Hpositive.
+    set (work := N.of_nat (poly_entail_budget P c)) in *.
+    time_unfold T_entail_cert. time_simpl.
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    unfold poly_entail_wrapper_factor.
+    clear -Hengine_total Hnormalize Hpositive. clearbody work. nia.
+  Qed.
+
+  (** A row pays for its own occurrences at the shared raw-input width. *)
+  Lemma T_poly_raw_normal_row_global : forall Q r, In r Q ->
+    (T_poly_normal_row X.encode X.T_encode r <=
+      poly_raw_row_factor * N.of_nat (length (lhs r) + 1) *
+        N.of_nat (nell (Reached Q) + 1))%N.
+  Proof.
+    intros Q r Hr.
+    pose proof (T_poly_raw_normal_row_bounded r (length (lhs r))
+      (C.row_key_bits r) (C.row_bits r) (Nat.le_refl _) (Nat.le_refl _)
+      (Nat.le_refl _)) as Hrow.
+    pose proof (poly_max_member _ C.row_key_bits 0 Q r Hr) as Hkeys.
+    pose proof (poly_max_member _ C.row_bits 0 Q r Hr) as Hbits.
+    pose proof (poly_raw_row_terms Q r Hr) as Hlength.
+    pose proof (Nat.log2_le_mono _ _ Hlength) as Hlog.
+    eapply N.le_trans; [exact Hrow|]. apply N.mul_le_mono_l.
+    unfold nell, ell. cbn [prows]. lia.
+  Qed.
+
+  (** Mapping row normalization adds the occurrence charges, rather than their maximum. *)
+  Lemma T_poly_normal_map_occurrences : forall P factor bits,
+    (forall r, In r P -> (T_poly_normal_row X.encode X.T_encode r <=
+      factor * N.of_nat (length (lhs r) + 1) * N.of_nat (bits + 1))%N) ->
+    (ListDef.T_map (poly_normal_row X.encode) (T_poly_normal_row X.encode X.T_encode) P <=
+      (factor + 2) * N.of_nat (terms (Reached P) + length P + 1) *
+        N.of_nat (bits + 1))%N.
+  Proof.
+    intro P. induction P as [|p P IH]; intros factor bits Hrows.
+    - time_unfold ListDef.T_map. time_cbn.
+      change (1 <= (factor + 2) * 1 * N.of_nat (bits + 1))%N. nia.
+    - pose proof (Hrows p (or_introl eq_refl)) as Hhead.
+      specialize (IH factor bits (fun r Hr => Hrows r (or_intror Hr))).
+      time_unfold ListDef.T_map. time_cbn.
+      change (1 + (T_poly_normal_row X.encode X.T_encode p +
+        ListDef.T_map (poly_normal_row X.encode) (T_poly_normal_row X.encode X.T_encode) P) <=
+        (factor + 2) * N.of_nat
+          (length (lhs p) + terms (Reached P) + S (length P) + 1) *
+            N.of_nat (bits + 1))%N.
+      rewrite !Nat2N.inj_add, Nat2N.inj_succ in *.
+      change (N.of_nat 1) with 1%N in *.
+      assert (Hwidth : (1 <= N.of_nat bits + 1)%N) by lia.
+      clear -Hhead IH Hwidth. nia.
+  Qed.
+
+  Definition poly_entail_raw_budget (P : list (lcons X.t)) (c : lcons X.t) : nat :=
+    terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) +
+      fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
+        (length P + 1) (nell (Reached (c :: P))).
+
+  (** The terminal recurrence charge pays for one normalization unit per input row. *)
+  Lemma poly_entail_raw_normalization_charge : forall P c,
+    (terms (Reached (c :: P)) + length P + 2) *
+      (nell (Reached (c :: P)) + 1) <= poly_entail_raw_budget P c.
+  Proof.
+    intros P c. set (dim := n P + length (lhs c)).
+    set (mlen := length P + 1). set (bits := nell (Reached (c :: P))).
+    pose proof (poly_fmcost_fuel_mono 0 dim (Nat.le_0_l _) dim mlen mlen bits) as Hfuel.
+    change ((mlen + 1) * (dim + mlen + 1) * (bits + 1) <=
+      fmcost dim mlen dim mlen bits) in Hfuel.
+    assert (Hbase : (mlen + 1) * (bits + 1) <=
+      (mlen + 1) * (dim + mlen + 1) * (bits + 1)).
+    { apply Nat.mul_le_mono_r. nia. }
+    unfold poly_entail_raw_budget. fold dim mlen bits.
+    replace (terms (Reached (c :: P)) + length P + 2) with
+      (terms (Reached (c :: P)) + (mlen + 1)) by (unfold mlen; lia).
+    rewrite Nat.mul_add_distr_r. lia.
+  Qed.
+
+  Definition poly_entail_raw_normalize_factor : N := (poly_raw_row_factor + 8)%N.
+
+  (** Normalizing the public raw boundary fits its explicit occurrence prefix. *)
+  Lemma T_poly_entail_normalize_raw : forall P c,
+    (T_poly_normal_rows P + T_poly_normal_row X.encode X.T_encode c <=
+      poly_entail_raw_normalize_factor * N.of_nat (poly_entail_raw_budget P c))%N.
+  Proof.
+    intros P c. set (bits := nell (Reached (c :: P))).
+    pose proof (T_poly_normal_map_occurrences P poly_raw_row_factor bits
+      (fun r Hr => T_poly_raw_normal_row_global (c :: P) r (or_intror Hr))) as Hmap.
+    pose proof (T_poly_raw_normal_row_global (c :: P) c (or_introl eq_refl)) as Htarget.
+    fold bits in Htarget.
+    set (source_mass := N.of_nat (terms (Reached P) + length P + 1)) in *.
+    set (target_mass := N.of_nat (length (lhs c) + 1)) in *.
+    set (width := N.of_nat (bits + 1)) in *.
+    assert (Hpositive : (1 <= width)%N) by (unfold width; lia).
+    assert (Hmass : (1 <= source_mass + target_mass)%N).
+    { unfold source_mass, target_mass. lia. }
+    assert (Hsum : (T_poly_normal_rows P + T_poly_normal_row X.encode X.T_encode c <=
+      poly_entail_raw_normalize_factor * (source_mass + target_mass) * width)%N).
+    { time_unfold T_poly_normal_rows. time_simpl.
+      change (fun x : X.t => X.T_encode x) with X.T_encode.
+      change (1 + ListDef.T_map (poly_normal_row X.encode)
+        (T_poly_normal_row X.encode X.T_encode) P +
+        T_poly_normal_row X.encode X.T_encode c <=
+        poly_entail_raw_normalize_factor * (source_mass + target_mass) * width)%N.
+      unfold poly_entail_raw_normalize_factor.
+      clear -Hmap Htarget Hpositive Hmass.
+      clearbody source_mass target_mass width. nia. }
+    assert (Hmass_bound : ((source_mass + target_mass) * width <=
+      N.of_nat (poly_entail_raw_budget P c))%N).
+    { pose proof (poly_entail_raw_normalization_charge P c) as Hcharge.
+      replace ((source_mass + target_mass) * width)%N with
+        (N.of_nat ((terms (Reached (c :: P)) + length P + 2) * (bits + 1))).
+      - unfold bits. clear -Hcharge. lia.
+      - unfold source_mass, target_mass, width.
+        change (N.of_nat ((length (lhs c) + terms (Reached P) + length P + 2) *
+          (bits + 1)) =
+          (N.of_nat (terms (Reached P) + length P + 1) +
+            N.of_nat (length (lhs c) + 1)) * N.of_nat (bits + 1))%N.
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add. cbn [N.of_nat]. ring. }
+    eapply N.le_trans; [exact Hsum|]. rewrite <- N.mul_assoc.
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  Definition poly_entail_raw_factor : N :=
+    (4 * poly_entail_factor + poly_entail_raw_normalize_factor + 8)%N.
+
+  (** The normalized engine preserves the original raw-input time envelope. *)
+  Lemma T_poly_entail_raw_bounded : forall P c,
+    (T_entail_cert P c <= poly_entail_raw_factor *
+      N.of_nat (poly_entail_raw_budget P c))%N.
+  Proof.
+    intros P c.
+    assert (HP : normal (poly_normal_rows P)) by apply poly_normal_rows_normal.
+    assert (Hc : normal [poly_normal_row X.encode c]).
+    { change (normal (poly_normal_rows [c])). apply poly_normal_rows_normal. }
+    pose proof (T_poly_entail_engine_bounded (poly_normal_rows P) (poly_normal_row X.encode c)
+      HP Hc) as Hengine.
+    pose proof (poly_normal_entail_budget_raw P c) as Hbudget.
+    assert (Hbudget_raw : poly_entail_budget (poly_normal_rows P)
+      (poly_normal_row X.encode c) <= 4 * poly_entail_raw_budget P c).
+    { unfold poly_entail_raw_budget. lia. }
+    assert (Hengine_total : (T_entail_engine (poly_normal_rows P) (poly_normal_row X.encode c)
+      <= 4 * poly_entail_factor * N.of_nat (poly_entail_raw_budget P c))%N).
+    { eapply N.le_trans; [exact Hengine|].
+      replace (4 * poly_entail_factor * N.of_nat (poly_entail_raw_budget P c))%N
+        with (poly_entail_factor * N.of_nat (4 * poly_entail_raw_budget P c))%N
+        by (rewrite Nat2N.inj_mul; change (N.of_nat 4) with 4%N; ring).
+      apply N.mul_le_mono_l. clear -Hbudget_raw. lia. }
+    pose proof (T_poly_entail_normalize_raw P c) as Hnormalize.
+    assert (Hpositive : (1 <= N.of_nat (poly_entail_raw_budget P c))%N).
+    { unfold poly_entail_raw_budget. pose proof (poly_fmcost_positive
+        (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
+        (length P + 1) (nell (Reached (c :: P)))). lia. }
+    set (work := N.of_nat (poly_entail_raw_budget P c)) in *.
+    time_unfold T_entail_cert. time_simpl.
+    change (fun x : X.t => X.T_encode x) with X.T_encode.
+    unfold poly_entail_raw_factor.
+    clear -Hengine_total Hnormalize Hpositive. clearbody work. nia.
+  Qed.
+
 End PolyClockCore.
 
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
@@ -9228,7 +9972,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros e s. eapply N.le_trans; [apply poly_range_size_bounded|].
     apply N.mul_le_mono_r. unfold c_num, poly_assume_factor. lia.
   Qed.
-  Definition c_poly : N := (poly_subst_factor + poly_fm_factor + poly_entail_factor + 1)%N.
+  Definition c_poly : N := (poly_subst_factor + poly_fm_factor + poly_entail_wrapper_factor + 1)%N.
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_poly * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
@@ -9287,13 +10031,15 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros g es s. unfold assume_work. rewrite Nat2N.inj_add, N2Nat.id. reflexivity.
   Qed.
-  Definition k_cert : N := 1%N. (* STUB *)
+  Definition k_cert : N := poly_entail_raw_factor.
   Lemma T_entail_cert_raw : forall P c,
     (T_entail_cert P c <= k_cert * N.of_nat
       (terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) +
        fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
          (length P + 1) (nell (Reached (c :: P)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c. exact (T_poly_entail_raw_bounded P c).
+  Qed.
   Lemma entail_cert_size : forall P c k, entail_cert P c = Some k ->
     (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
         (C.lsize c + C.cbits P (mults k) + 1)) <=
@@ -9471,6 +10217,10 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       end) b.
   Proof.
     intros a b. unfold leb.
+    assert (Hentails : forall r, entails_row a r = entails a r).
+    { intro r. unfold entails_row, entails.
+      destruct (entail_cert a r) as [k|] eqn:Hcertificate; [|reflexivity].
+      symmetry. exact (proj1 (entail_cert_returned a r k Hcertificate)). }
     assert (Hhead : forall r, keep_row a r =
       match lrel r with
       | RLe => entails a r
@@ -9478,7 +10228,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           (entails a (LCons _ (map (fun p => (fst p, (- snd p)%Z)) (lhs r)) RLe
             (- rhs r)%Z))
       end).
-    { intro r. unfold keep_row. destruct (lrel r); [|reflexivity].
+    { intro r. unfold keep_row. destruct (lrel r); rewrite !Hentails; [|reflexivity].
       assert (Hnegative : poly_scale_coef (-1)%Z (lhs r) =
         map (fun p => (fst p, (- snd p)%Z)) (lhs r)).
       { unfold poly_scale_coef. apply map_ext. intros [x z]. cbn [fst snd]. f_equal. }
