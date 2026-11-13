@@ -9537,7 +9537,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     UnionFind.wf (db_forest db) /\ UnionFind.card (db_forest db) = N.to_nat (ids db) /\
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
-    row_store_ok db.
+    row_store_ok db /\ database_wf db.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
 
@@ -9870,7 +9870,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db work r Hinv Hparent.
     unfold inv_on in Hinv. destruct Hinv as (_ & _ & _ & _ & _ & _ & _ & Hforest & _).
-    unfold forest_ok in Hforest. destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore).
+    unfold forest_ok in Hforest.
+    destruct Hforest as (_ & _ & _ & _ & _ & _ & _ & Hstore & _).
     unfold row_store_ok in Hstore. destruct Hstore as [Hlinks _].
     unfold row_parent in Hparent |- *.
     destruct (PTrieCode.get r (row_links (db_row_store db))) as [p |] eqn:Hlink;
@@ -10302,7 +10303,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (forall r, In r rs <-> In r (rows db) /\ fst (fst r) = f /\
         permute perm (snd (fst r) ++ option_list (snd r)) = u) /\
       N.to_nat (proj_count db s u) = length rs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db work s f perm u Hinv Hslot.
+    assert (Hbase : database_wf db).
+    { unfold inv_on, forest_ok in Hinv. tauto. }
+    destruct (wf_projection_counts db Hbase s f perm u Hslot)
+      as [rs [Hnodup [Hmembers Hcount]]].
+    exists rs. split; [exact Hnodup |]. split.
+    - intro r. unfold rows. rewrite <- RowMap.elements_trie. exact (Hmembers r).
+    - exact Hcount.
+  Qed.
 
   (** The counter of the empty index is recorded. *)
   Lemma F_counter_one : forall db, inv db -> In 1%positive (index_counters db).
