@@ -166,22 +166,169 @@ Module EnvBudget (X : KEY_T) (M : MAP_T X) (L : WORD_LANGUAGE_T)
     <: BUDGET E S.
   Include ENV_BUDGET_SPEC X M L W C B V E S P.
 
+  (** Optional bindings retain their declared variable and canonical value. *)
+  Definition binding_inv (p : S.prog) (x : X.t) (a : option V.t) : Prop :=
+    match a with
+    | None => True
+    | Some v => In x (P.variables p) /\ value_inv p x v
+    end.
+
+  (** Every stored binding in an invariant map has its declared width. *)
+  Lemma inv_get : forall p m x, inv p (Reached m) -> binding_inv p x (M.get x m).
+  Proof.
+    intros p m x [Hwf Hvalues]. rewrite Forall_forall in Hvalues.
+    unfold binding_inv. destruct (M.get x m) as [a|] eqn:Hget; [|constructor].
+    apply (Hvalues (x, a)). apply (proj2 (M.elements_spec V.t m x a Hwf)). exact Hget.
+  Qed.
+
+  (** Pointwise binding invariants suffice for a consistent reached map. *)
+  Lemma inv_of_get : forall p m, M.wf m ->
+    (forall x, binding_inv p x (M.get x m)) -> inv p (Reached m).
+  Proof.
+    intros p m Hwf Hget. split; [exact Hwf|]. apply Forall_forall.
+    intros [x a] Hin. specialize (Hget x). unfold binding_inv in Hget.
+    rewrite (proj1 (M.elements_spec V.t m x a Hwf) Hin) in Hget. exact Hget.
+  Qed.
+
+  (** Merging invariant bindings preserves the environment representation. *)
+  Lemma inv_merge : forall p ma mb (f : option V.t -> option V.t -> option V.t),
+    inv p (Reached ma) -> inv p (Reached mb) -> f None None = None ->
+    (forall x a b, binding_inv p x a -> binding_inv p x b -> binding_inv p x (f a b)) ->
+    inv p (Reached (M.merge f ma mb)).
+  Proof.
+    intros p ma mb f Ha Hb Hnone Hf. apply inv_of_get.
+    - apply M.wf_merge; [exact (proj1 Ha)|exact (proj1 Hb)].
+    - intro x. rewrite (M.get_merge V.t V.t V.t f ma mb x Hnone).
+      apply Hf; now apply inv_get.
+  Qed.
+
+  (** Updating a declared variable keeps support and canonical values. *)
+  Lemma inv_set : forall p m x a, inv p (Reached m) -> In x (P.variables p) ->
+    value_inv p x a -> inv p (Reached (M.set x a m)).
+  Proof.
+    intros p m x a Hinv Hdeclared Ha. apply inv_of_get.
+    - apply M.wf_set. exact (proj1 Hinv).
+    - intro y. destruct (X.eqb_spec y x) as [Heq|Hneq].
+      + subst y. rewrite M.get_set_same. split; assumption.
+      + rewrite M.get_set_other by exact Hneq. now apply inv_get.
+  Qed.
+
+  (** Tagged top is permitted at every declared width. *)
+  Lemma value_inv_top : forall p x, value_inv p x V.top.
+  Proof.
+    intros p x. rewrite D.top_tag. constructor.
+  Qed.
+
+  (** Tagged bottom is permitted at every declared width. *)
+  Lemma value_inv_bot : forall p x, value_inv p x V.bot.
+  Proof.
+    intros p x. rewrite D.bot_tag. constructor.
+  Qed.
+
+  (** A payload operation preserving canonical values also preserves its common width. *)
+  Lemma value_inv_binary : forall p x f a b,
+    (forall w r s, C.canonical w r -> C.canonical w s -> C.canonical w (f w r s)) ->
+    value_inv p x a -> value_inv p x b ->
+    value_inv p x (budget_binary W.pis_bot f a b).
+  Proof.
+    intros p x f a b Hf Ha Hb.
+    destruct a as [|wa ra|], b as [|wb rb|]; cbn [budget_binary];
+      try exact Ha; try exact Hb; try exact Logic.I.
+    destruct Ha as [Hwa Hra], Hb as [Hwb Hrb]. subst wa wb.
+    rewrite Pos.eqb_refl. unfold budget_norm.
+    destruct (W.pis_bot (P.width_of p x) (f (P.width_of p x) ra rb)); [constructor|].
+    split; [reflexivity|now apply Hf].
+  Qed.
+
+  (** Tagged join retains the declared operand width. *)
+  Lemma value_inv_join : forall p x a b,
+    value_inv p x a -> value_inv p x b -> value_inv p x (V.join a b).
+  Proof.
+    intros p x a b Ha Hb. rewrite D.join_tag.
+    apply value_inv_binary; [exact C.canonical_join|exact Ha|exact Hb].
+  Qed.
+
+  (** Tagged widening retains the declared operand width. *)
+  Lemma value_inv_widen : forall p x q a b,
+    value_inv p x a -> value_inv p x b -> value_inv p x (V.widen q a b).
+  Proof.
+    intros p x q a b Ha Hb. rewrite D.widen_tag. destruct (V.leb b a); [exact Ha|].
+    apply value_inv_binary; [exact (C.canonical_widen q)|exact Ha|exact Hb].
+  Qed.
+
+  (** Tagged narrowing retains the declared operand width. *)
+  Lemma value_inv_narrow : forall p x a b,
+    value_inv p x a -> value_inv p x b -> value_inv p x (V.narrow a b).
+  Proof.
+    intros p x a b Ha Hb. apply D.narrow_width; assumption.
+  Qed.
+
+  (** Tagged intersection retains the declared operand width. *)
+  Lemma value_inv_meet : forall p x a b,
+    value_inv p x a -> value_inv p x b -> value_inv p x (V.meet a b).
+  Proof.
+    intros p x a b Ha Hb. apply D.meet_width; assumption.
+  Qed.
+
+  (** Empty reached maps satisfy every program's representation invariant. *)
+  Lemma inv_top : forall p, inv p E.top.
+  Proof.
+    intro p. rewrite E.F_top. apply inv_of_get; [apply M.wf_empty|].
+    intro x. rewrite M.get_empty. constructor.
+  Qed.
+
+  (** Reading a consistent environment returns a canonical value at the declared width. *)
+  Lemma read_width : forall p m x, inv p (Reached m) ->
+    D.at_width (P.width_of p x) (E.read m x).
+  Proof.
+    intros p m x Hinv. rewrite E.read_spec.
+    pose proof (inv_get p m x Hinv) as Hget.
+    destruct (M.get x m) as [a|]; [exact (proj2 Hget)|apply value_inv_top].
+  Qed.
+
   (** Unreachable environments satisfy the representation invariant. *)
   Lemma inv_bot : forall p, inv p E.bot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. rewrite E.F_bot. constructor.
+  Qed.
 
   (** Pointwise join keeps declared widths and canonical payloads. *)
   Lemma inv_join : forall p a b, inv p a -> inv p b -> inv p (E.join a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Ha Hb. rewrite E.F_join.
+    destruct a as [|ma], b as [|mb]; try assumption.
+    rewrite E.F_join_map. apply inv_merge; try assumption; [reflexivity|].
+    intros x [va|] [vb|] Hx Hy; try exact Logic.I.
+    destruct Hx as [Hdeclared Hva], Hy as [_ Hvb].
+    cbn [binding_inv].
+    destruct (V.is_bot (V.join va vb)); [constructor|].
+    split; [exact Hdeclared|now apply value_inv_join].
+  Qed.
 
   (** Pointwise narrowing keeps declared widths and canonical payloads. *)
   Lemma inv_narrow : forall p a b, inv p a -> inv p b -> inv p (E.narrow a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Ha Hb. rewrite E.F_narrow. destruct (E.is_bot b); [exact Hb|].
+    destruct a as [|ma], b as [|mb]; try assumption.
+    apply inv_merge; try assumption; [reflexivity|].
+    intros x [va|] [vb|] Hx Hy; try exact Hx; try exact Hy; try exact Logic.I.
+    destruct Hx as [Hdeclared Hva], Hy as [_ Hvb].
+    split; [exact Hdeclared|now apply value_inv_narrow].
+  Qed.
 
   (** Payload widening keeps the representation invariant for every widening parameter. *)
   Lemma inv_widen : forall p w a b,
     inv p a -> inv p b -> inv p (E.widen w a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p q a b Ha Hb. rewrite E.F_widen. destruct (E.leb b a); [exact Ha|].
+    destruct a as [|ma], b as [|mb]; try assumption.
+    apply inv_merge; try assumption; [reflexivity|].
+    intros x [va|] [vb|] Hx Hy; try exact Logic.I.
+    destruct Hx as [Hdeclared Hva], Hy as [_ Hvb].
+    cbn [binding_inv].
+    destruct (V.is_bot (V.widen q va vb)); [constructor|].
+    split; [exact Hdeclared|now apply value_inv_widen].
+  Qed.
 
   (** Typed operational rows preserve the representation invariant on every contribution. *)
   Lemma inv_rows : forall p r look a ss, S.wf p -> In r (S.rows p) ->
