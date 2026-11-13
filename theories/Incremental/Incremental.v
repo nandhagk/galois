@@ -9810,6 +9810,80 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     unfold T_changed_keys; lia.
   Qed.
 
+  Lemma invalid_initial_arithmetic : forall q count changed seed,
+    (1 <= q)%N -> (changed <= 32 * q * count + 2)%N ->
+    (seed <= 24 * q * count + 1)%N ->
+    (1 + (changed + 1 + seed) <= 128 * q * (count + 1))%N.
+  Proof.
+    intros q count changed seed Hq Hchanged Hseed.
+    set (work := (q * count)%N).
+    replace (32 * q * count)%N with (32 * work)%N in Hchanged
+      by (unfold work; ring).
+    replace (24 * q * count)%N with (24 * work)%N in Hseed
+      by (unfold work; ring).
+    replace (128 * q * (count + 1))%N with (128 * work + 128 * q)%N
+      by (unfold work; ring).
+    lia.
+  Qed.
+
+  Lemma T_invalid_initial_le : forall p p' ch st,
+    S.wf p -> S.wf p' ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
+    (T_invalid_initial p p' ch st <=
+      128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (invalid_changed_work p p' ch + 1) *
+        N.of_nat (width p st + width p' st + kwidth st + 1))%N.
+  Proof.
+    intros p p' ch st Hwf Hwf' Hlisted.
+    pose proof (T_invalid_changed_keys_le p p' ch st Hwf Hwf' Hlisted)
+      as Hchanged.
+    pose proof (T_invalid_seed_fold_le st (changed_keys p p' ch)
+      {| invalid_pending := []; invalid_seen := PTrieCode.empty;
+         invalid_bad := []; invalid_done := [];
+         invalid_snapshots := inc_snapshots st |}) as Hseed.
+    pose proof (invalid_changed_keys_bits p p' ch st Hwf Hwf' Hlisted)
+      as Hbits.
+    apply nat_to_N_le in Hbits; rewrite Nat2N.inj_mul in Hbits.
+    assert (Hseed' : (List.T_fold_left (invalid_seed_one st)
+      (fun current x => T_invalid_seed_one st current x)
+      (changed_keys p p' ch)
+      {| invalid_pending := []; invalid_seen := PTrieCode.empty;
+         invalid_bad := []; invalid_done := [];
+         invalid_snapshots := inc_snapshots st |} <=
+      24 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (invalid_changed_work p p' ch) *
+        N.of_nat (width p st + width p' st + kwidth st + 1) + 1)%N).
+    { eapply N.le_trans; [exact Hseed|].
+      apply N.add_le_mono_r.
+      replace (24 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (invalid_changed_work p p' ch) *
+        N.of_nat (width p st + width p' st + kwidth st + 1))%N with
+        ((24 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1)) *
+          (N.of_nat (invalid_changed_work p p' ch) *
+            N.of_nat (width p st + width p' st + kwidth st + 1)))%N by ring.
+      apply N.mul_le_mono_l; exact Hbits. }
+    unfold T_invalid_initial, T_inc_snapshots; cbn beta.
+    set (base := (S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N)
+      in Hchanged, Hseed' |- *.
+    set (count := N.of_nat (invalid_changed_work p p' ch))
+      in Hchanged, Hseed' |- *.
+    set (widthN := N.of_nat (width p st + width p' st + kwidth st + 1))
+      in Hchanged, Hseed' |- *.
+    set (q := (base * widthN)%N).
+    assert (Hq : (1 <= q)%N).
+    { change (1 * 1 <= base * widthN)%N.
+      apply N.mul_le_mono; [unfold base; lia|unfold widthN; lia]. }
+    replace (32 * base * count * widthN)%N with (32 * q * count)%N
+      in Hchanged by (unfold q; ring).
+    replace (24 * base * count * widthN)%N with (24 * q * count)%N
+      in Hseed' by (unfold q; ring).
+    replace (N.of_nat (invalid_changed_work p p' ch + 1)) with
+      (count + 1)%N by (unfold count; rewrite Nat2N.inj_add; reflexivity).
+    replace (128 * base * (count + 1) * widthN)%N with
+      (128 * q * (count + 1))%N by (unfold q; ring).
+    eapply invalid_initial_arithmetic; [exact Hq|exact Hchanged|exact Hseed'].
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
