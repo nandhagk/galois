@@ -661,6 +661,135 @@ Module Env (X : KEY) (M : MAP X) (L : LANG) (V : VALUE_DOMAIN L)
     intros x [|m] st c Hgamma; [contradiction|].
     apply set_gamma; [exact Hgamma|apply V.gamma_top].
   Qed.
+
+  (** Annotation correctness records the shape and meaning of every cached subtree. *)
+  Fixpoint ann_covers (st : X.t -> L.val) (n : ann L.op X.t V.t)
+      (e : term L.op X.t) {struct n} : Prop :=
+    (forall c, eval_term L.eval st e = Some c -> V.gamma (root n) c) /\
+    match n, e with
+    | ALeaf x _, Leaf y => x = y
+    | ANode o _ ns, Node p es => o = p /\
+      (fix children (ns : list (ann L.op X.t V.t)) (es : list (term L.op X.t)) :=
+        match ns, es with
+        | nil, nil => True
+        | n :: ns, e :: es => ann_covers st n e /\ children ns es
+        | _, _ => False
+        end) ns es
+    | _, _ => False
+    end.
+
+  (** Forward annotation gives correct cached facts throughout the term tree. *)
+  Lemma annotate_covers : forall e m st,
+    (forall x, V.gamma (read m x) (st x)) -> ann_covers st (annotate m e) e.
+  Proof.
+    induction e as [x|o es IH]; intros m st Hmodel; split.
+    - intros c Heval. exact (annotate_value_sound (Leaf x) m st c Hmodel Heval).
+    - reflexivity.
+    - intros c Heval. exact (annotate_value_sound (Node o es) m st c Hmodel Heval).
+    - split; [reflexivity|].
+      induction IH as [|e Hhead es Htail IHtail]; cbn [map]; [constructor|].
+      split; [now apply Hhead|exact IHtail].
+  Qed.
+
+  (** A correct node pairs every cached child with the corresponding source term. *)
+  Lemma ann_covers_children : forall st o a ns p es,
+    ann_covers st (ANode o a ns) (Node p es) ->
+    o = p /\ Forall2 (ann_covers st) ns es.
+  Proof.
+    intros st o a ns p es [_ [Hop Hchildren]]. split; [exact Hop|].
+    revert es Hchildren. induction ns as [|n ns IH]; intros [|e es] Hchildren;
+      cbn in Hchildren; try contradiction; constructor.
+    - exact (proj1 Hchildren).
+    - apply IH. exact (proj2 Hchildren).
+  Qed.
+
+  (** Successful child evaluation attaches a concrete result to each correct cached child. *)
+  Lemma ann_children_results : forall st ns es cs,
+    Forall2 (ann_covers st) ns es -> eval_terms L.eval st es = Some cs ->
+    Forall2 (fun n c => exists e,
+      ann_covers st n e /\ eval_term L.eval st e = Some c) ns cs.
+  Proof.
+    intros st ns es cs Hchildren. revert cs.
+    induction Hchildren as [|n e ns es Hcover Hchildren IH]; intros cs Heval;
+      cbn [eval_terms map sequence] in Heval.
+    - injection Heval as Hvalues. subst cs. constructor.
+    - destruct (eval_term L.eval st e) as [c|] eqn:Hvalue; [|discriminate].
+      destruct (sequence (map (eval_term L.eval st) es)) as [ds|] eqn:Htail;
+        [|discriminate].
+      injection Heval as Hvalues. subst cs. constructor.
+      + exists e. split; assumption.
+      + now apply IH.
+  Qed.
+
+  (** A correct cached root covers every successful result of its source term. *)
+  Lemma ann_covers_root : forall st n e c,
+    ann_covers st n e -> eval_term L.eval st e = Some c -> V.gamma (root n) c.
+  Proof.
+    intros st [x a|o a ns] e c Hcover Heval; exact (proj1 Hcover c Heval).
+  Qed.
+
+  (** Correct cached children cover the same ordered list of concrete results. *)
+  Lemma ann_results_roots : forall st ns cs,
+    Forall2 (fun n c => exists e,
+      ann_covers st n e /\ eval_term L.eval st e = Some c) ns cs ->
+    Forall2 V.gamma (map root ns) cs.
+  Proof.
+    intros st ns cs Hresults.
+    induction Hresults as [|n c ns cs Hresult Hresults IH]; cbn [map]; constructor.
+    - destruct Hresult as [e [Hcover Heval]]. eapply ann_covers_root; eassumption.
+    - exact IH.
+  Qed.
+
+  (** Writing a fact about the current concrete value retains every represented variable. *)
+  Lemma set_same_models : forall m st x a,
+    (forall y, V.gamma (read m y) (st y)) -> V.gamma a (st x) ->
+    forall y, V.gamma (read (M.set x a m) y) (st y).
+  Proof.
+    intros m st x a Hmodel Ha y. unfold read.
+    destruct (X.eqb_spec y x) as [Heq|Hneq].
+    - subst y. rewrite M.get_set_same. exact Ha.
+    - rewrite M.get_set_other by exact Hneq. apply Hmodel.
+  Qed.
+
+  (** Checked refinement preserves a compatible model and never signals bottom. *)
+  Lemma refine_checked_covers : forall n m st e q c,
+    (forall x, V.gamma (read m x) (st x)) -> ann_covers st n e ->
+    eval_term L.eval st e = Some c -> V.gamma q c ->
+    (forall x, V.gamma (read (fst (refine_checked q n m)) x) (st x)) /\
+      snd (refine_checked q n m) = false.
+  Proof.
+    induction n as [x a|o a ns IH]; intros m st e q c Hmodel Hcover Heval Hq.
+    - destruct e as [y|p es]; destruct Hcover as [Hroot Hshape]; [|contradiction].
+      cbn in Hshape. subst y. cbn [eval_term] in Heval.
+      injection Heval as Hvalue. subst c. cbn [refine_checked fst snd].
+      assert (Hmeet : V.gamma (V.meet (read m x) q) (st x)) by
+        (apply V.gamma_meet; [apply Hmodel|exact Hq]).
+      split; [now apply set_same_models|now apply value_nonbot with (c := st x)].
+    - destruct e as [x|p es].
+      { destruct Hcover as [_ Hshape]. exact (False_rect _ Hshape). }
+      apply ann_covers_children in Hcover as [Hop Hchildren]. subst p.
+      cbn [eval_term] in Heval.
+      destruct (sequence (map (eval_term L.eval st) es)) as [cs|] eqn:Hvalues;
+        [|discriminate].
+      pose proof (ann_children_results st ns es cs Hchildren Hvalues) as Hresults.
+      pose proof (ann_results_roots st ns cs Hresults) as Hroots.
+      pose proof (V.backward_sound o q (map root ns) cs c Hroots Heval Hq) as Hrequests.
+      cbn [refine_checked].
+      remember (V.backward o q (map root ns)) as qs eqn:Hrequests_def.
+      clear Hrequests_def Hchildren Hvalues Heval Hq Hroots.
+      revert m qs Hmodel Hrequests IH.
+      induction Hresults as [|n value ns cs Hresult Hresults IHresults];
+        intros m qs Hmodel Hrequests IH.
+      + inversion Hrequests; subst. cbn. split; [exact Hmodel|reflexivity].
+      + inversion IH as [|head Hchild tail Htail]; subst.
+        inversion Hrequests as [|request value' requests values' Hrequest Hrequests']; subst.
+        destruct Hresult as [e [Hcover Heval]].
+        destruct (Hchild m st e request value Hmodel Hcover Heval Hrequest)
+          as [Hnext Hflag].
+        cbn. rewrite Hflag. cbn [orb].
+        exact (IHresults (fst (refine_checked request n m)) requests Hnext Hrequests' Htail).
+  Qed.
+
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
