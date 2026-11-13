@@ -968,10 +968,6 @@ Module Index (V : VALUE) <: INDEX V.
   Lemma wf_remove : forall a r ix, wf a ix -> wf a (remove r ix).
   Proof. Admitted. (* STUB *)
 
-  Lemma mem_remove : forall a r ix u, wf a ix ->
-    (mem (remove r ix) u <-> u <> r /\ mem ix u).
-  Proof. Admitted. (* STUB *)
-
   Lemma mem_arity : forall a ix u, wf a ix -> mem ix u -> length u = a.
   Proof.
     intros a ix u [_ Harity]. apply Harity.
@@ -2046,6 +2042,69 @@ Module Index (V : VALUE) <: INDEX V.
       exact Hmember.
   Qed.
 
+  Lemma remove_walk_preserves_other : forall original walk st pre u,
+    valid original -> shape (fst st) -> refines original (fst st) ->
+    node original (snd st) pre ->
+    (forall q, (snd st <= q)%positive -> read_node (fst st) q = read_node original q) ->
+    mem original (pre ++ walk) -> u <> pre ++ walk -> mem (fst st) u ->
+    mem (fst (fold_left remove_step_st walk st)) u.
+  Proof.
+    intros original walk. induction walk as [| c walk IH];
+      intros [ix n] pre u Hvalid Hshape Hrefines Hnode Hread Htarget Hneq Hmember;
+      cbn [fold_left]; [exact Hmember |].
+    cbn [fst snd] in Hshape, Hrefines, Hnode, Hread, Hmember.
+    pose proof (valid_shape original Hvalid) as Horiginal_shape.
+    pose proof (proj1 (node_member_suffix original n pre (c :: walk) Hnode) Htarget) as Htail.
+    rewrite contains_from_cons in Htail.
+    destruct (child original n c) as [m |] eqn:Horiginal_child; [| discriminate].
+    assert (Hchild : child ix n c = Some m).
+    { rewrite child_raw by exact (proj1 (proj2 Hshape)).
+      rewrite (Hread n (Pos.le_refl n)).
+      rewrite <- child_raw by exact (proj1 (proj2 Horiginal_shape)).
+      exact Horiginal_child. }
+    pose proof (remove_step_pointer ix n c m Hchild) as Hpointer.
+    pose proof (proj1 (child_forward original n c m (proj1 Horiginal_shape) Horiginal_child))
+      as Hforward.
+    apply (IH (remove_step_st (ix, n) c) (pre ++ [c]) u).
+    - exact Hvalid.
+    - apply shape_remove_step. exact Hshape.
+    - eapply refines_trans; [exact Hrefines |]. apply remove_step_refines. exact Hshape.
+    - rewrite Hpointer. apply (child_node original n pre c m Hnode). exact Horiginal_child.
+    - intros q Hbound. rewrite Hpointer in Hbound.
+      assert (Habove : (n < q)%positive) by (eapply Pos.lt_le_trans; eassumption).
+      rewrite remove_step_other_nodes.
+      + apply Hread. now apply Pos.lt_le_incl.
+      + cbn [snd]. intro Heq. subst q. exact (Pos.lt_irrefl _ Habove).
+    - rewrite <- app_assoc. exact Htarget.
+    - rewrite <- app_assoc. exact Hneq.
+    - apply (remove_step_preserves_other original ix n c pre walk u);
+        try assumption.
+      apply Hread, Pos.le_refl.
+  Qed.
+
+  Lemma remove_membership_complete : forall ix r u, valid ix ->
+    u <> r -> mem ix u -> mem (remove r ix) u.
+  Proof.
+    intros ix r u Hvalid Hneq Hmember.
+    pose proof (valid_shape ix Hvalid) as Hshape.
+    unfold remove, remove_finish. destruct (contains r ix) eqn:Htarget; [| exact Hmember].
+    set (st := fold_left remove_step_st r (start ix)).
+    assert (Hbefore : mem (fst st) u).
+    { apply (remove_walk_preserves_other ix r (start ix) [] u);
+        try assumption; try apply refines_refl; reflexivity. }
+    unfold contains, contains_from in Htarget.
+    destruct (seek ix (root ix) r) as [m |] eqn:Hpath; [| discriminate].
+    pose proof (remove_walk_pointer r (start ix) m Hshape Hpath) as Hpointer.
+    change (snd st = m) in Hpointer.
+    change (contains_from 1%positive u
+      (mark_terminal (fst st) (snd st) false (index_cell_width ix)) = true).
+    apply mark_terminal_delete. split; [| exact Hbefore].
+    intro Hseek. rewrite Hpointer in Hseek.
+    pose proof (seek_refinement ix (fst st) (remove_walk_refines r (start ix) Hshape)
+      u 1%positive m Hseek) as Horiginal.
+    apply Hneq. eapply (shape_paths_unique ix Hshape); [exact Horiginal | exact Hpath].
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
@@ -2176,6 +2235,14 @@ Module Index (V : VALUE) <: INDEX V.
     (mem (insert r ix) u <-> u = r \/ mem ix u).
   Proof.
     intros a r ix u [Hvalid _] _. apply insert_membership. now apply valid_shape.
+  Qed.
+
+  Lemma mem_remove : forall a r ix u, wf a ix ->
+    (mem (remove r ix) u <-> u <> r /\ mem ix u).
+  Proof.
+    intros a r ix u [Hvalid _]. split.
+    - apply remove_membership_sound. now apply valid_shape.
+    - intros [Hneq Hmember]. now apply remove_membership_complete.
   Qed.
 
 End Index.
