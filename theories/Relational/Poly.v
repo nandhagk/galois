@@ -5212,7 +5212,6 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition lat (m : nat) : nat :=
     2 * (m + 1) * (fmcost m (m + 1) m (m + 1) (m + 1) + m^2 + 1).
   Definition size (s : t) : nat := lat (2 * mu s).
-  Definition k_poly : N := 1. (* STUB *)
   Definition assign_work (x : X.t) (e : term L.op X.t) (s : t) : nat :=
     terms s * (nell s + 1) +
       (length (prows s) + 3)^2 *
@@ -10400,6 +10399,414 @@ Module PolyClockCore (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
+  (** One row test uses the recurrence already reserved by the lattice size. *)
+  Definition poly_lattice_budget (m : nat) : nat :=
+    fmcost m (m + 1) m (m + 1) (m + 1) + m^2 + 1.
+
+  Definition poly_lattice_envelope (P : list (lcons X.t)) (c : lcons X.t)
+      (m : nat) : Prop :=
+    terms (Reached (c :: P)) <= m /\ n P + length (lhs c) <= m /\
+    length P <= m /\ nell (Reached (c :: P)) <= m.
+
+  Lemma poly_lattice_budget_positive : forall m, 1 <= poly_lattice_budget m.
+  Proof. intro m. unfold poly_lattice_budget. lia. Qed.
+
+  Lemma poly_lattice_budget_square : forall m,
+    (m + 1)^2 <= 4 * poly_lattice_budget m.
+  Proof.
+    intro m. assert (Hsquare : (m + 1)^2 <= 4 * (m^2 + 1)).
+    { destruct m; cbn [Nat.pow]; nia. }
+    unfold poly_lattice_budget. lia.
+  Qed.
+
+  Lemma poly_lattice_mu_positive : forall s, 1 <= mu s.
+  Proof. intro s. unfold mu, nell. lia. Qed.
+
+  Lemma poly_lattice_rows_bound : forall s, length (prows s) <= mu s.
+  Proof. intro s. unfold mu, n. lia. Qed.
+
+  Lemma poly_lattice_mu_unreached : mu Unreached = 1.
+  Proof. reflexivity. Qed.
+
+  Lemma poly_lattice_ell_cons : forall P c,
+    ell (c :: P) <= ell P + C.row_bits c + C.row_key_bits c.
+  Proof. intros P c. unfold ell. cbn [map fold_right]. lia. Qed.
+
+  (** A target from the other state fits the sum of their raw numeric sizes. *)
+  Lemma poly_lattice_member_inputs : forall P Q r, In r Q ->
+    poly_lattice_envelope P r (mu (Reached P) + mu (Reached Q)) /\
+    length (lhs r) <= mu (Reached P) + mu (Reached Q) /\
+    C.row_bits r <= mu (Reached P) + mu (Reached Q).
+  Proof.
+    intros P Q r Hr.
+    pose proof (poly_raw_row_terms Q r Hr) as Hlength.
+    pose proof (poly_max_member _ C.row_bits 0 Q r Hr) as Hbits.
+    pose proof (poly_max_member _ C.row_key_bits 0 Q r Hr) as Hkeys.
+    assert (Hrow_width : C.row_bits r + C.row_key_bits r <= ell Q)
+      by (unfold ell; lia).
+    pose proof (poly_lattice_ell_cons P r) as Hell.
+    assert (Hlog : Nat.log2 (terms (Reached (r :: P))) <=
+      terms (Reached (r :: P))) by (apply Nat.log2_le_lin; lia).
+    assert (Hterms : terms (Reached (r :: P)) = length (lhs r) + terms (Reached P))
+      by reflexivity.
+    unfold poly_lattice_envelope, mu, nell. cbn [prows].
+    rewrite Hterms in Hlog |- *.
+    assert (Hcount : length P <= n P) by (unfold n; lia).
+    repeat split; lia.
+  Qed.
+
+  (** Changing relation tags or coefficient signs preserves this size-only envelope. *)
+  Lemma poly_lattice_envelope_shape : forall P r c m,
+    length (lhs c) = length (lhs r) -> C.row_bits c = C.row_bits r ->
+    C.row_key_bits c = C.row_key_bits r ->
+    poly_lattice_envelope P r m -> poly_lattice_envelope P c m.
+  Proof.
+    intros P r c m Hlength Hbits Hkeys Henv.
+    assert (Hterms : terms (Reached (c :: P)) = terms (Reached (r :: P))).
+    { change (length (lhs c) + terms (Reached P) =
+        length (lhs r) + terms (Reached P)). now rewrite Hlength. }
+    assert (Hell : ell (c :: P) = ell (r :: P)).
+    { unfold ell. cbn [map fold_right]. now rewrite Hbits, Hkeys. }
+    assert (Hwidth : nell (Reached (c :: P)) = nell (Reached (r :: P))).
+    { unfold nell. cbn [prows]. now rewrite Hell, Hterms. }
+    unfold poly_lattice_envelope in *. now rewrite Hterms, Hwidth, Hlength.
+  Qed.
+
+  Definition poly_lattice_false_row : lcons X.t := LCons X.t nil RLe (-1)%Z.
+
+  (** The false constant row adds at most one arithmetic bit to its source. *)
+  Lemma poly_lattice_bottom_envelope : forall P m,
+    mu (Reached P) + 1 <= m -> poly_lattice_envelope P poly_lattice_false_row m.
+  Proof.
+    intros P m Hm.
+    pose proof (poly_lattice_ell_cons P poly_lattice_false_row) as Hell.
+    change (ell (poly_lattice_false_row :: P) <= ell P + 1 + 0) in Hell.
+    assert (Hterms : terms (Reached (poly_lattice_false_row :: P)) = terms (Reached P))
+      by reflexivity.
+    assert (Hwidth : nell (Reached (poly_lattice_false_row :: P)) <=
+      nell (Reached P) + 1).
+    { unfold nell. cbn [prows]. rewrite Hterms. lia. }
+    unfold poly_lattice_envelope. rewrite Hterms.
+    change (terms (Reached P) <= m /\ n P + 0 <= m /\ length P <= m /\
+      nell (Reached (poly_lattice_false_row :: P)) <= m).
+    unfold mu in Hm. cbn [prows] in Hm.
+    assert (Hcount : length P <= n P) by (unfold n; lia).
+    repeat split; lia.
+  Qed.
+
+  (** The raw preprocessing prefix and full elimination fit one common row budget. *)
+  Lemma poly_lattice_entail_budget : forall P c m, poly_lattice_envelope P c m ->
+    poly_entail_raw_budget P c <= 2 * poly_lattice_budget m.
+  Proof.
+    intros P c m [Hterms [Hdim [Hrows Hbits]]].
+    assert (Hprefix : terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) <=
+      m * (m + 1)) by (apply Nat.mul_le_mono; lia).
+    assert (Hsquare : m * (m + 1) <= 2 * (m^2 + 1)).
+    { destruct m; cbn [Nat.pow]; nia. }
+    assert (Hrecurrence :
+      fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
+        (length P + 1) (nell (Reached (c :: P))) <=
+      fmcost m (m + 1) m (m + 1) (m + 1)).
+    { apply poly_fmcost_mono; lia. }
+    unfold poly_entail_raw_budget, poly_lattice_budget. lia.
+  Qed.
+
+  Lemma poly_lattice_lat_charge : forall m,
+    (N.of_nat (m + 1) * N.of_nat (poly_lattice_budget m) <= N.of_nat (lat m))%N.
+  Proof.
+    intro m. unfold lat. fold (poly_lattice_budget m).
+    rewrite !Nat2N.inj_mul. change (N.of_nat 2) with 2%N. nia.
+  Qed.
+
+  Lemma poly_lattice_lat_budget : forall m,
+    (N.of_nat (poly_lattice_budget m) <= N.of_nat (lat m))%N.
+  Proof.
+    intro m. eapply N.le_trans; [|apply poly_lattice_lat_charge].
+    rewrite <- (N.mul_1_l (N.of_nat (poly_lattice_budget m))) at 1.
+    apply N.mul_le_mono_r. lia.
+  Qed.
+
+  Lemma poly_lattice_lat_positive : forall m, (1 <= N.of_nat (lat m))%N.
+  Proof.
+    intro m. eapply N.le_trans; [|apply poly_lattice_lat_budget].
+    pose proof (poly_lattice_budget_positive m). lia.
+  Qed.
+
+  Lemma poly_lattice_lat_mono : forall m n, m <= n -> lat m <= lat n.
+  Proof.
+    intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
+    apply Nat.add_le_mono; [apply Nat.add_le_mono|lia].
+    - apply poly_fmcost_mono; lia.
+    - now apply Nat.pow_le_mono_l.
+  Qed.
+
+  (** A shared raw size is paid by the two public state sizes. *)
+  Lemma poly_lattice_lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
+  Proof.
+    intros a b. unfold size.
+    destruct (Nat.le_ge_cases (mu a) (mu b)) as [Hle|Hle].
+    - pose proof (poly_lattice_lat_mono (mu a + mu b) (2 * mu b) ltac:(lia)). lia.
+    - pose proof (poly_lattice_lat_mono (mu a + mu b) (2 * mu a) ltac:(lia)). lia.
+  Qed.
+
+  Definition poly_lattice_entail_factor : N := (2 * poly_entail_raw_factor + 4)%N.
+
+  (** A successful certificate needs no second execution of the raw checker. *)
+  Lemma T_poly_lattice_entails_row : forall P c m, poly_lattice_envelope P c m ->
+    (T_entails_row P c <= poly_lattice_entail_factor * N.of_nat (poly_lattice_budget m))%N.
+  Proof.
+    intros P c m Henv.
+    pose proof (T_poly_entail_raw_bounded P c) as Hproducer.
+    pose proof (poly_lattice_entail_budget P c m Henv) as Hbudget.
+    assert (Hproducer_total : (T_entail_cert P c <=
+      2 * poly_entail_raw_factor * N.of_nat (poly_lattice_budget m))%N).
+    { eapply N.le_trans; [exact Hproducer|].
+      replace (2 * poly_entail_raw_factor * N.of_nat (poly_lattice_budget m))%N with
+        (poly_entail_raw_factor * N.of_nat (2 * poly_lattice_budget m))%N
+        by (rewrite Nat2N.inj_mul; change (N.of_nat 2) with 2%N; ring).
+      apply N.mul_le_mono_l. clear -Hbudget. lia. }
+    pose proof (poly_lattice_budget_positive m) as Hpositive.
+    assert (Hwork : (1 <= N.of_nat (poly_lattice_budget m))%N) by lia.
+    set (work := N.of_nat (poly_lattice_budget m)) in *.
+    time_unfold T_entails_row. destruct (entail_cert P c); time_simpl;
+      unfold poly_lattice_entail_factor; clear -Hproducer_total Hwork;
+      clearbody work; rewrite N.mul_add_distr_r; lia.
+  Qed.
+
+  Definition poly_lattice_keep_factor : N := (2 * poly_lattice_entail_factor + 168)%N.
+
+  (** Equality inclusion pays for its two inequality queries and one target negation. *)
+  Lemma T_poly_lattice_keep_member : forall P Q r, In r Q ->
+    (T_keep_row P r <= poly_lattice_keep_factor *
+      N.of_nat (poly_lattice_budget (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q r Hr. set (m := mu (Reached P) + mu (Reached Q)).
+    destruct (poly_lattice_member_inputs P Q r Hr) as [Henv [Hlength Hbits]].
+    assert (Hupper : poly_lattice_envelope P (LCons X.t (lhs r) RLe (rhs r)) m).
+    { eapply poly_lattice_envelope_shape with (r := r); [reflexivity| | |exact Henv];
+        destruct r; reflexivity. }
+    assert (Hlower : poly_lattice_envelope P (poly_negate r) m).
+    { eapply poly_lattice_envelope_shape with (r := r); [apply poly_negate_row_length|
+        apply poly_negate_row_bits|apply poly_negate_row_key_bits|exact Henv]. }
+    pose proof (T_poly_lattice_entails_row P r m Henv) as Hdirect.
+    pose proof (T_poly_lattice_entails_row P _ m Hupper) as Hupper_time.
+    pose proof (T_poly_lattice_entails_row P _ m Hlower) as Hlower_time.
+    pose proof (T_poly_negate_bounded r m m Hlength Hbits) as Hnegate.
+    assert (Hsquare : (N.of_nat ((m + 1)^2) <=
+      4 * N.of_nat (poly_lattice_budget m))%N).
+    { pose proof (poly_lattice_budget_square m) as Hsquare_nat.
+      assert (Htransport : (N.of_nat ((m + 1)^2) <=
+        N.of_nat (4 * poly_lattice_budget m))%N) by lia.
+      rewrite Nat2N.inj_mul in Htransport. exact Htransport. }
+    assert (Hnegate_total : (T_poly_negate r <=
+      160 * N.of_nat (poly_lattice_budget m))%N).
+    { eapply N.le_trans; [exact Hnegate|].
+      replace (40 * N.of_nat (m + 1) * N.of_nat (m + 1))%N with
+        (40 * N.of_nat ((m + 1)^2))%N by (rewrite poly_nat_square; ring).
+      replace (160 * N.of_nat (poly_lattice_budget m))%N with
+        (40 * (4 * N.of_nat (poly_lattice_budget m)))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hpositive : (1 <= N.of_nat (poly_lattice_budget m))%N)
+      by (pose proof (poly_lattice_budget_positive m); lia).
+    set (work := N.of_nat (poly_lattice_budget m)) in *.
+    time_unfold T_keep_row. destruct (lrel r); time_simpl;
+      unfold poly_lattice_keep_factor;
+      clear -Hdirect Hupper_time Hlower_time Hnegate_total Hpositive;
+      clearbody work; nia.
+  Qed.
+
+  Definition poly_lattice_scan_factor : N := (poly_lattice_keep_factor + 4)%N.
+
+  Lemma T_poly_lattice_forallb : forall P Q,
+    (List.T_forallb (keep_row P) (T_keep_row P) Q <= poly_lattice_scan_factor *
+      N.of_nat (mu (Reached P) + mu (Reached Q) + 1) *
+      N.of_nat (poly_lattice_budget (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q. set (m := mu (Reached P) + mu (Reached Q)).
+    set (work := N.of_nat (poly_lattice_budget m)).
+    pose proof (poly_T_forallb_members _ (keep_row P) (T_keep_row P)
+      (poly_lattice_keep_factor * work)%N Q (T_poly_lattice_keep_member P Q)) as Hscan.
+    assert (Hcount : (N.of_nat (length Q + 1) <= N.of_nat (m + 1))%N).
+    { pose proof (poly_lattice_rows_bound (Reached Q)) as Hrows. cbn [prows] in Hrows.
+      unfold m. lia. }
+    assert (Hpositive : (1 <= work)%N)
+      by (unfold work; pose proof (poly_lattice_budget_positive m); lia).
+    pose proof (poly_clock_linear_count_bound poly_lattice_keep_factor 2
+      (N.of_nat (length Q)) (N.of_nat (m + 1)) work ltac:(lia) Hpositive) as Hlinear.
+    eapply N.le_trans; [exact Hscan|]. eapply N.le_trans; [exact Hlinear|].
+    repeat apply N.mul_le_mono_r. unfold poly_lattice_scan_factor. lia.
+  Qed.
+
+  Lemma T_poly_lattice_filter : forall P Q,
+    (List.T_filter (keep_row P) (T_keep_row P) Q <= poly_lattice_scan_factor *
+      N.of_nat (mu (Reached P) + mu (Reached Q) + 1) *
+      N.of_nat (poly_lattice_budget (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q. set (m := mu (Reached P) + mu (Reached Q)).
+    set (work := N.of_nat (poly_lattice_budget m)).
+    pose proof (poly_T_filter_members _ (keep_row P) (T_keep_row P)
+      (poly_lattice_keep_factor * work)%N Q (T_poly_lattice_keep_member P Q)) as Hscan.
+    assert (Hcount : (N.of_nat (length Q + 1) <= N.of_nat (m + 1))%N).
+    { pose proof (poly_lattice_rows_bound (Reached Q)) as Hrows. cbn [prows] in Hrows.
+      unfold m. lia. }
+    assert (Hpositive : (1 <= work)%N)
+      by (unfold work; pose proof (poly_lattice_budget_positive m); lia).
+    pose proof (poly_clock_linear_count_bound poly_lattice_keep_factor 1
+      (N.of_nat (length Q)) (N.of_nat (m + 1)) work ltac:(lia) Hpositive) as Hlinear.
+    eapply N.le_trans; [exact Hscan|]. eapply N.le_trans; [exact Hlinear|].
+    repeat apply N.mul_le_mono_r. unfold poly_lattice_scan_factor. lia.
+  Qed.
+
+  Definition poly_lattice_bottom_factor : N := (poly_lattice_entail_factor + 4)%N.
+
+  Lemma T_poly_lattice_is_bot : forall s m, mu s + 1 <= m ->
+    (T_is_bot s <= poly_lattice_bottom_factor * N.of_nat (poly_lattice_budget m))%N.
+  Proof.
+    intros [|P] m Hm.
+    - assert (Hpositive : (1 <= N.of_nat (poly_lattice_budget m))%N)
+        by (pose proof (poly_lattice_budget_positive m); lia).
+      time_unfold T_is_bot. time_simpl. unfold poly_lattice_bottom_factor. nia.
+    - pose proof (T_poly_lattice_entails_row P poly_lattice_false_row m
+        (poly_lattice_bottom_envelope P m Hm)) as Hquery.
+      assert (Hpositive : (1 <= N.of_nat (poly_lattice_budget m))%N)
+        by (pose proof (poly_lattice_budget_positive m); lia).
+      set (work := N.of_nat (poly_lattice_budget m)) in *.
+      time_unfold T_is_bot. time_simpl. fold poly_lattice_false_row.
+      unfold poly_lattice_bottom_factor. clear -Hquery Hpositive. clearbody work.
+      rewrite N.mul_add_distr_r. lia.
+  Qed.
+
+  Lemma T_poly_lattice_forallb_lat : forall P Q,
+    (List.T_forallb (keep_row P) (T_keep_row P) Q <= poly_lattice_scan_factor *
+      N.of_nat (lat (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q. eapply N.le_trans; [apply T_poly_lattice_forallb|].
+    rewrite <- N.mul_assoc. apply N.mul_le_mono_l. apply poly_lattice_lat_charge.
+  Qed.
+
+  Lemma T_poly_lattice_filter_lat : forall P Q,
+    (List.T_filter (keep_row P) (T_keep_row P) Q <= poly_lattice_scan_factor *
+      N.of_nat (lat (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q. eapply N.le_trans; [apply T_poly_lattice_filter|].
+    rewrite <- N.mul_assoc. apply N.mul_le_mono_l. apply poly_lattice_lat_charge.
+  Qed.
+
+  Lemma T_poly_lattice_is_bot_lat : forall s m, mu s + 1 <= m ->
+    (T_is_bot s <= poly_lattice_bottom_factor * N.of_nat (lat m))%N.
+  Proof.
+    intros s m Hm. eapply N.le_trans; [apply T_poly_lattice_is_bot; exact Hm|].
+    apply N.mul_le_mono_l. apply poly_lattice_lat_budget.
+  Qed.
+
+  Definition poly_lattice_factor : N :=
+    (2 * poly_lattice_scan_factor + 2 * poly_lattice_bottom_factor + 16)%N.
+
+  Lemma poly_lattice_factor_positive : (1 <= poly_lattice_factor)%N.
+  Proof. unfold poly_lattice_factor. lia. Qed.
+
+  Lemma poly_lattice_unit_bound : forall m,
+    (1 <= poly_lattice_factor * N.of_nat (lat m))%N.
+  Proof.
+    intro m. change (1 * 1 <= poly_lattice_factor * N.of_nat (lat m))%N.
+    apply N.mul_le_mono; [exact poly_lattice_factor_positive|apply poly_lattice_lat_positive].
+  Qed.
+
+  (** Inclusion traverses the target rows and uses the raw producer once per test. *)
+  Lemma T_poly_leb_lattice : forall a b,
+    (T_leb a b <= poly_lattice_factor * N.of_nat (lat (mu a + mu b)))%N.
+  Proof.
+    intros [|P] [|Q].
+    - time_unfold T_leb. time_simpl. apply poly_lattice_unit_bound.
+    - time_unfold T_leb. time_simpl. apply poly_lattice_unit_bound.
+    - pose proof (T_poly_lattice_is_bot_lat (Reached P)
+        (mu (Reached P) + mu Unreached)
+        ltac:(rewrite poly_lattice_mu_unreached; lia)) as Hbottom.
+      pose proof (poly_lattice_lat_positive (mu (Reached P) + mu Unreached)) as Hpositive.
+      set (work := N.of_nat (lat (mu (Reached P) + mu Unreached))) in *.
+      time_unfold T_leb. time_simpl. unfold poly_lattice_factor.
+      clear -Hbottom Hpositive. clearbody work. nia.
+    - pose proof (T_poly_lattice_forallb_lat P Q) as Hscan.
+      pose proof (poly_lattice_lat_positive (mu (Reached P) + mu (Reached Q))) as Hpositive.
+      set (work := N.of_nat (lat (mu (Reached P) + mu (Reached Q)))) in *.
+      time_unfold T_leb. time_simpl.
+      change (fun r : lcons X.t => T_keep_row P r) with (T_keep_row P).
+      unfold poly_lattice_factor. clear -Hscan Hpositive. clearbody work. nia.
+  Qed.
+
+  (** Appending the retained left rows costs no more than the shared lattice budget. *)
+  Lemma T_poly_lattice_join_append : forall P Q,
+    (Datatypes.T_app (filter (keep_row Q) P) (filter (keep_row P) Q) <=
+      N.of_nat (lat (mu (Reached P) + mu (Reached Q))))%N.
+  Proof.
+    intros P Q. pose proof (Datatypes.T_app_le
+      (filter (keep_row Q) P) (filter (keep_row P) Q)) as Happ.
+    pose proof (filter_length_le (keep_row Q) P) as Hlength.
+    pose proof (poly_lattice_rows_bound (Reached P)) as Hrows. cbn [prows] in Hrows.
+    set (m := mu (Reached P) + mu (Reached Q)).
+    eapply N.le_trans; [exact Happ|].
+    eapply N.le_trans with (m := N.of_nat (m + 1)); [unfold m; lia|].
+    eapply N.le_trans; [|apply poly_lattice_lat_charge].
+    rewrite <- (N.mul_1_r (N.of_nat (m + 1))) at 1.
+    apply N.mul_le_mono_l. pose proof (poly_lattice_budget_positive m). lia.
+  Qed.
+
+  (** Joining scans both raw states and concatenates the retained rows. *)
+  Lemma T_poly_join_lattice : forall a b,
+    (T_join a b <= poly_lattice_factor * N.of_nat (lat (mu a + mu b)))%N.
+  Proof.
+    intros [|P] [|Q].
+    - time_unfold T_join. time_simpl. apply poly_lattice_unit_bound.
+    - time_unfold T_join. time_simpl. apply poly_lattice_unit_bound.
+    - time_unfold T_join. time_simpl. apply poly_lattice_unit_bound.
+    - pose proof (T_poly_lattice_filter_lat Q P) as Hleft.
+      rewrite (Nat.add_comm (mu (Reached Q)) (mu (Reached P))) in Hleft.
+      pose proof (T_poly_lattice_filter_lat P Q) as Hright.
+      pose proof (T_poly_lattice_join_append P Q) as Happ.
+      pose proof (poly_lattice_lat_positive (mu (Reached P) + mu (Reached Q))) as Hpositive.
+      set (work := N.of_nat (lat (mu (Reached P) + mu (Reached Q)))) in *.
+      time_unfold T_join. time_simpl.
+      change (fun r : lcons X.t => T_keep_row Q r) with (T_keep_row Q).
+      change (fun r : lcons X.t => T_keep_row P r) with (T_keep_row P).
+      unfold poly_lattice_factor. clear -Hleft Hright Happ Hpositive.
+      clearbody work. nia.
+  Qed.
+
+  (** Widening scans the old rows, with one bottom query in its unreached branch. *)
+  Lemma T_poly_widen_lattice : forall p a b,
+    (T_widen p a b <= poly_lattice_factor * N.of_nat (lat (mu a + mu b)))%N.
+  Proof.
+    intros p [|P] b.
+    - pose proof (T_poly_lattice_is_bot_lat b (mu Unreached + mu b)
+        ltac:(rewrite poly_lattice_mu_unreached; lia)) as Hbottom.
+      pose proof (poly_lattice_lat_positive (mu Unreached + mu b)) as Hpositive.
+      set (work := N.of_nat (lat (mu Unreached + mu b))) in *.
+      time_unfold T_widen. time_simpl. unfold poly_lattice_factor.
+      clear -Hbottom Hpositive. clearbody work. nia.
+    - destruct b as [|Q].
+      + time_unfold T_widen. time_simpl. apply poly_lattice_unit_bound.
+      + pose proof (T_poly_lattice_filter_lat Q P) as Hscan.
+        rewrite (Nat.add_comm (mu (Reached Q)) (mu (Reached P))) in Hscan.
+        pose proof (poly_lattice_lat_positive (mu (Reached P) + mu (Reached Q))) as Hpositive.
+        set (work := N.of_nat (lat (mu (Reached P) + mu (Reached Q)))) in *.
+        time_unfold T_widen. time_simpl.
+        change (fun r : lcons X.t => T_keep_row Q r) with (T_keep_row Q).
+        unfold poly_lattice_factor. clear -Hscan Hpositive. clearbody work. nia.
+  Qed.
+
+  (** A single state's public size reserves enough room for its bottom query. *)
+  Lemma T_poly_is_bot_size : forall s,
+    (T_is_bot s <= poly_lattice_factor * N.of_nat (size s + 1))%N.
+  Proof.
+    intro s. pose proof (poly_lattice_mu_positive s) as Hmu.
+    eapply N.le_trans; [apply (T_poly_lattice_is_bot_lat s (2 * mu s)); lia|].
+    apply N.mul_le_mono.
+    - unfold poly_lattice_factor. lia.
+    - unfold size. lia.
+  Qed.
+
+  Definition k_poly : N := poly_lattice_factor.
+
 End PolyClockCore.
 
 Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
@@ -10622,24 +11029,39 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       unfold range_bits, range_work. cbn [prows]. rewrite !Nat2N.inj_add. nia.
   Qed.
 
-  Definition c_lat : N := 1. (* STUB *)
+  Definition c_lat : N := (poly_lattice_factor + 1)%N.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
     unfold c_lat. lia.
   Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply T_poly_leb_lattice|].
+    apply N.mul_le_mono; [unfold c_lat; lia|].
+    pose proof (poly_lattice_lat_size a b). lia.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. eapply N.le_trans; [apply T_poly_join_lattice|].
+    apply N.mul_le_mono; [unfold c_lat; lia|].
+    pose proof (poly_lattice_lat_size a b). lia.
+  Qed.
   Lemma T_is_bot_le : forall s,
     (T_is_bot s <= c_lat * N.of_nat (size s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro s. eapply N.le_trans; [apply T_poly_is_bot_size|].
+    apply N.mul_le_mono_r. unfold c_lat. lia.
+  Qed.
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. eapply N.le_trans; [apply T_poly_widen_lattice|].
+    apply N.mul_le_mono; [unfold c_lat; lia|].
+    pose proof (poly_lattice_lat_size a b). lia.
+  Qed.
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
@@ -10659,7 +11081,9 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
-    intros a b. time_unfold T_narrow. unfold c_lat. lia.
+    intros a b. time_unfold T_narrow.
+    change (1 * 1 <= c_lat * N.of_nat (size a + size b + 1))%N.
+    apply N.mul_le_mono; [exact c_lat_pos|lia].
   Qed.
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -10939,32 +11363,35 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   (** State size charges all stored numeric data. *)
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
-    intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
-    apply Nat.add_le_mono; [apply Nat.add_le_mono|lia].
-    - apply poly_fmcost_mono; lia.
-    - now apply Nat.pow_le_mono_l.
+    exact poly_lattice_lat_mono.
   Qed.
 
   Lemma lat_size : forall a b, lat (mu a + mu b) <= size a + size b.
   Proof.
-    intros a b. unfold size. destruct (Nat.le_ge_cases (mu a) (mu b)) as [Hle|Hle].
-    - pose proof (lat_mono (mu a + mu b) (2 * mu b) ltac:(lia)). lia.
-    - pose proof (lat_mono (mu a + mu b) (2 * mu a) ltac:(lia)). lia.
+    exact poly_lattice_lat_size.
   Qed.
 
   Lemma T1_leb : forall a b,
     (T_leb a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_poly_leb_lattice.
+  Qed.
   Lemma T1_join : forall a b,
     (T_join a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_poly_join_lattice.
+  Qed.
   Lemma T1_widen : forall p a b,
     (T_widen p a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_poly_widen_lattice.
+  Qed.
   Lemma T1_narrow : forall a b,
     (T_narrow a b <= k_poly * N.of_nat (lat (mu a + mu b)))%N.
   Proof.
-    intros a b. time_unfold T_narrow. unfold k_poly, lat. nia.
+    intros a b. time_unfold T_narrow. unfold k_poly.
+    change (1 * 1 <= poly_lattice_factor * N.of_nat (lat (mu a + mu b)))%N.
+    apply N.mul_le_mono; [exact poly_lattice_factor_positive|apply poly_lattice_lat_positive].
   Qed.
   Lemma F_size : forall s, size s = lat (2 * mu s).
   Proof.
