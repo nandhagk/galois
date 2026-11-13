@@ -9836,6 +9836,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
     row_store_ok db /\ projection_counts_ok db /\ database_history db /\ core_bridge db.
+  Lemma forest_ok_init : forall ds sl, forest_ok (init ds sl).
+  Proof.
+    intros ds sl. unfold forest_ok.
+    split.
+    - intros f k0 k Hloc. unfold located, locate, db_locate in Hloc.
+      cbn [init db_row_store row_history] in Hloc.
+      rewrite PTrie.get_empty in Hloc. discriminate.
+    - split; [apply metadata_init |].
+      split; [reflexivity |].
+      split; [apply UnionFind.wf_empty |].
+      split; [reflexivity |].
+      split; [exact (wf_equalities (init ds sl) (wf_init ds sl)) |].
+      split; [change (0 <= 0); lia |].
+      split; [apply row_store_ok_init |].
+      split; [apply init_projection_counts |].
+      split; [apply database_history_init |].
+      apply database_wf_core_bridge. apply wf_init.
+  Qed.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
 
