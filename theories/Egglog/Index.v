@@ -689,6 +689,146 @@ Module Index (V : VALUE) <: INDEX V.
     - injection Heq as Heq. apply V.encode_inj in Heq. now subst w.
   Qed.
 
+  Lemma child_forward : forall ix n c m, edge_shape ix -> child ix n c = Some m ->
+    (n < m <= next ix)%positive.
+  Proof.
+    intros ix n c m Hshape Hchild. unfold child in Hchild.
+    destruct (Pos.ltb (next ix) n); [discriminate |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| discriminate].
+    injection Hchild as <-. exact (proj2 (Hshape n (encode_cell c) edge Hget)).
+  Qed.
+
+  Lemma seek_forward : forall ix r n m, edge_shape ix -> seek ix n r = Some m ->
+    (n <= m)%positive.
+  Proof.
+    intros ix r. induction r as [| c r IH]; intros n m Hshape Hseek.
+    - cbn [seek] in Hseek. injection Hseek as <-. apply Pos.le_refl.
+    - cbn [seek] in Hseek.
+      destruct (child ix n c) as [child_node |] eqn:Hchild; [| discriminate].
+      eapply Pos.le_trans; [| eapply IH; eassumption].
+      apply Pos.lt_le_incl. exact (proj1 (child_forward ix n c child_node Hshape Hchild)).
+  Qed.
+
+  Lemma seek_strict : forall ix r n m, edge_shape ix -> r <> [] ->
+    seek ix n r = Some m -> (n < m)%positive.
+  Proof.
+    intros ix [| c r] n m Hshape Hnonempty Hseek; [contradiction |].
+    cbn [seek] in Hseek.
+    destruct (child ix n c) as [child_node |] eqn:Hchild; [| discriminate].
+    eapply Pos.lt_le_trans; [exact (proj1 (child_forward ix n c child_node Hshape Hchild)) |].
+    eapply seek_forward; eassumption.
+  Qed.
+
+  Lemma child_parents_unique : forall ix n c n' c' m,
+    parents_unique ix -> child ix n c = Some m -> child ix n' c' = Some m ->
+    n = n' /\ c = c'.
+  Proof.
+    intros ix n c n' c' m Hparents Hchild Hchild'.
+    unfold child in Hchild, Hchild'.
+    destruct (Pos.ltb (next ix) n), (Pos.ltb (next ix) n'); try discriminate.
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget; [| discriminate].
+    destruct (PTrieCode.get (encode_cell c') (node_edges (read_node ix n')))
+      as [edge' |] eqn:Hget'; [| discriminate].
+    destruct (Hparents n (encode_cell c) edge n' (encode_cell c') edge'
+      Hget Hget' ltac:(congruence)) as [Hnode Hcode].
+    split; [exact Hnode | now apply encode_cell_inj].
+  Qed.
+
+  (** Increasing identifiers and globally unique parents make root paths unique. *)
+  Lemma shape_paths_unique : forall ix, shape ix -> paths_unique ix.
+  Proof.
+    intros ix [Hshape [_ Hparents]] pre.
+    induction pre as [| c pre IH] using rev_ind; intros pre' n Hnode Hnode'.
+    - change (Some (root ix) = Some n) in Hnode. injection Hnode as <-.
+      destruct pre' as [| c' pre']; [reflexivity |].
+      pose proof (seek_strict ix (c' :: pre') (root ix) (root ix)
+        Hshape ltac:(discriminate) Hnode') as Hlt.
+      exfalso. exact (Pos.lt_irrefl _ Hlt).
+    - destruct (rev pre') as [| c' rest] eqn:Hrev.
+      + apply (f_equal (@rev (cell V.t))) in Hrev.
+        rewrite rev_involutive in Hrev. cbn [rev] in Hrev. subst pre'.
+        change (Some (root ix) = Some n) in Hnode'. injection Hnode' as <-.
+        pose proof (seek_strict ix (pre ++ [c]) (root ix) (root ix)
+          Hshape ltac:(destruct pre; discriminate) Hnode) as Hlt.
+        exfalso. exact (Pos.lt_irrefl _ Hlt).
+      + assert (Hpre' : pre' = rev rest ++ [c']).
+        { rewrite <- (rev_involutive pre'), Hrev. reflexivity. }
+        subst pre'. unfold node in Hnode, Hnode'.
+        rewrite seek_append in Hnode, Hnode'.
+        destruct (seek ix (root ix) pre) as [p |] eqn:Hpre; [| discriminate].
+        destruct (seek ix (root ix) (rev rest)) as [q |] eqn:Hrest; [| discriminate].
+        cbn [seek] in Hnode, Hnode'.
+        destruct (child ix p c) as [m |] eqn:Hchild; [| discriminate].
+        destruct (child ix q c') as [m' |] eqn:Hchild'; [| discriminate].
+        injection Hnode as ->. injection Hnode' as ->.
+        destruct (child_parents_unique ix p c q c' n Hparents Hchild Hchild') as [<- <-].
+        f_equal. exact (IH (rev rest) p Hpre Hrest).
+  Qed.
+
+  Lemma read_node_mark_same : forall ix n present bits,
+    read_node (mark_terminal ix n present bits) n =
+      IndexNode (node_edges (read_node ix n)) (node_degree (read_node ix n)) present.
+  Proof.
+    intros ix n present bits. unfold read_node, mark_terminal. cbn [index_nodes].
+    rewrite PTrie.get_set_same. reflexivity.
+  Qed.
+
+  Lemma read_node_mark_other : forall ix n present bits q, q <> n ->
+    read_node (mark_terminal ix n present bits) q = read_node ix q.
+  Proof.
+    intros ix n present bits q Hneq. unfold read_node, mark_terminal. cbn [index_nodes].
+    now rewrite PTrie.get_set_other.
+  Qed.
+
+  Lemma mark_node_edges : forall ix n present bits q,
+    node_edges (read_node (mark_terminal ix n present bits) q) =
+      node_edges (read_node ix q).
+  Proof.
+    intros ix n present bits q. destruct (Pos.eq_dec q n) as [-> | Hneq].
+    - rewrite read_node_mark_same. reflexivity.
+    - now rewrite read_node_mark_other.
+  Qed.
+
+  Lemma child_mark_terminal : forall ix n present bits q c,
+    child (mark_terminal ix n present bits) q c = child ix q c.
+  Proof.
+    intros ix n present bits q c. unfold child.
+    replace (next (mark_terminal ix n present bits)) with (next ix) by reflexivity.
+    rewrite mark_node_edges. reflexivity.
+  Qed.
+
+  Lemma seek_mark_terminal : forall ix r n present bits q,
+    seek (mark_terminal ix n present bits) q r = seek ix q r.
+  Proof.
+    intros ix r. induction r as [| c r IH]; intros n present bits q; cbn [seek].
+    - reflexivity.
+    - rewrite child_mark_terminal. destruct (child ix q c); [apply IH | reflexivity].
+  Qed.
+
+  Lemma mark_terminal_add : forall ix n bits q r,
+    contains_from q r (mark_terminal ix n true bits) = true <->
+      seek ix q r = Some n \/ contains_from q r ix = true.
+  Proof.
+    intros ix n bits q r. unfold contains_from. rewrite seek_mark_terminal.
+    destruct (seek ix q r) as [m |]; [| intuition discriminate].
+    destruct (Pos.eq_dec m n) as [-> | Hneq].
+    - rewrite read_node_mark_same. cbn [node_terminal]. intuition congruence.
+    - rewrite read_node_mark_other by exact Hneq. intuition congruence.
+  Qed.
+
+  Lemma mark_terminal_delete : forall ix n bits q r,
+    contains_from q r (mark_terminal ix n false bits) = true <->
+      seek ix q r <> Some n /\ contains_from q r ix = true.
+  Proof.
+    intros ix n bits q r. unfold contains_from. rewrite seek_mark_terminal.
+    destruct (seek ix q r) as [m |]; [| intuition discriminate].
+    destruct (Pos.eq_dec m n) as [-> | Hneq].
+    - rewrite read_node_mark_same. cbn [node_terminal]. intuition congruence.
+    - rewrite read_node_mark_other by exact Hneq. intuition congruence.
+  Qed.
+
   (** Positive cached suffix counts witness a live continuation below every edge. *)
   Lemma child_live : forall ix n c m, valid ix -> child ix n c = Some m ->
     exists suf, contains_from m suf ix = true.
