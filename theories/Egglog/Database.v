@@ -418,6 +418,29 @@ Proof.
     rewrite Pos2Nat.inj_succ in Htail. time_step slot_rank_positions.
 Qed.
 
+(** One prepared layout is bounded by the work charged for its source positions. *)
+Lemma T_prepare_slot_layout_le : forall perm,
+  (T_prepare_slot_layout perm <=
+    20 * N.of_nat ((length perm + 1) *
+      (fold_right Nat.add 0%nat (map S perm) + length perm + 1)))%N.
+Proof.
+  intro perm.
+  pose proof (T_slot_rank_positions_le 1 perm) as Hrank.
+  pose proof (T_slot_position_gaps_le 0 (slot_rank_positions 1 perm)) as Hgap.
+  rewrite slot_rank_positions_length, slot_rank_positions_mass in Hgap.
+  time_step prepare_slot_layout.
+Qed.
+
+(** Preparing the full layout list fits the released aggregate layout-work budget. *)
+Lemma T_prepare_slot_layouts_le : forall sl,
+  (T_prepare_slot_layouts sl <=
+    25 * N.of_nat (layout_work sl + length sl + 1))%N.
+Proof.
+  intro sl. induction sl as [| [f perm] sl IH]; time_step prepare_slot_layouts; time_step.
+  unfold T_prepare_slot_layouts, layout_work in IH.
+  revert IH. time_simpl. intro IH. time_cbn_all. nia.
+Qed.
+
 (** Stable row identifiers retain historical keys through collisions. *)
 Record database_row_store (C : Type) := {
   row_history : list ((positive * list C) * positive);
