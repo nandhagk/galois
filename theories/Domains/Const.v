@@ -1681,6 +1681,167 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
     eapply N.le_trans; [apply table_linear_work|].
     unfold c_word_table. nia.
   Qed.
+  (** Backward output sizes count the raw bits of flat singleton payloads. *)
+  Local Definition wbsize_raw (a : W.p) : nat :=
+    match a with FVal z => Z.size_nat z | _ => 0 end.
+  (** Backward size work sums the original operand widths. *)
+  Local Definition wbsize_widths (xs : list (positive * W.p)) : nat :=
+    fold_right Nat.add 0 (map (fun wp => Pos.to_nat (fst wp)) xs).
+  (** The returned list is measured at its original operand widths. *)
+  Local Definition wbsize_result (xs : list (positive * W.p)) (ys : list W.p) : nat :=
+    length ys + fold_right Nat.add 0
+      (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys)).
+
+  (** Payload size separates the target width from stored raw bits. *)
+  Local Lemma wbsize_raw_equation w a :
+    W.psize w a = Pos.to_nat w + wbsize_raw a + 1.
+  Proof.
+    apply W.F_psize_const.
+  Qed.
+
+  (** Normalization bounds raw bits by the original operand width. *)
+  Local Lemma wbsize_normalise w a : (wbsize_raw (normalise w a) <= Pos.to_nat w)%nat.
+  Proof.
+    destruct a as [|z|]; cbn [normalise wbsize_raw]; try lia.
+    unfold wrap_fast. rewrite ConstWordFast.wrap_fast_agrees.
+    apply WordTime.word_wrap_size_bound.
+  Qed.
+
+  (** An inverse with bounded outputs produces a bounded flat payload. *)
+  Local Lemma wbsize_inverse budget f a :
+    (forall z, (Z.size_nat (f z) <= budget)%nat) ->
+    (wbsize_raw (inverse f a) <= budget)%nat.
+  Proof.
+    intros Hf. destruct a; cbn [inverse wbsize_raw]; auto; lia.
+  Qed.
+
+  (** A bounded unchanged payload fits the common quadratic size budget. *)
+  Local Lemma wbsize_plain budget w a :
+    (1 <= budget)%nat -> (Pos.to_nat w <= budget)%nat ->
+    (wbsize_raw a <= budget)%nat ->
+    (N.of_nat (W.psize w a) <=
+      (8 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N.
+  Proof.
+    intros Hb Hw Ha.
+    assert (Hsmall_nat : (W.psize w a <= 3 * budget ^ 2)%nat).
+    { rewrite wbsize_raw_equation. cbn [Nat.pow]. nia. }
+    pose proof (time_of_nat_le _ _ Hsmall_nat) as Hsmall.
+    rewrite Nat2N.inj_mul in Hsmall. time_cbn_all.
+    nia.
+  Qed.
+
+  (** A meet result fits the budget at any bounded original operand width. *)
+  Local Lemma wbsize_meet budget rw target a b :
+    (1 <= budget)%nat -> (Pos.to_nat rw <= budget)%nat ->
+    (Pos.to_nat target <= budget)%nat ->
+    (wbsize_raw a <= budget)%nat -> (wbsize_raw b <= budget)%nat ->
+    (N.of_nat (W.psize target (W.pmeet rw a b)) <=
+      (8 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N.
+  Proof.
+    apply meet_size_budget.
+  Qed.
+
+  (** One returned payload and its list cell fit the backward size budget. *)
+  Local Lemma wbsize_single budget w original a :
+    (1 <= budget)%nat ->
+    (N.of_nat (W.psize w a) <=
+      (8 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N ->
+    (N.of_nat (wbsize_result [(w, original)] [a]) <=
+      (32 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N.
+  Proof.
+    intros Hb Ha.
+    pose proof (WordTime.time_square_floor 1 budget Hb Hb) as Hone.
+    cbn [wbsize_result map fst snd combine fold_right length].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; time_cbn_all; nia.
+  Qed.
+
+  (** Two returned payloads and their list cells fit the backward size budget. *)
+  Local Lemma wbsize_pair budget w v original_a original_b a b :
+    (1 <= budget)%nat ->
+    (N.of_nat (W.psize w a) <=
+      (8 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N ->
+    (N.of_nat (W.psize v b) <=
+      (8 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N ->
+    (N.of_nat (wbsize_result [(w, original_a); (v, original_b)] [a; b]) <=
+      (32 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N.
+  Proof.
+    intros Hb Ha Hbb.
+    pose proof (WordTime.time_square_floor 1 budget Hb Hb) as Hone.
+    cbn [wbsize_result map fst snd combine fold_right length].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; time_cbn_all; nia.
+  Qed.
+
+  (** Every unary inverse result has bounded size at the operand width. *)
+  Local Lemma wbsize_one_values budget o rw w original a q :
+    (1 <= budget)%nat -> (Pos.to_nat rw <= budget)%nat ->
+    (Pos.to_nat w <= budget)%nat -> (wbsize_raw a <= budget)%nat ->
+    (N.of_nat (wbsize_result [(w, original)] (backward_one_values o rw q [(w, a)])) <=
+      (32 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N.
+  Proof.
+    intros Hb Hrw Hw Ha.
+    destruct q as [|r|]; cbn [backward_one_values map snd].
+    - apply wbsize_single; [exact Hb|]. now apply wbsize_plain.
+    - apply wbsize_single; [exact Hb|]. apply wbsize_meet; try assumption.
+      cbn [wbsize_raw]. eapply Nat.le_trans; [|exact Hrw].
+      apply WordTime.word_size_bound. destruct o; first [apply wnot_is_word|apply wrap_is_word].
+    - apply wbsize_single; [exact Hb|]. now apply wbsize_plain.
+  Qed.
+
+  (** Binary inverse meets retain bounded sizes at both original widths. *)
+  Local Lemma wbsize_inverse_pair budget rw w v original_a original_b a b f g :
+    (1 <= budget)%nat -> (Pos.to_nat rw <= budget)%nat ->
+    (Pos.to_nat w <= budget)%nat -> (Pos.to_nat v <= budget)%nat ->
+    (wbsize_raw a <= budget)%nat -> (wbsize_raw b <= budget)%nat ->
+    (forall z, (Z.size_nat (f z) <= budget)%nat) ->
+    (forall z, (Z.size_nat (g z) <= budget)%nat) ->
+    (N.of_nat (wbsize_result [(w, original_a); (v, original_b)]
+      (inverse_pair rw f g a b)) <=
+      (32 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N.
+  Proof.
+    intros Hb Hrw Hw Hv Ha Hbb Hf Hg. unfold inverse_pair.
+    apply wbsize_pair; [exact Hb| |]; apply wbsize_meet; try assumption;
+      now apply wbsize_inverse.
+  Qed.
+
+  (** Each binary inverse family fits the common width-only result budget. *)
+  Local Lemma wbsize_two_values budget o rw w v original_a original_b a b q :
+    (1 <= budget)%nat -> (Pos.to_nat rw <= budget)%nat ->
+    (Pos.to_nat w <= budget)%nat -> (Pos.to_nat v <= budget)%nat ->
+    (wbsize_raw a <= budget)%nat -> (wbsize_raw b <= budget)%nat ->
+    (N.of_nat (wbsize_result [(w, original_a); (v, original_b)]
+      (backward_two_values o rw q [(w, a); (v, b)])) <=
+      (32 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N.
+  Proof.
+    intros Hb Hrw Hw Hv Ha Hbb.
+    assert (Hplain : (N.of_nat (wbsize_result [(w, original_a); (v, original_b)] [a; b]) <=
+      (32 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N).
+    { apply wbsize_pair; [exact Hb| |]; now apply wbsize_plain. }
+    assert (Hmeet : (N.of_nat (wbsize_result [(w, original_a); (v, original_b)]
+      [W.pmeet rw a b; W.pmeet rw b a]) <=
+      (32 * (W.c_payload + 1)) * N.of_nat (budget ^ 2))%N).
+    { apply wbsize_pair; [exact Hb| |]; now apply wbsize_meet. }
+    destruct q as [|r|]; cbn [backward_two_values map snd]; try exact Hplain.
+    destruct o; cbn [backward_two_values]; try exact Hplain;
+      try (destruct (Z.eqb r 1); assumption);
+      try (destruct (Z.eqb r 0); assumption).
+    all: apply wbsize_inverse_pair; try assumption.
+    all: intros z; eapply Nat.le_trans; [|exact Hw].
+    all: apply WordTime.word_size_bound; first [apply wxor_is_word|apply wrap_is_word].
+  Qed.
+
+  (** The public backward-table budget contains the stronger width-only bound. *)
+  Local Lemma wbsize_final_budget rw q xs :
+    ((32 * (W.c_payload + 1)) *
+       N.of_nat ((Pos.to_nat rw + wbsize_widths xs + 1)^2) <=
+     c_word_table * N.of_nat
+      ((Pos.to_nat rw + wbsize_widths xs + 1)^2 + W.psize rw q +
+        fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs)))%N.
+  Proof.
+    apply N.mul_le_mono.
+    - unfold c_word_table. nia.
+    - apply time_of_nat_le. lia.
+  Qed.
+
   (** The result stays within its declared work budget. *)
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
@@ -1690,5 +1851,31 @@ Module ConstWordTableT (L : WORD_LANGUAGE_T) (W : CONST_WORD_PAYLOAD_T L)
         fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         W.psize rw q +
         fold_right Nat.add 0 (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs ys Hentry.
+    change (N.of_nat (wbsize_result xs ys) <=
+      c_word_table * N.of_nat
+        ((Pos.to_nat rw + wbsize_widths xs + 1)^2 + W.psize rw q +
+          fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs)))%N.
+    eapply N.le_trans; [|apply wbsize_final_budget].
+    destruct xs as [|[w a] [|[v b] [|extra rest]]]; destruct o;
+      cbn [wbwd] in Hentry; try discriminate;
+      cbn [backward_one backward_two normalise_operands map fst snd] in Hentry;
+      injection Hentry as <-.
+    all: first
+      [apply (wbsize_one_values _ bvnot rw w a (normalise w a) (normalise rw q))
+      |apply (wbsize_one_values _ bvneg rw w a (normalise w a) (normalise rw q))
+      |apply (wbsize_two_values _ bvadd rw w v a b
+        (normalise w a) (normalise v b) (normalise rw q))
+      |apply (wbsize_two_values _ bvsub rw w v a b
+        (normalise w a) (normalise v b) (normalise rw q))
+      |apply (wbsize_two_values _ bvxor rw w v a b
+        (normalise w a) (normalise v b) (normalise rw q))
+      |apply (wbsize_two_values _ bveq rw w v a b
+        (normalise w a) (normalise v b) (normalise rw q))
+      |apply (wbsize_two_values _ bvne rw w v a b
+        (normalise w a) (normalise v b) (normalise rw q))].
+    all: cbn [wbsize_widths map fst snd fold_right]; try lia.
+    all: eapply Nat.le_trans; [apply wbsize_normalise|lia].
+  Qed.
 End ConstWordTableT.
