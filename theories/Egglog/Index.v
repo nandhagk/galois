@@ -346,20 +346,113 @@ Module Index (V : VALUE) <: INDEX V.
     reflexivity.
   Qed.
 
+  (** A walk step allocates at most one fresh node. *)
+  Lemma insert_step_counter : forall st c,
+    Pos.to_nat (next (fst (insert_step_st st c))) <= Pos.to_nat (next (fst st)) + 1.
+  Proof.
+    intros [ix n] c. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n); cbn [fst]; [lia |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)));
+      cbn [fst write_node next index_counter]; [lia |].
+    rewrite Pos2Nat.inj_succ. lia.
+  Qed.
+
+  Lemma insert_walk_counter : forall r st,
+    Pos.to_nat (next (fst (fold_left insert_step_st r st))) <=
+      Pos.to_nat (next (fst st)) + length r.
+  Proof.
+    induction r as [| c r IH]; intro st; cbn [fold_left length]; [lia |].
+    pose proof (IH (insert_step_st st c)).
+    pose proof (insert_step_counter st c). lia.
+  Qed.
+
+  (** Every removal step retains the allocation counter, including absent edges. *)
+  Lemma remove_step_counter : forall st c,
+    next (fst (remove_step_st st c)) = next (fst st).
+  Proof.
+    intros [ix n] c. unfold remove_step_st.
+    destruct (Pos.ltb (next ix) n); [reflexivity |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |]; [| reflexivity].
+    destruct (N.eqb (edge_count edge) 1%N); reflexivity.
+  Qed.
+
+  Lemma remove_walk_counter : forall r st,
+    next (fst (fold_left remove_step_st r st)) = next (fst st).
+  Proof.
+    induction r as [| c r IH]; intro st; cbn [fold_left]; [reflexivity |].
+    rewrite IH. apply remove_step_counter.
+  Qed.
+
   (** Insertion allocates at most one node per tuple cell. *)
   Lemma next_insert : forall a r ix, wf a ix ->
     (next (insert r ix) <= next ix + Pos.of_nat (length r))%positive.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a r ix _. apply Pos2Nat.inj_le.
+    rewrite Pos2Nat.inj_add, Nat2Pos.id_max.
+    pose proof (insert_walk_counter r (start ix)) as Hcounter.
+    cbn [start fst] in Hcounter.
+    unfold insert, insert_finish. destruct (contains r ix).
+    - lia.
+    - cbn [mark_terminal next index_counter]. lia.
+  Qed.
 
   (** Removal keeps the fresh node counter. *)
   Lemma next_remove : forall a r ix, wf a ix -> next (remove r ix) = next ix.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a r ix _. unfold remove, remove_finish.
+    destruct (contains r ix); [| reflexivity].
+    change (next (fst (fold_left remove_step_st r (start ix))) = next ix).
+    rewrite remove_walk_counter. reflexivity.
+  Qed.
+
+  Lemma read_node_empty : forall n, read_node empty n = empty_node.
+  Proof.
+    intro n. unfold read_node. cbn [empty index_nodes].
+    rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
+  Lemma child_empty : forall n c, child empty n c = None.
+  Proof.
+    intros n c. unfold child. destruct (Pos.ltb (next empty) n); [reflexivity |].
+    rewrite read_node_empty. cbn [empty_node node_edges].
+    rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
+  Lemma empty_no_edge : forall n code edge, ~ stored_edge empty n code edge.
+  Proof.
+    intros n code edge Hget. unfold stored_edge in Hget.
+    rewrite read_node_empty in Hget. cbn [empty_node node_edges] in Hget.
+    rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
 
   Lemma mem_empty : forall u, ~ mem empty u.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [| c u]; unfold mem, contains, contains_from; cbn [seek].
+    - rewrite read_node_empty. discriminate.
+    - rewrite child_empty. discriminate.
+  Qed.
 
   Lemma wf_empty : forall a, wf a empty.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. split; [| intros u Hu; exact (False_rect _ (mem_empty u Hu))].
+    unfold valid. split.
+    - intros n code edge Hget. exfalso. exact (empty_no_edge n code edge Hget).
+    - split.
+      + intro n. rewrite read_node_empty. split; reflexivity.
+      + split.
+        * intros n nd Hget. cbn [empty index_nodes] in Hget.
+          rewrite PTrie.get_empty in Hget. discriminate.
+        * split.
+          -- intros pre pre' n Hpre Hpre'.
+             destruct pre as [| c pre], pre' as [| c' pre']; [reflexivity |..];
+               unfold node in *; cbn [seek] in *; rewrite ?child_empty in *; discriminate.
+          -- split.
+             ++ intros n code edge n' code' edge' Hget.
+                exfalso. exact (empty_no_edge n code edge Hget).
+             ++ intros n code edge Hget.
+                exfalso. exact (empty_no_edge n code edge Hget).
+  Qed.
 
   Lemma wf_insert : forall a r ix, wf a ix -> length r = a -> wf a (insert r ix).
   Proof. Admitted. (* STUB *)
