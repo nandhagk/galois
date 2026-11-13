@@ -1176,22 +1176,466 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     unfold c_state. nia.
   Qed.
+  Create Rewrite HintDb env_time_nat.
+  Local Hint Rewrite Nat2N.inj_add Nat2N.inj_mul Nat2N.inj_succ Nat2N.inj_max
+    : env_time_nat.
+
+  (** A stored value pays for its payload and its occupied map cell. *)
+  Definition time_option_weight (a : option V.t) :=
+    match a with Some v => V.size v + 1 | None => 0 end.
+  (** The payload charge sums the occupied entries of a map. *)
+  Definition time_store_size (m : M.t V.t) :=
+    fold_right Nat.add 0 (map (fun c => time_option_weight (M.find c m)) (M.codes m)).
+
+  (** A nonzero fold seed is added after the list's total charge. *)
+  Lemma time_sum_seed : forall xs z,
+    fold_right Nat.add z xs = fold_right Nat.add 0 xs + z.
+  Proof.
+    intro xs. induction xs as [|x xs IH]; intro z; cbn; [lia|rewrite IH; lia].
+  Qed.
+
+  (** Appended lists contribute the sum of their separate charges. *)
+  Lemma time_sum_app : forall {A} (f : A -> nat) xs ys,
+    fold_right Nat.add 0 (map f (xs ++ ys)) =
+    fold_right Nat.add 0 (map f xs) + fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs ys. rewrite map_app, fold_right_app, time_sum_seed. reflexivity.
+  Qed.
+
+  (** Pairwise charges separate into two sums and a per-entry overhead. *)
+  Lemma time_sum_pair : forall {A} (f g : A -> nat) xs z,
+    fold_right Nat.add 0 (map (fun x => f x + g x + z) xs) =
+    fold_right Nat.add 0 (map f xs) + fold_right Nat.add 0 (map g xs) + length xs * z.
+  Proof.
+    intros A f g xs z. induction xs as [|x xs IH]; cbn; [lia|rewrite IH; lia].
+  Qed.
+
+  (** A duplicate-free sublist never costs more than its containing list. *)
+  Lemma time_sum_incl : forall {A} (f : A -> nat) xs ys,
+    NoDup xs -> incl xs ys ->
+    fold_right Nat.add 0 (map f xs) <= fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs ys Hnd. revert ys.
+    induction Hnd as [|x xs Hnot Hnd IH]; intros ys Hincl; cbn [map fold_right]; [lia|].
+    destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [left [right Heq]].
+    subst ys.
+    assert (Htail : incl xs (left ++ right)).
+    { intros y Hy. specialize (Hincl y (or_intror Hy)).
+      apply in_app_iff in Hincl. destruct Hincl as [Hleft|[Heq|Hright]].
+      - apply in_or_app. now left.
+      - subst y. contradiction.
+      - apply in_or_app. now right. }
+    specialize (IH _ Htail). rewrite time_sum_app in IH.
+    rewrite time_sum_app. cbn [map fold_right]. lia.
+  Qed.
+
+  (** Distinct lookups charge each occupied map entry at most once. *)
+  Lemma time_lookup_sum : forall m xs, NoDup xs ->
+    fold_right Nat.add 0 (map (fun c => time_option_weight (M.find c m)) xs) <=
+    time_store_size m.
+  Proof.
+    intros m xs Hnd.
+    set (present := fun c => match M.find c m with Some _ => true | None => false end).
+    assert (Hzero : fold_right Nat.add 0
+        (map (fun c => time_option_weight (M.find c m)) (filter present xs)) =
+      fold_right Nat.add 0 (map (fun c => time_option_weight (M.find c m)) xs)).
+    { apply rank_sum_filter_zero. intros c _ Hfalse. unfold present in Hfalse.
+      destruct (M.find c m); [discriminate|reflexivity]. }
+    rewrite <- Hzero. apply time_sum_incl.
+    - apply NoDup_filter. exact Hnd.
+    - intros c Hc. apply filter_In in Hc as [_ Hpresent]. apply M.codes_spec.
+      unfold present in Hpresent. destruct (M.find c m); congruence.
+  Qed.
+
+  (** Payload charges cover the number of occupied entries. *)
+  Lemma time_store_length : forall m, length (M.codes m) <= time_store_size m.
+  Proof.
+    intro m. unfold time_store_size.
+    assert (Hbound : forall c, In c (M.codes m) -> 1 <= time_option_weight (M.find c m)).
+    { intros c Hc. apply M.codes_spec in Hc.
+      destruct (M.find c m); cbn [time_option_weight]; [lia|contradiction]. }
+    induction (M.codes m) as [|c cs IH]; cbn [map fold_right length]; [lia|].
+    pose proof (Hbound c (or_introl eq_refl)).
+    specialize (IH (fun d Hd => Hbound d (or_intror Hd))). lia.
+  Qed.
+
+  (** Both code lists charge each map payload twice and the supplied per-key work. *)
+  Lemma time_codes_pair_sum : forall a b w,
+    fold_right Nat.add 0 (map (fun c =>
+      time_option_weight (M.find c a) + time_option_weight (M.find c b) + (w + 1))
+      (M.codes a ++ M.codes b)) <=
+    3 * (time_store_size a + time_store_size b) +
+      (length (M.codes a) + length (M.codes b)) * w.
+  Proof.
+    intros a b w. rewrite time_sum_pair, !time_sum_app, length_app.
+    pose proof (time_lookup_sum a (M.codes b) (M.codes_nodup V.t b)) as Hleft.
+    pose proof (time_lookup_sum b (M.codes a) (M.codes_nodup V.t a)) as Hright.
+    pose proof (time_store_length a) as Halen.
+    pose proof (time_store_length b) as Hblen.
+    unfold time_store_size in *. nia.
+  Qed.
+
+  (** Environment size separates the map skeleton, its payloads, and one state cell. *)
+  Lemma time_size_reached : forall m,
+    size (Reached m) = M.nodes m + time_store_size m + 1.
+  Proof.
+    intro m. unfold size, time_store_size, time_option_weight.
+    rewrite time_sum_seed. lia.
+  Qed.
+  (** Value callbacks may inspect top and then test a newly constructed result. *)
+  Definition time_value_factor :=
+    ((V.c_val + 1) * (V.c_val + 1) * (N.of_nat (V.size V.top) + 1))%N.
+  (** One map unit combines skeleton traversal with the value callback factor. *)
+  Definition time_map_unit := ((M.c_map + 1) * time_value_factor)%N.
+
+  (** The value factor pays for an operation followed by a test of its result. *)
+  Lemma time_factor_square : ((V.c_val + 1) * (V.c_val + 1) <= time_value_factor)%N.
+  Proof.
+    unfold time_value_factor. nia.
+  Qed.
+  (** The value factor covers comparisons against an implicit top binding. *)
+  Lemma time_factor_top :
+    ((V.c_val + 1) * (N.of_nat (V.size V.top) + 1) <= time_value_factor)%N.
+  Proof.
+    unfold time_value_factor. nia.
+  Qed.
+  (** A value factor pays for at least one callback entry. *)
+  Lemma time_factor_positive : (1 <= time_value_factor)%N.
+  Proof.
+    unfold time_value_factor. nia.
+  Qed.
+  (** A map unit pays for at least one enclosing operation. *)
+  Lemma time_map_unit_positive : (1 <= time_map_unit)%N.
+  Proof.
+    pose proof time_factor_positive. unfold time_map_unit. nia.
+  Qed.
+  (** The public lattice coefficient reserves sixty-four map units. *)
+  Lemma time_c_lat_units : c_lat = (64 * time_map_unit)%N.
+  Proof.
+    unfold c_lat, time_map_unit, time_value_factor. ring.
+  Qed.
+
+  (** Pointwise callback bounds sum over the two input maps' occupied codes. *)
+  Lemma time_callback_sum : forall a b Tf w c,
+    (forall x y, (Tf x y <= c * N.of_nat
+      (time_option_weight x + time_option_weight y + (w + 1)))%N) ->
+    (fold_right N.add 0
+      (map (fun p => Tf (M.find p a) (M.find p b)) (M.codes a ++ M.codes b)) <=
+      c * N.of_nat (3 * (time_store_size a + time_store_size b) +
+        (length (M.codes a) + length (M.codes b)) * w))%N.
+  Proof.
+    intros a b Tf w c Hcallback.
+    eapply N.le_trans; [apply time_sum_bound; intros p _; apply Hcallback|].
+    apply N.mul_le_mono_l. pose proof (time_codes_pair_sum a b w). lia.
+  Qed.
+
+  (** A binary map clock combines its skeleton bound and the summed callback charges. *)
+  Lemma time_binary_map_bound : forall a b Tf w clock c,
+    (1 <= c)%N -> Tf None None = 1%N ->
+    (forall x y, (Tf x y <= c * N.of_nat
+      (time_option_weight x + time_option_weight y + (w + 1)))%N) ->
+    (clock <= M.c_map *
+      ((Tf None None + 1) * N.of_nat (M.nodes a + M.nodes b + 1) +
+      fold_right N.add 0
+        (map (fun p => Tf (M.find p a) (M.find p b)) (M.codes a ++ M.codes b))))%N ->
+    (clock <= 4 * (M.c_map + 1) * c * N.of_nat
+      ((length (M.codes a) + length (M.codes b)) * w +
+        (size (Reached a) + size (Reached b) + 1)))%N.
+  Proof.
+    intros a b Tf w clock c Hpos Hnone Hcallback Hclock.
+    pose proof (time_callback_sum a b Tf w c Hcallback) as Hsum.
+    rewrite Hnone in Hclock.
+    assert (Hraw : (clock <= M.c_map *
+      (2 * N.of_nat (M.nodes a + M.nodes b + 1) +
+        c * N.of_nat (3 * (time_store_size a + time_store_size b) +
+          (length (M.codes a) + length (M.codes b)) * w)))%N).
+    { eapply N.le_trans; [exact Hclock|].
+      apply N.mul_le_mono_l. apply N.add_le_mono_l. exact Hsum. }
+    rewrite !time_size_reached.
+    autorewrite with env_time_nat in Hraw |- *.
+    change (N.succ (N.of_nat 0)) with 1%N in Hraw |- *.
+    change (N.succ (N.succ (N.succ (N.of_nat 0)))) with 3%N in Hraw.
+    clear Hclock Hsum Hcallback Hnone.
+    nia.
+  Qed.
+
+  (** Bottom testing traverses one skeleton and tests each occupied payload. *)
+  Lemma time_bot_raw : forall a,
+    (T_is_bot a <= (M.c_map + 1) * (V.c_val + 1) * N.of_nat (size a + 1))%N.
+  Proof.
+    intros [|m].
+    - change (1 <= (M.c_map + 1) * (V.c_val + 1) * 1)%N. nia.
+    - pose proof (M.T_existsb_sum_le V.t V.is_bot V.T_is_bot m) as Hmap.
+      assert (Hsum :
+        (fold_right N.add 0 (map (fun p => match M.find p m with
+          Some a => V.T_is_bot a | None => 0 end) (M.codes m)) <=
+          V.c_val * N.of_nat (time_store_size m))%N).
+      { apply time_sum_bound. intros p _.
+        destruct (M.find p m) as [a|]; cbn [time_option_weight]; [apply V.T_is_bot_le|nia]. }
+      change (1 + M.T_existsb V.is_bot V.T_is_bot m <=
+        (M.c_map + 1) * (V.c_val + 1) * N.of_nat (size (Reached m) + 1))%N.
+      rewrite time_size_reached. autorewrite with env_time_nat in Hmap |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hmap |- *. nia.
+  Qed.
+
+  (** Option comparison includes the cost of top when the left binding is absent. *)
+  Lemma time_option_comparison : forall x y,
+    (T_option_leb x y <= time_value_factor * N.of_nat
+      (time_option_weight x + time_option_weight y + (0 + 1)))%N.
+  Proof.
+    intros [a|] [b|]; unfold T_option_leb; cbn [time_option_weight];
+      pose proof time_factor_top as Htop;
+      pose proof time_factor_square as Hsquare;
+      pose proof time_factor_positive as Hpos.
+    - pose proof (V.T_leb_le a b) as Hle.
+      autorewrite with env_time_nat in Hle |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hle |- *. nia.
+    - autorewrite with env_time_nat. change (N.succ (N.of_nat 0)) with 1%N. nia.
+    - pose proof (V.T_leb_le V.top b) as Hle.
+      autorewrite with env_time_nat in Hle |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hle |- *. nia.
+    - change (1 <= time_value_factor * 1)%N. nia.
+  Qed.
+
+  (** The value factor also covers a single primitive value operation. *)
+  Lemma time_factor_linear : (V.c_val + 1 <= time_value_factor)%N.
+  Proof.
+    pose proof time_factor_square. nia.
+  Qed.
+
+  (** One map unit bounds environment bottom testing. *)
+  Lemma time_bot_unit : forall a,
+    (T_is_bot a <= time_map_unit * N.of_nat (size a + 1))%N.
+  Proof.
+    intro a. eapply N.le_trans; [apply time_bot_raw|].
+    apply N.mul_le_mono_r. unfold time_map_unit. apply N.mul_le_mono_l.
+    apply time_factor_linear.
+  Qed.
+
+  (** Comparing both maps takes four map units per combined size charge. *)
+  Lemma time_forall2_raw : forall a b,
+    (M.T_forall2b option_leb T_option_leb a b <=
+      4 * time_map_unit * N.of_nat (size (Reached a) + size (Reached b) + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (time_binary_map_bound a b T_option_leb 0
+      (M.T_forall2b option_leb T_option_leb a b) time_value_factor
+      time_factor_positive eq_refl time_option_comparison
+      (M.T_forall2b_sum_le V.t V.t option_leb T_option_leb a b)) as Hmap.
+    rewrite Nat.mul_0_r, Nat.add_0_l in Hmap. unfold time_map_unit. nia.
+  Qed.
+
+  (** Inclusion retains a sixteen-unit bound for use inside widening. *)
+  Lemma time_leb_raw : forall a b,
+    (T_leb a b <= 16 * time_map_unit * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. pose proof (time_bot_unit a) as Ha. pose proof (time_bot_unit b) as Hb.
+    pose proof time_map_unit_positive as Hu.
+    assert (Hmaps :
+      ((match a, b with
+        | Reached ma, Reached mb => M.T_forall2b option_leb T_option_leb ma mb
+        | _, _ => 0
+        end) <= 4 * time_map_unit * N.of_nat (size a + size b + 1))%N).
+    { destruct a as [|a], b as [|b]; try nia. apply time_forall2_raw. }
+    time_unfold T_leb.
+    unfold Std.Datatypes.T_negb, Std.Datatypes.T_andb, Std.Datatypes.T_orb.
+    change (fun x y : option V.t => T_option_leb x y) with T_option_leb.
+    autorewrite with env_time_nat in Ha, Hb, Hmaps |- *.
+    change (N.succ (N.of_nat 0)) with 1%N in Ha, Hb, Hmaps |- *.
+    nia.
+  Qed.
+
+  (** An operation and a bottom test share the operation's result-size bound. *)
+  Lemma time_checked_result : forall result clock n,
+    (clock <= V.c_val * N.of_nat n)%N ->
+    (N.of_nat (V.size result) <= V.c_val * N.of_nat n)%N ->
+    (1 + (clock + V.T_is_bot result) <=
+      time_value_factor * N.of_nat (n + 2))%N.
+  Proof.
+    intros result clock n Hclock Hsize.
+    pose proof (V.T_is_bot_le result) as Hbottom.
+    assert (Hbot :
+      (V.T_is_bot result <= V.c_val * (V.c_val * N.of_nat n + 1))%N).
+    { eapply N.le_trans; [exact Hbottom|]. apply N.mul_le_mono_l.
+      rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. lia. }
+    eapply N.le_trans with
+      (((V.c_val + 1) * (V.c_val + 1)) * N.of_nat (n + 2))%N.
+    - rewrite Nat2N.inj_add. change (N.of_nat 2) with 2%N. nia.
+    - apply N.mul_le_mono_r. apply time_factor_square.
+  Qed.
+
+  (** The join callback pays for construction and its result's bottom test. *)
+  Lemma time_join_callback : forall x y,
+    ((1 + match x, y with
+      | Some a, Some b => V.T_join a b + V.T_is_bot (V.join a b)
+      | _, _ => 0
+      end) <= time_value_factor * N.of_nat
+        (time_option_weight x + time_option_weight y + (0 + 1)))%N.
+  Proof.
+    intros [a|] [b|]; cbn [time_option_weight];
+      pose proof time_factor_positive as Hpos; try nia.
+    pose proof (time_checked_result (V.join a b) (V.T_join a b)
+      (V.size a + V.size b + 1) (V.T_join_le a b) (V.join_size a b)) as Hbound.
+    replace (V.size a + 1 + (V.size b + 1) + (0 + 1))%nat with
+      (V.size a + V.size b + 1 + 2)%nat by lia. exact Hbound.
+  Qed.
+
+  (** The widening callback includes the parameter charge and its result's bottom test. *)
+  Lemma time_widen_callback : forall p x y,
+    ((1 + match x, y with
+      | Some a, Some b => V.T_widen p a b + V.T_is_bot (V.widen p a b)
+      | _, _ => 0
+      end) <= time_value_factor * N.of_nat
+        (time_option_weight x + time_option_weight y + (V.wsize p + 1)))%N.
+  Proof.
+    intros p [a|] [b|]; cbn [time_option_weight];
+      pose proof time_factor_positive as Hpos; try nia.
+    pose proof (time_checked_result (V.widen p a b) (V.T_widen p a b)
+      (V.size a + V.size b + V.wsize p + 1)
+      (V.T_widen_le p a b) (V.widen_size p a b)) as Hbound.
+    replace (V.size a + 1 + (V.size b + 1) + (V.wsize p + 1))%nat with
+      (V.size a + V.size b + V.wsize p + 1 + 2)%nat by lia. exact Hbound.
+  Qed.
+
+  (** Narrowing invokes its value operation only when both bindings are present. *)
+  Lemma time_narrow_callback : forall x y,
+    ((1 + match x, y with
+      | Some a, Some b => V.T_narrow a b
+      | _, _ => 0
+      end) <= time_value_factor * N.of_nat
+        (time_option_weight x + time_option_weight y + (0 + 1)))%N.
+  Proof.
+    intros [a|] [b|]; cbn [time_option_weight];
+      pose proof time_factor_linear as Hfactor;
+      pose proof time_factor_positive as Hpos.
+    - pose proof (V.T_narrow_le a b) as Hnarrow.
+      autorewrite with env_time_nat in Hnarrow |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hnarrow |- *. nia.
+    - autorewrite with env_time_nat. change (N.succ (N.of_nat 0)) with 1%N. nia.
+    - autorewrite with env_time_nat. change (N.succ (N.of_nat 0)) with 1%N. nia.
+    - change (1 <= time_value_factor * 1)%N. nia.
+  Qed.
+
+  (** A generated merge callback uses four map units with its per-binding work. *)
+  Lemma time_merge_raw : forall f Tf a b w,
+    Tf None None = 1%N ->
+    (forall x y, (Tf x y <= time_value_factor * N.of_nat
+      (time_option_weight x + time_option_weight y + (w + 1)))%N) ->
+    (M.T_merge (C := V.t) f Tf a b <= 4 * time_map_unit * N.of_nat
+      ((length (M.codes a) + length (M.codes b)) * w +
+        (size (Reached a) + size (Reached b) + 1)))%N.
+  Proof.
+    intros f Tf a b w Hnone Hcallback.
+    pose proof (time_binary_map_bound a b Tf w (M.T_merge f Tf a b)
+      time_value_factor time_factor_positive Hnone Hcallback
+      (M.T_merge_sum_le V.t V.t V.t f Tf a b)) as Hmap.
+    unfold time_map_unit. nia.
+  Qed.
+
+  (** Map join retains a reserve for the enclosing environment constructor. *)
+  Lemma time_join_map_raw : forall a b,
+    (T_join_map a b <=
+      6 * time_map_unit * N.of_nat (size (Reached a) + size (Reached b) + 1))%N.
+  Proof.
+    intros a b. time_unfold T_join_map.
+    eapply N.le_trans with
+      (1 + 4 * time_map_unit * N.of_nat
+        ((length (M.codes a) + length (M.codes b)) * 0 +
+          (size (Reached a) + size (Reached b) + 1)))%N.
+    - apply N.add_le_mono_l. apply time_merge_raw; [reflexivity|apply time_join_callback].
+    - rewrite Nat.mul_0_r, Nat.add_0_l.
+      pose proof time_map_unit_positive as Hu. autorewrite with env_time_nat.
+      change (N.succ (N.of_nat 0)) with 1%N. nia.
+  Qed.
+
+  (** Joining environments uses eight map units per combined size charge. *)
+  Lemma time_join_raw : forall a b,
+    (T_join a b <= 8 * time_map_unit * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. pose proof time_map_unit_positive as Hu.
+    assert (Hmaps :
+      ((match a, b with
+        | Reached ma, Reached mb => T_join_map ma mb
+        | _, _ => 0
+        end) <= 6 * time_map_unit * N.of_nat (size a + size b + 1))%N).
+    { destruct a as [|a], b as [|b]; try apply N.le_0_l. apply time_join_map_raw. }
+    time_unfold T_join. autorewrite with env_time_nat in Hmaps |- *.
+    change (N.succ (N.of_nat 0)) with 1%N in Hmaps |- *. nia.
+  Qed.
+
+  (** Narrowing pays for the right bottom test and its generated merge callback. *)
+  Lemma time_narrow_raw : forall a b,
+    (T_narrow a b <= 8 * time_map_unit * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b. pose proof time_map_unit_positive as Hu.
+    pose proof (time_bot_unit b) as Hbot. time_unfold T_narrow.
+    destruct (is_bot b).
+    - autorewrite with env_time_nat in Hbot |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hbot |- *. nia.
+    - match goal with
+      | |- (1 + (_ + ?clock) <= _)%N =>
+          assert (Hmerge : (clock <=
+            4 * time_map_unit * N.of_nat (size a + size b + 1))%N)
+      end.
+      { destruct a as [|a], b as [|b]; try apply N.le_0_l.
+        eapply N.le_trans.
+        - apply time_merge_raw with (w := 0%nat);
+            [reflexivity|apply time_narrow_callback].
+        - rewrite Nat.mul_0_r, Nat.add_0_l. apply N.le_refl. }
+      autorewrite with env_time_nat in Hbot, Hmerge |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hbot, Hmerge |- *. nia.
+  Qed.
+
+
+  (** Inclusion fits the public lattice time coefficient. *)
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. rewrite time_c_lat_units.
+    eapply N.le_trans; [apply time_leb_raw|]. apply N.mul_le_mono_r. nia.
+  Qed.
+  (** Join fits the public lattice time coefficient. *)
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. rewrite time_c_lat_units.
+    eapply N.le_trans; [apply time_join_raw|]. apply N.mul_le_mono_r. nia.
+  Qed.
+  (** Bottom testing fits the public lattice time coefficient. *)
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. rewrite time_c_lat_units.
+    eapply N.le_trans; [apply time_bot_unit|]. apply N.mul_le_mono_r. nia.
+  Qed.
+  (** Widening directly charges its generated inclusion test and merge callback. *)
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. rewrite time_c_lat_units.
+    pose proof (time_leb_raw b a) as Hleb. pose proof time_map_unit_positive as Hu.
+    time_unfold T_widen. destruct (leb b a).
+    - autorewrite with env_time_nat in Hleb |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hleb |- *. nia.
+    - match goal with
+      | |- (1 + (_ + ?clock) <= _)%N =>
+          assert (Hmerge : (clock <= 4 * time_map_unit * N.of_nat
+            ((wunits a + wunits b) * wsize p + (size a + size b + 1)))%N)
+      end.
+      { destruct a as [|a], b as [|b]; try apply N.le_0_l.
+        cbn [wunits wsize]. apply time_merge_raw;
+          [reflexivity|apply time_widen_callback]. }
+      autorewrite with env_time_nat in Hleb, Hmerge |- *.
+      change (N.succ (N.of_nat 0)) with 1%N in Hleb, Hmerge |- *. nia.
+  Qed.
+  (** Narrowing fits the public lattice time coefficient. *)
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. rewrite time_c_lat_units.
+    eapply N.le_trans; [apply time_narrow_raw|]. apply N.mul_le_mono_r. nia.
+  Qed.
   (** Assignment pays for annotation and one encoded-key insertion. *)
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_state * N.of_nat (assign_work x e s + 1))%N.
@@ -1240,7 +1684,11 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
   Lemma T_join_env_le : forall a b, env_wf a -> env_wf b ->
     (T_join a b <= c_env * N.of_nat (esize a + esize b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b _ _. change (T_join a b <= c_env * N.of_nat (size a + size b + 1))%N.
+    eapply N.le_trans; [apply T_join_le|]. apply N.mul_le_mono_r.
+    unfold c_env, c_state. lia.
+  Qed.
 
   Lemma F_wunits_unreached : wunits Unreached = 0.
   Proof.
@@ -1274,7 +1722,7 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Definition k_env_widen : N := 1%N. (* STUB *)
+  Definition k_env_widen : N := 1%N.
   Lemma F_widen : forall p a b, widen p a b =
     if leb b a then a else
     match a, b with
@@ -1411,10 +1859,6 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       rewrite (IH m e), IHes. reflexivity. }
     now rewrite Hkids.
   Qed.
-  Create Rewrite HintDb env_time_nat.
-  Local Hint Rewrite Nat2N.inj_add Nat2N.inj_mul Nat2N.inj_succ Nat2N.inj_max
-    : env_time_nat.
-
   (** The extracted child traversal matches the local checked-refinement loop. *)
   Fixpoint refine_children (ns : list (ann L.op X.t V.t)) (qs : list V.t)
       (m : M.t V.t) (bad : bool) :=
