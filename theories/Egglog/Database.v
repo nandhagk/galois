@@ -6448,6 +6448,28 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     cbn [N.succ_pos N.size_nat]. induction p; cbn [Pos.succ Pos.size_nat]; lia.
   Qed.
 
+  (** Collecting the two final counters pays one bounded slot lookup per cache. *)
+  Lemma T_slot_updated_counters_le : forall layouts state bits,
+    (forall s layout, In (s, layout) layouts -> N.size_nat s <= bits) ->
+    (T_slot_updated_counters layouts state <=
+      16 * (I.c_ix + PTrieT.c_trie + 1) * N.of_nat (length layouts + 1) *
+        N.of_nat (bits + 1))%N.
+  Proof.
+    intro layouts. induction layouts as [|[s layout] rest IH]; intros state bits Hbits.
+    - time_unfold T_slot_updated_counters. cbn [length]. nia.
+    - pose proof (IH state bits (fun t block Hin => Hbits t block (or_intror Hin))) as Htail.
+      pose proof (Hbits s layout (or_introl eq_refl)) as Hslot.
+      pose proof (slot_code_bits s) as Hcode.
+      pose proof (N.T_succ_pos_le s) as Hsucc.
+      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_all_indexes state)) as Hall.
+      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_new_indexes state)) as Hnew.
+      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_all_indexes state))) as Hall_next.
+      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_new_indexes state))) as Hnew_next.
+      time_unfold T_slot_updated_counters.
+      time_unfold @T_runtime_all_indexes. time_unfold @T_runtime_new_indexes.
+      cbn [length]. nia.
+  Qed.
+
   (** Taking the maximum over a list retains its initial lower bound. *)
   Lemma fold_max_base : forall values base, (base <= fold_right N.max base values)%N.
   Proof.
@@ -6694,6 +6716,90 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     pose proof (db_row_code_bits f k) as Hbits.
     set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
     nia.
+  Qed.
+
+  (** A uniform cell-width bound controls the sum used by tuple encoding. *)
+  Lemma tuple_cell_bits_bound : forall u bits,
+    (forall c, In c u -> cell_bits V.encode c <= bits) ->
+    tuple_cell_bits u <= length u * bits.
+  Proof.
+    intro u. induction u as [|c rest IH]; intros bits Hcells.
+    - reflexivity.
+    - pose proof (Hcells c (or_introl eq_refl)) as Hhead.
+      pose proof (IH bits (fun d Hin => Hcells d (or_intror Hin))) as Htail.
+      unfold tuple_cell_bits in *. cbn [fold_right length]. lia.
+  Qed.
+
+  (** One slot mutation fits a uniform tuple, count, slot-key and index-width budget. *)
+  Lemma T_slot_update_one_width : forall b s u state arity count_limit bits,
+    (forall new, I.wf arity (runtime_slot_index state s new)) ->
+    length u <= count_limit ->
+    (forall c, In c u -> cell_bits V.encode c <= bits) ->
+    N.size_nat s <= bits ->
+    N.size_nat (runtime_projection_count state s u) <= bits ->
+    (forall new, I.width (runtime_slot_index state s new) u <= 4 * bits + 2) ->
+    (T_slot_update_one b s u state <=
+      128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros b s u state arity count_limit bits Harity Hlength Hcells Hslot Hcount Hwidth.
+    set (factor := (N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N).
+    pose proof (tuple_cell_bits_bound u bits Hcells) as Hsum.
+    assert (Hencoding_size : (N.of_nat (tuple_cell_bits u + length u + 1) <= factor)%N)
+      by (unfold factor; nia).
+    assert (Htuple_key : (N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <= 2 * factor)%N).
+    { pose proof (db_tuple_code_bits u). unfold factor. nia. }
+    assert (Hencoding : (T_db_tuple_code u <= (V.c_key + 8) * factor)%N).
+    { eapply N.le_trans; [apply T_db_tuple_code_bound |].
+      now apply N.mul_le_mono_l. }
+    assert (Hmutation : forall new,
+      (I.T_insert u (runtime_slot_index state s new) +
+       I.T_remove u (runtime_slot_index state s new) <= 8 * I.c_ix * factor)%N).
+    { intro new.
+      pose proof (I.T_insert_le arity u (runtime_slot_index state s new) (Harity new)) as Hinsert.
+      pose proof (I.T_remove_le arity u (runtime_slot_index state s new) (Harity new)) as Hremove.
+      assert (Hsize : (N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1) <= 4 * factor)%N).
+      { specialize (Hwidth new). unfold factor. nia. }
+      eapply N.le_trans; [apply N.add_le_mono; [exact Hinsert | exact Hremove] |].
+      replace (I.c_ix * N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1) +
+        I.c_ix * N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1))%N with
+        (2 * I.c_ix * (N.of_nat (length u + 1) *
+          N.of_nat (I.width (runtime_slot_index state s new) u + 1)))%N by ring.
+      replace (8 * I.c_ix * factor)%N with (2 * I.c_ix * (4 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (Hmutation false) as Hall.
+    pose proof (Hmutation true) as Hnew.
+    unfold runtime_slot_index in Hall, Hnew. cbn beta iota in Hall, Hnew.
+    pose proof (T_slot_update_one_local b s u state) as Hlocal. cbn beta zeta in Hlocal.
+    pose proof (N.T_succ_pos_le s) as Hsucc.
+    pose proof (slot_code_bits s) as Hcode.
+    assert (Hfactor : (1 <= factor)%N) by (unfold factor; nia).
+    assert (Hbits : (N.of_nat (bits + 1) <= factor)%N) by (unfold factor; nia).
+    assert (Hslot_key : (N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <= 2 * factor)%N)
+      by lia.
+    assert (Hslot_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <=
+      2 * PTrieT.c_trie * factor)%N).
+    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Htuple_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <=
+      2 * PTrieT.c_trie * factor)%N).
+    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hsucc_factor : (N.T_succ_pos s <= factor)%N) by lia.
+    assert (Hcount_factor : (N.of_nat (N.size_nat (runtime_projection_count state s u)) <=
+      factor)%N) by lia.
+    replace (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N with
+      (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N by (unfold factor; ring).
+    clearbody factor.
+    assert (Hcoarse : (T_slot_update_one b s u state <=
+      34 + (16 * I.c_ix + 16 * PTrieT.c_trie + V.c_key + 10) * factor)%N).
+    { clear -Hlocal Hslot_cost Htuple_cost Hall Hnew Hencoding Hsucc_factor Hcount_factor.
+      nia. }
+    eapply N.le_trans; [exact Hcoarse |]. clear -Hfactor. nia.
   Qed.
 
   (** Initialization starts without amortized debt. *)
