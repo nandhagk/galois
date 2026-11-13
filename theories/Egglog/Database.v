@@ -6962,18 +6962,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Definition group_slots (_ : t) (_ : bool) (_ : N) : list N := [].
   (** Slot facts survive changes to the row store between projection updates. *)
   Definition slots_ok (db : t) : Prop :=
-    (forall s f perm, slot_of db s = Some (f, perm) ->
-      I.wf (length perm) (index s false db) /\
-      I.wf (length perm) (index s true db) /\
-      exists d g j, slot_place db s = Some (d, g, j) /\ (g <= s)%N /\ (j <= s)%N /\
-        nth_error (group_slots db d g) (N.to_nat j) = Some s /\
-        (d = true <-> kind (view db) f <> None) /\
-        (d = true -> group_of db f = Some g /\ (g < wmark db)%N)) /\
-    (forall f g, group_of db f = Some g ->
-      NoDup (group_slots db true g) /\
-      forall s, In s (group_slots db true g) <-> exists perm, slot_of db s = Some (f, perm)) /\
+    metadata_ok db /\
     (forall s f perm new, slot_of db s = Some (f, perm) ->
-      (Npos (I.next (index s new db)) <= wmark db)%N).
+      I.wf (length perm) (index s new db)).
+
+  (** Empty initialized caches satisfy the maintained slot invariant for every layout. *)
+  Lemma slots_ok_init : forall ds sl, slots_ok (init ds sl).
+  Proof.
+    intros ds sl. split; [apply metadata_init |].
+    intros s f perm new _. rewrite index_init_empty. apply I.wf_empty.
+  Qed.
+
+  (** Recorded slot bounds identify each declared slot with its raw cache entry. *)
+  Lemma slots_metadata_inside : forall db s f perm, metadata_ok db ->
+    slot_of db s = Some (f, perm) -> (s < runtime_slot_bound (db_runtime db))%N.
+  Proof.
+    intros db s f perm Hmetadata Hslot.
+    destruct Hmetadata as (_ & _ & _ & _ & _ & _ & _ & Hbound). rewrite Hbound.
+    assert (Hinside : N.to_nat s < length (slots db)).
+    { apply nth_error_Some. unfold slot_of in Hslot. congruence. }
+    lia.
+  Qed.
   (** Every slot has a place whose group rank and offset do not exceed the slot number. *)
   Lemma F_slot_place : forall db work s f perm, inv_on db work ->
     slot_of db s = Some (f, perm) ->
@@ -7047,7 +7056,35 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** A slot update keeps those facts. *)
   Lemma F_slots_ok_update : forall db b f u, slots_ok db ->
     slots_fit db f (length u) -> slots_ok (slots_update b f u db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db b f u [Hmetadata Harity] Hfits.
+    assert (Hupdated : metadata_ok (slots_update b f u db)).
+    { apply metadata_slots_update; [exact Hmetadata | intros _; exact Hfits]. }
+    split; [exact Hupdated |]. intros s g perm new Hslot.
+    assert (Horiginal : slot_of db s = Some (g, perm)).
+    { unfold slot_of in Hslot |- *. rewrite slots_update_slots in Hslot. exact Hslot. }
+    pose proof (Harity s g perm new Horiginal) as Hwf.
+    rewrite index_runtime_slot in Hwf by
+      (eapply slots_metadata_inside; [exact Hmetadata | exact Horiginal]).
+    rewrite index_runtime_slot by
+      (eapply slots_metadata_inside; [exact Hupdated | exact Hslot]).
+    pose proof Hmetadata as Hfacts.
+    destruct Hfacts as (_ & _ & _ & _ & _ & _ & Hgroups & _).
+    destruct (Pos.eq_dec f g) as [Hequal | Hdifferent].
+    - subst g.
+      assert (Hpositions : Forall (fun p => p < length u) perm).
+      { assert (Hin : In (f, perm) (slots db)) by (eapply nth_error_In; exact Horiginal).
+        exact (proj2 (Hfits perm Hin)). }
+      rewrite (slot_snapshot_index _ _ s
+        (slots_update_snapshot_same db b f u s perm Hgroups Horiginal Hpositions)).
+      rewrite slot_update_one_index. destruct b.
+      + apply I.wf_insert; [exact Hwf | now apply permute_length].
+      + destruct (runtime_projection_count (db_runtime db) s (permute perm u)) as [|p];
+          [exact Hwf |]. destruct p; try exact Hwf. now apply I.wf_remove.
+    - rewrite (slot_snapshot_index _ _ s
+        (slots_update_snapshot_other db b f u s g perm Hgroups Horiginal Hdifferent)).
+      exact Hwf.
+  Qed.
 
   (** A driver step costs its repair, or its pop and bucket read, plus a constant. *)
   Lemma T_rstep_split : forall db work,
