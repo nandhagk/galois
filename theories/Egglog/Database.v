@@ -930,38 +930,157 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Module ForestFacts := UnionFindFacts UnionFind.
 
   (** Stored facts agree with the forest, allocated identifiers and declared row kinds. *)
-  Record database_wf (db : t) : Prop := Wf {
-    wf_forest : UnionFind.wf (db_forest db);
-    wf_forest_members : forall i, UnionFind.mem (db_forest db) i <-> allocated db i;
-    wf_forest_count : count (db_forest db) = ids db;
-    wf_forest_width : UnionFind.width (db_forest db) <= N.size_nat (ids db);
-    wf_equalities : forall i j, same (view db) i j <-> repr db i = repr db j;
-    wf_log_allocated : Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
-      (runtime_equalities (db_runtime db));
-    wf_row_map : RowMap.wf (runtime_rows (db_runtime db));
-    wf_row_kind : forall f k o, row (view db) f k o ->
+  Definition database_wf (db : t) : Prop :=
+    (UnionFind.wf (db_forest db)) /\
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) /\
+    (count (db_forest db) = ids db) /\
+    (UnionFind.width (db_forest db) <= N.size_nat (ids db)) /\
+    (forall i j, same (view db) i j <-> repr db i = repr db j) /\
+    (Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db))) /\
+    (RowMap.wf (runtime_rows (db_runtime db))) /\
+    (forall f k o, row (view db) f k o ->
       match kind (view db) f, o with
       | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
       | _, _ => False
-      end;
-    wf_row_ids : forall f k o i, row (view db) f k o ->
-      In (Id i) (k ++ option_list o) -> allocated db i;
-    wf_row_slots : forall f k o, row (view db) f k o ->
-      slots_fit db f (length (k ++ option_list o));
-    wf_kind_bound : forall f output, kind (view db) f = Some output ->
-      (f <= runtime_max_name (db_runtime db))%positive;
-    wf_slot_bound : runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db));
-    wf_pending_count : db_npending db = N.of_nat (pending db);
-    wf_queue_allocated : Forall (allocated db) (runtime_queue (db_runtime db));
-    wf_quiet_canonical : pending db = 0 -> canonical db;
-    wf_index_sound : forall s new u, I.mem (index s new db) u ->
+      end) /\
+    (forall f k o i, row (view db) f k o ->
+      In (Id i) (k ++ option_list o) -> allocated db i) /\
+    (forall f k o, row (view db) f k o ->
+      slots_fit db f (length (k ++ option_list o))) /\
+    (forall f output, kind (view db) f = Some output ->
+      (f <= runtime_max_name (db_runtime db))%positive) /\
+    (runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db))) /\
+    (db_npending db = N.of_nat (pending db)) /\
+    (Forall (allocated db) (runtime_queue (db_runtime db))) /\
+    (pending db = 0 -> canonical db) /\
+    (forall s new u, I.mem (index s new db) u ->
       exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
-        u = permute perm (k ++ option_list o);
-    wf_index_complete : forall s f perm k o, slot_of db s = Some (f, perm) ->
-      row (view db) f k o -> I.mem (index s false db) (permute perm (k ++ option_list o));
-    wf_index_arity : forall s new f perm, slot_of db s = Some (f, perm) ->
-      I.wf (length perm) (index s new db)
-  }.
+        u = permute perm (k ++ option_list o)) /\
+    (forall s f perm k o, slot_of db s = Some (f, perm) ->
+      row (view db) f k o -> I.mem (index s false db) (permute perm (k ++ option_list o))) /\
+    (forall s new f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s new db)).
+
+  (** The stored invariant supplies forest. *)
+  Lemma wf_forest : forall db, database_wf db -> UnionFind.wf (db_forest db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies forest members. *)
+  Lemma wf_forest_members : forall db, database_wf db -> forall i, UnionFind.mem (db_forest db) i <-> allocated db i.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies forest count. *)
+  Lemma wf_forest_count : forall db, database_wf db -> count (db_forest db) = ids db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies forest width. *)
+  Lemma wf_forest_width : forall db, database_wf db -> UnionFind.width (db_forest db) <= N.size_nat (ids db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies equalities. *)
+  Lemma wf_equalities : forall db, database_wf db -> forall i j, same (view db) i j <-> repr db i = repr db j.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies log allocated. *)
+  Lemma wf_log_allocated : forall db, database_wf db -> Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row map. *)
+  Lemma wf_row_map : forall db, database_wf db -> RowMap.wf (runtime_rows (db_runtime db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row kind. *)
+  Lemma wf_row_kind : forall db, database_wf db -> forall f k o, row (view db) f k o ->
+      match kind (view db) f, o with
+      | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
+      | _, _ => False
+      end.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row ids. *)
+  Lemma wf_row_ids : forall db, database_wf db -> forall f k o i, row (view db) f k o ->
+      In (Id i) (k ++ option_list o) -> allocated db i.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies row slots. *)
+  Lemma wf_row_slots : forall db, database_wf db -> forall f k o, row (view db) f k o ->
+      slots_fit db f (length (k ++ option_list o)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies kind bound. *)
+  Lemma wf_kind_bound : forall db, database_wf db -> forall f output, kind (view db) f = Some output ->
+      (f <= runtime_max_name (db_runtime db))%positive.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies slot bound. *)
+  Lemma wf_slot_bound : forall db, database_wf db -> runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies pending count. *)
+  Lemma wf_pending_count : forall db, database_wf db -> db_npending db = N.of_nat (pending db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies queue allocated. *)
+  Lemma wf_queue_allocated : forall db, database_wf db -> Forall (allocated db) (runtime_queue (db_runtime db)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies quiet canonical. *)
+  Lemma wf_quiet_canonical : forall db, database_wf db -> pending db = 0 -> canonical db.
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies index sound. *)
+  Lemma wf_index_sound : forall db, database_wf db -> forall s new u, I.mem (index s new db) u ->
+      exists f perm k o, slot_of db s = Some (f, perm) /\ row (view db) f k o /\
+        u = permute perm (k ++ option_list o).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies index complete. *)
+  Lemma wf_index_complete : forall db, database_wf db -> forall s f perm k o, slot_of db s = Some (f, perm) ->
+      row (view db) f k o -> I.mem (index s false db) (permute perm (k ++ option_list o)).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
+
+  (** The stored invariant supplies index arity. *)
+  Lemma wf_index_arity : forall db, database_wf db -> forall s new f perm, slot_of db s = Some (f, perm) ->
+      I.wf (length perm) (index s new db).
+  Proof.
+    unfold database_wf. tauto.
+  Qed.
   Definition wf : t -> Prop := database_wf.
   (** Identifier equality is equality of representatives. *)
   Lemma same_repr : forall db i j, wf db ->
