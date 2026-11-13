@@ -10846,6 +10846,45 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     split; [exact (database_wf_core_bridge db Hbase) | exact Hrank].
   Qed.
 
+  Lemma public_rows_member : forall db f k o, database_wf db ->
+    (In ((f, k), o) (rows db) <-> row (view db) f k o).
+  Proof.
+    intros db f k o Hbase. unfold rows. rewrite <- RowMap.elements_trie.
+    apply row_elements_member. exact (wf_row_map db Hbase).
+  Qed.
+
+  Lemma public_rows_distinct : forall db, database_wf db ->
+    NoDup (map fst (rows db)).
+  Proof.
+    intros db Hbase. unfold rows. rewrite <- RowMap.elements_trie.
+    apply RowMap.elements_nodup. exact (wf_row_map db Hbase).
+  Qed.
+
+  Lemma public_slot_inv : forall db, database_wf db -> forall s f perm,
+    slot_of db s = Some (f, perm) ->
+    I.wf (length perm) (index s false db) /\
+    I.wf (length perm) (index s true db) /\
+    (forall u, I.mem (index s false db) u <->
+      exists k o, row (view db) f k o /\ u = permute perm (k ++ option_list o)) /\
+    (forall u, I.mem (index s true db) u -> I.mem (index s false db) u).
+  Proof.
+    intros db Hbase s f perm Hslot.
+    split; [exact (wf_index_arity db Hbase s false f perm Hslot) |].
+    split; [exact (wf_index_arity db Hbase s true f perm Hslot) |].
+    split.
+    - intro u. split.
+      + intro Hmem. destruct (wf_index_sound db Hbase s false u Hmem)
+          as [owner [layout [k [o [Howner [Hrow Hu]]]]]].
+        rewrite Hslot in Howner. injection Howner as <- <-.
+        exists k, o. now split.
+      + intros [k [o [Hrow ->]]].
+        exact (wf_index_complete db Hbase s f perm k o Hslot Hrow).
+    - intros u Hmem. destruct (wf_index_sound db Hbase s true u Hmem)
+        as [owner [layout [k [o [Howner [Hrow Hu]]]]]].
+      rewrite Hslot in Howner. injection Howner as <- <-. subst u.
+      exact (wf_index_complete db Hbase s f perm k o Hslot Hrow).
+  Qed.
+
   (** Active repair states expose cache metadata directly, without a public wf conversion. *)
   Lemma inv_on_metadata : forall db work, inv_on db work -> metadata_ok db.
   Proof.
