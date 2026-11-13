@@ -536,6 +536,64 @@ End SignAll.
 
 Module SignTable (L : WORD_LANGUAGE) (W : SIGN L) <: SIGN_TABLE L W.
   Include SignTableCode L W.
+
+  (** Widths one and two are exact; every larger width has the same endpoint ordering. *)
+  Local Lemma sign_half_class_cases w :
+    half w = sign_half_class w \/ (4 <= half w /\ sign_half_class w = 4).
+  Proof.
+    assert (Hlarge : forall v, 3 <= Zpos v -> 4 <= half v).
+    { intros v Hv. change (2 ^ 2 <= 2 ^ (Zpos v - 1)).
+      apply Z.pow_le_mono_r; lia. }
+    destruct w as [w|w|].
+    - right. split; [apply Hlarge; change (3 <= 2 * Zpos w + 1); lia|reflexivity].
+    - destruct w as [w|w|].
+      + right. split.
+        * apply Hlarge. change (3 <= 2 * (2 * Zpos w + 1)). lia.
+        * reflexivity.
+      + right. split.
+        * apply Hlarge. change (3 <= 2 * (2 * Zpos w)). lia.
+        * reflexivity.
+      + left. reflexivity.
+    - left. reflexivity.
+  Qed.
+
+  (* Endpoint comparisons reduce to linear inequalities in the half modulus. *)
+  Local Ltac sign_endpoint_compare :=
+    repeat match goal with
+    | |- context [Z.ltb ?x ?y] =>
+      let Htest := fresh "Htest" in
+      destruct (Z.ltb x y) eqn:Htest;
+        [apply Z.ltb_lt in Htest|apply Z.ltb_ge in Htest]; try lia
+    | |- context [Z.leb ?x ?y] =>
+      let Htest := fresh "Htest" in
+      destruct (Z.leb x y) eqn:Htest;
+        [apply Z.leb_le in Htest|apply Z.leb_gt in Htest]; try lia
+    | |- context [Z.eqb ?x ?y] =>
+      let Htest := fresh "Htest" in
+      destruct (Z.eqb x y) eqn:Htest;
+        [apply Z.eqb_eq in Htest|apply Z.eqb_neq in Htest]; try lia
+    end; reflexivity.
+
+  (** The bounded endpoint dispatch preserves every numeric comparison result. *)
+  Lemma sign_cmp_sym_agrees : forall c w a b,
+    sign_cmp_sym c w a b = sign_cmp c w a b.
+  Proof.
+    intros c w [an az ap] [bn bz bp].
+    destruct (sign_half_class_cases w) as [Hsmall|[Hlarge Hclass]].
+    - unfold sign_cmp_sym, sign_cmp, sign_numeric_cmp, sign_lo_sym, sign_hi_sym,
+        sign_ulo_sym, sign_uhi_sym, sign_numeric_lo, sign_numeric_hi,
+        sign_numeric_ulo, sign_numeric_uhi.
+      rewrite <- Hsmall, modulus_half. reflexivity.
+    - unfold sign_cmp_sym, sign_cmp, sign_numeric_cmp, sign_lo_sym, sign_hi_sym,
+        sign_ulo_sym, sign_uhi_sym, sign_numeric_lo, sign_numeric_hi,
+        sign_numeric_ulo, sign_numeric_uhi.
+      rewrite Hclass, modulus_half.
+      destruct c; try reflexivity; destruct an, az, ap, bn, bz, bp;
+        lazy beta iota zeta delta [neg zero pos sign_cmp_lt sign_cmp_le sign_cmp_eq
+          sign_numeric_cmp_lt sign_numeric_cmp_le sign_numeric_cmp_eq];
+        sign_endpoint_compare.
+  Qed.
+
   (** A forward word entry retains each concrete result at its checked width. *)
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
@@ -578,7 +636,9 @@ Module SignTableT (L : WORD_LANGUAGE_T) (S : SIGN_T L) <: SIGN_TABLE_ALL L S.
   Definition c_word_table : N := 1%N. (* STUB *)
   (** The bounded flag comparison keeps every numeric comparator result. *)
   Lemma F_sign_cmp_sym : forall c w a b, sign_cmp_sym c w a b = sign_cmp c w a b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact sign_cmp_sym_agrees.
+  Qed.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
