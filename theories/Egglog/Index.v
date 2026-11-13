@@ -2921,6 +2921,92 @@ Module IndexT (V : VALUE_T) <: INDEX_ALL V.
         clearbody bits. set (trie_cost := PTrieT.c_trie) in *; clearbody trie_cost. lia.
   Qed.
 
+  (** An insertion cursor remains within the counter maintained by its current state. *)
+  Lemma insert_step_point_bound : forall st c, edge_shape (fst st) ->
+    (snd st <= next (fst st))%positive ->
+    (snd (insert_step_st st c) <= next (fst (insert_step_st st c)))%positive.
+  Proof.
+    intros [ix n] c Hshape Hbound. unfold insert_step_st.
+    destruct (Pos.ltb (next ix) n); [exact Hbound |].
+    destruct (PTrieCode.get (encode_cell c) (node_edges (read_node ix n)))
+      as [edge |] eqn:Hget.
+    - exact (proj2 (proj2 (Hshape n (encode_cell c) edge Hget))).
+    - apply Pos.le_refl.
+  Qed.
+
+  (** Every insertion prefix retains a bounded cursor. *)
+  Lemma insert_walk_point_bound : forall r st, shape (fst st) ->
+    (snd st <= next (fst st))%positive ->
+    (snd (fold_left insert_step_st r st) <= next (fst (fold_left insert_step_st r st)))%positive.
+  Proof.
+    induction r as [| c r IH]; intros st Hshape Hbound; cbn [fold_left]; [exact Hbound |].
+    apply IH; [now apply shape_insert_step |].
+    apply insert_step_point_bound; [exact (proj1 Hshape) | exact Hbound].
+  Qed.
+
+  (** The original walk width covers the counter after every shorter insertion prefix. *)
+  Lemma insert_prefix_counter_bits : forall ix r pre, length pre <= length r ->
+    Pos.size_nat (next (fst (fold_left insert_step_st pre (start ix)))) <= width ix r.
+  Proof.
+    intros ix r pre Hlength.
+    pose proof (insert_walk_counter pre (start ix)) as Hcounter.
+    cbn [start fst] in Hcounter.
+    assert (Hbits : Pos.size_nat (next (fst (fold_left insert_step_st pre (start ix)))) <=
+      Pos.size_nat (next ix + Pos.of_nat (length r))).
+    { apply positive_bits_mono, Pos2Nat.inj_le.
+      rewrite Pos2Nat.inj_add, Nat2Pos.id_max. lia. }
+    unfold width. lia.
+  Qed.
+
+  (** Every tuple cell fits the width charged to its complete walk. *)
+  Lemma tuple_cell_width : forall ix r c, In c r -> cell_bits V.encode c <= width ix r.
+  Proof.
+    intros ix r c Hin. pose proof (tuple_bits_member r c Hin). unfold width. lia.
+  Qed.
+
+  (** A fold sums uniform bounds needed only at the states its prefixes actually reach. *)
+  Lemma T_fold_left_prefix_le : forall A B (f : A -> B -> A) T_f xs acc k,
+    (forall pre x suf, xs = pre ++ x :: suf ->
+      (T_f (fold_left f pre acc) x <= k)%N) ->
+    (List.T_fold_left f T_f xs acc <= (k + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    intros A B f T_f xs. induction xs as [|x xs IH]; intros acc k Hprefix.
+    - time_unfold List.T_fold_left. time_cbn. lia.
+    - pose proof (Hprefix [] x xs eq_refl) as Hhead. cbn [fold_left] in Hhead.
+      assert (Htail : forall pre y suf, xs = pre ++ y :: suf ->
+        (T_f (fold_left f pre (f acc x)) y <= k)%N).
+      { intros pre y suf Heq. specialize (Hprefix (x :: pre) y suf).
+        cbn [fold_left app] in Hprefix. apply Hprefix. now rewrite Heq. }
+      pose proof (IH (f acc x) k Htail) as Hrest.
+      time_unfold List.T_fold_left. time_cbn. nia.
+  Qed.
+
+  (** Direct step bounds sum over insertion prefixes without requiring count invariants. *)
+  Lemma T_insert_fold_budget : forall ix r,
+    (List.T_fold_left insert_step_st T_insert_step_st r (start ix) <=
+      (128 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (width ix r + 1) + 1) *
+        N.of_nat (length r) + 1)%N.
+  Proof.
+    intros ix r. apply T_fold_left_prefix_le. intros pre c suf Hsplit.
+    apply T_insert_step_budget.
+    - apply insert_prefix_counter_bits. rewrite Hsplit, length_app. cbn [length]. lia.
+    - apply tuple_cell_width. rewrite Hsplit. apply in_or_app. right. now left.
+  Qed.
+
+  (** Removal prefixes preserve exactly the counter invariants needed by their clocks. *)
+  Lemma T_remove_fold_budget : forall ix r, valid ix ->
+    (List.T_fold_left remove_step_st T_remove_step_st r (start ix) <=
+      (128 * (PTrieT.c_trie + V.c_key + 1) * N.of_nat (width ix r + 1) + 1) *
+        N.of_nat (length r) + 1)%N.
+  Proof.
+    intros ix r Hvalid. apply T_fold_left_prefix_le. intros pre c suf Hsplit.
+    apply T_remove_step_budget.
+    - apply edges_ok_remove_walk. exact (proj1 Hvalid).
+    - apply degrees_ok_remove_walk. exact (proj1 (proj2 Hvalid)).
+    - rewrite remove_walk_counter. cbn [start fst]. apply node_bits_width, Pos.le_refl.
+    - apply tuple_cell_width. rewrite Hsplit. apply in_or_app. right. now left.
+  Qed.
+
   Definition inv := valid.
   Definition c_map : N := PTrieT.c_trie.
   Lemma inv_wf : forall a ix,
