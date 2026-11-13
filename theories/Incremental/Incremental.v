@@ -1739,19 +1739,30 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
         length roots + 1)%nat) * N.of_nat (width p st + 1) +
       c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
       c_inc * demand_solver_work p pol roots fuel st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: Global discovery and value scans exceed the regional time budget. *)
 
   (** Invalidation lists each removed stored key once. *)
   Lemma invalidated_nodup : forall p p' ch st, NoDup (invalidated p p' ch st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p p' ch st; apply invalidate_nodup.
+  Qed.
   (** The empty state stores no key and no influence entry. *)
   Lemma infl_mass_init : infl_mass init = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma kwidth_init : kwidth init = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Every stored key fits the key width of the state. *)
   Lemma kwidth_dom : forall st x, state_ok st -> dom st x -> S.key_bits x <= kwidth st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st x [Hstored Hrest] Hdom; unfold kwidth.
+    change (S.key_bits x <= finite_max S.key_bits (stored st ++ snapshot_keys st)).
+    apply finite_max_member; apply in_or_app; left.
+    apply (proj2 (Hstored x)); exact Hdom.
+  Qed.
   (** Demand adds influence mass within twice its charged region occurrences. *)
   Lemma infl_mass_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (o, st') ->
@@ -1780,30 +1791,73 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
         fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
           length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
       N.of_nat (width p st + width p' st + kwidth st + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: Whole-program and snapshot scans exceed released influence credit. *)
 
   TimeFun discover.
   (** Snapshot access walks the identifier once. *)
   Lemma T_snapshot_get_le : forall id st,
     (T_snapshot_get id st <= c_inc * N.of_nat (Pos.size_nat id + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros id st.
+    pose proof (PTrieT.T_get_le (incremental_snapshot S.key) id (inc_snapshots st)) as Hget.
+    unfold PTrieT.T_get in Hget.
+    unfold T_snapshot_get, PTrieCode.T_get, c_inc; time_simpl; time_cbn; nia.
+  Qed.
   Lemma T_snapshot_set_le : forall id ss st,
     (T_snapshot_set id ss st <= c_inc * N.of_nat (Pos.size_nat id + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros id ss st.
+    pose proof (PTrieT.T_set_le (incremental_snapshot S.key) id ss (inc_snapshots st)) as Hset.
+    unfold PTrieT.T_set in Hset.
+    unfold T_snapshot_set, PTrieCode.T_set, c_inc; time_simpl; time_cbn; nia.
+  Qed.
   (** Recording pays for the owner code and the new write occurrences. *)
   Lemma T_snapshot_record_le : forall owner writes st,
     (T_snapshot_record owner writes st <=
       c_inc * N.of_nat (S.key_bits owner + length writes + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros owner writes st.
+    pose proof (S.T_key_code_le owner) as Hcode.
+    pose proof (PTrieT.T_get_le (incremental_snapshot S.key)
+      (S.key_code owner) (inc_snapshots st)) as Hget.
+    pose proof (Datatypes.T_app_le writes
+      (match snapshot_get (S.key_code owner) st with
+       | Some ss => if snapshot_live ss then snapshot_writes ss else []
+       | None => []
+       end)) as Happ.
+    pose proof (PTrieT.T_set_le (incremental_snapshot S.key) (S.key_code owner)
+      {| snapshot_owner := owner;
+         snapshot_writes := writes ++
+           match snapshot_get (S.key_code owner) st with
+           | Some ss => if snapshot_live ss then snapshot_writes ss else []
+           | None => []
+           end;
+         snapshot_live := true |} (inc_snapshots st)) as Hset.
+    unfold PTrieT.T_get in Hget; unfold PTrieT.T_set in Hset.
+    unfold S.key_bits in Hcode.
+    unfold T_snapshot_record, T_snapshot_get, T_snapshot_set,
+      PTrieCode.T_get, PTrieCode.T_set, c_inc, S.key_bits.
+    time_simpl; time_cbn.
+    destruct (snapshot_get (S.key_code owner) st) as [ss|] eqn:Hsnapshot in *;
+      [destruct (snapshot_live ss) eqn:Hlive in *|]; cbn beta iota zeta in *;
+      rewrite !Nat2N.inj_add in *; change (N.of_nat 1) with 1%N in *; nia.
+  Qed.
   (** Trie lookup reads precisely the recorded snapshot inventory. *)
   Lemma snapshot_get_pin : forall st id ss,
     snapshot_get id st = Some ss <-> In (id, ss) (snapshots st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st id ss; unfold snapshot_get, snapshots; symmetry; apply PTrie.elements_spec.
+  Qed.
   (** Trie update changes precisely one shared snapshot. *)
   Lemma snapshot_set_pin : forall st id ss q,
     snapshot_get q (snapshot_set id ss st) =
       if Pos.eqb q id then Some ss else snapshot_get q st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st id ss q; unfold snapshot_get, snapshot_set; cbn [inc_snapshots].
+    destruct (Pos.eqb q id) eqn:Hcode.
+    - apply Pos.eqb_eq in Hcode; subst q; apply PTrie.get_set_same.
+    - apply Pos.eqb_neq in Hcode; apply PTrie.get_set_other; exact Hcode.
+  Qed.
   (** Recording copies the new row's writes once before the previous live group. *)
   Lemma snapshot_record_pin : forall st owner writes,
     snapshot_get (S.key_code owner) (snapshot_record owner writes st) =
@@ -1814,32 +1868,48 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
           | None => []
           end;
         snapshot_live := true |}.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st owner writes; unfold snapshot_record.
+    rewrite snapshot_set_pin, Pos.eqb_refl; reflexivity.
+  Qed.
   (** Snapshot mass counts each unvisited write occurrence once. *)
   Lemma snapshot_mass_pin : forall st, snapshot_mass st =
     fold_right (fun ss n =>
       if snapshot_live (snd ss) then length (snapshot_writes (snd ss)) + n else n)
       0 (snapshots st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** The recorded key inventory includes visited snapshots for identifier width accounting. *)
   Lemma snapshot_keys_pin : forall st, snapshot_keys st =
     flat_map (fun ss => snapshot_writes (snd ss)) (snapshots st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Every snapshot identifier is the code of an owner among its writes. *)
   Lemma snapshot_owner_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     id = S.key_code (snapshot_owner ss) /\ In (snapshot_owner ss) (snapshot_writes ss).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st id ss [_ [_ [Howner Hrest]]] Hin; apply Howner; exact Hin.
+  Qed.
   (** Snapshot identifiers occur once in the inventory. *)
   Lemma snapshots_nodup : forall st, NoDup (map fst (snapshots st)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro st; unfold snapshots; apply PTrie.elements_nodup.
+  Qed.
   (** Read entries resolve to a retained shared snapshot, including stale entries. *)
   Lemma infl_snapshot_pin : forall st x id, state_ok st -> In id (infl_at st x) ->
     exists ss, In (id, ss) (snapshots st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st x id [_ [_ [_ [Hrefs Hrest]]]] Hin; apply Hrefs with (x := x); exact Hin.
+  Qed.
   (** Unvisited snapshots contain stored keys. *)
   Lemma snapshot_stored_pin : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     snapshot_live ss = true -> forall x, In x (snapshot_writes ss) -> dom st x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st id ss [_ [_ [_ [_ [Hlive Hrest]]]]] Hin Hactive x Hx.
+    exact (Hlive id ss Hin Hactive x Hx).
+  Qed.
   (** Co-write memberships are precisely the unvisited snapshot key occurrences. *)
   Lemma cowrite_count_pin : forall st x id, state_ok st ->
     length (filter (Pos.eqb id) (cowrite_at st x)) =
@@ -1847,15 +1917,21 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       if (Pos.eqb id (fst iss) && snapshot_live (snd iss))%bool then
         length (filter (S.key_eqb x) (snapshot_writes (snd iss))) + n else n)
       0 (snapshots st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st x id [_ [_ [_ [_ [_ [Hcounts Hrest]]]]]]; exact (Hcounts x id).
+  Qed.
   (** Shared snapshot mass pays the co-write memberships without a second inventory charge. *)
   Lemma cowrite_mass_pin : forall st, state_ok st -> snapshot_mass st =
     fold_right Nat.add 0 (map (fun x => length (cowrite_at st x)) (stored st)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st [_ [_ [_ [_ [_ [_ [Hmass Hwidth]]]]]]]; exact Hmass.
+  Qed.
   (** Every retained snapshot identifier fits the stored key width. *)
   Lemma snapshot_id_width : forall st id ss, state_ok st -> In (id, ss) (snapshots st) ->
     Pos.size_nat id <= kwidth st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st id ss [_ [_ [_ [_ [_ [_ [_ Hwidth]]]]]]] Hin; exact (Hwidth id ss Hin).
+  Qed.
   (** Demands record write occurrences only from their discovered rows. *)
   Lemma snapshot_keys_demand : forall p pol roots fuel st o st', S.wf p -> inv p st ->
     demand p pol roots fuel st = (o, st') -> forall x, In x (snapshot_keys st') ->
@@ -1886,42 +1962,67 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
 
   (** The stored key list enumerates the domain once. *)
   Lemma stored_spec : forall st x, state_ok st -> (In x (stored st) <-> dom st x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st x [Hstored Hrest]; exact (Hstored x).
+  Qed.
   Lemma stored_nodup : forall st, state_ok st -> NoDup (stored st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st [_ [Hnodup Hrest]]; exact Hnodup.
+  Qed.
   (** The influence degree counts the recorded entries of a key, stale ones included. *)
   Lemma infl_deg_spec : forall st x, infl_deg st x = length (infl_at st x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Influence mass counts stored keys, their entries and the unvisited snapshot keys. *)
   Lemma infl_mass_spec : forall st, infl_mass st =
     fold_right Nat.add 0%nat (map (fun x => infl_deg st x + 1) (stored st)) + snapshot_mass st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** The key width covers the stored keys and every key of a recorded snapshot. *)
   Lemma kwidth_spec : forall st, kwidth st =
     fold_right Nat.max 0 (map S.key_bits (stored st ++ snapshot_keys st)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** The public invalidation list is the plan's closure. *)
   Lemma invalidated_pin : forall p p' ch st,
     invalidated p p' ch st = invalidate p p' ch st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   TimeFun merge_region.
 
   Lemma region_closed : forall p roots st r x, inv p st ->
     In r (region p roots st) -> In x (S.writes p r ++ S.deps p r) ->
     dom st x \/ In x (discover p roots st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p roots st r x Hinv Hr Hx; exact (discovery_region_support p roots st r x Hr Hx).
+  Qed.
 
   Lemma frame_post : forall p st s, S.wf p -> inv p st ->
     (forall x, dom st x -> s x = look st x) ->
     forall r y, In r (S.rows p) -> In y (S.writes p r) -> dom st y ->
       row_ok L.leb s (S.target p r) (S.eval p r s) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p st s Hwf [Hclosed Hpost] Hagree r y Hr Hy Hdom.
+    assert (Hrow : row_ok L.leb s (S.target p r) (S.eval p r s) =
+      row_ok L.leb (look st) (S.target p r) (S.eval p r (look st))).
+    { apply row_look_transport; [exact Hwf|exact Hr|].
+      intros x Hx; apply Hagree; exact (Hclosed r y x Hr Hy Hdom Hx). }
+    rewrite Hrow; exact (Hpost r y Hr Hy Hdom).
+  Qed.
 
   Lemma merge_inv : forall p roots st m, S.wf p -> inv p st ->
     Checker.check_rows p (region p roots st) m = true ->
     (forall x, dom st x -> Checker.look m x = look st x) ->
     inv p (merge_region st (discover p roots st) m).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p roots st m Hwf Hinv Hcheck Hagree.
+    apply merge_checked_inv; [exact Hwf|exact Hinv|exact Hcheck|].
+    intros r x Hr Hx Hdom; apply Hagree; exact Hdom.
+  Qed.
 
   Lemma demand_certificate : forall p pol roots fuel st st', inv p st ->
     demand p pol roots fuel st = (Done, st') ->
@@ -1933,7 +2034,10 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     Sol.run (R.mk p (frozen p roots st) (region p roots st)) pol fuel = Solved m ->
     forall s, S.post_solution p s -> forall x,
       L.leb (look_or S.key_code L.bot m x) (s x) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p pol roots fuel st m Hwf Hmono Hfree Hinv Hleast Hrun.
+    exact (regional_run_below p pol roots fuel st m Hwf Hmono Hfree Hleast Hrun).
+  Qed.
 
   Lemma region_least : forall p (E : S.key -> Prop) rs small global,
     S.wf p -> S.monotone p -> closed p E ->
@@ -1948,11 +2052,19 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   (** Frozen pairs are stored checked values. *)
   Lemma frozen_spec : forall p roots st x v,
     In (x, v) (frozen p roots st) -> value st x = Some v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p roots st x v Hin; exact (frozen_for_rows_sound p (region p roots st) st x v Hin).
+  Qed.
   (** Frozen pairs have distinct keys read or written by region rows. *)
   Lemma frozen_region : forall p roots st x v, In (x, v) (frozen p roots st) ->
     exists r, In r (region p roots st) /\ In x (S.writes p r ++ S.deps p r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p roots st x v Hin; unfold frozen, frozen_pairs, frozen_for_rows in Hin.
+    apply freeze_values_spec in Hin as [Hin Hvalue].
+    apply (proj1 (unique_spec (flat_map (row_keys p) (discovery_region p roots st)) x)) in Hin.
+    apply in_flat_map in Hin as [r [Hr Hx]].
+    exists r; split; assumption.
+  Qed.
   Lemma frozen_nodup : forall p roots st, NoDup (map fst (frozen p roots st)).
   Proof. Admitted. (* STUB *)
 
