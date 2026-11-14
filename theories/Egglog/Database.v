@@ -13351,6 +13351,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Howner.
   Qed.
 
+  Lemma database_history_key_shape_row_delete : forall db f k,
+    database_history_key_shape db ->
+    database_history_key_shape (row_delete f k db).
+  Proof.
+    intros db f k Hshape.
+    eapply database_history_key_shape_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - apply row_delete_ids.
+    - exact Hshape.
+  Qed.
+
   Lemma database_row_weight_conserved_row_delete : forall db f k,
     database_row_weight_conserved db ->
     database_row_weight_conserved (row_delete f k db).
@@ -13861,6 +13873,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try exact Hfresh_owner;
       (apply database_history_root_owner_row_replace;
         [exact Hfresh_store | exact Hfresh_owner]).
+  Qed.
+
+  Lemma database_history_key_shape_make : forall db f k,
+    database_row_store_ok db -> database_history_key_shape db ->
+    database_history_key_shape (snd (make f k db)).
+  Proof.
+    intros db f k Hstore Hshape.
+    pose proof (database_row_store_ok_allocate_next db Hstore) as Hfresh_store.
+    pose proof (database_history_key_shape_allocate_next db Hstore Hshape)
+      as Hfresh_shape.
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hshape;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh_shape;
+      (apply database_history_key_shape_row_replace;
+        [exact Hfresh_store | exact Hfresh_shape]).
   Qed.
 
   Lemma database_row_weight_conserved_make : forall db f k,
@@ -14521,6 +14550,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Howner f k key r g args other s Hfirst Hsecond Hroot).
   Qed.
 
+  Lemma database_history_key_shape_union : forall db i j,
+    database_history_key_shape db ->
+    database_history_key_shape (union i j db).
+  Proof.
+    intros db i j Hshape.
+    eapply database_history_key_shape_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - now rewrite union_row_store_raw.
+    - apply union_ids.
+    - exact Hshape.
+  Qed.
+
   Lemma database_row_weight_conserved_union : forall db i j,
     database_row_weight_conserved db ->
     database_row_weight_conserved (union i j db).
@@ -14697,6 +14738,35 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hnext_store | exact Hnext_owner].
     - apply database_history_root_owner_row_replace;
         [exact Hnext_store | exact Hnext_owner].
+  Qed.
+
+  Lemma database_history_key_shape_put : forall db f k o,
+    database_row_store_ok db -> database_history_key_shape db ->
+    database_history_key_shape (put f k o db).
+  Proof.
+    intros db f k o Hstore Hshape. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hnext_shape : database_history_key_shape next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try exact Hshape; apply database_history_key_shape_union; exact Hshape. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_shape |].
+      apply database_history_key_shape_row_replace;
+        [exact Hnext_store | exact Hnext_shape].
+    - apply database_history_key_shape_row_replace;
+        [exact Hnext_store | exact Hnext_shape].
   Qed.
 
   Lemma database_row_weight_conserved_put : forall db f k o,
