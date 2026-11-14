@@ -11792,6 +11792,35 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     now symmetry.
   Qed.
 
+  Lemma database_row_weight_codes_disjoint : forall db first second left right,
+    first <> second ->
+    (match PTrieCode.get first (row_links (db_row_store db)) with
+     | Some parent => parent | None => first end) = first ->
+    (match PTrieCode.get second (row_links (db_row_store db)) with
+     | Some parent => parent | None => second end) = second ->
+    Forall (fun code => exists label id,
+      PTrieCode.get code (row_history (db_row_store db)) = Some (label, id) /\
+      database_history_connected db id first) left ->
+    Forall (fun code => exists label id,
+      PTrieCode.get code (row_history (db_row_store db)) = Some (label, id) /\
+      database_history_connected db id second) right ->
+    forall code, In code left -> ~ In code right.
+  Proof.
+    intros db first second left right Hneq Hfirst Hsecond Hleft Hright code
+      Hinleft Hinright.
+    apply Forall_forall with (x := code) in Hleft; [| exact Hinleft].
+    apply Forall_forall with (x := code) in Hright; [| exact Hinright].
+    destruct Hleft as [label [id [Hentry Hconnected_first]]].
+    destruct Hright as [other [id' [Hentry' Hconnected_second]]].
+    rewrite Hentry in Hentry'. injection Hentry' as _ <-.
+    apply Hneq. eapply database_history_connected_fixed_unique;
+      [| exact Hfirst | exact Hsecond].
+    unfold database_history_connected in *.
+    eapply rst_trans.
+    - apply rst_sym. exact Hconnected_first.
+    - exact Hconnected_second.
+  Qed.
+
   (** Linking a terminal row root redirects every completed path with one more step. *)
   Lemma row_root_link_terminal : forall d r store store' loser winner,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
