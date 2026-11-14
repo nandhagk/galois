@@ -15255,6 +15255,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** A union finds both roots and links only distinct ones. *)
+  Lemma union_find_root_raw : forall u r,
+    UnionFind.is_root u r -> UnionFindCode.find r u = (r, u).
+  Proof.
+    intros u r Hroot.
+    unfold UnionFindCode.find, UnionFindCode.walk.
+    cbn [loop_fuel]. unfold UnionFindCode.walk_step. cbn [fst snd].
+    unfold UnionFind.is_root in Hroot.
+    rewrite Hroot, Pos.eqb_refl.
+    cbn [fst snd]. unfold UnionFindCode.compress. cbn [fold_left].
+    destruct u. reflexivity.
+  Qed.
+
   Lemma F_union_roots : forall i j db, inv db -> allocated db i -> allocated db j ->
     let '(ri, u1) := UnionFind.find i (uf_state db) in
     let '(rj, u2) := UnionFind.find j u1 in
