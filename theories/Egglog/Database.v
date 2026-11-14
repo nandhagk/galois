@@ -11327,6 +11327,32 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (database_row_store_history_range db Hstore g args key r Hget).
   Qed.
 
+  Lemma ensure_row_identity_old_size : forall db f k g args key r d,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
+    (let parent current :=
+      match PTrieCode.get current
+        (row_links (db_row_store (ensure_row_identity f k db))) with
+      | Some p => p | None => current end in
+     parent (Nat.iter d parent r) = Nat.iter d parent r) ->
+    (match PTrieCode.get
+      (Nat.iter d (fun current =>
+        match PTrieCode.get current
+          (row_links (db_row_store (ensure_row_identity f k db))) with
+        | Some p => p | None => current end) r)
+      (row_weights (db_row_store (ensure_row_identity f k db))) with
+     | Some n => n | None => 1%N end <=
+     (ids (ensure_row_identity f k db) + 1) ^ N.of_nat (length args))%N.
+  Proof.
+    intros db f k g args key r d Hstore Hget Hroot.
+    rewrite ensure_row_identity_links in Hroot |- *.
+    rewrite ensure_row_identity_ids.
+    rewrite ensure_row_identity_old_root_weight.
+    - exact (database_row_store_size db Hstore g args key r d Hget Hroot).
+    - apply row_parent_iter_below_fresh; [exact Hstore |].
+      exact (database_row_store_history_range db Hstore g args key r Hget).
+  Qed.
+
   Lemma ensure_row_identity_new_locate : forall db f k,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
