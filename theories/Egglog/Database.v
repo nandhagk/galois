@@ -22023,6 +22023,41 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       intros x Hin. exact (proj1 (Hmembers x) Hin).
   Qed.
 
+  Lemma union_same_base_active : forall db i j k l,
+    UnionFind.wf (db_forest db) ->
+    (forall a b, same (view db) a b <-> repr db a = repr db b) ->
+    (same (view (union i j db)) k l <->
+      clos_refl_sym_trans positive
+        (fun a b => same (view db) a b \/ (a, b) = (i, j)) k l).
+  Proof.
+    intros db i j k l Hforest Hsame. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db))
+      as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - apply equality_log_cons.
+    - change (equality_log (runtime_equalities (db_runtime db)) k l <->
+        clos_refl_sym_trans positive
+          (fun a b => equality_log (runtime_equalities (db_runtime db)) a b \/
+            (a, b) = (i, j)) k l).
+      rewrite <- equality_log_cons. symmetry. apply equality_log_redundant.
+      apply (proj2 (Hsame i j)).
+      exact (proj1 (UnionFind.union_none i j (db_forest db) forest
+        Hforest Hunion)).
+  Qed.
+
+  Lemma union_equalities_active : forall db i j,
+    UnionFind.wf (db_forest db) ->
+    (forall a b, same (view db) a b <-> repr db a = repr db b) ->
+    forall a b, same (view (union i j db)) a b <->
+      repr (union i j db) a = repr (union i j db) b.
+  Proof.
+    intros db i j Hforest Hsame a b.
+    rewrite (union_same_base_active db i j a b Hforest Hsame).
+    unfold repr. rewrite union_forest.
+    rewrite (ForestFacts.union_same_closure i j (db_forest db) a b Hforest).
+    apply equality_closure_equiv. intros x y. rewrite (Hsame x y). tauto.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
