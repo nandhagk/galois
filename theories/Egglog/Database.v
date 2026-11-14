@@ -5226,10 +5226,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite PTrie.get_empty. cbn. rewrite PTrie.get_empty. reflexivity.
   Qed.
 
-  (** Initialization creates a well-formed database. *)
-  Lemma wf_init : forall ds sl, wf (init ds sl).
+  (** Initialization establishes the base stored facts. *)
+  Lemma database_wf_init : forall ds sl, database_wf (init ds sl).
   Proof.
-    intros ds sl. unfold wf, database_wf.
+    intros ds sl. unfold database_wf.
     split; [apply UnionFind.wf_empty |].
     split.
     { intro i. change (PTrieCode.get i (@PTrieCode.empty positive) <> None <->
@@ -5255,6 +5255,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     { intros s new f perm _. rewrite index_init_empty. apply I.wf_empty. }
     split; [reflexivity |]. split; [apply init_projection_counts |].
     split; [apply init_max_name_attained | apply database_history_init].
+  Qed.
+
+  (** Initialization creates a well-formed database. *)
+  Lemma wf_init : forall ds sl, wf (init ds sl).
+  Proof. exact database_wf_init. Qed.
+
+  Lemma database_public_ok_init : forall ds sl, database_public_ok (init ds sl).
+  Proof.
+    intros ds sl. unfold database_public_ok.
+    split; [apply database_wf_init |].
+    split; [apply database_idle_ok_init | reflexivity].
   Qed.
 
   (** Rebuilding keeps the database well formed. *)
