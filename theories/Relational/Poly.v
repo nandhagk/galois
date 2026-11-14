@@ -15838,6 +15838,27 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply Nat.mul_le_mono_r, Nat.mul_le_mono_l. lia.
   Qed.
 
+  (** Prepared step and candidate widths use one logarithmic public envelope. *)
+  Lemma poly_assign_prepared_widths : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let wide := nell (Reached P) + X.bits x + F.bits_e e + 1 +
+      Nat.log2 (terms (Reached P) + tsize e + 1) + 1 in
+    poly_raw_keys P + poly_raw_bits P + X.bits x +
+      2 * F.form_bits prepared + 3 <= 5 * wide /\
+    poly_raw_keys P + 2 * poly_raw_bits P + X.bits x +
+      3 * F.form_bits prepared + 5 <= 8 * wide.
+  Proof.
+    intros x e P f Hlinear prepared wide.
+    destruct (F.lin_of_size e f NoWrap Hlinear) as [Hlength Hbits].
+    cbn [F.wrap_bits] in Hbits.
+    pose proof (poly_assign_prepared_form_bits f) as Hprepared.
+    pose proof (Nat.log2_le_mono (length (coef f))
+      (terms (Reached P) + tsize e + 1) ltac:(lia)) as Hlog.
+    pose proof (poly_raw_width P) as Hraw.
+    unfold wide, prepared. lia.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
