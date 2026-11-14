@@ -3467,6 +3467,16 @@ Fixpoint karr_target_exact (rs : list karr_row) (previous : Z)
       end
   end.
 
+(** Zero basis rows cannot request a target division. *)
+Lemma karr_target_exact_zero_rows : forall rs previous target,
+  Forall (fun row => karr_first (kcoeff row) = None) rs ->
+  karr_target_exact rs previous target.
+Proof.
+  intros rs previous target Hzero.
+  induction Hzero as [|row rs Hfirst Hrest IH]; [exact I|].
+  cbn [karr_target_exact]. now rewrite Hfirst.
+Qed.
+
 (** Exact full-width target traces project through any restored zero column. *)
 Lemma karr_target_restore_exact : forall rs previous r,
   karr_target_exact (map karr_restore rs) previous r ->
