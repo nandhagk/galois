@@ -14338,6 +14338,34 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact Hbits.
   Qed.
 
+  (** Untagging a full-step row retains its normality and temporary-key bounds. *)
+  Lemma poly_assign_output_untag_envelope : forall x f P r xs,
+    NoDup (map fst (coef f)) ->
+    In r (poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun q => (rename_row (rename_old x) q, false)) P))) ->
+    untag (lhs (poly_constraint r)) = Some xs ->
+    let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+    NoDup (map fst (lhs c)) /\
+    length (lhs c) <=
+      length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1 /\
+    C.row_key_bits c <= poly_raw_keys P + X.bits x + F.form_bits f + 1 /\
+    C.row_bits c <= 2 * (poly_raw_bits P + F.form_bits f + 1) + 1.
+  Proof.
+    intros x f P r xs Hform Hr Huntag c.
+    destruct (proj1 (Forall_forall _ _)
+      (poly_assign_output_envelope x f P Hform) r Hr)
+      as (Hnormal & Hdim & Hkeys & Hbits & _).
+    pose proof (poly_assign_untag_envelope (poly_constraint r) xs Huntag)
+      as (Hlength & Hbit_eq & Hkey_le).
+    repeat split.
+    - apply untag_nodup with (xs := lhs (poly_constraint r)); assumption.
+    - unfold c. cbn [lhs]. rewrite Hlength. exact Hdim.
+    - eapply Nat.le_trans; [exact Hkey_le|exact Hkeys].
+    - unfold c. rewrite Hbit_eq. exact Hbits.
+  Qed.
+
   (** Only the old assigned coordinate is eliminated from the source-only tail. *)
   Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
     poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
