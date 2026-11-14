@@ -16751,6 +16751,43 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  (** Source-only basis construction fits the conclusion's elimination allowance. *)
+  Lemma T_karr_source_basis_public : forall P c,
+    normal P ->
+    (T_equality_basis (variables P) P <=
+      (33554500 + 32 * karr_seed_factor + 8 * karr_prepare_factor) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (zero := LCons X.t [] REq 0%Z).
+    assert (Hsame : variables (zero :: P) = variables P).
+    { unfold zero, variables. cbn [flat_map lhs]. reflexivity. }
+    assert (Hsource_keys : Forall (fun x => X.bits x <= ell (Reached P))
+      (variables P)).
+    { apply karr_variables_key_bound.
+      eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [_ [Hbits _]]. exact Hbits. }
+    assert (Hkeys : Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (zero :: nil))) (variables P)).
+    { eapply Forall_impl; [|exact Hsource_keys].
+      intros x Hx. cbn beta in Hx. lia. }
+    pose proof (T_karr_equality_basis_public P zero (variables P) HP
+      ltac:(rewrite Hsame; lia) Hkeys) as Hclock.
+    assert (Hzero_n : n (Reached (zero :: nil)) = 1).
+    { unfold zero, n, vars_of. reflexivity. }
+    assert (Hc_n : 1 <= n (Reached (c :: nil))).
+    { unfold n. cbn [rows_of length]. lia. }
+    assert (Hzero_ell : ell (Reached (zero :: nil)) = 0).
+    { unfold zero, ell. reflexivity. }
+    assert (Hwork : elimination_work (Reached P) (Reached (zero :: nil)) <=
+      elimination_work (Reached P) (Reached (c :: nil))).
+    { unfold elimination_work. apply karr_numeric_polynomial_mono.
+      - rewrite Hzero_n. lia.
+      - rewrite Hzero_ell. lia. }
+    eapply N.le_trans; [exact Hclock|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
   (** The initialized contradiction scan fits the public elimination allowance. *)
   Lemma T_karr_contradiction_scan_public : forall P c,
     normal P ->
