@@ -14204,6 +14204,30 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - rewrite karr_combine_self. apply karr_minor_law_initial.
   Qed.
 
+  (** Equal-width rows initialize the labeled minor invariant at order zero. *)
+  Lemma karr_run_state_initial_general : forall width cols rows,
+    cols <= width ->
+    Forall (fun row => length (kcoeff row) = cols) rows ->
+    Forall (fun row => length (karr_row_entries row) = width) rows ->
+    karr_run_state width cols (map karr_row_entries rows) 1 [] []
+      (seq 0 width) (map karr_row_entries rows) rows.
+  Proof.
+    intros width cols rows Hcols Hcoeff Hentries.
+    unfold karr_run_state. repeat (apply conj).
+    - lia.
+    - reflexivity.
+    - now rewrite length_map.
+    - exact Hcoeff.
+    - now rewrite length_seq.
+    - rewrite length_seq. exact Hcols.
+    - reflexivity.
+    - cbn [app]. apply Permutation_refl.
+    - cbn [app]. apply karr_increasing_seq.
+    - cbn [app]. replace width with (0 + width) by lia.
+      apply karr_seq_bounded.
+    - rewrite karr_combine_self. apply karr_minor_law_initial.
+  Qed.
+
   (** Every initialized certificate vector has a zero when two source slots exist. *)
   Lemma seed_rows_zero_weight : forall xs total index P,
     2 <= total ->
