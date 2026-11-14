@@ -20486,6 +20486,29 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (proj1 (inv_on_core_bridge db work Hinv) i).
   Qed.
 
+  Lemma inv_on_normal_kind_ok : forall db work f k o,
+    inv_on db work -> kind_ok db f k o ->
+    kind_ok db f (normal_key db k) (option_map (normal_cell db) o).
+  Proof.
+    intros db work f k o Hinv [Hids [Hfits Hkind]].
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    assert (Hmembers : forall i,
+      UnionFind.mem (db_forest db) i <-> allocated db i).
+    { intro i. exact (inv_on_forest_members db work i Hinv). }
+    rewrite (normal_key_correct_forest db k Hforest Hmembers).
+    rewrite (normal_output_correct_forest db o Hforest Hmembers).
+    unfold kind_ok. split.
+    - intros i Hin. rewrite <- canon_row_tuple in Hin.
+      apply in_map_iff in Hin as [c [Hcell Hin]].
+      destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+      injection Hcell as <-. unfold repr, allocated in *.
+      eapply UnionFindCodeFacts.repr_allocated; [exact Hforest | exact Hmembers |].
+      exact (Hids j Hin).
+    - split.
+      + rewrite <- canon_row_tuple, length_map. exact Hfits.
+      + destruct o as [[j | v] |]; exact Hkind.
+  Qed.
+
   Lemma inv_on_repair_fixed : forall db f k rest current output,
     inv_on db ((f, k) :: rest) -> located db f k = Some current ->
     row_get f current db = Some output ->
