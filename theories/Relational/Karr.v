@@ -1252,6 +1252,58 @@ Proof.
   rewrite Hduplicate. ring.
 Qed.
 
+(** Permuting equal-width rows changes a determinant by at most its sign. *)
+Lemma karr_determinant_permutation : forall xs ys,
+  Permutation xs ys ->
+  forall order prefix suffix width,
+    length prefix + length xs <= S order ->
+    Forall (fun row => length row = width) xs ->
+    exists sign : Z, (sign = 1 \/ sign = -1)%Z /\
+      karr_determinant (S order) (prefix ++ xs ++ suffix) =
+        (sign * karr_determinant (S order) (prefix ++ ys ++ suffix))%Z.
+Proof.
+  intros xs ys Hperm.
+  induction Hperm as
+    [|row xs ys Hperm IH|first second xs|xs ys zs Hleft IHleft Hright IHright];
+    intros order prefix suffix width Hbound Hwidth.
+  - exists 1%Z. split; [now left|]. ring.
+  - apply Forall_cons_iff in Hwidth as [Hrow Htail].
+    destruct (IH order (prefix ++ [row]) suffix width
+      ltac:(rewrite length_app; cbn [length] in *; lia) Htail)
+      as [sign [Hsign Heq]].
+    exists sign. split; [exact Hsign|].
+    replace (prefix ++ (row :: xs) ++ suffix) with
+      ((prefix ++ [row]) ++ xs ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    replace (prefix ++ (row :: ys) ++ suffix) with
+      ((prefix ++ [row]) ++ ys ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    exact Heq.
+  - apply Forall_cons_iff in Hwidth as [Hfirst Htail].
+    apply Forall_cons_iff in Htail as [Hsecond _].
+    destruct order as [|order]; [cbn [length] in Hbound; lia|].
+    exists (-1)%Z. split; [now right|].
+    replace (prefix ++ (first :: second :: xs) ++ suffix) with
+      (prefix ++ first :: second :: (xs ++ suffix)) by reflexivity.
+    replace (prefix ++ (second :: first :: xs) ++ suffix) with
+      (prefix ++ second :: first :: (xs ++ suffix)) by reflexivity.
+    rewrite (karr_determinant_swap_at order prefix second first (xs ++ suffix))
+      by (cbn [length] in Hbound; lia).
+    ring.
+  - destruct (IHleft order prefix suffix width Hbound Hwidth)
+      as [left [Hleft_sign Hleft_eq]].
+    assert (Hmiddle_width : Forall (fun row => length row = width) ys)
+      by (eapply Permutation_Forall; eauto).
+    destruct (IHright order prefix suffix width
+      ltac:(rewrite <- (Permutation_length Hleft); exact Hbound) Hmiddle_width)
+      as [right [Hright_sign Hright_eq]].
+    exists (left * right)%Z. split.
+    + destruct Hleft_sign as [Hleft_one|Hleft_neg];
+        destruct Hright_sign as [Hright_one|Hright_neg];
+        subst; [left|right|right|left]; ring.
+    + rewrite Hleft_eq, Hright_eq. ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
