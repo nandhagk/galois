@@ -10748,6 +10748,38 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  (** Checking exact division scans both vectors at a common operand width. *)
+  Lemma T_karr_exact_bounded : forall dim mlen bits d r,
+    Z.size_nat d <= bits -> karr_row_envelope dim mlen bits r ->
+    (T_karr_exact d r <=
+      256 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d r Hd
+      [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    set (work := N.of_nat ((bits + 1)^2)).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    assert (Hcoefftime : (List.T_forallb (karr_divisible d) (T_karr_divisible d)
+      (kcoeff r) <= (64 * work + 2) * N.of_nat (length (kcoeff r)) + 1)%N).
+    { apply karr_T_forallb_members. intros z Hz.
+      apply T_karr_divisible_bounded; [exact Hd|].
+      exact (proj1 (Forall_forall _ _) Hcoeff z Hz). }
+    assert (Hmulttime : (List.T_forallb (karr_divisible d) (T_karr_divisible d)
+      (kweight r) <= (64 * work + 2) * N.of_nat (length (kweight r)) + 1)%N).
+    { apply karr_T_forallb_members. intros z Hz.
+      apply T_karr_divisible_bounded; [exact Hd|].
+      exact (proj1 (Forall_forall _ _) Hmult z Hz). }
+    pose proof (T_karr_divisible_bounded d (kright r) bits Hd Hrhs) as Hrighttime.
+    pose proof (T_karr_divisible_bounded d (kscale r) bits Hd Hscale) as Hscaletime.
+    pose proof (T_karr_zero_test d) as Hdivisor.
+    fold work in Hrighttime, Hscaletime |- *.
+    time_unfold T_karr_exact. time_simpl.
+    change (fun z : Z => T_karr_divisible d z) with (T_karr_divisible d).
+    rewrite !Nat2N.inj_add. cbn [N.of_nat].
+    clear -Hdim Hmlen Hcoefftime Hmulttime Hrighttime Hscaletime Hpositive Hdivisor.
+    clearbody work. nia.
+  Qed.
+
   (** Applying the exact quotient scans both vectors and the scalar fields once. *)
   Lemma T_karr_quotient_one_bounded : forall dim mlen bits r,
     karr_row_envelope dim mlen bits r ->
@@ -10774,6 +10806,40 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       fold work in Hdiv. lia. }
     pose proof (T_karr_division_one_bounded (kright r) bits Hrhs) as Hrighttime.
     pose proof (T_karr_division_one_bounded (kscale r) bits Hscale) as Hscaletime.
+    fold work in Hrighttime, Hscaletime |- *.
+    time_unfold T_karr_quotient. time_simpl.
+    rewrite !Nat2N.inj_add. cbn [N.of_nat].
+    clear -Hdim Hmlen Hcoefftime Hmulttime Hrighttime Hscaletime Hpositive.
+    clearbody work. nia.
+  Qed.
+
+  (** Quotient construction scans both vectors at a common operand width. *)
+  Lemma T_karr_quotient_bounded : forall dim mlen bits d r,
+    Z.size_nat d <= bits -> karr_row_envelope dim mlen bits r ->
+    (T_karr_quotient d r <=
+      256 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d r Hd
+      [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    set (work := N.of_nat ((bits + 1)^2)).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    assert (Hcoefftime : (ListDef.T_map (fun z => (z / d)%Z)
+      (fun z => (1 + Z.T_div z d)%N) (kcoeff r) <=
+      (65 * work + 1) * N.of_nat (length (kcoeff r)) + 1)%N).
+    { apply karr_T_map_members. intros z Hz.
+      pose proof (T_karr_division_bounded z d bits
+        (proj1 (Forall_forall _ _) Hcoeff z Hz) Hd) as Hdiv.
+      fold work in Hdiv. lia. }
+    assert (Hmulttime : (ListDef.T_map (fun z => (z / d)%Z)
+      (fun z => (1 + Z.T_div z d)%N) (kweight r) <=
+      (65 * work + 1) * N.of_nat (length (kweight r)) + 1)%N).
+    { apply karr_T_map_members. intros z Hz.
+      pose proof (T_karr_division_bounded z d bits
+        (proj1 (Forall_forall _ _) Hmult z Hz) Hd) as Hdiv.
+      fold work in Hdiv. lia. }
+    pose proof (T_karr_division_bounded (kright r) d bits Hrhs Hd) as Hrighttime.
+    pose proof (T_karr_division_bounded (kscale r) d bits Hscale Hd) as Hscaletime.
     fold work in Hrighttime, Hscaletime |- *.
     time_unfold T_karr_quotient. time_simpl.
     rewrite !Nat2N.inj_add. cbn [N.of_nat].
