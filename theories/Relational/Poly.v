@@ -15776,6 +15776,97 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now apply N.mul_le_mono_l.
   Qed.
 
+  (** A zero prepared pivot combines its head and source checker allowances. *)
+  Lemma T_poly_assign_zero_scan_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    NoDup (map fst (coef f)) ->
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) = 0%Z ->
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let rawkeys := poly_raw_keys P in
+    let rawbits := poly_raw_bits P in
+    let width := nell (Reached P) + 1 in
+    let workbits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * workbits^2 in
+    let tailbase := (2 * N.of_nat (dim + 1) +
+      AssignCore.poly_assign_zero_subst_factor *
+        N.of_nat (dim + length (coef f) + 1) *
+          N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) + 20)%N in
+    let headbase := (2 * N.of_nat (length (coef f) + 2) +
+      AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span (length (coef f) + 1) 0
+          (X.bits x + F.form_bits f + 1) (F.form_bits f + 1) + 16)%N in
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x f, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      headbase + tailbase * N.of_nat (length (poly_assign_tail_step x P)) +
+        12 * C.c_lc * N.of_nat work + 10)%N.
+  Proof.
+    intros x e P f Hlinear Hform Hzero dim rawkeys rawbits width
+      workbits volume work tailbase headbase.
+    destruct (poly_assign_form_row_bounds f) as [Hformkeys _].
+    pose proof (T_poly_assign_zero_head_scan x f P Hzero) as Hsplit.
+    pose proof (T_poly_assign_head_candidate_public x e P f Hlinear Hform) as Hhead.
+    cbn zeta in Hhead.
+    pose proof (T_poly_assign_tail_scan x P f Hform Hformkeys) as Htail.
+    cbn zeta in Htail.
+    pose proof (poly_assign_tail_checker_public_clock x e P) as Hcheck.
+    cbn zeta in Hcheck.
+    set (tailcount := N.of_nat (length (poly_assign_tail_step x P))).
+    set (headclock := T_assigned_candidate P x f (poly_assign_head x f P)).
+    set (tailclock := List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N)
+      (poly_assign_tail_step x P)).
+    set (checkbase := (16 * C.c_lc *
+      N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (width + 1)^2)%N).
+    assert (Hcheck' : (checkbase * tailcount <=
+      8 * C.c_lc * N.of_nat work)%N).
+    { unfold checkbase, tailcount.
+      replace (16 * C.c_lc *
+        N.of_nat (dim + terms (Reached P) + length P + 1) *
+        N.of_nat (width + 1)^2 *
+        N.of_nat (length (poly_assign_tail_step x P)))%N with
+        (16 * C.c_lc * N.of_nat (length (poly_assign_tail_step x P)) *
+          N.of_nat (dim + terms (Reached P) + length P + 1) *
+          N.of_nat (width + 1)^2)%N by ring.
+      exact Hcheck. }
+    assert (Htail' : (tailclock <=
+      (tailbase + checkbase) * tailcount + 1)%N).
+    { eapply N.le_trans; [exact Htail|].
+      unfold tailbase, checkbase, tailcount, dim, rawkeys, rawbits, width.
+      lazymatch goal with
+      | |- (?left <= ?right)%N =>
+        assert (Heq : left = right) by ring; rewrite Heq; apply N.le_refl
+      end. }
+    assert (Hhead' : (headclock <=
+      headbase + 4 * C.c_lc * N.of_nat work)%N).
+    { unfold headclock. eapply N.le_trans; [exact Hhead|].
+      unfold headbase, work, volume, workbits.
+      lazymatch goal with
+      | |- (?left <= ?right)%N =>
+        assert (Heq : left = right) by ring; rewrite Heq; apply N.le_refl
+      end. }
+    change (List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x f, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      headclock + tailclock + 8)%N in Hsplit.
+    clear -Hsplit Hhead' Htail' Hcheck'.
+    lia.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   (** An unreachable assignment performs only the outer reachability test. *)
   Lemma T_poly_assign_unreached : forall x e,
