@@ -11178,6 +11178,30 @@ Proof.
       * apply Nat.mul_le_mono_r, Nat.mul_le_mono_l. lia.
 Qed.
 
+(** A source-only checker scan consumes at most eight units of the quadratic work. *)
+Lemma poly_signed_assignment_tail_checker_mass : forall rows support terms volume bits
+    workbits output,
+  support <= terms -> terms + rows + 3 <= volume -> bits <= workbits ->
+  4 * output <= (rows + 2)^2 ->
+  16 * output * (support + terms + rows + 1) * bits^2 <=
+    8 * (rows + 3)^2 * volume * workbits^2.
+Proof.
+  intros rows support terms volume bits workbits output
+    Hsupport Hvolume Hbits Houtput.
+  assert (Hmass : support + terms + rows + 1 <= 2 * volume) by lia.
+  assert (Hrows : (rows + 2)^2 <= (rows + 3)^2)
+    by (cbn [Nat.pow]; nia).
+  assert (Hcount : 4 * output <= (rows + 3)^2) by lia.
+  assert (Hbase : 16 * output * (support + terms + rows + 1) <=
+    8 * (rows + 3)^2 * volume).
+  { pose proof (Nat.mul_le_mono _ _ _ _ Hcount Hmass) as Hproduct.
+    nia. }
+  assert (Hsquare : bits^2 <= workbits^2)
+    by (apply Nat.pow_le_mono_l; exact Hbits).
+  pose proof (Nat.mul_le_mono _ _ _ _ Hbase Hsquare) as Htotal.
+  exact Htotal.
+Qed.
+
 (** * Assignment branch structure and normal-form substitution clocks
 
     The prepared affine equality either supplies the first pivot or remains a
@@ -14648,6 +14672,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite poly_assign_initial_head. cbn [find]. now rewrite Hpivot.
   Qed.
 
+  (** A prepared pivot maps each initial row once. *)
+  Lemma poly_assign_nonzero_output_length : forall x f P,
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) <> 0%Z ->
+    length (poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P))) = length P + 1.
+  Proof.
+    intros x f P Hnonzero. unfold poly_step.
+    rewrite (poly_assign_nonzero_head_pivot x f P Hnonzero).
+    rewrite length_map, poly_initial_length. cbn [length]. rewrite length_map. lia.
+  Qed.
+
   (** The prepared pivot reduces the full-step row factor from quadratic to linear. *)
   Lemma T_poly_assign_nonzero_step_bounded : forall x f P,
     NoDup (map fst (coef f)) ->
@@ -14894,6 +14931,27 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact (T_poly_assign_output_candidate_bounded x f P r Hform Hr).
   Qed.
 
+  (** A prepared pivot scans one result row per input row. *)
+  Lemma T_poly_assign_nonzero_scan : forall x f P,
+    NoDup (map fst (coef f)) ->
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) <> 0%Z ->
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x f, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      (poly_assign_candidate_budget x f P + 4) * N.of_nat (length P + 1) + 1)%N.
+  Proof.
+    intros x f P Hform Hnonzero.
+    pose proof (T_poly_assign_output_scan x f P Hform) as Hscan.
+    cbn zeta in Hscan.
+    rewrite (poly_assign_nonzero_output_length x f P Hnonzero) in Hscan.
+    exact Hscan.
+  Qed.
+
   Lemma poly_assign_output_length : forall x f P,
     length (poly_step tmp_encode tmp_eqb None
       (poly_initial tmp_encode
@@ -14996,19 +15054,6 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros x f P Hzero. rewrite poly_assign_initial_head.
     unfold poly_assign_tail_step. now apply poly_assign_step_zero_head.
-  Qed.
-
-  (** A prepared pivot maps each initial row once. *)
-  Lemma poly_assign_nonzero_output_length : forall x f P,
-    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) <> 0%Z ->
-    length (poly_step tmp_encode tmp_eqb None
-      (poly_initial tmp_encode
-        ((assignment_row x f, false) ::
-          map (fun r => (rename_row (rename_old x) r, false)) P))) = length P + 1.
-  Proof.
-    intros x f P Hnonzero. unfold poly_step.
-    rewrite (poly_assign_nonzero_head_pivot x f P Hnonzero).
-    rewrite length_map, poly_initial_length. cbn [length]. rewrite length_map. lia.
   Qed.
 
   (** Source-only elimination preserves its original support and distinct coefficients. *)
@@ -15280,6 +15325,24 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (assigned_candidate P x f) (T_assigned_candidate P x f)).
     intros r Hr. unfold budget.
     exact (T_poly_assign_tail_candidate_bounded x P f r Hr Hform Hformkeys).
+  Qed.
+
+  (** The source-only certificate scan fits eight checker units of public work. *)
+  Lemma poly_assign_tail_checker_public_mass : forall x e P,
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let width := nell (Reached P) + 1 in
+    let workbits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    16 * length (poly_assign_tail_step x P) *
+      (dim + terms (Reached P) + length P + 1) * (width + 1)^2 <=
+    8 * (length P + 3)^2 * volume * workbits^2.
+  Proof.
+    intros x e P dim width workbits volume.
+    pose proof (poly_assign_source_dimension x P) as Hsupport.
+    pose proof (poly_assign_tail_output_quarter x P) as Houtput.
+    pose proof (Pos.size_nat_pos (X.encode x)) as Hkey.
+    apply poly_signed_assignment_tail_checker_mass;
+      unfold dim, width, workbits, volume in *; unfold X.bits in *; lia.
   Qed.
 
   (** A zero prepared coefficient adds one head callback to the source-only scan. *)
