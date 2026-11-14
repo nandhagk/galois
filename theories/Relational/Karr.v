@@ -8416,6 +8416,28 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
+  (** Certificate bit width is bounded by multiplier and source-row widths. *)
+  Lemma karr_cbits_envelope : forall P ms bits mbits,
+    Forall (fun r => C.row_bits r <= bits) P ->
+    Forall (fun m => Z.size_nat m <= mbits) ms ->
+    C.cbits P ms <= mbits + bits + Nat.log2 (length P) + 1.
+  Proof.
+    intros P ms bits mbits Hrows Hmult.
+    unfold C.cbits.
+    assert (Hmax : fold_right Nat.max 0
+        (map (fun pm => Z.size_nat (snd pm) + C.row_bits (fst pm))
+          (List.combine P ms)) <= mbits + bits).
+    { apply karr_max_bound; [lia|].
+      apply Forall_forall. intros [row m] Hin.
+      pose proof (in_combine_l _ _ _ _ Hin) as Hrow.
+      pose proof (in_combine_r _ _ _ _ Hin) as Hm.
+      pose proof (proj1 (Forall_forall _ _) Hrows row Hrow) as Hbits.
+      pose proof (proj1 (Forall_forall _ _) Hmult m Hm) as Hmbits.
+      cbn in Hbits, Hmbits.
+      cbn [fst snd]. lia. }
+    lia.
+  Qed.
+
   (** Increasing the arithmetic budget preserves a row envelope. *)
   Lemma karr_row_envelope_mono : forall dim mlen bits bits' r,
     bits <= bits' -> karr_row_envelope dim mlen bits r ->
