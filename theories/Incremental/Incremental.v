@@ -10361,6 +10361,75 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     time_simpl; time_cbn; nia.
   Qed.
 
+  Lemma T_restore_step_le : forall xv (m : kmap S.key L.t),
+    (1 + (Datatypes.T_fst xv + S.T_key_code (fst xv) +
+      PTrieCode.T_set (S.key_code (fst xv)) xv m) <=
+      8 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits (fst xv) + 1))%N.
+  Proof.
+    intros [x v] m; cbn [fst].
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_set_le (S.key * L.t) (S.key_code x) (x, v) m) as Hset.
+    unfold PTrieT.T_set in Hset.
+    unfold PTrieCode.T_set, S.key_bits in *.
+    time_simpl; time_cbn; nia.
+  Qed.
+
+  Lemma T_restore_le : forall fz (m : kmap S.key L.t),
+    (T_restore fz m <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun xv => (S.key_bits (fst xv) + 1)%nat) fz) + 2)%N.
+  Proof.
+    intros fz m.
+    destruct (fold_left_inv_time
+      (fun acc xv => PTrieCode.set (S.key_code (fst xv)) xv acc)
+      (fun acc xv => (1 + (Datatypes.T_fst xv + S.T_key_code (fst xv) +
+        PTrieCode.T_set (S.key_code (fst xv)) xv acc))%N)
+      (fun _ => True)
+      (fun xv => (8 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits (fst xv) + 1))%N) fz m I) as [_ Hfold].
+    { intros acc xv _ _; split; [exact I|apply T_restore_step_le]. }
+    assert (Hsum : forall ys : list (S.key * L.t),
+      (fold_right (fun xv total =>
+        8 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (S.key_bits (fst xv) + 1) + 2 + total)%N 1%N ys <=
+        16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (finite_sum (fun xv => (S.key_bits (fst xv) + 1)%nat) ys) + 1)%N).
+    { induction ys as [|[x v] rest IH]; [cbn; lia|].
+      unfold finite_sum in *; cbn [map fold_right].
+      rewrite Nat2N.inj_add.
+      assert (Hbits : (1 <= N.of_nat (S.key_bits x + 1))%N) by lia.
+      assert (Hbase : (1 <= S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) by lia.
+      nia. }
+    specialize (Hsum fz).
+    unfold T_restore; lia.
+  Qed.
+
+  Lemma T_remove_buckets_le : forall xs (m : PTrieCode.t (list positive)),
+    (T_remove_buckets xs m <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 2)%N.
+  Proof.
+    intros xs m.
+    change (T_remove_keys xs m <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 2)%N.
+    apply T_invalid_remove_keys_le.
+  Qed.
+
+  Lemma T_clear_new_buckets_le : forall xs st,
+    (T_clear_new_buckets xs st <=
+      40 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 12)%N.
+  Proof.
+    intros xs st.
+    pose proof (T_remove_buckets_le xs (inc_influence st)) as Hreads.
+    pose proof (T_remove_buckets_le xs (inc_cowrites st)) as Hcowrites.
+    unfold T_clear_new_buckets, T_inc_values, T_inc_influence,
+      T_inc_cowrites, T_inc_snapshots.
+    time_simpl; time_cbn; nia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
