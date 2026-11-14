@@ -15991,6 +15991,113 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact Hconverted.
   Qed.
 
+  (** The prepared nonzero branch scans one candidate per source row. *)
+  Lemma T_poly_assign_prepared_nonzero_scan : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    poly_coefficient tmp_eqb None
+      (poly_constraint (poly_assign_head x (poly_prepare_form X.encode f) P)) <> 0%Z ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 * (n P + total + length P + 3) * bits^2 in
+    let factor := (40 + AssignCore.poly_assign_normal_subst_factor +
+      16 * C.c_lc)%N in
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x prepared r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x prepared r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x prepared, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      factor * (128 * (128 * N.of_nat work)) + 1)%N.
+  Proof.
+    intros x e P f Hlinear Hnonzero prepared bits total work factor.
+    pose proof (T_poly_assign_nonzero_scan x prepared P
+      (poly_assign_prepared_nodup f) Hnonzero) as Hscan.
+    pose proof (poly_assign_prepared_output_clock_mass x e P f Hlinear)
+      as Hmass.
+    cbn zeta in Hmass.
+    set (support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef prepared) + 1).
+    set (checkerwidth := poly_raw_keys P + 2 * poly_raw_bits P + X.bits x +
+      3 * F.form_bits prepared + 5).
+    set (mass := support + length (coef prepared) + terms (Reached P) + length P + 1).
+    set (unit := (N.of_nat mass * N.of_nat checkerwidth^2)%N).
+    set (count := N.of_nat (length P + 1)).
+    assert (Hunit : (1 <= unit)%N).
+    { unfold unit. assert (Hmass_pos : 1 <= mass) by (unfold mass, support; lia).
+      assert (Hwidth_pos : 1 <= checkerwidth)
+        by (unfold checkerwidth; lia).
+      change (1 * 1 <= N.of_nat mass * N.of_nat checkerwidth^2)%N.
+      apply N.mul_le_mono; [lia|].
+      rewrite N.pow_2_r.
+      assert (Hwidth_clock : (1 <= N.of_nat checkerwidth)%N) by lia.
+      clear -Hwidth_clock. nia. }
+    assert (Hdim : (N.of_nat (support + 1) <= unit)%N).
+    { unfold unit. eapply N.le_trans with
+        (m := (N.of_nat mass * 1)%N).
+      - rewrite N.mul_1_r. apply time_of_nat_le. unfold mass, support; lia.
+      - apply N.mul_le_mono_l. rewrite N.pow_2_r.
+        assert (Hwidth_clock : (1 <= N.of_nat checkerwidth)%N)
+          by (unfold checkerwidth; lia).
+        clear -Hwidth_clock. nia. }
+    assert (Hspan : (poly_clock_span support 0
+      (poly_raw_keys P + X.bits x + F.form_bits prepared + 1)
+      (2 * (poly_raw_bits P + F.form_bits prepared + 1) + 1) <= unit)%N).
+    { unfold poly_clock_span, unit.
+      replace (poly_raw_keys P + X.bits x + F.form_bits prepared + 1 +
+        (2 * (poly_raw_bits P + F.form_bits prepared + 1) + 1) + 1)
+        with checkerwidth by (unfold checkerwidth; lia).
+      replace (support + 0 + 1) with (support + 1) by lia.
+      change (N.of_nat (support + 1) * N.of_nat checkerwidth^2 <=
+        N.of_nat mass * N.of_nat checkerwidth^2)%N.
+      apply N.mul_le_mono_r, time_of_nat_le. unfold mass; lia. }
+    assert (Hbudget : (poly_assign_candidate_budget x prepared P + 4 <=
+      factor * unit)%N).
+    { unfold poly_assign_candidate_budget, factor.
+      cbn zeta.
+      fold support.
+      replace (poly_raw_keys P + X.bits x + F.form_bits prepared + 1 +
+        (2 * (poly_raw_bits P + F.form_bits prepared + 1) + 1) + 1)
+        with checkerwidth by (unfold checkerwidth; lia).
+      fold mass unit.
+      assert (Hnormal : (AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span support 0
+          (poly_raw_keys P + X.bits x + F.form_bits prepared + 1)
+          (2 * (poly_raw_bits P + F.form_bits prepared + 1) + 1) <=
+        AssignCore.poly_assign_normal_subst_factor * unit)%N)
+        by (apply N.mul_le_mono_l; exact Hspan).
+      replace ((40 + AssignCore.poly_assign_normal_subst_factor +
+        16 * C.c_lc) * unit)%N with
+        (40 * unit + AssignCore.poly_assign_normal_subst_factor * unit +
+          16 * C.c_lc * unit)%N by ring.
+      clear -Hunit Hdim Hnormal. lia. }
+    assert (Hscan' : (List.T_flat_map
+      (fun r => match assigned_candidate P x prepared r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x prepared r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x prepared, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      (factor * unit) * count + 1)%N).
+    { eapply N.le_trans; [exact Hscan|].
+      apply N.add_le_mono_r, N.mul_le_mono_r. exact Hbudget. }
+    assert (Hmass' : (count * unit <=
+      128 * (128 * N.of_nat work))%N).
+    { unfold count, unit.
+      replace (N.of_nat (length P + 1) *
+        (N.of_nat mass * N.of_nat checkerwidth^2))%N with
+        (N.of_nat (length P + 1) *
+          N.of_nat mass * N.of_nat checkerwidth^2)%N by ring.
+      exact Hmass. }
+    eapply N.le_trans; [exact Hscan'|].
+    replace ((factor * unit) * count)%N with
+      (factor * (count * unit))%N by ring.
+    apply N.add_le_mono_r, N.mul_le_mono_l. exact Hmass'.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
