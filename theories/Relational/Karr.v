@@ -3372,6 +3372,38 @@ Proof.
   - exact Hminor.
 Qed.
 
+(** Projecting aligned row-entry pairs recovers their origin labels. *)
+Lemma karr_pair_origins : forall (labels : list (list Z)) (rows : list karr_row),
+  length labels = length rows ->
+  map fst (combine labels (map karr_row_entries rows)) = labels.
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|row rows] Hlength; cbn [length] in Hlength;
+    try discriminate; [reflexivity|].
+  cbn [map combine fst]. f_equal. apply IH. lia.
+Qed.
+
+(** Every currently stored augmented entry is a signed source minor. *)
+Lemma karr_run_state_entries : forall width cols original previous pivot_rows
+    pivot_columns columns labels rows z,
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels rows ->
+  In z (flat_map karr_row_entries rows) ->
+  In z (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns columns
+    labels rows z Hstate Hin.
+  unfold karr_run_state in Hstate. destruct Hstate as
+    [_ [_ [Hlabels [_ [Hentries [_ [Hsquare [Hpartition
+      [Hincreasing [Hbounded Hlaw]]]]]]]]]].
+  apply in_flat_map in Hin as [row [Hrow Hz]].
+  destruct (karr_pair_entries_origin labels rows row Hlabels Hrow)
+    as [origin Hpair].
+  rewrite <- (karr_pair_origins labels rows Hlabels) in Hpartition.
+  eapply karr_minor_law_entry; eauto.
+  exact (proj1 (Forall_forall _ _) Hentries row Hrow).
+Qed.
+
 (** Checked division preserves a zero coordinate in every branch. *)
 Lemma karr_divide_coordinate_zero : forall divisor r i,
   karr_nth i (kcoeff r) = 0%Z -> karr_nth i (kcoeff (karr_divide divisor r)) = 0%Z.
