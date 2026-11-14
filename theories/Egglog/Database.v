@@ -13170,6 +13170,51 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply database_history_alignment_row_replace; assumption.
   Qed.
 
+  Lemma put_fixed_key_locate : forall db f k o,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    (forall i, In (Id i) k -> repr db i = i) ->
+    forall key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store (put f k o db))) =
+        Some (key, r) ->
+      db_locate f k (put f k o db) = Some k.
+  Proof.
+    intros db f k o Hwf Hstore Halign Hfixed.
+    unfold put. rewrite (normal_key_of_fixed db k Hwf Hfixed).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f k db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hnext_loc : forall key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store next)) =
+        Some (key, r) -> db_locate f k next = Some k).
+    { intros key r Hentry.
+      assert (Hsame_store : db_row_store next = db_row_store db).
+      { unfold next. destruct previous as [[[a | v] |] |];
+          destruct co as [[b | w] |];
+          try reflexivity; apply union_row_store_raw. }
+      assert (Hsame_ids : ids next = ids db).
+      { unfold next. destruct previous as [[[a | v] |] |];
+          destruct co as [[b | w] |];
+          try reflexivity; apply union_ids. }
+      rewrite (db_locate_same_store_ids db next f k Hsame_store Hsame_ids).
+      apply (database_history_alignment_entry db Halign f k key r).
+      - now rewrite Hsame_store in Hentry.
+      - exact Hfixed. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + exact Hnext_loc.
+      + intros key r _. apply row_replace_new_locate_from_alignment;
+          [exact Hnext_store | exact Hnext_loc].
+    - intros key r _. apply row_replace_new_locate_from_alignment;
+        [exact Hnext_store | exact Hnext_loc].
+  Qed.
+
   Lemma put_representative_old : forall db f k o x,
     wf db -> repr (put f k o db) x = x -> repr db x = x.
   Proof.
@@ -13355,6 +13400,56 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply normal_key_of_fixed; [exact Hwf |].
     intros i Hin. apply (repair_current_representative_old db f k i Hwf).
     exact (Hfixed i Hin).
+  Qed.
+
+  Lemma repair_current_destination_locate : forall db f k,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    forall key r,
+      PTrieCode.get (db_row_code f (normal_key db k))
+        (row_history (db_row_store (repair_current f k db))) = Some (key, r) ->
+      db_locate f (normal_key db k) (repair_current f k db) =
+        Some (normal_key db k).
+  Proof.
+    intros db f k Hwf Hstore Halign key r Hentry.
+    assert (Hfixed : forall i, In (Id i) (normal_key db k) -> repr db i = i).
+    { rewrite normal_key_correct by exact Hwf. apply canon_key_fixed. exact Hwf. }
+    unfold repair_current in Hentry |- *.
+    destruct (row_get f k db) as [output |].
+    - destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+        (output_eqb (option_map (normal_cell db) output) output)).
+      + exact (database_history_alignment_entry db Halign f (normal_key db k)
+          key r Hentry Hfixed).
+      + set (deleted := row_delete f k db).
+        set (updated := put f (normal_key db k)
+          (option_map (normal_cell db) output) deleted).
+        cbn [database_set_nuses database_set_row_store db_row_store row_history]
+          in Hentry.
+        assert (Hdeleted_fixed : forall i, In (Id i) (normal_key db k) ->
+          repr deleted i = i).
+        { intros i Hin. subst deleted. unfold repr.
+          rewrite row_delete_forest. exact (Hfixed i Hin). }
+        assert (Hloc : db_locate f (normal_key db k) updated =
+          Some (normal_key db k)).
+        { subst updated. eapply (put_fixed_key_locate deleted f (normal_key db k)
+            (option_map (normal_cell db) output)).
+          - subst deleted. apply row_delete_wf. exact Hwf.
+          - subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
+          - subst deleted. apply database_history_alignment_row_delete. exact Halign.
+          - exact Hdeleted_fixed.
+          - exact Hentry. }
+        rewrite (db_locate_same_core updated
+          (database_set_nuses (db_nuses db)
+            (database_set_row_store
+              {| row_history := row_history (db_row_store updated);
+                 row_links := row_links (db_row_store updated);
+                 row_weights := row_weights (db_row_store updated);
+                 row_keys := row_keys (db_row_store updated);
+                 row_fresh := row_fresh (db_row_store updated);
+                 row_uses := row_uses (db_row_store db) |} updated))
+          f (normal_key db k)) by reflexivity.
+        exact Hloc.
+    - exact (database_history_alignment_entry db Halign f (normal_key db k)
+        key r Hentry Hfixed).
   Qed.
 
   Lemma database_row_store_ok_repair_current : forall db f k,
