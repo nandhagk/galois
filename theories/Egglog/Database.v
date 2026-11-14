@@ -15299,9 +15299,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma put_representative_old : forall db f k o x,
-    database_wf db -> repr (put f k o db) x = x -> repr db x = x.
+    UnionFind.wf (db_forest db) ->
+    repr (put f k o db) x = x -> repr db x = x.
   Proof.
-    intros db f k o x Hwf Hfixed. unfold put in Hfixed.
+    intros db f k o x Hforest Hfixed. unfold put in Hfixed.
     set (ck := normal_key db k) in *.
     set (co := option_map (normal_cell db) o) in *.
     set (previous := row_get f ck db) in *.
@@ -15313,7 +15314,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     { unfold next. destruct previous as [[[a | v] |] |];
         destruct co as [[b | w] |];
         try (intros H; exact H).
-      apply union_representative_old. exact (wf_forest db Hwf). }
+      apply union_representative_old. exact Hforest. }
     destruct previous as [before |].
     - destruct (output_eqb before updated);
         [apply Hnext; exact Hfixed |].
@@ -15867,9 +15868,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma repair_current_representative_old : forall db f k x,
-    wf db -> repr (repair_current f k db) x = x -> repr db x = x.
+    UnionFind.wf (db_forest db) ->
+    repr (repair_current f k db) x = x -> repr db x = x.
   Proof.
-    intros db f k x Hwf Hfixed. unfold repair_current in Hfixed.
+    intros db f k x Hforest Hfixed. unfold repair_current in Hfixed.
     destruct (row_get f k db) as [output |]; [| exact Hfixed].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) output) output));
@@ -15877,7 +15879,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     change (repr (put f (normal_key db k)
       (option_map (normal_cell db) output) (row_delete f k db)) x = x) in Hfixed.
     apply (put_representative_old (row_delete f k db) f (normal_key db k)
-      (option_map (normal_cell db) output) x (row_delete_wf db f k Hwf)) in Hfixed.
+      (option_map (normal_cell db) output) x) in Hfixed.
+    2: now rewrite row_delete_forest.
     unfold repr in Hfixed |- *. now rewrite row_delete_forest in Hfixed.
   Qed.
 
@@ -15888,7 +15891,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db f k Hwf Hfixed. symmetry.
     apply normal_key_of_fixed; [exact Hwf |].
-    intros i Hin. apply (repair_current_representative_old db f k i Hwf).
+    intros i Hin. apply (repair_current_representative_old db f k i (wf_forest db Hwf)).
     exact (Hfixed i Hin).
   Qed.
 
@@ -20523,6 +20526,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
     injection Hcell as <-.
     unfold repr. apply UnionFind.repr_idem. exact Hforest.
+  Qed.
+
+  Lemma inv_on_repair_current_fixed_key : forall db work f k,
+    inv_on db work ->
+    (forall i, In (Id i) k -> repr (repair_current f k db) i = i) ->
+    k = normal_key db k.
+  Proof.
+    intros db work f k Hinv Hfixed.
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    assert (Hmembers : forall i,
+      UnionFind.mem (db_forest db) i <-> allocated db i).
+    { intro i. exact (inv_on_forest_members db work i Hinv). }
+    assert (Hold : forall i, In (Id i) k -> repr db i = i).
+    { intros i Hin. apply (repair_current_representative_old db f k i Hforest).
+      exact (Hfixed i Hin). }
+    clear Hfixed.
+    symmetry. rewrite (normal_key_correct_forest db k Hforest Hmembers).
+    induction k as [| [j | v] rest IH]; [reflexivity | |].
+    - cbn [map canon].
+      rewrite Hold by now left.
+      f_equal. apply IH. intros i Hin.
+      apply Hold. now right.
+    - cbn [map canon]. f_equal. apply IH.
+      intros i Hin. apply Hold. now right.
   Qed.
 
   Lemma inv_on_repair_fixed : forall db f k rest current output,
