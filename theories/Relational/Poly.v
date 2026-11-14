@@ -16315,6 +16315,71 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.mul_le_mono_l. exact Hmass_clock.
   Qed.
 
+  (** Prepared equation construction and normalization share its row mass charge. *)
+  Lemma T_poly_assign_prepared_row_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 * (n P + total + length P + 3) * bits^2 in
+    (T_assignment_row x prepared <=
+      256 * (X.c_key + 24) * N.of_nat work)%N /\
+    (T_poly_normal_row tmp_encode T_tmp_encode (assignment_row x prepared) <=
+      256 * RangeCore.poly_normal_row_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P f Hlinear prepared bits total work.
+    pose proof (poly_assign_prepared_row_mass x e P f Hlinear) as Hmass.
+    cbn zeta in Hmass.
+    set (rowmass := (length (coef prepared) + 2) *
+      (X.bits x + 3 * F.form_bits prepared + 5)).
+    assert (Hrowmass : rowmass <= 256 * work) by exact Hmass.
+    assert (Hmapmass : (length (coef prepared) + 1) *
+      (F.form_bits prepared + 1) <= rowmass).
+    { unfold rowmass. apply Nat.mul_le_mono; lia. }
+    assert (Hnormalmass : (length (coef prepared) + 2) *
+      (X.bits x + 2 * F.form_bits prepared + 3) <= rowmass).
+    { unfold rowmass. apply Nat.mul_le_mono_l. lia. }
+    assert (Hmapclock : (N.of_nat (length (coef prepared) + 1) *
+      N.of_nat (F.form_bits prepared + 1) <= 256 * N.of_nat work)%N).
+    { assert (Hnat : (N.of_nat ((length (coef prepared) + 1) *
+        (F.form_bits prepared + 1)) <= N.of_nat (256 * work))%N)
+        by (apply time_of_nat_le; lia).
+      rewrite !Nat2N.inj_mul in Hnat. cbn [N.of_nat] in Hnat.
+      exact Hnat. }
+    assert (Hnormalclock : (N.of_nat (length (coef prepared) + 2) *
+      N.of_nat (X.bits x + 2 * F.form_bits prepared + 3) <=
+      256 * N.of_nat work)%N).
+    { assert (Hnat : (N.of_nat ((length (coef prepared) + 2) *
+        (X.bits x + 2 * F.form_bits prepared + 3)) <=
+        N.of_nat (256 * work))%N)
+        by (apply time_of_nat_le; lia).
+      rewrite !Nat2N.inj_mul in Hnat. cbn [N.of_nat] in Hnat.
+      exact Hnat. }
+    pose proof (T_poly_assign_prepared_row x prepared) as Hrow.
+    pose proof (T_poly_assign_head_normal x prepared
+      (poly_assign_prepared_nodup f)) as Hnormal.
+    replace ((X.c_key + 24) * N.of_nat (length (coef prepared) + 1) *
+      N.of_nat (F.form_bits prepared + 1))%N with
+      ((X.c_key + 24) * (N.of_nat (length (coef prepared) + 1) *
+        N.of_nat (F.form_bits prepared + 1)))%N in Hrow by ring.
+    replace (RangeCore.poly_normal_row_factor *
+      N.of_nat (length (coef prepared) + 2) *
+      N.of_nat (X.bits x + 2 * F.form_bits prepared + 3))%N with
+      (RangeCore.poly_normal_row_factor *
+        (N.of_nat (length (coef prepared) + 2) *
+          N.of_nat (X.bits x + 2 * F.form_bits prepared + 3)))%N
+      in Hnormal by ring.
+    split.
+    - eapply N.le_trans; [exact Hrow|].
+      replace (256 * (X.c_key + 24) * N.of_nat work)%N with
+        ((X.c_key + 24) * (256 * N.of_nat work))%N by ring.
+      apply N.mul_le_mono_l. exact Hmapclock.
+    - eapply N.le_trans; [exact Hnormal|].
+      replace (256 * RangeCore.poly_normal_row_factor * N.of_nat work)%N with
+        (RangeCore.poly_normal_row_factor * (256 * N.of_nat work))%N by ring.
+      apply N.mul_le_mono_l. exact Hnormalclock.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
