@@ -14061,6 +14061,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
              apply Forall_map, Forall_forall. intros p _. cbn [Z.size_nat]. lia.
   Qed.
 
+  Lemma poly_assign_row_envelope_mono : forall r dim dim' mlen keys keys' bits bits',
+    RangeCore.poly_row_envelope dim mlen keys bits r ->
+    dim <= dim' -> keys <= keys' -> bits <= bits' ->
+    RangeCore.poly_row_envelope dim' mlen keys' bits' r.
+  Proof.
+    intros r dim dim' mlen keys keys' bits bits'
+      (Hnormal & Hdim & Hkeys & Hbits & Hcount & Hmult) HD HK HB.
+    unfold RangeCore.poly_row_envelope. repeat split; try assumption; try lia.
+    eapply Forall_impl; [|exact Hmult]. intros z Hz.
+    eapply Nat.le_trans; [exact Hz|]. lia.
+  Qed.
+
   (** The prepared equation is the first initialized row; the old sources form its tail. *)
   Lemma poly_assign_initial_head : forall x f P,
     poly_initial tmp_encode
@@ -14176,6 +14188,29 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply le_n_S. exact Hlength.
     -
     constructor; [cbn [Z.size_nat]; lia|exact Hmults].
+  Qed.
+
+  (** The complete initialized system shares one envelope for its head and sources. *)
+  Lemma poly_assign_initial_envelope : forall x f P,
+    NoDup (map fst (coef f)) ->
+    Forall (RangeCore.poly_row_envelope
+      (length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1)
+      (length P + 1)
+      (poly_raw_keys P + X.bits x + F.form_bits f + 1)
+      (poly_raw_bits P + F.form_bits f + 1))
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)).
+  Proof.
+    intros x f P Hform. rewrite poly_assign_initial_head. constructor.
+    - eapply poly_assign_row_envelope_mono.
+      + apply poly_assign_head_envelope. exact Hform.
+      + lia.
+      + lia.
+      + lia.
+    - eapply Forall_impl; [|apply poly_assign_tail_envelopes].
+      intros r Hr. eapply poly_assign_row_envelope_mono;
+        [exact Hr|lia|lia|lia].
   Qed.
 
   (** Only the old assigned coordinate is eliminated from the source-only tail. *)
