@@ -4381,6 +4381,111 @@ Proof.
         [exact Htarget_entries|lia|exact Htarget_weight].
 Qed.
 
+(** The all-order law makes every target pivot in a labeled basis run exact. *)
+Lemma karr_bareiss_target_exact : forall cols offset previous pivot_rows
+    pivot_columns columns labels rows target_origin target,
+  length labels = length rows ->
+  Forall (fun row => length (kcoeff row) = cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rows ->
+  length (kcoeff target) = offset + cols ->
+  length (karr_row_entries target) = length columns ->
+  previous <> 0%Z ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels
+      (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+      [(target_origin, karr_row_entries target)]) ->
+  karr_target_exact
+    (map (karr_zero_prefix offset) (karr_bareiss cols previous rows))
+    previous target.
+Proof.
+  induction cols as [|cols IH]; intros offset previous pivot_rows
+    pivot_columns columns labels rows target_origin target Hlabels Hrows
+    Htarget_coeff Htarget_entries Hprevious Hlaw.
+  - cbn [karr_bareiss]. apply karr_target_exact_zero_rows.
+    apply Forall_map, Forall_forall. intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrows row Hin) as [Hwidth _].
+    apply karr_zero_prefix_first_none.
+    destruct (kcoeff row) as [|z zs]; [reflexivity|].
+    cbn [length] in Hwidth. lia.
+  - cbn [karr_bareiss].
+    destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+    + pose proof (karr_pivot_some rows pivot rest Hselect)
+        as [Hp Hperm_rows].
+      pose proof (Permutation_Forall Hperm_rows Hrows) as Hselected.
+      apply Forall_cons_iff in Hselected as [Hp_width Hrest_width].
+      destruct Hp_width as [Hp_coeff Hp_entries].
+      destruct (karr_pivot_combine _ _
+        (fun row => karr_row_entries (karr_zero_prefix offset row))
+        labels rows pivot rest Hlabels Hselect) as
+        [origin [remaining [Hremaining Hperm_pairs]]].
+      assert (Hlaw_selected : karr_minor_law previous pivot_rows
+        pivot_columns columns
+        ((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+          combine remaining
+            (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rest) ++
+          [(target_origin, karr_row_entries target)])).
+      { eapply karr_minor_law_permutation; [|exact Hlaw].
+        change (Permutation
+          (combine labels
+            (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+            [(target_origin, karr_row_entries target)])
+          (((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+            combine remaining
+              (map (fun row => karr_row_entries
+                (karr_zero_prefix offset row)) rest)) ++
+            [(target_origin, karr_row_entries target)])).
+        now apply Permutation_app_tail. }
+      destruct (karr_minor_law_prefix_step cols offset previous pivot_rows
+        pivot_columns columns origin pivot remaining rest target_origin target
+        Hremaining Hp_coeff Hp_entries Hrest_width Htarget_coeff
+        Htarget_entries Hprevious Hp Hlaw_selected)
+        as [Hexact Hnext].
+      destruct (karr_prefix_pivot_width cols offset previous columns pivot
+        rest target Hp_coeff Hp_entries Hrest_width Htarget_coeff
+        Htarget_entries Hp) as [Hrows_next [Htarget_coeff_next
+          Htarget_entries_next]].
+      set (a := karr_head pivot).
+      set (target' := karr_reduce previous a
+        (karr_nth offset (kcoeff target)) (karr_zero_prefix offset pivot) target).
+      set (rows' := map (fun row => karr_tail
+        (karr_reduce previous a (karr_head row) pivot row)) rest).
+      cbn [map karr_target_exact].
+      rewrite (karr_zero_prefix_first offset pivot Hp).
+      split; [exact Hexact|].
+      rewrite map_map.
+      replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+          (karr_bareiss cols a rows')) with
+        (map (karr_zero_prefix (S offset)) (karr_bareiss cols a rows')).
+      * apply (IH (S offset) a (pivot_rows ++ [origin])
+          (pivot_columns ++ [nth offset columns 0%nat]) columns
+          remaining rows' target_origin target').
+        -- unfold rows'. rewrite length_map. exact Hremaining.
+        -- exact Hrows_next.
+        -- exact Htarget_coeff_next.
+        -- exact Htarget_entries_next.
+        -- exact Hp.
+        -- exact Hnext.
+      * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+    + destruct (karr_minor_law_prefix_skip cols offset previous pivot_rows
+        pivot_columns columns labels rows target_origin target Hselect Hrows Hlaw)
+        as [Hrows_next Hlaw_next].
+      cbn [map]. rewrite map_map.
+      replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+          (karr_bareiss cols previous (map karr_tail rows))) with
+        (map (karr_zero_prefix (S offset))
+          (karr_bareiss cols previous (map karr_tail rows))).
+      * apply (IH (S offset) previous pivot_rows pivot_columns columns
+          labels (map karr_tail rows) target_origin target).
+        -- rewrite length_map. exact Hlabels.
+        -- exact Hrows_next.
+        -- replace (S offset + cols) with (offset + S cols) by lia.
+           exact Htarget_coeff.
+        -- exact Htarget_entries.
+        -- exact Hprevious.
+        -- exact Hlaw_next.
+      * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+Qed.
+
 (** A selected concrete pivot preserves all-order minors on its reduced tails. *)
 Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
     pivot_columns head columns labels rows pivot rest,
