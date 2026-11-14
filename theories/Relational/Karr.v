@@ -3446,6 +3446,22 @@ Proof.
   exact (proj1 (Forall_forall _ _) Hentries row Hrow).
 Qed.
 
+(** Any uniform source-minor bit bound covers every current augmented row. *)
+Lemma karr_run_state_bits : forall width cols original previous pivot_rows
+    pivot_columns columns labels rows bits,
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels rows ->
+  (forall z, In z (karr_signed_minors width original) -> Z.size_nat z <= bits) ->
+  Forall (fun row => Forall (fun z => Z.size_nat z <= bits)
+    (karr_row_entries row)) rows.
+Proof.
+  intros width cols original previous pivot_rows pivot_columns columns labels
+    rows bits Hstate Hbits.
+  apply Forall_forall. intros row Hrow. apply Forall_forall. intros z Hz.
+  apply Hbits. eapply karr_run_state_entries; [exact Hstate|].
+  apply in_flat_map. now exists row.
+Qed.
+
 (** A zero first entry of a live row is itself an enumerated source minor. *)
 Lemma karr_run_state_zero_head : forall width cols original previous pivot_rows
     pivot_columns head columns labels rows row,
