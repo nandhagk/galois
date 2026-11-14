@@ -4136,23 +4136,31 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     unfold value; cbn [inc_values]; apply lookup_remove_keys.
   Qed.
 
+  Lemma dom_from_value_filter : forall st st' bad x,
+    value st' x = (if mem x bad then None else value st x) ->
+    (dom st' x <-> dom st x /\ ~ In x bad).
+  Proof.
+    intros st st' bad x Hfilter; unfold dom; rewrite Hfilter.
+    destruct (mem x bad) eqn:Hmem.
+    - split.
+      + intros [v Hvalue]; discriminate Hvalue.
+      + intros [_ Hkeep]; exfalso; apply Hkeep.
+        apply (proj1 (mem_spec x bad)); exact Hmem.
+    - split.
+      + intro Hvalue; split; [exact Hvalue|].
+        intro Hin.
+        pose proof (proj2 (mem_spec x bad) Hin) as Htrue.
+        change (mem x bad = true) in Htrue; congruence.
+      + intros [Hvalue _]; exact Hvalue.
+  Qed.
+
   (** Retained values are exactly old values outside the invalidation list. *)
   Lemma edit_dom_keys : forall p p' ch st x,
     dom (edit p p' ch st) x <->
       dom st x /\ ~ In x (invalidate_keys p p' ch st).
   Proof.
-    intros p p' ch st x; unfold dom; rewrite edit_value_keys.
-    destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem.
-    - split.
-      + intros [v Hvalue]; discriminate Hvalue.
-      + intros [_ Hkeep]; exfalso; apply Hkeep.
-        apply (proj1 (mem_spec x (invalidate_keys p p' ch st))); exact Hmem.
-    - split.
-      + intro Hvalue; split; [exact Hvalue|].
-        intro Hin.
-        pose proof (proj2 (mem_spec x (invalidate_keys p p' ch st)) Hin) as Htrue.
-        change (mem x (invalidate_keys p p' ch st) = true) in Htrue; congruence.
-      + intros [Hvalue _]; exact Hvalue.
+    intros p p' ch st x; apply dom_from_value_filter.
+    apply edit_value_keys.
   Qed.
 
   (** The public invalidation inventory equals the actual removed domain, on all states. *)
