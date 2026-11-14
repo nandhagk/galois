@@ -9980,7 +9980,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Initialization starts without amortized debt. *)
   Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B ds sl. unfold potential.
+    cbn [init db_row_store row_uses db_runtime runtime_queue].
+    reflexivity.
+  Qed.
 
   (** Insertion pays for all slots and the logarithmic identifier budget. *)
   Lemma T_put_amort : forall B f k o db, wf db ->
@@ -15633,7 +15637,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Initialization has no use-occurrence debt. *)
   Lemma T2_init_credit : forall B ds sl, (rebuild_potential B (init ds sl) = 0)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B ds sl. unfold rebuild_potential, queue_weight, queue, uses_entries.
+    cbn [init db_row_store row_uses db_runtime runtime_queue].
+    reflexivity.
+  Qed.
 
   (** Insertion pays its executable work and new occurrence credit. *)
   Lemma T3_put_credit : forall B f k o db, wf db ->
