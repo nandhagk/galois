@@ -12440,6 +12440,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try reflexivity; exact Hconserved.
   Qed.
 
+  Lemma database_history_key_shape_advance : forall db,
+    database_history_key_shape db ->
+    database_history_key_shape (advance db).
+  Proof.
+    intros db Hshape.
+    eapply database_history_key_shape_transport with (db := db);
+      try reflexivity; exact Hshape.
+  Qed.
+
   (** Repointing a root preserves a lookup when both affected labels agree. *)
   Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
@@ -13178,6 +13187,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Howner.
   Qed.
 
+  Lemma database_history_key_shape_slots_update : forall db add f cells,
+    database_history_key_shape db ->
+    database_history_key_shape (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hshape.
+    eapply database_history_key_shape_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - now rewrite slots_update_row_store.
+    - apply slots_update_ids.
+    - exact Hshape.
+  Qed.
+
   Lemma database_row_weight_conserved_slots_update : forall db add f cells,
     database_row_weight_conserved db ->
     database_row_weight_conserved (slots_update add f cells db).
@@ -13203,6 +13224,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Howner.
   Qed.
 
+  Lemma database_history_key_shape_row_write : forall db f k o,
+    database_history_key_shape db ->
+    database_history_key_shape (row_write f k o db).
+  Proof.
+    intros db f k o Hshape.
+    eapply database_history_key_shape_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - now rewrite row_write_row_store.
+    - apply row_write_ids.
+    - exact Hshape.
+  Qed.
+
   Lemma database_row_weight_conserved_row_write : forall db f k o,
     database_row_weight_conserved db ->
     database_row_weight_conserved (row_write f k o db).
@@ -13226,6 +13259,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply database_history_root_owner_transport with (db := identified);
       try reflexivity.
     subst identified. apply database_history_root_owner_ensure; assumption.
+  Qed.
+
+  Lemma database_history_key_shape_register : forall db f k o,
+    database_row_store_ok db -> database_history_key_shape db ->
+    database_history_key_shape (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hstore Hshape.
+    unfold register_row_uses.
+    set (identified := ensure_row_identity f k db).
+    eapply database_history_key_shape_transport with (db := identified);
+      try reflexivity.
+    subst identified. apply database_history_key_shape_ensure; assumption.
   Qed.
 
   Lemma database_row_weight_conserved_register : forall db f k o,
@@ -13256,6 +13301,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
       + apply database_history_root_owner_row_write.
         apply database_history_root_owner_slots_update. exact Howner.
+  Qed.
+
+  Lemma database_history_key_shape_row_replace : forall db f k previous o,
+    database_row_store_ok db -> database_history_key_shape db ->
+    database_history_key_shape (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hstore Hshape; unfold row_replace.
+    - apply database_history_key_shape_register.
+      + apply row_write_row_store_ok.
+        apply slots_update_row_store_ok, slots_update_row_store_ok.
+        exact Hstore.
+      + apply database_history_key_shape_row_write.
+        apply database_history_key_shape_slots_update.
+        apply database_history_key_shape_slots_update. exact Hshape.
+    - apply database_history_key_shape_register.
+      + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
+      + apply database_history_key_shape_row_write.
+        apply database_history_key_shape_slots_update. exact Hshape.
   Qed.
 
   Lemma database_row_weight_conserved_row_replace : forall db f k previous o,
