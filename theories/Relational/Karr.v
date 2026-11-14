@@ -16175,6 +16175,21 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn beta in Hbound. unfold X.bits. lia.
   Qed.
 
+  Lemma karr_entail_variables_keys : forall P c,
+    normal P -> normal (c :: nil) ->
+    Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (c :: nil)))
+      (variables (c :: P)).
+  Proof.
+    intros P c HP Hc. apply karr_variables_key_bound.
+    constructor.
+    - pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hrow.
+      apply Forall_cons_iff in Hrow.
+      destruct Hrow as [[_ [Hkeys _]] _]. cbn beta in Hkeys. lia.
+    - eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [_ [Hkeys _]]. cbn beta in Hkeys. lia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
