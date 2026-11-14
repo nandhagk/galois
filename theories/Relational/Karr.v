@@ -3371,6 +3371,43 @@ Proof.
   injection Hfirst as Hindex Hvalue. subst i a. exists j. split; reflexivity.
 Qed.
 
+(** A zero target head passes through an entirely restored basis trace. *)
+Lemma karr_target_restore_zero : forall rs previous r,
+  karr_head r = 0%Z ->
+  karr_head (karr_target (map karr_restore rs) previous r) = 0%Z /\
+  karr_tail (karr_target (map karr_restore rs) previous r) =
+    karr_target rs previous (karr_tail r).
+Proof.
+  intro rs. induction rs as [|p rs IH]; intros previous r Hzero.
+  - split; [exact Hzero|reflexivity].
+  - cbn [map karr_target].
+    destruct (karr_first (kcoeff p)) as [[index a]|] eqn:Hfirst.
+    + rewrite (karr_first_restore p index a Hfirst).
+      assert (Hlookup : karr_nth (S index) (kcoeff r) =
+        karr_nth index (kcoeff (karr_tail r))).
+      { destruct r as [coeff right weight scale].
+        destruct coeff; destruct index; reflexivity. }
+      rewrite Hlookup.
+      set (next := karr_reduce previous a
+        (karr_nth index (kcoeff (karr_tail r))) (karr_restore p) r).
+      assert (Hnext_zero : karr_head next = 0%Z).
+      { unfold next, karr_reduce. apply karr_divide_head_zero.
+        destruct p as [pc pr pw ps], r as [rc rr rw sc].
+        destruct rc as [|head rc]; [reflexivity|].
+        cbn [karr_head kcoeff] in Hzero. subst head.
+        cbn [karr_head kcoeff karr_restore karr_cross]. ring. }
+      destruct (IH a next Hnext_zero) as [Hhead Htail].
+      split; [exact Hhead|].
+      rewrite Htail. unfold next.
+      rewrite (karr_reduce_restore_tail_zero previous a
+        (karr_nth index (kcoeff (karr_tail r))) p r Hzero).
+      reflexivity.
+    + cbn [karr_restore kcoeff karr_first]. rewrite Hfirst.
+      destruct (IH previous r Hzero) as [Hhead Htail].
+      split; [exact Hhead|].
+      exact Htail.
+Qed.
+
 (** Every coordinate before the first nonzero coefficient vanishes. *)
 Lemma karr_first_before : forall zs i a,
   karr_first zs = Some (i, a) -> forall j, j < i -> karr_nth j zs = 0%Z.
