@@ -14390,6 +14390,58 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
              apply Forall_map, Forall_forall. intros p _. cbn [Z.size_nat]. lia.
   Qed.
 
+  (** The head's actual zero source multipliers give a linear checker measure. *)
+  Lemma poly_assign_head_checker_measure : forall x f P xs,
+    NoDup (map fst (coef f)) ->
+    untag (lhs (poly_constraint (poly_assign_head x f P))) = Some xs ->
+    let c := LCons X.t xs
+      (lrel (poly_constraint (poly_assign_head x f P)))
+      (rhs (poly_constraint (poly_assign_head x f P))) in
+    C.csize P (map (fun _ => 0%Z) P) +
+      2 * (C.lsize (subst x f c) + C.cbits P (map (fun _ => 0%Z) P) + 1) <=
+      (terms (Reached P) + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef f) + 2) *
+        (X.bits x + 3 * F.form_bits f + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2).
+  Proof.
+    intros x f P xs Hform Huntag c.
+    destruct (poly_assign_head_envelope x f P Hform)
+      as (Hnormal & Hdim & Hkeys & Hbits & _).
+    destruct (poly_assign_untag_envelope
+      (poly_constraint (poly_assign_head x f P)) xs Huntag)
+      as (Hlength & Hrowbits & Hrowkeys).
+    assert (Hcnormal : NoDup (map fst (lhs c))).
+    { unfold c. cbn [lhs]. eapply untag_nodup; eassumption. }
+    assert (Hclength : length (lhs c) <= length (coef f) + 1).
+    { change (length xs <= length (coef f) + 1). rewrite Hlength. exact Hdim. }
+    assert (Hckeys : C.row_key_bits c <= X.bits x + F.form_bits f + 1).
+    { unfold c. eapply Nat.le_trans; [exact Hrowkeys|exact Hkeys]. }
+    assert (Hcbits : C.row_bits c <= F.form_bits f + 1).
+    { unfold c. rewrite Hrowbits. exact Hbits. }
+    destruct (poly_assign_form_row_bounds f) as [Hfkeys Hfbits].
+    destruct (AssignCore.poly_assign_subst_normal_sizes x f c
+      (X.bits x + F.form_bits f + 1) (F.form_bits f + 1)
+      Hcnormal Hform Hckeys Hcbits ltac:(lia) ltac:(lia))
+      as (Hsubstdim & Hsubstkeys & Hsubstbits).
+    change (length (lhs (subst x f c)) <= length (lhs c) + length (coef f))
+      in Hsubstdim.
+    change (C.row_key_bits (subst x f c) <= X.bits x + F.form_bits f + 1)
+      in Hsubstkeys.
+    change (C.row_bits (subst x f c) <= 2 * (F.form_bits f + 1) + 1)
+      in Hsubstbits.
+    assert (Hlsize : C.lsize (subst x f c) <=
+      (2 * length (coef f) + 2) * (X.bits x + 3 * F.form_bits f + 5)).
+    { assert (Hlen : length (lhs (subst x f c)) + 1 <= 2 * length (coef f) + 2).
+      { lia. }
+      assert (Hwidth : C.row_key_bits (subst x f c) +
+        C.row_bits (subst x f c) + 1 <= X.bits x + 3 * F.form_bits f + 5)
+        by lia.
+      unfold C.lsize. now apply Nat.mul_le_mono. }
+    pose proof (poly_assign_head_zero_csize P) as Hsize.
+    pose proof (poly_assign_head_zero_cbits P) as Hcbits_source.
+    lia.
+  Qed.
+
   (** Normalizing the prepared equation pays once for each form coefficient. *)
   Lemma T_poly_assign_head_normal : forall x f,
     NoDup (map fst (coef f)) ->
@@ -15404,6 +15456,89 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         pose proof (Datatypes.T_app_le xs ys) as Happ
       end;
       cbn [length] in *; lia.
+  Qed.
+
+  (** The initial affine row checks its unit certificate at its own linear size. *)
+  Lemma T_poly_assign_head_candidate : forall x f P,
+    NoDup (map fst (coef f)) ->
+    let dim := length (coef f) + 1 in
+    let keys := X.bits x + F.form_bits f + 1 in
+    let bits := F.form_bits f + 1 in
+    let measure :=
+      (terms (Reached P) + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef f) + 2) *
+        (X.bits x + 3 * F.form_bits f + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2) in
+    (T_assigned_candidate P x f (poly_assign_head x f P) <=
+      2 * N.of_nat (dim + 1) +
+      AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span dim 0 keys bits +
+      C.c_lc * N.of_nat measure + 16)%N.
+  Proof.
+    intros x f P Hform dim keys bits measure.
+    set (budget := (AssignCore.poly_assign_normal_subst_factor *
+      poly_clock_span dim 0 keys bits + C.c_lc * N.of_nat measure)%N).
+    assert (Hbranch : forall xs head ms,
+      untag (lhs (poly_constraint (poly_assign_head x f P))) = Some xs ->
+      poly_multipliers (poly_assign_head x f P) = head :: ms ->
+      let c := LCons X.t xs
+        (lrel (poly_constraint (poly_assign_head x f P)))
+        (rhs (poly_constraint (poly_assign_head x f P))) in
+      (T_subst x f c + C.T_check_entails P (subst x f c)
+        (Cert ms 1 false) <= budget)%N).
+    { intros xs head ms Huntag Hmult c.
+      cbn [poly_assign_head poly_multipliers] in Hmult.
+      injection Hmult as _ Hms. subst ms.
+      destruct (poly_assign_head_envelope x f P Hform)
+        as (Hnormal & Hdim & Hkeys & Hbits & _).
+      destruct (poly_assign_untag_envelope
+        (poly_constraint (poly_assign_head x f P)) xs Huntag)
+        as (Hlength & Hrowbits & Hrowkeys).
+      assert (Hrow : AssignCore.poly_input_envelope dim keys bits c).
+      { unfold AssignCore.poly_input_envelope. repeat split.
+        - unfold c. cbn [lhs]. eapply untag_nodup; eassumption.
+        - change (length xs <= dim). rewrite Hlength. exact Hdim.
+        - unfold c. eapply Nat.le_trans; [exact Hrowkeys|exact Hkeys].
+        - unfold c. rewrite Hrowbits. exact Hbits. }
+      destruct (poly_assign_form_row_bounds f) as [Hfkeys Hfbits].
+      assert (Hformrow : AssignCore.poly_input_envelope dim keys bits
+        (LCons X.t (coef f) REq (cst f))).
+      { unfold AssignCore.poly_input_envelope. cbn [lhs].
+        repeat split; try assumption; try lia. }
+      pose proof (AssignCore.T_poly_assign_subst_normal x f c dim keys bits
+        Hrow Hformrow) as Hsubst.
+      change (T_subst x f c <= AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span dim 0 keys bits)%N in Hsubst.
+      pose proof (poly_assign_head_checker_measure x f P xs Hform Huntag)
+        as Hmeasure.
+      cbn zeta in Hmeasure.
+      change (C.csize P (map (fun _ => 0%Z) P) +
+        2 * (C.lsize (subst x f c) + C.cbits P (map (fun _ => 0%Z) P) + 1)
+        <= measure) in Hmeasure.
+      pose proof (C.T_check_entails_le P (subst x f c)
+        (Cert (map (fun _ => 0%Z) P) 1 false)) as Hcheck.
+      change (C.T_check_entails P (subst x f c)
+        (Cert (map (fun _ => 0%Z) P) 1 false) <=
+        C.c_lc * N.of_nat (C.csize P (map (fun _ => 0%Z) P) +
+          2 * (C.lsize (subst x f c) + C.cbits P (map (fun _ => 0%Z) P) + 1)))%N
+        in Hcheck.
+      assert (Hcheck_total : (C.T_check_entails P (subst x f c)
+        (Cert (map (fun _ => 0%Z) P) 1 false) <= C.c_lc * N.of_nat measure)%N).
+      { eapply N.le_trans; [exact Hcheck|]. apply N.mul_le_mono_l.
+        now apply time_of_nat_le. }
+      unfold budget. now apply N.add_le_mono. }
+    pose proof (T_poly_assign_candidate_frame P x f
+      (poly_assign_head x f P) budget Hbranch) as Hframe.
+    pose proof (T_poly_assign_untag
+      (lhs (poly_constraint (poly_assign_head x f P)))) as Huntag_clock.
+    destruct (poly_assign_head_envelope x f P Hform) as (_ & Hdim & _).
+    assert (Huntag_total : (T_untag
+      (lhs (poly_constraint (poly_assign_head x f P))) <=
+      2 * N.of_nat (dim + 1))%N).
+    { eapply N.le_trans; [exact Huntag_clock|].
+      apply N.mul_le_mono_l, time_of_nat_le.
+      now apply Nat.add_le_mono_r. }
+    unfold budget in Hframe. clear -Hframe Huntag_total. lia.
   Qed.
 
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
