@@ -612,6 +612,19 @@ Proof.
     rewrite Hrun in Hagrees. cbn [fst] in Hagrees. now rewrite Hagrees.
 Qed.
 
+(** Each elimination stage retains the number of live rows. *)
+Lemma karr_bareiss_length : forall cols previous rows,
+  length (karr_bareiss cols previous rows) = length rows.
+Proof.
+  induction cols as [|cols IH]; intros previous rows; [reflexivity|].
+  cbn [karr_bareiss]. destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+  - cbn [length]. rewrite length_map, IH, !length_map.
+    destruct (karr_pivot_split rows pivot rest Hselect)
+      as [prefix [suffix [Hrows Hrest]]].
+    rewrite Hrows, Hrest, !length_app. cbn [length]. lia.
+  - rewrite length_map, IH, length_map. reflexivity.
+Qed.
+
 (** Initial matrix entries occur in the recorded execution. *)
 Lemma karr_bareiss_record_initial : forall cols previous rs z,
   In z (flat_map karr_row_entries rs) -> In z (snd (karr_bareiss_record cols previous rs)).
