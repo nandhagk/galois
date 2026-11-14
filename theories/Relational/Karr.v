@@ -3919,6 +3919,125 @@ Proof.
   rewrite length_map. clear -Hstage Hfactor. nia.
 Qed.
 
+(** A full-width pivot reduces every labeled row while preserving its minor law. *)
+Lemma karr_minor_law_pivot_rows : forall previous pivot_rows pivot_columns
+    columns index pivot_origin p rest,
+  karr_minor_law previous pivot_rows pivot_columns columns
+    ((pivot_origin, karr_row_entries p) ::
+      map (fun pair => (fst pair, karr_row_entries (snd pair))) rest) ->
+  previous <> 0%Z ->
+  index < length (kcoeff p) ->
+  karr_nth index (kcoeff p) <> 0%Z ->
+  length (karr_row_entries p) = length columns ->
+  Forall (fun pair =>
+    length (kcoeff (snd pair)) = length (kcoeff p) /\
+    length (kweight (snd pair)) = length (kweight p) /\
+    length (karr_row_entries (snd pair)) = length columns) rest ->
+  karr_minor_law (karr_nth index (kcoeff p))
+    (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth index columns 0%nat]) columns
+    (map (fun pair => (fst pair, karr_row_entries
+      (karr_reduce previous (karr_nth index (kcoeff p))
+        (karr_nth index (kcoeff (snd pair))) p (snd pair)))) rest).
+Proof.
+  intros previous pivot_rows pivot_columns columns index pivot_origin p
+    rest Hlaw Hprevious Hindex Hp Hp_width Hrest.
+  set (pivot := karr_row_entries p).
+  set (a := karr_nth index (kcoeff p)).
+  set (f := fun row : list Z => map (fun z => (z / previous)%Z)
+    (karr_cross a (karr_nth index row) row pivot)).
+  assert (Hpoint : forall origin r, In (origin, r) rest ->
+    f (karr_row_entries r) =
+      karr_row_entries (karr_reduce previous a
+        (karr_nth index (kcoeff r)) p r) /\
+    map (fun z => (previous * z)%Z) (f (karr_row_entries r)) =
+      karr_cross a (karr_nth index (karr_row_entries r))
+        (karr_row_entries r) pivot).
+  { intros origin r Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrest (origin, r) Hin) as
+      [Hcoeff [Hweight Hr_width]].
+    cbn [snd] in Hcoeff, Hweight, Hr_width.
+    assert (Hmember : In (origin, karr_row_entries r)
+      (map (fun pair => (fst pair, karr_row_entries (snd pair))) rest)).
+    { apply in_map_iff. exists (origin, r). split; [reflexivity|exact Hin]. }
+    assert (Hexact : karr_exact previous (KRow
+      (karr_cross a (karr_nth index (kcoeff r)) (kcoeff r) (kcoeff p))
+      (a * kright r - karr_nth index (kcoeff r) * kright p)%Z
+      (karr_cross a (karr_nth index (kcoeff r)) (kweight r) (kweight p))
+      (a * kscale r - karr_nth index (kcoeff r) * kscale p)%Z) = true).
+    { exact (karr_minor_law_reduce_exact_at previous pivot_rows
+        pivot_columns columns
+        ((pivot_origin, pivot) ::
+          map (fun pair => (fst pair, karr_row_entries (snd pair))) rest)
+        pivot_origin origin p r index Hlaw Hprevious
+        ltac:(now left) ltac:(now right) ltac:(lia) ltac:(lia) Hindex
+        Hp_width ltac:(lia)). }
+    assert (Hfull : karr_row_entries (karr_reduce previous a
+        (karr_nth index (kcoeff r)) p r) =
+      f (karr_row_entries r)).
+    { unfold f, pivot, a.
+      rewrite (karr_row_entries_reduce_exact previous
+        (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r
+        Hcoeff Hweight Hexact).
+      assert (Hr_index : index < length (kcoeff r)) by lia.
+      now rewrite (karr_nth_row_entries_coeff index r Hr_index). }
+    split; [symmetry; exact Hfull|].
+    rewrite <- Hfull.
+    pose proof (karr_minor_law_reduce_multiple_at previous pivot_rows
+      pivot_columns columns
+      ((pivot_origin, pivot) ::
+        map (fun pair => (fst pair, karr_row_entries (snd pair))) rest)
+      pivot_origin origin p r index Hlaw Hprevious
+      ltac:(now left) ltac:(now right) ltac:(lia) ltac:(lia)
+      Hindex Hp_width ltac:(lia)) as Hmultiple.
+    rewrite (karr_nth_row_entries_coeff index p Hindex) in Hmultiple.
+    exact Hmultiple.
+  }
+  assert (Hwidth : forall origin row,
+    In (origin, row) (map (fun pair =>
+      (fst pair, karr_row_entries (snd pair))) rest) ->
+    length row = length pivot).
+  { intros origin row Hin.
+    apply in_map_iff in Hin as [[source r] [Heq Hr]].
+    cbn [fst snd] in Heq. injection Heq as Hsource Hrow_entries.
+    subst source row.
+    pose proof (proj1 (Forall_forall _ _) Hrest (origin, r) Hr)
+      as [_ [_ Hrow]]. cbn [snd] in Hrow. unfold pivot. lia. }
+  assert (Hquotient : forall origin row,
+    In (origin, row) (map (fun pair =>
+      (fst pair, karr_row_entries (snd pair))) rest) ->
+    map (fun z => (previous * z)%Z) (f row) =
+      karr_cross (karr_nth index pivot) (karr_nth index row) row pivot).
+  { intros origin row Hin.
+    apply in_map_iff in Hin as [[source r] [Heq Hr]].
+    cbn [fst snd] in Heq. injection Heq as Hsource Hrow_entries.
+    subst source row.
+    pose proof (proj2 (Hpoint origin r Hr)) as Hmultiple.
+    unfold pivot. rewrite (karr_nth_row_entries_coeff index p Hindex).
+    exact Hmultiple. }
+  assert (Hindex_columns : index < length columns).
+  { unfold karr_row_entries in Hp_width.
+    rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+    rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+  pose proof (karr_minor_law_pivot_keep previous pivot_rows pivot_columns
+    columns index pivot_origin pivot
+    (map (fun pair => (fst pair, karr_row_entries (snd pair))) rest) f
+    Hlaw Hprevious ltac:(unfold pivot, a; now rewrite
+      karr_nth_row_entries_coeff by exact Hindex)
+    Hindex_columns Hwidth Hquotient) as Hnext.
+  unfold pivot in Hnext.
+  rewrite (karr_nth_row_entries_coeff index p Hindex) in Hnext.
+  rewrite map_map in Hnext. cbn [fst snd] in Hnext.
+  assert (Heq : map (fun pair =>
+      (fst pair, f (karr_row_entries (snd pair)))) rest =
+    map (fun pair => (fst pair, karr_row_entries
+      (karr_reduce previous a (karr_nth index (kcoeff (snd pair)))
+        p (snd pair)))) rest).
+  { apply map_ext_in. intros [origin r] Hin. cbn [fst snd].
+    f_equal. exact (proj1 (Hpoint origin r Hin)). }
+  rewrite Heq in Hnext. exact Hnext.
+Qed.
+
 (** A selected concrete pivot preserves all-order minors on its reduced tails. *)
 Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
     pivot_columns head columns labels rows pivot rest,
