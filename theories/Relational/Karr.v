@@ -2589,6 +2589,22 @@ Proof.
     exists source. split; [now right|exact Heq].
 Qed.
 
+(** Each row in aligned lists keeps some origin label in their pairing. *)
+Lemma karr_pair_entries_origin : forall (labels : list (list Z))
+    (rows : list karr_row) row,
+  length labels = length rows -> In row rows ->
+  exists origin, In (origin, karr_row_entries row)
+    (combine labels (map karr_row_entries rows)).
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|source rows] row Hlength Hin; cbn [length] in Hlength;
+    try discriminate; try contradiction.
+  cbn [map combine]. destruct Hin as [Heq|Hin].
+  - subst row. exists label. now left.
+  - destruct (IH rows row ltac:(lia) Hin) as [origin Horigin].
+    exists origin. now right.
+Qed.
+
 (** Deleting the first coordinate commutes with an entrywise map. *)
 Lemma karr_delete_map_first : forall (f : Z -> Z) xs,
   karr_delete 0 (map f xs) = map f (karr_delete 0 xs).
