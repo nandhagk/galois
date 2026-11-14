@@ -21017,6 +21017,41 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + exact Hkind.
   Qed.
 
+  (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
+  Lemma put_queue_allocated_active : forall db f k o,
+    UnionFind.wf (db_forest db) ->
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    Forall (allocated db) (queue db) ->
+    (forall a, row_get f (normal_key db k) db = Some (Some (Id a)) -> allocated db a) ->
+    (forall b, option_map (normal_cell db) o = Some (Id b) -> allocated db b) ->
+    Forall (allocated (put f k o db)) (queue (put f k o db)).
+  Proof.
+    intros db f k o Hforest Hmembers Hqueue Hprevious Hnormal.
+    unfold put.
+    remember (row_get f (normal_key db k) db) as previous eqn:Hrow.
+    remember (option_map (normal_cell db) o) as co eqn:Hco.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : Forall (allocated next) (queue next)).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try exact Hqueue.
+      apply union_queue_allocated;
+        [exact Hforest | exact Hmembers | exact Hqueue | |].
+      - apply Hprevious. reflexivity.
+      - apply Hnormal. reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      rewrite row_replace_queue.
+      eapply Forall_impl; [| exact Hnext].
+      intros x Hallocated. unfold allocated in *.
+      now rewrite row_replace_ids.
+    - rewrite row_replace_queue.
+      eapply Forall_impl; [| exact Hnext].
+      intros x Hallocated. unfold allocated in *.
+      now rewrite row_replace_ids.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
