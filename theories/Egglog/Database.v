@@ -2299,6 +2299,7 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     | _, _ => false
     end.
   Definition db_tuple_code := list_code db_cell_code.
+
   Definition db_row_code (f : positive) (k : list (cell V.t)) : positive :=
     pair_code (fun p => p) db_tuple_code (f, k).
   Definition row_get (f : positive) (k : list (cell V.t)) (db : t)
@@ -2694,6 +2695,29 @@ End DatabaseCode.
 Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Include DatabaseCode V I.
   Include DATABASE_SPEC V I.
+  Lemma db_cell_code_inj : forall c d,
+    db_cell_code c = db_cell_code d -> c = d.
+  Proof.
+    intros [i | v] [j | w] Hcode; cbn [db_cell_code] in Hcode;
+      try discriminate Hcode.
+    - injection Hcode as Heq. now subst.
+    - injection Hcode as Heq. f_equal. apply V.encode_inj. exact Heq.
+  Qed.
+
+  Lemma db_tuple_code_inj : forall xs ys,
+    db_tuple_code xs = db_tuple_code ys -> xs = ys.
+  Proof.
+    intros xs. induction xs as [| x rest IH]; intros [| y tail] Hcode;
+      cbn [db_tuple_code list_code] in Hcode.
+    - reflexivity.
+    - destruct (db_cell_code y); cbn [glue] in Hcode; discriminate Hcode.
+    - destruct (db_cell_code x); cbn [glue] in Hcode; discriminate Hcode.
+    - destruct (glue_inj _ _ _ _ Hcode) as [Hhead Htail].
+      f_equal.
+      + apply db_cell_code_inj. exact Hhead.
+      + apply IH. exact Htail.
+  Qed.
+
   (* spec: wf view repr pending old slots *)
   Definition view (db : t) : Model.view (V := V.t) :=
     {| row := fun f k o => row_get f k db = Some o;
@@ -20332,6 +20356,45 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db f k rest Hinv Habsent.
     rewrite (F6_absent db f k Habsent).
     exact (inv_on_drop_absent db f k rest Hinv Habsent).
+  Qed.
+
+  Lemma inv_on_drop_canonical : forall db f k rest current output,
+    inv_on db ((f, k) :: rest) -> located db f k = Some current ->
+    row (view db) f current output ->
+    (forall i, row_ids current output i -> repr db i = i) ->
+    inv_on db rest.
+  Proof.
+    intros db f k rest current output Hinv Hlocated_current Hrow_current Hfixed.
+    unfold inv_on in Hinv |- *.
+    destruct Hinv as
+      (Hrows & Hnodup_rows & Hcover & Hschedule & Hcache & Hnext & Hwork &
+       Hforest & Hkind & Hnodup_queue & Hpending & Hallocated).
+    split; [exact Hrows |].
+    split; [exact Hnodup_rows |].
+    split; [exact Hcover |].
+    split.
+    { intros g args out i Hrow Hids Hnonroot.
+      destruct (Hschedule g args out i Hrow Hids Hnonroot) as [key [Hentry Hlocated]].
+      exists key. split; [| exact Hlocated].
+      unfold scheduled in Hentry |- *.
+      destruct Hentry as [Hactive | Hqueued]; [| now right].
+      destruct Hactive as [Heq | Htail]; [| now left].
+      injection Heq as <- <-.
+      rewrite Hlocated_current in Hlocated.
+      injection Hlocated as <-.
+      change (row_get f current db = Some out) in Hrow.
+      change (row_get f current db = Some output) in Hrow_current.
+      rewrite Hrow_current in Hrow.
+      injection Hrow as <-.
+      exfalso. apply Hnonroot. exact (Hfixed i Hids). }
+    split; [exact Hcache |].
+    split; [exact Hnext |].
+    split.
+    { intros e Hin. apply Hwork. now right. }
+    split; [exact Hforest |].
+    split; [exact Hkind |].
+    split; [exact Hnodup_queue |].
+    split; [exact Hpending | exact Hallocated].
   Qed.
 
   Lemma inv_on_owned : forall db work,
