@@ -21110,6 +21110,55 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     lia.
   Qed.
 
+  Lemma slot_rank_ok_row_delete_active : forall db f k,
+    slot_rank_ok db -> slot_rank_ok (row_delete f k db).
+  Proof.
+    intros db f k Hrank. unfold row_delete.
+    destruct (row_get f k db) as [output |]; [| exact Hrank].
+    eapply slot_rank_ok_frame;
+      [reflexivity | reflexivity | reflexivity |].
+    apply slot_rank_ok_slots_update. exact Hrank.
+  Qed.
+
+  Lemma slot_rank_ok_repair_current_active : forall db f k,
+    slot_rank_ok db -> slot_rank_ok (repair_current f k db).
+  Proof.
+    intros db f k Hrank. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hrank].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hrank |].
+    eapply slot_rank_ok_frame;
+      [reflexivity | reflexivity | reflexivity |].
+    apply slot_rank_ok_put.
+    apply slot_rank_ok_row_delete_active. exact Hrank.
+  Qed.
+
+  Lemma inv_on_repair_slot_rank : forall db work f k,
+    inv_on db work -> slot_rank_ok (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hrank : slot_rank_ok db).
+    { unfold inv_on, forest_ok in Hinv. tauto. }
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hrank].
+    destruct (row_get f current db) as [output |]; [| exact Hrank].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hrank |].
+    pose proof (slot_rank_ok_repair_current_active db f current Hrank)
+      as Hrepair.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |]; [| exact Hrepair].
+    destruct (PTrieCode.get (db_row_code f (normal_key db current))
+      (row_history (db_row_store (repair_current f current db))))
+      as [[new_key new_id] |]; exact Hrepair.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
