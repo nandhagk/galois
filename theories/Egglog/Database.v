@@ -21137,6 +21137,56 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply put_queue_allocated_active; assumption.
   Qed.
 
+  Lemma move_row_identity_queue : forall db f old current,
+    queue (move_row_identity f old current db) = queue db.
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |]; [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store db))) as [[current_key current_id] |];
+      reflexivity.
+  Qed.
+
+  Lemma inv_on_repair_queue_allocated : forall db work f k,
+    inv_on db work ->
+    forall x, In x (queue (db_repair_entry f k db)) ->
+      allocated (db_repair_entry f k db) x.
+  Proof.
+    intros db work f k Hinv x Hqueued.
+    assert (Hforest : UnionFind.wf (db_forest db)).
+    { exact (inv_on_forest_wf db work Hinv). }
+    assert (Hmembers : forall i,
+      UnionFind.mem (db_forest db) i <-> allocated db i).
+    { intro i. exact (inv_on_forest_members db work i Hinv). }
+    assert (Hqueue : Forall (allocated db) (queue db)).
+    { assert (Hallocated : forall i, In i (queue db) -> allocated db i).
+      { unfold inv_on in Hinv. tauto. }
+      apply Forall_forall. exact Hallocated. }
+    assert (Hqueue_member : forall i, In i (queue db) -> allocated db i).
+    { apply (proj1 (Forall_forall _ _)). exact Hqueue. }
+    assert (Hrows : forall g args output i, row_get g args db = Some output ->
+      In (Id i) (args ++ option_list output) -> allocated db i).
+    { intros g args output i Hrow Hin.
+      apply (proj1 (inv_on_kind_ok db work g args output Hinv Hrow)).
+      exact Hin. }
+    unfold db_repair_entry in Hqueued |- *.
+    destruct (db_locate f k db) as [current |]; [| exact (Hqueue_member x Hqueued)].
+    destruct (row_get f current db) as [output |];
+      [| exact (Hqueue_member x Hqueued)].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact (Hqueue_member x Hqueued) |].
+    rewrite move_row_identity_queue in Hqueued.
+    destruct (move_row_identity_layout (repair_current f current db) f current
+      (normal_key db current)) as [_ Hids].
+    unfold allocated. rewrite Hids.
+    apply (proj1 (Forall_forall _ _)
+      (repair_current_queue_allocated_active db f current
+        Hforest Hmembers Hqueue Hrows) x Hqueued).
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
