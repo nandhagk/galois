@@ -22561,6 +22561,45 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         exact Hold.
   Qed.
 
+  Lemma repair_current_history_inverse : forall db f k g args key r,
+    UnionFind.wf (db_forest db) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (repair_current f k db))) = Some (key, r) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store db)) = Some (key, r) \/
+    (g, args) = (f, normal_key db k).
+  Proof.
+    intros db f k g args key r Hforest Hentry.
+    destruct (RowKeys.eqb_spec (g, args) (f, normal_key db k))
+      as [Htarget | Hother]; [now right | left].
+    now rewrite (repair_current_history_other db f k g args Hforest Hother)
+      in Hentry.
+  Qed.
+
+  Lemma db_repair_entry_history_inverse : forall db f k g args key r,
+    UnionFind.wf (db_forest db) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (db_repair_entry f k db))) = Some (key, r) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store db)) = Some (key, r) \/
+    exists current, db_locate f k db = Some current /\
+      (g, args) = (f, normal_key db current).
+  Proof.
+    intros db f k g args key r Hforest Hentry.
+    unfold db_repair_entry in Hentry.
+    destruct (db_locate f k db) as [current |] eqn:Hlocated;
+      [| now left].
+    destruct (row_get f current db) as [output |]; [| now left].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [now left |].
+    rewrite move_row_identity_history in Hentry.
+    destruct (repair_current_history_inverse db f current g args key r
+      Hforest Hentry) as [Hold | Htarget]; [now left |].
+    right. exists current. now split.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
