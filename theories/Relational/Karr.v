@@ -15754,6 +15754,54 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - exact Hscale.
   Qed.
 
+  (** The checker envelope is dominated by the public cubic work allowance. *)
+  Lemma karr_checker_work_public : forall d w,
+    2 <= d ->
+    (2 * d + 1) * (d + 1) *
+      (w + (8 * (ellB d w + 1) + 1) * (w + 1) + 1) +
+    (8 * (ellB d w + 1) + 1) *
+      ((d + 1) * (w + w + 1) + 8 * (ellB d w + 1) +
+        w + Nat.log2 d + 2) <=
+    256 * (d^3 * (ellB d w + 1)^2).
+  Proof.
+    intros d w Hd.
+    set (v := ellB d w + 1).
+    set (l := Nat.log2 d).
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hwv : w + 1 <= v) by (unfold v, ellB; nia).
+    assert (Hlv : l + 1 <= v) by (unfold v, ellB, l; nia).
+    assert (Hpref : (2 * d + 1) * (d + 1) <= 6 * d^2).
+    { cbn [Nat.pow]. nia. }
+    assert (Hinner : w + (8 * v + 1) * (w + 1) + 1 <= 10 * v^2).
+    { assert (Hproduct : (8 * v + 1) * (w + 1) <= 9 * v * v).
+      { apply Nat.mul_le_mono; lia. }
+      cbn [Nat.pow]. nia. }
+    assert (Hfirst : (2 * d + 1) * (d + 1) *
+      (w + (8 * v + 1) * (w + 1) + 1) <= 60 * d^2 * v^2).
+    { assert (Hproduct : (2 * d + 1) * (d + 1) *
+        (w + (8 * v + 1) * (w + 1) + 1) <=
+        (6 * d^2) * (10 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      nia. }
+    assert (Hsecond_inner : (d + 1) * (w + w + 1) +
+      8 * v + w + l + 2 <= 9 * d * v).
+    { assert (Hproduct : (d + 1) * (w + w + 1) <=
+        (2 * d) * (2 * v)).
+      { apply Nat.mul_le_mono; lia. }
+      nia. }
+    assert (Hsecond : (8 * v + 1) *
+      ((d + 1) * (w + w + 1) + 8 * v + w + l + 2) <=
+      81 * d * v^2).
+    { assert (Hproduct : (8 * v + 1) *
+        ((d + 1) * (w + w + 1) + 8 * v + w + l + 2) <=
+        (9 * v) * (9 * d * v)).
+      { apply Nat.mul_le_mono; lia. }
+      cbn [Nat.pow]. nia. }
+    fold v l.
+    cbn [Nat.pow] in *.
+    nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
