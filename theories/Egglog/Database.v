@@ -22384,6 +22384,29 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (repair_current_max_name_raw db f current).
   Qed.
 
+  Lemma inv_on_repair_core_bridge : forall db work f k,
+    inv_on db work -> core_bridge (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    destruct (inv_on_core_bridge db work Hinv) as
+      [_ [_ [_ [Hmap [Hmax Hattained]]]]].
+    destruct (inv_on_repair_forest_core db work f k Hinv)
+      as [_ [Hmembers Hcount]].
+    destruct (db_repair_entry_layout db f k) as [Hkind _].
+    unfold core_bridge.
+    split; [exact Hmembers |].
+    split; [exact Hcount |].
+    split; [exact (inv_on_repair_log_allocated db work f k Hinv) |].
+    split; [exact (row_map_wf_db_repair_entry db f k Hmap) |].
+    split.
+    - intros g output Hnew.
+      rewrite Hkind in Hnew.
+      rewrite db_repair_entry_max_name_raw.
+      exact (Hmax g output Hnew).
+    - rewrite db_repair_entry_max_name_raw, Hkind.
+      exact Hattained.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
