@@ -2386,6 +2386,40 @@ Proof.
     rewrite Hdet. rewrite Z.mul_comm. apply Z.mod_mul. exact Hprevious.
 Qed.
 
+(** Any selected pivot coordinate yields the same divisible two-row cross. *)
+Lemma karr_minor_law_cross_divisible_at : forall previous pivot_rows
+    pivot_columns columns pairs pivot_origin pivot target_origin target index j,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, pivot) pairs -> In (target_origin, target) pairs ->
+  length pivot = length columns -> length target = length columns ->
+  index < length columns -> j < length columns ->
+  (karr_nth j
+    (karr_cross (karr_nth index pivot) (karr_nth index target)
+      target pivot) mod previous = 0)%Z.
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin pivot
+    target_origin target index j Hlaw Hprevious Hpivot Htarget
+    Hpivot_width Htarget_width Hindex Hj.
+  assert (Hvalid : Forall (fun k => k < length columns) [index; j]).
+  { repeat constructor; assumption. }
+  assert (Hpaired : Forall2 (fun origin row => In (origin, row) pairs)
+    [pivot_origin; target_origin] [pivot; target]).
+  { repeat constructor; assumption. }
+  unfold karr_minor_law in Hlaw.
+  pose proof (Hlaw [pivot_origin; target_origin] [pivot; target]
+    [index; j] Hpaired eq_refl Hvalid ltac:(cbn [length]; lia)) as Hdet.
+  cbn [length karr_submatrix map Nat.sub Nat.add] in Hdet.
+  rewrite karr_determinant_two in Hdet.
+  rewrite Z.pow_1_r in Hdet.
+  rewrite karr_nth_cross by lia.
+  replace (karr_nth index pivot * karr_nth j target -
+    karr_nth index target * karr_nth j pivot)%Z with
+    (karr_nth index pivot * karr_nth j target -
+      karr_nth j pivot * karr_nth index target)%Z by ring.
+  rewrite Hdet. rewrite Z.mul_comm. apply Z.mod_mul. exact Hprevious.
+Qed.
+
 (** The selected pivot value is the next bordered minor. *)
 Lemma karr_minor_law_pivot_value : forall previous pivot_rows pivot_columns
     head columns pairs origin pivot,
