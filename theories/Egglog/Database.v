@@ -13769,6 +13769,44 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (Hcoherent f k o key r Hrow Hentry).
   Qed.
 
+  Lemma database_active_history_coherent_repair_current : forall db f k,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db ->
+    database_active_history_coherent (repair_current f k db).
+  Proof.
+    intros db f k Hwf Hstore Halign Hcoherent.
+    unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hcoherent].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hcoherent |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted).
+    assert (Hupdated : database_active_history_coherent updated).
+    { subst updated. apply database_active_history_coherent_put.
+      - subst deleted. apply row_delete_wf. exact Hwf.
+      - subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
+      - subst deleted. apply database_history_alignment_row_delete. exact Halign.
+      - subst deleted. apply database_active_history_coherent_row_delete.
+        exact Hcoherent. }
+    intros g args o key r Hrow Hentry.
+    change (row_get g args updated = Some o) in Hrow.
+    change (PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store updated)) = Some (key, r)) in Hentry.
+    rewrite (db_locate_same_core updated
+      (database_set_nuses (db_nuses db)
+        (database_set_row_store
+          {| row_history := row_history (db_row_store updated);
+             row_links := row_links (db_row_store updated);
+             row_weights := row_weights (db_row_store updated);
+             row_keys := row_keys (db_row_store updated);
+             row_fresh := row_fresh (db_row_store updated);
+             row_uses := row_uses (db_row_store db) |} updated))
+      g args) by reflexivity.
+    exact (Hupdated g args o key r Hrow Hentry).
+  Qed.
+
   Lemma database_row_store_ok_repair_current : forall db f k,
     database_row_store_ok db -> database_row_store_ok (repair_current f k db).
   Proof.
