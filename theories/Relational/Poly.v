@@ -16511,6 +16511,37 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply Nat.mul_le_mono; [exact Hcount|exact Hsingle].
   Qed.
 
+  (** The prepared head's substitution span fits the nonzero step allowance. *)
+  Lemma poly_assign_prepared_head_span_mass : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let headwidth := X.bits x + 2 * F.form_bits prepared + 3 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (length (coef prepared) + 2) * headwidth^2 <= 3200 * work.
+  Proof.
+    intros x e P f Hlinear prepared headwidth bits total work.
+    pose proof (poly_assign_prepared_step_mass x e P f Hlinear) as Hstep.
+    cbn zeta in Hstep.
+    set (support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef prepared) + 1).
+    set (stepwidth := poly_raw_keys P + poly_raw_bits P + X.bits x +
+      2 * F.form_bits prepared + 3).
+    assert (Hhead_count : length (coef prepared) + 2 <=
+      (length P + 2) * (support + length P + 2)).
+    { unfold support.
+      assert (Hfactor : 1 <= length P + 2) by lia.
+      assert (Hmass : length (coef prepared) + 2 <=
+        support + length P + 2) by (unfold support; lia).
+      nia. }
+    assert (Hwidth : headwidth^2 <= stepwidth^2).
+    { apply Nat.pow_le_mono_l. unfold headwidth, stepwidth; lia. }
+    eapply Nat.le_trans; [|exact Hstep].
+    apply Nat.mul_le_mono; [exact Hhead_count|exact Hwidth].
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
