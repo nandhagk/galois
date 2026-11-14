@@ -12046,6 +12046,29 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       exact (Hcanonical i Hin).
   Qed.
 
+  (** Fresh allocation retains every owned row and history invariant. *)
+  Lemma database_owned_ok_allocate_next : forall db,
+    wf db -> database_owned_ok db ->
+    database_owned_ok (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf Howned.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    unfold database_owned_ok.
+    split; [apply database_row_store_ok_allocate_next; exact Hstore |].
+    split; [eapply database_history_alignment_allocate_next; eassumption |].
+    split; [apply database_active_history_coherent_allocate_next; assumption |].
+    split; [apply database_history_root_owner_allocate_next; assumption |].
+    split; [apply database_history_key_shape_allocate_next; assumption |].
+    split.
+    { eapply database_history_codes_valid_transport with (db := db);
+        [reflexivity | exact Hvalid]. }
+    split; [apply database_history_key_ids_bounded_allocate_next; exact Hbounded |].
+    split; [apply database_row_weight_conserved_allocate_next; assumption |].
+    apply database_row_weights_positive_allocate_next. exact Hpositive.
+  Qed.
+
   Lemma database_one_le_pow : forall base d,
     (1 <= base)%N -> (1 <= base ^ N.of_nat d)%N.
   Proof.
