@@ -1254,6 +1254,157 @@ Proof.
   apply Forall_forall. intros row _. apply length_map.
 Qed.
 
+(** Selecting columns commutes with crossing two equally wide rows. *)
+Lemma karr_select_cross : forall columns a b xs ys,
+  length xs = length ys ->
+  map (fun i => karr_nth i (karr_cross a b xs ys)) columns =
+    karr_cross a b (map (fun i => karr_nth i xs) columns)
+      (map (fun i => karr_nth i ys) columns).
+Proof.
+  intros columns a b xs ys Hwidth.
+  induction columns as [|i columns IH]; [reflexivity|].
+  cbn [map karr_cross]. rewrite karr_nth_cross by exact Hwidth.
+  now rewrite IH.
+Qed.
+
+(** Crossing rows of equal width preserves their width. *)
+Lemma karr_cross_length : forall a b xs ys,
+  length xs = length ys -> length (karr_cross a b xs ys) = length xs.
+Proof.
+  intros a b xs. induction xs as [|x xs IH]; intros [|y ys] Hwidth;
+    cbn [length karr_cross] in *; try discriminate; try reflexivity.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Crossing each row below a pivot multiplies the determinant once per row. *)
+Lemma karr_determinant_cross_rows : forall p prefix xs a (f : list Z -> Z),
+  Forall (fun r => length r = length p) (prefix ++ xs) ->
+  karr_determinant (S (length prefix + length xs))
+    (p :: prefix ++ map (fun x => karr_cross a (f x) x p) xs) =
+  (a ^ Z.of_nat (length xs) *
+    karr_determinant (S (length prefix + length xs)) (p :: prefix ++ xs))%Z.
+Proof.
+  intros p prefix xs a f Hwidth. revert prefix Hwidth.
+  induction xs as [|x xs IH]; intros prefix Hwidth.
+  - cbn [length map app]. rewrite Z.pow_0_r. ring.
+  - apply Forall_app in Hwidth as [Hprefix Hrest].
+    inversion Hrest as [|? ? Hx Htail]; subst.
+    assert (Hnext : Forall (fun r => length r = length p) ((prefix ++ [x]) ++ xs)).
+    { apply Forall_app. split; [apply Forall_app; split; [exact Hprefix|constructor;
+        [exact Hx|constructor]]|exact Htail]. }
+    specialize (IH (prefix ++ [x]) Hnext).
+    replace (S (length prefix + length (x :: xs))) with
+      (S (S (length prefix + length xs))) by (cbn [length]; lia).
+    cbn [map].
+    replace (p :: prefix ++ karr_cross a (f x) x p ::
+      map (fun y => karr_cross a (f y) y p) xs) with
+      (([] ++ p :: prefix) ++ karr_cross a (f x) x p ::
+        map (fun y => karr_cross a (f y) y p) xs) by reflexivity.
+    rewrite (karr_determinant_row_reduce (length prefix + length xs)
+      [] p prefix x (map (fun y => karr_cross a (f y) y p) xs) a (f x))
+      by (cbn [length app]; try lia; exact Hprefix).
+    replace (S (length (prefix ++ [x]) + length xs)) with
+      (S (S (length prefix + length xs))) in IH
+      by (rewrite length_app; cbn [length]; lia).
+    replace (([] ++ p :: prefix) ++ x ::
+      map (fun y => karr_cross a (f y) y p) xs) with
+      (p :: prefix ++ x :: map (fun y => karr_cross a (f y) y p) xs)
+      by reflexivity.
+    replace (p :: (prefix ++ [x]) ++ xs) with (p :: prefix ++ x :: xs)
+      in IH by (rewrite <- app_assoc; reflexivity).
+    replace (p :: prefix ++ x :: map (fun y => karr_cross a (f y) y p) xs)
+      with (p :: (prefix ++ [x]) ++ map (fun y => karr_cross a (f y) y p) xs)
+      by (rewrite <- app_assoc; reflexivity).
+    rewrite IH. cbn [length]. rewrite Nat2Z.inj_succ, Z.pow_succ_r by lia.
+    ring.
+Qed.
+
+(** A selected pivot column and its suffix commute with every crossed row. *)
+Lemma karr_stage_cross_selected : forall c p xs ys,
+  Forall (fun x => length x = length p) xs ->
+  karr_submatrix (c :: ys)
+    (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs) =
+  map (fun row => karr_cross (karr_nth c p) (karr_nth 0 row) row
+    (map (fun i => karr_nth i p) (c :: ys))) (karr_submatrix (c :: ys) xs).
+Proof.
+  intros c p xs ys Hwidth. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext_in. intros x Hin. cbn [map].
+  rewrite karr_select_cross.
+  - rewrite karr_nth_cross by
+      exact (proj1 (Forall_forall _ _) Hwidth x Hin).
+    reflexivity.
+  - exact (proj1 (Forall_forall _ _) Hwidth x Hin).
+Qed.
+
+(** Removing the selected first column leaves precisely the suffix selection. *)
+Lemma karr_stage_selected_tail : forall c ys xs,
+  map (karr_delete 0) (karr_submatrix (c :: ys) xs) =
+    karr_submatrix ys xs.
+Proof.
+  intros c ys xs. unfold karr_submatrix. rewrite map_map.
+  apply map_ext. intro x. reflexivity.
+Qed.
+
+(** One undivided elimination stage scales every selected minor. *)
+Lemma karr_stage_minor : forall (c : nat) (p : list Z) (xs : list (list Z)) (ys : list nat),
+  karr_nth c p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  karr_determinant (length ys)
+    (karr_submatrix ys
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs)) =
+  (karr_nth c p ^ Z.of_nat (length xs - 1) *
+   karr_determinant (S (length ys)) (karr_submatrix (c :: ys) (p :: xs)))%Z.
+Proof.
+  intros c p xs ys Ha Hsource Hcolumns Hpositive.
+  set (a := karr_nth c p).
+  set (pivot := map (fun i => karr_nth i p) (c :: ys)).
+  set (rows := karr_submatrix (c :: ys) xs).
+  set (crossed := map (fun row => karr_cross a (karr_nth 0 row) row pivot) rows).
+  assert (Hwidth : Forall (fun row => length row = length pivot) rows).
+  { unfold rows, pivot. pose proof (karr_submatrix_width (c :: ys) xs) as Hrows.
+    rewrite length_map. exact Hrows. }
+  assert (Hlength : length rows = length ys).
+  { unfold rows, karr_submatrix. rewrite length_map. lia. }
+  assert (Hzero : Forall (fun row => karr_nth 0 row = 0%Z) crossed).
+  { unfold crossed. apply Forall_forall. intros row Hin.
+    apply in_map_iff in Hin as [source [Hrow Hsource_row]]. subst row.
+    rewrite karr_nth_cross by
+      exact (proj1 (Forall_forall _ _) Hwidth source Hsource_row).
+    unfold a, pivot. cbn [map karr_nth]. ring. }
+  pose proof (karr_determinant_cross_rows pivot [] rows a
+    (fun row => karr_nth 0 row) Hwidth) as Hcross.
+  cbn [length app] in Hcross. rewrite Hlength in Hcross.
+  pose proof (karr_determinant_triangular (length ys) pivot crossed Hzero) as Htri.
+  assert (Hselected : map (karr_delete 0) crossed =
+    karr_submatrix ys
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs)).
+  { unfold crossed, rows, pivot, a.
+    rewrite <- (karr_stage_cross_selected c p xs ys Hsource).
+    apply karr_stage_selected_tail. }
+  rewrite Hselected in Htri.
+  destruct (length xs) as [|m] eqn:Hm; [lia|].
+  assert (Hy : length ys = S m) by lia.
+  rewrite Hy in Hcross, Htri.
+  assert (Hhead : karr_nth 0 pivot = a) by (unfold pivot, a; reflexivity).
+  rewrite Hhead in Htri.
+  cbn [Nat.add] in Hcross.
+  fold crossed in Hcross.
+  rewrite Htri in Hcross.
+  rewrite Nat2Z.inj_succ, Z.pow_succ_r in Hcross by lia.
+  unfold a, pivot, rows in Hcross.
+  unfold a in Ha.
+  rewrite Hy. cbn [Nat.sub]. rewrite Nat.sub_0_r. unfold a.
+  change (karr_determinant (S m)
+    (karr_submatrix ys
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs)) =
+    ((karr_nth c p ^ Z.of_nat m)%Z *
+      karr_determinant (S (S m))
+        (map (fun i => karr_nth i p) (c :: ys) ::
+          karr_submatrix (c :: ys) xs))%Z).
+  nia.
+Qed.
+
 (** Signed minors account for the row exchanges made when selecting a pivot. *)
 Definition karr_signed_minors (width : nat) (rows : list (list Z)) : list Z :=
   flat_map (fun order =>
