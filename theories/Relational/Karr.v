@@ -13050,6 +13050,25 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite length_map in Hlength. unfold n. cbn [rows_of]. lia.
   Qed.
 
+  (** The input-minor width fits four copies of the public dimension width. *)
+  Lemma karr_minor_width_public : forall P,
+    normal P -> ellB (n (Reached P) + 1) (nell (Reached P)) + 1 <=
+      4 * (ellB (n (Reached P) + 2) (ell (Reached P)) + 1).
+  Proof.
+    intros P Hnormal.
+    pose proof (karr_normal_terms_log P Hnormal) as Hlog.
+    pose proof (Nat.log2_le_mono (n (Reached P) + 1)
+      (n (Reached P) + 2) ltac:(lia)) as Hdimlog.
+    unfold nell, ellB.
+    set (d := n (Reached P)) in *.
+    set (b := ell (Reached P)) in *.
+    set (l := Nat.log2 (d + 1)) in *.
+    set (l' := Nat.log2 (d + 2)) in *.
+    set (t := Nat.log2 (terms (Reached P))) in *.
+    clearbody d b l l' t.
+    nia.
+  Qed.
+
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
   Proof.
     intros P z Hin. unfold bareiss_entries in Hin. unfold input_minors.
