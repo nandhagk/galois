@@ -22641,6 +22641,34 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + now left.
   Qed.
 
+  Lemma db_repair_entry_target_row : forall db f k current output,
+    UnionFind.wf (db_forest db) ->
+    db_locate f k db = Some current -> row_get f current db = Some output ->
+    exists result, row (view (db_repair_entry f k db)) f
+      (normal_key db current) result.
+  Proof.
+    intros db f k current output Hforest Hlocated Hrow.
+    unfold db_repair_entry. rewrite Hlocated, Hrow.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output)) eqn:Hfixed.
+    - apply andb_true_iff in Hfixed as [Hkey _].
+      apply Pos.eqb_eq in Hkey.
+      apply Tuples.encode_inj in Hkey. rewrite Hkey.
+      exists output. exact Hrow.
+    - exists (combine_output (row_delete f current db) f
+        (row_get f (normal_key db current) (row_delete f current db))
+        (option_map (normal_cell db) output)).
+      change (row_get f (normal_key db current)
+        (move_row_identity f current (normal_key db current)
+          (repair_current f current db)) =
+        Some (combine_output (row_delete f current db) f
+          (row_get f (normal_key db current) (row_delete f current db))
+          (option_map (normal_cell db) output))).
+      unfold row_get. rewrite move_row_identity_rows_store.
+      exact (repair_current_target db f current output Hforest Hrow).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
