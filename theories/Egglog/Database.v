@@ -3472,6 +3472,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     reflexivity.
   Qed.
 
+  Lemma row_write_written_cells : forall db f k o,
+    db_written_cells (row_write f k o db) = db_written_cells db.
+  Proof.
+    reflexivity.
+  Qed.
+
   Lemma slots_update_row_store : forall db add f cells,
     db_row_store (slots_update add f cells db) = db_row_store db.
   Proof.
@@ -11826,6 +11832,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           split; [apply register_row_uses_map_wf; exact Hmap |].
           split; [apply register_row_uses_labels; exact Hstore |].
           apply register_row_uses_link_range. exact Hstore.
+  Qed.
+
+  Lemma database_row_store_ok_row_replace : forall db f k previous o,
+    database_row_store_ok db ->
+    database_row_store_ok (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hstore; unfold row_replace.
+    - apply database_row_store_ok_register.
+      + apply row_write_row_store_ok.
+        apply slots_update_row_store_ok, slots_update_row_store_ok.
+        exact Hstore.
+      + intros c Hin. rewrite row_write_written_cells, slots_update_written_cells.
+        apply in_or_app. left. apply in_or_app. now left.
+    - apply database_row_store_ok_register.
+      + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
+      + intros c Hin. rewrite row_write_written_cells, slots_update_written_cells.
+        apply in_or_app. left. apply in_or_app. now left.
   Qed.
 
   Lemma pop_loser_locate : forall db x db' f k,
