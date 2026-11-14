@@ -6751,18 +6751,6 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Proof.
     exact EditMetadata.kwidth_edit.
   Qed.
-  (** Editing pays for the influence mass that it releases and for the changed rows. *)
-  Lemma T_edit_le : forall p p' ch st, S.wf p -> S.wf p' -> state_ok st ->
-    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
-    (T_edit p p' ch st <= c_inc *
-      N.of_nat (((infl_mass st - infl_mass (edit p p' ch st)) +
-        fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
-          length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
-      N.of_nat (width p st + width p' st + kwidth st + 1))%N.
-  Proof.
-    (* OPEN: the local edit clock still needs the released influence credit bound. *)
-  Admitted.
-
   (** Snapshot access walks the identifier once. *)
   Lemma T_snapshot_get_le : forall id st,
     (T_snapshot_get id st <= c_inc * N.of_nat (Pos.size_nat id + 1))%N.
@@ -10142,6 +10130,138 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       (1024 * (released_work + rowwork + q))%N by
       (unfold released_work, rowwork; ring).
     lia.
+  Qed.
+
+  Lemma T_edit_clock_components : forall p p' ch st,
+    let bad := invalidate p p' ch st in
+    (T_edit p p' ch st <=
+      7 + T_invalid_initial p p' ch st +
+      Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
+        (fun acc : incremental_invalidation S.key => T_invalid_checked_step st acc)
+        (invalid_initial p p' ch st)
+        (invalid_accessible st (invalid_initial p p' ch st)) +
+      T_remove_keys bad (inc_values st) +
+      T_remove_keys bad (inc_influence st) +
+      T_remove_keys bad (inc_cowrites st))%N.
+  Proof.
+    intros p p' ch st; cbn beta zeta.
+    pose proof (T_edit_wrapper_le p p' ch st) as Hwrapper.
+    unfold T_invalid_walk in Hwrapper; cbn beta zeta in Hwrapper.
+    lia.
+  Qed.
+
+  Lemma edit_released_key_work : forall p p' ch st, state_ok st ->
+    finite_sum (fun x =>
+      infl_deg st x + length (cowrite_at st x) + 1)
+      (invalidate p p' ch st) <=
+      infl_mass st - infl_mass (edit p p' ch st).
+  Proof.
+    intros p p' ch st Hstate.
+    pose proof (infl_mass_release p p' ch st Hstate) as Hrelease.
+    change (infl_mass (edit p p' ch st) +
+      finite_sum (fun x => infl_deg st x + length (cowrite_at st x) + 1)
+        (invalidate p p' ch st) <= infl_mass st) in Hrelease.
+    lia.
+  Qed.
+
+  Lemma T_edit_remove_scaled_le : forall A p p' ch st (m : PTrieCode.t A),
+    state_ok st ->
+    (T_remove_keys (invalidate p p' ch st) m <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x =>
+          (infl_deg st x + length (cowrite_at st x) + 1)%nat)
+          (invalidate p p' ch st)) *
+        N.of_nat (width p st + width p' st + kwidth st + 1) + 2)%N.
+  Proof.
+    intros A p p' ch st m Hstate.
+    pose proof (T_invalid_remove_bad_le A p p' ch st m Hstate) as Hremove.
+    assert (Hwidth : (N.of_nat (kwidth st + 1) <=
+      N.of_nat (width p st + width p' st + kwidth st + 1))%N) by lia.
+    eapply N.le_trans; [exact Hremove|].
+    apply N.add_le_mono_r.
+    apply N.mul_le_mono_l; exact Hwidth.
+  Qed.
+
+  (** Editing charges the local walk and three metadata removals to released mass. *)
+  Lemma T_edit_le : forall p p' ch st, S.wf p -> S.wf p' -> state_ok st ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
+    (T_edit p p' ch st <= c_inc *
+      N.of_nat (((infl_mass st - infl_mass (edit p p' ch st)) +
+        fold_right Nat.add 0%nat (map (fun r => length (S.writes p r) + length (S.writes p' r) +
+          length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p st + width p' st + kwidth st + 1))%N.
+  Proof.
+    intros p p' ch st Hwf Hwf' Hstate Hlisted.
+    pose proof (T_edit_clock_components p p' ch st) as Hcomponents.
+    cbn beta zeta in Hcomponents.
+    pose proof (T_invalid_initial_le p p' ch st Hwf Hwf' Hlisted) as Hinitial.
+    pose proof (T_invalid_loop_key_le p p' ch st Hstate) as Hloop.
+    cbn beta zeta in Hloop.
+    pose proof (edit_released_key_work p p' ch st Hstate) as Hreleased.
+    apply nat_to_N_le in Hreleased.
+    pose (base := (S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N).
+    pose (width_total := width p st + width p' st + kwidth st + 1).
+    pose (keys := N.of_nat (finite_sum (fun x =>
+      infl_deg st x + length (cowrite_at st x) + 1) (invalidate p p' ch st))).
+    pose (rows := N.of_nat (invalid_changed_work p p' ch)).
+    pose (released := N.of_nat (infl_mass st - infl_mass (edit p p' ch st))).
+    pose (q := (base * N.of_nat width_total)%N).
+    assert (Hq : (1 <= q)%N).
+    { change (1 * 1 <= base * N.of_nat width_total)%N.
+      apply N.mul_le_mono; [unfold base; lia|unfold width_total; lia]. }
+    assert (HinitialQ :
+      (T_invalid_initial p p' ch st <= 128 * q * (rows + 1))%N).
+    { replace (N.of_nat (invalid_changed_work p p' ch + 1)) with
+        (rows + 1)%N in Hinitial by
+        (unfold rows; rewrite Nat2N.inj_add; reflexivity).
+      replace (128 * q * (rows + 1))%N with
+        (128 * base * (rows + 1) * N.of_nat width_total)%N by
+        (unfold q; ring).
+      exact Hinitial. }
+    assert (Hwidth : (N.of_nat (kwidth st + 1) <= N.of_nat width_total)%N).
+    { unfold width_total; lia. }
+    assert (HloopQ :
+      (Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
+        (fun acc : incremental_invalidation S.key => T_invalid_checked_step st acc)
+        (invalid_initial p p' ch st)
+        (invalid_accessible st (invalid_initial p p' ch st)) <=
+        320 * q * keys + 2)%N).
+    { eapply N.le_trans; [exact Hloop|].
+      replace (320 * q * keys)%N with
+        (320 * base * N.of_nat width_total * keys)%N by (unfold q; ring).
+      apply N.add_le_mono_r.
+      apply N.mul_le_mono_r.
+      apply N.mul_le_mono_l; exact Hwidth. }
+    pose proof (T_edit_remove_scaled_le _ p p' ch st (inc_values st) Hstate)
+      as Hvalues.
+    pose proof (T_edit_remove_scaled_le _ p p' ch st (inc_influence st) Hstate)
+      as Hreads.
+    pose proof (T_edit_remove_scaled_le _ p p' ch st (inc_cowrites st) Hstate)
+      as Hcowrites.
+    assert (Hremove : forall A (m : PTrieCode.t A),
+      (T_remove_keys (invalidate p p' ch st) m <= 16 * q * keys + 2)%N).
+    { intros A m.
+      pose proof (T_edit_remove_scaled_le A p p' ch st m Hstate) as Hbound.
+      replace (16 * q * keys)%N with
+        (16 * base * keys * N.of_nat width_total)%N by (unfold q; ring).
+      exact Hbound. }
+    clear Hvalues Hreads Hcowrites.
+    assert (Hrhs : (c_inc *
+      N.of_nat ((infl_mass st - infl_mass (edit p p' ch st) +
+        invalid_changed_work p p' ch + 1)%nat) * N.of_nat width_total =
+      1024 * q * (released + rows + 1))%N).
+    { assert (Hsum : N.of_nat ((infl_mass st - infl_mass (edit p p' ch st) +
+          invalid_changed_work p p' ch + 1)%nat) = (released + rows + 1)%N).
+      { unfold released, rows; rewrite !Nat2N.inj_add; reflexivity. }
+      rewrite Hsum; unfold c_inc, q, base; ring. }
+    change (T_edit p p' ch st <= c_inc *
+      N.of_nat ((infl_mass st - infl_mass (edit p p' ch st) +
+        invalid_changed_work p p' ch + 1)%nat) * N.of_nat width_total)%N.
+    rewrite Hrhs.
+    eapply N.le_trans; [exact Hcomponents|].
+    eapply edit_public_clock_arithmetic; try exact Hq;
+      try exact Hreleased; try exact HinitialQ; try exact HloopQ;
+      apply Hremove.
   Qed.
 
   Definition invalid_respects (P : S.key -> Prop)
