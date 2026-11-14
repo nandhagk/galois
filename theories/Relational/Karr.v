@@ -3636,6 +3636,26 @@ Proof.
   - rewrite !karr_zero_prefix_width. lia.
 Qed.
 
+(** A full-width pivot step matches the next inner tail representation. *)
+Lemma karr_zero_prefix_pivot_tail : forall count d p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  kcoeff r <> [] -> karr_head p <> 0%Z ->
+  karr_reduce d (karr_head p) (karr_head r)
+    (karr_zero_prefix count p) (karr_zero_prefix count r) =
+  karr_zero_prefix (S count)
+    (karr_tail (karr_reduce d (karr_head p) (karr_head r) p r)).
+Proof.
+  intros count d p r Hwidth Hr_nonempty Hp.
+  rewrite karr_zero_prefix_reduce by lia.
+  apply karr_zero_prefix_skip.
+  - intro Hempty.
+    pose proof (karr_reduce_width d (karr_head p) (karr_head r) p r
+      ltac:(lia)) as Hreduced.
+    rewrite Hempty in Hreduced. cbn [length] in Hreduced.
+    destruct (kcoeff r); [contradiction|cbn [length] in Hreduced; lia].
+  - now apply karr_reduce_head_zero.
+Qed.
+
 (** Every coordinate before the first nonzero coefficient vanishes. *)
 Lemma karr_first_before : forall zs i a,
   karr_first zs = Some (i, a) -> forall j, j < i -> karr_nth j zs = 0%Z.
