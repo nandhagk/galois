@@ -22208,6 +22208,76 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now rewrite row_replace_ids.
   Qed.
 
+  Lemma repair_current_log_allocated_active : forall db work f k,
+    inv_on db work ->
+    Forall (fun edge => allocated (repair_current f k db) (fst edge) /\
+      allocated (repair_current f k db) (snd edge))
+      (runtime_equalities (db_runtime (repair_current f k db))).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hlog : Forall
+      (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db))).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    unfold repair_current.
+    destruct (row_get f k db) as [output |] eqn:Hrow; [| exact Hlog].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hlog |].
+    set (deleted := row_delete f k db).
+    assert (Hlog_deleted : Forall
+      (fun edge => allocated deleted (fst edge) /\
+        allocated deleted (snd edge))
+      (runtime_equalities (db_runtime deleted))).
+    { subst deleted.
+      rewrite (row_delete_preserves _ (@runtime_equalities (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun all new counts state => eq_refl)
+        f k db).
+      eapply Forall_impl; [| exact Hlog].
+      intros edge [Hi Hj]. unfold allocated in *.
+      now rewrite row_delete_ids. }
+    assert (Hprevious : forall a,
+      row_get f (normal_key deleted (normal_key db k)) deleted =
+        Some (Some (Id a)) -> allocated deleted a).
+    { intros a Hnew. subst deleted.
+      rewrite row_delete_normal_key,
+        (normal_key_idempotent db k Hforest) in Hnew.
+      apply row_delete_binding in Hnew as [Hold _].
+      unfold allocated. rewrite row_delete_ids.
+      apply (proj1 (inv_on_kind_ok db work f (normal_key db k)
+        (Some (Id a)) Hinv Hold)).
+      apply in_or_app. right. cbn [option_list In]. now left. }
+    assert (Hnormal : forall b,
+      option_map (normal_cell deleted) (option_map (normal_cell db) output) =
+        Some (Id b) -> allocated deleted b).
+    { intros b Hnormalized. subst deleted.
+      rewrite row_delete_normal_output,
+        (normal_output_idempotent db output Hforest) in Hnormalized.
+      unfold allocated. rewrite row_delete_ids.
+      assert (Hkind_normal : kind_ok db f (normal_key db k)
+        (option_map (normal_cell db) output)).
+      { apply inv_on_normal_kind_ok with (work := work);
+          [exact Hinv |].
+        exact (inv_on_kind_ok db work f k output Hinv Hrow). }
+      apply (proj1 Hkind_normal).
+      apply in_or_app. right. rewrite Hnormalized.
+      cbn [option_list In]. now left. }
+    change (Forall
+      (fun edge => allocated
+        (put f (normal_key db k) (option_map (normal_cell db) output) deleted)
+        (fst edge) /\
+        allocated
+          (put f (normal_key db k) (option_map (normal_cell db) output) deleted)
+          (snd edge))
+      (runtime_equalities (db_runtime
+        (put f (normal_key db k)
+          (option_map (normal_cell db) output) deleted)))).
+    apply put_log_allocated_active; assumption.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
