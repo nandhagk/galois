@@ -14491,6 +14491,30 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     fold budget. clear -Huntag_total. lia.
   Qed.
 
+  (** Assignment construction exposes its source map, initialization, step, and final scan. *)
+  Lemma T_poly_assign_linear_setup : forall x f P,
+    let sources := map (fun r => (rename_row (rename_old x) r, false)) P in
+    let initial := poly_initial tmp_encode ((assignment_row x f, false) :: sources) in
+    let output := poly_step tmp_encode tmp_eqb None initial in
+    (T_assign_linear x f P <=
+      T_assignment_row x f +
+      ListDef.T_map (fun r => (rename_row (rename_old x) r, false))
+        (fun r => (1 + T_rename_row (rename_old x) (T_rename_old x) r)%N) P +
+      T_poly_initial tmp_encode T_tmp_encode ((assignment_row x f, false) :: sources) +
+      T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None initial +
+      List.T_flat_map
+        (fun r => match assigned_candidate P x f r with
+          | Some c => c :: nil | None => nil end)
+        (fun r => (1 + T_assigned_candidate P x f r)%N) output + 32)%N.
+  Proof.
+    intros x f P sources initial output.
+    time_unfold T_assign_linear. time_simpl.
+    change (fun y : X.t => T_rename_old x y) with (T_rename_old x).
+    change (fun y : option X.t => T_tmp_encode y) with T_tmp_encode.
+    change (fun y z : option X.t => T_tmp_eqb y z) with T_tmp_eqb.
+    fold sources initial output. lia.
+  Qed.
+
   (** Only the old assigned coordinate is eliminated from the source-only tail. *)
   Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
     poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
