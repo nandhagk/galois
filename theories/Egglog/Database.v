@@ -11281,6 +11281,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       rewrite Hrepr. exact (Hnonroot x Hin).
   Qed.
 
+  Lemma public_union_idle_none : forall db i j forest, database_public_ok db ->
+    UnionFindCode.union i j (db_forest db) = (None, forest) ->
+    database_idle_ok (union i j db).
+  Proof.
+    intros db i j forest Hpublic Hunion.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    destruct (UnionFind.union_none i j (db_forest db) forest
+      (wf_forest db Hbase) Hunion) as [_ Hrepr].
+    pose proof (database_row_store_ok_union i j db (proj1 Hidle)) as Hstore.
+    pose proof (public_union_queue_distinct db i j Hpublic) as Hdistinct.
+    pose proof (public_union_queue_nonroot db i j Hpublic) as Hnonroot.
+    unfold database_idle_ok in Hidle |- *.
+    destruct Hidle as [_ [_ [Hprimary [Hsecondary [Hlocated _]]]]].
+    unfold union in *. rewrite Hunion in *.
+    cbn [fst snd database_set_forest db_forest db_row_store db_nuses db_runtime
+      runtime_queue runtime_rows runtime_kinds] in *.
+    split; [exact Hstore |]. split; [exact Hdistinct |].
+    split.
+    { intros f k o x Hrow Hid.
+      destruct (Hprimary f k o x Hrow Hid) as [y [k0 [Hsame [Huse [Hloc Hqueued]]]]].
+      exists y, k0. split.
+      { change (UnionFind.repr forest y = UnionFind.repr forest x).
+        now rewrite !Hrepr. }
+      split; [exact Huse |]. split; [exact Hloc |].
+      destruct Hqueued as [Hroot | Hqueued]; [left | right].
+      - change (y = UnionFind.repr forest x). rewrite Hrepr. exact Hroot.
+      - exact Hqueued. }
+    split.
+    { intros f k o x Hrow Hid Hnonroot_new.
+      assert (Hnonroot_old : repr db x <> x).
+      { change (UnionFind.repr forest x <> x) in Hnonroot_new.
+        intro Heq. apply Hnonroot_new. rewrite Hrepr. exact Heq. }
+      exact (Hsecondary f k o x Hrow Hid Hnonroot_old). }
+    split; [exact Hlocated | exact Hnonroot].
+  Qed.
+
   (** Active and queued repair states expose their forest invariant directly. *)
   Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
   Proof.
