@@ -10676,6 +10676,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply id_occurrences_member in Hnew as [-> [-> _]].
       now apply register_row_uses_history_new.
   Qed.
+  Lemma register_row_uses_written_coverage : forall db f k o,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    (forall x g args c,
+      In (g, args) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
+      In c args -> In c (db_written_cells db)) ->
+    (forall c, In c k -> In c (db_written_cells db)) ->
+    forall x g args c,
+      In (g, args) (DatabaseUses.bucket x
+        (row_uses (db_row_store (register_row_uses f k o db)))) ->
+      In c args -> In c (db_written_cells (register_row_uses f k o db)).
+  Proof.
+    intros db f k o Hmap Hbefore Hkey x g args c Hbucket Hcell.
+    rewrite register_row_uses_written_cells.
+    pose proof (register_row_uses_map_wf db f k o Hmap) as Hmap'.
+    apply (proj2 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap')) in Hbucket.
+    rewrite <- uses_entries_facts in Hbucket by exact Hmap'.
+    apply (proj1 (register_row_uses_entries db f k o x g args Hmap)) in Hbucket.
+    destruct Hbucket as [Hold | Hnew].
+    - rewrite (uses_entries_facts db Hmap) in Hold.
+      apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
+      exact (Hbefore x g args c Hold Hcell).
+    - apply id_occurrences_member in Hnew as [_ [-> _]].
+      exact (Hkey c Hcell).
+  Qed.
   Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
