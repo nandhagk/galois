@@ -12424,6 +12424,60 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (Howner g args key r h other other_key s Hfirst Hsecond Hroots).
   Qed.
 
+  Lemma database_history_root_owner_slots_update : forall db add f cells,
+    database_history_root_owner db ->
+    database_history_root_owner (slots_update add f cells db).
+  Proof.
+    intros db add f cells Howner.
+    eapply database_history_root_owner_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - now rewrite slots_update_row_store.
+    - apply slots_update_ids.
+    - exact Howner.
+  Qed.
+
+  Lemma database_history_root_owner_row_write : forall db f k o,
+    database_history_root_owner db ->
+    database_history_root_owner (row_write f k o db).
+  Proof.
+    intros db f k o Howner.
+    eapply database_history_root_owner_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - now rewrite row_write_row_store.
+    - apply row_write_ids.
+    - exact Howner.
+  Qed.
+
+  Lemma database_history_root_owner_register : forall db f k o,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_root_owner (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hstore Howner.
+    unfold register_row_uses.
+    set (identified := ensure_row_identity f k db).
+    eapply database_history_root_owner_transport with (db := identified);
+      try reflexivity.
+    subst identified. apply database_history_root_owner_ensure; assumption.
+  Qed.
+
+  Lemma database_history_root_owner_row_replace : forall db f k previous o,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_root_owner (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hstore Howner; unfold row_replace.
+    - apply database_history_root_owner_register.
+      + apply row_write_row_store_ok.
+        apply slots_update_row_store_ok, slots_update_row_store_ok.
+        exact Hstore.
+      + apply database_history_root_owner_row_write.
+        apply database_history_root_owner_slots_update.
+        apply database_history_root_owner_slots_update. exact Howner.
+    - apply database_history_root_owner_register.
+      + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
+      + apply database_history_root_owner_row_write.
+        apply database_history_root_owner_slots_update. exact Howner.
+  Qed.
+
   Lemma ensure_row_identity_new_size : forall db f k d,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
