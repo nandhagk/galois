@@ -2240,6 +2240,40 @@ Proof.
   subst raw. rewrite length_map. apply karr_submatrix_scale_minor.
 Qed.
 
+(** Uniform exact row quotients transfer the full stage identity. *)
+Lemma karr_stage_quotient_minor : forall d p xs ys quotients,
+  karr_nth 0 p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  Forall2 (fun q x =>
+    map (fun z => (d * z)%Z) q =
+      karr_delete 0 (karr_cross (karr_nth 0 p) (karr_nth 0 x) x p))
+    quotients xs ->
+  (d ^ Z.of_nat (length xs) *
+    karr_determinant (length ys) (karr_submatrix ys quotients) =
+   karr_nth 0 p ^ Z.of_nat (length xs - 1) *
+    karr_determinant (S (length ys))
+      (karr_submatrix (0%nat :: map S ys) (p :: xs)))%Z.
+Proof.
+  intros d p xs ys quotients Hp Hwidth Hlength Hpositive Hquotients.
+  pose proof (Forall2_length Hquotients) as Hrows.
+  pose proof (karr_stage_minor 0 p xs (map S ys) Hp Hwidth
+    ltac:(rewrite length_map; exact Hlength) Hpositive) as Hstage.
+  rewrite length_map in Hstage.
+  rewrite <- karr_submatrix_delete_first in Hstage.
+  assert (Hraw : map (karr_delete 0)
+      (map (fun x => karr_cross (karr_nth 0 p) (karr_nth 0 x) x p) xs) =
+    map (map (fun z => (d * z)%Z)) quotients).
+  { clear Hrows Hstage Hwidth Hlength Hpositive Hp.
+    induction Hquotients as [|q x quotients xs Hhead Htail IH];
+      cbn [map]; [reflexivity|].
+    f_equal; [symmetry; exact Hhead|exact IH]. }
+  rewrite Hraw in Hstage.
+  replace (length ys) with (length quotients) in Hstage by lia.
+  rewrite karr_submatrix_scale_minor in Hstage.
+  rewrite Hrows in Hstage. rewrite Hlength. exact Hstage.
+Qed.
+
 (** Checked division preserves a zero coordinate in every branch. *)
 Lemma karr_divide_coordinate_zero : forall divisor r i,
   karr_nth i (kcoeff r) = 0%Z -> karr_nth i (kcoeff (karr_divide divisor r)) = 0%Z.
