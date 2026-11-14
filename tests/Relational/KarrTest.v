@@ -363,3 +363,11 @@ Example zero_width_hull_rows_are_discarded :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** A wider affine query can have an integral value on a rational source point. *)
+Example wide_query_of_a_rational_source_has_an_exact_endpoint :
+  Equalities.range_linear [LCons _ [(1%positive, 2)] REq 3]
+    (Lin _ [(1%positive, 1024)] 5) = (Fin 1541, Fin 1541).
+Proof.
+  vm_compute. reflexivity.
+Qed.
