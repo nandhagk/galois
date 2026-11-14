@@ -8409,6 +8409,52 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - apply hull_right_width.
   Qed.
 
+  (** Each lifted seed keeps one multiplier slot per source row. *)
+  Lemma hull_left_weight_length : forall xs total index P,
+    Forall (fun row => length (kweight row) = total)
+      (hull_left xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|row P IH]; intro index; [constructor|].
+    cbn [hull_left]. destruct (lrel row); [constructor|];
+      try apply IH.
+    cbn [kweight]. apply karr_unit_length.
+  Qed.
+
+  (** The right lifted seeds use the same source multiplier slots. *)
+  Lemma hull_right_weight_length : forall xs total index P,
+    Forall (fun row => length (kweight row) = total)
+      (hull_right xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|row P IH]; intro index; [constructor|].
+    cbn [hull_right]. destruct (lrel row); [constructor|];
+      try apply IH.
+    cbn [kweight]. apply karr_unit_length.
+  Qed.
+
+  (** Lifted augmented rows share one full matrix width. *)
+  Lemma hull_seed_entries_width : forall xs total left_index right_index P Q,
+    Forall (fun row => length (karr_row_entries row) =
+      2 * length xs + total + 4)
+      (hull_left xs total left_index P ++ hull_right xs total right_index Q).
+  Proof.
+    intros xs total left_index right_index P Q.
+    pose proof (hull_seed_width xs total left_index right_index P Q)
+      as Hcoeff.
+    assert (Hweight : Forall (fun row => length (kweight row) = total)
+      (hull_left xs total left_index P ++ hull_right xs total right_index Q)).
+    { apply Forall_app. split.
+      - apply hull_left_weight_length.
+      - apply hull_right_weight_length. }
+    apply Forall_forall. intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hin) as Hcoeff_row.
+    pose proof (proj1 (Forall_forall _ _) Hweight row Hin) as Hweight_row.
+    unfold karr_row_entries. rewrite !length_app. cbn [length].
+    rewrite length_app. cbn [length].
+    rewrite Hcoeff_row, Hweight_row. lia.
+  Qed.
+
   Lemma hull_seed_zero_right : forall xs total left_index right_index P Q,
     Forall (fun r => kright r = 0%Z)
       (hull_left xs total left_index P ++ hull_right xs total right_index Q).
