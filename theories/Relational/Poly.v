@@ -17560,7 +17560,65 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [|P].
+    - apply T_poly_assign_unreached.
+    - destruct (F.lin_of e) as [[f wrapping]|] eqn:Hlinear.
+      + destruct wrapping as [|lo hi].
+        * set (bits := nell (Reached P) + X.bits x + F.bits_e e + 1).
+          set (volume := n P + (terms (Reached P) + tsize e) + length P + 3).
+          set (work := (length P + 3)^2 * volume * bits^2).
+          set (budget := N.of_nat (assign_work x e (Reached P) + 1)).
+          pose proof (T_poly_assign_linear_wrapper x e P f Hlinear) as Hwrapper.
+          pose proof (T_poly_assign_prepared_linear_public x e P f Hlinear)
+            as Hlinearclock.
+          pose proof (T_poly_assign_prepare_public x e P f Hlinear)
+            as Hprepare.
+          cbn zeta in Hlinearclock, Hprepare.
+          replace (n P + terms (Reached P) + tsize e + length P + 3)
+            with volume in Hprepare by (unfold volume; lia).
+          replace ((length P + 3)^2 * volume * bits^2) with work
+            in Hlinearclock, Hprepare by reflexivity.
+          assert (Hwork_nat : work <= assign_work x e (Reached P) + 1).
+          { unfold assign_work. cbn [prows].
+            replace ((length P + 3)^2 *
+              (n P + terms (Reached P) + tsize e + length P + 3) *
+              (nell (Reached P) + X.bits x + F.bits_e e + 1)^2)
+              with work by (unfold work, volume, bits; ring).
+            lia. }
+          assert (Hwork : (N.of_nat work <= budget)%N).
+          { unfold budget. apply time_of_nat_le. exact Hwork_nat. }
+          assert (Hlin : (F.T_lin_of e <= budget)%N).
+          { unfold budget, assign_work. cbn [prows].
+            rewrite !Nat2N.inj_add, N2Nat.id. lia. }
+          assert (Hpositive : (1 <= budget)%N)
+            by (unfold budget; lia).
+          assert (Hlinear_total :
+            (T_assign_linear x (poly_prepare_form X.encode f) P <=
+              poly_assign_linear_public_factor * budget)%N).
+          { eapply N.le_trans; [exact Hlinearclock|].
+            apply N.mul_le_mono_l. exact Hwork. }
+          assert (Hprepare_total :
+            (T_poly_prepare_form X.encode X.T_encode f <=
+              AssignPrepare.Clock.poly_prepare_factor * budget)%N).
+          { eapply N.le_trans; [exact Hprepare|].
+            apply N.mul_le_mono_l. exact Hwork. }
+          eapply N.le_trans; [exact Hwrapper|].
+          eapply N.le_trans with (m :=
+            ((poly_assign_linear_public_factor +
+              AssignPrepare.Clock.poly_prepare_factor + 17) * budget)%N).
+          -- replace ((poly_assign_linear_public_factor +
+                AssignPrepare.Clock.poly_prepare_factor + 17) * budget)%N
+                with (poly_assign_linear_public_factor * budget +
+                  AssignPrepare.Clock.poly_prepare_factor * budget +
+                  17 * budget)%N by ring.
+             clear -Hlin Hlinear_total Hprepare_total Hpositive. lia.
+          -- apply N.mul_le_mono_r. exact poly_assign_linear_factor_le.
+        * apply T_poly_assign_fallback_bounded.
+          intros g Hcontr. rewrite Hlinear in Hcontr. discriminate.
+      + apply T_poly_assign_fallback_bounded.
+        intros g Hcontr. rewrite Hlinear in Hcontr. discriminate.
+  Qed.
   Lemma T_havoc_le : forall x s,
     (T_havoc x s <= c_num * N.of_nat (havoc_work x s + 1))%N.
   Proof.
