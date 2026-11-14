@@ -15740,6 +15740,42 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hcandidate Hcheck. lia.
   Qed.
 
+  (** The source-only scan's checker charge uses eight public work units. *)
+  Lemma poly_assign_tail_checker_public_clock : forall x e P,
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let width := nell (Reached P) + 1 in
+    let workbits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * workbits^2 in
+    (16 * C.c_lc * N.of_nat (length (poly_assign_tail_step x P)) *
+      N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (width + 1)^2 <= 8 * C.c_lc * N.of_nat work)%N.
+  Proof.
+    intros x e P dim width workbits volume work.
+    pose proof (poly_assign_tail_checker_public_mass x e P) as Hmass.
+    cbn zeta in Hmass.
+    assert (Hconverted :
+      (N.of_nat (16 * length (poly_assign_tail_step x P) *
+        (dim + terms (Reached P) + length P + 1) * (width + 1)^2) <=
+      N.of_nat (8 * work))%N).
+    { apply time_of_nat_le.
+      replace (8 * work) with
+        (8 * (length P + 3)^2 * volume * workbits^2)
+        by (unfold work; ring).
+      exact Hmass. }
+    replace (16 * C.c_lc * N.of_nat (length (poly_assign_tail_step x P)) *
+      N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (width + 1)^2)%N with
+      (C.c_lc * N.of_nat (16 * length (poly_assign_tail_step x P) *
+        (dim + terms (Reached P) + length P + 1) * (width + 1)^2))%N.
+    2: { rewrite !Nat2N.inj_mul, Nat2N.inj_pow.
+      cbn [N.of_nat]. rewrite !N.pow_2_r. ring. }
+    replace (8 * C.c_lc * N.of_nat work)%N with
+      (C.c_lc * N.of_nat (8 * work))%N.
+    2: { rewrite Nat2N.inj_mul. cbn [N.of_nat]. ring. }
+    now apply N.mul_le_mono_l.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   (** An unreachable assignment performs only the outer reachability test. *)
   Lemma T_poly_assign_unreached : forall x e,
