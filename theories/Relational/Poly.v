@@ -15867,7 +15867,11 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
-  Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
+  Definition c_num : N :=
+    (poly_assume_factor + poly_havoc_factor + poly_range_affine_factor + 32 +
+      1000000 * (RangeCore.poly_step_factor +
+        AssignCore.poly_assign_normal_subst_factor +
+        AssignCore.poly_assign_zero_subst_factor + C.c_lc + X.c_key + 1))%N.
   (** An unreachable assignment performs only the outer reachability test. *)
   Lemma T_poly_assign_unreached : forall x e,
     (T_assign x e Unreached <=
@@ -15944,7 +15948,13 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.mul_le_mono; [exact c_lat_pos|lia].
   Qed.
   Lemma T_range_le : forall e s, (T_range e s <= c_num * N.of_nat (range_work e s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e s.
+    pose proof (T_poly_range_from_linear poly_range_affine_factor
+      T_poly_range_affine_bounded e s) as Hrange.
+    eapply N.le_trans; [exact Hrange|].
+    apply N.mul_le_mono_r. unfold c_num. lia.
+  Qed.
   Lemma range_size : forall e s,
     (N.of_nat
       (match fst (range e s) with Fin z => Z.size_nat z | _ => 0 end +
