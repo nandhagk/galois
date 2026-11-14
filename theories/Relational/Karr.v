@@ -11195,6 +11195,29 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + time_simpl. cbn [length]. rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
   Qed.
 
+  (** The first-nonzero lookup tests each scanned coefficient once. *)
+  Lemma T_karr_first_bounded : forall entries,
+    (T_karr_first entries <= 16 * N.of_nat (length entries + 1))%N.
+  Proof.
+    intro entries. induction entries as [|z entries IH].
+    - time_unfold T_karr_first. cbn [length]. lia.
+    - pose proof (T_karr_zero_test z) as Hzero.
+      time_unfold T_karr_first. destruct (Z.eqb z 0).
+      + destruct (karr_first entries) as [[i a]|]; time_simpl;
+          cbn [length]; rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+      + time_simpl. cbn [length]. rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** A dense coordinate lookup scans no more than the source row length. *)
+  Lemma T_karr_nth_bounded : forall index entries,
+    (T_karr_nth index entries <= 8 * N.of_nat (length entries + 1))%N.
+  Proof.
+    intro index. induction index as [|index IH]; intros [|z entries];
+      time_unfold T_karr_nth; cbn [length]; try lia.
+    pose proof (IH entries) as Htail.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
+  Qed.
+
   (** Testing a full coefficient vector for zero costs one fixed scan per entry. *)
   Lemma T_karr_zero_bounded : forall r,
     (T_karr_zero r <= 8 * N.of_nat (length (kcoeff r) + 1))%N.
