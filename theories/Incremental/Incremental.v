@@ -10896,6 +10896,46 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     lia.
   Qed.
 
+  Lemma T_finish_demand_local_le : forall p st xs rs m, S.wf p ->
+    (forall r, In r rs -> In r (S.rows p)) ->
+    (T_finish_demand p st xs rs m <=
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) +
+      160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun r => length (row_keys p r)) rs) *
+        N.of_nat (width p st + 1) + 24)%N.
+  Proof.
+    intros p st xs rs m Hwf Hlisted.
+    pose proof (T_merge_discovered_small_le st xs m) as Hmerge.
+    pose proof (T_clear_new_buckets_le xs (merge_discovered st xs m)) as Hclear.
+    pose proof (T_record_rows_local_le p rs
+      (clear_new_buckets xs (merge_discovered st xs m)) Hwf Hlisted) as Hrows.
+    unfold width in Hrows |- *.
+    unfold T_finish_demand; cbn beta zeta.
+    replace (64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs))%N with
+      (24 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+         N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) +
+       40 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+         N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs))%N by ring.
+    lia.
+  Qed.
+
+  Lemma demand_clock_arithmetic : forall Q T F C guard discovery output work,
+    (2 <= Q)%N -> (1 <= C)%N ->
+    (guard <= 16 * T + 1)%N ->
+    (discovery <= 768 * Q + 768 * T + 1024 * F)%N ->
+    (output <= 240 * Q + 64 * T + 26)%N ->
+    (1 + guard + discovery + output + work <=
+      1024 * Q + 1024 * T + 1024 * F + C * work)%N.
+  Proof.
+    intros Q T F C guard discovery output work HQ HC Hguard Hdiscovery Houtput.
+    assert (Hscaled : (work <= C * work)%N).
+    { replace work with (1 * work)%N at 1 by ring.
+      apply N.mul_le_mono_r; exact HC. }
+    lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
