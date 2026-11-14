@@ -11892,6 +11892,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Module RangeCert := LinCertT RangeKey.
   Module RangeLinearize := PolyClockLinearize RangeKey L N.
   Module RangeCore := PolyClockCore RangeKey L N RangeLinearize RangeCert.
+  Module AssignCore := PolyAssignBranchExtended X L N F C.
 
   Definition poly_range_input (P : list (lcons X.t)) (f : lin X.t) :=
     range_row f :: map (rename_row (@Some X.t)) (map (poly_normal_row X.encode) P).
