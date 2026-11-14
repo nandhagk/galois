@@ -14306,6 +14306,53 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn zeta. eapply N.add_le_mono; [exact Hsubst_total|exact Hcheck].
   Qed.
 
+  (** Untagging and branch dispatch add a linear row scan to the source-only check. *)
+  Lemma T_poly_assign_tail_candidate_bounded : forall x P f r,
+    In r (poly_assign_tail_step x P) ->
+    NoDup (map fst (coef f)) ->
+    C.row_key_bits (LCons X.t (coef f) REq (cst f)) <= F.form_bits f ->
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let rawkeys := poly_raw_keys P in
+    let rawbits := poly_raw_bits P in
+    let width := nell (Reached P) + 1 in
+    (T_assigned_candidate P x f r <=
+      2 * N.of_nat (dim + 1) +
+      AssignCore.poly_assign_zero_subst_factor *
+        N.of_nat (dim + length (coef f) + 1) *
+          N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) +
+      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+        N.of_nat (width + 1)^2 + 16)%N.
+  Proof.
+    intros x P f r Hr Hform Hformkeys dim rawkeys rawbits width.
+    set (budget := (AssignCore.poly_assign_zero_subst_factor *
+      N.of_nat (dim + length (coef f) + 1) *
+        N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) +
+      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+        N.of_nat (width + 1)^2)%N).
+    assert (Hbranch : forall xs head ms,
+      untag (lhs (poly_constraint r)) = Some xs ->
+      poly_multipliers r = head :: ms ->
+      let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+      (T_subst x f c + C.T_check_entails P (subst x f c)
+        (Cert ms 1 false) <= budget)%N).
+    { intros xs head ms Huntag Hmult c.
+      pose proof (T_poly_assign_tail_candidate_branch x P f r xs head ms
+        Hr Huntag Hmult Hform Hformkeys) as Hcost.
+      cbn zeta in Hcost. exact Hcost. }
+    pose proof (T_poly_assign_candidate_frame P x f r budget Hbranch) as Hframe.
+    pose proof (T_poly_assign_untag (lhs (poly_constraint r))) as Huntime.
+    destruct (proj1 (Forall_forall _ _) (poly_assign_tail_step_envelopes x P)
+      r Hr) as (_ & Hdim & _).
+    assert (Huntag_total :
+      (T_untag (lhs (poly_constraint r)) <= 2 * N.of_nat (dim + 1))%N).
+    { eapply N.le_trans; [exact Huntime|].
+      apply N.mul_le_mono_l, time_of_nat_le.
+      change (length (lhs (poly_constraint r)) <= dim) in Hdim.
+      apply Nat.add_le_mono_r. exact Hdim. }
+    eapply N.le_trans; [exact Hframe|].
+    fold budget. clear -Huntag_total. lia.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
