@@ -13346,6 +13346,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold repr in Hfixed |- *. now rewrite row_delete_forest in Hfixed.
   Qed.
 
+  Lemma repair_current_fixed_key : forall db f k,
+    wf db ->
+    (forall i, In (Id i) k -> repr (repair_current f k db) i = i) ->
+    k = normal_key db k.
+  Proof.
+    intros db f k Hwf Hfixed. symmetry.
+    apply normal_key_of_fixed; [exact Hwf |].
+    intros i Hin. apply (repair_current_representative_old db f k i Hwf).
+    exact (Hfixed i Hin).
+  Qed.
+
   Lemma database_row_store_ok_repair_current : forall db f k,
     database_row_store_ok db -> database_row_store_ok (repair_current f k db).
   Proof.
