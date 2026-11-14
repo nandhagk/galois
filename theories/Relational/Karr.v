@@ -13164,6 +13164,28 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now apply N.mul_le_mono_l.
   Qed.
 
+  (** The basis clock includes preparation, initialization and elimination. *)
+  Lemma T_karr_equality_basis_components : forall xs P,
+    (T_equality_basis xs P <=
+      T_karr_bareiss (length xs) 1
+        (seed_rows xs (length P) 0 (map normalize_row P)) +
+      T_seed_rows xs (length P) 0 (map normalize_row P) +
+      ListDef.T_map normalize_row T_normalize_row P +
+      64 * N.of_nat (length xs + length P + 1))%N.
+  Proof.
+    intros xs P.
+    pose proof (Datatypes.T_length_le xs) as Hxs.
+    pose proof (Datatypes.T_length_le P) as Hrows.
+    time_unfold T_equality_basis.
+    change (fun H : lcons X.t => T_normalize_row H) with T_normalize_row.
+    set (preparation := ListDef.T_map normalize_row T_normalize_row P) in *.
+    set (initialization := T_seed_rows xs (length P) 0 (map normalize_row P)) in *.
+    set (elimination := T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P))) in *.
+    clearbody preparation initialization elimination.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
+  Qed.
+
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
   Lemma input_minors_bits : forall P z,
     In z (input_minors P) ->
