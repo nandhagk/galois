@@ -12321,6 +12321,86 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply history_shape_keys_length.
   Qed.
 
+  Lemma database_history_two_components_cardinality :
+    forall db f old ck old_key old_id ck_key ck_id codes,
+      database_row_store_depth_ok db -> database_history_root_owner db ->
+      database_history_key_shape db -> database_history_codes_valid db ->
+      database_history_key_ids_bounded db ->
+      PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+        Some (old_key, old_id) ->
+      PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+        Some (ck_key, ck_id) ->
+      row_key_shape old = row_key_shape ck ->
+      NoDup codes ->
+      Forall (fun code => exists label r,
+        PTrieCode.get code (row_history (db_row_store db)) = Some (label, r) /\
+        (database_history_connected db r
+          (row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+            (db_row_store db)) \/
+         database_history_connected db r
+          (row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+            (db_row_store db)))) codes ->
+      length codes <= (S (N.to_nat (ids db))) ^ length old.
+  Proof.
+    intros db f old ck old_key old_id ck_key ck_id codes Hdepth Howner
+      Hshape Hvalid Hbounded Hsource Hdest Hbridge Hdistinct Hmembers.
+    set (label_of := fun code =>
+      option_map fst (PTrieCode.get code (row_history (db_row_store db)))).
+    assert (Hlabels_distinct : NoDup (map label_of codes)).
+    { apply NoDup_map_NoDup_ForallPairs; [| exact Hdistinct].
+      intros a b Ha Hb Hequal.
+      apply Forall_forall with (x := a) in Hmembers as Ha_member;
+        [| exact Ha].
+      apply Forall_forall with (x := b) in Hmembers as Hb_member;
+        [| exact Hb].
+      destruct Ha_member as [[fa ka] [ra [Ha_entry _]]].
+      destruct Hb_member as [[fb kb] [rb [Hb_entry _]]].
+      unfold label_of in Hequal. rewrite Ha_entry, Hb_entry in Hequal.
+      cbn in Hequal. injection Hequal as Hf Hk. subst fb kb.
+      rewrite (Hvalid a fa ka ra Ha_entry),
+        (Hvalid b fa ka rb Hb_entry). reflexivity. }
+    assert (Hlabels_included :
+      incl (map label_of codes)
+        (map (fun args => Some (f, args))
+          (history_shape_keys (N.to_nat (ids db)) (row_key_shape old)))).
+    { intros label Hin.
+      apply in_map_iff in Hin as [code [Hlabel Hcode]].
+      apply Forall_forall with (x := code) in Hmembers as Hmember;
+        [| exact Hcode].
+      destruct Hmember as [[g args] [r [Hentry Hconnected]]].
+      assert (Hcode_eq : code = db_row_code g args)
+        by (eapply Hvalid; exact Hentry).
+      rewrite Hcode_eq in Hentry.
+      destruct Hconnected as [Hold_component | Hck_component].
+      - destruct (database_history_component_shape db f old old_key old_id
+          g args (g, args) r Hdepth Howner Hshape Hsource Hentry
+          Hold_component) as [Hfunction Hkey_shape].
+        apply in_map_iff. exists args. split.
+        + subst g. unfold label_of in Hlabel.
+          rewrite Hcode_eq, Hentry in Hlabel. cbn in Hlabel. now symmetry.
+        + rewrite Hkey_shape. apply history_shape_keys_member.
+          intros i Hi. pose proof (Hbounded (db_row_code g args) g args r
+            Hentry i Hi) as Hallocated.
+          unfold allocated in Hallocated. lia.
+      - destruct (database_history_component_shape db f ck ck_key ck_id
+          g args (g, args) r Hdepth Howner Hshape Hdest Hentry
+          Hck_component) as [Hfunction Hkey_shape].
+        apply in_map_iff. exists args. split.
+        + subst g. unfold label_of in Hlabel.
+          rewrite Hcode_eq, Hentry in Hlabel. cbn in Hlabel. now symmetry.
+        + rewrite Hbridge, Hkey_shape.
+          apply history_shape_keys_member.
+          intros i Hi. pose proof (Hbounded (db_row_code g args) g args r
+            Hentry i Hi) as Hallocated.
+          unfold allocated in Hallocated. lia. }
+    pose proof (NoDup_incl_length Hlabels_distinct Hlabels_included) as Hlength.
+    rewrite length_map in Hlength.
+    eapply Nat.le_trans; [exact Hlength |]. rewrite length_map.
+    replace (length old) with (length (row_key_shape old)) by
+      (unfold row_key_shape; now rewrite length_map).
+    apply history_shape_keys_length.
+  Qed.
+
   Lemma database_history_weight_cardinality : forall db f k key id,
     database_row_store_depth_ok db -> database_history_root_owner db ->
     database_history_key_shape db -> database_history_codes_valid db ->
