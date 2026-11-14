@@ -645,6 +645,30 @@ Proof.
   lia.
 Qed.
 
+(** Deleted-column indices enumerate all original columns except the removed one. *)
+Lemma karr_seq_delete : forall count removed,
+  removed < S count ->
+  map (fun index => if index <? removed then index else S index) (seq 0 count) =
+    seq 0 removed ++ seq (S removed) (count - removed).
+Proof.
+  intros count removed Hremoved.
+  replace count with (removed + (count - removed)) at 1 by lia.
+  rewrite seq_app, map_app.
+  f_equal.
+  - transitivity (map (fun index => index) (seq 0 removed)).
+    + apply map_ext_in. intros index Hin.
+      apply in_seq in Hin.
+      assert (Hlt : (index <? removed) = true) by (apply Nat.ltb_lt; lia).
+      rewrite Hlt. reflexivity.
+    + now rewrite map_id.
+  - transitivity (map S (seq removed (count - removed))).
+    + apply map_ext_in. intros index Hin.
+      apply in_seq in Hin.
+      assert (Hge : (index <? removed) = false) by (apply Nat.ltb_ge; lia).
+      rewrite Hge. reflexivity.
+    + now rewrite seq_shift.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
