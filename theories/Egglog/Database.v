@@ -11821,6 +11821,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hconnected_second.
   Qed.
 
+  Lemma database_history_connected_link : forall db db' loser winner x y,
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some parent => parent | None => loser end) = loser ->
+    database_history_connected db x y ->
+    database_history_connected db' x y.
+  Proof.
+    intros db db' loser winner x y Hlinks Hfixed Hconnected.
+    unfold database_history_connected in *.
+    induction Hconnected as
+      [a b Hedge | a | a b Hstep IH | a b c Hleft IHleft Hright IHright].
+    - destruct (Pos.eq_dec a loser) as [-> | Hother].
+      + rewrite Hedge in Hfixed. cbn in Hfixed. subst b. apply rst_refl.
+      + apply rst_step. rewrite Hlinks, PTrie.get_set_other by exact Hother.
+        exact Hedge.
+    - apply rst_refl.
+    - now apply rst_sym.
+    - eapply rst_trans; eassumption.
+  Qed.
+
   (** Linking a terminal row root redirects every completed path with one more step. *)
   Lemma row_root_link_terminal : forall d r store store' loser winner,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
