@@ -15893,6 +15893,37 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
+  (** The signed right-hand-side test uses the final row's bit width. *)
+  Lemma T_karr_signed_right_bounded : forall sign z bits,
+    (sign = 1%Z \/ sign = (-1)%Z) ->
+    Z.size_nat z <= bits ->
+    (Z.T_mul sign z + Z.T_leb 0 (sign * z) <=
+      32 * N.of_nat (bits + 1))%N.
+  Proof.
+    intros sign z bits Hsign Hz.
+    destruct Hsign as [Hsign|Hsign]; subst sign.
+    - pose proof (karr_T_Z_mul_bilinear 1 z) as Hmul.
+      pose proof (Z.T_leb_le 0 (1 * z)) as Hcheck.
+      cbn [Z.size_nat Pos.size_nat] in Hmul, Hcheck.
+      rewrite Z.mul_1_l in Hcheck.
+      assert (Hwidth : (N.of_nat (Z.size_nat z + 1) <=
+        N.of_nat (bits + 1))%N) by lia.
+      assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+      change (N.of_nat (1 + 1)) with 2%N in Hmul.
+      rewrite Z.mul_1_l.
+      nia.
+    - pose proof (karr_T_Z_mul_bilinear (-1) z) as Hmul.
+      pose proof (Z.T_leb_le 0 ((-1) * z)) as Hcheck.
+      cbn [Z.size_nat Pos.size_nat] in Hmul, Hcheck.
+      replace ((-1) * z)%Z with (- z)%Z in Hcheck by ring.
+      assert (Hwidth : (N.of_nat (Z.size_nat z + 1) <=
+        N.of_nat (bits + 1))%N) by lia.
+      assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+      change (N.of_nat (1 + 1)) with 2%N in Hmul.
+      replace ((-1) * z)%Z with (- z)%Z by ring.
+      nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
