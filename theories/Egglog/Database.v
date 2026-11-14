@@ -21159,6 +21159,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       as [[new_key new_id] |]; exact Hrepair.
   Qed.
 
+  Lemma inv_on_repair_queue_nonroot : forall db work f k,
+    inv_on db work ->
+    forall x, In x (queue (db_repair_entry f k db)) ->
+      repr (db_repair_entry f k db) x <> x.
+  Proof.
+    intros db work f k Hinv x Hin.
+    assert (Hqueue : queue_valid db).
+    { unfold queue_valid. split.
+      - unfold inv_on in Hinv. tauto.
+      - apply Forall_forall. intros y Hy.
+        assert (Hnonroot : forall z, In z (queue db) -> repr db z <> z).
+        { unfold inv_on, forest_ok in Hinv. tauto. }
+        exact (Hnonroot y Hy). }
+    destruct (db_repair_entry_queue_state db f k
+      (inv_on_forest_wf db work Hinv) Hqueue) as [_ Hnext].
+    unfold queue_valid in Hnext.
+    exact ((proj1 (Forall_forall _ _)) (proj2 Hnext) x Hin).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
