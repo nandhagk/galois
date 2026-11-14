@@ -15694,6 +15694,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + left. symmetry. exact Hfixed.
   Qed.
 
+
   Lemma database_idle_scheduled : forall db, database_idle_ok db ->
     forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
       exists k0, scheduled db [] (f, k0) /\ located db f k0 = Some k.
@@ -15704,6 +15705,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       as [k0 [[x [Hqueue Huse]] Hlocated]].
     exists k0. split; [right; exists x; split; assumption | exact Hlocated].
   Qed.
+  Lemma database_idle_secondary_row_replace : forall db f k previous o,
+    database_idle_ok db ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    forall g args output i,
+      row (view (row_replace f k previous o db)) g args output ->
+      row_ids args output i ->
+      repr (row_replace f k previous o db) i <> i ->
+      exists k0,
+        scheduled (row_replace f k previous o db) [] (g, k0) /\
+        located (row_replace f k previous o db) g k0 = Some args.
+  Proof.
+    intros db f k previous o Hidle Hcanonical g args output i Hrow Hid Hnonroot.
+    pose proof (database_idle_row_store db Hidle) as Hstore.
+    apply row_replace_rows in Hrow as [[Hold Hother] | [-> [-> <-]]].
+    - assert (Hnonroot_old : repr db i <> i).
+      { unfold repr in Hnonroot |- *. rewrite row_replace_forest in Hnonroot.
+        exact Hnonroot. }
+      destruct (database_idle_scheduled db Hidle g args output i Hold Hid
+        Hnonroot_old) as [k0 [Hscheduled Hlocated]].
+      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
+      destruct Hscheduled as [Hempty | [x [Hqueue Huse]]];
+        [contradiction |].
+      destruct (database_uses_history db x g k0 Hstore Huse)
+        as [r Hentry].
+      exists k0. split.
+      + unfold scheduled. right. exists x. split.
+        * rewrite row_replace_queue. exact Hqueue.
+        * apply row_replace_uses_old; [| exact Huse].
+          unfold row_store_ok, database_row_store_ok in Hstore. tauto.
+      + unfold located, locate in *.
+        rewrite (row_replace_old_locate db f k previous o g k0 (g, k0) r
+          Hstore Hentry). exact Hlocated.
+    - exfalso. apply Hnonroot.
+      unfold repr. rewrite row_replace_forest.
+      exact (Hcanonical i Hid).
+  Qed.
+
 
   Lemma database_idle_located : forall db, database_idle_ok db ->
     forall f k0 k, located db f k0 = Some k ->
