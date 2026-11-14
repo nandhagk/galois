@@ -1416,6 +1416,16 @@ Proof.
   apply map_ext. intro x. reflexivity.
 Qed.
 
+(** Selecting after deletion is selecting the successor coordinates before it. *)
+Lemma karr_submatrix_delete_first : forall selected rows,
+  karr_submatrix selected (map (karr_delete 0) rows) =
+    karr_submatrix (map S selected) rows.
+Proof.
+  intros selected rows. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext. intro row. rewrite map_map.
+  apply map_ext. intro index. now rewrite karr_nth_delete.
+Qed.
+
 (** One undivided elimination stage scales every selected minor. *)
 Lemma karr_stage_minor : forall (c : nat) (p : list Z) (xs : list (list Z)) (ys : list nat),
   karr_nth c p <> 0%Z ->
@@ -1539,6 +1549,48 @@ Proof.
   rewrite Hcolumns, Z.pow_1_l.
   - cbn [length app Nat.add]. rewrite Hlength. ring.
   - lia.
+Qed.
+
+(** Every selected row after a skipped column retains its original live label. *)
+Lemma karr_pairs_delete_first_lift : forall (pairs : list (list Z * list Z))
+    (origins live : list (list Z)),
+  Forall2 (fun origin row => In (origin, row)
+    (map (fun pair => (fst pair, karr_delete 0 (snd pair))) pairs)) origins live ->
+  exists prior,
+    Forall2 (fun origin row => In (origin, row) pairs) origins prior /\
+    live = map (karr_delete 0) prior.
+Proof.
+  intros pairs origins live Hpaired.
+  induction Hpaired as [|origin row origins live Hin Htail [prior [Hprior Heq]]].
+  - exists []. split; constructor.
+  - apply in_map_iff in Hin as [[source original] [Hsame Hsource]].
+    cbn [fst snd] in Hsame. inversion Hsame; subst source row.
+    exists (original :: prior). split.
+    + constructor; assumption.
+    + cbn [map]. now f_equal.
+Qed.
+
+(** Skipping a coordinate preserves every live minor equation. *)
+Lemma karr_minor_law_skip : forall previous pivot_rows pivot_columns head columns pairs,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (map (fun pair => (fst pair, karr_delete 0 (snd pair))) pairs).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs Hlaw.
+  unfold karr_minor_law in *. intros origins live selected Hpaired Hlength Hselected Hpositive.
+  destruct (karr_pairs_delete_first_lift pairs origins live Hpaired)
+    as [prior [Hprior Heq]]. subst live.
+  rewrite karr_submatrix_delete_first.
+  rewrite length_map in Hlength, Hpositive.
+  assert (Hvalid : Forall (fun i => i < length (head :: columns)) (map S selected)).
+  { apply Forall_forall. intros i Hi. apply in_map_iff in Hi as [j [Hj Hin]].
+    subst i. pose proof (proj1 (Forall_forall _ _) Hselected j Hin) as Hj.
+    cbn in Hj. cbn [length]. lia. }
+  pose proof (Hlaw origins prior (map S selected) Hprior
+    ltac:(rewrite length_map; exact Hlength) Hvalid ltac:(lia)) as Hstep.
+  rewrite length_map in Hstep.
+  rewrite map_map in Hstep. cbn [nth] in Hstep.
+  rewrite !length_map. exact Hstep.
 Qed.
 
 (** Signed minors account for the row exchanges made when selecting a pivot. *)
