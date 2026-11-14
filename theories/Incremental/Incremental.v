@@ -4626,6 +4626,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         + rewrite Hcurrent_writes; exact Hss_w.
         + assert (Hkeep_w : ~ In w (invalidate_keys p p' ch st)).
           { intro Hbad; apply Hkeep.
+            rewrite invalidate_keys_bad_eq in Hbad.
+            rewrite invalidate_keys_bad_eq.
             eapply invalidate_keys_old; [| |exact Hbad|exact Hy|exact Hold].
             - exists ss; split; [exact Hget|].
               split; [exact Hlive|].
@@ -4637,6 +4639,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       - intros x Hx.
         assert (Hkeep_x : ~ In x (invalidate_keys p p' ch st)).
         { intro Hbad; apply Hkeep.
+          rewrite invalidate_keys_bad_eq in Hbad.
+          rewrite invalidate_keys_bad_eq.
           eapply invalidate_keys_old; [| |exact Hbad|exact Hy|exact Hold].
           - exists ss; split; [exact Hget|].
             split; [exact Hlive|].
