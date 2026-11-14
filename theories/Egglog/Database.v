@@ -22621,6 +22621,54 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exfalso. apply Hnot_ck. congruence.
   Qed.
 
+  Lemma repair_current_move_lookup_other : forall db f current output g args value,
+    database_owned_ok db -> UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    row_get f current db = Some output ->
+    db_locate g args db = Some value ->
+    value <> current -> value <> normal_key db current ->
+    db_locate g args
+      (move_row_identity f current (normal_key db current)
+        (repair_current f current db)) = Some value.
+  Proof.
+    intros db f current output g args value Howned Hforest Hmembers Hrow
+      Hlookup Hnot_old Hnot_ck.
+    destruct Howned as [Hstore [Halign [Hcoherent _]]].
+    destruct (PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store db))) as [[key r] |] eqn:Hentry.
+    2: { unfold db_locate in Hlookup. now rewrite Hentry in Hlookup. }
+    set (repaired := repair_current f current db).
+    assert (Hrepaired_store : database_row_store_ok repaired).
+    { subst repaired. now apply database_row_store_ok_repair_current. }
+    assert (Hrepaired_loc : db_locate g args repaired = Some value).
+    { subst repaired. rewrite (repair_current_old_locate db f current
+        g args key r Hstore Hentry). exact Hlookup. }
+    assert (Hrepaired_entry : PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store repaired)) = Some (key, r)).
+    { subst repaired. apply repair_current_history_old. exact Hentry. }
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store repaired)))
+      as [[old_key old_id] |] eqn:Hsource.
+    2: { unfold move_row_identity. now rewrite Hsource. }
+    destruct (PTrieCode.get (db_row_code f (normal_key db current))
+      (row_history (db_row_store repaired)))
+      as [[ck_key ck_id] |] eqn:Hdest.
+    2: { unfold move_row_identity. now rewrite Hsource, Hdest. }
+    assert (Hsource_loc : db_locate f current repaired = Some current).
+    { subst repaired. eapply repair_current_source_locate;
+        [exact Hforest | exact Hmembers | exact Hstore | exact Halign |
+         exact Hcoherent | exact Hrow | exact Hsource]. }
+    assert (Hdest_loc : db_locate f (normal_key db current) repaired =
+      Some (normal_key db current)).
+    { subst repaired. eapply repair_current_destination_locate;
+        [exact Hforest | exact Hmembers | exact Hstore | exact Halign |
+         exact Hdest]. }
+    exact (move_row_identity_lookup_other repaired f current
+      (normal_key db current) g args value Hrepaired_store
+      ltac:(symmetry; apply normal_key_length) Hsource_loc Hdest_loc
+      Hrepaired_loc Hnot_old Hnot_ck).
+  Qed.
+
   Lemma repair_current_history_inverse : forall db f k g args key r,
     UnionFind.wf (db_forest db) ->
     PTrieCode.get (db_row_code g args)
