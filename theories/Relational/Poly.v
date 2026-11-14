@@ -17023,6 +17023,54 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
+  (** The complete zero-head output scan has a public-work clock. *)
+  Lemma T_poly_assign_prepared_zero_scan_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    poly_coefficient tmp_eqb None
+      (poly_constraint (poly_assign_head x (poly_prepare_form X.encode f) P)) = 0%Z ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x prepared r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x prepared r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x prepared, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      (278 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+        16 * AssignCore.poly_assign_zero_subst_factor +
+        264 * C.c_lc) * N.of_nat work + 25)%N.
+  Proof.
+    intros x e P f Hlinear Hzero prepared bits total work.
+    pose proof (T_poly_assign_zero_head_scan x prepared P Hzero) as Hsplit.
+    pose proof (T_poly_assign_prepared_head_public x e P f Hlinear) as Hhead.
+    pose proof (T_poly_assign_prepared_zero_tail_scan_public x e P f Hlinear)
+      as Htail.
+    cbn zeta in Hhead, Htail.
+    eapply N.le_trans; [exact Hsplit|].
+    eapply N.le_trans with (m :=
+      ((256 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+          256 * C.c_lc) * N.of_nat work + 16 +
+        ((22 + 16 * AssignCore.poly_assign_zero_subst_factor +
+          8 * C.c_lc) * N.of_nat work + 1) + 8)%N).
+    - apply N.add_le_mono.
+      + apply N.add_le_mono; [exact Hhead|exact Htail].
+      + apply N.le_refl.
+    - assert (Heq :
+        ((256 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+            256 * C.c_lc) * N.of_nat work + 16 +
+          ((22 + 16 * AssignCore.poly_assign_zero_subst_factor +
+            8 * C.c_lc) * N.of_nat work + 1) + 8 =
+        (278 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+          16 * AssignCore.poly_assign_zero_subst_factor +
+          264 * C.c_lc) * N.of_nat work + 25)%N) by ring.
+      rewrite Heq. apply N.le_refl.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
