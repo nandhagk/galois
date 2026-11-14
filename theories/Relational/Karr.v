@@ -10738,6 +10738,18 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     specialize (IH (S index)). destruct (lrel p); cbn [length]; lia.
   Qed.
 
+  (** Every emitted seed carries one multiplier slot per source row. *)
+  Lemma karr_seed_weight_width : forall xs total index P,
+    Forall (fun r => length (kweight r) = total)
+      (seed_rows xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intro index; [constructor|].
+    cbn [seed_rows]. destruct (lrel r).
+    - constructor; [cbn [kweight]; apply karr_unit_length|apply IH].
+    - apply IH.
+  Qed.
+
   (** Dense lookup of a normal row preserves its declared arithmetic width. *)
   Lemma karr_dense_bits : forall xs r bits,
     NoDup (map fst (lhs r)) -> C.row_bits r <= bits ->
@@ -13223,6 +13235,32 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply in_map_iff in Hrow as [source [Heq Hsource]]. subst row.
       apply karr_seed_basis_minor. apply in_flat_map.
       exists source. split; [exact Hsource|exact Hz].
+  Qed.
+
+  (** The final generic basis has bounded coordinates and multiplier slots. *)
+  Lemma karr_seed_basis_envelope : forall xs P,
+    Forall (karr_row_envelope (length xs) (length P)
+      (ellB (length xs + length P + 2) (nell (Reached P))))
+      (karr_bareiss (length xs) 1
+        (seed_rows xs (length P) 0 (map normalize_row P))).
+  Proof.
+    intros xs P.
+    pose proof (karr_bareiss_record_width (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P))
+      (seed_rows_width xs (length P) 0 (map normalize_row P))) as Hcoeff.
+    rewrite karr_bareiss_record_value in Hcoeff.
+    pose proof (karr_bareiss_weight_width (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) (length P)
+      (seed_rows_width xs (length P) 0 (map normalize_row P))
+      (karr_seed_weight_width xs (length P) 0 (map normalize_row P))) as Hweight.
+    pose proof (karr_seed_basis_bits xs P) as Hbits.
+    apply Forall_forall. intros row Hr.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hr) as Hrcoeff.
+    pose proof (proj1 (Forall_forall _ _) Hweight row Hr) as Hrweight.
+    pose proof (proj1 (Forall_forall _ _) Hbits (karr_row_entries row)
+      (in_map karr_row_entries _ _ Hr)) as Hrentries.
+    cbn beta in Hrcoeff, Hrweight, Hrentries.
+    apply karr_row_envelope_entries; [lia|lia|exact Hrentries].
   Qed.
 
   (** A complete elimination run fits the public cubic-Hadamard work shape. *)
