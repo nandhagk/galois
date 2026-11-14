@@ -3983,17 +3983,16 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     PTrieCode.get id (inc_snapshots st) = Some ss ->
     snapshot_live ss = true ->
     In id (invalid_buckets st x) ->
-    In x (invalidate_keys p p' ch st) ->
+    In x (invalid_bad (invalid_walk p p' ch st)) ->
     In y (snapshot_writes ss) -> present st y = true ->
-    In y (invalidate_keys p p' ch st).
+    In y (invalid_bad (invalid_walk p p' ch st)).
   Proof.
     intros p p' ch st id ss x y Hget Hlive Hbucket Hbad Hy Hpresent.
-    unfold invalidate_keys in Hbad.
     pose proof (invalid_walk_bad_done p p' ch st x Hbad) as Hdone.
     pose proof (invalid_walk_processed p p' ch st x Hdone id Hbucket) as Hretired.
     destruct (invalid_walk_snapshot_view p p' ch st id ss Hget Hlive) as
       [current [Hcurrent [Hwrites Hwrites_bad]]].
-    unfold invalidate_keys; apply (Hwrites_bad (Hretired current Hcurrent) y Hy Hpresent).
+    exact (Hwrites_bad (Hretired current Hcurrent) y Hy Hpresent).
   Qed.
 
   Lemma invalidate_keys_row : forall p p' ch st q r x y,
@@ -4005,6 +4004,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intros p p' ch st q r x y [ss [Hget [Hlive [Hwrites Hdeps]]]]
       Hx Hbad Hy Hdom.
     destruct (Hwrites y Hy) as [Hss _].
+    unfold invalidate_keys in Hbad.
+    unfold invalidate_keys.
     eapply invalidate_bucket_snapshot;
       [exact Hget|exact Hlive| |exact Hbad|exact Hss|].
     - apply in_app_iff in Hx as [Hx|Hx].
@@ -5504,6 +5505,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       In y (snapshot_writes ss) -> dom st y -> In y (invalidate_keys p p' ch st).
     Proof.
       intros p p' ch st id ss x y Hget Hlive Hbucket Hx Hbad Hy Hdom.
+      unfold invalidate_keys in Hbad.
+      unfold invalidate_keys.
       eapply invalidate_bucket_snapshot;
         [exact Hget|exact Hlive|exact Hbucket|exact Hbad|exact Hy|].
       now apply (proj2 (present_spec st y)).
