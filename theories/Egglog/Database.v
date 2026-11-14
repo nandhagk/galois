@@ -12951,6 +12951,28 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply database_history_alignment_row_replace; assumption.
   Qed.
 
+  Lemma database_row_store_ok_put : forall db f k o,
+    database_row_store_ok db -> database_row_store_ok (put f k o db).
+  Proof.
+    intros db f k o Hstore. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_store |].
+      apply database_row_store_ok_row_replace. exact Hnext_store.
+    - apply database_row_store_ok_row_replace. exact Hnext_store.
+  Qed.
+
   Lemma database_history_alignment_repair_current : forall db f k,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (repair_current f k db).
