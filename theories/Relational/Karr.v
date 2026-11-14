@@ -16259,6 +16259,55 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now apply N.mul_le_mono_l.
   Qed.
 
+  Lemma karr_target_finish_public : forall P c,
+    normal P ->
+    (1024 * N.of_nat (length (variables (c :: P)) + length P + 1) *
+      N.of_nat ((ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1)^2) <=
+      1024 * 64 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (b := ellB (length (variables (c :: P)) + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1).
+    set (v := ellB d w + 1).
+    pose proof (karr_target_dim_public P c) as Hdim.
+    pose proof (karr_target_width_public P c HP) as Hwidth.
+    assert (Hcolumns : length (variables (c :: P)) + length P + 1 <= d).
+    { unfold d in *. lia. }
+    assert (Hd : 1 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hbv : b <= 8 * v) by (unfold b, v, d, w in *; lia).
+    assert (Hsquare : b^2 <= 64 * v^2).
+    { replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hsmall : (length (variables (c :: P)) + length P + 1) * b^2 <=
+      64 * (d^3 * v^2)).
+    { assert (Hproduct : (length (variables (c :: P)) + length P + 1) * b^2
+        <= d * (64 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      assert (Hcube : d <= d^3).
+      { cbn [Nat.pow]. nia. }
+      replace (64 * (d^3 * v^2)) with (d^3 * (64 * v^2)) by ring.
+      eapply Nat.le_trans; [exact Hproduct|].
+      apply Nat.mul_le_mono; [exact Hcube|lia]. }
+    assert (HN : (N.of_nat
+      ((length (variables (c :: P)) + length P + 1) * b^2) <=
+      N.of_nat (64 * (d^3 * v^2)))%N) by lia.
+    unfold elimination_work. fold d w v.
+    replace (1024 * N.of_nat (length (variables (c :: P)) + length P + 1) *
+      N.of_nat (b^2))%N with
+      (1024 * N.of_nat
+        ((length (variables (c :: P)) + length P + 1) * b^2))%N
+      by (rewrite Nat2N.inj_mul; ring).
+    replace (1024 * 64 * N.of_nat (d^3 * v^2))%N with
+      (1024 * N.of_nat (64 * (d^3 * v^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 64) with 64%N; ring).
+    now apply N.mul_le_mono_l.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
