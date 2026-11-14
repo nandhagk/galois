@@ -4272,19 +4272,29 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold slot_of in Hslot. apply nth_error_None in Hslot. lia.
   Qed.
 
-  (** Executable cell normalization returns the public representative-based cell. *)
-  Lemma normal_cell_correct : forall db c, database_wf db -> normal_cell db c = canon db c.
+  Lemma normal_cell_correct_forest : forall db c,
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    normal_cell db c = canon db c.
   Proof.
-    intros db [i | v] Hwf; cbn [normal_cell canon repr].
+    intros db [i | v] Hforest Hmembers; cbn [normal_cell canon repr].
     - destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hallocated.
-      + f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
+      + f_equal. apply UnionFind.find_repr. exact Hforest.
       + f_equal. symmetry. apply UnionFindCodeFacts.repr_absent.
-        intro Hmember. apply (proj1 (wf_forest_members db Hwf i)) in Hmember.
+        intro Hmember. apply (proj1 (Hmembers i)) in Hmember.
         apply N.compare_lt_iff in Hallocated.
         change (Npos i <= runtime_allocated (db_runtime db))%N in Hmember.
         apply (N.lt_irrefl (Npos i)). eapply N.le_lt_trans; eassumption.
-      + f_equal. apply UnionFind.find_repr. exact (wf_forest db Hwf).
+      + f_equal. apply UnionFind.find_repr. exact Hforest.
     - reflexivity.
+  Qed.
+
+  (** Executable cell normalization returns the public representative-based cell. *)
+  Lemma normal_cell_correct : forall db c, database_wf db -> normal_cell db c = canon db c.
+  Proof.
+    intros db c Hwf. apply normal_cell_correct_forest.
+    - exact (wf_forest db Hwf).
+    - exact (wf_forest_members db Hwf).
   Qed.
 
   (** Executable key normalization agrees with the public canonical key. *)
@@ -4295,6 +4305,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intro c. exact (normal_cell_correct db c Hwf).
   Qed.
 
+  Lemma normal_key_correct_forest : forall db k,
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    normal_key db k = map (canon db) k.
+  Proof.
+    intros db k Hforest Hmembers. unfold normal_key. apply map_ext.
+    intro c. now apply normal_cell_correct_forest.
+  Qed.
+
   (** Executable output normalization agrees with the public canonical output. *)
   Lemma normal_output_correct : forall db o, database_wf db ->
     option_map (normal_cell db) o = option_map (canon db) o.
@@ -4302,6 +4321,46 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db [c |] Hwf; cbn [option_map].
     - now rewrite (normal_cell_correct db c Hwf).
     - reflexivity.
+  Qed.
+
+  Lemma normal_output_correct_forest : forall db o,
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    option_map (normal_cell db) o = option_map (canon db) o.
+  Proof.
+    intros db [c |] Hforest Hmembers; cbn [option_map].
+    - now rewrite (normal_cell_correct_forest db c Hforest Hmembers).
+    - reflexivity.
+  Qed.
+
+  Lemma canon_key_equal_fixed : forall db k,
+    map (canon db) k = k ->
+    forall i, In (Id i) k -> repr db i = i.
+  Proof.
+    intros db k. induction k as [| c rest IH]; intros Heq i Hin;
+      [contradiction |].
+    cbn [map] in Heq. injection Heq as Hcell Htail.
+    destruct Hin as [Hhead | Hrest].
+    - subst c. cbn [canon] in Hcell. now injection Hcell.
+    - exact (IH Htail i Hrest).
+  Qed.
+
+  Lemma normal_row_equal_canonical_forest : forall db k o,
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    normal_key db k = k -> option_map (normal_cell db) o = o ->
+    forall i, In (Id i) (k ++ option_list o) -> repr db i = i.
+  Proof.
+    intros db k [c |] Hforest Hmembers Hkey Houtput i Hin;
+      rewrite (normal_key_correct_forest db k Hforest Hmembers) in Hkey.
+    - rewrite (normal_output_correct_forest db (Some c) Hforest Hmembers) in Houtput.
+      apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
+      + exact (canon_key_equal_fixed db k Hkey i Hin).
+      + cbn [option_list In] in Hin. destruct Hin as [Heq | Hfalse];
+          [| contradiction].
+        subst c. cbn [option_map canon] in Houtput. now injection Houtput.
+    - cbn [option_list] in Hin. rewrite app_nil_r in Hin.
+      exact (canon_key_equal_fixed db k Hkey i Hin).
   Qed.
 
   (** A slot update preserves every observation independent of the three index caches. *)
@@ -20402,6 +20461,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db work Hinv.
     unfold inv_on, forest_ok in Hinv. tauto.
+  Qed.
+
+  Lemma inv_on_repair_fixed : forall db f k rest current output,
+    inv_on db ((f, k) :: rest) -> located db f k = Some current ->
+    row_get f current db = Some output ->
+    andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output) = true ->
+    inv_on (repair_entry (f, k) db) rest.
+  Proof.
+    intros db f k rest current output Hinv Hlocated Hrow Hfixed.
+    apply andb_true_iff in Hfixed as [Hkey_code Houtput_eqb].
+    apply Pos.eqb_eq in Hkey_code.
+    apply db_tuple_code_inj in Hkey_code.
+    destruct (output_eqb_spec (option_map (normal_cell db) output) output)
+      as [Houtput | Hunequal]; [| congruence].
+    assert (Hforest : UnionFind.wf (db_forest db)).
+    { apply inv_on_forest_wf with (work := (f, k) :: rest). exact Hinv. }
+    assert (Hmembers : forall i,
+      UnionFind.mem (db_forest db) i <-> allocated db i).
+    { unfold inv_on, forest_ok, core_bridge in Hinv. tauto. }
+    assert (Hcanonical : forall i, row_ids current output i -> repr db i = i).
+    { intros i Hin. apply (normal_row_equal_canonical_forest db current output
+        Hforest Hmembers Hkey_code Houtput i). exact Hin. }
+    assert (Hrow_view : row (view db) f current output) by exact Hrow.
+    change (db_locate f k db = Some current) in Hlocated.
+    assert (Hsame : repair_entry (f, k) db = db).
+    { unfold repair_entry, db_repair_entry.
+      cbn [fst snd].
+      rewrite Hlocated, Hrow, Hkey_code, Houtput.
+      now rewrite Pos.eqb_refl, output_eqb_refl. }
+    rewrite Hsame.
+    exact (inv_on_drop_canonical db f k rest current output Hinv
+      Hlocated Hrow_view Hcanonical).
   Qed.
 
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
