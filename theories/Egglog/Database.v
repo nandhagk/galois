@@ -11309,6 +11309,39 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply PTrie.get_set_other. lia.
   Qed.
 
+  Lemma ensure_row_identity_links_ok : forall db f k,
+    database_row_store_ok db ->
+    forall r p,
+      PTrieCode.get r (row_links (db_row_store (ensure_row_identity f k db))) = Some p ->
+      In r (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store (ensure_row_identity f k db))))) /\
+      In p (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store (ensure_row_identity f k db))))) /\
+      (p <> r ->
+        (1 <= match PTrieCode.get r
+          (row_weights (db_row_store (ensure_row_identity f k db))) with
+          | Some n => n | None => 1%N end)%N /\
+        (2 * match PTrieCode.get r
+          (row_weights (db_row_store (ensure_row_identity f k db))) with
+          | Some n => n | None => 1%N end <=
+          match PTrieCode.get p
+            (row_weights (db_row_store (ensure_row_identity f k db))) with
+          | Some n => n | None => 1%N end)%N).
+  Proof.
+    intros db f k Hstore r p Hlink.
+    rewrite ensure_row_identity_links in Hlink.
+    destruct (database_row_store_link_range db Hstore r p Hlink) as [Hr Hp].
+    unfold database_row_store_ok in Hstore.
+    destruct Hstore as [Hlinks _].
+    destruct (Hlinks r p Hlink) as [Hrecorded_r [Hrecorded_p Hweights]].
+    split; [now apply ensure_row_identity_recorded_old |].
+    split; [now apply ensure_row_identity_recorded_old |].
+    intros Hdistinct. destruct (Hweights Hdistinct) as [Hone Hdouble].
+    rewrite (ensure_row_identity_old_root_weight db f k r Hr).
+    rewrite (ensure_row_identity_old_root_weight db f k p Hp).
+    split; assumption.
+  Qed.
+
   Lemma ensure_row_identity_old_locate : forall db f k g args key r,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
