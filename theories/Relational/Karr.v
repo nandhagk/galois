@@ -16306,6 +16306,41 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
   Qed.
 
+  (** The final map and presence pass charge each bounded basis row once. *)
+  Lemma T_karr_hull_finish_bounded : forall xs a b basis dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    Forall (karr_row_envelope (2 * length xs + 2)
+      (length a + length b) bits) basis ->
+    (ListDef.T_map (checked_hull_row xs a b)
+       (T_checked_hull_row xs a b) basis +
+     T_present (map (checked_hull_row xs a b) basis) <=
+      (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1) + 16) *
+      N.of_nat (length basis + 1))%N.
+  Proof.
+    intros xs a b basis dim bits Hpositive Hxs Hcount Hkeys Ha Hb Hbasis.
+    assert (Hcallback : forall r, In r basis ->
+      (T_checked_hull_row xs a b r <=
+        2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1))%N).
+    { intros r Hr. apply T_karr_checked_hull_row_bounded;
+        try assumption.
+      exact (proj1 (Forall_forall _ _) Hbasis r Hr). }
+    pose proof (karr_T_map_members karr_row (option (lcons X.t))
+      (checked_hull_row xs a b) (T_checked_hull_row xs a b)
+      (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1))%N basis Hcallback) as Hmap.
+    pose proof (T_karr_present_bounded (lcons X.t)
+      (map (checked_hull_row xs a b) basis)) as Hpresent.
+    rewrite length_map in Hpresent.
+    rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
   (** Adding one conclusion cannot introduce more than its declared variables. *)
   Lemma karr_target_variables_public : forall P c,
     length (variables (c :: P)) <=
