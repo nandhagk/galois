@@ -11702,30 +11702,46 @@ Module PolyAssignBranch (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     length ms = length P -> Forall (fun m => Z.size_nat m <= 2 * bits + 2) ms ->
     length (lhs c) <= dim -> C.row_key_bits c + C.row_bits c <= 3 * bits + 1 ->
     C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1) <=
-      48 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2.
+      16 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2.
   Proof.
     intros P c ms dim bits Hsource Hlength Hmult Hdim Hwidth.
-    assert (Hsource' : Forall (fun p => C.row_key_bits p + C.row_bits p <= 2 * bits + 1) P).
-    { eapply Forall_impl; [|exact Hsource]. intros p Hp.
-      change (C.row_key_bits p + C.row_bits p <= bits) in Hp.
-      change (C.row_key_bits p + C.row_bits p <= 2 * bits + 1). lia. }
-    assert (Hmult' : Forall (fun m => Z.size_nat m <= 2 * (2 * bits + 1) + 2) ms).
-    { eapply Forall_impl; [|exact Hmult]. intros m Hm.
-      change (Z.size_nat m <= 2 * bits + 2) in Hm.
-      change (Z.size_nat m <= 2 * (2 * bits + 1) + 2). lia. }
-    pose proof (poly_scale_one_measure_terms P c ms dim (2 * bits + 1)
-      Hsource' Hlength Hmult' Hdim ltac:(lia)) as Hmeasure.
-    replace (12 * (dim + terms (Reached P) + length P + 1) * (2 * bits + 1 + 1)^2)
-      with (48 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2)
-      in Hmeasure by (cbn [Nat.pow]; nia).
-    exact Hmeasure.
+    pose proof (poly_csize_terms P ms bits (2 * bits + 2)
+      Hsource Hmult Hlength) as Hsize.
+    pose proof (poly_cbits_source_bits P ms bits (2 * bits + 2)
+      Hsource Hmult) as Hcbits.
+    pose proof (Nat.log2_le_lin (length P) ltac:(lia)) as Hlog.
+    assert (Hlsize : C.lsize c <= 3 * (dim + 1) * (bits + 1)).
+    { unfold C.lsize. eapply Nat.le_trans with
+        (m := (dim + 1) * (3 * bits + 2)).
+      - apply Nat.mul_le_mono; lia.
+      - nia. }
+    assert (Hsquare : bits + 1 <= (bits + 1)^2)
+      by (cbn [Nat.pow]; nia).
+    assert (Hcert : C.csize P ms <=
+      3 * (terms (Reached P) + length P) * (bits + 1)^2).
+    { eapply Nat.le_trans; [exact Hsize|].
+      assert (Hproduct : (2 * bits + 3) * (bits + 1) <=
+        3 * (bits + 1)^2) by (cbn [Nat.pow]; nia).
+      pose proof (Nat.mul_le_mono_l _ _
+        (terms (Reached P) + length P) Hproduct).
+      nia. }
+    assert (Hconclusion : 2 * C.lsize c <=
+      6 * (dim + 1) * (bits + 1)^2).
+    { pose proof (Nat.mul_le_mono_l _ _ (6 * (dim + 1)) Hsquare). nia. }
+    assert (Hwidthpart : 2 * (C.cbits P ms + 1) <=
+      (2 * length P + 8) * (bits + 1)^2).
+    { assert (Hlinear : 2 * (C.cbits P ms + 1) <=
+        (2 * length P + 8) * (bits + 1)) by nia.
+      eapply Nat.le_trans; [exact Hlinear|].
+      now apply Nat.mul_le_mono_l. }
+    clear -Hcert Hconclusion Hwidthpart. cbn [Nat.pow] in *. nia.
   Qed.
 
   Lemma T_poly_assign_checker : forall P c ms dim bits,
     Forall (fun p => C.row_key_bits p + C.row_bits p <= bits) P ->
     length ms = length P -> Forall (fun m => Z.size_nat m <= 2 * bits + 2) ms ->
     length (lhs c) <= dim -> C.row_key_bits c + C.row_bits c <= 3 * bits + 1 ->
-    (C.T_check_entails P c (Cert ms 1 false) <= 48 * C.c_lc *
+    (C.T_check_entails P c (Cert ms 1 false) <= 16 * C.c_lc *
       N.of_nat (dim + terms (Reached P) + length P + 1) * N.of_nat (bits + 1)^2)%N.
   Proof.
     intros P c ms dim bits Hsource Hlength Hmult Hdim Hwidth.
@@ -11735,11 +11751,11 @@ Module PolyAssignBranch (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     change (C.T_check_entails P c (Cert ms 1 false) <= C.c_lc *
       N.of_nat (C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1)))%N in Hcheck.
     eapply N.le_trans; [exact Hcheck|].
-    replace (48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+    replace (16 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
       N.of_nat (bits + 1)^2)%N with
-      (C.c_lc * N.of_nat (48 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2))%N
+      (C.c_lc * N.of_nat (16 * (dim + terms (Reached P) + length P + 1) * (bits + 1)^2))%N
       by (rewrite !Nat2N.inj_mul, poly_nat_square, N.pow_2_r;
-        change (N.of_nat 48) with 48%N; ring).
+        change (N.of_nat 16) with 16%N; ring).
     apply N.mul_le_mono_l. lia.
   Qed.
 End PolyAssignBranch.
@@ -14689,7 +14705,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_subst x f c + C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
       AssignCore.poly_assign_normal_subst_factor *
         poly_clock_span dim 0 keys bits +
-      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+      16 * C.c_lc * N.of_nat (dim + length (coef f) +
         terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2)%N.
   Proof.
     intros x f P r xs head ms Hform Hr Huntag Hmult
@@ -14741,7 +14757,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (dim + length (coef f)) checker_bits Hsource ltac:(lia) Hms
       Hcheckdim Hcheckwidth) as Hcheck.
     change (C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
-      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+      16 * C.c_lc * N.of_nat (dim + length (coef f) +
         terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2)%N
       in Hcheck.
     cbn zeta. now apply N.add_le_mono.
@@ -14763,14 +14779,14 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       2 * N.of_nat (dim + 1) +
       AssignCore.poly_assign_normal_subst_factor *
         poly_clock_span dim 0 keys bits +
-      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+      16 * C.c_lc * N.of_nat (dim + length (coef f) +
         terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2 +
       16)%N.
   Proof.
     intros x f P r Hform Hr dim keys bits checker_bits.
     set (budget := (AssignCore.poly_assign_normal_subst_factor *
       poly_clock_span dim 0 keys bits +
-      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+      16 * C.c_lc * N.of_nat (dim + length (coef f) +
         terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2)%N).
     assert (Hbranch : forall xs head ms,
       untag (lhs (poly_constraint r)) = Some xs ->
@@ -14805,7 +14821,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     let checker_bits := keys + bits in
     (2 * N.of_nat (dim + 1) +
       AssignCore.poly_assign_normal_subst_factor * poly_clock_span dim 0 keys bits +
-      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+      16 * C.c_lc * N.of_nat (dim + length (coef f) +
         terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2 + 16)%N.
 
   (** The optional result scan charges each output row once. *)
@@ -15035,7 +15051,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_subst x f c + C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
       AssignCore.poly_assign_zero_subst_factor * N.of_nat (dim + length (coef f) + 1) *
         N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) +
-      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+      16 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
         N.of_nat (width + 1)^2)%N.
   Proof.
     intros x P f r xs head ms Hr Huntag Hmult Hform Hformkeys
@@ -15097,7 +15113,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply N.mul_le_mono_r, N.mul_le_mono_l, time_of_nat_le.
       change (length (lhs c) <= dim) in Hdim. lia. }
     change (C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
-      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+      16 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
         N.of_nat (width + 1)^2)%N in Hcheck.
     cbn zeta. eapply N.add_le_mono; [exact Hsubst_total|exact Hcheck].
   Qed.
@@ -15116,14 +15132,14 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       AssignCore.poly_assign_zero_subst_factor *
         N.of_nat (dim + length (coef f) + 1) *
           N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) +
-      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+      16 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
         N.of_nat (width + 1)^2 + 16)%N.
   Proof.
     intros x P f r Hr Hform Hformkeys dim rawkeys rawbits width.
     set (budget := (AssignCore.poly_assign_zero_subst_factor *
       N.of_nat (dim + length (coef f) + 1) *
         N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) +
-      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+      16 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
         N.of_nat (width + 1)^2)%N).
     assert (Hbranch : forall xs head ms,
       untag (lhs (poly_constraint r)) = Some xs ->
