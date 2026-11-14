@@ -13391,6 +13391,37 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite karr_size_opp. exact Hbits.
   Qed.
 
+  (** An exact target reduction has the source-minor width at every entry. *)
+  Lemma karr_minor_law_reduce_entry_bits : forall previous pivot_rows
+      pivot_columns columns pairs pivot_origin target_origin p r index j dim bits,
+    karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+    previous <> 0%Z ->
+    In (pivot_origin, karr_row_entries p) pairs ->
+    In (target_origin, karr_row_entries r) pairs ->
+    length (kcoeff p) = length (kcoeff r) ->
+    length (kweight p) = length (kweight r) ->
+    index < length (kcoeff p) ->
+    length (karr_row_entries p) = length columns ->
+    length (karr_row_entries r) = length (karr_row_entries p) ->
+    j < length columns ->
+    1 <= dim -> length pivot_rows + 2 <= dim ->
+    Forall (Forall (fun z => Z.size_nat z <= bits))
+      (pivot_rows ++ [pivot_origin; target_origin]) ->
+    Z.size_nat (karr_nth j (karr_row_entries (karr_reduce previous
+      (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r))) <=
+      ellB dim bits.
+  Proof.
+    intros previous pivot_rows pivot_columns columns pairs pivot_origin
+      target_origin p r index j dim bits Hlaw Hprevious Hpivot Htarget
+      Hcoeff Hweight Hindex Hp_width Hr_width Hj Hdim Horder Hsources.
+    rewrite (karr_minor_law_reduce_entry_at previous pivot_rows
+      pivot_columns columns pairs pivot_origin target_origin p r index j
+      Hlaw Hprevious Hpivot Htarget Hcoeff Hweight Hindex Hp_width
+      Hr_width Hj).
+    apply karr_determinant_bits; [exact Hdim|exact Horder|].
+    now apply karr_submatrix_bits.
+  Qed.
+
   (** A row envelope bounds every entry of the augmented matrix representation. *)
   Lemma karr_row_entries_bits : forall dim mlen bits r,
     karr_row_envelope dim mlen bits r ->
