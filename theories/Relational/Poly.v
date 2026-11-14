@@ -13752,6 +13752,135 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
             [cbn [Z.size_nat Pos.size_nat]; lia|lia]. }
       + eapply IH; [exact Htail|exact Hresult].
   Qed.
+  (** A public certificate uses only multiplier widths reached by the normalized FM run. *)
+  Lemma poly_entail_cert_weights : forall P c k,
+    entail_cert P c = Some k ->
+    let fuel := length (poly_variables X.encode
+      (poly_normal_row X.encode c :: poly_normal_rows P)) in
+    let bits := nell (Reached (c :: P)) in
+    length (mults k) <= length P + 1 /\
+    Forall (fun m => Z.size_nat m <= poly_width_after fuel (2 * bits + 1) + 1)
+      (mults k) /\
+    Z.size_nat (scale k) <= poly_width_after fuel (2 * bits + 1) + 1.
+  Proof.
+    intros P c k Hresult fuel bits.
+    set (P' := poly_normal_rows P).
+    set (c' := poly_normal_row X.encode c).
+    set (dim := n P' + length (lhs c')).
+    set (mlen := length P' + 1).
+    set (keys := poly_entail_keys P' c').
+    set (rowbits := poly_entail_bits P' c').
+    set (vars := poly_entail_vars P' c').
+    set (initial := poly_initial X.encode
+      ((poly_negate c', true) :: map (fun r => (r, false)) P')).
+    unfold entail_cert, entail_engine in Hresult.
+    change (find_certificate P' c'
+      (poly_run X.encode X.eqb (poly_variables X.encode (c' :: P')) initial) = Some k)
+      in Hresult.
+    assert (HP : normal P') by apply poly_normal_rows_normal.
+    assert (Hc : normal [c']).
+    { change (normal (poly_normal_rows [c])). apply poly_normal_rows_normal. }
+    assert (Hdim : length vars <= dim) by apply poly_entail_vars_length.
+    assert (Hreduced : Forall (poly_reduced_row vars) initial)
+      by apply poly_entail_initial_reduced.
+    assert (Hinitial : Forall (poly_row_envelope dim mlen keys rowbits) initial)
+      by (apply poly_entail_initial_envelopes; assumption).
+    pose proof (poly_run_envelopes
+      (poly_variables X.encode (c' :: P')) vars initial dim mlen keys rowbits
+      Hdim Hreduced Hinitial) as Hfinal.
+    assert (Hweights : length (mults k) <= mlen /\
+      Forall (fun m => Z.size_nat m <=
+        poly_width_after fuel rowbits + 1) (mults k) /\
+      Z.size_nat (scale k) <= poly_width_after fuel rowbits + 1).
+    { apply (poly_returned_certificate_weights P' c'
+        (poly_run X.encode X.eqb (poly_variables X.encode (c' :: P')) initial)
+        k dim mlen keys
+        (poly_width_after fuel rowbits)).
+      - change (Forall (poly_row_envelope dim mlen keys
+          (poly_width_after (length (poly_variables X.encode (c' :: P'))) rowbits))
+          (poly_run X.encode X.eqb (poly_variables X.encode (c' :: P')) initial)).
+        exact Hfinal.
+      - exact Hresult. }
+    assert (Hwidth : keys + rowbits <= 2 * bits + 1).
+    { unfold keys, rowbits. rewrite poly_entail_width.
+      unfold P', c', bits.
+      apply poly_normal_entail_width_raw. }
+    assert (Hfinal_width : keys + poly_width_after fuel rowbits <=
+      poly_width_after fuel (2 * bits + 1)).
+    { eapply Nat.le_trans; [apply poly_width_after_fixed_keys|].
+      now apply poly_width_after_mono. }
+    destruct Hweights as [Hlength [Hmult Hscale]].
+    split; [rewrite <- poly_normal_rows_length; exact Hlength|].
+    split.
+    - apply Forall_forall. intros m Hin.
+      pose proof (proj1 (Forall_forall _ _) Hmult m Hin) as Hm.
+      eapply Nat.le_trans; [exact Hm|]. apply Nat.add_le_mono_r.
+      eapply Nat.le_trans; [apply Nat.le_add_l|exact Hfinal_width].
+    - eapply Nat.le_trans; [exact Hscale|]. apply Nat.add_le_mono_r.
+      eapply Nat.le_trans; [apply Nat.le_add_l|exact Hfinal_width].
+  Qed.
+  (** A singleton run can return only a unit certificate with no source multipliers. *)
+  Lemma poly_empty_returned_unit : forall c rows k,
+    Forall (fun r => poly_multipliers r = [1%Z]) rows ->
+    find_certificate [] c rows = Some k -> k = Cert [] 1 false.
+  Proof.
+    intros c rows. induction rows as [|r rows IH]; intros k Hrows Hresult.
+    - discriminate.
+    - inversion Hrows as [|? ? Hunit Htail]; subst.
+      cbn [find_certificate] in Hresult.
+      destruct (candidate [] c r) as [found|] eqn:Hcandidate.
+      + injection Hresult as Hsame. subst found.
+        unfold candidate in Hcandidate.
+        destruct (poly_contradiction r); [|discriminate].
+        rewrite Hunit in Hcandidate.
+        destruct (poly_canonical_guard [] c r 1 []); [|discriminate].
+        destruct (C.check_entails [] c (Cert [] (poly_canonical_scale 1) false));
+          [|discriminate].
+        injection Hcandidate as Hsame. subst k. reflexivity.
+      + now apply IH.
+  Qed.
+
+  (** Empty-source entailment returns a unit certificate whenever it succeeds. *)
+  Lemma poly_entail_cert_empty_unit : forall c k,
+    entail_cert [] c = Some k -> k = Cert [] 1 false.
+  Proof.
+    intros c k Hresult.
+    set (c' := poly_normal_row X.encode c).
+    assert (Hnormal : normal [c']).
+    { change (normal (poly_normal_rows [c])). apply poly_normal_rows_normal. }
+    pose proof (poly_entail_empty_shape (poly_variables X.encode [c']) c' Hnormal)
+      as [_ Hshape].
+    assert (Hunits : Forall (fun r => poly_multipliers r = [1%Z])
+      (poly_run X.encode X.eqb (poly_variables X.encode [c'])
+        (poly_initial X.encode [(poly_negate c', true)]))).
+    { eapply Forall_impl; [|exact Hshape]. intros r [_ Hunit]. exact Hunit. }
+    unfold entail_cert, entail_engine in Hresult.
+    change (find_certificate [] c'
+      (poly_run X.encode X.eqb (poly_variables X.encode [c'])
+        (poly_initial X.encode [(poly_negate c', true)])) = Some k) in Hresult.
+    now apply poly_empty_returned_unit with (c := c') (rows :=
+      poly_run X.encode X.eqb (poly_variables X.encode [c'])
+        (poly_initial X.encode [(poly_negate c', true)])); assumption.
+  Qed.
+  (** Original normal rows fit twice the raw global bit width used by FM. *)
+  Lemma poly_entail_raw_source_width : forall P c, normal P ->
+    Forall (poly_source_envelope (n P + length (lhs c))
+      (2 * nell (Reached (c :: P)) + 1)) (c :: P).
+  Proof.
+    intros P c HP.
+    assert (Hwidth : ell P + C.row_bits c + C.row_key_bits c <=
+      2 * nell (Reached (c :: P)) + 1).
+    { unfold nell, ell. cbn [prows map fold_right terms].
+      set (source_bits := fold_right Nat.max 0 (map C.row_bits P)).
+      set (source_keys := fold_right Nat.max 0 (map C.row_key_bits P)).
+      pose proof (Nat.le_max_l (C.row_bits c) source_bits) as Hb_c.
+      pose proof (Nat.le_max_r (C.row_bits c) source_bits) as Hb_P.
+      pose proof (Nat.le_max_l (C.row_key_bits c) source_keys) as Hk_c.
+      pose proof (Nat.le_max_r (C.row_key_bits c) source_keys) as Hk_P.
+      lia. }
+    eapply Forall_impl; [|apply poly_entail_source_envelopes; exact HP].
+    intros r [Hdim Hbits]. split; [exact Hdim|lia].
+  Qed.
   Lemma entail_cert_size : forall P c k, normal P -> normal (c :: nil) ->
     entail_cert P c = Some k ->
     (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
@@ -13760,7 +13889,95 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) +
          fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
            (length P + 1) (nell (Reached (c :: P)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros P c k HP Hc Hresult.
+    assert (Hfactor : (32 <= k_cert)%N).
+    { unfold k_cert, poly_entail_raw_factor, poly_entail_factor, poly_setup_factor. nia. }
+    destruct P as [|p P].
+    - pose proof (poly_entail_cert_empty_unit c k Hresult) as Hunit. subst k.
+      set (dim := length (lhs c)).
+      set (bits := nell (Reached [c])).
+      set (budget := fmcost dim 1 dim 1 bits).
+      assert (Hlsize : C.lsize c <= (dim + 1) * (bits + 1)).
+      { unfold C.lsize, dim, bits, nell, ell.
+        cbn [prows terms map fold_right]. apply Nat.mul_le_mono_l. lia. }
+      pose proof (poly_fmcost_initial_charge dim 1 bits) as Hcharge.
+      change (4 * (dim + 1) * (bits + 1) <= budget) in Hcharge.
+      assert (Hsize : 2 * (C.lsize c + 2) <= 32 * budget) by nia.
+      assert (Hempty : C.csize [] [] = 0 /\ C.cbits [] [] = 1 /\
+        Z.size_nat 1 = 1) by (repeat split; reflexivity).
+      destruct Hempty as [Hcsize [Hcbits Hscalebits]].
+      cbn [mults scale]. rewrite ?Hcsize, ?Hcbits, ?Hscalebits.
+      eapply N.le_trans with (m := N.of_nat (2 * (C.lsize c + 2))).
+      + lia.
+      + eapply N.le_trans with (m := (32 * N.of_nat budget)%N).
+        * replace (32 * N.of_nat budget)%N with (N.of_nat (32 * budget))
+            by (rewrite Nat2N.inj_mul; reflexivity). lia.
+        * apply N.mul_le_mono; [exact Hfactor|].
+          rewrite Nat2N.inj_add. apply N.le_add_l.
+    - set (dim := n (p :: P) + length (lhs c)).
+      set (mlen := length (p :: P) + 1).
+      set (bits := nell (Reached (c :: p :: P))).
+      set (fuel := length (poly_variables X.encode
+        (poly_normal_row X.encode c :: poly_normal_rows (p :: P)))).
+      set (width := poly_width_after fuel (2 * bits + 1)).
+      set (budget := fmcost dim mlen dim mlen bits).
+      pose proof (poly_entail_cert_weights (p :: P) c k Hresult) as Hweights.
+      change (length (mults k) <= mlen /\
+        Forall (fun m => Z.size_nat m <= width + 1) (mults k) /\
+        Z.size_nat (scale k) <= width + 1) in Hweights.
+      destruct Hweights as [Hlength [Hmult Hscale]].
+      pose proof (poly_entail_raw_source_width (p :: P) c HP) as Hraw.
+      assert (Hwidth : 2 * bits + 1 <= width).
+      { unfold width. pose proof (poly_width_after_fuel_mono 0 fuel (2 * bits + 1)
+          (Nat.le_0_l _)) as Hgrowth.
+        cbn [poly_width_after] in Hgrowth. exact Hgrowth. }
+      assert (Hsource : Forall (poly_source_envelope dim width) (c :: p :: P)).
+      { eapply Forall_impl; [|exact Hraw]. intros r [Hdim Hbits]. split; lia. }
+      pose proof (poly_checker_measure_envelope (p :: P) c (mults k) (scale k)
+        dim mlen width Hsource ltac:(lia) Hlength Hmult Hscale) as Hmeasure.
+      assert (Hfuel : S fuel <= dim).
+      { pose proof (poly_entail_spare_fuel (poly_normal_rows (p :: P))
+          (poly_normal_row X.encode c) ltac:(unfold poly_normal_rows; discriminate))
+          as Hspare.
+        pose proof (poly_normal_entail_dimension (p :: P) c) as Hdimension.
+        unfold fuel, dim in *. lia. }
+      pose proof (poly_fmcost_spare_square fuel dim mlen mlen (2 * bits + 1)
+        (Nat.le_refl _)) as Hsquare.
+      pose proof (poly_fmcost_fuel_mono (S fuel) dim Hfuel dim mlen mlen
+        (2 * bits + 1)) as Hmono.
+      pose proof (poly_fmcost_double_width dim dim mlen mlen bits) as Hdouble.
+      assert (Hsize : C.csize (p :: P) (mults k) + (Z.size_nat (scale k) + 1) *
+        (C.lsize c + C.cbits (p :: P) (mults k) + 1) <= 32 * budget).
+      { assert (Hcount : mlen + 1 <= (mlen + 1)^2) by (cbn [Nat.pow]; nia).
+        set (span := (dim + mlen + 1) * (width + 1)^2).
+        pose proof (Nat.mul_le_mono_r _ _ span Hcount) as Hcount_span.
+        assert (Hsquare_span : (mlen + 1)^2 * span <=
+          fmcost dim mlen (S fuel) mlen (2 * bits + 1)).
+        { unfold span, width.
+          replace ((mlen + 1)^2 *
+            ((dim + mlen + 1) * (poly_width_after fuel (2 * bits + 1) + 1)^2))
+            with ((mlen + 1)^2 * (dim + mlen + 1) *
+              (poly_width_after fuel (2 * bits + 1) + 1)^2) by ring.
+          exact Hsquare. }
+        assert (Hstage : (mlen + 1)^2 * span <= 4 * budget).
+        { eapply Nat.le_trans; [exact Hsquare_span|].
+          eapply Nat.le_trans; [exact Hmono|exact Hdouble]. }
+        eapply Nat.le_trans; [exact Hmeasure|].
+        replace (8 * (mlen + 1) * (dim + mlen + 1) * (width + 1)^2)
+          with (8 * ((mlen + 1) * span)) by (unfold span; ring).
+        eapply Nat.le_trans with (m := 8 * ((mlen + 1)^2 * span)).
+        - apply Nat.mul_le_mono_l. exact Hcount_span.
+        - clear -Hstage. nia. }
+      change (N.of_nat (C.csize (p :: P) (mults k) +
+        (Z.size_nat (scale k) + 1) * (C.lsize c + C.cbits (p :: P) (mults k) + 1)) <=
+        k_cert * N.of_nat (terms (Reached (c :: p :: P)) * (bits + 1) + budget))%N.
+      eapply N.le_trans with (m := (32 * N.of_nat budget)%N).
+      + replace (32 * N.of_nat budget)%N with (N.of_nat (32 * budget))
+          by (rewrite Nat2N.inj_mul; reflexivity). lia.
+      + apply N.mul_le_mono; [exact Hfactor|].
+        rewrite Nat2N.inj_add. apply N.le_add_l.
+  Qed.
   Lemma fm_mults_size : forall x P r, normal P -> In r (fm_elim x P) ->
     length (mults_of r) = length P /\
     Forall (fun m => Z.size_nat m <= ell P + 1) (mults_of r).
