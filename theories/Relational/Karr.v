@@ -524,6 +524,14 @@ Proof.
   cbn [app combine]. f_equal. apply IH. lia.
 Qed.
 
+(** Pairing a list with itself attaches each item as its own origin. *)
+Lemma karr_combine_self : forall A (xs : list A),
+  combine xs xs = map (fun x => (x, x)) xs.
+Proof.
+  intros A xs. induction xs as [|x xs IH]; cbn [combine map];
+    [reflexivity|now rewrite IH].
+Qed.
+
 (** Pivot discovery permutes each original row label with its live augmented row. *)
 Lemma karr_pivot_pairs_entries : forall (labels : list (list Z))
     (rows : list karr_row) (pivot : karr_row) (rest : list karr_row),
@@ -1494,6 +1502,24 @@ Fixpoint karr_increasing (columns : list nat) : Prop :=
   | column :: columns =>
     Forall (fun later => column < later) columns /\ karr_increasing columns
   end.
+
+(** Consecutive coordinates are strictly increasing. *)
+Lemma karr_increasing_seq : forall start count,
+  karr_increasing (seq start count).
+Proof.
+  intros start count. revert start. induction count as [|count IH]; intro start.
+  - exact I.
+  - cbn [seq karr_increasing]. split; [|apply IH].
+    apply Forall_forall. intros column Hin. apply in_seq in Hin. lia.
+Qed.
+
+(** Every coordinate of a consecutive range lies below its endpoint. *)
+Lemma karr_seq_bounded : forall start count,
+  Forall (fun column => column < start + count) (seq start count).
+Proof.
+  intros start count. apply Forall_forall. intros column Hin.
+  apply in_seq in Hin. lia.
+Qed.
 
 (** Appending any later coordinate preserves the strict prefix order. *)
 Lemma karr_increasing_prefix_member : forall prefix suffix column,
@@ -2546,6 +2572,86 @@ Proof.
   cbn [map combine fst snd]. f_equal.
   - f_equal. apply Heq. now left.
   - apply IH; [lia|]. intros source Hin. apply Heq. now right.
+Qed.
+
+(** Deleting the first coordinate commutes with an entrywise map. *)
+Lemma karr_delete_map_first : forall (f : Z -> Z) xs,
+  karr_delete 0 (map f xs) = map f (karr_delete 0 xs).
+Proof.
+  intros f [|x xs]; reflexivity.
+Qed.
+
+(** The exact reduced tail scales back to the crossed row without its head. *)
+Lemma karr_reduced_tail_multiple : forall cols d a b p r,
+  length (kcoeff p) = S cols ->
+  length (kcoeff r) = S cols ->
+  length (kweight r) = length (kweight p) ->
+  d <> 0%Z ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  (forall z, In z (karr_cross a b (karr_row_entries r) (karr_row_entries p)) ->
+    (z mod d = 0)%Z) ->
+  map (fun z => (d * z)%Z)
+    (karr_row_entries (karr_tail (karr_reduce d a b p r))) =
+    karr_delete 0 (karr_cross a b
+      (karr_row_entries r) (karr_row_entries p)).
+Proof.
+  intros cols d a b p r Hp Hr Hweight Hd Hexact Hmultiple.
+  rewrite karr_row_entries_tail.
+  - rewrite <- karr_delete_map_first.
+    rewrite karr_row_entries_reduce_multiple;
+      [reflexivity|lia|exact Hweight|exact Hd|exact Hexact|exact Hmultiple].
+  - pose proof (karr_reduce_width d a b p r ltac:(lia)) as Hwidth.
+    rewrite Hr in Hwidth. destruct (kcoeff (karr_reduce d a b p r));
+      cbn [length] in Hwidth; discriminate.
+Qed.
+
+(** Under the minor law, an actual pivot tail has the scaled stage equation. *)
+Lemma karr_minor_law_reduced_tail : forall cols previous pivot_rows
+    pivot_columns head columns pairs pivot_origin target_origin p r,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = S cols -> length (kcoeff r) = S cols ->
+  length (karr_row_entries p) = length (head :: columns) ->
+  length (karr_row_entries r) = length (head :: columns) ->
+  map (fun z => (previous * z)%Z)
+    (karr_row_entries
+      (karr_tail (karr_reduce previous (karr_head p) (karr_head r) p r))) =
+    karr_delete 0
+      (karr_cross (karr_nth 0 (karr_row_entries p))
+        (karr_nth 0 (karr_row_entries r))
+        (karr_row_entries r) (karr_row_entries p)).
+Proof.
+  intros cols previous pivot_rows pivot_columns head columns pairs
+    pivot_origin target_origin p r Hlaw Hprevious Hpivot Htarget
+    Hp_coeff Hr_coeff Hp_entries Hr_entries.
+  assert (Hweight : length (kweight p) = length (kweight r)).
+  { apply karr_weight_width_of_entries; lia. }
+  assert (Hstep : map (fun z => (previous * z)%Z)
+    (karr_row_entries
+      (karr_reduce previous (karr_head p) (karr_head r) p r)) =
+    karr_cross (karr_head p) (karr_head r)
+      (karr_row_entries r) (karr_row_entries p)).
+  { eapply karr_minor_law_reduce_multiple; eauto; try lia.
+    - destruct (kcoeff p); cbn [length] in Hp_coeff; discriminate.
+    - destruct (kcoeff r); cbn [length] in Hr_coeff; discriminate. }
+  rewrite karr_row_entries_tail.
+  - rewrite <- karr_delete_map_first, Hstep.
+    rewrite (karr_row_entries_head p), (karr_row_entries_head r);
+      [reflexivity| |].
+    + destruct (kcoeff r) as [|z coeff];
+        [cbn [length] in Hr_coeff; lia|intros H; discriminate].
+    + destruct (kcoeff p) as [|z coeff];
+        [cbn [length] in Hp_coeff; lia|intros H; discriminate].
+  - pose proof (karr_reduce_width previous (karr_head p) (karr_head r) p r
+      ltac:(lia)) as Hwidth.
+    rewrite Hr_coeff in Hwidth.
+    destruct (kcoeff (karr_reduce previous (karr_head p) (karr_head r) p r));
+      cbn [length] in Hwidth; discriminate.
 Qed.
 
 (** Restoring a zero coordinate increases the width by one. *)
@@ -11531,6 +11637,30 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite !length_app. cbn [length]. rewrite length_app, karr_unit_length. cbn [length].
       unfold dense. rewrite length_map. lia.
     - apply IH.
+  Qed.
+
+  (** The initialized run satisfies the labeled minor law at order zero. *)
+  Lemma bareiss_run_state_initial : forall P,
+    karr_run_state (length (variables P) + length P + 2)
+      (length (variables P))
+      (map karr_row_entries (bareiss_seeds P)) 1 [] []
+      (seq 0 (length (variables P) + length P + 2))
+      (map karr_row_entries (bareiss_seeds P)) (bareiss_seeds P).
+  Proof.
+    intro P. unfold karr_run_state. repeat (apply conj).
+    - lia.
+    - reflexivity.
+    - now rewrite length_map.
+    - unfold bareiss_seeds. apply seed_rows_width.
+    - rewrite length_seq. unfold bareiss_seeds. apply seed_entries_width.
+    - rewrite length_seq. lia.
+    - reflexivity.
+    - cbn [app]. apply Permutation_refl.
+    - cbn [app]. apply karr_increasing_seq.
+    - cbn [app]. replace (length (variables P) + length P + 2) with
+        (0 + (length (variables P) + length P + 2)) by lia.
+      apply karr_seq_bounded.
+    - rewrite karr_combine_self. apply karr_minor_law_initial.
   Qed.
 
   (** Every initialized certificate vector has a zero when two source slots exist. *)
