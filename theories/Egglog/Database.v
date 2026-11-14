@@ -21069,6 +21069,74 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply Hids. cbn [option_list In]. now left.
   Qed.
 
+  Lemma row_delete_queue : forall db f k,
+    queue (row_delete f k db) = queue db.
+  Proof.
+    intros db f k. unfold row_delete.
+    destruct (row_get f k db) as [output |]; [| reflexivity].
+    unfold queue, row_erase.
+    cbn [database_set_runtime runtime_set_rows db_runtime runtime_queue].
+    rewrite (slots_update_preserves _ (@runtime_queue (cell V.t) I.t)
+      (fun all new counts state => eq_refl)).
+    reflexivity.
+  Qed.
+
+  (** Current-row repair keeps all queued losers allocated. *)
+  Lemma repair_current_queue_allocated_active : forall db f k,
+    UnionFind.wf (db_forest db) ->
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    Forall (allocated db) (queue db) ->
+    (forall g args output i, row_get g args db = Some output ->
+      In (Id i) (args ++ option_list output) -> allocated db i) ->
+    Forall (allocated (repair_current f k db)) (queue (repair_current f k db)).
+  Proof.
+    intros db f k Hforest Hmembers Hqueue Hrows.
+    unfold repair_current.
+    destruct (row_get f k db) as [output |] eqn:Hrow; [| exact Hqueue].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hqueue |].
+    set (deleted := row_delete f k db).
+    assert (Hforest_deleted : UnionFind.wf (db_forest deleted)).
+    { subst deleted. now rewrite row_delete_forest. }
+    assert (Hmembers_deleted : forall x,
+      UnionFind.mem (db_forest deleted) x <-> allocated deleted x).
+    { intro x. subst deleted. rewrite row_delete_forest.
+      unfold allocated. rewrite row_delete_ids. exact (Hmembers x). }
+    assert (Hqueue_deleted : Forall (allocated deleted) (queue deleted)).
+    { subst deleted. rewrite row_delete_queue.
+      eapply Forall_impl; [| exact Hqueue].
+      intros x Hallocated. unfold allocated in *.
+      now rewrite row_delete_ids. }
+    assert (Hprevious : forall a,
+      row_get f (normal_key deleted (normal_key db k)) deleted =
+        Some (Some (Id a)) -> allocated deleted a).
+    { intros a Hnew. subst deleted.
+      rewrite row_delete_normal_key,
+        (normal_key_idempotent db k Hforest) in Hnew.
+      apply row_delete_binding in Hnew as [Hold _].
+      unfold allocated. rewrite row_delete_ids.
+      apply (Hrows f (normal_key db k) (Some (Id a)) a Hold).
+      apply in_or_app. right. cbn [option_list In]. now left. }
+    assert (Hnormal : forall b,
+      option_map (normal_cell deleted) (option_map (normal_cell db) output) =
+        Some (Id b) -> allocated deleted b).
+    { intros b Hnormalized. subst deleted.
+      rewrite row_delete_normal_output,
+        (normal_output_idempotent db output Hforest) in Hnormalized.
+      unfold allocated. rewrite row_delete_ids.
+      eapply normal_output_allocated_forest;
+        [exact Hforest | exact Hmembers | | exact Hnormalized].
+      intros i Hin. apply (Hrows f k output i Hrow).
+      apply in_or_app. now right. }
+    change (Forall (allocated (put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted))
+      (queue (put f (normal_key db k)
+        (option_map (normal_cell db) output) deleted))).
+    apply put_queue_allocated_active; assumption.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
