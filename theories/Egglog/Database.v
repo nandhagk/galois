@@ -11842,6 +11842,83 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact Hequal.
   Qed.
 
+  Lemma database_history_root_owner_affected : forall db f old ck
+      old_key old_id ck_key ck_id g args key r,
+    database_history_root_owner db ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db) =
+      row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db) \/
+     row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db) =
+      row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db)) -> g = f.
+  Proof.
+    intros db f old ck old_key old_id ck_key ck_id g args key r Howner
+      Hsource Hdest Hentry [Hroot | Hroot].
+    - exact (Howner g args key r f old old_key old_id Hentry Hsource Hroot).
+    - exact (Howner g args key r f ck ck_key ck_id Hentry Hdest Hroot).
+  Qed.
+
+  Lemma database_history_root_owner_link : forall db db' f old ck
+      old_key old_id ck_key ck_id loser winner,
+    database_history_root_owner db ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    ids db' = ids db ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links (db_row_store db')) with
+     | Some parent => parent | None => winner end) = winner ->
+    ((loser = row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db) /\
+      winner = row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db)) \/
+     (loser = row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db) /\
+      winner = row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db))) ->
+    database_history_root_owner db'.
+  Proof.
+    intros db db' f old ck old_key old_id ck_key ck_id loser winner
+      Howner Hsource Hdest Hhistory Hids Hlinks Hneq Hloser Hwinner Hanchors
+      g args key r h other other_key s Hfirst Hsecond Hroot.
+    rewrite Hhistory in Hfirst, Hsecond.
+    rewrite Hids in Hroot.
+    destruct (row_root_link_owner_preimages
+      (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (length other * (N.to_nat (N.log2 (ids db)) + 1)) s
+      (db_row_store db) (db_row_store db') loser winner
+      Hlinks Hneq Hloser Hwinner Hroot)
+      as [Hsame | [Hfirst_root Hsecond_root]].
+    - exact (Howner g args key r h other other_key s Hfirst Hsecond Hsame).
+    - assert (Hfirst_owner : g = f).
+      { eapply database_history_root_owner_affected;
+          [exact Howner | exact Hsource | exact Hdest | exact Hfirst |].
+        destruct Hanchors as [[Hleft Hright] | [Hleft Hright]];
+          destruct Hfirst_root as [Hroot_first | Hroot_first];
+          [left | right | right | left]; congruence. }
+      assert (Hsecond_owner : h = f).
+      { eapply database_history_root_owner_affected;
+          [exact Howner | exact Hsource | exact Hdest | exact Hsecond |].
+        destruct Hanchors as [[Hleft Hright] | [Hleft Hright]];
+          destruct Hsecond_root as [Hroot_second | Hroot_second];
+          [left | right | right | left]; congruence. }
+      congruence.
+  Qed.
+
   (** Repointing a root preserves a lookup when both affected labels agree. *)
   Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
