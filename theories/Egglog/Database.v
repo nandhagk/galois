@@ -11733,6 +11733,65 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - reflexivity.
   Qed.
 
+  Definition database_row_reaches (db : t) (x root : positive) : Prop :=
+    exists fuel, row_root fuel x (db_row_store db) = root.
+
+  Lemma database_row_reaches_edge : forall db x y root,
+    PTrieCode.get x (row_links (db_row_store db)) = Some y ->
+    (match PTrieCode.get root (row_links (db_row_store db)) with
+     | Some parent => parent | None => root end) = root ->
+    database_row_reaches db x root <-> database_row_reaches db y root.
+  Proof.
+    intros db x y root Hedge Hfixed.
+    destruct (Pos.eq_dec x y) as [-> | Hdifferent]; [tauto |].
+    split.
+    - intros [[| fuel] Hreach].
+      + cbn [row_root] in Hreach. subst x.
+        rewrite Hedge in Hfixed. cbn in Hfixed. subst y. contradiction.
+      + cbn [row_root] in Hreach. rewrite Hedge in Hreach.
+        destruct (Pos.eqb y x) eqn:Heq.
+        { apply Pos.eqb_eq in Heq. congruence. }
+        exists fuel. exact Hreach.
+    - intros [fuel Hreach]. exists (S fuel).
+      cbn [row_root]. rewrite Hedge.
+      destruct (Pos.eqb y x) eqn:Heq.
+      { apply Pos.eqb_eq in Heq. congruence. }
+      exact Hreach.
+  Qed.
+
+  Lemma database_history_connected_reaches : forall db x y root,
+    database_history_connected db x y ->
+    (match PTrieCode.get root (row_links (db_row_store db)) with
+     | Some parent => parent | None => root end) = root ->
+    (database_row_reaches db x root <-> database_row_reaches db y root).
+  Proof.
+    intros db x y root Hconnected Hfixed.
+    unfold database_history_connected in Hconnected.
+    induction Hconnected.
+    - eapply database_row_reaches_edge; eassumption.
+    - tauto.
+    - tauto.
+    - tauto.
+  Qed.
+
+  Lemma database_history_connected_fixed_unique : forall db first second,
+    database_history_connected db first second ->
+    (match PTrieCode.get first (row_links (db_row_store db)) with
+     | Some parent => parent | None => first end) = first ->
+    (match PTrieCode.get second (row_links (db_row_store db)) with
+     | Some parent => parent | None => second end) = second ->
+    first = second.
+  Proof.
+    intros db first second Hconnected Hfirst Hsecond.
+    assert (Hreach : database_row_reaches db second first).
+    { apply (proj1 (database_history_connected_reaches db first second first
+        Hconnected Hfirst)).
+      exists 0%nat. reflexivity. }
+    destruct Hreach as [fuel Hroot].
+    rewrite (row_root_fixed fuel second (db_row_store db) Hsecond) in Hroot.
+    now symmetry.
+  Qed.
+
   (** Linking a terminal row root redirects every completed path with one more step. *)
   Lemma row_root_link_terminal : forall d r store store' loser winner,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
