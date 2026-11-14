@@ -13488,6 +13488,80 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now rewrite row_root_parent_iter.
   Qed.
 
+  Lemma database_row_links_merge_ok : forall (db db' : t) loser winner,
+    database_row_store_ok db -> database_row_weights_positive db ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    row_weights (db_row_store db') =
+      PTrieCode.set winner
+        ((match PTrieCode.get loser (row_weights (db_row_store db)) with
+          | Some n => n | None => 1%N end) +
+         (match PTrieCode.get winner (row_weights (db_row_store db)) with
+          | Some n => n | None => 1%N end))%N
+        (row_weights (db_row_store db)) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some p => p | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links (db_row_store db)) with
+     | Some p => p | None => winner end) = winner ->
+    In loser (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history (db_row_store db)))) ->
+    In winner (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history (db_row_store db)))) ->
+    (match PTrieCode.get loser (row_weights (db_row_store db)) with
+     | Some n => n | None => 1%N end <=
+     match PTrieCode.get winner (row_weights (db_row_store db)) with
+     | Some n => n | None => 1%N end)%N ->
+    forall r p, PTrieCode.get r (row_links (db_row_store db')) = Some p ->
+      In r (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store db')))) /\
+      In p (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store db')))) /\
+      (p <> r ->
+        (1 <= match PTrieCode.get r (row_weights (db_row_store db')) with
+         | Some n => n | None => 1%N end)%N /\
+        (2 * match PTrieCode.get r (row_weights (db_row_store db')) with
+         | Some n => n | None => 1%N end <=
+         match PTrieCode.get p (row_weights (db_row_store db')) with
+         | Some n => n | None => 1%N end)%N).
+  Proof.
+    intros db db' loser winner Hstore Hpositive Hhistory Hlinks Hweights
+      Hdifferent Hloser_fixed Hwinner_fixed Hloser_recorded
+      Hwinner_recorded Horder r p Hlink.
+    unfold database_row_store_ok in Hstore.
+    destruct Hstore as [Hbase_links _].
+    rewrite Hlinks in Hlink.
+    destruct (Pos.eq_dec r loser) as [-> | Hother].
+    - rewrite PTrie.get_set_same in Hlink. injection Hlink as <-.
+      rewrite Hhistory. split; [exact Hloser_recorded |].
+      split; [exact Hwinner_recorded |].
+      intro Hdistinct. rewrite Hweights.
+      rewrite PTrie.get_set_other by exact Hdifferent.
+      rewrite PTrie.get_set_same.
+      assert (Hone : (1 <= match PTrieCode.get loser
+        (row_weights (db_row_store db)) with
+        | Some n => n | None => 1%N end)%N).
+      { destruct (PTrieCode.get loser (row_weights (db_row_store db)))
+          as [n |] eqn:Hget; [apply (Hpositive loser n Hget) | lia]. }
+      split; nia.
+    - rewrite PTrie.get_set_other in Hlink by exact Hother.
+      destruct (Hbase_links r p Hlink) as [Hrecorded_r
+        [Hrecorded_p Hbase_weight]].
+      rewrite Hhistory. split; [exact Hrecorded_r |].
+      split; [exact Hrecorded_p |].
+      intro Hdistinct.
+      destruct (Hbase_weight Hdistinct) as [Hone Hdouble].
+      assert (Hnot_winner : r <> winner).
+      { intro Heq. subst r. rewrite Hlink in Hwinner_fixed.
+        cbn in Hwinner_fixed. congruence. }
+      rewrite Hweights, PTrie.get_set_other by exact Hnot_winner.
+      destruct (Pos.eq_dec p winner) as [-> | Hnot_parent_winner].
+      + rewrite PTrie.get_set_same. split; [exact Hone | nia].
+      + rewrite PTrie.get_set_other by exact Hnot_parent_winner.
+        split; assumption.
+  Qed.
+
   Lemma database_row_store_depth_same_links : forall db db',
     database_row_store_ok db -> ids db' = ids db ->
     row_history (db_row_store db') = row_history (db_row_store db) ->
