@@ -13386,6 +13386,56 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
   Qed.
 
+  (** A uniform checker and zero-test allowance pays the complete basis scan. *)
+  Definition karr_empty_scan_charge (dim keys bits mbits : nat) : N :=
+    (C.c_lc * N.of_nat
+      ((2 * dim + 1) * (dim + 1) *
+        (keys + (mbits + 1) * (bits + 1) + 1) + 1) +
+      8 * N.of_nat (dim + 1) + 64)%N.
+
+  Lemma T_karr_empty_certificate_bounded : forall P rs dim keys bits mbits,
+    length P <= dim -> length rs <= dim ->
+    Forall (fun r => length (lhs r) <= dim /\
+      C.row_key_bits r <= keys /\ C.row_bits r <= bits) P ->
+    Forall (karr_row_envelope dim dim mbits) rs ->
+    (T_empty_certificate P rs <=
+      karr_empty_scan_charge dim keys bits mbits * N.of_nat (dim + 1))%N.
+  Proof.
+    intros P rs dim keys bits mbits HP Hrs Hsource Hbasis.
+    assert (Hrow_charge : forall row, In row rs ->
+      (T_karr_zero row + C.T_check_empty P (kweight row) <=
+        karr_empty_scan_charge dim keys bits mbits - 64)%N).
+    { intros row Hr.
+      pose proof (proj1 (Forall_forall _ _) Hbasis row Hr) as Hrow.
+      destruct Hrow as [Hcoeff [_ [_ [Hweight [Hweight_bits _]]]]].
+      pose proof (T_karr_zero_bounded row) as Hzero.
+      pose proof (C.T_check_empty_le P (kweight row)) as Hcheck.
+      pose proof (karr_csize_envelope P (kweight row) dim keys bits mbits
+        Hsource Hweight_bits) as Hsize.
+      assert (Hsize_bound : C.csize P (kweight row) <=
+        (2 * dim + 1) * (dim + 1) *
+          (keys + (mbits + 1) * (bits + 1) + 1)).
+      { eapply Nat.le_trans; [exact Hsize|].
+        apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|lia]. }
+      assert (Hcheck_bound : (C.T_check_empty P (kweight row) <=
+        C.c_lc * N.of_nat
+          ((2 * dim + 1) * (dim + 1) *
+            (keys + (mbits + 1) * (bits + 1) + 1) + 1))%N).
+      { eapply N.le_trans; [exact Hcheck|].
+        apply N.mul_le_mono_l. lia. }
+      assert (Hzero_bound : (T_karr_zero row <= 8 * N.of_nat (dim + 1))%N).
+      { eapply N.le_trans; [exact Hzero|].
+        apply N.mul_le_mono_l. lia. }
+      unfold karr_empty_scan_charge. lia. }
+    pose proof (T_karr_empty_certificate_scan P rs
+      (karr_empty_scan_charge dim keys bits mbits - 64)%N Hrow_charge) as Hscan.
+    eapply N.le_trans; [exact Hscan|].
+    replace (karr_empty_scan_charge dim keys bits mbits - 64 + 64)%N
+      with (karr_empty_scan_charge dim keys bits mbits)%N.
+    - now apply N.mul_le_mono_l; lia.
+    - unfold karr_empty_scan_charge. lia.
+  Qed.
+
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
   Lemma input_minors_bits : forall P z,
     In z (input_minors P) ->
