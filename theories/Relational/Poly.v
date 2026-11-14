@@ -13418,6 +13418,72 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
+  (** A nonempty source lets the terminal checker share the elimination recurrence. *)
+  Lemma T_poly_range_nonempty_fold : forall P f,
+    P <> [] ->
+    let rows := map (poly_normal_row X.encode) P in
+    let input := poly_range_input P f in
+    let vars := poly_variables X.encode
+      (LCons X.t (coef f) REq (cst f) :: rows) in
+    let xs := map (@Some X.t) vars in
+    let initial := poly_initial tmp_encode
+      (map (fun r => (r, false)) input) in
+    let dim := n P + length (coef f) in
+    let mlen := length P + 1 in
+    let keys := nell (Reached P) + F.form_bits f + 1 in
+    let initial_bits := keys +
+      Nat.log2 (length (coef f) - length (poly_form_variables f) + 1) + 1 in
+    (T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb xs initial +
+      List.T_fold_left (range_candidate rows f) (T_range_candidate rows f)
+        (poly_run tmp_encode tmp_eqb xs initial) (NegInf, PosInf) <=
+      (RangeCore.poly_step_factor + poly_range_candidate_factor + 16) *
+        N.of_nat (fmcost (dim + 1) mlen (S (length xs)) mlen
+          (keys + initial_bits)))%N.
+  Proof.
+    intros P f Hnonempty rows input vars xs initial dim mlen keys initial_bits.
+    assert (Hsupport : length (poly_range_fixed_support P f) <= dim + 1).
+    { exact (poly_range_fixed_support_length P f). }
+    assert (Hinitial_length : length initial = mlen).
+    { unfold initial, input, mlen, poly_range_input.
+      rewrite poly_initial_length, length_map. cbn [length]. rewrite !length_map. lia. }
+    assert (Hreduced : Forall
+      (RangeCore.poly_reduced_row (poly_range_fixed_support P f)) initial).
+    { exact (poly_range_initial_reduced P f). }
+    assert (Henvelopes : Forall (RangeCore.poly_row_envelope
+      (dim + 1) mlen keys initial_bits) initial).
+    { exact (poly_range_initial_envelopes P f). }
+    assert (Hsources : Forall (poly_source_envelope (dim + 1) keys) rows).
+    { exact (poly_range_sources_envelope P f). }
+    eapply RangeCore.T_poly_run_fold_bounded with
+      (vars := poly_range_fixed_support P f) (count := mlen).
+    - exact Hsupport.
+    - lia.
+    - rewrite <- Hinitial_length. apply Nat.le_refl.
+    - exact Hreduced.
+    - exact Henvelopes.
+    - intros wider bounds r Hwide Hr.
+      assert (Hsource_wide : Forall (poly_source_envelope (dim + 1) wider) rows).
+      { eapply Forall_impl; [|exact Hsources].
+        intros q Hq. eapply poly_source_envelope_mono; [exact Hq|lia|].
+        unfold initial_bits, keys in *. lia. }
+      assert (Hrow : RangeCore.poly_row_envelope
+        (dim + 1) (length rows + 1) keys wider r).
+      { replace (length rows + 1) with mlen
+          by (unfold rows, mlen; rewrite length_map; lia).
+        exact Hr. }
+      assert (Hformbits : F.form_bits f <= wider)
+        by (unfold initial_bits, keys in *; lia).
+      pose proof (T_poly_range_candidate_recurrence rows f bounds r
+        (dim + 1) keys wider
+        ltac:(unfold rows; destruct P; [contradiction|discriminate])
+        Hsource_wide ltac:(lia) Hformbits Hrow) as Hcandidate.
+      replace (length rows + 2) with (mlen + 1) in Hcandidate
+        by (unfold rows, mlen; rewrite length_map; lia).
+      replace (dim + 1 + length rows + 2) with (dim + 1 + mlen + 1)
+        in Hcandidate by (unfold rows, mlen; rewrite length_map; lia).
+      exact Hcandidate.
+  Qed.
+
   (** A completed affine-case bound lifts through linearization and the wrapped/unknown branches. *)
   Lemma T_poly_range_from_linear : forall factor,
     (forall P f, (T_range_linear P f <=
