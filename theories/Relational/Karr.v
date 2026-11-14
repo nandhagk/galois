@@ -16308,6 +16308,71 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now apply N.mul_le_mono_l.
   Qed.
 
+  (** Coordinate collection fits any larger public dimension and width. *)
+  Lemma T_karr_variables_public : forall Q d w,
+    normal Q -> n (Reached Q) <= d -> ell (Reached Q) <= w -> 2 <= d ->
+    (T_variables Q <= 8 * karr_variables_factor *
+      N.of_nat (d^3 * (ellB d w + 1)^2))%N.
+  Proof.
+    intros Q d w HQ Hdim Hwidth Hd.
+    set (v := ellB d w + 1).
+    set (mass := terms (Reached Q) + length Q + 1).
+    set (width := 2 * ell (Reached Q) +
+      Nat.log2 (terms (Reached Q)) + 1).
+    pose proof (T_karr_variables_raw Q (ell (Reached Q))
+      (ell (Reached Q))) as Hclock.
+    assert (Hsource : Forall (fun r =>
+      C.row_key_bits r <= ell (Reached Q) /\
+      C.row_bits r <= ell (Reached Q)) Q).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact HQ].
+      intros r [_ [Hkeys Hbits]]. split; assumption. }
+    specialize (Hclock Hsource).
+    assert (Hterms : terms (Reached Q) <= n (Reached Q)^2).
+    { pose proof (karr_normal_terms_bound Q HQ) as Hbound.
+      unfold n in *. cbn [rows_of] in *. cbn [Nat.pow]. nia. }
+    pose proof (karr_normal_terms_log Q HQ) as Hlog.
+    assert (Hlogd : Nat.log2 (n (Reached Q) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hmass : mass <= 2 * d^2).
+    { unfold mass, n in *. cbn [rows_of] in *.
+      cbn [Nat.pow] in *. nia. }
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hwidth' : width <= 4 * v).
+    { unfold width, v, ellB in *.
+      assert (Hlogpos : 1 <= Nat.log2 d).
+      { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+        change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+      nia. }
+    assert (Hproduct : mass * width <= (2 * d^2) * (4 * v)).
+    { apply Nat.mul_le_mono; assumption. }
+    assert (Hvolume : mass * width <= 8 * (d^3 * v^2)).
+    { eapply Nat.le_trans; [exact Hproduct|].
+      replace (8 * (d^3 * v^2)) with (2 * d^3 * (4 * v^2)) by ring.
+      apply Nat.mul_le_mono.
+      - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia.
+      - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia. }
+    assert (HN : (N.of_nat (mass * width) <=
+      N.of_nat (8 * (d^3 * v^2)))%N) by lia.
+    replace (ell (Reached Q) + ell (Reached Q) +
+      Nat.log2 (terms (Reached Q)) + 1) with width in Hclock
+      by (unfold width; lia).
+    change (T_variables Q <= karr_variables_factor *
+      N.of_nat mass * N.of_nat width)%N in Hclock.
+    replace (karr_variables_factor * N.of_nat mass * N.of_nat width)%N
+      with (karr_variables_factor * N.of_nat (mass * width))%N in Hclock
+      by (rewrite Nat2N.inj_mul; ring).
+    eapply N.le_trans with (m :=
+      (karr_variables_factor * N.of_nat (8 * (d^3 * v^2)))%N).
+    - eapply N.le_trans; [exact Hclock|].
+      now apply N.mul_le_mono_l.
+    - unfold v. rewrite Nat2N.inj_mul.
+      change (N.of_nat 8) with 8%N. ring_simplify. apply N.le_refl.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
