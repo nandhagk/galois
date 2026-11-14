@@ -669,6 +669,60 @@ Proof.
     + now rewrite seq_shift.
 Qed.
 
+(** Concatenating finite lists adds their integer sums. *)
+Lemma karr_determinant_sum_app : forall A (f : A -> Z) xs ys,
+  fold_right Z.add 0%Z (map f (xs ++ ys)) =
+    (fold_right Z.add 0%Z (map f xs) +
+      fold_right Z.add 0%Z (map f ys))%Z.
+Proof.
+  intros A f xs. induction xs as [|x xs IH]; intro ys;
+    cbn [app map fold_right]; [ring|].
+  rewrite IH. ring.
+Qed.
+
+(** Summing through a deletion skips the removed original column. *)
+Lemma karr_determinant_sum_skip : forall count removed (f : nat -> Z),
+  removed < S count ->
+  fold_right Z.add 0%Z (map (fun index =>
+    f (if index <? removed then index else S index)) (seq 0 count)) =
+  fold_right Z.add 0%Z (map (fun index =>
+    if index =? removed then 0%Z else f index) (seq 0 (S count))).
+Proof.
+  intros count removed f Hremoved.
+  set (skip := fun index => if index <? removed then index else S index).
+  set (g := fun index => if index =? removed then 0%Z else f index).
+  change (fold_right Z.add 0%Z (map (fun index => f (skip index)) (seq 0 count)) =
+    fold_right Z.add 0%Z (map g (seq 0 (S count)))).
+  rewrite <- map_map.
+  unfold skip. rewrite karr_seq_delete by exact Hremoved.
+  replace (S count) with (removed + S (count - removed)) by lia.
+  rewrite seq_app. cbn [Nat.add].
+  rewrite !karr_determinant_sum_app.
+  assert (Hprefix : map g (seq 0 removed) = map f (seq 0 removed)).
+  { apply map_ext_in. intros index Hin. apply in_seq in Hin.
+    unfold g. assert (Hneq : (index =? removed) = false).
+    { apply Nat.eqb_neq. lia. }
+    now rewrite Hneq. }
+  assert (Htail : fold_right Z.add 0%Z
+      (map g (seq removed (S (count - removed)))) =
+      fold_right Z.add 0%Z
+        (map f (seq (S removed) (count - removed)))).
+  { cbn [seq map fold_right].
+    change ((g removed + fold_right Z.add 0%Z
+      (map g (seq (S removed) (count - removed))))%Z =
+      fold_right Z.add 0%Z
+        (map f (seq (S removed) (count - removed)))).
+    unfold g at 1. rewrite Nat.eqb_refl.
+    rewrite (karr_determinant_sum_ext nat g f
+      (seq (S removed) (count - removed))).
+    - ring.
+    - intros index Hin. apply in_seq in Hin.
+      unfold g. assert (Hneq : (index =? removed) = false).
+      { apply Nat.eqb_neq. lia. }
+      now rewrite Hneq. }
+  rewrite Hprefix, Htail. ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
