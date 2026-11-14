@@ -10051,6 +10051,51 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     unfold T_remove_keys; lia.
   Qed.
 
+  Lemma invalid_bad_bits_le : forall p p' ch st, state_ok st ->
+    finite_sum (fun x => S.key_bits x + 1) (invalidate p p' ch st) <=
+      finite_sum (fun x =>
+        infl_deg st x + length (cowrite_at st x) + 1)
+        (invalidate p p' ch st) * (kwidth st + 1).
+  Proof.
+    intros p p' ch st Hstate.
+    pose proof (finite_sum_key_bits_width (invalidate p p' ch st) (kwidth st))
+      as Hbits.
+    specialize (Hbits (fun x Hin =>
+      kwidth_dom st x Hstate (invalidate_dom p p' ch st x Hin))).
+    assert (Hlen : length (invalidate p p' ch st) <=
+      finite_sum (fun x => infl_deg st x + length (cowrite_at st x) + 1)
+        (invalidate p p' ch st)).
+    { rewrite <- finite_sum_one.
+      apply finite_sum_mono; intros x Hin; lia. }
+    eapply Nat.le_trans; [exact Hbits|].
+    apply Nat.mul_le_mono_r; exact Hlen.
+  Qed.
+
+  Lemma T_invalid_remove_bad_le : forall A p p' ch st (m : PTrieCode.t A),
+    state_ok st ->
+    (T_remove_keys (invalidate p p' ch st) m <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x =>
+          (infl_deg st x + length (cowrite_at st x) + 1)%nat)
+          (invalidate p p' ch st)) * N.of_nat (kwidth st + 1) + 2)%N.
+  Proof.
+    intros A p p' ch st m Hstate.
+    pose proof (T_invalid_remove_keys_le A (invalidate p p' ch st) m) as Hremove.
+    pose proof (invalid_bad_bits_le p p' ch st Hstate) as Hbits.
+    apply nat_to_N_le in Hbits; rewrite Nat2N.inj_mul in Hbits.
+    eapply N.le_trans; [exact Hremove|].
+    apply N.add_le_mono_r.
+    replace (16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (finite_sum (fun x =>
+        (infl_deg st x + length (cowrite_at st x) + 1)%nat)
+        (invalidate p p' ch st)) * N.of_nat (kwidth st + 1))%N with
+      ((16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1)) *
+        (N.of_nat (finite_sum (fun x =>
+          (infl_deg st x + length (cowrite_at st x) + 1)%nat)
+          (invalidate p p' ch st)) * N.of_nat (kwidth st + 1)))%N by ring.
+    apply N.mul_le_mono_l; exact Hbits.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
