@@ -1506,6 +1506,41 @@ Proof.
   exact Hin.
 Qed.
 
+(** A valid index in the original coordinate sequence names itself. *)
+Lemma karr_nth_seq : forall count start index,
+  index < count -> nth index (seq start count) 0%nat = start + index.
+Proof.
+  induction count as [|count IH]; intros start [|index] Hindex;
+    [lia|lia|cbn [seq nth]; lia|].
+  - cbn [seq nth]. rewrite IH by lia. lia.
+Qed.
+
+(** The original augmented matrix satisfies the all-order law at stage zero. *)
+Lemma karr_minor_law_initial : forall originals width,
+  karr_minor_law 1 [] [] (seq 0 width)
+    (map (fun row => (row, row)) originals).
+Proof.
+  intros originals width. unfold karr_minor_law.
+  intros origins live selected Hpaired Hlength Hselected Hpositive.
+  assert (Hsame : origins = live).
+  { clear Hlength Hselected Hpositive.
+    induction Hpaired as [|origin row origins live Hin Htail IH];
+      [reflexivity|].
+    apply in_map_iff in Hin as [source [Heq _]].
+    inversion Heq; subst. now f_equal. }
+  subst origins.
+  assert (Hcolumns : map (fun i => nth i (seq 0 width) 0%nat) selected = selected).
+  { clear Hlength Hpositive Hpaired.
+    revert Hselected. induction selected as [|i selected IH]; intro Hselected;
+      [reflexivity|].
+    inversion Hselected as [|? ? Hi Hrest]; subst. cbn [map]. f_equal.
+    - rewrite length_seq in Hi. rewrite karr_nth_seq by exact Hi. lia.
+    - now apply IH. }
+  rewrite Hcolumns, Z.pow_1_l.
+  - cbn [length app Nat.add]. rewrite Hlength. ring.
+  - lia.
+Qed.
+
 (** Signed minors account for the row exchanges made when selecting a pivot. *)
 Definition karr_signed_minors (width : nat) (rows : list (list Z)) : list Z :=
   flat_map (fun order =>
