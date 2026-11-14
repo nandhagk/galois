@@ -5293,12 +5293,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     now rewrite PTrie.get_empty.
   Qed.
 
-  (** Advancing clears the change flag without changing the view. *)
-  Lemma wf_advance : forall db, wf db ->
-    wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
+  (** Advancing preserves the base facts and clears the change flag. *)
+  Lemma database_wf_advance : forall db, database_wf db ->
+    database_wf (advance db) /\ view (advance db) = view db /\
+      changed (advance db) = false.
   Proof.
     intros db Hwf. split.
-    - unfold wf, database_wf in Hwf |- *.
+    - unfold database_wf in Hwf |- *.
       destruct Hwf as (Hforest & Hmembers & Hcount & Hwidth & Hequalities & Hlog &
         Hrows & Hkind & Hrowids & Hslots & Hbound & Hslotbound & Hpending & Hqueue &
         Hcanonical & Hsound & Hcomplete & Harity & Hgroups & Hcounts & Hmaxname & Hhistory).
@@ -5317,6 +5318,19 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           -- split; [exact Hgroups |]. split; [exact Hcounts |].
              split; [exact Hmaxname | now apply database_history_advance].
     - split; reflexivity.
+  Qed.
+
+  (** Advancing clears the change flag without changing the view. *)
+  Lemma wf_advance : forall db, wf db ->
+    wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
+  Proof. exact database_wf_advance. Qed.
+
+  Lemma database_public_ok_advance : forall db, database_public_ok db ->
+    database_public_ok (advance db).
+  Proof.
+    intros db [Hbase [Hidle Hrank]]. unfold database_public_ok.
+    split; [exact (proj1 (database_wf_advance db Hbase)) |].
+    split; [exact (database_idle_ok_advance db Hidle) | exact Hrank].
   Qed.
 
   (** Find returns the representative without changing the view. *)
