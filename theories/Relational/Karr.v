@@ -2574,6 +2574,21 @@ Proof.
   - apply IH; [lia|]. intros source Hin. apply Heq. now right.
 Qed.
 
+(** A paired origin and entry vector comes from one concrete augmented row. *)
+Lemma karr_pair_entries_member : forall (labels : list (list Z))
+    (rows : list karr_row) origin entries,
+  In (origin, entries) (combine labels (map karr_row_entries rows)) ->
+  exists row, In row rows /\ entries = karr_row_entries row.
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|row rows] origin entries Hin; cbn [map combine] in Hin;
+    try contradiction.
+  destruct Hin as [Heq|Hin].
+  - inversion Heq; subst. exists row. split; [now left|reflexivity].
+  - destruct (IH rows origin entries Hin) as [source [Hsource Heq]].
+    exists source. split; [now right|exact Heq].
+Qed.
+
 (** Deleting the first coordinate commutes with an entrywise map. *)
 Lemma karr_delete_map_first : forall (f : Z -> Z) xs,
   karr_delete 0 (map f xs) = map f (karr_delete 0 xs).
