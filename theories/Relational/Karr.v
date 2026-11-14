@@ -2580,6 +2580,59 @@ Proof.
     rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
 Qed.
 
+(** An arbitrary selected coordinate gives the same exact row quotient. *)
+Lemma karr_minor_law_reduce_multiple_at : forall previous pivot_rows
+    pivot_columns columns pairs pivot_origin target_origin p r index,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  index < length (kcoeff p) ->
+  length (karr_row_entries p) = length columns ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  map (fun z => (previous * z)%Z)
+    (karr_row_entries (karr_reduce previous
+      (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r)) =
+  karr_cross (karr_nth index (karr_row_entries p))
+    (karr_nth index (karr_row_entries r))
+    (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin
+    target_origin p r index Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hindex Hp_width Hr_width.
+  assert (Hr_index : index < length (kcoeff r)) by lia.
+  rewrite (karr_nth_row_entries_coeff index p Hindex).
+  rewrite (karr_nth_row_entries_coeff index r Hr_index).
+  eapply karr_row_entries_reduce_multiple.
+  - symmetry. exact Hcoeff.
+  - symmetry. exact Hweight.
+  - exact Hprevious.
+  - eapply karr_minor_law_reduce_exact_at; eauto.
+  - intros z Hin.
+    rewrite <- (karr_nth_row_entries_coeff index p Hindex) in Hin.
+    rewrite <- (karr_nth_row_entries_coeff index r Hr_index) in Hin.
+    apply In_nth_error in Hin as [j Hget].
+    assert (Hj : j < length columns).
+    { assert (Hcross_index : j < length (karr_cross
+          (karr_nth index (karr_row_entries p))
+          (karr_nth index (karr_row_entries r))
+          (karr_row_entries r) (karr_row_entries p))).
+      { apply nth_error_Some. rewrite Hget. discriminate. }
+      rewrite karr_cross_length in Hcross_index by exact Hr_width.
+      lia. }
+    assert (Hindex_columns : index < length columns).
+    { unfold karr_row_entries in Hp_width.
+      rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+      rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+    pose proof (karr_minor_law_cross_divisible_at previous pivot_rows
+      pivot_columns columns pairs pivot_origin (karr_row_entries p)
+      target_origin (karr_row_entries r) index j Hlaw Hprevious Hpivot
+      Htarget Hp_width ltac:(lia) Hindex_columns Hj) as Hmod.
+    rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
+Qed.
+
 (** The order-three determinant agrees with the six signed permutation products. *)
 Lemma karr_determinant_three : forall a b c d e f g h i,
   karr_determinant 3 [[a; b; c]; [d; e; f]; [g; h; i]] =
