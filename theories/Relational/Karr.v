@@ -15678,6 +15678,40 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
+  (** Either certificate path fits the same public multiplier allowance. *)
+  Lemma karr_entail_candidate_envelope : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    let width := ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+      (ell (Reached P) + ell (Reached (c :: nil))) + 1 in
+    length (mults k) <= length P /\
+    Forall (fun z => Z.size_nat z <= 8 * width) (mults k) /\
+    Z.size_nat (scale k) <= 8 * width.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    set (width := ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+      (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+    destruct (contradiction P) as [ms|] eqn:Hcontradiction.
+    - inversion Hcandidate; subst k. cbn [mults scale].
+      pose proof (karr_contradiction_certificate_envelope P ms Hcontradiction)
+        as [Hlength Hbits].
+      pose proof (karr_contradiction_width_public P c HP) as Hwidth.
+      repeat split; [exact Hlength| |].
+      + eapply Forall_impl; [|exact Hbits].
+        intros z Hz. cbn beta in Hz. unfold width. lia.
+      + change (Z.size_nat 1) with 1. unfold width, ellB. nia.
+    - pose proof (karr_target_certificate_seed_envelope P c k Hc Hcandidate)
+        as [Hlength [Hbits Hscale]].
+      pose proof (karr_target_width_public P c HP) as Hwidth.
+      repeat split; [exact Hlength| |].
+      + eapply Forall_impl; [|exact Hbits].
+        intros z Hz. cbn beta in Hz. unfold width. lia.
+      + unfold width. lia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
