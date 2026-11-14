@@ -15010,6 +15010,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (database_row_store_uses_history db Hstore x f k Huse).
   Qed.
 
+  Lemma row_replace_queue : forall db f k previous o,
+    queue (row_replace f k previous o db) = queue db.
+  Proof.
+    intros db f k previous o. unfold queue.
+    exact (row_replace_preserves _ (@runtime_queue (cell V.t) I.t)
+      (fun rows state => eq_refl) (fun flag state => eq_refl)
+      (fun all new counts state => eq_refl) f k previous o db).
+  Qed.
+
   Lemma row_replace_old_locate : forall db f k previous o g args key r,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
@@ -15638,6 +15647,51 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold row_ids in Hid. destruct (Hcover f k o i Hrow Hid)
       as [x [k0 [Hrepr [Huse [Hlocated Hactive]]]]].
     exists x, k0. repeat split; try assumption.
+  Qed.
+
+  Lemma database_idle_primary_row_replace : forall db f k previous o,
+    database_idle_ok db -> database_history_alignment db ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    forall g args output i,
+      row (view (row_replace f k previous o db)) g args output ->
+      row_ids args output i ->
+      exists x k0,
+        repr (row_replace f k previous o db) x =
+          repr (row_replace f k previous o db) i /\
+        uses (row_replace f k previous o db) x (g, k0) /\
+        located (row_replace f k previous o db) g k0 = Some args /\
+        (x = repr (row_replace f k previous o db) i \/
+         In x (queue (row_replace f k previous o db))).
+  Proof.
+    intros db f k previous o Hidle Halign Hcanonical g args output i Hrow Hid.
+    pose proof (database_idle_row_store db Hidle) as Hstore.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold row_store_ok, database_row_store_ok in Hstore. tauto. }
+    apply row_replace_rows in Hrow as [[Hold Hother] | [-> [-> <-]]].
+    - destruct (database_idle_coverage db Hidle g args output i Hold Hid)
+        as [x [k0 [Hrepr [Huse [Hlocated Hactive]]]]].
+      destruct (database_uses_history db x g k0 Hstore Huse)
+        as [r Hentry].
+      exists x, k0. unfold repr.
+      rewrite row_replace_forest, row_replace_queue.
+      split; [exact Hrepr |].
+      split; [apply row_replace_uses_old; assumption |].
+      split.
+      + unfold located, locate in *.
+        rewrite (row_replace_old_locate db f k previous o
+          g k0 (g, k0) r Hstore Hentry). exact Hlocated.
+      + exact Hactive.
+    - exists i, k. unfold repr.
+      rewrite row_replace_forest, row_replace_queue.
+      assert (Hfixed : repr db i = i) by (apply Hcanonical; exact Hid).
+      split; [reflexivity |].
+      split; [apply row_replace_uses_new; assumption |].
+      split.
+      + unfold located, locate. apply row_replace_new_locate_from_alignment;
+          [exact Hstore |].
+        intros key r Hentry. apply (Halign f k key r Hentry).
+        intros j Hin. apply Hcanonical. apply in_or_app. now left.
+      + left. symmetry. exact Hfixed.
   Qed.
 
   Lemma database_idle_scheduled : forall db, database_idle_ok db ->
