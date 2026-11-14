@@ -16156,6 +16156,51 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     eapply N.le_trans; [exact Hstep|exact Hclock].
   Qed.
 
+  (** Preparing and normalizing the head row share its checker mass budget. *)
+  Lemma poly_assign_prepared_row_mass : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 * (n P + total + length P + 3) * bits^2 in
+    (length (coef prepared) + 2) *
+      (X.bits x + 3 * F.form_bits prepared + 5) <= 256 * work.
+  Proof.
+    intros x e P f Hlinear prepared bits total work.
+    pose proof (poly_assign_prepared_head_measure_public x e P f Hlinear)
+      as Hmeasure.
+    cbn zeta in Hmeasure.
+    set (rowmass := (length (coef prepared) + 2) *
+      (X.bits x + 3 * F.form_bits prepared + 5)).
+    assert (Hrow : rowmass <=
+      (terms (Reached P) + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef prepared) + 2) *
+        (X.bits x + 3 * F.form_bits prepared + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2)).
+    { unfold rowmass. clear -P x prepared. nia. }
+    assert (Hwork : 256 *
+      (n P + terms (Reached P) + tsize e + length P + 3) * bits^2 <=
+      256 * work).
+    { replace (n P + terms (Reached P) + tsize e + length P + 3) with
+        (n P + total + length P + 3) by (unfold total; lia).
+      assert (Hone : 1 <= (length P + 3)^2)
+        by (cbn [Nat.pow]; nia).
+      pose proof (Nat.mul_le_mono_r 1 ((length P + 3)^2)
+        (256 * (n P + total + length P + 3) * bits^2) Hone)
+        as Hproduct.
+      replace (1 * (256 * (n P + total + length P + 3) * bits^2)) with
+        (256 * (n P + total + length P + 3) * bits^2)
+        in Hproduct by ring.
+      eapply Nat.le_trans; [exact Hproduct|].
+      assert (Heq : (length P + 3)^2 *
+        (256 * (n P + total + length P + 3) * bits^2) = 256 * work)
+        by (unfold work; ring).
+      rewrite <- Heq.
+      apply Nat.le_refl. }
+    eapply Nat.le_trans; [exact Hrow|].
+    eapply Nat.le_trans; [exact Hmeasure|exact Hwork].
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
