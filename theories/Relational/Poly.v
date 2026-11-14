@@ -15695,6 +15695,51 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply Nat.pow_le_mono_l. lia.
   Qed.
 
+  (** One prepared-head callback consumes four checker units of assignment work. *)
+  Lemma T_poly_assign_head_candidate_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    NoDup (map fst (coef f)) ->
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (T_assigned_candidate P x f (poly_assign_head x f P) <=
+      2 * N.of_nat (length (coef f) + 2) +
+      AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span (length (coef f) + 1) 0
+          (X.bits x + F.form_bits f + 1) (F.form_bits f + 1) +
+      4 * C.c_lc * N.of_nat work + 16)%N.
+  Proof.
+    intros x e P f Hlinear Hform volume bits work.
+    pose proof (T_poly_assign_head_candidate x f P Hform) as Hcandidate.
+    cbn zeta in Hcandidate.
+    pose proof (poly_assign_head_measure_public x e P f Hlinear Hform) as Hmeasure.
+    set (measure := (terms (Reached P) + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef f) + 2) *
+        (X.bits x + 3 * F.form_bits f + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2)).
+    assert (Hwork : measure <= 4 * work).
+    { eapply Nat.le_trans; [exact Hmeasure|].
+      change (4 * volume * bits^2 <= 4 * work).
+      assert (Hone : 1 <= (length P + 3)^2)
+        by (cbn [Nat.pow]; nia).
+      pose proof (Nat.mul_le_mono_r 1 ((length P + 3)^2)
+        (4 * volume * bits^2) Hone) as Hproduct.
+      replace (1 * (4 * volume * bits^2)) with (4 * volume * bits^2)
+        in Hproduct by ring.
+      replace (4 * work) with
+        ((length P + 3)^2 * (4 * volume * bits^2))
+        by (unfold work; ring).
+      exact Hproduct. }
+    assert (Hcheck : (C.c_lc * N.of_nat measure <=
+      4 * C.c_lc * N.of_nat work)%N).
+    { assert (Hnat : (N.of_nat measure <= N.of_nat (4 * work))%N)
+        by (apply time_of_nat_le; exact Hwork).
+      rewrite Nat2N.inj_mul in Hnat. cbn [N.of_nat] in Hnat.
+      nia. }
+    unfold measure in Hcheck.
+    clear -Hcandidate Hcheck. lia.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   (** An unreachable assignment performs only the outer reachability test. *)
   Lemma T_poly_assign_unreached : forall x e,
