@@ -804,10 +804,229 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     end.
   Definition tgwork (_ : BitsLangT.guard) (xs : list B.t) : nat :=
     operand_sizes xs + length xs + 1%nat.
-  Definition c_tab : N := 1%N. (* STUB *)
+  Definition c_tab : N := (1000000 * (T.c_word_table + W.c_payload + 1))%N.
+
+  (** Successful untagging exposes the widths and payload sizes charged by the operands. *)
+  Local Lemma untag_sizes xs ws : untag xs = Some ws ->
+    operand_widths xs = fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) ws) /\
+    operand_sizes xs =
+      fold_right Nat.add 0%nat (map (fun x =>
+        (Pos.to_nat (fst x) + W.psize (fst x) (snd x) + 1)%nat) ws) /\
+    length xs = length ws.
+  Proof.
+    revert ws.
+    induction xs as [|x xs IH]; intros ws Htag.
+    - inversion Htag; subst. repeat split; reflexivity.
+    - destruct x as [|w p|]; cbn [untag] in Htag; try discriminate.
+      destruct (untag xs) as [tail|] eqn:Htail; [|discriminate].
+      inversion Htag; subst ws.
+      specialize (IH tail eq_refl) as [Hwidth [Hsize Hlength]].
+      unfold operand_widths, operand_sizes in *.
+      cbn [map fold_right length]. rewrite Hwidth, Hsize, Hlength.
+      repeat split; reflexivity.
+  Qed.
+
+  (** Each tagged operand pays for one list position. *)
+  Local Lemma operand_length xs : (length xs <= operand_sizes xs)%nat.
+  Proof.
+    induction xs as [|x xs IH]; [reflexivity|].
+    assert (Hunit : (1 <= B.bsize x)%nat).
+    { destruct x as [|w p|].
+      - change (B.bsize TBot) with 1%nat. lia.
+      - change (B.bsize (TVal w p)) with
+          (Pos.to_nat w + W.psize w p + 1)%nat.
+        pose proof (Pos2Nat.is_pos w). lia.
+      - change (B.bsize TAny) with 1%nat. lia. }
+    change (operand_sizes (x :: xs)) with (B.bsize x + operand_sizes xs)%nat.
+    cbn [length]. lia.
+  Qed.
+
+  (** The derived untag clock makes one visit per tagged operand. *)
+  Local Lemma untag_time xs :
+    (T_untag xs <= N.of_nat (length xs + 1))%N.
+  Proof.
+    induction xs as [|x xs IH].
+    - time_step.
+    - destruct x as [|w p|]; time_unfold T_untag; cbn [length];
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; time_cbn_all; lia.
+  Qed.
+
+  (** Retagging visits at most the paired positions and one final list cell. *)
+  Local Lemma retag_time ws ps :
+    (T_retag ws ps <= N.of_nat (length ws + length ps + 1))%N.
+  Proof.
+    revert ps.
+    induction ws as [|w ws IH]; intros [|p ps];
+      time_unfold T_retag; cbn [length];
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; time_cbn; try lia.
+    specialize (IH ps). rewrite ?Nat2N.inj_add in IH. time_cbn_all. lia.
+  Qed.
+
+  (** Payload sizes are part of the size of each tagged operand. *)
+  Local Lemma payload_sum_le ws :
+    (fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) ws) <=
+      fold_right Nat.add 0%nat (map (fun x =>
+        (Pos.to_nat (fst x) + W.psize (fst x) (snd x) + 1)%nat) ws))%nat.
+  Proof.
+    induction ws as [|[w p] ws IH]; cbn [map fold_right]; lia.
+  Qed.
+
+  (** A checked result width and the payloads fit within four table work units. *)
+  Local Lemma table_budget o xs ws rw :
+    untag xs = Some ws -> Op.result_width o (map fst ws) = Some rw ->
+    (((Pos.to_nat rw +
+      fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) ws) + 1) ^ 2 +
+      fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) ws))%nat <=
+      4 * (twork (BOp o) xs + 1))%nat.
+  Proof.
+    intros Htag Hwidth.
+    pose proof (untag_sizes xs ws Htag) as [Hws [Hsize Hlength]].
+    pose proof (WordTime.result_width_size_bound o (map fst ws) rw Hwidth) as Hr.
+    rewrite map_map in Hr.
+    pose proof (payload_sum_le ws) as Hpayload.
+    rewrite <- Hsize in Hpayload.
+    cbn [twork].
+    rewrite <- Hws in Hr.
+    rewrite <- Hws.
+    set (base := (Op.op_widths o + operand_widths xs + 1)%nat) in *.
+    set (target := (Pos.to_nat rw + operand_widths xs + 1)%nat) in *.
+    assert (Hscaled : (target <= 2 * base)%nat).
+    { unfold target, base. lia. }
+    assert (Hsquare : (target ^ 2 <= 4 * base ^ 2)%nat).
+    { assert (Hmono : (target ^ 2 <= (2 * base) ^ 2)%nat).
+      { apply Nat.pow_le_mono_l. exact Hscaled. }
+      rewrite !Nat.pow_2_r in Hmono.
+      rewrite !Nat.pow_2_r. nia. }
+    change ((target ^ 2 +
+      fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) ws))%nat <=
+      4 * (operand_sizes xs + length xs + base ^ 2 + 1))%nat.
+    lia.
+  Qed.
+
+  (** Reading the width of each untagged operand has linear clock. *)
+  Local Lemma width_map_time ws :
+    (ListDef.T_map (@fst positive W.p)
+      (fun x => @Datatypes.T_fst positive W.p x) ws <=
+      2 * N.of_nat (length ws) + 1)%N.
+  Proof.
+    pose proof (ListDef.T_map_le (@fst positive W.p)
+      (fun x => @Datatypes.T_fst positive W.p x) 1 ws
+      ltac:(intros [w p]; time_step)) as Hmap.
+    nia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma T_fwd_le : forall o xs, (T_fwd o xs <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [w z|o] xs.
+    - destruct xs as [|x xs]; time_unfold T_fwd; unfold c_tab, twork;
+        time_cbn; pose proof (W.T_pconst_le w z) as Hconst;
+        rewrite ?Nat2N.inj_add in *; time_cbn_all; nia.
+    - pose proof (untag_time xs) as Huntag.
+      pose proof (operand_length xs) as Hlength.
+      time_unfold T_fwd.
+      destruct (untag xs) as [ws|] eqn:Htag.
+      + pose proof (untag_sizes xs ws Htag) as [Hwidth [Hsize Hlen]].
+        pose proof (width_map_time ws) as Hmap.
+        pose proof (WordTime.result_width_time_bound o (map fst ws)) as Hrwtime.
+        rewrite map_map in Hrwtime. rewrite <- Hwidth in Hrwtime.
+        destruct (Op.result_width o (map fst ws)) as [rw|] eqn:Hrw.
+        * pose proof (table_budget o xs ws rw Htag Hrw) as Hbudget.
+          pose proof (T.T_wfwd_le o rw ws) as Htable.
+          apply time_of_nat_le in Hbudget.
+          rewrite Nat2N.inj_mul in Hbudget.
+          time_cbn_all.
+          set (budget := N.of_nat (twork (BOp o) xs + 1)).
+          assert (Hlinear : (N.of_nat (length xs + 1) <= budget)%N).
+          { unfold budget.
+            change (N.of_nat (length xs + 1) <= N.of_nat
+              (operand_sizes xs + length xs +
+                (Op.op_widths o + operand_widths xs + 1) ^ 2 + 1))%N.
+            apply time_of_nat_le. lia. }
+          rewrite Nat2N.inj_add in Hlinear.
+          assert (Hpositive : (1 <= budget)%N) by nia.
+          assert (Hsquare :
+            (N.of_nat ((Op.op_widths o + operand_widths xs + 1) ^ 2) <= budget)%N).
+          { unfold budget.
+            change (N.of_nat ((Op.op_widths o + operand_widths xs + 1) ^ 2) <= N.of_nat
+              (operand_sizes xs + length xs +
+                (Op.op_widths o + operand_widths xs + 1) ^ 2 + 1))%N.
+            apply time_of_nat_le. lia. }
+          assert (Htable_budget :
+            (T.T_wfwd o rw ws <= 4 * T.c_word_table * budget)%N).
+          { eapply N.le_trans; [exact Htable|].
+            replace (4 * T.c_word_table * budget)%N with
+              (T.c_word_table * (4 * budget))%N by nia.
+            apply N.mul_le_mono_l.
+            unfold budget. exact Hbudget. }
+          assert (Hmap_budget :
+            (ListDef.T_map (@fst positive W.p)
+              (fun x => @Datatypes.T_fst positive W.p x) ws <= 3 * budget)%N).
+          { rewrite <- Hlen in Hmap. nia. }
+          assert (Hrw_budget :
+            (Op.T_result_width o (map fst ws) <= 128 * budget)%N).
+          { eapply N.le_trans; [exact Hrwtime|].
+            apply N.mul_le_mono_l. exact Hsquare. }
+          change (1 + (T_untag xs +
+            (ListDef.T_map (@fst positive W.p)
+              (fun x => @Datatypes.T_fst positive W.p x) ws +
+              Op.T_result_width o (map fst ws) + T.T_wfwd o rw ws)) <=
+            c_tab * budget)%N.
+          rewrite Nat2N.inj_add in Huntag.
+          clear - Huntag Hlinear Hpositive Hmap_budget Hrw_budget Htable_budget.
+          eapply N.le_trans with (m := ((4 * T.c_word_table + 133) * budget)%N).
+          -- rewrite N.mul_add_distr_r. lia.
+          -- apply N.mul_le_mono_r. unfold c_tab. nia.
+        * time_cbn_all.
+          set (budget := N.of_nat (twork (BOp o) xs + 1)).
+          assert (Hlinear : (N.of_nat (length xs + 1) <= budget)%N).
+          { unfold budget.
+            change (N.of_nat (length xs + 1) <= N.of_nat
+              (operand_sizes xs + length xs +
+                (Op.op_widths o + operand_widths xs + 1) ^ 2 + 1))%N.
+            apply time_of_nat_le. lia. }
+          assert (Hsquare :
+            (N.of_nat ((Op.op_widths o + operand_widths xs + 1) ^ 2) <= budget)%N).
+          { unfold budget.
+            change (N.of_nat ((Op.op_widths o + operand_widths xs + 1) ^ 2) <= N.of_nat
+              (operand_sizes xs + length xs +
+                (Op.op_widths o + operand_widths xs + 1) ^ 2 + 1))%N.
+            apply time_of_nat_le. lia. }
+          rewrite Nat2N.inj_add in Hlinear.
+          assert (Hmap_budget :
+            (ListDef.T_map (@fst positive W.p)
+              (fun x => @Datatypes.T_fst positive W.p x) ws <= 3 * budget)%N).
+          { rewrite <- Hlen in Hmap. nia. }
+          assert (Hrw_budget :
+            (Op.T_result_width o (map fst ws) <= 128 * budget)%N).
+          { eapply N.le_trans; [exact Hrwtime|].
+            apply N.mul_le_mono_l. exact Hsquare. }
+          eapply N.le_trans with (m := (3 + T_untag xs +
+            ListDef.T_map (@fst positive W.p)
+              (fun x => @Datatypes.T_fst positive W.p x) ws +
+            Op.T_result_width o (map fst ws))%N); [lia|].
+          rewrite Nat2N.inj_add in Huntag.
+          assert (Hpositive : (1 <= budget)%N) by lia.
+          clear - Huntag Hlinear Hpositive Hmap_budget Hrw_budget.
+          eapply N.le_trans with (m := (135 * budget)%N).
+          -- lia.
+          -- apply N.mul_le_mono_r. unfold c_tab. nia.
+      + time_cbn_all.
+        set (budget := N.of_nat (twork (BOp o) xs + 1)).
+        assert (Hlinear : (N.of_nat (length xs + 1) <= budget)%N).
+        { unfold budget.
+          change (N.of_nat (length xs + 1) <= N.of_nat
+            (operand_sizes xs + length xs +
+              (Op.op_widths o + operand_widths xs + 1) ^ 2 + 1))%N.
+          apply time_of_nat_le. lia. }
+        rewrite Nat2N.inj_add in Hlinear.
+        rewrite Nat2N.inj_add in Huntag.
+        eapply N.le_trans with (m := (3 + T_untag xs)%N); [lia|].
+        assert (Hpositive : (1 <= budget)%N) by lia.
+        clear - Huntag Hlinear Hpositive.
+        eapply N.le_trans with (m := (4 * budget)%N).
+        * lia.
+        * apply N.mul_le_mono_r. unfold c_tab. nia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma T_bwd_le : forall o r xs,
     (T_bwd o r xs <= c_tab * N.of_nat ((twork o xs + B.bsize r + 1)%nat))%N.
