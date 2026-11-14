@@ -3136,6 +3136,25 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply N.pow_le_mono_l. exact Hbase.
   Qed.
 
+  Lemma database_losing_path_depth : forall count arity weight first,
+    (N.of_nat (2 ^ first) <= weight)%N ->
+    (2 * weight <= (count + 1) ^ N.of_nat arity)%N ->
+    first < arity * (N.to_nat (N.log2 count) + 1).
+  Proof.
+    intros count arity weight first Hpath Hdouble.
+    set (budget := arity * (N.to_nat (N.log2 count) + 1)).
+    pose proof (database_key_space_pow2 count arity) as Hcapacity.
+    fold budget in Hcapacity.
+    assert (Hpower_positive : (0 < N.of_nat (2 ^ budget))%N).
+    { pose proof (Nat.pow_nonzero 2 budget ltac:(lia)). lia. }
+    destruct (Nat.lt_ge_cases first budget) as [Hsmall | Hlarge];
+      [exact Hsmall |].
+    assert (Hpower : (N.of_nat (2 ^ budget) <= N.of_nat (2 ^ first))%N).
+    { assert (2 ^ budget <= 2 ^ first) by
+        (apply Nat.pow_le_mono_r; lia). lia. }
+    nia.
+  Qed.
+
   (** Historical keys in one root component have the same value positions. *)
   Definition database_history_key_shape (db : t) : Prop :=
     forall f k key r g args other s,
