@@ -13805,17 +13805,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (T_affine_hull a b <= c_karr * N.of_nat
       (elimination_work (Reached a) (Reached b)))%N.
   Proof. Admitted. (* STUB *)
-  Definition k_cert : N := 1%N. (* STUB *)
+  Definition k_cert : N := 256%N.
   Lemma affine_hull_size : forall a b, normal a -> normal b ->
     length (affine_hull a b) <= n (Reached a) + n (Reached b) /\
     ell (Reached (affine_hull a b)) <=
       ellB (n (Reached a) + n (Reached b) + 1) (ell (Reached a) + ell (Reached b)).
-  Proof. Admitted. (* STUB *)
-  Lemma entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
-    entail_cert P r = Some k ->
-    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
-        (C.lsize r + C.cbits P (mults k) + 1)) <=
-      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_join_karr_le : forall a b, normal_s a -> normal_s b ->
     (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
@@ -15905,6 +15899,67 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact HN.
   Qed.
 
+  (** The produced certificate itself fits the public checker measure. *)
+  Lemma karr_entail_candidate_size_public : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+      (C.lsize c + C.cbits P (mults k) + 1)) <=
+      256 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))))%N.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    pose proof (karr_entail_candidate_envelope P c k HP Hc Hcandidate)
+      as [Hlength [Hmult Hscale]].
+    assert (Hsource : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= w /\ C.row_bits row <= w) P).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [Hrow [Hkeys Hbits]]. unfold d, w in *. repeat split; lia. }
+    pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hconclusion.
+    apply Forall_cons_iff in Hconclusion.
+    destruct Hconclusion as
+      [[Hconclusion_length [Hconclusion_keys Hconclusion_bits]] _].
+    pose proof (karr_csize_envelope P (mults k) d w w (8 * v)
+      Hsource Hmult) as Hsize.
+    assert (Hsize' : C.csize P (mults k) <=
+      (2 * d + 1) * (d + 1) *
+        (w + (8 * v + 1) * (w + 1) + 1)).
+    { assert (Hcount : length P + length (mults k) + 1 <= 2 * d + 1).
+      { unfold d, n. cbn [rows_of length]. lia. }
+      nia. }
+    assert (Hsource_bits : Forall (fun row => C.row_bits row <= w) P).
+    { eapply Forall_impl; [|exact Hsource].
+      intros row [_ [_ Hbits]]. exact Hbits. }
+    pose proof (karr_cbits_envelope P (mults k) w (8 * v)
+      Hsource_bits Hmult) as Hbits.
+    pose proof (karr_lsize_envelope c d w w
+      ltac:(unfold d; lia)
+      ltac:(unfold w; lia) ltac:(unfold w; lia)) as Hline.
+    pose proof (Nat.log2_le_mono (length P) d
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hlog.
+    change (Z.size_nat (scale k) <= 8 * v) in Hscale.
+    assert (Hproduct : (Z.size_nat (scale k) + 1) *
+      (C.lsize c + C.cbits P (mults k) + 1) <=
+      (8 * v + 1) * ((d + 1) * (w + w + 1) +
+        8 * v + w + Nat.log2 d + 2)).
+    { apply Nat.mul_le_mono.
+      - lia.
+      - lia. }
+    pose proof (karr_checker_work_public d w
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hmeasure.
+    replace (256 * N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil))))%N with
+      (N.of_nat (256 * (d^3 * v^2)))
+      by (unfold elimination_work, d, v, w; rewrite Nat2N.inj_mul; reflexivity).
+    clear -Hsize' Hproduct Hmeasure. fold v in Hmeasure. lia.
+  Qed.
+
   (** Flipping or retaining target weights costs one bounded pass. *)
   Lemma T_karr_signed_weights_bounded : forall sign zs bits,
     (sign = 1%Z \/ sign = (-1)%Z) ->
@@ -17061,6 +17116,24 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros P r HP Hr.
     eapply N.le_trans; [exact (T_karr_entail_cert_public P r HP Hr)|].
     apply N.mul_le_mono_r. unfold c_karr. lia.
+  Qed.
+
+  Lemma entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
+    entail_cert P r = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+        (C.lsize r + C.cbits P (mults k) + 1)) <=
+      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
+  Proof.
+    intros P r k HP Hr Hresult.
+    unfold entail_cert in Hresult.
+    destruct (match contradiction P with
+      | Some ms => Some (Cert ms 1 false)
+      | None => target_certificate P r
+      end) as [candidate|] eqn:Hcandidate; [|discriminate].
+    destruct (C.check_entails P r candidate) eqn:Hcheck; [|discriminate].
+    inversion Hresult; subst candidate.
+    unfold k_cert.
+    exact (karr_entail_candidate_size_public P r k HP Hr Hcandidate).
   Qed.
 
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
