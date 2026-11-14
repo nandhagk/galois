@@ -16664,6 +16664,190 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
+  (** Source-only pivot lookups use one coefficient factor of public work. *)
+  Lemma T_poly_assign_zero_source_lookup_public : forall x e P r,
+    In r (poly_assign_tail x P) ->
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (T_poly_coefficient tmp_eqb T_tmp_eqb None (poly_constraint r) <=
+      RangeCore.poly_coef_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P r Hr bits volume work.
+    set (dim := length (RangeCore.vars_of (poly_assign_sources x P))).
+    set (width := poly_raw_keys P + poly_raw_bits P + 2).
+    destruct (proj1 (Forall_forall _ _)
+      (poly_assign_tail_envelopes x P) r Hr) as
+      (Hunique & Hdim & Hkeys & Hbits & _).
+    pose proof (RangeCore.T_poly_coefficient_normal None (poly_constraint r)
+      (poly_raw_keys P + 1) (poly_raw_bits P)
+      Hunique Hkeys Hbits) as Hlookup.
+    pose proof (poly_assign_zero_source_lookup_mass x e P) as Hmass.
+    cbn zeta in Hmass.
+    assert (Hmass_clock :
+      (N.of_nat (dim + 1) * N.of_nat width <= N.of_nat work)%N).
+    { assert (Hconverted : (N.of_nat ((dim + 1) * width) <=
+        N.of_nat work)%N) by (apply time_of_nat_le; exact Hmass).
+      rewrite Nat2N.inj_mul in Hconverted. exact Hconverted. }
+    replace (poly_raw_keys P + 1 + poly_raw_bits P + 1) with width
+      in Hlookup by (unfold width; lia).
+    replace (RangeCore.poly_coef_factor *
+      N.of_nat (length (lhs (poly_constraint r)) + 1) * N.of_nat width)%N
+      with (RangeCore.poly_coef_factor *
+        (N.of_nat (length (lhs (poly_constraint r)) + 1) *
+          N.of_nat width))%N in Hlookup by ring.
+    assert (Hscaled : (RangeCore.poly_coef_factor *
+      (N.of_nat (length (lhs (poly_constraint r)) + 1) * N.of_nat width) <=
+      RangeCore.poly_coef_factor * N.of_nat work)%N).
+    { apply N.mul_le_mono_l.
+      eapply N.le_trans; [|exact Hmass_clock].
+      assert (Hlength : (N.of_nat (length (lhs (poly_constraint r)) + 1) <=
+        N.of_nat (dim + 1))%N).
+      { apply time_of_nat_le. apply Nat.add_le_mono_r. exact Hdim. }
+      apply N.mul_le_mono; [exact Hlength|apply N.le_refl]. }
+    eapply N.le_trans; [exact Hlookup|].
+    eapply N.le_trans with (m := (RangeCore.poly_coef_factor *
+      (N.of_nat (length (lhs (poly_constraint r)) + 1) *
+        N.of_nat width))%N).
+    - rewrite N.mul_assoc. apply N.le_refl.
+    - exact Hscaled.
+  Qed.
+
+  (** The prepared first-row lookup fits its linear construction mass. *)
+  Lemma T_poly_assign_zero_head_lookup_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (T_poly_coefficient tmp_eqb T_tmp_eqb None
+      (poly_constraint (poly_assign_head x prepared P)) <=
+      256 * RangeCore.poly_coef_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P f Hlinear prepared bits total work.
+    destruct (poly_assign_head_envelope x prepared P
+      (poly_assign_prepared_nodup f)) as
+      (Hunique & Hdim & Hkeys & Hbits & _).
+    pose proof (RangeCore.T_poly_coefficient_normal None
+      (poly_constraint (poly_assign_head x prepared P))
+      (X.bits x + F.form_bits prepared + 1)
+      (F.form_bits prepared + 1) Hunique Hkeys Hbits) as Hlookup.
+    pose proof (poly_assign_prepared_row_mass x e P f Hlinear) as Hrow.
+    cbn zeta in Hrow.
+    set (headwidth := X.bits x + 2 * F.form_bits prepared + 3).
+    assert (Hmass : (length (lhs (poly_constraint
+      (poly_assign_head x prepared P))) + 1) * headwidth <=
+      256 * work).
+    { assert (Hwidth : headwidth <=
+        X.bits x + 3 * F.form_bits prepared + 5)
+        by (unfold headwidth; lia).
+      assert (Hlength : length (lhs (poly_constraint
+        (poly_assign_head x prepared P))) + 1 <=
+        length (coef prepared) + 2).
+      { replace (length (coef prepared) + 2) with
+          ((length (coef prepared) + 1) + 1) by ring.
+        apply Nat.add_le_mono; [exact Hdim|apply Nat.le_refl]. }
+      eapply Nat.le_trans with (m := (length (coef prepared) + 2) *
+        (X.bits x + 3 * F.form_bits prepared + 5)).
+      - apply Nat.mul_le_mono; [exact Hlength|exact Hwidth].
+      - exact Hrow. }
+    assert (Hmass_clock :
+      (N.of_nat (length (lhs (poly_constraint
+        (poly_assign_head x prepared P))) + 1) * N.of_nat headwidth <=
+        256 * N.of_nat work)%N).
+    { apply time_of_nat_le in Hmass.
+      rewrite !Nat2N.inj_mul in Hmass.
+      cbn [N.of_nat] in Hmass. exact Hmass. }
+    replace (X.bits x + F.form_bits prepared + 1 +
+      (F.form_bits prepared + 1) + 1) with headwidth in Hlookup
+      by (unfold headwidth; lia).
+    replace (RangeCore.poly_coef_factor *
+      N.of_nat (length (lhs (poly_constraint
+        (poly_assign_head x prepared P))) + 1) * N.of_nat headwidth)%N
+      with (RangeCore.poly_coef_factor *
+        (N.of_nat (length (lhs (poly_constraint
+          (poly_assign_head x prepared P))) + 1) *
+          N.of_nat headwidth))%N in Hlookup by ring.
+    replace (256 * RangeCore.poly_coef_factor * N.of_nat work)%N
+      with (RangeCore.poly_coef_factor * (256 * N.of_nat work))%N by ring.
+    assert (Hscaled : (RangeCore.poly_coef_factor *
+      (N.of_nat (length (lhs (poly_constraint
+        (poly_assign_head x prepared P))) + 1) * N.of_nat headwidth) <=
+      RangeCore.poly_coef_factor * (256 * N.of_nat work))%N).
+    { apply N.mul_le_mono_l. exact Hmass_clock. }
+    eapply N.le_trans; [exact Hlookup|].
+    eapply N.le_trans with (m := (RangeCore.poly_coef_factor *
+      (N.of_nat (length (lhs (poly_constraint
+        (poly_assign_head x prepared P))) + 1) *
+          N.of_nat headwidth))%N).
+    - rewrite N.mul_assoc. apply N.le_refl.
+    - exact Hscaled.
+  Qed.
+
+  (** A zero prepared pivot adds only two lookups to the source-only step. *)
+  Lemma T_poly_assign_prepared_zero_step_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    poly_coefficient tmp_eqb None
+      (poly_constraint (poly_assign_head x (poly_prepare_form X.encode f) P)) = 0%Z ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x prepared, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) <=
+      (4 * RangeCore.poly_step_factor +
+        2049 * RangeCore.poly_coef_factor) * N.of_nat work + 64)%N.
+  Proof.
+    intros x e P f Hlinear Hzero prepared bits total work.
+    pose proof (T_poly_assign_zero_step_public x e P) as Htail.
+    cbn zeta in Htail.
+    replace (n P + terms (Reached P) + tsize e + length P + 3)
+      with (n P + (terms (Reached P) + tsize e) + length P + 3)
+      in Htail by lia.
+    assert (Hrows : forall r, In r (poly_assign_tail x P) ->
+      (T_poly_coefficient tmp_eqb T_tmp_eqb None (poly_constraint r) <=
+        RangeCore.poly_coef_factor * N.of_nat work)%N).
+    { intros r Hr.
+      pose proof (T_poly_assign_zero_source_lookup_public x e P r Hr)
+        as Hlookup.
+      cbn zeta in Hlookup.
+      replace (n P + terms (Reached P) + tsize e + length P + 3)
+        with (n P + (terms (Reached P) + tsize e) + length P + 3)
+        in Hlookup by lia.
+      exact Hlookup. }
+    pose proof (RangeAssignExtended.T_poly_assign_step_zero_head None
+      (poly_assign_head x prepared P) (poly_assign_tail x P)
+      (RangeCore.poly_coef_factor * N.of_nat work) Hzero Hrows) as Hsplit.
+    pose proof (T_poly_assign_zero_head_lookup_public x e P f Hlinear)
+      as Hhead.
+    cbn zeta in Hhead.
+    assert (Hhead_scaled : (8 * T_poly_coefficient tmp_eqb T_tmp_eqb None
+      (poly_constraint (poly_assign_head x prepared P)) <=
+      2048 * RangeCore.poly_coef_factor * N.of_nat work)%N).
+    { eapply N.le_trans; [apply N.mul_le_mono_l; exact Hhead|].
+      replace (2048 * RangeCore.poly_coef_factor * N.of_nat work)%N
+        with (8 * (256 * RangeCore.poly_coef_factor * N.of_nat work))%N
+        by ring.
+      apply N.le_refl. }
+    rewrite poly_assign_initial_head.
+    eapply N.le_trans; [exact Hsplit|].
+    replace ((4 * RangeCore.poly_step_factor +
+      2049 * RangeCore.poly_coef_factor) * N.of_nat work + 64)%N with
+      (4 * RangeCore.poly_step_factor * N.of_nat work +
+        RangeCore.poly_coef_factor * N.of_nat work +
+        2048 * RangeCore.poly_coef_factor * N.of_nat work + 64)%N
+      by ring.
+    apply N.add_le_mono.
+    - apply N.add_le_mono.
+      + apply N.add_le_mono; [exact Htail|apply N.le_refl].
+      + exact Hhead_scaled.
+    - apply N.le_refl.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
@@ -16866,6 +17050,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition c_num : N :=
     (poly_assume_factor + poly_havoc_factor + poly_range_affine_factor + 32 +
       1000000 * (RangeCore.poly_step_factor +
+        RangeCore.poly_coef_factor +
         AssignCore.poly_assign_normal_subst_factor +
         AssignCore.poly_assign_zero_subst_factor + C.c_lc + X.c_key + 1))%N.
   (** An unreachable assignment performs only the outer reachability test. *)
