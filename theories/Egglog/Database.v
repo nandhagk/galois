@@ -16681,6 +16681,54 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * apply N.lt_le_incl, N.leb_gt. exact Horder.
   Qed.
 
+  Lemma database_row_links_range_move : forall db f old ck,
+    database_row_store_ok db -> length old = length ck ->
+    forall r p,
+      PTrieCode.get r
+        (row_links (db_row_store (move_row_identity f old ck db))) = Some p ->
+      (r < row_fresh (db_row_store (move_row_identity f old ck db)))%positive /\
+      (p < row_fresh (db_row_store (move_row_identity f old ck db)))%positive.
+  Proof.
+    intros db f old ck Hstore Hlength.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource;
+      [| exact (database_row_store_link_range db Hstore)].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest;
+      [| exact (database_row_store_link_range db Hstore)].
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_range : (source_root < row_fresh store)%positive).
+    { subst source_root depth store.
+      apply row_root_below_fresh; [exact Hstore |].
+      exact (database_row_store_history_range db Hstore f old old_key old_id
+        Hsource). }
+    assert (Hdest_range : (dest_root < row_fresh store)%positive).
+    { subst dest_root depth store.
+      apply row_root_below_fresh; [exact Hstore |].
+      exact (database_row_store_history_range db Hstore f ck ck_key ck_id
+        Hdest). }
+    replace (runtime_allocated (db_runtime db)) with (ids db)
+      by reflexivity.
+    fold store depth source_root dest_root.
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame;
+      [exact (database_row_store_link_range db Hstore) |].
+    destruct (N.leb
+      (match PTrieCode.get source_root (row_weights store) with
+       | Some n => n | None => 1%N end)
+      (match PTrieCode.get dest_root (row_weights store) with
+       | Some n => n | None => 1%N end)) eqn:Horder.
+    - eapply database_row_links_merge_range with
+        (db := db) (loser := source_root) (winner := dest_root);
+        try reflexivity; assumption.
+    - eapply database_row_links_merge_range with
+        (db := db) (loser := dest_root) (winner := source_root);
+        try reflexivity; assumption.
+  Qed.
+
   (** Fixed historical aliases at either affected root have the destination key. *)
   Lemma database_history_alignment_affected : forall db f old ck g args
       old_key old_id ck_key ck_id key r,
