@@ -12237,6 +12237,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         Hentry Hcanonical_old).
   Qed.
 
+  Lemma database_history_alignment_make : forall db f k,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_history_alignment (snd (make f k db)).
+  Proof.
+    intros db f k Hwf Hstore Halign.
+    pose proof (database_row_store_ok_allocate_next db Hstore) as Hfresh_store.
+    pose proof (database_history_alignment_allocate_next db Hwf Hstore Halign)
+      as Hfresh_align.
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Halign;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh_align;
+      (apply database_history_alignment_row_replace;
+        [exact Hfresh_store | exact Hfresh_align]).
+  Qed.
+
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
     database_row_store_ok db ->
     database_row_store_ok (row_replace f k previous o db).
