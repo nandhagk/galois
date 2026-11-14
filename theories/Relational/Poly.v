@@ -15859,6 +15859,55 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold wide, prepared. lia.
   Qed.
 
+  (** A prepared nonzero pivot step has a linear row count in public work. *)
+  Lemma poly_assign_prepared_step_mass : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef prepared) + 1 in
+    let stepwidth := poly_raw_keys P + poly_raw_bits P + X.bits x +
+      2 * F.form_bits prepared + 3 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 * (n P + total + length P + 3) * bits^2 in
+    (length P + 2) * (support + length P + 2) * stepwidth^2 <=
+      3200 * work.
+  Proof.
+    intros x e P f Hlinear prepared support stepwidth bits total work.
+    set (wide := bits + Nat.log2 (total + 1) + 1).
+    destruct (poly_assign_prepared_widths x e P f Hlinear) as [Hwidth _].
+    cbn zeta in Hwidth.
+    change (stepwidth <= 5 * wide) in Hwidth.
+    pose proof (poly_assign_prepared_pivot_work x e P f Hlinear) as Hpivot.
+    cbn zeta in Hpivot.
+    assert (Hpivot' : (length P + 2) *
+      (support + terms (Reached P) + length P + 3) * wide^2 <= 128 * work).
+    { replace (128 * work) with
+        (128 * (length P + 3)^2 *
+          (n P + total + length P + 3) * bits^2)
+        by (unfold work; ring).
+      exact Hpivot. }
+    assert (Hsquare : stepwidth^2 <= 25 * wide^2).
+    { eapply Nat.le_trans with (m := (5 * wide)^2).
+      - now apply Nat.pow_le_mono_l.
+      - cbn [Nat.pow]. nia. }
+    assert (Hmass : (length P + 2) * (support + length P + 2) <=
+      (length P + 2) * (support + terms (Reached P) + length P + 3))
+      by (apply Nat.mul_le_mono_l; lia).
+    assert (Hgeom : (length P + 2) * (support + length P + 2) * stepwidth^2 <=
+      25 * ((length P + 2) *
+        (support + terms (Reached P) + length P + 3) * wide^2)).
+    { replace (25 * ((length P + 2) *
+        (support + terms (Reached P) + length P + 3) * wide^2)) with
+        (((length P + 2) *
+          (support + terms (Reached P) + length P + 3)) * (25 * wide^2))
+        by ring.
+      now apply Nat.mul_le_mono. }
+    eapply Nat.le_trans; [exact Hgeom|].
+    replace (3200 * work) with (25 * (128 * work)) by ring.
+    apply Nat.mul_le_mono_l. exact Hpivot'.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
