@@ -5703,6 +5703,91 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       unfold Word.is_word; lia.
   Qed.
 
+  Local Lemma table_ashr_partial_scale : forall rw wa a wb b lo,
+    (0 <= lo < Z.pos rw)%Z ->
+    (T_interval_ashr_small rw (interval_clip wa a)
+      (I (Fin lo) (Fin (Z.pos rw - 1))) <=
+      200000 * N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (interval_clip wb b) + 1) ^ 2))%N.
+  Proof.
+    intros rw wa a wb b lo Hlo.
+    set (s := Pos.to_nat rw + interval_bits (interval_clip wa a) +
+      interval_bits (interval_clip wb b) + 1).
+    pose proof (table_ashr_partial_bits rw lo Hlo) as Hbits.
+    assert (Hsize :
+      (Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (I (Fin lo) (Fin (Z.pos rw - 1))) + 1 <= 2 * s)%nat)
+      by (unfold s; lia).
+    pose proof (table_square_scale _ _ _ Hsize) as Hscale.
+    change (N.of_nat (2 ^ 2)) with 4%N in Hscale.
+    pose proof (table_ashr_partial_time rw wa a lo Hlo) as Hpartial.
+    clear - Hscale Hpartial.
+    nia.
+  Qed.
+
+  Local Lemma table_ashr_guard_time : forall rw lo hi,
+    (Z.T_ltb hi (Z.pos rw) + Z.T_leb (Z.pos rw) lo <=
+      100 * N.of_nat ((Pos.to_nat rw + Z.size_nat lo + Z.size_nat hi + 1) ^ 2))%N.
+  Proof.
+    intros rw lo hi.
+    pose proof (Std.Z.T_ltb_le hi (Z.pos rw)) as Hlt.
+    pose proof (Std.Z.T_leb_le (Z.pos rw) lo) as Hle.
+    pose proof (table_positive_bits rw) as Hbits.
+    assert (Hpositive :
+      (1 <= Pos.to_nat rw + Z.size_nat lo + Z.size_nat hi + 1)%nat) by lia.
+    assert (Hsquare :
+      (Pos.to_nat rw + Z.size_nat lo + Z.size_nat hi + 1 <=
+        (Pos.to_nat rw + Z.size_nat lo + Z.size_nat hi + 1) ^ 2)%nat)
+      by (clear - Hpositive; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hsquare) as HsquareN.
+    cbn [Z.size_nat] in Hlt, Hle.
+    repeat rewrite Nat2N.inj_add in Hlt, Hle.
+    repeat rewrite Nat2N.inj_mul in Hlt, Hle.
+    repeat rewrite Nat2N.inj_add.
+    lia.
+  Qed.
+
+  Local Lemma table_ashr_join_time : forall rw wa a wb b lo (sign : bool),
+    (Scalar.T_interval_join
+      (interval_ashr_small rw (interval_clip wa a)
+        (I (Fin lo) (Fin (Z.pos rw - 1))))
+      (I (Fin (if sign then Word.modulus rw - 1 else 0))
+        (Fin (if sign then Word.modulus rw - 1 else 0))) <=
+      40 * Scalar.c_scalar * N.of_nat
+        ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+          interval_bits (interval_clip wb b) + 1) ^ 2))%N.
+  Proof.
+    intros rw wa a wb b lo sign.
+    set (ca := interval_clip wa a).
+    set (s := Pos.to_nat rw + interval_bits ca +
+      interval_bits (interval_clip wb b) + 1).
+    set (sat := (if sign then Word.modulus rw - 1 else 0)%Z).
+    assert (Hsat : (interval_bits (I (Fin sat) (Fin sat)) <= Pos.to_nat rw)%nat).
+    { unfold sat. destruct sign.
+      - cbn [interval_bits]. rewrite Nat.max_id.
+        apply PayloadBounds.payload_cap_bits.
+      - cbn [interval_bits Z.size_nat Nat.max]. lia. }
+    pose proof (table_ashr_small_raw_bits rw ca
+      (I (Fin lo) (Fin (Z.pos rw - 1)))) as Hsmall.
+    assert (Hlinear :
+      (interval_bits (interval_ashr_small rw ca
+        (I (Fin lo) (Fin (Z.pos rw - 1)))) +
+        interval_bits (I (Fin sat) (Fin sat)) + 1 <= 40 * s)%nat)
+      by (unfold s; lia).
+    assert (Hpositive : (1 <= s)%nat) by (unfold s; lia).
+    assert (Hsquare : (s <= s ^ 2)%nat)
+      by (clear - Hpositive; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hlinear) as HlinearN.
+    pose proof (table_nat_to_N_le _ _ Hsquare) as HsquareN.
+    rewrite Nat2N.inj_mul in HlinearN.
+    pose proof (Scalar.T_interval_join_le
+      (interval_ashr_small rw ca (I (Fin lo) (Fin (Z.pos rw - 1))))
+      (I (Fin sat) (Fin sat))) as Hjoin.
+    clear - HlinearN HsquareN Hjoin.
+    repeat rewrite Nat2N.inj_add in Hjoin.
+    nia.
+  Qed.
+
   Local Lemma table_unary_dispatch_time : forall rw w a cost,
     (cost <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits (interval_clip w a) + 1) ^ 2))%N ->
