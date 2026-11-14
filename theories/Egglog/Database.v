@@ -16691,7 +16691,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   TimeFun rank_slots.
   Definition k_locate : N := 1. (* STUB *)
   Definition k_repair : N := 1. (* STUB *)
-  Definition k_pop : N := 64 * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1).
+  Definition k_pop : N := 128 * (DatabaseUseMap.c_map + 1) * (UnionFindT.c_uf + 1).
   Definition k_rstep : N := 64.
   Definition k_stop : N := k_rstep + k_pop + c_loopN.
   Definition k_slots : N := 1024 * (I.c_ix + PTrieT.c_trie + V.c_key + 1).
@@ -17585,8 +17585,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold entry_weight. nia.
   Qed.
 
-  Local Transparent PTrieT.c_trie.
-
   Lemma T_pop_loser_le : forall db x db', inv db -> pop_loser db = Some (x, db') ->
     (T_pop_loser db <= k_pop * N.of_nat (work_weight db (bucket db x) + 1) *
       N.of_nat (unit db))%N.
@@ -17640,8 +17638,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       replace (16 * M * U + W + 1)%N with (16 * M * U + (W + 1))%N by ring.
       apply N.add_le_mono; [exact Hmaps | exact Hlength]. }
     assert (Hcoefficient : (67 + 2 * F + 16 * M <= k_pop)%N).
-    { unfold k_pop, M, F, DatabaseUseMap.c_map, PosKeyT.c_key,
-        PTrieT.c_trie, PTrieT.k_fold, UnionFindT.c_uf. lia. }
+    { unfold k_pop. fold M F.
+      eapply N.le_trans with (m := (128 * (M + F + 1))%N).
+      - replace (128 * (M + F + 1))%N with (128 * M + 128 * F + 128)%N by ring.
+        lia.
+      - replace (128 * (M + 1) * (F + 1))%N with
+          (128 * (M * F + M + F + 1))%N by ring.
+        apply N.mul_le_mono_l. lia. }
     assert (Hsize : (N.of_nat (N.size_nat (db_npending db)) <= U)%N)
       by (unfold U; lia).
     assert (Hcore : (T_pop_loser db <= (67 + 2 * F + 16 * M) * U + W)%N).
@@ -17667,7 +17670,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     2: { unfold W. rewrite Nat2N.inj_add. cbn [N.of_nat Pos.of_succ_nat]. ring. }
     lia.
   Qed.
-  Local Opaque PTrieT.c_trie.
   (** An empty pop reads the stored queue. *)
   Lemma T_pop_none_le : forall db, inv db -> pop_loser db = None ->
     (T_pop_loser db <= k_pop * N.of_nat (unit db))%N.
@@ -17681,8 +17683,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold k_pop. nia.
   Qed.
   (** A bucket is read by one keyed lookup. *)
-  Local Transparent PTrieT.c_trie.
-
   Lemma T_get_uses_le : forall db work x, inv_on db work -> allocated db x ->
     (T_get_uses x db <= k_pop * N.of_nat (unit db))%N.
   Proof.
@@ -17705,18 +17705,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       set (M := DatabaseUseMap.c_map) in *;
       set (F := UnionFindT.c_uf);
       set (U := N.of_nat (unit db)) in *;
-      assert (Hsingle : (5 + M * (U + 1) <= k_pop * U)%N)
-        by (unfold k_pop, M, F, DatabaseUseMap.c_map, PosKeyT.c_key,
-          PTrieT.c_trie, PTrieT.k_fold, UnionFindT.c_uf; nia);
+      assert (Hsingle : (5 + M * (U + 1) <= 128 * (M + 1) * U)%N) by nia;
       assert (Hbits : (N.of_nat (Pos.size_nat x) <= U)%N) by (unfold U; lia);
       assert (Hmap : (M * (N.of_nat (Pos.size_nat x) + 1) <= M * (U + 1))%N)
         by (apply N.mul_le_mono_l; lia);
       assert (Hcost : (DatabaseUseMap.T_get x (row_uses (db_row_store db)) <=
         M * (N.of_nat (Pos.size_nat x) + 1))%N) by exact Hget;
-      eapply N.le_trans with (m := (5 + M * (U + 1))%N);
-      [lia | exact Hsingle].
+      eapply N.le_trans with (m := (128 * (M + 1) * U)%N);
+      [lia |];
+      unfold k_pop; fold M F;
+      replace (128 * (M + 1) * (F + 1) * U)%N with
+        ((128 * (M + 1) * U) * (F + 1))%N by ring;
+      replace (128 * (M + 1) * U)%N with
+        ((128 * (M + 1) * U) * 1)%N at 1 by ring;
+      apply N.mul_le_mono_l; lia.
   Qed.
-  Local Opaque PTrieT.c_trie.
 
   Definition rebuild_measure (s : repair_state) : nat :=
     let db := fst s in
