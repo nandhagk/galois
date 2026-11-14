@@ -16881,6 +16881,148 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       lia.
   Qed.
 
+  (** The source-only scan's checker charge uses eight public work units. *)
+  Lemma poly_assign_tail_checker_public_clock : forall x e P,
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let width := nell (Reached P) + 1 in
+    let workbits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * workbits^2 in
+    (16 * C.c_lc * N.of_nat (length (poly_assign_tail_step x P)) *
+      N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (width + 1)^2 <= 8 * C.c_lc * N.of_nat work)%N.
+  Proof.
+    intros x e P dim width workbits volume work.
+    pose proof (poly_assign_tail_checker_public_mass x e P) as Hmass.
+    cbn zeta in Hmass.
+    assert (Hconverted :
+      (N.of_nat (16 * length (poly_assign_tail_step x P) *
+        (dim + terms (Reached P) + length P + 1) * (width + 1)^2) <=
+      N.of_nat (8 * work))%N).
+    { apply time_of_nat_le.
+      replace (8 * work) with
+        (8 * (length P + 3)^2 * volume * workbits^2)
+        by (unfold work; ring).
+      exact Hmass. }
+    replace (16 * C.c_lc * N.of_nat (length (poly_assign_tail_step x P)) *
+      N.of_nat (dim + terms (Reached P) + length P + 1) *
+      N.of_nat (width + 1)^2)%N with
+      (C.c_lc * N.of_nat (16 * length (poly_assign_tail_step x P) *
+        (dim + terms (Reached P) + length P + 1) * (width + 1)^2))%N.
+    2: { rewrite !Nat2N.inj_mul, Nat2N.inj_pow.
+      cbn [N.of_nat]. rewrite !N.pow_2_r. ring. }
+    replace (8 * C.c_lc * N.of_nat work)%N with
+      (C.c_lc * N.of_nat (8 * work))%N.
+    2: { rewrite Nat2N.inj_mul. cbn [N.of_nat]. ring. }
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** The prepared form's source-only scan fits the public assignment budget. *)
+  Lemma T_poly_assign_prepared_zero_tail_scan_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x prepared r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x prepared r)%N)
+      (poly_assign_tail_step x P) <=
+      (22 + 16 * AssignCore.poly_assign_zero_subst_factor +
+        8 * C.c_lc) * N.of_nat work + 1)%N.
+  Proof.
+    intros x e P f Hlinear prepared bits total work.
+    set (count := length (poly_assign_tail_step x P)).
+    set (dim := length (RangeCore.vars_of (poly_assign_sources x P))).
+    set (support := dim + length (coef prepared) + 1).
+    set (tailwidth := poly_raw_keys P + F.form_bits prepared +
+      2 * poly_raw_bits P + 3).
+    set (checkdim := dim + terms (Reached P) + length P + 1).
+    set (checkwidth := nell (Reached P) + 2).
+    destruct (poly_assign_form_row_bounds prepared) as [Hformkeys _].
+    pose proof (T_poly_assign_tail_scan x P prepared
+      (poly_assign_prepared_nodup f) Hformkeys) as Hscan.
+    cbn zeta in Hscan.
+    pose proof (poly_assign_tail_count_public_mass x e P)
+      as [Hcountdim Hcount].
+    cbn zeta in Hcountdim, Hcount.
+    pose proof (poly_assign_tail_subst_public_mass x e P f Hlinear)
+      as Hsubst.
+    cbn zeta in Hsubst.
+    pose proof (poly_assign_tail_checker_public_clock x e P) as Hcheck.
+    cbn zeta in Hcheck.
+    replace (n P + terms (Reached P) + tsize e + length P + 3)
+      with (n P + (terms (Reached P) + tsize e) + length P + 3)
+      in Hcountdim, Hcount, Hcheck by lia.
+    replace (nell (Reached P) + 1 + 1) with checkwidth in Hcheck
+      by (unfold checkwidth; lia).
+    assert (Hdimclock :
+      (N.of_nat count * N.of_nat (dim + 1) <= N.of_nat work)%N).
+    { assert (Hconverted : (N.of_nat (count * (dim + 1)) <=
+        N.of_nat work)%N) by (apply time_of_nat_le; exact Hcountdim).
+      rewrite Nat2N.inj_mul in Hconverted. exact Hconverted. }
+    assert (Hcountclock : (N.of_nat count <= N.of_nat work)%N)
+      by (apply time_of_nat_le; exact Hcount).
+    assert (Hsubstclock : (N.of_nat count * N.of_nat support *
+      N.of_nat tailwidth <= 16 * N.of_nat work)%N).
+    { assert (Hconverted :
+        (N.of_nat (count * support * tailwidth) <=
+          N.of_nat (16 * work))%N)
+        by (apply time_of_nat_le; exact Hsubst).
+      rewrite !Nat2N.inj_mul in Hconverted.
+      cbn [N.of_nat] in Hconverted. exact Hconverted. }
+    assert (Hfirst : (2 * N.of_nat (dim + 1) * N.of_nat count <=
+      2 * N.of_nat work)%N).
+    { replace (2 * N.of_nat (dim + 1) * N.of_nat count)%N with
+        (2 * (N.of_nat count * N.of_nat (dim + 1)))%N by ring.
+      apply N.mul_le_mono_l. exact Hdimclock. }
+    assert (Hsecond :
+      (AssignCore.poly_assign_zero_subst_factor * N.of_nat support *
+        N.of_nat tailwidth * N.of_nat count <=
+      16 * AssignCore.poly_assign_zero_subst_factor * N.of_nat work)%N).
+    { replace (AssignCore.poly_assign_zero_subst_factor * N.of_nat support *
+        N.of_nat tailwidth * N.of_nat count)%N with
+        (AssignCore.poly_assign_zero_subst_factor *
+          (N.of_nat count * N.of_nat support * N.of_nat tailwidth))%N
+        by ring.
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hsubstclock|].
+      replace (AssignCore.poly_assign_zero_subst_factor *
+        (16 * N.of_nat work))%N with
+        (16 * AssignCore.poly_assign_zero_subst_factor * N.of_nat work)%N
+        by ring.
+      apply N.le_refl. }
+    assert (Hthird : (16 * C.c_lc * N.of_nat checkdim *
+      N.of_nat checkwidth^2 * N.of_nat count <=
+      8 * C.c_lc * N.of_nat work)%N).
+    { replace (16 * C.c_lc * N.of_nat checkdim *
+        N.of_nat checkwidth^2 * N.of_nat count)%N with
+        (16 * C.c_lc * N.of_nat count *
+          N.of_nat checkdim * N.of_nat checkwidth^2)%N by ring.
+      exact Hcheck. }
+    assert (Hfourth : (20 * N.of_nat count <= 20 * N.of_nat work)%N)
+      by (apply N.mul_le_mono_l; exact Hcountclock).
+    eapply N.le_trans; [exact Hscan|].
+    replace ((2 * N.of_nat (dim + 1) +
+      AssignCore.poly_assign_zero_subst_factor * N.of_nat support *
+        N.of_nat tailwidth +
+      16 * C.c_lc * N.of_nat checkdim * N.of_nat checkwidth^2 + 16 + 4) *
+      N.of_nat count + 1)%N with
+      (2 * N.of_nat (dim + 1) * N.of_nat count +
+        AssignCore.poly_assign_zero_subst_factor * N.of_nat support *
+          N.of_nat tailwidth * N.of_nat count +
+        16 * C.c_lc * N.of_nat checkdim * N.of_nat checkwidth^2 *
+          N.of_nat count + 20 * N.of_nat count + 1)%N by ring.
+    replace ((22 + 16 * AssignCore.poly_assign_zero_subst_factor +
+      8 * C.c_lc) * N.of_nat work + 1)%N with
+      (2 * N.of_nat work +
+        16 * AssignCore.poly_assign_zero_subst_factor * N.of_nat work +
+        8 * C.c_lc * N.of_nat work + 20 * N.of_nat work + 1)%N by ring.
+    clear -Hfirst Hsecond Hthird Hfourth.
+    lia.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
@@ -16951,42 +17093,6 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       nia. }
     unfold measure in Hcheck.
     clear -Hcandidate Hcheck. lia.
-  Qed.
-
-  (** The source-only scan's checker charge uses eight public work units. *)
-  Lemma poly_assign_tail_checker_public_clock : forall x e P,
-    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
-    let width := nell (Reached P) + 1 in
-    let workbits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
-    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
-    let work := (length P + 3)^2 * volume * workbits^2 in
-    (16 * C.c_lc * N.of_nat (length (poly_assign_tail_step x P)) *
-      N.of_nat (dim + terms (Reached P) + length P + 1) *
-      N.of_nat (width + 1)^2 <= 8 * C.c_lc * N.of_nat work)%N.
-  Proof.
-    intros x e P dim width workbits volume work.
-    pose proof (poly_assign_tail_checker_public_mass x e P) as Hmass.
-    cbn zeta in Hmass.
-    assert (Hconverted :
-      (N.of_nat (16 * length (poly_assign_tail_step x P) *
-        (dim + terms (Reached P) + length P + 1) * (width + 1)^2) <=
-      N.of_nat (8 * work))%N).
-    { apply time_of_nat_le.
-      replace (8 * work) with
-        (8 * (length P + 3)^2 * volume * workbits^2)
-        by (unfold work; ring).
-      exact Hmass. }
-    replace (16 * C.c_lc * N.of_nat (length (poly_assign_tail_step x P)) *
-      N.of_nat (dim + terms (Reached P) + length P + 1) *
-      N.of_nat (width + 1)^2)%N with
-      (C.c_lc * N.of_nat (16 * length (poly_assign_tail_step x P) *
-        (dim + terms (Reached P) + length P + 1) * (width + 1)^2))%N.
-    2: { rewrite !Nat2N.inj_mul, Nat2N.inj_pow.
-      cbn [N.of_nat]. rewrite !N.pow_2_r. ring. }
-    replace (8 * C.c_lc * N.of_nat work)%N with
-      (C.c_lc * N.of_nat (8 * work))%N.
-    2: { rewrite Nat2N.inj_mul. cbn [N.of_nat]. ring. }
-    now apply N.mul_le_mono_l.
   Qed.
 
   (** A zero prepared pivot combines its head and source checker allowances. *)
