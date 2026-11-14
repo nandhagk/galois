@@ -13012,6 +13012,29 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply bareiss_run_state_initial.
     - exact Hin.
   Qed.
+  (** The initialized elimination run inherits the public input-minor width. *)
+  Lemma T_karr_bareiss_initial_bounded : forall P,
+    (T_karr_bareiss (length (variables P)) 1 (bareiss_seeds P) <=
+      N.of_nat (length (variables P)) *
+        karr_bareiss_stage_budget (n (Reached P) + 2)
+          (ellB (n (Reached P) + 1) (nell (Reached P))) + 4)%N.
+  Proof.
+    intro P.
+    eapply T_karr_bareiss_run_bounded with
+      (width := length (variables P) + length P + 2)
+      (original := map karr_row_entries (bareiss_seeds P))
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 (length (variables P) + length P + 2))
+      (labels := map karr_row_entries (bareiss_seeds P)).
+    - apply bareiss_run_state_initial.
+    - rewrite length_map. unfold bareiss_seeds.
+      pose proof (karr_seed_rows_length (variables P) (length P) 0
+        (map normalize_row P)) as Hlength.
+      rewrite length_map in Hlength. unfold n. cbn [rows_of]. lia.
+    - rewrite length_seq. unfold n. cbn [rows_of].
+      pose proof (karr_variables_count P). lia.
+    - intros z Hz. exact (input_minors_bits P z Hz).
+  Qed.
   Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
   Proof.
     reflexivity.
