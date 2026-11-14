@@ -1291,11 +1291,80 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     time_unfold T_grd. time_cbn.
     unfold c_tab. nia.
   Qed.
+  (** A pointed tagged operand exposes exactly its stored width. *)
+  Local Lemma pointed_widths xs cs :
+    Forall2 (fun x c => B.point x = Some c) xs cs ->
+    operand_widths xs =
+      fold_right Nat.add 0%nat (map (fun c => Pos.to_nat (fst c)) cs).
+  Proof.
+    intro Hpoints.
+    induction Hpoints as [|x c xs cs Hpoint Htail IH]; [reflexivity|].
+    change (tagged_point W.ppoint x = Some c) in Hpoint.
+    destruct x as [|w p|]; cbn [tagged_point] in Hpoint; try discriminate.
+    destruct (W.ppoint w p) as [z|] eqn:Hp; [|discriminate].
+    inversion Hpoint; subst c.
+    cbn [operand_widths map fold_right fst].
+    unfold operand_widths in IH. rewrite IH. reflexivity.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma T_abst_le : forall v xs o cs, BitsLangT.eval o cs = Some v ->
     Forall2 (fun x c => B.point x = Some c) xs cs ->
     (N.of_nat (B.abst_work v) <= c_tab * N.of_nat ((twork o xs + 1)%nat))%N.
-  Proof. Admitted. (* SIG-QUESTION: point widths need not be bounded by tag widths. *)
+  Proof.
+    intros [w z] xs [cw cz|o] cs Heval Hpoints.
+    - destruct cs as [|c cs]; cbn [BitsLangT.eval BitsLangCode.eval] in Heval;
+        [|discriminate].
+      inversion Hpoints; subst xs.
+      inversion Heval; subst w z.
+      change (B.abst_work (cw, Word.wrap cw cz)) with
+        ((Pos.to_nat cw + Z.size_nat (Word.wrap cw cz) + 1) ^ 2)%nat.
+      pose proof (WordTime.word_wrap_size_bound cw cz) as Hsize.
+      set (base := (Pos.to_nat cw + Z.size_nat cz + 1)%nat).
+      assert (Hscaled :
+        (Pos.to_nat cw + Z.size_nat (Word.wrap cw cz) + 1 <=
+          2 * base)%nat) by (unfold base; lia).
+      assert (Hsquare :
+        ((Pos.to_nat cw + Z.size_nat (Word.wrap cw cz) + 1) ^ 2 <=
+          4 * base ^ 2)%nat).
+      { pose proof (Nat.pow_le_mono_l _ _ 2 Hscaled) as Hmono.
+        rewrite !Nat.pow_2_r in Hmono |- *. nia. }
+      apply time_of_nat_le in Hsquare.
+      rewrite Nat2N.inj_mul in Hsquare.
+      eapply N.le_trans; [exact Hsquare|].
+      change (4 * N.of_nat (base ^ 2) <=
+        c_tab * N.of_nat (twork (BConst cw cz) nil + 1))%N.
+      unfold twork, c_tab, base. cbn [operand_sizes length].
+      rewrite Nat2N.inj_add. nia.
+    - change (L.eval_op o cs = Some (w, z)) in Heval.
+      pose proof (L.eval_op_is_word o cs w z Heval) as [Hword Hresult].
+      pose proof (pointed_widths xs cs Hpoints) as Hwidths.
+      pose proof (WordTime.word_size_bound w z Hword) as Hsize.
+      pose proof (WordTime.result_width_size_bound o (map fst cs) w Hresult)
+        as Hresult_width.
+      rewrite map_map in Hresult_width.
+      change (Pos.to_nat w <= Op.op_widths o +
+        fold_right Nat.add 0%nat
+          (map (fun c : positive * Z => Pos.to_nat (fst c)) cs) + 1)%nat
+        in Hresult_width.
+      rewrite <- Hwidths in Hresult_width.
+      set (base := (Op.op_widths o + operand_widths xs + 1)%nat).
+      assert (Hscaled :
+        (Pos.to_nat w + Z.size_nat z + 1 <= 3 * base)%nat)
+        by (unfold base; lia).
+      assert (Hsquare :
+        ((Pos.to_nat w + Z.size_nat z + 1) ^ 2 <= 9 * base ^ 2)%nat).
+      { pose proof (Nat.pow_le_mono_l _ _ 2 Hscaled) as Hmono.
+        rewrite !Nat.pow_2_r in Hmono |- *. nia. }
+      apply time_of_nat_le in Hsquare.
+      rewrite Nat2N.inj_mul in Hsquare.
+      change (B.abst_work (w, z)) with
+        ((Pos.to_nat w + Z.size_nat z + 1) ^ 2)%nat.
+      eapply N.le_trans; [exact Hsquare|].
+      change (9 * N.of_nat (base ^ 2) <=
+        c_tab * N.of_nat (twork (BOp o) xs + 1))%N.
+      unfold twork, c_tab, base.
+      rewrite Nat2N.inj_add. nia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma fwd_size_le : forall o xs r, fwd o xs = Some r ->
     (N.of_nat (B.bsize r) <= c_tab * N.of_nat (twork o xs + 1))%N.
