@@ -15810,6 +15810,54 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         rewrite Hentry in Hlocated. discriminate.
   Qed.
 
+  Lemma database_idle_ok_row_replace_canonical : forall db f k previous o,
+    database_wf db -> database_idle_ok db -> database_history_alignment db ->
+    kind_ok db f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    database_idle_ok (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hbase Hidle Halign Hkind Hcanonical.
+    set (next := row_replace f k previous o db).
+    assert (Hstore : database_row_store_ok next).
+    { subst next. apply database_row_store_ok_row_replace.
+      exact (database_idle_row_store db Hidle). }
+    assert (Hentry : forall x e, uses next x e <->
+      In (x, e) (flat_map (fun binding => map (pair (fst binding)) (snd binding))
+        (map (fun binding => (fst binding, snd (snd binding)))
+          (PTrieCode.elements (row_uses (db_row_store next)))))).
+    { intros x e. unfold uses, uses_entries. reflexivity. }
+    unfold database_idle_ok. fold next.
+    split; [exact Hstore |].
+    split.
+    { change (NoDup (queue next)). subst next.
+      rewrite row_replace_queue. exact (database_idle_queue_distinct db Hidle). }
+    split.
+    { intros g args output i Hrow Hid.
+      destruct (database_idle_primary_row_replace db f k previous o
+        Hidle Halign Hcanonical g args output i Hrow Hid)
+        as [x [k0 [Hrepr [Huse [Hlocated Hactive]]]]].
+      exists x, k0. repeat split; try assumption. }
+    split.
+    { intros g args output i Hrow Hid Hnonroot.
+      destruct (database_idle_secondary_row_replace db f k previous o
+        Hidle Hcanonical g args output i Hrow Hid Hnonroot)
+        as [k0 [Hscheduled Hlocated]].
+      exists k0. split; [| exact Hlocated].
+      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
+      destruct Hscheduled as [Hempty | [x [Hqueue Huse]]];
+        [contradiction |].
+      exists x. split; [exact Hqueue |]. apply Hentry. exact Huse. }
+    split.
+    { intros g k0 args Hlocated.
+      exact (database_idle_located_row_replace db f k previous o
+        Hbase Hidle Halign Hkind Hcanonical g k0 args Hlocated). }
+    intros x Hqueue. subst next.
+    change (In x (queue (row_replace f k previous o db))) in Hqueue.
+    rewrite row_replace_queue in Hqueue.
+    unfold repr. rewrite row_replace_forest.
+    exact (database_idle_queue_nonroot db Hidle x Hqueue).
+  Qed.
+
   Lemma forest_ok_public : forall db, database_wf db -> database_idle_ok db ->
     slot_rank_ok db -> database_owned_ok db -> forest_ok db.
   Proof.
