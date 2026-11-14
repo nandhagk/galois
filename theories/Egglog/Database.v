@@ -22407,6 +22407,56 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact Hattained.
   Qed.
 
+  Lemma row_root_relabel_lookup_inverse : forall fuel r store store' root ck k,
+    row_links store' = row_links store ->
+    row_keys store' = PTrieCode.set root ck (row_keys store) ->
+    PTrieCode.get (row_root fuel r store') (row_keys store') = Some k ->
+    PTrieCode.get (row_root fuel r store) (row_keys store) = Some k \/ k = ck.
+  Proof.
+    intros fuel r store store' root ck k Hlinks Hkeys Hlookup.
+    rewrite (row_root_same_links fuel r store' store Hlinks), Hkeys
+      in Hlookup.
+    destruct (Pos.eq_dec (row_root fuel r store) root) as [Heq | Hneq].
+    - rewrite Heq, PTrie.get_set_same in Hlookup.
+      right. now injection Hlookup.
+    - rewrite PTrie.get_set_other in Hlookup by exact Hneq.
+      now left.
+  Qed.
+
+  Lemma row_root_link_lookup_inverse : forall fuel r store store'
+      loser winner ck k,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    row_keys store' = PTrieCode.set winner ck (row_keys store) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links store) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links store') with
+     | Some parent => parent | None => winner end) = winner ->
+    PTrieCode.get (row_root fuel r store') (row_keys store') = Some k ->
+    PTrieCode.get (row_root fuel r store) (row_keys store) = Some k \/ k = ck.
+  Proof.
+    intros fuel r store store' loser winner ck k Hlinks Hkeys Hneq
+      Hloser Hwinner Hlookup.
+    destruct (Pos.eq_dec (row_root fuel r store) loser) as [Hsource | Hsource].
+    - destruct (row_root_link_two_roots fuel r store store' loser winner
+        Hlinks Hneq Hloser Hwinner Hsource) as [Hroot | Hroot];
+        rewrite Hroot, Hkeys in Hlookup.
+      + rewrite PTrie.get_set_other in Hlookup by exact Hneq.
+        left. now rewrite Hsource.
+      + rewrite PTrie.get_set_same in Hlookup.
+        right. now injection Hlookup.
+    - assert (Hdifferent : loser <> row_root fuel r store).
+      { intro Heq. apply Hsource. symmetry. exact Heq. }
+      rewrite (row_root_link_unaffected fuel r store store' loser winner
+        (row_root fuel r store) Hlinks Hdifferent Hloser eq_refl), Hkeys
+        in Hlookup.
+      destruct (Pos.eq_dec (row_root fuel r store) winner) as [Heq | Hother].
+      + rewrite Heq, PTrie.get_set_same in Hlookup.
+        right. now injection Hlookup.
+      + rewrite PTrie.get_set_other in Hlookup by exact Hother.
+        now left.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
