@@ -24609,6 +24609,24 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
 End Database.
 
+(** A finite callback trace records the exact terminal result. *)
+Inductive database_callback_finishes {S R : Type} (step : S -> S + R) (result : R) : S -> Prop :=
+| database_callback_finishes_stop : forall s,
+    step s = inr result -> database_callback_finishes step result s
+| database_callback_finishes_go : forall s next,
+    step s = inl next -> database_callback_finishes step result next ->
+    database_callback_finishes step result s.
+
+Lemma database_callback_finishes_next : forall S R (step : S -> S + R) result s next,
+  database_callback_finishes step result s -> step s = inl next ->
+  database_callback_finishes step result next.
+Proof.
+  intros S R step result s next Hfinished Hstep.
+  destruct Hfinished as [current Hstop | current following Hgo Hfinished].
+  - congruence.
+  - rewrite Hstep in Hgo. injection Hgo as Hequal. now subst following.
+Qed.
+
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Include Database V I.
   (* spec: wmark potential *)
@@ -31023,43 +31041,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (T_repair_entry_closed_bound db e rest Hinv).
   Qed.
 
-  (** Insertion pays its executable work and new occurrence credit. *)
-  Lemma T3_put_credit : forall B f k o db, wf db ->
-    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
-    (T_put f k o db +
-      N.of_nat (unit (put f k o db)) * (k_loop * rebuild_potential B (put f k o db)) <=
-      N.of_nat (unit (put f k o db)) *
-        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
-          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
-          (k_loop * rebuild_potential B db)))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Allocation pays new occurrences through the insertion budget. *)
-  Lemma T4_make_credit : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
-    (ids (snd (make f k db)) <= B)%N ->
-    (T_make f k db +
-      N.of_nat (unit (snd (make f k db))) * (k_loop * rebuild_potential B (snd (make f k db))) <=
-      N.of_nat (unit (snd (make f k db))) *
-        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
-          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
-          (k_loop * rebuild_potential B db)))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Union pays its root link and queued repair credit. *)
-  Lemma T5_union_credit : forall B i j db, wf db -> allocated db i -> allocated db j ->
-    (ids db <= B)%N ->
-    (T_union i j db +
-      N.of_nat (unit (union i j db)) * (k_loop * rebuild_potential B (union i j db)) <=
-      N.of_nat (unit (union i j db)) * (c_db + (k_loop * rebuild_potential B db)))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Continuing steps spend queued and active credit without a per-entry allowance. *)
-  Lemma T6_rstep_go : forall B U s s', state_inv s -> (ids (fst s') <= B)%N ->
-    unit (fst s') <= U -> rstep s = inl s' ->
-    (T_rstep s + k_loop * N.of_nat U * state_potential B s' <
-      k_loop * N.of_nat U * state_potential B s)%N.
-  Proof. Admitted. (* STUB *)
-
   (** The stopped branch reads an empty queue and pays the real wrapper overhead. *)
   Lemma T_rstep_stop_bound : forall s r, state_inv s -> rstep s = inr r ->
     (T_rstep s <= (k_rstep + k_pop) * N.of_nat (unit (fst s)))%N.
@@ -31083,13 +31064,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold k_stop. nia.
   Qed.
 
-  (** Continuing steps also pay the binary loop driver's per-step charge. *)
-  Lemma T6a_rstep_credit : forall B U s s', state_inv s ->
-    (ids (fst s') <= B)%N -> unit (fst s') <= U -> rstep s = inl s' ->
-    (T_rstep s + c_loopN + k_loop * N.of_nat U * state_potential B s' <=
-      k_loop * N.of_nat U * state_potential B s)%N.
-  Proof. Admitted. (* STUB *)
-
   (** Stopping retains result credit and spends the reserved stop allowance. *)
   Lemma T7a_stop_credit : forall B U s r, state_inv s -> unit (fst s) <= U ->
     rstep s = inr r ->
@@ -31104,14 +31078,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold state_potential. cbn [fst snd work_weight fold_right].
     unfold k_stop. nia.
   Qed.
-
-  (** The actual loop must fit the public budget after all use-entry charges are summed. *)
-  Lemma T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    (T_rebuild_fuel db + T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
-      N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
-      N.of_nat (unit (rebuild db)) *
-        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
-  Proof. Admitted. (* STUB *)
 
   (** The wrapper exposes fuel construction and driver overhead. *)
   Lemma T9_rebuild_driver : forall db,
@@ -31243,13 +31209,1836 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     time_unfold T_rebuild_fuel. unfold k_driver. nia.
   Qed.
 
-  (** The [T_loopN_amort] driver retains the final database credit. *)
+  (** Weighted occurrence credits and the complete amortized rebuild loop. *)
+
+  (** Relabeling one bucket evaluates each occurrence with its owner's cost function. *)
+  Lemma database_weighted_sum_labeled : forall A (cost : positive -> A -> nat) owner entries,
+    database_weighted_sum (fun xe => cost (fst xe) (snd xe)) (map (pair owner) entries) =
+      database_weighted_sum (cost owner) entries.
+  Proof.
+    intros A cost owner entries. unfold database_weighted_sum.
+    induction entries as [| entry entries IH]; cbn [fold_right map fst snd] in *; lia.
+  Qed.
+
+  Definition database_occurrence_sum {A : Type} (cost : positive -> A -> nat)
+      (m : DatabaseUseMap.t (list A)) : nat :=
+    database_weighted_sum
+      (fun binding => database_weighted_sum (cost (fst binding)) (snd binding))
+      (DatabaseUseMap.elements m).
+
+  Lemma database_occurrence_sum_entries : forall A cost (m : DatabaseUseMap.t (list A)),
+    database_weighted_sum (fun xe => cost (fst xe) (snd xe)) (DatabaseUsesFacts.entries m) =
+      database_occurrence_sum cost m.
+  Proof.
+    intros A cost m. unfold DatabaseUsesFacts.entries, database_occurrence_sum.
+    induction (DatabaseUseMap.elements m) as [| [owner entries] rest IH].
+    - reflexivity.
+    - cbn [flat_map fst snd].
+      rewrite database_weighted_sum_app, database_weighted_sum_labeled, IH.
+      reflexivity.
+  Qed.
+
+  Lemma database_occurrence_sum_set : forall A cost (m : DatabaseUseMap.t (list A)) owner entries,
+    DatabaseUseMap.wf m ->
+    database_occurrence_sum cost (DatabaseUseMap.set owner entries m) +
+      database_weighted_sum (cost owner) (DatabaseUses.bucket owner m) =
+    database_occurrence_sum cost m + database_weighted_sum (cost owner) entries.
+  Proof.
+    intros A cost m owner entries Hmap.
+    destruct (DatabaseUsesFacts.Maps.set_elements_decomposition _ m owner
+      (DatabaseUseMap.get owner m) entries Hmap eq_refl)
+      as [rest [Hbefore [Hafter Hrest]]].
+    pose proof (database_weighted_sum_permutation _
+      (fun binding => database_weighted_sum (cost (fst binding)) (snd binding))
+      _ _ Hbefore) as Hbefore_sum.
+    pose proof (database_weighted_sum_permutation _
+      (fun binding => database_weighted_sum (cost (fst binding)) (snd binding))
+      _ _ Hafter) as Hafter_sum.
+    unfold database_occurrence_sum, database_weighted_sum, DatabaseUses.bucket.
+    unfold database_weighted_sum in Hbefore_sum, Hafter_sum.
+    destruct (DatabaseUseMap.get owner m) as [previous |];
+      cbn [option_list option_map app database_weighted_sum fold_right fst snd] in *; lia.
+  Qed.
+
+  Lemma database_occurrence_sum_remove : forall A cost (m : DatabaseUseMap.t (list A)) owner,
+    DatabaseUseMap.wf m ->
+    database_occurrence_sum cost (DatabaseUseMap.remove owner m) +
+      database_weighted_sum (cost owner) (DatabaseUses.bucket owner m) =
+    database_occurrence_sum cost m.
+  Proof.
+    intros A cost m owner Hmap.
+    pose proof (DatabaseUsesFacts.Maps.remove_elements_decomposition _ m owner
+      (DatabaseUseMap.get owner m) Hmap eq_refl) as Hparts.
+    pose proof (database_weighted_sum_permutation _
+      (fun binding => database_weighted_sum (cost (fst binding)) (snd binding))
+      _ _ Hparts) as Hsum.
+    unfold database_occurrence_sum, database_weighted_sum, DatabaseUses.bucket.
+    unfold database_weighted_sum in Hsum.
+    destruct (DatabaseUseMap.get owner m) as [previous |];
+      cbn [option_list option_map app database_weighted_sum fold_right fst snd] in *; lia.
+  Qed.
+
+  (** Transfer changes the owner argument and retains every weighted occurrence once. *)
+  Lemma database_occurrence_sum_transfer : forall A cost source target
+      (m : DatabaseUseMap.t (list A)),
+    DatabaseUseMap.wf m ->
+    database_occurrence_sum cost (DatabaseUses.transfer source target m) +
+      database_weighted_sum (cost source) (DatabaseUses.bucket source m) =
+    database_occurrence_sum cost m +
+      database_weighted_sum (cost target) (DatabaseUses.bucket source m).
+  Proof.
+    intros A cost source target m Hmap. unfold DatabaseUses.transfer.
+    destruct (PosKeyT.eqb_spec source target) as [-> | Hdifferent]; [lia |].
+    set (removed := DatabaseUseMap.remove source m).
+    assert (Hremoved : DatabaseUseMap.wf removed).
+    { unfold removed. now apply DatabaseUseMap.wf_remove. }
+    assert (Htarget : DatabaseUses.bucket target removed = DatabaseUses.bucket target m).
+    { unfold removed, DatabaseUses.bucket.
+      now rewrite DatabaseUseMap.get_remove_other by congruence. }
+    pose proof (database_occurrence_sum_set _ cost removed target
+      (rev_append (DatabaseUses.bucket source m) (DatabaseUses.bucket target m)) Hremoved) as Hset.
+    pose proof (database_occurrence_sum_remove _ cost m source Hmap) as Hremove.
+    fold removed in Hremove. rewrite Htarget in Hset.
+    pose proof (database_weighted_sum_permutation _ (cost target) _ _
+      (DatabaseUsesFacts.reverse_append_inventory
+        (DatabaseUses.bucket source m) (DatabaseUses.bucket target m))) as Hreverse.
+    rewrite database_weighted_sum_app in Hreverse.
+    rewrite rev_append_rev in Hset, Hreverse |- *.
+    lia.
+  Qed.
+
+  Lemma database_bucket_transfer_other : forall A source target query
+      (m : DatabaseUseMap.t (list A)), query <> source -> query <> target ->
+    DatabaseUses.bucket query (DatabaseUses.transfer source target m) = DatabaseUses.bucket query m.
+  Proof.
+    intros A source target query m Hsource Htarget. unfold DatabaseUses.transfer.
+    destruct (PosKeyT.eqb_spec source target); [reflexivity |].
+    unfold DatabaseUses.bucket. rewrite DatabaseUseMap.get_set_other by congruence.
+    now rewrite DatabaseUseMap.get_remove_other by congruence.
+  Qed.
+
+  Lemma database_weighted_sum_member_le : forall A (weight : A -> nat) xs x,
+    In x xs -> weight x <= database_weighted_sum weight xs.
+  Proof.
+    intros A weight xs. unfold database_weighted_sum.
+    induction xs as [| y xs IH]; intros x Hin; [contradiction |].
+    cbn [fold_right]. destruct Hin as [-> | Hin]; [lia |].
+    specialize (IH x Hin). lia.
+  Qed.
+
+  Lemma database_weighted_sum_filter_mono : forall A (weight : A -> nat) left right xs,
+    (forall x, In x xs -> left x = true -> right x = true) ->
+    database_weighted_sum weight (filter left xs) <=
+      database_weighted_sum weight (filter right xs).
+  Proof.
+    intros A weight left right xs. induction xs as [| x xs IH]; intro Hinclude;
+      [reflexivity |].
+    assert (Htail : database_weighted_sum weight (filter left xs) <=
+      database_weighted_sum weight (filter right xs)).
+    { apply IH. intros y Hin Hleft. apply Hinclude; [now right | exact Hleft]. }
+    specialize (Hinclude x (or_introl eq_refl)).
+    unfold database_weighted_sum in Htail |- *. cbn [filter].
+    destruct (left x), (right x); cbn [database_weighted_sum fold_right] in *; try congruence; lia.
+  Qed.
+
+  (** Pointwise released credit pays the sum of all selected occurrence weights. *)
+  Lemma database_weighted_sum_spend : forall A (before after weight : A -> nat)
+      (selected : A -> bool) xs,
+    (forall x, In x xs -> after x + (if selected x then weight x else 0) <= before x) ->
+    database_weighted_sum after xs + database_weighted_sum weight (filter selected xs) <=
+      database_weighted_sum before xs.
+  Proof.
+    intros A before after weight selected xs. induction xs as [| x xs IH]; intro Hspend;
+      [reflexivity |].
+    assert (Htail : database_weighted_sum after xs +
+      database_weighted_sum weight (filter selected xs) <= database_weighted_sum before xs).
+    { apply IH. intros y Hin. apply Hspend. now right. }
+    specialize (Hspend x (or_introl eq_refl)).
+    unfold database_weighted_sum in Htail |- *.
+    cbn [filter fold_right] in Htail |- *.
+    destruct (selected x); cbn [database_weighted_sum fold_right] in *; lia.
+  Qed.
+
+  Definition database_total_credit (B : N) (db : t) : nat :=
+    database_weighted_sum (use_credit B db) (uses_entries db).
+
+  Definition database_class_work (db : t) (root : positive) : nat :=
+    database_weighted_sum (fun xe => entry_weight db (snd xe))
+      (filter (fun xe => Pos.eqb (repr db (fst xe)) root) (uses_entries db)).
+
+  Lemma database_entry_weight_positive : forall db e, 1 <= entry_weight db e.
+  Proof. intros db e. unfold entry_weight. nia. Qed.
+
+  Lemma database_entry_weight_layout : forall db next, slots next = slots db ->
+    forall e, entry_weight next e = entry_weight db e.
+  Proof. intros db next Hslots e. unfold entry_weight, slots_of. now rewrite Hslots. Qed.
+
+  Lemma database_work_weight_layout : forall db next, slots next = slots db ->
+    forall entries, work_weight next entries = work_weight db entries.
+  Proof.
+    intros db next Hslots entries. unfold work_weight.
+    change (database_weighted_sum (entry_weight next) entries =
+      database_weighted_sum (entry_weight db) entries).
+    apply database_weighted_sum_ext. now apply database_entry_weight_layout.
+  Qed.
+
+  Lemma database_class_work_positive : forall db root, In root (database_use_classes db) ->
+    1 <= database_class_work db root.
+  Proof.
+    intros db root Hin. unfold database_use_classes in Hin.
+    apply in_map_iff in Hin as [[owner entry] [Hequal Hmember]]. cbn [fst] in Hequal.
+    assert (Hfiltered : In (owner, entry)
+      (filter (fun xe => Pos.eqb (repr db (fst xe)) root) (uses_entries db))).
+    { apply filter_In. split; [exact Hmember |]. cbn [fst]. now apply Pos.eqb_eq. }
+    pose proof (database_weighted_sum_member_le _ (fun xe => entry_weight db (snd xe))
+      _ _ Hfiltered) as Hbound.
+    pose proof (database_entry_weight_positive db entry) as Hpositive.
+    unfold database_class_work. cbn [snd] in Hbound. lia.
+  Qed.
+
+  Lemma database_bucket_weight_sum : forall db owner,
+    work_weight db (bucket db owner) =
+      database_weighted_sum (fun xe => entry_weight db (snd xe))
+        (filter (fun xe => Pos.eqb (fst xe) owner) (uses_entries db)).
+  Proof.
+    intros db owner. unfold bucket, work_weight, database_weighted_sum.
+    induction (filter (fun xe => Pos.eqb (fst xe) owner) (uses_entries db))
+      as [| [x entry] entries IH]; cbn [map snd fold_right database_weighted_sum] in *; lia.
+  Qed.
+
+  Lemma database_bucket_class_work : forall db root, repr db root = root ->
+    work_weight db (bucket db root) <= database_class_work db root.
+  Proof.
+    intros db root Hroot. rewrite database_bucket_weight_sum. unfold database_class_work.
+    apply database_weighted_sum_filter_mono. intros [owner entry] Hin Howner.
+    cbn [fst] in *. apply Pos.eqb_eq in Howner. subst owner. now apply Pos.eqb_eq.
+  Qed.
+
+  (** Positive represented class work also pays a new queue cell. *)
+  Lemma database_queue_cost_class_work : forall db root, repr db root = root ->
+    In root (database_use_classes db) ->
+    work_weight db (bucket db root) + 1 <= 2 * database_class_work db root.
+  Proof.
+    intros db root Hroot Hclass.
+    pose proof (database_bucket_class_work db root Hroot) as Hbucket.
+    pose proof (database_class_work_positive db root Hclass) as Hpositive. lia.
+  Qed.
+
+  (** A row insertion's forest and queue expose its sole optional union. *)
+  Lemma put_forest_queue_effect : forall db f k o (covered : positive -> Prop),
+    (forall i, row_get f (normal_key db k) db = Some (Some (Id i)) -> covered i) ->
+    (forall j, option_map (normal_cell db) o = Some (Id j) -> covered j) ->
+    (db_forest (put f k o db) = db_forest db /\
+      queue (put f k o db) = queue db) \/
+    exists i j, covered i /\ covered j /\
+      db_forest (put f k o db) = db_forest (union i j db) /\
+      queue (put f k o db) = queue (union i j db).
+  Proof.
+    intros db f k o covered Hprevious Hnormal. unfold put.
+    rewrite !record_inputs_forest, !record_inputs_queue.
+    remember (row_get f (normal_key db k) db) as previous eqn:Hprevious_value.
+    remember (option_map (normal_cell db) o) as co eqn:Hnormal_value.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id i)), Some (Id j) => union i j db
+      | _, _ => db
+      end).
+    assert (Hnext : (db_forest next = db_forest db /\ queue next = queue db) \/
+      exists i j, covered i /\ covered j /\
+        db_forest next = db_forest (union i j db) /\
+        queue next = queue (union i j db)).
+    { unfold next. destruct previous as [[[i | v] |] |];
+        destruct co as [[j | w] |]; try (left; now split).
+      right. exists i, j. split; [apply Hprevious; congruence |].
+      split; [apply Hnormal; congruence |]. now split. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      rewrite row_replace_forest, row_replace_queue. exact Hnext.
+    - rewrite row_replace_forest, row_replace_queue. exact Hnext.
+  Qed.
+
+  (** Equal forest and queue fields give equal fields after a common union. *)
+  Lemma union_forest_queue_frame : forall db db' i j,
+    db_forest db' = db_forest db -> queue db' = queue db ->
+    db_forest (union i j db') = db_forest (union i j db) /\
+    queue (union i j db') = queue (union i j db).
+  Proof.
+    intros db db' i j Hforest Hpending. split.
+    - rewrite !union_forest. now rewrite Hforest.
+    - unfold union. rewrite Hforest.
+      destruct (UnionFindCode.union i j (db_forest db)) as [[[winner loser] |] forest].
+      + change (loser :: queue db' = loser :: queue db). now rewrite Hpending.
+      + change (queue db' = queue db). exact Hpending.
+  Qed.
+
+  (** A repair's optional collision joins two classes already represented in the inventory. *)
+  Lemma repair_current_forest_queue_effect : forall db work f k,
+    inv_on db work ->
+    (db_forest (repair_current f k db) = db_forest db /\
+      queue (repair_current f k db) = queue db) \/
+    exists i j,
+      In (repr db i) (database_use_classes db) /\
+      In (repr db j) (database_use_classes db) /\
+      db_forest (repair_current f k db) = db_forest (union i j db) /\
+      queue (repair_current f k db) = queue (union i j db).
+  Proof.
+    intros db work f k Hinv.
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    unfold repair_current.
+    destruct (row_get f k db) as [output |] eqn:Hrow; [| left; now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output)); [left; now split |].
+    set (deleted := row_delete f k db).
+    assert (Hprevious : forall i,
+      row_get f (normal_key deleted (normal_key db k)) deleted = Some (Some (Id i)) ->
+      In (repr db i) (database_use_classes db)).
+    { intros i Hget. unfold deleted in Hget.
+      rewrite row_delete_normal_key, (normal_key_idempotent db k Hforest) in Hget.
+      apply row_delete_binding in Hget as [Hold Hother].
+      exact (database_use_classes_output db work f (normal_key db k) i Hinv Hold). }
+    assert (Hnormal : forall j,
+      option_map (normal_cell deleted) (option_map (normal_cell db) output) = Some (Id j) ->
+      In (repr db j) (database_use_classes db)).
+    { intros j Hget. unfold deleted in Hget.
+      rewrite row_delete_normal_output, (normal_output_idempotent db output Hforest) in Hget.
+      exact (database_use_classes_normal_output db work f k output j Hinv Hrow Hget). }
+    destruct (put_forest_queue_effect deleted f (normal_key db k)
+      (option_map (normal_cell db) output)
+      (fun x => In (repr db x) (database_use_classes db)) Hprevious Hnormal)
+      as [[Hsame Hpending] | [i [j [Hi [Hj [Hunion Hpending]]]]]].
+    - left. change
+        (db_forest (put f (normal_key db k) (option_map (normal_cell db) output) deleted) =
+          db_forest db /\
+         queue (put f (normal_key db k) (option_map (normal_cell db) output) deleted) = queue db).
+      rewrite Hsame, Hpending. unfold deleted.
+      rewrite row_delete_forest, row_delete_queue. now split.
+    - right. exists i, j. split; [exact Hi |]. split; [exact Hj |].
+      change
+        (db_forest (put f (normal_key db k) (option_map (normal_cell db) output) deleted) =
+          db_forest (union i j db) /\
+         queue (put f (normal_key db k) (option_map (normal_cell db) output) deleted) =
+          queue (union i j db)).
+      rewrite Hunion, Hpending. apply union_forest_queue_frame.
+      + unfold deleted. apply row_delete_forest.
+      + unfold deleted. apply row_delete_queue.
+  Qed.
+
+  (** Resolving and linking row identities does not change the repair's union effect. *)
+  Lemma db_repair_entry_forest_queue_effect : forall db work f k,
+    inv_on db work ->
+    (db_forest (db_repair_entry f k db) = db_forest db /\
+      queue (db_repair_entry f k db) = queue db) \/
+    exists i j,
+      In (repr db i) (database_use_classes db) /\
+      In (repr db j) (database_use_classes db) /\
+      db_forest (db_repair_entry f k db) = db_forest (union i j db) /\
+      queue (db_repair_entry f k db) = queue (union i j db).
+  Proof.
+    intros db work f k Hinv. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| left; now split].
+    destruct (row_get f current db) as [output |]; [| left; now split].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) (output_eqb (option_map (normal_cell db) output) output));
+      [left; now split |].
+    rewrite (proj1 (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))).
+    rewrite (move_row_identity_queue
+      (repair_current f current db) f current (normal_key db current)).
+    exact (repair_current_forest_queue_effect db work f current Hinv).
+  Qed.
+
+  (** Every member of a successfully losing class inherits the size doubling. *)
+  Lemma database_union_losing_size : forall i j u winner loser next x,
+    UnionFind.wf u -> UnionFind.union i j u = (Some (winner, loser), next) ->
+    UnionFind.repr u x = loser ->
+    2 * UnionFind.size_of u (UnionFind.repr u x) <=
+      UnionFind.size_of next (UnionFind.repr next x).
+  Proof.
+    intros i j u winner loser next x Hwf Hunion Hclass.
+    pose proof (UnionFind.union_by_size i j u winner loser next Hwf Hunion) as Hbalance.
+    pose proof (UnionFind.size_of_union i j u winner loser next Hwf Hunion) as Hsum.
+    pose proof (proj2 (proj2 (UnionFind.union_some i j u winner loser next Hwf Hunion)))
+      as Hrepr.
+    rewrite Hclass, Hrepr, Hclass, Pos.eqb_refl, Hsum. lia.
+  Qed.
+
+  (** A selected doubled class releases one full entry weight, including repeated occurrences. *)
+  Lemma database_use_credit_spend : forall B db next root xe,
+    slots next = slots db ->
+    (class_size db (repr db (fst xe)) <= class_size next (repr next (fst xe)))%N ->
+    (0 < class_size db (repr db (fst xe)))%N ->
+    (class_size next (repr next (fst xe)) <= N.max 1 B)%N ->
+    (repr db (fst xe) = root ->
+      (2 * class_size db (repr db (fst xe)) <= class_size next (repr next (fst xe)))%N) ->
+    use_credit B next xe +
+      (if Pos.eqb (repr db (fst xe)) root then entry_weight db (snd xe) else 0) <=
+      use_credit B db xe.
+  Proof.
+    intros B db next root xe Hslots Hsize Hpositive Hbound Hdouble.
+    pose proof (N.log2_le_mono _ _ Hsize) as Hlogs.
+    unfold use_credit. rewrite (database_entry_weight_layout db next Hslots (snd xe)).
+    destruct (Pos.eqb (repr db (fst xe)) root) eqn:Hselected.
+    - apply Pos.eqb_eq in Hselected.
+      pose proof (database_log_debt_doubling B
+        (class_size db (repr db (fst xe))) (class_size next (repr next (fst xe)))
+        Hpositive (Hdouble Hselected) Hbound) as Hdrop. nia.
+    - assert (Hcredit : N.to_nat (N.log2 B - N.log2 (class_size next (repr next (fst xe)))) <=
+        N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe))))) by lia.
+      nia.
+  Qed.
+
+  (** Summing the pointwise size bound releases the complete represented losing class work. *)
+  Lemma database_total_credit_spend : forall B db next root,
+    uses_entries next = uses_entries db -> slots next = slots db ->
+    (forall x, (class_size db (repr db x) <= class_size next (repr next x))%N) ->
+    (forall x, (0 < class_size db (repr db x))%N) ->
+    (forall x, (class_size next (repr next x) <= N.max 1 B)%N) ->
+    (forall x, repr db x = root ->
+      (2 * class_size db (repr db x) <= class_size next (repr next x))%N) ->
+    database_total_credit B next + database_class_work db root <= database_total_credit B db.
+  Proof.
+    intros B db next root Huses Hslots Hsize Hpositive Hbound Hdouble.
+    unfold database_total_credit, database_class_work. rewrite Huses.
+    apply database_weighted_sum_spend. intros xe Hmember.
+    apply database_use_credit_spend; auto.
+  Qed.
+
+  (** Ordinary unions can add at most the cost of one empty queue cell. *)
+  Lemma database_union_credit_arithmetic : forall kc kq before after qbefore qafter bucket lost,
+    (kq <= kc)%N -> after + lost <= before -> qafter = qbefore + bucket + 1 -> bucket <= lost ->
+    (kc * N.of_nat after + kq * N.of_nat qafter <=
+      kc * N.of_nat before + kq * N.of_nat qbefore + kq)%N.
+  Proof.
+    intros kc kq before after qbefore qafter bucket lost Hcoeff Hcredit Hqueue Hbucket.
+    assert (Hsum : (N.of_nat after + N.of_nat lost <= N.of_nat before)%N) by lia.
+    assert (Hweighted : (kc * N.of_nat after + kc * N.of_nat lost <= kc * N.of_nat before)%N).
+    { rewrite <- N.mul_add_distr_l. now apply N.mul_le_mono_l. }
+    assert (Hbucket_weight : (kq * N.of_nat bucket <= kc * N.of_nat lost)%N).
+    { apply N.mul_le_mono; lia. }
+    rewrite Hqueue, !Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** A represented losing class pays its bucket and the extra queue cell together. *)
+  Lemma database_repair_credit_arithmetic : forall kc kq before after qbefore qafter bucket lost,
+    (2 * kq <= kc)%N -> after + lost <= before -> qafter = qbefore + bucket + 1 ->
+    bucket + 1 <= 2 * lost ->
+    (kc * N.of_nat after + kq * N.of_nat qafter <=
+      kc * N.of_nat before + kq * N.of_nat qbefore)%N.
+  Proof.
+    intros kc kq before after qbefore qafter bucket lost Hcoeff Hcredit Hqueue Hbucket.
+    assert (Hsum : (N.of_nat after + N.of_nat lost <= N.of_nat before)%N) by lia.
+    assert (Hweighted : (kc * N.of_nat after + kc * N.of_nat lost <= kc * N.of_nat before)%N).
+    { rewrite <- N.mul_add_distr_l. now apply N.mul_le_mono_l. }
+    assert (Hbucket_weight : (kq * N.of_nat (bucket + 1) <= kc * N.of_nat lost)%N).
+    { eapply N.le_trans with (m := (kq * (2 * N.of_nat lost))%N).
+      - apply N.mul_le_mono_l. lia.
+      - replace (kq * (2 * N.of_nat lost))%N with ((2 * kq) * N.of_nat lost)%N by ring.
+        now apply N.mul_le_mono_r. }
+    rewrite Hqueue, !Nat2N.inj_add. cbn [N.of_nat]. rewrite Nat2N.inj_add in Hbucket_weight.
+    cbn [N.of_nat] in Hbucket_weight. nia.
+  Qed.
+
+  Lemma database_total_credit_forest_frame : forall B db next,
+    db_forest next = db_forest db -> slots next = slots db ->
+    uses_entries next = uses_entries db ->
+    database_total_credit B next = database_total_credit B db.
+  Proof.
+    intros B db next Hforest Hslots Huses. unfold database_total_credit. rewrite Huses.
+    apply database_weighted_sum_ext. intro xe. unfold use_credit.
+    rewrite (database_entry_weight_layout db next Hslots (snd xe)).
+    unfold class_size, uf_state, repr. now rewrite Hforest.
+  Qed.
+
+  Lemma database_queue_weight_frame : forall db next, slots next = slots db ->
+    uses_entries next = uses_entries db -> queue next = queue db ->
+    queue_weight next = queue_weight db.
+  Proof.
+    intros db next Hslots Huses Hqueue. unfold queue_weight. rewrite Hqueue. clear Hqueue.
+    induction (queue db) as [| x rest IH]; [reflexivity |].
+    cbn [fold_right]. rewrite (database_work_weight_layout db next Hslots).
+    unfold bucket at 1. rewrite Huses. change
+      (work_weight db (bucket db x) + 1 +
+        fold_right (fun x n => work_weight next (bucket next x) + 1 + n) 0 rest =
+        work_weight db (bucket db x) + 1 +
+        fold_right (fun x n => work_weight db (bucket db x) + 1 + n) 0 rest).
+    now rewrite IH.
+  Qed.
+
+  (** Metadata recording leaves both components of rebuilding credit unchanged. *)
+  Lemma database_rebuild_potential_frame : forall B db next,
+    db_forest next = db_forest db -> slots next = slots db ->
+    uses_entries next = uses_entries db -> queue next = queue db ->
+    rebuild_potential B next = rebuild_potential B db.
+  Proof.
+    intros B db next Hforest Hslots Huses Hqueue. unfold rebuild_potential.
+    change (k_credit * N.of_nat (database_total_credit B next) +
+      k_queue * N.of_nat (queue_weight next) =
+      k_credit * N.of_nat (database_total_credit B db) +
+      k_queue * N.of_nat (queue_weight db))%N.
+    rewrite (database_total_credit_forest_frame B db next Hforest Hslots Huses),
+      (database_queue_weight_frame db next Hslots Huses Hqueue).
+    reflexivity.
+  Qed.
+
+  Lemma database_queue_weight_push : forall db next root, slots next = slots db ->
+    uses_entries next = uses_entries db -> queue next = root :: queue db ->
+    queue_weight next = queue_weight db + work_weight db (bucket db root) + 1.
+  Proof.
+    intros db next root Hslots Huses Hqueue. unfold queue_weight. rewrite Hqueue.
+    assert (Hbucket : forall x, work_weight next (bucket next x) = work_weight db (bucket db x)).
+    { intro x. rewrite (database_work_weight_layout db next Hslots). unfold bucket. now rewrite Huses. }
+    cbn [fold_right]. rewrite Hbucket.
+    assert (Hrest :
+      fold_right (fun x n => work_weight next (bucket next x) + 1 + n) 0 (queue db) =
+        fold_right (fun x n => work_weight db (bucket db x) + 1 + n) 0 (queue db)).
+    { clear - Hbucket. induction (queue db) as [| x rest IH]; cbn [fold_right]; [reflexivity |].
+      now rewrite Hbucket, IH. }
+    rewrite Hrest. lia.
+  Qed.
+
+  (** A single forest union never increases the logarithmic credit of any occurrence. *)
+  Lemma database_total_credit_union_mono : forall B db next i j work,
+    inv_on db work -> slots next = slots db -> uses_entries next = uses_entries db ->
+    db_forest next = snd (UnionFind.union i j (db_forest db)) ->
+    database_total_credit B next <= database_total_credit B db.
+  Proof.
+    intros B db next i j work Hinv Hslots Huses Hforest.
+    pose proof (inv_on_forest_wf db work Hinv) as Hwf.
+    assert (Hwf' : UnionFind.wf (db_forest next)).
+    { rewrite Hforest. now apply UnionFind.wf_union. }
+    unfold database_total_credit. rewrite Huses. apply database_weighted_sum_mono. intro xe.
+    assert (Hsize : (class_size db (repr db (fst xe)) <=
+      class_size next (repr next (fst xe)))%N).
+    { unfold class_size, uf_state, repr.
+      rewrite <- (UnionFind.size_of_repr (db_forest db) (fst xe) Hwf),
+        <- (UnionFind.size_of_repr (db_forest next) (fst xe) Hwf'), Hforest.
+      pose proof (database_union_size_monotone i j (db_forest db) (fst xe) Hwf). lia. }
+    pose proof (N.log2_le_mono _ _ Hsize) as Hlogs.
+    assert (Hdebt : N.to_nat (N.log2 B - N.log2 (class_size next (repr next (fst xe)))) <=
+      N.to_nat (N.log2 B - N.log2 (class_size db (repr db (fst xe))))) by lia.
+    unfold use_credit. rewrite (database_entry_weight_layout db next Hslots (snd xe)).
+    apply Nat.mul_le_mono_r. exact Hdebt.
+  Qed.
+
+  (** A successful invariant union releases all weights of the losing represented class. *)
+  Lemma database_total_credit_union_spend : forall B db next i j winner loser forest work rest,
+    inv_on db work -> inv_on next rest -> (ids next <= B)%N ->
+    slots next = slots db -> uses_entries next = uses_entries db ->
+    db_forest next = forest ->
+    UnionFind.union i j (db_forest db) = (Some (winner, loser), forest) ->
+    database_total_credit B next + database_class_work db loser <= database_total_credit B db.
+  Proof.
+    intros B db next i j winner loser forest work rest
+      Hinv Hnext Hbudget Hslots Huses Hforest Hunion.
+    pose proof (inv_on_forest_wf db work Hinv) as Hwf.
+    pose proof (inv_on_forest_wf next rest Hnext) as Hwf'.
+    apply database_total_credit_spend; [exact Huses | exact Hslots | | | |].
+    - intro x. unfold class_size, uf_state, repr.
+      rewrite <- (UnionFind.size_of_repr (db_forest db) x Hwf),
+        <- (UnionFind.size_of_repr (db_forest next) x Hwf'), Hforest.
+      pose proof (database_union_size_monotone i j (db_forest db) x Hwf) as Hsize.
+      rewrite Hunion in Hsize. cbn [snd] in Hsize. lia.
+    - intro x. pose proof (proj1 (F_class_size db work x Hinv)). lia.
+    - intro x. pose proof (proj2 (F_class_size next rest x Hnext)) as Hsize.
+      eapply N.le_trans; [exact Hsize |]. apply N.max_le_compat_l. exact Hbudget.
+    - intros x Hclass. unfold class_size, uf_state, repr. rewrite Hforest.
+      pose proof (database_union_losing_size i j (db_forest db) winner loser forest x
+        Hwf Hunion Hclass) as Hsize. lia.
+  Qed.
+
+  Lemma database_union_queue_effect : forall db i j,
+    queue (union i j db) =
+      match fst (UnionFind.union i j (db_forest db)) with
+      | Some (_, loser) => loser :: queue db
+      | None => queue db
+      end.
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [[[winner loser] |] forest]; reflexivity.
+  Qed.
+
+  (** Collision repair funds every new queue cell from an old represented class. *)
+  Lemma database_repair_potential_mono : forall B db f k rest,
+    (2 * k_queue <= k_credit)%N -> inv_on db ((f, k) :: rest) ->
+    (ids (db_repair_entry f k db) <= B)%N ->
+    (rebuild_potential B (db_repair_entry f k db) <= rebuild_potential B db)%N.
+  Proof.
+    intros B db f k rest Hcoefficient Hinv Hbudget.
+    set (next := db_repair_entry f k db).
+    assert (Hnext : inv_on next rest) by (exact (F7_repair_inv db (f, k) rest Hinv)).
+    pose proof (inv_on_forest_wf db ((f, k) :: rest) Hinv) as Hwf.
+    assert (Huses : uses_entries next = uses_entries db).
+    { unfold next, uses_entries. now rewrite db_repair_entry_uses_store. }
+    assert (Hslots : slots next = slots db).
+    { exact (proj1 (proj2 (db_repair_entry_layout db f k))). }
+    destruct (db_repair_entry_forest_queue_effect db ((f, k) :: rest) f k Hinv)
+      as [[Hforest Hqueue] | [i [j [Hi [Hj [Hforest Hqueue]]]]]]; fold next in Hforest, Hqueue.
+    - unfold rebuild_potential.
+      change (k_credit * N.of_nat (database_total_credit B next) +
+        k_queue * N.of_nat (queue_weight next) <=
+        k_credit * N.of_nat (database_total_credit B db) +
+        k_queue * N.of_nat (queue_weight db))%N.
+      rewrite (database_total_credit_forest_frame B db next Hforest Hslots Huses),
+        (database_queue_weight_frame db next Hslots Huses Hqueue). reflexivity.
+    - rewrite union_forest in Hforest. rewrite database_union_queue_effect in Hqueue.
+      destruct (UnionFind.union i j (db_forest db)) as [[[winner loser] |] forest] eqn:Hunion;
+        cbn [fst snd] in Hforest, Hqueue.
+      + assert (Hroot : repr db loser = loser).
+        { exact (ForestFacts.union_loser_was_representative i j (db_forest db)
+            winner loser forest Hwf Hunion). }
+        assert (Hrepresented : In loser (database_use_classes db)).
+        { destruct (proj1 (proj2 (UnionFind.union_some i j (db_forest db)
+            winner loser forest Hwf Hunion))) as [[_ ->] | [_ ->]]; assumption. }
+        pose proof (database_total_credit_union_spend B db next i j winner loser forest
+          ((f, k) :: rest) rest Hinv Hnext Hbudget Hslots Huses Hforest Hunion) as Hcredit.
+        pose proof (database_queue_weight_push db next loser Hslots Huses Hqueue) as Hqueued.
+        pose proof (database_queue_cost_class_work db loser Hroot Hrepresented) as Hwork.
+        unfold rebuild_potential.
+        change (k_credit * N.of_nat (database_total_credit B next) +
+          k_queue * N.of_nat (queue_weight next) <=
+          k_credit * N.of_nat (database_total_credit B db) +
+          k_queue * N.of_nat (queue_weight db))%N.
+        eapply database_repair_credit_arithmetic; eassumption.
+      + assert (Hunion_forest : db_forest next = snd (UnionFind.union i j (db_forest db))).
+        { rewrite Hunion. exact Hforest. }
+        pose proof (database_total_credit_union_mono B db next i j ((f, k) :: rest)
+          Hinv Hslots Huses Hunion_forest) as Hcredit.
+        pose proof (database_queue_weight_frame db next Hslots Huses Hqueue) as Hqueued.
+        unfold rebuild_potential.
+        change (k_credit * N.of_nat (database_total_credit B next) +
+          k_queue * N.of_nat (queue_weight next) <=
+          k_credit * N.of_nat (database_total_credit B db) +
+          k_queue * N.of_nat (queue_weight db))%N.
+        rewrite Hqueued. apply N.add_le_mono_r. apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** Active work loses exactly its head weight while repair potential does not grow. *)
+  Lemma database_state_potential_repair : forall B db e rest,
+    (2 * k_queue <= k_credit)%N -> inv_on db (e :: rest) ->
+    (ids (repair_entry e db) <= B)%N ->
+    (state_potential B (repair_entry e db, rest) + k_active * N.of_nat (entry_weight db e) <=
+      state_potential B (db, e :: rest))%N.
+  Proof.
+    intros B db [f k] rest Hcoefficient Hinv Hbudget.
+    pose proof (database_repair_potential_mono B db f k rest Hcoefficient Hinv Hbudget) as Hrepair.
+    pose proof (proj1 (proj2 (db_repair_entry_layout db f k))) as Hslots.
+    unfold state_potential. cbn [fst snd].
+    rewrite (database_work_weight_layout db (db_repair_entry f k db) Hslots).
+    change (rebuild_potential B (db_repair_entry f k db) +
+        k_active * N.of_nat (work_weight db rest) + k_active * N.of_nat (entry_weight db (f, k)) <=
+      rebuild_potential B db +
+        k_active * N.of_nat (entry_weight db (f, k) + work_weight db rest))%N.
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma database_total_credit_pop : forall B db x next,
+    inv db -> db_pop_loser db = Some (x, next) ->
+    database_total_credit B next = database_total_credit B db.
+  Proof.
+    intros B db x next Hinv Hpop.
+    pose proof (inv_on_forest_wf db [] Hinv) as Hwf.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold inv, inv_on, forest_ok, row_store_ok, database_row_store_ok in Hinv. tauto. }
+    pose proof (pop_loser_uses_store db x next Hwf Hpop) as Huses.
+    assert (Hmap' : DatabaseUseMap.wf (row_uses (db_row_store next))).
+    { rewrite Huses. now apply DatabaseUsesFacts.wf_transfer. }
+    destruct (db_pop_loser_preserves db x next Hpop) as [Hforest Hview].
+    destruct (db_pop_loser_layout db x next Hpop) as [Hslots Hrest].
+    assert (Hcost : forall xe, use_credit B next xe = use_credit B db xe).
+    { intro xe. unfold use_credit.
+      rewrite (database_entry_weight_layout db next Hslots (snd xe)).
+      unfold class_size, uf_state, repr. now rewrite Hforest. }
+    unfold database_total_credit.
+    rewrite (database_weighted_sum_ext _ _ _ (uses_entries next) Hcost),
+      (uses_entries_facts next Hmap'), (uses_entries_facts db Hmap).
+    set (cost := fun owner entry => use_credit B db (owner, entry)).
+    change (database_weighted_sum (fun xe => cost (fst xe) (snd xe))
+        (DatabaseUsesFacts.entries (row_uses (db_row_store next))) =
+      database_weighted_sum (fun xe => cost (fst xe) (snd xe))
+        (DatabaseUsesFacts.entries (row_uses (db_row_store db)))).
+    rewrite !database_occurrence_sum_entries, Huses.
+    pose proof (database_occurrence_sum_transfer _ cost x (repr db x)
+      (row_uses (db_row_store db)) Hmap) as Htransfer.
+    assert (Hsame : database_weighted_sum (cost x)
+        (DatabaseUses.bucket x (row_uses (db_row_store db))) =
+      database_weighted_sum (cost (repr db x))
+        (DatabaseUses.bucket x (row_uses (db_row_store db)))).
+    { apply database_weighted_sum_ext. intro entry.
+      unfold cost, use_credit. cbn [fst snd]. now rewrite (inv_on_repr_idem db [] x Hinv). }
+    change (database_occurrence_sum cost
+        (DatabaseUses.transfer x (repr db x) (row_uses (db_row_store db))) +
+        database_weighted_sum (cost x) (DatabaseUses.bucket x (row_uses (db_row_store db))) =
+      database_occurrence_sum cost (row_uses (db_row_store db)) +
+        database_weighted_sum (cost (repr db x))
+          (DatabaseUses.bucket x (row_uses (db_row_store db)))) in Htransfer.
+    rewrite Hsame in Htransfer. apply Nat.add_cancel_r in Htransfer. exact Htransfer.
+  Qed.
+
+  (** Removing the head loser transfers no work into any remaining queued nonroot. *)
+  Lemma database_queue_weight_pop : forall db x next,
+    inv db -> db_pop_loser db = Some (x, next) ->
+    queue_weight next + work_weight db (bucket db x) + 1 = queue_weight db.
+  Proof.
+    intros db x next Hinv Hpop.
+    pose proof (inv_on_forest_wf db [] Hinv) as Hwf.
+    pose proof (pop_loser_uses_store db x next Hwf Hpop) as Huses.
+    pose proof (pop_loser_queue db x next Hpop) as Hqueue.
+    destruct (db_pop_loser_layout db x next Hpop) as [Hslots Hrest].
+    assert (Hdistinct : NoDup (queue db)).
+    { unfold inv, inv_on in Hinv. tauto. }
+    assert (Hnonroot : forall y, In y (queue db) -> repr db y <> y).
+    { unfold inv, inv_on, forest_ok in Hinv. tauto. }
+    rewrite Hqueue in Hdistinct. inversion Hdistinct as [| ? ? Hfresh Htail]. subst.
+    assert (Hbucket : forall y, In y (queue next) ->
+      work_weight next (bucket next y) = work_weight db (bucket db y)).
+    { intros y Hin. rewrite (database_work_weight_layout db next Hslots).
+      f_equal. rewrite <- !get_uses_bucket.
+      change (DatabaseUses.bucket y (row_uses (db_row_store next)) =
+        DatabaseUses.bucket y (row_uses (db_row_store db))).
+      rewrite Huses. apply database_bucket_transfer_other.
+      - intro Hequal. subst y. contradiction.
+      - intro Hequal. subst y.
+        assert (Hin_old : In (repr db x) (queue db)) by (rewrite Hqueue; now right).
+        exact (Hnonroot (repr db x) Hin_old (inv_on_repr_idem db [] x Hinv)). }
+    assert (Htail_weight :
+      fold_right (fun y n => work_weight next (bucket next y) + 1 + n) 0 (queue next) =
+      fold_right (fun y n => work_weight db (bucket db y) + 1 + n) 0 (queue next)).
+    { clear - Hbucket. revert Hbucket. induction (queue next) as [| y rest IH]; intro Hbucket;
+        [reflexivity |].
+      cbn [fold_right]. rewrite (Hbucket y (or_introl eq_refl)).
+      f_equal. apply IH. intros z Hin. apply Hbucket. now right. }
+    unfold queue_weight. rewrite Hqueue. cbn [fold_right]. lia.
+  Qed.
+
+  (** Pop exchanges one queue bucket for active work and consumes its queue-cell reserve. *)
+  Lemma database_state_potential_pop : forall B db x next,
+    inv db -> db_pop_loser db = Some (x, next) ->
+    (state_potential B (next, get_uses x db) +
+        k_queue * N.of_nat (work_weight db (bucket db x) + 1) =
+      state_potential B (db, []) + k_active * N.of_nat (work_weight db (bucket db x)))%N.
+  Proof.
+    intros B db x next Hinv Hpop.
+    pose proof (database_total_credit_pop B db x next Hinv Hpop) as Hcredit.
+    pose proof (database_queue_weight_pop db x next Hinv Hpop) as Hqueue.
+    destruct (db_pop_loser_layout db x next Hpop) as [Hslots Hrest].
+    unfold state_potential, rebuild_potential. cbn [fst snd].
+    change (k_credit * N.of_nat (database_total_credit B next) +
+        k_queue * N.of_nat (queue_weight next) +
+        k_active * N.of_nat (work_weight next (get_uses x db)) +
+        k_queue * N.of_nat (work_weight db (bucket db x) + 1) =
+      k_credit * N.of_nat (database_total_credit B db) +
+        k_queue * N.of_nat (queue_weight db) +
+        k_active * N.of_nat (work_weight db []) +
+        k_active * N.of_nat (work_weight db (bucket db x)))%N.
+    rewrite Hcredit, get_uses_bucket, (database_work_weight_layout db next Hslots).
+    change (k_credit * N.of_nat (database_total_credit B db) +
+        k_queue * N.of_nat (queue_weight next) +
+        k_active * N.of_nat (work_weight db (bucket db x)) +
+        k_queue * N.of_nat (work_weight db (bucket db x) + 1) =
+      k_credit * N.of_nat (database_total_credit B db) +
+        k_queue * N.of_nat (queue_weight db) + k_active * 0 +
+        k_active * N.of_nat (work_weight db (bucket db x)))%N.
+    rewrite N.mul_0_r, N.add_0_r. rewrite <- Hqueue, !Nat2N.inj_add. ring.
+  Qed.
+
+  (** An arbitrary public union can create one unrepresented queue cell. *)
+  Lemma database_union_potential_le : forall B db i j,
+    (k_queue <= k_credit)%N -> wf db -> allocated db i -> allocated db j -> (ids db <= B)%N ->
+    (rebuild_potential B (union i j db) <= rebuild_potential B db + k_queue)%N.
+  Proof.
+    intros B db i j Hcoefficient Hwf Hi Hj Hbudget.
+    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (proj1 (F1_inv_wf (union i j db)) (wf_union i j db Hwf Hi Hj)) as Hnext.
+    pose proof (inv_on_forest_wf db [] Hinv) as Hforest.
+    assert (Hbudget' : (ids (union i j db) <= B)%N) by (now rewrite union_ids).
+    assert (Hslots : slots (union i j db) = slots db).
+    { unfold union. destruct (UnionFindCode.union i j (db_forest db)) as [[[w l] |] forest];
+        reflexivity. }
+    assert (Huses : uses_entries (union i j db) = uses_entries db).
+    { unfold union. destruct (UnionFindCode.union i j (db_forest db)) as [[[w l] |] forest];
+        reflexivity. }
+    pose proof (database_union_queue_effect db i j) as Hqueue.
+    pose proof (union_forest i j db) as Huf.
+    destruct (UnionFind.union i j (db_forest db)) as [[[winner loser] |] forest] eqn:Hunion;
+      cbn [fst snd] in Hqueue, Huf.
+    - pose proof (database_total_credit_union_spend B db (union i j db) i j winner loser forest
+        [] [] Hinv Hnext Hbudget' Hslots Huses Huf Hunion) as Hcredit.
+      pose proof (database_queue_weight_push db (union i j db) loser Hslots Huses Hqueue) as Hqueued.
+      assert (Hroot : repr db loser = loser).
+      { exact (ForestFacts.union_loser_was_representative i j (db_forest db)
+          winner loser forest Hforest Hunion). }
+      pose proof (database_bucket_class_work db loser Hroot) as Hwork.
+      unfold rebuild_potential.
+      change (k_credit * N.of_nat (database_total_credit B (union i j db)) +
+        k_queue * N.of_nat (queue_weight (union i j db)) <=
+        k_credit * N.of_nat (database_total_credit B db) +
+        k_queue * N.of_nat (queue_weight db) + k_queue)%N.
+      eapply database_union_credit_arithmetic; eassumption.
+    - pose proof (database_total_credit_union_mono B db (union i j db) i j []
+        Hinv Hslots Huses (union_forest i j db)) as Hcredit.
+      pose proof (database_queue_weight_frame db (union i j db) Hslots Huses Hqueue) as Hqueued.
+      unfold rebuild_potential.
+      change (k_credit * N.of_nat (database_total_credit B (union i j db)) +
+        k_queue * N.of_nat (queue_weight (union i j db)) <=
+        k_credit * N.of_nat (database_total_credit B db) +
+        k_queue * N.of_nat (queue_weight db) + k_queue)%N.
+      rewrite Hqueued.
+      assert (Hweighted : (k_credit * N.of_nat (database_total_credit B (union i j db)) <=
+        k_credit * N.of_nat (database_total_credit B db))%N) by (apply N.mul_le_mono_l; lia).
+      lia.
+  Qed.
+
+  (** A coefficient reserving union work and one queue cell proves the public credit law. *)
+  Lemma database_T5_union_credit :
+    (k_queue <= k_credit)%N ->
+    (4 * UnionFindT.c_uf + 65 + k_loop * k_queue <= c_db)%N ->
+    forall B i j db, wf db -> allocated db i -> allocated db j -> (ids db <= B)%N ->
+    (T_union i j db +
+      N.of_nat (unit (union i j db)) * (k_loop * rebuild_potential B (union i j db)) <=
+      N.of_nat (unit (union i j db)) * (c_db + k_loop * rebuild_potential B db))%N.
+  Proof.
+    intros Hcredit_coefficient Hcoefficient B i j db Hwf Hi Hj Hbudget.
+    pose proof (database_union_potential_le B db i j Hcredit_coefficient Hwf Hi Hj Hbudget)
+      as Hpotential.
+    pose proof (T_union_inv_on_unit db [] i j (proj1 (F1_inv_wf db) Hwf) Hi Hj) as Htime.
+    assert (Hunit : unit (union i j db) = unit db).
+    { unfold unit. now rewrite union_ids, wmark_union. }
+    rewrite Hunit in *. clear - Hcoefficient Hpotential Htime.
+    set (U := N.of_nat (unit db)) in *. clearbody U.
+    set (before := rebuild_potential B db) in *. clearbody before.
+    set (after := rebuild_potential B (union i j db)) in *. clearbody after.
+    set (cost := (4 * UnionFindT.c_uf + 65)%N) in *. clearbody cost.
+    assert (Hscaled : (U * (k_loop * after) <= U * (k_loop * (before + k_queue)))%N).
+    { apply N.mul_le_mono_l. now apply N.mul_le_mono_l. }
+    assert (Hbudget_scaled : (U * (cost + k_loop * k_queue) <= U * c_db)%N).
+    { now apply N.mul_le_mono_l. }
+    nia.
+  Qed.
+
+  Lemma database_occurrence_sum_add : forall A cost owner entry
+      (m : DatabaseUseMap.t (list A)), DatabaseUseMap.wf m ->
+    database_occurrence_sum cost (DatabaseUses.add owner entry m) =
+      database_occurrence_sum cost m + cost owner entry.
+  Proof.
+    intros A cost owner entry m Hmap. unfold DatabaseUses.add.
+    pose proof (database_occurrence_sum_set A cost m owner
+      (entry :: DatabaseUses.bucket owner m) Hmap) as Hsum.
+    unfold database_weighted_sum in Hsum. cbn [fold_right] in Hsum. lia.
+  Qed.
+
+  Lemma database_occurrence_sum_register : forall A cost occurrences
+      (m : DatabaseUseMap.t (list A)), DatabaseUseMap.wf m ->
+    database_occurrence_sum cost (DatabaseUses.register occurrences m) =
+      database_occurrence_sum cost m +
+        database_weighted_sum (fun xe => cost (fst xe) (snd xe)) occurrences.
+  Proof.
+    intros A cost occurrences. unfold database_weighted_sum.
+    induction occurrences as [| [owner entry] rest IH];
+      intros m Hmap; cbn [DatabaseUses.register fold_right fst snd].
+    - lia.
+    - rewrite IH by (now apply DatabaseUsesFacts.wf_add).
+      rewrite database_occurrence_sum_add by exact Hmap. lia.
+  Qed.
+
+  Definition database_queued_sum {A : Type} (weight : A -> nat)
+      (owners : list positive) (m : DatabaseUseMap.t (list A)) : nat :=
+    fold_right (fun owner n => database_weighted_sum weight (DatabaseUses.bucket owner m) + 1 + n)
+      0 owners.
+
+  Lemma database_queued_sum_add_away : forall A (weight : A -> nat) owners owner entry
+      (m : DatabaseUseMap.t (list A)), ~ In owner owners ->
+    database_queued_sum weight owners (DatabaseUses.add owner entry m) =
+      database_queued_sum weight owners m.
+  Proof.
+    intros A weight owners. induction owners as [| x rest IH]; intros owner entry m Haway;
+      [reflexivity |].
+    change (database_weighted_sum weight
+        (DatabaseUses.bucket x (DatabaseUses.add owner entry m)) + 1 +
+        database_queued_sum weight rest (DatabaseUses.add owner entry m) =
+      database_weighted_sum weight (DatabaseUses.bucket x m) + 1 +
+        database_queued_sum weight rest m).
+    rewrite IH by (intro Hin; apply Haway; now right).
+    unfold DatabaseUses.add, DatabaseUses.bucket.
+    rewrite DatabaseUseMap.get_set_other; [reflexivity |]. intro Hequal. subst x.
+    apply Haway. now left.
+  Qed.
+
+  (** A distinct queue charges a newly registered occurrence at most once. *)
+  Lemma database_queued_sum_add_le : forall A (weight : A -> nat) owners owner entry
+      (m : DatabaseUseMap.t (list A)), NoDup owners ->
+    database_queued_sum weight owners (DatabaseUses.add owner entry m) <=
+      database_queued_sum weight owners m + weight entry.
+  Proof.
+    intros A weight owners. induction owners as [| x rest IH]; intros owner entry m Hdistinct.
+    - cbn [database_queued_sum fold_right]. lia.
+    - inversion Hdistinct as [| ? ? Hfresh Htail]. subst.
+      change (database_weighted_sum weight
+          (DatabaseUses.bucket x (DatabaseUses.add owner entry m)) + 1 +
+          database_queued_sum weight rest (DatabaseUses.add owner entry m) <=
+        database_weighted_sum weight (DatabaseUses.bucket x m) + 1 +
+          database_queued_sum weight rest m + weight entry).
+      destruct (Pos.eq_dec x owner) as [-> | Hdifferent].
+      + rewrite (database_queued_sum_add_away A weight rest owner entry m Hfresh).
+        unfold DatabaseUses.add, DatabaseUses.bucket at 1.
+        rewrite DatabaseUseMap.get_set_same. unfold database_weighted_sum. cbn [fold_right]. lia.
+      + assert (Hbucket : DatabaseUses.bucket x (DatabaseUses.add owner entry m) =
+          DatabaseUses.bucket x m).
+        { unfold DatabaseUses.add, DatabaseUses.bucket.
+          now rewrite DatabaseUseMap.get_set_other. }
+        rewrite Hbucket. specialize (IH owner entry m Htail). lia.
+  Qed.
+
+  Lemma database_queued_sum_register_le : forall A (weight : A -> nat) owners occurrences
+      (m : DatabaseUseMap.t (list A)), NoDup owners ->
+    database_queued_sum weight owners (DatabaseUses.register occurrences m) <=
+      database_queued_sum weight owners m +
+        database_weighted_sum (fun xe => weight (snd xe)) occurrences.
+  Proof.
+    intros A weight owners occurrences. unfold database_weighted_sum.
+    induction occurrences as [| [owner entry] rest IH];
+      intros m Hdistinct; cbn [DatabaseUses.register fold_right snd].
+    - lia.
+    - specialize (IH (DatabaseUses.add owner entry m) Hdistinct).
+      pose proof (database_queued_sum_add_le A weight owners owner entry m Hdistinct) as Hhead.
+      lia.
+  Qed.
+
+  Lemma database_queue_weight_store : forall db,
+    queue_weight db = database_queued_sum (entry_weight db) (queue db) (row_uses (db_row_store db)).
+  Proof.
+    intro db. unfold queue_weight, database_queued_sum.
+    induction (queue db) as [| x rest IH]; [reflexivity |]. cbn [fold_right].
+    rewrite <- (get_uses_bucket db x). change
+      (database_weighted_sum (entry_weight db) (DatabaseUses.bucket x (row_uses (db_row_store db))) +
+        1 + fold_right (fun x n => work_weight db (bucket db x) + 1 + n) 0 rest =
+      database_weighted_sum (entry_weight db) (DatabaseUses.bucket x (row_uses (db_row_store db))) +
+        1 + fold_right (fun x n =>
+          database_weighted_sum (entry_weight db) (DatabaseUses.bucket x (row_uses (db_row_store db))) +
+          1 + n) 0 rest).
+    now rewrite IH.
+  Qed.
+
+  Lemma database_register_uses_store : forall db f k o,
+    row_uses (db_row_store (register_row_uses f k o db)) =
+      DatabaseUses.register (id_occurrences f k (k ++ option_list o)) (row_uses (db_row_store db)).
+  Proof.
+    intros db f k o. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db))); reflexivity.
+  Qed.
+
+  Lemma database_row_replace_uses_store : forall db f k previous o,
+    row_uses (db_row_store (row_replace f k previous o db)) =
+      DatabaseUses.register (id_occurrences f k (k ++ option_list o)) (row_uses (db_row_store db)).
+  Proof.
+    intros db f k [before |] o; unfold row_replace;
+      rewrite database_register_uses_store, row_write_row_store, !slots_update_row_store; reflexivity.
+  Qed.
+
+  Lemma database_occurrence_work_bound : forall db f k cells,
+    database_weighted_sum (fun xe => entry_weight db (snd xe)) (id_occurrences f k cells) <=
+      length cells * entry_weight db (f, k).
+  Proof.
+    intros db f k cells. unfold database_weighted_sum.
+    induction cells as [| [i | value] rest IH];
+      cbn [id_occurrences fold_right snd length] in *; lia.
+  Qed.
+
+  Lemma database_occurrence_credit_bound : forall B db f k cells,
+    database_weighted_sum (use_credit B db) (id_occurrences f k cells) <=
+      N.to_nat (N.log2 B) *
+        database_weighted_sum (fun xe => entry_weight db (snd xe)) (id_occurrences f k cells).
+  Proof.
+    intros B db f k cells. unfold database_weighted_sum.
+    induction cells as [| [i | value] rest IH];
+      cbn [id_occurrences fold_right] in *; try lia.
+    unfold use_credit at 1. cbn [fst snd].
+    assert (Hdebt : N.to_nat (N.log2 B - N.log2 (class_size db (repr db i))) <=
+      N.to_nat (N.log2 B)) by lia.
+    assert (Hweighted : N.to_nat (N.log2 B - N.log2 (class_size db (repr db i))) *
+      entry_weight db (f, k) <= N.to_nat (N.log2 B) * entry_weight db (f, k))
+      by (now apply Nat.mul_le_mono_r).
+    rewrite Nat.mul_add_distr_l. lia.
+  Qed.
+
+  (** Replacing a row adds bounded log credit and charges new queued occurrences once. *)
+  Lemma database_row_replace_potential_le : forall B db f k previous o,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) -> NoDup (queue db) ->
+    (rebuild_potential B (row_replace f k previous o db) <= rebuild_potential B db +
+      (k_credit * N.log2 B + k_queue) *
+        N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N.
+  Proof.
+    intros B db f k previous o Hmap Hqueue.
+    set (next := row_replace f k previous o db).
+    set (fresh := id_occurrences f k (k ++ option_list o)).
+    assert (Huses : row_uses (db_row_store next) =
+      DatabaseUses.register fresh (row_uses (db_row_store db))).
+    { exact (database_row_replace_uses_store db f k previous o). }
+    assert (Hmap' : DatabaseUseMap.wf (row_uses (db_row_store next))).
+    { rewrite Huses. now apply DatabaseUsesFacts.wf_register. }
+    assert (Hslots : slots next = slots db) by (apply row_replace_slots).
+    assert (Hforest : db_forest next = db_forest db) by (apply row_replace_forest).
+    assert (Hqueue' : queue next = queue db) by (apply row_replace_queue).
+    assert (Hcost : forall xe, use_credit B next xe = use_credit B db xe).
+    { intro xe. unfold use_credit.
+      rewrite (database_entry_weight_layout db next Hslots (snd xe)).
+      unfold class_size, uf_state, repr. now rewrite Hforest. }
+    assert (Hcredit : database_total_credit B next = database_total_credit B db +
+      database_weighted_sum (use_credit B db) fresh).
+    { unfold database_total_credit. rewrite (database_weighted_sum_ext _ _ _ (uses_entries next) Hcost),
+        (uses_entries_facts next Hmap'), (uses_entries_facts db Hmap).
+      set (cost := fun owner entry => use_credit B db (owner, entry)).
+      change (database_weighted_sum (fun xe => cost (fst xe) (snd xe))
+          (DatabaseUsesFacts.entries (row_uses (db_row_store next))) =
+        database_weighted_sum (fun xe => cost (fst xe) (snd xe))
+          (DatabaseUsesFacts.entries (row_uses (db_row_store db))) +
+        database_weighted_sum (fun xe => cost (fst xe) (snd xe)) fresh).
+      rewrite !database_occurrence_sum_entries, Huses. now apply database_occurrence_sum_register. }
+    assert (Hqueued : queue_weight next <= queue_weight db +
+      database_weighted_sum (fun xe => entry_weight db (snd xe)) fresh).
+    { rewrite !database_queue_weight_store, Hqueue', Huses.
+      assert (Hequal : entry_weight next = entry_weight db).
+      { unfold entry_weight, slots_of. now rewrite Hslots. }
+      rewrite Hequal. now apply database_queued_sum_register_le. }
+    pose proof (database_occurrence_work_bound db f k (k ++ option_list o)) as Hwork.
+    pose proof (database_occurrence_credit_bound B db f k (k ++ option_list o)) as Hdebt.
+    fold fresh in Hwork, Hdebt.
+    assert (Hlength : length (k ++ option_list o) <= length k + 1).
+    { rewrite length_app. destruct o; cbn [option_list length]; lia. }
+    assert (Hwork_bound : database_weighted_sum (fun xe => entry_weight db (snd xe)) fresh <=
+      (length k + 1) * (length k + 1) * (slots_of db f + 1)).
+    { eapply Nat.le_trans; [exact Hwork |].
+      change (length (k ++ option_list o) * ((length k + 1) * (slots_of db f + 1)) <=
+        (length k + 1) * (length k + 1) * (slots_of db f + 1)).
+      replace ((length k + 1) * (length k + 1) * (slots_of db f + 1)) with
+        ((length k + 1) * ((length k + 1) * (slots_of db f + 1))) by now rewrite Nat.mul_assoc.
+      now apply Nat.mul_le_mono_r. }
+    unfold rebuild_potential.
+    change (k_credit * N.of_nat (database_total_credit B next) +
+      k_queue * N.of_nat (queue_weight next) <=
+      k_credit * N.of_nat (database_total_credit B db) + k_queue * N.of_nat (queue_weight db) +
+      (k_credit * N.log2 B + k_queue) *
+        N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N.
+    rewrite Hcredit, Nat2N.inj_add.
+    assert (Hdebt_binary : (N.of_nat (database_weighted_sum (use_credit B db) fresh) <=
+      N.log2 B * N.of_nat (database_weighted_sum (fun xe => entry_weight db (snd xe)) fresh))%N).
+    { rewrite <- (N2Nat.id (N.log2 B)). rewrite <- Nat2N.inj_mul. lia. }
+    assert (Hqueue_binary : (N.of_nat (queue_weight next) <= N.of_nat (queue_weight db) +
+      N.of_nat (database_weighted_sum (fun xe => entry_weight db (snd xe)) fresh))%N) by lia.
+    assert (Hwork_binary : (N.of_nat (database_weighted_sum
+        (fun xe => entry_weight db (snd xe)) fresh) <=
+      N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N) by lia.
+    clear - Hdebt_binary Hqueue_binary Hwork_binary.
+    set (extra := N.of_nat (database_weighted_sum (fun xe => entry_weight db (snd xe)) fresh)) in *.
+    clearbody extra.
+    set (budget := N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1))) in *.
+    clearbody budget.
+    assert (Hcredit_scaled : (k_credit * N.of_nat (database_weighted_sum (use_credit B db) fresh) <=
+      k_credit * (N.log2 B * extra))%N) by (now apply N.mul_le_mono_l).
+    assert (Hqueue_scaled : (k_queue * N.of_nat (queue_weight next) <=
+      k_queue * (N.of_nat (queue_weight db) + extra))%N) by (now apply N.mul_le_mono_l).
+    assert (Hbudget_scaled : ((k_credit * N.log2 B + k_queue) * extra <=
+      (k_credit * N.log2 B + k_queue) * budget)%N) by (now apply N.mul_le_mono_l).
+    nia.
+  Qed.
+
+  (** The concrete size tie rule keeps an existing first class above a fresh second singleton. *)
+  Lemma database_union_fresh_second_loser : forall i j forest,
+    UnionFind.wf forest -> UnionFind.mem forest i -> ~ UnionFind.mem forest j ->
+    fst (UnionFind.union i j forest) = Some (UnionFind.repr forest i, j).
+  Proof.
+    intros i j forest Hwf Hmember Hfresh. unfold UnionFind.union.
+    destruct (UnionFind.find i (UnionFind.add j (UnionFind.add i forest)))
+      as [first middle] eqn:Hfirst. cbn [fst snd].
+    destruct (UnionFind.find j middle) as [second ready] eqn:Hsecond. cbn [fst snd].
+    destruct (UnionFind.union_find_correct i j forest Hwf first middle second ready Hfirst Hsecond)
+      as [Hfirst_root [Hsecond_root [Hready [Hmembers [Hroots [Hsizes
+        [[Hfirst_member Hfirst_fixed] [Hsecond_member Hsecond_fixed]]]]]]]].
+    assert (Hsecond_name : second = j).
+    { rewrite Hsecond_root. now apply UnionFind.repr_fresh. }
+    assert (Hdifferent : first <> second).
+    { intro Hequal. apply Hfresh. rewrite <- Hsecond_name, <- Hequal, Hfirst_root.
+      now apply UnionFind.repr_mem. }
+    pose proof (proj1 (proj2 (proj2 Hready)) first Hfirst_member Hfirst_fixed) as Hfirst_size.
+    pose proof (proj1 (proj2 (proj2 Hready)) second Hsecond_member Hsecond_fixed) as Hsecond_size.
+    rewrite Hsizes in Hfirst_size, Hsecond_size.
+    rewrite Hsecond_name, (UnionFind.size_of_fresh forest j Hwf Hfresh) in Hsecond_size.
+    pose proof (ConcreteUnionFindFacts.size_of_positive forest first) as Hpositive.
+    assert (Htest : Pos.eqb first second = false) by (now apply Pos.eqb_neq).
+    assert (Hbalance : N.leb (UnionFind.size_at second ready) (UnionFind.size_at first ready) = true).
+    { apply N.leb_le. rewrite Hsecond_name. lia. }
+    rewrite Htest, Hbalance. cbn [fst]. now rewrite Hfirst_root, Hsecond_name.
+  Qed.
+
+  (** Allocated occurrence owners make every fresh identifier's bucket empty. *)
+  Lemma database_unallocated_plan_bucket_empty : forall db owner,
+    (forall x e, uses db x e -> allocated db x) -> ~ allocated db owner -> bucket db owner = [].
+  Proof.
+    intros db owner Howners Hfresh. destruct (bucket db owner) as [| entry rest] eqn:Hbucket;
+      [reflexivity |]. exfalso. apply Hfresh. apply (Howners owner entry), bucket_member.
+    rewrite Hbucket. now left.
+  Qed.
+
+  (** Put's old constructor output is allocated even when the new output is arbitrary. *)
+  Lemma database_union_one_allocated_potential : forall B db i j,
+    (k_queue <= k_credit)%N -> wf db -> allocated db i ->
+    (forall x e, uses db x e -> allocated db x) -> (ids db <= B)%N ->
+    (rebuild_potential B (union i j db) <= rebuild_potential B db + k_queue)%N.
+  Proof.
+    intros B db i j Hcoefficient Hwf Hi Howners Hbudget.
+    destruct (N.leb (Npos j) (ids db)) eqn:Hallocation.
+    - apply N.leb_le in Hallocation.
+      exact (database_union_potential_le B db i j Hcoefficient Hwf Hi Hallocation Hbudget).
+    - assert (Hfresh : ~ (Npos j <= ids db)%N).
+      { intro Hallocated. apply N.leb_le in Hallocated. congruence. }
+      pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+      assert (Hnotmem : ~ UnionFind.mem (db_forest db) j).
+      { intro Hmem. apply Hfresh. exact (proj1 (wf_forest_members db Hwf j) Hmem). }
+      pose proof (database_union_fresh_second_loser i j (db_forest db) (wf_forest db Hwf)
+        (proj2 (wf_forest_members db Hwf i) Hi) Hnotmem) as Hloser.
+      pose proof (database_unallocated_plan_bucket_empty db j Howners Hfresh) as Hempty.
+      assert (Hslots : slots (union i j db) = slots db).
+      { unfold union. destruct (UnionFindCode.union i j (db_forest db)) as [[[w l] |] forest];
+          reflexivity. }
+      assert (Huses : uses_entries (union i j db) = uses_entries db).
+      { unfold union. destruct (UnionFindCode.union i j (db_forest db)) as [[[w l] |] forest];
+          reflexivity. }
+      assert (Hqueue : queue (union i j db) = j :: queue db).
+      { rewrite database_union_queue_effect, Hloser. reflexivity. }
+      pose proof (database_queue_weight_push db (union i j db) j Hslots Huses Hqueue) as Hqueued.
+      rewrite Hempty in Hqueued. cbn [work_weight fold_right] in Hqueued.
+      pose proof (database_total_credit_union_mono B db (union i j db) i j []
+        Hinv Hslots Huses (union_forest i j db)) as Hcredit.
+      unfold rebuild_potential.
+      change (k_credit * N.of_nat (database_total_credit B (union i j db)) +
+        k_queue * N.of_nat (queue_weight (union i j db)) <=
+        k_credit * N.of_nat (database_total_credit B db) +
+        k_queue * N.of_nat (queue_weight db) + k_queue)%N.
+      rewrite Hqueued, Nat2N.inj_add. cbn [N.of_nat].
+      assert (Hweighted : (k_credit * N.of_nat (database_total_credit B (union i j db)) <=
+        k_credit * N.of_nat (database_total_credit B db))%N) by (apply N.mul_le_mono_l; lia).
+      nia.
+  Qed.
+
+  (** Adding a singleton changes neither old class sizes nor old occurrence credit. *)
+  Lemma database_allocate_potential : forall B db i,
+    UnionFind.wf (db_forest db) ->
+    rebuild_potential B (allocate_id i db) = rebuild_potential B db.
+  Proof.
+    intros B db i Hwf.
+    assert (Hslots : slots (allocate_id i db) = slots db) by reflexivity.
+    assert (Huses : uses_entries (allocate_id i db) = uses_entries db) by reflexivity.
+    assert (Hqueue : queue (allocate_id i db) = queue db) by reflexivity.
+    assert (Hcredit : database_total_credit B (allocate_id i db) = database_total_credit B db).
+    { unfold database_total_credit. rewrite Huses. apply database_weighted_sum_ext. intros [owner entry].
+      unfold use_credit. cbn [fst snd].
+      rewrite (database_entry_weight_layout db (allocate_id i db) Hslots entry).
+      unfold class_size, uf_state, repr.
+      change (N.to_nat (N.log2 B - N.log2
+        (N.of_nat (UnionFind.size_of (UnionFind.add i (db_forest db))
+          (UnionFind.repr (UnionFind.add i (db_forest db)) owner)))) * entry_weight db entry =
+        N.to_nat (N.log2 B - N.log2
+          (N.of_nat (UnionFind.size_of (db_forest db) (UnionFind.repr (db_forest db) owner)))) *
+          entry_weight db entry).
+      rewrite (UnionFind.repr_add i (db_forest db) owner Hwf),
+        (UnionFind.size_of_add i (db_forest db) (UnionFind.repr (db_forest db) owner) Hwf).
+      reflexivity. }
+    unfold rebuild_potential.
+    change (k_credit * N.of_nat (database_total_credit B (allocate_id i db)) +
+      k_queue * N.of_nat (queue_weight (allocate_id i db)) =
+      k_credit * N.of_nat (database_total_credit B db) + k_queue * N.of_nat (queue_weight db))%N.
+    rewrite Hcredit, (database_queue_weight_frame db (allocate_id i db) Hslots Huses Hqueue).
+    reflexivity.
+  Qed.
+
+  Lemma database_inv_queue_valid : forall db, inv db -> queue_valid db.
+  Proof.
+    intros db Hinv. split.
+    - unfold inv, inv_on, queue in Hinv. tauto.
+    - rewrite Forall_forall. intros x Hin.
+      assert (Hnonroot : forall y, In y (queue db) -> repr db y <> y).
+      { unfold inv, inv_on, forest_ok in Hinv. tauto. }
+      exact (Hnonroot x Hin).
+  Qed.
+
+  (** Insertion funds its optional union and all newly recorded occurrences. *)
+  Lemma database_put_potential_le : forall B db f k o,
+    (k_queue <= k_credit)%N -> wf db ->
+    (forall x e, uses db x e -> allocated db x) -> (ids db <= B)%N ->
+    (rebuild_potential B (put f k o db) <= rebuild_potential B db + k_queue +
+      (k_credit * N.log2 B + k_queue) *
+        N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N.
+  Proof.
+    intros B db f k o Hcoefficient Hwf Howners Hbudget.
+    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (database_inv_queue_valid db Hinv) as Hqueue.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold inv, inv_on, forest_ok, row_store_ok, database_row_store_ok in Hinv. tauto. }
+    unfold put. rewrite record_inputs_rebuild_potential.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    remember (row_get f ck db) as previous eqn:Hprevious.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_slots : slots next = slots db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        [| reflexivity | reflexivity | reflexivity].
+      destruct co as [[b | w] |]; [| reflexivity | reflexivity].
+      unfold union.
+      destruct (UnionFindCode.union a b (db_forest db)) as [[[winner loser] |] forest]; reflexivity. }
+    assert (Hnext_uses : row_uses (db_row_store next) = row_uses (db_row_store db)).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        [| reflexivity | reflexivity | reflexivity].
+      destruct co as [[b | w] |]; [| reflexivity | reflexivity].
+      unfold union.
+      destruct (UnionFindCode.union a b (db_forest db)) as [[[winner loser] |] forest]; reflexivity. }
+    assert (Hnext_queue : NoDup (queue next)).
+    { assert (Hvalid : queue_valid next).
+      { unfold next. destruct previous as [[[a | v] |] |];
+          [| exact Hqueue | exact Hqueue | exact Hqueue].
+        destruct co as [[b | w] |]; [| exact Hqueue | exact Hqueue].
+        apply queue_valid_union; [exact (wf_forest db Hwf) | exact Hqueue]. }
+      exact (proj1 Hvalid). }
+    assert (Hnext_credit : (rebuild_potential B next <= rebuild_potential B db + k_queue)%N).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        [| apply N.le_add_r | apply N.le_add_r | apply N.le_add_r].
+      destruct co as [[b | w] |]; [| apply N.le_add_r | apply N.le_add_r].
+      apply database_union_one_allocated_potential; try assumption.
+      apply (row_allocated db f ck (Some (Id a)) a Hwf).
+      - symmetry. exact Hprevious.
+      - apply in_or_app. right. cbn [option_list In]. now left. }
+    assert (Hnext_map : DatabaseUseMap.wf (row_uses (db_row_store next))) by (now rewrite Hnext_uses).
+    assert (Hshape : (length ck + 1) * (length ck + 1) * (slots_of next f + 1) =
+      (length k + 1) * (length k + 1) * (slots_of db f + 1)).
+    { unfold ck. rewrite normal_key_length. unfold slots_of. now rewrite Hnext_slots. }
+    assert (Hwritten : forall before,
+      (rebuild_potential B (row_replace f ck before updated next) <=
+        rebuild_potential B db + k_queue + (k_credit * N.log2 B + k_queue) *
+          N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N).
+    { intros before. pose proof (database_row_replace_potential_le B next f ck before updated
+        Hnext_map Hnext_queue) as Hreplace. rewrite Hshape in Hreplace. lia. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + eapply N.le_trans; [exact Hnext_credit |]. apply N.le_add_r.
+      + exact (Hwritten (Some before)).
+    - exact (Hwritten None).
+  Qed.
+
+  (** Constructor allocation preserves old debt and pays only newly recorded occurrences. *)
+  Lemma database_make_potential_le : forall B db f k, wf db ->
+    (rebuild_potential B (snd (make f k db)) <= rebuild_potential B db +
+      (k_credit * N.log2 B + k_queue) *
+        N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N.
+  Proof.
+    intros B db f k Hwf.
+    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (database_inv_queue_valid db Hinv) as Hqueue.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold inv, inv_on, forest_ok, row_store_ok, database_row_store_ok in Hinv. tauto. }
+    set (fresh := allocate_id (N.succ_pos (ids db)) db).
+    set (ck := normal_key db k).
+    assert (Hfresh_potential : rebuild_potential B fresh = rebuild_potential B db).
+    { apply database_allocate_potential. exact (wf_forest db Hwf). }
+    assert (Hfresh_map : DatabaseUseMap.wf (row_uses (db_row_store fresh))) by exact Hmap.
+    assert (Hfresh_queue : NoDup (queue fresh)) by exact (proj1 Hqueue).
+    assert (Hwritten : forall previous,
+      (rebuild_potential B
+          (row_replace f ck previous (Some (Id (N.succ_pos (ids db)))) fresh) <=
+        rebuild_potential B db + (k_credit * N.log2 B + k_queue) *
+          N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N).
+    { intro previous.
+      pose proof (database_row_replace_potential_le B fresh f ck previous
+        (Some (Id (N.succ_pos (ids db)))) Hfresh_map Hfresh_queue) as Hreplace.
+      rewrite Hfresh_potential in Hreplace.
+      assert (Hshape : (length ck + 1) * (length ck + 1) * (slots_of fresh f + 1) =
+        (length k + 1) * (length k + 1) * (slots_of db f + 1)).
+      { unfold ck. rewrite normal_key_length. reflexivity. }
+      now rewrite Hshape in Hreplace. }
+    assert (Hplain : (rebuild_potential B fresh <= rebuild_potential B db +
+      (k_credit * N.log2 B + k_queue) *
+        N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N).
+    { rewrite Hfresh_potential. apply N.le_add_r. }
+    unfold make. fold ck fresh.
+    destruct (row_get f ck db) as [[[j | value] |] |]; cbn [snd].
+    - apply N.le_add_r.
+    - destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+        rewrite record_inputs_rebuild_potential;
+        [exact Hplain | exact (Hwritten (Some (Some (Val value)))) | exact Hplain | exact Hplain].
+    - destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+        rewrite record_inputs_rebuild_potential;
+        [exact Hplain | exact (Hwritten (Some None)) | exact Hplain | exact Hplain].
+    - destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+        rewrite record_inputs_rebuild_potential;
+        [exact Hplain | exact (Hwritten None) | exact Hplain | exact Hplain].
+  Qed.
+
+  Lemma database_credit_scale : forall scale unit reserve before after time driver,
+    (1 <= scale)%N -> (time + driver + 1 <= unit * reserve)%N ->
+    (after + reserve <= before)%N ->
+    (time + driver + scale * unit * after < scale * unit * before)%N.
+  Proof.
+    intros scale unit reserve before after time driver Hscale Htime Hdrop.
+    assert (Hscaled_drop : (scale * unit * after + scale * unit * reserve <=
+      scale * unit * before)%N).
+    { rewrite <- N.mul_add_distr_l. now apply N.mul_le_mono_l. }
+    assert (Hreserve : (unit * reserve <= scale * unit * reserve)%N).
+    { replace (scale * unit * reserve)%N with (scale * (unit * reserve))%N by ring.
+      replace (unit * reserve)%N with (1 * (unit * reserve))%N at 1 by ring.
+      now apply N.mul_le_mono_r. }
+    lia.
+  Qed.
+
+  Lemma database_repair_clock_arithmetic : forall scale unit active repair overhead driver
+      weight before after time,
+    (1 <= scale)%N -> (1 <= unit)%N -> (1 <= weight)%N ->
+    (repair + overhead + driver + 1 <= active)%N ->
+    (time <= overhead + repair * weight * unit)%N ->
+    (after + active * weight <= before)%N ->
+    (time + driver + scale * unit * after < scale * unit * before)%N.
+  Proof.
+    intros scale unit active repair overhead driver weight before after time
+      Hscale Hunit Hweight Hactive Htime Hdrop.
+    apply (database_credit_scale scale unit (active * weight) before after time driver Hscale);
+      [| exact Hdrop].
+    assert (Hproduct : (1 <= weight * unit)%N).
+    { replace 1%N with (1 * 1)%N by reflexivity. now apply N.mul_le_mono. }
+    assert (Hoverhead : (overhead + driver + 1 <= (overhead + driver + 1) * (weight * unit))%N).
+    { replace (overhead + driver + 1)%N with ((overhead + driver + 1) * 1)%N at 1 by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hbudget : ((repair + overhead + driver + 1) * (weight * unit) <=
+      active * (weight * unit))%N) by (now apply N.mul_le_mono_r).
+    nia.
+  Qed.
+
+  Lemma database_pop_clock_arithmetic : forall scale unit active queued pop overhead driver
+      weight before after time,
+    (1 <= scale)%N -> (1 <= unit)%N ->
+    (active + 2 * pop + overhead + driver + 1 <= queued)%N ->
+    (time <= overhead + pop * (weight + 2) * unit)%N ->
+    (after + queued * (weight + 1) = before + active * weight)%N ->
+    (time + driver + scale * unit * after < scale * unit * before)%N.
+  Proof.
+    intros scale unit active queued pop overhead driver weight before after time
+      Hscale Hunit Hqueued Htime Hbalance.
+    set (reserve := ((2 * pop + overhead + driver + 1) * (weight + 1))%N).
+    assert (Hdrop : (after + reserve <= before)%N).
+    { assert (Hpaid : ((active + 2 * pop + overhead + driver + 1) * (weight + 1) <=
+        queued * (weight + 1))%N) by (now apply N.mul_le_mono_r).
+      unfold reserve. nia. }
+    apply (database_credit_scale scale unit reserve before after time driver Hscale);
+      [| exact Hdrop].
+    assert (Hoverhead : (overhead + driver + 1 <= (overhead + driver + 1) * unit)%N).
+    { replace (overhead + driver + 1)%N with ((overhead + driver + 1) * 1)%N at 1 by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hperunit : (overhead + driver + 1 + pop * (weight + 2) <= reserve)%N).
+    { unfold reserve. nia. }
+    assert (Hbudget : ((overhead + driver + 1 + pop * (weight + 2)) * unit <= reserve * unit)%N)
+      by (now apply N.mul_le_mono_r).
+    nia.
+  Qed.
+
+  (** Coefficient inequalities suffice to pay both the callback and binary driver. *)
+  Lemma database_rstep_credit_strong :
+    (1 <= k_loop)%N -> (2 * k_queue <= k_credit)%N ->
+    (k_repair + k_rstep + c_loopN + 1 <= k_active)%N ->
+    (k_active + 2 * k_pop + k_rstep + c_loopN + 1 <= k_queue)%N ->
+    forall B U s next, state_inv s -> (ids (fst next) <= B)%N ->
+    unit (fst next) <= U -> rstep s = inl next ->
+    (T_rstep s + c_loopN + k_loop * N.of_nat U * state_potential B next <
+      k_loop * N.of_nat U * state_potential B s)%N.
+  Proof.
+    intros Hloop Hcredit Hactive Hqueued B U [db work] next Hinv Hbudget Hunit Hnext.
+    destruct work as [| [f k] rest].
+    - change (inv db) in Hinv.
+      change (db_rstep (db, []) = inl next) in Hnext. cbn [db_rstep fst snd] in Hnext.
+      destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [| discriminate].
+      injection Hnext as Hequal. subst next. cbn [fst snd] in Hbudget, Hunit |- *.
+      assert (Hpositive : (1 <= N.of_nat U)%N).
+      { pose proof (unit_positive current). lia. }
+      assert (Hprevious_unit : unit db <= U) by (now rewrite <- (unit_pop_loser db x current Hpop)).
+      assert (Hallocated : allocated db x).
+      { assert (Hmember : In x (queue db)) by (rewrite (pop_loser_queue db x current Hpop); now left).
+        assert (Hall : forall y, In y (queue db) -> allocated db y).
+        { unfold inv, inv_on in Hinv. tauto. }
+        exact (Hall x Hmember). }
+      pose proof (T_rstep_split db []) as Hsplit.
+      change (pop_loser db = Some (x, current)) in Hpop. rewrite Hpop in Hsplit.
+      change (T_rstep (db, []) <= k_rstep + (T_pop_loser db + T_get_uses x db))%N in Hsplit.
+      pose proof (T_pop_loser_le db x current Hinv Hpop) as Hpop_time.
+      pose proof (T_get_uses_le db [] x Hinv Hallocated) as Hget_time.
+      pose proof (database_state_potential_pop B db x current Hinv Hpop) as Hbalance.
+      rewrite Nat2N.inj_add in Hbalance.
+      change (state_potential B (current, get_uses x db) +
+          k_queue * (N.of_nat (work_weight db (bucket db x)) + 1) =
+        state_potential B (db, []) +
+          k_active * N.of_nat (work_weight db (bucket db x)))%N in Hbalance.
+      apply (database_pop_clock_arithmetic k_loop (N.of_nat U) k_active k_queue k_pop
+        k_rstep c_loopN (N.of_nat (work_weight db (bucket db x)))) with
+        (before := state_potential B (db, []))
+        (after := state_potential B (current, get_uses x db));
+        [exact Hloop | exact Hpositive | exact Hqueued | | exact Hbalance].
+      assert (Hbound : (N.of_nat (unit db) <= N.of_nat U)%N) by lia.
+      rewrite Nat2N.inj_add in Hpop_time.
+      change (T_pop_loser db <=
+        k_pop * (N.of_nat (work_weight db (bucket db x)) + 1) * N.of_nat (unit db))%N
+        in Hpop_time.
+      clear - Hsplit Hpop_time Hget_time Hbound.
+      set (before_unit := N.of_nat (unit db)) in *. clearbody before_unit.
+      set (after_unit := N.of_nat U) in *. clearbody after_unit.
+      set (weight := N.of_nat (work_weight db (bucket db x))) in *. clearbody weight.
+      assert (Hpop_scaled : (k_pop * (weight + 1) * before_unit <=
+        k_pop * (weight + 1) * after_unit)%N) by (now apply N.mul_le_mono_l).
+      assert (Hget_scaled : (k_pop * before_unit <= k_pop * after_unit)%N)
+        by (now apply N.mul_le_mono_l).
+      assert (Hpop_final : (T_pop_loser db <= k_pop * (weight + 1) * after_unit)%N).
+      { eapply N.le_trans; [exact Hpop_time | exact Hpop_scaled]. }
+      assert (Hget_final : (T_get_uses x db <= k_pop * after_unit)%N).
+      { eapply N.le_trans; [exact Hget_time | exact Hget_scaled]. }
+      eapply N.le_trans; [exact Hsplit |].
+      replace (k_rstep + k_pop * (weight + 2) * after_unit)%N with
+        (k_rstep + (k_pop * (weight + 1) * after_unit + k_pop * after_unit))%N by ring.
+      apply N.add_le_mono_l, N.add_le_mono; assumption.
+    - change (inv_on db ((f, k) :: rest)) in Hinv.
+      change (db_rstep (db, (f, k) :: rest) = inl next) in Hnext.
+      cbn [db_rstep fst snd] in Hnext. injection Hnext as Hequal. subst next.
+      cbn [fst snd] in Hbudget, Hunit |- *.
+      assert (Hpositive : (1 <= N.of_nat U)%N).
+      { pose proof (unit_positive (db_repair_entry f k db)). lia. }
+      assert (Hweight : (1 <= N.of_nat (entry_weight db (f, k)))%N).
+      { pose proof (database_entry_weight_positive db (f, k)). lia. }
+      pose proof (T_rstep_split db ((f, k) :: rest)) as Hsplit.
+      change (T_rstep (db, (f, k) :: rest) <= k_rstep + T_repair_entry (f, k) db)%N in Hsplit.
+      pose proof (T_repair_entry_le db (f, k) rest Hinv) as Hrepair_time.
+      pose proof (database_state_potential_repair B db (f, k) rest Hcredit Hinv Hbudget) as Hdrop.
+      apply (database_repair_clock_arithmetic k_loop (N.of_nat U) k_active k_repair
+        k_rstep c_loopN (N.of_nat (entry_weight db (f, k)))) with
+        (before := state_potential B (db, (f, k) :: rest))
+        (after := state_potential B (repair_entry (f, k) db, rest));
+        [exact Hloop | exact Hpositive | exact Hweight | exact Hactive | | exact Hdrop].
+      assert (Hbound : (N.of_nat (unit (repair_entry (f, k) db)) <= N.of_nat U)%N).
+      { change (unit (repair_entry (f, k) db) <= U) in Hunit. clear - Hunit. lia. }
+      eapply N.le_trans; [exact Hsplit |]. apply N.add_le_mono_l.
+      eapply N.le_trans; [exact Hrepair_time |]. now apply N.mul_le_mono_l.
+  Qed.
+
+  (** One optional queue cell and all new occurrences fit the common call allowance. *)
+  Lemma database_operation_growth_budget : forall credit queued logarithm raw_shape shape,
+    (raw_shape <= shape)%N -> (1 <= shape)%N ->
+    (queued + (credit * logarithm + queued) * raw_shape <=
+      (credit + 2 * queued) * shape * (logarithm + 1))%N.
+  Proof.
+    intros credit queued logarithm raw_shape shape Hshape Hpositive.
+    assert (Hspan : (1 <= shape * (logarithm + 1))%N) by nia.
+    assert (Hfixed : (queued <= queued * (shape * (logarithm + 1)))%N).
+    { replace queued with (queued * 1)%N at 1 by ring. now apply N.mul_le_mono_l. }
+    assert (Hvariable : ((credit * logarithm + queued) * raw_shape <=
+      (credit + queued) * (shape * (logarithm + 1)))%N).
+    { eapply N.le_trans with (m := ((credit * logarithm + queued) * shape)%N).
+      - now apply N.mul_le_mono_l.
+      - replace ((credit + queued) * (shape * (logarithm + 1)))%N with
+          (((credit + queued) * (logarithm + 1)) * shape)%N by ring.
+        apply N.mul_le_mono_r. nia. }
+    replace ((credit + 2 * queued) * shape * (logarithm + 1))%N with
+      (queued * (shape * (logarithm + 1)) +
+        (credit + queued) * (shape * (logarithm + 1)))%N by ring.
+    now apply N.add_le_mono.
+  Qed.
+
+  (** The execution coefficient and occurrence coefficient add directly in c_db. *)
+  Lemma database_operation_credit_arithmetic :
+    forall spend execution total loop credit queued logarithm raw_shape shape before after time,
+    (raw_shape <= shape)%N -> (1 <= shape)%N ->
+    (execution + loop * (credit + 2 * queued) <= total)%N ->
+    (time <= execution * spend * shape * (logarithm + 1))%N ->
+    (after <= before + queued + (credit * logarithm + queued) * raw_shape)%N ->
+    (time + spend * (loop * after) <=
+      spend * (total * shape * (logarithm + 1) + loop * before))%N.
+  Proof.
+    intros spend execution total loop credit queued logarithm raw_shape shape before after time
+      Hshape Hpositive Hcoefficient Htime Hgrowth.
+    pose proof (database_operation_growth_budget credit queued logarithm raw_shape shape
+      Hshape Hpositive) as Hallowance.
+    assert (Hpotential : (after <= before +
+      (credit + 2 * queued) * shape * (logarithm + 1))%N) by lia.
+    assert (Hscaled : (spend * (loop * after) <= spend * (loop *
+      (before + (credit + 2 * queued) * shape * (logarithm + 1))))%N).
+    { apply N.mul_le_mono_l. now apply N.mul_le_mono_l. }
+    eapply N.le_trans; [apply N.add_le_mono; [exact Htime | exact Hscaled] |].
+    replace (execution * spend * shape * (logarithm + 1) + spend * (loop *
+      (before + (credit + 2 * queued) * shape * (logarithm + 1))))%N with
+      (spend * ((execution + loop * (credit + 2 * queued)) *
+        shape * (logarithm + 1) + loop * before))%N by ring.
+    apply N.mul_le_mono_l, N.add_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r.
+    exact Hcoefficient.
+  Qed.
+
+  (** The enlarged database coefficient reserves execution and occurrence debt separately. *)
+  Lemma c_db_operation_credit_budget :
+    (65536 * (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+      DatabaseUseMap.c_map + 1) + k_loop * (k_credit + 2 * k_queue) <= c_db)%N.
+  Proof. unfold c_db. lia. Qed.
+
+  Lemma k_credit_queue_budget : (k_queue <= k_credit)%N.
+  Proof. unfold k_credit. lia. Qed.
+
+  (** A linear traversal fits the quadratic public shape with its logarithmic reserve. *)
+  Lemma database_operation_execution_shape : forall execution spend logarithm len slots time,
+    (time <= execution * N.of_nat (slots + 1) * N.of_nat (len + 2) * spend)%N ->
+    (time <= execution * spend *
+      N.of_nat ((len + 2) * (len + 2) * (slots + 1)) * (logarithm + 1))%N.
+  Proof.
+    intros execution spend logarithm len slots time Htime.
+    assert (Hshape :
+      (N.of_nat (slots + 1) * N.of_nat (len + 2) <=
+        N.of_nat ((len + 2) * (len + 2) * (slots + 1)))%N).
+    { assert (Hnatural : (slots + 1) * (len + 2) <=
+        (len + 2) * (len + 2) * (slots + 1)).
+      { clear - len slots. nia. }
+      rewrite <- Nat2N.inj_mul. clear - Hnatural. lia. }
+    assert (Hlog :
+      (N.of_nat ((len + 2) * (len + 2) * (slots + 1)) <=
+        N.of_nat ((len + 2) * (len + 2) * (slots + 1)) * (logarithm + 1))%N).
+    { replace (N.of_nat ((len + 2) * (len + 2) * (slots + 1))) with
+        (N.of_nat ((len + 2) * (len + 2) * (slots + 1)) * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. lia. }
+    eapply N.le_trans; [exact Htime |].
+    replace (execution * N.of_nat (slots + 1) * N.of_nat (len + 2) * spend)%N with
+      (execution * spend * (N.of_nat (slots + 1) * N.of_nat (len + 2)))%N by ring.
+    replace (execution * spend *
+      N.of_nat ((len + 2) * (len + 2) * (slots + 1)) * (logarithm + 1))%N with
+      (execution * spend *
+        (N.of_nat ((len + 2) * (len + 2) * (slots + 1)) * (logarithm + 1)))%N by ring.
+    apply N.mul_le_mono_l. exact (N.le_trans _ _ _ Hshape Hlog).
+  Qed.
+
+  (** The put allowance pays all execution and every newly recorded occurrence. *)
+  Lemma T3_put_credit : forall B f k o db, wf db ->
+    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
+    (T_put f k o db +
+      N.of_nat (unit (put f k o db)) * (k_loop * rebuild_potential B (put f k o db)) <=
+      N.of_nat (unit (put f k o db)) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          (k_loop * rebuild_potential B db)))%N.
+  Proof.
+    intros B f k o db Hwf Hfit Hids.
+    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    assert (Howners : forall x e, uses db x e -> allocated db x).
+    { intros x e Huse. eapply database_uses_allocated_entry.
+      - exact (proj1 (inv_on_owned db [] Hinv)).
+      - exact (wf_uses_allocated db Hwf).
+      - exact Huse. }
+    assert (Hbefore_ids : (ids db <= B)%N).
+    { rewrite <- (proj2 (proj2 (put_layout_raw db f k o))). exact Hids. }
+    pose proof (database_put_potential_le B db f k o k_credit_queue_budget
+      Hwf Howners Hbefore_ids) as Hgrowth.
+    pose proof (T_put_recorded_unit db f k o Hwf Hfit) as Htime.
+    set (execution := (65536 * (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf +
+      V.c_key + V.c_val + DatabaseUseMap.c_map + 1))%N) in *.
+    pose proof (database_operation_execution_shape execution (N.of_nat (unit (put f k o db)))
+      (N.log2 B) (length k) (slots_of db f) (T_put f k o db) Htime) as Htime_shape.
+    pose proof (database_operation_credit_arithmetic
+      (N.of_nat (unit (put f k o db))) execution c_db k_loop k_credit k_queue (N.log2 B)
+      (N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))
+      (N.of_nat ((length k + 2) * (length k + 2) * (slots_of db f + 1)))
+      (rebuild_potential B db) (rebuild_potential B (put f k o db)) (T_put f k o db)) as Hpay.
+    assert (Hshape :
+      (N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)) <=
+        N.of_nat ((length k + 2) * (length k + 2) * (slots_of db f + 1)))%N).
+    { assert (Hnatural : (length k + 1) * (length k + 1) * (slots_of db f + 1) <=
+        (length k + 2) * (length k + 2) * (slots_of db f + 1)).
+      { generalize (length k), (slots_of db f). clear - db. intros; nia. }
+      clear - Hnatural. lia. }
+    assert (Hpositive : (1 <=
+      N.of_nat ((length k + 2) * (length k + 2) * (slots_of db f + 1)))%N).
+    { generalize (length k), (slots_of db f). clear - db. intros; nia. }
+    specialize (Hpay Hshape Hpositive c_db_operation_credit_budget Htime_shape Hgrowth).
+    rewrite (Nat2N.inj_add (N.to_nat (N.log2 B)) 1), N2Nat.id. cbn [N.of_nat].
+    rewrite (Nat2N.inj_mul ((length k + 2) * (length k + 2)) (slots_of db f + 1)) in Hpay.
+    replace (c_db *
+      (N.of_nat ((length k + 2) * (length k + 2)) * N.of_nat (slots_of db f + 1)) *
+      (N.log2 B + 1))%N with
+      (c_db * N.of_nat ((length k + 2) * (length k + 2)) * N.of_nat (slots_of db f + 1) *
+        (N.log2 B + 1))%N in Hpay by ring. exact Hpay.
+  Qed.
+
+  (** Constructor allocation uses the same allowance, including the unchanged reuse branch. *)
+  Lemma T4_make_credit : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+    (ids (snd (make f k db)) <= B)%N ->
+    (T_make f k db +
+      N.of_nat (unit (snd (make f k db))) * (k_loop * rebuild_potential B (snd (make f k db))) <=
+      N.of_nat (unit (snd (make f k db))) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          (k_loop * rebuild_potential B db)))%N.
+  Proof.
+    intros B f k db Hwf Hfit Hids.
+    pose proof (database_make_potential_le B db f k Hwf) as Hgrowth.
+    pose proof (T_make_recorded_execution db f k Hwf Hfit) as Htime.
+    set (execution := (65536 * (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf +
+      V.c_key + V.c_val + DatabaseUseMap.c_map + 1))%N).
+    assert (Htime_full : (T_make f k db <= execution * N.of_nat (slots_of db f + 1) *
+      N.of_nat (length k + 2) * N.of_nat (unit (snd (make f k db))))%N).
+    { eapply N.le_trans; [exact Htime |].
+      apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r.
+      unfold execution. apply N.mul_le_mono_l. lia. }
+    pose proof (database_operation_execution_shape execution
+      (N.of_nat (unit (snd (make f k db)))) (N.log2 B) (length k) (slots_of db f)
+      (T_make f k db) Htime_full) as Htime_shape.
+    pose proof (database_operation_credit_arithmetic
+      (N.of_nat (unit (snd (make f k db)))) execution c_db k_loop k_credit k_queue (N.log2 B)
+      (N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))
+      (N.of_nat ((length k + 2) * (length k + 2) * (slots_of db f + 1)))
+      (rebuild_potential B db) (rebuild_potential B (snd (make f k db)))
+      (T_make f k db)) as Hpay.
+    assert (Hshape :
+      (N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)) <=
+        N.of_nat ((length k + 2) * (length k + 2) * (slots_of db f + 1)))%N).
+    { assert (Hnatural : (length k + 1) * (length k + 1) * (slots_of db f + 1) <=
+        (length k + 2) * (length k + 2) * (slots_of db f + 1)).
+      { generalize (length k), (slots_of db f). clear - db. intros; nia. }
+      clear - Hnatural. lia. }
+    assert (Hpositive : (1 <=
+      N.of_nat ((length k + 2) * (length k + 2) * (slots_of db f + 1)))%N).
+    { generalize (length k), (slots_of db f). clear - db. intros; nia. }
+    assert (Hgrow_queue : (rebuild_potential B (snd (make f k db)) <=
+      rebuild_potential B db + k_queue + (k_credit * N.log2 B + k_queue) *
+      N.of_nat ((length k + 1) * (length k + 1) * (slots_of db f + 1)))%N) by lia.
+    specialize (Hpay Hshape Hpositive c_db_operation_credit_budget Htime_shape Hgrow_queue).
+    rewrite (Nat2N.inj_add (N.to_nat (N.log2 B)) 1), N2Nat.id. cbn [N.of_nat].
+    rewrite (Nat2N.inj_mul ((length k + 2) * (length k + 2)) (slots_of db f + 1)) in Hpay.
+    replace (c_db *
+      (N.of_nat ((length k + 2) * (length k + 2)) * N.of_nat (slots_of db f + 1)) *
+      (N.log2 B + 1))%N with
+      (c_db * N.of_nat ((length k + 2) * (length k + 2)) * N.of_nat (slots_of db f + 1) *
+        (N.log2 B + 1))%N in Hpay by ring. exact Hpay.
+  Qed.
+
+  (** The concrete coefficients meet the separate repair, queue and driver budgets. *)
+  Lemma database_credit_coefficients :
+    (1 <= k_loop)%N /\ (2 * k_queue <= k_credit)%N /\
+    (k_repair + k_rstep + c_loopN + 1 <= k_active)%N /\
+    (k_active + 2 * k_pop + k_rstep + c_loopN + 1 <= k_queue)%N.
+  Proof.
+    repeat split.
+    - unfold k_loop. lia.
+    - unfold k_credit. lia.
+    - unfold k_active. lia.
+    - unfold k_queue. lia.
+  Qed.
+
+  (** The operation reserve covers a union and its optional new queue cell. *)
+  Lemma c_db_union_credit_budget :
+    (4 * UnionFindT.c_uf + 65 + k_loop * k_queue <= c_db)%N.
+  Proof.
+    pose proof c_db_operation_credit_budget as Hbudget.
+    assert (Htime : (4 * UnionFindT.c_uf + 65 <=
+      65536 * (I.c_ix + PTrieT.c_trie + UnionFindT.c_uf + V.c_key + V.c_val +
+        DatabaseUseMap.c_map + 1))%N).
+    { generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key, V.c_val,
+        DatabaseUseMap.c_map. clear Hbudget. intros; nia. }
+    assert (Hqueue : (k_loop * k_queue <= k_loop * (k_credit + 2 * k_queue))%N).
+    { apply N.mul_le_mono_l. lia. }
+    lia.
+  Qed.
+
+  Lemma T5_union_credit : forall B i j db, wf db -> allocated db i -> allocated db j ->
+    (ids db <= B)%N ->
+    (T_union i j db +
+      N.of_nat (unit (union i j db)) * (k_loop * rebuild_potential B (union i j db)) <=
+      N.of_nat (unit (union i j db)) * (c_db + (k_loop * rebuild_potential B db)))%N.
+  Proof.
+    exact (database_T5_union_credit k_credit_queue_budget c_db_union_credit_budget).
+  Qed.
+
+  Lemma T6_rstep_go : forall B U s s', state_inv s -> (ids (fst s') <= B)%N ->
+    unit (fst s') <= U -> rstep s = inl s' ->
+    (T_rstep s + k_loop * N.of_nat U * state_potential B s' <
+      k_loop * N.of_nat U * state_potential B s)%N.
+  Proof.
+    intros B U s s' Hinv Hids Hunit Hstep.
+    destruct database_credit_coefficients as [Hloop [Hcredit [Hactive Hqueue]]].
+    pose proof (database_rstep_credit_strong Hloop Hcredit Hactive Hqueue
+      B U s s' Hinv Hids Hunit Hstep) as Hpaid.
+    clear - Hpaid. lia.
+  Qed.
+
+  Lemma T6a_rstep_credit : forall B U s s', state_inv s ->
+    (ids (fst s') <= B)%N -> unit (fst s') <= U -> rstep s = inl s' ->
+    (T_rstep s + c_loopN + k_loop * N.of_nat U * state_potential B s' <=
+      k_loop * N.of_nat U * state_potential B s)%N.
+  Proof.
+    intros B U s s' Hinv Hids Hunit Hstep.
+    destruct database_credit_coefficients as [Hloop [Hcredit [Hactive Hqueue]]].
+    apply N.lt_le_incl.
+    exact (database_rstep_credit_strong Hloop Hcredit Hactive Hqueue
+      B U s s' Hinv Hids Hunit Hstep).
+  Qed.
+
+  Lemma c_db_rebuild_credit_budget :
+    (2 * k_driver + k_stop + 9 * c_loopN <= c_db)%N.
+  Proof. unfold c_db. lia. Qed.
+
+  (** The generic top-level trace specializes to the actual repair callback. *)
+  Definition database_finishes := database_callback_finishes rstep.
+
+  Lemma database_finishes_next : forall result s next,
+    database_finishes result s -> rstep s = inl next -> database_finishes result next.
+  Proof.
+    exact (database_callback_finishes_next repair_state t rstep).
+  Qed.
+
+  (** A completed binary run supplies a finite callback trace without unfolding accessibility. *)
+  Lemma rebuild_finishes : forall db, wf db -> database_finishes (rebuild db) (db, []).
+  Proof.
+    intros db Hwf.
+    set (Inv := fun s => forall result,
+      database_finishes result s -> database_finishes result (db, [])).
+    assert (Hgo : forall s next, Inv s -> rstep s = inl next -> Inv next).
+    { intros s next Hbefore Hstep result Hfinished. apply Hbefore.
+      eapply database_callback_finishes_go; eassumption. }
+    assert (Hstop : forall s result, Inv s -> rstep s = inr result ->
+      database_finishes result (db, [])).
+    { intros s result Hbefore Hstep. apply Hbefore. now apply database_callback_finishes_stop. }
+    assert (Hinitial : Inv (db, [])).
+    { intros result Hfinished. exact Hfinished. }
+    pose proof (LoopNFacts.loopN_preserves repair_state t rstep Inv
+      (fun result => database_finishes result (db, [])) Hgo Hstop
+      (rebuild_fuel db) (db, []) Hinitial) as Hrun.
+    rewrite (F16_rebuild_run db Hwf) in Hrun. exact Hrun.
+  Qed.
+
+  (** Every state on a completed trace fits the allocation and unit of its result. *)
+  Lemma database_finishes_bounds : forall result s,
+    database_finishes result s -> state_inv s ->
+    ids (fst s) = ids result /\ unit (fst s) <= unit result.
+  Proof.
+    intros result s Hfinished. induction Hfinished as
+      [s Hstop | s next Hstep Hfinished IH]; intro Hinv.
+    - destruct (F13_rstep_done s result Hinv Hstop) as [Hresult _].
+      rewrite Hresult. split; reflexivity.
+    - destruct (IH (F8_rstep_inv s next Hinv Hstep)) as [Hids Hunit].
+      split.
+      + rewrite <- Hids. symmetry. exact (proj2 (F9_rstep_layout s next Hinv Hstep)).
+      + eapply Nat.le_trans; [exact (F9b_rstep_unit s next Hinv Hstep) | exact Hunit].
+  Qed.
+
+  (** The actual amortized binary driver preserves the final database's credit. *)
   Lemma T8a_loop_final : forall B U db, inv db -> (ids (rebuild db) <= B)%N ->
     unit (rebuild db) <= U ->
     (T_loopN rstep T_rstep (rebuild_fuel db) (db, []) +
       k_loop * N.of_nat U * rebuild_potential B (rebuild db) <=
       k_loop * N.of_nat U * rebuild_potential B db + k_stop * N.of_nat U +
       c_loopN * N.of_nat (N.size_nat (rebuild_fuel db) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B U db Hinv Hids Hunit.
+    pose proof (proj2 (F1_inv_wf db) Hinv) as Hwf.
+    set (Inv := fun s => state_inv s /\ database_finishes (rebuild db) s).
+    set (Phi := fun s =>
+      (k_loop * N.of_nat U * state_potential B s + k_stop * N.of_nat U)%N).
+    set (Psi := fun result => (k_loop * N.of_nat U * rebuild_potential B result)%N).
+    assert (Hgo : forall s next, Inv s -> rstep s = inl next ->
+      Inv next /\ (T_rstep s + c_loopN + Phi next <= Phi s)%N).
+    { intros s next [Hstate Hfinished] Hstep.
+      pose proof (F8_rstep_inv s next Hstate Hstep) as Hnext.
+      pose proof (database_finishes_next (rebuild db) s next Hfinished Hstep) as Hsuffix.
+      destruct (database_finishes_bounds (rebuild db) next Hsuffix Hnext)
+        as [Hnext_ids Hnext_unit].
+      split; [now split |].
+      assert (Hbound : (ids (fst next) <= B)%N) by now rewrite Hnext_ids.
+      assert (Hspend : unit (fst next) <= U) by lia.
+      pose proof (T6a_rstep_credit B U s next Hstate Hbound Hspend Hstep) as Hcredit.
+      unfold Phi. lia. }
+    assert (Hstop : forall s result, Inv s -> rstep s = inr result ->
+      (T_rstep s + c_loopN + Psi result <= Phi s)%N).
+    { intros s result [Hstate Hfinished] Hstep.
+      destruct (database_finishes_bounds (rebuild db) s Hfinished Hstate)
+        as [_ Hcurrent_unit].
+      exact (T7a_stop_credit B U s result Hstate ltac:(lia) Hstep). }
+    assert (Hinitial : Inv (db, [])).
+    { split; [exact Hinv | now apply rebuild_finishes]. }
+    pose proof (T_loopN_amort repair_state t rstep T_rstep Inv Phi Psi
+      (rebuild_fuel db) (db, []) Hgo Hstop Hinitial) as Hloop.
+    rewrite (F16_rebuild_run db Hwf) in Hloop.
+    unfold Phi, Psi, state_potential in Hloop.
+    change
+      (T_loopN rstep T_rstep (rebuild_fuel db) (db, []) +
+        k_loop * N.of_nat U * rebuild_potential B (rebuild db) <=
+        k_loop * N.of_nat U * (rebuild_potential B db + k_active * 0) +
+        k_stop * N.of_nat U +
+        c_loopN * N.of_nat (N.size_nat (rebuild_fuel db) + 1))%N in Hloop.
+    rewrite N.mul_0_r, N.add_0_r in Hloop.
+    exact Hloop.
+  Qed.
+
+  (** The binary fuel's width fits a fixed multiple of the initial spending unit. *)
+  Lemma rebuild_fuel_bits_unit : forall db, inv db ->
+    N.size_nat (rebuild_fuel db) + 1 <= 9 * unit db.
+  Proof.
+    intros db Hinv.
+    assert (Hpending : (db_npending db <= wmark db)%N).
+    { eapply N.le_trans; [exact (inv_on_pending_bound db [] Hinv) | apply wmark_ids]. }
+    pose proof (N_width_mono _ _ (wmark_ids db)) as Hids.
+    pose proof (N_width_mono _ _ (wmark_nuses db)) as Huses.
+    pose proof (N_width_mono _ _ Hpending) as Hpending_width.
+    assert (Ha : N.size_nat (N.size (ids db) + 2) <= N.size_nat (ids db) + 2).
+    { pose proof (database_counter_bits_value (N.size (ids db) + 2)) as Hwidth.
+      rewrite N2Nat.inj_add, N_size_value in Hwidth. cbn in Hwidth. lia. }
+    pose proof (N_successor_width (db_nuses db)) as Hb.
+    pose proof (N_product_width (N.size (ids db) + 2) (db_nuses db + 1)) as Hab.
+    pose proof (N_sum_width ((N.size (ids db) + 2) * (db_nuses db + 1))
+      (db_npending db)) as Habp.
+    pose proof (N_successor_width
+      ((N.size (ids db) + 2) * (db_nuses db + 1) + db_npending db)) as Hfuel.
+    pose proof (unit_width_budget db) as Hunit.
+    unfold rebuild_fuel, db_rebuild_fuel. fold (ids db). lia.
+  Qed.
+
+  (** The final-loop inequality is an algebraic consequence of fuel and stop reserves. *)
+  Lemma T8_rebuild_loop_from_budget :
+    (2 * k_driver + k_stop + 9 * c_loopN <= c_db)%N ->
+    forall B db, wf db -> (ids (rebuild db) <= B)%N ->
+    (T_rebuild_fuel db + T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
+      N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
+      N.of_nat (unit (rebuild db)) *
+        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
+  Proof.
+    intros Hbudget B db Hwf Hids.
+    pose proof (proj1 (F1_inv_wf db) Hwf) as Hinv.
+    pose proof (T8a_loop_final B (unit (rebuild db)) db Hinv Hids
+      (Nat.le_refl _)) as Hloop.
+    pose proof (T7b_fuel db Hinv) as Hfuel.
+    pose proof (rebuild_fuel_bits_unit db Hinv) as Hbits.
+    pose proof (unit_mono_rebuild db Hwf) as Hunit.
+    pose proof (unit_positive (rebuild db)) as Hpositive.
+    rewrite !F2_potential.
+    set (spend := N.of_nat (unit (rebuild db))) in *.
+    assert (Hfuel_final : (T_rebuild_fuel db <= k_driver * spend)%N).
+    { eapply N.le_trans; [exact Hfuel |]. apply N.mul_le_mono_l. lia. }
+    assert (Hbits_final : (N.of_nat (N.size_nat (rebuild_fuel db) + 1) <=
+      9 * spend)%N) by lia.
+    assert (Hloop_bits :
+      (c_loopN * N.of_nat (N.size_nat (rebuild_fuel db) + 1) <=
+        c_loopN * (9 * spend))%N).
+    { now apply N.mul_le_mono_l. }
+    assert (Hdriver : (k_driver <= k_driver * spend)%N) by nia.
+    assert (Hconstant :
+      ((2 * k_driver + k_stop + 9 * c_loopN) * spend <= c_db * spend)%N).
+    { now apply N.mul_le_mono_r. }
+    assert (Hpending : (1 <= N.of_nat (pending db + 1))%N) by lia.
+    assert (Hpending_budget : (c_db * spend <=
+      spend * (c_db * N.of_nat (pending db + 1)))%N) by nia.
+    clear - Hloop Hfuel_final Hdriver Hconstant Hpending_budget Hloop_bits.
+    nia.
+  Qed.
+
+  (** Fuel, callback, stop, and driver charges fit the rebuild allowance. *)
+  Lemma T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
+    (T_rebuild_fuel db + T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
+      N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
+      N.of_nat (unit (rebuild db)) *
+        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
+  Proof. exact (T8_rebuild_loop_from_budget c_db_rebuild_credit_budget). Qed.
 
 End DatabaseT.
