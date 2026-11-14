@@ -6468,6 +6468,219 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Union of allocated endpoints keeps the forest's exact membership interval. *)
+  Lemma database_history_root_owner_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    ids db' = ids db -> database_history_root_owner db ->
+    database_history_root_owner db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hids Howner f k key r g args other s
+      Hfirst Hsecond Hroots.
+    rewrite Hhistory in Hfirst, Hsecond.
+    rewrite Hids in Hroots.
+    rewrite (row_root_same_links _ r (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    rewrite (row_root_same_links _ s (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    exact (Howner f k key r g args other s Hfirst Hsecond Hroots).
+  Qed.
+
+  Lemma database_history_key_shape_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    ids db' = ids db -> database_history_key_shape db ->
+    database_history_key_shape db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hids Hshape f k key r g args other s
+      Hfirst Hsecond Hroots.
+    rewrite Hhistory in Hfirst, Hsecond.
+    rewrite Hids in Hroots.
+    rewrite (row_root_same_links _ r (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    rewrite (row_root_same_links _ s (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    exact (Hshape f k key r g args other s Hfirst Hsecond Hroots).
+  Qed.
+
+  Lemma database_history_codes_valid_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    database_history_codes_valid db -> database_history_codes_valid db'.
+  Proof.
+    intros db db' Hhistory Hvalid code f k id Hentry.
+    rewrite Hhistory in Hentry. exact (Hvalid code f k id Hentry).
+  Qed.
+
+  Lemma database_history_key_ids_bounded_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    (ids db <= ids db')%N -> database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded db'.
+  Proof.
+    intros db db' Hhistory Hids Hbounded code f k id Hentry i Hin.
+    rewrite Hhistory in Hentry.
+    unfold allocated in *. eapply N.le_trans;
+      [exact (Hbounded code f k id Hentry i Hin) | exact Hids].
+  Qed.
+
+  Lemma database_row_weights_positive_transport : forall db db',
+    row_weights (db_row_store db') = row_weights (db_row_store db) ->
+    database_row_weights_positive db -> database_row_weights_positive db'.
+  Proof.
+    intros db db' Hweights Hpositive r n Hentry.
+    rewrite Hweights in Hentry. exact (Hpositive r n Hentry).
+  Qed.
+
+  Lemma database_row_weights_positive_union : forall db i j,
+    database_row_weights_positive db ->
+    database_row_weights_positive (union i j db).
+  Proof.
+    intros db i j Hpositive.
+    eapply database_row_weights_positive_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - exact Hpositive.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_advance : forall db,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (advance db).
+  Proof.
+    intros db Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db);
+      [reflexivity | reflexivity | exact Hbounded].
+  Qed.
+
+  Lemma database_history_connected_transport : forall db db' a b,
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    database_history_connected db a b ->
+    database_history_connected db' a b.
+  Proof.
+    intros db db' a b Hlinks Hconnected.
+    unfold database_history_connected in *.
+    eapply equality_closure_mono; [| exact Hconnected].
+    intros x y Hedge. now rewrite Hlinks.
+  Qed.
+
+  Lemma database_row_weight_conserved_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    row_weights (db_row_store db') = row_weights (db_row_store db) ->
+    ids db' = ids db -> database_row_weight_conserved db ->
+    database_row_weight_conserved db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hweights Hids Hconserved
+      f k key r Hentry.
+    rewrite Hhistory in Hentry.
+    destruct (Hconserved f k key r Hentry)
+      as [codes [Hdistinct [Hcount Hmembers]]].
+    exists codes. split; [exact Hdistinct |].
+    assert (Hroot :
+      row_root (length k * (N.to_nat (N.log2 (ids db')) + 1)) r
+        (db_row_store db') =
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db)).
+    { rewrite Hids. apply row_root_same_links. exact Hlinks. }
+    split.
+    - rewrite Hroot, Hweights. exact Hcount.
+    - rewrite Hroot. apply Forall_forall. intros code Hin.
+      apply Forall_forall with (x := code) in Hmembers; [| exact Hin].
+      destruct Hmembers as [label [id [Hget Hconnected]]].
+      exists label, id. split.
+      + now rewrite Hhistory.
+      + eapply database_history_connected_transport; eassumption.
+  Qed.
+
+  (** A historical row key resolves to its current stored key. *)
+  Definition located (db : t) (f : positive) (k : list (cell V.t))
+      : option (list (cell V.t)) := locate f k db.
+  Lemma union_located_raw : forall db i j f k,
+    located (union i j db) f k = located db f k.
+  Proof.
+    intros db i j f k. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  Lemma database_active_history_coherent_union : forall db i j,
+    database_active_history_coherent db ->
+    database_active_history_coherent (union i j db).
+  Proof.
+    intros db i j Hcoherent f k o key r Hrow Hentry.
+    change (row (view (union i j db)) f k o) in Hrow.
+    rewrite union_rows_raw in Hrow.
+    rewrite union_row_store_raw in Hentry.
+    change (located (union i j db) f k = Some k).
+    rewrite union_located_raw.
+    exact (Hcoherent f k o key r Hrow Hentry).
+  Qed.
+
+  Lemma database_history_root_owner_union : forall db i j,
+    database_history_root_owner db ->
+    database_history_root_owner (union i j db).
+  Proof.
+    intros db i j Howner f k key r g args other s Hfirst Hsecond Hroot.
+    rewrite union_row_store_raw in Hfirst, Hsecond, Hroot.
+    rewrite union_ids in Hroot.
+    exact (Howner f k key r g args other s Hfirst Hsecond Hroot).
+  Qed.
+
+  Lemma database_history_key_shape_union : forall db i j,
+    database_history_key_shape db ->
+    database_history_key_shape (union i j db).
+  Proof.
+    intros db i j Hshape.
+    eapply database_history_key_shape_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - now rewrite union_row_store_raw.
+    - apply union_ids.
+    - exact Hshape.
+  Qed.
+
+  Lemma database_history_codes_valid_union : forall db i j,
+    database_history_codes_valid db ->
+    database_history_codes_valid (union i j db).
+  Proof.
+    intros db i j Hvalid.
+    eapply database_history_codes_valid_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - exact Hvalid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_union : forall db i j,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (union i j db).
+  Proof.
+    intros db i j Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - rewrite union_ids. reflexivity.
+    - exact Hbounded.
+  Qed.
+
+  Lemma database_row_weight_conserved_union : forall db i j,
+    database_row_weight_conserved db ->
+    database_row_weight_conserved (union i j db).
+  Proof.
+    intros db i j Hconserved.
+    eapply database_row_weight_conserved_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - now rewrite union_row_store_raw.
+    - now rewrite union_row_store_raw.
+    - apply union_ids.
+    - exact Hconserved.
+  Qed.
+
+  Lemma database_history_alignment_union : forall db i j,
+    UnionFind.wf (db_forest db) -> database_history_alignment db ->
+    database_history_alignment (union i j db).
+  Proof.
+    intros db i j Hforest Halign f k key r Hentry Hcanonical.
+    rewrite union_row_store_raw in Hentry.
+    change (located (union i j db) f k = Some k).
+    rewrite union_located_raw.
+    apply (database_history_alignment_entry db Halign f k key r Hentry).
+    intros x Hin. apply (union_representative_old db i j x Hforest).
+    exact (Hcanonical x Hin).
+  Qed.
+
   Lemma union_forest_members : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     forall x, UnionFind.mem (db_forest (union i j db)) x <-> allocated (union i j db) x.
   Proof.
@@ -6572,6 +6785,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Equality insertion preserves the base stored facts. *)
+  Lemma database_owned_ok_union : forall db i j,
+    UnionFind.wf (db_forest db) -> database_owned_ok db ->
+    database_owned_ok (union i j db).
+  Proof.
+    intros db i j Hforest Howned.
+    unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    split; [apply database_row_store_ok_union; exact Hstore |].
+    split; [apply database_history_alignment_union; assumption |].
+    split; [apply database_active_history_coherent_union; exact Hcoherent |].
+    split; [apply database_history_root_owner_union; exact Howner |].
+    split; [apply database_history_key_shape_union; exact Hshape |].
+    split; [apply database_history_codes_valid_union; exact Hvalid |].
+    split; [apply database_history_key_ids_bounded_union; exact Hbounded |].
+    split; [apply database_row_weight_conserved_union; exact Hconserved |].
+    apply database_row_weights_positive_union. exact Hpositive.
+  Qed.
+
   Lemma database_wf_union : forall i j db, database_wf db ->
     allocated db i -> allocated db j -> database_wf (union i j db).
   Proof.
@@ -9772,9 +10005,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
   Definition class_size (db : t) (x : positive) : N :=
     N.of_nat (UnionFind.size_of (uf_state db) x).
-  (** A historical row key resolves to its current stored key. *)
-  Definition located (db : t) (f : positive) (k : list (cell V.t))
-      : option (list (cell V.t)) := locate f k db.
   (** Parent links and use entries refer to the historical row inventory. *)
   Definition row_store_ok (db : t) : Prop := database_row_store_ok db.
   (** Initialization has no historical keys, links or registered occurrences. *)
@@ -11224,67 +11454,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       destruct Hfirst_shape; destruct Hsecond_shape; congruence.
   Qed.
 
-  Lemma database_history_root_owner_transport : forall db db',
-    row_history (db_row_store db') = row_history (db_row_store db) ->
-    row_links (db_row_store db') = row_links (db_row_store db) ->
-    ids db' = ids db -> database_history_root_owner db ->
-    database_history_root_owner db'.
-  Proof.
-    intros db db' Hhistory Hlinks Hids Howner f k key r g args other s
-      Hfirst Hsecond Hroots.
-    rewrite Hhistory in Hfirst, Hsecond.
-    rewrite Hids in Hroots.
-    rewrite (row_root_same_links _ r (db_row_store db')
-      (db_row_store db) Hlinks) in Hroots.
-    rewrite (row_root_same_links _ s (db_row_store db')
-      (db_row_store db) Hlinks) in Hroots.
-    exact (Howner f k key r g args other s Hfirst Hsecond Hroots).
-  Qed.
-
-  Lemma database_history_key_shape_transport : forall db db',
-    row_history (db_row_store db') = row_history (db_row_store db) ->
-    row_links (db_row_store db') = row_links (db_row_store db) ->
-    ids db' = ids db -> database_history_key_shape db ->
-    database_history_key_shape db'.
-  Proof.
-    intros db db' Hhistory Hlinks Hids Hshape f k key r g args other s
-      Hfirst Hsecond Hroots.
-    rewrite Hhistory in Hfirst, Hsecond.
-    rewrite Hids in Hroots.
-    rewrite (row_root_same_links _ r (db_row_store db')
-      (db_row_store db) Hlinks) in Hroots.
-    rewrite (row_root_same_links _ s (db_row_store db')
-      (db_row_store db) Hlinks) in Hroots.
-    exact (Hshape f k key r g args other s Hfirst Hsecond Hroots).
-  Qed.
-
-  Lemma database_history_codes_valid_transport : forall db db',
-    row_history (db_row_store db') = row_history (db_row_store db) ->
-    database_history_codes_valid db -> database_history_codes_valid db'.
-  Proof.
-    intros db db' Hhistory Hvalid code f k id Hentry.
-    rewrite Hhistory in Hentry. exact (Hvalid code f k id Hentry).
-  Qed.
-
-  Lemma database_history_key_ids_bounded_transport : forall db db',
-    row_history (db_row_store db') = row_history (db_row_store db) ->
-    (ids db <= ids db')%N -> database_history_key_ids_bounded db ->
-    database_history_key_ids_bounded db'.
-  Proof.
-    intros db db' Hhistory Hids Hbounded code f k id Hentry i Hin.
-    rewrite Hhistory in Hentry.
-    unfold allocated in *. eapply N.le_trans;
-      [exact (Hbounded code f k id Hentry i Hin) | exact Hids].
-  Qed.
-
-  Lemma database_row_weights_positive_transport : forall db db',
-    row_weights (db_row_store db') = row_weights (db_row_store db) ->
-    database_row_weights_positive db -> database_row_weights_positive db'.
-  Proof.
-    intros db db' Hweights Hpositive r n Hentry.
-    rewrite Hweights in Hentry. exact (Hpositive r n Hentry).
-  Qed.
-
   Lemma database_row_weights_positive_advance : forall db,
     database_row_weights_positive db -> database_row_weights_positive (advance db).
   Proof.
@@ -11330,65 +11499,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     eapply database_row_weights_positive_transport with (db := db).
     - now rewrite row_delete_row_store.
     - exact Hpositive.
-  Qed.
-
-  Lemma database_row_weights_positive_union : forall db i j,
-    database_row_weights_positive db ->
-    database_row_weights_positive (union i j db).
-  Proof.
-    intros db i j Hpositive.
-    eapply database_row_weights_positive_transport with (db := db).
-    - now rewrite union_row_store_raw.
-    - exact Hpositive.
-  Qed.
-
-  Lemma database_history_key_ids_bounded_advance : forall db,
-    database_history_key_ids_bounded db ->
-    database_history_key_ids_bounded (advance db).
-  Proof.
-    intros db Hbounded.
-    eapply database_history_key_ids_bounded_transport with (db := db);
-      [reflexivity | reflexivity | exact Hbounded].
-  Qed.
-
-  Lemma database_history_connected_transport : forall db db' a b,
-    row_links (db_row_store db') = row_links (db_row_store db) ->
-    database_history_connected db a b ->
-    database_history_connected db' a b.
-  Proof.
-    intros db db' a b Hlinks Hconnected.
-    unfold database_history_connected in *.
-    eapply equality_closure_mono; [| exact Hconnected].
-    intros x y Hedge. now rewrite Hlinks.
-  Qed.
-
-  Lemma database_row_weight_conserved_transport : forall db db',
-    row_history (db_row_store db') = row_history (db_row_store db) ->
-    row_links (db_row_store db') = row_links (db_row_store db) ->
-    row_weights (db_row_store db') = row_weights (db_row_store db) ->
-    ids db' = ids db -> database_row_weight_conserved db ->
-    database_row_weight_conserved db'.
-  Proof.
-    intros db db' Hhistory Hlinks Hweights Hids Hconserved
-      f k key r Hentry.
-    rewrite Hhistory in Hentry.
-    destruct (Hconserved f k key r Hentry)
-      as [codes [Hdistinct [Hcount Hmembers]]].
-    exists codes. split; [exact Hdistinct |].
-    assert (Hroot :
-      row_root (length k * (N.to_nat (N.log2 (ids db')) + 1)) r
-        (db_row_store db') =
-      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
-        (db_row_store db)).
-    { rewrite Hids. apply row_root_same_links. exact Hlinks. }
-    split.
-    - rewrite Hroot, Hweights. exact Hcount.
-    - rewrite Hroot. apply Forall_forall. intros code Hin.
-      apply Forall_forall with (x := code) in Hmembers; [| exact Hin].
-      destruct Hmembers as [label [id [Hget Hconnected]]].
-      exists label, id. split.
-      + now rewrite Hhistory.
-      + eapply database_history_connected_transport; eassumption.
   Qed.
 
   Lemma database_row_weight_conserved_advance : forall db,
@@ -14604,96 +14714,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite Hrepr. exact (Hnonroot x Hin).
   Qed.
 
-  Lemma union_located_raw : forall db i j f k,
-    located (union i j db) f k = located db f k.
-  Proof.
-    intros db i j f k. unfold union.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
-    destruct roots as [[winner loser] |]; reflexivity.
-  Qed.
-
-  Lemma database_active_history_coherent_union : forall db i j,
-    database_active_history_coherent db ->
-    database_active_history_coherent (union i j db).
-  Proof.
-    intros db i j Hcoherent f k o key r Hrow Hentry.
-    change (row (view (union i j db)) f k o) in Hrow.
-    rewrite union_rows_raw in Hrow.
-    rewrite union_row_store_raw in Hentry.
-    change (located (union i j db) f k = Some k).
-    rewrite union_located_raw.
-    exact (Hcoherent f k o key r Hrow Hentry).
-  Qed.
-
-  Lemma database_history_root_owner_union : forall db i j,
-    database_history_root_owner db ->
-    database_history_root_owner (union i j db).
-  Proof.
-    intros db i j Howner f k key r g args other s Hfirst Hsecond Hroot.
-    rewrite union_row_store_raw in Hfirst, Hsecond, Hroot.
-    rewrite union_ids in Hroot.
-    exact (Howner f k key r g args other s Hfirst Hsecond Hroot).
-  Qed.
-
-  Lemma database_history_key_shape_union : forall db i j,
-    database_history_key_shape db ->
-    database_history_key_shape (union i j db).
-  Proof.
-    intros db i j Hshape.
-    eapply database_history_key_shape_transport with (db := db).
-    - now rewrite union_row_store_raw.
-    - now rewrite union_row_store_raw.
-    - apply union_ids.
-    - exact Hshape.
-  Qed.
-
-  Lemma database_history_codes_valid_union : forall db i j,
-    database_history_codes_valid db ->
-    database_history_codes_valid (union i j db).
-  Proof.
-    intros db i j Hvalid.
-    eapply database_history_codes_valid_transport with (db := db).
-    - now rewrite union_row_store_raw.
-    - exact Hvalid.
-  Qed.
-
-  Lemma database_history_key_ids_bounded_union : forall db i j,
-    database_history_key_ids_bounded db ->
-    database_history_key_ids_bounded (union i j db).
-  Proof.
-    intros db i j Hbounded.
-    eapply database_history_key_ids_bounded_transport with (db := db).
-    - now rewrite union_row_store_raw.
-    - rewrite union_ids. reflexivity.
-    - exact Hbounded.
-  Qed.
-
-  Lemma database_row_weight_conserved_union : forall db i j,
-    database_row_weight_conserved db ->
-    database_row_weight_conserved (union i j db).
-  Proof.
-    intros db i j Hconserved.
-    eapply database_row_weight_conserved_transport with (db := db).
-    - now rewrite union_row_store_raw.
-    - now rewrite union_row_store_raw.
-    - now rewrite union_row_store_raw.
-    - apply union_ids.
-    - exact Hconserved.
-  Qed.
-
-  Lemma database_history_alignment_union : forall db i j,
-    UnionFind.wf (db_forest db) -> database_history_alignment db ->
-    database_history_alignment (union i j db).
-  Proof.
-    intros db i j Hforest Halign f k key r Hentry Hcanonical.
-    rewrite union_row_store_raw in Hentry.
-    change (located (union i j db) f k = Some k).
-    rewrite union_located_raw.
-    apply (database_history_alignment_entry db Halign f k key r Hentry).
-    intros x Hin. apply (union_representative_old db i j x Hforest).
-    exact (Hcanonical x Hin).
-  Qed.
-
   Lemma database_history_alignment_put : forall db f k o,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (put f k o db).
@@ -16631,26 +16651,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply database_row_weights_positive_db_repair_entry. exact Hpositive.
   Qed.
 
-
-  Lemma database_owned_ok_union : forall db i j,
-    UnionFind.wf (db_forest db) -> database_owned_ok db ->
-    database_owned_ok (union i j db).
-  Proof.
-    intros db i j Hforest Howned.
-    unfold database_owned_ok in Howned |- *.
-    destruct Howned as
-      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
-    split; [apply database_row_store_ok_union; exact Hstore |].
-    split; [apply database_history_alignment_union; assumption |].
-    split; [apply database_active_history_coherent_union; exact Hcoherent |].
-    split; [apply database_history_root_owner_union; exact Howner |].
-    split; [apply database_history_key_shape_union; exact Hshape |].
-    split; [apply database_history_codes_valid_union; exact Hvalid |].
-    split; [apply database_history_key_ids_bounded_union; exact Hbounded |].
-    split; [apply database_row_weight_conserved_union; exact Hconserved |].
-    apply database_row_weights_positive_union. exact Hpositive.
-  Qed.
 
   Lemma database_owned_ok_put : forall db f k o,
     wf db -> kind_ok db f k o -> database_owned_ok db ->
