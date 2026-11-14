@@ -10008,6 +10008,34 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     right. right. apply in_or_app. now right.
   Qed.
 
+  Lemma slots_update_row_store_ok : forall db add f cells,
+    database_row_store_ok db ->
+    database_row_store_ok (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hstore.
+    eapply database_row_store_ok_transport.
+    - apply slots_update_row_store.
+    - apply slots_update_nuses.
+    - apply slots_update_ids.
+    - apply slots_update_counters_incl.
+    - intros c Hin. rewrite slots_update_written_cells.
+      apply in_or_app. now right.
+    - exact Hstore.
+  Qed.
+
+  Lemma row_write_row_store_ok : forall db f k o,
+    database_row_store_ok db -> database_row_store_ok (row_write f k o db).
+  Proof.
+    intros db f k o Hstore.
+    eapply database_row_store_ok_transport.
+    - apply row_write_row_store.
+    - reflexivity.
+    - apply row_write_ids.
+    - intros p Hin. exact Hin.
+    - intros c Hin. exact Hin.
+    - exact Hstore.
+  Qed.
+
   (** Cache updates retain all watermark inputs and record additional activity. *)
   Lemma wmark_slots_update : forall b f u db,
     (wmark db <= wmark (slots_update b f u db))%N.
