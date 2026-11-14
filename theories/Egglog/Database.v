@@ -10476,6 +10476,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply slots_update_nuses.
   Qed.
 
+  Lemma row_delete_row_store : forall db f k,
+    db_row_store (row_delete f k db) = db_row_store db.
+  Proof.
+    intros db f k. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| reflexivity].
+    change (db_row_store (slots_update false f (k ++ option_list before) db) =
+      db_row_store db).
+    apply slots_update_row_store.
+  Qed.
+
+  Lemma database_history_alignment_row_delete : forall db f k,
+    database_history_alignment db ->
+    database_history_alignment (row_delete f k db).
+  Proof.
+    intros db f k Halign.
+    eapply (database_history_alignment_transport db (row_delete f k db)).
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - apply row_delete_ids.
+    - apply row_delete_forest.
+    - exact Halign.
+  Qed.
+
+  Lemma database_row_store_ok_row_delete : forall db f k,
+    database_row_store_ok db -> database_row_store_ok (row_delete f k db).
+  Proof.
+    intros db f k Hstore.
+    eapply (database_row_store_ok_transport db (row_delete f k db)).
+    - apply row_delete_row_store.
+    - apply row_delete_nuses.
+    - apply row_delete_ids.
+    - apply row_delete_counters_incl.
+    - apply row_delete_written.
+    - exact Hstore.
+  Qed.
+
   (** Every fresh constructor branch combines increasing allocation with optional row recording. *)
   Lemma unit_make_fresh_monotone : forall f k previous db,
     let i := N.succ_pos (ids db) in
