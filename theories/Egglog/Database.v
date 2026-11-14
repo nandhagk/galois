@@ -12471,6 +12471,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try reflexivity; exact Hshape.
   Qed.
 
+  Lemma database_history_codes_valid_advance : forall db,
+    database_history_codes_valid db ->
+    database_history_codes_valid (advance db).
+  Proof.
+    intros db Hvalid.
+    eapply database_history_codes_valid_transport with (db := db);
+      [reflexivity | exact Hvalid].
+  Qed.
+
   (** Repointing a root preserves a lookup when both affected labels agree. *)
   Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
@@ -13238,6 +13247,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hshape.
   Qed.
 
+  Lemma database_history_codes_valid_slots_update : forall db add f cells,
+    database_history_codes_valid db ->
+    database_history_codes_valid (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hvalid.
+    eapply database_history_codes_valid_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - exact Hvalid.
+  Qed.
+
   Lemma database_row_weight_conserved_slots_update : forall db add f cells,
     database_row_weight_conserved db ->
     database_row_weight_conserved (slots_update add f cells db).
@@ -13275,6 +13294,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hshape.
   Qed.
 
+  Lemma database_history_codes_valid_row_write : forall db f k o,
+    database_history_codes_valid db ->
+    database_history_codes_valid (row_write f k o db).
+  Proof.
+    intros db f k o Hvalid.
+    eapply database_history_codes_valid_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - exact Hvalid.
+  Qed.
+
   Lemma database_row_weight_conserved_row_write : forall db f k o,
     database_row_weight_conserved db ->
     database_row_weight_conserved (row_write f k o db).
@@ -13310,6 +13339,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply database_history_key_shape_transport with (db := identified);
       try reflexivity.
     subst identified. apply database_history_key_shape_ensure; assumption.
+  Qed.
+
+  Lemma database_history_codes_valid_register : forall db f k o,
+    database_history_codes_valid db ->
+    database_history_codes_valid (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hvalid.
+    unfold register_row_uses.
+    set (identified := ensure_row_identity f k db).
+    eapply database_history_codes_valid_transport with (db := identified);
+      [reflexivity |].
+    subst identified. apply database_history_codes_valid_ensure. exact Hvalid.
   Qed.
 
   Lemma database_row_weight_conserved_register : forall db f k o,
@@ -13358,6 +13399,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
       + apply database_history_key_shape_row_write.
         apply database_history_key_shape_slots_update. exact Hshape.
+  Qed.
+
+  Lemma database_history_codes_valid_row_replace : forall db f k previous o,
+    database_history_codes_valid db ->
+    database_history_codes_valid (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hvalid; unfold row_replace;
+      apply database_history_codes_valid_register;
+      apply database_history_codes_valid_row_write;
+      repeat apply database_history_codes_valid_slots_update; exact Hvalid.
   Qed.
 
   Lemma database_row_weight_conserved_row_replace : forall db f k previous o,
