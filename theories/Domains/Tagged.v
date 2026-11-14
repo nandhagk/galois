@@ -132,6 +132,13 @@ Definition tagged_gamma {P : Type} (is_word : positive -> Z -> Prop)
   | TVal w p => fst c = w /\ is_word w (snd c) /\ pgamma w p (snd c)
   end.
 
+Definition tagged_point {P : Type} (ppoint : positive -> P -> option Z) (a : tagged P)
+    : option (positive * Z) :=
+  match a with
+  | TVal w p => match ppoint w p with Some z => Some (w, z) | None => None end
+  | _ => None
+  end.
+
 Module Type TAGGED_BASE (L : WORD_LANGUAGE) (W : WORD_PAYLOAD L) :=
   HARNESS_BASE BitsLang with Definition t := tagged W.p
     with Definition gamma := tagged_gamma L.is_word W.pgamma.
@@ -149,6 +156,7 @@ Module Type TAGGED_BASE_T (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) :=
   HARNESS_BASE_T BitsLangT with Definition t := tagged W.p
     with Definition wparam := W.pwparam
     with Definition gamma := tagged_gamma L.is_word W.pgamma
+    with Definition point := tagged_point W.ppoint
     with Definition bsize := tagged_size W.psize
     with Definition wsize := W.pwsize
     with Definition abst_work := tagged_abst_work.
