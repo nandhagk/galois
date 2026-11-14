@@ -9862,838 +9862,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       apply slot_rank_ok_allocate_id; exact Hrank.
   Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
-End Database.
-
-Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
-  Include Database V I.
-  (* spec: wmark potential *)
-  Definition decl_names (db : t) : list positive :=
-    map fst (PTrieCode.elements (runtime_kinds (db_runtime db))).
-  Definition wmark (db : t) : N :=
-    fold_right N.max (N.max (db_nuses db) (ids db))
-      (map Npos (db_index_counters db) ++ map Npos (decl_names db) ++
-        map (fun c => match c with
-          | Id i => Npos (xO i)
-          | Val v => Npos (xI (V.encode v))
-          end) (db_written_cells db)).
-  Definition unit (db : t) : nat :=
-    (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
-  Definition slots_of (db : t) (f : positive) : nat :=
-    length (filter (fun s => Pos.eqb (fst s) f) (slots db)).
-  Definition k_credit : N := 1%N.
-  Definition k_loop : N := (c_loopN + 1)%N.
-  Definition k_queue : N := 1%N.
-  Definition potential (B : N) (db : t) : N :=
-    let uses := flat_map (fun binding => map (pair (fst binding)) (snd binding))
-      (map (fun binding => (fst binding, snd (snd binding)))
-        (PTrieCode.elements (row_uses (db_row_store db)))) in
-    let weight := fun (e : positive * list (cell V.t)) =>
-      (length (snd e) + 1) * (slots_of db (fst e) + 1) in
-    let bucket := fun x => map snd (filter (fun xe => Pos.eqb (fst xe) x) uses) in
-    let credit := fun (xe : positive * (positive * list (cell V.t))) =>
-      N.to_nat (N.log2 B - N.log2
-        (N.of_nat (UnionFind.size_of (db_forest db) (repr db (fst xe))))) *
-        weight (snd xe) in
-    let work := fun entries => fold_right (fun e n => (weight e + n)%nat) 0%nat entries in
-    let queued := fold_right (fun x n => (work (bucket x) + 1 + n)%nat) 0%nat
-      (runtime_queue (db_runtime db)) in
-    (k_loop * (k_credit * N.of_nat
-      (fold_right (fun xe n => (credit xe + n)%nat) 0%nat uses) +
-      k_queue * N.of_nat queued))%N.
-  Definition num_slots (db : t) : nat := length (slots db).
-  TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
-  TimeFun normal_cell normal_key output_eqb combine_output.
-  TimeFun slot_index_get projection_table_get slot_update_one slot_update_many slot_updated_counters.
-  TimeFun slots_update row_write ensure_row_identity register_row_uses row_replace.
-  TimeFun row_erase row_delete.
-  TimeFun init.
-  TimeFun find.
-  TimeFun lookup.
-  TimeFun union.
-  TimeFun allocate_id.
-  TimeFun make.
-  TimeFun put.
-  TimeFun row_root db_locate move_row_identity repair_current db_repair_entry.
-  TimeFun db_get_uses db_pop_loser.
-  TimeFun db_rstep.
-  TimeFun db_rebuild_fuel.
-  TimeFun rebuild.
-  TimeFun index.
-  TimeFun advance.
-  TimeFun changed.
-  TimeFun ids.
-
-  (** A functional construction trace bounds cached widths using the public index laws. *)
-  Lemma index_history_cell_bits : forall written ix bits,
-    database_index_history I.empty I.insert I.remove written ix ->
-    (forall c, In c written -> cell_bits V.encode c <= bits) ->
-    I.max_cell_bits ix <= bits.
+  Lemma row_delete_row_store : forall db f k,
+    db_row_store (row_delete f k db) = db_row_store db.
   Proof.
-    intros written ix bits Hhistory Hwritten.
-    apply (database_index_history_induction (cell V.t) I.t I.empty I.insert I.remove written
-      (fun current => I.max_cell_bits current <= bits)); [| | | exact Hhistory].
-    - rewrite I.max_cell_bits_empty. lia.
-    - intros u current Hcells Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_insert |].
-      apply Nat.max_lub; [exact Hcurrent |].
-      induction u as [|c u IH]; cbn [fold_right]; [lia |]. apply Nat.max_lub.
-      + apply Hwritten, Hcells. now left.
-      + apply IH. intros d Hin. apply Hcells. now right.
-    - intros u current Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_remove | exact Hcurrent].
+    intros db f k. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| reflexivity].
+    change (db_row_store (slots_update false f (k ++ option_list before) db) =
+      db_row_store db).
+    apply slots_update_row_store.
   Qed.
 
-  (** Every insertion pays the actual binary increment of the stored projection count. *)
-  Lemma T_slot_update_one_count_succ_ge : forall s u state,
-    (N.T_succ (runtime_projection_count state s u) <=
-      T_slot_update_one true s u state)%N.
-  Proof.
-    intros s u state. unfold runtime_projection_count.
-    time_unfold T_slot_update_one. cbn beta iota zeta. lia.
-  Qed.
-
-  (** A non-final deletion pays the predecessor of its stored projection count. *)
-  Lemma T_slot_update_one_count_pred_ge : forall s u state,
-    runtime_projection_count state s u <> 0%N ->
-    runtime_projection_count state s u <> 1%N ->
-    (N.T_pred (runtime_projection_count state s u) <=
-      T_slot_update_one false s u state)%N.
-  Proof.
-    intros s u state Hnonzero Hnotone.
-    time_unfold T_slot_update_one. cbn beta iota zeta.
-    fold (runtime_projection_count state s u).
-    destruct (runtime_projection_count state s u) as [|p]; [contradiction |].
-    destruct p; [lia | lia | contradiction].
-  Qed.
-
-  (** All-ones multiplicities force an arbitrarily long carry inside one slot update. *)
-  Lemma T_slot_update_one_carry_ge : forall n s u state,
-    runtime_projection_count state s u = Npos (database_carry_value n) ->
-    (N.of_nat n + 2 <= T_slot_update_one true s u state)%N.
-  Proof.
-    intros n s u state Hcount.
-    pose proof (T_slot_update_one_count_succ_ge s u state) as Htime.
-    rewrite Hcount, database_carry_successor_time in Htime. exact Htime.
-  Qed.
-
-  (** A nonempty slot walk pays projection, one update, and its updated-state continuation. *)
-  Lemma T_slot_update_many_cons : forall b u s layout rest state,
-    T_slot_update_many b u ((s, layout) :: rest) state =
-      (1 + T_project_slot_layout layout u +
-       T_slot_update_one b s (project_slot_layout layout u) state +
-       T_slot_update_many b u rest
-         (slot_update_one b s (project_slot_layout layout u) state))%N.
-  Proof.
-    intros b u s layout rest state. time_unfold T_slot_update_many. ring.
-  Qed.
-
-  (** The empty slot walk performs only its entry call. *)
-  Lemma T_slot_update_many_nil : forall b u state,
-    T_slot_update_many b u [] state = 1%N.
-  Proof.
-    intros b u state. time_unfold T_slot_update_many. reflexivity.
-  Qed.
-
-  (** Reading either index cache pays the binary slot key once. *)
-  Lemma T_slot_index_get_width : forall code indexes,
-    (T_slot_index_get code indexes <=
-      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
-  Proof.
-    intros code indexes. time_unfold T_slot_index_get.
-    apply N.add_le_mono_l. apply PTrieT.T_get_le.
-  Qed.
-
-  (** Reading a projection-count table pays the same binary slot key. *)
-  Lemma T_projection_table_get_width : forall code counts,
-    (T_projection_table_get code counts <=
-      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
-  Proof.
-    intros code counts. time_unfold T_projection_table_get.
-    apply N.add_le_mono_l. apply PTrieT.T_get_le.
-  Qed.
-
-  (** One slot update exposes count width separately from tuple and index costs. *)
-  Lemma T_slot_update_one_local : forall add s u state,
-    let code := N.succ_pos s in
-    let all := slot_index_get code (runtime_all_indexes state) in
-    let fresh := slot_index_get code (runtime_new_indexes state) in
-    let count := runtime_projection_count state s u in
-    (T_slot_update_one add s u state <=
-      32 + N.T_succ_pos s + T_db_tuple_code u +
-      6 * (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1)) +
-      2 * (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1)) +
-      I.T_insert u all + I.T_insert u fresh + I.T_remove u all + I.T_remove u fresh +
-      N.of_nat (N.size_nat count) + 2)%N.
-  Proof.
-    intros add s u state. cbn beta zeta.
-    set (code := N.succ_pos s) in *.
-    set (tuple_code := db_tuple_code u) in *.
-    set (table := projection_table_get code (runtime_projection_counts state)).
-    set (all := slot_index_get code (runtime_all_indexes state)) in *.
-    set (fresh := slot_index_get code (runtime_new_indexes state)) in *.
-    pose proof (T_projection_table_get_width code (runtime_projection_counts state)) as Htable.
-    pose proof (T_slot_index_get_width code (runtime_all_indexes state)) as Hall.
-    pose proof (T_slot_index_get_width code (runtime_new_indexes state)) as Hfresh.
-    assert (Hget : (PTrieCode.T_get tuple_code table <=
-      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
-    { apply PTrieT.T_get_le. }
-    assert (Hset_slot : forall A (v : A) (m : PTrieCode.t A),
-      (PTrieCode.T_set code v m <= PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N).
-    { intros A v m. apply PTrieT.T_set_le. }
-    assert (Hset_tuple : forall v,
-      (PTrieCode.T_set tuple_code v table <=
-        PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
-    { intro v. apply PTrieT.T_set_le. }
-    assert (Hremove : (PTrieCode.T_remove tuple_code table <=
-      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
-    { apply PTrieT.T_remove_le. }
-    pose proof (N.T_succ_le (runtime_projection_count state s u)) as Hsucc.
-    pose proof (N.T_pred_le (runtime_projection_count state s u)) as Hpred.
-    unfold runtime_projection_count in Hsucc, Hpred |- *.
-    fold code tuple_code table in Hsucc, Hpred |- *.
-    set (count := match PTrieCode.get tuple_code table with Some (_, n) => n | None => 0%N end) in *.
-    time_unfold T_slot_update_one. cbn beta iota zeta.
-    fold code tuple_code table count all fresh.
-    destruct add; [| destruct count as [|[p|p|]]];
-      try time_unfold @T_runtime_set_indexes;
-      time_pose; time_simpl; time_cbn_all.
-    all: set (slot_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N) in *;
-      set (tuple_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N) in *;
-      clearbody slot_cost tuple_cost; lia.
-  Qed.
-
-  (** A preserved state predicate turns uniform per-layout costs into a complete walk bound. *)
-  Lemma T_slot_update_many_bound : forall b u layouts state
-    (P : database_runtime (cell V.t) I.t -> Prop) budget,
-    P state ->
-    (forall s layout current, In (s, layout) layouts -> P current ->
-      P (slot_update_one b s (project_slot_layout layout u) current) /\
-      (T_project_slot_layout layout u +
-       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
-    (T_slot_update_many b u layouts state <=
-      (budget + 1) * N.of_nat (length layouts) + 1)%N.
-  Proof.
-    intros b u layouts. induction layouts as [|[s layout] rest IH];
-      intros state P budget Hstate Hstep.
-    - rewrite T_slot_update_many_nil. cbn [length]. lia.
-    - destruct (Hstep s layout state (or_introl eq_refl) Hstate) as [Hnext Hcost].
-      pose proof (IH (slot_update_one b s (project_slot_layout layout u) state) P budget Hnext
-        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Htail.
-      rewrite T_slot_update_many_cons. cbn [length]. nia.
-  Qed.
-
-  (** A duplicate-free walk reads each slot before any earlier update can change it. *)
-  Lemma T_slot_update_many_snapshots : forall b u layouts original state budget,
-    NoDup (map fst layouts) ->
-    (forall s layout, In (s, layout) layouts -> slot_snapshot state s = slot_snapshot original s) ->
-    (forall s layout current, In (s, layout) layouts ->
-      slot_snapshot current s = slot_snapshot original s ->
-      (T_project_slot_layout layout u +
-       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
-    (T_slot_update_many b u layouts state <=
-      (budget + 1) * N.of_nat (length layouts) + 1)%N.
-  Proof.
-    intros b u layouts. induction layouts as [|[s layout] rest IH];
-      intros original state budget Hnodup Hsnapshots Hstep.
-    - rewrite T_slot_update_many_nil. cbn [length]. lia.
-    - cbn [map fst] in Hnodup. inversion Hnodup as [|key keys Hmissing Htail]; subst.
-      pose proof (Hstep s layout state (or_introl eq_refl)
-        (Hsnapshots s layout (or_introl eq_refl))) as Hhead.
-      assert (Hnext : forall t block, In (t, block) rest ->
-        slot_snapshot (slot_update_one b s (project_slot_layout layout u) state) t =
-          slot_snapshot original t).
-      { intros t block Hin. rewrite slot_update_one_snapshot_other.
-        - apply (Hsnapshots t block). now right.
-        - intro Hequal. subst t. apply Hmissing. exact (in_map fst rest (s, block) Hin). }
-      pose proof (IH original (slot_update_one b s (project_slot_layout layout u) state)
-        budget Htail Hnext
-        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Hrest.
-      rewrite T_slot_update_many_cons. cbn [length]. nia.
-  Qed.
-
-  (** Counter collection emits precisely the full and delta counter for every visited slot. *)
-  Lemma slot_updated_counters_length : forall layouts state,
-    length (slot_updated_counters layouts state) = 2 * length layouts.
-  Proof.
-    intro layouts. induction layouts as [|[s layout] rest IH]; intro state;
-      cbn [slot_updated_counters length]; [reflexivity | rewrite IH; lia].
-  Qed.
-
-  Definition c_db : N :=
-    4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
-
-  (** The database coefficient dominates the trie work and every constant observation cost. *)
-  Lemma c_db_trie_budget : (256 * (PTrieT.c_trie + 1) <= c_db)%N.
-  Proof.
-    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
-    intros a b c d. nia.
-  Qed.
-
-  (** Every database operation has room for its fixed record-construction overhead. *)
-  Lemma c_db_constant_budget : (128 <= c_db)%N.
-  Proof.
-    pose proof c_db_trie_budget. nia.
-  Qed.
-
-  (** The positive bit count agrees with the natural length of the positive size code. *)
-  Lemma positive_size_nat : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p.
-  Proof.
-    intro p. induction p; cbn [Pos.size Pos.size_nat];
-      rewrite ?Pos2Nat.inj_succ, ?IHp; reflexivity.
-  Qed.
-
-  (** Binary slot width fits its logarithmic public query size, including zero. *)
-  Lemma slot_width_log : forall s, N.size_nat s <= N.to_nat (N.log2 s) + 1.
-  Proof.
-    intros [| [p | p |]]; cbn [N.size_nat N.log2 N.to_nat Pos.size_nat];
-      rewrite ?positive_size_nat; lia.
-  Qed.
-
-  (** The positive slot encoding adds at most one bit to the queried number. *)
-  Lemma slot_code_bits : forall s, Pos.size_nat (N.succ_pos s) <= N.size_nat s + 1.
-  Proof.
-    intros [| p]; [cbn; lia |].
-    cbn [N.succ_pos N.size_nat]. induction p; cbn [Pos.succ Pos.size_nat]; lia.
-  Qed.
-
-  (** Collecting the two final counters pays one bounded slot lookup per cache. *)
-  Lemma T_slot_updated_counters_le : forall layouts state bits,
-    (forall s layout, In (s, layout) layouts -> N.size_nat s <= bits) ->
-    (T_slot_updated_counters layouts state <=
-      16 * (I.c_ix + PTrieT.c_trie + 1) * N.of_nat (length layouts + 1) *
-        N.of_nat (bits + 1))%N.
-  Proof.
-    intro layouts. induction layouts as [|[s layout] rest IH]; intros state bits Hbits.
-    - time_unfold T_slot_updated_counters. cbn [length]. nia.
-    - pose proof (IH state bits (fun t block Hin => Hbits t block (or_intror Hin))) as Htail.
-      pose proof (Hbits s layout (or_introl eq_refl)) as Hslot.
-      pose proof (slot_code_bits s) as Hcode.
-      pose proof (N.T_succ_pos_le s) as Hsucc.
-      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_all_indexes state)) as Hall.
-      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_new_indexes state)) as Hnew.
-      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_all_indexes state))) as Hall_next.
-      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_new_indexes state))) as Hnew_next.
-      time_unfold T_slot_updated_counters.
-      time_unfold @T_runtime_all_indexes. time_unfold @T_runtime_new_indexes.
-      cbn [length]. nia.
-  Qed.
-
-  (** Taking the maximum over a list retains its initial lower bound. *)
-  Lemma fold_max_base : forall values base, (base <= fold_right N.max base values)%N.
-  Proof.
-    intro values. induction values as [| value values IH]; intro base; cbn [fold_right].
-    - lia.
-    - eapply N.le_trans; [apply IH | apply N.le_max_r].
-  Qed.
-
-  (** Every recorded value is below the maximum over the recording list. *)
-  Lemma fold_max_member : forall values base value,
-    In value values -> (value <= fold_right N.max base values)%N.
-  Proof.
-    intro values. induction values as [| head values IH]; intros base value Hin.
-    - contradiction.
-    - cbn [fold_right]. destruct Hin as [-> | Hin]; [apply N.le_max_l |].
-      eapply N.le_trans; [now apply IH | apply N.le_max_r].
-  Qed.
-
-  (** Increasing a binary number never decreases its encoded width. *)
-  Lemma N_width_mono : forall n m, (n <= m)%N -> N.size_nat n <= N.size_nat m.
-  Proof.
-    intros [| p] [| q] Hle; cbn [N.size_nat]; try lia.
-    destruct (Pos.eq_dec p q) as [-> | Hneq]; [lia |].
-    apply Pos.size_nat_monotone. lia.
-  Qed.
-
-  (** Doubling a binary natural adds at most one bit. *)
-  Lemma database_double_bits : forall n, N.size_nat (2 * n) <= N.size_nat n + 1.
-  Proof.
-    intros [|p]; cbn [N.mul N.size_nat Pos.mul Pos.size_nat]; lia.
-  Qed.
-
-  (** A query length no greater than an input length fits the input's positive rank. *)
-  Lemma database_query_length_rank : forall n m, n <= m ->
-    (Npos (Pos.of_nat n) <= Npos (Pos.of_succ_nat m))%N.
-  Proof.
-    intros n m Hlength. change (Pos.of_nat n <= Pos.of_succ_nat m)%positive.
-    apply Pos2Nat.inj_le.
-    rewrite SuccNat2Pos.id_succ. destruct n as [|n].
-    - cbn. lia.
-    - rewrite Nat2Pos.id by lia. lia.
-  Qed.
-
-  (** Counter, query and stored-cell bounds together control the actual index width. *)
-  Lemma index_width_watermark : forall ix u bound,
-    (Npos (I.next ix) <= bound)%N ->
-    (Npos (Pos.of_nat (length u)) <= bound)%N ->
-    (forall c, In c u -> cell_bits V.encode c <= N.size_nat bound) ->
-    I.max_cell_bits ix <= N.size_nat bound ->
-    I.width ix u <= 4 * N.size_nat bound + 2.
-  Proof.
-    intros ix u bound Hnext Hlength Hcells Hstored.
-    assert (Hsum : (Npos (I.next ix + Pos.of_nat (length u)) <= 2 * bound)%N).
-    { change ((Npos (I.next ix) + Npos (Pos.of_nat (length u))) <= 2 * bound)%N. lia. }
-    pose proof (N_width_mono _ _ Hsum) as Hsum_bits.
-    change (Pos.size_nat (I.next ix + Pos.of_nat (length u)) <= N.size_nat (2 * bound))
-      in Hsum_bits.
-    pose proof (database_double_bits bound) as Hdouble.
-    assert (Hmaximum : fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 u <=
-      N.size_nat bound).
-    { clear -Hcells. induction u as [|c rest IH]; cbn [fold_right]; [lia |].
-      apply Nat.max_lub; [apply Hcells; now left |].
-      apply IH. intros d Hin. apply Hcells. now right. }
-    pose proof (I.width_le ix u). lia.
-  Qed.
-
-  (** The exact watermark formula always covers the allocated identifier interval. *)
-  Lemma wmark_ids : forall db, (ids db <= wmark db)%N.
-  Proof.
-    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_r | apply fold_max_base].
-  Qed.
-
-  (** The declaration inventory is exactly the domain of the stored kind trie. *)
-  Lemma decl_names_spec : forall db f,
-    kind (view db) f <> None <-> In f (decl_names db).
-  Proof.
-    intros db f. unfold decl_names.
-    change (PTrieCode.get f (runtime_kinds (db_runtime db)) <> None <->
-      In f (map fst (PTrieCode.elements (runtime_kinds (db_runtime db))))).
-    split.
-    - intro Hpresent. destruct (PTrieCode.get f (runtime_kinds (db_runtime db))) as [output |] eqn:Hget;
-        [| contradiction]. apply in_map_iff. exists (f, output). split; [reflexivity |].
-      now apply PTrie.elements_spec.
-    - intro Hin. apply in_map_iff in Hin as [[g output] [Heq Hin]].
-      cbn [fst] in Heq. subst g. apply PTrie.elements_spec in Hin. congruence.
-  Qed.
-
-  (** A guarded slot lookup pays only the query's bits and one trie access. *)
-  Lemma T_index_bits : forall s new db,
-    (T_index s new db <= 16 * (PTrieT.c_trie + 1) * N.of_nat (N.size_nat s + 1))%N.
-  Proof.
-    intros s new db. pose proof (N.T_compare_le s (runtime_slot_bound (db_runtime db))) as Hcompare.
-    pose proof (N.T_succ_pos_le s) as Hsucc.
-    pose proof (slot_code_bits s) as Hbits.
-    pose proof (PTrieT.T_get_le I.t (N.succ_pos s)
-      (if new then runtime_new_indexes (db_runtime db) else runtime_all_indexes (db_runtime db))) as Hget.
-    time_unfold T_index. time_unfold @T_db_runtime. time_unfold @T_runtime_slot_bound.
-    destruct (N.compare s (runtime_slot_bound (db_runtime db))); try nia.
-    destruct new; time_unfold @T_runtime_new_indexes; time_unfold @T_runtime_all_indexes;
-      cbn in Hget; nia.
-  Qed.
-
-  (** Unary logarithms agree with the width of a positive binary integer. *)
-  Lemma positive_nat_log2_size : forall p,
-    S (Nat.log2 (Pos.to_nat p)) = Pos.size_nat p.
-  Proof.
-    intro p. induction p.
-    - rewrite Pos2Nat.inj_xI.
-      replace (S (2 * Pos.to_nat p)) with (2 * Pos.to_nat p + 1) by lia.
-      rewrite Nat.log2_succ_double by apply Pos2Nat.is_pos.
-      cbn [Pos.size_nat]. now rewrite IHp.
-    - rewrite Pos2Nat.inj_xO, Nat.log2_double by apply Pos2Nat.is_pos.
-      cbn [Pos.size_nat]. now rewrite IHp.
-    - reflexivity.
-  Qed.
-
-  (** A unary logarithm is bounded by the width of the same binary integer. *)
-  Lemma nat_log2_N_width : forall n, Nat.log2 (N.to_nat n) <= N.size_nat n.
-  Proof.
-    intros [| p]; [reflexivity |].
-    change (Nat.log2 (Pos.to_nat p) <= Pos.size_nat p).
-    pose proof (positive_nat_log2_size p). lia.
-  Qed.
-
-  (** Forest cardinality is exactly the database allocation counter. *)
-  Lemma forest_card_ids : forall db, wf db ->
-    UnionFind.card (db_forest db) = N.to_nat (ids db).
-  Proof.
-    intros db Hwf. unfold UnionFind.card. now rewrite (wf_forest_count db Hwf).
-  Qed.
-
-  (** Find adds only the fixed record-wrapper work to the actual forest clock. *)
-  Lemma T_find_overhead : forall i db,
-    (T_find i db = UnionFindT.T_find i (db_forest db) + 14)%N.
-  Proof.
-    intros i db. time_unfold T_find. time_unfold @T_database_set_forest.
-    time_simpl. time_cbn. nia.
-  Qed.
-
-  (** The shared coefficient also dominates forest work and fixed wrapper costs. *)
-  Lemma c_db_forest_budget : (128 * (UnionFindT.c_uf + 1) <= c_db)%N.
-  Proof.
-    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
-    intros a b c d. nia.
-  Qed.
-
-  (** Allocated finds fit the logarithmic database unit without any history assumption. *)
-  Lemma T_find_unit_budget : forall i db, wf db -> allocated db i ->
-    (UnionFindT.T_find i (db_forest db) <=
-      2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
-  Proof.
-    intros i db Hwf Hi.
-    pose proof (UnionFindT.T_find_le i (db_forest db) (wf_forest db Hwf)) as Hfind.
-    rewrite (forest_card_ids db Hwf) in Hfind.
-    pose proof (nat_log2_N_width (ids db)) as Hlog.
-    pose proof (slot_width_log (ids db)) as Hlogwidth.
-    assert (Hwidth : Nat.max (UnionFind.width (db_forest db)) (Pos.size_nat i) <=
-      N.size_nat (wmark db)).
-    { apply Nat.max_lub.
-      - eapply Nat.le_trans; [exact (wf_forest_width db Hwf) |].
-        apply N_width_mono. apply wmark_ids.
-      - change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
-        apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
-    unfold unit. rewrite Nat2N.inj_mul.
-    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
-    nia.
-  Qed.
-
-  (** The input-cell width sum separates tuple payloads from list bookkeeping. *)
-  Definition tuple_cell_bits (k : list (cell V.t)) : nat :=
-    fold_right (fun c n => cell_bits V.encode c + n) 0 k.
-
-  (** Cell encoding has exactly the public tagged-cell width. *)
-  Lemma db_cell_code_bits : forall c,
-    Pos.size_nat (db_cell_code c) = cell_bits V.encode c.
-  Proof.
-    intros [i | v]; reflexivity.
-  Qed.
-
-  (** Self-delimiting glue adds at most twice the first code's width. *)
-  Lemma glue_width_bound : forall a b,
-    Pos.size_nat (glue a b) <= 2 * Pos.size_nat a + Pos.size_nat b.
-  Proof.
-    intro a. induction a as [a IH | a IH |]; intro b; cbn [glue Pos.size_nat].
-    - specialize (IH b). lia.
-    - specialize (IH b). lia.
-    - lia.
-  Qed.
-
-  (** The generated glue clock charges exactly one step per bit of its first code. *)
-  Lemma T_glue_bits : forall a b, T_glue a b = N.of_nat (Pos.size_nat a).
-  Proof.
-    intro a. induction a as [a IH | a IH |]; intro b; time_unfold T_glue;
-      cbn [Pos.size_nat]; rewrite ?Nat2N.inj_succ, ?IH; lia.
-  Qed.
-
-  (** Tuple codes have width linear in the sum of their tagged cell widths. *)
-  Lemma db_tuple_code_bits : forall k,
-    Pos.size_nat (db_tuple_code k) <= 2 * tuple_cell_bits k + 1.
-  Proof.
-    intro k. induction k as [| c rest IH]; [reflexivity |].
-    change (Pos.size_nat (glue (db_cell_code c) (db_tuple_code rest)) <=
-      2 * (cell_bits V.encode c + tuple_cell_bits rest) + 1).
-    pose proof (glue_width_bound (db_cell_code c) (db_tuple_code rest)) as Hglue.
-    rewrite db_cell_code_bits in Hglue. lia.
-  Qed.
-
-  (** Row-key width is linear in the function name and tuple payload widths. *)
-  Lemma db_row_code_bits : forall f k,
-    Pos.size_nat (db_row_code f k) <= 2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1.
-  Proof.
-    intros f k. pose proof (glue_width_bound f (db_tuple_code k)) as Hglue.
-    pose proof (db_tuple_code_bits k) as Htuple.
-    change (Pos.size_nat (glue f (db_tuple_code k)) <=
-      2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1). lia.
-  Qed.
-
-  (** Cell encoding pays the value encoder only in the value branch. *)
-  Lemma T_db_cell_code_bound : forall c,
-    (T_db_cell_code c <= (V.c_key + 2) * N.of_nat (cell_bits V.encode c + 1))%N.
-  Proof.
-    intros [i | v].
-    - time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
-    - pose proof (V.T_encode_le v) as Hencode.
-      change (V.T_encode v <= V.c_key * N.of_nat (Pos.size_nat (V.encode v) + 1))%N in Hencode.
-      time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
-  Qed.
-
-  (** The generated list-code walk pays once for every cell and its delimiter bits. *)
-  Lemma T_list_cell_code_bound : forall k,
-    (T_list_code db_cell_code (fun c => T_db_cell_code c) k <=
-      (V.c_key + 6) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
-  Proof.
-    intro k. induction k as [| c rest IH].
-    - time_unfold @T_list_code. cbn [tuple_cell_bits fold_right length]. nia.
-    - pose proof (T_db_cell_code_bound c) as Hcell.
-      pose proof (T_glue_bits (db_cell_code c) (list_code db_cell_code rest)) as Hglue.
-      rewrite db_cell_code_bits in Hglue. time_unfold @T_list_code.
-      unfold tuple_cell_bits in *. cbn [fold_right length] in *. nia.
-  Qed.
-
-  (** Tuple encoding adds only its wrapper to the linear list-code walk. *)
-  Lemma T_db_tuple_code_bound : forall k,
-    (T_db_tuple_code k <=
-      (V.c_key + 8) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
-  Proof.
-    intro k. pose proof (T_list_cell_code_bound k) as Hlist.
-    time_unfold T_db_tuple_code. nia.
-  Qed.
-
-  (** Encoding a row key adds the function-name delimiter to the tuple walk. *)
-  Lemma T_db_row_code_bound : forall f k,
-    (T_db_row_code f k <= (V.c_key + 16) *
-      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
-  Proof.
-    intros f k. pose proof (T_db_tuple_code_bound k) as Htuple.
-    pose proof (T_glue_bits f (db_tuple_code k)) as Hglue.
-    time_unfold T_db_row_code. time_unfold @T_pair_code.
-    time_unfold @Datatypes.T_fst. time_unfold @Datatypes.T_snd.
-    cbn [fst snd]. nia.
-  Qed.
-
-  (** The row-map wrapper adds at most five steps around encoding and trie lookup. *)
-  Lemma T_row_get_overhead : forall f k db,
-    (T_row_get f k db <= T_db_row_code f k +
-      PTrieT.T_get (db_row_code f k) (runtime_rows (db_runtime db)) + 5)%N.
-  Proof.
-    intros f k db. time_unfold T_row_get.
-    time_unfold @T_db_runtime. time_unfold @T_runtime_rows.
-    time_unfold @Map.Datatypes.T_option_map.
-    destruct (PTrieCode.get (db_row_code f k) (runtime_rows (db_runtime db)));
-      time_unfold @Datatypes.T_snd; nia.
-  Qed.
-
-  (** Row lookup pays linearly for the complete encoded query key. *)
-  Lemma T_row_get_bound : forall f k db,
-    (T_row_get f k db <= 32 * (PTrieT.c_trie + 1) * (V.c_key + 1) *
-      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
-  Proof.
-    intros f k db. pose proof (T_row_get_overhead f k db) as Hrow.
-    pose proof (T_db_row_code_bound f k) as Hcode.
-    pose proof (PTrieT.T_get_le _ (db_row_code f k)
-      (runtime_rows (db_runtime db))) as Hget.
-    pose proof (db_row_code_bits f k) as Hbits.
-    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
-    nia.
-  Qed.
-
-  (** A uniform cell-width bound controls the sum used by tuple encoding. *)
-  Lemma tuple_cell_bits_bound : forall u bits,
-    (forall c, In c u -> cell_bits V.encode c <= bits) ->
-    tuple_cell_bits u <= length u * bits.
-  Proof.
-    intro u. induction u as [|c rest IH]; intros bits Hcells.
-    - reflexivity.
-    - pose proof (Hcells c (or_introl eq_refl)) as Hhead.
-      pose proof (IH bits (fun d Hin => Hcells d (or_intror Hin))) as Htail.
-      unfold tuple_cell_bits in *. cbn [fold_right length]. lia.
-  Qed.
-
-  (** One slot mutation fits a uniform tuple, count, slot-key and index-width budget. *)
-  Lemma T_slot_update_one_width : forall b s u state arity count_limit bits,
-    (forall new, I.wf arity (runtime_slot_index state s new)) ->
-    length u <= count_limit ->
-    (forall c, In c u -> cell_bits V.encode c <= bits) ->
-    N.size_nat s <= bits ->
-    N.size_nat (runtime_projection_count state s u) <= bits ->
-    (forall new, I.width (runtime_slot_index state s new) u <= 4 * bits + 2) ->
-    (T_slot_update_one b s u state <=
-      128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
-        N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N.
-  Proof.
-    intros b s u state arity count_limit bits Harity Hlength Hcells Hslot Hcount Hwidth.
-    set (factor := (N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N).
-    pose proof (tuple_cell_bits_bound u bits Hcells) as Hsum.
-    assert (Hencoding_size : (N.of_nat (tuple_cell_bits u + length u + 1) <= factor)%N)
-      by (unfold factor; nia).
-    assert (Htuple_key : (N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <= 2 * factor)%N).
-    { pose proof (db_tuple_code_bits u). unfold factor. nia. }
-    assert (Hencoding : (T_db_tuple_code u <= (V.c_key + 8) * factor)%N).
-    { eapply N.le_trans; [apply T_db_tuple_code_bound |].
-      now apply N.mul_le_mono_l. }
-    assert (Hmutation : forall new,
-      (I.T_insert u (runtime_slot_index state s new) +
-       I.T_remove u (runtime_slot_index state s new) <= 8 * I.c_ix * factor)%N).
-    { intro new.
-      pose proof (I.T_insert_le arity u (runtime_slot_index state s new) (Harity new)) as Hinsert.
-      pose proof (I.T_remove_le arity u (runtime_slot_index state s new) (Harity new)) as Hremove.
-      assert (Hsize : (N.of_nat (length u + 1) *
-        N.of_nat (I.width (runtime_slot_index state s new) u + 1) <= 4 * factor)%N).
-      { specialize (Hwidth new). unfold factor. nia. }
-      eapply N.le_trans; [apply N.add_le_mono; [exact Hinsert | exact Hremove] |].
-      replace (I.c_ix * N.of_nat (length u + 1) *
-        N.of_nat (I.width (runtime_slot_index state s new) u + 1) +
-        I.c_ix * N.of_nat (length u + 1) *
-        N.of_nat (I.width (runtime_slot_index state s new) u + 1))%N with
-        (2 * I.c_ix * (N.of_nat (length u + 1) *
-          N.of_nat (I.width (runtime_slot_index state s new) u + 1)))%N by ring.
-      replace (8 * I.c_ix * factor)%N with (2 * I.c_ix * (4 * factor))%N by ring.
-      now apply N.mul_le_mono_l. }
-    pose proof (Hmutation false) as Hall.
-    pose proof (Hmutation true) as Hnew.
-    unfold runtime_slot_index in Hall, Hnew. cbn beta iota in Hall, Hnew.
-    pose proof (T_slot_update_one_local b s u state) as Hlocal. cbn beta zeta in Hlocal.
-    pose proof (N.T_succ_pos_le s) as Hsucc.
-    pose proof (slot_code_bits s) as Hcode.
-    assert (Hfactor : (1 <= factor)%N) by (unfold factor; nia).
-    assert (Hbits : (N.of_nat (bits + 1) <= factor)%N) by (unfold factor; nia).
-    assert (Hslot_key : (N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <= 2 * factor)%N)
-      by lia.
-    assert (Hslot_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <=
-      2 * PTrieT.c_trie * factor)%N).
-    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
-      now apply N.mul_le_mono_l. }
-    assert (Htuple_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <=
-      2 * PTrieT.c_trie * factor)%N).
-    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
-      now apply N.mul_le_mono_l. }
-    assert (Hsucc_factor : (N.T_succ_pos s <= factor)%N) by lia.
-    assert (Hcount_factor : (N.of_nat (N.size_nat (runtime_projection_count state s u)) <=
-      factor)%N) by lia.
-    replace (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
-      N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N with
-      (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N by (unfold factor; ring).
-    clearbody factor.
-    assert (Hcoarse : (T_slot_update_one b s u state <=
-      34 + (16 * I.c_ix + 16 * PTrieT.c_trie + V.c_key + 10) * factor)%N).
-    { clear -Hlocal Hslot_cost Htuple_cost Hall Hnew Hencoding Hsucc_factor Hcount_factor.
-      nia. }
-    eapply N.le_trans; [exact Hcoarse |]. clear -Hfactor. nia.
-  Qed.
-
-  (** Initialization starts without amortized debt. *)
-  Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
-  Proof.
-    intros B ds sl. unfold potential.
-    cbn [init db_row_store row_uses db_runtime runtime_queue].
-    reflexivity.
-  Qed.
-
-  (** Insertion pays for all slots and the logarithmic identifier budget. *)
-  Lemma T_put_amort : forall B f k o db, wf db ->
-    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
-    (T_put f k o db +
-      N.of_nat (unit (put f k o db)) * potential B (put f k o db) <=
-      N.of_nat (unit (put f k o db)) *
-        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
-          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
-          potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Constructor allocation has the same amortized budget as insertion. *)
-  Lemma T_make_amort : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
-    (ids (snd (make f k db)) <= B)%N ->
-    (T_make f k db +
-      N.of_nat (unit (snd (make f k db))) * potential B (snd (make f k db)) <=
-      N.of_nat (unit (snd (make f k db))) *
-        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
-          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
-          potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Union transfers the deferred work to potential. *)
-  Lemma T_union_amort : forall B i j db, wf db -> allocated db i -> allocated db j ->
-    (ids db <= B)%N ->
-    (T_union i j db +
-      N.of_nat (unit (union i j db)) * potential B (union i j db) <=
-      N.of_nat (unit (union i j db)) * (c_db + potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Rebuilding spends potential on pending union work. *)
-  Lemma T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    (T_rebuild db + N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
-      N.of_nat (unit (rebuild db)) *
-        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Slot lookup pays for the slot code. *)
-  Lemma T_index_le : forall s new db,
-    (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
-  Proof.
-    intros s new db. pose proof (T_index_bits s new db) as Htime.
-    pose proof (slot_width_log s) as Hwidth. pose proof c_db_trie_budget as Hcoefficient.
-    nia.
-  Qed.
-
-  (** Advancing visits every slot. *)
-  Lemma T_advance_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
-  Proof.
-    intro db. pose proof c_db_constant_budget as Hcoefficient.
-    time_unfold T_advance. time_unfold @T_runtime_set_indexes.
-    time_unfold @T_runtime_set_changed. time_unfold @T_database_set_runtime.
-    time_simpl. time_cbn. nia.
-  Qed.
-
-  (** Every recorded index or activity counter is included in the exact watermark maximum. *)
-  Lemma recorded_counters_wmark : forall db p, In p (db_index_counters db) ->
-    (Npos p <= wmark db)%N.
-  Proof.
-    intros db p Hin. unfold wmark. apply fold_max_member.
-    apply in_app_iff. left. now apply in_map.
-  Qed.
-
-  (** Every actual declaration name is watermarked, independently of the database invariant. *)
-  Lemma declared_names_wmark : forall db f, kind (view db) f <> None ->
-    (Npos f <= wmark db)%N.
-  Proof.
-    intros db f Hkind. unfold wmark. apply fold_max_member.
-    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
-    now apply decl_names_spec.
-  Qed.
-
-  (** Every recorded cell has a tagged encoding whose width is covered by the watermark. *)
-  Lemma recorded_cells_wmark : forall db c, In c (db_written_cells db) ->
-    cell_bits V.encode c <= N.size_nat (wmark db).
-  Proof.
-    intros db c Hin.
-    assert (Hbound : (Npos (db_cell_code c) <= wmark db)%N).
-    { unfold wmark. apply fold_max_member.
-      apply in_app_iff. right. apply in_app_iff. right. apply in_map_iff.
-      exists c. split; [destruct c; reflexivity | exact Hin]. }
-    pose proof (N_width_mono _ _ Hbound) as Hwidth.
-    change (Pos.size_nat (db_cell_code c) <= N.size_nat (wmark db)) in Hwidth.
-    now rewrite db_cell_code_bits in Hwidth.
-  Qed.
-
-  (** Genuine construction histories bound public indexes without requiring row consistency. *)
-  Lemma metadata_wmark_index : forall db s new, metadata_ok db ->
-    (Npos (I.next (index s new db)) <= wmark db)%N /\
-    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
-  Proof.
-    intros db s new Hmetadata.
-    destruct (metadata_public_index db s new Hmetadata) as [Hcounter Hhistory]. split.
-    - now apply recorded_counters_wmark.
-    - eapply index_history_cell_bits; [exact Hhistory |].
-      intros c Hin. exact (recorded_cells_wmark db c Hin).
-  Qed.
-
-  (** Extending a list and its base cannot decrease their folded maximum. *)
-  Lemma fold_max_incl : forall values values' base base', incl values values' ->
-    (base <= base' -> fold_right N.max base values <= fold_right N.max base' values')%N.
-  Proof.
-    intro values. induction values as [| value rest IH]; intros values' base base' Hincl Hbase;
-      cbn [fold_right].
-    - eapply N.le_trans; [exact Hbase | apply fold_max_base].
-    - apply N.max_lub.
-      + apply fold_max_member. apply Hincl. now left.
-      + apply IH; [| exact Hbase]. intros other Hin. apply Hincl. now right.
-  Qed.
-
-  (** Retained histories and increasing stored bounds never reduce the watermark. *)
-  Lemma wmark_monotone : forall db db', (ids db <= ids db')%N ->
-    (db_nuses db <= db_nuses db')%N -> decl_names db' = decl_names db ->
-    incl (db_index_counters db) (db_index_counters db') ->
-    incl (db_written_cells db) (db_written_cells db') -> (wmark db <= wmark db')%N.
-  Proof.
-    intros db db' Hids Huses Hnames Hcounters Hwritten. unfold wmark. apply fold_max_incl.
-    - intros value Hin. apply in_app_iff in Hin as [Hin | Hin].
-      + apply in_app_iff. left. apply in_map_iff in Hin as [p [<- Hin]].
-        apply in_map. now apply Hcounters.
-      + apply in_app_iff. right. apply in_app_iff in Hin as [Hin | Hin].
-        * apply in_app_iff. left. now rewrite Hnames.
-        * apply in_app_iff. right. apply in_map_iff in Hin as [c [<- Hin]].
-          apply in_map_iff. exists c. split; [reflexivity | now apply Hwritten].
-    - apply N.max_lub.
-      + eapply N.le_trans; [exact Huses | apply N.le_max_l].
-      + eapply N.le_trans; [exact Hids | apply N.le_max_r].
-  Qed.
-
-  (** Increasing allocation and watermark bounds increases the database spending unit. *)
-  Lemma unit_monotone : forall db db', (ids db <= ids db')%N ->
-    (wmark db <= wmark db')%N -> unit db <= unit db'.
-  Proof.
-    intros db db' Hids Hmark. pose proof (N.log2_le_mono _ _ Hids) as Hlog.
-    pose proof (N_width_mono _ _ Hmark) as Hwidth. unfold unit. nia.
-  Qed.
-
-  (** Cache maintenance leaves the stored use-entry count unchanged. *)
   Lemma slots_update_nuses : forall b f u db,
     db_nuses (slots_update b f u db) = db_nuses db.
   Proof.
@@ -10701,15 +9879,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   (** Cache maintenance retains the actual declaration inventory. *)
-  Lemma slots_update_decl_names : forall b f u db,
-    decl_names (slots_update b f u db) = decl_names db.
-  Proof.
-    intros b f u db. unfold decl_names.
-    rewrite (slots_update_preserves _ (fun state => runtime_kinds state)
-      (fun all new counts state => eq_refl) b f u db). reflexivity.
-  Qed.
-
-  (** Every cache call retains all previously recorded counters. *)
   Lemma slots_update_counters_incl : forall b f u db,
     incl (db_index_counters db) (db_index_counters (slots_update b f u db)).
   Proof.
@@ -10744,1020 +9913,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - intros p Hin. exact Hin.
     - intros c Hin. exact Hin.
     - exact Hstore.
-  Qed.
-
-  (** Cache updates retain all watermark inputs and record additional activity. *)
-  Lemma wmark_slots_update : forall b f u db,
-    (wmark db <= wmark (slots_update b f u db))%N.
-  Proof.
-    intros b f u db. apply wmark_monotone.
-    - rewrite slots_update_ids. reflexivity.
-    - rewrite slots_update_nuses. reflexivity.
-    - apply slots_update_decl_names.
-    - apply slots_update_counters_incl.
-    - intros c Hin. rewrite slots_update_written_cells. apply in_or_app. now right.
-  Qed.
-
-  (** Cache updates never reduce the spending unit, including during a partial row replacement. *)
-  Lemma unit_mono_slots_update : forall b f u db, unit db <= unit (slots_update b f u db).
-  Proof.
-    intros b f u db. apply unit_monotone.
-    - rewrite slots_update_ids. reflexivity.
-    - apply wmark_slots_update.
-  Qed.
-
-  (** Writing only the row table retains the complete watermark observation. *)
-  Lemma wmark_row_write : forall f k o db, wmark (row_write f k o db) = wmark db.
-  Proof.
-    reflexivity.
-  Qed.
-
-  (** Raising the base of a maximum fold cannot lower its result. *)
-  Lemma fold_max_base_mono : forall values a b,
-    (a <= b)%N ->
-    (fold_right N.max a values <= fold_right N.max b values)%N.
-  Proof.
-    intros values. induction values as [| value rest IH]; intros a b Hbound.
-    - exact Hbound.
-    - cbn [fold_right]. apply N.max_lub.
-      + apply N.le_max_l.
-      + eapply N.le_trans; [apply IH; exact Hbound | apply N.le_max_r].
-  Qed.
-
-  (** A fresh row identifier is added to the historical counter inventory. *)
-  Lemma wmark_ensure_row_identity : forall f k db,
-    (wmark db <= wmark (ensure_row_identity f k db))%N.
-  Proof.
-    intros f k db. unfold ensure_row_identity.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
-      as [entry |]; [reflexivity |].
-    unfold wmark, decl_names, ids.
-    cbn [database_set_index_counters database_set_row_store db_nuses
-      db_index_counters db_written_cells db_runtime runtime_allocated runtime_kinds
-      map fold_right].
-    apply N.le_max_r.
-  Qed.
-
-  (** Registering occurrences raises the count input to the watermark. *)
-  Lemma wmark_register_row_uses : forall f k o db,
-    (wmark db <= wmark (register_row_uses f k o db))%N.
-  Proof.
-    intros f k o db. unfold register_row_uses.
-    eapply N.le_trans; [apply wmark_ensure_row_identity |].
-    set (identified := ensure_row_identity f k db).
-    unfold wmark.
-    cbn [database_set_nuses database_set_row_store db_nuses ids
-      db_index_counters db_written_cells db_runtime].
-    apply fold_max_base_mono.
-    change (N.max (db_nuses identified) (ids identified) <=
-      N.max (db_nuses identified +
-        N.of_nat (length (id_occurrences f k (k ++ option_list o))))
-        (ids identified))%N.
-    apply N.max_lub.
-    -
-      eapply N.le_trans; [| apply N.le_max_l]. lia.
-    - apply N.le_max_r.
-  Qed.
-
-  (** Erasing only the row table likewise retains every watermark input. *)
-  Lemma wmark_row_erase : forall f k db, wmark (row_erase f k db) = wmark db.
-  Proof.
-    reflexivity.
-  Qed.
-
-  (** Replacement composes two monotone history updates before writing its row binding. *)
-  Lemma wmark_row_replace : forall f k previous o db,
-    (wmark db <= wmark (row_replace f k previous o db))%N.
-  Proof.
-    intros f k [before |] o db; unfold row_replace.
-    - eapply N.le_trans; [| apply wmark_register_row_uses].
-      rewrite wmark_row_write. eapply N.le_trans.
-      + exact (wmark_slots_update false f (k ++ option_list before) db).
-      + apply wmark_slots_update.
-    - eapply N.le_trans; [| apply wmark_register_row_uses].
-      rewrite wmark_row_write. apply wmark_slots_update.
-  Qed.
-
-  (** Deletion records its removed contribution and never discards prior watermark inputs. *)
-  Lemma wmark_row_delete : forall f k db, (wmark db <= wmark (row_delete f k db))%N.
-  Proof.
-    intros f k db. unfold row_delete. destruct (row_get f k db) as [before |].
-    - rewrite wmark_row_erase. apply wmark_slots_update.
-    - reflexivity.
-  Qed.
-
-  (** Row replacement cannot reduce the spending unit, without a row-consistency premise. *)
-  Lemma unit_row_replace_monotone : forall f k previous o db,
-    unit db <= unit (row_replace f k previous o db).
-  Proof.
-    intros f k previous o db. apply unit_monotone.
-    - rewrite row_replace_ids. reflexivity.
-    - apply wmark_row_replace.
-  Qed.
-
-  (** Row deletion cannot reduce the spending unit during an active repair. *)
-  Lemma unit_row_delete_monotone : forall f k db, unit db <= unit (row_delete f k db).
-  Proof.
-    intros f k db. apply unit_monotone.
-    - rewrite row_delete_ids. reflexivity.
-    - apply wmark_row_delete.
-  Qed.
-
-  (** Increasing the allocation bound retains all histories and increases the watermark. *)
-  Lemma wmark_allocate_id : forall i db, (ids db <= Npos i)%N ->
-    (wmark db <= wmark (allocate_id i db))%N.
-  Proof.
-    intros i db Hids. apply wmark_monotone.
-    - rewrite allocate_id_ids. exact Hids.
-    - reflexivity.
-    - reflexivity.
-    - intros p Hin. exact Hin.
-    - intros c Hin. exact Hin.
-  Qed.
-
-  (** Increasing allocation increases the spending unit without requiring forest consistency. *)
-  Lemma unit_allocate_id_monotone : forall i db, (ids db <= Npos i)%N ->
-    unit db <= unit (allocate_id i db).
-  Proof.
-    intros i db Hids. apply unit_monotone.
-    - rewrite allocate_id_ids. exact Hids.
-    - now apply wmark_allocate_id.
-  Qed.
-
-  (** Every raw put branch either retains the watermark or extends recorded histories. *)
-  Lemma wmark_put : forall f k o db, (wmark db <= wmark (put f k o db))%N.
-  Proof.
-    intros f k o db. unfold put.
-    remember (row_get f (normal_key db k) db) as previous.
-    remember (option_map (normal_cell db) o) as co.
-    set (updated := combine_output db f previous co).
-    set (next := match previous, co with
-      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
-    assert (Hnext : wmark next = wmark db).
-    { unfold next. destruct previous as [[[a | v] |] |];
-        destruct co as [[b | w] |]; try reflexivity.
-      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
-      destruct roots as [[winner loser] |]; reflexivity. }
-    destruct previous as [before |].
-    - destruct (output_eqb before updated).
-      + rewrite Hnext. reflexivity.
-      + rewrite <- Hnext. apply wmark_row_replace.
-    - rewrite <- Hnext. apply wmark_row_replace.
-  Qed.
-
-  (** Put is monotone in the spending unit even between invariant-restoring repair stages. *)
-  Lemma unit_put_monotone : forall f k o db, unit db <= unit (put f k o db).
-  Proof.
-    intros f k o db. apply unit_monotone.
-    - destruct (put_layout_raw db f k o) as [_ [_ Hids]]. rewrite Hids. reflexivity.
-    - apply wmark_put.
-  Qed.
-
-  Lemma register_row_uses_counters_incl : forall f k o db,
-    incl (db_index_counters db) (db_index_counters (register_row_uses f k o db)).
-  Proof.
-    intros f k o db p Hin. unfold register_row_uses, ensure_row_identity.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
-      cbn [database_set_nuses database_set_row_store database_set_index_counters
-        db_index_counters]; [exact Hin | now right].
-  Qed.
-
-  Lemma row_replace_counters_incl : forall f k previous o db,
-    incl (db_index_counters db) (db_index_counters (row_replace f k previous o db)).
-  Proof.
-    intros f k [before |] o db; unfold row_replace.
-    - eapply incl_tran with (m := db_index_counters
-        (slots_update false f (k ++ option_list before) db)).
-      + apply slots_update_counters_incl.
-      +
-      eapply incl_tran with (m := db_index_counters
-        (row_write f k o (slots_update true f (k ++ option_list o)
-          (slots_update false f (k ++ option_list before) db)))).
-        * change (incl (db_index_counters (slots_update false f
-          (k ++ option_list before) db))
-          (db_index_counters (slots_update true f (k ++ option_list o)
-            (slots_update false f (k ++ option_list before) db)))).
-          apply slots_update_counters_incl.
-        * apply register_row_uses_counters_incl.
-    - eapply incl_tran with (m := db_index_counters
-        (row_write f k o (slots_update true f (k ++ option_list o) db))).
-      + change (incl (db_index_counters db)
-          (db_index_counters (slots_update true f (k ++ option_list o) db))).
-        apply slots_update_counters_incl.
-      + apply register_row_uses_counters_incl.
-  Qed.
-
-  Lemma row_delete_counters_incl : forall f k db,
-    incl (db_index_counters db) (db_index_counters (row_delete f k db)).
-  Proof.
-    intros f k db. unfold row_delete.
-    destruct (row_get f k db) as [before |]; [| apply incl_refl].
-    change (incl (db_index_counters db)
-      (db_index_counters (slots_update false f (k ++ option_list before) db))).
-    apply slots_update_counters_incl.
-  Qed.
-
-  Lemma put_counters_incl : forall f k o db,
-    incl (db_index_counters db) (db_index_counters (put f k o db)).
-  Proof.
-    intros f k o db. unfold put.
-    remember (row_get f (normal_key db k) db) as previous.
-    remember (option_map (normal_cell db) o) as co.
-    set (updated := combine_output db f previous co).
-    set (next := match previous, co with
-      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
-    assert (Hnext : db_index_counters next = db_index_counters db).
-    { unfold next. destruct previous as [[[a | v] |] |];
-        destruct co as [[b | w] |]; try reflexivity.
-      unfold union. destruct (UnionFindCode.union a b (db_forest db))
-        as [[pair |] forest]; [destruct pair |]; reflexivity. }
-    destruct previous as [before |].
-    - destruct (output_eqb before updated).
-      + now rewrite Hnext.
-      + rewrite <- Hnext. apply row_replace_counters_incl.
-    - rewrite <- Hnext. apply row_replace_counters_incl.
-  Qed.
-
-  Lemma row_replace_written_incl : forall f k previous o db,
-    incl (db_written_cells db) (db_written_cells (row_replace f k previous o db)).
-  Proof.
-    intros f k [before |] o db c Hin; rewrite row_replace_written;
-      apply in_or_app; right; [apply in_or_app; now right | exact Hin].
-  Qed.
-
-  Lemma put_written_incl : forall f k o db,
-    incl (db_written_cells db) (db_written_cells (put f k o db)).
-  Proof.
-    intros f k o db. unfold put.
-    remember (row_get f (normal_key db k) db) as previous.
-    remember (option_map (normal_cell db) o) as co.
-    set (updated := combine_output db f previous co).
-    set (next := match previous, co with
-      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
-    assert (Hnext : db_written_cells next = db_written_cells db).
-    { unfold next. destruct previous as [[[a | v] |] |];
-        destruct co as [[b | w] |]; try reflexivity.
-      unfold union. destruct (UnionFindCode.union a b (db_forest db))
-        as [[pair |] forest]; [destruct pair |]; reflexivity. }
-    destruct previous as [before |].
-    - destruct (output_eqb before updated).
-      + now rewrite Hnext.
-      + rewrite <- Hnext. apply row_replace_written_incl.
-    - rewrite <- Hnext. apply row_replace_written_incl.
-  Qed.
-
-  Lemma row_replace_decl_names : forall f k previous o db,
-    decl_names (row_replace f k previous o db) = decl_names db.
-  Proof.
-    intros f k previous o db. unfold decl_names.
-    apply (row_replace_preserves (list positive)
-      (fun state => map fst (PTrieCode.elements (runtime_kinds state)))); reflexivity.
-  Qed.
-
-  Lemma row_delete_decl_names : forall f k db,
-    decl_names (row_delete f k db) = decl_names db.
-  Proof.
-    intros f k db. unfold decl_names.
-    apply (row_delete_preserves (list positive)
-      (fun state => map fst (PTrieCode.elements (runtime_kinds state)))); reflexivity.
-  Qed.
-
-  Lemma put_decl_names : forall f k o db, decl_names (put f k o db) = decl_names db.
-  Proof.
-    intros f k o db. unfold put.
-    remember (row_get f (normal_key db k) db) as previous.
-    remember (option_map (normal_cell db) o) as co.
-    set (updated := combine_output db f previous co).
-    set (next := match previous, co with
-      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
-    assert (Hnext : decl_names next = decl_names db).
-    { unfold next, decl_names. destruct previous as [[[a | v] |] |];
-        destruct co as [[b | w] |]; try reflexivity.
-      unfold union. destruct (UnionFindCode.union a b (db_forest db))
-        as [[pair |] forest]; [destruct pair |]; reflexivity. }
-    destruct previous as [before |].
-    - destruct (output_eqb before updated).
-      + exact Hnext.
-      + rewrite row_replace_decl_names. exact Hnext.
-    - rewrite row_replace_decl_names. exact Hnext.
-  Qed.
-
-  Lemma row_delete_nuses : forall f k db, db_nuses (row_delete f k db) = db_nuses db.
-  Proof.
-    intros f k db. unfold row_delete.
-    destruct (row_get f k db) as [before |]; [| reflexivity].
-    change (db_nuses (slots_update false f (k ++ option_list before) db) = db_nuses db).
-    apply slots_update_nuses.
-  Qed.
-
-  Lemma row_delete_row_store : forall db f k,
-    db_row_store (row_delete f k db) = db_row_store db.
-  Proof.
-    intros db f k. unfold row_delete.
-    destruct (row_get f k db) as [before |]; [| reflexivity].
-    change (db_row_store (slots_update false f (k ++ option_list before) db) =
-      db_row_store db).
-    apply slots_update_row_store.
-  Qed.
-
-  Lemma database_history_alignment_row_delete : forall db f k,
-    database_history_alignment db ->
-    database_history_alignment (row_delete f k db).
-  Proof.
-    intros db f k Halign.
-    eapply (database_history_alignment_transport db (row_delete f k db)).
-    - now rewrite row_delete_row_store.
-    - now rewrite row_delete_row_store.
-    - now rewrite row_delete_row_store.
-    - apply row_delete_ids.
-    - apply row_delete_forest.
-    - exact Halign.
-  Qed.
-
-  Lemma database_active_history_coherent_row_delete : forall db f k,
-    database_active_history_coherent db ->
-    database_active_history_coherent (row_delete f k db).
-  Proof.
-    intros db f k Hcoherent g args o key r Hrow Hentry.
-    change (row (view (row_delete f k db)) g args o) in Hrow.
-    apply row_delete_binding in Hrow as [Hrow _].
-    rewrite row_delete_row_store in Hentry.
-    rewrite (db_locate_same_store_ids db (row_delete f k db) g args)
-      by (try apply row_delete_row_store; apply row_delete_ids).
-    exact (Hcoherent g args o key r Hrow Hentry).
-  Qed.
-
-  Lemma database_row_store_ok_row_delete : forall db f k,
-    database_row_store_ok db -> database_row_store_ok (row_delete f k db).
-  Proof.
-    intros db f k Hstore.
-    eapply (database_row_store_ok_transport db (row_delete f k db)).
-    - now rewrite row_delete_row_store.
-    - apply row_delete_nuses.
-    - apply row_delete_ids.
-    - apply row_delete_counters_incl.
-    - apply row_delete_written.
-    - exact Hstore.
-  Qed.
-
-  (** Every fresh constructor branch combines increasing allocation with optional row recording. *)
-  Lemma unit_make_fresh_monotone : forall f k previous db,
-    let i := N.succ_pos (ids db) in
-    let fresh := allocate_id i db in
-    unit db <= unit (match kind_get f db with
-      | Some OId => row_replace f k previous (Some (Id i)) fresh | _ => fresh end).
-  Proof.
-    intros f k previous db. cbn zeta.
-    assert (Hallocate : unit db <= unit (allocate_id (N.succ_pos (ids db)) db)).
-    { apply unit_allocate_id_monotone. rewrite N.succ_pos_spec. lia. }
-    destruct (kind_get f db) as [[| |m] |]; try exact Hallocate.
-    eapply Nat.le_trans; [exact Hallocate | apply unit_row_replace_monotone].
-  Qed.
-
-  (** Reuse retains the unit, while every other make branch allocates monotonically. *)
-  Lemma unit_make_monotone : forall f k db, unit db <= unit (snd (make f k db)).
-  Proof.
-    intros f k db. unfold make.
-    destruct (row_get f (normal_key db k) db) as [[[i | v] |] |]; cbn [snd];
-      [reflexivity | apply unit_make_fresh_monotone | apply unit_make_fresh_monotone |
-       apply unit_make_fresh_monotone].
-  Qed.
-
-  (** The high-water mark covers every stored cell encoding. *)
-  Lemma wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
-    In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
-  Proof.
-    intros db f k o c Hwf Hrow Hin. apply recorded_cells_wmark.
-    exact (wf_recorded_rows db Hwf f k o c Hrow Hin).
-  Qed.
-
-  (** The high-water mark covers every declared function name. *)
-  Lemma wmark_names : forall db f, wf db -> kind (view db) f <> None ->
-    Pos.size_nat f <= N.size_nat (wmark db).
-  Proof.
-    intros db f _ Hkind. change (N.size_nat (Npos f) <= N.size_nat (wmark db)).
-    apply N_width_mono. unfold wmark. apply fold_max_member.
-    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
-    now apply decl_names_spec.
-  Qed.
-
-  (** One database unit covers the watermark width and a constant step. *)
-  Lemma unit_width_budget : forall db, N.size_nat (wmark db) + 1 <= unit db.
-  Proof.
-    intro db. unfold unit. nia.
-  Qed.
-
-  (** The allocation guard fits the same unit because identifiers are watermarked. *)
-  Lemma unit_ids_width : forall db, N.size_nat (ids db) + 1 <= unit db.
-  Proof.
-    intro db. pose proof (N_width_mono (ids db) (wmark db) (wmark_ids db)).
-    pose proof (unit_width_budget db). lia.
-  Qed.
-
-  (** Every database unit is positive, including the empty database. *)
-  Lemma unit_positive : forall db, (1 <= N.of_nat (unit db))%N.
-  Proof.
-    intro db. pose proof (unit_width_budget db). lia.
-  Qed.
-
-  (** The size operation returns the number of bits as a binary natural. *)
-  Lemma N_size_value : forall n, N.to_nat (N.size n) = N.size_nat n.
-  Proof.
-    intros [| p]; cbn [N.size N.to_nat N.size_nat]; [reflexivity | apply positive_size_nat].
-  Qed.
-
-  (** Incrementing a counter adds at most one bit. *)
-  Lemma N_successor_width : forall n, N.size_nat (n + 1) <= N.size_nat n + 1.
-  Proof.
-    intro n. replace (n + 1)%N with (N.succ n) by lia.
-    pose proof (slot_code_bits n) as Hbits. destruct n; exact Hbits.
-  Qed.
-
-  (** Product encodings have at most the sum of their operand widths. *)
-  Lemma N_product_width : forall n m,
-    N.size_nat (n * m) <= N.size_nat n + N.size_nat m.
-  Proof.
-    intros [| p] [| q]; cbn [N.mul N.size_nat]; try lia. apply Pos.size_nat_mul.
-  Qed.
-
-  (** A sum has a coarse linear width bound, including both zero operands. *)
-  Lemma N_sum_width : forall n m,
-    N.size_nat (n + m) <= N.size_nat n + N.size_nat m + 2.
-  Proof.
-    intros n m.
-    assert (Hnumber : (n + m <= (n + 1) * (m + 1))%N) by nia.
-    pose proof (N_width_mono _ _ Hnumber) as Hwidth.
-    pose proof (N_product_width (n + 1) (m + 1)).
-    pose proof (N_successor_width n). pose proof (N_successor_width m). lia.
-  Qed.
-
-  (** The pinned watermark covers the stored occurrence count directly. *)
-  Lemma wmark_nuses : forall db, (db_nuses db <= wmark db)%N.
-  Proof.
-    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_l | apply fold_max_base].
-  Qed.
-
-  (** Fuel arithmetic factors through the logarithmic allocation and watermark widths. *)
-  Lemma rebuild_fuel_scalar_budget : forall a w l : N,
-    (a <= l)%N -> (a <= w)%N -> (1 <= l)%N ->
-    ((a + 2) * (a + 2 * w + 6) + 7 * a + 5 * w + 32 <=
-      128 * l * (w + 1))%N.
-  Proof.
-    intros a w l Hal Haw Hl.
-    assert (Hleft : (a + 2 <= 3 * l)%N) by lia.
-    assert (Hright : (a + 2 * w + 6 <= 6 * (w + 1))%N) by lia.
-    pose proof (N.mul_le_mono _ _ _ _ Hleft Hright) as Hproduct.
-    assert (Hla : (a <= l * (w + 1))%N) by nia.
-    assert (Hlw : (w <= l * (w + 1))%N) by nia.
-    assert (Hlone : (1 <= l * (w + 1))%N) by nia.
-    nia.
-  Qed.
-
-  (** Constructing the exact binary fuel uses one database unit of operand widths. *)
-  Lemma T_db_rebuild_fuel_unit : forall db,
-    (db_npending db <= wmark db)%N ->
-    (T_db_rebuild_fuel db <= 128 * N.of_nat (unit db))%N.
-  Proof.
-    intros db Hpending.
-    pose proof (N_width_mono _ _ (wmark_ids db)) as Hids.
-    pose proof (N_width_mono _ _ (wmark_nuses db)) as Huses.
-    pose proof (N_width_mono _ _ Hpending) as Hpending_width.
-    pose proof (slot_width_log (ids db)) as Hlog.
-    pose proof (database_counter_bits_value (N.size (ids db))) as Hsize.
-    rewrite N_size_value in Hsize.
-    assert (Ha : N.size_nat (N.size (ids db) + 2) <= N.size_nat (ids db) + 2).
-    { pose proof (database_counter_bits_value (N.size (ids db) + 2)) as Hwidth.
-      rewrite N2Nat.inj_add, N_size_value in Hwidth. cbn in Hwidth. lia. }
-    assert (Hb : N.size_nat (db_nuses db + 1) <= N.size_nat (wmark db) + 1).
-    { pose proof (N_successor_width (db_nuses db)). lia. }
-    assert (Hab : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1)) <=
-      N.size_nat (ids db) + N.size_nat (wmark db) + 3).
-    { pose proof (N_product_width (N.size (ids db) + 2) (db_nuses db + 1)). lia. }
-    assert (Habp : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1) +
-      db_npending db) <= N.size_nat (ids db) + 2 * N.size_nat (wmark db) + 5).
-    { pose proof (N_sum_width ((N.size (ids db) + 2) * (db_nuses db + 1))
-        (db_npending db)). lia. }
-    pose proof (database_N_size_time (ids db)) as Htime_size.
-    assert (Htime_a : (N.T_add (N.size (ids db)) 2 <=
-      N.of_nat (N.size_nat (ids db)) + 3)%N).
-    { pose proof (N.T_add_le (N.size (ids db)) 2) as Htime.
-      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
-    assert (Htime_b : (N.T_add (db_nuses db) 1 <=
-      N.of_nat (N.size_nat (wmark db)) + 2)%N).
-    { pose proof (N.T_add_le (db_nuses db) 1) as Htime.
-      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
-    assert (Htime_product : (N.T_mul (N.size (ids db) + 2) (db_nuses db + 1) <=
-      (N.of_nat (N.size_nat (ids db)) + 2) *
-        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) + 1)%N).
-    { pose proof (database_N_mul_time (N.size (ids db) + 2) (db_nuses db + 1)) as Htime.
-      clear - Htime Ha Hb. nia. }
-    assert (Htime_pending : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1))
-      (db_npending db) <= N.of_nat (N.size_nat (ids db)) +
-        2 * N.of_nat (N.size_nat (wmark db)) + 4)%N).
-    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1))
-        (db_npending db)) as Htime. lia. }
-    assert (Htime_last : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1) +
-      db_npending db) 1 <= N.of_nat (N.size_nat (ids db)) +
-        2 * N.of_nat (N.size_nat (wmark db)) + 7)%N).
-    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1) +
-        db_npending db) 1) as Htime. cbn [N.size_nat Pos.size_nat] in Htime. lia. }
-    eapply N.le_trans with (m :=
-      ((N.of_nat (N.size_nat (ids db)) + 2) *
-        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) +
-        7 * N.of_nat (N.size_nat (ids db)) + 5 * N.of_nat (N.size_nat (wmark db)) + 32)%N).
-    - time_unfold T_db_rebuild_fuel. time_unfold @T_db_runtime.
-      time_unfold @T_runtime_allocated. time_unfold @T_db_nuses. time_unfold @T_db_npending.
-      fold (ids db). nia.
-    - pose proof (rebuild_fuel_scalar_budget (N.of_nat (N.size_nat (ids db)))
-        (N.of_nat (N.size_nat (wmark db)))
-        (N.of_nat (N.to_nat (N.log2 (ids db)) + 1))) as Hscalar.
-      specialize (Hscalar ltac:(lia) ltac:(lia) ltac:(lia)).
-      clear - Hscalar. unfold unit. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
-  Qed.
-
-  (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
-  Lemma T_normal_cell_id : forall db i,
-    (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
-      match N.compare (ids db) (Npos i) with
-      | Lt => 0
-      | _ => UnionFindT.T_find i (db_forest db) + 2
-      end)%N.
-  Proof.
-    intros db i. time_unfold T_normal_cell. time_unfold @T_db_runtime.
-    time_unfold @T_runtime_allocated. time_unfold @T_db_forest.
-    time_unfold @Datatypes.T_fst. fold (ids db).
-    destruct (N.compare (ids db) (Npos i)); nia.
-  Qed.
-
-  (** The guard keeps normalization bounded even for arbitrarily large unallocated queries. *)
-  Lemma T_normal_cell_bound : forall db c, wf db ->
-    (T_normal_cell db c <=
-      (2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N.
-  Proof.
-    intros db [i | v] Hwf.
-    - pose proof (N.T_compare_le (ids db) (Npos i)) as Hcompare.
-      pose proof (unit_ids_width db) as Hwidth.
-      pose proof (unit_positive db) as Hpositive. rewrite T_normal_cell_id.
-      destruct (N.compare (ids db) (Npos i)) eqn:Hcompare_result.
-      + apply N.compare_eq_iff in Hcompare_result.
-        assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
-        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
-      + set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
-      + apply N.compare_gt_iff in Hcompare_result.
-        assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
-        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
-    - time_unfold T_normal_cell. pose proof (unit_positive db).
-      set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
-  Qed.
-
-  (** Key normalization pays one guarded cell normalization per list element. *)
-  Lemma T_normal_key_bound : forall db k, wf db ->
-    (T_normal_key db k <= (2 * UnionFindT.c_uf + 12) *
-      N.of_nat (length k + 1) * N.of_nat (unit db))%N.
-  Proof.
-    intros db k Hwf.
-    pose proof (ListDef.T_map_le (normal_cell db) (fun c => T_normal_cell db c)
-      ((2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N k
-      (fun c => T_normal_cell_bound db c Hwf)) as Hmap.
-    pose proof (unit_positive db) as Hpositive. time_unfold T_normal_key.
-    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
-  Qed.
-
-  (** Normalizing an allocated identifier produces a cell whose width fits one unit. *)
-  Lemma normal_cell_allocated_bits : forall db i, wf db -> allocated db i ->
-    cell_bits V.encode (normal_cell db (Id i)) <= unit db.
-  Proof.
-    intros db i Hwf Hi. rewrite (normal_cell_correct db (Id i) Hwf).
-    pose proof (repr_allocated db i Hwf Hi) as Hrepr.
-    assert (Hbound : (Npos (repr db i) <= wmark db)%N).
-    { eapply N.le_trans; [exact Hrepr | apply wmark_ids]. }
-    pose proof (N_width_mono _ _ Hbound) as Hbits.
-    pose proof (unit_width_budget db) as Hunit.
-    cbn [canon cell_bits Pos.size_nat N.size_nat] in *. lia.
-  Qed.
-
-  (** Normalization either preserves a query cell or replaces its identifier within the unit. *)
-  Lemma normal_cell_bits : forall db c, wf db ->
-    cell_bits V.encode (normal_cell db c) <= cell_bits V.encode c + unit db.
-  Proof.
-    intros db [i | v] Hwf.
-    - destruct (N.compare (ids db) (Npos i)) eqn:Hcompare.
-      + apply N.compare_eq_iff in Hcompare.
-        assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
-      + unfold normal_cell. fold (ids db). rewrite Hcompare. lia.
-      + apply N.compare_gt_iff in Hcompare.
-        assert (Hi : allocated db i) by (unfold allocated; lia).
-        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
-    - cbn [normal_cell]. lia.
-  Qed.
-
-  (** Normalization preserves the number of cells in a query key. *)
-  Lemma normal_key_length : forall db k, length (normal_key db k) = length k.
-  Proof.
-    intros db k. unfold normal_key. apply length_map.
-  Qed.
-
-  Lemma normal_key_shape : forall db k,
-    row_key_shape (normal_key db k) = row_key_shape k.
-  Proof.
-    intros db k. unfold row_key_shape, normal_key.
-    induction k as [| cell rest IH]; [reflexivity |].
-    destruct cell as [i | v]; cbn [map normal_cell];
-      try destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i));
-      cbn; now rewrite IH.
-  Qed.
-
-  (** The normalized key width is covered by its original width and one unit per cell. *)
-  Lemma normal_key_bits_bound : forall db k, wf db ->
-    tuple_cell_bits (normal_key db k) <= tuple_cell_bits k + length k * unit db.
-  Proof.
-    intros db k Hwf. unfold normal_key, tuple_cell_bits.
-    induction k as [| c rest IH]; cbn [map fold_right length] in *; [lia |].
-    pose proof (normal_cell_bits db c Hwf). nia.
-  Qed.
-
-  (** The declaration guard uses the base name or an actual declared, watermarked name. *)
-  Lemma runtime_max_name_bits : forall db, wf db ->
-    Pos.size_nat (runtime_max_name (db_runtime db)) <= unit db.
-  Proof.
-    intros db Hwf. destruct (wf_max_name_attained db Hwf) as [Hbase | Hkind].
-    - rewrite Hbase. cbn [Pos.size_nat]. pose proof (unit_positive db). lia.
-    - pose proof (wmark_names db _ Hwf Hkind).
-      pose proof (unit_width_budget db). lia.
-  Qed.
-
-  (** Any function name admitted by the guard has width bounded by one unit. *)
-  Lemma guarded_name_bits : forall db f, wf db ->
-    (f <= runtime_max_name (db_runtime db))%positive -> Pos.size_nat f <= unit db.
-  Proof.
-    intros db f Hwf Hname.
-    assert (Hnumber : (Npos f <= Npos (runtime_max_name (db_runtime db)))%N)
-      by exact Hname.
-    pose proof (N_width_mono _ _ Hnumber) as Hbits.
-    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
-    cbn [N.size_nat] in Hbits. lia.
-  Qed.
-
-  (** The database coefficient covers row encoding, guarded finds, and their fixed overhead. *)
-  Lemma c_db_lookup_parts :
-    (32 * (PTrieT.c_trie + 1) * (V.c_key + 1) <= c_db /\
-      64 * (PTrieT.c_trie + 1) * (V.c_key + 1) +
-        2 * UnionFindT.c_uf + 17 <= c_db)%N.
-  Proof.
-    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
-    intros a b c d. split; nia.
-  Qed.
-
-  (** Separate payload and structural budgets absorb the three parts of a guarded lookup. *)
-  Lemma database_lookup_cost_combine :
-    forall coefficient row_cost cell_cost work payload guard normal read : N,
-      (row_cost <= coefficient -> 2 * row_cost + cell_cost + 5 <= coefficient ->
-        guard <= 5 * work -> normal <= cell_cost * work ->
-        read <= row_cost * (payload + 2 * work) ->
-        guard + normal + read <= coefficient * work + coefficient * payload)%N.
-  Proof.
-    intros coefficient row_cost cell_cost work payload guard normal read
-      Hrow_cost Hcombined Hguard Hnormal Hread.
-    assert (Hpayload : (row_cost * payload <= coefficient * payload)%N).
-    { apply N.mul_le_mono_r. exact Hrow_cost. }
-    assert (Hwork : ((2 * row_cost + cell_cost + 5) * work <= coefficient * work)%N).
-    { apply N.mul_le_mono_r. exact Hcombined. }
-    nia.
-  Qed.
-
-  (** A name admitted by the guard pays for normalization and the encoded row query. *)
-  Lemma T_lookup_active_budget : forall f k db, wf db ->
-    (f <= runtime_max_name (db_runtime db))%positive ->
-    (Pos.T_compare (runtime_max_name (db_runtime db)) f + 3 +
-      T_normal_key db k + T_row_get f (normal_key db k) db <=
-      c_db * (N.of_nat (length k + 1) * N.of_nat (unit db)) +
-        c_db * N.of_nat (tuple_cell_bits k))%N.
-  Proof.
-    intros f k db Hwf Hname.
-    pose proof (T_normal_key_bound db k Hwf) as Hnormal.
-    pose proof (T_row_get_bound f (normal_key db k) db) as Hrow.
-    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
-    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
-    pose proof (guarded_name_bits db f Hwf Hname) as Hfunction.
-    pose proof (normal_key_bits_bound db k Hwf) as Hkey.
-    pose proof (unit_positive db) as Hpositive.
-    assert (Hmass : Pos.size_nat f + tuple_cell_bits (normal_key db k) +
-      length (normal_key db k) + 1 <= tuple_cell_bits k + 2 * (length k + 1) * unit db).
-    { rewrite normal_key_length. nia. }
-    eapply database_lookup_cost_combine with
-      (row_cost := (32 * (PTrieT.c_trie + 1) * (V.c_key + 1))%N)
-      (cell_cost := (2 * UnionFindT.c_uf + 12)%N).
-    - exact (proj1 c_db_lookup_parts).
-    - pose proof (proj2 c_db_lookup_parts) as Hcoefficient.
-      set (trie_cost := PTrieT.c_trie) in *.
-      set (forest_cost := UnionFindT.c_uf) in *. clearbody trie_cost forest_cost. nia.
-    - nia.
-    - nia.
-    - eapply N.le_trans; [exact Hrow |]. apply N.mul_le_mono_l. nia.
-  Qed.
-
-  (** The high-water mark covers every slot index. *)
-  Lemma wmark_index : forall db s new, wf db ->
-    (Npos (I.next (index s new db)) <= wmark db)%N /\
-    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
-  Proof.
-    intros db s new Hwf. apply metadata_wmark_index. exact (wf_metadata db Hwf).
-  Qed.
-
-  (** Insertion never reduces the spending unit. *)
-  Lemma unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
-  Proof.
-    intros f k o db _. apply unit_put_monotone.
-  Qed.
-
-  (** Make never reduces the spending unit. *)
-  Lemma unit_mono_make : forall f k db, wf db -> unit db <= unit (snd (make f k db)).
-  Proof.
-    intros f k db _. apply unit_make_monotone.
-  Qed.
-
-  (** Union never reduces the spending unit. *)
-  Lemma wmark_union : forall i j db, wmark (union i j db) = wmark db.
-  Proof.
-    intros i j db. unfold union.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
-    destruct roots as [[winner loser] |]; reflexivity.
-  Qed.
-
-  (** Removing a scheduling entry leaves every component of the pinned watermark unchanged. *)
-  Lemma wmark_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
-    wmark db' = wmark db.
-  Proof.
-    intros db i db' Hpop. unfold db_pop_loser in Hpop.
-    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
-    injection Hpop as Hname Hdb. subst i db'. reflexivity.
-  Qed.
-
-  (** Queue scheduling keeps the spending unit exactly, including in active repair states. *)
-  Lemma unit_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
-    unit db' = unit db.
-  Proof.
-    intros db i db' Hpop. unfold unit.
-    rewrite (wmark_pop_loser db i db' Hpop),
-      (proj1 (proj2 (db_pop_loser_layout db i db' Hpop))). reflexivity.
-  Qed.
-
-  Lemma unit_mono_union : forall i j db, wf db -> unit db <= unit (union i j db).
-  Proof.
-    intros i j db _. unfold unit. rewrite union_ids, wmark_union. reflexivity.
-  Qed.
-
-  (** Repair retains its input unit even while the current queue has been popped. *)
-  Lemma repair_current_unit_monotone : forall db f k,
-    unit db <= unit (repair_current f k db).
-  Proof.
-    intros db f k. unfold repair_current.
-    destruct (row_get f k db) as [o |]; [| reflexivity].
-    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
-      (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
-    set (deleted := row_delete f k db).
-    set (updated := put f (normal_key db k) (option_map (normal_cell db) o) deleted).
-    set (store := db_row_store updated).
-    set (restored := database_set_nuses (db_nuses db)
-      (database_set_row_store
-        {| row_history := row_history store; row_links := row_links store;
-           row_weights := row_weights store; row_keys := row_keys store;
-           row_fresh := row_fresh store; row_uses := row_uses (db_row_store db) |}
-        updated)).
-    change (unit db <= unit restored).
-    eapply Nat.le_trans with (m := unit deleted).
-    - unfold deleted. apply unit_row_delete_monotone.
-    - apply unit_monotone.
-      + change (ids deleted <= ids updated)%N.
-        destruct (put_layout_raw deleted f (normal_key db k)
-          (option_map (normal_cell db) o)) as [_ [_ Hids]].
-        unfold updated. rewrite Hids. reflexivity.
-      + apply wmark_monotone.
-        * change (ids deleted <= ids updated)%N.
-          destruct (put_layout_raw deleted f (normal_key db k)
-            (option_map (normal_cell db) o)) as [_ [_ Hids]].
-          unfold updated. rewrite Hids. reflexivity.
-        * change (db_nuses deleted <= db_nuses db)%N.
-          unfold deleted. rewrite row_delete_nuses. reflexivity.
-        * change (decl_names restored = decl_names deleted).
-          change (decl_names updated = decl_names deleted).
-          apply put_decl_names.
-        * change (incl (db_index_counters deleted) (db_index_counters updated)).
-          apply put_counters_incl.
-        * change (incl (db_written_cells deleted) (db_written_cells updated)).
-          apply put_written_incl.
-  Qed.
-
-  Lemma move_row_identity_unit : forall f old current db,
-    unit (move_row_identity f old current db) = unit db.
-  Proof.
-    intros f old current db. unfold move_row_identity.
-    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
-      as [[old_key old_id] |]; [| reflexivity].
-    destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
-      as [[current_key current_id] |]; [| reflexivity].
-    reflexivity.
-  Qed.
-
-  Lemma db_repair_entry_unit_monotone : forall db f k,
-    unit db <= unit (db_repair_entry f k db).
-  Proof.
-    intros db f k. unfold db_repair_entry.
-    destruct (db_locate f k db) as [current |]; [| reflexivity].
-    destruct (row_get f current db) as [o |]; [| reflexivity].
-    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
-      (db_tuple_code current))
-      (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
-    rewrite move_row_identity_unit. apply repair_current_unit_monotone.
-  Qed.
-
-  (** Both actual loop branches preserve the original spending-unit lower bound. *)
-  Lemma unit_rebuild_monotone : forall db, unit db <= unit (rebuild db).
-  Proof.
-    intro db. apply (rebuild_preserves (fun current => unit db <= unit current)).
-    - intros current f k Hcurrent. eapply Nat.le_trans;
-        [exact Hcurrent | apply db_repair_entry_unit_monotone].
-    - intros current i next Hcurrent Hpop.
-      rewrite (unit_pop_loser current i next Hpop). exact Hcurrent.
-    - reflexivity.
-  Qed.
-
-  (** Rebuilding never reduces the spending unit. *)
-  Lemma unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
-  Proof.
-    intros db _. apply unit_rebuild_monotone.
-  Qed.
-  (** Advancing keeps the watermark and the amortized credit. *)
-  Lemma advance_credit : forall B db, wf db ->
-    wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
-  Proof.
-    intros B db _. split; reflexivity.
-  Qed.
-
-  (** Each initialization scan fits the same total amount of charged input. *)
-  Lemma database_init_sum_budget : forall cost decls slots layout declaration_bits slot_bits,
-    (1 <= cost ->
-      1 + 25 * (layout + slots + 1) + (slots + 1) + (3 * slots + 2) +
-      16 * (decls + declaration_bits + 1) + (slots + 1) + (declaration_bits + 4) +
-      (slots + 1) + 8 * cost * (decls + declaration_bits + 1) +
-      8 * cost * (slots + slot_bits + 1) +
-      48 * cost * (decls + slots + declaration_bits + slot_bits + 1) <=
-      256 * cost * (decls + slots + layout + declaration_bits + slot_bits + 1))%N.
-  Proof.
-    intros cost decls slots layout declaration_bits slot_bits Hcost.
-    set (total := (decls + slots + layout + declaration_bits + slot_bits + 1)%N).
-    set (budget := (cost * total)%N).
-    assert (Htotal : (total <= budget)%N).
-    { unfold budget. replace total with (1 * total)%N at 1 by ring.
-      apply N.mul_le_mono_r. exact Hcost. }
-    assert (Hkinds : (8 * cost * (decls + declaration_bits + 1) <= 8 * budget)%N).
-    { unfold budget. replace (8 * cost * (decls + declaration_bits + 1))%N with
-        (8 * (cost * (decls + declaration_bits + 1)))%N by ring.
-      apply N.mul_le_mono_l.
-      apply N.mul_le_mono_l. unfold total. lia. }
-    assert (Hgroups : (8 * cost * (slots + slot_bits + 1) <= 8 * budget)%N).
-    { unfold budget. replace (8 * cost * (slots + slot_bits + 1))%N with
-        (8 * (cost * (slots + slot_bits + 1)))%N by ring.
-      apply N.mul_le_mono_l.
-      apply N.mul_le_mono_l. unfold total. lia. }
-    replace (256 * cost * total)%N with (256 * budget)%N by (unfold budget; ring).
-    unfold total in Htotal. clearbody total budget. lia.
-  Qed.
-
-  (** Initialization sums preparation, name scans, and amortized dense slot numbering. *)
-  Lemma T_init_budget : forall ds sl,
-    (T_init ds sl <= 256 * (PTrieT.c_trie + 1) *
-      N.of_nat (length ds + length sl + layout_work sl +
-        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
-        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1))%N.
-  Proof.
-    intros ds sl.
-    pose proof (T_prepare_slot_layouts_le sl) as Hprepare.
-    pose proof (T_database_kinds_le ds) as Hkinds.
-    pose proof (T_database_max_name_le ds) as Hnames.
-    pose proof (T_database_slot_groups_le (prepare_slot_layouts sl) PTrieCode.empty) as Hgroups.
-    pose proof (T_database_rank_slots_budget ds sl) as Hrank.
-    destruct (database_prepared_sizes sl) as [Hprepared_length Hprepared_bits].
-    rewrite Hprepared_length, Hprepared_bits in Hgroups.
-    pose proof (Datatypes.T_length_le sl) as Hlength.
-    pose proof (T_database_of_nat_le (length sl)) as Hconvert.
-    pose proof (database_counter_bits_value (N.of_nat (length sl))) as Hslot_bits.
-    rewrite Nat2N.id in Hslot_bits.
-    pose proof (N.T_succ_le (N.of_nat (length sl))) as Hsucc.
-    pose proof (N.T_succ_pos_le (N.of_nat (length sl))) as Hsucc_pos.
-    pose proof (T_database_counter_max_le (Npos (database_max_name ds))
-      (N.succ (N.of_nat (length sl)))) as Hmaximum.
-    cbn [N.size_nat] in Hmaximum.
-    pose proof (database_max_name_bits ds) as Hname_bits.
-    assert (Hsucc_small : (N.T_succ (N.of_nat (length sl)) <=
-      N.of_nat (length sl) + 1)%N) by (clear - Hsucc Hslot_bits; lia).
-    assert (Hsucc_pos_small : (N.T_succ_pos (N.of_nat (length sl)) <=
-      N.of_nat (length sl) + 1)%N) by (clear - Hsucc_pos Hslot_bits; lia).
-    assert (Hmaximum_small : (N.T_max (Npos (database_max_name ds))
-      (N.succ (N.of_nat (length sl))) <=
-      N.of_nat (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds) + 4)%N)
-      by (clear - Hmaximum Hname_bits; lia).
-    assert (Hbranch : ((match sl with [] => 0 | _ :: _ =>
-      N.T_succ_pos (N.of_nat (length sl)) end) <= N.of_nat (length sl) + 1)%N).
-    { destruct sl; [cbn; lia | exact Hsucc_pos_small]. }
-    clear Hprepared_length Hprepared_bits Hslot_bits Hname_bits Hsucc Hsucc_pos Hmaximum.
-    time_unfold T_init. cbn beta zeta.
-    rewrite !Nat2N.inj_add in Hprepare, Hkinds, Hnames, Hgroups, Hrank |- *.
-    repeat rewrite Nat2N.inj_add.
-    set (cost := (PTrieT.c_trie + 1)%N) in *.
-    set (decls := N.of_nat (length ds)) in *.
-    set (slots_count := N.of_nat (length sl)) in *.
-    set (layout := N.of_nat (layout_work sl)) in *.
-    set (declaration_bits := N.of_nat
-      (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds)) in *.
-    set (slot_bits := N.of_nat
-      (fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl)) in *.
-    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
-    assert (Hrank_arg : (N.of_nat (length ds + length sl +
-      fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds) +
-      slot_bits + 1 =
-      decls + slots_count + declaration_bits + slot_bits + 1)%N).
-    { unfold decls, slots_count, declaration_bits.
-      repeat rewrite Nat2N.inj_add. lia. }
-    change (N.of_nat 1) with 1%N in Hrank.
-    rewrite Hrank_arg in Hrank.
-    pose proof (database_init_sum_budget cost decls slots_count layout declaration_bits slot_bits Hcost)
-      as Hbudget.
-    clearbody cost decls slots_count layout declaration_bits slot_bits. lia.
-  Qed.
-
-  (** Initialization pays for declarations and slot permutations. *)
-  Lemma T_init_le : forall ds sl,
-    (T_init ds sl <= c_db * N.of_nat (length ds + length sl + layout_work sl + 1) *
-      N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
-      c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
-        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
-  Proof.
-    intros ds sl. eapply N.le_trans; [apply T_init_budget |].
-    eapply N.le_trans.
-    - apply N.mul_le_mono_r. exact c_db_trie_budget.
-    - set (amount := N.of_nat (length ds + length sl + layout_work sl + 1)).
-      set (names := N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
-        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat)).
-      assert (Hsum : N.of_nat (length ds + length sl + layout_work sl +
-        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
-        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1) =
-        (amount + names)%N) by (unfold amount, names; lia).
-      rewrite Hsum, N.mul_add_distr_l. apply N.add_le_mono_r.
-      replace (c_db * amount)%N with ((c_db * amount) * 1)%N at 1 by ring.
-      apply N.mul_le_mono_l. lia.
-  Qed.
-
-  (** Find traverses allocated identifiers at the database unit. *)
-  Lemma T_find_le : forall i db, wf db -> allocated db i ->
-    (T_find i db <= c_db * N.of_nat (unit db))%N.
-  Proof.
-    intros i db Hwf Hi. rewrite T_find_overhead.
-    pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
-    pose proof c_db_forest_budget as Hcoefficient.
-    assert (Hunit : (1 <= N.of_nat (unit db))%N).
-    { unfold unit. rewrite Nat2N.inj_mul. nia. }
-    nia.
-  Qed.
-
-  (** Lookup charges the stored unit and query cell encodings. *)
-  Lemma T_lookup_le : forall f k db, wf db ->
-    (T_lookup f k db <= c_db * N.of_nat (length k + 1) * N.of_nat (unit db) +
-      c_db * N.of_nat ((fold_right (fun c n => cell_bits V.encode c + n) 0 k)%nat))%N.
-  Proof.
-    intros f k db Hwf.
-    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
-    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
-    pose proof (unit_positive db) as Hpositive.
-    pose proof c_db_constant_budget as Hcoefficient.
-    time_unfold T_lookup. time_unfold @T_db_runtime. time_unfold @T_runtime_max_name.
-    destruct (Pos.compare (runtime_max_name (db_runtime db)) f) eqn:Hbranch.
-    - apply Pos.compare_eq_iff in Hbranch.
-      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
-      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
-      unfold tuple_cell_bits in Hactive. nia.
-    - nia.
-    - apply Pos.compare_gt_iff in Hbranch.
-      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
-      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
-      unfold tuple_cell_bits in Hactive. nia.
-  Qed.
-
-  (** The change flag is stored. *)
-  Lemma T_changed_le : forall db, (T_changed db <= c_db)%N.
-  Proof.
-    intro db. pose proof c_db_constant_budget as Hcoefficient.
-    time_unfold T_changed. time_unfold @T_db_runtime. time_unfold @T_runtime_changed. nia.
-  Qed.
-
-  (** The allocation counter is stored. *)
-  Lemma T_ids_le : forall db, (T_ids db <= c_db)%N.
-  Proof.
-    intro db. pose proof c_db_constant_budget as Hcoefficient.
-    time_unfold T_ids. time_unfold @T_db_runtime. time_unfold @T_runtime_allocated. nia.
   Qed.
 
   Definition forest_ok (db : t) : Prop :=
@@ -16209,6 +14364,1851 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           unfold slot_rank_ok in *.
           apply forest_slot_rank. unfold inv_on in Hinv. tauto.
       + unfold inv_on, forest_ok in Hinv. tauto.
+  Qed.
+
+End Database.
+
+Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
+  Include Database V I.
+  (* spec: wmark potential *)
+  Definition decl_names (db : t) : list positive :=
+    map fst (PTrieCode.elements (runtime_kinds (db_runtime db))).
+  Definition wmark (db : t) : N :=
+    fold_right N.max (N.max (db_nuses db) (ids db))
+      (map Npos (db_index_counters db) ++ map Npos (decl_names db) ++
+        map (fun c => match c with
+          | Id i => Npos (xO i)
+          | Val v => Npos (xI (V.encode v))
+          end) (db_written_cells db)).
+  Definition unit (db : t) : nat :=
+    (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
+  Definition slots_of (db : t) (f : positive) : nat :=
+    length (filter (fun s => Pos.eqb (fst s) f) (slots db)).
+  Definition k_credit : N := 1%N.
+  Definition k_loop : N := (c_loopN + 1)%N.
+  Definition k_queue : N := 1%N.
+  Definition potential (B : N) (db : t) : N :=
+    let uses := flat_map (fun binding => map (pair (fst binding)) (snd binding))
+      (map (fun binding => (fst binding, snd (snd binding)))
+        (PTrieCode.elements (row_uses (db_row_store db)))) in
+    let weight := fun (e : positive * list (cell V.t)) =>
+      (length (snd e) + 1) * (slots_of db (fst e) + 1) in
+    let bucket := fun x => map snd (filter (fun xe => Pos.eqb (fst xe) x) uses) in
+    let credit := fun (xe : positive * (positive * list (cell V.t))) =>
+      N.to_nat (N.log2 B - N.log2
+        (N.of_nat (UnionFind.size_of (db_forest db) (repr db (fst xe))))) *
+        weight (snd xe) in
+    let work := fun entries => fold_right (fun e n => (weight e + n)%nat) 0%nat entries in
+    let queued := fold_right (fun x n => (work (bucket x) + 1 + n)%nat) 0%nat
+      (runtime_queue (db_runtime db)) in
+    (k_loop * (k_credit * N.of_nat
+      (fold_right (fun xe n => (credit xe + n)%nat) 0%nat uses) +
+      k_queue * N.of_nat queued))%N.
+  Definition num_slots (db : t) : nat := length (slots db).
+  TimeFun db_cell_code db_cell_eqb db_tuple_code db_row_code row_get kind_get.
+  TimeFun normal_cell normal_key output_eqb combine_output.
+  TimeFun slot_index_get projection_table_get slot_update_one slot_update_many slot_updated_counters.
+  TimeFun slots_update row_write ensure_row_identity register_row_uses row_replace.
+  TimeFun row_erase row_delete.
+  TimeFun init.
+  TimeFun find.
+  TimeFun lookup.
+  TimeFun union.
+  TimeFun allocate_id.
+  TimeFun make.
+  TimeFun put.
+  TimeFun row_root db_locate move_row_identity repair_current db_repair_entry.
+  TimeFun db_get_uses db_pop_loser.
+  TimeFun db_rstep.
+  TimeFun db_rebuild_fuel.
+  TimeFun rebuild.
+  TimeFun index.
+  TimeFun advance.
+  TimeFun changed.
+  TimeFun ids.
+
+  (** A functional construction trace bounds cached widths using the public index laws. *)
+  Lemma index_history_cell_bits : forall written ix bits,
+    database_index_history I.empty I.insert I.remove written ix ->
+    (forall c, In c written -> cell_bits V.encode c <= bits) ->
+    I.max_cell_bits ix <= bits.
+  Proof.
+    intros written ix bits Hhistory Hwritten.
+    apply (database_index_history_induction (cell V.t) I.t I.empty I.insert I.remove written
+      (fun current => I.max_cell_bits current <= bits)); [| | | exact Hhistory].
+    - rewrite I.max_cell_bits_empty. lia.
+    - intros u current Hcells Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_insert |].
+      apply Nat.max_lub; [exact Hcurrent |].
+      induction u as [|c u IH]; cbn [fold_right]; [lia |]. apply Nat.max_lub.
+      + apply Hwritten, Hcells. now left.
+      + apply IH. intros d Hin. apply Hcells. now right.
+    - intros u current Hcurrent. eapply Nat.le_trans; [apply I.max_cell_bits_remove | exact Hcurrent].
+  Qed.
+
+  (** Every insertion pays the actual binary increment of the stored projection count. *)
+  Lemma T_slot_update_one_count_succ_ge : forall s u state,
+    (N.T_succ (runtime_projection_count state s u) <=
+      T_slot_update_one true s u state)%N.
+  Proof.
+    intros s u state. unfold runtime_projection_count.
+    time_unfold T_slot_update_one. cbn beta iota zeta. lia.
+  Qed.
+
+  (** A non-final deletion pays the predecessor of its stored projection count. *)
+  Lemma T_slot_update_one_count_pred_ge : forall s u state,
+    runtime_projection_count state s u <> 0%N ->
+    runtime_projection_count state s u <> 1%N ->
+    (N.T_pred (runtime_projection_count state s u) <=
+      T_slot_update_one false s u state)%N.
+  Proof.
+    intros s u state Hnonzero Hnotone.
+    time_unfold T_slot_update_one. cbn beta iota zeta.
+    fold (runtime_projection_count state s u).
+    destruct (runtime_projection_count state s u) as [|p]; [contradiction |].
+    destruct p; [lia | lia | contradiction].
+  Qed.
+
+  (** All-ones multiplicities force an arbitrarily long carry inside one slot update. *)
+  Lemma T_slot_update_one_carry_ge : forall n s u state,
+    runtime_projection_count state s u = Npos (database_carry_value n) ->
+    (N.of_nat n + 2 <= T_slot_update_one true s u state)%N.
+  Proof.
+    intros n s u state Hcount.
+    pose proof (T_slot_update_one_count_succ_ge s u state) as Htime.
+    rewrite Hcount, database_carry_successor_time in Htime. exact Htime.
+  Qed.
+
+  (** A nonempty slot walk pays projection, one update, and its updated-state continuation. *)
+  Lemma T_slot_update_many_cons : forall b u s layout rest state,
+    T_slot_update_many b u ((s, layout) :: rest) state =
+      (1 + T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) state +
+       T_slot_update_many b u rest
+         (slot_update_one b s (project_slot_layout layout u) state))%N.
+  Proof.
+    intros b u s layout rest state. time_unfold T_slot_update_many. ring.
+  Qed.
+
+  (** The empty slot walk performs only its entry call. *)
+  Lemma T_slot_update_many_nil : forall b u state,
+    T_slot_update_many b u [] state = 1%N.
+  Proof.
+    intros b u state. time_unfold T_slot_update_many. reflexivity.
+  Qed.
+
+  (** Reading either index cache pays the binary slot key once. *)
+  Lemma T_slot_index_get_width : forall code indexes,
+    (T_slot_index_get code indexes <=
+      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
+  Proof.
+    intros code indexes. time_unfold T_slot_index_get.
+    apply N.add_le_mono_l. apply PTrieT.T_get_le.
+  Qed.
+
+  (** Reading a projection-count table pays the same binary slot key. *)
+  Lemma T_projection_table_get_width : forall code counts,
+    (T_projection_table_get code counts <=
+      1 + PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N.
+  Proof.
+    intros code counts. time_unfold T_projection_table_get.
+    apply N.add_le_mono_l. apply PTrieT.T_get_le.
+  Qed.
+
+  (** One slot update exposes count width separately from tuple and index costs. *)
+  Lemma T_slot_update_one_local : forall add s u state,
+    let code := N.succ_pos s in
+    let all := slot_index_get code (runtime_all_indexes state) in
+    let fresh := slot_index_get code (runtime_new_indexes state) in
+    let count := runtime_projection_count state s u in
+    (T_slot_update_one add s u state <=
+      32 + N.T_succ_pos s + T_db_tuple_code u +
+      6 * (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1)) +
+      2 * (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1)) +
+      I.T_insert u all + I.T_insert u fresh + I.T_remove u all + I.T_remove u fresh +
+      N.of_nat (N.size_nat count) + 2)%N.
+  Proof.
+    intros add s u state. cbn beta zeta.
+    set (code := N.succ_pos s) in *.
+    set (tuple_code := db_tuple_code u) in *.
+    set (table := projection_table_get code (runtime_projection_counts state)).
+    set (all := slot_index_get code (runtime_all_indexes state)) in *.
+    set (fresh := slot_index_get code (runtime_new_indexes state)) in *.
+    pose proof (T_projection_table_get_width code (runtime_projection_counts state)) as Htable.
+    pose proof (T_slot_index_get_width code (runtime_all_indexes state)) as Hall.
+    pose proof (T_slot_index_get_width code (runtime_new_indexes state)) as Hfresh.
+    assert (Hget : (PTrieCode.T_get tuple_code table <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { apply PTrieT.T_get_le. }
+    assert (Hset_slot : forall A (v : A) (m : PTrieCode.t A),
+      (PTrieCode.T_set code v m <= PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N).
+    { intros A v m. apply PTrieT.T_set_le. }
+    assert (Hset_tuple : forall v,
+      (PTrieCode.T_set tuple_code v table <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { intro v. apply PTrieT.T_set_le. }
+    assert (Hremove : (PTrieCode.T_remove tuple_code table <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N).
+    { apply PTrieT.T_remove_le. }
+    pose proof (N.T_succ_le (runtime_projection_count state s u)) as Hsucc.
+    pose proof (N.T_pred_le (runtime_projection_count state s u)) as Hpred.
+    unfold runtime_projection_count in Hsucc, Hpred |- *.
+    fold code tuple_code table in Hsucc, Hpred |- *.
+    set (count := match PTrieCode.get tuple_code table with Some (_, n) => n | None => 0%N end) in *.
+    time_unfold T_slot_update_one. cbn beta iota zeta.
+    fold code tuple_code table count all fresh.
+    destruct add; [| destruct count as [|[p|p|]]];
+      try time_unfold @T_runtime_set_indexes;
+      time_pose; time_simpl; time_cbn_all.
+    all: set (slot_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat code + 1))%N) in *;
+      set (tuple_cost := (PTrieT.c_trie * N.of_nat (Pos.size_nat tuple_code + 1))%N) in *;
+      clearbody slot_cost tuple_cost; lia.
+  Qed.
+
+  (** A preserved state predicate turns uniform per-layout costs into a complete walk bound. *)
+  Lemma T_slot_update_many_bound : forall b u layouts state
+    (P : database_runtime (cell V.t) I.t -> Prop) budget,
+    P state ->
+    (forall s layout current, In (s, layout) layouts -> P current ->
+      P (slot_update_one b s (project_slot_layout layout u) current) /\
+      (T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
+    (T_slot_update_many b u layouts state <=
+      (budget + 1) * N.of_nat (length layouts) + 1)%N.
+  Proof.
+    intros b u layouts. induction layouts as [|[s layout] rest IH];
+      intros state P budget Hstate Hstep.
+    - rewrite T_slot_update_many_nil. cbn [length]. lia.
+    - destruct (Hstep s layout state (or_introl eq_refl) Hstate) as [Hnext Hcost].
+      pose proof (IH (slot_update_one b s (project_slot_layout layout u) state) P budget Hnext
+        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Htail.
+      rewrite T_slot_update_many_cons. cbn [length]. nia.
+  Qed.
+
+  (** A duplicate-free walk reads each slot before any earlier update can change it. *)
+  Lemma T_slot_update_many_snapshots : forall b u layouts original state budget,
+    NoDup (map fst layouts) ->
+    (forall s layout, In (s, layout) layouts -> slot_snapshot state s = slot_snapshot original s) ->
+    (forall s layout current, In (s, layout) layouts ->
+      slot_snapshot current s = slot_snapshot original s ->
+      (T_project_slot_layout layout u +
+       T_slot_update_one b s (project_slot_layout layout u) current <= budget)%N) ->
+    (T_slot_update_many b u layouts state <=
+      (budget + 1) * N.of_nat (length layouts) + 1)%N.
+  Proof.
+    intros b u layouts. induction layouts as [|[s layout] rest IH];
+      intros original state budget Hnodup Hsnapshots Hstep.
+    - rewrite T_slot_update_many_nil. cbn [length]. lia.
+    - cbn [map fst] in Hnodup. inversion Hnodup as [|key keys Hmissing Htail]; subst.
+      pose proof (Hstep s layout state (or_introl eq_refl)
+        (Hsnapshots s layout (or_introl eq_refl))) as Hhead.
+      assert (Hnext : forall t block, In (t, block) rest ->
+        slot_snapshot (slot_update_one b s (project_slot_layout layout u) state) t =
+          slot_snapshot original t).
+      { intros t block Hin. rewrite slot_update_one_snapshot_other.
+        - apply (Hsnapshots t block). now right.
+        - intro Hequal. subst t. apply Hmissing. exact (in_map fst rest (s, block) Hin). }
+      pose proof (IH original (slot_update_one b s (project_slot_layout layout u) state)
+        budget Htail Hnext
+        (fun t block current Hin => Hstep t block current (or_intror Hin))) as Hrest.
+      rewrite T_slot_update_many_cons. cbn [length]. nia.
+  Qed.
+
+  (** Counter collection emits precisely the full and delta counter for every visited slot. *)
+  Lemma slot_updated_counters_length : forall layouts state,
+    length (slot_updated_counters layouts state) = 2 * length layouts.
+  Proof.
+    intro layouts. induction layouts as [|[s layout] rest IH]; intro state;
+      cbn [slot_updated_counters length]; [reflexivity | rewrite IH; lia].
+  Qed.
+
+  Definition c_db : N :=
+    4096 * (I.c_ix + 1) * (PTrieT.c_trie + 1) * (UnionFindT.c_uf + 1) * (V.c_key + 1).
+
+  (** The database coefficient dominates the trie work and every constant observation cost. *)
+  Lemma c_db_trie_budget : (256 * (PTrieT.c_trie + 1) <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. nia.
+  Qed.
+
+  (** Every database operation has room for its fixed record-construction overhead. *)
+  Lemma c_db_constant_budget : (128 <= c_db)%N.
+  Proof.
+    pose proof c_db_trie_budget. nia.
+  Qed.
+
+  (** The positive bit count agrees with the natural length of the positive size code. *)
+  Lemma positive_size_nat : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p.
+  Proof.
+    intro p. induction p; cbn [Pos.size Pos.size_nat];
+      rewrite ?Pos2Nat.inj_succ, ?IHp; reflexivity.
+  Qed.
+
+  (** Binary slot width fits its logarithmic public query size, including zero. *)
+  Lemma slot_width_log : forall s, N.size_nat s <= N.to_nat (N.log2 s) + 1.
+  Proof.
+    intros [| [p | p |]]; cbn [N.size_nat N.log2 N.to_nat Pos.size_nat];
+      rewrite ?positive_size_nat; lia.
+  Qed.
+
+  (** The positive slot encoding adds at most one bit to the queried number. *)
+  Lemma slot_code_bits : forall s, Pos.size_nat (N.succ_pos s) <= N.size_nat s + 1.
+  Proof.
+    intros [| p]; [cbn; lia |].
+    cbn [N.succ_pos N.size_nat]. induction p; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** Collecting the two final counters pays one bounded slot lookup per cache. *)
+  Lemma T_slot_updated_counters_le : forall layouts state bits,
+    (forall s layout, In (s, layout) layouts -> N.size_nat s <= bits) ->
+    (T_slot_updated_counters layouts state <=
+      16 * (I.c_ix + PTrieT.c_trie + 1) * N.of_nat (length layouts + 1) *
+        N.of_nat (bits + 1))%N.
+  Proof.
+    intro layouts. induction layouts as [|[s layout] rest IH]; intros state bits Hbits.
+    - time_unfold T_slot_updated_counters. cbn [length]. nia.
+    - pose proof (IH state bits (fun t block Hin => Hbits t block (or_intror Hin))) as Htail.
+      pose proof (Hbits s layout (or_introl eq_refl)) as Hslot.
+      pose proof (slot_code_bits s) as Hcode.
+      pose proof (N.T_succ_pos_le s) as Hsucc.
+      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_all_indexes state)) as Hall.
+      pose proof (T_slot_index_get_width (N.succ_pos s) (runtime_new_indexes state)) as Hnew.
+      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_all_indexes state))) as Hall_next.
+      pose proof (I.T_next_le (slot_index_get (N.succ_pos s) (runtime_new_indexes state))) as Hnew_next.
+      time_unfold T_slot_updated_counters.
+      time_unfold @T_runtime_all_indexes. time_unfold @T_runtime_new_indexes.
+      cbn [length]. nia.
+  Qed.
+
+  (** Taking the maximum over a list retains its initial lower bound. *)
+  Lemma fold_max_base : forall values base, (base <= fold_right N.max base values)%N.
+  Proof.
+    intro values. induction values as [| value values IH]; intro base; cbn [fold_right].
+    - lia.
+    - eapply N.le_trans; [apply IH | apply N.le_max_r].
+  Qed.
+
+  (** Every recorded value is below the maximum over the recording list. *)
+  Lemma fold_max_member : forall values base value,
+    In value values -> (value <= fold_right N.max base values)%N.
+  Proof.
+    intro values. induction values as [| head values IH]; intros base value Hin.
+    - contradiction.
+    - cbn [fold_right]. destruct Hin as [-> | Hin]; [apply N.le_max_l |].
+      eapply N.le_trans; [now apply IH | apply N.le_max_r].
+  Qed.
+
+  (** Increasing a binary number never decreases its encoded width. *)
+  Lemma N_width_mono : forall n m, (n <= m)%N -> N.size_nat n <= N.size_nat m.
+  Proof.
+    intros [| p] [| q] Hle; cbn [N.size_nat]; try lia.
+    destruct (Pos.eq_dec p q) as [-> | Hneq]; [lia |].
+    apply Pos.size_nat_monotone. lia.
+  Qed.
+
+  (** Doubling a binary natural adds at most one bit. *)
+  Lemma database_double_bits : forall n, N.size_nat (2 * n) <= N.size_nat n + 1.
+  Proof.
+    intros [|p]; cbn [N.mul N.size_nat Pos.mul Pos.size_nat]; lia.
+  Qed.
+
+  (** A query length no greater than an input length fits the input's positive rank. *)
+  Lemma database_query_length_rank : forall n m, n <= m ->
+    (Npos (Pos.of_nat n) <= Npos (Pos.of_succ_nat m))%N.
+  Proof.
+    intros n m Hlength. change (Pos.of_nat n <= Pos.of_succ_nat m)%positive.
+    apply Pos2Nat.inj_le.
+    rewrite SuccNat2Pos.id_succ. destruct n as [|n].
+    - cbn. lia.
+    - rewrite Nat2Pos.id by lia. lia.
+  Qed.
+
+  (** Counter, query and stored-cell bounds together control the actual index width. *)
+  Lemma index_width_watermark : forall ix u bound,
+    (Npos (I.next ix) <= bound)%N ->
+    (Npos (Pos.of_nat (length u)) <= bound)%N ->
+    (forall c, In c u -> cell_bits V.encode c <= N.size_nat bound) ->
+    I.max_cell_bits ix <= N.size_nat bound ->
+    I.width ix u <= 4 * N.size_nat bound + 2.
+  Proof.
+    intros ix u bound Hnext Hlength Hcells Hstored.
+    assert (Hsum : (Npos (I.next ix + Pos.of_nat (length u)) <= 2 * bound)%N).
+    { change ((Npos (I.next ix) + Npos (Pos.of_nat (length u))) <= 2 * bound)%N. lia. }
+    pose proof (N_width_mono _ _ Hsum) as Hsum_bits.
+    change (Pos.size_nat (I.next ix + Pos.of_nat (length u)) <= N.size_nat (2 * bound))
+      in Hsum_bits.
+    pose proof (database_double_bits bound) as Hdouble.
+    assert (Hmaximum : fold_right (fun c n => Nat.max (cell_bits V.encode c) n) 0 u <=
+      N.size_nat bound).
+    { clear -Hcells. induction u as [|c rest IH]; cbn [fold_right]; [lia |].
+      apply Nat.max_lub; [apply Hcells; now left |].
+      apply IH. intros d Hin. apply Hcells. now right. }
+    pose proof (I.width_le ix u). lia.
+  Qed.
+
+  (** The exact watermark formula always covers the allocated identifier interval. *)
+  Lemma wmark_ids : forall db, (ids db <= wmark db)%N.
+  Proof.
+    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_r | apply fold_max_base].
+  Qed.
+
+  (** The declaration inventory is exactly the domain of the stored kind trie. *)
+  Lemma decl_names_spec : forall db f,
+    kind (view db) f <> None <-> In f (decl_names db).
+  Proof.
+    intros db f. unfold decl_names.
+    change (PTrieCode.get f (runtime_kinds (db_runtime db)) <> None <->
+      In f (map fst (PTrieCode.elements (runtime_kinds (db_runtime db))))).
+    split.
+    - intro Hpresent. destruct (PTrieCode.get f (runtime_kinds (db_runtime db))) as [output |] eqn:Hget;
+        [| contradiction]. apply in_map_iff. exists (f, output). split; [reflexivity |].
+      now apply PTrie.elements_spec.
+    - intro Hin. apply in_map_iff in Hin as [[g output] [Heq Hin]].
+      cbn [fst] in Heq. subst g. apply PTrie.elements_spec in Hin. congruence.
+  Qed.
+
+  (** A guarded slot lookup pays only the query's bits and one trie access. *)
+  Lemma T_index_bits : forall s new db,
+    (T_index s new db <= 16 * (PTrieT.c_trie + 1) * N.of_nat (N.size_nat s + 1))%N.
+  Proof.
+    intros s new db. pose proof (N.T_compare_le s (runtime_slot_bound (db_runtime db))) as Hcompare.
+    pose proof (N.T_succ_pos_le s) as Hsucc.
+    pose proof (slot_code_bits s) as Hbits.
+    pose proof (PTrieT.T_get_le I.t (N.succ_pos s)
+      (if new then runtime_new_indexes (db_runtime db) else runtime_all_indexes (db_runtime db))) as Hget.
+    time_unfold T_index. time_unfold @T_db_runtime. time_unfold @T_runtime_slot_bound.
+    destruct (N.compare s (runtime_slot_bound (db_runtime db))); try nia.
+    destruct new; time_unfold @T_runtime_new_indexes; time_unfold @T_runtime_all_indexes;
+      cbn in Hget; nia.
+  Qed.
+
+  (** Unary logarithms agree with the width of a positive binary integer. *)
+  Lemma positive_nat_log2_size : forall p,
+    S (Nat.log2 (Pos.to_nat p)) = Pos.size_nat p.
+  Proof.
+    intro p. induction p.
+    - rewrite Pos2Nat.inj_xI.
+      replace (S (2 * Pos.to_nat p)) with (2 * Pos.to_nat p + 1) by lia.
+      rewrite Nat.log2_succ_double by apply Pos2Nat.is_pos.
+      cbn [Pos.size_nat]. now rewrite IHp.
+    - rewrite Pos2Nat.inj_xO, Nat.log2_double by apply Pos2Nat.is_pos.
+      cbn [Pos.size_nat]. now rewrite IHp.
+    - reflexivity.
+  Qed.
+
+  (** A unary logarithm is bounded by the width of the same binary integer. *)
+  Lemma nat_log2_N_width : forall n, Nat.log2 (N.to_nat n) <= N.size_nat n.
+  Proof.
+    intros [| p]; [reflexivity |].
+    change (Nat.log2 (Pos.to_nat p) <= Pos.size_nat p).
+    pose proof (positive_nat_log2_size p). lia.
+  Qed.
+
+  (** Forest cardinality is exactly the database allocation counter. *)
+  Lemma forest_card_ids : forall db, wf db ->
+    UnionFind.card (db_forest db) = N.to_nat (ids db).
+  Proof.
+    intros db Hwf. unfold UnionFind.card. now rewrite (wf_forest_count db Hwf).
+  Qed.
+
+  (** Find adds only the fixed record-wrapper work to the actual forest clock. *)
+  Lemma T_find_overhead : forall i db,
+    (T_find i db = UnionFindT.T_find i (db_forest db) + 14)%N.
+  Proof.
+    intros i db. time_unfold T_find. time_unfold @T_database_set_forest.
+    time_simpl. time_cbn. nia.
+  Qed.
+
+  (** The shared coefficient also dominates forest work and fixed wrapper costs. *)
+  Lemma c_db_forest_budget : (128 * (UnionFindT.c_uf + 1) <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. nia.
+  Qed.
+
+  (** Allocated finds fit the logarithmic database unit without any history assumption. *)
+  Lemma T_find_unit_budget : forall i db, wf db -> allocated db i ->
+    (UnionFindT.T_find i (db_forest db) <=
+      2 * UnionFindT.c_uf * N.of_nat (unit db))%N.
+  Proof.
+    intros i db Hwf Hi.
+    pose proof (UnionFindT.T_find_le i (db_forest db) (wf_forest db Hwf)) as Hfind.
+    rewrite (forest_card_ids db Hwf) in Hfind.
+    pose proof (nat_log2_N_width (ids db)) as Hlog.
+    pose proof (slot_width_log (ids db)) as Hlogwidth.
+    assert (Hwidth : Nat.max (UnionFind.width (db_forest db)) (Pos.size_nat i) <=
+      N.size_nat (wmark db)).
+    { apply Nat.max_lub.
+      - eapply Nat.le_trans; [exact (wf_forest_width db Hwf) |].
+        apply N_width_mono. apply wmark_ids.
+      - change (N.size_nat (Npos i) <= N.size_nat (wmark db)).
+        apply N_width_mono. eapply N.le_trans; [exact Hi | apply wmark_ids]. }
+    unfold unit. rewrite Nat2N.inj_mul.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
+    nia.
+  Qed.
+
+  (** The input-cell width sum separates tuple payloads from list bookkeeping. *)
+  Definition tuple_cell_bits (k : list (cell V.t)) : nat :=
+    fold_right (fun c n => cell_bits V.encode c + n) 0 k.
+
+  (** Cell encoding has exactly the public tagged-cell width. *)
+  Lemma db_cell_code_bits : forall c,
+    Pos.size_nat (db_cell_code c) = cell_bits V.encode c.
+  Proof.
+    intros [i | v]; reflexivity.
+  Qed.
+
+  (** Self-delimiting glue adds at most twice the first code's width. *)
+  Lemma glue_width_bound : forall a b,
+    Pos.size_nat (glue a b) <= 2 * Pos.size_nat a + Pos.size_nat b.
+  Proof.
+    intro a. induction a as [a IH | a IH |]; intro b; cbn [glue Pos.size_nat].
+    - specialize (IH b). lia.
+    - specialize (IH b). lia.
+    - lia.
+  Qed.
+
+  (** The generated glue clock charges exactly one step per bit of its first code. *)
+  Lemma T_glue_bits : forall a b, T_glue a b = N.of_nat (Pos.size_nat a).
+  Proof.
+    intro a. induction a as [a IH | a IH |]; intro b; time_unfold T_glue;
+      cbn [Pos.size_nat]; rewrite ?Nat2N.inj_succ, ?IH; lia.
+  Qed.
+
+  (** Tuple codes have width linear in the sum of their tagged cell widths. *)
+  Lemma db_tuple_code_bits : forall k,
+    Pos.size_nat (db_tuple_code k) <= 2 * tuple_cell_bits k + 1.
+  Proof.
+    intro k. induction k as [| c rest IH]; [reflexivity |].
+    change (Pos.size_nat (glue (db_cell_code c) (db_tuple_code rest)) <=
+      2 * (cell_bits V.encode c + tuple_cell_bits rest) + 1).
+    pose proof (glue_width_bound (db_cell_code c) (db_tuple_code rest)) as Hglue.
+    rewrite db_cell_code_bits in Hglue. lia.
+  Qed.
+
+  (** Row-key width is linear in the function name and tuple payload widths. *)
+  Lemma db_row_code_bits : forall f k,
+    Pos.size_nat (db_row_code f k) <= 2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1.
+  Proof.
+    intros f k. pose proof (glue_width_bound f (db_tuple_code k)) as Hglue.
+    pose proof (db_tuple_code_bits k) as Htuple.
+    change (Pos.size_nat (glue f (db_tuple_code k)) <=
+      2 * Pos.size_nat f + 2 * tuple_cell_bits k + 1). lia.
+  Qed.
+
+  (** Cell encoding pays the value encoder only in the value branch. *)
+  Lemma T_db_cell_code_bound : forall c,
+    (T_db_cell_code c <= (V.c_key + 2) * N.of_nat (cell_bits V.encode c + 1))%N.
+  Proof.
+    intros [i | v].
+    - time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
+    - pose proof (V.T_encode_le v) as Hencode.
+      change (V.T_encode v <= V.c_key * N.of_nat (Pos.size_nat (V.encode v) + 1))%N in Hencode.
+      time_unfold T_db_cell_code. cbn [cell_bits Pos.size_nat]. nia.
+  Qed.
+
+  (** The generated list-code walk pays once for every cell and its delimiter bits. *)
+  Lemma T_list_cell_code_bound : forall k,
+    (T_list_code db_cell_code (fun c => T_db_cell_code c) k <=
+      (V.c_key + 6) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intro k. induction k as [| c rest IH].
+    - time_unfold @T_list_code. cbn [tuple_cell_bits fold_right length]. nia.
+    - pose proof (T_db_cell_code_bound c) as Hcell.
+      pose proof (T_glue_bits (db_cell_code c) (list_code db_cell_code rest)) as Hglue.
+      rewrite db_cell_code_bits in Hglue. time_unfold @T_list_code.
+      unfold tuple_cell_bits in *. cbn [fold_right length] in *. nia.
+  Qed.
+
+  (** Tuple encoding adds only its wrapper to the linear list-code walk. *)
+  Lemma T_db_tuple_code_bound : forall k,
+    (T_db_tuple_code k <=
+      (V.c_key + 8) * N.of_nat (tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intro k. pose proof (T_list_cell_code_bound k) as Hlist.
+    time_unfold T_db_tuple_code. nia.
+  Qed.
+
+  (** Encoding a row key adds the function-name delimiter to the tuple walk. *)
+  Lemma T_db_row_code_bound : forall f k,
+    (T_db_row_code f k <= (V.c_key + 16) *
+      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intros f k. pose proof (T_db_tuple_code_bound k) as Htuple.
+    pose proof (T_glue_bits f (db_tuple_code k)) as Hglue.
+    time_unfold T_db_row_code. time_unfold @T_pair_code.
+    time_unfold @Datatypes.T_fst. time_unfold @Datatypes.T_snd.
+    cbn [fst snd]. nia.
+  Qed.
+
+  (** The row-map wrapper adds at most five steps around encoding and trie lookup. *)
+  Lemma T_row_get_overhead : forall f k db,
+    (T_row_get f k db <= T_db_row_code f k +
+      PTrieT.T_get (db_row_code f k) (runtime_rows (db_runtime db)) + 5)%N.
+  Proof.
+    intros f k db. time_unfold T_row_get.
+    time_unfold @T_db_runtime. time_unfold @T_runtime_rows.
+    time_unfold @Map.Datatypes.T_option_map.
+    destruct (PTrieCode.get (db_row_code f k) (runtime_rows (db_runtime db)));
+      time_unfold @Datatypes.T_snd; nia.
+  Qed.
+
+  (** Row lookup pays linearly for the complete encoded query key. *)
+  Lemma T_row_get_bound : forall f k db,
+    (T_row_get f k db <= 32 * (PTrieT.c_trie + 1) * (V.c_key + 1) *
+      N.of_nat (Pos.size_nat f + tuple_cell_bits k + length k + 1))%N.
+  Proof.
+    intros f k db. pose proof (T_row_get_overhead f k db) as Hrow.
+    pose proof (T_db_row_code_bound f k) as Hcode.
+    pose proof (PTrieT.T_get_le _ (db_row_code f k)
+      (runtime_rows (db_runtime db))) as Hget.
+    pose proof (db_row_code_bits f k) as Hbits.
+    set (trie_cost := PTrieT.c_trie) in *. clearbody trie_cost.
+    nia.
+  Qed.
+
+  (** A uniform cell-width bound controls the sum used by tuple encoding. *)
+  Lemma tuple_cell_bits_bound : forall u bits,
+    (forall c, In c u -> cell_bits V.encode c <= bits) ->
+    tuple_cell_bits u <= length u * bits.
+  Proof.
+    intro u. induction u as [|c rest IH]; intros bits Hcells.
+    - reflexivity.
+    - pose proof (Hcells c (or_introl eq_refl)) as Hhead.
+      pose proof (IH bits (fun d Hin => Hcells d (or_intror Hin))) as Htail.
+      unfold tuple_cell_bits in *. cbn [fold_right length]. lia.
+  Qed.
+
+  (** One slot mutation fits a uniform tuple, count, slot-key and index-width budget. *)
+  Lemma T_slot_update_one_width : forall b s u state arity count_limit bits,
+    (forall new, I.wf arity (runtime_slot_index state s new)) ->
+    length u <= count_limit ->
+    (forall c, In c u -> cell_bits V.encode c <= bits) ->
+    N.size_nat s <= bits ->
+    N.size_nat (runtime_projection_count state s u) <= bits ->
+    (forall new, I.width (runtime_slot_index state s new) u <= 4 * bits + 2) ->
+    (T_slot_update_one b s u state <=
+      128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+        N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros b s u state arity count_limit bits Harity Hlength Hcells Hslot Hcount Hwidth.
+    set (factor := (N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N).
+    pose proof (tuple_cell_bits_bound u bits Hcells) as Hsum.
+    assert (Hencoding_size : (N.of_nat (tuple_cell_bits u + length u + 1) <= factor)%N)
+      by (unfold factor; nia).
+    assert (Htuple_key : (N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <= 2 * factor)%N).
+    { pose proof (db_tuple_code_bits u). unfold factor. nia. }
+    assert (Hencoding : (T_db_tuple_code u <= (V.c_key + 8) * factor)%N).
+    { eapply N.le_trans; [apply T_db_tuple_code_bound |].
+      now apply N.mul_le_mono_l. }
+    assert (Hmutation : forall new,
+      (I.T_insert u (runtime_slot_index state s new) +
+       I.T_remove u (runtime_slot_index state s new) <= 8 * I.c_ix * factor)%N).
+    { intro new.
+      pose proof (I.T_insert_le arity u (runtime_slot_index state s new) (Harity new)) as Hinsert.
+      pose proof (I.T_remove_le arity u (runtime_slot_index state s new) (Harity new)) as Hremove.
+      assert (Hsize : (N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1) <= 4 * factor)%N).
+      { specialize (Hwidth new). unfold factor. nia. }
+      eapply N.le_trans; [apply N.add_le_mono; [exact Hinsert | exact Hremove] |].
+      replace (I.c_ix * N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1) +
+        I.c_ix * N.of_nat (length u + 1) *
+        N.of_nat (I.width (runtime_slot_index state s new) u + 1))%N with
+        (2 * I.c_ix * (N.of_nat (length u + 1) *
+          N.of_nat (I.width (runtime_slot_index state s new) u + 1)))%N by ring.
+      replace (8 * I.c_ix * factor)%N with (2 * I.c_ix * (4 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (Hmutation false) as Hall.
+    pose proof (Hmutation true) as Hnew.
+    unfold runtime_slot_index in Hall, Hnew. cbn beta iota in Hall, Hnew.
+    pose proof (T_slot_update_one_local b s u state) as Hlocal. cbn beta zeta in Hlocal.
+    pose proof (N.T_succ_pos_le s) as Hsucc.
+    pose proof (slot_code_bits s) as Hcode.
+    assert (Hfactor : (1 <= factor)%N) by (unfold factor; nia).
+    assert (Hbits : (N.of_nat (bits + 1) <= factor)%N) by (unfold factor; nia).
+    assert (Hslot_key : (N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <= 2 * factor)%N)
+      by lia.
+    assert (Hslot_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (N.succ_pos s) + 1) <=
+      2 * PTrieT.c_trie * factor)%N).
+    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Htuple_cost : (PTrieT.c_trie * N.of_nat (Pos.size_nat (db_tuple_code u) + 1) <=
+      2 * PTrieT.c_trie * factor)%N).
+    { replace (2 * PTrieT.c_trie * factor)%N with (PTrieT.c_trie * (2 * factor))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hsucc_factor : (N.T_succ_pos s <= factor)%N) by lia.
+    assert (Hcount_factor : (N.of_nat (N.size_nat (runtime_projection_count state s u)) <=
+      factor)%N) by lia.
+    replace (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) *
+      N.of_nat (count_limit + 1) * N.of_nat (bits + 1))%N with
+      (128 * (I.c_ix + PTrieT.c_trie + V.c_key + 1) * factor)%N by (unfold factor; ring).
+    clearbody factor.
+    assert (Hcoarse : (T_slot_update_one b s u state <=
+      34 + (16 * I.c_ix + 16 * PTrieT.c_trie + V.c_key + 10) * factor)%N).
+    { clear -Hlocal Hslot_cost Htuple_cost Hall Hnew Hencoding Hsucc_factor Hcount_factor.
+      nia. }
+    eapply N.le_trans; [exact Hcoarse |]. clear -Hfactor. nia.
+  Qed.
+
+  (** Initialization starts without amortized debt. *)
+  Lemma potential_init : forall B ds sl, (potential B (init ds sl) = 0)%N.
+  Proof.
+    intros B ds sl. unfold potential.
+    cbn [init db_row_store row_uses db_runtime runtime_queue].
+    reflexivity.
+  Qed.
+
+  (** Insertion pays for all slots and the logarithmic identifier budget. *)
+  Lemma T_put_amort : forall B f k o db, wf db ->
+    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
+    (T_put f k o db +
+      N.of_nat (unit (put f k o db)) * potential B (put f k o db) <=
+      N.of_nat (unit (put f k o db)) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          potential B db))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Constructor allocation has the same amortized budget as insertion. *)
+  Lemma T_make_amort : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+    (ids (snd (make f k db)) <= B)%N ->
+    (T_make f k db +
+      N.of_nat (unit (snd (make f k db))) * potential B (snd (make f k db)) <=
+      N.of_nat (unit (snd (make f k db))) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          potential B db))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Union transfers the deferred work to potential. *)
+  Lemma T_union_amort : forall B i j db, wf db -> allocated db i -> allocated db j ->
+    (ids db <= B)%N ->
+    (T_union i j db +
+      N.of_nat (unit (union i j db)) * potential B (union i j db) <=
+      N.of_nat (unit (union i j db)) * (c_db + potential B db))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Rebuilding spends potential on pending union work. *)
+  Lemma T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
+    (T_rebuild db + N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
+      N.of_nat (unit (rebuild db)) *
+        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
+  Proof. Admitted. (* STUB *)
+
+  (** Slot lookup pays for the slot code. *)
+  Lemma T_index_le : forall s new db,
+    (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
+  Proof.
+    intros s new db. pose proof (T_index_bits s new db) as Htime.
+    pose proof (slot_width_log s) as Hwidth. pose proof c_db_trie_budget as Hcoefficient.
+    nia.
+  Qed.
+
+  (** Advancing visits every slot. *)
+  Lemma T_advance_le : forall db, (T_advance db <= c_db * N.of_nat (num_slots db + 1))%N.
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_advance. time_unfold @T_runtime_set_indexes.
+    time_unfold @T_runtime_set_changed. time_unfold @T_database_set_runtime.
+    time_simpl. time_cbn. nia.
+  Qed.
+
+  (** Every recorded index or activity counter is included in the exact watermark maximum. *)
+  Lemma recorded_counters_wmark : forall db p, In p (db_index_counters db) ->
+    (Npos p <= wmark db)%N.
+  Proof.
+    intros db p Hin. unfold wmark. apply fold_max_member.
+    apply in_app_iff. left. now apply in_map.
+  Qed.
+
+  (** Every actual declaration name is watermarked, independently of the database invariant. *)
+  Lemma declared_names_wmark : forall db f, kind (view db) f <> None ->
+    (Npos f <= wmark db)%N.
+  Proof.
+    intros db f Hkind. unfold wmark. apply fold_max_member.
+    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
+    now apply decl_names_spec.
+  Qed.
+
+  (** Every recorded cell has a tagged encoding whose width is covered by the watermark. *)
+  Lemma recorded_cells_wmark : forall db c, In c (db_written_cells db) ->
+    cell_bits V.encode c <= N.size_nat (wmark db).
+  Proof.
+    intros db c Hin.
+    assert (Hbound : (Npos (db_cell_code c) <= wmark db)%N).
+    { unfold wmark. apply fold_max_member.
+      apply in_app_iff. right. apply in_app_iff. right. apply in_map_iff.
+      exists c. split; [destruct c; reflexivity | exact Hin]. }
+    pose proof (N_width_mono _ _ Hbound) as Hwidth.
+    change (Pos.size_nat (db_cell_code c) <= N.size_nat (wmark db)) in Hwidth.
+    now rewrite db_cell_code_bits in Hwidth.
+  Qed.
+
+  (** Genuine construction histories bound public indexes without requiring row consistency. *)
+  Lemma metadata_wmark_index : forall db s new, metadata_ok db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
+  Proof.
+    intros db s new Hmetadata.
+    destruct (metadata_public_index db s new Hmetadata) as [Hcounter Hhistory]. split.
+    - now apply recorded_counters_wmark.
+    - eapply index_history_cell_bits; [exact Hhistory |].
+      intros c Hin. exact (recorded_cells_wmark db c Hin).
+  Qed.
+
+  (** Extending a list and its base cannot decrease their folded maximum. *)
+  Lemma fold_max_incl : forall values values' base base', incl values values' ->
+    (base <= base' -> fold_right N.max base values <= fold_right N.max base' values')%N.
+  Proof.
+    intro values. induction values as [| value rest IH]; intros values' base base' Hincl Hbase;
+      cbn [fold_right].
+    - eapply N.le_trans; [exact Hbase | apply fold_max_base].
+    - apply N.max_lub.
+      + apply fold_max_member. apply Hincl. now left.
+      + apply IH; [| exact Hbase]. intros other Hin. apply Hincl. now right.
+  Qed.
+
+  (** Retained histories and increasing stored bounds never reduce the watermark. *)
+  Lemma wmark_monotone : forall db db', (ids db <= ids db')%N ->
+    (db_nuses db <= db_nuses db')%N -> decl_names db' = decl_names db ->
+    incl (db_index_counters db) (db_index_counters db') ->
+    incl (db_written_cells db) (db_written_cells db') -> (wmark db <= wmark db')%N.
+  Proof.
+    intros db db' Hids Huses Hnames Hcounters Hwritten. unfold wmark. apply fold_max_incl.
+    - intros value Hin. apply in_app_iff in Hin as [Hin | Hin].
+      + apply in_app_iff. left. apply in_map_iff in Hin as [p [<- Hin]].
+        apply in_map. now apply Hcounters.
+      + apply in_app_iff. right. apply in_app_iff in Hin as [Hin | Hin].
+        * apply in_app_iff. left. now rewrite Hnames.
+        * apply in_app_iff. right. apply in_map_iff in Hin as [c [<- Hin]].
+          apply in_map_iff. exists c. split; [reflexivity | now apply Hwritten].
+    - apply N.max_lub.
+      + eapply N.le_trans; [exact Huses | apply N.le_max_l].
+      + eapply N.le_trans; [exact Hids | apply N.le_max_r].
+  Qed.
+
+  (** Increasing allocation and watermark bounds increases the database spending unit. *)
+  Lemma unit_monotone : forall db db', (ids db <= ids db')%N ->
+    (wmark db <= wmark db')%N -> unit db <= unit db'.
+  Proof.
+    intros db db' Hids Hmark. pose proof (N.log2_le_mono _ _ Hids) as Hlog.
+    pose proof (N_width_mono _ _ Hmark) as Hwidth. unfold unit. nia.
+  Qed.
+
+  (** Cache maintenance leaves the stored use-entry count unchanged. *)
+  Lemma slots_update_decl_names : forall b f u db,
+    decl_names (slots_update b f u db) = decl_names db.
+  Proof.
+    intros b f u db. unfold decl_names.
+    rewrite (slots_update_preserves _ (fun state => runtime_kinds state)
+      (fun all new counts state => eq_refl) b f u db). reflexivity.
+  Qed.
+
+  (** Every cache call retains all previously recorded counters. *)
+  (** Cache updates retain all watermark inputs and record additional activity. *)
+  Lemma wmark_slots_update : forall b f u db,
+    (wmark db <= wmark (slots_update b f u db))%N.
+  Proof.
+    intros b f u db. apply wmark_monotone.
+    - rewrite slots_update_ids. reflexivity.
+    - rewrite slots_update_nuses. reflexivity.
+    - apply slots_update_decl_names.
+    - apply slots_update_counters_incl.
+    - intros c Hin. rewrite slots_update_written_cells. apply in_or_app. now right.
+  Qed.
+
+  (** Cache updates never reduce the spending unit, including during a partial row replacement. *)
+  Lemma unit_mono_slots_update : forall b f u db, unit db <= unit (slots_update b f u db).
+  Proof.
+    intros b f u db. apply unit_monotone.
+    - rewrite slots_update_ids. reflexivity.
+    - apply wmark_slots_update.
+  Qed.
+
+  (** Writing only the row table retains the complete watermark observation. *)
+  Lemma wmark_row_write : forall f k o db, wmark (row_write f k o db) = wmark db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Raising the base of a maximum fold cannot lower its result. *)
+  Lemma fold_max_base_mono : forall values a b,
+    (a <= b)%N ->
+    (fold_right N.max a values <= fold_right N.max b values)%N.
+  Proof.
+    intros values. induction values as [| value rest IH]; intros a b Hbound.
+    - exact Hbound.
+    - cbn [fold_right]. apply N.max_lub.
+      + apply N.le_max_l.
+      + eapply N.le_trans; [apply IH; exact Hbound | apply N.le_max_r].
+  Qed.
+
+  (** A fresh row identifier is added to the historical counter inventory. *)
+  Lemma wmark_ensure_row_identity : forall f k db,
+    (wmark db <= wmark (ensure_row_identity f k db))%N.
+  Proof.
+    intros f k db. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [entry |]; [reflexivity |].
+    unfold wmark, decl_names, ids.
+    cbn [database_set_index_counters database_set_row_store db_nuses
+      db_index_counters db_written_cells db_runtime runtime_allocated runtime_kinds
+      map fold_right].
+    apply N.le_max_r.
+  Qed.
+
+  (** Registering occurrences raises the count input to the watermark. *)
+  Lemma wmark_register_row_uses : forall f k o db,
+    (wmark db <= wmark (register_row_uses f k o db))%N.
+  Proof.
+    intros f k o db. unfold register_row_uses.
+    eapply N.le_trans; [apply wmark_ensure_row_identity |].
+    set (identified := ensure_row_identity f k db).
+    unfold wmark.
+    cbn [database_set_nuses database_set_row_store db_nuses ids
+      db_index_counters db_written_cells db_runtime].
+    apply fold_max_base_mono.
+    change (N.max (db_nuses identified) (ids identified) <=
+      N.max (db_nuses identified +
+        N.of_nat (length (id_occurrences f k (k ++ option_list o))))
+        (ids identified))%N.
+    apply N.max_lub.
+    -
+      eapply N.le_trans; [| apply N.le_max_l]. lia.
+    - apply N.le_max_r.
+  Qed.
+
+  (** Erasing only the row table likewise retains every watermark input. *)
+  Lemma wmark_row_erase : forall f k db, wmark (row_erase f k db) = wmark db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Replacement composes two monotone history updates before writing its row binding. *)
+  Lemma wmark_row_replace : forall f k previous o db,
+    (wmark db <= wmark (row_replace f k previous o db))%N.
+  Proof.
+    intros f k [before |] o db; unfold row_replace.
+    - eapply N.le_trans; [| apply wmark_register_row_uses].
+      rewrite wmark_row_write. eapply N.le_trans.
+      + exact (wmark_slots_update false f (k ++ option_list before) db).
+      + apply wmark_slots_update.
+    - eapply N.le_trans; [| apply wmark_register_row_uses].
+      rewrite wmark_row_write. apply wmark_slots_update.
+  Qed.
+
+  (** Deletion records its removed contribution and never discards prior watermark inputs. *)
+  Lemma wmark_row_delete : forall f k db, (wmark db <= wmark (row_delete f k db))%N.
+  Proof.
+    intros f k db. unfold row_delete. destruct (row_get f k db) as [before |].
+    - rewrite wmark_row_erase. apply wmark_slots_update.
+    - reflexivity.
+  Qed.
+
+  (** Row replacement cannot reduce the spending unit, without a row-consistency premise. *)
+  Lemma unit_row_replace_monotone : forall f k previous o db,
+    unit db <= unit (row_replace f k previous o db).
+  Proof.
+    intros f k previous o db. apply unit_monotone.
+    - rewrite row_replace_ids. reflexivity.
+    - apply wmark_row_replace.
+  Qed.
+
+  (** Row deletion cannot reduce the spending unit during an active repair. *)
+  Lemma unit_row_delete_monotone : forall f k db, unit db <= unit (row_delete f k db).
+  Proof.
+    intros f k db. apply unit_monotone.
+    - rewrite row_delete_ids. reflexivity.
+    - apply wmark_row_delete.
+  Qed.
+
+  (** Increasing the allocation bound retains all histories and increases the watermark. *)
+  Lemma wmark_allocate_id : forall i db, (ids db <= Npos i)%N ->
+    (wmark db <= wmark (allocate_id i db))%N.
+  Proof.
+    intros i db Hids. apply wmark_monotone.
+    - rewrite allocate_id_ids. exact Hids.
+    - reflexivity.
+    - reflexivity.
+    - intros p Hin. exact Hin.
+    - intros c Hin. exact Hin.
+  Qed.
+
+  (** Increasing allocation increases the spending unit without requiring forest consistency. *)
+  Lemma unit_allocate_id_monotone : forall i db, (ids db <= Npos i)%N ->
+    unit db <= unit (allocate_id i db).
+  Proof.
+    intros i db Hids. apply unit_monotone.
+    - rewrite allocate_id_ids. exact Hids.
+    - now apply wmark_allocate_id.
+  Qed.
+
+  (** Every raw put branch either retains the watermark or extends recorded histories. *)
+  Lemma wmark_put : forall f k o db, (wmark db <= wmark (put f k o db))%N.
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : wmark next = wmark db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db)) as [roots forest].
+      destruct roots as [[winner loser] |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + rewrite Hnext. reflexivity.
+      + rewrite <- Hnext. apply wmark_row_replace.
+    - rewrite <- Hnext. apply wmark_row_replace.
+  Qed.
+
+  (** Put is monotone in the spending unit even between invariant-restoring repair stages. *)
+  Lemma unit_put_monotone : forall f k o db, unit db <= unit (put f k o db).
+  Proof.
+    intros f k o db. apply unit_monotone.
+    - destruct (put_layout_raw db f k o) as [_ [_ Hids]]. rewrite Hids. reflexivity.
+    - apply wmark_put.
+  Qed.
+
+  Lemma register_row_uses_counters_incl : forall f k o db,
+    incl (db_index_counters db) (db_index_counters (register_row_uses f k o db)).
+  Proof.
+    intros f k o db p Hin. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_index_counters]; [exact Hin | now right].
+  Qed.
+
+  Lemma row_replace_counters_incl : forall f k previous o db,
+    incl (db_index_counters db) (db_index_counters (row_replace f k previous o db)).
+  Proof.
+    intros f k [before |] o db; unfold row_replace.
+    - eapply incl_tran with (m := db_index_counters
+        (slots_update false f (k ++ option_list before) db)).
+      + apply slots_update_counters_incl.
+      +
+      eapply incl_tran with (m := db_index_counters
+        (row_write f k o (slots_update true f (k ++ option_list o)
+          (slots_update false f (k ++ option_list before) db)))).
+        * change (incl (db_index_counters (slots_update false f
+          (k ++ option_list before) db))
+          (db_index_counters (slots_update true f (k ++ option_list o)
+            (slots_update false f (k ++ option_list before) db)))).
+          apply slots_update_counters_incl.
+        * apply register_row_uses_counters_incl.
+    - eapply incl_tran with (m := db_index_counters
+        (row_write f k o (slots_update true f (k ++ option_list o) db))).
+      + change (incl (db_index_counters db)
+          (db_index_counters (slots_update true f (k ++ option_list o) db))).
+        apply slots_update_counters_incl.
+      + apply register_row_uses_counters_incl.
+  Qed.
+
+  Lemma row_delete_counters_incl : forall f k db,
+    incl (db_index_counters db) (db_index_counters (row_delete f k db)).
+  Proof.
+    intros f k db. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| apply incl_refl].
+    change (incl (db_index_counters db)
+      (db_index_counters (slots_update false f (k ++ option_list before) db))).
+    apply slots_update_counters_incl.
+  Qed.
+
+  Lemma put_counters_incl : forall f k o db,
+    incl (db_index_counters db) (db_index_counters (put f k o db)).
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : db_index_counters next = db_index_counters db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[pair |] forest]; [destruct pair |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + now rewrite Hnext.
+      + rewrite <- Hnext. apply row_replace_counters_incl.
+    - rewrite <- Hnext. apply row_replace_counters_incl.
+  Qed.
+
+  Lemma row_replace_written_incl : forall f k previous o db,
+    incl (db_written_cells db) (db_written_cells (row_replace f k previous o db)).
+  Proof.
+    intros f k [before |] o db c Hin; rewrite row_replace_written;
+      apply in_or_app; right; [apply in_or_app; now right | exact Hin].
+  Qed.
+
+  Lemma put_written_incl : forall f k o db,
+    incl (db_written_cells db) (db_written_cells (put f k o db)).
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : db_written_cells next = db_written_cells db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[pair |] forest]; [destruct pair |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + now rewrite Hnext.
+      + rewrite <- Hnext. apply row_replace_written_incl.
+    - rewrite <- Hnext. apply row_replace_written_incl.
+  Qed.
+
+  Lemma row_replace_decl_names : forall f k previous o db,
+    decl_names (row_replace f k previous o db) = decl_names db.
+  Proof.
+    intros f k previous o db. unfold decl_names.
+    apply (row_replace_preserves (list positive)
+      (fun state => map fst (PTrieCode.elements (runtime_kinds state)))); reflexivity.
+  Qed.
+
+  Lemma row_delete_decl_names : forall f k db,
+    decl_names (row_delete f k db) = decl_names db.
+  Proof.
+    intros f k db. unfold decl_names.
+    apply (row_delete_preserves (list positive)
+      (fun state => map fst (PTrieCode.elements (runtime_kinds state)))); reflexivity.
+  Qed.
+
+  Lemma put_decl_names : forall f k o db, decl_names (put f k o db) = decl_names db.
+  Proof.
+    intros f k o db. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : decl_names next = decl_names db).
+    { unfold next, decl_names. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[pair |] forest]; [destruct pair |]; reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated).
+      + exact Hnext.
+      + rewrite row_replace_decl_names. exact Hnext.
+    - rewrite row_replace_decl_names. exact Hnext.
+  Qed.
+
+  Lemma row_delete_nuses : forall f k db, db_nuses (row_delete f k db) = db_nuses db.
+  Proof.
+    intros f k db. unfold row_delete.
+    destruct (row_get f k db) as [before |]; [| reflexivity].
+    change (db_nuses (slots_update false f (k ++ option_list before) db) = db_nuses db).
+    apply slots_update_nuses.
+  Qed.
+
+  Lemma database_history_alignment_row_delete : forall db f k,
+    database_history_alignment db ->
+    database_history_alignment (row_delete f k db).
+  Proof.
+    intros db f k Halign.
+    eapply (database_history_alignment_transport db (row_delete f k db)).
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - apply row_delete_ids.
+    - apply row_delete_forest.
+    - exact Halign.
+  Qed.
+
+  Lemma database_active_history_coherent_row_delete : forall db f k,
+    database_active_history_coherent db ->
+    database_active_history_coherent (row_delete f k db).
+  Proof.
+    intros db f k Hcoherent g args o key r Hrow Hentry.
+    change (row (view (row_delete f k db)) g args o) in Hrow.
+    apply row_delete_binding in Hrow as [Hrow _].
+    rewrite row_delete_row_store in Hentry.
+    rewrite (db_locate_same_store_ids db (row_delete f k db) g args)
+      by (try apply row_delete_row_store; apply row_delete_ids).
+    exact (Hcoherent g args o key r Hrow Hentry).
+  Qed.
+
+  Lemma database_row_store_ok_row_delete : forall db f k,
+    database_row_store_ok db -> database_row_store_ok (row_delete f k db).
+  Proof.
+    intros db f k Hstore.
+    eapply (database_row_store_ok_transport db (row_delete f k db)).
+    - now rewrite row_delete_row_store.
+    - apply row_delete_nuses.
+    - apply row_delete_ids.
+    - apply row_delete_counters_incl.
+    - apply row_delete_written.
+    - exact Hstore.
+  Qed.
+
+  (** Every fresh constructor branch combines increasing allocation with optional row recording. *)
+  Lemma unit_make_fresh_monotone : forall f k previous db,
+    let i := N.succ_pos (ids db) in
+    let fresh := allocate_id i db in
+    unit db <= unit (match kind_get f db with
+      | Some OId => row_replace f k previous (Some (Id i)) fresh | _ => fresh end).
+  Proof.
+    intros f k previous db. cbn zeta.
+    assert (Hallocate : unit db <= unit (allocate_id (N.succ_pos (ids db)) db)).
+    { apply unit_allocate_id_monotone. rewrite N.succ_pos_spec. lia. }
+    destruct (kind_get f db) as [[| |m] |]; try exact Hallocate.
+    eapply Nat.le_trans; [exact Hallocate | apply unit_row_replace_monotone].
+  Qed.
+
+  (** Reuse retains the unit, while every other make branch allocates monotonically. *)
+  Lemma unit_make_monotone : forall f k db, unit db <= unit (snd (make f k db)).
+  Proof.
+    intros f k db. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[i | v] |] |]; cbn [snd];
+      [reflexivity | apply unit_make_fresh_monotone | apply unit_make_fresh_monotone |
+       apply unit_make_fresh_monotone].
+  Qed.
+
+  (** The high-water mark covers every stored cell encoding. *)
+  Lemma wmark_cells : forall db f k o c, wf db -> row (view db) f k o ->
+    In c (k ++ option_list o) -> cell_bits V.encode c <= N.size_nat (wmark db).
+  Proof.
+    intros db f k o c Hwf Hrow Hin. apply recorded_cells_wmark.
+    exact (wf_recorded_rows db Hwf f k o c Hrow Hin).
+  Qed.
+
+  (** The high-water mark covers every declared function name. *)
+  Lemma wmark_names : forall db f, wf db -> kind (view db) f <> None ->
+    Pos.size_nat f <= N.size_nat (wmark db).
+  Proof.
+    intros db f _ Hkind. change (N.size_nat (Npos f) <= N.size_nat (wmark db)).
+    apply N_width_mono. unfold wmark. apply fold_max_member.
+    apply in_app_iff. right. apply in_app_iff. left. apply in_map.
+    now apply decl_names_spec.
+  Qed.
+
+  (** One database unit covers the watermark width and a constant step. *)
+  Lemma unit_width_budget : forall db, N.size_nat (wmark db) + 1 <= unit db.
+  Proof.
+    intro db. unfold unit. nia.
+  Qed.
+
+  (** The allocation guard fits the same unit because identifiers are watermarked. *)
+  Lemma unit_ids_width : forall db, N.size_nat (ids db) + 1 <= unit db.
+  Proof.
+    intro db. pose proof (N_width_mono (ids db) (wmark db) (wmark_ids db)).
+    pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** Every database unit is positive, including the empty database. *)
+  Lemma unit_positive : forall db, (1 <= N.of_nat (unit db))%N.
+  Proof.
+    intro db. pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** The size operation returns the number of bits as a binary natural. *)
+  Lemma N_size_value : forall n, N.to_nat (N.size n) = N.size_nat n.
+  Proof.
+    intros [| p]; cbn [N.size N.to_nat N.size_nat]; [reflexivity | apply positive_size_nat].
+  Qed.
+
+  (** Incrementing a counter adds at most one bit. *)
+  Lemma N_successor_width : forall n, N.size_nat (n + 1) <= N.size_nat n + 1.
+  Proof.
+    intro n. replace (n + 1)%N with (N.succ n) by lia.
+    pose proof (slot_code_bits n) as Hbits. destruct n; exact Hbits.
+  Qed.
+
+  (** Product encodings have at most the sum of their operand widths. *)
+  Lemma N_product_width : forall n m,
+    N.size_nat (n * m) <= N.size_nat n + N.size_nat m.
+  Proof.
+    intros [| p] [| q]; cbn [N.mul N.size_nat]; try lia. apply Pos.size_nat_mul.
+  Qed.
+
+  (** A sum has a coarse linear width bound, including both zero operands. *)
+  Lemma N_sum_width : forall n m,
+    N.size_nat (n + m) <= N.size_nat n + N.size_nat m + 2.
+  Proof.
+    intros n m.
+    assert (Hnumber : (n + m <= (n + 1) * (m + 1))%N) by nia.
+    pose proof (N_width_mono _ _ Hnumber) as Hwidth.
+    pose proof (N_product_width (n + 1) (m + 1)).
+    pose proof (N_successor_width n). pose proof (N_successor_width m). lia.
+  Qed.
+
+  (** The pinned watermark covers the stored occurrence count directly. *)
+  Lemma wmark_nuses : forall db, (db_nuses db <= wmark db)%N.
+  Proof.
+    intro db. unfold wmark. eapply N.le_trans; [apply N.le_max_l | apply fold_max_base].
+  Qed.
+
+  (** Fuel arithmetic factors through the logarithmic allocation and watermark widths. *)
+  Lemma rebuild_fuel_scalar_budget : forall a w l : N,
+    (a <= l)%N -> (a <= w)%N -> (1 <= l)%N ->
+    ((a + 2) * (a + 2 * w + 6) + 7 * a + 5 * w + 32 <=
+      128 * l * (w + 1))%N.
+  Proof.
+    intros a w l Hal Haw Hl.
+    assert (Hleft : (a + 2 <= 3 * l)%N) by lia.
+    assert (Hright : (a + 2 * w + 6 <= 6 * (w + 1))%N) by lia.
+    pose proof (N.mul_le_mono _ _ _ _ Hleft Hright) as Hproduct.
+    assert (Hla : (a <= l * (w + 1))%N) by nia.
+    assert (Hlw : (w <= l * (w + 1))%N) by nia.
+    assert (Hlone : (1 <= l * (w + 1))%N) by nia.
+    nia.
+  Qed.
+
+  (** Constructing the exact binary fuel uses one database unit of operand widths. *)
+  Lemma T_db_rebuild_fuel_unit : forall db,
+    (db_npending db <= wmark db)%N ->
+    (T_db_rebuild_fuel db <= 128 * N.of_nat (unit db))%N.
+  Proof.
+    intros db Hpending.
+    pose proof (N_width_mono _ _ (wmark_ids db)) as Hids.
+    pose proof (N_width_mono _ _ (wmark_nuses db)) as Huses.
+    pose proof (N_width_mono _ _ Hpending) as Hpending_width.
+    pose proof (slot_width_log (ids db)) as Hlog.
+    pose proof (database_counter_bits_value (N.size (ids db))) as Hsize.
+    rewrite N_size_value in Hsize.
+    assert (Ha : N.size_nat (N.size (ids db) + 2) <= N.size_nat (ids db) + 2).
+    { pose proof (database_counter_bits_value (N.size (ids db) + 2)) as Hwidth.
+      rewrite N2Nat.inj_add, N_size_value in Hwidth. cbn in Hwidth. lia. }
+    assert (Hb : N.size_nat (db_nuses db + 1) <= N.size_nat (wmark db) + 1).
+    { pose proof (N_successor_width (db_nuses db)). lia. }
+    assert (Hab : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1)) <=
+      N.size_nat (ids db) + N.size_nat (wmark db) + 3).
+    { pose proof (N_product_width (N.size (ids db) + 2) (db_nuses db + 1)). lia. }
+    assert (Habp : N.size_nat ((N.size (ids db) + 2) * (db_nuses db + 1) +
+      db_npending db) <= N.size_nat (ids db) + 2 * N.size_nat (wmark db) + 5).
+    { pose proof (N_sum_width ((N.size (ids db) + 2) * (db_nuses db + 1))
+        (db_npending db)). lia. }
+    pose proof (database_N_size_time (ids db)) as Htime_size.
+    assert (Htime_a : (N.T_add (N.size (ids db)) 2 <=
+      N.of_nat (N.size_nat (ids db)) + 3)%N).
+    { pose proof (N.T_add_le (N.size (ids db)) 2) as Htime.
+      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    assert (Htime_b : (N.T_add (db_nuses db) 1 <=
+      N.of_nat (N.size_nat (wmark db)) + 2)%N).
+    { pose proof (N.T_add_le (db_nuses db) 1) as Htime.
+      cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    assert (Htime_product : (N.T_mul (N.size (ids db) + 2) (db_nuses db + 1) <=
+      (N.of_nat (N.size_nat (ids db)) + 2) *
+        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) + 1)%N).
+    { pose proof (database_N_mul_time (N.size (ids db) + 2) (db_nuses db + 1)) as Htime.
+      clear - Htime Ha Hb. nia. }
+    assert (Htime_pending : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1))
+      (db_npending db) <= N.of_nat (N.size_nat (ids db)) +
+        2 * N.of_nat (N.size_nat (wmark db)) + 4)%N).
+    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1))
+        (db_npending db)) as Htime. lia. }
+    assert (Htime_last : (N.T_add ((N.size (ids db) + 2) * (db_nuses db + 1) +
+      db_npending db) 1 <= N.of_nat (N.size_nat (ids db)) +
+        2 * N.of_nat (N.size_nat (wmark db)) + 7)%N).
+    { pose proof (N.T_add_le ((N.size (ids db) + 2) * (db_nuses db + 1) +
+        db_npending db) 1) as Htime. cbn [N.size_nat Pos.size_nat] in Htime. lia. }
+    eapply N.le_trans with (m :=
+      ((N.of_nat (N.size_nat (ids db)) + 2) *
+        (N.of_nat (N.size_nat (ids db)) + 2 * N.of_nat (N.size_nat (wmark db)) + 6) +
+        7 * N.of_nat (N.size_nat (ids db)) + 5 * N.of_nat (N.size_nat (wmark db)) + 32)%N).
+    - time_unfold T_db_rebuild_fuel. time_unfold @T_db_runtime.
+      time_unfold @T_runtime_allocated. time_unfold @T_db_nuses. time_unfold @T_db_npending.
+      fold (ids db). nia.
+    - pose proof (rebuild_fuel_scalar_budget (N.of_nat (N.size_nat (ids db)))
+        (N.of_nat (N.size_nat (wmark db)))
+        (N.of_nat (N.to_nat (N.log2 (ids db)) + 1))) as Hscalar.
+      specialize (Hscalar ltac:(lia) ltac:(lia) ltac:(lia)).
+      clear - Hscalar. unfold unit. rewrite Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Identifier normalization first pays the stored allocation guard, then an optional find. *)
+  Lemma T_normal_cell_id : forall db i,
+    (T_normal_cell db (Id i) = N.T_compare (ids db) (Npos i) + 3 +
+      match N.compare (ids db) (Npos i) with
+      | Lt => 0
+      | _ => UnionFindT.T_find i (db_forest db) + 2
+      end)%N.
+  Proof.
+    intros db i. time_unfold T_normal_cell. time_unfold @T_db_runtime.
+    time_unfold @T_runtime_allocated. time_unfold @T_db_forest.
+    time_unfold @Datatypes.T_fst. fold (ids db).
+    destruct (N.compare (ids db) (Npos i)); nia.
+  Qed.
+
+  (** The guard keeps normalization bounded even for arbitrarily large unallocated queries. *)
+  Lemma T_normal_cell_bound : forall db c, wf db ->
+    (T_normal_cell db c <=
+      (2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N.
+  Proof.
+    intros db [i | v] Hwf.
+    - pose proof (N.T_compare_le (ids db) (Npos i)) as Hcompare.
+      pose proof (unit_ids_width db) as Hwidth.
+      pose proof (unit_positive db) as Hpositive. rewrite T_normal_cell_id.
+      destruct (N.compare (ids db) (Npos i)) eqn:Hcompare_result.
+      + apply N.compare_eq_iff in Hcompare_result.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+      + set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+      + apply N.compare_gt_iff in Hcompare_result.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+        set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+    - time_unfold T_normal_cell. pose proof (unit_positive db).
+      set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+  Qed.
+
+  (** Key normalization pays one guarded cell normalization per list element. *)
+  Lemma T_normal_key_bound : forall db k, wf db ->
+    (T_normal_key db k <= (2 * UnionFindT.c_uf + 12) *
+      N.of_nat (length k + 1) * N.of_nat (unit db))%N.
+  Proof.
+    intros db k Hwf.
+    pose proof (ListDef.T_map_le (normal_cell db) (fun c => T_normal_cell db c)
+      ((2 * UnionFindT.c_uf + 8) * N.of_nat (unit db))%N k
+      (fun c => T_normal_cell_bound db c Hwf)) as Hmap.
+    pose proof (unit_positive db) as Hpositive. time_unfold T_normal_key.
+    set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost. nia.
+  Qed.
+
+  (** Normalizing an allocated identifier produces a cell whose width fits one unit. *)
+  Lemma normal_cell_allocated_bits : forall db i, wf db -> allocated db i ->
+    cell_bits V.encode (normal_cell db (Id i)) <= unit db.
+  Proof.
+    intros db i Hwf Hi. rewrite (normal_cell_correct db (Id i) Hwf).
+    pose proof (repr_allocated db i Hwf Hi) as Hrepr.
+    assert (Hbound : (Npos (repr db i) <= wmark db)%N).
+    { eapply N.le_trans; [exact Hrepr | apply wmark_ids]. }
+    pose proof (N_width_mono _ _ Hbound) as Hbits.
+    pose proof (unit_width_budget db) as Hunit.
+    cbn [canon cell_bits Pos.size_nat N.size_nat] in *. lia.
+  Qed.
+
+  (** Normalization either preserves a query cell or replaces its identifier within the unit. *)
+  Lemma normal_cell_bits : forall db c, wf db ->
+    cell_bits V.encode (normal_cell db c) <= cell_bits V.encode c + unit db.
+  Proof.
+    intros db [i | v] Hwf.
+    - destruct (N.compare (ids db) (Npos i)) eqn:Hcompare.
+      + apply N.compare_eq_iff in Hcompare.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
+      + unfold normal_cell. fold (ids db). rewrite Hcompare. lia.
+      + apply N.compare_gt_iff in Hcompare.
+        assert (Hi : allocated db i) by (unfold allocated; lia).
+        pose proof (normal_cell_allocated_bits db i Hwf Hi). lia.
+    - cbn [normal_cell]. lia.
+  Qed.
+
+  (** Normalization preserves the number of cells in a query key. *)
+  Lemma normal_key_length : forall db k, length (normal_key db k) = length k.
+  Proof.
+    intros db k. unfold normal_key. apply length_map.
+  Qed.
+
+  Lemma normal_key_shape : forall db k,
+    row_key_shape (normal_key db k) = row_key_shape k.
+  Proof.
+    intros db k. unfold row_key_shape, normal_key.
+    induction k as [| cell rest IH]; [reflexivity |].
+    destruct cell as [i | v]; cbn [map normal_cell];
+      try destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i));
+      cbn; now rewrite IH.
+  Qed.
+
+  (** The normalized key width is covered by its original width and one unit per cell. *)
+  Lemma normal_key_bits_bound : forall db k, wf db ->
+    tuple_cell_bits (normal_key db k) <= tuple_cell_bits k + length k * unit db.
+  Proof.
+    intros db k Hwf. unfold normal_key, tuple_cell_bits.
+    induction k as [| c rest IH]; cbn [map fold_right length] in *; [lia |].
+    pose proof (normal_cell_bits db c Hwf). nia.
+  Qed.
+
+  (** The declaration guard uses the base name or an actual declared, watermarked name. *)
+  Lemma runtime_max_name_bits : forall db, wf db ->
+    Pos.size_nat (runtime_max_name (db_runtime db)) <= unit db.
+  Proof.
+    intros db Hwf. destruct (wf_max_name_attained db Hwf) as [Hbase | Hkind].
+    - rewrite Hbase. cbn [Pos.size_nat]. pose proof (unit_positive db). lia.
+    - pose proof (wmark_names db _ Hwf Hkind).
+      pose proof (unit_width_budget db). lia.
+  Qed.
+
+  (** Any function name admitted by the guard has width bounded by one unit. *)
+  Lemma guarded_name_bits : forall db f, wf db ->
+    (f <= runtime_max_name (db_runtime db))%positive -> Pos.size_nat f <= unit db.
+  Proof.
+    intros db f Hwf Hname.
+    assert (Hnumber : (Npos f <= Npos (runtime_max_name (db_runtime db)))%N)
+      by exact Hname.
+    pose proof (N_width_mono _ _ Hnumber) as Hbits.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    cbn [N.size_nat] in Hbits. lia.
+  Qed.
+
+  (** The database coefficient covers row encoding, guarded finds, and their fixed overhead. *)
+  Lemma c_db_lookup_parts :
+    (32 * (PTrieT.c_trie + 1) * (V.c_key + 1) <= c_db /\
+      64 * (PTrieT.c_trie + 1) * (V.c_key + 1) +
+        2 * UnionFindT.c_uf + 17 <= c_db)%N.
+  Proof.
+    unfold c_db. generalize I.c_ix, PTrieT.c_trie, UnionFindT.c_uf, V.c_key.
+    intros a b c d. split; nia.
+  Qed.
+
+  (** Separate payload and structural budgets absorb the three parts of a guarded lookup. *)
+  Lemma database_lookup_cost_combine :
+    forall coefficient row_cost cell_cost work payload guard normal read : N,
+      (row_cost <= coefficient -> 2 * row_cost + cell_cost + 5 <= coefficient ->
+        guard <= 5 * work -> normal <= cell_cost * work ->
+        read <= row_cost * (payload + 2 * work) ->
+        guard + normal + read <= coefficient * work + coefficient * payload)%N.
+  Proof.
+    intros coefficient row_cost cell_cost work payload guard normal read
+      Hrow_cost Hcombined Hguard Hnormal Hread.
+    assert (Hpayload : (row_cost * payload <= coefficient * payload)%N).
+    { apply N.mul_le_mono_r. exact Hrow_cost. }
+    assert (Hwork : ((2 * row_cost + cell_cost + 5) * work <= coefficient * work)%N).
+    { apply N.mul_le_mono_r. exact Hcombined. }
+    nia.
+  Qed.
+
+  (** A name admitted by the guard pays for normalization and the encoded row query. *)
+  Lemma T_lookup_active_budget : forall f k db, wf db ->
+    (f <= runtime_max_name (db_runtime db))%positive ->
+    (Pos.T_compare (runtime_max_name (db_runtime db)) f + 3 +
+      T_normal_key db k + T_row_get f (normal_key db k) db <=
+      c_db * (N.of_nat (length k + 1) * N.of_nat (unit db)) +
+        c_db * N.of_nat (tuple_cell_bits k))%N.
+  Proof.
+    intros f k db Hwf Hname.
+    pose proof (T_normal_key_bound db k Hwf) as Hnormal.
+    pose proof (T_row_get_bound f (normal_key db k) db) as Hrow.
+    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    pose proof (guarded_name_bits db f Hwf Hname) as Hfunction.
+    pose proof (normal_key_bits_bound db k Hwf) as Hkey.
+    pose proof (unit_positive db) as Hpositive.
+    assert (Hmass : Pos.size_nat f + tuple_cell_bits (normal_key db k) +
+      length (normal_key db k) + 1 <= tuple_cell_bits k + 2 * (length k + 1) * unit db).
+    { rewrite normal_key_length. nia. }
+    eapply database_lookup_cost_combine with
+      (row_cost := (32 * (PTrieT.c_trie + 1) * (V.c_key + 1))%N)
+      (cell_cost := (2 * UnionFindT.c_uf + 12)%N).
+    - exact (proj1 c_db_lookup_parts).
+    - pose proof (proj2 c_db_lookup_parts) as Hcoefficient.
+      set (trie_cost := PTrieT.c_trie) in *.
+      set (forest_cost := UnionFindT.c_uf) in *. clearbody trie_cost forest_cost. nia.
+    - nia.
+    - nia.
+    - eapply N.le_trans; [exact Hrow |]. apply N.mul_le_mono_l. nia.
+  Qed.
+
+  (** The high-water mark covers every slot index. *)
+  Lemma wmark_index : forall db s new, wf db ->
+    (Npos (I.next (index s new db)) <= wmark db)%N /\
+    I.max_cell_bits (index s new db) <= N.size_nat (wmark db).
+  Proof.
+    intros db s new Hwf. apply metadata_wmark_index. exact (wf_metadata db Hwf).
+  Qed.
+
+  (** Insertion never reduces the spending unit. *)
+  Lemma unit_mono_put : forall f k o db, wf db -> unit db <= unit (put f k o db).
+  Proof.
+    intros f k o db _. apply unit_put_monotone.
+  Qed.
+
+  (** Make never reduces the spending unit. *)
+  Lemma unit_mono_make : forall f k db, wf db -> unit db <= unit (snd (make f k db)).
+  Proof.
+    intros f k db _. apply unit_make_monotone.
+  Qed.
+
+  (** Union never reduces the spending unit. *)
+  Lemma wmark_union : forall i j db, wmark (union i j db) = wmark db.
+  Proof.
+    intros i j db. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  (** Removing a scheduling entry leaves every component of the pinned watermark unchanged. *)
+  Lemma wmark_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
+    wmark db' = wmark db.
+  Proof.
+    intros db i db' Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
+    injection Hpop as Hname Hdb. subst i db'. reflexivity.
+  Qed.
+
+  (** Queue scheduling keeps the spending unit exactly, including in active repair states. *)
+  Lemma unit_pop_loser : forall db i db', db_pop_loser db = Some (i, db') ->
+    unit db' = unit db.
+  Proof.
+    intros db i db' Hpop. unfold unit.
+    rewrite (wmark_pop_loser db i db' Hpop),
+      (proj1 (proj2 (db_pop_loser_layout db i db' Hpop))). reflexivity.
+  Qed.
+
+  Lemma unit_mono_union : forall i j db, wf db -> unit db <= unit (union i j db).
+  Proof.
+    intros i j db _. unfold unit. rewrite union_ids, wmark_union. reflexivity.
+  Qed.
+
+  (** Repair retains its input unit even while the current queue has been popped. *)
+  Lemma repair_current_unit_monotone : forall db f k,
+    unit db <= unit (repair_current f k db).
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [o |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k) (option_map (normal_cell db) o) deleted).
+    set (store := db_row_store updated).
+    set (restored := database_set_nuses (db_nuses db)
+      (database_set_row_store
+        {| row_history := row_history store; row_links := row_links store;
+           row_weights := row_weights store; row_keys := row_keys store;
+           row_fresh := row_fresh store; row_uses := row_uses (db_row_store db) |}
+        updated)).
+    change (unit db <= unit restored).
+    eapply Nat.le_trans with (m := unit deleted).
+    - unfold deleted. apply unit_row_delete_monotone.
+    - apply unit_monotone.
+      + change (ids deleted <= ids updated)%N.
+        destruct (put_layout_raw deleted f (normal_key db k)
+          (option_map (normal_cell db) o)) as [_ [_ Hids]].
+        unfold updated. rewrite Hids. reflexivity.
+      + apply wmark_monotone.
+        * change (ids deleted <= ids updated)%N.
+          destruct (put_layout_raw deleted f (normal_key db k)
+            (option_map (normal_cell db) o)) as [_ [_ Hids]].
+          unfold updated. rewrite Hids. reflexivity.
+        * change (db_nuses deleted <= db_nuses db)%N.
+          unfold deleted. rewrite row_delete_nuses. reflexivity.
+        * change (decl_names restored = decl_names deleted).
+          change (decl_names updated = decl_names deleted).
+          apply put_decl_names.
+        * change (incl (db_index_counters deleted) (db_index_counters updated)).
+          apply put_counters_incl.
+        * change (incl (db_written_cells deleted) (db_written_cells updated)).
+          apply put_written_incl.
+  Qed.
+
+  Lemma move_row_identity_unit : forall f old current db,
+    unit (move_row_identity f old current db) = unit db.
+  Proof.
+    intros f old current db. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |]; [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+      as [[current_key current_id] |]; [| reflexivity].
+    reflexivity.
+  Qed.
+
+  Lemma db_repair_entry_unit_monotone : forall db f k,
+    unit db <= unit (db_repair_entry f k db).
+  Proof.
+    intros db f k. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| reflexivity].
+    destruct (row_get f current db) as [o |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o)); [reflexivity |].
+    rewrite move_row_identity_unit. apply repair_current_unit_monotone.
+  Qed.
+
+  (** Both actual loop branches preserve the original spending-unit lower bound. *)
+  Lemma unit_rebuild_monotone : forall db, unit db <= unit (rebuild db).
+  Proof.
+    intro db. apply (rebuild_preserves (fun current => unit db <= unit current)).
+    - intros current f k Hcurrent. eapply Nat.le_trans;
+        [exact Hcurrent | apply db_repair_entry_unit_monotone].
+    - intros current i next Hcurrent Hpop.
+      rewrite (unit_pop_loser current i next Hpop). exact Hcurrent.
+    - reflexivity.
+  Qed.
+
+  (** Rebuilding never reduces the spending unit. *)
+  Lemma unit_mono_rebuild : forall db, wf db -> unit db <= unit (rebuild db).
+  Proof.
+    intros db _. apply unit_rebuild_monotone.
+  Qed.
+  (** Advancing keeps the watermark and the amortized credit. *)
+  Lemma advance_credit : forall B db, wf db ->
+    wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
+  Proof.
+    intros B db _. split; reflexivity.
+  Qed.
+
+  (** Each initialization scan fits the same total amount of charged input. *)
+  Lemma database_init_sum_budget : forall cost decls slots layout declaration_bits slot_bits,
+    (1 <= cost ->
+      1 + 25 * (layout + slots + 1) + (slots + 1) + (3 * slots + 2) +
+      16 * (decls + declaration_bits + 1) + (slots + 1) + (declaration_bits + 4) +
+      (slots + 1) + 8 * cost * (decls + declaration_bits + 1) +
+      8 * cost * (slots + slot_bits + 1) +
+      48 * cost * (decls + slots + declaration_bits + slot_bits + 1) <=
+      256 * cost * (decls + slots + layout + declaration_bits + slot_bits + 1))%N.
+  Proof.
+    intros cost decls slots layout declaration_bits slot_bits Hcost.
+    set (total := (decls + slots + layout + declaration_bits + slot_bits + 1)%N).
+    set (budget := (cost * total)%N).
+    assert (Htotal : (total <= budget)%N).
+    { unfold budget. replace total with (1 * total)%N at 1 by ring.
+      apply N.mul_le_mono_r. exact Hcost. }
+    assert (Hkinds : (8 * cost * (decls + declaration_bits + 1) <= 8 * budget)%N).
+    { unfold budget. replace (8 * cost * (decls + declaration_bits + 1))%N with
+        (8 * (cost * (decls + declaration_bits + 1)))%N by ring.
+      apply N.mul_le_mono_l.
+      apply N.mul_le_mono_l. unfold total. lia. }
+    assert (Hgroups : (8 * cost * (slots + slot_bits + 1) <= 8 * budget)%N).
+    { unfold budget. replace (8 * cost * (slots + slot_bits + 1))%N with
+        (8 * (cost * (slots + slot_bits + 1)))%N by ring.
+      apply N.mul_le_mono_l.
+      apply N.mul_le_mono_l. unfold total. lia. }
+    replace (256 * cost * total)%N with (256 * budget)%N by (unfold budget; ring).
+    unfold total in Htotal. clearbody total budget. lia.
+  Qed.
+
+  (** Initialization sums preparation, name scans, and amortized dense slot numbering. *)
+  Lemma T_init_budget : forall ds sl,
+    (T_init ds sl <= 256 * (PTrieT.c_trie + 1) *
+      N.of_nat (length ds + length sl + layout_work sl +
+        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1))%N.
+  Proof.
+    intros ds sl.
+    pose proof (T_prepare_slot_layouts_le sl) as Hprepare.
+    pose proof (T_database_kinds_le ds) as Hkinds.
+    pose proof (T_database_max_name_le ds) as Hnames.
+    pose proof (T_database_slot_groups_le (prepare_slot_layouts sl) PTrieCode.empty) as Hgroups.
+    pose proof (T_database_rank_slots_budget ds sl) as Hrank.
+    destruct (database_prepared_sizes sl) as [Hprepared_length Hprepared_bits].
+    rewrite Hprepared_length, Hprepared_bits in Hgroups.
+    pose proof (Datatypes.T_length_le sl) as Hlength.
+    pose proof (T_database_of_nat_le (length sl)) as Hconvert.
+    pose proof (database_counter_bits_value (N.of_nat (length sl))) as Hslot_bits.
+    rewrite Nat2N.id in Hslot_bits.
+    pose proof (N.T_succ_le (N.of_nat (length sl))) as Hsucc.
+    pose proof (N.T_succ_pos_le (N.of_nat (length sl))) as Hsucc_pos.
+    pose proof (T_database_counter_max_le (Npos (database_max_name ds))
+      (N.succ (N.of_nat (length sl)))) as Hmaximum.
+    cbn [N.size_nat] in Hmaximum.
+    pose proof (database_max_name_bits ds) as Hname_bits.
+    assert (Hsucc_small : (N.T_succ (N.of_nat (length sl)) <=
+      N.of_nat (length sl) + 1)%N) by (clear - Hsucc Hslot_bits; lia).
+    assert (Hsucc_pos_small : (N.T_succ_pos (N.of_nat (length sl)) <=
+      N.of_nat (length sl) + 1)%N) by (clear - Hsucc_pos Hslot_bits; lia).
+    assert (Hmaximum_small : (N.T_max (Npos (database_max_name ds))
+      (N.succ (N.of_nat (length sl))) <=
+      N.of_nat (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds) + 4)%N)
+      by (clear - Hmaximum Hname_bits; lia).
+    assert (Hbranch : ((match sl with [] => 0 | _ :: _ =>
+      N.T_succ_pos (N.of_nat (length sl)) end) <= N.of_nat (length sl) + 1)%N).
+    { destruct sl; [cbn; lia | exact Hsucc_pos_small]. }
+    clear Hprepared_length Hprepared_bits Hslot_bits Hname_bits Hsucc Hsucc_pos Hmaximum.
+    time_unfold T_init. cbn beta zeta.
+    rewrite !Nat2N.inj_add in Hprepare, Hkinds, Hnames, Hgroups, Hrank |- *.
+    repeat rewrite Nat2N.inj_add.
+    set (cost := (PTrieT.c_trie + 1)%N) in *.
+    set (decls := N.of_nat (length ds)) in *.
+    set (slots_count := N.of_nat (length sl)) in *.
+    set (layout := N.of_nat (layout_work sl)) in *.
+    set (declaration_bits := N.of_nat
+      (fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds)) in *.
+    set (slot_bits := N.of_nat
+      (fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl)) in *.
+    assert (Hcost : (1 <= cost)%N) by (unfold cost; lia).
+    assert (Hrank_arg : (N.of_nat (length ds + length sl +
+      fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds) +
+      slot_bits + 1 =
+      decls + slots_count + declaration_bits + slot_bits + 1)%N).
+    { unfold decls, slots_count, declaration_bits.
+      repeat rewrite Nat2N.inj_add. lia. }
+    change (N.of_nat 1) with 1%N in Hrank.
+    rewrite Hrank_arg in Hrank.
+    pose proof (database_init_sum_budget cost decls slots_count layout declaration_bits slot_bits Hcost)
+      as Hbudget.
+    clearbody cost decls slots_count layout declaration_bits slot_bits. lia.
+  Qed.
+
+  (** Initialization pays for declarations and slot permutations. *)
+  Lemma T_init_le : forall ds sl,
+    (T_init ds sl <= c_db * N.of_nat (length ds + length sl + layout_work sl + 1) *
+      N.of_nat ((fold_right (fun s n => length (snd s) + n) 0 sl + 1)%nat) +
+      c_db * N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat))%N.
+  Proof.
+    intros ds sl. eapply N.le_trans; [apply T_init_budget |].
+    eapply N.le_trans.
+    - apply N.mul_le_mono_r. exact c_db_trie_budget.
+    - set (amount := N.of_nat (length ds + length sl + layout_work sl + 1)).
+      set (names := N.of_nat ((fold_right (fun d n => Pos.size_nat (name d) + n) 0 ds +
+        fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl)%nat)).
+      assert (Hsum : N.of_nat (length ds + length sl + layout_work sl +
+        fold_right (fun d n => (Pos.size_nat (name d) + n)%nat) 0%nat ds +
+        fold_right (fun s n => (Pos.size_nat (fst s) + n)%nat) 0%nat sl + 1) =
+        (amount + names)%N) by (unfold amount, names; lia).
+      rewrite Hsum, N.mul_add_distr_l. apply N.add_le_mono_r.
+      replace (c_db * amount)%N with ((c_db * amount) * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** Find traverses allocated identifiers at the database unit. *)
+  Lemma T_find_le : forall i db, wf db -> allocated db i ->
+    (T_find i db <= c_db * N.of_nat (unit db))%N.
+  Proof.
+    intros i db Hwf Hi. rewrite T_find_overhead.
+    pose proof (T_find_unit_budget i db Hwf Hi) as Hfind.
+    pose proof c_db_forest_budget as Hcoefficient.
+    assert (Hunit : (1 <= N.of_nat (unit db))%N).
+    { unfold unit. rewrite Nat2N.inj_mul. nia. }
+    nia.
+  Qed.
+
+  (** Lookup charges the stored unit and query cell encodings. *)
+  Lemma T_lookup_le : forall f k db, wf db ->
+    (T_lookup f k db <= c_db * N.of_nat (length k + 1) * N.of_nat (unit db) +
+      c_db * N.of_nat ((fold_right (fun c n => cell_bits V.encode c + n) 0 k)%nat))%N.
+  Proof.
+    intros f k db Hwf.
+    pose proof (Pos.T_compare_le (runtime_max_name (db_runtime db)) f) as Hcompare.
+    pose proof (runtime_max_name_bits db Hwf) as Hmaximum.
+    pose proof (unit_positive db) as Hpositive.
+    pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_lookup. time_unfold @T_db_runtime. time_unfold @T_runtime_max_name.
+    destruct (Pos.compare (runtime_max_name (db_runtime db)) f) eqn:Hbranch.
+    - apply Pos.compare_eq_iff in Hbranch.
+      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
+      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
+      unfold tuple_cell_bits in Hactive. nia.
+    - nia.
+    - apply Pos.compare_gt_iff in Hbranch.
+      assert (Hname : (f <= runtime_max_name (db_runtime db))%positive) by lia.
+      pose proof (T_lookup_active_budget f k db Hwf Hname) as Hactive.
+      unfold tuple_cell_bits in Hactive. nia.
+  Qed.
+
+  (** The change flag is stored. *)
+  Lemma T_changed_le : forall db, (T_changed db <= c_db)%N.
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_changed. time_unfold @T_db_runtime. time_unfold @T_runtime_changed. nia.
+  Qed.
+
+  (** The allocation counter is stored. *)
+  Lemma T_ids_le : forall db, (T_ids db <= c_db)%N.
+  Proof.
+    intro db. pose proof c_db_constant_budget as Hcoefficient.
+    time_unfold T_ids. time_unfold @T_db_runtime. time_unfold @T_runtime_allocated. nia.
   Qed.
 
   Lemma public_union_queue_distinct : forall db i j, database_public_ok db ->
