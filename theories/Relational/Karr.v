@@ -13125,6 +13125,19 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       time_unfold List.T_flat_map. cbn [length]. time_simpl. nia.
   Qed.
 
+  (** Keeping present outputs pays one bounded visit per option. *)
+  Lemma T_karr_present_bounded : forall A (xs : list (option A)),
+    (T_present xs <= 8 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intros A xs.
+    pose proof (karr_T_flat_map_singleton (option A) A
+      (fun o => match o with Some x => [x] | None => [] end)
+      (fun _ => 1%N) 1 xs
+      ltac:(intros [x|] Hin; cbn [length]; lia)
+      ltac:(intros [x|] Hin; cbn beta; lia)) as Hflat.
+    unfold T_present. rewrite Nat2N.inj_add. cbn [N.of_nat]. lia.
+  Qed.
+
   (** Singleton-or-empty flattening never exceeds its source length. *)
   Lemma karr_flat_map_singleton_length : forall (A B : Type) (f : A -> list B) xs,
     (forall x, In x xs -> length (f x) <= 1) -> length (flat_map f xs) <= length xs.
