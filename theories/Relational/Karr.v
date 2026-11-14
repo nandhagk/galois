@@ -16383,6 +16383,32 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       now apply karr_vars_of_contains with (r := source).
   Qed.
 
+  (** Prepared rows use only variables from the two raw sources. *)
+  Lemma karr_hull_prepared_vars_public : forall a b,
+    length (vars_of (map normalize_row a ++ map normalize_row b)) <=
+      length (vars_of a) + length (vars_of b).
+  Proof.
+    intros a b. rewrite <- length_app.
+    apply NoDup_incl_length; [apply karr_vars_of_nodup|].
+    intros x Hx.
+    destruct (karr_vars_of_support
+      (map normalize_row a ++ map normalize_row b) x Hx)
+      as [row [Hrow Hterm]].
+    apply in_app_or in Hrow as [Hleft|Hright].
+    - apply in_map_iff in Hleft as [source [Heq Hsource]]. subst row.
+      apply in_map_iff in Hterm as [[key z] [Heq Hcoeff]].
+      cbn [fst] in Heq. subst key.
+      apply karr_normal_coef_keys in Hcoeff.
+      apply in_or_app. left.
+      now apply karr_vars_of_contains with (r := source).
+    - apply in_map_iff in Hright as [source [Heq Hsource]]. subst row.
+      apply in_map_iff in Hterm as [[key z] [Heq Hcoeff]].
+      cbn [fst] in Heq. subst key.
+      apply karr_normal_coef_keys in Hcoeff.
+      apply in_or_app. right.
+      now apply karr_vars_of_contains with (r := source).
+  Qed.
+
   (** The lifted minor width fits a fixed public Hadamard allowance. *)
   Lemma karr_hull_width_public : forall a b,
     normal a -> normal b ->
@@ -17754,6 +17780,81 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply N.add_le_mono; [exact HcheckerN|].
       now apply N.mul_le_mono_l.
     - now apply N.mul_le_mono_l.
+  Qed.
+
+  (** Normal input occurrence counts add only logarithmic raw width. *)
+  Lemma karr_hull_raw_width_public : forall a b,
+    normal a -> normal b ->
+    let d := n (Reached a) + n (Reached b) + 1 in
+    nell (Reached a) + nell (Reached b) <=
+      ell (Reached a) + ell (Reached b) + 4 * Nat.log2 d + 10.
+  Proof.
+    intros a b Ha Hb d.
+    pose proof (karr_normal_terms_log a Ha) as Hloga.
+    pose proof (karr_normal_terms_log b Hb) as Hlogb.
+    assert (Hlogda : Nat.log2 (n (Reached a) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hlogdb : Nat.log2 (n (Reached b) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    unfold nell. lia.
+  Qed.
+
+  (** A larger raw bit and dimension allowance fits public hull work. *)
+  Lemma karr_hull_raw_work_lift : forall a b,
+    normal a -> normal b ->
+    let d := n (Reached a) + n (Reached b) + 1 in
+    let raw := nell (Reached a) + nell (Reached b) in
+    (d + 1)^3 * (ellB (d + 1) (2 * raw) + 1)^2 <=
+      (8 * 4096) * elimination_work (Reached a) (Reached b).
+  Proof.
+    intros a b Ha Hb d raw.
+    set (w := ell (Reached a) + ell (Reached b)).
+    set (v := ellB d w + 1).
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hraw : raw <= w + 4 * Nat.log2 d + 10).
+    { pose proof (karr_hull_raw_width_public a b Ha Hb) as H.
+      cbv zeta in H. unfold raw, w, d in *. exact H. }
+    assert (Hlog : Nat.log2 (d + 1) <= Nat.log2 d + 1).
+    { replace (d + 1) with (S d) by lia.
+      replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+      apply Nat.log2_succ_le. }
+    assert (Hwidth : ellB (d + 1) (2 * raw) + 1 <= 64 * v).
+    { assert (Hbits : 2 * raw + Nat.log2 (d + 1) + 1 <=
+        32 * (w + Nat.log2 d + 1)) by lia.
+      assert (Hdim : d + 1 <= 2 * d) by lia.
+      unfold v, ellB.
+      eapply Nat.le_trans with (m :=
+        (2 * d) * (32 * (w + Nat.log2 d + 1)) + 1).
+      - apply Nat.add_le_mono_r. apply Nat.mul_le_mono; assumption.
+      - replace ((2 * d) * (32 * (w + Nat.log2 d + 1)) + 1) with
+          (64 * (d * (w + Nat.log2 d + 1)) + 1) by ring.
+        lia. }
+    assert (Hcube : (d + 1)^3 <= 8 * d^3).
+    { replace (8 * d^3) with ((2 * d)^3)
+        by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. lia. }
+    assert (Hsquare : (ellB (d + 1) (2 * raw) + 1)^2 <=
+      4096 * v^2).
+    { assert (Hsqr : forall x : nat, (64 * x)^2 = 4096 * x^2).
+      { intro x. cbn [Nat.pow]. change 4096 with (64 * 64). ring. }
+      rewrite <- Hsqr.
+      now apply Nat.pow_le_mono_l. }
+    eapply Nat.le_trans with (m := (8 * d^3) * (4096 * v^2)).
+    - apply Nat.mul_le_mono; assumption.
+    - unfold elimination_work. fold d w v.
+      assert (Hshuffle : forall k x y : nat,
+        (8 * x) * (k * y) = (8 * k) * (x * y)).
+      { intros k x y. ring. }
+      rewrite Hshuffle.
+      apply Nat.le_refl.
   Qed.
 
   Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
