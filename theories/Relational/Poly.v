@@ -14987,6 +14987,14 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
+  (** An unreachable assignment performs only the outer reachability test. *)
+  Lemma T_poly_assign_unreached : forall x e,
+    (T_assign x e Unreached <=
+      c_num * N.of_nat (assign_work x e Unreached + 1))%N.
+  Proof.
+    intros x e. time_unfold T_assign. time_simpl.
+    unfold c_num, assign_work. cbn [prows terms nell n]. nia.
+  Qed.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
