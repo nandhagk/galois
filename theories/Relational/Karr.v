@@ -14793,6 +14793,60 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       exact (proj1 (Forall_forall _ _) Henv row Hin).
   Qed.
 
+  (** Lifted seeding creates at most one row per source row. *)
+  Lemma karr_hull_left_length : forall xs total index P,
+    length (hull_left xs total index P) <= length P.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intro index; [cbn; lia|].
+    cbn [hull_left]. destruct (lrel r); cbn [length];
+      pose proof (IH (S index)); lia.
+  Qed.
+
+  Lemma karr_hull_right_length : forall xs total index P,
+    length (hull_right xs total index P) <= length P.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intro index; [cbn; lia|].
+    cbn [hull_right]. destruct (lrel r); cbn [length];
+      pose proof (IH (S index)); lia.
+  Qed.
+
+  (** The lifted Bareiss clock follows the actual augmented seed minors. *)
+  Lemma T_karr_hull_bareiss_seed_bounded : forall a b xs,
+    let total := length a + length b in
+    let width := 2 * length xs + total + 4 in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    (T_karr_bareiss (2 * length xs + 2) 1 rows <=
+      N.of_nat (2 * length xs + 2) *
+        karr_bareiss_stage_budget width
+          (ellB width (nell (Reached a) + nell (Reached b))) + 4)%N.
+  Proof.
+    intros a b xs total width rows.
+    eapply T_karr_bareiss_run_bounded with
+      (width := width) (original := map karr_row_entries rows)
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 width)
+      (labels := map karr_row_entries rows).
+    - subst rows width total. apply karr_hull_run_state_initial.
+    - rewrite length_map. subst rows total width. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright. lia.
+    - rewrite length_seq. lia.
+    - intros z Hz. eapply karr_signed_minors_bits;
+        [lia| |apply karr_hull_seed_entries_bits|exact Hz].
+      rewrite length_map. subst rows total width. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright. lia.
+  Qed.
+
   (** A generic initialized basis clock follows from the all-order minor law. *)
   Lemma T_karr_bareiss_seed_bounded : forall xs P,
     (T_karr_bareiss (length xs) 1
