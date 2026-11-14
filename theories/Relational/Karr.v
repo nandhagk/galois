@@ -10671,6 +10671,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite karr_nat_square. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.
 
+  (** Signed division is quadratic in a common dividend and divisor bit bound. *)
+  Lemma T_karr_division_bounded : forall z d bits,
+    Z.size_nat z <= bits -> Z.size_nat d <= bits ->
+    (Z.T_div z d <= 64 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros z d bits Hz Hd.
+    pose proof (Z.T_div_le z d) as Hdiv.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
+  Qed.
+
   (** Exactness testing pays the actual remainder clock and a constant zero test. *)
   Lemma T_karr_divisible_one_bounded : forall z bits, Z.size_nat z <= bits ->
     (T_karr_divisible 1 z <= 64 * N.of_nat ((bits + 1)^2))%N.
@@ -10680,6 +10691,19 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (T_karr_zero_test (z mod 1)) as Hzero.
     time_unfold T_karr_divisible. time_simpl.
     rewrite karr_nat_square. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Exactness testing is quadratic in the common signed operand width. *)
+  Lemma T_karr_divisible_bounded : forall d z bits,
+    Z.size_nat d <= bits -> Z.size_nat z <= bits ->
+    (T_karr_divisible d z <= 64 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros d z bits Hd Hz.
+    pose proof (Z.T_modulo_le z d) as Hmod.
+    pose proof (T_karr_zero_test (z mod d)) as Hzero.
+    time_unfold T_karr_divisible. time_simpl.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
   Qed.
 
   (** Universal Boolean traversal needs callback bounds only for present entries. *)
