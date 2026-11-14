@@ -14711,6 +14711,39 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         cbn [Z.size_nat]. lia.
   Qed.
 
+  (** Lifted right rows retain the prepared source arithmetic envelope. *)
+  Lemma karr_hull_right_envelopes : forall xs total index P bits,
+    1 <= bits ->
+    Forall (fun r => NoDup (map fst (lhs r)) /\ C.row_bits r <= bits) P ->
+    Forall (karr_row_envelope (2 * length xs + 2) total bits)
+      (hull_right xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intros index bits Hpositive Hrows;
+      [constructor|].
+    inversion Hrows as [|r' P' [Hnormal Hbits] Htail]; subst r' P'.
+    cbn [hull_right]. destruct (lrel r); [constructor|];
+      try (now apply IH).
+    - unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+      split; [rewrite length_app; cbn [length]; rewrite length_app;
+        unfold dense; rewrite !length_map; cbn [length]; lia|].
+      split.
+      + apply Forall_app. split.
+        * apply Forall_map. eapply Forall_impl with
+            (P := fun z => Z.size_nat z <= bits).
+          -- intros z Hz. now rewrite karr_size_opp.
+          -- now apply karr_dense_bits.
+        * constructor; [pose proof (karr_row_rhs_bits r); lia|].
+          apply Forall_app. split; [now apply karr_dense_bits|].
+          constructor; [pose proof (karr_row_rhs_bits r); lia|constructor].
+      + split; [cbn [Z.size_nat]; lia|].
+        split; [rewrite karr_unit_length; lia|].
+        split; [eapply Forall_impl with
+          (P := fun z => Z.size_nat z <= 1); [|apply karr_unit_bits];
+          intros z Hz; lia|].
+        cbn [Z.size_nat]. lia.
+  Qed.
+
   (** A generic initialized basis clock follows from the all-order minor law. *)
   Lemma T_karr_bareiss_seed_bounded : forall xs P,
     (T_karr_bareiss (length xs) 1
