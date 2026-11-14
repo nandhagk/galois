@@ -2485,6 +2485,57 @@ Proof.
   rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
 Qed.
 
+(** The same all-order law selects exact division at a later pivot coordinate. *)
+Lemma karr_minor_law_reduce_exact_at : forall previous pivot_rows pivot_columns
+    columns pairs pivot_origin target_origin p r index,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  index < length (kcoeff p) ->
+  length (karr_row_entries p) = length columns ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  karr_exact previous (KRow
+    (karr_cross (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r))
+      (kcoeff r) (kcoeff p))
+    (karr_nth index (kcoeff p) * kright r -
+      karr_nth index (kcoeff r) * kright p)%Z
+    (karr_cross (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r))
+      (kweight r) (kweight p))
+    (karr_nth index (kcoeff p) * kscale r -
+      karr_nth index (kcoeff r) * kscale p)%Z) = true.
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin
+    target_origin p r index Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hindex Hp_width Hr_width.
+  apply karr_exact_from_entries; [exact Hprevious|].
+  intros z Hin.
+  rewrite karr_row_entries_cross in Hin by (symmetry; assumption).
+  rewrite <- (karr_nth_row_entries_coeff index p Hindex) in Hin.
+  assert (Hr_index : index < length (kcoeff r)) by lia.
+  rewrite <- (karr_nth_row_entries_coeff index r Hr_index) in Hin.
+  apply In_nth_error in Hin as [j Hget].
+  assert (Hj : j < length columns).
+  { assert (Hcross_index : j < length (karr_cross
+        (karr_nth index (karr_row_entries p))
+        (karr_nth index (karr_row_entries r))
+        (karr_row_entries r) (karr_row_entries p))).
+    { apply nth_error_Some. rewrite Hget. discriminate. }
+    rewrite karr_cross_length in Hcross_index by exact Hr_width.
+    lia. }
+  assert (Hindex_columns : index < length columns).
+  { unfold karr_row_entries in Hp_width.
+    rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+    rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+  pose proof (karr_minor_law_cross_divisible_at previous pivot_rows
+    pivot_columns columns pairs pivot_origin (karr_row_entries p)
+    target_origin (karr_row_entries r) index j Hlaw Hprevious Hpivot Htarget
+    Hp_width ltac:(lia) Hindex_columns Hj) as Hmod.
+  rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
+Qed.
+
 (** Exact pivot reduction realizes the row quotient required by the minor law. *)
 Lemma karr_minor_law_reduce_multiple : forall previous pivot_rows pivot_columns
     head columns pairs pivot_origin target_origin p r,
