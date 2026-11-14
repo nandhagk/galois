@@ -10546,6 +10546,31 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     time_simpl; time_cbn; lia.
   Qed.
 
+  Lemma record_row_key_bits : forall p st r, S.wf p -> In r (S.rows p) ->
+    finite_sum (fun x => S.key_bits x + 1) (S.deps p r) +
+      finite_sum (fun x => S.key_bits x + 1) (row_writes p r) <=
+      length (row_keys p r) * (width p st + 1).
+  Proof.
+    intros p st r Hwf Hr.
+    pose proof (discovery_row_bits_le p st r Hwf Hr) as Hbits.
+    unfold row_keys in *.
+    rewrite finite_sum_app in Hbits; lia.
+  Qed.
+
+  Lemma record_row_clock_arithmetic : forall q target code writes snapshot deps
+      influence cowrites,
+    (1 <= q)%N ->
+    (target <= q)%N -> (code <= q)%N -> (writes <= 4 * q)%N ->
+    (snapshot <= 32 * q)%N -> (deps <= q)%N ->
+    (influence + cowrites <= 16 * q + 2)%N ->
+    (16 + target + code + writes + snapshot + deps + influence + cowrites <=
+      128 * q)%N.
+  Proof.
+    intros q target code writes snapshot deps influence cowrites Hq Htarget
+      Hcode Hwrites Hsnapshot Hdeps Hfolds.
+    lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
