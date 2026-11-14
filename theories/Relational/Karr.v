@@ -382,6 +382,30 @@ Fixpoint karr_determinant (order : nat) (rows : list (list Z)) : Z :=
 
 TimeFun karr_determinant.
 
+(** A dense cross product has the expected value at every coordinate. *)
+Lemma karr_nth_cross : forall index a b xs ys,
+  length xs = length ys ->
+  karr_nth index (karr_cross a b xs ys) =
+    (a * karr_nth index xs - b * karr_nth index ys)%Z.
+Proof.
+  induction index as [|index IH]; intros a b [|x xs] [|y ys] Hlength;
+    cbn [length karr_nth karr_cross] in *; try discriminate; try ring.
+  apply IH. now injection Hlength.
+Qed.
+
+(** A determinant is linear in a crossed first row. *)
+Lemma karr_determinant_cross : forall order a b xs ys rows,
+  length xs = length ys ->
+  karr_determinant (S order) (karr_cross a b xs ys :: rows) =
+    (a * karr_determinant (S order) (xs :: rows) -
+      b * karr_determinant (S order) (ys :: rows))%Z.
+Proof.
+  intros order a b xs ys rows Hlength. cbn [karr_determinant].
+  generalize (seq 0 (S order)) as indices. intro indices.
+  induction indices as [|index indices IH]; cbn [map fold_right]; [ring|].
+  rewrite karr_nth_cross by exact Hlength. rewrite IH. ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
