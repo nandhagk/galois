@@ -15043,6 +15043,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply poly_assign_tail_envelopes.
   Qed.
 
+  (** Source-only elimination keeps the quarter-square output allowance. *)
+  Lemma poly_assign_tail_output_quarter : forall x P,
+    4 * length (poly_assign_tail_step x P) <= (length P + 2)^2.
+  Proof.
+    intros x P. unfold poly_assign_tail_step.
+    pose proof (poly_step_rows (option X.t) tmp_encode tmp_eqb None
+      (poly_assign_tail x P)) as Hrows.
+    rewrite poly_assign_tail_length in Hrows.
+    pose proof (Nat.div_mod ((length P)^2) 4 ltac:(lia)) as Hdivision.
+    cbn [Nat.pow] in *. nia.
+  Qed.
+
   (** Initial unit vectors give the sharper one-step multiplier bound without form growth. *)
   Lemma poly_assign_tail_step_multiplier_bits : forall x P,
     Forall (fun r => length (poly_multipliers r) = length P + 1 /\
@@ -15240,6 +15252,68 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply Nat.add_le_mono_r. exact Hdim. }
     eapply N.le_trans; [exact Hframe|].
     fold budget. clear -Huntag_total. lia.
+  Qed.
+
+  (** The source-only branch scans each output with its form-independent checker width. *)
+  Lemma T_poly_assign_tail_scan : forall x P f,
+    NoDup (map fst (coef f)) ->
+    C.row_key_bits (LCons X.t (coef f) REq (cst f)) <= F.form_bits f ->
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let rawkeys := poly_raw_keys P in
+    let rawbits := poly_raw_bits P in
+    let width := nell (Reached P) + 1 in
+    let budget := (2 * N.of_nat (dim + 1) +
+      AssignCore.poly_assign_zero_subst_factor *
+        N.of_nat (dim + length (coef f) + 1) *
+          N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) +
+      16 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+        N.of_nat (width + 1)^2 + 16)%N in
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N)
+      (poly_assign_tail_step x P) <=
+      (budget + 4) * N.of_nat (length (poly_assign_tail_step x P)) + 1)%N.
+  Proof.
+    intros x P f Hform Hformkeys dim rawkeys rawbits width budget.
+    apply (poly_T_optional_flat_map _ _
+      (assigned_candidate P x f) (T_assigned_candidate P x f)).
+    intros r Hr. unfold budget.
+    exact (T_poly_assign_tail_candidate_bounded x P f r Hr Hform Hformkeys).
+  Qed.
+
+  (** A zero prepared coefficient adds one head callback to the source-only scan. *)
+  Lemma T_poly_assign_zero_head_scan : forall x f P,
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) = 0%Z ->
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x f, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      T_assigned_candidate P x f (poly_assign_head x f P) +
+      List.T_flat_map
+        (fun r => match assigned_candidate P x f r with
+          | Some c => c :: nil | None => nil end)
+        (fun r => (1 + T_assigned_candidate P x f r)%N)
+        (poly_assign_tail_step x P) + 8)%N.
+  Proof.
+    intros x f P Hzero. rewrite (poly_assign_zero_head_step x f P Hzero).
+    set (tailclock := List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N)
+      (poly_assign_tail_step x P)).
+    time_unfold List.T_flat_map.
+    destruct (assigned_candidate P x f (poly_assign_head x f P));
+      time_simpl; fold tailclock;
+      lazymatch goal with
+      | |- context [Datatypes.T_app ?xs ?ys] =>
+        pose proof (Datatypes.T_app_le xs ys) as Happ
+      end;
+      cbn [length] in *; lia.
   Qed.
 
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
