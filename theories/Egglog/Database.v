@@ -22600,6 +22600,47 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     right. exists current. now split.
   Qed.
 
+  Lemma db_repair_entry_lookup_inverse : forall db f k g args result,
+    database_row_store_ok db -> UnionFind.wf (db_forest db) ->
+    db_locate g args (db_repair_entry f k db) = Some result ->
+    db_locate g args db = Some result \/
+    exists current, db_locate f k db = Some current /\
+      ((g, args) = (f, normal_key db current) \/
+       result = normal_key db current).
+  Proof.
+    intros db f k g args result Hstore Hforest Hlookup.
+    unfold db_repair_entry in Hlookup.
+    destruct (db_locate f k db) as [current |] eqn:Hlocated;
+      [| now left].
+    destruct (row_get f current db) as [output |] eqn:Hrow; [| now left].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output)) eqn:Hfixed;
+      [now left |].
+    assert (Hrepair_store : database_row_store_ok (repair_current f current db)).
+    { apply database_row_store_ok_repair_current. exact Hstore. }
+    assert (Hfull : db_locate g args (db_repair_entry f k db) = Some result).
+    { unfold db_repair_entry. rewrite Hlocated.
+      rewrite Hrow, Hfixed. exact Hlookup. }
+    unfold db_locate in Hfull.
+    destruct (PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (db_repair_entry f k db))))
+      as [[key r] |] eqn:Hentry; [| discriminate Hfull].
+    destruct (db_repair_entry_history_inverse db f k g args key r
+      Hforest Hentry) as [Hold | Hnew].
+    - destruct (move_row_identity_lookup_inverse
+        (repair_current f current db) f current (normal_key db current)
+        g args result Hrepair_store ltac:(symmetry; apply normal_key_length)
+        Hlookup) as [Hrepair | Hck].
+      + left. rewrite (repair_current_old_locate db f current g args key r
+          Hstore Hold) in Hrepair. exact Hrepair.
+      + right. exists current. split; [reflexivity | now right].
+    - destruct Hnew as [current' [Hlocated' Htarget]].
+      right. exists current'. split.
+      + now rewrite Hlocated in Hlocated'.
+      + now left.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
