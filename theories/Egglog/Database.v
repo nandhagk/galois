@@ -11832,6 +11832,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (proj1 (proj2 (Hlinks r parent Hlink))).
   Qed.
 
+  Lemma database_history_entry_recorded : forall (db : t) code label r,
+    PTrieCode.get code (row_history (db_row_store db)) = Some (label, r) ->
+    In r (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history (db_row_store db)))).
+  Proof.
+    intros db code label r Hentry.
+    apply in_map_iff. exists (code, (label, r)).
+    split; [reflexivity |]. apply PTrie.elements_spec. exact Hentry.
+  Qed.
+
   Lemma row_parent_iter_below_fresh : forall db d r,
     database_row_store_ok db ->
     (r < row_fresh (db_row_store db))%positive ->
