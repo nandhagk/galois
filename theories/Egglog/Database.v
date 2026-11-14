@@ -15841,12 +15841,67 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct u. reflexivity.
   Qed.
 
+  Lemma union_add_member_raw : forall u x,
+    UnionFind.mem u x -> UnionFindCode.add x u = u.
+  Proof.
+    intros u x Hmember. unfold UnionFind.mem in Hmember.
+    unfold UnionFindCode.add.
+    destruct (PTrieCode.get x (parents u)); [reflexivity |].
+    exfalso. apply Hmember. reflexivity.
+  Qed.
+
   Lemma F_union_roots : forall i j db, inv db -> allocated db i -> allocated db j ->
     let '(ri, u1) := UnionFind.find i (uf_state db) in
     let '(rj, u2) := UnionFind.find j u1 in
     uf_state (union i j db) =
       if Pos.eqb ri rj then u2 else snd (UnionFind.union ri rj u2).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i j db Hinv Hi Hj.
+    assert (Hcore : core_bridge db).
+    { unfold inv, inv_on, forest_ok in Hinv. tauto. }
+    assert (Hforest : UnionFind.wf (db_forest db)).
+    { apply inv_on_forest_wf with (work := []). exact Hinv. }
+    assert (Hmem_i : UnionFind.mem (db_forest db) i).
+    { exact (proj2 (proj1 Hcore i) Hi). }
+    assert (Hmem_j : UnionFind.mem (db_forest db) j).
+    { exact (proj2 (proj1 Hcore j) Hj). }
+    unfold uf_state.
+    rewrite union_forest.
+    unfold UnionFindCode.union at 1.
+    rewrite (union_add_member_raw (db_forest db) i Hmem_i).
+    rewrite (union_add_member_raw (db_forest db) j Hmem_j).
+    destruct (UnionFindCode.find i (db_forest db)) as [ri u1] eqn:Hfind_i.
+    destruct (UnionFindCode.find j u1) as [rj u2] eqn:Hfind_j.
+    cbn [fst snd].
+    pose proof (UnionFind.find_correct i (db_forest db) Hforest)
+      as [Hri [Hwf1 [Hmem1 [_ [_ Hroots1]]]]].
+    rewrite Hfind_i in Hri, Hwf1, Hmem1, Hroots1.
+    pose proof (UnionFind.find_correct j u1 Hwf1)
+      as [Hrj [Hwf2 [Hmem2 [_ [_ Hroots2]]]]].
+    rewrite Hfind_j in Hrj, Hwf2, Hmem2, Hroots2.
+    cbn [fst snd] in *.
+    assert (Hroot_ri : UnionFind.is_root u2 ri).
+    { apply (proj2 (Hroots2 ri)), (proj2 (Hroots1 ri)).
+      rewrite Hri. apply UnionFind.repr_root. exact Hforest. }
+    assert (Hroot_rj : UnionFind.is_root u2 rj).
+    { apply (proj2 (Hroots2 rj)). rewrite Hrj.
+      apply UnionFind.repr_root. exact Hwf1. }
+    assert (Hmem_ri : UnionFind.mem u2 ri).
+    { apply (proj2 (Hmem2 ri)), (proj2 (Hmem1 ri)).
+      rewrite Hri. apply UnionFind.repr_mem; assumption. }
+    assert (Hmem_rj : UnionFind.mem u2 rj).
+    { apply (proj2 (Hmem2 rj)). rewrite Hrj.
+      apply UnionFind.repr_mem; [exact Hwf1 |].
+      apply (proj2 (Hmem1 j)). exact Hmem_j. }
+    unfold UnionFind.union, UnionFindCode.union.
+    rewrite (union_add_member_raw u2 ri Hmem_ri).
+    rewrite (union_add_member_raw u2 rj Hmem_rj).
+    rewrite (union_find_root_raw u2 ri Hroot_ri).
+    cbn [fst snd].
+    rewrite (union_find_root_raw u2 rj Hroot_rj).
+    rewrite Hfind_j. cbn [fst snd].
+    destruct (Pos.eqb ri rj); reflexivity.
+  Qed.
   (** Membership and key width stay within allocation. *)
   Lemma F_uf_card : forall db work, inv_on db work ->
     UnionFind.card (uf_state db) <= 3 * N.to_nat (ids db) /\
