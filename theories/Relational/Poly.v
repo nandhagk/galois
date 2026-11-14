@@ -13915,6 +13915,23 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
+  (** The fixed quadratic work absorbs source support and logarithmic preparation width. *)
+  Lemma poly_assign_source_pivot_mass : forall x e P,
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    (length P + 2) *
+      (length (RangeCore.vars_of (poly_assign_sources x P)) +
+        terms (Reached P) + length P + 3) *
+      (bits + Nat.log2 (terms (Reached P) + tsize e + 1) + 1)^2 <=
+    128 * (length P + 3)^2 *
+      (terms (Reached P) + tsize e + length P + 3) * bits^2.
+  Proof.
+    intros x e P bits.
+    assert (Hterms : terms (Reached P) <= 2^bits).
+    { apply poly_signed_log_capacity. unfold bits, nell. cbn [prows]. lia. }
+    pose proof (poly_assign_source_dimension x P) as Hdimension.
+    apply poly_signed_assignment_pivot_mass; lia.
+  Qed.
+
   Lemma poly_assign_sources_row_bits : forall x P,
     fold_right Nat.max 0 (map RangeCert.row_bits (poly_assign_sources x P)) =
       fold_right Nat.max 0 (map C.row_bits P).
