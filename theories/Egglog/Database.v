@@ -9623,6 +9623,245 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       exists args', None. split; [exact Htarget |]. split; [exact Hkeys | exact I].
   Qed.
 
+  Definition use_entry := (positive * list (cell V.t))%type.
+  Definition stored_row := (use_entry * option (cell V.t))%type.
+  Definition repair_state := (t * list use_entry)%type.
+
+  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
+     index_counters written_cells *)
+  Definition rows (db : t) : list stored_row :=
+    map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
+  Definition uses_entries (db : t) : list (positive * use_entry) :=
+    flat_map (fun binding => map (pair (fst binding)) (snd binding))
+      (map (fun binding => (fst binding, snd (snd binding)))
+        (PTrieCode.elements (row_uses (db_row_store db)))).
+  Lemma uses_entries_facts : forall db,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    uses_entries db = DatabaseUsesFacts.entries (row_uses (db_row_store db)).
+  Proof.
+    intros db Hwf. unfold uses_entries, DatabaseUsesFacts.entries.
+    rewrite DatabaseUseMap.elements_trie.
+    f_equal. apply map_ext_in.
+    intros [code [label entries]] Hin. cbn [fst snd].
+    apply PTrie.elements_spec in Hin. unfold DatabaseUseMap.wf in Hwf.
+    specialize (Hwf code label entries Hin). unfold PosKeyT.encode in Hwf.
+    subst code. reflexivity.
+  Qed.
+  Lemma register_row_uses_count : forall db f k o,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    N.to_nat (db_nuses db) = length (uses_entries db) ->
+    N.to_nat (db_nuses (register_row_uses f k o db)) =
+      length (uses_entries (register_row_uses f k o db)).
+  Proof.
+    intros db f k o Hmap Hcount.
+    rewrite (uses_entries_facts db Hmap) in Hcount.
+    unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_nuses db_row_store row_uses];
+      rewrite uses_entries_facts by (apply DatabaseUsesFacts.wf_register; exact Hmap);
+      apply DatabaseUsesFacts.register_count_consistent; assumption.
+  Qed.
+  Lemma register_row_uses_map_wf : forall db f k o,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    DatabaseUseMap.wf (row_uses (db_row_store (register_row_uses f k o db))).
+  Proof.
+    intros db f k o Hmap. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_row_store row_uses]; apply DatabaseUsesFacts.wf_register; exact Hmap.
+  Qed.
+  Lemma register_row_uses_entries : forall db f k o x g key,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    (In (x, (g, key)) (uses_entries (register_row_uses f k o db)) <->
+      In (x, (g, key)) (uses_entries db) \/
+      In (x, (g, key)) (id_occurrences f k (k ++ option_list o))).
+  Proof.
+    intros db f k o x g key Hmap.
+    rewrite (uses_entries_facts db Hmap).
+    rewrite uses_entries_facts by (apply register_row_uses_map_wf; exact Hmap).
+    unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_row_store row_uses];
+      apply DatabaseUsesFacts.entries_register; exact Hmap.
+  Qed.
+  Lemma register_row_uses_history_coverage : forall db f k o,
+    database_row_store_ok db ->
+    forall x g args,
+      In (g, args) (DatabaseUses.bucket x
+        (row_uses (db_row_store (register_row_uses f k o db)))) ->
+      exists r, PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (register_row_uses f k o db))) =
+        Some ((g, args), r).
+  Proof.
+    intros db f k o Hstore x g args Hbucket.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold database_row_store_ok in Hstore. tauto. }
+    pose proof (register_row_uses_map_wf db f k o Hmap) as Hmap'.
+    apply (proj2 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap')) in Hbucket.
+    rewrite <- uses_entries_facts in Hbucket by exact Hmap'.
+    apply (proj1 (register_row_uses_entries db f k o x g args Hmap)) in Hbucket.
+    destruct Hbucket as [Hold | Hnew].
+    - rewrite (uses_entries_facts db Hmap) in Hold.
+      apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
+      destruct (database_row_store_uses_history db Hstore x g args Hold) as [r Hr].
+      exists r. now apply register_row_uses_history_old.
+    - apply id_occurrences_member in Hnew as [-> [-> _]].
+      now apply register_row_uses_history_new.
+  Qed.
+  Lemma register_row_uses_written_coverage : forall db f k o,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    (forall x g args c,
+      In (g, args) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
+      In c args -> In c (db_written_cells db)) ->
+    (forall c, In c k -> In c (db_written_cells db)) ->
+    forall x g args c,
+      In (g, args) (DatabaseUses.bucket x
+        (row_uses (db_row_store (register_row_uses f k o db)))) ->
+      In c args -> In c (db_written_cells (register_row_uses f k o db)).
+  Proof.
+    intros db f k o Hmap Hbefore Hkey x g args c Hbucket Hcell.
+    rewrite register_row_uses_written_cells.
+    pose proof (register_row_uses_map_wf db f k o Hmap) as Hmap'.
+    apply (proj2 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap')) in Hbucket.
+    rewrite <- uses_entries_facts in Hbucket by exact Hmap'.
+    apply (proj1 (register_row_uses_entries db f k o x g args Hmap)) in Hbucket.
+    destruct Hbucket as [Hold | Hnew].
+    - rewrite (uses_entries_facts db Hmap) in Hold.
+      apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
+      exact (Hbefore x g args c Hold Hcell).
+    - apply id_occurrences_member in Hnew as [_ [-> _]].
+      exact (Hkey c Hcell).
+  Qed.
+  Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
+  Definition next_id (db : t) : positive := N.succ_pos (ids db).
+  Definition uf_state (db : t) : UnionFind.t := db_forest db.
+  Definition class_size (db : t) (x : positive) : N :=
+    N.of_nat (UnionFind.size_of (uf_state db) x).
+  (** A historical row key resolves to its current stored key. *)
+  Definition located (db : t) (f : positive) (k : list (cell V.t))
+      : option (list (cell V.t)) := locate f k db.
+  (** Parent links and use entries refer to the historical row inventory. *)
+  Definition row_store_ok (db : t) : Prop := database_row_store_ok db.
+  (** Initialization has no historical keys, links or registered occurrences. *)
+  Lemma row_store_ok_init : forall ds sl, row_store_ok (init ds sl).
+  Proof. apply database_row_store_ok_init. Qed.
+  (** Static core facts survive while a popped batch still has active entries. *)
+  Definition core_bridge (db : t) : Prop :=
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) /\
+    count (db_forest db) = ids db /\
+    Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db)) /\
+    RowMap.wf (runtime_rows (db_runtime db)) /\
+    (forall f output, kind (view db) f = Some output ->
+      (f <= runtime_max_name (db_runtime db))%positive) /\
+    (runtime_max_name (db_runtime db) = 1%positive \/
+      kind (view db) (runtime_max_name (db_runtime db)) <> None).
+  Lemma database_wf_core_bridge : forall db, database_wf db -> core_bridge db.
+  Proof.
+    intros db Hwf. unfold core_bridge.
+    split; [exact (wf_forest_members db Hwf) |].
+    split; [exact (wf_forest_count db Hwf) |].
+    split; [exact (wf_log_allocated db Hwf) |].
+    split; [exact (wf_row_map db Hwf) |].
+    split; [exact (wf_kind_bound db Hwf) |].
+    exact (wf_max_name_attained db Hwf).
+  Qed.
+  (** Stored slot positions retain the rank computed from the current slot layout. *)
+  Definition slot_rank_ok (db : t) : Prop :=
+    slot_positions _ (db_slot_store db) =
+      database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
+        PTrieCode.empty (slots db).
+  Lemma database_public_rank : forall db,
+    database_public_ok db -> slot_rank_ok db.
+  Proof.
+    intros db Hpublic. unfold database_public_ok, slot_rank_ok in *. tauto.
+  Qed.
+  Lemma slot_rank_ok_frame : forall db db',
+    slot_positions _ (db_slot_store db') = slot_positions _ (db_slot_store db) ->
+    runtime_kinds (db_runtime db') = runtime_kinds (db_runtime db) ->
+    slots db' = slots db -> slot_rank_ok db -> slot_rank_ok db'.
+  Proof.
+    intros db db' Hpositions Hkinds Hslots Hrank.
+    unfold slot_rank_ok in *. now rewrite Hpositions, Hkinds, Hslots.
+  Qed.
+  Lemma slot_rank_ok_union : forall db i j,
+    slot_rank_ok db -> slot_rank_ok (union i j db).
+  Proof.
+    intros db i j Hrank. unfold slot_rank_ok, union in *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; exact Hrank.
+  Qed.
+  Lemma slot_rank_ok_allocate_id : forall db i,
+    slot_rank_ok db -> slot_rank_ok (allocate_id i db).
+  Proof.
+    intros db i Hrank. eapply slot_rank_ok_frame;
+      [reflexivity | reflexivity | reflexivity | exact Hrank].
+  Qed.
+  Lemma slot_rank_ok_advance : forall db,
+    slot_rank_ok db -> slot_rank_ok (advance db).
+  Proof.
+    intros db Hrank. eapply slot_rank_ok_frame;
+      [reflexivity | reflexivity | reflexivity | exact Hrank].
+  Qed.
+  Lemma slot_rank_ok_slots_update : forall db b f u,
+    slot_rank_ok db -> slot_rank_ok (slots_update b f u db).
+  Proof.
+    intros db b f u Hrank. eapply slot_rank_ok_frame with (db := db);
+      [reflexivity | | apply slots_update_slots | exact Hrank].
+    apply slots_update_preserves. intros; reflexivity.
+  Qed.
+  Lemma slot_rank_ok_row_write : forall db f k o,
+    slot_rank_ok db -> slot_rank_ok (row_write f k o db).
+  Proof.
+    intros db f k o Hrank. eapply slot_rank_ok_frame with (db := db);
+      [reflexivity | reflexivity | reflexivity | exact Hrank].
+  Qed.
+  Lemma slot_rank_ok_register_row_uses : forall db f k o,
+    slot_rank_ok db -> slot_rank_ok (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hrank. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      eapply slot_rank_ok_frame with (db := db); try reflexivity; exact Hrank.
+  Qed.
+  Lemma slot_rank_ok_row_replace : forall db f k previous o,
+    slot_rank_ok db -> slot_rank_ok (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hrank; unfold row_replace;
+      apply slot_rank_ok_register_row_uses;
+      apply slot_rank_ok_row_write;
+      apply slot_rank_ok_slots_update;
+      [apply slot_rank_ok_slots_update; exact Hrank | exact Hrank].
+  Qed.
+  Lemma slot_rank_ok_put : forall db f k o,
+    slot_rank_ok db -> slot_rank_ok (put f k o db).
+  Proof.
+    intros db f k o Hrank. unfold put.
+    set (previous := row_get f (normal_key db k) db).
+    set (co := option_map (normal_cell db) o).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : slot_rank_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try apply slot_rank_ok_union; exact Hrank. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext | apply slot_rank_ok_row_replace; exact Hnext].
+    - apply slot_rank_ok_row_replace. exact Hnext.
+  Qed.
+  Lemma slot_rank_ok_make : forall db f k,
+    slot_rank_ok db -> slot_rank_ok (snd (make f k db)).
+  Proof.
+    intros db f k Hrank. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hrank;
+      destruct (kind_get f db) as [[| |m] |];
+      try apply slot_rank_ok_row_replace;
+      apply slot_rank_ok_allocate_id; exact Hrank.
+  Qed.
+  (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
@@ -11521,245 +11760,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     time_unfold T_ids. time_unfold @T_db_runtime. time_unfold @T_runtime_allocated. nia.
   Qed.
 
-  Definition use_entry := (positive * list (cell V.t))%type.
-  Definition stored_row := (use_entry * option (cell V.t))%type.
-  Definition repair_state := (t * list use_entry)%type.
-
-  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
-     index_counters written_cells *)
-  Definition rows (db : t) : list stored_row :=
-    map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
-  Definition uses_entries (db : t) : list (positive * use_entry) :=
-    flat_map (fun binding => map (pair (fst binding)) (snd binding))
-      (map (fun binding => (fst binding, snd (snd binding)))
-        (PTrieCode.elements (row_uses (db_row_store db)))).
-  Lemma uses_entries_facts : forall db,
-    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
-    uses_entries db = DatabaseUsesFacts.entries (row_uses (db_row_store db)).
-  Proof.
-    intros db Hwf. unfold uses_entries, DatabaseUsesFacts.entries.
-    rewrite DatabaseUseMap.elements_trie.
-    f_equal. apply map_ext_in.
-    intros [code [label entries]] Hin. cbn [fst snd].
-    apply PTrie.elements_spec in Hin. unfold DatabaseUseMap.wf in Hwf.
-    specialize (Hwf code label entries Hin). unfold PosKeyT.encode in Hwf.
-    subst code. reflexivity.
-  Qed.
-  Lemma register_row_uses_count : forall db f k o,
-    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
-    N.to_nat (db_nuses db) = length (uses_entries db) ->
-    N.to_nat (db_nuses (register_row_uses f k o db)) =
-      length (uses_entries (register_row_uses f k o db)).
-  Proof.
-    intros db f k o Hmap Hcount.
-    rewrite (uses_entries_facts db Hmap) in Hcount.
-    unfold register_row_uses, ensure_row_identity.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
-      cbn [database_set_nuses database_set_row_store database_set_index_counters
-        db_nuses db_row_store row_uses];
-      rewrite uses_entries_facts by (apply DatabaseUsesFacts.wf_register; exact Hmap);
-      apply DatabaseUsesFacts.register_count_consistent; assumption.
-  Qed.
-  Lemma register_row_uses_map_wf : forall db f k o,
-    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
-    DatabaseUseMap.wf (row_uses (db_row_store (register_row_uses f k o db))).
-  Proof.
-    intros db f k o Hmap. unfold register_row_uses, ensure_row_identity.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
-      cbn [database_set_nuses database_set_row_store database_set_index_counters
-        db_row_store row_uses]; apply DatabaseUsesFacts.wf_register; exact Hmap.
-  Qed.
-  Lemma register_row_uses_entries : forall db f k o x g key,
-    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
-    (In (x, (g, key)) (uses_entries (register_row_uses f k o db)) <->
-      In (x, (g, key)) (uses_entries db) \/
-      In (x, (g, key)) (id_occurrences f k (k ++ option_list o))).
-  Proof.
-    intros db f k o x g key Hmap.
-    rewrite (uses_entries_facts db Hmap).
-    rewrite uses_entries_facts by (apply register_row_uses_map_wf; exact Hmap).
-    unfold register_row_uses, ensure_row_identity.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
-      cbn [database_set_nuses database_set_row_store database_set_index_counters
-        db_row_store row_uses];
-      apply DatabaseUsesFacts.entries_register; exact Hmap.
-  Qed.
-  Lemma register_row_uses_history_coverage : forall db f k o,
-    database_row_store_ok db ->
-    forall x g args,
-      In (g, args) (DatabaseUses.bucket x
-        (row_uses (db_row_store (register_row_uses f k o db)))) ->
-      exists r, PTrieCode.get (db_row_code g args)
-        (row_history (db_row_store (register_row_uses f k o db))) =
-        Some ((g, args), r).
-  Proof.
-    intros db f k o Hstore x g args Hbucket.
-    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
-    { unfold database_row_store_ok in Hstore. tauto. }
-    pose proof (register_row_uses_map_wf db f k o Hmap) as Hmap'.
-    apply (proj2 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap')) in Hbucket.
-    rewrite <- uses_entries_facts in Hbucket by exact Hmap'.
-    apply (proj1 (register_row_uses_entries db f k o x g args Hmap)) in Hbucket.
-    destruct Hbucket as [Hold | Hnew].
-    - rewrite (uses_entries_facts db Hmap) in Hold.
-      apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
-      destruct (database_row_store_uses_history db Hstore x g args Hold) as [r Hr].
-      exists r. now apply register_row_uses_history_old.
-    - apply id_occurrences_member in Hnew as [-> [-> _]].
-      now apply register_row_uses_history_new.
-  Qed.
-  Lemma register_row_uses_written_coverage : forall db f k o,
-    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
-    (forall x g args c,
-      In (g, args) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
-      In c args -> In c (db_written_cells db)) ->
-    (forall c, In c k -> In c (db_written_cells db)) ->
-    forall x g args c,
-      In (g, args) (DatabaseUses.bucket x
-        (row_uses (db_row_store (register_row_uses f k o db)))) ->
-      In c args -> In c (db_written_cells (register_row_uses f k o db)).
-  Proof.
-    intros db f k o Hmap Hbefore Hkey x g args c Hbucket Hcell.
-    rewrite register_row_uses_written_cells.
-    pose proof (register_row_uses_map_wf db f k o Hmap) as Hmap'.
-    apply (proj2 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap')) in Hbucket.
-    rewrite <- uses_entries_facts in Hbucket by exact Hmap'.
-    apply (proj1 (register_row_uses_entries db f k o x g args Hmap)) in Hbucket.
-    destruct Hbucket as [Hold | Hnew].
-    - rewrite (uses_entries_facts db Hmap) in Hold.
-      apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
-      exact (Hbefore x g args c Hold Hcell).
-    - apply id_occurrences_member in Hnew as [_ [-> _]].
-      exact (Hkey c Hcell).
-  Qed.
-  Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
-  Definition next_id (db : t) : positive := N.succ_pos (ids db).
-  Definition uf_state (db : t) : UnionFind.t := db_forest db.
-  Definition class_size (db : t) (x : positive) : N :=
-    N.of_nat (UnionFind.size_of (uf_state db) x).
-  (** A historical row key resolves to its current stored key. *)
-  Definition located (db : t) (f : positive) (k : list (cell V.t))
-      : option (list (cell V.t)) := locate f k db.
-  (** Parent links and use entries refer to the historical row inventory. *)
-  Definition row_store_ok (db : t) : Prop := database_row_store_ok db.
-  (** Initialization has no historical keys, links or registered occurrences. *)
-  Lemma row_store_ok_init : forall ds sl, row_store_ok (init ds sl).
-  Proof. apply database_row_store_ok_init. Qed.
-  (** Static core facts survive while a popped batch still has active entries. *)
-  Definition core_bridge (db : t) : Prop :=
-    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) /\
-    count (db_forest db) = ids db /\
-    Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
-      (runtime_equalities (db_runtime db)) /\
-    RowMap.wf (runtime_rows (db_runtime db)) /\
-    (forall f output, kind (view db) f = Some output ->
-      (f <= runtime_max_name (db_runtime db))%positive) /\
-    (runtime_max_name (db_runtime db) = 1%positive \/
-      kind (view db) (runtime_max_name (db_runtime db)) <> None).
-  Lemma database_wf_core_bridge : forall db, database_wf db -> core_bridge db.
-  Proof.
-    intros db Hwf. unfold core_bridge.
-    split; [exact (wf_forest_members db Hwf) |].
-    split; [exact (wf_forest_count db Hwf) |].
-    split; [exact (wf_log_allocated db Hwf) |].
-    split; [exact (wf_row_map db Hwf) |].
-    split; [exact (wf_kind_bound db Hwf) |].
-    exact (wf_max_name_attained db Hwf).
-  Qed.
-  (** Stored slot positions retain the rank computed from the current slot layout. *)
-  Definition slot_rank_ok (db : t) : Prop :=
-    slot_positions _ (db_slot_store db) =
-      database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
-        PTrieCode.empty (slots db).
-  Lemma database_public_rank : forall db,
-    database_public_ok db -> slot_rank_ok db.
-  Proof.
-    intros db Hpublic. unfold database_public_ok, slot_rank_ok in *. tauto.
-  Qed.
-  Lemma slot_rank_ok_frame : forall db db',
-    slot_positions _ (db_slot_store db') = slot_positions _ (db_slot_store db) ->
-    runtime_kinds (db_runtime db') = runtime_kinds (db_runtime db) ->
-    slots db' = slots db -> slot_rank_ok db -> slot_rank_ok db'.
-  Proof.
-    intros db db' Hpositions Hkinds Hslots Hrank.
-    unfold slot_rank_ok in *. now rewrite Hpositions, Hkinds, Hslots.
-  Qed.
-  Lemma slot_rank_ok_union : forall db i j,
-    slot_rank_ok db -> slot_rank_ok (union i j db).
-  Proof.
-    intros db i j Hrank. unfold slot_rank_ok, union in *.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
-    destruct roots as [[winner loser] |]; exact Hrank.
-  Qed.
-  Lemma slot_rank_ok_allocate_id : forall db i,
-    slot_rank_ok db -> slot_rank_ok (allocate_id i db).
-  Proof.
-    intros db i Hrank. eapply slot_rank_ok_frame;
-      [reflexivity | reflexivity | reflexivity | exact Hrank].
-  Qed.
-  Lemma slot_rank_ok_advance : forall db,
-    slot_rank_ok db -> slot_rank_ok (advance db).
-  Proof.
-    intros db Hrank. eapply slot_rank_ok_frame;
-      [reflexivity | reflexivity | reflexivity | exact Hrank].
-  Qed.
-  Lemma slot_rank_ok_slots_update : forall db b f u,
-    slot_rank_ok db -> slot_rank_ok (slots_update b f u db).
-  Proof.
-    intros db b f u Hrank. eapply slot_rank_ok_frame with (db := db);
-      [reflexivity | | apply slots_update_slots | exact Hrank].
-    apply slots_update_preserves. intros; reflexivity.
-  Qed.
-  Lemma slot_rank_ok_row_write : forall db f k o,
-    slot_rank_ok db -> slot_rank_ok (row_write f k o db).
-  Proof.
-    intros db f k o Hrank. eapply slot_rank_ok_frame with (db := db);
-      [reflexivity | reflexivity | reflexivity | exact Hrank].
-  Qed.
-  Lemma slot_rank_ok_register_row_uses : forall db f k o,
-    slot_rank_ok db -> slot_rank_ok (register_row_uses f k o db).
-  Proof.
-    intros db f k o Hrank. unfold register_row_uses, ensure_row_identity.
-    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
-      eapply slot_rank_ok_frame with (db := db); try reflexivity; exact Hrank.
-  Qed.
-  Lemma slot_rank_ok_row_replace : forall db f k previous o,
-    slot_rank_ok db -> slot_rank_ok (row_replace f k previous o db).
-  Proof.
-    intros db f k [before |] o Hrank; unfold row_replace;
-      apply slot_rank_ok_register_row_uses;
-      apply slot_rank_ok_row_write;
-      apply slot_rank_ok_slots_update;
-      [apply slot_rank_ok_slots_update; exact Hrank | exact Hrank].
-  Qed.
-  Lemma slot_rank_ok_put : forall db f k o,
-    slot_rank_ok db -> slot_rank_ok (put f k o db).
-  Proof.
-    intros db f k o Hrank. unfold put.
-    set (previous := row_get f (normal_key db k) db).
-    set (co := option_map (normal_cell db) o).
-    set (updated := combine_output db f previous co).
-    set (next := match previous, co with
-      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
-    assert (Hnext : slot_rank_ok next).
-    { unfold next. destruct previous as [[[a | v] |] |];
-        destruct co as [[b | w] |]; try apply slot_rank_ok_union; exact Hrank. }
-    destruct previous as [before |].
-    - destruct (output_eqb before updated);
-        [exact Hnext | apply slot_rank_ok_row_replace; exact Hnext].
-    - apply slot_rank_ok_row_replace. exact Hnext.
-  Qed.
-  Lemma slot_rank_ok_make : forall db f k,
-    slot_rank_ok db -> slot_rank_ok (snd (make f k db)).
-  Proof.
-    intros db f k Hrank. unfold make.
-    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
-      cbn [snd]; try exact Hrank;
-      destruct (kind_get f db) as [[| |m] |];
-      try apply slot_rank_ok_row_replace;
-      apply slot_rank_ok_allocate_id; exact Hrank.
-  Qed.
-  (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
       exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None) /\
