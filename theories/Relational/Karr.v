@@ -775,6 +775,32 @@ Proof.
     now rewrite Htest.
 Qed.
 
+(** A column retained after deletion has a different original index. *)
+Lemma karr_skip_index_distinct : forall removed index,
+  removed <> (if index <? removed then index else S index).
+Proof.
+  intros removed index.
+  destruct (index <? removed) eqn:Htest.
+  - apply Nat.ltb_lt in Htest. lia.
+  - apply Nat.ltb_ge in Htest. lia.
+Qed.
+
+(** Converting a retained original index back gives its post-deletion index. *)
+Lemma karr_skip_index_inverse : forall removed index,
+  (if (if index <? removed then index else S index) <? removed then
+    (if index <? removed then index else S index)
+   else (if index <? removed then index else S index) - 1) = index.
+Proof.
+  intros removed index.
+  destruct (index <? removed) eqn:Htest.
+  - apply Nat.ltb_lt in Htest.
+    assert (Hsame : (index <? removed) = true) by (apply Nat.ltb_lt; lia).
+    rewrite Hsame. reflexivity.
+  - apply Nat.ltb_ge in Htest.
+    assert (Hsame : (S index <? removed) = false) by (apply Nat.ltb_ge; lia).
+    rewrite Hsame. lia.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
