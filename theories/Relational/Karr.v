@@ -643,6 +643,15 @@ Proof.
     apply in_or_app. right. apply in_or_app. now right.
 Qed.
 
+(** An empty elimination input produces neither rows nor recorded entries. *)
+Lemma karr_bareiss_record_empty : forall cols previous,
+  karr_bareiss_record cols previous [] = ([], []).
+Proof.
+  induction cols as [|cols IH]; intro previous; [reflexivity|].
+  cbn [karr_bareiss_record karr_pivot flat_map map].
+  now rewrite IH.
+Qed.
+
 (** Removing one column gives the smaller matrix used by Laplace expansion. *)
 Fixpoint karr_delete (index : nat) (row : list Z) : list Z :=
   match index, row with
@@ -3402,6 +3411,28 @@ Proof.
   rewrite <- (karr_pair_origins labels rows Hlabels) in Hpartition.
   eapply karr_minor_law_entry; eauto.
   exact (proj1 (Forall_forall _ _) Hentries row Hrow).
+Qed.
+
+(** A zero first entry of a live row is itself an enumerated source minor. *)
+Lemma karr_run_state_zero_head : forall width cols original previous pivot_rows
+    pivot_columns head columns labels rows row,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  In row rows -> karr_nth 0 (karr_row_entries row) = 0%Z ->
+  In 0%Z (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels rows row Hstate Hrow Hzero.
+  assert (Hentries : length (karr_row_entries row) = S (length columns)).
+  { unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [_ [_ [Hwidth _]]]]].
+    pose proof (proj1 (Forall_forall _ _) Hwidth row Hrow) as Hlength.
+    cbn beta in Hlength. exact Hlength. }
+  destruct (karr_row_entries row) as [|z entries] eqn:Hshape;
+    cbn [length karr_nth] in Hentries, Hzero; [lia|].
+  subst z. eapply karr_run_state_entries; [exact Hstate|].
+  apply in_flat_map. exists row. split; [exact Hrow|].
+  rewrite Hshape. now left.
 Qed.
 
 (** Checked division preserves a zero coordinate in every branch. *)
