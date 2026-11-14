@@ -12025,6 +12025,39 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply row_parent_iter_after_fixed. exact Hfixed.
   Qed.
 
+  Lemma database_history_root_path_weight : forall db f k key r,
+    database_row_store_ok db -> database_row_weights_positive db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    exists first,
+      first <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
+      row_root first r (db_row_store db) =
+        row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+          (db_row_store db) /\
+      (N.of_nat (2 ^ first) <=
+        match PTrieCode.get
+          (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+            (db_row_store db)) (row_weights (db_row_store db)) with
+        | Some n => n | None => 1%N end)%N.
+  Proof.
+    intros db f k key r Hstore Hpositive Hentry.
+    destruct (database_row_store_depth db Hstore f k key r Hentry)
+      as [d [Hbound [Hfixed _]]].
+    destruct (database_row_path_first_root db r d Hfixed)
+      as [first [Hfirst_bound [Hfirst_fixed Hstrict]]].
+    exists first. split; [lia |].
+    assert (Hpath : row_root first r (db_row_store db) =
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db)).
+    { rewrite (row_root_after_fixed _ first r (db_row_store db));
+        [| lia | exact Hfirst_fixed].
+      rewrite (row_root_after_fixed _ first r (db_row_store db));
+        [reflexivity | lia | exact Hfirst_fixed]. }
+    split; [exact Hpath |].
+    rewrite <- Hpath, row_root_parent_iter.
+    apply database_row_path_weight_growth; assumption.
+  Qed.
+
   Lemma row_root_fixed : forall fuel r store,
     (match PTrieCode.get r (row_links store) with
      | Some parent => parent | None => r end) = r -> row_root fuel r store = r.
