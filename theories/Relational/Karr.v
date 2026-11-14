@@ -13413,6 +13413,69 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         clearbody work; rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
   Qed.
 
+  Definition karr_hull_seed_factor : N := (karr_seed_factor + 1024)%N.
+
+  (** Lifted left seeding pays one dense scan and one zero vector per equality. *)
+  Lemma T_karr_hull_left_bounded : forall xs total index P dim bits,
+    length xs <= dim -> total <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun r => length (lhs r) <= dim /\ C.row_bits r <= bits) P ->
+    (T_hull_left xs total index P <= karr_hull_seed_factor *
+      N.of_nat (length P + 1) * N.of_nat (dim + 1)^2 *
+      N.of_nat (bits + dim + 1))%N.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|p P IH]; intros index dim bits Hxs Htotal Hkeys Hrows.
+    - time_unfold T_hull_left. cbn [length].
+      unfold karr_hull_seed_factor, karr_seed_factor.
+      rewrite !N.pow_2_r, !Nat2N.inj_add. cbn [N.of_nat]. nia.
+    - inversion Hrows as [|q qs [Hrow Hbits] Htail]; subst q qs.
+      pose proof (IH (S index) dim bits Hxs Htotal Hkeys Htail) as Hrest.
+      pose proof (T_karr_dense_bounded xs p dim bits Hxs Hrow Hbits Hkeys)
+        as Hdense.
+      pose proof (T_karr_unit_bounded total index) as Hunit.
+      pose proof (T_karr_repeat_zero_bounded (S (length xs))) as Hrepeat.
+      pose proof (Datatypes.T_length_le xs) as Hlength.
+      pose proof (Datatypes.T_app_le (dense xs p)
+        ((- rhs p)%Z :: repeat 0%Z (S (length xs)))) as Happ.
+      pose proof (Z.T_opp_le (rhs p)) as Hopp.
+      pose proof (karr_row_rhs_bits p) as Hrhs.
+      set (work := (N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N).
+      assert (Hextent : (N.of_nat (dim + 1) <= work)%N).
+      { unfold work. rewrite N.pow_2_r.
+        assert (Hfirst : (1 <= N.of_nat (dim + 1))%N) by lia.
+        assert (Hsecond : (1 <= N.of_nat (bits + dim + 1))%N) by lia. nia. }
+      assert (Hpositive : (1 <= work)%N)
+        by (eapply N.le_trans; [|exact Hextent]; lia).
+      assert (Hsmall : (Datatypes.T_length xs +
+        ListDef.T_repeat 0%Z (S (length xs)) +
+        Datatypes.T_app (dense xs p)
+          ((- rhs p)%Z :: repeat 0%Z (S (length xs))) +
+        Z.T_opp (rhs p) + T_karr_unit total index <= 64 * work)%N).
+      { assert (Hdense_length : length (dense xs p) = length xs)
+          by (unfold dense; apply length_map).
+        rewrite Hdense_length in Happ.
+        clear -Hxs Htotal Hbits Hrhs Hlength Hrepeat Happ Hopp Hunit
+          Hextent Hpositive.
+        unfold work in *. rewrite !Nat2N.inj_add in *.
+        cbn [N.of_nat] in *. nia. }
+      replace (karr_hull_seed_factor * N.of_nat (length P + 1) *
+        N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N with
+        (karr_hull_seed_factor * N.of_nat (length P + 1) * work)%N
+        in Hrest by (unfold work; ring).
+      replace (karr_dense_factor * N.of_nat (dim + 1)^2 *
+        N.of_nat (bits + dim + 1))%N with
+        (karr_dense_factor * work)%N in Hdense by (unfold work; ring).
+      replace (karr_hull_seed_factor * N.of_nat (length (p :: P) + 1) *
+        N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N with
+        (karr_hull_seed_factor * N.of_nat (length (p :: P) + 1) * work)%N
+        by (unfold work; ring).
+      time_unfold T_hull_left. destruct (lrel p); time_simpl; cbn [length];
+        unfold karr_hull_seed_factor, karr_seed_factor in *;
+        clear -Hrest Hdense Hsmall Hpositive; clearbody work;
+        rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
   (** Flattening source rows counts exactly the stored coefficient occurrences. *)
   Lemma karr_flat_source_length : forall P,
     length (flat_map lhs P) = terms (Reached P).
