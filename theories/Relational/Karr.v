@@ -15529,6 +15529,40 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold n in *. cbn [rows_of length] in *. lia.
   Qed.
 
+  (** The exact target minor width fits eight public Hadamard widths. *)
+  Lemma karr_target_width_public : forall P c,
+    normal P ->
+    ellB (length (variables (c :: P)) + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1 <=
+      8 * (ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+        (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+  Proof.
+    intros P c Hnormal.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (s := length (variables (c :: P)) + length P + 3).
+    pose proof (karr_target_dim_public P c) as Hdim.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hs : s <= d + 1) by (unfold s, d; lia).
+    assert (Hrowbits : C.row_bits c <= ell (Reached (c :: nil))).
+    { unfold ell. cbn [rows_of map fold_right]. lia. }
+    pose proof (karr_normal_terms_log P Hnormal) as Hterms.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hlogs : Nat.log2 s <= Nat.log2 d + 1).
+    { eapply Nat.le_trans; [apply Nat.log2_le_mono; exact Hs|].
+      replace (d + 1) with (S d) by lia.
+      replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+      apply Nat.log2_succ_le. }
+    assert (Hlogpos : 1 <= Nat.log2 d).
+    { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+      change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+    unfold nell, ellB in *.
+    fold d w s.
+    nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
