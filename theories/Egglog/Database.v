@@ -20497,6 +20497,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Hlocated Hrow_view Hcanonical).
   Qed.
 
+  Lemma inv_on_located_row : forall db work f key current,
+    inv_on db work -> located db f key = Some current ->
+    exists output, row_get f current db = Some output.
+  Proof.
+    intros db work f key current Hinv Hlocated.
+    pose proof Hinv as Hfacts.
+    unfold inv_on in Hfacts.
+    destruct Hfacts as [Hrows [_ [_ [_ [_ [_ [_ [Hforest _]]]]]]]].
+    destruct (F_forest_located db f key current Hforest Hlocated)
+      as [output [Hin _]].
+    exists output. change (row (view db) f current output).
+    apply (proj1 (Hrows f current output)). exact Hin.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
