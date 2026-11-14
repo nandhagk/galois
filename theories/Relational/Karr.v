@@ -743,6 +743,38 @@ Proof.
   symmetry. apply karr_delete_comm. lia.
 Qed.
 
+(** Exchanging two distinct Laplace columns reverses their combined sign. *)
+Lemma karr_determinant_sign_pair : forall first second,
+  first < second ->
+  ((if Nat.even first then 1 else -1) *
+    (if Nat.even (second - 1) then 1 else -1))%Z =
+  (- ((if Nat.even second then 1 else -1) *
+    (if Nat.even first then 1 else -1)))%Z.
+Proof.
+  intros first [|second] Horder; [lia|].
+  replace (S second - 1) with second by lia.
+  rewrite karr_determinant_sign_succ. ring.
+Qed.
+
+(** The minor after two deletions has a canonical increasing column order. *)
+Lemma karr_delete_pair_canonical : forall first second row,
+  first <> second ->
+  karr_delete (if second <? first then second else second - 1)
+    (karr_delete first row) =
+  karr_delete (Nat.min first second)
+    (karr_delete (Nat.max first second) row).
+Proof.
+  intros first second row Hdistinct.
+  assert (Horder : first < second \/ second < first) by lia.
+  destruct Horder as [Horder|Horder].
+  - rewrite Nat.min_l, Nat.max_r by lia.
+    assert (Htest : (second <? first) = false) by (apply Nat.ltb_ge; lia).
+    rewrite Htest. apply karr_delete_two. exact Horder.
+  - rewrite Nat.min_r, Nat.max_l by lia.
+    assert (Htest : (second <? first) = true) by (apply Nat.ltb_lt; lia).
+    now rewrite Htest.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
