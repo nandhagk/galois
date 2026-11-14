@@ -10482,6 +10482,27 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     split; [now apply karr_cross_bits|]. now apply karr_cross_entry_bits.
   Qed.
 
+  (** The undivided crossed row has one-step bit growth in every field. *)
+  Lemma karr_cross_row_envelope : forall dim mlen bits a b p r,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    karr_row_envelope dim mlen (2 * bits + 1)
+      (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+        (a * kright r - b * kright p)%Z
+        (karr_cross a b (kweight r) (kweight p))
+        (a * kscale r - b * kscale p)%Z).
+  Proof.
+    intros dim mlen bits a b p r Ha Hb
+      [Hpd [Hpc [Hpr [Hpm [Hpw Hps]]]]]
+      [Hrd [Hrc [Hrr [Hrm [Hrw Hrs]]]]].
+    unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+    split; [eapply Nat.le_trans; [apply karr_cross_length_le|exact Hrd]|].
+    split; [now apply karr_cross_bits|].
+    split; [now apply karr_cross_entry_bits|].
+    split; [eapply Nat.le_trans; [apply karr_cross_length_le|exact Hrm]|].
+    split; [now apply karr_cross_bits|]. now apply karr_cross_entry_bits.
+  Qed.
+
   (** Deleting and restoring the leading coordinate preserves bounded nonempty width. *)
   Lemma karr_restore_tail_envelope : forall dim mlen bits r, 1 <= dim ->
     karr_row_envelope dim mlen bits r ->
@@ -10858,6 +10879,20 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (T_karr_quotient_one_bounded dim mlen bits r Hrow) as Hdivide.
     pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hpositive.
     time_unfold T_karr_divide. destruct (karr_exact 1 r); time_simpl;
+      rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
+  (** Guarded division costs the same quadratic budget for any bounded divisor. *)
+  Lemma T_karr_divide_bounded : forall dim mlen bits d r,
+    Z.size_nat d <= bits -> karr_row_envelope dim mlen bits r ->
+    (T_karr_divide d r <=
+      1024 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d r Hd Hrow.
+    pose proof (T_karr_exact_bounded dim mlen bits d r Hd Hrow) as Hcheck.
+    pose proof (T_karr_quotient_bounded dim mlen bits d r Hd Hrow) as Hdivide.
+    pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hpositive.
+    time_unfold T_karr_divide. destruct (karr_exact d r); time_simpl;
       rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
   Qed.
 
