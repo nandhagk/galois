@@ -18627,6 +18627,75 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply slot_rank_ok_union. exact (database_public_rank db Hpublic).
   Qed.
 
+  Lemma database_idle_ok_put : forall db f k o,
+    database_public_ok db -> database_history_alignment db ->
+    kind_ok db f k o -> database_idle_ok (put f k o db).
+  Proof.
+    intros db f k o Hpublic Halign Hkind.
+    pose proof (database_public_base db Hpublic) as Hwf.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    pose proof (kind_ok_canon db f k o Hwf Hkind) as Hnormal.
+    unfold put. rewrite (normal_key_correct db k Hwf),
+      (normal_output_correct db o Hwf).
+    rewrite combine_output_correct. fold (old db f (map (canon db) k)).
+    destruct (old db f (map (canon db) k)) as [before |] eqn:Hprevious.
+    - pose proof (wf_row_kind db Hwf f (map (canon db) k) before Hprevious)
+        as Hbefore.
+      destruct Hkind as [Hids [Hfits Hshape]].
+      destruct (kind (view db) f) as [[| |m] |] eqn:Hdecl in Hshape, Hbefore;
+        destruct o as [[i | v] |]; destruct before as [[j | w] |];
+        cbn in Hshape, Hbefore; try contradiction.
+      + cbn [combine option_map canon]. rewrite output_eqb_refl. exact Hidle.
+      + cbn [combine option_map canon]. rewrite output_eqb_refl.
+        apply database_public_idle.
+        apply database_public_ok_union; [exact Hpublic | |].
+        * eapply wf_row_ids; [exact Hwf | exact Hprevious |].
+          apply in_app_iff. right. cbn [option_list In]. now left.
+        * apply repr_allocated; [exact Hwf |]. apply Hids.
+          apply in_app_iff. right. cbn [option_list In]. now left.
+      + cbn [combine option_map canon]. rewrite Hdecl.
+        destruct (output_eqb (Some (Val w)) (Some (Val (V.merge m w v))));
+          [exact Hidle |].
+        apply database_idle_ok_row_replace_canonical;
+          [exact Hwf | exact Hidle | exact Halign | |].
+        * exact (kind_ok_value_replace db f (map (canon db) k) v
+            (V.merge m w v) Hnormal).
+        * exact (canon_row_fixed db k (Some (Val (V.merge m w v))) Hwf).
+    - cbn [combine]. apply database_idle_ok_row_replace_canonical;
+        [exact Hwf | exact Hidle | exact Halign | exact Hnormal |].
+      exact (canon_row_fixed db k o Hwf).
+  Qed.
+
+  Lemma database_public_ok_put : forall db f k o,
+    database_public_ok db -> database_owned_ok db -> kind_ok db f k o ->
+    database_public_ok (put f k o db).
+  Proof.
+    intros db f k o Hpublic Howned Hkind.
+    unfold database_public_ok. split.
+    - apply wf_put; [exact (database_public_base db Hpublic) | exact Hkind].
+    - split.
+      + apply database_idle_ok_put; [exact Hpublic | | exact Hkind].
+        unfold database_owned_ok in Howned. tauto.
+      + apply slot_rank_ok_put. exact (database_public_rank db Hpublic).
+  Qed.
+
+  Lemma database_public_ok_make : forall db f k,
+    database_public_ok db -> database_owned_ok db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    slots_fit db f (S (length k)) ->
+    database_public_ok (snd (make f k db)).
+  Proof.
+    intros db f k Hpublic Howned Hargs Hfits.
+    unfold database_public_ok. split.
+    - apply wf_make; [exact (database_public_base db Hpublic) | exact Hargs | exact Hfits].
+    - split.
+      + apply database_idle_ok_make;
+          [exact (database_public_base db Hpublic) |
+           exact (database_public_idle db Hpublic) | | exact Hargs | exact Hfits].
+        unfold database_owned_ok in Howned. tauto.
+      + apply slot_rank_ok_make. exact (database_public_rank db Hpublic).
+  Qed.
+
   (** Active and queued repair states expose their forest invariant directly. *)
   Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
   Proof.
