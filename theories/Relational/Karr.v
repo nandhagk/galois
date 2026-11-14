@@ -16263,6 +16263,52 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply Nat.mul_le_mono; lia.
   Qed.
 
+  (** One final hull row pays both checkers plus linear reconstruction. *)
+  Lemma T_karr_checked_hull_row_bounded : forall xs a b r dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    (T_checked_hull_row xs a b r <=
+      2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+      1024 * N.of_nat (dim + 1))%N.
+  Proof.
+    intros xs a b r dim bits Hpositive Hxs Hcount Hkeys Ha Hb Henv.
+    set (zs := skipn (S (length xs)) (kcoeff r)).
+    set (c := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs)).
+    pose proof (T_karr_hull_checkers_bounded xs a b r dim bits
+      Hpositive Hxs Hcount Hkeys Ha Hb Henv) as Hcheck.
+    pose proof (T_karr_sparse_bounded xs zs) as Hsparse.
+    pose proof (T_karr_nth_bounded (length xs) zs) as Hnth.
+    pose proof (T_karr_firstn_bounded Z (S (length xs)) (kcoeff r))
+      as Hfirst_coeff.
+    pose proof (T_karr_firstn_bounded Z (length a) (kweight r))
+      as Hfirst_weight.
+    pose proof (T_karr_skipn_bounded Z (S (length xs)) (kcoeff r))
+      as Hskip_coeff.
+    pose proof (T_karr_skipn_bounded Z (length a) (kweight r))
+      as Hskip_weight.
+    pose proof (T_karr_zero_forallb_bounded
+      (firstn (S (length xs)) (kcoeff r))) as Hfirst_zero.
+    pose proof (T_karr_zero_forallb_bounded zs) as Hsuffix_zero.
+    pose proof (Datatypes.T_length_le xs) as Hlength_xs.
+    pose proof (Datatypes.T_length_le a) as Hlength_a.
+    destruct Henv as [Hcoeff _].
+    assert (Hzs : length zs <= 2 * length xs + 2).
+    { unfold zs. rewrite length_skipn. lia. }
+    assert (Hfirst_length : length (firstn (S (length xs)) (kcoeff r)) <=
+      S (length xs)).
+    { rewrite length_firstn. lia. }
+    time_unfold T_checked_hull_row. time_simpl.
+    unfold zs, c in *. clear -Hcheck Hsparse Hnth Hfirst_coeff
+      Hfirst_weight Hskip_coeff Hskip_weight Hfirst_zero Hsuffix_zero
+      Hlength_xs Hlength_a Hxs Hcount Hcoeff Hzs Hfirst_length.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
+  Qed.
+
   (** Adding one conclusion cannot introduce more than its declared variables. *)
   Lemma karr_target_variables_public : forall P c,
     length (variables (c :: P)) <=
