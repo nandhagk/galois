@@ -3040,6 +3040,66 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Definition row_key_shape (k : list (cell V.t)) : list (option V.t) :=
     map (fun c => match c with Id _ => None | Val v => Some v end) k.
 
+  Fixpoint history_shape_keys (n : nat) (shape : list (option V.t))
+      : list (list (cell V.t)) :=
+    match shape with
+    | [] => [[]]
+    | None :: rest =>
+      flat_map (fun i => map (cons (Id (Pos.of_nat i)))
+        (history_shape_keys n rest)) (seq 1 n)
+    | Some v :: rest => map (cons (Val v)) (history_shape_keys n rest)
+    end.
+
+  Lemma history_shape_keys_length : forall n shape,
+    length (history_shape_keys n shape) <= (S n) ^ length shape.
+  Proof.
+    intros n shape. induction shape as [| [v |] rest IH]; cbn [history_shape_keys length].
+    - cbn [Nat.pow]. lia.
+    - rewrite length_map. cbn [length Nat.pow]. nia.
+    - assert (Hflat : forall xs : list nat,
+        length (flat_map (fun i => map (cons (Id (Pos.of_nat i)))
+          (history_shape_keys n rest)) xs) =
+        length xs * length (history_shape_keys n rest)).
+      { induction xs as [| i xs IHxs]; cbn; [reflexivity |].
+        rewrite length_app, length_map, IHxs. lia. }
+      rewrite Hflat, length_seq. cbn [length Nat.pow]. nia.
+  Qed.
+
+  Lemma history_shape_keys_member : forall n k,
+    (forall i, In (Id i) k -> Pos.to_nat i <= n) ->
+    In k (history_shape_keys n (row_key_shape k)).
+  Proof.
+    intros n k. induction k as [| c rest IH]; intro Hbounded.
+    - now left.
+    - destruct c as [i | v].
+      + cbn [row_key_shape history_shape_keys]. apply in_flat_map.
+        exists (Pos.to_nat i). split.
+        * apply in_seq. split; [apply Pos2Nat.is_pos |].
+          specialize (Hbounded i (or_introl eq_refl)). lia.
+        * apply in_map_iff. exists rest. split.
+          -- rewrite Pos2Nat.id. reflexivity.
+          -- apply IH. intros j Hin. apply Hbounded. now right.
+      + cbn [row_key_shape history_shape_keys]. apply in_map_iff.
+        exists rest. split; [reflexivity |].
+        apply IH. intros i Hin. apply Hbounded. now right.
+  Qed.
+
+  Lemma history_keys_cardinality : forall n shape keys,
+    NoDup keys ->
+    Forall (fun k => row_key_shape k = shape /\
+      forall i, In (Id i) k -> Pos.to_nat i <= n) keys ->
+    length keys <= (S n) ^ length shape.
+  Proof.
+    intros n shape keys Hdistinct Hbounded.
+    eapply Nat.le_trans with (m := length (history_shape_keys n shape));
+      [| apply history_shape_keys_length].
+    apply NoDup_incl_length; [exact Hdistinct |].
+    intros k Hin. apply Forall_forall with (x := k) in Hbounded;
+      [| exact Hin].
+    destruct Hbounded as [Hshape Hids]. subst shape.
+    apply history_shape_keys_member. exact Hids.
+  Qed.
+
   (** Historical keys in one root component have the same value positions. *)
   Definition database_history_key_shape (db : t) : Prop :=
     forall f k key r g args other s,
