@@ -11753,6 +11753,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + rewrite PTrie.get_set_other by exact Htarget. exact Hlookup.
   Qed.
 
+  Lemma row_root_relabel_lookup : forall fuel r store store' root ck k,
+    row_links store' = row_links store ->
+    row_keys store' = PTrieCode.set root ck (row_keys store) ->
+    PTrieCode.get (row_root fuel r store) (row_keys store) = Some k ->
+    (row_root fuel r store = root -> k = ck) ->
+    PTrieCode.get (row_root fuel r store') (row_keys store') = Some k.
+  Proof.
+    intros fuel r store store' root ck k Hlinks Hkeys Hlookup Haffected.
+    rewrite (row_root_same_links fuel r store' store Hlinks), Hkeys.
+    destruct (Pos.eq_dec (row_root fuel r store) root) as [Heq | Hneq].
+    - rewrite Heq, PTrie.get_set_same. now rewrite (Haffected Heq).
+    - rewrite PTrie.get_set_other by exact Hneq. exact Hlookup.
+  Qed.
+
   (** A recorded key's full lookup reaches a fixed row root. *)
   Lemma database_history_root_fixed : forall db f k key r,
     database_row_store_ok db ->
