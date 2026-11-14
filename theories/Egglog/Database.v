@@ -15354,6 +15354,62 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * subst dest_root depth store. now rewrite <- Hlength.
   Qed.
 
+  Lemma database_history_key_shape_move : forall db f old ck,
+    database_row_store_ok db -> database_history_key_shape db ->
+    length old = length ck -> row_key_shape old = row_key_shape ck ->
+    database_history_key_shape (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Hshape Hlength Hbridge.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource; [| exact Hshape].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest; [| exact Hshape].
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some parent => parent | None => source_root end) = source_root).
+    { subst source_root depth store.
+      exact (database_history_root_fixed db f old old_key old_id Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some parent => parent | None => dest_root end) = dest_root).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id Hstore Hdest). }
+    replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+    fold store depth source_root dest_root.
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - eapply database_history_key_shape_transport with (db := db);
+        try reflexivity; exact Hshape.
+    - apply Pos.eqb_neq in Hsame.
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Hloses.
+      + eapply (database_history_key_shape_link db _ f old ck old_key old_id
+          ck_key ck_id source_root dest_root);
+          try exact Hshape; try exact Hbridge; try exact Hsource;
+          try exact Hdest; try reflexivity; try exact Hsame.
+        * exact Hsource_fixed.
+        * cbn [database_set_row_store db_row_store row_links].
+          rewrite PTrie.get_set_other by congruence. exact Hdest_fixed.
+        * left. split; [reflexivity |]. subst dest_root depth store.
+          now rewrite Hlength.
+      + eapply (database_history_key_shape_link db _ f old ck old_key old_id
+          ck_key ck_id dest_root source_root);
+          try exact Hshape; try exact Hbridge; try exact Hsource;
+          try exact Hdest; try reflexivity; try congruence.
+        * exact Hdest_fixed.
+        * cbn [database_set_row_store db_row_store row_links].
+          rewrite PTrie.get_set_other by congruence. exact Hsource_fixed.
+        * right. split; [| reflexivity]. subst dest_root depth store.
+          now rewrite Hlength.
+  Qed.
+
   Lemma database_history_root_owner_repair_current : forall db f k,
     database_row_store_ok db -> database_history_root_owner db ->
     database_history_root_owner (repair_current f k db).
