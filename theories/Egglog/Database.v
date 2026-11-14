@@ -20334,6 +20334,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (inv_on_drop_absent db f k rest Hinv Habsent).
   Qed.
 
+  Lemma inv_on_owned : forall db work,
+    inv_on db work -> database_owned_ok db.
+  Proof.
+    intros db work Hinv.
+    unfold inv_on, forest_ok in Hinv. tauto.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
