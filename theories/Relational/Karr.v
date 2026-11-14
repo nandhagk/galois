@@ -17057,6 +17057,132 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       now apply N.mul_le_mono_l.
   Qed.
 
+  (** Both lifted seed clocks fit the shared public elimination budget. *)
+  Lemma T_karr_hull_seeds_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    (T_hull_left xs (length a + length b) 0 (map normalize_row a) +
+     T_hull_right xs (length a + length b) (length a)
+       (map normalize_row b) <=
+      128 * karr_hull_seed_factor *
+        N.of_nat (elimination_work (Reached a) (Reached b)))%N.
+  Proof.
+    intros a b Ha Hb xs.
+    set (d := n (Reached a) + n (Reached b) + 1).
+    set (w := ell (Reached a) + ell (Reached b)).
+    set (bits := nell (Reached a) + nell (Reached b)).
+    set (v := ellB d w + 1).
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hxs : length xs <= d).
+    { pose proof (karr_hull_variables_public a b) as Hvars.
+      unfold xs, d, n. cbn [rows_of]. lia. }
+    assert (Htotal : length a + length b <= d).
+    { unfold d, n. cbn [rows_of]. lia. }
+    assert (Hkeys : Forall (fun x => X.bits x <= bits) xs).
+    { unfold xs. apply karr_variables_key_bound.
+      apply Forall_app. split; apply Forall_map, Forall_forall;
+        intros r Hr.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width a) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width b) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    assert (Ha_rows : Forall (fun r => length (lhs r) <= d /\
+      C.row_bits r <= bits) (map normalize_row a)).
+    { apply Forall_map, Forall_forall. intros r Hr. split.
+      - eapply Nat.le_trans with (m := length (vars_of a));
+          [apply karr_normal_row_dimension; exact Hr|].
+        unfold d, n. cbn [rows_of]. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width a) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    assert (Hb_rows : Forall (fun r => length (lhs r) <= d /\
+      C.row_bits r <= bits) (map normalize_row b)).
+    { apply Forall_map, Forall_forall. intros r Hr. split.
+      - eapply Nat.le_trans with (m := length (vars_of b));
+          [apply karr_normal_row_dimension; exact Hr|].
+        unfold d, n. cbn [rows_of]. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width b) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    pose proof (T_karr_hull_left_bounded xs (length a + length b) 0
+      (map normalize_row a) d bits Hxs Htotal Hkeys Ha_rows) as Hleft.
+    pose proof (T_karr_hull_right_bounded xs (length a + length b)
+      (length a) (map normalize_row b) d bits Hxs Htotal Hkeys Hb_rows)
+      as Hright.
+    pose proof (karr_normal_terms_log a Ha) as Hloga.
+    pose proof (karr_normal_terms_log b Hb) as Hlogb.
+    assert (Hlogda : Nat.log2 (n (Reached a) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hlogdb : Nat.log2 (n (Reached b) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hbits : bits + d + 1 <= 16 * v).
+    { unfold bits, nell, v, ellB, w. nia. }
+    assert (Hvolume : forall count, count + 1 <= d ->
+      (count + 1) * (d + 1)^2 * (bits + d + 1) <=
+        64 * (d^3 * v^2)).
+    { intros count Hcount.
+      assert (Hdim : (d + 1)^2 <= 4 * d^2).
+      { replace (4 * d^2) with ((2 * d)^2)
+          by (cbn [Nat.pow]; ring).
+        apply Nat.pow_le_mono_l. lia. }
+      eapply Nat.le_trans with (m := d * (4 * d^2) * (16 * v)).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; assumption|exact Hbits].
+      - replace (d * (4 * d^2) * (16 * v)) with
+          (64 * (d^3 * v)) by (cbn [Nat.pow]; ring).
+        apply Nat.mul_le_mono_l, Nat.mul_le_mono_l.
+        unfold v, ellB. cbn [Nat.pow]. nia. }
+    assert (HleftN : (N.of_nat ((length a + 1) * (d + 1)^2 *
+      (bits + d + 1)) <= 64 * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N).
+    { unfold elimination_work. fold d w v.
+      pose proof (Hvolume (length a) ltac:(unfold d, n;
+        cbn [rows_of]; lia)) as Hnat.
+      rewrite Nat2N.inj_mul. lia. }
+    assert (HrightN : (N.of_nat ((length b + 1) * (d + 1)^2 *
+      (bits + d + 1)) <= 64 * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N).
+    { unfold elimination_work. fold d w v.
+      pose proof (Hvolume (length b) ltac:(unfold d, n;
+        cbn [rows_of]; lia)) as Hnat.
+      rewrite Nat2N.inj_mul. lia. }
+    rewrite !length_map in Hleft, Hright.
+    eapply N.le_trans; [apply N.add_le_mono; eassumption|].
+    replace (karr_hull_seed_factor * N.of_nat (length a + 1) *
+      N.of_nat (d + 1)^2 * N.of_nat (bits + d + 1))%N with
+      (karr_hull_seed_factor * N.of_nat
+        ((length a + 1) * (d + 1)^2 * (bits + d + 1)))%N
+      by (rewrite !Nat2N.inj_mul, Nat2N.inj_pow;
+        change (N.of_nat 2) with 2%N; ring).
+    replace (karr_hull_seed_factor * N.of_nat (length b + 1) *
+      N.of_nat (d + 1)^2 * N.of_nat (bits + d + 1))%N with
+      (karr_hull_seed_factor * N.of_nat
+        ((length b + 1) * (d + 1)^2 * (bits + d + 1)))%N
+      by (rewrite !Nat2N.inj_mul, Nat2N.inj_pow;
+        change (N.of_nat 2) with 2%N; ring).
+    set (public := N.of_nat
+      (elimination_work (Reached a) (Reached b))).
+    eapply N.le_trans with (m := (karr_hull_seed_factor * (64 * public) +
+      karr_hull_seed_factor * (64 * public))%N).
+    - apply N.add_le_mono.
+      + apply N.mul_le_mono_l. exact HleftN.
+      + apply N.mul_le_mono_l. exact HrightN.
+    - unfold public. ring_simplify. apply N.le_refl.
+  Qed.
+
   Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
     (T_affine_hull a b <= c_karr * N.of_nat
       (elimination_work (Reached a) (Reached b)))%N.
