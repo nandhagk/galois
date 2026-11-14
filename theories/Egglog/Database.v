@@ -12301,6 +12301,62 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       congruence.
   Qed.
 
+  Lemma database_history_key_shape_link : forall db db' f old ck
+      old_key old_id ck_key ck_id loser winner,
+    database_history_key_shape db ->
+    row_key_shape old = row_key_shape ck ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    ids db' = ids db ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links (db_row_store db')) with
+     | Some parent => parent | None => winner end) = winner ->
+    ((loser = row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db) /\
+      winner = row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db)) \/
+     (loser = row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db) /\
+      winner = row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db))) ->
+    database_history_key_shape db'.
+  Proof.
+    intros db db' f old ck old_key old_id ck_key ck_id loser winner
+      Hshape Hbridge Hsource Hdest Hhistory Hids Hlinks Hneq Hloser Hwinner
+      Hanchors g args key r h other other_key s Hfirst Hsecond Hroot.
+    rewrite Hhistory in Hfirst, Hsecond.
+    rewrite Hids in Hroot.
+    destruct (row_root_link_owner_preimages
+      (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (length other * (N.to_nat (N.log2 (ids db)) + 1)) s
+      (db_row_store db) (db_row_store db') loser winner
+      Hlinks Hneq Hloser Hwinner Hroot)
+      as [Hsame | [Hfirst_root Hsecond_root]].
+    - exact (Hshape g args key r h other other_key s Hfirst Hsecond Hsame).
+    - assert (Hfirst_shape : row_key_shape args = row_key_shape old \/
+        row_key_shape args = row_key_shape ck).
+      { eapply database_history_key_shape_affected;
+          [exact Hshape | exact Hsource | exact Hdest | exact Hfirst |].
+        destruct Hanchors as [[Hleft Hright] | [Hleft Hright]];
+          destruct Hfirst_root as [Hroot_first | Hroot_first];
+          [left | right | right | left]; congruence. }
+      assert (Hsecond_shape : row_key_shape other = row_key_shape old \/
+        row_key_shape other = row_key_shape ck).
+      { eapply database_history_key_shape_affected;
+          [exact Hshape | exact Hsource | exact Hdest | exact Hsecond |].
+        destruct Hanchors as [[Hleft Hright] | [Hleft Hright]];
+          destruct Hsecond_root as [Hroot_second | Hroot_second];
+          [left | right | right | left]; congruence. }
+      destruct Hfirst_shape; destruct Hsecond_shape; congruence.
+  Qed.
+
   Lemma database_history_root_owner_transport : forall db db',
     row_history (db_row_store db') = row_history (db_row_store db) ->
     row_links (db_row_store db') = row_links (db_row_store db) ->
