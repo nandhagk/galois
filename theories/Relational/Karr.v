@@ -1799,6 +1799,50 @@ Proof.
   rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
 Qed.
 
+(** Exact pivot reduction realizes the row quotient required by the minor law. *)
+Lemma karr_minor_law_reduce_multiple : forall previous pivot_rows pivot_columns
+    head columns pairs pivot_origin target_origin p r,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  kcoeff p <> [] -> kcoeff r <> [] ->
+  length (karr_row_entries p) = length (head :: columns) ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  map (fun z => (previous * z)%Z)
+    (karr_row_entries (karr_reduce previous (karr_head p) (karr_head r) p r)) =
+  karr_cross (karr_head p) (karr_head r)
+    (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs pivot_origin
+    target_origin p r Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hp_nonempty Hr_nonempty Hp_width Hr_width.
+  eapply karr_row_entries_reduce_multiple.
+  - symmetry. exact Hcoeff.
+  - symmetry. exact Hweight.
+  - exact Hprevious.
+  - eapply karr_minor_law_reduce_exact; eauto.
+  - intros z Hin.
+    rewrite <- (karr_row_entries_head p Hp_nonempty) in Hin.
+    rewrite <- (karr_row_entries_head r Hr_nonempty) in Hin.
+    apply In_nth_error in Hin as [index Hget].
+    assert (Hindex : index < length (karr_row_entries r)).
+    { assert (Hcross_index : index < length (karr_cross
+          (karr_nth 0 (karr_row_entries p))
+          (karr_nth 0 (karr_row_entries r))
+          (karr_row_entries r) (karr_row_entries p))).
+      { apply nth_error_Some. rewrite Hget. discriminate. }
+      rewrite karr_cross_length in Hcross_index by exact Hr_width.
+      exact Hcross_index. }
+    pose proof (karr_minor_law_cross_divisible previous pivot_rows pivot_columns
+      head columns pairs pivot_origin (karr_row_entries p) target_origin
+      (karr_row_entries r) index Hlaw Hprevious Hpivot Htarget
+      Hp_width Hr_width Hindex) as Hmod.
+    rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
+Qed.
+
 (** The order-three determinant agrees with the six signed permutation products. *)
 Lemma karr_determinant_three : forall a b c d e f g h i,
   karr_determinant 3 [[a; b; c]; [d; e; f]; [g; h; i]] =
