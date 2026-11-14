@@ -278,6 +278,38 @@ Definition karr_row_entries (r : karr_row) : list Z :=
 
 TimeFun karr_row_entries.
 
+(** Crossing equal-length prefixes commutes with appending their suffixes. *)
+Lemma karr_cross_app : forall a b xs ys zs ws,
+  length xs = length ys ->
+  karr_cross a b (xs ++ zs) (ys ++ ws) =
+    karr_cross a b xs ys ++ karr_cross a b zs ws.
+Proof.
+  intros a b xs. induction xs as [|x xs IH]; intros [|y ys] zs ws Hlength;
+    cbn [length] in Hlength; try discriminate.
+  - reflexivity.
+  - cbn [app karr_cross]. f_equal. apply IH. lia.
+Qed.
+
+(** Every augmented row field follows the same integer cross product. *)
+Lemma karr_row_entries_cross : forall a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) ->
+  karr_row_entries (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) =
+  karr_cross a b (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros a b [pc pr pw ps] [rc rr rw rs] Hcoeff Hweight.
+  unfold karr_row_entries.
+  cbn [kcoeff kright kweight kscale].
+  rewrite (karr_cross_app a b rc pc (rr :: rw ++ [rs]) (pr :: pw ++ [ps]))
+    by exact Hcoeff.
+  cbn [karr_cross].
+  rewrite (karr_cross_app a b rw pw [rs] [ps]) by exact Hweight.
+  reflexivity.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
