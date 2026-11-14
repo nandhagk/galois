@@ -14972,6 +14972,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + now rewrite Hstore.
   Qed.
 
+  Lemma row_replace_uses_old : forall db f k previous o x g args,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    uses db x (g, args) ->
+    uses (row_replace f k previous o db) x (g, args).
+  Proof.
+    intros db f k previous o x g args Hmap Huse.
+    unfold uses in *. apply (proj2
+      (row_replace_uses_entries db f k previous o x g args Hmap)).
+    now left.
+  Qed.
+
+  Lemma row_replace_uses_new : forall db f k previous o i,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    In (Id i) (k ++ option_list o) ->
+    uses (row_replace f k previous o db) i (f, k).
+  Proof.
+    intros db f k previous o i Hmap Hin.
+    unfold uses. apply (proj2
+      (row_replace_uses_entries db f k previous o i f k Hmap)).
+    right. apply (proj2 (id_occurrences_member f k
+      (k ++ option_list o) i f k)).
+    repeat split; try reflexivity. exact Hin.
+  Qed.
+
   Lemma row_replace_old_locate : forall db f k previous o g args key r,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
