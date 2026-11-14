@@ -3017,6 +3017,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (forall i, In (Id i) k -> repr db i = i) ->
       db_locate f k db = Some k.
 
+  (** An active row's own historical identifier still resolves to that row. *)
+  Definition database_active_history_coherent (db : t) : Prop :=
+    forall f k o key r,
+      row_get f k db = Some o ->
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      db_locate f k db = Some k.
+
   Lemma database_history_alignment_entry : forall db,
     database_history_alignment db -> forall f k key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
@@ -3596,10 +3604,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite PTrie.get_empty in Hentry. discriminate.
   Qed.
 
+  Lemma database_active_history_coherent_init : forall ds sl,
+    database_active_history_coherent (init ds sl).
+  Proof.
+    intros ds sl f k o key r Hrow _.
+    unfold row_get in Hrow. cbn [init db_runtime runtime_rows] in Hrow.
+    rewrite PTrie.get_empty in Hrow. discriminate.
+  Qed.
+
   Lemma database_history_alignment_advance : forall db,
     database_history_alignment db -> database_history_alignment (advance db).
   Proof.
     intros db Halign. exact Halign.
+  Qed.
+
+  Lemma database_active_history_coherent_advance : forall db,
+    database_active_history_coherent db ->
+    database_active_history_coherent (advance db).
+  Proof.
+    intros db Hcoherent f k o key r Hrow Hentry.
+    exact (Hcoherent f k o key r Hrow Hentry).
   Qed.
 
   (** Public idle states retain enough historical uses to rebuild every row. *)
@@ -13573,6 +13597,33 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         exact Hloc.
     - exact (database_history_alignment_entry db Halign f (normal_key db k)
         key r Hentry Hfixed).
+  Qed.
+
+  Lemma repair_current_source_locate : forall db f k o,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db -> row_get f k db = Some o ->
+    forall key r,
+      PTrieCode.get (db_row_code f k)
+        (row_history (db_row_store (repair_current f k db))) = Some (key, r) ->
+      db_locate f k (repair_current f k db) = Some k.
+  Proof.
+    intros db f k o Hwf Hstore Halign Hcoherent Hrow key r Hentry.
+    destruct (Pos.eq_dec (db_row_code f k)
+      (db_row_code f (normal_key db k))) as [Hsame | Hother].
+    - apply RowKeys.encode_inj in Hsame. injection Hsame as Hkey.
+      replace (db_row_code f k) with (db_row_code f (normal_key db k)) in Hentry
+        by now rewrite <- Hkey.
+      replace (db_locate f k (repair_current f k db)) with
+        (db_locate f (normal_key db k) (repair_current f k db))
+        by now rewrite <- Hkey.
+      replace (Some k) with (Some (normal_key db k))
+        by (f_equal; symmetry; exact Hkey).
+      eapply repair_current_destination_locate; eassumption.
+    - assert (Hdifferent : (f, k) <> (f, normal_key db k)).
+      { intro Heq. injection Heq as Hkey. apply Hother. f_equal. exact Hkey. }
+      rewrite (repair_current_history_other db f k f k Hwf Hdifferent) in Hentry.
+      rewrite (repair_current_old_locate db f k f k key r Hstore Hentry).
+      exact (Hcoherent f k o key r Hrow Hentry).
   Qed.
 
   Lemma database_row_store_ok_repair_current : forall db f k,
