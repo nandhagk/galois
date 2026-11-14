@@ -10430,6 +10430,42 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     time_simpl; time_cbn; nia.
   Qed.
 
+  Lemma T_fill_local_small_le : forall xs m base,
+    (T_fill_local xs m base <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 1)%N.
+  Proof.
+    intros xs; induction xs as [|x rest IH]; intros m base.
+    - time_unfold @T_fill_local; unfold finite_sum; time_simpl; lia.
+    - pose proof (S.T_key_code_le x) as Hcode.
+      pose proof (T_local_look_le m x) as Hlook.
+      pose proof (PTrieT.T_set_le (S.key * L.t) (S.key_code x)
+        (x, look_or S.key_code L.bot m x) (fill_local rest m base)) as Hset.
+      specialize (IH m base).
+      time_unfold @T_fill_local; cbn [map fold_right].
+      change (PTrieCode.T_set (S.key_code x)
+        (x, look_or S.key_code L.bot m x) (fill_local rest m base)) with
+        (PTrieT.T_set (S.key_code x)
+          (x, look_or S.key_code L.bot m x) (fill_local rest m base)).
+      change (T_look_or S.key_code (fun y : S.key => S.T_key_code y) L.bot m x) with
+        (T_look_or S.key_code S.T_key_code L.bot m x).
+      unfold finite_sum, S.key_bits in *; time_simpl; time_cbn.
+      rewrite !Nat2N.inj_add in *.
+      nia.
+  Qed.
+
+  Lemma T_merge_discovered_small_le : forall st xs m,
+    (T_merge_discovered st xs m <=
+      24 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 8)%N.
+  Proof.
+    intros st xs m.
+    pose proof (T_fill_local_small_le xs m (inc_values st)) as Hfill.
+    unfold T_merge_discovered, T_inc_values, T_inc_influence,
+      T_inc_cowrites, T_inc_snapshots.
+    time_simpl; time_cbn; nia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
