@@ -14996,6 +14996,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     repeat split; try reflexivity. exact Hin.
   Qed.
 
+  Lemma database_uses_history : forall db x f k,
+    database_row_store_ok db -> uses db x (f, k) ->
+    exists r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store db)) = Some ((f, k), r).
+  Proof.
+    intros db x f k Hstore Huse.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold database_row_store_ok in Hstore. tauto. }
+    unfold uses in Huse. rewrite uses_entries_facts in Huse by exact Hmap.
+    apply (proj1 (DatabaseUsesFacts.entries_member _ x (f, k) Hmap))
+      in Huse.
+    exact (database_row_store_uses_history db Hstore x f k Huse).
+  Qed.
+
   Lemma row_replace_old_locate : forall db f k previous o g args key r,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
