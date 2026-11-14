@@ -16751,6 +16751,111 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  (** The initialized contradiction scan fits the public elimination allowance. *)
+  Lemma T_karr_contradiction_scan_public : forall P c,
+    normal P ->
+    (T_empty_certificate P (equality_basis (variables P) P) <=
+      256 * (C.c_lc + 1) * N.of_nat
+        (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (q := ell (Reached P)).
+    set (v := ellB d w + 1).
+    set (m := n (Reached P) + 2).
+    set (b := ellB (length (variables P) + length P + 2)
+      (nell (Reached P))).
+    pose proof (T_karr_contradiction_scan_bounded P HP) as Hscan.
+    pose proof (karr_contradiction_width_public P c HP) as Hbits.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hm : m <= d).
+    { unfold m, d, n. cbn [rows_of length]. lia. }
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    assert (Hw : w + 1 <= v).
+    { unfold v, ellB. nia. }
+    assert (Hq : q + 1 <= v) by (unfold q, w in *; lia).
+    assert (Hb : b + 1 <= 4 * v).
+    { unfold b, v, d, w in *. exact Hbits. }
+    assert (Hinner : q + (b + 1) * (q + 1) + 1 <= 5 * v^2).
+    { assert (Hproduct : (b + 1) * (q + 1) <= (4 * v) * v)
+        by (apply Nat.mul_le_mono; lia).
+      assert (Hsquare : v <= v^2) by (cbn [Nat.pow]; nia).
+      cbn [Nat.pow] in *. nia. }
+    assert (Hpoly :
+      ((2 * m + 1) * (m + 1) *
+        (q + (b + 1) * (q + 1) + 1) + 1) * (m + 1) <=
+      64 * (d^3 * v^2)).
+    { assert (Hpart :
+        (2 * m + 1) * (m + 1) *
+          (q + (b + 1) * (q + 1) + 1) <=
+        30 * (d^2 * v^2)).
+      { eapply Nat.le_trans with (m := (3 * d) * (2 * d) * (5 * v^2)).
+        - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hinner].
+        - replace ((3 * d) * (2 * d) * (5 * v^2)) with
+            (30 * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+          lia. }
+      assert (Hmass : 1 <= d^2 * v^2).
+      { cbn [Nat.pow]. nia. }
+      replace (d^3 * v^2) with (d * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+      set (mass := d^2 * v^2) in *. nia. }
+    assert (Hvolume : d^2 <= d^3 * v^2).
+    { replace (d^3 * v^2) with (d^2 * (d * v^2)) by (cbn [Nat.pow]; ring).
+      assert (1 <= d * v^2) by (cbn [Nat.pow]; nia).
+      nia. }
+    assert (Hextra : (8 * (m + 1) + 64) * (m + 1) <=
+      128 * (d^3 * v^2)).
+    { assert (Hspan : m + 1 <= 2 * d) by lia.
+      assert (Hsquare : (8 * (m + 1) + 64) * (m + 1) <= 96 * d^2).
+      { eapply Nat.le_trans with (m := (8 * (2 * d) + 64) * (2 * d)).
+        - apply Nat.mul_le_mono; lia.
+        - cbn [Nat.pow]. nia. }
+      set (volume := d^3 * v^2) in *.
+      set (square := d^2) in *.
+      clear -Hsquare Hvolume. nia. }
+    set (work := N.of_nat (d^3 * v^2)).
+    assert (HpolyN : (N.of_nat
+      ((2 * m + 1) * (m + 1) *
+        (q + (b + 1) * (q + 1) + 1) + 1) * N.of_nat (m + 1) <=
+      64 * work)%N).
+    { unfold work. rewrite <- Nat2N.inj_mul.
+      replace (64 * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat (64 * (d^3 * v^2))) by (rewrite Nat2N.inj_mul; reflexivity).
+      lia. }
+    assert (HextraN : ((8 * N.of_nat (m + 1) + 64) * N.of_nat (m + 1) <=
+      128 * work)%N).
+    { unfold work.
+      replace (8 * N.of_nat (m + 1) + 64)%N with
+        (N.of_nat (8 * (m + 1) + 64))
+        by (rewrite Nat2N.inj_add, Nat2N.inj_mul; reflexivity).
+      rewrite <- Nat2N.inj_mul.
+      replace (128 * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat (128 * (d^3 * v^2)))
+        by (rewrite Nat2N.inj_mul; reflexivity).
+      lia. }
+    replace (n (Reached P) + 3) with (m + 1) in Hscan by (unfold m; lia).
+    change (T_empty_certificate P (equality_basis (variables P) P) <=
+      karr_empty_scan_charge m q q b * N.of_nat (m + 1))%N in Hscan.
+    unfold karr_empty_scan_charge in Hscan.
+    change (T_empty_certificate P (equality_basis (variables P) P) <=
+      256 * (C.c_lc + 1) * work)%N.
+    set (poly := N.of_nat ((2 * m + 1) * (m + 1) *
+      (q + (b + 1) * (q + 1) + 1) + 1)) in *.
+    set (span := N.of_nat (m + 1)) in *.
+    change (T_empty_certificate P (equality_basis (variables P) P) <=
+      (C.c_lc * poly + 8 * span + 64) * span)%N in Hscan.
+    change (poly * span <= 64 * work)%N in HpolyN.
+    change ((8 * span + 64) * span <= 128 * work)%N in HextraN.
+    clear -Hscan HpolyN HextraN.
+    eapply N.le_trans; [exact Hscan|].
+    replace ((C.c_lc * poly + 8 * span + 64) * span)%N with
+      (C.c_lc * (poly * span) + (8 * span + 64) * span)%N by ring.
+    eapply N.le_trans with (m := (C.c_lc * (64 * work) + 128 * work)%N).
+    - apply N.add_le_mono; [now apply N.mul_le_mono_l|exact HextraN].
+    - nia.
+  Qed.
+
   (** A produced target certificate fits the public elimination allowance. *)
   Lemma T_karr_target_certificate_public : forall P c,
     normal P -> normal (c :: nil) ->
