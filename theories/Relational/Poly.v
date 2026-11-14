@@ -14114,6 +14114,37 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
              apply Forall_map, Forall_forall. intros p _. cbn [Z.size_nat]. lia.
   Qed.
 
+  (** Normalizing the prepared equation pays once for each form coefficient. *)
+  Lemma T_poly_assign_head_normal : forall x f,
+    NoDup (map fst (coef f)) ->
+    (T_poly_normal_row tmp_encode T_tmp_encode (assignment_row x f) <=
+      RangeCore.poly_normal_row_factor * N.of_nat (length (coef f) + 2) *
+        N.of_nat (X.bits x + 2 * F.form_bits f + 3))%N.
+  Proof.
+    intros x f Hform.
+    destruct (poly_assign_form_row_bounds f) as [Hformkeys Hformbits].
+    assert (Hinput : RangeCore.poly_input_envelope (length (coef f) + 1)
+      (X.bits x + F.form_bits f + 1) (F.form_bits f + 1)
+      (assignment_row x f)).
+    { unfold RangeCore.poly_input_envelope. repeat split.
+      - apply poly_assign_row_nodup_normal. exact Hform.
+      - cbn [assignment_row lhs length]. rewrite length_map. lia.
+      - pose proof (poly_assign_row_keys x f). lia.
+      - pose proof (poly_assign_row_bits x f). lia. }
+    pose proof (RangeCore.T_poly_normal_row_bounded (assignment_row x f)
+      (length (coef f) + 1) (X.bits x + F.form_bits f + 1)
+      (F.form_bits f + 1) Hinput) as Hnormal.
+    cbn [assignment_row lhs length] in Hnormal.
+    replace (length (coef f) + 1 + 1) with (length (coef f) + 2)
+      in Hnormal by lia.
+    replace (X.bits x + F.form_bits f + 1 + (F.form_bits f + 1) + 1)
+      with (X.bits x + 2 * F.form_bits f + 3) in Hnormal by lia.
+    change (T_poly_normal_row tmp_encode T_tmp_encode (assignment_row x f) <=
+      RangeCore.poly_normal_row_factor * N.of_nat (length (coef f) + 2) *
+        N.of_nat (X.bits x + 2 * F.form_bits f + 3))%N in Hnormal.
+    exact Hnormal.
+  Qed.
+
   Lemma poly_assign_row_envelope_mono : forall r dim dim' mlen keys keys' bits bits',
     RangeCore.poly_row_envelope dim mlen keys bits r ->
     dim <= dim' -> keys <= keys' -> bits <= bits' ->
