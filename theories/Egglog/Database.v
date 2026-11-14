@@ -20509,6 +20509,22 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + destruct o as [[j | v] |]; exact Hkind.
   Qed.
 
+  Lemma inv_on_normal_key_fixed : forall db work k,
+    inv_on db work ->
+    forall i, In (Id i) (normal_key db k) -> repr db i = i.
+  Proof.
+    intros db work k Hinv i Hin.
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    assert (Hmembers : forall j,
+      UnionFind.mem (db_forest db) j <-> allocated db j).
+    { intro j. exact (inv_on_forest_members db work j Hinv). }
+    rewrite (normal_key_correct_forest db k Hforest Hmembers) in Hin.
+    apply in_map_iff in Hin as [c [Hcell _]].
+    destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+    injection Hcell as <-.
+    unfold repr. apply UnionFind.repr_idem. exact Hforest.
+  Qed.
+
   Lemma inv_on_repair_fixed : forall db f k rest current output,
     inv_on db ((f, k) :: rest) -> located db f k = Some current ->
     row_get f current db = Some output ->
