@@ -3053,6 +3053,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         (db_row_store db) ->
       row_key_shape k = row_key_shape args.
 
+  (** Each stored history code encodes the label beside it. *)
+  Definition database_history_codes_valid (db : t) : Prop :=
+    forall code f k id,
+      PTrieCode.get code (row_history (db_row_store db)) = Some ((f, k), id) ->
+      code = db_row_code f k.
+
   (** A history identifier belongs to a row-link component. *)
   Definition database_history_connected (db : t) (a b : positive) : Prop :=
     clos_refl_sym_trans positive
@@ -3705,6 +3711,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_key_shape (init ds sl).
   Proof.
     intros ds sl f k key r g args other s Hentry _ _.
+    cbn [init db_row_store row_history] in Hentry.
+    rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
+  Lemma database_history_codes_valid_init : forall ds sl,
+    database_history_codes_valid (init ds sl).
+  Proof.
+    intros ds sl code f k id Hentry.
     cbn [init db_row_store row_history] in Hentry.
     rewrite PTrie.get_empty in Hentry. discriminate.
   Qed.
@@ -12391,6 +12405,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Hshape f k key r g args other s Hfirst Hsecond Hroots).
   Qed.
 
+  Lemma database_history_codes_valid_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    database_history_codes_valid db -> database_history_codes_valid db'.
+  Proof.
+    intros db db' Hhistory Hvalid code f k id Hentry.
+    rewrite Hhistory in Hentry. exact (Hvalid code f k id Hentry).
+  Qed.
+
   Lemma database_history_connected_transport : forall db db' a b,
     row_links (db_row_store db') = row_links (db_row_store db) ->
     database_history_connected db a b ->
@@ -13113,6 +13135,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - rewrite PTrie.get_set_other in Hfirst by exact Hfirst_old.
       rewrite PTrie.get_set_other in Hsecond by exact Hsecond_old.
       exact (Hshape g args key r h other other_key s Hfirst Hsecond Hroots).
+  Qed.
+
+  Lemma database_history_codes_valid_ensure : forall db f k,
+    database_history_codes_valid db ->
+    database_history_codes_valid (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hvalid. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[label id] |] eqn:Hprior; [exact Hvalid |].
+    intros code g args r Hentry.
+    cbn [database_set_index_counters database_set_row_store db_row_store
+      row_history] in Hentry.
+    destruct (Pos.eq_dec code (db_row_code f k)) as [Heq | Hother].
+    - subst code. rewrite PTrie.get_set_same in Hentry.
+      inversion Hentry. subst. reflexivity.
+    - rewrite PTrie.get_set_other in Hentry by exact Hother.
+      exact (Hvalid code g args r Hentry).
   Qed.
 
   Lemma database_row_weight_conserved_ensure : forall db f k,
