@@ -14024,6 +14024,46 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     eapply N.le_trans; [exact Hcount|]. apply N.mul_le_mono_r, N.mul_le_mono_r. lia.
   Qed.
 
+  (** Raw renamed sources normalize once and build their identity multipliers. *)
+  Lemma T_poly_assign_tail_initial : forall x P,
+    (T_poly_initial tmp_encode T_tmp_encode
+      (map (fun r => (rename_row (rename_old x) r, false)) P) <=
+      RangeCore.poly_raw_initial_factor * N.of_nat (length P + 1)^2 *
+        N.of_nat (terms (Reached P) + 1) *
+        N.of_nat (poly_raw_keys P + 1 + poly_raw_bits P +
+          Nat.log2 (terms (Reached P)) + 1))%N.
+  Proof.
+    intros x P.
+    assert (Hrows : Forall (fun p => length (lhs (fst p)) <= terms (Reached P) /\
+      RangeCert.row_key_bits (fst p) <= poly_raw_keys P + 1 /\
+      RangeCert.row_bits (fst p) <= poly_raw_bits P)
+      (map (fun r => (rename_row (rename_old x) r, false)) P)).
+    { apply Forall_map, Forall_forall. intros r Hr.
+      cbn [fst]. split.
+      - exact (eq_ind_r (fun count => count <= terms (Reached P))
+          (poly_raw_row_terms P r Hr)
+          (proj2 (poly_assign_rename_row_bits x r))).
+      - split.
+        + eapply Nat.le_trans; [apply poly_assign_rename_row_keys|].
+          pose proof (poly_max_member _ C.row_key_bits 0 P r Hr).
+          unfold poly_raw_keys. lia.
+        + rewrite (proj1 (poly_assign_rename_row_bits x r)).
+          pose proof (poly_max_member _ C.row_bits 0 P r Hr).
+          unfold poly_raw_bits. lia. }
+    pose proof (RangeCore.T_poly_initial_raw_bounded
+      (map (fun r => (rename_row (rename_old x) r, false)) P)
+      (terms (Reached P)) (poly_raw_keys P + 1) (poly_raw_bits P) Hrows)
+      as Hinitial.
+    rewrite length_map in Hinitial.
+    change (T_poly_initial tmp_encode T_tmp_encode
+      (map (fun r => (rename_row (rename_old x) r, false)) P) <=
+      RangeCore.poly_raw_initial_factor * N.of_nat (length P + 1)^2 *
+        N.of_nat (terms (Reached P) + 1) *
+        N.of_nat (poly_raw_keys P + 1 + poly_raw_bits P +
+          Nat.log2 (terms (Reached P)) + 1))%N in Hinitial.
+    exact Hinitial.
+  Qed.
+
   (** Source-only assignment rows reserve the first certificate position for the affine row. *)
   Definition poly_assign_tail (x : X.t) (P : list (lcons X.t)) :=
     map (@poly_pad_row (option X.t))
