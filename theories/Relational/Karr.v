@@ -16441,6 +16441,26 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - unfold n. cbn [rows_of length]. lia.
   Qed.
 
+  Lemma T_karr_target_variables_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_variables (c :: P) <= 8 * karr_variables_factor *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc. unfold elimination_work.
+    apply T_karr_variables_public.
+    - apply Forall_cons_iff in Hc as [Hhead _].
+      now constructor.
+    - pose proof (karr_vars_of_cons_bound P c) as Hvars.
+      assert (Hcvars : length (lhs c) <= length (vars_of (c :: nil))).
+      { apply Forall_cons_iff in Hc as [Hhead _].
+        rewrite <- (length_map fst (lhs c)).
+        apply NoDup_incl_length; [exact Hhead|].
+        intros x Hx. eapply karr_vars_of_contains; [now left|exact Hx]. }
+      unfold n in *. cbn [rows_of length] in *. lia.
+    - unfold ell. cbn [rows_of map fold_right]. lia.
+    - unfold n. cbn [rows_of length]. lia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
