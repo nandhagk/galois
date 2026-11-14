@@ -3872,6 +3872,50 @@ Proof.
   apply karr_echelon_width, karr_bareiss_echelon. exact Hwidth.
 Qed.
 
+(** Bareiss elimination preserves each multiplier-vector width. *)
+Lemma karr_bareiss_weight_width : forall cols previous rows mlen,
+  Forall (fun r => length (kcoeff r) = cols) rows ->
+  Forall (fun r => length (kweight r) = mlen) rows ->
+  Forall (fun r => length (kweight r) = mlen)
+    (karr_bareiss cols previous rows).
+Proof.
+  intro cols. induction cols as [|cols IH];
+    intros previous rows mlen Hcoeff Hweight; [exact Hweight|].
+  cbn [karr_bareiss]. destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+  - destruct (karr_pivot_some _ _ _ Hselect) as [_ Hperm].
+    pose proof (Permutation_Forall Hperm Hcoeff) as Hselected_coeff.
+    pose proof (Permutation_Forall Hperm Hweight) as Hselected_weight.
+    apply Forall_cons_iff in Hselected_coeff as [Hpcoeff Hrestcoeff].
+    apply Forall_cons_iff in Hselected_weight as [Hpweight Hrestweight].
+    constructor; [exact Hpweight|]. apply Forall_map.
+    apply IH.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      pose proof (proj1 (Forall_forall _ _) Hrestcoeff r Hr) as Hrcoeff.
+      apply karr_tail_width.
+      rewrite karr_reduce_width; [exact Hrcoeff|].
+      cbn beta in Hrcoeff. lia.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      pose proof (proj1 (Forall_forall _ _) Hrestcoeff r Hr) as Hrcoeff.
+      pose proof (proj1 (Forall_forall _ _) Hrestweight r Hr) as Hrweight.
+      cbn beta in Hrcoeff, Hrweight.
+      assert (Hsame_coeff : length (kcoeff r) = length (kcoeff pivot)) by lia.
+      assert (Hsame_weight : length (kweight r) = length (kweight pivot)) by lia.
+      pose proof (karr_weight_width_of_entries
+        (karr_reduce previous (karr_head pivot) (karr_head r) pivot r) r
+        (karr_reduce_width previous (karr_head pivot) (karr_head r)
+          pivot r Hsame_coeff)
+        (karr_reduce_entries_width previous (karr_head pivot) (karr_head r)
+          pivot r Hsame_coeff Hsame_weight)) as Hreduced.
+      cbn [karr_tail kweight]. lia.
+  - apply Forall_map. apply IH.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      pose proof (proj1 (Forall_forall _ _) Hcoeff r Hr) as Hrcoeff.
+      now apply karr_tail_width.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      cbn [karr_tail kweight].
+      exact (proj1 (Forall_forall _ _) Hweight r Hr).
+Qed.
+
 (** Reducing a target against equally wide basis rows preserves its width. *)
 Lemma karr_target_width : forall n rs previous r,
   Forall (fun p => length (kcoeff p) = n) rs -> length (kcoeff r) = n ->
