@@ -17000,6 +17000,63 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + apply slot_rank_ok_make. exact (database_public_rank db Hpublic).
   Qed.
 
+  (** Initialization establishes the public and owned invariants together. *)
+  Lemma database_full_ok_init : forall ds sl,
+    database_public_ok (init ds sl) /\ database_owned_ok (init ds sl).
+  Proof.
+    intros ds sl. split.
+    - apply database_public_ok_init.
+    - apply database_owned_ok_init.
+  Qed.
+
+  (** Advancing preserves the public and owned invariants together. *)
+  Lemma database_full_ok_advance : forall db,
+    database_public_ok db /\ database_owned_ok db ->
+    database_public_ok (advance db) /\ database_owned_ok (advance db).
+  Proof.
+    intros db [Hpublic Howned]. split.
+    - apply database_public_ok_advance. exact Hpublic.
+    - apply database_owned_ok_advance. exact Howned.
+  Qed.
+
+  (** Union preserves the public and owned invariants together. *)
+  Lemma database_full_ok_union : forall db i j,
+    database_public_ok db /\ database_owned_ok db ->
+    allocated db i -> allocated db j ->
+    database_public_ok (union i j db) /\ database_owned_ok (union i j db).
+  Proof.
+    intros db i j [Hpublic Howned] Hi Hj. split.
+    - apply database_public_ok_union; assumption.
+    - apply database_owned_ok_union.
+      + exact (wf_forest db (database_public_base db Hpublic)).
+      + exact Howned.
+  Qed.
+
+  (** Insertion preserves the public and owned invariants together. *)
+  Lemma database_full_ok_put : forall db f k o,
+    database_public_ok db /\ database_owned_ok db -> kind_ok db f k o ->
+    database_public_ok (put f k o db) /\ database_owned_ok (put f k o db).
+  Proof.
+    intros db f k o [Hpublic Howned] Hkind. split.
+    - apply database_public_ok_put; assumption.
+    - apply database_owned_ok_put;
+        [exact (database_public_base db Hpublic) | exact Hkind | exact Howned].
+  Qed.
+
+  (** Constructor allocation preserves the public and owned invariants together. *)
+  Lemma database_full_ok_make : forall db f k,
+    database_public_ok db /\ database_owned_ok db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    slots_fit db f (S (length k)) ->
+    database_public_ok (snd (make f k db)) /\
+    database_owned_ok (snd (make f k db)).
+  Proof.
+    intros db f k [Hpublic Howned] Hargs Hfits. split.
+    - apply database_public_ok_make; assumption.
+    - apply database_owned_ok_make;
+        [exact (database_public_base db Hpublic) | exact Howned | exact Hargs].
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
