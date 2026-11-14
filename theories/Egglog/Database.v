@@ -16729,6 +16729,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         try reflexivity; assumption.
   Qed.
 
+  Lemma move_row_identity_metadata : forall db f old ck,
+    row_history (db_row_store (move_row_identity f old ck db)) =
+      row_history (db_row_store db) /\
+    row_uses (db_row_store (move_row_identity f old ck db)) =
+      row_uses (db_row_store db) /\
+    db_nuses (move_row_identity f old ck db) = db_nuses db /\
+    row_fresh (db_row_store (move_row_identity f old ck db)) =
+      row_fresh (db_row_store db) /\
+    db_index_counters (move_row_identity f old ck db) =
+      db_index_counters db /\
+    db_written_cells (move_row_identity f old ck db) =
+      db_written_cells db /\
+    ids (move_row_identity f old ck db) = ids db.
+  Proof.
+    intros db f old ck. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |];
+      destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+        as [[ck_key ck_id] |]; repeat split; reflexivity.
+  Qed.
+
   (** Fixed historical aliases at either affected root have the destination key. *)
   Lemma database_history_alignment_affected : forall db f old ck g args
       old_key old_id ck_key ck_id key r,
@@ -17438,6 +17459,90 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
         as [[other s] |]; reflexivity.
     - exact Hbounded.
+  Qed.
+
+  Lemma database_row_store_ok_move : forall db f old ck,
+    database_row_store_ok db -> database_row_weights_positive db ->
+    database_history_root_owner db -> database_history_key_shape db ->
+    database_history_codes_valid db ->
+    database_history_key_ids_bounded db ->
+    database_row_weight_conserved db ->
+    length old = length ck -> row_key_shape old = row_key_shape ck ->
+    database_row_store_ok (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Hpositive Howner Hshape Hvalid Hbounded
+      Hconserved Hlength Hbridge.
+    set (next := move_row_identity f old ck db).
+    assert (Hdepth : database_row_store_depth_ok next).
+    { subst next. eapply database_row_store_depth_move; eassumption. }
+    assert (Hnext_owner : database_history_root_owner next).
+    { subst next. eapply database_history_root_owner_move; eassumption. }
+    assert (Hnext_shape : database_history_key_shape next).
+    { subst next. eapply database_history_key_shape_move; eassumption. }
+    assert (Hnext_conserved : database_row_weight_conserved next).
+    { subst next. eapply database_row_weight_conserved_move; eassumption. }
+    assert (Hnext_valid : database_history_codes_valid next).
+    { subst next. apply database_history_codes_valid_move. exact Hvalid. }
+    assert (Hnext_bounded : database_history_key_ids_bounded next).
+    { subst next. apply database_history_key_ids_bounded_move. exact Hbounded. }
+    destruct (move_row_identity_metadata db f old ck) as
+      (Hhistory & Huses & Hnuses & Hfresh & Hcounters & Hwritten & Hids).
+    fold next in Hhistory, Huses, Hnuses, Hfresh, Hcounters, Hwritten, Hids.
+    assert (Hlinks : forall r p,
+      PTrieCode.get r (row_links (db_row_store next)) = Some p ->
+      In r (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store next)))) /\
+      In p (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store next)))) /\
+      (p <> r ->
+        (1 <= match PTrieCode.get r (row_weights (db_row_store next)) with
+         | Some n => n | None => 1%N end)%N /\
+        (2 * match PTrieCode.get r (row_weights (db_row_store next)) with
+         | Some n => n | None => 1%N end <=
+         match PTrieCode.get p (row_weights (db_row_store next)) with
+         | Some n => n | None => 1%N end)%N)).
+    { subst next. apply database_row_links_ok_move; assumption. }
+    assert (Hrange : forall r p,
+      PTrieCode.get r (row_links (db_row_store next)) = Some p ->
+      (r < row_fresh (db_row_store next))%positive /\
+      (p < row_fresh (db_row_store next))%positive).
+    { subst next. apply database_row_links_range_move; assumption. }
+    pose proof Hstore as Hbase.
+    unfold database_row_store_ok in Hbase.
+    destruct Hbase as
+      (_ & Hbase_uses & Hbase_count & Hbase_counter & Hbase_cells & _ & _ &
+       Hbase_map & Hbase_labels & _).
+    unfold database_row_store_ok. cbv zeta.
+    split; [exact Hlinks |].
+    split.
+    - intros x g args Huse. rewrite Huses in Huse.
+      destruct (Hbase_uses x g args Huse) as [r Hget].
+      exists r. now rewrite Hhistory.
+    - split.
+      + rewrite Hnuses, Huses. exact Hbase_count.
+      + split.
+        * intros g args key r Hget. rewrite Hhistory in Hget.
+          destruct (Hbase_counter g args key r Hget) as
+            [Hrow [Hparent Hcounter]].
+          rewrite Hfresh, Hcounters.
+          split; [exact Hrow |]. split; [| exact Hcounter].
+          destruct (PTrieCode.get r (row_links (db_row_store next)))
+            as [p |] eqn:Hlink.
+          -- rewrite <- Hfresh. exact (proj2 (Hrange r p Hlink)).
+          -- exact Hrow.
+        * split.
+          -- intros x g args c Huse Hcell.
+             rewrite Huses in Huse. rewrite Hwritten.
+             exact (Hbase_cells x g args c Huse Hcell).
+          -- split; [exact Hdepth |].
+             split.
+             ++ eapply database_row_store_size_from_history;
+                  eassumption.
+             ++ split; [rewrite Huses; exact Hbase_map |].
+                split.
+                ** intros g args key r Hget. rewrite Hhistory in Hget.
+                   exact (Hbase_labels g args key r Hget).
+                ** exact Hrange.
   Qed.
 
   Lemma database_history_root_owner_repair_entry_move : forall db f k,
