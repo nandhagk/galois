@@ -13453,6 +13453,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hshape.
   Qed.
 
+  Lemma database_history_codes_valid_row_delete : forall db f k,
+    database_history_codes_valid db ->
+    database_history_codes_valid (row_delete f k db).
+  Proof.
+    intros db f k Hvalid.
+    eapply database_history_codes_valid_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - exact Hvalid.
+  Qed.
+
   Lemma database_row_weight_conserved_row_delete : forall db f k,
     database_row_weight_conserved db ->
     database_row_weight_conserved (row_delete f k db).
@@ -13980,6 +13990,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try exact Hfresh_shape;
       (apply database_history_key_shape_row_replace;
         [exact Hfresh_store | exact Hfresh_shape]).
+  Qed.
+
+  Lemma database_history_codes_valid_make : forall db f k,
+    database_history_codes_valid db ->
+    database_history_codes_valid (snd (make f k db)).
+  Proof.
+    intros db f k Hvalid. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hvalid;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try (eapply database_history_codes_valid_transport with (db := db);
+        [reflexivity | exact Hvalid]);
+      (apply database_history_codes_valid_row_replace;
+        eapply database_history_codes_valid_transport with (db := db);
+        [reflexivity | exact Hvalid]).
   Qed.
 
   Lemma database_row_weight_conserved_make : forall db f k,
@@ -14652,6 +14677,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hshape.
   Qed.
 
+  Lemma database_history_codes_valid_union : forall db i j,
+    database_history_codes_valid db ->
+    database_history_codes_valid (union i j db).
+  Proof.
+    intros db i j Hvalid.
+    eapply database_history_codes_valid_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - exact Hvalid.
+  Qed.
+
   Lemma database_row_weight_conserved_union : forall db i j,
     database_row_weight_conserved db ->
     database_row_weight_conserved (union i j db).
@@ -14857,6 +14892,29 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hnext_store | exact Hnext_shape].
     - apply database_history_key_shape_row_replace;
         [exact Hnext_store | exact Hnext_shape].
+  Qed.
+
+  Lemma database_history_codes_valid_put : forall db f k o,
+    database_history_codes_valid db ->
+    database_history_codes_valid (put f k o db).
+  Proof.
+    intros db f k o Hvalid. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_valid : database_history_codes_valid next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try exact Hvalid; apply database_history_codes_valid_union; exact Hvalid. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_valid |].
+      apply database_history_codes_valid_row_replace. exact Hnext_valid.
+    - apply database_history_codes_valid_row_replace. exact Hnext_valid.
   Qed.
 
   Lemma database_row_weight_conserved_put : forall db f k o,
