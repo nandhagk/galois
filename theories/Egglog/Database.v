@@ -14097,6 +14097,30 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + rewrite allocate_next_ids. lia.
   Qed.
 
+  (** Fresh allocation retains the public base, idle and slot rank facts. *)
+  Lemma database_public_ok_allocate_next : forall db,
+    database_public_ok db ->
+    database_public_ok (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db [Hbase [Hidle Hrank]]. unfold database_public_ok.
+    split; [apply wf_allocate_next; exact Hbase |].
+    split.
+    - apply database_idle_ok_allocate_next; assumption.
+    - apply slot_rank_ok_allocate_id. exact Hrank.
+  Qed.
+
+  (** Fresh allocation retains the complete public and owned package. *)
+  Lemma database_full_ok_allocate_next : forall db,
+    database_public_ok db /\ database_owned_ok db ->
+    database_public_ok (allocate_id (N.succ_pos (ids db)) db) /\
+    database_owned_ok (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db [Hpublic Howned]. split.
+    - apply database_public_ok_allocate_next. exact Hpublic.
+    - apply database_owned_ok_allocate_next;
+        [exact (database_public_base db Hpublic) | exact Howned].
+  Qed.
+
   Lemma database_idle_ok_make : forall db f k,
     wf db -> database_idle_ok db -> database_history_alignment db ->
     (forall i, In (Id i) k -> allocated db i) ->
