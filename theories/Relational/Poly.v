@@ -13812,6 +13812,17 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       cbn [lhs] in Hnormal. lia.
   Qed.
 
+  (** Normalization's merged arithmetic adds only its logarithmic multiplicity width. *)
+  Lemma poly_assign_prepared_form_bits : forall f,
+    F.form_bits (poly_prepare_form X.encode f) <=
+      2 * F.form_bits f + Nat.log2 (length (coef f)) + 1.
+  Proof.
+    intro f.
+    pose proof (poly_assign_form_bits_row (poly_prepare_form X.encode f)) as Hform.
+    destruct (poly_assign_prepared_form_bounds f) as [Hkeys Hbits].
+    lia.
+  Qed.
+
   (** The new-variable unit coefficient adds at most one bit to the form row width. *)
   Lemma poly_assign_row_bits : forall x f,
     RangeCert.row_bits (assignment_row x f) <=
