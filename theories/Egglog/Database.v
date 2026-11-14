@@ -22669,6 +22669,28 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Hrepaired_loc Hnot_old Hnot_ck).
   Qed.
 
+  Lemma inv_on_repair_lookup_other : forall db work f k current output
+      g args value,
+    inv_on db work -> db_locate f k db = Some current ->
+    row_get f current db = Some output ->
+    db_locate g args db = Some value ->
+    value <> current -> value <> normal_key db current ->
+    db_locate g args (db_repair_entry f k db) = Some value.
+  Proof.
+    intros db work f k current output g args value Hinv Hlocated Hrow
+      Hlookup Hnot_old Hnot_ck.
+    unfold db_repair_entry. rewrite Hlocated, Hrow.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hlookup |].
+    eapply repair_current_move_lookup_other;
+      [exact (inv_on_owned db work Hinv) |
+       exact (inv_on_forest_wf db work Hinv) |
+       intros i; exact (inv_on_forest_members db work i Hinv) |
+       exact Hrow | exact Hlookup | exact Hnot_old | exact Hnot_ck].
+  Qed.
+
   Lemma repair_current_history_inverse : forall db f k g args key r,
     UnionFind.wf (db_forest db) ->
     PTrieCode.get (db_row_code g args)
