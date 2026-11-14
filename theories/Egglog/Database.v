@@ -20711,7 +20711,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db [f k] rest Hinv.
+    destruct (located db f k) as [current |] eqn:Hlocated.
+    2: { eapply inv_on_repair_absent; eassumption. }
+    destruct (inv_on_located_row db ((f, k) :: rest) f k current Hinv Hlocated)
+      as [output Hrow].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output)) eqn:Hfixed.
+    1: { eapply inv_on_repair_fixed; eassumption. }
+  Admitted. (* STUB: present-row mutation remains *)
 
   (** Continuing steps retain the queue and active-batch invariant. *)
   Lemma F8_rstep_inv : forall s s', state_inv s -> rstep s = inl s' -> state_inv s'.
