@@ -3141,6 +3141,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       PTrieCode.get code (row_history (db_row_store db)) = Some ((f, k), id) ->
       forall i, In (Id i) k -> allocated db i.
 
+  Definition database_row_weights_positive (db : t) : Prop :=
+    forall r n,
+      PTrieCode.get r (row_weights (db_row_store db)) = Some n -> (1 <= n)%N.
+
   (** A history identifier belongs to a row-link component. *)
   Definition database_history_connected (db : t) (a b : positive) : Prop :=
     clos_refl_sym_trans positive
@@ -3818,6 +3822,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros ds sl code f k id Hentry i Hin.
     cbn [init db_row_store row_history] in Hentry.
     rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
+  Lemma database_row_weights_positive_init : forall ds sl,
+    database_row_weights_positive (init ds sl).
+  Proof.
+    intros ds sl r n Hweight.
+    cbn [init db_row_store row_weights] in Hweight.
+    rewrite PTrie.get_empty in Hweight. discriminate.
   Qed.
 
   Lemma database_row_weight_conserved_init : forall ds sl,
@@ -12755,6 +12767,71 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       [exact (Hbounded code f k id Hentry i Hin) | exact Hids].
   Qed.
 
+  Lemma database_row_weights_positive_transport : forall db db',
+    row_weights (db_row_store db') = row_weights (db_row_store db) ->
+    database_row_weights_positive db -> database_row_weights_positive db'.
+  Proof.
+    intros db db' Hweights Hpositive r n Hentry.
+    rewrite Hweights in Hentry. exact (Hpositive r n Hentry).
+  Qed.
+
+  Lemma database_row_weights_positive_advance : forall db,
+    database_row_weights_positive db -> database_row_weights_positive (advance db).
+  Proof.
+    intros db Hpositive.
+    eapply database_row_weights_positive_transport with (db := db);
+      [reflexivity | exact Hpositive].
+  Qed.
+
+  Lemma database_row_weights_positive_allocate_next : forall db,
+    database_row_weights_positive db ->
+    database_row_weights_positive (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hpositive.
+    eapply database_row_weights_positive_transport with (db := db);
+      [reflexivity | exact Hpositive].
+  Qed.
+
+  Lemma database_row_weights_positive_slots_update : forall db add f cells,
+    database_row_weights_positive db ->
+    database_row_weights_positive (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hpositive.
+    eapply database_row_weights_positive_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - exact Hpositive.
+  Qed.
+
+  Lemma database_row_weights_positive_row_write : forall db f k o,
+    database_row_weights_positive db ->
+    database_row_weights_positive (row_write f k o db).
+  Proof.
+    intros db f k o Hpositive.
+    eapply database_row_weights_positive_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - exact Hpositive.
+  Qed.
+
+  Lemma database_row_weights_positive_row_delete : forall db f k,
+    database_row_weights_positive db ->
+    database_row_weights_positive (row_delete f k db).
+  Proof.
+    intros db f k Hpositive.
+    eapply database_row_weights_positive_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - exact Hpositive.
+  Qed.
+
+  Lemma database_row_weights_positive_union : forall db i j,
+    database_row_weights_positive db ->
+    database_row_weights_positive (union i j db).
+  Proof.
+    intros db i j Hpositive.
+    eapply database_row_weights_positive_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - exact Hpositive.
+  Qed.
+
   Lemma database_history_key_ids_bounded_advance : forall db,
     database_history_key_ids_bounded db ->
     database_history_key_ids_bounded (advance db).
@@ -13523,6 +13600,45 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       inversion Hentry. subst. reflexivity.
     - rewrite PTrie.get_set_other in Hentry by exact Hother.
       exact (Hvalid code g args r Hentry).
+  Qed.
+
+  Lemma database_row_weights_positive_ensure : forall db f k,
+    database_row_weights_positive db ->
+    database_row_weights_positive (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hpositive. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[label id] |]; [exact Hpositive |].
+    intros r n Hentry.
+    cbn [database_set_index_counters database_set_row_store db_row_store row_weights]
+      in Hentry.
+    destruct (Pos.eq_dec r (row_fresh (db_row_store db))) as [Heq | Hneq].
+    - subst r. rewrite PTrie.get_set_same in Hentry.
+      injection Hentry as <-. lia.
+    - rewrite PTrie.get_set_other in Hentry by exact Hneq.
+      exact (Hpositive r n Hentry).
+  Qed.
+
+  Lemma database_row_weights_positive_register : forall db f k o,
+    database_row_weights_positive db ->
+    database_row_weights_positive (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hpositive.
+    eapply database_row_weights_positive_transport with
+      (db := ensure_row_identity f k db).
+    - apply register_row_uses_weights.
+    - apply database_row_weights_positive_ensure. exact Hpositive.
+  Qed.
+
+  Lemma database_row_weights_positive_row_replace : forall db f k previous o,
+    database_row_weights_positive db ->
+    database_row_weights_positive (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hpositive; unfold row_replace;
+      apply database_row_weights_positive_register;
+      apply database_row_weights_positive_row_write;
+      repeat apply database_row_weights_positive_slots_update;
+      exact Hpositive.
   Qed.
 
   Lemma database_history_key_ids_bounded_ensure : forall db f k,
@@ -14472,6 +14588,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (apply database_history_key_ids_bounded_row_replace;
         [exact Hfresh_bounded |]).
     all: intros i Hin; apply allocate_next_monotone; exact (Hck i Hin).
+  Qed.
+
+  Lemma database_row_weights_positive_make : forall db f k,
+    database_row_weights_positive db ->
+    database_row_weights_positive (snd (make f k db)).
+  Proof.
+    intros db f k Hpositive. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hpositive;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try (apply database_row_weights_positive_allocate_next; exact Hpositive);
+      apply database_row_weights_positive_row_replace;
+      apply database_row_weights_positive_allocate_next; exact Hpositive.
   Qed.
 
   Lemma database_row_weight_conserved_make : forall db f k,
@@ -15432,6 +15561,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hnext_bounded | exact Hnext_ck].
   Qed.
 
+  Lemma database_row_weights_positive_put : forall db f k o,
+    database_row_weights_positive db ->
+    database_row_weights_positive (put f k o db).
+  Proof.
+    intros db f k o Hpositive. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext : database_row_weights_positive next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try exact Hpositive;
+        apply database_row_weights_positive_union; exact Hpositive. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext |].
+      apply database_row_weights_positive_row_replace. exact Hnext.
+    - apply database_row_weights_positive_row_replace. exact Hnext.
+  Qed.
+
   Lemma database_row_weight_conserved_put : forall db f k o,
     database_row_store_ok db -> database_row_weight_conserved db ->
     database_row_weight_conserved (put f k o db).
@@ -15680,6 +15833,50 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
       as [[current_key current_id] |]; [| reflexivity].
     reflexivity.
+  Qed.
+
+  Lemma database_row_weights_positive_move : forall db f old current,
+    database_row_weights_positive db ->
+    database_row_weights_positive (move_row_identity f old current db).
+  Proof.
+    intros db f old current Hpositive. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |]; [| exact Hpositive].
+    destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+      as [[current_key current_id] |]; [| exact Hpositive].
+    set (old_root := row_root
+      (length old * (N.to_nat (N.log2 (runtime_allocated (db_runtime db))) + 1))
+      old_id (db_row_store db)).
+    set (current_root := row_root
+      (length old * (N.to_nat (N.log2 (runtime_allocated (db_runtime db))) + 1))
+      current_id (db_row_store db)).
+    set (old_size := match PTrieCode.get old_root (row_weights (db_row_store db))
+      with Some n => n | None => 1%N end).
+    set (current_size := match PTrieCode.get current_root
+      (row_weights (db_row_store db)) with Some n => n | None => 1%N end).
+    assert (Hold_positive : (1 <= old_size)%N).
+    { subst old_size. destruct (PTrieCode.get old_root
+        (row_weights (db_row_store db))) as [n |] eqn:Hget;
+        [apply (Hpositive old_root n Hget) | lia]. }
+    assert (Hcurrent_positive : (1 <= current_size)%N).
+    { subst current_size. destruct (PTrieCode.get current_root
+        (row_weights (db_row_store db))) as [n |] eqn:Hget;
+        [apply (Hpositive current_root n Hget) | lia]. }
+    destruct (Pos.eqb old_root current_root) eqn:Hsame;
+      [exact Hpositive |].
+    destruct (N.leb old_size current_size) eqn:Horder;
+      intros r n Hentry;
+      cbn [database_set_row_store db_row_store row_weights] in Hentry.
+    - destruct (Pos.eq_dec r current_root) as [Heq | Hneq].
+      + subst r. rewrite PTrie.get_set_same in Hentry.
+        injection Hentry as <-. lia.
+      + rewrite PTrie.get_set_other in Hentry by exact Hneq.
+        exact (Hpositive r n Hentry).
+    - destruct (Pos.eq_dec r old_root) as [Heq | Hneq].
+      + subst r. rewrite PTrie.get_set_same in Hentry.
+        injection Hentry as <-. lia.
+      + rewrite PTrie.get_set_other in Hentry by exact Hneq.
+        exact (Hpositive r n Hentry).
   Qed.
 
   (** Fixed historical aliases at either affected root have the destination key. *)
@@ -16352,6 +16549,22 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       [reflexivity | reflexivity | exact Hupdated].
   Qed.
 
+  Lemma database_row_weights_positive_repair_current : forall db f k,
+    database_row_weights_positive db ->
+    database_row_weights_positive (repair_current f k db).
+  Proof.
+    intros db f k Hpositive. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hpositive].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hpositive |].
+    eapply database_row_weights_positive_transport with
+      (db := put f (normal_key db k) (option_map (normal_cell db) output)
+        (row_delete f k db)); [reflexivity |].
+    apply database_row_weights_positive_put.
+    apply database_row_weights_positive_row_delete. exact Hpositive.
+  Qed.
+
   Lemma database_history_codes_valid_move : forall db f old current,
     database_history_codes_valid db ->
     database_history_codes_valid (move_row_identity f old current db).
@@ -16640,6 +16853,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       [exact Hbounded |].
     apply database_history_key_ids_bounded_move.
     apply database_history_key_ids_bounded_repair_current; assumption.
+  Qed.
+
+  Lemma database_row_weights_positive_db_repair_entry : forall db f k,
+    database_row_weights_positive db ->
+    database_row_weights_positive (db_repair_entry f k db).
+  Proof.
+    intros db f k Hpositive. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hpositive].
+    destruct (row_get f current db) as [o |]; [| exact Hpositive].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hpositive |].
+    apply database_row_weights_positive_move.
+    apply database_row_weights_positive_repair_current. exact Hpositive.
   Qed.
 
   Lemma union_uses_raw : forall db i j x e,
