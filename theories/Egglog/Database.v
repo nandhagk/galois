@@ -13581,6 +13581,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hvalid.
   Qed.
 
+  Lemma database_history_key_ids_bounded_row_delete : forall db f k,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (row_delete f k db).
+  Proof.
+    intros db f k Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - rewrite row_delete_ids. reflexivity.
+    - exact Hbounded.
+  Qed.
+
   Lemma database_row_weight_conserved_row_delete : forall db f k,
     database_row_weight_conserved db ->
     database_row_weight_conserved (row_delete f k db).
@@ -14805,6 +14816,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hvalid.
   Qed.
 
+  Lemma database_history_key_ids_bounded_union : forall db i j,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (union i j db).
+  Proof.
+    intros db i j Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - rewrite union_ids. reflexivity.
+    - exact Hbounded.
+  Qed.
+
   Lemma database_row_weight_conserved_union : forall db i j,
     database_row_weight_conserved db ->
     database_row_weight_conserved (union i j db).
@@ -15033,6 +15055,43 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hnext_valid |].
       apply database_history_codes_valid_row_replace. exact Hnext_valid.
     - apply database_history_codes_valid_row_replace. exact Hnext_valid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_put : forall db f k o,
+    wf db -> kind_ok db f k o -> database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (put f k o db).
+  Proof.
+    intros db f k o Hwf Hkind Hbounded. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hck : forall i, In (Id i) ck -> allocated db i).
+    { intros i Hin. subst ck. rewrite normal_key_correct in Hin by exact Hwf.
+      eapply canon_key_allocated; [exact Hwf | | exact Hin].
+      intros j Hmember. apply (proj1 Hkind). apply in_or_app. now left. }
+    assert (Hnext_ids : ids next = ids db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try reflexivity; apply union_ids. }
+    assert (Hnext_bounded : database_history_key_ids_bounded next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try exact Hbounded;
+        apply database_history_key_ids_bounded_union; exact Hbounded. }
+    assert (Hnext_ck : forall i, In (Id i) ck -> allocated next i).
+    { intros i Hin. unfold allocated. rewrite Hnext_ids.
+      exact (Hck i Hin). }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_bounded |].
+      apply database_history_key_ids_bounded_row_replace;
+        [exact Hnext_bounded | exact Hnext_ck].
+    - apply database_history_key_ids_bounded_row_replace;
+        [exact Hnext_bounded | exact Hnext_ck].
   Qed.
 
   Lemma database_row_weight_conserved_put : forall db f k o,
