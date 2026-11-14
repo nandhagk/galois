@@ -1407,6 +1407,47 @@ Proof.
       * exact Hselected_perm.
 Qed.
 
+(** Strictly increasing coordinates are the ordered selections of a source range. *)
+Fixpoint karr_increasing (columns : list nat) : Prop :=
+  match columns with
+  | [] => True
+  | column :: columns =>
+    Forall (fun later => column < later) columns /\ karr_increasing columns
+  end.
+
+(** Every bounded increasing coordinate list is enumerated by choose. *)
+Lemma karr_choose_seq_increasing : forall count start columns,
+  karr_increasing columns ->
+  Forall (fun column => start <= column /\ column < start + count) columns ->
+  In columns (karr_choose (length columns) (seq start count)).
+Proof.
+  induction count as [|count IH]; intros start [|column columns] Hinc Hrange.
+  - rewrite karr_choose_zero. now left.
+  - cbn [karr_increasing] in Hinc.
+    inversion Hrange as [|? ? [Hlow Hhigh] _]; subst. lia.
+  - rewrite karr_choose_zero. now left.
+  - cbn [karr_increasing] in Hinc. destruct Hinc as [Hafter Htail].
+    inversion Hrange as [|? ? [Hlow Hhigh] Hrest]; subst.
+    cbn [seq karr_choose length].
+    destruct (Nat.eq_dec column start) as [Heq|Hneq].
+    + subst column. apply in_or_app. left.
+      apply in_map_iff. exists columns. split; [reflexivity|].
+      apply IH; [exact Htail|].
+      apply Forall_forall. intros later Hin.
+      pose proof (proj1 (Forall_forall _ _) Hafter later Hin) as Hlater.
+      pose proof (proj1 (Forall_forall _ _) Hrest later Hin) as [_ Hbound].
+      cbn in Hlater, Hbound. lia.
+    + apply in_or_app. right.
+      apply IH.
+      * cbn [karr_increasing]. now split.
+      * constructor.
+        -- cbn [length] in *. lia.
+        -- apply Forall_forall. intros later Hin.
+           pose proof (proj1 (Forall_forall _ _) Hafter later Hin) as Hlater.
+           pose proof (proj1 (Forall_forall _ _) Hrest later Hin) as [_ Hbound].
+           cbn in Hlater, Hbound. lia.
+Qed.
+
 (** A selected row and column set determines one square submatrix. *)
 Definition karr_submatrix (columns : list nat) (rows : list (list Z)) : list (list Z) :=
   map (fun row => map (fun index => karr_nth index row) columns) rows.
