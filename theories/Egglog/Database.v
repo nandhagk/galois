@@ -6498,10 +6498,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Lemma wf_init : forall ds sl, wf (init ds sl).
   Proof. intros ds sl. exact (database_full_ok_init ds sl). Qed.
 
-  (** Rebuilding keeps the database well formed. *)
-  Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
-  Proof. Admitted. (* STUB *)
-
   (** Advancing preserves every full slot index exactly. *)
   Lemma index_advance_all : forall s db, index s false (advance db) = index s false db.
   Proof.
@@ -7496,30 +7492,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + exact (wf_forest db (database_public_base db Hpublic)).
       + exact Howned.
   Qed.
-
-  (** Rebuilding canonicalizes every row and empties pending work. *)
-  Lemma rebuild_canonical : forall db, wf db ->
-    canonical (rebuild db) /\ pending (rebuild db) = 0.
-  Proof. Admitted. (* STUB *)
-
-  (** Rebuilding computes functional-dependency congruence. *)
-  Lemma rebuild_same : forall db i j, wf db ->
-    (same (view (rebuild db)) i j <-> cong db i j).
-  Proof. Admitted. (* STUB *)
-
-  (** Every old row survives canonicalization and output merging. *)
-  Lemma rebuild_keeps : forall db f k o, wf db -> row (view db) f k o ->
-    exists o', row (view (rebuild db)) f (map (canon (rebuild db)) k) o' /\
-      out_le (rebuild db) f (option_map (canon (rebuild db)) o) o'.
-  Proof. Admitted. (* STUB *)
-
-  (** Every rebuilt row comes from a nonempty group of old rows. *)
-  Lemma rebuild_from : forall db f k' o', wf db -> row (view (rebuild db)) f k' o' ->
-    exists srcs, srcs <> [] /\
-      Forall (fun ko => row (view db) f (fst ko) (snd ko) /\
-        map (canon (rebuild db)) (fst ko) = k') srcs /\
-      o' = merged (rebuild db) f (map snd srcs).
-  Proof. Admitted. (* STUB *)
 
   (** Canonical databases without pending work rebuild to themselves. *)
   Lemma rebuild_idle : forall db, wf db -> canonical db -> pending db = 0 -> rebuild db = db.
@@ -23878,6 +23850,213 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     now rewrite Hrun.
   Qed.
 
+  (** Public rebuild contracts derived from the completed active run. *)
+
+  (** The completed fuelled run exposes an actual stopped invariant state. *)
+  Lemma rebuild_stopped : forall db, wf db ->
+    exists s, state_inv s /\ rstep s = inr (rebuild db).
+  Proof.
+    intros db Hwf.
+    assert (Hinitial : state_inv (db, [])).
+    { exact (proj1 (F1_inv_wf db) Hwf). }
+    assert (Hstop : forall s result, state_inv s -> rstep s = inr result ->
+      exists final, state_inv final /\ rstep final = inr result).
+    { intros s result Hinv Hdone. exists s. now split. }
+    pose proof (LoopNFacts.loopN_preserves repair_state t rstep state_inv
+      (fun result => exists final, state_inv final /\ rstep final = inr result)
+      F8_rstep_inv Hstop (rebuild_fuel db) (db, []) Hinitial) as Hrun.
+    rewrite (F16_rebuild_run db Hwf) in Hrun. exact Hrun.
+  Qed.
+
+  (** A property preserved by active steps holds at the completed database. *)
+  Lemma rebuild_active_preserves : forall P : t -> Prop,
+    (forall s next, state_inv s -> rstep s = inl next ->
+      P (fst s) -> P (fst next)) ->
+    forall db, wf db -> P db -> P (rebuild db).
+  Proof.
+    intros P Hstep db Hwf Hinitial.
+    assert (Hgo : forall s next, state_inv s /\ P (fst s) ->
+      rstep s = inl next -> state_inv next /\ P (fst next)).
+    { intros s next [Hinv HP] Hnext. split.
+      - exact (F8_rstep_inv s next Hinv Hnext).
+      - exact (Hstep s next Hinv Hnext HP). }
+    assert (Hstop : forall s result, state_inv s /\ P (fst s) ->
+      rstep s = inr result -> P result).
+    { intros s result [Hinv HP] Hdone.
+      destruct (F13_rstep_done s result Hinv Hdone) as [Hequal _].
+      now rewrite Hequal. }
+    pose proof (LoopNFacts.loopN_preserves repair_state t rstep
+      (fun s => state_inv s /\ P (fst s)) P Hgo Hstop
+      (rebuild_fuel db) (db, []) (conj (proj1 (F1_inv_wf db) Hwf) Hinitial)) as Hrun.
+    rewrite (F16_rebuild_run db Hwf) in Hrun. exact Hrun.
+  Qed.
+
+  (** Rebuilding keeps the database well formed. *)
+  Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
+  Proof.
+    intros db Hwf. destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
+    destruct (F13_rstep_done s (rebuild db) Hinv Hstop) as (_ & _ & Hfinal & _).
+    exact (proj2 (F1_inv_wf (rebuild db)) Hfinal).
+  Qed.
+
+  (** Rebuilding canonicalizes every row and empties pending work. *)
+  Lemma rebuild_canonical : forall db, wf db ->
+    canonical (rebuild db) /\ pending (rebuild db) = 0.
+  Proof.
+    intros db Hwf. destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
+    destruct (F13_rstep_done s (rebuild db) Hinv Hstop)
+      as (_ & _ & _ & Hcanonical & Hpending & _).
+    now split.
+  Qed.
+
+  (** The functional-dependency closure is unchanged by the complete active run. *)
+  Lemma rebuild_cong : forall db, wf db ->
+    forall i j, cong (rebuild db) i j <-> cong db i j.
+  Proof.
+    intros db Hwf.
+    apply (rebuild_active_preserves
+      (fun current => forall i j, cong current i j <-> cong db i j)).
+    - intros s next Hinv Hnext Hbefore i j.
+      rewrite (F10_rstep_cong s next i j Hinv Hnext). apply Hbefore.
+    - exact Hwf.
+    - intros i j. reflexivity.
+  Qed.
+
+  (** Rebuilding computes functional-dependency congruence. *)
+  Lemma rebuild_same : forall db i j, wf db ->
+    (same (view (rebuild db)) i j <-> cong db i j).
+  Proof.
+    intros db i j Hwf.
+    destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
+    destruct (F13_rstep_done s (rebuild db) Hinv Hstop)
+      as (_ & _ & _ & _ & _ & Hclosed).
+    split.
+    - intro Hsame. apply (proj1 (rebuild_cong db Hwf i j)). now apply cong_same.
+    - intro Hcong. apply (proj2 (rebuild_cong db Hwf i j)) in Hcong.
+      eapply (fd_congruence_minimal (view (rebuild db)) (same (view (rebuild db))));
+        [| exact Hclosed | | | exact Hcong].
+      + intros x y Hsame. exact Hsame.
+      + intros x y Hsame. now apply equality_log_sym.
+      + intros x y z Hxy Hyz. eapply equality_log_trans; eassumption.
+  Qed.
+
+  (** Canonicalizing the source output does not change its containment relation. *)
+  Lemma database_out_le_canon_left : forall db f a b, forest_agrees db ->
+    (out_le db f (option_map (canon db) a) b <-> out_le db f a b).
+  Proof.
+    intros db f [[i | a] |] [[j | b] |] Hforest;
+      cbn [out_le option_map canon cell_le]; try reflexivity.
+    split; intro Hsame.
+    - eapply equality_log_trans; [exact (forest_agrees_id db i Hforest) | exact Hsame].
+    - eapply equality_log_trans; [| exact Hsame].
+      apply equality_log_sym. exact (forest_agrees_id db i Hforest).
+  Qed.
+
+  (** Enlarging identifier equality with fixed kinds preserves output containment. *)
+  Lemma database_out_le_monotone : forall db next f a b,
+    kind (view next) = kind (view db) ->
+    (forall i j, same (view db) i j -> same (view next) i j) ->
+    out_le db f a b -> out_le next f a b.
+  Proof.
+    intros db next f [[i | a] |] [[j | b] |] Hkind Hsame Hle;
+      cbn [out_le cell_le] in *; try contradiction; try exact I.
+    - now apply Hsame.
+    - destruct Hle as [m [Hdecl Hmerge]]. exists m. split; [now rewrite Hkind | exact Hmerge].
+  Qed.
+
+  (** Output containment composes through equality and semilattice merge laws. *)
+  Lemma database_out_le_transitive : forall db f a b c,
+    out_le db f a b -> out_le db f b c -> out_le db f a c.
+  Proof.
+    intros db f [a |] [b |] [c |] Hab Hbc;
+      cbn [out_le] in *; try contradiction; try exact I.
+    destruct a as [i | a], b as [j | b], c as [k | c];
+      cbn [cell_le] in *; try contradiction.
+    - eapply equality_log_trans; eassumption.
+    - destruct Hab as [m [Hkind Hab]], Hbc as [n [Hkind' Hbc]].
+      assert (Hequal : m = n) by congruence. subst n.
+      exists m. split; [exact Hkind |].
+      rewrite <- Hbc at 1. rewrite V.merge_assoc, Hab. exact Hbc.
+  Qed.
+
+  (** Every continuing callback retains each old identifier equality. *)
+  Lemma database_rstep_same_preserves : forall s next, rstep s = inl next ->
+    forall i j, same (view (fst s)) i j -> same (view (fst next)) i j.
+  Proof.
+    intros [db work] next Hnext i j Hsame. unfold rstep in Hnext.
+    destruct work as [| [f k] rest]; cbn [db_rstep fst snd] in Hnext.
+    - destruct (db_pop_loser db) as [[x current] |] eqn:Hpop; [| discriminate].
+      injection Hnext as Hequal. subst next. cbn [fst].
+      destruct (db_pop_loser_preserves db x current Hpop) as [_ Hview].
+      now rewrite Hview.
+    - injection Hnext as Hequal. subst next. cbn [fst].
+      now apply db_repair_entry_same_preserves.
+  Qed.
+
+  (** Active repair retains each old row at a related key and a greater output. *)
+  Lemma rebuild_row_related : forall db f k o, wf db -> row (view db) f k o ->
+    exists k' o', row (view (rebuild db)) f k' o' /\
+      Forall2 (cell_rel (same (view (rebuild db)))) k k' /\ out_le (rebuild db) f o o'.
+  Proof.
+    intros db f k o Hwf Hrow.
+    apply (rebuild_active_preserves (fun current =>
+      exists k' o', row (view current) f k' o' /\
+        Forall2 (cell_rel (same (view current))) k k' /\ out_le current f o o')).
+    - intros s next Hinv Hnext [before [output [Hcurrent [Hkeys Hout]]]].
+      destruct (F11_rstep_keeps s next f before output Hinv Hnext Hcurrent)
+        as [after [result [Hresult [Hmoved Hlarger]]]].
+      pose proof (F8_rstep_inv s next Hinv Hnext) as Hinv'.
+      assert (Hforest : forest_agrees (fst next)).
+      { exact (inv_on_forest_agrees (fst next) (snd next) Hinv'). }
+      assert (Hsame : forall i j, same (view (fst s)) i j -> same (view (fst next)) i j).
+      { exact (database_rstep_same_preserves s next Hnext). }
+      exists after, result. split; [exact Hresult |]. split.
+      + eapply key_rel_transitive; [| | exact Hmoved].
+        * intros i j x Hij Hjx. eapply equality_log_trans; eassumption.
+        * eapply key_related_monotone; eassumption.
+      + apply (proj1 (database_out_le_canon_left (fst next) f output result Hforest)) in Hlarger.
+        eapply database_out_le_transitive; [| exact Hlarger].
+        eapply database_out_le_monotone; [| exact Hsame | exact Hout].
+        exact (proj1 (F9_rstep_layout s next Hinv Hnext)).
+    - exact Hwf.
+    - exists k, o. split; [exact Hrow |]. split; [apply key_related_refl |].
+      apply (proj1 (database_out_le_canon_left db f o o (forest_agrees_initial db Hwf))).
+      exact (row_output_canon_le db f k o (forest_agrees_initial db Hwf)
+        (wf_row_kind_ok db f k o Hwf Hrow)).
+  Qed.
+
+  (** Every old row survives canonicalization and output merging. *)
+  Lemma rebuild_keeps : forall db f k o, wf db -> row (view db) f k o ->
+    exists o', row (view (rebuild db)) f (map (canon (rebuild db)) k) o' /\
+      out_le (rebuild db) f (option_map (canon (rebuild db)) o) o'.
+  Proof.
+    intros db f k o Hwf Hrow.
+    destruct (rebuild_row_related db f k o Hwf Hrow)
+      as [k' [o' [Htarget [Hkeys Hout]]]].
+    pose proof (wf_rebuild db Hwf) as Hfinal.
+    pose proof (proj1 (rebuild_canonical db Hwf)) as Hcanonical.
+    pose proof (proj1 (canonical_row_identity (rebuild db) f k' o' Hcanonical Htarget)) as Hkey.
+    assert (Hequal : map (canon (rebuild db)) k = k').
+    { exact (related_key_canonical (rebuild db) [] k k'
+        (proj1 (F1_inv_wf (rebuild db)) Hfinal) Hkeys Hkey). }
+    exists o'. split; [now rewrite Hequal |].
+    apply (proj2 (database_out_le_canon_left (rebuild db) f o o'
+      (forest_agrees_initial (rebuild db) Hfinal))). exact Hout.
+  Qed.
+
+  (** Every rebuilt row comes from a nonempty group of old rows. *)
+  Lemma rebuild_from : forall db f k' o', wf db -> row (view (rebuild db)) f k' o' ->
+    exists srcs, srcs <> [] /\
+      Forall (fun ko => row (view db) f (fst ko) (snd ko) /\
+        map (canon (rebuild db)) (fst ko) = k') srcs /\
+      o' = merged (rebuild db) f (map snd srcs).
+  Proof.
+    intros db f k o Hwf Hrow.
+    destruct (rebuild_stopped db Hwf) as [s [Hinv Hstop]].
+    exact (F22_lineage_done db s (rebuild db) (proj1 (F1_inv_wf db) Hwf)
+      Hinv Hstop (rebuild_lineage db Hwf) f k o Hrow).
+  Qed.
+
 End Database.
 
 Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
@@ -24148,7 +24327,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     pose proof c_db_trie_budget. nia.
   Qed.
-
 
   (** Binary slot width fits its logarithmic public query size, including zero. *)
   Lemma slot_width_log : forall s, N.size_nat s <= N.to_nat (N.log2 s) + 1.
@@ -25031,7 +25209,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intro db. pose proof (unit_width_budget db). lia.
   Qed.
 
-
   (** Incrementing a counter adds at most one bit. *)
   Lemma N_successor_width : forall n, N.size_nat (n + 1) <= N.size_nat n + 1.
   Proof.
@@ -25610,13 +25787,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     time_unfold T_ids. time_unfold @T_db_runtime. time_unfold @T_runtime_allocated. nia.
   Qed.
 
-
-
-
-
-
-
-
   (** Allowing the forest's two queried keys costs at most four allocation-log units. *)
   Lemma union_logarithm_budget : forall n,
     Nat.log2 (N.to_nat n + 2) + 1 <= 4 * (N.to_nat (N.log2 n) + 1).
@@ -25693,7 +25863,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (budget := N.of_nat (unit db)) in *. clearbody budget. nia.
   Qed.
 
-
   (** The public coefficient covers the actual union clock without potential assumptions. *)
   Lemma T_union_unit_bound : forall i j db, inv db -> allocated db i -> allocated db j ->
     (T_union i j db <= c_db * N.of_nat (unit db))%N.
@@ -25704,7 +25873,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     set (forest_cost := UnionFindT.c_uf) in *. clearbody forest_cost.
     set (database_cost := c_db) in *. clearbody database_cost. lia.
   Qed.
-
 
   Lemma inv_init : forall ds sl, inv (init ds sl).
   Proof.
@@ -26793,8 +26961,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply N.mul_le_mono_l; lia.
   Qed.
 
-
-
   (** Identifying class names cannot create another distinct class. *)
   Lemma database_distinct_classes_image : forall (rename : positive -> positive) classes,
     database_distinct_classes (map rename classes) <= database_distinct_classes classes.
@@ -26807,26 +26973,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - rewrite length_map. reflexivity.
   Qed.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   (** The public potential is the weighted occurrence credit. *)
   Lemma F2_potential : forall B db, (potential B db = k_loop * rebuild_potential B db)%N.
   Proof. reflexivity. Qed.
@@ -26835,146 +26981,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Lemma F3_unit : forall db,
     unit db = (N.to_nat (N.log2 (ids db)) + 1) * (N.size_nat (wmark db) + 1).
   Proof. reflexivity. Qed.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   (** Congruent cells have equal denotations in every satisfying model. *)
   Lemma F17_cong_den : forall (M : model (V := V.t)) nu db i j, wf db ->
@@ -27030,61 +27036,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply (proj2 (db_rstep_semantic_continue M nu s s'
       (conj (inv_on_model_forest M nu (fst s) (snd s) Hinv Hsat) Hsat) Hstep)).
   Qed.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   (** A losing root enters a class at least twice as large. *)
   Lemma T1_doubling : forall db i j x, inv db -> repr db x = x ->
@@ -27188,7 +27139,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold k_stop. nia.
   Qed.
 
-
   (** The actual loop must fit the public budget after all use-entry charges are summed. *)
   Lemma T8_rebuild_loop : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
     (T_rebuild_fuel db + T_loopN rstep T_rstep (rebuild_fuel db) (db, []) + k_driver +
@@ -27280,8 +27230,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (inv_on_forest_wf db work Hinv).
   Qed.
 
-
-
   (** Collision unions also double the losing class. *)
   Lemma F_rstep_doubling : forall s s' x, state_inv s -> rstep s = inl s' ->
     repr (fst s) x = x -> repr (fst s') x <> x ->
@@ -27299,25 +27247,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (db_repair_entry_root_doubling db f k x
         (inv_on_forest_wf db ((f, k) :: rest) Hinv) Hfixed Hchanged).
   Qed.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   (** Repair never reduces the spending unit. *)
   Lemma F9b_rstep_unit : forall s s', state_inv s -> rstep s = inl s' ->
