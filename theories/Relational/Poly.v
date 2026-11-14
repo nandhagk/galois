@@ -13787,6 +13787,24 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply poly_normal_coef_nodup.
   Qed.
 
+  (** Every distinct prepared coefficient occupies one raw encoded-key slot. *)
+  Lemma poly_assign_prepared_key_space : forall f,
+    length (coef (poly_prepare_form X.encode f)) <= 2^F.form_bits f.
+  Proof.
+    intro f.
+    rewrite <- (length_map fst (coef (poly_prepare_form X.encode f))).
+    apply AssignCore.AssignKeySupport.poly_signed_key_width_count.
+    - apply poly_assign_prepared_nodup.
+    - apply Forall_forall. intros y Hy.
+      apply in_map_iff in Hy as [q [Heq Hq]]. subst y.
+      cbn [poly_prepare_form coef] in Hq.
+      rewrite poly_signed_normal_eq in Hq.
+      pose proof (poly_normal_coef_keys X.t X.encode (coef f) q Hq) as Hkey.
+      apply in_map_iff in Hkey as [p [Heq Hp]].
+      pose proof (poly_form_entry_bits f p Hp) as Hbits.
+      rewrite <- Heq. unfold X.bits in *. lia.
+  Qed.
+
   (** Preparing a recognized form stays within the linearizer's term allowance. *)
   Lemma poly_assign_prepared_length : forall e f wrapping,
     F.lin_of e = Some (f, wrapping) ->
