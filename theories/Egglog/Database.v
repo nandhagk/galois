@@ -22589,6 +22589,38 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         exact Hold.
   Qed.
 
+  Lemma move_row_identity_lookup_other : forall db f old ck g args value,
+    database_row_store_ok db -> length old = length ck ->
+    db_locate f old db = Some old -> db_locate f ck db = Some ck ->
+    db_locate g args db = Some value -> value <> old -> value <> ck ->
+    db_locate g args (move_row_identity f old ck db) = Some value.
+  Proof.
+    intros db f old ck g args value Hstore Hlength Hsource_loc Hdest_loc
+      Hlookup Hnot_old Hnot_ck.
+    destruct (PTrieCode.get (db_row_code f old)
+      (row_history (db_row_store db))) as [[old_key old_id] |] eqn:Hsource.
+    2: { unfold move_row_identity. now rewrite Hsource. }
+    destruct (PTrieCode.get (db_row_code f ck)
+      (row_history (db_row_store db))) as [[ck_key ck_id] |] eqn:Hdest.
+    2: { unfold move_row_identity. now rewrite Hsource, Hdest. }
+    destruct (PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store db))) as [[key r] |] eqn:Hentry.
+    2: { unfold db_locate in Hlookup. now rewrite Hentry in Hlookup. }
+    eapply (move_row_identity_locate_value db f old ck g args value
+      old_key old_id ck_key ck_id key r Hstore Hlength Hsource Hdest
+      Hentry Hsource_loc Hdest_loc Hlookup).
+    intros [Hroot | Hroot].
+    - unfold db_locate in Hsource_loc, Hlookup.
+      rewrite Hsource in Hsource_loc. rewrite Hentry in Hlookup.
+      unfold ids in Hroot. rewrite Hroot in Hlookup.
+      exfalso. apply Hnot_old. congruence.
+    - unfold db_locate in Hdest_loc, Hlookup.
+      rewrite Hdest in Hdest_loc. rewrite Hentry in Hlookup.
+      unfold ids in Hroot.
+      rewrite Hroot in Hlookup.
+      exfalso. apply Hnot_ck. congruence.
+  Qed.
+
   Lemma repair_current_history_inverse : forall db f k g args key r,
     UnionFind.wf (db_forest db) ->
     PTrieCode.get (db_row_code g args)
