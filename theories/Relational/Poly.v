@@ -13839,6 +13839,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact Hdimension.
   Qed.
 
+  (** The linearizer's width contract covers raw keys, coefficients, and the new key. *)
+  Lemma poly_assign_width_transport : forall x e P f wrapping,
+    F.lin_of e = Some (f, wrapping) ->
+    poly_raw_keys P + poly_raw_bits P + X.bits x + F.form_bits f + 1 <=
+      nell (Reached P) + X.bits x + F.bits_e e + 1.
+  Proof.
+    intros x e P f wrapping Hlinear.
+    destruct (F.lin_of_size e f wrapping Hlinear) as [_ Hbits].
+    pose proof (poly_raw_width P) as Hraw.
+    lia.
+  Qed.
+
   Lemma poly_assign_sources_row_bits : forall x P,
     fold_right Nat.max 0 (map RangeCert.row_bits (poly_assign_sources x P)) =
       fold_right Nat.max 0 (map C.row_bits P).
