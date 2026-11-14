@@ -15443,6 +15443,25 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       [exact Hwidth|rewrite karr_size_opp; exact Hwidth].
   Qed.
 
+  (** Contradiction certificates retain one bounded basis weight vector. *)
+  Lemma karr_empty_certificate_envelope : forall P rs ms dim bits,
+    empty_certificate P rs = Some ms ->
+    Forall (karr_row_envelope dim (length P) bits) rs ->
+    length ms <= length P /\
+    Forall (fun z => Z.size_nat z <= bits) ms.
+  Proof.
+    intros P rs. induction rs as [|row rest IH];
+      intros ms dim bits Hcert Hrows; [discriminate Hcert|].
+    apply Forall_cons_iff in Hrows as [Hrow Hrest].
+    cbn [empty_certificate] in Hcert.
+    destruct (karr_zero row && negb (Z.eqb (kright row) 0) &&
+      C.check_empty P (kweight row)) eqn:Htest.
+    - inversion Hcert; subst ms.
+      destruct Hrow as [_ [_ [_ [Hlength [Hbits _]]]]].
+      now split.
+    - eapply IH; eassumption.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
