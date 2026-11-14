@@ -20463,6 +20463,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold inv_on, forest_ok in Hinv. tauto.
   Qed.
 
+  Lemma inv_on_core_bridge : forall db work,
+    inv_on db work -> core_bridge db.
+  Proof.
+    intros db work Hinv.
+    unfold inv_on, forest_ok in Hinv. tauto.
+  Qed.
+
+  Lemma inv_on_forest_members : forall db work i,
+    inv_on db work ->
+    (UnionFind.mem (db_forest db) i <-> allocated db i).
+  Proof.
+    intros db work i Hinv.
+    exact (proj1 (inv_on_core_bridge db work Hinv) i).
+  Qed.
+
   Lemma inv_on_repair_fixed : forall db f k rest current output,
     inv_on db ((f, k) :: rest) -> located db f k = Some current ->
     row_get f current db = Some output ->
@@ -20481,7 +20496,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { apply inv_on_forest_wf with (work := (f, k) :: rest). exact Hinv. }
     assert (Hmembers : forall i,
       UnionFind.mem (db_forest db) i <-> allocated db i).
-    { unfold inv_on, forest_ok, core_bridge in Hinv. tauto. }
+    { intro i. apply inv_on_forest_members with (work := (f, k) :: rest).
+      exact Hinv. }
     assert (Hcanonical : forall i, row_ids current output i -> repr db i = i).
     { intros i Hin. apply (normal_row_equal_canonical_forest db current output
         Hforest Hmembers Hkey_code Houtput i). exact Hin. }
