@@ -11306,6 +11306,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply Pos.le_refl.
   Qed.
 
+  Lemma ensure_row_identity_new_depth : forall db f k,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
+    exists d,
+      d <= length k * (N.to_nat (N.log2 (ids (ensure_row_identity f k db))) + 1) /\
+      (let parent current :=
+        match PTrieCode.get current
+          (row_links (db_row_store (ensure_row_identity f k db))) with
+        | Some p => p | None => current end in
+       parent (Nat.iter d parent (row_fresh (db_row_store db))) =
+         Nat.iter d parent (row_fresh (db_row_store db))) /\
+      db_locate f k (ensure_row_identity f k db) =
+        PTrieCode.get
+          (Nat.iter d (fun current =>
+            match PTrieCode.get current
+              (row_links (db_row_store (ensure_row_identity f k db))) with
+            | Some p => p | None => current end) (row_fresh (db_row_store db)))
+          (row_keys (db_row_store (ensure_row_identity f k db))).
+  Proof.
+    intros db f k Hstore Hnone. exists 0.
+    split; [lia |]. split.
+    - cbn [Nat.iter]. rewrite ensure_row_identity_links.
+      rewrite (database_row_store_future_links db Hstore) by apply Pos.le_refl.
+      reflexivity.
+    - rewrite (ensure_row_identity_new_locate db f k Hstore Hnone).
+      cbn [Nat.iter]. unfold ensure_row_identity. rewrite Hnone.
+      cbn [database_set_index_counters database_set_row_store db_row_store row_keys].
+      now rewrite PTrie.get_set_same.
+  Qed.
+
   Lemma pop_loser_locate : forall db x db' f k,
     db_pop_loser db = Some (x, db') -> db_locate f k db' = db_locate f k db.
   Proof.
