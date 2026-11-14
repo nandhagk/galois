@@ -272,6 +272,16 @@ Fixpoint karr_unit (length index : nat) : list Z :=
 
 TimeFun karr_unit.
 
+(** A certificate vector of width at least two contains a zero. *)
+Lemma karr_unit_zero : forall total index,
+  2 <= total -> In 0%Z (karr_unit total index).
+Proof.
+  intros [|[|total]] [|index] Htotal; try lia;
+    cbn [karr_unit repeat List.In].
+  - now right; left.
+  - now left.
+Qed.
+
 (** Every stored integer is part of the augmented elimination matrix. *)
 Definition karr_row_entries (r : karr_row) : list Z :=
   kcoeff r ++ kright r :: kweight r ++ [kscale r].
@@ -11299,6 +11309,31 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply IH.
   Qed.
 
+  (** Every initialized certificate vector has a zero when two source slots exist. *)
+  Lemma seed_rows_zero_weight : forall xs total index P,
+    2 <= total ->
+    Forall (fun r => In 0%Z (kweight r)) (seed_rows xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intros index Htotal; [constructor|].
+    cbn [seed_rows]. destruct (lrel r).
+    - constructor; [cbn [kweight]; now apply karr_unit_zero|now apply IH].
+    - now apply IH.
+  Qed.
+
+  (** Every seed row has a literal zero when the input has at least two rows. *)
+  Lemma bareiss_seed_zero : forall P r,
+    2 <= length P -> In r (bareiss_seeds P) ->
+    In 0%Z (karr_row_entries r).
+  Proof.
+    intros P r Hcount Hin. unfold bareiss_seeds in Hin.
+    pose proof (proj1 (Forall_forall _ _)
+      (seed_rows_zero_weight (variables P) (length P) 0
+        (map normalize_row P) Hcount) r Hin) as Hzero.
+    unfold karr_row_entries. apply in_or_app. right. right.
+    apply in_or_app. now left.
+  Qed.
+
   (** Every initial augmented entry is both traced and an input minor. *)
   Lemma bareiss_initial_entry : forall P r z,
     In r (bareiss_seeds P) -> In z (karr_row_entries r) ->
@@ -11314,6 +11349,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           (seed_entries_width (variables P) (length P) 0 (map normalize_row P)) r Hr) as Hwidth.
         rewrite Hwidth. reflexivity.
       + exact Hz.
+  Qed.
+
+  (** A run with two source slots and a live seed has zero among its input minors. *)
+  Lemma input_minors_zero : forall P,
+    2 <= length P -> bareiss_seeds P <> [] -> In 0%Z (input_minors P).
+  Proof.
+    intros P Hcount Hnonempty.
+    destruct (bareiss_seeds P) as [|r rs] eqn:Hseeds; [contradiction|].
+    assert (Hin : In r (bareiss_seeds P)) by (rewrite Hseeds; now left).
+    exact (proj2 (bareiss_initial_entry P r 0 Hin
+      (bareiss_seed_zero P r Hcount Hin))).
   Qed.
 
   (** Every final basis entry occurs in the trace. *)
