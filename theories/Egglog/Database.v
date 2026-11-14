@@ -3059,6 +3059,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       PTrieCode.get code (row_history (db_row_store db)) = Some ((f, k), id) ->
       code = db_row_code f k.
 
+  (** Every identifier in a historical key was allocated when recorded. *)
+  Definition database_history_key_ids_bounded (db : t) : Prop :=
+    forall code f k id,
+      PTrieCode.get code (row_history (db_row_store db)) = Some ((f, k), id) ->
+      forall i, In (Id i) k -> allocated db i.
+
   (** A history identifier belongs to a row-link component. *)
   Definition database_history_connected (db : t) (a b : positive) : Prop :=
     clos_refl_sym_trans positive
@@ -3719,6 +3725,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_codes_valid (init ds sl).
   Proof.
     intros ds sl code f k id Hentry.
+    cbn [init db_row_store row_history] in Hentry.
+    rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_init : forall ds sl,
+    database_history_key_ids_bounded (init ds sl).
+  Proof.
+    intros ds sl code f k id Hentry i Hin.
     cbn [init db_row_store row_history] in Hentry.
     rewrite PTrie.get_empty in Hentry. discriminate.
   Qed.
@@ -12413,6 +12427,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite Hhistory in Hentry. exact (Hvalid code f k id Hentry).
   Qed.
 
+  Lemma database_history_key_ids_bounded_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    (ids db <= ids db')%N -> database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded db'.
+  Proof.
+    intros db db' Hhistory Hids Hbounded code f k id Hentry i Hin.
+    rewrite Hhistory in Hentry.
+    unfold allocated in *. eapply N.le_trans;
+      [exact (Hbounded code f k id Hentry i Hin) | exact Hids].
+  Qed.
+
   Lemma database_history_connected_transport : forall db db' a b,
     row_links (db_row_store db') = row_links (db_row_store db) ->
     database_history_connected db a b ->
@@ -13161,6 +13186,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       inversion Hentry. subst. reflexivity.
     - rewrite PTrie.get_set_other in Hentry by exact Hother.
       exact (Hvalid code g args r Hentry).
+  Qed.
+
+  Lemma database_history_key_ids_bounded_ensure : forall db f k,
+    database_history_key_ids_bounded db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_history_key_ids_bounded (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hbounded Hinput. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[label id] |] eqn:Hprior; [exact Hbounded |].
+    intros code g args r Hentry i Hin.
+    cbn [database_set_index_counters database_set_row_store db_row_store
+      row_history ids db_runtime runtime_allocated] in Hentry |- *.
+    destruct (Pos.eq_dec code (db_row_code f k)) as [Heq | Hother].
+    - subst code. rewrite PTrie.get_set_same in Hentry.
+      inversion Hentry. subst. apply Hinput. exact Hin.
+    - rewrite PTrie.get_set_other in Hentry by exact Hother.
+      exact (Hbounded code g args r Hentry i Hin).
   Qed.
 
   Lemma database_row_weight_conserved_ensure : forall db f k,
