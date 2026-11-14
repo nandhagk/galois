@@ -13787,7 +13787,13 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_karr : N := (karr_subst_factor + 1)%N.
+  Definition c_karr : N :=
+    (karr_subst_factor + 1 +
+      2 * (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor) +
+      256 * (C.c_lc + 1) + 64 +
+      16 * karr_dense_factor + 16384 * 64 + 1024 * 64 +
+      256 * C.c_lc + 64)%N.
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_karr * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
@@ -13810,10 +13816,6 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
         (C.lsize r + C.cbits P (mults k) + 1)) <=
       k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
-    (T_entail_cert P r <= c_karr * N.of_nat
-      (elimination_work (Reached P) (Reached (r :: nil))))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_join_karr_le : forall a b, normal_s a -> normal_s b ->
     (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
@@ -16092,10 +16094,14 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         by lia. nia. }
     assert (Hright_positive_total :
       (Z.T_mul 1 (kright result) + Z.T_leb 0 (1 * kright result) <=
-        32 * work)%N) by nia.
+        32 * work)%N).
+    { eapply N.le_trans; [exact Hright_positive|].
+      now apply N.mul_le_mono_l. }
     assert (Hright_negative_total :
       (Z.T_mul (-1) (kright result) + Z.T_leb 0 ((-1) * kright result) <=
-        32 * work)%N) by nia.
+        32 * work)%N).
+    { eapply N.le_trans; [exact Hright_negative|].
+      now apply N.mul_le_mono_l. }
     assert (Hmap_positive_total : (ListDef.T_map
       (fun z => (-1 * z)%Z)
       (fun z => (1 + (1 + Z.T_mul (-1) z))%N)
@@ -17046,6 +17052,15 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         * eapply karr_entail_clock_sum;
             [exact Hwork|exact Hcontradiction|exact Htarget|lia].
         * apply N.mul_le_mono_r. lia.
+  Qed.
+
+  Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
+    (T_entail_cert P r <= c_karr * N.of_nat
+      (elimination_work (Reached P) (Reached (r :: nil))))%N.
+  Proof.
+    intros P r HP Hr.
+    eapply N.le_trans; [exact (T_karr_entail_cert_public P r HP Hr)|].
+    apply N.mul_le_mono_r. unfold c_karr. lia.
   Qed.
 
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
