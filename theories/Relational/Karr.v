@@ -11301,6 +11301,111 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       lia.
   Qed.
 
+  (** One uniform charge covers each remaining column of a bounded run. *)
+  Definition karr_bareiss_stage_budget (budget bits : nat) : N :=
+    (32768 * N.of_nat (budget + 1) * N.of_nat (budget + budget + 1) *
+      N.of_nat ((bits + 1)^2))%N.
+
+  (** The partition in the run state bounds its live row count. *)
+  Lemma karr_run_state_row_count : forall width cols original previous
+      pivot_rows pivot_columns columns labels rows,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows -> length rows <= length original.
+  Proof.
+    intros width cols original previous pivot_rows pivot_columns columns labels
+      rows Hstate.
+    unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [Hlabels [_ [_ [_ [_ [Hpartition _]]]]]]]].
+    apply Permutation_length in Hpartition.
+    rewrite length_app in Hpartition. lia.
+  Qed.
+
+  (** Summing the stage charge follows the exact labeled elimination trace. *)
+  Lemma T_karr_bareiss_run_bounded : forall width cols original previous
+      pivot_rows pivot_columns columns labels rows budget bits,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows ->
+    length original <= budget -> length columns <= budget ->
+    (forall z, In z (karr_signed_minors width original) -> Z.size_nat z <= bits) ->
+    (T_karr_bareiss cols previous rows <=
+      N.of_nat cols * karr_bareiss_stage_budget budget bits + 4)%N.
+  Proof.
+    intros width cols. induction cols as [|cols IH];
+      intros original previous pivot_rows pivot_columns columns labels rows
+        budget bits Hstate Horiginal Hcolumns Hbits.
+    - pose proof (T_karr_bareiss_zero_bounded previous rows) as Hzero.
+      cbn [N.of_nat N.mul N.add]. exact Hzero.
+    - assert (Hcolumn_count : S cols <= length columns).
+      { unfold karr_run_state in Hstate.
+        destruct Hstate as [_ [_ [_ [_ [_ [Hcount _]]]]]]. exact Hcount. }
+      destruct columns as [|head columns]; [cbn [length] in Hcolumn_count; lia|].
+      pose proof (karr_run_state_previous_minor width (S cols) original
+        previous pivot_rows pivot_columns (head :: columns) labels rows Hstate)
+        as Hprevious_member.
+      pose proof (karr_run_state_envelope width (S cols) original previous
+        pivot_rows pivot_columns (head :: columns) labels rows budget bits Hstate
+        Hcolumns Hbits) as Hrows.
+      pose proof (T_karr_bareiss_stage_bounded cols previous rows budget budget
+        bits (Hbits previous Hprevious_member) Hrows) as Hstage.
+      assert (Hrow_count : length rows <= budget).
+      { pose proof (karr_run_state_row_count width (S cols) original previous
+          pivot_rows pivot_columns (head :: columns) labels rows Hstate).
+        lia. }
+      assert (Hstage_cost :
+        (32768 * N.of_nat (length rows + 1) *
+          N.of_nat (budget + budget + 1) * N.of_nat ((bits + 1)^2) <=
+          karr_bareiss_stage_budget budget bits)%N).
+      { unfold karr_bareiss_stage_budget.
+        set (work := (N.of_nat (budget + budget + 1) *
+          N.of_nat ((bits + 1)^2))%N).
+        replace (32768 * N.of_nat (length rows + 1) *
+          N.of_nat (budget + budget + 1) * N.of_nat ((bits + 1)^2))%N with
+          (32768 * N.of_nat (length rows + 1) * work)%N
+          by (unfold work; ring).
+        replace (32768 * N.of_nat (budget + 1) *
+          N.of_nat (budget + budget + 1) * N.of_nat ((bits + 1)^2))%N with
+          (32768 * N.of_nat (budget + 1) * work)%N
+          by (unfold work; ring).
+        apply N.mul_le_mono_r. apply N.mul_le_mono_l. lia. }
+      assert (Htail_budget : length columns <= budget).
+      { cbn [length] in Hcolumns. lia. }
+      destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+      + destruct (karr_run_state_pivot width cols original previous pivot_rows
+          pivot_columns head columns labels rows pivot rest Hstate Hselect)
+          as [origin [remaining Hnext]].
+        specialize (IH original (karr_head pivot) (pivot_rows ++ [origin])
+          (pivot_columns ++ [head]) columns remaining
+          (map (fun row => karr_tail
+            (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+            rest) budget bits Hnext Horiginal Htail_budget Hbits).
+        cbn [N.of_nat] in IH |- *.
+        eapply N.le_trans; [exact Hstage|].
+        eapply N.le_trans; [apply N.add_le_mono; [exact Hstage_cost|exact IH]|].
+        change (N.pos (PosDef.Pos.of_succ_nat cols)) with (N.of_nat (S cols)).
+        rewrite Nat2N.inj_succ.
+        replace (N.succ (N.of_nat cols)) with (N.of_nat cols + 1)%N by lia.
+        replace (((N.of_nat cols + 1) * karr_bareiss_stage_budget budget bits + 4)%N)
+          with (karr_bareiss_stage_budget budget bits +
+            (N.of_nat cols * karr_bareiss_stage_budget budget bits + 4))%N
+          by ring.
+        apply N.le_refl.
+      + pose proof (karr_run_state_skip width cols original previous pivot_rows
+          pivot_columns head columns labels rows Hstate) as Hnext.
+        specialize (IH original previous pivot_rows pivot_columns columns labels
+          (map karr_tail rows) budget bits Hnext Horiginal Htail_budget Hbits).
+        cbn [N.of_nat] in IH |- *.
+        eapply N.le_trans; [exact Hstage|].
+        eapply N.le_trans; [apply N.add_le_mono; [exact Hstage_cost|exact IH]|].
+        change (N.pos (PosDef.Pos.of_succ_nat cols)) with (N.of_nat (S cols)).
+        rewrite Nat2N.inj_succ.
+        replace (N.succ (N.of_nat cols)) with (N.of_nat cols + 1)%N by lia.
+        replace (((N.of_nat cols + 1) * karr_bareiss_stage_budget budget bits + 4)%N)
+          with (karr_bareiss_stage_budget budget bits +
+            (N.of_nat cols * karr_bareiss_stage_budget budget bits + 4))%N
+          by ring.
+        apply N.le_refl.
+  Qed.
+
 
   Definition karr_prepare_factor : N := (karr_raw_normal_factor + 32)%N.
 
