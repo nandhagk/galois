@@ -15462,6 +15462,73 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - eapply IH; eassumption.
   Qed.
 
+  (** A bounded certificate pays the checker through its public size law. *)
+  Lemma karr_checker_envelope : forall P c k dim keys bits mbits,
+    length P <= dim ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= keys /\ C.row_bits row <= bits) P ->
+    length (mults k) <= dim ->
+    Forall (fun z => Z.size_nat z <= mbits) (mults k) ->
+    length (lhs c) <= dim -> C.row_key_bits c <= keys ->
+    C.row_bits c <= bits -> Z.size_nat (scale k) <= mbits ->
+    (C.T_check_entails P c k <= C.c_lc * N.of_nat
+      ((2 * dim + 1) * (dim + 1) *
+        (keys + (mbits + 1) * (bits + 1) + 1) +
+       (mbits + 1) * ((dim + 1) * (keys + bits + 1) +
+         mbits + bits + Nat.log2 dim + 2)))%N.
+  Proof.
+    intros P c k dim keys bits mbits Hcount Hsource Hmult_length Hmult
+      Hconclusion_length Hconclusion_keys Hconclusion_bits Hscale.
+    pose proof (karr_csize_envelope P (mults k) dim keys bits mbits
+      Hsource Hmult) as Hsize.
+    assert (Hsize' : C.csize P (mults k) <=
+      (2 * dim + 1) * (dim + 1) *
+        (keys + (mbits + 1) * (bits + 1) + 1)).
+    { assert (Hlength : length P + length (mults k) + 1 <= 2 * dim + 1)
+        by lia. nia. }
+    assert (Hsource_bits : Forall (fun row => C.row_bits row <= bits) P).
+    { eapply Forall_impl; [|exact Hsource].
+      intros row Hrow. exact (proj2 (proj2 Hrow)). }
+    pose proof (karr_cbits_envelope P (mults k) bits mbits
+      Hsource_bits Hmult) as Hbits.
+    pose proof (karr_lsize_envelope c dim keys bits Hconclusion_length
+      Hconclusion_keys Hconclusion_bits) as Hconclusion.
+    pose proof (Nat.log2_le_mono (length P) dim Hcount) as Hlog.
+    assert (Hproduct : (Z.size_nat (scale k) + 1) *
+      (C.lsize c + C.cbits P (mults k) + 1) <=
+      (mbits + 1) * ((dim + 1) * (keys + bits + 1) +
+        mbits + bits + Nat.log2 dim + 2)).
+    { apply Nat.mul_le_mono; lia. }
+    pose proof (C.T_check_entails_le P c k) as Hclock.
+    eapply N.le_trans; [exact Hclock|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** Adding one conclusion cannot introduce more than its declared variables. *)
+  Lemma karr_target_variables_public : forall P c,
+    length (variables (c :: P)) <=
+      length (vars_of P) + length (vars_of (c :: nil)).
+  Proof.
+    intros P c. rewrite <- length_app.
+    apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx.
+    destruct (karr_variables_support (c :: P) x Hx) as
+      [row [[Hhead|Htail] Hterm]].
+    - subst row. apply in_or_app. right.
+      apply karr_vars_of_contains with (r := c); [now left|exact Hterm].
+    - apply in_or_app. left.
+      apply karr_vars_of_contains with (r := row); assumption.
+  Qed.
+
+  Lemma karr_target_dim_public : forall P c,
+    length (variables (c :: P)) + length P + 3 <=
+      n (Reached P) + n (Reached (c :: nil)) + 2.
+  Proof.
+    intros P c.
+    pose proof (karr_target_variables_public P c) as Hxs.
+    unfold n in *. cbn [rows_of length] in *. lia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
