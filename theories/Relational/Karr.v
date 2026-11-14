@@ -15062,6 +15062,27 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply karr_row_envelope_entries; [lia|lia|exact Hrentries].
   Qed.
 
+  (** Prefix and suffix certificate slices inherit their row bounds. *)
+  Lemma karr_Forall_firstn : forall A (P : A -> Prop) n xs,
+    Forall P xs -> Forall P (firstn n xs).
+  Proof.
+    intros A P n. induction n as [|n IH]; intros xs Hrows.
+    - constructor.
+    - destruct xs as [|x xs]; [constructor|].
+      cbn [firstn]. constructor.
+      + now apply Forall_inv in Hrows.
+      + apply IH. now apply Forall_inv_tail in Hrows.
+  Qed.
+
+  Lemma karr_Forall_skipn : forall A (P : A -> Prop) n xs,
+    Forall P xs -> Forall P (skipn n xs).
+  Proof.
+    intros A P n. induction n as [|n IH]; intros xs Hrows.
+    - exact Hrows.
+    - destruct xs as [|x xs]; [constructor|].
+      cbn [skipn]. apply IH. now apply Forall_inv_tail in Hrows.
+  Qed.
+
   (** A generic initialized basis clock follows from the all-order minor law. *)
   Lemma T_karr_bareiss_seed_bounded : forall xs P,
     (T_karr_bareiss (length xs) 1
