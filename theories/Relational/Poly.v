@@ -15779,6 +15779,45 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply Nat.mul_le_mono; [lia|apply Nat.le_refl].
   Qed.
 
+  (** The actual prepared head charges its checker against public work. *)
+  Lemma T_poly_assign_prepared_head_candidate_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    (T_assigned_candidate P x prepared (poly_assign_head x prepared P) <=
+      2 * N.of_nat (length (coef prepared) + 2) +
+      AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span (length (coef prepared) + 1) 0
+          (X.bits x + F.form_bits prepared + 1)
+          (F.form_bits prepared + 1) +
+      256 * C.c_lc * N.of_nat (volume * bits^2) + 16)%N.
+  Proof.
+    intros x e P f Hlinear prepared volume bits.
+    pose proof (T_poly_assign_head_candidate x prepared P
+      (poly_assign_prepared_nodup f)) as Hhead.
+    cbn zeta in Hhead.
+    pose proof (poly_assign_prepared_head_measure_public x e P f Hlinear)
+      as Hmeasure.
+    cbn zeta in Hmeasure.
+    set (measure := (terms (Reached P) + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef prepared) + 2) *
+        (X.bits x + 3 * F.form_bits prepared + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2)).
+    assert (Hmeasure' : measure <= 256 * (volume * bits^2)).
+    { replace (256 * (volume * bits^2)) with (256 * volume * bits^2) by ring.
+      exact Hmeasure. }
+    assert (Hcheck : (C.c_lc * N.of_nat measure <=
+      256 * C.c_lc * N.of_nat (volume * bits^2))%N).
+    { assert (Hnat : (N.of_nat measure <=
+        N.of_nat (256 * (volume * bits^2)))%N)
+        by (apply time_of_nat_le; exact Hmeasure').
+      rewrite Nat2N.inj_mul in Hnat. cbn [N.of_nat] in Hnat.
+      nia. }
+    unfold measure in Hcheck.
+    clear -Hhead Hcheck. lia.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
