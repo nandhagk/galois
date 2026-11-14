@@ -880,6 +880,47 @@ Proof.
   - unfold second. destruct (index <? first); reflexivity.
 Qed.
 
+(** A constant multiplier passes through a finite integer sum. *)
+Lemma karr_determinant_sum_scale : forall A (f : A -> Z) xs factor,
+  (factor * fold_right Z.add 0%Z (map f xs))%Z =
+    fold_right Z.add 0%Z (map (fun x => (factor * f x)%Z) xs).
+Proof.
+  intros A f xs. induction xs as [|x xs IH]; intro factor;
+    cbn [map fold_right]; [ring|].
+  rewrite Z.mul_add_distr_l, IH. ring.
+Qed.
+
+(** Equal first two rows make every double Laplace term cancel with its reverse. *)
+Lemma karr_determinant_duplicate_first : forall order row rows,
+  karr_determinant (S (S order)) (row :: row :: rows) = 0%Z.
+Proof.
+  intros order row rows.
+  rewrite karr_determinant_cons.
+  transitivity (fold_right Z.add 0%Z (map (fun first =>
+    fold_right Z.add 0%Z (map
+      (karr_determinant_pair_term order row rows first)
+      (seq 0 (S (S order))))) (seq 0 (S (S order))))).
+  - apply karr_determinant_sum_ext. intros first Hfirst.
+    apply in_seq in Hfirst.
+    replace (map (karr_delete first) (row :: rows))
+      with (karr_delete first row :: map (karr_delete first) rows) by reflexivity.
+    rewrite karr_determinant_cons.
+    rewrite karr_determinant_sum_scale.
+    transitivity (fold_right Z.add 0%Z (map (fun index =>
+      karr_determinant_pair_term order row rows first
+        (if index <? first then index else S index)) (seq 0 (S order)))).
+    + apply karr_determinant_sum_ext. intros index _.
+      rewrite karr_determinant_pair_term_skip. ring.
+    + rewrite (karr_determinant_sum_skip (S order) first
+        (karr_determinant_pair_term order row rows first)) by lia.
+      apply karr_determinant_sum_ext. intros second _.
+      destruct (second =? first) eqn:Hsame; [|reflexivity].
+      apply Nat.eqb_eq in Hsame. subst second.
+      unfold karr_determinant_pair_term. now rewrite Nat.eqb_refl.
+  - apply karr_determinant_pair_cancel.
+    intros first second _ _. apply karr_determinant_pair_term_swap.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
