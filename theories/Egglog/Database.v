@@ -17545,6 +17545,49 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
                 ** exact Hrange.
   Qed.
 
+  Lemma database_row_store_ok_repair_entry_move : forall db f k,
+    wf db -> database_row_store_ok db -> database_row_weights_positive db ->
+    database_history_root_owner db -> database_history_key_shape db ->
+    database_history_codes_valid db ->
+    database_history_key_ids_bounded db ->
+    database_row_weight_conserved db ->
+    database_row_store_ok
+      (move_row_identity f k (normal_key db k) (repair_current f k db)).
+  Proof.
+    intros db f k Hwf Hstore Hpositive Howner Hshape Hvalid Hbounded
+      Hconserved.
+    apply database_row_store_ok_move.
+    - apply database_row_store_ok_repair_current. exact Hstore.
+    - apply database_row_weights_positive_repair_current. exact Hpositive.
+    - apply database_history_root_owner_repair_current; assumption.
+    - apply database_history_key_shape_repair_current; assumption.
+    - apply database_history_codes_valid_repair_current. exact Hvalid.
+    - apply database_history_key_ids_bounded_repair_current; assumption.
+    - apply database_row_weight_conserved_repair_current; assumption.
+    - symmetry. apply normal_key_length.
+    - symmetry. apply normal_key_shape.
+  Qed.
+
+  Lemma database_row_store_ok_db_repair_entry : forall db f k,
+    wf db -> database_row_store_ok db -> database_row_weights_positive db ->
+    database_history_root_owner db -> database_history_key_shape db ->
+    database_history_codes_valid db ->
+    database_history_key_ids_bounded db ->
+    database_row_weight_conserved db ->
+    database_row_store_ok (db_repair_entry f k db).
+  Proof.
+    intros db f k Hwf Hstore Hpositive Howner Hshape Hvalid Hbounded
+      Hconserved.
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hstore].
+    destruct (row_get f current db) as [output |]; [| exact Hstore].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hstore |].
+    apply database_row_store_ok_repair_entry_move; assumption.
+  Qed.
+
   Lemma database_history_root_owner_repair_entry_move : forall db f k,
     database_row_store_ok db -> database_history_root_owner db ->
     database_history_root_owner
