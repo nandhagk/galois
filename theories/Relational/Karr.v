@@ -2144,6 +2144,68 @@ Definition karr_run_state (width cols : nat) (original : list (list Z))
   karr_minor_law previous pivot_rows pivot_columns columns
     (combine labels (map karr_row_entries rows)).
 
+(** Removing the coefficient head maps each paired augmented row to its tail. *)
+Lemma karr_pairs_tail : forall cols (labels : list (list Z)) (rows : list karr_row),
+  length labels = length rows ->
+  Forall (fun row => length (kcoeff row) = S cols) rows ->
+  combine labels (map karr_row_entries (map karr_tail rows)) =
+    map (fun pair => (fst pair, karr_delete 0 (snd pair)))
+      (combine labels (map karr_row_entries rows)).
+Proof.
+  intros cols labels. induction labels as [|label labels IH];
+    intros [|row rows] Hlength Hcoeff; cbn [length] in Hlength;
+    try discriminate; [reflexivity|].
+  apply Forall_cons_iff in Hcoeff as [Hrow Hrows].
+  cbn [map combine]. f_equal.
+  - rewrite karr_row_entries_tail.
+    + reflexivity.
+    + destruct (kcoeff row) as [|z coeff] eqn:Hnonempty;
+        cbn [length] in Hrow; [lia|discriminate].
+  - apply IH; [lia|exact Hrows].
+Qed.
+
+(** A skipped pivot column preserves the concrete labeled run invariant. *)
+Lemma karr_run_state_skip : forall width cols original previous pivot_rows
+    pivot_columns head columns labels rows,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels (map karr_tail rows).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels rows Hstate.
+  unfold karr_run_state in *. destruct Hstate as
+    [Hprevious [Hdet [Hlabels [Hcoeff [Hentries [Hcolumns [Hsquare
+      [Hpartition [Hincreasing [Hbounded Hlaw]]]]]]]]]].
+  repeat split.
+  - exact Hprevious.
+  - exact Hdet.
+  - now rewrite length_map.
+  - apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [source [Heq Hsource]]. subst r.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff source Hsource) as Hsource_coeff.
+    destruct source as [coeff right weight scale].
+    cbn [karr_tail kcoeff] in *. destruct coeff as [|z coeff];
+      cbn [length tl] in *; lia.
+  - apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [source [Heq Hsource]]. subst r.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff source Hsource) as Hsource_coeff.
+    pose proof (proj1 (Forall_forall _ _) Hentries source Hsource) as Hsource_entries.
+    destruct source as [coeff right weight scale].
+    destruct coeff as [|z coeff]; cbn [kcoeff length] in Hsource_coeff; [lia|].
+    unfold karr_row_entries in *. cbn [karr_tail kcoeff kright kweight kscale] in *.
+    rewrite !length_app in *. cbn [tl length] in *. lia.
+  - cbn [length] in Hcolumns |- *. lia.
+  - exact Hsquare.
+  - exact Hpartition.
+  - now apply karr_increasing_skip with (head := head).
+  - apply Forall_app in Hbounded as [Hprefix Htail].
+    apply Forall_cons_iff in Htail as [_ Hrest].
+    apply Forall_app. now split.
+  - rewrite (karr_pairs_tail cols labels rows Hlabels Hcoeff).
+    now apply karr_minor_law_skip with (head := head).
+Qed.
+
 (** A certificate unit vector has the declared source-row width. *)
 Lemma karr_unit_length : forall total index, length (karr_unit total index) = total.
 Proof.
