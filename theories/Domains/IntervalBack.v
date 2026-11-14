@@ -5672,6 +5672,37 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       rewrite Nat.mul_1_r; lia.
   Qed.
 
+  Local Lemma table_ashr_partial_time : forall rw wa a lo,
+    (0 <= lo < Z.pos rw)%Z ->
+    (T_interval_ashr_small rw (interval_clip wa a)
+      (I (Fin lo) (Fin (Z.pos rw - 1))) <=
+      50000 * N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (I (Fin lo) (Fin (Z.pos rw - 1))) + 1) ^ 2))%N.
+  Proof.
+    intros rw wa a lo Hlo.
+    assert (Hrange :
+      (0 <= lo /\ lo <= Z.pos rw - 1 /\ Z.pos rw - 1 < Word.modulus rw)%Z).
+    { pose proof (Word.width_lt_modulus rw). lia. }
+    pose proof (PayloadBounds.interval_clip_fixed rw lo (Z.pos rw - 1) Hrange)
+      as Hfixed.
+    replace (I (Fin lo) (Fin (Z.pos rw - 1))) with
+      (interval_clip rw (I (Fin lo) (Fin (Z.pos rw - 1))))
+      by exact Hfixed.
+    apply table_ashr_small_time.
+  Qed.
+
+  Local Lemma table_ashr_partial_bits : forall rw lo,
+    (0 <= lo < Z.pos rw)%Z ->
+    interval_bits (I (Fin lo) (Fin (Z.pos rw - 1))) <= Pos.to_nat rw.
+  Proof.
+    intros rw lo Hlo.
+    pose proof (Word.width_lt_modulus rw) as Hwidth.
+    cbn [interval_bits].
+    apply Nat.max_lub;
+      apply PayloadBounds.payload_word_bits;
+      unfold Word.is_word; lia.
+  Qed.
+
   Local Lemma table_unary_dispatch_time : forall rw w a cost,
     (cost <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits (interval_clip w a) + 1) ^ 2))%N ->
