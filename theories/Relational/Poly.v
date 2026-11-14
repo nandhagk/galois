@@ -12832,6 +12832,70 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.mul_le_mono_l. lia.
   Qed.
 
+  (** One final-stage charge pays every linear and quadratic terminal component. *)
+  Lemma poly_range_candidate_work : forall dim mlen keys bits len amount,
+    1 <= mlen -> len <= dim -> amount <= bits ->
+    let width := keys + bits + 1 in
+    let work := (mlen + 1) * (dim + mlen + 1) * width * width in
+    (len + 1) * (amount + 1) * (bits + 1) <= work /\
+    (bits + 1) * (bits + 1) <= work /\
+    (dim + 2) * width <= work /\
+    (mlen + 1) * (dim + mlen + 1) * (bits + 1) * (bits + 1) <= work.
+  Proof.
+    intros dim mlen keys bits len amount Hmlen Hlen Hamount width work.
+    unfold work, width. repeat split.
+    - replace ((len + 1) * (amount + 1) * (bits + 1)) with
+        (1 * (len + 1) * (amount + 1) * (bits + 1)) by ring.
+      repeat apply Nat.mul_le_mono; lia.
+    - replace ((bits + 1) * (bits + 1)) with
+        (1 * 1 * (bits + 1) * (bits + 1)) by ring.
+      repeat apply Nat.mul_le_mono; lia.
+    - replace ((dim + 2) * (keys + bits + 1)) with
+        (1 * (dim + 2) * (keys + bits + 1) * 1) by ring.
+      repeat apply Nat.mul_le_mono; lia.
+    - repeat apply Nat.mul_le_mono; lia.
+  Qed.
+
+  (** Candidate dispatch adds fixed projections to its scan, arithmetic, check, and update. *)
+  Lemma T_poly_range_candidate_frame : forall P f bounds
+      (r : poly_row (option X.t)) pre branch,
+    let c := poly_constraint r in
+    let a := poly_coefficient tmp_eqb None c in
+    let conclusion := LCons X.t (poly_scale_coef a (coef f)) (lrel c)
+      (rhs c - a * cst f)%Z in
+    (T_poly_scale_coef a (coef f) + Z.T_mul a (cst f) +
+      Z.T_sub (rhs c) (a * cst f) <= pre)%N ->
+    (forall head ms, poly_multipliers r = head :: ms ->
+      (C.T_check_entails P conclusion (Cert ms 1 false) +
+        T_range_update a (rhs c)
+          (match lrel c with REq => true | RLe => false end) bounds <= branch)%N) ->
+    (T_range_candidate P f bounds r <=
+      List.T_forallb poly_range_result_key T_poly_range_result_key (lhs c) +
+      T_poly_coefficient tmp_eqb T_tmp_eqb None c + pre + branch + 32)%N.
+  Proof.
+    intros P f bounds r pre branch c a conclusion Hpre Hbranch.
+    time_unfold T_range_candidate. time_simpl.
+    change (fun p : option X.t * Z =>
+      match fst p with Some _ => false | None => true end) with poly_range_result_key.
+    change (fun u v : option X.t => T_tmp_eqb u v) with T_tmp_eqb.
+    lazymatch goal with
+    | |- context [List.T_forallb poly_range_result_key ?Tf ?xs] =>
+        change Tf with T_poly_range_result_key
+    end.
+    unfold conclusion, a, c in *.
+    destruct (forallb poly_range_result_key (lhs (poly_constraint r)));
+      time_simpl; try nia.
+    destruct (poly_multipliers r) as [|head ms] eqn:Hmult; time_simpl; try nia.
+    pose proof (Hbranch head ms eq_refl) as Hsuffix.
+    destruct (C.check_entails P
+      (LCons X.t
+        (poly_scale_coef (poly_coefficient tmp_eqb None (poly_constraint r)) (coef f))
+        (lrel (poly_constraint r))
+        (rhs (poly_constraint r) -
+          poly_coefficient tmp_eqb None (poly_constraint r) * cst f)%Z)
+      (Cert ms 1 false)); time_simpl; nia.
+  Qed.
+
 
   Definition poly_range_empty_candidate_factor : N :=
     (32 * C.c_lc + RangeCore.poly_coef_factor + 256)%N.
