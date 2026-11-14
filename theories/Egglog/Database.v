@@ -13365,6 +13365,53 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
 
+  Lemma database_losing_component_short :
+    forall db f losing other losing_key losing_id other_key other_id,
+      database_row_store_ok db -> database_row_weights_positive db ->
+      database_history_root_owner db -> database_history_key_shape db ->
+      database_history_codes_valid db ->
+      database_history_key_ids_bounded db ->
+      database_row_weight_conserved db ->
+      PTrieCode.get (db_row_code f losing) (row_history (db_row_store db)) =
+        Some (losing_key, losing_id) ->
+      PTrieCode.get (db_row_code f other) (row_history (db_row_store db)) =
+        Some (other_key, other_id) ->
+      row_key_shape losing = row_key_shape other ->
+      let losing_root := row_root
+        (length losing * (N.to_nat (N.log2 (ids db)) + 1)) losing_id
+        (db_row_store db) in
+      let other_root := row_root
+        (length other * (N.to_nat (N.log2 (ids db)) + 1)) other_id
+        (db_row_store db) in
+      losing_root <> other_root ->
+      (match PTrieCode.get losing_root (row_weights (db_row_store db)) with
+       | Some n => n | None => 1%N end <=
+       match PTrieCode.get other_root (row_weights (db_row_store db)) with
+       | Some n => n | None => 1%N end)%N ->
+      exists first,
+        first < length losing * (N.to_nat (N.log2 (ids db)) + 1) /\
+        row_root first losing_id (db_row_store db) = losing_root.
+  Proof.
+    intros db f losing other losing_key losing_id other_key other_id Hstore
+      Hpositive Howner Hshape Hvalid Hbounded Hconserved Hlosing Hother
+      Hbridge losing_root other_root Hdifferent Horder.
+    destruct (database_history_root_path_weight db f losing losing_key
+      losing_id Hstore Hpositive Hlosing) as
+      [first [_ [Hroot Hpower]]].
+    pose proof (database_two_root_weight_cardinality db f losing other
+      losing_key losing_id other_key other_id Hstore Howner Hshape Hvalid
+      Hbounded Hconserved Hlosing Hother Hbridge Hdifferent) as Hsum.
+    assert (Htwice :
+      (2 * (match PTrieCode.get losing_root
+        (row_weights (db_row_store db)) with
+        | Some n => n | None => 1%N end) <=
+       (ids db + 1) ^ N.of_nat (length losing))%N).
+    { subst losing_root other_root. nia. }
+    exists first. split.
+    - eapply database_losing_path_depth; eassumption.
+    - exact Hroot.
+  Qed.
+
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
     (before <= after)%N ->
     length k * (N.to_nat (N.log2 before) + 1) <=
