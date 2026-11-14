@@ -14022,6 +14022,27 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       unfold X.bits, poly_raw_bits in *. lia.
   Qed.
 
+  (** Prepared source and form support share the fixed quadratic pivot charge. *)
+  Lemma poly_assign_prepared_pivot_mass : forall x e P f wrapping,
+    F.lin_of e = Some (f, wrapping) ->
+    let support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef (poly_prepare_form X.encode f)) + 1 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    (length P + 2) * (support + terms (Reached P) + length P + 3) *
+      (bits + Nat.log2 (terms (Reached P) + tsize e + 1) + 1)^2 <=
+    128 * (length P + 3)^2 *
+      (terms (Reached P) + tsize e + length P + 3) * bits^2.
+  Proof.
+    intros x e P f wrapping Hlinear support bits.
+    pose proof (poly_assign_source_dimension x P) as Hsource.
+    pose proof (poly_assign_prepared_length e f wrapping Hlinear) as Hform.
+    pose proof (poly_assign_prepared_dimension_space x e P f wrapping Hlinear)
+      as Hspace.
+    assert (Hterms : terms (Reached P) <= 2^bits).
+    { apply poly_signed_log_capacity. unfold bits, nell. cbn [prows]. lia. }
+    apply poly_signed_assignment_pivot_mass; unfold support, bits in *; lia.
+  Qed.
+
   (** Normalizing one renamed source cannot introduce the new assigned variable. *)
   Lemma poly_assign_normal_source_absent : forall x r,
     ~ In (Some x) (map fst (lhs
