@@ -13562,6 +13562,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         split; assumption.
   Qed.
 
+  Lemma database_row_links_merge_range : forall (db db' : t) loser winner,
+    database_row_store_ok db ->
+    row_fresh (db_row_store db') = row_fresh (db_row_store db) ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    (loser < row_fresh (db_row_store db))%positive ->
+    (winner < row_fresh (db_row_store db))%positive ->
+    forall r p, PTrieCode.get r (row_links (db_row_store db')) = Some p ->
+      (r < row_fresh (db_row_store db'))%positive /\
+      (p < row_fresh (db_row_store db'))%positive.
+  Proof.
+    intros db db' loser winner Hstore Hfresh Hlinks Hloser Hwinner
+      r p Hget.
+    rewrite Hlinks in Hget. rewrite Hfresh.
+    destruct (Pos.eq_dec r loser) as [-> | Hother].
+    - rewrite PTrie.get_set_same in Hget. injection Hget as <-.
+      split; assumption.
+    - rewrite PTrie.get_set_other in Hget by exact Hother.
+      exact (database_row_store_link_range db Hstore r p Hget).
+  Qed.
+
   Lemma database_row_store_depth_same_links : forall db db',
     database_row_store_ok db -> ids db' = ids db ->
     row_history (db_row_store db') = row_history (db_row_store db) ->
