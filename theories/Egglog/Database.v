@@ -11000,7 +11000,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   (** Advancing keeps the watermark and the amortized credit. *)
   Lemma advance_credit : forall B db, wf db ->
     wmark (advance db) = wmark db /\ (potential B (advance db) = potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B db _. split; reflexivity.
+  Qed.
 
   (** Each initialization scan fits the same total amount of charged input. *)
   Lemma database_init_sum_budget : forall cost decls slots layout declaration_bits slot_bits,
