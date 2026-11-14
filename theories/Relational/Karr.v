@@ -8393,6 +8393,29 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     Forall (fun z => Z.size_nat z <= bits) (kweight r) /\
     Z.size_nat (kscale r) <= bits.
 
+  (** Certificate traversal fits a row count times the largest per-row charge. *)
+  Lemma karr_csize_envelope : forall P ms dim keys bits mbits,
+    Forall (fun r => length (lhs r) <= dim /\
+      C.row_key_bits r <= keys /\ C.row_bits r <= bits) P ->
+    Forall (fun m => Z.size_nat m <= mbits) ms ->
+    C.csize P ms <= (length P + length ms + 1) * (dim + 1) *
+      (keys + (mbits + 1) * (bits + 1) + 1).
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] dim keys bits mbits Hrows Hmult;
+      cbn [C.csize length]; try nia.
+    inversion Hrows as [|? ? [Hlen [Hkey Hbits]] Htail]; subst.
+    inversion Hmult as [|? ? Hm Hmult_tail]; subst.
+    pose proof (IH ms dim keys bits mbits Htail Hmult_tail) as Hrest.
+    assert (Hterm : (length (lhs p) + 1) *
+        (C.row_key_bits p + (Z.size_nat m + 1) * (C.row_bits p + 1)) <=
+        (dim + 1) * (keys + (mbits + 1) * (bits + 1) + 1)).
+    { apply Nat.mul_le_mono; [lia|].
+      assert (Hprod : (Z.size_nat m + 1) * (C.row_bits p + 1) <=
+        (mbits + 1) * (bits + 1)) by (apply Nat.mul_le_mono; lia).
+      lia. }
+    nia.
+  Qed.
+
   (** Increasing the arithmetic budget preserves a row envelope. *)
   Lemma karr_row_envelope_mono : forall dim mlen bits bits' r,
     bits <= bits' -> karr_row_envelope dim mlen bits r ->
