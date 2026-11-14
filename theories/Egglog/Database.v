@@ -13195,6 +13195,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply put_history_old. now rewrite row_delete_row_store.
   Qed.
 
+  Lemma move_row_identity_history : forall db f old current,
+    row_history (db_row_store (move_row_identity f old current db)) =
+      row_history (db_row_store db).
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |]; [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+      as [[current_key current_id] |]; [| reflexivity].
+    reflexivity.
+  Qed.
+
   Lemma database_history_alignment_repair_current : forall db f k,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (repair_current f k db).
