@@ -16123,6 +16123,66 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     ring_simplify. apply N.le_refl.
   Qed.
 
+  (** The two checker charges fit one cubic public work allowance. *)
+  Lemma karr_hull_checker_charge_public : forall d bits v,
+    1 <= d -> 1 <= v -> bits + 1 <= 128 * v ->
+    Nat.log2 d <= v ->
+    karr_hull_checker_charge d bits <=
+      (1024 * 256) * (d^3 * v^2).
+  Proof.
+    intros d bits v Hd Hv Hbits Hlog.
+    assert (Hsquare : (bits + 1)^2 <= (128 * 128) * v^2).
+    { replace ((128 * 128) * v^2) with ((128 * v)^2)
+        by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hv_square : v <= v^2) by (cbn [Nat.pow]; nia).
+    assert (Hhead : bits + (bits + 1)^2 + 1 <=
+      (170 * 100) * v^2).
+    { lia. }
+    assert (Hinner : (d + 1) * (bits + bits + 1) +
+      bits + bits + Nat.log2 d + 2 <= 771 * (d * v)).
+    { assert (Htwo : bits + bits + 1 <= 256 * v) by lia.
+      assert (Hdim : d + 1 <= 2 * d) by lia.
+      assert (Hproduct : (d + 1) * (bits + bits + 1) <=
+        (2 * d) * (256 * v)) by (apply Nat.mul_le_mono; assumption).
+      nia. }
+    assert (Hfirst : (2 * d + 1) * (d + 1) *
+      (bits + (bits + 1)^2 + 1) <=
+      (3 * d) * (2 * d) * ((170 * 100) * v^2)).
+    { apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hhead]. }
+    assert (Hsecond : (bits + 1) *
+      ((d + 1) * (bits + bits + 1) +
+        bits + bits + Nat.log2 d + 2) <=
+      (128 * v) * (771 * (d * v))).
+    { apply Nat.mul_le_mono; assumption. }
+    unfold karr_hull_checker_charge.
+    replace ((bits + 1) * (bits + 1)) with ((bits + 1)^2)
+      by (cbn [Nat.pow]; ring).
+    eapply Nat.le_trans; [apply Nat.add_le_mono;
+      [exact Hfirst|exact Hsecond]|].
+    replace ((3 * d) * (2 * d) * ((170 * 100) * v^2) +
+      (128 * v) * (771 * (d * v))) with
+      ((102 * 1000) * (d^2 * v^2) + (128 * 771) * (d * v^2))
+      by (cbn [Nat.pow]; ring).
+    assert (Hd2 : d^2 <= d^3).
+    { cbn [Nat.pow]. nia. }
+    assert (Hd1 : d <= d^3).
+    { cbn [Nat.pow]. nia. }
+    assert (Hsum : (102 * 1000) * (d^2 * v^2) +
+      (128 * 771) * (d * v^2) <=
+      (102 * 1000 + 128 * 771) * (d^3 * v^2)).
+    { replace ((102 * 1000 + 128 * 771) * (d^3 * v^2)) with
+        ((102 * 1000) * (d^3 * v^2) +
+          (128 * 771) * (d^3 * v^2)) by ring.
+      apply Nat.add_le_mono.
+      - apply Nat.mul_le_mono; [lia|].
+        apply Nat.mul_le_mono; [exact Hd2|lia].
+      - apply Nat.mul_le_mono; [lia|].
+        apply Nat.mul_le_mono; [exact Hd1|lia]. }
+    eapply Nat.le_trans; [exact Hsum|].
+    apply Nat.mul_le_mono; lia.
+  Qed.
+
   (** Adding one conclusion cannot introduce more than its declared variables. *)
   Lemma karr_target_variables_public : forall P c,
     length (variables (c :: P)) <=
