@@ -11914,6 +11914,161 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     now symmetry.
   Qed.
 
+  Lemma database_row_reaches_fixed_unique : forall db x first second,
+    database_row_reaches db x first -> database_row_reaches db x second ->
+    (match PTrieCode.get first (row_links (db_row_store db)) with
+     | Some parent => parent | None => first end) = first ->
+    (match PTrieCode.get second (row_links (db_row_store db)) with
+     | Some parent => parent | None => second end) = second ->
+    first = second.
+  Proof.
+    intros db x first second [d Hfirst] [e Hsecond] Hfixed_first Hfixed_second.
+    assert (Hmax_first : d <= Nat.max d e) by lia.
+    assert (Hmax_second : e <= Nat.max d e) by lia.
+    assert (Hleft_fixed :
+      (let parent current := match PTrieCode.get current
+        (row_links (db_row_store db)) with
+       | Some p => p | None => current end in
+       parent (Nat.iter d parent x) = Nat.iter d parent x)).
+    { cbn. rewrite <- row_root_parent_iter. now rewrite Hfirst. }
+    assert (Hright_fixed :
+      (let parent current := match PTrieCode.get current
+        (row_links (db_row_store db)) with
+       | Some p => p | None => current end in
+       parent (Nat.iter e parent x) = Nat.iter e parent x)).
+    { cbn. rewrite <- row_root_parent_iter. now rewrite Hsecond. }
+    pose proof (row_root_after_fixed (Nat.max d e) d x (db_row_store db)
+      Hmax_first Hleft_fixed) as Hleft.
+    pose proof (row_root_after_fixed (Nat.max d e) e x (db_row_store db)
+      Hmax_second Hright_fixed) as Hright.
+    rewrite <- row_root_parent_iter, Hfirst in Hleft.
+    rewrite <- row_root_parent_iter, Hsecond in Hright.
+    congruence.
+  Qed.
+
+  Lemma database_history_connected_canonical : forall db f k key id root,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, id) ->
+    (match PTrieCode.get root (row_links (db_row_store db)) with
+     | Some parent => parent | None => root end) = root ->
+    database_history_connected db id root ->
+    row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+      (db_row_store db) = root.
+  Proof.
+    intros db f k key id root Hstore Hentry Hfixed Hconnected.
+    destruct (database_row_store_depth db Hstore f k key id Hentry)
+      as [d [Hbound [Hroot_fixed _]]].
+    assert (Hreaches : database_row_reaches db id root).
+    { apply (proj2 (database_history_connected_reaches db id root root
+        Hconnected Hfixed)). exists 0%nat. reflexivity. }
+    eapply database_row_reaches_fixed_unique with (x := id).
+    - exists (length k * (N.to_nat (N.log2 (ids db)) + 1)). reflexivity.
+    - exact Hreaches.
+    - rewrite (row_root_after_fixed _ d id (db_row_store db)
+        Hbound Hroot_fixed). exact Hroot_fixed.
+    - exact Hfixed.
+  Qed.
+
+  Lemma database_history_component_shape : forall db f k key id g args other s,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_key_shape db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, id) ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (other, s) ->
+    database_history_connected db s
+      (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+        (db_row_store db)) ->
+    f = g /\ row_key_shape k = row_key_shape args.
+  Proof.
+    intros db f k key id g args other s Hstore Howner Hshape Hfirst Hsecond
+      Hconnected.
+    set (root := row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+      (db_row_store db)).
+    assert (Hfixed :
+      (match PTrieCode.get root (row_links (db_row_store db)) with
+       | Some parent => parent | None => root end) = root).
+    { subst root.
+      destruct (database_row_store_depth db Hstore f k key id Hfirst)
+        as [d [Hbound [Hfixed _]]].
+      rewrite (row_root_after_fixed _ d id (db_row_store db)
+        Hbound Hfixed). exact Hfixed. }
+    assert (Hsecond_root :
+      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
+        (db_row_store db) = root).
+    { eapply database_history_connected_canonical; eassumption. }
+    split.
+    - eapply Howner; [exact Hfirst | exact Hsecond |].
+      fold root. now rewrite Hsecond_root.
+    - eapply Hshape; [exact Hfirst | exact Hsecond |].
+      fold root. now rewrite Hsecond_root.
+  Qed.
+
+  Lemma database_history_codes_cardinality : forall db f k key id codes,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_key_shape db -> database_history_codes_valid db ->
+    database_history_key_ids_bounded db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, id) ->
+    NoDup codes ->
+    Forall (fun code => exists label r,
+      PTrieCode.get code (row_history (db_row_store db)) = Some (label, r) /\
+      database_history_connected db r
+        (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+          (db_row_store db))) codes ->
+    length codes <= (S (N.to_nat (ids db))) ^ length k.
+  Proof.
+    intros db f k key id codes Hstore Howner Hshape Hvalid Hbounded Hanchor
+      Hdistinct Hmembers.
+    set (label_of := fun code =>
+      option_map fst (PTrieCode.get code (row_history (db_row_store db)))).
+    assert (Hlabels_distinct : NoDup (map label_of codes)).
+    { apply NoDup_map_NoDup_ForallPairs; [| exact Hdistinct].
+      intros a b Ha Hb Hequal.
+      apply Forall_forall with (x := a) in Hmembers as Ha_member;
+        [| exact Ha].
+      apply Forall_forall with (x := b) in Hmembers as Hb_member;
+        [| exact Hb].
+      destruct Ha_member as [first [ra [Ha_entry _]]].
+      destruct Hb_member as [second [rb [Hb_entry _]]].
+      destruct first as [fa ka], second as [fb kb].
+      unfold label_of in Hequal. rewrite Ha_entry, Hb_entry in Hequal.
+      cbn in Hequal. injection Hequal as Hf Hk. subst fb kb.
+      rewrite (Hvalid a fa ka ra Ha_entry),
+        (Hvalid b fa ka rb Hb_entry). reflexivity. }
+    assert (Hlabels_included :
+      incl (map label_of codes)
+        (map (fun args => Some (f, args))
+          (history_shape_keys (N.to_nat (ids db)) (row_key_shape k)))).
+    { intros label Hin.
+      apply in_map_iff in Hin as [code [Hlabel Hcode]].
+      apply Forall_forall with (x := code) in Hmembers as Hmember;
+        [| exact Hcode].
+      destruct Hmember as [[g args] [r [Hentry Hconnected]]].
+      assert (Hcode_eq : code = db_row_code g args)
+        by (eapply Hvalid; exact Hentry).
+      rewrite Hcode_eq in Hentry.
+      destruct (database_history_component_shape db f k key id g args
+        (g, args) r Hstore Howner Hshape Hanchor Hentry Hconnected)
+        as [Hfunction Hkey_shape].
+      apply in_map_iff. exists args. split.
+      - subst g. unfold label_of in Hlabel.
+        rewrite Hcode_eq, Hentry in Hlabel.
+        cbn in Hlabel. now symmetry.
+      - rewrite Hkey_shape.
+        apply history_shape_keys_member.
+        intros i Hi. pose proof (Hbounded (db_row_code g args) g args r Hentry i Hi)
+          as Hallocated. unfold allocated in Hallocated. lia. }
+    pose proof (NoDup_incl_length Hlabels_distinct Hlabels_included) as Hlength.
+    rewrite length_map in Hlength.
+    eapply Nat.le_trans; [exact Hlength |].
+    rewrite length_map.
+    replace (length k) with (length (row_key_shape k)) by
+      (unfold row_key_shape; now rewrite length_map).
+    apply history_shape_keys_length.
+  Qed.
+
   Lemma database_row_weight_codes_disjoint : forall db first second left right,
     first <> second ->
     (match PTrieCode.get first (row_links (db_row_store db)) with
