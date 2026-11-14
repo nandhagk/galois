@@ -14450,6 +14450,38 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now apply karr_submatrix_bits.
   Qed.
 
+  (** The order-one law bounds every live target coordinate by a source minor. *)
+  Lemma karr_minor_law_live_bits : forall previous pivot_rows pivot_columns
+      columns pairs origin live dim bits,
+    karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+    In (origin, live) pairs ->
+    length live = length columns ->
+    1 <= dim -> length pivot_rows + 1 <= dim ->
+    Forall (Forall (fun z => Z.size_nat z <= bits))
+      (pivot_rows ++ [origin]) ->
+    Forall (fun z => Z.size_nat z <= ellB dim bits) live.
+  Proof.
+    intros previous pivot_rows pivot_columns columns pairs origin live
+      dim bits Hlaw Hmember Hwidth Hdim Horder Hsources.
+    apply Forall_forall. intros z Hin.
+    apply In_nth_error in Hin as [index Hget].
+    assert (Hindex : index < length columns).
+    { rewrite <- Hwidth. apply nth_error_Some. rewrite Hget. discriminate. }
+    assert (Hpaired : Forall2 (fun source row => In (source, row) pairs)
+      [origin] [live]) by (constructor; [exact Hmember|constructor]).
+    assert (Hvalid : Forall (fun i => i < length columns) [index])
+      by (constructor; [exact Hindex|constructor]).
+    unfold karr_minor_law in Hlaw.
+    pose proof (Hlaw [origin] [live] [index] Hpaired eq_refl Hvalid
+      ltac:(cbn [length]; lia)) as Hminor.
+    cbn [length karr_submatrix map Nat.sub Nat.add] in Hminor.
+    rewrite karr_determinant_one, Z.pow_0_r, Z.mul_1_l in Hminor.
+    rewrite (karr_nth_error_value _ _ _ Hget) in Hminor.
+    rewrite Hminor.
+    apply karr_determinant_bits; [exact Hdim|exact Horder|].
+    now apply karr_submatrix_bits.
+  Qed.
+
   (** A row envelope bounds every entry of the augmented matrix representation. *)
   Lemma karr_row_entries_bits : forall dim mlen bits r,
     karr_row_envelope dim mlen bits r ->
