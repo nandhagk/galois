@@ -16190,6 +16190,29 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       intros row [_ [Hkeys _]]. cbn beta in Hkeys. lia.
   Qed.
 
+  (** Dense conclusion initialization uses the public source and target envelope. *)
+  Lemma T_karr_entail_dense_bounded : forall P c,
+    normal P -> normal (c :: nil) ->
+    let d := n (Reached P) + n (Reached (c :: nil)) + 1 in
+    let w := ell (Reached P) + ell (Reached (c :: nil)) in
+    (T_dense (variables (c :: P)) c <=
+      karr_dense_factor * N.of_nat (d + 1)^2 *
+        N.of_nat (w + d + 1))%N.
+  Proof.
+    intros P c HP Hc.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    pose proof (karr_target_variables_public P c) as Hxs.
+    pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hrow.
+    apply Forall_cons_iff in Hrow.
+    destruct Hrow as [[Hlength [_ Hbits]] _].
+    eapply T_karr_dense_bounded.
+    - unfold d, n in *. cbn [rows_of length] in *. lia.
+    - unfold d. lia.
+    - unfold w. lia.
+    - exact (karr_entail_variables_keys P c HP Hc).
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
