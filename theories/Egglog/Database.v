@@ -11753,6 +11753,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + rewrite PTrie.get_set_other by exact Htarget. exact Hlookup.
   Qed.
 
+  (** A recorded key's full lookup reaches a fixed row root. *)
+  Lemma database_history_root_fixed : forall db f k key r,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    (match PTrieCode.get
+       (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+         (db_row_store db)) (row_links (db_row_store db)) with
+     | Some parent => parent
+     | None => row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+         (db_row_store db)
+     end) = row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+       (db_row_store db).
+  Proof.
+    intros db f k key r Hstore Hentry.
+    destruct (database_row_store_depth db Hstore f k key r Hentry)
+      as [d [Hbound [Hfixed _]]].
+    rewrite (row_root_after_fixed _ d r (db_row_store db) Hbound Hfixed).
+    exact Hfixed.
+  Qed.
+
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
     (before <= after)%N ->
     length k * (N.to_nat (N.log2 before) + 1) <=
