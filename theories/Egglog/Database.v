@@ -12076,6 +12076,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Howner f k key r g args other s Hfirst Hsecond Hroots).
   Qed.
 
+  Lemma database_history_root_owner_allocate_next : forall db,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_root_owner (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hstore Howner.
+    eapply database_history_root_owner_ids_mono;
+      try exact Hstore; try exact Howner; try reflexivity.
+    rewrite allocate_next_ids. lia.
+  Qed.
+
   Lemma database_row_store_ok_ids_mono : forall db db',
     database_row_store_ok db ->
     db_row_store db' = db_row_store db -> db_nuses db' = db_nuses db ->
@@ -12476,6 +12486,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
       + apply database_history_root_owner_row_write.
         apply database_history_root_owner_slots_update. exact Howner.
+  Qed.
+
+  Lemma database_history_root_owner_row_delete : forall db f k,
+    database_history_root_owner db ->
+    database_history_root_owner (row_delete f k db).
+  Proof.
+    intros db f k Howner.
+    eapply database_history_root_owner_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - apply row_delete_ids.
+    - exact Howner.
   Qed.
 
   Lemma ensure_row_identity_new_size : forall db f k d,
@@ -12958,6 +12980,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try exact Hfresh_coherent;
       (apply database_active_history_coherent_row_replace;
         [exact Hfresh_store | exact Hfresh_coherent | exact Hfresh_loc]).
+  Qed.
+
+  Lemma database_history_root_owner_make : forall db f k,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_root_owner (snd (make f k db)).
+  Proof.
+    intros db f k Hstore Howner.
+    pose proof (database_row_store_ok_allocate_next db Hstore) as Hfresh_store.
+    pose proof (database_history_root_owner_allocate_next db Hstore Howner)
+      as Hfresh_owner.
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Howner;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh_owner;
+      (apply database_history_root_owner_row_replace;
+        [exact Hfresh_store | exact Hfresh_owner]).
   Qed.
 
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
@@ -13735,6 +13774,35 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hnext_store | exact Hnext_coherent | exact Hnext_loc].
     - apply database_active_history_coherent_row_replace;
         [exact Hnext_store | exact Hnext_coherent | exact Hnext_loc].
+  Qed.
+
+  Lemma database_history_root_owner_put : forall db f k o,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_root_owner (put f k o db).
+  Proof.
+    intros db f k o Hstore Howner. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hnext_owner : database_history_root_owner next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try exact Howner; apply database_history_root_owner_union; exact Howner. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_owner |].
+      apply database_history_root_owner_row_replace;
+        [exact Hnext_store | exact Hnext_owner].
+    - apply database_history_root_owner_row_replace;
+        [exact Hnext_store | exact Hnext_owner].
   Qed.
 
   Lemma put_representative_old : forall db f k o x,
