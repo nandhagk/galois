@@ -4272,6 +4272,52 @@ Proof.
   rewrite Hrows in Hnext. rewrite map_map. exact Hnext.
 Qed.
 
+(** Skipping a basis-zero column retains the target and its full minor law. *)
+Lemma karr_minor_law_prefix_skip : forall cols offset previous pivot_rows
+    pivot_columns columns labels rows target_origin target,
+  karr_pivot rows = None ->
+  Forall (fun row => length (kcoeff row) = S cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rows ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels
+      (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+      [(target_origin, karr_row_entries target)]) ->
+  Forall (fun row => length (kcoeff row) = cols /\
+    length (karr_row_entries (karr_zero_prefix (S offset) row)) = length columns)
+    (map karr_tail rows) /\
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels
+      (map (fun row => karr_row_entries (karr_zero_prefix (S offset) row))
+        (map karr_tail rows)) ++
+      [(target_origin, karr_row_entries target)]).
+Proof.
+  intros cols offset previous pivot_rows pivot_columns columns labels rows
+    target_origin target Hnone Hrows Hlaw.
+  pose proof (karr_pivot_none rows Hnone) as Hzero.
+  assert (Hpoint : forall row, In row rows ->
+    karr_zero_prefix offset row =
+      karr_zero_prefix (S offset) (karr_tail row)).
+  { intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrows row Hin) as [Hwidth _].
+    pose proof (proj1 (Forall_forall _ _) Hzero row Hin) as Hhead.
+    apply karr_zero_prefix_skip; [|exact Hhead].
+    intro Hempty. rewrite Hempty in Hwidth. cbn [length] in Hwidth. lia. }
+  split.
+  - apply Forall_forall. intros row Hin.
+    apply in_map_iff in Hin as [source [Heq Hsource]]. subst row.
+    pose proof (proj1 (Forall_forall _ _) Hrows source Hsource)
+      as [Hwidth Hentries].
+    split.
+    + now apply karr_tail_width.
+    + now rewrite <- (Hpoint source Hsource).
+  - assert (Heq : map (fun row =>
+        karr_row_entries (karr_zero_prefix offset row)) rows =
+      map (fun row => karr_row_entries
+        (karr_zero_prefix (S offset) (karr_tail row))) rows).
+    { apply map_ext_in. intros row Hin. now rewrite (Hpoint row Hin). }
+    rewrite Heq in Hlaw. rewrite map_map. exact Hlaw.
+Qed.
+
 (** A selected concrete pivot preserves all-order minors on its reduced tails. *)
 Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
     pivot_columns head columns labels rows pivot rest,
