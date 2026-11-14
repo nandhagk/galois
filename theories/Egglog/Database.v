@@ -20294,6 +20294,46 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     now rewrite Habsent.
   Qed.
 
+  (** Removing an absent active entry retains every active invariant clause. *)
+  Lemma inv_on_drop_absent : forall db f k rest,
+    inv_on db ((f, k) :: rest) -> located db f k = None -> inv_on db rest.
+  Proof.
+    intros db f k rest Hinv Habsent.
+    unfold inv_on in Hinv |- *.
+    destruct Hinv as
+      (Hrows & Hnodup_rows & Hcover & Hschedule & Hcache & Hnext & Hwork &
+       Hforest & Hkind & Hnodup_queue & Hpending & Hallocated).
+    split; [exact Hrows |].
+    split; [exact Hnodup_rows |].
+    split; [exact Hcover |].
+    split.
+    { intros g args out i Hrow Hids Hnonroot.
+      destruct (Hschedule g args out i Hrow Hids Hnonroot) as [key [Hentry Hlocated]].
+      exists key. split; [| exact Hlocated].
+      unfold scheduled in Hentry |- *.
+      destruct Hentry as [Hactive | Hqueued]; [| now right].
+      destruct Hactive as [Heq | Htail]; [| now left].
+      injection Heq as <- <-.
+      rewrite Habsent in Hlocated. discriminate. }
+    split; [exact Hcache |].
+    split; [exact Hnext |].
+    split.
+    { intros e Hin. apply Hwork. now right. }
+    split; [exact Hforest |].
+    split; [exact Hkind |].
+    split; [exact Hnodup_queue |].
+    split; [exact Hpending | exact Hallocated].
+  Qed.
+
+  Lemma inv_on_repair_absent : forall db f k rest,
+    inv_on db ((f, k) :: rest) -> located db f k = None ->
+    inv_on (repair_entry (f, k) db) rest.
+  Proof.
+    intros db f k rest Hinv Habsent.
+    rewrite (F6_absent db f k Habsent).
+    exact (inv_on_drop_absent db f k rest Hinv Habsent).
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
