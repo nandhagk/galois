@@ -22669,6 +22669,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (repair_current_target db f current output Hforest Hrow).
   Qed.
 
+  Lemma db_repair_entry_keeps_other_row : forall db f k current output
+      g args value,
+    UnionFind.wf (db_forest db) ->
+    db_locate f k db = Some current -> row_get f current db = Some output ->
+    row (view db) g args value ->
+    (g, args) <> (f, current) ->
+    (g, args) <> (f, normal_key db current) ->
+    row (view (db_repair_entry f k db)) g args value.
+  Proof.
+    intros db f k current output g args value Hforest Hlocated Hrow
+      Hold Hsource Htarget.
+    unfold db_repair_entry. rewrite Hlocated, Hrow.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hold |].
+    change (row_get g args
+      (move_row_identity f current (normal_key db current)
+        (repair_current f current db)) = Some value).
+    unfold row_get. rewrite move_row_identity_rows_store.
+    exact (repair_current_keeps db f current g args value Hforest
+      Hold Hsource Htarget).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
