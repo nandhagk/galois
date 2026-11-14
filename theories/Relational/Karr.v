@@ -3510,6 +3510,60 @@ Proof.
   apply karr_zero_prefix_restore.
 Qed.
 
+(** Zero prefixing adds exactly the processed coordinate count. *)
+Lemma karr_zero_prefix_width : forall count r,
+  length (kcoeff (karr_zero_prefix count r)) = count + length (kcoeff r).
+Proof.
+  induction count as [|count IH]; intro r; [reflexivity|].
+  cbn [karr_zero_prefix karr_restore kcoeff length]. rewrite IH. lia.
+Qed.
+
+(** A nonempty row with zero head is its own restored tail. *)
+Lemma karr_restore_tail_zero : forall r,
+  kcoeff r <> [] -> karr_head r = 0%Z -> r = karr_restore (karr_tail r).
+Proof.
+  intros [coeff right weight scale] Hnonempty Hzero.
+  destruct coeff as [|head coeff]; [contradiction|].
+  cbn [karr_head kcoeff] in Hzero. subst head. reflexivity.
+Qed.
+
+(** Exact or fallback reduction commutes with adding a common zero head. *)
+Lemma karr_reduce_restored : forall d a b p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  karr_reduce d a b (karr_restore p) (karr_restore r) =
+    karr_restore (karr_reduce d a b p r).
+Proof.
+  intros d a b p r Hwidth.
+  set (next := karr_reduce d a b (karr_restore p) (karr_restore r)).
+  assert (Hnext_width : length (kcoeff next) = S (length (kcoeff r))).
+  { unfold next. rewrite karr_reduce_width.
+    - cbn [karr_restore kcoeff length]. reflexivity.
+    - cbn [karr_restore kcoeff length]. lia. }
+  assert (Hnext_nonempty : kcoeff next <> []).
+  { intro Hempty. rewrite Hempty in Hnext_width. cbn [length] in Hnext_width. lia. }
+  assert (Hnext_zero : karr_head next = 0%Z).
+  { unfold next, karr_reduce. apply karr_divide_head_zero.
+    destruct p as [pc pr pw ps], r as [rc rr rw sc].
+    cbn [karr_head kcoeff karr_restore karr_cross]. ring. }
+  rewrite (karr_restore_tail_zero next Hnext_nonempty Hnext_zero).
+  f_equal. unfold next.
+  now apply karr_reduce_restore_tail_zero.
+Qed.
+
+(** Equal-width row reduction commutes with every processed zero prefix. *)
+Lemma karr_zero_prefix_reduce : forall count d a b p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  karr_reduce d a b (karr_zero_prefix count p)
+    (karr_zero_prefix count r) =
+    karr_zero_prefix count (karr_reduce d a b p r).
+Proof.
+  induction count as [|count IH]; intros d a b p r Hwidth;
+    [reflexivity|].
+  cbn [karr_zero_prefix]. rewrite karr_reduce_restored.
+  - now rewrite IH.
+  - rewrite !karr_zero_prefix_width. lia.
+Qed.
+
 (** Every coordinate before the first nonzero coefficient vanishes. *)
 Lemma karr_first_before : forall zs i a,
   karr_first zs = Some (i, a) -> forall j, j < i -> karr_nth j zs = 0%Z.
