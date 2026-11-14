@@ -11768,7 +11768,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
     row_store_ok db /\ projection_counts_ok db /\ database_history db /\ core_bridge db /\
-    slot_rank_ok db /\ (forall x, In x (queue db) -> repr db x <> x).
+    slot_rank_ok db /\ (forall x, In x (queue db) -> repr db x <> x) /\
+    database_owned_ok db.
   Lemma forest_ok_init : forall ds sl, forest_ok (init ds sl).
   Proof.
     intros ds sl. unfold forest_ok.
@@ -11787,7 +11788,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       split; [apply database_history_init |].
       split.
       + apply database_wf_core_bridge. apply wf_init.
-      + split; [reflexivity | intros x Hin; contradiction].
+      + split; [reflexivity |].
+        split; [intros x Hin; contradiction | apply database_owned_ok_init].
   Qed.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
@@ -15415,7 +15417,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db x db' Hforest Hpop.
     destruct Hforest as
       [Hlocated [Hmetadata [Hpending [Huf [Hcard [Hsame [Hwidth
-      [Hstore [Hcounts [Hhistory [Hcore [Hrank Hnonroot]]]]]]]]]]]].
+      [Hstore [Hcounts [Hhistory [Hcore [Hrank [Hnonroot Howned]]]]]]]]]]]]].
+    pose proof (database_owned_ok_pop db x db' Howned Hpop) as Howned'.
     pose proof (pop_loser_row_store_ok db x db' Hstore Hpop) as Hstore'.
     assert (Hlocate : forall f k, db_locate f k db' = db_locate f k db).
     { intros f k. eapply pop_loser_locate. exact Hpop. }
@@ -15445,10 +15448,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           split; [exact Hhistory |].
           split; [exact Hcore |].
           split; [exact Hrank |].
-          intros y Hin. unfold queue in Hin.
-          cbn [database_set_pending database_set_runtime runtime_set_union
-            db_runtime runtime_queue] in Hin.
-          apply Hnonroot. unfold queue. rewrite Hqueue. now right.
+          split.
+          -- intros y Hin. unfold queue in Hin.
+             cbn [database_set_pending database_set_runtime runtime_set_union
+               db_runtime runtime_queue] in Hin.
+             apply Hnonroot. unfold queue. rewrite Hqueue. now right.
+          -- exact Howned'.
   Qed.
 
   Lemma pop_loser_queue : forall db x db',
@@ -15618,9 +15623,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma forest_ok_public : forall db, database_wf db -> database_idle_ok db ->
-    slot_rank_ok db -> forest_ok db.
+    slot_rank_ok db -> database_owned_ok db -> forest_ok db.
   Proof.
-    intros db Hbase Hidle Hrank. unfold forest_ok.
+    intros db Hbase Hidle Hrank Howned. unfold forest_ok.
     split; [exact (database_idle_located db Hidle) |].
     split; [exact (wf_metadata db Hbase) |].
     split; [exact (wf_pending_count db Hbase) |].
@@ -15635,7 +15640,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     split; [exact (wf_history db Hbase) |].
     split; [exact (database_wf_core_bridge db Hbase) |].
     split; [exact Hrank |].
-    exact (database_idle_queue_nonroot db Hidle).
+    split; [exact (database_idle_queue_nonroot db Hidle) | exact Howned].
   Qed.
 
   Lemma public_rows_member : forall db f k o, database_wf db ->
@@ -15703,9 +15708,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma public_inv_forward : forall db, database_wf db -> database_idle_ok db ->
-    slot_rank_ok db -> inv_on db [].
+    slot_rank_ok db -> database_owned_ok db -> inv_on db [].
   Proof.
-    intros db Hbase Hidle Hrank. unfold inv_on.
+    intros db Hbase Hidle Hrank Howned. unfold inv_on.
     split; [intros f k o; exact (public_rows_member db f k o Hbase) |].
     split; [exact (public_rows_distinct db Hbase) |].
     split.
@@ -15718,7 +15723,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     split.
     { intros f k o i Hrow Hid. exact (public_row_id_bound db Hbase f k o i Hrow Hid). }
     split; [intros e Hin; contradiction |].
-    split; [exact (forest_ok_public db Hbase Hidle Hrank) |].
+    split; [exact (forest_ok_public db Hbase Hidle Hrank Howned) |].
     split.
     { intros f k o Hrow. exact (public_row_kind_ok db Hbase f k o Hrow). }
     split; [exact (database_idle_queue_distinct db Hidle) |].
@@ -15871,18 +15876,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma database_public_inv_iff : forall db,
-    database_public_ok db <-> inv_on db [].
+    database_public_ok db /\ database_owned_ok db <-> inv_on db [].
   Proof.
     intro db. split.
-    - intro Hpublic. apply public_inv_forward.
+    - intros [Hpublic Howned]. apply public_inv_forward.
       + exact (database_public_base db Hpublic).
       + exact (database_public_idle db Hpublic).
       + exact (database_public_rank db Hpublic).
-    - intro Hinv. unfold database_public_ok. split.
-      + exact (inv_base_reverse db Hinv).
-      + split; [exact (inv_idle_reverse db Hinv) |].
-        unfold slot_rank_ok in *.
-        apply forest_slot_rank. unfold inv_on in Hinv. tauto.
+      + exact Howned.
+    - intro Hinv. split.
+      + unfold database_public_ok. split.
+        * exact (inv_base_reverse db Hinv).
+        * split; [exact (inv_idle_reverse db Hinv) |].
+          unfold slot_rank_ok in *.
+          apply forest_slot_rank. unfold inv_on in Hinv. tauto.
+      + unfold inv_on, forest_ok in Hinv. tauto.
   Qed.
 
   Lemma public_union_queue_distinct : forall db i j, database_public_ok db ->
