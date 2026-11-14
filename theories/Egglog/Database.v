@@ -3062,6 +3062,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hstore. unfold database_row_store_ok in Hstore. tauto.
   Qed.
 
+  Lemma database_row_store_depth : forall db,
+    database_row_store_ok db ->
+    forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
+      exists d, d <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
+        (let parent current :=
+          match PTrieCode.get current (row_links (db_row_store db)) with
+          | Some p => p | None => current end in
+         parent (Nat.iter d parent r) = Nat.iter d parent r) /\
+        db_locate f k db =
+          PTrieCode.get
+            (Nat.iter d (fun current =>
+              match PTrieCode.get current (row_links (db_row_store db)) with
+              | Some p => p | None => current end) r)
+            (row_keys (db_row_store db)).
+  Proof.
+    intros db Hstore. unfold database_row_store_ok in Hstore.
+    destruct Hstore as (_ & _ & _ & _ & _ & Hdepth & _).
+    exact Hdepth.
+  Qed.
+
   Lemma database_row_store_uses_history : forall db,
     database_row_store_ok db ->
     forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
@@ -11237,6 +11258,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply ensure_row_identity_old_root_key.
     apply row_root_below_fresh; [exact Hstore |].
     exact (database_row_store_history_range db Hstore g args key r Hget).
+  Qed.
+
+  Lemma ensure_row_identity_old_depth : forall db f k g args key r,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
+    exists d,
+      d <= length args * (N.to_nat (N.log2 (ids (ensure_row_identity f k db))) + 1) /\
+      (let parent current :=
+        match PTrieCode.get current
+          (row_links (db_row_store (ensure_row_identity f k db))) with
+        | Some p => p | None => current end in
+       parent (Nat.iter d parent r) = Nat.iter d parent r) /\
+      db_locate g args (ensure_row_identity f k db) =
+        PTrieCode.get
+          (Nat.iter d (fun current =>
+            match PTrieCode.get current
+              (row_links (db_row_store (ensure_row_identity f k db))) with
+            | Some p => p | None => current end) r)
+          (row_keys (db_row_store (ensure_row_identity f k db))).
+  Proof.
+    intros db f k g args key r Hstore Hget.
+    destruct (database_row_store_depth db Hstore g args key r Hget)
+      as [d [Hbound [Hroot Hcurrent]]].
+    exists d. rewrite ensure_row_identity_ids. split; [exact Hbound |].
+    rewrite ensure_row_identity_links. split; [exact Hroot |].
+    rewrite (ensure_row_identity_old_locate db f k g args key r Hstore Hget).
+    rewrite ensure_row_identity_old_root_key.
+    - exact Hcurrent.
+    - apply row_parent_iter_below_fresh; [exact Hstore |].
+      exact (database_row_store_history_range db Hstore g args key r Hget).
   Qed.
 
   Lemma ensure_row_identity_new_locate : forall db f k,
