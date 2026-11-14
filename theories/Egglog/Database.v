@@ -20763,6 +20763,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     reflexivity.
   Qed.
 
+  Lemma db_repair_entry_uses : forall db f k x e,
+    uses (db_repair_entry f k db) x e <-> uses db x e.
+  Proof.
+    intros db f k x e. unfold uses, uses_entries.
+    now rewrite db_repair_entry_uses_store.
+  Qed.
+
+  (** Unconsumed active entries retain their registered occurrence witness. *)
+  Lemma inv_on_repair_work : forall db f k rest,
+    inv_on db ((f, k) :: rest) ->
+    forall e, In e rest -> exists x, uses (db_repair_entry f k db) x e.
+  Proof.
+    intros db f k rest Hinv e Hin.
+    destruct Hinv as (_ & _ & _ & _ & _ & _ & Hwork & _).
+    destruct (Hwork e (or_intror Hin)) as [x Huse].
+    exists x. now apply db_repair_entry_uses.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
