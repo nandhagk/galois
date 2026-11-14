@@ -15668,6 +15668,71 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       pose proof (poly_form_entry_bits f p Hp). unfold X.bits in *. lia.
   Qed.
 
+  (** Logarithmic preparation width is paid by finite coefficient support. *)
+  Lemma poly_assign_prepared_head_measure_numeric : forall total rows support
+      sourcebits keybits rawbits preparedbits bits,
+    support <= total + 1 -> support <= 2^bits ->
+    sourcebits <= bits -> keybits <= bits -> rawbits <= bits ->
+    preparedbits <= 2 * rawbits + Nat.log2 (total + 1) + 1 ->
+    3 <= bits ->
+    (total + rows) * (sourcebits + 1) +
+      2 * ((2 * support + 2) * (keybits + 3 * preparedbits + 5) +
+        sourcebits + Nat.log2 rows + 2) <=
+      256 * (total + rows + 3) * bits^2.
+  Proof.
+    intros total rows support sourcebits keybits rawbits preparedbits bits
+      Htotal Hspace Hsource Hkey Hraw Hprepared Hbits.
+    set (q := Nat.log2 (total + 1)).
+    set (volume := total + rows + 3).
+    pose proof (poly_signed_support_log_linear support total bits
+      Htotal Hspace) as Hsupportlog.
+    assert (Hone_space : 1 <= 2^bits).
+    { pose proof (Nat.pow_nonzero 2 bits ltac:(lia)). lia. }
+    pose proof (poly_signed_support_log_linear 1 total bits
+      ltac:(lia) Hone_space) as Honelog.
+    assert (Hsumlog : (support + 1) * (bits + q + 1) <=
+      4 * (total + 1) * (bits + 1)).
+    { unfold q in *. nia. }
+    assert (Hfactor : keybits + 3 * preparedbits + 5 <=
+      8 * (bits + q + 1)) by (unfold q in *; lia).
+    assert (Hcertificate : 2 * ((2 * support + 2) *
+      (keybits + 3 * preparedbits + 5)) <=
+      128 * volume * (bits + 1)).
+    { assert (Hfactor_product : (support + 1) *
+        (keybits + 3 * preparedbits + 5) <=
+        (support + 1) * (8 * (bits + q + 1)))
+        by (apply Nat.mul_le_mono_l; exact Hfactor).
+      unfold volume. nia. }
+    assert (Hsource_mass : (total + rows) * (sourcebits + 1) <=
+      volume * (bits + 1)).
+    { apply Nat.mul_le_mono; [unfold volume; lia|lia]. }
+    assert (Hrowlog : Nat.log2 rows <= rows).
+    { apply Nat.log2_le_lin. lia. }
+    assert (Htail_mass : 2 * (sourcebits + Nat.log2 rows + 2) <=
+      2 * volume * (bits + 1)).
+    { assert (Hvolume : rows + 3 <= volume) by (unfold volume; lia).
+      assert (Hproduct : (rows + 3) * (bits + 1) <= volume * (bits + 1))
+        by (apply Nat.mul_le_mono_r; exact Hvolume).
+      nia. }
+    assert (Hwidth_square : 131 * (bits + 1) <= 256 * bits^2)
+      by (clear -Hbits; cbn [Nat.pow]; nia).
+    assert (Haggregate : (total + rows) * (sourcebits + 1) +
+      2 * ((2 * support + 2) * (keybits + 3 * preparedbits + 5) +
+        sourcebits + Nat.log2 rows + 2) <= 131 * volume * (bits + 1))
+      by (replace
+        (2 * ((2 * support + 2) * (keybits + 3 * preparedbits + 5) +
+          sourcebits + Nat.log2 rows + 2)) with
+        (2 * ((2 * support + 2) * (keybits + 3 * preparedbits + 5)) +
+          2 * (sourcebits + Nat.log2 rows + 2)) by ring;
+        clear -Hsource_mass Hcertificate Htail_mass; lia).
+    eapply Nat.le_trans; [exact Haggregate|].
+    replace (131 * volume * (bits + 1)) with
+      (volume * (131 * (bits + 1))) by ring.
+    replace (256 * volume * bits^2) with
+      (volume * (256 * bits^2)) by ring.
+    now apply Nat.mul_le_mono_l.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
