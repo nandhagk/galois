@@ -3152,6 +3152,36 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - rewrite PTrie.get_set_other by exact Hother. exact Hget.
   Qed.
 
+  Lemma ensure_row_identity_raw_history_old : forall db f k code key r,
+    PTrieCode.get code (row_history (db_row_store db)) = Some (key, r) ->
+    PTrieCode.get code
+      (row_history (db_row_store (ensure_row_identity f k db))) = Some (key, r).
+  Proof.
+    intros db f k code key r Hget.
+    unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior; [exact Hget |].
+    cbn [database_set_index_counters database_set_row_store db_row_store row_history].
+    destruct (Pos.eq_dec code (db_row_code f k)) as [Hsame | Hother].
+    - rewrite Hsame in Hget. congruence.
+    - rewrite PTrie.get_set_other by exact Hother. exact Hget.
+  Qed.
+
+  Lemma ensure_row_identity_recorded_old : forall db f k r,
+    In r (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history (db_row_store db)))) ->
+    In r (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history (db_row_store (ensure_row_identity f k db))))).
+  Proof.
+    intros db f k r Hin.
+    apply in_map_iff in Hin as [[code [key prior]] [Heq Helem]].
+    cbn [snd] in Heq. subst prior.
+    apply PTrie.elements_spec in Helem.
+    apply in_map_iff. exists (code, (key, r)). split; [reflexivity |].
+    apply PTrie.elements_spec.
+    now apply ensure_row_identity_raw_history_old.
+  Qed.
+
   Lemma ensure_row_identity_history_new : forall db f k,
     database_row_store_ok db ->
     exists r, PTrieCode.get (db_row_code f k)
