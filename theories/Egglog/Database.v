@@ -22086,6 +22086,66 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (Hnext a b).
   Qed.
 
+  Lemma repair_current_equalities_active : forall db work f k,
+    inv_on db work -> forall a b,
+      same (view (repair_current f k db)) a b <->
+        repr (repair_current f k db) a = repr (repair_current f k db) b.
+  Proof.
+    intros db work f k Hinv a b.
+    assert (Hforest : UnionFind.wf (db_forest db)).
+    { exact (inv_on_forest_wf db work Hinv). }
+    assert (Hsame : forall x y,
+      same (view db) x y <-> repr db x = repr db y).
+    { intros x y. exact (inv_on_same_repr db work x y Hinv). }
+    unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact (Hsame a b)].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact (Hsame a b) |].
+    set (deleted := row_delete f k db).
+    assert (Hforest_deleted : UnionFind.wf (db_forest deleted)).
+    { subst deleted. now rewrite row_delete_forest. }
+    assert (Hsame_deleted : forall x y,
+      same (view deleted) x y <-> repr deleted x = repr deleted y).
+    { intros x y. subst deleted. rewrite row_delete_same.
+      unfold repr. rewrite row_delete_forest. exact (Hsame x y). }
+    change (same (view (put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted)) a b <->
+      repr (put f (normal_key db k)
+        (option_map (normal_cell db) output) deleted) a =
+      repr (put f (normal_key db k)
+        (option_map (normal_cell db) output) deleted) b).
+    exact (put_equalities_active deleted f (normal_key db k)
+      (option_map (normal_cell db) output) Hforest_deleted Hsame_deleted a b).
+  Qed.
+
+  Lemma inv_on_repair_equalities : forall db work f k,
+    inv_on db work -> forall a b,
+      same (view (db_repair_entry f k db)) a b <->
+        repr (db_repair_entry f k db) a = repr (db_repair_entry f k db) b.
+  Proof.
+    intros db work f k Hinv a b.
+    assert (Hsame : same (view db) a b <-> repr db a = repr db b).
+    { exact (inv_on_same_repr db work a b Hinv). }
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hsame].
+    destruct (row_get f current db) as [output |]; [| exact Hsame].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hsame |].
+    pose proof (repair_current_equalities_active db work f current Hinv a b)
+      as Hrepair.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |];
+      destruct (PTrieCode.get (db_row_code f (normal_key db current))
+        (row_history (db_row_store (repair_current f current db))))
+        as [[new_key new_id] |]; exact Hrepair.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
