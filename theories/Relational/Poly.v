@@ -14366,6 +14366,82 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - unfold c. rewrite Hbit_eq. exact Hbits.
   Qed.
 
+  (** A full-step candidate charges one normal substitution and one scale-one check. *)
+  Lemma T_poly_assign_output_candidate_branch : forall x f P r xs head ms,
+    NoDup (map fst (coef f)) ->
+    In r (poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun q => (rename_row (rename_old x) q, false)) P))) ->
+    untag (lhs (poly_constraint r)) = Some xs ->
+    poly_multipliers r = head :: ms ->
+    let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef f) + 1 in
+    let keys := poly_raw_keys P + X.bits x + F.form_bits f + 1 in
+    let bits := 2 * (poly_raw_bits P + F.form_bits f + 1) + 1 in
+    let checker_bits := keys + bits in
+    (T_subst x f c + C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
+      AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span dim 0 keys bits +
+      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+        terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2)%N.
+  Proof.
+    intros x f P r xs head ms Hform Hr Huntag Hmult
+      c dim keys bits checker_bits.
+    destruct (poly_assign_output_untag_envelope x f P r xs Hform Hr Huntag)
+      as (Hnormal & Hdim & Hkeys & Hbits).
+    cbn zeta in Hnormal, Hdim, Hkeys, Hbits.
+    destruct (poly_assign_form_row_bounds f) as [Hformkeys Hformbits].
+    assert (Hrow : poly_input_envelope dim keys bits c).
+    { unfold poly_input_envelope. repeat split; try assumption; try lia. }
+    assert (Hfrow : poly_input_envelope dim keys bits
+      (LCons X.t (coef f) REq (cst f))).
+    { unfold poly_input_envelope. cbn [lhs]. repeat split;
+        try assumption; try lia. }
+    pose proof (AssignCore.T_poly_assign_subst_normal x f c dim keys bits
+      Hrow Hfrow) as Hsubst.
+    change (T_subst x f c <= AssignCore.poly_assign_normal_subst_factor *
+      poly_clock_span dim 0 keys bits)%N in Hsubst.
+    destruct (AssignCore.poly_assign_subst_normal_sizes x f c keys bits
+      Hnormal Hform ltac:(exact (proj1 (proj2 (proj2 Hrow))))
+      ltac:(exact (proj2 (proj2 (proj2 Hrow))))
+      ltac:(exact (proj1 (proj2 (proj2 Hfrow))))
+      ltac:(exact (proj2 (proj2 (proj2 Hfrow)))))
+      as (Hsubstdim & Hsubstkeys & Hsubstbits).
+    change (length (lhs (subst x f c)) <= length (lhs c) + length (coef f))
+      in Hsubstdim.
+    change (C.row_key_bits (subst x f c) <= keys) in Hsubstkeys.
+    change (C.row_bits (subst x f c) <= 2 * bits + 1) in Hsubstbits.
+    destruct (proj1 (Forall_forall _ _)
+      (poly_assign_output_multiplier_bits x f P Hform) r Hr)
+      as [Hmultlen Hmultbits].
+    rewrite Hmult in Hmultlen, Hmultbits.
+    cbn [length] in Hmultlen. inversion Hmultbits as [|? ? _ Hmsbits]; subst.
+    assert (Hsource : Forall (fun p =>
+      C.row_key_bits p + C.row_bits p <= checker_bits) P).
+    { eapply Forall_impl; [|apply poly_raw_source_width].
+      intros p Hp. eapply Nat.le_trans; [exact Hp|].
+      unfold checker_bits, keys, bits. pose proof (poly_raw_width P). lia. }
+    assert (Hms : Forall (fun m => Z.size_nat m <= 2 * checker_bits + 2) ms).
+    { eapply Forall_impl; [|exact Hmsbits]. intros m Hm.
+      eapply Nat.le_trans; [exact Hm|].
+      unfold checker_bits, keys, bits. lia. }
+    assert (Hcheckdim : length (lhs (subst x f c)) <= dim + length (coef f))
+      by (change (length (lhs c) <= dim) in Hdim; lia).
+    assert (Hcheckwidth : C.row_key_bits (subst x f c) +
+      C.row_bits (subst x f c) <= 3 * checker_bits + 1)
+      by (unfold checker_bits; lia).
+    pose proof (AssignCore.T_poly_assign_checker P (subst x f c) ms
+      (dim + length (coef f)) checker_bits Hsource ltac:(lia) Hms
+      Hcheckdim Hcheckwidth) as Hcheck.
+    change (C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
+      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+        terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2)%N
+      in Hcheck.
+    cbn zeta. now apply N.add_le_mono.
+  Qed.
+
   (** Only the old assigned coordinate is eliminated from the source-only tail. *)
   Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
     poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
