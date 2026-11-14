@@ -13465,6 +13465,46 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
               [right | left]; assumption | reflexivity].
   Qed.
 
+  Lemma database_history_alignment_move : forall db f old ck,
+    database_row_store_ok db -> database_history_alignment db ->
+    length old = length ck -> db_locate f old db = Some old ->
+    (forall key r,
+      PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+        Some (key, r) -> db_locate f ck db = Some ck) ->
+    ((forall i, In (Id i) old -> repr db i = i) -> old = ck) ->
+    database_history_alignment (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Halign Hlength Hsource_loc Hdest_loc Hsource_fixed
+      g args key r Hentry Hfixed.
+    rewrite move_row_identity_history in Hentry.
+    assert (Hfixed_old : forall i, In (Id i) args -> repr db i = i).
+    { intros i Hin. specialize (Hfixed i Hin). unfold repr in *.
+      rewrite (proj1 (move_row_identity_semantic_fields db f old ck)) in Hfixed.
+      exact Hfixed. }
+    assert (Hlookup : db_locate g args db = Some args).
+    { exact (database_history_alignment_entry db Halign g args key r
+        Hentry Hfixed_old). }
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource;
+      [| unfold db_locate in Hsource_loc; rewrite Hsource in Hsource_loc;
+         discriminate].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest.
+    - apply (move_row_identity_locate_aligned db f old ck g args
+        old_key old_id ck_key ck_id key r Hstore Hlength Hsource Hdest Hentry).
+      + exact Hsource_loc.
+      + exact (Hdest_loc ck_key ck_id eq_refl).
+      + exact Hlookup.
+      + intro Hroots.
+        exact (database_history_alignment_affected db f old ck g args
+          old_key old_id ck_key ck_id key r Halign Hsource Hdest Hentry
+          Hsource_loc (Hdest_loc ck_key ck_id eq_refl) Hfixed_old
+          Hsource_fixed Hroots).
+    - replace (move_row_identity f old ck db) with db.
+      + exact Hlookup.
+      + unfold move_row_identity. now rewrite Hsource, Hdest.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
