@@ -12042,6 +12042,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     reflexivity.
   Qed.
 
+  Lemma database_history_root_owner_ids_mono : forall db db',
+    database_row_store_ok db -> database_history_root_owner db ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    (ids db <= ids db')%N -> database_history_root_owner db'.
+  Proof.
+    intros db db' Hstore Howner Hhistory Hlinks Hids
+      f k key r g args other s Hfirst Hsecond Hroots.
+    rewrite Hhistory in Hfirst, Hsecond.
+    assert (Hsame_root : forall name tuple label id,
+      PTrieCode.get (db_row_code name tuple)
+        (row_history (db_row_store db)) = Some (label, id) ->
+      row_root (length tuple * (N.to_nat (N.log2 (ids db')) + 1)) id
+        (db_row_store db') =
+      row_root (length tuple * (N.to_nat (N.log2 (ids db)) + 1)) id
+        (db_row_store db)).
+    { intros name tuple label id Hentry.
+      rewrite (row_root_same_links _ id (db_row_store db')
+        (db_row_store db) Hlinks).
+      destruct (database_row_store_depth db Hstore name tuple label id Hentry)
+        as [d [Hbound [Hfixed _]]].
+      assert (Hnew_bound : d <=
+        length tuple * (N.to_nat (N.log2 (ids db')) + 1)).
+      { eapply Nat.le_trans; [exact Hbound |].
+        apply row_lookup_depth_mono. exact Hids. }
+      rewrite (row_root_after_fixed _ d id (db_row_store db)
+        Hnew_bound Hfixed).
+      rewrite (row_root_after_fixed _ d id (db_row_store db)
+        Hbound Hfixed). reflexivity. }
+    rewrite (Hsame_root f k key r Hfirst) in Hroots.
+    rewrite (Hsame_root g args other s Hsecond) in Hroots.
+    exact (Howner f k key r g args other s Hfirst Hsecond Hroots).
+  Qed.
+
   Lemma database_row_store_ok_ids_mono : forall db db',
     database_row_store_ok db ->
     db_row_store db' = db_row_store db -> db_nuses db' = db_nuses db ->
