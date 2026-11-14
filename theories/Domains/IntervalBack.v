@@ -5602,6 +5602,76 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       rewrite Nat.mul_1_r; lia.
   Qed.
 
+  Local Lemma table_ashr_small_time : forall rw wa a wb b,
+    (T_interval_ashr_small rw (interval_clip wa a) (interval_clip wb b) <=
+      50000 * N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (interval_clip wb b) + 1) ^ 2))%N.
+  Proof.
+    intros rw wa a wb b.
+    set (ca := interval_clip wa a).
+    set (cb := interval_clip wb b).
+    set (s := Pos.to_nat rw + interval_bits ca + interval_bits cb + 1).
+    assert (Hpositive : (1 <= s)%nat) by (unfold s; lia).
+    assert (Hsquare_nat : (1 <= s * s)%nat)
+      by (clear - Hpositive; nia).
+    pose proof (table_nat_to_N_le _ _ Hsquare_nat) as Hbudget.
+    assert (Ha_nat :
+      ((Pos.to_nat rw + interval_bits ca + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    assert (Htop_nat : ((Pos.to_nat rw + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    pose proof (table_nat_to_N_le _ _ Ha_nat) as HaN.
+    pose proof (table_nat_to_N_le _ _ Htop_nat) as HtopN.
+    pose proof (table_sign_time rw ca) as Hsign.
+    pose proof (table_not_time rw ca) as Hnot.
+    pose proof (table_top_time rw) as Htop.
+    assert (Hsign_budget :
+      (T_interval_sign rw ca <= 300 * N.of_nat (s ^ 2))%N)
+      by (clear - Hsign HaN; nia).
+    assert (Hnot_budget :
+      (T_interval_not rw ca <= 1000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hnot HaN; nia).
+    assert (Htop_budget :
+      (T_interval_top rw <= 100 * N.of_nat (s ^ 2))%N)
+      by (clear - Htop HtopN; nia).
+    pose proof (table_lshr_time rw ca wb b) as Hplain.
+    pose proof (table_not_bits rw wa a) as Hnot_bits.
+    assert (Hnot_shift_nat :
+      (Pos.to_nat rw + interval_bits (interval_not rw ca) +
+        interval_bits cb + 1 <= 2 * s)%nat)
+      by (unfold ca, s; lia).
+    pose proof (table_square_scale _ _ _ Hnot_shift_nat) as Hnot_scale.
+    change (N.of_nat (2 ^ 2)) with 4%N in Hnot_scale.
+    pose proof (table_lshr_time rw (interval_not rw ca) wb b) as Hshift.
+    assert (Hshift_budget :
+      (T_interval_lshr rw (interval_not rw ca) cb <=
+        8000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hshift Hnot_scale; fold cb in Hshift; nia).
+    pose proof (table_lshr_raw_bits rw (interval_not rw ca) cb) as Hraw.
+    assert (Houter_nat :
+      (Pos.to_nat rw + interval_bits (interval_lshr rw (interval_not rw ca) cb) +
+        1 <= 4 * s)%nat)
+      by (unfold s, ca; unfold ca in Hraw; lia).
+    pose proof (table_square_scale _ _ _ Houter_nat) as Houter_scale.
+    change (N.of_nat (4 ^ 2)) with 16%N in Houter_scale.
+    pose proof (table_not_time rw (interval_lshr rw (interval_not rw ca) cb))
+      as Houter.
+    assert (Houter_budget :
+      (T_interval_not rw (interval_lshr rw (interval_not rw ca) cb) <=
+        16000 * N.of_nat (s ^ 2))%N)
+      by (clear - Houter Houter_scale; nia).
+    change (T_interval_lshr rw ca cb <= 2000 * N.of_nat (s ^ 2))%N in Hplain.
+    rewrite Nat.pow_2_r in Hsign_budget, Hnot_budget, Htop_budget,
+      Hshift_budget, Houter_budget, Hplain.
+    unfold T_interval_ashr_small.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (interval_sign rw ca) as [sign|]; [destruct sign|];
+      time_cbn_all;
+      clear - Hsign_budget Hnot_budget Htop_budget Hshift_budget
+        Houter_budget Hplain Hbudget;
+      rewrite Nat.mul_1_r; lia.
+  Qed.
+
   Local Lemma table_unary_dispatch_time : forall rw w a cost,
     (cost <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits (interval_clip w a) + 1) ^ 2))%N ->
