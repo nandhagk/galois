@@ -432,6 +432,24 @@ Proof.
       * split; assumption.
 Qed.
 
+(** A selected pivot keeps its matching origin label and permutes the live labels. *)
+Lemma karr_pivot_with_origins : forall A (R : A -> karr_row -> Prop) labels rows pivot rest,
+  Forall2 R labels rows -> karr_pivot rows = Some (pivot, rest) ->
+  exists label remaining,
+    Forall2 R (label :: remaining) (pivot :: rest) /\
+    Permutation labels (label :: remaining).
+Proof.
+  intros A R labels rows pivot rest Hrel Hpivot.
+  destruct (karr_pivot_split rows pivot rest Hpivot)
+    as [prefix [suffix [Hrows Hrest]]].
+  destruct (karr_forall2_split A karr_row R labels rows prefix pivot suffix
+    Hrel Hrows) as [before [label [after [Hlabels [Hbefore [Hlabel Hafter]]]]]].
+  exists label, (before ++ after). split.
+  - rewrite Hrest. constructor; [exact Hlabel|].
+    now apply Forall2_app.
+  - rewrite Hlabels. apply Permutation_sym, Permutation_middle.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
