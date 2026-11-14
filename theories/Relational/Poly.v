@@ -14017,6 +14017,27 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (poly_initial tmp_encode
         (map (fun r => (rename_row (rename_old x) r, false)) P)).
 
+  Definition poly_assign_head (x : X.t) (f : lin X.t)
+      (P : list (lcons X.t)) : poly_row (option X.t) :=
+    PolyRow (option X.t) (poly_normal_row tmp_encode (assignment_row x f))
+      (1%Z :: map (fun _ => 0%Z) P) false.
+
+  (** The prepared equation is the first initialized row; the old sources form its tail. *)
+  Lemma poly_assign_initial_head : forall x f P,
+    poly_initial tmp_encode
+      ((assignment_row x f, false) ::
+        map (fun r => (rename_row (rename_old x) r, false)) P) =
+      poly_assign_head x f P :: poly_assign_tail x P.
+  Proof.
+    intros x f P.
+    assert (Hzeros : map (fun _ : lcons (option X.t) * bool => 0%Z)
+      (map (fun r => (rename_row (rename_old x) r, false)) P) =
+      map (fun _ : lcons X.t => 0%Z) P).
+    { induction P as [|r P IH]; [reflexivity|]. cbn [map]. now f_equal. }
+    unfold poly_assign_head, poly_assign_tail.
+    cbn [poly_initial fst snd]. now rewrite Hzeros.
+  Qed.
+
   (** The renamed source list is shared by all support and width bounds. *)
   Lemma poly_assign_tail_sources : forall x P,
     poly_assign_tail x P = map (@poly_pad_row (option X.t))
