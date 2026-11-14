@@ -15468,12 +15468,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma repair_current_history_other : forall db f k g args,
-    wf db -> (g, args) <> (f, normal_key db k) ->
+    UnionFind.wf (db_forest db) ->
+    (g, args) <> (f, normal_key db k) ->
     PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (repair_current f k db))) =
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)).
   Proof.
-    intros db f k g args Hwf Hother. unfold repair_current.
+    intros db f k g args Hforest Hother. unfold repair_current.
     destruct (row_get f k db) as [output |]; [| reflexivity].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) output) output));
@@ -15482,7 +15483,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite put_history_other.
     - now rewrite row_delete_row_store.
     - rewrite row_delete_normal_key,
-        (normal_key_idempotent db k (wf_forest db Hwf)).
+        (normal_key_idempotent db k Hforest).
       exact Hother.
   Qed.
 
@@ -15903,13 +15904,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma repair_current_fixed_key : forall db f k,
-    wf db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
     (forall i, In (Id i) k -> repr (repair_current f k db) i = i) ->
     k = normal_key db k.
   Proof.
-    intros db f k Hwf Hfixed. symmetry.
-    apply normal_key_of_fixed; [exact Hwf |].
-    intros i Hin. apply (repair_current_representative_old db f k i (wf_forest db Hwf)).
+    intros db f k Hforest Hmembers Hfixed. symmetry.
+    apply normal_key_of_fixed_forest; [exact Hforest | exact Hmembers |].
+    intros i Hin. apply (repair_current_representative_old db f k i Hforest).
     exact (Hfixed i Hin).
   Qed.
 
@@ -15973,14 +15975,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma repair_current_source_locate : forall db f k o,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    database_row_store_ok db -> database_history_alignment db ->
     database_active_history_coherent db -> row_get f k db = Some o ->
     forall key r,
       PTrieCode.get (db_row_code f k)
         (row_history (db_row_store (repair_current f k db))) = Some (key, r) ->
       db_locate f k (repair_current f k db) = Some k.
   Proof.
-    intros db f k o Hwf Hstore Halign Hcoherent Hrow key r Hentry.
+    intros db f k o Hforest Hmembers Hstore Halign Hcoherent Hrow key r Hentry.
     destruct (Pos.eq_dec (db_row_code f k)
       (db_row_code f (normal_key db k))) as [Hsame | Hother].
     - apply RowKeys.encode_inj in Hsame. injection Hsame as Hkey.
@@ -15992,11 +15996,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       replace (Some k) with (Some (normal_key db k))
         by (f_equal; symmetry; exact Hkey).
       eapply repair_current_destination_locate;
-        [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+        [exact Hforest | exact Hmembers |
          exact Hstore | exact Halign | exact Hentry].
     - assert (Hdifferent : (f, k) <> (f, normal_key db k)).
       { intro Heq. injection Heq as Hkey. apply Hother. f_equal. exact Hkey. }
-      rewrite (repair_current_history_other db f k f k Hwf Hdifferent) in Hentry.
+      rewrite (repair_current_history_other db f k f k Hforest Hdifferent) in Hentry.
       rewrite (repair_current_old_locate db f k f k key r Hstore Hentry).
       exact (Hcoherent f k o key r Hrow Hentry).
   Qed.
@@ -16710,27 +16714,33 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_alignment_repair_entry_move : forall db f k o,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    database_row_store_ok db -> database_history_alignment db ->
     database_active_history_coherent db -> row_get f k db = Some o ->
     database_history_alignment
       (move_row_identity f k (normal_key db k) (repair_current f k db)).
   Proof.
-    intros db f k o Hwf Hstore Halign Hcoherent Hrow.
+    intros db f k o Hforest Hmembers Hstore Halign Hcoherent Hrow.
     set (repaired := repair_current f k db).
     pose proof (database_history_alignment_repair_current db f k
-      (wf_forest db Hwf) Hstore Halign) as Hrepaired_align.
+      Hforest Hstore Halign) as Hrepaired_align.
     destruct (PTrieCode.get (db_row_code f k)
       (row_history (db_row_store repaired))) as [[key r] |] eqn:Hsource.
     - apply database_history_alignment_move.
       + subst repaired. apply database_row_store_ok_repair_current. exact Hstore.
       + exact Hrepaired_align.
       + symmetry. apply normal_key_length.
-      + subst repaired. eapply repair_current_source_locate; eassumption.
+      + subst repaired. eapply repair_current_source_locate;
+          [exact Hforest | exact Hmembers |
+           exact Hstore | exact Halign | exact Hcoherent | exact Hrow |
+           exact Hsource].
       + intros dest_key dest_id Hdest. subst repaired.
         eapply repair_current_destination_locate;
-          [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+          [exact Hforest | exact Hmembers |
            exact Hstore | exact Halign | exact Hdest].
-      + subst repaired. apply repair_current_fixed_key. exact Hwf.
+      + subst repaired. apply (repair_current_fixed_key db f k
+          Hforest Hmembers).
     - replace (move_row_identity f k (normal_key db k) repaired) with repaired.
       + exact Hrepaired_align.
       + unfold move_row_identity. now rewrite Hsource.
@@ -16830,7 +16840,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + right. now apply Tuples.encode_inj.
       + left. apply repair_current_old_absent with (o := o);
           try assumption. intro Hsame. apply Hneq. now rewrite Hsame at 1.
-    - intros key r Hentry. eapply repair_current_source_locate; eassumption.
+    - intros key r Hentry. eapply repair_current_source_locate;
+        [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+         exact Hstore | exact Halign | exact Hcoherent | exact Hrow |
+         exact Hentry].
     - intros key r Hentry. eapply repair_current_destination_locate;
         [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
          exact Hstore | exact Halign | exact Hentry].
@@ -16850,7 +16863,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (db_tuple_code current))
       (output_eqb (option_map (normal_cell db) o) o));
       [exact Halign |].
-    eapply database_history_alignment_repair_entry_move; eassumption.
+    eapply database_history_alignment_repair_entry_move;
+      [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+       exact Hstore | exact Halign | exact Hcoherent | exact Hrow].
   Qed.
 
   Lemma database_history_root_owner_db_repair_entry : forall db f k,
