@@ -21801,6 +21801,48 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (inv_on_repair_cache_correct db work f k Hinv)))).
   Qed.
 
+  Lemma union_forest_members_active : forall db i j,
+    UnionFind.wf (db_forest db) ->
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    allocated db i -> allocated db j ->
+    forall x, UnionFind.mem (db_forest (union i j db)) x <->
+      allocated (union i j db) x.
+  Proof.
+    intros db i j Hforest Hmembers Hi Hj x.
+    rewrite union_forest.
+    unfold allocated. rewrite union_ids.
+    apply UnionFindCodeFacts.members_union_present;
+      [exact Hforest | exact Hmembers | exact Hi | exact Hj].
+  Qed.
+
+  Lemma union_forest_count_active : forall db i j,
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    count (db_forest db) = ids db ->
+    allocated db i -> allocated db j ->
+    count (db_forest (union i j db)) = ids (union i j db).
+  Proof.
+    intros db i j Hmembers Hcount Hi Hj.
+    rewrite union_forest, union_ids.
+    rewrite UnionFindCodeFacts.count_union_present.
+    - exact Hcount.
+    - exact (proj2 (Hmembers i) Hi).
+    - exact (proj2 (Hmembers j) Hj).
+  Qed.
+
+  Lemma union_forest_width_active : forall db i j,
+    UnionFind.wf (db_forest db) ->
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    allocated db i -> allocated db j ->
+    UnionFind.width (db_forest (union i j db)) <=
+      N.size_nat (ids (union i j db)).
+  Proof.
+    intros db i j Hforest Hmembers Hi Hj.
+    apply UnionFindCodeFacts.width_allocated.
+    intros x Hmember.
+    exact (proj1 (union_forest_members_active db i j Hforest Hmembers Hi Hj x)
+      Hmember).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
