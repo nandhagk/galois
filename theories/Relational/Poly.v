@@ -14491,6 +14491,56 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     fold budget. clear -Huntag_total. lia.
   Qed.
 
+  Definition poly_assign_candidate_budget (x : X.t) (f : lin X.t)
+      (P : list (lcons X.t)) : N :=
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef f) + 1 in
+    let keys := poly_raw_keys P + X.bits x + F.form_bits f + 1 in
+    let bits := 2 * (poly_raw_bits P + F.form_bits f + 1) + 1 in
+    let checker_bits := keys + bits in
+    (2 * N.of_nat (dim + 1) +
+      AssignCore.poly_assign_normal_subst_factor * poly_clock_span dim 0 keys bits +
+      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+        terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2 + 16)%N.
+
+  (** The optional result scan charges each output row once. *)
+  Lemma T_poly_assign_output_scan : forall x f P,
+    NoDup (map fst (coef f)) ->
+    let initial := poly_initial tmp_encode
+      ((assignment_row x f, false) ::
+        map (fun r => (rename_row (rename_old x) r, false)) P) in
+    let output := poly_step tmp_encode tmp_eqb None initial in
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x f r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x f r)%N) output <=
+      (poly_assign_candidate_budget x f P + 4) * N.of_nat (length output) + 1)%N.
+  Proof.
+    intros x f P Hform initial output.
+    apply (poly_T_optional_flat_map _ _
+      (assigned_candidate P x f) (T_assigned_candidate P x f)).
+    intros r Hr. unfold poly_assign_candidate_budget.
+    exact (T_poly_assign_output_candidate_bounded x f P r Hform Hr).
+  Qed.
+
+  Lemma poly_assign_output_length : forall x f P,
+    length (poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      (length P + 1)^2 / 4 + (length P + 1).
+  Proof.
+    intros x f P.
+    pose proof (poly_step_rows (option X.t) tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P))) as Hrows.
+    rewrite poly_initial_length in Hrows. cbn [length] in Hrows.
+    rewrite length_map in Hrows.
+    replace (S (length P)) with (length P + 1) in Hrows by lia.
+    exact Hrows.
+  Qed.
+
   (** Assignment construction exposes its source map, initialization, step, and final scan. *)
   Lemma T_poly_assign_linear_setup : forall x f P,
     let sources := map (fun r => (rename_row (rename_old x) r, false)) P in
