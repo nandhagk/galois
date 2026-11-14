@@ -588,6 +588,35 @@ Proof.
   - rewrite Hlabels. apply Permutation_sym, Permutation_middle.
 Qed.
 
+(** Pivot selection permutes source labels together with their transformed rows. *)
+Lemma karr_pivot_combine : forall A B (f : karr_row -> B)
+    (labels : list A) rows pivot rest,
+  length labels = length rows ->
+  karr_pivot rows = Some (pivot, rest) ->
+  exists origin remaining,
+    length remaining = length rest /\
+    Permutation (combine labels (map f rows))
+      ((origin, f pivot) :: combine remaining (map f rest)).
+Proof.
+  intros A B f labels rows. revert labels.
+  induction rows as [|row rows IH]; intros labels pivot rest Hlength Hselect;
+    [discriminate|].
+  destruct labels as [|label labels]; [cbn [length] in Hlength; discriminate|].
+  cbn [karr_pivot] in Hselect.
+  destruct (Z.eqb (karr_head row) 0) eqn:Hzero.
+  - destruct (karr_pivot rows) as [[selected remaining_rows]|] eqn:Htail;
+      [|discriminate].
+    injection Hselect as Hp Hr. subst selected rest.
+    destruct (IH labels pivot remaining_rows ltac:(cbn [length] in Hlength; lia)
+      eq_refl) as [origin [remaining [Hremaining Hperm]]].
+    exists origin, (label :: remaining). split; [cbn [length]; lia|].
+    cbn [map combine].
+    eapply Permutation_trans; [apply perm_skip; exact Hperm|].
+    apply perm_swap.
+  - injection Hselect as Hp Hr. subst pivot rest.
+    exists label, labels. split; [cbn [length] in Hlength; lia|apply Permutation_refl].
+Qed.
+
 (** Equal-length lists can always be paired by an unrestricted relation. *)
 Lemma karr_forall2_true : forall A B (xs : list A) (ys : list B),
   length xs = length ys -> Forall2 (fun _ _ => True) xs ys.
