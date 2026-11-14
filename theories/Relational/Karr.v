@@ -595,6 +595,7 @@ Lemma karr_pivot_combine : forall A B (f : karr_row -> B)
   karr_pivot rows = Some (pivot, rest) ->
   exists origin remaining,
     length remaining = length rest /\
+    Permutation labels (origin :: remaining) /\
     Permutation (combine labels (map f rows))
       ((origin, f pivot) :: combine remaining (map f rest)).
 Proof.
@@ -608,13 +609,17 @@ Proof.
       [|discriminate].
     injection Hselect as Hp Hr. subst selected rest.
     destruct (IH labels pivot remaining_rows ltac:(cbn [length] in Hlength; lia)
-      eq_refl) as [origin [remaining [Hremaining Hperm]]].
+      eq_refl) as [origin [remaining [Hremaining [Hlabels Hperm]]]].
     exists origin, (label :: remaining). split; [cbn [length]; lia|].
-    cbn [map combine].
-    eapply Permutation_trans; [apply perm_skip; exact Hperm|].
-    apply perm_swap.
+    split.
+    + eapply Permutation_trans; [apply perm_skip; exact Hlabels|].
+      apply perm_swap.
+    + cbn [map combine].
+      eapply Permutation_trans; [apply perm_skip; exact Hperm|].
+      apply perm_swap.
   - injection Hselect as Hp Hr. subst pivot rest.
-    exists label, labels. split; [cbn [length] in Hlength; lia|apply Permutation_refl].
+    exists label, labels. split; [cbn [length] in Hlength; lia|].
+    split; apply Permutation_refl.
 Qed.
 
 (** Mapping paired rows commutes with pairing their origin labels. *)
@@ -4417,7 +4422,7 @@ Proof.
       destruct (karr_pivot_combine _ _
         (fun row => karr_row_entries (karr_zero_prefix offset row))
         labels rows pivot rest Hlabels Hselect) as
-        [origin [remaining [Hremaining Hperm_pairs]]].
+        [origin [remaining [Hremaining [_ Hperm_pairs]]]].
       assert (Hlaw_selected : karr_minor_law previous pivot_rows
         pivot_columns columns
         ((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
