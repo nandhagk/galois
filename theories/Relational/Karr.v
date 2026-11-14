@@ -10346,6 +10346,37 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - intros x Hx. eapply karr_vars_of_contains; eassumption.
   Qed.
 
+  (** A quadratic occurrence count contributes only two dimension logarithms. *)
+  Lemma karr_log_square_bound : forall count dim,
+    count <= dim * dim ->
+    Nat.log2 count <= 2 * (Nat.log2 dim + 1).
+  Proof.
+    intros count dim Hcount.
+    pose proof (karr_log_upper dim) as Hbase.
+    assert (Hsquare : dim ^ 2 < (2 ^ (Nat.log2 dim + 1)) ^ 2).
+    { apply Nat.pow_lt_mono_l; lia. }
+    assert (Hpower : count < (2 ^ (Nat.log2 dim + 1)) ^ 2).
+    { rewrite Nat.pow_2_r in Hsquare. nia. }
+    rewrite <- Nat.pow_mul_r in Hpower.
+    pose proof (Nat.log2_le_mono count (2 ^ ((Nat.log2 dim + 1) * 2))
+      (Nat.lt_le_incl _ _ Hpower)) as Hlog.
+    rewrite Nat.log2_pow2 in Hlog by lia. lia.
+  Qed.
+
+  (** Normal input gives a logarithmic raw occurrence width in its dimension. *)
+  Lemma karr_normal_terms_log : forall P,
+    normal P -> Nat.log2 (terms (Reached P)) <=
+      2 * (Nat.log2 (n (Reached P) + 1) + 1).
+  Proof.
+    intros P Hnormal.
+    pose proof (karr_normal_terms_bound P Hnormal) as Hterms.
+    assert (Hsquare : terms (Reached P) <= n (Reached P) * n (Reached P)).
+    { unfold n. cbn [rows_of]. nia. }
+    pose proof (karr_log_square_bound _ _ Hsquare) as Hlog.
+    pose proof (Nat.log2_le_mono (n (Reached P)) (n (Reached P) + 1)
+      ltac:(lia)) as Hmono. lia.
+  Qed.
+
   (** A coefficient in a row with unique keys never adds distinct occurrences together. *)
   Lemma karr_coefficient_normal_bits : forall xs x bits,
     NoDup (map fst xs) -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
