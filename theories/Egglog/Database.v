@@ -14136,6 +14136,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [reflexivity | exact Hvalid]).
   Qed.
 
+  Lemma database_history_key_ids_bounded_make : forall db f k,
+    wf db -> database_history_key_ids_bounded db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_history_key_ids_bounded (snd (make f k db)).
+  Proof.
+    intros db f k Hwf Hbounded Hinput.
+    assert (Hck : forall i, In (Id i) (normal_key db k) -> allocated db i).
+    { rewrite normal_key_correct by exact Hwf.
+      eapply canon_key_allocated; eassumption. }
+    pose proof (database_history_key_ids_bounded_allocate_next db Hbounded)
+      as Hfresh_bounded.
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hbounded;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh_bounded;
+      (apply database_history_key_ids_bounded_row_replace;
+        [exact Hfresh_bounded |]).
+    all: intros i Hin; apply allocate_next_monotone; exact (Hck i Hin).
+  Qed.
+
   Lemma database_row_weight_conserved_make : forall db f k,
     database_row_store_ok db -> database_row_weight_conserved db ->
     database_row_weight_conserved (snd (make f k db)).
@@ -15973,6 +15994,72 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try reflexivity; exact Hupdated.
   Qed.
 
+  Lemma database_history_codes_valid_repair_current : forall db f k,
+    database_history_codes_valid db ->
+    database_history_codes_valid (repair_current f k db).
+  Proof.
+    intros db f k Hvalid. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hvalid].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hvalid |].
+    eapply database_history_codes_valid_transport with
+      (db := put f (normal_key db k) (option_map (normal_cell db) output)
+        (row_delete f k db)); [reflexivity |].
+    apply database_history_codes_valid_put.
+    apply database_history_codes_valid_row_delete. exact Hvalid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_repair_current : forall db f k,
+    wf db -> database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (repair_current f k db).
+  Proof.
+    intros db f k Hwf Hbounded. unfold repair_current.
+    destruct (row_get f k db) as [output |] eqn:Hrow; [| exact Hbounded].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hbounded |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted).
+    assert (Hupdated : database_history_key_ids_bounded updated).
+    { subst updated. apply database_history_key_ids_bounded_put.
+      - subst deleted. apply row_delete_wf. exact Hwf.
+      - subst deleted. apply row_delete_kind_ok.
+        rewrite (normal_key_correct db k Hwf), (normal_output_correct db output Hwf).
+        apply kind_ok_canon; [exact Hwf |].
+        apply wf_row_kind_ok. exact Hwf. exact Hrow.
+      - subst deleted. apply database_history_key_ids_bounded_row_delete.
+        exact Hbounded. }
+    eapply database_history_key_ids_bounded_transport with (db := updated);
+      [reflexivity | reflexivity | exact Hupdated].
+  Qed.
+
+  Lemma database_history_codes_valid_move : forall db f old current,
+    database_history_codes_valid db ->
+    database_history_codes_valid (move_row_identity f old current db).
+  Proof.
+    intros db f old current Hvalid.
+    eapply database_history_codes_valid_transport with (db := db).
+    - apply move_row_identity_history.
+    - exact Hvalid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_move : forall db f old current,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (move_row_identity f old current db).
+  Proof.
+    intros db f old current Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db).
+    - apply move_row_identity_history.
+    - unfold move_row_identity.
+      destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+        as [[key r] |]; [| reflexivity].
+      destruct (PTrieCode.get (db_row_code f current) (row_history (db_row_store db)))
+        as [[other s] |]; reflexivity.
+    - exact Hbounded.
+  Qed.
+
   Lemma database_history_root_owner_repair_entry_move : forall db f k,
     database_row_store_ok db -> database_history_root_owner db ->
     database_history_root_owner
@@ -16206,6 +16293,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (output_eqb (option_map (normal_cell db) o) o));
       [exact Hcoherent |].
     eapply database_active_history_coherent_repair_entry_move; eassumption.
+  Qed.
+
+  Lemma database_history_codes_valid_db_repair_entry : forall db f k,
+    database_history_codes_valid db ->
+    database_history_codes_valid (db_repair_entry f k db).
+  Proof.
+    intros db f k Hvalid. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hvalid].
+    destruct (row_get f current db) as [o |]; [| exact Hvalid].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hvalid |].
+    apply database_history_codes_valid_move.
+    apply database_history_codes_valid_repair_current. exact Hvalid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_db_repair_entry : forall db f k,
+    wf db -> database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (db_repair_entry f k db).
+  Proof.
+    intros db f k Hwf Hbounded. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hbounded].
+    destruct (row_get f current db) as [o |]; [| exact Hbounded].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hbounded |].
+    apply database_history_key_ids_bounded_move.
+    apply database_history_key_ids_bounded_repair_current; assumption.
   Qed.
 
   Lemma union_uses_raw : forall db i j x e,
