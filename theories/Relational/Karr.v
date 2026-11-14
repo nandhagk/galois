@@ -365,6 +365,26 @@ Fixpoint karr_delete (index : nat) (row : list Z) : list Z :=
 
 TimeFun karr_delete.
 
+(** Deleting the same coordinate preserves equality of vector widths. *)
+Lemma karr_delete_length_equal : forall index xs ys,
+  length xs = length ys -> length (karr_delete index xs) = length (karr_delete index ys).
+Proof.
+  induction index as [|index IH]; intros [|x xs] [|y ys] Hlength;
+    cbn [length karr_delete] in *; try discriminate; try lia.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Column deletion commutes with crossing equally wide rows. *)
+Lemma karr_delete_cross : forall index a b xs ys,
+  length xs = length ys ->
+  karr_delete index (karr_cross a b xs ys) =
+    karr_cross a b (karr_delete index xs) (karr_delete index ys).
+Proof.
+  induction index as [|index IH]; intros a b [|x xs] [|y ys] Hlength;
+    cbn [length karr_delete karr_cross] in *; try discriminate; try reflexivity.
+  f_equal. apply IH. lia.
+Qed.
+
 (** Laplace expansion defines determinants independently of the elimination program. *)
 Fixpoint karr_determinant (order : nat) (rows : list (list Z)) : Z :=
   match order with
@@ -381,6 +401,17 @@ Fixpoint karr_determinant (order : nat) (rows : list (list Z)) : Z :=
   end.
 
 TimeFun karr_determinant.
+
+(** One Laplace step exposes its cofactors without expanding their determinants. *)
+Lemma karr_determinant_cons : forall order row rows,
+  karr_determinant (S order) (row :: rows) =
+    fold_right Z.add 0%Z (map (fun index =>
+      ((if Nat.even index then 1 else -1) * karr_nth index row *
+        karr_determinant order (map (karr_delete index) rows))%Z)
+      (seq 0 (S order))).
+Proof.
+  reflexivity.
+Qed.
 
 (** A dense cross product has the expected value at every coordinate. *)
 Lemma karr_nth_cross : forall index a b xs ys,
@@ -404,6 +435,34 @@ Proof.
   generalize (seq 0 (S order)) as indices. intro indices.
   induction indices as [|index indices IH]; cbn [map fold_right]; [ring|].
   rewrite karr_nth_cross by exact Hlength. rewrite IH. ring.
+Qed.
+
+(** Crossing any selected row distributes through the whole determinant. *)
+Lemma karr_determinant_cross_at : forall order prefix a b xs ys suffix,
+  length prefix <= order -> length xs = length ys ->
+  karr_determinant (S order) (prefix ++ karr_cross a b xs ys :: suffix) =
+    (a * karr_determinant (S order) (prefix ++ xs :: suffix) -
+      b * karr_determinant (S order) (prefix ++ ys :: suffix))%Z.
+Proof.
+  induction order as [|order IH]; intros prefix a b xs ys suffix Hprefix Hlength.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_cross; exact Hlength|].
+    cbn [length] in Hprefix. lia.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_cross; exact Hlength|].
+    cbn [app].
+    rewrite (karr_determinant_cons (S order) row
+      (prefix ++ karr_cross a b xs ys :: suffix)).
+    rewrite (karr_determinant_cons (S order) row (prefix ++ xs :: suffix)).
+    rewrite (karr_determinant_cons (S order) row (prefix ++ ys :: suffix)).
+    generalize (seq 0 (S (S order))) as indices. intro indices.
+    induction indices as [|index indices IHindices]; cbn [map fold_right]; [ring|].
+    rewrite !map_app. cbn [map].
+    rewrite karr_delete_cross by exact Hlength.
+    pose proof (IH (map (karr_delete index) prefix) a b
+      (karr_delete index xs) (karr_delete index ys)
+      (map (karr_delete index) suffix)
+      ltac:(rewrite length_map; cbn [length] in Hprefix; lia)
+      (karr_delete_length_equal index xs ys Hlength)) as Hstep.
+    rewrite Hstep, IHindices. ring.
 Qed.
 
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
