@@ -4070,7 +4070,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Lemma invalidate_keys_closed_old : forall p p' ch st, inv p st ->
     (forall r y, In r (S.rows p) -> In y (S.writes p r) -> dom st y ->
       row_snapshot_recorded p st r y) ->
-    closed p (fun x => dom st x /\ ~ In x (invalidate_keys p p' ch st)).
+    closed p (fun x => dom st x /\
+      ~ In x (invalid_bad (invalid_walk p p' ch st))).
   Proof.
     intros p p' ch st [Hclosed Hpost] Hrecorded r y x Hr Hy [Hdom Hkeep] Hx; split.
     - exact (Hclosed r y x Hr Hy Hdom Hx).
@@ -4355,6 +4356,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intros p p' ch st Hinv Htracks r y x Hr Hy Hnew Hx.
     apply (proj2 (edit_dom_keys p p' ch st x)).
     apply (proj1 (edit_dom_keys p p' ch st y)) in Hnew.
+    unfold invalidate_keys in Hnew.
+    unfold invalidate_keys.
     exact (invalidate_keys_closed_old p p' ch st Hinv Htracks
       r y x Hr Hy Hnew Hx).
   Qed.
