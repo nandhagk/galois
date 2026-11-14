@@ -4067,6 +4067,66 @@ Proof.
   rewrite Heq in Hnext. exact Hnext.
 Qed.
 
+(** The appended target shares exact division and the next full-width law. *)
+Lemma karr_minor_law_pivot_target : forall previous pivot_rows pivot_columns
+    columns index pivot_origin p rest target_origin target,
+  karr_minor_law previous pivot_rows pivot_columns columns
+    ((pivot_origin, karr_row_entries p) ::
+      map (fun pair => (fst pair, karr_row_entries (snd pair))) rest ++
+      [(target_origin, karr_row_entries target)]) ->
+  previous <> 0%Z ->
+  index < length (kcoeff p) ->
+  karr_nth index (kcoeff p) <> 0%Z ->
+  length (karr_row_entries p) = length columns ->
+  Forall (fun pair =>
+    length (kcoeff (snd pair)) = length (kcoeff p) /\
+    length (kweight (snd pair)) = length (kweight p) /\
+    length (karr_row_entries (snd pair)) = length columns) rest ->
+  length (kcoeff target) = length (kcoeff p) ->
+  length (kweight target) = length (kweight p) ->
+  length (karr_row_entries target) = length columns ->
+  karr_exact previous (KRow
+    (karr_cross (karr_nth index (kcoeff p))
+      (karr_nth index (kcoeff target)) (kcoeff target) (kcoeff p))
+    (karr_nth index (kcoeff p) * kright target -
+      karr_nth index (kcoeff target) * kright p)%Z
+    (karr_cross (karr_nth index (kcoeff p))
+      (karr_nth index (kcoeff target)) (kweight target) (kweight p))
+    (karr_nth index (kcoeff p) * kscale target -
+      karr_nth index (kcoeff target) * kscale p)%Z) = true /\
+  karr_minor_law (karr_nth index (kcoeff p))
+    (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth index columns 0%nat]) columns
+    (map (fun pair => (fst pair, karr_row_entries
+      (karr_reduce previous (karr_nth index (kcoeff p))
+        (karr_nth index (kcoeff (snd pair))) p (snd pair)))) rest ++
+      [(target_origin, karr_row_entries (karr_reduce previous
+        (karr_nth index (kcoeff p)) (karr_nth index (kcoeff target))
+        p target))]).
+Proof.
+  intros previous pivot_rows pivot_columns columns index pivot_origin p
+    rest target_origin target Hlaw Hprevious Hindex Hp Hp_width Hrest
+    Htarget_coeff Htarget_weight Htarget_width.
+  split.
+  - exact (karr_minor_law_reduce_exact_at previous pivot_rows pivot_columns
+      columns
+      ((pivot_origin, karr_row_entries p) ::
+        map (fun pair => (fst pair, karr_row_entries (snd pair))) rest ++
+        [(target_origin, karr_row_entries target)])
+      pivot_origin target_origin p target index Hlaw Hprevious
+      ltac:(now left)
+      ltac:(right; apply in_or_app; right; now left)
+      ltac:(lia) ltac:(lia) Hindex Hp_width ltac:(lia)).
+  - pose proof (karr_minor_law_pivot_rows previous pivot_rows pivot_columns
+      columns index pivot_origin p (rest ++ [(target_origin, target)])
+      ltac:(rewrite map_app; cbn [map fst snd]; exact Hlaw)
+      Hprevious Hindex Hp Hp_width
+      ltac:(apply Forall_app; split; [exact Hrest|constructor;
+        [repeat split; assumption|constructor]])) as Hnext.
+    rewrite !map_app in Hnext. cbn [map fst snd] in Hnext.
+    exact Hnext.
+Qed.
+
 (** A selected concrete pivot preserves all-order minors on its reduced tails. *)
 Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
     pivot_columns head columns labels rows pivot rest,
