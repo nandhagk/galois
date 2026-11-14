@@ -16751,6 +16751,39 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  (** A produced target certificate fits the public elimination allowance. *)
+  Lemma T_karr_target_certificate_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_target_certificate P c <=
+      (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor +
+        16 * karr_dense_factor + 16384 * 64 + 1024 * 64) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    pose proof (T_karr_target_certificate_components P c Hc) as Hparts.
+    pose proof (T_karr_target_variables_public P c HP Hc) as Hvariables.
+    pose proof (T_karr_equality_basis_public P c
+      (variables (c :: P)) HP (Nat.le_refl _)
+      (karr_entail_variables_keys P c HP Hc)) as Hbasis.
+    pose proof (T_karr_entail_dense_public P c HP Hc) as Hdense.
+    pose proof (T_karr_target_public P c HP Hc) as Htarget.
+    pose proof (karr_target_finish_public P c HP) as Hfinish.
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))) in *.
+    change (T_target_certificate P c <=
+      T_variables (c :: P) +
+      T_equality_basis (variables (c :: P)) P +
+      T_dense (variables (c :: P)) c +
+      T_karr_target (equality_basis (variables (c :: P)) P) 1
+        (KRow (dense (variables (c :: P)) c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z) +
+      1024 * N.of_nat (length (variables (c :: P)) + length P + 1) *
+        N.of_nat ((ellB (length (variables (c :: P)) + length P + 3)
+          (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N in Hparts.
+    clearbody work. nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
