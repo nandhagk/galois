@@ -16848,6 +16848,39 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply N.le_refl.
   Qed.
 
+  (** The source-only output count and dimension fit public work. *)
+  Lemma poly_assign_tail_count_public_mass : forall x e P,
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let count := length (poly_assign_tail_step x P) in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    count * (dim + 1) <= work /\ count <= work.
+  Proof.
+    intros x e P dim count bits volume work.
+    pose proof (poly_assign_tail_output_quarter x P) as Hquarter.
+    pose proof (poly_assign_source_dimension x P) as Hdim.
+    assert (Hcount : count <= (length P + 3)^2).
+    { unfold count. clear -Hquarter. cbn [Nat.pow] in *. nia. }
+    assert (Hvolume : dim + 1 <= volume)
+      by (unfold dim, volume; lia).
+    assert (Hproduct : count * (dim + 1) <= (length P + 3)^2 * volume)
+      by (apply Nat.mul_le_mono; assumption).
+    assert (Hbits : 1 <= bits^2)
+      by (unfold bits; cbn [Nat.pow]; nia).
+    pose proof (Nat.mul_le_mono_l 1 (bits^2)
+      ((length P + 3)^2 * volume) Hbits) as Hclock.
+    rewrite Nat.mul_1_r in Hclock.
+    replace ((length P + 3)^2 * volume * bits^2) with work
+      in Hclock by (unfold work; ring).
+    split.
+    - lia.
+    - assert (Hpositive : 1 <= dim + 1) by lia.
+      assert (Hsmall : count <= count * (dim + 1))
+        by (clear -Hpositive; nia).
+      lia.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
