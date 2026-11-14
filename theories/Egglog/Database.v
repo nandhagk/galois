@@ -21095,6 +21095,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     now rewrite Hview, Hslots, Hids.
   Qed.
 
+  Lemma inv_on_repair_next_bound : forall db work f k,
+    inv_on db work ->
+    forall g args output i,
+      row (view (db_repair_entry f k db)) g args output ->
+      row_ids args output i ->
+      (i < next_id (db_repair_entry f k db))%positive.
+  Proof.
+    intros db work f k Hinv g args output i Hrow Hin.
+    pose proof (inv_on_repair_kind db work f k Hinv g args output Hrow)
+      as [Hids _].
+    apply Hids in Hin.
+    unfold next_id, allocated in *.
+    lia.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
