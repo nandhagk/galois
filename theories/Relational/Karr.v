@@ -15924,6 +15924,244 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       nia.
   Qed.
 
+  Lemma karr_target_finish_budget : forall base init neg right zero scale map
+      extra work : N,
+    (1 <= work)%N ->
+    (extra <= 12)%N ->
+    (init <= 3 * work)%N -> (neg <= 8 * work)%N ->
+    (right <= 32 * work)%N -> (zero <= 8 * work)%N ->
+    (scale <= 2)%N -> (map <= 64 * work)%N ->
+    (base + init + neg + right + zero + scale + map + extra <=
+      base + 1024 * work)%N.
+  Proof.
+    intros base init neg right zero scale map extra work Hwork Hextra
+      Hinit Hneg Hright Hzero Hscale Hmap.
+    nia.
+  Qed.
+
+  Lemma T_karr_target_certificate_components : forall P c,
+    normal (c :: nil) ->
+    let xs := variables (c :: P) in
+    let target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z in
+    let bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) in
+    (T_target_certificate P c <=
+      T_variables (c :: P) + T_equality_basis xs P +
+      T_dense xs c + T_karr_target (equality_basis xs P) 1 target +
+      1024 * N.of_nat (length xs + length P + 1) *
+        N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros P c Hnormal.
+    set (xs := variables (c :: P)).
+    set (target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z).
+    set (bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1)).
+    set (result := karr_target (equality_basis xs P) 1 target).
+    pose proof (karr_target_envelope_result _ _ _ _ _ _
+      (karr_target_seed_envelope xs P c Hnormal)) as Hresult.
+    time_unfold T_target_certificate.
+    cbn zeta.
+    fold xs target result bits.
+    time_simpl.
+    destruct Hresult as [Hcoeff [_ [Hright [Hweight [Hweights Hscale]]]]].
+    change (length (kcoeff result) <= length xs) in Hcoeff.
+    change (Z.size_nat (kright result) <= bits) in Hright.
+    change (length (kweight result) <= length P) in Hweight.
+    change (Forall (fun z => Z.size_nat z <= bits) (kweight result)) in Hweights.
+    change (Z.size_nat (kscale result) <= bits) in Hscale.
+    pose proof (Datatypes.T_length_le P) as Hlength.
+    pose proof (T_karr_repeat_zero_bounded (length P)) as Hrepeat.
+    pose proof (T_karr_zero_bounded result) as Hzero.
+    pose proof (T_karr_zero_test (kright result)) as Hright_zero.
+    pose proof (T_karr_zero_test (kscale result)) as Hscale_zero.
+    pose proof (Z.T_ltb_le (kscale result) 0) as Hnegative.
+    pose proof (T_karr_signed_right_bounded 1 (kright result) bits
+      (or_introl eq_refl) Hright) as Hright_positive.
+    pose proof (T_karr_signed_right_bounded (-1) (kright result) bits
+      (or_intror eq_refl) Hright) as Hright_negative.
+    pose proof (T_karr_signed_weights_bounded 1 (kweight result) bits
+      (or_introl eq_refl) Hweights) as Hmap_positive.
+    pose proof (T_karr_signed_weights_bounded (-1) (kweight result) bits
+      (or_intror eq_refl) Hweights) as Hmap_negative.
+    set (work := (N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N).
+    assert (Hwork : (1 <= work)%N).
+    { unfold work.
+      assert (Hfirst : (1 <= N.of_nat (length xs + length P + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+    assert (Hspan : (N.of_nat (length xs + length P + 1) <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+    assert (Hbitmass : (N.of_nat (bits + 1) <= work)%N).
+    { unfold work.
+      assert (Hlen : (1 <= N.of_nat (length xs + length P + 1))%N) by lia.
+      assert (Hsquare : bits + 1 <= (bits + 1)^2).
+      { cbn [Nat.pow]. nia. }
+      assert (HsquareN : (N.of_nat (bits + 1) <=
+        N.of_nat ((bits + 1)^2))%N) by lia. nia. }
+    assert (Hweightmass : (N.of_nat (length (kweight result) + 1) *
+      N.of_nat (bits + 1) <= work)%N).
+    { assert (HlenNat : length (kweight result) + 1 <=
+        length xs + length P + 1) by lia.
+      assert (HlenN : (N.of_nat (length (kweight result) + 1) <=
+        N.of_nat (length xs + length P + 1))%N) by lia.
+      assert (Hsquare : bits + 1 <= (bits + 1)^2).
+      { cbn [Nat.pow]. nia. }
+      assert (HsquareN : (N.of_nat (bits + 1) <=
+        N.of_nat ((bits + 1)^2))%N) by lia.
+      unfold work. now apply N.mul_le_mono. }
+    assert (Hinit : (Datatypes.T_length P +
+      ListDef.T_repeat 0%Z (length P) <= 3 * work)%N).
+    { pose proof (Datatypes.T_length_le P) as Hlen.
+      pose proof (T_karr_repeat_zero_bounded (length P)) as Hrep.
+      assert (Hsize : (N.of_nat (length P + 1) <= work)%N) by lia.
+      nia. }
+    assert (Hzero_total : (T_karr_zero result <= 8 * work)%N).
+    { eapply N.le_trans; [exact Hzero|]. apply N.mul_le_mono_l. lia. }
+    assert (Hnegative_total : (Z.T_ltb (kscale result) 0 <= 8 * work)%N).
+    { pose proof (Z.T_ltb_le (kscale result) 0) as Hbound.
+      assert (Hsize : (N.of_nat (Z.size_nat (kscale result) + 1) <= work)%N)
+        by lia. nia. }
+    assert (Hright_positive_total :
+      (Z.T_mul 1 (kright result) + Z.T_leb 0 (1 * kright result) <=
+        32 * work)%N) by nia.
+    assert (Hright_negative_total :
+      (Z.T_mul (-1) (kright result) + Z.T_leb 0 ((-1) * kright result) <=
+        32 * work)%N) by nia.
+    assert (Hmap_positive_total : (ListDef.T_map
+      (fun z => (-1 * z)%Z)
+      (fun z => (1 + (1 + Z.T_mul (-1) z))%N)
+      (kweight result) <= 64 * work)%N).
+    { change (ListDef.T_map (fun z => (-1 * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (-1) z))%N)
+        (kweight result) <=
+        64 * N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1))%N in Hmap_positive.
+      eapply N.le_trans; [exact Hmap_positive|].
+      replace (64 * N.of_nat (length (kweight result) + 1) *
+        N.of_nat (bits + 1))%N with
+        (64 * (N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1)))%N by ring.
+      apply N.mul_le_mono_l. exact Hweightmass. }
+    assert (Hmap_negative_total : (ListDef.T_map
+      (fun z => (- (-1) * z)%Z)
+      (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
+      (kweight result) <= 64 * work)%N).
+    { change (ListDef.T_map (fun z => (- (-1) * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
+        (kweight result) <=
+        64 * N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1))%N in Hmap_negative.
+      eapply N.le_trans; [exact Hmap_negative|].
+      replace (64 * N.of_nat (length (kweight result) + 1) *
+        N.of_nat (bits + 1))%N with
+        (64 * (N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1)))%N by ring.
+      apply N.mul_le_mono_l. exact Hweightmass. }
+    replace (1024 * N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N with (1024 * work)%N
+      by (unfold work; ring).
+    destruct (lrel c); destruct ((kscale result <? 0)%Z); time_simpl;
+      lazymatch goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end; time_simpl; clearbody work.
+    all: set (vclock := T_variables (c :: P)) in *;
+      set (bclock := T_equality_basis xs P) in *;
+      set (dclock := T_dense xs c) in *;
+      set (tclock := T_karr_target (equality_basis xs P) 1 target) in *;
+      set (iclock := (Datatypes.T_length P +
+        ListDef.T_repeat 0%Z (length P))%N) in *;
+      set (nclock := Z.T_ltb (kscale result) 0) in *;
+      set (zclock := T_karr_zero result) in *;
+      set (sclock := Z.T_eqb (kscale result) 0) in *;
+      set (eqclock := Z.T_eqb (kright result) 0) in *;
+      set (rpclock := (Z.T_mul 1 (kright result) +
+        Z.T_leb 0 (1 * kright result))%N) in *;
+      set (rnclock := (Z.T_mul (-1) (kright result) +
+        Z.T_leb 0 ((-1) * kright result))%N) in *;
+      set (mpclock := ListDef.T_map
+        (fun z => (- (1) * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (- (1)) z))%N)
+        (kweight result)) in *;
+      set (mnclock := ListDef.T_map
+        (fun z => (- (-1) * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
+        (kweight result)) in *;
+      clear - Hinit Hzero_total Hnegative_total Hright_zero Hscale_zero
+        Hright_positive_total Hright_negative_total Hmap_positive_total
+        Hmap_negative_total Hwork;
+      ring_simplify;
+      clearbody vclock bclock dclock tclock iclock nclock eqclock zclock
+        sclock mnclock.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
+      eqclock + zclock + sclock + mnclock + 12)%N with
+      (base + iclock + nclock + eqclock + zclock + sclock + mnclock + 12)%N
+      by (unfold base; ring).
+    1: fold base.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|exact Hmap_negative_total].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
+      eqclock + zclock + sclock + 9)%N with
+      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N
+      by (unfold base; ring).
+    1: fold base.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|lia].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + eqclock + zclock + sclock + mpclock + 12)%N).
+    1: unfold base, mpclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|exact Hmap_positive_total].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N).
+    1: unfold base; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|lia].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rnclock + zclock + sclock + mnclock + 12)%N).
+    1: unfold base, rnclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_negative_total|exact Hzero_total|
+       exact Hscale_zero|exact Hmap_negative_total].
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rnclock + zclock + sclock + 0 + 9)%N).
+    1: unfold base, rnclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_negative_total|exact Hzero_total|exact Hscale_zero|lia].
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rpclock + zclock + sclock + mpclock + 12)%N).
+    1: unfold base, rpclock, mpclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_positive_total|exact Hzero_total|
+       exact Hscale_zero|exact Hmap_positive_total].
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rpclock + zclock + sclock + 0 + 9)%N).
+    1: unfold base, rpclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_positive_total|exact Hzero_total|exact Hscale_zero|lia].
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
