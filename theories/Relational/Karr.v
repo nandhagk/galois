@@ -278,6 +278,21 @@ Definition karr_row_entries (r : karr_row) : list Z :=
 
 TimeFun karr_row_entries.
 
+(** A live coefficient head is the first augmented matrix coordinate. *)
+Lemma karr_row_entries_head : forall r,
+  kcoeff r <> [] -> karr_nth 0 (karr_row_entries r) = karr_head r.
+Proof.
+  intros [coeff right weight scale] Hnonempty.
+  destruct coeff as [|z coeff]; [contradiction|reflexivity].
+Qed.
+
+(** Restoring a processed column prepends its certified zero. *)
+Lemma karr_row_entries_restore : forall r,
+  karr_row_entries (karr_restore r) = 0%Z :: karr_row_entries r.
+Proof.
+  intros [coeff right weight scale]. reflexivity.
+Qed.
+
 (** Crossing equal-length prefixes commutes with appending their suffixes. *)
 Lemma karr_cross_app : forall a b xs ys zs ws,
   length xs = length ys ->
@@ -536,6 +551,15 @@ Fixpoint karr_delete (index : nat) (row : list Z) : list Z :=
   end.
 
 TimeFun karr_delete.
+
+(** Removing a live coefficient head deletes the first augmented coordinate. *)
+Lemma karr_row_entries_tail : forall r,
+  kcoeff r <> [] ->
+  karr_row_entries (karr_tail r) = karr_delete 0 (karr_row_entries r).
+Proof.
+  intros [coeff right weight scale] Hnonempty.
+  destruct coeff as [|z coeff]; [contradiction|reflexivity].
+Qed.
 
 (** Deleting the same coordinate preserves equality of vector widths. *)
 Lemma karr_delete_length_equal : forall index xs ys,
