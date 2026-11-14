@@ -11285,6 +11285,31 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       reflexivity.
   Qed.
 
+  Lemma ensure_row_identity_uses : forall db f k,
+    row_uses (db_row_store (ensure_row_identity f k db)) =
+      row_uses (db_row_store db).
+  Proof.
+    intros db f k. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
+  Lemma ensure_row_identity_nuses : forall db f k,
+    db_nuses (ensure_row_identity f k db) = db_nuses db.
+  Proof.
+    intros db f k. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
+  Lemma ensure_row_identity_written : forall db f k,
+    db_written_cells (ensure_row_identity f k db) = db_written_cells db.
+  Proof.
+    intros db f k. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
   Lemma ensure_row_identity_old_root_key : forall db f k root,
     (root < row_fresh (db_row_store db))%positive ->
     PTrieCode.get root (row_keys (db_row_store (ensure_row_identity f k db))) =
@@ -11566,6 +11591,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         exact (ensure_row_identity_new_depth db f k Hstore Hprior).
       + rewrite PTrie.get_set_other in Hget by exact Hother.
         exact (ensure_row_identity_old_depth db f k g args key r Hstore Hget).
+  Qed.
+
+  Lemma database_row_store_ok_ensure : forall db f k,
+    database_row_store_ok db -> database_row_store_ok (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hstore.
+    pose proof Hstore as Hbase.
+    unfold database_row_store_ok in Hbase.
+    destruct Hbase as
+      (_ & Huses & Hcount & _ & Hcells & _ & _ & Hmap & _ & _).
+    unfold database_row_store_ok.
+    split; [apply ensure_row_identity_links_ok; exact Hstore |].
+    split.
+    - intros x g args Huse. rewrite ensure_row_identity_uses in Huse.
+      destruct (Huses x g args Huse) as [r Hget].
+      exists r. now apply ensure_row_identity_history_old.
+    - split.
+      + rewrite ensure_row_identity_nuses, ensure_row_identity_uses. exact Hcount.
+      + split; [apply ensure_row_identity_history_counter; exact Hstore |].
+        split.
+        * intros x g args c Huse Hcell.
+          rewrite ensure_row_identity_uses in Huse.
+          rewrite ensure_row_identity_written.
+          exact (Hcells x g args c Huse Hcell).
+        * split; [apply ensure_row_identity_depth; exact Hstore |].
+          split; [apply ensure_row_identity_size; exact Hstore |].
+          split.
+          -- rewrite ensure_row_identity_uses. exact Hmap.
+          -- split; [apply ensure_row_identity_labels; exact Hstore |].
+             apply ensure_row_identity_link_range. exact Hstore.
   Qed.
 
   Lemma pop_loser_locate : forall db x db' f k,
