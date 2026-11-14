@@ -16244,6 +16244,77 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply Nat.mul_le_mono; [exact Hrow|exact Hterms].
   Qed.
 
+  (** Source renaming consumes one public assignment work unit. *)
+  Lemma T_poly_assign_source_map_public : forall x e P,
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (ListDef.T_map (fun r => (rename_row (rename_old x) r, false))
+      (fun r => (1 + T_rename_row (rename_old x) (T_rename_old x) r)%N) P <=
+      (X.c_key + 20) * N.of_nat work)%N.
+  Proof.
+    intros x e P bits volume work.
+    pose proof (T_poly_assign_source_map x P) as Hmap.
+    destruct (poly_assign_source_setup_mass x e P) as [Hmass _].
+    cbn zeta in Hmass.
+    assert (Hmass_clock :
+      (N.of_nat (length P + 1) * N.of_nat (terms (Reached P) + 1) *
+        N.of_nat (poly_raw_keys P + 1) <= N.of_nat work)%N).
+    { assert (Hconverted :
+        (N.of_nat ((length P + 1) * (terms (Reached P) + 1) *
+          (poly_raw_keys P + 1)) <= N.of_nat work)%N)
+        by (apply time_of_nat_le; exact Hmass).
+      rewrite !Nat2N.inj_mul in Hconverted. exact Hconverted. }
+    replace ((X.c_key + 20) * N.of_nat (length P + 1) *
+      (N.of_nat (terms (Reached P) + 1) *
+        N.of_nat (poly_raw_keys P + 1)))%N with
+      ((X.c_key + 20) *
+        (N.of_nat (length P + 1) * N.of_nat (terms (Reached P) + 1) *
+          N.of_nat (poly_raw_keys P + 1)))%N in Hmap by ring.
+    eapply N.le_trans; [exact Hmap|].
+    apply N.mul_le_mono_l. exact Hmass_clock.
+  Qed.
+
+  (** Source normalization consumes three public assignment work units. *)
+  Lemma T_poly_assign_tail_initial_public : forall x e P,
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (T_poly_initial tmp_encode T_tmp_encode
+      (map (fun r => (rename_row (rename_old x) r, false)) P) <=
+      3 * RangeCore.poly_raw_initial_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P bits volume work.
+    pose proof (T_poly_assign_tail_initial x P) as Hinitial.
+    destruct (poly_assign_source_setup_mass x e P) as [_ Hmass].
+    cbn zeta in Hmass.
+    assert (Hmass_clock :
+      (N.of_nat (length P + 1)^2 * N.of_nat (terms (Reached P) + 1) *
+        N.of_nat (poly_raw_keys P + 1 + poly_raw_bits P +
+          Nat.log2 (terms (Reached P)) + 1) <= 3 * N.of_nat work)%N).
+    { assert (Hconverted :
+        (N.of_nat ((length P + 1)^2 * (terms (Reached P) + 1) *
+          (poly_raw_keys P + 1 + poly_raw_bits P +
+            Nat.log2 (terms (Reached P)) + 1)) <=
+          N.of_nat (3 * work))%N)
+        by (apply time_of_nat_le; exact Hmass).
+      rewrite !Nat2N.inj_mul, Nat2N.inj_pow in Hconverted.
+      cbn [N.of_nat] in Hconverted. exact Hconverted. }
+    replace (RangeCore.poly_raw_initial_factor * N.of_nat (length P + 1)^2 *
+      N.of_nat (terms (Reached P) + 1) *
+      N.of_nat (poly_raw_keys P + 1 + poly_raw_bits P +
+        Nat.log2 (terms (Reached P)) + 1))%N with
+      (RangeCore.poly_raw_initial_factor *
+        (N.of_nat (length P + 1)^2 *
+          N.of_nat (terms (Reached P) + 1) *
+          N.of_nat (poly_raw_keys P + 1 + poly_raw_bits P +
+            Nat.log2 (terms (Reached P)) + 1)))%N in Hinitial by ring.
+    eapply N.le_trans; [exact Hinitial|].
+    replace (3 * RangeCore.poly_raw_initial_factor * N.of_nat work)%N with
+      (RangeCore.poly_raw_initial_factor * (3 * N.of_nat work))%N by ring.
+    apply N.mul_le_mono_l. exact Hmass_clock.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
