@@ -20987,6 +20987,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (inv_on_pending_count db work Hinv).
   Qed.
 
+  (** Combining a typed row with a typed input keeps its result kind and allocation. *)
+  Lemma combine_output_kind_ok_active : forall db f k previous o,
+    kind_ok db f k o ->
+    (forall old, previous = Some old -> kind_ok db f k old) ->
+    kind_ok db f k (combine_output db f previous o).
+  Proof.
+    intros db f k previous o Hnew Hold.
+    destruct previous as [old |]; [| exact Hnew].
+    unfold combine_output.
+    destruct old as [[i | a] |];
+      try (apply Hold; reflexivity).
+    destruct (kind_get f db) as [[| |m] |];
+      try (apply Hold; reflexivity).
+    destruct o as [[j | b] |];
+      try (apply Hold; reflexivity).
+    destruct Hnew as [Hallocated [Hslots Hkind]].
+    unfold kind_ok. split.
+    - intros x Hin. apply in_app_iff in Hin as [Hkey | Houtput].
+      + apply Hallocated. apply in_or_app. now left.
+      + cbn [option_list] in Houtput.
+        apply in_inv in Houtput as [Hbad | Hbad];
+          [discriminate | contradiction].
+    - split.
+      + replace (length (k ++ option_list (Some (Val (V.merge m a b)))))
+          with (length (k ++ option_list (Some (Val b))))
+          by (rewrite !length_app; reflexivity).
+        exact Hslots.
+      + exact Hkind.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
