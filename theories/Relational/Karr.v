@@ -388,6 +388,25 @@ Proof.
   reflexivity.
 Qed.
 
+(** Pivot discovery removes one selected row while retaining every other row's order. *)
+Lemma karr_pivot_split : forall rows pivot rest,
+  karr_pivot rows = Some (pivot, rest) ->
+  exists prefix suffix,
+    rows = prefix ++ pivot :: suffix /\ rest = prefix ++ suffix.
+Proof.
+  induction rows as [|row rows IH]; intros pivot rest Hpivot; [discriminate|].
+  cbn [karr_pivot] in Hpivot.
+  destruct (Z.eqb (karr_head row) 0) eqn:Hzero.
+  - destruct (karr_pivot rows) as [[selected remaining]|] eqn:Htail;
+      [|discriminate].
+    injection Hpivot as Hp Hr. subst selected rest.
+    destruct (IH pivot remaining eq_refl) as [prefix [suffix [Hrows Hrest]]].
+    exists (row :: prefix), suffix. subst rows. split; [reflexivity|].
+    cbn [app]. now rewrite Hrest.
+  - injection Hpivot as Hp Hr. subst pivot rest.
+    exists [], rows. split; reflexivity.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
