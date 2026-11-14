@@ -11719,6 +11719,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * subst loser. contradiction.
   Qed.
 
+  (** Repointing a root preserves a lookup when both affected labels agree. *)
+  Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    row_keys store' = PTrieCode.set winner ck (row_keys store) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links store) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links store') with
+     | Some parent => parent | None => winner end) = winner ->
+    PTrieCode.get (row_root fuel r store) (row_keys store) = Some k ->
+    (row_root fuel r store = loser \/ row_root fuel r store = winner -> k = ck) ->
+    PTrieCode.get (row_root fuel r store') (row_keys store') = Some k.
+  Proof.
+    intros fuel r store store' loser winner ck k Hlinks Hkeys Hneq Hloser Hwinner
+      Hlookup Haffected.
+    destruct (Pos.eq_dec (row_root fuel r store) loser) as [Hsource | Hsource].
+    - assert (Hkey : k = ck) by (apply Haffected; now left). subst k.
+      destruct (row_root_link_two_roots fuel r store store' loser winner
+        Hlinks Hneq Hloser Hwinner Hsource) as [Hroot | Hroot];
+        rewrite Hroot, Hkeys.
+      + rewrite PTrie.get_set_other by exact Hneq.
+        rewrite Hsource in Hlookup. exact Hlookup.
+      + apply PTrie.get_set_same.
+    - assert (Hdifferent : loser <> row_root fuel r store).
+      { intro Heq. apply Hsource. symmetry. exact Heq. }
+      rewrite (row_root_link_unaffected fuel r store store' loser winner
+        (row_root fuel r store) Hlinks Hdifferent Hloser eq_refl).
+      rewrite Hkeys.
+      destruct (Pos.eq_dec (row_root fuel r store) winner) as [Htarget | Htarget].
+      + rewrite Htarget, PTrie.get_set_same.
+        f_equal. symmetry. apply Haffected. now right.
+      + rewrite PTrie.get_set_other by exact Htarget. exact Hlookup.
+  Qed.
+
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
     (before <= after)%N ->
     length k * (N.to_nat (N.log2 before) + 1) <=
