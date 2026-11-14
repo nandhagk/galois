@@ -3172,6 +3172,10 @@ Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
   exists origin remaining,
     Permutation labels (origin :: remaining) /\
     length remaining = length rest /\
+    karr_head pivot =
+      karr_determinant (S (length pivot_rows))
+        (karr_submatrix (pivot_columns ++ [head])
+          (pivot_rows ++ [origin])) /\
     karr_minor_law (karr_head pivot) (pivot_rows ++ [origin])
       (pivot_columns ++ [head]) columns
       (combine remaining
@@ -3200,7 +3204,10 @@ Proof.
   assert (Hlaw_selected : karr_minor_law previous pivot_rows pivot_columns
     (head :: columns) pairs).
   { eapply karr_minor_law_permutation; [exact Hpair_perm|exact Hlaw]. }
-  set (f := fun entries => karr_delete 0
+  split.
+  - rewrite <- Ha_entries.
+    eapply karr_minor_law_pivot_value; [exact Hlaw_selected|now left].
+  - set (f := fun entries => karr_delete 0
     (map (fun z => (z / previous)%Z)
       (karr_cross (karr_head pivot) (karr_nth 0 entries)
         entries (karr_row_entries pivot)))).
@@ -3279,6 +3286,90 @@ Proof.
   rewrite Ha_entries in Hminor.
   rewrite <- (karr_pairs_map_rows remaining rest g f Hremaining Hactual) in Hminor.
   exact Hminor.
+Qed.
+
+(** A concrete nonzero pivot preserves the full labeled run invariant. *)
+Lemma karr_run_state_pivot : forall width cols original previous pivot_rows
+    pivot_columns head columns labels rows pivot rest,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  karr_pivot rows = Some (pivot, rest) ->
+  exists origin remaining,
+    karr_run_state width cols original (karr_head pivot)
+      (pivot_rows ++ [origin]) (pivot_columns ++ [head]) columns remaining
+      (map (fun row => karr_tail
+        (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+        rest).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels rows pivot rest Hstate Hselect.
+  unfold karr_run_state in Hstate. destruct Hstate as
+    [Hprevious [Hdet [Hlabels [Hcoeff [Hentries [Hcolumns [Hsquare
+      [Hpartition [Hincreasing [Hbounded Hlaw]]]]]]]]]].
+  destruct (karr_minor_law_pivot_concrete cols previous pivot_rows
+    pivot_columns head columns labels rows pivot rest Hlabels Hcoeff Hentries
+    Hlaw Hprevious Hselect) as
+    [origin [remaining [Hlabel_perm [Hremaining [Hnew_det Hminor]]]]].
+  pose proof (karr_pivot_some rows pivot rest Hselect) as [Ha Hrows_perm].
+  pose proof (Permutation_Forall Hrows_perm Hcoeff) as Hselected_coeff.
+  pose proof (Permutation_Forall Hrows_perm Hentries) as Hselected_entries.
+  apply Forall_cons_iff in Hselected_coeff as [Hp_coeff Hrest_coeff].
+  apply Forall_cons_iff in Hselected_entries as [Hp_entries Hrest_entries].
+  exists origin, remaining.
+  unfold karr_run_state. repeat (apply conj).
+  - exact Ha.
+  - replace (length (pivot_rows ++ [origin])) with (S (length pivot_rows))
+      by (rewrite length_app; cbn [length]; lia).
+    exact Hnew_det.
+  - now rewrite length_map.
+  - apply Forall_forall. intros reduced Hin.
+    apply in_map_iff in Hin as [row [Heq Hrow]]. subst reduced.
+    pose proof (proj1 (Forall_forall _ _) Hrest_coeff row Hrow) as Hr_coeff.
+    cbn beta in Hr_coeff.
+    apply karr_tail_width.
+    rewrite (karr_reduce_width previous (karr_head pivot) (karr_head row)
+      pivot row ltac:(lia)). exact Hr_coeff.
+  - apply Forall_forall. intros reduced Hin.
+    apply in_map_iff in Hin as [row [Heq Hrow]]. subst reduced.
+    pose proof (proj1 (Forall_forall _ _) Hrest_coeff row Hrow) as Hr_coeff.
+    pose proof (proj1 (Forall_forall _ _) Hrest_entries row Hrow) as Hr_entries.
+    cbn beta in Hr_coeff, Hr_entries.
+    assert (Hweight : length (kweight row) = length (kweight pivot)).
+    { apply karr_weight_width_of_entries;
+        [rewrite Hr_coeff, Hp_coeff|rewrite Hr_entries, Hp_entries]; reflexivity. }
+    assert (Hreduced_coeff : length (kcoeff
+      (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)) = S cols).
+    { rewrite (karr_reduce_width previous (karr_head pivot) (karr_head row)
+        pivot row ltac:(lia)). exact Hr_coeff. }
+    assert (Hreduced_entries : length (karr_row_entries
+      (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)) =
+      S (length columns)).
+    { rewrite (karr_reduce_entries_width previous (karr_head pivot)
+        (karr_head row) pivot row ltac:(lia) Hweight).
+      rewrite Hr_entries. reflexivity. }
+    rewrite karr_row_entries_tail.
+    + destruct (karr_row_entries
+        (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+        as [|z entries] eqn:Hshape;
+        cbn [karr_delete length] in Hreduced_entries |- *; lia.
+    + intro Hempty. rewrite Hempty in Hreduced_coeff.
+      cbn [length] in Hreduced_coeff. lia.
+  - cbn [length] in Hcolumns |- *. lia.
+  - rewrite !length_app. cbn [length]. lia.
+  - eapply Permutation_trans; [exact Hpartition|].
+    replace ((pivot_rows ++ [origin]) ++ remaining) with
+      (pivot_rows ++ origin :: remaining)
+      by (rewrite <- app_assoc; reflexivity).
+    now apply Permutation_app_head.
+  - replace ((pivot_columns ++ [head]) ++ columns) with
+      (pivot_columns ++ head :: columns)
+      by (rewrite <- app_assoc; reflexivity).
+    exact Hincreasing.
+  - replace ((pivot_columns ++ [head]) ++ columns) with
+      (pivot_columns ++ head :: columns)
+      by (rewrite <- app_assoc; reflexivity).
+    exact Hbounded.
+  - exact Hminor.
 Qed.
 
 (** Checked division preserves a zero coordinate in every branch. *)
