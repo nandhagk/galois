@@ -12182,6 +12182,53 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite allocate_next_ids. lia.
   Qed.
 
+  Lemma database_row_weight_conserved_ids_mono : forall db db',
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    row_weights (db_row_store db') = row_weights (db_row_store db) ->
+    (ids db <= ids db')%N -> database_row_weight_conserved db'.
+  Proof.
+    intros db db' Hstore Hconserved Hhistory Hlinks Hweights Hids
+      f k key r Hentry.
+    rewrite Hhistory in Hentry.
+    destruct (Hconserved f k key r Hentry)
+      as [codes [Hdistinct [Hcount Hmembers]]].
+    destruct (database_row_store_depth db Hstore f k key r Hentry)
+      as [d [Hbound [Hfixed _]]].
+    assert (Hnew_bound : d <= length k * (N.to_nat (N.log2 (ids db')) + 1)).
+    { eapply Nat.le_trans; [exact Hbound |].
+      apply row_lookup_depth_mono. exact Hids. }
+    assert (Hroot : row_root
+      (length k * (N.to_nat (N.log2 (ids db')) + 1)) r (db_row_store db') =
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db)).
+    { rewrite (row_root_same_links _ r (db_row_store db')
+        (db_row_store db) Hlinks).
+      rewrite (row_root_after_fixed _ d r (db_row_store db)
+        Hnew_bound Hfixed).
+      rewrite (row_root_after_fixed _ d r (db_row_store db)
+        Hbound Hfixed). reflexivity. }
+    exists codes. split; [exact Hdistinct |]. split.
+    - rewrite Hroot, Hweights. exact Hcount.
+    - rewrite Hroot. apply Forall_forall. intros code Hin.
+      apply Forall_forall with (x := code) in Hmembers; [| exact Hin].
+      destruct Hmembers as [label [id [Hget Hconnected]]].
+      exists label, id. split.
+      + now rewrite Hhistory.
+      + eapply database_history_connected_transport; eassumption.
+  Qed.
+
+  Lemma database_row_weight_conserved_allocate_next : forall db,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hstore Hconserved.
+    eapply database_row_weight_conserved_ids_mono;
+      try exact Hstore; try exact Hconserved; try reflexivity.
+    rewrite allocate_next_ids. lia.
+  Qed.
+
   Lemma database_row_store_ok_ids_mono : forall db db',
     database_row_store_ok db ->
     db_row_store db' = db_row_store db -> db_nuses db' = db_nuses db ->
@@ -12652,6 +12699,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     subst identified. apply database_history_root_owner_ensure; assumption.
   Qed.
 
+  Lemma database_row_weight_conserved_register : forall db f k o,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hstore Hconserved.
+    unfold register_row_uses.
+    set (identified := ensure_row_identity f k db).
+    eapply database_row_weight_conserved_transport with (db := identified);
+      try reflexivity.
+    subst identified. apply database_row_weight_conserved_ensure; assumption.
+  Qed.
+
   Lemma database_history_root_owner_row_replace : forall db f k previous o,
     database_row_store_ok db -> database_history_root_owner db ->
     database_history_root_owner (row_replace f k previous o db).
@@ -12668,6 +12727,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
       + apply database_history_root_owner_row_write.
         apply database_history_root_owner_slots_update. exact Howner.
+  Qed.
+
+  Lemma database_row_weight_conserved_row_replace : forall db f k previous o,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hstore Hconserved; unfold row_replace.
+    - apply database_row_weight_conserved_register.
+      + apply row_write_row_store_ok.
+        apply slots_update_row_store_ok, slots_update_row_store_ok.
+        exact Hstore.
+      + apply database_row_weight_conserved_row_write.
+        apply database_row_weight_conserved_slots_update.
+        apply database_row_weight_conserved_slots_update. exact Hconserved.
+    - apply database_row_weight_conserved_register.
+      + apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
+      + apply database_row_weight_conserved_row_write.
+        apply database_row_weight_conserved_slots_update. exact Hconserved.
   Qed.
 
   Lemma database_history_root_owner_row_delete : forall db f k,
@@ -13192,6 +13269,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try exact Hfresh_owner;
       (apply database_history_root_owner_row_replace;
         [exact Hfresh_store | exact Hfresh_owner]).
+  Qed.
+
+  Lemma database_row_weight_conserved_make : forall db f k,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (snd (make f k db)).
+  Proof.
+    intros db f k Hstore Hconserved.
+    pose proof (database_row_store_ok_allocate_next db Hstore) as Hfresh_store.
+    pose proof (database_row_weight_conserved_allocate_next db Hstore Hconserved)
+      as Hfresh_conserved.
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hconserved;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh_conserved;
+      (apply database_row_weight_conserved_row_replace;
+        [exact Hfresh_store | exact Hfresh_conserved]).
   Qed.
 
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
@@ -14011,6 +14105,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hnext_store | exact Hnext_owner].
     - apply database_history_root_owner_row_replace;
         [exact Hnext_store | exact Hnext_owner].
+  Qed.
+
+  Lemma database_row_weight_conserved_put : forall db f k o,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (put f k o db).
+  Proof.
+    intros db f k o Hstore Hconserved. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hnext_conserved : database_row_weight_conserved next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try exact Hconserved; apply database_row_weight_conserved_union;
+        exact Hconserved. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_conserved |].
+      apply database_row_weight_conserved_row_replace;
+        [exact Hnext_store | exact Hnext_conserved].
+    - apply database_row_weight_conserved_row_replace;
+        [exact Hnext_store | exact Hnext_conserved].
   Qed.
 
   Lemma put_representative_old : forall db f k o x,
