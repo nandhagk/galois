@@ -848,6 +848,38 @@ Proof.
       ring.
 Qed.
 
+(** A post-deletion cofactor is the term for its original pair of columns. *)
+Lemma karr_determinant_pair_term_skip : forall order row rows first index,
+  karr_determinant_pair_term order row rows first
+    (if index <? first then index else S index) =
+  ((if Nat.even first then 1 else -1) * karr_nth first row *
+    (if Nat.even index then 1 else -1) *
+    karr_nth index (karr_delete first row) *
+    karr_determinant order
+      (map (karr_delete index) (map (karr_delete first) rows)))%Z.
+Proof.
+  intros order row rows first index.
+  set (second := if index <? first then index else S index).
+  assert (Hdistinct : first <> second).
+  { unfold second. apply karr_skip_index_distinct. }
+  assert (Hinverse :
+      (if second <? first then second else second - 1) = index).
+  { unfold second. apply karr_skip_index_inverse. }
+  assert (Hrows : map (fun r =>
+        karr_delete (Nat.min first second)
+          (karr_delete (Nat.max first second) r)) rows =
+      map (karr_delete index) (map (karr_delete first) rows)).
+  { rewrite map_map. apply map_ext. intro r. symmetry.
+    rewrite <- Hinverse. apply karr_delete_pair_canonical. exact Hdistinct. }
+  unfold karr_determinant_pair_term.
+  assert (Hneq : (first =? second) = false) by (apply Nat.eqb_neq; exact Hdistinct).
+  rewrite Hneq, Hinverse, Hrows, karr_nth_delete.
+  replace (if index <? first then karr_nth index row else karr_nth (S index) row)
+    with (karr_nth second row).
+  - ring.
+  - unfold second. destruct (index <? first); reflexivity.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
