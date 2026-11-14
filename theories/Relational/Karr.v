@@ -11081,6 +11081,28 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hreduce Hhead Htail Hpositive. clearbody work. nia.
   Qed.
 
+  (** One general mapped pivot step includes its head, reduction and tail clocks. *)
+  Lemma T_karr_pivot_step_bounded : forall dim mlen bits d a p r,
+    Z.size_nat d <= bits -> Z.size_nat a <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    (4 + T_karr_head r +
+      T_karr_reduce d a (karr_head r) p r +
+      T_karr_tail (karr_reduce d a (karr_head r) p r) <=
+      16384 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d a p r Hd Ha Hp Hr.
+    pose proof (T_karr_reduce_bounded dim mlen bits d a (karr_head r) p r
+      Hd Ha (karr_head_bits dim mlen bits r Hr) Hp Hr) as Hreduce.
+    pose proof (T_karr_head_bounded r) as Hhead.
+    pose proof (T_karr_tail_bounded
+      (karr_reduce d a (karr_head r) p r)) as Htail.
+    assert (Hwork : (1 <= N.of_nat (dim + mlen + 1) *
+      N.of_nat ((bits + 1)^2))%N).
+    { assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hbits. nia. }
+    nia.
+  Qed.
+
   (** The zero-column recursion has constant dispatch cost. *)
   Lemma T_karr_bareiss_zero_bounded : forall previous rows,
     (T_karr_bareiss 0 previous rows <= 4)%N.
