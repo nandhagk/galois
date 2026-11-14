@@ -11336,6 +11336,42 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now rewrite PTrie.get_set_same.
   Qed.
 
+  Lemma ensure_row_identity_depth : forall db f k,
+    database_row_store_ok db ->
+    forall g args key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (ensure_row_identity f k db))) = Some (key, r) ->
+      exists d,
+        d <= length args * (N.to_nat (N.log2 (ids (ensure_row_identity f k db))) + 1) /\
+        (let parent current :=
+          match PTrieCode.get current
+            (row_links (db_row_store (ensure_row_identity f k db))) with
+          | Some p => p | None => current end in
+         parent (Nat.iter d parent r) = Nat.iter d parent r) /\
+        db_locate g args (ensure_row_identity f k db) =
+          PTrieCode.get
+            (Nat.iter d (fun current =>
+              match PTrieCode.get current
+                (row_links (db_row_store (ensure_row_identity f k db))) with
+              | Some p => p | None => current end) r)
+            (row_keys (db_row_store (ensure_row_identity f k db))).
+  Proof.
+    intros db f k Hstore g args key r Hget.
+    unfold ensure_row_identity in Hget.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior.
+    - exact (ensure_row_identity_old_depth db f k g args key r Hstore Hget).
+    - cbn [database_set_index_counters database_set_row_store db_row_store row_history]
+        in Hget.
+      destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k)) as [Hsame | Hother].
+      + change (RowKeys.encode (g, args) = RowKeys.encode (f, k)) in Hsame.
+        apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
+        rewrite PTrie.get_set_same in Hget. injection Hget as <- <-.
+        exact (ensure_row_identity_new_depth db f k Hstore Hprior).
+      + rewrite PTrie.get_set_other in Hget by exact Hother.
+        exact (ensure_row_identity_old_depth db f k g args key r Hstore Hget).
+  Qed.
+
   Lemma pop_loser_locate : forall db x db' f k,
     db_pop_loser db = Some (x, db') -> db_locate f k db' = db_locate f k db.
   Proof.
