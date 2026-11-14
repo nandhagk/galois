@@ -254,7 +254,7 @@ Example cache_history_without_slots :
   let written := FixtureDatabase.put 3%positive [Val 7%positive] None db in
   (db_written_cells written, db_cache_updates written,
    FixtureDatabase.row_get 3%positive [Val 7%positive] written) =
-    ([Val 7%positive], 1%N, Some None).
+    ([Val 7%positive; Val 7%positive], 1%N, Some None).
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -266,7 +266,7 @@ Example cache_history_on_deletion :
   let removed := FixtureDatabase.row_delete 3%positive [Val 7%positive] written in
   (db_written_cells removed, db_cache_updates removed,
    FixtureDatabase.row_get 3%positive [Val 7%positive] removed) =
-    ([Val 7%positive; Val 7%positive], 2%N, None).
+    ([Val 7%positive; Val 7%positive; Val 7%positive], 2%N, None).
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -635,6 +635,37 @@ Example repair_measure_spends_one :
         length (snd repaired)) = (2, 1, 0)
     end
   end.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A redundant insertion records a consumed output even when the stored output is retained. *)
+Example redundant_put_records_discarded_input :
+  let first := FixtureDatabase.put 3%positive [] None
+    (FixtureDatabase.init [Decl 3%positive [] ORel] []) in
+  let result := FixtureDatabase.put 3%positive [] (Some (Val 1048576%positive)) first in
+  (FixtureDatabase.row_get 3%positive [] result,
+    db_written_cells result, db_cache_updates result) =
+    (Some None, [Val 1048576%positive], 1%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** An undeclared fresh make records the actual function and key that its query consumed. *)
+Example make_undeclared_records_input :
+  let result := snd (FixtureDatabase.make 1048576%positive [Val 2097152%positive]
+    (FixtureDatabase.init [] [])) in
+  (db_written_cells result, db_index_counters result, FixtureDatabase.ids result) =
+    ([Val 2097152%positive], [1048576%positive; 1%positive], 1%N).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Constructor reuse retains exactly the existing state, including its input history. *)
+Example make_reuse_preserves_recorded_state :
+  let first := snd (FixtureDatabase.make 2%positive [Val 3%positive]
+    (FixtureDatabase.init [Decl 2%positive [SVal] OId] [])) in
+  snd (FixtureDatabase.make 2%positive [Val 3%positive] first) = first.
 Proof.
   vm_compute. reflexivity.
 Qed.
