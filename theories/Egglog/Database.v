@@ -11916,6 +11916,47 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       rewrite Nat2N.inj_mul. cbn [N.of_nat]. nia.
   Qed.
 
+  Lemma database_row_path_first_root : forall (db : t) r d,
+    (let parent current :=
+      match PTrieCode.get current (row_links (db_row_store db)) with
+      | Some p => p | None => current end in
+     parent (Nat.iter d parent r) = Nat.iter d parent r) ->
+    exists first, first <= d /\
+      (let parent current :=
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end in
+       parent (Nat.iter first parent r) = Nat.iter first parent r) /\
+      (forall j, j < first ->
+        let parent current :=
+          match PTrieCode.get current (row_links (db_row_store db)) with
+          | Some p => p | None => current end in
+        parent (Nat.iter j parent r) <> Nat.iter j parent r).
+  Proof.
+    intros db r d. generalize dependent r.
+    induction d as [| d IH]; intros r Hfixed.
+    - exists 0%nat. split; [lia |]. split; [exact Hfixed |].
+      intros j Hj. lia.
+    - set (parent := fun current =>
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end).
+      destruct (Pos.eq_dec (parent r) r) as [Hroot | Hstep].
+      + exists 0%nat. split; [lia |]. split; [exact Hroot |].
+        intros j Hj. lia.
+      + assert (Hnext : parent (Nat.iter d parent (parent r)) =
+          Nat.iter d parent (parent r)).
+        { rewrite <- Nat.iter_succ_r. exact Hfixed. }
+        destruct (IH (parent r) Hnext) as [first [Hbound [Hfirst Hstrict]]].
+        exists (S first). split; [lia |]. split.
+        * change (parent (Nat.iter (S first) parent r) =
+            Nat.iter (S first) parent r).
+          rewrite Nat.iter_succ_r. exact Hfirst.
+        * intros [| j] Hj.
+          -- cbn [Nat.iter]. exact Hstep.
+          -- change (parent (Nat.iter (S j) parent r) <>
+               Nat.iter (S j) parent r).
+             rewrite Nat.iter_succ_r. apply Hstrict. lia.
+  Qed.
+
   Lemma row_parent_iter_below_fresh : forall db d r,
     database_row_store_ok db ->
     (r < row_fresh (db_row_store db))%positive ->
