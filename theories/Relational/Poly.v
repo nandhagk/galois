@@ -17071,6 +17071,29 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite Heq. apply N.le_refl.
   Qed.
 
+  (** Public assignment work pays for its source-row count and fixed overhead. *)
+  Lemma poly_assign_work_floor : forall x e P,
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    length P + 3 <= work.
+  Proof.
+    intros x e P bits volume work.
+    assert (Hrows : 1 <= (length P + 3)^2)
+      by (cbn [Nat.pow]; nia).
+    assert (Hbits : 1 <= bits^2)
+      by (unfold bits; cbn [Nat.pow]; nia).
+    pose proof (Nat.mul_le_mono_r 1 ((length P + 3)^2)
+      volume Hrows) as Hfirst.
+    rewrite Nat.mul_1_l in Hfirst.
+    pose proof (Nat.mul_le_mono_l 1 (bits^2)
+      ((length P + 3)^2 * volume) Hbits) as Hsecond.
+    rewrite Nat.mul_1_r in Hsecond.
+    replace ((length P + 3)^2 * volume * bits^2) with work
+      in Hsecond by (unfold work; ring).
+    unfold volume in Hfirst. lia.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
@@ -17238,6 +17261,8 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     (poly_assume_factor + poly_havoc_factor + poly_range_affine_factor + 32 +
       1000000 * (RangeCore.poly_step_factor +
         RangeCore.poly_coef_factor +
+        RangeCore.poly_normal_row_factor +
+        RangeCore.poly_raw_initial_factor +
         AssignCore.poly_assign_normal_subst_factor +
         AssignCore.poly_assign_zero_subst_factor + C.c_lc + X.c_key + 1))%N.
   (** An unreachable assignment performs only the outer reachability test. *)
