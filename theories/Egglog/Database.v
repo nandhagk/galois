@@ -3025,6 +3025,32 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         Some (key, r) ->
       db_locate f k db = Some k.
 
+  (** Historical row roots retain the function that created each identity. *)
+  Definition database_history_root_owner (db : t) : Prop :=
+    forall f k key r g args other s,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+        Some (other, s) ->
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db) =
+      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
+        (db_row_store db) -> f = g.
+
+  Lemma database_history_root_owner_entry : forall db,
+    database_history_root_owner db -> forall f k key r g args other s,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+        Some (other, s) ->
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db) =
+      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
+        (db_row_store db) -> f = g.
+  Proof.
+    exact (fun db Howner => Howner).
+  Qed.
+
   Lemma database_history_alignment_entry : forall db,
     database_history_alignment db -> forall f k key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
@@ -3612,10 +3638,24 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite PTrie.get_empty in Hrow. discriminate.
   Qed.
 
+  Lemma database_history_root_owner_init : forall ds sl,
+    database_history_root_owner (init ds sl).
+  Proof.
+    intros ds sl f k key r g args other s Hentry _ _.
+    cbn [init db_row_store row_history] in Hentry.
+    rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
   Lemma database_history_alignment_advance : forall db,
     database_history_alignment db -> database_history_alignment (advance db).
   Proof.
     intros db Halign. exact Halign.
+  Qed.
+
+  Lemma database_history_root_owner_advance : forall db,
+    database_history_root_owner db -> database_history_root_owner (advance db).
+  Proof.
+    intros db Howner. exact Howner.
   Qed.
 
   Lemma database_active_history_coherent_advance : forall db,
@@ -13244,6 +13284,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     change (located (union i j db) f k = Some k).
     rewrite union_located_raw.
     exact (Hcoherent f k o key r Hrow Hentry).
+  Qed.
+
+  Lemma database_history_root_owner_union : forall db i j,
+    database_history_root_owner db ->
+    database_history_root_owner (union i j db).
+  Proof.
+    intros db i j Howner f k key r g args other s Hfirst Hsecond Hroot.
+    rewrite union_row_store_raw in Hfirst, Hsecond, Hroot.
+    rewrite union_ids in Hroot.
+    exact (Howner f k key r g args other s Hfirst Hsecond Hroot).
   Qed.
 
   Lemma database_history_alignment_union : forall db i j,
