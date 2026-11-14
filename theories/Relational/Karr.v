@@ -16162,6 +16162,19 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        exact Hright_positive_total|exact Hzero_total|exact Hscale_zero|lia].
   Qed.
 
+  (** Executable coordinates inherit their source row's key width. *)
+  Lemma karr_variables_key_bound : forall P keys,
+    Forall (fun row => C.row_key_bits row <= keys) P ->
+    Forall (fun x => X.bits x <= keys) (variables P).
+  Proof.
+    intros P keys Hrows. apply Forall_forall. intros x Hx.
+    destruct (karr_variables_support P x Hx) as [row [Hrow Hterm]].
+    apply in_map_iff in Hterm as [p [Hkey Hp]]. subst x.
+    pose proof (proj1 (Forall_forall _ _) Hrows row Hrow) as Hbound.
+    pose proof (karr_row_key_member row p Hp) as Hmember.
+    cbn beta in Hbound. unfold X.bits. lia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
