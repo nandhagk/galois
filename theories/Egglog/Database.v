@@ -12023,6 +12023,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + eapply database_history_connected_transport; eassumption.
   Qed.
 
+  Lemma database_row_weight_conserved_advance : forall db,
+    database_row_weight_conserved db ->
+    database_row_weight_conserved (advance db).
+  Proof.
+    intros db Hconserved.
+    eapply database_row_weight_conserved_transport with (db := db);
+      try reflexivity; exact Hconserved.
+  Qed.
+
   (** Repointing a root preserves a lookup when both affected labels agree. *)
   Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
@@ -12533,6 +12542,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Howner.
   Qed.
 
+  Lemma database_row_weight_conserved_slots_update : forall db add f cells,
+    database_row_weight_conserved db ->
+    database_row_weight_conserved (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hconserved.
+    eapply database_row_weight_conserved_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - now rewrite slots_update_row_store.
+    - now rewrite slots_update_row_store.
+    - apply slots_update_ids.
+    - exact Hconserved.
+  Qed.
+
   Lemma database_history_root_owner_row_write : forall db f k o,
     database_history_root_owner db ->
     database_history_root_owner (row_write f k o db).
@@ -12543,6 +12565,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - now rewrite row_write_row_store.
     - apply row_write_ids.
     - exact Howner.
+  Qed.
+
+  Lemma database_row_weight_conserved_row_write : forall db f k o,
+    database_row_weight_conserved db ->
+    database_row_weight_conserved (row_write f k o db).
+  Proof.
+    intros db f k o Hconserved.
+    eapply database_row_weight_conserved_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - now rewrite row_write_row_store.
+    - now rewrite row_write_row_store.
+    - apply row_write_ids.
+    - exact Hconserved.
   Qed.
 
   Lemma database_history_root_owner_register : forall db f k o,
@@ -12585,6 +12620,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - now rewrite row_delete_row_store.
     - apply row_delete_ids.
     - exact Howner.
+  Qed.
+
+  Lemma database_row_weight_conserved_row_delete : forall db f k,
+    database_row_weight_conserved db ->
+    database_row_weight_conserved (row_delete f k db).
+  Proof.
+    intros db f k Hconserved.
+    eapply database_row_weight_conserved_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - apply row_delete_ids.
+    - exact Hconserved.
   Qed.
 
   Lemma ensure_row_identity_new_size : forall db f k d,
@@ -13725,6 +13773,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite union_row_store_raw in Hfirst, Hsecond, Hroot.
     rewrite union_ids in Hroot.
     exact (Howner f k key r g args other s Hfirst Hsecond Hroot).
+  Qed.
+
+  Lemma database_row_weight_conserved_union : forall db i j,
+    database_row_weight_conserved db ->
+    database_row_weight_conserved (union i j db).
+  Proof.
+    intros db i j Hconserved.
+    eapply database_row_weight_conserved_transport with (db := db).
+    - now rewrite union_row_store_raw.
+    - now rewrite union_row_store_raw.
+    - now rewrite union_row_store_raw.
+    - apply union_ids.
+    - exact Hconserved.
   Qed.
 
   Lemma database_history_alignment_union : forall db i j,
