@@ -3009,6 +3009,25 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (forall r p, PTrieCode.get r (row_links store) = Some p ->
       (r < row_fresh store)%positive /\ (p < row_fresh store)%positive).
 
+  (** A historical key made of current representatives resolves to that key. *)
+  Definition database_history_alignment (db : t) : Prop :=
+    forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      (forall i, In (Id i) k -> repr db i = i) ->
+      db_locate f k db = Some k.
+
+  Lemma database_history_alignment_entry : forall db,
+    database_history_alignment db -> forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      (forall i, In (Id i) k -> repr db i = i) ->
+      db_locate f k db = Some k.
+  Proof.
+    exact (fun db Halign f k key r Hentry Hcanonical =>
+      Halign f k key r Hentry Hcanonical).
+  Qed.
+
   Lemma database_row_store_labels : forall db, database_row_store_ok db ->
     forall f k key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
@@ -3512,6 +3531,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
                        rewrite PTrie.get_empty in Hhistory. discriminate.
                    --- intros r p Hlink. rewrite PTrie.get_empty in Hlink.
                        discriminate.
+  Qed.
+
+  Lemma database_history_alignment_init : forall ds sl,
+    database_history_alignment (init ds sl).
+  Proof.
+    intros ds sl f k key r Hentry _.
+    cbn [init db_row_store row_history] in Hentry.
+    rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
+  Lemma database_history_alignment_advance : forall db,
+    database_history_alignment db -> database_history_alignment (advance db).
+  Proof.
+    intros db Halign. exact Halign.
   Qed.
 
   (** Public idle states retain enough historical uses to rebuild every row. *)
@@ -11917,6 +11950,22 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       rewrite register_row_uses_locate.
       apply ensure_row_identity_new_locate; [exact Hstore' |].
       now rewrite Hsame.
+  Qed.
+
+  Lemma row_replace_new_locate_from_alignment : forall db f k previous o,
+    database_row_store_ok db ->
+    (forall key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
+      db_locate f k db = Some k) ->
+    db_locate f k (row_replace f k previous o db) = Some k.
+  Proof.
+    intros db f k previous o Hstore Haligned.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key r] |] eqn:Hprior.
+    - specialize (Haligned key r eq_refl).
+      rewrite (row_replace_old_locate db f k previous o f k key r Hstore Hprior).
+      exact Haligned.
+    - exact (row_replace_new_locate db f k previous o Hstore Hprior).
   Qed.
 
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
