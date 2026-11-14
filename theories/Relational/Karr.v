@@ -1957,6 +1957,32 @@ Proof.
     cbn [map karr_nth]; try ring. apply IH.
 Qed.
 
+(** Column selection commutes with uniform row scaling. *)
+Lemma karr_submatrix_scale : forall d columns rows,
+  karr_submatrix columns (map (map (fun z => (d * z)%Z)) rows) =
+    map (map (fun z => (d * z)%Z)) (karr_submatrix columns rows).
+Proof.
+  intros d columns rows. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext. intro row. rewrite map_map.
+  apply map_ext. intro index. now rewrite karr_nth_scale.
+Qed.
+
+(** Scaling selected rows multiplies every minor by one factor per row. *)
+Lemma karr_submatrix_scale_minor : forall d columns rows,
+  karr_determinant (length rows)
+    (karr_submatrix columns (map (map (fun z => (d * z)%Z)) rows)) =
+  (d ^ Z.of_nat (length rows) *
+    karr_determinant (length rows) (karr_submatrix columns rows))%Z.
+Proof.
+  intros d columns rows. rewrite karr_submatrix_scale.
+  replace (length rows) with (length (karr_submatrix columns rows))
+    by (unfold karr_submatrix; now rewrite length_map).
+  pose proof (karr_determinant_scale_rows
+    (length (karr_submatrix columns rows)) [] (karr_submatrix columns rows) [] d
+    ltac:(cbn [length]; lia)) as Hscale.
+  cbn [app] in Hscale. rewrite !app_nil_r in Hscale. exact Hscale.
+Qed.
+
 (** Checked division preserves a zero coordinate in every branch. *)
 Lemma karr_divide_coordinate_zero : forall divisor r i,
   karr_nth i (kcoeff r) = 0%Z -> karr_nth i (kcoeff (karr_divide divisor r)) = 0%Z.
