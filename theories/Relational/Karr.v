@@ -403,6 +403,36 @@ Proof.
   reflexivity.
 Qed.
 
+(** Exact coordinatewise quotients multiply back to their undivided integers. *)
+Lemma karr_quotient_list_multiple : forall d zs,
+  d <> 0%Z -> (forall z, In z zs -> (z mod d = 0)%Z) ->
+  map (fun z => (d * z)%Z) (map (fun z => (z / d)%Z) zs) = zs.
+Proof.
+  intros d zs Hnonzero Hdivisible. rewrite map_map.
+  transitivity (map (fun z : Z => z) zs); [|apply map_id].
+  apply map_ext_in. intros z Hin.
+  pose proof (Z.div_mod z d Hnonzero) as Hdivision.
+  pose proof (Hdivisible z Hin) as Hremainder. nia.
+Qed.
+
+(** A checked reduction scales its quotient entries back to the full cross. *)
+Lemma karr_row_entries_reduce_multiple : forall d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) -> d <> 0%Z ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  (forall z, In z (karr_cross a b (karr_row_entries r) (karr_row_entries p)) ->
+    (z mod d = 0)%Z) ->
+  map (fun z => (d * z)%Z) (karr_row_entries (karr_reduce d a b p r)) =
+    karr_cross a b (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros d a b p r Hcoeff Hweight Hnonzero Hexact Hdivisible.
+  rewrite (karr_row_entries_reduce_exact d a b p r Hcoeff Hweight Hexact).
+  now apply karr_quotient_list_multiple.
+Qed.
+
 (** Pivot discovery removes one selected row while retaining every other row's order. *)
 Lemma karr_pivot_split : forall rows pivot rest,
   karr_pivot rows = Some (pivot, rest) ->
