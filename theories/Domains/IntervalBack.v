@@ -4177,6 +4177,44 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         lia.
   Qed.
 
+  Local Lemma table_mod_choice_time : forall u candidate,
+    (T_interval_mod_choice u candidate <=
+      (1000 + 100 * Scalar.c_scalar) *
+        N.of_nat (interval_bits u + interval_bits candidate + 1))%N.
+  Proof.
+    intros u candidate.
+    set (s := interval_bits u + interval_bits candidate + 1).
+    assert (Hpositive : (1 <= N.of_nat s)%N)
+      by (unfold s; rewrite Nat2N.inj_add; nia).
+    pose proof (Scalar.T_interval_join_le (I (Fin 0) (Fin 0)) candidate)
+      as Hjoin.
+    cbn [interval_bits Z.size_nat Nat.max] in Hjoin.
+    assert (Hjoin_budget :
+      (Scalar.T_interval_join (I (Fin 0) (Fin 0)) candidate <=
+        Scalar.c_scalar * N.of_nat s)%N).
+    { unfold s. repeat rewrite Nat2N.inj_add in *. nia. }
+    unfold T_interval_mod_choice.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (interval_finite_helper u) as [[lo hi]|] eqn:Hfinite;
+      time_cbn_all.
+    - destruct (table_finite_bits u lo hi Hfinite) as [Hlo Hhi].
+      pose proof (Std.Z.T_ltb_le 0 lo) as Hlt.
+      pose proof (Std.Z.T_eqb_le hi 0) as Heq.
+      cbn [Z.size_nat] in Hlt, Heq.
+      assert (HloN : (N.of_nat (Z.size_nat lo) <= N.of_nat s)%N)
+        by (apply table_nat_to_N_le; unfold s; lia).
+      assert (HhiN : (N.of_nat (Z.size_nat hi) <= N.of_nat s)%N)
+        by (apply table_nat_to_N_le; unfold s; lia).
+      destruct (0 <? lo)%Z; time_cbn_all;
+        [clear - Hlt HloN Hpositive|];
+        try (repeat rewrite Nat2N.inj_add in *; nia).
+      destruct (hi =? 0)%Z; time_cbn_all;
+        clear - Hlt Heq Hjoin_budget HloN HhiN Hpositive;
+        repeat rewrite Nat2N.inj_add in *; nia.
+    - clear - Hjoin_budget Hpositive.
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
   Local Lemma table_add_time : forall rw u v,
     (T_interval_add rw u v <= 10000 * N.of_nat
       ((Pos.to_nat rw + interval_bits u + interval_bits v + 1) ^ 2))%N.
