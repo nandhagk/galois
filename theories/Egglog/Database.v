@@ -14031,6 +14031,88 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + unfold move_row_identity. now rewrite Hsource.
   Qed.
 
+  Lemma repair_current_old_absent : forall db f k o,
+    wf db -> row_get f k db = Some o -> k <> normal_key db k ->
+    row_get f k (repair_current f k db) = None.
+  Proof.
+    intros db f k o Hwf Hrow Hdifferent.
+    destruct (row_get f k (repair_current f k db)) as [output |] eqn:Hresult;
+      [| reflexivity].
+    exfalso. unfold repair_current in Hresult. rewrite Hrow in Hresult.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) o) o)) eqn:Hfixed.
+    - apply andb_true_iff in Hfixed as [Hkey _].
+      apply Pos.eqb_eq in Hkey. apply Tuples.encode_inj in Hkey.
+      now apply Hdifferent.
+    - apply put_row_sources_raw in Hresult as [Hold | [Hf [Hk _]]].
+      + apply row_delete_binding in Hold as [_ Heq]. apply Heq. reflexivity.
+      + rewrite row_delete_normal_key,
+          (normal_key_idempotent db k (wf_forest db Hwf)) in Hk.
+        now apply Hdifferent.
+  Qed.
+
+  Lemma database_active_history_coherent_move : forall db f old ck,
+    database_row_store_ok db -> database_active_history_coherent db ->
+    length old = length ck -> (row_get f old db = None \/ old = ck) ->
+    (forall key r,
+      PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+        Some (key, r) -> db_locate f old db = Some old) ->
+    (forall key r,
+      PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+        Some (key, r) -> db_locate f ck db = Some ck) ->
+    (forall g args key r source_key source_id,
+      PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+        Some (source_key, source_id) ->
+      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db) =
+      row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) source_id
+        (db_row_store db) -> g = f) ->
+    database_active_history_coherent (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Hcoherent Hlength Hold_absent Hsource_loc Hdest_loc
+      Howner
+      g args o key r Hrow Hentry.
+    change (row (view (move_row_identity f old ck db)) g args o) in Hrow.
+    rewrite (proj2 (move_row_identity_semantic_fields db f old ck)) in Hrow.
+    change (row_get g args db = Some o) in Hrow.
+    rewrite move_row_identity_history in Hentry.
+    assert (Hlookup : db_locate g args db = Some args).
+    { exact (Hcoherent g args o key r Hrow Hentry). }
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource;
+      [| replace (move_row_identity f old ck db) with db by
+          (unfold move_row_identity; now rewrite Hsource);
+         exact Hlookup].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest;
+      [| replace (move_row_identity f old ck db) with db by
+          (unfold move_row_identity; now rewrite Hsource, Hdest);
+         exact Hlookup].
+    eapply move_row_identity_locate_aligned;
+      [exact Hstore | exact Hlength | exact Hsource | exact Hdest |
+       exact Hentry | exact (Hsource_loc old_key old_id eq_refl) |
+       exact (Hdest_loc ck_key ck_id eq_refl) | exact Hlookup |].
+    intros [Hroot | Hroot].
+    - pose proof (Hsource_loc old_key old_id eq_refl) as Hsource_lookup.
+      unfold db_locate in Hsource_lookup, Hlookup.
+      rewrite Hsource in Hsource_lookup. rewrite Hentry in Hlookup.
+      unfold ids in Hroot.
+      rewrite Hroot in Hlookup. rewrite Hlookup in Hsource_lookup.
+      injection Hsource_lookup as Hsame. subst args.
+      pose proof (Howner g old key r old_key old_id Hentry eq_refl Hroot) as ->.
+      destruct Hold_absent as [Habsent | Heq].
+      + rewrite Hrow in Habsent. discriminate.
+      + exact Heq.
+    - pose proof (Hdest_loc ck_key ck_id eq_refl) as Hdest_lookup.
+      unfold db_locate in Hdest_lookup, Hlookup.
+      rewrite Hdest in Hdest_lookup. rewrite Hentry in Hlookup.
+      unfold ids in Hroot.
+      rewrite Hroot in Hlookup. rewrite Hlookup in Hdest_lookup.
+      now injection Hdest_lookup.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
