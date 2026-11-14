@@ -5725,27 +5725,34 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Replacing one actual binding preserves the complete multiset cache at every declared slot. *)
   Lemma row_replace_slot_cache : forall db f k previous o s g perm,
-    database_wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    (forall before, previous = Some before ->
+      slots_fit db f (length (k ++ option_list before))) ->
+    slot_cache_ok (db_runtime db) s (length perm)
+      (row_contributions g perm
+        (RowMap.elements (runtime_rows (db_runtime db)))) ->
+    old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
     slot_of db s = Some (g, perm) ->
     slot_cache_ok (db_runtime (row_replace f k previous o db)) s (length perm)
       (row_contributions g perm
         (RowMap.elements (runtime_rows (db_runtime (row_replace f k previous o db))))).
   Proof.
-    intros db f k previous o s g perm Hwf Hprevious Hfits Hslot.
-    pose proof (wf_row_map db Hwf) as Hmap.
+    intros db f k previous o s g perm Hmap Hgroups Hbefore_fit Hcache
+      Hprevious Hfits Hslot.
     destruct (RowFacts.set_elements_decomposition _ _ (f, k) previous o Hmap Hprevious)
       as [rest [Hsource [Htarget _]]].
     rewrite row_replace_map. eapply slot_cache_permutation.
     - apply row_contributions_permutation. apply Permutation_sym. exact Htarget.
     - apply (row_replace_cache_list db f k previous o s g perm rest).
-      + exact (wf_group_table db Hwf).
+      + exact Hgroups.
       + exact Hslot.
       + exact Hfits.
-      + intros before Hbefore. apply (wf_row_slots db Hwf f k before).
-        change (old db f k = Some before). now rewrite Hprevious.
+      + exact Hbefore_fit.
       + eapply slot_cache_permutation.
         * apply row_contributions_permutation. exact Hsource.
-        * exact (wf_slot_cache db s g perm Hwf Hslot).
+        * exact Hcache.
   Qed.
 
   (** Row replacement preserves both indexes and exact projection counts without an output-wf premise. *)
@@ -5762,8 +5769,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         (fun rows state => eq_refl) (fun flag state => eq_refl)
         (fun all new counts state => eq_refl) f k previous o db), row_replace_slots.
       exact (wf_slot_bound db Hwf).
-    - intros s g perm Hslot. apply row_replace_slot_cache; try assumption.
-      unfold slot_of in *. now rewrite row_replace_slots in Hslot.
+    - intros s g perm Hslot.
+      assert (Hslot_old : slot_of db s = Some (g, perm)).
+      { unfold slot_of in *. now rewrite row_replace_slots in Hslot. }
+      eapply row_replace_slot_cache.
+      + exact (wf_row_map db Hwf).
+      + exact (wf_group_table db Hwf).
+      + intros before Hbefore. apply (wf_row_slots db Hwf f k before).
+        change (old db f k = Some before). now rewrite Hprevious.
+      + exact (wf_slot_cache db s g perm Hwf Hslot_old).
+      + exact Hprevious.
+      + exact Hfits.
+      + exact Hslot_old.
   Qed.
 
   (** Replacing a well-kinded row preserves the kind condition for every stored binding. *)
