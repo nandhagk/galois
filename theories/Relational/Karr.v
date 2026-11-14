@@ -3489,6 +3489,132 @@ Proof.
   now rewrite karr_row_entries_head.
 Qed.
 
+(** The concrete recorded run contains only source minors under the seed-zero condition. *)
+Lemma karr_run_state_record : forall width original,
+  (2 <= length original -> In 0%Z (karr_signed_minors width original)) ->
+  forall cols previous pivot_rows pivot_columns columns labels rows z,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows ->
+    In z (snd (karr_bareiss_record cols previous rows)) ->
+    In z (karr_signed_minors width original).
+Proof.
+  intros width original Hzero_two cols. induction cols as [|cols IH];
+    intros previous pivot_rows pivot_columns columns labels rows z Hstate Hin.
+  - cbn [karr_bareiss_record snd] in Hin.
+    eapply karr_run_state_entries; eauto.
+  - destruct columns as [|head columns].
+    { unfold karr_run_state in Hstate.
+      destruct Hstate as [_ [_ [_ [_ [_ [Hcolumns _]]]]]].
+      cbn [length] in Hcolumns. lia. }
+    cbn [karr_bareiss_record] in Hin.
+    destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+    + set (g := fun row => karr_reduce previous (karr_head pivot)
+        (karr_head row) pivot row).
+      set (reduced := map g rest).
+      change (map (fun row => karr_reduce previous (karr_head pivot)
+        (karr_head row) pivot row) rest) with reduced in Hin.
+      destruct (karr_bareiss_record cols (karr_head pivot)
+        (map karr_tail reduced)) as [result history] eqn:Hrun.
+      cbn [snd] in Hin.
+      destruct (karr_run_state_pivot width cols original previous pivot_rows
+        pivot_columns head columns labels rows pivot rest Hstate Hselect)
+        as [origin [remaining Hnext]].
+      assert (Hnext_rows : map karr_tail reduced =
+        map (fun row => karr_tail (g row)) rest).
+      { unfold reduced. now rewrite map_map. }
+      unfold g in Hnext_rows. rewrite <- Hnext_rows in Hnext.
+      assert (Hzero_rest : rest <> [] -> In 0%Z
+        (karr_signed_minors width original)).
+      { intro Hrest. apply Hzero_two.
+        unfold karr_run_state in Hstate.
+        destruct Hstate as [_ [_ [Hlabels [_ [_ [_ [_ [Hpartition _]]]]]]]].
+        pose proof (Permutation_length Hpartition) as Horiginal.
+        pose proof (Permutation_length
+          (proj2 (karr_pivot_some rows pivot rest Hselect))) as Hrow_count.
+        rewrite length_app in Horiginal. cbn [length] in Hrow_count.
+        destruct rest as [|first rest]; [contradiction|].
+        cbn [length] in Hrow_count. lia. }
+      apply in_app_iff in Hin as [Hhere|Hother].
+      * eapply karr_run_state_entries; [exact Hstate|exact Hhere].
+      * apply in_app_iff in Hother as [Hraw|Hother].
+        -- apply in_flat_map in Hraw as [reduced_row [Hreduced_row Hzrow]].
+           apply in_map_iff in Hreduced_row as [source [Heq Hsource]].
+           subst reduced_row.
+           pose proof (proj2 (karr_pivot_some rows pivot rest Hselect))
+             as Hrows_perm.
+           unfold karr_run_state in Hstate.
+           destruct Hstate as [_ [_ [_ [Hcoeff _]]]].
+           pose proof (Permutation_Forall Hrows_perm Hcoeff) as Hselected.
+           apply Forall_cons_iff in Hselected as [Hp_coeff Hrest_coeff].
+           pose proof (proj1 (Forall_forall _ _) Hrest_coeff source Hsource)
+             as Hsource_coeff.
+           cbn beta in Hsource_coeff.
+           assert (Hreduced_nonempty : kcoeff (g source) <> []).
+           { unfold g. intro Hempty.
+             pose proof (karr_reduce_width previous (karr_head pivot)
+               (karr_head source) pivot source ltac:(lia)) as Hwidth.
+             rewrite Hempty in Hwidth. cbn [length] in Hwidth. lia. }
+           rewrite (karr_row_entries_zero_tail (g source)
+             Hreduced_nonempty) in Hzrow
+             by (unfold g; apply karr_reduce_head_zero).
+           destruct Hzrow as [Hzero|Htail].
+           ++ subst z. apply Hzero_rest.
+              destruct rest; [contradiction|discriminate].
+           ++ eapply karr_run_state_entries; [exact Hnext|].
+              apply in_flat_map. exists (karr_tail (g source)). split.
+              ** apply in_map_iff. exists (g source). split;
+                   [reflexivity|apply in_map; exact Hsource].
+              ** exact Htail.
+        -- apply in_app_iff in Hother as [Hhistory|Houtput].
+           ++ eapply IH; [exact Hnext|]. now rewrite Hrun.
+           ++ apply in_flat_map in Houtput as [output [Houtput Hzrow]].
+              cbn [List.In] in Houtput.
+              destruct Houtput as [Hpivot|Hrestored].
+              ** subst output.
+                 eapply karr_run_state_entries; [exact Hstate|].
+                 apply in_flat_map. exists pivot. split; [|exact Hzrow].
+                 eapply Permutation_in;
+                   [apply Permutation_sym, (proj2
+                     (karr_pivot_some rows pivot rest Hselect))|now left].
+              ** apply in_map_iff in Hrestored as [output' [Heq Hresult]].
+                 subst output. rewrite karr_row_entries_restore in Hzrow.
+                 destruct Hzrow as [Hzero|Htail].
+                 --- subst z. apply Hzero_rest.
+                     intro Hempty. subst rest. cbn [map] in Hrun.
+                     rewrite karr_bareiss_record_empty in Hrun.
+                     inversion Hrun; subst. contradiction.
+                 --- apply IH with (previous := karr_head pivot)
+                       (pivot_rows := pivot_rows ++ [origin])
+                       (pivot_columns := pivot_columns ++ [head])
+                       (columns := columns) (labels := remaining)
+                       (rows := map karr_tail reduced);
+                       [exact Hnext|].
+                     rewrite Hrun.
+                     eapply karr_bareiss_record_output; eauto.
+                     apply in_flat_map. now exists output'.
+    + destruct (karr_bareiss_record cols previous (map karr_tail rows))
+        as [result history] eqn:Hrun.
+      cbn [snd] in Hin.
+      pose proof (karr_run_state_skip width cols original previous pivot_rows
+        pivot_columns head columns labels rows Hstate) as Hnext.
+      apply in_app_iff in Hin as [Hhere|Hother].
+      * eapply karr_run_state_entries; [exact Hstate|exact Hhere].
+      * apply in_app_iff in Hother as [Hhistory|Houtput].
+        -- eapply IH; [exact Hnext|]. now rewrite Hrun.
+        -- apply in_flat_map in Houtput as [output [Houtput Hzrow]].
+           apply in_map_iff in Houtput as [source [Heq Hsource]].
+           subst output. rewrite karr_row_entries_restore in Hzrow.
+           destruct Hzrow as [Hzero|Htail].
+           ++ subst z. eapply karr_run_state_no_pivot_zero;
+                [exact Hstate| |exact Hselect].
+              intro Hempty. subst rows. cbn [map] in Hrun.
+              rewrite karr_bareiss_record_empty in Hrun.
+              inversion Hrun; subst. contradiction.
+           ++ eapply IH; [exact Hnext|]. rewrite Hrun.
+              eapply karr_bareiss_record_output; eauto.
+              apply in_flat_map. now exists source.
+Qed.
+
 (** Checked division preserves a zero coordinate in every branch. *)
 Lemma karr_divide_coordinate_zero : forall divisor r i,
   karr_nth i (kcoeff r) = 0%Z -> karr_nth i (kcoeff (karr_divide divisor r)) = 0%Z.
