@@ -15848,6 +15848,53 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       now apply karr_vars_of_contains with (r := source).
   Qed.
 
+  (** The lifted minor width fits a fixed public Hadamard allowance. *)
+  Lemma karr_hull_width_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    let s := 2 * length xs + length a + length b + 5 in
+    let d := n (Reached a) + n (Reached b) + 1 in
+    let w := ell (Reached a) + ell (Reached b) in
+    ellB s (nell (Reached a) + nell (Reached b)) + 1 <=
+      128 * (ellB d w + 1).
+  Proof.
+    intros a b Ha Hb xs s d w.
+    pose proof (karr_hull_variables_public a b) as Hvars.
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hs : s <= 5 * d).
+    { unfold s, d, n, xs. cbn [rows_of length].
+      cbn [rows_of] in Hvars. lia. }
+    assert (Hlogadd : Nat.log2 (d + 5) <= Nat.log2 d + 5).
+    { replace (d + 5) with (S (S (S (S (S d))))) by lia.
+      pose proof (Nat.log2_succ_le d).
+      pose proof (Nat.log2_succ_le (S d)).
+      pose proof (Nat.log2_succ_le (S (S d))).
+      pose proof (Nat.log2_succ_le (S (S (S d)))).
+      pose proof (Nat.log2_succ_le (S (S (S (S d))))).
+      lia. }
+    assert (Hlogs : Nat.log2 s <= 2 * Nat.log2 d + 12).
+    { pose proof (karr_log_square_bound s (d + 5) ltac:(nia)) as Hsquare.
+      lia. }
+    pose proof (karr_normal_terms_log a Ha) as Hloga.
+    pose proof (karr_normal_terms_log b Hb) as Hlogb.
+    assert (Hlogda : Nat.log2 (n (Reached a) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hlogdb : Nat.log2 (n (Reached b) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hbits : nell (Reached a) + nell (Reached b) <=
+      w + 4 * Nat.log2 d + 10).
+    { unfold nell, w. lia. }
+    unfold ellB. nia.
+  Qed.
+
   Lemma karr_variables_cons_mono : forall P c,
     length (variables P) <= length (variables (c :: P)).
   Proof.
