@@ -20886,6 +20886,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply RowMap.elements_nodup. exact Hnext.
   Qed.
 
+  (** Repair keeps the queued identifiers distinct during an active batch. *)
+  Lemma inv_on_repair_queue_distinct : forall db work f k,
+    inv_on db work -> NoDup (queue (db_repair_entry f k db)).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hqueue : queue_valid db).
+    { unfold queue_valid. split.
+      - unfold inv_on in Hinv. tauto.
+      - apply Forall_forall. intros x Hin.
+        assert (Hnonroot : forall y, In y (queue db) -> repr db y <> y).
+        { unfold inv_on, forest_ok in Hinv. tauto. }
+        exact (Hnonroot x Hin). }
+    destruct (db_repair_entry_queue_state db f k
+      (inv_on_forest_wf db work Hinv) Hqueue) as [_ Hnext].
+    exact (proj1 Hnext).
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
