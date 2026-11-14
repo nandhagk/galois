@@ -13823,6 +13823,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
+  (** Recognized prepared coefficients fit the term and bit allowances together. *)
+  Lemma poly_assign_prepared_linear_width : forall e f wrapping,
+    F.lin_of e = Some (f, wrapping) ->
+    F.form_bits (poly_prepare_form X.encode f) <=
+      2 * F.bits_e e + tsize e + 1.
+  Proof.
+    intros e f wrapping Hlinear.
+    destruct (F.lin_of_size e f wrapping Hlinear) as [Hlength Hbits].
+    pose proof (poly_assign_prepared_form_bits f) as Hprepared.
+    pose proof (Nat.log2_le_lin (length (coef f)) ltac:(lia)) as Hlog.
+    lia.
+  Qed.
+
   (** The new-variable unit coefficient adds at most one bit to the form row width. *)
   Lemma poly_assign_row_bits : forall x f,
     RangeCert.row_bits (assignment_row x f) <=
