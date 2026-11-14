@@ -21759,6 +21759,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (repair_current_cache_correct_active db work f current Hinv).
   Qed.
 
+  Lemma inv_on_repair_slot_invariant : forall db work f k,
+    inv_on db work ->
+    forall s g perm,
+      slot_of (db_repair_entry f k db) s = Some (g, perm) ->
+      I.wf (length perm) (index s false (db_repair_entry f k db)) /\
+      I.wf (length perm) (index s true (db_repair_entry f k db)) /\
+      (forall u, I.mem (index s false (db_repair_entry f k db)) u <->
+        exists args output,
+          row (view (db_repair_entry f k db)) g args output /\
+          u = permute perm (args ++ option_list output)) /\
+      (forall u, I.mem (index s true (db_repair_entry f k db)) u ->
+        I.mem (index s false (db_repair_entry f k db)) u).
+  Proof.
+    intros db work f k Hinv s g perm Hslot.
+    destruct (inv_on_repair_cache_correct db work f k Hinv)
+      as [Hsound [Hcomplete [Harity _]]].
+    split; [exact (Harity s false g perm Hslot) |].
+    split; [exact (Harity s true g perm Hslot) |].
+    split.
+    - intro u. split.
+      + intro Hin.
+        destruct (Hsound s false u Hin)
+          as [owner [layout [args [output [Howner [Hrow Hu]]]]]].
+        rewrite Hslot in Howner. injection Howner as <- <-.
+        exists args, output. now split.
+      + intros [args [output [Hrow ->]]].
+        exact (Hcomplete s g perm args output Hslot Hrow).
+    - intros u Hin.
+      destruct (Hsound s true u Hin)
+        as [owner [layout [args [output [Howner [Hrow Hu]]]]]].
+      rewrite Hslot in Howner. injection Howner as <- <-. subst u.
+      exact (Hcomplete s g perm args output Hslot Hrow).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
