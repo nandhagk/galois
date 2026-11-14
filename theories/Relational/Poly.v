@@ -16201,6 +16201,49 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     eapply Nat.le_trans; [exact Hmeasure|exact Hwork].
   Qed.
 
+  (** Source renaming and raw normalization fit the assignment work volume. *)
+  Lemma poly_assign_source_setup_mass : forall x e P,
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (length P + 1) * (terms (Reached P) + 1) * (poly_raw_keys P + 1) <= work /\
+    (length P + 1)^2 * (terms (Reached P) + 1) *
+      (poly_raw_keys P + 1 + poly_raw_bits P +
+        Nat.log2 (terms (Reached P)) + 1) <= 3 * work.
+  Proof.
+    intros x e P bits volume work.
+    pose proof (poly_raw_width P) as Hraw.
+    assert (Hbits : 1 <= bits) by (unfold bits, nell; lia).
+    assert (Hrow : (length P + 1)^2 <= (length P + 3)^2)
+      by (cbn [Nat.pow]; nia).
+    assert (Hrowlinear : length P + 1 <= (length P + 3)^2)
+      by (clear -P; cbn [Nat.pow]; nia).
+    assert (Hterms : terms (Reached P) + 1 <= volume)
+      by (unfold volume; lia).
+    assert (Hkeys : poly_raw_keys P + 1 <= bits^2).
+    { assert (Hlinear : poly_raw_keys P + 1 <= bits)
+        by (unfold bits; lia).
+      cbn [Nat.pow]. nia. }
+    assert (Hsourcewidth : poly_raw_keys P + 1 + poly_raw_bits P +
+      Nat.log2 (terms (Reached P)) + 1 <= 3 * bits^2).
+    { assert (Hlog : Nat.log2 (terms (Reached P)) + 1 <= nell (Reached P))
+        by (unfold nell; lia).
+      assert (Hlinear : poly_raw_keys P + 1 + poly_raw_bits P +
+        Nat.log2 (terms (Reached P)) + 1 <= 3 * bits)
+        by (unfold bits; lia).
+      cbn [Nat.pow]. nia. }
+    split.
+    - unfold work.
+      apply Nat.mul_le_mono; [|exact Hkeys].
+      apply Nat.mul_le_mono; [|exact Hterms].
+      exact Hrowlinear.
+    - unfold work.
+      replace (3 * ((length P + 3)^2 * volume * bits^2)) with
+        ((length P + 3)^2 * volume * (3 * bits^2)) by ring.
+      apply Nat.mul_le_mono; [|exact Hsourcewidth].
+      apply Nat.mul_le_mono; [exact Hrow|exact Hterms].
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
