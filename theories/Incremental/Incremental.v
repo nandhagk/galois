@@ -10466,6 +10466,65 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     time_simpl; time_cbn; nia.
   Qed.
 
+  Lemma T_snapshot_record_small_le : forall owner writes st,
+    (T_snapshot_record owner writes st <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits owner + length writes + 1))%N.
+  Proof.
+    intros owner writes st.
+    pose proof (S.T_key_code_le owner) as Hcode.
+    pose proof (PTrieT.T_get_le (incremental_snapshot S.key)
+      (S.key_code owner) (inc_snapshots st)) as Hget.
+    pose proof (Datatypes.T_app_le writes
+      (match snapshot_get (S.key_code owner) st with
+       | Some ss => if snapshot_live ss then snapshot_writes ss else []
+       | None => [] end)) as Happ.
+    pose proof (PTrieT.T_set_le (incremental_snapshot S.key) (S.key_code owner)
+      {| snapshot_owner := owner;
+         snapshot_writes := writes ++
+           match snapshot_get (S.key_code owner) st with
+           | Some ss => if snapshot_live ss then snapshot_writes ss else []
+           | None => [] end;
+         snapshot_live := true |} (inc_snapshots st)) as Hset.
+    unfold PTrieT.T_get in Hget; unfold PTrieT.T_set in Hset.
+    unfold S.key_bits in Hcode.
+    unfold T_snapshot_record, T_snapshot_get, T_snapshot_set,
+      PTrieCode.T_get, PTrieCode.T_set, S.key_bits.
+    time_simpl; time_cbn.
+    destruct (snapshot_get (S.key_code owner) st) as [ss|] eqn:Hsnapshot in *;
+      [destruct (snapshot_live ss) eqn:Hlive in *|]; cbn beta iota zeta in *;
+      rewrite !Nat2N.inj_add in *; change (N.of_nat 1) with 1%N in *; nia.
+  Qed.
+
+  Lemma T_push_entry_fold_le : forall xs id (m : PTrieCode.t (list positive)),
+    (List.T_fold_left (fun acc x => push_entry x id acc)
+      (fun acc x => (1 + T_push_entry x id acc)%N) xs m <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 1)%N.
+  Proof.
+    intros xs id m.
+    destruct (fold_left_inv_time (fun acc x => push_entry x id acc)
+      (fun acc x => (1 + T_push_entry x id acc)%N)
+      (fun _ => True)
+      (fun x => (12 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1) + 1)%N) xs m I) as [_ Hfold].
+    { intros acc x _ _; split; [exact I|].
+      pose proof (T_push_entry_le x id acc); lia. }
+    assert (Hsum : forall ys,
+      (fold_right (fun x total =>
+        12 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (S.key_bits x + 1) + 1 + 2 + total)%N 1%N ys <=
+        16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) ys) + 1)%N).
+    { induction ys as [|x rest IH]; [cbn; lia|].
+      unfold finite_sum in *; cbn [map fold_right].
+      rewrite Nat2N.inj_add.
+      assert (Hbits : (1 <= N.of_nat (S.key_bits x + 1))%N) by lia.
+      assert (Hbase : (1 <= S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) by lia.
+      nia. }
+    eapply N.le_trans; [exact Hfold|apply Hsum].
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
