@@ -1464,11 +1464,123 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
         * nia.
       + apply N.mul_le_mono_r. unfold c_tab. nia.
   Qed.
+  (** Retagging charges each output width, payload, and list position once. *)
+  Local Lemma retag_size_budget ws ps :
+    (fold_right Nat.add 0%nat (map B.bsize (retag ws ps)) +
+      length (retag ws ps) <=
+      fold_right Nat.add 0%nat (map Pos.to_nat ws) + 2 * length ws +
+      (length ps + fold_right Nat.add 0%nat
+        (map (fun wy => W.psize (fst wy) (snd wy)) (combine ws ps))))%nat.
+  Proof.
+    revert ps.
+    induction ws as [|w ws IH]; intros [|p ps];
+      cbn [retag combine map fold_right length]; try lia.
+    change (B.bsize (TVal w p)) with (Pos.to_nat w + W.psize w p + 1)%nat.
+    specialize (IH ps).
+    cbn [fst snd]. lia.
+  Qed.
+
+  (** Stored operand headers fit within the backward caller work. *)
+  Local Lemma backward_headers_budget o w p xs ws : untag xs = Some ws ->
+    (N.of_nat (fold_right Nat.add 0%nat
+      (map Pos.to_nat (map fst ws)) + 2 * length ws) <=
+      N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N.
+  Proof.
+    intro Htag.
+    pose proof (untag_sizes xs ws Htag) as [Hwidth [Hsize Hlen]].
+    assert (Hheaders :
+      (fold_right Nat.add 0%nat (map Pos.to_nat (map fst ws)) + length ws <=
+        fold_right Nat.add 0%nat (map (fun x =>
+          (Pos.to_nat (fst x) + W.psize (fst x) (snd x) + 1)%nat) ws))%nat).
+    { clear Htag Hwidth Hsize Hlen.
+      rewrite map_map.
+      induction ws as [|[v q] ws IH];
+        cbn [map fold_right length fst snd]; lia. }
+    rewrite map_map in Hheaders.
+    rewrite <- Hwidth, <- Hsize, <- Hlen in Hheaders.
+    apply time_of_nat_le.
+    rewrite map_map. rewrite <- Hwidth, <- Hlen.
+    unfold twork.
+    pose proof (Nat.le_0_l
+      ((Op.op_widths o + operand_widths xs + 1) ^ 2)) as Hsquare.
+    pose proof (Nat.le_0_l (B.bsize (TVal w p))) as Hresult_size.
+    eapply Nat.le_trans with (m := (operand_sizes xs + length xs)%nat).
+    - replace (2 * length xs)%nat with
+        (length xs + length xs)%nat by lia.
+      lia.
+    - eapply Nat.le_trans with
+        (m := (operand_sizes xs + length xs +
+          (Op.op_widths o + operand_widths xs + 1) ^ 2)%nat).
+      + apply Nat.le_add_r.
+      + eapply Nat.le_trans with
+          (m := (operand_sizes xs + length xs +
+            (Op.op_widths o + operand_widths xs + 1) ^ 2 +
+            B.bsize (TVal w p))%nat).
+        * apply Nat.le_add_r.
+        * apply Nat.le_add_r.
+  Qed.
+
+  (** A returned backward payload fits four table coefficients of caller work. *)
+  Local Lemma backward_payload_size o w p xs ws ps :
+    untag xs = Some ws -> Op.result_width o (map fst ws) = Some w ->
+    T.wbwd o w p ws = Some ps ->
+    (N.of_nat (length ps + fold_right Nat.add 0%nat
+      (map (fun wy => W.psize (fst wy) (snd wy))
+        (combine (map fst ws) ps))) <=
+      4 * T.c_word_table *
+        N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N.
+  Proof.
+    intros Htag Hwidth Hresult.
+    pose proof (T.wbwd_size_le o w p ws ps Hresult) as Hsize.
+    pose proof (backward_table_budget o xs ws w p Htag Hwidth) as Hbudget.
+    apply time_of_nat_le in Hbudget. rewrite Nat2N.inj_mul in Hbudget.
+    eapply N.le_trans; [exact Hsize|].
+    replace (4 * T.c_word_table *
+      N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N with
+      (T.c_word_table *
+        (4 * N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1)))%N by nia.
+    apply N.mul_le_mono_l. exact Hbudget.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma bwd_size_le : forall o r xs ys, bwd o r xs = Some ys ->
     (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
       c_tab * N.of_nat (twork o xs + B.bsize r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [cw cz|o] [|w p|] xs ys Hresult;
+      cbn [bwd] in Hresult; try discriminate.
+    destruct (untag xs) as [ws|] eqn:Htag; [|discriminate].
+    destruct (Op.result_width o (map fst ws)) as [rw|] eqn:Hwidth;
+      [|discriminate].
+    destruct (Pos.eqb w rw) eqn:Hsame; [|discriminate].
+    apply Pos.eqb_eq in Hsame. subst rw.
+    destruct (T.wbwd o w p ws) as [ps|] eqn:Hpayload; [|discriminate].
+    inversion Hresult; subst ys.
+    pose proof (retag_size_budget (map fst ws) ps) as Hretag.
+    pose proof (backward_headers_budget o w p xs ws Htag) as Hheaders.
+    pose proof (backward_payload_size o w p xs ws ps Htag Hwidth Hpayload)
+      as Hpayload_size.
+    set (budget := N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1)).
+    change (N.of_nat (fold_right Nat.add 0%nat
+      (map Pos.to_nat (map fst ws)) + 2 * length ws) <= budget)%N in Hheaders.
+    change (N.of_nat (length ps + fold_right Nat.add 0%nat
+      (map (fun wy => W.psize (fst wy) (snd wy))
+        (combine (map fst ws) ps))) <=
+      4 * T.c_word_table * budget)%N in Hpayload_size.
+    rewrite length_map in Hretag.
+    apply time_of_nat_le in Hretag.
+    change (N.of_nat (fold_right Nat.add 0%nat
+      (map B.bsize (retag (map fst ws) ps)) +
+      length (retag (map fst ws) ps)) <= c_tab * budget)%N.
+    eapply N.le_trans; [exact Hretag|].
+    rewrite Nat2N.inj_add at 1.
+    eapply N.le_trans with
+      (m := (budget + 4 * T.c_word_table * budget)%N).
+    - lia.
+    - apply N.le_trans with
+        (m := ((1 + 4 * T.c_word_table) * budget)%N).
+      + nia.
+      + apply N.mul_le_mono_r. unfold c_tab. nia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma grd_size_le : forall g xs ys, grd g xs = Some ys ->
     (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
