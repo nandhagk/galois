@@ -16437,6 +16437,80 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.mul_le_mono_l. exact Hmass_clock.
   Qed.
 
+  (** Source-only substitution's prepared form width is paid by finite support. *)
+  Lemma poly_assign_tail_subst_public_mass : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let support := dim + length (coef prepared) + 1 in
+    let width := poly_raw_keys P + F.form_bits prepared +
+      2 * poly_raw_bits P + 3 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    length (poly_assign_tail_step x P) * support * width <= 16 * work.
+  Proof.
+    intros x e P f Hlinear prepared dim support width bits total work.
+    destruct (F.lin_of_size e f NoWrap Hlinear) as [Hlength Hbits].
+    cbn [F.wrap_bits] in Hbits.
+    pose proof (poly_assign_source_dimension x P) as Hsource.
+    pose proof (poly_assign_prepared_length e f NoWrap Hlinear) as Hprepared_length.
+    pose proof (poly_assign_prepared_dimension_space x e P f NoWrap Hlinear)
+      as Hspace.
+    pose proof (poly_assign_prepared_form_bits f) as Hprepared_bits.
+    pose proof (Nat.log2_le_mono (length (coef f))
+      (total + 1) ltac:(unfold total; lia)) as Hlog.
+    pose proof (poly_raw_width P) as Hraw.
+    change (length (coef prepared) <= tsize e) in Hprepared_length.
+    assert (Hsupport : support <= total + 1)
+      by (unfold support, dim, total; lia).
+    change (support <= 2^bits) in Hspace.
+    pose proof (poly_signed_support_log_linear support total bits
+      Hsupport Hspace) as Hsupportlog.
+    set (wide := bits + Nat.log2 (total + 1) + 1).
+    assert (Hwidth : width <= 4 * wide).
+    { unfold width, wide, bits, total.
+      change (F.form_bits prepared <=
+        2 * F.form_bits f + Nat.log2 (length (coef f)) + 1)
+        in Hprepared_bits.
+      unfold total in Hlog.
+      lia. }
+    assert (Hcore : support * width <=
+      8 * (total + 1) * (bits + 1)).
+    { assert (Hproduct : support * width <= support * (4 * wide))
+        by (apply Nat.mul_le_mono_l; exact Hwidth).
+      change (support * wide <= 2 * (total + 1) * (bits + 1))
+        in Hsupportlog.
+      clear -Hproduct Hsupportlog. nia. }
+    assert (Hbits_pos : 1 <= bits) by (unfold bits, nell; lia).
+    assert (Hsquare : 8 * (bits + 1) <= 16 * bits^2)
+      by (clear -Hbits_pos; cbn [Nat.pow]; nia).
+    assert (Hsingle : support * width <=
+      16 * (n P + total + length P + 3) * bits^2).
+    { assert (Hvolume : total + 1 <= n P + total + length P + 3) by lia.
+      eapply Nat.le_trans; [exact Hcore|].
+      eapply Nat.le_trans with
+        (m := (total + 1) * (16 * bits^2)).
+      - replace (8 * (total + 1) * (bits + 1)) with
+          ((total + 1) * (8 * (bits + 1))) by ring.
+        now apply Nat.mul_le_mono_l.
+      - replace (16 * (n P + total + length P + 3) * bits^2) with
+          ((n P + total + length P + 3) * (16 * bits^2)) by ring.
+        now apply Nat.mul_le_mono_r. }
+    pose proof (poly_assign_tail_output_quarter x P) as Hcount_quarter.
+    assert (Hcount : length (poly_assign_tail_step x P) <= (length P + 3)^2).
+    { clear -Hcount_quarter. cbn [Nat.pow] in *. nia. }
+    unfold work.
+    replace (16 * ((length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2)) with
+      ((length P + 3)^2 *
+        (16 * (n P + total + length P + 3) * bits^2)) by ring.
+    replace (length (poly_assign_tail_step x P) * support * width) with
+      (length (poly_assign_tail_step x P) * (support * width)) by ring.
+    apply Nat.mul_le_mono; [exact Hcount|exact Hsingle].
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
