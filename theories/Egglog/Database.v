@@ -11581,6 +11581,59 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     reflexivity.
   Qed.
 
+  Lemma database_row_store_ok_ids_mono : forall db db',
+    database_row_store_ok db ->
+    db_row_store db' = db_row_store db -> db_nuses db' = db_nuses db ->
+    (ids db <= ids db')%N ->
+    incl (db_index_counters db) (db_index_counters db') ->
+    incl (db_written_cells db) (db_written_cells db') ->
+    database_row_store_ok db'.
+  Proof.
+    intros db db' Hbase Hstore Hnuses Hids Hcounters Hwritten.
+    pose proof Hbase as Hsaved.
+    unfold database_row_store_ok in Hbase |- *.
+    destruct Hbase as
+      (Hlinks & Huses & Hcount & Hcounter & Hcells & Hdepth & Hsize &
+        Hmap & Hlabels & Hrange).
+    rewrite Hstore, Hnuses.
+    split; [exact Hlinks |]. split; [exact Huses |]. split; [exact Hcount |].
+    split.
+    - intros f k key r Hget.
+      destruct (Hcounter f k key r Hget) as [Hrow [Hparent Hfresh]].
+      repeat split; try assumption. now apply Hcounters.
+    - split.
+      + intros x f k c Huse Hcell. apply Hwritten.
+        exact (Hcells x f k c Huse Hcell).
+      + split.
+        * intros f k key r Hget.
+          destruct (Hdepth f k key r Hget) as [d [Hbound [Hroot Hcurrent]]].
+          exists d. split.
+          -- eapply Nat.le_trans; [exact Hbound |].
+             apply row_lookup_depth_mono. exact Hids.
+          -- split; [exact Hroot |].
+             rewrite (db_locate_ids_mono db db' Hsaved Hstore Hids).
+             exact Hcurrent.
+        * split.
+          -- intros f k key r d Hget Hroot.
+             eapply N.le_trans.
+             ++ exact (Hsize f k key r d Hget Hroot).
+             ++ apply N.pow_le_mono_l. lia.
+          -- split; [exact Hmap |].
+             split; [exact Hlabels | exact Hrange].
+  Qed.
+
+  Lemma database_row_store_ok_allocate_next : forall db,
+    database_row_store_ok db ->
+    database_row_store_ok (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hstore.
+    eapply (database_row_store_ok_ids_mono db _); try reflexivity.
+    - exact Hstore.
+    - rewrite allocate_next_ids. lia.
+    - unfold incl. auto.
+    - unfold incl. auto.
+  Qed.
+
   Lemma database_history_alignment_allocate_next : forall db,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (allocate_id (N.succ_pos (ids db)) db).
