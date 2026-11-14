@@ -22007,6 +22007,22 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         as [[new_key new_id] |]; exact Hrepair.
   Qed.
 
+  Lemma inv_on_repair_forest_card_width : forall db work f k,
+    inv_on db work ->
+    UnionFind.card (db_forest (db_repair_entry f k db)) =
+      N.to_nat (ids (db_repair_entry f k db)) /\
+    UnionFind.width (db_forest (db_repair_entry f k db)) <=
+      N.size_nat (ids (db_repair_entry f k db)).
+  Proof.
+    intros db work f k Hinv.
+    destruct (inv_on_repair_forest_core db work f k Hinv)
+      as [Hforest [Hmembers Hcount]].
+    split.
+    - unfold UnionFind.card. now rewrite Hcount.
+    - apply UnionFindCodeFacts.width_allocated.
+      intros x Hin. exact (proj1 (Hmembers x) Hin).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
