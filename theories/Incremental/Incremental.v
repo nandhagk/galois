@@ -10597,6 +10597,191 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     rewrite !Nat2N.inj_add, N2Nat.id; lia.
   Qed.
 
+  Lemma record_row_product_scale : forall a b c base n u,
+    (a <= base)%N -> (b <= n)%N -> (c <= u)%N ->
+    (a * b * c <= base * n * u)%N.
+  Proof.
+    intros a b c base n u Ha Hb Hc.
+    apply N.mul_le_mono; [apply N.mul_le_mono|]; assumption.
+  Qed.
+
+  Lemma T_record_row_source_clocks : forall p r st, S.wf p -> In r (S.rows p) ->
+    let q := ((S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N in
+    (S.T_target p r <= q)%N /\
+    (S.T_key_code (S.target p r) <= q)%N /\
+    (S.T_deps p r <= q)%N /\
+    (T_row_writes p r <= 4 * q)%N.
+  Proof.
+    intros p r st Hwf Hr; cbn beta zeta.
+    pose proof (S.T_target_le p r Hwf Hr) as Htarget.
+    pose proof (S.T_key_code_le (S.target p r)) as Hcode.
+    pose proof (S.T_deps_le p r Hwf Hr) as Hdeps.
+    pose proof (T_row_keys_le p st r Hwf Hr) as Hkeys.
+    pose proof (T_row_writes_from_keys p r) as Hwrites.
+    assert (Hcount : 1 <= length (row_keys p r)).
+    { rewrite record_row_count; lia. }
+    assert (Hdepslen : length (S.deps p r) + 1 <= length (row_keys p r)).
+    { rewrite record_row_count; lia. }
+    pose proof (record_row_owner_width p st r Hwf Hr) as Howner.
+    pose proof (record_row_work_width p st) as Hrowwork.
+    assert (Hkw : S.kw p + 1 <= width p st + 1).
+    { unfold width; lia. }
+    assert (HtargetQ : (S.T_target p r <=
+      (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N).
+    { eapply N.le_trans; [exact Htarget|].
+      replace (S.c_sys * (S.row_work p 0 + 1))%N with
+        (S.c_sys * 1 * (S.row_work p 0 + 1))%N by ring.
+      apply record_row_product_scale; [lia|lia|exact Hrowwork]. }
+    assert (HcodeQ : (S.T_key_code (S.target p r) <=
+      (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N).
+    { eapply N.le_trans; [exact Hcode|].
+      replace (S.c_sys * N.of_nat (S.key_bits (S.target p r) + 1))%N with
+        (S.c_sys * 1 * N.of_nat (S.key_bits (S.target p r) + 1))%N by ring.
+      apply record_row_product_scale; [lia|lia|apply nat_to_N_le; lia]. }
+    assert (HdepsQ : (S.T_deps p r <=
+      (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N).
+    { eapply N.le_trans; [exact Hdeps|].
+      apply record_row_product_scale; [lia|apply nat_to_N_le; exact Hdepslen|].
+      apply nat_to_N_le; exact Hkw. }
+    repeat split; [exact HtargetQ|exact HcodeQ|exact HdepsQ|].
+    eapply N.le_trans; [exact Hwrites|].
+    eapply N.le_trans; [exact Hkeys|].
+    replace (4 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+      (4 * ((S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N by ring.
+    replace (4 * (S.c_sys + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+      (4 * ((S.c_sys + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N by ring.
+    apply N.mul_le_mono_l.
+    apply record_row_product_scale; [lia|lia|lia].
+  Qed.
+
+  Lemma T_record_row_snapshot_clock : forall p r st, S.wf p -> In r (S.rows p) ->
+    (T_snapshot_record (S.target p r) (row_writes p r) st <=
+      32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N.
+  Proof.
+    intros p r st Hwf Hr.
+    pose proof (T_snapshot_record_small_le (S.target p r) (row_writes p r) st)
+      as Hsnapshot.
+    pose proof (record_row_owner_width p st r Hwf Hr) as Howner.
+    assert (Hcount : 1 <= length (row_keys p r)).
+    { rewrite record_row_count; lia. }
+    assert (Hwrites : length (row_writes p r) <= length (row_keys p r)).
+    { unfold row_keys; rewrite length_app; lia. }
+    assert (Hwork : S.key_bits (S.target p r) + length (row_writes p r) + 1 <=
+      2 * length (row_keys p r) * (width p st + 1)) by nia.
+    apply nat_to_N_le in Hwork; rewrite !Nat2N.inj_mul in Hwork.
+    eapply N.le_trans; [exact Hsnapshot|].
+    replace (32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+      (16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        (2 * N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N
+      by ring.
+    apply N.mul_le_mono_l; exact Hwork.
+  Qed.
+
+  Lemma T_record_row_fold_clock : forall p r st, S.wf p -> In r (S.rows p) ->
+    let owner := S.target p r in
+    let next := snapshot_record owner (row_writes p r) st in
+    (List.T_fold_left (fun acc x => push_entry x (S.key_code owner) acc)
+      (fun acc x => (1 + T_push_entry x (S.key_code owner) acc)%N)
+      (S.deps p r) (inc_influence next) +
+      List.T_fold_left (fun acc x => push_entry x (S.key_code owner) acc)
+        (fun acc x => (1 + T_push_entry x (S.key_code owner) acc)%N)
+        (row_writes p r) (inc_cowrites next) <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1) + 2)%N.
+  Proof.
+    intros p r st Hwf Hr; cbn beta zeta.
+    pose proof (T_push_entry_fold_le (S.deps p r) (S.key_code (S.target p r))
+      (inc_influence (snapshot_record (S.target p r) (row_writes p r) st)))
+      as Hreads.
+    pose proof (T_push_entry_fold_le (row_writes p r) (S.key_code (S.target p r))
+      (inc_cowrites (snapshot_record (S.target p r) (row_writes p r) st)))
+      as Hwrites.
+    pose proof (record_row_key_bits p st r Hwf Hr) as Hbits.
+    apply nat_to_N_le in Hbits.
+    rewrite Nat2N.inj_add, Nat2N.inj_mul in Hbits.
+    assert (Hcombined :
+      (List.T_fold_left (fun acc x => push_entry x (S.key_code (S.target p r)) acc)
+        (fun acc x => (1 + T_push_entry x (S.key_code (S.target p r)) acc)%N)
+        (S.deps p r)
+        (inc_influence (snapshot_record (S.target p r) (row_writes p r) st)) +
+       List.T_fold_left (fun acc x => push_entry x (S.key_code (S.target p r)) acc)
+        (fun acc x => (1 + T_push_entry x (S.key_code (S.target p r)) acc)%N)
+        (row_writes p r)
+        (inc_cowrites (snapshot_record (S.target p r) (row_writes p r) st)) <=
+       16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+         (N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) (S.deps p r)) +
+          N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) (row_writes p r))) +
+       2)%N).
+    { replace (16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        (N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) (S.deps p r)) +
+         N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) (row_writes p r))) +
+        2)%N with
+        (16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+           N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) (S.deps p r)) +
+         16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+           N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) (row_writes p r)) +
+         2)%N by ring.
+      lia. }
+    eapply N.le_trans; [exact Hcombined|].
+    apply N.add_le_mono_r.
+    replace (16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+      (16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        (N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N by ring.
+    apply N.mul_le_mono_l; exact Hbits.
+  Qed.
+
+  Lemma T_record_row_local_le : forall p r st, S.wf p -> In r (S.rows p) ->
+    (T_record_row p r st <=
+      128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N.
+  Proof.
+    intros p r st Hwf Hr.
+    pose proof (T_record_row_components_le p r st) as Hcomponents.
+    cbn beta zeta in Hcomponents.
+    destruct (T_record_row_source_clocks p r st Hwf Hr) as
+      [Htarget [Hcode [Hdeps Hwrites]]].
+    cbn beta zeta in Htarget, Hcode, Hdeps, Hwrites.
+    pose proof (T_record_row_snapshot_clock p r st Hwf Hr) as Hsnapshot.
+    pose proof (T_record_row_fold_clock p r st Hwf Hr) as Hfolds.
+    cbn beta zeta in Hfolds.
+    assert (Hq : (1 <= (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N).
+    { change (1 * 1 * 1 <= (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N.
+      apply N.mul_le_mono; [apply N.mul_le_mono|];
+        rewrite ?record_row_count; lia. }
+    replace (32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+      (32 * ((S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N
+      in Hsnapshot by ring.
+    replace (16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+      (16 * ((S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N
+      in Hfolds by ring.
+    replace (128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+      (128 * ((S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N
+      by ring.
+    eapply N.le_trans; [exact Hcomponents|].
+    eapply record_row_clock_arithmetic;
+      [exact Hq|exact Htarget|exact Hcode|exact Hwrites|
+       exact Hsnapshot|exact Hdeps|exact Hfolds].
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
