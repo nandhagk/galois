@@ -11097,6 +11097,40 @@ Proof.
       * clear -bits total. nia.
 Qed.
 
+(** A finite key space also absorbs one logarithmic width without squaring it. *)
+Lemma poly_signed_support_log_linear : forall support total bits,
+  support <= total + 1 -> support <= 2^bits ->
+  support * (bits + Nat.log2 (total + 1) + 1) <=
+    2 * (total + 1) * (bits + 1).
+Proof.
+  intros support total bits Hcount Hkeys.
+  pose proof (Nat.log2_spec (total + 1) ltac:(lia)) as [Hlower _].
+  set (q := Nat.log2 (total + 1)) in *.
+  destruct (le_dec q bits) as [Hsmall|Hlarge].
+  - assert (Hwidth : bits + q + 1 <= 2 * (bits + 1)) by lia.
+    pose proof (Nat.mul_le_mono _ _ _ _ Hcount Hwidth). nia.
+  - set (j := q - bits).
+    assert (Hsplit : q = bits + j) by (unfold j; lia).
+    assert (Hexp : forall k, k + 2 <= 2^(k + 1)).
+    { intro k. induction k as [|k IH]; [cbn; lia|].
+      replace (S k + 1) with (S (k + 1)) by lia.
+      rewrite Nat.pow_succ_r by lia.
+      nia. }
+    specialize (Hexp j).
+    assert (Hwidth : bits + q + 1 <= (bits + 1) * (j + 2)) by nia.
+    assert (Hpower : 2^bits * 2^j = 2^q)
+      by (rewrite <- Nat.pow_add_r; now rewrite Hsplit).
+    eapply Nat.le_trans with (m := 2^bits * ((bits + 1) * (j + 2))).
+    + now apply Nat.mul_le_mono.
+    + eapply Nat.le_trans with
+        (m := 2 * (2^bits * 2^j) * (bits + 1)).
+      * replace (j + 1) with (S j) in Hexp by lia.
+        rewrite Nat.pow_succ_r in Hexp by lia.
+        clear -Hexp. nia.
+      * rewrite Hpower. apply Nat.mul_le_mono_r, Nat.mul_le_mono_l.
+        exact Hlower.
+Qed.
+
 Module PolySignedKeySupport (X : KEY).
   (** Encoding into natural numbers preserves key uniqueness. *)
   Lemma poly_signed_encoded_nodup : forall xs,
