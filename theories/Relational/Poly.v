@@ -13828,6 +13828,17 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact (proj2 (poly_assign_rename_row_bits x r)).
   Qed.
 
+  (** Renaming preserves the occurrence allowance for distinct source coordinates. *)
+  Lemma poly_assign_source_dimension : forall x P,
+    length (RangeCore.vars_of (poly_assign_sources x P)) <= terms (Reached P).
+  Proof.
+    intros x P.
+    pose proof (RangeAssignCore.poly_assign_variables_terms
+      (poly_assign_sources x P)) as Hdimension.
+    rewrite poly_assign_sources_terms in Hdimension.
+    exact Hdimension.
+  Qed.
+
   Lemma poly_assign_sources_row_bits : forall x P,
     fold_right Nat.max 0 (map RangeCert.row_bits (poly_assign_sources x P)) =
       fold_right Nat.max 0 (map C.row_bits P).
