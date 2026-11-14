@@ -321,6 +321,28 @@ Proof.
   rewrite !map_app. cbn [map]. rewrite map_app. cbn [map]. reflexivity.
 Qed.
 
+(** Divisibility of every augmented coordinate selects the exact quotient branch. *)
+Lemma karr_exact_from_entries : forall d r,
+  d <> 0%Z ->
+  (forall z, In z (karr_row_entries r) -> (z mod d = 0)%Z) ->
+  karr_exact d r = true.
+Proof.
+  intros d r Hnonzero Hentries.
+  unfold karr_exact. repeat rewrite andb_true_iff. repeat split.
+  - apply negb_true_iff, Z.eqb_neq. exact Hnonzero.
+  - apply forallb_forall. intros z Hin. unfold karr_divisible.
+    apply Z.eqb_eq, Hentries. unfold karr_row_entries.
+    apply in_or_app. now left.
+  - unfold karr_divisible. apply Z.eqb_eq, Hentries.
+    unfold karr_row_entries. apply in_or_app. right. now left.
+  - apply forallb_forall. intros z Hin. unfold karr_divisible.
+    apply Z.eqb_eq, Hentries. unfold karr_row_entries.
+    apply in_or_app. right. right. apply in_or_app. now left.
+  - unfold karr_divisible. apply Z.eqb_eq, Hentries.
+    unfold karr_row_entries. apply in_or_app. right. right.
+    apply in_or_app. right. now left.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
