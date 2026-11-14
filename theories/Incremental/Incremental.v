@@ -8290,6 +8290,19 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     lia.
   Qed.
 
+  Lemma discovery_clock_with_output_strong : forall Q T U F BF seed loop spent output,
+    (U <= Q)%N -> (1 <= U)%N -> (F <= BF)%N ->
+    (seed <= 24 * T + 1)%N ->
+    (spent <= 512 * Q + 512 * T)%N ->
+    (loop <= spent + 128 * U + 8 * (F + 1))%N ->
+    (output <= 16 * Q)%N ->
+    (1 + seed + loop + output <= 768 * Q + 768 * T + 1024 * BF)%N.
+  Proof.
+    intros Q T U F BF seed loop spent output Hsub Hunit Hfuel Hseed Hspent
+      Hloop Houtput.
+    lia.
+  Qed.
+
   Lemma discovery_output_clock_le : forall p roots fuel st result,
     S.wf p ->
     loopN (discovery_step p st) fuel
@@ -8376,13 +8389,15 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     unfold discovery_potential in Hclock; lia.
   Qed.
 
-  Lemma T_discovery_le : forall p roots fuel st, S.wf p ->
+  Lemma T_discovery_strong_le : forall p roots fuel st, S.wf p ->
     (T_discovery p roots fuel st <=
-      c_inc * N.of_nat ((fold_right Nat.add 0%nat
+      768 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat ((fold_right Nat.add 0%nat
         (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
           (region p roots st)) + length roots + 1)%nat) *
         N.of_nat (width p st + 1) +
-      c_inc * N.of_nat (fold_right Nat.add 0%nat
+      768 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (fold_right Nat.add 0%nat
         (map (fun x => S.key_bits x + 1)%nat roots)) +
       c_inc * N.of_nat (N.size_nat fuel))%N.
   Proof.
@@ -8449,7 +8464,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     clearbody seed clock output.
     replace (1 + (seed + (clock + output)))%N with
       (1 + seed + clock + output)%N by ring.
-    pose proof (discovery_clock_with_output (base * q * u)%N (base * t)%N
+    pose proof (discovery_clock_with_output_strong (base * q * u)%N (base * t)%N
       (base * u)%N f (base * f)%N seed clock
       (512 * (base * q * u) + 512 * (base * t))%N output) as Hbudget.
     specialize (Hbudget Hqu).
@@ -8465,6 +8480,38 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     match goal with
     | |- (?lhs <= ?rhs)%N => replace rhs with lhs by ring; apply N.le_refl
     end.
+  Qed.
+
+  Lemma discovery_strong_to_public : forall base q t u f,
+    (768 * base * q * u + 768 * base * t + 1024 * base * f <=
+      1024 * base * q * u + 1024 * base * t + 1024 * base * f)%N.
+  Proof.
+    intros base q t u f.
+    assert (Hq : (768 * base * q * u <= 1024 * base * q * u)%N).
+    { replace (768 * base * q * u)%N with (768 * (base * q * u))%N by ring.
+      replace (1024 * base * q * u)%N with (1024 * (base * q * u))%N by ring.
+      apply N.mul_le_mono_r; lia. }
+    assert (Ht : (768 * base * t <= 1024 * base * t)%N).
+    { replace (768 * base * t)%N with (768 * (base * t))%N by ring.
+      replace (1024 * base * t)%N with (1024 * (base * t))%N by ring.
+      apply N.mul_le_mono_r; lia. }
+    lia.
+  Qed.
+
+  Lemma T_discovery_le : forall p roots fuel st, S.wf p ->
+    (T_discovery p roots fuel st <=
+      c_inc * N.of_nat ((fold_right Nat.add 0%nat
+        (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+          (region p roots st)) + length roots + 1)%nat) *
+        N.of_nat (width p st + 1) +
+      c_inc * N.of_nat (fold_right Nat.add 0%nat
+        (map (fun x => S.key_bits x + 1)%nat roots)) +
+      c_inc * N.of_nat (N.size_nat fuel))%N.
+  Proof.
+    intros p roots fuel st Hwf.
+    pose proof (T_discovery_strong_le p roots fuel st Hwf) as Hstrong.
+    eapply N.le_trans; [exact Hstrong|].
+    unfold c_inc; apply discovery_strong_to_public.
   Qed.
 
   Lemma T_invalid_seed_one_le : forall st acc x,
