@@ -16701,6 +16701,56 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       now apply N.mul_le_mono_l.
   Qed.
 
+  Lemma T_karr_equality_basis_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (c :: nil))) xs ->
+    (T_equality_basis xs P <=
+      (33554500 + 32 * karr_seed_factor + 8 * karr_prepare_factor) *
+        N.of_nat (elimination_work (Reached P)
+          (Reached (c :: nil))))%N.
+  Proof.
+    intros P c xs HP Hxs Hkeys.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))).
+    pose proof (T_karr_equality_basis_components xs P) as Hcomponents.
+    pose proof (T_karr_bareiss_basis_public P c xs HP Hxs) as Hbareiss.
+    pose proof (T_karr_seed_public P c xs HP Hxs Hkeys) as Hseed.
+    pose proof (T_karr_prepare_public P c HP) as Hprepare.
+    pose proof (karr_target_dim_public P c) as Hdim.
+    assert (Hcount : length xs + length P + 1 <= d).
+    { unfold d in *. lia. }
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hvolume : d <= d^3 * v^2).
+    { assert (Hd3 : d <= d^3) by (cbn [Nat.pow]; nia).
+      assert (Hv2 : 1 <= v^2) by (cbn [Nat.pow]; nia).
+      replace d with (d * 1) at 1 by lia.
+      now apply Nat.mul_le_mono. }
+    assert (Hoverhead :
+      (64 * N.of_nat (length xs + length P + 1) + 4 <= 68 * work)%N).
+    { assert (Hnat : length xs + length P + 1 <= d^3 * v^2)
+        by lia.
+      unfold work, elimination_work. fold d w v.
+      assert (HN : (N.of_nat (length xs + length P + 1) <=
+        N.of_nat (d^3 * v^2))%N) by lia.
+      assert (Hpositive : (1 <= N.of_nat (d^3 * v^2))%N) by lia.
+      nia. }
+    eapply N.le_trans; [exact Hcomponents|].
+    change (T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) <=
+      33554432 * work + 4)%N in Hbareiss.
+    change (T_seed_rows xs (length P) 0 (map normalize_row P) <=
+      32 * karr_seed_factor * work)%N in Hseed.
+    change (ListDef.T_map normalize_row T_normalize_row P <=
+      8 * karr_prepare_factor * work)%N in Hprepare.
+    clearbody work. nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
