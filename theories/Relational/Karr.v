@@ -1495,6 +1495,16 @@ Proof.
   - pose proof (IH (S count) selected Hin). lia.
 Qed.
 
+(** A lookup before the end of a list returns one of its elements. *)
+Lemma karr_nth_list_member : forall A (source : list A) default index,
+  index < length source -> In (nth index source default) source.
+Proof.
+  intros A source. induction source as [|head source IH]; intros default [|index] Hindex;
+    cbn [length nth List.In] in *; try lia.
+  - now left.
+  - right. apply IH. lia.
+Qed.
+
 (** A selected row and column set determines one square submatrix. *)
 Definition karr_submatrix (columns : list nat) (rows : list (list Z)) : list (list Z) :=
   map (fun row => map (fun index => karr_nth index row) columns) rows.
@@ -1972,6 +1982,69 @@ Proof.
       * cbn [length]. destruct Hsign as [Hsign|Hsign].
         -- left. rewrite Hdet, Hsign. ring.
         -- right. left. rewrite Hdet, Hsign. ring.
+Qed.
+
+(** A live augmented entry represented by the minor law is a signed source minor. *)
+Lemma karr_minor_law_entry : forall previous pivot_rows pivot_columns columns
+    pairs original width origin live z,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  Permutation original (pivot_rows ++ map fst pairs) ->
+  karr_increasing (pivot_columns ++ columns) ->
+  Forall (fun column => column < width) (pivot_columns ++ columns) ->
+  length pivot_rows = length pivot_columns ->
+  length live = length columns -> In (origin, live) pairs -> In z live ->
+  In z (karr_signed_minors width original).
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs original width
+    origin live z Hlaw Hpartition Hincreasing Hbound Hsquare Hlive Hpair Hz.
+  apply In_nth_error in Hz as [index Hget].
+  assert (Hindex : index < length columns).
+  { rewrite <- Hlive. apply nth_error_Some. rewrite Hget. discriminate. }
+  set (column := nth index columns 0%nat).
+  assert (Hmember : In column columns).
+  { unfold column. now apply karr_nth_list_member. }
+  assert (Horigin : In origin (map fst pairs)).
+  { apply in_map_iff. exists (origin, live). now split. }
+  destruct (karr_partition_select _ original pivot_rows (map fst pairs)
+    origin Hpartition Horigin) as [rest Hselected_rows].
+  assert (Hselected_columns : karr_increasing (pivot_columns ++ [column])).
+  { now apply karr_increasing_prefix_member with (suffix := columns). }
+  assert (Hselected_bound : Forall (fun c => c < width) (pivot_columns ++ [column])).
+  { apply Forall_app in Hbound as [Hprefix Htail].
+    apply Forall_app. split; [exact Hprefix|].
+    constructor; [exact (proj1 (Forall_forall _ _) Htail column Hmember)|constructor]. }
+  assert (Hpaired : Forall2 (fun source row => In (source, row) pairs)
+    [origin] [live]) by (constructor; [exact Hpair|constructor]).
+  assert (Hvalid : Forall (fun i => i < length columns) [index])
+    by (constructor; [exact Hindex|constructor]).
+  unfold karr_minor_law in Hlaw.
+  pose proof (Hlaw [origin] [live] [index] Hpaired eq_refl Hvalid
+    ltac:(cbn [length]; lia)) as Hminor.
+  cbn [length karr_submatrix map Nat.sub Nat.add] in Hminor.
+  rewrite karr_determinant_one, Z.pow_0_r, Z.mul_1_l in Hminor.
+  rewrite (karr_nth_error_value _ _ _ Hget) in Hminor.
+  replace (length pivot_rows + 1) with (S (length pivot_rows)) in Hminor by lia.
+  fold column in Hminor.
+  change (z = karr_determinant (S (length pivot_rows))
+    (karr_submatrix (pivot_columns ++ [column]) (pivot_rows ++ [origin])))
+    in Hminor.
+  rewrite Hminor.
+  destruct pivot_rows as [|first remaining].
+  - destruct pivot_columns as [|c pivot_columns];
+      [|cbn [length] in Hsquare; lia].
+    cbn [app length] in Hselected_rows, Hselected_columns, Hselected_bound |- *.
+    apply karr_signed_minors_partition_one with (rest := rest).
+    + exact Hselected_rows.
+    + exact (proj1 (Forall_forall _ _) Hselected_bound column (or_introl eq_refl)).
+  - replace (S (length (first :: remaining))) with
+      (length ((first :: remaining) ++ [origin]))
+      by (rewrite length_app; cbn [length]; lia).
+    apply karr_signed_minors_partition with (rest := rest).
+    + rewrite length_app. cbn [length]. lia.
+    + rewrite !length_app. cbn [length] in Hsquare |- *. lia.
+    + exact Hselected_rows.
+    + exact Hselected_columns.
+    + exact Hselected_bound.
 Qed.
 
 (** A certificate unit vector has the declared source-row width. *)
