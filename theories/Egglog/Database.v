@@ -21481,6 +21481,58 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       intros s g perm Hslot. now apply inv_on_slot_cache with (work := work).
   Qed.
 
+  Lemma cache_correct_slot_cache : forall db s f perm,
+    database_cache_correct db ->
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    slot_of db s = Some (f, perm) ->
+    slot_cache_ok (db_runtime db) s (length perm)
+      (row_contributions f perm
+        (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db s f perm [Hsound [Hcomplete [Harity Hcounts]]]
+      Hmap Hbound Hslot.
+    assert (Hindex : forall new,
+      index s new db = runtime_slot_index (db_runtime db) s new).
+    { intro new. now apply index_declared_slot with (f := f) (perm := perm). }
+    unfold slot_cache_ok.
+    split; [rewrite <- Hindex; exact (Harity s false f perm Hslot) |].
+    split; [rewrite <- Hindex; exact (Harity s true f perm Hslot) |].
+    split.
+    - intro u. split.
+      + intro Hmem. rewrite <- Hindex in Hmem.
+        destruct (Hsound s false u Hmem)
+          as [g [other [k [o [Howner [Hrow Hu]]]]]].
+        rewrite Hslot in Howner. injection Howner as <- <-.
+        apply row_contributions_member. exists k, o. split;
+          [apply row_elements_member; assumption | exact Hu].
+      + intro Hin. apply row_contributions_member in Hin as [k [o [Hrow ->]]].
+        apply row_elements_member in Hrow; [| exact Hmap].
+        rewrite <- Hindex.
+        exact (Hcomplete s f perm k o Hslot Hrow).
+    - split.
+      + intros u Hmem. rewrite <- Hindex in Hmem.
+        destruct (Hsound s true u Hmem)
+          as [g [other [k [o [Howner [Hrow Hu]]]]]].
+        rewrite Hslot in Howner. injection Howner as <- <-.
+        apply row_contributions_member. exists k, o. split;
+          [apply row_elements_member; assumption | exact Hu].
+      + intro u.
+        destruct (Hcounts s f perm u Hslot)
+          as [rs [Hdistinct [Hmembers Hcount]]].
+        change (N.to_nat (stored_projection_count db s u) =
+          tuple_multiplicity u
+            (row_contributions f perm
+              (RowMap.elements (runtime_rows (db_runtime db))))).
+        rewrite Hcount. symmetry.
+        unfold tuple_multiplicity, row_contributions.
+        eapply filtered_projection_witness_length.
+        * exact Tuples.eqb_spec.
+        * apply RowFacts.elements_nodup_pairs. exact Hmap.
+        * exact Hdistinct.
+        * intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
