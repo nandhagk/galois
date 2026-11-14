@@ -1476,6 +1476,36 @@ Proof.
   nia.
 Qed.
 
+(** Every selected live minor is tied to its labeled original rows and columns. *)
+Definition karr_minor_law (previous : Z) (pivot_rows : list (list Z))
+    (pivot_columns columns : list nat) (pairs : list (list Z * list Z)) : Prop :=
+  forall origins live selected,
+    Forall2 (fun origin row => In (origin, row) pairs) origins live ->
+    length selected = length live ->
+    Forall (fun i => i < length columns) selected ->
+    1 <= length live ->
+    karr_determinant (length selected) (karr_submatrix selected live) =
+      (previous ^ Z.of_nat (length live - 1) *
+        karr_determinant (length pivot_rows + length live)
+          (karr_submatrix
+            (pivot_columns ++ map (fun i => nth i columns 0%nat) selected)
+            (pivot_rows ++ origins)))%Z.
+
+(** Reordering the live row-label pairs leaves their minor equations intact. *)
+Lemma karr_minor_law_permutation : forall previous pivot_rows pivot_columns columns
+    pairs reordered,
+  Permutation pairs reordered ->
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  karr_minor_law previous pivot_rows pivot_columns columns reordered.
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs reordered Hperm Hlaw.
+  unfold karr_minor_law in *. intros origins live selected Hpaired Hlength Hcolumns Hpositive.
+  apply Hlaw; try assumption.
+  eapply Forall2_impl; [|exact Hpaired].
+  intros origin row Hin. eapply Permutation_in; [apply Permutation_sym; exact Hperm|].
+  exact Hin.
+Qed.
+
 (** Signed minors account for the row exchanges made when selecting a pivot. *)
 Definition karr_signed_minors (width : nat) (rows : list (list Z)) : list Z :=
   flat_map (fun order =>
