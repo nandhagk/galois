@@ -22485,6 +22485,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         now left.
   Qed.
 
+  Lemma row_root_link_lookup_redirect : forall fuel r store store'
+      loser winner ck d,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    row_keys store' = PTrieCode.set winner ck (row_keys store) ->
+    loser <> winner ->
+    (match PTrieCode.get winner (row_links store') with
+     | Some parent => parent | None => winner end) = winner ->
+    row_root d r store = loser -> S d <= fuel ->
+    PTrieCode.get (row_root fuel r store') (row_keys store') = Some ck.
+  Proof.
+    intros fuel r store store' loser winner ck d Hlinks Hkeys Hneq
+      Hwinner Hroot Hfuel.
+    rewrite (row_root_link_after_fixed fuel d r store store' loser winner
+      Hlinks Hneq Hwinner Hroot Hfuel), Hkeys.
+    apply PTrie.get_set_same.
+  Qed.
+
   Lemma move_row_identity_lookup_inverse : forall db f old ck g args result,
     database_row_store_ok db -> length old = length ck ->
     db_locate g args (move_row_identity f old ck db) = Some result ->
