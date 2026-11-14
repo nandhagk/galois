@@ -12530,6 +12530,66 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (Howner g args key r h other other_key s Hfirst Hsecond Hroots).
   Qed.
 
+  Lemma database_row_weight_conserved_ensure : forall db f k,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hstore Hconserved.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[prior prior_id] |] eqn:Hprior.
+    - unfold ensure_row_identity. now rewrite Hprior.
+    - intros g args key r Hentry.
+      destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
+        as [Hsame | Hother].
+      + apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
+        unfold ensure_row_identity in Hentry |- *. rewrite Hprior in Hentry |- *.
+        cbn [database_set_index_counters database_set_row_store db_row_store
+          row_history row_links row_weights ids db_runtime runtime_allocated]
+          in Hentry |- *.
+        rewrite PTrie.get_set_same in Hentry.
+        injection Hentry as _ <-.
+        rewrite (row_root_same_links _ (row_fresh (db_row_store db)) _
+          (db_row_store db)) by reflexivity.
+        rewrite (row_root_no_link _ (row_fresh (db_row_store db))
+          (db_row_store db)).
+        2: { apply database_row_store_future_links;
+             [exact Hstore | apply Pos.le_refl]. }
+        rewrite PTrie.get_set_same.
+        exists [db_row_code f k]. split; [constructor; [simpl; tauto | constructor] |].
+        split; [cbn; lia |]. constructor; [| constructor].
+        exists (f, k), (row_fresh (db_row_store db)). split.
+        * apply PTrie.get_set_same.
+        * unfold database_history_connected. apply rst_refl.
+      + assert (Hold : PTrieCode.get (db_row_code g args)
+          (row_history (db_row_store db)) = Some (key, r)).
+        { rewrite <- (ensure_row_identity_history_other db f k g args).
+          - exact Hentry.
+          - intro Heq. inversion Heq; subst. contradiction. }
+        destruct (Hconserved g args key r Hold)
+          as [codes [Hdistinct [Hcount Hmembers]]].
+        exists codes. split; [exact Hdistinct |].
+        assert (Hroot : row_root
+          (length args * (N.to_nat (N.log2 (ids (ensure_row_identity f k db))) + 1))
+          r (db_row_store (ensure_row_identity f k db)) =
+          row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+            (db_row_store db)).
+        { rewrite ensure_row_identity_ids.
+          apply row_root_same_links. apply ensure_row_identity_links. }
+        split.
+        * rewrite Hroot.
+          rewrite (ensure_row_identity_old_root_weight db f k _).
+          -- exact Hcount.
+          -- apply row_root_below_fresh; [exact Hstore |].
+             exact (database_row_store_history_range db Hstore g args key r Hold).
+        * rewrite Hroot. apply Forall_forall. intros code Hin.
+          apply Forall_forall with (x := code) in Hmembers; [| exact Hin].
+          destruct Hmembers as [label [id [Hget Hconnected]]].
+          exists label, id. split.
+          -- apply ensure_row_identity_raw_history_old. exact Hget.
+          -- eapply database_history_connected_transport;
+               [apply ensure_row_identity_links | exact Hconnected].
+  Qed.
+
   Lemma database_history_root_owner_slots_update : forall db add f cells,
     database_history_root_owner db ->
     database_history_root_owner (slots_update add f cells db).
