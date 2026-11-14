@@ -6180,6 +6180,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply database_idle_ok_init | reflexivity].
   Qed.
 
+  (** Initialization establishes the public and owned invariants together. *)
+  Lemma database_full_ok_init : forall ds sl,
+    database_public_ok (init ds sl) /\ database_owned_ok (init ds sl).
+  Proof.
+    intros ds sl. split.
+    - apply database_public_ok_init.
+    - apply database_owned_ok_init.
+  Qed.
+
   (** Initialization creates a well-formed database. *)
   Lemma wf_init : forall ds sl, wf (init ds sl).
   Proof. exact database_wf_init. Qed.
@@ -6249,6 +6258,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_owned_ok db -> database_owned_ok (advance db).
   Proof.
     intros db Howned. exact Howned.
+  Qed.
+
+  (** Advancing preserves the public and owned invariants together. *)
+  Lemma database_full_ok_advance : forall db,
+    database_public_ok db /\ database_owned_ok db ->
+    database_public_ok (advance db) /\ database_owned_ok (advance db).
+  Proof.
+    intros db [Hpublic Howned]. split.
+    - apply database_public_ok_advance. exact Hpublic.
+    - apply database_owned_ok_advance. exact Howned.
   Qed.
 
   Lemma wf_advance : forall db, wf db ->
@@ -16986,25 +17005,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
            exact (database_public_idle db Hpublic) | | exact Hargs | exact Hfits].
         unfold database_owned_ok in Howned. tauto.
       + apply slot_rank_ok_make. exact (database_public_rank db Hpublic).
-  Qed.
-
-  (** Initialization establishes the public and owned invariants together. *)
-  Lemma database_full_ok_init : forall ds sl,
-    database_public_ok (init ds sl) /\ database_owned_ok (init ds sl).
-  Proof.
-    intros ds sl. split.
-    - apply database_public_ok_init.
-    - apply database_owned_ok_init.
-  Qed.
-
-  (** Advancing preserves the public and owned invariants together. *)
-  Lemma database_full_ok_advance : forall db,
-    database_public_ok db /\ database_owned_ok db ->
-    database_public_ok (advance db) /\ database_owned_ok (advance db).
-  Proof.
-    intros db [Hpublic Howned]. split.
-    - apply database_public_ok_advance. exact Hpublic.
-    - apply database_owned_ok_advance. exact Howned.
   Qed.
 
   (** Union preserves the public and owned invariants together. *)
