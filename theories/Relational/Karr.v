@@ -496,6 +496,39 @@ Proof.
     rewrite Hstep, IHindices. ring.
 Qed.
 
+(** Deleting a later column leaves the first entry in place. *)
+Lemma karr_delete_first : forall index row,
+  karr_nth 0 (karr_delete (S index) row) = karr_nth 0 row.
+Proof.
+  intros index [|z row]; reflexivity.
+Qed.
+
+(** A square matrix with a zero first column has zero determinant. *)
+Lemma karr_determinant_zero_first : forall order rows,
+  Forall (fun row => karr_nth 0 row = 0%Z) rows ->
+  karr_determinant (S order) rows = 0%Z.
+Proof.
+  induction order as [|order IH]; intros [|row rows] Hzero; try reflexivity.
+  - inversion Hzero as [|? ? Hhead _]; subst.
+    rewrite karr_determinant_cons.
+    cbn [seq map fold_right karr_determinant Nat.even].
+    rewrite Hhead. ring.
+  - inversion Hzero as [|? ? Hhead Htail]; subst.
+    rewrite karr_determinant_cons.
+    generalize (seq 0 (S (S order))) as indices. intro indices.
+    induction indices as [|index indices IHindices]; cbn [map fold_right]; [ring|].
+    rewrite IHindices.
+    destruct index as [|index].
+    + rewrite Hhead. ring.
+    + assert (Hminor : Forall (fun r => karr_nth 0 r = 0%Z)
+          (map (karr_delete (S index)) rows)).
+      { apply Forall_forall. intros r Hr.
+        apply in_map_iff in Hr as [source [Hr Hsource]]. subst r.
+        rewrite karr_delete_first.
+        exact (proj1 (Forall_forall _ _) Htail source Hsource). }
+      rewrite (IH _ Hminor). ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
