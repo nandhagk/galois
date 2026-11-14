@@ -6689,18 +6689,6 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       | _ => 0
       end)%N.
 
-  Lemma T_demand_le : forall p pol roots fuel st, S.wf p -> inv p st ->
-    (T_demand p pol roots fuel st <=
-      c_inc * N.of_nat ((fold_right Nat.add 0%nat
-        (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
-        length roots + 1)%nat) * N.of_nat (width p st + 1) +
-      c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
-      c_inc * N.of_nat (N.size_nat fuel) +
-      c_inc * demand_solver_work p pol roots fuel st)%N.
-  Proof.
-    (* OPEN: the discovery and local finish clocks still need an amortized bound. *)
-  Admitted.
-
   (** Invalidation lists each removed stored key once. *)
   Lemma invalidated_nodup : forall p p' ch st, NoDup (invalidated p p' ch st).
   Proof.
@@ -11038,6 +11026,147 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       destruct (Sol.run (R.mk p fz rs) pol fuel) as [m|partial|why];
         cbn beta iota zeta; try lia.
       destruct (Checker.check_rows p rs (restore fz m)); lia.
+  Qed.
+
+  Lemma T_demand_output_budget : forall p pol roots fuel st, S.wf p ->
+    let output :=
+      match discovery p roots fuel st with
+      | None => 0%N
+      | Some (xs, rs, fz) =>
+          match Sol.run (R.mk p fz rs) pol fuel with
+          | Solved m =>
+              (T_restore fz m + T_finish_demand p st xs rs (restore fz m))%N
+          | _ => 0%N
+          end
+      end in
+    (output <=
+      240 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat ((fold_right Nat.add 0%nat
+          (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+            (region p roots st)) + length roots + 1)%nat) *
+        N.of_nat (width p st + 1) +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) roots) + 26)%N.
+  Proof.
+    intros p pol roots fuel st Hwf; cbn beta zeta.
+    destruct (discovery p roots fuel st) as [[[xs rs] fz]|] eqn:Hrun;
+      cbn beta iota zeta; [|lia].
+    destruct (Sol.run (R.mk p fz rs) pol fuel) as [m|partial|why];
+      cbn beta iota zeta; try lia.
+    pose proof (T_demand_success_output_le p roots fuel st xs rs fz m Hwf Hrun)
+      as Hsuccess.
+    assert (Hcount : finite_sum (fun r => length (row_keys p r))
+      (region p roots st) <=
+      (fold_right Nat.add 0%nat
+        (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+          (region p roots st)) + length roots + 1)%nat).
+    { rewrite discovery_row_sum_equation; lia. }
+    apply nat_to_N_le in Hcount.
+    assert (Hregional :
+      (240 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun r => length (row_keys p r))
+          (region p roots st)) * N.of_nat (width p st + 1) <=
+       240 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat ((fold_right Nat.add 0%nat
+          (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+            (region p roots st)) + length roots + 1)%nat) *
+        N.of_nat (width p st + 1))%N).
+    { apply N.mul_le_mono_r; apply N.mul_le_mono_l; exact Hcount. }
+    eapply N.le_trans; [exact Hsuccess|].
+    lia.
+  Qed.
+
+  Lemma T_demand_le : forall p pol roots fuel st, S.wf p -> inv p st ->
+    (T_demand p pol roots fuel st <=
+      c_inc * N.of_nat ((fold_right Nat.add 0%nat
+        (map (fun r => length (S.deps p r) + length (S.sides p r) + 1) (region p roots st)) +
+        length roots + 1)%nat) * N.of_nat (width p st + 1) +
+      c_inc * N.of_nat (fold_right Nat.add 0%nat (map (fun x => S.key_bits x + 1)%nat roots)) +
+      c_inc * N.of_nat (N.size_nat fuel) +
+      c_inc * demand_solver_work p pol roots fuel st)%N.
+  Proof.
+    intros p pol roots fuel st Hwf _.
+    pose (base := (S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N).
+    pose (qnat := (fold_right Nat.add 0%nat
+      (map (fun r => length (S.deps p r) + length (S.sides p r) + 1)
+        (region p roots st)) + length roots + 1)%nat).
+    pose (rootbits := finite_sum (fun x => (S.key_bits x + 1)%nat) roots).
+    pose (u := N.of_nat (width p st + 1)).
+    pose (regionQ := (base * N.of_nat qnat * u)%N).
+    pose (rootQ := (base * N.of_nat rootbits)%N).
+    pose (fuelQ := (base * N.of_nat (N.size_nat fuel))%N).
+    assert (HQ : (2 <= regionQ)%N).
+    { unfold regionQ.
+      change (2 * 1 * 1 <= base * N.of_nat qnat * u)%N.
+      apply N.mul_le_mono; [apply N.mul_le_mono|].
+      - unfold base, PTrieT.c_trie; lia.
+      - unfold qnat; lia.
+      - unfold u; lia. }
+    assert (HC : (1 <= c_inc)%N).
+    { unfold c_inc, PTrieT.c_trie; lia. }
+    pose proof (T_roots_scan_le st roots) as Hscan.
+    assert (HscanQ :
+      (List.T_forallb (present st) (fun x => T_present st x) roots <=
+        16 * rootQ + 1)%N).
+    { replace (16 * rootQ)%N with
+        (16 * base * N.of_nat rootbits)%N by (unfold rootQ; ring).
+      exact Hscan. }
+    pose proof (T_discovery_strong_le p roots fuel st Hwf) as Hdiscovery.
+    assert (HdiscoveryQ :
+      (T_discovery p roots fuel st <=
+        768 * regionQ + 768 * rootQ + 1024 * fuelQ)%N).
+    { replace (768 * regionQ + 768 * rootQ + 1024 * fuelQ)%N with
+        (768 * base * N.of_nat qnat * u +
+         768 * base * N.of_nat rootbits +
+         c_inc * N.of_nat (N.size_nat fuel))%N by
+        (unfold regionQ, rootQ, fuelQ, c_inc, base; ring).
+      exact Hdiscovery. }
+    pose proof (T_demand_output_budget p pol roots fuel st Hwf) as Houtput.
+    cbn beta zeta in Houtput.
+    assert (HoutputQ :
+      (match discovery p roots fuel st with
+       | None => 0%N
+       | Some (xs, rs, fz) =>
+           match Sol.run (R.mk p fz rs) pol fuel with
+           | Solved m =>
+               (T_restore fz m + T_finish_demand p st xs rs (restore fz m))%N
+           | _ => 0%N
+           end
+       end <= 240 * regionQ + 64 * rootQ + 26)%N).
+    { replace (240 * regionQ + 64 * rootQ + 26)%N with
+        (240 * base * N.of_nat qnat * u +
+         64 * base * N.of_nat rootbits + 26)%N by
+        (unfold regionQ, rootQ; ring).
+      exact Houtput. }
+    pose proof (T_demand_components_le p pol roots fuel st Hwf) as Hcomponents.
+    cbn beta zeta in Hcomponents.
+    pose proof (demand_clock_arithmetic regionQ rootQ fuelQ c_inc
+      (List.T_forallb (present st) (fun x => T_present st x) roots)
+      (T_discovery p roots fuel st)
+      (match discovery p roots fuel st with
+       | None => 0%N
+       | Some (xs, rs, fz) =>
+           match Sol.run (R.mk p fz rs) pol fuel with
+           | Solved m =>
+               (T_restore fz m + T_finish_demand p st xs rs (restore fz m))%N
+           | _ => 0%N
+           end
+       end)
+      (demand_solver_work p pol roots fuel st)
+      HQ HC HscanQ HdiscoveryQ HoutputQ) as Hbudget.
+    assert (Hrhs :
+      (c_inc * N.of_nat qnat * u + c_inc * N.of_nat rootbits +
+        c_inc * N.of_nat (N.size_nat fuel) +
+        c_inc * demand_solver_work p pol roots fuel st =
+       1024 * regionQ + 1024 * rootQ + 1024 * fuelQ +
+        c_inc * demand_solver_work p pol roots fuel st)%N).
+    { unfold regionQ, rootQ, fuelQ, c_inc, base; ring. }
+    change (T_demand p pol roots fuel st <=
+      c_inc * N.of_nat qnat * u + c_inc * N.of_nat rootbits +
+      c_inc * N.of_nat (N.size_nat fuel) +
+      c_inc * demand_solver_work p pol roots fuel st)%N.
+    rewrite Hrhs.
+    eapply N.le_trans; [exact Hcomponents|exact Hbudget].
   Qed.
 
   Definition invalid_respects (P : S.key -> Prop)
