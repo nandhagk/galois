@@ -682,6 +682,12 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
   Proof.
     reflexivity.
   Qed.
+
+  Lemma invalidate_keys_eq : forall p p' ch st,
+    invalidate p p' ch st = invalidate_keys p p' ch st.
+  Proof.
+    reflexivity.
+  Qed.
 End IncrementalCode.
 
 Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYSTEM L)
@@ -4117,7 +4123,14 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
         (Htracks r y Hr Hy Hdom) Hx Hbad Hy Hdom).
   Qed.
 
-  Definition invalidate_keys_closed := invalidate_closed.
+  Lemma invalidate_keys_closed : forall p p' ch st,
+    edit_covers p p' ch -> inv p st -> tracks p st ->
+    closed p' (fun x => dom st x /\ ~ In x (invalidate_keys p p' ch st)).
+  Proof.
+    intros p p' ch st Hcovers Hinv Htracks.
+    rewrite <- invalidate_keys_eq.
+    apply invalidate_closed; assumption.
+  Qed.
 
   (** Metadata retirement does not alter exact value deletion. *)
   Lemma edit_value : forall p p' ch st x,
