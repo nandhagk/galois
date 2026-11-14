@@ -13292,6 +13292,63 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact Hupdated.
   Qed.
 
+  Lemma database_row_store_ok_repair_current : forall db f k,
+    database_row_store_ok db -> database_row_store_ok (repair_current f k db).
+  Proof.
+    intros db f k Hstore. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hstore].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hstore |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted).
+    assert (Hupdated : database_row_store_ok updated).
+    { subst updated deleted. apply database_row_store_ok_put.
+      apply database_row_store_ok_row_delete. exact Hstore. }
+    pose proof Hstore as Hbase.
+    unfold database_row_store_ok in Hbase, Hupdated |- *.
+    destruct Hbase as
+      (_ & Huses & Hcount & _ & Hcells & _ & _ & Hmap & _ & _).
+    destruct Hupdated as
+      (Hlinks & _ & _ & Hcounter & _ & Hdepth & Hsize & _ & Hlabels & Hrange).
+    cbn [database_set_nuses database_set_row_store db_row_store row_history row_links
+      row_weights row_keys row_fresh row_uses db_nuses db_index_counters db_written_cells
+      db_runtime] in *.
+    split; [exact Hlinks |].
+    split.
+    - intros x g args Huse. destruct (Huses x g args Huse) as [r Hentry].
+      exists r. subst updated deleted. apply put_history_old.
+      now rewrite row_delete_row_store.
+    - split; [exact Hcount |].
+      split; [exact Hcounter |].
+      split.
+      + intros x g args c Huse Hcell.
+        assert (Hwritten : incl (db_written_cells db) (db_written_cells updated)).
+        { subst updated deleted. eapply incl_tran.
+          - apply row_delete_written.
+          - apply put_written_incl. }
+        apply Hwritten. exact (Hcells x g args c Huse Hcell).
+      + split.
+        * intros g args key r Hentry.
+          destruct (Hdepth g args key r Hentry) as [d [Hbound [Hroot Hloc]]].
+          exists d. split; [exact Hbound |]. split; [exact Hroot |].
+          rewrite (db_locate_same_core updated
+            (database_set_nuses (db_nuses db)
+              (database_set_row_store
+                {| row_history := row_history (db_row_store updated);
+                   row_links := row_links (db_row_store updated);
+                   row_weights := row_weights (db_row_store updated);
+                   row_keys := row_keys (db_row_store updated);
+                   row_fresh := row_fresh (db_row_store updated);
+                   row_uses := row_uses (db_row_store db) |} updated))
+            g args) by reflexivity.
+          exact Hloc.
+        * split; [exact Hsize |].
+          split; [exact Hmap |].
+          split; [exact Hlabels | exact Hrange].
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
