@@ -3131,6 +3131,47 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite Hstore. unfold ids in Hids. now rewrite Hids.
   Qed.
 
+  Lemma row_root_same_links : forall fuel r store store',
+    row_links store = row_links store' ->
+    row_root fuel r store = row_root fuel r store'.
+  Proof.
+    induction fuel as [| fuel IH]; intros r store store' Hlinks; [reflexivity |].
+    cbn [row_root]. rewrite Hlinks.
+    destruct (PTrieCode.get r (row_links store')) as [parent |]; [| reflexivity].
+    destruct (Pos.eqb parent r); [reflexivity |].
+    apply IH. exact Hlinks.
+  Qed.
+
+  Lemma db_locate_same_core : forall db db' f k,
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    row_keys (db_row_store db') = row_keys (db_row_store db) ->
+    ids db' = ids db -> db_locate f k db' = db_locate f k db.
+  Proof.
+    intros db db' f k Hhistory Hlinks Hkeys Hids.
+    unfold db_locate. rewrite Hhistory.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key r] |]; [| reflexivity].
+    unfold ids in Hids. rewrite Hids.
+    rewrite (row_root_same_links _ _ _ _ Hlinks). now rewrite Hkeys.
+  Qed.
+
+  Lemma database_history_alignment_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    row_keys (db_row_store db') = row_keys (db_row_store db) ->
+    ids db' = ids db -> db_forest db' = db_forest db ->
+    database_history_alignment db -> database_history_alignment db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hkeys Hids Hforest Halign.
+    intros f k key r Hentry Hcanonical.
+    rewrite (db_locate_same_core db db' f k Hhistory Hlinks Hkeys Hids).
+    apply (database_history_alignment_entry db Halign f k key r).
+    - now rewrite <- Hhistory.
+    - intros i Hin. specialize (Hcanonical i Hin).
+      unfold repr in Hcanonical |- *. now rewrite Hforest in Hcanonical.
+  Qed.
+
   Lemma database_row_store_ok_transport : forall db db',
     db_row_store db' = db_row_store db ->
     db_nuses db' = db_nuses db ->
@@ -6020,6 +6061,38 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct roots as [[winner loser] |]; reflexivity.
   Qed.
 
+  Lemma union_representative_old : forall db i j x,
+    UnionFind.wf (db_forest db) ->
+    repr (union i j db) x = x -> repr db x = x.
+  Proof.
+    intros db i j x Hforest Hfixed.
+    unfold repr in Hfixed |- *. rewrite union_forest in Hfixed.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |]; cbn [snd] in Hfixed.
+    - destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+        Hforest Hunion) as [Hdifferent [Hroots Hrepr]].
+      rewrite (Hrepr x) in Hfixed.
+      destruct (Pos.eqb (UnionFind.repr (db_forest db) x) loser) eqn:Hloser.
+      + apply Pos.eqb_eq in Hloser.
+        assert (Hwinner : UnionFind.repr (db_forest db) winner = winner).
+        { destruct Hroots as [[-> _] | [-> _]];
+            apply UnionFind.repr_idem; exact Hforest. }
+        assert (Hdistinct : winner <> loser).
+        { destruct Hroots as [[-> ->] | [-> ->]]; congruence. }
+        rewrite Hfixed in Hwinner. congruence.
+      + exact Hfixed.
+    - rewrite (proj2 (UnionFind.union_none i j (db_forest db) forest
+        Hforest Hunion) x) in Hfixed. exact Hfixed.
+  Qed.
+
+  Lemma union_row_store_raw : forall db i j,
+    db_row_store (union i j db) = db_row_store db.
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
   (** Union never changes the database allocation interval. *)
   Lemma union_ids : forall i j db, ids (union i j db) = ids db.
   Proof.
@@ -7855,6 +7928,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db i db' Hpop. unfold db_pop_loser in Hpop.
     destruct (runtime_queue (db_runtime db)) as [| j rest]; [discriminate |].
     injection Hpop as Hname Hdb. subst i db'. split; reflexivity.
+  Qed.
+
+  Lemma database_history_alignment_pop : forall db i db',
+    db_pop_loser db = Some (i, db') ->
+    database_history_alignment db -> database_history_alignment db'.
+  Proof.
+    intros db i db' Hpop Halign. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| popped rest]; [discriminate |].
+    injection Hpop as Hname Hstate. subst i db'.
+    eapply (database_history_alignment_transport db _); try reflexivity; exact Halign.
   Qed.
 
   (** Row-group links leave the represented rows and identifier forest unchanged. *)
@@ -11342,17 +11425,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact Hcount.
   Qed.
 
-  Lemma row_root_same_links : forall fuel r store store',
-    row_links store = row_links store' ->
-    row_root fuel r store = row_root fuel r store'.
-  Proof.
-    induction fuel as [|remaining IH]; intros r store store' Hlinks; [reflexivity |].
-    cbn [row_root]. rewrite Hlinks.
-    destruct (PTrieCode.get r (row_links store')) as [parent |]; [| reflexivity].
-    destruct (Pos.eqb parent r); [reflexivity |].
-    apply IH. exact Hlinks.
-  Qed.
-
   Lemma register_row_uses_locate : forall db f k o g args,
     db_locate g args (register_row_uses f k o db) =
       db_locate g args (ensure_row_identity f k db).
@@ -12584,6 +12656,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db i j f k. unfold union.
     destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
     destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  Lemma database_history_alignment_union : forall db i j,
+    UnionFind.wf (db_forest db) -> database_history_alignment db ->
+    database_history_alignment (union i j db).
+  Proof.
+    intros db i j Hforest Halign f k key r Hentry Hcanonical.
+    rewrite union_row_store_raw in Hentry.
+    change (located (union i j db) f k = Some k).
+    rewrite union_located_raw.
+    apply (database_history_alignment_entry db Halign f k key r Hentry).
+    intros x Hin. apply (union_representative_old db i j x Hforest).
+    exact (Hcanonical x Hin).
   Qed.
 
   Lemma union_uses_raw : forall db i j x e,
