@@ -10540,6 +10540,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Halign.
   Qed.
 
+  Lemma database_active_history_coherent_row_delete : forall db f k,
+    database_active_history_coherent db ->
+    database_active_history_coherent (row_delete f k db).
+  Proof.
+    intros db f k Hcoherent g args o key r Hrow Hentry.
+    change (row (view (row_delete f k db)) g args o) in Hrow.
+    apply row_delete_binding in Hrow as [Hrow _].
+    rewrite row_delete_row_store in Hentry.
+    rewrite (db_locate_same_store_ids db (row_delete f k db) g args)
+      by (try apply row_delete_row_store; apply row_delete_ids).
+    exact (Hcoherent g args o key r Hrow Hentry).
+  Qed.
+
   Lemma database_row_store_ok_row_delete : forall db f k,
     database_row_store_ok db -> database_row_store_ok (row_delete f k db).
   Proof.
@@ -12517,6 +12530,33 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         Hentry Hcanonical_old).
   Qed.
 
+  Lemma database_active_history_coherent_row_replace : forall db f k previous o,
+    database_row_store_ok db -> database_active_history_coherent db ->
+    (forall key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) -> db_locate f k db = Some k) ->
+    database_active_history_coherent (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hstore Hcoherent Hself
+      g args output key r Hrow Hentry.
+    destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
+      as [Hsame | Hother].
+    - apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
+      apply row_replace_new_locate_from_alignment; [exact Hstore |].
+      intros old_key old_id Hold.
+      exact (Hself old_key old_id Hold).
+    - assert (Hdifferent : (g, args) <> (f, k)).
+      { intro Heq. inversion Heq; subst. apply Hother. reflexivity. }
+      change (row (view (row_replace f k previous o db)) g args output) in Hrow.
+      apply row_replace_binding in Hrow as [[Hrow _] | [Heq _]];
+        [| contradiction].
+      rewrite (row_replace_history_other db f k previous o g args Hdifferent)
+        in Hentry.
+      rewrite (row_replace_old_locate db f k previous o g args key r
+        Hstore Hentry).
+      exact (Hcoherent g args output key r Hrow Hentry).
+  Qed.
+
   Lemma database_history_alignment_make : forall db f k,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (snd (make f k db)).
@@ -13152,6 +13192,19 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct roots as [[winner loser] |]; reflexivity.
   Qed.
 
+  Lemma database_active_history_coherent_union : forall db i j,
+    database_active_history_coherent db ->
+    database_active_history_coherent (union i j db).
+  Proof.
+    intros db i j Hcoherent f k o key r Hrow Hentry.
+    change (row (view (union i j db)) f k o) in Hrow.
+    rewrite union_rows_raw in Hrow.
+    rewrite union_row_store_raw in Hentry.
+    change (located (union i j db) f k = Some k).
+    rewrite union_located_raw.
+    exact (Hcoherent f k o key r Hrow Hentry).
+  Qed.
+
   Lemma database_history_alignment_union : forall db i j,
     UnionFind.wf (db_forest db) -> database_history_alignment db ->
     database_history_alignment (union i j db).
@@ -13237,6 +13290,55 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           [exact Hnext_store | exact Hnext_loc].
     - intros key r _. apply row_replace_new_locate_from_alignment;
         [exact Hnext_store | exact Hnext_loc].
+  Qed.
+
+  Lemma database_active_history_coherent_put : forall db f k o,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db ->
+    database_active_history_coherent (put f k o db).
+  Proof.
+    intros db f k o Hwf Hstore Halign Hcoherent. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hnext_coherent : database_active_history_coherent next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try exact Hcoherent.
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[pair |] forest]; [destruct pair |]; exact Hcoherent. }
+    assert (Hnext_loc : forall key r,
+      PTrieCode.get (db_row_code f ck) (row_history (db_row_store next)) =
+        Some (key, r) -> db_locate f ck next = Some ck).
+    { intros key r Hentry.
+      assert (Hsame_store : db_row_store next = db_row_store db).
+      { unfold next. destruct previous as [[[a | v] |] |];
+          destruct co as [[b | w] |];
+          try reflexivity; apply union_row_store_raw. }
+      assert (Hsame_ids : ids next = ids db).
+      { unfold next. destruct previous as [[[a | v] |] |];
+          destruct co as [[b | w] |];
+          try reflexivity; apply union_ids. }
+      rewrite (db_locate_same_store_ids db next f ck Hsame_store Hsame_ids).
+      apply (database_history_alignment_entry db Halign f ck key r).
+      - now rewrite Hsame_store in Hentry.
+      - subst ck. rewrite normal_key_correct by exact Hwf.
+        apply canon_key_fixed. exact Hwf. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_coherent |].
+      apply database_active_history_coherent_row_replace;
+        [exact Hnext_store | exact Hnext_coherent | exact Hnext_loc].
+    - apply database_active_history_coherent_row_replace;
+        [exact Hnext_store | exact Hnext_coherent | exact Hnext_loc].
   Qed.
 
   Lemma put_representative_old : forall db f k o x,
