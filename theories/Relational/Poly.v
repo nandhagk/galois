@@ -15908,6 +15908,60 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply Nat.mul_le_mono_l. exact Hpivot'.
   Qed.
 
+  (** Each nonzero-pivot output check fits a counted public work share. *)
+  Lemma poly_assign_prepared_output_mass : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef prepared) + 1 in
+    let checkerwidth := poly_raw_keys P + 2 * poly_raw_bits P + X.bits x +
+      3 * F.form_bits prepared + 5 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 * (n P + total + length P + 3) * bits^2 in
+    (length P + 1) *
+      (support + length (coef prepared) + terms (Reached P) + length P + 1) *
+      checkerwidth^2 <= 128 * (128 * work).
+  Proof.
+    intros x e P f Hlinear prepared support checkerwidth bits total work.
+    set (wide := bits + Nat.log2 (total + 1) + 1).
+    destruct (poly_assign_prepared_widths x e P f Hlinear) as [_ Hwidth].
+    cbn zeta in Hwidth.
+    change (checkerwidth <= 8 * wide) in Hwidth.
+    pose proof (poly_assign_prepared_pivot_work x e P f Hlinear) as Hpivot.
+    cbn zeta in Hpivot.
+    assert (Hpivot' : (length P + 2) *
+      (support + terms (Reached P) + length P + 3) * wide^2 <= 128 * work).
+    { replace (128 * work) with
+        (128 * (length P + 3)^2 *
+          (n P + total + length P + 3) * bits^2)
+        by (unfold work; ring).
+      exact Hpivot. }
+    assert (Hsquare : checkerwidth^2 <= 64 * wide^2).
+    { eapply Nat.le_trans with (m := (8 * wide)^2).
+      - now apply Nat.pow_le_mono_l.
+      - clear -wide. cbn [Nat.pow]. nia. }
+    assert (Hmass : (length P + 1) *
+      (support + length (coef prepared) + terms (Reached P) + length P + 1) <=
+      2 * (length P + 2) * (support + terms (Reached P) + length P + 3)).
+    { assert (Hform : length (coef prepared) <= support)
+        by (unfold support; lia).
+      clear -Hform. nia. }
+    assert (Hgeom : (length P + 1) *
+      (support + length (coef prepared) + terms (Reached P) + length P + 1) *
+      checkerwidth^2 <=
+      128 * ((length P + 2) *
+        (support + terms (Reached P) + length P + 3) * wide^2)).
+    { replace (128 * ((length P + 2) *
+        (support + terms (Reached P) + length P + 3) * wide^2)) with
+        (2 * (length P + 2) *
+          (support + terms (Reached P) + length P + 3) *
+          (64 * wide^2)) by ring.
+      now apply Nat.mul_le_mono. }
+    eapply Nat.le_trans; [exact Hgeom|].
+    apply Nat.mul_le_mono_l. exact Hpivot'.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
