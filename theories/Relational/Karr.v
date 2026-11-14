@@ -723,6 +723,26 @@ Proof.
   rewrite Hprefix, Htail. ring.
 Qed.
 
+(** Consecutive Laplace cofactors have opposite signs. *)
+Lemma karr_determinant_sign_succ : forall index,
+  (if Nat.even (S index) then 1 else -1)%Z =
+    (- (if Nat.even index then 1 else -1))%Z.
+Proof.
+  induction index as [|index IH]; [reflexivity|].
+  rewrite Nat.even_succ, Nat.odd_succ, IH. ring.
+Qed.
+
+(** Deleting two different columns agrees after their positions are adjusted. *)
+Lemma karr_delete_two : forall first second row,
+  first < second ->
+  karr_delete (second - 1) (karr_delete first row) =
+    karr_delete first (karr_delete second row).
+Proof.
+  intros first [|second] row Horder; [lia|].
+  replace (S second - 1) with second by lia.
+  symmetry. apply karr_delete_comm. lia.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
