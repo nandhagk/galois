@@ -3038,6 +3038,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     lia.
   Qed.
 
+  Lemma database_row_store_history_range : forall db,
+    database_row_store_ok db ->
+    forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
+      (r < row_fresh (db_row_store db))%positive.
+  Proof.
+    intros db Hstore f k key r Hget.
+    unfold database_row_store_ok in Hstore.
+    destruct Hstore as (_ & _ & _ & Hcounter & _).
+    exact (proj1 (Hcounter f k key r Hget)).
+  Qed.
+
   Lemma database_row_store_uses_history : forall db,
     database_row_store_ok db ->
     forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
@@ -11025,6 +11037,68 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (PTrieCode.get r (row_links store')) as [parent |]; [| reflexivity].
     destruct (Pos.eqb parent r); [reflexivity |].
     apply IH. exact Hlinks.
+  Qed.
+
+  Lemma row_root_below_fresh : forall db fuel r,
+    database_row_store_ok db ->
+    (r < row_fresh (db_row_store db))%positive ->
+    (row_root fuel r (db_row_store db) < row_fresh (db_row_store db))%positive.
+  Proof.
+    intros db fuel. induction fuel as [|remaining IH]; intros r Hstore Hbelow.
+    - exact Hbelow.
+    - cbn [row_root].
+      destruct (PTrieCode.get r (row_links (db_row_store db))) as [parent |]
+        eqn:Hlink; [| exact Hbelow].
+      destruct (Pos.eqb parent r) eqn:Hsame; [exact Hbelow |].
+      apply IH; [exact Hstore |].
+      exact (proj2 (database_row_store_link_range db Hstore r parent Hlink)).
+  Qed.
+
+  Lemma ensure_row_identity_ids : forall db f k,
+    ids (ensure_row_identity f k db) = ids db.
+  Proof.
+    intros db f k. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
+  Lemma ensure_row_identity_links : forall db f k,
+    row_links (db_row_store (ensure_row_identity f k db)) =
+      row_links (db_row_store db).
+  Proof.
+    intros db f k. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      reflexivity.
+  Qed.
+
+  Lemma ensure_row_identity_old_root_key : forall db f k root,
+    (root < row_fresh (db_row_store db))%positive ->
+    PTrieCode.get root (row_keys (db_row_store (ensure_row_identity f k db))) =
+      PTrieCode.get root (row_keys (db_row_store db)).
+  Proof.
+    intros db f k root Hbelow. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior; [reflexivity |].
+    cbn [database_set_index_counters database_set_row_store db_row_store row_keys].
+    apply PTrie.get_set_other. lia.
+  Qed.
+
+  Lemma ensure_row_identity_old_locate : forall db f k g args key r,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
+    db_locate g args (ensure_row_identity f k db) = db_locate g args db.
+  Proof.
+    intros db f k g args key r Hstore Hget.
+    unfold db_locate.
+    rewrite (ensure_row_identity_history_old db f k g args key r Hget), Hget.
+    pose proof (ensure_row_identity_ids db f k) as Hids.
+    unfold ids in Hids. rewrite Hids.
+    rewrite (row_root_same_links _ r
+      (db_row_store (ensure_row_identity f k db)) (db_row_store db))
+      by apply ensure_row_identity_links.
+    apply ensure_row_identity_old_root_key.
+    apply row_root_below_fresh; [exact Hstore |].
+    exact (database_row_store_history_range db Hstore g args key r Hget).
   Qed.
 
   Lemma pop_loser_locate : forall db x db' f k,
