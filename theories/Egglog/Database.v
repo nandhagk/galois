@@ -23088,7 +23088,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     { exact (inv_on_repair_queue_allocated db ((f, k) :: rest) f k Hinv). }
     unfold inv_on. destruct Hrows as [Hrows Hnodup].
     repeat split; try assumption.
-  Admitted. (* STUB: present-row mutation remains *)
+  Admitted. (* OPEN: active repair needs old-label root redirection, row/use coverage and scheduling. *)
 
   (** Continuing steps retain the queue and active-batch invariant. *)
   Lemma F8_rstep_inv : forall s s', state_inv s -> rstep s = inl s' -> state_inv s'.
