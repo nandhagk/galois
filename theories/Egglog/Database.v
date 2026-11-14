@@ -12069,6 +12069,37 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply history_shape_keys_length.
   Qed.
 
+  Lemma database_history_weight_cardinality : forall db f k key id,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_key_shape db -> database_history_codes_valid db ->
+    database_history_key_ids_bounded db ->
+    database_row_weight_conserved db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, id) ->
+    (match PTrieCode.get
+      (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+        (db_row_store db)) (row_weights (db_row_store db)) with
+     | Some n => n | None => 1%N end <= (ids db + 1) ^ N.of_nat (length k))%N.
+  Proof.
+    intros db f k key id Hstore Howner Hshape Hvalid Hbounded Hconserved
+      Hentry.
+    destruct (Hconserved f k key id Hentry) as
+      [codes [Hdistinct [Hweight Hmembers]]].
+    pose proof (database_history_codes_cardinality db f k key id codes
+      Hstore Howner Hshape Hvalid Hbounded Hentry Hdistinct Hmembers)
+      as Hcodes.
+    replace ((ids db + 1) ^ N.of_nat (length k))%N with
+      (N.of_nat ((S (N.to_nat (ids db))) ^ length k)).
+    - rewrite <- (N2Nat.id
+        (match PTrieCode.get
+          (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+            (db_row_store db)) (row_weights (db_row_store db)) with
+         | Some n => n | None => 1%N end)).
+      lia.
+    - rewrite Nat2N.inj_pow, Nat2N.inj_succ, N2Nat.id.
+      now rewrite N.add_1_r.
+  Qed.
+
   Lemma database_row_weight_codes_disjoint : forall db first second left right,
     first <> second ->
     (match PTrieCode.get first (row_links (db_row_store db)) with
