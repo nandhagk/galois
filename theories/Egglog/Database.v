@@ -6681,6 +6681,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact (Hcanonical x Hin).
   Qed.
 
+  Definition use_entry := (positive * list (cell V.t))%type.
+  Definition stored_row := (use_entry * option (cell V.t))%type.
+  Definition repair_state := (t * list use_entry)%type.
+
+  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
+     index_counters written_cells *)
+  Definition rows (db : t) : list stored_row :=
+    map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
+  Definition uses_entries (db : t) : list (positive * use_entry) :=
+    flat_map (fun binding => map (pair (fst binding)) (snd binding))
+      (map (fun binding => (fst binding, snd (snd binding)))
+        (PTrieCode.elements (row_uses (db_row_store db)))).
+  Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
+  Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
+    In (x, e) (uses_entries db).
+  Definition scheduled (db : t) (work : list use_entry) (e : use_entry) : Prop :=
+    In e work \/ exists x, In x (queue db) /\ uses db x e.
+  Definition row_ids (k : list (cell V.t)) (o : option (cell V.t)) (i : positive) : Prop :=
+    In (Id i) (k ++ option_list o).
+
   Lemma union_forest_members : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     forall x, UnionFind.mem (db_forest (union i j db)) x <-> allocated (union i j db) x.
   Proof.
@@ -9889,18 +9909,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       exists args', None. split; [exact Htarget |]. split; [exact Hkeys | exact I].
   Qed.
 
-  Definition use_entry := (positive * list (cell V.t))%type.
-  Definition stored_row := (use_entry * option (cell V.t))%type.
-  Definition repair_state := (t * list use_entry)%type.
-
-  (* spec: rows uses_entries queue next_id forest_ok class_size uf_state
-     index_counters written_cells *)
-  Definition rows (db : t) : list stored_row :=
-    map snd (PTrieCode.elements (runtime_rows (db_runtime db))).
-  Definition uses_entries (db : t) : list (positive * use_entry) :=
-    flat_map (fun binding => map (pair (fst binding)) (snd binding))
-      (map (fun binding => (fst binding, snd (snd binding)))
-        (PTrieCode.elements (row_uses (db_row_store db)))).
   Lemma uses_entries_facts : forall db,
     DatabaseUseMap.wf (row_uses (db_row_store db)) ->
     uses_entries db = DatabaseUsesFacts.entries (row_uses (db_row_store db)).
@@ -10000,7 +10008,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - apply id_occurrences_member in Hnew as [_ [-> _]].
       exact (Hkey c Hcell).
   Qed.
-  Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
   Definition class_size (db : t) (x : positive) : N :=
@@ -10211,13 +10218,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
-
-  Definition uses (db : t) (x : positive) (e : use_entry) : Prop :=
-    In (x, e) (uses_entries db).
-  Definition scheduled (db : t) (work : list use_entry) (e : use_entry) : Prop :=
-    In e work \/ exists x, In x (queue db) /\ uses db x e.
-  Definition row_ids (k : list (cell V.t)) (o : option (cell V.t)) (i : positive) : Prop :=
-    In (Id i) (k ++ option_list o).
 
   Lemma pop_loser_uses_transfer : forall db x db',
     DatabaseUseMap.wf (row_uses (db_row_store db)) ->
