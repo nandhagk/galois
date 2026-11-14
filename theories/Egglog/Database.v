@@ -3111,6 +3111,32 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     now apply ensure_row_identity_history_new.
   Qed.
 
+  Lemma register_row_uses_labels : forall db f k o,
+    database_row_store_ok db ->
+    forall g args key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (register_row_uses f k o db))) = Some (key, r) ->
+      key = (g, args).
+  Proof.
+    intros db f k o Hstore g args key r Hget.
+    rewrite register_row_uses_history in Hget.
+    now apply (ensure_row_identity_labels db f k Hstore g args key r).
+  Qed.
+
+  Lemma row_write_row_store : forall db f k o,
+    db_row_store (row_write f k o db) = db_row_store db.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma slots_update_row_store : forall db add f cells,
+    db_row_store (slots_update add f cells db) = db_row_store db.
+  Proof.
+    intros db add f cells. unfold slots_update.
+    destruct (PTrieCode.get f (runtime_function_slots (db_runtime db)));
+      reflexivity.
+  Qed.
+
   Lemma database_row_store_ok_init : forall ds sl,
     database_row_store_ok (init ds sl).
   Proof.
