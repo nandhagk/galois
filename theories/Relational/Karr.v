@@ -10334,6 +10334,50 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     Forall (fun z => Z.size_nat z <= bits) (kweight r) /\
     Z.size_nat (kscale r) <= bits.
 
+  (** A bounded augmented vector gives the componentwise row envelope. *)
+  Lemma karr_row_envelope_entries : forall dim mlen bits r,
+    length (kcoeff r) <= dim -> length (kweight r) <= mlen ->
+    Forall (fun z => Z.size_nat z <= bits) (karr_row_entries r) ->
+    karr_row_envelope dim mlen bits r.
+  Proof.
+    intros dim mlen bits r Hcoeff_length Hweight_length Hentries.
+    unfold karr_row_entries in Hentries.
+    apply Forall_app in Hentries as [Hcoeff Hright_tail].
+    apply Forall_cons_iff in Hright_tail as [Hright Hweight_tail].
+    apply Forall_app in Hweight_tail as [Hweight Hscale_tail].
+    apply Forall_cons_iff in Hscale_tail as [Hscale _].
+    unfold karr_row_envelope. repeat split; assumption.
+  Qed.
+
+  (** The maintained minor law supplies one envelope for every live row. *)
+  Lemma karr_run_state_envelope : forall width cols original previous
+      pivot_rows pivot_columns columns labels rows budget bits,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows ->
+    length columns <= budget ->
+    (forall z, In z (karr_signed_minors width original) -> Z.size_nat z <= bits) ->
+    Forall (karr_row_envelope budget budget bits) rows.
+  Proof.
+    intros width cols original previous pivot_rows pivot_columns columns labels
+      rows budget bits Hstate Hbudget Hbits.
+    pose proof (karr_run_state_bits width cols original previous pivot_rows
+      pivot_columns columns labels rows bits Hstate Hbits) as Hrows_bits.
+    unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [_ [Hcoeff [Hentries [Hcols _]]]]]].
+    apply Forall_forall. intros row Hrow.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hrow) as Hcoeff_length.
+    pose proof (proj1 (Forall_forall _ _) Hentries row Hrow) as Hentries_length.
+    pose proof (proj1 (Forall_forall _ _) Hrows_bits row Hrow) as Hrow_bits.
+    cbn beta in Hcoeff_length, Hentries_length, Hrow_bits.
+    apply karr_row_envelope_entries.
+    - lia.
+    - unfold karr_row_entries in Hentries_length.
+      cbn [length] in Hentries_length.
+      rewrite !length_app in Hentries_length. cbn [length] in Hentries_length.
+      rewrite length_app in Hentries_length. cbn [length] in Hentries_length. lia.
+    - exact Hrow_bits.
+  Qed.
+
   (** Certificate traversal fits a row count times the largest per-row charge. *)
   Lemma karr_csize_envelope : forall P ms dim keys bits mbits,
     Forall (fun r => length (lhs r) <= dim /\
