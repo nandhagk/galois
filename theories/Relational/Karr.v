@@ -3530,6 +3530,16 @@ Proof.
     rewrite (karr_first_restore _ _ _ (IH r Hhead)). reflexivity.
 Qed.
 
+(** Prefixing processed zeros cannot create a new pivot. *)
+Lemma karr_zero_prefix_first_none : forall count r,
+  karr_first (kcoeff r) = None ->
+  karr_first (kcoeff (karr_zero_prefix count r)) = None.
+Proof.
+  induction count as [|count IH]; intros r Hnone; [exact Hnone|].
+  cbn [karr_zero_prefix karr_restore kcoeff karr_first].
+  now rewrite IH.
+Qed.
+
 (** Prefixing zeros adds no augmented entries outside the coefficient vector. *)
 Lemma karr_zero_prefix_entries_width : forall count r,
   length (karr_row_entries (karr_zero_prefix count r)) =
