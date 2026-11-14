@@ -6173,16 +6173,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply init_max_name_attained | apply database_history_init].
   Qed.
 
-  (** Initialization creates a well-formed database. *)
-  Lemma wf_init : forall ds sl, wf (init ds sl).
-  Proof. exact database_wf_init. Qed.
-
   Lemma database_public_ok_init : forall ds sl, database_public_ok (init ds sl).
   Proof.
     intros ds sl. unfold database_public_ok.
     split; [apply database_wf_init |].
     split; [apply database_idle_ok_init | reflexivity].
   Qed.
+
+  (** Initialization creates a well-formed database. *)
+  Lemma wf_init : forall ds sl, wf (init ds sl).
+  Proof. exact database_wf_init. Qed.
 
   (** Rebuilding keeps the database well formed. *)
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
@@ -6236,11 +6236,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - split; reflexivity.
   Qed.
 
-  (** Advancing clears the change flag without changing the view. *)
-  Lemma wf_advance : forall db, wf db ->
-    wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
-  Proof. exact database_wf_advance. Qed.
-
   Lemma database_public_ok_advance : forall db, database_public_ok db ->
     database_public_ok (advance db).
   Proof.
@@ -6248,6 +6243,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [exact (proj1 (database_wf_advance db Hbase)) |].
     split; [exact (database_idle_ok_advance db Hidle) | exact Hrank].
   Qed.
+
+  (** Advancing clears the change flag without changing the view. *)
+  Lemma database_owned_ok_advance : forall db,
+    database_owned_ok db -> database_owned_ok (advance db).
+  Proof.
+    intros db Howned. exact Howned.
+  Qed.
+
+  Lemma wf_advance : forall db, wf db ->
+    wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
+  Proof. exact database_wf_advance. Qed.
 
   (** Find returns the representative without changing the view. *)
   Lemma find_spec : forall i db, wf db ->
@@ -16598,24 +16604,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply database_row_weights_positive_db_repair_entry. exact Hpositive.
   Qed.
 
-
-  Lemma database_owned_ok_advance : forall db,
-    database_owned_ok db -> database_owned_ok (advance db).
-  Proof.
-    intros db Howned. unfold database_owned_ok in Howned |- *.
-    destruct Howned as
-      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
-    split; [apply database_row_store_ok_advance; exact Hstore |].
-    split; [apply database_history_alignment_advance; exact Halign |].
-    split; [apply database_active_history_coherent_advance; exact Hcoherent |].
-    split; [apply database_history_root_owner_advance; exact Howner |].
-    split; [apply database_history_key_shape_advance; exact Hshape |].
-    split; [apply database_history_codes_valid_advance; exact Hvalid |].
-    split; [apply database_history_key_ids_bounded_advance; exact Hbounded |].
-    split; [apply database_row_weight_conserved_advance; exact Hconserved |].
-    apply database_row_weights_positive_advance. exact Hpositive.
-  Qed.
 
   Lemma database_owned_ok_union : forall db i j,
     UnionFind.wf (db_forest db) -> database_owned_ok db ->
