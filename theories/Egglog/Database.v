@@ -3116,6 +3116,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply history_shape_keys_member. exact Hids.
   Qed.
 
+  Lemma database_key_space_pow2 : forall count arity,
+    ((count + 1) ^ N.of_nat arity <=
+      N.of_nat (2 ^ (arity * (N.to_nat (N.log2 count) + 1))))%N.
+  Proof.
+    intros count arity.
+    assert (Hbase :
+      (count + 1 <= N.of_nat (2 ^ (N.to_nat (N.log2 count) + 1)))%N).
+    { destruct count as [| p].
+      - cbn. lia.
+      - pose proof (proj2 (N.log2_spec (Npos p) ltac:(lia))) as Hlog.
+        replace (N.succ (N.log2 (Npos p))) with
+          (N.log2 (Npos p) + 1)%N in Hlog by lia.
+        rewrite Nat2N.inj_pow, Nat2N.inj_add, N2Nat.id.
+        lia. }
+    replace (arity * (N.to_nat (N.log2 count) + 1)) with
+      ((N.to_nat (N.log2 count) + 1) * arity) by lia.
+    rewrite Nat.pow_mul_r, Nat2N.inj_pow.
+    apply N.pow_le_mono_l. exact Hbase.
+  Qed.
+
   (** Historical keys in one root component have the same value positions. *)
   Definition database_history_key_shape (db : t) : Prop :=
     forall f k key r g args other s,
