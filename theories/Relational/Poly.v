@@ -13748,6 +13748,28 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + apply Forall_forall. intros p Hp. pose proof (poly_form_entry_bits f p Hp). lia.
   Qed.
 
+  (** Separate row maxima together cover the linearizer's combined entry width. *)
+  Lemma poly_assign_form_bits_row : forall f,
+    F.form_bits f <= C.row_key_bits (LCons X.t (coef f) REq (cst f)) +
+      C.row_bits (LCons X.t (coef f) REq (cst f)).
+  Proof.
+    intro f. unfold F.form_bits, C.row_key_bits, C.row_bits.
+    cbn [lhs rhs]. unfold X.bits.
+    generalize (Z.size_nat (cst f)) as b.
+    induction (coef f) as [|[x a] ps IH]; intro b; cbn [map fold_right].
+    - lia.
+    - cbn [fst snd]. specialize (IH b).
+      pose proof (Nat.le_max_l (Pos.size_nat (X.encode x))
+        (fold_right Nat.max 0 (map (fun p => Pos.size_nat (X.encode (fst p))) ps))).
+      pose proof (Nat.le_max_r (Pos.size_nat (X.encode x))
+        (fold_right Nat.max 0 (map (fun p => Pos.size_nat (X.encode (fst p))) ps))).
+      pose proof (Nat.le_max_l (Z.size_nat a)
+        (fold_right Nat.max b (map (fun p => Z.size_nat (snd p)) ps))).
+      pose proof (Nat.le_max_r (Z.size_nat a)
+        (fold_right Nat.max b (map (fun p => Z.size_nat (snd p)) ps))).
+      apply Nat.max_lub; lia.
+  Qed.
+
   (** The signed preparer returns exactly the existing canonical form row. *)
   Lemma poly_assign_prepared_form_row : forall f,
     LCons X.t (coef (poly_prepare_form X.encode f)) REq (cst (poly_prepare_form X.encode f)) =
