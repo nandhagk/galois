@@ -21564,6 +21564,92 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (cache_correct_slot_cache db s g perm Hcache Hmap Hbound Hslot_old).
   Qed.
 
+  Lemma cache_correct_union_raw : forall db i j,
+    database_cache_correct db -> database_cache_correct (union i j db).
+  Proof.
+    intros db i j Hcache. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db))
+      as [[roots |] forest]; [destruct roots |];
+      change (database_cache_correct db); exact Hcache.
+  Qed.
+
+  Lemma union_cache_fields_raw : forall db i j f k,
+    runtime_rows (db_runtime (union i j db)) = runtime_rows (db_runtime db) /\
+    runtime_slot_bound (db_runtime (union i j db)) =
+      runtime_slot_bound (db_runtime db) /\
+    runtime_function_slots (db_runtime (union i j db)) =
+      runtime_function_slots (db_runtime db) /\
+    slots (union i j db) = slots db /\
+    row_get f k (union i j db) = row_get f k db.
+  Proof.
+    intros db i j f k. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db))
+      as [[roots |] forest]; [destruct roots |];
+      repeat split; reflexivity.
+  Qed.
+
+  Lemma put_cache_correct_core : forall db f k o,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    database_cache_correct db ->
+    (forall before, row_get f (normal_key db k) db = Some before ->
+      slots_fit db f (length (normal_key db k ++ option_list before))) ->
+    slots_fit db f
+      (length (normal_key db k ++ option_list
+        (combine_output db f (row_get f (normal_key db k) db)
+          (option_map (normal_cell db) o)))) ->
+    database_cache_correct (put f k o db).
+  Proof.
+    intros db f k o Hmap Hbound Hgroups Hcache Hbefore Hfits.
+    unfold put.
+    remember (row_get f (normal_key db k) db) as previous eqn:Hprevious.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext :
+      RowMap.wf (runtime_rows (db_runtime next)) /\
+      runtime_slot_bound (db_runtime next) = N.of_nat (length (slots next)) /\
+      runtime_function_slots (db_runtime next) =
+        database_slot_groups 0 (prepare_slot_layouts (slots next)) PTrieCode.empty /\
+      database_cache_correct next /\ slots next = slots db /\
+      row_get f (normal_key db k) next = previous).
+    { subst next.
+      destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try (split; [exact Hmap |];
+          split; [exact Hbound |];
+          split; [exact Hgroups |];
+          split; [exact Hcache |];
+          split; [reflexivity |]; symmetry; exact Hprevious).
+      destruct (union_cache_fields_raw db a b f (normal_key db k))
+        as [Hrows [Hbound_raw [Hgroups_raw [Hslots_raw Hrow_raw]]]].
+      split; [now rewrite Hrows |].
+      split; [now rewrite Hbound_raw, Hslots_raw |].
+      split; [now rewrite Hgroups_raw, Hslots_raw |].
+      split; [now apply cache_correct_union_raw |].
+      split; [exact Hslots_raw |].
+      rewrite Hrow_raw. symmetry. exact Hprevious. }
+    destruct Hnext as [Hmap_next [Hbound_next [Hgroups_next
+      [Hcache_next [Hslots_next Hprevious_next]]]]].
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hcache_next |].
+      eapply row_replace_cache_correct_core;
+        [exact Hmap_next | exact Hbound_next | exact Hgroups_next |
+         exact Hcache_next | exact Hprevious_next | |].
+      + unfold slots_fit in *. now rewrite Hslots_next.
+      + intros old Hold. injection Hold as <-.
+        unfold slots_fit in *. rewrite Hslots_next.
+        apply Hbefore. reflexivity.
+    - eapply row_replace_cache_correct_core;
+        [exact Hmap_next | exact Hbound_next | exact Hgroups_next |
+         exact Hcache_next | exact Hprevious_next | |].
+      + unfold slots_fit in *. now rewrite Hslots_next.
+      + intros old Hold. discriminate Hold.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
