@@ -10501,6 +10501,35 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db Hrank. eapply slot_rank_ok_frame;
       [reflexivity | reflexivity | reflexivity | exact Hrank].
   Qed.
+  Lemma slot_rank_ok_slots_update : forall db b f u,
+    slot_rank_ok db -> slot_rank_ok (slots_update b f u db).
+  Proof.
+    intros db b f u Hrank. eapply slot_rank_ok_frame with (db := db);
+      [reflexivity | | apply slots_update_slots | exact Hrank].
+    apply slots_update_preserves. intros; reflexivity.
+  Qed.
+  Lemma slot_rank_ok_row_write : forall db f k o,
+    slot_rank_ok db -> slot_rank_ok (row_write f k o db).
+  Proof.
+    intros db f k o Hrank. eapply slot_rank_ok_frame with (db := db);
+      [reflexivity | reflexivity | reflexivity | exact Hrank].
+  Qed.
+  Lemma slot_rank_ok_register_row_uses : forall db f k o,
+    slot_rank_ok db -> slot_rank_ok (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hrank. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      eapply slot_rank_ok_frame with (db := db); try reflexivity; exact Hrank.
+  Qed.
+  Lemma slot_rank_ok_row_replace : forall db f k previous o,
+    slot_rank_ok db -> slot_rank_ok (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hrank; unfold row_replace;
+      apply slot_rank_ok_register_row_uses;
+      apply slot_rank_ok_row_write;
+      apply slot_rank_ok_slots_update;
+      [apply slot_rank_ok_slots_update; exact Hrank | exact Hrank].
+  Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
