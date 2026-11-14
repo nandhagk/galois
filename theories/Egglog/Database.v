@@ -13207,6 +13207,49 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     reflexivity.
   Qed.
 
+  (** Fixed historical aliases at either affected root have the destination key. *)
+  Lemma database_history_alignment_affected : forall db f old ck g args
+      old_key old_id ck_key ck_id key r,
+    database_history_alignment db ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    db_locate f old db = Some old -> db_locate f ck db = Some ck ->
+    (forall i, In (Id i) args -> repr db i = i) ->
+    ((forall i, In (Id i) old -> repr db i = i) -> old = ck) ->
+    (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r (db_row_store db) =
+       row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+         (db_row_store db) \/
+     row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r (db_row_store db) =
+       row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+         (db_row_store db)) ->
+    args = ck.
+  Proof.
+    intros db f old ck g args old_key old_id ck_key ck_id key r Halign
+      Hsource Hdest Hentry Hsource_loc Hdest_loc Hfixed Hsource_fixed Hroot.
+    pose proof (database_history_alignment_entry db Halign g args key r
+      Hentry Hfixed) as Hargs_loc.
+    unfold db_locate in Hsource_loc, Hdest_loc, Hargs_loc.
+    rewrite Hsource in Hsource_loc. rewrite Hdest in Hdest_loc.
+    rewrite Hentry in Hargs_loc.
+    change (PTrieCode.get
+      (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db)) (row_keys (db_row_store db)) = Some args) in Hargs_loc.
+    change (PTrieCode.get
+      (row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db)) (row_keys (db_row_store db)) = Some old) in Hsource_loc.
+    change (PTrieCode.get
+      (row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db)) (row_keys (db_row_store db)) = Some ck) in Hdest_loc.
+    destruct Hroot as [Hroot | Hroot].
+    - rewrite Hroot, Hsource_loc in Hargs_loc. injection Hargs_loc as ->.
+      apply Hsource_fixed. exact Hfixed.
+    - rewrite Hroot, Hdest_loc in Hargs_loc. now injection Hargs_loc.
+  Qed.
+
   Lemma database_history_alignment_repair_current : forall db f k,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (repair_current f k db).
