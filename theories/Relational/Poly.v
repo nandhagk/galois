@@ -15008,6 +15008,18 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + lia.
     - apply Nat.pow_le_mono_l. lia.
   Qed.
+  (** Wrapped and unavailable linearizations take the havoc branch. *)
+  Lemma T_poly_assign_fallback : forall x e P,
+    (forall f, F.lin_of e <> Some (f, NoWrap)) ->
+    (T_assign x e (Reached P) <=
+      F.T_lin_of e + T_havoc x (Reached P) + 16)%N.
+  Proof.
+    intros x e P Hfallback.
+    time_unfold T_assign.
+    destruct (F.lin_of e) as [[f wrapping]|] eqn:Hlinear;
+      [destruct wrapping|]; time_simpl; try lia.
+    exfalso. now apply (Hfallback f).
+  Qed.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
