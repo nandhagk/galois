@@ -45,20 +45,25 @@ End UnitValue.
 Module UnitIndex := Index UnitValue.
 Module UnitDatabase := Database UnitValue UnitIndex.
 
-(** Clearing only the occurrence store preserves public well-formedness but loses a use. *)
+(** Clearing the occurrence store loses well-formedness and its recorded use. *)
 Definition missing_use_initial := UnitDatabase.init [Decl 1%positive [] OId] [].
 Definition missing_use_row := snd (UnitDatabase.make 1%positive [] missing_use_initial).
 Definition missing_use_db :=
   database_set_row_store (db_row_store missing_use_initial) missing_use_row.
 
-Example missing_use_db_wf : UnitDatabase.wf missing_use_db.
+Example missing_use_db_not_wf : ~ UnitDatabase.wf missing_use_db.
 Proof.
-  unfold missing_use_db, missing_use_row.
-  change (UnitDatabase.wf (snd (UnitDatabase.make 1%positive [] missing_use_initial))).
-  apply UnitDatabase.wf_make.
-  - apply UnitDatabase.wf_init.
-  - intros j H; contradiction.
-  - intros perm H; contradiction.
+  intro Hwf.
+  pose proof (UnitDatabase.database_public_idle missing_use_db (proj1 Hwf)) as Hidle.
+  pose proof (UnitDatabase.database_idle_coverage missing_use_db Hidle
+    1%positive [] (Some (Id 1%positive)) 1%positive) as Hcover.
+  assert (Hrow : Model.row (UnitDatabase.view missing_use_db)
+    1%positive [] (Some (Id 1%positive))) by (vm_compute; reflexivity).
+  assert (Hid : UnitDatabase.row_ids [] (Some (Id 1%positive)) 1%positive)
+    by (unfold UnitDatabase.row_ids; cbn; auto).
+  specialize (Hcover Hrow Hid).
+  destruct Hcover as [x [k0 [_ [Huse _]]]].
+  vm_compute in Huse. contradiction.
 Qed.
 
 Example missing_use_db_observation :
