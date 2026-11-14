@@ -11919,6 +11919,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       congruence.
   Qed.
 
+  Lemma database_history_root_owner_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    ids db' = ids db -> database_history_root_owner db ->
+    database_history_root_owner db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hids Howner f k key r g args other s
+      Hfirst Hsecond Hroots.
+    rewrite Hhistory in Hfirst, Hsecond.
+    rewrite Hids in Hroots.
+    rewrite (row_root_same_links _ r (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    rewrite (row_root_same_links _ s (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    exact (Howner f k key r g args other s Hfirst Hsecond Hroots).
+  Qed.
+
   (** Repointing a root preserves a lookup when both affected labels agree. *)
   Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
@@ -14254,6 +14271,62 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - replace (move_row_identity f old ck db) with db.
       + exact Hlookup.
       + unfold move_row_identity. now rewrite Hsource, Hdest.
+  Qed.
+
+  Lemma database_history_root_owner_move : forall db f old ck,
+    database_row_store_ok db -> database_history_root_owner db ->
+    length old = length ck ->
+    database_history_root_owner (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Howner Hlength.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource; [| exact Howner].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest; [| exact Howner].
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some parent => parent | None => source_root end) = source_root).
+    { subst source_root depth store.
+      exact (database_history_root_fixed db f old old_key old_id Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some parent => parent | None => dest_root end) = dest_root).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id Hstore Hdest). }
+    replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+    fold store depth source_root dest_root.
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - apply database_history_root_owner_transport with (db := db);
+        try reflexivity; exact Howner.
+    - apply Pos.eqb_neq in Hsame.
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Hloses.
+      + eapply (database_history_root_owner_link db _ f old ck old_key old_id
+          ck_key ck_id source_root dest_root);
+          try exact Howner; try exact Hsource; try exact Hdest;
+          try reflexivity; try exact Hsame.
+        * exact Hsource_fixed.
+        * cbn [database_set_row_store db_row_store row_links].
+          rewrite PTrie.get_set_other by congruence. exact Hdest_fixed.
+        * left. split; [reflexivity |]. subst dest_root depth store.
+          now rewrite Hlength.
+      + eapply (database_history_root_owner_link db _ f old ck old_key old_id
+          ck_key ck_id dest_root source_root);
+          try exact Howner; try exact Hsource; try exact Hdest;
+          try reflexivity; try congruence.
+        * exact Hdest_fixed.
+        * cbn [database_set_row_store db_row_store row_links].
+          rewrite PTrie.get_set_other by congruence. exact Hsource_fixed.
+        * right. split; [| reflexivity]. subst dest_root depth store.
+          now rewrite Hlength.
   Qed.
 
   Lemma database_history_alignment_repair_entry_move : forall db f k o,
