@@ -11915,6 +11915,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - unfold incl. auto.
   Qed.
 
+  Lemma database_active_history_coherent_allocate_next : forall db,
+    database_row_store_ok db -> database_active_history_coherent db ->
+    database_active_history_coherent (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hstore Hcoherent f k o key r Hrow Hentry.
+    rewrite (db_locate_ids_mono db (allocate_id (N.succ_pos (ids db)) db)
+      Hstore) by (try reflexivity; rewrite allocate_next_ids; lia).
+    exact (Hcoherent f k o key r Hrow Hentry).
+  Qed.
+
   Lemma database_history_alignment_allocate_next : forall db,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (allocate_id (N.succ_pos (ids db)) db).
