@@ -17209,6 +17209,61 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         apply N.add_le_mono; [exact Hmult|lia].
   Qed.
 
+  (** The native prepared affine assignment fits one public work factor. *)
+  Lemma T_poly_assign_prepared_linear_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (T_assign_linear x prepared P <=
+      poly_assign_linear_public_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P f Hlinear prepared bits total work.
+    pose proof (T_poly_assign_linear_components x prepared P) as Hcomponents.
+    cbn zeta in Hcomponents.
+    destruct (T_poly_assign_prepared_row_public x e P f Hlinear)
+      as [Hrow Hnormal].
+    pose proof (T_poly_assign_source_map_public x e P) as Hmap.
+    pose proof (T_poly_assign_tail_initial_public x e P) as Hinitial.
+    destruct (T_poly_assign_prepared_branches_public x e P f Hlinear)
+      as [Hstep Hscan].
+    pose proof (poly_assign_work_floor x e P) as Hfloor.
+    cbn zeta in Hrow, Hnormal, Hmap, Hinitial, Hstep, Hscan, Hfloor.
+    replace (n P + terms (Reached P) + tsize e + length P + 3)
+      with (n P + (terms (Reached P) + tsize e) + length P + 3)
+      in Hmap, Hinitial, Hfloor by lia.
+    assert (Hsmall : (N.of_nat (length P + 1) <= N.of_nat work)%N).
+    { apply time_of_nat_le.
+      eapply Nat.le_trans; [|exact Hfloor]. lia. }
+    assert (Hpositive : (1 <= N.of_nat work)%N).
+    { eapply N.le_trans; [|exact Hsmall]. lia. }
+    assert (Hoverhead :
+      (12 * N.of_nat (length P + 1) + 32 <=
+        44 * N.of_nat work)%N).
+    { clear -Hsmall Hpositive. lia. }
+    eapply N.le_trans; [exact Hcomponents|].
+    replace (poly_assign_linear_public_factor * N.of_nat work)%N with
+      (256 * (X.c_key + 24) * N.of_nat work +
+        (X.c_key + 20) * N.of_nat work +
+        256 * RangeCore.poly_normal_row_factor * N.of_nat work +
+        3 * RangeCore.poly_raw_initial_factor * N.of_nat work +
+        poly_assign_step_public_factor * N.of_nat work +
+        poly_assign_scan_public_factor * N.of_nat work +
+        256 * N.of_nat work)%N.
+    2: { unfold poly_assign_linear_public_factor,
+        poly_assign_setup_public_factor. ring. }
+    fold prepared in Hrow, Hnormal, Hstep, Hscan.
+    replace ((length P + 3)^2 *
+      (n P + (terms (Reached P) + tsize e) + length P + 3) *
+      (nell (Reached P) + X.bits x + F.bits_e e + 1)^2)
+      with work in Hrow, Hmap, Hnormal, Hinitial, Hstep, Hscan
+      by reflexivity.
+    clear -Hrow Hmap Hnormal Hinitial Hstep Hscan Hoverhead Hpositive.
+    lia.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
