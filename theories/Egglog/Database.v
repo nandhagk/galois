@@ -11641,6 +11641,49 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * subst loser. contradiction.
   Qed.
 
+  Lemma row_root_link_after_fixed : forall fuel d r store store' loser winner,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    loser <> winner ->
+    (match PTrieCode.get winner (row_links store') with
+     | Some parent => parent | None => winner end) = winner ->
+    row_root d r store = loser -> S d <= fuel ->
+    row_root fuel r store' = winner.
+  Proof.
+    intros fuel d r store store' loser winner Hlinks Hneq Hfixed Hroot Hfuel.
+    rewrite row_root_parent_iter.
+    replace fuel with (S d + (fuel - S d)) by lia.
+    rewrite row_parent_iter_after_fixed.
+    - rewrite <- row_root_parent_iter.
+      eapply row_root_link_terminal; eassumption.
+    - rewrite <- row_root_parent_iter.
+      rewrite (row_root_link_terminal d r store store' loser winner
+        Hlinks Hneq Hfixed Hroot).
+      exact Hfixed.
+  Qed.
+
+  (** A path to the winning root does not pass through the fixed losing root. *)
+  Lemma row_root_link_winner : forall d r store store' loser winner,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links store) with
+     | Some parent => parent | None => loser end) = loser ->
+    row_root d r store = winner -> row_root d r store' = winner.
+  Proof.
+    induction d as [| d IH]; intros r store store' loser winner Hlinks Hneq Hfixed Hroot.
+    - exact Hroot.
+    - destruct (Pos.eq_dec r loser) as [-> | Hother].
+      + rewrite (row_root_fixed (S d) loser store Hfixed) in Hroot.
+        contradiction.
+      + cbn [row_root] in Hroot |- *.
+        rewrite Hlinks, PTrie.get_set_other by exact Hother.
+        destruct (PTrieCode.get r (row_links store)) as [parent |] eqn:Hparent.
+        * destruct (Pos.eqb parent r) eqn:Heq.
+          -- exact Hroot.
+          -- change (row_root d parent store' = winner).
+             apply IH with (store := store) (loser := loser); assumption.
+        * exact Hroot.
+  Qed.
+
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
     (before <= after)%N ->
     length k * (N.to_nat (N.log2 before) + 1) <=
