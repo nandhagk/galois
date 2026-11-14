@@ -22278,6 +22278,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply put_log_allocated_active; assumption.
   Qed.
 
+  Lemma inv_on_repair_log_allocated : forall db work f k,
+    inv_on db work ->
+    Forall (fun edge => allocated (db_repair_entry f k db) (fst edge) /\
+      allocated (db_repair_entry f k db) (snd edge))
+      (runtime_equalities (db_runtime (db_repair_entry f k db))).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hlog : Forall
+      (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db))).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hlog].
+    destruct (row_get f current db) as [output |]; [| exact Hlog].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hlog |].
+    pose proof (repair_current_log_allocated_active db work f current Hinv)
+      as Hrepair.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |];
+      destruct (PTrieCode.get (db_row_code f (normal_key db current))
+        (row_history (db_row_store (repair_current f current db))))
+        as [[new_key new_id] |]; exact Hrepair.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
