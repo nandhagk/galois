@@ -12584,6 +12584,37 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hfresh_store | exact Hfresh_align]).
   Qed.
 
+  Lemma database_active_history_coherent_make : forall db f k,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db ->
+    database_active_history_coherent (snd (make f k db)).
+  Proof.
+    intros db f k Hwf Hstore Halign Hcoherent.
+    pose proof (database_row_store_ok_allocate_next db Hstore) as Hfresh_store.
+    pose proof (database_active_history_coherent_allocate_next db Hstore Hcoherent)
+      as Hfresh_coherent.
+    assert (Hfresh_loc : forall key r,
+      PTrieCode.get (db_row_code f (normal_key db k))
+        (row_history (db_row_store (allocate_id (N.succ_pos (ids db)) db))) =
+        Some (key, r) ->
+      db_locate f (normal_key db k) (allocate_id (N.succ_pos (ids db)) db) =
+        Some (normal_key db k)).
+    { intros key r Hentry.
+      rewrite (db_locate_ids_mono db (allocate_id (N.succ_pos (ids db)) db)
+        Hstore) by (try reflexivity; rewrite allocate_next_ids; lia).
+      apply (database_history_alignment_entry db Halign f (normal_key db k)
+        key r Hentry).
+      rewrite normal_key_correct by exact Hwf.
+      apply canon_key_fixed. exact Hwf. }
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hcoherent;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh_coherent;
+      (apply database_active_history_coherent_row_replace;
+        [exact Hfresh_store | exact Hfresh_coherent | exact Hfresh_loc]).
+  Qed.
+
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
     database_row_store_ok db ->
     database_row_store_ok (row_replace f k previous o db).
