@@ -5945,6 +5945,87 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       rewrite Nat.mul_1_r; nia.
   Qed.
 
+  Local Lemma table_smod_time : forall rw wa a wb b,
+    (T_interval_smod rw (interval_clip wa a) (interval_clip wb b) <=
+      (600000 + 11000 * Scalar.c_scalar) * N.of_nat
+        ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+          interval_bits (interval_clip wb b) + 1) ^ 2))%N.
+  Proof.
+    intros rw wa a wb b.
+    set (ca := interval_clip wa a).
+    set (cb := interval_clip wb b).
+    set (s := Pos.to_nat rw + interval_bits ca + interval_bits cb + 1).
+    assert (Hpositive : (1 <= s)%nat) by (unfold s; lia).
+    assert (Hsquare_nat : (s <= s ^ 2)%nat)
+      by (clear - Hpositive; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hsquare_nat) as HsquareN.
+    assert (Hone_nat : (1 <= s ^ 2)%nat)
+      by (clear - Hpositive; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hone_nat) as Hone.
+    assert (Hsign_nat :
+      ((Pos.to_nat rw + interval_bits cb + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    pose proof (table_nat_to_N_le _ _ Hsign_nat) as HsignN.
+    pose proof (table_sign_time rw cb) as Hsign.
+    assert (Hsign_budget :
+      (T_interval_sign rw cb <= 300 * N.of_nat (s ^ 2))%N)
+      by (clear - Hsign HsignN; nia).
+    pose proof (table_smod_base_time rw wa a wb b) as Hbase.
+    change (T_interval_smod_base rw ca cb <=
+      (500000 + 10000 * Scalar.c_scalar) * N.of_nat (s ^ 2))%N in Hbase.
+    pose proof (table_smod_base_raw_bits rw ca cb) as Hbase_bits.
+    rewrite Nat.pow_2_r in Hsign_budget, Hbase, Hone.
+    unfold T_interval_smod.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (interval_sign rw cb) as [sb|] eqn:Hsign_value;
+      destruct (interval_finite_helper cb) as [[lo hi]|] eqn:Hfinite;
+      time_cbn_all.
+    all: try (clear - Hsign_budget Hbase Hone;
+      rewrite Nat.mul_1_r; nia).
+    all: try (destruct sb; time_cbn_all;
+      clear - Hsign_budget Hbase Hone;
+      rewrite Nat.mul_1_r; nia).
+    destruct sb; time_cbn_all;
+      try (clear - Hsign_budget Hbase Hone;
+        rewrite Nat.mul_1_r; nia).
+    destruct (table_finite_bits cb lo hi Hfinite) as [Hlo_bits Hhi_bits].
+    pose proof (Std.Z.T_ltb_le 0 lo) as Hguard.
+    pose proof (Std.Z.T_sub_le hi 1) as Hsub.
+    pose proof (table_integer_sub_bits hi 1) as Hsub_bits.
+    assert (Hmeet_nat :
+      (interval_bits (interval_smod_base rw ca cb) +
+        interval_bits (I (Fin 0) (Fin (hi - 1))) + 1 <= 270 * s)%nat).
+    { cbn [interval_bits Z.size_nat Nat.max].
+      cbn [Z.size_nat Pos.size_nat] in Hsub_bits.
+      unfold s. lia. }
+    pose proof (table_nat_to_N_le _ _ Hmeet_nat) as HmeetN.
+    pose proof (Scalar.T_interval_meet_le
+      (interval_smod_base rw ca cb) (I (Fin 0) (Fin (hi - 1)))) as Hmeet.
+    replace (s * (s * 1))%nat with (s ^ 2)%nat in HsquareN
+      by (rewrite Nat.pow_2_r; nia).
+    assert (Hmeet_budget :
+      (Scalar.T_interval_meet (interval_smod_base rw ca cb)
+        (I (Fin 0) (Fin (hi - 1))) <=
+        270 * Scalar.c_scalar * N.of_nat (s ^ 2))%N)
+      by (clear - Hmeet HmeetN HsquareN;
+        repeat rewrite Nat2N.inj_add in *;
+        rewrite Nat2N.inj_mul in HmeetN; nia).
+    assert (Hguard_nat :
+      (Z.size_nat lo + Z.size_nat hi + 1 <= 3 * s)%nat)
+      by (unfold s; lia).
+    pose proof (table_nat_to_N_le _ _ Hguard_nat) as HguardN.
+    repeat rewrite Nat2N.inj_add in Hguard, Hsub, HguardN.
+    rewrite Nat2N.inj_mul in HguardN.
+    cbn [Z.size_nat Pos.size_nat] in Hguard, Hsub.
+    assert (Hguard_budget :
+      (Z.T_ltb 0 lo + Z.T_sub hi 1 <= 100 * N.of_nat (s ^ 2))%N)
+      by (clear - Hguard Hsub HguardN HsquareN Hone; nia).
+    rewrite Nat.pow_2_r in Hmeet_budget, Hguard_budget.
+    destruct (0 <? lo)%Z; time_cbn_all;
+      clear - Hsign_budget Hbase Hmeet_budget Hguard_budget Hone;
+      rewrite Nat.mul_1_r; nia.
+  Qed.
+
 
   Local Lemma table_ashr_small_time : forall rw wa a wb b,
     (T_interval_ashr_small rw (interval_clip wa a) (interval_clip wb b) <=
