@@ -16960,6 +16960,94 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  (** Three charged phases and a dispatch step fit their summed allowance. *)
+  Lemma karr_entail_clock_sum : forall a b c x y z work : N,
+    (1 <= work)%N -> (a <= x * work)%N -> (b <= y * work)%N ->
+    (c <= z * work)%N ->
+    (1 + (a + b + c) <= (x + y + z + 1) * work)%N.
+  Proof.
+    intros a b c x y z work Hwork Ha Hb Hc.
+    replace ((x + y + z + 1) * work)%N with
+      (x * work + y * work + z * work + work)%N by ring.
+    lia.
+  Qed.
+
+  (** Candidate production and checking fit one public elimination allowance. *)
+  Lemma T_karr_entail_cert_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_entail_cert P c <=
+      (2 * (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor) +
+        256 * (C.c_lc + 1) + 64 +
+        16 * karr_dense_factor + 16384 * 64 + 1024 * 64 +
+        256 * C.c_lc + 64) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    pose proof (T_karr_contradiction_public P c HP) as Hcontradiction.
+    pose proof (T_karr_target_certificate_public P c HP Hc) as Htarget.
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))) in *.
+    set (basis_factor := (8 * karr_variables_factor + 33554500 +
+      32 * karr_seed_factor + 8 * karr_prepare_factor)%N).
+    set (contradiction_factor :=
+      (basis_factor + 256 * (C.c_lc + 1) + 64)%N).
+    set (target_factor := (basis_factor + 16 * karr_dense_factor +
+      16384 * 64 + 1024 * 64)%N).
+    change (T_contradiction P <= contradiction_factor * work)%N
+      in Hcontradiction.
+    change (T_target_certificate P c <= target_factor * work)%N in Htarget.
+    replace ((2 * (8 * karr_variables_factor + 33554500 +
+      32 * karr_seed_factor + 8 * karr_prepare_factor) +
+      256 * (C.c_lc + 1) + 64 + 16 * karr_dense_factor +
+      16384 * 64 + 1024 * 64 + 256 * C.c_lc + 64) * work)%N with
+      ((contradiction_factor + target_factor + 256 * C.c_lc + 64) * work)%N
+      by (unfold contradiction_factor, target_factor, basis_factor; ring).
+    assert (Hwork : (1 <= work)%N).
+    { unfold work, elimination_work.
+      set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+      set (v := ellB d (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+      assert (Hd : 2 <= d).
+      { unfold d, n. cbn [rows_of length]. lia. }
+      assert (Hv : 1 <= v) by (unfold v; lia).
+      fold d v. cbn [Nat.pow]. nia. }
+    time_unfold T_entail_cert.
+    destruct (contradiction P) as [ms|] eqn:Hcontradiction_result; time_simpl.
+    - pose proof (T_karr_entail_candidate_checker_public P c
+        (Cert ms 1 false) HP Hc
+        ltac:(rewrite Hcontradiction_result; reflexivity)) as Hchecker.
+      destruct (C.check_entails P c (Cert ms 1 false)); time_simpl.
+      + eapply N.le_trans with (m :=
+          ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+        * eapply karr_entail_clock_sum;
+            [exact Hwork|exact Hcontradiction|lia|exact Hchecker].
+        * apply N.mul_le_mono_r. lia.
+      + eapply N.le_trans with (m :=
+          ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+        * eapply karr_entail_clock_sum;
+            [exact Hwork|exact Hcontradiction|lia|exact Hchecker].
+        * apply N.mul_le_mono_r. lia.
+    - destruct (target_certificate P c) as [k|] eqn:Hcandidate; time_simpl.
+      + pose proof (T_karr_entail_candidate_checker_public P c k HP Hc
+          ltac:(rewrite Hcontradiction_result; exact Hcandidate)) as Hchecker.
+        destruct (C.check_entails P c k); time_simpl.
+        * eapply N.le_trans with (m :=
+            ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+          -- eapply karr_entail_clock_sum;
+               [exact Hwork|exact Hcontradiction|exact Htarget|exact Hchecker].
+          -- apply N.mul_le_mono_r. lia.
+        * eapply N.le_trans with (m :=
+            ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+          -- eapply karr_entail_clock_sum;
+               [exact Hwork|exact Hcontradiction|exact Htarget|exact Hchecker].
+          -- apply N.mul_le_mono_r. lia.
+      + eapply N.le_trans with (m :=
+          ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+        * eapply karr_entail_clock_sum;
+            [exact Hwork|exact Hcontradiction|exact Htarget|lia].
+        * apply N.mul_le_mono_r. lia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
