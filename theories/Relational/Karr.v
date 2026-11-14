@@ -13186,6 +13186,20 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
   Qed.
 
+  (** Contradiction detection builds one basis and scans it for an empty row. *)
+  Lemma T_karr_contradiction_components : forall P,
+    (T_contradiction P <= T_variables P +
+      T_equality_basis (variables P) P +
+      T_empty_certificate P (equality_basis (variables P) P) +
+      64 * N.of_nat (length P + 1))%N.
+  Proof.
+    intros P. time_unfold T_contradiction.
+    set (coordinates := T_variables P) in *.
+    set (basis := T_equality_basis (variables P) P) in *.
+    set (scan := T_empty_certificate P (equality_basis (variables P) P)) in *.
+    clearbody coordinates basis scan. lia.
+  Qed.
+
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
   Lemma input_minors_bits : forall P z,
     In z (input_minors P) ->
