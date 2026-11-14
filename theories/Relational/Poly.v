@@ -15575,6 +15575,126 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold budget in Hframe. clear -Hframe Huntag_total. lia.
   Qed.
 
+  (** Finite form support pays for the prepared head's checker measure. *)
+  Lemma poly_assign_head_measure_numeric : forall total rows support sourcebits keybits formbits,
+    support <= total -> support <= 2^formbits ->
+    1 <= sourcebits -> 1 <= keybits ->
+    (total + rows) * (sourcebits + 1) +
+      2 * ((2 * support + 2) *
+        (keybits + 3 * formbits + 5) +
+        sourcebits + Nat.log2 rows + 2) <=
+      4 * (total + rows + 3) *
+        (sourcebits + keybits + formbits + 1)^2.
+  Proof.
+    intros total rows support sourcebits keybits formbits Htotal Hspace Hsource Hkey.
+    set (volume := total + rows + 3).
+    set (width := sourcebits + keybits + formbits + 1).
+    assert (Hwidth : 3 <= width) by (unfold width; lia).
+    assert (Hvolume : support + 3 <= volume) by (unfold volume; lia).
+    assert (Hsource_mass : (total + rows) * (sourcebits + 1) <=
+      volume * width^2).
+    { apply Nat.mul_le_mono; [unfold volume; lia|].
+      cbn [Nat.pow]. unfold width. nia. }
+    assert (Hform_mass : 4 * (support + 1) *
+      (keybits + 3 * formbits + 5) <= 2 * volume * width^2).
+    { assert (Hbasic : 2 * (support + 1) *
+        (keybits + 3 * formbits + 5) <= (support + 3) * width^2).
+      { destruct formbits as [|[|[|formbits]]].
+        - cbn [Nat.pow] in Hspace.
+          destruct support as [|[|support]]; try lia;
+            unfold width; cbn [Nat.pow]; nia.
+        - cbn [Nat.pow] in Hspace.
+          destruct support as [|[|[|support]]]; try lia;
+            unfold width; cbn [Nat.pow]; nia.
+        - cbn [Nat.pow] in Hspace.
+          destruct support as [|[|[|[|[|support]]]]]; try lia;
+            unfold width; cbn [Nat.pow]; nia.
+        - assert (Hlarge : 6 <= width) by (unfold width; lia).
+          assert (Hfactor : keybits + 3 * S (S (S formbits)) + 5 <= 3 * width)
+            by (unfold width; lia).
+          assert (Hfactor_width : 6 * width <= width^2)
+            by (cbn [Nat.pow]; nia).
+          eapply Nat.le_trans with (m := (support + 1) * (6 * width)).
+          + replace (2 * (support + 1) *
+              (keybits + 3 * S (S (S formbits)) + 5)) with
+              ((support + 1) * (2 *
+                (keybits + 3 * S (S (S formbits)) + 5))) by ring.
+            apply Nat.mul_le_mono_l. lia.
+          + eapply Nat.le_trans with (m := (support + 1) * width^2).
+            * apply Nat.mul_le_mono_l. exact Hfactor_width.
+            * apply Nat.mul_le_mono_r. lia. }
+      replace (4 * (support + 1) * (keybits + 3 * formbits + 5)) with
+        (2 * (2 * (support + 1) * (keybits + 3 * formbits + 5))) by ring.
+      replace (2 * volume * width^2) with (2 * (volume * width^2)) by ring.
+      apply Nat.mul_le_mono_l.
+      eapply Nat.le_trans; [exact Hbasic|].
+      apply Nat.mul_le_mono_r. exact Hvolume. }
+    assert (Hlog : Nat.log2 rows <= rows).
+    { pose proof (Nat.log2_le_lin rows ltac:(lia)). lia. }
+    assert (Htail_mass : 2 * (sourcebits + Nat.log2 rows + 2) <=
+      volume * width^2).
+    { assert (Htwowide : 2 * width <= width^2)
+        by (cbn [Nat.pow]; nia).
+      assert (Htwobits : 2 <= width^2)
+        by (cbn [Nat.pow]; nia).
+      eapply Nat.le_trans with (m := 2 * (width + rows)); [lia|].
+      replace (2 * (width + rows)) with (2 * width + 2 * rows) by ring.
+      eapply Nat.le_trans with (m := width^2 + rows * width^2).
+      - apply Nat.add_le_mono; [exact Htwowide|].
+        replace (2 * rows) with (rows * 2) by ring.
+        apply Nat.mul_le_mono_l. exact Htwobits.
+      - replace (width^2 + rows * width^2) with ((rows + 1) * width^2) by ring.
+        apply Nat.mul_le_mono_r. unfold volume; lia. }
+    clear -Hsource_mass Hform_mass Htail_mass.
+    replace ((total + rows) * (sourcebits + 1) +
+      2 * ((2 * support + 2) * (keybits + 3 * formbits + 5) +
+        sourcebits + Nat.log2 rows + 2)) with
+      ((total + rows) * (sourcebits + 1) +
+        4 * (support + 1) * (keybits + 3 * formbits + 5) +
+        2 * (sourcebits + Nat.log2 rows + 2)) by ring.
+    fold volume width. lia.
+  Qed.
+
+  (** Distinct raw form coordinates fit their encoded key space. *)
+  Lemma poly_assign_form_key_space : forall f,
+    NoDup (map fst (coef f)) -> length (coef f) <= 2^F.form_bits f.
+  Proof.
+    intros f Hform.
+    rewrite <- (length_map fst (coef f)).
+    apply AssignCore.AssignKeySupport.poly_signed_key_width_count.
+    - exact Hform.
+    - apply Forall_forall. intros y Hy.
+      apply in_map_iff in Hy as [p [Heq Hp]]. subst y.
+      pose proof (poly_form_entry_bits f p Hp). unfold X.bits in *. lia.
+  Qed.
+
+  (** The head checker measure fits four public quadratic work units. *)
+  Lemma poly_assign_head_measure_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    NoDup (map fst (coef f)) ->
+    (terms (Reached P) + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef f) + 2) *
+        (X.bits x + 3 * F.form_bits f + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2) <=
+      4 * (n P + terms (Reached P) + tsize e + length P + 3) *
+        (nell (Reached P) + X.bits x + F.bits_e e + 1)^2.
+  Proof.
+    intros x e P f Hlinear Hform.
+    destruct (F.lin_of_size e f NoWrap Hlinear) as [Hlength Hbits].
+    pose proof (poly_assign_form_key_space f Hform) as Hspace.
+    pose proof (poly_assign_head_measure_numeric
+      (terms (Reached P) + tsize e) (length P) (length (coef f))
+      (nell (Reached P)) (X.bits x) (F.form_bits f)
+      ltac:(lia) Hspace ltac:(unfold nell; lia)
+      ltac:(pose proof (Pos.size_nat_pos (X.encode x)); unfold X.bits; lia))
+      as Hnumeric.
+    cbn [F.wrap_bits] in Hbits.
+    eapply Nat.le_trans; [|eapply Nat.le_trans; [exact Hnumeric|]].
+    { apply Nat.add_le_mono_r, Nat.mul_le_mono_r. lia. }
+    apply Nat.mul_le_mono; [lia|].
+    apply Nat.pow_le_mono_l. lia.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   (** An unreachable assignment performs only the outer reachability test. *)
   Lemma T_poly_assign_unreached : forall x e,
