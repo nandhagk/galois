@@ -16077,6 +16077,52 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.mul_le_mono_l. lia.
   Qed.
 
+  Definition karr_hull_checker_charge (dim bits : nat) : nat :=
+    (2 * dim + 1) * (dim + 1) *
+      (bits + (bits + 1) * (bits + 1) + 1) +
+    (bits + 1) * ((dim + 1) * (bits + bits + 1) +
+      bits + bits + Nat.log2 dim + 2).
+
+  (** Both checked hull certificates pay the same public checker charge. *)
+  Lemma T_karr_hull_checkers_bounded : forall xs a b r dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    let zs := skipn (S (length xs)) (kcoeff r) in
+    let c := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs) in
+    (C.T_check_entails a c (Cert (firstn (length a) (kweight r)) 1 false) +
+     C.T_check_entails b c (Cert (skipn (length a) (kweight r)) 1 false) <=
+      2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits))%N.
+  Proof.
+    intros xs a b r dim bits Hpositive Hxs Hcount Hkeys Ha Hb Henv zs c.
+    destruct (karr_hull_checked_row_envelope xs a b r bits Hpositive
+      Hkeys Henv) as [Hclen [Hckey [Hcbits [Hfirstlen
+        [Hskiplen [Hfirstbits Hskipbits]]]]]].
+    assert (Halen : length a <= dim) by lia.
+    assert (Hblen : length b <= dim) by lia.
+    assert (Hcertscale : Z.size_nat 1 <= bits).
+    { change (1 <= bits). exact Hpositive. }
+    pose proof (karr_checker_envelope a c
+      (Cert (firstn (length a) (kweight r)) 1 false)
+      dim bits bits bits Halen Ha ltac:(cbn [mults]; lia)
+      ltac:(cbn [mults]; exact Hfirstbits)
+      ltac:(eapply Nat.le_trans; [exact Hclen|exact Hxs])
+      Hckey Hcbits ltac:(cbn [scale]; exact Hcertscale)) as Hleft.
+    pose proof (karr_checker_envelope b c
+      (Cert (skipn (length a) (kweight r)) 1 false)
+      dim bits bits bits Hblen Hb ltac:(cbn [mults]; lia)
+      ltac:(cbn [mults]; exact Hskipbits)
+      ltac:(eapply Nat.le_trans; [exact Hclen|exact Hxs])
+      Hckey Hcbits ltac:(cbn [scale]; exact Hcertscale)) as Hright.
+    unfold karr_hull_checker_charge.
+    eapply N.le_trans; [apply N.add_le_mono; [exact Hleft|exact Hright]|].
+    ring_simplify. apply N.le_refl.
+  Qed.
+
   (** Adding one conclusion cannot introduce more than its declared variables. *)
   Lemma karr_target_variables_public : forall P c,
     length (variables (c :: P)) <=
