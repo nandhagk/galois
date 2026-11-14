@@ -1865,6 +1865,57 @@ Proof.
         rewrite (karr_nth_error_value _ _ _ Hget). now left.
 Qed.
 
+(** Every higher-order minor of selected rows occurs with its pivot-order sign. *)
+Lemma karr_signed_minors_partition : forall width original selected rest columns,
+  2 <= length selected -> length selected = length columns ->
+  Permutation original (selected ++ rest) ->
+  karr_increasing columns ->
+  Forall (fun column => column < width) columns ->
+  In (karr_determinant (length selected) (karr_submatrix columns selected))
+    (karr_signed_minors width original).
+Proof.
+  intros width original selected rest columns Horder Hsquare Hpartition
+    Hincreasing Hbound.
+  destruct (karr_choose_partition original selected rest Hpartition)
+    as [ordered [Hordered Hperm]].
+  assert (Hcolumns : In columns
+      (karr_choose (length columns) (seq 0 width))).
+  { apply karr_choose_seq_increasing; [exact Hincreasing|].
+    eapply Forall_impl; [|exact Hbound].
+    intros column Hcolumn. cbn in Hcolumn. lia. }
+  assert (Hcolumn_count : length columns <= width).
+  { pose proof (karr_choose_count_le nat (seq 0 width)
+      (length columns) columns Hcolumns) as Hcount.
+    now rewrite length_seq in Hcount. }
+  assert (Hrow_count : length selected <= length original).
+  { pose proof (Permutation_length Hpartition) as Hcount.
+    rewrite length_app in Hcount. lia. }
+  assert (Hselected_perm : Permutation
+      (karr_submatrix columns selected) (karr_submatrix columns ordered)).
+  { unfold karr_submatrix. apply Permutation_map.
+    now apply Permutation_sym. }
+  destruct (length selected) as [|[|order]] eqn:Hrows; try lia.
+  destruct (karr_determinant_permutation _ _ Hselected_perm
+    (S order) [] [] (length columns)
+    ltac:(unfold karr_submatrix; rewrite length_map; cbn [length];
+      rewrite Hrows; lia)
+    (karr_submatrix_width columns selected)) as [sign [Hsign Hdet]].
+  cbn [app] in Hdet. rewrite !app_nil_r in Hdet.
+  unfold karr_signed_minors. apply in_flat_map.
+  exists (S (S order)). split.
+  - apply in_seq.
+    assert (Hmin : S (S order) <= Nat.min (length original) width)
+      by (apply Nat.min_glb; lia).
+    lia.
+  - apply in_flat_map. exists ordered. split.
+    + exact Hordered.
+    + apply in_flat_map. exists columns. split.
+      * rewrite <- Hsquare in Hcolumns. exact Hcolumns.
+      * cbn [length]. destruct Hsign as [Hsign|Hsign].
+        -- left. rewrite Hdet, Hsign. ring.
+        -- right. left. rewrite Hdet, Hsign. ring.
+Qed.
+
 (** A certificate unit vector has the declared source-row width. *)
 Lemma karr_unit_length : forall total index, length (karr_unit total index) = total.
 Proof.
