@@ -3213,6 +3213,180 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     clos_refl_sym_trans positive
       (fun x y => PTrieCode.get x (row_links (db_row_store db)) = Some y) a b.
 
+  (** Each historical row component has a current key and its own historical name. *)
+  Definition database_history_complete (db : t) : Prop :=
+    forall f k key r root,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      database_history_connected db r root ->
+      (match PTrieCode.get root (row_links (db_row_store db)) with
+       | Some parent => parent | None => root end) = root ->
+      exists current s,
+        PTrieCode.get root (row_keys (db_row_store db)) = Some current /\
+        PTrieCode.get (db_row_code f current) (row_history (db_row_store db)) =
+          Some ((f, current), s) /\
+        database_history_connected db s root.
+
+  Lemma database_history_complete_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    row_keys (db_row_store db') = row_keys (db_row_store db) ->
+    database_history_complete db -> database_history_complete db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hkeys Hcomplete
+      f k key r root Hentry Hconnected Hfixed.
+    rewrite Hhistory in Hentry. rewrite Hlinks in Hfixed.
+    assert (Hconnected_old : database_history_connected db r root).
+    { unfold database_history_connected in Hconnected |- *.
+      now rewrite Hlinks in Hconnected. }
+    destruct (Hcomplete f k key r root Hentry Hconnected_old Hfixed)
+      as [current [s [Hkey [Hself Hself_connected]]]].
+    exists current, s. split; [now rewrite Hkeys |].
+    split; [now rewrite Hhistory |].
+    unfold database_history_connected in Hself_connected |- *.
+    now rewrite Hlinks.
+  Qed.
+
+  Lemma database_history_complete_init : forall ds sl,
+    database_history_complete (init ds sl).
+  Proof.
+    intros ds sl f k key r root Hentry _ _.
+    cbn [init db_row_store row_history] in Hentry.
+    rewrite PTrie.get_empty in Hentry. discriminate Hentry.
+  Qed.
+
+  Lemma database_history_complete_advance : forall db,
+    database_history_complete db -> database_history_complete (advance db).
+  Proof.
+    intros db Hcomplete. exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_allocate_id : forall db i,
+    database_history_complete db -> database_history_complete (allocate_id i db).
+  Proof.
+    intros db i Hcomplete. exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_union : forall db i j,
+    database_history_complete db -> database_history_complete (union i j db).
+  Proof.
+    intros db i j Hcomplete. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [[pair |] forest];
+      [destruct pair |]; exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_pop : forall db x db',
+    database_history_complete db -> db_pop_loser db = Some (x, db') ->
+    database_history_complete db'.
+  Proof.
+    intros db x db' Hcomplete Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| first rest];
+      [discriminate Hpop |].
+    injection Hpop as Hname Hstate. subst x db'.
+    eapply database_history_complete_transport with (db := db);
+      try reflexivity; exact Hcomplete.
+  Qed.
+
+  Lemma database_history_connected_root : forall db d r,
+    database_history_connected db r (row_root d r (db_row_store db)).
+  Proof.
+    intros db d. induction d as [| d IH]; intro r.
+    - apply rst_refl.
+    - cbn [row_root].
+      destruct (PTrieCode.get r (row_links (db_row_store db)))
+        as [parent |] eqn:Hparent; [| apply rst_refl].
+      destruct (Pos.eqb parent r); [apply rst_refl |].
+      eapply rst_trans.
+      + apply rst_step. exact Hparent.
+      + exact (IH parent).
+  Qed.
+
+  (** Every owner of a recorded occurrence belongs to the allocated identifier interval. *)
+  Definition database_uses_allocated (db : t) : Prop :=
+    forall x e, In e (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
+      allocated db x.
+
+  Lemma database_unallocated_bucket_empty : forall db x,
+    database_uses_allocated db -> ~ allocated db x ->
+    DatabaseUses.bucket x (row_uses (db_row_store db)) = [].
+  Proof.
+    intros db x Hallocated Hfresh.
+    destruct (DatabaseUses.bucket x (row_uses (db_row_store db)))
+      as [| e rest] eqn:Hbucket; [reflexivity |].
+    exfalso. apply Hfresh. apply (Hallocated x e). rewrite Hbucket. now left.
+  Qed.
+
+  Lemma database_uses_allocated_transport : forall db db',
+    row_uses (db_row_store db') = row_uses (db_row_store db) ->
+    (ids db <= ids db')%N ->
+    database_uses_allocated db -> database_uses_allocated db'.
+  Proof.
+    intros db db' Huses Hids Hallocated x e Hin. rewrite Huses in Hin.
+    unfold allocated. eapply N.le_trans; [exact (Hallocated x e Hin) | exact Hids].
+  Qed.
+
+  Lemma database_uses_allocated_init : forall ds sl,
+    database_uses_allocated (init ds sl).
+  Proof.
+    intros ds sl x e Hin. unfold DatabaseUses.bucket in Hin.
+    cbn [init db_row_store row_uses] in Hin.
+    rewrite DatabaseUseMap.get_empty in Hin. contradiction.
+  Qed.
+
+  Lemma database_uses_allocated_advance : forall db,
+    database_uses_allocated db -> database_uses_allocated (advance db).
+  Proof. intros db Hallocated. exact Hallocated. Qed.
+
+  Lemma database_uses_allocated_union : forall db i j,
+    database_uses_allocated db -> database_uses_allocated (union i j db).
+  Proof.
+    intros db i j Hallocated. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [[roots |] forest];
+      [destruct roots |]; exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_allocate_id : forall db i,
+    (ids db <= Npos i)%N -> database_uses_allocated db ->
+    database_uses_allocated (allocate_id i db).
+  Proof.
+    intros db i Hids Hallocated.
+    eapply database_uses_allocated_transport with (db := db).
+    - reflexivity.
+    - exact Hids.
+    - exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_allocate_next : forall db,
+    database_uses_allocated db ->
+    database_uses_allocated (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hallocated. apply database_uses_allocated_allocate_id.
+    - rewrite N.succ_pos_spec. lia.
+    - exact Hallocated.
+  Qed.
+
+  (** A pop moves only existing occurrences to the allocated root returned by find. *)
+  Lemma database_uses_allocated_pop : forall db x db',
+    (forall i, allocated db i ->
+      allocated db (fst (UnionFindCode.find i (db_forest db)))) ->
+    database_uses_allocated db -> db_pop_loser db = Some (x, db') ->
+    database_uses_allocated db'.
+  Proof.
+    intros db x db' Hfind Hallocated Hpop. unfold db_pop_loser in Hpop.
+    destruct (runtime_queue (db_runtime db)) as [| first rest];
+      [discriminate Hpop |].
+    injection Hpop as Hname Hstate. subst x db'.
+    intros y e Hin.
+    change (In e (DatabaseUses.bucket y
+      (DatabaseUses.transfer first (fst (UnionFindCode.find first (db_forest db)))
+        (row_uses (db_row_store db))))) in Hin.
+    change (allocated db y).
+    apply DatabaseUsesFacts.bucket_transfer_member in Hin.
+    destruct Hin as [[Hold _] | [-> Hsource]].
+    - exact (Hallocated y e Hold).
+    - apply Hfind. exact (Hallocated first e Hsource).
+  Qed.
+
   (** Each root weight is charged to distinct historical row codes in its component. *)
   Definition database_row_weight_conserved (db : t) : Prop :=
     forall f k key r,
@@ -3233,7 +3407,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_active_history_coherent db /\ database_history_root_owner db /\
     database_history_key_shape db /\ database_history_codes_valid db /\
     database_history_key_ids_bounded db /\
-    database_row_weight_conserved db /\ database_row_weights_positive db.
+    database_row_weight_conserved db /\ database_row_weights_positive db /\
+    database_history_complete db /\ database_uses_allocated db.
+
+  Lemma database_owned_history_complete : forall db,
+    database_owned_ok db -> database_history_complete db.
+  Proof.
+    intros db Howned. unfold database_owned_ok in Howned. tauto.
+  Qed.
+
+  Lemma database_owned_uses_allocated : forall db,
+    database_owned_ok db -> database_uses_allocated db.
+  Proof.
+    intros db Howned. unfold database_owned_ok in Howned. tauto.
+  Qed.
 
   Lemma database_row_weight_conserved_entry : forall db,
     database_row_weight_conserved db -> forall f k key r,
@@ -3922,7 +4109,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply database_history_codes_valid_init |].
     split; [apply database_history_key_ids_bounded_init |].
     split; [apply database_row_weight_conserved_init |].
-    apply database_row_weights_positive_init.
+    split; [apply database_row_weights_positive_init |].
+    split; [apply database_history_complete_init |].
+    apply database_uses_allocated_init.
   Qed.
 
   Lemma database_history_alignment_advance : forall db,
@@ -4227,6 +4416,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hwf. exact (proj2 (wf_history db Hwf)).
   Qed.
   Definition wf (db : t) : Prop := database_public_ok db /\ database_owned_ok db.
+
+  Lemma wf_history_complete : forall db, wf db -> database_history_complete db.
+  Proof.
+    intros db Hwf. apply database_owned_history_complete. exact (proj2 Hwf).
+  Qed.
+
+  Lemma wf_uses_allocated : forall db, wf db -> database_uses_allocated db.
+  Proof.
+    intros db Hwf. apply database_owned_uses_allocated. exact (proj2 Hwf).
+  Qed.
 
   Lemma wf_base : forall db, wf db -> database_wf db.
   Proof. intros db Hwf. exact (database_public_base db (proj1 Hwf)). Qed.
@@ -6996,7 +7195,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
     split; [apply database_row_store_ok_union; exact Hstore |].
     split; [apply database_history_alignment_union; assumption |].
     split; [apply database_active_history_coherent_union; exact Hcoherent |].
@@ -7005,7 +7204,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply database_history_codes_valid_union; exact Hvalid |].
     split; [apply database_history_key_ids_bounded_union; exact Hbounded |].
     split; [apply database_row_weight_conserved_union; exact Hconserved |].
-    apply database_row_weights_positive_union. exact Hpositive.
+    split; [apply database_row_weights_positive_union; exact Hpositive |].
+    split; [apply database_history_complete_union; exact Hcomplete |].
+    apply database_uses_allocated_union. exact Huses_allocated.
   Qed.
 
   Lemma database_wf_union : forall i j db, database_wf db ->
@@ -12626,7 +12827,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hwf Howned.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
     unfold database_owned_ok.
     split; [apply database_row_store_ok_allocate_next; exact Hstore |].
     split; [eapply database_history_alignment_allocate_next; eassumption |].
@@ -12638,7 +12839,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         [reflexivity | exact Hvalid]. }
     split; [apply database_history_key_ids_bounded_allocate_next; exact Hbounded |].
     split; [apply database_row_weight_conserved_allocate_next; assumption |].
-    apply database_row_weights_positive_allocate_next. exact Hpositive.
+    split; [apply database_row_weights_positive_allocate_next; exact Hpositive |].
+    split; [apply database_history_complete_allocate_id; exact Hcomplete |].
+    apply database_uses_allocated_allocate_next. exact Huses_allocated.
   Qed.
 
   Lemma database_one_le_pow : forall base d,
@@ -14152,14 +14355,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
 
   Lemma database_owned_ok_pop : forall db x db',
+    (forall i, allocated db i ->
+      allocated db (fst (UnionFindCode.find i (db_forest db)))) ->
     database_owned_ok db -> db_pop_loser db = Some (x, db') ->
     database_owned_ok db'.
   Proof.
-    intros db x db' Howned Hpop.
+    intros db x db' Hfind Howned Hpop.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
     assert (Hhistory : row_history (db_row_store db') =
       row_history (db_row_store db)).
     { unfold db_pop_loser in Hpop.
@@ -14204,8 +14409,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [eapply database_row_weight_conserved_transport;
       [exact Hhistory | exact Hlinks | exact Hweights | exact Hids |
        exact Hconserved] |].
-    eapply database_row_weights_positive_transport;
-      [exact Hweights | exact Hpositive].
+    split.
+    { eapply database_row_weights_positive_transport;
+        [exact Hweights | exact Hpositive]. }
+    split; [eapply database_history_complete_pop; eassumption |].
+    eapply database_uses_allocated_pop; eassumption.
   Qed.
 
   Lemma forest_ok_pop : forall db x db', forest_ok db ->
@@ -14215,7 +14423,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct Hforest as
       [Hlocated [Hmetadata [Hpending [Huf [Hcard [Hsame [Hwidth
       [Hstore [Hcounts [Hhistory [Hcore [Hrank [Hnonroot Howned]]]]]]]]]]]]].
-    pose proof (database_owned_ok_pop db x db' Howned Hpop) as Howned'.
+    assert (Hfind : forall i, allocated db i ->
+      allocated db (fst (UnionFindCode.find i (db_forest db)))).
+    { intros i Hi. rewrite (UnionFind.find_repr i (db_forest db) Huf).
+      unfold allocated. eapply UnionFindCodeFacts.repr_allocated.
+      - exact Huf.
+      - exact (proj1 Hcore).
+      - exact Hi. }
+    pose proof (database_owned_ok_pop db x db' Hfind Howned Hpop) as Howned'.
     pose proof (pop_loser_row_store_ok db x db' Hstore Hpop) as Hstore'.
     assert (Hlocate : forall f k, db_locate f k db' = db_locate f k db).
     { intros f k. eapply pop_loser_locate. exact Hpop. }
@@ -17074,6 +17289,1183 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply database_row_weights_positive_repair_current. exact Hpositive.
   Qed.
 
+  (** Connected historical names read the same completed row root. *)
+  Lemma database_history_connected_locate : forall db f k key r g args other s,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (other, s) ->
+    database_history_connected db r s ->
+    db_locate f k db = db_locate g args db.
+  Proof.
+    intros db f k key r g args other s Hstore Hentry Hother Hconnected.
+    set (root := row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db)).
+    assert (Hfixed :
+      (match PTrieCode.get root (row_links (db_row_store db)) with
+       | Some parent => parent | None => root end) = root).
+    { subst root. exact (database_history_root_fixed db f k key r Hstore Hentry). }
+    assert (Hsecond : database_history_connected db s root).
+    { eapply rst_trans.
+      - apply rst_sym. exact Hconnected.
+      - subst root. apply database_history_connected_root. }
+    assert (Hroot :
+      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
+        (db_row_store db) = root).
+    { eapply database_history_connected_canonical;
+        [apply database_row_store_depth_of_store; exact Hstore |
+         exact Hother | exact Hfixed | exact Hsecond]. }
+    unfold db_locate. rewrite Hentry, Hother.
+    change (PTrieCode.get root (row_keys (db_row_store db)) =
+      PTrieCode.get
+        (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
+          (db_row_store db)) (row_keys (db_row_store db))).
+    now rewrite Hroot.
+  Qed.
+
+  (** Every recorded historical key resolves to a current key. *)
+  Lemma database_history_complete_locate : forall db f k key r,
+    database_row_store_ok db -> database_history_complete db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    exists current, db_locate f k db = Some current.
+  Proof.
+    intros db f k key r Hstore Hcomplete Hentry.
+    set (root := row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db)).
+    assert (Hconnected : database_history_connected db r root).
+    { subst root. apply database_history_connected_root. }
+    assert (Hfixed :
+      (match PTrieCode.get root (row_links (db_row_store db)) with
+       | Some parent => parent | None => root end) = root).
+    { subst root. exact (database_history_root_fixed db f k key r Hstore Hentry). }
+    destruct (Hcomplete f k key r root Hentry Hconnected Hfixed)
+      as [current [s [Hkey _]]].
+    exists current. unfold db_locate. now rewrite Hentry.
+  Qed.
+
+  (** A located row has a self-history in the same row-link component. *)
+  Lemma database_history_located_self : forall db f k current,
+    database_row_store_ok db -> database_history_complete db ->
+    db_locate f k db = Some current ->
+    exists r s,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some ((f, k), r) /\
+      PTrieCode.get (db_row_code f current) (row_history (db_row_store db)) =
+        Some ((f, current), s) /\
+      database_history_connected db r s.
+  Proof.
+    intros db f k current Hstore Hcomplete Hlocated.
+    unfold db_locate in Hlocated.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key r] |] eqn:Hentry; [| discriminate Hlocated].
+    pose proof (database_row_store_labels db Hstore f k key r Hentry) as Hlabel.
+    subst key.
+    set (root := row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db)).
+    assert (Hconnected : database_history_connected db r root).
+    { subst root. apply database_history_connected_root. }
+    assert (Hfixed :
+      (match PTrieCode.get root (row_links (db_row_store db)) with
+       | Some parent => parent | None => root end) = root).
+    { subst root.
+      exact (database_history_root_fixed db f k (f, k) r Hstore Hentry). }
+    destruct (Hcomplete f k (f, k) r root Hentry Hconnected Hfixed)
+      as [target [s [Hkey [Hself Hself_connected]]]].
+    change (PTrieCode.get root (row_keys (db_row_store db)) = Some current)
+      in Hlocated.
+    assert (Htarget : target = current) by congruence. subst target.
+    exists r, s. split; [reflexivity |]. split; [exact Hself |].
+    eapply rst_trans; [exact Hconnected |].
+    apply rst_sym. exact Hself_connected.
+  Qed.
+
+  Lemma database_history_located_shape : forall db f k current,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_root_owner db -> database_history_key_shape db ->
+    db_locate f k db = Some current ->
+    row_key_shape k = row_key_shape current.
+  Proof.
+    intros db f k current Hstore Hcomplete Howner Hshape Hlocated.
+    destruct (database_history_located_self db f k current
+      Hstore Hcomplete Hlocated) as [r [s [Hentry [Hself Hconnected]]]].
+    assert (Hsecond : database_history_connected db s
+      (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db))).
+    { eapply rst_trans; [apply rst_sym; exact Hconnected |].
+      apply database_history_connected_root. }
+    exact (proj2 (database_history_component_shape db f k (f, k) r
+      f current (f, current) s
+      (database_row_store_depth_of_store db Hstore) Howner Hshape
+      Hentry Hself Hsecond)).
+  Qed.
+
+  Lemma database_history_located_length : forall db f k current,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_root_owner db -> database_history_key_shape db ->
+    db_locate f k db = Some current -> length k = length current.
+  Proof.
+    intros db f k current Hstore Hcomplete Howner Hshape Hlocated.
+    pose proof (database_history_located_shape db f k current
+      Hstore Hcomplete Howner Hshape Hlocated) as Hkey_shape.
+    apply (f_equal (@length (option V.t))) in Hkey_shape.
+    unfold row_key_shape in Hkey_shape. now rewrite !length_map in Hkey_shape.
+  Qed.
+
+  (** Adding a fresh historical name creates one complete singleton component. *)
+  Lemma database_history_complete_ensure : forall db f k,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_complete (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hstore Hcomplete. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior; [exact Hcomplete |].
+    intros g args key r root Hentry Hconnected Hfixed.
+    cbn [database_set_index_counters database_set_row_store db_row_store
+      row_history] in Hentry.
+    change (database_history_connected db r root) in Hconnected.
+    change ((match PTrieCode.get root (row_links (db_row_store db)) with
+      | Some parent => parent | None => root end) = root) in Hfixed.
+    destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
+      as [Hsame | Hother].
+    - change (RowKeys.encode (g, args) = RowKeys.encode (f, k)) in Hsame.
+      apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
+      rewrite PTrie.get_set_same in Hentry. injection Hentry as <- <-.
+      assert (Hfresh_fixed :
+        (match PTrieCode.get (row_fresh (db_row_store db))
+          (row_links (db_row_store db)) with
+         | Some parent => parent | None => row_fresh (db_row_store db) end) =
+          row_fresh (db_row_store db)).
+      { rewrite (database_row_store_future_links db Hstore
+          (row_fresh (db_row_store db))) by lia. reflexivity. }
+      assert (Hroot : row_fresh (db_row_store db) = root).
+      { eapply database_history_connected_fixed_unique; eassumption. }
+      rewrite <- Hroot.
+      exists k, (row_fresh (db_row_store db)).
+      split.
+      + cbn [database_set_index_counters database_set_row_store db_row_store row_keys].
+        apply PTrie.get_set_same.
+      + split.
+        * cbn [database_set_index_counters database_set_row_store db_row_store row_history].
+          apply PTrie.get_set_same.
+        * apply rst_refl.
+    - rewrite PTrie.get_set_other in Hentry by exact Hother.
+      assert (Hroot :
+        row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+          (db_row_store db) = root).
+      { eapply database_history_connected_canonical;
+          [apply database_row_store_depth_of_store; exact Hstore |
+           exact Hentry | exact Hfixed | exact Hconnected]. }
+      assert (Hbelow : (root < row_fresh (db_row_store db))%positive).
+      { rewrite <- Hroot. apply row_root_below_fresh; [exact Hstore |].
+        exact (database_row_store_history_range db Hstore g args key r Hentry). }
+      destruct (Hcomplete g args key r root Hentry Hconnected Hfixed)
+        as [current [s [Hkey [Hself Hself_connected]]]].
+      exists current, s. split.
+      + cbn [database_set_index_counters database_set_row_store db_row_store row_keys].
+        rewrite PTrie.get_set_other by lia. exact Hkey.
+      + split.
+        * cbn [database_set_index_counters database_set_row_store db_row_store row_history].
+          rewrite PTrie.get_set_other; [exact Hself |].
+          intro Heq. rewrite Heq, Hprior in Hself. discriminate Hself.
+        * change (database_history_connected db s root). exact Hself_connected.
+  Qed.
+
+  (** Relabeling a component keeps a self-history at its selected current key. *)
+  Lemma database_history_complete_relabel : forall db db' f ck ck_id root,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_root_owner db ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    row_keys (db_row_store db') =
+      PTrieCode.set root ck (row_keys (db_row_store db)) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some ((f, ck), ck_id) ->
+    row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+      (db_row_store db) = root ->
+    database_history_complete db'.
+  Proof.
+    intros db db' f ck ck_id root Hstore Hcomplete Howner
+      Hhistory Hlinks Hkeys Htarget Htarget_root
+      g args key r terminal Hentry Hconnected Hfixed.
+    rewrite Hhistory in Hentry. rewrite Hlinks in Hfixed.
+    assert (Hconnected_old : database_history_connected db r terminal).
+    { unfold database_history_connected in Hconnected |- *.
+      now rewrite Hlinks in Hconnected. }
+    destruct (Pos.eq_dec terminal root) as [-> | Hother].
+    - assert (Hroot :
+        row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+          (db_row_store db) = root).
+      { eapply database_history_connected_canonical;
+          [apply database_row_store_depth_of_store; exact Hstore |
+           exact Hentry | exact Hfixed | exact Hconnected_old]. }
+      assert (Hfunction : g = f).
+      { eapply Howner; [exact Hentry | exact Htarget |].
+        now rewrite Hroot, Htarget_root. }
+      subst g. exists ck, ck_id. split.
+      + rewrite Hkeys. apply PTrie.get_set_same.
+      + split; [now rewrite Hhistory |].
+        unfold database_history_connected. rewrite Hlinks.
+        change (database_history_connected db ck_id root).
+        rewrite <- Htarget_root. apply database_history_connected_root.
+    - destruct (Hcomplete g args key r terminal
+        Hentry Hconnected_old Hfixed)
+        as [current [s [Hkey [Hself Hself_connected]]]].
+      exists current, s. split.
+      + rewrite Hkeys, PTrie.get_set_other by exact Hother. exact Hkey.
+      + split; [now rewrite Hhistory |].
+        unfold database_history_connected in Hself_connected |- *.
+        now rewrite Hlinks.
+  Qed.
+
+  (** Joining two components retains their common function and a current self-history. *)
+  Lemma database_history_complete_link : forall db db' f
+      losing_key losing_id winning_key winning_id ck ck_id loser winner,
+    database_row_store_ok db -> database_row_store_ok db' ->
+    database_history_complete db -> database_history_root_owner db ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    row_keys (db_row_store db') =
+      PTrieCode.set winner ck (row_keys (db_row_store db)) ->
+    ids db' = ids db -> loser <> winner ->
+    PTrieCode.get (db_row_code f losing_key) (row_history (db_row_store db)) =
+      Some ((f, losing_key), losing_id) ->
+    PTrieCode.get (db_row_code f winning_key) (row_history (db_row_store db)) =
+      Some ((f, winning_key), winning_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some ((f, ck), ck_id) ->
+    row_root (length losing_key * (N.to_nat (N.log2 (ids db)) + 1)) losing_id
+      (db_row_store db) = loser ->
+    row_root (length winning_key * (N.to_nat (N.log2 (ids db)) + 1)) winning_id
+      (db_row_store db) = winner ->
+    (database_history_connected db ck_id loser \/
+      database_history_connected db ck_id winner) ->
+    database_history_complete db'.
+  Proof.
+    intros db db' f losing_key losing_id winning_key winning_id ck ck_id
+      loser winner Hstore Hnext_store Hcomplete Howner
+      Hhistory Hlinks Hkeys Hids Hneq Hlosing Hwinning Htarget
+      Hlosing_root Hwinning_root Htarget_connected.
+    assert (Hloser_fixed :
+      (match PTrieCode.get loser (row_links (db_row_store db)) with
+       | Some parent => parent | None => loser end) = loser).
+    { pose proof (database_history_root_fixed db f losing_key
+        (f, losing_key) losing_id Hstore Hlosing) as Hfixed.
+      now rewrite Hlosing_root in Hfixed. }
+    assert (Hwinner_fixed :
+      (match PTrieCode.get winner (row_links (db_row_store db)) with
+       | Some parent => parent | None => winner end) = winner).
+    { pose proof (database_history_root_fixed db f winning_key
+        (f, winning_key) winning_id Hstore Hwinning) as Hfixed.
+      now rewrite Hwinning_root in Hfixed. }
+    assert (Hwinner_next :
+      (match PTrieCode.get winner (row_links (db_row_store db')) with
+       | Some parent => parent | None => winner end) = winner).
+    { rewrite Hlinks, PTrie.get_set_other by congruence. exact Hwinner_fixed. }
+    assert (Htarget_next : database_history_connected db' ck_id winner).
+    { destruct Htarget_connected as [Htarget_loser | Htarget_winner].
+      - eapply database_history_connected_link_winner; eassumption.
+      - eapply database_history_connected_link; eassumption. }
+    intros g args key r terminal Hentry Hconnected Hfixed.
+    assert (Hentry_old :
+      PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+        Some (key, r)).
+    { now rewrite <- Hhistory. }
+    set (fuel := length args * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (old_root := row_root fuel r (db_row_store db)).
+    assert (Hterminal : row_root fuel r (db_row_store db') = terminal).
+    { unfold fuel. rewrite <- Hids.
+      eapply database_history_connected_canonical;
+        [apply database_row_store_depth_of_store; exact Hnext_store |
+         exact Hentry | exact Hfixed | exact Hconnected]. }
+    assert (Hmerged : g = f -> terminal = winner ->
+      exists current s,
+        PTrieCode.get terminal (row_keys (db_row_store db')) = Some current /\
+        PTrieCode.get (db_row_code g current) (row_history (db_row_store db')) =
+          Some ((g, current), s) /\
+        database_history_connected db' s terminal).
+    { intros -> ->. exists ck, ck_id. split.
+      - rewrite Hkeys. apply PTrie.get_set_same.
+      - split; [now rewrite Hhistory | exact Htarget_next]. }
+    destruct (Pos.eq_dec old_root loser) as [Hloses | Hsurvives].
+    - assert (Hterminal_winner : terminal = winner).
+      { destruct (row_root_link_two_roots fuel r (db_row_store db)
+          (db_row_store db') loser winner Hlinks Hneq Hloser_fixed
+          Hwinner_next Hloses) as [Hshort | Hreaches].
+        - rewrite Hterminal in Hshort.
+          rewrite Hshort, Hlinks, PTrie.get_set_same in Hfixed.
+          cbn in Hfixed. congruence.
+        - now rewrite Hterminal in Hreaches. }
+      apply Hmerged; [| exact Hterminal_winner].
+      eapply Howner; [exact Hentry_old | exact Hlosing |].
+      fold fuel old_root. now rewrite Hloses, Hlosing_root.
+    - assert (Hterminal_old : terminal = old_root).
+      { pose proof (row_root_link_unaffected fuel r (db_row_store db)
+          (db_row_store db') loser winner old_root Hlinks
+          ltac:(congruence) Hloser_fixed eq_refl) as Hsame.
+        now rewrite Hterminal in Hsame. }
+      destruct (Pos.eq_dec terminal winner) as [Hwins | Hother].
+      + apply Hmerged; [| exact Hwins].
+        eapply Howner; [exact Hentry_old | exact Hwinning |].
+        fold fuel old_root. rewrite <- Hterminal_old, Hwins.
+        now rewrite Hwinning_root.
+      + assert (Hconnected_old : database_history_connected db r terminal).
+        { rewrite Hterminal_old. unfold old_root.
+          apply database_history_connected_root. }
+        assert (Hfixed_old :
+          (match PTrieCode.get terminal (row_links (db_row_store db)) with
+           | Some parent => parent | None => terminal end) = terminal).
+        { rewrite Hterminal_old. unfold old_root, fuel.
+          exact (database_history_root_fixed db g args key r Hstore Hentry_old). }
+        destruct (Hcomplete g args key r terminal
+          Hentry_old Hconnected_old Hfixed_old)
+          as [current [s [Hkey [Hself Hself_connected]]]].
+        exists current, s. split.
+        * rewrite Hkeys, PTrie.get_set_other by exact Hother. exact Hkey.
+        * split; [now rewrite Hhistory |].
+          eapply database_history_connected_link; eassumption.
+  Qed.
+
+  (** A size-based identity move preserves complete historical components. *)
+  Lemma database_history_complete_move : forall db f old ck,
+    database_row_store_ok db ->
+    database_row_store_ok (move_row_identity f old ck db) ->
+    database_history_complete db -> database_history_root_owner db ->
+    length old = length ck ->
+    database_history_complete (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Hnext_store Hcomplete Howner Hlength.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource.
+    2: { unfold move_row_identity. rewrite Hsource. exact Hcomplete. }
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest.
+    2: { unfold move_row_identity. rewrite Hsource, Hdest. exact Hcomplete. }
+    pose proof (database_row_store_labels db Hstore f old old_key old_id Hsource)
+      as Hsource_label.
+    pose proof (database_row_store_labels db Hstore f ck ck_key ck_id Hdest)
+      as Hdest_label.
+    subst old_key ck_key.
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    set (next := move_row_identity f old ck db).
+    assert (Hhistory : row_history (db_row_store next) = row_history store).
+    { apply move_row_identity_history. }
+    assert (Hids : ids next = ids db).
+    { apply (proj2 (move_row_identity_layout db f old ck)). }
+    assert (Hdest_root :
+      row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id store =
+        dest_root).
+    { unfold dest_root, depth. now rewrite Hlength. }
+    assert (Hdest_connected : database_history_connected db ck_id dest_root).
+    { rewrite <- Hdest_root. apply database_history_connected_root. }
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - assert (Hsame_roots : source_root = dest_root).
+      { apply Pos.eqb_eq. exact Hsame. }
+      assert (Hlinks : row_links (db_row_store next) = row_links store).
+      { unfold next, move_row_identity. rewrite Hsource, Hdest.
+        replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+        fold store depth source_root dest_root. now rewrite Hsame. }
+      assert (Hkeys : row_keys (db_row_store next) =
+        PTrieCode.set source_root ck (row_keys store)).
+      { unfold next, move_row_identity. rewrite Hsource, Hdest.
+        replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+        fold store depth source_root dest_root. now rewrite Hsame. }
+      eapply database_history_complete_relabel with
+        (db := db) (f := f) (ck_id := ck_id) (root := source_root);
+        try exact Hstore; try exact Hcomplete; try exact Howner;
+        try exact Hhistory; try exact Hlinks; try exact Hkeys; try exact Hdest.
+      change (row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1))
+        ck_id store = source_root).
+      now rewrite Hdest_root, Hsame_roots.
+    - assert (Hneq : source_root <> dest_root).
+      { apply Pos.eqb_neq. exact Hsame. }
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Hloses.
+      + assert (Hlinks : row_links (db_row_store next) =
+          PTrieCode.set source_root dest_root (row_links store)).
+        { unfold next, move_row_identity. rewrite Hsource, Hdest.
+          replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+          fold store depth source_root dest_root. now rewrite Hsame, Hloses. }
+        assert (Hkeys : row_keys (db_row_store next) =
+          PTrieCode.set dest_root ck (row_keys store)).
+        { unfold next, move_row_identity. rewrite Hsource, Hdest.
+          replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+          fold store depth source_root dest_root. now rewrite Hsame, Hloses. }
+        eapply database_history_complete_link with
+          (db := db) (f := f) (losing_key := old) (losing_id := old_id)
+          (winning_key := ck) (winning_id := ck_id) (ck_id := ck_id)
+          (loser := source_root) (winner := dest_root);
+          try exact Hstore; try exact Hnext_store; try exact Hcomplete;
+          try exact Howner; try exact Hhistory; try exact Hlinks; try exact Hkeys;
+          try exact Hids; try exact Hneq; try exact Hsource; try exact Hdest;
+          try exact Hdest_root; try reflexivity.
+        now right.
+      + assert (Hlinks : row_links (db_row_store next) =
+          PTrieCode.set dest_root source_root (row_links store)).
+        { unfold next, move_row_identity. rewrite Hsource, Hdest.
+          replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+          fold store depth source_root dest_root. now rewrite Hsame, Hloses. }
+        assert (Hkeys : row_keys (db_row_store next) =
+          PTrieCode.set source_root ck (row_keys store)).
+        { unfold next, move_row_identity. rewrite Hsource, Hdest.
+          replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+          fold store depth source_root dest_root. now rewrite Hsame, Hloses. }
+        eapply database_history_complete_link with
+          (db := db) (f := f) (losing_key := ck) (losing_id := ck_id)
+          (winning_key := old) (winning_id := old_id) (ck_id := ck_id)
+          (loser := dest_root) (winner := source_root);
+          try exact Hstore; try exact Hnext_store; try exact Hcomplete;
+          try exact Howner; try exact Hhistory; try exact Hlinks; try exact Hkeys;
+          try exact Hids; try exact Hsource; try exact Hdest;
+          try exact Hdest_root; try reflexivity; try congruence.
+        now left.
+  Qed.
+
+  Lemma database_history_complete_slots_update : forall db add f cells,
+    database_history_complete db ->
+    database_history_complete (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hcomplete.
+    eapply database_history_complete_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - now rewrite slots_update_row_store.
+    - now rewrite slots_update_row_store.
+    - exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_row_write : forall db f k o,
+    database_history_complete db -> database_history_complete (row_write f k o db).
+  Proof.
+    intros db f k o Hcomplete.
+    eapply database_history_complete_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - now rewrite row_write_row_store.
+    - now rewrite row_write_row_store.
+    - exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_register : forall db f k o,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_complete (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hstore Hcomplete. unfold register_row_uses.
+    eapply database_history_complete_transport with (db := ensure_row_identity f k db);
+      try reflexivity.
+    apply database_history_complete_ensure; assumption.
+  Qed.
+
+  Lemma database_history_complete_row_replace : forall db f k previous o,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_complete (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hstore Hcomplete; unfold row_replace;
+      apply database_history_complete_register.
+    - apply row_write_row_store_ok, slots_update_row_store_ok,
+        slots_update_row_store_ok. exact Hstore.
+    - apply database_history_complete_row_write,
+        database_history_complete_slots_update,
+        database_history_complete_slots_update. exact Hcomplete.
+    - apply row_write_row_store_ok, slots_update_row_store_ok. exact Hstore.
+    - apply database_history_complete_row_write,
+        database_history_complete_slots_update. exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_row_delete : forall db f k,
+    database_history_complete db -> database_history_complete (row_delete f k db).
+  Proof.
+    intros db f k Hcomplete.
+    eapply database_history_complete_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - now rewrite row_delete_row_store.
+    - exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_put : forall db f k o,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_complete (put f k o db).
+  Proof.
+    intros db f k o Hstore Hcomplete. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hnext_complete : database_history_complete next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_history_complete_union; exact Hcomplete. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext_complete |].
+      apply database_history_complete_row_replace; assumption.
+    - apply database_history_complete_row_replace; assumption.
+  Qed.
+
+  Lemma database_history_complete_make : forall db f k,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_complete (snd (make f k db)).
+  Proof.
+    intros db f k Hstore Hcomplete.
+    pose proof (database_row_store_ok_allocate_next db Hstore) as Hfresh_store.
+    pose proof (database_history_complete_allocate_id db
+      (N.succ_pos (runtime_allocated (db_runtime db))) Hcomplete) as Hfresh_complete.
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hcomplete;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh_complete;
+      apply database_history_complete_row_replace; assumption.
+  Qed.
+
+  Lemma database_history_complete_repair_current : forall db f k,
+    database_row_store_ok db -> database_history_complete db ->
+    database_history_complete (repair_current f k db).
+  Proof.
+    intros db f k Hstore Hcomplete. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hcomplete].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hcomplete |].
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) (row_delete f k db)).
+    eapply database_history_complete_transport with (db := updated); try reflexivity.
+    unfold updated. apply database_history_complete_put.
+    - apply database_row_store_ok_row_delete. exact Hstore.
+    - apply database_history_complete_row_delete. exact Hcomplete.
+  Qed.
+
+  Lemma database_history_complete_db_repair_entry : forall db f k,
+    database_row_store_ok db ->
+    database_row_store_ok (db_repair_entry f k db) ->
+    database_history_complete db -> database_history_root_owner db ->
+    database_history_complete (db_repair_entry f k db).
+  Proof.
+    intros db f k Hstore Hnext_store Hcomplete Howner.
+    unfold db_repair_entry in Hnext_store |- *.
+    destruct (db_locate f k db) as [current |]; [| exact Hcomplete].
+    destruct (row_get f current db) as [output |]; [| exact Hcomplete].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hcomplete |].
+    apply database_history_complete_move.
+    - apply database_row_store_ok_repair_current. exact Hstore.
+    - exact Hnext_store.
+    - apply database_history_complete_repair_current; assumption.
+    - apply database_history_root_owner_repair_current; assumption.
+    - symmetry. apply normal_key_length.
+  Qed.
+
+  (** Moving a row joins its two historical identities and retains all old connections. *)
+  Lemma move_row_identity_connections : forall db f old ck old_key old_id ck_key ck_id,
+    database_row_store_ok db -> length old = length ck ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    (forall x y, database_history_connected db x y ->
+      database_history_connected (move_row_identity f old ck db) x y) /\
+    database_history_connected (move_row_identity f old ck db) old_id ck_id.
+  Proof.
+    intros db f old ck old_key old_id ck_key ck_id Hstore Hlength Hsource Hdest.
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    set (next := move_row_identity f old ck db).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some parent => parent | None => source_root end) = source_root).
+    { unfold source_root, depth, store.
+      exact (database_history_root_fixed db f old old_key old_id Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some parent => parent | None => dest_root end) = dest_root).
+    { unfold dest_root, depth, store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id Hstore Hdest). }
+    assert (Hsource_connected : database_history_connected db old_id source_root).
+    { unfold source_root. apply database_history_connected_root. }
+    assert (Hdest_connected : database_history_connected db ck_id dest_root).
+    { unfold dest_root. apply database_history_connected_root. }
+    assert (Hpaths :
+      (forall x y, database_history_connected db x y ->
+        database_history_connected next x y) /\
+      database_history_connected next source_root dest_root).
+    { destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+      - assert (Hlinks : row_links (db_row_store next) = row_links store).
+        { unfold next, move_row_identity. rewrite Hsource, Hdest.
+          replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+          fold store depth source_root dest_root. now rewrite Hsame. }
+        split.
+        + intros x y Hconnected.
+          eapply database_history_connected_transport; eassumption.
+        + apply Pos.eqb_eq in Hsame. rewrite Hsame. apply rst_refl.
+      - destruct (N.leb
+          (match PTrieCode.get source_root (row_weights store) with
+           | Some n => n | None => 1%N end)
+          (match PTrieCode.get dest_root (row_weights store) with
+           | Some n => n | None => 1%N end)) eqn:Hloses.
+        + assert (Hlinks : row_links (db_row_store next) =
+            PTrieCode.set source_root dest_root (row_links store)).
+          { unfold next, move_row_identity. rewrite Hsource, Hdest.
+            replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+            fold store depth source_root dest_root. now rewrite Hsame, Hloses. }
+          split.
+          * intros x y Hconnected.
+            eapply database_history_connected_link; eassumption.
+          * apply rst_step. rewrite Hlinks. apply PTrie.get_set_same.
+        + assert (Hlinks : row_links (db_row_store next) =
+            PTrieCode.set dest_root source_root (row_links store)).
+          { unfold next, move_row_identity. rewrite Hsource, Hdest.
+            replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+            fold store depth source_root dest_root. now rewrite Hsame, Hloses. }
+          split.
+          * intros x y Hconnected.
+            eapply database_history_connected_link; eassumption.
+          * apply rst_sym, rst_step. rewrite Hlinks. apply PTrie.get_set_same. }
+    destruct Hpaths as [Hpreserved Hjoined]. split; [exact Hpreserved |].
+    eapply rst_trans; [apply Hpreserved; exact Hsource_connected |].
+    eapply rst_trans; [exact Hjoined |].
+    apply rst_sym, Hpreserved. exact Hdest_connected.
+  Qed.
+
+  Lemma row_replace_links : forall db f k previous o,
+    row_links (db_row_store (row_replace f k previous o db)) =
+      row_links (db_row_store db).
+  Proof.
+    intros db f k [before |] o; unfold row_replace;
+      rewrite register_row_uses_links, ensure_row_identity_links, row_write_row_store;
+      now rewrite !slots_update_row_store.
+  Qed.
+
+  Lemma put_links : forall db f k o,
+    row_links (db_row_store (put f k o db)) = row_links (db_row_store db).
+  Proof.
+    intros db f k o. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext : row_links (db_row_store next) = row_links (db_row_store db)).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try reflexivity; now rewrite union_row_store_raw. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      now rewrite row_replace_links.
+    - now rewrite row_replace_links.
+  Qed.
+
+  Lemma repair_current_links : forall db f k,
+    row_links (db_row_store (repair_current f k db)) =
+      row_links (db_row_store db).
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output)); [reflexivity |].
+    cbn [database_set_nuses database_set_row_store db_row_store row_links].
+    now rewrite put_links, row_delete_row_store.
+  Qed.
+
+  (** All aliases of the repaired source follow the joined destination identity. *)
+  Lemma repair_current_move_locate_source : forall db f current historical
+      target_key target_id,
+    database_row_store_ok db -> database_history_complete db ->
+    db_locate f historical db = Some current ->
+    PTrieCode.get (db_row_code f (normal_key db current))
+      (row_history (db_row_store (repair_current f current db))) =
+        Some (target_key, target_id) ->
+    database_row_store_ok
+      (move_row_identity f current (normal_key db current)
+        (repair_current f current db)) ->
+    db_locate f (normal_key db current)
+      (move_row_identity f current (normal_key db current)
+        (repair_current f current db)) = Some (normal_key db current) ->
+    db_locate f historical
+      (move_row_identity f current (normal_key db current)
+        (repair_current f current db)) = Some (normal_key db current).
+  Proof.
+    intros db f current historical target_key target_id Hstore Hcomplete
+      Hlocated Htarget Hnext_store Htarget_locate.
+    destruct (database_history_located_self db f historical current
+      Hstore Hcomplete Hlocated)
+      as [r [s [Hentry [Hself Hconnected]]]].
+    set (repaired := repair_current f current db).
+    set (next := move_row_identity f current (normal_key db current) repaired).
+    assert (Hrepaired_store : database_row_store_ok repaired).
+    { apply database_row_store_ok_repair_current. exact Hstore. }
+    assert (Hrepaired_self :
+      PTrieCode.get (db_row_code f current) (row_history (db_row_store repaired)) =
+        Some ((f, current), s)).
+    { apply repair_current_history_old. exact Hself. }
+    assert (Hrepaired_entry :
+      PTrieCode.get (db_row_code f historical) (row_history (db_row_store repaired)) =
+        Some ((f, historical), r)).
+    { apply repair_current_history_old. exact Hentry. }
+    assert (Hrepaired_connected : database_history_connected repaired r s).
+    { eapply database_history_connected_transport;
+        [apply repair_current_links | exact Hconnected]. }
+    destruct (move_row_identity_connections repaired f current (normal_key db current)
+      (f, current) s target_key target_id Hrepaired_store
+      ltac:(symmetry; apply normal_key_length) Hrepaired_self Htarget)
+      as [Hpreserved Hjoined].
+    assert (Hnext_connected : database_history_connected next r target_id).
+    { eapply rst_trans; [apply Hpreserved; exact Hrepaired_connected | exact Hjoined]. }
+    transitivity (db_locate f (normal_key db current) next); [| exact Htarget_locate].
+    eapply database_history_connected_locate;
+      [exact Hnext_store | | | exact Hnext_connected].
+    - unfold next. rewrite move_row_identity_history. exact Hrepaired_entry.
+    - unfold next. rewrite move_row_identity_history. exact Htarget.
+  Qed.
+
+  Lemma row_replace_history_new : forall db f k previous o,
+    database_row_store_ok db ->
+    exists r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store (row_replace f k previous o db))) =
+        Some ((f, k), r).
+  Proof.
+    intros db f k [before |] o Hstore; unfold row_replace;
+      apply register_row_uses_history_new;
+      apply row_write_row_store_ok, slots_update_row_store_ok.
+    - apply slots_update_row_store_ok. exact Hstore.
+    - exact Hstore.
+  Qed.
+
+  Lemma put_target_history : forall db f k o,
+    database_row_store_ok db ->
+    (forall before, row_get f (normal_key db k) db = Some before ->
+      exists r, PTrieCode.get (db_row_code f (normal_key db k))
+        (row_history (db_row_store db)) = Some ((f, normal_key db k), r)) ->
+    exists r, PTrieCode.get (db_row_code f (normal_key db k))
+      (row_history (db_row_store (put f k o db))) = Some ((f, normal_key db k), r).
+  Proof.
+    intros db f k o Hstore Hexisting.
+    destruct (row_get f (normal_key db k) db) as [before |] eqn:Hprevious.
+    - destruct (Hexisting before eq_refl) as [r Hentry].
+      exists r. apply put_history_old. exact Hentry.
+    - unfold put. rewrite Hprevious.
+      apply row_replace_history_new. exact Hstore.
+  Qed.
+
+  Lemma normal_key_has_id_or_equal : forall db k,
+    (exists i, In (Id i) (normal_key db k)) \/ normal_key db k = k.
+  Proof.
+    intros db k. induction k as [| [i | value] rest IH].
+    - now right.
+    - left. cbn [normal_key map normal_cell].
+      destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i));
+        eexists; now left.
+    - destruct IH as [[i Hin] | Hequal].
+      + left. exists i. cbn [normal_key map normal_cell]. now right.
+      + right. cbn [normal_key map normal_cell].
+        change (Val value :: normal_key db rest = Val value :: rest).
+        now rewrite Hequal.
+  Qed.
+
+  (** Coverage supplies a self-history for every row containing an identifier. *)
+  Lemma database_row_with_id_history : forall db work f k output i,
+    inv_on db work -> database_history_complete db ->
+    row_get f k db = Some output -> row_ids k output i ->
+    exists s, PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some ((f, k), s).
+  Proof.
+    intros db work f k output i Hinv Hcomplete Hrow Hid.
+    assert (Hstore : database_row_store_ok db).
+    { unfold inv_on, forest_ok, database_owned_ok in Hinv. tauto. }
+    destruct Hinv as (_ & _ & Hcoverage & _).
+    destruct (Hcoverage f k output i Hrow Hid)
+      as [x [historical [_ [_ [Hlocated _]]]]].
+    change (db_locate f historical db = Some k) in Hlocated.
+    destruct (database_history_located_self db f historical k
+      Hstore Hcomplete Hlocated) as [r [s [_ [Hself _]]]].
+    exists s. exact Hself.
+  Qed.
+
+  (** The target of a repair always has an historical identity to receive the source. *)
+  Lemma repair_current_target_history : forall db work f historical current output,
+    inv_on db work -> database_history_complete db ->
+    db_locate f historical db = Some current -> row_get f current db = Some output ->
+    exists s, PTrieCode.get (db_row_code f (normal_key db current))
+      (row_history (db_row_store (repair_current f current db))) =
+        Some ((f, normal_key db current), s).
+  Proof.
+    intros db work f historical current output Hinv Hcomplete Hlocated Hrow.
+    assert (Hstore : database_row_store_ok db).
+    { unfold inv_on, forest_ok, database_owned_ok in Hinv. tauto. }
+    assert (Hforest : UnionFind.wf (db_forest db)).
+    { unfold inv_on, forest_ok in Hinv. tauto. }
+    destruct (Pos.eq_dec (db_tuple_code (normal_key db current))
+      (db_tuple_code current)) as [Hequal | Hdifferent].
+    - apply Tuples.encode_inj in Hequal.
+      destruct (database_history_located_self db f historical current
+        Hstore Hcomplete Hlocated) as [r [s [_ [Hself _]]]].
+      exists s. rewrite Hequal. apply repair_current_history_old. exact Hself.
+    - assert (Hkey_test : Pos.eqb (db_tuple_code (normal_key db current))
+        (db_tuple_code current) = false).
+      { apply Pos.eqb_neq. exact Hdifferent. }
+      destruct (normal_key_has_id_or_equal db current) as [[i Hin] | Hequal].
+      2: { exfalso. apply Hdifferent. now rewrite Hequal. }
+      set (deleted := row_delete f current db).
+      assert (Hdeleted_store : database_row_store_ok deleted).
+      { apply database_row_store_ok_row_delete. exact Hstore. }
+      assert (Hnormal : normal_key deleted (normal_key db current) =
+        normal_key db current).
+      { unfold deleted. rewrite row_delete_normal_key.
+        apply normal_key_idempotent. exact Hforest. }
+      assert (Hexisting : forall before,
+        row_get f (normal_key deleted (normal_key db current)) deleted = Some before ->
+        exists r, PTrieCode.get (db_row_code f (normal_key deleted (normal_key db current)))
+          (row_history (db_row_store deleted)) =
+            Some ((f, normal_key deleted (normal_key db current)), r)).
+      { intros before Hbefore. rewrite Hnormal in Hbefore |- *.
+        assert (Hbefore_old : row_get f (normal_key db current) db = Some before).
+        { unfold deleted in Hbefore. apply row_delete_binding in Hbefore as [Hold _].
+          exact Hold. }
+        assert (Hid : row_ids (normal_key db current) before i).
+        { unfold row_ids. apply in_or_app. now left. }
+        destruct (database_row_with_id_history db work f (normal_key db current)
+          before i Hinv Hcomplete Hbefore_old Hid) as [r Hentry].
+        exists r. unfold deleted. now rewrite row_delete_row_store. }
+      destruct (put_target_history deleted f (normal_key db current)
+        (option_map (normal_cell db) output) Hdeleted_store Hexisting)
+        as [s Htarget].
+      rewrite Hnormal in Htarget. exists s.
+      unfold repair_current. rewrite Hrow, Hkey_test.
+      cbn [andb database_set_nuses database_set_row_store db_row_store row_history].
+      exact Htarget.
+  Qed.
+
+  (** Repair redirects every historical name of the source row to its normalized target. *)
+  Lemma db_repair_entry_locate_source : forall db work f historical current output alias,
+    inv_on db work -> database_history_complete db ->
+    db_locate f historical db = Some current -> row_get f current db = Some output ->
+    db_locate f alias db = Some current ->
+    db_locate f alias (db_repair_entry f historical db) =
+      Some (normal_key db current).
+  Proof.
+    intros db work f historical current output alias Hinv Hcomplete Hlocated Hrow Halias.
+    unfold db_repair_entry. rewrite Hlocated, Hrow.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output)) eqn:Hfixed.
+    - apply andb_true_iff in Hfixed as [Hkey _].
+      apply Pos.eqb_eq in Hkey. apply Tuples.encode_inj in Hkey.
+      now rewrite Hkey.
+    - assert (Howned : database_owned_ok db).
+      { unfold inv_on, forest_ok in Hinv. tauto. }
+      destruct Howned as
+        (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+         Hbounded & Hconserved & Htail).
+      assert (Hpositive : database_row_weights_positive db) by tauto.
+      assert (Hforest : UnionFind.wf (db_forest db)).
+      { unfold inv_on, forest_ok in Hinv. tauto. }
+      assert (Hbridge : core_bridge db).
+      { unfold inv_on, forest_ok in Hinv. tauto. }
+      assert (Hmembers : forall i,
+        UnionFind.mem (db_forest db) i <-> allocated db i).
+      { exact (proj1 Hbridge). }
+      assert (Hkinds : forall g args value,
+        row (view db) g args value -> kind_ok db g args value).
+      { unfold inv_on in Hinv. tauto. }
+      assert (Hkey_ids : forall i, In (Id i) current -> allocated db i).
+      { intros i Hin. apply (proj1 (Hkinds f current output Hrow)).
+        apply in_or_app. now left. }
+      set (next := move_row_identity f current (normal_key db current)
+        (repair_current f current db)).
+      assert (Hnext_store : database_row_store_ok next).
+      { unfold next. apply database_row_store_ok_repair_entry_move;
+          assumption. }
+      assert (Hnext_coherent : database_active_history_coherent next).
+      { unfold next. eapply database_active_history_coherent_repair_entry_move;
+          eassumption. }
+      destruct (repair_current_target_history db work f historical current output
+        Hinv Hcomplete Hlocated Hrow) as [target_id Htarget].
+      set (value := combine_output (row_delete f current db) f
+        (row_get f (normal_key db current) (row_delete f current db))
+        (option_map (normal_cell db) output)).
+      assert (Htarget_row : row_get f (normal_key db current) next = Some value).
+      { change (row (view next) f (normal_key db current) value).
+        unfold next. rewrite (proj2 (move_row_identity_semantic_fields
+          (repair_current f current db) f current (normal_key db current))).
+        exact (repair_current_target db f current output Hforest Hrow). }
+      assert (Htarget_next :
+        PTrieCode.get (db_row_code f (normal_key db current))
+          (row_history (db_row_store next)) =
+            Some ((f, normal_key db current), target_id)).
+      { unfold next. rewrite move_row_identity_history. exact Htarget. }
+      assert (Htarget_locate : db_locate f (normal_key db current) next =
+        Some (normal_key db current)).
+      { exact (Hnext_coherent f (normal_key db current) value
+          (f, normal_key db current) target_id Htarget_row Htarget_next). }
+      eapply repair_current_move_locate_source;
+        [exact Hstore | exact Hcomplete | exact Halias | exact Htarget |
+         exact Hnext_store | exact Htarget_locate].
+  Qed.
+
+  (** Rewriting a current row retains the historical occurrence inventory. *)
+  Lemma repair_current_uses_store : forall db f k,
+    row_uses (db_row_store (repair_current f k db)) =
+      row_uses (db_row_store db).
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output)); reflexivity.
+  Qed.
+
+  (** Linking historical row identities leaves their occurrence inventory untouched. *)
+  Lemma move_row_identity_uses_store : forall db f old current,
+    row_uses (db_row_store (move_row_identity f old current db)) =
+      row_uses (db_row_store db).
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |];
+      [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store db))) as [[current_key current_id] |];
+      reflexivity.
+  Qed.
+
+  (** A full repair leaves all registered occurrences available to later pops. *)
+  Lemma db_repair_entry_uses_store : forall db f k,
+    row_uses (db_row_store (db_repair_entry f k db)) = row_uses (db_row_store db).
+  Proof.
+    intros db f k. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| reflexivity].
+    destruct (row_get f current db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [reflexivity |].
+    rewrite move_row_identity_uses_store, repair_current_uses_store.
+    reflexivity.
+  Qed.
+
+  Lemma database_bucket_owners_register : forall A
+      (entries : list (positive * A)) (store : DatabaseUseMap.t (list A))
+      (P : positive -> Prop),
+    (forall x e, In e (DatabaseUses.bucket x store) -> P x) ->
+    (forall x e, In (x, e) entries -> P x) ->
+    forall x e, In e (DatabaseUses.bucket x (DatabaseUses.register entries store)) -> P x.
+  Proof.
+    intros A entries. induction entries as [| [owner entry] rest IH];
+      intros store P Hbefore Hnew x e Hin.
+    - exact (Hbefore x e Hin).
+    - cbn [DatabaseUses.register] in Hin.
+      eapply IH with (store := DatabaseUses.add owner entry store) (P := P).
+      + intros y value Hbucket.
+        destruct (Pos.eq_dec y owner) as [-> | Hother].
+        * apply (Hnew owner entry). now left.
+        * unfold DatabaseUses.add, DatabaseUses.bucket in Hbucket.
+          rewrite DatabaseUseMap.get_set_other in Hbucket by exact Hother.
+          exact (Hbefore y value Hbucket).
+      + intros y value Hentry. apply (Hnew y value). now right.
+      + exact Hin.
+  Qed.
+
+  Lemma database_uses_allocated_slots_update : forall db add f cells,
+    database_uses_allocated db -> database_uses_allocated (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hallocated.
+    eapply database_uses_allocated_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - rewrite slots_update_ids. apply N.le_refl.
+    - exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_row_write : forall db f k o,
+    database_uses_allocated db -> database_uses_allocated (row_write f k o db).
+  Proof.
+    intros db f k o Hallocated.
+    eapply database_uses_allocated_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - rewrite row_write_ids. apply N.le_refl.
+    - exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_register : forall db f k o,
+    database_uses_allocated db ->
+    (forall i, In (Id i) (k ++ option_list o) -> allocated db i) ->
+    database_uses_allocated (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hallocated Hinput x e Hin.
+    unfold allocated. rewrite (proj1 (register_row_uses_control f k o db)).
+    unfold register_row_uses in Hin.
+    cbn [database_set_nuses database_set_row_store db_row_store row_uses] in Hin.
+    rewrite ensure_row_identity_uses in Hin.
+    eapply database_bucket_owners_register with
+      (entries := id_occurrences f k (k ++ option_list o))
+      (store := row_uses (db_row_store db)) (P := allocated db).
+    - exact Hallocated.
+    - intros y [g args] Hentry.
+      apply id_occurrences_member in Hentry as [_ [_ Hcell]].
+      exact (Hinput y Hcell).
+    - exact Hin.
+  Qed.
+
+  Lemma database_uses_allocated_row_replace : forall db f k previous o,
+    database_uses_allocated db ->
+    (forall i, In (Id i) (k ++ option_list o) -> allocated db i) ->
+    database_uses_allocated (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hallocated Hinput; unfold row_replace;
+      apply database_uses_allocated_register.
+    - apply database_uses_allocated_row_write,
+        database_uses_allocated_slots_update, database_uses_allocated_slots_update.
+      exact Hallocated.
+    - intros i Hin. unfold allocated. rewrite row_write_ids, !slots_update_ids.
+      exact (Hinput i Hin).
+    - apply database_uses_allocated_row_write, database_uses_allocated_slots_update.
+      exact Hallocated.
+    - intros i Hin. unfold allocated. rewrite row_write_ids, slots_update_ids.
+      exact (Hinput i Hin).
+  Qed.
+
+  Lemma database_uses_allocated_row_delete : forall db f k,
+    database_uses_allocated db -> database_uses_allocated (row_delete f k db).
+  Proof.
+    intros db f k Hallocated.
+    eapply database_uses_allocated_transport with (db := db).
+    - now rewrite row_delete_row_store.
+    - rewrite row_delete_ids. apply N.le_refl.
+    - exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_put_raw : forall db f k o,
+    database_uses_allocated db ->
+    (forall i, In (Id i) (normal_key db k ++ option_list
+      (combine_output db f (row_get f (normal_key db k) db)
+        (option_map (normal_cell db) o))) -> allocated db i) ->
+    database_uses_allocated (put f k o db).
+  Proof.
+    intros db f k o Hallocated Hinput. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext : database_uses_allocated next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_uses_allocated_union; exact Hallocated. }
+    assert (Hids : ids next = ids db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try reflexivity; apply union_ids. }
+    assert (Hwritten : forall i, In (Id i) (ck ++ option_list updated) ->
+      allocated next i).
+    { intros i Hin. unfold allocated. rewrite Hids. exact (Hinput i Hin). }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      apply database_uses_allocated_row_replace; assumption.
+    - apply database_uses_allocated_row_replace; assumption.
+  Qed.
+
+  (** Valid insertion registers only identifiers allocated in its actual target row. *)
+  Lemma database_uses_allocated_put : forall db f k o,
+    database_wf db -> kind_ok db f k o -> database_uses_allocated db ->
+    database_uses_allocated (put f k o db).
+  Proof.
+    intros db f k o Hwf Hkind Hallocated.
+    apply database_uses_allocated_put_raw; [exact Hallocated |].
+    intros i Hin.
+    pose proof (wf_row_ids (put f k o db)
+      (database_wf_put f k o db Hwf Hkind) f (normal_key db k)
+      (combine_output db f (row_get f (normal_key db k) db)
+        (option_map (normal_cell db) o)) i (put_row_target_raw db f k o) Hin) as Hi.
+    unfold allocated in Hi |- *.
+    now rewrite (proj2 (proj2 (put_layout_raw db f k o))) in Hi.
+  Qed.
+
+  Lemma database_uses_allocated_make : forall db f k,
+    database_wf db -> database_uses_allocated db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_uses_allocated (snd (make f k db)).
+  Proof.
+    intros db f k Hwf Hallocated Hinput.
+    assert (Hnormal : forall i, In (Id i) (normal_key db k) -> allocated db i).
+    { rewrite normal_key_correct by exact Hwf.
+      exact (canon_key_allocated db k Hwf Hinput). }
+    pose proof (database_uses_allocated_allocate_next db Hallocated) as Hfresh.
+    assert (Hwritten : forall i,
+      In (Id i) (normal_key db k ++ option_list (Some (Id (N.succ_pos (ids db))))) ->
+      allocated (allocate_id (N.succ_pos (ids db)) db) i).
+    { intros i Hin. apply in_app_iff in Hin as [Hkey | Houtput].
+      - apply allocate_next_monotone. exact (Hnormal i Hkey).
+      - cbn [option_list In] in Houtput.
+        destruct Houtput as [Heq | Hfalse]; [| contradiction].
+        injection Heq as <-. unfold allocated. rewrite allocate_id_ids. apply N.le_refl. }
+    unfold make. fold (ids db).
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hallocated;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd]; try exact Hfresh;
+      apply database_uses_allocated_row_replace; assumption.
+  Qed.
+
+  Lemma database_uses_allocated_repair_current : forall db f k,
+    database_uses_allocated db -> database_uses_allocated (repair_current f k db).
+  Proof.
+    intros db f k Hallocated.
+    eapply database_uses_allocated_transport with (db := db).
+    - apply repair_current_uses_store.
+    - rewrite (proj2 (proj2 (repair_current_layout db f k))). apply N.le_refl.
+    - exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_move : forall db f old current,
+    database_uses_allocated db ->
+    database_uses_allocated (move_row_identity f old current db).
+  Proof.
+    intros db f old current Hallocated.
+    eapply database_uses_allocated_transport with (db := db).
+    - apply move_row_identity_uses_store.
+    - rewrite (proj2 (move_row_identity_layout db f old current)). apply N.le_refl.
+    - exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_db_repair_entry : forall db f k,
+    database_uses_allocated db -> database_uses_allocated (db_repair_entry f k db).
+  Proof.
+    intros db f k Hallocated.
+    eapply database_uses_allocated_transport with (db := db).
+    - apply db_repair_entry_uses_store.
+    - rewrite (proj2 (proj2 (db_repair_entry_layout db f k))). apply N.le_refl.
+    - exact Hallocated.
+  Qed.
+
+  Lemma database_uses_allocated_entry : forall db x e,
+    database_row_store_ok db -> database_uses_allocated db ->
+    uses db x e -> allocated db x.
+  Proof.
+    intros db x e Hstore Hallocated Huse.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold database_row_store_ok in Hstore. tauto. }
+    unfold uses in Huse. rewrite uses_entries_facts in Huse by exact Hmap.
+    apply (proj1 (DatabaseUsesFacts.entries_member _ x e Hmap)) in Huse.
+    exact (Hallocated x e Huse).
+  Qed.
+
   Lemma database_owned_ok_db_repair_entry : forall db f k,
     UnionFind.wf (db_forest db) ->
     (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
@@ -17086,8 +18478,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
-    split; [eapply database_row_store_ok_db_repair_entry; eassumption |].
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
+    assert (Hnext_store : database_row_store_ok (db_repair_entry f k db)).
+    { eapply database_row_store_ok_db_repair_entry; eassumption. }
+    split; [exact Hnext_store |].
     split; [eapply database_history_alignment_db_repair_entry; eassumption |].
     split; [eapply database_active_history_coherent_db_repair_entry; eassumption |].
     split; [eapply database_history_root_owner_db_repair_entry; eassumption |].
@@ -17095,7 +18489,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply database_history_codes_valid_db_repair_entry; exact Hvalid |].
     split; [eapply database_history_key_ids_bounded_db_repair_entry; eassumption |].
     split; [eapply database_row_weight_conserved_db_repair_entry; eassumption |].
-    apply database_row_weights_positive_db_repair_entry. exact Hpositive.
+    split; [apply database_row_weights_positive_db_repair_entry; exact Hpositive |].
+    split; [eapply database_history_complete_db_repair_entry; eassumption |].
+    apply database_uses_allocated_db_repair_entry. exact Huses_allocated.
   Qed.
 
 
@@ -17107,7 +18503,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
     split; [apply database_row_store_ok_put; exact Hstore |].
     split; [eapply database_history_alignment_put;
       [exact (wf_forest db Hwf) | exact Hstore | exact Halign] |].
@@ -17119,7 +18515,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply database_history_codes_valid_put; exact Hvalid |].
     split; [eapply database_history_key_ids_bounded_put; eassumption |].
     split; [eapply database_row_weight_conserved_put; eassumption |].
-    apply database_row_weights_positive_put. exact Hpositive.
+    split; [apply database_row_weights_positive_put; exact Hpositive |].
+    split; [apply database_history_complete_put; assumption |].
+    eapply database_uses_allocated_put; eassumption.
   Qed.
 
   Lemma database_row_store_ok_make : forall db f k,
@@ -17144,7 +18542,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
     split; [apply database_row_store_ok_make; exact Hstore |].
     split; [eapply database_history_alignment_make; eassumption |].
     split; [eapply database_active_history_coherent_make; eassumption |].
@@ -17153,7 +18551,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply database_history_codes_valid_make; exact Hvalid |].
     split; [eapply database_history_key_ids_bounded_make; eassumption |].
     split; [eapply database_row_weight_conserved_make; eassumption |].
-    apply database_row_weights_positive_make. exact Hpositive.
+    split; [apply database_row_weights_positive_make; exact Hpositive |].
+    split; [apply database_history_complete_make; assumption |].
+    eapply database_uses_allocated_make; eassumption.
   Qed.
 
   Lemma database_owned_ok_row_delete : forall db f k,
@@ -17163,7 +18563,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
     split; [apply database_row_store_ok_row_delete; exact Hstore |].
     split; [apply database_history_alignment_row_delete; exact Halign |].
     split; [apply database_active_history_coherent_row_delete; exact Hcoherent |].
@@ -17172,7 +18572,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [apply database_history_codes_valid_row_delete; exact Hvalid |].
     split; [apply database_history_key_ids_bounded_row_delete; exact Hbounded |].
     split; [apply database_row_weight_conserved_row_delete; exact Hconserved |].
-    apply database_row_weights_positive_row_delete. exact Hpositive.
+    split; [apply database_row_weights_positive_row_delete; exact Hpositive |].
+    split; [apply database_history_complete_row_delete; exact Hcomplete |].
+    apply database_uses_allocated_row_delete. exact Huses_allocated.
   Qed.
 
   Lemma database_owned_ok_row_replace : forall db f k previous o,
@@ -17185,7 +18587,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
+       Hbounded & Hconserved & Hpositive & Hcomplete & Huses_allocated).
     assert (Hself : forall key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
         Some (key, r) -> db_locate f k db = Some k).
@@ -17206,7 +18608,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       intros i Hin. apply (proj1 Hkind). apply in_or_app. now left. }
     split; [eapply database_row_weight_conserved_row_replace;
       eassumption |].
-    apply database_row_weights_positive_row_replace. exact Hpositive.
+    split; [apply database_row_weights_positive_row_replace; exact Hpositive |].
+    split; [apply database_history_complete_row_replace; assumption |].
+    apply database_uses_allocated_row_replace;
+      [exact Huses_allocated | exact (proj1 Hkind)].
   Qed.
 
   Lemma database_idle_ok_put : forall db f k o,
@@ -20773,46 +22178,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact (inv_on_owned db work Hinv).
   Qed.
 
-  (** Rewriting a current row retains the historical occurrence inventory. *)
-  Lemma repair_current_uses_store : forall db f k,
-    row_uses (db_row_store (repair_current f k db)) =
-      row_uses (db_row_store db).
-  Proof.
-    intros db f k. unfold repair_current.
-    destruct (row_get f k db) as [output |]; [| reflexivity].
-    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
-      (db_tuple_code k))
-      (output_eqb (option_map (normal_cell db) output) output)); reflexivity.
-  Qed.
-
-  (** Linking historical row identities leaves their occurrence inventory untouched. *)
-  Lemma move_row_identity_uses_store : forall db f old current,
-    row_uses (db_row_store (move_row_identity f old current db)) =
-      row_uses (db_row_store db).
-  Proof.
-    intros db f old current. unfold move_row_identity.
-    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
-      as [[old_key old_id] |];
-      [| reflexivity].
-    destruct (PTrieCode.get (db_row_code f current)
-      (row_history (db_row_store db))) as [[current_key current_id] |];
-      reflexivity.
-  Qed.
-
-  (** A full repair leaves all registered occurrences available to later pops. *)
-  Lemma db_repair_entry_uses_store : forall db f k,
-    row_uses (db_row_store (db_repair_entry f k db)) = row_uses (db_row_store db).
-  Proof.
-    intros db f k. unfold db_repair_entry.
-    destruct (db_locate f k db) as [current |]; [| reflexivity].
-    destruct (row_get f current db) as [output |]; [| reflexivity].
-    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
-      (db_tuple_code current))
-      (output_eqb (option_map (normal_cell db) output) output));
-      [reflexivity |].
-    rewrite move_row_identity_uses_store, repair_current_uses_store.
-    reflexivity.
-  Qed.
 
   Lemma db_repair_entry_uses : forall db f k x e,
     uses (db_repair_entry f k db) x e <-> uses db x e.
@@ -23044,51 +24409,641 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact Howned.
   Qed.
 
+  (** Row repair preserves old classes and schedules every representative it redirects. *)
+  Definition database_repr_progress (db next : t) : Prop :=
+    (forall i j, repr db i = repr db j -> repr next i = repr next j) /\
+    incl (queue db) (queue next) /\
+    (forall i, repr db i <> repr next i -> In (repr db i) (queue next)).
+
+  Lemma database_repr_progress_refl : forall db, database_repr_progress db db.
+  Proof.
+    intro db. split; [intros i j Hsame; exact Hsame |].
+    split; [intros i Hin; exact Hin |].
+    intros i Hdifferent. exfalso. apply Hdifferent. reflexivity.
+  Qed.
+
+  Lemma database_repr_progress_frame : forall db next,
+    db_forest next = db_forest db -> queue next = queue db ->
+    database_repr_progress db next.
+  Proof.
+    intros db next Hforest Hqueue.
+    unfold database_repr_progress, repr. rewrite Hforest, Hqueue.
+    split; [intros i j Hsame; exact Hsame |].
+    split; [intros i Hin; exact Hin |].
+    intros i Hdifferent. exfalso. apply Hdifferent. reflexivity.
+  Qed.
+
+  Lemma database_repr_progress_target : forall db middle next,
+    database_repr_progress db middle ->
+    db_forest next = db_forest middle -> queue next = queue middle ->
+    database_repr_progress db next.
+  Proof.
+    intros db middle next Hprogress Hforest Hqueue.
+    unfold database_repr_progress, repr in Hprogress |- *.
+    now rewrite Hforest, Hqueue.
+  Qed.
+
+  Lemma database_repr_progress_source : forall db middle next,
+    database_repr_progress middle next ->
+    db_forest middle = db_forest db -> queue middle = queue db ->
+    database_repr_progress db next.
+  Proof.
+    intros db middle next Hprogress Hforest Hqueue.
+    unfold database_repr_progress, repr in Hprogress |- *.
+    now rewrite Hforest, Hqueue in Hprogress.
+  Qed.
+
+  Lemma union_repr_progress : forall db i j,
+    UnionFind.wf (db_forest db) -> database_repr_progress db (union i j db).
+  Proof.
+    intros db i j Hforest.
+    destruct (UnionFindCode.union i j (db_forest db))
+      as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+        Hforest Hunion) as [_ [_ Hrepr]].
+      unfold database_repr_progress, repr, queue, union.
+      rewrite Hunion.
+      cbn [fst snd database_set_pending database_set_runtime runtime_set_union
+        db_runtime runtime_queue db_forest].
+      split.
+      + intros a b Hsame. now rewrite !Hrepr, Hsame.
+      + split; [intros x Hin; now right |].
+        intros x Hdifferent. rewrite Hrepr in Hdifferent.
+        destruct (Pos.eqb (UnionFind.repr (db_forest db) x) loser)
+          eqn:Hloser; [| contradiction].
+        apply Pos.eqb_eq in Hloser. now left.
+    - destruct (UnionFind.union_none i j (db_forest db) forest Hforest Hunion)
+        as [_ Hrepr].
+      unfold database_repr_progress, repr, queue, union.
+      rewrite Hunion.
+      cbn [fst snd database_set_forest db_runtime runtime_queue db_forest].
+      split.
+      + intros a b Hsame. now rewrite !Hrepr.
+      + split; [intros x Hin; exact Hin |].
+        intros x Hdifferent. exfalso. apply Hdifferent. symmetry. apply Hrepr.
+  Qed.
+
+  Lemma put_repr_progress : forall db f k o,
+    UnionFind.wf (db_forest db) -> database_repr_progress db (put f k o db).
+  Proof.
+    intros db f k o Hforest. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext : database_repr_progress db next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try apply database_repr_progress_refl.
+      apply union_repr_progress. exact Hforest. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      eapply database_repr_progress_target; [exact Hnext | |].
+      + apply row_replace_forest.
+      + apply row_replace_queue.
+    - eapply database_repr_progress_target; [exact Hnext | |].
+      + apply row_replace_forest.
+      + apply row_replace_queue.
+  Qed.
+
+  Lemma repair_current_repr_progress : forall db f k,
+    UnionFind.wf (db_forest db) ->
+    database_repr_progress db (repair_current f k db).
+  Proof.
+    intros db f k Hforest. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| apply database_repr_progress_refl].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [apply database_repr_progress_refl |].
+    change (database_repr_progress db
+      (put f (normal_key db k) (option_map (normal_cell db) output)
+        (row_delete f k db))).
+    eapply database_repr_progress_source with (middle := row_delete f k db).
+    - apply put_repr_progress. now rewrite row_delete_forest.
+    - apply row_delete_forest.
+    - apply row_delete_queue.
+  Qed.
+
+  Lemma db_repair_entry_repr_progress : forall db f k,
+    UnionFind.wf (db_forest db) ->
+    database_repr_progress db (db_repair_entry f k db).
+  Proof.
+    intros db f k Hforest. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |];
+      [| apply database_repr_progress_refl].
+    destruct (row_get f current db) as [output |];
+      [| apply database_repr_progress_refl].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [apply database_repr_progress_refl |].
+    eapply database_repr_progress_target.
+    - apply repair_current_repr_progress. exact Hforest.
+    - exact (proj1 (move_row_identity_semantic_fields
+        (repair_current f current db) f current (normal_key db current))).
+    - apply move_row_identity_queue.
+  Qed.
+
+  Lemma database_repr_progress_coverage : forall db next x i j,
+    database_repr_progress db next -> repr db x = repr db i ->
+    (x = repr db i \/ In x (queue db)) -> repr next i = repr next j ->
+    repr next x = repr next j /\ (x = repr next j \/ In x (queue next)).
+  Proof.
+    intros db next x i j [Hsame [Hqueue Hchanged]] Hrepr Hposition Hequal.
+    split; [rewrite <- Hequal; apply Hsame; exact Hrepr |].
+    destruct Hposition as [Hroot | Hqueued]; [| right; now apply Hqueue].
+    destruct (Pos.eq_dec (repr db i) (repr next i)) as [Hfixed | Hdifferent].
+    - left. now rewrite Hroot, Hfixed.
+    - right. rewrite Hroot. now apply Hchanged.
+  Qed.
+
+  (** Every identifier in a repaired row is old or the normalization of a removed-row identifier. *)
+  Lemma repair_current_row_id_origin : forall db f current before,
+    UnionFind.wf (db_forest db) ->
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    row_get f current db = Some before ->
+    andb (Pos.eqb (db_tuple_code (normal_key db current)) (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) before) before) = false ->
+    forall g args output i,
+    row (view (repair_current f current db)) g args output -> row_ids args output i ->
+    exists old_key old_output j,
+      row (view db) g old_key old_output /\ row_ids old_key old_output j /\
+      ((args = old_key /\ i = j /\ (g, old_key) <> (f, current)) \/
+       (g = f /\ old_key = current /\ args = normal_key db current /\ i = repr db j)).
+  Proof.
+    intros db f current before Hforest Hmembers Hbefore Hfixed
+      g args output i Hrow Hids.
+    unfold repair_current in Hrow. rewrite Hbefore, Hfixed in Hrow.
+    change (row (view (put f (normal_key db current)
+      (option_map (normal_cell db) before) (row_delete f current db)))
+      g args output) in Hrow.
+    destruct (put_row_sources_raw (row_delete f current db) f
+      (normal_key db current) (option_map (normal_cell db) before)
+      g args output Hrow) as [Hold | [Hname [Hkey Houtput]]].
+    - apply row_delete_binding in Hold as [Hold Hother].
+      exists args, output, i. split; [exact Hold |]. split; [exact Hids |].
+      left. now repeat split.
+    - subst g.
+      rewrite row_delete_normal_key,
+        (normal_key_idempotent db current Hforest) in Hkey.
+      rewrite row_delete_normal_key,
+        (normal_key_idempotent db current Hforest), row_delete_normal_output,
+        (normal_output_idempotent db before Hforest) in Houtput.
+      subst args. unfold row_ids in Hids.
+      apply in_app_or in Hids as [Hinput | Hout].
+      + rewrite (normal_key_correct_forest db current Hforest Hmembers) in Hinput.
+        apply in_map_iff in Hinput as [c [Hcell Hin]].
+        destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+        injection Hcell as Heq.
+        exists current, before, j. split; [exact Hbefore |].
+        split; [unfold row_ids; apply in_or_app; now left |].
+        right. repeat split. symmetry. exact Heq.
+      + destruct output as [[j | v] |]; cbn [option_list In] in Hout;
+          try contradiction.
+        2: { destruct Hout as [Hbad | Hbad]; [discriminate Hbad | contradiction]. }
+        destruct Hout as [Heq | Hempty]; [| contradiction].
+        injection Heq as Heq. subst i.
+        destruct (combine_output_id_sources (row_delete f current db) f
+          (row_get f (normal_key db current) (row_delete f current db))
+          (option_map (normal_cell db) before) j Houtput)
+          as [Hprevious | [_ Hnormalized]].
+        * apply row_delete_binding in Hprevious as [Hold Hother].
+          exists (normal_key db current), (Some (Id j)), j.
+          split; [exact Hold |].
+          split.
+          { unfold row_ids. apply in_or_app. right. cbn [option_list In]. now left. }
+          left. now repeat split.
+        * rewrite (normal_output_correct_forest db before Hforest Hmembers)
+            in Hnormalized.
+          destruct before as [[x | v] |]; cbn [option_map canon] in Hnormalized;
+            try discriminate Hnormalized.
+          injection Hnormalized as Hnormal.
+          exists current, (Some (Id x)), x. split; [exact Hbefore |].
+          split.
+          { unfold row_ids. apply in_or_app. right. cbn [option_list In]. now left. }
+          right. repeat split. symmetry. exact Hnormal.
+  Qed.
+
+  (** The row-identity update preserves the origins established by row repair. *)
+  Lemma db_repair_entry_row_id_origin : forall db work f k current before,
+    inv_on db work -> db_locate f k db = Some current ->
+    row_get f current db = Some before ->
+    andb (Pos.eqb (db_tuple_code (normal_key db current)) (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) before) before) = false ->
+    forall g args output i,
+    row (view (db_repair_entry f k db)) g args output -> row_ids args output i ->
+    exists old_key old_output j,
+      row (view db) g old_key old_output /\ row_ids old_key old_output j /\
+      ((args = old_key /\ i = j /\ (g, old_key) <> (f, current)) \/
+       (g = f /\ old_key = current /\ args = normal_key db current /\ i = repr db j)).
+  Proof.
+    intros db work f k current before Hinv Hlocated Hbefore Hfixed
+      g args output i Hrow Hids.
+    unfold db_repair_entry in Hrow. rewrite Hlocated, Hbefore, Hfixed in Hrow.
+    rewrite (proj2 (move_row_identity_semantic_fields
+      (repair_current f current db) f current (normal_key db current))) in Hrow.
+    eapply repair_current_row_id_origin.
+    - exact (inv_on_forest_wf db work Hinv).
+    - intro x. exact (inv_on_forest_members db work x Hinv).
+    - exact Hbefore.
+    - exact Hfixed.
+    - exact Hrow.
+    - exact Hids.
+  Qed.
+
+  (** Repair preserves aliases of every current row except the removed source row. *)
+  Lemma repair_current_move_lookup_other_row : forall db f current before g args value,
+    database_owned_ok db -> UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    row_get f current db = Some before ->
+    db_locate g args db = Some value -> (g, value) <> (f, current) ->
+    db_locate g args
+      (move_row_identity f current (normal_key db current)
+        (repair_current f current db)) = Some value.
+  Proof.
+    intros db f current before g args value Howned Hforest Hmembers Hrow
+      Hlookup Hother.
+    destruct Howned as [Hstore [Halign [Hcoherent [Howner _]]]].
+    destruct (PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store db))) as [[key r] |] eqn:Hentry.
+    2: { unfold db_locate in Hlookup. now rewrite Hentry in Hlookup. }
+    set (repaired := repair_current f current db).
+    assert (Hrepaired_store : database_row_store_ok repaired).
+    { subst repaired. now apply database_row_store_ok_repair_current. }
+    assert (Hrepaired_owner : database_history_root_owner repaired).
+    { subst repaired. now apply database_history_root_owner_repair_current. }
+    assert (Hrepaired_loc : db_locate g args repaired = Some value).
+    { subst repaired. rewrite (repair_current_old_locate db f current
+        g args key r Hstore Hentry). exact Hlookup. }
+    assert (Hrepaired_entry : PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store repaired)) = Some (key, r)).
+    { subst repaired. apply repair_current_history_old. exact Hentry. }
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store repaired)))
+      as [[old_key old_id] |] eqn:Hsource.
+    2: { unfold move_row_identity. now rewrite Hsource. }
+    destruct (PTrieCode.get (db_row_code f (normal_key db current))
+      (row_history (db_row_store repaired)))
+      as [[ck_key ck_id] |] eqn:Hdest.
+    2: { unfold move_row_identity. now rewrite Hsource, Hdest. }
+    assert (Hsource_loc : db_locate f current repaired = Some current).
+    { subst repaired. eapply repair_current_source_locate;
+        [exact Hforest | exact Hmembers | exact Hstore | exact Halign |
+         exact Hcoherent | exact Hrow | exact Hsource]. }
+    assert (Hdest_loc : db_locate f (normal_key db current) repaired =
+      Some (normal_key db current)).
+    { subst repaired. eapply repair_current_destination_locate;
+        [exact Hforest | exact Hmembers | exact Hstore | exact Halign |
+         exact Hdest]. }
+    eapply (move_row_identity_locate_value repaired f current (normal_key db current)
+      g args value old_key old_id ck_key ck_id key r Hrepaired_store
+      ltac:(symmetry; apply normal_key_length) Hsource Hdest Hrepaired_entry
+      Hsource_loc Hdest_loc Hrepaired_loc).
+    intros [Hroot | Hroot].
+    - pose proof (Hrepaired_owner g args key r f current old_key old_id
+        Hrepaired_entry Hsource Hroot) as Hname.
+      unfold db_locate in Hsource_loc, Hrepaired_loc.
+      rewrite Hsource in Hsource_loc. rewrite Hrepaired_entry in Hrepaired_loc.
+      unfold ids in Hroot. rewrite Hroot in Hrepaired_loc.
+      assert (Hvalue : value = current) by congruence.
+      exfalso. apply Hother. now subst g value.
+    - unfold db_locate in Hdest_loc, Hrepaired_loc.
+      rewrite Hdest in Hdest_loc. rewrite Hrepaired_entry in Hrepaired_loc.
+      unfold ids in Hroot. rewrite Hroot in Hrepaired_loc. congruence.
+  Qed.
+
+  Lemma inv_on_repair_lookup_other_row : forall db work f k current before
+      g args value,
+    inv_on db work -> db_locate f k db = Some current ->
+    row_get f current db = Some before ->
+    db_locate g args db = Some value -> (g, value) <> (f, current) ->
+    db_locate g args (db_repair_entry f k db) = Some value.
+  Proof.
+    intros db work f k current before g args value Hinv Hlocated Hrow
+      Hlookup Hother.
+    unfold db_repair_entry. rewrite Hlocated, Hrow.
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) before) before));
+      [exact Hlookup |].
+    eapply repair_current_move_lookup_other_row.
+    - exact (inv_on_owned db work Hinv).
+    - exact (inv_on_forest_wf db work Hinv).
+    - intro i. exact (inv_on_forest_members db work i Hinv).
+    - exact Hrow.
+    - exact Hlookup.
+    - exact Hother.
+  Qed.
+
+  Lemma database_repr_progress_normalized : forall db next j,
+    UnionFind.wf (db_forest db) -> database_repr_progress db next ->
+    repr next (repr db j) = repr next j.
+  Proof.
+    intros db next j Hforest [Hsame _]. apply Hsame.
+    unfold repr. apply UnionFind.repr_idem. exact Hforest.
+  Qed.
+
+  (** A changed class retains a queued occurrence for every row that used it. *)
+  Lemma database_changed_class_scheduled : forall db next work rest g old_key old_output j args,
+    inv_on db work -> database_repr_progress db next ->
+    (forall x e, uses next x e <-> uses db x e) ->
+    row (view db) g old_key old_output -> row_ids old_key old_output j ->
+    repr db j <> repr next j ->
+    (forall historical, located db g historical = Some old_key ->
+      located next g historical = Some args) ->
+    exists historical, scheduled next rest (g, historical) /\
+      located next g historical = Some args.
+  Proof.
+    intros db next work rest g old_key old_output j args Hinv
+      [_ [Hqueue Hchanged]] Huses Hrow Hid Hdifferent Hlocate.
+    destruct Hinv as (_ & _ & Hcoverage & _).
+    destruct (Hcoverage g old_key old_output j Hrow Hid)
+      as [x [historical [_ [Huse [Hlocated Hposition]]]]].
+    exists historical. split; [| now apply Hlocate].
+    right. exists x. split.
+    - destruct Hposition as [Hroot | Hqueued].
+      + rewrite Hroot. now apply Hchanged.
+      + now apply Hqueue.
+    - now apply Huses.
+  Qed.
+
+  (** Dropping the current entry preserves schedules for every other current row. *)
+  Lemma database_schedule_tail : forall db next rest f k current g old_key historical,
+    database_repr_progress db next ->
+    (forall x e, uses next x e <-> uses db x e) ->
+    located db f k = Some current -> (g, old_key) <> (f, current) ->
+    scheduled db ((f, k) :: rest) (g, historical) ->
+    located db g historical = Some old_key -> scheduled next rest (g, historical).
+  Proof.
+    intros db next rest f k current g old_key historical
+      [_ [Hqueue _]] Huses Hcurrent Hother Hscheduled Hlocated.
+    destruct Hscheduled as [[Heq | Hrest] | [x [Hqueued Huse]]].
+    - injection Heq as Hname Hkey. subst g historical.
+      rewrite Hcurrent in Hlocated. injection Hlocated as Heq.
+      subst old_key. exfalso. apply Hother. reflexivity.
+    - now left.
+    - right. exists x. split; [now apply Hqueue | now apply Huses].
+  Qed.
+
+  (** Forward lookup and row origins transport coverage through a nontrivial repair. *)
+  Lemma inv_on_repair_coverage_from_lookups : forall db rest f k current before,
+    inv_on db ((f, k) :: rest) -> db_locate f k db = Some current ->
+    row_get f current db = Some before ->
+    andb (Pos.eqb (db_tuple_code (normal_key db current)) (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) before) before) = false ->
+    (forall historical, located db f historical = Some current ->
+      located (db_repair_entry f k db) f historical = Some (normal_key db current)) ->
+    (forall g old_key historical, located db g historical = Some old_key ->
+      (g, old_key) <> (f, current) ->
+      located (db_repair_entry f k db) g historical = Some old_key) ->
+    forall g args output i, row (view (db_repair_entry f k db)) g args output ->
+      row_ids args output i ->
+      exists x historical,
+        repr (db_repair_entry f k db) x = repr (db_repair_entry f k db) i /\
+        uses (db_repair_entry f k db) x (g, historical) /\
+        located (db_repair_entry f k db) g historical = Some args /\
+        (x = repr (db_repair_entry f k db) i \/ In x (queue (db_repair_entry f k db))).
+  Proof.
+    intros db rest f k current before Hinv Hlocated Hbefore Hfixed Hsource Hother
+      g args output i Hrow Hids.
+    pose proof (inv_on_forest_wf db ((f, k) :: rest) Hinv) as Hforest.
+    pose proof (db_repair_entry_repr_progress db f k Hforest) as Hprogress.
+    destruct (db_repair_entry_row_id_origin db ((f, k) :: rest) f k current before
+      Hinv Hlocated Hbefore Hfixed g args output i Hrow Hids)
+      as [old_key [old_output [j [Hold [Hid Horigin]]]]].
+    assert (Hcoverage : exists x historical,
+      repr db x = repr db j /\ uses db x (g, historical) /\
+      located db g historical = Some old_key /\
+      (x = repr db j \/ In x (queue db))).
+    { destruct Hinv as (_ & _ & Hcover & _).
+      exact (Hcover g old_key old_output j Hold Hid). }
+    destruct Hcoverage as [x [historical [Hrepr [Huse [Hlookup Hposition]]]]].
+    assert (Hequal : repr (db_repair_entry f k db) j =
+      repr (db_repair_entry f k db) i).
+    { destruct Horigin as [[_ [-> _]] | [_ [_ [_ ->]]]]; [reflexivity |].
+      symmetry. apply database_repr_progress_normalized; assumption. }
+    destruct (database_repr_progress_coverage db (db_repair_entry f k db) x j i
+      Hprogress Hrepr Hposition Hequal) as [Hsame Hnext_position].
+    exists x, historical. split; [exact Hsame |].
+    split; [now apply db_repair_entry_uses |].
+    split; [| exact Hnext_position].
+    destruct Horigin as [[Hargs [_ Hnot_source]] | [Hname [Hkey [Hargs _]]]].
+    - subst args. now apply Hother.
+    - subst g old_key args. now apply Hsource.
+  Qed.
+
+  (** A noncanonical repaired row retains work or has acquired a queued losing class. *)
+  Lemma inv_on_repair_schedule_from_lookups : forall db rest f k current before,
+    inv_on db ((f, k) :: rest) -> db_locate f k db = Some current ->
+    row_get f current db = Some before ->
+    andb (Pos.eqb (db_tuple_code (normal_key db current)) (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) before) before) = false ->
+    (forall historical, located db f historical = Some current ->
+      located (db_repair_entry f k db) f historical = Some (normal_key db current)) ->
+    (forall g old_key historical, located db g historical = Some old_key ->
+      (g, old_key) <> (f, current) ->
+      located (db_repair_entry f k db) g historical = Some old_key) ->
+    forall g args output i, row (view (db_repair_entry f k db)) g args output ->
+      row_ids args output i -> repr (db_repair_entry f k db) i <> i ->
+      exists historical, scheduled (db_repair_entry f k db) rest (g, historical) /\
+        located (db_repair_entry f k db) g historical = Some args.
+  Proof.
+    intros db rest f k current before Hinv Hlocated Hbefore Hfixed Hsource Hother
+      g args output i Hrow Hids Hnonroot.
+    pose proof (inv_on_forest_wf db ((f, k) :: rest) Hinv) as Hforest.
+    pose proof (db_repair_entry_repr_progress db f k Hforest) as Hprogress.
+    destruct (db_repair_entry_row_id_origin db ((f, k) :: rest) f k current before
+      Hinv Hlocated Hbefore Hfixed g args output i Hrow Hids)
+      as [old_key [old_output [j [Hold [Hid Horigin]]]]].
+    destruct Horigin as [[Hargs [Hid_equal Hnot_source]] |
+      [Hname [Hkey [Hargs Hid_normal]]]].
+    - subst args i.
+      destruct (Pos.eq_dec (repr db j) j) as [Hroot | Hold_nonroot].
+      + eapply database_changed_class_scheduled.
+        * exact Hinv.
+        * exact Hprogress.
+        * intros x e. apply db_repair_entry_uses.
+        * exact Hold.
+        * exact Hid.
+        * rewrite Hroot. intro Heq. apply Hnonroot. symmetry. exact Heq.
+        * intros historical Hlookup. now apply Hother.
+      + assert (Hschedule : exists historical,
+          scheduled db ((f, k) :: rest) (g, historical) /\
+          located db g historical = Some old_key).
+        { destruct Hinv as (_ & _ & _ & Hschedule & _).
+          exact (Hschedule g old_key old_output j Hold Hid Hold_nonroot). }
+        destruct Hschedule as [historical [Hscheduled Hlookup]].
+        exists historical. split.
+        * eapply database_schedule_tail.
+          -- exact Hprogress.
+          -- intros x e. apply db_repair_entry_uses.
+          -- exact Hlocated.
+          -- exact Hnot_source.
+          -- exact Hscheduled.
+          -- exact Hlookup.
+        * now apply Hother.
+    - subst g old_key args i.
+      eapply database_changed_class_scheduled.
+      + exact Hinv.
+      + exact Hprogress.
+      + intros x e. apply db_repair_entry_uses.
+      + exact Hold.
+      + exact Hid.
+      + intro Heq. apply Hnonroot.
+        rewrite (database_repr_progress_normalized db (db_repair_entry f k db)
+          j Hforest Hprogress). symmetry. exact Heq.
+      + exact Hsource.
+  Qed.
+
+  (** A repaired history names either the normalized source or an unchanged row. *)
+  Lemma db_repair_entry_lookup_origin_complete : forall db work f historical
+      current before g args result,
+    inv_on db work -> database_history_complete db ->
+    db_locate f historical db = Some current -> row_get f current db = Some before ->
+    db_locate g args (db_repair_entry f historical db) = Some result ->
+    (g, result) = (f, normal_key db current) \/
+    (db_locate g args db = Some result /\ (g, result) <> (f, current)).
+  Proof.
+    intros db work f historical current before g args result Hinv Hcomplete
+      Hlocated Hrow Hlookup.
+    pose proof (inv_on_owned db work Hinv) as Howned.
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    pose proof (proj1 Howned) as Hstore.
+    assert (Hentry : exists key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (db_repair_entry f historical db))) =
+        Some (key, r)).
+    { unfold db_locate in Hlookup.
+      destruct (PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (db_repair_entry f historical db))))
+        as [[key r] |] eqn:Hentry; [now exists key, r | discriminate]. }
+    destruct Hentry as [key [r Hentry]].
+    destruct (db_repair_entry_history_inverse db f historical g args key r
+      Hforest Hentry) as [Hold | Hnew].
+    - destruct (database_history_complete_locate db g args key r Hstore Hcomplete
+        Hold) as [old_key Hold_lookup].
+      destruct (RowKeys.eqb_spec (g, old_key) (f, current)) as [Hsource | Hother].
+      + injection Hsource as Hname Hkey. subst g old_key.
+        pose proof (db_repair_entry_locate_source db work f historical current
+          before args Hinv Hcomplete Hlocated Hrow Hold_lookup) as Hforward.
+        change (db_locate f args (db_repair_entry f historical db) =
+          Some (normal_key db current)) in Hforward.
+        left. assert (Heq : result = normal_key db current) by congruence.
+        now subst result.
+      + pose proof (inv_on_repair_lookup_other_row db work f historical current
+          before g args old_key Hinv Hlocated Hrow Hold_lookup Hother) as Hforward.
+        assert (Heq : result = old_key) by congruence. subst result. now right.
+    - destruct Hnew as [current' [Hlocated' Htarget]].
+      assert (Heq : current' = current) by congruence. subst current'.
+      injection Htarget as Hname Hkey. subst g args.
+      destruct (db_repair_entry_target_row db f historical current before
+        Hforest Hlocated Hrow) as [output Htarget_row].
+      pose proof (inv_on_repair_owned db work f historical Hinv) as Hnext_owned.
+      destruct Hnext_owned as [_ [_ [Hcoherent _]]].
+      pose proof (Hcoherent f (normal_key db current) output key r
+        Htarget_row Hentry) as Htarget_locate.
+      left. assert (Heq : result = normal_key db current) by congruence.
+      now subst result.
+  Qed.
+
+  Lemma kind_ok_declared : forall db f k output,
+    kind_ok db f k output -> kind (view db) f <> None.
+  Proof.
+    intros db f k output [_ [_ Hkind]] Hnone.
+    now rewrite Hnone in Hkind.
+  Qed.
+
+  Lemma inv_on_repair_located_rows_complete : forall db work f historical
+      current before,
+    inv_on db work -> database_history_complete db ->
+    db_locate f historical db = Some current -> row_get f current db = Some before ->
+    forall g args result, located (db_repair_entry f historical db) g args = Some result ->
+      exists output, In ((g, result), output) (rows (db_repair_entry f historical db)) /\
+        kind (view (db_repair_entry f historical db)) g <> None.
+  Proof.
+    intros db work f historical current before Hinv Hcomplete Hlocated Hrow
+      g args result Hlookup.
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    assert (Hresult : exists output,
+      row (view (db_repair_entry f historical db)) g result output).
+    { destruct (db_repair_entry_lookup_origin_complete db work f historical
+        current before g args result Hinv Hcomplete Hlocated Hrow Hlookup)
+        as [Htarget | [Hold_lookup Hother]].
+      - injection Htarget as Hname Hkey. subst g result.
+        exact (db_repair_entry_target_row db f historical current before
+          Hforest Hlocated Hrow).
+      - destruct (RowKeys.eqb_spec (g, result) (f, normal_key db current))
+          as [Htarget | Hnot_target].
+        + injection Htarget as Hname Hkey. subst g result.
+          exact (db_repair_entry_target_row db f historical current before
+            Hforest Hlocated Hrow).
+        + destruct (inv_on_located_row db work g args result Hinv Hold_lookup)
+            as [output Hbefore].
+          exists output. eapply db_repair_entry_keeps_other_row; eassumption. }
+    destruct Hresult as [output Hresult]. exists output. split.
+    - apply (proj2 (proj1 (inv_on_repair_rows db work f historical Hinv)
+        g result output)). exact Hresult.
+    - apply (kind_ok_declared (db_repair_entry f historical db) g result output).
+      exact (inv_on_repair_kind db work f historical Hinv g result output Hresult).
+  Qed.
+
+  Lemma inv_on_repair_forest_complete : forall db work f historical current before,
+    inv_on db work -> database_history_complete db ->
+    db_locate f historical db = Some current -> row_get f current db = Some before ->
+    forest_ok (db_repair_entry f historical db).
+  Proof.
+    intros db work f historical current before Hinv Hcomplete Hlocated Hrow.
+    split.
+    - exact (inv_on_repair_located_rows_complete db work f historical current before
+        Hinv Hcomplete Hlocated Hrow).
+    - exact (inv_on_repair_forest_tail db work f historical Hinv).
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
   Proof.
     intros db [f k] rest Hinv.
+    pose proof (database_owned_history_complete db
+      (inv_on_owned db ((f, k) :: rest) Hinv)) as Hcomplete.
     destruct (located db f k) as [current |] eqn:Hlocated.
     2: { eapply inv_on_repair_absent; eassumption. }
     destruct (inv_on_located_row db ((f, k) :: rest) f k current Hinv Hlocated)
-      as [output Hrow].
+      as [before Hrow].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
       (db_tuple_code current))
-      (output_eqb (option_map (normal_cell db) output) output)) eqn:Hfixed.
+      (output_eqb (option_map (normal_cell db) before) before)) eqn:Hfixed.
     1: { eapply inv_on_repair_fixed; eassumption. }
-    assert (Howned : database_owned_ok (repair_entry (f, k) db)).
-    { exact (inv_on_repair_owned db ((f, k) :: rest) f k Hinv). }
-    assert (Hwork : forall e, In e rest ->
-      exists x, uses (repair_entry (f, k) db) x e).
-    { exact (inv_on_repair_work db f k rest Hinv). }
-    assert (Hrows :
-      (forall g args output,
-        In ((g, args), output) (rows (repair_entry (f, k) db)) <->
-          row (view (repair_entry (f, k) db)) g args output) /\
-      NoDup (map fst (rows (repair_entry (f, k) db)))).
-    { exact (inv_on_repair_rows db ((f, k) :: rest) f k Hinv). }
-    assert (Hnext : forall g args output i,
-      row (view (repair_entry (f, k) db)) g args output ->
-      row_ids args output i ->
-      (i < next_id (repair_entry (f, k) db))%positive).
-    { exact (inv_on_repair_next_bound db ((f, k) :: rest) f k Hinv). }
-    assert (Hkind : forall g args output,
-      row (view (repair_entry (f, k) db)) g args output ->
-      kind_ok (repair_entry (f, k) db) g args output).
-    { exact (inv_on_repair_kind db ((f, k) :: rest) f k Hinv). }
-    assert (Hqueue : NoDup (queue (repair_entry (f, k) db))).
-    { exact (inv_on_repair_queue_distinct db ((f, k) :: rest) f k Hinv). }
-    assert (Hpending : db_npending (repair_entry (f, k) db) =
-      N.of_nat (pending (repair_entry (f, k) db))).
-    { exact (inv_on_repair_pending_count db ((f, k) :: rest) f k Hinv). }
-    assert (Hallocated : forall x,
-      In x (queue (repair_entry (f, k) db)) ->
-      allocated (repair_entry (f, k) db) x).
-    { exact (inv_on_repair_queue_allocated db ((f, k) :: rest) f k Hinv). }
-    unfold inv_on. destruct Hrows as [Hrows Hnodup].
-    repeat split; try assumption.
-  Admitted. (* OPEN: active repair needs old-label root redirection, row/use coverage and scheduling. *)
+    assert (Hsource : forall historical, located db f historical = Some current ->
+      located (db_repair_entry f k db) f historical = Some (normal_key db current)).
+    { intros historical Halias. eapply db_repair_entry_locate_source; eassumption. }
+    assert (Hother : forall g old_key historical, located db g historical = Some old_key ->
+      (g, old_key) <> (f, current) ->
+      located (db_repair_entry f k db) g historical = Some old_key).
+    { intros g old_key historical Hlookup Hnot_source.
+      eapply inv_on_repair_lookup_other_row; eassumption. }
+    destruct (inv_on_repair_rows db ((f, k) :: rest) f k Hinv)
+      as [Hrows Hnodup].
+    split; [exact Hrows |]. split; [exact Hnodup |].
+    split.
+    - exact (inv_on_repair_coverage_from_lookups db rest f k current before
+        Hinv Hlocated Hrow Hfixed Hsource Hother).
+    - split.
+      + exact (inv_on_repair_schedule_from_lookups db rest f k current before
+          Hinv Hlocated Hrow Hfixed Hsource Hother).
+      + split; [exact (inv_on_repair_slot_invariant db ((f, k) :: rest) f k Hinv) |].
+        split; [exact (inv_on_repair_next_bound db ((f, k) :: rest) f k Hinv) |].
+        split; [exact (inv_on_repair_work db f k rest Hinv) |].
+        split.
+        * exact (inv_on_repair_forest_complete db ((f, k) :: rest) f k current before
+            Hinv Hcomplete Hlocated Hrow).
+        * split; [exact (inv_on_repair_kind db ((f, k) :: rest) f k Hinv) |].
+          split; [exact (inv_on_repair_queue_distinct db ((f, k) :: rest) f k Hinv) |].
+          split; [reflexivity |].
+          exact (inv_on_repair_queue_allocated db ((f, k) :: rest) f k Hinv).
+  Qed.
 
   (** Continuing steps retain the queue and active-batch invariant. *)
   Lemma F8_rstep_inv : forall s s', state_inv s -> rstep s = inl s' -> state_inv s'.

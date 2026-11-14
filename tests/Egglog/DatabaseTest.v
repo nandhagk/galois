@@ -5,7 +5,7 @@
     Initialization also retains the empty index's positive counter.
     Builds on: Database and the code towers of ValueSig and Index. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Relations.Relation_Operators.
 From Galois.Base Require Import Trie UnionFind.
 From Galois.Egglog Require Import ValueSig Syntax Index Database DatabaseSig.
 
@@ -513,6 +513,71 @@ Example rebuild_empty_queue_identity :
   let db := FixtureDatabase.put 3%positive [Val 2%positive] (Some (Val 4%positive))
     (FixtureDatabase.init [Decl 3%positive [SVal] (OLat 1%positive)] [(3%positive, [0])]) in
   FixtureDatabase.rebuild db = db.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+(** The complete-history invariant excludes the earlier raw alias candidate. *)
+Example alias_candidate_not_history_complete :
+  ~ UnitDatabase.database_history_complete alias_candidate.
+Proof.
+  intro Hcomplete.
+  assert (Hentry :
+    PTrieCode.get (UnitDatabase.db_row_code 2%positive [Id 3%positive])
+      (row_history (db_row_store alias_candidate)) =
+      Some ((2%positive, [Id 3%positive]), 1%positive)).
+  { vm_compute. reflexivity. }
+  assert (Hconnected :
+    UnitDatabase.database_history_connected alias_candidate 1%positive 1%positive).
+  { apply rst_refl. }
+  assert (Hfixed :
+    (match PTrieCode.get 1%positive (row_links (db_row_store alias_candidate)) with
+     | Some parent => parent | None => 1%positive end) = 1%positive).
+  { vm_compute. reflexivity. }
+  destruct (Hcomplete 2%positive [Id 3%positive] (2%positive, [Id 3%positive])
+    1%positive 1%positive Hentry Hconnected Hfixed)
+    as [current [s [Hkey [Hself _]]]].
+  change (Some [Id 2%positive] = Some current) in Hkey.
+  injection Hkey as <-.
+  change (None = Some ((2%positive, [@Id UnitValue.t 2%positive]), s)) in Hself.
+  discriminate Hself.
+Qed.
+(** A historical use follows its row through two successive key normalizations. *)
+Definition successive_alias_source :=
+  let empty := FixtureDatabase.init [Decl 2%positive [SId] ORel] [] in
+  let first := snd (FixtureDatabase.make 9%positive [] empty) in
+  let second := snd (FixtureDatabase.make 9%positive [] first) in
+  let third := snd (FixtureDatabase.make 9%positive [] second) in
+  let fourth := snd (FixtureDatabase.make 9%positive [] third) in
+  let stored := FixtureDatabase.put 2%positive [Id 3%positive] None fourth in
+  FixtureDatabase.union 2%positive 3%positive
+    (FixtureDatabase.union 1%positive 4%positive stored).
+
+Example repair_follows_successive_aliases :
+  match FixtureDatabase.db_rstep (successive_alias_source, []) with
+  | inr _ => False
+  | inl active =>
+    match FixtureDatabase.db_rstep active with
+    | inr _ => False
+    | inl (first, _) =>
+      let queued := FixtureDatabase.union 1%positive 2%positive first in
+      match FixtureDatabase.db_rstep (queued, []) with
+      | inr _ => False
+      | inl active =>
+        match FixtureDatabase.db_rstep active with
+        | inr _ => False
+        | inl (second, rest) =>
+          (FixtureDatabase.db_locate 2%positive [Id 3%positive] first,
+            FixtureDatabase.db_locate 2%positive [Id 3%positive] second,
+            FixtureDatabase.db_locate 2%positive [Id 2%positive] second,
+            FixtureDatabase.row_get 2%positive [Id 2%positive] second,
+            FixtureDatabase.row_get 2%positive [Id 1%positive] second,
+            rest) =
+          (Some [Id 2%positive], Some [Id 1%positive], Some [Id 1%positive],
+            None, Some None, [])
+        end
+      end
+    end
+  end.
 Proof.
   vm_compute. reflexivity.
 Qed.
