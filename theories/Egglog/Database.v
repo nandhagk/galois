@@ -18005,6 +18005,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply database_row_weights_positive_union. exact Hpositive.
   Qed.
 
+  Lemma database_owned_ok_put : forall db f k o,
+    wf db -> kind_ok db f k o -> database_owned_ok db ->
+    database_owned_ok (put f k o db).
+  Proof.
+    intros db f k o Hwf Hkind Howned.
+    unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    split; [apply database_row_store_ok_put; exact Hstore |].
+    split; [eapply database_history_alignment_put; eassumption |].
+    split; [eapply database_active_history_coherent_put; eassumption |].
+    split; [eapply database_history_root_owner_put; eassumption |].
+    split; [eapply database_history_key_shape_put; eassumption |].
+    split; [apply database_history_codes_valid_put; exact Hvalid |].
+    split; [eapply database_history_key_ids_bounded_put; eassumption |].
+    split; [eapply database_row_weight_conserved_put; eassumption |].
+    apply database_row_weights_positive_put. exact Hpositive.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
