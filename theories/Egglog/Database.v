@@ -10499,6 +10499,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       rewrite uses_entries_facts by (apply DatabaseUsesFacts.wf_register; exact Hmap);
       apply DatabaseUsesFacts.register_count_consistent; assumption.
   Qed.
+  Lemma register_row_uses_map_wf : forall db f k o,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    DatabaseUseMap.wf (row_uses (db_row_store (register_row_uses f k o db))).
+  Proof.
+    intros db f k o Hmap. unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_row_store row_uses]; apply DatabaseUsesFacts.wf_register; exact Hmap.
+  Qed.
+  Lemma register_row_uses_entries : forall db f k o x g key,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    (In (x, (g, key)) (uses_entries (register_row_uses f k o db)) <->
+      In (x, (g, key)) (uses_entries db) \/
+      In (x, (g, key)) (id_occurrences f k (k ++ option_list o))).
+  Proof.
+    intros db f k o x g key Hmap.
+    rewrite (uses_entries_facts db Hmap).
+    rewrite uses_entries_facts by (apply register_row_uses_map_wf; exact Hmap).
+    unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_row_store row_uses];
+      apply DatabaseUsesFacts.entries_register; exact Hmap.
+  Qed.
   Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
