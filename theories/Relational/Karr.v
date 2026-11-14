@@ -505,6 +505,59 @@ Proof.
   - rewrite Hlabels. apply Permutation_sym, Permutation_middle.
 Qed.
 
+(** Equal-length lists can always be paired by an unrestricted relation. *)
+Lemma karr_forall2_true : forall A B (xs : list A) (ys : list B),
+  length xs = length ys -> Forall2 (fun _ _ => True) xs ys.
+Proof.
+  intros A B xs. induction xs as [|x xs IH]; intros [|y ys] Hlength;
+    cbn [length] in Hlength; try discriminate; [constructor|].
+  constructor; [exact I|]. apply IH. lia.
+Qed.
+
+(** Combining two aligned prefixes commutes with appending their suffixes. *)
+Lemma karr_combine_app : forall A B (xs : list A) (ys : list B) xs' ys',
+  length xs = length ys ->
+  combine (xs ++ xs') (ys ++ ys') = combine xs ys ++ combine xs' ys'.
+Proof.
+  intros A B xs. induction xs as [|x xs IH]; intros [|y ys] xs' ys' Hlength;
+    cbn [length] in Hlength; try discriminate; [reflexivity|].
+  cbn [app combine]. f_equal. apply IH. lia.
+Qed.
+
+(** Pivot discovery permutes each original row label with its live augmented row. *)
+Lemma karr_pivot_pairs_entries : forall (labels : list (list Z))
+    (rows : list karr_row) (pivot : karr_row) (rest : list karr_row),
+  length labels = length rows -> karr_pivot rows = Some (pivot, rest) ->
+  exists label remaining,
+    Permutation (combine labels (map karr_row_entries rows))
+      ((label, karr_row_entries pivot) ::
+        combine remaining (map karr_row_entries rest)) /\
+    Permutation labels (label :: remaining) /\
+    length remaining = length rest.
+Proof.
+  intros labels rows pivot rest Hlength Hpivot.
+  destruct (karr_pivot_split rows pivot rest Hpivot)
+    as [prefix [suffix [Hrows Hrest]]].
+  pose proof (karr_forall2_true _ _ labels rows Hlength) as Hpaired.
+  destruct (karr_forall2_split _ _ (fun _ _ => True) labels rows
+    prefix pivot suffix Hpaired Hrows)
+    as [before [label [after [Hlabels [Hbefore [_ Hafter]]]]]].
+  pose proof (Forall2_length Hbefore) as Hbefore_length.
+  pose proof (Forall2_length Hafter) as Hafter_length.
+  exists label, (before ++ after). repeat split.
+  - rewrite Hlabels, Hrows, Hrest. rewrite !map_app. cbn [map combine].
+    rewrite (karr_combine_app _ _ before (map karr_row_entries prefix)
+      (label :: after) (karr_row_entries pivot :: map karr_row_entries suffix))
+      by (rewrite length_map; exact Hbefore_length).
+    cbn [combine].
+    rewrite (karr_combine_app _ _ before (map karr_row_entries prefix)
+      after (map karr_row_entries suffix))
+      by (rewrite length_map; exact Hbefore_length).
+    apply Permutation_sym, Permutation_middle.
+  - rewrite Hlabels. apply Permutation_sym, Permutation_middle.
+  - rewrite Hrest. rewrite !length_app. lia.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
