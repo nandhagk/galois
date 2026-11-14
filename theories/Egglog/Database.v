@@ -21337,6 +21337,83 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact (inv_on_repair_recorded_rows db work f k Hinv).
   Qed.
 
+  Lemma inv_on_slot_projection_count : forall db work s f perm u,
+    inv_on db work -> slot_of db s = Some (f, perm) ->
+    N.to_nat (runtime_projection_count (db_runtime db) s u) =
+      tuple_multiplicity u
+        (row_contributions f perm
+          (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db work s f perm u Hinv Hslot.
+    assert (Hcounts : projection_counts_ok db).
+    { unfold inv_on, forest_ok in Hinv. tauto. }
+    assert (Hmap : RowMap.wf (runtime_rows (db_runtime db))).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    destruct (Hcounts s f perm u Hslot)
+      as [rs [Hdistinct [Hmembers Hcount]]].
+    change (N.to_nat (stored_projection_count db s u) =
+      tuple_multiplicity u
+        (row_contributions f perm
+          (RowMap.elements (runtime_rows (db_runtime db))))).
+    rewrite Hcount. symmetry.
+    unfold tuple_multiplicity, row_contributions.
+    eapply filtered_projection_witness_length.
+    - exact Tuples.eqb_spec.
+    - apply RowFacts.elements_nodup_pairs. exact Hmap.
+    - exact Hdistinct.
+    - intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
+  Qed.
+
+  Lemma inv_on_slot_cache : forall db work s f perm,
+    inv_on db work -> slot_of db s = Some (f, perm) ->
+    slot_cache_ok (db_runtime db) s (length perm)
+      (row_contributions f perm
+        (RowMap.elements (runtime_rows (db_runtime db)))).
+  Proof.
+    intros db work s f perm Hinv Hslot.
+    assert (Hbound : runtime_slot_bound (db_runtime db) =
+      N.of_nat (length (slots db))).
+    { unfold inv_on, forest_ok, metadata_ok in Hinv. tauto. }
+    assert (Hmap : RowMap.wf (runtime_rows (db_runtime db))).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    assert (Hcache : I.wf (length perm) (index s false db) /\
+      I.wf (length perm) (index s true db) /\
+      (forall u, I.mem (index s false db) u <->
+        exists k o, row (view db) f k o /\
+          u = permute perm (k ++ option_list o)) /\
+      (forall u, I.mem (index s true db) u ->
+        I.mem (index s false db) u)).
+    { unfold inv_on in Hinv. destruct Hinv as
+        (_ & _ & _ & _ & Hslots & _).
+      exact (Hslots s f perm Hslot). }
+    destruct Hcache as [Hall [Hnew [Hmem Hdelta]]].
+    assert (Hindex : forall new,
+      index s new db = runtime_slot_index (db_runtime db) s new).
+    { intro new. now apply index_declared_slot with (f := f) (perm := perm). }
+    unfold slot_cache_ok. split; [rewrite <- Hindex; exact Hall |].
+    split; [rewrite <- Hindex; exact Hnew |].
+    split.
+    - intro u. rewrite <- Hindex, Hmem.
+      split.
+      + intros [k [o [Hrow ->]]].
+        apply row_contributions_member. exists k, o. split;
+          [apply row_elements_member; assumption | reflexivity].
+      + intro Hin. apply row_contributions_member in Hin as [k [o [Hrow ->]]].
+        exists k, o. split;
+          [apply row_elements_member; assumption | reflexivity].
+    - split.
+      + intros u Hin.
+        assert (Hraw : I.mem (index s true db) u).
+        { now rewrite Hindex. }
+        destruct (proj1 (Hmem u) (Hdelta u Hraw))
+          as [k [o [Hrow Hu]]].
+        apply row_contributions_member. exists k, o. split;
+          [apply row_elements_member; assumption | exact Hu].
+      + intro u. exact (inv_on_slot_projection_count db work s f perm u Hinv Hslot).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
