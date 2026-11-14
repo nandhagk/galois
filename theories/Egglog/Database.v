@@ -21052,6 +21052,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now rewrite row_replace_ids.
   Qed.
 
+  Lemma normal_output_allocated_forest : forall db o b,
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    (forall i, In (Id i) (option_list o) -> allocated db i) ->
+    option_map (normal_cell db) o = Some (Id b) -> allocated db b.
+  Proof.
+    intros db [[i | value] |] b Hforest Hmembers Hids Hnormal;
+      try discriminate Hnormal.
+    rewrite (normal_output_correct_forest db (Some (Id i)) Hforest Hmembers)
+      in Hnormal.
+    cbn [option_map canon] in Hnormal. injection Hnormal as <-.
+    unfold repr.
+    eapply UnionFindCodeFacts.repr_allocated;
+      [exact Hforest | exact Hmembers |].
+    apply Hids. cbn [option_list In]. now left.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
