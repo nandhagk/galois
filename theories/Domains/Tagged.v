@@ -1365,10 +1365,105 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
       unfold twork, c_tab, base.
       rewrite Nat2N.inj_add. nia.
   Qed.
+  (** A successful forward payload fits four table coefficients of caller work. *)
+  Local Lemma forward_payload_size o xs ws w p :
+    untag xs = Some ws -> Op.result_width o (map fst ws) = Some w ->
+    T.wfwd o w ws = Some p ->
+    (N.of_nat (W.psize w p) <=
+      4 * T.c_word_table * N.of_nat (twork (BOp o) xs + 1))%N.
+  Proof.
+    intros Htag Hwidth Hresult.
+    pose proof (T.wfwd_size_le o w ws p Hresult) as Hsize.
+    pose proof (table_budget o xs ws w Htag Hwidth) as Hbudget.
+    apply time_of_nat_le in Hbudget. rewrite Nat2N.inj_mul in Hbudget.
+    eapply N.le_trans; [exact Hsize|].
+    replace (4 * T.c_word_table * N.of_nat (twork (BOp o) xs + 1))%N with
+      (T.c_word_table *
+        (4 * N.of_nat (twork (BOp o) xs + 1)))%N by nia.
+    apply N.mul_le_mono_l. exact Hbudget.
+  Qed.
+
+  (** A checked forward result width is charged by the caller work. *)
+  Local Lemma forward_width_size o xs ws w :
+    untag xs = Some ws -> Op.result_width o (map fst ws) = Some w ->
+    (N.of_nat (Pos.to_nat w + 1) <=
+      N.of_nat (twork (BOp o) xs + 1))%N.
+  Proof.
+    intros Htag Hwidth.
+    pose proof (untag_sizes xs ws Htag) as [Hws _].
+    pose proof (WordTime.result_width_size_bound o (map fst ws) w Hwidth) as Hr.
+    rewrite map_map in Hr. rewrite <- Hws in Hr.
+    set (base := (Op.op_widths o + operand_widths xs + 1)%nat).
+    assert (Hbase : (1 <= base)%nat) by (unfold base; lia).
+    assert (Hbound : (Pos.to_nat w + 1 <= base ^ 2 + 1)%nat).
+    { rewrite Nat.pow_2_r. unfold base in Hr. nia. }
+    apply time_of_nat_le.
+    change (Pos.to_nat w + 1 <=
+      operand_sizes xs + length xs + base ^ 2 + 1)%nat.
+    lia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma fwd_size_le : forall o xs r, fwd o xs = Some r ->
     (N.of_nat (B.bsize r) <= c_tab * N.of_nat (twork o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [w z|o] xs r Hresult.
+    - destruct xs as [|x xs]; cbn [fwd] in Hresult; [|discriminate].
+      inversion Hresult; subst r.
+      pose proof (W.pconst_size w z) as Hpayload.
+      set (base := (Pos.to_nat w + Z.size_nat z + 1)%nat).
+      assert (Hwidth :
+        (N.of_nat (Pos.to_nat w + 1) <= N.of_nat (base ^ 2))%N).
+      { apply time_of_nat_le. rewrite Nat.pow_2_r. unfold base. nia. }
+      rewrite Nat2N.inj_add in Hwidth at 1.
+      change (N.of_nat (W.psize w (W.pconst w z)) <=
+        W.c_payload * N.of_nat (base ^ 2))%N in Hpayload.
+      change (N.of_nat (Pos.to_nat w + W.psize w (W.pconst w z) + 1) <=
+        c_tab * N.of_nat (twork (BConst w z) nil + 1))%N.
+      rewrite Nat2N.inj_add at 1.
+      rewrite Nat2N.inj_add at 1.
+      assert (Hbase :
+        (N.of_nat (base ^ 2) <=
+          N.of_nat (twork (BConst w z) nil + 1))%N).
+      { apply time_of_nat_le. unfold twork, base.
+        cbn [operand_sizes length]. lia. }
+      eapply N.le_trans with
+        (m := ((W.c_payload + 1) * N.of_nat (base ^ 2))%N).
+      + eapply N.le_trans with
+          (m := (N.of_nat (base ^ 2) +
+            W.c_payload * N.of_nat (base ^ 2))%N).
+        * lia.
+        * nia.
+      + eapply N.le_trans with
+          (m := ((W.c_payload + 1) *
+            N.of_nat (twork (BConst w z) nil + 1))%N).
+        * apply N.mul_le_mono_l. exact Hbase.
+        * apply N.mul_le_mono_r. unfold c_tab. nia.
+    - cbn [fwd] in Hresult.
+      destruct (untag xs) as [ws|] eqn:Htag; [|discriminate].
+      destruct (Op.result_width o (map fst ws)) as [w|] eqn:Hwidth;
+        [|discriminate].
+      destruct (T.wfwd o w ws) as [p|] eqn:Hpayload; [|discriminate].
+      inversion Hresult; subst r.
+      pose proof (forward_payload_size o xs ws w p Htag Hwidth Hpayload)
+        as Hpayload_size.
+      pose proof (forward_width_size o xs ws w Htag Hwidth) as Hwidth_size.
+      set (budget := N.of_nat (twork (BOp o) xs + 1)).
+      change (N.of_nat (W.psize w p) <=
+        4 * T.c_word_table * budget)%N in Hpayload_size.
+      change (N.of_nat (Pos.to_nat w + 1) <= budget)%N in Hwidth_size.
+      rewrite Nat2N.inj_add in Hwidth_size at 1.
+      change (N.of_nat (Pos.to_nat w + W.psize w p + 1) <=
+        c_tab * budget)%N.
+      rewrite Nat2N.inj_add at 1.
+      rewrite Nat2N.inj_add at 1.
+      eapply N.le_trans with
+        (m := ((1 + 4 * T.c_word_table) * budget)%N).
+      + eapply N.le_trans with
+          (m := (budget + 4 * T.c_word_table * budget)%N).
+        * lia.
+        * nia.
+      + apply N.mul_le_mono_r. unfold c_tab. nia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma bwd_size_le : forall o r xs ys, bwd o r xs = Some ys ->
     (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
