@@ -5593,9 +5593,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       exact (wf_quiet_canonical db Hwf Hquiet f k o Hrow x Hin).
   Qed.
 
-  (** Equality insertion keeps the database well formed. *)
-  Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
-    wf (union i j db).
+  (** Equality insertion preserves the base stored facts. *)
+  Lemma database_wf_union : forall i j db, database_wf db ->
+    allocated db i -> allocated db j -> database_wf (union i j db).
   Proof.
     intros i j db Hwf Hi Hj.
     assert (Hforest : UnionFind.wf (db_forest (union i j db))).
@@ -5609,7 +5609,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (union_queue_allocated i j db Hwf Hi Hj) as Hqueue.
     pose proof (union_quiet_canonical i j db Hwf) as Hcanonical.
     pose proof (database_history_union db i j (wf_history db Hwf)) as Hhistory.
-    unfold wf, database_wf in Hwf |- *. unfold union in *.
+    unfold database_wf in Hwf |- *. unfold union in *.
     destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
     destruct roots as [[winner loser] |];
       cbn [fst snd database_set_forest database_set_runtime database_set_pending
@@ -5620,6 +5620,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         view row same kind row_get kind_get repr allocated ids pending slots slot_of
         index canonical slots_fit projection_counts_ok stored_projection_count] in *; tauto.
   Qed.
+
+  (** Equality insertion keeps the database well formed. *)
+  Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
+    wf (union i j db).
+  Proof. exact database_wf_union. Qed.
 
   (** Rebuilding canonicalizes every row and empties pending work. *)
   Lemma rebuild_canonical : forall db, wf db ->
@@ -11475,7 +11480,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db i j Hpublic Hi Hj. unfold database_public_ok.
     split.
-    - apply wf_union; [exact (database_public_base db Hpublic) | exact Hi | exact Hj].
+    - apply database_wf_union; [exact (database_public_base db Hpublic) | exact Hi | exact Hj].
     - split; [exact (public_union_idle db i j Hpublic) |].
       apply slot_rank_ok_union. exact (database_public_rank db Hpublic).
   Qed.
