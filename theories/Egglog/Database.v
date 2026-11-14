@@ -3037,6 +3037,45 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
         (db_row_store db) -> f = g.
 
+  (** A history identifier belongs to a row-link component. *)
+  Definition database_history_connected (db : t) (a b : positive) : Prop :=
+    clos_refl_sym_trans positive
+      (fun x y => PTrieCode.get x (row_links (db_row_store db)) = Some y) a b.
+
+  (** Each root weight is charged to distinct historical row codes in its component. *)
+  Definition database_row_weight_conserved (db : t) : Prop :=
+    forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      let root := row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db) in
+      exists codes : list positive,
+        NoDup codes /\
+        (N.to_nat (match PTrieCode.get root (row_weights (db_row_store db)) with
+          | Some n => n | None => 1%N end) <= length codes)%nat /\
+        Forall (fun code => exists label id,
+          PTrieCode.get code (row_history (db_row_store db)) = Some (label, id) /\
+          database_history_connected db id root) codes.
+
+  Lemma database_row_weight_conserved_entry : forall db,
+    database_row_weight_conserved db -> forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      exists codes : list positive,
+        NoDup codes /\
+        (N.to_nat (match PTrieCode.get
+          (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+            (db_row_store db)) (row_weights (db_row_store db)) with
+          | Some n => n | None => 1%N end) <= length codes)%nat /\
+        Forall (fun code => exists label id,
+          PTrieCode.get code (row_history (db_row_store db)) = Some (label, id) /\
+          database_history_connected db id
+            (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+              (db_row_store db))) codes.
+  Proof.
+    exact (fun db Hconserved => Hconserved).
+  Qed.
+
   Lemma database_history_root_owner_entry : forall db,
     database_history_root_owner db -> forall f k key r g args other s,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
@@ -3642,6 +3681,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_history_root_owner (init ds sl).
   Proof.
     intros ds sl f k key r g args other s Hentry _ _.
+    cbn [init db_row_store row_history] in Hentry.
+    rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
+  Lemma database_row_weight_conserved_init : forall ds sl,
+    database_row_weight_conserved (init ds sl).
+  Proof.
+    intros ds sl f k key r Hentry.
     cbn [init db_row_store row_history] in Hentry.
     rewrite PTrie.get_empty in Hentry. discriminate.
   Qed.
