@@ -14744,6 +14744,55 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         cbn [Z.size_nat]. lia.
   Qed.
 
+  (** Both normalized inputs provide the source envelope for lifted rows. *)
+  Lemma karr_hull_seed_entries_bits : forall a b xs,
+    Forall (Forall (fun z =>
+      Z.size_nat z <= nell (Reached a) + nell (Reached b)))
+      (map karr_row_entries
+        (hull_left xs (length a + length b) 0 (map normalize_row a) ++
+         hull_right xs (length a + length b) (length a)
+           (map normalize_row b))).
+  Proof.
+    intros a b xs. apply Forall_map.
+    apply Forall_app. split;
+      apply Forall_forall; intros row Hin;
+      apply karr_row_entries_bits with
+        (dim := 2 * length xs + 2) (mlen := length a + length b).
+    - assert (Hprepared : Forall (fun r => NoDup (map fst (lhs r)) /\
+          C.row_bits r <= nell (Reached a) + nell (Reached b))
+          (map normalize_row a)).
+      { apply Forall_forall. intros r Hr.
+        apply in_map_iff in Hr as [source [Heq Hsource]]. subst r.
+        split; [cbn [normalize_row lhs]; apply normalize_coef_nodup|].
+        pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width a) (normalize_row source)
+          (in_map normalize_row _ _ Hsource)) as Hwidth.
+        cbn beta in Hwidth.
+        eapply Nat.le_trans with (m := nell (Reached a));
+          [lia|apply Nat.le_add_r]. }
+      pose proof (karr_hull_left_envelopes xs (length a + length b) 0
+        (map normalize_row a) (nell (Reached a) + nell (Reached b))
+        ltac:(unfold nell; lia) Hprepared) as Henv.
+      exact (proj1 (Forall_forall _ _) Henv row Hin).
+    - assert (Hprepared : Forall (fun r => NoDup (map fst (lhs r)) /\
+          C.row_bits r <= nell (Reached a) + nell (Reached b))
+          (map normalize_row b)).
+      { apply Forall_forall. intros r Hr.
+        apply in_map_iff in Hr as [source [Heq Hsource]]. subst r.
+        split; [cbn [normalize_row lhs]; apply normalize_coef_nodup|].
+        pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width b) (normalize_row source)
+          (in_map normalize_row _ _ Hsource)) as Hwidth.
+        cbn beta in Hwidth.
+        eapply Nat.le_trans with (m := nell (Reached b));
+          [lia|apply Nat.le_add_l]. }
+      pose proof (karr_hull_right_envelopes xs (length a + length b)
+        (length a) (map normalize_row b)
+        (nell (Reached a) + nell (Reached b))
+        ltac:(unfold nell; lia) Hprepared) as Henv.
+      exact (proj1 (Forall_forall _ _) Henv row Hin).
+  Qed.
+
   (** A generic initialized basis clock follows from the all-order minor law. *)
   Lemma T_karr_bareiss_seed_bounded : forall xs P,
     (T_karr_bareiss (length xs) 1
