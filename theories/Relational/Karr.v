@@ -1667,6 +1667,43 @@ Proof.
     Nat.even]. ring.
 Qed.
 
+(** The order-two law makes every undivided pivot cross divisible by the prior minor. *)
+Lemma karr_minor_law_cross_divisible : forall previous pivot_rows pivot_columns
+    head columns pairs pivot_origin pivot target_origin target index,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, pivot) pairs -> In (target_origin, target) pairs ->
+  length pivot = length (head :: columns) -> length target = length pivot ->
+  index < length target ->
+  (karr_nth index
+    (karr_cross (karr_nth 0 pivot) (karr_nth 0 target) target pivot)
+      mod previous = 0)%Z.
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs
+    pivot_origin pivot target_origin target [|index] Hlaw Hprevious
+    Hpivot Htarget Hpivot_width Htarget_width Hindex.
+  - rewrite karr_nth_cross by lia.
+    replace (karr_nth 0 pivot * karr_nth 0 target -
+      karr_nth 0 target * karr_nth 0 pivot)%Z with 0%Z by ring.
+    apply Z.mod_0_l. exact Hprevious.
+  - assert (Hvalid : Forall (fun i => i < length (head :: columns)) [0; S index]).
+    { constructor; [cbn [length] in *; lia|].
+      constructor; [cbn [length] in *; lia|constructor]. }
+    assert (Hpaired : Forall2 (fun origin row => In (origin, row) pairs)
+      [pivot_origin; target_origin] [pivot; target]).
+    { repeat constructor; assumption. }
+    unfold karr_minor_law in Hlaw.
+    pose proof (Hlaw [pivot_origin; target_origin] [pivot; target]
+      [0; S index] Hpaired eq_refl Hvalid ltac:(cbn [length]; lia)) as Hdet.
+    cbn [length karr_submatrix map Nat.sub Nat.add] in Hdet.
+    rewrite karr_determinant_two in Hdet.
+    rewrite Z.pow_1_r in Hdet.
+    rewrite karr_nth_cross by lia.
+    replace (karr_nth 0 target * karr_nth (S index) pivot)%Z with
+      (karr_nth (S index) pivot * karr_nth 0 target)%Z by ring.
+    rewrite Hdet. rewrite Z.mul_comm. apply Z.mod_mul. exact Hprevious.
+Qed.
+
 (** The order-three determinant agrees with the six signed permutation products. *)
 Lemma karr_determinant_three : forall a b c d e f g h i,
   karr_determinant 3 [[a; b; c]; [d; e; f]; [g; h; i]] =
