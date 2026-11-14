@@ -13425,6 +13425,69 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hroot.
   Qed.
 
+  Lemma database_row_store_depth_link : forall db db' loser winner,
+    database_row_store_ok db ->
+    ids db' = ids db ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some p => p | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links (db_row_store db')) with
+     | Some p => p | None => winner end) = winner ->
+    (forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db) = loser ->
+      exists first,
+        first < length k * (N.to_nat (N.log2 (ids db)) + 1) /\
+        row_root first r (db_row_store db) = loser) ->
+    database_row_store_depth_ok db'.
+  Proof.
+    intros db db' loser winner Hstore Hids Hhistory Hlinks Hdifferent
+      Hloser_fixed Hwinner_fixed Hshort f k key r Hentry_new.
+    rewrite Hhistory in Hentry_new.
+    set (fuel := length k * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (old_root := row_root fuel r (db_row_store db)).
+    assert (Hold_fixed :
+      (match PTrieCode.get old_root (row_links (db_row_store db)) with
+       | Some p => p | None => old_root end) = old_root).
+    { subst old_root fuel.
+      exact (database_history_root_fixed db f k key r Hstore Hentry_new). }
+    assert (Hnew_fixed :
+      (let parent current :=
+        match PTrieCode.get current (row_links (db_row_store db')) with
+        | Some p => p | None => current end in
+       parent (row_root fuel r (db_row_store db')) =
+         row_root fuel r (db_row_store db'))).
+    { destruct (Pos.eq_dec old_root loser) as [Hloses | Hother].
+      - destruct (Hshort f k key r Hentry_new Hloses) as
+          [first [Hfirst Hroot]].
+        assert (Hnew_root : row_root fuel r (db_row_store db') = winner).
+        { eapply row_root_link_after_fixed;
+            [exact Hlinks | exact Hdifferent | exact Hwinner_fixed |
+             exact Hroot | lia]. }
+        now rewrite Hnew_root.
+      - assert (Hother_direction : loser <> old_root) by congruence.
+        rewrite (row_root_link_unaffected fuel r (db_row_store db)
+          (db_row_store db') loser winner old_root Hlinks
+          Hother_direction Hloser_fixed eq_refl).
+        rewrite Hlinks.
+        change (match PTrieCode.get old_root
+          (PTrieCode.set loser winner (row_links (db_row_store db))) with
+          | Some p => p | None => old_root end = old_root).
+        rewrite PTrie.get_set_other by exact Hother.
+        exact Hold_fixed. }
+    exists fuel. split; [rewrite Hids; lia |].
+    split.
+    - cbv zeta. rewrite <- row_root_parent_iter. exact Hnew_fixed.
+    - unfold ids in Hids. unfold db_locate.
+      rewrite Hhistory, Hentry_new, Hids.
+      now rewrite row_root_parent_iter.
+  Qed.
+
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
     (before <= after)%N ->
     length k * (N.to_nat (N.log2 before) + 1) <=
