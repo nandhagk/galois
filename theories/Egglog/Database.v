@@ -15229,11 +15229,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - apply database_history_codes_valid_row_replace. exact Hnext_valid.
   Qed.
 
-  Lemma database_history_key_ids_bounded_put : forall db f k o,
-    database_wf db -> kind_ok db f k o -> database_history_key_ids_bounded db ->
+  Lemma database_history_key_ids_bounded_put_keys : forall db f k o,
+    (forall i, In (Id i) (normal_key db k) -> allocated db i) ->
+    database_history_key_ids_bounded db ->
     database_history_key_ids_bounded (put f k o db).
   Proof.
-    intros db f k o Hwf Hkind Hbounded. unfold put.
+    intros db f k o Hkey Hbounded. unfold put.
     set (ck := normal_key db k).
     set (co := option_map (normal_cell db) o).
     set (previous := row_get f ck db).
@@ -15242,9 +15243,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       | Some (Some (Id a)), Some (Id b) => union a b db
       | _, _ => db end).
     assert (Hck : forall i, In (Id i) ck -> allocated db i).
-    { intros i Hin. subst ck. rewrite normal_key_correct in Hin by exact Hwf.
-      eapply canon_key_allocated; [exact Hwf | | exact Hin].
-      intros j Hmember. apply (proj1 Hkind). apply in_or_app. now left. }
+    { exact Hkey. }
     assert (Hnext_ids : ids next = ids db).
     { unfold next. destruct previous as [[[a | v] |] |];
         destruct co as [[b | w] |];
@@ -15264,6 +15263,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         [exact Hnext_bounded | exact Hnext_ck].
     - apply database_history_key_ids_bounded_row_replace;
         [exact Hnext_bounded | exact Hnext_ck].
+  Qed.
+
+  Lemma database_history_key_ids_bounded_put : forall db f k o,
+    database_wf db -> kind_ok db f k o -> database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (put f k o db).
+  Proof.
+    intros db f k o Hwf Hkind Hbounded.
+    apply database_history_key_ids_bounded_put_keys; [| exact Hbounded].
+    intros i Hin. rewrite normal_key_correct in Hin by exact Hwf.
+    eapply canon_key_allocated; [exact Hwf | | exact Hin].
+    intros j Hmember. apply (proj1 Hkind). apply in_or_app. now left.
   Qed.
 
   Lemma database_row_weights_positive_put : forall db f k o,
@@ -16493,10 +16503,21 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_key_ids_bounded_repair_current : forall db f k,
-    wf db -> database_history_key_ids_bounded db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_history_key_ids_bounded db ->
     database_history_key_ids_bounded (repair_current f k db).
   Proof.
-    intros db f k Hwf Hbounded. unfold repair_current.
+    intros db f k Hforest Hmembers Hkey Hbounded.
+    assert (Hnormal : forall i, In (Id i) (normal_key db k) -> allocated db i).
+    { intros i Hin. rewrite (normal_key_correct_forest db k Hforest Hmembers) in Hin.
+      apply in_map_iff in Hin as [c [Hcell Hin]].
+      destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+      injection Hcell as <-. unfold repr.
+      eapply UnionFindCodeFacts.repr_allocated;
+        [exact Hforest | exact Hmembers | exact (Hkey j Hin)]. }
+    unfold repair_current.
     destruct (row_get f k db) as [output |] eqn:Hrow; [| exact Hbounded].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) output) output));
@@ -16505,12 +16526,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     set (updated := put f (normal_key db k)
       (option_map (normal_cell db) output) deleted).
     assert (Hupdated : database_history_key_ids_bounded updated).
-    { subst updated. apply database_history_key_ids_bounded_put.
-      - subst deleted. apply row_delete_wf. exact Hwf.
-      - subst deleted. apply row_delete_kind_ok.
-        rewrite (normal_key_correct db k Hwf), (normal_output_correct db output Hwf).
-        apply kind_ok_canon; [exact Hwf |].
-        apply wf_row_kind_ok. exact Hwf. exact Hrow.
+    { subst updated. apply database_history_key_ids_bounded_put_keys.
+      - subst deleted. rewrite row_delete_normal_key,
+          (normal_key_idempotent db k Hforest).
+        intros i Hin. unfold allocated. rewrite row_delete_ids.
+        exact (Hnormal i Hin).
       - subst deleted. apply database_history_key_ids_bounded_row_delete.
         exact Hbounded. }
     eapply database_history_key_ids_bounded_transport with (db := updated);
@@ -16643,7 +16663,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_row_store_ok_repair_entry_move : forall db f k,
-    wf db -> database_row_store_ok db -> database_row_weights_positive db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_row_store_ok db -> database_row_weights_positive db ->
     database_history_root_owner db -> database_history_key_shape db ->
     database_history_codes_valid db ->
     database_history_key_ids_bounded db ->
@@ -16651,7 +16674,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     database_row_store_ok
       (move_row_identity f k (normal_key db k) (repair_current f k db)).
   Proof.
-    intros db f k Hwf Hstore Hpositive Howner Hshape Hvalid Hbounded
+    intros db f k Hforest Hmembers Hkey Hstore Hpositive Howner Hshape Hvalid Hbounded
       Hconserved.
     apply database_row_store_ok_move.
     - apply database_row_store_ok_repair_current. exact Hstore.
@@ -16666,23 +16689,28 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_row_store_ok_db_repair_entry : forall db f k,
-    wf db -> database_row_store_ok db -> database_row_weights_positive db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    (forall g args output i, row_get g args db = Some output ->
+      In (Id i) args -> allocated db i) ->
+    database_row_store_ok db -> database_row_weights_positive db ->
     database_history_root_owner db -> database_history_key_shape db ->
     database_history_codes_valid db ->
     database_history_key_ids_bounded db ->
     database_row_weight_conserved db ->
     database_row_store_ok (db_repair_entry f k db).
   Proof.
-    intros db f k Hwf Hstore Hpositive Howner Hshape Hvalid Hbounded
+    intros db f k Hforest Hmembers Hrows Hstore Hpositive Howner Hshape Hvalid Hbounded
       Hconserved.
     unfold db_repair_entry.
     destruct (db_locate f k db) as [current |]; [| exact Hstore].
-    destruct (row_get f current db) as [output |]; [| exact Hstore].
+    destruct (row_get f current db) as [output |] eqn:Hrow; [| exact Hstore].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
       (db_tuple_code current))
       (output_eqb (option_map (normal_cell db) output) output));
       [exact Hstore |].
-    apply database_row_store_ok_repair_entry_move; assumption.
+    apply database_row_store_ok_repair_entry_move; try assumption.
+    intros i Hin. exact (Hrows f current output i Hrow Hin).
   Qed.
 
   Lemma database_history_root_owner_repair_entry_move : forall db f k,
@@ -16756,10 +16784,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma repair_current_old_absent : forall db f k o,
-    wf db -> row_get f k db = Some o -> k <> normal_key db k ->
+    UnionFind.wf (db_forest db) -> row_get f k db = Some o ->
+    k <> normal_key db k ->
     row_get f k (repair_current f k db) = None.
   Proof.
-    intros db f k o Hwf Hrow Hdifferent.
+    intros db f k o Hforest Hrow Hdifferent.
     destruct (row_get f k (repair_current f k db)) as [output |] eqn:Hresult;
       [| reflexivity].
     exfalso. unfold repair_current in Hresult. rewrite Hrow in Hresult.
@@ -16771,7 +16800,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - apply put_row_sources_raw in Hresult as [Hold | [Hf [Hk _]]].
       + apply row_delete_binding in Hold as [_ Heq]. apply Heq. reflexivity.
       + rewrite row_delete_normal_key,
-          (normal_key_idempotent db k (wf_forest db Hwf)) in Hk.
+          (normal_key_idempotent db k Hforest) in Hk.
         now apply Hdifferent.
   Qed.
 
@@ -16832,17 +16861,19 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   Lemma database_active_history_coherent_repair_entry_move :
     forall db f k o,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    database_row_store_ok db -> database_history_alignment db ->
     database_active_history_coherent db -> database_history_root_owner db ->
     row_get f k db = Some o ->
     database_active_history_coherent
       (move_row_identity f k (normal_key db k) (repair_current f k db)).
   Proof.
-    intros db f k o Hwf Hstore Halign Hcoherent Howner Hrow.
+    intros db f k o Hforest Hmembers Hstore Halign Hcoherent Howner Hrow.
     apply database_active_history_coherent_move.
     - apply database_row_store_ok_repair_current. exact Hstore.
     - apply database_active_history_coherent_repair_current;
-        [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+        [exact Hforest | exact Hmembers |
          exact Hstore | exact Halign | exact Hcoherent].
     - symmetry. apply normal_key_length.
     - destruct (Pos.eq_dec (db_tuple_code k)
@@ -16851,21 +16882,23 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + left. apply repair_current_old_absent with (o := o);
           try assumption. intro Hsame. apply Hneq. now rewrite Hsame at 1.
     - intros key r Hentry. eapply repair_current_source_locate;
-        [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+        [exact Hforest | exact Hmembers |
          exact Hstore | exact Halign | exact Hcoherent | exact Hrow |
          exact Hentry].
     - intros key r Hentry. eapply repair_current_destination_locate;
-        [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+        [exact Hforest | exact Hmembers |
          exact Hstore | exact Halign | exact Hentry].
     - apply database_history_root_owner_repair_current; assumption.
   Qed.
 
   Lemma database_history_alignment_db_repair_entry : forall db f k,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    database_row_store_ok db -> database_history_alignment db ->
     database_active_history_coherent db ->
     database_history_alignment (db_repair_entry f k db).
   Proof.
-    intros db f k Hwf Hstore Halign Hcoherent.
+    intros db f k Hforest Hmembers Hstore Halign Hcoherent.
     unfold db_repair_entry.
     destruct (db_locate f k db) as [current |]; [| exact Halign].
     destruct (row_get f current db) as [o |] eqn:Hrow; [| exact Halign].
@@ -16874,7 +16907,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (output_eqb (option_map (normal_cell db) o) o));
       [exact Halign |].
     eapply database_history_alignment_repair_entry_move;
-      [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+      [exact Hforest | exact Hmembers |
        exact Hstore | exact Halign | exact Hcoherent | exact Hrow].
   Qed.
 
@@ -16921,11 +16954,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_active_history_coherent_db_repair_entry : forall db f k,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    database_row_store_ok db -> database_history_alignment db ->
     database_active_history_coherent db -> database_history_root_owner db ->
     database_active_history_coherent (db_repair_entry f k db).
   Proof.
-    intros db f k Hwf Hstore Halign Hcoherent Howner.
+    intros db f k Hforest Hmembers Hstore Halign Hcoherent Howner.
     unfold db_repair_entry.
     destruct (db_locate f k db) as [current |]; [| exact Hcoherent].
     destruct (row_get f current db) as [o |] eqn:Hrow; [| exact Hcoherent].
@@ -16933,7 +16968,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (db_tuple_code current))
       (output_eqb (option_map (normal_cell db) o) o));
       [exact Hcoherent |].
-    eapply database_active_history_coherent_repair_entry_move; eassumption.
+    eapply database_active_history_coherent_repair_entry_move;
+      [exact Hforest | exact Hmembers | exact Hstore | exact Halign |
+       exact Hcoherent | exact Howner | exact Hrow].
   Qed.
 
   Lemma database_history_codes_valid_db_repair_entry : forall db f k,
@@ -16952,18 +16989,23 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_key_ids_bounded_db_repair_entry : forall db f k,
-    wf db -> database_history_key_ids_bounded db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    (forall g args output i, row_get g args db = Some output ->
+      In (Id i) args -> allocated db i) ->
+    database_history_key_ids_bounded db ->
     database_history_key_ids_bounded (db_repair_entry f k db).
   Proof.
-    intros db f k Hwf Hbounded. unfold db_repair_entry.
+    intros db f k Hforest Hmembers Hrows Hbounded. unfold db_repair_entry.
     destruct (db_locate f k db) as [current |]; [| exact Hbounded].
-    destruct (row_get f current db) as [o |]; [| exact Hbounded].
+    destruct (row_get f current db) as [o |] eqn:Hrow; [| exact Hbounded].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
       (db_tuple_code current))
       (output_eqb (option_map (normal_cell db) o) o));
       [exact Hbounded |].
     apply database_history_key_ids_bounded_move.
-    apply database_history_key_ids_bounded_repair_current; assumption.
+    apply database_history_key_ids_bounded_repair_current; try assumption.
+    intros i Hin. exact (Hrows f current o i Hrow Hin).
   Qed.
 
   Lemma database_row_weights_positive_db_repair_entry : forall db f k,
@@ -16982,10 +17024,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_owned_ok_db_repair_entry : forall db f k,
-    wf db -> database_owned_ok db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    (forall g args output i, row_get g args db = Some output ->
+      In (Id i) args -> allocated db i) ->
+    database_owned_ok db ->
     database_owned_ok (db_repair_entry f k db).
   Proof.
-    intros db f k Hwf Howned.
+    intros db f k Hforest Hmembers Hrows Howned.
     unfold database_owned_ok in Howned |- *.
     destruct Howned as
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
