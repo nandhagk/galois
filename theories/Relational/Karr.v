@@ -15083,6 +15083,41 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       cbn [skipn]. apply IH. now apply Forall_inv_tail in Hrows.
   Qed.
 
+  (** Reconstructed hull rows and both certificate slices inherit basis bits. *)
+  Lemma karr_hull_checked_row_envelope : forall xs
+      (a b : list (lcons X.t)) r bits,
+    1 <= bits ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    let zs := skipn (S (length xs)) (kcoeff r) in
+    let c := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs) in
+    length (lhs c) <= length xs /\
+    C.row_key_bits c <= bits /\ C.row_bits c <= bits /\
+    length (firstn (length a) (kweight r)) <= length a /\
+    length (skipn (length a) (kweight r)) <= length b /\
+    Forall (fun z => Z.size_nat z <= bits)
+      (firstn (length a) (kweight r)) /\
+    Forall (fun z => Z.size_nat z <= bits)
+      (skipn (length a) (kweight r)).
+  Proof.
+    intros xs a b r bits Hpositive Hkeys Henv zs c.
+    destruct Henv as [_ [Hcoeff [_ [Hweight_length [Hweight _]]]]].
+    assert (Hzs : Forall (fun z => Z.size_nat z <= bits) zs).
+    { unfold zs. now apply karr_Forall_skipn. }
+    assert (Hrhs : Z.size_nat (karr_nth (length xs) zs) <= bits)
+      by (apply karr_nth_bits; exact Hzs).
+    destruct (karr_sparse_row_bits xs zs (karr_nth (length xs) zs)
+      bits bits Hkeys Hzs Hrhs) as [Hkey Hbits].
+    repeat split.
+    - cbn [c lhs]. apply karr_sparse_length.
+    - exact Hkey.
+    - exact Hbits.
+    - rewrite length_firstn. lia.
+    - rewrite length_skipn. lia.
+    - apply karr_Forall_firstn. exact Hweight.
+    - apply karr_Forall_skipn. exact Hweight.
+  Qed.
+
   (** A generic initialized basis clock follows from the all-order minor law. *)
   Lemma T_karr_bareiss_seed_bounded : forall xs P,
     (T_karr_bareiss (length xs) 1
@@ -16875,6 +16910,24 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       destruct Hrow as [[_ [Hkeys _]] _]. cbn beta in Hkeys. lia.
     - eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
       intros row [_ [Hkeys _]]. cbn beta in Hkeys. lia.
+  Qed.
+
+  (** Hull coordinates inherit the normalized inputs' raw bit allowance. *)
+  Lemma karr_hull_variables_keys : forall a b,
+    Forall (fun x => X.bits x <= nell (Reached a) + nell (Reached b))
+      (variables (map normalize_row a ++ map normalize_row b)).
+  Proof.
+    intros a b. apply karr_variables_key_bound.
+    apply Forall_app. split; apply Forall_map, Forall_forall;
+      intros r Hr.
+    - pose proof (proj1 (Forall_forall _ _)
+        (karr_normal_source_width a) (normalize_row r)
+        (in_map normalize_row _ _ Hr)) as Hrow.
+      cbn beta in Hrow. lia.
+    - pose proof (proj1 (Forall_forall _ _)
+        (karr_normal_source_width b) (normalize_row r)
+        (in_map normalize_row _ _ Hr)) as Hrow.
+      cbn beta in Hrow. lia.
   Qed.
 
   (** Dense conclusion initialization uses the public source and target envelope. *)
