@@ -13337,6 +13337,27 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply karr_row_envelope_entries; [lia|lia|exact Hrentries].
   Qed.
 
+  (** A normal conclusion starts with bounded dense data and zero multipliers. *)
+  Lemma karr_target_initial_envelope : forall (xs : list X.t)
+      (P : list (lcons X.t)) (c : lcons X.t) (bits : nat),
+    normal (c :: nil) -> 1 <= bits -> C.row_bits c <= bits ->
+    karr_row_envelope (length xs) (length P) bits
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z).
+  Proof.
+    intros xs P c bits Hnormal Hpositive Hbits.
+    unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+    repeat split.
+    - unfold dense. now rewrite length_map.
+    - apply karr_dense_bits.
+      + apply Forall_cons_iff in Hnormal as [Hunique _]. exact Hunique.
+      + exact Hbits.
+    - pose proof (karr_row_rhs_bits c). lia.
+    - rewrite repeat_length. reflexivity.
+    - apply Forall_forall. intros z Hin.
+      apply repeat_spec in Hin. subst z. change (0 <= bits). lia.
+    - change (1 <= bits). exact Hpositive.
+  Qed.
+
   (** A complete elimination run fits the public cubic-Hadamard work shape. *)
   Lemma karr_bareiss_budget_public : forall count dim bits,
     count <= dim ->
