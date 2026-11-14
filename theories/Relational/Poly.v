@@ -14631,6 +14631,56 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact Hstep.
   Qed.
 
+  (** A nonzero prepared equality is the first pivot found by the native step. *)
+  Lemma poly_assign_nonzero_head_pivot : forall x f P,
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) <> 0%Z ->
+    find (poly_pivot tmp_eqb None)
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) =
+      Some (poly_assign_head x f P).
+  Proof.
+    intros x f P Hnonzero.
+    assert (Hpivot : poly_pivot tmp_eqb None (poly_assign_head x f P) = true).
+    { unfold poly_pivot.
+      change (lrel (poly_constraint (poly_assign_head x f P))) with REq.
+      apply Bool.negb_true_iff, Z.eqb_neq. exact Hnonzero. }
+    rewrite poly_assign_initial_head. cbn [find]. now rewrite Hpivot.
+  Qed.
+
+  (** The prepared pivot reduces the full-step row factor from quadratic to linear. *)
+  Lemma T_poly_assign_nonzero_step_bounded : forall x f P,
+    NoDup (map fst (coef f)) ->
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) <> 0%Z ->
+    (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) <=
+      RangeCore.poly_step_factor * N.of_nat (length P + 2) *
+        RangeCore.poly_clock_span
+          (length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1)
+          (length P + 1)
+          (poly_raw_keys P + X.bits x + F.form_bits f + 1)
+          (poly_raw_bits P + F.form_bits f + 1))%N.
+  Proof.
+    intros x f P Hform Hnonzero.
+    pose proof (RangeAssignCore.T_poly_assign_step_pivot_linear None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P))
+      (poly_assign_head x f P)
+      (length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1)
+      (length P + 1)
+      (poly_raw_keys P + X.bits x + F.form_bits f + 1)
+      (poly_raw_bits P + F.form_bits f + 1)
+      (poly_assign_initial_envelope x f P Hform)
+      (poly_assign_nonzero_head_pivot x f P Hnonzero)) as Hstep.
+    rewrite poly_initial_length in Hstep. cbn [length] in Hstep.
+    rewrite length_map in Hstep.
+    replace (S (length P) + 1) with (length P + 2) in Hstep by lia.
+    exact Hstep.
+  Qed.
+
   (** Every output certificate retains one prepared-head slot and one slot per source. *)
   Lemma poly_assign_output_multiplier_bits : forall x f P,
     NoDup (map fst (coef f)) ->
@@ -14862,6 +14912,20 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact Hrows.
   Qed.
 
+  (** One elimination produces at most a quarter of the public quadratic row allowance. *)
+  Lemma poly_assign_output_quarter : forall x f P,
+    4 * length (poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      (length P + 3)^2.
+  Proof.
+    intros x f P.
+    pose proof (poly_assign_output_length x f P) as Hrows.
+    pose proof (Nat.div_mod ((length P + 1)^2) 4 ltac:(lia)) as Hdivision.
+    cbn [Nat.pow] in *. nia.
+  Qed.
+
   (** Assignment construction exposes its source map, initialization, step, and final scan. *)
   Lemma T_poly_assign_linear_setup : forall x f P,
     let sources := map (fun r => (rename_row (rename_old x) r, false)) P in
@@ -14932,6 +14996,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros x f P Hzero. rewrite poly_assign_initial_head.
     unfold poly_assign_tail_step. now apply poly_assign_step_zero_head.
+  Qed.
+
+  (** A prepared pivot maps each initial row once. *)
+  Lemma poly_assign_nonzero_output_length : forall x f P,
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) <> 0%Z ->
+    length (poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P))) = length P + 1.
+  Proof.
+    intros x f P Hnonzero. unfold poly_step.
+    rewrite (poly_assign_nonzero_head_pivot x f P Hnonzero).
+    rewrite length_map, poly_initial_length. cbn [length]. rewrite length_map. lia.
   Qed.
 
   (** Source-only elimination preserves its original support and distinct coefficients. *)
