@@ -20708,6 +20708,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply (proj1 (Hrows f current output)). exact Hin.
   Qed.
 
+  (** Active repair retains the owned row history without requiring an empty work list. *)
+  Lemma inv_on_repair_owned : forall db work f k,
+    inv_on db work -> database_owned_ok (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    apply database_owned_ok_db_repair_entry.
+    - exact (inv_on_forest_wf db work Hinv).
+    - intros i. exact (inv_on_forest_members db work i Hinv).
+    - intros g args output i Hrow Hin.
+      apply (proj1 (inv_on_kind_ok db work g args output Hinv Hrow)).
+      apply in_or_app. now left.
+    - exact (inv_on_owned db work Hinv).
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
