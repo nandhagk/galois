@@ -17094,6 +17094,121 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold volume in Hfirst. lia.
   Qed.
 
+  Definition poly_assign_step_public_factor : N :=
+    (3204 * RangeCore.poly_step_factor +
+      2049 * RangeCore.poly_coef_factor)%N.
+  Definition poly_assign_scan_public_factor : N :=
+    (16384 * (40 + AssignCore.poly_assign_normal_subst_factor +
+      16 * C.c_lc) +
+      278 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+      16 * AssignCore.poly_assign_zero_subst_factor + 264 * C.c_lc)%N.
+  Definition poly_assign_setup_public_factor : N :=
+    (256 * (X.c_key + 24) + (X.c_key + 20) +
+      256 * RangeCore.poly_normal_row_factor +
+      3 * RangeCore.poly_raw_initial_factor)%N.
+  Definition poly_assign_linear_public_factor : N :=
+    (poly_assign_setup_public_factor + poly_assign_step_public_factor +
+      poly_assign_scan_public_factor + 256)%N.
+
+  (** Both native elimination branches fit common step and scan factors. *)
+  Lemma T_poly_assign_prepared_branches_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x prepared, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) <=
+      poly_assign_step_public_factor * N.of_nat work + 64)%N /\
+    (List.T_flat_map
+      (fun r => match assigned_candidate P x prepared r with
+        | Some c => c :: nil | None => nil end)
+      (fun r => (1 + T_assigned_candidate P x prepared r)%N)
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x prepared, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))) <=
+      poly_assign_scan_public_factor * N.of_nat work + 25)%N.
+  Proof.
+    intros x e P f Hlinear prepared bits total work.
+    destruct (Z.eq_dec (poly_coefficient tmp_eqb None
+      (poly_constraint (poly_assign_head x prepared P))) 0) as
+      [Hzero|Hnonzero].
+    - pose proof (T_poly_assign_prepared_zero_step_public x e P f
+        Hlinear Hzero) as Hstep.
+      pose proof (T_poly_assign_prepared_zero_scan_public x e P f
+        Hlinear Hzero) as Hscan.
+      cbn zeta in Hstep, Hscan.
+      assert (Hstepcoef :
+        (4 * RangeCore.poly_step_factor +
+          2049 * RangeCore.poly_coef_factor <=
+          poly_assign_step_public_factor)%N)
+        by (unfold poly_assign_step_public_factor; lia).
+      assert (Hscancoef :
+        (278 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+          16 * AssignCore.poly_assign_zero_subst_factor +
+          264 * C.c_lc <= poly_assign_scan_public_factor)%N)
+        by (unfold poly_assign_scan_public_factor; lia).
+      split.
+      + eapply N.le_trans; [exact Hstep|].
+        assert (Hmult :
+          ((4 * RangeCore.poly_step_factor +
+            2049 * RangeCore.poly_coef_factor) * N.of_nat work <=
+            poly_assign_step_public_factor * N.of_nat work)%N)
+          by (apply N.mul_le_mono_r; exact Hstepcoef).
+        apply N.add_le_mono; [exact Hmult|apply N.le_refl].
+      + eapply N.le_trans; [exact Hscan|].
+        assert (Hmult :
+          ((278 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+            16 * AssignCore.poly_assign_zero_subst_factor +
+            264 * C.c_lc) * N.of_nat work <=
+            poly_assign_scan_public_factor * N.of_nat work)%N)
+          by (apply N.mul_le_mono_r; exact Hscancoef).
+        apply N.add_le_mono; [exact Hmult|apply N.le_refl].
+    - pose proof (T_poly_assign_prepared_nonzero_step_public x e P f
+        Hlinear Hnonzero) as Hstep.
+      pose proof (T_poly_assign_prepared_nonzero_scan x e P f
+        Hlinear Hnonzero) as Hscan.
+      cbn zeta in Hstep, Hscan.
+      assert (Hstepcoef :
+        (3200 * RangeCore.poly_step_factor <=
+          poly_assign_step_public_factor)%N)
+        by (unfold poly_assign_step_public_factor; lia).
+      assert (Hscancoef :
+        (16384 * (40 + AssignCore.poly_assign_normal_subst_factor +
+          16 * C.c_lc) <= poly_assign_scan_public_factor)%N)
+        by (unfold poly_assign_scan_public_factor; lia).
+      split.
+      + eapply N.le_trans; [exact Hstep|].
+        assert (Hmult :
+          (3200 * RangeCore.poly_step_factor * N.of_nat work <=
+            poly_assign_step_public_factor * N.of_nat work)%N)
+          by (apply N.mul_le_mono_r; exact Hstepcoef).
+        eapply N.le_trans; [exact Hmult|]. lia.
+      + eapply N.le_trans; [exact Hscan|].
+        assert (Hclock :
+          ((40 + AssignCore.poly_assign_normal_subst_factor +
+            16 * C.c_lc) * (128 * (128 * N.of_nat work)) + 1 <=
+          16384 * (40 + AssignCore.poly_assign_normal_subst_factor +
+            16 * C.c_lc) * N.of_nat work + 1)%N).
+        { assert (Heq :
+            ((40 + AssignCore.poly_assign_normal_subst_factor +
+              16 * C.c_lc) * (128 * (128 * N.of_nat work)) =
+            16384 * (40 + AssignCore.poly_assign_normal_subst_factor +
+              16 * C.c_lc) * N.of_nat work)%N) by ring.
+          rewrite Heq. apply N.le_refl. }
+        assert (Hmult :
+          (16384 * (40 + AssignCore.poly_assign_normal_subst_factor +
+            16 * C.c_lc) * N.of_nat work <=
+            poly_assign_scan_public_factor * N.of_nat work)%N)
+          by (apply N.mul_le_mono_r; exact Hscancoef).
+        eapply N.le_trans; [exact Hclock|].
+        apply N.add_le_mono; [exact Hmult|lia].
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
