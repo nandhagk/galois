@@ -14143,6 +14143,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
     poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
 
+  (** When the prepared equation omits the old key, elimination leaves it at the front. *)
+  Lemma poly_assign_zero_head_step : forall x f P,
+    poly_coefficient tmp_eqb None (poly_constraint (poly_assign_head x f P)) = 0%Z ->
+    poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) =
+      poly_assign_head x f P :: poly_assign_tail_step x P.
+  Proof.
+    intros x f P Hzero. rewrite poly_assign_initial_head.
+    unfold poly_assign_tail_step. now apply poly_assign_step_zero_head.
+  Qed.
+
   (** Source-only elimination preserves its original support and distinct coefficients. *)
   Lemma poly_assign_tail_step_reduced : forall x P,
     Forall (RangeCore.poly_reduced_row (RangeCore.vars_of (poly_assign_sources x P)))
