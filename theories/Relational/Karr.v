@@ -12456,7 +12456,21 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
-  Proof. Admitted. (* OPEN: general Sylvester and initialized-run divisibility invariant. *)
+  Proof.
+    intros P z Hin. unfold bareiss_entries in Hin. unfold input_minors.
+    eapply karr_run_state_record.
+    - intro Htwo. rewrite length_map in Htwo.
+      assert (Hsource_count : 2 <= length P).
+      { unfold bareiss_seeds in Htwo.
+        pose proof (karr_seed_rows_length (variables P) (length P) 0
+          (map normalize_row P)) as Hcount.
+        rewrite length_map in Hcount. lia. }
+      apply input_minors_zero; [exact Hsource_count|].
+      destruct (bareiss_seeds P) as [|row rows] eqn:Hseeds;
+        [cbn [length] in Htwo; lia|discriminate].
+    - apply bareiss_run_state_initial.
+    - exact Hin.
+  Qed.
   Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
   Proof.
     reflexivity.
