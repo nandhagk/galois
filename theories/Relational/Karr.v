@@ -16893,6 +16893,40 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - nia.
   Qed.
 
+  (** Contradiction detection fits one public elimination allowance. *)
+  Lemma T_karr_contradiction_public : forall P c,
+    normal P ->
+    (T_contradiction P <=
+      (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor +
+        256 * (C.c_lc + 1) + 64) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    pose proof (T_karr_contradiction_components P) as Hparts.
+    pose proof (T_karr_source_variables_public P c HP) as Hvariables.
+    pose proof (T_karr_source_basis_public P c HP) as Hbasis.
+    pose proof (T_karr_contradiction_scan_public P c HP) as Hscan.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (v := ellB d (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    assert (Hcount : length P + 1 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hvolume : d <= d^3 * v^2).
+    { replace (d^3 * v^2) with (d * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+      assert (1 <= d^2 * v^2) by (cbn [Nat.pow]; nia).
+      nia. }
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))) in *.
+    assert (Hoverhead : (64 * N.of_nat (length P + 1) <= 64 * work)%N).
+    { apply N.mul_le_mono_l. unfold work, elimination_work. fold d v.
+      lia. }
+    clear -Hparts Hvariables Hbasis Hscan Hoverhead.
+    nia.
+  Qed.
+
   (** A produced target certificate fits the public elimination allowance. *)
   Lemma T_karr_target_certificate_public : forall P c,
     normal P -> normal (c :: nil) ->
