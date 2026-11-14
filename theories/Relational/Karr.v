@@ -16870,6 +16870,74 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - exact (karr_target_width_public P c HP).
   Qed.
 
+  (** The lifted Bareiss clock fits the public elimination polynomial. *)
+  Lemma T_karr_hull_bareiss_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    let rows := hull_left xs (length a + length b) 0 (map normalize_row a) ++
+      hull_right xs (length a + length b) (length a) (map normalize_row b) in
+    (T_karr_bareiss (2 * length xs + 2) 1 rows <=
+      134217728000 * N.of_nat
+        (elimination_work (Reached a) (Reached b)) + 4)%N.
+  Proof.
+    intros a b Ha Hb xs rows.
+    set (width := 2 * length xs + length a + length b + 4).
+    set (s := width + 1).
+    set (d := n (Reached a) + n (Reached b) + 1).
+    set (w := ell (Reached a) + ell (Reached b)).
+    set (bits := nell (Reached a) + nell (Reached b)).
+    set (v := ellB d w + 1).
+    set (bound := ellB s bits + 1).
+    pose proof (T_karr_hull_bareiss_seed_bounded a b xs) as Hclock.
+    pose proof (karr_bareiss_budget_public (2 * length xs + 2)
+      width bits ltac:(unfold width; lia)) as Hbudget.
+    pose proof (karr_hull_width_public a b Ha Hb) as Hwidth.
+    assert (Hbound : bound <= 128 * v).
+    { unfold bound, s, width, bits, v, d, w, xs in *.
+      cbn beta in Hwidth.
+      replace (2 * length (variables (map normalize_row a ++
+        map normalize_row b)) + length a + length b + 4 + 1) with
+        (2 * length (variables (map normalize_row a ++
+          map normalize_row b)) + length a + length b + 5) by lia.
+      exact Hwidth. }
+    pose proof (karr_hull_variables_public a b) as Hvars.
+    assert (Hs : s <= 5 * d).
+    { unfold s, width, d, n, xs in *.
+      cbn [rows_of length] in *. lia. }
+    assert (Hcube : s^3 <= 125 * d^3).
+    { replace (125 * d^3) with ((5 * d)^3)
+        by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hsquare : bound^2 <= (128 * 128) * v^2).
+    { replace ((128 * 128) * v^2) with ((128 * v)^2)
+        by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hvolume : s^3 * bound^2 <=
+      (125 * 128 * 128) * (d^3 * v^2)).
+    { eapply Nat.le_trans with (m := (125 * d^3) * ((128 * 128) * v^2)).
+      - apply Nat.mul_le_mono; assumption.
+      - nia. }
+    assert (HN : (N.of_nat (s^3 * bound^2) <=
+      N.of_nat (125 * 128 * 128) *
+        N.of_nat (elimination_work (Reached a) (Reached b)))%N).
+    { unfold elimination_work. fold d w v.
+      rewrite <- Nat2N.inj_mul.
+      lia. }
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans.
+    - apply N.add_le_mono_r.
+      replace (2 * length xs + (length a + length b) + 4) with width
+        by (unfold width; lia).
+      exact Hbudget.
+    - apply N.add_le_mono_r.
+      change (N.of_nat (125 * 128 * 128)) with 2048000%N.
+      replace (134217728000 * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N with
+        (65536 * (2048000 * N.of_nat
+          (elimination_work (Reached a) (Reached b))))%N by ring.
+      now apply N.mul_le_mono_l.
+  Qed.
+
   Lemma T_karr_bareiss_basis_public : forall P c (xs : list X.t),
     normal P -> length xs <= length (variables (c :: P)) ->
     (T_karr_bareiss (length xs) 1
