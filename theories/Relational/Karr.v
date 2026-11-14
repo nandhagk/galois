@@ -576,6 +576,32 @@ Proof.
     ring.
 Qed.
 
+(** A finite sum distributes over pointwise integer addition. *)
+Lemma karr_determinant_sum_add : forall A (f g : A -> Z) xs,
+  fold_right Z.add 0%Z (map (fun x => (f x + g x)%Z) xs) =
+    (fold_right Z.add 0%Z (map f xs) +
+      fold_right Z.add 0%Z (map g xs))%Z.
+Proof.
+  intros A f g xs. induction xs as [|x xs IH]; cbn [map fold_right]; [ring|].
+  rewrite IH. ring.
+Qed.
+
+(** The order of two finite integer summations can be exchanged. *)
+Lemma karr_determinant_sum_swap : forall A B (f : A -> B -> Z) xs ys,
+  fold_right Z.add 0%Z (map (fun x =>
+    fold_right Z.add 0%Z (map (f x) ys)) xs) =
+  fold_right Z.add 0%Z (map (fun y =>
+    fold_right Z.add 0%Z (map (fun x => f x y) xs)) ys).
+Proof.
+  intros A B f xs. induction xs as [|x xs IH]; intro ys.
+  - induction ys as [|y ys IHys]; cbn [map fold_right]; [reflexivity|].
+    cbn [map fold_right] in IHys. rewrite <- IHys. ring.
+  - cbn [map fold_right]. rewrite IH.
+    rewrite (karr_determinant_sum_add B (f x)
+      (fun y => fold_right Z.add 0%Z (map (fun a => f a y) xs)) ys).
+    ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
