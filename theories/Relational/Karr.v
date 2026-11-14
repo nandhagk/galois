@@ -13470,6 +13470,32 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - unfold karr_empty_scan_charge. lia.
   Qed.
 
+  (** Contradiction scanning uses the initialized basis and the normal source budget. *)
+  Lemma T_karr_contradiction_scan_bounded : forall P,
+    normal P ->
+    (T_empty_certificate P (equality_basis (variables P) P) <=
+      karr_empty_scan_charge (n (Reached P) + 2)
+        (ell (Reached P)) (ell (Reached P))
+        (ellB (length (variables P) + length P + 2) (nell (Reached P))) *
+        N.of_nat (n (Reached P) + 3))%N.
+  Proof.
+    intros P Hnormal.
+    replace (n (Reached P) + 3) with ((n (Reached P) + 2) + 1) by lia.
+    eapply T_karr_empty_certificate_bounded.
+    - unfold n. cbn [rows_of]. lia.
+    - unfold equality_basis. rewrite karr_bareiss_length.
+      pose proof (karr_seed_rows_length (variables P) (length P) 0
+        (map normalize_row P)) as Hlength.
+      rewrite length_map in Hlength. unfold n. cbn [rows_of]. lia.
+    - eapply Forall_impl; [|apply karr_normal_source_envelope; exact Hnormal].
+      intros row [Hlength [Hkeys Hbits]]. repeat split; lia.
+    - unfold equality_basis.
+      eapply Forall_impl; [|apply karr_seed_basis_envelope].
+      intros row Hrow. eapply karr_row_envelope_resize;
+        [| | |exact Hrow]; unfold n; cbn [rows_of];
+        try (pose proof (karr_variables_count P)); lia.
+  Qed.
+
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
   Lemma input_minors_bits : forall P z,
     In z (input_minors P) ->
