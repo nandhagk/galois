@@ -14954,7 +14954,10 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         (map normalize_row a)) as Hleft.
       pose proof (karr_hull_right_length xs (length a + length b)
         (length a) (map normalize_row b)) as Hright.
-      rewrite !length_map in Hleft, Hright. lia.
+      rewrite !length_map in Hleft, Hright.
+      eapply Nat.le_trans with (m := length a + length b).
+      + apply Nat.add_le_mono; [exact Hleft|exact Hright].
+      + lia.
     - rewrite length_seq. lia.
     - intros z Hz. eapply karr_signed_minors_bits;
         [lia| |apply karr_hull_seed_entries_bits|exact Hz].
@@ -14964,6 +14967,67 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       pose proof (karr_hull_right_length xs (length a + length b)
         (length a) (map normalize_row b)) as Hright.
       rewrite !length_map in Hleft, Hright. lia.
+  Qed.
+
+  (** Every lifted basis entry is an enumerated augmented source minor. *)
+  Lemma karr_hull_basis_minor : forall a b xs z,
+    let total := length a + length b in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    In z (flat_map karr_row_entries
+      (karr_bareiss (2 * length xs + 2) 1 rows)) ->
+    In z (karr_signed_minors (2 * length xs + total + 4)
+      (map karr_row_entries rows)).
+  Proof.
+    intros a b xs z total rows Hin.
+    eapply karr_run_state_record.
+    - intro Htwo. destruct rows as [|row rest] eqn:Hrows;
+        [cbn [map length] in Htwo; lia|].
+      apply karr_signed_minors_entry with (row := karr_row_entries row).
+      + apply in_map. now left.
+      + pose proof (proj1 (Forall_forall _ _)
+          (hull_seed_entries_width xs total 0 (length a)
+            (map normalize_row a) (map normalize_row b))
+          row ltac:(change (In row rows); rewrite Hrows; now left)) as Hwidth.
+        rewrite Hwidth. reflexivity.
+      + pose proof (proj1 (Forall_forall _ _)
+          (hull_seed_zero_right xs total 0 (length a)
+            (map normalize_row a) (map normalize_row b))
+          row ltac:(change (In row rows); rewrite Hrows; now left)) as Hzero.
+        unfold karr_row_entries. apply in_or_app. right.
+        rewrite Hzero. now left.
+    - subst rows total. apply karr_hull_run_state_initial.
+    - now apply karr_bareiss_record_final.
+  Qed.
+
+  (** Final lifted basis entries inherit the source Hadamard width. *)
+  Lemma karr_hull_basis_bits : forall a b xs,
+    let total := length a + length b in
+    let width := 2 * length xs + total + 4 in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    Forall (Forall (fun z => Z.size_nat z <=
+      ellB width (nell (Reached a) + nell (Reached b))))
+      (map karr_row_entries
+        (karr_bareiss (2 * length xs + 2) 1 rows)).
+  Proof.
+    intros a b xs total width rows.
+    apply Forall_forall. intros entries Hentries.
+    apply Forall_forall. intros z Hz.
+    eapply karr_signed_minors_bits;
+      [lia| |apply karr_hull_seed_entries_bits|].
+    - rewrite length_map. subst rows total width. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright.
+      eapply Nat.le_trans with (m := length a + length b).
+      + apply Nat.add_le_mono; [exact Hleft|exact Hright].
+      + lia.
+    - apply in_map_iff in Hentries as [source [Heq Hsource]].
+      subst entries. apply karr_hull_basis_minor.
+      apply in_flat_map. exists source. split; assumption.
   Qed.
 
   (** A generic initialized basis clock follows from the all-order minor law. *)
