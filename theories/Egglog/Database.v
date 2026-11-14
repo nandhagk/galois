@@ -6378,8 +6378,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + apply fresh_constructor_extension. exact (eq_sym Hprevious).
   Qed.
 
-  (** Union adds precisely the requested equality closure. *)
-  Lemma union_same : forall i j db k l, wf db ->
+  (** The base invariant suffices for the union equality observation. *)
+  Lemma database_union_same_base : forall i j db k l, database_wf db ->
     (same (view (union i j db)) k l <->
       clos_refl_sym_trans positive (fun a b => same (view db) a b \/ (a, b) = (i, j)) k l).
   Proof.
@@ -6392,9 +6392,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           (fun a b => equality_log (runtime_equalities (db_runtime db)) a b \/
             (a, b) = (i, j)) k l).
       rewrite <- equality_log_cons. symmetry. apply equality_log_redundant.
-      apply (proj2 (same_repr db i j Hwf)).
+      apply (proj2 (wf_equalities db Hwf i j)).
       exact (proj1 (UnionFind.union_none i j (db_forest db) forest
         (wf_forest db Hwf) Hunion)).
+  Qed.
+
+  (** Union adds precisely the requested equality closure. *)
+  Lemma union_same : forall i j db k l, wf db ->
+    (same (view (union i j db)) k l <->
+      clos_refl_sym_trans positive (fun a b => same (view db) a b \/ (a, b) = (i, j)) k l).
+  Proof.
+    exact database_union_same_base.
   Qed.
 
   (** Union queues equality work without changing rows. *)
@@ -6460,7 +6468,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Union of allocated endpoints keeps the forest's exact membership interval. *)
-  Lemma union_forest_members : forall i j db, wf db -> allocated db i -> allocated db j ->
+  Lemma union_forest_members : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     forall x, UnionFind.mem (db_forest (union i j db)) x <-> allocated (union i j db) x.
   Proof.
     intros i j db Hwf Hi Hj x. rewrite union_forest.
@@ -6473,7 +6481,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Already allocated union endpoints add no forest members or counter charge. *)
-  Lemma union_forest_count : forall i j db, wf db -> allocated db i -> allocated db j ->
+  Lemma union_forest_count : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     count (db_forest (union i j db)) = ids (union i j db).
   Proof.
     intros i j db Hwf Hi Hj. rewrite union_forest, union_ids.
@@ -6484,7 +6492,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The preserved allocation interval bounds all forest keys after union. *)
-  Lemma union_forest_width : forall i j db, wf db -> allocated db i -> allocated db j ->
+  Lemma union_forest_width : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     UnionFind.width (db_forest (union i j db)) <= N.size_nat (ids (union i j db)).
   Proof.
     intros i j db Hwf Hi Hj. apply UnionFindCodeFacts.width_allocated.
@@ -6492,17 +6500,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The updated equality log describes exactly the updated forest classes. *)
-  Lemma union_equalities : forall i j db, wf db -> forall a b,
+  Lemma union_equalities : forall i j db, database_wf db -> forall a b,
     same (view (union i j db)) a b <-> repr (union i j db) a = repr (union i j db) b.
   Proof.
-    intros i j db Hwf a b. rewrite (union_same i j db a b Hwf).
+    intros i j db Hwf a b. rewrite (database_union_same_base i j db a b Hwf).
     unfold repr. rewrite union_forest.
     rewrite (ForestFacts.union_same_closure i j (db_forest db) a b (wf_forest db Hwf)).
-    apply equality_closure_equiv. intros x y. rewrite (same_repr db x y Hwf). tauto.
+    apply equality_closure_equiv. intros x y. rewrite (wf_equalities db Hwf x y). tauto.
   Qed.
 
   (** A recorded union adds only its two allocated endpoints to the equality log. *)
-  Lemma union_log_allocated : forall i j db, wf db -> allocated db i -> allocated db j ->
+  Lemma union_log_allocated : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     Forall (fun edge => allocated (union i j db) (fst edge) /\
       allocated (union i j db) (snd edge)) (runtime_equalities (db_runtime (union i j db))).
   Proof.
@@ -6516,7 +6524,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The losing representative queued by union is allocated. *)
-  Lemma union_queue_allocated : forall i j db, wf db -> allocated db i -> allocated db j ->
+  Lemma union_queue_allocated : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     Forall (allocated (union i j db)) (runtime_queue (db_runtime (union i j db))).
   Proof.
     intros i j db Hwf Hi Hj.
@@ -6537,7 +6545,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The stored pending counter follows exactly the optional queue insertion. *)
-  Lemma union_pending_count : forall i j db, wf db ->
+  Lemma union_pending_count : forall i j db, database_wf db ->
     db_npending (union i j db) = N.of_nat (pending (union i j db)).
   Proof.
     intros i j db Hwf. unfold union.
@@ -6549,7 +6557,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A union with an empty resulting queue has changed no representative. *)
-  Lemma union_quiet_canonical : forall i j db, wf db ->
+  Lemma union_quiet_canonical : forall i j db, database_wf db ->
     pending (union i j db) = 0 -> canonical (union i j db).
   Proof.
     intros i j db Hwf Hquiet. unfold union in Hquiet |- *.
