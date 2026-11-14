@@ -17617,6 +17617,145 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - unfold public. ring_simplify. apply N.le_refl.
   Qed.
 
+  Definition karr_hull_finish_factor : N := (524288 * C.c_lc + 2064)%N.
+
+  (** Checking and retaining every final row fits public elimination work. *)
+  Lemma T_karr_hull_finish_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    let rows := hull_left xs (length a + length b) 0 (map normalize_row a) ++
+      hull_right xs (length a + length b) (length a) (map normalize_row b) in
+    let basis := karr_bareiss (2 * length xs + 2) 1 rows in
+    (ListDef.T_map (checked_hull_row xs a b)
+       (T_checked_hull_row xs a b) basis +
+     T_present (map (checked_hull_row xs a b) basis) <=
+      karr_hull_finish_factor * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N.
+  Proof.
+    intros a b Ha Hb xs rows basis.
+    set (d := n (Reached a) + n (Reached b) + 1).
+    set (w := ell (Reached a) + ell (Reached b)).
+    set (v := ellB d w + 1).
+    set (width := 2 * length xs + length a + length b + 4).
+    set (raw := nell (Reached a) + nell (Reached b)).
+    set (bits := ellB width raw).
+    set (charge := karr_hull_checker_charge d bits).
+    set (work := elimination_work (Reached a) (Reached b)).
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hbits_positive : 1 <= bits).
+    { unfold bits, width, raw, ellB, nell. nia. }
+    assert (Hraw : raw <= bits).
+    { unfold bits, width, ellB. nia. }
+    assert (Hw : w <= bits).
+    { unfold w, raw, nell in *. lia. }
+    assert (Hwidth : bits + 1 <= 128 * v).
+    { pose proof (karr_hull_width_public a b Ha Hb) as Hpublic.
+      cbv zeta in Hpublic.
+      replace (2 * length (variables (map normalize_row a ++
+        map normalize_row b)) + length a + length b + 5) with
+        (width + 1) in Hpublic by (unfold width, xs; lia).
+      change (ellB (width + 1) raw + 1 <= 128 * v) in Hpublic.
+      unfold bits.
+      eapply Nat.le_trans with (m := ellB (width + 1) raw + 1).
+      - apply Nat.add_le_mono_r, ellB_mono; lia.
+      - exact Hpublic. }
+    assert (Hxs : length xs <= d).
+    { pose proof (karr_hull_variables_public a b) as Hvars.
+      unfold xs, d, n. cbn [rows_of]. lia. }
+    assert (Hcount : length a + length b <= d).
+    { unfold d, n. cbn [rows_of]. lia. }
+    assert (Hkeys : Forall (fun x => X.bits x <= bits) xs).
+    { eapply Forall_impl; [|apply karr_hull_variables_keys].
+      intros x Hx. cbn beta in Hx. unfold raw in Hraw. lia. }
+    assert (Ha_rows : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact Ha].
+      intros row [Hlen [Hkey Hrow]]. cbn beta in *.
+      unfold d, w in *. lia. }
+    assert (Hb_rows : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact Hb].
+      intros row [Hlen [Hkey Hrow]]. cbn beta in *.
+      unfold d, w in *. lia. }
+    pose proof (karr_hull_basis_envelope a b xs) as Hbasis.
+    cbv zeta in Hbasis.
+    replace (2 * length xs + (length a + length b) + 4) with width
+      in Hbasis by (unfold width; lia).
+    pose proof (T_karr_hull_finish_bounded xs a b basis d bits
+      Hbits_positive Hxs Hcount Hkeys Ha_rows Hb_rows Hbasis) as Hfinish.
+    assert (Hbasis_length : length basis + 1 <= d).
+    { unfold basis. rewrite karr_bareiss_length.
+      unfold rows. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright.
+      unfold d, n. cbn [rows_of]. lia. }
+    assert (Hlog : Nat.log2 d <= v).
+    { unfold v, ellB. nia. }
+    pose proof (karr_hull_checker_charge_public d bits v
+      Hd Hv Hwidth Hlog) as Hcharge.
+    assert (Hwork : work = d^3 * v^2).
+    { unfold work, elimination_work, d, v, w. reflexivity. }
+    assert (Hproduct : (length basis + 1) * charge <=
+      (1024 * 256) * work).
+    { unfold charge.
+      eapply Nat.le_trans with (m := d * ((1024 * 256) * (d^2 * v^2))).
+      - apply Nat.mul_le_mono; [exact Hbasis_length|exact Hcharge].
+      - rewrite Hwork. cbn [Nat.pow]. ring_simplify. lia. }
+    assert (Hpair : (d + 1) * (length basis + 1) <= 2 * work).
+    { rewrite Hwork.
+      assert (Hdim : d + 1 <= 2 * d) by lia.
+      eapply Nat.le_trans with (m := (2 * d) * d).
+      - apply Nat.mul_le_mono; assumption.
+      - replace ((2 * d) * d) with (2 * (d * d)) by ring.
+        replace (2 * (d ^ 3 * v ^ 2)) with
+          (2 * (d * d) * (d * v * v)) by (cbn [Nat.pow]; ring).
+        replace (2 * (d * d)) with (2 * (d * d) * 1) at 1 by ring.
+        apply Nat.mul_le_mono_l. nia. }
+    assert (Hvisit : length basis + 1 <= work).
+    { eapply Nat.le_trans; [exact Hbasis_length|].
+      rewrite Hwork.
+      replace (d ^ 3 * v ^ 2) with (d * (d * d * v * v))
+        by (cbn [Nat.pow]; ring).
+      replace d with (d * 1) at 1 by ring.
+      apply Nat.mul_le_mono_l. nia. }
+    assert (HproductN : (N.of_nat charge * N.of_nat (length basis + 1) <=
+      262144 * N.of_nat work)%N).
+    { rewrite <- Nat2N.inj_mul.
+      change 262144%N with (N.of_nat (1024 * 256)). lia. }
+    assert (HpairN : (N.of_nat (d + 1) * N.of_nat (length basis + 1) <=
+      2 * N.of_nat work)%N).
+    { rewrite <- Nat2N.inj_mul. lia. }
+    assert (HvisitN : (N.of_nat (length basis + 1) <=
+      N.of_nat work)%N) by lia.
+    eapply N.le_trans; [exact Hfinish|].
+    fold charge.
+    replace ((2 * C.c_lc * N.of_nat charge +
+      1024 * N.of_nat (d + 1) + 16) *
+      N.of_nat (length basis + 1))%N with
+      (2 * C.c_lc * (N.of_nat charge * N.of_nat (length basis + 1)) +
+        1024 * (N.of_nat (d + 1) * N.of_nat (length basis + 1)) +
+        16 * N.of_nat (length basis + 1))%N by ring.
+    assert (HcheckerN : (2 * C.c_lc *
+      (N.of_nat charge * N.of_nat (length basis + 1)) <=
+      524288 * C.c_lc * N.of_nat work)%N).
+    { replace (524288 * C.c_lc * N.of_nat work)%N with
+        (2 * C.c_lc * (262144 * N.of_nat work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    unfold karr_hull_finish_factor.
+    replace ((524288 * C.c_lc + 2064) * N.of_nat work)%N with
+      ((524288 * C.c_lc * N.of_nat work +
+        1024 * (2 * N.of_nat work)) +
+        16 * N.of_nat work)%N by ring.
+    apply N.add_le_mono.
+    - apply N.add_le_mono; [exact HcheckerN|].
+      now apply N.mul_le_mono_l.
+    - now apply N.mul_le_mono_l.
+  Qed.
+
   Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
     (T_affine_hull a b <= c_karr * N.of_nat
       (elimination_work (Reached a) (Reached b)))%N.
