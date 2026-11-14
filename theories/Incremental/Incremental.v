@@ -9168,7 +9168,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     state_ok st -> invalid_pending_dom st current ->
     invalid_snapshot_origin st current ->
     (Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
-      (T_invalid_checked_step st) current H + invalid_processed_credit st current +
+      (fun acc : incremental_invalidation S.key => T_invalid_checked_step st acc)
+      current H + invalid_processed_credit st current +
       invalid_remaining_credit st
         (Argent.Loop.loop (invalid_lt st) (invalid_checked_step st) current H) <=
       invalid_processed_credit st
@@ -9177,7 +9178,7 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
   Proof.
     intros st current H Hstate Hpending Horigin.
     eapply (incremental_loop_credit (invalid_lt st) (invalid_checked_step st)
-      (T_invalid_checked_step st)
+      (fun acc : incremental_invalidation S.key => T_invalid_checked_step st acc)
       (fun acc => invalid_pending_dom st acc /\ invalid_snapshot_origin st acc)
       (invalid_processed_credit st) (invalid_remaining_credit st) 2).
     - intros [pending0 seen bad done snapshots] next Hlt [Hdom Hsnap] Hstep.
@@ -9542,7 +9543,8 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     let initial := invalid_initial p p' ch st in
     let H := invalid_accessible st initial in
     (Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
-      (T_invalid_checked_step st) initial H <=
+      (fun acc : incremental_invalidation S.key => T_invalid_checked_step st acc)
+      initial H <=
       320 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
         N.of_nat (kwidth st + 1) *
         N.of_nat (finite_sum (fun x =>
@@ -9882,6 +9884,111 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     replace (128 * base * (count + 1) * widthN)%N with
       (128 * q * (count + 1))%N by (unfold q; ring).
     eapply invalid_initial_arithmetic; [exact Hq|exact Hchanged|exact Hseed'].
+  Qed.
+
+  Lemma invalid_public_clock_arithmetic : forall q keys rows initial walk,
+    (1 <= q)%N ->
+    (initial <= 128 * q * (rows + 1))%N ->
+    (walk <= 320 * q * keys + 2)%N ->
+    (4 + initial + walk <= 1024 * q * (keys + rows + 1))%N.
+  Proof.
+    intros q keys rows initial walk Hq Hinitial Hwalk.
+    set (keywork := (q * keys)%N).
+    set (rowwork := (q * rows)%N).
+    replace (128 * q * (rows + 1))%N with
+      (128 * rowwork + 128 * q)%N in Hinitial by (unfold rowwork; ring).
+    replace (320 * q * keys)%N with (320 * keywork)%N in Hwalk
+      by (unfold keywork; ring).
+    replace (1024 * q * (keys + rows + 1))%N with
+      (1024 * (keywork + rowwork + q))%N by
+      (unfold keywork, rowwork; ring).
+    lia.
+  Qed.
+
+  Lemma T_invalidate_le : forall p p' ch st, S.wf p -> S.wf p' -> state_ok st ->
+    (forall r, In r ch -> In r (S.rows p) /\ In r (S.rows p')) ->
+    (T_invalidate p p' ch st <= c_inc *
+      N.of_nat ((fold_right Nat.add 0%nat (map (fun x =>
+          infl_deg st x + length (cowrite_at st x) + 1) (invalidate p p' ch st)) +
+        fold_right Nat.add 0%nat (map (fun r =>
+          length (S.writes p r) + length (S.writes p' r) +
+          length (S.deps p r) + length (S.deps p' r) + 1) ch) + 1)%nat) *
+      N.of_nat (width p st + width p' st + kwidth st + 1))%N.
+  Proof.
+    intros p p' ch st Hwf Hwf' Hstate Hlisted.
+    pose proof (T_invalid_initial_le p p' ch st Hwf Hwf' Hlisted) as Hinitial.
+    pose proof (T_invalid_loop_key_le p p' ch st Hstate) as Hloop.
+    cbn beta zeta in Hloop.
+    pose (base := (S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N).
+    pose (width_total := width p st + width p' st + kwidth st + 1).
+    pose (keywork := N.of_nat (finite_sum (fun x =>
+      infl_deg st x + length (cowrite_at st x) + 1)
+      (invalidate p p' ch st))).
+    pose (rowwork := N.of_nat (invalid_changed_work p p' ch)).
+    pose (q := (base * N.of_nat width_total)%N).
+    assert (Hq : (1 <= q)%N).
+    { change (1 * 1 <= base * N.of_nat width_total)%N.
+      apply N.mul_le_mono; [unfold base; lia|unfold width_total; lia]. }
+    replace (N.of_nat (invalid_changed_work p p' ch + 1)) with
+      (rowwork + 1)%N in Hinitial by
+      (unfold rowwork; rewrite Nat2N.inj_add; reflexivity).
+    assert (HinitialQ :
+      (T_invalid_initial p p' ch st <= 128 * q * (rowwork + 1))%N).
+    { replace (128 * q * (rowwork + 1))%N with
+        (128 * base * (rowwork + 1) * N.of_nat width_total)%N
+        by (unfold q; ring).
+      exact Hinitial. }
+    assert (Hwidth : (N.of_nat (kwidth st + 1) <= N.of_nat width_total)%N).
+    { unfold width_total; lia. }
+    assert (Hloopwide :
+      (Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
+        (fun acc : incremental_invalidation S.key => T_invalid_checked_step st acc)
+        (invalid_initial p p' ch st)
+        (invalid_accessible st (invalid_initial p p' ch st)) <=
+        320 * q * keywork + 2)%N).
+    { eapply N.le_trans; [exact Hloop|].
+      replace (320 * q * keywork)%N with
+        (320 * base * N.of_nat width_total * keywork)%N by (unfold q; ring).
+      apply N.add_le_mono_r.
+      apply N.mul_le_mono_r.
+      apply N.mul_le_mono_l; exact Hwidth. }
+    pose proof (invalid_public_clock_arithmetic q keywork rowwork
+      (T_invalid_initial p p' ch st)
+      (Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
+        (fun acc : incremental_invalidation S.key => T_invalid_checked_step st acc)
+        (invalid_initial p p' ch st)
+        (invalid_accessible st (invalid_initial p p' ch st)))
+      Hq HinitialQ Hloopwide) as Hbudget.
+    assert (Hrhs : (c_inc *
+      N.of_nat ((finite_sum (fun x =>
+        infl_deg st x + length (cowrite_at st x) + 1)
+        (invalidate p p' ch st) + invalid_changed_work p p' ch + 1)%nat) *
+      N.of_nat width_total =
+      1024 * q * (keywork + rowwork + 1))%N).
+    { assert (Hsum : N.of_nat ((finite_sum (fun x =>
+          infl_deg st x + length (cowrite_at st x) + 1)
+          (invalidate p p' ch st) + invalid_changed_work p p' ch + 1)%nat) =
+        (keywork + rowwork + 1)%N).
+      { unfold keywork, rowwork; rewrite !Nat2N.inj_add; reflexivity. }
+      rewrite Hsum; unfold c_inc, q, base; ring. }
+    change (T_invalidate p p' ch st <= c_inc *
+      N.of_nat ((finite_sum (fun x =>
+        infl_deg st x + length (cowrite_at st x) + 1)
+        (invalidate p p' ch st) + invalid_changed_work p p' ch + 1)%nat) *
+      N.of_nat width_total)%N.
+    unfold T_invalidate, T_invalidate_keys, T_invalid_bad, T_invalid_walk.
+    cbn beta zeta.
+    match goal with
+    | |- (?lhs <= _)%N =>
+        replace lhs with
+          (4 + T_invalid_initial p p' ch st +
+            Argent.Loop.T_loop (invalid_lt st) (invalid_checked_step st)
+              (fun current : incremental_invalidation S.key =>
+                T_invalid_checked_step st current) (invalid_initial p p' ch st)
+              (invalid_accessible st (invalid_initial p p' ch st)))%N by ring
+    end.
+    rewrite Hrhs.
+    exact Hbudget.
   Qed.
 
   Definition invalid_respects (P : S.key -> Prop)
