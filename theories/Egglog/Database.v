@@ -12401,6 +12401,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply history_shape_keys_length.
   Qed.
 
+
   Lemma database_history_weight_cardinality : forall db f k key id,
     database_row_store_depth_ok db -> database_history_root_owner db ->
     database_history_key_shape db -> database_history_codes_valid db ->
@@ -13273,6 +13274,96 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite (row_root_after_fixed _ d r (db_row_store db) Hbound Hfixed).
     exact Hfixed.
   Qed.
+  Lemma database_two_root_weight_cardinality :
+    forall db f old ck old_key old_id ck_key ck_id,
+      database_row_store_ok db -> database_history_root_owner db ->
+      database_history_key_shape db -> database_history_codes_valid db ->
+      database_history_key_ids_bounded db ->
+      database_row_weight_conserved db ->
+      PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+        Some (old_key, old_id) ->
+      PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+        Some (ck_key, ck_id) ->
+      row_key_shape old = row_key_shape ck ->
+      let source_root := row_root
+        (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db) in
+      let dest_root := row_root
+        (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db) in
+      source_root <> dest_root ->
+      (match PTrieCode.get source_root (row_weights (db_row_store db)) with
+       | Some n => n | None => 1%N end +
+       match PTrieCode.get dest_root (row_weights (db_row_store db)) with
+       | Some n => n | None => 1%N end <=
+       (ids db + 1) ^ N.of_nat (length old))%N.
+  Proof.
+    intros db f old ck old_key old_id ck_key ck_id Hstore Howner Hshape
+      Hvalid Hbounded Hconserved Hsource Hdest Hbridge source_root dest_root
+      Hdifferent.
+    destruct (Hconserved f old old_key old_id Hsource) as
+      [source_codes [Hsource_distinct [Hsource_count Hsource_members]]].
+    destruct (Hconserved f ck ck_key ck_id Hdest) as
+      [dest_codes [Hdest_distinct [Hdest_count Hdest_members]]].
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links (db_row_store db)) with
+       | Some p => p | None => source_root end) = source_root).
+    { exact (database_history_root_fixed db f old old_key old_id
+        Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links (db_row_store db)) with
+       | Some p => p | None => dest_root end) = dest_root).
+    { exact (database_history_root_fixed db f ck ck_key ck_id
+        Hstore Hdest). }
+    assert (Hdisjoint : forall code, In code source_codes ->
+      ~ In code dest_codes).
+    { eapply database_row_weight_codes_disjoint; eassumption. }
+    assert (Hmerged_distinct : NoDup (source_codes ++ dest_codes)).
+    { clear Hsource_count Hdest_count.
+      revert Hsource_members Hdisjoint.
+      induction Hsource_distinct as [|code rest Hnotin Hdistinct IH];
+        intros Hmembers Hdisjoint; simpl; [exact Hdest_distinct |].
+      constructor.
+      - rewrite in_app_iff. intros [Hin | Hin].
+        + exact (Hnotin Hin).
+        + exact (Hdisjoint code (or_introl eq_refl) Hin).
+      - apply IH.
+        + exact (Forall_inv_tail Hmembers).
+        + intros other Hin. apply Hdisjoint. now right. }
+    assert (Hmerged_members : Forall (fun code => exists label r,
+        PTrieCode.get code (row_history (db_row_store db)) = Some (label, r) /\
+        (database_history_connected db r source_root \/
+         database_history_connected db r dest_root))
+      (source_codes ++ dest_codes)).
+    { rewrite Forall_app. split;
+        apply Forall_forall; intros code Hin.
+      - apply Forall_forall with (x := code) in Hsource_members;
+          [| exact Hin].
+        destruct Hsource_members as [label [r [Hentry Hconnected]]].
+        exists label, r. split; [exact Hentry | now left].
+      - apply Forall_forall with (x := code) in Hdest_members;
+          [| exact Hin].
+        destruct Hdest_members as [label [r [Hentry Hconnected]]].
+        exists label, r. split; [exact Hentry | now right]. }
+    pose proof (database_history_two_components_cardinality db f old ck
+      old_key old_id ck_key ck_id (source_codes ++ dest_codes)
+      (database_row_store_depth_of_store db Hstore) Howner Hshape Hvalid
+      Hbounded Hsource Hdest Hbridge Hmerged_distinct Hmerged_members)
+      as Hcapacity.
+    rewrite length_app in Hcapacity.
+    rewrite <- (N2Nat.id
+      ((match PTrieCode.get source_root (row_weights (db_row_store db)) with
+        | Some n => n | None => 1%N end) +
+       (match PTrieCode.get dest_root (row_weights (db_row_store db)) with
+        | Some n => n | None => 1%N end)))%N.
+    rewrite N2Nat.inj_add.
+    replace ((ids db + 1) ^ N.of_nat (length old))%N with
+      (N.of_nat ((S (N.to_nat (ids db))) ^ length old)).
+    - subst source_root dest_root. apply time_of_nat_le. lia.
+    - rewrite Nat2N.inj_pow, Nat2N.inj_succ, N2Nat.id.
+      now rewrite N.add_1_r.
+  Qed.
+
 
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
     (before <= after)%N ->
