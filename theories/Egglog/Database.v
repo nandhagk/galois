@@ -7025,6 +7025,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     injection Hcell as <-. apply repr_idem. exact Hwf.
   Qed.
 
+  (** A key whose identifiers are representatives is unchanged by normalization. *)
+  Lemma normal_key_of_fixed : forall db k, wf db ->
+    (forall i, In (Id i) k -> repr db i = i) -> normal_key db k = k.
+  Proof.
+    intros db k Hwf Hfixed. rewrite normal_key_correct by exact Hwf.
+    induction k as [| [i | v] rest IH]; [reflexivity | |].
+    - cbn [map canon]. rewrite Hfixed by now left.
+      f_equal. apply IH. intros j Hin. apply Hfixed. now right.
+    - cbn [map canon]. f_equal. apply IH.
+      intros j Hin. apply Hfixed. now right.
+  Qed.
+
   (** Normalization preserves allocation, tuple length and the declared output shape. *)
   Lemma kind_ok_canon : forall db f k o, wf db -> kind_ok db f k o ->
     kind_ok db f (map (canon db) k) (option_map (canon db) o).
@@ -11585,6 +11597,48 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite row_root_parent_iter.
     replace fuel with (d + (fuel - d)) by lia.
     apply row_parent_iter_after_fixed. exact Hfixed.
+  Qed.
+
+  Lemma row_root_fixed : forall fuel r store,
+    (match PTrieCode.get r (row_links store) with
+     | Some parent => parent | None => r end) = r -> row_root fuel r store = r.
+  Proof.
+    intros [| fuel] r store Hfixed; [reflexivity |].
+    cbn [row_root]. destruct (PTrieCode.get r (row_links store)) as [parent |].
+    - cbn in Hfixed. subst parent. now rewrite Pos.eqb_refl.
+    - reflexivity.
+  Qed.
+
+  (** Linking a terminal row root redirects every completed path with one more step. *)
+  Lemma row_root_link_terminal : forall d r store store' loser winner,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    loser <> winner ->
+    (match PTrieCode.get winner (row_links store') with
+     | Some parent => parent | None => winner end) = winner ->
+    row_root d r store = loser -> row_root (S d) r store' = winner.
+  Proof.
+    induction d as [| d IH]; intros r store store' loser winner Hlinks Hneq Hfixed Hroot.
+    - cbn [row_root] in Hroot. subst r.
+      cbn [row_root]. rewrite Hlinks, PTrie.get_set_same.
+      destruct (Pos.eqb winner loser) eqn:Heq.
+      { apply Pos.eqb_eq in Heq. exfalso. apply Hneq. symmetry. exact Heq. }
+      reflexivity.
+    - destruct (Pos.eq_dec r loser) as [-> | Hother].
+      + cbn [row_root]. rewrite Hlinks, PTrie.get_set_same.
+        destruct (Pos.eqb winner loser) eqn:Heq.
+        { apply Pos.eqb_eq in Heq. exfalso. apply Hneq. symmetry. exact Heq. }
+        rewrite <- Hlinks.
+        change (row_root (S d) winner store' = winner).
+        apply row_root_fixed. exact Hfixed.
+      + cbn [row_root] in Hroot |- *.
+        rewrite Hlinks, PTrie.get_set_other by exact Hother.
+        destruct (PTrieCode.get r (row_links store)) as [parent |] eqn:Hparent.
+        * destruct (Pos.eqb parent r) eqn:Heq.
+          -- apply Pos.eqb_eq in Heq. subst parent. subst loser. contradiction.
+          -- rewrite <- Hlinks.
+             change (row_root (S d) parent store' = winner).
+             apply IH with (store := store) (loser := loser); assumption.
+        * subst loser. contradiction.
   Qed.
 
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
