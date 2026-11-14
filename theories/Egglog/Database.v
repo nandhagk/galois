@@ -21178,6 +21178,96 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact ((proj1 (Forall_forall _ _)) (proj2 Hnext) x Hin).
   Qed.
 
+  Lemma metadata_put_active : forall db f k o,
+    metadata_ok db ->
+    slots_fit db f
+      (length (normal_key db k ++ option_list
+        (combine_output db f (row_get f (normal_key db k) db)
+          (option_map (normal_cell db) o)))) ->
+    metadata_ok (put f k o db).
+  Proof.
+    intros db f k o Hmetadata Hfits. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : metadata_ok next /\ slots next = slots db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try (split; [exact Hmetadata | reflexivity]).
+      split; [now apply metadata_union |].
+      unfold union. destruct (UnionFindCode.union a b (db_forest db))
+        as [[roots |] forest];
+        [destruct roots |]; reflexivity. }
+    destruct Hnext as [Hnext Hslots].
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      apply metadata_row_replace; [exact Hnext |].
+      unfold slots_fit in *. now rewrite Hslots.
+    - apply metadata_row_replace; [exact Hnext |].
+      unfold slots_fit in *. now rewrite Hslots.
+  Qed.
+
+  Lemma metadata_repair_current_active : forall db work f k,
+    inv_on db work -> metadata_ok (repair_current f k db).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hmetadata : metadata_ok db).
+    { unfold inv_on, forest_ok in Hinv. tauto. }
+    destruct (row_get f k db) as [before |] eqn:Hbefore;
+      [| unfold repair_current; rewrite Hbefore; exact Hmetadata].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)) eqn:Hfixed.
+    { unfold repair_current. now rewrite Hbefore, Hfixed. }
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    pose proof (repair_current_target db f k before Hforest Hbefore) as Htarget.
+    pose proof (repair_current_row_kind_active db work f k Hinv _ _ _ Htarget)
+      as [_ [Hfits _]].
+    assert (Hfit : slots_fit (row_delete f k db) f
+      (length (normal_key db k ++ option_list
+        (combine_output (row_delete f k db) f
+          (row_get f (normal_key db k) (row_delete f k db))
+          (option_map (normal_cell db) before))))).
+    { unfold slots_fit in *. rewrite row_delete_slots.
+      destruct (repair_current_layout db f k) as [_ [Hslots _]].
+      now rewrite Hslots in Hfits. }
+    unfold repair_current. rewrite Hbefore, Hfixed.
+    eapply metadata_snapshot_ok; [reflexivity |].
+    apply metadata_put_active.
+    - apply metadata_row_delete. exact Hmetadata.
+    - rewrite row_delete_normal_key,
+        (normal_key_idempotent db k Hforest),
+        row_delete_normal_output,
+        (normal_output_idempotent db before Hforest).
+      exact Hfit.
+  Qed.
+
+  Lemma inv_on_repair_metadata : forall db work f k,
+    inv_on db work -> metadata_ok (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hmetadata : metadata_ok db).
+    { unfold inv_on, forest_ok in Hinv. tauto. }
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hmetadata].
+    destruct (row_get f current db) as [output |]; [| exact Hmetadata].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hmetadata |].
+    eapply metadata_snapshot_ok with (db := repair_current f current db);
+      [| exact (metadata_repair_current_active db work f current Hinv)].
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |]; [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f (normal_key db current))
+      (row_history (db_row_store (repair_current f current db))))
+      as [[new_key new_id] |]; reflexivity.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
