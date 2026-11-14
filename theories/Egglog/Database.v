@@ -6918,24 +6918,28 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The losing representative queued by union is allocated. *)
-  Lemma union_queue_allocated : forall i j db, database_wf db -> allocated db i -> allocated db j ->
+  Lemma union_queue_allocated : forall i j db,
+    UnionFind.wf (db_forest db) ->
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    Forall (allocated db) (runtime_queue (db_runtime db)) ->
+    allocated db i -> allocated db j ->
     Forall (allocated (union i j db)) (runtime_queue (db_runtime (union i j db))).
   Proof.
-    intros i j db Hwf Hi Hj.
+    intros i j db Hforest Hmembers Hqueue Hi Hj.
     pose proof (UnionFindCodeFacts.repr_allocated (db_forest db) (ids db)
-      (wf_forest db Hwf) (wf_forest_members db Hwf)) as Hrepresentative.
+      Hforest Hmembers) as Hrepresentative.
     unfold union.
     destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
     destruct roots as [[winner loser] |].
     - change (Forall (allocated db) (loser :: runtime_queue (db_runtime db))).
       constructor.
       + destruct (UnionFind.union_some i j (db_forest db) winner loser forest
-          (wf_forest db Hwf) Hunion) as [_ [Hroots _]].
+          Hforest Hunion) as [_ [Hroots _]].
         destruct Hroots as [[_ Hloser] | [_ Hloser]]; rewrite Hloser.
         * exact (Hrepresentative j Hj).
         * exact (Hrepresentative i Hi).
-      + exact (wf_queue_allocated db Hwf).
-    - exact (wf_queue_allocated db Hwf).
+      + exact Hqueue.
+    - exact Hqueue.
   Qed.
 
   (** The stored pending counter follows exactly the optional queue insertion. *)
@@ -6999,7 +7003,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (union_equalities i j db Hwf) as Hequalities.
     pose proof (union_log_allocated i j db Hwf Hi Hj) as Hlog.
     pose proof (union_pending_count i j db (wf_pending_count db Hwf)) as Hpending.
-    pose proof (union_queue_allocated i j db Hwf Hi Hj) as Hqueue.
+    pose proof (union_queue_allocated i j db (wf_forest db Hwf)
+      (wf_forest_members db Hwf) (wf_queue_allocated db Hwf) Hi Hj) as Hqueue.
     pose proof (union_quiet_canonical i j db Hwf) as Hcanonical.
     pose proof (database_history_union db i j (wf_history db Hwf)) as Hhistory.
     unfold database_wf in Hwf |- *. unfold union in *.
