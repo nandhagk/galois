@@ -1722,7 +1722,6 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Definition k_env_widen : N := 1%N.
   Lemma F_widen : forall p a b, widen p a b =
     if leb b a then a else
     match a, b with
@@ -1735,23 +1734,6 @@ Module EnvT (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma T_widen_split : forall p a b,
-    (T_widen p a b <= T_leb b a + k_env_widen *
-      (1 + if leb b a then 0 else
-        match a, b with
-        | Reached ma, Reached mb => M.T_merge
-            (fun x y => match x, y with
-             | Some a, Some b => let v := V.widen p a b in if V.is_bot v then None else Some v
-             | _, _ => None
-             end)
-            (fun x y => match x, y with
-             | Some a, Some b => V.T_widen p a b + V.T_is_bot (V.widen p a b) + 1
-             | _, _ => 1
-             end) ma mb
-        | _, _ => 0
-        end))%N.
-  Proof. Admitted. (* PLAN-DEFECT: MAP_TIME lacks extensionality for the clock callback;
-    the generated clock adds its unit outside the match, unlike the plan's callback. *)
   Lemma F_narrow : forall a b, narrow a b =
     if is_bot b then b else
     match a, b with
