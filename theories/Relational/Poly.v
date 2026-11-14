@@ -14224,6 +14224,88 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply poly_coefficient_absent. exact Hfresh.
   Qed.
 
+  (** Source-only assignment candidates preserve the original width through substitution. *)
+  Lemma T_poly_assign_tail_candidate_branch : forall x P f r xs head ms,
+    In r (poly_assign_tail_step x P) ->
+    untag (lhs (poly_constraint r)) = Some xs ->
+    poly_multipliers r = head :: ms ->
+    NoDup (map fst (coef f)) ->
+    C.row_key_bits (LCons X.t (coef f) REq (cst f)) <= F.form_bits f ->
+    let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let rawkeys := poly_raw_keys P in
+    let rawbits := poly_raw_bits P in
+    let width := nell (Reached P) + 1 in
+    (T_subst x f c + C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
+      AssignCore.poly_assign_zero_subst_factor * N.of_nat (dim + length (coef f) + 1) *
+        N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3) +
+      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+        N.of_nat (width + 1)^2)%N.
+  Proof.
+    intros x P f r xs head ms Hr Huntag Hmult Hform Hformkeys
+      c dim rawkeys rawbits width.
+    destruct (poly_assign_tail_candidate_envelope x P r xs Hr Huntag)
+      as (Hnormal & Hdim & Hkeys & Hbits & Hzero).
+    cbn zeta in Hnormal, Hdim, Hkeys, Hbits, Hzero.
+    assert (Hfresh : ~ In x (map fst (lhs c))).
+    { unfold c. eapply poly_assign_untag_absent; [exact Huntag|].
+      exact (proj1 (Forall_forall _ _) (poly_assign_tail_step_absent x P) r Hr). }
+    assert (Hformentries : Forall (fun p =>
+      Pos.size_nat (X.encode (fst p)) <= rawkeys + F.form_bits f + 1) (coef f)).
+    { apply Forall_forall. intros p Hp.
+      pose proof (poly_row_key_member
+        (LCons X.t (coef f) REq (cst f)) p Hp) as Hkey.
+      lia. }
+    assert (Hkeys_total : C.row_key_bits c <= rawkeys + F.form_bits f + 1).
+    { eapply Nat.le_trans; [exact Hkeys|]. lia. }
+    pose proof (AssignCore.T_poly_assign_subst_zero x f c
+      (rawkeys + F.form_bits f + 1) (2 * rawbits + 1)
+      Hnormal Hform Hkeys_total Hbits Hformentries Hzero) as Hsubst.
+    assert (Hsubstdim : length (lhs (subst x f c)) <= dim).
+    { destruct (AssignCore.poly_assign_subst_absent_envelope x f c Hfresh Hnormal)
+        as [Hlength _]. eapply Nat.le_trans; [exact Hlength|exact Hdim]. }
+    assert (Hsubstwidth : C.row_key_bits (subst x f c) +
+      C.row_bits (subst x f c) <= 3 * width + 1).
+    { destruct (AssignCore.poly_assign_subst_absent_envelope x f c Hfresh Hnormal)
+        as [_ [Hkey Hbit]].
+      change (C.row_key_bits (subst x f c) <= C.row_key_bits c) in Hkey.
+      change (C.row_bits (subst x f c) <= C.row_bits c) in Hbit.
+      change (C.row_key_bits c <= rawkeys + 1) in Hkeys.
+      change (C.row_bits c <= 2 * rawbits + 1) in Hbits.
+      unfold width, rawkeys, rawbits in *.
+      pose proof (poly_raw_width P). lia. }
+    destruct (proj1 (Forall_forall _ _) (poly_assign_tail_step_multiplier_bits x P)
+      r Hr) as [Hmultlen Hmultbits].
+    rewrite Hmult in Hmultlen, Hmultbits.
+    cbn [length] in Hmultlen. inversion Hmultbits as [|? ? _ Hmsbits]; subst.
+    assert (Hsource : Forall (fun p =>
+      C.row_key_bits p + C.row_bits p <= width) P).
+    { eapply Forall_impl; [|apply poly_raw_source_width].
+      intros p Hp. eapply Nat.le_trans; [exact Hp|]. unfold width. lia. }
+    assert (Hms : Forall (fun m => Z.size_nat m <= 2 * width + 2) ms).
+    { eapply Forall_impl; [|exact Hmsbits].
+      intros m Hm. unfold width, rawbits in *.
+      pose proof (poly_raw_width P). lia. }
+    pose proof (AssignCore.T_poly_assign_checker P (subst x f c) ms dim width
+      Hsource ltac:(lia) Hms Hsubstdim Hsubstwidth) as Hcheck.
+    change (T_subst x f c <= AssignCore.poly_assign_zero_subst_factor *
+      N.of_nat (length (lhs c) + length (coef f) + 1) *
+      N.of_nat (rawkeys + F.form_bits f + 1 + (2 * rawbits + 1) + 1))%N in Hsubst.
+    replace (rawkeys + F.form_bits f + 1 + (2 * rawbits + 1) + 1) with
+      (rawkeys + F.form_bits f + 2 * rawbits + 3) in Hsubst by lia.
+    assert (Hsubst_total : (T_subst x f c <=
+      AssignCore.poly_assign_zero_subst_factor *
+        N.of_nat (dim + length (coef f) + 1) *
+        N.of_nat (rawkeys + F.form_bits f + 2 * rawbits + 3))%N).
+    { eapply N.le_trans; [exact Hsubst|].
+      apply N.mul_le_mono_r, N.mul_le_mono_l, time_of_nat_le.
+      change (length (lhs c) <= dim) in Hdim. lia. }
+    change (C.T_check_entails P (subst x f c) (Cert ms 1 false) <=
+      48 * C.c_lc * N.of_nat (dim + terms (Reached P) + length P + 1) *
+        N.of_nat (width + 1)^2)%N in Hcheck.
+    cbn zeta. eapply N.add_le_mono; [exact Hsubst_total|exact Hcheck].
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
