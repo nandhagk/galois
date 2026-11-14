@@ -13847,10 +13847,6 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros x f r. eapply N.le_trans; [apply T_karr_subst_bounded|].
     apply N.mul_le_mono_r. unfold c_karr. lia.
   Qed.
-  Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
-    (T_affine_hull a b <= c_karr * N.of_nat
-      (elimination_work (Reached a) (Reached b)))%N.
-  Proof. Admitted. (* STUB *)
   Definition k_cert : N := 256%N.
   Lemma affine_hull_size : forall a b, normal a -> normal b ->
     length (affine_hull a b) <= n (Reached a) + n (Reached b) /\
@@ -16937,6 +16933,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           (elimination_work (Reached a) (Reached b))))%N by ring.
       now apply N.mul_le_mono_l.
   Qed.
+
+  Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
+    (T_affine_hull a b <= c_karr * N.of_nat
+      (elimination_work (Reached a) (Reached b)))%N.
+  Proof. Admitted. (* STUB *)
 
   Lemma T_karr_bareiss_basis_public : forall P c (xs : list X.t),
     normal P -> length xs <= length (variables (c :: P)) ->
