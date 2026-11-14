@@ -670,6 +670,12 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
   Definition invalidate := invalidate_keys.
   Definition invalidated := invalidate.
   Definition merge_region := merge_discovered.
+
+  Lemma invalidate_keys_bad_eq : forall p p' ch st,
+    invalidate_keys p p' ch st = invalid_bad (invalid_walk p p' ch st).
+  Proof.
+    reflexivity.
+  Qed.
 End IncrementalCode.
 
 Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYSTEM L)
@@ -4099,6 +4105,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     split.
     - exact (Hclosed r y x Hr Hy Hdom Hx).
     - intro Hbad; apply Hkeep.
+      rewrite invalidate_keys_bad_eq in Hbad.
+      rewrite invalidate_keys_bad_eq.
       exact (invalidate_keys_old p p' ch st r x y
         (Htracks r y Hr Hy Hdom) Hx Hbad Hy Hdom).
   Qed.
