@@ -3002,7 +3002,41 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
       parent (up d r) = up d r ->
       (size (up d r) <= (ids db + 1) ^ N.of_nat (length k))%N) /\
-    DatabaseUseMap.wf (row_uses store).
+    DatabaseUseMap.wf (row_uses store) /\
+    (forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
+      key = (f, k)).
+
+  Lemma database_row_store_labels : forall db, database_row_store_ok db ->
+    forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
+      key = (f, k).
+  Proof.
+    intros db Hstore. unfold database_row_store_ok in Hstore. tauto.
+  Qed.
+
+  Lemma ensure_row_identity_labels : forall db f k,
+    database_row_store_ok db ->
+    forall g args key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (ensure_row_identity f k db))) = Some (key, r) ->
+      key = (g, args).
+  Proof.
+    intros db f k Hstore g args key r Hget.
+    pose proof (database_row_store_labels db Hstore) as Hlabels.
+    unfold ensure_row_identity in Hget.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [old |] eqn:Hprior.
+    - exact (Hlabels g args key r Hget).
+    - cbn [database_set_index_counters database_set_row_store db_row_store
+        row_history] in Hget.
+      destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k)) as [Hsame | Hother].
+      + change (RowKeys.encode (g, args) = RowKeys.encode (f, k)) in Hsame.
+        apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
+        rewrite PTrie.get_set_same in Hget. injection Hget as <- _. reflexivity.
+      + rewrite PTrie.get_set_other in Hget by exact Hother.
+        exact (Hlabels g args key r Hget).
+  Qed.
 
   Lemma database_row_store_ok_init : forall ds sl,
     database_row_store_ok (init ds sl).
@@ -3025,7 +3059,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
              ++ split.
                 ** intros f k key r d Hhistory.
                    rewrite PTrie.get_empty in Hhistory. discriminate.
-                ** apply DatabaseUseMap.wf_empty.
+                ** split; [apply DatabaseUseMap.wf_empty |].
+                   intros f k key r Hhistory.
+                   rewrite PTrie.get_empty in Hhistory. discriminate.
   Qed.
 
   (** Public idle states retain enough historical uses to rebuild every row. *)
@@ -10782,7 +10818,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     pose proof (proj1 (proj2 (db_pop_loser_layout db x db' Hpop))) as Hids.
     unfold row_store_ok, database_row_store_ok in Hstore.
     destruct Hstore as
-      [Hlinks [Hhistory [Hcount [Hcounter [Hcells [Hdepth [Hgroup Hmap]]]]]]].
+      (Hlinks & Hhistory & Hcount & Hcounter & Hcells & Hdepth & Hgroup &
+        Hmap & Hlabels).
     assert (Hcountnew : N.to_nat (db_nuses db') = length (uses_entries db')).
     { eapply pop_loser_nuses_count; [exact Hmap | exact Hcount | exact Hpop]. }
     unfold db_pop_loser in Hpop.
@@ -10814,7 +10851,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * split.
           -- intros f k key r d Hget Hroot. rewrite Hids.
              exact (Hgroup f k key r d Hget Hroot).
-          -- apply DatabaseUsesFacts.wf_transfer. exact Hmap.
+          -- split; [apply DatabaseUsesFacts.wf_transfer; exact Hmap | exact Hlabels].
   Qed.
 
   Lemma forest_ok_pop : forall db x db', forest_ok db ->
