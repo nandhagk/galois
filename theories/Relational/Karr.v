@@ -1448,6 +1448,18 @@ Proof.
            cbn in Hlater, Hbound. lia.
 Qed.
 
+(** An enumerated selection cannot exceed its source list. *)
+Lemma karr_choose_count_le : forall A (source : list A) count selected,
+  In selected (karr_choose count source) -> count <= length source.
+Proof.
+  intros A source. induction source as [|x source IH]; intros [|count] selected Hin;
+    cbn [karr_choose length] in *; try lia; try contradiction.
+  apply in_app_or in Hin as [Hin|Hin].
+  - apply in_map_iff in Hin as [tail [_ Htail]].
+    pose proof (IH count tail Htail). lia.
+  - pose proof (IH (S count) selected Hin). lia.
+Qed.
+
 (** A selected row and column set determines one square submatrix. *)
 Definition karr_submatrix (columns : list nat) (rows : list (list Z)) : list (list Z) :=
   map (fun row => map (fun index => karr_nth index row) columns) rows.
