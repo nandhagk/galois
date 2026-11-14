@@ -10869,6 +10869,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia.
   Qed.
 
+  Lemma T_karr_zero_test_left : forall z, (Z.T_eqb 0 z <= 2)%N.
+  Proof.
+    intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia.
+  Qed.
+
   (** The coefficient filter retains exactly the nonzero entries. *)
   Definition karr_nonzero (p : X.t * Z) : bool := negb (Z.eqb (snd p) 0).
 
@@ -12293,6 +12298,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - pose proof (Hf x (or_introl eq_refl)) as Hhead.
       specialize (IH (fun y Hy => Hf y (or_intror Hy))).
       time_unfold List.T_forallb. cbn [length]. time_simpl. nia.
+  Qed.
+
+  (** A zero-prefix test visits every coefficient at constant cost. *)
+  Lemma T_karr_zero_forallb_bounded : forall zs,
+    (List.T_forallb (Z.eqb 0) (fun z => Z.T_eqb 0 z) zs <=
+      4 * N.of_nat (length zs + 1))%N.
+  Proof.
+    intro zs. pose proof (karr_T_forallb_members Z (Z.eqb 0)
+      (fun z => Z.T_eqb 0 z) 2 zs
+      ltac:(intros z Hz; apply T_karr_zero_test_left)) as Hscan.
+    rewrite Nat2N.inj_add. cbn [N.of_nat]. lia.
   Qed.
 
 
