@@ -3114,6 +3114,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       now rewrite PTrie.get_set_same.
   Qed.
 
+  Lemma ensure_row_identity_history_range : forall db f k,
+    database_row_store_ok db ->
+    forall g args key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (ensure_row_identity f k db))) = Some (key, r) ->
+      (r < row_fresh (db_row_store (ensure_row_identity f k db)))%positive.
+  Proof.
+    intros db f k Hstore g args key r Hget.
+    unfold ensure_row_identity in Hget |- *.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior.
+    - exact (database_row_store_history_range db Hstore g args key r Hget).
+    - cbn [database_set_index_counters database_set_row_store db_row_store
+        row_history row_fresh] in Hget |- *.
+      destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k)) as [Hsame | Hother].
+      + rewrite Hsame, PTrie.get_set_same in Hget. inversion Hget; subst. lia.
+      + rewrite PTrie.get_set_other in Hget by exact Hother.
+        pose proof (database_row_store_history_range db Hstore g args key r Hget).
+        lia.
+  Qed.
+
   Lemma register_row_uses_history : forall db f k o g args,
     PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (register_row_uses f k o db))) =
@@ -3123,6 +3144,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db f k o g args.
     unfold register_row_uses.
     reflexivity.
+  Qed.
+
+  Lemma register_row_uses_fresh : forall db f k o,
+    row_fresh (db_row_store (register_row_uses f k o db)) =
+      row_fresh (db_row_store (ensure_row_identity f k db)).
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma register_row_uses_history_range : forall db f k o,
+    database_row_store_ok db ->
+    forall g args key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (register_row_uses f k o db))) = Some (key, r) ->
+      (r < row_fresh (db_row_store (register_row_uses f k o db)))%positive.
+  Proof.
+    intros db f k o Hstore g args key r Hget.
+    rewrite register_row_uses_history in Hget.
+    rewrite register_row_uses_fresh.
+    now apply (ensure_row_identity_history_range db f k Hstore g args key r).
   Qed.
 
   Lemma register_row_uses_history_old : forall db f k o g args key r,
@@ -11039,6 +11080,13 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply IH. exact Hlinks.
   Qed.
 
+  Lemma row_root_no_link : forall fuel r store,
+    PTrieCode.get r (row_links store) = None -> row_root fuel r store = r.
+  Proof.
+    intros fuel r store Hnone. destruct fuel; [reflexivity |].
+    cbn [row_root]. now rewrite Hnone.
+  Qed.
+
   Lemma row_root_below_fresh : forall db fuel r,
     database_row_store_ok db ->
     (r < row_fresh (db_row_store db))%positive ->
@@ -11099,6 +11147,22 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply ensure_row_identity_old_root_key.
     apply row_root_below_fresh; [exact Hstore |].
     exact (database_row_store_history_range db Hstore g args key r Hget).
+  Qed.
+
+  Lemma ensure_row_identity_new_locate : forall db f k,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
+    db_locate f k (ensure_row_identity f k db) = Some k.
+  Proof.
+    intros db f k Hstore Hnone.
+    unfold db_locate, ensure_row_identity. rewrite Hnone.
+    cbn [database_set_index_counters database_set_row_store db_row_store
+      row_history row_links row_keys db_runtime runtime_allocated].
+    rewrite PTrie.get_set_same.
+    rewrite row_root_no_link.
+    - now rewrite PTrie.get_set_same.
+    - apply (database_row_store_future_links db Hstore).
+      apply Pos.le_refl.
   Qed.
 
   Lemma pop_loser_locate : forall db x db' f k,
