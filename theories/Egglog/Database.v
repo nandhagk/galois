@@ -11842,6 +11842,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - eapply rst_trans; eassumption.
   Qed.
 
+  Lemma database_history_connected_link_winner : forall db db' loser winner x,
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some parent => parent | None => loser end) = loser ->
+    database_history_connected db x loser ->
+    database_history_connected db' x winner.
+  Proof.
+    intros db db' loser winner x Hlinks Hfixed Hconnected.
+    eapply rst_trans.
+    - eapply database_history_connected_link; eassumption.
+    - unfold database_history_connected. apply rst_step.
+      rewrite Hlinks, PTrie.get_set_same. reflexivity.
+  Qed.
+
   (** Linking a terminal row root redirects every completed path with one more step. *)
   Lemma row_root_link_terminal : forall d r store store' loser winner,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
