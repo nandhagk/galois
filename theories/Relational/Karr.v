@@ -15822,6 +15822,32 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply karr_vars_of_contains with (r := row); assumption.
   Qed.
 
+  (** Hull coordinates come from one of the two raw variable sets. *)
+  Lemma karr_hull_variables_public : forall a b,
+    length (variables (map normalize_row a ++ map normalize_row b)) <=
+      length (vars_of a) + length (vars_of b).
+  Proof.
+    intros a b. rewrite <- length_app.
+    apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx.
+    destruct (karr_variables_support
+      (map normalize_row a ++ map normalize_row b) x Hx)
+      as [row [Hrow Hterm]].
+    apply in_app_or in Hrow as [Hleft|Hright].
+    - apply in_map_iff in Hleft as [source [Heq Hsource]]. subst row.
+      apply in_map_iff in Hterm as [[key z] [Heq Hcoeff]].
+      cbn [fst] in Heq. subst key.
+      apply karr_normal_coef_keys in Hcoeff.
+      apply in_or_app. left.
+      now apply karr_vars_of_contains with (r := source).
+    - apply in_map_iff in Hright as [source [Heq Hsource]]. subst row.
+      apply in_map_iff in Hterm as [[key z] [Heq Hcoeff]].
+      cbn [fst] in Heq. subst key.
+      apply karr_normal_coef_keys in Hcoeff.
+      apply in_or_app. right.
+      now apply karr_vars_of_contains with (r := source).
+  Qed.
+
   Lemma karr_variables_cons_mono : forall P c,
     length (variables P) <= length (variables (c :: P)).
   Proof.
