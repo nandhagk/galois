@@ -3551,14 +3551,25 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
       [reflexivity|exact I].
   Qed.
 
+  Lemma invalid_queued_done : forall acc x,
+    invalid_queued acc -> invalid_pending acc = [] ->
+    In x (invalid_bad acc) -> In x (invalid_done acc).
+  Proof.
+    intros acc x Hqueued Hempty Hbad.
+    destruct (Hqueued x Hbad) as [Hpending|Hdone]; [|exact Hdone].
+    rewrite Hempty in Hpending; contradiction.
+  Qed.
+
   Lemma invalid_walk_bad_done : forall p p' ch st x,
     In x (invalidate_keys p p' ch st) ->
     In x (invalid_done (invalid_walk p p' ch st)).
   Proof.
-    intros p p' ch st x Hbad; unfold invalidate_keys in Hbad.
-    pose proof (invalid_walk_queued p p' ch st x Hbad) as [Hpending|Hdone];
-      [|exact Hdone].
-    rewrite invalid_walk_pending_empty in Hpending; contradiction.
+    intros p p' ch st x Hbad.
+    change (In x (invalid_bad (invalid_walk p p' ch st))) in Hbad.
+    eapply invalid_queued_done.
+    - exact (invalid_walk_queued p p' ch st).
+    - exact (invalid_walk_pending_empty p p' ch st).
+    - exact Hbad.
   Qed.
 
   Definition invalid_snapshot_view (st : state)
