@@ -15623,6 +15623,35 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now apply N.mul_le_mono_l.
   Qed.
 
+  (** A contradiction scan returns a vector with the initialized minor width. *)
+  Lemma karr_contradiction_certificate_envelope : forall P ms,
+    contradiction P = Some ms ->
+    length ms <= length P /\
+    Forall (fun z => Z.size_nat z <=
+      ellB (length (variables P) + length P + 2) (nell (Reached P))) ms.
+  Proof.
+    intros P ms Hcert. unfold contradiction in Hcert.
+    eapply karr_empty_certificate_envelope; [exact Hcert|].
+    unfold equality_basis. exact (karr_seed_basis_envelope (variables P) P).
+  Qed.
+
+  (** A target certificate returns the exact final target-minor width. *)
+  Lemma karr_target_certificate_seed_envelope : forall P c k,
+    normal (c :: nil) -> target_certificate P c = Some k ->
+    length (mults k) <= length P /\
+    Forall (fun z => Z.size_nat z <=
+      ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1)) (mults k) /\
+    Z.size_nat (scale k) <=
+      ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1).
+  Proof.
+    intros P c k Hnormal Hcert.
+    eapply karr_target_certificate_envelope; [exact Hcert|].
+    apply karr_target_envelope_result.
+    exact (karr_target_seed_envelope (variables (c :: P)) P c Hnormal).
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
