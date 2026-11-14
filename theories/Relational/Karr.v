@@ -12794,6 +12794,20 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply in_or_app. now left.
   Qed.
 
+  (** Any coordinate list keeps a literal zero in a seed with two source slots. *)
+  Lemma karr_seed_zero : forall xs P r,
+    2 <= length P ->
+    In r (seed_rows xs (length P) 0 (map normalize_row P)) ->
+    In 0%Z (karr_row_entries r).
+  Proof.
+    intros xs P r Hcount Hin.
+    pose proof (proj1 (Forall_forall _ _)
+      (seed_rows_zero_weight xs (length P) 0
+        (map normalize_row P) Hcount) r Hin) as Hzero.
+    unfold karr_row_entries. apply in_or_app. right. right.
+    apply in_or_app. now left.
+  Qed.
+
   (** Every initial augmented entry is both traced and an input minor. *)
   Lemma bareiss_initial_entry : forall P r z,
     In r (bareiss_seeds P) -> In z (karr_row_entries r) ->
@@ -13112,6 +13126,59 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite length_map.
       pose proof (karr_seed_rows_length xs (length P) 0 (map normalize_row P))
         as Hlength. rewrite length_map in Hlength. lia.
+  Qed.
+
+  (** Every generic basis entry is an independently enumerated seed minor. *)
+  Lemma karr_seed_basis_minor : forall xs P z,
+    In z (flat_map karr_row_entries
+      (karr_bareiss (length xs) 1
+        (seed_rows xs (length P) 0 (map normalize_row P)))) ->
+    In z (karr_signed_minors (length xs + length P + 2)
+      (map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P)))).
+  Proof.
+    intros xs P z Hin.
+    eapply karr_run_state_record.
+    - intro Htwo. rewrite length_map in Htwo.
+      assert (Hcount : 2 <= length P).
+      { pose proof (karr_seed_rows_length xs (length P) 0
+          (map normalize_row P)) as Hlength.
+        rewrite length_map in Hlength. lia. }
+      destruct (seed_rows xs (length P) 0 (map normalize_row P))
+        as [|row rest] eqn:Hseed; [cbn [length] in Htwo; lia|].
+      apply karr_signed_minors_entry with (row := karr_row_entries row).
+      + apply in_map. now left.
+      + pose proof (proj1 (Forall_forall _ _)
+          (seed_entries_width xs (length P) 0 (map normalize_row P))
+          row ltac:(rewrite Hseed; now left)) as Hwidth.
+        rewrite Hwidth. reflexivity.
+      + eapply karr_seed_zero; [exact Hcount|rewrite Hseed; now left].
+    - apply karr_run_state_seed.
+    - now apply karr_bareiss_record_final.
+  Qed.
+
+  (** Generic basis rows inherit the same Hadamard input-minor width. *)
+  Lemma karr_seed_basis_bits : forall xs P,
+    Forall (Forall (fun z => Z.size_nat z <=
+      ellB (length xs + length P + 2) (nell (Reached P))))
+      (map karr_row_entries
+        (karr_bareiss (length xs) 1
+          (seed_rows xs (length P) 0 (map normalize_row P)))).
+  Proof.
+    intros xs P. apply Forall_forall. intros row Hrow.
+    apply Forall_forall. intros z Hz.
+    eapply (karr_signed_minors_bits (length xs + length P + 2)
+      (map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P)))
+      (length xs + length P + 2) (nell (Reached P)) z);
+      [lia| |apply karr_seed_entries_bits|].
+    - rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0
+        (map normalize_row P)) as Hlength.
+      rewrite length_map in Hlength. lia.
+    - apply in_map_iff in Hrow as [source [Heq Hsource]]. subst row.
+      apply karr_seed_basis_minor. apply in_flat_map.
+      exists source. split; [exact Hsource|exact Hz].
   Qed.
 
   (** A complete elimination run fits the public cubic-Hadamard work shape. *)
