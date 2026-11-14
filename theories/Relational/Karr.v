@@ -1407,6 +1407,23 @@ Proof.
       * exact Hselected_perm.
 Qed.
 
+(** Moving one remaining label into the selected prefix preserves the source partition. *)
+Lemma karr_partition_select : forall A (original prefix labels : list A) item,
+  Permutation original (prefix ++ labels) -> In item labels ->
+  exists rest, Permutation original ((prefix ++ [item]) ++ rest).
+Proof.
+  intros A original prefix labels item Hpartition Hin.
+  apply in_split in Hin as [before [after Hlabels]]. subst labels.
+  exists (before ++ after). eapply Permutation_trans; [exact Hpartition|].
+  eapply Permutation_trans.
+  - apply Permutation_app_head.
+    apply Permutation_sym, Permutation_middle.
+  - replace (prefix ++ item :: before ++ after) with
+      ((prefix ++ [item]) ++ (before ++ after))
+      by (rewrite <- app_assoc; reflexivity).
+    apply Permutation_refl.
+Qed.
+
 (** Strictly increasing coordinates are the ordered selections of a source range. *)
 Fixpoint karr_increasing (columns : list nat) : Prop :=
   match columns with
