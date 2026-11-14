@@ -9664,6 +9664,50 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply karr_positive_power_monotone; lia.
   Qed.
 
+  (** The abstract certificate checker fits the one-column matrix volume. *)
+  Lemma karr_havoc_checker_measure : forall P ms c dim bits,
+    length P <= dim -> length ms <= dim ->
+    Forall (fun r => length (lhs r) <= dim /\
+      C.row_key_bits r <= bits /\ C.row_bits r <= bits) P ->
+    Forall (fun m => Z.size_nat m <= bits) ms ->
+    length (lhs c) <= dim -> C.row_key_bits c <= bits -> C.row_bits c <= bits ->
+    Nat.log2 (length P) <= bits ->
+    C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1) <=
+      32 * karr_havoc_volume dim bits.
+  Proof.
+    intros P ms c dim bits Hrows_len Hmult_len Hrows Hmult
+      Hclen Hckeys Hcbits Hlog.
+    pose proof (karr_csize_envelope P ms dim bits bits bits Hrows Hmult) as Hsize.
+    assert (Hrow_bits : Forall (fun r => C.row_bits r <= bits) P).
+    { eapply Forall_impl; [|exact Hrows]. intros r [_ [_ Hr]]. exact Hr. }
+    pose proof (karr_cbits_envelope P ms bits bits Hrow_bits Hmult) as Hbits.
+    pose proof (karr_lsize_envelope c dim bits bits Hclen Hckeys Hcbits) as Hline.
+    pose proof (karr_havoc_rows_volume 0 dim bits ltac:(lia)) as Hsquare.
+    pose proof (karr_havoc_product_volume dim bits) as Hproduct.
+    pose proof (karr_havoc_volume_lower dim bits) as [_ Hwidth].
+    assert (Hfactor : bits + (bits + 1) * (bits + 1) + 1 <=
+      2 * (bits + 1)^2) by (rewrite Nat.pow_2_r; nia).
+    assert (Hsize_bound : C.csize P ms <= 4 * karr_havoc_volume dim bits).
+    { eapply Nat.le_trans; [exact Hsize|].
+      eapply Nat.le_trans with (m :=
+        2 * (dim + 1) * (dim + 1) * (2 * (bits + 1)^2)).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hfactor].
+      - replace (2 * (dim + 1) * (dim + 1) * (2 * (bits + 1)^2))
+          with (4 * ((dim + 1)^2 * (bits + 1)^2))
+          by (rewrite !Nat.pow_2_r; ring).
+        lia. }
+    assert (Hline_bound : C.lsize c <= 2 * karr_havoc_volume dim bits).
+    { eapply Nat.le_trans; [exact Hline|].
+      eapply Nat.le_trans with (m := (dim + 1) * (2 * (bits + 1))).
+      - apply Nat.mul_le_mono_l. lia.
+      - replace ((dim + 1) * (2 * (bits + 1)))
+          with (2 * ((dim + 1) * (bits + 1))) by ring.
+        lia. }
+    assert (Hbits_bound : C.cbits P ms <= 3 * karr_havoc_volume dim bits)
+      by lia.
+    lia.
+  Qed.
+
   (** Raw row headers are paid by the matrix budget in addition to occurrence preparation. *)
   Lemma karr_havoc_preparation_volume : forall total count width dim bits,
     count <= dim -> width <= bits + 1 ->
