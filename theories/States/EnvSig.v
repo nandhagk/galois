@@ -141,24 +141,6 @@ Module Type ENV_PLAN (X : KEY_T) (M : MAP_T X) (L : LANG_T) (V : VALUE_DOMAIN_T 
         | _, _ => None
         end) a b)
     end.
-  Parameter k_env_widen : N.
-  (** Widening pays for inclusion before its conditional merge. *)
-  Parameter T_widen_split : forall p a b,
-    (T_widen p a b <= T_leb b a + k_env_widen *
-      (1 + if leb b a then 0 else
-        match a, b with
-        | Reached ma, Reached mb => M.T_merge
-            (fun x y => match x, y with
-             | Some a, Some b =>
-               let v := V.widen p a b in if V.is_bot v then None else Some v
-             | _, _ => None
-             end)
-            (fun x y => match x, y with
-             | Some a, Some b => V.T_widen p a b + V.T_is_bot (V.widen p a b) + 1
-             | _, _ => 1
-             end) ma mb
-        | _, _ => 0
-        end))%N.
   (** Narrowing retains one-sided bindings and narrows common bindings. *)
   Parameter F_narrow : forall a b, narrow a b =
     if is_bot b then b else
