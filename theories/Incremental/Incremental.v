@@ -10849,6 +10849,53 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     unfold T_record_rows; lia.
   Qed.
 
+  Lemma discovery_keys_bits_charge : forall p roots fuel st xs rs fz,
+    S.wf p -> discovery p roots fuel st = Some (xs, rs, fz) ->
+    finite_sum (fun x => S.key_bits x + 1) xs <=
+      finite_sum (fun x => S.key_bits x + 1) roots +
+      finite_sum (fun r => length (row_keys p r)) (region p roots st) *
+        (width p st + 1).
+  Proof.
+    intros p roots fuel st xs rs fz Hwf Hrun.
+    destruct (discovery_result_missing p roots fuel st xs rs fz Hrun)
+      as [Hnodup _].
+    assert (Hincl : incl xs
+      (roots ++ flat_map (row_keys p) (region p roots st))).
+    { intros x Hx; apply in_app_iff.
+      destruct (discovery_result_source p roots fuel st xs rs fz x Hrun Hx)
+        as [Hroot|[r [Hr Hkey]]]; [now left|right].
+      apply in_flat_map; exists r; split.
+      - rewrite <- (discovery_result_view_rows p roots fuel st xs rs fz Hwf Hrun).
+        exact Hr.
+      - exact Hkey. }
+    pose proof (finite_sum_incl_nodup _ (fun x => S.key_bits x + 1)
+      _ _ Hnodup Hincl) as Hbits.
+    rewrite finite_sum_app, finite_sum_flat_map_local in Hbits.
+    pose proof (discovery_region_bits_le p roots st Hwf) as Hregion.
+    rewrite finite_sum_flat_map_local in Hregion.
+    lia.
+  Qed.
+
+  Lemma frozen_key_bits_charge : forall p roots st, S.wf p ->
+    finite_sum (fun xv => S.key_bits (fst xv) + 1) (frozen p roots st) <=
+      finite_sum (fun r => length (row_keys p r)) (region p roots st) *
+        (width p st + 1).
+  Proof.
+    intros p roots st Hwf.
+    assert (Hincl : incl (map fst (frozen p roots st))
+      (flat_map (row_keys p) (region p roots st))).
+    { intros x Hx; apply in_map_iff in Hx as [[y v] [Heq Hin]].
+      cbn [fst] in Heq; subst y.
+      destruct (frozen_region p roots st x v Hin) as [r [Hr Hkey]].
+      apply in_flat_map; exists r; split; assumption. }
+    pose proof (finite_sum_incl_nodup _ (fun x => S.key_bits x + 1) _ _
+      (frozen_nodup p roots st) Hincl) as Hbits.
+    pose proof (discovery_region_bits_le p roots st Hwf) as Hregion.
+    unfold finite_sum in Hbits, Hregion |- *.
+    rewrite map_map in Hbits.
+    lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
