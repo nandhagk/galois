@@ -14213,6 +14213,46 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         [exact Hr|lia|lia|lia].
   Qed.
 
+  (** The prepared head and sources share the public quadratic step allowance. *)
+  Lemma T_poly_assign_full_step_bounded : forall x f P,
+    NoDup (map fst (coef f)) ->
+    (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) <=
+      RangeCore.poly_step_factor * N.of_nat (length P + 2)^2 *
+        RangeCore.poly_clock_span
+          (length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1)
+          (length P + 1)
+          (poly_raw_keys P + X.bits x + F.form_bits f + 1)
+          (poly_raw_bits P + F.form_bits f + 1))%N.
+  Proof.
+    intros x f P Hform.
+    pose proof (RangeCore.T_poly_step_bounded None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P))
+      (length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1)
+      (length P + 1)
+      (poly_raw_keys P + X.bits x + F.form_bits f + 1)
+      (poly_raw_bits P + F.form_bits f + 1)
+      (poly_assign_initial_envelope x f P Hform)) as Hstep.
+    rewrite poly_initial_length in Hstep. cbn [length] in Hstep.
+    rewrite length_map in Hstep.
+    replace (S (length P) + 1) with (length P + 2) in Hstep by lia.
+    change (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) <=
+      RangeCore.poly_step_factor * N.of_nat (length P + 2)^2 *
+        RangeCore.poly_clock_span
+          (length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1)
+          (length P + 1)
+          (poly_raw_keys P + X.bits x + F.form_bits f + 1)
+          (poly_raw_bits P + F.form_bits f + 1))%N in Hstep.
+    exact Hstep.
+  Qed.
+
   (** Only the old assigned coordinate is eliminated from the source-only tail. *)
   Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
     poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
