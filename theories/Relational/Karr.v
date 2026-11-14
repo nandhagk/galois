@@ -652,6 +652,29 @@ Proof.
   now rewrite IH.
 Qed.
 
+(** Every returned row entry already appears in that call's trace. *)
+Lemma karr_bareiss_record_output : forall cols previous rows result history z,
+  karr_bareiss_record cols previous rows = (result, history) ->
+  In z (flat_map karr_row_entries result) -> In z history.
+Proof.
+  intros cols previous rows result history z Hrun Hin.
+  pose proof (karr_bareiss_record_value cols previous rows) as Hvalue.
+  rewrite Hrun in Hvalue. cbn [fst] in Hvalue.
+  rewrite Hvalue in Hin.
+  pose proof (karr_bareiss_record_final cols previous rows z Hin) as Htrace.
+  now rewrite Hrun in Htrace.
+Qed.
+
+(** A nonempty result requires a nonempty input list. *)
+Lemma karr_bareiss_record_nonempty_input : forall cols previous rows result history,
+  karr_bareiss_record cols previous rows = (result, history) ->
+  result <> [] -> rows <> [].
+Proof.
+  intros cols previous rows result history Hrun Hnonempty Hempty.
+  subst rows. rewrite karr_bareiss_record_empty in Hrun.
+  inversion Hrun; subst. now apply Hnonempty.
+Qed.
+
 (** Removing one column gives the smaller matrix used by Laplace expansion. *)
 Fixpoint karr_delete (index : nat) (row : list Z) : list Z :=
   match index, row with
