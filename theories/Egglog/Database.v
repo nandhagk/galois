@@ -21298,6 +21298,32 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     assert (Hwork : forall e, In e rest ->
       exists x, uses (repair_entry (f, k) db) x e).
     { exact (inv_on_repair_work db f k rest Hinv). }
+    assert (Hrows :
+      (forall g args output,
+        In ((g, args), output) (rows (repair_entry (f, k) db)) <->
+          row (view (repair_entry (f, k) db)) g args output) /\
+      NoDup (map fst (rows (repair_entry (f, k) db)))).
+    { exact (inv_on_repair_rows db ((f, k) :: rest) f k Hinv). }
+    assert (Hnext : forall g args output i,
+      row (view (repair_entry (f, k) db)) g args output ->
+      row_ids args output i ->
+      (i < next_id (repair_entry (f, k) db))%positive).
+    { exact (inv_on_repair_next_bound db ((f, k) :: rest) f k Hinv). }
+    assert (Hkind : forall g args output,
+      row (view (repair_entry (f, k) db)) g args output ->
+      kind_ok (repair_entry (f, k) db) g args output).
+    { exact (inv_on_repair_kind db ((f, k) :: rest) f k Hinv). }
+    assert (Hqueue : NoDup (queue (repair_entry (f, k) db))).
+    { exact (inv_on_repair_queue_distinct db ((f, k) :: rest) f k Hinv). }
+    assert (Hpending : db_npending (repair_entry (f, k) db) =
+      N.of_nat (pending (repair_entry (f, k) db))).
+    { exact (inv_on_repair_pending_count db ((f, k) :: rest) f k Hinv). }
+    assert (Hallocated : forall x,
+      In x (queue (repair_entry (f, k) db)) ->
+      allocated (repair_entry (f, k) db) x).
+    { exact (inv_on_repair_queue_allocated db ((f, k) :: rest) f k Hinv). }
+    unfold inv_on. destruct Hrows as [Hrows Hnodup].
+    repeat split; try assumption.
   Admitted. (* STUB: present-row mutation remains *)
 
   (** Continuing steps retain the queue and active-batch invariant. *)
