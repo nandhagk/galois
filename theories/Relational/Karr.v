@@ -2508,6 +2508,28 @@ Proof.
   destruct zs; cbn [length tl] in *; lia.
 Qed.
 
+(** The reduced tail is the quotient of the crossed augmented row without its head. *)
+Lemma karr_reduced_tail_entries : forall cols d a b p r,
+  length (kcoeff p) = S cols ->
+  length (kcoeff r) = S cols ->
+  length (kweight r) = length (kweight p) ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  karr_row_entries (karr_tail (karr_reduce d a b p r)) =
+    karr_delete 0
+      (map (fun z => (z / d)%Z)
+        (karr_cross a b (karr_row_entries r) (karr_row_entries p))).
+Proof.
+  intros cols d a b p r Hp Hr Hweight Hexact.
+  rewrite karr_row_entries_tail.
+  - rewrite karr_row_entries_reduce_exact; [reflexivity|lia|exact Hweight|exact Hexact].
+  - pose proof (karr_reduce_width d a b p r ltac:(lia)) as Hwidth.
+    rewrite Hr in Hwidth. destruct (kcoeff (karr_reduce d a b p r));
+      cbn [length] in Hwidth; discriminate.
+Qed.
+
 (** Restoring a zero coordinate increases the width by one. *)
 Lemma karr_restore_width : forall r,
   length (kcoeff (karr_restore r)) = S (length (kcoeff r)).
