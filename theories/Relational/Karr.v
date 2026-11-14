@@ -1837,6 +1837,19 @@ Proof.
   apply map_ext. intro index. now rewrite karr_nth_delete.
 Qed.
 
+(** Selecting after an arbitrary deletion skips that original column. *)
+Lemma karr_submatrix_delete_at : forall removed selected rows,
+  karr_submatrix selected (map (karr_delete removed) rows) =
+    karr_submatrix
+      (map (fun index => if index <? removed then index else S index) selected)
+      rows.
+Proof.
+  intros removed selected rows. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext. intro row. rewrite !map_map.
+  apply map_ext. intro index. rewrite karr_nth_delete.
+  now destruct (index <? removed).
+Qed.
+
 (** One undivided elimination stage scales every selected minor. *)
 Lemma karr_stage_minor : forall (c : nat) (p : list Z) (xs : list (list Z)) (ys : list nat),
   karr_nth c p <> 0%Z ->
@@ -3374,6 +3387,42 @@ Proof.
   rewrite <- karr_submatrix_delete_first in Hstage.
   assert (Hraw : map (karr_delete 0)
       (map (fun x => karr_cross (karr_nth 0 p) (karr_nth 0 x) x p) xs) =
+    map (map (fun z => (d * z)%Z)) quotients).
+  { clear Hrows Hstage Hwidth Hlength Hpositive Hp.
+    induction Hquotients as [|q x quotients xs Hhead Htail IH];
+      cbn [map]; [reflexivity|].
+    f_equal; [symmetry; exact Hhead|exact IH]. }
+  rewrite Hraw in Hstage.
+  replace (length ys) with (length quotients) in Hstage by lia.
+  rewrite karr_submatrix_scale_minor in Hstage.
+  rewrite Hrows in Hstage. rewrite Hlength. exact Hstage.
+Qed.
+
+(** Exact row quotients preserve minors when the pivot is not the first column. *)
+Lemma karr_stage_quotient_minor_at : forall d c p xs ys quotients,
+  karr_nth c p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  Forall2 (fun q x =>
+    map (fun z => (d * z)%Z) q =
+      karr_delete c (karr_cross (karr_nth c p) (karr_nth c x) x p))
+    quotients xs ->
+  (d ^ Z.of_nat (length xs) *
+    karr_determinant (length ys) (karr_submatrix ys quotients) =
+   karr_nth c p ^ Z.of_nat (length xs - 1) *
+    karr_determinant (S (length ys))
+      (karr_submatrix (c :: map (fun index =>
+        if (index <? c)%nat then index else S index) ys) (p :: xs)))%Z.
+Proof.
+  intros d c p xs ys quotients Hp Hwidth Hlength Hpositive Hquotients.
+  pose proof (Forall2_length Hquotients) as Hrows.
+  pose proof (karr_stage_minor c p xs (map (fun index =>
+    if index <? c then index else S index) ys) Hp Hwidth
+    ltac:(rewrite length_map; exact Hlength) Hpositive) as Hstage.
+  rewrite length_map in Hstage.
+  rewrite <- karr_submatrix_delete_at in Hstage.
+  assert (Hraw : map (karr_delete c)
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs) =
     map (map (fun z => (d * z)%Z)) quotients).
   { clear Hrows Hstage Hwidth Hlength Hpositive Hp.
     induction Hquotients as [|q x quotients xs Hhead Htail IH];
