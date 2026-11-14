@@ -3204,6 +3204,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           PTrieCode.get code (row_history (db_row_store db)) = Some (label, id) /\
           database_history_connected db id root) codes.
 
+  Definition database_owned_ok (db : t) : Prop :=
+    database_row_store_ok db /\ database_history_alignment db /\
+    database_active_history_coherent db /\ database_history_root_owner db /\
+    database_history_key_shape db /\ database_history_codes_valid db /\
+    database_history_key_ids_bounded db /\
+    database_row_weight_conserved db /\ database_row_weights_positive db.
+
   Lemma database_row_weight_conserved_entry : forall db,
     database_row_weight_conserved db -> forall f k key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
@@ -3877,6 +3884,21 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros ds sl f k key r Hentry.
     cbn [init db_row_store row_history] in Hentry.
     rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
+  Lemma database_owned_ok_init : forall ds sl,
+    database_owned_ok (init ds sl).
+  Proof.
+    intros ds sl. unfold database_owned_ok.
+    split; [apply database_row_store_ok_init |].
+    split; [apply database_history_alignment_init |].
+    split; [apply database_active_history_coherent_init |].
+    split; [apply database_history_root_owner_init |].
+    split; [apply database_history_key_shape_init |].
+    split; [apply database_history_codes_valid_init |].
+    split; [apply database_history_key_ids_bounded_init |].
+    split; [apply database_row_weight_conserved_init |].
+    apply database_row_weights_positive_init.
   Qed.
 
   Lemma database_history_alignment_advance : forall db,
@@ -17866,6 +17888,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       [exact Hpositive |].
     apply database_row_weights_positive_move.
     apply database_row_weights_positive_repair_current. exact Hpositive.
+  Qed.
+
+  Lemma database_owned_ok_db_repair_entry : forall db f k,
+    wf db -> database_owned_ok db ->
+    database_owned_ok (db_repair_entry f k db).
+  Proof.
+    intros db f k Hwf Howned.
+    unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    split; [eapply database_row_store_ok_db_repair_entry; eassumption |].
+    split; [eapply database_history_alignment_db_repair_entry; eassumption |].
+    split; [eapply database_active_history_coherent_db_repair_entry; eassumption |].
+    split; [eapply database_history_root_owner_db_repair_entry; eassumption |].
+    split; [eapply database_history_key_shape_db_repair_entry; eassumption |].
+    split; [apply database_history_codes_valid_db_repair_entry; exact Hvalid |].
+    split; [eapply database_history_key_ids_bounded_db_repair_entry; eassumption |].
+    split; [eapply database_row_weight_conserved_db_repair_entry; eassumption |].
+    apply database_row_weights_positive_db_repair_entry. exact Hpositive.
   Qed.
 
   Lemma union_uses_raw : forall db i j x e,
