@@ -21268,6 +21268,75 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       as [[new_key new_id] |]; reflexivity.
   Qed.
 
+  Lemma recorded_rows_put_active : forall db f k o,
+    recorded_rows db -> recorded_rows (put f k o db).
+  Proof.
+    intros db f k o Hrecorded. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : recorded_rows next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try exact Hrecorded.
+      unfold union.
+      destruct (UnionFindCode.union a b (db_forest db))
+        as [[roots |] forest]; [destruct roots |]; exact Hrecorded. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      now apply row_replace_recorded_rows.
+    - now apply row_replace_recorded_rows.
+  Qed.
+
+  Lemma recorded_rows_repair_current_active : forall db f k,
+    recorded_rows db -> recorded_rows (repair_current f k db).
+  Proof.
+    intros db f k Hrecorded.
+    unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hrecorded].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hrecorded |].
+    change (recorded_rows (put f (normal_key db k)
+      (option_map (normal_cell db) output) (row_delete f k db))).
+    apply recorded_rows_put_active.
+    now apply row_delete_recorded_rows.
+  Qed.
+
+  Lemma inv_on_repair_recorded_rows : forall db work f k,
+    inv_on db work -> recorded_rows (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hrecorded : recorded_rows db).
+    { unfold inv_on, forest_ok, database_history in Hinv. tauto. }
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hrecorded].
+    destruct (row_get f current db) as [output |]; [| exact Hrecorded].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hrecorded |].
+    pose proof (recorded_rows_repair_current_active db f current Hrecorded)
+      as Hrepair.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |];
+      destruct (PTrieCode.get (db_row_code f (normal_key db current))
+        (row_history (db_row_store (repair_current f current db))))
+        as [[new_key new_id] |]; exact Hrepair.
+  Qed.
+
+  Lemma inv_on_repair_history : forall db work f k,
+    inv_on db work -> database_history (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv. split.
+    - exact (inv_on_repair_metadata db work f k Hinv).
+    - exact (inv_on_repair_recorded_rows db work f k Hinv).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
