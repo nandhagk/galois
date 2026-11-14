@@ -22457,6 +22457,110 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         now left.
   Qed.
 
+  Lemma move_row_identity_lookup_inverse : forall db f old ck g args result,
+    database_row_store_ok db -> length old = length ck ->
+    db_locate g args (move_row_identity f old ck db) = Some result ->
+    db_locate g args db = Some result \/ result = ck.
+  Proof.
+    intros db f old ck g args result Hstore Hlength Hlookup.
+    destruct (PTrieCode.get (db_row_code f old)
+      (row_history (db_row_store db))) as [[old_key old_id] |] eqn:Hsource;
+      [| left; unfold move_row_identity in Hlookup;
+         now rewrite Hsource in Hlookup].
+    destruct (PTrieCode.get (db_row_code f ck)
+      (row_history (db_row_store db))) as [[ck_key ck_id] |] eqn:Hdest;
+      [| left; unfold move_row_identity in Hlookup;
+         now rewrite Hsource, Hdest in Hlookup].
+    assert (Hids : ids (move_row_identity f old ck db) = ids db).
+    { exact (proj2 (move_row_identity_layout db f old ck)). }
+    unfold db_locate in Hlookup |- *.
+    rewrite move_row_identity_history in Hlookup.
+    unfold ids in Hids. rewrite Hids in Hlookup.
+    destruct (PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store db))) as [[key r] |] eqn:Hentry;
+      [| discriminate Hlookup].
+    set (updated := db_row_store (move_row_identity f old ck db)) in Hlookup.
+    set (store := db_row_store db).
+    set (depth := length old *
+      (N.to_nat (N.log2 (runtime_allocated (db_runtime db))) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some parent => parent | None => source_root end) = source_root).
+    { subst source_root depth store.
+      exact (database_history_root_fixed db f old old_key old_id Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some parent => parent | None => dest_root end) = dest_root).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id Hstore Hdest). }
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - assert (Hlinks : row_links updated = row_links store).
+      { unfold updated, move_row_identity.
+        rewrite Hsource, Hdest. fold store depth source_root dest_root.
+        now rewrite Hsame. }
+      assert (Hkeys : row_keys updated =
+        PTrieCode.set source_root ck (row_keys store)).
+      { unfold updated, move_row_identity.
+        rewrite Hsource, Hdest. fold store depth source_root dest_root.
+        now rewrite Hsame. }
+      destruct (row_root_relabel_lookup_inverse
+        (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+        store updated source_root ck result Hlinks Hkeys Hlookup)
+        as [Hold | Hck]; [left | now right].
+      exact Hold.
+    - assert (Hneq : source_root <> dest_root).
+      { apply Pos.eqb_neq. exact Hsame. }
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Hloses.
+      + assert (Hlinks : row_links updated =
+          PTrieCode.set source_root dest_root (row_links store)).
+        { unfold updated, move_row_identity.
+          rewrite Hsource, Hdest. fold store depth source_root dest_root.
+          rewrite Hsame, Hloses. reflexivity. }
+        assert (Hkeys : row_keys updated =
+          PTrieCode.set dest_root ck (row_keys store)).
+        { unfold updated, move_row_identity.
+          rewrite Hsource, Hdest. fold store depth source_root dest_root.
+          rewrite Hsame, Hloses. reflexivity. }
+        assert (Hwinner_fixed :
+          (match PTrieCode.get dest_root (row_links updated) with
+           | Some parent => parent | None => dest_root end) = dest_root).
+        { rewrite Hlinks, PTrie.get_set_other by congruence.
+          exact Hdest_fixed. }
+        destruct (row_root_link_lookup_inverse
+          (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store updated
+          source_root dest_root ck result Hlinks Hkeys Hneq
+          Hsource_fixed Hwinner_fixed Hlookup) as [Hold | Hck];
+          [left | now right].
+        exact Hold.
+      + assert (Hlinks : row_links updated =
+          PTrieCode.set dest_root source_root (row_links store)).
+        { unfold updated, move_row_identity.
+          rewrite Hsource, Hdest. fold store depth source_root dest_root.
+          rewrite Hsame, Hloses. reflexivity. }
+        assert (Hkeys : row_keys updated =
+          PTrieCode.set source_root ck (row_keys store)).
+        { unfold updated, move_row_identity.
+          rewrite Hsource, Hdest. fold store depth source_root dest_root.
+          rewrite Hsame, Hloses. reflexivity. }
+        assert (Hwinner_fixed :
+          (match PTrieCode.get source_root (row_links updated) with
+           | Some parent => parent | None => source_root end) = source_root).
+        { rewrite Hlinks, PTrie.get_set_other by congruence.
+          exact Hsource_fixed. }
+        destruct (row_root_link_lookup_inverse
+          (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store updated
+          dest_root source_root ck result Hlinks Hkeys
+          ltac:(congruence) Hdest_fixed Hwinner_fixed Hlookup)
+          as [Hold | Hck]; [left | now right].
+        exact Hold.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
