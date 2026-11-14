@@ -15356,6 +15356,57 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (Nat.log2_le_mono dim dim' Hdim). lia.
   Qed.
 
+  (** An initialized conclusion trace has the public minor-width clock. *)
+  Lemma T_karr_target_seed_bounded : forall xs P c,
+    normal (c :: nil) ->
+    (T_karr_target (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z) <=
+      16384 * N.of_nat (length P + 1) *
+        N.of_nat (length xs + length P + 1) *
+        N.of_nat ((ellB (length xs + length P + 3)
+          (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N.
+  Proof.
+    intros xs P c Hnormal.
+    set (bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1)).
+    pose proof (karr_target_seed_envelope xs P c Hnormal) as Htrace.
+    assert (Hbasis : Forall (karr_row_envelope (length xs) (length P) bits)
+      (equality_basis xs P)).
+    { unfold equality_basis.
+      eapply Forall_impl; [|apply karr_seed_basis_envelope].
+      intros row Hr. eapply (karr_row_envelope_resize (length xs) (length P)
+        (ellB (length xs + length P + 2) (nell (Reached P)))
+        (length xs) (length P) bits);
+        [lia|lia| |exact Hr].
+      unfold bits. apply ellB_mono; lia. }
+    assert (Hprevious : Z.size_nat 1 <= bits).
+    { change (Z.size_nat 1) with 1. unfold bits, ellB. nia. }
+    pose proof (T_karr_target_trace_bounded (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z)
+      (length xs) (length P) bits Hprevious Hbasis Htrace) as Hclock.
+    assert (Hlength : length (equality_basis xs P) <= length P).
+    { unfold equality_basis. rewrite karr_bareiss_length.
+      pose proof (karr_seed_rows_length xs (length P) 0
+        (map normalize_row P)) as Hseed.
+      rewrite length_map in Hseed. exact Hseed. }
+    set (work := (16384 * N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N).
+    replace (16384 * N.of_nat (length (equality_basis xs P) + 1) *
+      N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N with
+      (N.of_nat (length (equality_basis xs P) + 1) * work)%N in Hclock
+      by (unfold work; ring).
+    replace (16384 * N.of_nat (length P + 1) *
+      N.of_nat (length xs + length P + 1) *
+      N.of_nat ((ellB (length xs + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N with
+      (N.of_nat (length P + 1) * work)%N by (unfold work, bits; ring).
+    eapply N.le_trans; [exact Hclock|].
+    assert (HlengthN : (N.of_nat (length (equality_basis xs P) + 1) <=
+      N.of_nat (length P + 1))%N) by lia.
+    nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
