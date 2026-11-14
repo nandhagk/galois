@@ -464,6 +464,13 @@ Proof.
   vm_compute; reflexivity.
 Qed.
 
+(** Editing the source leaves the unrelated island's stored value intact. *)
+Example graph_edit_retains_unrelated_value :
+  IncGraph.value graph_chain_edited 20 = Some true.
+Proof.
+  vm_compute; reflexivity.
+Qed.
+
 (** Recomputing the edited chain replaces all three former true values by stored false. *)
 Example graph_redemand_changed_chain :
   graph_observe [0; 1; 2; 20]
@@ -559,16 +566,17 @@ Definition graph_snapshot_view (st : IncGraph.state) (owner : nat)
   | None => None
   end.
 
-(** Shared writes and readers retain each occurrence at the owning snapshot's identifier. *)
-Example graph_metadata_recording :
+(** A row reached through two missing keys is recorded once per key. *)
+Example graph_metadata_duplicate_row_witness :
   let st := snd graph_side_loaded in
   (graph_bucket (inc_influence st) 41,
    graph_bucket (inc_cowrites st) 40,
    graph_bucket (inc_cowrites st) 41,
    graph_snapshot_view st 40,
    graph_snapshot_view st 41) =
-    (Some [51%positive], Some [41%positive], Some [42%positive; 41%positive],
-     Some (40, [40; 41], true), Some (41, [41], true)).
+    (Some [51%positive], Some [41%positive; 41%positive],
+     Some [41%positive; 42%positive; 41%positive],
+     Some (40, [40; 41; 40; 41], true), Some (41, [41], true)).
 Proof.
   vm_compute; reflexivity.
 Qed.
@@ -581,13 +589,13 @@ Example graph_metadata_edit_retirement :
    graph_snapshot_view graph_side_edited 40,
    graph_snapshot_view graph_side_edited 41,
    graph_snapshot_view graph_side_edited 20) =
-    (None, None, None, Some (40, [40; 41], false), Some (41, [41], false),
+    (None, None, None, Some (40, [40; 41; 40; 41], false), Some (41, [41], false),
      Some (20, [20], true)).
 Proof.
   vm_compute; reflexivity.
 Qed.
 
-(** Recomputing a retired group adds one fresh occurrence instead of replaying stale ones. *)
+(** Recomputing a retired group records each reach from a missing key. *)
 Example graph_metadata_redemand :
   let st := snd (IncGraph.demand graph_side_changed graph_flat [50] 64%N graph_side_edited) in
   (graph_bucket (inc_influence st) 41,
@@ -595,8 +603,9 @@ Example graph_metadata_redemand :
    graph_bucket (inc_cowrites st) 41,
    graph_snapshot_view st 40,
    graph_snapshot_view st 41) =
-    (Some [51%positive], Some [41%positive], Some [42%positive; 41%positive],
-     Some (40, [40; 41], true), Some (41, [41], true)).
+    (Some [51%positive], Some [41%positive; 41%positive],
+     Some [41%positive; 42%positive; 41%positive],
+     Some (40, [40; 41; 40; 41], true), Some (41, [41], true)).
 Proof.
   vm_compute; reflexivity.
 Qed.
@@ -634,13 +643,13 @@ Definition graph_malformed_value : IncGraph.state :=
      inc_cowrites := PTrieCode.empty;
      inc_snapshots := PTrieCode.empty |}.
 
-(** A payload stored at the wrong code is absent and is pruned before the new binding is added. *)
-Example graph_metadata_prunes_malformed_values :
+(** A malformed payload stays hidden while a different new key is stored. *)
+Example graph_metadata_ignores_malformed_values :
   let st := snd (IncGraph.demand graph_original graph_flat [99] 4%N graph_malformed_value) in
   (IncGraph.value graph_malformed_value 0,
    IncGraph.value graph_malformed_value 99,
    PTrieCode.get (IncGraphSystem.key_code 0) (inc_values st),
-   IncGraph.value st 99) = (None, None, None, Some false).
+   IncGraph.value st 99) = (None, None, Some (99, true), Some false).
 Proof.
   vm_compute; reflexivity.
 Qed.
