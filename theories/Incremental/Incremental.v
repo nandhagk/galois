@@ -10571,6 +10571,32 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     lia.
   Qed.
 
+  Lemma record_row_count : forall p r,
+    length (row_keys p r) =
+      length (S.deps p r) + length (S.sides p r) + 1.
+  Proof.
+    intros p r; unfold row_keys, row_writes.
+    rewrite length_app; cbn [length]; lia.
+  Qed.
+
+  Lemma record_row_owner_width : forall p st r, S.wf p -> In r (S.rows p) ->
+    S.key_bits (S.target p r) <= width p st.
+  Proof.
+    intros p st r Hwf Hr.
+    unfold width.
+    pose proof (S.key_bits_le p r (S.target p r) Hwf Hr) as Hbits.
+    specialize (Hbits (or_introl eq_refl)).
+    unfold row_keys, row_writes in Hbits.
+    lia.
+  Qed.
+
+  Lemma record_row_work_width : forall p st,
+    (S.row_work p 0 + 1 <= N.of_nat (width p st + 1))%N.
+  Proof.
+    intros p st; unfold width.
+    rewrite !Nat2N.inj_add, N2Nat.id; lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
