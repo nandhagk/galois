@@ -13114,6 +13114,56 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         as Hlength. rewrite length_map in Hlength. lia.
   Qed.
 
+  (** A complete elimination run fits the public cubic-Hadamard work shape. *)
+  Lemma karr_bareiss_budget_public : forall count dim bits,
+    count <= dim ->
+    (N.of_nat count * karr_bareiss_stage_budget dim (ellB dim bits) <=
+      65536 * N.of_nat ((dim + 1)^3 *
+        (ellB (dim + 1) bits + 1)^2))%N.
+  Proof.
+    intros count dim bits Hcount.
+    assert (Hdim : count * (dim + 1) * (dim + dim + 1) <=
+      2 * (dim + 1)^3).
+    { assert (Hmiddle : dim + dim + 1 <= 2 * (dim + 1)) by lia.
+      assert (Hc : count <= dim + 1) by lia.
+      eapply Nat.le_trans with (m :=
+        (dim + 1) * (dim + 1) * (2 * (dim + 1))).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hmiddle].
+      - replace ((dim + 1)^3) with
+          ((dim + 1) * (dim + 1) * (dim + 1))
+          by (cbn [Nat.pow]; ring). lia. }
+    assert (Hbits : (ellB dim bits + 1)^2 <=
+      (ellB (dim + 1) bits + 1)^2).
+    { apply Nat.pow_le_mono_l.
+      unfold ellB. apply Nat.add_le_mono_r.
+      apply Nat.mul_le_mono; [lia|].
+      pose proof (Nat.log2_le_mono dim (dim + 1) ltac:(lia)). lia. }
+    assert (Hnat : count * (dim + 1) * (dim + dim + 1) *
+        (ellB dim bits + 1)^2 <=
+      2 * ((dim + 1)^3 * (ellB (dim + 1) bits + 1)^2)).
+    { replace (2 * ((dim + 1)^3 * (ellB (dim + 1) bits + 1)^2))
+        with ((2 * (dim + 1)^3) * (ellB (dim + 1) bits + 1)^2)
+        by ring.
+      apply Nat.mul_le_mono; [exact Hdim|exact Hbits]. }
+    assert (HN : (N.of_nat (count * (dim + 1) * (dim + dim + 1) *
+      (ellB dim bits + 1)^2) <= N.of_nat
+      (2 * ((dim + 1)^3 * (ellB (dim + 1) bits + 1)^2)))%N) by lia.
+    rewrite !Nat2N.inj_mul in HN.
+    unfold karr_bareiss_stage_budget.
+    replace (N.of_nat count * (32768 * N.of_nat (dim + 1) *
+      N.of_nat (dim + dim + 1) * N.of_nat ((ellB dim bits + 1)^2)))%N with
+      (32768 * (N.of_nat count * N.of_nat (dim + 1) *
+        N.of_nat (dim + dim + 1) * N.of_nat ((ellB dim bits + 1)^2)))%N
+      by ring.
+    replace (65536 * N.of_nat ((dim + 1)^3 *
+      (ellB (dim + 1) bits + 1)^2))%N with
+      (32768 * (2 * N.of_nat ((dim + 1)^3 *
+        (ellB (dim + 1) bits + 1)^2)))%N by ring.
+    rewrite Nat2N.inj_mul.
+    change (N.of_nat 2) with 2%N in HN.
+    now apply N.mul_le_mono_l.
+  Qed.
+
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
   Lemma input_minors_bits : forall P z,
     In z (input_minors P) ->
