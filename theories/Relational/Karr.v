@@ -15563,6 +15563,66 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
+  (** The initialized conclusion reduction fits the public elimination work. *)
+  Lemma T_karr_target_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_karr_target (equality_basis (variables (c :: P)) P) 1
+      (KRow (dense (variables (c :: P)) c) (rhs c)
+        (repeat 0%Z (length P)) 1%Z) <=
+      16384 * 64 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    set (xs := variables (c :: P)).
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (b := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1).
+    set (v := ellB d w + 1).
+    pose proof (T_karr_target_seed_bounded xs P c Hc) as Hclock.
+    pose proof (karr_target_dim_public P c) as Hdim.
+    pose proof (karr_target_width_public P c HP) as Hwidth.
+    assert (Hcount : length P + 1 <= d /\ length xs + length P + 1 <= d).
+    { unfold d, n, xs in *. cbn [rows_of length] in *. lia. }
+    destruct Hcount as [Hcount Hcolumns].
+    assert (Hpositive : 1 <= d) by lia.
+    assert (Hsquare : b^2 <= 64 * v^2).
+    { assert (Hbv : b <= 8 * v) by (unfold b, v, xs, d, w in *; lia).
+      replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hsmall : (length P + 1) *
+      (length xs + length P + 1) * b^2 <=
+      64 * (d^3 * v^2)).
+    { assert (Hcounts : (length P + 1) *
+        (length xs + length P + 1) <= d * d).
+      { apply Nat.mul_le_mono; lia. }
+      assert (Hvolume : (length P + 1) *
+        (length xs + length P + 1) * b^2 <=
+        (d * d) * (64 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      replace (64 * (d^3 * v^2)) with (d^3 * (64 * v^2)) by ring.
+      eapply Nat.le_trans; [exact Hvolume|].
+      apply Nat.mul_le_mono; [|lia].
+      cbn [Nat.pow]. nia. }
+    assert (HN : (N.of_nat ((length P + 1) *
+      (length xs + length P + 1) * b^2) <=
+      N.of_nat (64 * (d^3 * v^2)))%N) by lia.
+    unfold elimination_work.
+    fold d w v.
+    eapply N.le_trans; [exact Hclock|].
+    replace (16384 * N.of_nat (length P + 1) *
+      N.of_nat (length xs + length P + 1) *
+      N.of_nat ((ellB (length xs + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N with
+      (16384 * N.of_nat ((length P + 1) *
+        (length xs + length P + 1) * b^2))%N
+      by (unfold b; rewrite !Nat2N.inj_mul; ring).
+    replace (16384 * 64 * N.of_nat (d^3 * v^2))%N with
+      (16384 * N.of_nat (64 * (d^3 * v^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 64) with 64%N; ring).
+    now apply N.mul_le_mono_l.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
