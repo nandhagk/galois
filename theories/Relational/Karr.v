@@ -3518,6 +3518,28 @@ Proof.
   cbn [karr_zero_prefix karr_restore kcoeff length]. rewrite IH. lia.
 Qed.
 
+(** A nonzero inner head becomes the next full-width pivot coordinate. *)
+Lemma karr_zero_prefix_first : forall count r,
+  karr_head r <> 0%Z ->
+  karr_first (kcoeff (karr_zero_prefix count r)) =
+    Some (count, karr_head r).
+Proof.
+  induction count as [|count IH]; intros r Hhead.
+  - now apply karr_first_head.
+  - cbn [karr_zero_prefix].
+    rewrite (karr_first_restore _ _ _ (IH r Hhead)). reflexivity.
+Qed.
+
+(** Prefixing zeros adds no augmented entries outside the coefficient vector. *)
+Lemma karr_zero_prefix_entries_width : forall count r,
+  length (karr_row_entries (karr_zero_prefix count r)) =
+    count + length (karr_row_entries r).
+Proof.
+  induction count as [|count IH]; intro r; [reflexivity|].
+  cbn [karr_zero_prefix]. rewrite karr_row_entries_restore.
+  cbn [length]. rewrite IH. lia.
+Qed.
+
 (** A nonempty row with zero head is its own restored tail. *)
 Lemma karr_restore_tail_zero : forall r,
   kcoeff r <> [] -> karr_head r = 0%Z -> r = karr_restore (karr_tail r).
