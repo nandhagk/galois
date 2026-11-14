@@ -10530,6 +10530,33 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply slot_rank_ok_slots_update;
       [apply slot_rank_ok_slots_update; exact Hrank | exact Hrank].
   Qed.
+  Lemma slot_rank_ok_put : forall db f k o,
+    slot_rank_ok db -> slot_rank_ok (put f k o db).
+  Proof.
+    intros db f k o Hrank. unfold put.
+    set (previous := row_get f (normal_key db k) db).
+    set (co := option_map (normal_cell db) o).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : slot_rank_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try apply slot_rank_ok_union; exact Hrank. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext | apply slot_rank_ok_row_replace; exact Hnext].
+    - apply slot_rank_ok_row_replace. exact Hnext.
+  Qed.
+  Lemma slot_rank_ok_make : forall db f k,
+    slot_rank_ok db -> slot_rank_ok (snd (make f k db)).
+  Proof.
+    intros db f k Hrank. unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hrank;
+      destruct (kind_get f db) as [[| |m] |];
+      try apply slot_rank_ok_row_replace;
+      apply slot_rank_ok_allocate_id; exact Hrank.
+  Qed.
   (** Repair retains located rows, metadata and the allocated forest's equality meaning. *)
   Definition forest_ok (db : t) : Prop :=
     (forall f k0 k, located db f k0 = Some k ->
