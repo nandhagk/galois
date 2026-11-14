@@ -15020,6 +15020,26 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       [destruct wrapping|]; time_simpl; try lia.
     exfalso. now apply (Hfallback f).
   Qed.
+  (** The public assignment budget pays for every havoc fallback. *)
+  Lemma T_poly_assign_fallback_bounded : forall x e P,
+    (forall f, F.lin_of e <> Some (f, NoWrap)) ->
+    (T_assign x e (Reached P) <=
+      c_num * N.of_nat (assign_work x e (Reached P) + 1))%N.
+  Proof.
+    intros x e P Hfallback.
+    set (work := N.of_nat (assign_work x e (Reached P) + 1)).
+    assert (Hpositive : (1 <= work)%N) by (unfold work; lia).
+    assert (Hlin : (F.T_lin_of e <= work)%N).
+    { unfold work, assign_work. rewrite !Nat2N.inj_add, N2Nat.id. lia. }
+    pose proof (T_poly_havoc_bounded x (Reached P)) as Hhavoc.
+    pose proof (poly_assign_havoc_work x e P) as Hwork.
+    assert (Hhavoc_total : (T_havoc x (Reached P) <= poly_havoc_factor * work)%N).
+    { eapply N.le_trans; [exact Hhavoc|].
+      apply N.mul_le_mono_l. unfold work. apply time_of_nat_le. lia. }
+    pose proof (T_poly_assign_fallback x e P Hfallback) as Hassign.
+    unfold c_num, poly_assume_factor. fold work.
+    clear -Hpositive Hlin Hhavoc_total Hassign. clearbody work. nia.
+  Qed.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
