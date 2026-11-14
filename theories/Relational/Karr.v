@@ -15802,6 +15802,40 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
+  Lemma T_karr_entail_candidate_checker_public : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    (C.T_check_entails P c k <= 256 * C.c_lc *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    pose proof (T_karr_entail_candidate_checker P c k HP Hc Hcandidate)
+      as Hclock.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    pose proof (karr_checker_work_public d w
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hmeasure.
+    assert (HN : (N.of_nat
+      ((2 * d + 1) * (d + 1) *
+        (w + (8 * (ellB d w + 1) + 1) * (w + 1) + 1) +
+       (8 * (ellB d w + 1) + 1) *
+        ((d + 1) * (w + w + 1) + 8 * (ellB d w + 1) +
+          w + Nat.log2 d + 2)) <=
+      N.of_nat (256 * (d^3 * (ellB d w + 1)^2)))%N) by lia.
+    unfold elimination_work.
+    fold d w.
+    eapply N.le_trans; [exact Hclock|].
+    rewrite Nat2N.inj_mul in HN.
+    change (N.of_nat 256) with 256%N in HN.
+    apply N.mul_le_mono_l with (p := C.c_lc) in HN.
+    replace (256 * C.c_lc * N.of_nat (d^3 * (ellB d w + 1)^2))%N with
+      (C.c_lc * (256 * N.of_nat (d^3 * (ellB d w + 1)^2)))%N by ring.
+    exact HN.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
