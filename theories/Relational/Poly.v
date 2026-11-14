@@ -11967,6 +11967,8 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Module RangeLinearize := PolyClockLinearize RangeKey L N.
   Module RangeCore := PolyClockCore RangeKey L N RangeLinearize RangeCert.
   Module RangeAssignCore := PolyAssignBranch RangeKey L N RangeLinearize RangeCert.
+  Module RangeAssignExtended :=
+    PolyAssignBranchExtended RangeKey L N RangeLinearize RangeCert.
   Module AssignCore := PolyAssignBranchExtended X L N F C.
 
   Definition poly_range_input (P : list (lcons X.t)) (f : lin X.t) :=
@@ -16626,6 +16628,40 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + apply N.add_le_mono; [exact Huntag|exact Hsubst'].
       + exact Hcheck.
     - apply N.le_refl.
+  Qed.
+
+  (** Each source-only coefficient lookup fits one public work unit. *)
+  Lemma poly_assign_zero_source_lookup_mass : forall x e P,
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) in
+    let width := poly_raw_keys P + poly_raw_bits P + 2 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (dim + 1) * width <= work.
+  Proof.
+    intros x e P dim width bits volume work.
+    pose proof (poly_assign_source_dimension x P) as Hdim.
+    pose proof (poly_raw_width P) as Hraw.
+    pose proof (Pos.size_nat_pos (X.encode x)) as Hkey.
+    assert (Hwidth : width <= bits)
+      by (unfold width, bits, X.bits; lia).
+    assert (Hvolume : dim + 1 <= volume)
+      by (unfold dim, volume; lia).
+    assert (Hfirst : (dim + 1) * width <= volume * bits)
+      by (apply Nat.mul_le_mono; assumption).
+    assert (Hbits : bits <= bits^2)
+      by (unfold bits; cbn [Nat.pow]; nia).
+    assert (Hsecond : volume * bits <= volume * bits^2)
+      by (apply Nat.mul_le_mono_l; exact Hbits).
+    assert (Hrows : 1 <= (length P + 3)^2)
+      by (cbn [Nat.pow]; nia).
+    pose proof (Nat.mul_le_mono_r 1 ((length P + 3)^2)
+      (volume * bits^2) Hrows) as Hthird.
+    replace (1 * (volume * bits^2)) with (volume * bits^2)
+      in Hthird by ring.
+    replace ((length P + 3)^2 * (volume * bits^2)) with work
+      in Hthird by (unfold work; ring).
+    lia.
   Qed.
 
   (** The head checker measure fits four public quadratic work units. *)
