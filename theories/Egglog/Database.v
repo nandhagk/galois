@@ -15090,6 +15090,58 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           now rewrite Hlength.
   Qed.
 
+  Lemma database_row_weight_conserved_move : forall db f old ck,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    length old = length ck ->
+    database_row_weight_conserved (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Hconserved Hlength.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource; [| exact Hconserved].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest; [| exact Hconserved].
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some parent => parent | None => source_root end) = source_root).
+    { subst source_root depth store.
+      exact (database_history_root_fixed db f old old_key old_id Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some parent => parent | None => dest_root end) = dest_root).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id Hstore Hdest). }
+    replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+    fold store depth source_root dest_root.
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - eapply database_row_weight_conserved_transport with (db := db);
+        try reflexivity; exact Hconserved.
+    - apply Pos.eqb_neq in Hsame.
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Hloses.
+      + eapply (database_row_weight_conserved_link db _ source_root dest_root
+          f old old_key old_id f ck ck_key ck_id);
+          try exact Hconserved; try exact Hsame;
+          try exact Hsource_fixed; try exact Hdest_fixed;
+          try exact Hsource; try exact Hdest; try reflexivity.
+        * subst dest_root depth store. now rewrite <- Hlength.
+      + eapply (database_row_weight_conserved_link db _ dest_root source_root
+          f ck ck_key ck_id f old old_key old_id);
+          try exact Hconserved; try congruence;
+          try exact Hdest_fixed; try exact Hsource_fixed;
+          try exact Hdest; try exact Hsource; try reflexivity.
+        * cbn [database_set_row_store db_row_store row_weights].
+          rewrite N.add_comm. reflexivity.
+        * subst dest_root depth store. now rewrite <- Hlength.
+  Qed.
+
   Lemma database_history_root_owner_repair_current : forall db f k,
     database_row_store_ok db -> database_history_root_owner db ->
     database_history_root_owner (repair_current f k db).
