@@ -22146,6 +22146,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         as [[new_key new_id] |]; exact Hrepair.
   Qed.
 
+  Lemma union_log_allocated_active : forall db i j,
+    Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db)) ->
+    allocated db i -> allocated db j ->
+    Forall (fun edge => allocated (union i j db) (fst edge) /\
+      allocated (union i j db) (snd edge))
+      (runtime_equalities (db_runtime (union i j db))).
+  Proof.
+    intros db i j Hlog Hi Hj. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db))
+      as [roots forest].
+    destruct roots as [[winner loser] |].
+    - change (Forall (fun edge => allocated db (fst edge) /\
+        allocated db (snd edge))
+        ((i, j) :: runtime_equalities (db_runtime db))).
+      constructor; [now split | exact Hlog].
+    - exact Hlog.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
