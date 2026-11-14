@@ -16213,6 +16213,52 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - exact (karr_entail_variables_keys P c HP Hc).
   Qed.
 
+  Lemma T_karr_entail_dense_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_dense (variables (c :: P)) c <=
+      16 * karr_dense_factor *
+        N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    pose proof (T_karr_entail_dense_bounded P c HP Hc) as Hclock.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hwv : w + 1 <= v).
+    { unfold v, ellB. nia. }
+    assert (Hdv : d <= v).
+    { unfold v, ellB. nia. }
+    assert (Hsquare : (d + 1)^2 <= 4 * d^2).
+    { replace (4 * d^2) with ((2 * d)^2) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. lia. }
+    assert (Hwidth : w + d + 1 <= 2 * v) by lia.
+    assert (Hsmall : (d + 1)^2 * (w + d + 1) <=
+      16 * (d^3 * v^2)).
+    { assert (Hproduct : (d + 1)^2 * (w + d + 1) <=
+        (4 * d^2) * (2 * v)).
+      { apply Nat.mul_le_mono; assumption. }
+      cbn [Nat.pow] in *. nia. }
+    assert (HN : (N.of_nat ((d + 1)^2 * (w + d + 1)) <=
+      N.of_nat (16 * (d^3 * v^2)))%N) by lia.
+    unfold elimination_work.
+    fold d w v.
+    change (T_dense (variables (c :: P)) c <=
+      karr_dense_factor * N.of_nat (d + 1)^2 *
+        N.of_nat (w + d + 1))%N in Hclock.
+    replace (karr_dense_factor * N.of_nat (d + 1)^2 *
+      N.of_nat (w + d + 1))%N with
+      (karr_dense_factor * N.of_nat ((d + 1)^2 * (w + d + 1)))%N in Hclock
+      by (rewrite Nat2N.inj_mul, !Nat.pow_2_r, N.pow_2_r,
+        Nat2N.inj_mul; ring).
+    replace (16 * karr_dense_factor * N.of_nat (d^3 * v^2))%N with
+      (karr_dense_factor * N.of_nat (16 * (d^3 * v^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 16) with 16%N; ring).
+    eapply N.le_trans; [exact Hclock|].
+    now apply N.mul_le_mono_l.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
