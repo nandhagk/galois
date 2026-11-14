@@ -15407,6 +15407,42 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     nia.
   Qed.
 
+  (** Target certificates inherit the final elimination row's width. *)
+  Lemma karr_target_certificate_envelope : forall P c k dim bits,
+    target_certificate P c = Some k ->
+    karr_row_envelope dim (length P) bits
+      (karr_target (equality_basis (variables (c :: P)) P) 1
+        (KRow (dense (variables (c :: P)) c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z)) ->
+    length (mults k) <= length P /\
+    Forall (fun z => Z.size_nat z <= bits) (mults k) /\
+    Z.size_nat (scale k) <= bits.
+  Proof.
+    intros P c k dim bits Hcert Hrow.
+    unfold target_certificate in Hcert.
+    cbn zeta in Hcert.
+    set (row := karr_target (equality_basis (variables (c :: P)) P) 1
+      (KRow (dense (variables (c :: P)) c) (rhs c)
+        (repeat 0%Z (length P)) 1%Z)) in *.
+    destruct Hrow as [_ [_ [_ [Hlength [Hweights Hscale]]]]].
+    destruct (karr_zero row && negb (Z.eqb (kscale row) 0) &&
+        match lrel c with
+        | REq => Z.eqb (kright row) 0
+        | RLe => (0 <=? (if (kscale row <? 0)%Z then -1 else 1) * kright row)%Z
+        end) eqn:Htest; try discriminate Hcert.
+    inversion Hcert; subst k; cbn [mults scale]; repeat split;
+        try (rewrite length_map; exact Hlength);
+        try (rewrite karr_size_abs; exact Hscale).
+    apply Forall_forall. intros y Hy.
+    apply in_map_iff in Hy as [z [Hy Hz]]. subst y.
+    pose proof (proj1 (Forall_forall _ _) Hweights z Hz) as Hwidth.
+    cbn beta in Hwidth.
+    destruct ((kscale row <? 0)%Z);
+      [replace ((- (-1)) * z)%Z with z by ring|
+       replace ((- 1) * z)%Z with (- z)%Z by ring];
+      [exact Hwidth|rewrite karr_size_opp; exact Hwidth].
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
