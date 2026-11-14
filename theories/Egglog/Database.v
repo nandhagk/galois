@@ -16142,7 +16142,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           split; [exact Hlabels | exact Hrange].
   Qed.
 
-  Lemma move_row_identity_locate_aligned : forall db f old ck g args
+  Lemma move_row_identity_locate_value : forall db f old ck g args value
       old_key old_id ck_key ck_id key r,
     database_row_store_ok db -> length old = length ck ->
     PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
@@ -16152,7 +16152,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
       Some (key, r) ->
     db_locate f old db = Some old -> db_locate f ck db = Some ck ->
-    db_locate g args db = Some args ->
+    db_locate g args db = Some value ->
     (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
        (db_row_store db) =
        row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
@@ -16160,10 +16160,10 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
        (db_row_store db) =
        row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
-         (db_row_store db) -> args = ck) ->
-    db_locate g args (move_row_identity f old ck db) = Some args.
+         (db_row_store db) -> value = ck) ->
+    db_locate g args (move_row_identity f old ck db) = Some value.
   Proof.
-    intros db f old ck g args old_key old_id ck_key ck_id key r Hstore Hlength
+    intros db f old ck g args value old_key old_id ck_key ck_id key r Hstore Hlength
       Hsource Hdest Hentry Hsource_loc Hdest_loc Hlookup Haffected.
     set (store := db_row_store db).
     set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
@@ -16187,12 +16187,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       rewrite <- Hlength in Hdest_loc. exact Hdest_loc. }
     assert (Hlookup_key : PTrieCode.get
       (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store)
-      (row_keys store) = Some args).
+      (row_keys store) = Some value).
     { unfold db_locate in Hlookup. rewrite Hentry in Hlookup. exact Hlookup. }
     assert (Hroots : forall x,
       x = source_root \/ x = dest_root ->
       x = row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store ->
-      args = ck).
+      value = ck).
     { intros x Hx Hxroot. subst x. apply Haffected. destruct Hx as [Hx | Hx].
       - left. exact Hx.
       - right. subst dest_root depth. now rewrite Hlength in Hx. }
@@ -16242,6 +16242,34 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
             (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store));
             [destruct Hroot as [Hdest_side | Hsource_side];
               [right | left]; assumption | reflexivity].
+  Qed.
+
+  Lemma move_row_identity_locate_aligned : forall db f old ck g args
+      old_key old_id ck_key ck_id key r,
+    database_row_store_ok db -> length old = length ck ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    db_locate f old db = Some old -> db_locate f ck db = Some ck ->
+    db_locate g args db = Some args ->
+    (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+       (db_row_store db) =
+       row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+         (db_row_store db) \/
+     row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+       (db_row_store db) =
+       row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+         (db_row_store db) -> args = ck) ->
+    db_locate g args (move_row_identity f old ck db) = Some args.
+  Proof.
+    intros db f old ck g args old_key old_id ck_key ck_id key r
+      Hstore Hlength Hsource Hdest Hentry Hsource_loc Hdest_loc Hlookup Haffected.
+    exact (move_row_identity_locate_value db f old ck g args args
+      old_key old_id ck_key ck_id key r Hstore Hlength Hsource Hdest
+      Hentry Hsource_loc Hdest_loc Hlookup Haffected).
   Qed.
 
   Lemma database_history_alignment_move : forall db f old ck,
