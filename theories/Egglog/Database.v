@@ -22058,6 +22058,34 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply equality_closure_equiv. intros x y. rewrite (Hsame x y). tauto.
   Qed.
 
+  Lemma put_equalities_active : forall db f k o,
+    UnionFind.wf (db_forest db) ->
+    (forall a b, same (view db) a b <-> repr db a = repr db b) ->
+    forall a b, same (view (put f k o db)) a b <->
+      repr (put f k o db) a = repr (put f k o db) b.
+  Proof.
+    intros db f k o Hforest Hsame a b. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id x)), Some (Id y) => union x y db | _, _ => db end).
+    assert (Hnext : forall x y,
+      same (view next) x y <-> repr next x = repr next y).
+    { unfold next. destruct previous as [[[x | v] |] |];
+        destruct co as [[y | w] |];
+        try exact Hsame.
+      exact (union_equalities_active db x y Hforest Hsame). }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact (Hnext a b) |].
+      rewrite row_replace_same.
+      unfold repr. rewrite row_replace_forest.
+      exact (Hnext a b).
+    - rewrite row_replace_same.
+      unfold repr. rewrite row_replace_forest.
+      exact (Hnext a b).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
