@@ -13170,6 +13170,31 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply database_history_alignment_row_replace; assumption.
   Qed.
 
+  Lemma put_representative_old : forall db f k o x,
+    wf db -> repr (put f k o db) x = x -> repr db x = x.
+  Proof.
+    intros db f k o x Hwf Hfixed. unfold put in Hfixed.
+    set (ck := normal_key db k) in *.
+    set (co := option_map (normal_cell db) o) in *.
+    set (previous := row_get f ck db) in *.
+    set (updated := combine_output db f previous co) in *.
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end) in *.
+    assert (Hnext : repr next x = x -> repr db x = x).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try (intros H; exact H).
+      apply union_representative_old. exact (wf_forest db Hwf). }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [apply Hnext; exact Hfixed |].
+      apply Hnext. unfold repr in Hfixed |- *.
+      rewrite row_replace_forest in Hfixed. exact Hfixed.
+    - apply Hnext. unfold repr in Hfixed |- *.
+      rewrite row_replace_forest in Hfixed. exact Hfixed.
+  Qed.
+
   Lemma database_row_store_ok_put : forall db f k o,
     database_row_store_ok db -> database_row_store_ok (put f k o db).
   Proof.
@@ -13304,6 +13329,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       - subst deleted. apply database_history_alignment_row_delete. exact Halign. }
     eapply (database_history_alignment_transport updated _); try reflexivity.
     exact Hupdated.
+  Qed.
+
+  Lemma repair_current_representative_old : forall db f k x,
+    wf db -> repr (repair_current f k db) x = x -> repr db x = x.
+  Proof.
+    intros db f k x Hwf Hfixed. unfold repair_current in Hfixed.
+    destruct (row_get f k db) as [output |]; [| exact Hfixed].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hfixed |].
+    change (repr (put f (normal_key db k)
+      (option_map (normal_cell db) output) (row_delete f k db)) x = x) in Hfixed.
+    apply (put_representative_old (row_delete f k db) f (normal_key db k)
+      (option_map (normal_cell db) output) x (row_delete_wf db f k Hwf)) in Hfixed.
+    unfold repr in Hfixed |- *. now rewrite row_delete_forest in Hfixed.
   Qed.
 
   Lemma database_row_store_ok_repair_current : forall db f k,
