@@ -11796,6 +11796,52 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * subst loser. contradiction.
   Qed.
 
+  Lemma row_root_link_owner_preimages : forall d1 r1 d2 r2 store store'
+      loser winner,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links store) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links store') with
+     | Some parent => parent | None => winner end) = winner ->
+    row_root d1 r1 store' = row_root d2 r2 store' ->
+    row_root d1 r1 store = row_root d2 r2 store \/
+      (row_root d1 r1 store = loser \/ row_root d1 r1 store = winner) /\
+      (row_root d2 r2 store = loser \/ row_root d2 r2 store = winner).
+  Proof.
+    intros d1 r1 d2 r2 store store' loser winner Hlinks Hneq Hloser Hwinner
+      Hequal.
+    destruct (Pos.eq_dec (row_root d1 r1 store) loser) as [Hfirst | Hfirst];
+      destruct (Pos.eq_dec (row_root d2 r2 store) loser) as [Hsecond | Hsecond].
+    - right. split; [now left | now left].
+    - right. split; [now left | right].
+      destruct (row_root_link_two_roots d1 r1 store store' loser winner
+        Hlinks Hneq Hloser Hwinner Hfirst) as [Hnew | Hnew].
+      + rewrite (row_root_link_unaffected d2 r2 store store' loser winner
+          (row_root d2 r2 store) Hlinks) in Hequal by (congruence || exact Hloser ||
+          reflexivity).
+        rewrite Hnew in Hequal. congruence.
+      + rewrite (row_root_link_unaffected d2 r2 store store' loser winner
+          (row_root d2 r2 store) Hlinks) in Hequal by (congruence || exact Hloser ||
+          reflexivity).
+        now rewrite Hnew in Hequal.
+    - right. split; [right | now left].
+      destruct (row_root_link_two_roots d2 r2 store store' loser winner
+        Hlinks Hneq Hloser Hwinner Hsecond) as [Hnew | Hnew];
+        rewrite (row_root_link_unaffected d1 r1 store store' loser winner
+          (row_root d1 r1 store) Hlinks) in Hequal by
+          (congruence || exact Hloser || reflexivity);
+        rewrite Hnew in Hequal; [congruence | now symmetry].
+    - left.
+      rewrite (row_root_link_unaffected d1 r1 store store' loser winner
+        (row_root d1 r1 store) Hlinks) in Hequal by
+        (congruence || exact Hloser || reflexivity).
+      rewrite (row_root_link_unaffected d2 r2 store store' loser winner
+        (row_root d2 r2 store) Hlinks) in Hequal by
+        (congruence || exact Hloser || reflexivity).
+      exact Hequal.
+  Qed.
+
   (** Repointing a root preserves a lookup when both affected labels agree. *)
   Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
