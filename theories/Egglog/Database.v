@@ -13366,7 +13366,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
 
   Lemma database_losing_component_short :
-    forall db f losing other losing_key losing_id other_key other_id,
+    forall db f losing other losing_key losing_id other_key other_id
+      g args key id,
       database_row_store_ok db -> database_row_weights_positive db ->
       database_history_root_owner db -> database_history_key_shape db ->
       database_history_codes_valid db ->
@@ -13376,6 +13377,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         Some (losing_key, losing_id) ->
       PTrieCode.get (db_row_code f other) (row_history (db_row_store db)) =
         Some (other_key, other_id) ->
+      PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+        Some (key, id) ->
       row_key_shape losing = row_key_shape other ->
       let losing_root := row_root
         (length losing * (N.to_nat (N.log2 (ids db)) + 1)) losing_id
@@ -13388,16 +13391,25 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
        | Some n => n | None => 1%N end <=
        match PTrieCode.get other_root (row_weights (db_row_store db)) with
        | Some n => n | None => 1%N end)%N ->
+      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) id
+        (db_row_store db) = losing_root ->
       exists first,
-        first < length losing * (N.to_nat (N.log2 (ids db)) + 1) /\
-        row_root first losing_id (db_row_store db) = losing_root.
+        first < length args * (N.to_nat (N.log2 (ids db)) + 1) /\
+        row_root first id (db_row_store db) = losing_root.
   Proof.
-    intros db f losing other losing_key losing_id other_key other_id Hstore
-      Hpositive Howner Hshape Hvalid Hbounded Hconserved Hlosing Hother
-      Hbridge losing_root other_root Hdifferent Horder.
-    destruct (database_history_root_path_weight db f losing losing_key
-      losing_id Hstore Hpositive Hlosing) as
-      [first [_ [Hroot Hpower]]].
+    intros db f losing other losing_key losing_id other_key other_id
+      g args key id Hstore Hpositive Howner Hshape Hvalid Hbounded
+      Hconserved Hlosing Hother Hentry Hbridge losing_root other_root
+      Hdifferent Horder Hsame.
+    destruct (database_history_root_path_weight db g args key id Hstore
+      Hpositive Hentry) as [first [_ [Hroot Hpower]]].
+    rewrite Hsame in Hroot, Hpower.
+    assert (Hlength : length losing = length args).
+    { pose proof (Hshape f losing losing_key losing_id g args key id
+        Hlosing Hentry (eq_sym Hsame)) as Hkey_shape.
+      unfold row_key_shape in Hkey_shape.
+      apply (f_equal (@length _)) in Hkey_shape.
+      now repeat rewrite length_map in Hkey_shape. }
     pose proof (database_two_root_weight_cardinality db f losing other
       losing_key losing_id other_key other_id Hstore Howner Hshape Hvalid
       Hbounded Hconserved Hlosing Hother Hbridge Hdifferent) as Hsum.
@@ -13407,6 +13419,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         | Some n => n | None => 1%N end) <=
        (ids db + 1) ^ N.of_nat (length losing))%N).
     { subst losing_root other_root. nia. }
+    rewrite Hlength in Htwice.
     exists first. split.
     - eapply database_losing_path_depth; eassumption.
     - exact Hroot.
