@@ -13138,6 +13138,38 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold T_present. rewrite Nat2N.inj_add. cbn [N.of_nat]. lia.
   Qed.
 
+  (** Pairing coordinates visits no more entries than the first list. *)
+  Lemma T_karr_combine_bounded : forall A B (xs : list A) (ys : list B),
+    (List.T_combine xs ys <= 4 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intros A B xs. induction xs as [|x xs IH]; intros [|y ys];
+      time_unfold List.T_combine; time_simpl; cbn [length];
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]); try nia.
+    pose proof (IH ys). nia.
+  Qed.
+
+  (** Sparse reconstruction scans one paired coordinate per input key. *)
+  Lemma T_karr_sparse_bounded : forall xs zs,
+    (T_sparse xs zs <= 16 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intros xs zs.
+    pose proof (T_karr_combine_bounded X.t Z xs zs) as Hcombine.
+    assert (Hcallback : forall p, In p (combine xs zs) ->
+      (1 + (Datatypes.T_snd p + Z.T_eqb (snd p) 0 +
+        Datatypes.T_negb (snd p =? 0)%Z) <= 8)%N).
+    { intros p Hp. pose proof (T_karr_zero_test (snd p)) as Hzero.
+      time_simpl. lia. }
+    pose proof (karr_T_filter_members (X.t * Z)
+      (fun p => negb (snd p =? 0)%Z)
+      (fun p => 1 + (Datatypes.T_snd p + Z.T_eqb (snd p) 0 +
+        Datatypes.T_negb (snd p =? 0)%Z))%N 8%N
+      (combine xs zs) Hcallback) as Hfilter.
+    assert (Hlen : length (combine xs zs) <= length xs).
+    { rewrite length_combine. apply Nat.le_min_l. }
+    time_unfold T_sparse. rewrite Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
+  Qed.
+
   (** Singleton-or-empty flattening never exceeds its source length. *)
   Lemma karr_flat_map_singleton_length : forall (A B : Type) (f : A -> list B) xs,
     (forall x, In x xs -> length (f x) <= 1) -> length (flat_map f xs) <= length xs.
