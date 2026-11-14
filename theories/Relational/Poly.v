@@ -13801,6 +13801,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Definition poly_assign_sources (x : X.t) (P : list (lcons X.t)) :=
     map (rename_row (rename_old x)) P.
 
+  Definition poly_assign_input (x : X.t) (f : lin X.t)
+      (P : list (lcons X.t)) :=
+    assignment_row x f :: poly_assign_sources x P.
+
+  Lemma poly_assign_input_rows : forall x f P,
+    map (fun r => (r, false)) (poly_assign_input x f P) =
+      (assignment_row x f, false) ::
+        map (fun r => (rename_row (rename_old x) r, false)) P.
+  Proof.
+    intros x f P. unfold poly_assign_input, poly_assign_sources.
+    cbn [map]. now rewrite map_map.
+  Qed.
+
   Lemma poly_assign_sources_length : forall x P,
     length (poly_assign_sources x P) = length P.
   Proof. intros. unfold poly_assign_sources. apply length_map. Qed.
@@ -14211,6 +14224,50 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - eapply Forall_impl; [|apply poly_assign_tail_envelopes].
       intros r Hr. eapply poly_assign_row_envelope_mono;
         [exact Hr|lia|lia|lia].
+  Qed.
+
+  (** The raw input support is covered by the old support and the prepared equation. *)
+  Lemma poly_assign_input_support_length : forall x f P,
+    length (RangeCore.vars_of (poly_assign_input x f P)) <=
+      length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1.
+  Proof.
+    intros x f P.
+    replace (length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef f) + 1) with
+      (length (RangeCore.vars_of (poly_assign_sources x P)) +
+        length (map fst (lhs (assignment_row x f))))
+      by (rewrite length_map; cbn [assignment_row lhs length]; rewrite length_map; lia).
+    rewrite <- length_app.
+    apply NoDup_incl_length; [apply RangeCore.poly_vars_of_nodup|].
+    intros y Hy.
+    destruct (RangeCore.poly_vars_of_support (poly_assign_input x f P) y Hy)
+      as [r [Hr Hkey]].
+    unfold poly_assign_input in Hr. destruct Hr as [Hhead|Hsource].
+    - subst r. apply in_or_app. right. exact Hkey.
+    - apply in_or_app. left.
+      now apply RangeCore.poly_vars_of_contains with (r := r).
+  Qed.
+
+  (** One elimination preserves the full head-and-source dimension and doubles width. *)
+  Lemma poly_assign_output_envelope : forall x f P,
+    NoDup (map fst (coef f)) ->
+    Forall (RangeCore.poly_row_envelope
+      (length (RangeCore.vars_of (poly_assign_sources x P)) + length (coef f) + 1)
+      (length P + 1)
+      (poly_raw_keys P + X.bits x + F.form_bits f + 1)
+      (2 * (poly_raw_bits P + F.form_bits f + 1) + 1))
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x f, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))).
+  Proof.
+    intros x f P Hform.
+    apply RangeCore.poly_step_envelopes
+      with (vars := RangeCore.vars_of (poly_assign_input x f P)).
+    - apply poly_assign_input_support_length.
+    - rewrite <- poly_assign_input_rows.
+      apply RangeCore.poly_raw_initial_reduced.
+    - apply poly_assign_initial_envelope. exact Hform.
   Qed.
 
   (** The prepared head and sources share the public quadratic step allowance. *)
