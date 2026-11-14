@@ -12745,6 +12745,30 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - rewrite karr_combine_self. apply karr_minor_law_initial.
   Qed.
 
+  (** Any coordinate list initializes the same labeled minor invariant. *)
+  Lemma karr_run_state_seed : forall xs P,
+    karr_run_state (length xs + length P + 2) (length xs)
+      (map karr_row_entries (seed_rows xs (length P) 0 (map normalize_row P)))
+      1 [] [] (seq 0 (length xs + length P + 2))
+      (map karr_row_entries (seed_rows xs (length P) 0 (map normalize_row P)))
+      (seed_rows xs (length P) 0 (map normalize_row P)).
+  Proof.
+    intros xs P. unfold karr_run_state. repeat (apply conj).
+    - lia.
+    - reflexivity.
+    - now rewrite length_map.
+    - apply seed_rows_width.
+    - rewrite length_seq. apply seed_entries_width.
+    - rewrite length_seq. lia.
+    - reflexivity.
+    - cbn [app]. apply Permutation_refl.
+    - cbn [app]. apply karr_increasing_seq.
+    - cbn [app]. replace (length xs + length P + 2) with
+        (0 + (length xs + length P + 2)) by lia.
+      apply karr_seq_bounded.
+    - rewrite karr_combine_self. apply karr_minor_law_initial.
+  Qed.
+
   (** Every initialized certificate vector has a zero when two source slots exist. *)
   Lemma seed_rows_zero_weight : forall xs total index P,
     2 <= total ->
@@ -13035,6 +13059,59 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (Nat.le_refl _) (Nat.le_refl _) Hpositive Hprepared) as Hseed.
     eapply Forall_impl; [|exact Hseed].
     intros r Hr. exact (karr_row_entries_bits _ _ _ r Hr).
+  Qed.
+
+  (** Arbitrary dense coordinates preserve the prepared seed entry width. *)
+  Lemma karr_seed_entries_bits : forall xs P,
+    Forall (Forall (fun z => Z.size_nat z <= nell (Reached P)))
+      (map karr_row_entries (seed_rows xs (length P) 0 (map normalize_row P))).
+  Proof.
+    intros xs P. apply Forall_map.
+    assert (Hprepared : Forall (fun r =>
+      NoDup (map fst (lhs r)) /\ C.row_bits r <= nell (Reached P))
+      (map normalize_row P)).
+    { pose proof (karr_normal_source_width P) as Hwidth.
+      apply Forall_forall. intros r Hr. split.
+      - apply in_map_iff in Hr as [source [Heq _]]. subst r.
+        cbn [normalize_row lhs]. apply normalize_coef_nodup.
+      - pose proof (proj1 (Forall_forall _ _) Hwidth r Hr) as Hrow.
+        change (C.row_key_bits r + C.row_bits r <= nell (Reached P)) in Hrow.
+        lia. }
+    assert (Hpositive : 1 <= nell (Reached P)) by (unfold nell; lia).
+    pose proof (karr_seed_rows_envelopes xs (length P) 0
+      (map normalize_row P) (length xs) (length P) (nell (Reached P))
+      (Nat.le_refl _) (Nat.le_refl _) Hpositive Hprepared) as Hseed.
+    eapply Forall_impl; [|exact Hseed].
+    intros r Hr. exact (karr_row_entries_bits _ _ _ r Hr).
+  Qed.
+
+  (** A generic initialized basis clock follows from the all-order minor law. *)
+  Lemma T_karr_bareiss_seed_bounded : forall xs P,
+    (T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) <=
+      N.of_nat (length xs) *
+        karr_bareiss_stage_budget (length xs + length P + 2)
+          (ellB (length xs + length P + 2) (nell (Reached P))) + 4)%N.
+  Proof.
+    intros xs P.
+    eapply T_karr_bareiss_run_bounded with
+      (width := length xs + length P + 2)
+      (original := map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P)))
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 (length xs + length P + 2))
+      (labels := map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P))).
+    - apply karr_run_state_seed.
+    - rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0 (map normalize_row P))
+        as Hlength. rewrite length_map in Hlength. lia.
+    - rewrite length_seq. lia.
+    - intros z Hz. eapply karr_signed_minors_bits;
+        [lia| |apply karr_seed_entries_bits|exact Hz].
+      rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0 (map normalize_row P))
+        as Hlength. rewrite length_map in Hlength. lia.
   Qed.
 
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
