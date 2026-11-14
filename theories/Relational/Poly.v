@@ -11970,6 +11970,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Module RangeAssignExtended :=
     PolyAssignBranchExtended RangeKey L N RangeLinearize RangeCert.
   Module AssignCore := PolyAssignBranchExtended X L N F C.
+  Module AssignPrepare := PolySignedAffineLinearize X L N F.
 
   Definition poly_range_input (P : list (lcons X.t)) (f : lin X.t) :=
     range_row f :: map (rename_row (@Some X.t)) (map (poly_normal_row X.encode) P).
@@ -17433,6 +17434,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         RangeCore.poly_coef_factor +
         RangeCore.poly_normal_row_factor +
         RangeCore.poly_raw_initial_factor +
+        AssignPrepare.Clock.poly_prepare_factor +
         AssignCore.poly_assign_normal_subst_factor +
         AssignCore.poly_assign_zero_subst_factor + C.c_lc + X.c_key + 1))%N.
   (** An unreachable assignment performs only the outer reachability test. *)
@@ -17487,6 +17489,74 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (T_poly_assign_fallback x e P Hfallback) as Hassign.
     unfold c_num, poly_assume_factor. fold work.
     clear -Hpositive Hlin Hhavoc_total Hassign. clearbody work. nia.
+  Qed.
+  (** The fixed public factor covers the composed affine clock and outer dispatch. *)
+  Lemma poly_assign_linear_factor_le :
+    (poly_assign_linear_public_factor +
+      AssignPrepare.Clock.poly_prepare_factor + 17 <= c_num)%N.
+  Proof.
+    unfold poly_assign_linear_public_factor,
+      poly_assign_setup_public_factor,
+      poly_assign_step_public_factor,
+      poly_assign_scan_public_factor, c_num.
+    lia.
+  Qed.
+  (** Preparation of a recognized affine form consumes one public work unit. *)
+  Lemma T_poly_assign_prepare_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (T_poly_prepare_form X.encode X.T_encode f <=
+      AssignPrepare.Clock.poly_prepare_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P f Hlinear bits volume work.
+    pose proof (AssignPrepare.T_poly_prepare_lin_of e f NoWrap Hlinear)
+      as Hprepare.
+    assert (Hvolume : tsize e + 1 <= volume)
+      by (unfold volume; lia).
+    assert (Hwidth : F.bits_e e + 1 <= bits^2).
+    { assert (Hbits : F.bits_e e + 1 <= bits)
+        by (unfold bits; lia).
+      assert (Hpositive : 1 <= bits) by (unfold bits; lia).
+      cbn [Nat.pow]. nia. }
+    assert (Hbase : (tsize e + 1) * (F.bits_e e + 1) <=
+      volume * bits^2) by (apply Nat.mul_le_mono; assumption).
+    assert (Hrows : 1 <= (length P + 3)^2)
+      by (cbn [Nat.pow]; nia).
+    pose proof (Nat.mul_le_mono_r 1 ((length P + 3)^2)
+      (volume * bits^2) Hrows) as Hrowsclock.
+    rewrite Nat.mul_1_l in Hrowsclock.
+    replace ((length P + 3)^2 * (volume * bits^2)) with work
+      in Hrowsclock by (unfold work; ring).
+    assert (Hmass : (tsize e + 1) * (F.bits_e e + 1) <= work)
+      by lia.
+    assert (Hmass_clock :
+      (N.of_nat (tsize e + 1) * N.of_nat (F.bits_e e + 1) <=
+        N.of_nat work)%N).
+    { apply time_of_nat_le in Hmass.
+      rewrite Nat2N.inj_mul in Hmass. exact Hmass. }
+    replace (AssignPrepare.Clock.poly_prepare_factor *
+      N.of_nat (tsize e + 1) * N.of_nat (F.bits_e e + 1))%N with
+      (AssignPrepare.Clock.poly_prepare_factor *
+        (N.of_nat (tsize e + 1) * N.of_nat (F.bits_e e + 1)))%N
+      in Hprepare by ring.
+    eapply N.le_trans; [exact Hprepare|].
+    apply N.mul_le_mono_l. exact Hmass_clock.
+  Qed.
+  (** A recognized unwrapped form dispatches to the prepared affine operation. *)
+  Lemma T_poly_assign_linear_wrapper : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    (T_assign x e (Reached P) <=
+      F.T_lin_of e +
+      T_poly_prepare_form X.encode X.T_encode f +
+      T_assign_linear x (poly_prepare_form X.encode f) P + 1)%N.
+  Proof.
+    intros x e P f Hlinear.
+    time_unfold T_assign.
+    rewrite Hlinear. time_simpl.
+    change (fun H : X.t => X.T_encode H) with X.T_encode.
+    lia.
   Qed.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
