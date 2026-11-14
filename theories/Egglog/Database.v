@@ -22308,6 +22308,82 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         as [[new_key new_id] |]; exact Hrepair.
   Qed.
 
+  Lemma union_max_name_raw : forall db i j,
+    runtime_max_name (db_runtime (union i j db)) =
+      runtime_max_name (db_runtime db).
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db))
+      as [roots forest]; destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  Lemma put_max_name_raw : forall db f k o,
+    runtime_max_name (db_runtime (put f k o db)) =
+      runtime_max_name (db_runtime db).
+  Proof.
+    intros db f k o. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : runtime_max_name (db_runtime next) =
+      runtime_max_name (db_runtime db)).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try reflexivity; apply union_max_name_raw. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      rewrite (row_replace_preserves _ (@runtime_max_name (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f (normal_key db k)
+        (Some before) updated next).
+      exact Hnext.
+    - rewrite (row_replace_preserves _ (@runtime_max_name (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f (normal_key db k)
+        None updated next).
+      exact Hnext.
+  Qed.
+
+  Lemma repair_current_max_name_raw : forall db f k,
+    runtime_max_name (db_runtime (repair_current f k db)) =
+      runtime_max_name (db_runtime db).
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [reflexivity |].
+    change (runtime_max_name (db_runtime
+      (put f (normal_key db k) (option_map (normal_cell db) output)
+        (row_delete f k db))) = runtime_max_name (db_runtime db)).
+    rewrite put_max_name_raw.
+    apply row_delete_preserves; intros; reflexivity.
+  Qed.
+
+  Lemma db_repair_entry_max_name_raw : forall db f k,
+    runtime_max_name (db_runtime (db_repair_entry f k db)) =
+      runtime_max_name (db_runtime db).
+  Proof.
+    intros db f k. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| reflexivity].
+    destruct (row_get f current db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [reflexivity |].
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |];
+      destruct (PTrieCode.get (db_row_code f (normal_key db current))
+        (row_history (db_row_store (repair_current f current db))))
+        as [[new_key new_id] |];
+      exact (repair_current_max_name_raw db f current).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
