@@ -14846,6 +14846,188 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         end
     end.
 
+  (** A zero-pivot basis leaves the same target envelope at every step. *)
+  Lemma karr_target_envelope_zero_rows : forall rs previous target dim mlen bits,
+    Forall (fun row => karr_first (kcoeff row) = None) rs ->
+    karr_row_envelope dim mlen bits target ->
+    karr_target_envelope rs previous target dim mlen bits.
+  Proof.
+    intros rs previous target dim mlen bits Hzero Htarget.
+    induction Hzero as [|row rs Hfirst Hrest IH].
+    - cbn [karr_target_envelope]. now split.
+    - cbn [karr_target_envelope]. split; [exact Htarget|].
+      now rewrite Hfirst.
+  Qed.
+
+  (** A live target satisfying the source law fits one fixed row envelope. *)
+  Lemma karr_target_law_envelope : forall previous pivot_rows pivot_columns
+      columns pairs origin target dim mlen det_dim src_bits,
+    karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+    In (origin, karr_row_entries target) pairs ->
+    length (kcoeff target) = dim ->
+    length (karr_row_entries target) = length columns ->
+    length columns = dim + mlen + 2 ->
+    Forall (Forall (fun z => Z.size_nat z <= src_bits)) pivot_rows ->
+    Forall (fun z => Z.size_nat z <= src_bits) origin ->
+    1 <= det_dim -> length pivot_rows + 1 <= det_dim ->
+    karr_row_envelope dim mlen (ellB det_dim src_bits) target.
+  Proof.
+    intros previous pivot_rows pivot_columns columns pairs origin target
+      dim mlen det_dim src_bits Hlaw Hmember Hcoeff Hentries Hcolumns
+      Hpivots Horigin Hdet_dim Horder.
+    apply karr_row_envelope_entries.
+    - lia.
+    - unfold karr_row_entries in Hentries.
+      rewrite !length_app in Hentries. cbn [length] in Hentries.
+      rewrite length_app in Hentries. cbn [length] in Hentries. lia.
+    - eapply karr_minor_law_live_bits with
+        (previous := previous) (pivot_rows := pivot_rows)
+        (pivot_columns := pivot_columns) (columns := columns)
+        (pairs := pairs) (origin := origin); eauto.
+      apply Forall_app. split; [exact Hpivots|].
+      constructor; [exact Horigin|constructor].
+  Qed.
+
+  (** Every target row in a labeled elimination run retains the source-minor width. *)
+  Lemma karr_bareiss_target_envelope : forall cols offset previous pivot_rows
+      pivot_columns columns labels rows target_origin target dim mlen det_dim src_bits,
+    length labels = length rows ->
+    Forall (fun row => length (kcoeff row) = cols /\
+      length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rows ->
+    length (kcoeff target) = offset + cols ->
+    length (karr_row_entries target) = length columns ->
+    offset + cols = dim -> length columns = dim + mlen + 2 ->
+    previous <> 0%Z ->
+    karr_minor_law previous pivot_rows pivot_columns columns
+      (combine labels
+        (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+        [(target_origin, karr_row_entries target)]) ->
+    Forall (Forall (fun z => Z.size_nat z <= src_bits)) pivot_rows ->
+    Forall (Forall (fun z => Z.size_nat z <= src_bits)) labels ->
+    Forall (fun z => Z.size_nat z <= src_bits) target_origin ->
+    1 <= det_dim -> length pivot_rows + length labels + 1 <= det_dim ->
+    karr_target_envelope
+      (map (karr_zero_prefix offset) (karr_bareiss cols previous rows))
+      previous target dim mlen (ellB det_dim src_bits).
+  Proof.
+    induction cols as [|cols IH]; intros offset previous pivot_rows
+      pivot_columns columns labels rows target_origin target dim mlen det_dim src_bits
+      Hlabels Hrows Htarget_coeff Htarget_entries Hdim Hcolumns Hprevious Hlaw
+      Hpivots Hlabels_bits Htarget_bits Hdet_dim Hcount.
+    all: pose proof (karr_target_law_envelope previous pivot_rows
+      pivot_columns columns
+      (combine labels
+        (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+        [(target_origin, karr_row_entries target)])
+      target_origin target dim mlen det_dim src_bits Hlaw
+      ltac:(apply in_or_app; right; now left)
+      ltac:(lia) Htarget_entries Hcolumns Hpivots Htarget_bits
+      Hdet_dim ltac:(lia)) as Htarget_envelope.
+    - cbn [karr_bareiss]. apply karr_target_envelope_zero_rows;
+        [|exact Htarget_envelope].
+      apply Forall_map, Forall_forall. intros row Hin.
+      pose proof (proj1 (Forall_forall _ _) Hrows row Hin) as [Hwidth _].
+      apply karr_zero_prefix_first_none.
+      destruct (kcoeff row) as [|z zs]; [reflexivity|].
+      cbn [length] in Hwidth. lia.
+    - rename cols into cols'. cbn [karr_bareiss].
+      destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+      + pose proof (karr_pivot_some rows pivot rest Hselect)
+          as [Hp Hperm_rows].
+        pose proof (Permutation_Forall Hperm_rows Hrows) as Hselected.
+        apply Forall_cons_iff in Hselected as [Hp_width Hrest_width].
+        destruct Hp_width as [Hp_coeff Hp_entries].
+        destruct (karr_pivot_combine _ _
+          (fun row => karr_row_entries (karr_zero_prefix offset row))
+          labels rows pivot rest Hlabels Hselect) as
+          [origin [remaining [Hremaining [Hperm_labels Hperm_pairs]]]].
+        pose proof (Permutation_Forall Hperm_labels Hlabels_bits) as Hsources.
+        apply Forall_cons_iff in Hsources as [Horigin Hremaining_bits].
+        assert (Hlaw_selected : karr_minor_law previous pivot_rows
+          pivot_columns columns
+          ((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+            combine remaining
+              (map (fun row => karr_row_entries
+                (karr_zero_prefix offset row)) rest) ++
+            [(target_origin, karr_row_entries target)])).
+        { eapply karr_minor_law_permutation; [|exact Hlaw].
+          change (Permutation
+            (combine labels (map (fun row => karr_row_entries
+              (karr_zero_prefix offset row)) rows) ++
+              [(target_origin, karr_row_entries target)])
+            (((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+              combine remaining (map (fun row => karr_row_entries
+                (karr_zero_prefix offset row)) rest)) ++
+              [(target_origin, karr_row_entries target)])).
+          now apply Permutation_app_tail. }
+        destruct (karr_minor_law_prefix_step cols' offset previous pivot_rows
+          pivot_columns columns origin pivot remaining rest target_origin target
+          Hremaining Hp_coeff Hp_entries Hrest_width Htarget_coeff
+          Htarget_entries Hprevious Hp Hlaw_selected)
+          as [_ Hnext].
+        destruct (karr_prefix_pivot_width cols' offset previous columns pivot
+          rest target Hp_coeff Hp_entries Hrest_width Htarget_coeff
+          Htarget_entries Hp) as [Hrows_next [Htarget_coeff_next
+            Htarget_entries_next]].
+        set (a := karr_head pivot).
+        set (target' := karr_reduce previous a
+          (karr_nth offset (kcoeff target)) (karr_zero_prefix offset pivot) target).
+        set (rows' := map (fun row => karr_tail
+          (karr_reduce previous a (karr_head row) pivot row)) rest).
+        cbn [map karr_target_envelope].
+        rewrite (karr_zero_prefix_first offset pivot Hp).
+        split; [exact Htarget_envelope|].
+        rewrite map_map.
+        replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+            (karr_bareiss cols' a rows')) with
+          (map (karr_zero_prefix (S offset)) (karr_bareiss cols' a rows')).
+        * apply (IH (S offset) a (pivot_rows ++ [origin])
+            (pivot_columns ++ [nth offset columns 0%nat]) columns
+            remaining rows' target_origin target' dim mlen det_dim src_bits).
+          -- unfold rows'. rewrite length_map. exact Hremaining.
+          -- exact Hrows_next.
+          -- exact Htarget_coeff_next.
+          -- exact Htarget_entries_next.
+          -- lia.
+          -- exact Hcolumns.
+          -- exact Hp.
+          -- exact Hnext.
+          -- apply Forall_app. split; [exact Hpivots|].
+             constructor; [exact Horigin|constructor].
+          -- exact Hremaining_bits.
+          -- exact Htarget_bits.
+          -- exact Hdet_dim.
+          -- pose proof (Permutation_length Hperm_rows) as Hrow_count.
+             cbn [length] in Hrow_count.
+             rewrite length_app. cbn [length]. lia.
+        * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+      + destruct (karr_minor_law_prefix_skip cols' offset previous pivot_rows
+          pivot_columns columns labels rows target_origin target Hselect Hrows Hlaw)
+          as [Hrows_next Hlaw_next].
+        rewrite map_map.
+        replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+            (karr_bareiss cols' previous (map karr_tail rows))) with
+          (map (karr_zero_prefix (S offset))
+            (karr_bareiss cols' previous (map karr_tail rows))).
+        * apply (IH (S offset) previous pivot_rows pivot_columns columns
+            labels (map karr_tail rows) target_origin target dim mlen det_dim src_bits).
+          -- rewrite length_map. exact Hlabels.
+          -- exact Hrows_next.
+          -- replace (S offset + cols') with (offset + S cols') by lia.
+             exact Htarget_coeff.
+          -- exact Htarget_entries.
+          -- lia.
+          -- exact Hcolumns.
+          -- exact Hprevious.
+          -- exact Hlaw_next.
+          -- exact Hpivots.
+          -- exact Hlabels_bits.
+          -- exact Htarget_bits.
+          -- exact Hdet_dim.
+          -- exact Hcount.
+        * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+  Qed.
+
   (** The last row of a bounded target trace retains the same envelope. *)
   Lemma karr_target_envelope_result : forall rs previous target dim mlen bits,
     karr_target_envelope rs previous target dim mlen bits ->
