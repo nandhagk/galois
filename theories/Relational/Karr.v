@@ -801,6 +801,53 @@ Proof.
     rewrite Hsame. lia.
 Qed.
 
+(** A pair of original columns contributes one term to a double Laplace expansion. *)
+Definition karr_determinant_pair_term (order : nat) (row : list Z)
+    (rows : list (list Z)) (first second : nat) : Z :=
+  if first =? second then 0%Z else
+    ((if Nat.even first then 1 else -1) *
+      (if Nat.even (if (second <? first)%nat then second else (second - 1)%nat)
+        then 1 else -1) *
+      karr_nth first row * karr_nth second row *
+      karr_determinant order (map (fun r =>
+        karr_delete (Nat.min first second)
+          (karr_delete (Nat.max first second) r)) rows))%Z.
+
+(** Exchanging the two selected columns negates their double-expansion term. *)
+Lemma karr_determinant_pair_term_swap : forall order row rows first second,
+  karr_determinant_pair_term order row rows first second =
+    (- karr_determinant_pair_term order row rows second first)%Z.
+Proof.
+  intros order row rows first second.
+  destruct (Nat.eq_dec first second) as [Hequal|Hdistinct].
+  - subst second. unfold karr_determinant_pair_term.
+    now rewrite Nat.eqb_refl.
+  - unfold karr_determinant_pair_term.
+    assert (Hfirst : (first =? second) = false) by (apply Nat.eqb_neq; exact Hdistinct).
+    assert (Hsecond : (second =? first) = false) by (apply Nat.eqb_neq; lia).
+    rewrite Hfirst, Hsecond.
+    assert (Hminor : map (fun r =>
+        karr_delete (Nat.min first second)
+          (karr_delete (Nat.max first second) r)) rows =
+      map (fun r => karr_delete (Nat.min second first)
+        (karr_delete (Nat.max second first) r)) rows).
+    { rewrite (Nat.min_comm first second), (Nat.max_comm first second).
+      reflexivity. }
+    rewrite Hminor.
+    assert (Horder : first < second \/ second < first) by lia.
+    destruct Horder as [Horder|Horder].
+    + assert (Hlt : (first <? second) = true) by (apply Nat.ltb_lt; lia).
+      assert (Hge : (second <? first) = false) by (apply Nat.ltb_ge; lia).
+      rewrite Hlt, Hge.
+      rewrite (karr_determinant_sign_pair first second Horder).
+      ring.
+    + assert (Hlt : (second <? first) = true) by (apply Nat.ltb_lt; lia).
+      assert (Hge : (first <? second) = false) by (apply Nat.ltb_ge; lia).
+      rewrite Hlt, Hge.
+      rewrite (karr_determinant_sign_pair second first Horder).
+      ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
