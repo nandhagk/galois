@@ -15818,6 +15818,26 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hhead Hcheck. lia.
   Qed.
 
+  (** The prepared pivot's support and logarithmic width fit public work. *)
+  Lemma poly_assign_prepared_pivot_work : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef prepared) + 1 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    (length P + 2) * (support + terms (Reached P) + length P + 3) *
+      (bits + Nat.log2 (total + 1) + 1)^2 <=
+      128 * (length P + 3)^2 *
+        (n P + total + length P + 3) * bits^2.
+  Proof.
+    intros x e P f Hlinear prepared support bits total.
+    pose proof (poly_assign_prepared_pivot_mass x e P f NoWrap Hlinear) as Hpivot.
+    cbn zeta in Hpivot.
+    eapply Nat.le_trans; [exact Hpivot|].
+    apply Nat.mul_le_mono_r, Nat.mul_le_mono_l. lia.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
