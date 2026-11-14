@@ -13053,6 +13053,32 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Qed.
 
 
+  (** The terminal callback fits the row allowance used by the run-fold recurrence. *)
+  Lemma T_poly_range_candidate_recurrence : forall P f bounds r dim keys bits,
+    P <> [] -> Forall (poly_source_envelope dim bits) P ->
+    length (coef f) <= dim -> F.form_bits f <= bits ->
+    RangeCore.poly_row_envelope dim (length P + 1) keys bits r ->
+    (T_range_candidate P f bounds r <= poly_range_candidate_factor *
+      N.of_nat (length P + 2) * N.of_nat (dim + length P + 2) *
+        N.of_nat (keys + bits + 1)^2)%N.
+  Proof.
+    intros P f bounds r dim keys bits Hnonempty Hsource Hform Hbits Hr.
+    pose proof (T_poly_range_candidate_bounded P f bounds r dim (length P)
+      keys bits ltac:(destruct P; [contradiction|cbn; lia])
+      ltac:(lia) Hsource Hform Hbits Hr) as Hcandidate.
+    set (width := keys + bits + 1).
+    assert (Hstage : (length P + 1) * (dim + length P + 1) * width * width <=
+      (length P + 2) * (dim + length P + 2) * width * width).
+    { repeat apply Nat.mul_le_mono; lia. }
+    eapply N.le_trans; [exact Hcandidate|].
+    replace (poly_range_candidate_factor * N.of_nat (length P + 2) *
+      N.of_nat (dim + length P + 2) * N.of_nat width^2)%N
+      with (poly_range_candidate_factor * N.of_nat
+        ((length P + 2) * (dim + length P + 2) * width * width))%N
+      by (rewrite !Nat2N.inj_mul, N.pow_2_r; ring).
+    apply N.mul_le_mono_l. now apply time_of_nat_le.
+  Qed.
+
   Definition poly_range_empty_candidate_factor : N :=
     (32 * C.c_lc + RangeCore.poly_coef_factor + 256)%N.
 
