@@ -10521,7 +10521,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Proof.
     intros db f k Hstore.
     eapply (database_row_store_ok_transport db (row_delete f k db)).
-    - apply row_delete_row_store.
+    - now rewrite row_delete_row_store.
     - apply row_delete_nuses.
     - apply row_delete_ids.
     - apply row_delete_counters_incl.
@@ -13285,6 +13285,72 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply row_replace_history_old. exact Hnext.
   Qed.
 
+  Lemma put_history_other : forall db f k o g args,
+    (g, args) <> (f, normal_key db k) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (put f k o db))) =
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)).
+  Proof.
+    intros db f k o g args Hother. unfold put.
+    set (ck := normal_key db k) in *.
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext : db_row_store next = db_row_store db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try reflexivity; apply union_row_store_raw. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [now rewrite Hnext |].
+      rewrite row_replace_history_other by exact Hother. now rewrite Hnext.
+    - rewrite row_replace_history_other by exact Hother. now rewrite Hnext.
+  Qed.
+
+  Lemma put_old_locate : forall db f k o g args key r,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    db_locate g args (put f k o db) = db_locate g args db.
+  Proof.
+    intros db f k o g args key r Hstore Hentry. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hsame_store : db_row_store next = db_row_store db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try reflexivity; apply union_row_store_raw. }
+    assert (Hsame_ids : ids next = ids db).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try reflexivity; apply union_ids. }
+    assert (Hnext_entry : PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store next)) = Some (key, r)).
+    { now rewrite Hsame_store. }
+    assert (Hnext_loc : db_locate g args next = db_locate g args db).
+    { apply db_locate_same_store_ids; assumption. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_loc |].
+      rewrite (row_replace_old_locate next f ck (Some before) updated
+        g args key r Hnext_store Hnext_entry).
+      exact Hnext_loc.
+    - rewrite (row_replace_old_locate next f ck None updated
+        g args key r Hnext_store Hnext_entry).
+      exact Hnext_loc.
+  Qed.
+
   (** Repair retains the original row identifier of every historical key. *)
   Lemma repair_current_history_old : forall db f k code key r,
     PTrieCode.get code (row_history (db_row_store db)) = Some (key, r) ->
@@ -13298,6 +13364,63 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       [exact Hentry |].
     cbn [database_set_nuses database_set_row_store db_row_store row_history].
     apply put_history_old. now rewrite row_delete_row_store.
+  Qed.
+
+  Lemma repair_current_history_other : forall db f k g args,
+    wf db -> (g, args) <> (f, normal_key db k) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (repair_current f k db))) =
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)).
+  Proof.
+    intros db f k g args Hwf Hother. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [reflexivity |].
+    cbn [database_set_nuses database_set_row_store db_row_store row_history].
+    rewrite put_history_other.
+    - now rewrite row_delete_row_store.
+    - rewrite row_delete_normal_key,
+        (normal_key_idempotent db k (wf_forest db Hwf)).
+      exact Hother.
+  Qed.
+
+  Lemma repair_current_old_locate : forall db f k g args key r,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    db_locate g args (repair_current f k db) = db_locate g args db.
+  Proof.
+    intros db f k g args key r Hstore Hentry. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [reflexivity |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted).
+    assert (Hdeleted_entry : PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store deleted)) = Some (key, r)).
+    { subst deleted. now rewrite row_delete_row_store. }
+    assert (Hupdated_loc : db_locate g args updated = db_locate g args db).
+    { transitivity (db_locate g args deleted).
+      - subst updated. eapply put_old_locate.
+        + subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
+        + exact Hdeleted_entry.
+      - subst deleted. apply db_locate_same_store_ids.
+        + apply row_delete_row_store.
+        + apply row_delete_ids. }
+    rewrite (db_locate_same_core updated
+      (database_set_nuses (db_nuses db)
+        (database_set_row_store
+          {| row_history := row_history (db_row_store updated);
+             row_links := row_links (db_row_store updated);
+             row_weights := row_weights (db_row_store updated);
+             row_keys := row_keys (db_row_store updated);
+             row_fresh := row_fresh (db_row_store updated);
+             row_uses := row_uses (db_row_store db) |} updated))
+      g args) by reflexivity.
+    exact Hupdated_loc.
   Qed.
 
   Lemma move_row_identity_history : forall db f old current,
