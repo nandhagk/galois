@@ -385,6 +385,37 @@ Proof.
   f_equal. apply IH. lia.
 Qed.
 
+(** Deleting two distinct columns gives the same row in either order. *)
+Lemma karr_delete_comm : forall first second row,
+  first <= second ->
+  karr_delete first (karr_delete (S second) row) =
+    karr_delete second (karr_delete first row).
+Proof.
+  induction first as [|first IH]; intros [|second] [|z row] Horder;
+    cbn [karr_delete] in *; try reflexivity; try lia.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Lookup after a deletion skips precisely the removed coordinate. *)
+Lemma karr_nth_delete : forall removed index row,
+  karr_nth index (karr_delete removed row) =
+    if index <? removed then karr_nth index row else karr_nth (S index) row.
+Proof.
+  intros removed index row. revert index row.
+  induction removed as [|removed IH]; intros index [|z row].
+  - destruct index as [|index]; cbn [karr_nth karr_delete Nat.ltb];
+      try reflexivity; destruct (index <? 0); reflexivity.
+  - destruct index as [|index]; reflexivity.
+  - destruct index as [|index]; cbn [karr_nth karr_delete Nat.ltb];
+      try reflexivity; destruct (S index <? S removed); reflexivity.
+  - destruct index as [|index].
+    + reflexivity.
+    + cbn [karr_nth karr_delete].
+      change (karr_nth index (karr_delete removed row) =
+        if index <? removed then karr_nth index row else karr_nth (S index) row).
+      exact (IH index row).
+Qed.
+
 (** Laplace expansion defines determinants independently of the elimination program. *)
 Fixpoint karr_determinant (order : nat) (rows : list (list Z)) : Z :=
   match order with
