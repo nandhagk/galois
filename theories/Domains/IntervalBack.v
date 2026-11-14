@@ -5799,6 +5799,153 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       rewrite Nat.mul_1_r; lia.
   Qed.
 
+  Local Lemma table_smod_base_time : forall rw wa a wb b,
+    (T_interval_smod_base rw (interval_clip wa a) (interval_clip wb b) <=
+      (500000 + 10000 * Scalar.c_scalar) * N.of_nat
+        ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+          interval_bits (interval_clip wb b) + 1) ^ 2))%N.
+  Proof.
+    intros rw wa a wb b.
+    set (ca := interval_clip wa a).
+    set (cb := interval_clip wb b).
+    set (s := Pos.to_nat rw + interval_bits ca + interval_bits cb + 1).
+    assert (Hpositive : (1 <= s)%nat) by (unfold s; lia).
+    assert (Hsquare_nat : (s <= s ^ 2)%nat)
+      by (clear - Hpositive; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hsquare_nat) as HsquareN.
+    assert (Hone_nat : (1 <= s ^ 2)%nat)
+      by (clear - Hpositive; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hone_nat) as Hone.
+    assert (Ha_nat :
+      ((Pos.to_nat rw + interval_bits ca + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    assert (Hb_nat :
+      ((Pos.to_nat rw + interval_bits cb + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    assert (Htop_nat : ((Pos.to_nat rw + 1) ^ 2 <= s ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold s; lia).
+    pose proof (table_nat_to_N_le _ _ Ha_nat) as HaN.
+    pose proof (table_nat_to_N_le _ _ Hb_nat) as HbN.
+    pose proof (table_nat_to_N_le _ _ Htop_nat) as HtopN.
+    pose proof (table_sign_time rw ca) as Hsign_a.
+    pose proof (table_sign_time rw cb) as Hsign_b.
+    pose proof (table_neg_time rw ca) as Hneg_a.
+    pose proof (table_neg_time rw cb) as Hneg_b.
+    pose proof (table_top_time rw) as Htop.
+    assert (Hsign_a_budget :
+      (T_interval_sign rw ca <= 300 * N.of_nat (s ^ 2))%N)
+      by (clear - Hsign_a HaN; nia).
+    assert (Hsign_b_budget :
+      (T_interval_sign rw cb <= 300 * N.of_nat (s ^ 2))%N)
+      by (clear - Hsign_b HbN; nia).
+    assert (Hneg_a_budget :
+      (T_interval_neg rw ca <= 1000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hneg_a HaN; nia).
+    assert (Hneg_b_budget :
+      (T_interval_neg rw cb <= 1000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hneg_b HbN; nia).
+    assert (Htop_budget :
+      (T_interval_top rw <= 100 * N.of_nat (s ^ 2))%N)
+      by (clear - Htop HtopN; nia).
+    rewrite Nat.pow_2_r in Hsign_a_budget, Hsign_b_budget,
+      Hneg_a_budget, Hneg_b_budget, Htop_budget, Hone.
+    unfold T_interval_smod_base.
+    time_simpl; time_cbn; time_pose; time_cbn_all.
+    destruct (interval_sign rw ca) as [sa|] eqn:Ha;
+      destruct (interval_sign rw cb) as [sb|] eqn:Hb;
+      time_cbn_all.
+    all: try (clear - Hsign_a_budget Hsign_b_budget Htop_budget Hone;
+      rewrite Nat.mul_1_r; nia).
+    replace (s * (s * 1))%nat with (s ^ 2)%nat in HsquareN
+      by (rewrite Nat.pow_2_r; nia).
+    set (aa := if sa then interval_neg rw ca else ca).
+    set (bb := if sb then interval_neg rw cb else cb).
+    assert (Haa_bits : (interval_bits aa <= s)%nat).
+    { unfold aa. destruct sa; unfold ca.
+      - pose proof (table_neg_bits rw wa a). unfold s; lia.
+      - unfold s, ca; lia. }
+    assert (Hbb_bits : (interval_bits bb <= s)%nat).
+    { unfold bb. destruct sb; unfold cb.
+      - pose proof (table_neg_bits rw wb b). unfold s; lia.
+      - unfold s, cb; lia. }
+    assert (Hrem_nat :
+      (Pos.to_nat rw + interval_bits aa + interval_bits bb + 1 <= 4 * s)%nat)
+      by (unfold s; lia).
+    pose proof (table_square_scale _ _ _ Hrem_nat) as Hrem_scale.
+    change (N.of_nat (4 ^ 2)) with 16%N in Hrem_scale.
+    pose proof (table_urem_time rw aa bb) as Hrem.
+    assert (Hrem_budget :
+      (T_interval_urem rw aa bb <= 32000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hrem Hrem_scale; nia).
+    set (u := interval_urem rw aa bb).
+    pose proof (table_urem_raw_bits rw aa bb) as Hu_raw.
+    assert (Hu_bits : (interval_bits u <= 11 * s)%nat)
+      by (unfold u, s; lia).
+    pose proof (table_neg_raw_bits rw u) as Hnegu_raw.
+    assert (Hnegu_bits : (interval_bits (interval_neg rw u) <= 29 * s)%nat)
+      by (unfold s; lia).
+    assert (Hnegu_nat :
+      (Pos.to_nat rw + interval_bits u + 1 <= 12 * s)%nat)
+      by (unfold s; lia).
+    pose proof (table_square_scale _ _ _ Hnegu_nat) as Hnegu_scale.
+    change (N.of_nat (12 ^ 2)) with 144%N in Hnegu_scale.
+    pose proof (table_neg_time rw u) as Hnegu.
+    assert (Hnegu_budget :
+      (T_interval_neg rw u <= 144000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hnegu Hnegu_scale; nia).
+    assert (Hadd_u_nat :
+      (Pos.to_nat rw + interval_bits u + interval_bits cb + 1 <= 14 * s)%nat)
+      by (unfold s; lia).
+    assert (Hadd_negu_nat :
+      (Pos.to_nat rw + interval_bits (interval_neg rw u) +
+        interval_bits cb + 1 <= 32 * s)%nat)
+      by (unfold s; lia).
+    pose proof (table_add_modular_time rw u cb) as Hadd_u.
+    pose proof (table_add_modular_time rw (interval_neg rw u) cb) as Hadd_negu.
+    pose proof (table_nat_to_N_le _ _ Hadd_u_nat) as Hadd_uN.
+    pose proof (table_nat_to_N_le _ _ Hadd_negu_nat) as Hadd_neguN.
+    rewrite Nat2N.inj_mul in Hadd_uN, Hadd_neguN.
+    assert (Hadd_u_budget :
+      (T_interval_add_modular rw u cb <= 56000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hadd_u Hadd_uN HsquareN; nia).
+    assert (Hadd_negu_budget :
+      (T_interval_add_modular rw (interval_neg rw u) cb <=
+        128000 * N.of_nat (s ^ 2))%N)
+      by (clear - Hadd_negu Hadd_neguN HsquareN; nia).
+    set (candidate := match sa, sb with
+      | false, false => u
+      | true, false => interval_add_modular rw (interval_neg rw u) cb
+      | false, true => interval_add_modular rw u cb
+      | true, true => interval_neg rw u
+      end).
+    assert (Hcandidate_bits : (interval_bits candidate <= 70 * s)%nat).
+    { unfold candidate. destruct sa, sb.
+      - lia.
+      - pose proof (table_add_modular_raw_bits rw (interval_neg rw u) cb).
+        unfold s; lia.
+      - pose proof (table_add_modular_raw_bits rw u cb).
+        unfold s; lia.
+      - lia. }
+    assert (Hchoice_nat :
+      (interval_bits u + interval_bits candidate + 1 <= 82 * s)%nat)
+      by (unfold s; lia).
+    pose proof (table_nat_to_N_le _ _ Hchoice_nat) as HchoiceN.
+    rewrite Nat2N.inj_mul in HchoiceN.
+    pose proof (table_mod_choice_time u candidate) as Hchoice.
+    assert (Hchoice_budget :
+      (T_interval_mod_choice u candidate <=
+        (82000 + 8200 * Scalar.c_scalar) * N.of_nat (s ^ 2))%N)
+      by (clear - Hchoice HchoiceN HsquareN; nia).
+    rewrite Nat.pow_2_r in Hrem_budget, Hnegu_budget, Hadd_u_budget,
+      Hadd_negu_budget, Hchoice_budget.
+    destruct sa, sb; time_cbn_all;
+      clear - Hsign_a_budget Hsign_b_budget Hneg_a_budget Hneg_b_budget
+        Hrem_budget Hnegu_budget Hadd_u_budget Hadd_negu_budget
+        Hchoice_budget Hone;
+      rewrite Nat.mul_1_r; nia.
+  Qed.
+
+
   Local Lemma table_ashr_small_time : forall rw wa a wb b,
     (T_interval_ashr_small rw (interval_clip wa a) (interval_clip wb b) <=
       50000 * N.of_nat ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
