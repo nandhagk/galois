@@ -1900,6 +1900,29 @@ Proof.
         rewrite (karr_nth_error_value _ _ _ Hget). now left.
 Qed.
 
+(** A selected singleton row and valid column give an order-one source minor. *)
+Lemma karr_signed_minors_partition_one : forall width original row rest column,
+  Permutation original (row :: rest) -> column < width ->
+  In (karr_determinant 1 (karr_submatrix [column] [row]))
+    (karr_signed_minors width original).
+Proof.
+  intros width original row rest column Hpartition Hcolumn.
+  assert (Hrow : In row original).
+  { eapply Permutation_in; [apply Permutation_sym; exact Hpartition|now left]. }
+  assert (Hlength : 0 < length original).
+  { destruct original; [contradiction|cbn [length]; lia]. }
+  unfold karr_signed_minors. apply in_flat_map. exists 1. split.
+  - apply in_seq. assert (Hmin : 1 <= Nat.min (length original) width)
+      by (apply Nat.min_glb; lia). lia.
+  - apply in_flat_map. exists [row]. split.
+    + rewrite karr_choose_one. apply in_map_iff.
+      exists row. split; [reflexivity|exact Hrow].
+    + apply in_flat_map. exists [column]. split.
+      * rewrite karr_choose_one. apply in_map_iff.
+        exists column. split; [reflexivity|]. apply in_seq. lia.
+      * now left.
+Qed.
+
 (** Every higher-order minor of selected rows occurs with its pivot-order sign. *)
 Lemma karr_signed_minors_partition : forall width original selected rest columns,
   2 <= length selected -> length selected = length columns ->
