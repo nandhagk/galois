@@ -14958,10 +14958,49 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intro db. reflexivity.
   Qed.
 
+  Lemma database_log_width_upper : forall n,
+    N.to_nat (N.log2 n) + 1 <= N.size_nat n + 1.
+  Proof.
+    intros [| [p | p |]];
+      cbn [N.log2 N.to_nat N.size_nat Pos.size_nat];
+      rewrite ?positive_size_nat; lia.
+  Qed.
+
+  Lemma rebuild_measure_entries_le : forall db (entries : list (positive * use_entry)),
+    fold_right (fun xe n =>
+      (N.to_nat (N.log2 (ids db) -
+        N.log2 (class_size db (repr db (fst xe)))) + 1 + n)%nat)
+      0%nat entries <=
+    length entries * (N.to_nat (N.log2 (ids db)) + 1).
+  Proof.
+    intros db entries. induction entries as [| xe rest IH]; [cbn; lia |].
+    cbn [fold_right length].
+    assert (Hlog : N.to_nat (N.log2 (ids db) -
+      N.log2 (class_size db (repr db (fst xe)))) <=
+      N.to_nat (N.log2 (ids db))).
+    { lia. }
+    lia.
+  Qed.
+
   (** Computed fuel includes the final stop call. *)
   Lemma F15_fuel_enough : forall db, inv db ->
     (N.of_nat (rebuild_measure (db, [])) < rebuild_fuel db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db Hinv.
+    pose proof (inv_on_pending_count db [] Hinv) as Hpending.
+    assert (Hcount : N.to_nat (db_nuses db) = length (uses_entries db)).
+    { unfold inv, inv_on, forest_ok, row_store_ok, database_row_store_ok in Hinv.
+      unfold uses_entries. tauto. }
+    pose proof (rebuild_measure_entries_le db (uses_entries db)) as Hentries.
+    pose proof (database_log_width_upper (ids db)) as Hwidth.
+    rewrite F15_fuel_formula.
+    unfold rebuild_measure. cbn [fst snd length].
+    unfold nuses, npending. rewrite Hpending.
+    rewrite <- (N2Nat.id (db_nuses db)).
+    rewrite <- (N2Nat.id (N.size (ids db))).
+    rewrite N_size_value.
+    nia.
+  Qed.
 
   (** The rebuild operation runs the same step and fuel as the plan. *)
   Lemma F16_rebuild_run : forall db, wf db ->
