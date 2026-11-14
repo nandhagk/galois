@@ -3471,6 +3471,45 @@ Proof.
       exact (IH previous r Htrace).
 Qed.
 
+(** A live basis row retains one zero for every processed source column. *)
+Fixpoint karr_zero_prefix (count : nat) (r : karr_row) : karr_row :=
+  match count with
+  | 0 => r
+  | S count => karr_restore (karr_zero_prefix count r)
+  end.
+
+(** The next unprocessed coefficient keeps its inner head value. *)
+Lemma karr_zero_prefix_nth : forall count r,
+  karr_nth count (kcoeff (karr_zero_prefix count r)) = karr_head r.
+Proof.
+  induction count as [|count IH]; intro r.
+  - destruct r as [[|z zs] right weight scale]; reflexivity.
+  - cbn [karr_zero_prefix karr_restore kcoeff karr_nth]. exact (IH r).
+Qed.
+
+(** Prefixing an additional skipped zero commutes with prior zeros. *)
+Lemma karr_zero_prefix_restore : forall count r,
+  karr_zero_prefix count (karr_restore r) =
+    karr_restore (karr_zero_prefix count r).
+Proof.
+  induction count as [|count IH]; intro r; [reflexivity|].
+  cbn [karr_zero_prefix]. now rewrite IH.
+Qed.
+
+(** A zero selected head can join the prefix of processed columns. *)
+Lemma karr_zero_prefix_skip : forall count r,
+  kcoeff r <> [] -> karr_head r = 0%Z ->
+  karr_zero_prefix count r = karr_zero_prefix (S count) (karr_tail r).
+Proof.
+  intros count [coeff right weight scale] Hnonempty Hzero.
+  destruct coeff as [|head coeff]; [contradiction|].
+  cbn [karr_head kcoeff] in Hzero. subst head.
+  change (karr_zero_prefix count
+    (karr_restore (KRow coeff right weight scale)) =
+    karr_zero_prefix (S count) (KRow coeff right weight scale)).
+  apply karr_zero_prefix_restore.
+Qed.
+
 (** Every coordinate before the first nonzero coefficient vanishes. *)
 Lemma karr_first_before : forall zs i a,
   karr_first zs = Some (i, a) -> forall j, j < i -> karr_nth j zs = 0%Z.
