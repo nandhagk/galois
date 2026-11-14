@@ -4202,7 +4202,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db Hwf. exact (proj2 (wf_history db Hwf)).
   Qed.
-  Definition wf : t -> Prop := database_wf.
+  Definition wf (db : t) : Prop := database_public_ok db /\ database_owned_ok db.
+
+  Lemma wf_base : forall db, wf db -> database_wf db.
+  Proof. intros db Hwf. exact (database_public_base db (proj1 Hwf)). Qed.
+
+  Coercion wf_base : wf >-> database_wf.
 
   (** An in-range slot reads exactly its stored full or delta cache. *)
   Lemma index_runtime_slot : forall db s new,
@@ -4226,7 +4231,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A declared slot number is below the stored bound in every well-formed database. *)
-  Lemma slot_of_inside_bound : forall db s f perm, wf db ->
+  Lemma slot_of_inside_bound : forall db s f perm, database_wf db ->
     slot_of db s = Some (f, perm) -> (s < runtime_slot_bound (db_runtime db))%N.
   Proof.
     intros db s f perm Hwf Hslot. rewrite (wf_slot_bound db Hwf).
@@ -4236,7 +4241,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Missing slot declarations are exactly the queries outside the allocated slot interval. *)
-  Lemma slot_of_outside_bound : forall db s, wf db -> slot_of db s = None ->
+  Lemma slot_of_outside_bound : forall db s, database_wf db -> slot_of db s = None ->
     (runtime_slot_bound (db_runtime db) <= s)%N.
   Proof.
     intros db s Hwf Hslot. rewrite (wf_slot_bound db Hwf).
@@ -4244,7 +4249,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Executable cell normalization returns the public representative-based cell. *)
-  Lemma normal_cell_correct : forall db c, wf db -> normal_cell db c = canon db c.
+  Lemma normal_cell_correct : forall db c, database_wf db -> normal_cell db c = canon db c.
   Proof.
     intros db [i | v] Hwf; cbn [normal_cell canon repr].
     - destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i)) eqn:Hallocated.
@@ -4259,7 +4264,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Executable key normalization agrees with the public canonical key. *)
-  Lemma normal_key_correct : forall db k, wf db ->
+  Lemma normal_key_correct : forall db k, database_wf db ->
     normal_key db k = map (canon db) k.
   Proof.
     intros db k Hwf. unfold normal_key. apply map_ext.
@@ -4267,7 +4272,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Executable output normalization agrees with the public canonical output. *)
-  Lemma normal_output_correct : forall db o, wf db ->
+  Lemma normal_output_correct : forall db o, database_wf db ->
     option_map (normal_cell db) o = option_map (canon db) o.
   Proof.
     intros db [c |] Hwf; cbn [option_map].
@@ -5112,7 +5117,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A well-formed count equals multiplicity in the actual row projection multiset. *)
-  Lemma wf_slot_projection_count : forall db s f perm u, wf db ->
+  Lemma wf_slot_projection_count : forall db s f perm u, database_wf db ->
     slot_of db s = Some (f, perm) ->
     N.to_nat (runtime_projection_count (db_runtime db) s u) =
       tuple_multiplicity u
@@ -5126,13 +5131,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite Hcount. symmetry.
     unfold tuple_multiplicity, row_contributions. eapply filtered_projection_witness_length.
     - exact Tuples.eqb_spec.
-    - apply RowFacts.elements_nodup_pairs. now apply wf_row_map.
+    - apply RowFacts.elements_nodup_pairs. exact (wf_row_map db Hwf).
     - exact Hdistinct.
     - intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
   Qed.
 
   (** Every cached member in a declared slot has a source in the actual projection multiset. *)
-  Lemma wf_slot_cache_sound : forall db s f perm, wf db ->
+  Lemma wf_slot_cache_sound : forall db s f perm, database_wf db ->
     slot_of db s = Some (f, perm) -> forall new u,
     I.mem (runtime_slot_index (db_runtime db) s new) u ->
     In u (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
@@ -5149,7 +5154,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Every declared slot in a well-formed database has the complete multiset cache invariant. *)
-  Lemma wf_slot_cache : forall db s f perm, wf db -> slot_of db s = Some (f, perm) ->
+  Lemma wf_slot_cache : forall db s f perm, database_wf db -> slot_of db s = Some (f, perm) ->
     slot_cache_ok (db_runtime db) s (length perm)
       (row_contributions f perm (RowMap.elements (runtime_rows (db_runtime db)))).
   Proof.
@@ -5637,7 +5642,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Replacing one actual binding preserves the complete multiset cache at every declared slot. *)
   Lemma row_replace_slot_cache : forall db f k previous o s g perm,
-    wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
+    database_wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
     slot_of db s = Some (g, perm) ->
     slot_cache_ok (db_runtime (row_replace f k previous o db)) s (length perm)
       (row_contributions g perm
@@ -5650,7 +5655,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite row_replace_map. eapply slot_cache_permutation.
     - apply row_contributions_permutation. apply Permutation_sym. exact Htarget.
     - apply (row_replace_cache_list db f k previous o s g perm rest).
-      + now apply wf_group_table.
+      + exact (wf_group_table db Hwf).
       + exact Hslot.
       + exact Hfits.
       + intros before Hbefore. apply (wf_row_slots db Hwf f k before).
@@ -5662,25 +5667,25 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Row replacement preserves both indexes and exact projection counts without an output-wf premise. *)
   Lemma row_replace_cache_correct : forall db f k previous o,
-    wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
+    database_wf db -> old db f k = previous -> slots_fit db f (length (k ++ option_list o)) ->
     database_cache_correct (row_replace f k previous o db).
   Proof.
     intros db f k previous o Hwf Hprevious Hfits.
     apply database_cache_correct_from_slots.
-    - rewrite row_replace_map. apply RowMap.wf_set. now apply wf_row_map.
+    - rewrite row_replace_map. apply RowMap.wf_set. exact (wf_row_map db Hwf).
     - change (runtime_slot_bound (db_runtime (row_replace f k previous o db)) =
         N.of_nat (length (slots (row_replace f k previous o db)))).
       rewrite (row_replace_preserves _ (@runtime_slot_bound (cell V.t) I.t)
         (fun rows state => eq_refl) (fun flag state => eq_refl)
         (fun all new counts state => eq_refl) f k previous o db), row_replace_slots.
-      now apply wf_slot_bound.
+      exact (wf_slot_bound db Hwf).
     - intros s g perm Hslot. apply row_replace_slot_cache; try assumption.
       unfold slot_of in *. now rewrite row_replace_slots in Hslot.
   Qed.
 
   (** Replacing a well-kinded row preserves the kind condition for every stored binding. *)
   Lemma row_replace_kinds : forall db f k previous o,
-    wf db -> kind_ok db f k o ->
+    database_wf db -> kind_ok db f k o ->
     forall g args output, row (view (row_replace f k previous o db)) g args output ->
       match kind (view (row_replace f k previous o db)) g, output with
       | Some ORel, None | Some OId, Some (Id _) | Some (OLat _), Some (Val _) => True
@@ -5695,7 +5700,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** A replacement whose new cells are allocated keeps every row identifier allocated. *)
   Lemma row_replace_allocated : forall db f k previous o,
-    wf db -> kind_ok db f k o ->
+    database_wf db -> kind_ok db f k o ->
     forall g args output i, row (view (row_replace f k previous o db)) g args output ->
       In (Id i) (args ++ option_list output) -> allocated (row_replace f k previous o db) i.
   Proof.
@@ -5708,7 +5713,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** A fitting replacement preserves all row lengths required by the stored slots. *)
   Lemma row_replace_fits : forall db f k previous o,
-    wf db -> kind_ok db f k o ->
+    database_wf db -> kind_ok db f k o ->
     forall g args output, row (view (row_replace f k previous o db)) g args output ->
       slots_fit (row_replace f k previous o db) g (length (args ++ option_list output)).
   Proof.
@@ -5721,7 +5726,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** A canonical replacement leaves quiet databases canonical. *)
   Lemma row_replace_canonical : forall db f k previous o,
-    wf db -> (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    database_wf db -> (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
     pending (row_replace f k previous o db) = 0 -> canonical (row_replace f k previous o db).
   Proof.
     intros db f k previous o Hwf Hnew Hquiet g args output Hrow i Hin.
@@ -5760,7 +5765,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Cache correctness is the only remaining obligation for a well-kinded canonical row update. *)
   Lemma row_replace_wf_from_caches : forall db f k previous o,
-    wf db -> kind_ok db f k o ->
+    database_wf db -> kind_ok db f k o ->
     (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
     (forall s new u, I.mem (index s new (row_replace f k previous o db)) u ->
       exists g perm args output,
@@ -5776,7 +5781,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       slot_of (row_replace f k previous o db) s = Some (g, perm) ->
       I.wf (length perm) (index s new (row_replace f k previous o db))) ->
     projection_counts_ok (row_replace f k previous o db) ->
-    wf (row_replace f k previous o db).
+    database_wf (row_replace f k previous o db).
   Proof.
     intros db f k previous o Hwf Hkind Hcanonical Hsound Hcomplete Harity Hcounts.
     assert (Hruntime :
@@ -5804,7 +5809,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       runtime_max_name (db_runtime db)) in Hmax.
     change (runtime_slot_bound (db_runtime (row_replace f k previous o db)) =
       runtime_slot_bound (db_runtime db)) in Hbound.
-    unfold wf, database_wf. split.
+    unfold database_wf. split.
     { rewrite row_replace_forest. exact (wf_forest db Hwf). }
     split.
     { intro i. rewrite row_replace_forest. unfold allocated. rewrite row_replace_ids.
@@ -5881,7 +5886,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The next interval endpoint is absent from the current well-formed forest. *)
-  Lemma allocate_next_absent : forall db, wf db ->
+  Lemma allocate_next_absent : forall db, database_wf db ->
     ~ UnionFind.mem (db_forest db) (N.succ_pos (ids db)).
   Proof.
     intros db Hwf Hmember. apply (proj1 (wf_forest_members db Hwf _)) in Hmember.
@@ -5889,7 +5894,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Fresh allocation extends exact forest membership to the new interval endpoint. *)
-  Lemma allocate_next_members : forall db, wf db -> forall i,
+  Lemma allocate_next_members : forall db, database_wf db -> forall i,
     UnionFind.mem (db_forest (allocate_id (N.succ_pos (ids db)) db)) i <->
       allocated (allocate_id (N.succ_pos (ids db)) db) i.
   Proof.
@@ -5902,26 +5907,26 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Fresh allocation increments the stored forest count and allocation bound together. *)
-  Lemma allocate_next_count : forall db, wf db ->
+  Lemma allocate_next_count : forall db, database_wf db ->
     count (db_forest (allocate_id (N.succ_pos (ids db)) db)) =
       ids (allocate_id (N.succ_pos (ids db)) db).
   Proof.
     intros db Hwf. rewrite allocate_next_ids.
     change (count (UnionFindCode.add (N.succ_pos (ids db)) (db_forest db)) =
       N.succ (ids db)).
-    rewrite UnionFindCodeFacts.count_add_absent by now apply allocate_next_absent.
+    rewrite UnionFindCodeFacts.count_add_absent by exact (allocate_next_absent db Hwf).
     now rewrite (wf_forest_count db Hwf).
   Qed.
 
   (** Adding the fresh singleton preserves every old representative. *)
-  Lemma allocate_next_repr : forall db, wf db -> forall i,
+  Lemma allocate_next_repr : forall db, database_wf db -> forall i,
     repr (allocate_id (N.succ_pos (ids db)) db) i = repr db i.
   Proof.
     intros db Hwf i. apply UnionFind.repr_add. exact (wf_forest db Hwf).
   Qed.
 
   (** Fresh allocation preserves the log-to-representative agreement. *)
-  Lemma allocate_next_equalities : forall db, wf db -> forall i j,
+  Lemma allocate_next_equalities : forall db, database_wf db -> forall i j,
     same (view (allocate_id (N.succ_pos (ids db)) db)) i j <->
       repr (allocate_id (N.succ_pos (ids db)) db) i =
       repr (allocate_id (N.succ_pos (ids db)) db) j.
@@ -5932,7 +5937,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Every logged endpoint stays inside the enlarged allocation interval. *)
-  Lemma allocate_next_log : forall db, wf db ->
+  Lemma allocate_next_log : forall db, database_wf db ->
     Forall (fun edge => allocated (allocate_id (N.succ_pos (ids db)) db) (fst edge) /\
       allocated (allocate_id (N.succ_pos (ids db)) db) (snd edge))
       (runtime_equalities (db_runtime (allocate_id (N.succ_pos (ids db)) db))).
@@ -5942,7 +5947,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The unchanged pending queue remains allocated after a fresh singleton is added. *)
-  Lemma allocate_next_queue : forall db, wf db ->
+  Lemma allocate_next_queue : forall db, database_wf db ->
     Forall (allocated (allocate_id (N.succ_pos (ids db)) db))
       (runtime_queue (db_runtime (allocate_id (N.succ_pos (ids db)) db))).
   Proof.
@@ -5951,7 +5956,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Identifiers in unchanged rows remain allocated after the interval grows. *)
-  Lemma allocate_next_row_ids : forall db, wf db -> forall f k o i,
+  Lemma allocate_next_row_ids : forall db, database_wf db -> forall f k o i,
     row (view (allocate_id (N.succ_pos (ids db)) db)) f k o ->
     In (Id i) (k ++ option_list o) -> allocated (allocate_id (N.succ_pos (ids db)) db) i.
   Proof.
@@ -5960,7 +5965,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Fresh singleton allocation preserves canonicality whenever the queue is empty. *)
-  Lemma allocate_next_canonical : forall db, wf db ->
+  Lemma allocate_next_canonical : forall db, database_wf db ->
     pending (allocate_id (N.succ_pos (ids db)) db) = 0 ->
     canonical (allocate_id (N.succ_pos (ids db)) db).
   Proof.
@@ -5970,7 +5975,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Adding the next singleton preserves the complete database invariant. *)
-  Lemma wf_allocate_next : forall db, wf db -> wf (allocate_id (N.succ_pos (ids db)) db).
+  Lemma wf_allocate_next : forall db, database_wf db ->
+    database_wf (allocate_id (N.succ_pos (ids db)) db).
   Proof.
     intros db Hwf.
     assert (Hforest : UnionFind.wf (db_forest (allocate_id (N.succ_pos (ids db)) db))).
@@ -5987,7 +5993,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (allocate_next_canonical db Hwf) as Hcanonical.
     pose proof (database_history_allocate_id db (N.succ_pos (ids db))
       (wf_history db Hwf)) as Hhistory.
-    unfold wf, database_wf in Hwf |- *. unfold allocate_id in *.
+    unfold database_wf in Hwf |- *. unfold allocate_id in *.
     cbn [database_set_forest database_set_runtime runtime_set_allocated runtime_set_changed
       db_forest db_runtime db_npending runtime_allocated runtime_rows runtime_kinds
       runtime_slots runtime_equalities runtime_queue runtime_all_indexes runtime_new_indexes
@@ -6191,7 +6197,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Initialization creates a well-formed database. *)
   Lemma wf_init : forall ds sl, wf (init ds sl).
-  Proof. exact database_wf_init. Qed.
+  Proof. intros ds sl. exact (database_full_ok_init ds sl). Qed.
 
   (** Rebuilding keeps the database well formed. *)
   Lemma wf_rebuild : forall db, wf db -> wf (rebuild db).
@@ -6272,7 +6278,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   Lemma wf_advance : forall db, wf db ->
     wf (advance db) /\ view (advance db) = view db /\ changed (advance db) = false.
-  Proof. exact database_wf_advance. Qed.
+  Proof.
+    intros db Hwf.
+    destruct (database_full_ok_advance db Hwf) as [Hpublic Howned].
+    split; [exact (conj Hpublic Howned) |].
+    exact (proj2 (database_wf_advance db (wf_base db Hwf))).
+  Qed.
 
   (** Find returns the representative without changing the view. *)
   Lemma find_spec : forall i db, wf db ->
@@ -7171,7 +7182,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   (** Equality insertion keeps the database well formed. *)
   Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
     wf (union i j db).
-  Proof. exact database_wf_union. Qed.
+  Proof.
+    intros i j db [Hpublic Howned] Hi Hj. split.
+    - apply database_public_ok_union; assumption.
+    - apply database_owned_ok_union.
+      + exact (wf_forest db (database_public_base db Hpublic)).
+      + exact Howned.
+  Qed.
 
   (** Rebuilding canonicalizes every row and empties pending work. *)
   Lemma rebuild_canonical : forall db, wf db ->
@@ -7849,7 +7866,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A representative of an allocated identifier is still allocated. *)
-  Lemma repr_allocated : forall db i, wf db -> allocated db i -> allocated db (repr db i).
+  Lemma repr_allocated : forall db i, database_wf db -> allocated db i -> allocated db (repr db i).
   Proof.
     intros db i Hwf Hi. unfold allocated, repr.
     eapply UnionFindCodeFacts.repr_allocated.
@@ -7859,7 +7876,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Canonicalizing an allocated tuple does not introduce an unallocated identifier. *)
-  Lemma canon_key_allocated : forall db k, wf db ->
+  Lemma canon_key_allocated : forall db k, database_wf db ->
     (forall j, In (Id j) k -> allocated db j) ->
     forall i, In (Id i) (map (canon db) k) -> allocated db i.
   Proof.
@@ -7938,16 +7955,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Every identifier in a normalized tuple is already its own representative. *)
-  Lemma canon_key_fixed : forall db k, wf db ->
+  Lemma canon_key_fixed : forall db k, database_wf db ->
     forall i, In (Id i) (map (canon db) k) -> repr db i = i.
   Proof.
     intros db k Hwf i Hin. apply in_map_iff in Hin as [c [Hcell Hin]].
     destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
-    injection Hcell as <-. apply repr_idem. exact Hwf.
+    injection Hcell as <-. unfold repr. apply UnionFind.repr_idem.
+    exact (wf_forest db Hwf).
   Qed.
 
   (** A key whose identifiers are representatives is unchanged by normalization. *)
-  Lemma normal_key_of_fixed : forall db k, wf db ->
+  Lemma normal_key_of_fixed : forall db k, database_wf db ->
     (forall i, In (Id i) k -> repr db i = i) -> normal_key db k = k.
   Proof.
     intros db k Hwf Hfixed. rewrite normal_key_correct by exact Hwf.
@@ -7959,7 +7977,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Normalization preserves allocation, tuple length and the declared output shape. *)
-  Lemma kind_ok_canon : forall db f k o, wf db -> kind_ok db f k o ->
+  Lemma kind_ok_canon : forall db f k o, database_wf db -> kind_ok db f k o ->
     kind_ok db f (map (canon db) k) (option_map (canon db) o).
   Proof.
     intros db f k o Hwf [Hids [Hfits Hkind]]. unfold kind_ok. split.
@@ -7971,7 +7989,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A fresh constructor row has allocated cells, the required slots and its declared kind. *)
-  Lemma fresh_constructor_kind_ok : forall db f k, wf db ->
+  Lemma fresh_constructor_kind_ok : forall db f k, database_wf db ->
     (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
     kind (view db) f = Some OId ->
     kind_ok (allocate_id (N.succ_pos (ids db)) db) f (map (canon db) k)
@@ -7990,7 +8008,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The fresh singleton and every normalized key identifier remain canonical after allocation. *)
-  Lemma fresh_constructor_canonical : forall db k, wf db ->
+  Lemma fresh_constructor_canonical : forall db k, database_wf db ->
     forall i, In (Id i)
       (map (canon db) k ++ option_list (Some (Id (N.succ_pos (ids db))))) ->
     repr (allocate_id (N.succ_pos (ids db)) db) i = i.
@@ -7999,21 +8017,21 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
     - exact (canon_key_fixed db k Hwf i Hin).
     - cbn [option_list In] in Hin. destruct Hin as [Heq | Hfalse]; [| contradiction].
-      injection Heq as <-. apply UnionFindCodeFacts.repr_absent. now apply allocate_next_absent.
+      injection Heq as <-. apply UnionFindCodeFacts.repr_absent. exact (allocate_next_absent db Hwf).
   Qed.
 
   (** The common row-update obligation used by put and fresh constructor allocation. *)
   Definition replacement_preserves_wf : Prop :=
-    forall db f k previous o, wf db -> old db f k = previous -> kind_ok db f k o ->
+    forall db f k previous o, database_wf db -> old db f k = previous -> kind_ok db f k o ->
     (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
-    wf (row_replace f k previous o db).
+    database_wf (row_replace f k previous o db).
 
   (** Every non-reuse make branch follows from fresh allocation and the common row update. *)
   Lemma wf_make_fresh_from_replacement : replacement_preserves_wf ->
-    forall db f k previous, wf db ->
+    forall db f k previous, database_wf db ->
     (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
     old db f (map (canon db) k) = previous ->
-    wf (match kind_get f db with
+    database_wf (match kind_get f db with
       | Some OId => row_replace f (map (canon db) k) previous
           (Some (Id (N.succ_pos (ids db)))) (allocate_id (N.succ_pos (ids db)) db)
       | _ => allocate_id (N.succ_pos (ids db)) db
@@ -8030,9 +8048,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Constructor well-formedness reduces to the proved allocation and one row replacement. *)
   Lemma wf_make_from_replacement : replacement_preserves_wf ->
-    forall f k db, wf db ->
+    forall f k db, database_wf db ->
     (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
-    wf (snd (make f k db)).
+    database_wf (snd (make f k db)).
   Proof.
     intros Hreplace f k db Hwf Hargs Hfits. unfold make.
     rewrite (normal_key_correct db k Hwf). fold (ids db).
@@ -8056,7 +8074,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Normalized keys and normalized optional outputs form a canonical row. *)
-  Lemma canon_row_fixed : forall db k o, wf db ->
+  Lemma canon_row_fixed : forall db k o, database_wf db ->
     forall i, In (Id i) (map (canon db) k ++ option_list (option_map (canon db) o)) ->
     repr db i = i.
   Proof.
@@ -8066,7 +8084,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Put uses only a justified union, an unchanged state or one canonical row replacement. *)
   Lemma wf_put_from_replacement : replacement_preserves_wf ->
-    forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
+    forall f k o db, database_wf db -> kind_ok db f k o -> database_wf (put f k o db).
   Proof.
     intros Hreplace f k o db Hwf Hkind.
     pose proof (kind_ok_canon db f k o Hwf Hkind) as Hnormal.
@@ -8080,7 +8098,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         cbn in Hshape, Hbefore; try contradiction.
       + cbn [combine option_map canon]. rewrite output_eqb_refl. exact Hwf.
       + cbn [combine option_map canon]. rewrite output_eqb_refl.
-        apply wf_union; [exact Hwf | |].
+        apply database_wf_union; [exact Hwf | |].
         * eapply wf_row_ids; [exact Hwf | exact Hprevious |].
           apply in_app_iff. right. cbn [option_list In]. now left.
         * apply repr_allocated; [exact Hwf |]. apply Hids.
@@ -8109,15 +8127,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Kind-correct insertion keeps the database well formed. *)
-  Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
+  Lemma database_wf_put : forall f k o db, database_wf db ->
+    kind_ok db f k o -> database_wf (put f k o db).
   Proof.
     exact (wf_put_from_replacement row_replace_wf).
   Qed.
 
   (** Constructor allocation keeps the database well formed. *)
-  Lemma wf_make : forall f k db, wf db ->
+  Lemma database_wf_make : forall f k db, database_wf db ->
     (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
-    wf (snd (make f k db)).
+    database_wf (snd (make f k db)).
   Proof.
     exact (wf_make_from_replacement row_replace_wf).
   Qed.
@@ -8346,7 +8365,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Actual row deletion preserves exact projection multiplicities and both index caches. *)
   Lemma row_delete_cache_correct : forall db f k,
-    wf db -> database_cache_correct (row_delete f k db).
+    database_wf db -> database_cache_correct (row_delete f k db).
   Proof.
     intros db f k Hwf. destruct (row_get f k db) as [o |] eqn:Hrow.
     - pose proof (row_delete_map_present f k db o Hrow) as Hmap.
@@ -8382,7 +8401,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Removing a stored row preserves every structural and multiset-cache invariant. *)
-  Lemma row_delete_wf : forall db f k, wf db -> wf (row_delete f k db).
+  Lemma row_delete_wf : forall db f k, database_wf db -> database_wf (row_delete f k db).
   Proof.
     intros db f k Hwf.
     assert (Hruntime :
@@ -8419,7 +8438,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         exact (wf_row_map db Hwf).
       - unfold row_delete. rewrite Hrow. exact (wf_row_map db Hwf). }
     destruct (row_delete_cache_correct db f k Hwf) as [Hsound [Hcomplete [Harity Hcounts]]].
-    unfold wf, database_wf. split.
+    unfold database_wf. split.
     { rewrite row_delete_forest. exact (wf_forest db Hwf). }
     split.
     { intro i. rewrite row_delete_forest. unfold allocated. rewrite row_delete_ids.
@@ -9524,7 +9543,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Every actual row of a well-formed database satisfies the insertion shape conditions. *)
-  Lemma wf_row_kind_ok : forall db f k o, wf db -> row (view db) f k o -> kind_ok db f k o.
+  Lemma wf_row_kind_ok : forall db f k o, database_wf db -> row (view db) f k o -> kind_ok db f k o.
   Proof.
     intros db f k o Hwf Hrow. split.
     - intros i Hin. exact (wf_row_ids db Hwf f k o i Hrow Hin).
@@ -9573,13 +9592,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** A repair begun in a public well-formed state preserves its complete database invariant. *)
-  Lemma repair_current_wf : forall db f k, wf db -> wf (repair_current f k db).
+  Lemma repair_current_wf : forall db f k, database_wf db -> database_wf (repair_current f k db).
   Proof.
     intros db f k Hwf. unfold repair_current.
     destruct (row_get f k db) as [o |] eqn:Hrow; [| exact Hwf].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) o) o)); [exact Hwf |].
-    apply wf_put; [now apply row_delete_wf |]. apply row_delete_kind_ok.
+    apply database_wf_put; [now apply row_delete_wf |]. apply row_delete_kind_ok.
     rewrite (normal_key_correct db k Hwf), (normal_output_correct db o Hwf).
     apply kind_ok_canon; [exact Hwf |]. now apply wf_row_kind_ok.
   Qed.
@@ -12467,7 +12486,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_alignment_allocate_next : forall db,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (allocate_id (N.succ_pos (ids db)) db).
   Proof.
     intros db Hwf Hstore Halign f k key r Hentry Hcanonical.
@@ -12481,7 +12500,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   (** Fresh allocation retains every owned row and history invariant. *)
   Lemma database_owned_ok_allocate_next : forall db,
-    wf db -> database_owned_ok db ->
+    database_wf db -> database_owned_ok db ->
     database_owned_ok (allocate_id (N.succ_pos (ids db)) db).
   Proof.
     intros db Hwf Howned.
@@ -13786,7 +13805,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_alignment_make : forall db f k,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (snd (make f k db)).
   Proof.
     intros db f k Hwf Hstore Halign.
@@ -13803,7 +13822,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_active_history_coherent_make : forall db f k,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_active_history_coherent db ->
     database_active_history_coherent (snd (make f k db)).
   Proof.
@@ -13883,14 +13902,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_key_ids_bounded_make : forall db f k,
-    wf db -> database_history_key_ids_bounded db ->
+    database_wf db -> database_history_key_ids_bounded db ->
     (forall i, In (Id i) k -> allocated db i) ->
     database_history_key_ids_bounded (snd (make f k db)).
   Proof.
     intros db f k Hwf Hbounded Hinput.
     assert (Hck : forall i, In (Id i) (normal_key db k) -> allocated db i).
     { rewrite normal_key_correct by exact Hwf.
-      eapply canon_key_allocated; eassumption. }
+      intros i Hin. exact (canon_key_allocated db k Hwf Hinput i Hin). }
     pose proof (database_history_key_ids_bounded_allocate_next db Hbounded)
       as Hfresh_bounded.
     unfold make.
@@ -14464,7 +14483,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_idle_ok_allocate_next : forall db,
-    wf db -> database_idle_ok db ->
+    database_wf db -> database_idle_ok db ->
     database_idle_ok (allocate_id (N.succ_pos (ids db)) db).
   Proof.
     intros db Hwf Hidle.
@@ -14508,12 +14527,12 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_idle_ok_make : forall db f k,
-    wf db -> database_idle_ok db -> database_history_alignment db ->
+    database_wf db -> database_idle_ok db -> database_history_alignment db ->
     (forall i, In (Id i) k -> allocated db i) ->
     slots_fit db f (S (length k)) ->
     database_idle_ok (snd (make f k db)).
   Proof.
-    intros db f k Hwf Hidle Halign Hargs Hfits.
+    intros db f k Hwf Hidle Halign Hargs Hfits. pose proof Hwf as Hbase.
     unfold make. rewrite (normal_key_correct db k Hwf). fold (ids db).
     destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |]
       eqn:Hprevious; cbn [snd]; [exact Hidle | | |].
@@ -14902,7 +14921,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_alignment_put : forall db f k o,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (put f k o db).
   Proof.
     intros db f k o Hwf Hstore Halign.
@@ -14931,7 +14950,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma put_fixed_key_locate : forall db f k o,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
     (forall i, In (Id i) k -> repr db i = i) ->
     forall key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store (put f k o db))) =
@@ -14976,7 +14995,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_active_history_coherent_put : forall db f k o,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_active_history_coherent db ->
     database_active_history_coherent (put f k o db).
   Proof.
@@ -15106,7 +15125,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_key_ids_bounded_put : forall db f k o,
-    wf db -> kind_ok db f k o -> database_history_key_ids_bounded db ->
+    database_wf db -> kind_ok db f k o -> database_history_key_ids_bounded db ->
     database_history_key_ids_bounded (put f k o db).
   Proof.
     intros db f k o Hwf Hkind Hbounded. unfold put.
@@ -15197,7 +15216,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma put_representative_old : forall db f k o x,
-    wf db -> repr (put f k o db) x = x -> repr db x = x.
+    database_wf db -> repr (put f k o db) x = x -> repr db x = x.
   Proof.
     intros db f k o x Hwf Hfixed. unfold put in Hfixed.
     set (ck := normal_key db k) in *.
@@ -16840,7 +16859,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
 
   Lemma database_owned_ok_put : forall db f k o,
-    wf db -> kind_ok db f k o -> database_owned_ok db ->
+    database_wf db -> kind_ok db f k o -> database_owned_ok db ->
     database_owned_ok (put f k o db).
   Proof.
     intros db f k o Hwf Hkind Howned.
@@ -16873,7 +16892,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_owned_ok_make : forall db f k,
-    wf db -> database_owned_ok db ->
+    database_wf db -> database_owned_ok db ->
     (forall i, In (Id i) k -> allocated db i) ->
     database_owned_ok (snd (make f k db)).
   Proof.
@@ -16991,7 +17010,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db f k o Hpublic Howned Hkind.
     unfold database_public_ok. split.
-    - apply wf_put; [exact (database_public_base db Hpublic) | exact Hkind].
+    - apply database_wf_put; [exact (database_public_base db Hpublic) | exact Hkind].
     - split.
       + apply database_idle_ok_put; [exact Hpublic | | exact Hkind].
         unfold database_owned_ok in Howned. tauto.
@@ -17006,7 +17025,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Proof.
     intros db f k Hpublic Howned Hargs Hfits.
     unfold database_public_ok. split.
-    - apply wf_make; [exact (database_public_base db Hpublic) | exact Hargs | exact Hfits].
+    - apply database_wf_make; [exact (database_public_base db Hpublic) | exact Hargs | exact Hfits].
     - split.
       + apply database_idle_ok_make;
           [exact (database_public_base db Hpublic) |
@@ -17051,6 +17070,22 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - apply database_public_ok_make; assumption.
     - apply database_owned_ok_make;
         [exact (database_public_base db Hpublic) | exact Howned | exact Hargs].
+  Qed.
+
+  (** Kind-correct insertion keeps the database well formed. *)
+  Lemma wf_put : forall f k o db, wf db -> kind_ok db f k o -> wf (put f k o db).
+  Proof.
+    intros f k o db Hwf Hkind.
+    exact (database_full_ok_put db f k o Hwf Hkind).
+  Qed.
+
+  (** Constructor allocation keeps the database well formed. *)
+  Lemma wf_make : forall f k db, wf db ->
+    (forall j, In (Id j) k -> allocated db j) -> slots_fit db f (S (length k)) ->
+    wf (snd (make f k db)).
+  Proof.
+    intros f k db Hwf Hargs Hfits.
+    exact (database_full_ok_make db f k Hwf Hargs Hfits).
   Qed.
 
 End Database.
@@ -20132,7 +20167,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Public well-formedness is the maintained invariant at an empty active batch. *)
   Lemma F1_inv_wf : forall db, wf db <-> inv db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. unfold wf, inv.
+    exact (database_public_inv_iff db).
+  Qed.
 
   (** The public potential is the weighted occurrence credit. *)
   Lemma F2_potential : forall B db, (potential B db = k_loop * rebuild_potential B db)%N.
