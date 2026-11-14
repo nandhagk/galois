@@ -2367,6 +2367,79 @@ Proof.
   rewrite Hrows in Hstage. rewrite Hlength. exact Hstage.
 Qed.
 
+(** A nonzero pivot and exact row quotients preserve all live minor equations. *)
+Lemma karr_minor_law_pivot : forall previous pivot_rows pivot_columns head columns
+    pivot_origin pivot rest (f : list Z -> list Z),
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns)
+    ((pivot_origin, pivot) :: rest) ->
+  previous <> 0%Z -> karr_nth 0 pivot <> 0%Z ->
+  (forall origin row, In (origin, row) rest -> length row = length pivot) ->
+  (forall origin row, In (origin, row) rest ->
+    map (fun z => (previous * z)%Z) (f row) =
+      karr_delete 0
+        (karr_cross (karr_nth 0 pivot) (karr_nth 0 row) row pivot)) ->
+  karr_minor_law (karr_nth 0 pivot) (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [head]) columns
+    (map (fun pair => (fst pair, f (snd pair))) rest).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pivot_origin pivot rest f
+    Hlaw Hprevious Hp Hwidth Hquotient.
+  unfold karr_minor_law in *. intros origins quotients selected
+    Hpaired Hlength Hselected Hpositive.
+  destruct (karr_pairs_map_lift f rest origins quotients Hpaired)
+    as [live [Hlive Heq]]. subst quotients.
+  rewrite length_map in Hlength, Hpositive.
+  assert (Hlive_width : Forall (fun row => length row = length pivot) live).
+  { clear Hpaired Hlength Hselected Hpositive.
+    induction Hlive as [|origin row origins live Hin Htail IH];
+      [constructor|constructor; [now apply Hwidth with (origin := origin)|exact IH]]. }
+  assert (Hlive_quotient : Forall2 (fun q row =>
+      map (fun z => (previous * z)%Z) q =
+        karr_delete 0
+          (karr_cross (karr_nth 0 pivot) (karr_nth 0 row) row pivot))
+      (map f live) live).
+  { clear Hpaired Hlength Hselected Hpositive Hlive_width.
+    induction Hlive as [|origin row origins live Hin Htail IH];
+      cbn [map]; [constructor|].
+    constructor; [now apply Hquotient with (origin := origin)|exact IH]. }
+  assert (Hcurrent : Forall2
+      (fun origin row => In (origin, row) ((pivot_origin, pivot) :: rest))
+      (pivot_origin :: origins) (pivot :: live)).
+  { constructor; [now left|].
+    eapply Forall2_impl; [|exact Hlive]. intros origin row Hin. now right. }
+  assert (Hvalid : Forall (fun i => i < length (head :: columns))
+      (0 :: map S selected)).
+  { constructor; [cbn [length]; lia|].
+    apply Forall_forall. intros i Hi.
+    apply in_map_iff in Hi as [j [Hj Hin]]. subst i.
+    pose proof (proj1 (Forall_forall _ _) Hselected j Hin) as Hjvalid.
+    cbn in Hjvalid. cbn [length]. lia. }
+  pose proof (Hlaw (pivot_origin :: origins) (pivot :: live)
+    (0 :: map S selected) Hcurrent
+    ltac:(cbn [length]; rewrite length_map; lia) Hvalid
+    ltac:(cbn [length]; lia)) as Hold.
+  pose proof (karr_stage_quotient_minor previous pivot live selected (map f live)
+    Hp Hlive_width Hlength Hpositive Hlive_quotient) as Hstage.
+  cbn [length] in Hold. rewrite length_map in Hold.
+  cbn [Nat.sub] in Hold. rewrite Nat.sub_0_r in Hold.
+  cbn [map] in Hold.
+  rewrite map_map in Hold. cbn [map nth] in Hold.
+  replace (pivot_columns ++ head :: map (fun i => nth i columns 0%nat) selected)
+    with ((pivot_columns ++ [head]) ++
+      map (fun i => nth i columns 0%nat) selected) in Hold
+    by (rewrite <- app_assoc; reflexivity).
+  replace (pivot_rows ++ pivot_origin :: origins)
+    with ((pivot_rows ++ [pivot_origin]) ++ origins) in Hold
+    by (rewrite <- app_assoc; reflexivity).
+  replace (length pivot_rows + S (length live))
+    with (length (pivot_rows ++ [pivot_origin]) + length live) in Hold
+    by (rewrite length_app; cbn [length]; lia).
+  rewrite Hold in Hstage.
+  assert (Hfactor : (previous ^ Z.of_nat (length live) <> 0)%Z).
+  { apply Z.pow_nonzero; lia. }
+  rewrite length_map. clear -Hstage Hfactor. nia.
+Qed.
+
 (** Checked division preserves a zero coordinate in every branch. *)
 Lemma karr_divide_coordinate_zero : forall divisor r i,
   karr_nth i (kcoeff r) = 0%Z -> karr_nth i (kcoeff (karr_divide divisor r)) = 0%Z.
