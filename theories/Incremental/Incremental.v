@@ -3561,11 +3561,10 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Qed.
 
   Lemma invalid_walk_bad_done : forall p p' ch st x,
-    In x (invalidate_keys p p' ch st) ->
+    In x (invalid_bad (invalid_walk p p' ch st)) ->
     In x (invalid_done (invalid_walk p p' ch st)).
   Proof.
     intros p p' ch st x Hbad.
-    change (In x (invalid_bad (invalid_walk p p' ch st))) in Hbad.
     eapply invalid_queued_done.
     - exact (invalid_walk_queued p p' ch st).
     - exact (invalid_walk_pending_empty p p' ch st).
@@ -3989,6 +3988,7 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     In y (invalidate_keys p p' ch st).
   Proof.
     intros p p' ch st id ss x y Hget Hlive Hbucket Hbad Hy Hpresent.
+    unfold invalidate_keys in Hbad.
     pose proof (invalid_walk_bad_done p p' ch st x Hbad) as Hdone.
     pose proof (invalid_walk_processed p p' ch st x Hdone id Hbucket) as Hretired.
     destruct (invalid_walk_snapshot_view p p' ch st id ss Hget Hlive) as
@@ -5574,12 +5574,12 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
         pose proof (Hcounts x id) as Hcount.
         rewrite Horig, Hlive in Hcount; rewrite Hcount.
         apply (proj2 (histogram_count_pos S.key_eqb key_eqb_true x _)); exact Hx. }
+      unfold invalidate_keys in Hbad.
       pose proof (invalid_walk_bad_done p p' ch st x Hbad) as Hdone.
       pose proof (invalid_walk_processed p p' ch st x Hdone id Hbucket) as Hretired.
       rewrite snapshot_get_edit in Hget.
       destruct (invalid_bad (invalid_walk p p' ch st)) as [|y bad]
-        eqn:Hbadlist; [unfold invalidate_keys in Hbad; rewrite Hbadlist in Hbad;
-          contradiction|].
+        eqn:Hbadlist; [contradiction|].
       pose proof (Hretired ss' Hget) as Hfalse; congruence.
     Qed.
 
