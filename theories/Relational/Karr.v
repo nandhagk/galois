@@ -1983,6 +1983,20 @@ Proof.
   cbn [app] in Hscale. rewrite !app_nil_r in Hscale. exact Hscale.
 Qed.
 
+(** Coordinatewise exact quotients scale every selected determinant uniformly. *)
+Lemma karr_submatrix_multiple_minor : forall d columns quotients raw,
+  Forall2 (fun q r => map (fun z => (d * z)%Z) q = r) quotients raw ->
+  karr_determinant (length raw) (karr_submatrix columns raw) =
+    (d ^ Z.of_nat (length quotients) *
+      karr_determinant (length quotients) (karr_submatrix columns quotients))%Z.
+Proof.
+  intros d columns quotients raw Hmultiple.
+  assert (Hraw : raw = map (map (fun z => (d * z)%Z)) quotients).
+  { induction Hmultiple as [|q r qs rs Hhead Htail IH];
+      cbn [map]; [reflexivity|]. now rewrite <- Hhead, IH. }
+  subst raw. rewrite length_map. apply karr_submatrix_scale_minor.
+Qed.
+
 (** Checked division preserves a zero coordinate in every branch. *)
 Lemma karr_divide_coordinate_zero : forall divisor r i,
   karr_nth i (kcoeff r) = 0%Z -> karr_nth i (kcoeff (karr_divide divisor r)) = 0%Z.
