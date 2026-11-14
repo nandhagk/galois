@@ -12896,6 +12896,162 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (Cert ms 1 false)); time_simpl; nia.
   Qed.
 
+  Definition poly_range_candidate_factor : N :=
+    (128 * C.c_lc + RangeCore.poly_coef_factor + 4200)%N.
+
+  (** A bounded terminal row pays for its complete range candidate callback. *)
+  Lemma T_poly_range_candidate_bounded : forall P f bounds r dim mlen keys bits,
+    1 <= mlen -> length P <= mlen ->
+    Forall (poly_source_envelope dim bits) P ->
+    length (coef f) <= dim -> F.form_bits f <= bits ->
+    RangeCore.poly_row_envelope dim (mlen + 1) keys bits r ->
+    (T_range_candidate P f bounds r <= poly_range_candidate_factor *
+      N.of_nat ((mlen + 1) * (dim + mlen + 1) *
+        (keys + bits + 1) * (keys + bits + 1)))%N.
+  Proof.
+    intros P f bounds r dim mlen keys bits Hmlen HP Hsource Hform Hformbits
+      (Hnormal & Hdim & Hkeys & Hbits & Hmultlen & Hmultbits).
+    set (c := poly_constraint r).
+    set (a := poly_coefficient tmp_eqb None c).
+    set (width := keys + bits + 1).
+    set (stage := (mlen + 1) * (dim + mlen + 1) * width * width).
+    set (work := N.of_nat stage).
+    assert (Ha : Z.size_nat a <= bits).
+    { unfold a, c. eapply Nat.le_trans;
+        [apply RangeCore.poly_row_coefficient_bits; exact Hnormal|exact Hbits]. }
+    assert (Hr : Z.size_nat (rhs c) <= bits).
+    { unfold c. eapply Nat.le_trans; [apply RangeCore.poly_row_rhs_bits|exact Hbits]. }
+    pose proof (poly_range_candidate_work dim mlen keys bits
+      (length (coef f)) (Z.size_nat a) Hmlen Hform Ha) as Hcharges.
+    change ((length (coef f) + 1) * (Z.size_nat a + 1) * (bits + 1) <= stage /\
+      (bits + 1) * (bits + 1) <= stage /\
+      (dim + 2) * width <= stage /\
+      (mlen + 1) * (dim + mlen + 1) * (bits + 1) * (bits + 1) <= stage)
+      in Hcharges.
+    destruct Hcharges as [Hscale_work [Hsquare_work [Hlinear_work Hcheck_work]]].
+    assert (Hwork : (1 <= work)%N).
+    { unfold work. assert (Hnat : 1 <= stage).
+      { pose proof Hsquare_work. nia. }
+      lia. }
+    assert (Hrowdim : length (lhs c) <= dim) by exact Hdim.
+    assert (Hentry : (N.of_nat (length (lhs c) + 1) <= work)%N).
+    { unfold work. apply time_of_nat_le.
+      eapply Nat.le_trans; [|exact Hlinear_work].
+      assert (Hdim' : length (lhs c) + 1 <= dim + 2) by lia.
+      assert (Hproduct : dim + 2 <= (dim + 2) * width).
+      { eapply Nat.le_trans with (m := (dim + 2) * 1); [lia|].
+        apply Nat.mul_le_mono_l. unfold width. lia. }
+      lia. }
+    pose proof (List.T_forallb_le poly_range_result_key T_poly_range_result_key 2
+      (lhs c) T_poly_range_result_key_bounded) as Hscan.
+    assert (Hscan_total : (List.T_forallb poly_range_result_key T_poly_range_result_key
+      (lhs c) <= 5 * work)%N).
+    { change (List.T_forallb poly_range_result_key T_poly_range_result_key (lhs c) <=
+        4 * N.of_nat (length (lhs c)) + 1)%N in Hscan.
+      clear -Hscan Hentry Hwork. lia. }
+    pose proof (RangeCore.T_poly_coefficient_normal None c keys bits
+      Hnormal Hkeys Hbits) as Hcoefficient.
+    change (T_poly_coefficient tmp_eqb T_tmp_eqb None c <=
+      RangeCore.poly_coef_factor * N.of_nat (length (lhs c) + 1) *
+        N.of_nat width)%N in Hcoefficient.
+    assert (Hcoefficient_total : (T_poly_coefficient tmp_eqb T_tmp_eqb None c <=
+      RangeCore.poly_coef_factor * work)%N).
+    { eapply N.le_trans; [exact Hcoefficient|].
+      assert (Hnat : (length (lhs c) + 1) * width <= stage).
+      { eapply Nat.le_trans; [|exact Hlinear_work].
+        apply Nat.mul_le_mono_r. lia. }
+      unfold work. rewrite <- N.mul_assoc.
+      apply N.mul_le_mono_l. rewrite <- Nat2N.inj_mul.
+      now apply time_of_nat_le. }
+    assert (Hform_coefficients :
+      Forall (fun p => Z.size_nat (snd p) <= bits) (coef f)).
+    { apply Forall_forall. intros p Hp.
+      pose proof (poly_form_entry_bits f p Hp). lia. }
+    pose proof (T_poly_scale_coef_bounded a (coef f) bits Hform_coefficients) as Hscale.
+    assert (Hscale_total : (T_poly_scale_coef a (coef f) <= 16 * work)%N).
+    { eapply N.le_trans; [exact Hscale|].
+      apply N.mul_le_mono_l. unfold work. now apply time_of_nat_le. }
+    pose proof (poly_form_constant_bits f) as Hconstant.
+    pose proof (poly_T_Z_mul_bilinear a (cst f)) as Hmultiply.
+    pose proof (poly_size_mul a (cst f)) as Hproduct_width.
+    assert (Hmultiply_total : (Z.T_mul a (cst f) <= 8 * work)%N).
+    { eapply N.le_trans; [exact Hmultiply|].
+      assert (Hnat : (Z.size_nat a + 1) * (Z.size_nat (cst f) + 1) <= stage).
+      { eapply Nat.le_trans; [|exact Hsquare_work].
+        apply Nat.mul_le_mono; lia. }
+      rewrite <- N.mul_assoc.
+      replace (N.of_nat (Z.size_nat a + 1) * N.of_nat (Z.size_nat (cst f) + 1))%N
+        with (N.of_nat ((Z.size_nat a + 1) * (Z.size_nat (cst f) + 1)))
+        by (rewrite Nat2N.inj_mul; reflexivity).
+      apply N.mul_le_mono_l. unfold work. now apply time_of_nat_le. }
+    pose proof (Z.T_sub_le (rhs c) (a * cst f)) as Hsubtract.
+    assert (Hsubtract_total : (Z.T_sub (rhs c) (a * cst f) <= 12 * work)%N).
+    { assert (Hsum : (N.of_nat (Z.size_nat (rhs c) + Z.size_nat (a * cst f)) <=
+        3 * N.of_nat (bits + 1))%N)
+        by (clear -Hr Hproduct_width Ha Hconstant Hformbits; lia).
+      assert (Hbits_work : (N.of_nat (bits + 1) <= work)%N).
+      { unfold work. apply time_of_nat_le.
+        eapply Nat.le_trans; [|exact Hsquare_work]. nia. }
+      clear -Hsubtract Hsum Hbits_work Hwork. nia. }
+    pose proof (T_poly_range_update_width a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds bits Ha Hr) as Hupdate.
+    assert (Hupdate_total : (T_range_update a (rhs c)
+      (match lrel c with REq => true | RLe => false end) bounds <=
+      4096 * work)%N).
+    { eapply N.le_trans; [exact Hupdate|].
+      apply N.mul_le_mono_l. unfold work. apply time_of_nat_le.
+      replace ((bits + 1)^2) with ((bits + 1) * (bits + 1))
+        by (cbn [Nat.pow]; ring).
+      exact Hsquare_work. }
+    assert (Hpre : (T_poly_scale_coef a (coef f) + Z.T_mul a (cst f) +
+      Z.T_sub (rhs c) (a * cst f) <= 36 * work)%N)
+      by (clear -Hscale_total Hmultiply_total Hsubtract_total; lia).
+    assert (Hbranch : forall head ms, poly_multipliers r = head :: ms ->
+      (C.T_check_entails P
+        (LCons X.t (poly_scale_coef a (coef f)) (lrel c)
+          (rhs c - a * cst f)%Z) (Cert ms 1 false) +
+        T_range_update a (rhs c)
+          (match lrel c with REq => true | RLe => false end) bounds <=
+        (128 * C.c_lc + 4096) * work)%N).
+    { intros head ms Hmult.
+      assert (Hms : length ms <= mlen).
+      { rewrite Hmult in Hmultlen. cbn [length] in Hmultlen. lia. }
+      assert (Hweights : Forall (fun m => Z.size_nat m <= bits + 1) ms).
+      { rewrite Hmult in Hmultbits. now inversion Hmultbits. }
+      pose proof (T_poly_range_checker_width P f a c ms dim mlen bits
+        Hsource HP Hms Hweights Hform Hformbits Ha Hr) as Hcheck.
+      cbn zeta in Hcheck.
+      assert (Hcheck_total : (C.T_check_entails P
+        (LCons X.t (poly_scale_coef a (coef f)) (lrel c)
+          (rhs c - a * cst f)%Z) (Cert ms 1 false) <=
+        128 * C.c_lc * work)%N).
+      { eapply N.le_trans; [exact Hcheck|].
+        replace (128 * C.c_lc * work)%N with
+          (C.c_lc * (128 * work))%N by ring.
+        apply N.mul_le_mono_l.
+        unfold work.
+        replace (128 * N.of_nat stage)%N with (N.of_nat (128 * stage))
+          by (rewrite Nat2N.inj_mul; reflexivity).
+        apply time_of_nat_le.
+        replace (128 * (mlen + 1) * (dim + mlen + 1) * (bits + 1)^2)
+          with (128 * ((mlen + 1) * (dim + mlen + 1) * (bits + 1) * (bits + 1)))
+          by (cbn [Nat.pow]; ring).
+        now apply Nat.mul_le_mono_l. }
+      clear -Hcheck_total Hupdate_total. nia. }
+    pose proof (T_poly_range_candidate_frame P f bounds r
+      (36 * work) ((128 * C.c_lc + 4096) * work) Hpre Hbranch) as Hframe.
+    cbn zeta in Hframe. fold c in Hframe.
+    eapply N.le_trans; [exact Hframe|].
+    unfold poly_range_candidate_factor.
+    fold c width stage work.
+    change (List.T_forallb poly_range_result_key T_poly_range_result_key (lhs c) +
+      T_poly_coefficient tmp_eqb T_tmp_eqb None c + 36 * work +
+      (128 * C.c_lc + 4096) * work + 32 <=
+      (128 * C.c_lc + RangeCore.poly_coef_factor + 4200) * work)%N.
+    clear -Hscan_total Hcoefficient_total Hwork. clearbody work.
+    nia.
+  Qed.
+
 
   Definition poly_range_empty_candidate_factor : N :=
     (32 * C.c_lc + RangeCore.poly_coef_factor + 256)%N.
