@@ -16540,6 +16540,91 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply N.add_le_mono_r. now apply N.mul_le_mono_l.
   Qed.
 
+  Lemma karr_raw_work_public : forall Q d w,
+    normal Q -> n (Reached Q) <= d -> ell (Reached Q) <= w -> 2 <= d ->
+    (terms (Reached Q) + length Q + 1) *
+      (2 * ell (Reached Q) + Nat.log2 (terms (Reached Q)) + 1) <=
+      8 * (d^3 * (ellB d w + 1)^2).
+  Proof.
+    intros Q d w HQ Hdim Hwidth Hd.
+    assert (Hterms : terms (Reached Q) <= n (Reached Q)^2).
+    { pose proof (karr_normal_terms_bound Q HQ) as Hbound.
+      unfold n in *. cbn [rows_of] in *. cbn [Nat.pow]. nia. }
+    pose proof (karr_normal_terms_log Q HQ) as Hlog.
+    assert (Hlogd : Nat.log2 (n (Reached Q) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    set (mass := terms (Reached Q) + length Q + 1).
+    set (width := 2 * ell (Reached Q) + Nat.log2 (terms (Reached Q)) + 1).
+    set (v := ellB d w + 1).
+    assert (Hmass : mass <= 2 * d^2).
+    { unfold mass, n in *. cbn [rows_of] in *.
+      cbn [Nat.pow] in *. nia. }
+    assert (Hwidth' : width <= 4 * v).
+    { unfold width, v, ellB in *.
+      assert (Hlogpos : 1 <= Nat.log2 d).
+      { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+        change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+      nia. }
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hproduct : mass * width <= (2 * d^2) * (4 * v)).
+    { apply Nat.mul_le_mono; assumption. }
+    eapply Nat.le_trans; [exact Hproduct|].
+    replace (8 * (d^3 * v^2)) with (2 * d^3 * (4 * v^2)) by ring.
+    apply Nat.mul_le_mono.
+    - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia.
+    - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia.
+  Qed.
+
+  Lemma T_karr_prepare_public : forall P c,
+    normal P ->
+    (ListDef.T_map normalize_row T_normalize_row P <=
+      8 * karr_prepare_factor * N.of_nat
+        (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (mass := terms (Reached P) + length P + 1).
+    set (width := 2 * ell (Reached P) +
+      Nat.log2 (terms (Reached P)) + 1).
+    pose proof (karr_normal_source_envelope P HP) as Hrows.
+    assert (Hsource : Forall (fun r =>
+      C.row_key_bits r <= ell (Reached P) /\
+      C.row_bits r <= ell (Reached P)) P).
+    { eapply Forall_impl; [|exact Hrows].
+      intros r [_ [Hkeys Hbits]]. split; assumption. }
+    pose proof (T_karr_prepare_rows_bounded P (ell (Reached P))
+      (ell (Reached P)) (terms (Reached P)) Hsource
+      (Nat.le_refl _)) as Hclock.
+    pose proof (karr_raw_work_public P d w HP
+      ltac:(unfold d; lia) ltac:(unfold w; lia)
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hwork.
+    assert (HN : (N.of_nat (mass * width) <=
+      N.of_nat (8 * elimination_work (Reached P)
+        (Reached (c :: nil))))%N).
+    { unfold elimination_work. fold d w. unfold mass, width in Hwork.
+      lia. }
+    replace (ell (Reached P) + ell (Reached P) +
+      Nat.log2 (terms (Reached P)) + 1) with width in Hclock
+      by (unfold width; lia).
+    change (ListDef.T_map normalize_row T_normalize_row P <=
+      karr_prepare_factor * N.of_nat mass * N.of_nat width)%N in Hclock.
+    replace (karr_prepare_factor * N.of_nat mass * N.of_nat width)%N
+      with (karr_prepare_factor * N.of_nat (mass * width))%N in Hclock
+      by (rewrite Nat2N.inj_mul; ring).
+    eapply N.le_trans with (m :=
+      (karr_prepare_factor * N.of_nat
+        (8 * elimination_work (Reached P) (Reached (c :: nil))))%N).
+    - eapply N.le_trans; [exact Hclock|].
+      now apply N.mul_le_mono_l.
+    - rewrite Nat2N.inj_mul.
+      change (N.of_nat 8) with 8%N. ring_simplify. apply N.le_refl.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
