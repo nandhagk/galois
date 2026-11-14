@@ -21969,6 +21969,44 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply put_forest_core_active; assumption.
   Qed.
 
+  Lemma inv_on_repair_forest_core : forall db work f k,
+    inv_on db work ->
+    UnionFind.wf (db_forest (db_repair_entry f k db)) /\
+    (forall x, UnionFind.mem (db_forest (db_repair_entry f k db)) x <->
+      allocated (db_repair_entry f k db) x) /\
+    count (db_forest (db_repair_entry f k db)) = ids (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hforest : UnionFind.wf (db_forest db)).
+    { exact (inv_on_forest_wf db work Hinv). }
+    assert (Hmembers : forall x,
+      UnionFind.mem (db_forest db) x <-> allocated db x).
+    { intro x. exact (inv_on_forest_members db work x Hinv). }
+    assert (Hcount : count (db_forest db) = ids db).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    assert (Horiginal : UnionFind.wf (db_forest db) /\
+      (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) /\
+      count (db_forest db) = ids db).
+    { split; [exact Hforest |]; split; assumption. }
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Horiginal].
+    destruct (row_get f current db) as [output |]; [| exact Horiginal].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Horiginal |].
+    pose proof (repair_current_forest_core_active db work f current Hinv)
+      as Hrepair.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |];
+      destruct (PTrieCode.get (db_row_code f (normal_key db current))
+        (row_history (db_row_store (repair_current f current db))))
+        as [[new_key new_id] |]; exact Hrepair.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
