@@ -16415,6 +16415,89 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         exact (Hpositive r n Hentry).
   Qed.
 
+  Lemma database_row_store_depth_move : forall db f old ck,
+    database_row_store_ok db -> database_row_weights_positive db ->
+    database_history_root_owner db -> database_history_key_shape db ->
+    database_history_codes_valid db ->
+    database_history_key_ids_bounded db ->
+    database_row_weight_conserved db ->
+    length old = length ck -> row_key_shape old = row_key_shape ck ->
+    database_row_store_depth_ok (move_row_identity f old ck db).
+  Proof.
+    intros db f old ck Hstore Hpositive Howner Hshape Hvalid Hbounded
+      Hconserved Hlength Hbridge.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource;
+      [| exact (database_row_store_depth_of_store db Hstore)].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest;
+      [| exact (database_row_store_depth_of_store db Hstore)].
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some p => p | None => source_root end) = source_root).
+    { subst source_root depth store.
+      exact (database_history_root_fixed db f old old_key old_id
+        Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some p => p | None => dest_root end) = dest_root).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id
+        Hstore Hdest). }
+    replace (runtime_allocated (db_runtime db)) with (ids db)
+      by reflexivity.
+    fold store depth source_root dest_root.
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - eapply database_row_store_depth_same_links with (db := db);
+        [exact Hstore | reflexivity | reflexivity | reflexivity].
+    - apply Pos.eqb_neq in Hsame.
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Horder.
+      + eapply database_row_store_depth_link with
+          (db := db) (loser := source_root) (winner := dest_root);
+          [exact Hstore | reflexivity | reflexivity | reflexivity |
+           exact Hsame | exact Hsource_fixed | |].
+        * cbn [database_set_row_store db_row_store row_links].
+          rewrite PTrie.get_set_other by congruence. exact Hdest_fixed.
+        * intros g args key r Hentry Hroot.
+          eapply (database_losing_component_short db f old ck old_key old_id
+            ck_key ck_id g args key r Hstore Hpositive Howner Hshape
+            Hvalid Hbounded Hconserved Hsource Hdest Hentry Hbridge);
+            [| | exact Hroot].
+          -- rewrite <- Hlength. exact Hsame.
+          -- rewrite <- Hlength. apply N.leb_le. exact Horder.
+      + eapply database_row_store_depth_link with
+          (db := db) (loser := dest_root) (winner := source_root);
+          [exact Hstore | reflexivity | reflexivity | reflexivity |
+           congruence | exact Hdest_fixed | |].
+        * cbn [database_set_row_store db_row_store row_links].
+          rewrite PTrie.get_set_other by congruence. exact Hsource_fixed.
+        * intros g args key r Hentry Hroot.
+          assert (Hdest_equiv : dest_root =
+            row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+              (db_row_store db)).
+          { subst dest_root depth store. now rewrite <- Hlength. }
+          rewrite Hdest_equiv in Hroot |- *.
+          eapply (database_losing_component_short db f ck old ck_key ck_id
+            old_key old_id g args key r Hstore Hpositive Howner Hshape
+            Hvalid Hbounded Hconserved Hdest Hsource Hentry
+            (eq_sym Hbridge));
+            [| |].
+          -- rewrite <- Hlength. change (dest_root <> source_root).
+             congruence.
+          -- rewrite <- Hlength. apply N.lt_le_incl, N.leb_gt.
+             exact Horder.
+          -- exact Hroot.
+  Qed.
+
   (** Fixed historical aliases at either affected root have the destination key. *)
   Lemma database_history_alignment_affected : forall db f old ck g args
       old_key old_id ck_key ck_id key r,
