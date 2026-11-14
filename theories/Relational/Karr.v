@@ -1555,6 +1555,17 @@ Proof.
     apply Forall_forall. intros column Hin. apply in_seq in Hin. lia.
 Qed.
 
+(** Every prefix of an increasing coordinate list is increasing. *)
+Lemma karr_increasing_prefix : forall prefix suffix,
+  karr_increasing (prefix ++ suffix) -> karr_increasing prefix.
+Proof.
+  induction prefix as [|head prefix IH]; intros suffix Hinc; [exact I|].
+  cbn [app karr_increasing] in Hinc |- *.
+  destruct Hinc as [Hafter Htail]. split.
+  - apply Forall_app in Hafter as [Hprefix _]. exact Hprefix.
+  - now apply IH with (suffix := suffix).
+Qed.
+
 (** Every coordinate of a consecutive range lies below its endpoint. *)
 Lemma karr_seq_bounded : forall start count,
   Forall (fun column => column < start + count) (seq start count).
@@ -2014,6 +2025,19 @@ Definition karr_signed_minors (width : nat) (rows : list (list Z)) : list Z :=
     (seq 0 (S (Nat.min (length rows) width))).
 
 TimeFun karr_signed_minors.
+
+(** The order-zero minor is present for every source matrix. *)
+Lemma karr_signed_minors_one : forall width rows,
+  In 1%Z (karr_signed_minors width rows).
+Proof.
+  intros width rows. unfold karr_signed_minors.
+  apply in_flat_map. exists 0. split; [apply in_seq; lia|].
+  apply in_flat_map. exists []. split;
+    [rewrite karr_choose_zero; now left|].
+  apply in_flat_map. exists []. split;
+    [rewrite karr_choose_zero; now left|].
+  now left.
+Qed.
 
 (** The order-one determinant is its sole entry. *)
 Lemma karr_determinant_one : forall z, karr_determinant 1 [[z]] = z.
@@ -3460,6 +3484,40 @@ Proof.
   apply Forall_forall. intros row Hrow. apply Forall_forall. intros z Hz.
   apply Hbits. eapply karr_run_state_entries; [exact Hstate|].
   apply in_flat_map. now exists row.
+Qed.
+
+(** The current exact divisor is itself an enumerated pivot-prefix minor. *)
+Lemma karr_run_state_previous_minor : forall width cols original previous
+    pivot_rows pivot_columns columns labels rows,
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels rows ->
+  In previous (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns columns labels
+    rows Hstate.
+  unfold karr_run_state in Hstate. destruct Hstate as
+    [_ [Hdet [_ [_ [_ [_ [Hsquare [Hpartition
+      [Hincreasing [Hbounded _]]]]]]]]]].
+  assert (Hinc : karr_increasing pivot_columns)
+    by (eapply karr_increasing_prefix; exact Hincreasing).
+  assert (Hbound : Forall (fun c => c < width) pivot_columns).
+  { apply Forall_app in Hbounded as [Hprefix _]. exact Hprefix. }
+  rewrite Hdet. destruct pivot_rows as [|row [|next rest]].
+  - cbn [length karr_determinant]. apply karr_signed_minors_one.
+  - destruct pivot_columns as [|column pivot_columns];
+      [cbn [length] in Hsquare; lia|].
+    destruct pivot_columns as [|second remaining];
+      [|cbn [length] in Hsquare; lia].
+    cbn [length] in Hsquare.
+    cbn [length] in Hbound. apply Forall_cons_iff in Hbound as [Hcolumn _].
+    cbn [app] in Hpartition.
+    eapply karr_signed_minors_partition_one; [exact Hpartition|exact Hcolumn].
+  - eapply karr_signed_minors_partition with (rest := labels).
+    + cbn [length]. lia.
+    + exact Hsquare.
+    + exact Hpartition.
+    + exact Hinc.
+    + exact Hbound.
 Qed.
 
 (** A zero first entry of a live row is itself an enumerated source minor. *)
