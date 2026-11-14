@@ -15004,10 +15004,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_alignment_put : forall db f k o,
-    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (put f k o db).
   Proof.
-    intros db f k o Hwf Hstore Halign.
+    intros db f k o Hforest Hstore Halign.
     unfold put.
     set (ck := normal_key db k).
     set (co := option_map (normal_cell db) o).
@@ -15024,7 +15025,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     { unfold next. destruct previous as [[[a | v] |] |];
         destruct co as [[b | w] |];
         try (apply database_history_alignment_union;
-          [exact (wf_forest db Hwf) | exact Halign]); exact Halign. }
+          [exact Hforest | exact Halign]); exact Halign. }
     destruct previous as [before |].
     - destruct (output_eqb before updated);
         [exact Hnext_align |].
@@ -15847,10 +15848,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma database_history_alignment_repair_current : forall db f k,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (repair_current f k db).
   Proof.
-    intros db f k Hwf Hstore Halign. unfold repair_current.
+    intros db f k Hforest Hstore Halign. unfold repair_current.
     destruct (row_get f k db) as [output |]; [| exact Halign].
     destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
       (output_eqb (option_map (normal_cell db) output) output));
@@ -15860,7 +15862,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (option_map (normal_cell db) output) deleted).
     assert (Hupdated : database_history_alignment updated).
     { subst updated. apply database_history_alignment_put.
-      - subst deleted. apply row_delete_wf. exact Hwf.
+      - subst deleted. now rewrite row_delete_forest.
       - subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
       - subst deleted. apply database_history_alignment_row_delete. exact Halign. }
     eapply (database_history_alignment_transport updated _); try reflexivity.
@@ -16689,7 +16691,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db f k o Hwf Hstore Halign Hcoherent Hrow.
     set (repaired := repair_current f k db).
     pose proof (database_history_alignment_repair_current db f k
-      Hwf Hstore Halign) as Hrepaired_align.
+      (wf_forest db Hwf) Hstore Halign) as Hrepaired_align.
     destruct (PTrieCode.get (db_row_code f k)
       (row_history (db_row_store repaired))) as [[key r] |] eqn:Hsource.
     - apply database_history_alignment_move.
@@ -16954,7 +16956,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
        Hbounded & Hconserved & Hpositive).
     split; [apply database_row_store_ok_put; exact Hstore |].
-    split; [eapply database_history_alignment_put; eassumption |].
+    split; [eapply database_history_alignment_put;
+      [exact (wf_forest db Hwf) | exact Hstore | exact Halign] |].
     split; [eapply database_active_history_coherent_put; eassumption |].
     split; [eapply database_history_root_owner_put; eassumption |].
     split; [eapply database_history_key_shape_put; eassumption |].
