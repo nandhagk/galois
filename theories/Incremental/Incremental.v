@@ -4125,9 +4125,16 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     unfold value; cbn [inc_values]; apply lookup_remove_keys.
   Qed.
 
-  Definition edit_value_keys : forall p p' ch st x,
+  Lemma edit_value_keys : forall p p' ch st x,
     value (edit p p' ch st) x =
-      if mem x (invalidate_keys p p' ch st) then None else value st x := edit_value.
+      if mem x (invalidate_keys p p' ch st) then None else value st x.
+  Proof.
+    intros p p' ch st x; rewrite invalidate_keys_bad_eq.
+    unfold mem, edit.
+    destruct (invalid_walk p p' ch st) as [pending seen bad done snapshots].
+    destruct bad as [|y bad]; [reflexivity|].
+    unfold value; cbn [inc_values]; apply lookup_remove_keys.
+  Qed.
 
   (** Retained values are exactly old values outside the invalidation list. *)
   Lemma edit_dom_keys : forall p p' ch st x,
