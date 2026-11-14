@@ -13805,6 +13805,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite <- Heq. unfold X.bits in *. lia.
   Qed.
 
+  (** Two finite key spaces and one fresh key fit their combined bit allowance. *)
+  Lemma poly_assign_binary_space : forall a b,
+    2^a + 2^b + 1 <= 2^(a + b + 2).
+  Proof.
+    intros a b.
+    rewrite Nat.pow_add_r, Nat.pow_add_r.
+    assert (Ha : 1 <= 2^a).
+    { pose proof (Nat.pow_nonzero 2 a ltac:(lia)). lia. }
+    assert (Hb : 1 <= 2^b).
+    { pose proof (Nat.pow_nonzero 2 b ltac:(lia)). lia. }
+    cbn [Nat.pow]. nia.
+  Qed.
+
   (** Preparing a recognized form stays within the linearizer's term allowance. *)
   Lemma poly_assign_prepared_length : forall e f wrapping,
     F.lin_of e = Some (f, wrapping) ->
@@ -13977,6 +13990,36 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (poly_assign_rename_row_keys x r) as Hrename.
     pose proof (poly_max_member _ C.row_key_bits 0 P r Hr) as Hsource.
     unfold poly_raw_keys. lia.
+  Qed.
+
+  (** Source and prepared-form supports fit the public assignment bit width. *)
+  Lemma poly_assign_prepared_dimension_space : forall x e P f wrapping,
+    F.lin_of e = Some (f, wrapping) ->
+    length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef (poly_prepare_form X.encode f)) + 1 <=
+      2^(nell (Reached P) + X.bits x + F.bits_e e + 1).
+  Proof.
+    intros x e P f wrapping Hlinear.
+    pose proof (RangeAssignCore.poly_assign_variables_space
+      (poly_assign_sources x P)) as Hsource.
+    pose proof (poly_assign_sources_raw_keys x P) as Hsourcekeys.
+    assert (Hsource_bound : length (RangeCore.vars_of (poly_assign_sources x P)) <=
+      2^(poly_raw_keys P + 1)).
+    { eapply Nat.le_trans; [exact Hsource|].
+      apply Nat.pow_le_mono_r; [lia|].
+      change (RangeAssignCore.poly_raw_keys (poly_assign_sources x P) <=
+        poly_raw_keys P + 1) in Hsourcekeys.
+      exact Hsourcekeys. }
+    pose proof (poly_assign_prepared_key_space f) as Hprepared.
+    destruct (F.lin_of_size e f wrapping Hlinear) as [_ Hbits].
+    pose proof (poly_assign_binary_space (poly_raw_keys P + 1) (F.form_bits f))
+      as Hcombined.
+    pose proof (poly_raw_width P) as Hwidth.
+    eapply Nat.le_trans with (m := 2^(poly_raw_keys P + 1 + F.form_bits f + 2)).
+    - lia.
+    - apply Nat.pow_le_mono_r; [lia|].
+      pose proof (Pos.size_nat_pos (X.encode x)) as Hkeypos.
+      unfold X.bits, poly_raw_bits in *. lia.
   Qed.
 
   (** Normalizing one renamed source cannot introduce the new assigned variable. *)
