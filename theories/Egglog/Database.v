@@ -15858,6 +15858,67 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (database_idle_queue_nonroot db Hidle x Hqueue).
   Qed.
 
+  Lemma database_idle_ok_frame : forall db db',
+    database_idle_ok db -> database_row_store_ok db' ->
+    row_uses (db_row_store db') = row_uses (db_row_store db) ->
+    runtime_rows (db_runtime db') = runtime_rows (db_runtime db) ->
+    runtime_queue (db_runtime db') = runtime_queue (db_runtime db) ->
+    kind (view db') = kind (view db) ->
+    (forall i, repr db' i = repr db i) ->
+    (forall f k, db_locate f k db' = db_locate f k db) ->
+    database_idle_ok db'.
+  Proof.
+    intros db db' Hidle Hstore Huses Hrows Hqueue Hkind Hrepr Hloc.
+    unfold database_idle_ok in Hidle |- *.
+    destruct Hidle as [Hprior [Hdistinct [Hprimary [Hsecondary
+      [Hlocated Hnonroot]]]]].
+    rewrite Huses, Hrows, Hqueue.
+    split; [exact Hstore |].
+    split; [exact Hdistinct |].
+    split.
+    { intros f k o i Hrow Hid.
+      change (row_get f k db' = Some o) in Hrow.
+      unfold row_get in Hrow. rewrite Hrows in Hrow.
+      change (row (view db) f k o) in Hrow.
+      destruct (Hprimary f k o i Hrow Hid)
+        as [x [k0 [Heq [Huse [Hfound Hactive]]]]].
+      exists x, k0. rewrite !Hrepr, Hloc. repeat split; assumption. }
+    split.
+    { intros f k o i Hrow Hid Hnonroot'.
+      change (row_get f k db' = Some o) in Hrow.
+      unfold row_get in Hrow. rewrite Hrows in Hrow.
+      change (row (view db) f k o) in Hrow.
+      rewrite Hrepr in Hnonroot'.
+      destruct (Hsecondary f k o i Hrow Hid Hnonroot')
+        as [k0 [Hscheduled Hfound]].
+      exists k0. rewrite Hloc. now split. }
+    split.
+    { intros f k0 k Hfound. rewrite Hloc in Hfound.
+      destruct (Hlocated f k0 k Hfound) as [o [Hrow Hdeclared]].
+      exists o. split; [exact Hrow | now rewrite Hkind]. }
+    intros x Hin. rewrite Hrepr. exact (Hnonroot x Hin).
+  Qed.
+
+  Lemma database_idle_ok_allocate_next : forall db,
+    wf db -> database_idle_ok db ->
+    database_idle_ok (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf Hidle.
+    eapply database_idle_ok_frame with (db := db).
+    - exact Hidle.
+    - apply database_row_store_ok_allocate_next.
+      exact (database_idle_row_store db Hidle).
+    - reflexivity.
+    - reflexivity.
+    - reflexivity.
+    - rewrite allocate_id_view. reflexivity.
+    - apply allocate_next_repr. exact Hwf.
+    - intros f k. apply db_locate_ids_mono.
+      + exact (database_idle_row_store db Hidle).
+      + reflexivity.
+      + rewrite allocate_next_ids. lia.
+  Qed.
+
   Lemma forest_ok_public : forall db, database_wf db -> database_idle_ok db ->
     slot_rank_ok db -> database_owned_ok db -> forest_ok db.
   Proof.
