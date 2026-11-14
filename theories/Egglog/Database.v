@@ -12207,6 +12207,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now rewrite row_write_row_store, slots_update_row_store.
   Qed.
 
+  Lemma row_replace_history_old : forall db f k previous o code key r,
+    PTrieCode.get code (row_history (db_row_store db)) = Some (key, r) ->
+    PTrieCode.get code
+      (row_history (db_row_store (row_replace f k previous o db))) = Some (key, r).
+  Proof.
+    intros db f k [before |] o code key r Hentry; unfold row_replace;
+      rewrite register_row_uses_history_map;
+      apply ensure_row_identity_raw_history_old.
+    - now rewrite row_write_row_store, !slots_update_row_store.
+    - now rewrite row_write_row_store, slots_update_row_store.
+  Qed.
+
   Lemma row_replace_new_locate : forall db f k previous o,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
@@ -12971,6 +12983,29 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         [exact Hnext_store |].
       apply database_row_store_ok_row_replace. exact Hnext_store.
     - apply database_row_store_ok_row_replace. exact Hnext_store.
+  Qed.
+
+  Lemma put_history_old : forall db f k o code key r,
+    PTrieCode.get code (row_history (db_row_store db)) = Some (key, r) ->
+    PTrieCode.get code (row_history (db_row_store (put f k o db))) = Some (key, r).
+  Proof.
+    intros db f k o code key r Hentry. unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext : PTrieCode.get code (row_history (db_row_store next)) =
+      Some (key, r)).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try rewrite union_row_store_raw; exact Hentry. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext | apply row_replace_history_old; exact Hnext].
+    - apply row_replace_history_old. exact Hnext.
   Qed.
 
   Lemma database_history_alignment_repair_current : forall db f k,
