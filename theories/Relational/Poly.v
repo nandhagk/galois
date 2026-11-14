@@ -14196,6 +14196,34 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now rewrite poly_assign_tail_length in Hstep.
   Qed.
 
+  (** Untagged source-only results are normal and omit the new assigned key. *)
+  Lemma poly_assign_tail_candidate_envelope : forall x P r xs,
+    In r (poly_assign_tail_step x P) ->
+    untag (lhs (poly_constraint r)) = Some xs ->
+    let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+    NoDup (map fst (lhs c)) /\
+    length (lhs c) <= length (RangeCore.vars_of (poly_assign_sources x P)) /\
+    C.row_key_bits c <= poly_raw_keys P + 1 /\
+    C.row_bits c <= 2 * poly_raw_bits P + 1 /\
+    poly_coefficient X.eqb x c = 0%Z.
+  Proof.
+    intros x P r xs Hr Huntag c.
+    destruct (proj1 (Forall_forall _ _) (poly_assign_tail_step_envelopes x P)
+      r Hr) as (Hnormal & Hdim & Hkeys & Hbits & _).
+    pose proof (poly_assign_untag_envelope (poly_constraint r) xs Huntag)
+      as (Hlength & Hbits_eq & Hkeys_le).
+    pose proof (proj1 (Forall_forall _ _) (poly_assign_tail_step_absent x P)
+      r Hr) as Habsent.
+    pose proof (poly_assign_untag_absent x (poly_constraint r) xs Huntag
+      Habsent) as Hfresh.
+    repeat split.
+    - apply untag_nodup with (xs := lhs (poly_constraint r)); assumption.
+    - unfold c. cbn [lhs]. rewrite Hlength. exact Hdim.
+    - eapply Nat.le_trans; [exact Hkeys_le|exact Hkeys].
+    - unfold c. rewrite Hbits_eq. exact Hbits.
+    - apply poly_coefficient_absent. exact Hfresh.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
