@@ -11162,6 +11162,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (proj2 (database_row_store_link_range db Hstore r parent Hlink)).
   Qed.
 
+  Lemma row_parent_iter_below_fresh : forall db d r,
+    database_row_store_ok db ->
+    (r < row_fresh (db_row_store db))%positive ->
+    (Nat.iter d (fun current =>
+      match PTrieCode.get current (row_links (db_row_store db)) with
+      | Some parent => parent | None => current end) r <
+      row_fresh (db_row_store db))%positive.
+  Proof.
+    intros db d. induction d as [|remaining IH]; intros r Hstore Hbelow.
+    - exact Hbelow.
+    - rewrite Nat.iter_succ_r.
+      destruct (PTrieCode.get r (row_links (db_row_store db)))
+        as [parent |] eqn:Hlink.
+      + apply IH; [exact Hstore |].
+        exact (proj2 (database_row_store_link_range db Hstore r parent Hlink)).
+      + apply IH; assumption.
+  Qed.
+
   Lemma ensure_row_identity_ids : forall db f k,
     ids (ensure_row_identity f k db) = ids db.
   Proof.
