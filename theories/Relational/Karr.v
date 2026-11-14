@@ -1319,6 +1319,53 @@ Proof.
     ring.
 Qed.
 
+(** Crossing a row against itself with zero second factor scales every entry. *)
+Lemma karr_cross_scale : forall a xs,
+  karr_cross a 0 xs xs = map (fun z => (a * z)%Z) xs.
+Proof.
+  intros a xs. induction xs as [|x xs IH]; [reflexivity|].
+  cbn [karr_cross map]. rewrite IH. f_equal. ring.
+Qed.
+
+(** Scaling several selected rows scales the determinant by one factor per row. *)
+Lemma karr_determinant_scale_rows : forall order prefix rows suffix a,
+  length prefix + length rows <= order ->
+  karr_determinant order
+    (prefix ++ map (map (fun z => (a * z)%Z)) rows ++ suffix) =
+  (a ^ Z.of_nat (length rows) *
+    karr_determinant order (prefix ++ rows ++ suffix))%Z.
+Proof.
+  intros order prefix rows. revert prefix.
+  induction rows as [|row rows IH]; intros prefix suffix a Hbound.
+  - cbn [map length app]. rewrite Z.pow_0_r. ring.
+  - destruct order as [|order]; [cbn [length] in Hbound; lia|].
+    cbn [map length].
+    rewrite <- karr_cross_scale.
+    rewrite app_assoc.
+    replace ((prefix ++ karr_cross a 0 row row ::
+      map (map (fun z => (a * z)%Z)) rows) ++ suffix) with
+      (prefix ++ karr_cross a 0 row row ::
+        (map (map (fun z => (a * z)%Z)) rows ++ suffix))
+      by (rewrite <- app_assoc; reflexivity).
+    cbn [length] in Hbound.
+    rewrite (karr_determinant_cross_at order prefix a 0 row row
+      (map (map (fun z => (a * z)%Z)) rows ++ suffix)) by lia.
+    specialize (IH (prefix ++ [row]) suffix a ltac:(rewrite length_app;
+      cbn [length] in *; lia)).
+    replace (prefix ++ row :: map (map (fun z => (a * z)%Z)) rows ++ suffix)
+      with ((prefix ++ [row]) ++ map (map (fun z => (a * z)%Z)) rows ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    rewrite IH.
+    replace ((prefix ++ [row]) ++ rows ++ suffix)
+      with (prefix ++ row :: rows ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    rewrite Nat2Z.inj_succ, Z.pow_succ_r by lia.
+    replace (prefix ++ (row :: rows) ++ suffix)
+      with (prefix ++ row :: rows ++ suffix)
+      by reflexivity.
+    ring.
+Qed.
+
 (** A selected pivot column and its suffix commute with every crossed row. *)
 Lemma karr_stage_cross_selected : forall c p xs ys,
   Forall (fun x => length x = length p) xs ->
