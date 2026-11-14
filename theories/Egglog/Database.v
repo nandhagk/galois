@@ -22731,6 +22731,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         Hforest Hmembers Hqueue Hrows) x Hqueued).
   Qed.
 
+  Lemma inv_on_repair_forest_tail : forall db work f k,
+    inv_on db work ->
+    let next := db_repair_entry f k db in
+    metadata_ok next /\ db_npending next = N.of_nat (pending next) /\
+    UnionFind.wf (db_forest next) /\
+    UnionFind.card (db_forest next) = N.to_nat (ids next) /\
+    (forall i j, same (view next) i j <-> repr next i = repr next j) /\
+    UnionFind.width (db_forest next) <= N.size_nat (ids next) /\
+    row_store_ok next /\ projection_counts_ok next /\
+    database_history next /\ core_bridge next /\ slot_rank_ok next /\
+    (forall x, In x (queue next) -> repr next x <> x) /\
+    database_owned_ok next.
+  Proof.
+    intros db work f k Hinv. cbn zeta.
+    pose proof (inv_on_repair_owned db work f k Hinv) as Howned.
+    destruct (inv_on_repair_forest_core db work f k Hinv)
+      as [Hforest _].
+    destruct (inv_on_repair_forest_card_width db work f k Hinv)
+      as [Hcard Hwidth].
+    split; [exact (inv_on_repair_metadata db work f k Hinv) |].
+    split; [exact (inv_on_repair_pending_count db work f k Hinv) |].
+    split; [exact Hforest |].
+    split; [exact Hcard |].
+    split; [exact (inv_on_repair_equalities db work f k Hinv) |].
+    split; [exact Hwidth |].
+    split; [exact (proj1 Howned) |].
+    split; [exact (inv_on_repair_projection_counts db work f k Hinv) |].
+    split; [exact (inv_on_repair_history db work f k Hinv) |].
+    split; [exact (inv_on_repair_core_bridge db work f k Hinv) |].
+    split; [exact (inv_on_repair_slot_rank db work f k Hinv) |].
+    split; [exact (inv_on_repair_queue_nonroot db work f k Hinv) |].
+    exact Howned.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
