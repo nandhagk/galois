@@ -14022,6 +14022,45 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     PolyRow (option X.t) (poly_normal_row tmp_encode (assignment_row x f))
       (1%Z :: map (fun _ => 0%Z) P) false.
 
+  Lemma poly_assign_row_nodup_normal : forall x f,
+    NoDup (map fst (coef f)) -> NoDup (map fst (lhs (assignment_row x f))).
+  Proof.
+    intros x f Hform. cbn [assignment_row lhs map fst]. rewrite map_map.
+    constructor.
+    - intro Hin. apply in_map_iff in Hin as [p [Heq _]]. cbn [fst] in Heq.
+      exact (poly_assign_rename_fresh x (fst p) Heq).
+    - pose proof (poly_assign_nodup_map X.t (option X.t) (rename_old x)
+        (poly_assign_rename_injective x) (map fst (coef f)) Hform) as Hkeys.
+      rewrite map_map in Hkeys. exact Hkeys.
+  Qed.
+
+  (** A normal prepared equation fits one head row at its own form width. *)
+  Lemma poly_assign_head_envelope : forall x f P,
+    NoDup (map fst (coef f)) ->
+    RangeCore.poly_row_envelope (length (coef f) + 1) (length P + 1)
+      (X.bits x + F.form_bits f + 1) (F.form_bits f + 1)
+      (poly_assign_head x f P).
+  Proof.
+    intros x f P Hform.
+    pose proof (poly_assign_form_row_bounds f) as [Hformkeys Hformbits].
+    pose proof (poly_assign_row_nodup_normal x f Hform) as Hrowunique.
+    unfold RangeCore.poly_row_envelope, poly_assign_head.
+    cbn [poly_constraint poly_multipliers length].
+    split; [apply poly_normal_coef_nodup|]. split.
+    - eapply Nat.le_trans; [apply RangeCore.poly_normal_length|].
+      cbn [assignment_row lhs length]. rewrite length_map. lia.
+    - split.
+      + eapply Nat.le_trans; [apply RangeCore.poly_normal_row_key_bits|].
+        pose proof (poly_assign_row_keys x f). lia.
+      + split.
+        * eapply Nat.le_trans; [apply RangeCore.poly_normal_row_bits; exact Hrowunique|].
+          pose proof (poly_assign_row_bits x f). lia.
+        * split.
+          -- rewrite length_map. lia.
+          -- constructor; [cbn [Z.size_nat Pos.size_nat]; lia|].
+             apply Forall_map, Forall_forall. intros p _. cbn [Z.size_nat]. lia.
+  Qed.
+
   (** The prepared equation is the first initialized row; the old sources form its tail. *)
   Lemma poly_assign_initial_head : forall x f P,
     poly_initial tmp_encode
