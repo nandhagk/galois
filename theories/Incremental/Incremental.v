@@ -10096,6 +10096,54 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     apply N.mul_le_mono_l; exact Hbits.
   Qed.
 
+  Lemma T_edit_wrapper_le : forall p p' ch st,
+    (T_edit p p' ch st <= T_invalid_walk p p' ch st + 6 +
+      T_remove_keys (invalidate p p' ch st) (inc_values st) +
+      T_remove_keys (invalidate p p' ch st) (inc_influence st) +
+      T_remove_keys (invalidate p p' ch st) (inc_cowrites st))%N.
+  Proof.
+    intros p p' ch st.
+    unfold T_edit, T_invalid_bad, T_inc_values, T_inc_influence,
+      T_inc_cowrites, T_invalid_snapshots.
+    cbn beta zeta.
+    unfold invalidate, invalidate_keys.
+    destruct (invalid_bad (invalid_walk p p' ch st)) as [|x bad]; lia.
+  Qed.
+
+  Lemma edit_public_clock_arithmetic : forall q keys rows released initial walk
+      remove_values remove_reads remove_cowrites,
+    (1 <= q)%N -> (keys <= released)%N ->
+    (initial <= 128 * q * (rows + 1))%N ->
+    (walk <= 320 * q * keys + 2)%N ->
+    (remove_values <= 16 * q * keys + 2)%N ->
+    (remove_reads <= 16 * q * keys + 2)%N ->
+    (remove_cowrites <= 16 * q * keys + 2)%N ->
+    (7 + initial + walk + remove_values + remove_reads + remove_cowrites <=
+      1024 * q * (released + rows + 1))%N.
+  Proof.
+    intros q keys rows released initial walk remove_values remove_reads
+      remove_cowrites Hq Hreleased Hinitial Hwalk Hvalues Hreads Hcowrites.
+    assert (Hkey : (q * keys <= q * released)%N).
+    { apply N.mul_le_mono_l; exact Hreleased. }
+    set (keywork := (q * keys)%N) in Hkey.
+    set (released_work := (q * released)%N) in Hkey.
+    set (rowwork := (q * rows)%N).
+    replace (128 * q * (rows + 1))%N with
+      (128 * rowwork + 128 * q)%N in Hinitial by (unfold rowwork; ring).
+    replace (320 * q * keys)%N with (320 * keywork)%N in Hwalk
+      by (unfold keywork; ring).
+    replace (16 * q * keys)%N with (16 * keywork)%N
+      in Hvalues by (unfold keywork; ring).
+    replace (16 * q * keys)%N with (16 * keywork)%N
+      in Hreads by (unfold keywork; ring).
+    replace (16 * q * keys)%N with (16 * keywork)%N
+      in Hcowrites by (unfold keywork; ring).
+    replace (1024 * q * (released + rows + 1))%N with
+      (1024 * (released_work + rowwork + q))%N by
+      (unfold released_work, rowwork; ring).
+    lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
