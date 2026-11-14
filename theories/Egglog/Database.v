@@ -11856,6 +11856,66 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply database_history_entry_recorded. exact Hentry.
   Qed.
 
+  Lemma database_row_size_positive : forall db r,
+    database_row_weights_positive db ->
+    (1 <= match PTrieCode.get r (row_weights (db_row_store db)) with
+     | Some n => n | None => 1%N end)%N.
+  Proof.
+    intros db r Hpositive.
+    destruct (PTrieCode.get r (row_weights (db_row_store db)))
+      as [n |] eqn:Hweight; [apply (Hpositive r n Hweight) | lia].
+  Qed.
+
+  Lemma database_row_path_weight_growth : forall db r d,
+    database_row_store_ok db -> database_row_weights_positive db ->
+    (forall j, j < d ->
+      let parent current :=
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end in
+      parent (Nat.iter j parent r) <> Nat.iter j parent r) ->
+    (N.of_nat (2 ^ d) <=
+      match PTrieCode.get
+        (Nat.iter d (fun current =>
+          match PTrieCode.get current (row_links (db_row_store db)) with
+          | Some p => p | None => current end) r)
+        (row_weights (db_row_store db)) with
+      | Some n => n | None => 1%N end)%N.
+  Proof.
+    intros db r d Hstore Hpositive.
+    induction d as [| d IH]; intro Hstrict.
+    - cbn [Nat.iter Nat.pow N.of_nat]. apply database_row_size_positive.
+      exact Hpositive.
+    - assert (Hprevious : forall j, j < d ->
+        let parent current :=
+          match PTrieCode.get current (row_links (db_row_store db)) with
+          | Some p => p | None => current end in
+        parent (Nat.iter j parent r) <> Nat.iter j parent r).
+      { intros j Hj. apply Hstrict. lia. }
+      pose proof (IH Hprevious) as Hweight.
+      set (current := Nat.iter d (fun current =>
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end) r) in *.
+      specialize (Hstrict d ltac:(lia)).
+      cbn in Hstrict.
+      change (match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end <> current) in Hstrict.
+      destruct (PTrieCode.get current (row_links (db_row_store db)))
+        as [parent |] eqn:Hlink.
+      2: { exfalso. apply Hstrict. reflexivity. }
+      assert (Hdifferent : parent <> current) by congruence.
+      unfold database_row_store_ok in Hstore.
+      destruct Hstore as [Hlinks _].
+      destruct (Hlinks current parent Hlink) as [_ [_ Hdouble]].
+      specialize (Hdouble Hdifferent).
+      rewrite Nat.iter_succ.
+      fold current. rewrite Hlink.
+      change (N.of_nat (2 ^ S d) <=
+        match PTrieCode.get parent (row_weights (db_row_store db)) with
+        | Some n => n | None => 1%N end)%N.
+      rewrite Nat.pow_succ_r by lia.
+      rewrite Nat2N.inj_mul. cbn [N.of_nat]. nia.
+  Qed.
+
   Lemma row_parent_iter_below_fresh : forall db d r,
     database_row_store_ok db ->
     (r < row_fresh (db_row_store db))%positive ->
