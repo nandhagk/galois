@@ -14617,6 +14617,76 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now injection Hdest_lookup.
   Qed.
 
+  Lemma database_active_history_coherent_repair_entry_move :
+    forall db f k o,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db -> database_history_root_owner db ->
+    row_get f k db = Some o ->
+    database_active_history_coherent
+      (move_row_identity f k (normal_key db k) (repair_current f k db)).
+  Proof.
+    intros db f k o Hwf Hstore Halign Hcoherent Howner Hrow.
+    apply database_active_history_coherent_move.
+    - apply database_row_store_ok_repair_current. exact Hstore.
+    - apply database_active_history_coherent_repair_current;
+        assumption.
+    - symmetry. apply normal_key_length.
+    - destruct (Pos.eq_dec (db_tuple_code k)
+        (db_tuple_code (normal_key db k))) as [Heq | Hneq].
+      + right. now apply Tuples.encode_inj.
+      + left. apply repair_current_old_absent with (o := o);
+          try assumption. intro Hsame. apply Hneq. now rewrite Hsame at 1.
+    - intros key r Hentry. eapply repair_current_source_locate; eassumption.
+    - intros key r Hentry. eapply repair_current_destination_locate; eassumption.
+    - apply database_history_root_owner_repair_current; assumption.
+  Qed.
+
+  Lemma database_history_alignment_db_repair_entry : forall db f k,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db ->
+    database_history_alignment (db_repair_entry f k db).
+  Proof.
+    intros db f k Hwf Hstore Halign Hcoherent.
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Halign].
+    destruct (row_get f current db) as [o |] eqn:Hrow; [| exact Halign].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Halign |].
+    eapply database_history_alignment_repair_entry_move; eassumption.
+  Qed.
+
+  Lemma database_history_root_owner_db_repair_entry : forall db f k,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_root_owner (db_repair_entry f k db).
+  Proof.
+    intros db f k Hstore Howner. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Howner].
+    destruct (row_get f current db) as [o |]; [| exact Howner].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Howner |].
+    apply database_history_root_owner_repair_entry_move; assumption.
+  Qed.
+
+  Lemma database_active_history_coherent_db_repair_entry : forall db f k,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db -> database_history_root_owner db ->
+    database_active_history_coherent (db_repair_entry f k db).
+  Proof.
+    intros db f k Hwf Hstore Halign Hcoherent Howner.
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hcoherent].
+    destruct (row_get f current db) as [o |] eqn:Hrow; [| exact Hcoherent].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hcoherent |].
+    eapply database_active_history_coherent_repair_entry_move; eassumption.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
