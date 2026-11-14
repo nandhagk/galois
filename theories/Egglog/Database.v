@@ -3015,6 +3015,15 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hstore. unfold database_row_store_ok in Hstore. tauto.
   Qed.
 
+  Lemma database_row_store_uses_history : forall db,
+    database_row_store_ok db ->
+    forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
+      exists r, PTrieCode.get (db_row_code f k)
+        (row_history (db_row_store db)) = Some ((f, k), r).
+  Proof.
+    intros db Hstore. unfold database_row_store_ok in Hstore. tauto.
+  Qed.
+
   Lemma ensure_row_identity_labels : forall db f k,
     database_row_store_ok db ->
     forall g args key r,
@@ -10642,6 +10651,30 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       cbn [database_set_nuses database_set_row_store database_set_index_counters
         db_row_store row_uses];
       apply DatabaseUsesFacts.entries_register; exact Hmap.
+  Qed.
+  Lemma register_row_uses_history_coverage : forall db f k o,
+    database_row_store_ok db ->
+    forall x g args,
+      In (g, args) (DatabaseUses.bucket x
+        (row_uses (db_row_store (register_row_uses f k o db)))) ->
+      exists r, PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (register_row_uses f k o db))) =
+        Some ((g, args), r).
+  Proof.
+    intros db f k o Hstore x g args Hbucket.
+    assert (Hmap : DatabaseUseMap.wf (row_uses (db_row_store db))).
+    { unfold database_row_store_ok in Hstore. tauto. }
+    pose proof (register_row_uses_map_wf db f k o Hmap) as Hmap'.
+    apply (proj2 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap')) in Hbucket.
+    rewrite <- uses_entries_facts in Hbucket by exact Hmap'.
+    apply (proj1 (register_row_uses_entries db f k o x g args Hmap)) in Hbucket.
+    destruct Hbucket as [Hold | Hnew].
+    - rewrite (uses_entries_facts db Hmap) in Hold.
+      apply (proj1 (DatabaseUsesFacts.entries_member _ x (g, args) Hmap)) in Hold.
+      destruct (database_row_store_uses_history db Hstore x g args Hold) as [r Hr].
+      exists r. now apply register_row_uses_history_old.
+    - apply id_occurrences_member in Hnew as [-> [-> _]].
+      now apply register_row_uses_history_new.
   Qed.
   Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
