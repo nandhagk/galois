@@ -11161,6 +11161,23 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + time_simpl. cbn [length]. rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
   Qed.
 
+  (** Testing a full coefficient vector for zero costs one fixed scan per entry. *)
+  Lemma T_karr_zero_bounded : forall r,
+    (T_karr_zero r <= 8 * N.of_nat (length (kcoeff r) + 1))%N.
+  Proof.
+    intro r.
+    assert (Hzero : forall z, (Z.T_eqb 0 z <= 2)%N).
+    { intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia. }
+    pose proof (karr_T_forallb_members Z (Z.eqb 0)
+      (fun z => Z.T_eqb 0 z) 2 (kcoeff r)
+      (fun z _ => Hzero z)) as Hscan.
+    time_unfold T_karr_zero. time_unfold T_kcoeff.
+    change (fun z : Z => Z.T_eqb 0 z) with (fun z => Z.T_eqb 0 z).
+    rewrite Nat2N.inj_add. cbn [N.of_nat].
+    change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N.
+    lia.
+  Qed.
+
   (** A projection reduction removes the coordinate just eliminated by its cross product. *)
   Definition karr_projection_step (a : Z) (p r : karr_row) : karr_row :=
     karr_tail (karr_reduce 1 a (karr_head r) p r).
