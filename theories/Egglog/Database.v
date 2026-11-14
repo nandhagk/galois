@@ -14006,6 +14006,31 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + unfold move_row_identity. now rewrite Hsource, Hdest.
   Qed.
 
+  Lemma database_history_alignment_repair_entry_move : forall db f k o,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_active_history_coherent db -> row_get f k db = Some o ->
+    database_history_alignment
+      (move_row_identity f k (normal_key db k) (repair_current f k db)).
+  Proof.
+    intros db f k o Hwf Hstore Halign Hcoherent Hrow.
+    set (repaired := repair_current f k db).
+    pose proof (database_history_alignment_repair_current db f k
+      Hwf Hstore Halign) as Hrepaired_align.
+    destruct (PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store repaired))) as [[key r] |] eqn:Hsource.
+    - apply database_history_alignment_move.
+      + subst repaired. apply database_row_store_ok_repair_current. exact Hstore.
+      + exact Hrepaired_align.
+      + symmetry. apply normal_key_length.
+      + subst repaired. eapply repair_current_source_locate; eassumption.
+      + intros dest_key dest_id Hdest. subst repaired.
+        eapply repair_current_destination_locate; eassumption.
+      + subst repaired. apply repair_current_fixed_key. exact Hwf.
+    - replace (move_row_identity f k (normal_key db k) repaired) with repaired.
+      + exact Hrepaired_align.
+      + unfold move_row_identity. now rewrite Hsource.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
