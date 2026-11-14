@@ -12070,6 +12070,98 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact Hequal.
   Qed.
 
+  Lemma database_row_weight_conserved_link : forall db db' loser winner
+      f_l k_l key_l id_l f_w k_w key_w id_w,
+    database_row_weight_conserved db ->
+    loser <> winner ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    ids db' = ids db ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    row_weights (db_row_store db') =
+      PTrieCode.set winner
+        ((match PTrieCode.get loser (row_weights (db_row_store db)) with
+          | Some n => n | None => 1%N end) +
+         (match PTrieCode.get winner (row_weights (db_row_store db)) with
+          | Some n => n | None => 1%N end))%N
+        (row_weights (db_row_store db)) ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links (db_row_store db)) with
+     | Some parent => parent | None => winner end) = winner ->
+    PTrieCode.get (db_row_code f_l k_l) (row_history (db_row_store db)) =
+      Some (key_l, id_l) ->
+    PTrieCode.get (db_row_code f_w k_w) (row_history (db_row_store db)) =
+      Some (key_w, id_w) ->
+    row_root (length k_l * (N.to_nat (N.log2 (ids db)) + 1)) id_l
+      (db_row_store db) = loser ->
+    row_root (length k_w * (N.to_nat (N.log2 (ids db)) + 1)) id_w
+      (db_row_store db) = winner ->
+    database_row_weight_conserved db'.
+  Proof.
+    intros db db' loser winner f_l k_l key_l id_l f_w k_w key_w id_w
+      Hconserved Hneq Hhistory Hids Hlinks Hweights Hloser Hwinner
+      Hentry_l Hentry_w Hroot_l Hroot_w.
+    destruct (Hconserved f_l k_l key_l id_l Hentry_l)
+      as [losing_codes [Hlosing_distinct [Hlosing_count Hlosing_members]]].
+    destruct (Hconserved f_w k_w key_w id_w Hentry_w)
+      as [winning_codes [Hwinning_distinct [Hwinning_count Hwinning_members]]].
+    rewrite Hroot_l in Hlosing_count, Hlosing_members.
+    rewrite Hroot_w in Hwinning_count, Hwinning_members.
+    destruct (database_row_weight_witness_merge db db' loser winner
+      losing_codes winning_codes _ _ Hneq Hhistory Hlinks Hloser Hwinner
+      Hlosing_distinct Hwinning_distinct Hlosing_count Hwinning_count
+      Hlosing_members Hwinning_members)
+      as [Hmerged_distinct [Hmerged_count Hmerged_members]].
+    assert (Hwinner_new :
+      (match PTrieCode.get winner (row_links (db_row_store db')) with
+       | Some parent => parent | None => winner end) = winner).
+    { rewrite Hlinks, PTrie.get_set_other by congruence. exact Hwinner. }
+    intros g args key id Hentry_new.
+    rewrite Hhistory in Hentry_new.
+    rewrite Hids.
+    destruct (Hconserved g args key id Hentry_new)
+      as [codes [Hdistinct [Hcount Hmembers]]].
+    set (fuel := length args * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (old_root := row_root fuel id (db_row_store db)).
+    set (new_root := row_root fuel id (db_row_store db')).
+    change (exists codes' : list positive,
+      NoDup codes' /\
+      N.to_nat (match PTrieCode.get new_root (row_weights (db_row_store db'))
+        with | Some n => n | None => 1%N end) <= length codes' /\
+      Forall (fun code => exists label id',
+        PTrieCode.get code (row_history (db_row_store db')) = Some (label, id') /\
+        database_history_connected db' id' new_root) codes').
+    assert (Hold_root : old_root = loser ->
+      new_root = loser \/ new_root = winner).
+    { intro Heq. subst old_root new_root.
+      eapply row_root_link_two_roots; eassumption. }
+    assert (Hother_root : old_root <> loser -> new_root = old_root).
+    { intro Hother. subst old_root new_root.
+      eapply row_root_link_unaffected with
+        (target := row_root fuel id (db_row_store db));
+        [exact Hlinks | congruence | exact Hloser | reflexivity]. }
+    destruct (Pos.eq_dec new_root winner) as [Hmerged | Hother_winner].
+    - exists (losing_codes ++ winning_codes). split; [exact Hmerged_distinct |].
+      split.
+      + rewrite Hmerged, Hweights, PTrie.get_set_same. exact Hmerged_count.
+      + rewrite Hmerged. exact Hmerged_members.
+    - exists codes. split; [exact Hdistinct |].
+      assert (Hsame_root : new_root = old_root).
+      { destruct (Pos.eq_dec old_root loser) as [Heq | Hother].
+        - destruct (Hold_root Heq) as [Hsame | Himpossible];
+            [rewrite Heq; exact Hsame | contradiction].
+        - exact (Hother_root Hother). }
+      split.
+      + rewrite Hsame_root, Hweights.
+        rewrite PTrie.get_set_other by congruence. exact Hcount.
+      + rewrite Hsame_root. apply Forall_forall. intros code Hin.
+        apply Forall_forall with (x := code) in Hmembers; [| exact Hin].
+        destruct Hmembers as [label [id' [Hget Hconnected]]].
+        exists label, id'. split; [now rewrite Hhistory |].
+        eapply database_history_connected_link; eassumption.
+  Qed.
+
   Lemma database_history_root_owner_affected : forall db f old ck
       old_key old_id ck_key ck_id g args key r,
     database_history_root_owner db ->
