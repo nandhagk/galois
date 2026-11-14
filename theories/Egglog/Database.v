@@ -11502,6 +11502,98 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - rewrite Nat.iter_succ, IH, Hfixed. reflexivity.
   Qed.
 
+  Lemma row_root_parent_iter : forall fuel r store,
+    row_root fuel r store =
+      Nat.iter fuel (fun current =>
+        match PTrieCode.get current (row_links store) with
+        | Some parent => parent | None => current end) r.
+  Proof.
+    induction fuel as [|remaining IH]; intros r store; [reflexivity |].
+    rewrite Nat.iter_succ_r. cbn [row_root].
+    destruct (PTrieCode.get r (row_links store)) as [parent |] eqn:Hlink.
+    - destruct (Pos.eqb parent r) eqn:Heq.
+      + apply Pos.eqb_eq in Heq. subst parent. symmetry.
+        apply row_parent_iter_fixed. now rewrite Hlink.
+      + apply IH.
+    - symmetry. apply row_parent_iter_fixed. now rewrite Hlink.
+  Qed.
+
+  Lemma row_parent_iter_after_fixed : forall d extra (parent : positive -> positive) r,
+    parent (Nat.iter d parent r) = Nat.iter d parent r ->
+    Nat.iter (d + extra) parent r = Nat.iter d parent r.
+  Proof.
+    intros d extra parent r Hfixed. induction extra as [|remaining IH].
+    - now rewrite Nat.add_0_r.
+    - rewrite Nat.add_succ_r, Nat.iter_succ, IH, Hfixed. reflexivity.
+  Qed.
+
+  Lemma row_root_after_fixed : forall fuel d r store,
+    d <= fuel ->
+    (let parent current :=
+      match PTrieCode.get current (row_links store) with
+      | Some p => p | None => current end in
+     parent (Nat.iter d parent r) = Nat.iter d parent r) ->
+    row_root fuel r store =
+      Nat.iter d (fun current =>
+        match PTrieCode.get current (row_links store) with
+        | Some p => p | None => current end) r.
+  Proof.
+    intros fuel d r store Hbound Hfixed.
+    rewrite row_root_parent_iter.
+    replace fuel with (d + (fuel - d)) by lia.
+    apply row_parent_iter_after_fixed. exact Hfixed.
+  Qed.
+
+  Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
+    (before <= after)%N ->
+    length k * (N.to_nat (N.log2 before) + 1) <=
+      length k * (N.to_nat (N.log2 after) + 1).
+  Proof.
+    intros before after k Hbound.
+    pose proof (N.log2_le_mono _ _ Hbound) as Hlog.
+    apply Nat.mul_le_mono_l. nia.
+  Qed.
+
+  Lemma db_locate_ids_mono : forall db db',
+    database_row_store_ok db ->
+    db_row_store db' = db_row_store db ->
+    (ids db <= ids db')%N ->
+    forall f k, db_locate f k db' = db_locate f k db.
+  Proof.
+    intros db db' Hstore Hsame Hids f k.
+    unfold db_locate. rewrite Hsame.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key r] |] eqn:Hentry; [| reflexivity].
+    change (PTrieCode.get
+      (row_root (length k * (N.to_nat (N.log2 (ids db')) + 1)) r (db_row_store db))
+      (row_keys (db_row_store db)) =
+      PTrieCode.get
+        (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r (db_row_store db))
+        (row_keys (db_row_store db))).
+    destruct (database_row_store_depth db Hstore f k key r Hentry)
+      as [d [Hdepth [Hfixed _]]].
+    assert (Hnew_depth :
+      d <= length k * (N.to_nat (N.log2 (ids db')) + 1)).
+    { eapply Nat.le_trans; [exact Hdepth |].
+      apply row_lookup_depth_mono. exact Hids. }
+    rewrite (row_root_after_fixed _ d r (db_row_store db) Hnew_depth Hfixed).
+    rewrite (row_root_after_fixed _ d r (db_row_store db) Hdepth Hfixed).
+    reflexivity.
+  Qed.
+
+  Lemma database_history_alignment_allocate_next : forall db,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_history_alignment (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hwf Hstore Halign f k key r Hentry Hcanonical.
+    rewrite (db_locate_ids_mono db (allocate_id (N.succ_pos (ids db)) db))
+      by (try exact Hstore; try reflexivity; rewrite allocate_next_ids; lia).
+    apply (database_history_alignment_entry db Halign f k key r).
+    - exact Hentry.
+    - intros i Hin. rewrite <- (allocate_next_repr db Hwf i).
+      exact (Hcanonical i Hin).
+  Qed.
+
   Lemma database_one_le_pow : forall base d,
     (1 <= base)%N -> (1 <= base ^ N.of_nat d)%N.
   Proof.
