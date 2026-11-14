@@ -15712,6 +15712,48 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + unfold width. lia.
   Qed.
 
+  (** The entailment checker sees only public dimensions and widths. *)
+  Lemma T_karr_entail_candidate_checker : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    let d := n (Reached P) + n (Reached (c :: nil)) + 1 in
+    let w := ell (Reached P) + ell (Reached (c :: nil)) in
+    let v := ellB d w + 1 in
+    (C.T_check_entails P c k <= C.c_lc * N.of_nat
+      ((2 * d + 1) * (d + 1) *
+        (w + (8 * v + 1) * (w + 1) + 1) +
+       (8 * v + 1) * ((d + 1) * (w + w + 1) +
+         8 * v + w + Nat.log2 d + 2)))%N.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    pose proof (karr_entail_candidate_envelope P c k HP Hc Hcandidate)
+      as [Hlength [Hmult Hscale]].
+    assert (Hsource : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= w /\ C.row_bits row <= w) P).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [Hrow [Hkeys Hbits]]. unfold d, w in *. repeat split; lia. }
+    pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hconclusion.
+    apply Forall_cons_iff in Hconclusion.
+    destruct Hconclusion as
+      [[Hconclusion_length [Hconclusion_keys Hconclusion_bits]] _].
+    eapply karr_checker_envelope with (dim := d) (keys := w)
+      (bits := w) (mbits := 8 * v).
+    - unfold d, n. cbn [rows_of length]. lia.
+    - exact Hsource.
+    - unfold d, n. cbn [rows_of length]. lia.
+    - exact Hmult.
+    - unfold d. lia.
+    - unfold w. lia.
+    - unfold w. lia.
+    - exact Hscale.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
