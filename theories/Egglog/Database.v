@@ -21431,6 +21431,56 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + intro u. exact (inv_on_slot_projection_count db work s f perm u Hinv Hslot).
   Qed.
 
+  Lemma row_delete_cache_correct_active : forall db work f k,
+    inv_on db work -> database_cache_correct (row_delete f k db).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hmap : RowMap.wf (runtime_rows (db_runtime db))).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    assert (Hbound : runtime_slot_bound (db_runtime db) =
+      N.of_nat (length (slots db))).
+    { unfold inv_on, forest_ok, metadata_ok in Hinv. tauto. }
+    assert (Hgroups : runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db))
+        PTrieCode.empty).
+    { unfold inv_on, forest_ok, metadata_ok in Hinv. tauto. }
+    destruct (row_get f k db) as [output |] eqn:Hrow.
+    - pose proof (row_delete_map_present f k db output Hrow) as Hremoved.
+      apply (database_cache_correct_from_slots (row_delete f k db)).
+      + refine (eq_ind_r (fun rows => RowMap.wf rows) _ Hremoved).
+        apply RowMap.wf_remove. exact Hmap.
+      + change (runtime_slot_bound (db_runtime (row_delete f k db)) =
+          N.of_nat (length (slots (row_delete f k db)))).
+        rewrite (row_delete_preserves _ (@runtime_slot_bound (cell V.t) I.t)
+          (fun rows state => eq_refl) (fun all new counts state => eq_refl)
+          f k db), row_delete_slots. exact Hbound.
+      + intros s g perm Hslot.
+        assert (Hslot_old : slot_of db s = Some (g, perm)).
+        { unfold slot_of in *. now rewrite row_delete_slots in Hslot. }
+        pose proof (RowFacts.remove_elements_decomposition _
+          (runtime_rows (db_runtime db)) (f, k) (Some output) Hmap Hrow)
+          as Hrows.
+        cbn [option_list option_map app] in Hrows.
+        pose proof (inv_on_slot_cache db work s g perm Hinv Hslot_old)
+          as Hcache.
+        pose proof (slot_cache_permutation (db_runtime db) s (length perm) _ _
+          (row_contributions_permutation g perm _ _ Hrows) Hcache)
+          as Hordered.
+        refine (eq_ind_r (fun rows => slot_cache_ok (db_runtime (row_delete f k db))
+          s (length perm) (row_contributions g perm (RowMap.elements rows)))
+          _ Hremoved).
+        unfold row_delete. rewrite Hrow.
+        eapply slot_cache_snapshot; [apply row_erase_slot_snapshot |].
+        apply slots_update_cache_row_remove; try assumption.
+        * exact (proj1 (proj2
+            (inv_on_kind_ok db work f k output Hinv Hrow))).
+    - unfold row_delete. rewrite Hrow.
+      apply database_cache_correct_from_slots;
+        [exact Hmap | exact Hbound |].
+      intros s g perm Hslot. now apply inv_on_slot_cache with (work := work).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
