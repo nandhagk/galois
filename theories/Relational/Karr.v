@@ -10323,6 +10323,29 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold nell, ell. cbn [rows_of]. lia.
   Qed.
 
+  (** A common row length bounds the total number of raw occurrences. *)
+  Lemma karr_terms_rows_bound : forall P dim,
+    Forall (fun r => length (lhs r) <= dim) P ->
+    terms (Reached P) <= length P * dim.
+  Proof.
+    intros P dim Hrows. induction Hrows as [|r P Hrow Htail IH].
+    - cbn [terms rows_of map fold_right length]. lia.
+    - change (length (lhs r) + terms (Reached P) <= S (length P) * dim).
+      nia.
+  Qed.
+
+  (** Normal source rows give a quadratic bound on their raw occurrences. *)
+  Lemma karr_normal_terms_bound : forall P,
+    normal P -> terms (Reached P) <= length P * length (vars_of P).
+  Proof.
+    intros P Hnormal. apply karr_terms_rows_bound.
+    apply Forall_forall. intros r Hr.
+    rewrite <- (length_map fst (lhs r)).
+    apply NoDup_incl_length.
+    - exact (proj1 (Forall_forall _ _) Hnormal r Hr).
+    - intros x Hx. eapply karr_vars_of_contains; eassumption.
+  Qed.
+
   (** A coefficient in a row with unique keys never adds distinct occurrences together. *)
   Lemma karr_coefficient_normal_bits : forall xs x bits,
     NoDup (map fst xs) -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
