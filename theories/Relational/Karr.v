@@ -617,6 +617,17 @@ Proof.
     exists label, labels. split; [cbn [length] in Hlength; lia|apply Permutation_refl].
 Qed.
 
+(** Mapping paired rows commutes with pairing their origin labels. *)
+Lemma karr_combine_map : forall A B C (f : B -> C)
+    (labels : list A) (rows : list B),
+  map (fun pair => (fst pair, f (snd pair))) (combine labels rows) =
+    combine labels (map f rows).
+Proof.
+  intros A B C f labels. induction labels as [|label labels IH];
+    intros [|row rows]; cbn [map combine fst snd]; try reflexivity.
+  now rewrite IH.
+Qed.
+
 (** Equal-length lists can always be paired by an unrestricted relation. *)
 Lemma karr_forall2_true : forall A B (xs : list A) (ys : list B),
   length xs = length ys -> Forall2 (fun _ _ => True) xs ys.
