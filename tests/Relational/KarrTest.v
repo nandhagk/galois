@@ -356,3 +356,10 @@ Example range_certifies_an_empty_source_constant :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Zero-width source rows cannot produce a nonzero hull equality. *)
+Example zero_width_hull_rows_are_discarded :
+  Equalities.affine_hull [LCons _ [] REq 0] [LCons _ [] REq 0] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
