@@ -15733,6 +15733,52 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now apply Nat.mul_le_mono_l.
   Qed.
 
+  (** The recognized prepared head fits the public assignment bit budget. *)
+  Lemma poly_assign_prepared_head_measure_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    (terms (Reached P) + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef prepared) + 2) *
+        (X.bits x + 3 * F.form_bits prepared + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2) <=
+      256 * (n P + terms (Reached P) + tsize e + length P + 3) * bits^2.
+  Proof.
+    intros x e P f Hlinear prepared bits.
+    destruct (F.lin_of_size e f NoWrap Hlinear) as [Hlength Hbits].
+    cbn [F.wrap_bits] in Hbits.
+    pose proof (poly_assign_prepared_length e f NoWrap Hlinear) as Hprepared_len.
+    pose proof (poly_assign_prepared_key_space f) as Hspace.
+    pose proof (poly_assign_prepared_form_bits f) as Hprepared_bits.
+    change (length (coef prepared) <= tsize e) in Hprepared_len.
+    change (F.form_bits prepared <=
+      2 * F.form_bits f + Nat.log2 (length (coef f)) + 1)
+      in Hprepared_bits.
+    pose proof (Nat.log2_le_mono (length (coef f))
+      (terms (Reached P) + tsize e + 1) ltac:(lia)) as Hlog.
+    assert (Hspace_bits : length (coef prepared) <= 2^bits).
+    { eapply Nat.le_trans; [exact Hspace|].
+      apply Nat.pow_le_mono_r; [lia|]. unfold bits; lia. }
+    pose proof (poly_assign_prepared_head_measure_numeric
+      (terms (Reached P) + tsize e) (length P) (length (coef prepared))
+      (nell (Reached P)) (X.bits x) (F.form_bits f)
+      (F.form_bits prepared) bits
+      ltac:(lia) Hspace_bits
+      ltac:(unfold bits; lia) ltac:(unfold bits; lia)
+      ltac:(unfold bits; lia)
+      ltac:(lia)
+      ltac:(unfold bits, nell, X.bits; pose proof (Pos.size_nat_pos (X.encode x)); lia))
+      as Hnumeric.
+    eapply Nat.le_trans with (m :=
+      (terms (Reached P) + tsize e + length P) * (nell (Reached P) + 1) +
+      2 * ((2 * length (coef prepared) + 2) *
+        (X.bits x + 3 * F.form_bits prepared + 5) +
+        nell (Reached P) + Nat.log2 (length P) + 2)).
+    - apply Nat.add_le_mono_r, Nat.mul_le_mono_r. lia.
+    - eapply Nat.le_trans; [exact Hnumeric|].
+      apply Nat.mul_le_mono; [lia|apply Nat.le_refl].
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
