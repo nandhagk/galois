@@ -903,6 +903,29 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
     lia.
   Qed.
 
+  (** A requested payload adds its size to the checked word-table budget. *)
+  Local Lemma backward_table_budget o xs ws w p :
+    untag xs = Some ws -> Op.result_width o (map fst ws) = Some w ->
+    (((Pos.to_nat w +
+      fold_right Nat.add 0%nat (map (fun x => Pos.to_nat (fst x)) ws) + 1) ^ 2 +
+      W.psize w p +
+      fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) ws))%nat <=
+      4 * (twork (BOp o) xs + B.bsize (TVal w p) + 1))%nat.
+  Proof.
+    intros Htag Hwidth.
+    pose proof (table_budget o xs ws w Htag Hwidth) as Hbase.
+    change (B.bsize (TVal w p)) with (Pos.to_nat w + W.psize w p + 1)%nat.
+    lia.
+  Qed.
+
+  (** Comparing a requested result width costs at most that width. *)
+  Local Lemma width_compare_time w v :
+    (Pos.T_eqb w v <= N.of_nat (Pos.to_nat w))%N.
+  Proof.
+    eapply N.le_trans; [apply Pos.T_eqb_le|].
+    apply time_of_nat_le. apply WordTime.positive_size_value.
+  Qed.
+
   (** Reading the width of each untagged operand has linear clock. *)
   Local Lemma width_map_time ws :
     (ListDef.T_map (@fst positive W.p)
@@ -1027,13 +1050,247 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
         * lia.
         * apply N.mul_le_mono_r. unfold c_tab. nia.
   Qed.
+
+  (** Untagging and width checking fit within the requested backward work. *)
+  Local Lemma backward_prefix_time o w p xs ws : untag xs = Some ws ->
+    (T_untag xs +
+      ListDef.T_map (@fst positive W.p)
+        (fun x => @Datatypes.T_fst positive W.p x) ws +
+      Op.T_result_width o (map fst ws) <=
+      132 * N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N.
+  Proof.
+    intro Htag.
+    pose proof (untag_sizes xs ws Htag) as [Hwidth [_ Hlen]].
+    pose proof (untag_time xs) as Huntag.
+    pose proof (width_map_time ws) as Hmap.
+    pose proof (WordTime.result_width_time_bound o (map fst ws)) as Hrwtime.
+    rewrite map_map in Hrwtime. rewrite <- Hwidth in Hrwtime.
+    rewrite <- Hlen in Hmap.
+    set (budget := N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1)).
+    assert (Hlinear : (N.of_nat (length xs + 1) <= budget)%N).
+    { unfold budget.
+      change (N.of_nat (length xs + 1) <= N.of_nat
+        (operand_sizes xs + length xs +
+          (Op.op_widths o + operand_widths xs + 1) ^ 2 +
+          (Pos.to_nat w + W.psize w p + 1) + 1))%N.
+      apply time_of_nat_le. lia. }
+    assert (Hsquare :
+      (N.of_nat ((Op.op_widths o + operand_widths xs + 1) ^ 2) <= budget)%N).
+    { unfold budget.
+      change (N.of_nat ((Op.op_widths o + operand_widths xs + 1) ^ 2) <= N.of_nat
+        (operand_sizes xs + length xs +
+          (Op.op_widths o + operand_widths xs + 1) ^ 2 +
+          (Pos.to_nat w + W.psize w p + 1) + 1))%N.
+      apply time_of_nat_le. lia. }
+    rewrite Nat2N.inj_add in Hlinear, Huntag.
+    clear - Huntag Hmap Hrwtime Hlinear Hsquare.
+    lia.
+  Qed.
+
+  (** A backward table call fits four times its declared coefficient and work. *)
+  Local Lemma backward_payload_time o w p xs ws :
+    untag xs = Some ws -> Op.result_width o (map fst ws) = Some w ->
+    (T.T_wbwd o w p ws <= 4 * T.c_word_table *
+      N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N.
+  Proof.
+    intros Htag Hwidth.
+    pose proof (T.T_wbwd_le o w p ws) as Htime.
+    pose proof (backward_table_budget o xs ws w p Htag Hwidth) as Hbudget.
+    apply time_of_nat_le in Hbudget. rewrite Nat2N.inj_mul in Hbudget.
+    eapply N.le_trans; [exact Htime|].
+    replace (4 * T.c_word_table *
+      N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N with
+      (T.c_word_table *
+        (4 * N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1)))%N by nia.
+    apply N.mul_le_mono_l. exact Hbudget.
+  Qed.
+
+  (** A returned backward payload list has bounded length. *)
+  Local Lemma backward_payload_length o w p xs ws ps :
+    untag xs = Some ws -> Op.result_width o (map fst ws) = Some w ->
+    T.wbwd o w p ws = Some ps ->
+    (N.of_nat (length ps) <= 4 * T.c_word_table *
+      N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N.
+  Proof.
+    intros Htag Hwidth Hresult.
+    pose proof (T.wbwd_size_le o w p ws ps Hresult) as Hsize.
+    pose proof (backward_table_budget o xs ws w p Htag Hwidth) as Hbudget.
+    apply time_of_nat_le in Hbudget. rewrite Nat2N.inj_mul in Hbudget.
+    eapply N.le_trans; [|eapply N.le_trans; [exact Hsize|]].
+    - apply time_of_nat_le. lia.
+    - replace (4 * T.c_word_table *
+        N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N with
+        (T.c_word_table *
+          (4 * N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1)))%N by nia.
+      apply N.mul_le_mono_l. exact Hbudget.
+  Qed.
+
+  (** Backward work pays for every operand and the requested result width. *)
+  Local Lemma backward_work_linear o w p xs :
+    (N.of_nat (length xs + 1) <=
+      N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N /\
+    (N.of_nat (Pos.to_nat w) <=
+      N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1))%N.
+  Proof.
+    change (B.bsize (TVal w p)) with (Pos.to_nat w + W.psize w p + 1)%nat.
+    split; apply time_of_nat_le; unfold twork; cbn; lia.
+  Qed.
+
+  (** Every table budget pays for one clock unit. *)
+  Local Lemma table_budget_positive o r xs :
+    (1 <= c_tab * N.of_nat (twork o xs + B.bsize r + 1))%N.
+  Proof.
+    assert (Hcoefficient : (1 <= c_tab)%N) by (unfold c_tab; nia).
+    assert (Hwork : (1 <= N.of_nat (twork o xs + B.bsize r + 1))%N).
+    { change (N.of_nat 1 <= N.of_nat (twork o xs + B.bsize r + 1))%N.
+      apply time_of_nat_le. lia. }
+    nia.
+  Qed.
+  (** The initial untag pass fits every backward work budget. *)
+  Local Lemma backward_untag_budget op r xs :
+    (N.of_nat (length xs + 1) <=
+      N.of_nat (twork op xs + B.bsize r + 1))%N.
+  Proof.
+    apply time_of_nat_le.
+    destruct op, r; unfold twork; cbn [B.bsize]; lia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma T_bwd_le : forall o r xs,
     (T_bwd o r xs <= c_tab * N.of_nat ((twork o xs + B.bsize r + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros op result xs.
+    pose proof (table_budget_positive op result xs) as Hunit.
+    pose proof (backward_untag_budget op result xs) as Hinitial.
+    pose proof (untag_time xs) as Hinitial_time.
+    assert (Hinitial_positive :
+      (1 <= N.of_nat (twork op xs + B.bsize result + 1))%N).
+    { change (N.of_nat 1 <= N.of_nat
+        (twork op xs + B.bsize result + 1))%N.
+      apply time_of_nat_le. lia. }
+    assert (Hshort :
+      (3 + T_untag xs <=
+        c_tab * N.of_nat (twork op xs + B.bsize result + 1))%N).
+    { eapply N.le_trans with
+        (m := (4 * N.of_nat (twork op xs + B.bsize result + 1))%N).
+      - assert (Hvisit :
+          (T_untag xs <=
+            N.of_nat (twork op xs + B.bsize result + 1))%N).
+        { eapply N.le_trans; [exact Hinitial_time|exact Hinitial]. }
+        lia.
+      - apply N.mul_le_mono_r. unfold c_tab. nia. }
+    destruct op as [cw cz|o], result as [|w p|];
+      time_unfold T_bwd; time_cbn;
+      try solve [cbn in Hunit |- *; lia].
+    pose proof (untag_time xs) as Huntag.
+    pose proof (backward_work_linear o w p xs) as [Hlinear Hwidth].
+    set (budget := N.of_nat (twork (BOp o) xs + B.bsize (TVal w p) + 1)).
+    change (N.of_nat (length xs + 1) <= budget)%N in Hlinear.
+    change (N.of_nat (Pos.to_nat w) <= budget)%N in Hwidth.
+    rewrite Nat2N.inj_add in Hlinear at 1.
+    rewrite Nat2N.inj_add in Huntag.
+    assert (Hpositive : (1 <= budget)%N) by lia.
+    destruct (untag xs) as [ws|] eqn:Htag; time_cbn_all.
+    - pose proof (backward_prefix_time o w p xs ws Htag) as Hprefix.
+      change (T_untag xs +
+        ListDef.T_map (@fst positive W.p)
+          (fun x => @Datatypes.T_fst positive W.p x) ws +
+        Op.T_result_width o (map fst ws) <= 132 * budget)%N in Hprefix.
+      destruct (Op.result_width o (map fst ws)) as [rw|] eqn:Hrw; time_cbn_all.
+      + pose proof (width_compare_time w rw) as Hcompare.
+        assert (Hcompare_budget : (Pos.T_eqb w rw <= budget)%N).
+        { eapply N.le_trans; [exact Hcompare|exact Hwidth]. }
+        clear Hcompare. rename Hcompare_budget into Hcompare.
+        destruct (Pos.eqb w rw) eqn:Hsame; time_cbn_all.
+        * apply Pos.eqb_eq in Hsame. subst rw.
+          pose proof (backward_payload_time o w p xs ws Htag Hrw) as Htable.
+          change (T.T_wbwd o w p ws <=
+            4 * T.c_word_table * budget)%N in Htable.
+          destruct (T.wbwd o w p ws) as [ps|] eqn:Hback; time_cbn_all.
+          -- pose proof (backward_payload_length o w p xs ws ps Htag Hrw Hback)
+               as Hpayload_length.
+             pose proof (retag_time (map fst ws) ps) as Hretag.
+             pose proof (width_map_time ws) as Hmap.
+             pose proof (untag_sizes xs ws Htag) as [_ [_ Hlen]].
+             pose proof (backward_work_linear o w p xs) as [Hxs _].
+             rewrite Nat2N.inj_add in Hxs at 1.
+             change (N.of_nat (length xs) + N.of_nat 1 <= budget)%N in Hxs.
+             change (N.of_nat (length ps) <=
+               4 * T.c_word_table * budget)%N in Hpayload_length.
+             rewrite length_map in Hretag.
+             rewrite <- Hlen in Hretag, Hmap.
+             rewrite !Nat2N.inj_add in Hretag.
+             assert (Hretag_budget :
+               (T_retag (map fst ws) ps <=
+                 (1 + 4 * T.c_word_table) * budget)%N).
+             { eapply N.le_trans; [exact Hretag|].
+               eapply N.le_trans with
+                 (m := (budget + 4 * T.c_word_table * budget)%N).
+               - lia.
+               - nia. }
+             assert (Hmap_budget :
+               (ListDef.T_map (@fst positive W.p)
+                 (fun x => @Datatypes.T_fst positive W.p x) ws <= 3 * budget)%N)
+               by lia.
+             eapply N.le_trans with (m := (5 +
+               (T_untag xs +
+                ListDef.T_map (@fst positive W.p)
+                  (fun x => @Datatypes.T_fst positive W.p x) ws +
+                Op.T_result_width o (map fst ws)) +
+               Pos.T_eqb w w + T.T_wbwd o w p ws +
+               ListDef.T_map (@fst positive W.p)
+                 (fun x => @Datatypes.T_fst positive W.p x) ws +
+               T_retag (map fst ws) ps)%N); [lia|].
+             clear - Hprefix Hcompare Htable Hretag_budget Hmap_budget Hpositive.
+             eapply N.le_trans with
+               (m := ((142 + 8 * T.c_word_table) * budget)%N).
+             ++ rewrite N.mul_add_distr_r. lia.
+             ++ apply N.mul_le_mono_r. unfold c_tab. nia.
+          -- eapply N.le_trans with (m := (3 +
+               (T_untag xs +
+                ListDef.T_map (@fst positive W.p)
+                  (fun x => @Datatypes.T_fst positive W.p x) ws +
+                Op.T_result_width o (map fst ws)) +
+               Pos.T_eqb w w + T.T_wbwd o w p ws)%N); [lia|].
+             clear - Hprefix Hcompare Htable Hpositive.
+             eapply N.le_trans with
+               (m := ((137 + 4 * T.c_word_table) * budget)%N).
+             ++ rewrite N.mul_add_distr_r. lia.
+             ++ apply N.mul_le_mono_r. unfold c_tab. nia.
+        * eapply N.le_trans with (m := (3 +
+            (T_untag xs +
+             ListDef.T_map (@fst positive W.p)
+               (fun x => @Datatypes.T_fst positive W.p x) ws +
+             Op.T_result_width o (map fst ws)) +
+            Pos.T_eqb w rw)%N); [lia|].
+          clear - Hprefix Hcompare Hpositive.
+          eapply N.le_trans with (m := (136 * budget)%N).
+          -- lia.
+          -- apply N.mul_le_mono_r. unfold c_tab. nia.
+      + eapply N.le_trans with (m := (3 +
+          T_untag xs +
+          ListDef.T_map (@fst positive W.p)
+            (fun x => @Datatypes.T_fst positive W.p x) ws +
+          Op.T_result_width o (map fst ws))%N); [lia|].
+        clear - Hprefix Hpositive.
+        eapply N.le_trans with (m := (135 * budget)%N).
+        * lia.
+        * apply N.mul_le_mono_r. unfold c_tab. nia.
+    - eapply N.le_trans with (m := (3 + T_untag xs)%N); [lia|].
+      clear - Huntag Hlinear Hpositive.
+      eapply N.le_trans with (m := (4 * budget)%N).
+      + lia.
+      + apply N.mul_le_mono_r. unfold c_tab. nia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma T_grd_le : forall g xs, (T_grd g xs <= c_tab * N.of_nat ((tgwork g xs + 1)%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs.
+    assert (Hwork : (1 <= N.of_nat (tgwork g xs + 1))%N).
+    { change (N.of_nat 1 <= N.of_nat (tgwork g xs + 1))%N.
+      apply time_of_nat_le. lia. }
+    time_unfold T_grd. time_cbn.
+    unfold c_tab. nia.
+  Qed.
   (** The entry stays within its declared work budget. *)
   Lemma T_abst_le : forall v xs o cs, BitsLangT.eval o cs = Some v ->
     Forall2 (fun x c => B.point x = Some c) xs cs ->
@@ -1052,7 +1309,9 @@ Module TaggedTableT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L)
   Lemma grd_size_le : forall g xs ys, grd g xs = Some ys ->
     (N.of_nat (fold_right Nat.add 0%nat (map B.bsize ys) + length ys) <=
       c_tab * N.of_nat (tgwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs ys Hresult. cbn [grd] in Hresult. discriminate.
+  Qed.
 End TaggedTableT.
 
 Module WordDomainT (L : WORD_LANGUAGE_T) (W : WORD_PAYLOAD_T L) (T : WORD_TABLE_T L W).
