@@ -13757,6 +13757,24 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     now rewrite poly_signed_normal_eq.
   Qed.
 
+  (** Canonical preparation gives the distinct keys required by the step bounds. *)
+  Lemma poly_assign_prepared_nodup : forall f,
+    NoDup (map fst (coef (poly_prepare_form X.encode f))).
+  Proof.
+    intro f. cbn [poly_prepare_form coef]. rewrite poly_signed_normal_eq.
+    apply poly_normal_coef_nodup.
+  Qed.
+
+  (** Preparing a recognized form stays within the linearizer's term allowance. *)
+  Lemma poly_assign_prepared_length : forall e f wrapping,
+    F.lin_of e = Some (f, wrapping) ->
+    length (coef (poly_prepare_form X.encode f)) <= tsize e.
+  Proof.
+    intros e f wrapping Hlinear.
+    eapply Nat.le_trans; [apply poly_prepare_form_length|].
+    exact (proj1 (F.lin_of_size e f wrapping Hlinear)).
+  Qed.
+
   (** Prepared affine coefficients grow only by the logarithm of raw multiplicity. *)
   Lemma poly_assign_prepared_form_bounds : forall f,
     C.row_key_bits (LCons X.t (coef (poly_prepare_form X.encode f)) REq
