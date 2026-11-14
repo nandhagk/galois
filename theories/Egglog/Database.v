@@ -11857,6 +11857,63 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       rewrite Hlinks, PTrie.get_set_same. reflexivity.
   Qed.
 
+  Lemma database_row_weight_witness_merge : forall db db' loser winner
+      losing_codes winning_codes losing_weight winning_weight,
+    loser <> winner ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') =
+      PTrieCode.set loser winner (row_links (db_row_store db)) ->
+    (match PTrieCode.get loser (row_links (db_row_store db)) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links (db_row_store db)) with
+     | Some parent => parent | None => winner end) = winner ->
+    NoDup losing_codes -> NoDup winning_codes ->
+    N.to_nat losing_weight <= length losing_codes ->
+    N.to_nat winning_weight <= length winning_codes ->
+    Forall (fun code => exists label id,
+      PTrieCode.get code (row_history (db_row_store db)) = Some (label, id) /\
+      database_history_connected db id loser) losing_codes ->
+    Forall (fun code => exists label id,
+      PTrieCode.get code (row_history (db_row_store db)) = Some (label, id) /\
+      database_history_connected db id winner) winning_codes ->
+    NoDup (losing_codes ++ winning_codes) /\
+    N.to_nat (losing_weight + winning_weight) <=
+      length (losing_codes ++ winning_codes) /\
+    Forall (fun code => exists label id,
+      PTrieCode.get code (row_history (db_row_store db')) = Some (label, id) /\
+      database_history_connected db' id winner)
+      (losing_codes ++ winning_codes).
+  Proof.
+    intros db db' loser winner losing_codes winning_codes losing_weight
+      winning_weight Hneq Hhistory Hlinks Hloser Hwinner Hlosing_distinct
+      Hwinning_distinct Hlosing_count Hwinning_count Hlosing Hwinning.
+    assert (Hdisjoint : forall code, In code losing_codes ->
+      ~ In code winning_codes).
+    { eapply database_row_weight_codes_disjoint; eassumption. }
+    assert (Hmerged_distinct : NoDup (losing_codes ++ winning_codes)).
+    { clear Hlosing_count Hwinning_count. revert Hlosing Hdisjoint.
+      induction Hlosing_distinct as [| code rest Hnotin Hdistinct IH];
+        intros Hlosing Hdisjoint; simpl; [exact Hwinning_distinct |].
+      constructor.
+      + rewrite in_app_iff. intros [Hin | Hin].
+        * exact (Hnotin Hin).
+        * exact (Hdisjoint code (or_introl eq_refl) Hin).
+      + apply IH.
+        * exact (Forall_inv_tail Hlosing).
+        * intros other Hin. apply Hdisjoint. now right. }
+    split; [exact Hmerged_distinct |]. split.
+    - rewrite N2Nat.inj_add, length_app. lia.
+    - rewrite Forall_app. split; apply Forall_forall; intros code Hin.
+      + apply Forall_forall with (x := code) in Hlosing; [| exact Hin].
+        destruct Hlosing as [label [id [Hget Hconnected]]].
+        exists label, id. split; [now rewrite Hhistory |].
+        eapply database_history_connected_link_winner; eassumption.
+      + apply Forall_forall with (x := code) in Hwinning; [| exact Hin].
+        destruct Hwinning as [label [id [Hget Hconnected]]].
+        exists label, id. split; [now rewrite Hhistory |].
+        eapply database_history_connected_link; eassumption.
+  Qed.
+
   (** Linking a terminal row root redirects every completed path with one more step. *)
   Lemma row_root_link_terminal : forall d r store store' loser winner,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
