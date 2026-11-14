@@ -11301,6 +11301,22 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct roots as [[winner loser] |]; reflexivity.
   Qed.
 
+  Lemma union_rows_list_raw : forall db i j,
+    rows (union i j db) = rows db.
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  Lemma union_kind_raw : forall db i j,
+    kind (view (union i j db)) = kind (view db).
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
   Lemma public_union_idle_none : forall db i j forest, database_public_ok db ->
     UnionFindCode.union i j (db_forest db) = (None, forest) ->
     database_idle_ok (union i j db).
@@ -11417,6 +11433,41 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         cbn [database_set_pending database_set_runtime runtime_set_union
           db_runtime runtime_queue]. now right.
       + apply (proj2 (union_uses_raw db i j y (f, k0))). exact Huse.
+  Qed.
+
+  Lemma public_union_idle : forall db i j, database_public_ok db ->
+    database_idle_ok (union i j db).
+  Proof.
+    intros db i j Hpublic.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    2: { eapply public_union_idle_none; eassumption. }
+    unfold database_idle_ok.
+    split; [apply database_row_store_ok_union; exact (database_idle_row_store db Hidle) |].
+    split; [exact (public_union_queue_distinct db i j Hpublic) |].
+    split.
+    { intros f k o x Hrow Hid.
+      destruct (public_union_primary_some db i j winner loser forest Hpublic Hunion
+        f k o x Hrow Hid) as [y [k0 [Hsame [Huse [Hlocated Hactive]]]]].
+      exists y, k0. repeat split; assumption. }
+    split.
+    { intros f k o x Hrow Hid Hnonroot.
+      destruct (public_union_secondary_some db i j winner loser forest Hpublic Hunion
+        f k o x Hrow Hid Hnonroot) as [k0 [Hscheduled Hlocated]].
+      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
+      destruct Hscheduled as [Hnone | [y [Hqueued Huse]]]; [contradiction |].
+      exists k0. split; [exists y; split; assumption | exact Hlocated]. }
+    split.
+    { intros f k0 k Hlocated.
+      change (located (union i j db) f k0 = Some k) in Hlocated.
+      rewrite union_located_raw in Hlocated.
+      destruct (database_idle_located db Hidle f k0 k Hlocated) as [o [Hrow Hkind]].
+      exists o. split.
+      - change (In ((f, k), o) (rows (union i j db))).
+        rewrite union_rows_list_raw. exact Hrow.
+      - rewrite union_kind_raw. exact Hkind. }
+    exact (public_union_queue_nonroot db i j Hpublic).
   Qed.
 
   (** Active and queued repair states expose their forest invariant directly. *)
