@@ -3408,6 +3408,69 @@ Proof.
       exact Htail.
 Qed.
 
+(** A target trace witnesses exact division at each selected basis pivot. *)
+Fixpoint karr_target_exact (rs : list karr_row) (previous : Z)
+    (r : karr_row) : Prop :=
+  match rs with
+  | [] => True
+  | p :: rest =>
+      match karr_first (kcoeff p) with
+      | None => karr_target_exact rest previous r
+      | Some (index, a) =>
+          karr_exact previous (KRow
+            (karr_cross a (karr_nth index (kcoeff r)) (kcoeff r) (kcoeff p))
+            (a * kright r - karr_nth index (kcoeff r) * kright p)%Z
+            (karr_cross a (karr_nth index (kcoeff r)) (kweight r) (kweight p))
+            (a * kscale r - karr_nth index (kcoeff r) * kscale p)%Z) = true /\
+          karr_target_exact rest a
+            (karr_reduce previous a (karr_nth index (kcoeff r)) p r)
+      end
+  end.
+
+(** Exact full-width target traces project through any restored zero column. *)
+Lemma karr_target_restore_exact : forall rs previous r,
+  karr_target_exact (map karr_restore rs) previous r ->
+  karr_target_exact rs previous (karr_tail r) /\
+  karr_tail (karr_target (map karr_restore rs) previous r) =
+    karr_target rs previous (karr_tail r).
+Proof.
+  intro rs. induction rs as [|p rs IH]; intros previous r Htrace.
+  - split; [exact I|reflexivity].
+  - cbn [map karr_target_exact karr_target] in *.
+    destruct (karr_first (kcoeff p)) as [[index a]|] eqn:Hfirst.
+    + rewrite (karr_first_restore p index a Hfirst).
+      cbn [karr_restore kcoeff karr_first] in Htrace.
+      rewrite Hfirst in Htrace.
+      destruct Htrace as [Hexact Hrest].
+      assert (Hlookup : karr_nth (S index) (kcoeff r) =
+        karr_nth index (kcoeff (karr_tail r))).
+      { destruct r as [coeff right weight scale].
+        destruct coeff; destruct index; reflexivity. }
+      rewrite Hlookup in Hexact, Hrest |- *.
+      set (b := karr_nth index (kcoeff (karr_tail r))) in *.
+      assert (Hstep : karr_tail (karr_reduce previous a b
+          (karr_restore p) r) =
+        karr_reduce previous a b p (karr_tail r)).
+      { now apply karr_reduce_restore_tail. }
+      assert (Htail_exact : karr_exact previous (KRow
+          (karr_cross a b (kcoeff (karr_tail r)) (kcoeff p))
+          (a * kright (karr_tail r) - b * kright p)%Z
+          (karr_cross a b (kweight (karr_tail r)) (kweight p))
+          (a * kscale (karr_tail r) - b * kscale p)%Z) = true).
+      { pose proof (karr_exact_tail previous _ Hexact) as Htail.
+        destruct p as [pc pr pw ps], r as [rc rr rw sc].
+        destruct rc; exact Htail. }
+      destruct (IH a (karr_reduce previous a b (karr_restore p) r) Hrest)
+        as [Hnext_exact Hnext_tail].
+      split.
+      * split; [exact Htail_exact|]. now rewrite <- Hstep.
+      * rewrite Hnext_tail, Hstep. reflexivity.
+    + cbn [karr_restore kcoeff karr_first] in Htrace.
+      rewrite Hfirst in Htrace.
+      cbn [karr_restore kcoeff karr_first]. rewrite Hfirst.
+      exact (IH previous r Htrace).
+Qed.
+
 (** Every coordinate before the first nonzero coefficient vanishes. *)
 Lemma karr_first_before : forall zs i a,
   karr_first zs = Some (i, a) -> forall j, j < i -> karr_nth j zs = 0%Z.
