@@ -3252,6 +3252,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - rewrite PTrie.get_set_other by exact Hother. exact Hget.
   Qed.
 
+  Lemma ensure_row_identity_history_other : forall db f k g args,
+    (g, args) <> (f, k) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (ensure_row_identity f k db))) =
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)).
+  Proof.
+    intros db f k g args Hother. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |]; [reflexivity |].
+    cbn [database_set_index_counters database_set_row_store db_row_store row_history].
+    rewrite PTrie.get_set_other; [reflexivity |].
+    intro Hcode. apply Hother. apply RowKeys.encode_inj. exact Hcode.
+  Qed.
+
   Lemma ensure_row_identity_raw_history_old : forall db f k code key r,
     PTrieCode.get code (row_history (db_row_store db)) = Some (key, r) ->
     PTrieCode.get code
@@ -11996,6 +12010,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply db_locate_same_store_ids; assumption.
   Qed.
 
+  Lemma row_replace_history_other : forall db f k previous o g args,
+    (g, args) <> (f, k) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (row_replace f k previous o db))) =
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)).
+  Proof.
+    intros db f k [before |] o g args Hother; unfold row_replace.
+    - rewrite register_row_uses_history_map.
+      rewrite ensure_row_identity_history_other by exact Hother.
+      now rewrite row_write_row_store, !slots_update_row_store.
+    - rewrite register_row_uses_history_map.
+      rewrite ensure_row_identity_history_other by exact Hother.
+      now rewrite row_write_row_store, slots_update_row_store.
+  Qed.
+
   Lemma row_replace_new_locate : forall db f k previous o,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
@@ -12038,6 +12067,29 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       rewrite (row_replace_old_locate db f k previous o f k key r Hstore Hprior).
       exact Haligned.
     - exact (row_replace_new_locate db f k previous o Hstore Hprior).
+  Qed.
+
+  Lemma database_history_alignment_row_replace : forall db f k previous o,
+    database_row_store_ok db -> database_history_alignment db ->
+    database_history_alignment (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hstore Halign g args key r Hentry Hcanonical.
+    assert (Hcanonical_old : forall i, In (Id i) args -> repr db i = i).
+    { intros i Hin. specialize (Hcanonical i Hin).
+      unfold repr in Hcanonical |- *. now rewrite row_replace_forest in Hcanonical. }
+    destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
+      as [Hsame | Hother].
+    - apply RowKeys.encode_inj in Hsame. injection Hsame as -> ->.
+      apply row_replace_new_locate_from_alignment; [exact Hstore |].
+      intros old_key old_id Hold.
+      exact (database_history_alignment_entry db Halign f k old_key old_id
+        Hold Hcanonical_old).
+    - assert (Hkeys : (g, args) <> (f, k)).
+      { intro Heq. inversion Heq; subst. apply Hother. reflexivity. }
+      rewrite (row_replace_history_other db f k previous o g args Hkeys) in Hentry.
+      rewrite (row_replace_old_locate db f k previous o g args key r Hstore Hentry).
+      exact (database_history_alignment_entry db Halign g args key r
+        Hentry Hcanonical_old).
   Qed.
 
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
