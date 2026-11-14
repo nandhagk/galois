@@ -671,6 +671,16 @@ Proof.
   destruct coeff as [|z coeff]; [contradiction|reflexivity].
 Qed.
 
+(** A live row with zero head records zero followed by its tail entries. *)
+Lemma karr_row_entries_zero_tail : forall r,
+  kcoeff r <> [] -> karr_head r = 0%Z ->
+  karr_row_entries r = 0%Z :: karr_row_entries (karr_tail r).
+Proof.
+  intros [coeff right weight scale] Hnonempty Hzero.
+  destruct coeff as [|z coeff]; [contradiction|].
+  cbn [karr_head kcoeff] in Hzero. subst z. reflexivity.
+Qed.
+
 (** Deleting the same coordinate preserves equality of vector widths. *)
 Lemma karr_delete_length_equal : forall index xs ys,
   length xs = length ys -> length (karr_delete index xs) = length (karr_delete index ys).
@@ -3433,6 +3443,27 @@ Proof.
   subst z. eapply karr_run_state_entries; [exact Hstate|].
   apply in_flat_map. exists row. split; [exact Hrow|].
   rewrite Hshape. now left.
+Qed.
+
+(** Failing a pivot on nonempty rows exposes a zero source minor. *)
+Lemma karr_run_state_no_pivot_zero : forall width cols original previous
+    pivot_rows pivot_columns head columns labels rows,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  rows <> [] -> karr_pivot rows = None ->
+  In 0%Z (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels [|row rows] Hstate Hnonempty Hnone; [contradiction|].
+  pose proof (karr_pivot_none (row :: rows) Hnone) as Hheads.
+  apply Forall_cons_iff in Hheads as [Hzero _].
+  assert (Hcoeff : kcoeff row <> []).
+  { unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [_ [Hwidth _]]]].
+    apply Forall_cons_iff in Hwidth as [Hrow _].
+    intro Hempty. rewrite Hempty in Hrow. cbn [length] in Hrow. lia. }
+  eapply karr_run_state_zero_head; [exact Hstate|now left|].
+  now rewrite karr_row_entries_head.
 Qed.
 
 (** Checked division preserves a zero coordinate in every branch. *)
