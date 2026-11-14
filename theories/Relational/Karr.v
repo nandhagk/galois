@@ -166,6 +166,57 @@ Definition karr_tail (r : karr_row) : karr_row :=
 
 TimeFun karr_tail.
 
+(** Dropping a coefficient preserves exact divisibility of the row. *)
+Lemma karr_exact_tail : forall d r,
+  karr_exact d r = true -> karr_exact d (karr_tail r) = true.
+Proof.
+  intros d [coeff right weight scale] Hexact.
+  unfold karr_exact in *. cbn [karr_tail kcoeff].
+  apply andb_true_iff in Hexact as [Hnonzero Hfields].
+  apply andb_true_iff in Hfields as [Hcoeff Hother].
+  apply andb_true_iff. split; [exact Hnonzero|].
+  apply andb_true_iff. split; [|exact Hother].
+  apply forallb_forall. intros z Hin.
+  apply (proj1 (forallb_forall _ _) Hcoeff).
+  destruct coeff as [|head tail]; cbn [tl] in Hin; [contradiction|now right].
+Qed.
+
+(** Exact division commutes with dropping a leading coefficient. *)
+Lemma karr_tail_divide_exact : forall d r,
+  karr_exact d r = true ->
+  karr_tail (karr_divide d r) = karr_divide d (karr_tail r).
+Proof.
+  intros d r Hexact. unfold karr_divide. rewrite Hexact.
+  rewrite (karr_exact_tail d r Hexact).
+  destruct r as [coeff right weight scale].
+  destruct coeff; reflexivity.
+Qed.
+
+(** A zero leading coefficient cannot change the exact-division decision. *)
+Lemma karr_exact_zero_head : forall d r,
+  karr_head r = 0%Z -> karr_exact d r = karr_exact d (karr_tail r).
+Proof.
+  intros d [coeff right weight scale] Hzero.
+  destruct coeff as [|head coeff]; [reflexivity|].
+  cbn [karr_head kcoeff] in Hzero. subst head.
+  unfold karr_exact. cbn [karr_tail kcoeff forallb].
+  destruct (Z.eqb d 0) eqn:Hdivisor; [reflexivity|].
+  apply Z.eqb_neq in Hdivisor.
+  unfold karr_divisible at 1. rewrite Z.mod_0_l by exact Hdivisor.
+  reflexivity.
+Qed.
+
+(** Division commutes with tail projection when the removed entry is zero. *)
+Lemma karr_tail_divide_zero : forall d r,
+  karr_head r = 0%Z ->
+  karr_tail (karr_divide d r) = karr_divide d (karr_tail r).
+Proof.
+  intros d r Hzero. unfold karr_divide.
+  rewrite (karr_exact_zero_head d r Hzero).
+  destruct (karr_exact d (karr_tail r)); [|reflexivity].
+  destruct r as [coeff right weight scale]. destruct coeff; reflexivity.
+Qed.
+
 Definition karr_restore (r : karr_row) : karr_row :=
   KRow (0%Z :: kcoeff r) (kright r) (kweight r) (kscale r).
 
@@ -179,6 +230,38 @@ Definition karr_reduce (d a b : Z) (p r : karr_row) : karr_row :=
       (a * kscale r - b * kscale p)%Z).
 
 TimeFun karr_reduce.
+
+(** An exact full-width reduction projects to the skipped-column tail. *)
+Lemma karr_reduce_restore_tail : forall d a b p r,
+  karr_exact d (KRow
+    (karr_cross a b (kcoeff r) (kcoeff (karr_restore p)))
+    (a * kright r - b * kright (karr_restore p))%Z
+    (karr_cross a b (kweight r) (kweight (karr_restore p)))
+    (a * kscale r - b * kscale (karr_restore p))%Z) = true ->
+  karr_tail (karr_reduce d a b (karr_restore p) r) =
+    karr_reduce d a b p (karr_tail r).
+Proof.
+  intros d a b p r Hexact. unfold karr_reduce.
+  rewrite karr_tail_divide_exact by exact Hexact.
+  destruct p as [pc pr pw ps], r as [rc rr rw rs].
+  destruct rc; reflexivity.
+Qed.
+
+(** A canceled pivot column projects through every guarded reduction. *)
+Lemma karr_reduce_restore_tail_zero : forall d a b p r,
+  karr_head r = 0%Z ->
+  karr_tail (karr_reduce d a b (karr_restore p) r) =
+    karr_reduce d a b p (karr_tail r).
+Proof.
+  intros d a b p r Hzero. unfold karr_reduce.
+  rewrite karr_tail_divide_zero.
+  - destruct p as [pc pr pw ps], r as [rc rr rw rs].
+    destruct rc; reflexivity.
+  - destruct p as [pc pr pw ps], r as [rc rr rw rs].
+    destruct rc as [|head rc]; [reflexivity|].
+    cbn [karr_head kcoeff] in Hzero. subst head.
+    cbn [karr_head kcoeff karr_restore karr_cross]. ring.
+Qed.
 
 (** A finite rational store evaluates the dense coefficient coordinates in order. *)
 Fixpoint karr_eval (qs : list Q) (zs : list Z) : Q :=
@@ -272,11 +355,344 @@ Fixpoint karr_unit (length index : nat) : list Z :=
 
 TimeFun karr_unit.
 
+(** A certificate vector of width at least two contains a zero. *)
+Lemma karr_unit_zero : forall total index,
+  2 <= total -> In 0%Z (karr_unit total index).
+Proof.
+  intros [|[|total]] [|index] Htotal; try lia;
+    cbn [karr_unit repeat List.In].
+  - now right; left.
+  - now left.
+Qed.
+
 (** Every stored integer is part of the augmented elimination matrix. *)
 Definition karr_row_entries (r : karr_row) : list Z :=
   kcoeff r ++ kright r :: kweight r ++ [kscale r].
 
 TimeFun karr_row_entries.
+
+(** A live coefficient head is the first augmented matrix coordinate. *)
+Lemma karr_row_entries_head : forall r,
+  kcoeff r <> [] -> karr_nth 0 (karr_row_entries r) = karr_head r.
+Proof.
+  intros [coeff right weight scale] Hnonempty.
+  destruct coeff as [|z coeff]; [contradiction|reflexivity].
+Qed.
+
+(** Restoring a processed column prepends its certified zero. *)
+Lemma karr_row_entries_restore : forall r,
+  karr_row_entries (karr_restore r) = 0%Z :: karr_row_entries r.
+Proof.
+  intros [coeff right weight scale]. reflexivity.
+Qed.
+
+(** Crossing equal-length prefixes commutes with appending their suffixes. *)
+Lemma karr_cross_app : forall a b xs ys zs ws,
+  length xs = length ys ->
+  karr_cross a b (xs ++ zs) (ys ++ ws) =
+    karr_cross a b xs ys ++ karr_cross a b zs ws.
+Proof.
+  intros a b xs. induction xs as [|x xs IH]; intros [|y ys] zs ws Hlength;
+    cbn [length] in Hlength; try discriminate.
+  - reflexivity.
+  - cbn [app karr_cross]. f_equal. apply IH. lia.
+Qed.
+
+(** Every augmented row field follows the same integer cross product. *)
+Lemma karr_row_entries_cross : forall a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) ->
+  karr_row_entries (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) =
+  karr_cross a b (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros a b [pc pr pw ps] [rc rr rw rs] Hcoeff Hweight.
+  unfold karr_row_entries.
+  cbn [kcoeff kright kweight kscale].
+  rewrite (karr_cross_app a b rc pc (rr :: rw ++ [rs]) (pr :: pw ++ [ps]))
+    by exact Hcoeff.
+  cbn [karr_cross].
+  rewrite (karr_cross_app a b rw pw [rs] [ps]) by exact Hweight.
+  reflexivity.
+Qed.
+
+(** Quotienting a row divides each augmented coordinate in the same order. *)
+Lemma karr_row_entries_quotient : forall d r,
+  karr_row_entries (karr_quotient d r) =
+    map (fun z => (z / d)%Z) (karr_row_entries r).
+Proof.
+  intros d [coeff right weight scale].
+  unfold karr_row_entries, karr_quotient.
+  cbn [kcoeff kright kweight kscale].
+  rewrite !map_app. cbn [map]. rewrite map_app. cbn [map]. reflexivity.
+Qed.
+
+(** Divisibility of every augmented coordinate selects the exact quotient branch. *)
+Lemma karr_exact_from_entries : forall d r,
+  d <> 0%Z ->
+  (forall z, In z (karr_row_entries r) -> (z mod d = 0)%Z) ->
+  karr_exact d r = true.
+Proof.
+  intros d r Hnonzero Hentries.
+  unfold karr_exact. repeat rewrite andb_true_iff. repeat split.
+  - apply negb_true_iff, Z.eqb_neq. exact Hnonzero.
+  - apply forallb_forall. intros z Hin. unfold karr_divisible.
+    apply Z.eqb_eq, Hentries. unfold karr_row_entries.
+    apply in_or_app. now left.
+  - unfold karr_divisible. apply Z.eqb_eq, Hentries.
+    unfold karr_row_entries. apply in_or_app. right. now left.
+  - apply forallb_forall. intros z Hin. unfold karr_divisible.
+    apply Z.eqb_eq, Hentries. unfold karr_row_entries.
+    apply in_or_app. right. right. apply in_or_app. now left.
+  - unfold karr_divisible. apply Z.eqb_eq, Hentries.
+    unfold karr_row_entries. apply in_or_app. right. right.
+    apply in_or_app. right. now left.
+Qed.
+
+(** The row multiplication relation multiplies every augmented coordinate. *)
+Lemma karr_row_entries_multiple : forall d q r,
+  karr_multiple d q r ->
+  map (fun z => (d * z)%Z) (karr_row_entries q) = karr_row_entries r.
+Proof.
+  intros d [qc qr qw qs] [rc rr rw rs] Hmultiple.
+  unfold karr_multiple in Hmultiple.
+  cbn [kcoeff kright kweight kscale] in Hmultiple.
+  destruct Hmultiple as [Hcoeff [Hright [Hweight Hscale]]].
+  unfold karr_row_entries. cbn [kcoeff kright kweight kscale].
+  rewrite !map_app. cbn [map]. rewrite map_app. cbn [map].
+  rewrite Hcoeff, Hright, Hweight, Hscale. reflexivity.
+Qed.
+
+(** An integer quotient witness makes the guarded division exact. *)
+Lemma karr_multiple_exact : forall d q r,
+  d <> 0%Z -> karr_multiple d q r -> karr_exact d r = true.
+Proof.
+  intros d q r Hnonzero Hmultiple.
+  apply karr_exact_from_entries; [exact Hnonzero|].
+  intros z Hin.
+  rewrite <- (karr_row_entries_multiple d q r Hmultiple) in Hin.
+  apply in_map_iff in Hin as [entry [Hz _]]. subst z.
+  rewrite Z.mul_comm. apply Z.mod_mul. exact Hnonzero.
+Qed.
+
+(** An exact reduction applies cross multiplication and quotient to all row entries. *)
+Lemma karr_row_entries_reduce_exact : forall d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  karr_row_entries (karr_reduce d a b p r) =
+    map (fun z => (z / d)%Z)
+      (karr_cross a b (karr_row_entries r) (karr_row_entries p)).
+Proof.
+  intros d a b p r Hcoeff Hweight Hexact.
+  unfold karr_reduce, karr_divide.
+  rewrite Hexact, karr_row_entries_quotient.
+  rewrite karr_row_entries_cross by assumption.
+  reflexivity.
+Qed.
+
+(** Exact coordinatewise quotients multiply back to their undivided integers. *)
+Lemma karr_quotient_list_multiple : forall d zs,
+  d <> 0%Z -> (forall z, In z zs -> (z mod d = 0)%Z) ->
+  map (fun z => (d * z)%Z) (map (fun z => (z / d)%Z) zs) = zs.
+Proof.
+  intros d zs Hnonzero Hdivisible. rewrite map_map.
+  transitivity (map (fun z : Z => z) zs); [|apply map_id].
+  apply map_ext_in. intros z Hin.
+  pose proof (Z.div_mod z d Hnonzero) as Hdivision.
+  pose proof (Hdivisible z Hin) as Hremainder. nia.
+Qed.
+
+(** A checked reduction scales its quotient entries back to the full cross. *)
+Lemma karr_row_entries_reduce_multiple : forall d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) -> d <> 0%Z ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  (forall z, In z (karr_cross a b (karr_row_entries r) (karr_row_entries p)) ->
+    (z mod d = 0)%Z) ->
+  map (fun z => (d * z)%Z) (karr_row_entries (karr_reduce d a b p r)) =
+    karr_cross a b (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros d a b p r Hcoeff Hweight Hnonzero Hexact Hdivisible.
+  rewrite (karr_row_entries_reduce_exact d a b p r Hcoeff Hweight Hexact).
+  now apply karr_quotient_list_multiple.
+Qed.
+
+(** Pivot discovery removes one selected row while retaining every other row's order. *)
+Lemma karr_pivot_split : forall rows pivot rest,
+  karr_pivot rows = Some (pivot, rest) ->
+  exists prefix suffix,
+    rows = prefix ++ pivot :: suffix /\ rest = prefix ++ suffix.
+Proof.
+  induction rows as [|row rows IH]; intros pivot rest Hpivot; [discriminate|].
+  cbn [karr_pivot] in Hpivot.
+  destruct (Z.eqb (karr_head row) 0) eqn:Hzero.
+  - destruct (karr_pivot rows) as [[selected remaining]|] eqn:Htail;
+      [|discriminate].
+    injection Hpivot as Hp Hr. subst selected rest.
+    destruct (IH pivot remaining eq_refl) as [prefix [suffix [Hrows Hrest]]].
+    exists (row :: prefix), suffix. subst rows. split; [reflexivity|].
+    cbn [app]. now rewrite Hrest.
+  - injection Hpivot as Hp Hr. subst pivot rest.
+    exists [], rows. split; reflexivity.
+Qed.
+
+(** Parallel origin labels split at the same selected live row. *)
+Lemma karr_forall2_split : forall A B (R : A -> B -> Prop) xs ys prefix y suffix,
+  Forall2 R xs ys -> ys = prefix ++ y :: suffix ->
+  exists labels label remaining,
+    xs = labels ++ label :: remaining /\
+    Forall2 R labels prefix /\ R label y /\ Forall2 R remaining suffix.
+Proof.
+  intros A B R xs ys prefix y suffix Hrel Heq.
+  revert xs ys Hrel Heq.
+  induction prefix as [|head prefix IH]; intros xs ys Hrel Heq; subst ys.
+  - destruct xs as [|label remaining]; [inversion Hrel|].
+    inversion Hrel as [|? ? ? ? Hhead Htail]; subst.
+    exists [], label, remaining. repeat split; try constructor; assumption.
+  - destruct xs as [|label remaining]; [inversion Hrel|].
+    inversion Hrel as [|? ? ? ? Hhead Htail]; subst.
+    destruct (IH remaining (prefix ++ y :: suffix) Htail eq_refl)
+      as [labels [selected [tail [Hlabels [Hprefix [Hselected Hsuffix]]]]]].
+    exists (label :: labels), selected, tail.
+    split.
+    + cbn [app]. now rewrite Hlabels.
+    + split.
+      * constructor; assumption.
+      * split; assumption.
+Qed.
+
+(** A selected pivot keeps its matching origin label and permutes the live labels. *)
+Lemma karr_pivot_with_origins : forall A (R : A -> karr_row -> Prop) labels rows pivot rest,
+  Forall2 R labels rows -> karr_pivot rows = Some (pivot, rest) ->
+  exists label remaining,
+    Forall2 R (label :: remaining) (pivot :: rest) /\
+    Permutation labels (label :: remaining).
+Proof.
+  intros A R labels rows pivot rest Hrel Hpivot.
+  destruct (karr_pivot_split rows pivot rest Hpivot)
+    as [prefix [suffix [Hrows Hrest]]].
+  destruct (karr_forall2_split A karr_row R labels rows prefix pivot suffix
+    Hrel Hrows) as [before [label [after [Hlabels [Hbefore [Hlabel Hafter]]]]]].
+  exists label, (before ++ after). split.
+  - rewrite Hrest. constructor; [exact Hlabel|].
+    now apply Forall2_app.
+  - rewrite Hlabels. apply Permutation_sym, Permutation_middle.
+Qed.
+
+(** Pivot selection permutes source labels together with their transformed rows. *)
+Lemma karr_pivot_combine : forall A B (f : karr_row -> B)
+    (labels : list A) rows pivot rest,
+  length labels = length rows ->
+  karr_pivot rows = Some (pivot, rest) ->
+  exists origin remaining,
+    length remaining = length rest /\
+    Permutation labels (origin :: remaining) /\
+    Permutation (combine labels (map f rows))
+      ((origin, f pivot) :: combine remaining (map f rest)).
+Proof.
+  intros A B f labels rows. revert labels.
+  induction rows as [|row rows IH]; intros labels pivot rest Hlength Hselect;
+    [discriminate|].
+  destruct labels as [|label labels]; [cbn [length] in Hlength; discriminate|].
+  cbn [karr_pivot] in Hselect.
+  destruct (Z.eqb (karr_head row) 0) eqn:Hzero.
+  - destruct (karr_pivot rows) as [[selected remaining_rows]|] eqn:Htail;
+      [|discriminate].
+    injection Hselect as Hp Hr. subst selected rest.
+    destruct (IH labels pivot remaining_rows ltac:(cbn [length] in Hlength; lia)
+      eq_refl) as [origin [remaining [Hremaining [Hlabels Hperm]]]].
+    exists origin, (label :: remaining). split; [cbn [length]; lia|].
+    split.
+    + eapply Permutation_trans; [apply perm_skip; exact Hlabels|].
+      apply perm_swap.
+    + cbn [map combine].
+      eapply Permutation_trans; [apply perm_skip; exact Hperm|].
+      apply perm_swap.
+  - injection Hselect as Hp Hr. subst pivot rest.
+    exists label, labels. split; [cbn [length] in Hlength; lia|].
+    split; apply Permutation_refl.
+Qed.
+
+(** Mapping paired rows commutes with pairing their origin labels. *)
+Lemma karr_combine_map : forall A B C (f : B -> C)
+    (labels : list A) (rows : list B),
+  map (fun pair => (fst pair, f (snd pair))) (combine labels rows) =
+    combine labels (map f rows).
+Proof.
+  intros A B C f labels. induction labels as [|label labels IH];
+    intros [|row rows]; cbn [map combine fst snd]; try reflexivity.
+  now rewrite IH.
+Qed.
+
+(** Equal-length lists can always be paired by an unrestricted relation. *)
+Lemma karr_forall2_true : forall A B (xs : list A) (ys : list B),
+  length xs = length ys -> Forall2 (fun _ _ => True) xs ys.
+Proof.
+  intros A B xs. induction xs as [|x xs IH]; intros [|y ys] Hlength;
+    cbn [length] in Hlength; try discriminate; [constructor|].
+  constructor; [exact I|]. apply IH. lia.
+Qed.
+
+(** Combining two aligned prefixes commutes with appending their suffixes. *)
+Lemma karr_combine_app : forall A B (xs : list A) (ys : list B) xs' ys',
+  length xs = length ys ->
+  combine (xs ++ xs') (ys ++ ys') = combine xs ys ++ combine xs' ys'.
+Proof.
+  intros A B xs. induction xs as [|x xs IH]; intros [|y ys] xs' ys' Hlength;
+    cbn [length] in Hlength; try discriminate; [reflexivity|].
+  cbn [app combine]. f_equal. apply IH. lia.
+Qed.
+
+(** Pairing a list with itself attaches each item as its own origin. *)
+Lemma karr_combine_self : forall A (xs : list A),
+  combine xs xs = map (fun x => (x, x)) xs.
+Proof.
+  intros A xs. induction xs as [|x xs IH]; cbn [combine map];
+    [reflexivity|now rewrite IH].
+Qed.
+
+(** Pivot discovery permutes each original row label with its live augmented row. *)
+Lemma karr_pivot_pairs_entries : forall (labels : list (list Z))
+    (rows : list karr_row) (pivot : karr_row) (rest : list karr_row),
+  length labels = length rows -> karr_pivot rows = Some (pivot, rest) ->
+  exists label remaining,
+    Permutation (combine labels (map karr_row_entries rows))
+      ((label, karr_row_entries pivot) ::
+        combine remaining (map karr_row_entries rest)) /\
+    Permutation labels (label :: remaining) /\
+    length remaining = length rest.
+Proof.
+  intros labels rows pivot rest Hlength Hpivot.
+  destruct (karr_pivot_split rows pivot rest Hpivot)
+    as [prefix [suffix [Hrows Hrest]]].
+  pose proof (karr_forall2_true _ _ labels rows Hlength) as Hpaired.
+  destruct (karr_forall2_split _ _ (fun _ _ => True) labels rows
+    prefix pivot suffix Hpaired Hrows)
+    as [before [label [after [Hlabels [Hbefore [_ Hafter]]]]]].
+  pose proof (Forall2_length Hbefore) as Hbefore_length.
+  pose proof (Forall2_length Hafter) as Hafter_length.
+  exists label, (before ++ after). repeat split.
+  - rewrite Hlabels, Hrows, Hrest. rewrite !map_app. cbn [map combine].
+    rewrite (karr_combine_app _ _ before (map karr_row_entries prefix)
+      (label :: after) (karr_row_entries pivot :: map karr_row_entries suffix))
+      by (rewrite length_map; exact Hbefore_length).
+    cbn [combine].
+    rewrite (karr_combine_app _ _ before (map karr_row_entries prefix)
+      after (map karr_row_entries suffix))
+      by (rewrite length_map; exact Hbefore_length).
+    apply Permutation_sym, Permutation_middle.
+  - rewrite Hlabels. apply Permutation_sym, Permutation_middle.
+  - rewrite Hrest. rewrite !length_app. lia.
+Qed.
 
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
@@ -324,6 +740,19 @@ Proof.
     rewrite Hrun in Hagrees. cbn [fst] in Hagrees. now rewrite Hagrees.
 Qed.
 
+(** Each elimination stage retains the number of live rows. *)
+Lemma karr_bareiss_length : forall cols previous rows,
+  length (karr_bareiss cols previous rows) = length rows.
+Proof.
+  induction cols as [|cols IH]; intros previous rows; [reflexivity|].
+  cbn [karr_bareiss]. destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+  - cbn [length]. rewrite length_map, IH, !length_map.
+    destruct (karr_pivot_split rows pivot rest Hselect)
+      as [prefix [suffix [Hrows Hrest]]].
+    rewrite Hrows, Hrest, !length_app. cbn [length]. lia.
+  - rewrite length_map, IH, length_map. reflexivity.
+Qed.
+
 (** Initial matrix entries occur in the recorded execution. *)
 Lemma karr_bareiss_record_initial : forall cols previous rs z,
   In z (flat_map karr_row_entries rs) -> In z (snd (karr_bareiss_record cols previous rs)).
@@ -355,6 +784,38 @@ Proof.
     apply in_or_app. right. apply in_or_app. now right.
 Qed.
 
+(** An empty elimination input produces neither rows nor recorded entries. *)
+Lemma karr_bareiss_record_empty : forall cols previous,
+  karr_bareiss_record cols previous [] = ([], []).
+Proof.
+  induction cols as [|cols IH]; intro previous; [reflexivity|].
+  cbn [karr_bareiss_record karr_pivot flat_map map].
+  now rewrite IH.
+Qed.
+
+(** Every returned row entry already appears in that call's trace. *)
+Lemma karr_bareiss_record_output : forall cols previous rows result history z,
+  karr_bareiss_record cols previous rows = (result, history) ->
+  In z (flat_map karr_row_entries result) -> In z history.
+Proof.
+  intros cols previous rows result history z Hrun Hin.
+  pose proof (karr_bareiss_record_value cols previous rows) as Hvalue.
+  rewrite Hrun in Hvalue. cbn [fst] in Hvalue.
+  rewrite Hvalue in Hin.
+  pose proof (karr_bareiss_record_final cols previous rows z Hin) as Htrace.
+  now rewrite Hrun in Htrace.
+Qed.
+
+(** A nonempty result requires a nonempty input list. *)
+Lemma karr_bareiss_record_nonempty_input : forall cols previous rows result history,
+  karr_bareiss_record cols previous rows = (result, history) ->
+  result <> [] -> rows <> [].
+Proof.
+  intros cols previous rows result history Hrun Hnonempty Hempty.
+  subst rows. rewrite karr_bareiss_record_empty in Hrun.
+  inversion Hrun; subst. now apply Hnonempty.
+Qed.
+
 (** Removing one column gives the smaller matrix used by Laplace expansion. *)
 Fixpoint karr_delete (index : nat) (row : list Z) : list Z :=
   match index, row with
@@ -364,6 +825,76 @@ Fixpoint karr_delete (index : nat) (row : list Z) : list Z :=
   end.
 
 TimeFun karr_delete.
+
+(** Removing a live coefficient head deletes the first augmented coordinate. *)
+Lemma karr_row_entries_tail : forall r,
+  kcoeff r <> [] ->
+  karr_row_entries (karr_tail r) = karr_delete 0 (karr_row_entries r).
+Proof.
+  intros [coeff right weight scale] Hnonempty.
+  destruct coeff as [|z coeff]; [contradiction|reflexivity].
+Qed.
+
+(** A live row with zero head records zero followed by its tail entries. *)
+Lemma karr_row_entries_zero_tail : forall r,
+  kcoeff r <> [] -> karr_head r = 0%Z ->
+  karr_row_entries r = 0%Z :: karr_row_entries (karr_tail r).
+Proof.
+  intros [coeff right weight scale] Hnonempty Hzero.
+  destruct coeff as [|z coeff]; [contradiction|].
+  cbn [karr_head kcoeff] in Hzero. subst z. reflexivity.
+Qed.
+
+(** Deleting the same coordinate preserves equality of vector widths. *)
+Lemma karr_delete_length_equal : forall index xs ys,
+  length xs = length ys -> length (karr_delete index xs) = length (karr_delete index ys).
+Proof.
+  induction index as [|index IH]; intros [|x xs] [|y ys] Hlength;
+    cbn [length karr_delete] in *; try discriminate; try lia.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Column deletion commutes with crossing equally wide rows. *)
+Lemma karr_delete_cross : forall index a b xs ys,
+  length xs = length ys ->
+  karr_delete index (karr_cross a b xs ys) =
+    karr_cross a b (karr_delete index xs) (karr_delete index ys).
+Proof.
+  induction index as [|index IH]; intros a b [|x xs] [|y ys] Hlength;
+    cbn [length karr_delete karr_cross] in *; try discriminate; try reflexivity.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Deleting two distinct columns gives the same row in either order. *)
+Lemma karr_delete_comm : forall first second row,
+  first <= second ->
+  karr_delete first (karr_delete (S second) row) =
+    karr_delete second (karr_delete first row).
+Proof.
+  induction first as [|first IH]; intros [|second] [|z row] Horder;
+    cbn [karr_delete] in *; try reflexivity; try lia.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Lookup after a deletion skips precisely the removed coordinate. *)
+Lemma karr_nth_delete : forall removed index row,
+  karr_nth index (karr_delete removed row) =
+    if index <? removed then karr_nth index row else karr_nth (S index) row.
+Proof.
+  intros removed index row. revert index row.
+  induction removed as [|removed IH]; intros index [|z row].
+  - destruct index as [|index]; cbn [karr_nth karr_delete Nat.ltb];
+      try reflexivity; destruct (index <? 0); reflexivity.
+  - destruct index as [|index]; reflexivity.
+  - destruct index as [|index]; cbn [karr_nth karr_delete Nat.ltb];
+      try reflexivity; destruct (S index <? S removed); reflexivity.
+  - destruct index as [|index].
+    + reflexivity.
+    + cbn [karr_nth karr_delete].
+      change (karr_nth index (karr_delete removed row) =
+        if index <? removed then karr_nth index row else karr_nth (S index) row).
+      exact (IH index row).
+Qed.
 
 (** Laplace expansion defines determinants independently of the elimination program. *)
 Fixpoint karr_determinant (order : nat) (rows : list (list Z)) : Z :=
@@ -381,6 +912,651 @@ Fixpoint karr_determinant (order : nat) (rows : list (list Z)) : Z :=
   end.
 
 TimeFun karr_determinant.
+
+(** One Laplace step exposes its cofactors without expanding their determinants. *)
+Lemma karr_determinant_cons : forall order row rows,
+  karr_determinant (S order) (row :: rows) =
+    fold_right Z.add 0%Z (map (fun index =>
+      ((if Nat.even index then 1 else -1) * karr_nth index row *
+        karr_determinant order (map (karr_delete index) rows))%Z)
+      (seq 0 (S order))).
+Proof.
+  reflexivity.
+Qed.
+
+(** A dense cross product has the expected value at every coordinate. *)
+Lemma karr_nth_cross : forall index a b xs ys,
+  length xs = length ys ->
+  karr_nth index (karr_cross a b xs ys) =
+    (a * karr_nth index xs - b * karr_nth index ys)%Z.
+Proof.
+  induction index as [|index IH]; intros a b [|x xs] [|y ys] Hlength;
+    cbn [length karr_nth karr_cross] in *; try discriminate; try ring.
+  apply IH. now injection Hlength.
+Qed.
+
+(** A determinant is linear in a crossed first row. *)
+Lemma karr_determinant_cross : forall order a b xs ys rows,
+  length xs = length ys ->
+  karr_determinant (S order) (karr_cross a b xs ys :: rows) =
+    (a * karr_determinant (S order) (xs :: rows) -
+      b * karr_determinant (S order) (ys :: rows))%Z.
+Proof.
+  intros order a b xs ys rows Hlength. cbn [karr_determinant].
+  generalize (seq 0 (S order)) as indices. intro indices.
+  induction indices as [|index indices IH]; cbn [map fold_right]; [ring|].
+  rewrite karr_nth_cross by exact Hlength. rewrite IH. ring.
+Qed.
+
+(** Crossing any selected row distributes through the whole determinant. *)
+Lemma karr_determinant_cross_at : forall order prefix a b xs ys suffix,
+  length prefix <= order -> length xs = length ys ->
+  karr_determinant (S order) (prefix ++ karr_cross a b xs ys :: suffix) =
+    (a * karr_determinant (S order) (prefix ++ xs :: suffix) -
+      b * karr_determinant (S order) (prefix ++ ys :: suffix))%Z.
+Proof.
+  induction order as [|order IH]; intros prefix a b xs ys suffix Hprefix Hlength.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_cross; exact Hlength|].
+    cbn [length] in Hprefix. lia.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_cross; exact Hlength|].
+    cbn [app].
+    rewrite (karr_determinant_cons (S order) row
+      (prefix ++ karr_cross a b xs ys :: suffix)).
+    rewrite (karr_determinant_cons (S order) row (prefix ++ xs :: suffix)).
+    rewrite (karr_determinant_cons (S order) row (prefix ++ ys :: suffix)).
+    generalize (seq 0 (S (S order))) as indices. intro indices.
+    induction indices as [|index indices IHindices]; cbn [map fold_right]; [ring|].
+    rewrite !map_app. cbn [map].
+    rewrite karr_delete_cross by exact Hlength.
+    pose proof (IH (map (karr_delete index) prefix) a b
+      (karr_delete index xs) (karr_delete index ys)
+      (map (karr_delete index) suffix)
+      ltac:(rewrite length_map; cbn [length] in Hprefix; lia)
+      (karr_delete_length_equal index xs ys Hlength)) as Hstep.
+    rewrite Hstep, IHindices. ring.
+Qed.
+
+(** Deleting a later column leaves the first entry in place. *)
+Lemma karr_delete_first : forall index row,
+  karr_nth 0 (karr_delete (S index) row) = karr_nth 0 row.
+Proof.
+  intros index [|z row]; reflexivity.
+Qed.
+
+(** A square matrix with a zero first column has zero determinant. *)
+Lemma karr_determinant_zero_first : forall order rows,
+  Forall (fun row => karr_nth 0 row = 0%Z) rows ->
+  karr_determinant (S order) rows = 0%Z.
+Proof.
+  induction order as [|order IH]; intros [|row rows] Hzero; try reflexivity.
+  - inversion Hzero as [|? ? Hhead _]; subst.
+    rewrite karr_determinant_cons.
+    cbn [seq map fold_right karr_determinant Nat.even].
+    rewrite Hhead. ring.
+  - inversion Hzero as [|? ? Hhead Htail]; subst.
+    rewrite karr_determinant_cons.
+    generalize (seq 0 (S (S order))) as indices. intro indices.
+    induction indices as [|index indices IHindices]; cbn [map fold_right]; [ring|].
+    rewrite IHindices.
+    destruct index as [|index].
+    + rewrite Hhead. ring.
+    + assert (Hminor : Forall (fun r => karr_nth 0 r = 0%Z)
+          (map (karr_delete (S index)) rows)).
+      { apply Forall_forall. intros r Hr.
+        apply in_map_iff in Hr as [source [Hr Hsource]]. subst r.
+        rewrite karr_delete_first.
+        exact (proj1 (Forall_forall _ _) Htail source Hsource). }
+      rewrite (IH _ Hminor). ring.
+Qed.
+
+(** Cofactors beyond the first column vanish when the remaining rows start with zero. *)
+Lemma karr_laplace_tail_zero : forall order row rows indices,
+  Forall (fun index => 0 < index) indices ->
+  Forall (fun r => karr_nth 0 r = 0%Z) rows ->
+  fold_right Z.add 0%Z (map (fun index =>
+    ((if Nat.even index then 1 else -1) * karr_nth index row *
+      karr_determinant (S order) (map (karr_delete index) rows))%Z) indices) = 0%Z.
+Proof.
+  intros order row rows indices Hpositive Hzero.
+  revert Hpositive. induction indices as [|index indices IH];
+    intros Hpositive; [reflexivity|].
+  inversion Hpositive as [|? ? Hindex Hrest]; subst.
+  cbn [map fold_right]. rewrite (IH Hrest).
+  destruct index as [|index]; [lia|].
+  assert (Hminor : Forall (fun r => karr_nth 0 r = 0%Z)
+      (map (karr_delete (S index)) rows)).
+  { apply Forall_forall. intros r Hr.
+    apply in_map_iff in Hr as [source [Hr Hsource]]. subst r.
+    rewrite karr_delete_first.
+    exact (proj1 (Forall_forall _ _) Hzero source Hsource). }
+  rewrite (karr_determinant_zero_first order _ Hminor). ring.
+Qed.
+
+(** Expansion of a matrix with zeros below its first entry is triangular. *)
+Lemma karr_determinant_triangular : forall order row rows,
+  Forall (fun r => karr_nth 0 r = 0%Z) rows ->
+  karr_determinant (S order) (row :: rows) =
+    (karr_nth 0 row * karr_determinant order (map (karr_delete 0) rows))%Z.
+Proof.
+  intros [|order] row rows Hzero.
+  - rewrite karr_determinant_cons.
+    cbn [seq map fold_right karr_determinant Nat.even]. ring.
+  - rewrite karr_determinant_cons.
+    change ((1 * karr_nth 0 row *
+      karr_determinant (S order) (map (karr_delete 0) rows) +
+      fold_right Z.add 0%Z (map (fun index =>
+        ((if Nat.even index then 1 else -1) * karr_nth index row *
+          karr_determinant (S order) (map (karr_delete index) rows))%Z)
+        (seq 1 (S order))))%Z =
+      (karr_nth 0 row *
+        karr_determinant (S order) (map (karr_delete 0) rows))%Z).
+    assert (Hpositive : Forall (fun index => 0 < index) (seq 1 (S order))).
+    { apply Forall_forall. intros index Hin. apply in_seq in Hin. lia. }
+    rewrite (karr_laplace_tail_zero order row rows _ Hpositive Hzero).
+    ring.
+Qed.
+
+(** A finite sum distributes over pointwise integer addition. *)
+Lemma karr_determinant_sum_add : forall A (f g : A -> Z) xs,
+  fold_right Z.add 0%Z (map (fun x => (f x + g x)%Z) xs) =
+    (fold_right Z.add 0%Z (map f xs) +
+      fold_right Z.add 0%Z (map g xs))%Z.
+Proof.
+  intros A f g xs. induction xs as [|x xs IH]; cbn [map fold_right]; [ring|].
+  rewrite IH. ring.
+Qed.
+
+(** The order of two finite integer summations can be exchanged. *)
+Lemma karr_determinant_sum_swap : forall A B (f : A -> B -> Z) xs ys,
+  fold_right Z.add 0%Z (map (fun x =>
+    fold_right Z.add 0%Z (map (f x) ys)) xs) =
+  fold_right Z.add 0%Z (map (fun y =>
+    fold_right Z.add 0%Z (map (fun x => f x y) xs)) ys).
+Proof.
+  intros A B f xs. induction xs as [|x xs IH]; intro ys.
+  - induction ys as [|y ys IHys]; cbn [map fold_right]; [reflexivity|].
+    cbn [map fold_right] in IHys. rewrite <- IHys. ring.
+  - cbn [map fold_right]. rewrite IH.
+    rewrite (karr_determinant_sum_add B (f x)
+      (fun y => fold_right Z.add 0%Z (map (fun a => f a y) xs)) ys).
+    ring.
+Qed.
+
+(** Pointwise equality on a finite list gives equality of its integer sums. *)
+Lemma karr_determinant_sum_ext : forall A (f g : A -> Z) xs,
+  (forall x, In x xs -> f x = g x) ->
+  fold_right Z.add 0%Z (map f xs) = fold_right Z.add 0%Z (map g xs).
+Proof.
+  intros A f g xs Hequal. revert Hequal.
+  induction xs as [|x xs IH]; intro Hequal; [reflexivity|].
+  cbn [map fold_right]. rewrite (Hequal x (or_introl eq_refl)).
+  rewrite IH; [reflexivity|].
+  intros y Hy. apply Hequal. now right.
+Qed.
+
+(** Negating each summand negates the finite sum. *)
+Lemma karr_determinant_sum_neg : forall A (f : A -> Z) xs,
+  fold_right Z.add 0%Z (map (fun x => (- f x)%Z) xs) =
+    (- fold_right Z.add 0%Z (map f xs))%Z.
+Proof.
+  intros A f xs. induction xs as [|x xs IH]; cbn [map fold_right]; [ring|].
+  rewrite IH. ring.
+Qed.
+
+(** An antisymmetric term cancels across every ordered pair of a finite list. *)
+Lemma karr_determinant_pair_cancel : forall A (f : A -> A -> Z) xs,
+  (forall x y, In x xs -> In y xs -> f x y = (- f y x)%Z) ->
+  fold_right Z.add 0%Z (map (fun x =>
+    fold_right Z.add 0%Z (map (f x) xs)) xs) = 0%Z.
+Proof.
+  intros A f xs Hanti.
+  set (total := fold_right Z.add 0%Z (map (fun x =>
+    fold_right Z.add 0%Z (map (f x) xs)) xs)).
+  assert (Hneg : total = (- total)%Z).
+  { unfold total.
+    rewrite karr_determinant_sum_swap at 1.
+    rewrite <- (karr_determinant_sum_neg A (fun y =>
+      fold_right Z.add 0%Z (map (f y) xs)) xs).
+    apply karr_determinant_sum_ext. intros y Hy.
+    rewrite (karr_determinant_sum_ext A (fun x => f x y)
+      (fun x => (- f y x)%Z) xs).
+    - rewrite karr_determinant_sum_neg. reflexivity.
+    - intros x Hx. apply Hanti; assumption. }
+  lia.
+Qed.
+
+(** Deleted-column indices enumerate all original columns except the removed one. *)
+Lemma karr_seq_delete : forall count removed,
+  removed < S count ->
+  map (fun index => if index <? removed then index else S index) (seq 0 count) =
+    seq 0 removed ++ seq (S removed) (count - removed).
+Proof.
+  intros count removed Hremoved.
+  replace count with (removed + (count - removed)) at 1 by lia.
+  rewrite seq_app, map_app.
+  f_equal.
+  - transitivity (map (fun index => index) (seq 0 removed)).
+    + apply map_ext_in. intros index Hin.
+      apply in_seq in Hin.
+      assert (Hlt : (index <? removed) = true) by (apply Nat.ltb_lt; lia).
+      rewrite Hlt. reflexivity.
+    + now rewrite map_id.
+  - transitivity (map S (seq removed (count - removed))).
+    + apply map_ext_in. intros index Hin.
+      apply in_seq in Hin.
+      assert (Hge : (index <? removed) = false) by (apply Nat.ltb_ge; lia).
+      rewrite Hge. reflexivity.
+    + now rewrite seq_shift.
+Qed.
+
+(** Concatenating finite lists adds their integer sums. *)
+Lemma karr_determinant_sum_app : forall A (f : A -> Z) xs ys,
+  fold_right Z.add 0%Z (map f (xs ++ ys)) =
+    (fold_right Z.add 0%Z (map f xs) +
+      fold_right Z.add 0%Z (map f ys))%Z.
+Proof.
+  intros A f xs. induction xs as [|x xs IH]; intro ys;
+    cbn [app map fold_right]; [ring|].
+  rewrite IH. ring.
+Qed.
+
+(** Summing through a deletion skips the removed original column. *)
+Lemma karr_determinant_sum_skip : forall count removed (f : nat -> Z),
+  removed < S count ->
+  fold_right Z.add 0%Z (map (fun index =>
+    f (if index <? removed then index else S index)) (seq 0 count)) =
+  fold_right Z.add 0%Z (map (fun index =>
+    if index =? removed then 0%Z else f index) (seq 0 (S count))).
+Proof.
+  intros count removed f Hremoved.
+  set (skip := fun index => if index <? removed then index else S index).
+  set (g := fun index => if index =? removed then 0%Z else f index).
+  change (fold_right Z.add 0%Z (map (fun index => f (skip index)) (seq 0 count)) =
+    fold_right Z.add 0%Z (map g (seq 0 (S count)))).
+  rewrite <- map_map.
+  unfold skip. rewrite karr_seq_delete by exact Hremoved.
+  replace (S count) with (removed + S (count - removed)) by lia.
+  rewrite seq_app. cbn [Nat.add].
+  rewrite !karr_determinant_sum_app.
+  assert (Hprefix : map g (seq 0 removed) = map f (seq 0 removed)).
+  { apply map_ext_in. intros index Hin. apply in_seq in Hin.
+    unfold g. assert (Hneq : (index =? removed) = false).
+    { apply Nat.eqb_neq. lia. }
+    now rewrite Hneq. }
+  assert (Htail : fold_right Z.add 0%Z
+      (map g (seq removed (S (count - removed)))) =
+      fold_right Z.add 0%Z
+        (map f (seq (S removed) (count - removed)))).
+  { cbn [seq map fold_right].
+    change ((g removed + fold_right Z.add 0%Z
+      (map g (seq (S removed) (count - removed))))%Z =
+      fold_right Z.add 0%Z
+        (map f (seq (S removed) (count - removed)))).
+    unfold g at 1. rewrite Nat.eqb_refl.
+    rewrite (karr_determinant_sum_ext nat g f
+      (seq (S removed) (count - removed))).
+    - ring.
+    - intros index Hin. apply in_seq in Hin.
+      unfold g. assert (Hneq : (index =? removed) = false).
+      { apply Nat.eqb_neq. lia. }
+      now rewrite Hneq. }
+  rewrite Hprefix, Htail. ring.
+Qed.
+
+(** Consecutive Laplace cofactors have opposite signs. *)
+Lemma karr_determinant_sign_succ : forall index,
+  (if Nat.even (S index) then 1 else -1)%Z =
+    (- (if Nat.even index then 1 else -1))%Z.
+Proof.
+  induction index as [|index IH]; [reflexivity|].
+  rewrite Nat.even_succ, Nat.odd_succ, IH. ring.
+Qed.
+
+(** Deleting two different columns agrees after their positions are adjusted. *)
+Lemma karr_delete_two : forall first second row,
+  first < second ->
+  karr_delete (second - 1) (karr_delete first row) =
+    karr_delete first (karr_delete second row).
+Proof.
+  intros first [|second] row Horder; [lia|].
+  replace (S second - 1) with second by lia.
+  symmetry. apply karr_delete_comm. lia.
+Qed.
+
+(** Exchanging two distinct Laplace columns reverses their combined sign. *)
+Lemma karr_determinant_sign_pair : forall first second,
+  first < second ->
+  ((if Nat.even first then 1 else -1) *
+    (if Nat.even (second - 1) then 1 else -1))%Z =
+  (- ((if Nat.even second then 1 else -1) *
+    (if Nat.even first then 1 else -1)))%Z.
+Proof.
+  intros first [|second] Horder; [lia|].
+  replace (S second - 1) with second by lia.
+  rewrite karr_determinant_sign_succ. ring.
+Qed.
+
+(** The minor after two deletions has a canonical increasing column order. *)
+Lemma karr_delete_pair_canonical : forall first second row,
+  first <> second ->
+  karr_delete (if second <? first then second else second - 1)
+    (karr_delete first row) =
+  karr_delete (Nat.min first second)
+    (karr_delete (Nat.max first second) row).
+Proof.
+  intros first second row Hdistinct.
+  assert (Horder : first < second \/ second < first) by lia.
+  destruct Horder as [Horder|Horder].
+  - rewrite Nat.min_l, Nat.max_r by lia.
+    assert (Htest : (second <? first) = false) by (apply Nat.ltb_ge; lia).
+    rewrite Htest. apply karr_delete_two. exact Horder.
+  - rewrite Nat.min_r, Nat.max_l by lia.
+    assert (Htest : (second <? first) = true) by (apply Nat.ltb_lt; lia).
+    now rewrite Htest.
+Qed.
+
+(** A column retained after deletion has a different original index. *)
+Lemma karr_skip_index_distinct : forall removed index,
+  removed <> (if index <? removed then index else S index).
+Proof.
+  intros removed index.
+  destruct (index <? removed) eqn:Htest.
+  - apply Nat.ltb_lt in Htest. lia.
+  - apply Nat.ltb_ge in Htest. lia.
+Qed.
+
+(** Converting a retained original index back gives its post-deletion index. *)
+Lemma karr_skip_index_inverse : forall removed index,
+  (if (if index <? removed then index else S index) <? removed then
+    (if index <? removed then index else S index)
+   else (if index <? removed then index else S index) - 1) = index.
+Proof.
+  intros removed index.
+  destruct (index <? removed) eqn:Htest.
+  - apply Nat.ltb_lt in Htest.
+    assert (Hsame : (index <? removed) = true) by (apply Nat.ltb_lt; lia).
+    rewrite Hsame. reflexivity.
+  - apply Nat.ltb_ge in Htest.
+    assert (Hsame : (S index <? removed) = false) by (apply Nat.ltb_ge; lia).
+    rewrite Hsame. lia.
+Qed.
+
+(** A pair of original columns contributes one term to a double Laplace expansion. *)
+Definition karr_determinant_pair_term (order : nat) (row : list Z)
+    (rows : list (list Z)) (first second : nat) : Z :=
+  if first =? second then 0%Z else
+    ((if Nat.even first then 1 else -1) *
+      (if Nat.even (if (second <? first)%nat then second else (second - 1)%nat)
+        then 1 else -1) *
+      karr_nth first row * karr_nth second row *
+      karr_determinant order (map (fun r =>
+        karr_delete (Nat.min first second)
+          (karr_delete (Nat.max first second) r)) rows))%Z.
+
+(** Exchanging the two selected columns negates their double-expansion term. *)
+Lemma karr_determinant_pair_term_swap : forall order row rows first second,
+  karr_determinant_pair_term order row rows first second =
+    (- karr_determinant_pair_term order row rows second first)%Z.
+Proof.
+  intros order row rows first second.
+  destruct (Nat.eq_dec first second) as [Hequal|Hdistinct].
+  - subst second. unfold karr_determinant_pair_term.
+    now rewrite Nat.eqb_refl.
+  - unfold karr_determinant_pair_term.
+    assert (Hfirst : (first =? second) = false) by (apply Nat.eqb_neq; exact Hdistinct).
+    assert (Hsecond : (second =? first) = false) by (apply Nat.eqb_neq; lia).
+    rewrite Hfirst, Hsecond.
+    assert (Hminor : map (fun r =>
+        karr_delete (Nat.min first second)
+          (karr_delete (Nat.max first second) r)) rows =
+      map (fun r => karr_delete (Nat.min second first)
+        (karr_delete (Nat.max second first) r)) rows).
+    { rewrite (Nat.min_comm first second), (Nat.max_comm first second).
+      reflexivity. }
+    rewrite Hminor.
+    assert (Horder : first < second \/ second < first) by lia.
+    destruct Horder as [Horder|Horder].
+    + assert (Hlt : (first <? second) = true) by (apply Nat.ltb_lt; lia).
+      assert (Hge : (second <? first) = false) by (apply Nat.ltb_ge; lia).
+      rewrite Hlt, Hge.
+      rewrite (karr_determinant_sign_pair first second Horder).
+      ring.
+    + assert (Hlt : (second <? first) = true) by (apply Nat.ltb_lt; lia).
+      assert (Hge : (first <? second) = false) by (apply Nat.ltb_ge; lia).
+      rewrite Hlt, Hge.
+      rewrite (karr_determinant_sign_pair second first Horder).
+      ring.
+Qed.
+
+(** A post-deletion cofactor is the term for its original pair of columns. *)
+Lemma karr_determinant_pair_term_skip : forall order row rows first index,
+  karr_determinant_pair_term order row rows first
+    (if index <? first then index else S index) =
+  ((if Nat.even first then 1 else -1) * karr_nth first row *
+    (if Nat.even index then 1 else -1) *
+    karr_nth index (karr_delete first row) *
+    karr_determinant order
+      (map (karr_delete index) (map (karr_delete first) rows)))%Z.
+Proof.
+  intros order row rows first index.
+  set (second := if index <? first then index else S index).
+  assert (Hdistinct : first <> second).
+  { unfold second. apply karr_skip_index_distinct. }
+  assert (Hinverse :
+      (if second <? first then second else second - 1) = index).
+  { unfold second. apply karr_skip_index_inverse. }
+  assert (Hrows : map (fun r =>
+        karr_delete (Nat.min first second)
+          (karr_delete (Nat.max first second) r)) rows =
+      map (karr_delete index) (map (karr_delete first) rows)).
+  { rewrite map_map. apply map_ext. intro r. symmetry.
+    rewrite <- Hinverse. apply karr_delete_pair_canonical. exact Hdistinct. }
+  unfold karr_determinant_pair_term.
+  assert (Hneq : (first =? second) = false) by (apply Nat.eqb_neq; exact Hdistinct).
+  rewrite Hneq, Hinverse, Hrows, karr_nth_delete.
+  replace (if index <? first then karr_nth index row else karr_nth (S index) row)
+    with (karr_nth second row).
+  - ring.
+  - unfold second. destruct (index <? first); reflexivity.
+Qed.
+
+(** A constant multiplier passes through a finite integer sum. *)
+Lemma karr_determinant_sum_scale : forall A (f : A -> Z) xs factor,
+  (factor * fold_right Z.add 0%Z (map f xs))%Z =
+    fold_right Z.add 0%Z (map (fun x => (factor * f x)%Z) xs).
+Proof.
+  intros A f xs. induction xs as [|x xs IH]; intro factor;
+    cbn [map fold_right]; [ring|].
+  rewrite Z.mul_add_distr_l, IH. ring.
+Qed.
+
+(** Equal first two rows make every double Laplace term cancel with its reverse. *)
+Lemma karr_determinant_duplicate_first : forall order row rows,
+  karr_determinant (S (S order)) (row :: row :: rows) = 0%Z.
+Proof.
+  intros order row rows.
+  rewrite karr_determinant_cons.
+  transitivity (fold_right Z.add 0%Z (map (fun first =>
+    fold_right Z.add 0%Z (map
+      (karr_determinant_pair_term order row rows first)
+      (seq 0 (S (S order))))) (seq 0 (S (S order))))).
+  - apply karr_determinant_sum_ext. intros first Hfirst.
+    apply in_seq in Hfirst.
+    replace (map (karr_delete first) (row :: rows))
+      with (karr_delete first row :: map (karr_delete first) rows) by reflexivity.
+    rewrite karr_determinant_cons.
+    rewrite karr_determinant_sum_scale.
+    transitivity (fold_right Z.add 0%Z (map (fun index =>
+      karr_determinant_pair_term order row rows first
+        (if index <? first then index else S index)) (seq 0 (S order)))).
+    + apply karr_determinant_sum_ext. intros index _.
+      rewrite karr_determinant_pair_term_skip. ring.
+    + rewrite (karr_determinant_sum_skip (S order) first
+        (karr_determinant_pair_term order row rows first)) by lia.
+      apply karr_determinant_sum_ext. intros second _.
+      destruct (second =? first) eqn:Hsame; [|reflexivity].
+      apply Nat.eqb_eq in Hsame. subst second.
+      unfold karr_determinant_pair_term. now rewrite Nat.eqb_refl.
+  - apply karr_determinant_pair_cancel.
+    intros first second _ _. apply karr_determinant_pair_term_swap.
+Qed.
+
+(** Exchanging the first two equally wide rows reverses a determinant's sign. *)
+Lemma karr_determinant_swap_first : forall order xs ys rows,
+  length xs = length ys ->
+  karr_determinant (S (S order)) (xs :: ys :: rows) =
+    (- karr_determinant (S (S order)) (ys :: xs :: rows))%Z.
+Proof.
+  intros order xs ys rows Hlength.
+  pose proof (karr_determinant_duplicate_first order
+    (karr_cross 1 (-1) xs ys) rows) as Hzero.
+  rewrite (karr_determinant_cross (S order) 1 (-1) xs ys
+    (karr_cross 1 (-1) xs ys :: rows) Hlength) in Hzero.
+  replace (xs :: karr_cross 1 (-1) xs ys :: rows)
+    with ([xs] ++ karr_cross 1 (-1) xs ys :: rows) in Hzero by reflexivity.
+  replace (ys :: karr_cross 1 (-1) xs ys :: rows)
+    with ([ys] ++ karr_cross 1 (-1) xs ys :: rows) in Hzero by reflexivity.
+  rewrite (karr_determinant_cross_at (S order) [xs] 1 (-1) xs ys rows)
+    in Hzero by (cbn [length]; lia).
+  rewrite (karr_determinant_cross_at (S order) [ys] 1 (-1) xs ys rows)
+    in Hzero by (cbn [length]; lia).
+  cbn [app] in Hzero.
+  rewrite !karr_determinant_duplicate_first in Hzero.
+  ring_simplify in Hzero. lia.
+Qed.
+
+(** Exchanging adjacent equally wide rows anywhere reverses the determinant's sign. *)
+Lemma karr_determinant_swap_at : forall order prefix xs ys suffix,
+  length prefix <= order -> length xs = length ys ->
+  karr_determinant (S (S order)) (prefix ++ xs :: ys :: suffix) =
+    (- karr_determinant (S (S order)) (prefix ++ ys :: xs :: suffix))%Z.
+Proof.
+  induction order as [|order IH]; intros prefix xs ys suffix Hprefix Hlength.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_swap_first; exact Hlength|].
+    cbn [length] in Hprefix. lia.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_swap_first; exact Hlength|].
+    cbn [app].
+    rewrite (karr_determinant_cons (S (S order)) row (prefix ++ xs :: ys :: suffix)).
+    rewrite (karr_determinant_cons (S (S order)) row (prefix ++ ys :: xs :: suffix)).
+    generalize (seq 0 (S (S (S order)))) as indices. intro indices.
+    induction indices as [|index indices IHindices]; cbn [map fold_right]; [ring|].
+    rewrite !map_app. cbn [map].
+    pose proof (IH (map (karr_delete index) prefix)
+      (karr_delete index xs) (karr_delete index ys)
+      (map (karr_delete index) suffix)
+      ltac:(rewrite length_map; cbn [length] in Hprefix; lia)
+      (karr_delete_length_equal index xs ys Hlength)) as Hstep.
+    rewrite Hstep, IHindices. ring.
+Qed.
+
+(** Repeating a row in adjacent positions makes the determinant zero. *)
+Lemma karr_determinant_duplicate_at : forall order prefix row suffix,
+  length prefix <= order ->
+  karr_determinant (S (S order)) (prefix ++ row :: row :: suffix) = 0%Z.
+Proof.
+  intros order prefix row suffix Hprefix.
+  pose proof (karr_determinant_swap_at order prefix row row suffix
+    Hprefix eq_refl) as Hswap.
+  lia.
+Qed.
+
+(** Equal rows still cancel when equally wide rows lie between them. *)
+Lemma karr_determinant_duplicate_separated : forall order prefix row middle suffix,
+  length prefix + length middle <= order ->
+  Forall (fun r => length r = length row) middle ->
+  karr_determinant (S (S order)) (prefix ++ row :: middle ++ row :: suffix) = 0%Z.
+Proof.
+  intros order prefix row middle suffix Hbound Hwidth.
+  revert prefix Hbound Hwidth.
+  induction middle as [|r middle IH]; intros prefix Hbound Hwidth.
+  - cbn [app]. apply karr_determinant_duplicate_at. lia.
+  - inversion Hwidth as [|? ? Hr Htail]; subst.
+    replace (prefix ++ row :: (r :: middle) ++ row :: suffix)
+      with (prefix ++ row :: r :: (middle ++ row :: suffix)) by reflexivity.
+    rewrite (karr_determinant_swap_at order prefix row r
+      (middle ++ row :: suffix)) by (cbn [length] in *; lia).
+    replace (prefix ++ r :: row :: middle ++ row :: suffix)
+      with ((prefix ++ [r]) ++ row :: middle ++ row :: suffix)
+      by now rewrite <- app_assoc.
+    rewrite (IH (prefix ++ [r])
+      ltac:(rewrite length_app; cbn [length] in *; lia) Htail).
+    ring.
+Qed.
+
+(** Eliminating a later row by an earlier row scales the determinant by the pivot. *)
+Lemma karr_determinant_row_reduce : forall order prefix pivot middle target suffix a h,
+  length prefix + length middle <= order ->
+  length target = length pivot ->
+  Forall (fun r => length r = length pivot) middle ->
+  karr_determinant (S (S order))
+    ((prefix ++ pivot :: middle) ++ karr_cross a h target pivot :: suffix) =
+  (a * karr_determinant (S (S order))
+    ((prefix ++ pivot :: middle) ++ target :: suffix))%Z.
+Proof.
+  intros order prefix pivot middle target suffix a h Hbound Hlength Hwidth.
+  rewrite (karr_determinant_cross_at (S order)
+    (prefix ++ pivot :: middle) a h target pivot suffix
+    ltac:(rewrite length_app; cbn [length]; lia) Hlength).
+  assert (Hduplicate : karr_determinant (S (S order))
+      ((prefix ++ pivot :: middle) ++ pivot :: suffix) = 0%Z).
+  { replace ((prefix ++ pivot :: middle) ++ pivot :: suffix)
+      with (prefix ++ pivot :: middle ++ pivot :: suffix)
+      by now rewrite <- app_assoc.
+    apply karr_determinant_duplicate_separated; assumption. }
+  rewrite Hduplicate. ring.
+Qed.
+
+(** Permuting equal-width rows changes a determinant by at most its sign. *)
+Lemma karr_determinant_permutation : forall xs ys,
+  Permutation xs ys ->
+  forall order prefix suffix width,
+    length prefix + length xs <= S order ->
+    Forall (fun row => length row = width) xs ->
+    exists sign : Z, (sign = 1 \/ sign = -1)%Z /\
+      karr_determinant (S order) (prefix ++ xs ++ suffix) =
+        (sign * karr_determinant (S order) (prefix ++ ys ++ suffix))%Z.
+Proof.
+  intros xs ys Hperm.
+  induction Hperm as
+    [|row xs ys Hperm IH|first second xs|xs ys zs Hleft IHleft Hright IHright];
+    intros order prefix suffix width Hbound Hwidth.
+  - exists 1%Z. split; [now left|]. ring.
+  - apply Forall_cons_iff in Hwidth as [Hrow Htail].
+    destruct (IH order (prefix ++ [row]) suffix width
+      ltac:(rewrite length_app; cbn [length] in *; lia) Htail)
+      as [sign [Hsign Heq]].
+    exists sign. split; [exact Hsign|].
+    replace (prefix ++ (row :: xs) ++ suffix) with
+      ((prefix ++ [row]) ++ xs ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    replace (prefix ++ (row :: ys) ++ suffix) with
+      ((prefix ++ [row]) ++ ys ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    exact Heq.
+  - apply Forall_cons_iff in Hwidth as [Hfirst Htail].
+    apply Forall_cons_iff in Htail as [Hsecond _].
+    destruct order as [|order]; [cbn [length] in Hbound; lia|].
+    exists (-1)%Z. split; [now right|].
+    replace (prefix ++ (first :: second :: xs) ++ suffix) with
+      (prefix ++ first :: second :: (xs ++ suffix)) by reflexivity.
+    replace (prefix ++ (second :: first :: xs) ++ suffix) with
+      (prefix ++ second :: first :: (xs ++ suffix)) by reflexivity.
+    rewrite (karr_determinant_swap_at order prefix second first (xs ++ suffix))
+      by (cbn [length] in Hbound; lia).
+    ring.
+  - destruct (IHleft order prefix suffix width Hbound Hwidth)
+      as [left [Hleft_sign Hleft_eq]].
+    assert (Hmiddle_width : Forall (fun row => length row = width) ys)
+      by (eapply Permutation_Forall; eauto).
+    destruct (IHright order prefix suffix width
+      ltac:(rewrite <- (Permutation_length Hleft); exact Hbound) Hmiddle_width)
+      as [right [Hright_sign Hright_eq]].
+    exists (left * right)%Z. split.
+    + destruct Hleft_sign as [Hleft_one|Hleft_neg];
+        destruct Hright_sign as [Hright_one|Hright_neg];
+        subst; [left|right|right|left]; ring.
+    + rewrite Hleft_eq, Hright_eq. ring.
+Qed.
 
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
@@ -424,6 +1600,209 @@ Proof.
   cbn [karr_choose map]. rewrite karr_choose_zero, IH. reflexivity.
 Qed.
 
+(** A multiset partition contains an ordered selected subsequence. *)
+Lemma karr_choose_partition : forall (original selected rest : list (list Z)),
+  Permutation original (selected ++ rest) ->
+  exists ordered,
+    In ordered (karr_choose (length selected) original) /\
+    Permutation ordered selected.
+Proof.
+  induction original as [|row original IH]; intros selected rest Hperm.
+  - destruct selected as [|head selected].
+    + exists []. split; [now rewrite karr_choose_zero; left|constructor].
+    + pose proof (Permutation_length Hperm) as Hlength.
+      cbn [length] in Hlength. rewrite length_app in Hlength.
+      cbn [length] in Hlength. lia.
+  - destruct (in_dec (list_eq_dec Z.eq_dec) row selected) as [Hin|Hout].
+    + apply in_split in Hin as [before [after Hselected]]. subst selected.
+      assert (Htail : Permutation original ((before ++ after) ++ rest)).
+      { apply Permutation_cons_inv with (a := row).
+        eapply Permutation_trans; [exact Hperm|].
+        replace ((before ++ row :: after) ++ rest) with
+          (before ++ row :: (after ++ rest)) by (rewrite <- app_assoc; reflexivity).
+        eapply Permutation_trans.
+        * apply Permutation_sym, Permutation_middle.
+        * replace (row :: before ++ after ++ rest) with
+            (row :: ((before ++ after) ++ rest))
+            by (rewrite <- app_assoc; reflexivity).
+          apply Permutation_refl. }
+      destruct (IH (before ++ after) rest Htail)
+        as [ordered [Hordered Hselected_perm]].
+      exists (row :: ordered). split.
+      * replace (length (before ++ row :: after)) with
+          (S (length (before ++ after)))
+          by (rewrite !length_app; cbn [length]; lia).
+        cbn [karr_choose]. apply in_or_app. left.
+        apply in_map_iff. exists ordered. now split.
+      * eapply Permutation_trans; [apply perm_skip; exact Hselected_perm|].
+        apply Permutation_middle.
+    + assert (Hin : In row rest).
+      { assert (Htotal : In row (selected ++ rest)).
+        { eapply Permutation_in; [exact Hperm|now left]. }
+        apply in_app_or in Htotal as [Hselected|Hrest];
+          [contradiction|exact Hrest]. }
+      apply in_split in Hin as [before [after Hrest]]. subst rest.
+      assert (Htail : Permutation original (selected ++ before ++ after)).
+      { apply Permutation_cons_inv with (a := row).
+        eapply Permutation_trans; [exact Hperm|].
+        replace (selected ++ before ++ row :: after) with
+          ((selected ++ before) ++ row :: after)
+          by (rewrite <- app_assoc; reflexivity).
+        replace (selected ++ before ++ after) with
+          ((selected ++ before) ++ after)
+          by (rewrite <- app_assoc; reflexivity).
+        apply Permutation_sym, Permutation_middle. }
+      destruct (IH selected (before ++ after) Htail)
+        as [ordered [Hordered Hselected_perm]].
+      exists ordered. split.
+      * destruct selected as [|head selected].
+        -- rewrite karr_choose_zero in Hordered |- *. exact Hordered.
+        -- cbn [karr_choose]. apply in_or_app. right. exact Hordered.
+      * exact Hselected_perm.
+Qed.
+
+(** Moving one remaining label into the selected prefix preserves the source partition. *)
+Lemma karr_partition_select : forall A (original prefix labels : list A) item,
+  Permutation original (prefix ++ labels) -> In item labels ->
+  exists rest, Permutation original ((prefix ++ [item]) ++ rest).
+Proof.
+  intros A original prefix labels item Hpartition Hin.
+  apply in_split in Hin as [before [after Hlabels]]. subst labels.
+  exists (before ++ after). eapply Permutation_trans; [exact Hpartition|].
+  eapply Permutation_trans.
+  - apply Permutation_app_head.
+    apply Permutation_sym, Permutation_middle.
+  - replace (prefix ++ item :: before ++ after) with
+      ((prefix ++ [item]) ++ (before ++ after))
+      by (rewrite <- app_assoc; reflexivity).
+    apply Permutation_refl.
+Qed.
+
+(** Strictly increasing coordinates are the ordered selections of a source range. *)
+Fixpoint karr_increasing (columns : list nat) : Prop :=
+  match columns with
+  | [] => True
+  | column :: columns =>
+    Forall (fun later => column < later) columns /\ karr_increasing columns
+  end.
+
+(** Consecutive coordinates are strictly increasing. *)
+Lemma karr_increasing_seq : forall start count,
+  karr_increasing (seq start count).
+Proof.
+  intros start count. revert start. induction count as [|count IH]; intro start.
+  - exact I.
+  - cbn [seq karr_increasing]. split; [|apply IH].
+    apply Forall_forall. intros column Hin. apply in_seq in Hin. lia.
+Qed.
+
+(** Every prefix of an increasing coordinate list is increasing. *)
+Lemma karr_increasing_prefix : forall prefix suffix,
+  karr_increasing (prefix ++ suffix) -> karr_increasing prefix.
+Proof.
+  induction prefix as [|head prefix IH]; intros suffix Hinc; [exact I|].
+  cbn [app karr_increasing] in Hinc |- *.
+  destruct Hinc as [Hafter Htail]. split.
+  - apply Forall_app in Hafter as [Hprefix _]. exact Hprefix.
+  - now apply IH with (suffix := suffix).
+Qed.
+
+(** Every coordinate of a consecutive range lies below its endpoint. *)
+Lemma karr_seq_bounded : forall start count,
+  Forall (fun column => column < start + count) (seq start count).
+Proof.
+  intros start count. apply Forall_forall. intros column Hin.
+  apply in_seq in Hin. lia.
+Qed.
+
+(** Appending any later coordinate preserves the strict prefix order. *)
+Lemma karr_increasing_prefix_member : forall prefix suffix column,
+  karr_increasing (prefix ++ suffix) -> In column suffix ->
+  karr_increasing (prefix ++ [column]).
+Proof.
+  induction prefix as [|head prefix IH]; intros suffix column Hinc Hin.
+  - cbn [app karr_increasing]. split; [constructor|exact I].
+  - cbn [app karr_increasing] in *. destruct Hinc as [Hafter Htail].
+    split.
+    + apply Forall_app. split.
+      * apply (proj1 (Forall_app _ _ _)) in Hafter as [Hprefix _].
+        exact Hprefix.
+      * constructor; [|constructor].
+        apply (proj1 (Forall_forall _ _) Hafter).
+        apply in_or_app. now right.
+    + apply IH with (suffix := suffix); assumption.
+Qed.
+
+(** Dropping the next coordinate keeps the chosen and live columns increasing. *)
+Lemma karr_increasing_skip : forall prefix head suffix,
+  karr_increasing (prefix ++ head :: suffix) ->
+  karr_increasing (prefix ++ suffix).
+Proof.
+  induction prefix as [|first prefix IH]; intros head suffix Hinc.
+  - cbn [app karr_increasing] in Hinc |- *. exact (proj2 Hinc).
+  - cbn [app karr_increasing] in *. destruct Hinc as [Hafter Htail].
+    split.
+    + apply Forall_app in Hafter as [Hprefix Hrest].
+      apply Forall_app. split; [exact Hprefix|].
+      inversion Hrest as [|? ? _ Hsuffix]; subst. exact Hsuffix.
+    + now apply IH with (head := head).
+Qed.
+
+(** Every bounded increasing coordinate list is enumerated by choose. *)
+Lemma karr_choose_seq_increasing : forall count start columns,
+  karr_increasing columns ->
+  Forall (fun column => start <= column /\ column < start + count) columns ->
+  In columns (karr_choose (length columns) (seq start count)).
+Proof.
+  induction count as [|count IH]; intros start [|column columns] Hinc Hrange.
+  - rewrite karr_choose_zero. now left.
+  - cbn [karr_increasing] in Hinc.
+    inversion Hrange as [|? ? [Hlow Hhigh] _]; subst. lia.
+  - rewrite karr_choose_zero. now left.
+  - cbn [karr_increasing] in Hinc. destruct Hinc as [Hafter Htail].
+    inversion Hrange as [|? ? [Hlow Hhigh] Hrest]; subst.
+    cbn [seq karr_choose length].
+    destruct (Nat.eq_dec column start) as [Heq|Hneq].
+    + subst column. apply in_or_app. left.
+      apply in_map_iff. exists columns. split; [reflexivity|].
+      apply IH; [exact Htail|].
+      apply Forall_forall. intros later Hin.
+      pose proof (proj1 (Forall_forall _ _) Hafter later Hin) as Hlater.
+      pose proof (proj1 (Forall_forall _ _) Hrest later Hin) as [_ Hbound].
+      cbn in Hlater, Hbound. lia.
+    + apply in_or_app. right.
+      apply IH.
+      * cbn [karr_increasing]. now split.
+      * constructor.
+        -- cbn [length] in *. lia.
+        -- apply Forall_forall. intros later Hin.
+           pose proof (proj1 (Forall_forall _ _) Hafter later Hin) as Hlater.
+           pose proof (proj1 (Forall_forall _ _) Hrest later Hin) as [_ Hbound].
+           cbn in Hlater, Hbound. lia.
+Qed.
+
+(** An enumerated selection cannot exceed its source list. *)
+Lemma karr_choose_count_le : forall A (source : list A) count selected,
+  In selected (karr_choose count source) -> count <= length source.
+Proof.
+  intros A source. induction source as [|x source IH]; intros [|count] selected Hin;
+    cbn [karr_choose length] in *; try lia; try contradiction.
+  apply in_app_or in Hin as [Hin|Hin].
+  - apply in_map_iff in Hin as [tail [_ Htail]].
+    pose proof (IH count tail Htail). lia.
+  - pose proof (IH (S count) selected Hin). lia.
+Qed.
+
+(** A lookup before the end of a list returns one of its elements. *)
+Lemma karr_nth_list_member : forall A (source : list A) default index,
+  index < length source -> In (nth index source default) source.
+Proof.
+  intros A source. induction source as [|head source IH]; intros default [|index] Hindex;
+    cbn [length nth List.In] in *; try lia.
+  - now left.
+  - right. apply IH. lia.
+Qed.
+
 (** A selected row and column set determines one square submatrix. *)
 Definition karr_submatrix (columns : list nat) (rows : list (list Z)) : list (list Z) :=
   map (fun row => map (fun index => karr_nth index row) columns) rows.
@@ -436,6 +1815,353 @@ Lemma karr_submatrix_width : forall columns rows,
 Proof.
   intros columns rows. unfold karr_submatrix. apply Forall_map.
   apply Forall_forall. intros row _. apply length_map.
+Qed.
+
+(** Selecting columns commutes with crossing two equally wide rows. *)
+Lemma karr_select_cross : forall columns a b xs ys,
+  length xs = length ys ->
+  map (fun i => karr_nth i (karr_cross a b xs ys)) columns =
+    karr_cross a b (map (fun i => karr_nth i xs) columns)
+      (map (fun i => karr_nth i ys) columns).
+Proof.
+  intros columns a b xs ys Hwidth.
+  induction columns as [|i columns IH]; [reflexivity|].
+  cbn [map karr_cross]. rewrite karr_nth_cross by exact Hwidth.
+  now rewrite IH.
+Qed.
+
+(** Crossing rows of equal width preserves their width. *)
+Lemma karr_cross_length : forall a b xs ys,
+  length xs = length ys -> length (karr_cross a b xs ys) = length xs.
+Proof.
+  intros a b xs. induction xs as [|x xs IH]; intros [|y ys] Hwidth;
+    cbn [length karr_cross] in *; try discriminate; try reflexivity.
+  f_equal. apply IH. lia.
+Qed.
+
+(** Crossing each row below a pivot multiplies the determinant once per row. *)
+Lemma karr_determinant_cross_rows : forall p prefix xs a (f : list Z -> Z),
+  Forall (fun r => length r = length p) (prefix ++ xs) ->
+  karr_determinant (S (length prefix + length xs))
+    (p :: prefix ++ map (fun x => karr_cross a (f x) x p) xs) =
+  (a ^ Z.of_nat (length xs) *
+    karr_determinant (S (length prefix + length xs)) (p :: prefix ++ xs))%Z.
+Proof.
+  intros p prefix xs a f Hwidth. revert prefix Hwidth.
+  induction xs as [|x xs IH]; intros prefix Hwidth.
+  - cbn [length map app]. rewrite Z.pow_0_r. ring.
+  - apply Forall_app in Hwidth as [Hprefix Hrest].
+    inversion Hrest as [|? ? Hx Htail]; subst.
+    assert (Hnext : Forall (fun r => length r = length p) ((prefix ++ [x]) ++ xs)).
+    { apply Forall_app. split; [apply Forall_app; split; [exact Hprefix|constructor;
+        [exact Hx|constructor]]|exact Htail]. }
+    specialize (IH (prefix ++ [x]) Hnext).
+    replace (S (length prefix + length (x :: xs))) with
+      (S (S (length prefix + length xs))) by (cbn [length]; lia).
+    cbn [map].
+    replace (p :: prefix ++ karr_cross a (f x) x p ::
+      map (fun y => karr_cross a (f y) y p) xs) with
+      (([] ++ p :: prefix) ++ karr_cross a (f x) x p ::
+        map (fun y => karr_cross a (f y) y p) xs) by reflexivity.
+    rewrite (karr_determinant_row_reduce (length prefix + length xs)
+      [] p prefix x (map (fun y => karr_cross a (f y) y p) xs) a (f x))
+      by (cbn [length app]; try lia; exact Hprefix).
+    replace (S (length (prefix ++ [x]) + length xs)) with
+      (S (S (length prefix + length xs))) in IH
+      by (rewrite length_app; cbn [length]; lia).
+    replace (([] ++ p :: prefix) ++ x ::
+      map (fun y => karr_cross a (f y) y p) xs) with
+      (p :: prefix ++ x :: map (fun y => karr_cross a (f y) y p) xs)
+      by reflexivity.
+    replace (p :: (prefix ++ [x]) ++ xs) with (p :: prefix ++ x :: xs)
+      in IH by (rewrite <- app_assoc; reflexivity).
+    replace (p :: prefix ++ x :: map (fun y => karr_cross a (f y) y p) xs)
+      with (p :: (prefix ++ [x]) ++ map (fun y => karr_cross a (f y) y p) xs)
+      by (rewrite <- app_assoc; reflexivity).
+    rewrite IH. cbn [length]. rewrite Nat2Z.inj_succ, Z.pow_succ_r by lia.
+    ring.
+Qed.
+
+(** Crossing a row against itself with zero second factor scales every entry. *)
+Lemma karr_cross_scale : forall a xs,
+  karr_cross a 0 xs xs = map (fun z => (a * z)%Z) xs.
+Proof.
+  intros a xs. induction xs as [|x xs IH]; [reflexivity|].
+  cbn [karr_cross map]. rewrite IH. f_equal. ring.
+Qed.
+
+(** Scaling several selected rows scales the determinant by one factor per row. *)
+Lemma karr_determinant_scale_rows : forall order prefix rows suffix a,
+  length prefix + length rows <= order ->
+  karr_determinant order
+    (prefix ++ map (map (fun z => (a * z)%Z)) rows ++ suffix) =
+  (a ^ Z.of_nat (length rows) *
+    karr_determinant order (prefix ++ rows ++ suffix))%Z.
+Proof.
+  intros order prefix rows. revert prefix.
+  induction rows as [|row rows IH]; intros prefix suffix a Hbound.
+  - cbn [map length app]. rewrite Z.pow_0_r. ring.
+  - destruct order as [|order]; [cbn [length] in Hbound; lia|].
+    cbn [map length].
+    rewrite <- karr_cross_scale.
+    rewrite app_assoc.
+    replace ((prefix ++ karr_cross a 0 row row ::
+      map (map (fun z => (a * z)%Z)) rows) ++ suffix) with
+      (prefix ++ karr_cross a 0 row row ::
+        (map (map (fun z => (a * z)%Z)) rows ++ suffix))
+      by (rewrite <- app_assoc; reflexivity).
+    cbn [length] in Hbound.
+    rewrite (karr_determinant_cross_at order prefix a 0 row row
+      (map (map (fun z => (a * z)%Z)) rows ++ suffix)) by lia.
+    specialize (IH (prefix ++ [row]) suffix a ltac:(rewrite length_app;
+      cbn [length] in *; lia)).
+    replace (prefix ++ row :: map (map (fun z => (a * z)%Z)) rows ++ suffix)
+      with ((prefix ++ [row]) ++ map (map (fun z => (a * z)%Z)) rows ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    rewrite IH.
+    replace ((prefix ++ [row]) ++ rows ++ suffix)
+      with (prefix ++ row :: rows ++ suffix)
+      by (rewrite <- app_assoc; reflexivity).
+    rewrite Nat2Z.inj_succ, Z.pow_succ_r by lia.
+    replace (prefix ++ (row :: rows) ++ suffix)
+      with (prefix ++ row :: rows ++ suffix)
+      by reflexivity.
+    ring.
+Qed.
+
+(** A selected pivot column and its suffix commute with every crossed row. *)
+Lemma karr_stage_cross_selected : forall c p xs ys,
+  Forall (fun x => length x = length p) xs ->
+  karr_submatrix (c :: ys)
+    (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs) =
+  map (fun row => karr_cross (karr_nth c p) (karr_nth 0 row) row
+    (map (fun i => karr_nth i p) (c :: ys))) (karr_submatrix (c :: ys) xs).
+Proof.
+  intros c p xs ys Hwidth. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext_in. intros x Hin. cbn [map].
+  rewrite karr_select_cross.
+  - rewrite karr_nth_cross by
+      exact (proj1 (Forall_forall _ _) Hwidth x Hin).
+    reflexivity.
+  - exact (proj1 (Forall_forall _ _) Hwidth x Hin).
+Qed.
+
+(** Removing the selected first column leaves precisely the suffix selection. *)
+Lemma karr_stage_selected_tail : forall c ys xs,
+  map (karr_delete 0) (karr_submatrix (c :: ys) xs) =
+    karr_submatrix ys xs.
+Proof.
+  intros c ys xs. unfold karr_submatrix. rewrite map_map.
+  apply map_ext. intro x. reflexivity.
+Qed.
+
+(** Selecting after deletion is selecting the successor coordinates before it. *)
+Lemma karr_submatrix_delete_first : forall selected rows,
+  karr_submatrix selected (map (karr_delete 0) rows) =
+    karr_submatrix (map S selected) rows.
+Proof.
+  intros selected rows. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext. intro row. rewrite map_map.
+  apply map_ext. intro index. now rewrite karr_nth_delete.
+Qed.
+
+(** Selecting after an arbitrary deletion skips that original column. *)
+Lemma karr_submatrix_delete_at : forall removed selected rows,
+  karr_submatrix selected (map (karr_delete removed) rows) =
+    karr_submatrix
+      (map (fun index => if index <? removed then index else S index) selected)
+      rows.
+Proof.
+  intros removed selected rows. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext. intro row. rewrite !map_map.
+  apply map_ext. intro index. rewrite karr_nth_delete.
+  now destruct (index <? removed).
+Qed.
+
+(** One undivided elimination stage scales every selected minor. *)
+Lemma karr_stage_minor : forall (c : nat) (p : list Z) (xs : list (list Z)) (ys : list nat),
+  karr_nth c p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  karr_determinant (length ys)
+    (karr_submatrix ys
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs)) =
+  (karr_nth c p ^ Z.of_nat (length xs - 1) *
+   karr_determinant (S (length ys)) (karr_submatrix (c :: ys) (p :: xs)))%Z.
+Proof.
+  intros c p xs ys Ha Hsource Hcolumns Hpositive.
+  set (a := karr_nth c p).
+  set (pivot := map (fun i => karr_nth i p) (c :: ys)).
+  set (rows := karr_submatrix (c :: ys) xs).
+  set (crossed := map (fun row => karr_cross a (karr_nth 0 row) row pivot) rows).
+  assert (Hwidth : Forall (fun row => length row = length pivot) rows).
+  { unfold rows, pivot. pose proof (karr_submatrix_width (c :: ys) xs) as Hrows.
+    rewrite length_map. exact Hrows. }
+  assert (Hlength : length rows = length ys).
+  { unfold rows, karr_submatrix. rewrite length_map. lia. }
+  assert (Hzero : Forall (fun row => karr_nth 0 row = 0%Z) crossed).
+  { unfold crossed. apply Forall_forall. intros row Hin.
+    apply in_map_iff in Hin as [source [Hrow Hsource_row]]. subst row.
+    rewrite karr_nth_cross by
+      exact (proj1 (Forall_forall _ _) Hwidth source Hsource_row).
+    unfold a, pivot. cbn [map karr_nth]. ring. }
+  pose proof (karr_determinant_cross_rows pivot [] rows a
+    (fun row => karr_nth 0 row) Hwidth) as Hcross.
+  cbn [length app] in Hcross. rewrite Hlength in Hcross.
+  pose proof (karr_determinant_triangular (length ys) pivot crossed Hzero) as Htri.
+  assert (Hselected : map (karr_delete 0) crossed =
+    karr_submatrix ys
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs)).
+  { unfold crossed, rows, pivot, a.
+    rewrite <- (karr_stage_cross_selected c p xs ys Hsource).
+    apply karr_stage_selected_tail. }
+  rewrite Hselected in Htri.
+  destruct (length xs) as [|m] eqn:Hm; [lia|].
+  assert (Hy : length ys = S m) by lia.
+  rewrite Hy in Hcross, Htri.
+  assert (Hhead : karr_nth 0 pivot = a) by (unfold pivot, a; reflexivity).
+  rewrite Hhead in Htri.
+  cbn [Nat.add] in Hcross.
+  fold crossed in Hcross.
+  rewrite Htri in Hcross.
+  rewrite Nat2Z.inj_succ, Z.pow_succ_r in Hcross by lia.
+  unfold a, pivot, rows in Hcross.
+  unfold a in Ha.
+  rewrite Hy. cbn [Nat.sub]. rewrite Nat.sub_0_r. unfold a.
+  change (karr_determinant (S m)
+    (karr_submatrix ys
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs)) =
+    ((karr_nth c p ^ Z.of_nat m)%Z *
+      karr_determinant (S (S m))
+        (map (fun i => karr_nth i p) (c :: ys) ::
+          karr_submatrix (c :: ys) xs))%Z).
+  nia.
+Qed.
+
+(** Every selected live minor is tied to its labeled original rows and columns. *)
+Definition karr_minor_law (previous : Z) (pivot_rows : list (list Z))
+    (pivot_columns columns : list nat) (pairs : list (list Z * list Z)) : Prop :=
+  forall origins live selected,
+    Forall2 (fun origin row => In (origin, row) pairs) origins live ->
+    length selected = length live ->
+    Forall (fun i => i < length columns) selected ->
+    1 <= length live ->
+    karr_determinant (length selected) (karr_submatrix selected live) =
+      (previous ^ Z.of_nat (length live - 1) *
+        karr_determinant (length pivot_rows + length live)
+          (karr_submatrix
+            (pivot_columns ++ map (fun i => nth i columns 0%nat) selected)
+            (pivot_rows ++ origins)))%Z.
+
+(** Reordering the live row-label pairs leaves their minor equations intact. *)
+Lemma karr_minor_law_permutation : forall previous pivot_rows pivot_columns columns
+    pairs reordered,
+  Permutation pairs reordered ->
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  karr_minor_law previous pivot_rows pivot_columns columns reordered.
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs reordered Hperm Hlaw.
+  unfold karr_minor_law in *. intros origins live selected Hpaired Hlength Hcolumns Hpositive.
+  apply Hlaw; try assumption.
+  eapply Forall2_impl; [|exact Hpaired].
+  intros origin row Hin. eapply Permutation_in; [apply Permutation_sym; exact Hperm|].
+  exact Hin.
+Qed.
+
+(** A valid index in the original coordinate sequence names itself. *)
+Lemma karr_nth_seq : forall count start index,
+  index < count -> nth index (seq start count) 0%nat = start + index.
+Proof.
+  induction count as [|count IH]; intros start [|index] Hindex;
+    [lia|lia|cbn [seq nth]; lia|].
+  - cbn [seq nth]. rewrite IH by lia. lia.
+Qed.
+
+(** The original augmented matrix satisfies the all-order law at stage zero. *)
+Lemma karr_minor_law_initial : forall originals width,
+  karr_minor_law 1 [] [] (seq 0 width)
+    (map (fun row => (row, row)) originals).
+Proof.
+  intros originals width. unfold karr_minor_law.
+  intros origins live selected Hpaired Hlength Hselected Hpositive.
+  assert (Hsame : origins = live).
+  { clear Hlength Hselected Hpositive.
+    induction Hpaired as [|origin row origins live Hin Htail IH];
+      [reflexivity|].
+    apply in_map_iff in Hin as [source [Heq _]].
+    inversion Heq; subst. now f_equal. }
+  subst origins.
+  assert (Hcolumns : map (fun i => nth i (seq 0 width) 0%nat) selected = selected).
+  { clear Hlength Hpositive Hpaired.
+    revert Hselected. induction selected as [|i selected IH]; intro Hselected;
+      [reflexivity|].
+    inversion Hselected as [|? ? Hi Hrest]; subst. cbn [map]. f_equal.
+    - rewrite length_seq in Hi. rewrite karr_nth_seq by exact Hi. lia.
+    - now apply IH. }
+  rewrite Hcolumns, Z.pow_1_l.
+  - cbn [length app Nat.add]. rewrite Hlength. ring.
+  - lia.
+Qed.
+
+(** Every selected row after a skipped column retains its original live label. *)
+Lemma karr_pairs_delete_first_lift : forall (pairs : list (list Z * list Z))
+    (origins live : list (list Z)),
+  Forall2 (fun origin row => In (origin, row)
+    (map (fun pair => (fst pair, karr_delete 0 (snd pair))) pairs)) origins live ->
+  exists prior,
+    Forall2 (fun origin row => In (origin, row) pairs) origins prior /\
+    live = map (karr_delete 0) prior.
+Proof.
+  intros pairs origins live Hpaired.
+  induction Hpaired as [|origin row origins live Hin Htail [prior [Hprior Heq]]].
+  - exists []. split; constructor.
+  - apply in_map_iff in Hin as [[source original] [Hsame Hsource]].
+    cbn [fst snd] in Hsame. inversion Hsame; subst source row.
+    exists (original :: prior). split.
+    + constructor; assumption.
+    + cbn [map]. now f_equal.
+Qed.
+
+(** A mapped live row retains the source row paired with its origin label. *)
+Lemma karr_pairs_map_lift : forall (f : list Z -> list Z)
+    (pairs : list (list Z * list Z)) (origins live : list (list Z)),
+  Forall2 (fun origin row => In (origin, row)
+    (map (fun pair => (fst pair, f (snd pair))) pairs)) origins live ->
+  exists prior,
+    Forall2 (fun origin row => In (origin, row) pairs) origins prior /\
+    live = map f prior.
+Proof.
+  intros f pairs origins live Hpaired.
+  induction Hpaired as [|origin row origins live Hin Htail [prior [Hprior Heq]]].
+  - exists []. split; constructor.
+  - apply in_map_iff in Hin as [[source original] [Hsame Hsource]].
+    cbn [fst snd] in Hsame. inversion Hsame; subst source row.
+    exists (original :: prior). split.
+    + constructor; assumption.
+    + cbn [map]. now f_equal.
+Qed.
+
+(** Skipping a coordinate preserves every live minor equation. *)
+Lemma karr_minor_law_skip : forall previous pivot_rows pivot_columns head columns pairs,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (map (fun pair => (fst pair, karr_delete 0 (snd pair))) pairs).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs Hlaw.
+  unfold karr_minor_law in *. intros origins live selected Hpaired Hlength Hselected Hpositive.
+  destruct (karr_pairs_delete_first_lift pairs origins live Hpaired)
+    as [prior [Hprior Heq]]. subst live.
+  rewrite karr_submatrix_delete_first.
+  rewrite length_map in Hlength, Hpositive.
+  assert (Hvalid : Forall (fun i => i < length (head :: columns)) (map S selected)).
+  { apply Forall_forall. intros i Hi. apply in_map_iff in Hi as [j [Hj Hin]].
+    subst i. pose proof (proj1 (Forall_forall _ _) Hselected j Hin) as Hj.
+    cbn in Hj. cbn [length]. lia. }
+  pose proof (Hlaw origins prior (map S selected) Hprior
+    ltac:(rewrite length_map; exact Hlength) Hvalid ltac:(lia)) as Hstep.
+  rewrite length_map in Hstep.
+  rewrite map_map in Hstep. cbn [nth] in Hstep.
+  rewrite !length_map. exact Hstep.
 Qed.
 
 (** Signed minors account for the row exchanges made when selecting a pivot. *)
@@ -454,6 +2180,19 @@ Definition karr_signed_minors (width : nat) (rows : list (list Z)) : list Z :=
 
 TimeFun karr_signed_minors.
 
+(** The order-zero minor is present for every source matrix. *)
+Lemma karr_signed_minors_one : forall width rows,
+  In 1%Z (karr_signed_minors width rows).
+Proof.
+  intros width rows. unfold karr_signed_minors.
+  apply in_flat_map. exists 0. split; [apply in_seq; lia|].
+  apply in_flat_map. exists []. split;
+    [rewrite karr_choose_zero; now left|].
+  apply in_flat_map. exists []. split;
+    [rewrite karr_choose_zero; now left|].
+  now left.
+Qed.
+
 (** The order-one determinant is its sole entry. *)
 Lemma karr_determinant_one : forall z, karr_determinant 1 [[z]] = z.
 Proof.
@@ -469,6 +2208,27 @@ Proof.
     cbn [nth_error karr_nth] in *; try discriminate.
   - now injection Hget.
   - now apply IH.
+Qed.
+
+(** A lookup inside the first list ignores every appended field. *)
+Lemma karr_nth_app_left : forall index xs ys,
+  index < length xs -> karr_nth index (xs ++ ys) = karr_nth index xs.
+Proof.
+  intro index. induction index as [|index IH]; intros xs ys Hindex;
+    destruct xs as [|z xs]; cbn [length app karr_nth] in *.
+  - lia.
+  - reflexivity.
+  - lia.
+  - apply IH. lia.
+Qed.
+
+(** A live coefficient has the same augmented-row coordinate. *)
+Lemma karr_nth_row_entries_coeff : forall index row,
+  index < length (kcoeff row) ->
+  karr_nth index (karr_row_entries row) = karr_nth index (kcoeff row).
+Proof.
+  intros index row Hindex. unfold karr_row_entries.
+  now apply karr_nth_app_left.
 Qed.
 
 (** Every actual matrix entry is an independently enumerated order-one minor. *)
@@ -495,6 +2255,224 @@ Proof.
         rewrite (karr_nth_error_value _ _ _ Hget). now left.
 Qed.
 
+(** A selected singleton row and valid column give an order-one source minor. *)
+Lemma karr_signed_minors_partition_one : forall width original row rest column,
+  Permutation original (row :: rest) -> column < width ->
+  In (karr_determinant 1 (karr_submatrix [column] [row]))
+    (karr_signed_minors width original).
+Proof.
+  intros width original row rest column Hpartition Hcolumn.
+  assert (Hrow : In row original).
+  { eapply Permutation_in; [apply Permutation_sym; exact Hpartition|now left]. }
+  assert (Hlength : 0 < length original).
+  { destruct original; [contradiction|cbn [length]; lia]. }
+  unfold karr_signed_minors. apply in_flat_map. exists 1. split.
+  - apply in_seq. assert (Hmin : 1 <= Nat.min (length original) width)
+      by (apply Nat.min_glb; lia). lia.
+  - apply in_flat_map. exists [row]. split.
+    + rewrite karr_choose_one. apply in_map_iff.
+      exists row. split; [reflexivity|exact Hrow].
+    + apply in_flat_map. exists [column]. split.
+      * rewrite karr_choose_one. apply in_map_iff.
+        exists column. split; [reflexivity|]. apply in_seq. lia.
+      * now left.
+Qed.
+
+(** Every higher-order minor of selected rows occurs with its pivot-order sign. *)
+Lemma karr_signed_minors_partition : forall width original selected rest columns,
+  2 <= length selected -> length selected = length columns ->
+  Permutation original (selected ++ rest) ->
+  karr_increasing columns ->
+  Forall (fun column => column < width) columns ->
+  In (karr_determinant (length selected) (karr_submatrix columns selected))
+    (karr_signed_minors width original).
+Proof.
+  intros width original selected rest columns Horder Hsquare Hpartition
+    Hincreasing Hbound.
+  destruct (karr_choose_partition original selected rest Hpartition)
+    as [ordered [Hordered Hperm]].
+  assert (Hcolumns : In columns
+      (karr_choose (length columns) (seq 0 width))).
+  { apply karr_choose_seq_increasing; [exact Hincreasing|].
+    eapply Forall_impl; [|exact Hbound].
+    intros column Hcolumn. cbn in Hcolumn. lia. }
+  assert (Hcolumn_count : length columns <= width).
+  { pose proof (karr_choose_count_le nat (seq 0 width)
+      (length columns) columns Hcolumns) as Hcount.
+    now rewrite length_seq in Hcount. }
+  assert (Hrow_count : length selected <= length original).
+  { pose proof (Permutation_length Hpartition) as Hcount.
+    rewrite length_app in Hcount. lia. }
+  assert (Hselected_perm : Permutation
+      (karr_submatrix columns selected) (karr_submatrix columns ordered)).
+  { unfold karr_submatrix. apply Permutation_map.
+    now apply Permutation_sym. }
+  destruct (length selected) as [|[|order]] eqn:Hrows; try lia.
+  destruct (karr_determinant_permutation _ _ Hselected_perm
+    (S order) [] [] (length columns)
+    ltac:(unfold karr_submatrix; rewrite length_map; cbn [length];
+      rewrite Hrows; lia)
+    (karr_submatrix_width columns selected)) as [sign [Hsign Hdet]].
+  cbn [app] in Hdet. rewrite !app_nil_r in Hdet.
+  unfold karr_signed_minors. apply in_flat_map.
+  exists (S (S order)). split.
+  - apply in_seq.
+    assert (Hmin : S (S order) <= Nat.min (length original) width)
+      by (apply Nat.min_glb; lia).
+    lia.
+  - apply in_flat_map. exists ordered. split.
+    + exact Hordered.
+    + apply in_flat_map. exists columns. split.
+      * rewrite <- Hsquare in Hcolumns. exact Hcolumns.
+      * cbn [length]. destruct Hsign as [Hsign|Hsign].
+        -- left. rewrite Hdet, Hsign. ring.
+        -- right. left. rewrite Hdet, Hsign. ring.
+Qed.
+
+(** A live augmented entry represented by the minor law is a signed source minor. *)
+Lemma karr_minor_law_entry : forall previous pivot_rows pivot_columns columns
+    pairs original width origin live z,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  Permutation original (pivot_rows ++ map fst pairs) ->
+  karr_increasing (pivot_columns ++ columns) ->
+  Forall (fun column => column < width) (pivot_columns ++ columns) ->
+  length pivot_rows = length pivot_columns ->
+  length live = length columns -> In (origin, live) pairs -> In z live ->
+  In z (karr_signed_minors width original).
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs original width
+    origin live z Hlaw Hpartition Hincreasing Hbound Hsquare Hlive Hpair Hz.
+  apply In_nth_error in Hz as [index Hget].
+  assert (Hindex : index < length columns).
+  { rewrite <- Hlive. apply nth_error_Some. rewrite Hget. discriminate. }
+  set (column := nth index columns 0%nat).
+  assert (Hmember : In column columns).
+  { unfold column. now apply karr_nth_list_member. }
+  assert (Horigin : In origin (map fst pairs)).
+  { apply in_map_iff. exists (origin, live). now split. }
+  destruct (karr_partition_select _ original pivot_rows (map fst pairs)
+    origin Hpartition Horigin) as [rest Hselected_rows].
+  assert (Hselected_columns : karr_increasing (pivot_columns ++ [column])).
+  { now apply karr_increasing_prefix_member with (suffix := columns). }
+  assert (Hselected_bound : Forall (fun c => c < width) (pivot_columns ++ [column])).
+  { apply Forall_app in Hbound as [Hprefix Htail].
+    apply Forall_app. split; [exact Hprefix|].
+    constructor; [exact (proj1 (Forall_forall _ _) Htail column Hmember)|constructor]. }
+  assert (Hpaired : Forall2 (fun source row => In (source, row) pairs)
+    [origin] [live]) by (constructor; [exact Hpair|constructor]).
+  assert (Hvalid : Forall (fun i => i < length columns) [index])
+    by (constructor; [exact Hindex|constructor]).
+  unfold karr_minor_law in Hlaw.
+  pose proof (Hlaw [origin] [live] [index] Hpaired eq_refl Hvalid
+    ltac:(cbn [length]; lia)) as Hminor.
+  cbn [length karr_submatrix map Nat.sub Nat.add] in Hminor.
+  rewrite karr_determinant_one, Z.pow_0_r, Z.mul_1_l in Hminor.
+  rewrite (karr_nth_error_value _ _ _ Hget) in Hminor.
+  replace (length pivot_rows + 1) with (S (length pivot_rows)) in Hminor by lia.
+  fold column in Hminor.
+  change (z = karr_determinant (S (length pivot_rows))
+    (karr_submatrix (pivot_columns ++ [column]) (pivot_rows ++ [origin])))
+    in Hminor.
+  rewrite Hminor.
+  destruct pivot_rows as [|first remaining].
+  - destruct pivot_columns as [|c pivot_columns];
+      [|cbn [length] in Hsquare; lia].
+    cbn [app length] in Hselected_rows, Hselected_columns, Hselected_bound |- *.
+    apply karr_signed_minors_partition_one with (rest := rest).
+    + exact Hselected_rows.
+    + exact (proj1 (Forall_forall _ _) Hselected_bound column (or_introl eq_refl)).
+  - replace (S (length (first :: remaining))) with
+      (length ((first :: remaining) ++ [origin]))
+      by (rewrite length_app; cbn [length]; lia).
+    apply karr_signed_minors_partition with (rest := rest).
+    + rewrite length_app. cbn [length]. lia.
+    + rewrite !length_app. cbn [length] in Hsquare |- *. lia.
+    + exact Hselected_rows.
+    + exact Hselected_columns.
+    + exact Hselected_bound.
+Qed.
+
+(** The traced run carries labels, widths, a nonzero prior minor and every-order equations. *)
+Definition karr_run_state (width cols : nat) (original : list (list Z))
+    (previous : Z) (pivot_rows : list (list Z))
+    (pivot_columns columns : list nat) (labels : list (list Z))
+    (rows : list karr_row) : Prop :=
+  previous <> 0%Z /\
+  previous = karr_determinant (length pivot_rows)
+    (karr_submatrix pivot_columns pivot_rows) /\
+  length labels = length rows /\
+  Forall (fun row => length (kcoeff row) = cols) rows /\
+  Forall (fun row => length (karr_row_entries row) = length columns) rows /\
+  cols <= length columns /\
+  length pivot_rows = length pivot_columns /\
+  Permutation original (pivot_rows ++ labels) /\
+  karr_increasing (pivot_columns ++ columns) /\
+  Forall (fun column => column < width) (pivot_columns ++ columns) /\
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels (map karr_row_entries rows)).
+
+(** Removing the coefficient head maps each paired augmented row to its tail. *)
+Lemma karr_pairs_tail : forall cols (labels : list (list Z)) (rows : list karr_row),
+  length labels = length rows ->
+  Forall (fun row => length (kcoeff row) = S cols) rows ->
+  combine labels (map karr_row_entries (map karr_tail rows)) =
+    map (fun pair => (fst pair, karr_delete 0 (snd pair)))
+      (combine labels (map karr_row_entries rows)).
+Proof.
+  intros cols labels. induction labels as [|label labels IH];
+    intros [|row rows] Hlength Hcoeff; cbn [length] in Hlength;
+    try discriminate; [reflexivity|].
+  apply Forall_cons_iff in Hcoeff as [Hrow Hrows].
+  cbn [map combine]. f_equal.
+  - rewrite karr_row_entries_tail.
+    + reflexivity.
+    + destruct (kcoeff row) as [|z coeff] eqn:Hnonempty;
+        cbn [length] in Hrow; [lia|discriminate].
+  - apply IH; [lia|exact Hrows].
+Qed.
+
+(** A skipped pivot column preserves the concrete labeled run invariant. *)
+Lemma karr_run_state_skip : forall width cols original previous pivot_rows
+    pivot_columns head columns labels rows,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels (map karr_tail rows).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels rows Hstate.
+  unfold karr_run_state in *. destruct Hstate as
+    [Hprevious [Hdet [Hlabels [Hcoeff [Hentries [Hcolumns [Hsquare
+      [Hpartition [Hincreasing [Hbounded Hlaw]]]]]]]]]].
+  repeat split.
+  - exact Hprevious.
+  - exact Hdet.
+  - now rewrite length_map.
+  - apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [source [Heq Hsource]]. subst r.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff source Hsource) as Hsource_coeff.
+    destruct source as [coeff right weight scale].
+    cbn [karr_tail kcoeff] in *. destruct coeff as [|z coeff];
+      cbn [length tl] in *; lia.
+  - apply Forall_forall. intros r Hin.
+    apply in_map_iff in Hin as [source [Heq Hsource]]. subst r.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff source Hsource) as Hsource_coeff.
+    pose proof (proj1 (Forall_forall _ _) Hentries source Hsource) as Hsource_entries.
+    destruct source as [coeff right weight scale].
+    destruct coeff as [|z coeff]; cbn [kcoeff length] in Hsource_coeff; [lia|].
+    unfold karr_row_entries in *. cbn [karr_tail kcoeff kright kweight kscale] in *.
+    rewrite !length_app in *. cbn [tl length] in *. lia.
+  - cbn [length] in Hcolumns |- *. lia.
+  - exact Hsquare.
+  - exact Hpartition.
+  - now apply karr_increasing_skip with (head := head).
+  - apply Forall_app in Hbounded as [Hprefix Htail].
+    apply Forall_cons_iff in Htail as [_ Hrest].
+    apply Forall_app. now split.
+  - rewrite (karr_pairs_tail cols labels rows Hlabels Hcoeff).
+    now apply karr_minor_law_skip with (head := head).
+Qed.
+
 (** A certificate unit vector has the declared source-row width. *)
 Lemma karr_unit_length : forall total index, length (karr_unit total index) = total.
 Proof.
@@ -510,6 +2488,351 @@ Lemma karr_determinant_two : forall a b c d,
 Proof.
   intros a b c d. cbn [karr_determinant karr_delete karr_nth seq map fold_right
     Nat.even]. ring.
+Qed.
+
+(** The order-two law makes every undivided pivot cross divisible by the prior minor. *)
+Lemma karr_minor_law_cross_divisible : forall previous pivot_rows pivot_columns
+    head columns pairs pivot_origin pivot target_origin target index,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, pivot) pairs -> In (target_origin, target) pairs ->
+  length pivot = length (head :: columns) -> length target = length pivot ->
+  index < length target ->
+  (karr_nth index
+    (karr_cross (karr_nth 0 pivot) (karr_nth 0 target) target pivot)
+      mod previous = 0)%Z.
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs
+    pivot_origin pivot target_origin target [|index] Hlaw Hprevious
+    Hpivot Htarget Hpivot_width Htarget_width Hindex.
+  - rewrite karr_nth_cross by lia.
+    replace (karr_nth 0 pivot * karr_nth 0 target -
+      karr_nth 0 target * karr_nth 0 pivot)%Z with 0%Z by ring.
+    apply Z.mod_0_l. exact Hprevious.
+  - assert (Hvalid : Forall (fun i => i < length (head :: columns)) [0; S index]).
+    { constructor; [cbn [length] in *; lia|].
+      constructor; [cbn [length] in *; lia|constructor]. }
+    assert (Hpaired : Forall2 (fun origin row => In (origin, row) pairs)
+      [pivot_origin; target_origin] [pivot; target]).
+    { repeat constructor; assumption. }
+    unfold karr_minor_law in Hlaw.
+    pose proof (Hlaw [pivot_origin; target_origin] [pivot; target]
+      [0; S index] Hpaired eq_refl Hvalid ltac:(cbn [length]; lia)) as Hdet.
+    cbn [length karr_submatrix map Nat.sub Nat.add] in Hdet.
+    rewrite karr_determinant_two in Hdet.
+    rewrite Z.pow_1_r in Hdet.
+    rewrite karr_nth_cross by lia.
+    replace (karr_nth 0 target * karr_nth (S index) pivot)%Z with
+      (karr_nth (S index) pivot * karr_nth 0 target)%Z by ring.
+    rewrite Hdet. rewrite Z.mul_comm. apply Z.mod_mul. exact Hprevious.
+Qed.
+
+(** Any selected pivot coordinate yields the same divisible two-row cross. *)
+Lemma karr_minor_law_cross_divisible_at : forall previous pivot_rows
+    pivot_columns columns pairs pivot_origin pivot target_origin target index j,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, pivot) pairs -> In (target_origin, target) pairs ->
+  length pivot = length columns -> length target = length columns ->
+  index < length columns -> j < length columns ->
+  (karr_nth j
+    (karr_cross (karr_nth index pivot) (karr_nth index target)
+      target pivot) mod previous = 0)%Z.
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin pivot
+    target_origin target index j Hlaw Hprevious Hpivot Htarget
+    Hpivot_width Htarget_width Hindex Hj.
+  assert (Hvalid : Forall (fun k => k < length columns) [index; j]).
+  { repeat constructor; assumption. }
+  assert (Hpaired : Forall2 (fun origin row => In (origin, row) pairs)
+    [pivot_origin; target_origin] [pivot; target]).
+  { repeat constructor; assumption. }
+  unfold karr_minor_law in Hlaw.
+  pose proof (Hlaw [pivot_origin; target_origin] [pivot; target]
+    [index; j] Hpaired eq_refl Hvalid ltac:(cbn [length]; lia)) as Hdet.
+  cbn [length karr_submatrix map Nat.sub Nat.add] in Hdet.
+  rewrite karr_determinant_two in Hdet.
+  rewrite Z.pow_1_r in Hdet.
+  rewrite karr_nth_cross by lia.
+  replace (karr_nth index pivot * karr_nth j target -
+    karr_nth index target * karr_nth j pivot)%Z with
+    (karr_nth index pivot * karr_nth j target -
+      karr_nth j pivot * karr_nth index target)%Z by ring.
+  rewrite Hdet. rewrite Z.mul_comm. apply Z.mod_mul. exact Hprevious.
+Qed.
+
+(** The selected pivot value is the next bordered minor. *)
+Lemma karr_minor_law_pivot_value : forall previous pivot_rows pivot_columns
+    head columns pairs origin pivot,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  In (origin, pivot) pairs ->
+  karr_nth 0 pivot =
+    karr_determinant (S (length pivot_rows))
+      (karr_submatrix (pivot_columns ++ [head]) (pivot_rows ++ [origin])).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs origin pivot Hlaw Hin.
+  unfold karr_minor_law in Hlaw.
+  assert (Hpaired : Forall2 (fun source row => In (source, row) pairs)
+    [origin] [pivot]) by (constructor; [exact Hin|constructor]).
+  assert (Hvalid : Forall (fun i => i < length (head :: columns)) [0])
+    by (constructor; [cbn [length]; lia|constructor]).
+  pose proof (Hlaw [origin] [pivot] [0] Hpaired eq_refl Hvalid
+    ltac:(cbn [length]; lia)) as Hminor.
+  cbn [length karr_submatrix map nth Nat.sub Nat.add] in Hminor.
+  rewrite karr_determinant_one, Z.pow_0_r in Hminor.
+  replace (length pivot_rows + 1) with (S (length pivot_rows)) in Hminor by lia.
+  rewrite Z.mul_1_l in Hminor. exact Hminor.
+Qed.
+
+(** The all-order law selects the exact quotient branch for an augmented row. *)
+Lemma karr_minor_law_reduce_exact : forall previous pivot_rows pivot_columns
+    head columns pairs pivot_origin target_origin p r,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  kcoeff p <> [] -> kcoeff r <> [] ->
+  length (karr_row_entries p) = length (head :: columns) ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  karr_exact previous (KRow
+    (karr_cross (karr_head p) (karr_head r) (kcoeff r) (kcoeff p))
+    (karr_head p * kright r - karr_head r * kright p)%Z
+    (karr_cross (karr_head p) (karr_head r) (kweight r) (kweight p))
+    (karr_head p * kscale r - karr_head r * kscale p)%Z) = true.
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs pivot_origin
+    target_origin p r Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hp_nonempty Hr_nonempty Hp_width Hr_width.
+  apply karr_exact_from_entries; [exact Hprevious|].
+  intros z Hin.
+  rewrite karr_row_entries_cross in Hin by (symmetry; assumption).
+  rewrite <- (karr_row_entries_head p Hp_nonempty) in Hin.
+  rewrite <- (karr_row_entries_head r Hr_nonempty) in Hin.
+  apply In_nth_error in Hin as [index Hget].
+  assert (Hindex : index < length (karr_row_entries r)).
+  { assert (Hcross_index : index < length (karr_cross
+        (karr_nth 0 (karr_row_entries p))
+        (karr_nth 0 (karr_row_entries r))
+        (karr_row_entries r) (karr_row_entries p))).
+    { apply nth_error_Some. rewrite Hget. discriminate. }
+    rewrite karr_cross_length in Hcross_index by exact Hr_width.
+    exact Hcross_index. }
+  pose proof (karr_minor_law_cross_divisible previous pivot_rows pivot_columns
+    head columns pairs pivot_origin (karr_row_entries p) target_origin
+    (karr_row_entries r) index Hlaw Hprevious Hpivot Htarget
+    Hp_width Hr_width Hindex) as Hmod.
+  rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
+Qed.
+
+(** The same all-order law selects exact division at a later pivot coordinate. *)
+Lemma karr_minor_law_reduce_exact_at : forall previous pivot_rows pivot_columns
+    columns pairs pivot_origin target_origin p r index,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  index < length (kcoeff p) ->
+  length (karr_row_entries p) = length columns ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  karr_exact previous (KRow
+    (karr_cross (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r))
+      (kcoeff r) (kcoeff p))
+    (karr_nth index (kcoeff p) * kright r -
+      karr_nth index (kcoeff r) * kright p)%Z
+    (karr_cross (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r))
+      (kweight r) (kweight p))
+    (karr_nth index (kcoeff p) * kscale r -
+      karr_nth index (kcoeff r) * kscale p)%Z) = true.
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin
+    target_origin p r index Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hindex Hp_width Hr_width.
+  apply karr_exact_from_entries; [exact Hprevious|].
+  intros z Hin.
+  rewrite karr_row_entries_cross in Hin by (symmetry; assumption).
+  rewrite <- (karr_nth_row_entries_coeff index p Hindex) in Hin.
+  assert (Hr_index : index < length (kcoeff r)) by lia.
+  rewrite <- (karr_nth_row_entries_coeff index r Hr_index) in Hin.
+  apply In_nth_error in Hin as [j Hget].
+  assert (Hj : j < length columns).
+  { assert (Hcross_index : j < length (karr_cross
+        (karr_nth index (karr_row_entries p))
+        (karr_nth index (karr_row_entries r))
+        (karr_row_entries r) (karr_row_entries p))).
+    { apply nth_error_Some. rewrite Hget. discriminate. }
+    rewrite karr_cross_length in Hcross_index by exact Hr_width.
+    lia. }
+  assert (Hindex_columns : index < length columns).
+  { unfold karr_row_entries in Hp_width.
+    rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+    rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+  pose proof (karr_minor_law_cross_divisible_at previous pivot_rows
+    pivot_columns columns pairs pivot_origin (karr_row_entries p)
+    target_origin (karr_row_entries r) index j Hlaw Hprevious Hpivot Htarget
+    Hp_width ltac:(lia) Hindex_columns Hj) as Hmod.
+  rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
+Qed.
+
+(** Exact pivot reduction realizes the row quotient required by the minor law. *)
+Lemma karr_minor_law_reduce_multiple : forall previous pivot_rows pivot_columns
+    head columns pairs pivot_origin target_origin p r,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  kcoeff p <> [] -> kcoeff r <> [] ->
+  length (karr_row_entries p) = length (head :: columns) ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  map (fun z => (previous * z)%Z)
+    (karr_row_entries (karr_reduce previous (karr_head p) (karr_head r) p r)) =
+  karr_cross (karr_head p) (karr_head r)
+    (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs pivot_origin
+    target_origin p r Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hp_nonempty Hr_nonempty Hp_width Hr_width.
+  eapply karr_row_entries_reduce_multiple.
+  - symmetry. exact Hcoeff.
+  - symmetry. exact Hweight.
+  - exact Hprevious.
+  - eapply karr_minor_law_reduce_exact; eauto.
+  - intros z Hin.
+    rewrite <- (karr_row_entries_head p Hp_nonempty) in Hin.
+    rewrite <- (karr_row_entries_head r Hr_nonempty) in Hin.
+    apply In_nth_error in Hin as [index Hget].
+    assert (Hindex : index < length (karr_row_entries r)).
+    { assert (Hcross_index : index < length (karr_cross
+          (karr_nth 0 (karr_row_entries p))
+          (karr_nth 0 (karr_row_entries r))
+          (karr_row_entries r) (karr_row_entries p))).
+      { apply nth_error_Some. rewrite Hget. discriminate. }
+      rewrite karr_cross_length in Hcross_index by exact Hr_width.
+      exact Hcross_index. }
+    pose proof (karr_minor_law_cross_divisible previous pivot_rows pivot_columns
+      head columns pairs pivot_origin (karr_row_entries p) target_origin
+      (karr_row_entries r) index Hlaw Hprevious Hpivot Htarget
+      Hp_width Hr_width Hindex) as Hmod.
+    rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
+Qed.
+
+(** An arbitrary selected coordinate gives the same exact row quotient. *)
+Lemma karr_minor_law_reduce_multiple_at : forall previous pivot_rows
+    pivot_columns columns pairs pivot_origin target_origin p r index,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  index < length (kcoeff p) ->
+  length (karr_row_entries p) = length columns ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  map (fun z => (previous * z)%Z)
+    (karr_row_entries (karr_reduce previous
+      (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r)) =
+  karr_cross (karr_nth index (karr_row_entries p))
+    (karr_nth index (karr_row_entries r))
+    (karr_row_entries r) (karr_row_entries p).
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin
+    target_origin p r index Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hindex Hp_width Hr_width.
+  assert (Hr_index : index < length (kcoeff r)) by lia.
+  rewrite (karr_nth_row_entries_coeff index p Hindex).
+  rewrite (karr_nth_row_entries_coeff index r Hr_index).
+  eapply karr_row_entries_reduce_multiple.
+  - symmetry. exact Hcoeff.
+  - symmetry. exact Hweight.
+  - exact Hprevious.
+  - eapply karr_minor_law_reduce_exact_at; eauto.
+  - intros z Hin.
+    rewrite <- (karr_nth_row_entries_coeff index p Hindex) in Hin.
+    rewrite <- (karr_nth_row_entries_coeff index r Hr_index) in Hin.
+    apply In_nth_error in Hin as [j Hget].
+    assert (Hj : j < length columns).
+    { assert (Hcross_index : j < length (karr_cross
+          (karr_nth index (karr_row_entries p))
+          (karr_nth index (karr_row_entries r))
+          (karr_row_entries r) (karr_row_entries p))).
+      { apply nth_error_Some. rewrite Hget. discriminate. }
+      rewrite karr_cross_length in Hcross_index by exact Hr_width.
+      lia. }
+    assert (Hindex_columns : index < length columns).
+    { unfold karr_row_entries in Hp_width.
+      rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+      rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+    pose proof (karr_minor_law_cross_divisible_at previous pivot_rows
+      pivot_columns columns pairs pivot_origin (karr_row_entries p)
+      target_origin (karr_row_entries r) index j Hlaw Hprevious Hpivot
+      Htarget Hp_width ltac:(lia) Hindex_columns Hj) as Hmod.
+    rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
+Qed.
+
+(** A target quotient entry is the bordered minor at any retained column. *)
+Lemma karr_minor_law_reduce_entry_at : forall previous pivot_rows
+    pivot_columns columns pairs pivot_origin target_origin p r index j,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  index < length (kcoeff p) ->
+  length (karr_row_entries p) = length columns ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  j < length columns ->
+  karr_nth j (karr_row_entries (karr_reduce previous
+      (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r)) =
+    karr_determinant (length pivot_rows + 2)
+      (karr_submatrix
+        (pivot_columns ++ [nth index columns 0%nat; nth j columns 0%nat])
+        (pivot_rows ++ [pivot_origin; target_origin])).
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin
+    target_origin p r index j Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hindex Hp_width Hr_width Hj.
+  assert (Hindex_columns : index < length columns).
+  { unfold karr_row_entries in Hp_width.
+    rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+    rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+  pose proof (karr_minor_law_reduce_multiple_at previous pivot_rows
+    pivot_columns columns pairs pivot_origin target_origin p r index Hlaw
+    Hprevious Hpivot Htarget Hcoeff Hweight Hindex Hp_width Hr_width)
+    as Hmultiple.
+  apply (f_equal (karr_nth j)) in Hmultiple.
+  assert (Hscale : forall zs k,
+    karr_nth k (map (fun z => (previous * z)%Z) zs) =
+      (previous * karr_nth k zs)%Z).
+  { intros zs. induction zs as [|z zs IH]; intros [|k];
+      cbn [map karr_nth]; try ring. apply IH. }
+  rewrite Hscale in Hmultiple.
+  rewrite karr_nth_cross in Hmultiple by lia.
+  assert (Hvalid : Forall (fun k => k < length columns) [index; j]).
+  { repeat constructor; assumption. }
+  assert (Hpaired : Forall2 (fun origin row => In (origin, row) pairs)
+    [pivot_origin; target_origin] [karr_row_entries p; karr_row_entries r]).
+  { repeat constructor; assumption. }
+  unfold karr_minor_law in Hlaw.
+  pose proof (Hlaw [pivot_origin; target_origin]
+    [karr_row_entries p; karr_row_entries r] [index; j]
+    Hpaired eq_refl Hvalid ltac:(cbn [length]; lia)) as Hdet.
+  cbn [length karr_submatrix map Nat.sub Nat.add] in Hdet.
+  rewrite karr_determinant_two, Z.pow_1_r in Hdet.
+  replace (karr_nth index (karr_row_entries p) *
+      karr_nth j (karr_row_entries r) -
+      karr_nth j (karr_row_entries p) *
+      karr_nth index (karr_row_entries r))%Z with
+    (karr_nth index (karr_row_entries p) *
+      karr_nth j (karr_row_entries r) -
+      karr_nth index (karr_row_entries r) *
+      karr_nth j (karr_row_entries p))%Z in Hdet by ring.
+  nia.
 Qed.
 
 (** The order-three determinant agrees with the six signed permutation products. *)
@@ -608,12 +2931,198 @@ Proof.
   cbn [kcoeff]. now apply karr_cross_width.
 Qed.
 
+(** Shared coefficient and augmented widths determine the multiplier width. *)
+Lemma karr_weight_width_of_entries : forall p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  length (karr_row_entries p) = length (karr_row_entries r) ->
+  length (kweight p) = length (kweight r).
+Proof.
+  intros p r Hcoeff Hentries.
+  unfold karr_row_entries in Hentries. rewrite !length_app in Hentries.
+  cbn [length] in Hentries. rewrite !length_app in Hentries.
+  cbn [length] in Hentries. lia.
+Qed.
+
+(** Guarded division preserves the full augmented row width in either branch. *)
+Lemma karr_divide_entries_width : forall d r,
+  length (karr_row_entries (karr_divide d r)) = length (karr_row_entries r).
+Proof.
+  intros d r. unfold karr_divide. destruct (karr_exact d r);
+    [rewrite karr_row_entries_quotient, length_map|]; reflexivity.
+Qed.
+
+(** A reduction of equally wide rows keeps their augmented width. *)
+Lemma karr_reduce_entries_width : forall d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) ->
+  length (karr_row_entries (karr_reduce d a b p r)) =
+    length (karr_row_entries r).
+Proof.
+  intros d a b p r Hcoeff Hweight. unfold karr_reduce.
+  rewrite karr_divide_entries_width.
+  rewrite karr_row_entries_cross by assumption.
+  apply karr_cross_length.
+  unfold karr_row_entries. rewrite !length_app.
+  cbn [length]. rewrite !length_app. cbn [length]. lia.
+Qed.
+
 (** Dropping a leading coordinate reduces a positive width by one. *)
 Lemma karr_tail_width : forall n r, length (kcoeff r) = S n ->
   length (kcoeff (karr_tail r)) = n.
 Proof.
   intros n [zs rhs ws sc] Hwidth; cbn [kcoeff karr_tail] in *.
   destruct zs; cbn [length tl] in *; lia.
+Qed.
+
+(** The reduced tail is the quotient of the crossed augmented row without its head. *)
+Lemma karr_reduced_tail_entries : forall cols d a b p r,
+  length (kcoeff p) = S cols ->
+  length (kcoeff r) = S cols ->
+  length (kweight r) = length (kweight p) ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  karr_row_entries (karr_tail (karr_reduce d a b p r)) =
+    karr_delete 0
+      (map (fun z => (z / d)%Z)
+        (karr_cross a b (karr_row_entries r) (karr_row_entries p))).
+Proof.
+  intros cols d a b p r Hp Hr Hweight Hexact.
+  rewrite karr_row_entries_tail.
+  - rewrite karr_row_entries_reduce_exact; [reflexivity|lia|exact Hweight|exact Hexact].
+  - pose proof (karr_reduce_width d a b p r ltac:(lia)) as Hwidth.
+    rewrite Hr in Hwidth. destruct (kcoeff (karr_reduce d a b p r));
+      cbn [length] in Hwidth; discriminate.
+Qed.
+
+(** Entrywise equality transports a paired label list through a row operation. *)
+Lemma karr_pairs_map_rows : forall (labels : list (list Z))
+    (rows : list karr_row) (g : karr_row -> karr_row)
+    (f : list Z -> list Z),
+  length labels = length rows ->
+  (forall row, In row rows -> karr_row_entries (g row) = f (karr_row_entries row)) ->
+  combine labels (map karr_row_entries (map g rows)) =
+    map (fun pair => (fst pair, f (snd pair)))
+      (combine labels (map karr_row_entries rows)).
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|row rows] g f Hlength Heq; cbn [length] in Hlength;
+    try discriminate; [reflexivity|].
+  cbn [map combine fst snd]. f_equal.
+  - f_equal. apply Heq. now left.
+  - apply IH; [lia|]. intros source Hin. apply Heq. now right.
+Qed.
+
+(** A paired origin and entry vector comes from one concrete augmented row. *)
+Lemma karr_pair_entries_member : forall (labels : list (list Z))
+    (rows : list karr_row) origin entries,
+  In (origin, entries) (combine labels (map karr_row_entries rows)) ->
+  exists row, In row rows /\ entries = karr_row_entries row.
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|row rows] origin entries Hin; cbn [map combine] in Hin;
+    try contradiction.
+  destruct Hin as [Heq|Hin].
+  - inversion Heq; subst. exists row. split; [now left|reflexivity].
+  - destruct (IH rows origin entries Hin) as [source [Hsource Heq]].
+    exists source. split; [now right|exact Heq].
+Qed.
+
+(** Each row in aligned lists keeps some origin label in their pairing. *)
+Lemma karr_pair_entries_origin : forall (labels : list (list Z))
+    (rows : list karr_row) row,
+  length labels = length rows -> In row rows ->
+  exists origin, In (origin, karr_row_entries row)
+    (combine labels (map karr_row_entries rows)).
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|source rows] row Hlength Hin; cbn [length] in Hlength;
+    try discriminate; try contradiction.
+  cbn [map combine]. destruct Hin as [Heq|Hin].
+  - subst row. exists label. now left.
+  - destruct (IH rows row ltac:(lia) Hin) as [origin Horigin].
+    exists origin. now right.
+Qed.
+
+(** Deleting the first coordinate commutes with an entrywise map. *)
+Lemma karr_delete_map_first : forall (f : Z -> Z) xs,
+  karr_delete 0 (map f xs) = map f (karr_delete 0 xs).
+Proof.
+  intros f [|x xs]; reflexivity.
+Qed.
+
+(** The exact reduced tail scales back to the crossed row without its head. *)
+Lemma karr_reduced_tail_multiple : forall cols d a b p r,
+  length (kcoeff p) = S cols ->
+  length (kcoeff r) = S cols ->
+  length (kweight r) = length (kweight p) ->
+  d <> 0%Z ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  (forall z, In z (karr_cross a b (karr_row_entries r) (karr_row_entries p)) ->
+    (z mod d = 0)%Z) ->
+  map (fun z => (d * z)%Z)
+    (karr_row_entries (karr_tail (karr_reduce d a b p r))) =
+    karr_delete 0 (karr_cross a b
+      (karr_row_entries r) (karr_row_entries p)).
+Proof.
+  intros cols d a b p r Hp Hr Hweight Hd Hexact Hmultiple.
+  rewrite karr_row_entries_tail.
+  - rewrite <- karr_delete_map_first.
+    rewrite karr_row_entries_reduce_multiple;
+      [reflexivity|lia|exact Hweight|exact Hd|exact Hexact|exact Hmultiple].
+  - pose proof (karr_reduce_width d a b p r ltac:(lia)) as Hwidth.
+    rewrite Hr in Hwidth. destruct (kcoeff (karr_reduce d a b p r));
+      cbn [length] in Hwidth; discriminate.
+Qed.
+
+(** Under the minor law, an actual pivot tail has the scaled stage equation. *)
+Lemma karr_minor_law_reduced_tail : forall cols previous pivot_rows
+    pivot_columns head columns pairs pivot_origin target_origin p r,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = S cols -> length (kcoeff r) = S cols ->
+  length (karr_row_entries p) = length (head :: columns) ->
+  length (karr_row_entries r) = length (head :: columns) ->
+  map (fun z => (previous * z)%Z)
+    (karr_row_entries
+      (karr_tail (karr_reduce previous (karr_head p) (karr_head r) p r))) =
+    karr_delete 0
+      (karr_cross (karr_nth 0 (karr_row_entries p))
+        (karr_nth 0 (karr_row_entries r))
+        (karr_row_entries r) (karr_row_entries p)).
+Proof.
+  intros cols previous pivot_rows pivot_columns head columns pairs
+    pivot_origin target_origin p r Hlaw Hprevious Hpivot Htarget
+    Hp_coeff Hr_coeff Hp_entries Hr_entries.
+  assert (Hweight : length (kweight p) = length (kweight r)).
+  { apply karr_weight_width_of_entries; lia. }
+  assert (Hstep : map (fun z => (previous * z)%Z)
+    (karr_row_entries
+      (karr_reduce previous (karr_head p) (karr_head r) p r)) =
+    karr_cross (karr_head p) (karr_head r)
+      (karr_row_entries r) (karr_row_entries p)).
+  { eapply karr_minor_law_reduce_multiple; eauto; try lia.
+    - destruct (kcoeff p); cbn [length] in Hp_coeff; discriminate.
+    - destruct (kcoeff r); cbn [length] in Hr_coeff; discriminate. }
+  rewrite karr_row_entries_tail.
+  - rewrite <- karr_delete_map_first, Hstep.
+    rewrite (karr_row_entries_head p), (karr_row_entries_head r);
+      [reflexivity| |].
+    + destruct (kcoeff r) as [|z coeff];
+        [cbn [length] in Hr_coeff; lia|intros H; discriminate].
+    + destruct (kcoeff p) as [|z coeff];
+        [cbn [length] in Hp_coeff; lia|intros H; discriminate].
+  - pose proof (karr_reduce_width previous (karr_head p) (karr_head r) p r
+      ltac:(lia)) as Hwidth.
+    rewrite Hr_coeff in Hwidth.
+    destruct (kcoeff (karr_reduce previous (karr_head p) (karr_head r) p r));
+      cbn [length] in Hwidth; discriminate.
 Qed.
 
 (** Restoring a zero coordinate increases the width by one. *)
@@ -907,6 +3416,261 @@ Proof.
   injection Hfirst as Hindex Hvalue. subst i a. exists j. split; reflexivity.
 Qed.
 
+(** A zero target head passes through an entirely restored basis trace. *)
+Lemma karr_target_restore_zero : forall rs previous r,
+  karr_head r = 0%Z ->
+  karr_head (karr_target (map karr_restore rs) previous r) = 0%Z /\
+  karr_tail (karr_target (map karr_restore rs) previous r) =
+    karr_target rs previous (karr_tail r).
+Proof.
+  intro rs. induction rs as [|p rs IH]; intros previous r Hzero.
+  - split; [exact Hzero|reflexivity].
+  - cbn [map karr_target].
+    destruct (karr_first (kcoeff p)) as [[index a]|] eqn:Hfirst.
+    + rewrite (karr_first_restore p index a Hfirst).
+      assert (Hlookup : karr_nth (S index) (kcoeff r) =
+        karr_nth index (kcoeff (karr_tail r))).
+      { destruct r as [coeff right weight scale].
+        destruct coeff; destruct index; reflexivity. }
+      rewrite Hlookup.
+      set (next := karr_reduce previous a
+        (karr_nth index (kcoeff (karr_tail r))) (karr_restore p) r).
+      assert (Hnext_zero : karr_head next = 0%Z).
+      { unfold next, karr_reduce. apply karr_divide_head_zero.
+        destruct p as [pc pr pw ps], r as [rc rr rw sc].
+        destruct rc as [|head rc]; [reflexivity|].
+        cbn [karr_head kcoeff] in Hzero. subst head.
+        cbn [karr_head kcoeff karr_restore karr_cross]. ring. }
+      destruct (IH a next Hnext_zero) as [Hhead Htail].
+      split; [exact Hhead|].
+      rewrite Htail. unfold next.
+      rewrite (karr_reduce_restore_tail_zero previous a
+        (karr_nth index (kcoeff (karr_tail r))) p r Hzero).
+      reflexivity.
+    + cbn [karr_restore kcoeff karr_first]. rewrite Hfirst.
+      destruct (IH previous r Hzero) as [Hhead Htail].
+      split; [exact Hhead|].
+      exact Htail.
+Qed.
+
+(** A target trace witnesses exact division at each selected basis pivot. *)
+Fixpoint karr_target_exact (rs : list karr_row) (previous : Z)
+    (r : karr_row) : Prop :=
+  match rs with
+  | [] => True
+  | p :: rest =>
+      match karr_first (kcoeff p) with
+      | None => karr_target_exact rest previous r
+      | Some (index, a) =>
+          karr_exact previous (KRow
+            (karr_cross a (karr_nth index (kcoeff r)) (kcoeff r) (kcoeff p))
+            (a * kright r - karr_nth index (kcoeff r) * kright p)%Z
+            (karr_cross a (karr_nth index (kcoeff r)) (kweight r) (kweight p))
+            (a * kscale r - karr_nth index (kcoeff r) * kscale p)%Z) = true /\
+          karr_target_exact rest a
+            (karr_reduce previous a (karr_nth index (kcoeff r)) p r)
+      end
+  end.
+
+(** Zero basis rows cannot request a target division. *)
+Lemma karr_target_exact_zero_rows : forall rs previous target,
+  Forall (fun row => karr_first (kcoeff row) = None) rs ->
+  karr_target_exact rs previous target.
+Proof.
+  intros rs previous target Hzero.
+  induction Hzero as [|row rs Hfirst Hrest IH]; [exact I|].
+  cbn [karr_target_exact]. now rewrite Hfirst.
+Qed.
+
+(** Exact full-width target traces project through any restored zero column. *)
+Lemma karr_target_restore_exact : forall rs previous r,
+  karr_target_exact (map karr_restore rs) previous r ->
+  karr_target_exact rs previous (karr_tail r) /\
+  karr_tail (karr_target (map karr_restore rs) previous r) =
+    karr_target rs previous (karr_tail r).
+Proof.
+  intro rs. induction rs as [|p rs IH]; intros previous r Htrace.
+  - split; [exact I|reflexivity].
+  - cbn [map karr_target_exact karr_target] in *.
+    destruct (karr_first (kcoeff p)) as [[index a]|] eqn:Hfirst.
+    + rewrite (karr_first_restore p index a Hfirst).
+      cbn [karr_restore kcoeff karr_first] in Htrace.
+      rewrite Hfirst in Htrace.
+      destruct Htrace as [Hexact Hrest].
+      assert (Hlookup : karr_nth (S index) (kcoeff r) =
+        karr_nth index (kcoeff (karr_tail r))).
+      { destruct r as [coeff right weight scale].
+        destruct coeff; destruct index; reflexivity. }
+      rewrite Hlookup in Hexact, Hrest |- *.
+      set (b := karr_nth index (kcoeff (karr_tail r))) in *.
+      assert (Hstep : karr_tail (karr_reduce previous a b
+          (karr_restore p) r) =
+        karr_reduce previous a b p (karr_tail r)).
+      { now apply karr_reduce_restore_tail. }
+      assert (Htail_exact : karr_exact previous (KRow
+          (karr_cross a b (kcoeff (karr_tail r)) (kcoeff p))
+          (a * kright (karr_tail r) - b * kright p)%Z
+          (karr_cross a b (kweight (karr_tail r)) (kweight p))
+          (a * kscale (karr_tail r) - b * kscale p)%Z) = true).
+      { pose proof (karr_exact_tail previous _ Hexact) as Htail.
+        destruct p as [pc pr pw ps], r as [rc rr rw sc].
+        destruct rc; exact Htail. }
+      destruct (IH a (karr_reduce previous a b (karr_restore p) r) Hrest)
+        as [Hnext_exact Hnext_tail].
+      split.
+      * split; [exact Htail_exact|]. now rewrite <- Hstep.
+      * rewrite Hnext_tail, Hstep. reflexivity.
+    + cbn [karr_restore kcoeff karr_first] in Htrace.
+      rewrite Hfirst in Htrace.
+      cbn [karr_restore kcoeff karr_first]. rewrite Hfirst.
+      exact (IH previous r Htrace).
+Qed.
+
+(** A live basis row retains one zero for every processed source column. *)
+Fixpoint karr_zero_prefix (count : nat) (r : karr_row) : karr_row :=
+  match count with
+  | 0 => r
+  | S count => karr_restore (karr_zero_prefix count r)
+  end.
+
+(** The next unprocessed coefficient keeps its inner head value. *)
+Lemma karr_zero_prefix_nth : forall count r,
+  karr_nth count (kcoeff (karr_zero_prefix count r)) = karr_head r.
+Proof.
+  induction count as [|count IH]; intro r.
+  - destruct r as [[|z zs] right weight scale]; reflexivity.
+  - cbn [karr_zero_prefix karr_restore kcoeff karr_nth]. exact (IH r).
+Qed.
+
+(** Prefixing an additional skipped zero commutes with prior zeros. *)
+Lemma karr_zero_prefix_restore : forall count r,
+  karr_zero_prefix count (karr_restore r) =
+    karr_restore (karr_zero_prefix count r).
+Proof.
+  induction count as [|count IH]; intro r; [reflexivity|].
+  cbn [karr_zero_prefix]. now rewrite IH.
+Qed.
+
+(** A zero selected head can join the prefix of processed columns. *)
+Lemma karr_zero_prefix_skip : forall count r,
+  kcoeff r <> [] -> karr_head r = 0%Z ->
+  karr_zero_prefix count r = karr_zero_prefix (S count) (karr_tail r).
+Proof.
+  intros count [coeff right weight scale] Hnonempty Hzero.
+  destruct coeff as [|head coeff]; [contradiction|].
+  cbn [karr_head kcoeff] in Hzero. subst head.
+  change (karr_zero_prefix count
+    (karr_restore (KRow coeff right weight scale)) =
+    karr_zero_prefix (S count) (KRow coeff right weight scale)).
+  apply karr_zero_prefix_restore.
+Qed.
+
+(** Zero prefixing adds exactly the processed coordinate count. *)
+Lemma karr_zero_prefix_width : forall count r,
+  length (kcoeff (karr_zero_prefix count r)) = count + length (kcoeff r).
+Proof.
+  induction count as [|count IH]; intro r; [reflexivity|].
+  cbn [karr_zero_prefix karr_restore kcoeff length]. rewrite IH. lia.
+Qed.
+
+(** A nonzero inner head becomes the next full-width pivot coordinate. *)
+Lemma karr_zero_prefix_first : forall count r,
+  karr_head r <> 0%Z ->
+  karr_first (kcoeff (karr_zero_prefix count r)) =
+    Some (count, karr_head r).
+Proof.
+  induction count as [|count IH]; intros r Hhead.
+  - now apply karr_first_head.
+  - cbn [karr_zero_prefix].
+    rewrite (karr_first_restore _ _ _ (IH r Hhead)). reflexivity.
+Qed.
+
+(** Prefixing processed zeros cannot create a new pivot. *)
+Lemma karr_zero_prefix_first_none : forall count r,
+  karr_first (kcoeff r) = None ->
+  karr_first (kcoeff (karr_zero_prefix count r)) = None.
+Proof.
+  induction count as [|count IH]; intros r Hnone; [exact Hnone|].
+  cbn [karr_zero_prefix karr_restore kcoeff karr_first].
+  now rewrite IH.
+Qed.
+
+(** Prefixing zeros adds no augmented entries outside the coefficient vector. *)
+Lemma karr_zero_prefix_entries_width : forall count r,
+  length (karr_row_entries (karr_zero_prefix count r)) =
+    count + length (karr_row_entries r).
+Proof.
+  induction count as [|count IH]; intro r; [reflexivity|].
+  cbn [karr_zero_prefix]. rewrite karr_row_entries_restore.
+  cbn [length]. rewrite IH. lia.
+Qed.
+
+(** A nonempty row with zero head is its own restored tail. *)
+Lemma karr_restore_tail_zero : forall r,
+  kcoeff r <> [] -> karr_head r = 0%Z -> r = karr_restore (karr_tail r).
+Proof.
+  intros [coeff right weight scale] Hnonempty Hzero.
+  destruct coeff as [|head coeff]; [contradiction|].
+  cbn [karr_head kcoeff] in Hzero. subst head. reflexivity.
+Qed.
+
+(** Exact or fallback reduction commutes with adding a common zero head. *)
+Lemma karr_reduce_restored : forall d a b p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  karr_reduce d a b (karr_restore p) (karr_restore r) =
+    karr_restore (karr_reduce d a b p r).
+Proof.
+  intros d a b p r Hwidth.
+  set (next := karr_reduce d a b (karr_restore p) (karr_restore r)).
+  assert (Hnext_width : length (kcoeff next) = S (length (kcoeff r))).
+  { unfold next. rewrite karr_reduce_width.
+    - cbn [karr_restore kcoeff length]. reflexivity.
+    - cbn [karr_restore kcoeff length]. lia. }
+  assert (Hnext_nonempty : kcoeff next <> []).
+  { intro Hempty. rewrite Hempty in Hnext_width. cbn [length] in Hnext_width. lia. }
+  assert (Hnext_zero : karr_head next = 0%Z).
+  { unfold next, karr_reduce. apply karr_divide_head_zero.
+    destruct p as [pc pr pw ps], r as [rc rr rw sc].
+    cbn [karr_head kcoeff karr_restore karr_cross]. ring. }
+  rewrite (karr_restore_tail_zero next Hnext_nonempty Hnext_zero).
+  f_equal. unfold next.
+  now apply karr_reduce_restore_tail_zero.
+Qed.
+
+(** Equal-width row reduction commutes with every processed zero prefix. *)
+Lemma karr_zero_prefix_reduce : forall count d a b p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  karr_reduce d a b (karr_zero_prefix count p)
+    (karr_zero_prefix count r) =
+    karr_zero_prefix count (karr_reduce d a b p r).
+Proof.
+  induction count as [|count IH]; intros d a b p r Hwidth;
+    [reflexivity|].
+  cbn [karr_zero_prefix]. rewrite karr_reduce_restored.
+  - now rewrite IH.
+  - rewrite !karr_zero_prefix_width. lia.
+Qed.
+
+(** A full-width pivot step matches the next inner tail representation. *)
+Lemma karr_zero_prefix_pivot_tail : forall count d p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  kcoeff r <> [] -> karr_head p <> 0%Z ->
+  karr_reduce d (karr_head p) (karr_head r)
+    (karr_zero_prefix count p) (karr_zero_prefix count r) =
+  karr_zero_prefix (S count)
+    (karr_tail (karr_reduce d (karr_head p) (karr_head r) p r)).
+Proof.
+  intros count d p r Hwidth Hr_nonempty Hp.
+  rewrite karr_zero_prefix_reduce by lia.
+  apply karr_zero_prefix_skip.
+  - intro Hempty.
+    pose proof (karr_reduce_width d (karr_head p) (karr_head r) p r
+      ltac:(lia)) as Hreduced.
+    rewrite Hempty in Hreduced. cbn [length] in Hreduced.
+    destruct (kcoeff r); [contradiction|cbn [length] in Hreduced; lia].
+  - now apply karr_reduce_head_zero.
+Qed.
+
 (** Every coordinate before the first nonzero coefficient vanishes. *)
 Lemma karr_first_before : forall zs i a,
   karr_first zs = Some (i, a) -> forall j, j < i -> karr_nth j zs = 0%Z.
@@ -941,6 +3705,1254 @@ Lemma karr_nth_scale : forall factor zs i,
 Proof.
   intros factor zs. induction zs as [|z zs IH]; intros [|i];
     cbn [map karr_nth]; try ring. apply IH.
+Qed.
+
+(** Column selection commutes with uniform row scaling. *)
+Lemma karr_submatrix_scale : forall d columns rows,
+  karr_submatrix columns (map (map (fun z => (d * z)%Z)) rows) =
+    map (map (fun z => (d * z)%Z)) (karr_submatrix columns rows).
+Proof.
+  intros d columns rows. unfold karr_submatrix. rewrite !map_map.
+  apply map_ext. intro row. rewrite map_map.
+  apply map_ext. intro index. now rewrite karr_nth_scale.
+Qed.
+
+(** Scaling selected rows multiplies every minor by one factor per row. *)
+Lemma karr_submatrix_scale_minor : forall d columns rows,
+  karr_determinant (length rows)
+    (karr_submatrix columns (map (map (fun z => (d * z)%Z)) rows)) =
+  (d ^ Z.of_nat (length rows) *
+    karr_determinant (length rows) (karr_submatrix columns rows))%Z.
+Proof.
+  intros d columns rows. rewrite karr_submatrix_scale.
+  replace (length rows) with (length (karr_submatrix columns rows))
+    by (unfold karr_submatrix; now rewrite length_map).
+  pose proof (karr_determinant_scale_rows
+    (length (karr_submatrix columns rows)) [] (karr_submatrix columns rows) [] d
+    ltac:(cbn [length]; lia)) as Hscale.
+  cbn [app] in Hscale. rewrite !app_nil_r in Hscale. exact Hscale.
+Qed.
+
+(** Coordinatewise exact quotients scale every selected determinant uniformly. *)
+Lemma karr_submatrix_multiple_minor : forall d columns quotients raw,
+  Forall2 (fun q r => map (fun z => (d * z)%Z) q = r) quotients raw ->
+  karr_determinant (length raw) (karr_submatrix columns raw) =
+    (d ^ Z.of_nat (length quotients) *
+      karr_determinant (length quotients) (karr_submatrix columns quotients))%Z.
+Proof.
+  intros d columns quotients raw Hmultiple.
+  assert (Hraw : raw = map (map (fun z => (d * z)%Z)) quotients).
+  { induction Hmultiple as [|q r qs rs Hhead Htail IH];
+      cbn [map]; [reflexivity|]. now rewrite <- Hhead, IH. }
+  subst raw. rewrite length_map. apply karr_submatrix_scale_minor.
+Qed.
+
+(** Uniform exact row quotients transfer the full stage identity. *)
+Lemma karr_stage_quotient_minor : forall d p xs ys quotients,
+  karr_nth 0 p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  Forall2 (fun q x =>
+    map (fun z => (d * z)%Z) q =
+      karr_delete 0 (karr_cross (karr_nth 0 p) (karr_nth 0 x) x p))
+    quotients xs ->
+  (d ^ Z.of_nat (length xs) *
+    karr_determinant (length ys) (karr_submatrix ys quotients) =
+   karr_nth 0 p ^ Z.of_nat (length xs - 1) *
+    karr_determinant (S (length ys))
+      (karr_submatrix (0%nat :: map S ys) (p :: xs)))%Z.
+Proof.
+  intros d p xs ys quotients Hp Hwidth Hlength Hpositive Hquotients.
+  pose proof (Forall2_length Hquotients) as Hrows.
+  pose proof (karr_stage_minor 0 p xs (map S ys) Hp Hwidth
+    ltac:(rewrite length_map; exact Hlength) Hpositive) as Hstage.
+  rewrite length_map in Hstage.
+  rewrite <- karr_submatrix_delete_first in Hstage.
+  assert (Hraw : map (karr_delete 0)
+      (map (fun x => karr_cross (karr_nth 0 p) (karr_nth 0 x) x p) xs) =
+    map (map (fun z => (d * z)%Z)) quotients).
+  { clear Hrows Hstage Hwidth Hlength Hpositive Hp.
+    induction Hquotients as [|q x quotients xs Hhead Htail IH];
+      cbn [map]; [reflexivity|].
+    f_equal; [symmetry; exact Hhead|exact IH]. }
+  rewrite Hraw in Hstage.
+  replace (length ys) with (length quotients) in Hstage by lia.
+  rewrite karr_submatrix_scale_minor in Hstage.
+  rewrite Hrows in Hstage. rewrite Hlength. exact Hstage.
+Qed.
+
+(** Exact row quotients preserve minors when the pivot is not the first column. *)
+Lemma karr_stage_quotient_minor_at : forall d c p xs ys quotients,
+  karr_nth c p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  Forall2 (fun q x =>
+    map (fun z => (d * z)%Z) q =
+      karr_delete c (karr_cross (karr_nth c p) (karr_nth c x) x p))
+    quotients xs ->
+  (d ^ Z.of_nat (length xs) *
+    karr_determinant (length ys) (karr_submatrix ys quotients) =
+   karr_nth c p ^ Z.of_nat (length xs - 1) *
+    karr_determinant (S (length ys))
+      (karr_submatrix (c :: map (fun index =>
+        if (index <? c)%nat then index else S index) ys) (p :: xs)))%Z.
+Proof.
+  intros d c p xs ys quotients Hp Hwidth Hlength Hpositive Hquotients.
+  pose proof (Forall2_length Hquotients) as Hrows.
+  pose proof (karr_stage_minor c p xs (map (fun index =>
+    if index <? c then index else S index) ys) Hp Hwidth
+    ltac:(rewrite length_map; exact Hlength) Hpositive) as Hstage.
+  rewrite length_map in Hstage.
+  rewrite <- karr_submatrix_delete_at in Hstage.
+  assert (Hraw : map (karr_delete c)
+      (map (fun x => karr_cross (karr_nth c p) (karr_nth c x) x p) xs) =
+    map (map (fun z => (d * z)%Z)) quotients).
+  { clear Hrows Hstage Hwidth Hlength Hpositive Hp.
+    induction Hquotients as [|q x quotients xs Hhead Htail IH];
+      cbn [map]; [reflexivity|].
+    f_equal; [symmetry; exact Hhead|exact IH]. }
+  rewrite Hraw in Hstage.
+  replace (length ys) with (length quotients) in Hstage by lia.
+  rewrite karr_submatrix_scale_minor in Hstage.
+  rewrite Hrows in Hstage. rewrite Hlength. exact Hstage.
+Qed.
+
+(** Full-width exact quotients support any retained column selection. *)
+Lemma karr_stage_quotient_minor_selected : forall d c p xs ys quotients,
+  karr_nth c p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  Forall2 (fun q x =>
+    map (fun z => (d * z)%Z) q =
+      karr_cross (karr_nth c p) (karr_nth c x) x p)
+    quotients xs ->
+  (d ^ Z.of_nat (length xs) *
+    karr_determinant (length ys) (karr_submatrix ys quotients) =
+   karr_nth c p ^ Z.of_nat (length xs - 1) *
+    karr_determinant (S (length ys))
+      (karr_submatrix (c :: ys) (p :: xs)))%Z.
+Proof.
+  intros d c p xs ys quotients Hp Hwidth Hlength Hpositive Hquotients.
+  pose proof (karr_stage_minor c p xs ys Hp Hwidth Hlength Hpositive)
+    as Hstage.
+  pose proof (Forall2_length Hquotients) as Hrows.
+  assert (Hraw : map (fun x => karr_cross (karr_nth c p)
+      (karr_nth c x) x p) xs =
+    map (map (fun z => (d * z)%Z)) quotients).
+  { clear Hstage Hrows Hp Hwidth Hlength Hpositive.
+    induction Hquotients as [|q x quotients xs Hhead Htail IH];
+      cbn [map]; [reflexivity|].
+    f_equal; [symmetry; exact Hhead|exact IH]. }
+  rewrite Hraw in Hstage.
+  replace (length ys) with (length quotients) in Hstage by lia.
+  rewrite karr_submatrix_scale_minor in Hstage.
+  replace (length quotients) with (length ys) in Hstage by lia.
+  replace (d ^ Z.of_nat (length xs))%Z with
+    (d ^ Z.of_nat (length ys))%Z by now rewrite Hlength.
+  exact Hstage.
+Qed.
+
+(** A nonzero pivot and exact row quotients preserve all live minor equations. *)
+Lemma karr_minor_law_pivot : forall previous pivot_rows pivot_columns head columns
+    pivot_origin pivot rest (f : list Z -> list Z),
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns)
+    ((pivot_origin, pivot) :: rest) ->
+  previous <> 0%Z -> karr_nth 0 pivot <> 0%Z ->
+  (forall origin row, In (origin, row) rest -> length row = length pivot) ->
+  (forall origin row, In (origin, row) rest ->
+    map (fun z => (previous * z)%Z) (f row) =
+      karr_delete 0
+        (karr_cross (karr_nth 0 pivot) (karr_nth 0 row) row pivot)) ->
+  karr_minor_law (karr_nth 0 pivot) (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [head]) columns
+    (map (fun pair => (fst pair, f (snd pair))) rest).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pivot_origin pivot rest f
+    Hlaw Hprevious Hp Hwidth Hquotient.
+  unfold karr_minor_law in *. intros origins quotients selected
+    Hpaired Hlength Hselected Hpositive.
+  destruct (karr_pairs_map_lift f rest origins quotients Hpaired)
+    as [live [Hlive Heq]]. subst quotients.
+  rewrite length_map in Hlength, Hpositive.
+  assert (Hlive_width : Forall (fun row => length row = length pivot) live).
+  { clear Hpaired Hlength Hselected Hpositive.
+    induction Hlive as [|origin row origins live Hin Htail IH];
+      [constructor|constructor; [now apply Hwidth with (origin := origin)|exact IH]]. }
+  assert (Hlive_quotient : Forall2 (fun q row =>
+      map (fun z => (previous * z)%Z) q =
+        karr_delete 0
+          (karr_cross (karr_nth 0 pivot) (karr_nth 0 row) row pivot))
+      (map f live) live).
+  { clear Hpaired Hlength Hselected Hpositive Hlive_width.
+    induction Hlive as [|origin row origins live Hin Htail IH];
+      cbn [map]; [constructor|].
+    constructor; [now apply Hquotient with (origin := origin)|exact IH]. }
+  assert (Hcurrent : Forall2
+      (fun origin row => In (origin, row) ((pivot_origin, pivot) :: rest))
+      (pivot_origin :: origins) (pivot :: live)).
+  { constructor; [now left|].
+    eapply Forall2_impl; [|exact Hlive]. intros origin row Hin. now right. }
+  assert (Hvalid : Forall (fun i => i < length (head :: columns))
+      (0 :: map S selected)).
+  { constructor; [cbn [length]; lia|].
+    apply Forall_forall. intros i Hi.
+    apply in_map_iff in Hi as [j [Hj Hin]]. subst i.
+    pose proof (proj1 (Forall_forall _ _) Hselected j Hin) as Hjvalid.
+    cbn in Hjvalid. cbn [length]. lia. }
+  pose proof (Hlaw (pivot_origin :: origins) (pivot :: live)
+    (0 :: map S selected) Hcurrent
+    ltac:(cbn [length]; rewrite length_map; lia) Hvalid
+    ltac:(cbn [length]; lia)) as Hold.
+  pose proof (karr_stage_quotient_minor previous pivot live selected (map f live)
+    Hp Hlive_width Hlength Hpositive Hlive_quotient) as Hstage.
+  cbn [length] in Hold. rewrite length_map in Hold.
+  cbn [Nat.sub] in Hold. rewrite Nat.sub_0_r in Hold.
+  cbn [map] in Hold.
+  rewrite map_map in Hold. cbn [map nth] in Hold.
+  replace (pivot_columns ++ head :: map (fun i => nth i columns 0%nat) selected)
+    with ((pivot_columns ++ [head]) ++
+      map (fun i => nth i columns 0%nat) selected) in Hold
+    by (rewrite <- app_assoc; reflexivity).
+  replace (pivot_rows ++ pivot_origin :: origins)
+    with ((pivot_rows ++ [pivot_origin]) ++ origins) in Hold
+    by (rewrite <- app_assoc; reflexivity).
+  replace (length pivot_rows + S (length live))
+    with (length (pivot_rows ++ [pivot_origin]) + length live) in Hold
+    by (rewrite length_app; cbn [length]; lia).
+  rewrite Hold in Hstage.
+  assert (Hfactor : (previous ^ Z.of_nat (length live) <> 0)%Z).
+  { apply Z.pow_nonzero; lia. }
+  rewrite length_map. clear -Hstage Hfactor. nia.
+Qed.
+
+(** A selected pivot may leave all unprocessed coordinates in the live rows. *)
+Lemma karr_minor_law_pivot_keep : forall previous pivot_rows pivot_columns
+    columns index pivot_origin pivot rest (f : list Z -> list Z),
+  karr_minor_law previous pivot_rows pivot_columns columns
+    ((pivot_origin, pivot) :: rest) ->
+  previous <> 0%Z -> karr_nth index pivot <> 0%Z ->
+  index < length columns ->
+  (forall origin row, In (origin, row) rest -> length row = length pivot) ->
+  (forall origin row, In (origin, row) rest ->
+    map (fun z => (previous * z)%Z) (f row) =
+      karr_cross (karr_nth index pivot) (karr_nth index row) row pivot) ->
+  karr_minor_law (karr_nth index pivot) (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth index columns 0%nat]) columns
+    (map (fun pair => (fst pair, f (snd pair))) rest).
+Proof.
+  intros previous pivot_rows pivot_columns columns index pivot_origin pivot
+    rest f Hlaw Hprevious Hp Hindex Hwidth Hquotient.
+  unfold karr_minor_law in *. intros origins quotients selected
+    Hpaired Hlength Hselected Hpositive.
+  destruct (karr_pairs_map_lift f rest origins quotients Hpaired)
+    as [live [Hlive Heq]]. subst quotients.
+  rewrite length_map in Hlength, Hpositive.
+  assert (Hlive_width : Forall (fun row => length row = length pivot) live).
+  { clear Hpaired Hlength Hselected Hpositive.
+    induction Hlive as [|origin row origins live Hin Htail IH];
+      [constructor|constructor; [now apply Hwidth with (origin := origin)|exact IH]]. }
+  assert (Hlive_quotient : Forall2 (fun q row =>
+      map (fun z => (previous * z)%Z) q =
+        karr_cross (karr_nth index pivot) (karr_nth index row) row pivot)
+      (map f live) live).
+  { clear Hpaired Hlength Hselected Hpositive Hlive_width.
+    induction Hlive as [|origin row origins live Hin Htail IH];
+      cbn [map]; [constructor|].
+    constructor; [now apply Hquotient with (origin := origin)|exact IH]. }
+  assert (Hcurrent : Forall2
+      (fun origin row => In (origin, row) ((pivot_origin, pivot) :: rest))
+      (pivot_origin :: origins) (pivot :: live)).
+  { constructor; [now left|].
+    eapply Forall2_impl; [|exact Hlive]. intros origin row Hin. now right. }
+  assert (Hvalid : Forall (fun i => i < length columns)
+      (index :: selected)).
+  { now constructor. }
+  pose proof (Hlaw (pivot_origin :: origins) (pivot :: live)
+    (index :: selected) Hcurrent
+    ltac:(cbn [length]; lia) Hvalid
+    ltac:(cbn [length]; lia)) as Hold.
+  pose proof (karr_stage_quotient_minor_selected previous index pivot live
+    selected (map f live) Hp Hlive_width Hlength Hpositive Hlive_quotient)
+    as Hstage.
+  cbn [length] in Hold.
+  cbn [Nat.sub] in Hold. rewrite Nat.sub_0_r in Hold.
+  cbn [map] in Hold.
+  replace (pivot_columns ++ nth index columns 0%nat ::
+      map (fun i => nth i columns 0%nat) selected)
+    with ((pivot_columns ++ [nth index columns 0%nat]) ++
+      map (fun i => nth i columns 0%nat) selected) in Hold
+    by (rewrite <- app_assoc; reflexivity).
+  replace (pivot_rows ++ pivot_origin :: origins)
+    with ((pivot_rows ++ [pivot_origin]) ++ origins) in Hold
+    by (rewrite <- app_assoc; reflexivity).
+  replace (length pivot_rows + S (length live))
+    with (length (pivot_rows ++ [pivot_origin]) + length live) in Hold
+    by (rewrite length_app; cbn [length]; lia).
+  rewrite Hold in Hstage.
+  assert (Hfactor : (previous ^ Z.of_nat (length live) <> 0)%Z).
+  { apply Z.pow_nonzero; lia. }
+  rewrite length_map. clear -Hstage Hfactor. nia.
+Qed.
+
+(** A full-width pivot reduces every labeled row while preserving its minor law. *)
+Lemma karr_minor_law_pivot_rows : forall previous pivot_rows pivot_columns
+    columns index pivot_origin p rest,
+  karr_minor_law previous pivot_rows pivot_columns columns
+    ((pivot_origin, karr_row_entries p) ::
+      map (fun pair => (fst pair, karr_row_entries (snd pair))) rest) ->
+  previous <> 0%Z ->
+  index < length (kcoeff p) ->
+  karr_nth index (kcoeff p) <> 0%Z ->
+  length (karr_row_entries p) = length columns ->
+  Forall (fun pair =>
+    length (kcoeff (snd pair)) = length (kcoeff p) /\
+    length (kweight (snd pair)) = length (kweight p) /\
+    length (karr_row_entries (snd pair)) = length columns) rest ->
+  karr_minor_law (karr_nth index (kcoeff p))
+    (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth index columns 0%nat]) columns
+    (map (fun pair => (fst pair, karr_row_entries
+      (karr_reduce previous (karr_nth index (kcoeff p))
+        (karr_nth index (kcoeff (snd pair))) p (snd pair)))) rest).
+Proof.
+  intros previous pivot_rows pivot_columns columns index pivot_origin p
+    rest Hlaw Hprevious Hindex Hp Hp_width Hrest.
+  set (pivot := karr_row_entries p).
+  set (a := karr_nth index (kcoeff p)).
+  set (f := fun row : list Z => map (fun z => (z / previous)%Z)
+    (karr_cross a (karr_nth index row) row pivot)).
+  assert (Hpoint : forall origin r, In (origin, r) rest ->
+    f (karr_row_entries r) =
+      karr_row_entries (karr_reduce previous a
+        (karr_nth index (kcoeff r)) p r) /\
+    map (fun z => (previous * z)%Z) (f (karr_row_entries r)) =
+      karr_cross a (karr_nth index (karr_row_entries r))
+        (karr_row_entries r) pivot).
+  { intros origin r Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrest (origin, r) Hin) as
+      [Hcoeff [Hweight Hr_width]].
+    cbn [snd] in Hcoeff, Hweight, Hr_width.
+    assert (Hmember : In (origin, karr_row_entries r)
+      (map (fun pair => (fst pair, karr_row_entries (snd pair))) rest)).
+    { apply in_map_iff. exists (origin, r). split; [reflexivity|exact Hin]. }
+    assert (Hexact : karr_exact previous (KRow
+      (karr_cross a (karr_nth index (kcoeff r)) (kcoeff r) (kcoeff p))
+      (a * kright r - karr_nth index (kcoeff r) * kright p)%Z
+      (karr_cross a (karr_nth index (kcoeff r)) (kweight r) (kweight p))
+      (a * kscale r - karr_nth index (kcoeff r) * kscale p)%Z) = true).
+    { exact (karr_minor_law_reduce_exact_at previous pivot_rows
+        pivot_columns columns
+        ((pivot_origin, pivot) ::
+          map (fun pair => (fst pair, karr_row_entries (snd pair))) rest)
+        pivot_origin origin p r index Hlaw Hprevious
+        ltac:(now left) ltac:(now right) ltac:(lia) ltac:(lia) Hindex
+        Hp_width ltac:(lia)). }
+    assert (Hfull : karr_row_entries (karr_reduce previous a
+        (karr_nth index (kcoeff r)) p r) =
+      f (karr_row_entries r)).
+    { unfold f, pivot, a.
+      rewrite (karr_row_entries_reduce_exact previous
+        (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r
+        Hcoeff Hweight Hexact).
+      assert (Hr_index : index < length (kcoeff r)) by lia.
+      now rewrite (karr_nth_row_entries_coeff index r Hr_index). }
+    split; [symmetry; exact Hfull|].
+    rewrite <- Hfull.
+    pose proof (karr_minor_law_reduce_multiple_at previous pivot_rows
+      pivot_columns columns
+      ((pivot_origin, pivot) ::
+        map (fun pair => (fst pair, karr_row_entries (snd pair))) rest)
+      pivot_origin origin p r index Hlaw Hprevious
+      ltac:(now left) ltac:(now right) ltac:(lia) ltac:(lia)
+      Hindex Hp_width ltac:(lia)) as Hmultiple.
+    rewrite (karr_nth_row_entries_coeff index p Hindex) in Hmultiple.
+    exact Hmultiple.
+  }
+  assert (Hwidth : forall origin row,
+    In (origin, row) (map (fun pair =>
+      (fst pair, karr_row_entries (snd pair))) rest) ->
+    length row = length pivot).
+  { intros origin row Hin.
+    apply in_map_iff in Hin as [[source r] [Heq Hr]].
+    cbn [fst snd] in Heq. injection Heq as Hsource Hrow_entries.
+    subst source row.
+    pose proof (proj1 (Forall_forall _ _) Hrest (origin, r) Hr)
+      as [_ [_ Hrow]]. cbn [snd] in Hrow. unfold pivot. lia. }
+  assert (Hquotient : forall origin row,
+    In (origin, row) (map (fun pair =>
+      (fst pair, karr_row_entries (snd pair))) rest) ->
+    map (fun z => (previous * z)%Z) (f row) =
+      karr_cross (karr_nth index pivot) (karr_nth index row) row pivot).
+  { intros origin row Hin.
+    apply in_map_iff in Hin as [[source r] [Heq Hr]].
+    cbn [fst snd] in Heq. injection Heq as Hsource Hrow_entries.
+    subst source row.
+    pose proof (proj2 (Hpoint origin r Hr)) as Hmultiple.
+    unfold pivot. rewrite (karr_nth_row_entries_coeff index p Hindex).
+    exact Hmultiple. }
+  assert (Hindex_columns : index < length columns).
+  { unfold karr_row_entries in Hp_width.
+    rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+    rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+  pose proof (karr_minor_law_pivot_keep previous pivot_rows pivot_columns
+    columns index pivot_origin pivot
+    (map (fun pair => (fst pair, karr_row_entries (snd pair))) rest) f
+    Hlaw Hprevious ltac:(unfold pivot, a; now rewrite
+      karr_nth_row_entries_coeff by exact Hindex)
+    Hindex_columns Hwidth Hquotient) as Hnext.
+  unfold pivot in Hnext.
+  rewrite (karr_nth_row_entries_coeff index p Hindex) in Hnext.
+  rewrite map_map in Hnext. cbn [fst snd] in Hnext.
+  assert (Heq : map (fun pair =>
+      (fst pair, f (karr_row_entries (snd pair)))) rest =
+    map (fun pair => (fst pair, karr_row_entries
+      (karr_reduce previous a (karr_nth index (kcoeff (snd pair)))
+        p (snd pair)))) rest).
+  { apply map_ext_in. intros [origin r] Hin. cbn [fst snd].
+    f_equal. exact (proj1 (Hpoint origin r Hin)). }
+  rewrite Heq in Hnext. exact Hnext.
+Qed.
+
+(** The appended target shares exact division and the next full-width law. *)
+Lemma karr_minor_law_pivot_target : forall previous pivot_rows pivot_columns
+    columns index pivot_origin p rest target_origin target,
+  karr_minor_law previous pivot_rows pivot_columns columns
+    ((pivot_origin, karr_row_entries p) ::
+      map (fun pair => (fst pair, karr_row_entries (snd pair))) rest ++
+      [(target_origin, karr_row_entries target)]) ->
+  previous <> 0%Z ->
+  index < length (kcoeff p) ->
+  karr_nth index (kcoeff p) <> 0%Z ->
+  length (karr_row_entries p) = length columns ->
+  Forall (fun pair =>
+    length (kcoeff (snd pair)) = length (kcoeff p) /\
+    length (kweight (snd pair)) = length (kweight p) /\
+    length (karr_row_entries (snd pair)) = length columns) rest ->
+  length (kcoeff target) = length (kcoeff p) ->
+  length (kweight target) = length (kweight p) ->
+  length (karr_row_entries target) = length columns ->
+  karr_exact previous (KRow
+    (karr_cross (karr_nth index (kcoeff p))
+      (karr_nth index (kcoeff target)) (kcoeff target) (kcoeff p))
+    (karr_nth index (kcoeff p) * kright target -
+      karr_nth index (kcoeff target) * kright p)%Z
+    (karr_cross (karr_nth index (kcoeff p))
+      (karr_nth index (kcoeff target)) (kweight target) (kweight p))
+    (karr_nth index (kcoeff p) * kscale target -
+      karr_nth index (kcoeff target) * kscale p)%Z) = true /\
+  karr_minor_law (karr_nth index (kcoeff p))
+    (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth index columns 0%nat]) columns
+    (map (fun pair => (fst pair, karr_row_entries
+      (karr_reduce previous (karr_nth index (kcoeff p))
+        (karr_nth index (kcoeff (snd pair))) p (snd pair)))) rest ++
+      [(target_origin, karr_row_entries (karr_reduce previous
+        (karr_nth index (kcoeff p)) (karr_nth index (kcoeff target))
+        p target))]).
+Proof.
+  intros previous pivot_rows pivot_columns columns index pivot_origin p
+    rest target_origin target Hlaw Hprevious Hindex Hp Hp_width Hrest
+    Htarget_coeff Htarget_weight Htarget_width.
+  split.
+  - exact (karr_minor_law_reduce_exact_at previous pivot_rows pivot_columns
+      columns
+      ((pivot_origin, karr_row_entries p) ::
+        map (fun pair => (fst pair, karr_row_entries (snd pair))) rest ++
+        [(target_origin, karr_row_entries target)])
+      pivot_origin target_origin p target index Hlaw Hprevious
+      ltac:(now left)
+      ltac:(right; apply in_or_app; right; now left)
+      ltac:(lia) ltac:(lia) Hindex Hp_width ltac:(lia)).
+  - pose proof (karr_minor_law_pivot_rows previous pivot_rows pivot_columns
+      columns index pivot_origin p (rest ++ [(target_origin, target)])
+      ltac:(rewrite map_app; cbn [map fst snd]; exact Hlaw)
+      Hprevious Hindex Hp Hp_width
+      ltac:(apply Forall_app; split; [exact Hrest|constructor;
+        [repeat split; assumption|constructor]])) as Hnext.
+    rewrite !map_app in Hnext. cbn [map fst snd] in Hnext.
+    exact Hnext.
+Qed.
+
+(** A basis pivot and target advance together in the full source coordinates. *)
+Lemma karr_minor_law_prefix_step : forall cols offset previous pivot_rows
+    pivot_columns columns pivot_origin p remaining rest target_origin target,
+  length remaining = length rest ->
+  length (kcoeff p) = S cols ->
+  length (karr_row_entries (karr_zero_prefix offset p)) = length columns ->
+  Forall (fun row => length (kcoeff row) = S cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rest ->
+  length (kcoeff target) = offset + S cols ->
+  length (karr_row_entries target) = length columns ->
+  previous <> 0%Z -> karr_head p <> 0%Z ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    ((pivot_origin, karr_row_entries (karr_zero_prefix offset p)) ::
+      combine remaining
+        (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rest) ++
+      [(target_origin, karr_row_entries target)]) ->
+  let a := karr_head p in
+  let target' := karr_reduce previous a
+    (karr_nth offset (kcoeff target)) (karr_zero_prefix offset p) target in
+  let rest' := map (fun row => karr_tail
+    (karr_reduce previous a (karr_head row) p row)) rest in
+  karr_exact previous (KRow
+    (karr_cross a (karr_nth offset (kcoeff target))
+      (kcoeff target) (kcoeff (karr_zero_prefix offset p)))
+    (a * kright target -
+      karr_nth offset (kcoeff target) *
+        kright (karr_zero_prefix offset p))%Z
+    (karr_cross a (karr_nth offset (kcoeff target))
+      (kweight target) (kweight (karr_zero_prefix offset p)))
+    (a * kscale target -
+      karr_nth offset (kcoeff target) *
+        kscale (karr_zero_prefix offset p))%Z) = true /\
+  karr_minor_law a (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth offset columns 0%nat]) columns
+    (combine remaining
+      (map (fun row => karr_row_entries (karr_zero_prefix (S offset) row)) rest') ++
+      [(target_origin, karr_row_entries target')]).
+Proof.
+  intros cols offset previous pivot_rows pivot_columns columns pivot_origin
+    p remaining rest target_origin target Hremaining Hp_coeff Hp_width Hrest
+    Htarget_coeff Htarget_width Hprevious Hp Hlaw a target' rest'.
+  assert (Hfull_coeff : length (kcoeff (karr_zero_prefix offset p)) =
+    offset + S cols) by (rewrite karr_zero_prefix_width, Hp_coeff; lia).
+  assert (Hindex : offset < length (kcoeff (karr_zero_prefix offset p))) by lia.
+  assert (Htarget_weight : length (kweight target) =
+    length (kweight (karr_zero_prefix offset p))).
+  { apply karr_weight_width_of_entries; lia. }
+  assert (Hrest_pairs : Forall (fun pair =>
+      length (kcoeff (snd pair)) =
+        length (kcoeff (karr_zero_prefix offset p)) /\
+      length (kweight (snd pair)) =
+        length (kweight (karr_zero_prefix offset p)) /\
+      length (karr_row_entries (snd pair)) = length columns)
+      (combine remaining (map (karr_zero_prefix offset) rest))).
+  { clear -Hrest Hp_coeff Hp_width Hremaining.
+    revert remaining Hremaining.
+    induction Hrest as [|row rest [Hrow_coeff Hrow_width] Hrest IH];
+      intros [|origin remaining] Hremaining;
+      cbn [length map combine] in Hremaining; try discriminate;
+      [constructor|].
+    constructor.
+    - cbn [snd]. split.
+      + rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff. reflexivity.
+      + split.
+        * apply karr_weight_width_of_entries.
+          -- rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff.
+             reflexivity.
+          -- lia.
+        * exact Hrow_width.
+    - apply IH. lia. }
+  assert (Hlaw_pack : karr_minor_law previous pivot_rows pivot_columns
+    columns ((pivot_origin, karr_row_entries (karr_zero_prefix offset p)) ::
+      map (fun pair => (fst pair, karr_row_entries (snd pair)))
+        (combine remaining (map (karr_zero_prefix offset) rest)) ++
+      [(target_origin, karr_row_entries target)])).
+  { rewrite karr_combine_map, map_map. exact Hlaw. }
+  destruct (karr_minor_law_pivot_target previous pivot_rows pivot_columns
+    columns offset pivot_origin (karr_zero_prefix offset p)
+    (combine remaining (map (karr_zero_prefix offset) rest))
+    target_origin target Hlaw_pack Hprevious Hindex
+    ltac:(rewrite karr_zero_prefix_nth; exact Hp) Hp_width Hrest_pairs
+    ltac:(lia) Htarget_weight Htarget_width) as [Hexact Hnext].
+  rewrite karr_zero_prefix_nth in Hexact, Hnext.
+  split; [exact Hexact|].
+  unfold a, target', rest'.
+  set (h := fun row : karr_row => karr_row_entries
+    (karr_reduce previous (karr_head p)
+      (karr_nth offset (kcoeff row)) (karr_zero_prefix offset p) row)).
+  change (karr_minor_law (karr_head p) (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth offset columns 0%nat]) columns
+    (map (fun pair => (fst pair, h (snd pair)))
+      (combine remaining (map (karr_zero_prefix offset) rest)) ++
+      [(target_origin, h target)])) in Hnext.
+  rewrite karr_combine_map in Hnext.
+  rewrite map_map in Hnext.
+  assert (Hrows : map (fun row => karr_row_entries
+      (karr_reduce previous (karr_head p)
+        (karr_nth offset (kcoeff (karr_zero_prefix offset row)))
+        (karr_zero_prefix offset p) (karr_zero_prefix offset row))) rest =
+    map (fun row => karr_row_entries (karr_zero_prefix (S offset)
+      (karr_tail (karr_reduce previous (karr_head p) (karr_head row) p row))))
+      rest).
+  { apply map_ext_in. intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrest row Hin) as [Hcoeff _].
+    rewrite karr_zero_prefix_nth.
+    rewrite karr_zero_prefix_pivot_tail.
+    - reflexivity.
+    - lia.
+    - intro Hempty. rewrite Hempty in Hcoeff. cbn [length] in Hcoeff. lia.
+    - exact Hp. }
+  unfold h in Hnext.
+  rewrite Hrows in Hnext. rewrite map_map. exact Hnext.
+Qed.
+
+(** Skipping a basis-zero column retains the target and its full minor law. *)
+Lemma karr_minor_law_prefix_skip : forall cols offset previous pivot_rows
+    pivot_columns columns labels rows target_origin target,
+  karr_pivot rows = None ->
+  Forall (fun row => length (kcoeff row) = S cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rows ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels
+      (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+      [(target_origin, karr_row_entries target)]) ->
+  Forall (fun row => length (kcoeff row) = cols /\
+    length (karr_row_entries (karr_zero_prefix (S offset) row)) = length columns)
+    (map karr_tail rows) /\
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels
+      (map (fun row => karr_row_entries (karr_zero_prefix (S offset) row))
+        (map karr_tail rows)) ++
+      [(target_origin, karr_row_entries target)]).
+Proof.
+  intros cols offset previous pivot_rows pivot_columns columns labels rows
+    target_origin target Hnone Hrows Hlaw.
+  pose proof (karr_pivot_none rows Hnone) as Hzero.
+  assert (Hpoint : forall row, In row rows ->
+    karr_zero_prefix offset row =
+      karr_zero_prefix (S offset) (karr_tail row)).
+  { intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrows row Hin) as [Hwidth _].
+    pose proof (proj1 (Forall_forall _ _) Hzero row Hin) as Hhead.
+    apply karr_zero_prefix_skip; [|exact Hhead].
+    intro Hempty. rewrite Hempty in Hwidth. cbn [length] in Hwidth. lia. }
+  split.
+  - apply Forall_forall. intros row Hin.
+    apply in_map_iff in Hin as [source [Heq Hsource]]. subst row.
+    pose proof (proj1 (Forall_forall _ _) Hrows source Hsource)
+      as [Hwidth Hentries].
+    split.
+    + now apply karr_tail_width.
+    + now rewrite <- (Hpoint source Hsource).
+  - assert (Heq : map (fun row =>
+        karr_row_entries (karr_zero_prefix offset row)) rows =
+      map (fun row => karr_row_entries
+        (karr_zero_prefix (S offset) (karr_tail row))) rows).
+    { apply map_ext_in. intros row Hin. now rewrite (Hpoint row Hin). }
+    rewrite Heq in Hlaw. rewrite map_map. exact Hlaw.
+Qed.
+
+(** Full-width pivot reduction preserves the next basis and target widths. *)
+Lemma karr_prefix_pivot_width : forall cols offset previous (columns : list nat)
+    p rest target,
+  length (kcoeff p) = S cols ->
+  length (karr_row_entries (karr_zero_prefix offset p)) = length columns ->
+  Forall (fun row => length (kcoeff row) = S cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rest ->
+  length (kcoeff target) = offset + S cols ->
+  length (karr_row_entries target) = length columns ->
+  karr_head p <> 0%Z ->
+  Forall (fun row => length (kcoeff row) = cols /\
+    length (karr_row_entries (karr_zero_prefix (S offset) row)) = length columns)
+    (map (fun row => karr_tail
+      (karr_reduce previous (karr_head p) (karr_head row) p row)) rest) /\
+  length (kcoeff (karr_reduce previous (karr_head p)
+    (karr_nth offset (kcoeff target)) (karr_zero_prefix offset p) target)) =
+    S offset + cols /\
+  length (karr_row_entries (karr_reduce previous (karr_head p)
+    (karr_nth offset (kcoeff target)) (karr_zero_prefix offset p) target)) =
+    length columns.
+Proof.
+  intros cols offset previous columns p rest target Hp_coeff Hp_entries
+    Hrest Htarget_coeff Htarget_entries Hp.
+  assert (Hfull_coeff : length (kcoeff (karr_zero_prefix offset p)) =
+    offset + S cols) by (rewrite karr_zero_prefix_width, Hp_coeff; lia).
+  assert (Htarget_weight : length (kweight target) =
+    length (kweight (karr_zero_prefix offset p))).
+  { apply karr_weight_width_of_entries; lia. }
+  split.
+  - apply Forall_forall. intros output Hin.
+    apply in_map_iff in Hin as [row [Heq Hrow]]. subst output.
+    pose proof (proj1 (Forall_forall _ _) Hrest row Hrow)
+      as [Hrow_coeff Hrow_entries].
+    assert (Hrow_weight : length (kweight (karr_zero_prefix offset row)) =
+      length (kweight (karr_zero_prefix offset p))).
+    { apply karr_weight_width_of_entries.
+      - rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff. reflexivity.
+      - lia. }
+    split.
+    + apply karr_tail_width.
+      rewrite karr_reduce_width; lia.
+    + rewrite <- (karr_zero_prefix_pivot_tail offset previous p row
+        ltac:(lia) ltac:(intro Hempty; rewrite Hempty in Hrow_coeff;
+          cbn [length] in Hrow_coeff; lia) Hp).
+      rewrite karr_reduce_entries_width; [exact Hrow_entries| |].
+      * rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff. reflexivity.
+      * exact Hrow_weight.
+  - split.
+    + rewrite karr_reduce_width; lia.
+    + rewrite karr_reduce_entries_width;
+        [exact Htarget_entries|lia|exact Htarget_weight].
+Qed.
+
+(** The all-order law makes every target pivot in a labeled basis run exact. *)
+Lemma karr_bareiss_target_exact : forall cols offset previous pivot_rows
+    pivot_columns columns labels rows target_origin target,
+  length labels = length rows ->
+  Forall (fun row => length (kcoeff row) = cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rows ->
+  length (kcoeff target) = offset + cols ->
+  length (karr_row_entries target) = length columns ->
+  previous <> 0%Z ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels
+      (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+      [(target_origin, karr_row_entries target)]) ->
+  karr_target_exact
+    (map (karr_zero_prefix offset) (karr_bareiss cols previous rows))
+    previous target.
+Proof.
+  induction cols as [|cols IH]; intros offset previous pivot_rows
+    pivot_columns columns labels rows target_origin target Hlabels Hrows
+    Htarget_coeff Htarget_entries Hprevious Hlaw.
+  - cbn [karr_bareiss]. apply karr_target_exact_zero_rows.
+    apply Forall_map, Forall_forall. intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrows row Hin) as [Hwidth _].
+    apply karr_zero_prefix_first_none.
+    destruct (kcoeff row) as [|z zs]; [reflexivity|].
+    cbn [length] in Hwidth. lia.
+  - cbn [karr_bareiss].
+    destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+    + pose proof (karr_pivot_some rows pivot rest Hselect)
+        as [Hp Hperm_rows].
+      pose proof (Permutation_Forall Hperm_rows Hrows) as Hselected.
+      apply Forall_cons_iff in Hselected as [Hp_width Hrest_width].
+      destruct Hp_width as [Hp_coeff Hp_entries].
+      destruct (karr_pivot_combine _ _
+        (fun row => karr_row_entries (karr_zero_prefix offset row))
+        labels rows pivot rest Hlabels Hselect) as
+        [origin [remaining [Hremaining [_ Hperm_pairs]]]].
+      assert (Hlaw_selected : karr_minor_law previous pivot_rows
+        pivot_columns columns
+        ((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+          combine remaining
+            (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rest) ++
+          [(target_origin, karr_row_entries target)])).
+      { eapply karr_minor_law_permutation; [|exact Hlaw].
+        change (Permutation
+          (combine labels
+            (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+            [(target_origin, karr_row_entries target)])
+          (((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+            combine remaining
+              (map (fun row => karr_row_entries
+                (karr_zero_prefix offset row)) rest)) ++
+            [(target_origin, karr_row_entries target)])).
+        now apply Permutation_app_tail. }
+      destruct (karr_minor_law_prefix_step cols offset previous pivot_rows
+        pivot_columns columns origin pivot remaining rest target_origin target
+        Hremaining Hp_coeff Hp_entries Hrest_width Htarget_coeff
+        Htarget_entries Hprevious Hp Hlaw_selected)
+        as [Hexact Hnext].
+      destruct (karr_prefix_pivot_width cols offset previous columns pivot
+        rest target Hp_coeff Hp_entries Hrest_width Htarget_coeff
+        Htarget_entries Hp) as [Hrows_next [Htarget_coeff_next
+          Htarget_entries_next]].
+      set (a := karr_head pivot).
+      set (target' := karr_reduce previous a
+        (karr_nth offset (kcoeff target)) (karr_zero_prefix offset pivot) target).
+      set (rows' := map (fun row => karr_tail
+        (karr_reduce previous a (karr_head row) pivot row)) rest).
+      cbn [map karr_target_exact].
+      rewrite (karr_zero_prefix_first offset pivot Hp).
+      split; [exact Hexact|].
+      rewrite map_map.
+      replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+          (karr_bareiss cols a rows')) with
+        (map (karr_zero_prefix (S offset)) (karr_bareiss cols a rows')).
+      * apply (IH (S offset) a (pivot_rows ++ [origin])
+          (pivot_columns ++ [nth offset columns 0%nat]) columns
+          remaining rows' target_origin target').
+        -- unfold rows'. rewrite length_map. exact Hremaining.
+        -- exact Hrows_next.
+        -- exact Htarget_coeff_next.
+        -- exact Htarget_entries_next.
+        -- exact Hp.
+        -- exact Hnext.
+      * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+    + destruct (karr_minor_law_prefix_skip cols offset previous pivot_rows
+        pivot_columns columns labels rows target_origin target Hselect Hrows Hlaw)
+        as [Hrows_next Hlaw_next].
+      cbn [map]. rewrite map_map.
+      replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+          (karr_bareiss cols previous (map karr_tail rows))) with
+        (map (karr_zero_prefix (S offset))
+          (karr_bareiss cols previous (map karr_tail rows))).
+      * apply (IH (S offset) previous pivot_rows pivot_columns columns
+          labels (map karr_tail rows) target_origin target).
+        -- rewrite length_map. exact Hlabels.
+        -- exact Hrows_next.
+        -- replace (S offset + cols) with (offset + S cols) by lia.
+           exact Htarget_coeff.
+        -- exact Htarget_entries.
+        -- exact Hprevious.
+        -- exact Hlaw_next.
+      * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+Qed.
+
+(** A selected concrete pivot preserves all-order minors on its reduced tails. *)
+Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
+    pivot_columns head columns labels rows pivot rest,
+  length labels = length rows ->
+  Forall (fun row => length (kcoeff row) = S cols) rows ->
+  Forall (fun row => length (karr_row_entries row) = length (head :: columns)) rows ->
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns)
+    (combine labels (map karr_row_entries rows)) ->
+  previous <> 0%Z ->
+  karr_pivot rows = Some (pivot, rest) ->
+  exists origin remaining,
+    Permutation labels (origin :: remaining) /\
+    length remaining = length rest /\
+    karr_head pivot =
+      karr_determinant (S (length pivot_rows))
+        (karr_submatrix (pivot_columns ++ [head])
+          (pivot_rows ++ [origin])) /\
+    karr_minor_law (karr_head pivot) (pivot_rows ++ [origin])
+      (pivot_columns ++ [head]) columns
+      (combine remaining
+        (map karr_row_entries
+          (map (fun row => karr_tail
+            (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+            rest))).
+Proof.
+  intros cols previous pivot_rows pivot_columns head columns labels rows
+    pivot rest Hlabels Hcoeff Hentries Hlaw Hprevious Hselect.
+  destruct (karr_pivot_pairs_entries labels rows pivot rest Hlabels Hselect)
+    as [origin [remaining [Hpair_perm [Hlabel_perm Hremaining]]]].
+  exists origin, remaining. split; [exact Hlabel_perm|].
+  split; [exact Hremaining|].
+  pose proof (karr_pivot_some rows pivot rest Hselect) as [Ha Hrows_perm].
+  pose proof (Permutation_Forall Hrows_perm Hcoeff) as Hcoeff_selected.
+  pose proof (Permutation_Forall Hrows_perm Hentries) as Hentries_selected.
+  apply Forall_cons_iff in Hcoeff_selected as [Hp_coeff Hrest_coeff].
+  apply Forall_cons_iff in Hentries_selected as [Hp_entries Hrest_entries].
+  assert (Hp_nonempty : kcoeff pivot <> []).
+  { intro Hempty. rewrite Hempty in Hp_coeff. cbn [length] in Hp_coeff. lia. }
+  assert (Ha_entries : karr_nth 0 (karr_row_entries pivot) = karr_head pivot)
+    by (now apply karr_row_entries_head).
+  set (pairs := (origin, karr_row_entries pivot) ::
+    combine remaining (map karr_row_entries rest)).
+  assert (Hlaw_selected : karr_minor_law previous pivot_rows pivot_columns
+    (head :: columns) pairs).
+  { eapply karr_minor_law_permutation; [exact Hpair_perm|exact Hlaw]. }
+  split.
+  - rewrite <- Ha_entries.
+    eapply karr_minor_law_pivot_value; [exact Hlaw_selected|now left].
+  - set (f := fun entries => karr_delete 0
+    (map (fun z => (z / previous)%Z)
+      (karr_cross (karr_head pivot) (karr_nth 0 entries)
+        entries (karr_row_entries pivot)))).
+  set (g := fun row => karr_tail
+    (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)).
+  assert (Hactual : forall row, In row rest ->
+    karr_row_entries (g row) = f (karr_row_entries row)).
+  { intros row Hin.
+    destruct (karr_pair_entries_origin remaining rest row Hremaining Hin)
+      as [target Htarget].
+    pose proof (proj1 (Forall_forall _ _) Hrest_coeff row Hin) as Hr_coeff.
+    pose proof (proj1 (Forall_forall _ _) Hrest_entries row Hin) as Hr_entries.
+    assert (Hweight : length (kweight row) = length (kweight pivot)).
+    { apply karr_weight_width_of_entries;
+        [rewrite Hr_coeff, Hp_coeff|rewrite Hr_entries, Hp_entries]; reflexivity. }
+    assert (Hr_nonempty : kcoeff row <> []).
+    { cbn beta in Hr_coeff. intro Hempty.
+      rewrite Hempty in Hr_coeff. cbn [length] in Hr_coeff. lia. }
+    assert (Hexact : karr_exact previous (KRow
+      (karr_cross (karr_head pivot) (karr_head row)
+        (kcoeff row) (kcoeff pivot))
+      (karr_head pivot * kright row - karr_head row * kright pivot)%Z
+      (karr_cross (karr_head pivot) (karr_head row)
+        (kweight row) (kweight pivot))
+      (karr_head pivot * kscale row - karr_head row * kscale pivot)%Z) = true).
+    { eapply karr_minor_law_reduce_exact with (pivot_origin := origin)
+        (target_origin := target) (pairs := pairs).
+      - exact Hlaw_selected.
+      - exact Hprevious.
+      - now left.
+      - now right.
+      - cbn beta in Hr_coeff. lia.
+      - lia.
+      - exact Hp_nonempty.
+      - exact Hr_nonempty.
+      - exact Hp_entries.
+      - cbn beta in Hr_entries. lia. }
+    unfold g, f.
+    rewrite (karr_reduced_tail_entries cols previous (karr_head pivot)
+      (karr_head row) pivot row Hp_coeff Hr_coeff Hweight Hexact).
+    now rewrite (karr_row_entries_head row Hr_nonempty). }
+  assert (Hquotient : forall target entries,
+    In (target, entries) (combine remaining (map karr_row_entries rest)) ->
+    map (fun z => (previous * z)%Z) (f entries) =
+      karr_delete 0
+        (karr_cross (karr_nth 0 (karr_row_entries pivot))
+          (karr_nth 0 entries) entries (karr_row_entries pivot))).
+  { intros target entries Hin.
+    destruct (karr_pair_entries_member remaining rest target entries Hin)
+      as [row [Hrow Hrow_entries]]. subst entries.
+    rewrite <- (Hactual row Hrow).
+    pose proof (proj1 (Forall_forall _ _) Hrest_coeff row Hrow) as Hr_coeff.
+    pose proof (proj1 (Forall_forall _ _) Hrest_entries row Hrow) as Hr_entries.
+    eapply karr_minor_law_reduced_tail with (pivot_origin := origin)
+      (target_origin := target) (pairs := pairs); eauto; try lia.
+    - now left.
+    - now right. }
+  assert (Hwidth : forall target entries,
+    In (target, entries) (combine remaining (map karr_row_entries rest)) ->
+    length entries = length (karr_row_entries pivot)).
+  { intros target entries Hin.
+    destruct (karr_pair_entries_member remaining rest target entries Hin)
+      as [row [Hrow Hrow_entries]]. subst entries.
+    pose proof (proj1 (Forall_forall _ _) Hrest_entries row Hrow) as Hr_entries.
+    cbn beta in Hr_entries. lia. }
+  assert (Hminor : karr_minor_law (karr_nth 0 (karr_row_entries pivot))
+    (pivot_rows ++ [origin]) (pivot_columns ++ [head]) columns
+    (map (fun pair => (fst pair, f (snd pair)))
+      (combine remaining (map karr_row_entries rest)))).
+  { eapply karr_minor_law_pivot with (f := f).
+    - exact Hlaw_selected.
+    - exact Hprevious.
+    - now rewrite Ha_entries.
+    - exact Hwidth.
+    - exact Hquotient. }
+  rewrite Ha_entries in Hminor.
+  rewrite <- (karr_pairs_map_rows remaining rest g f Hremaining Hactual) in Hminor.
+  exact Hminor.
+Qed.
+
+(** A concrete nonzero pivot preserves the full labeled run invariant. *)
+Lemma karr_run_state_pivot : forall width cols original previous pivot_rows
+    pivot_columns head columns labels rows pivot rest,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  karr_pivot rows = Some (pivot, rest) ->
+  exists origin remaining,
+    karr_run_state width cols original (karr_head pivot)
+      (pivot_rows ++ [origin]) (pivot_columns ++ [head]) columns remaining
+      (map (fun row => karr_tail
+        (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+        rest).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels rows pivot rest Hstate Hselect.
+  unfold karr_run_state in Hstate. destruct Hstate as
+    [Hprevious [Hdet [Hlabels [Hcoeff [Hentries [Hcolumns [Hsquare
+      [Hpartition [Hincreasing [Hbounded Hlaw]]]]]]]]]].
+  destruct (karr_minor_law_pivot_concrete cols previous pivot_rows
+    pivot_columns head columns labels rows pivot rest Hlabels Hcoeff Hentries
+    Hlaw Hprevious Hselect) as
+    [origin [remaining [Hlabel_perm [Hremaining [Hnew_det Hminor]]]]].
+  pose proof (karr_pivot_some rows pivot rest Hselect) as [Ha Hrows_perm].
+  pose proof (Permutation_Forall Hrows_perm Hcoeff) as Hselected_coeff.
+  pose proof (Permutation_Forall Hrows_perm Hentries) as Hselected_entries.
+  apply Forall_cons_iff in Hselected_coeff as [Hp_coeff Hrest_coeff].
+  apply Forall_cons_iff in Hselected_entries as [Hp_entries Hrest_entries].
+  exists origin, remaining.
+  unfold karr_run_state. repeat (apply conj).
+  - exact Ha.
+  - replace (length (pivot_rows ++ [origin])) with (S (length pivot_rows))
+      by (rewrite length_app; cbn [length]; lia).
+    exact Hnew_det.
+  - now rewrite length_map.
+  - apply Forall_forall. intros reduced Hin.
+    apply in_map_iff in Hin as [row [Heq Hrow]]. subst reduced.
+    pose proof (proj1 (Forall_forall _ _) Hrest_coeff row Hrow) as Hr_coeff.
+    cbn beta in Hr_coeff.
+    apply karr_tail_width.
+    rewrite (karr_reduce_width previous (karr_head pivot) (karr_head row)
+      pivot row ltac:(lia)). exact Hr_coeff.
+  - apply Forall_forall. intros reduced Hin.
+    apply in_map_iff in Hin as [row [Heq Hrow]]. subst reduced.
+    pose proof (proj1 (Forall_forall _ _) Hrest_coeff row Hrow) as Hr_coeff.
+    pose proof (proj1 (Forall_forall _ _) Hrest_entries row Hrow) as Hr_entries.
+    cbn beta in Hr_coeff, Hr_entries.
+    assert (Hweight : length (kweight row) = length (kweight pivot)).
+    { apply karr_weight_width_of_entries;
+        [rewrite Hr_coeff, Hp_coeff|rewrite Hr_entries, Hp_entries]; reflexivity. }
+    assert (Hreduced_coeff : length (kcoeff
+      (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)) = S cols).
+    { rewrite (karr_reduce_width previous (karr_head pivot) (karr_head row)
+        pivot row ltac:(lia)). exact Hr_coeff. }
+    assert (Hreduced_entries : length (karr_row_entries
+      (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)) =
+      S (length columns)).
+    { rewrite (karr_reduce_entries_width previous (karr_head pivot)
+        (karr_head row) pivot row ltac:(lia) Hweight).
+      rewrite Hr_entries. reflexivity. }
+    rewrite karr_row_entries_tail.
+    + destruct (karr_row_entries
+        (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+        as [|z entries] eqn:Hshape;
+        cbn [karr_delete length] in Hreduced_entries |- *; lia.
+    + intro Hempty. rewrite Hempty in Hreduced_coeff.
+      cbn [length] in Hreduced_coeff. lia.
+  - cbn [length] in Hcolumns |- *. lia.
+  - rewrite !length_app. cbn [length]. lia.
+  - eapply Permutation_trans; [exact Hpartition|].
+    replace ((pivot_rows ++ [origin]) ++ remaining) with
+      (pivot_rows ++ origin :: remaining)
+      by (rewrite <- app_assoc; reflexivity).
+    now apply Permutation_app_head.
+  - replace ((pivot_columns ++ [head]) ++ columns) with
+      (pivot_columns ++ head :: columns)
+      by (rewrite <- app_assoc; reflexivity).
+    exact Hincreasing.
+  - replace ((pivot_columns ++ [head]) ++ columns) with
+      (pivot_columns ++ head :: columns)
+      by (rewrite <- app_assoc; reflexivity).
+    exact Hbounded.
+  - exact Hminor.
+Qed.
+
+(** Projecting aligned row-entry pairs recovers their origin labels. *)
+Lemma karr_pair_origins : forall (labels : list (list Z)) (rows : list karr_row),
+  length labels = length rows ->
+  map fst (combine labels (map karr_row_entries rows)) = labels.
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|row rows] Hlength; cbn [length] in Hlength;
+    try discriminate; [reflexivity|].
+  cbn [map combine fst]. f_equal. apply IH. lia.
+Qed.
+
+(** Every currently stored augmented entry is a signed source minor. *)
+Lemma karr_run_state_entries : forall width cols original previous pivot_rows
+    pivot_columns columns labels rows z,
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels rows ->
+  In z (flat_map karr_row_entries rows) ->
+  In z (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns columns
+    labels rows z Hstate Hin.
+  unfold karr_run_state in Hstate. destruct Hstate as
+    [_ [_ [Hlabels [_ [Hentries [_ [Hsquare [Hpartition
+      [Hincreasing [Hbounded Hlaw]]]]]]]]]].
+  apply in_flat_map in Hin as [row [Hrow Hz]].
+  destruct (karr_pair_entries_origin labels rows row Hlabels Hrow)
+    as [origin Hpair].
+  rewrite <- (karr_pair_origins labels rows Hlabels) in Hpartition.
+  eapply karr_minor_law_entry; eauto.
+  exact (proj1 (Forall_forall _ _) Hentries row Hrow).
+Qed.
+
+(** Any uniform source-minor bit bound covers every current augmented row. *)
+Lemma karr_run_state_bits : forall width cols original previous pivot_rows
+    pivot_columns columns labels rows bits,
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels rows ->
+  (forall z, In z (karr_signed_minors width original) -> Z.size_nat z <= bits) ->
+  Forall (fun row => Forall (fun z => Z.size_nat z <= bits)
+    (karr_row_entries row)) rows.
+Proof.
+  intros width cols original previous pivot_rows pivot_columns columns labels
+    rows bits Hstate Hbits.
+  apply Forall_forall. intros row Hrow. apply Forall_forall. intros z Hz.
+  apply Hbits. eapply karr_run_state_entries; [exact Hstate|].
+  apply in_flat_map. now exists row.
+Qed.
+
+(** The current exact divisor is itself an enumerated pivot-prefix minor. *)
+Lemma karr_run_state_previous_minor : forall width cols original previous
+    pivot_rows pivot_columns columns labels rows,
+  karr_run_state width cols original previous pivot_rows pivot_columns
+    columns labels rows ->
+  In previous (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns columns labels
+    rows Hstate.
+  unfold karr_run_state in Hstate. destruct Hstate as
+    [_ [Hdet [_ [_ [_ [_ [Hsquare [Hpartition
+      [Hincreasing [Hbounded _]]]]]]]]]].
+  assert (Hinc : karr_increasing pivot_columns)
+    by (eapply karr_increasing_prefix; exact Hincreasing).
+  assert (Hbound : Forall (fun c => c < width) pivot_columns).
+  { apply Forall_app in Hbounded as [Hprefix _]. exact Hprefix. }
+  rewrite Hdet. destruct pivot_rows as [|row [|next rest]].
+  - cbn [length karr_determinant]. apply karr_signed_minors_one.
+  - destruct pivot_columns as [|column pivot_columns];
+      [cbn [length] in Hsquare; lia|].
+    destruct pivot_columns as [|second remaining];
+      [|cbn [length] in Hsquare; lia].
+    cbn [length] in Hsquare.
+    cbn [length] in Hbound. apply Forall_cons_iff in Hbound as [Hcolumn _].
+    cbn [app] in Hpartition.
+    eapply karr_signed_minors_partition_one; [exact Hpartition|exact Hcolumn].
+  - eapply karr_signed_minors_partition with (rest := labels).
+    + cbn [length]. lia.
+    + exact Hsquare.
+    + exact Hpartition.
+    + exact Hinc.
+    + exact Hbound.
+Qed.
+
+(** A zero first entry of a live row is itself an enumerated source minor. *)
+Lemma karr_run_state_zero_head : forall width cols original previous pivot_rows
+    pivot_columns head columns labels rows row,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  In row rows -> karr_nth 0 (karr_row_entries row) = 0%Z ->
+  In 0%Z (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels rows row Hstate Hrow Hzero.
+  assert (Hentries : length (karr_row_entries row) = S (length columns)).
+  { unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [_ [_ [Hwidth _]]]]].
+    pose proof (proj1 (Forall_forall _ _) Hwidth row Hrow) as Hlength.
+    cbn beta in Hlength. exact Hlength. }
+  destruct (karr_row_entries row) as [|z entries] eqn:Hshape;
+    cbn [length karr_nth] in Hentries, Hzero; [lia|].
+  subst z. eapply karr_run_state_entries; [exact Hstate|].
+  apply in_flat_map. exists row. split; [exact Hrow|].
+  rewrite Hshape. now left.
+Qed.
+
+(** Failing a pivot on nonempty rows exposes a zero source minor. *)
+Lemma karr_run_state_no_pivot_zero : forall width cols original previous
+    pivot_rows pivot_columns head columns labels rows,
+  karr_run_state width (S cols) original previous pivot_rows pivot_columns
+    (head :: columns) labels rows ->
+  rows <> [] -> karr_pivot rows = None ->
+  In 0%Z (karr_signed_minors width original).
+Proof.
+  intros width cols original previous pivot_rows pivot_columns head columns
+    labels [|row rows] Hstate Hnonempty Hnone; [contradiction|].
+  pose proof (karr_pivot_none (row :: rows) Hnone) as Hheads.
+  apply Forall_cons_iff in Hheads as [Hzero _].
+  assert (Hcoeff : kcoeff row <> []).
+  { unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [_ [Hwidth _]]]].
+    apply Forall_cons_iff in Hwidth as [Hrow _].
+    intro Hempty. rewrite Hempty in Hrow. cbn [length] in Hrow. lia. }
+  eapply karr_run_state_zero_head; [exact Hstate|now left|].
+  now rewrite karr_row_entries_head.
+Qed.
+
+(** The concrete recorded run contains only source minors under the seed-zero condition. *)
+Lemma karr_run_state_record : forall width original,
+  (2 <= length original -> In 0%Z (karr_signed_minors width original)) ->
+  forall cols previous pivot_rows pivot_columns columns labels rows z,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows ->
+    In z (snd (karr_bareiss_record cols previous rows)) ->
+    In z (karr_signed_minors width original).
+Proof.
+  intros width original Hzero_two cols. induction cols as [|cols IH];
+    intros previous pivot_rows pivot_columns columns labels rows z Hstate Hin.
+  - cbn [karr_bareiss_record snd] in Hin.
+    eapply karr_run_state_entries; eauto.
+  - destruct columns as [|head columns].
+    { unfold karr_run_state in Hstate.
+      destruct Hstate as [_ [_ [_ [_ [_ [Hcolumns _]]]]]].
+      cbn [length] in Hcolumns. lia. }
+    cbn [karr_bareiss_record] in Hin.
+    destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+    + set (g := fun row => karr_reduce previous (karr_head pivot)
+        (karr_head row) pivot row).
+      set (reduced := map g rest).
+      change (map (fun row => karr_reduce previous (karr_head pivot)
+        (karr_head row) pivot row) rest) with reduced in Hin.
+      destruct (karr_bareiss_record cols (karr_head pivot)
+        (map karr_tail reduced)) as [result history] eqn:Hrun.
+      cbn [snd] in Hin.
+      destruct (karr_run_state_pivot width cols original previous pivot_rows
+        pivot_columns head columns labels rows pivot rest Hstate Hselect)
+        as [origin [remaining Hnext]].
+      assert (Hnext_rows : map karr_tail reduced =
+        map (fun row => karr_tail (g row)) rest).
+      { unfold reduced. now rewrite map_map. }
+      unfold g in Hnext_rows. rewrite <- Hnext_rows in Hnext.
+      assert (Hzero_rest : rest <> [] -> In 0%Z
+        (karr_signed_minors width original)).
+      { intro Hrest. apply Hzero_two.
+        unfold karr_run_state in Hstate.
+        destruct Hstate as [_ [_ [Hlabels [_ [_ [_ [_ [Hpartition _]]]]]]]].
+        pose proof (Permutation_length Hpartition) as Horiginal.
+        pose proof (Permutation_length
+          (proj2 (karr_pivot_some rows pivot rest Hselect))) as Hrow_count.
+        rewrite length_app in Horiginal. cbn [length] in Hrow_count.
+        destruct rest as [|first rest]; [contradiction|].
+        cbn [length] in Hrow_count. lia. }
+      apply in_app_iff in Hin as [Hhere|Hother].
+      * eapply karr_run_state_entries; [exact Hstate|exact Hhere].
+      * apply in_app_iff in Hother as [Hraw|Hother].
+        -- apply in_flat_map in Hraw as [reduced_row [Hreduced_row Hzrow]].
+           apply in_map_iff in Hreduced_row as [source [Heq Hsource]].
+           subst reduced_row.
+           pose proof (proj2 (karr_pivot_some rows pivot rest Hselect))
+             as Hrows_perm.
+           unfold karr_run_state in Hstate.
+           destruct Hstate as [_ [_ [_ [Hcoeff _]]]].
+           pose proof (Permutation_Forall Hrows_perm Hcoeff) as Hselected.
+           apply Forall_cons_iff in Hselected as [Hp_coeff Hrest_coeff].
+           pose proof (proj1 (Forall_forall _ _) Hrest_coeff source Hsource)
+             as Hsource_coeff.
+           cbn beta in Hsource_coeff.
+           assert (Hreduced_nonempty : kcoeff (g source) <> []).
+           { unfold g. intro Hempty.
+             pose proof (karr_reduce_width previous (karr_head pivot)
+               (karr_head source) pivot source ltac:(lia)) as Hwidth.
+             rewrite Hempty in Hwidth. cbn [length] in Hwidth. lia. }
+           rewrite (karr_row_entries_zero_tail (g source)
+             Hreduced_nonempty) in Hzrow
+             by (unfold g; apply karr_reduce_head_zero).
+           destruct Hzrow as [Hzero|Htail].
+           ++ subst z. apply Hzero_rest.
+              destruct rest; [contradiction|discriminate].
+           ++ eapply karr_run_state_entries; [exact Hnext|].
+              apply in_flat_map. exists (karr_tail (g source)). split.
+              ** apply in_map_iff. exists (g source). split;
+                   [reflexivity|apply in_map; exact Hsource].
+              ** exact Htail.
+        -- apply in_app_iff in Hother as [Hhistory|Houtput].
+           ++ eapply IH; [exact Hnext|]. now rewrite Hrun.
+           ++ apply in_flat_map in Houtput as [output [Houtput Hzrow]].
+              cbn [List.In] in Houtput.
+              destruct Houtput as [Hpivot|Hrestored].
+              ** subst output.
+                 eapply karr_run_state_entries; [exact Hstate|].
+                 apply in_flat_map. exists pivot. split; [|exact Hzrow].
+                 eapply Permutation_in;
+                   [apply Permutation_sym, (proj2
+                     (karr_pivot_some rows pivot rest Hselect))|now left].
+              ** apply in_map_iff in Hrestored as [output' [Heq Hresult]].
+                 subst output. rewrite karr_row_entries_restore in Hzrow.
+                 destruct Hzrow as [Hzero|Htail].
+                 --- subst z. apply Hzero_rest.
+                     intro Hempty. subst rest. cbn [map] in Hrun.
+                     rewrite karr_bareiss_record_empty in Hrun.
+                     inversion Hrun; subst. contradiction.
+                 --- apply IH with (previous := karr_head pivot)
+                       (pivot_rows := pivot_rows ++ [origin])
+                       (pivot_columns := pivot_columns ++ [head])
+                       (columns := columns) (labels := remaining)
+                       (rows := map karr_tail reduced);
+                       [exact Hnext|].
+                     rewrite Hrun.
+                     eapply karr_bareiss_record_output; eauto.
+                     apply in_flat_map. now exists output'.
+    + destruct (karr_bareiss_record cols previous (map karr_tail rows))
+        as [result history] eqn:Hrun.
+      cbn [snd] in Hin.
+      pose proof (karr_run_state_skip width cols original previous pivot_rows
+        pivot_columns head columns labels rows Hstate) as Hnext.
+      apply in_app_iff in Hin as [Hhere|Hother].
+      * eapply karr_run_state_entries; [exact Hstate|exact Hhere].
+      * apply in_app_iff in Hother as [Hhistory|Houtput].
+        -- eapply IH; [exact Hnext|]. now rewrite Hrun.
+        -- apply in_flat_map in Houtput as [output [Houtput Hzrow]].
+           apply in_map_iff in Houtput as [source [Heq Hsource]].
+           subst output. rewrite karr_row_entries_restore in Hzrow.
+           destruct Hzrow as [Hzero|Htail].
+           ++ subst z. eapply karr_run_state_no_pivot_zero;
+                [exact Hstate| |exact Hselect].
+              intro Hempty. subst rows. cbn [map] in Hrun.
+              rewrite karr_bareiss_record_empty in Hrun.
+              inversion Hrun; subst. contradiction.
+           ++ eapply IH; [exact Hnext|]. rewrite Hrun.
+              eapply karr_bareiss_record_output; eauto.
+              apply in_flat_map. now exists source.
 Qed.
 
 (** Checked division preserves a zero coordinate in every branch. *)
@@ -1100,6 +5112,61 @@ Proof.
   - constructor; [exact Hwidth|]. apply Forall_forall. intros r Hin.
     apply in_map_iff in Hin as [s [Hsame Hin]]. subst r.
     rewrite karr_restore_width, (proj1 (Forall_forall _ _) IH s Hin). reflexivity.
+Qed.
+
+(** The recorded run returns rows with the input coefficient width. *)
+Lemma karr_bareiss_record_width : forall cols previous rows,
+  Forall (fun r => length (kcoeff r) = cols) rows ->
+  Forall (fun r => length (kcoeff r) = cols)
+    (fst (karr_bareiss_record cols previous rows)).
+Proof.
+  intros cols previous rows Hwidth.
+  rewrite karr_bareiss_record_value.
+  apply karr_echelon_width, karr_bareiss_echelon. exact Hwidth.
+Qed.
+
+(** Bareiss elimination preserves each multiplier-vector width. *)
+Lemma karr_bareiss_weight_width : forall cols previous rows mlen,
+  Forall (fun r => length (kcoeff r) = cols) rows ->
+  Forall (fun r => length (kweight r) = mlen) rows ->
+  Forall (fun r => length (kweight r) = mlen)
+    (karr_bareiss cols previous rows).
+Proof.
+  intro cols. induction cols as [|cols IH];
+    intros previous rows mlen Hcoeff Hweight; [exact Hweight|].
+  cbn [karr_bareiss]. destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+  - destruct (karr_pivot_some _ _ _ Hselect) as [_ Hperm].
+    pose proof (Permutation_Forall Hperm Hcoeff) as Hselected_coeff.
+    pose proof (Permutation_Forall Hperm Hweight) as Hselected_weight.
+    apply Forall_cons_iff in Hselected_coeff as [Hpcoeff Hrestcoeff].
+    apply Forall_cons_iff in Hselected_weight as [Hpweight Hrestweight].
+    constructor; [exact Hpweight|]. apply Forall_map.
+    apply IH.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      pose proof (proj1 (Forall_forall _ _) Hrestcoeff r Hr) as Hrcoeff.
+      apply karr_tail_width.
+      rewrite karr_reduce_width; [exact Hrcoeff|].
+      cbn beta in Hrcoeff. lia.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      pose proof (proj1 (Forall_forall _ _) Hrestcoeff r Hr) as Hrcoeff.
+      pose proof (proj1 (Forall_forall _ _) Hrestweight r Hr) as Hrweight.
+      cbn beta in Hrcoeff, Hrweight.
+      assert (Hsame_coeff : length (kcoeff r) = length (kcoeff pivot)) by lia.
+      assert (Hsame_weight : length (kweight r) = length (kweight pivot)) by lia.
+      pose proof (karr_weight_width_of_entries
+        (karr_reduce previous (karr_head pivot) (karr_head r) pivot r) r
+        (karr_reduce_width previous (karr_head pivot) (karr_head r)
+          pivot r Hsame_coeff)
+        (karr_reduce_entries_width previous (karr_head pivot) (karr_head r)
+          pivot r Hsame_coeff Hsame_weight)) as Hreduced.
+      cbn [karr_tail kweight]. lia.
+  - apply Forall_map. apply IH.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      pose proof (proj1 (Forall_forall _ _) Hcoeff r Hr) as Hrcoeff.
+      now apply karr_tail_width.
+    + apply Forall_map, Forall_forall. intros r Hr.
+      cbn [karr_tail kweight].
+      exact (proj1 (Forall_forall _ _) Hweight r Hr).
 Qed.
 
 (** Reducing a target against equally wide basis rows preserves its width. *)
@@ -4342,6 +8409,52 @@ Module Karr (X : KEY) (L : LANG) (N : NUM_VIEW L)
     - apply hull_right_width.
   Qed.
 
+  (** Each lifted seed keeps one multiplier slot per source row. *)
+  Lemma hull_left_weight_length : forall xs total index P,
+    Forall (fun row => length (kweight row) = total)
+      (hull_left xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|row P IH]; intro index; [constructor|].
+    cbn [hull_left]. destruct (lrel row); [constructor|];
+      try apply IH.
+    cbn [kweight]. apply karr_unit_length.
+  Qed.
+
+  (** The right lifted seeds use the same source multiplier slots. *)
+  Lemma hull_right_weight_length : forall xs total index P,
+    Forall (fun row => length (kweight row) = total)
+      (hull_right xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|row P IH]; intro index; [constructor|].
+    cbn [hull_right]. destruct (lrel row); [constructor|];
+      try apply IH.
+    cbn [kweight]. apply karr_unit_length.
+  Qed.
+
+  (** Lifted augmented rows share one full matrix width. *)
+  Lemma hull_seed_entries_width : forall xs total left_index right_index P Q,
+    Forall (fun row => length (karr_row_entries row) =
+      2 * length xs + total + 4)
+      (hull_left xs total left_index P ++ hull_right xs total right_index Q).
+  Proof.
+    intros xs total left_index right_index P Q.
+    pose proof (hull_seed_width xs total left_index right_index P Q)
+      as Hcoeff.
+    assert (Hweight : Forall (fun row => length (kweight row) = total)
+      (hull_left xs total left_index P ++ hull_right xs total right_index Q)).
+    { apply Forall_app. split.
+      - apply hull_left_weight_length.
+      - apply hull_right_weight_length. }
+    apply Forall_forall. intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hin) as Hcoeff_row.
+    pose proof (proj1 (Forall_forall _ _) Hweight row Hin) as Hweight_row.
+    unfold karr_row_entries. rewrite !length_app. cbn [length].
+    rewrite length_app. cbn [length].
+    rewrite Hcoeff_row, Hweight_row. lia.
+  Qed.
+
   Lemma hull_seed_zero_right : forall xs total left_index right_index P Q,
     Forall (fun r => kright r = 0%Z)
       (hull_left xs total left_index P ++ hull_right xs total right_index Q).
@@ -6756,6 +10869,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia.
   Qed.
 
+  Lemma T_karr_zero_test_left : forall z, (Z.T_eqb 0 z <= 2)%N.
+  Proof.
+    intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia.
+  Qed.
+
   (** The coefficient filter retains exactly the nonzero entries. *)
   Definition karr_nonzero (p : X.t * Z) : bool := negb (Z.eqb (snd p) 0).
 
@@ -7493,12 +11611,68 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + now right.
   Qed.
 
+  Lemma karr_vars_fold_support : forall xs acc x,
+    In x (fold_left (fun acc y =>
+      if existsb (X.eqb y) acc then acc else y :: acc) xs acc) ->
+    In x acc \/ In x xs.
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros acc x Hin;
+      cbn [fold_left] in Hin.
+    - now left.
+    - specialize (IH _ _ Hin).
+      destruct (existsb (X.eqb y) acc); simpl in *; intuition congruence.
+  Qed.
+
+  Lemma karr_vars_fold_nodup : forall xs acc,
+    NoDup acc -> NoDup (fold_left (fun acc y =>
+      if existsb (X.eqb y) acc then acc else y :: acc) xs acc).
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros acc Hacc;
+      cbn [fold_left].
+    - exact Hacc.
+    - destruct (existsb (X.eqb y) acc) eqn:Hseen.
+      + now apply IH.
+      + apply IH. constructor; [|exact Hacc].
+        intro Hy. assert (Htrue : existsb (X.eqb y) acc = true).
+        { apply existsb_exists. exists y. split; [exact Hy|].
+          destruct (X.eqb_spec y y); congruence. }
+        congruence.
+  Qed.
+
+  Lemma karr_vars_of_nodup : forall P, NoDup (vars_of P).
+  Proof.
+    intro P. unfold vars_of. apply karr_vars_fold_nodup. constructor.
+  Qed.
+
+  Lemma karr_vars_of_support : forall P x,
+    In x (vars_of P) ->
+    exists r, In r P /\ In x (map fst (lhs r)).
+  Proof.
+    intros P x Hx. unfold vars_of in Hx.
+    apply karr_vars_fold_support in Hx.
+    destruct Hx as [Hnone|Hraw]; [contradiction|].
+    now apply in_flat_map in Hraw.
+  Qed.
+
   (** The public source dimension contains every raw row variable. *)
   Lemma karr_vars_of_contains : forall P r x,
     In r P -> In x (map fst (lhs r)) -> In x (vars_of P).
   Proof.
     intros P r x Hr Hx. unfold vars_of. apply karr_vars_fold_contains. right.
     apply in_flat_map. exists r. auto.
+  Qed.
+
+  Lemma karr_vars_of_cons_bound : forall P c,
+    length (vars_of (c :: P)) <= length (vars_of P) + length (lhs c).
+  Proof.
+    intros P c. rewrite <- (length_map fst (lhs c)).
+    rewrite <- length_app. apply NoDup_incl_length.
+    - apply karr_vars_of_nodup.
+    - intros x Hx. destruct (karr_vars_of_support (c :: P) x Hx)
+        as [r [[Hr|Hr] Hterm]].
+      + subst r. apply in_or_app. right. exact Hterm.
+      + apply in_or_app. left.
+        eapply karr_vars_of_contains; eassumption.
   Qed.
 
   (** Unique executable coordinates fit the dimension declared by the signature. *)
@@ -7553,6 +11727,77 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     unfold nell, ell. cbn [rows_of]. lia.
   Qed.
 
+  (** A common row length bounds the total number of raw occurrences. *)
+  Lemma karr_terms_rows_bound : forall P dim,
+    Forall (fun r => length (lhs r) <= dim) P ->
+    terms (Reached P) <= length P * dim.
+  Proof.
+    intros P dim Hrows. induction Hrows as [|r P Hrow Htail IH].
+    - cbn [terms rows_of map fold_right length]. lia.
+    - change (length (lhs r) + terms (Reached P) <= S (length P) * dim).
+      nia.
+  Qed.
+
+  (** Normal source rows give a quadratic bound on their raw occurrences. *)
+  Lemma karr_normal_terms_bound : forall P,
+    normal P -> terms (Reached P) <= length P * length (vars_of P).
+  Proof.
+    intros P Hnormal. apply karr_terms_rows_bound.
+    apply Forall_forall. intros r Hr.
+    rewrite <- (length_map fst (lhs r)).
+    apply NoDup_incl_length.
+    - exact (proj1 (Forall_forall _ _) Hnormal r Hr).
+    - intros x Hx. eapply karr_vars_of_contains; eassumption.
+  Qed.
+
+  (** A quadratic occurrence count contributes only two dimension logarithms. *)
+  Lemma karr_log_square_bound : forall count dim,
+    count <= dim * dim ->
+    Nat.log2 count <= 2 * (Nat.log2 dim + 1).
+  Proof.
+    intros count dim Hcount.
+    pose proof (karr_log_upper dim) as Hbase.
+    assert (Hsquare : dim ^ 2 < (2 ^ (Nat.log2 dim + 1)) ^ 2).
+    { apply Nat.pow_lt_mono_l; lia. }
+    assert (Hpower : count < (2 ^ (Nat.log2 dim + 1)) ^ 2).
+    { rewrite Nat.pow_2_r in Hsquare. nia. }
+    rewrite <- Nat.pow_mul_r in Hpower.
+    pose proof (Nat.log2_le_mono count (2 ^ ((Nat.log2 dim + 1) * 2))
+      (Nat.lt_le_incl _ _ Hpower)) as Hlog.
+    rewrite Nat.log2_pow2 in Hlog by lia. lia.
+  Qed.
+
+  (** Normal input gives a logarithmic raw occurrence width in its dimension. *)
+  Lemma karr_normal_terms_log : forall P,
+    normal P -> Nat.log2 (terms (Reached P)) <=
+      2 * (Nat.log2 (n (Reached P) + 1) + 1).
+  Proof.
+    intros P Hnormal.
+    pose proof (karr_normal_terms_bound P Hnormal) as Hterms.
+    assert (Hsquare : terms (Reached P) <= n (Reached P) * n (Reached P)).
+    { unfold n. cbn [rows_of]. nia. }
+    pose proof (karr_log_square_bound _ _ Hsquare) as Hlog.
+    pose proof (Nat.log2_le_mono (n (Reached P)) (n (Reached P) + 1)
+      ltac:(lia)) as Hmono. lia.
+  Qed.
+
+  (** Normal source rows fit the public dimension and maximum input widths. *)
+  Lemma karr_normal_source_envelope : forall P,
+    normal P -> Forall (fun r => length (lhs r) <= n (Reached P) /\
+      C.row_key_bits r <= ell (Reached P) /\
+      C.row_bits r <= ell (Reached P)) P.
+  Proof.
+    intros P Hnormal. apply Forall_forall. intros r Hr.
+    assert (Hterms : length (lhs r) <= length (vars_of P)).
+    { rewrite <- (length_map fst (lhs r)).
+      apply NoDup_incl_length.
+      - exact (proj1 (Forall_forall _ _) Hnormal r Hr).
+      - intros x Hx. eapply karr_vars_of_contains; eassumption. }
+    pose proof (karr_max_member _ C.row_key_bits 0 P r Hr) as Hkeys.
+    pose proof (karr_max_member _ C.row_bits 0 P r Hr) as Hbits.
+    unfold n, ell. cbn [rows_of]. repeat split; lia.
+  Qed.
+
   (** A coefficient in a row with unique keys never adds distinct occurrences together. *)
   Lemma karr_coefficient_normal_bits : forall xs x bits,
     NoDup (map fst xs) -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
@@ -7576,6 +11821,122 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     length (kweight r) <= mlen /\
     Forall (fun z => Z.size_nat z <= bits) (kweight r) /\
     Z.size_nat (kscale r) <= bits.
+
+  (** Larger dimensions and bit limits preserve a row envelope. *)
+  Lemma karr_row_envelope_resize : forall dim mlen bits dim' mlen' bits' r,
+    dim <= dim' -> mlen <= mlen' -> bits <= bits' ->
+    karr_row_envelope dim mlen bits r ->
+    karr_row_envelope dim' mlen' bits' r.
+  Proof.
+    intros dim mlen bits dim' mlen' bits' r Hdim Hmlen Hbits
+      [Hcoeff [Hcoeff_bits [Hrhs [Hweight [Hweight_bits Hscale]]]]].
+    unfold karr_row_envelope. repeat split.
+    - lia.
+    - eapply Forall_impl; [|exact Hcoeff_bits]. intros z Hz; cbn beta in Hz; lia.
+    - lia.
+    - lia.
+    - eapply Forall_impl; [|exact Hweight_bits]. intros z Hz; cbn beta in Hz; lia.
+    - lia.
+  Qed.
+
+  (** A bounded augmented vector gives the componentwise row envelope. *)
+  Lemma karr_row_envelope_entries : forall dim mlen bits r,
+    length (kcoeff r) <= dim -> length (kweight r) <= mlen ->
+    Forall (fun z => Z.size_nat z <= bits) (karr_row_entries r) ->
+    karr_row_envelope dim mlen bits r.
+  Proof.
+    intros dim mlen bits r Hcoeff_length Hweight_length Hentries.
+    unfold karr_row_entries in Hentries.
+    apply Forall_app in Hentries as [Hcoeff Hright_tail].
+    apply Forall_cons_iff in Hright_tail as [Hright Hweight_tail].
+    apply Forall_app in Hweight_tail as [Hweight Hscale_tail].
+    apply Forall_cons_iff in Hscale_tail as [Hscale _].
+    unfold karr_row_envelope. repeat split; assumption.
+  Qed.
+
+  (** The maintained minor law supplies one envelope for every live row. *)
+  Lemma karr_run_state_envelope : forall width cols original previous
+      pivot_rows pivot_columns columns labels rows budget bits,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows ->
+    length columns <= budget ->
+    (forall z, In z (karr_signed_minors width original) -> Z.size_nat z <= bits) ->
+    Forall (karr_row_envelope budget budget bits) rows.
+  Proof.
+    intros width cols original previous pivot_rows pivot_columns columns labels
+      rows budget bits Hstate Hbudget Hbits.
+    pose proof (karr_run_state_bits width cols original previous pivot_rows
+      pivot_columns columns labels rows bits Hstate Hbits) as Hrows_bits.
+    unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [_ [Hcoeff [Hentries [Hcols _]]]]]].
+    apply Forall_forall. intros row Hrow.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hrow) as Hcoeff_length.
+    pose proof (proj1 (Forall_forall _ _) Hentries row Hrow) as Hentries_length.
+    pose proof (proj1 (Forall_forall _ _) Hrows_bits row Hrow) as Hrow_bits.
+    cbn beta in Hcoeff_length, Hentries_length, Hrow_bits.
+    apply karr_row_envelope_entries.
+    - lia.
+    - unfold karr_row_entries in Hentries_length.
+      cbn [length] in Hentries_length.
+      rewrite !length_app in Hentries_length. cbn [length] in Hentries_length.
+      rewrite length_app in Hentries_length. cbn [length] in Hentries_length. lia.
+    - exact Hrow_bits.
+  Qed.
+
+  (** Certificate traversal fits a row count times the largest per-row charge. *)
+  Lemma karr_csize_envelope : forall P ms dim keys bits mbits,
+    Forall (fun r => length (lhs r) <= dim /\
+      C.row_key_bits r <= keys /\ C.row_bits r <= bits) P ->
+    Forall (fun m => Z.size_nat m <= mbits) ms ->
+    C.csize P ms <= (length P + length ms + 1) * (dim + 1) *
+      (keys + (mbits + 1) * (bits + 1) + 1).
+  Proof.
+    intro P. induction P as [|p P IH]; intros [|m ms] dim keys bits mbits Hrows Hmult;
+      cbn [C.csize length]; try nia.
+    inversion Hrows as [|? ? [Hlen [Hkey Hbits]] Htail]; subst.
+    inversion Hmult as [|? ? Hm Hmult_tail]; subst.
+    pose proof (IH ms dim keys bits mbits Htail Hmult_tail) as Hrest.
+    assert (Hterm : (length (lhs p) + 1) *
+        (C.row_key_bits p + (Z.size_nat m + 1) * (C.row_bits p + 1)) <=
+        (dim + 1) * (keys + (mbits + 1) * (bits + 1) + 1)).
+    { apply Nat.mul_le_mono; [lia|].
+      assert (Hprod : (Z.size_nat m + 1) * (C.row_bits p + 1) <=
+        (mbits + 1) * (bits + 1)) by (apply Nat.mul_le_mono; lia).
+      lia. }
+    nia.
+  Qed.
+
+  (** Certificate bit width is bounded by multiplier and source-row widths. *)
+  Lemma karr_cbits_envelope : forall P ms bits mbits,
+    Forall (fun r => C.row_bits r <= bits) P ->
+    Forall (fun m => Z.size_nat m <= mbits) ms ->
+    C.cbits P ms <= mbits + bits + Nat.log2 (length P) + 1.
+  Proof.
+    intros P ms bits mbits Hrows Hmult.
+    unfold C.cbits.
+    assert (Hmax : fold_right Nat.max 0
+        (map (fun pm => Z.size_nat (snd pm) + C.row_bits (fst pm))
+          (List.combine P ms)) <= mbits + bits).
+    { apply karr_max_bound; [lia|].
+      apply Forall_forall. intros [row m] Hin.
+      pose proof (in_combine_l _ _ _ _ Hin) as Hrow.
+      pose proof (in_combine_r _ _ _ _ Hin) as Hm.
+      pose proof (proj1 (Forall_forall _ _) Hrows row Hrow) as Hbits.
+      pose proof (proj1 (Forall_forall _ _) Hmult m Hm) as Hmbits.
+      cbn in Hbits, Hmbits.
+      cbn [fst snd]. lia. }
+    lia.
+  Qed.
+
+  (** A bounded conclusion row has a bounded checker size. *)
+  Lemma karr_lsize_envelope : forall row dim keys bits,
+    length (lhs row) <= dim -> C.row_key_bits row <= keys ->
+    C.row_bits row <= bits ->
+    C.lsize row <= (dim + 1) * (keys + bits + 1).
+  Proof.
+    intros row dim keys bits Hlength Hkeys Hbits.
+    unfold C.lsize. apply Nat.mul_le_mono; lia.
+  Qed.
 
   (** Increasing the arithmetic budget preserves a row envelope. *)
   Lemma karr_row_envelope_mono : forall dim mlen bits bits' r,
@@ -7670,6 +12031,27 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     split; [now apply karr_cross_bits|]. now apply karr_cross_entry_bits.
   Qed.
 
+  (** The undivided crossed row has one-step bit growth in every field. *)
+  Lemma karr_cross_row_envelope : forall dim mlen bits a b p r,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    karr_row_envelope dim mlen (2 * bits + 1)
+      (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+        (a * kright r - b * kright p)%Z
+        (karr_cross a b (kweight r) (kweight p))
+        (a * kscale r - b * kscale p)%Z).
+  Proof.
+    intros dim mlen bits a b p r Ha Hb
+      [Hpd [Hpc [Hpr [Hpm [Hpw Hps]]]]]
+      [Hrd [Hrc [Hrr [Hrm [Hrw Hrs]]]]].
+    unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+    split; [eapply Nat.le_trans; [apply karr_cross_length_le|exact Hrd]|].
+    split; [now apply karr_cross_bits|].
+    split; [now apply karr_cross_entry_bits|].
+    split; [eapply Nat.le_trans; [apply karr_cross_length_le|exact Hrm]|].
+    split; [now apply karr_cross_bits|]. now apply karr_cross_entry_bits.
+  Qed.
+
   (** Deleting and restoring the leading coordinate preserves bounded nonempty width. *)
   Lemma karr_restore_tail_envelope : forall dim mlen bits r, 1 <= dim ->
     karr_row_envelope dim mlen bits r ->
@@ -7748,6 +12130,18 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros xs total index P. revert index. induction P as [|p P IH]; intro index;
       cbn [seed_rows length]; [lia|].
     specialize (IH (S index)). destruct (lrel p); cbn [length]; lia.
+  Qed.
+
+  (** Every emitted seed carries one multiplier slot per source row. *)
+  Lemma karr_seed_weight_width : forall xs total index P,
+    Forall (fun r => length (kweight r) = total)
+      (seed_rows xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intro index; [constructor|].
+    cbn [seed_rows]. destruct (lrel r).
+    - constructor; [cbn [kweight]; apply karr_unit_length|apply IH].
+    - apply IH.
   Qed.
 
   (** Dense lookup of a normal row preserves its declared arithmetic width. *)
@@ -7859,6 +12253,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite karr_nat_square. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.
 
+  (** Signed division is quadratic in a common dividend and divisor bit bound. *)
+  Lemma T_karr_division_bounded : forall z d bits,
+    Z.size_nat z <= bits -> Z.size_nat d <= bits ->
+    (Z.T_div z d <= 64 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros z d bits Hz Hd.
+    pose proof (Z.T_div_le z d) as Hdiv.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
+  Qed.
+
   (** Exactness testing pays the actual remainder clock and a constant zero test. *)
   Lemma T_karr_divisible_one_bounded : forall z bits, Z.size_nat z <= bits ->
     (T_karr_divisible 1 z <= 64 * N.of_nat ((bits + 1)^2))%N.
@@ -7868,6 +12273,19 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (T_karr_zero_test (z mod 1)) as Hzero.
     time_unfold T_karr_divisible. time_simpl.
     rewrite karr_nat_square. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Exactness testing is quadratic in the common signed operand width. *)
+  Lemma T_karr_divisible_bounded : forall d z bits,
+    Z.size_nat d <= bits -> Z.size_nat z <= bits ->
+    (T_karr_divisible d z <= 64 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros d z bits Hd Hz.
+    pose proof (Z.T_modulo_le z d) as Hmod.
+    pose proof (T_karr_zero_test (z mod d)) as Hzero.
+    time_unfold T_karr_divisible. time_simpl.
+    rewrite karr_nat_square. rewrite !Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
   Qed.
 
   (** Universal Boolean traversal needs callback bounds only for present entries. *)
@@ -7880,6 +12298,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - pose proof (Hf x (or_introl eq_refl)) as Hhead.
       specialize (IH (fun y Hy => Hf y (or_intror Hy))).
       time_unfold List.T_forallb. cbn [length]. time_simpl. nia.
+  Qed.
+
+  (** A zero-prefix test visits every coefficient at constant cost. *)
+  Lemma T_karr_zero_forallb_bounded : forall zs,
+    (List.T_forallb (Z.eqb 0) (fun z => Z.T_eqb 0 z) zs <=
+      4 * N.of_nat (length zs + 1))%N.
+  Proof.
+    intro zs. pose proof (karr_T_forallb_members Z (Z.eqb 0)
+      (fun z => Z.T_eqb 0 z) 2 zs
+      ltac:(intros z Hz; apply T_karr_zero_test_left)) as Hscan.
+    rewrite Nat2N.inj_add. cbn [N.of_nat]. lia.
   Qed.
 
 
@@ -7907,6 +12336,38 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     fold work in Hrighttime, Hscaletime |- *.
     time_unfold T_karr_exact. time_simpl.
     change (fun z : Z => T_karr_divisible 1 z) with (T_karr_divisible 1).
+    rewrite !Nat2N.inj_add. cbn [N.of_nat].
+    clear -Hdim Hmlen Hcoefftime Hmulttime Hrighttime Hscaletime Hpositive Hdivisor.
+    clearbody work. nia.
+  Qed.
+
+  (** Checking exact division scans both vectors at a common operand width. *)
+  Lemma T_karr_exact_bounded : forall dim mlen bits d r,
+    Z.size_nat d <= bits -> karr_row_envelope dim mlen bits r ->
+    (T_karr_exact d r <=
+      256 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d r Hd
+      [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    set (work := N.of_nat ((bits + 1)^2)).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    assert (Hcoefftime : (List.T_forallb (karr_divisible d) (T_karr_divisible d)
+      (kcoeff r) <= (64 * work + 2) * N.of_nat (length (kcoeff r)) + 1)%N).
+    { apply karr_T_forallb_members. intros z Hz.
+      apply T_karr_divisible_bounded; [exact Hd|].
+      exact (proj1 (Forall_forall _ _) Hcoeff z Hz). }
+    assert (Hmulttime : (List.T_forallb (karr_divisible d) (T_karr_divisible d)
+      (kweight r) <= (64 * work + 2) * N.of_nat (length (kweight r)) + 1)%N).
+    { apply karr_T_forallb_members. intros z Hz.
+      apply T_karr_divisible_bounded; [exact Hd|].
+      exact (proj1 (Forall_forall _ _) Hmult z Hz). }
+    pose proof (T_karr_divisible_bounded d (kright r) bits Hd Hrhs) as Hrighttime.
+    pose proof (T_karr_divisible_bounded d (kscale r) bits Hd Hscale) as Hscaletime.
+    pose proof (T_karr_zero_test d) as Hdivisor.
+    fold work in Hrighttime, Hscaletime |- *.
+    time_unfold T_karr_exact. time_simpl.
+    change (fun z : Z => T_karr_divisible d z) with (T_karr_divisible d).
     rewrite !Nat2N.inj_add. cbn [N.of_nat].
     clear -Hdim Hmlen Hcoefftime Hmulttime Hrighttime Hscaletime Hpositive Hdivisor.
     clearbody work. nia.
@@ -7945,6 +12406,40 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. nia.
   Qed.
 
+  (** Quotient construction scans both vectors at a common operand width. *)
+  Lemma T_karr_quotient_bounded : forall dim mlen bits d r,
+    Z.size_nat d <= bits -> karr_row_envelope dim mlen bits r ->
+    (T_karr_quotient d r <=
+      256 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d r Hd
+      [Hdim [Hcoeff [Hrhs [Hmlen [Hmult Hscale]]]]].
+    set (work := N.of_nat ((bits + 1)^2)).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    assert (Hcoefftime : (ListDef.T_map (fun z => (z / d)%Z)
+      (fun z => (1 + Z.T_div z d)%N) (kcoeff r) <=
+      (65 * work + 1) * N.of_nat (length (kcoeff r)) + 1)%N).
+    { apply karr_T_map_members. intros z Hz.
+      pose proof (T_karr_division_bounded z d bits
+        (proj1 (Forall_forall _ _) Hcoeff z Hz) Hd) as Hdiv.
+      fold work in Hdiv. lia. }
+    assert (Hmulttime : (ListDef.T_map (fun z => (z / d)%Z)
+      (fun z => (1 + Z.T_div z d)%N) (kweight r) <=
+      (65 * work + 1) * N.of_nat (length (kweight r)) + 1)%N).
+    { apply karr_T_map_members. intros z Hz.
+      pose proof (T_karr_division_bounded z d bits
+        (proj1 (Forall_forall _ _) Hmult z Hz) Hd) as Hdiv.
+      fold work in Hdiv. lia. }
+    pose proof (T_karr_division_bounded (kright r) d bits Hrhs Hd) as Hrighttime.
+    pose proof (T_karr_division_bounded (kscale r) d bits Hscale Hd) as Hscaletime.
+    fold work in Hrighttime, Hscaletime |- *.
+    time_unfold T_karr_quotient. time_simpl.
+    rewrite !Nat2N.inj_add. cbn [N.of_nat].
+    clear -Hdim Hmlen Hcoefftime Hmulttime Hrighttime Hscaletime Hpositive.
+    clearbody work. nia.
+  Qed.
+
   (** Guarding exact division is bounded by the sum of its check and quotient paths. *)
   Lemma T_karr_divide_one_bounded : forall dim mlen bits r,
     karr_row_envelope dim mlen bits r ->
@@ -7959,6 +12454,20 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
   Qed.
 
+  (** Guarded division costs the same quadratic budget for any bounded divisor. *)
+  Lemma T_karr_divide_bounded : forall dim mlen bits d r,
+    Z.size_nat d <= bits -> karr_row_envelope dim mlen bits r ->
+    (T_karr_divide d r <=
+      1024 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d r Hd Hrow.
+    pose proof (T_karr_exact_bounded dim mlen bits d r Hd Hrow) as Hcheck.
+    pose proof (T_karr_quotient_bounded dim mlen bits d r Hd Hrow) as Hdivide.
+    pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hpositive.
+    time_unfold T_karr_divide. destruct (karr_exact d r); time_simpl;
+      rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
   (** The first reduction charges two cross products and exact division by one. *)
   Lemma T_karr_reduce_one_bounded : forall dim mlen bits a b p r,
     Z.size_nat a <= bits -> Z.size_nat b <= bits ->
@@ -7970,6 +12479,38 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     pose proof (karr_reduce_one_envelope dim mlen bits a b p r Ha Hb Hp Hr) as Hraw.
     unfold karr_reduce in Hraw. rewrite karr_divide_one in Hraw.
     pose proof (T_karr_divide_one_bounded dim mlen (2 * bits + 1) _ Hraw) as Hdivide.
+    replace ((2 * bits + 1 + 1)^2) with (4 * (bits + 1)^2) in Hdivide
+      by (clear -bits; cbn [Nat.pow]; nia).
+    destruct Hp as [Hpd [Hpc [Hpr [Hpm [Hpw Hps]]]]].
+    destruct Hr as [Hrd [Hrc [Hrr [Hrm [Hrw Hrs]]]]].
+    pose proof (T_karr_cross_bounded a b (kcoeff r) (kcoeff p) bits Ha Hb Hrc Hpc)
+      as Hcoefftime.
+    pose proof (T_karr_cross_bounded a b (kweight r) (kweight p) bits Ha Hb Hrw Hpw)
+      as Hmulttime.
+    pose proof (T_karr_cross_entry_bounded a b (kright r) (kright p) bits Ha Hb Hrr Hpr)
+      as Hrighttime.
+    pose proof (T_karr_cross_entry_bounded a b (kscale r) (kscale p) bits Ha Hb Hrs Hps)
+      as Hscaletime.
+    rewrite Nat2N.inj_mul in Hdivide.
+    set (work := N.of_nat ((bits + 1)^2)) in *.
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    time_unfold T_karr_reduce. time_simpl.
+    clear -Hcoefftime Hmulttime Hrighttime Hscaletime Hdivide Hrd Hrm Hpositive.
+    clearbody work. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** A general pivot reduction charges crosses and exact guarded division. *)
+  Lemma T_karr_reduce_bounded : forall dim mlen bits d a b p r,
+    Z.size_nat d <= bits -> Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    (T_karr_reduce d a b p r <=
+      8192 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d a b p r Hd Ha Hb Hp Hr.
+    pose proof (karr_cross_row_envelope dim mlen bits a b p r Ha Hb Hp Hr) as Hraw.
+    pose proof (T_karr_divide_bounded dim mlen (2 * bits + 1) d _
+      ltac:(lia) Hraw) as Hdivide.
     replace ((2 * bits + 1 + 1)^2) with (4 * (bits + 1)^2) in Hdivide
       by (clear -bits; cbn [Nat.pow]; nia).
     destruct Hp as [Hpd [Hpc [Hpr [Hpm [Hpw Hps]]]]].
@@ -8025,6 +12566,46 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + time_simpl. cbn [length]. rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
   Qed.
 
+  (** The first-nonzero lookup tests each scanned coefficient once. *)
+  Lemma T_karr_first_bounded : forall entries,
+    (T_karr_first entries <= 16 * N.of_nat (length entries + 1))%N.
+  Proof.
+    intro entries. induction entries as [|z entries IH].
+    - time_unfold T_karr_first. cbn [length]. lia.
+    - pose proof (T_karr_zero_test z) as Hzero.
+      time_unfold T_karr_first. destruct (Z.eqb z 0).
+      + destruct (karr_first entries) as [[i a]|]; time_simpl;
+          cbn [length]; rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+      + time_simpl. cbn [length]. rewrite !Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** A dense coordinate lookup scans no more than the source row length. *)
+  Lemma T_karr_nth_bounded : forall index entries,
+    (T_karr_nth index entries <= 8 * N.of_nat (length entries + 1))%N.
+  Proof.
+    intro index. induction index as [|index IH]; intros [|z entries];
+      time_unfold T_karr_nth; cbn [length]; try lia.
+    pose proof (IH entries) as Htail.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
+  Qed.
+
+  (** Testing a full coefficient vector for zero costs one fixed scan per entry. *)
+  Lemma T_karr_zero_bounded : forall r,
+    (T_karr_zero r <= 8 * N.of_nat (length (kcoeff r) + 1))%N.
+  Proof.
+    intro r.
+    assert (Hzero : forall z, (Z.T_eqb 0 z <= 2)%N).
+    { intros [|p|p]; time_unfold Z.T_eqb; time_simpl; lia. }
+    pose proof (karr_T_forallb_members Z (Z.eqb 0)
+      (fun z => Z.T_eqb 0 z) 2 (kcoeff r)
+      (fun z _ => Hzero z)) as Hscan.
+    time_unfold T_karr_zero. time_unfold T_kcoeff.
+    change (fun z : Z => Z.T_eqb 0 z) with (fun z => Z.T_eqb 0 z).
+    rewrite Nat2N.inj_add. cbn [N.of_nat].
+    change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N.
+    lia.
+  Qed.
+
   (** A projection reduction removes the coordinate just eliminated by its cross product. *)
   Definition karr_projection_step (a : Z) (p r : karr_row) : karr_row :=
     karr_tail (karr_reduce 1 a (karr_head r) p r).
@@ -8053,6 +12634,28 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (16384 * work)%N by (unfold work; ring).
     time_unfold T_karr_projection_step. time_simpl.
     clear -Hreduce Hhead Htail Hpositive. clearbody work. nia.
+  Qed.
+
+  (** One general mapped pivot step includes its head, reduction and tail clocks. *)
+  Lemma T_karr_pivot_step_bounded : forall dim mlen bits d a p r,
+    Z.size_nat d <= bits -> Z.size_nat a <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    (4 + T_karr_head r +
+      T_karr_reduce d a (karr_head r) p r +
+      T_karr_tail (karr_reduce d a (karr_head r) p r) <=
+      16384 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d a p r Hd Ha Hp Hr.
+    pose proof (T_karr_reduce_bounded dim mlen bits d a (karr_head r) p r
+      Hd Ha (karr_head_bits dim mlen bits r Hr) Hp Hr) as Hreduce.
+    pose proof (T_karr_head_bounded r) as Hhead.
+    pose proof (T_karr_tail_bounded
+      (karr_reduce d a (karr_head r) p r)) as Htail.
+    assert (Hwork : (1 <= N.of_nat (dim + mlen + 1) *
+      N.of_nat ((bits + 1)^2))%N).
+    { assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hbits. nia. }
+    nia.
   Qed.
 
   (** The zero-column recursion has constant dispatch cost. *)
@@ -8125,6 +12728,237 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       cbn [karr_bareiss].
       clear -Hpositive Hpivot_time Htail Hrestore Hbase. clearbody work.
       rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** One arbitrary Bareiss column pays for its pivot, updates and restores. *)
+  Lemma T_karr_bareiss_stage_bounded : forall cols previous rows dim mlen bits,
+    Z.size_nat previous <= bits ->
+    Forall (karr_row_envelope dim mlen bits) rows ->
+    (T_karr_bareiss (S cols) previous rows <=
+      32768 * N.of_nat (length rows + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2) +
+      match karr_pivot rows with
+      | None => T_karr_bareiss cols previous (map karr_tail rows)
+      | Some (pivot, rest) =>
+          T_karr_bareiss cols (karr_head pivot)
+            (map (fun row => karr_tail
+              (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+              rest)
+      end)%N.
+  Proof.
+    intros cols previous rows dim mlen bits Hprevious Hrows.
+    set (work := (N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hbits. nia. }
+    pose proof (T_karr_pivot_bounded rows) as Hpivot_time.
+    time_unfold T_karr_bareiss.
+    destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+    - destruct (karr_pivot_some _ _ _ Hselect) as [_ Hperm].
+      assert (Hpermuted : Forall (karr_row_envelope dim mlen bits)
+        (pivot :: rest)).
+      { eapply Permutation_Forall; [exact Hperm|exact Hrows]. }
+      apply Forall_cons_iff in Hpermuted as [Hp Hrest].
+      pose proof (Permutation_length Hperm) as Hlength.
+      cbn [length] in Hlength.
+      pose proof (T_karr_head_bounded pivot) as Hhead.
+      set (step := fun row => karr_tail
+        (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)).
+      set (T_step := fun row => (1 + (T_karr_head row +
+        T_karr_reduce previous (karr_head pivot) (karr_head row) pivot row +
+        T_karr_tail
+          (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)))%N).
+      assert (Hstep : forall row, In row rest -> (T_step row <= 16384 * work)%N).
+      { intros row Hrow. unfold T_step.
+        pose proof (T_karr_pivot_step_bounded dim mlen bits previous
+          (karr_head pivot) pivot row Hprevious
+          (karr_head_bits dim mlen bits pivot Hp) Hp
+          (proj1 (Forall_forall _ _) Hrest row Hrow)) as Htime.
+        replace (16384 * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (16384 * work)%N in Htime
+          by (unfold work; ring).
+        clearbody work. nia. }
+      pose proof (karr_T_map_members karr_row karr_row step T_step
+        (16384 * work)%N rest Hstep) as Hstep_map.
+      pose proof (karr_T_map_members karr_row karr_row karr_restore T_karr_restore 8
+        (karr_bareiss cols (karr_head pivot) (map step rest))
+        (fun row _ => T_karr_restore_bounded row)) as Hrestore.
+      rewrite karr_bareiss_length, length_map in Hrestore.
+      time_simpl.
+      lazymatch goal with
+      | |- context [ListDef.T_map ?f ?Tf rest] =>
+        change f with step; change Tf with T_step
+      end.
+      change (fun row : karr_row => T_karr_restore row) with T_karr_restore.
+      fold step.
+      clear -Hpositive Hpivot_time Hlength Hhead Hstep_map Hrestore.
+      replace (32768 * N.of_nat (length rows + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+        (32768 * N.of_nat (length rows + 1) * work)%N
+        by (unfold work; ring).
+      clearbody work. clearbody step. clearbody T_step.
+      rewrite !Nat2N.inj_add in *.
+      rewrite Hlength in *.
+      rewrite !Nat2N.inj_succ in *.
+      change (N.of_nat 1) with 1%N in *.
+      set (n := N.of_nat (length rest)) in *.
+      clearbody n.
+      cbn [N.of_nat] in *.
+      replace (N.succ n) with (n + 1)%N in * by lia.
+      change (N.succ 0) with 1%N in *.
+      replace ((16384 * work + 1) * n)%N with
+        (16384 * (n * work) + n)%N in Hstep_map by ring.
+      replace (32768 * (n + 1 + 1) * work)%N with
+        (32768 * (n * work) + 65536 * work)%N by ring.
+      assert (Hvolume : (n <= n * work)%N).
+      { replace n with (n * 1)%N at 1 by ring.
+        now apply N.mul_le_mono_l. }
+      set (volume := (n * work)%N) in *.
+      set (pivot_cost := T_karr_pivot rows) in *.
+      set (head_cost := T_karr_head pivot) in *.
+      set (step_cost := ListDef.T_map step T_step rest) in *.
+      set (recursive_cost := T_karr_bareiss cols (karr_head pivot)
+        (map step rest)) in *.
+      set (restore_cost := ListDef.T_map karr_restore T_karr_restore
+        (karr_bareiss cols (karr_head pivot) (map step rest))) in *.
+      clearbody volume pivot_cost head_cost step_cost recursive_cost restore_cost.
+      lia.
+    - pose proof (karr_T_map_members karr_row karr_row karr_tail T_karr_tail 8 rows
+        (fun row _ => T_karr_tail_bounded row)) as Htail.
+      pose proof (karr_T_map_members karr_row karr_row karr_restore T_karr_restore 8
+        (karr_bareiss cols previous (map karr_tail rows))
+        (fun row _ => T_karr_restore_bounded row)) as Hrestore.
+      rewrite karr_bareiss_length, length_map in Hrestore.
+      time_simpl.
+      change (fun row : karr_row => T_karr_tail row) with T_karr_tail.
+      change (fun row : karr_row => T_karr_restore row) with T_karr_restore.
+      clear -Hpositive Hpivot_time Htail Hrestore.
+      rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *.
+      change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N in *.
+      replace (N.of_nat dim + N.of_nat mlen + 1)%N with
+        (N.of_nat (dim + mlen + 1))%N by lia.
+      set (n := N.of_nat (length rows)) in *.
+      clearbody n.
+      replace (32768 * (n + 1) * N.of_nat (dim + mlen + 1) *
+        N.of_nat ((bits + 1)^2))%N with
+        (32768 * ((n + 1) * work))%N in |- * by (unfold work; ring).
+      clearbody work.
+      assert (Hvolume : (n + 1 <= (n + 1) * work)%N).
+      { replace (n + 1)%N with ((n + 1) * 1)%N at 1 by ring.
+        now apply N.mul_le_mono_l. }
+      set (volume := ((n + 1) * work)%N) in *.
+      set (pivot_cost := T_karr_pivot rows) in *.
+      set (tail_cost := ListDef.T_map karr_tail T_karr_tail rows) in *.
+      set (recursive_cost := T_karr_bareiss cols previous (map karr_tail rows)) in *.
+      set (restore_cost := ListDef.T_map karr_restore T_karr_restore
+        (karr_bareiss cols previous (map karr_tail rows))) in *.
+      clearbody volume pivot_cost tail_cost recursive_cost restore_cost.
+      lia.
+  Qed.
+
+  (** One uniform charge covers each remaining column of a bounded run. *)
+  Definition karr_bareiss_stage_budget (budget bits : nat) : N :=
+    (32768 * N.of_nat (budget + 1) * N.of_nat (budget + budget + 1) *
+      N.of_nat ((bits + 1)^2))%N.
+
+  (** The partition in the run state bounds its live row count. *)
+  Lemma karr_run_state_row_count : forall width cols original previous
+      pivot_rows pivot_columns columns labels rows,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows -> length rows <= length original.
+  Proof.
+    intros width cols original previous pivot_rows pivot_columns columns labels
+      rows Hstate.
+    unfold karr_run_state in Hstate.
+    destruct Hstate as [_ [_ [Hlabels [_ [_ [_ [_ [Hpartition _]]]]]]]].
+    apply Permutation_length in Hpartition.
+    rewrite length_app in Hpartition. lia.
+  Qed.
+
+  (** Summing the stage charge follows the exact labeled elimination trace. *)
+  Lemma T_karr_bareiss_run_bounded : forall width cols original previous
+      pivot_rows pivot_columns columns labels rows budget bits,
+    karr_run_state width cols original previous pivot_rows pivot_columns
+      columns labels rows ->
+    length original <= budget -> length columns <= budget ->
+    (forall z, In z (karr_signed_minors width original) -> Z.size_nat z <= bits) ->
+    (T_karr_bareiss cols previous rows <=
+      N.of_nat cols * karr_bareiss_stage_budget budget bits + 4)%N.
+  Proof.
+    intros width cols. induction cols as [|cols IH];
+      intros original previous pivot_rows pivot_columns columns labels rows
+        budget bits Hstate Horiginal Hcolumns Hbits.
+    - pose proof (T_karr_bareiss_zero_bounded previous rows) as Hzero.
+      cbn [N.of_nat N.mul N.add]. exact Hzero.
+    - assert (Hcolumn_count : S cols <= length columns).
+      { unfold karr_run_state in Hstate.
+        destruct Hstate as [_ [_ [_ [_ [_ [Hcount _]]]]]]. exact Hcount. }
+      destruct columns as [|head columns]; [cbn [length] in Hcolumn_count; lia|].
+      pose proof (karr_run_state_previous_minor width (S cols) original
+        previous pivot_rows pivot_columns (head :: columns) labels rows Hstate)
+        as Hprevious_member.
+      pose proof (karr_run_state_envelope width (S cols) original previous
+        pivot_rows pivot_columns (head :: columns) labels rows budget bits Hstate
+        Hcolumns Hbits) as Hrows.
+      pose proof (T_karr_bareiss_stage_bounded cols previous rows budget budget
+        bits (Hbits previous Hprevious_member) Hrows) as Hstage.
+      assert (Hrow_count : length rows <= budget).
+      { pose proof (karr_run_state_row_count width (S cols) original previous
+          pivot_rows pivot_columns (head :: columns) labels rows Hstate).
+        lia. }
+      assert (Hstage_cost :
+        (32768 * N.of_nat (length rows + 1) *
+          N.of_nat (budget + budget + 1) * N.of_nat ((bits + 1)^2) <=
+          karr_bareiss_stage_budget budget bits)%N).
+      { unfold karr_bareiss_stage_budget.
+        set (work := (N.of_nat (budget + budget + 1) *
+          N.of_nat ((bits + 1)^2))%N).
+        replace (32768 * N.of_nat (length rows + 1) *
+          N.of_nat (budget + budget + 1) * N.of_nat ((bits + 1)^2))%N with
+          (32768 * N.of_nat (length rows + 1) * work)%N
+          by (unfold work; ring).
+        replace (32768 * N.of_nat (budget + 1) *
+          N.of_nat (budget + budget + 1) * N.of_nat ((bits + 1)^2))%N with
+          (32768 * N.of_nat (budget + 1) * work)%N
+          by (unfold work; ring).
+        apply N.mul_le_mono_r. apply N.mul_le_mono_l. lia. }
+      assert (Htail_budget : length columns <= budget).
+      { cbn [length] in Hcolumns. lia. }
+      destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+      + destruct (karr_run_state_pivot width cols original previous pivot_rows
+          pivot_columns head columns labels rows pivot rest Hstate Hselect)
+          as [origin [remaining Hnext]].
+        specialize (IH original (karr_head pivot) (pivot_rows ++ [origin])
+          (pivot_columns ++ [head]) columns remaining
+          (map (fun row => karr_tail
+            (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+            rest) budget bits Hnext Horiginal Htail_budget Hbits).
+        cbn [N.of_nat] in IH |- *.
+        eapply N.le_trans; [exact Hstage|].
+        eapply N.le_trans; [apply N.add_le_mono; [exact Hstage_cost|exact IH]|].
+        change (N.pos (PosDef.Pos.of_succ_nat cols)) with (N.of_nat (S cols)).
+        rewrite Nat2N.inj_succ.
+        replace (N.succ (N.of_nat cols)) with (N.of_nat cols + 1)%N by lia.
+        replace (((N.of_nat cols + 1) * karr_bareiss_stage_budget budget bits + 4)%N)
+          with (karr_bareiss_stage_budget budget bits +
+            (N.of_nat cols * karr_bareiss_stage_budget budget bits + 4))%N
+          by ring.
+        apply N.le_refl.
+      + pose proof (karr_run_state_skip width cols original previous pivot_rows
+          pivot_columns head columns labels rows Hstate) as Hnext.
+        specialize (IH original previous pivot_rows pivot_columns columns labels
+          (map karr_tail rows) budget bits Hnext Horiginal Htail_budget Hbits).
+        cbn [N.of_nat] in IH |- *.
+        eapply N.le_trans; [exact Hstage|].
+        eapply N.le_trans; [apply N.add_le_mono; [exact Hstage_cost|exact IH]|].
+        change (N.pos (PosDef.Pos.of_succ_nat cols)) with (N.of_nat (S cols)).
+        rewrite Nat2N.inj_succ.
+        replace (N.succ (N.of_nat cols)) with (N.of_nat cols + 1)%N by lia.
+        replace (((N.of_nat cols + 1) * karr_bareiss_stage_budget budget bits + 4)%N)
+          with (karr_bareiss_stage_budget budget bits +
+            (N.of_nat cols * karr_bareiss_stage_budget budget bits + 4))%N
+          by ring.
+        apply N.le_refl.
   Qed.
 
 
@@ -8305,6 +13139,70 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         ltac:(intros y Hy; apply Htime; now right)).
       pose proof (Datatypes.T_app_le (f x) (flat_map f xs)) as Happ.
       time_unfold List.T_flat_map. cbn [length]. time_simpl. nia.
+  Qed.
+
+  (** Keeping present outputs pays one bounded visit per option. *)
+  Lemma T_karr_present_bounded : forall A (xs : list (option A)),
+    (T_present xs <= 8 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intros A xs.
+    pose proof (karr_T_flat_map_singleton (option A) A
+      (fun o => match o with Some x => [x] | None => [] end)
+      (fun _ => 1%N) 1 xs
+      ltac:(intros [x|] Hin; cbn [length]; lia)
+      ltac:(intros [x|] Hin; cbn beta; lia)) as Hflat.
+    unfold T_present. rewrite Nat2N.inj_add. cbn [N.of_nat]. lia.
+  Qed.
+
+  (** Pairing coordinates visits no more entries than the first list. *)
+  Lemma T_karr_combine_bounded : forall A B (xs : list A) (ys : list B),
+    (List.T_combine xs ys <= 4 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intros A B xs. induction xs as [|x xs IH]; intros [|y ys];
+      time_unfold List.T_combine; time_simpl; cbn [length];
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]); try nia.
+    pose proof (IH ys). nia.
+  Qed.
+
+  (** Sparse reconstruction scans one paired coordinate per input key. *)
+  Lemma T_karr_sparse_bounded : forall xs zs,
+    (T_sparse xs zs <= 16 * N.of_nat (length xs + 1))%N.
+  Proof.
+    intros xs zs.
+    pose proof (T_karr_combine_bounded X.t Z xs zs) as Hcombine.
+    assert (Hcallback : forall p, In p (combine xs zs) ->
+      (1 + (Datatypes.T_snd p + Z.T_eqb (snd p) 0 +
+        Datatypes.T_negb (snd p =? 0)%Z) <= 8)%N).
+    { intros p Hp. pose proof (T_karr_zero_test (snd p)) as Hzero.
+      time_simpl. lia. }
+    pose proof (karr_T_filter_members (X.t * Z)
+      (fun p => negb (snd p =? 0)%Z)
+      (fun p => 1 + (Datatypes.T_snd p + Z.T_eqb (snd p) 0 +
+        Datatypes.T_negb (snd p =? 0)%Z))%N 8%N
+      (combine xs zs) Hcallback) as Hfilter.
+    assert (Hlen : length (combine xs zs) <= length xs).
+    { rewrite length_combine. apply Nat.le_min_l. }
+    time_unfold T_sparse. rewrite Nat2N.inj_add in *.
+    cbn [N.of_nat] in *. nia.
+  Qed.
+
+  (** Taking or skipping a bounded prefix visits at most that prefix. *)
+  Lemma T_karr_firstn_bounded : forall A n (xs : list A),
+    (ListDef.T_firstn n xs <= 4 * N.of_nat (n + 1))%N.
+  Proof.
+    intros A n. induction n as [|n IH]; intros [|x xs];
+      time_unfold ListDef.T_firstn; time_simpl;
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]); try nia.
+    pose proof (IH xs). nia.
+  Qed.
+
+  Lemma T_karr_skipn_bounded : forall A n (xs : list A),
+    (ListDef.T_skipn n xs <= 4 * N.of_nat (n + 1))%N.
+  Proof.
+    intros A n. induction n as [|n IH]; intros [|x xs];
+      time_unfold ListDef.T_skipn; time_simpl;
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]); try nia.
+    pose proof (IH xs). nia.
   Qed.
 
   (** Singleton-or-empty flattening never exceeds its source length. *)
@@ -8595,6 +13493,129 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         clearbody work; rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
   Qed.
 
+  Definition karr_hull_seed_factor : N := (karr_seed_factor + 1024)%N.
+
+  (** Lifted left seeding pays one dense scan and one zero vector per equality. *)
+  Lemma T_karr_hull_left_bounded : forall xs total index P dim bits,
+    length xs <= dim -> total <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun r => length (lhs r) <= dim /\ C.row_bits r <= bits) P ->
+    (T_hull_left xs total index P <= karr_hull_seed_factor *
+      N.of_nat (length P + 1) * N.of_nat (dim + 1)^2 *
+      N.of_nat (bits + dim + 1))%N.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|p P IH]; intros index dim bits Hxs Htotal Hkeys Hrows.
+    - time_unfold T_hull_left. cbn [length].
+      unfold karr_hull_seed_factor, karr_seed_factor.
+      rewrite !N.pow_2_r, !Nat2N.inj_add. cbn [N.of_nat]. nia.
+    - inversion Hrows as [|q qs [Hrow Hbits] Htail]; subst q qs.
+      pose proof (IH (S index) dim bits Hxs Htotal Hkeys Htail) as Hrest.
+      pose proof (T_karr_dense_bounded xs p dim bits Hxs Hrow Hbits Hkeys)
+        as Hdense.
+      pose proof (T_karr_unit_bounded total index) as Hunit.
+      pose proof (T_karr_repeat_zero_bounded (S (length xs))) as Hrepeat.
+      pose proof (Datatypes.T_length_le xs) as Hlength.
+      pose proof (Datatypes.T_app_le (dense xs p)
+        ((- rhs p)%Z :: repeat 0%Z (S (length xs)))) as Happ.
+      pose proof (Z.T_opp_le (rhs p)) as Hopp.
+      pose proof (karr_row_rhs_bits p) as Hrhs.
+      set (work := (N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N).
+      assert (Hextent : (N.of_nat (dim + 1) <= work)%N).
+      { unfold work. rewrite N.pow_2_r.
+        assert (Hfirst : (1 <= N.of_nat (dim + 1))%N) by lia.
+        assert (Hsecond : (1 <= N.of_nat (bits + dim + 1))%N) by lia. nia. }
+      assert (Hpositive : (1 <= work)%N)
+        by (eapply N.le_trans; [|exact Hextent]; lia).
+      assert (Hsmall : (Datatypes.T_length xs +
+        ListDef.T_repeat 0%Z (S (length xs)) +
+        Datatypes.T_app (dense xs p)
+          ((- rhs p)%Z :: repeat 0%Z (S (length xs))) +
+        Z.T_opp (rhs p) + T_karr_unit total index <= 64 * work)%N).
+      { assert (Hdense_length : length (dense xs p) = length xs)
+          by (unfold dense; apply length_map).
+        rewrite Hdense_length in Happ.
+        clear -Hxs Htotal Hbits Hrhs Hlength Hrepeat Happ Hopp Hunit
+          Hextent Hpositive.
+        unfold work in *. rewrite !Nat2N.inj_add in *.
+        cbn [N.of_nat] in *. nia. }
+      replace (karr_hull_seed_factor * N.of_nat (length P + 1) *
+        N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N with
+        (karr_hull_seed_factor * N.of_nat (length P + 1) * work)%N
+        in Hrest by (unfold work; ring).
+      replace (karr_dense_factor * N.of_nat (dim + 1)^2 *
+        N.of_nat (bits + dim + 1))%N with
+        (karr_dense_factor * work)%N in Hdense by (unfold work; ring).
+      replace (karr_hull_seed_factor * N.of_nat (length (p :: P) + 1) *
+        N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N with
+        (karr_hull_seed_factor * N.of_nat (length (p :: P) + 1) * work)%N
+        by (unfold work; ring).
+      time_unfold T_hull_left. destruct (lrel p); time_simpl; cbn [length];
+        unfold karr_hull_seed_factor, karr_seed_factor in *;
+        clear -Hrest Hdense Hsmall Hpositive; clearbody work;
+        rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
+  (** Lifted right seeding pays for one dense scan and one negated copy. *)
+  Lemma T_karr_hull_right_bounded : forall xs total index P dim bits,
+    length xs <= dim -> total <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun r => length (lhs r) <= dim /\ C.row_bits r <= bits) P ->
+    (T_hull_right xs total index P <= karr_hull_seed_factor *
+      N.of_nat (length P + 1) * N.of_nat (dim + 1)^2 *
+      N.of_nat (bits + dim + 1))%N.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|p P IH]; intros index dim bits Hxs Htotal Hkeys Hrows.
+    - time_unfold T_hull_right. cbn [length].
+      unfold karr_hull_seed_factor, karr_seed_factor.
+      rewrite !N.pow_2_r, !Nat2N.inj_add. cbn [N.of_nat]. nia.
+    - inversion Hrows as [|q qs [Hrow Hbits] Htail]; subst q qs.
+      pose proof (IH (S index) dim bits Hxs Htotal Hkeys Htail) as Hrest.
+      pose proof (T_karr_dense_bounded xs p dim bits Hxs Hrow Hbits Hkeys)
+        as Hdense.
+      pose proof (karr_T_map_members Z Z Z.opp (fun _ => 1%N) 1%N
+        (dense xs p) ltac:(intros z Hz; cbn beta; lia)) as Hnegate.
+      pose proof (T_karr_unit_bounded total index) as Hunit.
+      pose proof (Datatypes.T_app_le (dense xs p) [rhs p]) as Happ1.
+      pose proof (Datatypes.T_app_le (map Z.opp (dense xs p))
+        (rhs p :: dense xs p ++ [rhs p])) as Happ2.
+      set (work := (N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N).
+      assert (Hextent : (N.of_nat (dim + 1) <= work)%N).
+      { unfold work. rewrite N.pow_2_r.
+        assert (Hfirst : (1 <= N.of_nat (dim + 1))%N) by lia.
+        assert (Hsecond : (1 <= N.of_nat (bits + dim + 1))%N) by lia. nia. }
+      assert (Hpositive : (1 <= work)%N)
+        by (eapply N.le_trans; [|exact Hextent]; lia).
+      assert (Hsmall : (ListDef.T_map Z.opp (fun _ => 1%N) (dense xs p) +
+        Datatypes.T_app (dense xs p) [rhs p] +
+        Datatypes.T_app (map Z.opp (dense xs p))
+          (rhs p :: dense xs p ++ [rhs p]) +
+        T_karr_unit total index <= 64 * work)%N).
+      { assert (Hdense_length : length (dense xs p) = length xs)
+          by (unfold dense; apply length_map).
+        rewrite Hdense_length in Hnegate, Happ1.
+        rewrite length_map, Hdense_length in Happ2.
+        clear -Hxs Htotal Hnegate Happ1 Happ2 Hunit Hextent Hpositive.
+        unfold work in *. rewrite !Nat2N.inj_add in *.
+        cbn [N.of_nat] in *. nia. }
+      replace (karr_hull_seed_factor * N.of_nat (length P + 1) *
+        N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N with
+        (karr_hull_seed_factor * N.of_nat (length P + 1) * work)%N
+        in Hrest by (unfold work; ring).
+      replace (karr_dense_factor * N.of_nat (dim + 1)^2 *
+        N.of_nat (bits + dim + 1))%N with
+        (karr_dense_factor * work)%N in Hdense by (unfold work; ring).
+      replace (karr_hull_seed_factor * N.of_nat (length (p :: P) + 1) *
+        N.of_nat (dim + 1)^2 * N.of_nat (bits + dim + 1))%N with
+        (karr_hull_seed_factor * N.of_nat (length (p :: P) + 1) * work)%N
+        by (unfold work; ring).
+      time_unfold T_hull_right. destruct (lrel p); time_simpl; cbn [length];
+        unfold karr_hull_seed_factor, karr_seed_factor in *;
+        clear -Hrest Hdense Hsmall Hpositive; clearbody work;
+        rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
   (** Flattening source rows counts exactly the stored coefficient occurrences. *)
   Lemma karr_flat_source_length : forall P,
     length (flat_map lhs P) = terms (Reached P).
@@ -8793,6 +13814,50 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply karr_positive_power_monotone; lia.
   Qed.
 
+  (** The abstract certificate checker fits the one-column matrix volume. *)
+  Lemma karr_havoc_checker_measure : forall P ms c dim bits,
+    length P <= dim -> length ms <= dim ->
+    Forall (fun r => length (lhs r) <= dim /\
+      C.row_key_bits r <= bits /\ C.row_bits r <= bits) P ->
+    Forall (fun m => Z.size_nat m <= bits) ms ->
+    length (lhs c) <= dim -> C.row_key_bits c <= bits -> C.row_bits c <= bits ->
+    Nat.log2 (length P) <= bits ->
+    C.csize P ms + 2 * (C.lsize c + C.cbits P ms + 1) <=
+      32 * karr_havoc_volume dim bits.
+  Proof.
+    intros P ms c dim bits Hrows_len Hmult_len Hrows Hmult
+      Hclen Hckeys Hcbits Hlog.
+    pose proof (karr_csize_envelope P ms dim bits bits bits Hrows Hmult) as Hsize.
+    assert (Hrow_bits : Forall (fun r => C.row_bits r <= bits) P).
+    { eapply Forall_impl; [|exact Hrows]. intros r [_ [_ Hr]]. exact Hr. }
+    pose proof (karr_cbits_envelope P ms bits bits Hrow_bits Hmult) as Hbits.
+    pose proof (karr_lsize_envelope c dim bits bits Hclen Hckeys Hcbits) as Hline.
+    pose proof (karr_havoc_rows_volume 0 dim bits ltac:(lia)) as Hsquare.
+    pose proof (karr_havoc_product_volume dim bits) as Hproduct.
+    pose proof (karr_havoc_volume_lower dim bits) as [_ Hwidth].
+    assert (Hfactor : bits + (bits + 1) * (bits + 1) + 1 <=
+      2 * (bits + 1)^2) by (rewrite Nat.pow_2_r; nia).
+    assert (Hsize_bound : C.csize P ms <= 4 * karr_havoc_volume dim bits).
+    { eapply Nat.le_trans; [exact Hsize|].
+      eapply Nat.le_trans with (m :=
+        2 * (dim + 1) * (dim + 1) * (2 * (bits + 1)^2)).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hfactor].
+      - replace (2 * (dim + 1) * (dim + 1) * (2 * (bits + 1)^2))
+          with (4 * ((dim + 1)^2 * (bits + 1)^2))
+          by (rewrite !Nat.pow_2_r; ring).
+        lia. }
+    assert (Hline_bound : C.lsize c <= 2 * karr_havoc_volume dim bits).
+    { eapply Nat.le_trans; [exact Hline|].
+      eapply Nat.le_trans with (m := (dim + 1) * (2 * (bits + 1))).
+      - apply Nat.mul_le_mono_l. lia.
+      - replace ((dim + 1) * (2 * (bits + 1)))
+          with (2 * ((dim + 1) * (bits + 1))) by ring.
+        lia. }
+    assert (Hbits_bound : C.cbits P ms <= 3 * karr_havoc_volume dim bits)
+      by lia.
+    lia.
+  Qed.
+
   (** Raw row headers are paid by the matrix budget in addition to occurrence preparation. *)
   Lemma karr_havoc_preparation_volume : forall total count width dim bits,
     count <= dim -> width <= bits + 1 ->
@@ -8971,7 +14036,13 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
        match snd (range e s) with Fin z => Z.size_nat z | _ => 0 end) <=
      c_num * N.of_nat (range_bits e s + 1))%N.
   Proof. Admitted. (* STUB *)
-  Definition c_karr : N := (karr_subst_factor + 1)%N.
+  Definition c_karr : N :=
+    (karr_subst_factor + 1 +
+      2 * (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor) +
+      256 * (C.c_lc + 1) + 64 +
+      16 * karr_dense_factor + 16384 * 64 + 1024 * 64 +
+      256 * C.c_lc + 64)%N.
   Lemma T_subst_le : forall x f r,
     (T_subst x f r <= c_karr * N.of_nat
       ((X.bits x + C.lsize (LCons _ (coef f) REq (cst f)) + C.lsize r + 1)^2))%N.
@@ -8979,25 +14050,11 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros x f r. eapply N.le_trans; [apply T_karr_subst_bounded|].
     apply N.mul_le_mono_r. unfold c_karr. lia.
   Qed.
-  Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
-    (T_affine_hull a b <= c_karr * N.of_nat
-      (elimination_work (Reached a) (Reached b)))%N.
-  Proof. Admitted. (* STUB *)
-  Definition k_cert : N := 1%N. (* STUB *)
+  Definition k_cert : N := 256%N.
   Lemma affine_hull_size : forall a b, normal a -> normal b ->
     length (affine_hull a b) <= n (Reached a) + n (Reached b) /\
     ell (Reached (affine_hull a b)) <=
       ellB (n (Reached a) + n (Reached b) + 1) (ell (Reached a) + ell (Reached b)).
-  Proof. Admitted. (* STUB *)
-  Lemma entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
-    entail_cert P r = Some k ->
-    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
-        (C.lsize r + C.cbits P (mults k) + 1)) <=
-      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
-    (T_entail_cert P r <= c_karr * N.of_nat
-      (elimination_work (Reached P) (Reached (r :: nil))))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_join_karr_le : forall a b, normal_s a -> normal_s b ->
     (T_join a b <= c_karr * N.of_nat (((n a + n b + 1)^3)%nat) *
@@ -9344,6 +14401,132 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - apply IH.
   Qed.
 
+  (** The initialized run satisfies the labeled minor law at order zero. *)
+  Lemma bareiss_run_state_initial : forall P,
+    karr_run_state (length (variables P) + length P + 2)
+      (length (variables P))
+      (map karr_row_entries (bareiss_seeds P)) 1 [] []
+      (seq 0 (length (variables P) + length P + 2))
+      (map karr_row_entries (bareiss_seeds P)) (bareiss_seeds P).
+  Proof.
+    intro P. unfold karr_run_state. repeat (apply conj).
+    - lia.
+    - reflexivity.
+    - now rewrite length_map.
+    - unfold bareiss_seeds. apply seed_rows_width.
+    - rewrite length_seq. unfold bareiss_seeds. apply seed_entries_width.
+    - rewrite length_seq. lia.
+    - reflexivity.
+    - cbn [app]. apply Permutation_refl.
+    - cbn [app]. apply karr_increasing_seq.
+    - cbn [app]. replace (length (variables P) + length P + 2) with
+        (0 + (length (variables P) + length P + 2)) by lia.
+      apply karr_seq_bounded.
+    - rewrite karr_combine_self. apply karr_minor_law_initial.
+  Qed.
+
+  (** Any coordinate list initializes the same labeled minor invariant. *)
+  Lemma karr_run_state_seed : forall xs P,
+    karr_run_state (length xs + length P + 2) (length xs)
+      (map karr_row_entries (seed_rows xs (length P) 0 (map normalize_row P)))
+      1 [] [] (seq 0 (length xs + length P + 2))
+      (map karr_row_entries (seed_rows xs (length P) 0 (map normalize_row P)))
+      (seed_rows xs (length P) 0 (map normalize_row P)).
+  Proof.
+    intros xs P. unfold karr_run_state. repeat (apply conj).
+    - lia.
+    - reflexivity.
+    - now rewrite length_map.
+    - apply seed_rows_width.
+    - rewrite length_seq. apply seed_entries_width.
+    - rewrite length_seq. lia.
+    - reflexivity.
+    - cbn [app]. apply Permutation_refl.
+    - cbn [app]. apply karr_increasing_seq.
+    - cbn [app]. replace (length xs + length P + 2) with
+        (0 + (length xs + length P + 2)) by lia.
+      apply karr_seq_bounded.
+    - rewrite karr_combine_self. apply karr_minor_law_initial.
+  Qed.
+
+  (** Equal-width rows initialize the labeled minor invariant at order zero. *)
+  Lemma karr_run_state_initial_general : forall width cols rows,
+    cols <= width ->
+    Forall (fun row => length (kcoeff row) = cols) rows ->
+    Forall (fun row => length (karr_row_entries row) = width) rows ->
+    karr_run_state width cols (map karr_row_entries rows) 1 [] []
+      (seq 0 width) (map karr_row_entries rows) rows.
+  Proof.
+    intros width cols rows Hcols Hcoeff Hentries.
+    unfold karr_run_state. repeat (apply conj).
+    - lia.
+    - reflexivity.
+    - now rewrite length_map.
+    - exact Hcoeff.
+    - now rewrite length_seq.
+    - rewrite length_seq. exact Hcols.
+    - reflexivity.
+    - cbn [app]. apply Permutation_refl.
+    - cbn [app]. apply karr_increasing_seq.
+    - cbn [app]. replace width with (0 + width) by lia.
+      apply karr_seq_bounded.
+    - rewrite karr_combine_self. apply karr_minor_law_initial.
+  Qed.
+
+  (** The lifted hull seeds initialize the labeled minor invariant. *)
+  Lemma karr_hull_run_state_initial : forall xs total left_index right_index P Q,
+    let rows := hull_left xs total left_index P ++
+      hull_right xs total right_index Q in
+    let width := 2 * length xs + total + 4 in
+    karr_run_state width (2 * length xs + 2)
+      (map karr_row_entries rows) 1 [] [] (seq 0 width)
+      (map karr_row_entries rows) rows.
+  Proof.
+    intros xs total left_index right_index P Q rows width.
+    apply karr_run_state_initial_general; [lia| |].
+    - subst rows. apply hull_seed_width.
+    - subst rows width. apply hull_seed_entries_width.
+  Qed.
+
+  (** Every initialized certificate vector has a zero when two source slots exist. *)
+  Lemma seed_rows_zero_weight : forall xs total index P,
+    2 <= total ->
+    Forall (fun r => In 0%Z (kweight r)) (seed_rows xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intros index Htotal; [constructor|].
+    cbn [seed_rows]. destruct (lrel r).
+    - constructor; [cbn [kweight]; now apply karr_unit_zero|now apply IH].
+    - now apply IH.
+  Qed.
+
+  (** Every seed row has a literal zero when the input has at least two rows. *)
+  Lemma bareiss_seed_zero : forall P r,
+    2 <= length P -> In r (bareiss_seeds P) ->
+    In 0%Z (karr_row_entries r).
+  Proof.
+    intros P r Hcount Hin. unfold bareiss_seeds in Hin.
+    pose proof (proj1 (Forall_forall _ _)
+      (seed_rows_zero_weight (variables P) (length P) 0
+        (map normalize_row P) Hcount) r Hin) as Hzero.
+    unfold karr_row_entries. apply in_or_app. right. right.
+    apply in_or_app. now left.
+  Qed.
+
+  (** Any coordinate list keeps a literal zero in a seed with two source slots. *)
+  Lemma karr_seed_zero : forall xs P r,
+    2 <= length P ->
+    In r (seed_rows xs (length P) 0 (map normalize_row P)) ->
+    In 0%Z (karr_row_entries r).
+  Proof.
+    intros xs P r Hcount Hin.
+    pose proof (proj1 (Forall_forall _ _)
+      (seed_rows_zero_weight xs (length P) 0
+        (map normalize_row P) Hcount) r Hin) as Hzero.
+    unfold karr_row_entries. apply in_or_app. right. right.
+    apply in_or_app. now left.
+  Qed.
+
   (** Every initial augmented entry is both traced and an input minor. *)
   Lemma bareiss_initial_entry : forall P r z,
     In r (bareiss_seeds P) -> In z (karr_row_entries r) ->
@@ -9359,6 +14542,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
           (seed_entries_width (variables P) (length P) 0 (map normalize_row P)) r Hr) as Hwidth.
         rewrite Hwidth. reflexivity.
       + exact Hz.
+  Qed.
+
+  (** A run with two source slots and a live seed has zero among its input minors. *)
+  Lemma input_minors_zero : forall P,
+    2 <= length P -> bareiss_seeds P <> [] -> In 0%Z (input_minors P).
+  Proof.
+    intros P Hcount Hnonempty.
+    destruct (bareiss_seeds P) as [|r rs] eqn:Hseeds; [contradiction|].
+    assert (Hin : In r (bareiss_seeds P)) by (rewrite Hseeds; now left).
+    exact (proj2 (bareiss_initial_entry P r 0 Hin
+      (bareiss_seed_zero P r Hcount Hin))).
   Qed.
 
   (** Every final basis entry occurs in the trace. *)
@@ -9566,6 +14760,69 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite karr_size_opp. exact Hbits.
   Qed.
 
+  (** An exact target reduction has the source-minor width at every entry. *)
+  Lemma karr_minor_law_reduce_entry_bits : forall previous pivot_rows
+      pivot_columns columns pairs pivot_origin target_origin p r index j dim bits,
+    karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+    previous <> 0%Z ->
+    In (pivot_origin, karr_row_entries p) pairs ->
+    In (target_origin, karr_row_entries r) pairs ->
+    length (kcoeff p) = length (kcoeff r) ->
+    length (kweight p) = length (kweight r) ->
+    index < length (kcoeff p) ->
+    length (karr_row_entries p) = length columns ->
+    length (karr_row_entries r) = length (karr_row_entries p) ->
+    j < length columns ->
+    1 <= dim -> length pivot_rows + 2 <= dim ->
+    Forall (Forall (fun z => Z.size_nat z <= bits))
+      (pivot_rows ++ [pivot_origin; target_origin]) ->
+    Z.size_nat (karr_nth j (karr_row_entries (karr_reduce previous
+      (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r))) <=
+      ellB dim bits.
+  Proof.
+    intros previous pivot_rows pivot_columns columns pairs pivot_origin
+      target_origin p r index j dim bits Hlaw Hprevious Hpivot Htarget
+      Hcoeff Hweight Hindex Hp_width Hr_width Hj Hdim Horder Hsources.
+    rewrite (karr_minor_law_reduce_entry_at previous pivot_rows
+      pivot_columns columns pairs pivot_origin target_origin p r index j
+      Hlaw Hprevious Hpivot Htarget Hcoeff Hweight Hindex Hp_width
+      Hr_width Hj).
+    apply karr_determinant_bits; [exact Hdim|exact Horder|].
+    now apply karr_submatrix_bits.
+  Qed.
+
+  (** The order-one law bounds every live target coordinate by a source minor. *)
+  Lemma karr_minor_law_live_bits : forall previous pivot_rows pivot_columns
+      columns pairs origin live dim bits,
+    karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+    In (origin, live) pairs ->
+    length live = length columns ->
+    1 <= dim -> length pivot_rows + 1 <= dim ->
+    Forall (Forall (fun z => Z.size_nat z <= bits))
+      (pivot_rows ++ [origin]) ->
+    Forall (fun z => Z.size_nat z <= ellB dim bits) live.
+  Proof.
+    intros previous pivot_rows pivot_columns columns pairs origin live
+      dim bits Hlaw Hmember Hwidth Hdim Horder Hsources.
+    apply Forall_forall. intros z Hin.
+    apply In_nth_error in Hin as [index Hget].
+    assert (Hindex : index < length columns).
+    { rewrite <- Hwidth. apply nth_error_Some. rewrite Hget. discriminate. }
+    assert (Hpaired : Forall2 (fun source row => In (source, row) pairs)
+      [origin] [live]) by (constructor; [exact Hmember|constructor]).
+    assert (Hvalid : Forall (fun i => i < length columns) [index])
+      by (constructor; [exact Hindex|constructor]).
+    unfold karr_minor_law in Hlaw.
+    pose proof (Hlaw [origin] [live] [index] Hpaired eq_refl Hvalid
+      ltac:(cbn [length]; lia)) as Hminor.
+    cbn [length karr_submatrix map Nat.sub Nat.add] in Hminor.
+    rewrite karr_determinant_one, Z.pow_0_r, Z.mul_1_l in Hminor.
+    rewrite (karr_nth_error_value _ _ _ Hget) in Hminor.
+    rewrite Hminor.
+    apply karr_determinant_bits; [exact Hdim|exact Horder|].
+    now apply karr_submatrix_bits.
+  Qed.
+
   (** A row envelope bounds every entry of the augmented matrix representation. *)
   Lemma karr_row_entries_bits : forall dim mlen bits r,
     karr_row_envelope dim mlen bits r ->
@@ -9600,6 +14857,1069 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros r Hr. exact (karr_row_entries_bits _ _ _ r Hr).
   Qed.
 
+  (** Arbitrary dense coordinates preserve the prepared seed entry width. *)
+  Lemma karr_seed_entries_bits : forall xs P,
+    Forall (Forall (fun z => Z.size_nat z <= nell (Reached P)))
+      (map karr_row_entries (seed_rows xs (length P) 0 (map normalize_row P))).
+  Proof.
+    intros xs P. apply Forall_map.
+    assert (Hprepared : Forall (fun r =>
+      NoDup (map fst (lhs r)) /\ C.row_bits r <= nell (Reached P))
+      (map normalize_row P)).
+    { pose proof (karr_normal_source_width P) as Hwidth.
+      apply Forall_forall. intros r Hr. split.
+      - apply in_map_iff in Hr as [source [Heq _]]. subst r.
+        cbn [normalize_row lhs]. apply normalize_coef_nodup.
+      - pose proof (proj1 (Forall_forall _ _) Hwidth r Hr) as Hrow.
+        change (C.row_key_bits r + C.row_bits r <= nell (Reached P)) in Hrow.
+        lia. }
+    assert (Hpositive : 1 <= nell (Reached P)) by (unfold nell; lia).
+    pose proof (karr_seed_rows_envelopes xs (length P) 0
+      (map normalize_row P) (length xs) (length P) (nell (Reached P))
+      (Nat.le_refl _) (Nat.le_refl _) Hpositive Hprepared) as Hseed.
+    eapply Forall_impl; [|exact Hseed].
+    intros r Hr. exact (karr_row_entries_bits _ _ _ r Hr).
+  Qed.
+
+  (** Lifted left rows retain the prepared source arithmetic envelope. *)
+  Lemma karr_hull_left_envelopes : forall xs total index P bits,
+    1 <= bits ->
+    Forall (fun r => NoDup (map fst (lhs r)) /\ C.row_bits r <= bits) P ->
+    Forall (karr_row_envelope (2 * length xs + 2) total bits)
+      (hull_left xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intros index bits Hpositive Hrows;
+      [constructor|].
+    inversion Hrows as [|r' P' [Hnormal Hbits] Htail]; subst r' P'.
+    cbn [hull_left]. destruct (lrel r); [constructor|];
+      try (now apply IH).
+    - unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+      split; [rewrite length_app; cbn [length]; rewrite repeat_length;
+        unfold dense; rewrite length_map; lia|].
+      split.
+      + apply Forall_app. split; [now apply karr_dense_bits|].
+        constructor; [rewrite karr_size_opp; pose proof (karr_row_rhs_bits r); lia|].
+        apply Forall_forall. intros z Hin.
+        apply repeat_spec in Hin. subst z. change (0 <= bits). lia.
+      + split; [cbn [Z.size_nat]; lia|].
+        split; [rewrite karr_unit_length; lia|].
+        split; [eapply Forall_impl with
+          (P := fun z => Z.size_nat z <= 1); [|apply karr_unit_bits];
+          intros z Hz; lia|].
+        cbn [Z.size_nat]. lia.
+  Qed.
+
+  (** Lifted right rows retain the prepared source arithmetic envelope. *)
+  Lemma karr_hull_right_envelopes : forall xs total index P bits,
+    1 <= bits ->
+    Forall (fun r => NoDup (map fst (lhs r)) /\ C.row_bits r <= bits) P ->
+    Forall (karr_row_envelope (2 * length xs + 2) total bits)
+      (hull_right xs total index P).
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intros index bits Hpositive Hrows;
+      [constructor|].
+    inversion Hrows as [|r' P' [Hnormal Hbits] Htail]; subst r' P'.
+    cbn [hull_right]. destruct (lrel r); [constructor|];
+      try (now apply IH).
+    - unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+      split; [rewrite length_app; cbn [length]; rewrite length_app;
+        unfold dense; rewrite !length_map; cbn [length]; lia|].
+      split.
+      + apply Forall_app. split.
+        * apply Forall_map. eapply Forall_impl with
+            (P := fun z => Z.size_nat z <= bits).
+          -- intros z Hz. now rewrite karr_size_opp.
+          -- now apply karr_dense_bits.
+        * constructor; [pose proof (karr_row_rhs_bits r); lia|].
+          apply Forall_app. split; [now apply karr_dense_bits|].
+          constructor; [pose proof (karr_row_rhs_bits r); lia|constructor].
+      + split; [cbn [Z.size_nat]; lia|].
+        split; [rewrite karr_unit_length; lia|].
+        split; [eapply Forall_impl with
+          (P := fun z => Z.size_nat z <= 1); [|apply karr_unit_bits];
+          intros z Hz; lia|].
+        cbn [Z.size_nat]. lia.
+  Qed.
+
+  (** Both normalized inputs provide the source envelope for lifted rows. *)
+  Lemma karr_hull_seed_entries_bits : forall a b xs,
+    Forall (Forall (fun z =>
+      Z.size_nat z <= nell (Reached a) + nell (Reached b)))
+      (map karr_row_entries
+        (hull_left xs (length a + length b) 0 (map normalize_row a) ++
+         hull_right xs (length a + length b) (length a)
+           (map normalize_row b))).
+  Proof.
+    intros a b xs. apply Forall_map.
+    apply Forall_app. split;
+      apply Forall_forall; intros row Hin;
+      apply karr_row_entries_bits with
+        (dim := 2 * length xs + 2) (mlen := length a + length b).
+    - assert (Hprepared : Forall (fun r => NoDup (map fst (lhs r)) /\
+          C.row_bits r <= nell (Reached a) + nell (Reached b))
+          (map normalize_row a)).
+      { apply Forall_forall. intros r Hr.
+        apply in_map_iff in Hr as [source [Heq Hsource]]. subst r.
+        split; [cbn [normalize_row lhs]; apply normalize_coef_nodup|].
+        pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width a) (normalize_row source)
+          (in_map normalize_row _ _ Hsource)) as Hwidth.
+        cbn beta in Hwidth.
+        eapply Nat.le_trans with (m := nell (Reached a));
+          [lia|apply Nat.le_add_r]. }
+      pose proof (karr_hull_left_envelopes xs (length a + length b) 0
+        (map normalize_row a) (nell (Reached a) + nell (Reached b))
+        ltac:(unfold nell; lia) Hprepared) as Henv.
+      exact (proj1 (Forall_forall _ _) Henv row Hin).
+    - assert (Hprepared : Forall (fun r => NoDup (map fst (lhs r)) /\
+          C.row_bits r <= nell (Reached a) + nell (Reached b))
+          (map normalize_row b)).
+      { apply Forall_forall. intros r Hr.
+        apply in_map_iff in Hr as [source [Heq Hsource]]. subst r.
+        split; [cbn [normalize_row lhs]; apply normalize_coef_nodup|].
+        pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width b) (normalize_row source)
+          (in_map normalize_row _ _ Hsource)) as Hwidth.
+        cbn beta in Hwidth.
+        eapply Nat.le_trans with (m := nell (Reached b));
+          [lia|apply Nat.le_add_l]. }
+      pose proof (karr_hull_right_envelopes xs (length a + length b)
+        (length a) (map normalize_row b)
+        (nell (Reached a) + nell (Reached b))
+        ltac:(unfold nell; lia) Hprepared) as Henv.
+      exact (proj1 (Forall_forall _ _) Henv row Hin).
+  Qed.
+
+  (** Lifted seeding creates at most one row per source row. *)
+  Lemma karr_hull_left_length : forall xs total index P,
+    length (hull_left xs total index P) <= length P.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intro index; [cbn; lia|].
+    cbn [hull_left]. destruct (lrel r); cbn [length];
+      pose proof (IH (S index)); lia.
+  Qed.
+
+  Lemma karr_hull_right_length : forall xs total index P,
+    length (hull_right xs total index P) <= length P.
+  Proof.
+    intros xs total index P. revert index.
+    induction P as [|r P IH]; intro index; [cbn; lia|].
+    cbn [hull_right]. destruct (lrel r); cbn [length];
+      pose proof (IH (S index)); lia.
+  Qed.
+
+  (** The lifted Bareiss clock follows the actual augmented seed minors. *)
+  Lemma T_karr_hull_bareiss_seed_bounded : forall a b xs,
+    let total := length a + length b in
+    let width := 2 * length xs + total + 4 in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    (T_karr_bareiss (2 * length xs + 2) 1 rows <=
+      N.of_nat (2 * length xs + 2) *
+        karr_bareiss_stage_budget width
+          (ellB width (nell (Reached a) + nell (Reached b))) + 4)%N.
+  Proof.
+    intros a b xs total width rows.
+    eapply T_karr_bareiss_run_bounded with
+      (width := width) (original := map karr_row_entries rows)
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 width)
+      (labels := map karr_row_entries rows).
+    - subst rows width total. apply karr_hull_run_state_initial.
+    - rewrite length_map. subst rows total width. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright.
+      eapply Nat.le_trans with (m := length a + length b).
+      + apply Nat.add_le_mono; [exact Hleft|exact Hright].
+      + lia.
+    - rewrite length_seq. lia.
+    - intros z Hz. eapply karr_signed_minors_bits;
+        [lia| |apply karr_hull_seed_entries_bits|exact Hz].
+      rewrite length_map. subst rows total width. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright. lia.
+  Qed.
+
+  (** Every lifted basis entry is an enumerated augmented source minor. *)
+  Lemma karr_hull_basis_minor : forall a b xs z,
+    let total := length a + length b in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    In z (flat_map karr_row_entries
+      (karr_bareiss (2 * length xs + 2) 1 rows)) ->
+    In z (karr_signed_minors (2 * length xs + total + 4)
+      (map karr_row_entries rows)).
+  Proof.
+    intros a b xs z total rows Hin.
+    eapply karr_run_state_record.
+    - intro Htwo. destruct rows as [|row rest] eqn:Hrows;
+        [cbn [map length] in Htwo; lia|].
+      apply karr_signed_minors_entry with (row := karr_row_entries row).
+      + apply in_map. now left.
+      + pose proof (proj1 (Forall_forall _ _)
+          (hull_seed_entries_width xs total 0 (length a)
+            (map normalize_row a) (map normalize_row b))
+          row ltac:(change (In row rows); rewrite Hrows; now left)) as Hwidth.
+        rewrite Hwidth. reflexivity.
+      + pose proof (proj1 (Forall_forall _ _)
+          (hull_seed_zero_right xs total 0 (length a)
+            (map normalize_row a) (map normalize_row b))
+          row ltac:(change (In row rows); rewrite Hrows; now left)) as Hzero.
+        unfold karr_row_entries. apply in_or_app. right.
+        rewrite Hzero. now left.
+    - subst rows total. apply karr_hull_run_state_initial.
+    - now apply karr_bareiss_record_final.
+  Qed.
+
+  (** Final lifted basis entries inherit the source Hadamard width. *)
+  Lemma karr_hull_basis_bits : forall a b xs,
+    let total := length a + length b in
+    let width := 2 * length xs + total + 4 in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    Forall (Forall (fun z => Z.size_nat z <=
+      ellB width (nell (Reached a) + nell (Reached b))))
+      (map karr_row_entries
+        (karr_bareiss (2 * length xs + 2) 1 rows)).
+  Proof.
+    intros a b xs total width rows.
+    apply Forall_forall. intros entries Hentries.
+    apply Forall_forall. intros z Hz.
+    eapply karr_signed_minors_bits;
+      [lia| |apply karr_hull_seed_entries_bits|].
+    - rewrite length_map. subst rows total width. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright.
+      eapply Nat.le_trans with (m := length a + length b).
+      + apply Nat.add_le_mono; [exact Hleft|exact Hright].
+      + lia.
+    - apply in_map_iff in Hentries as [source [Heq Hsource]].
+      subst entries. apply karr_hull_basis_minor.
+      apply in_flat_map. exists source. split; assumption.
+  Qed.
+
+  (** Final lifted rows keep the exact coefficient and multiplier widths. *)
+  Lemma karr_hull_basis_envelope : forall a b xs,
+    let total := length a + length b in
+    let width := 2 * length xs + total + 4 in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    Forall (karr_row_envelope (2 * length xs + 2) total
+      (ellB width (nell (Reached a) + nell (Reached b))))
+      (karr_bareiss (2 * length xs + 2) 1 rows).
+  Proof.
+    intros a b xs total width rows.
+    pose proof (karr_bareiss_record_width (2 * length xs + 2) 1 rows
+      (hull_seed_width xs total 0 (length a)
+        (map normalize_row a) (map normalize_row b))) as Hcoeff.
+    rewrite karr_bareiss_record_value in Hcoeff.
+    assert (Hseed_weight : Forall (fun r => length (kweight r) = total) rows).
+    { subst rows. apply Forall_app. split.
+      - apply hull_left_weight_length.
+      - apply hull_right_weight_length. }
+    pose proof (karr_bareiss_weight_width (2 * length xs + 2) 1 rows total
+      (hull_seed_width xs total 0 (length a)
+        (map normalize_row a) (map normalize_row b)) Hseed_weight) as Hweight.
+    pose proof (karr_hull_basis_bits a b xs) as Hbits.
+    apply Forall_forall. intros row Hr.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hr) as Hrcoeff.
+    pose proof (proj1 (Forall_forall _ _) Hweight row Hr) as Hrweight.
+    pose proof (proj1 (Forall_forall _ _) Hbits (karr_row_entries row)
+      (in_map karr_row_entries _ _ Hr)) as Hrentries.
+    cbn beta in Hrcoeff, Hrweight, Hrentries.
+    apply karr_row_envelope_entries; [lia|lia|exact Hrentries].
+  Qed.
+
+  (** Prefix and suffix certificate slices inherit their row bounds. *)
+  Lemma karr_Forall_firstn : forall A (P : A -> Prop) n xs,
+    Forall P xs -> Forall P (firstn n xs).
+  Proof.
+    intros A P n. induction n as [|n IH]; intros xs Hrows.
+    - constructor.
+    - destruct xs as [|x xs]; [constructor|].
+      cbn [firstn]. constructor.
+      + now apply Forall_inv in Hrows.
+      + apply IH. now apply Forall_inv_tail in Hrows.
+  Qed.
+
+  Lemma karr_Forall_skipn : forall A (P : A -> Prop) n xs,
+    Forall P xs -> Forall P (skipn n xs).
+  Proof.
+    intros A P n. induction n as [|n IH]; intros xs Hrows.
+    - exact Hrows.
+    - destruct xs as [|x xs]; [constructor|].
+      cbn [skipn]. apply IH. now apply Forall_inv_tail in Hrows.
+  Qed.
+
+  (** Reconstructed hull rows and both certificate slices inherit basis bits. *)
+  Lemma karr_hull_checked_row_envelope : forall xs
+      (a b : list (lcons X.t)) r bits,
+    1 <= bits ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    let zs := skipn (S (length xs)) (kcoeff r) in
+    let c := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs) in
+    length (lhs c) <= length xs /\
+    C.row_key_bits c <= bits /\ C.row_bits c <= bits /\
+    length (firstn (length a) (kweight r)) <= length a /\
+    length (skipn (length a) (kweight r)) <= length b /\
+    Forall (fun z => Z.size_nat z <= bits)
+      (firstn (length a) (kweight r)) /\
+    Forall (fun z => Z.size_nat z <= bits)
+      (skipn (length a) (kweight r)).
+  Proof.
+    intros xs a b r bits Hpositive Hkeys Henv zs c.
+    destruct Henv as [_ [Hcoeff [_ [Hweight_length [Hweight _]]]]].
+    assert (Hzs : Forall (fun z => Z.size_nat z <= bits) zs).
+    { unfold zs. now apply karr_Forall_skipn. }
+    assert (Hrhs : Z.size_nat (karr_nth (length xs) zs) <= bits)
+      by (apply karr_nth_bits; exact Hzs).
+    destruct (karr_sparse_row_bits xs zs (karr_nth (length xs) zs)
+      bits bits Hkeys Hzs Hrhs) as [Hkey Hbits].
+    repeat split.
+    - cbn [c lhs]. apply karr_sparse_length.
+    - exact Hkey.
+    - exact Hbits.
+    - rewrite length_firstn. lia.
+    - rewrite length_skipn. lia.
+    - apply karr_Forall_firstn. exact Hweight.
+    - apply karr_Forall_skipn. exact Hweight.
+  Qed.
+
+  (** A generic initialized basis clock follows from the all-order minor law. *)
+  Lemma T_karr_bareiss_seed_bounded : forall xs P,
+    (T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) <=
+      N.of_nat (length xs) *
+        karr_bareiss_stage_budget (length xs + length P + 2)
+          (ellB (length xs + length P + 2) (nell (Reached P))) + 4)%N.
+  Proof.
+    intros xs P.
+    eapply T_karr_bareiss_run_bounded with
+      (width := length xs + length P + 2)
+      (original := map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P)))
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 (length xs + length P + 2))
+      (labels := map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P))).
+    - apply karr_run_state_seed.
+    - rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0 (map normalize_row P))
+        as Hlength. rewrite length_map in Hlength. lia.
+    - rewrite length_seq. lia.
+    - intros z Hz. eapply karr_signed_minors_bits;
+        [lia| |apply karr_seed_entries_bits|exact Hz].
+      rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0 (map normalize_row P))
+        as Hlength. rewrite length_map in Hlength. lia.
+  Qed.
+
+  (** Every generic basis entry is an independently enumerated seed minor. *)
+  Lemma karr_seed_basis_minor : forall xs P z,
+    In z (flat_map karr_row_entries
+      (karr_bareiss (length xs) 1
+        (seed_rows xs (length P) 0 (map normalize_row P)))) ->
+    In z (karr_signed_minors (length xs + length P + 2)
+      (map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P)))).
+  Proof.
+    intros xs P z Hin.
+    eapply karr_run_state_record.
+    - intro Htwo. rewrite length_map in Htwo.
+      assert (Hcount : 2 <= length P).
+      { pose proof (karr_seed_rows_length xs (length P) 0
+          (map normalize_row P)) as Hlength.
+        rewrite length_map in Hlength. lia. }
+      destruct (seed_rows xs (length P) 0 (map normalize_row P))
+        as [|row rest] eqn:Hseed; [cbn [length] in Htwo; lia|].
+      apply karr_signed_minors_entry with (row := karr_row_entries row).
+      + apply in_map. now left.
+      + pose proof (proj1 (Forall_forall _ _)
+          (seed_entries_width xs (length P) 0 (map normalize_row P))
+          row ltac:(rewrite Hseed; now left)) as Hwidth.
+        rewrite Hwidth. reflexivity.
+      + eapply karr_seed_zero; [exact Hcount|rewrite Hseed; now left].
+    - apply karr_run_state_seed.
+    - now apply karr_bareiss_record_final.
+  Qed.
+
+  (** Generic basis rows inherit the same Hadamard input-minor width. *)
+  Lemma karr_seed_basis_bits : forall xs P,
+    Forall (Forall (fun z => Z.size_nat z <=
+      ellB (length xs + length P + 2) (nell (Reached P))))
+      (map karr_row_entries
+        (karr_bareiss (length xs) 1
+          (seed_rows xs (length P) 0 (map normalize_row P)))).
+  Proof.
+    intros xs P. apply Forall_forall. intros row Hrow.
+    apply Forall_forall. intros z Hz.
+    eapply (karr_signed_minors_bits (length xs + length P + 2)
+      (map karr_row_entries
+        (seed_rows xs (length P) 0 (map normalize_row P)))
+      (length xs + length P + 2) (nell (Reached P)) z);
+      [lia| |apply karr_seed_entries_bits|].
+    - rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0
+        (map normalize_row P)) as Hlength.
+      rewrite length_map in Hlength. lia.
+    - apply in_map_iff in Hrow as [source [Heq Hsource]]. subst row.
+      apply karr_seed_basis_minor. apply in_flat_map.
+      exists source. split; [exact Hsource|exact Hz].
+  Qed.
+
+  (** The final generic basis has bounded coordinates and multiplier slots. *)
+  Lemma karr_seed_basis_envelope : forall xs P,
+    Forall (karr_row_envelope (length xs) (length P)
+      (ellB (length xs + length P + 2) (nell (Reached P))))
+      (karr_bareiss (length xs) 1
+        (seed_rows xs (length P) 0 (map normalize_row P))).
+  Proof.
+    intros xs P.
+    pose proof (karr_bareiss_record_width (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P))
+      (seed_rows_width xs (length P) 0 (map normalize_row P))) as Hcoeff.
+    rewrite karr_bareiss_record_value in Hcoeff.
+    pose proof (karr_bareiss_weight_width (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) (length P)
+      (seed_rows_width xs (length P) 0 (map normalize_row P))
+      (karr_seed_weight_width xs (length P) 0 (map normalize_row P))) as Hweight.
+    pose proof (karr_seed_basis_bits xs P) as Hbits.
+    apply Forall_forall. intros row Hr.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hr) as Hrcoeff.
+    pose proof (proj1 (Forall_forall _ _) Hweight row Hr) as Hrweight.
+    pose proof (proj1 (Forall_forall _ _) Hbits (karr_row_entries row)
+      (in_map karr_row_entries _ _ Hr)) as Hrentries.
+    cbn beta in Hrcoeff, Hrweight, Hrentries.
+    apply karr_row_envelope_entries; [lia|lia|exact Hrentries].
+  Qed.
+
+  (** A normal conclusion starts with bounded dense data and zero multipliers. *)
+  Lemma karr_target_initial_envelope : forall (xs : list X.t)
+      (P : list (lcons X.t)) (c : lcons X.t) (bits : nat),
+    normal (c :: nil) -> 1 <= bits -> C.row_bits c <= bits ->
+    karr_row_envelope (length xs) (length P) bits
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z).
+  Proof.
+    intros xs P c bits Hnormal Hpositive Hbits.
+    unfold karr_row_envelope. cbn [kcoeff kright kweight kscale].
+    repeat split.
+    - unfold dense. now rewrite length_map.
+    - apply karr_dense_bits.
+      + apply Forall_cons_iff in Hnormal as [Hunique _]. exact Hunique.
+      + exact Hbits.
+    - pose proof (karr_row_rhs_bits c). lia.
+    - rewrite repeat_length. reflexivity.
+    - apply Forall_forall. intros z Hin.
+      apply repeat_spec in Hin. subst z. change (0 <= bits). lia.
+    - change (1 <= bits). exact Hpositive.
+  Qed.
+
+  (** A complete elimination run fits the public cubic-Hadamard work shape. *)
+  Lemma karr_bareiss_budget_public : forall count dim bits,
+    count <= dim ->
+    (N.of_nat count * karr_bareiss_stage_budget dim (ellB dim bits) <=
+      65536 * N.of_nat ((dim + 1)^3 *
+        (ellB (dim + 1) bits + 1)^2))%N.
+  Proof.
+    intros count dim bits Hcount.
+    assert (Hdim : count * (dim + 1) * (dim + dim + 1) <=
+      2 * (dim + 1)^3).
+    { assert (Hmiddle : dim + dim + 1 <= 2 * (dim + 1)) by lia.
+      assert (Hc : count <= dim + 1) by lia.
+      eapply Nat.le_trans with (m :=
+        (dim + 1) * (dim + 1) * (2 * (dim + 1))).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hmiddle].
+      - replace ((dim + 1)^3) with
+          ((dim + 1) * (dim + 1) * (dim + 1))
+          by (cbn [Nat.pow]; ring). lia. }
+    assert (Hbits : (ellB dim bits + 1)^2 <=
+      (ellB (dim + 1) bits + 1)^2).
+    { apply Nat.pow_le_mono_l.
+      unfold ellB. apply Nat.add_le_mono_r.
+      apply Nat.mul_le_mono; [lia|].
+      pose proof (Nat.log2_le_mono dim (dim + 1) ltac:(lia)). lia. }
+    assert (Hnat : count * (dim + 1) * (dim + dim + 1) *
+        (ellB dim bits + 1)^2 <=
+      2 * ((dim + 1)^3 * (ellB (dim + 1) bits + 1)^2)).
+    { replace (2 * ((dim + 1)^3 * (ellB (dim + 1) bits + 1)^2))
+        with ((2 * (dim + 1)^3) * (ellB (dim + 1) bits + 1)^2)
+        by ring.
+      apply Nat.mul_le_mono; [exact Hdim|exact Hbits]. }
+    assert (HN : (N.of_nat (count * (dim + 1) * (dim + dim + 1) *
+      (ellB dim bits + 1)^2) <= N.of_nat
+      (2 * ((dim + 1)^3 * (ellB (dim + 1) bits + 1)^2)))%N) by lia.
+    rewrite !Nat2N.inj_mul in HN.
+    unfold karr_bareiss_stage_budget.
+    replace (N.of_nat count * (32768 * N.of_nat (dim + 1) *
+      N.of_nat (dim + dim + 1) * N.of_nat ((ellB dim bits + 1)^2)))%N with
+      (32768 * (N.of_nat count * N.of_nat (dim + 1) *
+        N.of_nat (dim + dim + 1) * N.of_nat ((ellB dim bits + 1)^2)))%N
+      by ring.
+    replace (65536 * N.of_nat ((dim + 1)^3 *
+      (ellB (dim + 1) bits + 1)^2))%N with
+      (32768 * (2 * N.of_nat ((dim + 1)^3 *
+        (ellB (dim + 1) bits + 1)^2)))%N by ring.
+    rewrite Nat2N.inj_mul.
+    change (N.of_nat 2) with 2%N in HN.
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** The basis clock includes preparation, initialization and elimination. *)
+  Lemma T_karr_equality_basis_components : forall xs P,
+    (T_equality_basis xs P <=
+      T_karr_bareiss (length xs) 1
+        (seed_rows xs (length P) 0 (map normalize_row P)) +
+      T_seed_rows xs (length P) 0 (map normalize_row P) +
+      ListDef.T_map normalize_row T_normalize_row P +
+      64 * N.of_nat (length xs + length P + 1))%N.
+  Proof.
+    intros xs P.
+    pose proof (Datatypes.T_length_le xs) as Hxs.
+    pose proof (Datatypes.T_length_le P) as Hrows.
+    time_unfold T_equality_basis.
+    change (fun H : lcons X.t => T_normalize_row H) with T_normalize_row.
+    set (preparation := ListDef.T_map normalize_row T_normalize_row P) in *.
+    set (initialization := T_seed_rows xs (length P) 0 (map normalize_row P)) in *.
+    set (elimination := T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P))) in *.
+    clearbody preparation initialization elimination.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
+  Qed.
+
+  (** Contradiction detection builds one basis and scans it for an empty row. *)
+  Lemma T_karr_contradiction_components : forall P,
+    (T_contradiction P <= T_variables P +
+      T_equality_basis (variables P) P +
+      T_empty_certificate P (equality_basis (variables P) P) +
+      64 * N.of_nat (length P + 1))%N.
+  Proof.
+    intros P. time_unfold T_contradiction.
+    set (coordinates := T_variables P) in *.
+    set (basis := T_equality_basis (variables P) P) in *.
+    set (scan := T_empty_certificate P (equality_basis (variables P) P)) in *.
+    clearbody coordinates basis scan. lia.
+  Qed.
+
+  (** An empty-certificate search pays one bounded check per basis row. *)
+  Lemma T_karr_empty_certificate_scan : forall P rs charge,
+    (forall r, In r rs ->
+      (T_karr_zero r + C.T_check_empty P (kweight r) <= charge)%N) ->
+    (T_empty_certificate P rs <=
+      (charge + 64) * N.of_nat (length rs + 1))%N.
+  Proof.
+    intros P rs. induction rs as [|r rs IH]; intros charge Hcharge.
+    - time_unfold T_empty_certificate. cbn [length]. lia.
+    - pose proof (Hcharge r (or_introl eq_refl)) as Hhead.
+      specialize (IH charge (fun q Hq => Hcharge q (or_intror Hq))).
+      pose proof (T_karr_zero_test (kright r)) as Hright.
+      time_unfold T_empty_certificate.
+      time_unfold T_kright. time_unfold T_kweight.
+      time_unfold Datatypes.T_negb. time_unfold Datatypes.T_andb.
+      destruct (karr_zero r && negb (Z.eqb (kright r) 0) &&
+        C.check_empty P (kweight r)); time_simpl; cbn [length];
+        rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
+  (** A uniform checker and zero-test allowance pays the complete basis scan. *)
+  Definition karr_empty_scan_charge (dim keys bits mbits : nat) : N :=
+    (C.c_lc * N.of_nat
+      ((2 * dim + 1) * (dim + 1) *
+        (keys + (mbits + 1) * (bits + 1) + 1) + 1) +
+      8 * N.of_nat (dim + 1) + 64)%N.
+
+  Lemma T_karr_empty_certificate_bounded : forall P rs dim keys bits mbits,
+    length P <= dim -> length rs <= dim ->
+    Forall (fun r => length (lhs r) <= dim /\
+      C.row_key_bits r <= keys /\ C.row_bits r <= bits) P ->
+    Forall (karr_row_envelope dim dim mbits) rs ->
+    (T_empty_certificate P rs <=
+      karr_empty_scan_charge dim keys bits mbits * N.of_nat (dim + 1))%N.
+  Proof.
+    intros P rs dim keys bits mbits HP Hrs Hsource Hbasis.
+    assert (Hrow_charge : forall row, In row rs ->
+      (T_karr_zero row + C.T_check_empty P (kweight row) <=
+        karr_empty_scan_charge dim keys bits mbits - 64)%N).
+    { intros row Hr.
+      pose proof (proj1 (Forall_forall _ _) Hbasis row Hr) as Hrow.
+      destruct Hrow as [Hcoeff [_ [_ [Hweight [Hweight_bits _]]]]].
+      pose proof (T_karr_zero_bounded row) as Hzero.
+      pose proof (C.T_check_empty_le P (kweight row)) as Hcheck.
+      pose proof (karr_csize_envelope P (kweight row) dim keys bits mbits
+        Hsource Hweight_bits) as Hsize.
+      assert (Hsize_bound : C.csize P (kweight row) <=
+        (2 * dim + 1) * (dim + 1) *
+          (keys + (mbits + 1) * (bits + 1) + 1)).
+      { eapply Nat.le_trans; [exact Hsize|].
+        apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|lia]. }
+      assert (Hcheck_bound : (C.T_check_empty P (kweight row) <=
+        C.c_lc * N.of_nat
+          ((2 * dim + 1) * (dim + 1) *
+            (keys + (mbits + 1) * (bits + 1) + 1) + 1))%N).
+      { eapply N.le_trans; [exact Hcheck|].
+        apply N.mul_le_mono_l. lia. }
+      assert (Hzero_bound : (T_karr_zero row <= 8 * N.of_nat (dim + 1))%N).
+      { eapply N.le_trans; [exact Hzero|].
+        apply N.mul_le_mono_l. lia. }
+      unfold karr_empty_scan_charge. lia. }
+    pose proof (T_karr_empty_certificate_scan P rs
+      (karr_empty_scan_charge dim keys bits mbits - 64)%N Hrow_charge) as Hscan.
+    eapply N.le_trans; [exact Hscan|].
+    replace (karr_empty_scan_charge dim keys bits mbits - 64 + 64)%N
+      with (karr_empty_scan_charge dim keys bits mbits)%N.
+    - now apply N.mul_le_mono_l; lia.
+    - unfold karr_empty_scan_charge. lia.
+  Qed.
+
+  (** A target trace records the envelope at every intermediate reduction. *)
+  Fixpoint karr_target_envelope (rs : list karr_row) (previous : Z)
+      (target : karr_row) (dim mlen bits : nat) : Prop :=
+    karr_row_envelope dim mlen bits target /\
+    match rs with
+    | [] => True
+    | pivot :: rest =>
+        match karr_first (kcoeff pivot) with
+        | None => karr_target_envelope rest previous target dim mlen bits
+        | Some (index, a) =>
+            karr_target_envelope rest a
+              (karr_reduce previous a (karr_nth index (kcoeff target))
+                pivot target) dim mlen bits
+        end
+    end.
+
+  (** A zero-pivot basis leaves the same target envelope at every step. *)
+  Lemma karr_target_envelope_zero_rows : forall rs previous target dim mlen bits,
+    Forall (fun row => karr_first (kcoeff row) = None) rs ->
+    karr_row_envelope dim mlen bits target ->
+    karr_target_envelope rs previous target dim mlen bits.
+  Proof.
+    intros rs previous target dim mlen bits Hzero Htarget.
+    induction Hzero as [|row rs Hfirst Hrest IH].
+    - cbn [karr_target_envelope]. now split.
+    - cbn [karr_target_envelope]. split; [exact Htarget|].
+      now rewrite Hfirst.
+  Qed.
+
+  (** A live target satisfying the source law fits one fixed row envelope. *)
+  Lemma karr_target_law_envelope : forall previous pivot_rows pivot_columns
+      columns pairs origin target dim mlen det_dim src_bits,
+    karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+    In (origin, karr_row_entries target) pairs ->
+    length (kcoeff target) = dim ->
+    length (karr_row_entries target) = length columns ->
+    length columns = dim + mlen + 2 ->
+    Forall (Forall (fun z => Z.size_nat z <= src_bits)) pivot_rows ->
+    Forall (fun z => Z.size_nat z <= src_bits) origin ->
+    1 <= det_dim -> length pivot_rows + 1 <= det_dim ->
+    karr_row_envelope dim mlen (ellB det_dim src_bits) target.
+  Proof.
+    intros previous pivot_rows pivot_columns columns pairs origin target
+      dim mlen det_dim src_bits Hlaw Hmember Hcoeff Hentries Hcolumns
+      Hpivots Horigin Hdet_dim Horder.
+    apply karr_row_envelope_entries.
+    - lia.
+    - unfold karr_row_entries in Hentries.
+      rewrite !length_app in Hentries. cbn [length] in Hentries.
+      rewrite length_app in Hentries. cbn [length] in Hentries. lia.
+    - eapply karr_minor_law_live_bits with
+        (previous := previous) (pivot_rows := pivot_rows)
+        (pivot_columns := pivot_columns) (columns := columns)
+        (pairs := pairs) (origin := origin); eauto.
+      apply Forall_app. split; [exact Hpivots|].
+      constructor; [exact Horigin|constructor].
+  Qed.
+
+  (** Every target row in a labeled elimination run retains the source-minor width. *)
+  Lemma karr_bareiss_target_envelope : forall cols offset previous pivot_rows
+      pivot_columns columns labels rows target_origin target dim mlen det_dim src_bits,
+    length labels = length rows ->
+    Forall (fun row => length (kcoeff row) = cols /\
+      length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rows ->
+    length (kcoeff target) = offset + cols ->
+    length (karr_row_entries target) = length columns ->
+    offset + cols = dim -> length columns = dim + mlen + 2 ->
+    previous <> 0%Z ->
+    karr_minor_law previous pivot_rows pivot_columns columns
+      (combine labels
+        (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+        [(target_origin, karr_row_entries target)]) ->
+    Forall (Forall (fun z => Z.size_nat z <= src_bits)) pivot_rows ->
+    Forall (Forall (fun z => Z.size_nat z <= src_bits)) labels ->
+    Forall (fun z => Z.size_nat z <= src_bits) target_origin ->
+    1 <= det_dim -> length pivot_rows + length labels + 1 <= det_dim ->
+    karr_target_envelope
+      (map (karr_zero_prefix offset) (karr_bareiss cols previous rows))
+      previous target dim mlen (ellB det_dim src_bits).
+  Proof.
+    induction cols as [|cols IH]; intros offset previous pivot_rows
+      pivot_columns columns labels rows target_origin target dim mlen det_dim src_bits
+      Hlabels Hrows Htarget_coeff Htarget_entries Hdim Hcolumns Hprevious Hlaw
+      Hpivots Hlabels_bits Htarget_bits Hdet_dim Hcount.
+    all: pose proof (karr_target_law_envelope previous pivot_rows
+      pivot_columns columns
+      (combine labels
+        (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rows) ++
+        [(target_origin, karr_row_entries target)])
+      target_origin target dim mlen det_dim src_bits Hlaw
+      ltac:(apply in_or_app; right; now left)
+      ltac:(lia) Htarget_entries Hcolumns Hpivots Htarget_bits
+      Hdet_dim ltac:(lia)) as Htarget_envelope.
+    - cbn [karr_bareiss]. apply karr_target_envelope_zero_rows;
+        [|exact Htarget_envelope].
+      apply Forall_map, Forall_forall. intros row Hin.
+      pose proof (proj1 (Forall_forall _ _) Hrows row Hin) as [Hwidth _].
+      apply karr_zero_prefix_first_none.
+      destruct (kcoeff row) as [|z zs]; [reflexivity|].
+      cbn [length] in Hwidth. lia.
+    - rename cols into cols'. cbn [karr_bareiss].
+      destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+      + pose proof (karr_pivot_some rows pivot rest Hselect)
+          as [Hp Hperm_rows].
+        pose proof (Permutation_Forall Hperm_rows Hrows) as Hselected.
+        apply Forall_cons_iff in Hselected as [Hp_width Hrest_width].
+        destruct Hp_width as [Hp_coeff Hp_entries].
+        destruct (karr_pivot_combine _ _
+          (fun row => karr_row_entries (karr_zero_prefix offset row))
+          labels rows pivot rest Hlabels Hselect) as
+          [origin [remaining [Hremaining [Hperm_labels Hperm_pairs]]]].
+        pose proof (Permutation_Forall Hperm_labels Hlabels_bits) as Hsources.
+        apply Forall_cons_iff in Hsources as [Horigin Hremaining_bits].
+        assert (Hlaw_selected : karr_minor_law previous pivot_rows
+          pivot_columns columns
+          ((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+            combine remaining
+              (map (fun row => karr_row_entries
+                (karr_zero_prefix offset row)) rest) ++
+            [(target_origin, karr_row_entries target)])).
+        { eapply karr_minor_law_permutation; [|exact Hlaw].
+          change (Permutation
+            (combine labels (map (fun row => karr_row_entries
+              (karr_zero_prefix offset row)) rows) ++
+              [(target_origin, karr_row_entries target)])
+            (((origin, karr_row_entries (karr_zero_prefix offset pivot)) ::
+              combine remaining (map (fun row => karr_row_entries
+                (karr_zero_prefix offset row)) rest)) ++
+              [(target_origin, karr_row_entries target)])).
+          now apply Permutation_app_tail. }
+        destruct (karr_minor_law_prefix_step cols' offset previous pivot_rows
+          pivot_columns columns origin pivot remaining rest target_origin target
+          Hremaining Hp_coeff Hp_entries Hrest_width Htarget_coeff
+          Htarget_entries Hprevious Hp Hlaw_selected)
+          as [_ Hnext].
+        destruct (karr_prefix_pivot_width cols' offset previous columns pivot
+          rest target Hp_coeff Hp_entries Hrest_width Htarget_coeff
+          Htarget_entries Hp) as [Hrows_next [Htarget_coeff_next
+            Htarget_entries_next]].
+        set (a := karr_head pivot).
+        set (target' := karr_reduce previous a
+          (karr_nth offset (kcoeff target)) (karr_zero_prefix offset pivot) target).
+        set (rows' := map (fun row => karr_tail
+          (karr_reduce previous a (karr_head row) pivot row)) rest).
+        cbn [map karr_target_envelope].
+        rewrite (karr_zero_prefix_first offset pivot Hp).
+        split; [exact Htarget_envelope|].
+        rewrite map_map.
+        replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+            (karr_bareiss cols' a rows')) with
+          (map (karr_zero_prefix (S offset)) (karr_bareiss cols' a rows')).
+        * apply (IH (S offset) a (pivot_rows ++ [origin])
+            (pivot_columns ++ [nth offset columns 0%nat]) columns
+            remaining rows' target_origin target' dim mlen det_dim src_bits).
+          -- unfold rows'. rewrite length_map. exact Hremaining.
+          -- exact Hrows_next.
+          -- exact Htarget_coeff_next.
+          -- exact Htarget_entries_next.
+          -- lia.
+          -- exact Hcolumns.
+          -- exact Hp.
+          -- exact Hnext.
+          -- apply Forall_app. split; [exact Hpivots|].
+             constructor; [exact Horigin|constructor].
+          -- exact Hremaining_bits.
+          -- exact Htarget_bits.
+          -- exact Hdet_dim.
+          -- pose proof (Permutation_length Hperm_rows) as Hrow_count.
+             cbn [length] in Hrow_count.
+             rewrite length_app. cbn [length]. lia.
+        * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+      + destruct (karr_minor_law_prefix_skip cols' offset previous pivot_rows
+          pivot_columns columns labels rows target_origin target Hselect Hrows Hlaw)
+          as [Hrows_next Hlaw_next].
+        rewrite map_map.
+        replace (map (fun row => karr_zero_prefix offset (karr_restore row))
+            (karr_bareiss cols' previous (map karr_tail rows))) with
+          (map (karr_zero_prefix (S offset))
+            (karr_bareiss cols' previous (map karr_tail rows))).
+        * apply (IH (S offset) previous pivot_rows pivot_columns columns
+            labels (map karr_tail rows) target_origin target dim mlen det_dim src_bits).
+          -- rewrite length_map. exact Hlabels.
+          -- exact Hrows_next.
+          -- replace (S offset + cols') with (offset + S cols') by lia.
+             exact Htarget_coeff.
+          -- exact Htarget_entries.
+          -- lia.
+          -- exact Hcolumns.
+          -- exact Hprevious.
+          -- exact Hlaw_next.
+          -- exact Hpivots.
+          -- exact Hlabels_bits.
+          -- exact Htarget_bits.
+          -- exact Hdet_dim.
+          -- exact Hcount.
+        * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
+  Qed.
+
+  (** The actual conclusion row inherits one fixed source-minor envelope. *)
+  Lemma karr_target_seed_envelope : forall xs P c,
+    normal (c :: nil) ->
+    karr_target_envelope (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z)
+      (length xs) (length P)
+      (ellB (length xs + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1)).
+  Proof.
+    intros xs P c Hnormal.
+    set (seeds := seed_rows xs (length P) 0 (map normalize_row P)).
+    set (source := map karr_row_entries seeds).
+    set (target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z).
+    set (width := length xs + length P + 2).
+    set (src_bits := nell (Reached P) + C.row_bits c + 1).
+    unfold equality_basis.
+    change (karr_target_envelope (karr_bareiss (length xs) 1 seeds)
+      1 target (length xs) (length P)
+      (ellB (length xs + length P + 3) src_bits)).
+    replace (karr_bareiss (length xs) 1 seeds) with
+      (map (karr_zero_prefix 0) (karr_bareiss (length xs) 1 seeds))
+      by (cbn [karr_zero_prefix]; now rewrite map_id).
+    eapply karr_bareiss_target_envelope with
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 width) (labels := source)
+      (target_origin := karr_row_entries target).
+    - unfold source. rewrite length_map. reflexivity.
+    - apply Forall_forall. intros row Hin. split.
+      + exact (proj1 (Forall_forall _ _)
+          (seed_rows_width xs (length P) 0 (map normalize_row P)) row Hin).
+      + cbn [karr_zero_prefix]. rewrite length_seq. unfold width.
+        exact (proj1 (Forall_forall _ _)
+          (seed_entries_width xs (length P) 0 (map normalize_row P)) row Hin).
+    - unfold target. cbn [kcoeff]. unfold dense. rewrite length_map. lia.
+    - unfold target, karr_row_entries.
+      cbn [kcoeff kright kweight kscale].
+      rewrite !length_app. cbn [length].
+      rewrite length_app. cbn [length].
+      unfold dense. rewrite length_map, repeat_length, length_seq.
+      lia.
+    - lia.
+    - rewrite length_seq. unfold width. lia.
+    - lia.
+    - unfold source. cbn [karr_zero_prefix].
+      change (karr_minor_law 1 [] [] (seq 0 width)
+        (combine (map karr_row_entries seeds) (map karr_row_entries seeds) ++
+          [(karr_row_entries target, karr_row_entries target)])).
+      rewrite karr_combine_self.
+      change (karr_minor_law 1 [] [] (seq 0 width)
+        (map (fun row => (row, row)) (map karr_row_entries seeds) ++
+          map (fun row => (row, row)) [karr_row_entries target])).
+      rewrite <- map_app.
+      apply karr_minor_law_initial.
+    - constructor.
+    - unfold source. eapply Forall_impl;
+        [|apply karr_seed_entries_bits].
+      intros row Hrow. eapply Forall_impl; [|exact Hrow].
+      intros z Hz. cbn beta in *. unfold src_bits. lia.
+    - apply (karr_row_entries_bits (length xs) (length P) src_bits target).
+      apply karr_target_initial_envelope; [exact Hnormal| |];
+        unfold src_bits, nell; lia.
+    - lia.
+    - unfold source. rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0
+        (map normalize_row P)) as Hcount.
+      rewrite length_map in Hcount.
+      change (length seeds <= length P) in Hcount.
+      cbn [length]. lia.
+  Qed.
+
+  (** The last row of a bounded target trace retains the same envelope. *)
+  Lemma karr_target_envelope_result : forall rs previous target dim mlen bits,
+    karr_target_envelope rs previous target dim mlen bits ->
+    karr_row_envelope dim mlen bits (karr_target rs previous target).
+  Proof.
+    intro rs. induction rs as [|pivot rest IH];
+      intros previous target dim mlen bits Htrace.
+    - exact (proj1 Htrace).
+    - destruct Htrace as [_ Hnext]. cbn [karr_target].
+      destruct (karr_first (kcoeff pivot)) as [[index a]|];
+        now apply IH.
+  Qed.
+
+  (** A bounded target trace pays one reduction and two lookups per basis row. *)
+  Lemma T_karr_target_trace_bounded : forall rs previous target dim mlen bits,
+    Z.size_nat previous <= bits ->
+    Forall (karr_row_envelope dim mlen bits) rs ->
+    karr_target_envelope rs previous target dim mlen bits ->
+    (T_karr_target rs previous target <=
+      16384 * N.of_nat (length rs + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intro rs. induction rs as [|pivot rest IH];
+      intros previous target dim mlen bits Hprevious Hbasis Htrace.
+    - time_unfold T_karr_target. cbn [length].
+      assert (Hpositive : (1 <= N.of_nat (dim + mlen + 1) *
+        N.of_nat ((bits + 1)^2))%N).
+      { assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+        pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+      nia.
+    - apply Forall_cons_iff in Hbasis as [Hp Hrest].
+      destruct Htrace as [Ht Hnext].
+      pose proof (T_karr_first_bounded (kcoeff pivot)) as Hfirst.
+      time_unfold T_karr_target.
+      destruct (karr_first (kcoeff pivot)) as [[index a]|] eqn:Hselect.
+      + pose proof (karr_first_nth (kcoeff pivot) index a Hselect) as Ha_eq.
+        assert (Ha : Z.size_nat a <= bits).
+        { rewrite <- Ha_eq. apply karr_nth_bits.
+          exact (proj1 (proj2 Hp)). }
+        assert (Hb : Z.size_nat (karr_nth index (kcoeff target)) <= bits).
+        { apply karr_nth_bits. exact (proj1 (proj2 Ht)). }
+        pose proof (T_karr_nth_bounded index (kcoeff target)) as Hnth.
+        pose proof (T_karr_reduce_bounded dim mlen bits previous a
+          (karr_nth index (kcoeff target)) pivot target Hprevious Ha Hb Hp Ht)
+          as Hreduce.
+        pose proof (IH a
+          (karr_reduce previous a (karr_nth index (kcoeff target)) pivot target)
+          dim mlen bits Ha Hrest Hnext) as Htail.
+        time_unfold T_kcoeff.
+        set (work := (N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N).
+        assert (Hpositive : (1 <= work)%N).
+        { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N)
+            by lia.
+          pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+        assert (Hdimension : (N.of_nat (dim + 1) <= work)%N).
+        { unfold work.
+          assert (Hsquare : (1 <= N.of_nat ((bits + 1)^2))%N).
+          { pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+          eapply N.le_trans; [|apply N.mul_le_mono_l; exact Hsquare].
+          lia. }
+        assert (Hfirst_work : (T_karr_first (kcoeff pivot) <= 16 * work)%N).
+        { eapply N.le_trans; [exact Hfirst|]. apply N.mul_le_mono_l.
+          eapply N.le_trans; [|exact Hdimension].
+          destruct Hp as [Hpcoeff _]. lia. }
+        assert (Hnth_work : (T_karr_nth index (kcoeff target) <= 8 * work)%N).
+        { eapply N.le_trans; [exact Hnth|]. apply N.mul_le_mono_l.
+          eapply N.le_trans; [|exact Hdimension].
+          destruct Ht as [Htcoeff _]. lia. }
+        replace (8192 * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (8192 * work)%N in Hreduce
+          by (unfold work; ring).
+        set (count := N.of_nat (length rest + 1)) in *.
+        replace (16384 * N.of_nat (length rest + 1) *
+          N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+          (16384 * count * work)%N in Htail by (unfold count, work; ring).
+        replace (16384 * N.of_nat (length (pivot :: rest) + 1) *
+          N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+          (16384 * count * work + 16384 * work)%N in |- *
+          by (unfold count, work; cbn [length]; rewrite !Nat2N.inj_add;
+            cbn [N.of_nat];
+            change (N.pos (PosDef.Pos.of_succ_nat (length rest))) with
+              (N.of_nat (S (length rest)));
+            rewrite Nat2N.inj_succ;
+            replace (N.succ (N.of_nat (length rest))) with
+              (N.of_nat (length rest) + 1)%N by lia;
+            change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N;
+            ring).
+        set (volume := (count * work)%N) in *.
+        replace (16384 * count * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (16384 * volume)%N in Htail
+          by (unfold volume, work; ring).
+        replace (16384 * count * work + 16384 * work)%N with
+          (16384 * volume + 16384 * work)%N in |- *
+          by (unfold volume; ring).
+        set (first_cost := T_karr_first (kcoeff pivot)) in *.
+        set (nth_cost := T_karr_nth index (kcoeff target)) in *.
+        set (reduce_cost := T_karr_reduce previous a
+          (karr_nth index (kcoeff target)) pivot target) in *.
+        set (recursive_cost := T_karr_target rest a
+          (karr_reduce previous a (karr_nth index (kcoeff target)) pivot target)) in *.
+        clearbody work count volume first_cost nth_cost reduce_cost recursive_cost.
+        lia.
+      + pose proof (IH previous target dim mlen bits Hprevious Hrest Hnext)
+          as Htail.
+        time_unfold T_kcoeff.
+        set (work := (N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N).
+        assert (Hpositive : (1 <= work)%N).
+        { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N)
+            by lia.
+          pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+        assert (Hdimension : (N.of_nat (dim + 1) <= work)%N).
+        { unfold work.
+          assert (Hsquare : (1 <= N.of_nat ((bits + 1)^2))%N).
+          { pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+          eapply N.le_trans; [|apply N.mul_le_mono_l; exact Hsquare]. lia. }
+        assert (Hfirst_work : (T_karr_first (kcoeff pivot) <= 16 * work)%N).
+        { eapply N.le_trans; [exact Hfirst|]. apply N.mul_le_mono_l.
+          eapply N.le_trans; [|exact Hdimension].
+          destruct Hp as [Hpcoeff _]. lia. }
+        set (count := N.of_nat (length rest + 1)) in *.
+        set (volume := (count * work)%N) in *.
+        replace (16384 * count * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (16384 * volume)%N in Htail
+          by (unfold volume, work; ring).
+        replace (16384 * N.of_nat (length (pivot :: rest) + 1) *
+          N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+          (16384 * volume + 16384 * work)%N in |- *
+          by (unfold volume, count, work; cbn [length];
+            rewrite !Nat2N.inj_add; cbn [N.of_nat];
+            change (N.pos (PosDef.Pos.of_succ_nat (length rest))) with
+              (N.of_nat (S (length rest)));
+            rewrite Nat2N.inj_succ;
+            replace (N.succ (N.of_nat (length rest))) with
+              (N.of_nat (length rest) + 1)%N by lia;
+            change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N; ring).
+        set (first_cost := T_karr_first (kcoeff pivot)) in *.
+        set (recursive_cost := T_karr_target rest previous target) in *.
+        clearbody work count volume first_cost recursive_cost. lia.
+  Qed.
+
+  (** Contradiction scanning uses the initialized basis and the normal source budget. *)
+  Lemma T_karr_contradiction_scan_bounded : forall P,
+    normal P ->
+    (T_empty_certificate P (equality_basis (variables P) P) <=
+      karr_empty_scan_charge (n (Reached P) + 2)
+        (ell (Reached P)) (ell (Reached P))
+        (ellB (length (variables P) + length P + 2) (nell (Reached P))) *
+        N.of_nat (n (Reached P) + 3))%N.
+  Proof.
+    intros P Hnormal.
+    replace (n (Reached P) + 3) with ((n (Reached P) + 2) + 1) by lia.
+    eapply T_karr_empty_certificate_bounded.
+    - unfold n. cbn [rows_of]. lia.
+    - unfold equality_basis. rewrite karr_bareiss_length.
+      pose proof (karr_seed_rows_length (variables P) (length P) 0
+        (map normalize_row P)) as Hlength.
+      rewrite length_map in Hlength. unfold n. cbn [rows_of]. lia.
+    - eapply Forall_impl; [|apply karr_normal_source_envelope; exact Hnormal].
+      intros row [Hlength [Hkeys Hbits]]. repeat split; lia.
+    - unfold equality_basis.
+      eapply Forall_impl; [|apply karr_seed_basis_envelope].
+      intros row Hrow. eapply karr_row_envelope_resize;
+        [| | |exact Hrow]; unfold n; cbn [rows_of];
+        try (pose proof (karr_variables_count P)); lia.
+  Qed.
+
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
   Lemma input_minors_bits : forall P z,
     In z (input_minors P) ->
@@ -9613,8 +15933,64 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     rewrite length_map in Hlength. unfold n. cbn [rows_of]. lia.
   Qed.
 
+  (** The input-minor width fits four copies of the public dimension width. *)
+  Lemma karr_minor_width_public : forall P,
+    normal P -> ellB (n (Reached P) + 1) (nell (Reached P)) + 1 <=
+      4 * (ellB (n (Reached P) + 2) (ell (Reached P)) + 1).
+  Proof.
+    intros P Hnormal.
+    pose proof (karr_normal_terms_log P Hnormal) as Hlog.
+    pose proof (Nat.log2_le_mono (n (Reached P) + 1)
+      (n (Reached P) + 2) ltac:(lia)) as Hdimlog.
+    unfold nell, ellB.
+    set (d := n (Reached P)) in *.
+    set (b := ell (Reached P)) in *.
+    set (l := Nat.log2 (d + 1)) in *.
+    set (l' := Nat.log2 (d + 2)) in *.
+    set (t := Nat.log2 (terms (Reached P))) in *.
+    clearbody d b l l' t.
+    nia.
+  Qed.
+
   Lemma bareiss_minor : forall P z, In z (bareiss_entries P) -> In z (input_minors P).
-  Proof. Admitted. (* OPEN: general Sylvester and initialized-run divisibility invariant. *)
+  Proof.
+    intros P z Hin. unfold bareiss_entries in Hin. unfold input_minors.
+    eapply karr_run_state_record.
+    - intro Htwo. rewrite length_map in Htwo.
+      assert (Hsource_count : 2 <= length P).
+      { unfold bareiss_seeds in Htwo.
+        pose proof (karr_seed_rows_length (variables P) (length P) 0
+          (map normalize_row P)) as Hcount.
+        rewrite length_map in Hcount. lia. }
+      apply input_minors_zero; [exact Hsource_count|].
+      destruct (bareiss_seeds P) as [|row rows] eqn:Hseeds;
+        [cbn [length] in Htwo; lia|discriminate].
+    - apply bareiss_run_state_initial.
+    - exact Hin.
+  Qed.
+  (** The initialized elimination run inherits the public input-minor width. *)
+  Lemma T_karr_bareiss_initial_bounded : forall P,
+    (T_karr_bareiss (length (variables P)) 1 (bareiss_seeds P) <=
+      N.of_nat (length (variables P)) *
+        karr_bareiss_stage_budget (n (Reached P) + 2)
+          (ellB (n (Reached P) + 1) (nell (Reached P))) + 4)%N.
+  Proof.
+    intro P.
+    eapply T_karr_bareiss_run_bounded with
+      (width := length (variables P) + length P + 2)
+      (original := map karr_row_entries (bareiss_seeds P))
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 (length (variables P) + length P + 2))
+      (labels := map karr_row_entries (bareiss_seeds P)).
+    - apply bareiss_run_state_initial.
+    - rewrite length_map. unfold bareiss_seeds.
+      pose proof (karr_seed_rows_length (variables P) (length P) 0
+        (map normalize_row P)) as Hlength.
+      rewrite length_map in Hlength. unfold n. cbn [rows_of]. lia.
+    - rewrite length_seq. unfold n. cbn [rows_of].
+      pose proof (karr_variables_count P). lia.
+    - intros z Hz. exact (input_minors_bits P z Hz).
+  Qed.
   Lemma widen_join : forall p a b, widen p a b = if leb b a then a else join a b.
   Proof.
     reflexivity.
@@ -9631,6 +16007,2347 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros dim dim' bits bits' Hdim Hbits. unfold ellB.
     apply Nat.mul_le_mono; [exact Hdim|].
     pose proof (Nat.log2_le_mono dim dim' Hdim). lia.
+  Qed.
+
+  (** An initialized conclusion trace has the public minor-width clock. *)
+  Lemma T_karr_target_seed_bounded : forall xs P c,
+    normal (c :: nil) ->
+    (T_karr_target (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z) <=
+      16384 * N.of_nat (length P + 1) *
+        N.of_nat (length xs + length P + 1) *
+        N.of_nat ((ellB (length xs + length P + 3)
+          (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N.
+  Proof.
+    intros xs P c Hnormal.
+    set (bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1)).
+    pose proof (karr_target_seed_envelope xs P c Hnormal) as Htrace.
+    assert (Hbasis : Forall (karr_row_envelope (length xs) (length P) bits)
+      (equality_basis xs P)).
+    { unfold equality_basis.
+      eapply Forall_impl; [|apply karr_seed_basis_envelope].
+      intros row Hr. eapply (karr_row_envelope_resize (length xs) (length P)
+        (ellB (length xs + length P + 2) (nell (Reached P)))
+        (length xs) (length P) bits);
+        [lia|lia| |exact Hr].
+      unfold bits. apply ellB_mono; lia. }
+    assert (Hprevious : Z.size_nat 1 <= bits).
+    { change (Z.size_nat 1) with 1. unfold bits, ellB. nia. }
+    pose proof (T_karr_target_trace_bounded (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z)
+      (length xs) (length P) bits Hprevious Hbasis Htrace) as Hclock.
+    assert (Hlength : length (equality_basis xs P) <= length P).
+    { unfold equality_basis. rewrite karr_bareiss_length.
+      pose proof (karr_seed_rows_length xs (length P) 0
+        (map normalize_row P)) as Hseed.
+      rewrite length_map in Hseed. exact Hseed. }
+    set (work := (16384 * N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N).
+    replace (16384 * N.of_nat (length (equality_basis xs P) + 1) *
+      N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N with
+      (N.of_nat (length (equality_basis xs P) + 1) * work)%N in Hclock
+      by (unfold work; ring).
+    replace (16384 * N.of_nat (length P + 1) *
+      N.of_nat (length xs + length P + 1) *
+      N.of_nat ((ellB (length xs + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N with
+      (N.of_nat (length P + 1) * work)%N by (unfold work, bits; ring).
+    eapply N.le_trans; [exact Hclock|].
+    assert (HlengthN : (N.of_nat (length (equality_basis xs P) + 1) <=
+      N.of_nat (length P + 1))%N) by lia.
+    nia.
+  Qed.
+
+  (** Target certificates inherit the final elimination row's width. *)
+  Lemma karr_target_certificate_envelope : forall P c k dim bits,
+    target_certificate P c = Some k ->
+    karr_row_envelope dim (length P) bits
+      (karr_target (equality_basis (variables (c :: P)) P) 1
+        (KRow (dense (variables (c :: P)) c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z)) ->
+    length (mults k) <= length P /\
+    Forall (fun z => Z.size_nat z <= bits) (mults k) /\
+    Z.size_nat (scale k) <= bits.
+  Proof.
+    intros P c k dim bits Hcert Hrow.
+    unfold target_certificate in Hcert.
+    cbn zeta in Hcert.
+    set (row := karr_target (equality_basis (variables (c :: P)) P) 1
+      (KRow (dense (variables (c :: P)) c) (rhs c)
+        (repeat 0%Z (length P)) 1%Z)) in *.
+    destruct Hrow as [_ [_ [_ [Hlength [Hweights Hscale]]]]].
+    destruct (karr_zero row && negb (Z.eqb (kscale row) 0) &&
+        match lrel c with
+        | REq => Z.eqb (kright row) 0
+        | RLe => (0 <=? (if (kscale row <? 0)%Z then -1 else 1) * kright row)%Z
+        end) eqn:Htest; try discriminate Hcert.
+    inversion Hcert; subst k; cbn [mults scale]; repeat split;
+        try (rewrite length_map; exact Hlength);
+        try (rewrite karr_size_abs; exact Hscale).
+    apply Forall_forall. intros y Hy.
+    apply in_map_iff in Hy as [z [Hy Hz]]. subst y.
+    pose proof (proj1 (Forall_forall _ _) Hweights z Hz) as Hwidth.
+    cbn beta in Hwidth.
+    destruct ((kscale row <? 0)%Z);
+      [replace ((- (-1)) * z)%Z with z by ring|
+       replace ((- 1) * z)%Z with (- z)%Z by ring];
+      [exact Hwidth|rewrite karr_size_opp; exact Hwidth].
+  Qed.
+
+  (** Contradiction certificates retain one bounded basis weight vector. *)
+  Lemma karr_empty_certificate_envelope : forall P rs ms dim bits,
+    empty_certificate P rs = Some ms ->
+    Forall (karr_row_envelope dim (length P) bits) rs ->
+    length ms <= length P /\
+    Forall (fun z => Z.size_nat z <= bits) ms.
+  Proof.
+    intros P rs. induction rs as [|row rest IH];
+      intros ms dim bits Hcert Hrows; [discriminate Hcert|].
+    apply Forall_cons_iff in Hrows as [Hrow Hrest].
+    cbn [empty_certificate] in Hcert.
+    destruct (karr_zero row && negb (Z.eqb (kright row) 0) &&
+      C.check_empty P (kweight row)) eqn:Htest.
+    - inversion Hcert; subst ms.
+      destruct Hrow as [_ [_ [_ [Hlength [Hbits _]]]]].
+      now split.
+    - eapply IH; eassumption.
+  Qed.
+
+  (** A bounded certificate pays the checker through its public size law. *)
+  Lemma karr_checker_envelope : forall P c k dim keys bits mbits,
+    length P <= dim ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= keys /\ C.row_bits row <= bits) P ->
+    length (mults k) <= dim ->
+    Forall (fun z => Z.size_nat z <= mbits) (mults k) ->
+    length (lhs c) <= dim -> C.row_key_bits c <= keys ->
+    C.row_bits c <= bits -> Z.size_nat (scale k) <= mbits ->
+    (C.T_check_entails P c k <= C.c_lc * N.of_nat
+      ((2 * dim + 1) * (dim + 1) *
+        (keys + (mbits + 1) * (bits + 1) + 1) +
+       (mbits + 1) * ((dim + 1) * (keys + bits + 1) +
+         mbits + bits + Nat.log2 dim + 2)))%N.
+  Proof.
+    intros P c k dim keys bits mbits Hcount Hsource Hmult_length Hmult
+      Hconclusion_length Hconclusion_keys Hconclusion_bits Hscale.
+    pose proof (karr_csize_envelope P (mults k) dim keys bits mbits
+      Hsource Hmult) as Hsize.
+    assert (Hsize' : C.csize P (mults k) <=
+      (2 * dim + 1) * (dim + 1) *
+        (keys + (mbits + 1) * (bits + 1) + 1)).
+    { assert (Hlength : length P + length (mults k) + 1 <= 2 * dim + 1)
+        by lia. nia. }
+    assert (Hsource_bits : Forall (fun row => C.row_bits row <= bits) P).
+    { eapply Forall_impl; [|exact Hsource].
+      intros row Hrow. exact (proj2 (proj2 Hrow)). }
+    pose proof (karr_cbits_envelope P (mults k) bits mbits
+      Hsource_bits Hmult) as Hbits.
+    pose proof (karr_lsize_envelope c dim keys bits Hconclusion_length
+      Hconclusion_keys Hconclusion_bits) as Hconclusion.
+    pose proof (Nat.log2_le_mono (length P) dim Hcount) as Hlog.
+    assert (Hproduct : (Z.size_nat (scale k) + 1) *
+      (C.lsize c + C.cbits P (mults k) + 1) <=
+      (mbits + 1) * ((dim + 1) * (keys + bits + 1) +
+        mbits + bits + Nat.log2 dim + 2)).
+    { apply Nat.mul_le_mono; lia. }
+    pose proof (C.T_check_entails_le P c k) as Hclock.
+    eapply N.le_trans; [exact Hclock|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  Definition karr_hull_checker_charge (dim bits : nat) : nat :=
+    (2 * dim + 1) * (dim + 1) *
+      (bits + (bits + 1) * (bits + 1) + 1) +
+    (bits + 1) * ((dim + 1) * (bits + bits + 1) +
+      bits + bits + Nat.log2 dim + 2).
+
+  (** Both checked hull certificates pay the same public checker charge. *)
+  Lemma T_karr_hull_checkers_bounded : forall xs a b r dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    let zs := skipn (S (length xs)) (kcoeff r) in
+    let c := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs) in
+    (C.T_check_entails a c (Cert (firstn (length a) (kweight r)) 1 false) +
+     C.T_check_entails b c (Cert (skipn (length a) (kweight r)) 1 false) <=
+      2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits))%N.
+  Proof.
+    intros xs a b r dim bits Hpositive Hxs Hcount Hkeys Ha Hb Henv zs c.
+    destruct (karr_hull_checked_row_envelope xs a b r bits Hpositive
+      Hkeys Henv) as [Hclen [Hckey [Hcbits [Hfirstlen
+        [Hskiplen [Hfirstbits Hskipbits]]]]]].
+    assert (Halen : length a <= dim) by lia.
+    assert (Hblen : length b <= dim) by lia.
+    assert (Hcertscale : Z.size_nat 1 <= bits).
+    { change (1 <= bits). exact Hpositive. }
+    pose proof (karr_checker_envelope a c
+      (Cert (firstn (length a) (kweight r)) 1 false)
+      dim bits bits bits Halen Ha ltac:(cbn [mults]; lia)
+      ltac:(cbn [mults]; exact Hfirstbits)
+      ltac:(eapply Nat.le_trans; [exact Hclen|exact Hxs])
+      Hckey Hcbits ltac:(cbn [scale]; exact Hcertscale)) as Hleft.
+    pose proof (karr_checker_envelope b c
+      (Cert (skipn (length a) (kweight r)) 1 false)
+      dim bits bits bits Hblen Hb ltac:(cbn [mults]; lia)
+      ltac:(cbn [mults]; exact Hskipbits)
+      ltac:(eapply Nat.le_trans; [exact Hclen|exact Hxs])
+      Hckey Hcbits ltac:(cbn [scale]; exact Hcertscale)) as Hright.
+    unfold karr_hull_checker_charge.
+    eapply N.le_trans; [apply N.add_le_mono; [exact Hleft|exact Hright]|].
+    ring_simplify. apply N.le_refl.
+  Qed.
+
+  (** The two checker charges fit one cubic public work allowance. *)
+  Lemma karr_hull_checker_charge_public : forall d bits v,
+    1 <= d -> 1 <= v -> bits + 1 <= 128 * v ->
+    Nat.log2 d <= v ->
+    karr_hull_checker_charge d bits <=
+      (1024 * 256) * (d^2 * v^2).
+  Proof.
+    intros d bits v Hd Hv Hbits Hlog.
+    assert (Hsquare : (bits + 1)^2 <= (128 * 128) * v^2).
+    { replace ((128 * 128) * v^2) with ((128 * v)^2)
+        by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hv_square : v <= v^2) by (cbn [Nat.pow]; nia).
+    assert (Hhead : bits + (bits + 1)^2 + 1 <=
+      (170 * 100) * v^2).
+    { lia. }
+    assert (Hinner : (d + 1) * (bits + bits + 1) +
+      bits + bits + Nat.log2 d + 2 <= 771 * (d * v)).
+    { assert (Htwo : bits + bits + 1 <= 256 * v) by lia.
+      assert (Hdim : d + 1 <= 2 * d) by lia.
+      assert (Hproduct : (d + 1) * (bits + bits + 1) <=
+        (2 * d) * (256 * v)) by (apply Nat.mul_le_mono; assumption).
+      nia. }
+    assert (Hfirst : (2 * d + 1) * (d + 1) *
+      (bits + (bits + 1)^2 + 1) <=
+      (3 * d) * (2 * d) * ((170 * 100) * v^2)).
+    { apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hhead]. }
+    assert (Hsecond : (bits + 1) *
+      ((d + 1) * (bits + bits + 1) +
+        bits + bits + Nat.log2 d + 2) <=
+      (128 * v) * (771 * (d * v))).
+    { apply Nat.mul_le_mono; assumption. }
+    unfold karr_hull_checker_charge.
+    replace ((bits + 1) * (bits + 1)) with ((bits + 1)^2)
+      by (cbn [Nat.pow]; ring).
+    eapply Nat.le_trans; [apply Nat.add_le_mono;
+      [exact Hfirst|exact Hsecond]|].
+    replace ((3 * d) * (2 * d) * ((170 * 100) * v^2) +
+      (128 * v) * (771 * (d * v))) with
+      ((102 * 1000) * (d^2 * v^2) + (128 * 771) * (d * v^2))
+      by (cbn [Nat.pow]; ring).
+    assert (Hd1 : d <= d^2).
+    { cbn [Nat.pow]. nia. }
+    assert (Hsum : (102 * 1000) * (d^2 * v^2) +
+      (128 * 771) * (d * v^2) <=
+      (102 * 1000 + 128 * 771) * (d^2 * v^2)).
+    { replace ((102 * 1000 + 128 * 771) * (d^2 * v^2)) with
+        ((102 * 1000) * (d^2 * v^2) +
+          (128 * 771) * (d^2 * v^2)) by ring.
+      apply Nat.add_le_mono.
+      - apply Nat.le_refl.
+      - apply Nat.mul_le_mono; [lia|].
+        apply Nat.mul_le_mono; [exact Hd1|lia]. }
+    eapply Nat.le_trans; [exact Hsum|].
+    apply Nat.mul_le_mono; lia.
+  Qed.
+
+  (** One final hull row pays both checkers plus linear reconstruction. *)
+  Lemma T_karr_checked_hull_row_bounded : forall xs a b r dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    karr_row_envelope (2 * length xs + 2) (length a + length b) bits r ->
+    (T_checked_hull_row xs a b r <=
+      2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+      1024 * N.of_nat (dim + 1))%N.
+  Proof.
+    intros xs a b r dim bits Hpositive Hxs Hcount Hkeys Ha Hb Henv.
+    set (zs := skipn (S (length xs)) (kcoeff r)).
+    set (c := LCons X.t (sparse xs zs) REq (karr_nth (length xs) zs)).
+    pose proof (T_karr_hull_checkers_bounded xs a b r dim bits
+      Hpositive Hxs Hcount Hkeys Ha Hb Henv) as Hcheck.
+    pose proof (T_karr_sparse_bounded xs zs) as Hsparse.
+    pose proof (T_karr_nth_bounded (length xs) zs) as Hnth.
+    pose proof (T_karr_firstn_bounded Z (S (length xs)) (kcoeff r))
+      as Hfirst_coeff.
+    pose proof (T_karr_firstn_bounded Z (length a) (kweight r))
+      as Hfirst_weight.
+    pose proof (T_karr_skipn_bounded Z (S (length xs)) (kcoeff r))
+      as Hskip_coeff.
+    pose proof (T_karr_skipn_bounded Z (length a) (kweight r))
+      as Hskip_weight.
+    pose proof (T_karr_zero_forallb_bounded
+      (firstn (S (length xs)) (kcoeff r))) as Hfirst_zero.
+    pose proof (T_karr_zero_forallb_bounded zs) as Hsuffix_zero.
+    pose proof (Datatypes.T_length_le xs) as Hlength_xs.
+    pose proof (Datatypes.T_length_le a) as Hlength_a.
+    destruct Henv as [Hcoeff _].
+    assert (Hzs : length zs <= 2 * length xs + 2).
+    { unfold zs. rewrite length_skipn. lia. }
+    assert (Hfirst_length : length (firstn (S (length xs)) (kcoeff r)) <=
+      S (length xs)).
+    { rewrite length_firstn. lia. }
+    time_unfold T_checked_hull_row. time_simpl.
+    unfold zs, c in *. clear -Hcheck Hsparse Hnth Hfirst_coeff
+      Hfirst_weight Hskip_coeff Hskip_weight Hfirst_zero Hsuffix_zero
+      Hlength_xs Hlength_a Hxs Hcount Hcoeff Hzs Hfirst_length.
+    rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. lia.
+  Qed.
+
+  (** The final map and presence pass charge each bounded basis row once. *)
+  Lemma T_karr_hull_finish_bounded : forall xs a b basis dim bits,
+    1 <= bits -> length xs <= dim -> length a + length b <= dim ->
+    Forall (fun x => X.bits x <= bits) xs ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a ->
+    Forall (fun row => length (lhs row) <= dim /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b ->
+    Forall (karr_row_envelope (2 * length xs + 2)
+      (length a + length b) bits) basis ->
+    (ListDef.T_map (checked_hull_row xs a b)
+       (T_checked_hull_row xs a b) basis +
+     T_present (map (checked_hull_row xs a b) basis) <=
+      (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1) + 16) *
+      N.of_nat (length basis + 1))%N.
+  Proof.
+    intros xs a b basis dim bits Hpositive Hxs Hcount Hkeys Ha Hb Hbasis.
+    assert (Hcallback : forall r, In r basis ->
+      (T_checked_hull_row xs a b r <=
+        2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1))%N).
+    { intros r Hr. apply T_karr_checked_hull_row_bounded;
+        try assumption.
+      exact (proj1 (Forall_forall _ _) Hbasis r Hr). }
+    pose proof (karr_T_map_members karr_row (option (lcons X.t))
+      (checked_hull_row xs a b) (T_checked_hull_row xs a b)
+      (2 * C.c_lc * N.of_nat (karr_hull_checker_charge dim bits) +
+        1024 * N.of_nat (dim + 1))%N basis Hcallback) as Hmap.
+    pose proof (T_karr_present_bounded (lcons X.t)
+      (map (checked_hull_row xs a b) basis)) as Hpresent.
+    rewrite length_map in Hpresent.
+    rewrite Nat2N.inj_add. cbn [N.of_nat]. nia.
+  Qed.
+
+  (** Adding one conclusion cannot introduce more than its declared variables. *)
+  Lemma karr_target_variables_public : forall P c,
+    length (variables (c :: P)) <=
+      length (vars_of P) + length (vars_of (c :: nil)).
+  Proof.
+    intros P c. rewrite <- length_app.
+    apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx.
+    destruct (karr_variables_support (c :: P) x Hx) as
+      [row [[Hhead|Htail] Hterm]].
+    - subst row. apply in_or_app. right.
+      apply karr_vars_of_contains with (r := c); [now left|exact Hterm].
+    - apply in_or_app. left.
+      apply karr_vars_of_contains with (r := row); assumption.
+  Qed.
+
+  (** Hull coordinates come from one of the two raw variable sets. *)
+  Lemma karr_hull_variables_public : forall a b,
+    length (variables (map normalize_row a ++ map normalize_row b)) <=
+      length (vars_of a) + length (vars_of b).
+  Proof.
+    intros a b. rewrite <- length_app.
+    apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx.
+    destruct (karr_variables_support
+      (map normalize_row a ++ map normalize_row b) x Hx)
+      as [row [Hrow Hterm]].
+    apply in_app_or in Hrow as [Hleft|Hright].
+    - apply in_map_iff in Hleft as [source [Heq Hsource]]. subst row.
+      apply in_map_iff in Hterm as [[key z] [Heq Hcoeff]].
+      cbn [fst] in Heq. subst key.
+      apply karr_normal_coef_keys in Hcoeff.
+      apply in_or_app. left.
+      now apply karr_vars_of_contains with (r := source).
+    - apply in_map_iff in Hright as [source [Heq Hsource]]. subst row.
+      apply in_map_iff in Hterm as [[key z] [Heq Hcoeff]].
+      cbn [fst] in Heq. subst key.
+      apply karr_normal_coef_keys in Hcoeff.
+      apply in_or_app. right.
+      now apply karr_vars_of_contains with (r := source).
+  Qed.
+
+  (** The lifted minor width fits a fixed public Hadamard allowance. *)
+  Lemma karr_hull_width_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    let s := 2 * length xs + length a + length b + 5 in
+    let d := n (Reached a) + n (Reached b) + 1 in
+    let w := ell (Reached a) + ell (Reached b) in
+    ellB s (nell (Reached a) + nell (Reached b)) + 1 <=
+      128 * (ellB d w + 1).
+  Proof.
+    intros a b Ha Hb xs s d w.
+    pose proof (karr_hull_variables_public a b) as Hvars.
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hs : s <= 5 * d).
+    { unfold s, d, n, xs. cbn [rows_of length].
+      cbn [rows_of] in Hvars. lia. }
+    assert (Hlogadd : Nat.log2 (d + 5) <= Nat.log2 d + 5).
+    { replace (d + 5) with (S (S (S (S (S d))))) by lia.
+      pose proof (Nat.log2_succ_le d).
+      pose proof (Nat.log2_succ_le (S d)).
+      pose proof (Nat.log2_succ_le (S (S d))).
+      pose proof (Nat.log2_succ_le (S (S (S d)))).
+      pose proof (Nat.log2_succ_le (S (S (S (S d))))).
+      lia. }
+    assert (Hlogs : Nat.log2 s <= 2 * Nat.log2 d + 12).
+    { pose proof (karr_log_square_bound s (d + 5) ltac:(nia)) as Hsquare.
+      lia. }
+    pose proof (karr_normal_terms_log a Ha) as Hloga.
+    pose proof (karr_normal_terms_log b Hb) as Hlogb.
+    assert (Hlogda : Nat.log2 (n (Reached a) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hlogdb : Nat.log2 (n (Reached b) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hbits : nell (Reached a) + nell (Reached b) <=
+      w + 4 * Nat.log2 d + 10).
+    { unfold nell, w. lia. }
+    unfold ellB. nia.
+  Qed.
+
+  Lemma karr_variables_cons_mono : forall P c,
+    length (variables P) <= length (variables (c :: P)).
+  Proof.
+    intros P c. apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx.
+    destruct (karr_variables_support P x Hx) as [r [Hr Hterm]].
+    apply in_map_iff in Hterm as [[y z] [Heq Hz]]. cbn in Heq. subst y.
+    eapply variables_contains with (r := r) (z := z);
+      [now right|exact Hz].
+  Qed.
+
+  Lemma karr_target_dim_public : forall P c,
+    length (variables (c :: P)) + length P + 3 <=
+      n (Reached P) + n (Reached (c :: nil)) + 2.
+  Proof.
+    intros P c.
+    pose proof (karr_target_variables_public P c) as Hxs.
+    unfold n in *. cbn [rows_of length] in *. lia.
+  Qed.
+
+  (** The exact target minor width fits eight public Hadamard widths. *)
+  Lemma karr_target_width_public : forall P c,
+    normal P ->
+    ellB (length (variables (c :: P)) + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1 <=
+      8 * (ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+        (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+  Proof.
+    intros P c Hnormal.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (s := length (variables (c :: P)) + length P + 3).
+    pose proof (karr_target_dim_public P c) as Hdim.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hs : s <= d + 1) by (unfold s, d; lia).
+    assert (Hrowbits : C.row_bits c <= ell (Reached (c :: nil))).
+    { unfold ell. cbn [rows_of map fold_right]. lia. }
+    pose proof (karr_normal_terms_log P Hnormal) as Hterms.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hlogs : Nat.log2 s <= Nat.log2 d + 1).
+    { eapply Nat.le_trans; [apply Nat.log2_le_mono; exact Hs|].
+      replace (d + 1) with (S d) by lia.
+      replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+      apply Nat.log2_succ_le. }
+    assert (Hlogpos : 1 <= Nat.log2 d).
+    { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+      change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+    unfold nell, ellB in *.
+    fold d w s.
+    nia.
+  Qed.
+
+  (** The initialized conclusion reduction fits the public elimination work. *)
+  Lemma T_karr_target_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_karr_target (equality_basis (variables (c :: P)) P) 1
+      (KRow (dense (variables (c :: P)) c) (rhs c)
+        (repeat 0%Z (length P)) 1%Z) <=
+      16384 * 64 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    set (xs := variables (c :: P)).
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (b := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1).
+    set (v := ellB d w + 1).
+    pose proof (T_karr_target_seed_bounded xs P c Hc) as Hclock.
+    pose proof (karr_target_dim_public P c) as Hdim.
+    pose proof (karr_target_width_public P c HP) as Hwidth.
+    assert (Hcount : length P + 1 <= d /\ length xs + length P + 1 <= d).
+    { unfold d, n, xs in *. cbn [rows_of length] in *. lia. }
+    destruct Hcount as [Hcount Hcolumns].
+    assert (Hpositive : 1 <= d) by lia.
+    assert (Hsquare : b^2 <= 64 * v^2).
+    { assert (Hbv : b <= 8 * v) by (unfold b, v, xs, d, w in *; lia).
+      replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hsmall : (length P + 1) *
+      (length xs + length P + 1) * b^2 <=
+      64 * (d^3 * v^2)).
+    { assert (Hcounts : (length P + 1) *
+        (length xs + length P + 1) <= d * d).
+      { apply Nat.mul_le_mono; lia. }
+      assert (Hvolume : (length P + 1) *
+        (length xs + length P + 1) * b^2 <=
+        (d * d) * (64 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      replace (64 * (d^3 * v^2)) with (d^3 * (64 * v^2)) by ring.
+      eapply Nat.le_trans; [exact Hvolume|].
+      apply Nat.mul_le_mono; [|lia].
+      cbn [Nat.pow]. nia. }
+    assert (HN : (N.of_nat ((length P + 1) *
+      (length xs + length P + 1) * b^2) <=
+      N.of_nat (64 * (d^3 * v^2)))%N) by lia.
+    unfold elimination_work.
+    fold d w v.
+    eapply N.le_trans; [exact Hclock|].
+    replace (16384 * N.of_nat (length P + 1) *
+      N.of_nat (length xs + length P + 1) *
+      N.of_nat ((ellB (length xs + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N with
+      (16384 * N.of_nat ((length P + 1) *
+        (length xs + length P + 1) * b^2))%N
+      by (unfold b; rewrite !Nat2N.inj_mul; ring).
+    replace (16384 * 64 * N.of_nat (d^3 * v^2))%N with
+      (16384 * N.of_nat (64 * (d^3 * v^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 64) with 64%N; ring).
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** A contradiction scan returns a vector with the initialized minor width. *)
+  Lemma karr_contradiction_certificate_envelope : forall P ms,
+    contradiction P = Some ms ->
+    length ms <= length P /\
+    Forall (fun z => Z.size_nat z <=
+      ellB (length (variables P) + length P + 2) (nell (Reached P))) ms.
+  Proof.
+    intros P ms Hcert. unfold contradiction in Hcert.
+    eapply karr_empty_certificate_envelope; [exact Hcert|].
+    unfold equality_basis. exact (karr_seed_basis_envelope (variables P) P).
+  Qed.
+
+  (** A target certificate returns the exact final target-minor width. *)
+  Lemma karr_target_certificate_seed_envelope : forall P c k,
+    normal (c :: nil) -> target_certificate P c = Some k ->
+    length (mults k) <= length P /\
+    Forall (fun z => Z.size_nat z <=
+      ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1)) (mults k) /\
+    Z.size_nat (scale k) <=
+      ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1).
+  Proof.
+    intros P c k Hnormal Hcert.
+    eapply karr_target_certificate_envelope; [exact Hcert|].
+    apply karr_target_envelope_result.
+    exact (karr_target_seed_envelope (variables (c :: P)) P c Hnormal).
+  Qed.
+
+  (** The contradiction basis width fits four public Hadamard widths. *)
+  Lemma karr_contradiction_width_public : forall P c,
+    normal P ->
+    ellB (length (variables P) + length P + 2) (nell (Reached P)) + 1 <=
+      4 * (ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+        (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+  Proof.
+    intros P c Hnormal.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (s := length (variables P) + length P + 2).
+    pose proof (karr_variables_count P) as Hvars.
+    assert (Hs : s <= d).
+    { unfold s, d, n in *. cbn [rows_of length] in *. lia. }
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    pose proof (karr_normal_terms_log P Hnormal) as Hterms.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hlogs : Nat.log2 s <= Nat.log2 d).
+    { now apply Nat.log2_le_mono. }
+    unfold nell, ellB in *.
+    fold d w s.
+    nia.
+  Qed.
+
+  (** Either certificate path fits the same public multiplier allowance. *)
+  Lemma karr_entail_candidate_envelope : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    let width := ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+      (ell (Reached P) + ell (Reached (c :: nil))) + 1 in
+    length (mults k) <= length P /\
+    Forall (fun z => Z.size_nat z <= 8 * width) (mults k) /\
+    Z.size_nat (scale k) <= 8 * width.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    set (width := ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+      (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+    destruct (contradiction P) as [ms|] eqn:Hcontradiction.
+    - inversion Hcandidate; subst k. cbn [mults scale].
+      pose proof (karr_contradiction_certificate_envelope P ms Hcontradiction)
+        as [Hlength Hbits].
+      pose proof (karr_contradiction_width_public P c HP) as Hwidth.
+      repeat split; [exact Hlength| |].
+      + eapply Forall_impl; [|exact Hbits].
+        intros z Hz. cbn beta in Hz. unfold width. lia.
+      + change (Z.size_nat 1) with 1. unfold width, ellB. nia.
+    - pose proof (karr_target_certificate_seed_envelope P c k Hc Hcandidate)
+        as [Hlength [Hbits Hscale]].
+      pose proof (karr_target_width_public P c HP) as Hwidth.
+      repeat split; [exact Hlength| |].
+      + eapply Forall_impl; [|exact Hbits].
+        intros z Hz. cbn beta in Hz. unfold width. lia.
+      + unfold width. lia.
+  Qed.
+
+  (** The entailment checker sees only public dimensions and widths. *)
+  Lemma T_karr_entail_candidate_checker : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    let d := n (Reached P) + n (Reached (c :: nil)) + 1 in
+    let w := ell (Reached P) + ell (Reached (c :: nil)) in
+    let v := ellB d w + 1 in
+    (C.T_check_entails P c k <= C.c_lc * N.of_nat
+      ((2 * d + 1) * (d + 1) *
+        (w + (8 * v + 1) * (w + 1) + 1) +
+       (8 * v + 1) * ((d + 1) * (w + w + 1) +
+         8 * v + w + Nat.log2 d + 2)))%N.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    pose proof (karr_entail_candidate_envelope P c k HP Hc Hcandidate)
+      as [Hlength [Hmult Hscale]].
+    assert (Hsource : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= w /\ C.row_bits row <= w) P).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [Hrow [Hkeys Hbits]]. unfold d, w in *. repeat split; lia. }
+    pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hconclusion.
+    apply Forall_cons_iff in Hconclusion.
+    destruct Hconclusion as
+      [[Hconclusion_length [Hconclusion_keys Hconclusion_bits]] _].
+    eapply karr_checker_envelope with (dim := d) (keys := w)
+      (bits := w) (mbits := 8 * v).
+    - unfold d, n. cbn [rows_of length]. lia.
+    - exact Hsource.
+    - unfold d, n. cbn [rows_of length]. lia.
+    - exact Hmult.
+    - unfold d. lia.
+    - unfold w. lia.
+    - unfold w. lia.
+    - exact Hscale.
+  Qed.
+
+  (** The checker envelope is dominated by the public cubic work allowance. *)
+  Lemma karr_checker_work_public : forall d w,
+    2 <= d ->
+    (2 * d + 1) * (d + 1) *
+      (w + (8 * (ellB d w + 1) + 1) * (w + 1) + 1) +
+    (8 * (ellB d w + 1) + 1) *
+      ((d + 1) * (w + w + 1) + 8 * (ellB d w + 1) +
+        w + Nat.log2 d + 2) <=
+    256 * (d^3 * (ellB d w + 1)^2).
+  Proof.
+    intros d w Hd.
+    set (v := ellB d w + 1).
+    set (l := Nat.log2 d).
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hwv : w + 1 <= v) by (unfold v, ellB; nia).
+    assert (Hlv : l + 1 <= v) by (unfold v, ellB, l; nia).
+    assert (Hpref : (2 * d + 1) * (d + 1) <= 6 * d^2).
+    { cbn [Nat.pow]. nia. }
+    assert (Hinner : w + (8 * v + 1) * (w + 1) + 1 <= 10 * v^2).
+    { assert (Hproduct : (8 * v + 1) * (w + 1) <= 9 * v * v).
+      { apply Nat.mul_le_mono; lia. }
+      cbn [Nat.pow]. nia. }
+    assert (Hfirst : (2 * d + 1) * (d + 1) *
+      (w + (8 * v + 1) * (w + 1) + 1) <= 60 * d^2 * v^2).
+    { assert (Hproduct : (2 * d + 1) * (d + 1) *
+        (w + (8 * v + 1) * (w + 1) + 1) <=
+        (6 * d^2) * (10 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      nia. }
+    assert (Hsecond_inner : (d + 1) * (w + w + 1) +
+      8 * v + w + l + 2 <= 9 * d * v).
+    { assert (Hproduct : (d + 1) * (w + w + 1) <=
+        (2 * d) * (2 * v)).
+      { apply Nat.mul_le_mono; lia. }
+      nia. }
+    assert (Hsecond : (8 * v + 1) *
+      ((d + 1) * (w + w + 1) + 8 * v + w + l + 2) <=
+      81 * d * v^2).
+    { assert (Hproduct : (8 * v + 1) *
+        ((d + 1) * (w + w + 1) + 8 * v + w + l + 2) <=
+        (9 * v) * (9 * d * v)).
+      { apply Nat.mul_le_mono; lia. }
+      cbn [Nat.pow]. nia. }
+    fold v l.
+    cbn [Nat.pow] in *.
+    nia.
+  Qed.
+
+  Lemma T_karr_entail_candidate_checker_public : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    (C.T_check_entails P c k <= 256 * C.c_lc *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    pose proof (T_karr_entail_candidate_checker P c k HP Hc Hcandidate)
+      as Hclock.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    pose proof (karr_checker_work_public d w
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hmeasure.
+    assert (HN : (N.of_nat
+      ((2 * d + 1) * (d + 1) *
+        (w + (8 * (ellB d w + 1) + 1) * (w + 1) + 1) +
+       (8 * (ellB d w + 1) + 1) *
+        ((d + 1) * (w + w + 1) + 8 * (ellB d w + 1) +
+          w + Nat.log2 d + 2)) <=
+      N.of_nat (256 * (d^3 * (ellB d w + 1)^2)))%N) by lia.
+    unfold elimination_work.
+    fold d w.
+    eapply N.le_trans; [exact Hclock|].
+    rewrite Nat2N.inj_mul in HN.
+    change (N.of_nat 256) with 256%N in HN.
+    apply N.mul_le_mono_l with (p := C.c_lc) in HN.
+    replace (256 * C.c_lc * N.of_nat (d^3 * (ellB d w + 1)^2))%N with
+      (C.c_lc * (256 * N.of_nat (d^3 * (ellB d w + 1)^2)))%N by ring.
+    exact HN.
+  Qed.
+
+  (** The produced certificate itself fits the public checker measure. *)
+  Lemma karr_entail_candidate_size_public : forall P c k,
+    normal P -> normal (c :: nil) ->
+    (match contradiction P with
+     | Some ms => Some (Cert ms 1 false)
+     | None => target_certificate P c
+     end) = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+      (C.lsize c + C.cbits P (mults k) + 1)) <=
+      256 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))))%N.
+  Proof.
+    intros P c k HP Hc Hcandidate.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    pose proof (karr_entail_candidate_envelope P c k HP Hc Hcandidate)
+      as [Hlength [Hmult Hscale]].
+    assert (Hsource : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= w /\ C.row_bits row <= w) P).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [Hrow [Hkeys Hbits]]. unfold d, w in *. repeat split; lia. }
+    pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hconclusion.
+    apply Forall_cons_iff in Hconclusion.
+    destruct Hconclusion as
+      [[Hconclusion_length [Hconclusion_keys Hconclusion_bits]] _].
+    pose proof (karr_csize_envelope P (mults k) d w w (8 * v)
+      Hsource Hmult) as Hsize.
+    assert (Hsize' : C.csize P (mults k) <=
+      (2 * d + 1) * (d + 1) *
+        (w + (8 * v + 1) * (w + 1) + 1)).
+    { assert (Hcount : length P + length (mults k) + 1 <= 2 * d + 1).
+      { unfold d, n. cbn [rows_of length]. lia. }
+      nia. }
+    assert (Hsource_bits : Forall (fun row => C.row_bits row <= w) P).
+    { eapply Forall_impl; [|exact Hsource].
+      intros row [_ [_ Hbits]]. exact Hbits. }
+    pose proof (karr_cbits_envelope P (mults k) w (8 * v)
+      Hsource_bits Hmult) as Hbits.
+    pose proof (karr_lsize_envelope c d w w
+      ltac:(unfold d; lia)
+      ltac:(unfold w; lia) ltac:(unfold w; lia)) as Hline.
+    pose proof (Nat.log2_le_mono (length P) d
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hlog.
+    change (Z.size_nat (scale k) <= 8 * v) in Hscale.
+    assert (Hproduct : (Z.size_nat (scale k) + 1) *
+      (C.lsize c + C.cbits P (mults k) + 1) <=
+      (8 * v + 1) * ((d + 1) * (w + w + 1) +
+        8 * v + w + Nat.log2 d + 2)).
+    { apply Nat.mul_le_mono.
+      - lia.
+      - lia. }
+    pose proof (karr_checker_work_public d w
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hmeasure.
+    replace (256 * N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil))))%N with
+      (N.of_nat (256 * (d^3 * v^2)))
+      by (unfold elimination_work, d, v, w; rewrite Nat2N.inj_mul; reflexivity).
+    clear -Hsize' Hproduct Hmeasure. fold v in Hmeasure. lia.
+  Qed.
+
+  (** Flipping or retaining target weights costs one bounded pass. *)
+  Lemma T_karr_signed_weights_bounded : forall sign zs bits,
+    (sign = 1%Z \/ sign = (-1)%Z) ->
+    Forall (fun z => Z.size_nat z <= bits) zs ->
+    (ListDef.T_map (fun z => (- sign * z)%Z)
+      (fun z => 1 + (Z.T_opp sign + Z.T_mul (- sign) z)) zs <=
+      64 * N.of_nat (length zs + 1) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros sign zs bits Hsign Hbits.
+    assert (Hcallback : forall z, In z zs ->
+      (1 + (Z.T_opp sign + Z.T_mul (- sign) z) <=
+        32 * N.of_nat (bits + 1))%N).
+    { intros z Hz.
+      pose proof (proj1 (Forall_forall _ _) Hbits z Hz) as Hwidth.
+      cbn beta in Hwidth.
+      destruct Hsign as [Hsign|Hsign]; subst sign.
+      - pose proof (karr_T_Z_mul_bilinear (-1) z) as Hmul.
+        pose proof (Z.T_opp_le 1) as Hopp.
+        cbn [Z.size_nat Pos.size_nat] in Hmul.
+        assert (HwidthN : (N.of_nat (Z.size_nat z + 1) <=
+          N.of_nat (bits + 1))%N) by lia.
+        assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+        change (N.of_nat (1 + 1)) with 2%N in Hmul.
+        replace (8 * 2 * N.of_nat (Z.size_nat z + 1))%N with
+          (16 * N.of_nat (Z.size_nat z + 1))%N in Hmul by ring.
+        assert (Hmul' : (Z.T_mul (-1) z <=
+          16 * N.of_nat (bits + 1))%N).
+        { eapply N.le_trans; [exact Hmul|].
+          now apply N.mul_le_mono_l. }
+        change (1 + (Z.T_opp 1 + Z.T_mul (-1) z) <=
+          32 * N.of_nat (bits + 1))%N.
+        lia.
+      - pose proof (karr_T_Z_mul_bilinear 1 z) as Hmul.
+        pose proof (Z.T_opp_le (-1)) as Hopp.
+        cbn [Z.size_nat Pos.size_nat] in Hmul.
+        assert (HwidthN : (N.of_nat (Z.size_nat z + 1) <=
+          N.of_nat (bits + 1))%N) by lia.
+        assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+        change (N.of_nat (1 + 1)) with 2%N in Hmul.
+        replace (8 * 2 * N.of_nat (Z.size_nat z + 1))%N with
+          (16 * N.of_nat (Z.size_nat z + 1))%N in Hmul by ring.
+        assert (Hmul' : (Z.T_mul 1 z <=
+          16 * N.of_nat (bits + 1))%N).
+        { eapply N.le_trans; [exact Hmul|].
+          now apply N.mul_le_mono_l. }
+        change (1 + (Z.T_opp (-1) + Z.T_mul 1 z) <=
+          32 * N.of_nat (bits + 1))%N.
+        lia. }
+    pose proof (karr_T_map_members Z Z
+      (fun z => (- sign * z)%Z)
+      (fun z => (1 + (Z.T_opp sign + Z.T_mul (- sign) z))%N)
+      (32 * N.of_nat (bits + 1))%N zs Hcallback) as Hmap.
+    assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+    rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *.
+    nia.
+  Qed.
+
+  (** The signed right-hand-side test uses the final row's bit width. *)
+  Lemma T_karr_signed_right_bounded : forall sign z bits,
+    (sign = 1%Z \/ sign = (-1)%Z) ->
+    Z.size_nat z <= bits ->
+    (Z.T_mul sign z + Z.T_leb 0 (sign * z) <=
+      32 * N.of_nat (bits + 1))%N.
+  Proof.
+    intros sign z bits Hsign Hz.
+    destruct Hsign as [Hsign|Hsign]; subst sign.
+    - pose proof (karr_T_Z_mul_bilinear 1 z) as Hmul.
+      pose proof (Z.T_leb_le 0 (1 * z)) as Hcheck.
+      cbn [Z.size_nat Pos.size_nat] in Hmul, Hcheck.
+      rewrite Z.mul_1_l in Hcheck.
+      assert (Hwidth : (N.of_nat (Z.size_nat z + 1) <=
+        N.of_nat (bits + 1))%N) by lia.
+      assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+      change (N.of_nat (1 + 1)) with 2%N in Hmul.
+      rewrite Z.mul_1_l.
+      nia.
+    - pose proof (karr_T_Z_mul_bilinear (-1) z) as Hmul.
+      pose proof (Z.T_leb_le 0 ((-1) * z)) as Hcheck.
+      cbn [Z.size_nat Pos.size_nat] in Hmul, Hcheck.
+      replace ((-1) * z)%Z with (- z)%Z in Hcheck by ring.
+      assert (Hwidth : (N.of_nat (Z.size_nat z + 1) <=
+        N.of_nat (bits + 1))%N) by lia.
+      assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+      change (N.of_nat (1 + 1)) with 2%N in Hmul.
+      replace ((-1) * z)%Z with (- z)%Z by ring.
+      nia.
+  Qed.
+
+  Lemma karr_target_finish_budget : forall base init neg right zero scale map
+      extra work : N,
+    (1 <= work)%N ->
+    (extra <= 12)%N ->
+    (init <= 3 * work)%N -> (neg <= 8 * work)%N ->
+    (right <= 32 * work)%N -> (zero <= 8 * work)%N ->
+    (scale <= 2)%N -> (map <= 64 * work)%N ->
+    (base + init + neg + right + zero + scale + map + extra <=
+      base + 1024 * work)%N.
+  Proof.
+    intros base init neg right zero scale map extra work Hwork Hextra
+      Hinit Hneg Hright Hzero Hscale Hmap.
+    nia.
+  Qed.
+
+  Lemma T_karr_target_certificate_components : forall P c,
+    normal (c :: nil) ->
+    let xs := variables (c :: P) in
+    let target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z in
+    let bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) in
+    (T_target_certificate P c <=
+      T_variables (c :: P) + T_equality_basis xs P +
+      T_dense xs c + T_karr_target (equality_basis xs P) 1 target +
+      1024 * N.of_nat (length xs + length P + 1) *
+        N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros P c Hnormal.
+    set (xs := variables (c :: P)).
+    set (target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z).
+    set (bits := ellB (length xs + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1)).
+    set (result := karr_target (equality_basis xs P) 1 target).
+    pose proof (karr_target_envelope_result _ _ _ _ _ _
+      (karr_target_seed_envelope xs P c Hnormal)) as Hresult.
+    time_unfold T_target_certificate.
+    cbn zeta.
+    fold xs target result bits.
+    time_simpl.
+    destruct Hresult as [Hcoeff [_ [Hright [Hweight [Hweights Hscale]]]]].
+    change (length (kcoeff result) <= length xs) in Hcoeff.
+    change (Z.size_nat (kright result) <= bits) in Hright.
+    change (length (kweight result) <= length P) in Hweight.
+    change (Forall (fun z => Z.size_nat z <= bits) (kweight result)) in Hweights.
+    change (Z.size_nat (kscale result) <= bits) in Hscale.
+    pose proof (Datatypes.T_length_le P) as Hlength.
+    pose proof (T_karr_repeat_zero_bounded (length P)) as Hrepeat.
+    pose proof (T_karr_zero_bounded result) as Hzero.
+    pose proof (T_karr_zero_test (kright result)) as Hright_zero.
+    pose proof (T_karr_zero_test (kscale result)) as Hscale_zero.
+    pose proof (Z.T_ltb_le (kscale result) 0) as Hnegative.
+    pose proof (T_karr_signed_right_bounded 1 (kright result) bits
+      (or_introl eq_refl) Hright) as Hright_positive.
+    pose proof (T_karr_signed_right_bounded (-1) (kright result) bits
+      (or_intror eq_refl) Hright) as Hright_negative.
+    pose proof (T_karr_signed_weights_bounded 1 (kweight result) bits
+      (or_introl eq_refl) Hweights) as Hmap_positive.
+    pose proof (T_karr_signed_weights_bounded (-1) (kweight result) bits
+      (or_intror eq_refl) Hweights) as Hmap_negative.
+    set (work := (N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N).
+    assert (Hwork : (1 <= work)%N).
+    { unfold work.
+      assert (Hfirst : (1 <= N.of_nat (length xs + length P + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+    assert (Hspan : (N.of_nat (length xs + length P + 1) <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+    assert (Hbitmass : (N.of_nat (bits + 1) <= work)%N).
+    { unfold work.
+      assert (Hlen : (1 <= N.of_nat (length xs + length P + 1))%N) by lia.
+      assert (Hsquare : bits + 1 <= (bits + 1)^2).
+      { cbn [Nat.pow]. nia. }
+      assert (HsquareN : (N.of_nat (bits + 1) <=
+        N.of_nat ((bits + 1)^2))%N) by lia. nia. }
+    assert (Hweightmass : (N.of_nat (length (kweight result) + 1) *
+      N.of_nat (bits + 1) <= work)%N).
+    { assert (HlenNat : length (kweight result) + 1 <=
+        length xs + length P + 1) by lia.
+      assert (HlenN : (N.of_nat (length (kweight result) + 1) <=
+        N.of_nat (length xs + length P + 1))%N) by lia.
+      assert (Hsquare : bits + 1 <= (bits + 1)^2).
+      { cbn [Nat.pow]. nia. }
+      assert (HsquareN : (N.of_nat (bits + 1) <=
+        N.of_nat ((bits + 1)^2))%N) by lia.
+      unfold work. now apply N.mul_le_mono. }
+    assert (Hinit : (Datatypes.T_length P +
+      ListDef.T_repeat 0%Z (length P) <= 3 * work)%N).
+    { pose proof (Datatypes.T_length_le P) as Hlen.
+      pose proof (T_karr_repeat_zero_bounded (length P)) as Hrep.
+      assert (Hsize : (N.of_nat (length P + 1) <= work)%N) by lia.
+      nia. }
+    assert (Hzero_total : (T_karr_zero result <= 8 * work)%N).
+    { eapply N.le_trans; [exact Hzero|]. apply N.mul_le_mono_l. lia. }
+    assert (Hnegative_total : (Z.T_ltb (kscale result) 0 <= 8 * work)%N).
+    { pose proof (Z.T_ltb_le (kscale result) 0) as Hbound.
+      assert (Hsize : (N.of_nat (Z.size_nat (kscale result) + 1) <= work)%N)
+        by lia. nia. }
+    assert (Hright_positive_total :
+      (Z.T_mul 1 (kright result) + Z.T_leb 0 (1 * kright result) <=
+        32 * work)%N).
+    { eapply N.le_trans; [exact Hright_positive|].
+      now apply N.mul_le_mono_l. }
+    assert (Hright_negative_total :
+      (Z.T_mul (-1) (kright result) + Z.T_leb 0 ((-1) * kright result) <=
+        32 * work)%N).
+    { eapply N.le_trans; [exact Hright_negative|].
+      now apply N.mul_le_mono_l. }
+    assert (Hmap_positive_total : (ListDef.T_map
+      (fun z => (-1 * z)%Z)
+      (fun z => (1 + (1 + Z.T_mul (-1) z))%N)
+      (kweight result) <= 64 * work)%N).
+    { change (ListDef.T_map (fun z => (-1 * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (-1) z))%N)
+        (kweight result) <=
+        64 * N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1))%N in Hmap_positive.
+      eapply N.le_trans; [exact Hmap_positive|].
+      replace (64 * N.of_nat (length (kweight result) + 1) *
+        N.of_nat (bits + 1))%N with
+        (64 * (N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1)))%N by ring.
+      apply N.mul_le_mono_l. exact Hweightmass. }
+    assert (Hmap_negative_total : (ListDef.T_map
+      (fun z => (- (-1) * z)%Z)
+      (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
+      (kweight result) <= 64 * work)%N).
+    { change (ListDef.T_map (fun z => (- (-1) * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
+        (kweight result) <=
+        64 * N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1))%N in Hmap_negative.
+      eapply N.le_trans; [exact Hmap_negative|].
+      replace (64 * N.of_nat (length (kweight result) + 1) *
+        N.of_nat (bits + 1))%N with
+        (64 * (N.of_nat (length (kweight result) + 1) *
+          N.of_nat (bits + 1)))%N by ring.
+      apply N.mul_le_mono_l. exact Hweightmass. }
+    replace (1024 * N.of_nat (length xs + length P + 1) *
+      N.of_nat ((bits + 1)^2))%N with (1024 * work)%N
+      by (unfold work; ring).
+    destruct (lrel c); destruct ((kscale result <? 0)%Z); time_simpl;
+      lazymatch goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end; time_simpl; clearbody work.
+    all: set (vclock := T_variables (c :: P)) in *;
+      set (bclock := T_equality_basis xs P) in *;
+      set (dclock := T_dense xs c) in *;
+      set (tclock := T_karr_target (equality_basis xs P) 1 target) in *;
+      set (iclock := (Datatypes.T_length P +
+        ListDef.T_repeat 0%Z (length P))%N) in *;
+      set (nclock := Z.T_ltb (kscale result) 0) in *;
+      set (zclock := T_karr_zero result) in *;
+      set (sclock := Z.T_eqb (kscale result) 0) in *;
+      set (eqclock := Z.T_eqb (kright result) 0) in *;
+      set (rpclock := (Z.T_mul 1 (kright result) +
+        Z.T_leb 0 (1 * kright result))%N) in *;
+      set (rnclock := (Z.T_mul (-1) (kright result) +
+        Z.T_leb 0 ((-1) * kright result))%N) in *;
+      set (mpclock := ListDef.T_map
+        (fun z => (- (1) * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (- (1)) z))%N)
+        (kweight result)) in *;
+      set (mnclock := ListDef.T_map
+        (fun z => (- (-1) * z)%Z)
+        (fun z => (1 + (1 + Z.T_mul (- (-1)) z))%N)
+        (kweight result)) in *;
+      clear - Hinit Hzero_total Hnegative_total Hright_zero Hscale_zero
+        Hright_positive_total Hright_negative_total Hmap_positive_total
+        Hmap_negative_total Hwork;
+      ring_simplify;
+      clearbody vclock bclock dclock tclock iclock nclock eqclock zclock
+        sclock mnclock.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
+      eqclock + zclock + sclock + mnclock + 12)%N with
+      (base + iclock + nclock + eqclock + zclock + sclock + mnclock + 12)%N
+      by (unfold base; ring).
+    1: fold base.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|exact Hmap_negative_total].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: replace (vclock + bclock + dclock + iclock + tclock + nclock +
+      eqclock + zclock + sclock + 9)%N with
+      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N
+      by (unfold base; ring).
+    1: fold base.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|lia].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + eqclock + zclock + sclock + mpclock + 12)%N).
+    1: unfold base, mpclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|exact Hmap_positive_total].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + eqclock + zclock + sclock + 0 + 9)%N).
+    1: unfold base; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total| |exact Hzero_total|
+       exact Hscale_zero|lia].
+    1: nia.
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rnclock + zclock + sclock + mnclock + 12)%N).
+    1: unfold base, rnclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_negative_total|exact Hzero_total|
+       exact Hscale_zero|exact Hmap_negative_total].
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rnclock + zclock + sclock + 0 + 9)%N).
+    1: unfold base, rnclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_negative_total|exact Hzero_total|exact Hscale_zero|lia].
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rpclock + zclock + sclock + mpclock + 12)%N).
+    1: unfold base, rpclock, mpclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_positive_total|exact Hzero_total|
+       exact Hscale_zero|exact Hmap_positive_total].
+    1: set (base := (vclock + bclock + dclock + tclock)%N).
+    1: eapply N.le_trans with (m :=
+      (base + iclock + nclock + rpclock + zclock + sclock + 0 + 9)%N).
+    1: unfold base, rpclock; ring_simplify; apply N.le_refl.
+    1: eapply karr_target_finish_budget;
+      [exact Hwork|lia|exact Hinit|exact Hnegative_total|
+       exact Hright_positive_total|exact Hzero_total|exact Hscale_zero|lia].
+  Qed.
+
+  (** Executable coordinates inherit their source row's key width. *)
+  Lemma karr_variables_key_bound : forall P keys,
+    Forall (fun row => C.row_key_bits row <= keys) P ->
+    Forall (fun x => X.bits x <= keys) (variables P).
+  Proof.
+    intros P keys Hrows. apply Forall_forall. intros x Hx.
+    destruct (karr_variables_support P x Hx) as [row [Hrow Hterm]].
+    apply in_map_iff in Hterm as [p [Hkey Hp]]. subst x.
+    pose proof (proj1 (Forall_forall _ _) Hrows row Hrow) as Hbound.
+    pose proof (karr_row_key_member row p Hp) as Hmember.
+    cbn beta in Hbound. unfold X.bits. lia.
+  Qed.
+
+  Lemma karr_entail_variables_keys : forall P c,
+    normal P -> normal (c :: nil) ->
+    Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (c :: nil)))
+      (variables (c :: P)).
+  Proof.
+    intros P c HP Hc. apply karr_variables_key_bound.
+    constructor.
+    - pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hrow.
+      apply Forall_cons_iff in Hrow.
+      destruct Hrow as [[_ [Hkeys _]] _]. cbn beta in Hkeys. lia.
+    - eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [_ [Hkeys _]]. cbn beta in Hkeys. lia.
+  Qed.
+
+  (** Hull coordinates inherit the normalized inputs' raw bit allowance. *)
+  Lemma karr_hull_variables_keys : forall a b,
+    Forall (fun x => X.bits x <= nell (Reached a) + nell (Reached b))
+      (variables (map normalize_row a ++ map normalize_row b)).
+  Proof.
+    intros a b. apply karr_variables_key_bound.
+    apply Forall_app. split; apply Forall_map, Forall_forall;
+      intros r Hr.
+    - pose proof (proj1 (Forall_forall _ _)
+        (karr_normal_source_width a) (normalize_row r)
+        (in_map normalize_row _ _ Hr)) as Hrow.
+      cbn beta in Hrow. lia.
+    - pose proof (proj1 (Forall_forall _ _)
+        (karr_normal_source_width b) (normalize_row r)
+        (in_map normalize_row _ _ Hr)) as Hrow.
+      cbn beta in Hrow. lia.
+  Qed.
+
+  (** Dense conclusion initialization uses the public source and target envelope. *)
+  Lemma T_karr_entail_dense_bounded : forall P c,
+    normal P -> normal (c :: nil) ->
+    let d := n (Reached P) + n (Reached (c :: nil)) + 1 in
+    let w := ell (Reached P) + ell (Reached (c :: nil)) in
+    (T_dense (variables (c :: P)) c <=
+      karr_dense_factor * N.of_nat (d + 1)^2 *
+        N.of_nat (w + d + 1))%N.
+  Proof.
+    intros P c HP Hc.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    pose proof (karr_target_variables_public P c) as Hxs.
+    pose proof (karr_normal_source_envelope (c :: nil) Hc) as Hrow.
+    apply Forall_cons_iff in Hrow.
+    destruct Hrow as [[Hlength [_ Hbits]] _].
+    eapply T_karr_dense_bounded.
+    - unfold d, n in *. cbn [rows_of length] in *. lia.
+    - unfold d. lia.
+    - unfold w. lia.
+    - exact (karr_entail_variables_keys P c HP Hc).
+  Qed.
+
+  Lemma T_karr_entail_dense_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_dense (variables (c :: P)) c <=
+      16 * karr_dense_factor *
+        N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    pose proof (T_karr_entail_dense_bounded P c HP Hc) as Hclock.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hwv : w + 1 <= v).
+    { unfold v, ellB. nia. }
+    assert (Hdv : d <= v).
+    { unfold v, ellB. nia. }
+    assert (Hsquare : (d + 1)^2 <= 4 * d^2).
+    { replace (4 * d^2) with ((2 * d)^2) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. lia. }
+    assert (Hwidth : w + d + 1 <= 2 * v) by lia.
+    assert (Hsmall : (d + 1)^2 * (w + d + 1) <=
+      16 * (d^3 * v^2)).
+    { assert (Hproduct : (d + 1)^2 * (w + d + 1) <=
+        (4 * d^2) * (2 * v)).
+      { apply Nat.mul_le_mono; assumption. }
+      cbn [Nat.pow] in *. nia. }
+    assert (HN : (N.of_nat ((d + 1)^2 * (w + d + 1)) <=
+      N.of_nat (16 * (d^3 * v^2)))%N) by lia.
+    unfold elimination_work.
+    fold d w v.
+    change (T_dense (variables (c :: P)) c <=
+      karr_dense_factor * N.of_nat (d + 1)^2 *
+        N.of_nat (w + d + 1))%N in Hclock.
+    replace (karr_dense_factor * N.of_nat (d + 1)^2 *
+      N.of_nat (w + d + 1))%N with
+      (karr_dense_factor * N.of_nat ((d + 1)^2 * (w + d + 1)))%N in Hclock
+      by (rewrite Nat2N.inj_mul, !Nat.pow_2_r, N.pow_2_r,
+        Nat2N.inj_mul; ring).
+    replace (16 * karr_dense_factor * N.of_nat (d^3 * v^2))%N with
+      (karr_dense_factor * N.of_nat (16 * (d^3 * v^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 16) with 16%N; ring).
+    eapply N.le_trans; [exact Hclock|].
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  Lemma karr_target_finish_public : forall P c,
+    normal P ->
+    (1024 * N.of_nat (length (variables (c :: P)) + length P + 1) *
+      N.of_nat ((ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1)^2) <=
+      1024 * 64 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (b := ellB (length (variables (c :: P)) + length P + 3)
+      (nell (Reached P) + C.row_bits c + 1) + 1).
+    set (v := ellB d w + 1).
+    pose proof (karr_target_dim_public P c) as Hdim.
+    pose proof (karr_target_width_public P c HP) as Hwidth.
+    assert (Hcolumns : length (variables (c :: P)) + length P + 1 <= d).
+    { unfold d in *. lia. }
+    assert (Hd : 1 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hbv : b <= 8 * v) by (unfold b, v, d, w in *; lia).
+    assert (Hsquare : b^2 <= 64 * v^2).
+    { replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hsmall : (length (variables (c :: P)) + length P + 1) * b^2 <=
+      64 * (d^3 * v^2)).
+    { assert (Hproduct : (length (variables (c :: P)) + length P + 1) * b^2
+        <= d * (64 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      assert (Hcube : d <= d^3).
+      { cbn [Nat.pow]. nia. }
+      replace (64 * (d^3 * v^2)) with (d^3 * (64 * v^2)) by ring.
+      eapply Nat.le_trans; [exact Hproduct|].
+      apply Nat.mul_le_mono; [exact Hcube|lia]. }
+    assert (HN : (N.of_nat
+      ((length (variables (c :: P)) + length P + 1) * b^2) <=
+      N.of_nat (64 * (d^3 * v^2)))%N) by lia.
+    unfold elimination_work. fold d w v.
+    replace (1024 * N.of_nat (length (variables (c :: P)) + length P + 1) *
+      N.of_nat (b^2))%N with
+      (1024 * N.of_nat
+        ((length (variables (c :: P)) + length P + 1) * b^2))%N
+      by (rewrite Nat2N.inj_mul; ring).
+    replace (1024 * 64 * N.of_nat (d^3 * v^2))%N with
+      (1024 * N.of_nat (64 * (d^3 * v^2)))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 64) with 64%N; ring).
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** Coordinate collection fits any larger public dimension and width. *)
+  Lemma T_karr_variables_public : forall Q d w,
+    normal Q -> n (Reached Q) <= d -> ell (Reached Q) <= w -> 2 <= d ->
+    (T_variables Q <= 8 * karr_variables_factor *
+      N.of_nat (d^3 * (ellB d w + 1)^2))%N.
+  Proof.
+    intros Q d w HQ Hdim Hwidth Hd.
+    set (v := ellB d w + 1).
+    set (mass := terms (Reached Q) + length Q + 1).
+    set (width := 2 * ell (Reached Q) +
+      Nat.log2 (terms (Reached Q)) + 1).
+    pose proof (T_karr_variables_raw Q (ell (Reached Q))
+      (ell (Reached Q))) as Hclock.
+    assert (Hsource : Forall (fun r =>
+      C.row_key_bits r <= ell (Reached Q) /\
+      C.row_bits r <= ell (Reached Q)) Q).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact HQ].
+      intros r [_ [Hkeys Hbits]]. split; assumption. }
+    specialize (Hclock Hsource).
+    assert (Hterms : terms (Reached Q) <= n (Reached Q)^2).
+    { pose proof (karr_normal_terms_bound Q HQ) as Hbound.
+      unfold n in *. cbn [rows_of] in *. cbn [Nat.pow]. nia. }
+    pose proof (karr_normal_terms_log Q HQ) as Hlog.
+    assert (Hlogd : Nat.log2 (n (Reached Q) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hmass : mass <= 2 * d^2).
+    { unfold mass, n in *. cbn [rows_of] in *.
+      cbn [Nat.pow] in *. nia. }
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hwidth' : width <= 4 * v).
+    { unfold width, v, ellB in *.
+      assert (Hlogpos : 1 <= Nat.log2 d).
+      { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+        change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+      nia. }
+    assert (Hproduct : mass * width <= (2 * d^2) * (4 * v)).
+    { apply Nat.mul_le_mono; assumption. }
+    assert (Hvolume : mass * width <= 8 * (d^3 * v^2)).
+    { eapply Nat.le_trans; [exact Hproduct|].
+      replace (8 * (d^3 * v^2)) with (2 * d^3 * (4 * v^2)) by ring.
+      apply Nat.mul_le_mono.
+      - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia.
+      - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia. }
+    assert (HN : (N.of_nat (mass * width) <=
+      N.of_nat (8 * (d^3 * v^2)))%N) by lia.
+    replace (ell (Reached Q) + ell (Reached Q) +
+      Nat.log2 (terms (Reached Q)) + 1) with width in Hclock
+      by (unfold width; lia).
+    change (T_variables Q <= karr_variables_factor *
+      N.of_nat mass * N.of_nat width)%N in Hclock.
+    replace (karr_variables_factor * N.of_nat mass * N.of_nat width)%N
+      with (karr_variables_factor * N.of_nat (mass * width))%N in Hclock
+      by (rewrite Nat2N.inj_mul; ring).
+    eapply N.le_trans with (m :=
+      (karr_variables_factor * N.of_nat (8 * (d^3 * v^2)))%N).
+    - eapply N.le_trans; [exact Hclock|].
+      now apply N.mul_le_mono_l.
+    - unfold v. rewrite Nat2N.inj_mul.
+      change (N.of_nat 8) with 8%N. ring_simplify. apply N.le_refl.
+  Qed.
+
+  Lemma T_karr_source_variables_public : forall P c,
+    normal P ->
+    (T_variables P <= 8 * karr_variables_factor *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP. unfold elimination_work.
+    apply T_karr_variables_public; [exact HP| | |].
+    - unfold n. cbn [rows_of length]. lia.
+    - unfold ell. cbn [rows_of map fold_right]. lia.
+    - unfold n. cbn [rows_of length]. lia.
+  Qed.
+
+  Lemma T_karr_target_variables_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_variables (c :: P) <= 8 * karr_variables_factor *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc. unfold elimination_work.
+    apply T_karr_variables_public.
+    - apply Forall_cons_iff in Hc as [Hhead _].
+      now constructor.
+    - pose proof (karr_vars_of_cons_bound P c) as Hvars.
+      assert (Hcvars : length (lhs c) <= length (vars_of (c :: nil))).
+      { apply Forall_cons_iff in Hc as [Hhead _].
+        rewrite <- (length_map fst (lhs c)).
+        apply NoDup_incl_length; [exact Hhead|].
+        intros x Hx. eapply karr_vars_of_contains; [now left|exact Hx]. }
+      unfold n in *. cbn [rows_of length] in *. lia.
+    - unfold ell. cbn [rows_of map fold_right]. lia.
+    - unfold n. cbn [rows_of length]. lia.
+  Qed.
+
+  Lemma karr_basis_width_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    ellB (length xs + length P + 3) (nell (Reached P)) + 1 <=
+      8 * (ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+        (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+  Proof.
+    intros P c xs HP Hxs.
+    eapply Nat.le_trans with (m :=
+      ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1).
+    - apply Nat.add_le_mono_r. apply ellB_mono; lia.
+    - exact (karr_target_width_public P c HP).
+  Qed.
+
+  (** The lifted Bareiss clock fits the public elimination polynomial. *)
+  Lemma T_karr_hull_bareiss_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    let rows := hull_left xs (length a + length b) 0 (map normalize_row a) ++
+      hull_right xs (length a + length b) (length a) (map normalize_row b) in
+    (T_karr_bareiss (2 * length xs + 2) 1 rows <=
+      134217728000 * N.of_nat
+        (elimination_work (Reached a) (Reached b)) + 4)%N.
+  Proof.
+    intros a b Ha Hb xs rows.
+    set (width := 2 * length xs + length a + length b + 4).
+    set (s := width + 1).
+    set (d := n (Reached a) + n (Reached b) + 1).
+    set (w := ell (Reached a) + ell (Reached b)).
+    set (bits := nell (Reached a) + nell (Reached b)).
+    set (v := ellB d w + 1).
+    set (bound := ellB s bits + 1).
+    pose proof (T_karr_hull_bareiss_seed_bounded a b xs) as Hclock.
+    pose proof (karr_bareiss_budget_public (2 * length xs + 2)
+      width bits ltac:(unfold width; lia)) as Hbudget.
+    pose proof (karr_hull_width_public a b Ha Hb) as Hwidth.
+    assert (Hbound : bound <= 128 * v).
+    { unfold bound, s, width, bits, v, d, w, xs in *.
+      cbn beta in Hwidth.
+      replace (2 * length (variables (map normalize_row a ++
+        map normalize_row b)) + length a + length b + 4 + 1) with
+        (2 * length (variables (map normalize_row a ++
+          map normalize_row b)) + length a + length b + 5) by lia.
+      exact Hwidth. }
+    pose proof (karr_hull_variables_public a b) as Hvars.
+    assert (Hs : s <= 5 * d).
+    { unfold s, width, d, n, xs in *.
+      cbn [rows_of length] in *. lia. }
+    assert (Hcube : s^3 <= 125 * d^3).
+    { replace (125 * d^3) with ((5 * d)^3)
+        by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hsquare : bound^2 <= (128 * 128) * v^2).
+    { replace ((128 * 128) * v^2) with ((128 * v)^2)
+        by (cbn [Nat.pow]; ring).
+      now apply Nat.pow_le_mono_l. }
+    assert (Hvolume : s^3 * bound^2 <=
+      (125 * 128 * 128) * (d^3 * v^2)).
+    { eapply Nat.le_trans with (m := (125 * d^3) * ((128 * 128) * v^2)).
+      - apply Nat.mul_le_mono; assumption.
+      - nia. }
+    assert (HN : (N.of_nat (s^3 * bound^2) <=
+      N.of_nat (125 * 128 * 128) *
+        N.of_nat (elimination_work (Reached a) (Reached b)))%N).
+    { unfold elimination_work. fold d w v.
+      rewrite <- Nat2N.inj_mul.
+      lia. }
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans.
+    - apply N.add_le_mono_r.
+      replace (2 * length xs + (length a + length b) + 4) with width
+        by (unfold width; lia).
+      exact Hbudget.
+    - apply N.add_le_mono_r.
+      change (N.of_nat (125 * 128 * 128)) with 2048000%N.
+      replace (134217728000 * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N with
+        (65536 * (2048000 * N.of_nat
+          (elimination_work (Reached a) (Reached b))))%N by ring.
+      now apply N.mul_le_mono_l.
+  Qed.
+
+  (** Both lifted seed clocks fit the shared public elimination budget. *)
+  Lemma T_karr_hull_seeds_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    (T_hull_left xs (length a + length b) 0 (map normalize_row a) +
+     T_hull_right xs (length a + length b) (length a)
+       (map normalize_row b) <=
+      128 * karr_hull_seed_factor *
+        N.of_nat (elimination_work (Reached a) (Reached b)))%N.
+  Proof.
+    intros a b Ha Hb xs.
+    set (d := n (Reached a) + n (Reached b) + 1).
+    set (w := ell (Reached a) + ell (Reached b)).
+    set (bits := nell (Reached a) + nell (Reached b)).
+    set (v := ellB d w + 1).
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hxs : length xs <= d).
+    { pose proof (karr_hull_variables_public a b) as Hvars.
+      unfold xs, d, n. cbn [rows_of]. lia. }
+    assert (Htotal : length a + length b <= d).
+    { unfold d, n. cbn [rows_of]. lia. }
+    assert (Hkeys : Forall (fun x => X.bits x <= bits) xs).
+    { unfold xs. apply karr_variables_key_bound.
+      apply Forall_app. split; apply Forall_map, Forall_forall;
+        intros r Hr.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width a) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width b) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    assert (Ha_rows : Forall (fun r => length (lhs r) <= d /\
+      C.row_bits r <= bits) (map normalize_row a)).
+    { apply Forall_map, Forall_forall. intros r Hr. split.
+      - eapply Nat.le_trans with (m := length (vars_of a));
+          [apply karr_normal_row_dimension; exact Hr|].
+        unfold d, n. cbn [rows_of]. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width a) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    assert (Hb_rows : Forall (fun r => length (lhs r) <= d /\
+      C.row_bits r <= bits) (map normalize_row b)).
+    { apply Forall_map, Forall_forall. intros r Hr. split.
+      - eapply Nat.le_trans with (m := length (vars_of b));
+          [apply karr_normal_row_dimension; exact Hr|].
+        unfold d, n. cbn [rows_of]. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width b) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    pose proof (T_karr_hull_left_bounded xs (length a + length b) 0
+      (map normalize_row a) d bits Hxs Htotal Hkeys Ha_rows) as Hleft.
+    pose proof (T_karr_hull_right_bounded xs (length a + length b)
+      (length a) (map normalize_row b) d bits Hxs Htotal Hkeys Hb_rows)
+      as Hright.
+    pose proof (karr_normal_terms_log a Ha) as Hloga.
+    pose proof (karr_normal_terms_log b Hb) as Hlogb.
+    assert (Hlogda : Nat.log2 (n (Reached a) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hlogdb : Nat.log2 (n (Reached b) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. unfold d. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    assert (Hbits : bits + d + 1 <= 16 * v).
+    { unfold bits, nell, v, ellB, w. nia. }
+    assert (Hvolume : forall count, count + 1 <= d ->
+      (count + 1) * (d + 1)^2 * (bits + d + 1) <=
+        64 * (d^3 * v^2)).
+    { intros count Hcount.
+      assert (Hdim : (d + 1)^2 <= 4 * d^2).
+      { replace (4 * d^2) with ((2 * d)^2)
+          by (cbn [Nat.pow]; ring).
+        apply Nat.pow_le_mono_l. lia. }
+      eapply Nat.le_trans with (m := d * (4 * d^2) * (16 * v)).
+      - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; assumption|exact Hbits].
+      - replace (d * (4 * d^2) * (16 * v)) with
+          (64 * (d^3 * v)) by (cbn [Nat.pow]; ring).
+        apply Nat.mul_le_mono_l, Nat.mul_le_mono_l.
+        unfold v, ellB. cbn [Nat.pow]. nia. }
+    assert (HleftN : (N.of_nat ((length a + 1) * (d + 1)^2 *
+      (bits + d + 1)) <= 64 * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N).
+    { unfold elimination_work. fold d w v.
+      pose proof (Hvolume (length a) ltac:(unfold d, n;
+        cbn [rows_of]; lia)) as Hnat.
+      rewrite Nat2N.inj_mul. lia. }
+    assert (HrightN : (N.of_nat ((length b + 1) * (d + 1)^2 *
+      (bits + d + 1)) <= 64 * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N).
+    { unfold elimination_work. fold d w v.
+      pose proof (Hvolume (length b) ltac:(unfold d, n;
+        cbn [rows_of]; lia)) as Hnat.
+      rewrite Nat2N.inj_mul. lia. }
+    rewrite !length_map in Hleft, Hright.
+    eapply N.le_trans; [apply N.add_le_mono; eassumption|].
+    replace (karr_hull_seed_factor * N.of_nat (length a + 1) *
+      N.of_nat (d + 1)^2 * N.of_nat (bits + d + 1))%N with
+      (karr_hull_seed_factor * N.of_nat
+        ((length a + 1) * (d + 1)^2 * (bits + d + 1)))%N
+      by (rewrite !Nat2N.inj_mul, Nat2N.inj_pow;
+        change (N.of_nat 2) with 2%N; ring).
+    replace (karr_hull_seed_factor * N.of_nat (length b + 1) *
+      N.of_nat (d + 1)^2 * N.of_nat (bits + d + 1))%N with
+      (karr_hull_seed_factor * N.of_nat
+        ((length b + 1) * (d + 1)^2 * (bits + d + 1)))%N
+      by (rewrite !Nat2N.inj_mul, Nat2N.inj_pow;
+        change (N.of_nat 2) with 2%N; ring).
+    set (public := N.of_nat
+      (elimination_work (Reached a) (Reached b))).
+    eapply N.le_trans with (m := (karr_hull_seed_factor * (64 * public) +
+      karr_hull_seed_factor * (64 * public))%N).
+    - apply N.add_le_mono.
+      + apply N.mul_le_mono_l. exact HleftN.
+      + apply N.mul_le_mono_l. exact HrightN.
+    - unfold public. ring_simplify. apply N.le_refl.
+  Qed.
+
+  Definition karr_hull_finish_factor : N := (524288 * C.c_lc + 2064)%N.
+
+  (** Checking and retaining every final row fits public elimination work. *)
+  Lemma T_karr_hull_finish_public : forall a b,
+    normal a -> normal b ->
+    let xs := variables (map normalize_row a ++ map normalize_row b) in
+    let rows := hull_left xs (length a + length b) 0 (map normalize_row a) ++
+      hull_right xs (length a + length b) (length a) (map normalize_row b) in
+    let basis := karr_bareiss (2 * length xs + 2) 1 rows in
+    (ListDef.T_map (checked_hull_row xs a b)
+       (T_checked_hull_row xs a b) basis +
+     T_present (map (checked_hull_row xs a b) basis) <=
+      karr_hull_finish_factor * N.of_nat
+        (elimination_work (Reached a) (Reached b)))%N.
+  Proof.
+    intros a b Ha Hb xs rows basis.
+    set (d := n (Reached a) + n (Reached b) + 1).
+    set (w := ell (Reached a) + ell (Reached b)).
+    set (v := ellB d w + 1).
+    set (width := 2 * length xs + length a + length b + 4).
+    set (raw := nell (Reached a) + nell (Reached b)).
+    set (bits := ellB width raw).
+    set (charge := karr_hull_checker_charge d bits).
+    set (work := elimination_work (Reached a) (Reached b)).
+    assert (Hd : 1 <= d) by (unfold d; lia).
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hbits_positive : 1 <= bits).
+    { unfold bits, width, raw, ellB, nell. nia. }
+    assert (Hraw : raw <= bits).
+    { unfold bits, width, ellB. nia. }
+    assert (Hw : w <= bits).
+    { unfold w, raw, nell in *. lia. }
+    assert (Hwidth : bits + 1 <= 128 * v).
+    { pose proof (karr_hull_width_public a b Ha Hb) as Hpublic.
+      cbv zeta in Hpublic.
+      replace (2 * length (variables (map normalize_row a ++
+        map normalize_row b)) + length a + length b + 5) with
+        (width + 1) in Hpublic by (unfold width, xs; lia).
+      change (ellB (width + 1) raw + 1 <= 128 * v) in Hpublic.
+      unfold bits.
+      eapply Nat.le_trans with (m := ellB (width + 1) raw + 1).
+      - apply Nat.add_le_mono_r, ellB_mono; lia.
+      - exact Hpublic. }
+    assert (Hxs : length xs <= d).
+    { pose proof (karr_hull_variables_public a b) as Hvars.
+      unfold xs, d, n. cbn [rows_of]. lia. }
+    assert (Hcount : length a + length b <= d).
+    { unfold d, n. cbn [rows_of]. lia. }
+    assert (Hkeys : Forall (fun x => X.bits x <= bits) xs).
+    { eapply Forall_impl; [|apply karr_hull_variables_keys].
+      intros x Hx. cbn beta in Hx. unfold raw in Hraw. lia. }
+    assert (Ha_rows : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) a).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact Ha].
+      intros row [Hlen [Hkey Hrow]]. cbn beta in *.
+      unfold d, w in *. lia. }
+    assert (Hb_rows : Forall (fun row => length (lhs row) <= d /\
+      C.row_key_bits row <= bits /\ C.row_bits row <= bits) b).
+    { eapply Forall_impl; [|apply karr_normal_source_envelope; exact Hb].
+      intros row [Hlen [Hkey Hrow]]. cbn beta in *.
+      unfold d, w in *. lia. }
+    pose proof (karr_hull_basis_envelope a b xs) as Hbasis.
+    cbv zeta in Hbasis.
+    replace (2 * length xs + (length a + length b) + 4) with width
+      in Hbasis by (unfold width; lia).
+    pose proof (T_karr_hull_finish_bounded xs a b basis d bits
+      Hbits_positive Hxs Hcount Hkeys Ha_rows Hb_rows Hbasis) as Hfinish.
+    assert (Hbasis_length : length basis + 1 <= d).
+    { unfold basis. rewrite karr_bareiss_length.
+      unfold rows. rewrite length_app.
+      pose proof (karr_hull_left_length xs (length a + length b) 0
+        (map normalize_row a)) as Hleft.
+      pose proof (karr_hull_right_length xs (length a + length b)
+        (length a) (map normalize_row b)) as Hright.
+      rewrite !length_map in Hleft, Hright.
+      unfold d, n. cbn [rows_of]. lia. }
+    assert (Hlog : Nat.log2 d <= v).
+    { unfold v, ellB. nia. }
+    pose proof (karr_hull_checker_charge_public d bits v
+      Hd Hv Hwidth Hlog) as Hcharge.
+    assert (Hwork : work = d^3 * v^2).
+    { unfold work, elimination_work, d, v, w. reflexivity. }
+    assert (Hproduct : (length basis + 1) * charge <=
+      (1024 * 256) * work).
+    { unfold charge.
+      eapply Nat.le_trans with (m := d * ((1024 * 256) * (d^2 * v^2))).
+      - apply Nat.mul_le_mono; [exact Hbasis_length|exact Hcharge].
+      - rewrite Hwork. cbn [Nat.pow]. ring_simplify. lia. }
+    assert (Hpair : (d + 1) * (length basis + 1) <= 2 * work).
+    { rewrite Hwork.
+      assert (Hdim : d + 1 <= 2 * d) by lia.
+      eapply Nat.le_trans with (m := (2 * d) * d).
+      - apply Nat.mul_le_mono; assumption.
+      - replace ((2 * d) * d) with (2 * (d * d)) by ring.
+        replace (2 * (d ^ 3 * v ^ 2)) with
+          (2 * (d * d) * (d * v * v)) by (cbn [Nat.pow]; ring).
+        replace (2 * (d * d)) with (2 * (d * d) * 1) at 1 by ring.
+        apply Nat.mul_le_mono_l. nia. }
+    assert (Hvisit : length basis + 1 <= work).
+    { eapply Nat.le_trans; [exact Hbasis_length|].
+      rewrite Hwork.
+      replace (d ^ 3 * v ^ 2) with (d * (d * d * v * v))
+        by (cbn [Nat.pow]; ring).
+      replace d with (d * 1) at 1 by ring.
+      apply Nat.mul_le_mono_l. nia. }
+    assert (HproductN : (N.of_nat charge * N.of_nat (length basis + 1) <=
+      262144 * N.of_nat work)%N).
+    { rewrite <- Nat2N.inj_mul.
+      change 262144%N with (N.of_nat (1024 * 256)). lia. }
+    assert (HpairN : (N.of_nat (d + 1) * N.of_nat (length basis + 1) <=
+      2 * N.of_nat work)%N).
+    { rewrite <- Nat2N.inj_mul. lia. }
+    assert (HvisitN : (N.of_nat (length basis + 1) <=
+      N.of_nat work)%N) by lia.
+    eapply N.le_trans; [exact Hfinish|].
+    fold charge.
+    replace ((2 * C.c_lc * N.of_nat charge +
+      1024 * N.of_nat (d + 1) + 16) *
+      N.of_nat (length basis + 1))%N with
+      (2 * C.c_lc * (N.of_nat charge * N.of_nat (length basis + 1)) +
+        1024 * (N.of_nat (d + 1) * N.of_nat (length basis + 1)) +
+        16 * N.of_nat (length basis + 1))%N by ring.
+    assert (HcheckerN : (2 * C.c_lc *
+      (N.of_nat charge * N.of_nat (length basis + 1)) <=
+      524288 * C.c_lc * N.of_nat work)%N).
+    { replace (524288 * C.c_lc * N.of_nat work)%N with
+        (2 * C.c_lc * (262144 * N.of_nat work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    unfold karr_hull_finish_factor.
+    replace ((524288 * C.c_lc + 2064) * N.of_nat work)%N with
+      ((524288 * C.c_lc * N.of_nat work +
+        1024 * (2 * N.of_nat work)) +
+        16 * N.of_nat work)%N by ring.
+    apply N.add_le_mono.
+    - apply N.add_le_mono; [exact HcheckerN|].
+      now apply N.mul_le_mono_l.
+    - now apply N.mul_le_mono_l.
+  Qed.
+
+  Lemma T_affine_hull_le : forall a b, normal a -> normal b ->
+    (T_affine_hull a b <= c_karr * N.of_nat
+      (elimination_work (Reached a) (Reached b)))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_karr_bareiss_basis_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    (T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) <=
+      33554432 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))) + 4)%N.
+  Proof.
+    intros P c xs HP Hxs.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (dim := length xs + length P + 2).
+    set (b := ellB (dim + 1) (nell (Reached P)) + 1).
+    set (v := ellB d w + 1).
+    pose proof (T_karr_bareiss_seed_bounded xs P) as Hclock.
+    pose proof (karr_bareiss_budget_public (length xs) dim
+      (nell (Reached P)) ltac:(unfold dim; lia)) as Hbudget.
+    pose proof (karr_basis_width_public P c xs HP Hxs) as Hwidth.
+    pose proof (karr_target_dim_public P c) as Hdim.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hdim' : dim + 1 <= 2 * d).
+    { unfold dim, d in *. lia. }
+    assert (Hb : b <= 8 * v).
+    { unfold b, dim, v, d, w.
+      replace (length xs + length P + 2 + 1) with
+        (length xs + length P + 3) by lia.
+      exact Hwidth. }
+    assert (Hcube : (dim + 1)^3 <= 8 * d^3).
+    { replace (8 * d^3) with ((2 * d)^3) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. exact Hdim'. }
+    assert (Hsquare : b^2 <= 64 * v^2).
+    { replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. exact Hb. }
+    assert (Hvolume : (dim + 1)^3 * b^2 <= 512 * (d^3 * v^2)).
+    { assert (Hproduct : (dim + 1)^3 * b^2 <=
+        (8 * d^3) * (64 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      eapply Nat.le_trans; [exact Hproduct|].
+      replace ((8 * d^3) * (64 * v^2)) with
+        (512 * (d^3 * v^2)) by ring. lia. }
+    assert (HN : (N.of_nat ((dim + 1)^3 * b^2) <=
+      N.of_nat (512 * (d^3 * v^2)))%N) by lia.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans with (m :=
+      (65536 * N.of_nat ((dim + 1)^3 * b^2) + 4)%N).
+    - apply N.add_le_mono_r. exact Hbudget.
+    - unfold elimination_work. fold d w v.
+      replace (33554432 * N.of_nat (d^3 * v^2) + 4)%N with
+        (65536 * N.of_nat (512 * (d^3 * v^2)) + 4)%N
+        by (rewrite Nat2N.inj_mul;
+          change (N.of_nat 512) with 512%N; ring).
+      apply N.add_le_mono_r. now apply N.mul_le_mono_l.
+  Qed.
+
+  Lemma karr_raw_work_public : forall Q d w,
+    normal Q -> n (Reached Q) <= d -> ell (Reached Q) <= w -> 2 <= d ->
+    (terms (Reached Q) + length Q + 1) *
+      (2 * ell (Reached Q) + Nat.log2 (terms (Reached Q)) + 1) <=
+      8 * (d^3 * (ellB d w + 1)^2).
+  Proof.
+    intros Q d w HQ Hdim Hwidth Hd.
+    assert (Hterms : terms (Reached Q) <= n (Reached Q)^2).
+    { pose proof (karr_normal_terms_bound Q HQ) as Hbound.
+      unfold n in *. cbn [rows_of] in *. cbn [Nat.pow]. nia. }
+    pose proof (karr_normal_terms_log Q HQ) as Hlog.
+    assert (Hlogd : Nat.log2 (n (Reached Q) + 1) <= Nat.log2 d + 1).
+    { eapply Nat.le_trans with (m := Nat.log2 (d + 1)).
+      - apply Nat.log2_le_mono. lia.
+      - replace (d + 1) with (S d) by lia.
+        replace (Nat.log2 d + 1) with (S (Nat.log2 d)) by lia.
+        apply Nat.log2_succ_le. }
+    set (mass := terms (Reached Q) + length Q + 1).
+    set (width := 2 * ell (Reached Q) + Nat.log2 (terms (Reached Q)) + 1).
+    set (v := ellB d w + 1).
+    assert (Hmass : mass <= 2 * d^2).
+    { unfold mass, n in *. cbn [rows_of] in *.
+      cbn [Nat.pow] in *. nia. }
+    assert (Hwidth' : width <= 4 * v).
+    { unfold width, v, ellB in *.
+      assert (Hlogpos : 1 <= Nat.log2 d).
+      { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+        change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+      nia. }
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hproduct : mass * width <= (2 * d^2) * (4 * v)).
+    { apply Nat.mul_le_mono; assumption. }
+    eapply Nat.le_trans; [exact Hproduct|].
+    replace (8 * (d^3 * v^2)) with (2 * d^3 * (4 * v^2)) by ring.
+    apply Nat.mul_le_mono.
+    - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia.
+    - apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia.
+  Qed.
+
+  Lemma T_karr_prepare_public : forall P c,
+    normal P ->
+    (ListDef.T_map normalize_row T_normalize_row P <=
+      8 * karr_prepare_factor * N.of_nat
+        (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (mass := terms (Reached P) + length P + 1).
+    set (width := 2 * ell (Reached P) +
+      Nat.log2 (terms (Reached P)) + 1).
+    pose proof (karr_normal_source_envelope P HP) as Hrows.
+    assert (Hsource : Forall (fun r =>
+      C.row_key_bits r <= ell (Reached P) /\
+      C.row_bits r <= ell (Reached P)) P).
+    { eapply Forall_impl; [|exact Hrows].
+      intros r [_ [Hkeys Hbits]]. split; assumption. }
+    pose proof (T_karr_prepare_rows_bounded P (ell (Reached P))
+      (ell (Reached P)) (terms (Reached P)) Hsource
+      (Nat.le_refl _)) as Hclock.
+    pose proof (karr_raw_work_public P d w HP
+      ltac:(unfold d; lia) ltac:(unfold w; lia)
+      ltac:(unfold d, n; cbn [rows_of length]; lia)) as Hwork.
+    assert (HN : (N.of_nat (mass * width) <=
+      N.of_nat (8 * elimination_work (Reached P)
+        (Reached (c :: nil))))%N).
+    { unfold elimination_work. fold d w. unfold mass, width in Hwork.
+      lia. }
+    replace (ell (Reached P) + ell (Reached P) +
+      Nat.log2 (terms (Reached P)) + 1) with width in Hclock
+      by (unfold width; lia).
+    change (ListDef.T_map normalize_row T_normalize_row P <=
+      karr_prepare_factor * N.of_nat mass * N.of_nat width)%N in Hclock.
+    replace (karr_prepare_factor * N.of_nat mass * N.of_nat width)%N
+      with (karr_prepare_factor * N.of_nat (mass * width))%N in Hclock
+      by (rewrite Nat2N.inj_mul; ring).
+    eapply N.le_trans with (m :=
+      (karr_prepare_factor * N.of_nat
+        (8 * elimination_work (Reached P) (Reached (c :: nil))))%N).
+    - eapply N.le_trans; [exact Hclock|].
+      now apply N.mul_le_mono_l.
+    - rewrite Nat2N.inj_mul.
+      change (N.of_nat 8) with 8%N. ring_simplify. apply N.le_refl.
+  Qed.
+
+  Lemma T_karr_seed_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (c :: nil))) xs ->
+    (T_seed_rows xs (length P) 0 (map normalize_row P) <=
+      32 * karr_seed_factor * N.of_nat
+        (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c xs HP Hxs Hkeys.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (bits := nell (Reached P) + w).
+    set (v := ellB d w + 1).
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hlen : length xs <= d).
+    { pose proof (karr_target_dim_public P c) as Hdim.
+      unfold d in *. lia. }
+    assert (Hrows : Forall (fun r =>
+      length (lhs r) <= d /\ C.row_bits r <= bits)
+      (map normalize_row P)).
+    { apply Forall_map, Forall_forall. intros r Hr. split.
+      - pose proof (karr_normal_row_dimension P r Hr) as Hrow.
+        unfold d, n in *. cbn [rows_of length] in *. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width P) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    pose proof (T_karr_seed_rows_bounded xs (length P) 0
+      (map normalize_row P) d bits Hlen
+      ltac:(unfold d, n; cbn [rows_of length]; lia)
+      ltac:(eapply Forall_impl; [|exact Hkeys]; intros x Hx;
+        cbn beta in Hx; unfold bits, w; lia) Hrows) as Hclock.
+    pose proof (karr_normal_terms_log P HP) as Hlog.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hbits : bits + d + 1 <= 8 * v).
+    { unfold bits, nell, v, ellB in *.
+      assert (Hlogpos : 1 <= Nat.log2 d).
+      { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+        change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+      nia. }
+    assert (Hcount : length (map normalize_row P) + 1 <= d).
+    { rewrite length_map. unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hdim : d + 1 <= 2 * d) by lia.
+    assert (Hcube : (length (map normalize_row P) + 1) * (d + 1)^2 *
+      (bits + d + 1) <= 32 * (d^3 * v^2)).
+    { assert (Hsquare : (d + 1)^2 <= 4 * d^2).
+      { replace (4 * d^2) with ((2 * d)^2) by (cbn [Nat.pow]; ring).
+        apply Nat.pow_le_mono_l. exact Hdim. }
+      assert (Hproduct : (length (map normalize_row P) + 1) * (d + 1)^2 *
+        (bits + d + 1) <= d * (4 * d^2) * (8 * v)).
+      { apply Nat.mul_le_mono; [apply Nat.mul_le_mono; assumption|exact Hbits]. }
+      eapply Nat.le_trans; [exact Hproduct|].
+      replace (d * (4 * d^2) * (8 * v)) with (32 * (d^3 * v))
+        by (cbn [Nat.pow]; ring).
+      apply Nat.mul_le_mono_l.
+      apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia. }
+    assert (HN : (N.of_nat
+      ((length (map normalize_row P) + 1) * (d + 1)^2 *
+        (bits + d + 1)) <= N.of_nat (32 * (d^3 * v^2)))%N) by lia.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans with (m :=
+      (karr_seed_factor * N.of_nat
+        ((length (map normalize_row P) + 1) * (d + 1)^2 *
+          (bits + d + 1)))%N).
+    - rewrite !Nat2N.inj_mul, !Nat.pow_2_r, N.pow_2_r,
+        Nat2N.inj_mul. ring_simplify. apply N.le_refl.
+    - unfold elimination_work. fold d w v.
+      replace (32 * karr_seed_factor * N.of_nat (d^3 * v^2))%N with
+        (karr_seed_factor * N.of_nat (32 * (d^3 * v^2)))%N
+        by (rewrite Nat2N.inj_mul;
+          change (N.of_nat 32) with 32%N; ring).
+      now apply N.mul_le_mono_l.
+  Qed.
+
+  Lemma T_karr_equality_basis_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (c :: nil))) xs ->
+    (T_equality_basis xs P <=
+      (33554500 + 32 * karr_seed_factor + 8 * karr_prepare_factor) *
+        N.of_nat (elimination_work (Reached P)
+          (Reached (c :: nil))))%N.
+  Proof.
+    intros P c xs HP Hxs Hkeys.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (v := ellB d w + 1).
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))).
+    pose proof (T_karr_equality_basis_components xs P) as Hcomponents.
+    pose proof (T_karr_bareiss_basis_public P c xs HP Hxs) as Hbareiss.
+    pose proof (T_karr_seed_public P c xs HP Hxs Hkeys) as Hseed.
+    pose proof (T_karr_prepare_public P c HP) as Hprepare.
+    pose proof (karr_target_dim_public P c) as Hdim.
+    assert (Hcount : length xs + length P + 1 <= d).
+    { unfold d in *. lia. }
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hv : 1 <= v) by (unfold v, ellB; nia).
+    assert (Hvolume : d <= d^3 * v^2).
+    { assert (Hd3 : d <= d^3) by (cbn [Nat.pow]; nia).
+      assert (Hv2 : 1 <= v^2) by (cbn [Nat.pow]; nia).
+      replace d with (d * 1) at 1 by lia.
+      now apply Nat.mul_le_mono. }
+    assert (Hoverhead :
+      (64 * N.of_nat (length xs + length P + 1) + 4 <= 68 * work)%N).
+    { assert (Hnat : length xs + length P + 1 <= d^3 * v^2)
+        by lia.
+      unfold work, elimination_work. fold d w v.
+      assert (HN : (N.of_nat (length xs + length P + 1) <=
+        N.of_nat (d^3 * v^2))%N) by lia.
+      assert (Hpositive : (1 <= N.of_nat (d^3 * v^2))%N) by lia.
+      nia. }
+    eapply N.le_trans; [exact Hcomponents|].
+    change (T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) <=
+      33554432 * work + 4)%N in Hbareiss.
+    change (T_seed_rows xs (length P) 0 (map normalize_row P) <=
+      32 * karr_seed_factor * work)%N in Hseed.
+    change (ListDef.T_map normalize_row T_normalize_row P <=
+      8 * karr_prepare_factor * work)%N in Hprepare.
+    clearbody work. nia.
+  Qed.
+
+  (** Source-only basis construction fits the conclusion's elimination allowance. *)
+  Lemma T_karr_source_basis_public : forall P c,
+    normal P ->
+    (T_equality_basis (variables P) P <=
+      (33554500 + 32 * karr_seed_factor + 8 * karr_prepare_factor) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (zero := LCons X.t [] REq 0%Z).
+    assert (Hsame : variables (zero :: P) = variables P).
+    { unfold zero, variables. cbn [flat_map lhs]. reflexivity. }
+    assert (Hsource_keys : Forall (fun x => X.bits x <= ell (Reached P))
+      (variables P)).
+    { apply karr_variables_key_bound.
+      eapply Forall_impl; [|apply karr_normal_source_envelope; exact HP].
+      intros row [_ [Hbits _]]. exact Hbits. }
+    assert (Hkeys : Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (zero :: nil))) (variables P)).
+    { eapply Forall_impl; [|exact Hsource_keys].
+      intros x Hx. cbn beta in Hx. lia. }
+    pose proof (T_karr_equality_basis_public P zero (variables P) HP
+      ltac:(rewrite Hsame; lia) Hkeys) as Hclock.
+    assert (Hzero_n : n (Reached (zero :: nil)) = 1).
+    { unfold zero, n, vars_of. reflexivity. }
+    assert (Hc_n : 1 <= n (Reached (c :: nil))).
+    { unfold n. cbn [rows_of length]. lia. }
+    assert (Hzero_ell : ell (Reached (zero :: nil)) = 0).
+    { unfold zero, ell. reflexivity. }
+    assert (Hwork : elimination_work (Reached P) (Reached (zero :: nil)) <=
+      elimination_work (Reached P) (Reached (c :: nil))).
+    { unfold elimination_work. apply karr_numeric_polynomial_mono.
+      - rewrite Hzero_n. lia.
+      - rewrite Hzero_ell. lia. }
+    eapply N.le_trans; [exact Hclock|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** The initialized contradiction scan fits the public elimination allowance. *)
+  Lemma T_karr_contradiction_scan_public : forall P c,
+    normal P ->
+    (T_empty_certificate P (equality_basis (variables P) P) <=
+      256 * (C.c_lc + 1) * N.of_nat
+        (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (q := ell (Reached P)).
+    set (v := ellB d w + 1).
+    set (m := n (Reached P) + 2).
+    set (b := ellB (length (variables P) + length P + 2)
+      (nell (Reached P))).
+    pose proof (T_karr_contradiction_scan_bounded P HP) as Hscan.
+    pose proof (karr_contradiction_width_public P c HP) as Hbits.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hm : m <= d).
+    { unfold m, d, n. cbn [rows_of length]. lia. }
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    assert (Hw : w + 1 <= v).
+    { unfold v, ellB. nia. }
+    assert (Hq : q + 1 <= v) by (unfold q, w in *; lia).
+    assert (Hb : b + 1 <= 4 * v).
+    { unfold b, v, d, w in *. exact Hbits. }
+    assert (Hinner : q + (b + 1) * (q + 1) + 1 <= 5 * v^2).
+    { assert (Hproduct : (b + 1) * (q + 1) <= (4 * v) * v)
+        by (apply Nat.mul_le_mono; lia).
+      assert (Hsquare : v <= v^2) by (cbn [Nat.pow]; nia).
+      cbn [Nat.pow] in *. nia. }
+    assert (Hpoly :
+      ((2 * m + 1) * (m + 1) *
+        (q + (b + 1) * (q + 1) + 1) + 1) * (m + 1) <=
+      64 * (d^3 * v^2)).
+    { assert (Hpart :
+        (2 * m + 1) * (m + 1) *
+          (q + (b + 1) * (q + 1) + 1) <=
+        30 * (d^2 * v^2)).
+      { eapply Nat.le_trans with (m := (3 * d) * (2 * d) * (5 * v^2)).
+        - apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|exact Hinner].
+        - replace ((3 * d) * (2 * d) * (5 * v^2)) with
+            (30 * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+          lia. }
+      assert (Hmass : 1 <= d^2 * v^2).
+      { cbn [Nat.pow]. nia. }
+      replace (d^3 * v^2) with (d * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+      set (mass := d^2 * v^2) in *. nia. }
+    assert (Hvolume : d^2 <= d^3 * v^2).
+    { replace (d^3 * v^2) with (d^2 * (d * v^2)) by (cbn [Nat.pow]; ring).
+      assert (1 <= d * v^2) by (cbn [Nat.pow]; nia).
+      nia. }
+    assert (Hextra : (8 * (m + 1) + 64) * (m + 1) <=
+      128 * (d^3 * v^2)).
+    { assert (Hspan : m + 1 <= 2 * d) by lia.
+      assert (Hsquare : (8 * (m + 1) + 64) * (m + 1) <= 96 * d^2).
+      { eapply Nat.le_trans with (m := (8 * (2 * d) + 64) * (2 * d)).
+        - apply Nat.mul_le_mono; lia.
+        - cbn [Nat.pow]. nia. }
+      set (volume := d^3 * v^2) in *.
+      set (square := d^2) in *.
+      clear -Hsquare Hvolume. nia. }
+    set (work := N.of_nat (d^3 * v^2)).
+    assert (HpolyN : (N.of_nat
+      ((2 * m + 1) * (m + 1) *
+        (q + (b + 1) * (q + 1) + 1) + 1) * N.of_nat (m + 1) <=
+      64 * work)%N).
+    { unfold work. rewrite <- Nat2N.inj_mul.
+      replace (64 * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat (64 * (d^3 * v^2))) by (rewrite Nat2N.inj_mul; reflexivity).
+      lia. }
+    assert (HextraN : ((8 * N.of_nat (m + 1) + 64) * N.of_nat (m + 1) <=
+      128 * work)%N).
+    { unfold work.
+      replace (8 * N.of_nat (m + 1) + 64)%N with
+        (N.of_nat (8 * (m + 1) + 64))
+        by (rewrite Nat2N.inj_add, Nat2N.inj_mul; reflexivity).
+      rewrite <- Nat2N.inj_mul.
+      replace (128 * N.of_nat (d^3 * v^2))%N with
+        (N.of_nat (128 * (d^3 * v^2)))
+        by (rewrite Nat2N.inj_mul; reflexivity).
+      lia. }
+    replace (n (Reached P) + 3) with (m + 1) in Hscan by (unfold m; lia).
+    change (T_empty_certificate P (equality_basis (variables P) P) <=
+      karr_empty_scan_charge m q q b * N.of_nat (m + 1))%N in Hscan.
+    unfold karr_empty_scan_charge in Hscan.
+    change (T_empty_certificate P (equality_basis (variables P) P) <=
+      256 * (C.c_lc + 1) * work)%N.
+    set (poly := N.of_nat ((2 * m + 1) * (m + 1) *
+      (q + (b + 1) * (q + 1) + 1) + 1)) in *.
+    set (span := N.of_nat (m + 1)) in *.
+    change (T_empty_certificate P (equality_basis (variables P) P) <=
+      (C.c_lc * poly + 8 * span + 64) * span)%N in Hscan.
+    change (poly * span <= 64 * work)%N in HpolyN.
+    change ((8 * span + 64) * span <= 128 * work)%N in HextraN.
+    clear -Hscan HpolyN HextraN.
+    eapply N.le_trans; [exact Hscan|].
+    replace ((C.c_lc * poly + 8 * span + 64) * span)%N with
+      (C.c_lc * (poly * span) + (8 * span + 64) * span)%N by ring.
+    eapply N.le_trans with (m := (C.c_lc * (64 * work) + 128 * work)%N).
+    - apply N.add_le_mono; [now apply N.mul_le_mono_l|exact HextraN].
+    - nia.
+  Qed.
+
+  (** Contradiction detection fits one public elimination allowance. *)
+  Lemma T_karr_contradiction_public : forall P c,
+    normal P ->
+    (T_contradiction P <=
+      (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor +
+        256 * (C.c_lc + 1) + 64) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP.
+    pose proof (T_karr_contradiction_components P) as Hparts.
+    pose proof (T_karr_source_variables_public P c HP) as Hvariables.
+    pose proof (T_karr_source_basis_public P c HP) as Hbasis.
+    pose proof (T_karr_contradiction_scan_public P c HP) as Hscan.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (v := ellB d (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hv : 1 <= v) by (unfold v; lia).
+    assert (Hcount : length P + 1 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hvolume : d <= d^3 * v^2).
+    { replace (d^3 * v^2) with (d * (d^2 * v^2)) by (cbn [Nat.pow]; ring).
+      assert (1 <= d^2 * v^2) by (cbn [Nat.pow]; nia).
+      nia. }
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))) in *.
+    assert (Hoverhead : (64 * N.of_nat (length P + 1) <= 64 * work)%N).
+    { apply N.mul_le_mono_l. unfold work, elimination_work. fold d v.
+      lia. }
+    clear -Hparts Hvariables Hbasis Hscan Hoverhead.
+    nia.
+  Qed.
+
+  (** A produced target certificate fits the public elimination allowance. *)
+  Lemma T_karr_target_certificate_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_target_certificate P c <=
+      (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor +
+        16 * karr_dense_factor + 16384 * 64 + 1024 * 64) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    pose proof (T_karr_target_certificate_components P c Hc) as Hparts.
+    pose proof (T_karr_target_variables_public P c HP Hc) as Hvariables.
+    pose proof (T_karr_equality_basis_public P c
+      (variables (c :: P)) HP (Nat.le_refl _)
+      (karr_entail_variables_keys P c HP Hc)) as Hbasis.
+    pose proof (T_karr_entail_dense_public P c HP Hc) as Hdense.
+    pose proof (T_karr_target_public P c HP Hc) as Htarget.
+    pose proof (karr_target_finish_public P c HP) as Hfinish.
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))) in *.
+    change (T_target_certificate P c <=
+      T_variables (c :: P) +
+      T_equality_basis (variables (c :: P)) P +
+      T_dense (variables (c :: P)) c +
+      T_karr_target (equality_basis (variables (c :: P)) P) 1
+        (KRow (dense (variables (c :: P)) c) (rhs c)
+          (repeat 0%Z (length P)) 1%Z) +
+      1024 * N.of_nat (length (variables (c :: P)) + length P + 1) *
+        N.of_nat ((ellB (length (variables (c :: P)) + length P + 3)
+          (nell (Reached P) + C.row_bits c + 1) + 1)^2))%N in Hparts.
+    clearbody work. nia.
+  Qed.
+
+  (** Three charged phases and a dispatch step fit their summed allowance. *)
+  Lemma karr_entail_clock_sum : forall a b c x y z work : N,
+    (1 <= work)%N -> (a <= x * work)%N -> (b <= y * work)%N ->
+    (c <= z * work)%N ->
+    (1 + (a + b + c) <= (x + y + z + 1) * work)%N.
+  Proof.
+    intros a b c x y z work Hwork Ha Hb Hc.
+    replace ((x + y + z + 1) * work)%N with
+      (x * work + y * work + z * work + work)%N by ring.
+    lia.
+  Qed.
+
+  (** Candidate production and checking fit one public elimination allowance. *)
+  Lemma T_karr_entail_cert_public : forall P c,
+    normal P -> normal (c :: nil) ->
+    (T_entail_cert P c <=
+      (2 * (8 * karr_variables_factor + 33554500 +
+        32 * karr_seed_factor + 8 * karr_prepare_factor) +
+        256 * (C.c_lc + 1) + 64 +
+        16 * karr_dense_factor + 16384 * 64 + 1024 * 64 +
+        256 * C.c_lc + 64) *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP Hc.
+    pose proof (T_karr_contradiction_public P c HP) as Hcontradiction.
+    pose proof (T_karr_target_certificate_public P c HP Hc) as Htarget.
+    set (work := N.of_nat
+      (elimination_work (Reached P) (Reached (c :: nil)))) in *.
+    set (basis_factor := (8 * karr_variables_factor + 33554500 +
+      32 * karr_seed_factor + 8 * karr_prepare_factor)%N).
+    set (contradiction_factor :=
+      (basis_factor + 256 * (C.c_lc + 1) + 64)%N).
+    set (target_factor := (basis_factor + 16 * karr_dense_factor +
+      16384 * 64 + 1024 * 64)%N).
+    change (T_contradiction P <= contradiction_factor * work)%N
+      in Hcontradiction.
+    change (T_target_certificate P c <= target_factor * work)%N in Htarget.
+    replace ((2 * (8 * karr_variables_factor + 33554500 +
+      32 * karr_seed_factor + 8 * karr_prepare_factor) +
+      256 * (C.c_lc + 1) + 64 + 16 * karr_dense_factor +
+      16384 * 64 + 1024 * 64 + 256 * C.c_lc + 64) * work)%N with
+      ((contradiction_factor + target_factor + 256 * C.c_lc + 64) * work)%N
+      by (unfold contradiction_factor, target_factor, basis_factor; ring).
+    assert (Hwork : (1 <= work)%N).
+    { unfold work, elimination_work.
+      set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+      set (v := ellB d (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+      assert (Hd : 2 <= d).
+      { unfold d, n. cbn [rows_of length]. lia. }
+      assert (Hv : 1 <= v) by (unfold v; lia).
+      fold d v. cbn [Nat.pow]. nia. }
+    time_unfold T_entail_cert.
+    destruct (contradiction P) as [ms|] eqn:Hcontradiction_result; time_simpl.
+    - pose proof (T_karr_entail_candidate_checker_public P c
+        (Cert ms 1 false) HP Hc
+        ltac:(rewrite Hcontradiction_result; reflexivity)) as Hchecker.
+      destruct (C.check_entails P c (Cert ms 1 false)); time_simpl.
+      + eapply N.le_trans with (m :=
+          ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+        * eapply karr_entail_clock_sum;
+            [exact Hwork|exact Hcontradiction|lia|exact Hchecker].
+        * apply N.mul_le_mono_r. lia.
+      + eapply N.le_trans with (m :=
+          ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+        * eapply karr_entail_clock_sum;
+            [exact Hwork|exact Hcontradiction|lia|exact Hchecker].
+        * apply N.mul_le_mono_r. lia.
+    - destruct (target_certificate P c) as [k|] eqn:Hcandidate; time_simpl.
+      + pose proof (T_karr_entail_candidate_checker_public P c k HP Hc
+          ltac:(rewrite Hcontradiction_result; exact Hcandidate)) as Hchecker.
+        destruct (C.check_entails P c k); time_simpl.
+        * eapply N.le_trans with (m :=
+            ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+          -- eapply karr_entail_clock_sum;
+               [exact Hwork|exact Hcontradiction|exact Htarget|exact Hchecker].
+          -- apply N.mul_le_mono_r. lia.
+        * eapply N.le_trans with (m :=
+            ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+          -- eapply karr_entail_clock_sum;
+               [exact Hwork|exact Hcontradiction|exact Htarget|exact Hchecker].
+          -- apply N.mul_le_mono_r. lia.
+      + eapply N.le_trans with (m :=
+          ((contradiction_factor + target_factor + 256 * C.c_lc + 1) * work)%N).
+        * eapply karr_entail_clock_sum;
+            [exact Hwork|exact Hcontradiction|exact Htarget|lia].
+        * apply N.mul_le_mono_r. lia.
+  Qed.
+
+  Lemma T_entail_cert_le : forall P r, normal P -> normal (r :: nil) ->
+    (T_entail_cert P r <= c_karr * N.of_nat
+      (elimination_work (Reached P) (Reached (r :: nil))))%N.
+  Proof.
+    intros P r HP Hr.
+    eapply N.le_trans; [exact (T_karr_entail_cert_public P r HP Hr)|].
+    apply N.mul_le_mono_r. unfold c_karr. lia.
+  Qed.
+
+  Lemma entail_cert_size : forall P r k, normal P -> normal (r :: nil) ->
+    entail_cert P r = Some k ->
+    (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
+        (C.lsize r + C.cbits P (mults k) + 1)) <=
+      k_cert * N.of_nat (elimination_work (Reached P) (Reached (r :: nil))))%N.
+  Proof.
+    intros P r k HP Hr Hresult.
+    unfold entail_cert in Hresult.
+    destruct (match contradiction P with
+      | Some ms => Some (Cert ms 1 false)
+      | None => target_certificate P r
+      end) as [candidate|] eqn:Hcandidate; [|discriminate].
+    destruct (C.check_entails P r candidate) eqn:Hcheck; [|discriminate].
+    inversion Hresult; subst candidate.
+    unfold k_cert.
+    exact (karr_entail_candidate_size_public P r k HP Hr Hcandidate).
   Qed.
 
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
