@@ -16625,6 +16625,82 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       change (N.of_nat 8) with 8%N. ring_simplify. apply N.le_refl.
   Qed.
 
+  Lemma T_karr_seed_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    Forall (fun x => X.bits x <=
+      ell (Reached P) + ell (Reached (c :: nil))) xs ->
+    (T_seed_rows xs (length P) 0 (map normalize_row P) <=
+      32 * karr_seed_factor * N.of_nat
+        (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c xs HP Hxs Hkeys.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (bits := nell (Reached P) + w).
+    set (v := ellB d w + 1).
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hlen : length xs <= d).
+    { pose proof (karr_target_dim_public P c) as Hdim.
+      unfold d in *. lia. }
+    assert (Hrows : Forall (fun r =>
+      length (lhs r) <= d /\ C.row_bits r <= bits)
+      (map normalize_row P)).
+    { apply Forall_map, Forall_forall. intros r Hr. split.
+      - pose proof (karr_normal_row_dimension P r Hr) as Hrow.
+        unfold d, n in *. cbn [rows_of length] in *. lia.
+      - pose proof (proj1 (Forall_forall _ _)
+          (karr_normal_source_width P) (normalize_row r)
+          (in_map normalize_row _ _ Hr)) as Hrow.
+        cbn beta in Hrow. unfold bits. lia. }
+    pose proof (T_karr_seed_rows_bounded xs (length P) 0
+      (map normalize_row P) d bits Hlen
+      ltac:(unfold d, n; cbn [rows_of length]; lia)
+      ltac:(eapply Forall_impl; [|exact Hkeys]; intros x Hx;
+        cbn beta in Hx; unfold bits, w; lia) Hrows) as Hclock.
+    pose proof (karr_normal_terms_log P HP) as Hlog.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hbits : bits + d + 1 <= 8 * v).
+    { unfold bits, nell, v, ellB in *.
+      assert (Hlogpos : 1 <= Nat.log2 d).
+      { pose proof (Nat.log2_le_mono 2 d Hd) as Hmono.
+        change (1 <= Nat.log2 d) in Hmono. exact Hmono. }
+      nia. }
+    assert (Hcount : length (map normalize_row P) + 1 <= d).
+    { rewrite length_map. unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hdim : d + 1 <= 2 * d) by lia.
+    assert (Hcube : (length (map normalize_row P) + 1) * (d + 1)^2 *
+      (bits + d + 1) <= 32 * (d^3 * v^2)).
+    { assert (Hsquare : (d + 1)^2 <= 4 * d^2).
+      { replace (4 * d^2) with ((2 * d)^2) by (cbn [Nat.pow]; ring).
+        apply Nat.pow_le_mono_l. exact Hdim. }
+      assert (Hproduct : (length (map normalize_row P) + 1) * (d + 1)^2 *
+        (bits + d + 1) <= d * (4 * d^2) * (8 * v)).
+      { apply Nat.mul_le_mono; [apply Nat.mul_le_mono; assumption|exact Hbits]. }
+      eapply Nat.le_trans; [exact Hproduct|].
+      replace (d * (4 * d^2) * (8 * v)) with (32 * (d^3 * v))
+        by (cbn [Nat.pow]; ring).
+      apply Nat.mul_le_mono_l.
+      apply Nat.mul_le_mono_l. cbn [Nat.pow]. nia. }
+    assert (HN : (N.of_nat
+      ((length (map normalize_row P) + 1) * (d + 1)^2 *
+        (bits + d + 1)) <= N.of_nat (32 * (d^3 * v^2)))%N) by lia.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans with (m :=
+      (karr_seed_factor * N.of_nat
+        ((length (map normalize_row P) + 1) * (d + 1)^2 *
+          (bits + d + 1)))%N).
+    - rewrite !Nat2N.inj_mul, !Nat.pow_2_r, N.pow_2_r,
+        Nat2N.inj_mul. ring_simplify. apply N.le_refl.
+    - unfold elimination_work. fold d w v.
+      replace (32 * karr_seed_factor * N.of_nat (d^3 * v^2))%N with
+        (karr_seed_factor * N.of_nat (32 * (d^3 * v^2)))%N
+        by (rewrite Nat2N.inj_mul;
+          change (N.of_nat 32) with 32%N; ring).
+      now apply N.mul_le_mono_l.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
