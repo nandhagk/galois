@@ -13530,6 +13530,19 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         end
     end.
 
+  (** The last row of a bounded target trace retains the same envelope. *)
+  Lemma karr_target_envelope_result : forall rs previous target dim mlen bits,
+    karr_target_envelope rs previous target dim mlen bits ->
+    karr_row_envelope dim mlen bits (karr_target rs previous target).
+  Proof.
+    intro rs. induction rs as [|pivot rest IH];
+      intros previous target dim mlen bits Htrace.
+    - exact (proj1 Htrace).
+    - destruct Htrace as [_ Hnext]. cbn [karr_target].
+      destruct (karr_first (kcoeff pivot)) as [[index a]|];
+        now apply IH.
+  Qed.
+
   (** A bounded target trace pays one reduction and two lookups per basis row. *)
   Lemma T_karr_target_trace_bounded : forall rs previous target dim mlen bits,
     Z.size_nat previous <= bits ->
