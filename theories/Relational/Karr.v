@@ -1704,6 +1704,29 @@ Proof.
     rewrite Hdet. rewrite Z.mul_comm. apply Z.mod_mul. exact Hprevious.
 Qed.
 
+(** The selected pivot value is the next bordered minor. *)
+Lemma karr_minor_law_pivot_value : forall previous pivot_rows pivot_columns
+    head columns pairs origin pivot,
+  karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
+  In (origin, pivot) pairs ->
+  karr_nth 0 pivot =
+    karr_determinant (S (length pivot_rows))
+      (karr_submatrix (pivot_columns ++ [head]) (pivot_rows ++ [origin])).
+Proof.
+  intros previous pivot_rows pivot_columns head columns pairs origin pivot Hlaw Hin.
+  unfold karr_minor_law in Hlaw.
+  assert (Hpaired : Forall2 (fun source row => In (source, row) pairs)
+    [origin] [pivot]) by (constructor; [exact Hin|constructor]).
+  assert (Hvalid : Forall (fun i => i < length (head :: columns)) [0])
+    by (constructor; [cbn [length]; lia|constructor]).
+  pose proof (Hlaw [origin] [pivot] [0] Hpaired eq_refl Hvalid
+    ltac:(cbn [length]; lia)) as Hminor.
+  cbn [length karr_submatrix map nth Nat.sub Nat.add] in Hminor.
+  rewrite karr_determinant_one, Z.pow_0_r in Hminor.
+  replace (length pivot_rows + 1) with (S (length pivot_rows)) in Hminor by lia.
+  rewrite Z.mul_1_l in Hminor. exact Hminor.
+Qed.
+
 (** The all-order law selects the exact quotient branch for an augmented row. *)
 Lemma karr_minor_law_reduce_exact : forall previous pivot_rows pivot_columns
     head columns pairs pivot_origin target_origin p r,
