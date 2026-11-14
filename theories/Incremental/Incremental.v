@@ -4202,14 +4202,22 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
 
   Definition invalidated_keys_spec := invalidated_spec.
 
+  Lemma look_from_value_filter : forall st st' bad x,
+    value st' x = (if mem x bad then None else value st x) ->
+    ~ In x bad -> look st' x = look st x.
+  Proof.
+    intros st st' bad x Hfilter Hkeep; unfold look; rewrite Hfilter.
+    destruct (mem x bad) eqn:Hmem; [|reflexivity].
+    exfalso; apply Hkeep.
+    apply (proj1 (mem_spec x bad)); exact Hmem.
+  Qed.
+
   (** Values at retained keys agree pointwise with their old lookups. *)
   Lemma edit_look_kept : forall p p' ch st x,
     ~ In x (invalidate_keys p p' ch st) -> look (edit p p' ch st) x = look st x.
   Proof.
-    intros p p' ch st x Hkeep; unfold look; rewrite edit_value_keys.
-    destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem; [|reflexivity].
-    exfalso; apply Hkeep.
-    apply (proj1 (mem_spec x (invalidate_keys p p' ch st))); exact Hmem.
+    intros p p' ch st x Hkeep.
+    eapply look_from_value_filter; [apply edit_value_keys|exact Hkeep].
   Qed.
 
   (** Unchanged retained rows keep their accepted contributions under the edited lookup. *)
