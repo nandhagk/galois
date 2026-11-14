@@ -15028,6 +15028,77 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         * apply map_ext. intro row. symmetry. apply karr_zero_prefix_restore.
   Qed.
 
+  (** The actual conclusion row inherits one fixed source-minor envelope. *)
+  Lemma karr_target_seed_envelope : forall xs P c,
+    normal (c :: nil) ->
+    karr_target_envelope (equality_basis xs P) 1
+      (KRow (dense xs c) (rhs c) (repeat 0%Z (length P)) 1%Z)
+      (length xs) (length P)
+      (ellB (length xs + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1)).
+  Proof.
+    intros xs P c Hnormal.
+    set (seeds := seed_rows xs (length P) 0 (map normalize_row P)).
+    set (source := map karr_row_entries seeds).
+    set (target := KRow (dense xs c) (rhs c)
+      (repeat 0%Z (length P)) 1%Z).
+    set (width := length xs + length P + 2).
+    set (src_bits := nell (Reached P) + C.row_bits c + 1).
+    unfold equality_basis.
+    change (karr_target_envelope (karr_bareiss (length xs) 1 seeds)
+      1 target (length xs) (length P)
+      (ellB (length xs + length P + 3) src_bits)).
+    replace (karr_bareiss (length xs) 1 seeds) with
+      (map (karr_zero_prefix 0) (karr_bareiss (length xs) 1 seeds))
+      by (cbn [karr_zero_prefix]; now rewrite map_id).
+    eapply karr_bareiss_target_envelope with
+      (pivot_rows := []) (pivot_columns := [])
+      (columns := seq 0 width) (labels := source)
+      (target_origin := karr_row_entries target).
+    - unfold source. rewrite length_map. reflexivity.
+    - apply Forall_forall. intros row Hin. split.
+      + exact (proj1 (Forall_forall _ _)
+          (seed_rows_width xs (length P) 0 (map normalize_row P)) row Hin).
+      + cbn [karr_zero_prefix]. rewrite length_seq. unfold width.
+        exact (proj1 (Forall_forall _ _)
+          (seed_entries_width xs (length P) 0 (map normalize_row P)) row Hin).
+    - unfold target. cbn [kcoeff]. unfold dense. rewrite length_map. lia.
+    - unfold target, karr_row_entries.
+      cbn [kcoeff kright kweight kscale].
+      rewrite !length_app. cbn [length].
+      rewrite length_app. cbn [length].
+      unfold dense. rewrite length_map, repeat_length, length_seq.
+      lia.
+    - lia.
+    - rewrite length_seq. unfold width. lia.
+    - lia.
+    - unfold source. cbn [karr_zero_prefix].
+      change (karr_minor_law 1 [] [] (seq 0 width)
+        (combine (map karr_row_entries seeds) (map karr_row_entries seeds) ++
+          [(karr_row_entries target, karr_row_entries target)])).
+      rewrite karr_combine_self.
+      change (karr_minor_law 1 [] [] (seq 0 width)
+        (map (fun row => (row, row)) (map karr_row_entries seeds) ++
+          map (fun row => (row, row)) [karr_row_entries target])).
+      rewrite <- map_app.
+      apply karr_minor_law_initial.
+    - constructor.
+    - unfold source. eapply Forall_impl;
+        [|apply karr_seed_entries_bits].
+      intros row Hrow. eapply Forall_impl; [|exact Hrow].
+      intros z Hz. cbn beta in *. unfold src_bits. lia.
+    - apply (karr_row_entries_bits (length xs) (length P) src_bits target).
+      apply karr_target_initial_envelope; [exact Hnormal| |];
+        unfold src_bits, nell; lia.
+    - lia.
+    - unfold source. rewrite length_map.
+      pose proof (karr_seed_rows_length xs (length P) 0
+        (map normalize_row P)) as Hcount.
+      rewrite length_map in Hcount.
+      change (length seeds <= length P) in Hcount.
+      cbn [length]. lia.
+  Qed.
+
   (** The last row of a bounded target trace retains the same envelope. *)
   Lemma karr_target_envelope_result : forall rs previous target dim mlen bits,
     karr_target_envelope rs previous target dim mlen bits ->
