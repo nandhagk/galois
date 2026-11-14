@@ -5460,13 +5460,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** Union queues equality work without changing rows. *)
-  Lemma union_rows : forall i j db, wf db ->
+  Lemma union_rows_raw : forall i j db,
     row (view (union i j db)) = row (view db).
   Proof.
-    intros i j db _. unfold union.
+    intros i j db. unfold union.
     destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
     destruct roots as [[winner loser] |]; reflexivity.
   Qed.
+
+  Lemma union_rows : forall i j db, wf db ->
+    row (view (union i j db)) = row (view db).
+  Proof. intros i j db _. apply union_rows_raw. Qed.
 
   (** Database union retains exactly the forest returned by the concrete union operation. *)
   Lemma union_forest : forall i j db,
@@ -11316,6 +11320,38 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         intro Heq. apply Hnonroot_new. rewrite Hrepr. exact Heq. }
       exact (Hsecondary f k o x Hrow Hid Hnonroot_old). }
     split; [exact Hlocated | exact Hnonroot].
+  Qed.
+
+  Lemma public_union_primary_some : forall db i j winner loser forest,
+    database_public_ok db ->
+    UnionFindCode.union i j (db_forest db) = (Some (winner, loser), forest) ->
+    forall f k o x, row (view (union i j db)) f k o -> row_ids k o x ->
+      exists y k0, repr (union i j db) y = repr (union i j db) x /\
+        uses (union i j db) y (f, k0) /\ located (union i j db) f k0 = Some k /\
+        (y = repr (union i j db) x \/ In y (queue (union i j db))).
+  Proof.
+    intros db i j winner loser forest Hpublic Hunion f k o x Hrow Hid.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+      (wf_forest db Hbase) Hunion) as [_ [_ Hrepr]].
+    rewrite (union_rows_raw i j db) in Hrow.
+    destruct (database_idle_coverage db Hidle f k o x Hrow Hid)
+      as [y [k0 [Hsame [Huse [Hlocated Hactive]]]]].
+    exists y, k0. unfold union. rewrite Hunion.
+    cbn [fst snd database_set_pending database_set_runtime runtime_set_union
+      db_runtime runtime_queue db_forest db_row_store] in *.
+    split.
+    { change (UnionFind.repr forest y = UnionFind.repr forest x).
+      unfold repr in Hsame.
+      now rewrite !Hrepr, Hsame. }
+    split; [exact Huse |]. split; [exact Hlocated |].
+    destruct Hactive as [Hroot | Hqueued].
+    - destruct (Pos.eqb (repr db x) loser) eqn:Hloser.
+      + right. left. apply Pos.eqb_eq in Hloser. congruence.
+      + left. change (y = UnionFind.repr forest x).
+        rewrite Hrepr. unfold repr in Hloser. now rewrite Hloser.
+    - right. now right.
   Qed.
 
   (** Active and queued repair states expose their forest invariant directly. *)
