@@ -16542,6 +16542,92 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply Nat.mul_le_mono; [exact Hhead_count|exact Hwidth].
   Qed.
 
+  (** The prepared head callback has a direct public-work clock bound. *)
+  Lemma T_poly_assign_prepared_head_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 *
+      (n P + total + length P + 3) * bits^2 in
+    (T_assigned_candidate P x prepared (poly_assign_head x prepared P) <=
+      (256 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+        256 * C.c_lc) * N.of_nat work + 16)%N.
+  Proof.
+    intros x e P f Hlinear prepared bits total work.
+    pose proof (T_poly_assign_prepared_head_candidate_public x e P f Hlinear)
+      as Hhead.
+    pose proof (poly_assign_prepared_head_span_mass x e P f Hlinear)
+      as Hspan.
+    pose proof (poly_assign_prepared_row_mass x e P f Hlinear) as Hrow.
+    cbn zeta in Hhead, Hspan, Hrow.
+    assert (Huntag : (2 * N.of_nat (length (coef prepared) + 2) <=
+      256 * N.of_nat work)%N).
+    { apply time_of_nat_le in Hrow.
+      assert (Htwo : 2 * (length (coef prepared) + 2) <=
+        (length (coef prepared) + 2) *
+          (X.bits x + 3 * F.form_bits prepared + 5)) by nia.
+      apply time_of_nat_le in Htwo.
+      rewrite !Nat2N.inj_mul in Htwo, Hrow.
+      cbn [N.of_nat] in Htwo, Hrow.
+      eapply N.le_trans; [exact Htwo|exact Hrow]. }
+    assert (Hsubst : (poly_clock_span (length (coef prepared) + 1) 0
+      (X.bits x + F.form_bits prepared + 1)
+      (F.form_bits prepared + 1) <= 3200 * N.of_nat work)%N).
+    { unfold poly_clock_span.
+      replace (length (coef prepared) + 1 + 0 + 1) with
+        (length (coef prepared) + 2) by lia.
+      replace (X.bits x + F.form_bits prepared + 1 +
+        (F.form_bits prepared + 1) + 1) with
+        (X.bits x + 2 * F.form_bits prepared + 3) by lia.
+      assert (Hclock : (N.of_nat ((length (coef prepared) + 2) *
+        (X.bits x + 2 * F.form_bits prepared + 3)^2) <=
+        N.of_nat (3200 * work))%N)
+        by (apply time_of_nat_le; exact Hspan).
+      rewrite !Nat2N.inj_mul, Nat2N.inj_pow in Hclock.
+      cbn [N.of_nat] in Hclock.
+      exact Hclock. }
+    assert (Hsubst' : (AssignCore.poly_assign_normal_subst_factor *
+      poly_clock_span (length (coef prepared) + 1) 0
+        (X.bits x + F.form_bits prepared + 1)
+        (F.form_bits prepared + 1) <=
+      3200 * AssignCore.poly_assign_normal_subst_factor * N.of_nat work)%N).
+    { eapply N.le_trans; [apply N.mul_le_mono_l; exact Hsubst|].
+      replace (AssignCore.poly_assign_normal_subst_factor *
+        (3200 * N.of_nat work))%N with
+        (3200 * AssignCore.poly_assign_normal_subst_factor * N.of_nat work)%N
+        by ring.
+      apply N.le_refl. }
+    assert (Hcheck : (256 * C.c_lc * N.of_nat
+      ((n P + terms (Reached P) + tsize e + length P + 3) * bits^2) <=
+      256 * C.c_lc * N.of_nat work)%N).
+    { apply N.mul_le_mono_l.
+      unfold work, total.
+      apply time_of_nat_le.
+      assert (Hone : 1 <= (length P + 3)^2)
+        by (cbn [Nat.pow]; nia).
+      set (volume := n P + (terms (Reached P) + tsize e) + length P + 3).
+      assert (Hvolume : volume <= (length P + 3)^2 * volume).
+      { clear -Hone. nia. }
+      replace (n P + terms (Reached P) + tsize e + length P + 3)
+        with volume by (unfold volume; lia).
+      change (volume * bits^2 <=
+        ((length P + 3)^2 * volume) * bits^2).
+      now apply Nat.mul_le_mono_r. }
+    eapply N.le_trans; [exact Hhead|].
+    clear -Huntag Hsubst' Hcheck.
+    replace ((256 + 3200 * AssignCore.poly_assign_normal_subst_factor +
+      256 * C.c_lc) * N.of_nat work + 16)%N with
+      (256 * N.of_nat work +
+        3200 * AssignCore.poly_assign_normal_subst_factor * N.of_nat work +
+        256 * C.c_lc * N.of_nat work + 16)%N by ring.
+    apply N.add_le_mono.
+    - apply N.add_le_mono.
+      + apply N.add_le_mono; [exact Huntag|exact Hsubst'].
+      + exact Hcheck.
+    - apply N.le_refl.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
