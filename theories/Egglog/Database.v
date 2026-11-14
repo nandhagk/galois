@@ -3267,6 +3267,40 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     reflexivity.
   Qed.
 
+  Lemma register_row_uses_history_map : forall db f k o,
+    row_history (db_row_store (register_row_uses f k o db)) =
+      row_history (db_row_store (ensure_row_identity f k db)).
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma register_row_uses_links : forall db f k o,
+    row_links (db_row_store (register_row_uses f k o db)) =
+      row_links (db_row_store (ensure_row_identity f k db)).
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma register_row_uses_weights : forall db f k o,
+    row_weights (db_row_store (register_row_uses f k o db)) =
+      row_weights (db_row_store (ensure_row_identity f k db)).
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma register_row_uses_keys : forall db f k o,
+    row_keys (db_row_store (register_row_uses f k o db)) =
+      row_keys (db_row_store (ensure_row_identity f k db)).
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma register_row_uses_ids : forall db f k o,
+    ids (register_row_uses f k o db) = ids (ensure_row_identity f k db).
+  Proof.
+    reflexivity.
+  Qed.
+
   Lemma register_row_uses_history_range : forall db f k o,
     database_row_store_ok db ->
     forall g args key r,
@@ -11210,6 +11244,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (PTrieCode.get r (row_links store')) as [parent |]; [| reflexivity].
     destruct (Pos.eqb parent r); [reflexivity |].
     apply IH. exact Hlinks.
+  Qed.
+
+  Lemma register_row_uses_locate : forall db f k o g args,
+    db_locate g args (register_row_uses f k o db) =
+      db_locate g args (ensure_row_identity f k db).
+  Proof.
+    intros db f k o g args. unfold db_locate.
+    rewrite register_row_uses_history_map.
+    pose proof (register_row_uses_ids db f k o) as Hids.
+    unfold ids in Hids. rewrite Hids.
+    destruct (PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (ensure_row_identity f k db))))
+      as [[key r] |]; [| reflexivity].
+    rewrite register_row_uses_keys.
+    f_equal. apply row_root_same_links. apply register_row_uses_links.
   Qed.
 
   Lemma row_root_no_link : forall fuel r store,
