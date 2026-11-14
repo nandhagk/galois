@@ -11891,6 +11891,34 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply db_locate_same_store_ids; assumption.
   Qed.
 
+  Lemma row_replace_new_locate : forall db f k previous o,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
+    db_locate f k (row_replace f k previous o db) = Some k.
+  Proof.
+    intros db f k [before |] o Hstore Hnone; unfold row_replace.
+    - set (prepared := row_write f k o
+        (slots_update true f (k ++ option_list o)
+          (slots_update false f (k ++ option_list before) db))).
+      assert (Hstore' : database_row_store_ok prepared).
+      { subst prepared. apply row_write_row_store_ok.
+        apply slots_update_row_store_ok, slots_update_row_store_ok. exact Hstore. }
+      assert (Hsame : db_row_store prepared = db_row_store db).
+      { subst prepared. now rewrite row_write_row_store, !slots_update_row_store. }
+      rewrite register_row_uses_locate.
+      apply ensure_row_identity_new_locate; [exact Hstore' |].
+      now rewrite Hsame.
+    - set (prepared := row_write f k o (slots_update true f (k ++ option_list o) db)).
+      assert (Hstore' : database_row_store_ok prepared).
+      { subst prepared. apply row_write_row_store_ok, slots_update_row_store_ok.
+        exact Hstore. }
+      assert (Hsame : db_row_store prepared = db_row_store db).
+      { subst prepared. now rewrite row_write_row_store, slots_update_row_store. }
+      rewrite register_row_uses_locate.
+      apply ensure_row_identity_new_locate; [exact Hstore' |].
+      now rewrite Hsame.
+  Qed.
+
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
     database_row_store_ok db ->
     database_row_store_ok (row_replace f k previous o db).
