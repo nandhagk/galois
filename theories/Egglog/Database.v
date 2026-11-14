@@ -18088,6 +18088,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply database_row_weights_positive_row_delete. exact Hpositive.
   Qed.
 
+  Lemma database_owned_ok_row_replace : forall db f k previous o,
+    kind_ok db f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    database_owned_ok db ->
+    database_owned_ok (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hkind Hcanonical Howned.
+    unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    assert (Hself : forall key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) -> db_locate f k db = Some k).
+    { intros key r Hentry. apply (Halign f k key r Hentry).
+      intros i Hin. apply Hcanonical. apply in_or_app. now left. }
+    split; [apply database_row_store_ok_row_replace; exact Hstore |].
+    split; [apply database_history_alignment_row_replace; assumption |].
+    split; [eapply database_active_history_coherent_row_replace;
+      eassumption |].
+    split; [eapply database_history_root_owner_row_replace;
+      eassumption |].
+    split; [eapply database_history_key_shape_row_replace;
+      eassumption |].
+    split; [apply database_history_codes_valid_row_replace; exact Hvalid |].
+    split.
+    { apply database_history_key_ids_bounded_row_replace;
+        [exact Hbounded |].
+      intros i Hin. apply (proj1 Hkind). apply in_or_app. now left. }
+    split; [eapply database_row_weight_conserved_row_replace;
+      eassumption |].
+    apply database_row_weights_positive_row_replace. exact Hpositive.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
