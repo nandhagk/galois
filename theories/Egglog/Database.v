@@ -14837,6 +14837,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try reflexivity; exact Hupdated.
   Qed.
 
+  Lemma database_row_weight_conserved_repair_current : forall db f k,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (repair_current f k db).
+  Proof.
+    intros db f k Hstore Hconserved. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hconserved].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hconserved |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted).
+    assert (Hupdated : database_row_weight_conserved updated).
+    { subst updated. apply database_row_weight_conserved_put.
+      - subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
+      - subst deleted. apply database_row_weight_conserved_row_delete.
+        exact Hconserved. }
+    eapply database_row_weight_conserved_transport with (db := updated);
+      try reflexivity; exact Hupdated.
+  Qed.
+
   Lemma database_history_root_owner_repair_entry_move : forall db f k,
     database_row_store_ok db -> database_history_root_owner db ->
     database_history_root_owner
