@@ -6939,15 +6939,16 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   (** The stored pending counter follows exactly the optional queue insertion. *)
-  Lemma union_pending_count : forall i j db, database_wf db ->
+  Lemma union_pending_count : forall i j db,
+    db_npending db = N.of_nat (pending db) ->
     db_npending (union i j db) = N.of_nat (pending (union i j db)).
   Proof.
-    intros i j db Hwf. unfold union.
+    intros i j db Hcount. unfold union.
     destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
     destruct roots as [[winner loser] |].
     - change (N.succ (db_npending db) = N.of_nat (S (pending db))).
-      now rewrite Nat2N.inj_succ, (wf_pending_count db Hwf).
-    - exact (wf_pending_count db Hwf).
+      now rewrite Nat2N.inj_succ, Hcount.
+    - exact Hcount.
   Qed.
 
   (** A union with an empty resulting queue has changed no representative. *)
@@ -6997,7 +6998,7 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     pose proof (union_forest_width i j db Hwf Hi Hj) as Hwidth.
     pose proof (union_equalities i j db Hwf) as Hequalities.
     pose proof (union_log_allocated i j db Hwf Hi Hj) as Hlog.
-    pose proof (union_pending_count i j db Hwf) as Hpending.
+    pose proof (union_pending_count i j db (wf_pending_count db Hwf)) as Hpending.
     pose proof (union_queue_allocated i j db Hwf Hi Hj) as Hqueue.
     pose proof (union_quiet_canonical i j db Hwf) as Hcanonical.
     pose proof (database_history_union db i j (wf_history db Hwf)) as Hhistory.
@@ -20901,6 +20902,84 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (db_repair_entry_queue_state db f k
       (inv_on_forest_wf db work Hinv) Hqueue) as [_ Hnext].
     exact (proj1 Hnext).
+  Qed.
+
+  Lemma put_pending_count_active : forall db f k o,
+    db_npending db = N.of_nat (pending db) ->
+    db_npending (put f k o db) = N.of_nat (pending (put f k o db)).
+  Proof.
+    intros db f k o Hcount. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : db_npending next = N.of_nat (pending next)).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try exact Hcount.
+      now apply union_pending_count. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      now rewrite row_replace_npending, row_replace_pending.
+    - now rewrite row_replace_npending, row_replace_pending.
+  Qed.
+
+  Lemma repair_current_pending_count_active : forall db f k,
+    db_npending db = N.of_nat (pending db) ->
+    db_npending (repair_current f k db) =
+      N.of_nat (pending (repair_current f k db)).
+  Proof.
+    intros db f k Hcount. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hcount].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hcount |].
+    change (db_npending (put f (normal_key db k)
+      (option_map (normal_cell db) output) (row_delete f k db)) =
+      N.of_nat (pending (put f (normal_key db k)
+        (option_map (normal_cell db) output) (row_delete f k db)))).
+    apply put_pending_count_active.
+    now rewrite row_delete_npending, row_delete_pending.
+  Qed.
+
+  Lemma move_row_identity_pending_count : forall db f old current,
+    db_npending (move_row_identity f old current db) = db_npending db /\
+    pending (move_row_identity f old current db) = pending db.
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |]; [| now split].
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store db))) as [[current_key current_id] |];
+      now split.
+  Qed.
+
+  Lemma db_repair_entry_pending_count : forall db f k,
+    db_npending db = N.of_nat (pending db) ->
+    db_npending (db_repair_entry f k db) =
+      N.of_nat (pending (db_repair_entry f k db)).
+  Proof.
+    intros db f k Hcount. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hcount].
+    destruct (row_get f current db) as [output |]; [| exact Hcount].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hcount |].
+    destruct (move_row_identity_pending_count (repair_current f current db)
+      f current (normal_key db current)) as [Hstored Hqueue].
+    rewrite Hstored, Hqueue.
+    now apply repair_current_pending_count_active.
+  Qed.
+
+  Lemma inv_on_repair_pending_count : forall db work f k,
+    inv_on db work -> db_npending (db_repair_entry f k db) =
+      N.of_nat (pending (db_repair_entry f k db)).
+  Proof.
+    intros db work f k Hinv.
+    apply db_repair_entry_pending_count.
+    exact (inv_on_pending_count db work Hinv).
   Qed.
 
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
