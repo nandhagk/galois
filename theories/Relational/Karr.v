@@ -3434,6 +3434,41 @@ Proof.
   rewrite Hrows in Hstage. rewrite Hlength. exact Hstage.
 Qed.
 
+(** Full-width exact quotients support any retained column selection. *)
+Lemma karr_stage_quotient_minor_selected : forall d c p xs ys quotients,
+  karr_nth c p <> 0%Z ->
+  Forall (fun x => length x = length p) xs ->
+  length ys = length xs -> 1 <= length xs ->
+  Forall2 (fun q x =>
+    map (fun z => (d * z)%Z) q =
+      karr_cross (karr_nth c p) (karr_nth c x) x p)
+    quotients xs ->
+  (d ^ Z.of_nat (length xs) *
+    karr_determinant (length ys) (karr_submatrix ys quotients) =
+   karr_nth c p ^ Z.of_nat (length xs - 1) *
+    karr_determinant (S (length ys))
+      (karr_submatrix (c :: ys) (p :: xs)))%Z.
+Proof.
+  intros d c p xs ys quotients Hp Hwidth Hlength Hpositive Hquotients.
+  pose proof (karr_stage_minor c p xs ys Hp Hwidth Hlength Hpositive)
+    as Hstage.
+  pose proof (Forall2_length Hquotients) as Hrows.
+  assert (Hraw : map (fun x => karr_cross (karr_nth c p)
+      (karr_nth c x) x p) xs =
+    map (map (fun z => (d * z)%Z)) quotients).
+  { clear Hstage Hrows Hp Hwidth Hlength Hpositive.
+    induction Hquotients as [|q x quotients xs Hhead Htail IH];
+      cbn [map]; [reflexivity|].
+    f_equal; [symmetry; exact Hhead|exact IH]. }
+  rewrite Hraw in Hstage.
+  replace (length ys) with (length quotients) in Hstage by lia.
+  rewrite karr_submatrix_scale_minor in Hstage.
+  replace (length quotients) with (length ys) in Hstage by lia.
+  replace (d ^ Z.of_nat (length xs))%Z with
+    (d ^ Z.of_nat (length ys))%Z by now rewrite Hlength.
+  exact Hstage.
+Qed.
+
 (** A nonzero pivot and exact row quotients preserve all live minor equations. *)
 Lemma karr_minor_law_pivot : forall previous pivot_rows pivot_columns head columns
     pivot_origin pivot rest (f : list Z -> list Z),
