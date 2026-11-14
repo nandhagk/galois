@@ -16593,6 +16593,94 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           -- exact Hroot.
   Qed.
 
+  Lemma database_row_links_ok_move : forall db f old ck,
+    database_row_store_ok db -> database_row_weights_positive db ->
+    length old = length ck ->
+    forall r p,
+      PTrieCode.get r
+        (row_links (db_row_store (move_row_identity f old ck db))) = Some p ->
+      In r (map (fun binding => snd (snd binding))
+        (PTrieCode.elements
+          (row_history (db_row_store (move_row_identity f old ck db))))) /\
+      In p (map (fun binding => snd (snd binding))
+        (PTrieCode.elements
+          (row_history (db_row_store (move_row_identity f old ck db))))) /\
+      (p <> r ->
+        (1 <= match PTrieCode.get r
+          (row_weights (db_row_store (move_row_identity f old ck db))) with
+         | Some n => n | None => 1%N end)%N /\
+        (2 * match PTrieCode.get r
+          (row_weights (db_row_store (move_row_identity f old ck db))) with
+         | Some n => n | None => 1%N end <=
+         match PTrieCode.get p
+          (row_weights (db_row_store (move_row_identity f old ck db))) with
+         | Some n => n | None => 1%N end)%N).
+  Proof.
+    intros db f old ck Hstore Hpositive Hlength.
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |] eqn:Hsource;
+      [| unfold database_row_store_ok in Hstore; tauto].
+    destruct (PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)))
+      as [[ck_key ck_id] |] eqn:Hdest;
+      [| unfold database_row_store_ok in Hstore; tauto].
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some p => p | None => source_root end) = source_root).
+    { subst source_root depth store.
+      exact (database_history_root_fixed db f old old_key old_id
+        Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some p => p | None => dest_root end) = dest_root).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id
+        Hstore Hdest). }
+    assert (Hsource_recorded : In source_root
+      (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history store)))).
+    { subst source_root depth store.
+      exact (database_history_root_recorded db f old old_key old_id
+        Hstore Hsource). }
+    assert (Hdest_recorded : In dest_root
+      (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history store)))).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_recorded db f ck ck_key ck_id
+        Hstore Hdest). }
+    replace (runtime_allocated (db_runtime db)) with (ids db)
+      by reflexivity.
+    fold store depth source_root dest_root.
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - unfold database_row_store_ok in Hstore. tauto.
+    - apply Pos.eqb_neq in Hsame.
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Horder.
+      + eapply database_row_links_merge_ok with (db := db)
+          (loser := source_root) (winner := dest_root);
+          try reflexivity; try exact Hstore; try exact Hpositive;
+          try exact Hsame; try exact Hsource_fixed;
+          try exact Hdest_fixed; try exact Hsource_recorded;
+          try exact Hdest_recorded.
+        apply N.leb_le. exact Horder.
+      + eapply database_row_links_merge_ok with (db := db)
+          (loser := dest_root) (winner := source_root);
+          try reflexivity; try exact Hstore; try exact Hpositive;
+          try exact Hdest_fixed; try exact Hsource_fixed;
+          try exact Hdest_recorded; try exact Hsource_recorded.
+        * cbn [database_set_row_store db_row_store row_weights].
+          now rewrite N.add_comm.
+        * congruence.
+        * apply N.lt_le_incl, N.leb_gt. exact Horder.
+  Qed.
+
   (** Fixed historical aliases at either affected root have the destination key. *)
   Lemma database_history_alignment_affected : forall db f old ck g args
       old_key old_id ck_key ck_id key r,
