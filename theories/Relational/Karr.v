@@ -4158,6 +4158,120 @@ Proof.
     exact Hnext.
 Qed.
 
+(** A basis pivot and target advance together in the full source coordinates. *)
+Lemma karr_minor_law_prefix_step : forall cols offset previous pivot_rows
+    pivot_columns columns pivot_origin p remaining rest target_origin target,
+  length remaining = length rest ->
+  length (kcoeff p) = S cols ->
+  length (karr_row_entries (karr_zero_prefix offset p)) = length columns ->
+  Forall (fun row => length (kcoeff row) = S cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rest ->
+  length (kcoeff target) = offset + S cols ->
+  length (karr_row_entries target) = length columns ->
+  previous <> 0%Z -> karr_head p <> 0%Z ->
+  karr_minor_law previous pivot_rows pivot_columns columns
+    ((pivot_origin, karr_row_entries (karr_zero_prefix offset p)) ::
+      combine remaining
+        (map (fun row => karr_row_entries (karr_zero_prefix offset row)) rest) ++
+      [(target_origin, karr_row_entries target)]) ->
+  let a := karr_head p in
+  let target' := karr_reduce previous a
+    (karr_nth offset (kcoeff target)) (karr_zero_prefix offset p) target in
+  let rest' := map (fun row => karr_tail
+    (karr_reduce previous a (karr_head row) p row)) rest in
+  karr_exact previous (KRow
+    (karr_cross a (karr_nth offset (kcoeff target))
+      (kcoeff target) (kcoeff (karr_zero_prefix offset p)))
+    (a * kright target -
+      karr_nth offset (kcoeff target) *
+        kright (karr_zero_prefix offset p))%Z
+    (karr_cross a (karr_nth offset (kcoeff target))
+      (kweight target) (kweight (karr_zero_prefix offset p)))
+    (a * kscale target -
+      karr_nth offset (kcoeff target) *
+        kscale (karr_zero_prefix offset p))%Z) = true /\
+  karr_minor_law a (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth offset columns 0%nat]) columns
+    (combine remaining
+      (map (fun row => karr_row_entries (karr_zero_prefix (S offset) row)) rest') ++
+      [(target_origin, karr_row_entries target')]).
+Proof.
+  intros cols offset previous pivot_rows pivot_columns columns pivot_origin
+    p remaining rest target_origin target Hremaining Hp_coeff Hp_width Hrest
+    Htarget_coeff Htarget_width Hprevious Hp Hlaw a target' rest'.
+  assert (Hfull_coeff : length (kcoeff (karr_zero_prefix offset p)) =
+    offset + S cols) by (rewrite karr_zero_prefix_width, Hp_coeff; lia).
+  assert (Hindex : offset < length (kcoeff (karr_zero_prefix offset p))) by lia.
+  assert (Htarget_weight : length (kweight target) =
+    length (kweight (karr_zero_prefix offset p))).
+  { apply karr_weight_width_of_entries; lia. }
+  assert (Hrest_pairs : Forall (fun pair =>
+      length (kcoeff (snd pair)) =
+        length (kcoeff (karr_zero_prefix offset p)) /\
+      length (kweight (snd pair)) =
+        length (kweight (karr_zero_prefix offset p)) /\
+      length (karr_row_entries (snd pair)) = length columns)
+      (combine remaining (map (karr_zero_prefix offset) rest))).
+  { clear -Hrest Hp_coeff Hp_width Hremaining.
+    revert remaining Hremaining.
+    induction Hrest as [|row rest [Hrow_coeff Hrow_width] Hrest IH];
+      intros [|origin remaining] Hremaining;
+      cbn [length map combine] in Hremaining; try discriminate;
+      [constructor|].
+    constructor.
+    - cbn [snd]. split.
+      + rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff. reflexivity.
+      + split.
+        * apply karr_weight_width_of_entries.
+          -- rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff.
+             reflexivity.
+          -- lia.
+        * exact Hrow_width.
+    - apply IH. lia. }
+  assert (Hlaw_pack : karr_minor_law previous pivot_rows pivot_columns
+    columns ((pivot_origin, karr_row_entries (karr_zero_prefix offset p)) ::
+      map (fun pair => (fst pair, karr_row_entries (snd pair)))
+        (combine remaining (map (karr_zero_prefix offset) rest)) ++
+      [(target_origin, karr_row_entries target)])).
+  { rewrite karr_combine_map, map_map. exact Hlaw. }
+  destruct (karr_minor_law_pivot_target previous pivot_rows pivot_columns
+    columns offset pivot_origin (karr_zero_prefix offset p)
+    (combine remaining (map (karr_zero_prefix offset) rest))
+    target_origin target Hlaw_pack Hprevious Hindex
+    ltac:(rewrite karr_zero_prefix_nth; exact Hp) Hp_width Hrest_pairs
+    ltac:(lia) Htarget_weight Htarget_width) as [Hexact Hnext].
+  rewrite karr_zero_prefix_nth in Hexact, Hnext.
+  split; [exact Hexact|].
+  unfold a, target', rest'.
+  set (h := fun row : karr_row => karr_row_entries
+    (karr_reduce previous (karr_head p)
+      (karr_nth offset (kcoeff row)) (karr_zero_prefix offset p) row)).
+  change (karr_minor_law (karr_head p) (pivot_rows ++ [pivot_origin])
+    (pivot_columns ++ [nth offset columns 0%nat]) columns
+    (map (fun pair => (fst pair, h (snd pair)))
+      (combine remaining (map (karr_zero_prefix offset) rest)) ++
+      [(target_origin, h target)])) in Hnext.
+  rewrite karr_combine_map in Hnext.
+  rewrite map_map in Hnext.
+  assert (Hrows : map (fun row => karr_row_entries
+      (karr_reduce previous (karr_head p)
+        (karr_nth offset (kcoeff (karr_zero_prefix offset row)))
+        (karr_zero_prefix offset p) (karr_zero_prefix offset row))) rest =
+    map (fun row => karr_row_entries (karr_zero_prefix (S offset)
+      (karr_tail (karr_reduce previous (karr_head p) (karr_head row) p row))))
+      rest).
+  { apply map_ext_in. intros row Hin.
+    pose proof (proj1 (Forall_forall _ _) Hrest row Hin) as [Hcoeff _].
+    rewrite karr_zero_prefix_nth.
+    rewrite karr_zero_prefix_pivot_tail.
+    - reflexivity.
+    - lia.
+    - intro Hempty. rewrite Hempty in Hcoeff. cbn [length] in Hcoeff. lia.
+    - exact Hp. }
+  unfold h in Hnext.
+  rewrite Hrows in Hnext. rewrite map_map. exact Hnext.
+Qed.
+
 (** A selected concrete pivot preserves all-order minors on its reduced tails. *)
 Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
     pivot_columns head columns labels rows pivot rest,
