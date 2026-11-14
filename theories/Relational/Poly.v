@@ -11892,6 +11892,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Module RangeCert := LinCertT RangeKey.
   Module RangeLinearize := PolyClockLinearize RangeKey L N.
   Module RangeCore := PolyClockCore RangeKey L N RangeLinearize RangeCert.
+  Module RangeAssignCore := PolyAssignBranch RangeKey L N RangeLinearize RangeCert.
   Module AssignCore := PolyAssignBranchExtended X L N F C.
 
   Definition poly_range_input (P : list (lcons X.t)) (f : lin X.t) :=
@@ -14143,6 +14144,31 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       RangeCore.poly_normal_row_factor * N.of_nat (length (coef f) + 2) *
         N.of_nat (X.bits x + 2 * F.form_bits f + 3))%N in Hnormal.
     exact Hnormal.
+  Qed.
+
+  (** The complete initialization adds one prepared row and pads the source vectors. *)
+  Lemma T_poly_assign_full_initial : forall x f P,
+    (T_poly_initial tmp_encode T_tmp_encode
+      ((assignment_row x f, false) ::
+        map (fun r => (rename_row (rename_old x) r, false)) P) <=
+      T_poly_normal_row tmp_encode T_tmp_encode (assignment_row x f) +
+      T_poly_initial tmp_encode T_tmp_encode
+        (map (fun r => (rename_row (rename_old x) r, false)) P) +
+      12 * N.of_nat (length P + 1))%N.
+  Proof.
+    intros x f P.
+    pose proof (RangeAssignCore.T_poly_assign_initial_cons
+      (assignment_row x f) false
+      (map (fun r => (rename_row (rename_old x) r, false)) P)) as Hinitial.
+    rewrite length_map in Hinitial.
+    change (T_poly_initial tmp_encode T_tmp_encode
+      ((assignment_row x f, false) ::
+        map (fun r => (rename_row (rename_old x) r, false)) P) <=
+      T_poly_normal_row tmp_encode T_tmp_encode (assignment_row x f) +
+      T_poly_initial tmp_encode T_tmp_encode
+        (map (fun r => (rename_row (rename_old x) r, false)) P) +
+      12 * N.of_nat (length P + 1))%N in Hinitial.
+    exact Hinitial.
   Qed.
 
   Lemma poly_assign_row_envelope_mono : forall r dim dim' mlen keys keys' bits bits',
