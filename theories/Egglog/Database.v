@@ -12438,6 +12438,15 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       [exact (Hbounded code f k id Hentry i Hin) | exact Hids].
   Qed.
 
+  Lemma database_history_key_ids_bounded_advance : forall db,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (advance db).
+  Proof.
+    intros db Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db);
+      [reflexivity | reflexivity | exact Hbounded].
+  Qed.
+
   Lemma database_history_connected_transport : forall db db' a b,
     row_links (db_row_store db') = row_links (db_row_store db) ->
     database_history_connected db a b ->
@@ -12697,6 +12706,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply database_history_key_shape_ids_mono;
       try exact Hstore; try exact Hshape; try reflexivity.
     rewrite allocate_next_ids. lia.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_allocate_next : forall db,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (allocate_id (N.succ_pos (ids db)) db).
+  Proof.
+    intros db Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db).
+    - reflexivity.
+    - rewrite allocate_next_ids. lia.
+    - exact Hbounded.
   Qed.
 
   Lemma database_row_weight_conserved_ids_mono : forall db db',
@@ -13300,6 +13320,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hvalid.
   Qed.
 
+  Lemma database_history_key_ids_bounded_slots_update : forall db add f cells,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (slots_update add f cells db).
+  Proof.
+    intros db add f cells Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db).
+    - now rewrite slots_update_row_store.
+    - rewrite slots_update_ids. reflexivity.
+    - exact Hbounded.
+  Qed.
+
   Lemma database_row_weight_conserved_slots_update : forall db add f cells,
     database_row_weight_conserved db ->
     database_row_weight_conserved (slots_update add f cells db).
@@ -13345,6 +13376,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply database_history_codes_valid_transport with (db := db).
     - now rewrite row_write_row_store.
     - exact Hvalid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_row_write : forall db f k o,
+    database_history_key_ids_bounded db ->
+    database_history_key_ids_bounded (row_write f k o db).
+  Proof.
+    intros db f k o Hbounded.
+    eapply database_history_key_ids_bounded_transport with (db := db).
+    - now rewrite row_write_row_store.
+    - rewrite row_write_ids. reflexivity.
+    - exact Hbounded.
   Qed.
 
   Lemma database_row_weight_conserved_row_write : forall db f k o,
@@ -13394,6 +13436,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     eapply database_history_codes_valid_transport with (db := identified);
       [reflexivity |].
     subst identified. apply database_history_codes_valid_ensure. exact Hvalid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_register : forall db f k o,
+    database_history_key_ids_bounded db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_history_key_ids_bounded (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hbounded Hinput.
+    unfold register_row_uses.
+    set (identified := ensure_row_identity f k db).
+    eapply database_history_key_ids_bounded_transport with (db := identified).
+    - reflexivity.
+    - reflexivity.
+    - subst identified. apply database_history_key_ids_bounded_ensure;
+        assumption.
   Qed.
 
   Lemma database_row_weight_conserved_register : forall db f k o,
@@ -13452,6 +13509,24 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       apply database_history_codes_valid_register;
       apply database_history_codes_valid_row_write;
       repeat apply database_history_codes_valid_slots_update; exact Hvalid.
+  Qed.
+
+  Lemma database_history_key_ids_bounded_row_replace : forall db f k previous o,
+    database_history_key_ids_bounded db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_history_key_ids_bounded (row_replace f k previous o db).
+  Proof.
+    intros db f k [before |] o Hbounded Hinput; unfold row_replace;
+      apply database_history_key_ids_bounded_register.
+    - apply database_history_key_ids_bounded_row_write.
+      repeat apply database_history_key_ids_bounded_slots_update.
+      exact Hbounded.
+    - intros i Hin. unfold allocated. rewrite row_write_ids, !slots_update_ids.
+      exact (Hinput i Hin).
+    - apply database_history_key_ids_bounded_row_write.
+      apply database_history_key_ids_bounded_slots_update. exact Hbounded.
+    - intros i Hin. unfold allocated. rewrite row_write_ids, slots_update_ids.
+      exact (Hinput i Hin).
   Qed.
 
   Lemma database_row_weight_conserved_row_replace : forall db f k previous o,
