@@ -11857,6 +11857,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + now rewrite Hstore.
   Qed.
 
+  Lemma row_replace_old_locate : forall db f k previous o g args key r,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) = Some (key, r) ->
+    db_locate g args (row_replace f k previous o db) = db_locate g args db.
+  Proof.
+    intros db f k [before |] o g args key r Hstore Hget; unfold row_replace.
+    - set (prepared := row_write f k o
+        (slots_update true f (k ++ option_list o)
+          (slots_update false f (k ++ option_list before) db))).
+      assert (Hstore' : database_row_store_ok prepared).
+      { subst prepared. apply row_write_row_store_ok.
+        apply slots_update_row_store_ok, slots_update_row_store_ok. exact Hstore. }
+      assert (Hsame : db_row_store prepared = db_row_store db).
+      { subst prepared. now rewrite row_write_row_store, !slots_update_row_store. }
+      assert (Hids : ids prepared = ids db).
+      { subst prepared. now rewrite row_write_ids, !slots_update_ids. }
+      rewrite register_row_uses_locate.
+      rewrite (ensure_row_identity_old_locate prepared f k g args key r Hstore')
+        by (rewrite Hsame; exact Hget).
+      apply db_locate_same_store_ids; assumption.
+    - set (prepared := row_write f k o (slots_update true f (k ++ option_list o) db)).
+      assert (Hstore' : database_row_store_ok prepared).
+      { subst prepared. apply row_write_row_store_ok, slots_update_row_store_ok.
+        exact Hstore. }
+      assert (Hsame : db_row_store prepared = db_row_store db).
+      { subst prepared. now rewrite row_write_row_store, slots_update_row_store. }
+      assert (Hids : ids prepared = ids db).
+      { subst prepared. now rewrite row_write_ids, slots_update_ids. }
+      rewrite register_row_uses_locate.
+      rewrite (ensure_row_identity_old_locate prepared f k g args key r Hstore')
+        by (rewrite Hsame; exact Hget).
+      apply db_locate_same_store_ids; assumption.
+  Qed.
+
   Lemma database_row_store_ok_row_replace : forall db f k previous o,
     database_row_store_ok db ->
     database_row_store_ok (row_replace f k previous o db).
