@@ -20722,6 +20722,47 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact (inv_on_owned db work Hinv).
   Qed.
 
+  (** Rewriting a current row retains the historical occurrence inventory. *)
+  Lemma repair_current_uses_store : forall db f k,
+    row_uses (db_row_store (repair_current f k db)) =
+      row_uses (db_row_store db).
+  Proof.
+    intros db f k. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output)); reflexivity.
+  Qed.
+
+  (** Linking historical row identities leaves their occurrence inventory untouched. *)
+  Lemma move_row_identity_uses_store : forall db f old current,
+    row_uses (db_row_store (move_row_identity f old current db)) =
+      row_uses (db_row_store db).
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |];
+      [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store db))) as [[current_key current_id] |];
+      reflexivity.
+  Qed.
+
+  (** A full repair leaves all registered occurrences available to later pops. *)
+  Lemma db_repair_entry_uses_store : forall db f k,
+    row_uses (db_row_store (db_repair_entry f k db)) = row_uses (db_row_store db).
+  Proof.
+    intros db f k. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| reflexivity].
+    destruct (row_get f current db) as [output |]; [| reflexivity].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [reflexivity |].
+    rewrite move_row_identity_uses_store, repair_current_uses_store.
+    reflexivity.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
