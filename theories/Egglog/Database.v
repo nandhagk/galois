@@ -3009,6 +3009,22 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     (forall r p, PTrieCode.get r (row_links store) = Some p ->
       (r < row_fresh store)%positive /\ (p < row_fresh store)%positive).
 
+  Definition database_row_store_depth_ok (db : t) : Prop :=
+    forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      exists d, d <= length k * (N.to_nat (N.log2 (ids db)) + 1) /\
+        (let parent current :=
+          match PTrieCode.get current (row_links (db_row_store db)) with
+          | Some p => p | None => current end in
+         parent (Nat.iter d parent r) = Nat.iter d parent r) /\
+        db_locate f k db =
+          PTrieCode.get
+            (Nat.iter d (fun current =>
+              match PTrieCode.get current (row_links (db_row_store db)) with
+              | Some p => p | None => current end) r)
+            (row_keys (db_row_store db)).
+
   (** A historical key made of current representatives resolves to that key. *)
   Definition database_history_alignment (db : t) : Prop :=
     forall f k key r,
@@ -3261,6 +3277,13 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hstore. unfold database_row_store_ok in Hstore.
     destruct Hstore as (_ & _ & _ & _ & _ & Hdepth & _).
     exact Hdepth.
+  Qed.
+
+  Lemma database_row_store_depth_of_store : forall db,
+    database_row_store_ok db -> database_row_store_depth_ok db.
+  Proof.
+    intros db Hstore.
+    exact (database_row_store_depth db Hstore).
   Qed.
 
   Lemma database_row_store_size : forall db,
@@ -11947,7 +11970,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma database_history_connected_canonical : forall db f k key id root,
-    database_row_store_ok db ->
+    database_row_store_depth_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
       Some (key, id) ->
     (match PTrieCode.get root (row_links (db_row_store db)) with
@@ -11956,8 +11979,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
       (db_row_store db) = root.
   Proof.
-    intros db f k key id root Hstore Hentry Hfixed Hconnected.
-    destruct (database_row_store_depth db Hstore f k key id Hentry)
+    intros db f k key id root Hdepth Hentry Hfixed Hconnected.
+    destruct (Hdepth f k key id Hentry)
       as [d [Hbound [Hroot_fixed _]]].
     assert (Hreaches : database_row_reaches db id root).
     { apply (proj2 (database_history_connected_reaches db id root root
@@ -11971,7 +11994,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma database_history_component_shape : forall db f k key id g args other s,
-    database_row_store_ok db -> database_history_root_owner db ->
+    database_row_store_depth_ok db -> database_history_root_owner db ->
     database_history_key_shape db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
       Some (key, id) ->
@@ -11982,7 +12005,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (db_row_store db)) ->
     f = g /\ row_key_shape k = row_key_shape args.
   Proof.
-    intros db f k key id g args other s Hstore Howner Hshape Hfirst Hsecond
+    intros db f k key id g args other s Hdepth Howner Hshape Hfirst Hsecond
       Hconnected.
     set (root := row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
       (db_row_store db)).
@@ -11990,7 +12013,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (match PTrieCode.get root (row_links (db_row_store db)) with
        | Some parent => parent | None => root end) = root).
     { subst root.
-      destruct (database_row_store_depth db Hstore f k key id Hfirst)
+      destruct (Hdepth f k key id Hfirst)
         as [d [Hbound [Hfixed _]]].
       rewrite (row_root_after_fixed _ d id (db_row_store db)
         Hbound Hfixed). exact Hfixed. }
@@ -12006,7 +12029,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma database_history_codes_cardinality : forall db f k key id codes,
-    database_row_store_ok db -> database_history_root_owner db ->
+    database_row_store_depth_ok db -> database_history_root_owner db ->
     database_history_key_shape db -> database_history_codes_valid db ->
     database_history_key_ids_bounded db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
@@ -12019,7 +12042,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           (db_row_store db))) codes ->
     length codes <= (S (N.to_nat (ids db))) ^ length k.
   Proof.
-    intros db f k key id codes Hstore Howner Hshape Hvalid Hbounded Hanchor
+    intros db f k key id codes Hdepth Howner Hshape Hvalid Hbounded Hanchor
       Hdistinct Hmembers.
     set (label_of := fun code =>
       option_map fst (PTrieCode.get code (row_history (db_row_store db)))).
@@ -12050,7 +12073,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         by (eapply Hvalid; exact Hentry).
       rewrite Hcode_eq in Hentry.
       destruct (database_history_component_shape db f k key id g args
-        (g, args) r Hstore Howner Hshape Hanchor Hentry Hconnected)
+        (g, args) r Hdepth Howner Hshape Hanchor Hentry Hconnected)
         as [Hfunction Hkey_shape].
       apply in_map_iff. exists args. split.
       - subst g. unfold label_of in Hlabel.
@@ -12070,7 +12093,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
   Qed.
 
   Lemma database_history_weight_cardinality : forall db f k key id,
-    database_row_store_ok db -> database_history_root_owner db ->
+    database_row_store_depth_ok db -> database_history_root_owner db ->
     database_history_key_shape db -> database_history_codes_valid db ->
     database_history_key_ids_bounded db ->
     database_row_weight_conserved db ->
@@ -12081,12 +12104,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         (db_row_store db)) (row_weights (db_row_store db)) with
      | Some n => n | None => 1%N end <= (ids db + 1) ^ N.of_nat (length k))%N.
   Proof.
-    intros db f k key id Hstore Howner Hshape Hvalid Hbounded Hconserved
+    intros db f k key id Hdepth Howner Hshape Hvalid Hbounded Hconserved
       Hentry.
     destruct (Hconserved f k key id Hentry) as
       [codes [Hdistinct [Hweight Hmembers]]].
     pose proof (database_history_codes_cardinality db f k key id codes
-      Hstore Howner Hshape Hvalid Hbounded Hentry Hdistinct Hmembers)
+      Hdepth Howner Hshape Hvalid Hbounded Hentry Hdistinct Hmembers)
       as Hcodes.
     replace ((ids db + 1) ^ N.of_nat (length k))%N with
       (N.of_nat ((S (N.to_nat (ids db))) ^ length k)).
