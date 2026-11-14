@@ -15030,6 +15030,38 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply in_flat_map. exists source. split; assumption.
   Qed.
 
+  (** Final lifted rows keep the exact coefficient and multiplier widths. *)
+  Lemma karr_hull_basis_envelope : forall a b xs,
+    let total := length a + length b in
+    let width := 2 * length xs + total + 4 in
+    let rows := hull_left xs total 0 (map normalize_row a) ++
+      hull_right xs total (length a) (map normalize_row b) in
+    Forall (karr_row_envelope (2 * length xs + 2) total
+      (ellB width (nell (Reached a) + nell (Reached b))))
+      (karr_bareiss (2 * length xs + 2) 1 rows).
+  Proof.
+    intros a b xs total width rows.
+    pose proof (karr_bareiss_record_width (2 * length xs + 2) 1 rows
+      (hull_seed_width xs total 0 (length a)
+        (map normalize_row a) (map normalize_row b))) as Hcoeff.
+    rewrite karr_bareiss_record_value in Hcoeff.
+    assert (Hseed_weight : Forall (fun r => length (kweight r) = total) rows).
+    { subst rows. apply Forall_app. split.
+      - apply hull_left_weight_length.
+      - apply hull_right_weight_length. }
+    pose proof (karr_bareiss_weight_width (2 * length xs + 2) 1 rows total
+      (hull_seed_width xs total 0 (length a)
+        (map normalize_row a) (map normalize_row b)) Hseed_weight) as Hweight.
+    pose proof (karr_hull_basis_bits a b xs) as Hbits.
+    apply Forall_forall. intros row Hr.
+    pose proof (proj1 (Forall_forall _ _) Hcoeff row Hr) as Hrcoeff.
+    pose proof (proj1 (Forall_forall _ _) Hweight row Hr) as Hrweight.
+    pose proof (proj1 (Forall_forall _ _) Hbits (karr_row_entries row)
+      (in_map karr_row_entries _ _ Hr)) as Hrentries.
+    cbn beta in Hrcoeff, Hrweight, Hrentries.
+    apply karr_row_envelope_entries; [lia|lia|exact Hrentries].
+  Qed.
+
   (** A generic initialized basis clock follows from the all-order minor law. *)
   Lemma T_karr_bareiss_seed_bounded : forall xs P,
     (T_karr_bareiss (length xs) 1
