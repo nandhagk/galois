@@ -13488,6 +13488,31 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now rewrite row_root_parent_iter.
   Qed.
 
+  Lemma database_row_store_depth_same_links : forall db db',
+    database_row_store_ok db -> ids db' = ids db ->
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    database_row_store_depth_ok db'.
+  Proof.
+    intros db db' Hstore Hids Hhistory Hlinks f k key r Hentry.
+    rewrite Hhistory in Hentry.
+    set (fuel := length k * (N.to_nat (N.log2 (ids db)) + 1)).
+    assert (Hfixed :
+      (let parent current :=
+        match PTrieCode.get current (row_links (db_row_store db')) with
+        | Some p => p | None => current end in
+       parent (row_root fuel r (db_row_store db')) =
+         row_root fuel r (db_row_store db'))).
+    { rewrite (row_root_same_links fuel r (db_row_store db')
+        (db_row_store db) Hlinks), Hlinks.
+      exact (database_history_root_fixed db f k key r Hstore Hentry). }
+    exists fuel. split; [rewrite Hids; lia |]. split.
+    - cbv zeta. rewrite <- row_root_parent_iter. exact Hfixed.
+    - unfold ids in Hids. unfold db_locate.
+      rewrite Hhistory, Hentry, Hids.
+      now rewrite row_root_parent_iter.
+  Qed.
+
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
     (before <= after)%N ->
     length k * (N.to_nat (N.log2 before) + 1) <=
