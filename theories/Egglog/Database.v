@@ -22165,6 +22165,49 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - exact Hlog.
   Qed.
 
+  Lemma put_log_allocated_active : forall db f k o,
+    Forall (fun edge => allocated db (fst edge) /\ allocated db (snd edge))
+      (runtime_equalities (db_runtime db)) ->
+    (forall a, row_get f (normal_key db k) db = Some (Some (Id a)) ->
+      allocated db a) ->
+    (forall b, option_map (normal_cell db) o = Some (Id b) ->
+      allocated db b) ->
+    Forall (fun edge => allocated (put f k o db) (fst edge) /\
+      allocated (put f k o db) (snd edge))
+      (runtime_equalities (db_runtime (put f k o db))).
+  Proof.
+    intros db f k o Hlog Hprevious Hnormal. unfold put.
+    remember (row_get f (normal_key db k) db) as previous eqn:Hrow.
+    remember (option_map (normal_cell db) o) as co eqn:Hco.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : Forall
+      (fun edge => allocated next (fst edge) /\ allocated next (snd edge))
+      (runtime_equalities (db_runtime next))).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try exact Hlog.
+      apply union_log_allocated_active; [exact Hlog | |].
+      - apply Hprevious. reflexivity.
+      - apply Hnormal. reflexivity. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      rewrite (row_replace_preserves _ (@runtime_equalities (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f (normal_key db k) (Some before)
+        updated next).
+      eapply Forall_impl; [| exact Hnext].
+      intros edge [Hi Hj]. unfold allocated in *.
+      now rewrite row_replace_ids.
+    - rewrite (row_replace_preserves _ (@runtime_equalities (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f (normal_key db k) None
+        updated next).
+      eapply Forall_impl; [| exact Hnext].
+      intros edge [Hi Hj]. unfold allocated in *.
+      now rewrite row_replace_ids.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
