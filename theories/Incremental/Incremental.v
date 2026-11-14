@@ -10525,6 +10525,27 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     eapply N.le_trans; [exact Hfold|apply Hsum].
   Qed.
 
+  Lemma T_record_row_components_le : forall p r st,
+    let owner := S.target p r in
+    let id := S.key_code owner in
+    let writes := row_writes p r in
+    let next := snapshot_record owner writes st in
+    (T_record_row p r st <=
+      16 + S.T_target p r + S.T_key_code owner + T_row_writes p r +
+      T_snapshot_record owner writes st + S.T_deps p r +
+      List.T_fold_left (fun acc x => push_entry x id acc)
+        (fun acc x => (1 + T_push_entry x id acc)%N)
+        (S.deps p r) (inc_influence next) +
+      List.T_fold_left (fun acc x => push_entry x id acc)
+        (fun acc x => (1 + T_push_entry x id acc)%N)
+        writes (inc_cowrites next))%N.
+  Proof.
+    intros p r st; cbn beta zeta.
+    unfold T_record_row, T_inc_values, T_inc_influence,
+      T_inc_cowrites, T_inc_snapshots.
+    time_simpl; time_cbn; lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
