@@ -3083,6 +3083,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact Hdepth.
   Qed.
 
+  Lemma database_row_store_size : forall db,
+    database_row_store_ok db ->
+    forall f k key r d,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
+      (let parent current :=
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end in
+       parent (Nat.iter d parent r) = Nat.iter d parent r) ->
+      (match PTrieCode.get
+        (Nat.iter d (fun current =>
+          match PTrieCode.get current (row_links (db_row_store db)) with
+          | Some p => p | None => current end) r)
+        (row_weights (db_row_store db)) with
+       | Some n => n | None => 1%N end <=
+       (ids db + 1) ^ N.of_nat (length k))%N.
+  Proof.
+    intros db Hstore. unfold database_row_store_ok in Hstore.
+    destruct Hstore as (_ & _ & _ & _ & _ & _ & Hgroup & _).
+    exact Hgroup.
+  Qed.
+
   Lemma database_row_store_uses_history : forall db,
     database_row_store_ok db ->
     forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
@@ -11199,6 +11220,22 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + apply IH; [exact Hstore |].
         exact (proj2 (database_row_store_link_range db Hstore r parent Hlink)).
       + apply IH; assumption.
+  Qed.
+
+  Lemma row_parent_iter_fixed : forall d (parent : positive -> positive) r,
+    parent r = r -> Nat.iter d parent r = r.
+  Proof.
+    intros d parent r Hfixed. induction d as [|remaining IH].
+    - reflexivity.
+    - rewrite Nat.iter_succ, IH, Hfixed. reflexivity.
+  Qed.
+
+  Lemma database_one_le_pow : forall base d,
+    (1 <= base)%N -> (1 <= base ^ N.of_nat d)%N.
+  Proof.
+    intros base d Hbase. induction d as [|remaining IH].
+    - cbn. lia.
+    - rewrite Nat2N.inj_succ, N.pow_succ_r by lia. nia.
   Qed.
 
   Lemma ensure_row_identity_ids : forall db f k,
