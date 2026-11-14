@@ -6919,6 +6919,255 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         index canonical slots_fit projection_counts_ok stored_projection_count] in *; tauto.
   Qed.
 
+  Definition row_store_ok (db : t) : Prop := database_row_store_ok db.
+  Lemma database_idle_row_store : forall db, database_idle_ok db -> row_store_ok db.
+  Proof.
+    intros db Hidle. unfold database_idle_ok, row_store_ok in *. tauto.
+  Qed.
+
+  Lemma database_idle_coverage : forall db, database_idle_ok db ->
+    forall f k o i, row (view db) f k o -> row_ids k o i ->
+      exists x k0, repr db x = repr db i /\ uses db x (f, k0) /\
+        located db f k0 = Some k /\ (x = repr db i \/ In x (queue db)).
+  Proof.
+    intros db Hidle f k o i Hrow Hid.
+    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & Hcover & _).
+    unfold row_ids in Hid. destruct (Hcover f k o i Hrow Hid)
+      as [x [k0 [Hrepr [Huse [Hlocated Hactive]]]]].
+    exists x, k0. repeat split; try assumption.
+  Qed.
+
+  Lemma database_idle_scheduled : forall db, database_idle_ok db ->
+    forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
+      exists k0, scheduled db [] (f, k0) /\ located db f k0 = Some k.
+  Proof.
+    intros db Hidle f k o i Hrow Hid Hnonroot.
+    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & Hcover & _).
+    unfold row_ids in Hid. destruct (Hcover f k o i Hrow Hid Hnonroot)
+      as [k0 [[x [Hqueue Huse]] Hlocated]].
+    exists k0. split; [right; exists x; split; assumption | exact Hlocated].
+  Qed.
+  Lemma database_idle_located : forall db, database_idle_ok db ->
+    forall f k0 k, located db f k0 = Some k ->
+      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
+  Proof.
+    intros db Hidle f k0 k Hlocated.
+    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & _ & Hcover & _).
+    exact (Hcover f k0 k Hlocated).
+  Qed.
+
+  (** Stored slot positions retain the rank computed from the current slot layout. *)
+  Definition slot_rank_ok (db : t) : Prop :=
+    slot_positions _ (db_slot_store db) =
+      database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
+        PTrieCode.empty (slots db).
+  Lemma database_public_rank : forall db,
+    database_public_ok db -> slot_rank_ok db.
+  Proof.
+    intros db Hpublic. unfold database_public_ok, slot_rank_ok in *. tauto.
+  Qed.
+  Lemma slot_rank_ok_frame : forall db db',
+    slot_positions _ (db_slot_store db') = slot_positions _ (db_slot_store db) ->
+    runtime_kinds (db_runtime db') = runtime_kinds (db_runtime db) ->
+    slots db' = slots db -> slot_rank_ok db -> slot_rank_ok db'.
+  Proof.
+    intros db db' Hpositions Hkinds Hslots Hrank.
+    unfold slot_rank_ok in *. now rewrite Hpositions, Hkinds, Hslots.
+  Qed.
+  Lemma slot_rank_ok_union : forall db i j,
+    slot_rank_ok db -> slot_rank_ok (union i j db).
+  Proof.
+    intros db i j Hrank. unfold slot_rank_ok, union in *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; exact Hrank.
+  Qed.
+  Lemma union_uses_raw : forall db i j x e,
+    uses (union i j db) x e <-> uses db x e.
+  Proof.
+    intros db i j x e. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  Lemma union_rows_list_raw : forall db i j,
+    rows (union i j db) = rows db.
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  Lemma union_kind_raw : forall db i j,
+    kind (view (union i j db)) = kind (view db).
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
+    destruct roots as [[winner loser] |]; reflexivity.
+  Qed.
+
+  Lemma public_union_idle_none : forall db i j forest, database_public_ok db ->
+    UnionFindCode.union i j (db_forest db) = (None, forest) ->
+    database_idle_ok (union i j db).
+  Proof.
+    intros db i j forest Hpublic Hunion.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    destruct (UnionFind.union_none i j (db_forest db) forest
+      (wf_forest db Hbase) Hunion) as [_ Hrepr].
+    pose proof (database_row_store_ok_union i j db (proj1 Hidle)) as Hstore.
+    pose proof (public_union_queue_distinct db i j Hpublic) as Hdistinct.
+    pose proof (public_union_queue_nonroot db i j Hpublic) as Hnonroot.
+    unfold database_idle_ok in Hidle |- *.
+    destruct Hidle as [_ [_ [Hprimary [Hsecondary [Hlocated _]]]]].
+    unfold union in *. rewrite Hunion in *.
+    cbn [fst snd database_set_forest db_forest db_row_store db_nuses db_runtime
+      runtime_queue runtime_rows runtime_kinds] in *.
+    split; [exact Hstore |]. split; [exact Hdistinct |].
+    split.
+    { intros f k o x Hrow Hid.
+      destruct (Hprimary f k o x Hrow Hid) as [y [k0 [Hsame [Huse [Hloc Hqueued]]]]].
+      exists y, k0. split.
+      { change (UnionFind.repr forest y = UnionFind.repr forest x).
+        now rewrite !Hrepr. }
+      split; [exact Huse |]. split; [exact Hloc |].
+      destruct Hqueued as [Hroot | Hqueued]; [left | right].
+      - change (y = UnionFind.repr forest x). rewrite Hrepr. exact Hroot.
+      - exact Hqueued. }
+    split.
+    { intros f k o x Hrow Hid Hnonroot_new.
+      assert (Hnonroot_old : repr db x <> x).
+      { change (UnionFind.repr forest x <> x) in Hnonroot_new.
+        intro Heq. apply Hnonroot_new. rewrite Hrepr. exact Heq. }
+      exact (Hsecondary f k o x Hrow Hid Hnonroot_old). }
+    split; [exact Hlocated | exact Hnonroot].
+  Qed.
+
+  Lemma public_union_primary_some : forall db i j winner loser forest,
+    database_public_ok db ->
+    UnionFindCode.union i j (db_forest db) = (Some (winner, loser), forest) ->
+    forall f k o x, row (view (union i j db)) f k o -> row_ids k o x ->
+      exists y k0, repr (union i j db) y = repr (union i j db) x /\
+        uses (union i j db) y (f, k0) /\ located (union i j db) f k0 = Some k /\
+        (y = repr (union i j db) x \/ In y (queue (union i j db))).
+  Proof.
+    intros db i j winner loser forest Hpublic Hunion f k o x Hrow Hid.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+      (wf_forest db Hbase) Hunion) as [_ [_ Hrepr]].
+    rewrite (union_rows_raw i j db) in Hrow.
+    destruct (database_idle_coverage db Hidle f k o x Hrow Hid)
+      as [y [k0 [Hsame [Huse [Hlocated Hactive]]]]].
+    exists y, k0. unfold union. rewrite Hunion.
+    cbn [fst snd database_set_pending database_set_runtime runtime_set_union
+      db_runtime runtime_queue db_forest db_row_store] in *.
+    split.
+    { change (UnionFind.repr forest y = UnionFind.repr forest x).
+      unfold repr in Hsame.
+      now rewrite !Hrepr, Hsame. }
+    split; [exact Huse |]. split; [exact Hlocated |].
+    destruct Hactive as [Hroot | Hqueued].
+    - destruct (Pos.eqb (repr db x) loser) eqn:Hloser.
+      + right. left. apply Pos.eqb_eq in Hloser. congruence.
+      + left. change (y = UnionFind.repr forest x).
+        rewrite Hrepr. unfold repr in Hloser. now rewrite Hloser.
+    - right. now right.
+  Qed.
+
+  Lemma public_union_secondary_some : forall db i j winner loser forest,
+    database_public_ok db ->
+    UnionFindCode.union i j (db_forest db) = (Some (winner, loser), forest) ->
+    forall f k o x, row (view (union i j db)) f k o -> row_ids k o x ->
+      repr (union i j db) x <> x ->
+      exists k0, scheduled (union i j db) [] (f, k0) /\
+        located (union i j db) f k0 = Some k.
+  Proof.
+    intros db i j winner loser forest Hpublic Hunion f k o x Hrow Hid Hnewnonroot.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+      (wf_forest db Hbase) Hunion) as [_ [_ Hrepr]].
+    rewrite (union_rows_raw i j db) in Hrow.
+    unfold union in Hnewnonroot. rewrite Hunion in Hnewnonroot.
+    change (UnionFind.repr forest x <> x) in Hnewnonroot.
+    destruct (Pos.eq_dec (repr db x) x) as [Hroot | Holdnonroot].
+    - destruct (database_idle_coverage db Hidle f k o x Hrow Hid)
+        as [y [k0 [_ [Huse [Hlocated Hactive]]]]].
+      destruct Hactive as [Hroot_use | Hqueued].
+      + assert (Hloser : Pos.eqb (repr db x) loser = true).
+        { destruct (Pos.eqb (repr db x) loser) eqn:Htest; [reflexivity |].
+          exfalso. apply Hnewnonroot. rewrite Hrepr.
+          unfold repr in Htest. rewrite Htest. exact Hroot. }
+        apply Pos.eqb_eq in Hloser.
+        exists k0. split; [| rewrite union_located_raw; exact Hlocated].
+        right. exists y. split.
+        * unfold queue, union. rewrite Hunion.
+          cbn [database_set_pending database_set_runtime runtime_set_union
+            db_runtime runtime_queue]. left. congruence.
+        * apply (proj2 (union_uses_raw db i j y (f, k0))). exact Huse.
+      + exists k0. split; [| rewrite union_located_raw; exact Hlocated].
+        right. exists y. split.
+        * unfold queue, union. rewrite Hunion.
+          cbn [database_set_pending database_set_runtime runtime_set_union
+            db_runtime runtime_queue]. now right.
+        * apply (proj2 (union_uses_raw db i j y (f, k0))). exact Huse.
+    - destruct (database_idle_scheduled db Hidle f k o x Hrow Hid Holdnonroot)
+        as [k0 [Hscheduled Hlocated]].
+      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
+      destruct Hscheduled as [Hnone | [y [Hqueued Huse]]]; [contradiction |].
+      exists k0. split; [| rewrite union_located_raw; exact Hlocated].
+      right. exists y. split.
+      + unfold queue, union. rewrite Hunion.
+        cbn [database_set_pending database_set_runtime runtime_set_union
+          db_runtime runtime_queue]. now right.
+      + apply (proj2 (union_uses_raw db i j y (f, k0))). exact Huse.
+  Qed.
+
+  Lemma public_union_idle : forall db i j, database_public_ok db ->
+    database_idle_ok (union i j db).
+  Proof.
+    intros db i j Hpublic.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    2: { eapply public_union_idle_none; eassumption. }
+    unfold database_idle_ok.
+    split; [apply database_row_store_ok_union; exact (database_idle_row_store db Hidle) |].
+    split; [exact (public_union_queue_distinct db i j Hpublic) |].
+    split.
+    { intros f k o x Hrow Hid.
+      destruct (public_union_primary_some db i j winner loser forest Hpublic Hunion
+        f k o x Hrow Hid) as [y [k0 [Hsame [Huse [Hlocated Hactive]]]]].
+      exists y, k0. repeat split; assumption. }
+    split.
+    { intros f k o x Hrow Hid Hnonroot.
+      destruct (public_union_secondary_some db i j winner loser forest Hpublic Hunion
+        f k o x Hrow Hid Hnonroot) as [k0 [Hscheduled Hlocated]].
+      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
+      destruct Hscheduled as [Hnone | [y [Hqueued Huse]]]; [contradiction |].
+      exists k0. split; [exists y; split; assumption | exact Hlocated]. }
+    split.
+    { intros f k0 k Hlocated.
+      change (located (union i j db) f k0 = Some k) in Hlocated.
+      rewrite union_located_raw in Hlocated.
+      destruct (database_idle_located db Hidle f k0 k Hlocated) as [o [Hrow Hkind]].
+      exists o. split.
+      - change (In ((f, k), o) (rows (union i j db))).
+        rewrite union_rows_list_raw. exact Hrow.
+      - rewrite union_kind_raw. exact Hkind. }
+    exact (public_union_queue_nonroot db i j Hpublic).
+  Qed.
+
+  Lemma database_public_ok_union : forall db i j, database_public_ok db ->
+    allocated db i -> allocated db j -> database_public_ok (union i j db).
+  Proof.
+    intros db i j Hpublic Hi Hj. unfold database_public_ok.
+    split.
+    - apply database_wf_union; [exact (database_public_base db Hpublic) | exact Hi | exact Hj].
+    - split; [exact (public_union_idle db i j Hpublic) |].
+      apply slot_rank_ok_union. exact (database_public_rank db Hpublic).
+  Qed.
+
   (** Equality insertion keeps the database well formed. *)
   Lemma wf_union : forall i j db, wf db -> allocated db i -> allocated db j ->
     wf (union i j db).
@@ -10080,7 +10329,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Definition class_size (db : t) (x : positive) : N :=
     N.of_nat (UnionFind.size_of (uf_state db) x).
   (** Parent links and use entries refer to the historical row inventory. *)
-  Definition row_store_ok (db : t) : Prop := database_row_store_ok db.
   (** Initialization has no historical keys, links or registered occurrences. *)
   Lemma row_store_ok_init : forall ds sl, row_store_ok (init ds sl).
   Proof. apply database_row_store_ok_init. Qed.
@@ -10104,31 +10352,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [exact (wf_row_map db Hwf) |].
     split; [exact (wf_kind_bound db Hwf) |].
     exact (wf_max_name_attained db Hwf).
-  Qed.
-  (** Stored slot positions retain the rank computed from the current slot layout. *)
-  Definition slot_rank_ok (db : t) : Prop :=
-    slot_positions _ (db_slot_store db) =
-      database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
-        PTrieCode.empty (slots db).
-  Lemma database_public_rank : forall db,
-    database_public_ok db -> slot_rank_ok db.
-  Proof.
-    intros db Hpublic. unfold database_public_ok, slot_rank_ok in *. tauto.
-  Qed.
-  Lemma slot_rank_ok_frame : forall db db',
-    slot_positions _ (db_slot_store db') = slot_positions _ (db_slot_store db) ->
-    runtime_kinds (db_runtime db') = runtime_kinds (db_runtime db) ->
-    slots db' = slots db -> slot_rank_ok db -> slot_rank_ok db'.
-  Proof.
-    intros db db' Hpositions Hkinds Hslots Hrank.
-    unfold slot_rank_ok in *. now rewrite Hpositions, Hkinds, Hslots.
-  Qed.
-  Lemma slot_rank_ok_union : forall db i j,
-    slot_rank_ok db -> slot_rank_ok (union i j db).
-  Proof.
-    intros db i j Hrank. unfold slot_rank_ok, union in *.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
-    destruct roots as [[winner loser] |]; exact Hrank.
   Qed.
   Lemma slot_rank_ok_allocate_id : forall db i,
     slot_rank_ok db -> slot_rank_ok (allocate_id i db).
@@ -14009,21 +14232,41 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     NoDup (queue db) /\ pending db = length (queue db) /\
     (forall x, In x (queue db) -> allocated db x).
 
-  Lemma database_idle_row_store : forall db, database_idle_ok db -> row_store_ok db.
+  Lemma database_idle_secondary_row_replace : forall db f k previous o,
+    database_idle_ok db ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    forall g args output i,
+      row (view (row_replace f k previous o db)) g args output ->
+      row_ids args output i ->
+      repr (row_replace f k previous o db) i <> i ->
+      exists k0,
+        scheduled (row_replace f k previous o db) [] (g, k0) /\
+        located (row_replace f k previous o db) g k0 = Some args.
   Proof.
-    intros db Hidle. unfold database_idle_ok, row_store_ok in *. tauto.
-  Qed.
-
-  Lemma database_idle_coverage : forall db, database_idle_ok db ->
-    forall f k o i, row (view db) f k o -> row_ids k o i ->
-      exists x k0, repr db x = repr db i /\ uses db x (f, k0) /\
-        located db f k0 = Some k /\ (x = repr db i \/ In x (queue db)).
-  Proof.
-    intros db Hidle f k o i Hrow Hid.
-    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & Hcover & _).
-    unfold row_ids in Hid. destruct (Hcover f k o i Hrow Hid)
-      as [x [k0 [Hrepr [Huse [Hlocated Hactive]]]]].
-    exists x, k0. repeat split; try assumption.
+    intros db f k previous o Hidle Hcanonical g args output i Hrow Hid Hnonroot.
+    pose proof (database_idle_row_store db Hidle) as Hstore.
+    apply row_replace_rows in Hrow as [[Hold Hother] | [-> [-> <-]]].
+    - assert (Hnonroot_old : repr db i <> i).
+      { unfold repr in Hnonroot |- *. rewrite row_replace_forest in Hnonroot.
+        exact Hnonroot. }
+      destruct (database_idle_scheduled db Hidle g args output i Hold Hid
+        Hnonroot_old) as [k0 [Hscheduled Hlocated]].
+      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
+      destruct Hscheduled as [Hempty | [x [Hqueue Huse]]];
+        [contradiction |].
+      destruct (database_uses_history db x g k0 Hstore Huse)
+        as [r Hentry].
+      exists k0. split.
+      + unfold scheduled. right. exists x. split.
+        * rewrite row_replace_queue. exact Hqueue.
+        * apply row_replace_uses_old; [| exact Huse].
+          unfold row_store_ok, database_row_store_ok in Hstore. tauto.
+      + unfold located, locate in *.
+        rewrite (row_replace_old_locate db f k previous o g k0 (g, k0) r
+          Hstore Hentry). exact Hlocated.
+    - exfalso. apply Hnonroot.
+      unfold repr. rewrite row_replace_forest.
+      exact (Hcanonical i Hid).
   Qed.
 
   Lemma database_idle_primary_row_replace : forall db f k previous o,
@@ -14072,62 +14315,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
 
-  Lemma database_idle_scheduled : forall db, database_idle_ok db ->
-    forall f k o i, row (view db) f k o -> row_ids k o i -> repr db i <> i ->
-      exists k0, scheduled db [] (f, k0) /\ located db f k0 = Some k.
-  Proof.
-    intros db Hidle f k o i Hrow Hid Hnonroot.
-    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & Hcover & _).
-    unfold row_ids in Hid. destruct (Hcover f k o i Hrow Hid Hnonroot)
-      as [k0 [[x [Hqueue Huse]] Hlocated]].
-    exists k0. split; [right; exists x; split; assumption | exact Hlocated].
-  Qed.
-  Lemma database_idle_secondary_row_replace : forall db f k previous o,
-    database_idle_ok db ->
-    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
-    forall g args output i,
-      row (view (row_replace f k previous o db)) g args output ->
-      row_ids args output i ->
-      repr (row_replace f k previous o db) i <> i ->
-      exists k0,
-        scheduled (row_replace f k previous o db) [] (g, k0) /\
-        located (row_replace f k previous o db) g k0 = Some args.
-  Proof.
-    intros db f k previous o Hidle Hcanonical g args output i Hrow Hid Hnonroot.
-    pose proof (database_idle_row_store db Hidle) as Hstore.
-    apply row_replace_rows in Hrow as [[Hold Hother] | [-> [-> <-]]].
-    - assert (Hnonroot_old : repr db i <> i).
-      { unfold repr in Hnonroot |- *. rewrite row_replace_forest in Hnonroot.
-        exact Hnonroot. }
-      destruct (database_idle_scheduled db Hidle g args output i Hold Hid
-        Hnonroot_old) as [k0 [Hscheduled Hlocated]].
-      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
-      destruct Hscheduled as [Hempty | [x [Hqueue Huse]]];
-        [contradiction |].
-      destruct (database_uses_history db x g k0 Hstore Huse)
-        as [r Hentry].
-      exists k0. split.
-      + unfold scheduled. right. exists x. split.
-        * rewrite row_replace_queue. exact Hqueue.
-        * apply row_replace_uses_old; [| exact Huse].
-          unfold row_store_ok, database_row_store_ok in Hstore. tauto.
-      + unfold located, locate in *.
-        rewrite (row_replace_old_locate db f k previous o g k0 (g, k0) r
-          Hstore Hentry). exact Hlocated.
-    - exfalso. apply Hnonroot.
-      unfold repr. rewrite row_replace_forest.
-      exact (Hcanonical i Hid).
-  Qed.
-
-
-  Lemma database_idle_located : forall db, database_idle_ok db ->
-    forall f k0 k, located db f k0 = Some k ->
-      exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
-  Proof.
-    intros db Hidle f k0 k Hlocated.
-    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & _ & Hcover & _).
-    exact (Hcover f k0 k Hlocated).
-  Qed.
 
   Lemma database_idle_located_row_replace : forall db f k previous o,
     database_wf db -> database_idle_ok db -> database_history_alignment db ->
@@ -16757,193 +16944,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     split; [eapply database_row_weight_conserved_row_replace;
       eassumption |].
     apply database_row_weights_positive_row_replace. exact Hpositive.
-  Qed.
-
-  Lemma union_uses_raw : forall db i j x e,
-    uses (union i j db) x e <-> uses db x e.
-  Proof.
-    intros db i j x e. unfold union.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
-    destruct roots as [[winner loser] |]; reflexivity.
-  Qed.
-
-  Lemma union_rows_list_raw : forall db i j,
-    rows (union i j db) = rows db.
-  Proof.
-    intros db i j. unfold union.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
-    destruct roots as [[winner loser] |]; reflexivity.
-  Qed.
-
-  Lemma union_kind_raw : forall db i j,
-    kind (view (union i j db)) = kind (view db).
-  Proof.
-    intros db i j. unfold union.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest].
-    destruct roots as [[winner loser] |]; reflexivity.
-  Qed.
-
-  Lemma public_union_idle_none : forall db i j forest, database_public_ok db ->
-    UnionFindCode.union i j (db_forest db) = (None, forest) ->
-    database_idle_ok (union i j db).
-  Proof.
-    intros db i j forest Hpublic Hunion.
-    pose proof (database_public_base db Hpublic) as Hbase.
-    pose proof (database_public_idle db Hpublic) as Hidle.
-    destruct (UnionFind.union_none i j (db_forest db) forest
-      (wf_forest db Hbase) Hunion) as [_ Hrepr].
-    pose proof (database_row_store_ok_union i j db (proj1 Hidle)) as Hstore.
-    pose proof (public_union_queue_distinct db i j Hpublic) as Hdistinct.
-    pose proof (public_union_queue_nonroot db i j Hpublic) as Hnonroot.
-    unfold database_idle_ok in Hidle |- *.
-    destruct Hidle as [_ [_ [Hprimary [Hsecondary [Hlocated _]]]]].
-    unfold union in *. rewrite Hunion in *.
-    cbn [fst snd database_set_forest db_forest db_row_store db_nuses db_runtime
-      runtime_queue runtime_rows runtime_kinds] in *.
-    split; [exact Hstore |]. split; [exact Hdistinct |].
-    split.
-    { intros f k o x Hrow Hid.
-      destruct (Hprimary f k o x Hrow Hid) as [y [k0 [Hsame [Huse [Hloc Hqueued]]]]].
-      exists y, k0. split.
-      { change (UnionFind.repr forest y = UnionFind.repr forest x).
-        now rewrite !Hrepr. }
-      split; [exact Huse |]. split; [exact Hloc |].
-      destruct Hqueued as [Hroot | Hqueued]; [left | right].
-      - change (y = UnionFind.repr forest x). rewrite Hrepr. exact Hroot.
-      - exact Hqueued. }
-    split.
-    { intros f k o x Hrow Hid Hnonroot_new.
-      assert (Hnonroot_old : repr db x <> x).
-      { change (UnionFind.repr forest x <> x) in Hnonroot_new.
-        intro Heq. apply Hnonroot_new. rewrite Hrepr. exact Heq. }
-      exact (Hsecondary f k o x Hrow Hid Hnonroot_old). }
-    split; [exact Hlocated | exact Hnonroot].
-  Qed.
-
-  Lemma public_union_primary_some : forall db i j winner loser forest,
-    database_public_ok db ->
-    UnionFindCode.union i j (db_forest db) = (Some (winner, loser), forest) ->
-    forall f k o x, row (view (union i j db)) f k o -> row_ids k o x ->
-      exists y k0, repr (union i j db) y = repr (union i j db) x /\
-        uses (union i j db) y (f, k0) /\ located (union i j db) f k0 = Some k /\
-        (y = repr (union i j db) x \/ In y (queue (union i j db))).
-  Proof.
-    intros db i j winner loser forest Hpublic Hunion f k o x Hrow Hid.
-    pose proof (database_public_base db Hpublic) as Hbase.
-    pose proof (database_public_idle db Hpublic) as Hidle.
-    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
-      (wf_forest db Hbase) Hunion) as [_ [_ Hrepr]].
-    rewrite (union_rows_raw i j db) in Hrow.
-    destruct (database_idle_coverage db Hidle f k o x Hrow Hid)
-      as [y [k0 [Hsame [Huse [Hlocated Hactive]]]]].
-    exists y, k0. unfold union. rewrite Hunion.
-    cbn [fst snd database_set_pending database_set_runtime runtime_set_union
-      db_runtime runtime_queue db_forest db_row_store] in *.
-    split.
-    { change (UnionFind.repr forest y = UnionFind.repr forest x).
-      unfold repr in Hsame.
-      now rewrite !Hrepr, Hsame. }
-    split; [exact Huse |]. split; [exact Hlocated |].
-    destruct Hactive as [Hroot | Hqueued].
-    - destruct (Pos.eqb (repr db x) loser) eqn:Hloser.
-      + right. left. apply Pos.eqb_eq in Hloser. congruence.
-      + left. change (y = UnionFind.repr forest x).
-        rewrite Hrepr. unfold repr in Hloser. now rewrite Hloser.
-    - right. now right.
-  Qed.
-
-  Lemma public_union_secondary_some : forall db i j winner loser forest,
-    database_public_ok db ->
-    UnionFindCode.union i j (db_forest db) = (Some (winner, loser), forest) ->
-    forall f k o x, row (view (union i j db)) f k o -> row_ids k o x ->
-      repr (union i j db) x <> x ->
-      exists k0, scheduled (union i j db) [] (f, k0) /\
-        located (union i j db) f k0 = Some k.
-  Proof.
-    intros db i j winner loser forest Hpublic Hunion f k o x Hrow Hid Hnewnonroot.
-    pose proof (database_public_base db Hpublic) as Hbase.
-    pose proof (database_public_idle db Hpublic) as Hidle.
-    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
-      (wf_forest db Hbase) Hunion) as [_ [_ Hrepr]].
-    rewrite (union_rows_raw i j db) in Hrow.
-    unfold union in Hnewnonroot. rewrite Hunion in Hnewnonroot.
-    change (UnionFind.repr forest x <> x) in Hnewnonroot.
-    destruct (Pos.eq_dec (repr db x) x) as [Hroot | Holdnonroot].
-    - destruct (database_idle_coverage db Hidle f k o x Hrow Hid)
-        as [y [k0 [_ [Huse [Hlocated Hactive]]]]].
-      destruct Hactive as [Hroot_use | Hqueued].
-      + assert (Hloser : Pos.eqb (repr db x) loser = true).
-        { destruct (Pos.eqb (repr db x) loser) eqn:Htest; [reflexivity |].
-          exfalso. apply Hnewnonroot. rewrite Hrepr.
-          unfold repr in Htest. rewrite Htest. exact Hroot. }
-        apply Pos.eqb_eq in Hloser.
-        exists k0. split; [| rewrite union_located_raw; exact Hlocated].
-        right. exists y. split.
-        * unfold queue, union. rewrite Hunion.
-          cbn [database_set_pending database_set_runtime runtime_set_union
-            db_runtime runtime_queue]. left. congruence.
-        * apply (proj2 (union_uses_raw db i j y (f, k0))). exact Huse.
-      + exists k0. split; [| rewrite union_located_raw; exact Hlocated].
-        right. exists y. split.
-        * unfold queue, union. rewrite Hunion.
-          cbn [database_set_pending database_set_runtime runtime_set_union
-            db_runtime runtime_queue]. now right.
-        * apply (proj2 (union_uses_raw db i j y (f, k0))). exact Huse.
-    - destruct (database_idle_scheduled db Hidle f k o x Hrow Hid Holdnonroot)
-        as [k0 [Hscheduled Hlocated]].
-      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
-      destruct Hscheduled as [Hnone | [y [Hqueued Huse]]]; [contradiction |].
-      exists k0. split; [| rewrite union_located_raw; exact Hlocated].
-      right. exists y. split.
-      + unfold queue, union. rewrite Hunion.
-        cbn [database_set_pending database_set_runtime runtime_set_union
-          db_runtime runtime_queue]. now right.
-      + apply (proj2 (union_uses_raw db i j y (f, k0))). exact Huse.
-  Qed.
-
-  Lemma public_union_idle : forall db i j, database_public_ok db ->
-    database_idle_ok (union i j db).
-  Proof.
-    intros db i j Hpublic.
-    pose proof (database_public_idle db Hpublic) as Hidle.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
-    destruct roots as [[winner loser] |].
-    2: { eapply public_union_idle_none; eassumption. }
-    unfold database_idle_ok.
-    split; [apply database_row_store_ok_union; exact (database_idle_row_store db Hidle) |].
-    split; [exact (public_union_queue_distinct db i j Hpublic) |].
-    split.
-    { intros f k o x Hrow Hid.
-      destruct (public_union_primary_some db i j winner loser forest Hpublic Hunion
-        f k o x Hrow Hid) as [y [k0 [Hsame [Huse [Hlocated Hactive]]]]].
-      exists y, k0. repeat split; assumption. }
-    split.
-    { intros f k o x Hrow Hid Hnonroot.
-      destruct (public_union_secondary_some db i j winner loser forest Hpublic Hunion
-        f k o x Hrow Hid Hnonroot) as [k0 [Hscheduled Hlocated]].
-      unfold scheduled in Hscheduled. cbn [In] in Hscheduled.
-      destruct Hscheduled as [Hnone | [y [Hqueued Huse]]]; [contradiction |].
-      exists k0. split; [exists y; split; assumption | exact Hlocated]. }
-    split.
-    { intros f k0 k Hlocated.
-      change (located (union i j db) f k0 = Some k) in Hlocated.
-      rewrite union_located_raw in Hlocated.
-      destruct (database_idle_located db Hidle f k0 k Hlocated) as [o [Hrow Hkind]].
-      exists o. split.
-      - change (In ((f, k), o) (rows (union i j db))).
-        rewrite union_rows_list_raw. exact Hrow.
-      - rewrite union_kind_raw. exact Hkind. }
-    exact (public_union_queue_nonroot db i j Hpublic).
-  Qed.
-
-  Lemma database_public_ok_union : forall db i j, database_public_ok db ->
-    allocated db i -> allocated db j -> database_public_ok (union i j db).
-  Proof.
-    intros db i j Hpublic Hi Hj. unfold database_public_ok.
-    split.
-    - apply database_wf_union; [exact (database_public_base db Hpublic) | exact Hi | exact Hj].
-    - split; [exact (public_union_idle db i j Hpublic) |].
-      apply slot_rank_ok_union. exact (database_public_rank db Hpublic).
   Qed.
 
   Lemma database_idle_ok_put : forall db f k o,
