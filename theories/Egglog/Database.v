@@ -8059,6 +8059,20 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       intros j Hin. apply Hfixed. now right.
   Qed.
 
+  Lemma normal_key_of_fixed_forest : forall db k,
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    (forall i, In (Id i) k -> repr db i = i) -> normal_key db k = k.
+  Proof.
+    intros db k Hforest Hmembers Hfixed.
+    rewrite (normal_key_correct_forest db k Hforest Hmembers).
+    induction k as [| [j | v] rest IH]; [reflexivity | |].
+    - cbn [map canon]. rewrite Hfixed by now left.
+      f_equal. apply IH. intros i Hin. apply Hfixed. now right.
+    - cbn [map canon]. f_equal. apply IH.
+      intros i Hin. apply Hfixed. now right.
+  Qed.
+
   (** Normalization preserves allocation, tuple length and the declared output shape. *)
   Lemma kind_ok_canon : forall db f k o, database_wf db -> kind_ok db f k o ->
     kind_ok db f (map (canon db) k) (option_map (canon db) o).
@@ -15034,15 +15048,17 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma put_fixed_key_locate : forall db f k o,
-    database_wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    database_row_store_ok db -> database_history_alignment db ->
     (forall i, In (Id i) k -> repr db i = i) ->
     forall key r,
       PTrieCode.get (db_row_code f k) (row_history (db_row_store (put f k o db))) =
         Some (key, r) ->
       db_locate f k (put f k o db) = Some k.
   Proof.
-    intros db f k o Hwf Hstore Halign Hfixed.
-    unfold put. rewrite (normal_key_of_fixed db k Hwf Hfixed).
+    intros db f k o Hforest Hmembers Hstore Halign Hfixed.
+    unfold put. rewrite (normal_key_of_fixed_forest db k Hforest Hmembers Hfixed).
     set (co := option_map (normal_cell db) o).
     set (previous := row_get f k db).
     set (updated := combine_output db f previous co).
@@ -15898,16 +15914,23 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Qed.
 
   Lemma repair_current_destination_locate : forall db f k,
-    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    UnionFind.wf (db_forest db) ->
+    (forall i, UnionFind.mem (db_forest db) i <-> allocated db i) ->
+    database_row_store_ok db -> database_history_alignment db ->
     forall key r,
       PTrieCode.get (db_row_code f (normal_key db k))
         (row_history (db_row_store (repair_current f k db))) = Some (key, r) ->
       db_locate f (normal_key db k) (repair_current f k db) =
         Some (normal_key db k).
   Proof.
-    intros db f k Hwf Hstore Halign key r Hentry.
+    intros db f k Hforest Hmembers Hstore Halign key r Hentry.
     assert (Hfixed : forall i, In (Id i) (normal_key db k) -> repr db i = i).
-    { rewrite normal_key_correct by exact Hwf. apply canon_key_fixed. exact Hwf. }
+    { intros i Hin.
+      rewrite (normal_key_correct_forest db k Hforest Hmembers) in Hin.
+      apply in_map_iff in Hin as [c [Hcell _]].
+      destruct c as [j | v]; cbn [canon] in Hcell; [| discriminate Hcell].
+      injection Hcell as <-. unfold repr.
+      apply UnionFind.repr_idem. exact Hforest. }
     unfold repair_current in Hentry |- *.
     destruct (row_get f k db) as [output |].
     - destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
@@ -15927,7 +15950,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
           Some (normal_key db k)).
         { subst updated. eapply (put_fixed_key_locate deleted f (normal_key db k)
             (option_map (normal_cell db) output)).
-          - subst deleted. apply row_delete_wf. exact Hwf.
+          - subst deleted. now rewrite row_delete_forest.
+          - subst deleted. intro i. unfold allocated.
+            now rewrite row_delete_forest, row_delete_ids.
           - subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
           - subst deleted. apply database_history_alignment_row_delete. exact Halign.
           - exact Hdeleted_fixed.
@@ -15966,7 +15991,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         by now rewrite <- Hkey.
       replace (Some k) with (Some (normal_key db k))
         by (f_equal; symmetry; exact Hkey).
-      eapply repair_current_destination_locate; eassumption.
+      eapply repair_current_destination_locate;
+        [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+         exact Hstore | exact Halign | exact Hentry].
     - assert (Hdifferent : (f, k) <> (f, normal_key db k)).
       { intro Heq. injection Heq as Hkey. apply Hother. f_equal. exact Hkey. }
       rewrite (repair_current_history_other db f k f k Hwf Hdifferent) in Hentry.
@@ -16700,7 +16727,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + symmetry. apply normal_key_length.
       + subst repaired. eapply repair_current_source_locate; eassumption.
       + intros dest_key dest_id Hdest. subst repaired.
-        eapply repair_current_destination_locate; eassumption.
+        eapply repair_current_destination_locate;
+          [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+           exact Hstore | exact Halign | exact Hdest].
       + subst repaired. apply repair_current_fixed_key. exact Hwf.
     - replace (move_row_identity f k (normal_key db k) repaired) with repaired.
       + exact Hrepaired_align.
@@ -16802,7 +16831,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       + left. apply repair_current_old_absent with (o := o);
           try assumption. intro Hsame. apply Hneq. now rewrite Hsame at 1.
     - intros key r Hentry. eapply repair_current_source_locate; eassumption.
-    - intros key r Hentry. eapply repair_current_destination_locate; eassumption.
+    - intros key r Hentry. eapply repair_current_destination_locate;
+        [exact (wf_forest db Hwf) | exact (wf_forest_members db Hwf) |
+         exact Hstore | exact Halign | exact Hentry].
     - apply database_history_root_owner_repair_current; assumption.
   Qed.
 
