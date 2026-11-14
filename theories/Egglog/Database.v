@@ -3038,6 +3038,70 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         exact (Hlabels g args key r Hget).
   Qed.
 
+  Lemma ensure_row_identity_history_old : forall db f k g args key r,
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (ensure_row_identity f k db))) = Some (key, r).
+  Proof.
+    intros db f k g args key r Hget.
+    unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [old |] eqn:Hprior; [exact Hget |].
+    cbn [database_set_index_counters database_set_row_store db_row_store row_history].
+    destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k)) as [Hsame | Hother].
+    - rewrite Hsame in Hget. congruence.
+    - rewrite PTrie.get_set_other by exact Hother. exact Hget.
+  Qed.
+
+  Lemma ensure_row_identity_history_new : forall db f k,
+    database_row_store_ok db ->
+    exists r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store (ensure_row_identity f k db))) = Some ((f, k), r).
+  Proof.
+    intros db f k Hstore.
+    unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[key r] |] eqn:Hprior.
+    - pose proof (database_row_store_labels db Hstore f k key r Hprior) as ->.
+      exists r. exact Hprior.
+    - exists (row_fresh (db_row_store db)).
+      cbn [database_set_index_counters database_set_row_store db_row_store row_history].
+      now rewrite PTrie.get_set_same.
+  Qed.
+
+  Lemma register_row_uses_history : forall db f k o g args,
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (register_row_uses f k o db))) =
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (ensure_row_identity f k db))).
+  Proof.
+    intros db f k o g args.
+    unfold register_row_uses.
+    reflexivity.
+  Qed.
+
+  Lemma register_row_uses_history_old : forall db f k o g args key r,
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    PTrieCode.get (db_row_code g args)
+      (row_history (db_row_store (register_row_uses f k o db))) = Some (key, r).
+  Proof.
+    intros db f k o g args key r Hget.
+    rewrite register_row_uses_history.
+    now apply ensure_row_identity_history_old.
+  Qed.
+
+  Lemma register_row_uses_history_new : forall db f k o,
+    database_row_store_ok db ->
+    exists r, PTrieCode.get (db_row_code f k)
+      (row_history (db_row_store (register_row_uses f k o db))) = Some ((f, k), r).
+  Proof.
+    intros db f k o Hstore.
+    rewrite register_row_uses_history.
+    now apply ensure_row_identity_history_new.
+  Qed.
+
   Lemma database_row_store_ok_init : forall ds sl,
     database_row_store_ok (init ds sl).
   Proof.
