@@ -16098,6 +16098,64 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply N.add_le_mono_r, N.mul_le_mono_l. exact Hmass'.
   Qed.
 
+  (** The native prepared pivot step uses the public linear row allowance. *)
+  Lemma T_poly_assign_prepared_nonzero_step_public : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    poly_coefficient tmp_eqb None
+      (poly_constraint (poly_assign_head x (poly_prepare_form X.encode f) P)) <> 0%Z ->
+    let prepared := poly_prepare_form X.encode f in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 * (n P + total + length P + 3) * bits^2 in
+    (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x prepared, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) <=
+      3200 * RangeCore.poly_step_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P f Hlinear Hnonzero prepared bits total work.
+    pose proof (T_poly_assign_nonzero_step_bounded x prepared P
+      (poly_assign_prepared_nodup f) Hnonzero) as Hstep.
+    pose proof (poly_assign_prepared_step_mass x e P f Hlinear) as Hmass.
+    cbn zeta in Hmass.
+    set (support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef prepared) + 1).
+    set (stepwidth := poly_raw_keys P + poly_raw_bits P + X.bits x +
+      2 * F.form_bits prepared + 3).
+    assert (Hconverted :
+      (N.of_nat ((length P + 2) * (support + length P + 2) * stepwidth^2) <=
+        N.of_nat (3200 * work))%N)
+      by (apply time_of_nat_le; exact Hmass).
+    rewrite !Nat2N.inj_mul, Nat2N.inj_pow in Hconverted.
+    cbn [N.of_nat] in Hconverted.
+    unfold RangeCore.poly_clock_span in Hstep.
+    replace (poly_raw_keys P + X.bits x + F.form_bits prepared + 1 +
+      (poly_raw_bits P + F.form_bits prepared + 1) + 1)
+      with stepwidth in Hstep by (unfold stepwidth; lia).
+    fold support in Hstep.
+    replace (support + (length P + 1) + 1) with (support + length P + 2)
+      in Hstep by lia.
+    change (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x prepared, false) ::
+          map (fun r => (rename_row (rename_old x) r, false)) P)) <=
+      RangeCore.poly_step_factor * N.of_nat (length P + 2) *
+        (N.of_nat (support + length P + 2) * N.of_nat stepwidth^2))%N
+      in Hstep.
+    assert (Hclock : (RangeCore.poly_step_factor * N.of_nat (length P + 2) *
+      (N.of_nat (support + length P + 2) * N.of_nat stepwidth^2) <=
+      3200 * RangeCore.poly_step_factor * N.of_nat work)%N).
+    { replace (RangeCore.poly_step_factor * N.of_nat (length P + 2) *
+        (N.of_nat (support + length P + 2) * N.of_nat stepwidth^2))%N with
+        (RangeCore.poly_step_factor *
+          (N.of_nat (length P + 2) * N.of_nat (support + length P + 2) *
+            N.of_nat stepwidth^2))%N by ring.
+      replace (3200 * RangeCore.poly_step_factor * N.of_nat work)%N with
+        (RangeCore.poly_step_factor * (3200 * N.of_nat work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    eapply N.le_trans; [exact Hstep|exact Hclock].
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
