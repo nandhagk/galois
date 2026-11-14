@@ -18025,6 +18025,40 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply database_row_weights_positive_put. exact Hpositive.
   Qed.
 
+  Lemma database_row_store_ok_make : forall db f k,
+    database_row_store_ok db -> database_row_store_ok (snd (make f k db)).
+  Proof.
+    intros db f k Hstore.
+    pose proof (database_row_store_ok_allocate_next db Hstore) as Hfresh.
+    unfold make.
+    destruct (row_get f (normal_key db k) db) as [[[j | v] |] |];
+      cbn [snd]; try exact Hstore;
+      destruct (kind_get f db) as [[| |m] |]; cbn [snd];
+      try exact Hfresh;
+      apply database_row_store_ok_row_replace; exact Hfresh.
+  Qed.
+
+  Lemma database_owned_ok_make : forall db f k,
+    wf db -> database_owned_ok db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    database_owned_ok (snd (make f k db)).
+  Proof.
+    intros db f k Hwf Howned Hinput.
+    unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    split; [apply database_row_store_ok_make; exact Hstore |].
+    split; [eapply database_history_alignment_make; eassumption |].
+    split; [eapply database_active_history_coherent_make; eassumption |].
+    split; [eapply database_history_root_owner_make; eassumption |].
+    split; [eapply database_history_key_shape_make; eassumption |].
+    split; [apply database_history_codes_valid_make; exact Hvalid |].
+    split; [eapply database_history_key_ids_bounded_make; eassumption |].
+    split; [eapply database_row_weight_conserved_make; eassumption |].
+    apply database_row_weights_positive_make. exact Hpositive.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
