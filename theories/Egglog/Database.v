@@ -15351,6 +15351,64 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
              split; [exact Hlabels | exact Hrange].
   Qed.
 
+
+  Lemma database_owned_ok_pop : forall db x db',
+    database_owned_ok db -> db_pop_loser db = Some (x, db') ->
+    database_owned_ok db'.
+  Proof.
+    intros db x db' Howned Hpop.
+    unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    assert (Hhistory : row_history (db_row_store db') =
+      row_history (db_row_store db)).
+    { unfold db_pop_loser in Hpop.
+      destruct (runtime_queue (db_runtime db)) as [|i rest];
+        [discriminate |].
+      injection Hpop as Hname Hstate. subst db'. reflexivity. }
+    assert (Hlinks : row_links (db_row_store db') =
+      row_links (db_row_store db)).
+    { unfold db_pop_loser in Hpop.
+      destruct (runtime_queue (db_runtime db)) as [|i rest];
+        [discriminate |].
+      injection Hpop as Hname Hstate. subst db'. reflexivity. }
+    assert (Hweights : row_weights (db_row_store db') =
+      row_weights (db_row_store db)).
+    { unfold db_pop_loser in Hpop.
+      destruct (runtime_queue (db_runtime db)) as [|i rest];
+        [discriminate |].
+      injection Hpop as Hname Hstate. subst db'. reflexivity. }
+    assert (Hids : ids db' = ids db).
+    { destruct (db_pop_loser_layout db x db' Hpop) as [Hslots [Hids _]].
+      exact Hids. }
+    assert (Hrows : forall f k, row_get f k db' = row_get f k db).
+    { intros f k. unfold db_pop_loser in Hpop.
+      destruct (runtime_queue (db_runtime db)) as [|i rest];
+        [discriminate |].
+      injection Hpop as Hname Hstate. subst db'. reflexivity. }
+    split; [eapply pop_loser_row_store_ok; eassumption |].
+    split; [eapply database_history_alignment_pop; eassumption |].
+    split.
+    { intros f k o key r Hrow Hentry.
+      rewrite Hrows in Hrow. rewrite Hhistory in Hentry.
+      rewrite (pop_loser_locate db x db' f k Hpop).
+      exact (Hcoherent f k o key r Hrow Hentry). }
+    split; [eapply database_history_root_owner_transport;
+      [exact Hhistory | exact Hlinks | exact Hids | exact Howner] |].
+    split; [eapply database_history_key_shape_transport;
+      [exact Hhistory | exact Hlinks | exact Hids | exact Hshape] |].
+    split; [eapply database_history_codes_valid_transport;
+      [exact Hhistory | exact Hvalid] |].
+    split; [eapply database_history_key_ids_bounded_transport;
+      [exact Hhistory | rewrite Hids; lia | exact Hbounded] |].
+    split; [eapply database_row_weight_conserved_transport;
+      [exact Hhistory | exact Hlinks | exact Hweights | exact Hids |
+       exact Hconserved] |].
+    eapply database_row_weights_positive_transport;
+      [exact Hweights | exact Hpositive].
+  Qed.
+
   Lemma forest_ok_pop : forall db x db', forest_ok db ->
     db_pop_loser db = Some (x, db') -> forest_ok db'.
   Proof.
@@ -17910,62 +17968,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply database_row_weights_positive_db_repair_entry. exact Hpositive.
   Qed.
 
-  Lemma database_owned_ok_pop : forall db x db',
-    database_owned_ok db -> db_pop_loser db = Some (x, db') ->
-    database_owned_ok db'.
-  Proof.
-    intros db x db' Howned Hpop.
-    unfold database_owned_ok in Howned |- *.
-    destruct Howned as
-      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
-       Hbounded & Hconserved & Hpositive).
-    assert (Hhistory : row_history (db_row_store db') =
-      row_history (db_row_store db)).
-    { unfold db_pop_loser in Hpop.
-      destruct (runtime_queue (db_runtime db)) as [|i rest];
-        [discriminate |].
-      injection Hpop as Hname Hstate. subst db'. reflexivity. }
-    assert (Hlinks : row_links (db_row_store db') =
-      row_links (db_row_store db)).
-    { unfold db_pop_loser in Hpop.
-      destruct (runtime_queue (db_runtime db)) as [|i rest];
-        [discriminate |].
-      injection Hpop as Hname Hstate. subst db'. reflexivity. }
-    assert (Hweights : row_weights (db_row_store db') =
-      row_weights (db_row_store db)).
-    { unfold db_pop_loser in Hpop.
-      destruct (runtime_queue (db_runtime db)) as [|i rest];
-        [discriminate |].
-      injection Hpop as Hname Hstate. subst db'. reflexivity. }
-    assert (Hids : ids db' = ids db).
-    { destruct (db_pop_loser_layout db x db' Hpop) as [Hslots [Hids _]].
-      exact Hids. }
-    assert (Hrows : forall f k, row_get f k db' = row_get f k db).
-    { intros f k. unfold db_pop_loser in Hpop.
-      destruct (runtime_queue (db_runtime db)) as [|i rest];
-        [discriminate |].
-      injection Hpop as Hname Hstate. subst db'. reflexivity. }
-    split; [eapply pop_loser_row_store_ok; eassumption |].
-    split; [eapply database_history_alignment_pop; eassumption |].
-    split.
-    { intros f k o key r Hrow Hentry.
-      rewrite Hrows in Hrow. rewrite Hhistory in Hentry.
-      rewrite (pop_loser_locate db x db' f k Hpop).
-      exact (Hcoherent f k o key r Hrow Hentry). }
-    split; [eapply database_history_root_owner_transport;
-      [exact Hhistory | exact Hlinks | exact Hids | exact Howner] |].
-    split; [eapply database_history_key_shape_transport;
-      [exact Hhistory | exact Hlinks | exact Hids | exact Hshape] |].
-    split; [eapply database_history_codes_valid_transport;
-      [exact Hhistory | exact Hvalid] |].
-    split; [eapply database_history_key_ids_bounded_transport;
-      [exact Hhistory | rewrite Hids; lia | exact Hbounded] |].
-    split; [eapply database_row_weight_conserved_transport;
-      [exact Hhistory | exact Hlinks | exact Hweights | exact Hids |
-       exact Hconserved] |].
-    eapply database_row_weights_positive_transport;
-      [exact Hweights | exact Hpositive].
-  Qed.
 
   Lemma database_owned_ok_advance : forall db,
     database_owned_ok db -> database_owned_ok (advance db).
