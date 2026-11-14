@@ -10928,6 +10928,38 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody work. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.
 
+  (** A general pivot reduction charges crosses and exact guarded division. *)
+  Lemma T_karr_reduce_bounded : forall dim mlen bits d a b p r,
+    Z.size_nat d <= bits -> Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    karr_row_envelope dim mlen bits p -> karr_row_envelope dim mlen bits r ->
+    (T_karr_reduce d a b p r <=
+      8192 * N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros dim mlen bits d a b p r Hd Ha Hb Hp Hr.
+    pose proof (karr_cross_row_envelope dim mlen bits a b p r Ha Hb Hp Hr) as Hraw.
+    pose proof (T_karr_divide_bounded dim mlen (2 * bits + 1) d _
+      ltac:(lia) Hraw) as Hdivide.
+    replace ((2 * bits + 1 + 1)^2) with (4 * (bits + 1)^2) in Hdivide
+      by (clear -bits; cbn [Nat.pow]; nia).
+    destruct Hp as [Hpd [Hpc [Hpr [Hpm [Hpw Hps]]]]].
+    destruct Hr as [Hrd [Hrc [Hrr [Hrm [Hrw Hrs]]]]].
+    pose proof (T_karr_cross_bounded a b (kcoeff r) (kcoeff p) bits Ha Hb Hrc Hpc)
+      as Hcoefftime.
+    pose proof (T_karr_cross_bounded a b (kweight r) (kweight p) bits Ha Hb Hrw Hpw)
+      as Hmulttime.
+    pose proof (T_karr_cross_entry_bounded a b (kright r) (kright p) bits Ha Hb Hrr Hpr)
+      as Hrighttime.
+    pose proof (T_karr_cross_entry_bounded a b (kscale r) (kscale p) bits Ha Hb Hrs Hps)
+      as Hscaletime.
+    rewrite Nat2N.inj_mul in Hdivide.
+    set (work := N.of_nat ((bits + 1)^2)) in *.
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+    time_unfold T_karr_reduce. time_simpl.
+    clear -Hcoefftime Hmulttime Hrighttime Hscaletime Hdivide Hrd Hrm Hpositive.
+    clearbody work. rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
+  Qed.
+
   (** Reading a leading coefficient has a fixed record-and-list dispatch cost. *)
   Lemma T_karr_head_bounded : forall r, (T_karr_head r <= 4)%N.
   Proof.
