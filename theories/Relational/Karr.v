@@ -8438,6 +8438,16 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     lia.
   Qed.
 
+  (** A bounded conclusion row has a bounded checker size. *)
+  Lemma karr_lsize_envelope : forall row dim keys bits,
+    length (lhs row) <= dim -> C.row_key_bits row <= keys ->
+    C.row_bits row <= bits ->
+    C.lsize row <= (dim + 1) * (keys + bits + 1).
+  Proof.
+    intros row dim keys bits Hlength Hkeys Hbits.
+    unfold C.lsize. apply Nat.mul_le_mono; lia.
+  Qed.
+
   (** Increasing the arithmetic budget preserves a row envelope. *)
   Lemma karr_row_envelope_mono : forall dim mlen bits bits' r,
     bits <= bits' -> karr_row_envelope dim mlen bits r ->
