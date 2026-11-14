@@ -1432,6 +1432,24 @@ Fixpoint karr_increasing (columns : list nat) : Prop :=
     Forall (fun later => column < later) columns /\ karr_increasing columns
   end.
 
+(** Appending any later coordinate preserves the strict prefix order. *)
+Lemma karr_increasing_prefix_member : forall prefix suffix column,
+  karr_increasing (prefix ++ suffix) -> In column suffix ->
+  karr_increasing (prefix ++ [column]).
+Proof.
+  induction prefix as [|head prefix IH]; intros suffix column Hinc Hin.
+  - cbn [app karr_increasing]. split; [constructor|exact I].
+  - cbn [app karr_increasing] in *. destruct Hinc as [Hafter Htail].
+    split.
+    + apply Forall_app. split.
+      * apply (proj1 (Forall_app _ _ _)) in Hafter as [Hprefix _].
+        exact Hprefix.
+      * constructor; [|constructor].
+        apply (proj1 (Forall_forall _ _) Hafter).
+        apply in_or_app. now right.
+    + apply IH with (suffix := suffix); assumption.
+Qed.
+
 (** Every bounded increasing coordinate list is enumerated by choose. *)
 Lemma karr_choose_seq_increasing : forall count start columns,
   karr_increasing columns ->
