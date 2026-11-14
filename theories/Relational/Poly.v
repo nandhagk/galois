@@ -13555,6 +13555,20 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hnative Hsetup Hfold_total. clearbody work. nia.
   Qed.
 
+  Definition poly_range_affine_factor : N :=
+    (poly_range_empty_factor + poly_range_nonempty_factor)%N.
+
+  Lemma T_poly_range_affine_bounded : forall P f,
+    (T_range_linear P f <= poly_range_affine_factor *
+      N.of_nat (poly_range_setup_budget P f))%N.
+  Proof.
+    intros [|r P] f.
+    - eapply N.le_trans; [apply T_poly_range_empty_bounded|].
+      unfold poly_range_affine_factor. now apply N.mul_le_mono_r, N.le_add_r.
+    - eapply N.le_trans; [apply T_poly_range_nonempty_bounded; discriminate|].
+      unfold poly_range_affine_factor. now apply N.mul_le_mono_r, N.le_add_l.
+  Qed.
+
   (** A completed affine-case bound lifts through linearization and the wrapped/unknown branches. *)
   Lemma T_poly_range_from_linear : forall factor,
     (forall P f, (T_range_linear P f <=
