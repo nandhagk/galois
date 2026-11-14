@@ -13493,6 +13493,151 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - unfold karr_empty_scan_charge. lia.
   Qed.
 
+  (** A target trace records the envelope at every intermediate reduction. *)
+  Fixpoint karr_target_envelope (rs : list karr_row) (previous : Z)
+      (target : karr_row) (dim mlen bits : nat) : Prop :=
+    karr_row_envelope dim mlen bits target /\
+    match rs with
+    | [] => True
+    | pivot :: rest =>
+        match karr_first (kcoeff pivot) with
+        | None => karr_target_envelope rest previous target dim mlen bits
+        | Some (index, a) =>
+            karr_target_envelope rest a
+              (karr_reduce previous a (karr_nth index (kcoeff target))
+                pivot target) dim mlen bits
+        end
+    end.
+
+  (** A bounded target trace pays one reduction and two lookups per basis row. *)
+  Lemma T_karr_target_trace_bounded : forall rs previous target dim mlen bits,
+    Z.size_nat previous <= bits ->
+    Forall (karr_row_envelope dim mlen bits) rs ->
+    karr_target_envelope rs previous target dim mlen bits ->
+    (T_karr_target rs previous target <=
+      16384 * N.of_nat (length rs + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intro rs. induction rs as [|pivot rest IH];
+      intros previous target dim mlen bits Hprevious Hbasis Htrace.
+    - time_unfold T_karr_target. cbn [length].
+      assert (Hpositive : (1 <= N.of_nat (dim + mlen + 1) *
+        N.of_nat ((bits + 1)^2))%N).
+      { assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+        pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+      nia.
+    - apply Forall_cons_iff in Hbasis as [Hp Hrest].
+      destruct Htrace as [Ht Hnext].
+      pose proof (T_karr_first_bounded (kcoeff pivot)) as Hfirst.
+      time_unfold T_karr_target.
+      destruct (karr_first (kcoeff pivot)) as [[index a]|] eqn:Hselect.
+      + pose proof (karr_first_nth (kcoeff pivot) index a Hselect) as Ha_eq.
+        assert (Ha : Z.size_nat a <= bits).
+        { rewrite <- Ha_eq. apply karr_nth_bits.
+          exact (proj1 (proj2 Hp)). }
+        assert (Hb : Z.size_nat (karr_nth index (kcoeff target)) <= bits).
+        { apply karr_nth_bits. exact (proj1 (proj2 Ht)). }
+        pose proof (T_karr_nth_bounded index (kcoeff target)) as Hnth.
+        pose proof (T_karr_reduce_bounded dim mlen bits previous a
+          (karr_nth index (kcoeff target)) pivot target Hprevious Ha Hb Hp Ht)
+          as Hreduce.
+        pose proof (IH a
+          (karr_reduce previous a (karr_nth index (kcoeff target)) pivot target)
+          dim mlen bits Ha Hrest Hnext) as Htail.
+        time_unfold T_kcoeff.
+        set (work := (N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N).
+        assert (Hpositive : (1 <= work)%N).
+        { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N)
+            by lia.
+          pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+        assert (Hdimension : (N.of_nat (dim + 1) <= work)%N).
+        { unfold work.
+          assert (Hsquare : (1 <= N.of_nat ((bits + 1)^2))%N).
+          { pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+          eapply N.le_trans; [|apply N.mul_le_mono_l; exact Hsquare].
+          lia. }
+        assert (Hfirst_work : (T_karr_first (kcoeff pivot) <= 16 * work)%N).
+        { eapply N.le_trans; [exact Hfirst|]. apply N.mul_le_mono_l.
+          eapply N.le_trans; [|exact Hdimension].
+          destruct Hp as [Hpcoeff _]. lia. }
+        assert (Hnth_work : (T_karr_nth index (kcoeff target) <= 8 * work)%N).
+        { eapply N.le_trans; [exact Hnth|]. apply N.mul_le_mono_l.
+          eapply N.le_trans; [|exact Hdimension].
+          destruct Ht as [Htcoeff _]. lia. }
+        replace (8192 * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (8192 * work)%N in Hreduce
+          by (unfold work; ring).
+        set (count := N.of_nat (length rest + 1)) in *.
+        replace (16384 * N.of_nat (length rest + 1) *
+          N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+          (16384 * count * work)%N in Htail by (unfold count, work; ring).
+        replace (16384 * N.of_nat (length (pivot :: rest) + 1) *
+          N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+          (16384 * count * work + 16384 * work)%N in |- *
+          by (unfold count, work; cbn [length]; rewrite !Nat2N.inj_add;
+            cbn [N.of_nat];
+            change (N.pos (PosDef.Pos.of_succ_nat (length rest))) with
+              (N.of_nat (S (length rest)));
+            rewrite Nat2N.inj_succ;
+            replace (N.succ (N.of_nat (length rest))) with
+              (N.of_nat (length rest) + 1)%N by lia;
+            change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N;
+            ring).
+        set (volume := (count * work)%N) in *.
+        replace (16384 * count * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (16384 * volume)%N in Htail
+          by (unfold volume, work; ring).
+        replace (16384 * count * work + 16384 * work)%N with
+          (16384 * volume + 16384 * work)%N in |- *
+          by (unfold volume; ring).
+        set (first_cost := T_karr_first (kcoeff pivot)) in *.
+        set (nth_cost := T_karr_nth index (kcoeff target)) in *.
+        set (reduce_cost := T_karr_reduce previous a
+          (karr_nth index (kcoeff target)) pivot target) in *.
+        set (recursive_cost := T_karr_target rest a
+          (karr_reduce previous a (karr_nth index (kcoeff target)) pivot target)) in *.
+        clearbody work count volume first_cost nth_cost reduce_cost recursive_cost.
+        lia.
+      + pose proof (IH previous target dim mlen bits Hprevious Hrest Hnext)
+          as Htail.
+        time_unfold T_kcoeff.
+        set (work := (N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N).
+        assert (Hpositive : (1 <= work)%N).
+        { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N)
+            by lia.
+          pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). nia. }
+        assert (Hdimension : (N.of_nat (dim + 1) <= work)%N).
+        { unfold work.
+          assert (Hsquare : (1 <= N.of_nat ((bits + 1)^2))%N).
+          { pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)). lia. }
+          eapply N.le_trans; [|apply N.mul_le_mono_l; exact Hsquare]. lia. }
+        assert (Hfirst_work : (T_karr_first (kcoeff pivot) <= 16 * work)%N).
+        { eapply N.le_trans; [exact Hfirst|]. apply N.mul_le_mono_l.
+          eapply N.le_trans; [|exact Hdimension].
+          destruct Hp as [Hpcoeff _]. lia. }
+        set (count := N.of_nat (length rest + 1)) in *.
+        set (volume := (count * work)%N) in *.
+        replace (16384 * count * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (16384 * volume)%N in Htail
+          by (unfold volume, work; ring).
+        replace (16384 * N.of_nat (length (pivot :: rest) + 1) *
+          N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+          (16384 * volume + 16384 * work)%N in |- *
+          by (unfold volume, count, work; cbn [length];
+            rewrite !Nat2N.inj_add; cbn [N.of_nat];
+            change (N.pos (PosDef.Pos.of_succ_nat (length rest))) with
+              (N.of_nat (S (length rest)));
+            rewrite Nat2N.inj_succ;
+            replace (N.succ (N.of_nat (length rest))) with
+              (N.of_nat (length rest) + 1)%N by lia;
+            change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N; ring).
+        set (first_cost := T_karr_first (kcoeff pivot)) in *.
+        set (recursive_cost := T_karr_target rest previous target) in *.
+        clearbody work count volume first_cost recursive_cost. lia.
+  Qed.
+
   (** Contradiction scanning uses the initialized basis and the normal source budget. *)
   Lemma T_karr_contradiction_scan_bounded : forall P,
     normal P ->
