@@ -2530,6 +2530,24 @@ Proof.
       cbn [length] in Hwidth; discriminate.
 Qed.
 
+(** Entrywise equality transports a paired label list through a row operation. *)
+Lemma karr_pairs_map_rows : forall (labels : list (list Z))
+    (rows : list karr_row) (g : karr_row -> karr_row)
+    (f : list Z -> list Z),
+  length labels = length rows ->
+  (forall row, In row rows -> karr_row_entries (g row) = f (karr_row_entries row)) ->
+  combine labels (map karr_row_entries (map g rows)) =
+    map (fun pair => (fst pair, f (snd pair)))
+      (combine labels (map karr_row_entries rows)).
+Proof.
+  intros labels. induction labels as [|label labels IH];
+    intros [|row rows] g f Hlength Heq; cbn [length] in Hlength;
+    try discriminate; [reflexivity|].
+  cbn [map combine fst snd]. f_equal.
+  - f_equal. apply Heq. now left.
+  - apply IH; [lia|]. intros source Hin. apply Heq. now right.
+Qed.
+
 (** Restoring a zero coordinate increases the width by one. *)
 Lemma karr_restore_width : forall r,
   length (kcoeff (karr_restore r)) = S (length (kcoeff r)).
