@@ -14995,6 +14995,19 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros x e. time_unfold T_assign. time_simpl.
     unfold c_num, assign_work. cbn [prows terms nell n]. nia.
   Qed.
+  (** The assignment work allowance also covers its havoc fallback. *)
+  Lemma poly_assign_havoc_work : forall x e P,
+    havoc_work x (Reached P) <= assign_work x e (Reached P).
+  Proof.
+    intros x e P. unfold havoc_work, assign_work.
+    eapply Nat.le_trans; [|apply Nat.le_add_r].
+    apply Nat.add_le_mono_l.
+    apply Nat.mul_le_mono.
+    - apply Nat.mul_le_mono.
+      + apply Nat.pow_le_mono_l. lia.
+      + lia.
+    - apply Nat.pow_le_mono_l. lia.
+  Qed.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
   Proof. Admitted. (* STUB *)
