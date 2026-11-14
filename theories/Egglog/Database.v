@@ -10484,6 +10484,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     specialize (Hwf code label entries Hin). unfold PosKeyT.encode in Hwf.
     subst code. reflexivity.
   Qed.
+  Lemma register_row_uses_count : forall db f k o,
+    DatabaseUseMap.wf (row_uses (db_row_store db)) ->
+    N.to_nat (db_nuses db) = length (uses_entries db) ->
+    N.to_nat (db_nuses (register_row_uses f k o db)) =
+      length (uses_entries (register_row_uses f k o db)).
+  Proof.
+    intros db f k o Hmap Hcount.
+    rewrite (uses_entries_facts db Hmap) in Hcount.
+    unfold register_row_uses, ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)));
+      cbn [database_set_nuses database_set_row_store database_set_index_counters
+        db_nuses db_row_store row_uses];
+      rewrite uses_entries_facts by (apply DatabaseUsesFacts.wf_register; exact Hmap);
+      apply DatabaseUsesFacts.register_count_consistent; assumption.
+  Qed.
   Definition queue (db : t) : list positive := runtime_queue (db_runtime db).
   Definition next_id (db : t) : positive := N.succ_pos (ids db).
   Definition uf_state (db : t) : UnionFind.t := db_forest db.
