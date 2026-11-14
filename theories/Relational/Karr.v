@@ -15576,6 +15576,17 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       apply karr_vars_of_contains with (r := row); assumption.
   Qed.
 
+  Lemma karr_variables_cons_mono : forall P c,
+    length (variables P) <= length (variables (c :: P)).
+  Proof.
+    intros P c. apply NoDup_incl_length; [apply variables_nodup|].
+    intros x Hx.
+    destruct (karr_variables_support P x Hx) as [r [Hr Hterm]].
+    apply in_map_iff in Hterm as [[y z] [Heq Hz]]. cbn in Heq. subst y.
+    eapply variables_contains with (r := r) (z := z);
+      [now right|exact Hz].
+  Qed.
+
   Lemma karr_target_dim_public : forall P c,
     length (variables (c :: P)) + length P + 3 <=
       n (Reached P) + n (Reached (c :: nil)) + 2.
