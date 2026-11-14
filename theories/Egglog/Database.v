@@ -21017,6 +21017,84 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + exact Hkind.
   Qed.
 
+  Lemma put_row_kind_active : forall db f k o,
+    (forall g args output, row (view db) g args output ->
+      kind_ok db g args output) ->
+    kind_ok db f (normal_key db k)
+      (combine_output db f (row_get f (normal_key db k) db)
+        (option_map (normal_cell db) o)) ->
+    forall g args output, row (view (put f k o db)) g args output ->
+      kind_ok (put f k o db) g args output.
+  Proof.
+    intros db f k o Htyped Hnew g args output Hrow.
+    destruct (put_row_sources_raw db f k o g args output Hrow)
+      as [Hold | [-> [-> ->]]];
+      unfold kind_ok, allocated, slots_fit in *;
+      destruct (put_layout_raw db f k o) as [Hkind [Hslots Hids]];
+      rewrite Hkind, Hslots, Hids; [now apply Htyped | exact Hnew].
+  Qed.
+
+  Lemma repair_current_row_kind_active : forall db work f k,
+    inv_on db work ->
+    forall g args output, row (view (repair_current f k db)) g args output ->
+      kind_ok (repair_current f k db) g args output.
+  Proof.
+    intros db work f k Hinv g args output Hrow.
+    destruct (repair_current_row_sources db f k
+      (inv_on_forest_wf db work Hinv) g args output Hrow)
+      as [Hold | [before [Hbefore [-> [-> ->]]]]].
+    - pose proof (inv_on_kind_ok db work g args output Hinv Hold) as Hkind.
+      unfold kind_ok, allocated, slots_fit in *.
+      destruct (repair_current_layout db f k) as [Hdecl [Hslots Hids]].
+      now rewrite Hdecl, Hslots, Hids.
+    - assert (Hnew : kind_ok (row_delete f k db) f (normal_key db k)
+        (option_map (normal_cell db) before)).
+      { apply row_delete_kind_ok.
+        apply inv_on_normal_kind_ok with (work := work);
+          [exact Hinv |].
+        exact (inv_on_kind_ok db work f k before Hinv Hbefore). }
+      assert (Hold : forall old,
+        row_get f (normal_key db k) (row_delete f k db) = Some old ->
+        kind_ok (row_delete f k db) f (normal_key db k) old).
+      { intros old Hget. apply row_delete_kind_ok.
+        apply row_delete_binding in Hget.
+        exact (inv_on_kind_ok db work f (normal_key db k) old Hinv
+          (proj1 Hget)). }
+      pose proof (combine_output_kind_ok_active (row_delete f k db) f
+        (normal_key db k) (row_get f (normal_key db k) (row_delete f k db))
+        (option_map (normal_cell db) before) Hnew Hold) as Hkind.
+      apply row_delete_kind_ok in Hkind.
+      unfold kind_ok, allocated, slots_fit in *.
+      destruct (repair_current_layout db f k) as [Hdecl [Hslots Hids]].
+      now rewrite Hdecl, Hslots, Hids.
+  Qed.
+
+  Lemma inv_on_repair_kind : forall db work f k,
+    inv_on db work ->
+    forall g args output, row (view (db_repair_entry f k db)) g args output ->
+      kind_ok (db_repair_entry f k db) g args output.
+  Proof.
+    intros db work f k Hinv g args output Hrow.
+    unfold db_repair_entry in Hrow |- *.
+    destruct (db_locate f k db) as [current |];
+      [| exact (inv_on_kind_ok db work g args output Hinv Hrow)].
+    destruct (row_get f current db) as [before |];
+      [| exact (inv_on_kind_ok db work g args output Hinv Hrow)].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) before) before));
+      [exact (inv_on_kind_ok db work g args output Hinv Hrow) |].
+    destruct (move_row_identity_semantic_fields (repair_current f current db)
+      f current (normal_key db current)) as [_ Hview].
+    destruct (move_row_identity_layout (repair_current f current db)
+      f current (normal_key db current)) as [Hslots Hids].
+    rewrite Hview in Hrow.
+    pose proof (repair_current_row_kind_active db work f current Hinv
+      g args output Hrow) as Hkind.
+    unfold kind_ok, allocated, slots_fit in *.
+    now rewrite Hview, Hslots, Hids.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
