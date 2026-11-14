@@ -12885,6 +12885,35 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Hcanonical x Hin).
   Qed.
 
+  Lemma database_history_alignment_put : forall db f k o,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_history_alignment (put f k o db).
+  Proof.
+    intros db f k o Hwf Hstore Halign.
+    unfold put.
+    set (ck := normal_key db k).
+    set (co := option_map (normal_cell db) o).
+    set (previous := row_get f ck db).
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db
+      | _, _ => db end).
+    assert (Hnext_store : database_row_store_ok next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try apply database_row_store_ok_union; exact Hstore. }
+    assert (Hnext_align : database_history_alignment next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try (apply database_history_alignment_union;
+          [exact (wf_forest db Hwf) | exact Halign]); exact Halign. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [exact Hnext_align |].
+      apply database_history_alignment_row_replace; assumption.
+    - apply database_history_alignment_row_replace; assumption.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
