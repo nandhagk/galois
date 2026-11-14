@@ -15962,6 +15962,35 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     apply Nat.mul_le_mono_l. exact Hpivot'.
   Qed.
 
+  (** The nonzero output mass has the same bound in binary clock units. *)
+  Lemma poly_assign_prepared_output_clock_mass : forall x e P f,
+    F.lin_of e = Some (f, NoWrap) ->
+    let prepared := poly_prepare_form X.encode f in
+    let support := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef prepared) + 1 in
+    let checkerwidth := poly_raw_keys P + 2 * poly_raw_bits P + X.bits x +
+      3 * F.form_bits prepared + 5 in
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let total := terms (Reached P) + tsize e in
+    let work := (length P + 3)^2 * (n P + total + length P + 3) * bits^2 in
+    (N.of_nat (length P + 1) *
+      N.of_nat (support + length (coef prepared) + terms (Reached P) + length P + 1) *
+      N.of_nat checkerwidth^2 <=
+      128 * (128 * N.of_nat work))%N.
+  Proof.
+    intros x e P f Hlinear prepared support checkerwidth bits total work.
+    pose proof (poly_assign_prepared_output_mass x e P f Hlinear) as Hmass.
+    cbn zeta in Hmass.
+    assert (Hconverted :
+      (N.of_nat ((length P + 1) *
+        (support + length (coef prepared) + terms (Reached P) + length P + 1) *
+        checkerwidth^2) <= N.of_nat (128 * (128 * work)))%N).
+    { apply time_of_nat_le. exact Hmass. }
+    rewrite !Nat2N.inj_mul, Nat2N.inj_pow in Hconverted.
+    cbn [N.of_nat] in Hconverted.
+    exact Hconverted.
+  Qed.
+
   (** The head checker measure fits four public quadratic work units. *)
   Lemma poly_assign_head_measure_public : forall x e P f,
     F.lin_of e = Some (f, NoWrap) ->
