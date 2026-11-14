@@ -4418,8 +4418,8 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     intros p p' ch st Hinv Htracks r y x Hr Hy Hnew Hx.
     apply (proj2 (edit_dom_keys p p' ch st x)).
     apply (proj1 (edit_dom_keys p p' ch st y)) in Hnew.
-    unfold invalidate_keys in Hnew.
-    unfold invalidate_keys.
+    rewrite invalidate_keys_bad_eq in Hnew.
+    rewrite invalidate_keys_bad_eq.
     exact (invalidate_keys_closed_old p p' ch st Hinv Htracks
       r y x Hr Hy Hnew Hx).
   Qed.
