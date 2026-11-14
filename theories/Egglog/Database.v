@@ -21533,6 +21533,37 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * intro r. rewrite Hmembers, Pos.eqb_eq. reflexivity.
   Qed.
 
+  Lemma row_replace_cache_correct_core : forall db f k previous o,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    runtime_slot_bound (db_runtime db) = N.of_nat (length (slots db)) ->
+    runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db)) PTrieCode.empty ->
+    database_cache_correct db ->
+    old db f k = previous ->
+    slots_fit db f (length (k ++ option_list o)) ->
+    (forall before, previous = Some before ->
+      slots_fit db f (length (k ++ option_list before))) ->
+    database_cache_correct (row_replace f k previous o db).
+  Proof.
+    intros db f k previous o Hmap Hbound Hgroups Hcache Hprevious
+      Hfits Hbefore.
+    apply database_cache_correct_from_slots.
+    - rewrite row_replace_map. apply RowMap.wf_set. exact Hmap.
+    - change (runtime_slot_bound (db_runtime (row_replace f k previous o db)) =
+        N.of_nat (length (slots (row_replace f k previous o db)))).
+      rewrite (row_replace_preserves _ (@runtime_slot_bound (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun flag state => eq_refl)
+        (fun all new counts state => eq_refl) f k previous o db),
+        row_replace_slots. exact Hbound.
+    - intros s g perm Hslot.
+      assert (Hslot_old : slot_of db s = Some (g, perm)).
+      { unfold slot_of in *. now rewrite row_replace_slots in Hslot. }
+      eapply row_replace_slot_cache;
+        [exact Hmap | exact Hgroups | exact Hbefore | | exact Hprevious |
+         exact Hfits | exact Hslot_old].
+      exact (cache_correct_slot_cache db s g perm Hcache Hmap Hbound Hslot_old).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
