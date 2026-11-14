@@ -11812,6 +11812,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (proj2 (database_row_store_link_range db Hstore r parent Hlink)).
   Qed.
 
+  Lemma row_root_recorded : forall db fuel r,
+    database_row_store_ok db ->
+    In r (map (fun binding => snd (snd binding))
+      (PTrieCode.elements (row_history (db_row_store db)))) ->
+    In (row_root fuel r (db_row_store db))
+      (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store db)))).
+  Proof.
+    intros db fuel. induction fuel as [| fuel IH]; intros r Hstore Hrecorded.
+    - exact Hrecorded.
+    - cbn [row_root].
+      destruct (PTrieCode.get r (row_links (db_row_store db)))
+        as [parent |] eqn:Hlink; [| exact Hrecorded].
+      destruct (Pos.eqb parent r) eqn:Heq; [exact Hrecorded |].
+      apply IH; [exact Hstore |].
+      unfold database_row_store_ok in Hstore.
+      destruct Hstore as [Hlinks _].
+      exact (proj1 (proj2 (Hlinks r parent Hlink))).
+  Qed.
+
   Lemma row_parent_iter_below_fresh : forall db d r,
     database_row_store_ok db ->
     (r < row_fresh (db_row_store db))%positive ->
