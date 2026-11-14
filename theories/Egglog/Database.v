@@ -11842,6 +11842,20 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     split; [reflexivity |]. apply PTrie.elements_spec. exact Hentry.
   Qed.
 
+  Lemma database_history_root_recorded : forall db f k key r,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    In (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db))
+      (map (fun binding => snd (snd binding))
+        (PTrieCode.elements (row_history (db_row_store db)))).
+  Proof.
+    intros db f k key r Hstore Hentry.
+    apply row_root_recorded; [exact Hstore |].
+    eapply database_history_entry_recorded. exact Hentry.
+  Qed.
+
   Lemma row_parent_iter_below_fresh : forall db d r,
     database_row_store_ok db ->
     (r < row_fresh (db_row_store db))%positive ->
