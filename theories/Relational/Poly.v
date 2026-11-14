@@ -13702,14 +13702,15 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros P c. exact (T_poly_entail_raw_bounded P c).
   Qed.
-  Lemma entail_cert_size : forall P c k, entail_cert P c = Some k ->
+  Lemma entail_cert_size : forall P c k, normal P -> normal (c :: nil) ->
+    entail_cert P c = Some k ->
     (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
         (C.lsize c + C.cbits P (mults k) + 1)) <=
       k_cert * N.of_nat
         (terms (Reached (c :: P)) * (nell (Reached (c :: P)) + 1) +
          fmcost (n P + length (lhs c)) (length P + 1) (n P + length (lhs c))
            (length P + 1) (nell (Reached (c :: P)))))%N.
-  Proof. Admitted. (* SIG-QUESTION: raw duplicate chains exceed this envelope; see handoff. *)
+  Proof. Admitted. (* STUB *)
   Lemma fm_mults_size : forall x P r, normal P -> In r (fm_elim x P) ->
     length (mults_of r) = length P /\
     Forall (fun m => Z.size_nat m <= ell P + 1) (mults_of r).
