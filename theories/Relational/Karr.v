@@ -529,6 +529,53 @@ Proof.
       rewrite (IH _ Hminor). ring.
 Qed.
 
+(** Cofactors beyond the first column vanish when the remaining rows start with zero. *)
+Lemma karr_laplace_tail_zero : forall order row rows indices,
+  Forall (fun index => 0 < index) indices ->
+  Forall (fun r => karr_nth 0 r = 0%Z) rows ->
+  fold_right Z.add 0%Z (map (fun index =>
+    ((if Nat.even index then 1 else -1) * karr_nth index row *
+      karr_determinant (S order) (map (karr_delete index) rows))%Z) indices) = 0%Z.
+Proof.
+  intros order row rows indices Hpositive Hzero.
+  revert Hpositive. induction indices as [|index indices IH];
+    intros Hpositive; [reflexivity|].
+  inversion Hpositive as [|? ? Hindex Hrest]; subst.
+  cbn [map fold_right]. rewrite (IH Hrest).
+  destruct index as [|index]; [lia|].
+  assert (Hminor : Forall (fun r => karr_nth 0 r = 0%Z)
+      (map (karr_delete (S index)) rows)).
+  { apply Forall_forall. intros r Hr.
+    apply in_map_iff in Hr as [source [Hr Hsource]]. subst r.
+    rewrite karr_delete_first.
+    exact (proj1 (Forall_forall _ _) Hzero source Hsource). }
+  rewrite (karr_determinant_zero_first order _ Hminor). ring.
+Qed.
+
+(** Expansion of a matrix with zeros below its first entry is triangular. *)
+Lemma karr_determinant_triangular : forall order row rows,
+  Forall (fun r => karr_nth 0 r = 0%Z) rows ->
+  karr_determinant (S order) (row :: rows) =
+    (karr_nth 0 row * karr_determinant order (map (karr_delete 0) rows))%Z.
+Proof.
+  intros [|order] row rows Hzero.
+  - rewrite karr_determinant_cons.
+    cbn [seq map fold_right karr_determinant Nat.even]. ring.
+  - rewrite karr_determinant_cons.
+    change ((1 * karr_nth 0 row *
+      karr_determinant (S order) (map (karr_delete 0) rows) +
+      fold_right Z.add 0%Z (map (fun index =>
+        ((if Nat.even index then 1 else -1) * karr_nth index row *
+          karr_determinant (S order) (map (karr_delete index) rows))%Z)
+        (seq 1 (S order))))%Z =
+      (karr_nth 0 row *
+        karr_determinant (S order) (map (karr_delete 0) rows))%Z).
+    assert (Hpositive : Forall (fun index => 0 < index) (seq 1 (S order))).
+    { apply Forall_forall. intros index Hin. apply in_seq in Hin. lia. }
+    rewrite (karr_laplace_tail_zero order row rows _ Hpositive Hzero).
+    ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
