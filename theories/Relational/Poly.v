@@ -16298,7 +16298,7 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
             Nat.log2 (terms (Reached P)) + 1)) <=
           N.of_nat (3 * work))%N)
         by (apply time_of_nat_le; exact Hmass).
-      rewrite !Nat2N.inj_mul, Nat2N.inj_pow in Hconverted.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_pow in Hconverted.
       cbn [N.of_nat] in Hconverted. exact Hconverted. }
     replace (RangeCore.poly_raw_initial_factor * N.of_nat (length P + 1)^2 *
       N.of_nat (terms (Reached P) + 1) *
@@ -16378,6 +16378,63 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       replace (256 * RangeCore.poly_normal_row_factor * N.of_nat work)%N with
         (RangeCore.poly_normal_row_factor * (256 * N.of_nat work))%N by ring.
       apply N.mul_le_mono_l. exact Hnormalclock.
+  Qed.
+
+  (** Source-only elimination has no prepared-form width charge. *)
+  Lemma T_poly_assign_zero_step_public : forall x e P,
+    let bits := nell (Reached P) + X.bits x + F.bits_e e + 1 in
+    let volume := n P + terms (Reached P) + tsize e + length P + 3 in
+    let work := (length P + 3)^2 * volume * bits^2 in
+    (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_assign_tail x P) <=
+      4 * RangeCore.poly_step_factor * N.of_nat work)%N.
+  Proof.
+    intros x e P bits volume work.
+    set (dim := length (RangeCore.vars_of (poly_assign_sources x P))).
+    set (width := poly_raw_keys P + 1 + poly_raw_bits P + 1).
+    pose proof (poly_assign_source_dimension x P) as Hdim.
+    pose proof (poly_raw_width P) as Hraw.
+    assert (Hwidth : width <= 2 * bits) by (unfold width, bits; lia).
+    assert (Hmass : (length P + 1)^2 * (dim + length P + 2) * width^2 <=
+      4 * work).
+    { assert (Hrows : (length P + 1)^2 <= (length P + 3)^2)
+        by (cbn [Nat.pow]; nia).
+      assert (Hvolume : dim + length P + 2 <= volume)
+        by (unfold dim, volume; lia).
+      assert (Hsquare : width^2 <= 4 * bits^2).
+      { eapply Nat.le_trans with (m := (2 * bits)^2).
+        - now apply Nat.pow_le_mono_l.
+        - clear -bits. cbn [Nat.pow]. nia. }
+      unfold work.
+      replace (4 * ((length P + 3)^2 * volume * bits^2)) with
+        ((length P + 3)^2 * volume * (4 * bits^2)) by ring.
+      apply Nat.mul_le_mono; [|exact Hsquare].
+      now apply Nat.mul_le_mono. }
+    pose proof (T_poly_assign_tail_step_bounded x P) as Hstep.
+    unfold RangeCore.poly_clock_span in Hstep.
+    fold dim in Hstep.
+    replace (poly_raw_keys P + 1 + poly_raw_bits P + 1) with width
+      in Hstep by reflexivity.
+    replace (dim + (length P + 1) + 1) with (dim + length P + 2)
+      in Hstep by lia.
+    assert (Hmass_clock :
+      (N.of_nat (length P + 1)^2 * N.of_nat (dim + length P + 2) *
+        N.of_nat width^2 <= 4 * N.of_nat work)%N).
+    { assert (Hconverted :
+        (N.of_nat ((length P + 1)^2 * (dim + length P + 2) * width^2) <=
+          N.of_nat (4 * work))%N)
+        by (apply time_of_nat_le; exact Hmass).
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_pow in Hconverted.
+      cbn [N.of_nat] in Hconverted. exact Hconverted. }
+    replace (RangeCore.poly_step_factor * N.of_nat (length P + 1)^2 *
+      (N.of_nat (dim + length P + 2) * N.of_nat width^2))%N with
+      (RangeCore.poly_step_factor *
+        (N.of_nat (length P + 1)^2 * N.of_nat (dim + length P + 2) *
+          N.of_nat width^2))%N in Hstep by ring.
+    eapply N.le_trans; [exact Hstep|].
+    replace (4 * RangeCore.poly_step_factor * N.of_nat work)%N with
+      (RangeCore.poly_step_factor * (4 * N.of_nat work))%N by ring.
+    apply N.mul_le_mono_l. exact Hmass_clock.
   Qed.
 
   (** The head checker measure fits four public quadratic work units. *)
