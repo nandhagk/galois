@@ -11983,6 +11983,46 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Howner f k key r g args other s Hfirst Hsecond Hroots).
   Qed.
 
+  Lemma database_history_connected_transport : forall db db' a b,
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    database_history_connected db a b ->
+    database_history_connected db' a b.
+  Proof.
+    intros db db' a b Hlinks Hconnected.
+    unfold database_history_connected in *.
+    eapply equality_closure_mono; [| exact Hconnected].
+    intros x y Hedge. now rewrite Hlinks.
+  Qed.
+
+  Lemma database_row_weight_conserved_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    row_weights (db_row_store db') = row_weights (db_row_store db) ->
+    ids db' = ids db -> database_row_weight_conserved db ->
+    database_row_weight_conserved db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hweights Hids Hconserved
+      f k key r Hentry.
+    rewrite Hhistory in Hentry.
+    destruct (Hconserved f k key r Hentry)
+      as [codes [Hdistinct [Hcount Hmembers]]].
+    exists codes. split; [exact Hdistinct |].
+    assert (Hroot :
+      row_root (length k * (N.to_nat (N.log2 (ids db')) + 1)) r
+        (db_row_store db') =
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db)).
+    { rewrite Hids. apply row_root_same_links. exact Hlinks. }
+    split.
+    - rewrite Hroot, Hweights. exact Hcount.
+    - rewrite Hroot. apply Forall_forall. intros code Hin.
+      apply Forall_forall with (x := code) in Hmembers; [| exact Hin].
+      destruct Hmembers as [label [id [Hget Hconnected]]].
+      exists label, id. split.
+      + now rewrite Hhistory.
+      + eapply database_history_connected_transport; eassumption.
+  Qed.
+
   (** Repointing a root preserves a lookup when both affected labels agree. *)
   Lemma row_root_link_lookup : forall fuel r store store' loser winner ck k,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
