@@ -969,6 +969,40 @@ Proof.
     rewrite Hstep, IHindices. ring.
 Qed.
 
+(** Repeating a row in adjacent positions makes the determinant zero. *)
+Lemma karr_determinant_duplicate_at : forall order prefix row suffix,
+  length prefix <= order ->
+  karr_determinant (S (S order)) (prefix ++ row :: row :: suffix) = 0%Z.
+Proof.
+  intros order prefix row suffix Hprefix.
+  pose proof (karr_determinant_swap_at order prefix row row suffix
+    Hprefix eq_refl) as Hswap.
+  lia.
+Qed.
+
+(** Equal rows still cancel when equally wide rows lie between them. *)
+Lemma karr_determinant_duplicate_separated : forall order prefix row middle suffix,
+  length prefix + length middle <= order ->
+  Forall (fun r => length r = length row) middle ->
+  karr_determinant (S (S order)) (prefix ++ row :: middle ++ row :: suffix) = 0%Z.
+Proof.
+  intros order prefix row middle suffix Hbound Hwidth.
+  revert prefix Hbound Hwidth.
+  induction middle as [|r middle IH]; intros prefix Hbound Hwidth.
+  - cbn [app]. apply karr_determinant_duplicate_at. lia.
+  - inversion Hwidth as [|? ? Hr Htail]; subst.
+    replace (prefix ++ row :: (r :: middle) ++ row :: suffix)
+      with (prefix ++ row :: r :: (middle ++ row :: suffix)) by reflexivity.
+    rewrite (karr_determinant_swap_at order prefix row r
+      (middle ++ row :: suffix)) by (cbn [length] in *; lia).
+    replace (prefix ++ r :: row :: middle ++ row :: suffix)
+      with ((prefix ++ [r]) ++ row :: middle ++ row :: suffix)
+      by now rewrite <- app_assoc.
+    rewrite (IH (prefix ++ [r])
+      ltac:(rewrite length_app; cbn [length] in *; lia) Htail).
+    ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
