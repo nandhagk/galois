@@ -921,6 +921,30 @@ Proof.
     intros first second _ _. apply karr_determinant_pair_term_swap.
 Qed.
 
+(** Exchanging the first two equally wide rows reverses a determinant's sign. *)
+Lemma karr_determinant_swap_first : forall order xs ys rows,
+  length xs = length ys ->
+  karr_determinant (S (S order)) (xs :: ys :: rows) =
+    (- karr_determinant (S (S order)) (ys :: xs :: rows))%Z.
+Proof.
+  intros order xs ys rows Hlength.
+  pose proof (karr_determinant_duplicate_first order
+    (karr_cross 1 (-1) xs ys) rows) as Hzero.
+  rewrite (karr_determinant_cross (S order) 1 (-1) xs ys
+    (karr_cross 1 (-1) xs ys :: rows) Hlength) in Hzero.
+  replace (xs :: karr_cross 1 (-1) xs ys :: rows)
+    with ([xs] ++ karr_cross 1 (-1) xs ys :: rows) in Hzero by reflexivity.
+  replace (ys :: karr_cross 1 (-1) xs ys :: rows)
+    with ([ys] ++ karr_cross 1 (-1) xs ys :: rows) in Hzero by reflexivity.
+  rewrite (karr_determinant_cross_at (S order) [xs] 1 (-1) xs ys rows)
+    in Hzero by (cbn [length]; lia).
+  rewrite (karr_determinant_cross_at (S order) [ys] 1 (-1) xs ys rows)
+    in Hzero by (cbn [length]; lia).
+  cbn [app] in Hzero.
+  rewrite !karr_determinant_duplicate_first in Hzero.
+  ring_simplify in Hzero. lia.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
