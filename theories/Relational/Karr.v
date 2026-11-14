@@ -16472,6 +16472,74 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - unfold n. cbn [rows_of length]. lia.
   Qed.
 
+  Lemma karr_basis_width_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    ellB (length xs + length P + 3) (nell (Reached P)) + 1 <=
+      8 * (ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+        (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+  Proof.
+    intros P c xs HP Hxs.
+    eapply Nat.le_trans with (m :=
+      ellB (length (variables (c :: P)) + length P + 3)
+        (nell (Reached P) + C.row_bits c + 1) + 1).
+    - apply Nat.add_le_mono_r. apply ellB_mono; lia.
+    - exact (karr_target_width_public P c HP).
+  Qed.
+
+  Lemma T_karr_bareiss_basis_public : forall P c (xs : list X.t),
+    normal P -> length xs <= length (variables (c :: P)) ->
+    (T_karr_bareiss (length xs) 1
+      (seed_rows xs (length P) 0 (map normalize_row P)) <=
+      33554432 * N.of_nat (elimination_work (Reached P)
+        (Reached (c :: nil))) + 4)%N.
+  Proof.
+    intros P c xs HP Hxs.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (dim := length xs + length P + 2).
+    set (b := ellB (dim + 1) (nell (Reached P)) + 1).
+    set (v := ellB d w + 1).
+    pose proof (T_karr_bareiss_seed_bounded xs P) as Hclock.
+    pose proof (karr_bareiss_budget_public (length xs) dim
+      (nell (Reached P)) ltac:(unfold dim; lia)) as Hbudget.
+    pose proof (karr_basis_width_public P c xs HP Hxs) as Hwidth.
+    pose proof (karr_target_dim_public P c) as Hdim.
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    assert (Hdim' : dim + 1 <= 2 * d).
+    { unfold dim, d in *. lia. }
+    assert (Hb : b <= 8 * v).
+    { unfold b, dim, v, d, w.
+      replace (length xs + length P + 2 + 1) with
+        (length xs + length P + 3) by lia.
+      exact Hwidth. }
+    assert (Hcube : (dim + 1)^3 <= 8 * d^3).
+    { replace (8 * d^3) with ((2 * d)^3) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. exact Hdim'. }
+    assert (Hsquare : b^2 <= 64 * v^2).
+    { replace (64 * v^2) with ((8 * v)^2) by (cbn [Nat.pow]; ring).
+      apply Nat.pow_le_mono_l. exact Hb. }
+    assert (Hvolume : (dim + 1)^3 * b^2 <= 512 * (d^3 * v^2)).
+    { assert (Hproduct : (dim + 1)^3 * b^2 <=
+        (8 * d^3) * (64 * v^2)).
+      { apply Nat.mul_le_mono; assumption. }
+      eapply Nat.le_trans; [exact Hproduct|].
+      replace ((8 * d^3) * (64 * v^2)) with
+        (512 * (d^3 * v^2)) by ring. lia. }
+    assert (HN : (N.of_nat ((dim + 1)^3 * b^2) <=
+      N.of_nat (512 * (d^3 * v^2)))%N) by lia.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans with (m :=
+      (65536 * N.of_nat ((dim + 1)^3 * b^2) + 4)%N).
+    - apply N.add_le_mono_r. exact Hbudget.
+    - unfold elimination_work. fold d w v.
+      replace (33554432 * N.of_nat (d^3 * v^2) + 4)%N with
+        (65536 * N.of_nat (512 * (d^3 * v^2)) + 4)%N
+        by (rewrite Nat2N.inj_mul;
+          change (N.of_nat 512) with 512%N; ring).
+      apply N.add_le_mono_r. now apply N.mul_le_mono_l.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
