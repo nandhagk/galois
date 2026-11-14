@@ -13363,6 +13363,108 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           split; [exact Hlabels | exact Hrange].
   Qed.
 
+  Lemma move_row_identity_locate_aligned : forall db f old ck g args
+      old_key old_id ck_key ck_id key r,
+    database_row_store_ok db -> length old = length ck ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    db_locate f old db = Some old -> db_locate f ck db = Some ck ->
+    db_locate g args db = Some args ->
+    (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+       (db_row_store db) =
+       row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+         (db_row_store db) \/
+     row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+       (db_row_store db) =
+       row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+         (db_row_store db) -> args = ck) ->
+    db_locate g args (move_row_identity f old ck db) = Some args.
+  Proof.
+    intros db f old ck g args old_key old_id ck_key ck_id key r Hstore Hlength
+      Hsource Hdest Hentry Hsource_loc Hdest_loc Hlookup Haffected.
+    set (store := db_row_store db).
+    set (depth := length old * (N.to_nat (N.log2 (ids db)) + 1)).
+    set (source_root := row_root depth old_id store).
+    set (dest_root := row_root depth ck_id store).
+    assert (Hsource_fixed :
+      (match PTrieCode.get source_root (row_links store) with
+       | Some parent => parent | None => source_root end) = source_root).
+    { subst source_root depth store.
+      exact (database_history_root_fixed db f old old_key old_id Hstore Hsource). }
+    assert (Hdest_fixed :
+      (match PTrieCode.get dest_root (row_links store) with
+       | Some parent => parent | None => dest_root end) = dest_root).
+    { subst dest_root depth store. rewrite Hlength.
+      exact (database_history_root_fixed db f ck ck_key ck_id Hstore Hdest). }
+    assert (Hsource_key : PTrieCode.get source_root (row_keys store) = Some old).
+    { unfold db_locate in Hsource_loc. rewrite Hsource in Hsource_loc.
+      exact Hsource_loc. }
+    assert (Hdest_key : PTrieCode.get dest_root (row_keys store) = Some ck).
+    { unfold db_locate in Hdest_loc. rewrite Hdest in Hdest_loc.
+      rewrite <- Hlength in Hdest_loc. exact Hdest_loc. }
+    assert (Hlookup_key : PTrieCode.get
+      (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store)
+      (row_keys store) = Some args).
+    { unfold db_locate in Hlookup. rewrite Hentry in Hlookup. exact Hlookup. }
+    assert (Hroots : forall x,
+      x = source_root \/ x = dest_root ->
+      x = row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store ->
+      args = ck).
+    { intros x Hx Hxroot. subst x. apply Haffected. destruct Hx as [Hx | Hx].
+      - left. exact Hx.
+      - right. subst dest_root depth. now rewrite Hlength in Hx. }
+    pose proof (proj2 (move_row_identity_layout db f old ck)) as Hids.
+    unfold db_locate. rewrite move_row_identity_history.
+    rewrite Hentry. unfold ids in Hids. rewrite Hids.
+    unfold move_row_identity. rewrite Hsource, Hdest.
+    replace (runtime_allocated (db_runtime db)) with (ids db) by reflexivity.
+    fold store depth source_root dest_root.
+    destruct (Pos.eqb source_root dest_root) eqn:Hsame.
+    - apply Pos.eqb_eq in Hsame.
+      cbn [database_set_row_store db_row_store row_links row_keys].
+      eapply row_root_relabel_lookup with
+        (store := store) (root := source_root) (ck := ck);
+        try reflexivity; [exact Hlookup_key |].
+      intro Hroot. apply (Hroots source_root); [now left | symmetry; exact Hroot].
+    - apply Pos.eqb_neq in Hsame.
+      destruct (N.leb
+        (match PTrieCode.get source_root (row_weights store) with
+         | Some n => n | None => 1%N end)
+        (match PTrieCode.get dest_root (row_weights store) with
+         | Some n => n | None => 1%N end)) eqn:Hloses.
+      + cbn [database_set_row_store db_row_store row_links row_keys].
+        eapply row_root_link_lookup with (store := store)
+          (loser := source_root) (winner := dest_root) (ck := ck).
+        * reflexivity.
+        * reflexivity.
+        * exact Hsame.
+        * exact Hsource_fixed.
+        * cbn [row_links]. rewrite PTrie.get_set_other by congruence.
+          exact Hdest_fixed.
+        * exact Hlookup_key.
+        * intro Hroot. apply (Hroots (row_root
+            (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store));
+            [exact Hroot | reflexivity].
+      + cbn [database_set_row_store db_row_store row_links row_keys].
+        eapply row_root_link_lookup with (store := store)
+          (loser := dest_root) (winner := source_root) (ck := ck).
+        * reflexivity.
+        * reflexivity.
+        * congruence.
+        * exact Hdest_fixed.
+        * cbn [row_links]. rewrite PTrie.get_set_other by congruence.
+          exact Hsource_fixed.
+        * exact Hlookup_key.
+        * intro Hroot. apply (Hroots (row_root
+            (length args * (N.to_nat (N.log2 (ids db)) + 1)) r store));
+            [destruct Hroot as [Hdest_side | Hsource_side];
+              [right | left]; assumption | reflexivity].
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
