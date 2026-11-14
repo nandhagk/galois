@@ -13702,6 +13702,56 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
   Proof.
     intros P c. exact (T_poly_entail_raw_bounded P c).
   Qed.
+  (** One spare FM stage pays a quadratic charge at the final multiplier width. *)
+  Lemma poly_fmcost_spare_square : forall fuel dim mlen rows bits,
+    mlen <= rows ->
+    (mlen + 1)^2 * (dim + mlen + 1) * (poly_width_after fuel bits + 1)^2 <=
+      fmcost dim mlen (S fuel) rows bits.
+  Proof.
+    intro fuel. induction fuel as [|fuel IH]; intros dim mlen rows bits Hrows.
+    - cbn [poly_width_after fmcost].
+      eapply Nat.le_trans with (m :=
+        (rows + 1)^2 * (dim + mlen + 1) * (bits + 1)^2).
+      + apply Nat.mul_le_mono; [apply Nat.mul_le_mono; [apply Nat.pow_le_mono_l; lia|lia]|lia].
+      + lia.
+    - cbn [poly_width_after fmcost].
+      eapply Nat.le_trans with
+        (m := fmcost dim mlen (S fuel) (rows^2 / 4 + rows) (2 * bits + 1)).
+      2: { apply Nat.le_add_l. }
+      pose proof (poly_rows_recurrence_mono mlen rows Hrows) as Hmono.
+      assert (mlen <= mlen^2 / 4 + mlen) by lia.
+      apply IH. lia.
+  Qed.
+  (** A returned terminal certificate inherits its tracked row's multiplier widths. *)
+  Lemma poly_returned_certificate_weights : forall P c rows k dim mlen keys bits,
+    Forall (poly_row_envelope dim mlen keys bits) rows ->
+    find_certificate P c rows = Some k ->
+    length (mults k) <= mlen /\
+    Forall (fun m => Z.size_nat m <= bits + 1) (mults k) /\
+    Z.size_nat (scale k) <= bits + 1.
+  Proof.
+    intros P c rows. induction rows as [|r rows IH];
+      intros k dim mlen keys bits Hrows Hresult.
+    - discriminate.
+    - inversion Hrows as [|? ? Hr Htail]; subst.
+      cbn [find_certificate] in Hresult.
+      destruct (candidate P c r) as [found|] eqn:Hcandidate.
+      + injection Hresult as Hsame. subst found.
+        unfold candidate in Hcandidate.
+        destruct (poly_contradiction r); [|discriminate].
+        destruct (poly_multipliers r) as [|sc ms] eqn:Hweights; [discriminate|].
+        destruct (poly_canonical_guard P c r sc ms); [|discriminate].
+        destruct (C.check_entails P c (Cert ms (poly_canonical_scale sc) false));
+          [|discriminate].
+        injection Hcandidate as Hsame. subst k. cbn [mults scale].
+        destruct Hr as (_ & _ & _ & _ & Hmultlength & Hmultbits).
+        rewrite Hweights in Hmultlength, Hmultbits. cbn [length] in Hmultlength.
+        inversion Hmultbits as [|? ? Hscale Hms]; subst.
+        split; [lia|]. split; [exact Hms|].
+        { unfold poly_canonical_scale. destruct (Z.eqb sc 0);
+            [cbn [Z.size_nat Pos.size_nat]; lia|lia]. }
+      + eapply IH; [exact Htail|exact Hresult].
+  Qed.
   Lemma entail_cert_size : forall P c k, normal P -> normal (c :: nil) ->
     entail_cert P c = Some k ->
     (N.of_nat (C.csize P (mults k) + (Z.size_nat (scale k) + 1) *
