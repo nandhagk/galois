@@ -3024,7 +3024,8 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         (exists x, In x queued /\ In (x, (f, k0)) entries) /\
         db_locate f k0 db = Some k) /\
     (forall f k0 k, db_locate f k0 db = Some k ->
-      exists o, In ((f, k), o) stored /\ kind (view db) f <> None).
+      exists o, In ((f, k), o) stored /\ kind (view db) f <> None) /\
+    (forall x, In x queued -> repr db x <> x).
 
   (** Retaining rows and extending their history preserves cell coverage. *)
   Lemma recorded_rows_transport : forall db db',
@@ -5164,9 +5165,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     - intros f k o i Hrow _. exfalso. exact (init_rows_empty ds sl f k o Hrow).
     - split.
       + intros f k o i Hrow _ _. exfalso. exact (init_rows_empty ds sl f k o Hrow).
-      + intros f k0 k Hloc. unfold db_locate in Hloc.
-        cbn [init db_row_store row_history] in Hloc.
-        rewrite PTrie.get_empty in Hloc. discriminate.
+      + split.
+        * intros f k0 k Hloc. unfold db_locate in Hloc.
+          cbn [init db_row_store row_history] in Hloc.
+          rewrite PTrie.get_empty in Hloc. discriminate.
+        * intros x Hin. contradiction.
   Qed.
 
   Lemma database_row_store_ok_union : forall i j db,
@@ -10608,7 +10611,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall i j, same (view db) i j <-> repr db i = repr db j) /\
     UnionFind.width (db_forest db) <= N.size_nat (ids db) /\
     row_store_ok db /\ projection_counts_ok db /\ database_history db /\ core_bridge db /\
-    slot_rank_ok db.
+    slot_rank_ok db /\ (forall x, In x (queue db) -> repr db x <> x).
   Lemma forest_ok_init : forall ds sl, forest_ok (init ds sl).
   Proof.
     intros ds sl. unfold forest_ok.
@@ -10627,7 +10630,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       split; [apply database_history_init |].
       split.
       + apply database_wf_core_bridge. apply wf_init.
-      + reflexivity.
+      + split; [reflexivity | intros x Hin; contradiction].
   Qed.
   Definition k_active : N := 1. (* STUB *)
   Definition k_driver : N := 512.
@@ -10752,7 +10755,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db x db' Hforest Hpop.
     destruct Hforest as
       [Hlocated [Hmetadata [Hpending [Huf [Hcard [Hsame [Hwidth
-      [Hstore [Hcounts [Hhistory [Hcore Hrank]]]]]]]]]]].
+      [Hstore [Hcounts [Hhistory [Hcore [Hrank Hnonroot]]]]]]]]]]]].
     pose proof (pop_loser_row_store_ok db x db' Hstore Hpop) as Hstore'.
     assert (Hlocate : forall f k, db_locate f k db' = db_locate f k db).
     { intros f k. eapply pop_loser_locate. exact Hpop. }
@@ -10781,7 +10784,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           split; [exact Hcounts |].
           split; [exact Hhistory |].
           split; [exact Hcore |].
-          exact Hrank.
+          split; [exact Hrank |].
+          intros y Hin. unfold queue in Hin.
+          cbn [database_set_pending database_set_runtime runtime_set_union
+            db_runtime runtime_queue] in Hin.
+          apply Hnonroot. unfold queue. rewrite Hqueue. now right.
   Qed.
 
   Lemma pop_loser_queue : forall db x db',
@@ -10912,6 +10919,12 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db Hidle. unfold database_idle_ok, queue in *. tauto.
   Qed.
 
+  Lemma database_idle_queue_nonroot : forall db, database_idle_ok db ->
+    forall x, In x (queue db) -> repr db x <> x.
+  Proof.
+    intros db Hidle. unfold database_idle_ok, queue in *. tauto.
+  Qed.
+
   Lemma database_idle_coverage : forall db, database_idle_ok db ->
     forall f k o i, row (view db) f k o -> row_ids k o i ->
       exists x k0, repr db x = repr db i /\ uses db x (f, k0) /\
@@ -10940,7 +10953,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exists o, In ((f, k), o) (rows db) /\ kind (view db) f <> None.
   Proof.
     intros db Hidle f k0 k Hlocated.
-    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & _ & Hcover).
+    unfold database_idle_ok in Hidle. destruct Hidle as (_ & _ & _ & _ & Hcover & _).
     exact (Hcover f k0 k Hlocated).
   Qed.
 
@@ -10960,7 +10973,9 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     split; [exact (database_idle_row_store db Hidle) |].
     split; [exact (wf_projection_counts db Hbase) |].
     split; [exact (wf_history db Hbase) |].
-    split; [exact (database_wf_core_bridge db Hbase) | exact Hrank].
+    split; [exact (database_wf_core_bridge db Hbase) |].
+    split; [exact Hrank |].
+    exact (database_idle_queue_nonroot db Hidle).
   Qed.
 
   Lemma public_rows_member : forall db f k o, database_wf db ->
@@ -11068,8 +11083,10 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       unfold scheduled in Hwork. cbn [In] in Hwork.
       destruct Hwork as [Hempty | [x [Hqueued Huse]]]; [contradiction |].
       exists k0. split; [exists x; split; assumption | exact Hlocated]. }
-    intros f k0 k Hlocated.
-    exact (proj1 Hforest f k0 k Hlocated).
+    split.
+    - intros f k0 k Hlocated.
+      exact (proj1 Hforest f k0 k Hlocated).
+    - unfold forest_ok in Hforest. tauto.
   Qed.
 
   Lemma indexed_slot_exists : forall db s new u, metadata_ok db ->
