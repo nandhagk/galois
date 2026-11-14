@@ -20781,6 +20781,111 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exists x. now apply db_repair_entry_uses.
   Qed.
 
+  Lemma union_rows_store : forall db i j,
+    runtime_rows (db_runtime (union i j db)) =
+      runtime_rows (db_runtime db).
+  Proof.
+    intros db i j. unfold union.
+    destruct (UnionFindCode.union i j (db_forest db))
+      as [[pair |] forest]; [destruct pair |];
+      cbn [fst snd database_set_pending database_set_runtime runtime_set_union
+        database_set_forest db_runtime runtime_rows]; reflexivity.
+  Qed.
+
+  Lemma row_map_wf_union_active : forall db i j,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    RowMap.wf (runtime_rows (db_runtime (union i j db))).
+  Proof.
+    intros db i j Hmap. rewrite union_rows_store. exact Hmap.
+  Qed.
+
+  (** Raw insertion preserves the finite map shape while an active batch is in flight. *)
+  Lemma row_map_wf_put_active : forall db f k o,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    RowMap.wf (runtime_rows (db_runtime (put f k o db))).
+  Proof.
+    intros db f k o Hmap. unfold put.
+    remember (row_get f (normal_key db k) db) as previous.
+    remember (option_map (normal_cell db) o) as co.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : RowMap.wf (runtime_rows (db_runtime next))).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |]; try exact Hmap.
+      apply row_map_wf_union_active. exact Hmap. }
+    destruct previous as [before |].
+    - destruct (output_eqb before updated); [exact Hnext |].
+      rewrite row_replace_map. apply RowMap.wf_set. exact Hnext.
+    - rewrite row_replace_map. apply RowMap.wf_set. exact Hnext.
+  Qed.
+
+  Lemma row_map_wf_repair_current : forall db f k,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    RowMap.wf (runtime_rows (db_runtime (repair_current f k db))).
+  Proof.
+    intros db f k Hmap. unfold repair_current.
+    destruct (row_get f k db) as [output |] eqn:Hrow; [| exact Hmap].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hmap |].
+    change (RowMap.wf (runtime_rows (db_runtime
+      (put f (normal_key db k) (option_map (normal_cell db) output)
+        (row_delete f k db))))).
+    apply row_map_wf_put_active.
+    refine (eq_ind_r (fun rows => RowMap.wf rows) _
+      (row_delete_map_present f k db output Hrow)).
+    now apply RowMap.wf_remove.
+  Qed.
+
+  Lemma move_row_identity_rows_store : forall db f old current,
+    runtime_rows (db_runtime (move_row_identity f old current db)) =
+      runtime_rows (db_runtime db).
+  Proof.
+    intros db f old current. unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f old) (row_history (db_row_store db)))
+      as [[old_key old_id] |]; [| reflexivity].
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store db))) as [[current_key current_id] |];
+      reflexivity.
+  Qed.
+
+  Lemma row_map_wf_db_repair_entry : forall db f k,
+    RowMap.wf (runtime_rows (db_runtime db)) ->
+    RowMap.wf (runtime_rows (db_runtime (db_repair_entry f k db))).
+  Proof.
+    intros db f k Hmap. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hmap].
+    destruct (row_get f current db) as [output |]; [| exact Hmap].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hmap |].
+    rewrite move_row_identity_rows_store.
+    exact (row_map_wf_repair_current db f current Hmap).
+  Qed.
+
+  (** Active repair retains row enumeration and distinct row keys. *)
+  Lemma inv_on_repair_rows : forall db work f k,
+    inv_on db work ->
+    (forall g args output,
+      In ((g, args), output) (rows (db_repair_entry f k db)) <->
+        row (view (db_repair_entry f k db)) g args output) /\
+    NoDup (map fst (rows (db_repair_entry f k db))).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hmap : RowMap.wf (runtime_rows (db_runtime db))).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    pose proof (row_map_wf_db_repair_entry db f k Hmap) as Hnext.
+    split.
+    - intros g args output. unfold rows. rewrite <- RowMap.elements_trie.
+      apply row_elements_member. exact Hnext.
+    - unfold rows. rewrite <- RowMap.elements_trie.
+      apply RowMap.elements_nodup. exact Hnext.
+  Qed.
+
   (** Repair discharges one active occurrence and retains coverage of affected rows. *)
   Lemma F7_repair_inv : forall db e rest, inv_on db (e :: rest) ->
     inv_on (repair_entry e db) rest.
@@ -20794,6 +20899,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (db_tuple_code current))
       (output_eqb (option_map (normal_cell db) output) output)) eqn:Hfixed.
     1: { eapply inv_on_repair_fixed; eassumption. }
+    assert (Howned : database_owned_ok (repair_entry (f, k) db)).
+    { exact (inv_on_repair_owned db ((f, k) :: rest) f k Hinv). }
+    assert (Hwork : forall e, In e rest ->
+      exists x, uses (repair_entry (f, k) db) x e).
+    { exact (inv_on_repair_work db f k rest Hinv). }
   Admitted. (* STUB: present-row mutation remains *)
 
   (** Continuing steps retain the queue and active-batch invariant. *)
