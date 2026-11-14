@@ -343,6 +343,20 @@ Proof.
     apply in_or_app. right. now left.
 Qed.
 
+(** The row multiplication relation multiplies every augmented coordinate. *)
+Lemma karr_row_entries_multiple : forall d q r,
+  karr_multiple d q r ->
+  map (fun z => (d * z)%Z) (karr_row_entries q) = karr_row_entries r.
+Proof.
+  intros d [qc qr qw qs] [rc rr rw rs] Hmultiple.
+  unfold karr_multiple in Hmultiple.
+  cbn [kcoeff kright kweight kscale] in Hmultiple.
+  destruct Hmultiple as [Hcoeff [Hright [Hweight Hscale]]].
+  unfold karr_row_entries. cbn [kcoeff kright kweight kscale].
+  rewrite !map_app. cbn [map]. rewrite map_app. cbn [map].
+  rewrite Hcoeff, Hright, Hweight, Hscale. reflexivity.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
