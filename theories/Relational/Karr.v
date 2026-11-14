@@ -369,6 +369,25 @@ Proof.
   rewrite Z.mul_comm. apply Z.mod_mul. exact Hnonzero.
 Qed.
 
+(** An exact reduction applies cross multiplication and quotient to all row entries. *)
+Lemma karr_row_entries_reduce_exact : forall d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) ->
+  karr_exact d (KRow (karr_cross a b (kcoeff r) (kcoeff p))
+    (a * kright r - b * kright p)%Z
+    (karr_cross a b (kweight r) (kweight p))
+    (a * kscale r - b * kscale p)%Z) = true ->
+  karr_row_entries (karr_reduce d a b p r) =
+    map (fun z => (z / d)%Z)
+      (karr_cross a b (karr_row_entries r) (karr_row_entries p)).
+Proof.
+  intros d a b p r Hcoeff Hweight Hexact.
+  unfold karr_reduce, karr_divide.
+  rewrite Hexact, karr_row_entries_quotient.
+  rewrite karr_row_entries_cross by assumption.
+  reflexivity.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
