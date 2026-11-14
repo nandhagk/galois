@@ -20301,7 +20301,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
 
   (** Continuing steps retain the queue and active-batch invariant. *)
   Lemma F8_rstep_inv : forall s s', state_inv s -> rstep s = inl s' -> state_inv s'.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [db work] s' Hinv Hstep.
+    destruct work as [| e rest].
+    - cbn [state_inv fst snd] in Hinv.
+      rewrite F5_rstep in Hstep.
+      destruct (pop_loser db) as [[x db'] |] eqn:Hpop; [| discriminate].
+      injection Hstep as Hstate. subst s'.
+      cbn [state_inv fst snd].
+      rewrite (F4_bucket db [] x Hinv).
+      exact (proj2 (proj2 (proj2 (proj2 (F4_pop db x db' Hinv Hpop))))).
+    - rewrite F5_rstep in Hstep.
+      injection Hstep as Hstate. subst s'.
+      cbn [state_inv fst snd] in *.
+      exact (F7_repair_inv db e rest Hinv).
+  Qed.
 
   (** Repair retains kinds and identifier allocation. *)
   Lemma F9_rstep_layout : forall s s', state_inv s -> rstep s = inl s' ->
