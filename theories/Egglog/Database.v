@@ -3104,6 +3104,46 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact Hgroup.
   Qed.
 
+  Lemma db_locate_same_store_ids : forall db db' f k,
+    db_row_store db' = db_row_store db -> ids db' = ids db ->
+    db_locate f k db' = db_locate f k db.
+  Proof.
+    intros db db' f k Hstore Hids. unfold db_locate.
+    rewrite Hstore. unfold ids in Hids. now rewrite Hids.
+  Qed.
+
+  Lemma database_row_store_ok_transport : forall db db',
+    db_row_store db' = db_row_store db ->
+    db_nuses db' = db_nuses db ->
+    ids db' = ids db ->
+    incl (db_index_counters db) (db_index_counters db') ->
+    incl (db_written_cells db) (db_written_cells db') ->
+    database_row_store_ok db -> database_row_store_ok db'.
+  Proof.
+    intros db db' Hstore Hnuses Hids Hcounters Hwritten Hbase.
+    unfold database_row_store_ok in Hbase |- *.
+    destruct Hbase as
+      (Hlinks & Huses & Hcount & Hcounter & Hcells & Hdepth & Hsize &
+        Hmap & Hlabels & Hrange).
+    rewrite Hstore, Hnuses, Hids.
+    split; [exact Hlinks |]. split; [exact Huses |]. split; [exact Hcount |].
+    split.
+    - intros f k key r Hget.
+      destruct (Hcounter f k key r Hget) as [Hrow [Hparent Hfresh]].
+      repeat split; try assumption. now apply Hcounters.
+    - split.
+      + intros x f k c Huse Hcell. apply Hwritten.
+        exact (Hcells x f k c Huse Hcell).
+      + split.
+        * intros f k key r Hget.
+          destruct (Hdepth f k key r Hget) as [d [Hbound [Hroot Hcurrent]]].
+          exists d. split; [exact Hbound |]. split; [exact Hroot |].
+          rewrite (db_locate_same_store_ids db db' f k Hstore Hids).
+          exact Hcurrent.
+        * split; [exact Hsize |]. split; [exact Hmap |].
+          split; [exact Hlabels | exact Hrange].
+  Qed.
+
   Lemma database_row_store_uses_history : forall db,
     database_row_store_ok db ->
     forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
