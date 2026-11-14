@@ -945,6 +945,30 @@ Proof.
   ring_simplify in Hzero. lia.
 Qed.
 
+(** Exchanging adjacent equally wide rows anywhere reverses the determinant's sign. *)
+Lemma karr_determinant_swap_at : forall order prefix xs ys suffix,
+  length prefix <= order -> length xs = length ys ->
+  karr_determinant (S (S order)) (prefix ++ xs :: ys :: suffix) =
+    (- karr_determinant (S (S order)) (prefix ++ ys :: xs :: suffix))%Z.
+Proof.
+  induction order as [|order IH]; intros prefix xs ys suffix Hprefix Hlength.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_swap_first; exact Hlength|].
+    cbn [length] in Hprefix. lia.
+  - destruct prefix as [|row prefix]; [apply karr_determinant_swap_first; exact Hlength|].
+    cbn [app].
+    rewrite (karr_determinant_cons (S (S order)) row (prefix ++ xs :: ys :: suffix)).
+    rewrite (karr_determinant_cons (S (S order)) row (prefix ++ ys :: xs :: suffix)).
+    generalize (seq 0 (S (S (S order)))) as indices. intro indices.
+    induction indices as [|index indices IHindices]; cbn [map fold_right]; [ring|].
+    rewrite !map_app. cbn [map].
+    pose proof (IH (map (karr_delete index) prefix)
+      (karr_delete index xs) (karr_delete index ys)
+      (map (karr_delete index) suffix)
+      ltac:(rewrite length_map; cbn [length] in Hprefix; lia)
+      (karr_delete_length_equal index xs ys Hlength)) as Hstep.
+    rewrite Hstep, IHindices. ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
