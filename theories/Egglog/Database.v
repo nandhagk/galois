@@ -6701,6 +6701,73 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
   Definition row_ids (k : list (cell V.t)) (o : option (cell V.t)) (i : positive) : Prop :=
     In (Id i) (k ++ option_list o).
 
+  Lemma database_idle_queue_distinct : forall db, database_idle_ok db -> NoDup (queue db).
+  Proof.
+    intros db Hidle. unfold database_idle_ok, queue in *. tauto.
+  Qed.
+
+  Lemma database_idle_queue_nonroot : forall db, database_idle_ok db ->
+    forall x, In x (queue db) -> repr db x <> x.
+  Proof.
+    intros db Hidle. unfold database_idle_ok, queue in *. tauto.
+  Qed.
+
+  Lemma public_union_queue_distinct : forall db i j, database_public_ok db ->
+    NoDup (queue (union i j db)).
+  Proof.
+    intros db i j Hpublic.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    pose proof (database_idle_queue_distinct db Hidle) as Hdistinct.
+    pose proof (database_idle_queue_nonroot db Hidle) as Hnonroot.
+    unfold union, queue.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |]; cbn [database_set_pending database_set_runtime
+      runtime_set_union db_runtime runtime_queue]; [| exact Hdistinct].
+    constructor; [| exact Hdistinct]. intro Hin.
+    pose proof (Hnonroot loser Hin) as Hloser_nonroot.
+    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+      (wf_forest db Hbase) Hunion) as [_ [Hroots _]].
+    destruct Hroots as [[_ Hloser] | [_ Hloser]]; subst loser;
+      apply Hloser_nonroot; apply UnionFind.repr_idem; exact (wf_forest db Hbase).
+  Qed.
+
+  Lemma public_union_queue_nonroot : forall db i j, database_public_ok db ->
+    forall x, In x (queue (union i j db)) -> repr (union i j db) x <> x.
+  Proof.
+    intros db i j Hpublic x Hin.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_idle_queue_nonroot db (database_public_idle db Hpublic)) as Hnonroot.
+    unfold union in Hin |- *.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |].
+    - destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+        (wf_forest db Hbase) Hunion) as [Hdiff [Hroots Hrepr]].
+      assert (Hwinner_root : repr db winner = winner).
+      { destruct Hroots as [[Hw _] | [Hw _]]; subst winner;
+          apply UnionFind.repr_idem; exact (wf_forest db Hbase). }
+      assert (Hloser_root : repr db loser = loser).
+      { destruct Hroots as [[_ Hl] | [_ Hl]]; subst loser;
+          apply UnionFind.repr_idem; exact (wf_forest db Hbase). }
+      assert (Hdifferent : winner <> loser).
+      { intro Heq. subst loser. destruct Hroots as [[Hw Hl] | [Hw Hl]];
+          rewrite Hw in Hl; congruence. }
+      cbn [database_set_pending database_set_runtime runtime_set_union db_runtime
+        runtime_queue] in Hin.
+      change (UnionFind.repr forest x <> x).
+      rewrite Hrepr. destruct Hin as [-> | Hold].
+      + unfold repr in Hloser_root. rewrite Hloser_root, Pos.eqb_refl.
+        exact Hdifferent.
+      + destruct (Pos.eqb (repr db x) loser) eqn:Hsame.
+        * unfold repr in Hsame. rewrite Hsame.
+          intro Hwinner. subst x. apply (Hnonroot winner Hold). exact Hwinner_root.
+        * unfold repr in Hsame. rewrite Hsame. exact (Hnonroot x Hold).
+    - destruct (UnionFind.union_none i j (db_forest db) forest
+        (wf_forest db Hbase) Hunion) as [_ Hrepr].
+      change (UnionFind.repr forest x <> x).
+      rewrite Hrepr. exact (Hnonroot x Hin).
+  Qed.
+
   Lemma union_forest_members : forall i j db, database_wf db -> allocated db i -> allocated db j ->
     forall x, UnionFind.mem (db_forest (union i j db)) x <-> allocated (union i j db) x.
   Proof.
@@ -13947,17 +14014,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     intros db Hidle. unfold database_idle_ok, row_store_ok in *. tauto.
   Qed.
 
-  Lemma database_idle_queue_distinct : forall db, database_idle_ok db -> NoDup (queue db).
-  Proof.
-    intros db Hidle. unfold database_idle_ok, queue in *. tauto.
-  Qed.
-
-  Lemma database_idle_queue_nonroot : forall db, database_idle_ok db ->
-    forall x, In x (queue db) -> repr db x <> x.
-  Proof.
-    intros db Hidle. unfold database_idle_ok, queue in *. tauto.
-  Qed.
-
   Lemma database_idle_coverage : forall db, database_idle_ok db ->
     forall f k o i, row (view db) f k o -> row_ids k o i ->
       exists x k0, repr db x = repr db i /\ uses db x (f, k0) /\
@@ -14656,62 +14712,6 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     destruct cell as [i | v]; cbn [map normal_cell];
       try destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i));
       cbn; now rewrite IH.
-  Qed.
-
-  Lemma public_union_queue_distinct : forall db i j, database_public_ok db ->
-    NoDup (queue (union i j db)).
-  Proof.
-    intros db i j Hpublic.
-    pose proof (database_public_base db Hpublic) as Hbase.
-    pose proof (database_public_idle db Hpublic) as Hidle.
-    pose proof (database_idle_queue_distinct db Hidle) as Hdistinct.
-    pose proof (database_idle_queue_nonroot db Hidle) as Hnonroot.
-    unfold union, queue.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
-    destruct roots as [[winner loser] |]; cbn [database_set_pending database_set_runtime
-      runtime_set_union db_runtime runtime_queue]; [| exact Hdistinct].
-    constructor; [| exact Hdistinct]. intro Hin.
-    pose proof (Hnonroot loser Hin) as Hloser_nonroot.
-    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
-      (wf_forest db Hbase) Hunion) as [_ [Hroots _]].
-    destruct Hroots as [[_ Hloser] | [_ Hloser]]; subst loser;
-      apply Hloser_nonroot; apply UnionFind.repr_idem; exact (wf_forest db Hbase).
-  Qed.
-
-  Lemma public_union_queue_nonroot : forall db i j, database_public_ok db ->
-    forall x, In x (queue (union i j db)) -> repr (union i j db) x <> x.
-  Proof.
-    intros db i j Hpublic x Hin.
-    pose proof (database_public_base db Hpublic) as Hbase.
-    pose proof (database_idle_queue_nonroot db (database_public_idle db Hpublic)) as Hnonroot.
-    unfold union in Hin |- *.
-    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
-    destruct roots as [[winner loser] |].
-    - destruct (UnionFind.union_some i j (db_forest db) winner loser forest
-        (wf_forest db Hbase) Hunion) as [Hdiff [Hroots Hrepr]].
-      assert (Hwinner_root : repr db winner = winner).
-      { destruct Hroots as [[Hw _] | [Hw _]]; subst winner;
-          apply UnionFind.repr_idem; exact (wf_forest db Hbase). }
-      assert (Hloser_root : repr db loser = loser).
-      { destruct Hroots as [[_ Hl] | [_ Hl]]; subst loser;
-          apply UnionFind.repr_idem; exact (wf_forest db Hbase). }
-      assert (Hdifferent : winner <> loser).
-      { intro Heq. subst loser. destruct Hroots as [[Hw Hl] | [Hw Hl]];
-          rewrite Hw in Hl; congruence. }
-      cbn [database_set_pending database_set_runtime runtime_set_union db_runtime
-        runtime_queue] in Hin.
-      change (UnionFind.repr forest x <> x).
-      rewrite Hrepr. destruct Hin as [-> | Hold].
-      + unfold repr in Hloser_root. rewrite Hloser_root, Pos.eqb_refl.
-        exact Hdifferent.
-      + destruct (Pos.eqb (repr db x) loser) eqn:Hsame.
-        * unfold repr in Hsame. rewrite Hsame.
-          intro Hwinner. subst x. apply (Hnonroot winner Hold). exact Hwinner_root.
-        * unfold repr in Hsame. rewrite Hsame. exact (Hnonroot x Hold).
-    - destruct (UnionFind.union_none i j (db_forest db) forest
-        (wf_forest db Hbase) Hunion) as [_ Hrepr].
-      change (UnionFind.repr forest x <> x).
-      rewrite Hrepr. exact (Hnonroot x Hin).
   Qed.
 
   Lemma database_history_alignment_put : forall db f k o,
