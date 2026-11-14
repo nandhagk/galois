@@ -3005,7 +3005,9 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     DatabaseUseMap.wf (row_uses store) /\
     (forall f k key r,
       PTrieCode.get (db_row_code f k) (row_history store) = Some (key, r) ->
-      key = (f, k)).
+      key = (f, k)) /\
+    (forall r p, PTrieCode.get r (row_links store) = Some p ->
+      (r < row_fresh store)%positive /\ (p < row_fresh store)%positive).
 
   Lemma database_row_store_labels : forall db, database_row_store_ok db ->
     forall f k key r,
@@ -3013,6 +3015,27 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       key = (f, k).
   Proof.
     intros db Hstore. unfold database_row_store_ok in Hstore. tauto.
+  Qed.
+
+  Lemma database_row_store_link_range : forall db,
+    database_row_store_ok db ->
+    forall r p, PTrieCode.get r (row_links (db_row_store db)) = Some p ->
+      (r < row_fresh (db_row_store db))%positive /\
+      (p < row_fresh (db_row_store db))%positive.
+  Proof.
+    intros db Hstore. unfold database_row_store_ok in Hstore. tauto.
+  Qed.
+
+  Lemma database_row_store_future_links : forall db,
+    database_row_store_ok db ->
+    forall r, (row_fresh (db_row_store db) <= r)%positive ->
+      PTrieCode.get r (row_links (db_row_store db)) = None.
+  Proof.
+    intros db Hstore r Hfuture.
+    destruct (PTrieCode.get r (row_links (db_row_store db))) as [p |] eqn:Hlink;
+      [| reflexivity].
+    destruct (database_row_store_link_range db Hstore r p Hlink) as [Hrange _].
+    lia.
   Qed.
 
   Lemma database_row_store_uses_history : forall db,
@@ -3123,6 +3146,67 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     now apply (ensure_row_identity_labels db f k Hstore g args key r).
   Qed.
 
+  Lemma ensure_row_identity_link_range : forall db f k,
+    database_row_store_ok db ->
+    forall r p,
+      PTrieCode.get r (row_links (db_row_store (ensure_row_identity f k db))) = Some p ->
+      (r < row_fresh (db_row_store (ensure_row_identity f k db)))%positive /\
+      (p < row_fresh (db_row_store (ensure_row_identity f k db)))%positive.
+  Proof.
+    intros db f k Hstore r p Hlink.
+    unfold ensure_row_identity in *.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior.
+    - exact (database_row_store_link_range db Hstore r p Hlink).
+    - cbn [database_set_index_counters database_set_row_store db_row_store
+        row_fresh row_links] in Hlink |- *.
+      destruct (database_row_store_link_range db Hstore r p Hlink) as [Hr Hp].
+      split; lia.
+  Qed.
+
+  Lemma register_row_uses_link_range : forall db f k o,
+    database_row_store_ok db ->
+    forall r p,
+      PTrieCode.get r (row_links (db_row_store (register_row_uses f k o db))) = Some p ->
+      (r < row_fresh (db_row_store (register_row_uses f k o db)))%positive /\
+      (p < row_fresh (db_row_store (register_row_uses f k o db)))%positive.
+  Proof.
+    intros db f k o Hstore r p Hlink.
+    unfold register_row_uses in *.
+    cbn [database_set_nuses database_set_row_store db_row_store row_fresh row_links]
+      in Hlink |- *.
+    exact (ensure_row_identity_link_range db f k Hstore r p Hlink).
+  Qed.
+
+  Lemma ensure_row_identity_future_links : forall db f k,
+    database_row_store_ok db ->
+    forall r,
+      (row_fresh (db_row_store (ensure_row_identity f k db)) <= r)%positive ->
+      PTrieCode.get r (row_links (db_row_store (ensure_row_identity f k db))) = None.
+  Proof.
+    intros db f k Hstore r Hfuture.
+    unfold ensure_row_identity in *.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior.
+    - exact (database_row_store_future_links db Hstore r Hfuture).
+    - cbn [database_set_index_counters database_set_row_store db_row_store
+        row_fresh row_links] in Hfuture |- *.
+      apply (database_row_store_future_links db Hstore r). lia.
+  Qed.
+
+  Lemma register_row_uses_future_links : forall db f k o,
+    database_row_store_ok db ->
+    forall r,
+      (row_fresh (db_row_store (register_row_uses f k o db)) <= r)%positive ->
+      PTrieCode.get r (row_links (db_row_store (register_row_uses f k o db))) = None.
+  Proof.
+    intros db f k o Hstore r Hfuture.
+    unfold register_row_uses in *.
+    cbn [database_set_nuses database_set_row_store db_row_store row_fresh row_links]
+      in Hfuture |- *.
+    exact (ensure_row_identity_future_links db f k Hstore r Hfuture).
+  Qed.
+
   Lemma row_write_row_store : forall db f k o,
     db_row_store (row_write f k o db) = db_row_store db.
   Proof.
@@ -3158,9 +3242,11 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
              ++ split.
                 ** intros f k key r d Hhistory.
                    rewrite PTrie.get_empty in Hhistory. discriminate.
-                ** split; [apply DatabaseUseMap.wf_empty |].
-                   intros f k key r Hhistory.
-                   rewrite PTrie.get_empty in Hhistory. discriminate.
+                ** split; [apply DatabaseUseMap.wf_empty |]. split.
+                   --- intros f k key r Hhistory.
+                       rewrite PTrie.get_empty in Hhistory. discriminate.
+                   --- intros r p Hlink. rewrite PTrie.get_empty in Hlink.
+                       discriminate.
   Qed.
 
   (** Public idle states retain enough historical uses to rebuild every row. *)
@@ -10966,7 +11052,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     unfold row_store_ok, database_row_store_ok in Hstore.
     destruct Hstore as
       (Hlinks & Hhistory & Hcount & Hcounter & Hcells & Hdepth & Hgroup &
-        Hmap & Hlabels).
+        Hmap & Hlabels & Hrange).
     assert (Hcountnew : N.to_nat (db_nuses db') = length (uses_entries db')).
     { eapply pop_loser_nuses_count; [exact Hmap | exact Hcount | exact Hpop]. }
     unfold db_pop_loser in Hpop.
@@ -10998,7 +11084,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         * split.
           -- intros f k key r d Hget Hroot. rewrite Hids.
              exact (Hgroup f k key r d Hget Hroot).
-          -- split; [apply DatabaseUsesFacts.wf_transfer; exact Hmap | exact Hlabels].
+          -- split; [apply DatabaseUsesFacts.wf_transfer; exact Hmap |].
+             split; [exact Hlabels | exact Hrange].
   Qed.
 
   Lemma forest_ok_pop : forall db x db', forest_ok db ->
