@@ -1215,6 +1215,12 @@ Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
   Definition raw_keys (m : kmap S.key L.t) : list S.key :=
     map (fun binding => fst (snd binding)) (PTrieCode.elements m).
 
+  (** A validated inventory ignores a cell stored away from its payload key. *)
+  Definition valid_keys (m : kmap S.key L.t) : list S.key :=
+    map (fun binding => fst (snd binding))
+      (filter (fun binding => Pos.eqb (fst binding)
+        (S.key_code (fst (snd binding)))) (PTrieCode.elements m)).
+
   (** Guarded lookup accepts exactly a payload carrying the queried key. *)
   Lemma raw_lookup_cell : forall m x v,
     Bindings.lookup m x = Some v <->
@@ -1226,6 +1232,65 @@ Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
       + split; intro Heq; now inversion Heq.
       + split; intro Heq; [discriminate Heq|congruence].
     - split; intro Heq; discriminate Heq.
+  Qed.
+
+  Lemma valid_keys_dom : forall m x,
+    In x (valid_keys m) <-> exists v, Bindings.lookup m x = Some v.
+  Proof.
+    intros m x; unfold valid_keys; split.
+    - intros Hin; apply in_map_iff in Hin as [[path [y v]] [Heq Hin]].
+      cbn in Heq; subst y; apply filter_In in Hin as [Hin Hpath].
+      apply Pos.eqb_eq in Hpath; cbn [fst snd] in Hpath; subst path.
+      apply PTrie.elements_spec in Hin; exists v; now apply raw_lookup_cell.
+    - intros [v Hlookup]; apply raw_lookup_cell in Hlookup.
+      apply in_map_iff; exists (S.key_code x, (x, v)); split; [reflexivity|].
+      apply filter_In; split; [now apply PTrie.elements_spec|].
+      cbn [fst snd]; apply Pos.eqb_refl.
+  Qed.
+
+  Lemma valid_keys_fill : forall xs m base x,
+    In x (valid_keys (Bindings.fill xs m base)) <->
+      In x xs \/ In x (valid_keys base).
+  Proof.
+    intros xs m base x; rewrite !valid_keys_dom, fill_lookup.
+    destruct (Bindings.mem x xs) eqn:Hmem.
+    - split.
+      + intros _; left; now apply (proj1 (mem_spec x xs)).
+      + intros _; eexists; reflexivity.
+    - split.
+      + intros Hvalue; right; exact Hvalue.
+      + intros [Hin|Hvalue]; [|exact Hvalue].
+        pose proof (proj2 (mem_spec x xs) Hin) as Htrue; congruence.
+  Qed.
+
+  Lemma valid_keys_nodup : forall m, NoDup (valid_keys m).
+  Proof.
+    intro m; unfold valid_keys.
+    apply NoDup_map_inv with (f := S.key_code).
+    assert (Hcodes : map S.key_code
+      (map (fun binding => fst (snd binding))
+        (filter (fun binding => Pos.eqb (fst binding)
+          (S.key_code (fst (snd binding)))) (PTrieCode.elements m))) =
+      map fst (filter (fun binding => Pos.eqb (fst binding)
+        (S.key_code (fst (snd binding)))) (PTrieCode.elements m))).
+    { rewrite map_map; apply map_ext_in; intros [path [x v]] Hin; cbn [fst snd] in *.
+      apply filter_In in Hin as [_ Hpath]; apply Pos.eqb_eq in Hpath.
+      cbn [fst snd] in Hpath; now symmetry. }
+    rewrite Hcodes; clear Hcodes.
+    assert (Hcells : NoDup (map fst (PTrieCode.elements m)))
+      by apply PTrie.elements_nodup.
+    remember (PTrieCode.elements m) as cells eqn:Hcells_eq.
+    clear Hcells_eq; induction cells as [|cell rest IH].
+    - constructor.
+    - inversion Hcells as [|? ? Habsent Hrest]; subst.
+      cbn [filter map].
+      destruct (Pos.eqb (fst cell) (S.key_code (fst (snd cell)))).
+      + constructor; [|apply IH; exact Hrest].
+        intro Hin; apply Habsent.
+        apply in_map_iff in Hin as [other [Heq Hother]].
+        apply in_map_iff; exists other; split; [exact Heq|].
+        now apply filter_In in Hother as [Hother _].
+      + apply IH; exact Hrest.
   Qed.
 
   (** Every canonical inventory key is present, and every present key is listed. *)
@@ -1255,6 +1320,30 @@ Module SourceBindingInventory (L : LATTICE) (S : SYSTEM L)
   Proof.
     intros m Hcanonical; apply NoDup_map_inv with (f := S.key_code).
     rewrite raw_keys_codes by exact Hcanonical; apply PTrie.elements_nodup.
+  Qed.
+
+  Lemma valid_keys_raw : forall m, canonical m -> valid_keys m = raw_keys m.
+  Proof.
+    intros m Hcanonical; unfold valid_keys, raw_keys; f_equal.
+    assert (Hfilter : forall (cells : list (positive * (S.key * L.t))),
+      (forall path x v, In (path, (x, v)) cells -> path = S.key_code x) ->
+      filter (fun binding => Pos.eqb (fst binding)
+        (S.key_code (fst (snd binding)))) cells = cells).
+    { intros cells; induction cells as [|[path [x v]] rest IH]; intro Hall.
+      - reflexivity.
+      - cbn [filter]; rewrite (Hall path x v (or_introl eq_refl)), Pos.eqb_refl.
+        f_equal; apply IH; intros q y w Hin; apply (Hall q y w); now right. }
+    apply Hfilter; intros path x v Hin.
+    apply PTrie.elements_spec in Hin; exact (Hcanonical path x v Hin).
+  Qed.
+
+  Lemma valid_keys_remove_subset : forall bad m x,
+    In x (valid_keys (Bindings.remove_keys bad m)) -> In x (valid_keys m).
+  Proof.
+    intros bad m x Hin; apply valid_keys_dom in Hin as [v Hvalue].
+    apply valid_keys_dom; exists v.
+    rewrite lookup_remove_keys in Hvalue.
+    destruct (Bindings.mem x bad); [discriminate Hvalue|exact Hvalue].
   Qed.
 
   (** A duplicate-free mapped list identifies equal fibers uniquely. *)
