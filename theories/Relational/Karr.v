@@ -11560,12 +11560,68 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       + now right.
   Qed.
 
+  Lemma karr_vars_fold_support : forall xs acc x,
+    In x (fold_left (fun acc y =>
+      if existsb (X.eqb y) acc then acc else y :: acc) xs acc) ->
+    In x acc \/ In x xs.
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros acc x Hin;
+      cbn [fold_left] in Hin.
+    - now left.
+    - specialize (IH _ _ Hin).
+      destruct (existsb (X.eqb y) acc); simpl in *; intuition congruence.
+  Qed.
+
+  Lemma karr_vars_fold_nodup : forall xs acc,
+    NoDup acc -> NoDup (fold_left (fun acc y =>
+      if existsb (X.eqb y) acc then acc else y :: acc) xs acc).
+  Proof.
+    intro xs. induction xs as [|y xs IH]; intros acc Hacc;
+      cbn [fold_left].
+    - exact Hacc.
+    - destruct (existsb (X.eqb y) acc) eqn:Hseen.
+      + now apply IH.
+      + apply IH. constructor; [|exact Hacc].
+        intro Hy. assert (Htrue : existsb (X.eqb y) acc = true).
+        { apply existsb_exists. exists y. split; [exact Hy|].
+          destruct (X.eqb_spec y y); congruence. }
+        congruence.
+  Qed.
+
+  Lemma karr_vars_of_nodup : forall P, NoDup (vars_of P).
+  Proof.
+    intro P. unfold vars_of. apply karr_vars_fold_nodup. constructor.
+  Qed.
+
+  Lemma karr_vars_of_support : forall P x,
+    In x (vars_of P) ->
+    exists r, In r P /\ In x (map fst (lhs r)).
+  Proof.
+    intros P x Hx. unfold vars_of in Hx.
+    apply karr_vars_fold_support in Hx.
+    destruct Hx as [Hnone|Hraw]; [contradiction|].
+    now apply in_flat_map in Hraw.
+  Qed.
+
   (** The public source dimension contains every raw row variable. *)
   Lemma karr_vars_of_contains : forall P r x,
     In r P -> In x (map fst (lhs r)) -> In x (vars_of P).
   Proof.
     intros P r x Hr Hx. unfold vars_of. apply karr_vars_fold_contains. right.
     apply in_flat_map. exists r. auto.
+  Qed.
+
+  Lemma karr_vars_of_cons_bound : forall P c,
+    length (vars_of (c :: P)) <= length (vars_of P) + length (lhs c).
+  Proof.
+    intros P c. rewrite <- (length_map fst (lhs c)).
+    rewrite <- length_app. apply NoDup_incl_length.
+    - apply karr_vars_of_nodup.
+    - intros x Hx. destruct (karr_vars_of_support (c :: P) x Hx)
+        as [r [[Hr|Hr] Hterm]].
+      + subst r. apply in_or_app. right. exact Hterm.
+      + apply in_or_app. left.
+        eapply karr_vars_of_contains; eassumption.
   Qed.
 
   (** Unique executable coordinates fit the dimension declared by the signature. *)
