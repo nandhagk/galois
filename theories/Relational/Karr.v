@@ -13170,6 +13170,25 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn [N.of_nat] in *. nia.
   Qed.
 
+  (** Taking or skipping a bounded prefix visits at most that prefix. *)
+  Lemma T_karr_firstn_bounded : forall A n (xs : list A),
+    (ListDef.T_firstn n xs <= 4 * N.of_nat (n + 1))%N.
+  Proof.
+    intros A n. induction n as [|n IH]; intros [|x xs];
+      time_unfold ListDef.T_firstn; time_simpl;
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]); try nia.
+    pose proof (IH xs). nia.
+  Qed.
+
+  Lemma T_karr_skipn_bounded : forall A n (xs : list A),
+    (ListDef.T_skipn n xs <= 4 * N.of_nat (n + 1))%N.
+  Proof.
+    intros A n. induction n as [|n IH]; intros [|x xs];
+      time_unfold ListDef.T_skipn; time_simpl;
+      try (rewrite Nat2N.inj_add; cbn [N.of_nat]); try nia.
+    pose proof (IH xs). nia.
+  Qed.
+
   (** Singleton-or-empty flattening never exceeds its source length. *)
   Lemma karr_flat_map_singleton_length : forall (A B : Type) (f : A -> list B) xs,
     (forall x, In x xs -> length (f x) <= 1) -> length (flat_map f xs) <= length xs.
