@@ -3998,14 +3998,13 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   Lemma invalidate_keys_row : forall p p' ch st q r x y,
     row_snapshot_recorded q st r y ->
     In x (S.writes q r ++ S.deps q r) ->
-    In x (invalidate_keys p p' ch st) -> In y (S.writes q r) -> dom st y ->
-    In y (invalidate_keys p p' ch st).
+    In x (invalid_bad (invalid_walk p p' ch st)) ->
+    In y (S.writes q r) -> dom st y ->
+    In y (invalid_bad (invalid_walk p p' ch st)).
   Proof.
     intros p p' ch st q r x y [ss [Hget [Hlive [Hwrites Hdeps]]]]
       Hx Hbad Hy Hdom.
     destruct (Hwrites y Hy) as [Hss _].
-    unfold invalidate_keys in Hbad.
-    unfold invalidate_keys.
     eapply invalidate_bucket_snapshot;
       [exact Hget|exact Hlive| |exact Hbad|exact Hss|].
     - apply in_app_iff in Hx as [Hx|Hx].
@@ -4019,8 +4018,9 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   (** Old rows propagate invalidation from reads and co-writes to every stored write. *)
   Lemma invalidate_keys_old : forall p p' ch st r x y,
     row_snapshot_recorded p st r y -> In x (S.writes p r ++ S.deps p r) ->
-    In x (invalidate_keys p p' ch st) -> In y (S.writes p r) -> dom st y ->
-    In y (invalidate_keys p p' ch st).
+    In x (invalid_bad (invalid_walk p p' ch st)) ->
+    In y (S.writes p r) -> dom st y ->
+    In y (invalid_bad (invalid_walk p p' ch st)).
   Proof.
     intros p p' ch st r x y Hrecorded Hx Hbad Hy Hdom.
     exact (invalidate_keys_row p p' ch st p r x y Hrecorded Hx Hbad Hy Hdom).
@@ -4029,8 +4029,9 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
   (** New rows propagate invalidation from reads and co-writes to every stored write. *)
   Lemma invalidate_keys_new : forall p p' ch st r x y,
     row_snapshot_recorded p' st r y -> In x (S.writes p' r ++ S.deps p' r) ->
-    In x (invalidate_keys p p' ch st) -> In y (S.writes p' r) -> dom st y ->
-    In y (invalidate_keys p p' ch st).
+    In x (invalid_bad (invalid_walk p p' ch st)) ->
+    In y (S.writes p' r) -> dom st y ->
+    In y (invalid_bad (invalid_walk p p' ch st)).
   Proof.
     intros p p' ch st r x y Hrecorded Hx Hbad Hy Hdom.
     exact (invalidate_keys_row p p' ch st p' r x y Hrecorded Hx Hbad Hy Hdom).
