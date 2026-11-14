@@ -17967,6 +17967,44 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       [exact Hweights | exact Hpositive].
   Qed.
 
+  Lemma database_owned_ok_advance : forall db,
+    database_owned_ok db -> database_owned_ok (advance db).
+  Proof.
+    intros db Howned. unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    split; [apply database_row_store_ok_advance; exact Hstore |].
+    split; [apply database_history_alignment_advance; exact Halign |].
+    split; [apply database_active_history_coherent_advance; exact Hcoherent |].
+    split; [apply database_history_root_owner_advance; exact Howner |].
+    split; [apply database_history_key_shape_advance; exact Hshape |].
+    split; [apply database_history_codes_valid_advance; exact Hvalid |].
+    split; [apply database_history_key_ids_bounded_advance; exact Hbounded |].
+    split; [apply database_row_weight_conserved_advance; exact Hconserved |].
+    apply database_row_weights_positive_advance. exact Hpositive.
+  Qed.
+
+  Lemma database_owned_ok_union : forall db i j,
+    UnionFind.wf (db_forest db) -> database_owned_ok db ->
+    database_owned_ok (union i j db).
+  Proof.
+    intros db i j Hforest Howned.
+    unfold database_owned_ok in Howned |- *.
+    destruct Howned as
+      (Hstore & Halign & Hcoherent & Howner & Hshape & Hvalid &
+       Hbounded & Hconserved & Hpositive).
+    split; [apply database_row_store_ok_union; exact Hstore |].
+    split; [apply database_history_alignment_union; assumption |].
+    split; [apply database_active_history_coherent_union; exact Hcoherent |].
+    split; [apply database_history_root_owner_union; exact Howner |].
+    split; [apply database_history_key_shape_union; exact Hshape |].
+    split; [apply database_history_codes_valid_union; exact Hvalid |].
+    split; [apply database_history_key_ids_bounded_union; exact Hbounded |].
+    split; [apply database_row_weight_conserved_union; exact Hconserved |].
+    apply database_row_weights_positive_union. exact Hpositive.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
