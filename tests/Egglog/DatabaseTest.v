@@ -45,6 +45,64 @@ End UnitValue.
 Module UnitIndex := Index UnitValue.
 Module UnitDatabase := Database UnitValue UnitIndex.
 
+(** This raw state tests a missing self-history entry; its active invariant is unproved. *)
+Definition alias_base :=
+  let empty := UnitDatabase.init [Decl 2%positive [SId] ORel] [] in
+  let first := UnitDatabase.allocate_id 1%positive empty in
+  let second := UnitDatabase.allocate_id 2%positive first in
+  let third := UnitDatabase.allocate_id 3%positive second in
+  let row := UnitDatabase.put 2%positive [Id 2%positive] None third in
+  UnitDatabase.union 1%positive 3%positive
+    (UnitDatabase.union 1%positive 2%positive row).
+
+Definition alias_candidate :=
+  let db := alias_base in
+  let store := db_row_store db in
+  let original := UnitDatabase.db_row_code 2%positive [Id 2%positive] in
+  let alias := UnitDatabase.db_row_code 2%positive [Id 3%positive] in
+  match PTrieCode.get original (row_history store) with
+  | None => db
+  | Some (_, id) =>
+    let history := PTrieCode.set alias ((2%positive, [Id 3%positive]), id)
+      (PTrieCode.remove original (row_history store)) in
+    let uses := DatabaseUses.add 3%positive (2%positive, [Id 3%positive])
+      (DatabaseUseMap.remove 2%positive (row_uses store)) in
+    let updated := {|
+      row_history := history;
+      row_links := row_links store;
+      row_weights := row_weights store;
+      row_keys := row_keys store;
+      row_fresh := row_fresh store;
+      row_uses := uses
+    |} in
+    DatabaseState (db_forest db) (db_nuses db) (db_npending db) (db_wmark db)
+      (Id 3%positive :: db_written_cells db) (db_index_counters db)
+      updated (db_slot_store db) (db_runtime db) (db_cache_updates db)
+  end.
+
+Example alias_candidate_observation :
+  (UnitDatabase.row_get 2%positive [Id 2%positive] alias_candidate,
+   UnitDatabase.db_locate 2%positive [Id 3%positive] alias_candidate,
+   PTrieCode.get (UnitDatabase.db_row_code 2%positive [Id 2%positive])
+     (row_history (db_row_store alias_candidate)),
+   UnitDatabase.repr alias_candidate 2%positive,
+   UnitDatabase.repr alias_candidate 3%positive) =
+  (Some None, Some [Id 2%positive], None, 1%positive, 1%positive).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example alias_candidate_repair_observation :
+  let repaired := UnitDatabase.db_repair_entry
+    2%positive [Id 3%positive] alias_candidate in
+  (UnitDatabase.row_get 2%positive [Id 2%positive] repaired,
+   UnitDatabase.row_get 2%positive [Id 1%positive] repaired,
+   UnitDatabase.db_locate 2%positive [Id 3%positive] repaired) =
+  (None, Some None, Some [Id 2%positive]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 (** Clearing the occurrence store loses well-formedness and its recorded use. *)
 Definition missing_use_initial := UnitDatabase.init [Decl 1%positive [] OId] [].
 Definition missing_use_row := snd (UnitDatabase.make 1%positive [] missing_use_initial).
