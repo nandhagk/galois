@@ -1346,6 +1346,67 @@ Proof.
   cbn [karr_choose map]. rewrite karr_choose_zero, IH. reflexivity.
 Qed.
 
+(** A multiset partition contains an ordered selected subsequence. *)
+Lemma karr_choose_partition : forall (original selected rest : list (list Z)),
+  Permutation original (selected ++ rest) ->
+  exists ordered,
+    In ordered (karr_choose (length selected) original) /\
+    Permutation ordered selected.
+Proof.
+  induction original as [|row original IH]; intros selected rest Hperm.
+  - destruct selected as [|head selected].
+    + exists []. split; [now rewrite karr_choose_zero; left|constructor].
+    + pose proof (Permutation_length Hperm) as Hlength.
+      cbn [length] in Hlength. rewrite length_app in Hlength.
+      cbn [length] in Hlength. lia.
+  - destruct (in_dec (list_eq_dec Z.eq_dec) row selected) as [Hin|Hout].
+    + apply in_split in Hin as [before [after Hselected]]. subst selected.
+      assert (Htail : Permutation original ((before ++ after) ++ rest)).
+      { apply Permutation_cons_inv with (a := row).
+        eapply Permutation_trans; [exact Hperm|].
+        replace ((before ++ row :: after) ++ rest) with
+          (before ++ row :: (after ++ rest)) by (rewrite <- app_assoc; reflexivity).
+        eapply Permutation_trans.
+        * apply Permutation_sym, Permutation_middle.
+        * replace (row :: before ++ after ++ rest) with
+            (row :: ((before ++ after) ++ rest))
+            by (rewrite <- app_assoc; reflexivity).
+          apply Permutation_refl. }
+      destruct (IH (before ++ after) rest Htail)
+        as [ordered [Hordered Hselected_perm]].
+      exists (row :: ordered). split.
+      * replace (length (before ++ row :: after)) with
+          (S (length (before ++ after)))
+          by (rewrite !length_app; cbn [length]; lia).
+        cbn [karr_choose]. apply in_or_app. left.
+        apply in_map_iff. exists ordered. now split.
+      * eapply Permutation_trans; [apply perm_skip; exact Hselected_perm|].
+        apply Permutation_middle.
+    + assert (Hin : In row rest).
+      { assert (Htotal : In row (selected ++ rest)).
+        { eapply Permutation_in; [exact Hperm|now left]. }
+        apply in_app_or in Htotal as [Hselected|Hrest];
+          [contradiction|exact Hrest]. }
+      apply in_split in Hin as [before [after Hrest]]. subst rest.
+      assert (Htail : Permutation original (selected ++ before ++ after)).
+      { apply Permutation_cons_inv with (a := row).
+        eapply Permutation_trans; [exact Hperm|].
+        replace (selected ++ before ++ row :: after) with
+          ((selected ++ before) ++ row :: after)
+          by (rewrite <- app_assoc; reflexivity).
+        replace (selected ++ before ++ after) with
+          ((selected ++ before) ++ after)
+          by (rewrite <- app_assoc; reflexivity).
+        apply Permutation_sym, Permutation_middle. }
+      destruct (IH selected (before ++ after) Htail)
+        as [ordered [Hordered Hselected_perm]].
+      exists ordered. split.
+      * destruct selected as [|head selected].
+        -- rewrite karr_choose_zero in Hordered |- *. exact Hordered.
+        -- cbn [karr_choose]. apply in_or_app. right. exact Hordered.
+      * exact Hselected_perm.
+Qed.
+
 (** A selected row and column set determines one square submatrix. *)
 Definition karr_submatrix (columns : list nat) (rows : list (list Z)) : list (list Z) :=
   map (fun row => map (fun index => karr_nth index row) columns) rows.
