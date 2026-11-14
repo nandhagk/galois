@@ -357,6 +357,18 @@ Proof.
   rewrite Hcoeff, Hright, Hweight, Hscale. reflexivity.
 Qed.
 
+(** An integer quotient witness makes the guarded division exact. *)
+Lemma karr_multiple_exact : forall d q r,
+  d <> 0%Z -> karr_multiple d q r -> karr_exact d r = true.
+Proof.
+  intros d q r Hnonzero Hmultiple.
+  apply karr_exact_from_entries; [exact Hnonzero|].
+  intros z Hin.
+  rewrite <- (karr_row_entries_multiple d q r Hmultiple) in Hin.
+  apply in_map_iff in Hin as [entry [Hz _]]. subst z.
+  rewrite Z.mul_comm. apply Z.mod_mul. exact Hnonzero.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
