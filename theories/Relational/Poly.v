@@ -14324,6 +14324,33 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     PolyRow (option X.t) (poly_normal_row tmp_encode (assignment_row x f))
       (1%Z :: map (fun _ => 0%Z) P) false.
 
+  (** The head certificate's zero source multipliers pay once per raw occurrence. *)
+  Lemma poly_assign_head_zero_csize : forall P,
+    C.csize P (map (fun _ => 0%Z) P) <=
+      (terms (Reached P) + length P) * (nell (Reached P) + 1).
+  Proof.
+    intro P.
+    pose proof (poly_csize_terms P (map (fun _ => 0%Z) P)
+      (nell (Reached P)) 0 (poly_raw_source_width P)) as Hsize.
+    assert (Hzeros : Forall (fun m => Z.size_nat m <= 0)
+      (map (fun _ : lcons X.t => 0%Z) P)).
+    { apply Forall_map, Forall_forall. intros r _. cbn [Z.size_nat]. lia. }
+    specialize (Hsize Hzeros ltac:(now rewrite length_map)).
+    cbn [Nat.add] in Hsize. rewrite Nat.mul_1_r in Hsize. exact Hsize.
+  Qed.
+
+  (** Zero source multipliers keep the head check within the original bit width. *)
+  Lemma poly_assign_head_zero_cbits : forall P,
+    C.cbits P (map (fun _ => 0%Z) P) <=
+      nell (Reached P) + Nat.log2 (length P) + 1.
+  Proof.
+    intro P. apply poly_cbits_source_bits with (bits := nell (Reached P))
+      (multbits := 0).
+    - apply poly_raw_source_width.
+    - apply Forall_map, Forall_forall.
+      intros r _. cbn [Z.size_nat]. lia.
+  Qed.
+
   Lemma poly_assign_row_nodup_normal : forall x f,
     NoDup (map fst (coef f)) -> NoDup (map fst (lhs (assignment_row x f))).
   Proof.
