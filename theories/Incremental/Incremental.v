@@ -10782,6 +10782,73 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
        exact Hsnapshot|exact Hdeps|exact Hfolds].
   Qed.
 
+  Lemma T_record_rows_local_le : forall p rs st, S.wf p ->
+    (forall r, In r rs -> In r (S.rows p)) ->
+    (T_record_rows p rs st <=
+      160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun r => length (row_keys p r)) rs) *
+        N.of_nat (width p st + 1) + 2)%N.
+  Proof.
+    intros p rs st Hwf Hlisted.
+    destruct (fold_left_inv_time (fun current r => record_row p r current)
+      (fun current r => (1 + T_record_row p r current)%N)
+      (fun _ => True)
+      (fun r => (128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1) + 1)%N)
+      rs st I) as [_ Hfold].
+    { intros current r _ Hr; split; [exact I|].
+      pose proof (T_record_row_local_le p r current Hwf (Hlisted r Hr)) as Hrow.
+      unfold width in *; lia. }
+    assert (Hsum : forall ys,
+      (fold_right (fun r total =>
+        128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1) +
+          1 + 2 + total)%N 1%N ys <=
+        160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (finite_sum (fun r => length (row_keys p r)) ys) *
+          N.of_nat (width p st + 1) + 1)%N).
+    { induction ys as [|r rest IH]; [cbn; lia|].
+      unfold finite_sum in *; cbn [map fold_right].
+      rewrite (Nat2N.inj_add (length (row_keys p r))
+        (fold_right Nat.add 0%nat
+          (map (fun q => length (row_keys p q)) rest))).
+      assert (Hrowlen : (1 <= N.of_nat (length (row_keys p r)))%N).
+      { rewrite record_row_count; lia. }
+      assert (Hbase : (1 <= S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) by lia.
+      assert (Hu : (1 <= N.of_nat (width p st + 1))%N) by lia.
+      assert (Hunit : (1 <= (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N).
+      { change (1 * 1 * 1 <= (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N.
+        apply N.mul_le_mono; [apply N.mul_le_mono|]; assumption. }
+      replace (160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        (N.of_nat (length (row_keys p r)) +
+         N.of_nat (finite_sum (fun q => length (row_keys p q)) rest)) *
+        N.of_nat (width p st + 1))%N with
+        (160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+           N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1) +
+         160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+           N.of_nat (finite_sum (fun q => length (row_keys p q)) rest) *
+           N.of_nat (width p st + 1))%N by ring.
+      assert (Hhead : (3 <= 32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N).
+      { replace (32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+          (32 * ((S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+            N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1)))%N
+          by ring; lia. }
+      replace (160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N with
+        (128 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+           N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1) +
+         32 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+           N.of_nat (length (row_keys p r)) * N.of_nat (width p st + 1))%N
+        by ring.
+      lia. }
+    specialize (Hsum rs).
+    unfold T_record_rows; lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
