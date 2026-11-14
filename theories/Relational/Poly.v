@@ -14442,6 +14442,55 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     cbn zeta. now apply N.add_le_mono.
   Qed.
 
+  (** Candidate dispatch adds its untag scan to the full-step branch charge. *)
+  Lemma T_poly_assign_output_candidate_bounded : forall x f P r,
+    NoDup (map fst (coef f)) ->
+    In r (poly_step tmp_encode tmp_eqb None
+      (poly_initial tmp_encode
+        ((assignment_row x f, false) ::
+          map (fun q => (rename_row (rename_old x) q, false)) P))) ->
+    let dim := length (RangeCore.vars_of (poly_assign_sources x P)) +
+      length (coef f) + 1 in
+    let keys := poly_raw_keys P + X.bits x + F.form_bits f + 1 in
+    let bits := 2 * (poly_raw_bits P + F.form_bits f + 1) + 1 in
+    let checker_bits := keys + bits in
+    (T_assigned_candidate P x f r <=
+      2 * N.of_nat (dim + 1) +
+      AssignCore.poly_assign_normal_subst_factor *
+        poly_clock_span dim 0 keys bits +
+      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+        terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2 +
+      16)%N.
+  Proof.
+    intros x f P r Hform Hr dim keys bits checker_bits.
+    set (budget := (AssignCore.poly_assign_normal_subst_factor *
+      poly_clock_span dim 0 keys bits +
+      48 * C.c_lc * N.of_nat (dim + length (coef f) +
+        terms (Reached P) + length P + 1) * N.of_nat (checker_bits + 1)^2)%N).
+    assert (Hbranch : forall xs head ms,
+      untag (lhs (poly_constraint r)) = Some xs ->
+      poly_multipliers r = head :: ms ->
+      let c := LCons X.t xs (lrel (poly_constraint r)) (rhs (poly_constraint r)) in
+      (T_subst x f c + C.T_check_entails P (subst x f c)
+        (Cert ms 1 false) <= budget)%N).
+    { intros xs head ms Huntag Hmult c.
+      pose proof (T_poly_assign_output_candidate_branch x f P r xs head ms
+        Hform Hr Huntag Hmult) as Hcost.
+      cbn zeta in Hcost. exact Hcost. }
+    pose proof (T_poly_assign_candidate_frame P x f r budget Hbranch) as Hframe.
+    pose proof (T_poly_assign_untag (lhs (poly_constraint r))) as Huntime.
+    destruct (proj1 (Forall_forall _ _) (poly_assign_output_envelope x f P Hform)
+      r Hr) as (_ & Hdim & _).
+    assert (Huntag_total :
+      (T_untag (lhs (poly_constraint r)) <= 2 * N.of_nat (dim + 1))%N).
+    { eapply N.le_trans; [exact Huntime|].
+      apply N.mul_le_mono_l, time_of_nat_le.
+      change (length (lhs (poly_constraint r)) <= dim) in Hdim.
+      apply Nat.add_le_mono_r. exact Hdim. }
+    eapply N.le_trans; [exact Hframe|].
+    fold budget. clear -Huntag_total. lia.
+  Qed.
+
   (** Only the old assigned coordinate is eliminated from the source-only tail. *)
   Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
     poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
