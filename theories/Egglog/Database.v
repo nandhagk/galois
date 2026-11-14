@@ -12173,6 +12173,83 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     reflexivity.
   Qed.
 
+  Lemma database_history_root_owner_ensure : forall db f k,
+    database_row_store_ok db -> database_history_root_owner db ->
+    database_history_root_owner (ensure_row_identity f k db).
+  Proof.
+    intros db f k Hstore Howner.
+    unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [[prior prior_id] |] eqn:Hprior; [exact Howner |].
+    set (fresh := row_fresh (db_row_store db)).
+    set (updated := {| row_history :=
+      PTrieCode.set (db_row_code f k) ((f, k), fresh)
+        (row_history (db_row_store db));
+      row_links := row_links (db_row_store db);
+      row_weights := PTrieCode.set fresh 1%N (row_weights (db_row_store db));
+      row_keys := PTrieCode.set fresh k (row_keys (db_row_store db));
+      row_fresh := Pos.succ fresh;
+      row_uses := row_uses (db_row_store db) |}).
+    intros g args key r h other other_key s Hfirst Hsecond Hroots.
+    subst updated.
+    cbn [database_set_index_counters database_set_row_store db_row_store
+      row_history row_links ids db_runtime runtime_allocated] in *.
+    rewrite (row_root_same_links _ r _ (db_row_store db)) in Hroots
+      by reflexivity.
+    rewrite (row_root_same_links _ s _ (db_row_store db)) in Hroots
+      by reflexivity.
+    unfold ids in Hroots.
+    cbn [database_set_index_counters database_set_row_store db_runtime
+      runtime_allocated] in Hroots.
+    destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k))
+      as [Hfirst_new | Hfirst_old];
+      destruct (Pos.eq_dec (db_row_code h other) (db_row_code f k))
+      as [Hsecond_new | Hsecond_old].
+    - apply RowKeys.encode_inj in Hfirst_new.
+      apply RowKeys.encode_inj in Hsecond_new.
+      injection Hfirst_new as -> ->. injection Hsecond_new as -> ->.
+      reflexivity.
+    - apply RowKeys.encode_inj in Hfirst_new.
+      injection Hfirst_new as -> ->.
+      rewrite PTrie.get_set_same in Hfirst.
+      injection Hfirst as _ <-.
+      rewrite PTrie.get_set_other in Hsecond by exact Hsecond_old.
+      rewrite (row_root_no_link _ fresh (db_row_store db)) in Hroots.
+      2: { subst fresh. apply database_row_store_future_links;
+           [exact Hstore | apply Pos.le_refl]. }
+      exfalso.
+      pose proof (database_row_store_history_range db Hstore h other
+        other_key s Hsecond) as Hbelow.
+      pose proof (row_root_below_fresh db
+        (length other * (N.to_nat (N.log2 (ids db)) + 1)) s Hstore Hbelow)
+        as Hroot_below.
+      change (fresh = row_root
+        (length other * (N.to_nat (N.log2 (ids db)) + 1)) s
+        (db_row_store db)) in Hroots.
+      subst fresh. lia.
+    - apply RowKeys.encode_inj in Hsecond_new.
+      injection Hsecond_new as -> ->.
+      rewrite PTrie.get_set_other in Hfirst by exact Hfirst_old.
+      rewrite PTrie.get_set_same in Hsecond.
+      injection Hsecond as _ <-.
+      rewrite (row_root_no_link _ fresh (db_row_store db)) in Hroots.
+      2: { subst fresh. apply database_row_store_future_links;
+           [exact Hstore | apply Pos.le_refl]. }
+      exfalso.
+      pose proof (database_row_store_history_range db Hstore g args
+        key r Hfirst) as Hbelow.
+      pose proof (row_root_below_fresh db
+        (length args * (N.to_nat (N.log2 (ids db)) + 1)) r Hstore Hbelow)
+        as Hroot_below.
+      change (row_root
+        (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db) = fresh) in Hroots.
+      subst fresh. lia.
+    - rewrite PTrie.get_set_other in Hfirst by exact Hfirst_old.
+      rewrite PTrie.get_set_other in Hsecond by exact Hsecond_old.
+      exact (Howner g args key r h other other_key s Hfirst Hsecond Hroots).
+  Qed.
+
   Lemma ensure_row_identity_new_size : forall db f k d,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
@@ -14110,15 +14187,7 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     (forall key r,
       PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
         Some (key, r) -> db_locate f ck db = Some ck) ->
-    (forall g args key r source_key source_id,
-      PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
-        Some (key, r) ->
-      PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
-        Some (source_key, source_id) ->
-      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
-        (db_row_store db) =
-      row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) source_id
-        (db_row_store db) -> g = f) ->
+    database_history_root_owner db ->
     database_active_history_coherent (move_row_identity f old ck db).
   Proof.
     intros db f old ck Hstore Hcoherent Hlength Hold_absent Hsource_loc Hdest_loc
@@ -14151,7 +14220,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       unfold ids in Hroot.
       rewrite Hroot in Hlookup. rewrite Hlookup in Hsource_lookup.
       injection Hsource_lookup as Hsame. subst args.
-      pose proof (Howner g old key r old_key old_id Hentry eq_refl Hroot) as ->.
+      pose proof (Howner g old key r f old old_key old_id
+        Hentry Hsource Hroot) as ->.
       destruct Hold_absent as [Habsent | Heq].
       + rewrite Hrow in Habsent. discriminate.
       + exact Heq.
