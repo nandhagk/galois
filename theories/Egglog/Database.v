@@ -15752,6 +15752,64 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (Hcover f k0 k Hlocated).
   Qed.
 
+  Lemma database_idle_located_row_replace : forall db f k previous o,
+    database_wf db -> database_idle_ok db -> database_history_alignment db ->
+    kind_ok db f k o ->
+    (forall i, In (Id i) (k ++ option_list o) -> repr db i = i) ->
+    forall g k0 args,
+      located (row_replace f k previous o db) g k0 = Some args ->
+      exists output,
+        In ((g, args), output) (rows (row_replace f k previous o db)) /\
+        kind (view (row_replace f k previous o db)) g <> None.
+  Proof.
+    intros db f k previous o Hbase Hidle Halign Hkind Hcanonical
+      g k0 args Hlocated.
+    pose proof (database_idle_row_store db Hidle) as Hstore.
+    assert (Hmap : RowMap.wf
+      (runtime_rows (db_runtime (row_replace f k previous o db)))).
+    { rewrite row_replace_map. apply RowMap.wf_set. exact (wf_row_map db Hbase). }
+    assert (Hnew : located (row_replace f k previous o db) f k = Some k).
+    { unfold located, locate. apply row_replace_new_locate_from_alignment;
+        [exact Hstore |].
+      intros key r Hentry. apply (Halign f k key r Hentry).
+      intros i Hin. apply Hcanonical. apply in_or_app. now left. }
+    destruct (RowKeys.eqb_spec (g, k0) (f, k)) as [Hsame | Hother].
+    - injection Hsame as -> ->. rewrite Hnew in Hlocated.
+      injection Hlocated as <-. exists o. split.
+      + unfold rows. rewrite <- RowMap.elements_trie.
+        apply row_elements_member; [exact Hmap |].
+        apply row_replace_rows. right. repeat split; reflexivity.
+      + rewrite row_replace_kind. unfold kind_ok in Hkind.
+        destruct Hkind as [_ [_ Hshape]].
+        destruct (kind (view db) f) as [decl |]; [discriminate |].
+        destruct o as [c |]; [destruct c |]; contradiction.
+    - unfold located, locate in Hlocated.
+      destruct (PTrieCode.get (db_row_code g k0)
+        (row_history (db_row_store db))) as [[key r] |] eqn:Hentry.
+      + rewrite (row_replace_old_locate db f k previous o g k0 key r
+          Hstore Hentry) in Hlocated.
+        destruct (database_idle_located db Hidle g k0 args Hlocated)
+          as [output [Hrow Hdeclared]].
+        assert (Hold : row (view db) g args output).
+        { unfold rows in Hrow. rewrite <- RowMap.elements_trie in Hrow.
+          apply row_elements_member in Hrow; [exact Hrow | exact (wf_row_map db Hbase)]. }
+        destruct (RowKeys.eqb_spec (g, args) (f, k)) as [Htarget | Hdistinct].
+        * injection Htarget as -> ->. exists o. split.
+          -- unfold rows. rewrite <- RowMap.elements_trie.
+             apply row_elements_member; [exact Hmap |].
+             apply row_replace_rows. right. repeat split; reflexivity.
+          -- rewrite row_replace_kind. exact Hdeclared.
+        * exists output. split.
+          -- unfold rows. rewrite <- RowMap.elements_trie.
+             apply row_elements_member; [exact Hmap |].
+             apply row_replace_rows. left. now split.
+          -- rewrite row_replace_kind. exact Hdeclared.
+      + unfold db_locate in Hlocated.
+        rewrite (row_replace_history_other db f k previous o g k0 Hother)
+          in Hlocated.
+        rewrite Hentry in Hlocated. discriminate.
+  Qed.
+
   Lemma forest_ok_public : forall db, database_wf db -> database_idle_ok db ->
     slot_rank_ok db -> database_owned_ok db -> forest_ok db.
   Proof.
