@@ -14274,6 +14274,21 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - rewrite karr_combine_self. apply karr_minor_law_initial.
   Qed.
 
+  (** The lifted hull seeds initialize the labeled minor invariant. *)
+  Lemma karr_hull_run_state_initial : forall xs total left_index right_index P Q,
+    let rows := hull_left xs total left_index P ++
+      hull_right xs total right_index Q in
+    let width := 2 * length xs + total + 4 in
+    karr_run_state width (2 * length xs + 2)
+      (map karr_row_entries rows) 1 [] [] (seq 0 width)
+      (map karr_row_entries rows) rows.
+  Proof.
+    intros xs total left_index right_index P Q rows width.
+    apply karr_run_state_initial_general; [lia| |].
+    - subst rows. apply hull_seed_width.
+    - subst rows width. apply hull_seed_entries_width.
+  Qed.
+
   (** Every initialized certificate vector has a zero when two source slots exist. *)
   Lemma seed_rows_zero_weight : forall xs total index P,
     2 <= total ->
