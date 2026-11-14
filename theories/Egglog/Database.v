@@ -13146,6 +13146,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply row_replace_history_old. exact Hnext.
   Qed.
 
+  (** Repair retains the original row identifier of every historical key. *)
+  Lemma repair_current_history_old : forall db f k code key r,
+    PTrieCode.get code (row_history (db_row_store db)) = Some (key, r) ->
+    PTrieCode.get code (row_history (db_row_store (repair_current f k db))) =
+      Some (key, r).
+  Proof.
+    intros db f k code key r Hentry. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hentry].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hentry |].
+    cbn [database_set_nuses database_set_row_store db_row_store row_history].
+    apply put_history_old. now rewrite row_delete_row_store.
+  Qed.
+
   Lemma database_history_alignment_repair_current : forall db f k,
     wf db -> database_row_store_ok db -> database_history_alignment db ->
     database_history_alignment (repair_current f k db).
