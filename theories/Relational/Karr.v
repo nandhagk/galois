@@ -11175,6 +11175,132 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *. nia.
   Qed.
 
+  (** One arbitrary Bareiss column pays for its pivot, updates and restores. *)
+  Lemma T_karr_bareiss_stage_bounded : forall cols previous rows dim mlen bits,
+    Z.size_nat previous <= bits ->
+    Forall (karr_row_envelope dim mlen bits) rows ->
+    (T_karr_bareiss (S cols) previous rows <=
+      32768 * N.of_nat (length rows + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2) +
+      match karr_pivot rows with
+      | None => T_karr_bareiss cols previous (map karr_tail rows)
+      | Some (pivot, rest) =>
+          T_karr_bareiss cols (karr_head pivot)
+            (map (fun row => karr_tail
+              (karr_reduce previous (karr_head pivot) (karr_head row) pivot row))
+              rest)
+      end)%N.
+  Proof.
+    intros cols previous rows dim mlen bits Hprevious Hrows.
+    set (work := (N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N).
+    assert (Hpositive : (1 <= work)%N).
+    { unfold work. assert (Hdim : (1 <= N.of_nat (dim + mlen + 1))%N) by lia.
+      pose proof (karr_nat_square_ge (bits + 1) ltac:(lia)) as Hbits. nia. }
+    pose proof (T_karr_pivot_bounded rows) as Hpivot_time.
+    time_unfold T_karr_bareiss.
+    destruct (karr_pivot rows) as [[pivot rest]|] eqn:Hselect.
+    - destruct (karr_pivot_some _ _ _ Hselect) as [_ Hperm].
+      assert (Hpermuted : Forall (karr_row_envelope dim mlen bits)
+        (pivot :: rest)).
+      { eapply Permutation_Forall; [exact Hperm|exact Hrows]. }
+      apply Forall_cons_iff in Hpermuted as [Hp Hrest].
+      pose proof (Permutation_length Hperm) as Hlength.
+      cbn [length] in Hlength.
+      pose proof (T_karr_head_bounded pivot) as Hhead.
+      set (step := fun row => karr_tail
+        (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)).
+      set (T_step := fun row => (1 + (T_karr_head row +
+        T_karr_reduce previous (karr_head pivot) (karr_head row) pivot row +
+        T_karr_tail
+          (karr_reduce previous (karr_head pivot) (karr_head row) pivot row)))%N).
+      assert (Hstep : forall row, In row rest -> (T_step row <= 16384 * work)%N).
+      { intros row Hrow. unfold T_step.
+        pose proof (T_karr_pivot_step_bounded dim mlen bits previous
+          (karr_head pivot) pivot row Hprevious
+          (karr_head_bits dim mlen bits pivot Hp) Hp
+          (proj1 (Forall_forall _ _) Hrest row Hrow)) as Htime.
+        replace (16384 * N.of_nat (dim + mlen + 1) *
+          N.of_nat ((bits + 1)^2))%N with (16384 * work)%N in Htime
+          by (unfold work; ring).
+        clearbody work. nia. }
+      pose proof (karr_T_map_members karr_row karr_row step T_step
+        (16384 * work)%N rest Hstep) as Hstep_map.
+      pose proof (karr_T_map_members karr_row karr_row karr_restore T_karr_restore 8
+        (karr_bareiss cols (karr_head pivot) (map step rest))
+        (fun row _ => T_karr_restore_bounded row)) as Hrestore.
+      rewrite karr_bareiss_length, length_map in Hrestore.
+      time_simpl.
+      lazymatch goal with
+      | |- context [ListDef.T_map ?f ?Tf rest] =>
+        change f with step; change Tf with T_step
+      end.
+      change (fun row : karr_row => T_karr_restore row) with T_karr_restore.
+      fold step.
+      clear -Hpositive Hpivot_time Hlength Hhead Hstep_map Hrestore.
+      replace (32768 * N.of_nat (length rows + 1) *
+        N.of_nat (dim + mlen + 1) * N.of_nat ((bits + 1)^2))%N with
+        (32768 * N.of_nat (length rows + 1) * work)%N
+        by (unfold work; ring).
+      clearbody work. clearbody step. clearbody T_step.
+      rewrite !Nat2N.inj_add in *.
+      rewrite Hlength in *.
+      rewrite !Nat2N.inj_succ in *.
+      change (N.of_nat 1) with 1%N in *.
+      set (n := N.of_nat (length rest)) in *.
+      clearbody n.
+      cbn [N.of_nat] in *.
+      replace (N.succ n) with (n + 1)%N in * by lia.
+      change (N.succ 0) with 1%N in *.
+      replace ((16384 * work + 1) * n)%N with
+        (16384 * (n * work) + n)%N in Hstep_map by ring.
+      replace (32768 * (n + 1 + 1) * work)%N with
+        (32768 * (n * work) + 65536 * work)%N by ring.
+      assert (Hvolume : (n <= n * work)%N).
+      { replace n with (n * 1)%N at 1 by ring.
+        now apply N.mul_le_mono_l. }
+      set (volume := (n * work)%N) in *.
+      set (pivot_cost := T_karr_pivot rows) in *.
+      set (head_cost := T_karr_head pivot) in *.
+      set (step_cost := ListDef.T_map step T_step rest) in *.
+      set (recursive_cost := T_karr_bareiss cols (karr_head pivot)
+        (map step rest)) in *.
+      set (restore_cost := ListDef.T_map karr_restore T_karr_restore
+        (karr_bareiss cols (karr_head pivot) (map step rest))) in *.
+      clearbody volume pivot_cost head_cost step_cost recursive_cost restore_cost.
+      lia.
+    - pose proof (karr_T_map_members karr_row karr_row karr_tail T_karr_tail 8 rows
+        (fun row _ => T_karr_tail_bounded row)) as Htail.
+      pose proof (karr_T_map_members karr_row karr_row karr_restore T_karr_restore 8
+        (karr_bareiss cols previous (map karr_tail rows))
+        (fun row _ => T_karr_restore_bounded row)) as Hrestore.
+      rewrite karr_bareiss_length, length_map in Hrestore.
+      time_simpl.
+      change (fun row : karr_row => T_karr_tail row) with T_karr_tail.
+      change (fun row : karr_row => T_karr_restore row) with T_karr_restore.
+      clear -Hpositive Hpivot_time Htail Hrestore.
+      rewrite !Nat2N.inj_add in *. cbn [N.of_nat] in *.
+      change (N.pos (PosDef.Pos.of_succ_nat 0)) with 1%N in *.
+      replace (N.of_nat dim + N.of_nat mlen + 1)%N with
+        (N.of_nat (dim + mlen + 1))%N by lia.
+      set (n := N.of_nat (length rows)) in *.
+      clearbody n.
+      replace (32768 * (n + 1) * N.of_nat (dim + mlen + 1) *
+        N.of_nat ((bits + 1)^2))%N with
+        (32768 * ((n + 1) * work))%N in |- * by (unfold work; ring).
+      clearbody work.
+      assert (Hvolume : (n + 1 <= (n + 1) * work)%N).
+      { replace (n + 1)%N with ((n + 1) * 1)%N at 1 by ring.
+        now apply N.mul_le_mono_l. }
+      set (volume := ((n + 1) * work)%N) in *.
+      set (pivot_cost := T_karr_pivot rows) in *.
+      set (tail_cost := ListDef.T_map karr_tail T_karr_tail rows) in *.
+      set (recursive_cost := T_karr_bareiss cols previous (map karr_tail rows)) in *.
+      set (restore_cost := ListDef.T_map karr_restore T_karr_restore
+        (karr_bareiss cols previous (map karr_tail rows))) in *.
+      clearbody volume pivot_cost tail_cost recursive_cost restore_cost.
+      lia.
+  Qed.
+
 
   Definition karr_prepare_factor : N := (karr_raw_normal_factor + 32)%N.
 
