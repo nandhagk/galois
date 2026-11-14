@@ -192,6 +192,31 @@ Proof.
   destruct coeff; reflexivity.
 Qed.
 
+(** A zero leading coefficient cannot change the exact-division decision. *)
+Lemma karr_exact_zero_head : forall d r,
+  karr_head r = 0%Z -> karr_exact d r = karr_exact d (karr_tail r).
+Proof.
+  intros d [coeff right weight scale] Hzero.
+  destruct coeff as [|head coeff]; [reflexivity|].
+  cbn [karr_head kcoeff] in Hzero. subst head.
+  unfold karr_exact. cbn [karr_tail kcoeff forallb].
+  destruct (Z.eqb d 0) eqn:Hdivisor; [reflexivity|].
+  apply Z.eqb_neq in Hdivisor.
+  unfold karr_divisible at 1. rewrite Z.mod_0_l by exact Hdivisor.
+  reflexivity.
+Qed.
+
+(** Division commutes with tail projection when the removed entry is zero. *)
+Lemma karr_tail_divide_zero : forall d r,
+  karr_head r = 0%Z ->
+  karr_tail (karr_divide d r) = karr_divide d (karr_tail r).
+Proof.
+  intros d r Hzero. unfold karr_divide.
+  rewrite (karr_exact_zero_head d r Hzero).
+  destruct (karr_exact d (karr_tail r)); [|reflexivity].
+  destruct r as [coeff right weight scale]. destruct coeff; reflexivity.
+Qed.
+
 Definition karr_restore (r : karr_row) : karr_row :=
   KRow (0%Z :: kcoeff r) (kright r) (kweight r) (kscale r).
 
@@ -220,6 +245,22 @@ Proof.
   rewrite karr_tail_divide_exact by exact Hexact.
   destruct p as [pc pr pw ps], r as [rc rr rw rs].
   destruct rc; reflexivity.
+Qed.
+
+(** A canceled pivot column projects through every guarded reduction. *)
+Lemma karr_reduce_restore_tail_zero : forall d a b p r,
+  karr_head r = 0%Z ->
+  karr_tail (karr_reduce d a b (karr_restore p) r) =
+    karr_reduce d a b p (karr_tail r).
+Proof.
+  intros d a b p r Hzero. unfold karr_reduce.
+  rewrite karr_tail_divide_zero.
+  - destruct p as [pc pr pw ps], r as [rc rr rw rs].
+    destruct rc; reflexivity.
+  - destruct p as [pc pr pw ps], r as [rc rr rw rs].
+    destruct rc as [|head rc]; [reflexivity|].
+    cbn [karr_head kcoeff] in Hzero. subst head.
+    cbn [karr_head kcoeff karr_restore karr_cross]. ring.
 Qed.
 
 (** A finite rational store evaluates the dense coefficient coordinates in order. *)
