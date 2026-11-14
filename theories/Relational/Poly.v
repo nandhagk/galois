@@ -13484,6 +13484,77 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       exact Hcandidate.
   Qed.
 
+  Definition poly_range_nonempty_factor : N :=
+    (poly_range_setup_factor +
+      32 * (RangeCore.poly_step_factor + poly_range_candidate_factor + 16))%N.
+
+  (** The nonempty affine branch fits the original preprocessing budget. *)
+  Lemma T_poly_range_nonempty_bounded : forall P f,
+    P <> [] ->
+    (T_range_linear P f <= poly_range_nonempty_factor *
+      N.of_nat (poly_range_setup_budget P f))%N.
+  Proof.
+    intros P f Hnonempty.
+    set (rows := map (poly_normal_row X.encode) P).
+    set (input := poly_range_input P f).
+    set (vars := poly_variables X.encode
+      (LCons X.t (coef f) REq (cst f) :: rows)).
+    set (xs := map (@Some X.t) vars).
+    set (initial := poly_initial tmp_encode (map (fun r => (r, false)) input)).
+    set (dim := n P + length (coef f)).
+    set (mlen := length P + 1).
+    set (keys := nell (Reached P) + F.form_bits f + 1).
+    set (extra := length (coef f) - length (poly_form_variables f)).
+    set (initial_bits := keys + Nat.log2 (extra + 1) + 1).
+    set (stage := N.of_nat
+      (fmcost (dim + 1) mlen (S (length xs)) mlen (keys + initial_bits))).
+    set (work := N.of_nat (poly_range_setup_budget P f)).
+    assert (Hfuel : extra + S (length xs) <= dim).
+    { pose proof (poly_range_duplicate_fuel P f (length (coef f)) Hnonempty
+        ltac:(lia)) as Hbound.
+      unfold extra, xs, vars, rows, dim. rewrite length_map. exact Hbound. }
+    pose proof (poly_range_nonempty_budget_transport dim mlen
+      (S (length xs)) extra keys Hfuel) as Htransport.
+    assert (Hstage : (stage <= 32 * work)%N).
+    { unfold stage, initial_bits.
+      replace (keys + (keys + Nat.log2 (extra + 1) + 1)) with
+        (2 * keys + Nat.log2 (extra + 1) + 1) by lia.
+      eapply N.le_trans with (m := N.of_nat
+        (32 * fmcost dim (mlen + 1) dim (mlen + 1) keys)).
+      - now apply time_of_nat_le.
+      - rewrite Nat2N.inj_mul. unfold work, poly_range_setup_budget, dim, mlen, keys.
+        replace (length P + 1 + 1) with (length P + 2) by lia.
+        rewrite Nat2N.inj_add. apply N.mul_le_mono_l. apply N.le_add_l. }
+    pose proof (T_poly_range_nonempty_fold P f Hnonempty) as Hfold.
+    cbn zeta in Hfold.
+    change (T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb xs initial +
+      List.T_fold_left (range_candidate rows f) (T_range_candidate rows f)
+        (poly_run tmp_encode tmp_eqb xs initial) (NegInf, PosInf) <=
+      (RangeCore.poly_step_factor + poly_range_candidate_factor + 16) * stage)%N
+      in Hfold.
+    assert (Hfold_total : (T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb
+      xs initial + List.T_fold_left (range_candidate rows f)
+        (T_range_candidate rows f) (poly_run tmp_encode tmp_eqb xs initial)
+        (NegInf, PosInf) <=
+      (32 * (RangeCore.poly_step_factor + poly_range_candidate_factor + 16)) * work)%N).
+    { eapply N.le_trans; [exact Hfold|].
+      replace (32 * (RangeCore.poly_step_factor + poly_range_candidate_factor + 16) *
+        work)%N with
+        ((RangeCore.poly_step_factor + poly_range_candidate_factor + 16) *
+          (32 * work))%N by ring.
+      now apply N.mul_le_mono_l. }
+    pose proof (T_poly_range_setup_bounded P f) as Hsetup.
+    change (poly_range_setup_cost P f <= poly_range_setup_factor * work)%N in Hsetup.
+    pose proof (T_poly_range_linear_setup P f) as Hnative.
+    cbn zeta in Hnative.
+    change (T_range_linear P f <= poly_range_setup_cost P f +
+      T_poly_run tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb xs initial +
+      List.T_fold_left (range_candidate rows f) (T_range_candidate rows f)
+        (poly_run tmp_encode tmp_eqb xs initial) (NegInf, PosInf))%N in Hnative.
+    unfold poly_range_nonempty_factor. fold work.
+    clear -Hnative Hsetup Hfold_total. clearbody work. nia.
+  Qed.
+
   (** A completed affine-case bound lifts through linearization and the wrapped/unknown branches. *)
   Lemma T_poly_range_from_linear : forall factor,
     (forall P f, (T_range_linear P f <=
