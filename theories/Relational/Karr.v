@@ -15836,6 +15836,63 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact HN.
   Qed.
 
+  (** Flipping or retaining target weights costs one bounded pass. *)
+  Lemma T_karr_signed_weights_bounded : forall sign zs bits,
+    (sign = 1%Z \/ sign = (-1)%Z) ->
+    Forall (fun z => Z.size_nat z <= bits) zs ->
+    (ListDef.T_map (fun z => (- sign * z)%Z)
+      (fun z => 1 + (Z.T_opp sign + Z.T_mul (- sign) z)) zs <=
+      64 * N.of_nat (length zs + 1) * N.of_nat (bits + 1))%N.
+  Proof.
+    intros sign zs bits Hsign Hbits.
+    assert (Hcallback : forall z, In z zs ->
+      (1 + (Z.T_opp sign + Z.T_mul (- sign) z) <=
+        32 * N.of_nat (bits + 1))%N).
+    { intros z Hz.
+      pose proof (proj1 (Forall_forall _ _) Hbits z Hz) as Hwidth.
+      cbn beta in Hwidth.
+      destruct Hsign as [Hsign|Hsign]; subst sign.
+      - pose proof (karr_T_Z_mul_bilinear (-1) z) as Hmul.
+        pose proof (Z.T_opp_le 1) as Hopp.
+        cbn [Z.size_nat Pos.size_nat] in Hmul.
+        assert (HwidthN : (N.of_nat (Z.size_nat z + 1) <=
+          N.of_nat (bits + 1))%N) by lia.
+        assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+        change (N.of_nat (1 + 1)) with 2%N in Hmul.
+        replace (8 * 2 * N.of_nat (Z.size_nat z + 1))%N with
+          (16 * N.of_nat (Z.size_nat z + 1))%N in Hmul by ring.
+        assert (Hmul' : (Z.T_mul (-1) z <=
+          16 * N.of_nat (bits + 1))%N).
+        { eapply N.le_trans; [exact Hmul|].
+          now apply N.mul_le_mono_l. }
+        change (1 + (Z.T_opp 1 + Z.T_mul (-1) z) <=
+          32 * N.of_nat (bits + 1))%N.
+        lia.
+      - pose proof (karr_T_Z_mul_bilinear 1 z) as Hmul.
+        pose proof (Z.T_opp_le (-1)) as Hopp.
+        cbn [Z.size_nat Pos.size_nat] in Hmul.
+        assert (HwidthN : (N.of_nat (Z.size_nat z + 1) <=
+          N.of_nat (bits + 1))%N) by lia.
+        assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+        change (N.of_nat (1 + 1)) with 2%N in Hmul.
+        replace (8 * 2 * N.of_nat (Z.size_nat z + 1))%N with
+          (16 * N.of_nat (Z.size_nat z + 1))%N in Hmul by ring.
+        assert (Hmul' : (Z.T_mul 1 z <=
+          16 * N.of_nat (bits + 1))%N).
+        { eapply N.le_trans; [exact Hmul|].
+          now apply N.mul_le_mono_l. }
+        change (1 + (Z.T_opp (-1) + Z.T_mul 1 z) <=
+          32 * N.of_nat (bits + 1))%N.
+        lia. }
+    pose proof (karr_T_map_members Z Z
+      (fun z => (- sign * z)%Z)
+      (fun z => (1 + (Z.T_opp sign + Z.T_mul (- sign) z))%N)
+      (32 * N.of_nat (bits + 1))%N zs Hcallback) as Hmap.
+    assert (Hpositive : (1 <= N.of_nat (bits + 1))%N) by lia.
+    rewrite Nat2N.inj_add in *; cbn [N.of_nat] in *.
+    nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
