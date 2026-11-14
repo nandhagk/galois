@@ -11730,6 +11730,36 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       g args key r d Hget Hroot).
   Qed.
 
+  Lemma database_row_store_ok_register : forall db f k o,
+    database_row_store_ok db ->
+    (forall c, In c k -> In c (db_written_cells db)) ->
+    database_row_store_ok (register_row_uses f k o db).
+  Proof.
+    intros db f k o Hstore Hkey.
+    pose proof (database_row_store_ok_ensure db f k Hstore) as Hidentified.
+    pose proof Hstore as Hbase.
+    unfold database_row_store_ok in Hbase.
+    destruct Hbase as (_ & _ & Hcount & _ & Hcells & _ & _ & Hmap & _ & _).
+    unfold database_row_store_ok.
+    split.
+    - rewrite register_row_uses_history_map, register_row_uses_links,
+        register_row_uses_weights.
+      exact (proj1 Hidentified).
+    - split; [apply register_row_uses_history_coverage; exact Hstore |].
+      split.
+      + change (N.to_nat (db_nuses (register_row_uses f k o db)) =
+          length (uses_entries (register_row_uses f k o db))).
+        apply register_row_uses_count; assumption.
+      + split; [apply register_row_uses_history_counter; exact Hstore |].
+        split.
+        * apply register_row_uses_written_coverage; assumption.
+        * split; [apply register_row_uses_depth; exact Hstore |].
+          split; [apply register_row_uses_size; exact Hstore |].
+          split; [apply register_row_uses_map_wf; exact Hmap |].
+          split; [apply register_row_uses_labels; exact Hstore |].
+          apply register_row_uses_link_range. exact Hstore.
+  Qed.
+
   Lemma pop_loser_locate : forall db x db' f k,
     db_pop_loser db = Some (x, db') -> db_locate f k db' = db_locate f k db.
   Proof.
