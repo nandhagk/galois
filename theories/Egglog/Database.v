@@ -21896,6 +21896,79 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + now rewrite row_replace_forest, row_replace_ids.
   Qed.
 
+  Lemma repair_current_forest_core_active : forall db work f k,
+    inv_on db work ->
+    UnionFind.wf (db_forest (repair_current f k db)) /\
+    (forall x, UnionFind.mem (db_forest (repair_current f k db)) x <->
+      allocated (repair_current f k db) x) /\
+    count (db_forest (repair_current f k db)) = ids (repair_current f k db).
+  Proof.
+    intros db work f k Hinv.
+    assert (Hforest : UnionFind.wf (db_forest db)).
+    { exact (inv_on_forest_wf db work Hinv). }
+    assert (Hmembers : forall x,
+      UnionFind.mem (db_forest db) x <-> allocated db x).
+    { intro x. exact (inv_on_forest_members db work x Hinv). }
+    assert (Hcount : count (db_forest db) = ids db).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    unfold repair_current.
+    destruct (row_get f k db) as [output |] eqn:Hrow;
+      [| split; [exact Hforest |];
+         split; [exact Hmembers | exact Hcount]].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [split; [exact Hforest |];
+       split; [exact Hmembers | exact Hcount] |].
+    set (deleted := row_delete f k db).
+    assert (Hforest_deleted : UnionFind.wf (db_forest deleted)).
+    { subst deleted. now rewrite row_delete_forest. }
+    assert (Hmembers_deleted : forall x,
+      UnionFind.mem (db_forest deleted) x <-> allocated deleted x).
+    { intro x. subst deleted. rewrite row_delete_forest.
+      unfold allocated. rewrite row_delete_ids. exact (Hmembers x). }
+    assert (Hcount_deleted : count (db_forest deleted) = ids deleted).
+    { subst deleted. now rewrite row_delete_forest, row_delete_ids. }
+    assert (Hprevious : forall a,
+      row_get f (normal_key deleted (normal_key db k)) deleted =
+        Some (Some (Id a)) -> allocated deleted a).
+    { intros a Hnew. subst deleted.
+      rewrite row_delete_normal_key,
+        (normal_key_idempotent db k Hforest) in Hnew.
+      apply row_delete_binding in Hnew as [Hold _].
+      unfold allocated. rewrite row_delete_ids.
+      apply (proj1 (inv_on_kind_ok db work f (normal_key db k)
+        (Some (Id a)) Hinv Hold)).
+      apply in_or_app. right. cbn [option_list In]. now left. }
+    assert (Hnormal : forall b,
+      option_map (normal_cell deleted) (option_map (normal_cell db) output) =
+        Some (Id b) -> allocated deleted b).
+    { intros b Hnormalized. subst deleted.
+      rewrite row_delete_normal_output,
+        (normal_output_idempotent db output Hforest) in Hnormalized.
+      unfold allocated. rewrite row_delete_ids.
+      assert (Hkind_normal : kind_ok db f (normal_key db k)
+        (option_map (normal_cell db) output)).
+      { apply inv_on_normal_kind_ok with (work := work);
+          [exact Hinv |].
+        exact (inv_on_kind_ok db work f k output Hinv Hrow). }
+      apply (proj1 Hkind_normal).
+      apply in_or_app. right. rewrite Hnormalized.
+      cbn [option_list In]. now left. }
+    change (UnionFind.wf (db_forest
+      (put f (normal_key db k) (option_map (normal_cell db) output) deleted)) /\
+      (forall x, UnionFind.mem (db_forest
+        (put f (normal_key db k) (option_map (normal_cell db) output) deleted)) x <->
+        allocated (put f (normal_key db k)
+          (option_map (normal_cell db) output) deleted) x) /\
+      count (db_forest
+        (put f (normal_key db k) (option_map (normal_cell db) output) deleted)) =
+        ids (put f (normal_key db k)
+          (option_map (normal_cell db) output) deleted)).
+    apply put_forest_core_active; assumption.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
