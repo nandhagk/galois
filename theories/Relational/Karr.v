@@ -166,6 +166,32 @@ Definition karr_tail (r : karr_row) : karr_row :=
 
 TimeFun karr_tail.
 
+(** Dropping a coefficient preserves exact divisibility of the row. *)
+Lemma karr_exact_tail : forall d r,
+  karr_exact d r = true -> karr_exact d (karr_tail r) = true.
+Proof.
+  intros d [coeff right weight scale] Hexact.
+  unfold karr_exact in *. cbn [karr_tail kcoeff].
+  apply andb_true_iff in Hexact as [Hnonzero Hfields].
+  apply andb_true_iff in Hfields as [Hcoeff Hother].
+  apply andb_true_iff. split; [exact Hnonzero|].
+  apply andb_true_iff. split; [|exact Hother].
+  apply forallb_forall. intros z Hin.
+  apply (proj1 (forallb_forall _ _) Hcoeff).
+  destruct coeff as [|head tail]; cbn [tl] in Hin; [contradiction|now right].
+Qed.
+
+(** Exact division commutes with dropping a leading coefficient. *)
+Lemma karr_tail_divide_exact : forall d r,
+  karr_exact d r = true ->
+  karr_tail (karr_divide d r) = karr_divide d (karr_tail r).
+Proof.
+  intros d r Hexact. unfold karr_divide. rewrite Hexact.
+  rewrite (karr_exact_tail d r Hexact).
+  destruct r as [coeff right weight scale].
+  destruct coeff; reflexivity.
+Qed.
+
 Definition karr_restore (r : karr_row) : karr_row :=
   KRow (0%Z :: kcoeff r) (kright r) (kweight r) (kscale r).
 
@@ -179,6 +205,22 @@ Definition karr_reduce (d a b : Z) (p r : karr_row) : karr_row :=
       (a * kscale r - b * kscale p)%Z).
 
 TimeFun karr_reduce.
+
+(** An exact full-width reduction projects to the skipped-column tail. *)
+Lemma karr_reduce_restore_tail : forall d a b p r,
+  karr_exact d (KRow
+    (karr_cross a b (kcoeff r) (kcoeff (karr_restore p)))
+    (a * kright r - b * kright (karr_restore p))%Z
+    (karr_cross a b (kweight r) (kweight (karr_restore p)))
+    (a * kscale r - b * kscale (karr_restore p))%Z) = true ->
+  karr_tail (karr_reduce d a b (karr_restore p) r) =
+    karr_reduce d a b p (karr_tail r).
+Proof.
+  intros d a b p r Hexact. unfold karr_reduce.
+  rewrite karr_tail_divide_exact by exact Hexact.
+  destruct p as [pc pr pw ps], r as [rc rr rw rs].
+  destruct rc; reflexivity.
+Qed.
 
 (** A finite rational store evaluates the dense coefficient coordinates in order. *)
 Fixpoint karr_eval (qs : list Q) (zs : list Z) : Q :=
