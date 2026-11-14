@@ -6874,6 +6874,42 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
     nia.
   Qed.
 
+  Local Lemma table_smod_dispatch_time : forall rw wa a wb b,
+    (5 + T_interval_clip wa a + T_interval_clip wb b +
+      T_interval_smod rw (interval_clip wa a) (interval_clip wb b) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          W.psize wa a + W.psize wb b)%nat))%N.
+  Proof.
+    intros rw wa a wb b.
+    pose proof (table_clip_time wa a) as Hclip_a.
+    pose proof (table_clip_time wb b) as Hclip_b.
+    pose proof (table_clip_bits wa a) as Hbits_a.
+    pose proof (table_clip_bits wb b) as Hbits_b.
+    pose proof (table_smod_time rw wa a wb b) as Hsmod.
+    set (s := Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1).
+    set (budget_nat := s ^ 2 + W.psize wa a + W.psize wb b).
+    assert (Hcost_nat :
+      ((Pos.to_nat rw + interval_bits (interval_clip wa a) +
+        interval_bits (interval_clip wb b) + 1) ^ 2 <= budget_nat)%nat).
+    { unfold budget_nat, s. apply Nat.le_trans with (m :=
+        (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2).
+      - apply Nat.pow_le_mono_l. lia.
+      - lia. }
+    assert (Hclip_a_nat : (W.psize wa a + 1 <= budget_nat)%nat)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    assert (Hclip_b_nat : (W.psize wb b + 1 <= budget_nat)%nat)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    pose proof (table_nat_to_N_le _ _ Hcost_nat) as HcostN.
+    pose proof (table_nat_to_N_le _ _ Hclip_a_nat) as Hclip_aN.
+    pose proof (table_nat_to_N_le _ _ Hclip_b_nat) as Hclip_bN.
+    assert (Hbudget : (1 <= N.of_nat budget_nat)%N)
+      by (unfold budget_nat, s; rewrite Nat.pow_2_r; nia).
+    clear - Hclip_a Hclip_b Hsmod HcostN Hclip_aN Hclip_bN Hbudget.
+    unfold c_word_table.
+    nia.
+  Qed.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
@@ -7164,6 +7200,18 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         eapply N.le_trans; [|exact Htime]; lia
     end).
     all: try (match goal with
+    | |- context [T_interval_smod _ _ _] =>
+        pose proof (table_smod_dispatch_time rw wa a wb b) as Htime;
+        match goal with
+        | |- (_ <= c_word_table * N.of_nat ?budget)%N =>
+            replace budget with
+              (((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+                W.psize wa a + W.psize wb b)%nat)
+              by (rewrite Nat.pow_2_r; nia)
+        end;
+        eapply N.le_trans; [|exact Htime]; lia
+    end).
+    all: try (match goal with
     | |- context [Scalar.T_interval_join _ _] =>
         pose proof (table_ite_dispatch_time rw wa a wb b wc c) as Htime;
         match goal with
@@ -7178,7 +7226,7 @@ Module IntervalWordTableT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
         end;
         exact Htime
     end).
-  Admitted. (* OPEN: bound the timed unary and binary interval dispatches. *)
+  Qed.
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw +
