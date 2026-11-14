@@ -16208,7 +16208,7 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     1 <= d -> 1 <= v -> bits + 1 <= 128 * v ->
     Nat.log2 d <= v ->
     karr_hull_checker_charge d bits <=
-      (1024 * 256) * (d^3 * v^2).
+      (1024 * 256) * (d^2 * v^2).
   Proof.
     intros d bits v Hd Hv Hbits Hlog.
     assert (Hsquare : (bits + 1)^2 <= (128 * 128) * v^2).
@@ -16244,19 +16244,16 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       (128 * v) * (771 * (d * v))) with
       ((102 * 1000) * (d^2 * v^2) + (128 * 771) * (d * v^2))
       by (cbn [Nat.pow]; ring).
-    assert (Hd2 : d^2 <= d^3).
-    { cbn [Nat.pow]. nia. }
-    assert (Hd1 : d <= d^3).
+    assert (Hd1 : d <= d^2).
     { cbn [Nat.pow]. nia. }
     assert (Hsum : (102 * 1000) * (d^2 * v^2) +
       (128 * 771) * (d * v^2) <=
-      (102 * 1000 + 128 * 771) * (d^3 * v^2)).
-    { replace ((102 * 1000 + 128 * 771) * (d^3 * v^2)) with
-        ((102 * 1000) * (d^3 * v^2) +
-          (128 * 771) * (d^3 * v^2)) by ring.
+      (102 * 1000 + 128 * 771) * (d^2 * v^2)).
+    { replace ((102 * 1000 + 128 * 771) * (d^2 * v^2)) with
+        ((102 * 1000) * (d^2 * v^2) +
+          (128 * 771) * (d^2 * v^2)) by ring.
       apply Nat.add_le_mono.
-      - apply Nat.mul_le_mono; [lia|].
-        apply Nat.mul_le_mono; [exact Hd2|lia].
+      - apply Nat.le_refl.
       - apply Nat.mul_le_mono; [lia|].
         apply Nat.mul_le_mono; [exact Hd1|lia]. }
     eapply Nat.le_trans; [exact Hsum|].
