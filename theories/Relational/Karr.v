@@ -2633,6 +2633,67 @@ Proof.
     rewrite (karr_nth_error_value _ _ _ Hget) in Hmod. exact Hmod.
 Qed.
 
+(** A target quotient entry is the bordered minor at any retained column. *)
+Lemma karr_minor_law_reduce_entry_at : forall previous pivot_rows
+    pivot_columns columns pairs pivot_origin target_origin p r index j,
+  karr_minor_law previous pivot_rows pivot_columns columns pairs ->
+  previous <> 0%Z ->
+  In (pivot_origin, karr_row_entries p) pairs ->
+  In (target_origin, karr_row_entries r) pairs ->
+  length (kcoeff p) = length (kcoeff r) ->
+  length (kweight p) = length (kweight r) ->
+  index < length (kcoeff p) ->
+  length (karr_row_entries p) = length columns ->
+  length (karr_row_entries r) = length (karr_row_entries p) ->
+  j < length columns ->
+  karr_nth j (karr_row_entries (karr_reduce previous
+      (karr_nth index (kcoeff p)) (karr_nth index (kcoeff r)) p r)) =
+    karr_determinant (length pivot_rows + 2)
+      (karr_submatrix
+        (pivot_columns ++ [nth index columns 0%nat; nth j columns 0%nat])
+        (pivot_rows ++ [pivot_origin; target_origin])).
+Proof.
+  intros previous pivot_rows pivot_columns columns pairs pivot_origin
+    target_origin p r index j Hlaw Hprevious Hpivot Htarget Hcoeff Hweight
+    Hindex Hp_width Hr_width Hj.
+  assert (Hindex_columns : index < length columns).
+  { unfold karr_row_entries in Hp_width.
+    rewrite !length_app in Hp_width. cbn [length] in Hp_width.
+    rewrite length_app in Hp_width. cbn [length] in Hp_width. lia. }
+  pose proof (karr_minor_law_reduce_multiple_at previous pivot_rows
+    pivot_columns columns pairs pivot_origin target_origin p r index Hlaw
+    Hprevious Hpivot Htarget Hcoeff Hweight Hindex Hp_width Hr_width)
+    as Hmultiple.
+  apply (f_equal (karr_nth j)) in Hmultiple.
+  assert (Hscale : forall zs k,
+    karr_nth k (map (fun z => (previous * z)%Z) zs) =
+      (previous * karr_nth k zs)%Z).
+  { intros zs. induction zs as [|z zs IH]; intros [|k];
+      cbn [map karr_nth]; try ring. apply IH. }
+  rewrite Hscale in Hmultiple.
+  rewrite karr_nth_cross in Hmultiple by lia.
+  assert (Hvalid : Forall (fun k => k < length columns) [index; j]).
+  { repeat constructor; assumption. }
+  assert (Hpaired : Forall2 (fun origin row => In (origin, row) pairs)
+    [pivot_origin; target_origin] [karr_row_entries p; karr_row_entries r]).
+  { repeat constructor; assumption. }
+  unfold karr_minor_law in Hlaw.
+  pose proof (Hlaw [pivot_origin; target_origin]
+    [karr_row_entries p; karr_row_entries r] [index; j]
+    Hpaired eq_refl Hvalid ltac:(cbn [length]; lia)) as Hdet.
+  cbn [length karr_submatrix map Nat.sub Nat.add] in Hdet.
+  rewrite karr_determinant_two, Z.pow_1_r in Hdet.
+  replace (karr_nth index (karr_row_entries p) *
+      karr_nth j (karr_row_entries r) -
+      karr_nth j (karr_row_entries p) *
+      karr_nth index (karr_row_entries r))%Z with
+    (karr_nth index (karr_row_entries p) *
+      karr_nth j (karr_row_entries r) -
+      karr_nth index (karr_row_entries r) *
+      karr_nth j (karr_row_entries p))%Z in Hdet by ring.
+  nia.
+Qed.
+
 (** The order-three determinant agrees with the six signed permutation products. *)
 Lemma karr_determinant_three : forall a b c d e f g h i,
   karr_determinant 3 [[a; b; c]; [d; e; f]; [g; h; i]] =
