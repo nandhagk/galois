@@ -21793,6 +21793,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (Hcomplete s g perm args output Hslot Hrow).
   Qed.
 
+  Lemma inv_on_repair_projection_counts : forall db work f k,
+    inv_on db work -> projection_counts_ok (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    exact (proj2 (proj2 (proj2
+      (inv_on_repair_cache_correct db work f k Hinv)))).
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
