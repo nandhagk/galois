@@ -2180,6 +2180,17 @@ Proof.
     rewrite karr_restore_width, (proj1 (Forall_forall _ _) IH s Hin). reflexivity.
 Qed.
 
+(** The recorded run returns rows with the input coefficient width. *)
+Lemma karr_bareiss_record_width : forall cols previous rows,
+  Forall (fun r => length (kcoeff r) = cols) rows ->
+  Forall (fun r => length (kcoeff r) = cols)
+    (fst (karr_bareiss_record cols previous rows)).
+Proof.
+  intros cols previous rows Hwidth.
+  rewrite karr_bareiss_record_value.
+  apply karr_echelon_width, karr_bareiss_echelon. exact Hwidth.
+Qed.
+
 (** Reducing a target against equally wide basis rows preserves its width. *)
 Lemma karr_target_width : forall n rs previous r,
   Forall (fun p => length (kcoeff p) = n) rs -> length (kcoeff r) = n ->
