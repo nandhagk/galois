@@ -602,6 +602,49 @@ Proof.
     ring.
 Qed.
 
+(** Pointwise equality on a finite list gives equality of its integer sums. *)
+Lemma karr_determinant_sum_ext : forall A (f g : A -> Z) xs,
+  (forall x, In x xs -> f x = g x) ->
+  fold_right Z.add 0%Z (map f xs) = fold_right Z.add 0%Z (map g xs).
+Proof.
+  intros A f g xs Hequal. revert Hequal.
+  induction xs as [|x xs IH]; intro Hequal; [reflexivity|].
+  cbn [map fold_right]. rewrite (Hequal x (or_introl eq_refl)).
+  rewrite IH; [reflexivity|].
+  intros y Hy. apply Hequal. now right.
+Qed.
+
+(** Negating each summand negates the finite sum. *)
+Lemma karr_determinant_sum_neg : forall A (f : A -> Z) xs,
+  fold_right Z.add 0%Z (map (fun x => (- f x)%Z) xs) =
+    (- fold_right Z.add 0%Z (map f xs))%Z.
+Proof.
+  intros A f xs. induction xs as [|x xs IH]; cbn [map fold_right]; [ring|].
+  rewrite IH. ring.
+Qed.
+
+(** An antisymmetric term cancels across every ordered pair of a finite list. *)
+Lemma karr_determinant_pair_cancel : forall A (f : A -> A -> Z) xs,
+  (forall x y, In x xs -> In y xs -> f x y = (- f y x)%Z) ->
+  fold_right Z.add 0%Z (map (fun x =>
+    fold_right Z.add 0%Z (map (f x) xs)) xs) = 0%Z.
+Proof.
+  intros A f xs Hanti.
+  set (total := fold_right Z.add 0%Z (map (fun x =>
+    fold_right Z.add 0%Z (map (f x) xs)) xs)).
+  assert (Hneg : total = (- total)%Z).
+  { unfold total.
+    rewrite karr_determinant_sum_swap at 1.
+    rewrite <- (karr_determinant_sum_neg A (fun y =>
+      fold_right Z.add 0%Z (map (f y) xs)) xs).
+    apply karr_determinant_sum_ext. intros y Hy.
+    rewrite (karr_determinant_sum_ext A (fun x => f x y)
+      (fun x => (- f y x)%Z) xs).
+    - rewrite karr_determinant_sum_neg. reflexivity.
+    - intros x Hx. apply Hanti; assumption. }
+  lia.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
