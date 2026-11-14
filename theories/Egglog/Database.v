@@ -20377,6 +20377,14 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     now rewrite Habsent.
   Qed.
 
+  (** Active repair directly supplies each stored row's insertion shape condition. *)
+  Lemma inv_on_kind_ok : forall db work f k o, inv_on db work ->
+    row (view db) f k o -> kind_ok db f k o.
+  Proof.
+    intros db work f k o (_ & _ & _ & _ & _ & _ & _ & _ & Hkinds & _) Hrow.
+    exact (Hkinds f k o Hrow).
+  Qed.
+
   (** Removing an absent active entry retains every active invariant clause. *)
   Lemma inv_on_drop_absent : forall db f k rest,
     inv_on db ((f, k) :: rest) -> located db f k = None -> inv_on db rest.
@@ -21162,14 +21170,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db work Hinv. split.
     - exact (inv_on_forest_wf db work Hinv).
     - intros i j. exact (inv_on_same_repr db work i j Hinv).
-  Qed.
-
-  (** Active repair directly supplies each stored row's insertion shape condition. *)
-  Lemma inv_on_kind_ok : forall db work f k o, inv_on db work ->
-    row (view db) f k o -> kind_ok db f k o.
-  Proof.
-    intros db work f k o (_ & _ & _ & _ & _ & _ & _ & _ & Hkinds & _) Hrow.
-    exact (Hkinds f k o Hrow).
   Qed.
 
   (** A row's normalized key and output retain its source group after equality coarsening. *)
