@@ -15652,6 +15652,32 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact (karr_target_seed_envelope (variables (c :: P)) P c Hnormal).
   Qed.
 
+  (** The contradiction basis width fits four public Hadamard widths. *)
+  Lemma karr_contradiction_width_public : forall P c,
+    normal P ->
+    ellB (length (variables P) + length P + 2) (nell (Reached P)) + 1 <=
+      4 * (ellB (n (Reached P) + n (Reached (c :: nil)) + 1)
+        (ell (Reached P) + ell (Reached (c :: nil))) + 1).
+  Proof.
+    intros P c Hnormal.
+    set (d := n (Reached P) + n (Reached (c :: nil)) + 1).
+    set (w := ell (Reached P) + ell (Reached (c :: nil))).
+    set (s := length (variables P) + length P + 2).
+    pose proof (karr_variables_count P) as Hvars.
+    assert (Hs : s <= d).
+    { unfold s, d, n in *. cbn [rows_of length] in *. lia. }
+    assert (Hd : 2 <= d).
+    { unfold d, n. cbn [rows_of length]. lia. }
+    pose proof (karr_normal_terms_log P Hnormal) as Hterms.
+    assert (Hlogd : Nat.log2 (n (Reached P) + 1) <= Nat.log2 d).
+    { apply Nat.log2_le_mono. unfold d. lia. }
+    assert (Hlogs : Nat.log2 s <= Nat.log2 d).
+    { now apply Nat.log2_le_mono. }
+    unfold nell, ellB in *.
+    fold d w s.
+    nia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
