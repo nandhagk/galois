@@ -2369,6 +2369,41 @@ Proof.
   cbn [kcoeff]. now apply karr_cross_width.
 Qed.
 
+(** Shared coefficient and augmented widths determine the multiplier width. *)
+Lemma karr_weight_width_of_entries : forall p r,
+  length (kcoeff p) = length (kcoeff r) ->
+  length (karr_row_entries p) = length (karr_row_entries r) ->
+  length (kweight p) = length (kweight r).
+Proof.
+  intros p r Hcoeff Hentries.
+  unfold karr_row_entries in Hentries. rewrite !length_app in Hentries.
+  cbn [length] in Hentries. rewrite !length_app in Hentries.
+  cbn [length] in Hentries. lia.
+Qed.
+
+(** Guarded division preserves the full augmented row width in either branch. *)
+Lemma karr_divide_entries_width : forall d r,
+  length (karr_row_entries (karr_divide d r)) = length (karr_row_entries r).
+Proof.
+  intros d r. unfold karr_divide. destruct (karr_exact d r);
+    [rewrite karr_row_entries_quotient, length_map|]; reflexivity.
+Qed.
+
+(** A reduction of equally wide rows keeps their augmented width. *)
+Lemma karr_reduce_entries_width : forall d a b p r,
+  length (kcoeff r) = length (kcoeff p) ->
+  length (kweight r) = length (kweight p) ->
+  length (karr_row_entries (karr_reduce d a b p r)) =
+    length (karr_row_entries r).
+Proof.
+  intros d a b p r Hcoeff Hweight. unfold karr_reduce.
+  rewrite karr_divide_entries_width.
+  rewrite karr_row_entries_cross by assumption.
+  apply karr_cross_length.
+  unfold karr_row_entries. rewrite !length_app.
+  cbn [length]. rewrite !length_app. cbn [length]. lia.
+Qed.
+
 (** Dropping a leading coordinate reduces a positive width by one. *)
 Lemma karr_tail_width : forall n r, length (kcoeff r) = S n ->
   length (kcoeff (karr_tail r)) = n.
