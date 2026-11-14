@@ -3117,6 +3117,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       kind (view db) (runtime_max_name (db_runtime db)) <> None) /\
     database_history db.
 
+  Definition database_public_ok (db : t) : Prop :=
+    database_wf db /\ database_idle_ok db /\
+    slot_positions _ (db_slot_store db) =
+      database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
+        PTrieCode.empty (slots db).
+
+  Lemma database_public_base : forall db, database_public_ok db -> database_wf db.
+  Proof. intros db Hpublic. exact (proj1 Hpublic). Qed.
+
+  Lemma database_public_idle : forall db, database_public_ok db -> database_idle_ok db.
+  Proof. intros db Hpublic. exact (proj1 (proj2 Hpublic)). Qed.
+
   (** The stored invariant supplies forest. *)
   Lemma wf_forest : forall db, database_wf db -> UnionFind.wf (db_forest db).
   Proof.
@@ -10474,6 +10486,11 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     slot_positions _ (db_slot_store db) =
       database_rank_slots_from (runtime_kinds (db_runtime db)) 0%N
         PTrieCode.empty (slots db).
+  Lemma database_public_rank : forall db,
+    database_public_ok db -> slot_rank_ok db.
+  Proof.
+    intros db Hpublic. unfold database_public_ok, slot_rank_ok in *. tauto.
+  Qed.
   Lemma slot_rank_ok_frame : forall db db',
     slot_positions _ (db_slot_store db') = slot_positions _ (db_slot_store db) ->
     runtime_kinds (db_runtime db') = runtime_kinds (db_runtime db) ->
@@ -11149,6 +11166,21 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     split; [exact Hgroups |].
     split; [exact Hprojection |].
     split; [exact Hmaxname | exact Hhistory].
+  Qed.
+
+  Lemma database_public_inv_iff : forall db,
+    database_public_ok db <-> inv_on db [].
+  Proof.
+    intro db. split.
+    - intro Hpublic. apply public_inv_forward.
+      + exact (database_public_base db Hpublic).
+      + exact (database_public_idle db Hpublic).
+      + exact (database_public_rank db Hpublic).
+    - intro Hinv. unfold database_public_ok. split.
+      + exact (inv_base_reverse db Hinv).
+      + split; [exact (inv_idle_reverse db Hinv) |].
+        unfold slot_rank_ok in *.
+        apply forest_slot_rank. unfold inv_on in Hinv. tauto.
   Qed.
 
   (** Active and queued repair states expose their forest invariant directly. *)
