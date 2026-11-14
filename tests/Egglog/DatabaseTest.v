@@ -581,3 +581,60 @@ Example repair_follows_successive_aliases :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** A queued one-entry bucket has enough measure to activate and consume its repair. *)
+Definition measured_one_bucket :=
+  let empty := UnitDatabase.init [Decl 2%positive [SId] ORel] [] in
+  let first := snd (UnitDatabase.make 9%positive [] empty) in
+  let second := snd (UnitDatabase.make 9%positive [] first) in
+  UnitDatabase.union 1%positive 2%positive
+    (UnitDatabase.put 2%positive [Id 2%positive] None second).
+
+Lemma measured_one_bucket_wf : UnitDatabase.wf measured_one_bucket.
+Proof.
+  unfold measured_one_bucket.
+  apply UnitDatabase.wf_union.
+  - apply UnitDatabase.wf_put.
+    + apply UnitDatabase.wf_make.
+      * apply UnitDatabase.wf_make.
+        -- apply UnitDatabase.wf_init.
+        -- intros j Hin. contradiction.
+        -- intros perm Hin. vm_compute in Hin. contradiction.
+      * intros j Hin. contradiction.
+      * intros perm Hin. vm_compute in Hin. contradiction.
+    + split.
+      * intros i Hin. cbn [app option_list In] in Hin.
+        destruct Hin as [Hin | Hin]; [injection Hin as Hi; subst i | contradiction].
+        vm_compute. easy.
+      * split.
+        -- intros perm Hin. vm_compute in Hin. contradiction.
+        -- vm_compute. exact I.
+  - vm_compute. easy.
+  - vm_compute. easy.
+Qed.
+
+Example pop_measure_spends_one :
+  match UnitDatabase.rstep (measured_one_bucket, []) with
+  | inr _ => False
+  | inl state =>
+    (UnitDatabase.rebuild_measure (measured_one_bucket, []),
+      UnitDatabase.rebuild_measure state, length (snd state)) = (3, 2, 1)
+  end.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example repair_measure_spends_one :
+  match UnitDatabase.rstep (measured_one_bucket, []) with
+  | inr _ => False
+  | inl active =>
+    match UnitDatabase.rstep active with
+    | inr _ => False
+    | inl repaired =>
+      (UnitDatabase.rebuild_measure active, UnitDatabase.rebuild_measure repaired,
+        length (snd repaired)) = (2, 1, 0)
+    end
+  end.
+Proof.
+  vm_compute. reflexivity.
+Qed.
