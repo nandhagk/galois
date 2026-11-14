@@ -3050,6 +3050,18 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     exact (proj1 (Hcounter f k key r Hget)).
   Qed.
 
+  Lemma database_row_store_history_counter : forall db,
+    database_row_store_ok db ->
+    forall f k key r,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = Some (key, r) ->
+      (r < row_fresh (db_row_store db))%positive /\
+      (match PTrieCode.get r (row_links (db_row_store db)) with
+       | Some parent => parent | None => r end < row_fresh (db_row_store db))%positive /\
+      In (row_fresh (db_row_store db)) (db_index_counters db).
+  Proof.
+    intros db Hstore. unfold database_row_store_ok in Hstore. tauto.
+  Qed.
+
   Lemma database_row_store_uses_history : forall db,
     database_row_store_ok db ->
     forall x f k, In (f, k) (DatabaseUses.bucket x (row_uses (db_row_store db))) ->
@@ -3135,6 +3147,36 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
         lia.
   Qed.
 
+  Lemma ensure_row_identity_history_counter : forall db f k,
+    database_row_store_ok db ->
+    forall g args key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (ensure_row_identity f k db))) = Some (key, r) ->
+      let store := db_row_store (ensure_row_identity f k db) in
+      (r < row_fresh store)%positive /\
+      (match PTrieCode.get r (row_links store) with
+       | Some parent => parent | None => r end < row_fresh store)%positive /\
+      In (row_fresh store) (db_index_counters (ensure_row_identity f k db)).
+  Proof.
+    intros db f k Hstore g args key r Hget.
+    unfold ensure_row_identity in Hget |- *.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior.
+    - exact (database_row_store_history_counter db Hstore g args key r Hget).
+    - cbn [database_set_index_counters database_set_row_store db_row_store
+        row_history row_links row_fresh db_index_counters] in Hget |- *.
+      destruct (Pos.eq_dec (db_row_code g args) (db_row_code f k)) as [Hsame | Hother].
+      + rewrite Hsame, PTrie.get_set_same in Hget. inversion Hget; subst.
+        split; [lia |]. split.
+        * rewrite (database_row_store_future_links db Hstore) by apply Pos.le_refl.
+          lia.
+        * now left.
+      + rewrite PTrie.get_set_other in Hget by exact Hother.
+        destruct (database_row_store_history_counter db Hstore g args key r Hget)
+          as [Hid [Hparent Hcounter]].
+        split; [lia |]. split; [lia | now left].
+  Qed.
+
   Lemma register_row_uses_history : forall db f k o g args,
     PTrieCode.get (db_row_code g args)
       (row_history (db_row_store (register_row_uses f k o db))) =
@@ -3164,6 +3206,24 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
     rewrite register_row_uses_history in Hget.
     rewrite register_row_uses_fresh.
     now apply (ensure_row_identity_history_range db f k Hstore g args key r).
+  Qed.
+
+  Lemma register_row_uses_history_counter : forall db f k o,
+    database_row_store_ok db ->
+    forall g args key r,
+      PTrieCode.get (db_row_code g args)
+        (row_history (db_row_store (register_row_uses f k o db))) = Some (key, r) ->
+      let store := db_row_store (register_row_uses f k o db) in
+      (r < row_fresh store)%positive /\
+      (match PTrieCode.get r (row_links store) with
+       | Some parent => parent | None => r end < row_fresh store)%positive /\
+      In (row_fresh store) (db_index_counters (register_row_uses f k o db)).
+  Proof.
+    intros db f k o Hstore g args key r Hget.
+    unfold register_row_uses in Hget |- *.
+    cbn [database_set_nuses database_set_row_store db_row_store row_history
+      row_links row_fresh db_index_counters] in Hget |- *.
+    exact (ensure_row_identity_history_counter db f k Hstore g args key r Hget).
   Qed.
 
   Lemma register_row_uses_history_old : forall db f k o g args key r,
@@ -11128,6 +11188,18 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
       as [prior |] eqn:Hprior; [reflexivity |].
     cbn [database_set_index_counters database_set_row_store db_row_store row_keys].
+    apply PTrie.get_set_other. lia.
+  Qed.
+
+  Lemma ensure_row_identity_old_root_weight : forall db f k root,
+    (root < row_fresh (db_row_store db))%positive ->
+    PTrieCode.get root (row_weights (db_row_store (ensure_row_identity f k db))) =
+      PTrieCode.get root (row_weights (db_row_store db)).
+  Proof.
+    intros db f k root Hbelow. unfold ensure_row_identity.
+    destruct (PTrieCode.get (db_row_code f k) (row_history (db_row_store db)))
+      as [prior |] eqn:Hprior; [reflexivity |].
+    cbn [database_set_index_counters database_set_row_store db_row_store row_weights].
     apply PTrie.get_set_other. lia.
   Qed.
 
