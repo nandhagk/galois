@@ -12634,6 +12634,110 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
         rewrite Nat2N.inj_add; change (N.of_nat 1) with 1%N; nia.
   Qed.
 
+  (** Division of two bounded row coefficients fits a quadratic width charge. *)
+  Lemma T_poly_range_div_width : forall a b bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    (Z.T_div a b <= 512 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros a b bits Ha Hb.
+    set (n := 2 * (bits + 1)).
+    assert (Hsize : Z.size_nat a + Z.size_nat b + 1 <= n)
+      by (unfold n; lia).
+    assert (Hdiv : (Z.T_div a b <= 64 * N.of_nat (n^2))%N).
+    { pose proof (Z.T_div_le a b) as Hdivide.
+      apply time_of_nat_le in Hsize.
+      rewrite !Nat2N.inj_pow, !Nat2N.inj_add in *. time_cbn_all.
+      assert (Hproduct : ((N.of_nat (Z.size_nat a) + 1) *
+        (N.of_nat (Z.size_nat a) + N.of_nat (Z.size_nat b) + 2) <=
+        N.of_nat n * (2 * N.of_nat n))%N).
+      { apply N.mul_le_mono; lia. }
+      clear -Hdivide Hproduct Hsize. nia. }
+    eapply N.le_trans; [exact Hdiv|].
+    unfold n. rewrite !Nat2N.inj_pow, !Nat2N.inj_mul, !Nat2N.inj_add.
+    change (N.of_nat 1) with 1%N. nia.
+  Qed.
+
+  (** Updating either endpoint charges only the incoming coefficient and right-hand side. *)
+  Lemma T_poly_range_update_width : forall a b is_eq bounds bits,
+    Z.size_nat a <= bits -> Z.size_nat b <= bits ->
+    (T_range_update a b is_eq bounds <=
+      4096 * N.of_nat ((bits + 1)^2))%N.
+  Proof.
+    intros a b is_eq [lo hi] bits Ha Hb.
+    pose proof (Z.T_ltb_le 0 a) as Hpositive_clock.
+    pose proof (Z.T_ltb_le a 0) as Hnegative_clock.
+    pose proof (Z.T_opp_le a) as Hoppa.
+    pose proof (Z.T_opp_le b) as Hoppb.
+    assert (Hopp_a : Z.size_nat (-a) <= bits)
+      by (rewrite poly_size_opp; exact Ha).
+    assert (Hopp_b : Z.size_nat (-b) <= bits)
+      by (rewrite poly_size_opp; exact Hb).
+    pose proof (T_poly_range_div_width b a bits Hb Ha) as Hdiv_pos.
+    pose proof (T_poly_range_div_width (-b) a bits Hopp_b Ha) as Hdiv_pos_neg.
+    pose proof (T_poly_range_div_width b (-a) bits Hb Hopp_a) as Hdiv_neg.
+    pose proof (T_poly_range_div_width (-b) (-a) bits Hopp_b Hopp_a)
+      as Hdiv_neg_neg.
+    assert (Hwork : (1 <= N.of_nat ((bits + 1)^2))%N)
+      by (rewrite Nat2N.inj_pow, Nat2N.inj_add; nia).
+    set (work := N.of_nat ((bits + 1)^2)) in *.
+    assert (Hbit_work : (N.of_nat (bits + 1) <= work)%N).
+    { assert (Hnat : bits + 1 <= (bits + 1)^2) by (cbn [Nat.pow]; nia).
+      unfold work. now apply time_of_nat_le. }
+    assert (Hpositive_total : (Z.T_ltb 0 a <= 8 * work)%N).
+    { change (Z.T_ltb 0 a <= 4)%N in Hpositive_clock.
+      clear -Hpositive_clock Hwork. nia. }
+    assert (Hnegative_total : (Z.T_ltb a 0 <= 8 * work)%N).
+    { pose proof (poly_negative_test_clock bits a Ha) as Htest.
+      clear -Htest Hbit_work Hwork. nia. }
+    assert (Hoppa_total : (Z.T_opp a <= 8 * work)%N)
+      by (clear -Hoppa Ha Hbit_work Hwork; lia).
+    assert (Hoppb_total : (Z.T_opp b <= 8 * work)%N)
+      by (clear -Hoppb Hb Hbit_work Hwork; lia).
+    time_unfold T_range_update.
+    destruct (0 <? a)%Z eqn:Hpositive.
+    - apply Z.ltb_lt in Hpositive.
+      pose proof (poly_div_size_le b a Hpositive) as Hquot_pos.
+      pose proof (poly_div_size_le (-b) a Hpositive) as Hquot_neg.
+      rewrite poly_size_opp in Hquot_neg.
+      pose proof (T_poly_lower_bounded (-((-b) / a)) lo) as Hlower.
+      pose proof (T_poly_upper_bounded (b / a) hi) as Hupper.
+      pose proof (Z.T_opp_le ((-b) / a)) as Hopp_quot.
+      rewrite poly_size_opp in Hlower.
+      assert (Hlower_total : (T_poly_lower (-((-b) / a)) lo <= 16 * work)%N)
+        by (clear -Hlower Hquot_neg Hb Hbit_work Hwork; lia).
+      assert (Hupper_total : (T_poly_upper (b / a) hi <= 16 * work)%N)
+        by (clear -Hupper Hquot_pos Hb Hbit_work Hwork; lia).
+      assert (Hopp_quot_total : (Z.T_opp ((-b) / a) <= 8 * work)%N)
+        by (clear -Hopp_quot Hquot_neg Hb Hbit_work Hwork; lia).
+      destruct is_eq; time_simpl; cbn [fst snd]; fold work;
+        clear -Hpositive_total Hoppb_total Hdiv_pos Hdiv_pos_neg
+          Hlower_total Hupper_total Hopp_quot_total Hwork;
+        clearbody work; nia.
+    - destruct (a <? 0)%Z eqn:Hnegative.
+      + apply Z.ltb_lt in Hnegative.
+        assert (Hdivisor : (0 < -a)%Z) by lia.
+        pose proof (poly_div_size_le b (-a) Hdivisor) as Hquot_pos.
+        pose proof (poly_div_size_le (-b) (-a) Hdivisor) as Hquot_neg.
+        rewrite poly_size_opp in Hquot_neg.
+        pose proof (T_poly_lower_bounded (-(b / (-a))) lo) as Hlower.
+        pose proof (T_poly_upper_bounded ((-b) / (-a)) hi) as Hupper.
+        pose proof (Z.T_opp_le (b / (-a))) as Hopp_quot.
+        rewrite poly_size_opp in Hlower.
+        assert (Hlower_total : (T_poly_lower (-(b / (-a))) lo <= 16 * work)%N)
+          by (clear -Hlower Hquot_pos Hb Hbit_work Hwork; lia).
+        assert (Hupper_total : (T_poly_upper ((-b) / (-a)) hi <= 16 * work)%N)
+          by (clear -Hupper Hquot_neg Hb Hbit_work Hwork; lia).
+        assert (Hopp_quot_total : (Z.T_opp (b / (-a)) <= 8 * work)%N)
+          by (clear -Hopp_quot Hquot_pos Hb Hbit_work Hwork; lia).
+        destruct is_eq; time_simpl; cbn [fst snd]; fold work;
+          clear -Hpositive_total Hnegative_total Hoppa_total Hoppb_total
+            Hdiv_neg Hdiv_neg_neg Hlower_total Hupper_total Hopp_quot_total Hwork;
+          clearbody work; nia.
+      + time_simpl; fold work;
+          clear -Hpositive_total Hnegative_total Hwork;
+          clearbody work; nia.
+  Qed.
+
 
   Definition poly_range_result_key (p : option X.t * Z) : bool :=
     match fst p with None => true | Some _ => false end.
