@@ -12123,6 +12123,54 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       now rewrite N.add_1_r.
   Qed.
 
+  Lemma database_row_store_size_from_history : forall db,
+    database_row_store_depth_ok db -> database_history_root_owner db ->
+    database_history_key_shape db -> database_history_codes_valid db ->
+    database_history_key_ids_bounded db ->
+    database_row_weight_conserved db ->
+    forall f k key id d,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, id) ->
+      (let parent current :=
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end in
+       parent (Nat.iter d parent id) = Nat.iter d parent id) ->
+      (match PTrieCode.get
+        (Nat.iter d (fun current =>
+          match PTrieCode.get current (row_links (db_row_store db)) with
+          | Some p => p | None => current end) id)
+        (row_weights (db_row_store db)) with
+       | Some n => n | None => 1%N end <=
+       (ids db + 1) ^ N.of_nat (length k))%N.
+  Proof.
+    intros db Hdepth Howner Hshape Hvalid Hbounded Hconserved
+      f k key id d Hentry Hfixed.
+    destruct (Hdepth f k key id Hentry) as [base [Hbase [Hroot_fixed _]]].
+    assert (Hcanonical_fixed :
+      (let parent current :=
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end in
+       parent (row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+         (db_row_store db)) =
+       row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+         (db_row_store db))).
+    { rewrite (row_root_after_fixed _ base id (db_row_store db)
+        Hbase Hroot_fixed). exact Hroot_fixed. }
+    assert (Hequal :
+      Nat.iter d (fun current =>
+        match PTrieCode.get current (row_links (db_row_store db)) with
+        | Some p => p | None => current end) id =
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) id
+        (db_row_store db)).
+    { eapply database_row_reaches_fixed_unique with (x := id).
+      - exists d. now rewrite row_root_parent_iter.
+      - exists (length k * (N.to_nat (N.log2 (ids db)) + 1)). reflexivity.
+      - exact Hfixed.
+      - exact Hcanonical_fixed. }
+    rewrite Hequal.
+    eapply database_history_weight_cardinality; eassumption.
+  Qed.
+
   Lemma database_row_weight_codes_disjoint : forall db first second left right,
     first <> second ->
     (match PTrieCode.get first (row_links (db_row_store db)) with
