@@ -13365,6 +13365,33 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clear -Hsetup Hnative Hrun_total Hfold_work. clearbody work. nia.
   Qed.
 
+  (** Duplicate form entries consume stages before the nonempty range recurrence. *)
+  Lemma poly_range_nonempty_budget_transport : forall dim mlen fuel extra bits,
+    extra + fuel <= dim ->
+    fmcost (dim + 1) mlen fuel mlen (2 * bits + Nat.log2 (extra + 1) + 1) <=
+      32 * fmcost dim (mlen + 1) dim (mlen + 1) bits.
+  Proof.
+    intros dim mlen fuel extra bits Hfuel.
+    assert (Hwidth : 2 * bits + Nat.log2 (extra + 1) + 1 <=
+      poly_width_after extra (2 * (2 * bits + 1) + 1)).
+    { eapply Nat.le_trans; [apply poly_duplicate_width_shift|].
+      apply poly_width_after_mono. lia. }
+    eapply Nat.le_trans with (m := fmcost (dim + 1) mlen fuel mlen
+      (poly_width_after extra (2 * (2 * bits + 1) + 1))).
+    { apply poly_fmcost_params_mono; lia. }
+    eapply Nat.le_trans; [apply poly_fmcost_shift_width|].
+    eapply Nat.le_trans with (m := fmcost (dim + 1) (mlen + 1) dim
+      (mlen + 1) (2 * (2 * bits + 1) + 1)).
+    { apply poly_fmcost_mono; lia. }
+    pose proof (poly_fmcost_dimension_successor dim dim (mlen + 1)
+      (mlen + 1) (2 * (2 * bits + 1) + 1)) as Hdimension.
+    pose proof (poly_fmcost_double_width dim dim (mlen + 1)
+      (mlen + 1) (2 * bits + 1)) as Hdouble.
+    pose proof (poly_fmcost_double_width dim dim (mlen + 1)
+      (mlen + 1) bits) as Hbase.
+    lia.
+  Qed.
+
   (** A completed affine-case bound lifts through linearization and the wrapped/unknown branches. *)
   Lemma T_poly_range_from_linear : forall factor,
     (forall P f, (T_range_linear P f <=
