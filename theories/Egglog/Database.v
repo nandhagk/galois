@@ -2270,6 +2270,26 @@ Module DatabaseCode (V : VALUE_OPS) (I : INDEX_OPS V) <: DATABASE_OPS V I.
     end.
   TimeFun id_occurrences.
 
+  Lemma id_occurrences_member : forall f k cells x g key,
+    In (x, (g, key)) (id_occurrences f k cells) <->
+      g = f /\ key = k /\ In (Id x) cells.
+  Proof.
+    intros f k cells. induction cells as [|[i | v] rest IH]; intros x g key;
+      cbn [id_occurrences In].
+    - tauto.
+    - rewrite IH. split.
+      + intros [Heq | [Hg [Hk Hin]]].
+        * injection Heq as -> -> ->. repeat split; now left.
+        * repeat split; try assumption. now right.
+      + intros [Hg [Hk [Heq | Hin]]].
+        * injection Heq as <-. subst g key. now left.
+        * right. repeat split; assumption.
+    - rewrite IH. split.
+      + intros [Hg [Hk Hin]]. repeat split; try assumption. now right.
+      + intros [Hg [Hk [Himpossible | Hin]]]; [discriminate |].
+        repeat split; assumption.
+  Qed.
+
   Definition db_cell_code (c : cell V.t) : positive :=
     match c with Id i => xO i | Val v => xI (V.encode v) end.
   Definition db_cell_eqb (c d : cell V.t) : bool :=
