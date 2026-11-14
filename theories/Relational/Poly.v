@@ -14025,6 +14025,28 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     eapply N.le_trans; [exact Hcount|]. apply N.mul_le_mono_r, N.mul_le_mono_r. lia.
   Qed.
 
+  Lemma T_poly_assign_prepared_row : forall x f,
+    (T_assignment_row x f <= (X.c_key + 24) *
+      N.of_nat (length (coef f) + 1) * N.of_nat (F.form_bits f + 1))%N.
+  Proof.
+    intros x f. apply T_poly_assign_row.
+    apply Forall_forall. intros p Hp.
+    pose proof (poly_form_entry_bits f p Hp). unfold X.bits in *. lia.
+  Qed.
+
+  Lemma T_poly_assign_source_map : forall x P,
+    (ListDef.T_map (fun r => (rename_row (rename_old x) r, false))
+      (fun r => (1 + T_rename_row (rename_old x) (T_rename_old x) r)%N) P <=
+      (X.c_key + 20) * N.of_nat (length P + 1) *
+        (N.of_nat (terms (Reached P) + 1) *
+          N.of_nat (poly_raw_keys P + 1)))%N.
+  Proof.
+    intros x P. apply T_poly_assign_sources.
+    apply Forall_forall. intros r Hr.
+    pose proof (poly_max_member _ C.row_key_bits 0 P r Hr).
+    unfold poly_raw_keys. lia.
+  Qed.
+
   (** Raw renamed sources normalize once and build their identity multipliers. *)
   Lemma T_poly_assign_tail_initial : forall x P,
     (T_poly_initial tmp_encode T_tmp_encode
