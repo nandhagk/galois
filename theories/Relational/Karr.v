@@ -2069,6 +2069,27 @@ Proof.
   - now apply IH.
 Qed.
 
+(** A lookup inside the first list ignores every appended field. *)
+Lemma karr_nth_app_left : forall index xs ys,
+  index < length xs -> karr_nth index (xs ++ ys) = karr_nth index xs.
+Proof.
+  intro index. induction index as [|index IH]; intros xs ys Hindex;
+    destruct xs as [|z xs]; cbn [length app karr_nth] in *.
+  - lia.
+  - reflexivity.
+  - lia.
+  - apply IH. lia.
+Qed.
+
+(** A live coefficient has the same augmented-row coordinate. *)
+Lemma karr_nth_row_entries_coeff : forall index row,
+  index < length (kcoeff row) ->
+  karr_nth index (karr_row_entries row) = karr_nth index (kcoeff row).
+Proof.
+  intros index row Hindex. unfold karr_row_entries.
+  now apply karr_nth_app_left.
+Qed.
+
 (** Every actual matrix entry is an independently enumerated order-one minor. *)
 Lemma karr_signed_minors_entry : forall width rows row z,
   In row rows -> length row <= width -> In z row ->
