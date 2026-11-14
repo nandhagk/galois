@@ -9991,6 +9991,66 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     exact Hbudget.
   Qed.
 
+  Lemma invalid_remove_step_arithmetic : forall code_unit trie_unit bits code remove,
+    (1 <= bits)%N -> (code <= code_unit * bits)%N ->
+    (remove <= trie_unit * bits)%N ->
+    (1 + (code + remove) <=
+      4 * (code_unit + trie_unit + 1) * bits)%N.
+  Proof.
+    intros code_unit trie_unit bits code remove Hbits Hcode Hremove.
+    replace (4 * (code_unit + trie_unit + 1) * bits)%N with
+      (4 * code_unit * bits + 4 * trie_unit * bits + 4 * bits)%N by ring.
+    nia.
+  Qed.
+
+  Lemma T_invalid_remove_step_le : forall A x (m : PTrieCode.t A),
+    (1 + (S.T_key_code x + PTrieCode.T_remove (S.key_code x) m) <=
+      4 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1))%N.
+  Proof.
+    intros A x m.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_remove_le A (S.key_code x) m) as Hremove.
+    unfold PTrieT.T_remove in Hremove.
+    unfold S.key_bits in *.
+    assert (Hbits : (1 <= N.of_nat (Pos.size_nat (S.key_code x) + 1))%N)
+      by lia.
+    eapply N.le_trans.
+    - eapply invalid_remove_step_arithmetic;
+        [exact Hbits|exact Hcode|exact Hremove].
+    - apply N.mul_le_mono_r; lia.
+  Qed.
+
+  Lemma T_invalid_remove_keys_le : forall A (xs : list S.key) (m : PTrieCode.t A),
+    (T_remove_keys xs m <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) xs) + 2)%N.
+  Proof.
+    intros A xs m.
+    destruct (fold_left_inv_time
+      (fun acc x => PTrieCode.remove (S.key_code x) acc)
+      (fun acc x => (1 + (S.T_key_code x +
+        PTrieCode.T_remove (S.key_code x) acc))%N)
+      (fun _ : PTrieCode.t A => True)
+      (fun x => (4 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1))%N) xs m I) as [_ Hfold].
+    { intros acc x _ _; split; [exact I|apply T_invalid_remove_step_le]. }
+    assert (Hsum : forall ys,
+      (fold_right (fun x total =>
+        4 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (S.key_bits x + 1) + 2 + total)%N 1%N ys <=
+        16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+          N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) ys) + 1)%N).
+    { induction ys as [|x rest IH]; [cbn; lia|].
+      unfold finite_sum in *; cbn [map fold_right].
+      rewrite Nat2N.inj_add.
+      assert (Hbits : (1 <= N.of_nat (S.key_bits x + 1))%N) by lia.
+      assert (Hbase : (1 <= S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) by lia.
+      clear -IH Hbits Hbase; nia. }
+    specialize (Hsum xs).
+    unfold T_remove_keys; lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
