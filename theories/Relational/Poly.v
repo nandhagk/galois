@@ -14310,6 +14310,34 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     exact Hstep.
   Qed.
 
+  (** Every output certificate retains one prepared-head slot and one slot per source. *)
+  Lemma poly_assign_output_multiplier_bits : forall x f P,
+    NoDup (map fst (coef f)) ->
+    Forall (fun r => length (poly_multipliers r) = length P + 1 /\
+      Forall (fun m => Z.size_nat m <=
+        (poly_raw_bits P + F.form_bits f + 1) + 1) (poly_multipliers r))
+      (poly_step tmp_encode tmp_eqb None
+        (poly_initial tmp_encode
+          ((assignment_row x f, false) ::
+            map (fun r => (rename_row (rename_old x) r, false)) P))).
+  Proof.
+    intros x f P Hform.
+    eapply RangeCore.poly_step_multiplier_bits with
+      (count := length P + 1) (bits := poly_raw_bits P + F.form_bits f + 1).
+    apply Forall_forall. intros r Hr.
+    pose proof (poly_initial_units (option X.t) tmp_encode
+      ((assignment_row x f, false) ::
+        map (fun p => (rename_row (rename_old x) p, false)) P)) as Hunits.
+    destruct (proj1 (Forall_forall _ _) Hunits r Hr) as [Hlength Hunit].
+    cbn [length] in Hlength. rewrite length_map in Hlength.
+    replace (S (length P)) with (length P + 1) in Hlength by lia.
+    destruct (proj1 (Forall_forall _ _) (poly_assign_initial_envelope x f P Hform)
+      r Hr) as (Hnormal & Hdim & Hkeys & Hbits & Hcount & Hmult).
+    split; [exact Hlength|]. split; [exact Hunit|].
+    eapply Nat.le_trans; [apply RangeCore.poly_row_coefficient_bits; exact Hnormal|].
+    exact Hbits.
+  Qed.
+
   (** Only the old assigned coordinate is eliminated from the source-only tail. *)
   Definition poly_assign_tail_step (x : X.t) (P : list (lcons X.t)) :=
     poly_step tmp_encode tmp_eqb None (poly_assign_tail x P).
