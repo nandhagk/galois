@@ -11225,6 +11225,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         apply forest_slot_rank. unfold inv_on in Hinv. tauto.
   Qed.
 
+  Lemma public_union_queue_distinct : forall db i j, database_public_ok db ->
+    NoDup (queue (union i j db)).
+  Proof.
+    intros db i j Hpublic.
+    pose proof (database_public_base db Hpublic) as Hbase.
+    pose proof (database_public_idle db Hpublic) as Hidle.
+    pose proof (database_idle_queue_distinct db Hidle) as Hdistinct.
+    pose proof (database_idle_queue_nonroot db Hidle) as Hnonroot.
+    unfold union, queue.
+    destruct (UnionFindCode.union i j (db_forest db)) as [roots forest] eqn:Hunion.
+    destruct roots as [[winner loser] |]; cbn [database_set_pending database_set_runtime
+      runtime_set_union db_runtime runtime_queue]; [| exact Hdistinct].
+    constructor; [| exact Hdistinct]. intro Hin.
+    pose proof (Hnonroot loser Hin) as Hloser_nonroot.
+    destruct (UnionFind.union_some i j (db_forest db) winner loser forest
+      (wf_forest db Hbase) Hunion) as [_ [Hroots _]].
+    destruct Hroots as [[_ Hloser] | [_ Hloser]]; subst loser;
+      apply Hloser_nonroot; apply UnionFind.repr_idem; exact (wf_forest db Hbase).
+  Qed.
+
   (** Active and queued repair states expose their forest invariant directly. *)
   Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
   Proof.
