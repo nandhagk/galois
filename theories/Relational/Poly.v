@@ -14179,6 +14179,22 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     intros r Hr. now apply RangeCore.poly_coefficient_absent.
   Qed.
 
+  (** The source-only assignment step uses the established quadratic row charge. *)
+  Lemma T_poly_assign_tail_step_bounded : forall x P,
+    (T_poly_step tmp_encode T_tmp_encode tmp_eqb T_tmp_eqb None
+      (poly_assign_tail x P) <= RangeCore.poly_step_factor *
+        N.of_nat (length P + 1)^2 * RangeCore.poly_clock_span
+          (length (RangeCore.vars_of (poly_assign_sources x P)))
+          (length P + 1) (poly_raw_keys P + 1) (poly_raw_bits P))%N.
+  Proof.
+    intros x P.
+    pose proof (RangeCore.T_poly_step_bounded None (poly_assign_tail x P)
+      (length (RangeCore.vars_of (poly_assign_sources x P)))
+      (length P + 1) (poly_raw_keys P + 1) (poly_raw_bits P)
+      (poly_assign_tail_envelopes x P)) as Hstep.
+    now rewrite poly_assign_tail_length in Hstep.
+  Qed.
+
   Definition c_num : N := (poly_assume_factor + poly_havoc_factor + 1)%N.
   Lemma T_assign_le : forall x e s,
     (T_assign x e s <= c_num * N.of_nat (assign_work x e s + 1))%N.
