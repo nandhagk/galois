@@ -12781,6 +12781,57 @@ Module PolyT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     - lia.
   Qed.
 
+  (** Checking a bounded result row costs at most a quadratic final-width charge. *)
+  Lemma T_poly_range_checker_width : forall P f a (r : lcons (option X.t)) ms dim mlen bits,
+    Forall (poly_source_envelope dim bits) P -> length P <= mlen ->
+    length ms <= mlen ->
+    Forall (fun m => Z.size_nat m <= bits + 1) ms ->
+    length (coef f) <= dim -> F.form_bits f <= bits ->
+    Z.size_nat a <= bits -> Z.size_nat (rhs r) <= bits ->
+    let conclusion := LCons X.t (poly_scale_coef a (coef f)) (lrel r)
+      (rhs r - a * cst f)%Z in
+    (C.T_check_entails P conclusion (Cert ms 1 false) <=
+      C.c_lc * N.of_nat (128 * (mlen + 1) * (dim + mlen + 1) * (bits + 1)^2))%N.
+  Proof.
+    intros P f a r ms dim mlen bits Hsource HP Hms Hweights Hform Hformbits
+      Ha Hr conclusion.
+    assert (Hconclusion : poly_source_envelope dim (4 * bits + 1) conclusion).
+    { unfold conclusion. now apply poly_range_conclusion_envelope. }
+    assert (Hsources : Forall (poly_source_envelope dim (4 * bits + 1))
+      (conclusion :: P)).
+    { constructor; [exact Hconclusion|].
+      eapply Forall_impl; [|exact Hsource].
+      intros row [Hdim Hbits]. split; lia. }
+    assert (Hweights' : Forall (fun m => Z.size_nat m <= 4 * bits + 1 + 1) ms).
+    { apply Forall_forall. intros m Hin.
+      pose proof (proj1 (Forall_forall _ _) Hweights m Hin) as Hm.
+      eapply Nat.le_trans; [exact Hm|]. lia. }
+    pose proof (poly_checker_measure_envelope P conclusion ms 1 dim mlen
+      (4 * bits + 1) Hsources HP Hms Hweights'
+      ltac:(cbn [Z.size_nat Pos.size_nat]; lia)) as Hmeasure.
+    assert (Hsquare : (4 * bits + 2)^2 <= 16 * (bits + 1)^2)
+      by (cbn [Nat.pow]; nia).
+    assert (Htotal : C.csize P ms + 2 *
+      (C.lsize conclusion + C.cbits P ms + 1) <=
+      128 * (mlen + 1) * (dim + mlen + 1) * (bits + 1)^2).
+    { assert (Hbase : 4 * bits + 1 + 1 <= 4 * bits + 2) by lia.
+      assert (Hwidth : (4 * bits + 1 + 1)^2 <= 16 * (bits + 1)^2).
+      { eapply Nat.le_trans; [apply Nat.pow_le_mono_l; exact Hbase|exact Hsquare]. }
+      pose proof (Nat.mul_le_mono_l _ _
+        (8 * (mlen + 1) * (dim + mlen + 1)) Hwidth) as Hscaled.
+      assert (Heq : (8 * (mlen + 1) * (dim + mlen + 1)) *
+        (16 * (bits + 1)^2) =
+        128 * (mlen + 1) * (dim + mlen + 1) * (bits + 1)^2) by ring.
+      rewrite Heq in Hscaled.
+      eapply Nat.le_trans; [exact Hmeasure|exact Hscaled]. }
+    pose proof (C.T_check_entails_le P conclusion (Cert ms 1 false)) as Hcheck.
+    change (C.T_check_entails P conclusion (Cert ms 1 false) <=
+      C.c_lc * N.of_nat (C.csize P ms + 2 *
+        (C.lsize conclusion + C.cbits P ms + 1)))%N in Hcheck.
+    eapply N.le_trans; [exact Hcheck|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
+
 
   Definition poly_range_empty_candidate_factor : N :=
     (32 * C.c_lc + RangeCore.poly_coef_factor + 256)%N.
