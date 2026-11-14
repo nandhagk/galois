@@ -16373,6 +16373,18 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       change (N.of_nat 8) with 8%N. ring_simplify. apply N.le_refl.
   Qed.
 
+  Lemma T_karr_source_variables_public : forall P c,
+    normal P ->
+    (T_variables P <= 8 * karr_variables_factor *
+      N.of_nat (elimination_work (Reached P) (Reached (c :: nil))))%N.
+  Proof.
+    intros P c HP. unfold elimination_work.
+    apply T_karr_variables_public; [exact HP| | |].
+    - unfold n. cbn [rows_of length]. lia.
+    - unfold ell. cbn [rows_of map fold_right]. lia.
+    - unfold n. cbn [rows_of length]. lia.
+  Qed.
+
   Lemma lat_mono : forall m n, m <= n -> lat m <= lat n.
   Proof.
     intros m n Hle. unfold lat. apply Nat.mul_le_mono; [lia|].
