@@ -15607,6 +15607,26 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       try reflexivity; exact Hupdated.
   Qed.
 
+  Lemma database_history_key_shape_repair_current : forall db f k,
+    database_row_store_ok db -> database_history_key_shape db ->
+    database_history_key_shape (repair_current f k db).
+  Proof.
+    intros db f k Hstore Hshape. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Hshape].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Hshape |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted).
+    assert (Hupdated : database_history_key_shape updated).
+    { subst updated. apply database_history_key_shape_put.
+      - subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
+      - subst deleted. apply database_history_key_shape_row_delete. exact Hshape. }
+    eapply database_history_key_shape_transport with (db := updated);
+      try reflexivity; exact Hupdated.
+  Qed.
+
   Lemma database_row_weight_conserved_repair_current : forall db f k,
     database_row_store_ok db -> database_row_weight_conserved db ->
     database_row_weight_conserved (repair_current f k db).
@@ -15637,6 +15657,31 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     apply database_history_root_owner_move.
     - apply database_row_store_ok_repair_current. exact Hstore.
     - apply database_history_root_owner_repair_current; assumption.
+    - symmetry. apply normal_key_length.
+  Qed.
+
+  Lemma database_history_key_shape_repair_entry_move : forall db f k,
+    database_row_store_ok db -> database_history_key_shape db ->
+    database_history_key_shape
+      (move_row_identity f k (normal_key db k) (repair_current f k db)).
+  Proof.
+    intros db f k Hstore Hshape.
+    apply database_history_key_shape_move.
+    - apply database_row_store_ok_repair_current. exact Hstore.
+    - apply database_history_key_shape_repair_current; assumption.
+    - symmetry. apply normal_key_length.
+    - symmetry. apply normal_key_shape.
+  Qed.
+
+  Lemma database_row_weight_conserved_repair_entry_move : forall db f k,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved
+      (move_row_identity f k (normal_key db k) (repair_current f k db)).
+  Proof.
+    intros db f k Hstore Hconserved.
+    apply database_row_weight_conserved_move.
+    - apply database_row_store_ok_repair_current. exact Hstore.
+    - apply database_row_weight_conserved_repair_current; assumption.
     - symmetry. apply normal_key_length.
   Qed.
 
@@ -15792,6 +15837,34 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       (output_eqb (option_map (normal_cell db) o) o));
       [exact Howner |].
     apply database_history_root_owner_repair_entry_move; assumption.
+  Qed.
+
+  Lemma database_history_key_shape_db_repair_entry : forall db f k,
+    database_row_store_ok db -> database_history_key_shape db ->
+    database_history_key_shape (db_repair_entry f k db).
+  Proof.
+    intros db f k Hstore Hshape. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hshape].
+    destruct (row_get f current db) as [o |]; [| exact Hshape].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hshape |].
+    apply database_history_key_shape_repair_entry_move; assumption.
+  Qed.
+
+  Lemma database_row_weight_conserved_db_repair_entry : forall db f k,
+    database_row_store_ok db -> database_row_weight_conserved db ->
+    database_row_weight_conserved (db_repair_entry f k db).
+  Proof.
+    intros db f k Hstore Hconserved. unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |]; [| exact Hconserved].
+    destruct (row_get f current db) as [o |]; [| exact Hconserved].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) o) o));
+      [exact Hconserved |].
+    apply database_row_weight_conserved_repair_entry_move; assumption.
   Qed.
 
   Lemma database_active_history_coherent_db_repair_entry : forall db f k,
