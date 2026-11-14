@@ -676,6 +676,12 @@ Module IncrementalCode (L : WLATTICE_OPS) (S : LOCAL_SYSTEM_OPS L)
   Proof.
     reflexivity.
   Qed.
+
+  Lemma invalidated_keys_eq : forall p p' ch st,
+    invalidated p p' ch st = invalidate_keys p p' ch st.
+  Proof.
+    reflexivity.
+  Qed.
 End IncrementalCode.
 
 Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYSTEM L)
@@ -4163,23 +4169,35 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     apply edit_value_keys.
   Qed.
 
+  Lemma removed_domain_filter : forall st st' bad x,
+    (In x bad -> dom st x) ->
+    (dom st' x <-> dom st x /\ ~ In x bad) ->
+    (In x bad <-> dom st x /\ ~ dom st' x).
+  Proof.
+    intros st st' bad x Hbad_dom Hdom; split.
+    - intro Hin; split; [now apply Hbad_dom|].
+      intro Hnew; apply (proj1 Hdom) in Hnew as [_ Hkeep].
+      exact (Hkeep Hin).
+    - intros [Hold Hremoved].
+      destruct (mem x bad) eqn:Hmem.
+      + apply (proj1 (mem_spec x bad)); exact Hmem.
+      + exfalso; apply Hremoved; apply (proj2 Hdom).
+        split; [exact Hold|].
+        intro Hin.
+        pose proof (proj2 (mem_spec x bad) Hin) as Htrue.
+        change (mem x bad = true) in Htrue; congruence.
+  Qed.
+
   (** The public invalidation inventory equals the actual removed domain, on all states. *)
   Lemma invalidated_spec : forall p p' ch st x,
     In x (invalidated p p' ch st) <-> dom st x /\ ~ dom (edit p p' ch st) x.
   Proof.
-    unfold invalidated, invalidate.
-    intros p p' ch st x; split.
-    - intro Hin; split; [eapply invalidate_keys_dom; exact Hin|].
-      intro Hnew; apply (proj1 (edit_dom_keys p p' ch st x)) in Hnew as [_ Hkeep].
-      exact (Hkeep Hin).
-    - intros [Hold Hremoved].
-      destruct (mem x (invalidate_keys p p' ch st)) eqn:Hmem.
-      + apply (proj1 (mem_spec x (invalidate_keys p p' ch st))); exact Hmem.
-      + exfalso; apply Hremoved; apply (proj2 (edit_dom_keys p p' ch st x)).
-        split; [exact Hold|].
-        intro Hin.
-        pose proof (proj2 (mem_spec x (invalidate_keys p p' ch st)) Hin) as Htrue.
-        change (mem x (invalidate_keys p p' ch st) = true) in Htrue; congruence.
+    intros p p' ch st x; rewrite invalidated_keys_eq.
+    eapply removed_domain_filter.
+    - intro Hin; rewrite invalidate_keys_bad_eq in Hin.
+      apply (proj1 (present_spec st x)).
+      exact (invalid_walk_bad_present p p' ch st x Hin).
+    - apply edit_dom_keys.
   Qed.
 
   Definition invalidated_keys_spec := invalidated_spec.
