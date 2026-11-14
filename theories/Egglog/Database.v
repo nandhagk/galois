@@ -10937,6 +10937,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     intros db k. unfold normal_key. apply length_map.
   Qed.
 
+  Lemma normal_key_shape : forall db k,
+    row_key_shape (normal_key db k) = row_key_shape k.
+  Proof.
+    intros db k. unfold row_key_shape, normal_key.
+    induction k as [| cell rest IH]; [reflexivity |].
+    destruct cell as [i | v]; cbn [map normal_cell];
+      try destruct (N.compare (runtime_allocated (db_runtime db)) (Npos i));
+      cbn; now rewrite IH.
+  Qed.
+
   (** The normalized key width is covered by its original width and one unit per cell. *)
   Lemma normal_key_bits_bound : forall db k, wf db ->
     tuple_cell_bits (normal_key db k) <= tuple_cell_bits k + length k * unit db.
@@ -12208,6 +12218,34 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Hsource Hdest Hentry [Hroot | Hroot].
     - exact (Howner g args key r f old old_key old_id Hentry Hsource Hroot).
     - exact (Howner g args key r f ck ck_key ck_id Hentry Hdest Hroot).
+  Qed.
+
+  Lemma database_history_key_shape_affected : forall db f old ck
+      old_key old_id ck_key ck_id g args key r,
+    database_history_key_shape db ->
+    PTrieCode.get (db_row_code f old) (row_history (db_row_store db)) =
+      Some (old_key, old_id) ->
+    PTrieCode.get (db_row_code f ck) (row_history (db_row_store db)) =
+      Some (ck_key, ck_id) ->
+    PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+      Some (key, r) ->
+    (row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db) =
+      row_root (length old * (N.to_nat (N.log2 (ids db)) + 1)) old_id
+        (db_row_store db) \/
+     row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) r
+      (db_row_store db) =
+      row_root (length ck * (N.to_nat (N.log2 (ids db)) + 1)) ck_id
+        (db_row_store db)) ->
+    row_key_shape args = row_key_shape old \/
+      row_key_shape args = row_key_shape ck.
+  Proof.
+    intros db f old ck old_key old_id ck_key ck_id g args key r Hshape
+      Hsource Hdest Hentry [Hroot | Hroot].
+    - left. exact (Hshape g args key r f old old_key old_id
+        Hentry Hsource Hroot).
+    - right. exact (Hshape g args key r f ck ck_key ck_id
+        Hentry Hdest Hroot).
   Qed.
 
   Lemma database_history_root_owner_link : forall db db' f old ck
