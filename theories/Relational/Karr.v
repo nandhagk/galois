@@ -1600,6 +1600,25 @@ Proof.
     + cbn [map]. now f_equal.
 Qed.
 
+(** A mapped live row retains the source row paired with its origin label. *)
+Lemma karr_pairs_map_lift : forall (f : list Z -> list Z)
+    (pairs : list (list Z * list Z)) (origins live : list (list Z)),
+  Forall2 (fun origin row => In (origin, row)
+    (map (fun pair => (fst pair, f (snd pair))) pairs)) origins live ->
+  exists prior,
+    Forall2 (fun origin row => In (origin, row) pairs) origins prior /\
+    live = map f prior.
+Proof.
+  intros f pairs origins live Hpaired.
+  induction Hpaired as [|origin row origins live Hin Htail [prior [Hprior Heq]]].
+  - exists []. split; constructor.
+  - apply in_map_iff in Hin as [[source original] [Hsame Hsource]].
+    cbn [fst snd] in Hsame. inversion Hsame; subst source row.
+    exists (original :: prior). split.
+    + constructor; assumption.
+    + cbn [map]. now f_equal.
+Qed.
+
 (** Skipping a coordinate preserves every live minor equation. *)
 Lemma karr_minor_law_skip : forall previous pivot_rows pivot_columns head columns pairs,
   karr_minor_law previous pivot_rows pivot_columns (head :: columns) pairs ->
