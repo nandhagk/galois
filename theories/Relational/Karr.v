@@ -13366,6 +13366,26 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     clearbody coordinates basis scan. lia.
   Qed.
 
+  (** An empty-certificate search pays one bounded check per basis row. *)
+  Lemma T_karr_empty_certificate_scan : forall P rs charge,
+    (forall r, In r rs ->
+      (T_karr_zero r + C.T_check_empty P (kweight r) <= charge)%N) ->
+    (T_empty_certificate P rs <=
+      (charge + 64) * N.of_nat (length rs + 1))%N.
+  Proof.
+    intros P rs. induction rs as [|r rs IH]; intros charge Hcharge.
+    - time_unfold T_empty_certificate. cbn [length]. lia.
+    - pose proof (Hcharge r (or_introl eq_refl)) as Hhead.
+      specialize (IH charge (fun q Hq => Hcharge q (or_intror Hq))).
+      pose proof (T_karr_zero_test (kright r)) as Hright.
+      time_unfold T_empty_certificate.
+      time_unfold T_kright. time_unfold T_kweight.
+      time_unfold Datatypes.T_negb. time_unfold Datatypes.T_andb.
+      destruct (karr_zero r && negb (Z.eqb (kright r) 0) &&
+        C.check_empty P (kweight r)); time_simpl; cbn [length];
+        rewrite !Nat2N.inj_add in *; cbn [N.of_nat] in *; nia.
+  Qed.
+
   (** Independent minors of the initialized augmented matrix fit the frozen ellB bound. *)
   Lemma input_minors_bits : forall P z,
     In z (input_minors P) ->
