@@ -12951,6 +12951,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     - apply database_history_alignment_row_replace; assumption.
   Qed.
 
+  Lemma database_history_alignment_repair_current : forall db f k,
+    wf db -> database_row_store_ok db -> database_history_alignment db ->
+    database_history_alignment (repair_current f k db).
+  Proof.
+    intros db f k Hwf Hstore Halign. unfold repair_current.
+    destruct (row_get f k db) as [output |]; [| exact Halign].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k)) (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact Halign |].
+    set (deleted := row_delete f k db).
+    set (updated := put f (normal_key db k)
+      (option_map (normal_cell db) output) deleted).
+    assert (Hupdated : database_history_alignment updated).
+    { subst updated. apply database_history_alignment_put.
+      - subst deleted. apply row_delete_wf. exact Hwf.
+      - subst deleted. apply database_row_store_ok_row_delete. exact Hstore.
+      - subst deleted. apply database_history_alignment_row_delete. exact Halign. }
+    eapply (database_history_alignment_transport updated _); try reflexivity.
+    exact Hupdated.
+  Qed.
+
   Lemma union_uses_raw : forall db i j x e,
     uses (union i j db) x e <-> uses db x e.
   Proof.
