@@ -21843,6 +21843,59 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       Hmember).
   Qed.
 
+  Lemma put_forest_core_active : forall db f k o,
+    UnionFind.wf (db_forest db) ->
+    (forall x, UnionFind.mem (db_forest db) x <-> allocated db x) ->
+    count (db_forest db) = ids db ->
+    (forall a, row_get f (normal_key db k) db = Some (Some (Id a)) ->
+      allocated db a) ->
+    (forall b, option_map (normal_cell db) o = Some (Id b) ->
+      allocated db b) ->
+    UnionFind.wf (db_forest (put f k o db)) /\
+    (forall x, UnionFind.mem (db_forest (put f k o db)) x <->
+      allocated (put f k o db) x) /\
+    count (db_forest (put f k o db)) = ids (put f k o db).
+  Proof.
+    intros db f k o Hforest Hmembers Hcount Hprevious Hnormal.
+    unfold put.
+    remember (row_get f (normal_key db k) db) as previous eqn:Hrow.
+    remember (option_map (normal_cell db) o) as co eqn:Hco.
+    set (updated := combine_output db f previous co).
+    set (next := match previous, co with
+      | Some (Some (Id a)), Some (Id b) => union a b db | _, _ => db end).
+    assert (Hnext : UnionFind.wf (db_forest next) /\
+      (forall x, UnionFind.mem (db_forest next) x <-> allocated next x) /\
+      count (db_forest next) = ids next).
+    { unfold next. destruct previous as [[[a | v] |] |];
+        destruct co as [[b | w] |];
+        try (split; [exact Hforest |];
+          split; [exact Hmembers | exact Hcount]).
+      assert (Ha : allocated db a).
+      { apply Hprevious. reflexivity. }
+      assert (Hb : allocated db b).
+      { apply Hnormal. reflexivity. }
+      split.
+      - rewrite union_forest. apply UnionFind.wf_union. exact Hforest.
+      - split.
+        + exact (union_forest_members_active db a b Hforest Hmembers Ha Hb).
+        + exact (union_forest_count_active db a b Hmembers Hcount Ha Hb). }
+    destruct Hnext as [Hnext_wf [Hnext_members Hnext_count]].
+    destruct previous as [before |].
+    - destruct (output_eqb before updated);
+        [split; [exact Hnext_wf |];
+         split; [exact Hnext_members | exact Hnext_count] |].
+      split; [now rewrite row_replace_forest |].
+      split.
+      + intro x. unfold allocated in *. rewrite row_replace_forest,
+          row_replace_ids. exact (Hnext_members x).
+      + now rewrite row_replace_forest, row_replace_ids.
+    - split; [now rewrite row_replace_forest |].
+      split.
+      + intro x. unfold allocated in *. rewrite row_replace_forest,
+          row_replace_ids. exact (Hnext_members x).
+      + now rewrite row_replace_forest, row_replace_ids.
+  Qed.
+
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
   Lemma put_queue_allocated_active : forall db f k o,
     UnionFind.wf (db_forest db) ->
