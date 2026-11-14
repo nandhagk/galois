@@ -4318,6 +4318,59 @@ Proof.
     rewrite Heq in Hlaw. rewrite map_map. exact Hlaw.
 Qed.
 
+(** Full-width pivot reduction preserves the next basis and target widths. *)
+Lemma karr_prefix_pivot_width : forall cols offset previous (columns : list nat)
+    p rest target,
+  length (kcoeff p) = S cols ->
+  length (karr_row_entries (karr_zero_prefix offset p)) = length columns ->
+  Forall (fun row => length (kcoeff row) = S cols /\
+    length (karr_row_entries (karr_zero_prefix offset row)) = length columns) rest ->
+  length (kcoeff target) = offset + S cols ->
+  length (karr_row_entries target) = length columns ->
+  karr_head p <> 0%Z ->
+  Forall (fun row => length (kcoeff row) = cols /\
+    length (karr_row_entries (karr_zero_prefix (S offset) row)) = length columns)
+    (map (fun row => karr_tail
+      (karr_reduce previous (karr_head p) (karr_head row) p row)) rest) /\
+  length (kcoeff (karr_reduce previous (karr_head p)
+    (karr_nth offset (kcoeff target)) (karr_zero_prefix offset p) target)) =
+    S offset + cols /\
+  length (karr_row_entries (karr_reduce previous (karr_head p)
+    (karr_nth offset (kcoeff target)) (karr_zero_prefix offset p) target)) =
+    length columns.
+Proof.
+  intros cols offset previous columns p rest target Hp_coeff Hp_entries
+    Hrest Htarget_coeff Htarget_entries Hp.
+  assert (Hfull_coeff : length (kcoeff (karr_zero_prefix offset p)) =
+    offset + S cols) by (rewrite karr_zero_prefix_width, Hp_coeff; lia).
+  assert (Htarget_weight : length (kweight target) =
+    length (kweight (karr_zero_prefix offset p))).
+  { apply karr_weight_width_of_entries; lia. }
+  split.
+  - apply Forall_forall. intros output Hin.
+    apply in_map_iff in Hin as [row [Heq Hrow]]. subst output.
+    pose proof (proj1 (Forall_forall _ _) Hrest row Hrow)
+      as [Hrow_coeff Hrow_entries].
+    assert (Hrow_weight : length (kweight (karr_zero_prefix offset row)) =
+      length (kweight (karr_zero_prefix offset p))).
+    { apply karr_weight_width_of_entries.
+      - rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff. reflexivity.
+      - lia. }
+    split.
+    + apply karr_tail_width.
+      rewrite karr_reduce_width; lia.
+    + rewrite <- (karr_zero_prefix_pivot_tail offset previous p row
+        ltac:(lia) ltac:(intro Hempty; rewrite Hempty in Hrow_coeff;
+          cbn [length] in Hrow_coeff; lia) Hp).
+      rewrite karr_reduce_entries_width; [exact Hrow_entries| |].
+      * rewrite !karr_zero_prefix_width, Hrow_coeff, Hp_coeff. reflexivity.
+      * exact Hrow_weight.
+  - split.
+    + rewrite karr_reduce_width; lia.
+    + rewrite karr_reduce_entries_width;
+        [exact Htarget_entries|lia|exact Htarget_weight].
+Qed.
+
 (** A selected concrete pivot preserves all-order minors on its reduced tails. *)
 Lemma karr_minor_law_pivot_concrete : forall cols previous pivot_rows
     pivot_columns head columns labels rows pivot rest,
