@@ -3037,6 +3037,22 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
       row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
         (db_row_store db) -> f = g.
 
+  Definition row_key_shape (k : list (cell V.t)) : list (option V.t) :=
+    map (fun c => match c with Id _ => None | Val v => Some v end) k.
+
+  (** Historical keys in one root component have the same value positions. *)
+  Definition database_history_key_shape (db : t) : Prop :=
+    forall f k key r g args other s,
+      PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) =
+        Some (key, r) ->
+      PTrieCode.get (db_row_code g args) (row_history (db_row_store db)) =
+        Some (other, s) ->
+      row_root (length k * (N.to_nat (N.log2 (ids db)) + 1)) r
+        (db_row_store db) =
+      row_root (length args * (N.to_nat (N.log2 (ids db)) + 1)) s
+        (db_row_store db) ->
+      row_key_shape k = row_key_shape args.
+
   (** A history identifier belongs to a row-link component. *)
   Definition database_history_connected (db : t) (a b : positive) : Prop :=
     clos_refl_sym_trans positive
@@ -3679,6 +3695,14 @@ Module Database (V : VALUE) (I : INDEX V) <: DATABASE V I.
 
   Lemma database_history_root_owner_init : forall ds sl,
     database_history_root_owner (init ds sl).
+  Proof.
+    intros ds sl f k key r g args other s Hentry _ _.
+    cbn [init db_row_store row_history] in Hentry.
+    rewrite PTrie.get_empty in Hentry. discriminate.
+  Qed.
+
+  Lemma database_history_key_shape_init : forall ds sl,
+    database_history_key_shape (init ds sl).
   Proof.
     intros ds sl f k key r g args other s Hentry _ _.
     cbn [init db_row_store row_history] in Hentry.
@@ -12254,6 +12278,23 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     rewrite (row_root_same_links _ s (db_row_store db')
       (db_row_store db) Hlinks) in Hroots.
     exact (Howner f k key r g args other s Hfirst Hsecond Hroots).
+  Qed.
+
+  Lemma database_history_key_shape_transport : forall db db',
+    row_history (db_row_store db') = row_history (db_row_store db) ->
+    row_links (db_row_store db') = row_links (db_row_store db) ->
+    ids db' = ids db -> database_history_key_shape db ->
+    database_history_key_shape db'.
+  Proof.
+    intros db db' Hhistory Hlinks Hids Hshape f k key r g args other s
+      Hfirst Hsecond Hroots.
+    rewrite Hhistory in Hfirst, Hsecond.
+    rewrite Hids in Hroots.
+    rewrite (row_root_same_links _ r (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    rewrite (row_root_same_links _ s (db_row_store db')
+      (db_row_store db) Hlinks) in Hroots.
+    exact (Hshape f k key r g args other s Hfirst Hsecond Hroots).
   Qed.
 
   Lemma database_history_connected_transport : forall db db' a b,
