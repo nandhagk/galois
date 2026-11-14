@@ -10311,6 +10311,56 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
       apply Hremove.
   Qed.
 
+  Lemma T_present_small_le : forall st x,
+    (T_present st x <= 8 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (S.key_bits x + 1))%N.
+  Proof.
+    intros st x.
+    pose proof (T_value_small_le st x) as Hvalue.
+    unfold T_present; time_simpl; time_cbn.
+    assert (Hbits : (1 <= N.of_nat (S.key_bits x + 1))%N) by lia.
+    nia.
+  Qed.
+
+  Lemma T_forallb_sum_local : forall A (f : A -> bool) Tf xs,
+    (List.T_forallb f Tf xs <=
+      fold_right (fun x total => Tf x + 2 + total)%N 1%N xs)%N.
+  Proof.
+    intros A f Tf xs; induction xs as [|x rest IH]; time_step.
+  Qed.
+
+  Lemma T_roots_scan_le : forall st roots,
+    (List.T_forallb (present st) (fun x => T_present st x) roots <=
+      16 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) roots) + 1)%N.
+  Proof.
+    intros st roots.
+    eapply N.le_trans; [apply T_forallb_sum_local|].
+    induction roots as [|x rest IH]; [cbn; lia|].
+    unfold finite_sum in *; cbn [map fold_right].
+    rewrite Nat2N.inj_add.
+    pose proof (T_present_small_le st x) as Hpresent.
+    assert (Hbits : (1 <= N.of_nat (S.key_bits x + 1))%N) by lia.
+    assert (Hbase : (1 <= S.c_sys + S.c_loc + PTrieT.c_trie + 1)%N) by lia.
+    nia.
+  Qed.
+
+  Lemma T_push_entry_le : forall x id (m : PTrieCode.t (list positive)),
+    (T_push_entry x id m <=
+      12 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (S.key_bits x + 1))%N.
+  Proof.
+    intros x id m.
+    pose proof (S.T_key_code_le x) as Hcode.
+    pose proof (PTrieT.T_get_le (list positive) (S.key_code x) m) as Hget.
+    pose proof (PTrieT.T_set_le (list positive) (S.key_code x)
+      (id :: match PTrieCode.get (S.key_code x) m with
+        | Some ids => ids | None => [] end) m) as Hset.
+    unfold PTrieT.T_get in Hget; unfold PTrieT.T_set in Hset.
+    unfold T_push_entry, PTrieCode.T_get, PTrieCode.T_set, S.key_bits in *.
+    time_simpl; time_cbn; nia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
