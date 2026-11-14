@@ -407,6 +407,31 @@ Proof.
     exists [], rows. split; reflexivity.
 Qed.
 
+(** Parallel origin labels split at the same selected live row. *)
+Lemma karr_forall2_split : forall A B (R : A -> B -> Prop) xs ys prefix y suffix,
+  Forall2 R xs ys -> ys = prefix ++ y :: suffix ->
+  exists labels label remaining,
+    xs = labels ++ label :: remaining /\
+    Forall2 R labels prefix /\ R label y /\ Forall2 R remaining suffix.
+Proof.
+  intros A B R xs ys prefix y suffix Hrel Heq.
+  revert xs ys Hrel Heq.
+  induction prefix as [|head prefix IH]; intros xs ys Hrel Heq; subst ys.
+  - destruct xs as [|label remaining]; [inversion Hrel|].
+    inversion Hrel as [|? ? ? ? Hhead Htail]; subst.
+    exists [], label, remaining. repeat split; try constructor; assumption.
+  - destruct xs as [|label remaining]; [inversion Hrel|].
+    inversion Hrel as [|? ? ? ? Hhead Htail]; subst.
+    destruct (IH remaining (prefix ++ y :: suffix) Htail eq_refl)
+      as [labels [selected [tail [Hlabels [Hprefix [Hselected Hsuffix]]]]]].
+    exists (label :: labels), selected, tail.
+    split.
+    + cbn [app]. now rewrite Hlabels.
+    + split.
+      * constructor; assumption.
+      * split; assumption.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
