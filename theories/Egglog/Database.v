@@ -11470,6 +11470,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     exact (public_union_queue_nonroot db i j Hpublic).
   Qed.
 
+  Lemma database_public_ok_union : forall db i j, database_public_ok db ->
+    allocated db i -> allocated db j -> database_public_ok (union i j db).
+  Proof.
+    intros db i j Hpublic Hi Hj. unfold database_public_ok.
+    split.
+    - apply wf_union; [exact (database_public_base db Hpublic) | exact Hi | exact Hj].
+    - split; [exact (public_union_idle db i j Hpublic) |].
+      apply slot_rank_ok_union. exact (database_public_rank db Hpublic).
+  Qed.
+
   (** Active and queued repair states expose their forest invariant directly. *)
   Lemma inv_on_forest_wf : forall db work, inv_on db work -> UnionFind.wf (db_forest db).
   Proof.
