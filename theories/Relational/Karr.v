@@ -1513,6 +1513,21 @@ Proof.
     + apply IH with (suffix := suffix); assumption.
 Qed.
 
+(** Dropping the next coordinate keeps the chosen and live columns increasing. *)
+Lemma karr_increasing_skip : forall prefix head suffix,
+  karr_increasing (prefix ++ head :: suffix) ->
+  karr_increasing (prefix ++ suffix).
+Proof.
+  induction prefix as [|first prefix IH]; intros head suffix Hinc.
+  - cbn [app karr_increasing] in Hinc |- *. exact (proj2 Hinc).
+  - cbn [app karr_increasing] in *. destruct Hinc as [Hafter Htail].
+    split.
+    + apply Forall_app in Hafter as [Hprefix Hrest].
+      apply Forall_app. split; [exact Hprefix|].
+      inversion Hrest as [|? ? _ Hsuffix]; subst. exact Hsuffix.
+    + now apply IH with (head := head).
+Qed.
+
 (** Every bounded increasing coordinate list is enumerated by choose. *)
 Lemma karr_choose_seq_increasing : forall count start columns,
   karr_increasing columns ->
@@ -2109,6 +2124,25 @@ Proof.
     + exact Hselected_columns.
     + exact Hselected_bound.
 Qed.
+
+(** The traced run carries labels, widths, a nonzero prior minor and every-order equations. *)
+Definition karr_run_state (width cols : nat) (original : list (list Z))
+    (previous : Z) (pivot_rows : list (list Z))
+    (pivot_columns columns : list nat) (labels : list (list Z))
+    (rows : list karr_row) : Prop :=
+  previous <> 0%Z /\
+  previous = karr_determinant (length pivot_rows)
+    (karr_submatrix pivot_columns pivot_rows) /\
+  length labels = length rows /\
+  Forall (fun row => length (kcoeff row) = cols) rows /\
+  Forall (fun row => length (karr_row_entries row) = length columns) rows /\
+  cols <= length columns /\
+  length pivot_rows = length pivot_columns /\
+  Permutation original (pivot_rows ++ labels) /\
+  karr_increasing (pivot_columns ++ columns) /\
+  Forall (fun column => column < width) (pivot_columns ++ columns) /\
+  karr_minor_law previous pivot_rows pivot_columns columns
+    (combine labels (map karr_row_entries rows)).
 
 (** A certificate unit vector has the declared source-row width. *)
 Lemma karr_unit_length : forall total index, length (karr_unit total index) = total.
