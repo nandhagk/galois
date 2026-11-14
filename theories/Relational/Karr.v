@@ -10421,6 +10421,23 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
       ltac:(lia)) as Hmono. lia.
   Qed.
 
+  (** Normal source rows fit the public dimension and maximum input widths. *)
+  Lemma karr_normal_source_envelope : forall P,
+    normal P -> Forall (fun r => length (lhs r) <= n (Reached P) /\
+      C.row_key_bits r <= ell (Reached P) /\
+      C.row_bits r <= ell (Reached P)) P.
+  Proof.
+    intros P Hnormal. apply Forall_forall. intros r Hr.
+    assert (Hterms : length (lhs r) <= length (vars_of P)).
+    { rewrite <- (length_map fst (lhs r)).
+      apply NoDup_incl_length.
+      - exact (proj1 (Forall_forall _ _) Hnormal r Hr).
+      - intros x Hx. eapply karr_vars_of_contains; eassumption. }
+    pose proof (karr_max_member _ C.row_key_bits 0 P r Hr) as Hkeys.
+    pose proof (karr_max_member _ C.row_bits 0 P r Hr) as Hbits.
+    unfold n, ell. cbn [rows_of]. repeat split; lia.
+  Qed.
+
   (** A coefficient in a row with unique keys never adds distinct occurrences together. *)
   Lemma karr_coefficient_normal_bits : forall xs x bits,
     NoDup (map fst xs) -> Forall (fun p => Z.size_nat (snd p) <= bits) xs ->
@@ -10444,6 +10461,23 @@ Module KarrT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L)
     length (kweight r) <= mlen /\
     Forall (fun z => Z.size_nat z <= bits) (kweight r) /\
     Z.size_nat (kscale r) <= bits.
+
+  (** Larger dimensions and bit limits preserve a row envelope. *)
+  Lemma karr_row_envelope_resize : forall dim mlen bits dim' mlen' bits' r,
+    dim <= dim' -> mlen <= mlen' -> bits <= bits' ->
+    karr_row_envelope dim mlen bits r ->
+    karr_row_envelope dim' mlen' bits' r.
+  Proof.
+    intros dim mlen bits dim' mlen' bits' r Hdim Hmlen Hbits
+      [Hcoeff [Hcoeff_bits [Hrhs [Hweight [Hweight_bits Hscale]]]]].
+    unfold karr_row_envelope. repeat split.
+    - lia.
+    - eapply Forall_impl; [|exact Hcoeff_bits]. intros z Hz; cbn beta in Hz; lia.
+    - lia.
+    - lia.
+    - eapply Forall_impl; [|exact Hweight_bits]. intros z Hz; cbn beta in Hz; lia.
+    - lia.
+  Qed.
 
   (** A bounded augmented vector gives the componentwise row envelope. *)
   Lemma karr_row_envelope_entries : forall dim mlen bits r,
