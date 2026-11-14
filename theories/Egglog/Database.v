@@ -25345,43 +25345,6 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
     ring.
   Qed.
 
-  (** Insertion pays for all slots and the logarithmic identifier budget. *)
-  Lemma T_put_amort : forall B f k o db, wf db ->
-    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
-    (T_put f k o db +
-      N.of_nat (unit (put f k o db)) * potential B (put f k o db) <=
-      N.of_nat (unit (put f k o db)) *
-        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
-          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
-          potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Constructor allocation has the same amortized budget as insertion. *)
-  Lemma T_make_amort : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
-    (ids (snd (make f k db)) <= B)%N ->
-    (T_make f k db +
-      N.of_nat (unit (snd (make f k db))) * potential B (snd (make f k db)) <=
-      N.of_nat (unit (snd (make f k db))) *
-        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
-          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
-          potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Union transfers the deferred work to potential. *)
-  Lemma T_union_amort : forall B i j db, wf db -> allocated db i -> allocated db j ->
-    (ids db <= B)%N ->
-    (T_union i j db +
-      N.of_nat (unit (union i j db)) * potential B (union i j db) <=
-      N.of_nat (unit (union i j db)) * (c_db + potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Rebuilding spends potential on pending union work. *)
-  Lemma T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
-    (T_rebuild db + N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
-      N.of_nat (unit (rebuild db)) *
-        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
-  Proof. Admitted. (* STUB *)
-
   (** Slot lookup pays for the slot code. *)
   Lemma T_index_le : forall s new db,
     (T_index s new db <= c_db * N.of_nat (N.to_nat (N.log2 s) + 1))%N.
@@ -33040,5 +33003,48 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       N.of_nat (unit (rebuild db)) *
         (c_db * N.of_nat (pending db + 1) + potential B db))%N.
   Proof. exact (T8_rebuild_loop_from_budget c_db_rebuild_credit_budget). Qed.
+
+  (** Public amortized contracts assembled from the completed credit laws. *)
+
+  (** Insertion pays for all slots and the logarithmic identifier budget. *)
+  Lemma T_put_amort : forall B f k o db, wf db ->
+    slots_fit db f (length (k ++ option_list o)) -> (ids (put f k o db) <= B)%N ->
+    (T_put f k o db +
+      N.of_nat (unit (put f k o db)) * potential B (put f k o db) <=
+      N.of_nat (unit (put f k o db)) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          potential B db))%N.
+  Proof. intros B f k o db Hwf Hslots Hids. rewrite !F2_potential. now apply T3_put_credit. Qed.
+
+  (** Constructor allocation has the same amortized budget as insertion. *)
+  Lemma T_make_amort : forall B f k db, wf db -> slots_fit db f (S (length k)) ->
+    (ids (snd (make f k db)) <= B)%N ->
+    (T_make f k db +
+      N.of_nat (unit (snd (make f k db))) * potential B (snd (make f k db)) <=
+      N.of_nat (unit (snd (make f k db))) *
+        (c_db * N.of_nat ((length k + 2) * (length k + 2)) *
+          N.of_nat (slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          potential B db))%N.
+  Proof. intros B f k db Hwf Hslots Hids. rewrite !F2_potential. now apply T4_make_credit. Qed.
+
+  (** Union transfers the deferred work to potential. *)
+  Lemma T_union_amort : forall B i j db, wf db -> allocated db i -> allocated db j ->
+    (ids db <= B)%N ->
+    (T_union i j db +
+      N.of_nat (unit (union i j db)) * potential B (union i j db) <=
+      N.of_nat (unit (union i j db)) * (c_db + potential B db))%N.
+  Proof. intros B i j db Hwf Hi Hj Hids. rewrite !F2_potential. now apply T5_union_credit. Qed.
+
+  (** Rebuilding spends potential on pending union work. *)
+  Lemma T_rebuild_amort : forall B db, wf db -> (ids (rebuild db) <= B)%N ->
+    (T_rebuild db + N.of_nat (unit (rebuild db)) * potential B (rebuild db) <=
+      N.of_nat (unit (rebuild db)) *
+        (c_db * N.of_nat (pending db + 1) + potential B db))%N.
+  Proof.
+    intros B db Hwf Hids.
+    pose proof (T8_rebuild_loop B db Hwf Hids) as Hloop.
+    pose proof (T9_rebuild_driver db) as Hdriver. lia.
+  Qed.
 
 End DatabaseT.
