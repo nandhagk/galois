@@ -310,6 +310,17 @@ Proof.
   reflexivity.
 Qed.
 
+(** Quotienting a row divides each augmented coordinate in the same order. *)
+Lemma karr_row_entries_quotient : forall d r,
+  karr_row_entries (karr_quotient d r) =
+    map (fun z => (z / d)%Z) (karr_row_entries r).
+Proof.
+  intros d [coeff right weight scale].
+  unfold karr_row_entries, karr_quotient.
+  cbn [kcoeff kright kweight kscale].
+  rewrite !map_app. cbn [map]. rewrite map_app. cbn [map]. reflexivity.
+Qed.
+
 (** The instrumented run records matrix states before and after every elimination stage. *)
 Fixpoint karr_bareiss_record (cols : nat) (previous : Z) (rs : list karr_row)
     : list karr_row * list Z :=
