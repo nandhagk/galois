@@ -11353,6 +11353,41 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact (database_row_store_history_range db Hstore g args key r Hget).
   Qed.
 
+  Lemma ensure_row_identity_fresh_iter : forall db f k d,
+    database_row_store_ok db ->
+    Nat.iter d (fun current =>
+      match PTrieCode.get current
+        (row_links (db_row_store (ensure_row_identity f k db))) with
+      | Some p => p | None => current end) (row_fresh (db_row_store db)) =
+      row_fresh (db_row_store db).
+  Proof.
+    intros db f k d Hstore. apply row_parent_iter_fixed.
+    rewrite ensure_row_identity_links.
+    rewrite (database_row_store_future_links db Hstore) by apply Pos.le_refl.
+    reflexivity.
+  Qed.
+
+  Lemma ensure_row_identity_new_size : forall db f k d,
+    database_row_store_ok db ->
+    PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
+    (match PTrieCode.get
+      (Nat.iter d (fun current =>
+        match PTrieCode.get current
+          (row_links (db_row_store (ensure_row_identity f k db))) with
+        | Some p => p | None => current end) (row_fresh (db_row_store db)))
+      (row_weights (db_row_store (ensure_row_identity f k db))) with
+     | Some n => n | None => 1%N end <=
+     (ids (ensure_row_identity f k db) + 1) ^ N.of_nat (length k))%N.
+  Proof.
+    intros db f k d Hstore Hnone.
+    rewrite (ensure_row_identity_fresh_iter db f k d Hstore).
+    unfold ensure_row_identity. rewrite Hnone.
+    cbn [database_set_index_counters database_set_row_store db_row_store
+      row_weights ids db_runtime runtime_allocated].
+    rewrite PTrie.get_set_same.
+    apply database_one_le_pow. lia.
+  Qed.
+
   Lemma ensure_row_identity_new_locate : forall db f k,
     database_row_store_ok db ->
     PTrieCode.get (db_row_code f k) (row_history (db_row_store db)) = None ->
