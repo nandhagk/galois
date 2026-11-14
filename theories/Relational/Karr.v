@@ -1003,6 +1003,29 @@ Proof.
     ring.
 Qed.
 
+(** Eliminating a later row by an earlier row scales the determinant by the pivot. *)
+Lemma karr_determinant_row_reduce : forall order prefix pivot middle target suffix a h,
+  length prefix + length middle <= order ->
+  length target = length pivot ->
+  Forall (fun r => length r = length pivot) middle ->
+  karr_determinant (S (S order))
+    ((prefix ++ pivot :: middle) ++ karr_cross a h target pivot :: suffix) =
+  (a * karr_determinant (S (S order))
+    ((prefix ++ pivot :: middle) ++ target :: suffix))%Z.
+Proof.
+  intros order prefix pivot middle target suffix a h Hbound Hlength Hwidth.
+  rewrite (karr_determinant_cross_at (S order)
+    (prefix ++ pivot :: middle) a h target pivot suffix
+    ltac:(rewrite length_app; cbn [length]; lia) Hlength).
+  assert (Hduplicate : karr_determinant (S (S order))
+      ((prefix ++ pivot :: middle) ++ pivot :: suffix) = 0%Z).
+  { replace ((prefix ++ pivot :: middle) ++ pivot :: suffix)
+      with (prefix ++ pivot :: middle ++ pivot :: suffix)
+      by now rewrite <- app_assoc.
+    apply karr_determinant_duplicate_separated; assumption. }
+  rewrite Hduplicate. ring.
+Qed.
+
 (** Choosing ordered subsequences enumerates minors without reordering their rows. *)
 Fixpoint karr_choose {A} (count : nat) (xs : list A) {struct xs} : list (list A) :=
   match count with
