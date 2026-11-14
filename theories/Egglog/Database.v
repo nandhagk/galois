@@ -21431,6 +21431,17 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + intro u. exact (inv_on_slot_projection_count db work s f perm u Hinv Hslot).
   Qed.
 
+  Lemma inv_on_cache_correct : forall db work,
+    inv_on db work -> database_cache_correct db.
+  Proof.
+    intros db work Hinv. apply database_cache_correct_from_slots.
+    - pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto.
+    - unfold inv_on, forest_ok, metadata_ok in Hinv. tauto.
+    - intros s f perm Hslot.
+      exact (inv_on_slot_cache db work s f perm Hinv Hslot).
+  Qed.
+
   Lemma row_delete_cache_correct_active : forall db work f k,
     inv_on db work -> database_cache_correct (row_delete f k db).
   Proof.
@@ -21648,6 +21659,104 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
          exact Hcache_next | exact Hprevious_next | |].
       + unfold slots_fit in *. now rewrite Hslots_next.
       + intros old Hold. discriminate Hold.
+  Qed.
+
+  Lemma repair_current_cache_correct_active : forall db work f k,
+    inv_on db work -> database_cache_correct (repair_current f k db).
+  Proof.
+    intros db work f k Hinv.
+    destruct (row_get f k db) as [before |] eqn:Hbefore;
+      [| unfold repair_current; rewrite Hbefore;
+         exact (inv_on_cache_correct db work Hinv)].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db k))
+      (db_tuple_code k))
+      (output_eqb (option_map (normal_cell db) before) before)) eqn:Hfixed.
+    { unfold repair_current. rewrite Hbefore, Hfixed.
+      exact (inv_on_cache_correct db work Hinv). }
+    pose proof (inv_on_forest_wf db work Hinv) as Hforest.
+    pose proof (repair_current_target db f k before Hforest Hbefore) as Htarget.
+    pose proof (repair_current_row_kind_active db work f k Hinv _ _ _ Htarget)
+      as [_ [Hfits _]].
+    assert (Hfit : slots_fit (row_delete f k db) f
+      (length (normal_key db k ++ option_list
+        (combine_output (row_delete f k db) f
+          (row_get f (normal_key db k) (row_delete f k db))
+          (option_map (normal_cell db) before))))).
+    { unfold slots_fit in *. rewrite row_delete_slots.
+      destruct (repair_current_layout db f k) as [_ [Hslots _]].
+      now rewrite Hslots in Hfits. }
+    assert (Hmap : RowMap.wf (runtime_rows (db_runtime db))).
+    { pose proof (inv_on_core_bridge db work Hinv) as Hcore.
+      unfold core_bridge in Hcore. tauto. }
+    assert (Hmap_deleted : RowMap.wf
+      (runtime_rows (db_runtime (row_delete f k db)))).
+    { rewrite (row_delete_map_present f k db before Hbefore).
+      apply RowMap.wf_remove. exact Hmap. }
+    assert (Hbound : runtime_slot_bound (db_runtime db) =
+      N.of_nat (length (slots db))).
+    { unfold inv_on, forest_ok, metadata_ok in Hinv. tauto. }
+    assert (Hbound_deleted : runtime_slot_bound
+      (db_runtime (row_delete f k db)) =
+      N.of_nat (length (slots (row_delete f k db)))).
+    { rewrite (row_delete_preserves _ (@runtime_slot_bound (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun all new counts state => eq_refl)
+        f k db), row_delete_slots. exact Hbound. }
+    assert (Hgroups : runtime_function_slots (db_runtime db) =
+      database_slot_groups 0 (prepare_slot_layouts (slots db))
+        PTrieCode.empty).
+    { unfold inv_on, forest_ok, metadata_ok in Hinv. tauto. }
+    assert (Hgroups_deleted : runtime_function_slots
+      (db_runtime (row_delete f k db)) =
+      database_slot_groups 0
+        (prepare_slot_layouts (slots (row_delete f k db))) PTrieCode.empty).
+    { rewrite (row_delete_preserves _
+        (@runtime_function_slots (cell V.t) I.t)
+        (fun rows state => eq_refl) (fun all new counts state => eq_refl)
+        f k db), row_delete_slots. exact Hgroups. }
+    unfold repair_current. rewrite Hbefore, Hfixed.
+    change (database_cache_correct
+      (put f (normal_key db k) (option_map (normal_cell db) before)
+        (row_delete f k db))).
+    eapply put_cache_correct_core;
+      [exact Hmap_deleted | exact Hbound_deleted | exact Hgroups_deleted |
+       exact (row_delete_cache_correct_active db work f k Hinv) | |].
+    - intros old Hold.
+      rewrite row_delete_normal_key,
+        (normal_key_idempotent db k Hforest) in Hold.
+      apply row_delete_binding in Hold as [Hrow _].
+      rewrite row_delete_normal_key,
+        (normal_key_idempotent db k Hforest).
+      unfold slots_fit. rewrite row_delete_slots.
+      exact (proj1 (proj2
+        (inv_on_kind_ok db work f (normal_key db k) old Hinv Hrow))).
+    - rewrite row_delete_normal_key,
+        (normal_key_idempotent db k Hforest),
+        row_delete_normal_output,
+        (normal_output_idempotent db before Hforest).
+      exact Hfit.
+  Qed.
+
+  Lemma inv_on_repair_cache_correct : forall db work f k,
+    inv_on db work -> database_cache_correct (db_repair_entry f k db).
+  Proof.
+    intros db work f k Hinv.
+    unfold db_repair_entry.
+    destruct (db_locate f k db) as [current |];
+      [| exact (inv_on_cache_correct db work Hinv)].
+    destruct (row_get f current db) as [output |];
+      [| exact (inv_on_cache_correct db work Hinv)].
+    destruct (andb (Pos.eqb (db_tuple_code (normal_key db current))
+      (db_tuple_code current))
+      (output_eqb (option_map (normal_cell db) output) output));
+      [exact (inv_on_cache_correct db work Hinv) |].
+    unfold move_row_identity.
+    destruct (PTrieCode.get (db_row_code f current)
+      (row_history (db_row_store (repair_current f current db))))
+      as [[old_key old_id] |];
+      destruct (PTrieCode.get (db_row_code f (normal_key db current))
+        (row_history (db_row_store (repair_current f current db))))
+        as [[new_key new_id] |];
+      exact (repair_current_cache_correct_active db work f current Hinv).
   Qed.
 
   (** A raw put queues only allocated representatives when its two conflict inputs are allocated. *)
