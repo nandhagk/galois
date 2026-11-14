@@ -4059,7 +4059,11 @@ Module Incremental (L : WLATTICE) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_SYST
     ~ In y (invalidate_keys p p' ch st) -> ~ In r ch.
   Proof.
     intros p p' ch st r y Hr Hy Hdom Hkeep Hchanged; apply Hkeep.
-    eapply invalidate_keys_changed; [exact Hchanged|right; split; eassumption|exact Hdom].
+    apply (invalidate_keys_seed p p' ch st).
+    apply (proj2 (changed_seeds_spec p p' ch st y)).
+    split; [exact Hdom|].
+    exists r; split; [exact Hchanged|].
+    apply in_or_app; right; exact Hy.
   Qed.
 
   (** The retained domain remains closed for the old program. *)
