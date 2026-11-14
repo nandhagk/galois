@@ -11637,7 +11637,8 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
           -- apply Pos.eqb_eq in Heq. subst parent. subst loser. contradiction.
           -- rewrite <- Hlinks.
              change (row_root (S d) parent store' = winner).
-             apply IH with (store := store) (loser := loser); assumption.
+             apply IH with (store := store) (loser := loser) (winner := winner);
+               assumption.
         * subst loser. contradiction.
   Qed.
 
@@ -11661,15 +11662,16 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       exact Hfixed.
   Qed.
 
-  (** A path to the winning root does not pass through the fixed losing root. *)
-  Lemma row_root_link_winner : forall d r store store' loser winner,
+  (** A path to another root does not pass through the fixed losing root. *)
+  Lemma row_root_link_unaffected : forall d r store store' loser winner target,
     row_links store' = PTrieCode.set loser winner (row_links store) ->
-    loser <> winner ->
+    loser <> target ->
     (match PTrieCode.get loser (row_links store) with
      | Some parent => parent | None => loser end) = loser ->
-    row_root d r store = winner -> row_root d r store' = winner.
+    row_root d r store = target -> row_root d r store' = target.
   Proof.
-    induction d as [| d IH]; intros r store store' loser winner Hlinks Hneq Hfixed Hroot.
+    induction d as [| d IH]; intros r store store' loser winner target
+      Hlinks Hneq Hfixed Hroot.
     - exact Hroot.
     - destruct (Pos.eq_dec r loser) as [-> | Hother].
       + rewrite (row_root_fixed (S d) loser store Hfixed) in Hroot.
@@ -11679,9 +11681,42 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
         destruct (PTrieCode.get r (row_links store)) as [parent |] eqn:Hparent.
         * destruct (Pos.eqb parent r) eqn:Heq.
           -- exact Hroot.
-          -- change (row_root d parent store' = winner).
-             apply IH with (store := store) (loser := loser); assumption.
+          -- change (row_root d parent store' = target).
+             apply IH with (store := store) (loser := loser) (winner := winner);
+               assumption.
         * exact Hroot.
+  Qed.
+
+  (** A lookup ending at a losing root ends at that root or its new parent. *)
+  Lemma row_root_link_two_roots : forall fuel r store store' loser winner,
+    row_links store' = PTrieCode.set loser winner (row_links store) ->
+    loser <> winner ->
+    (match PTrieCode.get loser (row_links store) with
+     | Some parent => parent | None => loser end) = loser ->
+    (match PTrieCode.get winner (row_links store') with
+     | Some parent => parent | None => winner end) = winner ->
+    row_root fuel r store = loser ->
+    row_root fuel r store' = loser \/ row_root fuel r store' = winner.
+  Proof.
+    induction fuel as [| fuel IH]; intros r store store' loser winner
+      Hlinks Hneq Hloser Hwinner Hroot.
+    - cbn [row_root] in Hroot |- *. now left.
+    - destruct (Pos.eq_dec r loser) as [-> | Hother].
+      + cbn [row_root]. rewrite Hlinks, PTrie.get_set_same.
+        destruct (Pos.eqb winner loser) eqn:Heq.
+        { apply Pos.eqb_eq in Heq. exfalso. apply Hneq. symmetry. exact Heq. }
+        right.
+        change (row_root fuel winner store' = winner).
+        apply row_root_fixed. exact Hwinner.
+      + cbn [row_root] in Hroot |- *.
+        rewrite Hlinks, PTrie.get_set_other by exact Hother.
+        destruct (PTrieCode.get r (row_links store)) as [parent |] eqn:Hparent.
+        * destruct (Pos.eqb parent r) eqn:Heq.
+          -- subst loser. contradiction.
+          -- destruct (IH parent store store' loser winner Hlinks Hneq Hloser
+               Hwinner Hroot) as [Hleft | Hright];
+               [left | right]; exact Hleft || exact Hright.
+        * subst loser. contradiction.
   Qed.
 
   Lemma row_lookup_depth_mono : forall before after (k : list (cell V.t)),
