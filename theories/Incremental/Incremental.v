@@ -10936,6 +10936,110 @@ Module IncrementalT (L : WLATTICE_T) (LB : LUB L) (Top : HAS_TOP L) (S : LOCAL_S
     lia.
   Qed.
 
+  Lemma demand_output_arithmetic : forall base row root keys frozen finish restore,
+    (keys <= root + row)%N -> (frozen <= row)%N ->
+    (finish <= 64 * base * keys + 160 * base * row + 24)%N ->
+    (restore <= 16 * base * frozen + 2)%N ->
+    (restore + finish <= 240 * base * row + 64 * base * root + 26)%N.
+  Proof.
+    intros base row root keys frozen finish restore Hkeys Hfrozen Hfinish Hrestore.
+    assert (Hkey_cost : (64 * base * keys <= 64 * base * (root + row))%N).
+    { replace (64 * base * keys)%N with ((64 * base) * keys)%N by ring.
+      replace (64 * base * (root + row))%N with
+        ((64 * base) * (root + row))%N by ring.
+      apply N.mul_le_mono_l; exact Hkeys. }
+    assert (Hfrozen_cost : (16 * base * frozen <= 16 * base * row)%N).
+    { apply N.mul_le_mono_l; exact Hfrozen. }
+    replace (240 * base * row + 64 * base * root + 26)%N with
+      (64 * base * (root + row) + 160 * base * row +
+        16 * base * row + 26)%N by ring.
+    lia.
+  Qed.
+
+  Lemma T_demand_success_output_le : forall p roots fuel st xs rs fz m,
+    S.wf p -> discovery p roots fuel st = Some (xs, rs, fz) ->
+    (T_restore fz m + T_finish_demand p st xs rs (restore fz m) <=
+      240 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun r => length (row_keys p r))
+          (region p roots st)) * N.of_nat (width p st + 1) +
+      64 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        N.of_nat (finite_sum (fun x => (S.key_bits x + 1)%nat) roots) + 26)%N.
+  Proof.
+    intros p roots fuel st xs rs fz m Hwf Hrun.
+    pose proof (discovery_keys_bits_charge p roots fuel st xs rs fz Hwf Hrun)
+      as Hkeys.
+    destruct (discovery_result_view_projection p roots fuel st xs rs fz Hwf Hrun)
+      as [_ [Hregion Hfrozen_view]].
+    subst rs fz.
+    pose proof (frozen_key_bits_charge p roots st Hwf) as Hfrozen.
+    pose proof (T_restore_le (frozen p roots st) m) as Hrestore.
+    pose proof (T_finish_demand_local_le p st xs (region p roots st)
+      (restore (frozen p roots st) m) Hwf
+      (fun r Hr => region_rows p roots st r Hwf Hr)) as Hfinish.
+    apply nat_to_N_le in Hkeys; rewrite Nat2N.inj_add, Nat2N.inj_mul in Hkeys.
+    apply nat_to_N_le in Hfrozen; rewrite Nat2N.inj_mul in Hfrozen.
+    replace (160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (finite_sum (fun r => length (row_keys p r)) (region p roots st)) *
+      N.of_nat (width p st + 1))%N with
+      (160 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        (N.of_nat (finite_sum (fun r => length (row_keys p r)) (region p roots st)) *
+          N.of_nat (width p st + 1)))%N in Hfinish by ring.
+    replace (240 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+      N.of_nat (finite_sum (fun r => length (row_keys p r)) (region p roots st)) *
+      N.of_nat (width p st + 1))%N with
+      (240 * (S.c_sys + S.c_loc + PTrieT.c_trie + 1) *
+        (N.of_nat (finite_sum (fun r => length (row_keys p r)) (region p roots st)) *
+          N.of_nat (width p st + 1)))%N by ring.
+    eapply demand_output_arithmetic;
+      [exact Hkeys|exact Hfrozen|exact Hfinish|exact Hrestore].
+  Qed.
+
+  Lemma demand_solver_work_result : forall p pol roots fuel st xs rs fz,
+    S.wf p -> discovery p roots fuel st = Some (xs, rs, fz) ->
+    demand_solver_work p pol roots fuel st =
+      (Sol.T_run (R.mk p fz rs) pol fuel + R.T_mk p fz rs +
+        match Sol.run (R.mk p fz rs) pol fuel with
+        | Solved m => Checker.T_check_rows p rs (restore fz m)
+        | _ => 0
+        end)%N.
+  Proof.
+    intros p pol roots fuel st xs rs fz Hwf Hrun.
+    destruct (discovery_result_view_projection p roots fuel st xs rs fz Hwf Hrun)
+      as [_ [Hregion Hfrozen_view]].
+    subst rs fz.
+    unfold demand_solver_work, checked, restore; reflexivity.
+  Qed.
+
+  Lemma T_demand_components_le : forall p pol roots fuel st, S.wf p ->
+    let output :=
+      match discovery p roots fuel st with
+      | None => 0%N
+      | Some (xs, rs, fz) =>
+          match Sol.run (R.mk p fz rs) pol fuel with
+          | Solved m =>
+              (T_restore fz m + T_finish_demand p st xs rs (restore fz m))%N
+          | _ => 0%N
+          end
+      end in
+    (T_demand p pol roots fuel st <=
+      1 + List.T_forallb (present st) (fun x => T_present st x) roots +
+      T_discovery p roots fuel st + output +
+      demand_solver_work p pol roots fuel st)%N.
+  Proof.
+    intros p pol roots fuel st Hwf; cbn beta zeta.
+    unfold T_demand; cbn beta zeta.
+    destruct (forallb (present st) roots) eqn:Hcovered; cbn beta iota zeta.
+    - lia.
+    - destruct (discovery p roots fuel st) as [[[xs rs] fz]|] eqn:Hrun;
+        cbn beta iota zeta; [|lia].
+      pose proof (demand_solver_work_result p pol roots fuel st xs rs fz Hwf Hrun)
+        as Hsolver.
+      rewrite Hsolver.
+      destruct (Sol.run (R.mk p fz rs) pol fuel) as [m|partial|why];
+        cbn beta iota zeta; try lia.
+      destruct (Checker.check_rows p rs (restore fz m)); lia.
+  Qed.
+
   Definition invalid_respects (P : S.key -> Prop)
       (acc : incremental_invalidation S.key) : Prop :=
     forall x, In x (invalid_bad acc ++ invalid_pending acc) -> P x.
