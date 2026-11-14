@@ -15919,6 +15919,27 @@ Module DatabaseT (V : VALUE_T) (I : INDEX_T V) <: DATABASE_ALL V I.
       + rewrite allocate_next_ids. lia.
   Qed.
 
+  Lemma database_idle_ok_make : forall db f k,
+    wf db -> database_idle_ok db -> database_history_alignment db ->
+    (forall i, In (Id i) k -> allocated db i) ->
+    slots_fit db f (S (length k)) ->
+    database_idle_ok (snd (make f k db)).
+  Proof.
+    intros db f k Hwf Hidle Halign Hargs Hfits.
+    unfold make. rewrite (normal_key_correct db k Hwf). fold (ids db).
+    destruct (row_get f (map (canon db) k) db) as [[[j | v] |] |]
+      eqn:Hprevious; cbn [snd]; [exact Hidle | | |].
+    all: destruct (kind_get f db) as [[| |m] |] eqn:Hkind; cbn [snd];
+      try (apply database_idle_ok_allocate_next; assumption).
+    all: apply database_idle_ok_row_replace_canonical.
+    all: try (apply wf_allocate_next; exact Hwf).
+    all: try (apply database_idle_ok_allocate_next; assumption).
+    all: try (apply database_history_alignment_allocate_next;
+      [exact Hwf | exact (database_idle_row_store db Hidle) | exact Halign]).
+    all: try (apply fresh_constructor_kind_ok; assumption).
+    all: apply fresh_constructor_canonical; exact Hwf.
+  Qed.
+
   Lemma forest_ok_public : forall db, database_wf db -> database_idle_ok db ->
     slot_rank_ok db -> database_owned_ok db -> forest_ok db.
   Proof.
