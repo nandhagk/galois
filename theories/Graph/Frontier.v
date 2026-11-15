@@ -728,6 +728,144 @@ Proof.
       split; [discriminate|contradiction].
 Qed.
 
+(** Finite row sizes count each stored source-target pair once. *)
+Definition df_rows_size (vertices : list positive) (rows : ptrie (list positive)) : nat :=
+  fold_right (fun x total => length (frontier_row rows x) + total) 0 vertices.
+
+Lemma frontier_sum_ext {A : Type} : forall (xs : list A) (f g : A -> nat),
+  (forall x, In x xs -> f x = g x) ->
+  fold_right (fun x total => f x + total) 0 xs =
+  fold_right (fun x total => g x + total) 0 xs.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros f g Heq; [reflexivity|].
+  cbn [fold_right]. rewrite (Heq x (or_introl eq_refl)). f_equal.
+  apply IH. intros u Hu. apply Heq. now right.
+Qed.
+
+Lemma frontier_sum_update {A : Type} : forall (xs : list A) x (f g : A -> nat),
+  NoDup xs -> In x xs -> g x = S (f x) -> (forall u, u <> x -> g u = f u) ->
+  fold_right (fun u total => g u + total) 0 xs =
+  S (fold_right (fun u total => f u + total) 0 xs).
+Proof.
+  intro xs. induction xs as [|v rest IH]; intros x f g Hunique Hin Hx Hother.
+  - contradiction.
+  - inversion Hunique as [|? ? Hnot Hrest]; subst.
+    destruct Hin as [Heq|Hin].
+    + subst v. cbn [fold_right]. rewrite Hx.
+      assert (Htail : fold_right (fun u total => g u + total) 0 rest =
+        fold_right (fun u total => f u + total) 0 rest).
+      { apply frontier_sum_ext. intros u Hu. apply Hother. intro Heq. subst u. contradiction. }
+      now rewrite Htail.
+    + assert (Hvx : v <> x) by (intro Heq; subst v; contradiction).
+      cbn [fold_right]. rewrite (Hother v Hvx), (IH x f g Hrest Hin Hx Hother). lia.
+Qed.
+
+Lemma df_rows_empty : df_rows_valid (Empty, Empty).
+Proof.
+  split.
+  - intro x. unfold frontier_row. rewrite PTrie.get_empty. constructor.
+  - intros x y. cbn [fst snd]. rewrite PTrie.get_empty.
+    unfold frontier_row. rewrite !PTrie.get_empty. cbn [In].
+    split; [discriminate|contradiction].
+Qed.
+
+Lemma df_insert_size : forall vertices y x state,
+  NoDup vertices -> In x vertices -> df_rows_valid state ->
+  ~ In y (frontier_row (fst state) x) ->
+  df_rows_size vertices (fst (df_insert y x state)) =
+    S (df_rows_size vertices (fst state)).
+Proof.
+  intros vertices y x [rows marks] Hunique Hin Hvalid Hfresh.
+  destruct Hvalid as [Hrows Hmarks]. cbn [fst snd] in *.
+  assert (Hget : trie_get y
+    (match trie_get x marks with Some row => row | None => Empty end) = None).
+  { destruct (trie_get y (match trie_get x marks with Some row => row | None => Empty end))
+      as [[]|] eqn:Hget; [|reflexivity].
+    exfalso. apply Hfresh. now apply (proj1 (Hmarks x y)). }
+  unfold df_insert. rewrite Hget. cbn [fst]. unfold df_rows_size.
+  apply frontier_sum_update with x; [exact Hunique|exact Hin| |].
+  - unfold frontier_row at 1. rewrite PTrie.get_set_same. reflexivity.
+  - intros u Hne. unfold frontier_row at 1. now rewrite PTrie.get_set_other.
+Qed.
+
+Lemma df_column_insert_size : forall vertices y xs state,
+  NoDup vertices -> NoDup xs -> incl xs vertices -> df_rows_valid state ->
+  (forall x, In x xs -> ~ In y (frontier_row (fst state) x)) ->
+  df_rows_size vertices (fst (fold_left (fun acc x => df_insert y x acc) xs state)) =
+    length xs + df_rows_size vertices (fst state).
+Proof.
+  intros vertices y xs. induction xs as [|x rest IH];
+    intros state Hvertices Hunique Hincl Hvalid Hclear; [reflexivity|].
+  inversion Hunique as [|? ? Hnot Hrest]; subst.
+  assert (Hinclrest : incl rest vertices) by (intros u Hu; apply Hincl; now right).
+  assert (Hclearrest : forall u, In u rest ->
+    ~ In y (frontier_row (fst (df_insert y x state)) u)).
+  { intros u Hu Hmember. apply (proj1 (df_insert_member y x state u y Hvalid)) in Hmember.
+    destruct Hmember as [Hmember|[Heq _]].
+    - apply (Hclear u (or_intror Hu)). exact Hmember.
+    - subst u. contradiction. }
+  cbn [fold_left length].
+  rewrite (IH (df_insert y x state) Hvertices Hrest Hinclrest
+    (df_insert_valid y x state Hvalid) Hclearrest).
+  rewrite (df_insert_size vertices y x state Hvertices (Hincl x (or_introl eq_refl))
+    Hvalid (Hclear x (or_introl eq_refl))). lia.
+Qed.
+
+Lemma df_columns_insert_size : forall vertices columns state,
+  NoDup vertices -> NoDup (map fst columns) ->
+  Forall (fun entry => NoDup (snd entry) /\ incl (snd entry) vertices) columns ->
+  df_rows_valid state ->
+  (forall y xs, In (y, xs) columns -> forall x, ~ In y (frontier_row (fst state) x)) ->
+  df_rows_size vertices (fst (fold_left df_insert_column columns state)) =
+    fold_right (fun entry total => length (snd entry) + total) 0 columns +
+      df_rows_size vertices (fst state).
+Proof.
+  intros vertices columns. induction columns as [|[y xs] rest IH];
+    intros [rows marks] Hvertices Htargets Hcolumns Hvalid Hclear; [reflexivity|].
+  inversion Htargets as [|? ? Hnot Hrest]; subst.
+  inversion Hcolumns as [|? ? Hcolumn Hcolumnsrest]; subst.
+  destruct Hcolumn as [Hxs Hwithin]. cbn [snd] in Hxs, Hwithin.
+  assert (Hvalidnext : df_rows_valid
+    (fold_left (fun acc x => df_insert y x acc) xs (rows, marks))).
+  { apply frontier_fold_invariant; [intros; now apply df_insert_valid|exact Hvalid]. }
+  assert (Hclearnext : forall target column, In (target, column) rest ->
+    forall x, ~ In target (frontier_row
+      (fst (fold_left (fun acc x => df_insert y x acc) xs (rows, marks))) x)).
+  { intros target column Hcolumn x Hmember.
+    apply (proj1 (df_column_insert_member y xs (rows, marks) x target Hvalid)) in Hmember.
+    destruct Hmember as [Hmember|[Heq Hin]].
+    - exact (Hclear target column (or_intror Hcolumn) x Hmember).
+    - subst target. apply Hnot. apply in_map_iff. exists (y, column). now split. }
+  cbn [fold_left df_insert_column fold_right snd].
+  rewrite (IH _ Hvertices Hrest Hcolumnsrest Hvalidnext Hclearnext).
+  rewrite (df_column_insert_size vertices y xs (rows, marks) Hvertices Hxs Hwithin Hvalid).
+  - lia.
+  - intros x Hx. exact (Hclear y xs (or_introl eq_refl) x).
+Qed.
+
+Lemma df_transpose_size : forall vertices columns,
+  NoDup vertices -> NoDup (map fst columns) ->
+  Forall (fun entry => NoDup (snd entry) /\ incl (snd entry) vertices) columns ->
+  df_rows_size vertices (df_transpose columns) =
+    fold_right (fun entry total => length (snd entry) + total) 0 columns.
+Proof.
+  intros vertices columns Hvertices Htargets Hcolumns.
+  assert (Hempty : df_rows_size vertices Empty = 0).
+  { clear Hvertices Htargets Hcolumns columns.
+    induction vertices as [|v rest IH]; [reflexivity|].
+    unfold df_rows_size in *. cbn [fold_right]. unfold frontier_row at 1.
+    rewrite PTrie.get_empty. cbn [length]. exact IH. }
+  pose proof (df_columns_insert_size vertices columns (Empty, Empty)
+    Hvertices Htargets Hcolumns df_rows_empty) as Hsize.
+  specialize (Hsize (fun y xs Hin x =>
+    ltac:(unfold frontier_row; rewrite PTrie.get_empty; cbn [In]; tauto))).
+  cbn [fst] in Hsize. rewrite Hempty in Hsize.
+  unfold df_transpose. change (df_rows_size vertices
+    (fst (fold_left df_insert_column columns (Empty, Empty))) =
+      fold_right (fun entry total => length (snd entry) + total) 0 columns).
+  lia.
+Qed.
+
 Definition idf_step (rows : ptrie (list positive)) (st : idf_state) :
     idf_state + list positive :=
   match st with
@@ -1226,7 +1364,22 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma F8_df_pairs : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     fold_right (fun entry n => length (snd entry) + n) 0 (df_columns g t) = df_size g t.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    assert (Hnodes : NoDup (nodes g)).
+    { destruct g as [[vertices adjacency] predecessors vertices_count edges_count].
+      exact (proj1 Hgraph). }
+    symmetry. change (df_rows_size (nodes g) (df_transpose (df_columns g t)) =
+      fold_right (fun entry n => length (snd entry) + n) 0 (df_columns g t)).
+    apply df_transpose_size; [exact Hnodes| |].
+    - unfold df_columns. rewrite map_map.
+      change (NoDup (map (fun y : positive => y) (nodes g))). now rewrite map_id.
+    - apply Forall_forall. intros [y xs] Hin.
+      unfold df_columns in Hin. apply in_map_iff in Hin.
+      destruct Hin as [v [Heq Hv]]. injection Heq as Heqv Heqxs. subst v xs.
+      pose proof (df_column_correct g t r y Hgraph Hprepared Htree) as [Hunique [Hwithin Hspec]].
+      now split.
+  Qed.
 
   Lemma T1_df_step : forall g t r y st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
