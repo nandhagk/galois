@@ -7,7 +7,8 @@
 From Stdlib Require Import ZArith NArith List Bool Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Op Fun Arith.
-From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps Thresholds BitsLang.
+From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps
+  Thresholds BitsLang.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -789,7 +790,8 @@ Theorem wrapped_norm_idempotent w a :
 Proof.
   destruct a as [| |lo hi]; cbn [wrapped_norm]; try reflexivity.
   destruct (wrapped_offset w lo hi =? modulus w - 1) eqn:Hfull; [reflexivity|].
-  cbn [wrapped_norm]. rewrite !arc_wrap_agrees. rewrite wrapped_offset_wrap, Hfull, !wrap_wrap. reflexivity.
+  cbn [wrapped_norm]. rewrite !arc_wrap_agrees. rewrite wrapped_offset_wrap, Hfull, !wrap_wrap.
+    reflexivity.
 Qed.
 
 Theorem wrapped_norm_endpoints w a lo hi :
@@ -934,7 +936,8 @@ Proof.
     + left. apply wrapped_interval_value_sound. now apply wrapped_interval_meet_sound.
     + right; left. apply wrapped_interval_value_sound. now apply wrapped_interval_meet_sound.
     + right; right; left. apply wrapped_interval_value_sound. now apply wrapped_interval_meet_sound.
-    + right; right; right. apply wrapped_interval_value_sound. now apply wrapped_interval_meet_sound.
+    + right; right; right. apply wrapped_interval_value_sound. now apply
+      wrapped_interval_meet_sound.
   - exact (proj2 (wrapped_norm_gamma w a z) Ha).
 Qed.
 
@@ -1889,7 +1892,8 @@ Lemma wrapped_of_interval_time : forall w a,
     4096 * N.of_nat (Pos.to_nat w + interval_bits a + 1))%N.
 Proof.
   intros w [|[|lo|] [|hi|]]; time_unfold T_wrapped_of_interval;
-    cbn beta iota zeta; time_simpl; time_pose; cbn [interval_bits]; rewrite !Nat2N.inj_add in *; lia.
+    cbn beta iota zeta; time_simpl; time_pose; cbn [interval_bits]; rewrite !Nat2N.inj_add in *;
+      lia.
 Qed.
 TimeBound wrapped_of_interval_time.
 
@@ -2470,7 +2474,8 @@ Lemma wrapped_interval_not_time : forall w a,
 Proof.
   intros w [|[|lo|] [|hi|]];
     try (time_unfold WrappedIntervalOps.T_interval_not; cbn beta iota zeta;
-      cbn [interval_finite_helper]; time_simpl; time_pose; cbn [interval_bits]; rewrite !Nat2N.inj_add in *; lia).
+      cbn [interval_finite_helper]; time_simpl; time_pose; cbn [interval_bits]; rewrite
+        !Nat2N.inj_add in *; lia).
   pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
   pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
   pose proof (wrapped_last_word_bits w) as Hlast.
@@ -3063,7 +3068,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Definition psize (w : positive) (a : p) : nat := Pos.to_nat w + wrapped_bits a + 1.
   Definition pwsize (_ : pwparam) : nat := 0.
   Definition c_payload : N := 67108864.
-  Definition c_wrapped : N := 1. (* STUB *)
+  Definition c_wrapped : N := 1125899906842624.
 
   (** Constructing top fits the published width cost. *)
   Lemma T_ptop_le : forall w,
@@ -3206,7 +3211,8 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
       N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
   Proof.
     intros w z. pose proof (wrapped_norm_time w (WItv z z)) as Htime.
-    time_unfold T_pconst. cbn beta iota zeta. time_simpl. unfold c_payload. cbn [wrapped_bits Nat.pow] in *.
+    time_unfold T_pconst. cbn beta iota zeta. time_simpl. unfold c_payload. cbn [wrapped_bits
+      Nat.pow] in *.
     rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
   Qed.
 
@@ -3214,52 +3220,112 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Lemma T_wrapped_norm_le : forall w a,
     (T_wrapped_norm w a <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (wrapped_norm_time w a) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_norm. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Arc expansion charges raw endpoints and output width. *)
   Lemma T_wrapped_double_le : forall w a,
     (T_wrapped_double w a <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (wrapped_double_time w a) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_double. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Arithmetic negation charges raw endpoints and output width. *)
   Lemma T_wrapped_neg_le : forall w a,
     (T_wrapped_neg w a <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (wrapped_neg_time w a) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_neg. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Bitwise negation charges raw endpoints and output width. *)
   Lemma T_wrapped_not_le : forall w a,
     (T_wrapped_not w a <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (wrapped_not_time w a) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_not. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Circular multiplication charges width and both endpoint sets. *)
   Lemma T_wrapped_mul_le : forall w a b,
     (T_wrapped_mul w a b <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_mul_time w a b) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Circular addition charges width and both endpoint sets. *)
   Lemma T_wrapped_add_le : forall w a b,
     (T_wrapped_add w a b <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_add_time w a b) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_add. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Circular subtraction charges width and both endpoint sets. *)
   Lemma T_wrapped_sub_le : forall w a b,
     (T_wrapped_sub w a b <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_sub_time w a b) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_sub. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Arc splitting charges endpoint normalization at both poles. *)
   Lemma T_wrapped_split_le : forall w a,
     (T_wrapped_split w a <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (wrapped_split_time w a) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_split. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Unsigned division charges width and both endpoint sets. *)
   Lemma T_wrapped_udiv_le : forall w a b,
     (T_wrapped_udiv w a b <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_udiv_time w a b) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_udiv. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Unsigned remainder charges width and both endpoint sets. *)
   Lemma T_wrapped_urem_le : forall w a b,
     (T_wrapped_urem w a b <= c_wrapped *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_urem_time w a b) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+      (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+    time_unfold T_wrapped_urem. cbn beta iota zeta. time_simpl.
+    unfold c_wrapped. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Circular multiplication has the published quadratic work bound. *)
   Lemma mul_bigO : bigO (fun _ => True)
     (fun x : positive * (wrapped * wrapped) => N.of_nat
