@@ -2962,6 +2962,161 @@ Proof.
   now rewrite Hdone in Hloop.
 Qed.
 
+(** Stored latch occurrences consume the original graph's edge occurrences. *)
+Local Definition loop_latch_row (rows : ptrie (list positive)) h : list positive :=
+  match trie_get h rows with Some vs => vs | None => [] end.
+
+Local Definition loop_latch_mass (vertices : list positive) rows : nat :=
+  fold_right (fun h n => length (loop_latch_row rows h) + n) 0 vertices.
+
+Local Lemma loop_latch_mass_push vertices rows u v : NoDup vertices -> In v vertices ->
+  loop_latch_mass vertices (PTrieCode.set v (u :: loop_latch_row rows v) rows) =
+    S (loop_latch_mass vertices rows).
+Proof.
+  intros Hunique Hin. unfold loop_latch_mass. apply (loop_sum_update vertices v);
+    [exact Hunique|exact Hin| |].
+  - unfold loop_latch_row. rewrite PTrie.get_set_same. reflexivity.
+  - intros x Hne. unfold loop_latch_row. now rewrite PTrie.get_set_other by exact Hne.
+Qed.
+
+Local Lemma loop_latch_mass_empty vertices : loop_latch_mass vertices Empty = 0.
+Proof.
+  induction vertices as [|v rest IH]; [reflexivity|].
+  unfold loop_latch_mass in *. cbn [fold_right]. unfold loop_latch_row.
+  rewrite PTrie.get_empty. cbn [length]. exact IH.
+Qed.
+
+Local Definition loop_task_edge_count task : nat :=
+  match task with LoopTreeEdges _ vs => length vs | _ => 0 end.
+
+Local Definition loop_edge_budget g st : nat :=
+  loop_unseen_order (fun v => length (succs (base g) v)) (nodes g)
+    (loop_order (loop_tree_output st)) +
+  fold_right (fun task n => loop_task_edge_count task + n) 0 (loop_tree_pending st) +
+  loop_latch_mass (nodes g) (loop_latches (loop_tree_output st)).
+
+Local Lemma loop_active_listed g t r st v : wf_graph (base g) -> domtree_exact g r t ->
+  loop_stack_state t r st -> trie_get v (loop_tree_active st) = Some tt -> In v (nodes g).
+Proof.
+  intros Hgraph Htree [Hchain Hagree] Hget. rewrite loop_nodes_verts.
+  apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+  pose proof (loop_stack_reachable g r (idom t) (loop_tree_stack st)
+    (proj1 (proj2 Htree)) Hchain) as Hlive.
+  apply (proj1 (Forall_forall _ _) Hlive v). now apply Hagree.
+Qed.
+
+Local Lemma loop_edge_budget_step g t r st next : wf_graph (base g) -> domtree_exact g r t ->
+  loop_tree_core g t r st -> tree_step g t st = inl next ->
+  loop_edge_budget g next <= loop_edge_budget g st.
+Proof.
+  intros Hgraph Htree [Htasks [Hstack Hpart]] Hstep.
+  destruct st as [tasks stack active [order latches backs]].
+  destruct tasks as [|task rest]; [discriminate Hstep|].
+  destruct task as [v|v|vs|u vs|v]; cbn [tree_step] in Hstep.
+  - destruct (trie_get v (pre t)); destruct (trie_get v (idom t));
+      injection Hstep as <-; unfold loop_edge_budget;
+      cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right loop_task_edge_count]; lia.
+  - assert (Hin : In v (nodes g)).
+    { rewrite loop_nodes_verts. apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+      destruct Hpart as [_ _ _ Hlive _ _ _]. apply Hlive. now left. }
+    assert (Hfresh : ~ In v order).
+    { destruct Hpart as [_ _ _ _ Hseparate _ _].
+      exact (Hseparate v v (or_introl eq_refl) (tree_anc_refl (idom t) v)). }
+    pose proof (loop_unseen_order_mark (fun x => length (succs (base g) x)) (nodes g)
+      (loop_nodes_unique g Hgraph) order v Hin Hfresh) as Hmark.
+    injection Hstep as <-. unfold loop_edge_budget.
+    cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right loop_task_edge_count].
+    rewrite Hmark. lia.
+  - destruct vs as [|v vs]; injection Hstep as <-; unfold loop_edge_budget;
+      cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right loop_task_edge_count]; lia.
+  - destruct vs as [|v vs].
+    + injection Hstep as <-. unfold loop_edge_budget.
+      cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right loop_task_edge_count length]; lia.
+    + destruct (trie_get v active) as [[]|] eqn:Hget.
+      * assert (Hlisted : In v (nodes g)).
+        { exact (loop_active_listed g t r
+            (LoopTreeState (LoopTreeEdges u (v :: vs) :: rest) stack active
+              (LoopScan order latches backs)) v Hgraph Htree Hstack Hget). }
+        pose proof (loop_latch_mass_push (nodes g) latches u v
+          (loop_nodes_unique g Hgraph) Hlisted) as Hmass.
+        injection Hstep as <-. unfold loop_edge_budget.
+        cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right loop_task_edge_count length].
+        change (loop_latch_mass (nodes g)
+          (PTrieCode.set v (u :: match trie_get v latches with Some xs => xs | None => [] end) latches) =
+          S (loop_latch_mass (nodes g) latches)) in Hmass.
+        rewrite Hmass. lia.
+      * injection Hstep as <-. unfold loop_edge_budget.
+        cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right loop_task_edge_count length]; lia.
+  - injection Hstep as <-. unfold loop_edge_budget.
+    cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right loop_task_edge_count]; lia.
+Qed.
+
+Local Lemma loop_edge_budget_initial g :
+  loop_edge_budget g
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) =
+    graph_e (base g).
+Proof.
+  assert (Hwhite : forall vertices,
+    loop_unseen_order (fun v => length (succs (base g) v)) vertices [] =
+      fold_right (fun v n => length (succs (base g) v) + n) 0 vertices).
+  { intro vertices. induction vertices as [|v rest IH];
+      cbn [loop_unseen_order existsb fold_right]; [reflexivity|now rewrite IH]. }
+  assert (Hpending : forall vertices,
+    fold_right (fun task n => loop_task_edge_count task + n) 0 (map LoopTreeRoot vertices) = 0).
+  { intro vertices. induction vertices as [|v rest IH];
+      cbn [map fold_right loop_task_edge_count]; assumption || reflexivity. }
+  unfold loop_edge_budget. cbn [loop_tree_output loop_order loop_tree_pending loop_latches].
+  rewrite Hwhite, Hpending, loop_latch_mass_empty. rewrite !Nat.add_0_r.
+  destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity.
+Qed.
+
+Local Lemma loop_classify_latch_mass g t r :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  loop_latch_mass (nodes g) (loop_latches (classify g t)) <= graph_e (base g).
+Proof.
+  intros Hgraph Hprepared Htree.
+  pose proof (loop_classify_driver g t r Hgraph Hprepared Htree) as Hdone.
+  assert (Hloop : match loopN (tree_step g t) (8 * (nv g + ne g + 1))%N
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) with
+    | inl final => loop_tree_core g t r final /\ loop_edge_budget g final <= graph_e (base g)
+    | inr result => loop_latch_mass (nodes g) (loop_latches result) <= graph_e (base g) end).
+  { unfold loopN. apply (loop_state_result (tree_step g t)
+      (fun st => loop_tree_core g t r st /\ loop_edge_budget g st <= graph_e (base g))
+      (fun result => loop_latch_mass (nodes g) (loop_latches result) <= graph_e (base g))).
+    - intros st next [Hcore Hbudget] Hstep. split.
+      + exact (loop_tree_core_step g t r st next Htree Hcore Hstep).
+      + pose proof (loop_edge_budget_step g t r st next Hgraph Htree Hcore Hstep). lia.
+    - intros st result [Hcore Hbudget] Hstep.
+      pose proof (loop_tree_stop_pending g t st result Hstep) as Hempty.
+      destruct st as [tasks stack active [order latches backs]]. cbn in Hempty. subst tasks.
+      cbn [tree_step] in Hstep. injection Hstep as <-. cbn [loop_latches].
+      unfold loop_edge_budget in Hbudget.
+      cbn [loop_tree_output loop_order loop_tree_pending loop_latches fold_right] in Hbudget. lia.
+    - split; [now apply loop_tree_core_initial|]. rewrite loop_edge_budget_initial. lia. }
+  now rewrite Hdone in Hloop.
+Qed.
+
+Local Lemma loop_classify_headers_count g t r :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  NoDup (loop_headers_of (classify g t)) /\ incl (loop_headers_of (classify g t)) (nodes g) /\
+    fold_right (fun h n => length (loop_latches_at (classify g t) h) + n) 0
+      (loop_headers_of (classify g t)) <= graph_e (base g).
+Proof.
+  intros Hgraph Hprepared Htree.
+  destruct (loop_classify_order g t r Hgraph Hprepared Htree) as [Hunique [Hroot [Hmembers Horder]]].
+  assert (Hheaders : NoDup (loop_headers_of (classify g t))).
+  { unfold loop_headers_of. now apply NoDup_filter. }
+  assert (Hlisted : incl (loop_headers_of (classify g t)) (nodes g)).
+  { intros h Hin. unfold loop_headers_of in Hin. apply filter_In in Hin as [Hin Htest].
+    rewrite loop_nodes_verts. apply (loop_reachable_listed (base g) r h Hgraph (proj1 Htree)).
+    now apply Hmembers. }
+  split; [exact Hheaders|]. split; [exact Hlisted|].
+  pose proof (DomProducer.dom_nodup_sum_incl (fun h => length (loop_latches_at (classify g t) h))
+    (loop_headers_of (classify g t)) (nodes g) Hheaders Hlisted) as Hsum.
+  pose proof (loop_classify_latch_mass g t r Hgraph Hprepared Htree) as Hmass.
+  eapply Nat.le_trans; [exact Hsum|exact Hmass].
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -3397,7 +3552,10 @@ Module LoopsT <: LOOPS_ALL.
     NoDup (headers g t) /\ incl (headers g t) (nodes g) /\
     fold_right (fun h n => length (latches (classify g t) h) + n) 0 (headers g t) <=
       graph_e (base g).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    exact (loop_classify_headers_count g t r Hgraph Hprepared Htree).
+  Qed.
 
   Local Lemma latch_exact : forall g t r h v,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
