@@ -7,7 +7,7 @@
 From Stdlib Require Import ZArith List Bool Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Op Fun Arith.
-From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps Thresholds.
+From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps Thresholds BitsLang.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -1267,6 +1267,181 @@ Proof.
   destruct b; cbn [wrapped_leb] in Hright; try discriminate.
 Qed.
 
+
+(** Normalization stores at most two width-bounded endpoints. *)
+Local Lemma wrapped_norm_bits w a :
+  (wrapped_bits (wrapped_norm w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  destruct (wrapped_norm w a) as [| |lo hi] eqn:Hnorm; cbn [wrapped_bits]; try lia.
+  destruct (wrapped_norm_endpoints w a lo hi Hnorm) as [Hlo Hhi].
+  pose proof (WordTime.word_size_bound w lo Hlo).
+  pose proof (WordTime.word_size_bound w hi Hhi). lia.
+Qed.
+
+(** Joining always normalizes the selected circular cover. *)
+Local Lemma wrapped_join_bits w a b :
+  (wrapped_bits (wrapped_join w a b) <= 2 * Pos.to_nat w)%nat.
+Proof. unfold wrapped_join. apply wrapped_norm_bits. Qed.
+
+(** Addition either normalizes its arc or returns a constructor without endpoints. *)
+Local Lemma wrapped_add_bits w a b :
+  (wrapped_bits (wrapped_add w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  destruct a as [| |lo hi], b as [| |lo' hi']; cbn [wrapped_add wrapped_bits]; try lia.
+  destruct (modulus w <? wrapped_size w (WItv lo hi) + wrapped_size w (WItv lo' hi'));
+    [cbn [wrapped_bits]; lia|apply wrapped_norm_bits].
+Qed.
+
+(** Negation normalizes every stored endpoint. *)
+Local Lemma wrapped_neg_bits w a :
+  (wrapped_bits (wrapped_neg w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  destruct a as [| |lo hi]; cbn [wrapped_neg wrapped_bits]; try lia.
+  apply wrapped_norm_bits.
+Qed.
+
+(** Both signed and unsigned multiplication covers end in a normalized join. *)
+Local Lemma wrapped_mul_bits w a b :
+  (wrapped_bits (wrapped_mul w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  unfold wrapped_mul.
+  destruct (wrapped_size w (wrapped_mul_both_parts w (half w)
+    (wrapped_parts w a) (wrapped_parts w b)) <=?
+    wrapped_size w (wrapped_mul_both_parts w 0
+      (wrapped_signed_parts w a) (wrapped_signed_parts w b)));
+    unfold wrapped_mul_both_parts, wrapped_join_four; apply wrapped_join_bits.
+Qed.
+
+(** Finite clipping yields bottom or ordered endpoints within the clipping interval. *)
+Local Lemma wrapped_finite_meet_shape a lo hi :
+  WrappedScalar.interval_meet a (I (Fin lo) (Fin hi)) = IBot \/
+  exists l h, WrappedScalar.interval_meet a (I (Fin lo) (Fin hi)) = I (Fin l) (Fin h) /\
+    lo <= l /\ l <= h /\ h <= hi.
+Proof.
+  destruct a as [|lower upper]; [left; reflexivity|].
+  unfold WrappedScalar.interval_meet.
+  remember (WrappedScalar.bound_max lower (Fin lo)) as lbound eqn:Hlower.
+  remember (WrappedScalar.bound_min upper (Fin hi)) as hbound eqn:Hupper.
+  destruct (WrappedScalar.bounds_nonempty lbound hbound) eqn:Hnonempty;
+    [right|left; reflexivity].
+  assert (Hlo : WrappedScalar.bound_leb (Fin lo) lbound = true).
+  { subst lbound. apply WrappedIntervalSound.bound_max_upper_r. }
+  assert (Hhi : WrappedScalar.bound_leb hbound (Fin hi) = true).
+  { subst hbound. apply WrappedIntervalSound.bound_min_lower_r. }
+  destruct lbound as [|l|], hbound as [|h|];
+    cbn [WrappedScalar.bound_leb WrappedScalar.bounds_nonempty] in Hlo, Hhi, Hnonempty;
+    try discriminate.
+  exists l, h. split; [reflexivity|].
+  apply Z.leb_le in Hlo, Hhi, Hnonempty. lia.
+Qed.
+
+(** Split pieces have finite word endpoints whenever they are nonempty. *)
+Definition wrapped_interval_word_shape w a : Prop :=
+  a = IBot \/ exists lo hi, a = I (Fin lo) (Fin hi) /\ is_word w lo /\ is_word w hi.
+
+Local Lemma wrapped_finite_meet_word_shape w a lo hi :
+  is_word w lo -> is_word w hi ->
+  wrapped_interval_word_shape w (WrappedScalar.interval_meet a (I (Fin lo) (Fin hi))).
+Proof.
+  intros Hlo Hhi. destruct (wrapped_finite_meet_shape a lo hi) as [Hbot|[l [h [Hshape Hrange]]]].
+  - now left.
+  - right. exists l, h. split; [exact Hshape|]. unfold is_word in *. lia.
+Qed.
+
+(** Pole clipping keeps both pieces inside the unsigned word range. *)
+Local Lemma wrapped_pole_cut_word_shape w a :
+  wrapped_interval_word_shape w (fst (wrapped_pole_cut w a)) /\
+  wrapped_interval_word_shape w (snd (wrapped_pole_cut w a)).
+Proof.
+  pose proof (half_pos w). pose proof (modulus_half w).
+  unfold wrapped_pole_cut. cbn [fst snd]. split; apply wrapped_finite_meet_word_shape;
+    unfold is_word; lia.
+Qed.
+
+(** Cutting at the signed pole covers every represented word in the input interval. *)
+Local Lemma wrapped_pole_cut_gamma w a z :
+  interval_pgamma w a z -> interval_pgamma w (fst (wrapped_pole_cut w a)) z \/
+    interval_pgamma w (snd (wrapped_pole_cut w a)) z.
+Proof.
+  intro Ha. pose proof (proj1 Ha) as Hword.
+  unfold wrapped_pole_cut. cbn [fst snd].
+  destruct (Z_lt_ge_dec z (half w)) as [Hlow|Hhigh].
+  - left. apply wrapped_interval_meet_sound; [exact Ha|].
+    split; [exact Hword|]. change (0 <= z <= half w - 1). destruct Hword. lia.
+  - right. apply wrapped_interval_meet_sound; [exact Ha|].
+    split; [exact Hword|]. change (half w <= z <= modulus w - 1). destruct Hword. lia.
+Qed.
+
+(** A single finite interval contributes at most one split piece. *)
+Local Lemma wrapped_interval_list_length a : (length (wrapped_interval_list a) <= 1)%nat.
+Proof. destruct a as [|[|lo|] [|hi|]]; cbn [wrapped_interval_list length]; lia. Qed.
+
+(** The four pole projections contribute at most four ordinary intervals. *)
+Local Lemma wrapped_split_length w a : (length (wrapped_split w a) <= 4)%nat.
+Proof.
+  unfold wrapped_split. rewrite !length_app.
+  replace 4%nat with (1 + (1 + (1 + 1)))%nat by reflexivity.
+  repeat apply Nat.add_le_mono; apply wrapped_interval_list_length.
+Qed.
+
+(** A represented value in a finite split piece lies between its listed endpoints. *)
+Local Lemma wrapped_interval_list_cover w a z :
+  wrapped_interval_word_shape w a -> interval_pgamma w a z ->
+  exists lo hi, In (lo, hi) (wrapped_interval_list a) /\ lo <= z <= hi.
+Proof.
+  intros [->|[lo [hi [-> Hends]]]] Ha; [exact (False_rect _ (proj2 Ha))|].
+  exists lo, hi. split; [left; reflexivity|exact (proj2 Ha)].
+Qed.
+
+(** The two pole pieces cover the concrete interval before list concatenation. *)
+Local Lemma wrapped_cut_list_cover w a z : interval_pgamma w a z ->
+  exists lo hi, In (lo, hi) (wrapped_interval_list (fst (wrapped_pole_cut w a)) ++
+    wrapped_interval_list (snd (wrapped_pole_cut w a))) /\ lo <= z <= hi.
+Proof.
+  intro Ha. destruct (wrapped_pole_cut_word_shape w a) as [Hleft Hright].
+  destruct (wrapped_pole_cut_gamma w a z Ha) as [Hgamma|Hgamma].
+  - destruct (wrapped_interval_list_cover w _ z Hleft Hgamma) as [lo [hi [Hin Hrange]]].
+    exists lo, hi. split; [apply in_or_app; now left|exact Hrange].
+  - destruct (wrapped_interval_list_cover w _ z Hright Hgamma) as [lo [hi [Hin Hrange]]].
+    exists lo, hi. split; [apply in_or_app; now right|exact Hrange].
+Qed.
+
+(** Splitting at zero and at the signed pole covers every circular arc member. *)
+Local Lemma wrapped_split_cover w a z : wrapped_gamma w a z ->
+  exists lo hi, In (lo, hi) (wrapped_split w a) /\ lo <= z <= hi.
+Proof.
+  intro Ha. apply wrapped_parts_spec in Ha. unfold wrapped_split.
+  destruct Ha as [Ha|Ha];
+    destruct (wrapped_cut_list_cover w _ z Ha) as [lo [hi [Hin Hrange]]];
+    exists lo, hi; split; try exact Hrange;
+    rewrite !in_app_iff in *; tauto.
+Qed.
+
+(** Listed endpoints of a bounded split piece fit the declared width. *)
+Local Lemma wrapped_interval_list_bits w a lo hi :
+  wrapped_interval_word_shape w a -> In (lo, hi) (wrapped_interval_list a) ->
+  (Z.size_nat lo + Z.size_nat hi <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros [->|[l [h [-> [Hl Hh]]]]] Hin; [contradiction|].
+  destruct Hin as [Heq|Hempty]; [inversion Heq; subst l h|contradiction].
+  pose proof (WordTime.word_size_bound w lo Hl).
+  pose proof (WordTime.word_size_bound w hi Hh). lia.
+Qed.
+
+(** Every piece produced by splitting has two width-bounded endpoints. *)
+Local Lemma wrapped_split_bits_bound w a lo hi : In (lo, hi) (wrapped_split w a) ->
+  (Z.size_nat lo + Z.size_nat hi <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intro Hin. unfold wrapped_split in Hin. rewrite !in_app_iff in Hin.
+  destruct (wrapped_pole_cut_word_shape w (fst (wrapped_parts w a))) as [Hfirst Hsecond].
+  destruct (wrapped_pole_cut_word_shape w (snd (wrapped_parts w a))) as [Hthird Hfourth].
+  destruct Hin as [Hin|[Hin|[Hin|Hin]]].
+  - exact (wrapped_interval_list_bits w _ lo hi Hfirst Hin).
+  - exact (wrapped_interval_list_bits w _ lo hi Hsecond Hin).
+  - exact (wrapped_interval_list_bits w _ lo hi Hthird Hin).
+  - exact (wrapped_interval_list_bits w _ lo hi Hfourth Hin).
+Qed.
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
@@ -1649,11 +1824,13 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Qed.
   (** Pole splitting returns at most four pieces. *)
   Lemma F3_split_len : forall w a, (length (wrapped_split w a) <= 4)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof. apply wrapped_split_length. Qed.
   (** Every represented word belongs to a returned split interval. *)
   Lemma F4_split_covers : forall w a z, pgamma w a z ->
     exists lo hi, In (lo, hi) (wrapped_split w a) /\ (lo <= z <= hi)%Z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a z Ha. apply wrapped_split_cover. exact (proj1 (pgamma_wrapped w a z) Ha).
+  Qed.
   (** A multiplication piece contains every product from its intervals. *)
   Lemma F5_mul_piece : forall w lo hi lo' hi' x y,
     (lo <= x <= hi)%Z -> (lo' <= y <= hi')%Z ->
@@ -1711,12 +1888,18 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     (wrapped_bits (wrapped_sub w a b) <= 2 * Pos.to_nat w)%nat /\
     (wrapped_bits (wrapped_mul w a b) <= 2 * Pos.to_nat w)%nat /\
     (wrapped_bits (wrapped_neg w a) <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. repeat split.
+    - apply wrapped_add_bits.
+    - apply wrapped_add_bits.
+    - apply wrapped_mul_bits.
+    - apply wrapped_neg_bits.
+  Qed.
   (** Every split piece has endpoints within the word width. *)
   Lemma wrapped_split_bits : forall w a lo hi,
     In (lo, hi) (wrapped_split w a) ->
     (Z.size_nat lo + Z.size_nat hi <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof. apply wrapped_split_bits_bound. Qed.
   (** Multiplication pieces charge width and all endpoint bit lengths. *)
   Lemma T1_mul_piece : forall w lo hi lo' hi',
     (T_mul_piece w (lo, hi) (lo', hi') <= k_mul_piece * N.of_nat
