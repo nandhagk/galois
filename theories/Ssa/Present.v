@@ -4,7 +4,7 @@
     For example, two arms aimed at the same block remain distinct.
     Builds on: Ssa.Lang. *)
 
-From Stdlib Require Import List PArith NArith Bool Lia Arith.
+From Stdlib Require Import List PArith NArith ZArith Bool Lia Arith.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
@@ -267,6 +267,16 @@ Proof.
     + right; now apply Hsource.
 Qed.
 
+(** Instruction rows are internal point edges. *)
+Lemma code_rows_internal {K} b i (cs : list (positive * K * list positive)) row :
+  In row (fst (code_rows b i cs)) -> point_block_edge (fst (fst row)) = None.
+Proof.
+  revert i; induction cs as [|[[x op] xs] rest IH]; intros i Hin; [contradiction|].
+  cbn [code_rows fst] in Hin. destruct Hin as [Heq|Hin].
+  - subst row; reflexivity.
+  - now apply (IH (N.succ i)).
+Qed.
+
 (** Each exit edge with the arguments that it passes. *)
 Definition exit_edge_args {G} (source : positive) (e : exit positive G)
     : list (block_edge * list positive) :=
@@ -377,6 +387,22 @@ Proof.
   now apply code_rows_dest_bounds in Hin as [Howner _].
 Qed.
 
+(** A point index is at most the block's instruction count plus its parameter edge. *)
+Lemma summarize_point_index {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) n :
+  In n (summary_points (summarize kept item)) ->
+    (snd n <= N.of_nat (length (code _ _ _ (snd item)) + 1))%N.
+Proof.
+  change (In n ((fst item, 0%N) :: (fst item, 1%N) ::
+    map (fun r => point_dst (fst (fst r)))
+      (fst (code_rows (fst item) 1%N (code _ _ _ (snd item))))) ->
+    (snd n <= N.of_nat (length (code _ _ _ (snd item)) + 1))%N).
+  rewrite Nat2N.inj_add. intros [Heq|[Heq|Hin]]; try (subst n; cbn; lia).
+  apply code_rows_dest_bounds in Hin as [_ Hbound].
+  change (snd n <= N.of_nat (length (code _ _ _ (snd item))) + 1)%N.
+  rewrite N.add_comm. exact (proj2 Hbound).
+Qed.
+
 (** The entry and instruction points of a summary never repeat. *)
 Lemma summarize_points_nodup {A K G} (kept : ptrie A)
     (item : positive * block positive K G) :
@@ -422,6 +448,18 @@ Proof.
     + right. now apply (proj2 (code_rows_endpoints (fst item) 1%N
         (code _ _ _ (snd item)))).
     + right; right. apply in_map_iff. exists row; now split.
+Qed.
+
+Lemma summarize_internal_no_block {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) row :
+  In row (summary_internal (summarize kept item)) ->
+    point_block_edge (fst (fst row)) = None.
+Proof.
+  change (In row ((PointEdge (fst item, 0%N) (fst item, 1%N) None,
+      [], params _ _ _ (snd item)) ::
+    fst (code_rows (fst item) 1%N (code _ _ _ (snd item)))) ->
+    point_block_edge (fst (fst row)) = None).
+  intros [Heq|Hin]; [subst row; reflexivity|]. now apply code_rows_internal in Hin.
 Qed.
 
 (** Summary point lists of distinct blocks are disjoint. *)
@@ -994,6 +1032,120 @@ Proof.
       unfold kept in Hlisted. now apply block_table_listed in Hlisted.
 Qed.
 
+(** Any nonnegative row weight is at most the sum of its containing list. *)
+Lemma list_weight_member {A} (weight : A -> nat) xs x : In x xs ->
+  weight x <= fold_right (fun y n => weight y + n) 0 xs.
+Proof.
+  induction xs as [|a rest IH]; intro Hin; [contradiction|].
+  cbn [fold_right]. destruct Hin as [Heq|Hin]; [subst a; lia|].
+  specialize (IH Hin); lia.
+Qed.
+
+Lemma block_code_size {K G} (p : func positive K G) id body :
+  In (id, body) (blocks _ _ _ p) -> length (code _ _ _ body) <= function_size p.
+Proof.
+  intro Hin. pose proof (list_weight_member
+    (fun item => length (code _ _ _ (snd item))) _ _ Hin) as Hcode.
+  cbn [snd] in Hcode. unfold function_size. lia.
+Qed.
+
+(** Point identifiers and indices fit their source function's syntax budget. *)
+Lemma lang_point_bounds {K G} (p : func positive K G) n :
+  In n (lang_points (lang_prepare p)) ->
+    Pos.size_nat (fst n) <= function_width p /\
+    (snd n <= N.of_nat (function_size p + 1))%N.
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  change (In n (flat_map summary_points (map (summarize kept) bs)) ->
+    Pos.size_nat (fst n) <= function_width p /\
+    (snd n <= N.of_nat (function_size p + 1))%N).
+  intro Hin. apply in_flat_map in Hin. destruct Hin as [summary [Hsummary Hpoint]].
+  apply in_map_iff in Hsummary. destruct Hsummary as [[b body] [Heq Hbody]]. subst summary.
+  assert (Hsource : In (b, body) (blocks _ _ _ p)).
+  { unfold bs in Hbody. rewrite first_blocks_selected in Hbody.
+    now apply selected_blocks_in in Hbody as [Hbody _]. }
+  split.
+  - rewrite (summarize_point_owner _ _ _ Hpoint). cbn [fst].
+    apply function_id_width. now apply (block_id_in_function p b body).
+  - pose proof (summarize_point_index _ _ _ Hpoint) as Hindex.
+    pose proof (block_code_size _ _ _ Hsource) as Hlength.
+    assert (HlengthN : (N.of_nat (length (code _ _ _ body) + 1) <=
+      N.of_nat (function_size p + 1))%N) by (apply time_of_nat_le; lia).
+    cbn [snd] in Hindex. lia.
+Qed.
+
+(** The size component of function width also bounds one extra point index. *)
+Lemma function_index_width {K G} (p : func positive K G) i :
+  (i <= N.of_nat (function_size p + 1))%N ->
+    Pos.size_nat (N.succ_pos i) <= function_width p + 2.
+Proof.
+  intro Hindex.
+  assert (Hwidth : Pos.size_nat (Pos.of_succ_nat (function_size p)) <= function_width p).
+  { unfold function_width. rewrite graph_max_nat. apply Nat.le_max_r. }
+  pose proof (Pos.size_nat_upper (Pos.of_succ_nat (function_size p))) as Hvalue.
+  pose proof (Nat.pow_le_mono_r 2 _ _ ltac:(discriminate) Hwidth) as Hpower.
+  rewrite SuccNat2Pos.id_succ in Hvalue.
+  assert (Hindex_nat : N.to_nat i <= function_size p + 1) by lia.
+  assert (Hencode : Pos.to_nat (N.succ_pos i) = S (N.to_nat i)).
+  { change (N.to_nat (N.pos (N.succ_pos i)) = S (N.to_nat i)).
+    rewrite N.succ_pos_spec, N2Nat.inj_succ. reflexivity. }
+  apply Pos.size_nat_least. rewrite Hencode, Nat.pow_add_r. cbn [Nat.pow]. nia.
+Qed.
+
+(** The point pair code needs only a fixed multiple of source identifier width. *)
+Lemma lang_point_key_width {K G} (p : func positive K G) n :
+  In n (lang_points (lang_prepare p)) -> PointKey.bits n <= 4 * (function_width p + 1).
+Proof.
+  intro Hin. destruct (lang_point_bounds _ _ Hin) as [Hblock Hindex].
+  pose proof (function_index_width _ _ Hindex) as Hcounter.
+  unfold PointKey.bits, PointKey.encode, pair_code.
+  cbn [PosKeyT.encode NKeyT.encode]. rewrite glue_bits.
+  change (2 * Pos.size_nat (fst n) + Pos.size_nat (N.succ_pos (snd n)) - 1 <=
+    4 * (function_width p + 1)). lia.
+Qed.
+
+(** A projected block edge uses the block components of its point endpoints. *)
+Lemma lang_point_edge_block_sides {K G} (p : func positive K G) edge be :
+  In edge (lang_point_edges (lang_prepare p)) -> point_block_edge edge = Some be ->
+    edge_source be = fst (point_src edge) /\ edge_target be = fst (point_dst edge).
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  change (In edge (map (fun r => fst (fst r))
+    (flat_map (fun s => summary_internal s ++ summary_outgoing s)
+      (map (summarize kept) bs))) -> point_block_edge edge = Some be ->
+    edge_source be = fst (point_src edge) /\ edge_target be = fst (point_dst edge)).
+  intros Hin Hprojection. apply in_map_iff in Hin. destruct Hin as [row [Heq Hin]].
+  subst edge. apply in_flat_map in Hin. destruct Hin as [summary [Hsummary Hin]].
+  apply in_map_iff in Hsummary. destruct Hsummary as [item [Heq Hitem]].
+  subst summary. apply in_app_or in Hin. destruct Hin as [Hinternal|Houtgoing].
+  - rewrite (summarize_internal_no_block _ _ _ Hinternal) in Hprojection; discriminate.
+  - change (In row (map (fun ea =>
+      (PointEdge (summary_exit (summarize kept item)) (edge_target (fst ea), 0%N)
+        (Some (fst ea)), guard_uses (term _ _ _ (snd item)) ++ snd ea, []))
+      (listed_edge_args kept (fst item) (term _ _ _ (snd item))))) in Houtgoing.
+    apply in_map_iff in Houtgoing. destruct Houtgoing as [[be' args] [Heq Hedge]].
+    subst row. cbn [fst point_block_edge] in Hprojection. inversion Hprojection; subst be'.
+    apply filter_In in Hedge as [Hsyntax _].
+    destruct (exit_edge_args_shape _ _ _ _ Hsyntax) as [Hsource _].
+    change (edge_source be = fst item /\ edge_target be = edge_target be).
+    split; [exact Hsource|reflexivity].
+Qed.
+
+Lemma block_edge_width_from_ends edge width :
+  Pos.size_nat (edge_source edge) <= width -> Pos.size_nat (edge_target edge) <= width ->
+    BlockEdge.bits edge <= 4 * (width + 1).
+Proof.
+  intros Hsource Htarget.
+  unfold BlockEdge.bits, BlockEdge.encode, block_edge_tuple,
+    EdgeTupleKey.encode, EdgeArmTargetKey.encode, pair_code.
+  cbn [fst snd PosKeyT.encode]. rewrite !glue_bits.
+  destruct (edge_arm edge); cbn [ArmKeyT.encode Pos.size_nat]; lia.
+Qed.
+
 Module Prepared (O : OPS) <: TYPE.
   Definition t := lang_prepared O.K O.G.
 End Prepared.
@@ -1445,11 +1597,36 @@ Module PresentT (O : OPS)
   (** Listed point keys are within a constant factor of the syntax width. *)
   Lemma point_bits_le : forall p n, In n (C.nodes (R.prepare p)) ->
     (N.of_nat (PointKey.bits n) <= c_present * N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n Hin. pose proof (lang_point_key_width _ _ Hin) as Hwidth.
+    unfold c_present. apply time_of_nat_le in Hwidth. rewrite Nat2N.inj_mul in Hwidth.
+    nia.
+  Qed.
   (** Listed edge keys are within a constant factor of the syntax width. *)
   Lemma edge_bits_le : forall p e, In e (C.edges (R.prepare p)) ->
     (N.of_nat (PointEdge.bits e) <= c_present * N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e Hin. destruct (lang_point_edges_nodes _ _ Hin) as [Hsrc Hdst].
+    pose proof (lang_point_key_width _ _ Hsrc) as Hsrc_key.
+    pose proof (lang_point_key_width _ _ Hdst) as Hdst_key.
+    assert (Hblock : forall be, point_block_edge e = Some be ->
+      BlockEdge.bits be <= 4 * (function_width p + 1)).
+    { intros be Hbe. destruct (lang_point_edge_block_sides _ _ _ Hin Hbe) as [Hs Ht].
+      destruct (lang_point_bounds _ _ Hsrc) as [Hsrc_block _].
+      destruct (lang_point_bounds _ _ Hdst) as [Hdst_block _].
+      apply block_edge_width_from_ends; [now rewrite Hs|now rewrite Ht]. }
+    assert (Hwidth : PointEdge.bits e <= 128 * (function_width p + 1)).
+    { unfold PointEdge.bits, PointEdge.encode, point_edge_tuple,
+        PointEdgeTupleKey.encode, PointTargetEdgeKey.encode, pair_code.
+      cbn [fst snd]. rewrite !glue_bits.
+      fold (PointKey.bits (point_src e)). fold (PointKey.bits (point_dst e)).
+      destruct (point_block_edge e) as [be|] eqn:Hbe.
+      - specialize (Hblock be eq_refl). cbn [OptionalBlockEdgeKey.encode option_code Pos.size_nat].
+        fold (BlockEdge.bits be). lia.
+      - cbn [OptionalBlockEdgeKey.encode option_code Pos.size_nat]. lia. }
+    unfold c_present. apply time_of_nat_le in Hwidth.
+    now rewrite Nat2N.inj_mul in Hwidth.
+  Qed.
   (** Listed block-edge keys are within a constant factor of the syntax width. *)
   Lemma block_edge_bits_le : forall p e, In e (BC.edges (R.prepare p)) ->
     (N.of_nat (BlockEdge.bits e) <= c_present * N.of_nat (function_width p + 1))%N.
