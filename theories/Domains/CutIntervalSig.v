@@ -167,9 +167,20 @@ Definition cut_leb (a b : itv) : bool :=
   end.
 TimeFun cut_leb.
 
-Module Type CUT_RAW_LINK (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) (R : INTERVAL_ALL L T).
+Module Type CUT_RAW_LINK_LAWS (L : Z_LANGUAGE) (T : THRESHOLDS) (R : INTERVAL L T).
   (** The raw order compares endpoints. *)
   Parameter raw_leb : forall a b, R.leb a b = cut_leb a b.
+  (** Raw concretization is inclusive endpoint membership. *)
+  Parameter raw_gamma : forall a z, R.gamma a z <-> R.in_itv a z.
+  (** Raw widening rank counts the thresholds beyond each finite endpoint. *)
+  Parameter raw_wrank : forall q a, R.wrank q a = R.interval_wrank q a.
+  (** Raw narrowing needs no more endpoint bits than its larger operand. *)
+  Parameter raw_narrow_bits : forall a b,
+    (interval_bits (R.narrow a b) <= Nat.max (interval_bits a) (interval_bits b))%nat.
+End CUT_RAW_LINK_LAWS.
+
+Module Type CUT_RAW_LINK (L : Z_LANGUAGE_T) (T : THRESHOLDS_T) (R : INTERVAL_ALL L T).
+  Include CUT_RAW_LINK_LAWS L T R.
   (** Raw transfer work counts operand bits, arity, the quadratic term and the literal. *)
   Parameter raw_work : forall o xs, R.work o xs =
     fold_right Nat.add 0 (map interval_bits xs) + length xs +

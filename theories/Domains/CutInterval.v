@@ -4,7 +4,7 @@
     For example, a large upper endpoint becomes positive infinity.
     Builds on: CutIntervalSig and the shared interval operations. *)
 
-From Stdlib Require Import List ZArith Bool.
+From Stdlib Require Import List ZArith Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig Interval.
 
@@ -41,7 +41,7 @@ Module CutIntervalCode (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_OPS)
 End CutIntervalCode.
 
 Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
-    (T : THRESHOLDS) (R : INTERVAL L T) <: CUT_INTERVAL C L.
+    (T : THRESHOLDS) (R : INTERVAL L T) (RL : CUT_RAW_LINK_LAWS L T R) <: CUT_INTERVAL C L.
   Include CutIntervalCode C L T R.
   Include CUT_INTERVAL_SPEC C L.
   Definition gamma := in_cut.
@@ -51,12 +51,22 @@ Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof. Admitted. (* STUB *)
   Lemma bot_least : forall a, leb bot a = true.
-  (* INTERVAL does not link raw order to endpoint meaning. The lawful PermutedRaw
-     in CutIntervalTest makes this order test false at top. The representation
-     pins in CUT_INTERVAL_PLAN require a stronger functional raw interface. *)
-  Proof. Admitted. (* SIG-QUESTION: the functional raw parameter lacks endpoint-order pins. *)
+  Proof.
+    intro a.
+    unfold leb.
+    rewrite RL.raw_leb.
+    reflexivity.
+  Qed.
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* SIG-QUESTION: PermutedRaw legally recognizes IBot as nonbottom. *)
+  Proof.
+    change (R.is_bot IBot = true).
+    assert (Hbot : R.bot = IBot).
+    { generalize (R.bot_least IBot).
+      rewrite RL.raw_leb.
+      destruct R.bot as [|lo hi]; cbn; intro Hleb; congruence. }
+    rewrite <- Hbot.
+    exact R.is_bot_bot.
+  Qed.
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
@@ -129,6 +139,16 @@ Module CutIntervalRaw (L : Z_LANGUAGE_T) (T : THRESHOLDS_T).
   Module Link <: CUT_RAW_LINK L T R.
     Lemma raw_leb : forall a b, R.leb a b = cut_leb a b.
     Proof. reflexivity. Qed.
+    Lemma raw_gamma : forall a z, R.gamma a z <-> R.in_itv a z.
+    Proof. reflexivity. Qed.
+    Lemma raw_wrank : forall q a, R.wrank q a = R.interval_wrank q a.
+    Proof. reflexivity. Qed.
+    Lemma raw_narrow_bits : forall a b,
+      interval_bits (R.narrow a b) <= Nat.max (interval_bits a) (interval_bits b).
+    Proof.
+      intros [|l h] [|l' h']; cbn; try lia.
+      destruct l, h, l', h'; cbn; lia.
+    Qed.
     Lemma raw_work : forall o xs, R.work o xs =
       fold_right Nat.add 0 (map interval_bits xs) + length xs +
         (fold_right Nat.add 0 (map interval_bits xs) + 1) ^ 2 +
@@ -144,7 +164,7 @@ End CutIntervalRaw.
 Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R)
     <: CUT_INTERVAL_ALL C L T R RL.
-  Include CutInterval C L T R.
+  Include CutInterval C L T R RL.
 
   TimeFun cut.
   TimeFun bot.
