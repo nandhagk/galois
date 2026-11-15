@@ -839,11 +839,145 @@ Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
     unfold W.offset, wrapped_offset. rewrite !arc_wrap_agrees. reflexivity.
   Qed.
 
+  (** Unfolding only local wrappers exposes the common circular transfer helpers. *)
+  Local Lemma forward_unary_same o w a rw :
+    forward_unary o w a rw = Claims.O.forward_unary o w a rw.
+  Proof.
+    cbv beta iota zeta delta [forward_unary Ops.forward_unary Claims.O.forward_unary
+      piece_forward Ops.piece_forward Claims.O.piece_forward]. reflexivity.
+  Qed.
+
+  (** Both binary code instances call the same pole-cut helper implementations. *)
+  Local Lemma forward_binary_same o wa wb a b rw :
+    forward_binary o wa wb a b rw = Claims.O.forward_binary o wa wb a b rw.
+  Proof.
+    cbv beta iota zeta delta [forward_binary Ops.forward_binary Claims.O.forward_binary
+      piece_cut Ops.piece_cut Claims.O.piece_cut
+      piece_binary Ops.piece_binary Claims.O.piece_binary
+      piece_forward Ops.piece_forward Claims.O.piece_forward]. reflexivity.
+  Qed.
+
+  (** A unary entry uses the supplied negation law and the checked piece transfers. *)
+  Local Lemma forward_one_sound o w a x rw z r :
+    wfwd o rw [(w, a)] = Some r -> is_word w x -> W.pgamma w a x ->
+    eval_op o [(w, x)] = Some (rw, z) -> W.pgamma rw r z.
+  Proof.
+    intros Hentry Hword Ha Heval.
+    change (Some (match o with
+      | bvneg => W.wrapped_neg rw a
+      | bvzext _ | bvtrunc _ => wrapped_project rw w a
+      | _ => forward_unary o w a rw
+      end) = Some r) in Hentry.
+    injection Hentry as <-.
+    assert (Hbase : W.pgamma rw (forward_unary o w a rw) z).
+    { rewrite (forward_unary_same o w a rw). apply (proj2 (gamma_wrapped _ _ _)).
+      exact (Claims.wrapped_forward_unary_sound o w a x rw z
+        (proj1 (gamma_wrapped w a x) Ha) Heval). }
+    destruct o.
+    all: lazymatch type of Heval with
+    | eval_op bvneg _ = _ => idtac
+    | eval_op (bvzext _) _ = _ => idtac
+    | eval_op (bvtrunc _) _ = _ => idtac
+    | _ => exact Hbase
+    end.
+    all: clear Hbase.
+    - pose proof (eval_op_fun1 bvneg w x UNeg eq_refl) as Hop.
+      rewrite Hop in Heval. injection Heval as <- <-.
+      exact (W.wrapped_neg_sound w a x (eval_unary_tag UNeg w x) Hword Ha Hop).
+    - rewrite eval_op_zext, (wrap_id w x Hword) in Heval. injection Heval as <- <-.
+      apply (proj2 (gamma_wrapped _ _ _)).
+      exact (wrapped_project_sound (w + extra)%positive w a x
+        (proj1 (gamma_wrapped w a x) Ha)).
+    - rewrite eval_op_trunc in Heval. destruct (Pos.leb target w); [|discriminate].
+      rewrite (wrap_id w x Hword) in Heval. injection Heval as <- <-.
+      apply (proj2 (gamma_wrapped _ _ _)).
+      exact (wrapped_project_sound target w a x (proj1 (gamma_wrapped w a x) Ha)).
+  Qed.
+
+  (** Binary arithmetic uses supplied laws while other operators use the checked pole cuts. *)
+  Local Lemma forward_two_sound o wa wb a b x y rw z r :
+    wfwd o rw [(wa, a); (wb, b)] = Some r ->
+    is_word wa x -> is_word wb y -> W.pgamma wa a x -> W.pgamma wb b y ->
+    eval_op o [(wa, x); (wb, y)] = Some (rw, z) -> W.pgamma rw r z.
+  Proof.
+    intros Hentry Hx Hy Ha Hb Heval.
+    change (Some (match o with
+      | bvadd => W.wrapped_add rw a b
+      | bvsub => W.wrapped_sub rw a b
+      | bvmul => W.wrapped_mul rw a b
+      | _ => forward_binary o wa wb a b rw
+      end) = Some r) in Hentry.
+    injection Hentry as <-.
+    assert (Hbase : W.pgamma rw (forward_binary o wa wb a b rw) z).
+    { rewrite (forward_binary_same o wa wb a b rw). apply (proj2 (gamma_wrapped _ _ _)).
+      exact (Claims.wrapped_forward_binary_sound o wa wb a b x y rw z
+        (proj1 (gamma_wrapped wa a x) Ha) (proj1 (gamma_wrapped wb b y) Hb) Heval). }
+    destruct o.
+    all: lazymatch type of Heval with
+    | eval_op bvadd _ = _ => idtac
+    | eval_op bvsub _ = _ => idtac
+    | eval_op bvmul _ = _ => idtac
+    | _ => exact Hbase
+    end.
+    all: clear Hbase.
+    - pose proof (eval_op_fun2_width bvadd BAdd wa wb x y (rw, z) eq_refl Heval) as ->.
+      pose proof (eval_op_fun2 bvadd wb x y BAdd eq_refl) as Hop.
+      rewrite Hop in Heval. injection Heval as <- <-.
+      exact (W.wrapped_add_sound wb a b x y (eval_binary_tag BAdd wb x y) Hx Hy Ha Hb Hop).
+    - pose proof (eval_op_fun2_width bvsub BSub wa wb x y (rw, z) eq_refl Heval) as ->.
+      pose proof (eval_op_fun2 bvsub wb x y BSub eq_refl) as Hop.
+      rewrite Hop in Heval. injection Heval as <- <-.
+      exact (W.wrapped_sub_sound wb a b x y (eval_binary_tag BSub wb x y) Hx Hy Ha Hb Hop).
+    - pose proof (eval_op_fun2_width bvmul BMul wa wb x y (rw, z) eq_refl Heval) as ->.
+      pose proof (eval_op_fun2 bvmul wb x y BMul eq_refl) as Hop.
+      rewrite Hop in Heval. injection Heval as <- <-.
+      exact (W.wrapped_mul_sound wb a b x y (eval_binary_tag BMul wb x y) Hx Hy Ha Hb Hop).
+  Qed.
+
+  (** Selection joins the two arms after concrete evaluation verifies their widths. *)
+  Local Lemma forward_three_sound o wc wa wb c a b k x y rw z r :
+    wfwd o rw [(wc, c); (wa, a); (wb, b)] = Some r ->
+    is_word wa x -> is_word wb y -> W.pgamma wa a x -> W.pgamma wb b y ->
+    eval_op o [(wc, k); (wa, x); (wb, y)] = Some (rw, z) -> W.pgamma rw r z.
+  Proof.
+    intros Hentry Hx Hy Ha Hb Heval.
+    change (match o with bvite => Some (W.pjoin rw a b) | _ => None end = Some r) in Hentry.
+    destruct o; try discriminate Hentry. injection Hentry as <-.
+    destruct (eval_op_ite_width wc wa wb k x y (rw, z) Heval) as [Hcondition Harms].
+    subst wc wb. rewrite eval_op_ite in Heval.
+    rewrite (wrap_id wa x Hx), (wrap_id wa y Hy) in Heval.
+    destruct (wrap 1%positive k =? 1); injection Heval as <- <-.
+    - exact (W.pgamma_mono wa a (W.pjoin wa a b) x (W.pjoin_ub_l wa a b) Ha).
+    - exact (W.pgamma_mono wa b (W.pjoin wa a b) y (W.pjoin_ub_r wa a b) Hb).
+  Qed.
+
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
     L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted. (* OPEN: supplied-payload forward integration needs smaller conversion lemmas. *)
+  Proof.
+    intros o rw wps cs z r Hentry Hinputs Heval.
+    change (eval_op o cs = Some (rw, z)) in Heval.
+    destruct wps as [|[w1 a1] [|[w2 a2] [|[w3 a3] [|extra rest]]]];
+      try discriminate Hentry.
+    - inversion Hinputs as [|wp [v1 x1] tail values [Hwidth [Hword Ha]] Htail]; subst.
+      inversion Htail; subst. change (w1 = v1) in Hwidth. subst v1.
+      exact (forward_one_sound o w1 a1 x1 rw z r Hentry Hword Ha Heval).
+    - inversion Hinputs as [|wp [v1 x1] tail values [Hwidth1 [Hword1 Ha]] Htail]; subst.
+      inversion Htail as [|wp [v2 x2] tail' values' [Hwidth2 [Hword2 Hb]] Hlast]; subst.
+      inversion Hlast; subst.
+      change (w1 = v1) in Hwidth1. change (w2 = v2) in Hwidth2. subst v1 v2.
+      exact (forward_two_sound o w1 w2 a1 a2 x1 x2 rw z r
+        Hentry Hword1 Hword2 Ha Hb Heval).
+    - inversion Hinputs as [|wp [v1 x1] tail values [Hwidth1 [Hword1 Hc]] Htail]; subst.
+      inversion Htail as [|wp [v2 x2] tail' values' [Hwidth2 [Hword2 Ha]] Hlast]; subst.
+      inversion Hlast as [|wp [v3 x3] tail'' values'' [Hwidth3 [Hword3 Hb]] Hnil]; subst.
+      inversion Hnil; subst.
+      change (w1 = v1) in Hwidth1. change (w2 = v2) in Hwidth2.
+      change (w3 = v3) in Hwidth3. subst v1 v2 v3.
+      exact (forward_three_sound o w1 w2 w3 a1 a2 a3 x1 x2 x3 rw z r
+        Hentry Hword2 Hword3 Ha Hb Heval).
+  Qed.
   Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
