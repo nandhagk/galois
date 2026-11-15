@@ -4,7 +4,7 @@
     For example, closing a cycle root emits its pending vertices together.
     Builds on: depth-first search and the SCC signature. *)
 
-From Stdlib Require Import List NArith PArith Sorting.Permutation.
+From Stdlib Require Import List NArith PArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search SccSig.
@@ -399,7 +399,29 @@ Module SccT <: SCC_ALL.
   Lemma F3_initial : forall g,
     invariant g [] tarjan_initial /\
     potential (graph_width (base g)) tarjan_initial = 0%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g. split.
+    - unfold invariant. split; [reflexivity|]. split.
+      + unfold inventory, tarjan_initial. cbn.
+        split; [constructor|]. split; [constructor|].
+        split; [intros v Hfalse; contradiction|].
+        split; [reflexivity|]. split; [reflexivity|]. split.
+        * intros v. rewrite PTrie.get_empty. cbn. split; [discriminate|contradiction].
+        * split.
+          -- intros v. rewrite PTrie.get_empty. cbn. split.
+             ++ intros [i Hfalse]. discriminate Hfalse.
+             ++ contradiction.
+          -- intros v i. rewrite PTrie.get_empty. split; [discriminate|].
+             intros [n [Hnth Hi]]. destruct n; discriminate Hnth.
+      + split.
+        * unfold width_domain, tarjan_initial. cbn.
+          split; [constructor|]. split; [constructor|].
+          split; [lia|]. split; [lia|]. split;
+            intros v i Hlookup; rewrite PTrie.get_empty in Hlookup; discriminate Hlookup.
+        * unfold emitted_closed, tarjan_initial. constructor.
+    - change ((pop_unit (graph_width (base g)) * 0 + k_result * 0)%N = 0%N).
+      now rewrite !N.mul_0_r.
+  Qed.
 
   Lemma F4_prefix : forall g prefix suffix,
     wf_graph (base g) -> tarjan_trace g = prefix ++ suffix ->
