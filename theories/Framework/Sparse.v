@@ -5,7 +5,7 @@
     Builds on: Framework.SparseSig and Fixpoint.Query. *)
 
 From Stdlib Require Import List Bool Arith NArith Lia.
-From Argent Require Import Time Std Loop.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
@@ -294,47 +294,275 @@ Module SparseT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Definition sparse_kw (p : prog) : nat := fold_right Nat.max 0
     (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
   Definition kw := sparse_kw.
-  Definition c_sys : N := 1%N. (* STUB *)
+  Definition c_sys : N := (128 * (X.c_key + S.c_ssa + T.c_seed + 1))%N.
+
+  (** A listed definition row originates in the prepared value inventory. *)
+  Lemma definition_listed : forall p x,
+    In (SparseDef x) (rows p) -> In x (S.values p).
+  Proof.
+    intros p x Hrow; unfold rows in Hrow.
+    apply in_app_or in Hrow; destruct Hrow as [Hrow|Hrow].
+    - apply in_map_iff in Hrow as [y [Hsame _]]; discriminate.
+    - apply in_app_or in Hrow; destruct Hrow as [Hrow|Hrow].
+      + apply in_map_iff in Hrow as [y [Hsame Hy]]; now injection Hsame as <-.
+      + apply in_map_iff in Hrow as [r [Hsame _]]; discriminate.
+  Qed.
+
+  (** Every list member is below the list's maximum. *)
+  Lemma max_member : forall xs x, In x xs -> x <= fold_right Nat.max 0 xs.
+  Proof.
+    intro xs; induction xs as [|y xs IH]; intros x Hin; [contradiction|].
+    cbn [fold_right]; destruct Hin as [Hsame|Hin].
+    - subst y; apply Nat.le_max_l.
+    - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
+  Qed.
+
+  (** Every target key fits the program's target-width budget. *)
+  Lemma target_bits : forall p r, In r (rows p) -> X.bits (target p r) <= value_bits p.
+  Proof.
+    intros p r Hr; unfold value_bits; apply max_member.
+    apply in_map_iff; exists r; auto.
+  Qed.
+
+  (** A bounded lookup supplies a bounded list of operands. *)
+  Lemma lookup_sizes : forall (look : X.t -> V.t) xs s,
+    (forall x, V.size (look x) <= s) ->
+    Forall (fun a => V.size a <= s) (map look xs).
+  Proof.
+    intros look xs s Hsize; induction xs as [|x xs IH]; cbn [map]; constructor; auto.
+  Qed.
+
+  (** The prepared operator envelope bounds each listed operation's lookup operands. *)
+  Lemma lookup_work : forall p x op xs look s,
+    In (SparseDef x) (rows p) -> S.def p x = Op op xs ->
+    (forall y, V.size (look y) <= s) ->
+    V.work op (map look xs) <= B.op_work p s.
+  Proof.
+    intros p x op xs look s Hrow Hdef Hsize.
+    apply (B.op_work_le p x op xs (map look xs) s).
+    - now apply definition_listed.
+    - exact Hdef.
+    - apply length_map.
+    - now apply lookup_sizes.
+  Qed.
+
+  (** A reached read frame remembers exactly its consumed operand prefix. *)
+  Lemma read_frame : forall p look n op xs received q acc x f,
+    loop_fuel (eval_step (resume p) look) n
+      (sparse_read V.forward op xs received, nil) = inl (q, acc) ->
+    fst (peel q acc) = inr (x, f) ->
+    exists before after, xs = before ++ x :: after /\
+      f = SparseRead X.t L.op V.t op after (rev (map look before) ++ received).
+  Proof.
+    intros p look n; induction n as [|n IH];
+      intros op xs received q acc x f Hloop Hask.
+    - injection Hloop as <- <-; destruct xs as [|y ys].
+      + discriminate Hask.
+      + injection Hask as <- <-; exists nil, ys; split; reflexivity.
+    - destruct xs as [|y ys]; [discriminate Hloop|].
+      cbn [loop_fuel sparse_read eval_step peel fst snd resume] in Hloop.
+      destruct (IH op ys (look y :: received) q acc x f Hloop Hask)
+        as [before [after [Hrest Hframe]]].
+      exists (y :: before), after; split.
+      + cbn; now rewrite Hrest.
+      + rewrite Hframe; cbn [map rev]; now rewrite <- app_assoc.
+  Qed.
+
+  (** Returning the final operand restores the original lookup order. *)
+  Lemma final_operands : forall (look : X.t -> V.t) before x,
+    rev_append (look x :: rev (map look before)) nil = map look (before ++ x :: nil).
+  Proof.
+    intros look before x; rewrite rev_append_rev, app_nil_r; cbn [rev].
+    now rewrite rev_involutive, map_app.
+  Qed.
+
+  (** Step budgets grow with the sizes of the lookup values. *)
   Lemma row_work_mono : forall p s t, s <= t ->
     (row_work p s <= row_work p t)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s t Hst; pose proof (B.op_work_mono p s t Hst) as Hwork.
+    unfold row_work; time_cbn_all; nia.
+  Qed.
+
+  (** Every declared read or write key fits the maximum listed key width. *)
   Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r x _ Hrow Hx; unfold kw, sparse_kw; apply max_member.
+    apply in_flat_map; exists r; split; [exact Hrow|now apply in_map].
+  Qed.
+
+  (** Key encoding pays for its own output bit length. *)
   Lemma T_key_code_le : forall x,
     (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro x; pose proof (X.T_encode_le x) as Hcost.
+    unfold T_key_code, key_bits, key_code, c_sys; unfold X.bits in Hcost; nia.
+  Qed.
+
+  (** Key comparison pays for the first key's bit length. *)
   Lemma T_key_eqb_le : forall a b,
     (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof (X.T_eqb_le a b) as Hcost.
+    unfold T_key_eqb, key_bits, key_code, c_sys; unfold X.bits in Hcost; nia.
+  Qed.
+
+  (** Cached inventories make row enumeration linear in its output. *)
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p _; unfold c_sys; time_step.
+    pose proof (ListDef.T_map_le (@SparseSeed E.t X.t) (fun _ => 1%N) 1%N
+      (S.entry_params p) (fun _ => N.le_refl 1)) as Hseed.
+    pose proof (ListDef.T_map_le (@SparseDef E.t X.t) (fun _ => 1%N) 1%N
+      (S.values p) (fun _ => N.le_refl 1)) as Hdefs.
+    pose proof (ListDef.T_map_le
+      (fun r : E.t * (X.t * X.t) => SparseArg (fst r) (fst (snd r)) (snd (snd r)))
+      (fun _ => (1 + (1 + (1 + 1 + (1 + 1))))%N) 6%N
+      (S.arg_rows p) (fun _ => N.le_refl 6)) as Hargs.
+    unfold rows; rewrite !length_app, !length_map in *; time_cbn_all; nia.
+  Qed.
+
+  (** Projecting a row target has constant overhead. *)
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
     (T_target p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [x|x|e x y] _ _; unfold c_sys; time_step.
+  Qed.
+
+  (** Starting each listed row fits the prepared reader and transfer budgets. *)
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB: F2-108 Q8 adds target key width to row_work *)
+  Proof.
+    intros p r _ Hrow; pose proof (target_bits p r Hrow) as Hbits.
+    destruct r as [x|x|e x y]; cbn [target] in Hbits.
+    - pose proof (T.T_seed_le p x) as Hseed.
+      unfold c_sys, row_work; time_step.
+    - pose proof (S.T_def_le p x) as Hreader; unfold S.operands in Hreader.
+      pose proof (definition_listed p x Hrow) as Hlisted.
+      destruct (S.def p x) as [op xs|b i|] eqn:Hdef.
+      + pose proof (B.op_arity_le p x op xs Hlisted Hdef) as Harity.
+        destruct xs as [|y ys].
+        * assert (Hwork : V.work op nil <= B.op_work p 0).
+          { apply (B.op_work_le p x op nil nil 0); try assumption; constructor. }
+          pose proof (V.T_forward_le op nil) as Hforward.
+          time_unfold T_start; time_simpl; rewrite Hdef.
+          time_unfold @T_sparse_read; time_simpl.
+          unfold c_sys, row_work; time_cbn; time_pose; time_cbn_all; nia.
+        * time_unfold T_start; time_simpl; rewrite Hdef.
+          time_unfold @T_sparse_read; time_simpl.
+          unfold c_sys, row_work; time_cbn; time_pose; time_cbn_all; nia.
+      + time_unfold T_start; time_simpl; rewrite Hdef.
+        unfold c_sys, row_work; time_cbn; time_pose; time_cbn_all; nia.
+      + time_unfold T_start; time_simpl; rewrite Hdef.
+        unfold c_sys, row_work; time_cbn; time_pose; time_cbn_all; nia.
+    - unfold c_sys; time_step.
+  Qed.
+
+  (** Actual reader frames pay only for a prefix of their listed operation. *)
   Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
     (forall y, V.size (look y) <= s) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) ->
     (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [y|y|e y z] look s n q acc x f _ Hrow Hsize Hloop Hask.
+    - exfalso; eapply ret_no_ask; eassumption.
+    - cbn [start] in Hloop; destruct (S.def p y) as [op xs|b i|] eqn:Hdef.
+      + destruct (read_frame p look n op xs nil q acc x f Hloop Hask)
+          as [before [after [Hxs Hframe]]].
+        rewrite app_nil_r in Hframe; subst f.
+        pose proof (B.op_arity_le p y op xs (definition_listed p y Hrow) Hdef) as Harity.
+        assert (Hlength : length before + 1 + length after <= B.op_arity p).
+        { rewrite Hxs, length_app in Harity; cbn [length] in Harity; lia. }
+        destruct after as [|z zs].
+        * assert (Hvalues : rev_append (look x :: rev (map look before)) nil =
+            map look xs) by (rewrite final_operands, Hxs; reflexivity).
+          pose proof (lookup_work p y op xs look s Hrow Hdef Hsize) as Hwork.
+          pose proof (V.T_forward_le op (map look xs)) as Hforward.
+          assert (Hbudget : (V.T_forward op (map look xs) <=
+            V.c_val * N.of_nat (B.op_work p s + 1))%N).
+          { eapply N.le_trans; [exact Hforward|].
+            apply N.mul_le_mono_l, time_of_nat_le, Nat.add_le_mono_r; exact Hwork. }
+          pose proof (List.T_rev_append_le (look x :: rev (map look before)) nil) as Hreverse.
+          time_unfold T_resume; time_unfold @T_sparse_read; time_simpl.
+          rewrite Hvalues; unfold c_sys, row_work; time_cbn_all.
+          rewrite length_rev, length_map in Hreverse; time_cbn_all; nia.
+        * time_unfold T_resume; time_unfold @T_sparse_read; time_simpl.
+          unfold c_sys; time_cbn; nia.
+      + exfalso; eapply ret_no_ask; eassumption.
+      + exfalso; eapply ret_no_ask; eassumption.
+    - destruct n as [|n].
+      + injection Hloop as <- <-; injection Hask as <- <-; unfold c_sys; time_step.
+      + cbn [start loop_fuel eval_step peel fst snd resume] in Hloop.
+        exfalso; eapply ret_no_ask; eassumption.
+  Qed.
+
+  (** Dependency readers pay for their row key and returned operand occurrences. *)
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r _ Hrow.
+    assert (Hkey : X.bits (target p r) <= kw p).
+    { apply (key_bits_le p r (target p r) I Hrow); now left. }
+    destruct r as [x|x|e x y]; unfold c_sys.
+    - time_step.
+    - pose proof (S.T_def_le p x) as Hdef; cbn [target] in Hkey.
+      change (S.T_def p x <= S.c_ssa *
+        N.of_nat (X.bits x + length (deps p (SparseDef x)) + 1))%N in Hdef.
+      assert (Hclock : T_deps p (SparseDef x) = (1 + S.T_def p x)%N).
+      { unfold T_deps; destruct (S.def p x); reflexivity. }
+      assert (Hwidth : X.bits x + length (deps p (SparseDef x)) + 1 <=
+        (length (deps p (SparseDef x)) + 1) * (kw p + 1)).
+      { clear -Hkey; nia. }
+      apply time_of_nat_le in Hwidth; rewrite Nat2N.inj_mul in Hwidth.
+      set (budget := (N.of_nat (length (deps p (SparseDef x)) + 1) *
+        N.of_nat (kw p + 1))%N) in *.
+      assert (Hnonzero : (1 <= budget)%N).
+      { clear -budget; unfold budget; rewrite !Nat2N.inj_add.
+        change (N.of_nat 1) with 1%N; nia. }
+      assert (Hread : (S.T_def p x <= S.c_ssa * budget)%N).
+      { eapply N.le_trans; [exact Hdef|now apply N.mul_le_mono_l]. }
+      rewrite Hclock, <- N.mul_assoc; fold budget.
+      clearbody budget; clear -Hread Hnonzero.
+      eapply N.le_trans with (m := ((S.c_ssa + 1) * budget)%N).
+      + rewrite N.mul_add_distr_r, N.mul_1_l; lia.
+      + apply N.mul_le_mono_r; lia.
+    - time_step.
+  Qed.
+  (** Sparse rows declare no side keys. *)
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r _ _; unfold c_sys; time_step.
+  Qed.
+  (** Every completed contribution fits the prepared value and operator budgets. *)
   Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
     (forall x, V.size (look x) <= s) -> eval p r look = Some (a, ss) ->
     (N.of_nat (V.size a) <= row_work p s)%N /\
     Forall (fun xb => (N.of_nat (V.size (snd xb)) <= row_work p s)%N) ss.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look s a ss _ Hrow Hsize Heval.
+    rewrite eval_result in Heval; injection Heval as <- <-; split; [|constructor].
+    destruct r as [x|x|e x y].
+    - eapply N.le_trans; [apply time_of_nat_le; exact (T.seed_size p x)|].
+      unfold row_work; rewrite !Nat2N.inj_add; lia.
+    - destruct (S.def p x) as [op xs|b i|] eqn:Hdef.
+      + pose proof (lookup_work p x op xs look s Hrow Hdef Hsize) as Hwork.
+        pose proof (V.forward_size op (map look xs)) as Hforward.
+        eapply N.le_trans; [exact Hforward|].
+        eapply N.le_trans with (m := (V.c_val * N.of_nat (B.op_work p s + 1))%N).
+        * apply N.mul_le_mono_l, time_of_nat_le, Nat.add_le_mono_r; exact Hwork.
+        * unfold row_work; lia.
+      + unfold row_work; rewrite !Nat2N.inj_add; lia.
+      + unfold row_work; rewrite !Nat2N.inj_add; lia.
+    - pose proof (time_of_nat_le _ _ (Hsize y)) as Hy.
+      unfold row_work; rewrite !Nat2N.inj_add, !Nat2N.inj_mul.
+      change (N.of_nat 1) with 1%N; clear -Hy; nia.
+  Qed.
 End SparseT.
 
 Module SparseSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
