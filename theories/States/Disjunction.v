@@ -783,6 +783,122 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       repeat rewrite Nat2N.inj_add in *; nia.
   Qed.
 
+  (** Boolean existential traversal charges each callback and two scalar steps. *)
+  Local Lemma exists_clock {A} (f : A -> bool) (T_f : A -> N) xs :
+    (List.T_existsb f T_f xs <=
+      2 * (fold_right N.add 0%N (map (fun x => T_f x + 1)%N xs) + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; time_unfold @List.T_existsb; time_simpl;
+      cbn [map fold_right]; nia.
+  Qed.
+
+  (** Boolean universal traversal has a linear cell and callback budget. *)
+  Local Lemma forall_clock {A} (f : A -> bool) (T_f : A -> N) xs :
+    (List.T_forallb f T_f xs <= 2 *
+      (fold_right N.add 0%N (map T_f xs) + N.of_nat (length xs) + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; time_unfold @List.T_forallb; time_simpl;
+      cbn [map fold_right length]; rewrite ?Nat2N.inj_succ; nia.
+  Qed.
+
+  (** Pairwise comparison work includes a unit for every examined pair. *)
+  Local Definition scan_work (old new : list S.t) : N :=
+    fold_right N.add 0%N (map (fun y => fold_right N.add 0%N
+      (map (fun x => S.T_leb y x + 1)%N old)) new).
+
+  (** Filtering candidates costs at most a constant times their comparison scan. *)
+  Local Lemma uncovered_clock old new : old <> [] ->
+    (T_uncovered S.leb S.T_leb old new <= 8 * (scan_work old new + 1))%N.
+  Proof.
+    intro Hnonempty.
+    assert (Hfilter : (List.T_filter (fun y => negb (existsb (S.leb y) old))
+        (fun y => 1 + (List.T_existsb (S.leb y) (fun x => S.T_leb y x) old +
+          Datatypes.T_negb (existsb (S.leb y) old)))%N new <=
+        7 * scan_work old new + 1)%N).
+    { induction new as [|y ys IH].
+      - time_unfold @List.T_filter; unfold scan_work; cbn [map fold_right]; lia.
+      - pose proof (exists_clock (S.leb y) (fun x => S.T_leb y x) old) as Hrow.
+        assert (Hrowpos : (1 <= fold_right N.add 0%N
+          (map (fun x => S.T_leb y x + 1)%N old))%N).
+        { destruct old as [|x xs]; [contradiction |]; cbn [map fold_right]; nia. }
+        cbv [Datatypes.T_negb] in IH.
+        time_unfold @List.T_filter; time_simpl; unfold scan_work in *;
+          cbn [map fold_right]; destruct (negb (existsb (S.leb y) old)); nia. }
+    time_unfold @T_uncovered; nia.
+  Qed.
+
+  (** The replacement traversal charges its shared callback setup only once. *)
+  Local Lemma replace_clock {A} (bot : A -> bool) (T_bot : A -> N)
+      (f : A -> A) (T_f work : A -> N) common xs :
+    (forall x, In x xs -> (T_f x <= common + work x)%N) ->
+    (T_replace_first bot T_bot f T_f xs <=
+      fold_right N.add 0%N (map T_bot xs) + N.of_nat (length xs) + 1 + common +
+      fold_right N.add 0%N (map work xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hcalls.
+    - time_unfold @T_replace_first; cbn [map fold_right length]; nia.
+    - specialize (IH (fun y Hy => Hcalls y (or_intror Hy))).
+      pose proof (Hcalls x (or_introl eq_refl)) as Hcall.
+      time_unfold @T_replace_first; cbn [map fold_right length].
+      rewrite Nat2N.inj_succ; destruct (bot x); nia.
+  Qed.
+
+  (** The public widening plan combines tests, scans and possible receiver updates. *)
+  Local Definition widen_budget p (a b : t) : N :=
+    (T_leb b a + T_is_bot a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
+      fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) +
+      scan_work (proj1_sig a) (proj1_sig b) +
+      fold_right N.add 0%N (map (fun x =>
+        let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
+        T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
+        (proj1_sig a)))%N.
+
+  (** Every widening branch is paid by the same public scan budget. *)
+  Local Lemma widen_clock : forall p a b,
+    (T_widen p a b <= k_disjunction * widen_budget p a b)%N.
+  Proof.
+    intros p [old Hbound] b; pose proof (proj2 coefficients_positive) as Hcoefficient.
+    pose proof (forall_clock S.is_bot (fun x => S.T_is_bot x) old) as Hforall.
+    change (fold_right N.add 0%N (map (fun x => S.T_is_bot x) old)) with
+      (fold_right N.add 0%N (map S.T_is_bot old)) in Hforall.
+    time_unfold @T_widen; unfold widen_budget; cbn [proj1_sig].
+    rewrite Nat2N.inj_add.
+    destruct (leb b (exist _ old Hbound)) eqn:Hstable; [nia |].
+    destruct (is_bot (exist _ old Hbound)) eqn:Hempty; [nia |].
+    destruct (forallb S.is_bot old) eqn:Hbottom; [nia |].
+    assert (Hnonempty : old <> []).
+    { intro Heq; assert (Hbot : is_bot (exist _ old Hbound) = true).
+      { apply P.is_bot_spec; exact Heq. } congruence. }
+    pose proof (uncovered_clock old (proj1_sig b) Hnonempty) as Hscan.
+    pose proof (replace_clock S.is_bot (fun x => S.T_is_bot x)
+      (fun x => S.widen p x (collapse (x :: uncovered S.leb old (proj1_sig b))))
+      (fun x => 1 + (Specif.T_proj1_sig b + T_uncovered S.leb
+        (fun y z => S.T_leb y z) old (proj1_sig b) +
+        T_collapse (x :: uncovered S.leb old (proj1_sig b)) +
+        S.T_widen p x (collapse (x :: uncovered S.leb old (proj1_sig b)))))%N
+      (fun x => T_collapse (x :: uncovered S.leb old (proj1_sig b)) +
+        S.T_widen p x (collapse (x :: uncovered S.leb old (proj1_sig b))))%N
+      (T_uncovered S.leb S.T_leb old (proj1_sig b) + 2)%N old) as Hreplace.
+    assert (Hcalls : forall x, In x old ->
+      (1 + (Specif.T_proj1_sig b + T_uncovered S.leb
+        (fun y z => S.T_leb y z) old (proj1_sig b) +
+        T_collapse (x :: uncovered S.leb old (proj1_sig b)) +
+        S.T_widen p x (collapse (x :: uncovered S.leb old (proj1_sig b)))) <=
+        T_uncovered S.leb S.T_leb old (proj1_sig b) + 2 +
+        (T_collapse (x :: uncovered S.leb old (proj1_sig b)) +
+          S.T_widen p x (collapse (x :: uncovered S.leb old (proj1_sig b)))))%N).
+    { intros x Hin; time_unfold @Specif.T_proj1_sig.
+      change (T_uncovered S.leb S.T_leb old (proj1_sig b)) with
+        (T_uncovered S.leb (fun y z => S.T_leb y z) old (proj1_sig b)).
+      lia. }
+    specialize (Hreplace Hcalls).
+    change (T_uncovered S.leb S.T_leb old (proj1_sig b)) with
+      (T_uncovered S.leb (fun y z => S.T_leb y z) old (proj1_sig b)) in *.
+    change (fold_right N.add 0%N (map (fun x => S.T_is_bot x) old)) with
+      (fold_right N.add 0%N (map S.T_is_bot old)) in Hreplace.
+    nia.
+  Qed.
+
   (** Assignment work is the component work of every alternative. *)
   Lemma assign_work_alternatives : forall x e d, assign_work x e d =
     fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
@@ -1006,7 +1122,9 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
          let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
          T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
          (proj1_sig a))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact widen_clock.
+  Qed.
   (** Evaluation joins the values of the alternatives from bottom. *)
   Lemma F7_eval : forall e d,
     eval e d = fold_left (fun a s => V.join a (S.eval e s)) (proj1_sig d) V.bot.
