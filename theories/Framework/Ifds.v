@@ -31,6 +31,44 @@ Proof.
   - now rewrite IH.
 Qed.
 
+(** Numbering allocates one row per rule occurrence. *)
+Lemma path_number_length {N E F} : forall next (rules : list (path_rule N E F)),
+  length (path_number next rules) = length rules.
+Proof.
+  intros next rules.
+  rewrite <- (length_map path_row_rule (path_number next rules)), path_number_rules.
+  reflexivity.
+Qed.
+
+(** Set digits pay for carries when the next row identifier is incremented. *)
+Fixpoint path_number_potential (next : positive) : N :=
+  match next with
+  | xI rest => (path_number_potential rest + 1)%N
+  | xO rest => path_number_potential rest
+  | xH => 1%N
+  end.
+
+(** Each successor consumes at most two units after accounting for its changed digits. *)
+Lemma path_number_carry : forall next,
+  (Pos.T_succ next + path_number_potential (Pos.succ next) <=
+    path_number_potential next + 2)%N.
+Proof.
+  induction next as [next IH|next IH|]; time_step.
+Qed.
+
+(** Binary numbering is linear in the number of rows plus the initial digit potential. *)
+Lemma T_path_number_le {N E F} : forall next (rules : list (path_rule N E F)),
+  (T_path_number next rules <=
+    3 * N.of_nat (length rules) + path_number_potential next + 1)%N.
+Proof.
+  intros next rules; revert next.
+  induction rules as [|rule rules IH]; intro next.
+  - time_step.
+  - pose proof (path_number_carry next) as Hcarry.
+    pose proof (IH (Pos.succ next)) as Hrest.
+    time_step.
+Qed.
+
 (** Propagating an empty collection of facts keeps it empty. *)
 Lemma path_fold_nil {E F} (flow : E -> F -> list F) : forall path,
   fold_left (fun facts e => flat_map (flow e) facts) path nil = nil.
@@ -386,7 +424,7 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Definition path_kw (p : prog) : nat := fold_right Nat.max 0
     (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
   Definition kw := path_kw.
-  Definition c_sys : N := 1%N. (* STUB *)
+  Definition c_sys : N := (64 * (N.c_key + F.c_key + C.c_cfg + R.c_rules + 1))%N.
   Lemma row_work_mono : forall p s t, s <= t ->
     (row_work p s <= row_work p t)%N.
   Proof.
@@ -410,35 +448,128 @@ Module IfdsT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
     apply path_width_member, in_flat_map.
     exists r; split; [exact Hr|now apply in_map].
   Qed.
+
+  (** A path-edge code contains the widths of all three key components. *)
+  Lemma path_key_bits : forall d n x,
+    key_bits (d, (n, x)) + 2 = 2 * F.bits d + 2 * N.bits n + F.bits x.
+  Proof.
+    intros d n x; unfold key_bits, key_code, path_edge_code, pair_code.
+    cbn [fst snd]; rewrite !glue_bits.
+    unfold F.bits, N.bits.
+    pose proof (Pos.size_nat_pos (F.encode d)).
+    pose proof (Pos.size_nat_pos (N.encode n)).
+    pose proof (Pos.size_nat_pos (F.encode x)); lia.
+  Qed.
+
+  (** Each component fits the code's common bit budget. *)
+  Lemma path_key_widths : forall d n x,
+    F.bits d <= key_bits (d, (n, x)) /\ N.bits n <= key_bits (d, (n, x)) /\
+      F.bits x <= key_bits (d, (n, x)).
+  Proof.
+    intros d n x; pose proof (path_key_bits d n x) as Hbits.
+    unfold F.bits, N.bits in *.
+    pose proof (Pos.size_nat_pos (F.encode d)).
+    pose proof (Pos.size_nat_pos (N.encode n)).
+    pose proof (Pos.size_nat_pos (F.encode x)); lia.
+  Qed.
   Lemma T_key_code_le : forall x,
     (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [d [n x]].
+    pose proof (F.T_encode_le d) as Hd.
+    pose proof (N.T_encode_le n) as Hn.
+    pose proof (F.T_encode_le x) as Hx.
+    pose proof (T_glue_le (N.encode n) (F.encode x)) as Hinner.
+    pose proof (T_glue_le (F.encode d) (glue (N.encode n) (F.encode x))) as Houter.
+    destruct (path_key_widths d n x) as [Hd_width [Hn_width Hx_width]].
+    set (budget := N.of_nat (key_bits (d, (n, x)) + 1)).
+    set (scale := (N.c_key + F.c_key + C.c_cfg + R.c_rules + 1)%N).
+    assert (Hd_cost : (F.T_encode d <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hd|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hn_cost : (N.T_encode n <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hn|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hx_cost : (F.T_encode x <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hx|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hinner_cost : (T_glue (N.encode n) (F.encode x) <= budget)%N).
+    { unfold c_glue in Hinner; unfold N.bits in Hn_width; unfold budget; lia. }
+    assert (Houter_cost :
+      (T_glue (F.encode d) (glue (N.encode n) (F.encode x)) <= budget)%N).
+    { unfold c_glue in Houter; unfold F.bits in Hd_width; unfold budget; lia. }
+    assert (Hscale : (1 <= scale)%N) by (unfold scale; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; lia).
+    clear Hd Hn Hx Hinner Houter Hd_width Hn_width Hx_width.
+    unfold c_sys; fold scale; fold budget.
+    time_unfold T_key_code; time_unfold @T_path_edge_code; time_unfold @T_pair_code.
+    time_simpl; time_cbn; time_unfold @T_pair_code.
+    time_simpl; time_cbn; unfold pair_code; cbn [fst snd].
+    fold scale; fold budget; clearbody scale budget; nia.
+  Qed.
   Lemma T_key_eqb_le : forall a b,
     (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [d [n x]] [d' [n' x']].
+    pose proof (F.T_eqb_le d d') as Hd.
+    pose proof (N.T_eqb_le n n') as Hn.
+    pose proof (F.T_eqb_le x x') as Hx.
+    destruct (path_key_widths d n x) as [Hd_width [Hn_width Hx_width]].
+    set (budget := N.of_nat (key_bits (d, (n, x)) + 1)).
+    set (scale := (N.c_key + F.c_key + C.c_cfg + R.c_rules + 1)%N).
+    assert (Hd_cost : (F.T_eqb d d' <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hd|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hn_cost : (N.T_eqb n n' <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hn|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hx_cost : (F.T_eqb x x' <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hx|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hscale : (1 <= scale)%N) by (unfold scale; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; lia).
+    clear Hd Hn Hx Hd_width Hn_width Hx_width.
+    unfold c_sys; fold scale; fold budget.
+    time_unfold T_key_eqb; time_simpl; time_cbn.
+    fold scale; fold budget; clearbody scale budget; nia.
+  Qed.
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p _.
+    pose proof (R.T_rules_le p) as Hrules.
+    pose proof (T_path_number_le 1%positive (R.rules p)) as Hnumber.
+    change (T_rows p <= c_sys *
+      N.of_nat (length (path_number 1%positive (R.rules p)) + 1))%N.
+    rewrite path_number_length; unfold c_sys.
+    time_unfold T_rows; time_cbn_all; nia.
+  Qed.
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
     (T_target p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [code rule] _ _; destruct rule; unfold c_sys, row_work; time_step.
+  Qed.
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [code rule] _ _; destruct rule; unfold c_sys, row_work.
+    all: time_unfold T_start; time_unfold T_deps; time_simpl; time_cbn; time_pose; nia.
+  Qed.
   Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
     (forall y, L.size (look y) <= s) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) ->
     (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look s n q acc x [pending value] _ _ _ _ _.
+    unfold c_sys, row_work; time_step.
+  Qed.
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [code rule] _ _; destruct rule; unfold c_sys; time_step.
+  Qed.
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r _ _; unfold c_sys; time_step.
+  Qed.
   Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
     (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
     (N.of_nat (L.size a) <= row_work p s)%N /\
