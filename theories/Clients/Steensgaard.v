@@ -649,6 +649,7 @@ End Steensgaard.
 Module SteensgaardT (V : VALUE_T with Definition t := positive)
     (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D) <: STEENSGAARD_ALL V I J D R.
   Include Steensgaard V I J D R.
+  Module SeedTime := PointerSeedTime V I J D R.
   TimeFun compile.
   TimeFun seed_put.
   TimeFun seed.
@@ -659,6 +660,71 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Definition k_seed : N := (128 * (D.c_db + 1) * (k_rules + 32) * (k_rules + 32))%N.
   Definition k_wrap : N := 32%N.
   Definition c_steensgaard : N := (k_seed + D.c_db + k_wrap + 32)%N.
+
+  (** Planning the fixed program and storing its slots have a fixed cost budget. *)
+  Lemma seed_plan_time : forall q,
+    (R.T_plan (compile q) <= k_rules)%N /\
+    (N.of_nat (pointer_layout_size (Syntax.slots V.t (R.plan (compile q)))) <= k_rules)%N.
+  Proof.
+    intro q.
+    pose proof (R.T_plan_le (compile q)) as Hplan.
+    pose proof (R.plan_slots_le (compile q)) as Hslots.
+    change (N.of_nat (pointer_layout_size (Syntax.slots V.t (R.plan (compile q)))) <=
+      R.c_run * N.of_nat (R.size_program (compile q) + 1) *
+        N.of_nat (R.size_program (compile q) + 1) *
+        N.of_nat (R.size_program (compile q) + 1))%N in Hslots.
+    assert (Hsize : (N.of_nat (R.size_program (compile q) + 1) <= 512)%N).
+    { change (N.of_nat (program_bits steensgaard_program + 1) <= 512)%N; vm_compute; discriminate. }
+    assert (Hcube : (R.c_run * N.of_nat (R.size_program (compile q) + 1) *
+      N.of_nat (R.size_program (compile q) + 1) * N.of_nat (R.size_program (compile q) + 1) <=
+      R.c_run * 512 * 512 * 512)%N).
+    { apply N.mul_le_mono; [apply N.mul_le_mono; [apply N.mul_le_mono_l |] |]; exact Hsize. }
+    split.
+    - eapply N.le_trans; [exact Hplan |].
+      eapply N.le_trans; [exact Hcube | unfold k_rules; apply N.le_add_r].
+    - eapply N.le_trans; [exact Hslots |].
+      eapply N.le_trans; [exact Hcube | unfold k_rules; apply N.le_add_r].
+  Qed.
+
+  (** The fixed program's binary declarations and slots bound initialization work. *)
+  Lemma seed_init_time : forall q,
+    (D.T_init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q))) <=
+      64 * (D.c_db + 1) * (k_rules + 8) * (k_rules + 8))%N.
+  Proof.
+    intro q; apply SeedTime.init_time.
+    - apply R.plan_checked; apply program_sorted.
+    - vm_compute; repeat constructor.
+    - vm_compute; lia.
+    - vm_compute; lia.
+    - exact (proj2 (seed_plan_time q)).
+  Qed.
+
+  (** The generated seed callback charges the database call and constant tuple plumbing. *)
+  Lemma seed_put_time : forall db entry,
+    (T_seed_put db entry <= D.T_put (fst entry)
+      [Val (fst (snd entry)); Val (snd (snd entry))] None db + 32)%N.
+  Proof.
+    intros db entry; time_unfold T_seed_put; time_simpl; lia.
+  Qed.
+
+  (** Folding all seed entries is linear at the final database's spending unit. *)
+  Lemma seed_fold_time : forall q,
+    let p := compile q in
+    let initial := D.init (decls V.t p) (Syntax.slots V.t (R.plan p)) in
+    (Std.List.T_fold_left seed_put T_seed_put (pointer_seed_entries 1 q) initial <=
+      N.of_nat (D.unit (seed q)) * (16 * D.c_db * (k_rules + 1) + 33) *
+        N.of_nat (length (constraints q) + length (initial_pointers q)) + 1)%N.
+  Proof.
+    intro q; cbn zeta.
+    assert (Hslots : (N.of_nat (length (Syntax.slots V.t (R.plan (compile q))) + 1) <=
+      k_rules + 1)%N).
+    { pose proof (proj2 (seed_plan_time q)) as Hsize.
+      pose proof (proj1 (pointer_layout_size_bounds (Syntax.slots V.t (R.plan (compile q)))))
+        as Hlength; lia. }
+    pose proof (SeedTime.fold_time (compile q) (pointer_seed_entries 1 q) T_seed_put (k_rules + 1)
+      (R.plan_checked (compile q) (program_sorted q)) Hslots seed_put_time (seed_entries_ok q)) as Hfold.
+    rewrite pointer_seed_entries_length in Hfold; exact Hfold.
+  Qed.
 
   (** Inspecting a lookup result adds only a constant number of constructor tests. *)
   Lemma lookup_id_time : forall f key db,
@@ -681,7 +747,42 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     (T_seed q <= c_steensgaard *
       N.of_nat (length (constraints q) + length (initial_pointers q) + 1) *
       N.of_nat (D.unit (seed q)) * N.of_nat (N.to_nat (N.log2 (D.ids (seed q))) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q.
+    pose proof (pointer_seed_entries_time 1 q) as Hentries.
+    pose proof (seed_fold_time q) as Hfold; cbn zeta in Hfold.
+    pose proof (seed_init_time q) as Hinit.
+    pose proof (proj1 (seed_plan_time q)) as Hplan.
+    assert (Hcharge : (16 * D.c_db * (k_rules + 1) + 33 <= k_seed)%N).
+    { exact (proj1 (pointer_seed_budget D.c_db k_rules)). }
+    assert (Hfixed : (D.T_init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q))) +
+      R.T_plan (compile q) + 16 <= k_seed)%N).
+    { eapply N.le_trans; [apply N.add_le_mono_r; apply N.add_le_mono; [exact Hinit | exact Hplan] |].
+      exact (proj2 (pointer_seed_budget D.c_db k_rules)). }
+    clear Hinit Hplan.
+    pose proof (N.mul_le_mono_l _ _ (N.of_nat (D.unit (seed q))) Hcharge) as Hscaled.
+    pose proof (N.mul_le_mono_r _ _
+      (N.of_nat (length (constraints q) + length (initial_pointers q))) Hscaled) as Hscaled_entries.
+    assert (Hfold_bound : (Std.List.T_fold_left seed_put T_seed_put (pointer_seed_entries 1 q)
+      (D.init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q)))) <=
+      N.of_nat (D.unit (seed q)) * k_seed *
+        N.of_nat (length (constraints q) + length (initial_pointers q)) + 1)%N) by lia.
+    clear Hfold Hcharge Hscaled Hscaled_entries.
+    assert (Hunit : (1 <= N.of_nat (D.unit (seed q)))%N).
+    { clear - q; pose proof (SeedTime.unit_positive (seed q)); lia. }
+    rewrite (proj1 (proj2 (proj2 (seed_invariant q)))); cbn [N.log2 N.to_nat].
+    rewrite N.mul_1_r.
+    time_unfold T_seed; time_simpl.
+    change (pointer_plan_slots (R.plan (compile q))) with
+      (Syntax.slots V.t (R.plan (compile q))).
+    rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1) in Hentries |- *.
+    pose proof (pointer_seed_composition _ _ _ _ D.c_db k_seed _ _ Hunit Hentries Hfixed Hfold_bound)
+      as Htotal.
+    unfold c_steensgaard, k_wrap.
+    change (fun db entry => T_seed_put db entry) with T_seed_put.
+    replace (k_seed + D.c_db + 32 + 32)%N with (k_seed + D.c_db + 64)%N by lia.
+    lia.
+  Qed.
 
   Lemma T_compile_le : forall q, (T_compile q <= c_steensgaard)%N.
   Proof.
