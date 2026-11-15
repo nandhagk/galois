@@ -2491,6 +2491,163 @@ Proof.
 Qed.
 
 
+(** Plain graph paths are sufficient for the semantic low-link invariant. *)
+Definition tarjan_reaches (g : digraph) (u v : positive) : Prop :=
+  exists vertices, path g u vertices v.
+
+Lemma tarjan_reaches_refl g v : tarjan_reaches g v v.
+Proof. exists [v]. constructor. Qed.
+
+Lemma tarjan_reaches_edge g u v : edge g u v -> tarjan_reaches g u v.
+Proof. intro Huv. exists [u; v]. econstructor; [exact Huv|constructor]. Qed.
+
+Lemma tarjan_reaches_trans g u v w :
+  tarjan_reaches g u v -> tarjan_reaches g v w -> tarjan_reaches g u w.
+Proof.
+  intros [first Hfirst]. revert w. induction Hfirst; intros destination [last Hlast].
+  - now exists last.
+  - destruct (IHHfirst destination (ex_intro _ last Hlast)) as [joined Hjoined].
+    exists (u :: joined). econstructor; eassumption.
+Qed.
+
+(** Pending discoveries decrease from the newest vertex to the oldest. *)
+Fixpoint tarjan_ordered (disc : ptrie positive) (vertices : list positive) : Prop :=
+  match vertices with
+  | [] => True
+  | v :: rest => tarjan_ordered disc rest /\
+      forall w a b, In w rest -> trie_get v disc = Some a ->
+        trie_get w disc = Some b -> Pos.to_nat b < Pos.to_nat a
+  end.
+Definition tarjan_state_ordered s := tarjan_ordered (tarjan_disc s) (tarjan_pending s).
+
+Lemma tarjan_ordered_lookup first second vertices :
+  (forall v, In v vertices -> trie_get v first = trie_get v second) ->
+  tarjan_ordered first vertices -> tarjan_ordered second vertices.
+Proof.
+  induction vertices as [|v rest IH]; intros Hlookup; cbn [tarjan_ordered]; [tauto|].
+  intros [Htail Hhead]. split.
+  - apply IH; [intros w Hin; apply Hlookup; now right|exact Htail].
+  - intros w a b Hin Hv Hw. apply (Hhead w a b Hin).
+    + rewrite Hlookup; [exact Hv|now left].
+    + rewrite Hlookup; [exact Hw|now right].
+Qed.
+
+Lemma tarjan_ordered_suffix disc prefix suffix :
+  tarjan_ordered disc (prefix ++ suffix) -> tarjan_ordered disc suffix.
+Proof.
+  induction prefix as [|v prefix IH]; cbn [app tarjan_ordered]; [tauto|].
+  intros [Htail _]. now apply IH.
+Qed.
+
+Lemma tarjan_ordered_cross disc prefix suffix u v a b :
+  tarjan_ordered disc (prefix ++ suffix) -> In u prefix -> In v suffix ->
+  trie_get u disc = Some a -> trie_get v disc = Some b -> Pos.to_nat b < Pos.to_nat a.
+Proof.
+  induction prefix as [|w prefix IH]; cbn [app In tarjan_ordered]; [tauto|].
+  intros [Htail Hhead] [Heq|Hin] Hv Hu Hvb.
+  - subst w. apply (Hhead v a b); [apply in_or_app; now right|exact Hu|exact Hvb].
+  - eapply IH; eassumption.
+Qed.
+
+Lemma tarjan_ordered_embeds disc first second :
+  tarjan_embeds first second -> tarjan_ordered disc second -> tarjan_ordered disc first.
+Proof.
+  intro Hembed. induction Hembed; cbn [tarjan_ordered].
+  - tauto.
+  - intros [Htail _]. now apply IHHembed.
+  - intros [Htail Hhead]. split; [now apply IHHembed|].
+    intros w a b Hin Hx Hw. apply (Hhead w a b); [|exact Hx|exact Hw].
+    now apply (tarjan_embeds_incl _ _ Hembed).
+Qed.
+
+Lemma tarjan_ordered_enter v s :
+  ~ In v (tarjan_pending s) -> tarjan_values_below_clock s ->
+  tarjan_state_ordered s -> tarjan_state_ordered (TarjanVisitor.enter v s).
+Proof.
+  intros Hfresh Hvalues Horder. unfold tarjan_state_ordered in *.
+  cbn [TarjanVisitor.enter tarjan_disc tarjan_pending tarjan_ordered]. split.
+  - eapply tarjan_ordered_lookup; [|exact Horder].
+    intros w Hin. rewrite PTrie.get_set_other; [reflexivity|].
+    intro Heq. subst w. contradiction.
+  - intros w a b Hin Hv Hw. rewrite PTrie.get_set_same in Hv. injection Hv as Ha. subst a.
+    rewrite PTrie.get_set_other in Hw by (intro Heq; subst w; contradiction).
+    exact (proj1 Hvalues w b Hw).
+Qed.
+
+Lemma tarjan_ordered_lower v n s :
+  tarjan_state_ordered s -> tarjan_state_ordered (TarjanVisitor.lower v n s).
+Proof.
+  intro Horder. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)); exact Horder.
+Qed.
+
+Lemma tarjan_ordered_edge kind u v s :
+  tarjan_state_ordered s -> tarjan_state_ordered (TarjanVisitor.edge kind u v s).
+Proof.
+  intro Horder. destruct kind; cbn [TarjanVisitor.edge]; try exact Horder.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Horder.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Horder.
+  all: now apply tarjan_ordered_lower.
+Qed.
+
+Lemma tarjan_ordered_leave v s :
+  tarjan_state_ordered s -> tarjan_state_ordered (TarjanVisitor.leave v s).
+Proof.
+  intro Horder. unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|exact Horder].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|exact Horder].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members remaining] lows] actives] owners] eqn:Hpop.
+    pose proof (proj1 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop)) as Hsplit.
+    unfold tarjan_state_ordered in *. cbn [tarjan_disc tarjan_pending].
+    rewrite Hsplit in Horder. now apply tarjan_ordered_suffix in Horder.
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end)
+      as [|parent frames]; [exact Horder|]. now apply tarjan_ordered_lower.
+Qed.
+
+Lemma tarjan_frame_number v frames s a da dv :
+  tarjan_frames s = v :: frames -> tarjan_frames_embedded s ->
+  tarjan_state_ordered s -> In a frames ->
+  trie_get a (tarjan_disc s) = Some da -> trie_get v (tarjan_disc s) = Some dv ->
+  Pos.to_nat da < Pos.to_nat dv.
+Proof.
+  intros Hframes Hembed Horder Ha Had Hvd.
+  pose proof (tarjan_ordered_embeds _ _ _ Hembed Horder) as Hframes_order.
+  rewrite Hframes in Hframes_order. exact (proj2 Hframes_order a dv da Ha Hvd Had).
+Qed.
+
+Lemma tarjan_ordered_events es : forall s,
+  NoDup (rev (entered es) ++ tarjan_bag s) -> tarjan_values_below_clock s ->
+  tarjan_state_ordered s ->
+  tarjan_state_ordered (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s).
+Proof.
+  induction es as [|e rest IH]; intros s Hunique Hvalues Horder.
+  - exact Horder.
+  - cbn [fold_events fold_left]. apply IH.
+    + exact (tarjan_future_unique e rest s Hunique).
+    + exact (tarjan_values_fold [e] s Hvalues).
+    + destruct e as [v|v|kind u v]; cbn [visit_event].
+      * apply tarjan_ordered_enter; [|exact Hvalues|exact Horder].
+        intro Hin. cbn [entered rev] in Hunique. rewrite <- app_assoc in Hunique.
+        cbn [app] in Hunique. apply NoDup_app_remove_l in Hunique.
+        inversion Hunique as [|v' bag Hnot Htail]; subst v' bag.
+        apply Hnot. unfold tarjan_bag. apply in_or_app. now left.
+      * now apply tarjan_ordered_leave.
+      * now apply tarjan_ordered_edge.
+Qed.
+
+(** Unique entry traces keep pending vertices in decreasing discovery order. *)
+Lemma tarjan_ordered_fold es : NoDup (entered es) ->
+  tarjan_state_ordered
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial).
+Proof.
+  intro Hunique. apply tarjan_ordered_events; [|apply tarjan_values_initial|exact I].
+  cbn [tarjan_bag tarjan_initial tarjan_pending tarjan_emitted concat app].
+  rewrite app_nil_r. now apply NoDup_rev.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
