@@ -1232,47 +1232,6 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     unfold T_widen, T_cut, T_cut_raw, k_cut. cbn beta iota zeta. lia.
   Qed.
 
-  (** Inclusion testing costs at most the combined abstract sizes. *)
-  Lemma T_leb_le : forall a b,
-    (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Joining costs at most the combined abstract sizes. *)
-  Lemma T_join_le : forall a b,
-    (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Meeting costs at most the combined abstract sizes. *)
-  Lemma T_meet_le : forall a b,
-    (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Bottom testing costs at most the abstract size. *)
-  Lemma T_is_bot_le : forall a,
-    (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Widening charges both values and the widening parameters. *)
-  Lemma T_widen_le : forall q a b,
-    (T_widen q a b <= c_val * N.of_nat (size a + size b + wsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Narrowing charges both abstract values. *)
-  Lemma T_narrow_le : forall a b,
-    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Forward transfer is bounded by operator work. *)
-  Lemma T_forward_le : forall o xs,
-    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Backward transfer charges operator work and the requested result. *)
-  Lemma T_backward_le : forall o r xs,
-    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Guard transfer is bounded by guard work. *)
-  Lemma T_guard_le : forall g xs,
-    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** The cutoff pays for shape comparisons and endpoint bit scans. *)
-  Lemma T_cut_le : forall a,
-    (T_cut a <= c_cut * N.of_nat (interval_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
   (** The wrapper constant covers the raw constant and its fixed call overhead. *)
   Lemma c_val_dominates : (R.c_val + 4 <= c_val)%N.
   Proof.
@@ -1572,6 +1531,307 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     pose proof c_val_dominates.
     unfold t in *.
     nia.
+  Qed.
+
+  (** The cutoff pays for shape comparisons and endpoint bit scans. *)
+  Lemma T_cut_le : forall a,
+    (T_cut a <= c_cut * N.of_nat (interval_bits a + 1))%N.
+  Proof.
+    intro a.
+    pose proof (T_cut_pack a) as Hpack.
+    pose proof (T_cut_helper a) as Hcut.
+    assert (Hpositive : (1 <= N.of_nat (interval_bits a + 1))%N) by lia.
+    unfold c_cut.
+    nia.
+  Qed.
+
+  (** The value constant covers a raw operation, its cutoff and call overhead. *)
+  Lemma c_val_cut_coefficient :
+    (R.c_val + c_cut * (R.c_val + 1) + 3 <= c_val)%N.
+  Proof.
+    unfold c_cut, c_val.
+    nia.
+  Qed.
+
+  (** The value constant covers one projected raw operation and output scan. *)
+  Lemma c_val_source_coefficient :
+    (k_cut * (R.c_val + k_cut * (R.c_val + 1) + 2) <= c_val)%N.
+  Proof.
+    unfold c_val.
+    nia.
+  Qed.
+
+  (** The value constant covers raw transfer work and every returned cutoff. *)
+  Lemma c_val_list_coefficient :
+    (k_cut * (R.c_val + (k_cut + 1) * (R.c_val + 2) + 2) <= c_val)%N.
+  Proof.
+    unfold c_val.
+    nia.
+  Qed.
+
+  (** A raw operation and its resulting cutoff fit the wrapper constant. *)
+  Lemma cut_clock_budget : forall raw_time a budget,
+    (1 <= budget)%N ->
+    (raw_time <= R.c_val * budget)%N ->
+    (N.of_nat (interval_bits a) <= R.c_val * budget)%N ->
+    (raw_time + T_cut a + 3 <= c_val * budget)%N.
+  Proof.
+    intros raw_time a budget Hpositive Htime Hsize.
+    pose proof (T_cut_le a) as Hcut.
+    assert (Hscan : (T_cut a <= c_cut * ((R.c_val + 1) * budget))%N).
+    { eapply N.le_trans; [exact Hcut|]. apply N.mul_le_mono_l. nia. }
+    eapply N.le_trans with ((R.c_val + c_cut * (R.c_val + 1) + 3) * budget)%N.
+    - nia.
+    - apply N.mul_le_mono_r. exact c_val_cut_coefficient.
+  Qed.
+
+  (** The source clock's projection traversal and output scan share one work budget. *)
+  Lemma source_clock_budget : forall budget raw_time raw_bits cut_time traversal,
+    (1 <= budget)%N ->
+    (raw_time <= R.c_val * budget)%N ->
+    (raw_bits <= R.c_val * budget)%N ->
+    (cut_time <= k_cut * (raw_bits + 1))%N ->
+    (traversal <= budget)%N ->
+    (k_cut * (raw_time + cut_time + traversal + 1) <= c_val * budget)%N.
+  Proof.
+    intros budget raw_time raw_bits cut_time traversal Hpositive Htime Hsize Hcut Htraversal.
+    assert (Hscan : (cut_time <= k_cut * ((R.c_val + 1) * budget))%N).
+    { eapply N.le_trans; [exact Hcut|]. apply N.mul_le_mono_l. nia. }
+    assert (Hinside :
+      (raw_time + cut_time + traversal + 1 <=
+        (R.c_val + k_cut * (R.c_val + 1) + 2) * budget)%N) by nia.
+    eapply N.le_trans with
+      (k_cut * ((R.c_val + k_cut * (R.c_val + 1) + 2) * budget))%N.
+    - apply N.mul_le_mono_l. exact Hinside.
+    - rewrite N.mul_assoc. apply N.mul_le_mono_r. exact c_val_source_coefficient.
+  Qed.
+
+  (** Summing inward scans charges both lists and the traversal of the old operands. *)
+  Lemma within_list_clock_le : forall ys olds,
+    (fold_right N.add 0%N
+      (map (fun yx => (T_cut_within C.bits (snd yx) (fst yx) + 1)%N)
+        (combine ys olds)) <=
+      (k_cut + 1) * N.of_nat
+        (fold_right Nat.add 0%nat (map interval_bits ys) +
+          fold_right Nat.add 0%nat (map interval_bits olds) + length olds))%N.
+  Proof.
+    induction ys as [|y ys IH]; intros [|old olds];
+      cbn [combine map fold_right length fst snd]; try lia.
+    pose proof (T_cut_within_helper old y) as Hhead.
+    specialize (IH olds).
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *.
+    nia.
+  Qed.
+
+  (** Returned storage, original storage and list traversal fit one transfer budget. *)
+  Lemma source_list_clock_budget : forall budget raw_time raw_bits input_bits traversal scans,
+    (1 <= budget)%N ->
+    (raw_time <= R.c_val * budget)%N ->
+    (raw_bits <= R.c_val * budget)%N ->
+    (input_bits <= budget)%N ->
+    (traversal <= budget)%N ->
+    (scans <= (k_cut + 1) * (raw_bits + input_bits + traversal))%N ->
+    (k_cut * (raw_time + scans + traversal + 1) <= c_val * budget)%N.
+  Proof.
+    intros budget raw_time raw_bits input_bits traversal scans
+      Hpositive Htime Hsize Hinput Htraversal Hscans.
+    assert (Hstorage :
+      (raw_bits + input_bits + traversal <= (R.c_val + 2) * budget)%N) by nia.
+    assert (Hscan : (scans <= (k_cut + 1) * ((R.c_val + 2) * budget))%N).
+    { eapply N.le_trans; [exact Hscans|]. apply N.mul_le_mono_l. exact Hstorage. }
+    assert (Hinside :
+      (raw_time + scans + traversal + 1 <=
+        (R.c_val + (k_cut + 1) * (R.c_val + 2) + 2) * budget)%N) by nia.
+    eapply N.le_trans with
+      (k_cut * ((R.c_val + (k_cut + 1) * (R.c_val + 2) + 2) * budget))%N.
+    - apply N.mul_le_mono_l. exact Hinside.
+    - rewrite N.mul_assoc. apply N.mul_le_mono_r. exact c_val_list_coefficient.
+  Qed.
+
+  (** Inclusion testing costs at most the combined abstract sizes. *)
+  Lemma T_leb_le : forall a b,
+    (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (R.T_leb_le (cut_raw a) (cut_raw b)) as Hraw.
+    rewrite !raw_size_agrees in Hraw.
+    change (R.T_leb (cut_raw a) (cut_raw b) <=
+      R.c_val * N.of_nat (size a + size b + 1))%N in Hraw.
+    pose proof c_val_dominates.
+    assert (Hpositive : (1 <= N.of_nat (size a + size b + 1))%N) by lia.
+    unfold T_leb, T_cut_raw.
+    cbn beta iota zeta.
+    nia.
+  Qed.
+
+  (** Joining costs at most the combined abstract sizes. *)
+  Lemma T_join_le : forall a b,
+    (T_join a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (R.T_join_le (cut_raw a) (cut_raw b)) as Htime.
+    pose proof (R.join_size (cut_raw a) (cut_raw b)) as Hsize.
+    rewrite !raw_size_agrees in Htime.
+    rewrite !raw_size_agrees in Hsize.
+    assert (Hpositive : (1 <= N.of_nat (size a + size b + 1))%N) by lia.
+    pose proof (cut_clock_budget (R.T_join (cut_raw a) (cut_raw b))
+      (R.join (cut_raw a) (cut_raw b)) (N.of_nat (size a + size b + 1))
+      Hpositive Htime Hsize) as Hbudget.
+    unfold T_join, T_cut_raw.
+    cbn beta iota zeta.
+    lia.
+  Qed.
+
+  (** Meeting costs at most the combined abstract sizes. *)
+  Lemma T_meet_le : forall a b,
+    (T_meet a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (R.T_meet_le (cut_raw a) (cut_raw b)) as Htime.
+    pose proof (R.meet_size (cut_raw a) (cut_raw b)) as Hsize.
+    rewrite !raw_size_agrees in Htime.
+    rewrite !raw_size_agrees in Hsize.
+    assert (Hpositive : (1 <= N.of_nat (size a + size b + 1))%N) by lia.
+    pose proof (cut_clock_budget (R.T_meet (cut_raw a) (cut_raw b))
+      (R.meet (cut_raw a) (cut_raw b)) (N.of_nat (size a + size b + 1))
+      Hpositive Htime Hsize) as Hbudget.
+    unfold T_meet, T_cut_raw.
+    cbn beta iota zeta.
+    lia.
+  Qed.
+
+  (** Bottom testing costs at most the abstract size. *)
+  Lemma T_is_bot_le : forall a,
+    (T_is_bot a <= c_val * N.of_nat (size a + 1))%N.
+  Proof.
+    intro a.
+    pose proof (R.T_is_bot_le (cut_raw a)) as Hraw.
+    rewrite raw_size_agrees in Hraw.
+    change (R.T_is_bot (cut_raw a) <= R.c_val * N.of_nat (size a + 1))%N in Hraw.
+    pose proof c_val_dominates.
+    assert (Hpositive : (1 <= N.of_nat (size a + 1))%N) by lia.
+    unfold T_is_bot, T_cut_raw.
+    cbn beta iota zeta.
+    nia.
+  Qed.
+
+  (** Widening charges both values and the widening parameters. *)
+  Lemma T_widen_le : forall q a b,
+    (T_widen q a b <= c_val * N.of_nat (size a + size b + wsize q + 1))%N.
+  Proof.
+    intros q a b.
+    pose proof (R.T_widen_le q (cut_raw a) (cut_raw b)) as Htime.
+    pose proof (R.widen_size q (cut_raw a) (cut_raw b)) as Hsize.
+    rewrite !raw_size_agrees in Htime.
+    rewrite !raw_size_agrees in Hsize.
+    pose proof (raw_wsize_agrees q) as Hparameter.
+    assert (Htime' : (R.T_widen q (cut_raw a) (cut_raw b) <=
+      R.c_val * N.of_nat (size a + size b + wsize q + 1))%N).
+    { unfold size. nia. }
+    assert (Hsize' : (N.of_nat (interval_bits (R.widen q (cut_raw a) (cut_raw b))) <=
+      R.c_val * N.of_nat (size a + size b + wsize q + 1))%N).
+    { unfold size. nia. }
+    assert (Hpositive : (1 <= N.of_nat (size a + size b + wsize q + 1))%N) by lia.
+    pose proof (cut_clock_budget (R.T_widen q (cut_raw a) (cut_raw b))
+      (R.widen q (cut_raw a) (cut_raw b)) (N.of_nat (size a + size b + wsize q + 1))
+      Hpositive Htime' Hsize') as Hbudget.
+    unfold T_widen, T_cut_raw.
+    cbn beta iota zeta.
+    lia.
+  Qed.
+
+  (** Narrowing charges both abstract values. *)
+  Lemma T_narrow_le : forall a b,
+    (T_narrow a b <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (R.T_narrow_le (cut_raw a) (cut_raw b)) as Htime.
+    rewrite !raw_size_agrees in Htime.
+    pose proof (RL.raw_narrow_bits (cut_raw a) (cut_raw b)) as Hbits.
+    pose proof R.c_lat_pos as Hrawpositive.
+    change (1 <= R.c_val)%N in Hrawpositive.
+    assert (Hsize : (N.of_nat (interval_bits (R.narrow (cut_raw a) (cut_raw b))) <=
+      R.c_val * N.of_nat (size a + size b + 1))%N).
+    { unfold size. nia. }
+    assert (Hpositive : (1 <= N.of_nat (size a + size b + 1))%N) by lia.
+    pose proof (cut_clock_budget (R.T_narrow (cut_raw a) (cut_raw b))
+      (R.narrow (cut_raw a) (cut_raw b)) (N.of_nat (size a + size b + 1))
+      Hpositive Htime Hsize) as Hbudget.
+    unfold T_narrow, T_cut_raw.
+    cbn beta iota zeta.
+    lia.
+  Qed.
+
+  (** Forward transfer is bounded by operator work. *)
+  Lemma T_forward_le : forall o xs,
+    (T_forward o xs <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof.
+    intros o xs.
+    pose proof (R.T_forward_le o (map cut_raw xs)) as Htime.
+    pose proof (R.forward_size o (map cut_raw xs)) as Hsize.
+    rewrite raw_size_agrees in Hsize.
+    pose proof (raw_work_agrees o xs) as Hwork.
+    pose proof (work_length o xs) as Hlength.
+    pose proof (T_cut_helper (R.forward o (map cut_raw xs))) as Hcut.
+    rewrite Nat2N.inj_add in Hcut.
+    eapply N.le_trans; [apply T_forward_source|].
+    unfold t in *.
+    eapply source_clock_budget.
+    - lia.
+    - eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l. lia.
+    - eapply N.le_trans; [exact Hsize|]. apply N.mul_le_mono_l. lia.
+    - exact Hcut.
+    - lia.
+  Qed.
+
+  (** Backward transfer charges operator work and the requested result. *)
+  Lemma T_backward_le : forall o r xs,
+    (T_backward o r xs <= c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof.
+    intros o r xs.
+    pose proof (R.T_backward_le o (cut_raw r) (map cut_raw xs)) as Htime.
+    pose proof (R.backward_size o (cut_raw r) (map cut_raw xs)) as Hsize.
+    rewrite raw_size_agrees in Htime.
+    rewrite raw_sizes_agree, raw_size_agrees in Hsize.
+    pose proof (raw_work_agrees o xs) as Hwork.
+    pose proof (work_length o xs) as Hlength.
+    assert (Hinput : operand_bits xs <= work o xs) by (unfold work, transfer_work; lia).
+    pose proof (within_list_clock_le
+      (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)) as Hscans.
+    rewrite projected_bits_agree, length_map, !Nat2N.inj_add in Hscans.
+    eapply N.le_trans; [apply T_backward_source|].
+    unfold t in *.
+    eapply source_list_clock_budget with (input_bits := N.of_nat (operand_bits xs)).
+    - lia.
+    - eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l. unfold size. lia.
+    - eapply N.le_trans; [exact Hsize|]. apply N.mul_le_mono_l. unfold size. lia.
+    - lia.
+    - lia.
+    - exact Hscans.
+  Qed.
+
+  (** Guard transfer is bounded by guard work. *)
+  Lemma T_guard_le : forall g xs,
+    (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof.
+    intros g xs.
+    pose proof (R.T_guard_le g (map cut_raw xs)) as Htime.
+    pose proof (R.guard_size g (map cut_raw xs)) as Hsize.
+    rewrite raw_sizes_agree in Hsize.
+    pose proof (raw_gwork_agrees g xs) as Hwork.
+    pose proof (gwork_length g xs) as Hlength.
+    assert (Hinput : operand_bits xs <= gwork g xs) by (unfold gwork, guard_work; lia).
+    pose proof (within_list_clock_le (R.guard g (map cut_raw xs)) (map cut_raw xs)) as Hscans.
+    rewrite projected_bits_agree, length_map, !Nat2N.inj_add in Hscans.
+    eapply N.le_trans; [apply T_guard_source|].
+    unfold t in *.
+    eapply source_list_clock_budget with (input_bits := N.of_nat (operand_bits xs)).
+    - lia.
+    - eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_l. lia.
+    - eapply N.le_trans; [exact Hsize|]. apply N.mul_le_mono_l. lia.
+    - lia.
+    - lia.
+    - exact Hscans.
   Qed.
 
 End CutIntervalT.
