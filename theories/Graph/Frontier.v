@@ -8,7 +8,7 @@ From Stdlib Require Import PArith NArith List Bool Arith Lia.
 From Stdlib.Sorting Require Import Permutation.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data Spec DigraphSig DomSig FrontierSig.
+From Galois.Graph Require Import Data Spec DigraphSig DomSig DomOrder FrontierSig.
 Import List.ListNotations.
 
 (** A prepared predecessor occurrence is exactly an edge from a listed source. *)
@@ -27,6 +27,135 @@ Proof.
     apply in_flat_map. exists x. split; [exact Hx|].
     apply in_map_iff. exists y. split; [reflexivity|].
     apply filter_In. split; [exact Hedge|apply Pos.eqb_refl].
+Qed.
+
+(** Private semantic facts for the enabled parent runners. *)
+Lemma frontier_path_listed : forall g a vs b,
+  wf_graph g -> In a (verts g) -> path g a vs b -> In b (verts g).
+Proof.
+  intros g a vs b [Hunique Hclosed] Ha Hpath. revert Ha.
+  induction Hpath as [v|u v vs w Hedge Hpath IH]; intro Ha.
+  - exact Ha.
+  - apply IH. eapply Hclosed; eassumption.
+Qed.
+
+Lemma frontier_reach_listed : forall g r v,
+  wf_graph (base g) -> In r (verts (base g)) -> reach (base g) [r] v ->
+  In v (nodes g).
+Proof.
+  intros g r v Hgraph Hr [a [vs [Ha Hpath]]].
+  destruct Ha as [<-|[]].
+  replace (nodes g) with (verts (base g)) by (destruct g as [[]]; reflexivity).
+  eapply frontier_path_listed; eassumption.
+Qed.
+
+Lemma frontier_reach_edge : forall g r p y,
+  reach g [r] p -> edge g p y -> reach g [r] y.
+Proof.
+  intros g r p y [a [vs [Ha Hpath]]] Hedge.
+  exists a, (vs ++ [y]). split; [exact Ha|].
+  eapply dom_cert_path_snoc; eassumption.
+Qed.
+
+Lemma frontier_anc_reachable : forall g r m x v,
+  dom_exact g r m -> tree_anc m x v -> reach (base g) [r] v ->
+  reach (base g) [r] x.
+Proof.
+  intros g r m x v Hexact Hanc. induction Hanc as [|p v Hparent Hanc IH]; intro Hv.
+  - exact Hv.
+  - apply IH. exact (proj1 (proj1 Hexact v p Hparent)).
+Qed.
+
+Definition df_enabled (t : domtree) (y x : positive) : Prop :=
+  (exists a, trie_get x (pre t) = Some a) /\
+  forall b, trie_get y (idom t) = Some b -> x <> b.
+
+Inductive df_route (g : prepared) (t : domtree) (y : positive) : positive -> Prop :=
+  | df_route_seed : forall x, In x (preds g y) -> df_enabled t y x -> df_route g t y x
+  | df_route_parent : forall x q,
+      df_route g t y x -> trie_get x (idom t) = Some q ->
+      df_enabled t y q -> df_route g t y q.
+
+Lemma df_route_witness : forall g t r y x,
+  prepared_ok g -> domtree_exact g r t -> df_route g t y x ->
+  exists p, In p (preds g y) /\ reach (base g) [r] p /\
+    tree_anc (idom t) x p /\
+    forall b, trie_get y (idom t) = Some b -> ~ tree_anc (idom t) x b.
+Proof.
+  intros g t r y x Hprepared Htree Hroute.
+  destruct Htree as [Hr [Hexact [Hwidth [Hkids [Hsort [Hpre Hrest]]]]]].
+  induction Hroute as [x Hpred [Hpresent Hboundary]|v q Hroute IH Hparent [Hpresent Hboundary]].
+  - assert (Hp : reach (base g) [r] x) by now apply (proj1 (Hpre x)).
+    exists x. split; [exact Hpred|]. split; [exact Hp|]. split; [constructor|].
+    intros b Hget Hxb.
+    pose proof (dom_exact_edge_parent g r (idom t) x y b Hexact Hp
+      (proj2 (proj1 (frontier_preds_member g y x Hprepared) Hpred)) Hget) as Hbx.
+    apply (Hboundary b Hget).
+    eapply dom_anc_wf_antisym; [exact (proj2 (proj2 Hexact))|exact Hxb|exact Hbx].
+  - destruct IH as [p [Hpred [Hp [Hvp Hboundaryv]]]].
+    exists p. split; [exact Hpred|]. split; [exact Hp|]. split.
+    + eapply dom_cert_anc_trans; [|exact Hvp].
+      eapply tree_anc_step; [exact Hparent|constructor].
+    + intros b Hget Hqb.
+      pose proof (dom_exact_edge_parent g r (idom t) p y b Hexact Hp
+        (proj2 (proj1 (frontier_preds_member g y p Hprepared) Hpred)) Hget) as Hbp.
+      destruct (dom_anc_chain_comparable (idom t) b v p Hbp Hvp) as [Hbv|Hvb].
+      * assert (Hne : b <> v).
+        { intro Heq. subst b. apply (Hboundaryv v Hget). constructor. }
+        pose proof (dom_cert_anc_parent (idom t) b v q Hparent Hbv Hne) as Hbq.
+        apply (Hboundary b Hget).
+        eapply dom_anc_wf_antisym; [exact (proj2 (proj2 Hexact))|exact Hqb|exact Hbq].
+      * exact (Hboundaryv b Hget Hvb).
+Qed.
+
+Lemma df_route_climb : forall g t r y x v,
+  domtree_exact g r t -> tree_anc (idom t) x v -> df_route g t y v ->
+  (forall b, trie_get y (idom t) = Some b -> ~ tree_anc (idom t) x b) ->
+  df_route g t y x.
+Proof.
+  intros g t r y x v Htree Hanc.
+  destruct Htree as [Hr [Hexact [Hwidth [Hkids [Hsort [Hpre Hrest]]]]]].
+  induction Hanc as [|p v Hparent Hanc IH]; intros Hroute Hboundary.
+  - exact Hroute.
+  - apply IH; [|exact Hboundary].
+    eapply df_route_parent; [exact Hroute|exact Hparent|].
+    split.
+    + apply (proj2 (Hpre p)). exact (proj1 (proj1 Hexact v p Hparent)).
+    + intros b Hget Heq. subst b. exact (Hboundary p Hget Hanc).
+Qed.
+
+Lemma df_route_spec : forall g t r x y,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  (df_route g t y x <-> in_frontier (base g) r x y).
+Proof.
+  intros g t r x y Hgraph Hprepared Htree.
+  pose proof Htree as [Hr [Hexact [Hwidth [Hkids [Hsort [Hpre Hrest]]]]]].
+  split.
+  - intro Hroute.
+    destruct (df_route_witness g t r y x Hprepared Htree Hroute)
+      as [p [Hpred [Hp [Hxp Hboundary]]]].
+    pose proof (proj2 (proj1 (frontier_preds_member g y p Hprepared) Hpred)) as Hedge.
+    split.
+    + exists p. split; [exact Hp|]. split; [exact Hedge|].
+      eapply dom_exact_anc_dominates; eassumption.
+    + intro Hstrict. destruct (trie_get y (idom t)) as [b|] eqn:Hget.
+      * apply (Hboundary b eq_refl).
+        now apply (proj1 (dom_exact_parent_strict g r (idom t) x y b Hexact Hget)).
+      * apply (proj1 (proj1 (proj2 Hexact) y
+          (frontier_reach_edge (base g) r p y Hp Hedge)) Hget).
+        exists x. exact Hstrict.
+  - intros [[p [Hp [Hedge Hdom]]] Hnotstrict].
+    pose proof (dom_exact_dominates_anc g r (idom t) x p Hexact Hp Hdom) as Hxp.
+    assert (Hboundary : forall b, trie_get y (idom t) = Some b ->
+      ~ tree_anc (idom t) x b).
+    { intros b Hget Hxb. apply Hnotstrict.
+      now apply (proj2 (dom_exact_parent_strict g r (idom t) x y b Hexact Hget)). }
+    eapply df_route_climb; [exact Htree|exact Hxp| |exact Hboundary].
+    apply df_route_seed.
+    + apply (proj2 (frontier_preds_member g y p Hprepared)). split; [|exact Hedge].
+      eapply frontier_reach_listed; eassumption.
+    + split; [now apply (proj2 (Hpre p))|].
+      intros b Hget Heq. subst b. exact (Hboundary p Hget Hxp).
 Qed.
 
 Definition df_step (g : prepared) (t : domtree) (y : positive) (st : df_state) :
