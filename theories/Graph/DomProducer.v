@@ -1734,3 +1734,199 @@ Proof.
   exact (dom_lt_settlements_operations numeric (lt_numeric_order numeric)
     (DomLtSemiState Empty Empty (DomLtLinks Empty Empty []))).
 Qed.
+
+(** * Numeric operand ranges *)
+
+(** The reverse layout order and forward DFS order contain the same number of discoveries. *)
+Lemma dom_lt_layout_order_length g r :
+  length (lt_reverse_order (dom_lt_layout_of g r)) = length (dom_lt_dfs g r).
+Proof.
+  unfold dom_lt_dfs. rewrite rev_append_rev, length_app, length_rev. cbn [length]. lia.
+Qed.
+
+(** Every stored producer rank is positive and no greater than the distinct discovery count. *)
+Lemma dom_lt_layout_rank_discovered g r v rank :
+  trie_get v (lt_rank (dom_lt_layout_of g r)) = Some rank ->
+  (0 < rank <= N.of_nat (length (dom_lt_dfs g r)))%N.
+Proof.
+  intro Hget. pose proof (dom_lt_layout_of_inventory g r) as Hlayout.
+  pose proof (dom_lt_layout_positive _ Hlayout v rank Hget) as Hpositive.
+  pose proof (dom_lt_layout_bounded _ Hlayout v rank Hget) as Hbelow.
+  pose proof (dom_lt_layout_next _ Hlayout) as Hnext.
+  rewrite dom_lt_layout_order_length, Nat2N.inj_add in Hnext.
+  split; [exact Hpositive|]. lia.
+Qed.
+
+(** The discovery rank bound also fits the original vertex inventory. *)
+Lemma dom_lt_layout_rank_bound g r v rank :
+  trie_get v (lt_rank (dom_lt_layout_of g r)) = Some rank ->
+  (0 < rank <= N.of_nat (graph_n (base g)))%N.
+Proof.
+  intro Hget. pose proof (dom_lt_layout_rank_discovered g r v rank Hget) as Hrank.
+  destruct (dom_lt_dfs_inventory g r) as [_ [_ [Hvertices Hedges]]]. lia.
+Qed.
+
+(** Rank lookup stays within the distinct discovery inventory, including its default zero. *)
+Lemma dom_lt_rank_get_discovered g r v :
+  (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v <=
+    N.of_nat (length (dom_lt_dfs g r)))%N.
+Proof.
+  unfold dom_lt_rank_get.
+  destruct (trie_get v (lt_rank (dom_lt_layout_of g r))) as [rank|] eqn:Hget; [|lia].
+  exact (proj2 (dom_lt_layout_rank_discovered g r v rank Hget)).
+Qed.
+
+(** The rank lookup's default zero obeys the same upper bound as every stored rank. *)
+Lemma dom_lt_rank_get_bound g r v :
+  (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v <=
+    N.of_nat (graph_n (base g)))%N.
+Proof.
+  unfold dom_lt_rank_get.
+  destruct (trie_get v (lt_rank (dom_lt_layout_of g r))) as [rank|] eqn:Hget; [|lia].
+  exact (proj2 (dom_lt_layout_rank_bound g r v rank Hget)).
+Qed.
+
+(** Numeric construction leaves its discovery-limit field unchanged. *)
+Lemma dom_lt_numeric_limit_fold g layout xs st :
+  lt_numeric_limit (fold_left (dom_lt_numeric_add g layout) xs st) = lt_numeric_limit st.
+Proof.
+  revert st. induction xs as [|v rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH. reflexivity.
+Qed.
+
+(** Numeric evaluation fuel is the discovery count plus one. *)
+Lemma dom_lt_numeric_limit_count g r :
+  lt_numeric_limit (dom_lt_numeric_of g r) = N.of_nat (length (dom_lt_dfs g r) + 1).
+Proof.
+  unfold dom_lt_numeric_of. rewrite dom_lt_numeric_limit_fold. cbn [lt_numeric_limit].
+  rewrite (dom_lt_layout_next _ (dom_lt_layout_of_inventory g r)).
+  now rewrite dom_lt_layout_order_length.
+Qed.
+
+(** Every rank in the numeric traversal order names a positive bounded discovery. *)
+Lemma dom_lt_numeric_order_discovered g r rank :
+  In rank (lt_numeric_order (dom_lt_numeric_of g r)) ->
+  (0 < rank <= N.of_nat (length (dom_lt_dfs g r)))%N.
+Proof.
+  rewrite dom_lt_numeric_order_of, <- in_rev. intro Hin.
+  apply in_map_iff in Hin. destruct Hin as [v [<- Hv]].
+  destruct (proj1 (dom_lt_dfs_rank_domain g r v) Hv) as [n Hget].
+  unfold dom_lt_rank_get. rewrite Hget. now apply (dom_lt_layout_rank_discovered g r v n).
+Qed.
+
+(** Numeric traversal ranks also fit the original vertex inventory. *)
+Lemma dom_lt_numeric_order_bound g r rank :
+  In rank (lt_numeric_order (dom_lt_numeric_of g r)) ->
+  (0 < rank <= N.of_nat (graph_n (base g)))%N.
+Proof.
+  intro Hin. pose proof (dom_lt_numeric_order_discovered g r rank Hin) as Hrank.
+  destruct (dom_lt_dfs_inventory g r) as [_ [_ [Hvertices Hedges]]]. lia.
+Qed.
+
+(** A trie payload invariant constrains every successful lookup independently of its key. *)
+Definition dom_lt_trie_all {A : Type} (P : A -> Prop) (m : ptrie A) : Prop :=
+  forall key value, trie_get key m = Some value -> P value.
+
+(** An empty trie satisfies every payload invariant. *)
+Lemma dom_lt_trie_all_empty {A : Type} (P : A -> Prop) : dom_lt_trie_all P Empty.
+Proof.
+  intros key value Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+Qed.
+
+(** A trie write preserves a payload invariant when the installed value satisfies it. *)
+Lemma dom_lt_trie_all_set {A : Type} (P : A -> Prop) m key value :
+  dom_lt_trie_all P m -> P value -> dom_lt_trie_all P (PTrieCode.set key value m).
+Proof.
+  intros Hbefore Hvalue query stored Hget.
+  destruct (Pos.eq_dec query key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same in Hget. now injection Hget as <-.
+  - rewrite PTrie.get_set_other in Hget by exact Hdifferent. now apply (Hbefore query).
+Qed.
+
+(** Identity-default lookup preserves any upper bound on payloads and its default key. *)
+Lemma dom_lt_identity_bounded bound m v :
+  dom_lt_trie_all (fun n => (n <= bound)%N) m -> (v <= bound)%N ->
+  (dom_lt_identity m v <= bound)%N.
+Proof.
+  intros Hvalues Hv. unfold dom_lt_identity.
+  destruct (trie_get (dom_lt_key v) m) as [stored|] eqn:Hget; [|exact Hv].
+  now apply (Hvalues (dom_lt_key v)).
+Qed.
+
+(** Filtering a row through bounded ranks produces a row of bounded numeric operands. *)
+Lemma dom_lt_ranked_row_bounded bound ranks row :
+  dom_lt_trie_all (fun n => (n <= bound)%N) ranks ->
+  Forall (fun n => (n <= bound)%N) (dom_lt_ranked_row ranks row).
+Proof.
+  intro Hvalues. unfold dom_lt_ranked_row. induction row as [|v rest IH]; cbn [fold_right].
+  - constructor.
+  - destruct (trie_get v ranks) as [stored|] eqn:Hget; [|exact IH].
+    constructor; [now apply (Hvalues v)|exact IH].
+Qed.
+
+(** Numeric layout order, parents and predecessor rows all stay inside one numeric range. *)
+Record dom_lt_numeric_ranges (bound : N) (numeric : dom_lt_numeric) : Prop :=
+  DomLtNumericRanges {
+    dom_lt_numeric_order_range : Forall (fun n => (n <= bound)%N) (lt_numeric_order numeric);
+    dom_lt_numeric_parent_range :
+      dom_lt_trie_all (fun n => (n <= bound)%N) (lt_numeric_parent numeric);
+    dom_lt_numeric_predecessor_range :
+      dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) (lt_numeric_pred numeric)
+  }.
+
+(** Adding an original vertex keeps every numeric payload within the distinct discovery bound. *)
+Lemma dom_lt_numeric_add_ranges g r st v :
+  dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r))) st ->
+  dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r)))
+    (dom_lt_numeric_add g (dom_lt_layout_of g r) st v).
+Proof.
+  intros [Horder Hparents Hpredecessors]. unfold dom_lt_numeric_add.
+  constructor; cbn [lt_numeric_order lt_numeric_parent lt_numeric_pred].
+  - constructor; [apply dom_lt_rank_get_discovered|exact Horder].
+  - destruct (trie_get v (lt_dfs_parent (dom_lt_layout_of g r))) as [p|];
+      [|exact Hparents].
+    apply dom_lt_trie_all_set; [exact Hparents|apply dom_lt_rank_get_discovered].
+  - apply dom_lt_trie_all_set; [exact Hpredecessors|].
+    apply dom_lt_ranked_row_bounded. intros key value Hget.
+    exact (proj2 (dom_lt_layout_rank_discovered g r key value Hget)).
+Qed.
+
+(** Numeric layout construction bounds every operand by its distinct discovery count. *)
+Lemma dom_lt_numeric_of_ranges g r :
+  dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r))) (dom_lt_numeric_of g r).
+Proof.
+  unfold dom_lt_numeric_of.
+  apply (dom_lt_fold_invariant (dom_lt_numeric_add g (dom_lt_layout_of g r))
+    (dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r))))).
+  - constructor; cbn [lt_numeric_order lt_numeric_parent lt_numeric_pred].
+    + constructor.
+    + apply dom_lt_trie_all_empty.
+    + apply dom_lt_trie_all_empty.
+  - intros st v Hrange. now apply dom_lt_numeric_add_ranges.
+Qed.
+
+(** A larger numeric budget preserves all three numeric payload-range invariants. *)
+Lemma dom_lt_numeric_ranges_mono smaller larger numeric :
+  (smaller <= larger)%N -> dom_lt_numeric_ranges smaller numeric ->
+  dom_lt_numeric_ranges larger numeric.
+Proof.
+  intros Hle [Horder Hparents Hpredecessors]. constructor.
+  - apply Forall_forall. intros n Hin.
+    pose proof (proj1 (Forall_forall _ _) Horder n Hin) as Hsmall.
+    eapply N.le_trans; [exact Hsmall|exact Hle].
+  - intros key value Hget. specialize (Hparents key value Hget).
+    eapply N.le_trans; [exact Hparents|exact Hle].
+  - intros key row Hget. specialize (Hpredecessors key row Hget).
+    apply Forall_forall. intros n Hin.
+    pose proof (proj1 (Forall_forall _ _) Hpredecessors n Hin) as Hsmall.
+    eapply N.le_trans; [exact Hsmall|exact Hle].
+Qed.
+
+(** The distinct discovery range weakens to the original vertex-count range for work budgets. *)
+Lemma dom_lt_numeric_graph_ranges g r :
+  dom_lt_numeric_ranges (N.of_nat (graph_n (base g))) (dom_lt_numeric_of g r).
+Proof.
+  apply (dom_lt_numeric_ranges_mono (N.of_nat (length (dom_lt_dfs g r)))).
+  - pose proof (proj1 (proj2 (proj2 (dom_lt_dfs_inventory g r)))) as Hvertices. lia.
+  - apply dom_lt_numeric_of_ranges.
+Qed.
