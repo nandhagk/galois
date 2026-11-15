@@ -628,6 +628,57 @@ Proof.
   rewrite Hnodes in Hvertices. rewrite Hedges in Hrows. rewrite scc_trace_length. lia.
 Qed.
 
+Local Lemma scc_weight_permutation {A} (weight : A -> nat) first last :
+  Permutation first last ->
+  fold_right (fun v n => weight v + n) 0 first =
+    fold_right (fun v n => weight v + n) 0 last.
+Proof.
+  intros Hperm. induction Hperm; cbn [fold_right]; lia.
+Qed.
+
+Local Lemma scc_weight_ext {A} (first second : A -> nat) xs :
+  (forall v, In v xs -> first v = second v) ->
+  fold_right (fun v n => first v + n) 0 xs =
+    fold_right (fun v n => second v + n) 0 xs.
+Proof.
+  induction xs as [|v xs IH]; intros Hagree; [reflexivity|].
+  cbn [fold_right]. rewrite (Hagree v (or_introl eq_refl)).
+  rewrite IH; [reflexivity|]. intros u Hin. apply Hagree. now right.
+Qed.
+
+(** For a well-formed listed graph, the entered list permutes every supplied vertex once. *)
+Lemma scc_trace_partition g : wf_graph (base g) ->
+  Permutation (entered (scc_trace g)) (nodes g).
+Proof.
+  intros Hwf. apply NoDup_Permutation.
+  - apply scc_trace_unique.
+  - destruct g as [[vertices adjacency] predecessors n e]. exact (proj1 Hwf).
+  - intros v. apply scc_trace_entered.
+Qed.
+
+(** Well-formed inputs retain every row and attain the exact vertex-and-edge event count. *)
+Lemma scc_trace_size_exact g : wf_graph (base g) ->
+  length (scc_trace g) = 2 * graph_n (base g) + graph_e (base g).
+Proof.
+  intros Hwf. pose proof (scc_trace_partition g Hwf) as Hperm.
+  pose proof (Permutation_length Hperm) as Hvertices.
+  pose proof (scc_weight_permutation (fun v => length (succs (base g) v))
+    _ _ Hperm) as Hrows. cbn beta in Hrows.
+  assert (Hfiltered :
+    fold_right (fun v n => length (succs (base (scc_graph g)) v) + n) 0
+      (entered (scc_trace g)) =
+    fold_right (fun v n => length (succs (base g) v) + n) 0 (entered (scc_trace g))).
+  { apply scc_weight_ext. intros v Hin. f_equal. apply scc_graph_agrees; [exact Hwf|].
+    now apply scc_trace_entered in Hin. }
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedges : fold_right (fun v n => length (succs (base g) v) + n) 0 (nodes g) =
+      graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  rewrite Hnodes in Hvertices. rewrite Hedges in Hrows.
+  now rewrite scc_trace_length, Hfiltered, Hvertices, Hrows.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
@@ -754,7 +805,11 @@ Module SccT <: SCC_ALL.
     (forall v, In v (entered (tarjan_trace g)) <-> In v (nodes g)) /\
     trace_stack [] (tarjan_trace g) [] /\
     length (tarjan_trace g) = 2 * graph_n (base g) + graph_e (base g).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g Hwf. split; [apply scc_trace_unique|].
+    split; [apply scc_trace_entered|].
+    split; [apply scc_trace_nested|now apply scc_trace_size_exact].
+  Qed.
 
   (** The filtered traversal is nested, duplicate-free and graph-sized on every input. *)
   Lemma F1b_trace_size : forall g,
