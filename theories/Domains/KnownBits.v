@@ -2222,7 +2222,25 @@ Theorem tnum_expand_mask_join : forall o w u r target,
   (tnum_leb w (tnum_expand_mask o w u r) target = true <->
    forall c, Z.land c u = c ->
      tnum_leb w (tnum_scalar o w c r) target = true).
-Proof. Admitted. (* CONVERT: tnum_expand_mask_join: Found no subterm matching "wrap ?M1502 (wrap ?M1502 ?M1503)" *)
+Proof.
+  intros o w [|p|p] r target Hu; [| |lia].
+  - change (tnum_leb w (tnum_normalise w r) target = true <->
+      forall c, Z.land c 0 = c ->
+        tnum_leb w (tnum_scalar o w c r) target = true).
+    assert (Hnorm : tnum_equiv w (tnum_normalise w r) r).
+    { unfold tnum_equiv, tnum_normalise. cbn [zeros ones]. now rewrite !tnum_wrap_agrees, !wrap_wrap. }
+    rewrite (tnum_equiv_leb w _ _ target Hnorm). split.
+    + intros Hr c Hc. rewrite Z.land_0_r in Hc. subst c.
+      apply (tnum_equiv_leb w _ _ target (tnum_scalar_zero o w r)). exact Hr.
+    + intro H. apply (tnum_equiv_leb w _ _ target (tnum_scalar_zero o w r)).
+      apply H. reflexivity.
+  - change (tnum_leb w (tnum_expand o w p 1 r) target = true <->
+      forall c, Z.land c (Zpos p) = c ->
+        tnum_leb w (tnum_scalar o w c r) target = true).
+    rewrite tnum_expand_join by lia. setoid_rewrite tnum_choices_land.
+    split; intros H c Hc; specialize (H c Hc);
+      replace (1 * c) with c in * by ring; exact H.
+Qed.
 
 Lemma tnum_expand_base_join : forall o w u base a target,
   0 <= u -> 0 <= base ->
@@ -2303,13 +2321,53 @@ Qed.
 Theorem tnum_variable_raw_amount_bound : forall o w a b k,
   is_word w k -> tnum_gamma w b k ->
   tnum_leb w (tnum_scalar o w k a) (tnum_variable_raw o w a b) = true.
-Proof. Admitted. (* CONVERT: tnum_variable_raw_amount_bound: The variable leb_refl was not found in the current environment. *)
+Proof.
+  intros o w a b k Hk Hb. destruct (tnum_decompose w b k Hk Hb) as [c [Hc ->]].
+  set (target := tnum_variable_raw o w a b).
+  assert (Hself : tnum_leb w (tnum_variable_raw o w a b) target = true)
+    by (apply tnum_leb_bits; auto).
+  rewrite tnum_variable_raw_equation in Hself.
+  cbn zeta in Hself.
+  pose proof (tnum_min_word w b) as Hbase.
+  pose proof (tnum_mask_word w b) as Hu.
+  destruct (tnum_rotation o) eqn:Hrot.
+  - apply (proj1 (tnum_expand_base_join o w _ _ a target (proj1 Hu) (proj1 Hbase))
+      Hself c Hc).
+  - pose proof (tnum_shift_cutoff_bound w) as [Hcut Hwidth].
+    pose proof (tnum_submask_bound w _ c Hu Hc) as Hcbound.
+    destruct (tnum_mask w b <? 2 ^ tnum_shift_cutoff w) eqn:Hhigh.
+    + apply Z.ltb_lt in Hhigh. rewrite Z.mod_small in Hself by (unfold is_word in Hu; lia).
+      apply (proj1 (tnum_expand_base_join o w _ _ a target (proj1 Hu) (proj1 Hbase))
+        Hself c Hc).
+    + apply tnum_join_leb in Hself as [Hsmall Hbig].
+      destruct (c <? 2 ^ tnum_shift_cutoff w) eqn:Hcsmall.
+      * apply Z.ltb_lt in Hcsmall.
+        assert (Hpow : 0 < 2 ^ tnum_shift_cutoff w) by (apply Z.pow_pos_nonneg; lia).
+        apply (proj1 (tnum_expand_base_join o w _ _ a target
+          (proj1 (Z.mod_pos_bound _ _ Hpow)) (proj1 Hbase)) Hsmall).
+        pose proof (tnum_submask_mod c (tnum_mask w b) (tnum_shift_cutoff w) Hcut Hc)
+          as Hmod. now rewrite Z.mod_small in Hmod by lia.
+      * apply Z.ltb_ge in Hcsmall.
+        rewrite tnum_scalar_oversized by (try exact Hrot; unfold is_word in Hbase; lia).
+        exact Hbig.
+Qed.
 
 Theorem tnum_variable_sound : forall o w f a b x k,
   tnum_shift_op o -> word_fun2 o = Some f ->
   is_word w x -> is_word w k -> tnum_gamma w a x -> tnum_gamma w b k ->
   tnum_gamma w (tnum_variable o w a b) (eval_binary_tag f w x k).
-Proof. Admitted. (* CONVERT: tnum_variable_sound: The reference tnum_variable_c was not found in the current *)
+Proof.
+  intros o w f a b x k Ho Hf Hx Hk Ha Hb.
+  pose proof (proj2 (tnum_normalise_sound w a x) Ha) as Han.
+  pose proof (proj2 (tnum_normalise_sound w b k) Hb) as Hbn.
+  unfold tnum_variable.
+  rewrite (tnum_empty_sound w _ x Han), (tnum_empty_sound w _ k Hbn).
+  cbn [orb].
+  eapply tnum_gamma_monotone;
+    [apply (tnum_variable_raw_amount_bound o w _ _ k Hk Hbn)|].
+  rewrite <- (tnum_scalar_agrees o w f k x Ho Hf Hk Hx).
+  apply tnum_scalar_sound; try assumption. exact (proj1 Hk).
+Qed.
 
 Theorem tnum_order_sound : forall strict w a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
@@ -2364,7 +2422,29 @@ Theorem tnum_compare_sound : forall o w f a b x y,
   word_cmp o = Some f -> is_word w x -> is_word w y ->
   tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma 1%positive (tnum_compare o w a b) (if eval_comparison_tag f w x y then 1 else 0).
-Proof. Admitted. (* CONVERT: tnum_compare_sound: Found no subterm matching "wrap w x" in the current goal. *)
+Proof.
+  intros o w f a b x y Hf Hx Hy Ha Hb. destruct o;
+    try discriminate Hf; injection Hf as <-; cbn [tnum_compare eval_comparison_tag].
+  - rewrite (wrap_id w x Hx), (wrap_id w y Hy). now apply tnum_equal_sound.
+  - rewrite (wrap_id w x Hx), (wrap_id w y Hy).
+    pose proof (tnum_not_sound 1%positive (tnum_equal w a b)
+      (if x =? y then 1 else 0) (tnum_equal_sound w a b x y Hx Hy Ha Hb)) as Hnot.
+    destruct (x =? y); exact Hnot.
+  - rewrite wult_value, (wrap_id w x Hx), (wrap_id w y Hy).
+    exact (tnum_order_sound true w a b x y Hx Hy Ha Hb).
+  - rewrite wule_value, (wrap_id w x Hx), (wrap_id w y Hy).
+    exact (tnum_order_sound false w a b x y Hx Hy Ha Hb).
+  - rewrite wslt_bias, wult_value. rewrite !wrap_id by apply wxor_is_word.
+    apply (tnum_order_sound true w); try apply wxor_is_word; now apply tnum_bias_sound.
+  - assert (Hbias : wsle w x y = (wxor w x (half w) <=? wxor w y (half w))).
+    { rewrite wsle_value, !wxor_half_value.
+      destruct (signed w x <=? signed w y) eqn:Hxy;
+        destruct (signed w x + half w <=? signed w y + half w) eqn:Hbias;
+        try reflexivity; apply Z.leb_le in Hxy || apply Z.leb_gt in Hxy;
+        apply Z.leb_le in Hbias || apply Z.leb_gt in Hbias; lia. }
+    rewrite Hbias. apply (tnum_order_sound false w);
+      try apply wxor_is_word; now apply tnum_bias_sound.
+Qed.
 
 Theorem tnum_count_sound : forall o w f x,
   (o = bvclz \/ o = bvctz \/ o = bvpopcnt) -> word_fun1 o = Some f ->
