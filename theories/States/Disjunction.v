@@ -4,7 +4,7 @@
     For example, cap one joins two alternatives into one state.
     Builds on: DisjunctionSig, StateSig and the lattice interfaces. *)
 
-From Stdlib Require Import List NArith Arith Bool.
+From Stdlib Require Import List NArith Arith Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
@@ -87,29 +87,109 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Definition wrank (p : wparam) (d : t) : nat :=
     fold_right Nat.add 0 (map (S.wrank p) (proj1_sig d)) +
       if forallb S.is_bot (proj1_sig d) then 1 + S.wrank p S.top else 0.
+
+  (** Every fold result covers its initial accumulator. *)
+  Lemma fold_join_start : forall xs a, S.leb a (fold_left S.join xs a) = true.
+  Proof.
+    induction xs as [|x xs IH]; intro a; cbn [fold_left].
+    - apply S.leb_refl.
+    - eapply S.leb_trans; [apply S.join_ub_l | apply IH].
+  Qed.
+
+  (** Every member of a fold's input is below its result. *)
+  Lemma fold_join_member : forall xs a x, In x xs ->
+    S.leb x (fold_left S.join xs a) = true.
+  Proof.
+    induction xs as [|y xs IH]; intros a x Hin; cbn in Hin; [contradiction |].
+    cbn [fold_left]; destruct Hin as [<- | Hin].
+    - eapply S.leb_trans; [apply S.join_ub_r | apply fold_join_start].
+    - apply IH; exact Hin.
+  Qed.
+
+  (** Collapse covers every raw alternative, including a singleton. *)
+  Lemma collapse_upper : forall xs x, In x xs -> S.leb x (collapse xs) = true.
+  Proof.
+    intros [|a xs] x Hin; cbn [collapse] in *; [contradiction |].
+    destruct Hin as [<- | Hin]; auto using fold_join_start, fold_join_member.
+  Qed.
+
+  (** Prefix compaction keeps each input below a returned alternative. *)
+  Lemma compact_tail_covers : forall n xs x, In x xs ->
+    exists y, In y (compact_tail n xs) /\ S.leb x y = true.
+  Proof.
+    induction n as [|n IH]; intros xs x Hin.
+    - exists (collapse xs); split; [now left | now apply collapse_upper].
+    - destruct xs as [|a xs]; [contradiction |].
+      cbn [compact_tail]; destruct Hin as [<- | Hin].
+      + exists a; split; [now left | apply S.leb_refl].
+      + destruct (IH xs x Hin) as [y [Hy Hle]].
+        exists y; split; [now right | exact Hle].
+  Qed.
+
+  (** A compacted suffix contributes at most one extra alternative. *)
+  Lemma compact_tail_length : forall n xs, length (compact_tail n xs) <= n + 1.
+  Proof.
+    induction n as [|n IH]; intros [|x xs]; cbn [compact_tail length]; try lia.
+    specialize (IH xs); lia.
+  Qed.
+
+  (** The raw widening equation exposes only the chosen branch's alternatives. *)
+  Lemma widen_raw : forall p a b, proj1_sig (widen p a b) =
+    if leb b a then proj1_sig a else
+    if is_bot a then proj1_sig b else
+    if forallb S.is_bot (proj1_sig a) then [S.top] else
+    replace_first S.is_bot
+      (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))))
+      (proj1_sig a).
+  Proof.
+    intros p [xs Hbound] b; unfold widen; cbn [proj1_sig].
+    destruct (leb b (exist _ xs Hbound)); [reflexivity |].
+    destruct (is_bot (exist _ xs Hbound)); [reflexivity |].
+    destruct (forallb S.is_bot xs); [|reflexivity].
+    apply P.clip_small; cbn; exact C.k_pos.
+  Qed.
+
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.leb_refl.
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.leb_trans.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.bot_least.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_bot.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_least.
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.join_ub_l.
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.join_ub_r.
+  Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; apply P.leb_spec; intros x Hin; exists S.top; split.
+    - unfold top; rewrite P.clip_small; [now left | cbn; exact C.k_pos].
+    - apply S.top_greatest.
+  Qed.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
@@ -119,7 +199,9 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* STUB *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [xs Hbound] b Hstable; unfold widen; now rewrite Hstable.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   (* F2-22 replaced the former twoStateDisj aligned-pair rank route with uncovered
      alternatives, and F2-30 supplies the size and widening-unit capabilities it needs. *)
@@ -128,56 +210,117 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* STUB *)
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hnonbottom; destruct (leb b a) eqn:Hstable.
+    - rewrite widen_stable by exact Hstable; lia.
+    - pose proof (wrank_widen p a b Hnonbottom Hstable); lia.
+  Qed.
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hle; split; [exact Hle | apply leb_refl].
+  Qed.
 
   (** Abstract inclusion entails inclusion of concrete environments. *)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b st Hle Hgamma; apply Exists_exists in Hgamma.
+    destruct Hgamma as [x [Hin Hx]].
+    destruct (proj1 (P.leb_spec a b) Hle x Hin) as [y [Hy Hxy]].
+    apply Exists_exists; exists y; split; [exact Hy |].
+    eapply S.gamma_mono; eassumption.
+  Qed.
   (** Bottom describes no concrete environment. *)
   Lemma gamma_bot : forall st, ~ gamma bot st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st Hgamma; unfold gamma, bot in Hgamma; rewrite P.bot_raw in Hgamma.
+    inversion Hgamma.
+  Qed.
   (** Top describes every concrete environment. *)
   Lemma gamma_top : forall st, gamma top st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro st; unfold gamma, top; rewrite P.clip_small.
+    - constructor; apply S.gamma_top.
+    - cbn; exact C.k_pos.
+  Qed.
   (** Assignment contains each successful concrete update. *)
   Lemma assign_sound : forall x e s st c,
     gamma s st -> eval_term L.eval st e = Some c ->
     gamma (assign x e s) (upd X.eqb st x c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [xs Hbound] st c Hgamma Heval; apply Exists_exists in Hgamma.
+    destruct Hgamma as [a [Hin Ha]].
+    apply Exists_exists; exists (S.assign x e a); split.
+    - apply in_map; exact Hin.
+    - eapply S.assign_sound; eassumption.
+  Qed.
   (** Havoc contains every concrete update of the selected variable. *)
   Lemma havoc_sound : forall x s st c,
     gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [xs Hbound] st c Hgamma; apply Exists_exists in Hgamma.
+    destruct Hgamma as [a [Hin Ha]].
+    apply Exists_exists; exists (S.havoc x a); split.
+    - apply in_map; exact Hin.
+    - apply S.havoc_sound; exact Ha.
+  Qed.
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
     gamma (assume g es s) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [xs Hbound] st cs Hgamma Heval Hholds; apply Exists_exists in Hgamma.
+    destruct Hgamma as [a [Hin Ha]].
+    apply Exists_exists; exists (S.assume g es a); split.
+    - apply in_map; exact Hin.
+    - eapply S.assume_sound; eassumption.
+  Qed.
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
   Proof. Admitted. (* STUB *)
   Lemma gamma_alternatives : forall d st,
     gamma d st <-> Exists (fun s => S.gamma s st) (proj1_sig d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma leb_hoare : forall a b, leb a b =
     forallb (fun x => existsb (S.leb x) (proj1_sig b)) (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; apply eq_true_iff_eq; rewrite P.leb_spec, forallb_forall.
+    split; intros H x Hin; specialize (H x Hin); now apply existsb_exists in H.
+  Qed.
   Lemma join_compact : forall a b, join a b = P.clip (proj1_sig a ++ proj1_sig b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.join_clip.
+  Qed.
   Lemma compact_cap : forall d, compact C.k d = proj1_sig (P.clip d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro d; unfold compact; now rewrite Nat.eqb_refl.
+  Qed.
   Lemma compact_covers : forall n d x, In x d ->
     exists y, In y (compact n d) /\ S.leb x y = true.
-  Proof. Admitted. (* CONVERT: compact_covers: The variable compact_equation was not found in the current environment. *)
+  Proof.
+    intros n d x Hin; unfold compact; destruct (Nat.eqb n C.k).
+    - apply P.clip_covers; [exact C.k_pos | exact Hin].
+    - destruct (Nat.leb (length d) n).
+      + exists x; split; [exact Hin | apply S.leb_refl].
+      + now apply compact_tail_covers.
+  Qed.
   Lemma compact_len : forall n d, length (compact n d) <= Nat.max n 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros n d; unfold compact; destruct (Nat.eqb n C.k) eqn:Hcap.
+    - apply Nat.eqb_eq in Hcap; subst n.
+      pose proof (proj2_sig (P.clip d)) as Hbound; apply Nat.leb_le in Hbound; lia.
+    - destruct (Nat.leb (length d) n) eqn:Hlength.
+      + apply Nat.leb_le in Hlength; lia.
+      + pose proof (compact_tail_length (Nat.pred n) d); destruct n; cbn in *; lia.
+  Qed.
   Lemma collapse_covers : forall xs x, In x xs -> S.leb x (collapse xs) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact collapse_upper.
+  Qed.
 End StateDisjunction.
 
 Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
