@@ -1158,3 +1158,51 @@ Proof.
   - exfalso. apply (dom_map_no_return m p (Hwf p) a Hparent).
     eapply dom_cert_anc_trans; eassumption.
 Qed.
+
+(** Distinct positive keys fit strictly below the capacity of their maximum bit width. *)
+Lemma dom_distinct_keys_cardinality xs w : NoDup xs ->
+  (forall v, In v xs -> Pos.size_nat v <= w) -> length xs < Nat.pow 2 w.
+Proof.
+  intros Hunique Hwidth.
+  assert (Hcodes : NoDup (map Pos.to_nat xs)).
+  { clear Hwidth. induction Hunique as [|v xs Hfresh Hunique IH].
+    - constructor.
+    - cbn [map]. constructor; [|exact IH].
+      intro Hin. apply in_map_iff in Hin as [u [Heq Hin]].
+      apply Pos2Nat.inj in Heq. subst u. exact (Hfresh Hin). }
+  assert (Hrange : incl (map Pos.to_nat xs) (seq 1 (Nat.pow 2 w - 1))).
+  { intros code Hin. apply in_map_iff in Hin as [v [<- Hin]].
+    apply in_seq.
+    pose proof (Pos2Nat.is_pos v) as Hpositive.
+    pose proof (Pos.size_nat_upper v) as Hupper.
+    pose proof (Nat.pow_le_mono_r 2 _ _ ltac:(lia) (Hwidth v Hin)) as Hpow.
+    pose proof (Nat.pow_lower_bound 2 w ltac:(lia)) as Hnonzero. lia. }
+  pose proof (NoDup_incl_length Hcodes Hrange) as Hlength.
+  rewrite length_map, length_seq in Hlength.
+  pose proof (Nat.pow_lower_bound 2 w ltac:(lia)) as Hnonzero. lia.
+Qed.
+
+(** Values bounded by a distinct key count fit within those keys' width. *)
+Lemma dom_distinct_value_width xs w a : NoDup xs ->
+  (forall v, In v xs -> Pos.size_nat v <= w) ->
+  (a <= N.of_nat (length xs))%N -> N.size_nat a <= w.
+Proof.
+  intros Hunique Hwidth Hvalue.
+  pose proof (dom_distinct_keys_cardinality xs w Hunique Hwidth) as Hlength.
+  destruct a as [|p]; [cbn; lia|].
+  assert (Hnatural : N.to_nat (N.pos p) <= length xs) by lia.
+  cbn [N.to_nat] in Hnatural. apply Pos.size_nat_least. lia.
+Qed.
+
+(** Twice a distinct key count plus one needs at most one additional bit. *)
+Lemma dom_distinct_twice_width xs w a : NoDup xs ->
+  (forall v, In v xs -> Pos.size_nat v <= w) ->
+  (a <= 2 * N.of_nat (length xs) + 1)%N -> N.size_nat a <= w + 1.
+Proof.
+  intros Hunique Hwidth Hvalue.
+  pose proof (dom_distinct_keys_cardinality xs w Hunique Hwidth) as Hlength.
+  destruct a as [|p]; [cbn; lia|].
+  assert (Hnatural : N.to_nat (N.pos p) <= 2 * length xs + 1) by lia.
+  cbn [N.to_nat] in Hnatural. apply Pos.size_nat_least.
+  rewrite Nat.add_1_r, Nat.pow_succ_r'. nia.
+Qed.
