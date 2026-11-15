@@ -822,6 +822,271 @@ Proof.
 Qed.
 
 
+(** Optional folds cannot recover after a rejecting callback. *)
+Local Lemma dom_optional_fold_none {A B : Type} (step : option B -> A -> option B) :
+  (forall x, step None x = None) ->
+  forall xs, fold_left step xs None = None.
+Proof.
+  intros Hnone xs. induction xs as [| x rest IH]; [reflexivity |].
+  cbn [fold_left]. rewrite Hnone. exact IH.
+Qed.
+
+(** A successful optional fold has a successful callback at every input occurrence. *)
+Local Lemma dom_optional_fold_entries {A B : Type} (step : option B -> A -> option B) :
+  (forall x, step None x = None) ->
+  forall xs initial result, fold_left step xs (Some initial) = Some result ->
+  forall x, In x xs -> exists before after, step (Some before) x = Some after.
+Proof.
+  intros Hnone xs. induction xs as [| head rest IH]; intros initial result Hrun x Hin.
+  - contradiction.
+  - cbn [fold_left] in Hrun.
+    destruct (step (Some initial) head) as [next |] eqn:Hstep.
+    2: rewrite (dom_optional_fold_none step Hnone rest) in Hrun; discriminate Hrun.
+    destruct Hin as [<- | Hin].
+    + exists initial, next. exact Hstep.
+    + eapply IH; eassumption.
+Qed.
+
+Local Lemma dom_optional_fold_preserves {A B : Type}
+    (step : option B -> A -> option B) (Inv : B -> Prop) (Valid : A -> Prop) :
+  (forall x, step None x = None) ->
+  (forall x before after, Valid x -> Inv before ->
+    step (Some before) x = Some after -> Inv after) ->
+  forall xs initial result, Forall Valid xs -> Inv initial ->
+    fold_left step xs (Some initial) = Some result -> Inv result.
+Proof.
+  intros Hnone Hstep xs. induction xs as [| x rest IH];
+    intros initial result Hvalid Hinv Hrun.
+  - cbn [fold_left] in Hrun. injection Hrun as Heq. now subst result.
+  - inversion Hvalid as [| head tail Hx Hrest]; subst head tail.
+    cbn [fold_left] in Hrun.
+    destruct (step (Some initial) x) as [next |] eqn:Hnext.
+    + eapply IH; [exact Hrest | | exact Hrun]. eapply Hstep; eassumption.
+    + rewrite (dom_optional_fold_none step Hnone rest) in Hrun. discriminate Hrun.
+Qed.
+
+(** Every stored extreme is witnessed by a real processed incoming edge. *)
+Local Definition dom_flag_valid g m (pos : ptrie N) o v direct lo hi : Prop :=
+  (direct = true -> exists p, trie_get v m = Some p /\ edge (base g) p v) /\
+  (exists u, In u o /\ edge (base g) u v /\ trie_get u pos = Some lo) /\
+  exists w, In w o /\ edge (base g) w v /\ trie_get w pos = Some hi.
+
+Local Definition dom_flags_valid g m pos o flags : Prop :=
+  forall v direct lo hi, trie_get v flags = Some (direct, lo, hi) ->
+    dom_flag_valid g m pos o v direct lo hi.
+
+Local Lemma dom_flags_set : forall g m pos o flags v direct lo hi,
+  dom_flags_valid g m pos o flags -> dom_flag_valid g m pos o v direct lo hi ->
+  dom_flags_valid g m pos o (PTrieCode.set v (direct, lo, hi) flags).
+Proof.
+  intros g m pos o flags v direct lo hi Hflags Hnew q d l h Hget.
+  destruct (Pos.eq_dec q v) as [Heq | Hneq].
+  - subst q. rewrite PTrie.get_set_same in Hget. inversion Hget; subst. exact Hnew.
+  - rewrite PTrie.get_set_other in Hget by exact Hneq. eapply Hflags. exact Hget.
+Qed.
+
+Local Lemma dom_flag_initial : forall g m pos o u v pu,
+  In u o -> edge (base g) u v -> trie_get u pos = Some pu ->
+  dom_flag_valid g m pos o v false pu pu.
+Proof.
+  intros g m pos o u v pu Hin Huv Hpu. split; [discriminate |].
+  split; exists u; repeat split; assumption.
+Qed.
+
+Local Lemma dom_flag_merge : forall g m pos o u v p pu direct lo hi,
+  In u o -> edge (base g) u v -> trie_get u pos = Some pu -> trie_get v m = Some p ->
+  dom_flag_valid g m pos o v direct lo hi ->
+  dom_flag_valid g m pos o v (direct || Pos.eqb u p) (N.min lo pu) (N.max hi pu).
+Proof.
+  intros g m pos o u v p pu direct lo hi Hin Huv Hpu Hparent
+    [Hdirect [Hlo Hhi]].
+  split.
+  - intro Hnew. apply orb_true_iff in Hnew as [Hold | Hsame].
+    + now apply Hdirect.
+    + apply Pos.eqb_eq in Hsame. subst u. exists p. now split.
+  - split.
+    + destruct (N.le_ge_cases lo pu) as [Hle | Hle].
+      * rewrite (N.min_l _ _ Hle). exact Hlo.
+      * rewrite (N.min_r _ _ Hle). exists u. repeat split; assumption.
+    + destruct (N.le_ge_cases hi pu) as [Hle | Hle].
+      * rewrite (N.max_r _ _ Hle). exists u. repeat split; assumption.
+      * rewrite (N.max_l _ _ Hle). exact Hhi.
+Qed.
+
+Local Lemma dom_edge_update_flags : forall g r m pos sizes o u v flags result,
+  In u o -> edge (base g) u v -> dom_flags_valid g m pos o flags ->
+  dom_edge_update r m pos sizes u (Some flags) v = Some result ->
+  dom_flags_valid g m pos o result.
+Proof.
+  intros g r m pos sizes o u v flags result Hin Huv Hflags Hstep.
+  unfold dom_edge_update in Hstep.
+  destruct (trie_get u pos) as [pu |] eqn:Hpu; [| discriminate Hstep].
+  destruct (trie_get v pos) as [pv |]; [| discriminate Hstep].
+  destruct (Pos.eqb v r).
+  - injection Hstep as Heq. now subst result.
+  - destruct (trie_get v m) as [p |] eqn:Hparent; [| discriminate Hstep].
+    destruct (dom_interval pos sizes p u); [| discriminate Hstep].
+    destruct (trie_get v flags) as [[[direct lo] hi] |] eqn:Hprior.
+    + injection Hstep as Heq. subst result. apply dom_flags_set; [exact Hflags |].
+      eapply dom_flag_merge; try eassumption. eapply Hflags. exact Hprior.
+    + injection Hstep as Heq. subst result. apply dom_flags_set; [exact Hflags |].
+      exact (dom_flag_merge g m pos o u v p pu false pu pu Hin Huv Hpu Hparent
+        (dom_flag_initial g m pos o u v pu Hin Huv Hpu)).
+Qed.
+
+Local Lemma dom_edges_from_none : forall g r m pos sizes u,
+  dom_edges_from g r m pos sizes None u = None.
+Proof.
+  intros g r m pos sizes u. unfold dom_edges_from.
+  apply dom_optional_fold_none. intro v. reflexivity.
+Qed.
+
+Local Lemma dom_edges_from_flags : forall g r m pos sizes o u flags result,
+  In u o -> dom_flags_valid g m pos o flags ->
+  dom_edges_from g r m pos sizes (Some flags) u = Some result ->
+  dom_flags_valid g m pos o result.
+Proof.
+  intros g r m pos sizes o u flags result Hin Hflags Hrun.
+  unfold dom_edges_from in Hrun.
+  eapply (dom_optional_fold_preserves (dom_edge_update r m pos sizes u)
+    (dom_flags_valid g m pos o) (edge (base g) u)); try eassumption.
+  - intro v. reflexivity.
+  - intros v before after Huv Hbefore Hstep. eapply dom_edge_update_flags; eassumption.
+  - apply Forall_forall. intros v Huv. exact Huv.
+Qed.
+
+Local Lemma dom_edges_flags : forall g r m pos sizes o flags,
+  fold_left (dom_edges_from g r m pos sizes) o (Some Empty) = Some flags ->
+  dom_flags_valid g m pos o flags.
+Proof.
+  intros g r m pos sizes o flags Hrun.
+  eapply (dom_optional_fold_preserves (dom_edges_from g r m pos sizes)
+    (dom_flags_valid g m pos o) (fun u => In u o)); try eassumption.
+  - apply dom_edges_from_none.
+  - intros u before after Hin Hbefore Hstep. eapply dom_edges_from_flags; eassumption.
+  - apply Forall_forall. intros u Hin. exact Hin.
+  - intros v direct lo hi Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+Qed.
+
+Local Lemma dom_edge_update_checked : forall r m pos sizes u v flags result,
+  dom_edge_update r m pos sizes u (Some flags) v = Some result ->
+  (exists pv, trie_get v pos = Some pv) /\
+  (v = r \/ exists p, trie_get v m = Some p /\ dom_interval pos sizes p u = true).
+Proof.
+  intros r m pos sizes u v flags result Hstep. unfold dom_edge_update in Hstep.
+  destruct (trie_get u pos) as [pu |]; [| discriminate Hstep].
+  destruct (trie_get v pos) as [pv |] eqn:Hpv; [| discriminate Hstep].
+  split; [now exists pv |]. destruct (Pos.eqb v r) eqn:Hroot.
+  - left. now apply Pos.eqb_eq.
+  - destruct (trie_get v m) as [p |] eqn:Hparent; [| discriminate Hstep].
+    destruct (dom_interval pos sizes p u) eqn:Hinterval; [| discriminate Hstep].
+    right. exists p. now split.
+Qed.
+
+Local Lemma dom_edges_checked : forall g r m pos sizes o flags,
+  fold_left (dom_edges_from g r m pos sizes) o (Some Empty) = Some flags ->
+  forall u v, In u o -> edge (base g) u v ->
+    (exists pv, trie_get v pos = Some pv) /\
+    (v = r \/ exists p, trie_get v m = Some p /\ dom_interval pos sizes p u = true).
+Proof.
+  intros g r m pos sizes o flags Hrun u v Hin Huv.
+  destruct (dom_optional_fold_entries (dom_edges_from g r m pos sizes)
+    (dom_edges_from_none g r m pos sizes) o Empty flags Hrun u Hin)
+    as [before [after Hrow]].
+  unfold dom_edges_from in Hrow.
+  destruct (dom_optional_fold_entries (dom_edge_update r m pos sizes u)
+    (fun x => eq_refl) (succs (base g) u) before after Hrow v Huv)
+    as [flags0 [flags1 Hstep]].
+  eapply dom_edge_update_checked. exact Hstep.
+Qed.
+
+(** Numeric positions recover the certificate's strict list order. *)
+Local Lemma dom_positions_before : forall o u v pu pv,
+  NoDup o -> trie_get u (dom_positions o) = Some pu ->
+  trie_get v (dom_positions o) = Some pv -> (pu < pv)%N -> order_before o u v.
+Proof.
+  intros o u v pu pv Hunique Hu Hv Hlt.
+  destruct (dom_positions_value o u pu Hunique Hu) as [i [Hi Hpu]].
+  destruct (dom_positions_value o v pv Hunique Hv) as [j [Hj Hpv]].
+  exists i, j. split; [exact Hi |]. split; [exact Hj |]. subst pu pv. lia.
+Qed.
+
+(** Accepted parent maps contain only ordered children and ordered parents. *)
+Local Lemma dom_map_check_domain : forall g r m o,
+  dom_map_check_known (dom_scan g) r m o = true ->
+  forall v p, trie_get v m = Some p -> In v o /\ In p o.
+Proof.
+  intros g r m o Hcheck v p Hget.
+  destruct (dom_map_check_structure g r m o Hcheck) as
+    [_ [_ [Hroot [Hparents Hdomain]]]].
+  pose proof (Hdomain v p Hget) as Hin. split; [exact Hin |].
+  destruct (Pos.eq_dec v r) as [Heq | Hneq].
+  - subst v. rewrite Hroot in Hget. discriminate Hget.
+  - destruct (Hparents v Hin Hneq) as [parent [Hparent [i [j [Hi [Hj Hlt]]]]]].
+    rewrite Hget in Hparent. injection Hparent as Heq. subst parent.
+    eapply nth_error_In. exact Hi.
+Qed.
+
+(** Witness flags and parent containment establish the graph portions of a certificate. *)
+Local Lemma dom_edges_certificate : forall g r m o sizes,
+  NoDup o -> trie_get r m = None ->
+  (forall v p, trie_get v m = Some p -> In v o /\ In p o) ->
+  (forall v, In v o -> (1 <= dom_size_get sizes v)%N) ->
+  dom_sizes_ok m (dom_positions o) sizes o = true ->
+  (forall u v, In u o -> In v o ->
+    dom_interval (dom_positions o) sizes u v = true -> tree_anc m u v) ->
+  dom_edges g r m o (dom_positions o) sizes = true ->
+  cert_parent (base g) m o /\ cert_low_high (base g) m o.
+Proof.
+  intros g r m o sizes Hunique Hroot Hdomain Hpositive Hsizes Hreflect Hedges.
+  unfold dom_edges in Hedges.
+  destruct (fold_left (dom_edges_from g r m (dom_positions o) sizes) o (Some Empty))
+    as [flags |] eqn:Hrun; [| discriminate Hedges].
+  pose proof (dom_edges_flags g r m (dom_positions o) sizes o flags Hrun) as Hflags.
+  pose proof (dom_edges_checked g r m (dom_positions o) sizes o flags Hrun) as Hchecked.
+  assert (Hpositioned : forall v, In v o -> exists i,
+    trie_get v (dom_positions o) = Some i).
+  { intros v Hin. now apply (proj2 (dom_positions_domain o v)). }
+  assert (Hparents : forall v p, trie_get v m = Some p -> In p o).
+  { intros v p Hget. exact (proj2 (Hdomain v p Hget)). }
+  split.
+  - intros u v Hin Huv.
+    destruct (Hchecked u v Hin Huv) as [Hposition [Heq | [p [Hparent Hinterval]]]].
+    + split; [now apply (proj1 (dom_positions_domain o v)) |].
+      intros p Hget. subst v. rewrite Hroot in Hget. discriminate Hget.
+    + split; [now apply (proj1 (dom_positions_domain o v)) |].
+      intros q Hget. rewrite Hget in Hparent. injection Hparent as Heq. subst q.
+      eapply Hreflect; [eapply Hparents; exact Hget | exact Hin | exact Hinterval].
+  - intros v p Hget.
+    destruct (Hdomain v p Hget) as [Hin Hpin].
+    assert (Hneq : v <> r).
+    { intro Heq. subst v. rewrite Hroot in Hget. discriminate Hget. }
+    pose proof (proj1 (forallb_forall (dom_low_high r (dom_positions o) sizes flags) o)
+      Hedges v Hin) as Hlowhigh.
+    unfold dom_low_high in Hlowhigh.
+    rewrite (proj2 (Pos.eqb_neq v r) Hneq) in Hlowhigh.
+    destruct (trie_get v (dom_positions o)) as [pv |] eqn:Hpv;
+      [| discriminate Hlowhigh].
+    destruct (trie_get v flags) as [[[direct lo] hi] |] eqn:Hflag;
+      [| discriminate Hlowhigh].
+    destruct (Hflags v direct lo hi Hflag) as [Hdirect [Hlo Hhi]].
+    apply orb_true_iff in Hlowhigh as [Hdirect_true | Hbounds].
+    + left. destruct (Hdirect Hdirect_true) as [parent [Hparent Hedge]].
+      rewrite Hget in Hparent. injection Hparent as Heq. now subst parent.
+    + apply andb_true_iff in Hbounds as [Hlow Hhigh].
+      apply N.ltb_lt in Hlow. apply N.leb_le in Hhigh.
+      destruct Hlo as [u [Hu [Huv Hpu]]].
+      destruct Hhi as [w [Hw [Hwv Hpw]]].
+      right. exists u, w. split; [exact Hu |]. split; [exact Hw |].
+      split; [exact Huv |]. split; [exact Hwv |]. split.
+      * eapply dom_positions_before; eassumption.
+      * split.
+        -- eapply dom_positions_before; try eassumption.
+           pose proof (Hpositive v Hin). lia.
+        -- eapply dom_interval_high_not_ancestor; try eassumption.
+           exact (Hpositive w Hw).
+Qed.
+
 Module DomCode <: DOM_OPS.
   Definition build := dom_build_candidate.
 
