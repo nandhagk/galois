@@ -4,7 +4,7 @@
     For example, two arms aimed at the same block remain distinct.
     Builds on: Ssa.Lang. *)
 
-From Stdlib Require Import List PArith NArith Bool Lia.
+From Stdlib Require Import List PArith NArith Bool Lia Arith.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Program Require Import CfgSig VarsSig Vars SsaSig Ssa.
@@ -364,7 +364,7 @@ Proof.
         (multi_table key rest)) x) <-> In y (a :: rest) /\ key y = x).
     unfold index_row at 1.
     destruct (Pos.eq_dec x (key a)) as [Heq | Hneq].
-    + subst x. rewrite PTrie.get_set_same. cbn. rewrite IH; intuition congruence.
+    + subst x. rewrite PTrie.get_set_same. cbn. rewrite IH; cbn; intuition congruence.
     + rewrite PTrie.get_set_other by exact Hneq.
       change (In y (index_row (multi_table key rest) x) <->
         In y (a :: rest) /\ key y = x).
@@ -449,6 +449,94 @@ Proof.
   - cbn [selected_blocks]. destruct (trie_get (fst a) seen) as [[]|]; cbn [length].
     + specialize (IH seen); lia.
     + specialize (IH (PTrieCode.set (fst a) tt seen)); lia.
+Qed.
+
+(** Selection preserves first lookup for every identifier not already visited. *)
+Lemma selected_blocks_find {K G} (bs : list (positive * block positive K G)) seen b :
+  find_block b (selected_blocks seen bs) =
+    match trie_get b seen with Some _ => None | None => find_block b bs end.
+Proof.
+  revert seen; induction bs as [|[a body] rest IH]; intro seen.
+  - cbn [selected_blocks find_block]. destruct (trie_get b seen); reflexivity.
+  - cbn [selected_blocks fst]. destruct (trie_get a seen) as [[]|] eqn:Hseen.
+    + rewrite IH. cbn [find_block].
+      destruct (Pos.eqb b a) eqn:Heq; [|reflexivity].
+      apply Pos.eqb_eq in Heq. subst b. rewrite Hseen; reflexivity.
+    + cbn [find_block]. destruct (Pos.eqb b a) eqn:Heq.
+      * apply Pos.eqb_eq in Heq. subst b. rewrite Hseen; reflexivity.
+      * rewrite IH, PTrie.get_set_other by now apply Pos.eqb_neq.
+        reflexivity.
+Qed.
+
+(** Selecting first blocks preserves the source interpreter's lookup exactly. *)
+Lemma first_blocks_find {K G} (bs : list (positive * block positive K G)) b :
+  find_block b (first_blocks bs) = find_block b bs.
+Proof.
+  rewrite first_blocks_selected, selected_blocks_find, PTrie.get_empty. reflexivity.
+Qed.
+
+(** Successful source lookup returns a block actually present in the source list. *)
+Lemma find_block_in {K G} (bs : list (positive * block positive K G)) b body :
+  find_block b bs = Some body -> In (b, body) bs.
+Proof.
+  induction bs as [|[a found] rest IH]; cbn [find_block]; intro Hfind.
+  - discriminate.
+  - destruct (Pos.eqb b a) eqn:Heq.
+    + apply Pos.eqb_eq in Heq. inversion Hfind; subst; now left.
+    + right; now apply IH.
+Qed.
+
+(** A block identifier is listed exactly when source lookup succeeds. *)
+Lemma find_block_exists {K G} (bs : list (positive * block positive K G)) b :
+  (exists body, find_block b bs = Some body) <-> In b (map fst bs).
+Proof.
+  induction bs as [|[a body] rest IH]; cbn [find_block map fst].
+  - split; [intros [? H]; discriminate|contradiction].
+  - destruct (Pos.eqb b a) eqn:Heq.
+    + apply Pos.eqb_eq in Heq; subst b. split; intro H.
+      * now left.
+      * exists body; reflexivity.
+    + apply Pos.eqb_neq in Heq. rewrite IH; cbn; intuition congruence.
+Qed.
+
+(** Indexing a block projection retains exactly the first source block. *)
+Lemma block_table_get {K G A} (f : block positive K G -> A)
+    (bs : list (positive * block positive K G)) b :
+  trie_get b (first_table PosKeyCode.encode (map (fun item => (fst item, f (snd item))) bs)) =
+    option_map f (find_block b bs).
+Proof.
+  induction bs as [|[a body] rest IH].
+  - unfold first_table; cbn [map fold_right find_block option_map].
+    apply PTrie.get_empty.
+  - change (trie_get b (PTrieCode.set a (f body)
+      (first_table PosKeyCode.encode (map (fun item => (fst item, f (snd item))) rest))) =
+      option_map f (if Pos.eqb b a then Some body else find_block b rest)).
+    destruct (Pos.eqb b a) eqn:Heq.
+    + apply Pos.eqb_eq in Heq. subst b. apply PTrie.get_set_same.
+    + rewrite PTrie.get_set_other by now apply Pos.eqb_neq. exact IH.
+Qed.
+
+(** The block index recognizes precisely the identifiers supplied to it. *)
+Lemma block_table_listed {K G A} (f : block positive K G -> A)
+    (bs : list (positive * block positive K G)) b :
+  is_listed (first_table PosKeyCode.encode (map (fun item => (fst item, f (snd item))) bs)) b
+    = true <-> In b (map fst bs).
+Proof.
+  unfold is_listed. rewrite block_table_get, <- find_block_exists.
+  destruct (find_block b bs) as [body|]; cbn [option_map].
+  - split; [intro H; exists body; reflexivity|intro H; reflexivity].
+  - split; [discriminate|intros [body H]; discriminate].
+Qed.
+
+(** Listed edges retain their source identifier and a syntactic target. *)
+Lemma exit_edge_args_shape {G} b (e : exit positive G) edge args :
+  In (edge, args) (exit_edge_args b e) ->
+    edge_source edge = b /\ In (edge_target edge) (exit_targets e).
+Proof.
+  destruct e; cbn [exit_edge_args exit_targets]; intro Hin.
+  - destruct Hin as [Heq|[]]. inversion Heq; subst; cbn; auto.
+  - destruct Hin as [Heq|[Heq|[]]]; inversion Heq; subst; cbn; auto.
+  - contradiction.
 Qed.
 
 Record lang_prepared (K G : Type) := LangPrepared {
@@ -558,6 +646,70 @@ Definition lang_prepare {K G} (p : func positive K G) : lang_prepared K G :=
         (flat_map (fun r => map (fun x => (x, point_src (fst (fst r)))) (snd r)) rows))).
 TimeFun lang_prepare.
 
+(** Every retained entry is the identifier of a retained block. *)
+Lemma lang_entries_nodes {K G} (p : func positive K G) b :
+  In b (lang_entries (lang_prepare p)) -> In b (lang_blocks (lang_prepare p)).
+Proof.
+  change (In b (if is_listed (first_table PosKeyCode.encode
+      (map (fun item => (fst item, params _ _ _ (snd item)))
+        (first_blocks (blocks _ _ _ p)))) (entry _ _ _ p)
+    then [entry _ _ _ p] else []) -> In b (map fst (first_blocks (blocks _ _ _ p)))).
+  destruct (is_listed _ _) eqn:Hlisted.
+  - cbn. intros [Heq|[]]; subst b. now apply block_table_listed in Hlisted.
+  - contradiction.
+Qed.
+
+(** Every prepared edge comes from a retained source and targets a retained block. *)
+Lemma lang_edges_shape {K G} (p : func positive K G) edge :
+  In edge (lang_edges (lang_prepare p)) ->
+  exists body, In (edge_source edge, body) (first_blocks (blocks _ _ _ p)) /\
+    In (edge_target edge) (exit_targets (term _ _ _ body)) /\
+    In (edge_target edge) (lang_blocks (lang_prepare p)).
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  change (In edge (map fst (flat_map (fun item =>
+      listed_edge_args kept (fst item) (term _ _ _ (snd item))) bs)) ->
+    exists body, In (edge_source edge, body) bs /\
+      In (edge_target edge) (exit_targets (term _ _ _ body)) /\
+      In (edge_target edge) (map fst bs)).
+  intro Hin. apply in_map_iff in Hin.
+  destruct Hin as [[edge' args] [Heq Hin]]. cbn in Heq; subst edge'.
+  apply in_flat_map in Hin. destruct Hin as [item [Hitem Hin]].
+  unfold listed_edge_args in Hin. apply filter_In in Hin.
+  destruct Hin as [Hexit Htarget].
+  destruct (exit_edge_args_shape _ _ _ _ Hexit) as [Hsource Hsyntax].
+  exists (snd item). split.
+  - rewrite Hsource. destruct item; exact Hitem.
+  - split; [exact Hsyntax|].
+    unfold kept in Htarget. now apply block_table_listed in Htarget.
+Qed.
+
+(** Each retained block contributes at most two block edges. *)
+Lemma lang_edges_length {K G} (p : func positive K G) :
+  length (lang_edges (lang_prepare p)) <= 2 * length (lang_blocks (lang_prepare p)).
+Proof.
+  change (length (map fst (flat_map (fun item => listed_edge_args
+    (first_table PosKeyCode.encode
+      (map (fun item => (fst item, params _ _ _ (snd item)))
+        (first_blocks (blocks _ _ _ p))))
+    (fst item) (term _ _ _ (snd item))) (first_blocks (blocks _ _ _ p)))) <=
+    2 * length (map fst (first_blocks (blocks _ _ _ p)))).
+  rewrite !length_map.
+  generalize (first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item)))
+      (first_blocks (blocks _ _ _ p)))) as kept.
+  induction (first_blocks (blocks _ _ _ p)) as [|item rest IH]; intro kept.
+  - reflexivity.
+  - cbn [flat_map length]. rewrite length_app. specialize (IH kept).
+    assert (Hedge : length (listed_edge_args kept (fst item) (term _ _ _ (snd item))) <= 2).
+    { unfold listed_edge_args.
+      eapply Nat.le_trans; [apply filter_length_le|].
+      destruct (term _ _ _ (snd item)); cbn [exit_edge_args length]; lia. }
+    lia.
+Qed.
+
 Module Prepared (O : OPS) <: TYPE.
   Definition t := lang_prepared O.K O.G.
 End Prepared.
@@ -603,10 +755,19 @@ Module BlockCfg (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     rewrite first_blocks_selected. apply selected_blocks_nodup.
   Qed.
   Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n Hwf. unfold wf in Hwf. rewrite Hwf.
+    apply lang_entries_nodes.
+  Qed.
   Lemma edges_nodes : forall p e, wf p -> In e (edges p) ->
     In (src p e) (nodes p) /\ In (dst p e) (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e Hwf. unfold wf in Hwf. rewrite Hwf. intro Hin.
+    destruct (lang_edges_shape _ _ Hin) as [body [Hsource [_ Htarget]]].
+    split; [|exact Htarget].
+    unfold nodes; cbn [lang_prepare lang_blocks].
+    apply in_map_iff. exists (edge_source e, body); auto.
+  Qed.
   Lemma out_spec : forall p n e, wf p ->
     (In e (out p n) <-> In e (edges p) /\ src p e = n).
   Proof.
@@ -854,7 +1015,19 @@ Module PresentT (O : OPS)
   Module Link <: LANG_SSA_LINK O K G Q R BlockEdge BC S.
     Lemma entries_agree : forall p, In (entry _ _ _ p) (map fst (blocks _ _ _ p)) ->
       BC.entries (R.prepare p) = [entry _ _ _ p].
-    Proof. Admitted. (* STUB *)
+    Proof.
+      intros p Hin.
+      change ((if is_listed (first_table PosKeyCode.encode
+        (map (fun item => (fst item, params _ _ _ (snd item)))
+          (first_blocks (blocks _ _ _ p)))) (entry _ _ _ p)
+        then [entry _ _ _ p] else []) = [entry _ _ _ p]).
+      assert (Hlisted : is_listed (first_table PosKeyCode.encode
+        (map (fun item => (fst item, params _ _ _ (snd item)))
+          (first_blocks (blocks _ _ _ p)))) (entry _ _ _ p) = true).
+      { apply block_table_listed. apply find_block_exists.
+        rewrite first_blocks_find. now apply find_block_exists. }
+      now rewrite Hlisted.
+    Qed.
     Lemma nodes_agree : forall p,
       BC.nodes (R.prepare p) = map fst (first_blocks (blocks _ _ _ p)).
     Proof.
@@ -864,7 +1037,12 @@ Module PresentT (O : OPS)
     Lemma edges_syntax : forall p e, In e (BC.edges (R.prepare p)) ->
       exists body, In (BC.src (R.prepare p) e, body) (blocks _ _ _ p) /\
         In (BC.dst (R.prepare p) e) (exit_targets (term _ _ _ body)).
-    Proof. Admitted. (* STUB *)
+    Proof.
+      intros p e Hin. destruct (lang_edges_shape _ _ Hin) as [body [Hsource [Htarget _]]].
+      exists body; split; [|exact Htarget].
+      rewrite first_blocks_selected in Hsource.
+      now apply selected_blocks_in in Hsource as [Hsource _].
+    Qed.
     Lemma paths_agree : forall p a route b, NoDup (map fst (blocks _ _ _ p)) ->
       targets_listed p ->
       (presentation_path (BC.edges (R.prepare p)) (BC.src (R.prepare p))
@@ -875,7 +1053,17 @@ Module PresentT (O : OPS)
       | Some body => Lang.params _ _ _ body
       | None => []
       end.
-    Proof. Admitted. (* STUB *)
+    Proof.
+      intros p b. change (index_row (first_table PosKeyCode.encode
+        (map (fun item => (fst item, params _ _ _ (snd item)))
+          (first_blocks (blocks _ _ _ p)))) b =
+        match find_block b (blocks _ _ _ p) with
+        | Some body => Lang.params _ _ _ body
+        | None => []
+        end).
+      unfold index_row. rewrite block_table_get, first_blocks_find.
+      destruct (find_block b (blocks _ _ _ p)); reflexivity.
+    Qed.
     Lemma wf_from_lang : forall p, ssa_wf p -> S.wf (R.prepare p).
     Proof. Admitted. (* STUB *)
   End Link.
@@ -901,7 +1089,9 @@ Module PresentT (O : OPS)
   (** Each listed block contributes at most its two exit edges. *)
   Lemma block_edges_le : forall p,
     length (BC.edges (R.prepare p)) <= 2 * length (BC.nodes (R.prepare p)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply lang_edges_length.
+  Qed.
   (** Presented block identifiers are identifiers of the syntax. *)
   Lemma block_bits_le : forall p b,
     (In b (BC.nodes (R.prepare p)) \/ exists e, In e (BC.edges (R.prepare p)) /\
