@@ -4,7 +4,7 @@
     For example, an absent definition is arbitrary.
     Builds on: Program.SsaSig and Base.Trie. *)
 
-From Stdlib Require Import List Bool NArith PArith.
+From Stdlib Require Import List Bool NArith PArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie Loop Code.
 From Galois.Graph Require Import Data SearchSig Search Dom.
@@ -288,52 +288,117 @@ Module Ssa (P : TYPE) (N : KEY) (E : KEY)
     entry_params p = flat_map (params p) (C.entries p) /\
     arg_rows p = flat_map (fun e => map (pair e) (args p e)) (C.edges p).
 
+  (** Entry parameters retain the entry order and each block's parameter order. *)
   Lemma entry_params_spec : forall p, wf p ->
     entry_params p = flat_map (params p) (C.entries p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf.
+    destruct Hwf as (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hentries & _).
+    exact Hentries.
+  Qed.
+
+  (** Operand rows retain the edge order and each edge's operand order. *)
   Lemma arg_rows_spec : forall p, wf p ->
     arg_rows p = flat_map (fun e => map (pair e) (args p e)) (C.edges p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf.
+    destruct Hwf as (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hrows).
+    exact Hrows.
+  Qed.
 
+  (** A well-formed SSA presentation has a well-formed underlying graph. *)
   Lemma cfg_wf : forall p, wf p -> C.wf p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [Hcfg _].
+    exact Hcfg.
+  Qed.
+
+  (** The value inventory contains each value at most once. *)
   Lemma values_nodup : forall p, wf p -> NoDup (values p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p (_ & Hvalues & _).
+    exact Hvalues.
+  Qed.
+
+  (** Every inventoried value has a home in the graph's node inventory. *)
   Lemma homes_listed : forall p x, wf p -> In x (values p) -> In (home p x) (C.nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x (_ & _ & Hhomes & _).
+    exact (Hhomes x).
+  Qed.
+
+  (** Parameter definitions agree with their positions in block parameter lists. *)
   Lemma param_defs : forall p x b i, wf p ->
     (def p x = Param b i <-> nth_error (params p b) i = Some x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x b i (_ & _ & _ & Hparams & _).
+    exact (Hparams x b i).
+  Qed.
+
+  (** A parameter's home is the block that receives it. *)
   Lemma param_home : forall p b x, wf p -> In x (params p b) -> home p x = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b x (_ & _ & _ & _ & Hhome & _).
+    exact (Hhome b x).
+  Qed.
+
+  (** Parameters of inventoried blocks belong to the value inventory. *)
   Lemma params_listed : forall p b x, wf p -> In b (C.nodes p) ->
     In x (params p b) -> In x (values p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b x (_ & _ & _ & _ & _ & Hlisted & _).
+    exact (Hlisted b x).
+  Qed.
+
+  (** An edge's operands follow the receiving block's parameter order. *)
   Lemma args_params : forall p e, wf p -> In e (C.edges p) ->
     map fst (args p e) = params p (C.dst p e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e (_ & _ & _ & _ & _ & _ & Hargs & _).
+    exact (Hargs e).
+  Qed.
+
+  (** Each incoming operand is inventoried and its home dominates the edge source. *)
   Lemma args_dominate : forall p e x y, wf p -> In e (C.edges p) ->
     In (x, y) (args p e) -> In y (values p) /\ forall entry route,
       In entry (C.entries p) ->
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
       In (home p y) route.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e x y (_ & _ & _ & _ & _ & _ & _ & Hdominate & _).
+    exact (Hdominate e x y).
+  Qed.
+
+  (** Each guard operand is inventoried and its home dominates the edge source. *)
   Lemma guards_dominate : forall p e g xs x, wf p -> In e (C.edges p) ->
     In (g, xs) (guards p e) -> In x xs -> In x (values p) /\ forall entry route,
       In entry (C.entries p) ->
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (C.src p e) ->
       In (home p x) route.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e g xs x (_ & _ & _ & _ & _ & _ & _ & _ & Hdominate & _).
+    exact (Hdominate e g xs x).
+  Qed.
+
+  (** Each operation operand is inventoried and its home dominates the result's home. *)
   Lemma op_args_dominate : forall p x op xs y, wf p -> In x (values p) ->
     def p x = Op op xs -> In y xs -> In y (values p) /\ forall entry route,
       In entry (C.entries p) ->
       presentation_path (C.edges p) (C.src p) (C.dst p) entry route (home p x) ->
       In (home p y) route.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x op xs y (_ & _ & _ & _ & _ & _ & _ & _ & _ & Hdominate & _).
+    exact (Hdominate x op xs y).
+  Qed.
+
+  (** Operation dependencies at a common home form a well-founded relation. *)
   Lemma op_args_acyclic : forall p, wf p ->
     well_founded (fun y x => In x (values p) /\ home p y = home p x /\
       exists op xs, def p x = Op op xs /\ In y xs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hacyclic & _).
+    exact Hacyclic.
+  Qed.
 End Ssa.
 
 Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
@@ -350,35 +415,81 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   TimeFun guards.
   TimeFun edge_uses.
   TimeFun operands.
-  Definition c_ssa : N := 1%N. (* STUB *)
+  Definition c_ssa : N := 8 * (D.c_tables + N.c_key + E.c_key + V.c_key + 1).
+
+  (** Reading the stored entry inventory pays for its table and projection. *)
   Lemma T_entry_params_le : forall p,
     (T_entry_params p <= c_ssa * N.of_nat (length (entry_params p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (D.T_tables_le p) as Htables.
+    unfold c_ssa. time_unfold T_entry_params. time_simpl; time_cbn; nia.
+  Qed.
+
+  (** Reading the stored operand inventory pays for its table and projection. *)
   Lemma T_arg_rows_le : forall p,
     (T_arg_rows p <= c_ssa * N.of_nat (length (arg_rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (D.T_tables_le p) as Htables.
+    unfold c_ssa. time_unfold T_arg_rows. time_simpl; time_cbn; nia.
+  Qed.
+
+  (** Reading the stored value inventory pays for its table and projection. *)
   Lemma T_values_le : forall p,
     (T_values p <= c_ssa * N.of_nat (length (values p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (D.T_tables_le p) as Htables.
+    unfold c_ssa. time_unfold T_values. time_simpl; time_cbn; nia.
+  Qed.
 
+  (** Definition lookup traverses the encoded value key. *)
   Lemma T_def_le : forall p x,
     (T_def p x <= c_ssa * N.of_nat (V.bits x + length (operands p x) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x. pose proof (D.T_tables_le p) as Htables.
+    pose proof (V.T_encode_le x) as Hencode.
+    unfold c_ssa. time_unfold T_def. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold V.bits in *; nia.
+  Qed.
 
+  (** Home lookup also pays for the default table read when its key is absent. *)
   Lemma T_home_le : forall p x, (T_home p x <= c_ssa * N.of_nat (V.bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x. pose proof (D.T_tables_le p) as Htables.
+    pose proof (V.T_encode_le x) as Hencode.
+    unfold c_ssa. time_unfold T_home. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (V.encode x) (ssa_homes (D.tables p)));
+      time_simpl; time_cbn; unfold V.bits in *; nia.
+  Qed.
 
+  (** Parameter lookup traverses the encoded node key. *)
   Lemma T_params_le : forall p n,
     (T_params p n <= c_ssa * N.of_nat (N.bits n + length (params p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. pose proof (D.T_tables_le p) as Htables.
+    pose proof (N.T_encode_le n) as Hencode.
+    unfold c_ssa. time_unfold T_params. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold N.bits in *; nia.
+  Qed.
 
+  (** Incoming operand lookup traverses the encoded edge key. *)
   Lemma T_args_le : forall p e,
     (T_args p e <= c_ssa * N.of_nat (E.bits e + length (args p e) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. pose proof (D.T_tables_le p) as Htables.
+    pose proof (E.T_encode_le e) as Hencode.
+    unfold c_ssa. time_unfold T_args. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold E.bits in *; nia.
+  Qed.
 
+  (** Guard lookup traverses the encoded edge key. *)
   Lemma T_guards_le : forall p e,
     (T_guards p e <= c_ssa * N.of_nat (E.bits e + length (guards p e) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. pose proof (D.T_tables_le p) as Htables.
+    pose proof (E.T_encode_le e) as Hencode.
+    unfold c_ssa. time_unfold T_guards. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold E.bits in *; nia.
+  Qed.
 End SsaT.
 
 Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
@@ -424,39 +535,100 @@ Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
     (forall e1 e2 be, In e1 (C.edges p) -> In e2 (C.edges p) ->
     block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2).
 
+  (** A well-formed point presentation has well-formed point and block graphs. *)
   Lemma graphs_wf : forall p, wf p -> C.wf p /\ BC.wf p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [Hgraphs _].
+    exact Hgraphs.
+  Qed.
+
+  (** Each point's outgoing list contains no repeated edge identity. *)
   Lemma points_out_nodup : forall p n, wf p -> NoDup (C.out p n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n (_ & Hnodup & _).
+    exact (Hnodup n).
+  Qed.
+
+  (** Each block's outgoing list contains no repeated edge identity. *)
   Lemma blocks_out_nodup : forall p b, wf p -> NoDup (BC.out p b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b (_ & _ & Hnodup & _).
+    exact (Hnodup b).
+  Qed.
+
+  (** The block point inventories cover precisely the point graph's nodes. *)
   Lemma points_covered : forall p n, wf p ->
     (In n (C.nodes p) <-> exists b, In b (BC.nodes p) /\ In n (points_in_block p b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n (_ & _ & _ & Hcovered & _).
+    exact (Hcovered n).
+  Qed.
+
+  (** A block's point list has no repeated point. *)
   Lemma points_unique : forall p b, wf p -> NoDup (points_in_block p b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b (_ & _ & _ & _ & Hunique & _).
+    exact (Hunique b).
+  Qed.
+
+  (** Every point in an inventoried block has that block as its owner. *)
   Lemma points_owner : forall p b n, wf p -> In b (BC.nodes p) ->
     In n (points_in_block p b) -> block_of_point p n = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b n (_ & _ & _ & _ & _ & Howner & _).
+    exact (Howner b n).
+  Qed.
+
+  (** Every inventoried block has at least one point. *)
   Lemma blocks_nonempty : forall p b, wf p -> In b (BC.nodes p) ->
     points_in_block p b <> nil.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b (_ & _ & _ & _ & _ & _ & Hnonempty & _).
+    exact (Hnonempty b).
+  Qed.
+
+  (** Instruction edges connect each block's points in their listed order. *)
   Lemma points_ordered : forall p b, wf p -> In b (BC.nodes p) ->
     presentation_chain (C.edges p) (C.src p) (C.dst p)
       (points_in_block p b) (instruction_edges p b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b (_ & _ & _ & _ & _ & _ & _ & Hordered & _).
+    exact (Hordered b).
+  Qed.
+
+  (** Instruction edges inside inventoried blocks have no block-edge projection. *)
   Lemma instruction_edges_internal : forall p b e, wf p -> In b (BC.nodes p) ->
     In e (instruction_edges p b) -> block_edge_of p e = None.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b e (_ & _ & _ & _ & _ & _ & _ & _ & Hinternal & _).
+    exact (Hinternal b e).
+  Qed.
+
+  (** Every unprojected point edge is listed among its source block's instruction edges. *)
   Lemma instruction_edges_complete : forall p e, wf p -> In e (C.edges p) ->
     block_edge_of p e = None -> In e (instruction_edges p (block_of_point p (C.src p e))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e (_ & _ & _ & _ & _ & _ & _ & _ & _ & Hcomplete & _).
+    exact (Hcomplete e).
+  Qed.
+
+  (** Parameter binding occurs on the first instruction edge of each inventoried block. *)
   Lemma parameter_edge_first : forall p b, wf p -> In b (BC.nodes p) ->
     nth_error (instruction_edges p b) 0 = Some (parameter_edge p b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hfirst & _).
+    exact (Hfirst b).
+  Qed.
+
+  (** A block's parameter edge defines exactly the parameters of that block. *)
   Lemma parameter_edge_defs : forall p b x, wf p -> In b (BC.nodes p) ->
     (In x (U.defs p (parameter_edge p b)) <-> In x (block_params p b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b x (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hdefs & _).
+    exact (Hdefs b x).
+  Qed.
+
+  (** Projected edges join block boundaries and unprojected edges stay inside one block. *)
   Lemma point_edge_projection : forall p e, wf p -> In e (C.edges p) ->
     match block_edge_of p e with
     | None => block_of_point p (C.src p e) = block_of_point p (C.dst p e)
@@ -465,20 +637,44 @@ Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
         last (points_in_block p (block_of_point p (C.src p e))) (C.src p e) = C.src p e /\
         nth_error (points_in_block p (BC.dst p be)) 0 = Some (C.dst p e)
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hprojection & _).
+    exact (Hprojection e).
+  Qed.
+
+  (** A block edge supplies one phi operand for every destination parameter. *)
   Lemma phi_args_length : forall p be, wf p -> In be (BC.edges p) ->
     length (block_edge_args p be) = length (block_params p (BC.dst p be)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p be (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hlength & _).
+    exact (Hlength be).
+  Qed.
+
+  (** A phi operand is used by the point-edge occurrence of its incoming block edge. *)
   Lemma phi_edge_use : forall p e be x, wf p -> In e (C.edges p) ->
     block_edge_of p e = Some be -> In x (block_edge_args p be) -> In x (U.uses p e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e be x (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Huse & _).
+    exact (Huse e be x).
+  Qed.
+
+  (** Every block edge is the projection of a listed point-edge occurrence. *)
   Lemma block_edge_covered : forall p be, wf p -> In be (BC.edges p) ->
     exists e, In e (C.edges p) /\ block_edge_of p e = Some be.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p be (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hcovered & _).
+    exact (Hcovered be).
+  Qed.
+
+  (** Two point-edge occurrences with the same block-edge projection are equal. *)
   Lemma block_edge_unique : forall p e1 e2 be, wf p ->
     In e1 (C.edges p) -> In e2 (C.edges p) ->
     block_edge_of p e1 = Some be -> block_edge_of p e2 = Some be -> e1 = e2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e1 e2 be
+      (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & Hunique).
+    exact (Hunique e1 e2 be).
+  Qed.
 End SsaPoints.
 
 Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
@@ -495,42 +691,94 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   TimeFun block_params.
   TimeFun block_edge_args.
   TimeFun point_definition.
-  Definition c_points : N := 1%N. (* STUB *)
+  Definition c_points : N :=
+    8 * (D.c_tables + B.c_key + BE.c_key + N.c_key + E.c_key + V.c_key + 1).
+
+  (** Block point lookup traverses the encoded block key. *)
   Lemma T_points_in_block_le : forall p b,
     (T_points_in_block p b <=
       c_points * N.of_nat (B.bits b + length (points_in_block p b) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_points_in_block. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Instruction edge lookup traverses the encoded block key. *)
   Lemma T_instruction_edges_le : forall p b,
     (T_instruction_edges p b <=
       c_points * N.of_nat (B.bits b + length (instruction_edges p b) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_instruction_edges. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Parameter edge lookup includes the default table read when its key is absent. *)
   Lemma T_parameter_edge_le : forall p b,
     (T_parameter_edge p b <= c_points * N.of_nat (B.bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_parameter_edge. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (B.encode b) (parameter_edges (D.tables p)));
+      time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Owner lookup includes the default table read when its key is absent. *)
   Lemma T_block_of_point_le : forall p n,
     (T_block_of_point p n <= c_points * N.of_nat (N.bits n + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. pose proof (D.T_tables_le p) as Htables.
+    pose proof (N.T_encode_le n) as Hencode.
+    unfold c_points. time_unfold T_block_of_point. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (N.encode n) (point_blocks (D.tables p)));
+      time_simpl; time_cbn; unfold N.bits in *; nia.
+  Qed.
 
+  (** Edge projection traverses the encoded point-edge key. *)
   Lemma T_block_edge_of_le : forall p e,
     (T_block_edge_of p e <= c_points * N.of_nat (E.bits e + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. pose proof (D.T_tables_le p) as Htables.
+    pose proof (E.T_encode_le e) as Hencode.
+    unfold c_points. time_unfold T_block_edge_of. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold E.bits in *; nia.
+  Qed.
 
+  (** Block parameter lookup traverses the encoded block key. *)
   Lemma T_block_params_le : forall p b,
     (T_block_params p b <=
       c_points * N.of_nat (B.bits b + length (block_params p b) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_block_params. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Phi operand lookup traverses the encoded block-edge key. *)
   Lemma T_block_edge_args_le : forall p be,
     (T_block_edge_args p be <=
       c_points * N.of_nat (BE.bits be + length (block_edge_args p be) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p be. pose proof (D.T_tables_le p) as Htables.
+    pose proof (BE.T_encode_le be) as Hencode.
+    unfold c_points. time_unfold T_block_edge_args. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold BE.bits in *; nia.
+  Qed.
 
+  (** Definition point lookup traverses the encoded value key. *)
   Lemma T_point_definition_le : forall p x,
     (T_point_definition p x <= c_points * N.of_nat (V.bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x. pose proof (D.T_tables_le p) as Htables.
+    pose proof (V.T_encode_le x) as Hencode.
+    unfold c_points. time_unfold T_point_definition. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold V.bits in *; nia.
+  Qed.
 End SsaPointsT.
 
 Module Type SSA_POINTS_STRICT_WITNESS (P : TYPE) (B : KEY) (BE : TYPE)
