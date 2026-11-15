@@ -290,3 +290,399 @@ Example nullary_atom_rejected :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** * Rejecting aliases of hidden join variables *)
+
+Definition copy_alias_program : program positive :=
+  Program positive [Decl 1 [SVal; SVal] ORel; Decl 2 [SVal] ORel; Decl 3 [] ORel]
+    [Rule positive [Fun positive 1 [Var 2; Var 2] None;
+       Fun positive 2 [Var 1] None] [Put 3 [] None]].
+
+Definition copy_alias_plan : cplan positive :=
+  CPlan positive 0 (JPlan 2 [[0; 1]; [0]])
+    [All positive 0; All positive 1] [1; 2]%positive [0].
+
+Definition copy_alias_compiled : compiled positive :=
+  Compiled positive [(1%positive, [1; 0]); (2%positive, [0])]
+    [copy_alias_plan] [copy_alias_plan; copy_alias_plan].
+
+Definition copy_alias_seed (cp : compiled positive) : PlanDatabase.t :=
+  let db := PlanRun.load copy_alias_program cp in
+  let db := PlanDatabase.put 1 [val 1; val 1] None db in
+  PlanDatabase.put 2 [val 2] None db.
+
+(** A copy of variable [2] must not reuse the join variable of [1]. *)
+Example copy_alias_rejected :
+  (PlanRun.check_plan copy_alias_program copy_alias_compiled,
+   PlanRun.check_plan copy_alias_program (PlanRun.plan copy_alias_program)) = (false, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The aliased join loses the match witnessed by the two stored rows. *)
+Example copy_alias_loses_match :
+  (lookups 1 (copy_alias_seed copy_alias_compiled) [[val 1; val 1]],
+   lookups 2 (copy_alias_seed copy_alias_compiled) [[val 2]],
+   length (PlanRun.jobs copy_alias_program copy_alias_compiled true
+     (copy_alias_seed copy_alias_compiled)),
+   length (PlanRun.jobs copy_alias_program (PlanRun.plan copy_alias_program) true
+     (copy_alias_seed (PlanRun.plan copy_alias_program)))) =
+  ([Some None], [Some None], 0, 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition literal_alias_program : program positive :=
+  Program positive [Decl 1 [SVal] ORel; Decl 2 [SVal] ORel; Decl 3 [] ORel]
+    [Rule positive [Fun positive 1 [Lit 1%positive] None;
+       Fun positive 2 [Var 1] None] [Put 3 [] None]].
+
+Definition literal_alias_plan : cplan positive :=
+  CPlan positive 0 (JPlan 1 [[0]; [0]; [0]])
+    [All positive 0; Const positive (val 1); All positive 1] [1]%positive [].
+
+Definition literal_alias_compiled : compiled positive :=
+  Compiled positive [(1%positive, [0]); (2%positive, [0])]
+    [literal_alias_plan] [literal_alias_plan; literal_alias_plan].
+
+Definition literal_alias_seed (cp : compiled positive) : PlanDatabase.t :=
+  let db := PlanRun.load literal_alias_program cp in
+  let db := PlanDatabase.put 1 [val 1] None db in
+  PlanDatabase.put 2 [val 2] None db.
+
+(** A literal must not reuse the join variable of a real query variable. *)
+Example literal_alias_rejected :
+  (PlanRun.check_plan literal_alias_program literal_alias_compiled,
+   PlanRun.check_plan literal_alias_program (PlanRun.plan literal_alias_program)) = (false, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The aliased constant excludes a real-variable match with a different value. *)
+Example literal_alias_loses_match :
+  (lookups 1 (literal_alias_seed literal_alias_compiled) [[val 1]],
+   lookups 2 (literal_alias_seed literal_alias_compiled) [[val 2]],
+   length (PlanRun.jobs literal_alias_program literal_alias_compiled true
+     (literal_alias_seed literal_alias_compiled)),
+   length (PlanRun.jobs literal_alias_program (PlanRun.plan literal_alias_program) true
+     (literal_alias_seed (PlanRun.plan literal_alias_program)))) =
+  ([Some None], [Some None], 0, 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition literals_alias_program : program positive :=
+  Program positive [Decl 1 [SVal] ORel; Decl 2 [SVal] ORel; Decl 3 [] ORel]
+    [Rule positive [Fun positive 1 [Lit 1%positive] None;
+       Fun positive 2 [Lit 2%positive] None] [Put 3 [] None]].
+
+Definition literals_alias_plan : cplan positive :=
+  CPlan positive 0 (JPlan 1 [[0]; [0]; [0]; [0]])
+    [All positive 0; Const positive (val 1); All positive 1; Const positive (val 2)]
+    [2]%positive [].
+
+Definition literals_alias_compiled : compiled positive :=
+  Compiled positive [(1%positive, [0]); (2%positive, [0])]
+    [literals_alias_plan] [literals_alias_plan; literals_alias_plan].
+
+Definition literals_alias_seed (cp : compiled positive) : PlanDatabase.t :=
+  let db := PlanRun.load literals_alias_program cp in
+  let db := PlanDatabase.put 1 [val 1] None db in
+  PlanDatabase.put 2 [val 2] None db.
+
+(** Even a fresh name cannot serve two different literal occurrences. *)
+Example literals_alias_rejected :
+  (PlanRun.check_plan literals_alias_program literals_alias_compiled,
+   PlanRun.check_plan literals_alias_program (PlanRun.plan literals_alias_program)) = (false, true).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Joining different literals through one variable discards their independent match. *)
+Example literals_alias_loses_match :
+  (lookups 1 (literals_alias_seed literals_alias_compiled) [[val 1]],
+   lookups 2 (literals_alias_seed literals_alias_compiled) [[val 2]],
+   length (PlanRun.jobs literals_alias_program literals_alias_compiled true
+     (literals_alias_seed literals_alias_compiled)),
+   length (PlanRun.jobs literals_alias_program (PlanRun.plan literals_alias_program) true
+     (literals_alias_seed (PlanRun.plan literals_alias_program)))) =
+  ([Some None], [Some None], 0, 1).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** * A missing premise in the derivation plan law *)
+
+(** The relational-fragment flag does not reject a result-bearing put. The database below
+    makes that put a valid lattice insertion, while the program's relational derivation
+    rules cannot derive any row from it. No unfinished Run law is used in this example. *)
+Module DerivationPlanCounterexample (V : VALUE) (I : IndexSig.INDEX V)
+    (J : JoinSig.JOIN V I) (D : DatabaseSig.DATABASE V I).
+  Module R := Run V I J D.
+
+  Definition counter_rule (v : V.t) : rule V.t :=
+    Rule V.t [] [Put 1%positive [] (Some (Lit v))].
+  Definition counter_program (v : V.t) : program V.t :=
+    Program V.t [Decl 1%positive [] ORel] [counter_rule v].
+  Definition counter_db : D.t := D.init [Decl 1%positive [] (OLat 1%positive)] [].
+  Definition counter_derived (v : V.t) (current : D.t) : Prop :=
+    forall f k o, row (D.view current) f k o ->
+      derives V.prim (counter_program v) (D.view counter_db) f k.
+
+  Lemma counter_empty : forall f k o, ~ row (D.view counter_db) f k o.
+  Proof.
+    intros f k o Hrow. unfold counter_db in Hrow.
+    exact (proj1 (proj1 (D.init_view [Decl 1%positive [] (OLat 1%positive)] []
+      f k o 1%positive 1%positive)) Hrow).
+  Qed.
+
+  Lemma counter_no_ids : R.no_ids counter_db.
+  Proof.
+    destruct (D.init_view [Decl 1%positive [] (OLat 1%positive)] []
+      1%positive [] None 1%positive 1%positive) as [_ [_ [_ [_ [Hids _]]]]].
+    split; [exact Hids|]. intros f k o Hrow. exfalso. eapply counter_empty. exact Hrow.
+  Qed.
+
+  Lemma counter_put_allowed : forall v, D.kind_ok counter_db 1%positive [] (Some (Val v)).
+  Proof.
+    intro v.
+    destruct (D.init_view [Decl 1%positive [] (OLat 1%positive)] []
+      1%positive [] None 1%positive 1%positive) as [_ [_ [Hkind [Hslots _]]]].
+    split.
+    - intros i Hin. destruct Hin as [Hbad|[]]. discriminate Hbad.
+    - split.
+      + intros perm Hin. unfold counter_db in Hin. rewrite Hslots in Hin. contradiction.
+      + change (kind (D.view counter_db) 1%positive = Some (OLat 1%positive)) in Hkind.
+        now rewrite Hkind.
+  Qed.
+
+  Lemma counter_old_empty : D.old counter_db 1%positive [] = None.
+  Proof.
+    destruct (D.old counter_db 1%positive []) as [o|] eqn:Hold; [|reflexivity].
+    exfalso. apply (counter_empty 1%positive [] o).
+    apply (proj1 (D.old_row counter_db 1%positive [] o
+      (D.wf_init [Decl 1%positive [] (OLat 1%positive)] []))). exact Hold.
+  Qed.
+
+  Lemma counter_inserted : forall v,
+    row (D.view (R.apply (actions V.t (counter_rule v)) (fun _ => None) counter_db))
+      1%positive [] (Some (Val v)).
+  Proof.
+    intro v. change (row (D.view (D.put 1%positive [] (Some (Val v)) counter_db))
+      1%positive [] (Some (Val v))).
+    apply (proj2 (D.put_rows 1%positive [] (Some (Val v)) counter_db
+      (D.wf_init [Decl 1%positive [] (OLat 1%positive)] []) (counter_put_allowed v)
+      1%positive [] (Some (Val v)))).
+    right. split; [reflexivity|]. split; [reflexivity|].
+    change (D.combine counter_db 1%positive (D.old counter_db 1%positive [])
+      (Some (Val v)) = Some (Val v)).
+    rewrite counter_old_empty. reflexivity.
+  Qed.
+
+  Lemma counter_not_derivable : forall v f k,
+    ~ derives V.prim (counter_program v) (D.view counter_db) f k.
+  Proof.
+    intros v f k Hderive. destruct Hderive as [f k Hrow|r s f k Hin Hbody Hactions].
+    - eapply counter_empty. exact Hrow.
+    - destruct Hin as [<-|[]]. cbn [counter_rule actions] in Hactions. inversion Hactions.
+  Qed.
+
+  (** All premises of F7 hold, but applying the rule produces an underivable row. *)
+  Lemma F7_plan_counterexample : forall v,
+    relational_fragment (counter_program v) = true /\ R.no_ids counter_db /\
+    D.wf counter_db /\ counter_derived v counter_db /\
+    In (counter_rule v) (rules V.t (counter_program v)) /\
+    derivation_body V.prim (counter_program v) (D.view counter_db) (fun _ => None)
+      (query V.t (counter_rule v)) /\
+    ~ counter_derived v
+      (R.apply (actions V.t (counter_rule v)) (fun _ => None) counter_db).
+  Proof.
+    intro v. split; [reflexivity|]. split; [exact counter_no_ids|].
+    split; [apply D.wf_init|]. split.
+    - intros f k o Hrow. exfalso. eapply counter_empty. exact Hrow.
+    - split; [now left|]. split; [constructor|].
+      intro Hderived. apply (counter_not_derivable v 1%positive []).
+      eapply Hderived. apply counter_inserted.
+  Qed.
+End DerivationPlanCounterexample.
+
+(** The same insertion is visible in the operations-only positive-value implementation. *)
+Example derivation_plan_result_put :
+  let p := Program positive [Decl 1 [] ORel]
+    [Rule positive [] [Put 1 [] (Some (Lit 1%positive))]] in
+  let db := PlanDatabase.init [Decl 1 [] (OLat 1)] [] in
+  (relational_fragment p,
+   fst (PlanDatabase.lookup 1 []
+     (PlanRun.apply [Put 1 [] (Some (Lit 1%positive))] (fun _ => None) db))) =
+  (true, Some (Some (val 1))).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** * A raised initial flag consumes an extra confirmation round *)
+
+(** The concrete database invariant does not inspect its runtime change flag.
+    The following input therefore has the same valid empty contents as initialization,
+    while reporting an already-raised flag. No database law or unfinished Run theorem
+    is assumed to establish the witness. *)
+Module InitialFlagTerminationCounterexample (V : VALUE) (I : IndexSig.INDEX V)
+    (J : JoinSig.JOIN V I).
+  Module D := Database V I.
+  Module R := Run V I J D.
+
+  Definition program : Syntax.program V.t := Program V.t [] [].
+  Definition compiled : Syntax.compiled V.t := R.plan program.
+  Definition initial : D.t :=
+    let empty := D.init [] [] in
+    database_set_runtime (runtime_set_changed true (db_runtime empty)) empty.
+
+  Lemma initial_wf : D.wf initial.
+  Proof.
+    change (D.wf (D.init [] [])). apply D.wf_init.
+  Qed.
+
+  Lemma initial_loaded : R.loaded program compiled initial.
+  Proof.
+    change (R.loaded program compiled (D.init [] [])). split.
+    - intro f.
+      destruct (D.init_view [] [] f [] None 1%positive 1%positive) as [_ [_ [Hkind _]]].
+      exact Hkind.
+    - split; [reflexivity|]. intros f key output Hrow. exfalso.
+      exact (proj1 (proj1 (D.init_view [] [] f key output 1%positive 1%positive)) Hrow).
+  Qed.
+
+  Lemma initial_no_ids : R.no_ids initial.
+  Proof.
+    change (R.no_ids (D.init [] [])). split; [reflexivity|].
+    intros f key output Hrow. exfalso.
+    exact (proj1 (proj1 (D.init_view [] [] f key output 1%positive 1%positive)) Hrow).
+  Qed.
+
+  Lemma initial_changed : D.changed initial = true.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma empty_program_checked : R.plans_ok program compiled.
+  Proof.
+    unfold compiled. apply R.plan_checked. constructor.
+  Qed.
+
+  (** The public rule-membership law excludes every plan of an empty program. *)
+  Lemma empty_plan_lists :
+    naive V.t compiled = [] /\ seminaive V.t compiled = [].
+  Proof.
+    apply app_eq_nil. change (R.all_plans compiled = []).
+    destruct (R.all_plans compiled) as [|c rest] eqn:Hplans; [reflexivity|].
+    exfalso.
+    assert (Hin : In c (R.all_plans compiled)) by (rewrite Hplans; now left).
+    pose proof (R.F33_plan_rule program compiled c empty_program_checked Hin) as Hrule.
+    apply nth_error_In in Hrule. exact Hrule.
+  Qed.
+
+  Lemma empty_jobs : forall nv db, R.jobs program compiled nv db = [].
+  Proof.
+    intros nv db. rewrite R.F31_jobs.
+    destruct empty_plan_lists as [Hnaive Hsemi].
+    destruct nv; [rewrite Hnaive|rewrite Hsemi]; reflexivity.
+  Qed.
+
+  Lemma empty_round : forall nv db, R.round program compiled nv db = D.rebuild db.
+  Proof.
+    intros nv db. rewrite R.F32_round_jobs, empty_jobs. reflexivity.
+  Qed.
+
+  Lemma initial_rebuild : D.rebuild initial = initial.
+  Proof.
+    apply D.rebuild_idle; [exact initial_wf| |reflexivity].
+    intros f k o Hrow. exfalso.
+    change (row (D.view (D.init [] [])) f k o) in Hrow.
+    exact (proj1 (proj1 (D.init_view [] [] f k o 1%positive 1%positive)) Hrow).
+  Qed.
+
+  Lemma empty_rebuild : D.rebuild (D.init [] []) = D.init [] [].
+  Proof.
+    apply D.rebuild_idle; [apply D.wf_init| |reflexivity].
+    intros f k o Hrow. exfalso.
+    exact (proj1 (proj1 (D.init_view [] [] f k o 1%positive 1%positive)) Hrow).
+  Qed.
+
+  (** The prescribed driver clears the raised flag without entering naive mode. *)
+  Lemma first_driver_step :
+    R.driver program compiled (Limits 2 0) (false, initial) =
+      inl (false, D.init [] []).
+  Proof.
+    rewrite R.F21_driver_step, empty_round, initial_rebuild. reflexivity.
+  Qed.
+
+  (** The next prescribed step enters naive mode but cannot yet report saturation. *)
+  Lemma second_driver_step :
+    R.driver program compiled (Limits 2 0) (false, D.init [] []) =
+      inl (true, D.init [] []).
+  Proof.
+    rewrite R.F21_driver_step, empty_round, empty_rebuild. reflexivity.
+  Qed.
+
+  Lemma loop_two_continuations : forall (A B : Type) (step : A -> A + B) a b c,
+    step a = inl b -> step b = inl c ->
+    Galois.Base.Loop.loopN step 2%N a = inl c.
+  Proof.
+    intros A B step a b c Hfirst Hsecond.
+    unfold Galois.Base.Loop.loopN.
+    match goal with |- context [Argent.Loop.loop _ _ _ ?H] => generalize H end.
+    intros [Hacc]. cbn [Argent.Loop.loop Galois.Base.Loop.loopN_step].
+    rewrite Hfirst.
+    cbn [Acc_inv N.pred Pos.pred_N].
+    match goal with |- context [Argent.Loop.loop _ _ _ ?H] => generalize H end.
+    intros [Hnext]. cbn [Argent.Loop.loop Galois.Base.Loop.loopN_step].
+    rewrite Hsecond. cbn [Acc_inv N.pred Pos.pred_N].
+    match goal with |- context [Argent.Loop.loop _ _ _ ?H] => generalize H end.
+    intros [Hfinal]. reflexivity.
+  Qed.
+
+  (** This derivation uses the fixed equations for jobs, rounds, the driver and run. *)
+  Lemma two_rounds_equation :
+    fst (R.run program compiled (Limits 2 0) initial) = IterLimit.
+  Proof.
+    pose proof (loop_two_continuations (bool * D.t) (stop * D.t)
+      (R.driver program compiled (Limits 2 0)) (false, initial)
+      (false, D.init [] []) (true, D.init [] []) first_driver_step second_driver_step)
+      as Hloop.
+    pose proof (R.F10_run_loop program compiled (Limits 2 0) initial
+      empty_program_checked initial_wf initial_loaded) as Hrun.
+    cbn [max_iter] in Hrun. rewrite Hloop in Hrun.
+    exact (f_equal (@fst stop D.t) Hrun).
+  Qed.
+
+  Lemma empty_herbrand : R.herbrand program initial = 0.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Two iterations clear the old flag and discover a quiet semi-naive round;
+      they do not yet execute the naive confirmation. *)
+  Lemma two_rounds_exhaust : fst (R.run program compiled (Limits 2 0) initial) = IterLimit.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** A third iteration supplies the missing naive confirmation. *)
+  Lemma three_rounds_saturate : fst (R.run program compiled (Limits 3 0) initial) = Saturated.
+  Proof.
+    vm_compute. reflexivity.
+  Qed.
+
+  (** Every stated premise of run_terminates holds, but its conclusion does not. *)
+  Lemma run_terminates_counterexample :
+    R.plans_ok program compiled /\ D.wf initial /\ R.loaded program compiled initial /\
+    relational_fragment program = true /\ RunSig.prim_free program = true /\ R.no_ids initial /\
+    N.to_nat (max_iter (Limits 2 0)) >= 2 * R.herbrand program initial + 2 /\
+    fst (R.run program compiled (Limits 2 0) initial) <> Saturated.
+  Proof.
+    split; [exact empty_program_checked|]. split; [exact initial_wf|].
+    split; [exact initial_loaded|]. split; [reflexivity|]. split; [reflexivity|].
+    split; [exact initial_no_ids|]. split.
+    - rewrite empty_herbrand. constructor.
+    - rewrite two_rounds_equation. discriminate.
+  Qed.
+End InitialFlagTerminationCounterexample.
