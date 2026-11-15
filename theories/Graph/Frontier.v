@@ -1618,6 +1618,121 @@ Proof.
   specialize (IH f g (fun y Hy => Hbound y (or_intror Hy))). cbn [fold_right]. lia.
 Qed.
 
+Lemma frontier_sum_one_more {A : Type} : forall (xs : list A) (size : A -> nat),
+  fold_right (fun x total => size x + 1 + total) 0 xs =
+    fold_right (fun x total => size x + total) 0 xs + length xs.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intro size; [reflexivity|].
+  cbn [fold_right length]. rewrite IH. lia.
+Qed.
+
+(** Inserting a pair has bounded key cost independently of the accumulated rows. *)
+Lemma frontier_df_insert_time : forall y x state width,
+  Pos.size_nat x <= width -> Pos.size_nat y <= width ->
+  (T_df_insert y x state <= 16 * frontier_unit_cost * N.of_nat (width + 1))%N.
+Proof.
+  intros y x [rows marks] width Hx Hy. apply time_of_nat_le in Hx, Hy.
+  set (marked := match trie_get x marks with Some row => row | None => Empty end).
+  pose proof (PTrieT.T_set_le (list positive) x (y :: frontier_row rows x) rows) as Hrows.
+  pose proof (PTrieT.T_set_le unit y tt marked) as Hpair.
+  pose proof (PTrieT.T_set_le (ptrie unit) x (PTrieCode.set y tt marked) marks) as Hmarks.
+  change (PTrieCode.T_set x (y :: frontier_row rows x) rows <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat x + 1))%N in Hrows.
+  change (PTrieCode.T_set y tt marked <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat y + 1))%N in Hpair.
+  change (PTrieCode.T_set x (PTrieCode.set y tt marked) marks <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat x + 1))%N in Hmarks.
+  time_unfold T_df_insert. time_unfold T_frontier_row.
+  fold marked. repeat rewrite PTrieT.trie_get_clock.
+  unfold frontier_unit_cost. rewrite !Nat2N.inj_add in Hrows, Hpair, Hmarks |- *.
+  destruct (trie_get y marked); nia.
+Qed.
+
+(** Transposition charges each listed column and each emitted pair with their key width. *)
+Lemma frontier_df_transpose_time : forall columns width,
+  Forall (fun entry => Pos.size_nat (fst entry) <= width /\
+    forall x, In x (snd entry) -> Pos.size_nat x <= width) columns ->
+  (T_df_transpose columns + 1 <= frontier_transpose_cost *
+    N.of_nat (length columns +
+      fold_right (fun entry total => (length (snd entry) + total)%nat) 0%nat columns + 1) *
+    N.of_nat (width + 1))%N.
+Proof.
+  intros columns width Hwidth. rewrite Forall_forall in Hwidth.
+  time_unfold T_df_transpose. time_unfold @Datatypes.T_fst.
+  match goal with
+  | |- context [List.T_fold_left ?f ?Tf columns ?state] =>
+      assert (Hfold : (List.T_fold_left f Tf columns state <=
+        N.of_nat (length columns + 1) + fold_right (fun entry total =>
+          32 * frontier_unit_cost * N.of_nat (width + 1) *
+            N.of_nat (length (snd entry) + 1) + total)%N 0%N columns)%N)
+  end.
+  { apply frontier_fold_time_sum. intros [y xs] Hin [rows marks].
+    destruct (Hwidth (y, xs) Hin) as [Hy Hxs]. cbn [fst snd] in Hy, Hxs.
+    cbn beta iota zeta. cbn [snd].
+    match goal with
+    | |- context [List.T_fold_left ?f ?Tf xs ?state] =>
+        assert (Hinner : (List.T_fold_left f Tf xs state <=
+          (16 * frontier_unit_cost * N.of_nat (width + 1) + 1) *
+            N.of_nat (length xs) + 1)%N)
+    end.
+    { apply dom_time_fold_left. intros x Hx [acc seen].
+      pose proof (frontier_df_insert_time y x (acc, seen) width (Hxs x Hx) Hy) as Hinsert.
+      unfold T_df_insert, T_frontier_row in Hinsert.
+      unfold frontier_row in Hinsert. cbn beta iota zeta in Hinsert |- *.
+      destruct (trie_get y (match trie_get x seen with Some row => row | None => Empty end)); lia. }
+    unfold frontier_unit_cost in *. rewrite Nat2N.inj_add. nia. }
+  rewrite frontier_weighted_sum, frontier_sum_one_more in Hfold.
+  unfold frontier_transpose_cost, frontier_unit_cost in *.
+  repeat rewrite Nat2N.inj_add in Hfold. repeat rewrite Nat2N.inj_add. nia.
+Qed.
+
+Lemma frontier_column_pairs : forall g t r,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  fold_right (fun y total => length (df_column g t y) + total) 0 (nodes g) = Frontier.df_size g t.
+Proof.
+  intros g t r Hgraph Hprepared Htree.
+  assert (Hnodes : NoDup (nodes g)) by now apply frontier_nodes_unique.
+  assert (Htargets : NoDup (map fst (map (fun y => (y, df_column g t y)) (nodes g)))).
+  { rewrite map_map. change (NoDup (map (fun y : positive => y) (nodes g))). now rewrite map_id. }
+  assert (Hcolumns : Forall (fun entry => NoDup (snd entry) /\ incl (snd entry) (nodes g))
+    (map (fun y => (y, df_column g t y)) (nodes g))).
+  { apply Forall_forall. intros [y xs] Hin. apply in_map_iff in Hin.
+    destruct Hin as [v [Heq Hv]]. injection Heq as Heqv Heqxs. subst v xs.
+    pose proof (df_column_correct g t r y Hgraph Hprepared Htree) as [Hunique [Hwithin Hspec]].
+    now split. }
+  symmetry. change (df_rows_size (nodes g)
+    (df_transpose (map (fun y => (y, df_column g t y)) (nodes g))) =
+    fold_right (fun y total => length (df_column g t y) + total) 0 (nodes g)).
+  rewrite (df_transpose_size _ _ Hnodes Htargets Hcolumns).
+  clear Hnodes Htargets Hcolumns Hgraph Hprepared Htree.
+  induction (nodes g) as [|y rest IH]; cbn [map fold_right snd]; [reflexivity|now rewrite IH].
+Qed.
+
+Lemma frontier_df_columns_time : forall g t r,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  (fold_right (fun y total => (1 + T_df_column g t y) + total)%N 0%N (nodes g) <=
+    frontier_column_cost *
+      N.of_nat (graph_n (base g) + graph_e (base g) + Frontier.df_size g t + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros g t r Hgraph Hprepared Htree.
+  pose proof (frontier_sum_le (nodes g) (fun y => (1 + T_df_column g t y)%N)
+    (fun y => ((frontier_column_cost * N.of_nat (graph_width (base g) + 1)) *
+      N.of_nat (length (preds g y) + length (df_column g t y) + 1))%N)) as Hsum.
+  assert (Hcolumns : forall y, In y (nodes g) ->
+    (1 + T_df_column g t y <=
+      (frontier_column_cost * N.of_nat (graph_width (base g) + 1)) *
+        N.of_nat (length (preds g y) + length (df_column g t y) + 1))%N).
+  { intros y Hy. pose proof (frontier_df_column_time g t r y Hgraph Hprepared Htree Hy). nia. }
+  specialize (Hsum Hcolumns). cbn beta in Hsum. rewrite frontier_weighted_sum in Hsum.
+  rewrite frontier_sum_one_more, frontier_sum_add in Hsum.
+  rewrite (frontier_predecessor_sum g Hgraph Hprepared),
+    (frontier_column_pairs g t r Hgraph Hprepared Htree) in Hsum.
+  replace (length (nodes g)) with (graph_n (base g)) in Hsum by
+    (destruct g as [[vertices adjacency] predecessors vertices_count edges_count]; reflexivity).
+  repeat rewrite Nat2N.inj_add in Hsum. repeat rewrite Nat2N.inj_add. nia.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
