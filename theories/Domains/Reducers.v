@@ -597,9 +597,42 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
       with Definition gamma := tagged_gamma L.is_word B0.pgamma)
     <: REDUCTION_STEPS BitsLang A B.
   Include IntervalBitsCode L A0 B0 A B.
-  Lemma reduce_sound : forall a b c, A.gamma a c -> B.gamma b c ->
-    A.gamma (fst (reduce (a, b))) c /\ B.gamma (snd (reduce (a, b))) c.
-  Proof. Admitted. (* STUB *)
+
+  (** The known-bit hull supplies sound finite interval endpoints. *)
+  Lemma hull_sound : forall w b z, L.is_word w z -> B0.pgamma w b z ->
+    A0.pgamma w (bits_interval w b) z.
+  Proof.
+    intros w b z Hword Hbits.
+    apply B0.gamma_tnum in Hbits; unfold B0.tnum_gamma in Hbits.
+    destruct Hbits as [Hzero Hone].
+    pose proof (reducer_bits_bounds w b z Hword Hzero Hone) as Hbounds.
+    apply A0.F_pgamma; split; [exact Hword|].
+    unfold bits_interval, bits_hull.
+    destruct (Z.leb (tnum_wrap w (ones b))
+      (Z.lxor (tnum_wrap w (zeros b)) (Z.ones (Zpos w)))) eqn:Horder.
+    - exact Hbounds.
+    - apply Z.leb_gt in Horder; lia.
+  Qed.
+
+  (** Word clipping and prefix extraction retain each interval member. *)
+  Lemma prefix_sound : forall w a z, A0.pgamma w a z ->
+    B0.pgamma w (interval_prefix w a) z.
+  Proof.
+    intros w a z Ha; apply A0.F_pgamma in Ha; destruct Ha as [Hword Ha].
+    pose proof (reducer_clip_sound w a z Hword Ha) as Hmember.
+    apply B0.gamma_tnum; unfold B0.tnum_gamma, interval_prefix.
+    destruct (interval_word_clip w a) as [|[|lo|] [|hi|]] eqn:Hclip;
+      try (change (Z.land z (Word.wrap w 0) = 0 /\
+        Z.land (Word.wrap w 0) (Z.lnot z) = 0);
+        rewrite Word.wrap_0, Z.land_0_r, Z.land_0_l; split; reflexivity).
+    apply reducer_arc_prefix_sound; [exact Hword|].
+    pose proof (reducer_clip_bounds w a lo hi Hclip) as Hbounds.
+    unfold in_bnd in Hmember.
+    change ((z - lo) mod Word.modulus w <= (hi - lo) mod Word.modulus w).
+    rewrite !Z.mod_small by (unfold Word.is_word in *; lia); lia.
+  Qed.
+
+
   Lemma left_frame : forall x, snd (to_left x) = snd x.
   Proof.
     intros [[|w a|] [|v b|]]; cbn [to_left]; try reflexivity.
@@ -612,10 +645,32 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
   Qed.
   Lemma left_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_left (a, b))) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|] [u z] Ha Hb; cbn [to_left fst]; try exact Ha.
+    destruct (Pos.eqb w v) eqn:Hwidth; cbn [fst]; [|exact Ha].
+    apply Pos.eqb_eq in Hwidth; subst v.
+    change (u = w /\ L.is_word w z /\ A0.pgamma w a z) in Ha.
+    change (u = w /\ L.is_word w z /\ B0.pgamma w b z) in Hb.
+    destruct Ha as [Hu [Hword Ha]]; destruct Hb as [_ [_ Hb]].
+    change (u = w /\ L.is_word w z /\
+      A0.pgamma w (A0.pmeet w a (bits_interval w b)) z).
+    split; [exact Hu|]; split; [exact Hword|].
+    apply A0.pgamma_meet; [exact Ha|now apply hull_sound].
+  Qed.
   Lemma right_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     B.gamma (snd (to_right (a, b))) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|] [u z] Ha Hb; cbn [to_right snd]; try exact Hb.
+    destruct (Pos.eqb w v) eqn:Hwidth; cbn [snd]; [|exact Hb].
+    apply Pos.eqb_eq in Hwidth; subst v.
+    change (u = w /\ L.is_word w z /\ A0.pgamma w a z) in Ha.
+    change (u = w /\ L.is_word w z /\ B0.pgamma w b z) in Hb.
+    destruct Ha as [_ [Hword Ha]]; destruct Hb as [Hu [_ Hb]].
+    change (u = w /\ L.is_word w z /\
+      B0.pgamma w (B0.pmeet w b (interval_prefix w a)) z).
+    split; [exact Hu|]; split; [exact Hword|].
+    apply B0.pgamma_meet; [exact Hb|now apply prefix_sound].
+  Qed.
   Lemma left_lower : forall a b, A.leb (fst (to_left (a, b))) a = true.
   Proof.
     intros [|w a|] [|v b|]; cbn [to_left fst]; try apply A.leb_refl.
@@ -668,6 +723,17 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
       apply right_lower.
   Qed.
 
+
+  Lemma reduce_sound : forall a b c, A.gamma a c -> B.gamma b c ->
+    A.gamma (fst (reduce (a, b))) c /\ B.gamma (snd (reduce (a, b))) c.
+  Proof.
+    intros a b c Ha Hb; unfold reduce; split.
+    - rewrite right_frame; now apply left_sound.
+    - pose proof (left_sound a b c Ha Hb) as Hleft.
+      pose proof (left_frame (a, b)) as Hframe.
+      destruct (to_left (a, b)) as [a' b']; cbn in Hframe, Hleft; subst b'.
+      now apply right_sound.
+  Qed.
 End IntervalBits.
 
 Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
