@@ -1806,6 +1806,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat U * D.potential B db)%N.
   Proof. Admitted. (* STUB *)
 
+  (** The driver constant covers the stored fields and binary comparison. *)
+  Lemma driver_constant_fields : (32 * (D.c_db + 1) <= k_driver)%N.
+  Proof.
+    unfold k_driver. nia.
+  Qed.
+
   Lemma T3_driver_wrapper : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (T_run p cp lim db <=
       T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) +
@@ -1813,7 +1819,36 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       | inl (_, final) => D.T_rebuild final
       | inr (_, final) => D.T_rebuild final
       end + k_driver)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db Hplans Hwf Hloaded.
+    pose proof driver_constant_fields as Hconstant.
+    time_unfold T_run. time_unfold T_limits_iter.
+    change (limits_iter lim) with (max_iter lim).
+    change (fun st : bool * D.t => T_driver p cp lim st) with (T_driver p cp lim).
+    destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
+      as [[nv final] | [st final]]; lia.
+  Qed.
+
+  (** Positive comparison stops when either operand ends. *)
+  Lemma compare_cont_right_clock : forall order p q,
+    (Pos.T_compare_cont order p q <= N.of_nat (Pos.size_nat q))%N.
+  Proof.
+    intros order p q. revert order p.
+    induction q as [q IH | q IH |]; intros order [p | p |];
+      time_unfold Pos.T_compare_cont; cbn [Pos.size_nat];
+      rewrite ?Nat2N.inj_succ;
+      try pose proof (IH order p); try pose proof (IH Lt p);
+      try pose proof (IH Gt p); lia.
+  Qed.
+
+  (** Natural comparison can be charged to the second operand. *)
+  Lemma compare_right_clock : forall a b,
+    (N.T_compare a b <= N.of_nat (N.size_nat b) + 2)%N.
+  Proof.
+    intros [|a] [|b]; time_unfold N.T_compare; cbn [N.size_nat]; try lia.
+    pose proof (compare_cont_right_clock Eq a b) as Hcompare.
+    time_unfold Pos.T_compare. lia.
+  Qed.
 
   (** A driver call pays for its round, limit test, flag test and advance. *)
   Lemma T2a_driver_le : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
@@ -1821,14 +1856,79 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (T_driver p cp lim (nv, db) <= T_round p cp nv db + k_driver *
       N.of_nat (length (Syntax.slots V.t cp) +
         N.size_nat (D.ids (round p cp nv db)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim nv db Hplans Hwf Hloaded.
+    destruct (F17_round_mono p cp nv db Hplans Hwf Hloaded)
+      as [Hwf_next [Hloaded_next Hmono]].
+    destruct Hloaded_next as [Hkinds [Hslots Hsorted]].
+    pose proof (D.T_advance_le (round p cp nv db)) as Hadvance.
+    unfold D.num_slots in Hadvance. rewrite Hslots in Hadvance.
+    pose proof (D.T_ids_le (round p cp nv db)) as Hids.
+    pose proof (D.T_changed_le (round p cp nv db)) as Hchanged.
+    pose proof (compare_right_clock (max_ids lim) (D.ids (round p cp nv db))) as Hcompare.
+    pose proof driver_constant_fields as Hconstant.
+    clear Hplans Hwf Hloaded Hwf_next Hkinds Hslots Hsorted Hmono.
+    time_unfold T_driver. time_unfold T_limits_ids. time_unfold N.T_ltb.
+    change (limits_ids lim) with (max_ids lim).
+    destruct (N.ltb (max_ids lim) (D.ids (round p cp nv db)));
+      [| destruct (andb nv (negb (D.changed (round p cp nv db))))];
+      rewrite ?Nat2N.inj_add in *; time_simpl; nia.
+  Qed.
+
+  (** A loop pays each visited callback and amortised binary decrement once. *)
+  Lemma loop_trace_clock_acc : forall (St Out : Type) (step : St -> St + Out)
+      (T_step : St -> N) fs (Hacc : Acc loopN_lt fs),
+    (Loop.T_loop loopN_lt (loopN_step step) (fun fs => T_loopN_step step T_step fs) fs Hacc <=
+      fold_right N.add 0 (map (fun st => T_step st + c_loopN)
+        (firstn (N.to_nat (fst fs))
+          (driver_trace step (N.to_nat (fst fs)) (snd fs)))) +
+      loopN_zero_bits (fst fs) + 2)%N.
+  Proof.
+    intros St Out step T_step fs Hacc.
+    induction Hacc as [[fuel state] Hnext IH] using Loop.Acc_ind_dep.
+    cbn [fst snd]. destruct fuel as [|p].
+    - time_unfold @Loop.T_loop. cbn [loopN_step Acc_inv].
+      unfold T_loopN_step at 1.
+      cbn [loopN_step loopN_zero_bits N.to_nat firstn map fold_right]. lia.
+    - assert (Hfuel : N.to_nat (Npos p) = S (N.to_nat (N.pred (Npos p)))).
+      { rewrite N2Nat.inj_pred.
+        change (Pos.to_nat p = S (Nat.pred (Pos.to_nat p))).
+        pose proof (Pos2Nat.is_pos p). lia. }
+      time_unfold @Loop.T_loop.
+      cbn [loopN_step Acc_inv].
+      destruct (step state) as [next | result] eqn:Hstep.
+      + match goal with
+        | |- context [Loop.T_loop _ _ _ ?fs (Hnext _ ?Hlt)] =>
+            pose proof (IH fs Hlt) as Htail
+        end.
+        cbn [fst snd] in Htail.
+        pose proof (loopN_pred_credit (Npos p)) as Hcredit.
+        unfold T_loopN_step at 1. cbn beta iota zeta. rewrite Hstep.
+        rewrite Hfuel. cbn [driver_trace firstn map fold_right]. rewrite Hstep.
+        unfold c_loopN in Htail |- *. lia.
+      + unfold T_loopN_step at 1. cbn beta iota zeta. rewrite Hstep.
+        rewrite Hfuel. cbn [driver_trace firstn map fold_right]. rewrite Hstep.
+        rewrite ?firstn_nil. cbn [map fold_right]. unfold c_loopN. lia.
+  Qed.
+
   (** The loop pays for every driver call in the trace prefix and its fuel. *)
   Lemma T2b_loop_trace : forall p cp lim db,
     (T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) <=
       fold_right N.add 0 (map (fun st => T_driver p cp lim st + c_loopN)
         (firstn (N.to_nat (max_iter lim)) (trace p cp lim db))) +
       c_loopN * N.of_nat (N.size_nat (max_iter lim) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db. unfold trace.
+    time_unfold @T_loopN.
+    match goal with
+    | |- context [Loop.T_loop _ _ _ _ ?Hacc] =>
+        pose proof (loop_trace_clock_acc _ _ (driver p cp lim) (T_driver p cp lim)
+          (max_iter lim, (false, db)) Hacc) as Hloop
+    end.
+    pose proof (loopN_zero_bits_le_size (max_iter lim)) as Hbits.
+    cbn [fst snd] in Hloop. unfold c_loopN in Hloop |- *.
+    rewrite Nat2N.inj_add. lia.
+  Qed.
   (** Applying a rule pays for its actions, referenced bindings and transferred potential. *)
   Lemma T2c_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
