@@ -5560,6 +5560,414 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
       cbn [search_restate search_queue]. rewrite PTrieT.trie_get_clock.
       rewrite !Nat2N.inj_add in *. nia.
   Qed.
+  (** Residual cells pay repeated wakeups; the original key pays completion once. *)
+  Definition search_frame_work (frame : extraction_frame V.t) :=
+    length (frame_rest frame) + length (snd (fst (frame_row frame))) + 1.
+
+  Definition search_frames_work (frames : list (extraction_frame V.t)) :=
+    fold_right (fun frame total => search_frame_work frame + total) 0 frames.
+
+  Definition search_waiting_work (waiters : ptrie (list (extraction_frame V.t))) :=
+    search_trie_weight search_frames_work waiters.
+
+  Definition search_cell_unit (w : nat) : N :=
+    (128 * (PTrieT.c_trie + C.c_cost + 1) * N.of_nat (w + 1))%N.
+
+  Definition search_work_unit (w : nat) : N := (4 * search_cell_unit w)%N.
+
+  Definition search_push_unit (P w : nat) : N :=
+    (Q.c_pq * N.of_nat (Q.unit_pq P w))%N.
+
+  Definition search_frame_credit (P w : nat) (frame : extraction_frame V.t) : N :=
+    (search_work_unit w * N.of_nat (search_frame_work frame) + search_push_unit P w)%N.
+
+  Definition search_frames_credit (P w : nat) (frames : list (extraction_frame V.t)) : N :=
+    (search_work_unit w * N.of_nat (search_frames_work frames) +
+      search_push_unit P w * N.of_nat (length frames))%N.
+
+  (** Search credit combines suspended-row work with the queue's public stale-entry credit. *)
+  Definition search_potential {DB} (P w : nat) (s : extraction_state V.t DB Q.t) : N :=
+    (search_work_unit w * N.of_nat (search_waiting_work (search_waiters s)) +
+      search_push_unit P w * N.of_nat (Resources.search_waiter_count (search_waiters s)) +
+      Q.phi P w (search_queue s))%N.
+
+  Definition search_detached {DB} (i : positive) (s : extraction_state V.t DB Q.t) :=
+    match trie_get i (search_waiters s) with Some frames => frames | None => [] end.
+
+  Lemma search_frames_work_cons : forall frame frames,
+    search_frames_work (frame :: frames) = search_frame_work frame + search_frames_work frames.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma search_frames_work_nil : search_frames_work [] = 0.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma search_frames_credit_cons : forall P w frame frames,
+    search_frames_credit P w (frame :: frames) =
+      (search_frame_credit P w frame + search_frames_credit P w frames)%N.
+  Proof.
+    intros P w frame frames. unfold search_frames_credit, search_frame_credit.
+    rewrite search_frames_work_cons. cbn [length].
+    rewrite Nat2N.inj_add, Nat2N.inj_succ. nia.
+  Qed.
+
+  Lemma search_frames_credit_nil : forall P w, search_frames_credit P w [] = 0%N.
+  Proof.
+    intros P w. unfold search_frames_credit. rewrite search_frames_work_nil.
+    cbn [length]. nia.
+  Qed.
+
+  Lemma search_park_work : forall DB i frame (s : extraction_state V.t DB Q.t),
+    search_waiting_work (search_waiters (search_park i frame s)) =
+      search_waiting_work (search_waiters s) + search_frame_work frame.
+  Proof.
+    intros DB i frame s. unfold search_waiting_work, search_park.
+    cbn [search_restate search_waiters].
+    pose proof (search_trie_weight_replace _ search_frames_work i
+      (Some (frame :: match trie_get i (search_waiters s) with
+        | Some frames => frames | None => [] end)) (search_waiters s)) as Hcharge.
+    unfold PTrieCode.get in Hcharge. unfold PTrieCode.set.
+    destruct (trie_get i (search_waiters s)); cbn beta iota zeta in Hcharge;
+      rewrite search_frames_work_cons in Hcharge;
+      rewrite ?search_frames_work_nil in Hcharge; lia.
+  Qed.
+
+  Lemma search_park_count : forall DB i frame (s : extraction_state V.t DB Q.t),
+    Resources.search_waiter_count (search_waiters (search_park i frame s)) =
+      S (Resources.search_waiter_count (search_waiters s)).
+  Proof.
+    intros DB i frame s.
+    pose proof (Resources.search_park_load DB i frame s) as Hload.
+    unfold Resources.search_load in Hload.
+    change (Resources.search_waiter_count (search_waiters (search_park i frame s)) +
+      Q.pending (search_queue s) =
+      S (Resources.search_waiter_count (search_waiters s) + Q.pending (search_queue s)))
+      in Hload.
+    lia.
+  Qed.
+
+  (** Parking transfers exactly the frame's work and insertion credit into the state. *)
+  Lemma search_park_potential : forall DB P w i frame (s : extraction_state V.t DB Q.t),
+    search_potential P w (search_park i frame s) =
+      (search_potential P w s + search_frame_credit P w frame)%N.
+  Proof.
+    intros DB P w i frame s. unfold search_potential, search_frame_credit.
+    rewrite search_park_work, search_park_count, Nat2N.inj_add, Nat2N.inj_succ.
+    cbn [search_park search_restate search_queue]. nia.
+  Qed.
+
+  (** Removing a waiting list transfers its entire credit to that detached active list. *)
+  Lemma search_detached_potential : forall DB P w i costs candidates queue finals
+      (s : extraction_state V.t DB Q.t),
+    (search_potential P w (search_restate s costs candidates
+        (PTrieCode.remove i (search_waiters s)) queue finals) +
+      search_frames_credit P w (search_detached i s) + Q.phi P w (search_queue s) =
+      search_potential P w s + Q.phi P w queue)%N.
+  Proof.
+    intros DB P w i costs candidates queue finals s.
+    pose proof (search_trie_weight_remove _ search_frames_work i (search_waiters s))
+      as Hwork.
+    pose proof (search_trie_weight_remove _ (@length (extraction_frame V.t)) i
+      (search_waiters s)) as Hcount.
+    unfold search_potential, search_frames_credit, search_detached,
+      search_waiting_work, Resources.search_waiter_count.
+    cbn [search_restate search_waiters search_queue].
+    destruct (trie_get i (search_waiters s)); cbn beta iota zeta in Hwork, Hcount |- *.
+    - apply (f_equal N.of_nat) in Hwork. apply (f_equal N.of_nat) in Hcount.
+      rewrite Nat2N.inj_add in Hwork, Hcount. rewrite <- Hwork, <- Hcount. nia.
+    - rewrite search_frames_work_nil.
+      cbn [length] in Hcount |- *.
+      rewrite Nat.add_0_r in Hwork, Hcount. rewrite Hwork, Hcount. nia.
+  Qed.
+
+  Lemma search_start_potential : forall DB (db : DB) rs P w,
+    search_potential P w (search_start db rs) = 0%N.
+  Proof.
+    intros DB db rs P w.
+    unfold search_potential, search_waiting_work, Resources.search_waiter_count,
+      search_trie_weight, search_entries_weight, search_start.
+    cbn [search_waiters search_queue PTrieCode.elements PTrieCode.fold PTrieCode.fold_path
+      rev_append fold_right].
+    rewrite Q.phi_empty. nia.
+  Qed.
+
+
+  (** Source identifiers and literals fit the same physical-width envelope as heap entries. *)
+  Definition search_syntax_width (rs : list (search_row V.t)) (w : nat) :=
+    forall f k i, In (f, k, i) rs -> Pos.size_nat i <= w /\
+      (forall j, In (Id j) k -> Pos.size_nat j <= w) /\
+      (forall v, In (Val v) k -> V.bits v <= w).
+
+  Lemma search_frame_suffix : forall rs costs frame item,
+    Facts.search_frame_valid rs costs frame -> In item (frame_rest frame) ->
+    In item (snd (fst (frame_row frame))).
+  Proof.
+    intros rs costs frame item [Hrow [pre [Hkey Hrest]]] Hin.
+    rewrite Hkey. apply in_or_app. now right.
+  Qed.
+
+  Lemma search_cell_bound_mono : forall costs budget larger todo,
+    search_cell_bound costs budget todo -> (budget <= larger)%N ->
+    search_cell_bound costs larger todo.
+  Proof.
+    intros costs budget larger todo Hbound Hle item Hin.
+    eapply N.le_trans; [exact (Hbound item Hin)|exact Hle].
+  Qed.
+
+  (** A valid frame inherits both the output lookup bound and all residual scan bounds. *)
+  Lemma search_frame_syntax : forall rs costs frame w,
+    Facts.search_frame_valid rs costs frame -> search_syntax_width rs w ->
+    Pos.size_nat (snd (frame_row frame)) <= w /\
+      search_cell_bound costs (search_cell_unit w) (frame_rest frame).
+  Proof.
+    intros rs costs [[[f k] i] todo acc] w Hframe Hsyntax.
+    destruct (Hsyntax f k i (proj1 Hframe)) as [Houtput [Hids Hvalues]].
+    split; [exact Houtput|].
+    eapply search_cell_bound_mono; [apply search_cell_bound_width|].
+    - intros j Hin. apply Hids.
+      exact (search_frame_suffix rs costs _ (Id j) Hframe Hin).
+    - intros v Hin. apply Hvalues.
+      exact (search_frame_suffix rs costs _ (Val v) Hframe Hin).
+    - unfold search_cell_unit. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma search_frame_head_width : forall rs costs frame w i tail,
+    Facts.search_frame_valid rs costs frame -> search_syntax_width rs w ->
+    frame_rest frame = Id i :: tail -> Pos.size_nat i <= w.
+  Proof.
+    intros rs costs [[[f k] output] todo acc] w i tail Hframe Hsyntax Hhead.
+    destruct (Hsyntax f k output (proj1 Hframe)) as [Houtput [Hids Hvalues]].
+    apply Hids. apply (search_frame_suffix rs costs _ (Id i) Hframe).
+    rewrite Hhead. now left.
+  Qed.
+
+  Definition search_frame_awake (costs : ptrie N) (frame : extraction_frame V.t) :=
+    exists i tail n, frame_rest frame = Id i :: tail /\ trie_get i costs = Some n.
+
+  Lemma search_frame_awake_progress : forall costs frame child rest values,
+    search_frame_awake costs frame ->
+    search_scan costs (frame_costs frame) (frame_rest frame) = inl (child, (rest, values)) ->
+    length rest < length (frame_rest frame).
+  Proof.
+    intros costs frame child rest values [i [tail [n [Hhead Hget]]]] Hscan.
+    rewrite Hhead in Hscan |- *. eapply search_scan_progress; eassumption.
+  Qed.
+
+  (** An initial scan may retain its first missing cell, which costs one registration fee. *)
+  Lemma search_wait_charge_fresh : forall unit work fixed before after : N,
+    (work + unit * after <= unit * (before + 1))%N -> (fixed <= unit)%N ->
+    (after <= before)%N ->
+    (work + fixed + (4 * unit) * after <= (4 * unit) * before + 4 * unit)%N.
+  Proof.
+    intros unit work fixed before after Hwork Hfixed Hlength.
+    assert (Hscaled : (unit * after <= unit * before)%N)
+      by (now apply N.mul_le_mono_l).
+    nia.
+  Qed.
+
+  (** A wakeup that consumes a cell pays its scan and fixed overhead from residual credit. *)
+  Lemma search_wait_charge_awake : forall unit work fixed before after : N,
+    (work + unit * after <= unit * (before + 1))%N -> (fixed <= unit)%N ->
+    (after + 1 <= before)%N ->
+    (work + fixed + (4 * unit) * after <= (4 * unit) * before)%N.
+  Proof.
+    intros unit work fixed before after Hwork Hfixed Hlength.
+    assert (Hscaled : (unit * (after + 1) <= unit * before)%N)
+      by (now apply N.mul_le_mono_l).
+    nia.
+  Qed.
+
+  Lemma search_frame_credit_unit : forall P w frame,
+    (search_work_unit w <= search_frame_credit P w frame)%N.
+  Proof.
+    intros P w frame.
+    assert (Hpositive : (1 <= N.of_nat (search_frame_work frame))%N)
+      by (unfold search_frame_work; lia).
+    assert (Hscaled : (search_work_unit w <=
+      search_work_unit w * N.of_nat (search_frame_work frame))%N).
+    { rewrite <- (N.mul_1_r (search_work_unit w)) at 1.
+      now apply N.mul_le_mono_l. }
+    unfold search_frame_credit. lia.
+  Qed.
+
+  (** Initial frame credit is linear in source count, key length and one push per source. *)
+  Lemma search_initial_credit_bound : forall rs P w a,
+    (forall row, In row rs -> length (snd (fst row)) <= a) ->
+    (search_frames_credit P w (map search_new_frame rs) <=
+      N.of_nat (length rs) *
+        (search_work_unit w * N.of_nat (2 * a + 1) + search_push_unit P w))%N.
+  Proof.
+    induction rs as [|[[f k] i] rs IH]; intros P w a Hlength.
+    - cbn [map length]. rewrite search_frames_credit_nil. nia.
+    - specialize (IH P w a ltac:(intros row Hin; apply Hlength; now right)).
+      pose proof (Hlength (f, k, i) (or_introl eq_refl)) as Hkey.
+      assert (Hframe : (search_frame_credit P w (search_new_frame (f, k, i)) <=
+        search_work_unit w * N.of_nat (2 * a + 1) + search_push_unit P w)%N).
+      { unfold search_frame_credit, search_frame_work.
+        cbn [search_new_frame frame_rest frame_row fst snd] in *.
+        apply N.add_le_mono_r, N.mul_le_mono_l. lia. }
+      cbn [map length]. rewrite search_frames_credit_cons, Nat2N.inj_succ. nia.
+  Qed.
+  Lemma search_resume_wait_state : forall DB f k i todo acc child rest values
+      (s : extraction_state V.t DB Q.t),
+    trie_get i (search_final_costs s) = None ->
+    search_scan (search_final_costs s) acc todo = inl (child, (rest, values)) ->
+    search_resume (ExtractionFrame (f, k, i) todo acc) s =
+      search_park child (ExtractionFrame (f, k, i) rest values) s.
+  Proof.
+    intros DB f k i todo acc child rest values s Hget Hscan.
+    unfold search_resume. cbn [frame_row frame_rest frame_costs]. now rewrite Hget, Hscan.
+  Qed.
+
+  Lemma search_resume_ready_state : forall DB f k i todo acc values
+      (s : extraction_state V.t DB Q.t),
+    trie_get i (search_final_costs s) = None ->
+    search_scan (search_final_costs s) acc todo = inr values ->
+    search_resume (ExtractionFrame (f, k, i) todo acc) s =
+      search_offer i (C.fn_cost f values) (f, k) s.
+  Proof.
+    intros DB f k i todo acc values s Hget Hscan.
+    unfold search_resume. cbn [frame_row frame_rest frame_costs]. now rewrite Hget, Hscan.
+  Qed.
+
+  Lemma T_search_resume_wait_eq : forall DB f k i todo acc child rest values
+      (s : extraction_state V.t DB Q.t),
+    trie_get i (search_final_costs s) = None ->
+    search_scan (search_final_costs s) acc todo = inl (child, (rest, values)) ->
+    T_search_resume (ExtractionFrame (f, k, i) todo acc) s =
+      (6 + T_trie_get i (search_final_costs s) +
+        T_search_scan (search_final_costs s) acc todo +
+        T_search_park child (ExtractionFrame (f, k, i) rest values) s)%N.
+  Proof.
+    intros DB f k i todo acc child rest values s Hget Hscan.
+    time_unfold @T_search_resume. time_simpl. time_cbn. rewrite Hget, Hscan. ring.
+  Qed.
+
+  Lemma T_search_resume_ready_eq : forall DB f k i todo acc values
+      (s : extraction_state V.t DB Q.t),
+    trie_get i (search_final_costs s) = None ->
+    search_scan (search_final_costs s) acc todo = inr values ->
+    T_search_resume (ExtractionFrame (f, k, i) todo acc) s =
+      (6 + T_trie_get i (search_final_costs s) +
+        T_search_scan (search_final_costs s) acc todo + C.T_fn_cost f values +
+        T_search_offer i (C.fn_cost f values) (f, k) s)%N.
+  Proof.
+    intros DB f k i todo acc values s Hget Hscan.
+    time_unfold @T_search_resume. time_simpl. time_cbn. rewrite Hget, Hscan. ring.
+  Qed.
+
+  (** A discarded frame pays the final-output check from its fixed completion reserve. *)
+  Lemma T_search_resume_final_credit : forall DB P w f k i todo acc n
+      (s : extraction_state V.t DB Q.t),
+    trie_get i (search_final_costs s) = Some n -> Pos.size_nat i <= w ->
+    (T_search_resume (ExtractionFrame (f, k, i) todo acc) s + 1 <=
+      search_frame_credit P w (ExtractionFrame (f, k, i) todo acc))%N.
+  Proof.
+    intros DB P w f k i todo acc n s Hget Hwidth.
+    eapply N.le_trans; [|apply search_frame_credit_unit].
+    time_unfold @T_search_resume. time_simpl. time_cbn. rewrite Hget.
+    rewrite PTrieT.trie_get_clock. unfold search_work_unit, search_cell_unit.
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Scan-independent parking work fits one cell-price allowance. *)
+  Lemma search_park_overhead : forall DB w i child frame (s : extraction_state V.t DB Q.t),
+    Pos.size_nat i <= w -> Pos.size_nat child <= w ->
+    (T_search_park child frame s + 7 + 2 * N.of_nat (Pos.size_nat i) <=
+      search_cell_unit w)%N.
+  Proof.
+    intros DB w i child frame s Hi Hchild.
+    pose proof (T_search_park_le DB child frame s w Hchild) as Hpark.
+    unfold search_cell_unit. rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** A parked frame retains only its residual credit; fresh registration pays one extra fee. *)
+  Lemma T_search_resume_wait_credit : forall DB P w fresh f k i todo acc child rest values
+      (s : extraction_state V.t DB Q.t),
+    trie_get i (search_final_costs s) = None ->
+    search_scan (search_final_costs s) acc todo = inl (child, (rest, values)) ->
+    search_cell_bound (search_final_costs s) (search_cell_unit w) todo ->
+    Pos.size_nat i <= w -> Pos.size_nat child <= w ->
+    (fresh = true \/ length rest < length todo) ->
+    (T_search_resume (ExtractionFrame (f, k, i) todo acc) s + 1 +
+      search_frame_credit P w (ExtractionFrame (f, k, i) rest values) <=
+      search_frame_credit P w (ExtractionFrame (f, k, i) todo acc) +
+      if fresh then search_work_unit w else 0)%N.
+  Proof.
+    intros DB P w fresh f k i todo acc child rest values s
+      Hget Hscan Hbound Hi Hchild Hprogress.
+    pose proof (T_search_scan_wait todo (search_final_costs s) acc child rest values
+      (search_cell_unit w) Hbound Hscan) as Hwork.
+    rewrite Nat2N.inj_add in Hwork.
+    pose proof (search_park_overhead DB w i child
+      (ExtractionFrame (f, k, i) rest values) s Hi Hchild) as Hfixed.
+    rewrite (T_search_resume_wait_eq DB f k i todo acc child rest values s Hget Hscan).
+    rewrite PTrieT.trie_get_clock.
+    unfold search_frame_credit, search_frame_work, search_work_unit.
+    cbn [frame_rest frame_row fst snd]. rewrite !Nat2N.inj_add.
+    destruct fresh.
+    - destruct (Facts.search_scan_wait _ _ _ _ _ _ Hscan)
+        as [pre [tail [Htodo [Hrest Hfacts]]]].
+      assert (Hlength : (N.of_nat (length rest) <= N.of_nat (length todo))%N).
+      { rewrite Htodo, Hrest, length_app. cbn [length]. lia. }
+      pose proof (search_wait_charge_fresh _ _ _ _ _ Hwork Hfixed Hlength) as Hcharge.
+      nia.
+    - destruct Hprogress as [Hfalse|Hlength]; [discriminate|].
+      assert (HlengthN : (N.of_nat (length rest) + 1 <= N.of_nat (length todo))%N) by lia.
+      pose proof (search_wait_charge_awake _ _ _ _ _ Hwork Hfixed HlengthN) as Hcharge.
+      nia.
+  Qed.
+
+  (** Completion pays its reverse, constructor call and map work without a logarithmic key factor. *)
+  Lemma search_completion_charge : forall w key_length output_width,
+    output_width <= w ->
+    (N.of_nat key_length + 9 + 2 * N.of_nat output_width +
+      C.c_cost * N.of_nat (key_length + 1) * N.of_nat (w + 1) +
+      64 * (PTrieT.c_trie + 1) * N.of_nat (w + 1) <=
+      search_cell_unit w * N.of_nat (key_length + 1))%N.
+  Proof.
+    intros w key_length output_width Hwidth. unfold search_cell_unit.
+    rewrite !Nat2N.inj_add. nia.
+  Qed.
+
+  (** Completing a row consumes its one-time full-key and heap-insertion reserve. *)
+  Lemma T_search_resume_ready_credit : forall DB P w f k i todo acc values
+      (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.fits w (search_queue s) ->
+    Q.pending (search_queue s) < P ->
+    trie_get i (search_final_costs s) = None ->
+    search_scan (search_final_costs s) acc todo = inr values ->
+    search_cell_bound (search_final_costs s) (search_cell_unit w) todo ->
+    length acc + length todo = length k ->
+    Pos.size_nat i + N.size_nat (C.fn_cost f values) <= w ->
+    (T_search_resume (ExtractionFrame (f, k, i) todo acc) s + 1 +
+      Q.phi P w (search_queue (search_offer i (C.fn_cost f values) (f, k) s)) <=
+      Q.phi P w (search_queue s) +
+      search_frame_credit P w (ExtractionFrame (f, k, i) todo acc))%N.
+  Proof.
+    intros DB P w f k i todo acc values s Hwf Hfits Hpending
+      Hget Hscan Hbound Hlength Hwidth.
+    pose proof (T_search_scan_ready todo (search_final_costs s) acc values
+      (search_cell_unit w) Hbound Hscan) as Hscan_time. rewrite Hlength in Hscan_time.
+    assert (Hvalues_length : length values = length k).
+    { destruct (Facts.search_scan_ready _ _ _ _ Hscan) as [Hknown Hvalues].
+      rewrite Hvalues, length_app, length_rev, dag_cost_cells_map, length_map. exact Hlength. }
+    pose proof (T_search_fn_cost_le f values w ltac:(lia)) as Hcost.
+    rewrite Hvalues_length in Hcost.
+    pose proof (T_search_offer_amort DB P w i (C.fn_cost f values) (f, k) s
+      Hwf Hfits Hpending Hwidth) as Hoffer.
+    fold (search_push_unit P w) in Hoffer.
+    pose proof (search_completion_charge w (length k) (Pos.size_nat i) ltac:(lia)) as Hbody.
+    rewrite (T_search_resume_ready_eq DB f k i todo acc values s Hget Hscan).
+    rewrite PTrieT.trie_get_clock.
+    unfold search_frame_credit, search_frame_work, search_work_unit.
+    cbn [frame_rest frame_row fst snd]. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+
 End SearchResourceT.
 
 (** A finite bound on distinct finalisations supplies a terminating unary loop. *)
