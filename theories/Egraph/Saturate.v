@@ -3254,13 +3254,6 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     time_unfold @T_check_front; time_simpl. unfold c_sat. nia.
   Qed.
 
-  Lemma T_add_expr_amort : forall B U ds e db, D.wf db -> expr_ok ds db e ->
-    (D.ids (snd (add_expr e db)) <= B)%N -> D.unit (snd (add_expr e db)) <= U ->
-    (T_add_expr e db + N.of_nat U * D.potential B (snd (add_expr e db)) <=
-      c_sat * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
-        N.of_nat (D.num_slots db + 1) * N.of_nat (expr_work e) +
-      N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
 
   Lemma T_saturate_le : forall ds rws ans lim es,
     let p := C.compile ds rws ans in
@@ -3481,16 +3474,6 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     unfold k_sat, c_sat. nia.
   Qed.
 
-  (** Adding inputs pays for their nodes at the final unit and identifier budget. *)
-  Lemma T_inputs_le : forall B U ds rws ans es, front_ok ds rws ans es ->
-    let p := C.compile ds rws ans in
-    let db0 := E.load p (E.plan p) in
-    (D.ids (inputs_db es db0) <= B)%N -> D.unit (inputs_db es db0) <= U ->
-    (T_inputs es db0 + N.of_nat U * D.potential B (inputs_db es db0) <=
-      c_sat * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
-        N.of_nat (D.num_slots db0 + 1) *
-        N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es))%N.
-  Proof. Admitted. (* STUB *)
   (** Adding a flat expression folds over its nodes in order and returns its root cell. *)
   (** The optimized node table computes the same ordered fold as the plan's lists. *)
   Lemma build_nodes_reference : forall ns t db, table_valid t ->
@@ -3543,7 +3526,6 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       try discriminate Hroot_sort.
     rewrite table_get_list by exact Hvalid. rewrite Hcell. split; reflexivity.
   Qed.
-  (** Adding an expression separates node insertion cost from child-index work. *)
   (** Unary table subtraction reads at most its first argument. *)
   Lemma table_sub_clock : forall n m, (T_table_sub n m <= N.of_nat (n + 1))%N.
   Proof.
@@ -3594,7 +3576,8 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
   Qed.
   (** Reading all children pays for the sum of their indices. *)
   Lemma table_children_clock : forall (default : cell V.t) children t, table_valid t ->
-    (ListDef.T_map (fun j => table_get default j t) (fun j => 1 + T_table_get default j t) children <=
+    (ListDef.T_map (fun j => table_get default j t)
+      (fun j => 1 + T_table_get default j t) children <=
       64 * N.of_nat ((fold_right (fun (j n : nat) => (j + 1 + n)%nat) 0%nat children + 1)%nat))%N.
   Proof.
     intros default children. induction children as [| j rest IH]; intros t Hvalid.
@@ -3921,6 +3904,7 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       rewrite Hnum_slots in IH. cbn [fold_right]. rewrite Nat2N.inj_add.
       rewrite N.mul_add_distr_l. lia.
   Qed.
+  (** Adding an expression separates node insertion cost from child-index work. *)
   Lemma T3_add_expr_split : forall e db,
     (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
       k_sat * N.of_nat (expr_work e))%N.
@@ -3947,5 +3931,178 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       as Hcost.
     eapply N.le_trans; [exact Hcost |]. apply N.add_le_mono_r.
     do 4 apply N.mul_le_mono_r. unfold k_sat. nia.
+  Qed.
+  (** Expression insertion returns exactly the database produced by its node fold. *)
+  Lemma add_expr_db : forall e db,
+    snd (add_expr e db) = snd (build_nodes (expr_nodes V.t e) table_empty db).
+  Proof.
+    intros [ns root_index] db. unfold add_expr. cbn [expr_nodes].
+    destruct (build_nodes ns table_empty db) as [t final].
+    destruct (table_get (Id 1%positive) root_index t); reflexivity.
+  Qed.
+
+  (** Input insertion combines node potential transfer with the optimized table overhead. *)
+  Lemma add_expr_amort_bound : forall B U ds e db, D.wf db -> expr_ok ds db e ->
+    (D.ids (snd (add_expr e db)) <= B)%N -> D.unit (snd (add_expr e db)) <= U ->
+    (T_add_expr e db + N.of_nat U * D.potential B (snd (add_expr e db)) <=
+      1024 * (D.c_db + 1) * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * N.of_nat (expr_work e) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U ds [ns root_index] db Hwf [Hexpr [Hkind Hslots]] Hids HU.
+    rewrite add_expr_db in Hids, HU |- *. cbn [expr_nodes] in Hids, HU |- *.
+    pose proof (expr_nodes_typed V.t ds (FExpr V.t ns root_index) Hexpr) as Htyped.
+    assert (Hallocated : table_allocated db (@table_empty (cell V.t))) by constructor.
+    pose proof (T_add_nodes_amort B U ds ns table_empty db Hwf Hkind
+      (table_empty_valid (cell V.t)) Hallocated Htyped Hslots Hids HU) as Hnodes.
+    pose proof (T_add_expr_bound (FExpr V.t ns root_index) db) as Hclock.
+    destruct (build_nodes_economy ds ns table_empty db Hwf Hkind
+      (table_empty_valid (cell V.t)) Hallocated Htyped Hslots)
+      as [Hwf' [Hlayout [Hids_mono Hunit_mono]]].
+    assert (Hunit : D.unit db <= U) by lia.
+    pose proof (node_budget_positive B U db 1 Hunit (Nat.le_refl 1)) as Hpositive.
+    set (q := (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+      N.of_nat (D.num_slots db + 1))%N).
+    change (1 <= q * 1)%N in Hpositive. rewrite N.mul_1_r in Hpositive.
+    assert (Hsum : (N.of_nat (fold_right (fun n m => (enode_work n + m)%nat) 0%nat ns) <=
+      N.of_nat (expr_work (FExpr V.t ns root_index)))%N).
+    { unfold expr_work. cbn [expr_nodes expr_root].
+      rewrite (nodes_work_offset ns (root_index + 1)). lia. }
+    change (T_add_nodes ns [] db + N.of_nat U *
+      D.potential B (snd (build_nodes ns table_empty db)) <=
+      128 * (D.c_db + 1) * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) *
+        N.of_nat (fold_right (fun n m => (enode_work n + m)%nat) 0%nat ns) +
+      N.of_nat U * D.potential B db)%N in Hnodes.
+    replace (128 * (D.c_db + 1) * N.of_nat U *
+      N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1))%N
+      with (128 * ((D.c_db + 1) * q))%N in Hnodes by (unfold q; ring).
+    replace (1024 * (D.c_db + 1) * N.of_nat U *
+      N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1))%N
+      with (1024 * ((D.c_db + 1) * q))%N by (unfold q; ring).
+    set (r := ((D.c_db + 1) * q)%N) in *.
+    assert (Hr : (1 <= r)%N) by (unfold r; nia).
+    assert (Hsum_paid : (r *
+      N.of_nat (fold_right (fun n m => (enode_work n + m)%nat) 0%nat ns) <=
+      r * N.of_nat (expr_work (FExpr V.t ns root_index)))%N).
+    { now apply N.mul_le_mono_l. }
+    assert (Hwork_paid : (N.of_nat (expr_work (FExpr V.t ns root_index)) <=
+      r * N.of_nat (expr_work (FExpr V.t ns root_index)))%N) by nia.
+    cbn [expr_nodes] in Hclock. nia.
+  Qed.
+
+  (** Adding accepted inputs never lowers the database's spending unit. *)
+  Lemma inputs_unit_mono : forall ds es db, D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
+    D.unit db <= D.unit (inputs_db es db).
+  Proof.
+    intros ds es. induction es as [| e rest IH]; intros db Hwf Hsorted Hexprs;
+      cbn [inputs_db]; [apply Nat.le_refl |].
+    apply Forall_cons_iff in Hexprs. destruct Hexprs as [Hexpr Hrest].
+    destruct (F2_add_expr_wf ds e db Hwf Hexpr Hsorted)
+      as [Hwf' [Hsorted' [Hkind [Hslots [Hallocated [Hids Hunit]]]]]].
+    assert (Hrest' : Forall (expr_ok ds (snd (add_expr e db))) rest).
+    { eapply Forall_impl; [| exact Hrest]. intros x Hx.
+      exact (expr_ok_layout ds db (snd (add_expr e db)) x Hkind Hslots Hx). }
+    eapply Nat.le_trans; [exact Hunit |]. now apply IH.
+  Qed.
+
+  (** The ordered input cost telescopes potential at one common final spending budget. *)
+  Lemma T_inputs_amort : forall B U ds es db, D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
+    (D.ids (inputs_db es db) <= B)%N -> D.unit (inputs_db es db) <= U ->
+    (T_inputs es db + N.of_nat U * D.potential B (inputs_db es db) <=
+      1024 * (D.c_db + 1) * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) *
+        N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U ds es. induction es as [| e rest IH]; intros db Hwf Hsorted Hexprs Hids HU;
+      cbn [T_inputs inputs_db fold_right] in Hids, HU |- *.
+    - pose proof (node_budget_positive B U db 1 HU (Nat.le_refl 1)) as Hpositive.
+      change (1 <= N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * 1)%N in Hpositive.
+      rewrite N.mul_1_r in Hpositive |- *.
+      set (q := (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1))%N) in *.
+      replace (1024 * (D.c_db + 1) * N.of_nat U *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1))%N
+        with (1024 * (D.c_db + 1) * q)%N by (unfold q; ring). nia.
+    - apply Forall_cons_iff in Hexprs. destruct Hexprs as [Hexpr Hrest].
+      destruct (F2_add_expr_wf ds e db Hwf Hexpr Hsorted)
+        as [Hwf' [Hsorted' [Hkind [Hslots [Hallocated [Hids' Hunit']]]]]].
+      set (next := snd (add_expr e db)) in *.
+      assert (Hrest' : Forall (expr_ok ds next) rest).
+      { eapply Forall_impl; [| exact Hrest]. intros x Hx.
+        exact (expr_ok_layout ds db next x Hkind Hslots Hx). }
+      destruct (add_inputs_properties ds rest next Hwf' Hsorted' Hrest')
+        as [Hfinal [Hsorted_final [Hkind_final [Hslots_final [Hids_final Hgrowth]]]]].
+      rewrite add_inputs_db in Hids_final.
+      pose proof (inputs_unit_mono ds rest next Hwf' Hsorted' Hrest') as Hunit_final.
+      pose proof (add_expr_amort_bound B U ds e db Hwf Hexpr
+        (N.le_trans _ _ _ Hids_final Hids) (Nat.le_trans _ _ _ Hunit_final HU)) as Hhead.
+      fold next in Hhead.
+      specialize (IH next Hwf' Hsorted' Hrest' Hids HU).
+      assert (Hnum_slots : D.num_slots next = D.num_slots db).
+      { unfold D.num_slots. now rewrite Hslots. }
+      rewrite Hnum_slots in IH.
+      assert (Hunit : D.unit db <= U) by lia.
+      pose proof (node_budget_positive B U db 1 Hunit (Nat.le_refl 1)) as Hpositive.
+      change (1 <= N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * 1)%N in Hpositive.
+      rewrite N.mul_1_r in Hpositive.
+      set (q := (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1))%N) in Hpositive.
+      set (r := (1024 * (D.c_db + 1) * N.of_nat U *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1))%N) in *.
+      assert (Hr : (1 <= r)%N).
+      { unfold r. replace (1024 * (D.c_db + 1) * N.of_nat U *
+          N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1))%N
+          with (1024 * (D.c_db + 1) * q)%N by (unfold q; ring). nia. }
+      rewrite !Nat2N.inj_add, !N.mul_add_distr_l, N.mul_1_r. lia.
+  Qed.
+
+  (** Adding an expression transfers scaled potential at the result's spending budgets. *)
+  Lemma T_add_expr_amort : forall B U ds e db, D.wf db -> expr_ok ds db e ->
+    (D.ids (snd (add_expr e db)) <= B)%N -> D.unit (snd (add_expr e db)) <= U ->
+    (T_add_expr e db + N.of_nat U * D.potential B (snd (add_expr e db)) <=
+      c_sat * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * N.of_nat (expr_work e) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U ds e db Hwf Hexpr Hids HU.
+    eapply N.le_trans; [exact (add_expr_amort_bound B U ds e db Hwf Hexpr Hids HU) |].
+    apply N.add_le_mono_r. do 4 apply N.mul_le_mono_r. unfold c_sat. nia.
+  Qed.
+
+  (** Adding inputs pays for their nodes at the final unit and identifier budget. *)
+  Lemma T_inputs_le : forall B U ds rws ans es, front_ok ds rws ans es ->
+    let p := C.compile ds rws ans in
+    let db0 := E.load p (E.plan p) in
+    (D.ids (inputs_db es db0) <= B)%N -> D.unit (inputs_db es db0) <= U ->
+    (T_inputs es db0 + N.of_nat U * D.potential B (inputs_db es db0) <=
+      c_sat * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db0 + 1) *
+        N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es))%N.
+  Proof.
+    intros B U ds rws ans es [Hrules Hexprs]. cbv zeta. intros Hids HU.
+    set (p := C.compile ds rws ans) in *.
+    set (cp := E.plan p) in *.
+    assert (Hdecls : decls V.t p = ds) by apply C.compile_program.
+    assert (Hplan : E.plans_ok p cp).
+    { apply E.plan_checked. now apply C.compile_sorted. }
+    destruct (load_properties p cp) as [Hwf Hloaded].
+    assert (Hsorted : view_sorted (lookup_sorts ds) (D.view (E.load p cp))).
+    { destruct Hloaded as [Hkind [Hslots Hsort]].
+      unfold program_sorts in Hsort. now rewrite Hdecls in Hsort. }
+    assert (Hinputs : Forall (expr_ok ds (E.load p cp)) es).
+    { eapply Forall_impl; [| exact Hexprs]. intros e Hexpr.
+      exact (loaded_expr_ok p cp ds (E.load p cp) e Hdecls Hplan Hloaded Hexpr). }
+    pose proof (T_inputs_amort B U ds es (E.load p cp) Hwf Hsorted Hinputs Hids HU) as Hcost.
+    assert (Hzero : D.potential B (E.load p cp) = 0%N).
+    { rewrite E.load_spec. apply D.potential_init. }
+    rewrite Hzero, N.mul_0_r, N.add_0_r in Hcost.
+    eapply N.le_trans; [exact Hcost |].
+    do 4 apply N.mul_le_mono_r. unfold c_sat. nia.
   Qed.
 End SaturateT.
