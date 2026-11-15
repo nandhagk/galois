@@ -1850,7 +1850,300 @@ Module Destroy (O : OPS)
         * right. now right.
   Qed.
 
+  (** An exit advances the fresh counter exactly once for each inserted bridge. *)
+  Lemma split_exit_counter fresh e next ending extra :
+    split_exit fresh e = (next, (ending, extra)) ->
+    Pos.to_nat next = Pos.to_nat fresh + exit_split_count e.
+  Proof.
+    destruct e as [target actuals|guard operands yes ys no ns|values].
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      cbn [exit_split_count]. lia.
+    - destruct ys, ns; cbn [split_exit split_edge]; intro Hsplit;
+        inversion Hsplit; subst; cbn [exit_split_count];
+        rewrite ?Pos2Nat.inj_succ; lia.
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      cbn [exit_split_count]. lia.
+  Qed.
+
+  (** At most two bridge blocks are inserted for one exit. *)
+  Lemma exit_split_count_bound (e : exit positive O.G) : exit_split_count e <= 2.
+  Proof.
+    destruct e as [target actuals|guard operands yes ys no ns|values];
+      cbn [exit_split_count]; try lia.
+    destruct ys, ns; lia.
+  Qed.
+
+  (** The number of inserted bridges is at most twice the number of source blocks. *)
+  Lemma block_split_count_bound bs :
+    block_sum (fun body => exit_split_count (term _ _ _ body)) bs <= 2 * length bs.
+  Proof.
+    induction bs as [|[id body] rest IH]; cbn [block_sum fold_right snd length]; [lia|].
+    pose proof (exit_split_count_bound (term _ _ _ body)) as Hhead.
+    unfold block_sum in IH. lia.
+  Qed.
+
+  (** The block pass advances its fresh counter by the exact number of inserted bridges. *)
+  Lemma split_blocks_counter bs : forall fresh last out,
+    split_blocks fresh bs = (last, out) ->
+    Pos.to_nat last = Pos.to_nat fresh +
+      block_sum (fun body => exit_split_count (term _ _ _ body)) bs.
+  Proof.
+    induction bs as [|[id body] rest IH]; intros fresh last out Hsplit.
+    - inversion Hsplit; subst. cbn [block_sum fold_right]. lia.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      pose proof (split_exit_counter _ _ _ _ _ Hexit) as Hnext.
+      pose proof (IH next final tail Htail) as Hlast.
+      cbn [block_sum fold_right snd]. unfold block_sum in Hlast. lia.
+  Qed.
+
+  Definition block_labels (bs : list (positive * block positive O.K O.G)) :=
+    flat_map (fun item => fst item :: exit_targets (term _ _ _ (snd item))) bs.
+
+  (** The block-label inventory distributes over concatenation. *)
+  Lemma block_labels_append left right :
+    block_labels (left ++ right) = block_labels left ++ block_labels right.
+  Proof.
+    apply flat_map_app.
+  Qed.
+
+  (** A split exit uses original targets and labels from its allocated interval. *)
+  Lemma split_exit_labels fresh e next ending extra :
+    split_exit fresh e = (next, (ending, extra)) ->
+    forall x, In x (exit_targets ending ++ block_labels extra) ->
+      In x (exit_targets e) \/ Pos.to_nat fresh <= Pos.to_nat x < Pos.to_nat next.
+  Proof.
+    destruct e as [target actuals|guard operands yes ys no ns|values].
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      intros x Hx. left. cbn [block_labels flat_map] in Hx. now rewrite app_nil_r in Hx.
+    - destruct ys, ns; cbn [split_exit split_edge]; intro Hsplit;
+        inversion Hsplit; subst;
+        cbn [exit_targets block_labels flat_map fst snd term app In];
+        intros x Hx; repeat rewrite Pos2Nat.inj_succ;
+        intuition (subst; auto; lia).
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      intros x Hx. left. cbn [block_labels flat_map] in Hx. now rewrite app_nil_r in Hx.
+  Qed.
+
+  (** The split program uses original labels and labels from the allocated interval. *)
+  Lemma split_blocks_labels bs : forall fresh last out,
+    split_blocks fresh bs = (last, out) ->
+    forall x, In x (block_labels out) ->
+      In x (block_labels bs) \/ Pos.to_nat fresh <= Pos.to_nat x < Pos.to_nat last.
+  Proof.
+    induction bs as [|[id body] rest IH]; intros fresh last out Hsplit x Hx.
+    - inversion Hsplit; subst. contradiction.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      change (In x ((id :: exit_targets ending) ++ block_labels (extra ++ tail))) in Hx.
+      rewrite block_labels_append in Hx.
+      change (In x ((id :: exit_targets (term _ _ _ body)) ++ block_labels rest) \/
+        Pos.to_nat fresh <= Pos.to_nat x < Pos.to_nat final).
+      pose proof (split_exit_counter _ _ _ _ _ Hexit) as Hnext.
+      pose proof (split_blocks_counter _ _ _ _ Htail) as Hlast.
+      apply in_app_or in Hx as [[Heq|Hx]|Hx].
+      + left. apply in_or_app. left. now left.
+      + destruct (split_exit_labels _ _ _ _ _ Hexit x (in_or_app _ _ _ (or_introl Hx)))
+          as [Hold|Hfresh].
+        * left. apply in_or_app. left. now right.
+        * right. lia.
+      + apply in_app_or in Hx as [Hx|Hx].
+        * destruct (split_exit_labels _ _ _ _ _ Hexit x (in_or_app _ _ _ (or_intror Hx)))
+            as [Hold|Hfresh].
+          -- left. apply in_or_app. left. now right.
+          -- right. lia.
+        * destruct (IH next final tail Htail x Hx) as [Hold|Hfresh].
+          -- left. apply in_or_app. now right.
+          -- right. lia.
+  Qed.
+  (** A positive identifier fitting a width is numerically below that power of two. *)
+  Lemma positive_width_value x w : Pos.size_nat x <= w -> Pos.to_nat x < 2 ^ w.
+  Proof.
+    intro Hwidth. pose proof (Pos.size_nat_upper x) as Hvalue.
+    pose proof (Nat.pow_le_mono_r 2 (Pos.size_nat x) w ltac:(discriminate) Hwidth) as Hpow.
+    lia.
+  Qed.
+
+  (** Function syntax size fits below the power of two recorded by its width. *)
+  Lemma function_size_value (s : P.t) : function_size s < 2 ^ function_width s.
+  Proof.
+    assert (Hwidth : Pos.size_nat (Pos.of_succ_nat (function_size s)) <= function_width s).
+    { unfold function_width. rewrite destroy_graph_max_nat. apply Nat.le_max_r. }
+    pose proof (positive_width_value _ _ Hwidth) as Hvalue.
+    rewrite SuccNat2Pos.id_succ in Hvalue. lia.
+  Qed.
+
+  (** All possible bridge allocations fit within two extra identifier bits. *)
+  Lemma split_counter_budget (s : P.t) :
+    Pos.to_nat (fresh_after (function_ids s)) + 2 * length (blocks _ _ _ s) <
+      2 ^ (function_width s + 2).
+  Proof.
+    pose proof (fresh_after_width (function_ids s) (function_width s)
+      (function_width_positive s) (function_id_width s)) as Hfresh.
+    pose proof (positive_width_value _ _ Hfresh) as Hfresh_value.
+    pose proof (function_size_value s) as Hsize.
+    assert (Hblocks : length (blocks _ _ _ s) <= function_size s).
+    { unfold function_size. lia. }
+    rewrite Nat.pow_add_r in Hfresh_value |- *. cbn [Nat.pow] in Hfresh_value |- *. nia.
+  Qed.
+
+  (** Every identifier after splitting fits within two extra bits of the source width. *)
+  Lemma split_ids_width : forall s split_s, split s = Some split_s ->
+    forall x, In x (function_ids split_s) -> Pos.size_nat x <= function_width s + 2.
+  Proof.
+    intros s split_s Hsplit.
+    pose proof (proj1 (split_inventory _ _ Hsplit)) as Hvars.
+    unfold split in Hsplit.
+    destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s))
+      as [last out] eqn:Hblocks. inversion Hsplit; subst split_s.
+    intros x Hx. unfold function_ids in Hx. cbn [entry blocks] in Hx.
+    rewrite Hvars in Hx. destruct Hx as [Heq|Hx].
+    - subst x. pose proof (function_id_width s (entry _ _ _ s) (or_introl eq_refl)). lia.
+    - apply in_app_or in Hx as [Hx|Hx].
+      + pose proof (function_var_width s x Hx). lia.
+      + destruct (split_blocks_labels _ _ _ _ Hblocks x Hx) as [Hold|Hnew].
+        * assert (Hwidth : Pos.size_nat x <= function_width s).
+          { apply function_id_width. unfold function_ids. right. apply in_or_app. now right. }
+          lia.
+        * pose proof (split_blocks_counter _ _ _ _ Hblocks) as Hcounter.
+          pose proof (block_split_count_bound (blocks _ _ _ s)) as Hcount.
+          pose proof (split_counter_budget s) as Hbudget.
+          apply Pos.size_nat_least. lia.
+  Qed.
+
 End Destroy.
+
+(** Flattening charges list cells, output cells and the callback budget. *)
+Lemma destroy_flat_map_clock {A B} (f : A -> list B) Tf k xs :
+  (forall x, In x xs -> (Tf x <= k * N.of_nat (length (f x) + 1))%N) ->
+  (Code.List.T_flat_map f Tf xs <=
+    (k + 4) * N.of_nat (length xs + length (flat_map f xs) + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hcallback.
+  - time_unfold Code.List.T_flat_map. cbn [length flat_map]. nia.
+  - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+    specialize (IH (fun y Hy => Hcallback y (or_intror Hy))).
+    pose proof (Datatypes.T_app_le (f x) (flat_map f rest)) as Happend.
+    time_unfold Code.List.T_flat_map. cbn [flat_map length]. rewrite length_app.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+Qed.
+
+(** The variable inventory contains at least the destination of every instruction. *)
+Lemma destroy_instruction_count {K} (instructions : list (positive * K * list positive)) :
+  length instructions <= length (flat_map (fun '(dst, _, args) => dst :: args) instructions).
+Proof.
+  induction instructions as [|[[dst op] args] rest IH]; cbn [flat_map length]; [lia|].
+  rewrite length_app. cbn [length]. lia.
+Qed.
+
+(** Collecting an exit row costs at most a constant times its length. *)
+Lemma destroy_exit_uses_clock {G} (e : exit positive G) :
+  (T_exit_uses e <= 4 * N.of_nat (length (exit_uses e) + 1))%N.
+Proof.
+  destruct e as [target actuals|guard operands yes ys no ns|values].
+  - unfold T_exit_uses. cbn [exit_uses]. nia.
+  - pose proof (Datatypes.T_app_le ys ns) as Hargs.
+    pose proof (Datatypes.T_app_le operands (ys ++ ns)) as Hoperands.
+    unfold T_exit_uses. cbn [exit_uses]. rewrite !length_app.
+    rewrite !Nat2N.inj_add in *. nia.
+  - unfold T_exit_uses. cbn [exit_uses]. nia.
+Qed.
+
+(** Collecting all function variables costs at most a constant times syntax size. *)
+Lemma destroy_function_vars_clock {K G} (s : func positive K G) :
+  (T_function_vars s <= 128 * N.of_nat (function_size s + 1))%N.
+Proof.
+  set (row := fun item : positive * block positive K G =>
+    params _ _ _ (snd item) ++
+    flat_map (fun '(dst, _, args) => dst :: args) (code _ _ _ (snd item)) ++
+    exit_uses (term _ _ _ (snd item))).
+  set (callback := fun item : positive * block positive K G =>
+    (1 + (Datatypes.T_snd item + T_params _ _ _ (snd item) +
+      (Datatypes.T_snd item + T_code _ _ _ (snd item) +
+        Code.List.T_flat_map (fun '(dst, _, args) => dst :: args) (fun _ => 1%N)
+          (code _ _ _ (snd item)) +
+        (Datatypes.T_snd item + T_term _ _ _ (snd item) +
+          T_exit_uses (term _ _ _ (snd item))) +
+        Datatypes.T_app
+          (flat_map (fun '(dst, _, args) => dst :: args) (code _ _ _ (snd item)))
+          (exit_uses (term _ _ _ (snd item)))) +
+      Datatypes.T_app (params _ _ _ (snd item))
+        (flat_map (fun '(dst, _, args) => dst :: args) (code _ _ _ (snd item)) ++
+          exit_uses (term _ _ _ (snd item)))))%N).
+  assert (Hcallback : forall item, (callback item <= 64 * N.of_nat (length (row item) + 1))%N).
+  { intros [id [formals instructions ending]].
+    pose proof (destroy_flat_map_clock (fun '(dst, _, args) => dst :: args)
+      (fun _ : positive * K * list positive => 1%N) 1%N instructions
+      ltac:(intros; rewrite Nat2N.inj_add; nia)) as Hcode.
+    pose proof (destroy_instruction_count instructions) as Hcount.
+    pose proof (destroy_exit_uses_clock ending) as Hexit.
+    pose proof (Datatypes.T_app_le
+      (flat_map (fun '(dst, _, args) => dst :: args) instructions) (exit_uses ending)) as Happend.
+    pose proof (Datatypes.T_app_le formals
+      (flat_map (fun '(dst, _, args) => dst :: args) instructions ++ exit_uses ending)) as Hparams.
+    unfold callback, row, Datatypes.T_snd, T_params, T_code, T_term.
+    time_cbn. rewrite !length_app.
+    apply time_of_nat_le in Hcount. rewrite !Nat2N.inj_add in *. nia. }
+  pose proof (destroy_flat_map_clock row callback 64%N (blocks _ _ _ s)
+    (fun item _ => Hcallback item)) as Hrows.
+  pose proof (Datatypes.T_app_le (inputs _ _ _ s)
+    (flat_map row (blocks _ _ _ s))) as Hinputs.
+  unfold T_function_vars. fold row callback. unfold T_inputs, T_blocks. time_cbn.
+  unfold function_size, function_vars. fold row. rewrite length_app.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Each exit has at most two target identifiers. *)
+Lemma destroy_target_count {G} (e : exit positive G) : length (exit_targets e) <= 2.
+Proof.
+  destruct e; cbn [exit_targets length]; lia.
+Qed.
+
+(** Listed block labels and targets occupy at most three cells per source block. *)
+Lemma destroy_id_rows_length {K G} (bs : list (positive * block positive K G)) :
+  length (flat_map (fun item => fst item :: exit_targets (term _ _ _ (snd item))) bs) <=
+    3 * length bs.
+Proof.
+  induction bs as [|[id body] rest IH]; cbn [flat_map fst snd length]; [lia|].
+  rewrite length_app. cbn [length]. pose proof (destroy_target_count (term _ _ _ body)). lia.
+Qed.
+
+(** The full identifier inventory is linear in function syntax size. *)
+Lemma destroy_function_ids_length {K G} (s : func positive K G) :
+  length (function_ids s) <= 3 * (function_size s + 1).
+Proof.
+  pose proof (destroy_id_rows_length (blocks _ _ _ s)) as Hrows.
+  unfold function_ids, function_size. cbn [length]. rewrite length_app. lia.
+Qed.
+
+(** Collecting identifiers costs at most a constant times function syntax size. *)
+Lemma destroy_function_ids_clock {K G} (s : func positive K G) :
+  (T_function_ids s <= 256 * N.of_nat (function_size s + 1))%N.
+Proof.
+  pose proof (destroy_function_vars_clock s) as Hvars.
+  pose proof (destroy_id_rows_length (blocks _ _ _ s)) as Hlength.
+  set (row := fun item : positive * block positive K G =>
+    fst item :: exit_targets (term _ _ _ (snd item))).
+  set (callback := fun item : positive * block positive K G =>
+    (1 + (Datatypes.T_fst item +
+      (Datatypes.T_snd item + T_term _ _ _ (snd item) +
+        T_exit_targets (term _ _ _ (snd item)))))%N).
+  assert (Hcallback : forall item, (callback item <= 8 * N.of_nat (length (row item) + 1))%N).
+  { intros [id [formals instructions ending]].
+    unfold callback, row, Datatypes.T_fst, Datatypes.T_snd, T_term, T_exit_targets.
+    destruct ending; time_cbn; nia. }
+  pose proof (destroy_flat_map_clock row callback 8%N (blocks _ _ _ s)
+    (fun item _ => Hcallback item)) as Hrows.
+  pose proof (Datatypes.T_app_le (function_vars s)
+    (flat_map row (blocks _ _ _ s))) as Happend.
+  unfold T_function_ids. fold row callback. unfold T_entry, T_blocks. time_cbn.
+  apply time_of_nat_le in Hlength. fold row in Hlength.
+  unfold function_size in *. rewrite !Nat2N.inj_add in *. nia.
+Qed.
 
 Module DestroyT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
@@ -1878,13 +2171,118 @@ Module DestroyT (O : OPS)
   Definition c_ds : N := 1. (* STUB *)
   Definition destroy_work (s : P.t) :=
     function_size s + destroy_edge_args s + split_count s + 1.
+  (** The maximum comparison pays only for the width of its first identifier. *)
+  Lemma positive_max_clock a b :
+    (Pos.T_max a b <= N.of_nat (Pos.size_nat a) + 2)%N.
+  Proof.
+    pose proof (Pos.T_compare_le a b) as Hcompare.
+    time_unfold Pos.T_max. nia.
+  Qed.
+
+  (** Finding an identifier maximum is linear in row length and row width. *)
+  Lemma positive_fold_max_clock xs w :
+    (forall x, In x xs -> Pos.size_nat x <= w) ->
+    (List.T_fold_right Pos.max Pos.T_max 1%positive xs <=
+      4 * N.of_nat (length xs + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    induction xs as [|x rest IH]; intro Hwidth.
+    - time_unfold List.T_fold_right. cbn [length]. rewrite Nat2N.inj_add. nia.
+    - pose proof (Hwidth x (or_introl eq_refl)) as Hx.
+      specialize (IH (fun y Hy => Hwidth y (or_intror Hy))).
+      pose proof (positive_max_clock x (fold_right Pos.max 1%positive rest)) as Hmax.
+      apply time_of_nat_le in Hx.
+      time_unfold List.T_fold_right. cbn [length].
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** Allocating above a row maximum is linear in its length and identifier width. *)
+  Lemma fresh_after_clock xs w : 1 <= w ->
+    (forall x, In x xs -> Pos.size_nat x <= w) ->
+    (T_fresh_after xs <= 8 * N.of_nat (length xs + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hpositive Hwidth.
+    assert (Hmax : Pos.size_nat (fold_right Pos.max 1%positive xs) <= w).
+    { induction xs as [|x rest IH].
+      - exact Hpositive.
+      - cbn [fold_right]. apply positive_max_width.
+        + apply Hwidth. now left.
+        + apply IH. intros y Hy. apply Hwidth. now right. }
+    pose proof (Pos.T_succ_le (fold_right Pos.max 1%positive xs)) as Hsucc.
+    pose proof (positive_fold_max_clock xs w Hwidth) as Hfold.
+    change (List.T_fold_right Pos.max (fun x acc => Pos.T_max x acc) 1%positive xs <=
+      4 * N.of_nat (length xs + 1) * N.of_nat (w + 1))%N in Hfold.
+    apply time_of_nat_le in Hmax. time_unfold T_fresh_after.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Splitting an exit performs at most two fresh-counter increments. *)
+  Lemma split_exit_clock fresh e :
+    (T_split_exit fresh e <= 16 * N.of_nat (Pos.size_nat fresh + 2))%N.
+  Proof.
+    pose proof (Pos.T_succ_le fresh) as Hfirst.
+    pose proof (Pos.T_succ_le (Pos.succ fresh)) as Hsecond.
+    pose proof (Z.size_nat_succ fresh) as Hwidth.
+    apply time_of_nat_le in Hwidth.
+    destruct e as [target actuals|guard operands yes ys no ns|values].
+    - time_unfold T_split_exit. rewrite Nat2N.inj_add. nia.
+    - destruct ys, ns; unfold T_split_exit, T_split_edge; cbn [split_edge];
+        unfold Datatypes.T_app; time_cbn; rewrite !Nat2N.inj_add in *; nia.
+    - time_unfold T_split_exit. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** The split pass is linear in block count at a width containing every allocated label. *)
+  Lemma split_blocks_clock bs w : forall fresh,
+    Pos.to_nat fresh + 2 * length bs < 2 ^ w ->
+    (T_split_blocks fresh bs <=
+      64 * N.of_nat (length bs + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    induction bs as [|[id body] rest IH]; intros fresh Hbudget.
+    - time_unfold T_split_blocks. cbn [length]. rewrite Nat2N.inj_add. nia.
+    - assert (Hfresh : Pos.size_nat fresh <= w).
+      { apply Pos.size_nat_least. lia. }
+      pose proof (split_exit_clock fresh (term _ _ _ body)) as Hexit_time.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extra]] eqn:Hexit.
+      pose proof (split_exit_counter _ _ _ _ _ Hexit) as Hnext.
+      pose proof (exit_split_count_bound (term _ _ _ body)) as Hcount.
+      assert (Htail_budget : Pos.to_nat next + 2 * length rest < 2 ^ w).
+      { cbn [length] in Hbudget. lia. }
+      specialize (IH next Htail_budget).
+      destruct (split_exit_inventory _ _ _ _ _ Hexit) as [_ [Hextra _]].
+      destruct (split_blocks next rest) as [last tail] eqn:Htail.
+      pose proof (Datatypes.T_app_le extra tail) as Happend.
+      assert (Hextra_small : length extra <= 2) by lia.
+      apply time_of_nat_le in Hfresh. apply time_of_nat_le in Hextra_small.
+      time_unfold T_split_blocks. rewrite Hexit, Htail.
+      unfold T_term, T_params, T_code. cbn [length].
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** Splitting satisfies the source syntax and bit-width budget. *)
+  Lemma split_source_clock s :
+    (T_split s <= 4096 * N.of_nat (destroy_work s) *
+      N.of_nat (function_width s + 1))%N.
+  Proof.
+    pose proof (destroy_function_ids_clock s) as Hsyntax.
+    pose proof (destroy_function_ids_length s) as Hids_length.
+    pose proof (fresh_after_clock (function_ids s) (function_width s)
+      (function_width_positive s) (function_id_width s)) as Hfresh.
+    pose proof (split_blocks_clock (blocks _ _ _ s) (function_width s + 2)
+      (fresh_after (function_ids s)) (split_counter_budget s)) as Hblocks.
+    assert (Hblock_count : length (blocks _ _ _ s) <= function_size s).
+    { unfold function_size. lia. }
+    apply time_of_nat_le in Hids_length. apply time_of_nat_le in Hblock_count.
+    time_unfold T_split. unfold T_blocks, T_entry, T_inputs.
+    destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s)).
+    unfold destroy_work. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
+
   Lemma T_destroy_le : forall s,
     (T_destroy s <= c_ds * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma destroy_bigO : bigO (fun _ : P.t => True)
     (fun s => N.of_nat (destroy_work s * (function_width s + 1))) T_destroy.
   Proof. Admitted. (* STUB *)
-  Definition k_split : N := 1. (* STUB *)
+  Definition k_split : N := 4096.
   Definition k_copies : N := 1. (* STUB *)
   Definition k_wrap : N := 1.
   Lemma F1_destroy_phases : forall s, destroy s =
@@ -1936,7 +2334,9 @@ Module DestroyT (O : OPS)
   Qed.
   Lemma T1_split : forall s,
     (T_split s <= k_split * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro s. unfold k_split. apply split_source_clock.
+  Qed.
   Lemma F9_moves_size : forall s split_s, split s = Some split_s ->
     fold_right (fun mc n => length (fst (fst mc)) + 1 + n) 0 (checked_moves split_s) <=
       destroy_work s /\
