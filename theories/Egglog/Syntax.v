@@ -4,8 +4,8 @@
     For example, a relation declaration has output kind [ORel].
     Builds on: Stdlib lists and binary arithmetic, Base key signatures, and Argent. *)
 
-From Stdlib Require Import List PArith NArith Bool.
-From Argent Require Import Time Std.
+From Stdlib Require Import List PArith NArith Bool Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 
 Inductive cell (V : Type) : Type :=
@@ -159,9 +159,23 @@ Module CellKeyT (V : KEY_T) <: KEY_T.
   Include CellKey V.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 8 * (V.c_key + 1).
+  (** Encoding adds one constructor bit to each identifier or value code. *)
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [i | v]; try pose proof (V.T_encode_le v) as Hencode;
+      unfold bits, encode, c_key, V.bits in *;
+      cbn [Pos.size_nat]; time_unfold T_encode;
+      time_simpl; time_cbn; nia.
+  Qed.
+  (** Cell equality charges the first operand's code and its constructor. *)
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [i | v] [j | w];
+      try pose proof (Pos.T_eqb_le i j) as Hcompare;
+      try pose proof (V.T_eqb_le v w) as Hcompare;
+      unfold bits, encode, c_key, V.bits in *;
+      cbn [Pos.size_nat]; time_unfold T_eqb;
+      time_simpl; time_cbn; nia.
+  Qed.
 End CellKeyT.
