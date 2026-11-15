@@ -521,6 +521,61 @@ Proof.
       cbn. destruct (p x); [now apply loop_order_cons|exact Htail].
 Qed.
 
+(** A body step preserves every answer vertex, including the premarked header. *)
+Local Lemma loop_body_step_member : forall g t h x st,
+  In x (loop_body_answer st) ->
+  match body_step g t h st with
+  | inl next => In x (loop_body_answer next)
+  | inr result => In x result
+  end.
+Proof.
+  intros g t h x [pending seen answer] Hmember. cbn [loop_body_answer] in Hmember.
+  destruct pending as [|v rest].
+  - cbn [body_step]. rewrite rev_append_rev, app_nil_r.
+    now apply (proj1 (in_rev answer x)).
+  - cbn [body_step].
+    destruct (trie_get v seen) as [present|]; destruct (trie_get v (pre t)) as [number|];
+      cbn [loop_body_answer]; try exact Hmember.
+    now right.
+Qed.
+
+Local Lemma loop_body_loop_member : forall g t h fs (Hacc : Acc loopN_lt fs),
+  forall x, In x (loop_body_answer (snd fs)) ->
+  match Argent.Loop.loop loopN_lt (loopN_step (body_step g t h)) fs Hacc with
+  | inl final => In x (loop_body_answer final)
+  | inr result => In x result
+  end.
+Proof.
+  intros g t h fs Hacc.
+  induction Hacc as [[fuel st] Hnext IH] using Acc_ind_dep.
+  cbn [snd]. intros x Hmember. destruct fuel as [|fuel].
+  - exact Hmember.
+  - cbn [Argent.Loop.loop loopN_step Acc_inv].
+    pose proof (loop_body_step_member g t h x st Hmember) as Hstep.
+    destruct (body_step g t h st) as [next|result] eqn:Hresult.
+    + apply IH. exact Hstep.
+    + exact Hstep.
+Qed.
+
+(** Even an exhausted raw collection retains the header installed before traversal. *)
+Local Lemma loop_collect_header : forall g t h sources, In h (collect g t h sources).
+Proof.
+  intros g t h sources.
+  assert (Hinitial : In h (loop_body_answer
+    (LoopBodyState sources (PTrieCode.set h tt Empty) [h]))) by now left.
+  unfold collect, loopN.
+  match goal with
+  | |- context [Argent.Loop.loop _ _ ?fs ?Hacc] =>
+      pose proof (loop_body_loop_member g t h fs Hacc h Hinitial) as Hloop
+  end.
+  match goal with
+  | Hloop : context [Argent.Loop.loop ?lt ?step ?fs ?Hacc] |- _ =>
+      destruct (Argent.Loop.loop lt step fs Hacc) as [final|result]
+  end.
+  - rewrite rev_append_rev, app_nil_r. now apply (proj1 (in_rev _ h)).
+  - exact Hloop.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -891,7 +946,27 @@ Module LoopsT <: LOOPS_ALL.
   Lemma F7_body_initial : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h (body_initial h (latches (classify g t) h)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h Hgraph Hprepared Htree Hheader.
+    unfold body_invariant, body_initial.
+    cbn [loop_body_answer loop_body_seen loop_body_pending].
+    split; [exists 0%nat; reflexivity|].
+    split; [constructor; [simpl; tauto|constructor]|].
+    split; [now left|]. split.
+    - intro v. destruct (Pos.eq_dec v h) as [->|Hne].
+      + change (PTrie.get h (PTrie.set h tt PTrie.empty) = Some tt <-> In h [h]).
+        rewrite PTrie.get_set_same. split; [intros _; now left|intros _; reflexivity].
+      + change (PTrie.get v (PTrie.set h tt PTrie.empty) = Some tt <-> In v [h]).
+        rewrite PTrie.get_set_other by exact Hne. rewrite PTrie.get_empty.
+        split; [discriminate|]. intros [Heq|Hfalse].
+        * exfalso. apply Hne. now symmetry.
+        * contradiction.
+    - split.
+      + intros v [<-|Hin]; [|contradiction]. unfold collected. apply loop_collect_header.
+      + intros v Hin.
+        destruct (F5_back_edges g t r v h Hgraph Hprepared Htree) as [Hback Hlatch].
+        exact (proj1 (proj1 Hback (proj1 Hlatch Hin))).
+  Qed.
 
   Lemma F8_body_step : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
