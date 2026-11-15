@@ -276,7 +276,8 @@ Proof.
     Fun positive 5 [Var 2; Var 3] None] [Put 5 [Var 1; Var 3] None]) rho).
   - right; left; reflexivity.
   - constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hcopy] |].
-    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
+    constructor;
+      [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
 Qed.
 
 (** Closure of the load rule follows the two source pointer edges. *)
@@ -296,7 +297,8 @@ Proof.
   - right; right; left; reflexivity.
   - constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hload] |].
     constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hlocation] |].
-    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
+    constructor;
+      [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
 Qed.
 
 (** Closure of the store rule adds the stored pointee at the destination location. *)
@@ -317,7 +319,8 @@ Proof.
   - right; right; right; left; reflexivity.
   - constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hstore] |].
     constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hlocation] |].
-    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
+    constructor;
+      [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
 Qed.
 
 (** An output-free closed extension contains every source inclusion derivation. *)
@@ -339,7 +342,8 @@ Proof.
     apply Hseed; split; [reflexivity | exists x, y; split; [reflexivity | right; left; auto]].
   - eapply pointer_closed_load;
       [exact Hclosed | exact Houtputs | | exact IHlocation | exact IHpoints].
-    apply Hseed; split; [reflexivity | exists x, y; split; [reflexivity | right; right; left; auto]].
+    apply Hseed; split;
+      [reflexivity | exists x, y; split; [reflexivity | right; right; left; auto]].
   - eapply pointer_closed_store;
       [exact Hclosed | exact Houtputs | | exact IHlocation | exact IHpoints].
     apply Hseed; split; [reflexivity | exists x, y; split; [reflexivity |]].
@@ -434,7 +438,8 @@ Lemma pointer_seed_entries_length : forall initial_relation q,
   length (pointer_seed_entries initial_relation q) =
     length (constraints q) + length (initial_pointers q).
 Proof.
-  intros initial_relation [instructions initial]; cbn [pointer_seed_entries constraints initial_pointers].
+  intros initial_relation [instructions initial].
+  cbn [pointer_seed_entries constraints initial_pointers].
   rewrite length_app, !length_map; reflexivity.
 Qed.
 
@@ -950,7 +955,8 @@ Module Andersen (V : VALUE with Definition t := positive)
   Proof.
     intros [instructions initial]; cbn [pointer_seed_entries]; apply Forall_app; split.
     - apply Forall_forall; intros entry Hin; apply in_map_iff in Hin.
-      destruct Hin as [instruction [Heq Hin]]; subst entry; destruct instruction; split; reflexivity.
+      destruct Hin as [instruction [Heq Hin]]; subst entry;
+        destruct instruction; split; reflexivity.
     - apply Forall_forall; intros entry Hin; apply in_map_iff in Hin.
       destruct Hin as [[x y] [Heq Hin]]; subst entry; split; reflexivity.
   Qed.
@@ -1150,7 +1156,8 @@ Module Andersen (V : VALUE with Definition t := positive)
 End Andersen.
 
 Module AndersenT (V : VALUE_T with Definition t := positive)
-    (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D) <: ANDERSEN_ALL V I J D R.
+    (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D)
+    <: ANDERSEN_ALL V I J D R.
   Include Andersen V I J D R.
   Module SeedTime := PointerSeedTime V I J D R.
   TimeFun compile.
@@ -1224,7 +1231,8 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
       pose proof (proj1 (pointer_layout_size_bounds (Syntax.slots V.t (R.plan (compile q)))))
         as Hlength; lia. }
     pose proof (SeedTime.fold_time (compile q) (pointer_seed_entries 5 q) T_seed_put (k_rules + 1)
-      (R.plan_checked (compile q) (program_sorted q)) Hslots seed_put_time (seed_entries_ok q)) as Hfold.
+      (R.plan_checked (compile q) (program_sorted q)) Hslots seed_put_time (seed_entries_ok q))
+      as Hfold.
     rewrite pointer_seed_entries_length in Hfold; exact Hfold.
   Qed.
 
@@ -1242,7 +1250,8 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     { exact (proj1 (pointer_seed_budget D.c_db k_rules)). }
     assert (Hfixed : (D.T_init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q))) +
       R.T_plan (compile q) + 16 <= k_seed)%N).
-    { eapply N.le_trans; [apply N.add_le_mono_r; apply N.add_le_mono; [exact Hinit | exact Hplan] |].
+    { eapply N.le_trans;
+        [apply N.add_le_mono_r; apply N.add_le_mono; [exact Hinit | exact Hplan] |].
       exact (proj2 (pointer_seed_budget D.c_db k_rules)). }
     clear Hinit Hplan.
     pose proof (N.mul_le_mono_l _ _ (N.of_nat (D.unit (seed q))) Hcharge) as Hscaled.
@@ -1260,9 +1269,10 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     time_unfold T_seed; time_simpl.
     change (pointer_plan_slots (R.plan (compile q))) with
       (Syntax.slots V.t (R.plan (compile q))).
-    rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1) in Hentries |- *.
-    pose proof (pointer_seed_composition _ _ _ _ D.c_db k_seed _ _ Hunit Hentries Hfixed Hfold_bound)
-      as Htotal.
+    rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1)
+      in Hentries |- *.
+    pose proof (pointer_seed_composition _ _ _ _ D.c_db k_seed _ _
+      Hunit Hentries Hfixed Hfold_bound) as Htotal.
     unfold c_andersen, k_wrap.
     change (fun db entry => T_seed_put db entry) with T_seed_put.
     replace (k_seed + D.c_db + 32 + 32)%N with (k_seed + D.c_db + 64)%N by lia.
@@ -1338,7 +1348,8 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
       + apply seed_loaded.
       + rewrite <- solve_run; exact Hsolve.
     - intros f key output Hrow; apply seed_rows in Hrow.
-      pose proof (solve_seed_rows q lim f key output Hrow) as Hnew; rewrite Hsolve in Hnew; exact Hnew.
+      pose proof (solve_seed_rows q lim f key output Hrow) as Hnew.
+      rewrite Hsolve in Hnew; exact Hnew.
     - intros f key output Hrow; apply (solve_no_outputs q lim f key output).
       rewrite Hsolve; exact Hrow.
     - exact Hderive.
@@ -1347,7 +1358,8 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Lemma F6_closed_source : forall q w, closed V.prim V.merge (compile q) w ->
     (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
     forall x a, may_points q x a -> row w 5 [Val x; Val a] None.
-  Proof. Admitted. (* PLAN-DEFECT: pointer_closed_source_counterexample has only Some (Val 1) outputs. *)
+  Proof. Admitted. (* PLAN-DEFECT: pointer_closed_source_counterexample
+    has only Some (Val 1) outputs at relation 5. *)
 
   Lemma F7_step_covered : forall q r instruction before after,
     pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
