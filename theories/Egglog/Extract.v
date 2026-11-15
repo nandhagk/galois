@@ -4612,23 +4612,73 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V) (Q : PQ
     apply dag_unfold_spec.
   Qed.
 
+  Module Correct := SearchCorrect V C Q.
+  Module Finals := SearchFinals V C.
+
+  (** Every finite source yields a complete attained optimal final table. *)
+  Lemma best_rows_spec : forall (db : D.t) rs,
+    exists costs, Finals.finalised_valid rs costs (best_rows db rs) /\
+      Semantics.search_knuth rs costs /\ Semantics.search_best_complete rs (best_rows db rs).
+  Proof.
+    intros db rs.
+    destruct (Correct.best_rows_correct D.t db rs
+      (SearchProof.search_initial_invariant D.t db rs)
+      (SearchProof.search_step_invariant D.t rs)) as [_ Hresult].
+    exact Hresult.
+  Qed.
+
+  (** The public driver has the generic finite-row search specification. *)
+  Lemma best_result : forall cs db,
+    exists costs, Finals.finalised_valid (Enumeration.enumerated_rows cs db) costs (best cs db) /\
+      Semantics.search_knuth (Enumeration.enumerated_rows cs db) costs /\
+      Semantics.search_best_complete (Enumeration.enumerated_rows cs db) (best cs db).
+  Proof.
+    intros cs db. exact (best_rows_spec db (Enumeration.enumerated_rows cs db)).
+  Qed.
+
   Lemma best_row : forall cs db c n f k, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     In (c, (n, (f, k))) (best cs db) ->
     row (D.view db) f k (Some (Id c)) /\
       n = C.fn_cost f (map (cost_of (best cs db)) k).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db c n f k Hwf Hcanonical Hinventory Hin.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    destruct (best_result cs db) as [costs [Hfinals [Hoptimal Hcomplete]]].
+    destruct (Finals.finalised_row (Enumeration.enumerated_rows cs db) costs (best cs db)
+      c n f k Hfinals Hin) as [Hrow Hcost].
+    split; [now apply (proj1 (Hrows f k c))|exact Hcost].
+  Qed.
 
   Lemma best_optimal : forall cs db c e, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     represents (D.view db) (Id c) e ->
     exists n ch, In (D.repr db c, (n, ch)) (best cs db) /\ (n <= tree_cost e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db c e Hwf Hcanonical Hinventory Hrep.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    destruct (best_result cs db) as [costs [Hfinals [Hoptimal Hcomplete]]].
+    pose proof (DatabaseTrees.database_search_represents db (Enumeration.enumerated_rows cs db)
+      Hwf Hcanonical (fun f k i Hrow => proj2 (Hrows f k i) Hrow) (Id c) e Hrep) as Hexact.
+    change (search_represents (Enumeration.enumerated_rows cs db) (Id (D.repr db c)) e)
+      in Hexact.
+    destruct (Hcomplete (D.repr db c) e Hexact) as [n [ch Hin]].
+    exists n, ch. split; [exact Hin|].
+    exact (Finals.finalised_optimal (Enumeration.enumerated_rows cs db) costs (best cs db)
+      Hfinals Hoptimal (D.repr db c) n ch Hin e Hexact).
+  Qed.
 
   Lemma best_attained : forall cs db c n ch, D.wf db -> D.canonical db ->
-    ctor_inventory cs db ->
-    In (c, (n, ch)) (best cs db) ->
+    ctor_inventory cs db -> In (c, (n, ch)) (best cs db) ->
     exists e, represents (D.view db) (Id c) e /\ tree_cost e = n.
-  Proof. Admitted. (* STUB *)
-
+  Proof.
+    intros cs db c n ch Hwf Hcanonical Hinventory Hin.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    destruct (best_result cs db) as [costs [Hfinals [Hoptimal Hcomplete]]].
+    destruct (Finals.finalised_attained (Enumeration.enumerated_rows cs db) costs (best cs db)
+      Hfinals c n ch Hin) as [e [Hrep Hcost]].
+    exists e. split; [|exact Hcost].
+    exact (DatabaseTrees.search_database_represents db (Enumeration.enumerated_rows cs db)
+      Hwf (fun f k i Hrow => proj1 (Hrows f k i) Hrow) (Id c) e Hrep).
+  Qed.
   (** Canonical-key validation makes lookup's canonicalization an identity. *)
   Lemma checked_key_canonical : forall db k, D.wf db ->
     dag_check_key (D.ids db) (fun i => fst (D.find i db)) k = true ->
