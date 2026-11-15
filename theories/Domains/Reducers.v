@@ -420,9 +420,49 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
       with Definition gamma := tagged_gamma L.is_word B0.pgamma)
     <: REDUCTION_STEPS BitsLang A B.
   Include IntervalCongrCode L A0 B0 A B.
-  Lemma reduce_sound : forall a b c, A.gamma a c -> B.gamma b c ->
-    A.gamma (fst (reduce (a, b))) c /\ B.gamma (snd (reduce (a, b))) c.
-  Proof. Admitted. (* STUB *)
+
+  (** Inward rounding preserves each interval member in the supplied residue class. *)
+  Lemma round_sound : forall w a b z, A0.pgamma w a z -> B0.pgamma w b z ->
+    A0.pgamma w (congr_interval w a b) z.
+  Proof.
+    intros w a b z Ha Hb.
+    apply A0.F_pgamma in Ha; destruct Ha as [Hword Ha].
+    pose proof (reducer_clip_sound w a z Hword Ha) as Hclip.
+    apply B0.F1_gamma in Hb; unfold B0.congr_gamma in Hb.
+    destruct b as [|m r]; [contradiction|].
+    destruct Hb as [_ Hdiv].
+    apply A0.F_pgamma; split; [exact Hword|].
+    unfold congr_interval.
+    destruct (interval_word_clip w a) as [|lo hi]; [contradiction|].
+    destruct (m =? 0) eqn:Hmodulus.
+    - apply Z.eqb_eq in Hmodulus; subst m.
+      destruct Hdiv as [q Hq]; unfold in_bnd; lia.
+    - apply Z.eqb_neq in Hmodulus.
+      destruct lo as [|lo|], hi as [|hi|]; unfold in_bnd in *; try tauto.
+      + split; [constructor|].
+        exact (proj2 (reducer_residue_round m r z hi z Hmodulus ltac:(lia) Hdiv)).
+      + apply reducer_residue_round; assumption.
+      + split; [|constructor].
+        exact (proj1 (reducer_residue_round m r lo z z Hmodulus ltac:(lia) Hdiv)).
+  Qed.
+
+  (** A clipped singleton yields an exact congruence for each represented word. *)
+  Lemma singleton_sound : forall w a z, A0.pgamma w a z ->
+    B0.pgamma w (interval_congr (interval_word_clip w a)) z.
+  Proof.
+    intros w a z Ha; apply A0.F_pgamma in Ha; destruct Ha as [Hword Ha].
+    pose proof (reducer_clip_sound w a z Hword Ha) as Hclip.
+    apply B0.F1_gamma; unfold interval_congr.
+    destruct (interval_word_clip w a) as [|[|lo|] [|hi|]];
+      try contradiction; unfold B0.congr_gamma;
+      try (split; [exact Hword|exists z; lia]).
+    destruct (lo =? hi) eqn:Hpoint; unfold B0.congr_gamma.
+    - apply Z.eqb_eq in Hpoint; subst hi.
+      split; [exact Hword|exists 0; unfold in_bnd in Hclip; lia].
+    - split; [exact Hword|exists z; lia].
+  Qed.
+
+
   Lemma left_frame : forall x, snd (to_left x) = snd x.
   Proof.
     intros [[|w a|] [|v b|]]; cbn [to_left]; try reflexivity.
@@ -435,10 +475,32 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
   Qed.
   Lemma left_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_left (a, b))) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|] [u z] Ha Hb; cbn [to_left fst]; try exact Ha.
+    destruct (Pos.eqb w v) eqn:Hwidth; cbn [fst]; [|exact Ha].
+    apply Pos.eqb_eq in Hwidth; subst v.
+    change (u = w /\ L.is_word w z /\ A0.pgamma w a z) in Ha.
+    change (u = w /\ L.is_word w z /\ B0.pgamma w b z) in Hb.
+    destruct Ha as [Hu [Hword Ha]]; destruct Hb as [_ [_ Hb]].
+    change (u = w /\ L.is_word w z /\
+      A0.pgamma w (A0.pmeet w a (congr_interval w a b)) z).
+    split; [exact Hu|]; split; [exact Hword|].
+    apply A0.pgamma_meet; [exact Ha|now apply round_sound].
+  Qed.
   Lemma right_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     B.gamma (snd (to_right (a, b))) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|] [u z] Ha Hb; cbn [to_right snd]; try exact Hb.
+    destruct (Pos.eqb w v) eqn:Hwidth; cbn [snd]; [|exact Hb].
+    apply Pos.eqb_eq in Hwidth; subst v.
+    change (u = w /\ L.is_word w z /\ A0.pgamma w a z) in Ha.
+    change (u = w /\ L.is_word w z /\ B0.pgamma w b z) in Hb.
+    destruct Ha as [_ [Hword Ha]]; destruct Hb as [Hu [_ Hb]].
+    change (u = w /\ L.is_word w z /\
+      B0.pgamma w (B0.pmeet w b (interval_congr (interval_word_clip w a))) z).
+    split; [exact Hu|]; split; [exact Hword|].
+    apply B0.pgamma_meet; [exact Hb|now apply singleton_sound].
+  Qed.
   Lemma left_lower : forall a b, A.leb (fst (to_left (a, b))) a = true.
   Proof.
     intros [|w a|] [|v b|]; cbn [to_left fst]; try apply A.leb_refl.
@@ -491,6 +553,17 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
       apply right_lower.
   Qed.
 
+
+  Lemma reduce_sound : forall a b c, A.gamma a c -> B.gamma b c ->
+    A.gamma (fst (reduce (a, b))) c /\ B.gamma (snd (reduce (a, b))) c.
+  Proof.
+    intros a b c Ha Hb; unfold reduce; split.
+    - rewrite right_frame; now apply left_sound.
+    - pose proof (left_sound a b c Ha Hb) as Hleft.
+      pose proof (left_frame (a, b)) as Hframe.
+      destruct (to_left (a, b)) as [a' b']; cbn in Hframe, Hleft; subst b'.
+      now apply right_sound.
+  Qed.
 End IntervalCongr.
 
 Module IntervalBitsCode (L : WORD_LANGUAGE_OPS) (A0 : WORD_PAYLOAD_OPS L with Definition p := itv)
