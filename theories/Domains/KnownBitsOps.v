@@ -378,3 +378,41 @@ Module KnownBitsSuppliedForwardProof (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
   Qed.
 End KnownBitsSuppliedForwardProof.
 
+(** The unsigned numeric view reads the normalized integer stored in a word. *)
+Module KnownBitsNumU <: NUM_VIEW BitsLang.
+  Definition num (c : BitsLang.val) : Z := snd c.
+End KnownBitsNumU.
+
+Module KnownBitsRangeCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS_OPS L C).
+  Definition range (a : tagged K.p) : bnd * bnd :=
+    match a with
+    | TBot => (PosInf, NegInf)
+    | TVal w p =>
+      if tnum_empty w p then (PosInf, NegInf)
+      else (Fin (tnum_min w p), Fin (tnum_max w p))
+    | TAny => (NegInf, PosInf)
+    end.
+End KnownBitsRangeCode.
+
+(** A tagged known-bit payload exposes its least and greatest unsigned members. *)
+Module KnownBitsRange (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
+    (D : VALUE_DOMAIN BitsLang with Definition t := tagged K.p
+      with Definition gamma := tagged_gamma L.is_word K.pgamma)
+    <: RANGE_QUERY BitsLang KnownBitsNumU D.
+  Include KnownBitsRangeCode L C K.
+
+  (** Every represented integer lies between the queried endpoints. *)
+  Lemma range_sound : forall a c,
+    D.gamma a c -> in_bnd (fst (range a)) (snd (range a)) (KnownBitsNumU.num c).
+  Proof.
+    intros [|w a|] [v z] Hgamma.
+    - contradiction.
+    - destruct Hgamma as [Hwidth [Hword Hmask]].
+      apply (proj1 (K.gamma_tnum w a z)) in Hmask.
+      cbn [range KnownBitsNumU.num fst snd].
+      rewrite (tnum_empty_sound w a z Hmask).
+      exact (tnum_unsigned_bounds w a z Hword Hmask).
+    - split; exact I.
+  Qed.
+End KnownBitsRange.
