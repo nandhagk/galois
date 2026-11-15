@@ -500,6 +500,20 @@ Proof.
     + apply Pos.eqb_neq in Heq. rewrite IH; cbn; intuition congruence.
 Qed.
 
+(** With distinct identifiers, membership identifies the selected block body. *)
+Lemma find_block_of_in {K G} (bs : list (positive * block positive K G)) b body :
+  NoDup (map fst bs) -> In (b, body) bs -> find_block b bs = Some body.
+Proof.
+  induction bs as [|[a found] rest IH]; intros Hdistinct Hin; [contradiction|].
+  inversion Hdistinct as [|head tail Hfresh Htail]; subst.
+  cbn [find_block]. destruct Hin as [Heq|Hin].
+  - inversion Heq; subst; now rewrite Pos.eqb_refl.
+  - destruct (Pos.eqb b a) eqn:Heq.
+    + apply Pos.eqb_eq in Heq; subst b. exfalso; apply Hfresh.
+      apply in_map_iff. exists (a, body); auto.
+    + apply IH; assumption.
+Qed.
+
 (** Indexing a block projection retains exactly the first source block. *)
 Lemma block_table_get {K G A} (f : block positive K G -> A)
     (bs : list (positive * block positive K G)) b :
@@ -538,6 +552,27 @@ Proof.
   - destruct Hin as [Heq|[]]. inversion Heq; subst; cbn; auto.
   - destruct Hin as [Heq|[Heq|[]]]; inversion Heq; subst; cbn; auto.
   - contradiction.
+Qed.
+
+(** Every syntactic successor has an outgoing edge occurrence. *)
+Lemma exit_edge_args_successor {G} b (e : exit positive G) target :
+  successor e target -> exists edge args, In (edge, args) (exit_edge_args b e) /\
+    edge_source edge = b /\ edge_target edge = target.
+Proof.
+  destruct e as [next args|guard xs yes yes_args no no_args|values];
+    cbn [successor exit_edge_args]; intro Hnext.
+  - subst target. exists (BlockEdge b Jump_arm next), args; cbn; auto.
+  - destruct Hnext as [Heq|Heq]; subst target.
+    + exists (BlockEdge b True_arm yes), yes_args; cbn; auto.
+    + exists (BlockEdge b False_arm no), no_args; cbn; auto.
+  - contradiction.
+Qed.
+
+(** Exit targets and the language successor predicate describe the same identifiers. *)
+Lemma exit_targets_successor {G} (e : exit positive G) target :
+  In target (exit_targets e) <-> successor e target.
+Proof.
+  destruct e; cbn [exit_targets successor In]; intuition congruence.
 Qed.
 
 Record lang_prepared (K G : Type) := LangPrepared {
@@ -727,6 +762,30 @@ Proof.
   - rewrite Hsource. destruct item; exact Hitem.
   - split; [exact Hsyntax|].
     unfold kept in Htarget. now apply block_table_listed in Htarget.
+Qed.
+
+(** Every well-formed source successor remains an indexed block edge. *)
+Lemma lang_edges_successor {K G} (p : func positive K G) b body target :
+  NoDup (map fst (blocks _ _ _ p)) -> targets_listed p ->
+  In (b, body) (blocks _ _ _ p) -> successor (term _ _ _ body) target ->
+  exists edge, In edge (lang_edges (lang_prepare p)) /\
+    edge_source edge = b /\ edge_target edge = target.
+Proof.
+  intros Hdistinct Htargets Hin Hnext.
+  destruct (exit_edge_args_successor b _ target Hnext) as [edge [args [Hedge [Hsrc Hdst]]]].
+  exists edge; split; [|now split].
+  change (In edge (map fst (flat_map (fun item =>
+    listed_edge_args (first_table PosKeyCode.encode
+      (map (fun item => (fst item, params _ _ _ (snd item)))
+        (first_blocks (blocks _ _ _ p))))
+      (fst item) (term _ _ _ (snd item))) (first_blocks (blocks _ _ _ p))))).
+  apply in_map_iff. exists (edge, args); split; [reflexivity|].
+  apply in_flat_map. exists (b, body); split.
+  - apply find_block_in. rewrite first_blocks_find. now apply find_block_of_in.
+  - unfold listed_edge_args. apply filter_In; split; [exact Hedge|].
+    cbn [fst]. rewrite Hdst. apply block_table_listed.
+    apply find_block_exists. rewrite first_blocks_find. apply find_block_exists.
+    apply (Htargets b body target Hin). now apply exit_targets_successor.
 Qed.
 
 (** Each retained block contributes at most two block edges. *)
@@ -1090,7 +1149,22 @@ Module PresentT (O : OPS)
       targets_listed p ->
       (presentation_path (BC.edges (R.prepare p)) (BC.src (R.prepare p))
         (BC.dst (R.prepare p)) a route b <-> Lang.path p a route b).
-    Proof. Admitted. (* STUB *)
+    Proof.
+      intros p a route b Hdistinct Htargets; split; intro Hpath.
+      - induction Hpath as [n|e rest target Hedge Hpath IH].
+        + constructor.
+        + destruct (edges_syntax p e Hedge) as [body [Hsource Htarget]].
+          eapply path_next; [exact Hsource| |exact IH].
+          now apply exit_targets_successor.
+      - induction Hpath as [n|id body next rest target Hbody Hnext Hpath IH].
+        + constructor.
+        + destruct (lang_edges_successor p id body next Hdistinct Htargets Hbody Hnext)
+            as [edge [Hedge [Hsrc Hdst]]].
+          change (presentation_path (lang_edges (lang_prepare p)) edge_source edge_target
+            id (id :: rest) target).
+          rewrite <- Hsrc. econstructor; [exact Hedge|].
+          rewrite Hdst. exact IH.
+    Qed.
     Lemma params_agree : forall p b, S.params (R.prepare p) b =
       match find_block b (blocks _ _ _ p) with
       | Some body => Lang.params _ _ _ body
