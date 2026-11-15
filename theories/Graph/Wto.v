@@ -1127,10 +1127,20 @@ End WtoCode.
 Module Wto <: WTO.
   Include WtoCode.
 
+  Local Opaque loopN.
+
   (** Acceptance establishes exact rooted coverage and the nesting edge condition. *)
   Lemma check_sound : forall g roots w,
     check g roots w = true -> is_wto g roots w.
-  Proof. Admitted. (* CONVERT: WtoCheck.check_correct: interval checker requires the new proof. *)
+  Proof.
+    intros g roots w Hcheck. apply (wto_check_sound_from_reach g roots w); [|exact Hcheck].
+    apply prepared_search_reach_closed.
+    - apply scc_graph_counts.
+    - intros u v Hu Hedge. rewrite scc_graph_nodes. now apply (scc_graph_closed g u).
+    - intros r Hin. rewrite scc_graph_nodes. exact (wto_check_roots g roots w Hcheck r Hin).
+  Qed.
+
+  Local Transparent loopN.
 
   (** Heads are the structural loop heads in traversal order. *)
   Lemma heads_spec : forall w, heads w = wto_heads w.
@@ -1414,7 +1424,9 @@ Module WtoT <: WTO_ALL.
   Proof. Admitted. (* STUB *)
 
   Lemma F6_sound : forall g roots w, check g roots w = true -> is_wto g roots w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply check_sound.
+  Qed.
 
   Lemma F7_encloses : forall w h v,
     wto_encloses h v w -> In h (wto_heads w) /\ In h (wto_order w).
