@@ -10870,3 +10870,690 @@ Proof.
 Qed.
 
 Local Transparent dom_order_colour T_dom_order_colour dom_order_indexes T_dom_order_indexes dom_order_number_tree T_dom_order_number_tree.
+
+Local Opaque Argent.Loop.loop T_loopN.
+
+(** A source insertion inherits all of its primitive width bounds from the stale inventory. *)
+Lemma dom_source_add_bounded_clock count width tree vertex source parent :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_source_numeric_bounded count tree ->
+  (vertex <= N.of_nat count)%N -> (source <= N.of_nat count)%N ->
+  (T_dom_source_add tree vertex source parent <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hwidth Htree Hvertex Hsource.
+  apply (dom_source_add_clock width tree vertex source parent).
+  - exact (dom_order_removal_base_width count width Hwidth vertex Hvertex).
+  - exact (dom_order_removal_base_width count width Hwidth source Hsource).
+  - exact (dom_source_numeric_count_width count width tree source Hwidth Htree Hsource).
+Qed.
+
+(** A count removal needs no semantic relationship between its vertex and parent argument. *)
+Lemma dom_source_remove_bounded_clock count width tree vertex parent :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_source_numeric_bounded count tree -> (vertex <= N.of_nat count)%N ->
+  (T_dom_source_remove tree vertex parent <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hwidth Htree Hvertex.
+  pose proof (dom_source_numeric_value count tree vertex Htree Hvertex) as Hsource.
+  apply (dom_source_remove_clock width tree vertex parent).
+  - exact (dom_order_removal_base_width count width Hwidth vertex Hvertex).
+  - exact (dom_order_removal_base_width count width Hwidth _ Hsource).
+  - exact (dom_source_numeric_count_width count width tree _ Hwidth Htree Hsource).
+Qed.
+
+(** Redirection retains bounded counts through its preliminary count removal. *)
+Lemma dom_source_redirect_bounded_clock count width tree vertex source parent :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_source_numeric_bounded count tree ->
+  (vertex <= N.of_nat count)%N -> (source <= N.of_nat count)%N ->
+  (T_dom_source_redirect tree vertex source parent <=
+    512 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hwidth Htree Hvertex Hsource.
+  pose proof (dom_source_numeric_value count tree vertex Htree Hvertex) as Hold.
+  pose proof (dom_source_remove_numeric_bounded count tree vertex parent Htree) as Hnext.
+  apply (dom_source_redirect_clock width tree vertex source parent).
+  - exact (dom_order_removal_base_width count width Hwidth vertex Hvertex).
+  - exact (dom_order_removal_base_width count width Hwidth _ Hold).
+  - exact (dom_source_numeric_count_width count width tree _ Hwidth Htree Hold).
+  - exact (dom_order_removal_base_width count width Hwidth source Hsource).
+  - exact (dom_source_numeric_count_width count width (dom_source_remove tree vertex parent)
+      source Hwidth Hnext Hsource).
+Qed.
+(** * Source initialization clocks *)
+
+(** Naming the existing initialization callback provides its automatically derived clock. *)
+Definition dom_source_initial_step (parents sources : ptrie N)
+    (tree : dom_source_tree) (vertex : N) : dom_source_tree :=
+  match trie_get (dom_lt_key vertex) parents with
+  | None => tree
+  | Some parent => dom_source_add tree vertex (dom_lt_identity sources vertex) parent
+  end.
+TimeFun dom_source_initial_step.
+
+(** Each initialization callback performs one bounded lookup and at most one bounded insertion. *)
+Lemma dom_source_initial_step_clock count width parents sources tree vertex :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) sources ->
+  dom_source_numeric_bounded count tree -> (vertex <= N.of_nat count)%N ->
+  (T_dom_source_initial_step parents sources tree vertex <=
+    256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hwidth Hsources Htree Hvertex.
+  pose proof (dom_order_removal_base_width count width Hwidth vertex Hvertex) as Hvertex_width.
+  pose proof (dom_lt_identity_bounded (N.of_nat count) sources vertex Hsources Hvertex)
+    as Hsource.
+  pose proof (dom_lt_time_key vertex) as Hkey.
+  pose proof (dom_lt_key_width vertex) as Hkey_width.
+  pose proof (dom_lt_time_identity sources vertex) as Hidentity.
+  pose proof (dom_order_removal_unit_width width) as Hunit.
+  replace (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N with
+    (256 * dom_order_removal_unit width)%N by (unfold dom_order_removal_unit; ring).
+  set (unit := dom_order_removal_unit width) in *.
+  unfold T_dom_source_initial_step. time_simpl. rewrite PTrieT.trie_get_clock.
+  destruct (trie_get (dom_lt_key vertex) parents) as [parent|].
+  - pose proof (dom_source_add_bounded_clock count width tree vertex
+      (dom_lt_identity sources vertex) parent Hwidth Htree Hvertex Hsource) as Hadd.
+    rewrite <- N.mul_assoc in Hadd. fold (dom_order_removal_unit width) in Hadd.
+    fold unit in Hadd. time_simpl. clearbody unit.
+    clear -Hvertex_width Hkey Hkey_width Hidentity Hadd Hunit.
+    rewrite !Nat2N.inj_add in *. lia.
+  - time_simpl. clearbody unit. clear -Hvertex_width Hkey Hkey_width Hunit.
+    rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+(** The named callback adds only wrapper calls to the original initialization fold. *)
+Lemma dom_source_initial_overhead parents sources order :
+  (T_dom_source_initial parents sources order <=
+    List.T_fold_left (dom_source_initial_step parents sources)
+      (T_dom_source_initial_step parents sources) order (DomSourceTree Empty Empty Empty) + 8)%N.
+Proof.
+  unfold T_dom_source_initial. time_simpl.
+  eapply N.le_trans with (1 +
+    List.T_fold_left (dom_source_initial_step parents sources)
+      (T_dom_source_initial_step parents sources) order (DomSourceTree Empty Empty Empty))%N.
+  - apply N.add_le_mono_l. apply dom_order_fold_clock_mono.
+    intros tree vertex. unfold T_dom_source_initial_step. time_simpl. lia.
+  - lia.
+Qed.
+
+Definition dom_source_initial_invariant (count total : nat) (rest : list N)
+    (tree : dom_source_tree) : Prop :=
+  dom_source_range (N.of_nat count) tree /\ dom_source_counts_fit tree /\
+  dom_lt_row_mass (dom_order_key_universe count) (source_children tree) + length rest <= total /\
+  Forall (fun value => (value <= N.of_nat count)%N) rest.
+
+(** An insertion consumes one pending input and adds at most one retained inverse occurrence. *)
+Lemma dom_source_initial_invariant_step count total parents sources vertex rest tree :
+  dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) sources ->
+  dom_source_initial_invariant count total (vertex :: rest) tree ->
+  dom_source_initial_invariant count total rest
+    (dom_source_initial_step parents sources tree vertex).
+Proof.
+  intros Hsources [Hrange [Hcounts [Hmass Hrest]]].
+  inversion Hrest as [|head tail Hvertex Htail]; subst head tail.
+  unfold dom_source_initial_step.
+  destruct (trie_get (dom_lt_key vertex) parents) as [parent|].
+  - assert (Hsource : (dom_lt_identity sources vertex <= N.of_nat count)%N).
+    { exact (dom_lt_identity_bounded (N.of_nat count) sources vertex Hsources Hvertex). }
+    pose proof (dom_source_add_mass (dom_order_key_universe count) tree vertex
+      (dom_lt_identity sources vertex) parent (dom_order_key_universe_unique count)) as Hnext.
+    split; [now apply dom_source_add_range|].
+    split; [now apply dom_source_add_counts|]. split; [cbn [length] in Hmass; lia|exact Htail].
+  - split; [exact Hrange|]. split; [exact Hcounts|].
+    split; [cbn [length] in Hmass; lia|exact Htail].
+Qed.
+
+(** Every partial initialization tree fits the callback's numeric count ceiling. *)
+Lemma dom_source_initial_numeric_bounded count total rest tree :
+  total <= count -> dom_source_initial_invariant count total rest tree ->
+  dom_source_numeric_bounded count tree.
+Proof.
+  intros Htotal [Hrange [Hcounts [Hmass Hrest]]].
+  split; [exact Hrange|]. split; [exact Hcounts|]. lia.
+Qed.
+
+(** The constant callback allowance pays the fold calls and its outer wrapper. *)
+Lemma dom_source_initial_clock_budget (unit count fold_work total_work : N) :
+  (8 <= unit)%N -> (fold_work <= (unit + 1) * count + 1)%N ->
+  (total_work <= fold_work + 8)%N -> (total_work <= 2 * unit * (count + 1))%N.
+Proof.
+  intros Hunit Hfold Htotal. nia.
+Qed.
+
+(** Source initialization is linear in the supplied input length at the common width. *)
+Lemma dom_source_initial_time count width parents sources order :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) sources ->
+  Forall (fun value => (value <= N.of_nat count)%N) order -> length order <= count ->
+  (T_dom_source_initial parents sources order <=
+    512 * (PTrieT.c_trie + 1) * N.of_nat ((length order + 1) * (width + 1)))%N.
+Proof.
+  intros Hwidth Hsources Horder Hlength.
+  set (unit := (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+  assert (Hunit : (8 <= unit)%N).
+  { unfold unit. change (8 * 1 <= (256 * (PTrieT.c_trie + 1)) * N.of_nat (width + 1))%N.
+    apply N.mul_le_mono; [lia|rewrite Nat2N.inj_add; lia]. }
+  assert (Hinitial : dom_source_initial_invariant count (length order) order
+    (DomSourceTree Empty Empty Empty)).
+  { split; [split; apply dom_lt_trie_all_empty|].
+    split; [apply dom_source_empty_counts|]. split; [|exact Horder].
+    cbn [source_children]. rewrite dom_lt_row_mass_empty. lia. }
+  pose proof (dom_lt_fold_credit (dom_source_initial_step parents sources)
+    (T_dom_source_initial_step parents sources)
+    (dom_source_initial_invariant count (length order)) (fun _ => 0%N) unit order) as Hfold.
+  specialize (Hfold ltac:(intros vertex rest tree Htree;
+    exact (dom_source_initial_invariant_step count (length order) parents sources
+      vertex rest tree Hsources Htree))).
+  specialize (Hfold ltac:(intros vertex rest tree Htree; cbn beta; rewrite !N.add_0_r;
+    apply (dom_source_initial_step_clock count width parents sources tree vertex);
+    [exact Hwidth|exact Hsources|
+      exact (dom_source_initial_numeric_bounded count (length order) (vertex :: rest)
+        tree Hlength Htree)|];
+    destruct Htree as [Hrange [Hcounts [Hmass Hrest]]]; now inversion Hrest)).
+  specialize (Hfold (DomSourceTree Empty Empty Empty) Hinitial).
+  destruct Hfold as [Hfinal Hclock]. cbn beta in Hclock. rewrite !N.add_0_r in Hclock.
+  pose proof (dom_source_initial_overhead parents sources order) as Hwrapper.
+  rewrite Nat2N.inj_mul, Nat2N.inj_add.
+  change (N.of_nat 1) with 1%N.
+  replace (512 * (PTrieT.c_trie + 1) *
+    ((N.of_nat (length order) + 1) * N.of_nat (width + 1)))%N with
+    (2 * unit * (N.of_nat (length order) + 1))%N by (unfold unit; ring).
+  eapply dom_source_initial_clock_budget; [exact Hunit|exact Hclock|exact Hwrapper].
+Qed.
+(** The eligibility test has a constant allowance at the common operand width. *)
+Lemma dom_order_remove_guard_clock count width blue red active vertex :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_source_numeric_bounded count blue -> dom_source_numeric_bounded count red ->
+  (vertex <= N.of_nat count)%N ->
+  (T_dom_order_active active vertex +
+    T_dom_lt_identity (source_parent blue) vertex +
+    T_dom_lt_identity (source_parent red) vertex +
+    T_dom_order_number (source_count blue) vertex +
+    T_dom_order_number (source_count red) vertex +
+    N.T_eqb (dom_lt_identity (source_parent blue) vertex)
+      (dom_lt_identity (source_parent red) vertex) +
+    N.T_add (dom_order_number (source_count blue) vertex)
+      (dom_order_number (source_count red) vertex) +
+    N.T_ltb (N.add (dom_order_number (source_count blue) vertex)
+      (dom_order_number (source_count red) vertex))
+      (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+        (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N) + 64 <=
+      256 * dom_order_removal_unit width)%N.
+Proof.
+  intros Hwidth Hblue Hred Hvertex.
+  pose proof (dom_order_removal_base_width count width Hwidth vertex Hvertex) as Hv.
+  pose proof (dom_source_numeric_value count blue vertex Hblue Hvertex) as Hb.
+  pose proof (dom_order_removal_base_width count width Hwidth _ Hb) as Hbw.
+  pose proof (dom_source_numeric_count_width count width blue vertex Hwidth Hblue Hvertex)
+    as Hnb.
+  pose proof (dom_source_numeric_count_width count width red vertex Hwidth Hred Hvertex)
+    as Hnr.
+  pose proof (dom_source_numeric_sum_width count width blue red vertex Hwidth Hblue Hred Hvertex)
+    as Hsum.
+  pose proof (dom_order_active_clock active vertex) as Ha.
+  pose proof (dom_lt_time_identity (source_parent blue) vertex) as Hib.
+  pose proof (dom_lt_time_identity (source_parent red) vertex) as Hir.
+  pose proof (dom_order_number_clock (source_count blue) vertex) as Hcb.
+  pose proof (dom_order_number_clock (source_count red) vertex) as Hcr.
+  pose proof (N.T_eqb_le (dom_lt_identity (source_parent blue) vertex)
+    (dom_lt_identity (source_parent red) vertex)) as Heq.
+  pose proof (N.T_add_le (dom_order_number (source_count blue) vertex)
+    (dom_order_number (source_count red) vertex)) as Hadd.
+  pose proof (dom_lt_time_ltb
+    (N.add (dom_order_number (source_count blue) vertex) (dom_order_number (source_count red) vertex))
+    (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+      (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N)) as Hlt.
+  pose proof (dom_order_removal_unit_width width) as Hunit.
+  set (unit := dom_order_removal_unit width) in *. clearbody unit.
+  clear -Hv Hbw Hnb Hnr Hsum Ha Hib Hir Hcb Hcr Heq Hadd Hlt Hunit.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+(** Fixed retirement work is absorbed by every positive row-work allowance. *)
+Lemma dom_order_remove_success_budget (unit work fixed scan redirect total : N) :
+  (1 <= unit)%N -> (1 <= work)%N ->
+  (fixed <= 512 * unit)%N -> (scan <= 64 * unit * work)%N ->
+  (redirect <= 512 * unit)%N -> (total <= fixed + scan + redirect + 64)%N ->
+  (total <= 2048 * unit * work)%N.
+Proof.
+  intros Hunit Hwork Hfixed Hscan Hredirect Htotal.
+  assert (Hscale : (unit <= unit * work)%N).
+  { rewrite <- (N.mul_1_r unit) at 1. now apply N.mul_le_mono_l. }
+  assert (Hpositive : (1 <= unit * work)%N).
+  { eapply N.le_trans with unit; [exact Hunit|exact Hscale]. }
+  lia.
+Qed.
+
+Lemma dom_order_removal_unit_positive width : (1 <= dom_order_removal_unit width)%N.
+Proof.
+  eapply N.le_trans; [|exact (dom_order_removal_unit_width width)].
+  rewrite Nat2N.inj_add. lia.
+Qed.
+
+(** A fallback callback adds only one retirement write after its prefix scan. *)
+Lemma dom_order_remove_fallback_overhead parents blue red active remaining records :
+  (T_dom_order_remove_step parents
+      (DomOrderRemovalState blue red active [] remaining records) <=
+    T_dom_order_fallback active remaining +
+      (match dom_order_fallback active remaining with
+      | None => 0
+      | Some (vertex, _) => T_dom_lt_identity parents vertex + T_dom_lt_key vertex +
+          PTrieCode.T_set (dom_lt_key vertex) false active
+      end) + 32)%N.
+Proof.
+  unfold T_dom_order_remove_step.
+  cbn [removal_blue removal_red removal_active removal_queue removal_fallback removal_records].
+  destruct (dom_order_fallback active remaining) as [[vertex rest]|]; time_simpl; lia.
+Qed.
+
+(** A positive scan allowance absorbs the fixed fallback retirement overhead. *)
+Lemma dom_order_remove_fallback_budget (unit work scan extra step_work : N) :
+  (1 <= unit)%N -> (1 <= work)%N -> (scan <= 16 * unit * work)%N ->
+  (extra <= 64 * unit)%N -> (step_work <= scan + extra + 32)%N ->
+  (step_work <= 256 * unit * work)%N.
+Proof.
+  intros Hunit Hwork Hscan Hextra Hstep.
+  assert (Hscale : (unit <= unit * work)%N).
+  { rewrite <- (N.mul_1_r unit) at 1. now apply N.mul_le_mono_l. }
+  assert (Hpositive : (1 <= unit * work)%N).
+  { eapply N.le_trans with unit; [exact Hunit|exact Hscale]. }
+  lia.
+Qed.
+
+(** Fallback scanning is paid by the consumed-prefix work, uniformly over the source trees. *)
+Lemma dom_order_remove_fallback_clock width parents blue red active remaining records :
+  Forall (fun vertex => N.size_nat vertex <= width) remaining ->
+  (T_dom_order_remove_step parents
+      (DomOrderRemovalState blue red active [] remaining records) <=
+    256 * dom_order_removal_unit width *
+      N.of_nat (dom_order_fallback_steps active remaining + 1))%N.
+Proof.
+  intro Hremaining.
+  pose proof (dom_order_remove_fallback_overhead parents blue red active remaining records)
+    as Hstep.
+  pose proof (dom_order_fallback_clock width active remaining Hremaining) as Hscan.
+  assert (Hscan_scaled : (T_dom_order_fallback active remaining <=
+    16 * dom_order_removal_unit width *
+      N.of_nat (dom_order_fallback_steps active remaining + 1))%N).
+  { eapply N.le_trans; [exact Hscan|].
+    apply N.mul_le_mono_r. apply N.mul_le_mono_l. apply dom_order_removal_unit_width. }
+  set (extra := match dom_order_fallback active remaining with
+    | None => 0%N
+    | Some (vertex, _) => (T_dom_lt_identity parents vertex + T_dom_lt_key vertex +
+        PTrieCode.T_set (dom_lt_key vertex) false active)%N
+    end) in Hstep.
+  assert (Hextra : (extra <= 64 * dom_order_removal_unit width)%N).
+  { unfold extra. destruct (dom_order_fallback active remaining) as [[vertex rest]|] eqn:Hcase;
+      [|apply N.le_0_l].
+    pose proof (proj1 (dom_order_fallback_forall (fun vertex => N.size_nat vertex <= width)
+      active remaining vertex rest Hremaining Hcase)) as Hvertex.
+    pose proof (dom_lt_time_identity parents vertex) as Hidentity.
+    pose proof (dom_lt_time_key vertex) as Hkey.
+    pose proof (dom_order_removal_set_clock width active vertex false Hvertex) as Hset.
+    pose proof (dom_order_removal_unit_width width) as Hunit.
+    set (unit := dom_order_removal_unit width) in *. clearbody unit.
+    rewrite !Nat2N.inj_add in *.
+    clear -Hvertex Hidentity Hkey Hset Hunit. lia. }
+  eapply dom_order_remove_fallback_budget with
+    (scan := T_dom_order_fallback active remaining) (extra := extra).
+  - apply dom_order_removal_unit_positive.
+  - rewrite Nat2N.inj_add. lia.
+  - exact Hscan_scaled.
+  - exact Hextra.
+  - exact Hstep.
+Qed.
+(** * Closing the removal callback clock from its bounded source operations *)
+
+(** One retained row lookup and its scan fit the shared two-row allowance. *)
+Lemma dom_order_remove_scan_budget (width unit cells work row scan : N) :
+  (width <= unit)%N -> (1 <= work)%N -> (cells + 1 <= work)%N ->
+  (row <= 8 * width)%N -> (scan <= 32 * width * (cells + 1))%N ->
+  (row + scan <= 64 * unit * work)%N.
+Proof.
+  intros Hwidth Hwork Hcells Hrow Hscan.
+  assert (Hscaled : (width * (cells + 1) <= unit * work)%N)
+    by now apply N.mul_le_mono.
+  assert (Hbase : (width <= unit * work)%N).
+  { eapply N.le_trans; [exact Hwidth|].
+    rewrite <- (N.mul_1_r unit) at 1. now apply N.mul_le_mono_l. }
+  lia.
+Qed.
+
+(** A retirement spends the sum of the two retained inverse-row lengths plus one. *)
+Lemma dom_order_remove_success_clock count width parents blue red active vertex
+    queue remaining records b r nr :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_source_numeric_bounded count blue -> dom_source_numeric_bounded count red ->
+  (vertex <= N.of_nat count)%N -> (b <= N.of_nat count)%N -> (r <= N.of_nat count)%N ->
+  N.size_nat nr <= width ->
+  (T_dom_order_remove_success parents blue red active vertex queue remaining records b r nr <=
+    2048 * dom_order_removal_unit width *
+      N.of_nat (length (dom_order_row (source_children blue) vertex) +
+        length (dom_order_row (source_children red) vertex) + 1))%N.
+Proof.
+  intros Hwidth Hblue Hred Hvertex Hb Hr Hnr.
+  pose proof (dom_order_removal_base_width count width Hwidth vertex Hvertex) as Hv.
+  set (unit := dom_order_removal_unit width).
+  set (work := N.of_nat (length (dom_order_row (source_children blue) vertex) +
+    length (dom_order_row (source_children red) vertex) + 1)).
+  set (parent := dom_lt_identity parents vertex).
+  set (fixed := (T_dom_lt_identity parents vertex + N.T_eqb nr 0%N +
+    T_dom_source_remove blue vertex parent + T_dom_source_remove red vertex parent +
+    T_dom_lt_key vertex + PTrieCode.T_set (dom_lt_key vertex) false active)%N).
+  assert (Hwork : (1 <= work)%N) by (unfold work; rewrite !Nat2N.inj_add; lia).
+  assert (Hfixed : (fixed <= 512 * unit)%N).
+  { pose proof (dom_source_remove_bounded_clock count width blue vertex parent
+      Hwidth Hblue Hvertex) as Hblue_remove.
+    pose proof (dom_source_remove_bounded_clock count width red vertex parent
+      Hwidth Hred Hvertex) as Hred_remove.
+    rewrite <- N.mul_assoc in Hblue_remove, Hred_remove.
+    fold (dom_order_removal_unit width) in Hblue_remove, Hred_remove.
+    fold unit in Hblue_remove, Hred_remove.
+    pose proof (dom_lt_time_identity parents vertex) as Hidentity.
+    pose proof (N.T_eqb_le nr 0%N) as Hcompare.
+    pose proof (dom_lt_time_key vertex) as Hkey.
+    pose proof (dom_order_removal_set_clock width active vertex false Hv) as Hset.
+    pose proof (dom_order_removal_unit_width width) as Hunit. fold unit in Hunit, Hset.
+    unfold fixed. clearbody unit.
+    clear -Hv Hnr Hblue_remove Hred_remove Hidentity Hcompare Hkey Hset Hunit.
+    rewrite !Nat2N.inj_add in *. lia. }
+  assert (Hscan : forall tree,
+    dom_source_numeric_bounded count tree ->
+    length (dom_order_row (source_children tree) vertex) <=
+      length (dom_order_row (source_children blue) vertex) +
+        length (dom_order_row (source_children red) vertex) ->
+    (T_dom_order_row (source_children tree) vertex +
+      T_dom_source_child (source_parent tree) active vertex
+        (dom_order_row (source_children tree) vertex) <= 64 * unit * work)%N).
+  { intros tree [[Hparents Hrows] Hcounts] Hlength.
+    pose proof (dom_order_row_forall (fun value => (value <= N.of_nat count)%N)
+      (source_children tree) vertex Hrows) as Hrow_range.
+    pose proof (dom_source_child_clock (N.of_nat count) width (source_parent tree)
+      active vertex (dom_order_row (source_children tree) vertex) Hparents
+      (dom_order_removal_base_width count width Hwidth) Hrow_range) as Hchild.
+    pose proof (dom_order_row_clock (source_children tree) vertex) as Hrow.
+    apply dom_order_remove_scan_budget with (width := N.of_nat (width + 1))
+      (cells := N.of_nat (length (dom_order_row (source_children tree) vertex))).
+    - exact (dom_order_removal_unit_width width).
+    - exact Hwork.
+    - unfold work. rewrite !Nat2N.inj_add. apply time_of_nat_le in Hlength.
+      rewrite Nat2N.inj_add in Hlength. clear -Hlength. lia.
+    - eapply N.le_trans; [exact Hrow|]. apply N.mul_le_mono_l.
+      apply time_of_nat_le. clear -Hv. lia.
+    - rewrite (Nat2N.inj_add (length (dom_order_row (source_children tree) vertex)) 1)
+        in Hchild. exact Hchild. }
+  set (tree := if N.eqb nr 0%N then blue else red).
+  set (scan := (T_dom_order_row (source_children tree) vertex +
+    T_dom_source_child (source_parent tree) active vertex
+      (dom_order_row (source_children tree) vertex))%N).
+  assert (Hscan_bound : (scan <= 64 * unit * work)%N).
+  { unfold scan, tree. destruct (N.eqb nr 0%N).
+    - apply Hscan; [exact Hblue|apply Nat.le_add_r].
+    - apply Hscan; [exact Hred|apply Nat.le_add_l]. }
+  set (redirect := match dom_source_child (source_parent tree) active vertex
+    (dom_order_row (source_children tree) vertex) with
+    | None => 0%N
+    | Some child => if N.eqb nr 0%N then
+        T_dom_source_redirect (dom_source_remove blue vertex parent) child b parent else
+        T_dom_source_redirect (dom_source_remove red vertex parent) child r parent
+    end).
+  assert (Hredirect : (redirect <= 512 * unit)%N).
+  { assert (Hone : forall source_tree anchor child,
+      dom_source_numeric_bounded count source_tree -> (anchor <= N.of_nat count)%N ->
+      dom_source_child (source_parent source_tree) active vertex
+        (dom_order_row (source_children source_tree) vertex) = Some child ->
+      (T_dom_source_redirect (dom_source_remove source_tree vertex parent)
+        child anchor parent <= 512 * unit)%N).
+    { intros source_tree anchor child Htree Hanchor Hchild.
+      assert (Hchild_range : (child <= N.of_nat count)%N).
+      { pose proof (dom_order_row_forall (fun value => (value <= N.of_nat count)%N)
+          (source_children source_tree) vertex (proj2 (proj1 Htree))) as Hrow.
+        apply Forall_forall with (x := child) in Hrow; [exact Hrow|].
+        now apply dom_source_child_member in Hchild. }
+      pose proof (dom_source_redirect_bounded_clock count width
+        (dom_source_remove source_tree vertex parent) child anchor parent Hwidth
+        (dom_source_remove_numeric_bounded count source_tree vertex parent Htree)
+        Hchild_range Hanchor) as Hclock.
+      rewrite <- N.mul_assoc in Hclock. exact Hclock. }
+    unfold redirect, tree. destruct (N.eqb nr 0%N).
+    - destruct (dom_source_child (source_parent blue) active vertex
+        (dom_order_row (source_children blue) vertex)) as [child|] eqn:Hchild;
+        [exact (Hone blue b child Hblue Hb Hchild)|apply N.le_0_l].
+    - destruct (dom_source_child (source_parent red) active vertex
+        (dom_order_row (source_children red) vertex)) as [child|] eqn:Hchild;
+        [exact (Hone red r child Hred Hr Hchild)|apply N.le_0_l]. }
+  pose proof (dom_order_remove_success_overhead parents blue red active vertex queue
+    remaining records b r nr) as Htotal.
+  cbn zeta in Htotal. fold parent tree in Htotal. fold redirect in Htotal.
+  eapply dom_order_remove_success_budget with (fixed := fixed) (scan := scan)
+    (redirect := redirect).
+  - exact (dom_order_removal_unit_positive width).
+  - exact Hwork.
+  - exact Hfixed.
+  - exact Hscan_bound.
+  - exact Hredirect.
+  - unfold fixed, scan. clear -Htotal. lia.
+Qed.
+
+(** A constant queue guard is covered by every positive row-work allowance. *)
+Lemma dom_order_remove_queue_budget (unit work guard success total : N) :
+  (1 <= work)%N -> (guard <= 256 * unit)%N ->
+  (success <= 2048 * unit * work)%N -> (total <= guard + success)%N ->
+  (total <= 4096 * unit * work)%N.
+Proof.
+  intros Hwork Hguard Hsuccess Htotal.
+  assert (Hscale : (unit <= unit * work)%N).
+  { rewrite <- (N.mul_1_r unit) at 1. now apply N.mul_le_mono_l. }
+  lia.
+Qed.
+
+(** Every removal callback is paid by its explicit prefix or two-row work. *)
+Lemma dom_order_remove_step_clock count width parents st :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) parents ->
+  dom_order_removal_invariant count st ->
+  (T_dom_order_remove_step parents st <=
+    4096 * (PTrieT.c_trie + 1) * N.of_nat (width + 1) *
+      N.of_nat (dom_order_removal_work st))%N.
+Proof.
+  intros Hwidth Hparents Hst.
+  pose proof (dom_order_removal_trees_bounded count st Hst) as [Hblue Hred].
+  pose proof (dom_order_removal_inv_range count st Hst) as Hrange.
+  destruct st as [blue red active queue remaining records].
+  cbn [removal_blue removal_red] in Hblue, Hred.
+  destruct Hrange as [Hbr [Hrr [Hqueue [Hremaining Hrecords]]]].
+  cbn [removal_queue removal_fallback] in Hqueue, Hremaining.
+  replace (4096 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N with
+    (4096 * dom_order_removal_unit width)%N by (unfold dom_order_removal_unit; ring).
+  destruct queue as [|vertex queue].
+  - assert (Hremaining_width : Forall (fun value => N.size_nat value <= width) remaining).
+    { apply Forall_forall. intros value Hin.
+      exact (dom_order_removal_base_width count width Hwidth value
+        (proj1 (Forall_forall _ _) Hremaining value Hin)). }
+    pose proof (dom_order_remove_fallback_clock width parents blue red active remaining
+      records Hremaining_width) as Hclock.
+    unfold dom_order_removal_work.
+    cbn [removal_blue removal_red removal_active removal_queue removal_fallback].
+    eapply N.le_trans; [exact Hclock|]. apply N.mul_le_mono_r.
+    apply N.mul_le_mono_r. lia.
+  - inversion Hqueue as [|head tail Hvertex Htail]; subst head tail.
+    pose proof (dom_order_remove_queue_overhead parents blue red active vertex queue
+      remaining records) as Htotal.
+    pose proof (dom_order_remove_guard_clock count width blue red active vertex Hwidth
+      Hblue Hred Hvertex) as Hguard.
+    pose proof (dom_order_remove_success_clock count width parents blue red active vertex
+      queue remaining records
+      (dom_lt_identity (source_parent blue) vertex)
+      (dom_lt_identity (source_parent red) vertex)
+      (dom_order_number (source_count red) vertex) Hwidth Hblue Hred Hvertex
+      (dom_source_numeric_value count blue vertex Hblue Hvertex)
+      (dom_source_numeric_value count red vertex Hred Hvertex)
+      (dom_source_numeric_count_width count width red vertex Hwidth Hred Hvertex)) as Hsuccess.
+    cbn zeta in Htotal. unfold dom_order_removal_work.
+    cbn [removal_blue removal_red removal_active removal_queue removal_fallback].
+    destruct (dom_order_active active vertex).
+    + destruct (N.ltb
+        (N.add (dom_order_number (source_count blue) vertex)
+          (dom_order_number (source_count red) vertex))
+        (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+          (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N)).
+      * eapply dom_order_remove_queue_budget with
+          (guard := (256 * dom_order_removal_unit width)%N).
+        -- rewrite !Nat2N.inj_add. lia.
+        -- reflexivity.
+        -- exact Hsuccess.
+        -- clear -Htotal Hguard. lia.
+      * change (N.of_nat 1) with 1%N. clear -Htotal Hguard. lia.
+    + change (N.of_nat 1) with 1%N. clear -Htotal Hguard. lia.
+Qed.
+(** The removal work potential pays every callback and every binary-loop visit. *)
+Lemma dom_order_removal_loop_clock count width parents fuel initial :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) parents ->
+  dom_order_removal_invariant count initial ->
+  (T_loopN (dom_order_remove_step parents) (T_dom_order_remove_step parents) fuel initial <=
+    ((4096 * (PTrieT.c_trie + 1) + c_loopN) * N.of_nat (width + 1)) *
+      N.of_nat (dom_order_removal_credit (dom_order_key_universe count) initial) +
+    c_loopN * N.of_nat (N.size_nat fuel + 1))%N.
+Proof.
+  intros Hwidth Hparents Hinitial.
+  eapply (dom_order_work_loop (dom_order_remove_step parents)
+    (T_dom_order_remove_step parents) (dom_order_removal_invariant count)
+    dom_order_removal_work (dom_order_removal_credit (dom_order_key_universe count))).
+  - intros st Hst. eapply dom_order_callback_overhead.
+    + rewrite Nat2N.inj_add. lia.
+    + exact (time_of_nat_le _ _ (dom_order_removal_work_positive st)).
+    + exact (dom_order_remove_step_clock count width parents st Hwidth Hparents Hst).
+  - intros st next Hst Hstep. split.
+    + exact (dom_order_removal_invariant_step count parents st next Hparents Hst Hstep).
+    + exact (dom_order_remove_step_credit (dom_order_key_universe count) parents st next
+        (dom_order_key_universe_unique count) (dom_order_removal_inv_domain _ _ Hst) Hstep).
+  - intros st result Hst Hstep.
+    exact (dom_order_remove_stop_credit (dom_order_key_universe count) parents st result Hstep).
+  - exact Hinitial.
+Qed.
+(** Filtering, initialization and all removal callbacks have a common linear budget. *)
+Lemma dom_order_removal_time count width limit parents order sources :
+  length order <= count ->
+  Forall (fun value => (value <= N.of_nat count)%N) order ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) parents ->
+  dom_order_sources_range (N.of_nat count) sources ->
+  (limit <= N.of_nat (count + 1))%N ->
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  (T_dom_order_removal limit parents order sources <=
+    dom_order_removal_coefficient * N.of_nat ((count + 1) * (width + 1)))%N.
+Proof.
+  intros Hlength Horder Hparents Hsources Hlimit Hwidth.
+  set (children := filter (dom_order_removal_keep parents) order).
+  assert (Hchildren_length : length children <= count).
+  { unfold children. eapply Nat.le_trans; [apply filter_length_le|exact Hlength]. }
+  assert (Hchildren : Forall (fun value => (value <= N.of_nat count)%N) children).
+  { apply Forall_forall. intros value Hin. unfold children in Hin.
+    apply filter_In in Hin. exact (proj1 (Forall_forall _ _) Horder value (proj1 Hin)). }
+  assert (Horder_width : Forall (fun value => N.size_nat value <= width) order).
+  { apply Forall_forall. intros value Hin. apply (dom_order_removal_base_width count width Hwidth).
+    exact (proj1 (Forall_forall _ _) Horder value Hin). }
+  assert (Hchildren_width : Forall (fun value => N.size_nat value <= width) children).
+  { apply Forall_forall. intros value Hin. apply (dom_order_removal_base_width count width Hwidth).
+    exact (proj1 (Forall_forall _ _) Hchildren value Hin). }
+  assert (Hlimit_width : N.size_nat limit <= width).
+  { apply Hwidth. apply dom_order_removal_linear_bound.
+    rewrite Nat2N.inj_add in Hlimit. change (N.of_nat 1) with 1%N in Hlimit.
+    clear -Hlimit. lia. }
+  set (initial := DomOrderRemovalState
+    (dom_source_initial parents (source_blue sources) children)
+    (dom_source_initial parents (source_red sources) children)
+    (fold_left dom_order_removal_activate children Empty) children children []).
+  pose proof (dom_order_removal_initial_invariant count parents sources children
+    Hchildren_length Hchildren Hsources) as Hinitial.
+  change (dom_order_removal_invariant count initial /\
+    dom_order_removal_credit (dom_order_key_universe count) initial <= 12 * (count + 1)) in Hinitial.
+  destruct Hinitial as [Hinv Hcredit].
+  pose proof (dom_order_removal_loop_clock count width parents
+    (N.double (N.double (N.double (N.double limit))) + 3)%N initial Hwidth Hparents Hinv) as Hloop.
+  pose proof (dom_order_removal_filter_clock width parents order Horder_width) as Hfilter.
+  pose proof (dom_order_removal_activation_clock width children Empty Hchildren_width) as Hactive.
+  destruct Hsources as [Hblue_source Hred_source].
+  pose proof (dom_source_initial_time count width parents (source_blue sources) children
+    Hwidth Hblue_source Hchildren Hchildren_length) as Hblue.
+  pose proof (dom_source_initial_time count width parents (source_red sources) children
+    Hwidth Hred_source Hchildren Hchildren_length) as Hred.
+  pose proof (dom_order_removal_overhead limit parents order sources) as Hsetup.
+  fold children initial in Hsetup.
+  set (budget := N.of_nat ((count + 1) * (width + 1))).
+  assert (Horder_budget : (N.of_nat ((length order + 1) * (width + 1)) <= budget)%N).
+  { unfold budget. apply time_of_nat_le. apply Nat.mul_le_mono_r. clear -Hlength. lia. }
+  assert (Hchildren_budget : (N.of_nat ((length children + 1) * (width + 1)) <= budget)%N).
+  { unfold budget. apply time_of_nat_le. apply Nat.mul_le_mono_r.
+    clear -Hchildren_length. lia. }
+  assert (Hwidth_budget : (N.of_nat (width + 1) <= budget)%N).
+  { unfold budget. apply time_of_nat_le. clear -count width. nia. }
+  assert (Hlimit_budget : (N.of_nat (N.size_nat limit + 1) <= budget)%N).
+  { eapply N.le_trans with (N.of_nat (width + 1)).
+    - apply time_of_nat_le. clear -Hlimit_width. lia.
+    - exact Hwidth_budget. }
+  assert (Hfilter_paid : (List.T_filter (dom_order_removal_keep parents)
+    (T_dom_order_removal_keep parents) order <= 32 * budget)%N).
+  { eapply N.le_trans; [exact Hfilter|]. now apply N.mul_le_mono_l. }
+  assert (Hactive_paid : (List.T_fold_left dom_order_removal_activate T_dom_order_removal_activate
+    children Empty <= 128 * (PTrieT.c_trie + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hactive|]. now apply N.mul_le_mono_l. }
+  assert (Hblue_paid : (T_dom_source_initial parents (source_blue sources) children <=
+    512 * (PTrieT.c_trie + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hblue|]. now apply N.mul_le_mono_l. }
+  assert (Hred_paid : (T_dom_source_initial parents (source_red sources) children <=
+    512 * (PTrieT.c_trie + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hred|]. now apply N.mul_le_mono_l. }
+  assert (Hfuel_paid : (c_loopN * N.of_nat
+    (N.size_nat (N.double (N.double (N.double (N.double limit))) + 3)%N + 1) <=
+      7 * c_loopN * budget)%N).
+  { pose proof (dom_order_removal_fuel_bits limit) as Hfuel.
+    assert (Hbits : N.size_nat (N.double (N.double (N.double (N.double limit))) + 3)%N + 1 <=
+      7 * (width + 1)) by (clear -Hfuel Hlimit_width; lia).
+    apply time_of_nat_le in Hbits. rewrite Nat2N.inj_mul in Hbits.
+    change (N.of_nat 7) with 7%N in Hbits.
+    apply N.mul_le_mono_l with (p := c_loopN) in Hbits.
+    eapply N.le_trans; [exact Hbits|].
+    replace (c_loopN * (7 * N.of_nat (width + 1)))%N with
+      (7 * c_loopN * N.of_nat (width + 1))%N by ring.
+    apply N.mul_le_mono_l. exact Hwidth_budget. }
+  assert (Hcredit_paid : (((4096 * (PTrieT.c_trie + 1) + c_loopN) * N.of_nat (width + 1)) *
+    N.of_nat (dom_order_removal_credit (dom_order_key_universe count) initial) <=
+      (49152 * (PTrieT.c_trie + 1) + 12 * c_loopN) * budget)%N).
+  { apply time_of_nat_le in Hcredit. rewrite Nat2N.inj_mul in Hcredit.
+    change (N.of_nat 12) with 12%N in Hcredit.
+    eapply N.le_trans.
+    - apply N.mul_le_mono_l. exact Hcredit.
+    - unfold budget. rewrite Nat2N.inj_mul. ring_simplify. reflexivity. }
+  assert (Hloop_paid : (T_loopN (dom_order_remove_step parents) (T_dom_order_remove_step parents)
+    (N.double (N.double (N.double (N.double limit))) + 3)%N initial <=
+      (49152 * (PTrieT.c_trie + 1) + 19 * c_loopN) * budget)%N).
+  { replace ((49152 * (PTrieT.c_trie + 1) + 19 * c_loopN) * budget)%N with
+      ((49152 * (PTrieT.c_trie + 1) + 12 * c_loopN) * budget +
+        7 * c_loopN * budget)%N by ring.
+    clear -Hloop Hcredit_paid Hfuel_paid. lia. }
+  assert (Hsetup_paid : (T_dom_order_removal limit parents order sources <=
+    List.T_filter (dom_order_removal_keep parents) (T_dom_order_removal_keep parents) order +
+    List.T_fold_left dom_order_removal_activate T_dom_order_removal_activate children Empty +
+    T_dom_source_initial parents (source_blue sources) children +
+    T_dom_source_initial parents (source_red sources) children +
+    T_loopN (dom_order_remove_step parents) (T_dom_order_remove_step parents)
+      (N.double (N.double (N.double (N.double limit))) + 3)%N initial + 64 * budget)%N).
+  { eapply N.le_trans; [exact Hsetup|]. apply N.add_le_mono_l. now apply N.mul_le_mono_l. }
+  unfold dom_order_removal_coefficient. fold budget.
+  exact (dom_order_removal_final_budget PTrieT.c_trie c_loopN budget _ _ _ _ _ _
+    Hfilter_paid Hactive_paid Hblue_paid Hred_paid Hloop_paid Hsetup_paid).
+Qed.
