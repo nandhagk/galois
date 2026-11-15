@@ -2191,6 +2191,270 @@ Module BuildT (O : OPS)
   Proof.
     intros p s c Hproduce. unfold k_size. now apply produce_size_checked.
   Qed.
+  Module Clock := ValidateT O K G P Q R BE BC S DG D B.
+
+  Lemma budget_graph_width p : graph_width (base (graph p)) <= function_width p.
+  Proof.
+    exact (Clock.ssa_graph_width p).
+  Qed.
+  (** Each source block occurs in the graph when source identifiers are distinct. *)
+  Lemma budget_graph_count p : NoDup (map fst (blocks _ _ _ p)) ->
+    graph_n (base (graph p)) = length (blocks _ _ _ p).
+  Proof.
+    intro Hunique. rewrite Clock.ssa_graph_nodes.
+    apply Nat.le_antisymm; [apply PB.block_nodes_le|].
+    assert (Hlength : length (map fst (blocks _ _ _ p)) <=
+      length (BC.nodes (R.prepare p))).
+    { apply NoDup_incl_length; [exact Hunique|].
+      rewrite B.nodes_agree. intros b Hin. now apply val_first_blocks_ids. }
+    now rewrite length_map in Hlength.
+  Qed.
+
+  (** The published dominator budget contains the unweighted graph inventory. *)
+  Lemma budget_dom_lower p :
+    graph_n (base (graph p)) + graph_e (base (graph p)) + 1 <= dom_work p.
+  Proof.
+    unfold dom_work; nia.
+  Qed.
+  Lemma budget_size_lower p : 1 <= build_work p /\ function_size p + 1 <= build_work p.
+  Proof.
+    unfold build_work; lia.
+  Qed.
+  Lemma budget_graph_inventory p :
+    function_size p + graph_n (base (graph p)) + graph_e (base (graph p)) + 1 <=
+      build_work p.
+  Proof.
+    rewrite Clock.ssa_graph_nodes, Clock.ssa_graph_edges. unfold build_work; lia.
+  Qed.
+  Lemma budget_graph_clock p :
+    (T_graph p <= Clock.ssa_graph_coefficient * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    eapply N.le_trans; [exact (Clock.ssa_graph_clock p)|].
+    apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+    apply time_of_nat_le, budget_graph_inventory.
+  Qed.
+
+  Lemma budget_prepare_clock p :
+    (R.T_prepare p <= R.c_prepare * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    eapply N.le_trans; [apply R.T_prepare_le|].
+    apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+    apply time_of_nat_le. exact (proj2 (budget_size_lower p)).
+  Qed.
+
+  Lemma budget_dom_build_clock p :
+    (D.T_build (graph p) (entry _ _ _ p) <= D.c_dom * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    eapply N.le_trans; [apply D.T_build_le, Clock.ssa_graph_prepared|].
+    apply N.mul_le_mono.
+    - rewrite <- N.mul_assoc, <- Nat2N.inj_mul.
+      apply N.mul_le_mono_l; apply time_of_nat_le.
+      change (dom_work p <= build_work p). unfold build_work; lia.
+    - apply time_of_nat_le. pose proof (budget_graph_width p); lia.
+  Qed.
+
+  Lemma budget_dom_check_clock p m order :
+    (D.T_check (graph p) (entry _ _ _ p) m order <= D.c_dom * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    eapply N.le_trans; [apply D.T_check_le|]. apply N.mul_le_mono.
+    - apply N.mul_le_mono_l; apply time_of_nat_le.
+      pose proof (budget_dom_lower p). unfold build_work; lia.
+    - apply time_of_nat_le. pose proof (budget_graph_width p); lia.
+  Qed.
+
+  Lemma budget_dom_tree_clock p m order :
+    D.check (graph p) (entry _ _ _ p) m order = true ->
+    (D.T_tree (graph p) (entry _ _ _ p) m order <= D.c_dom * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro Hcheck. eapply N.le_trans; [apply D.T_tree_le; exact Hcheck|].
+    apply N.mul_le_mono.
+    - apply N.mul_le_mono_l; apply time_of_nat_le.
+      pose proof (budget_dom_lower p). unfold build_work; lia.
+    - apply time_of_nat_le. pose proof (budget_graph_width p); lia.
+  Qed.
+
+  Lemma budget_frontier_clock p :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    (F.T_df (graph p) (dom_tree p) <= F.c_frontier * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro Hcheck. eapply N.le_trans.
+    - eapply F.T_df_le; [apply F1_graph_wf|apply Clock.ssa_graph_prepared|].
+      apply D.tree_exact; exact Hcheck.
+    - apply N.mul_le_mono.
+      + apply N.mul_le_mono_l; apply time_of_nat_le.
+        rewrite Clock.ssa_graph_nodes, Clock.ssa_graph_edges.
+        unfold build_work, df_size; lia.
+      + apply time_of_nat_le. pose proof (budget_graph_width p); lia.
+  Qed.
+
+  (** Successful renaming leaves the dominator node count unchanged. *)
+  Lemma budget_candidate_nodes p s c : produce p = Some (s, c) ->
+    graph_n (base (graph s)) = graph_n (base (graph p)).
+  Proof.
+    intro Hproduce. pose proof (produce_unique _ _ _ Hproduce) as Hunique.
+    destruct (produce_size_checked _ _ _ Hproduce) as [Hids _].
+    rewrite !budget_graph_count by (try rewrite Hids; exact Hunique).
+    apply f_equal with (f := @length positive) in Hids.
+    now rewrite !length_map in Hids.
+  Qed.
+
+  Lemma budget_candidate_dom p s c : produce p = Some (s, c) ->
+    (Va.dom_bound s <= 3 * N.of_nat (dom_work p))%N.
+  Proof.
+    intro Hproduce. pose proof (PB.block_edges_le s) as Hedges.
+    rewrite <- Clock.ssa_graph_nodes, <- Clock.ssa_graph_edges in Hedges.
+    change (graph_e (base (graph s)) <= 2 * graph_n (base (graph s))) in Hedges.
+    pose proof (budget_candidate_nodes _ _ _ Hproduce) as Hnodes.
+    change (N.of_nat ((graph_n (base (graph s)) + graph_e (base (graph s)) + 1) *
+      (Nat.log2 (graph_n (base (graph s))) + 1)) <= 3 * N.of_nat (dom_work p))%N.
+    change (N.of_nat ((graph_n (base (graph s)) + graph_e (base (graph s)) + 1) *
+      (Nat.log2 (graph_n (base (graph s))) + 1)) <= N.of_nat 3 * N.of_nat (dom_work p))%N.
+    rewrite <- Nat2N.inj_mul. apply time_of_nat_le. rewrite Hnodes in *.
+    unfold dom_work. nia.
+  Qed.
+
+  Lemma budget_candidate_sizes p s c : produce p = Some (s, c) ->
+    function_size p + function_size s + cert_size c + 1 <= 17 * build_work p /\
+    Va.check_width p s c + 1 <= 17 * (function_width p + 1) /\
+    function_size s + 1 <= 17 * build_work p /\
+    function_width s + 1 <= 17 * (function_width p + 1).
+  Proof.
+    intro Hproduce. destruct (produce_size_checked _ _ _ Hproduce) as [_ [Hsize Hwidth]].
+    assert (Hs : function_size s + cert_size c <= 16 * build_work p).
+    { assert (HsN : (N.of_nat (function_size s + cert_size c) <=
+        N.of_nat (16 * build_work p))%N) by (rewrite Nat2N.inj_mul; exact Hsize).
+      lia. }
+    assert (Hw : function_width s + vertex_width (cert_ids c) <= 16 * (function_width p + 1)).
+    { assert (HwN : (N.of_nat (function_width s + vertex_width (cert_ids c)) <=
+        N.of_nat (16 * (function_width p + 1)))%N)
+        by (rewrite Nat2N.inj_mul; exact Hwidth). lia. }
+    pose proof (budget_size_lower p) as Hlower. unfold Va.check_width; lia.
+  Qed.
+
+  Lemma budget_translation_clock p s c : produce p = Some (s, c) ->
+    (Va.T_check p s c <= 512 * Va.c_val * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1) + Va.c_val * N.of_nat (Va.op_bits p + 1))%N.
+  Proof.
+    intro Hproduce. destruct (budget_candidate_sizes _ _ _ Hproduce) as [Hs [Hw _]].
+    eapply N.le_trans; [apply Va.T_check_le|]. apply N.add_le_mono_r.
+    eapply N.le_trans with (m := (Va.c_val * N.of_nat (17 * build_work p) *
+      N.of_nat (17 * (function_width p + 1)))%N).
+    - apply N.mul_le_mono; [apply N.mul_le_mono_l|]; now apply time_of_nat_le.
+    - rewrite !Nat2N.inj_mul.
+      change (N.of_nat 17) with 17%N.
+      replace (Va.c_val * (17 * N.of_nat (build_work p)) *
+        (17 * N.of_nat (function_width p + 1)))%N with
+        (289 * (Va.c_val * N.of_nat (build_work p) * N.of_nat (function_width p + 1)))%N
+        by ring.
+      replace (512 * Va.c_val * N.of_nat (build_work p) *
+        N.of_nat (function_width p + 1))%N with
+        (512 * (Va.c_val * N.of_nat (build_work p) * N.of_nat (function_width p + 1)))%N
+        by ring.
+      apply N.mul_le_mono_r; lia.
+  Qed.
+
+  Lemma budget_candidate_ssa_clock p s c : produce p = Some (s, c) ->
+    (Va.T_check_ssa s <= 512 * Va.c_val * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro Hproduce. destruct (budget_candidate_sizes _ _ _ Hproduce) as [_ [_ [Hs Hw]]].
+    pose proof (budget_candidate_dom _ _ _ Hproduce) as Hd.
+    assert (Hdom : (N.of_nat (dom_work p) <= N.of_nat (build_work p))%N)
+      by (apply time_of_nat_le; unfold build_work; lia).
+    assert (Htotal : (N.of_nat (function_size s + 1) + Va.dom_bound s <=
+      20 * N.of_nat (build_work p))%N).
+    { apply time_of_nat_le in Hs. rewrite Nat2N.inj_mul in Hs.
+      change (N.of_nat 17) with 17%N in Hs. lia. }
+    eapply N.le_trans; [apply Va.T_check_ssa_le|].
+    eapply N.le_trans with (m := (Va.c_val * (20 * N.of_nat (build_work p)) *
+      N.of_nat (17 * (function_width p + 1)))%N).
+    - apply N.mul_le_mono; [now apply N.mul_le_mono_l|now apply time_of_nat_le].
+    - rewrite Nat2N.inj_mul. change (N.of_nat 17) with 17%N.
+      replace (Va.c_val * (20 * N.of_nat (build_work p)) *
+        (17 * N.of_nat (function_width p + 1)))%N with
+        (340 * (Va.c_val * N.of_nat (build_work p) * N.of_nat (function_width p + 1)))%N
+        by ring.
+      replace (512 * Va.c_val * N.of_nat (build_work p) *
+        N.of_nat (function_width p + 1))%N with
+        (512 * (Va.c_val * N.of_nat (build_work p) * N.of_nat (function_width p + 1)))%N
+        by ring.
+      apply N.mul_le_mono_r; lia.
+  Qed.
+
+  Lemma budget_live_clock p :
+    (L.T_live_in p <= L.c_live * N.of_nat (build_work p) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    eapply N.le_trans; [apply L.T_live_in_le|].
+    apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply time_of_nat_le.
+    unfold build_work; lia.
+  Qed.
+
+  (** Rejection of repeated source identifiers costs at most one syntax scan. *)
+  Lemma budget_unique_clock : forall (bs : list (positive * block positive O.K O.G)) seen w,
+    (forall b body, In (b, body) bs -> Pos.size_nat b <= w) ->
+    (T_build_blocks_unique bs seen <= (PTrieT.c_trie + 16) *
+      N.of_nat (length bs + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    induction bs as [|[b body] rest IH]; intros seen w Hwidth.
+    - time_step.
+    - assert (Hb : Pos.size_nat b <= w) by (apply (Hwidth b body); left; reflexivity).
+      specialize (IH (PTrieCode.set b tt seen) w
+        ltac:(intros a other Hin; apply (Hwidth a other); right; exact Hin)).
+      pose proof (val_mem_time seen b w Hb) as Hmem.
+      pose proof (PTrieT.T_set_le unit b tt seen) as Hset.
+      time_unfold @T_build_blocks_unique.
+      destruct (val_mem seen b); time_cbn; nia.
+  Qed.
+
+  Lemma budget_source_unique_clock p :
+    (T_build_blocks_unique (blocks _ _ _ p) Empty <=
+      (PTrieT.c_trie + 16) * N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    eapply N.le_trans.
+    - apply budget_unique_clock; intros b body Hin; now apply (val_block_width p b body).
+    - apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply time_of_nat_le.
+      pose proof (val_ssa_counts p). unfold build_work; lia.
+  Qed.
+  (** The producer pays only the phases reached before rejection. *)
+  Lemma budget_produce_parts p :
+    (T_produce p <= R.T_prepare p + T_build_blocks_unique (blocks _ _ _ p) Empty +
+      (if build_blocks_unique (blocks _ _ _ p) Empty then
+        T_graph p + D.T_build (graph p) (entry _ _ _ p) +
+        D.T_check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
+        (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) then
+          D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
+          F.T_df (graph p) (dom_tree p) + L.T_live_in p + U.T_universe (R.prepare p) +
+          T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+            (U.universe (R.prepare p)) +
+          (if placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+            (U.universe (R.prepare p)) then
+            T_def_index p + T_live_sets (L.live_in p) +
+            T_placement_with (frontiers p) (def_index p) (live_sets (L.live_in p))
+              (U.universe (R.prepare p)) +
+            T_rename p (dom_tree p) (placement p) (L.live_in p)
+          else 0)
+        else 0)
+      else 0) + 1024)%N.
+  Proof.
+    time_unfold T_produce. time_unfold T_graph. time_simpl.
+    unfold placement, frontiers, dom_tree, dom_result, graph.
+    set (q := R.prepare p).
+    set (g := DG.prepare (cfg_graph (BC.nodes q) (BC.edges q) (BC.src q) (BC.dst q))).
+    set (result := D.build g (entry _ _ _ p)).
+    set (tree := D.tree g (entry _ _ _ p) (fst result) (snd result)).
+    set (frontier := F.df g tree).
+    destruct (build_blocks_unique (blocks _ _ _ p) Empty); [|lia].
+    destruct (D.check g (entry _ _ _ p) (fst result) (snd result)); [|lia].
+    destruct (placement_allowed p q frontier (L.live_in p) (U.universe q)); lia.
+  Qed.
+
   (** The producer checks the graph before preparing it and stops at the first rejection. *)
   Lemma T3_produce : forall p,
     (T_produce p <= R.T_prepare p + k_graph +
