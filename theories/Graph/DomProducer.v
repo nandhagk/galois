@@ -512,3 +512,53 @@ Lemma dom_size_value n : (N.of_nat (N.size_nat n) <= n)%N.
 Proof.
   destruct n as [|p]; [reflexivity|apply dom_positive_size_value].
 Qed.
+
+(** Reconstruction credit counts trie nodes and all stored value bits. *)
+Fixpoint dom_rebuilt_weight_ne (t : trie_ne positive) : nat :=
+  match t with
+  | N001 r => 1 + dom_rebuilt_weight_ne r
+  | N010 v => 1 + Pos.size_nat v
+  | N011 v r => 1 + Pos.size_nat v + dom_rebuilt_weight_ne r
+  | N100 l => 1 + dom_rebuilt_weight_ne l
+  | N101 l r => 1 + dom_rebuilt_weight_ne l + dom_rebuilt_weight_ne r
+  | N110 l v => 1 + dom_rebuilt_weight_ne l + Pos.size_nat v
+  | N111 l v r => 1 + dom_rebuilt_weight_ne l + Pos.size_nat v + dom_rebuilt_weight_ne r
+  end.
+
+Definition dom_rebuilt_weight (t : ptrie positive) : nat :=
+  match t with Empty => 0 | Nodes n => dom_rebuilt_weight_ne n end.
+
+(** A reconstructed node introduces only its node and optional value credit. *)
+Lemma dom_rebuilt_weight_node l o r :
+  dom_rebuilt_weight (PTrieCode.node l o r) <=
+  1 + dom_rebuilt_weight l +
+    (match o with None => 0 | Some v => Pos.size_nat v end) + dom_rebuilt_weight r.
+Proof.
+  destruct l, o, r; cbn [PTrieCode.node dom_rebuilt_weight dom_rebuilt_weight_ne]; lia.
+Qed.
+
+(** Children and an existing value spend at most the containing trie's credit. *)
+Lemma dom_rebuilt_weight_parts t :
+  dom_rebuilt_weight (trie_left t) +
+    (match trie_value t with None => 0 | Some v => Pos.size_nat v end) +
+    dom_rebuilt_weight (trie_right t) <= dom_rebuilt_weight t.
+Proof.
+  destruct t as [|t]; [reflexivity|]. destruct t;
+    cbn [trie_left trie_value trie_right dom_rebuilt_weight dom_rebuilt_weight_ne]; lia.
+Qed.
+
+(** Insertion pays for its key path and the inserted value once. *)
+Lemma dom_rebuilt_weight_set p v t :
+  dom_rebuilt_weight (PTrieCode.set p v t) <=
+    dom_rebuilt_weight t + Pos.size_nat p + Pos.size_nat v.
+Proof.
+  revert t. induction p as [p IH|p IH|]; intro t;
+    cbn [PTrieCode.set PTrieCode.replace Pos.size_nat].
+  all: eapply Nat.le_trans; [apply dom_rebuilt_weight_node|].
+  all: pose proof (dom_rebuilt_weight_parts t) as Hparts.
+  - specialize (IH (trie_right t)). unfold PTrieCode.set in IH.
+    unfold PTrieCode.left, PTrieCode.value, PTrieCode.right in *. lia.
+  - specialize (IH (trie_left t)). unfold PTrieCode.set in IH.
+    unfold PTrieCode.left, PTrieCode.value, PTrieCode.right in *. lia.
+  - unfold PTrieCode.left, PTrieCode.right in *. lia.
+Qed.

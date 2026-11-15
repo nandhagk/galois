@@ -2450,6 +2450,120 @@ Proof.
   - rewrite <- length_rev. apply dom_size_budget_empty.
 Qed.
 
+(** A structural equality check spends the expected trie's reconstruction credit. *)
+Local Lemma dom_time_map_eq_ne expected candidate :
+  (T_dom_map_eq_ne expected candidate <=
+    4 * N.of_nat (dom_rebuilt_weight_ne expected))%N.
+Proof.
+  revert candidate.
+  induction expected as [r IHr|v|v r IHr|l IHl|l IHl r IHr|l IHl v|l IHl v r IHr];
+    intro candidate;
+    destruct candidate as [r'|v'|v' r'|l'|l' r'|l' v'|l' v' r'];
+    time_unfold T_dom_map_eq_ne; time_simpl;
+    cbn [dom_rebuilt_weight_ne].
+  all: try specialize (IHl l'); try specialize (IHr r');
+    try pose proof (Pos.T_eqb_le v v') as Hcompare.
+  all: rewrite !Nat2N.inj_add; lia.
+Qed.
+
+(** Empty-tree comparisons add only their outer branch charge. *)
+Local Lemma dom_time_map_eq expected candidate :
+  (T_dom_map_eq expected candidate <=
+    4 * N.of_nat (dom_rebuilt_weight expected) + 2)%N.
+Proof.
+  destruct expected as [|expected], candidate as [|candidate];
+    unfold T_dom_map_eq; cbn [dom_rebuilt_weight]; time_simpl; try lia.
+  pose proof (dom_time_map_eq_ne expected candidate). lia.
+Qed.
+
+(** Strict numeric comparison examines at most its first operand's bits. *)
+Local Lemma dom_time_N_ltb a b :
+  (N.T_ltb a b <= N.of_nat (N.size_nat a) + 3)%N.
+Proof.
+  pose proof (N.T_compare_le a b). time_unfold N.T_ltb. lia.
+Qed.
+
+(** Every reconstructed binding pays once for its key and checked parent value. *)
+Local Lemma dom_rebuild_weight width r m pos before v after :
+  Pos.size_nat v <= width ->
+  dom_rebuild width r m pos (Some before) v = Some after ->
+  dom_rebuilt_weight after <= dom_rebuilt_weight before + 2 * width.
+Proof.
+  intros Hwidth Hstep. unfold dom_rebuild in Hstep.
+  destruct (Pos.eqb v r).
+  - destruct (trie_get v m); [discriminate Hstep|]. injection Hstep as <-. lia.
+  - destruct (trie_get v m) as [p|]; [|discriminate Hstep].
+    destruct (dom_key_fits width p) eqn:Hfits; [|discriminate Hstep].
+    destruct (trie_get p pos) as [pp|]; [|discriminate Hstep].
+    destruct (trie_get v pos) as [pv|]; [|discriminate Hstep].
+    destruct (N.ltb pp pv); [|discriminate Hstep]. injection Hstep as <-.
+    pose proof (dom_key_fits_width width p Hfits).
+    pose proof (dom_rebuilt_weight_set v p before). lia.
+Qed.
+
+(** Reconstruction accumulates credit only along the bounded accepted input list. *)
+Local Lemma dom_rebuild_fold_weight width r m pos vs before after :
+  (forall v, In v vs -> Pos.size_nat v <= width) ->
+  fold_left (dom_rebuild width r m pos) vs (Some before) = Some after ->
+  dom_rebuilt_weight after <= dom_rebuilt_weight before + length vs * (2 * width).
+Proof.
+  revert before after. induction vs as [|v vs IH]; intros before after Hwidth Hfold.
+  - cbn [fold_left] in Hfold. injection Hfold as <-. cbn [length]. lia.
+  - cbn [fold_left] in Hfold.
+    destruct (dom_rebuild width r m pos (Some before) v) as [next|] eqn:Hstep.
+    + pose proof (dom_rebuild_weight width r m pos before v next
+        (Hwidth v (or_introl eq_refl)) Hstep) as Hnext.
+      specialize (IH next after (fun x Hx => Hwidth x (or_intror Hx)) Hfold).
+      cbn [length]. nia.
+    + rewrite dom_rebuild_fold_none in Hfold. discriminate Hfold.
+Qed.
+
+(** Each reconstruction callback bounds foreign parent keys before traversing them. *)
+Local Lemma dom_time_rebuild width r m pos acc v :
+  Pos.size_nat v <= width ->
+  (forall x i, trie_get x pos = Some i -> N.size_nat i <= width) ->
+  (T_dom_rebuild width r m pos acc v <=
+    (PTrieT.c_trie + 64) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hwidth Hvalues. destruct acc as [before|].
+  2: { unfold T_dom_rebuild. time_simpl. rewrite Nat2N.inj_add. nia. }
+  pose proof (Pos.T_eqb_le v r) as Hroot.
+  unfold T_dom_rebuild. destruct (Pos.eqb v r) eqn:Eroot.
+  - destruct (trie_get v m); rewrite !PTrieT.trie_get_clock;
+      time_simpl; rewrite !Nat2N.inj_add; nia.
+  - destruct (trie_get v m) as [p|] eqn:Hparent.
+    2: { rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia. }
+    pose proof (dom_time_key_fits width p) as Hfits_time.
+    destruct (dom_key_fits width p) eqn:Hfits.
+    2: { rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia. }
+    pose proof (dom_key_fits_width width p Hfits) as Hparent_width.
+    destruct (trie_get p pos) as [pp|] eqn:Hpp;
+      destruct (trie_get v pos) as [pv|] eqn:Hpv.
+    + pose proof (Hvalues p pp Hpp) as Hpp_width.
+      pose proof (dom_time_N_ltb pp pv) as Hcompare.
+      pose proof (PTrieT.T_set_le positive v p before) as Hset.
+      change (PTrieCode.T_set v p before <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+      destruct (N.ltb pp pv); rewrite !PTrieT.trie_get_clock; time_simpl;
+        rewrite !Nat2N.inj_add in *; nia.
+    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    + rewrite !PTrieT.trie_get_clock. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Distinct accepted keys also bound every reconstructed numeric position. *)
+Local Lemma dom_read_positions_width g r o pos :
+  dom_read_known (dom_scan g) r o = Some pos ->
+  forall v i, trie_get v pos = Some i -> N.size_nat i <= graph_width (base g).
+Proof.
+  intro Hread. pose proof (dom_read_known_positions (dom_scan g) r o pos Hread) as ->.
+  destruct (dom_read_known_success g r o (dom_positions o) Hread)
+    as [Hunique [_ [_ [Hlisted _]]]].
+  intros v i Hget. apply (dom_distinct_value_width o (graph_width (base g)) i Hunique).
+  - intros x Hx. apply dom_listed_key_width. now apply Hlisted.
+  - apply N.lt_le_incl. exact (dom_positions_bound o v i Hunique Hget).
+Qed.
+
 Module DomT <: DOM_ALL.
   Include Dom.
   TimeFun build.
@@ -2496,7 +2610,7 @@ Module DomT <: DOM_ALL.
   Definition k_scan : N := (8 * PTrieT.c_trie + 512)%N.
   Definition k_read : N :=
     (32 * (PTrieT.c_trie + c_loopN + 16) + 64 * c_loopN + 128)%N.
-  Definition k_map : N := 1%N. (* STUB *)
+  Definition k_map : N := (2 * k_read + 16 * PTrieT.c_trie + 512)%N.
   Definition k_size : N := 1%N. (* STUB *)
   Definition k_edge : N := 1%N. (* STUB *)
   Definition k_tree : N := 1%N. (* STUB *)
@@ -2715,7 +2829,50 @@ Module DomT <: DOM_ALL.
   Lemma T3_map : forall g r m o,
     (T_map_check (scan g) r m o <= k_map * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o. pose proof (T2_read g r o) as Hread_time.
+    unfold T_read in Hread_time. cbn beta iota zeta in Hread_time.
+    unfold T_map_check, T_dom_map_check_known. time_simpl.
+    destruct (dom_read_known (scan g) r o) as [pos|] eqn:Hread.
+    - change (dom_read_known (dom_scan g) r o = Some pos) in Hread.
+      destruct (dom_read_known_success g r o pos Hread)
+        as [Hunique [Hlength [_ [Hlisted _]]]].
+      assert (Hkeys : forall v, In v o -> Pos.size_nat v <= graph_width (base g)).
+      { intros v Hv. apply dom_listed_key_width. now apply Hlisted. }
+      pose proof (dom_read_positions_width g r o pos Hread) as Hvalues.
+      cbn [scan dom_scan dom_width].
+      pose proof (@dom_time_fold_left (option (ptrie positive)) positive
+        (dom_rebuild (graph_width (base g)) r m pos)
+        (T_dom_rebuild (graph_width (base g)) r m pos)
+        ((PTrieT.c_trie + 64) * N.of_nat (graph_width (base g) + 1))%N o (Some Empty)
+        ltac:(intros v Hv acc; apply dom_time_rebuild; [now apply Hkeys|exact Hvalues]))
+        as Hfold_time.
+      destruct (fold_left (dom_rebuild (graph_width (base g)) r m pos) o (Some Empty))
+        as [built|] eqn:Hfold.
+      + pose proof (dom_rebuild_fold_weight (graph_width (base g)) r m pos o Empty built
+          Hkeys Hfold) as Hweight.
+        pose proof (dom_time_map_eq built m) as Hequal.
+        cbn [dom_rebuilt_weight] in Hweight.
+        time_simpl. unfold k_map.
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+        change (fun (H : option (ptrie positive)) (H0 : positive) =>
+          T_dom_rebuild (graph_width (base g)) r m pos H H0)
+          with (T_dom_rebuild (graph_width (base g)) r m pos).
+        set (running := List.T_fold_left (dom_rebuild (graph_width (base g)) r m pos)
+          (T_dom_rebuild (graph_width (base g)) r m pos) o (Some Empty)) in *;
+          clearbody running.
+        clear -Hlength Hread_time Hfold_time Hweight Hequal. nia.
+      + time_simpl. unfold k_map.
+        change (fun (H : option (ptrie positive)) (H0 : positive) =>
+          T_dom_rebuild (graph_width (base g)) r m pos H H0)
+          with (T_dom_rebuild (graph_width (base g)) r m pos).
+        set (running := List.T_fold_left (dom_rebuild (graph_width (base g)) r m pos)
+          (T_dom_rebuild (graph_width (base g)) r m pos) o (Some Empty)) in *;
+          clearbody running.
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+        clear -Hlength Hread_time Hfold_time. nia.
+    - time_simpl. unfold k_map. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
 
   Lemma T4_sizes : forall g m o, NoDup o -> length o <= graph_n (base g) ->
     (forall v, In v o -> In v (nodes g)) ->
