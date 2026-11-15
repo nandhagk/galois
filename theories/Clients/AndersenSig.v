@@ -161,7 +161,7 @@ Module Type ANDERSEN_LAWS (V : VALUE with Definition t := positive)
 
   (** A run with enough iteration fuel saturates. *)
   Parameter solve_saturates : forall q lim,
-    N.to_nat (max_iter lim) >= 2 * R.herbrand (compile q) (seed q) + 2 ->
+    N.to_nat (max_iter lim) >= 2 * R.herbrand (compile q) (seed q) + 3 ->
     fst (solve q lim) = Saturated.
 
   (** A saturated result is exactly the least inclusion solution. *)

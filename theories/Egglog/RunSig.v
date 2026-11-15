@@ -294,10 +294,12 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
       (forall f, kind w f = program_kind p f) -> view_sorted (program_sorts p) w ->
       includes (D.view db') w.
-  (** A relational run reaches saturation within its finite Herbrand budget. *)
+  (** A relational run reaches saturation within its finite Herbrand budget. The budget has
+      one round more than twice the universe, because the seed may start with its change flag
+      raised. *)
   Parameter run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
-    N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
+    N.to_nat (max_iter lim) >= 2 * herbrand p db + 3 ->
     fst (run p cp lim db) = Saturated.
   (** Identifier exhaustion of a checked run reports allocation above the caller's identifier
       limit. The final rebuild keeps the counter only on a well-formed database. *)
@@ -402,6 +404,13 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   (** Finding the rule of a plan walks the rule list with a binary counter. *)
   Definition rule_work (p : program V.t) (c : cplan V.t) : nat :=
     (length (rules V.t p) + 1) * (N.size_nat (rule_ix V.t c) + 1).
+  (** Reading the index of a source pays for the bits of its slot number. *)
+  Definition source_bits (c : cplan V.t) : nat :=
+    fold_right (fun src n =>
+      match src with
+      | All _ slot | New _ slot => N.size_nat slot + 1 + n
+      | Const _ _ => 1 + n
+      end) 0 (sources V.t c).
   Fixpoint apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : D.t :=
     match js with
@@ -499,11 +508,14 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
   Parameter F6a_rebuild_grows : forall db0 db, D.wf db -> grows_upto db0 db ->
     grows db0 (D.rebuild db).
 
-  (** Applying a relational rule retains derivability of every output row. *)
-  Parameter F7_apply_derives : forall p initial db r s, relational_fragment p = true ->
-    no_ids initial -> D.wf db -> derived p initial db -> In r (rules V.t p) ->
+  (** Applying a checked relational rule in a well-sorted allocated environment of a loaded,
+      identifier-free database keeps every row derivable and adds no identifier. *)
+  Parameter F7_apply_derives : forall p cp initial db r s,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    no_ids db -> derived p initial db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
     derivation_body V.prim p (D.view initial) s (query V.t r) ->
-    derived p initial (apply (actions V.t r) s db).
+    no_ids (apply (actions V.t r) s db) /\ derived p initial (apply (actions V.t r) s db).
   (** A quiet naive round establishes closure of the current view. *)
   Parameter F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
@@ -571,7 +583,7 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
         (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
-           length (sources V.t c) + 2) *
+           length (sources V.t c) + source_bits c + 2) *
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (fold_right (fun x n => Pos.size_nat x + 1 + n) 0 (var_of V.t c) +
@@ -624,13 +636,16 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (T_bind_trie c b <= k_driver *
       N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
         (var_of V.t c) + 1))%N.
-  (** The filter pays for finding its rule, for its atoms at the widest program word or
-      binding cell, and for the primitive work of the query. *)
+  (** The filter pays for finding its rule, for looking up the names of its join variables,
+      for its atoms at the widest program word or binding cell, and for the primitive work of
+      the query. *)
   Parameter T7_keep_le : forall p c b,
     (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
       k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
-      k_driver * N.of_nat (rule_work p c))%N.
+      k_driver * N.of_nat (rule_work p c) +
+      k_driver * N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
+        (var_of V.t c) + 1))%N.
   (** A round's jobs are the kept bindings of its plans, plan by plan. *)
   Parameter F31_jobs : forall p cp nv db,
     jobs p cp nv db = flat_map (fun c => map (fun b => (c, b))

@@ -907,6 +907,50 @@ Definition check_cplan {V : Type} (eqb : V -> V -> bool) (newok : bool)
   end.
 TimeFun check_cplan.
 
+(** The layout check with the query's largest variable and copy count already computed. *)
+Definition layout_ok_at {V : Type} (bound : positive) (copies : nat) (vars : list positive)
+    (srcs : list (source V)) (cols : list (list nat)) : bool :=
+  match layout_fresh bound copies vars 0 Empty with
+  | Some allowed => layout_literals srcs cols allowed
+  | None => false
+  end.
+TimeFun layout_ok_at.
+
+(** The plan check with the query's largest variable and copy count already computed, so that
+    a rule's plans share one scan of the query. *)
+Definition check_cplan_at {V : Type} (bound : positive) (copies : nat) (eqb : V -> V -> bool)
+    (newok : bool) (table : ptrie (N * (positive * list nat))) (i : N) (r : rule V)
+    (c : cplan V) : bool :=
+  match r, c with
+  | Rule _ q _, CPlan _ ix (JPlan n cols) srcs vars post =>
+      if N.eqb ix i then
+        if Nat.eqb (length vars) n then
+          match var_table vars 0 Empty with
+          | Some names =>
+              if layout_ok_at bound copies vars srcs cols then
+                match check_query eqb newok names n table q 0 0 Empty 0 srcs cols [] with
+                | Some (count, [], [], expected) =>
+                    if N.eqb count (nat_n n) then nats_eqb (rev_append expected []) post
+                    else false
+                | _ => false
+                end
+              else false
+          | None => false
+          end
+        else false
+      else false
+  end.
+TimeFun check_cplan_at.
+
+(** Scanning the query once agrees with scanning it for every plan. *)
+Lemma check_cplan_at_agrees : forall {V : Type} (eqb : V -> V -> bool) newok table i q acts c,
+  check_cplan eqb newok table i (Rule V q acts) c =
+  check_cplan_at (query_max q 1%positive) (query_copies q 0) eqb newok table i
+    (Rule V q acts) c.
+Proof.
+  intros V eqb newok table i q acts [ix [n cols] srcs vars post]. reflexivity.
+Qed.
+
 Fixpoint fun_count {V : Type} (q : list (atom V)) : nat :=
   match q with
   | [] => O
@@ -953,13 +997,78 @@ Fixpoint check_rule_plans {V : Type} (eqb : V -> V -> bool)
   end.
 TimeFun check_rule_plans.
 
+(** The semi-naive plan check with the rule's scan results passed in. *)
+Fixpoint check_semis_at {V : Type} (bound : positive) (copies : nat) (eqb : V -> V -> bool)
+    (table : ptrie (N * (positive * list nat))) (i : N) (r : rule V) (k : nat)
+    (cs : list (cplan V)) : option (list (cplan V)) :=
+  match k with
+  | O => Some cs
+  | S k' =>
+      match cs with
+      | [] => None
+      | c :: rest =>
+          if check_cplan_at bound copies eqb true table i r c then
+            check_semis_at bound copies eqb table i r k' rest
+          else None
+      end
+  end.
+TimeFun check_semis_at.
+
+(** The rule plan check scans each rule's query once and shares the result among its plans. *)
+Fixpoint check_rule_plans_at {V : Type} (eqb : V -> V -> bool)
+    (table : ptrie (N * (positive * list nat))) (rs : list (rule V)) (i : N)
+    (naive semi : list (cplan V)) : bool :=
+  match rs, naive with
+  | [], [] =>
+      match semi with
+      | [] => true
+      | _ :: _ => false
+      end
+  | r :: rest, c :: naive' =>
+      match r with
+      | Rule _ q _ =>
+          let bound := query_max q 1%positive in
+          let copies := query_copies q 0 in
+          if check_cplan_at bound copies eqb false table i r c then
+            match check_semis_at bound copies eqb table i r (fun_count q) semi with
+            | Some semi' => check_rule_plans_at eqb table rest (N.succ i) naive' semi'
+            | None => false
+            end
+          else false
+      end
+  | _, _ => false
+  end.
+TimeFun check_rule_plans_at.
+
+Lemma check_semis_at_agrees : forall {V : Type} (eqb : V -> V -> bool) table i q acts k cs,
+  check_semis eqb table i (Rule V q acts) k cs =
+  check_semis_at (query_max q 1%positive) (query_copies q 0) eqb table i (Rule V q acts) k cs.
+Proof.
+  intros V eqb table i q acts k. induction k as [|k IH]; intros [|c cs]; try reflexivity.
+  cbn [check_semis check_semis_at]. rewrite check_cplan_at_agrees.
+  destruct (check_cplan_at _ _ _ _ _ _ _ _); [apply IH|reflexivity].
+Qed.
+
+(** Sharing the scans does not change the shape check's answer. *)
+Lemma check_rule_plans_at_agrees : forall {V : Type} (eqb : V -> V -> bool) table rs i naive semi,
+  check_rule_plans_at eqb table rs i naive semi = check_rule_plans eqb table rs i naive semi.
+Proof.
+  intros V eqb table rs. induction rs as [|[q acts] rs IH]; intros i naive semi.
+  - destruct naive; reflexivity.
+  - destruct naive as [|c naive]; [reflexivity|].
+    cbn [check_rule_plans_at check_rule_plans]. rewrite check_cplan_at_agrees.
+    destruct (check_cplan_at _ _ _ _ _ _ _ _); [|reflexivity].
+    rewrite check_semis_at_agrees.
+    destruct (check_semis_at _ _ _ _ _ _ _ _); [apply IH|reflexivity].
+Qed.
+
 (** The shape check validates the slots and then every plan against its rule. *)
 Definition check_shape_with {V : Type} (eqb : V -> V -> bool) (p : program V)
     (cp : compiled V) : bool :=
   match p, cp with
   | Program _ ds rs, Compiled _ sl naive semi =>
       match slot_table (decl_widths ds Empty) sl 0 Empty with
-      | Some table => check_rule_plans eqb table rs 0 naive semi
+      | Some table => check_rule_plans_at eqb table rs 0 naive semi
       | None => false
       end
   end.
@@ -4888,7 +4997,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     { apply Forall_rev. exact Hvalid. }
     destruct (planner_slot_table (decl_widths ds Empty) stored next rows Hfinal
       Hvalidrev) as [checked [Hscan Hnumbers]].
-    rewrite !rev_append_rev, !app_nil_r, Hscan.
+    rewrite !rev_append_rev, !app_nil_r, Hscan, check_rule_plans_at_agrees.
     eapply planner_rules_checked; [exact Hinitial| |exact Hrules|].
     - intros r s j s' c cs Hin Hstate Hrule Hslots.
       eapply (planner_rule_checked (Program V.t ds rs));
@@ -5045,6 +5154,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct Hplan as [_ Hshape]. unfold check_shape, check_shape_with in Hshape.
     destruct (slot_table (decl_widths ds Empty) sl 0 Empty)
       as [table|] eqn:Htable; [|discriminate].
+    rewrite check_rule_plans_at_agrees in Hshape.
     destruct (run_check_rule_plans_member rs table 0 naive semi Hshape c Hin)
       as [k [r [newok [Hnth [Hindex Hc]]]]].
     cbn in Hindex. exists table, newok, r. split; [exact Htable|].
@@ -6362,6 +6472,7 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     destruct Hcheck as [_ Hshape]. unfold check_shape, check_shape_with in Hshape.
     destruct (slot_table (decl_widths ds Empty) sl 0 Empty)
       as [table|] eqn:Htable; [|discriminate].
+    rewrite check_rule_plans_at_agrees in Hshape.
     destruct (run_check_rule_naive_member rs table 0 nv sn r Hshape Hin)
       as [c [k [Hmember [Hnth [Hindex Hplan]]]]].
     exists table, c. split; [exact Hmember|]. split; [exact Htable|].
@@ -12837,10 +12948,9 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
 
   Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
-    N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
+    N.to_nat (max_iter lim) >= 2 * herbrand p db + 3 ->
     fst (run p cp lim db) = Saturated.
-  Proof.
-  Admitted. (* SIG-QUESTION: initial change flag exceeds the stated round bound; see RunTest. *)
+  Proof. Admitted. (* STUB *)
 
   (** An identifier-limit stop is produced only by a round above the requested bound. *)
   Lemma run_loop_id_limit : forall p cp lim fuel nv db result,
@@ -12910,11 +13020,18 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   (** Finding the rule of a plan walks the rule list with a binary counter. *)
   Definition rule_work (p : program V.t) (c : cplan V.t) : nat :=
     (length (rules V.t p) + 1) * (N.size_nat (rule_ix V.t c) + 1).
+  (** Reading the index of a source pays for the bits of its slot number. *)
+  Definition source_bits (c : cplan V.t) : nat :=
+    fold_right (fun src n =>
+      match src with
+      | All _ slot | New _ slot => N.size_nat slot + 1 + n
+      | Const _ _ => 1 + n
+      end) 0 (sources V.t c).
   Definition round_work (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t) : nat :=
     length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
         (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
-          length (sources V.t c) + 2) *
+          length (sources V.t c) + source_bits c + 2) *
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
@@ -14621,7 +14738,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
          N.of_nat (D.pending db + 1)) +
       c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* SIG-QUESTION: DATABASE_T permits uncharged wide source slots. *)
+  Proof. Admitted. (* STUB *)
 
   Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : N :=
@@ -14743,11 +14860,15 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated. exact Hcell.
   Qed.
 
-  Lemma F7_apply_derives : forall p initial db r s, relational_fragment p = true ->
-    no_ids initial -> D.wf db -> derived p initial db -> In r (rules V.t p) ->
+  Lemma F7_apply_derives : forall p cp initial db r s,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    no_ids db -> derived p initial db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
     derivation_body V.prim p (D.view initial) s (query V.t r) ->
-    derived p initial (apply (actions V.t r) s db).
-  Proof. Admitted. (* PLAN-DEFECT: result-bearing relational Put; see RunTest. *)
+    no_ids (apply (actions V.t r) s db) /\ derived p initial (apply (actions V.t r) s db).
+  Proof.
+    exact run_apply_derives_checked.
+  Qed.
 
   Lemma F13_herbrand_size : forall p db,
     relational_fragment p = true -> prim_free p = true ->
@@ -14817,7 +14938,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
         (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
-          length (sources V.t c) + 2) *
+          length (sources V.t c) + source_bits c + 2) *
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
@@ -16510,6 +16631,201 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     cbn [length]. now rewrite (IH ys H).
   Qed.
 
+  (** Positive comparison stops when either operand ends. *)
+  Lemma compare_cont_right_clock : forall order p q,
+    (Pos.T_compare_cont order p q <= N.of_nat (Pos.size_nat q))%N.
+  Proof.
+    intros order p q. revert order p.
+    induction q as [q IH | q IH |]; intros order [p | p |];
+      time_unfold Pos.T_compare_cont; cbn [Pos.size_nat];
+      rewrite ?Nat2N.inj_succ;
+      try pose proof (IH order p); try pose proof (IH Lt p);
+      try pose proof (IH Gt p); lia.
+  Qed.
+
+  (** The layout check's strict comparison is charged to the variable it reads second. *)
+  Lemma run_pos_ltb_right : forall p q,
+    (Pos.T_ltb p q <= N.of_nat (Pos.size_nat q) + 2)%N.
+  Proof.
+    intros p q. pose proof (compare_cont_right_clock Eq p q) as Hcompare.
+    time_unfold Pos.T_ltb. time_unfold Pos.T_compare.
+    destruct (Pos.compare p q); time_cbn; lia.
+  Qed.
+
+  (** Distinct positives of bounded width fit below a power of two. *)
+  Lemma run_distinct_small : forall (xs : list positive) s,
+    NoDup xs -> Forall (fun x => Pos.size_nat x <= s) xs -> length xs < 2 ^ s.
+  Proof.
+    intros xs s Hnodup Hsmall.
+    assert (Hmap : NoDup (map Pos.to_nat xs)).
+    { apply run_map_nodup; [exact Pos2Nat.inj | exact Hnodup]. }
+    assert (Hincl : incl (map Pos.to_nat xs) (seq 1 (2 ^ s - 1))).
+    { intros n Hn. apply in_map_iff in Hn. destruct Hn as [x [Hx Hin]]. subst n.
+      rewrite in_seq. rewrite Forall_forall in Hsmall.
+      pose proof (Hsmall x Hin) as Hsize.
+      pose proof (Pos.size_nat_upper x) as Hupper.
+      pose proof (Nat.pow_le_mono_r 2 _ _ (Nat.neq_succ_0 1) Hsize) as Hpow.
+      pose proof (Pos2Nat.is_pos x) as Hpos. lia. }
+    pose proof (NoDup_incl_length Hmap Hincl) as Hlength.
+    rewrite length_map, length_seq in Hlength.
+    pose proof (Nat.pow_nonzero 2 s (Nat.neq_succ_0 1)) as Hnonzero.
+    lia.
+  Qed.
+
+  (** Bit sizes of distinct positives sum to at least the size of the largest small class. *)
+  Lemma run_distinct_mass : forall (xs : list positive) s,
+    (s + 1) * length xs <= fold_right (fun x n => Pos.size_nat x + n) 0 xs +
+      (s + 1) * length (filter (fun x => Nat.leb (Pos.size_nat x) s) xs).
+  Proof.
+    intros xs s. induction xs as [|x xs IH]; cbn [fold_right length filter].
+    - lia.
+    - assert (Hsize : 1 <= Pos.size_nat x) by (destruct x; cbn [Pos.size_nat]; lia).
+      destruct (Nat.leb (Pos.size_nat x) s) eqn:Hleb; cbn [length].
+      + nia.
+      + apply Nat.leb_gt in Hleb. nia.
+  Qed.
+
+  (** The width of the largest counter is paid by the distinct names of a plan. *)
+  Lemma run_distinct_key_mass : forall vars, NoDup vars ->
+    length vars * Pos.size_nat (N.succ_pos (N.of_nat (length vars))) <=
+      2 * run_vars_size vars + 2 * length vars + 1.
+  Proof.
+    intros vars Hnodup.
+    set (m := length vars). set (b := Pos.size_nat (N.succ_pos (N.of_nat m))).
+    assert (Hvalue : Pos.to_nat (N.succ_pos (N.of_nat m)) = m + 1).
+    { rewrite run_counter_key_value, Nat2N.id. reflexivity. }
+    assert (Hsum : fold_right (fun x n => Pos.size_nat x + n) 0 vars <= run_vars_size vars).
+    { clear. unfold run_vars_size. induction vars as [|x xs IH]; cbn [fold_right]; lia. }
+    destruct (Nat.le_gt_cases b 1) as [Hsmall | Hbig].
+    - nia.
+    - destruct b as [|[|s]] eqn:Hb; [lia | lia |].
+      assert (Hlower : 2 ^ (S s) <= m + 1).
+      { pose proof (Pos.size_nat_least (N.succ_pos (N.of_nat m)) (S s)) as Hleast.
+        rewrite Hvalue in Hleast. fold b in Hleast. rewrite Hb in Hleast.
+        destruct (Nat.lt_ge_cases (m + 1) (2 ^ S s)) as [Hlt | Hge]; [|exact Hge].
+        specialize (Hleast Hlt). lia. }
+      pose proof (run_distinct_mass vars s) as Hmass.
+      assert (Hcount : length (filter (fun x => Nat.leb (Pos.size_nat x) s) vars) < 2 ^ s).
+      { apply run_distinct_small.
+        - apply NoDup_filter. exact Hnodup.
+        - apply Forall_forall. intros x Hx. apply filter_In in Hx. destruct Hx as [_ Hleb].
+          apply Nat.leb_le. exact Hleb. }
+      cbn [Nat.pow] in Hlower. fold m in Hmass.
+      assert (Hprod : (s + 1) * (2 * length (filter (fun x => Nat.leb (Pos.size_nat x) s) vars)
+        + 2) <= (s + 1) * (m + 1)).
+      { apply Nat.mul_le_mono_l. lia. }
+      nia.
+  Qed.
+
+  (** A smaller positive has no more bits. *)
+  Lemma run_pos_size_mono : forall p q,
+    Pos.to_nat p <= Pos.to_nat q -> Pos.size_nat p <= Pos.size_nat q.
+  Proof.
+    intros p q Hle. apply Pos.size_nat_least.
+    pose proof (Pos.size_nat_upper q). lia.
+  Qed.
+
+  (** Building the allowed set pays for each variable and the width of its index key. *)
+  Lemma run_layout_fresh_time : forall vars bound copies j allowed kb,
+    Pos.size_nat (N.succ_pos (j + N.of_nat (length vars))) <= kb ->
+    (T_layout_fresh bound copies vars j allowed <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (run_vars_size vars + length vars * kb + 1) +
+        run_counter_credit j)%N.
+  Proof.
+    intro vars. induction vars as [| x vars IH]; intros bound copies j allowed kb Hkb.
+    - time_unfold T_layout_fresh. destruct copies; time_cbn; nia.
+    - pose proof (run_counter_succ_amort j) as Hstep.
+      pose proof (run_pos_ltb_right bound x) as Hltb.
+      assert (Hkey : Pos.size_nat (N.succ_pos j) <= kb).
+      { eapply Nat.le_trans; [| exact Hkb]. apply run_pos_size_mono.
+        rewrite !run_counter_key_value, N2Nat.inj_add, Nat2N.id.
+        cbn [length]. lia. }
+      assert (Hnext : Pos.size_nat (N.succ_pos (N.succ j + N.of_nat (length vars))) <= kb).
+      { eapply Nat.le_trans; [| exact Hkb]. apply run_pos_size_mono.
+        rewrite !run_counter_key_value, !N2Nat.inj_add, N2Nat.inj_succ,
+          Nat2N.id. cbn [length]. lia. }
+      pose proof (N.T_succ_pos_le j) as Hcode.
+      pose proof (run_counter_key_bits_lower j) as Hbits.
+      pose proof (PTrieT.T_set_le unit (N.succ_pos j) tt allowed) as Hset.
+      change (run_vars_size (x :: vars)) with (Pos.size_nat x + 1 + run_vars_size vars).
+      cbn [length].
+      time_unfold T_layout_fresh. destruct copies as [| copies].
+      + pose proof (IH bound 0 (N.succ j) allowed kb Hnext) as Htail.
+        destruct (Pos.ltb bound x);
+          [pose proof (IH bound 0 (N.succ j) (PTrieCode.set (N.succ_pos j) tt allowed) kb Hnext)
+            as Htail_set | ];
+          time_cbn; nia.
+      + pose proof (IH bound copies (N.succ j) allowed kb Hnext) as Htail.
+        destruct (Pos.ltb bound x); time_cbn; nia.
+  Qed.
+
+  (** Checking literal sources pays for the positions of the columns it consumes. *)
+  Lemma run_layout_literals_time : forall (srcs : list (source V.t)) cols allowed,
+    (T_layout_literals srcs cols allowed <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (run_columns_size cols + 1))%N.
+  Proof.
+    intro srcs. induction srcs as [| src srcs IH]; intros cols allowed.
+    - time_unfold @T_layout_literals. destruct cols; time_cbn; nia.
+    - destruct cols as [| col cols].
+      + time_unfold @T_layout_literals. destruct src; time_cbn; nia.
+      + change (run_columns_size (col :: cols)) with
+          (run_positions_size col + 1 + run_columns_size cols).
+        destruct src as [slot | slot | value].
+        * pose proof (IH cols allowed) as Htail.
+          time_unfold @T_layout_literals. time_cbn. nia.
+        * pose proof (IH cols allowed) as Htail.
+          time_unfold @T_layout_literals. time_cbn. nia.
+        * destruct col as [| j [| k rest]].
+          -- time_unfold @T_layout_literals. time_cbn. nia.
+          -- change (run_positions_size [j]) with (j + 1 + 0).
+             pose proof (run_nat_n_time j) as Hnat.
+             pose proof (N.T_succ_pos_le (nat_n j)) as Hcode.
+             pose proof (run_counter_bits_value (nat_n j)) as Hvalue.
+             assert (Hnatvalue : N.to_nat (nat_n j) = j) by
+               (rewrite run_nat_n_spec, Nat2N.id; reflexivity).
+             rewrite Hnatvalue in Hvalue.
+             pose proof (run_positive_bits_value (N.succ_pos (nat_n j))) as Hbits.
+             rewrite run_position_key_value in Hbits.
+             pose proof (PTrieT.T_remove_le unit (N.succ_pos (nat_n j)) allowed) as Hremove.
+             pose proof (IH cols allowed) as Htail.
+             pose proof (IH cols (PTrieCode.remove (N.succ_pos (nat_n j)) allowed)) as Htail_remove.
+             time_unfold @T_layout_literals. rewrite PTrieT.trie_get_clock.
+             destruct (trie_get (N.succ_pos (nat_n j)) allowed); time_cbn; nia.
+          -- time_unfold @T_layout_literals. time_cbn. nia.
+  Qed.
+
+  (** Checking a layout with names that are already distinct is linear in the plan's text. *)
+  Lemma run_layout_ok_at_time : forall bound copies vars (srcs : list (source V.t)) cols,
+    NoDup vars ->
+    (T_layout_ok_at bound copies vars srcs cols <=
+      128 * (PTrieT.c_trie + 1) *
+        N.of_nat (run_vars_size vars + run_columns_size cols + 1))%N.
+  Proof.
+    intros bound copies vars srcs cols Hnodup.
+    set (kb := Pos.size_nat (N.succ_pos (N.of_nat (length vars)))).
+    pose proof (run_layout_fresh_time vars bound copies 0 Empty kb
+      ltac:(rewrite N.add_0_l; subst kb; lia)) as Hfresh.
+    pose proof (run_distinct_key_mass vars Hnodup) as Hmass.
+    pose proof (run_vars_length vars) as Hlength.
+    assert (Hcost : run_vars_size vars + length vars * kb + 1 <= 5 * run_vars_size vars + 2)
+      by (subst kb; lia).
+    cbn [run_counter_credit] in Hfresh.
+    assert (Hscaled : (16 * (PTrieT.c_trie + 1) *
+      N.of_nat (run_vars_size vars + length vars * kb + 1) <=
+      16 * (PTrieT.c_trie + 1) * (5 * N.of_nat (run_vars_size vars) + 2))%N).
+    { apply N.mul_le_mono_l. lia. }
+    assert (HK : (1 <= PTrieT.c_trie + 1)%N) by lia.
+    time_unfold @T_layout_ok_at.
+    destruct (layout_fresh bound copies vars 0 Empty) as [allowed |].
+    - pose proof (run_layout_literals_time srcs cols allowed) as Hliterals.
+      rewrite !Nat2N.inj_add in Hliterals |- *. time_cbn.
+      replace (N.of_nat 0) with 0%N by reflexivity.
+      clear -Hfresh Hscaled Hliterals HK. nia.
+    - rewrite !Nat2N.inj_add. time_cbn.
+      replace (N.of_nat 0) with 0%N by reflexivity.
+      clear -Hfresh Hscaled HK. nia.
+  Qed.
+
   (** The non-query checks read each stored plan field once. *)
   Lemma run_check_cplan_overhead : forall ix i n vars stored_post expected count,
     (1 + N.T_eqb ix i + Datatypes.T_length vars + Nat.T_eqb (length vars) n +
@@ -16537,17 +16853,41 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     nia.
   Qed.
 
-  Lemma run_check_cplan_accepted_time : forall newok table i q acts c width,
+  (** Successful name-table construction needs distinct names that the table lacks. *)
+  Lemma run_var_table_nodup_fresh : forall vars start table names,
+    var_table vars start table = Some names ->
+    NoDup vars /\ Forall (fun x => trie_get x table = None) vars.
+  Proof.
+    intro vars. induction vars as [| key vars IH]; intros start table names Htable.
+    - split; constructor.
+    - cbn [var_table] in Htable.
+      destruct (trie_get key table) as [old |] eqn:Hkey; [discriminate |].
+      destruct (IH (N.succ start) (PTrieCode.set key start table) names Htable)
+        as [Hnodup Hfresh].
+      rewrite Forall_forall in Hfresh.
+      split.
+      + constructor; [| exact Hnodup]. intro Hin.
+        pose proof (Hfresh key Hin) as Hnone. rewrite PTrie.get_set_same in Hnone. discriminate.
+      + constructor; [exact Hkey |]. apply Forall_forall. intros y Hy.
+        pose proof (Hfresh y Hy) as Hnone.
+        destruct (Pos.eq_dec y key) as [Heq | Hneq].
+        * subst y. rewrite PTrie.get_set_same in Hnone. discriminate.
+        * rewrite PTrie.get_set_other in Hnone by exact Hneq. exact Hnone.
+  Qed.
+
+  Lemma run_check_cplan_accepted_time : forall bound copies newok table i q acts c width,
     run_query_width width q ->
-    check_cplan V.eqb newok table i (Rule V.t q acts) c = true ->
-    (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+    check_cplan_at bound copies V.eqb newok table i (Rule V.t q acts) c = true ->
+    (T_check_cplan_at bound copies V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
       run_check_inner width * N.of_nat (run_cplan_size c))%N.
   Proof.
-    intros newok table i q acts [ix [n columns] srcs vars stored_post] width Hwidth Hcheck.
-    cbn [check_cplan] in Hcheck.
+    intros bound copies newok table i q acts [ix [n columns] srcs vars stored_post] width
+      Hwidth Hcheck.
+    cbn [check_cplan_at] in Hcheck.
     destruct (N.eqb ix i) eqn:Hrule; [| discriminate].
     destruct (Nat.eqb (length vars) n) eqn:Hvars; [| discriminate].
     destruct (var_table vars 0 Empty) as [names |] eqn:Htable; [| discriminate].
+    destruct (layout_ok_at bound copies vars srcs columns) eqn:Hlayout; [| discriminate].
     destruct (check_query V.eqb newok names n table q 0 0 Empty 0 srcs columns [])
       as [[[[count rest_srcs] rest_columns] expected] |] eqn:Hquery; [| discriminate].
     destruct rest_srcs as [| src rest_srcs]; [| discriminate].
@@ -16563,8 +16903,13 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     change (run_payload_size [] []) with 0 in Hquery_clock.
     cbn [length run_counter_credit] in Hquery_clock.
     pose proof (run_check_cplan_overhead ix i n vars stored_post expected count) as Hoverhead.
+    pose proof (run_var_table_nodup_fresh vars 0 Empty names Htable) as [Hnodup _].
+    pose proof (run_layout_ok_at_time bound copies vars srcs columns Hnodup) as Hlayout_clock.
+    assert (HK : (PTrieT.c_trie + 1 <= V.c_key + PTrieT.c_trie + 1)%N) by lia.
     assert (Hbudget :
       (run_query_coefficient width * N.of_nat (run_payload_size srcs columns + length expected + 1) +
+        128 * (PTrieT.c_trie + 1) *
+          N.of_nat (run_vars_size vars + run_columns_size columns + 1) +
         64 * (V.c_key + PTrieT.c_trie + 1) *
           N.of_nat (N.size_nat ix + run_vars_size vars + n + run_positions_size stored_post +
             length expected + 1) <=
@@ -16572,9 +16917,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           N.of_nat (run_cplan_size (CPlan V.t ix (JPlan n columns) srcs vars stored_post)))%N).
     { unfold run_query_coefficient, run_check_inner, run_cplan_size, run_payload_size.
       cbn [rule_ix join nvars cols sources var_of Syntax.post].
-      clear -Hpost_length Hpost_mass. nia. }
-    time_unfold @T_check_cplan. rewrite Hrule, Hvars, Htable, Hquery, Hcount.
-    clear -Hquery_clock Hoverhead Hbudget. lia.
+      clear -Hpost_length Hpost_mass HK. nia. }
+    time_unfold @T_check_cplan_at. rewrite Hrule, Hvars, Htable, Hlayout, Hquery, Hcount.
+    clear -Hquery_clock Hoverhead Hbudget Hlayout_clock. lia.
   Qed.
 
   (** Successful name-table construction tracks old entries and bounds new ordinals. *)
@@ -16620,15 +16965,18 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     pose proof (run_var_table_index_strict vars names Htable x ordinal Hget). lia.
   Qed.
 
-  Lemma run_check_cplan_general_time : forall newok table i q acts c width,
+  Lemma run_check_cplan_general_time : forall bound copies newok table i q acts c width,
     run_query_width width q ->
-    (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+    (T_check_cplan_at bound copies V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
       run_check_inner width * N.of_nat (run_cplan_size c + run_query_size q))%N.
   Proof.
-    intros newok table i q acts [ix [n columns] srcs vars stored_post] width Hwidth.
+    intros bound copies newok table i q acts [ix [n columns] srcs vars stored_post] width Hwidth.
+    assert (HK : (PTrieT.c_trie + 1 <= V.c_key + PTrieT.c_trie + 1)%N) by lia.
     assert (Hbudget : forall expected_length, expected_length <= run_query_size q ->
       (run_query_coefficient width * N.of_nat (run_payload_size srcs columns + run_query_size q + 1) +
         2048 * (V.c_key + PTrieT.c_trie + 1) * N.of_nat n +
+        128 * (PTrieT.c_trie + 1) *
+          N.of_nat (run_vars_size vars + run_columns_size columns + 1) +
         64 * (V.c_key + PTrieT.c_trie + 1) *
           N.of_nat (N.size_nat ix + run_vars_size vars + n + run_positions_size stored_post +
             expected_length + 1) <=
@@ -16638,11 +16986,11 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     { intros expected_length Hexpected.
       unfold run_query_coefficient, run_check_inner, run_cplan_size, run_payload_size.
       cbn [rule_ix join nvars cols sources var_of Syntax.post].
-      clear -Hexpected. nia. }
+      clear -Hexpected HK. nia. }
     pose proof (Hbudget 0 (Nat.le_0_l _)) as Hbudget0.
     pose proof (run_check_cplan_overhead ix i n vars stored_post [] 0) as Hbase.
     cbn [length] in Hbase.
-    time_unfold @T_check_cplan.
+    time_unfold @T_check_cplan_at.
     destruct (N.eqb ix i) eqn:Hrule.
     - destruct (Nat.eqb (length vars) n) eqn:Hvars.
       + destruct (var_table vars 0 Empty) as [names |] eqn:Htable.
@@ -16652,6 +17000,11 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
             pose proof (run_var_table_index_bound vars names Htable x ordinal Hget).
             apply Nat.eqb_eq in Hvars. lia. }
           assert (Hcopy : (0 <= N.of_nat n)%N) by lia.
+          pose proof (run_var_table_nodup_fresh vars 0 Empty names Htable) as [Hnodup _].
+          pose proof (run_layout_ok_at_time bound copies vars srcs columns Hnodup)
+            as Hlayout_clock.
+          destruct (layout_ok_at bound copies vars srcs columns) eqn:Hlayout; cycle 1.
+          { clear -Hlayout_clock Hbase Hbudget0. lia. }
           destruct (check_query V.eqb newok names n table q 0 0 Empty 0 srcs columns [])
             as [[[[count rest_srcs] rest_columns] expected] |] eqn:Hquery.
           -- pose proof (run_check_query_success_time newok names n table q width 0 0 Empty 0
@@ -16674,25 +17027,25 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
                 2048 * (V.c_key + PTrieT.c_trie + 1) * N.of_nat n)%N).
              { clear -Hquery_success Hexpected. nia. }
              destruct rest_srcs; destruct rest_columns; destruct (N.eqb count (nat_n n));
-               clear -Hquery_clock Hoverhead Hbudget_expected; lia.
+               clear -Hquery_clock Hoverhead Hbudget_expected Hlayout_clock; lia.
           -- pose proof (run_check_query_failure_time newok names n table q width 0 0 Empty 0
                srcs columns [] Hwidth Hnames Hcopy Hquery) as Hquery_clock.
              cbn [run_counter_credit] in Hquery_clock.
-             clear -Hquery_clock Hbase Hbudget0. lia.
+             clear -Hquery_clock Hbase Hbudget0 Hlayout_clock. lia.
         * clear -Hbase Hbudget0. lia.
       + clear -Hbase Hbudget0. lia.
     - clear -Hbase Hbudget0. lia.
   Qed.
 
   (** Accepted plans pay their own compiled representation; only a rejected plan pays its query text. *)
-  Lemma run_check_cplan_time : forall newok table i q acts c width,
+  Lemma run_check_cplan_time : forall bound copies newok table i q acts c width,
     run_query_width width q ->
-    (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+    (T_check_cplan_at bound copies V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
       run_check_inner width * N.of_nat (run_cplan_size c +
-        if check_cplan V.eqb newok table i (Rule V.t q acts) c then 0 else run_query_size q))%N.
+        if check_cplan_at bound copies V.eqb newok table i (Rule V.t q acts) c then 0 else run_query_size q))%N.
   Proof.
-    intros newok table i q acts c width Hwidth.
-    destruct (check_cplan V.eqb newok table i (Rule V.t q acts) c) eqn:Hcheck.
+    intros bound copies newok table i q acts c width Hwidth.
+    destruct (check_cplan_at bound copies V.eqb newok table i (Rule V.t q acts) c) eqn:Hcheck.
     - rewrite Nat.add_0_r. now apply run_check_cplan_accepted_time.
     - now apply run_check_cplan_general_time.
   Qed.
@@ -16785,21 +17138,21 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
   (** A semi-naive prefix retains the budget of the plans it leaves unread. *)
-  Lemma run_check_semis_outer : forall q acts table i C, (16 <= C)%N ->
+  Lemma run_check_semis_outer : forall bound copies q acts table i C, (16 <= C)%N ->
     (forall c,
-      (T_check_cplan V.eqb V.T_eqb true table i (Rule V.t q acts) c <=
+      (T_check_cplan_at bound copies V.eqb V.T_eqb true table i (Rule V.t q acts) c <=
         C * N.of_nat (run_cplan_size c +
-          if check_cplan V.eqb true table i (Rule V.t q acts) c then 0
+          if check_cplan_at bound copies V.eqb true table i (Rule V.t q acts) c then 0
           else run_query_size q))%N) ->
     forall k cs,
-    (T_check_semis V.eqb V.T_eqb table i (Rule V.t q acts) k cs +
-      4 * C * N.of_nat (match check_semis V.eqb table i (Rule V.t q acts) k cs with
+    (T_check_semis_at bound copies V.eqb V.T_eqb table i (Rule V.t q acts) k cs +
+      4 * C * N.of_nat (match check_semis_at bound copies V.eqb table i (Rule V.t q acts) k cs with
         | Some tail => run_cplan_list_size tail | None => 0 end) <=
       4 * C * N.of_nat (run_cplan_list_size cs) +
-      C * N.of_nat (match check_semis V.eqb table i (Rule V.t q acts) k cs with
+      C * N.of_nat (match check_semis_at bound copies V.eqb table i (Rule V.t q acts) k cs with
         | Some _ => 0 | None => run_query_size q end) + 4 * C)%N.
   Proof.
-    intros q acts table i C HC Hplan k. induction k as [|k IH]; intro cs.
+    intros bound copies q acts table i C HC Hplan k. induction k as [|k IH]; intro cs.
     - change (1 + 4 * C * N.of_nat (run_cplan_list_size cs) <=
         4 * C * N.of_nat (run_cplan_list_size cs) + C * N.of_nat 0 + 4 * C)%N.
       lia.
@@ -16812,19 +17165,19 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         pose proof (run_cplan_size_pos c) as Hsize.
         (* These conversions expose one recursive step only. In particular,
            check_cplan and N arithmetic remain as named applications. *)
-        change (T_check_semis V.eqb V.T_eqb table i (Rule V.t q acts) (S k) (c :: cs))
-          with (1 + (T_check_cplan V.eqb V.T_eqb true table i (Rule V.t q acts) c +
-            (if check_cplan V.eqb true table i (Rule V.t q acts) c
-             then T_check_semis V.eqb V.T_eqb table i (Rule V.t q acts) k cs
+        change (T_check_semis_at bound copies V.eqb V.T_eqb table i (Rule V.t q acts) (S k) (c :: cs))
+          with (1 + (T_check_cplan_at bound copies V.eqb V.T_eqb true table i (Rule V.t q acts) c +
+            (if check_cplan_at bound copies V.eqb true table i (Rule V.t q acts) c
+             then T_check_semis_at bound copies V.eqb V.T_eqb table i (Rule V.t q acts) k cs
              else 0)))%N.
-        change (check_semis V.eqb table i (Rule V.t q acts) (S k) (c :: cs))
-          with (if check_cplan V.eqb true table i (Rule V.t q acts) c
-            then check_semis V.eqb table i (Rule V.t q acts) k cs else None).
+        change (check_semis_at bound copies V.eqb table i (Rule V.t q acts) (S k) (c :: cs))
+          with (if check_cplan_at bound copies V.eqb true table i (Rule V.t q acts) c
+            then check_semis_at bound copies V.eqb table i (Rule V.t q acts) k cs else None).
         change (run_cplan_list_size (c :: cs))
           with (run_cplan_size c + run_cplan_list_size cs).
-        destruct (check_cplan V.eqb true table i (Rule V.t q acts) c) eqn:Hcheck.
+        destruct (check_cplan_at bound copies V.eqb true table i (Rule V.t q acts) c) eqn:Hcheck.
         * rewrite ?Hcheck in Hhead. rewrite Nat.add_0_r in Hhead.
-          destruct (check_semis V.eqb table i (Rule V.t q acts) k cs) as [tail |]
+          destruct (check_semis_at bound copies V.eqb table i (Rule V.t q acts) k cs) as [tail |]
             eqn:Hresult in Htail |- *;
             cbv beta iota zeta in Htail |- *;
             rewrite !Nat2N.inj_add;
@@ -16838,65 +17191,87 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition run_rule_cplan_bound (C : N) (table : ptrie (N * (positive * list nat)))
       (r : rule V.t) : Prop :=
     forall newok i c,
-      (T_check_cplan V.eqb V.T_eqb newok table i r c <=
+      (T_check_cplan_at (query_max (query V.t r) 1%positive) (query_copies (query V.t r) 0)
+        V.eqb V.T_eqb newok table i r c <=
         C * N.of_nat (run_cplan_size c +
-          if check_cplan V.eqb newok table i r c then 0
+          if check_cplan_at (query_max (query V.t r) 1%positive) (query_copies (query V.t r) 0)
+            V.eqb newok table i r c then 0
           else run_query_size (query V.t r)))%N.
 
   (** Rule checking charges its first rejected plan's query only once. *)
-  Lemma run_check_rule_plans_outer : forall C table, (16 <= C)%N ->
+  Lemma run_check_rule_plans_outer : forall C table, (64 <= C)%N ->
     forall rs i nv sn, Forall (run_rule_cplan_bound C table) rs ->
-    (T_check_rule_plans V.eqb V.T_eqb table rs i nv sn <=
+    (T_check_rule_plans_at V.eqb V.T_eqb table rs i nv sn <=
       4 * C * N.of_nat (run_rules_size rs + run_cplan_list_size nv +
         run_cplan_list_size sn + 1) + run_counter_credit i)%N.
   Proof.
     intros C table HC rs. induction rs as [|[q acts] rs IH]; intros i nv sn Hbounds.
     - destruct nv as [|c nv]; destruct sn as [|c' sn];
-        time_unfold @T_check_rule_plans;
+        time_unfold @T_check_rule_plans_at;
         change (run_rules_size []) with 0%nat;
         cbv beta iota zeta; nia.
     - destruct nv as [|c nv].
-      + time_unfold @T_check_rule_plans. cbv beta iota zeta. nia.
+      + time_unfold @T_check_rule_plans_at. cbv beta iota zeta. nia.
       + inversion Hbounds as [|r rs' Hbound Hrest]; subst r rs'.
-        pose proof (Hbound false i c) as Hhead.
-        pose proof (run_check_semis_outer q acts table i C HC (Hbound true i)
+        pose proof (Hbound false i c) as Hhead. cbn [query] in Hhead.
+        pose proof (run_check_semis_outer (query_max q 1%positive) (query_copies q 0) q acts
+          table i C ltac:(lia) (Hbound true i)
           (fun_count q) sn) as Hsemis.
         pose proof (run_fun_count_clock q) as Hfun.
+        pose proof (run_query_max_clock q 1%positive) as Hmax.
+        pose proof (run_query_copies_clock q 0) as Hcopies.
+        change (fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q) with (run_query_size q)
+          in Hmax, Hcopies.
+        rewrite !Nat2N.inj_add in Hmax, Hcopies.
         pose proof (run_counter_succ_amort i) as Hsucc.
         pose proof (run_query_rule_size (Rule V.t q acts)) as Hqsize.
         pose proof (run_cplan_size_pos c) as Hcsize.
         change (run_query_size q + 1 <= rule_bits (Rule V.t q acts)) in Hqsize.
-        time_unfold @T_check_rule_plans.
+        time_unfold @T_check_rule_plans_at.
         change (run_rules_size (Rule V.t q acts :: rs)) with
           (rule_bits (Rule V.t q acts) + run_rules_size rs).
         change (run_cplan_list_size (c :: nv)) with
           (run_cplan_size c + run_cplan_list_size nv).
-        destruct (check_cplan V.eqb false table i (Rule V.t q acts) c) eqn:Hcheck.
+        assert (Hscan : (65 * N.of_nat (run_query_size q + 1) + 4 + C <=
+          4 * C * N.of_nat (rule_bits (Rule V.t q acts)))%N).
+        { assert (Hrule : (N.of_nat (run_query_size q + 1) <= N.of_nat (rule_bits (Rule V.t q acts)))%N)
+            by lia.
+          assert (Hone : (1 <= N.of_nat (run_query_size q + 1))%N) by lia.
+          set (Q := N.of_nat (run_query_size q + 1)) in *.
+          set (R := N.of_nat (rule_bits (Rule V.t q acts))) in *.
+          clear -HC Hrule Hone. nia. }
+        destruct (check_cplan_at (query_max q 1%positive) (query_copies q 0) V.eqb false table i
+          (Rule V.t q acts) c) eqn:Hcheck.
         * rewrite ?Hcheck in Hhead. rewrite Nat.add_0_r in Hhead.
-          destruct (check_semis V.eqb table i (Rule V.t q acts) (fun_count q) sn)
+          destruct (check_semis_at (query_max q 1%positive) (query_copies q 0) V.eqb table i
+            (Rule V.t q acts) (fun_count q) sn)
             as [tail |] eqn:Hsemi in Hsemis |- *.
           -- pose proof (IH (N.succ i) nv tail Hrest) as Htail.
              cbv beta iota zeta in Hsemis |- *.
              rewrite !Nat2N.inj_add in Htail |- *.
-             clear -HC Hhead Hsemis Hfun Hsucc Hqsize Hcsize Htail. nia.
+             rewrite ?Nat2N.inj_add in *.
+             clear -HC Hhead Hsemis Hfun Hsucc Hqsize Hcsize Htail Hmax Hcopies Hscan. nia.
           -- cbv beta iota zeta in Hsemis |- *.
              rewrite !Nat2N.inj_add.
-             clear -HC Hhead Hsemis Hfun Hqsize Hcsize. nia.
+             rewrite ?Nat2N.inj_add in *.
+             clear -HC Hhead Hsemis Hfun Hqsize Hcsize Hmax Hcopies Hscan. nia.
         * rewrite ?Hcheck in Hhead.
-          change (T_check_cplan V.eqb V.T_eqb false table i (Rule V.t q acts) c <=
+          change (T_check_cplan_at (query_max q 1%positive) (query_copies q 0) V.eqb V.T_eqb false table
+            i (Rule V.t q acts) c <=
             C * N.of_nat (run_cplan_size c + run_query_size q))%N in Hhead.
           cbv beta iota zeta.
           rewrite !Nat2N.inj_add in Hhead |- *.
-          clear -HC Hhead Hqsize Hcsize. nia.
+          rewrite ?Nat2N.inj_add in *.
+          clear -HC Hhead Hqsize Hcsize Hmax Hcopies Hscan. nia.
   Qed.
 
   (** The outer checker needs only the per-plan bound and the already checked prefix clocks. *)
   Lemma run_check_shape_from_cplans :
-    (forall newok table i q acts c width, run_query_width width q ->
-      (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+    (forall bound copies newok table i q acts c width, run_query_width width q ->
+      (T_check_cplan_at bound copies V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
         (4 * 1024) * (V.c_key + PTrieT.c_trie + 1) *
           N.of_nat (run_cplan_size c +
-            if check_cplan V.eqb newok table i (Rule V.t q acts) c then 0
+            if check_cplan_at bound copies V.eqb newok table i (Rule V.t q acts) c then 0
             else run_query_size q) * N.of_nat (width + 1))%N) ->
     forall p cp,
     (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
@@ -16909,6 +17284,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     assert (Hfront : (128 * (PTrieT.c_trie + 1) <= C)%N).
     { unfold C, run_check_inner.
       assert (Hw : (1 <= N.of_nat (width + 1))%N) by lia. nia. }
+    assert (HC64 : (64 <= C)%N) by (clear -Hfront; lia).
     assert (Hconstant : (k_check * N.of_nat (width + 1) = 16 * C)%N).
     { unfold C, run_check_inner, k_check. nia. }
     assert (Hbudget : forall n,
@@ -16918,10 +17294,13 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     { intro table. pose proof (run_program_query_width p) as Hwidth.
       change (Forall (fun r => run_query_width width (query V.t r)) rs) in Hwidth.
       rewrite Forall_forall in Hwidth |- *. intros [q acts] Hr newok i c.
-      pose proof (Hinner newok table i q acts c width (Hwidth (Rule V.t q acts) Hr)) as Hc.
-      change (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+      pose proof (Hinner (query_max q 1%positive) (query_copies q 0) newok table i q acts c width
+        (Hwidth (Rule V.t q acts) Hr)) as Hc.
+      change (T_check_cplan_at (query_max q 1%positive) (query_copies q 0) V.eqb V.T_eqb newok
+        table i (Rule V.t q acts) c <=
         C * N.of_nat (run_cplan_size c +
-          if check_cplan V.eqb newok table i (Rule V.t q acts) c then 0
+          if check_cplan_at (query_max q 1%positive) (query_copies q 0) V.eqb newok table i
+            (Rule V.t q acts) c then 0
           else run_query_size q))%N.
       unfold C, run_check_inner. clear -Hc. nia. }
     assert (Hsize : size_program p + size_compiled cp + 1 =
@@ -16959,7 +17338,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     time_unfold T_check_shape. time_unfold @T_check_shape_with.
     change (fun a b : V.t => V.T_eqb a b) with V.T_eqb.
     destruct (slot_table (decl_widths ds Empty) sl 0 Empty) as [table |] eqn:Htable.
-    - pose proof (run_check_rule_plans_outer C table HC rs 0 nv sn (Hrules table)) as Hplans.
+    - pose proof (run_check_rule_plans_outer C table HC64 rs 0 nv sn (Hrules table)) as Hplans.
       change (run_counter_credit 0%N) with 0%N in Hplans.
       rewrite N.add_0_r in Hplans.
       pose proof (N.add_le_mono _ _ _ _ Hprefix Hplans) as Htotal.
@@ -16978,8 +17357,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat (wbits p + 1))%N.
   Proof.
     intros p cp. apply run_check_shape_from_cplans.
-    intros newok table i q acts c width Hwidth.
-    pose proof (run_check_cplan_time newok table i q acts c width Hwidth) as Hplan.
+    intros bound copies newok table i q acts c width Hwidth.
+    pose proof (run_check_cplan_time bound copies newok table i q acts c width Hwidth) as Hplan.
     unfold run_check_inner in Hplan. clear -Hplan. nia.
   Qed.
 
@@ -17098,14 +17477,17 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     rewrite Hpost, Hrule, Hwidth, Hprim. cbn [fold_right].
     intro Hbound. nia.
   Qed.
-  (** The filter pays for its atoms at the widest program word or binding cell, and for the
-      primitive work of the query. *)
+  (** The filter pays for finding its rule, for looking up the names of its join variables,
+      for its atoms at the widest program word or binding cell, and for the primitive work of
+      the query. *)
   Lemma T7_keep_le : forall p c b,
     (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
       k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
-      k_driver * N.of_nat (rule_work p c))%N.
-  Proof. Admitted. (* PLAN-DEFECT: copy-name widths are uncharged; keep_bound_counterexample. *)
+      k_driver * N.of_nat (rule_work p c) +
+      k_driver * N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
+        (var_of V.t c) + 1))%N.
+  Proof. Admitted. (* STUB *)
 
   (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
   Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
@@ -17121,7 +17503,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       T_apply_jobs p (jobs p cp nv db) db +
       D.T_rebuild (apply_jobs p (jobs p cp nv db) db) +
       k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: repeated source lookups omit the slot-number width. *)
+  Proof. Admitted. (* STUB *)
 
   Lemma T1_round_le : forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (D.ids (round p cp nv db) <= B)%N -> D.unit (round p cp nv db) <= U ->
@@ -17129,7 +17511,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
         N.of_nat (round_work p cp nv db + D.pending db + 1) +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* SIG-QUESTION: DATABASE_T permits uncharged wide source slots. *)
+  Proof. Admitted. (* STUB *)
 
   (** The driver constant covers the stored fields and binary comparison. *)
   Lemma driver_constant_fields : (32 * (D.c_db + 1) <= k_driver)%N.
@@ -17154,17 +17536,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       as [[nv final] | [st final]]; lia.
   Qed.
 
-  (** Positive comparison stops when either operand ends. *)
-  Lemma compare_cont_right_clock : forall order p q,
-    (Pos.T_compare_cont order p q <= N.of_nat (Pos.size_nat q))%N.
-  Proof.
-    intros order p q. revert order p.
-    induction q as [q IH | q IH |]; intros order [p | p |];
-      time_unfold Pos.T_compare_cont; cbn [Pos.size_nat];
-      rewrite ?Nat2N.inj_succ;
-      try pose proof (IH order p); try pose proof (IH Lt p);
-      try pose proof (IH Gt p); lia.
-  Qed.
 
   (** Natural comparison can be charged to the second operand. *)
   Lemma compare_right_clock : forall a b,
@@ -17303,22 +17674,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         destruct (value_terms t args) as [vs |]; [|reflexivity].
         destruct (V.prim op vs) as [v |]; [|reflexivity].
         f_equal. apply IH. apply run_value_update_agree; [exact Hagree | reflexivity].
-  Qed.
-
-  (** Empty local bindings leave the original environment visible. *)
-  Lemma run_look_empty : forall s x, @look V.t s Empty x = s x.
-  Proof.
-    intros s x. unfold look. rewrite PTrie.get_empty. reflexivity.
-  Qed.
-
-  (** A new local binding has the same shadowing order as the specification update. *)
-  Lemma run_look_set : forall s locals x c y,
-    @look V.t s (PTrieCode.set x c locals) y = update (look s locals) x c y.
-  Proof.
-    intros s locals x c y. unfold look, update.
-    destruct (Pos.eqb x y) eqn:Hxy.
-    - apply Pos.eqb_eq in Hxy. subst y. rewrite PTrie.get_set_same. reflexivity.
-    - apply Pos.eqb_neq in Hxy. rewrite PTrie.get_set_other by congruence. reflexivity.
   Qed.
 
   (** Local lookup charges one trie walk and at most one external environment call. *)
@@ -17546,14 +17901,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         cbn [option_map out_sort] in Hout; try discriminate; exact I.
   Qed.
 
-  (** Allocation remains valid when the identifier counter grows. *)
-  Lemma run_env_allocated_mono : forall db db' s,
-    (D.ids db <= D.ids db')%N -> env_allocated db s -> env_allocated db' s.
-  Proof.
-    intros db db' s Hids Henv x i Hx.
-    specialize (Henv x i Hx). unfold D.allocated in *. lia.
-  Qed.
-
   (** Local updates preserve the typing and allocation conditions of an action environment. *)
   Lemma run_local_sorted : forall g s locals x (c : cell V.t),
     env_sorted g (look s locals) ->
@@ -17574,18 +17921,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     unfold update in Hy. destruct (Pos.eqb x y).
     - apply Hnew. now inversion Hy.
     - exact (Henv y i Hy).
-  Qed.
-
-  (** A constructor either reuses its input database or advances its identifier counter. *)
-  Lemma run_make_ids : forall f k db, D.wf db -> kind (D.view db) f = Some OId ->
-    (D.ids db <= D.ids (snd (D.make f k db)))%N.
-  Proof.
-    intros f k db Hwf Hkind. pose proof (D.make_spec f k db Hwf Hkind) as Hmake.
-    destruct (D.make f k db) as [i db'] eqn:Hresult. cbn [snd] in *.
-    destruct Hmake as [[j [_ [_ Hsame]]] | [Hfresh [_ Hextends]]].
-    - subst db'. lia.
-    - destruct Hextends as [Hids _]. unfold D.fresh_id in Hfresh.
-      rewrite Hids, Hfresh, N.succ_pos_spec. lia.
   Qed.
 
   Lemma run_loaded_put : forall p cp db f k o, D.wf db -> loaded p cp db ->

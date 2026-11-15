@@ -1051,7 +1051,7 @@ Module Andersen (V : VALUE with Definition t := positive)
   Qed.
 
   Lemma solve_saturates : forall q lim,
-    N.to_nat (max_iter lim) >= 2 * R.herbrand (compile q) (seed q) + 2 ->
+    N.to_nat (max_iter lim) >= 2 * R.herbrand (compile q) (seed q) + 3 ->
     fst (solve q lim) = Saturated.
   Proof.
     intros q lim Hfuel; rewrite solve_run; apply R.run_terminates.
@@ -1332,7 +1332,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     derives V.prim (compile q) (D.view (seed q)) 5 [Val x; Val a] -> may_points q x a.
   Proof.
     intros q x a Hderive.
-    set (lim := Limits (N.of_nat (2 * R.herbrand (compile q) (seed q) + 2)) 0%N).
+    set (lim := Limits (N.of_nat (2 * R.herbrand (compile q) (seed q) + 3)) 0%N).
     assert (Hsaturated : fst (solve q lim) = Saturated).
     { apply solve_saturates; unfold lim; cbn [max_iter]; rewrite Nat2N.id; apply le_n. }
     destruct (solve q lim) as [st db] eqn:Hsolve; cbn [fst] in Hsaturated; subst st.
