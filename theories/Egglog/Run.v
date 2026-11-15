@@ -1149,16 +1149,6 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
 
   Definition herbrand (p : program V.t) (db : D.t) : nat := length (universe p db).
 
-  Lemma universe_spec : forall p db, D.wf db -> relational_fragment p = true ->
-    prim_free p = true -> no_ids db ->
-    NoDup (universe p db) /\
-    forall f k, In (f, k) (universe p db) <->
-      program_kind p f = Some ORel /\
-      (exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
-        length k = length (arg_sorts d)) /\
-      Forall (fun c => exists v, c = Val v /\ active_value p db v) k.
-  Proof. Admitted. (* STUB *)
-
   Lemma herbrand_spec : forall p db, herbrand p db = length (universe p db).
   Proof.
     reflexivity.
@@ -1355,6 +1345,398 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     cbn [lookup_sorts find] in *. destruct (Pos.eqb (name h) f) eqn:Heq.
     - exists h. split; [reflexivity|]. injection Hsort as Hsort. exact Hsort.
     - apply IH. exact Hsort.
+  Qed.
+
+  (** * Finite universe enumeration *)
+
+  (** Mapping an injective function preserves absence of duplicates. *)
+  Lemma run_map_nodup : forall (A B : Type) (f : A -> B) xs,
+    (forall x y, f x = f y -> x = y) -> NoDup xs -> NoDup (map f xs).
+  Proof.
+    intros A B f xs Hinjective Hdistinct.
+    induction Hdistinct as [|x xs Hfresh Htail IH]; cbn [map]; constructor.
+    - intro Hin. apply in_map_iff in Hin as [y [Heq Hy]].
+      apply Hinjective in Heq. subst y. contradiction.
+    - exact IH.
+  Qed.
+
+  (** Value equality tests recognize list membership. *)
+  Lemma run_value_seen : forall (v : V.t) vs, existsb (V.eqb v) vs = true <-> In v vs.
+  Proof.
+    intros v vs. split.
+    - intro Hseen. apply existsb_exists in Hseen as [w [Hin Heq]].
+      destruct (V.eqb_spec v w) as [->|Hdifferent]; [exact Hin|discriminate].
+    - intro Hin. apply existsb_exists. exists v. split; [exact Hin|].
+      destruct (V.eqb_spec v v); [reflexivity|contradiction].
+  Qed.
+
+  (** One distinct-value insertion adds exactly its supplied value. *)
+  Lemma run_distinct_step_member : forall (vs : list V.t) v w,
+    In w (if existsb (V.eqb v) vs then vs else v :: vs) <-> w = v \/ In w vs.
+  Proof.
+    intros vs v w. destruct (existsb (V.eqb v) vs) eqn:Hseen.
+    - apply run_value_seen in Hseen. split; [now right|].
+      intros [->|Hin]; assumption.
+    - cbn [In]. intuition congruence.
+  Qed.
+
+  (** The distinct-value fold retains exactly its input and accumulator members. *)
+  Lemma run_distinct_fold_member : forall vs acc (v : V.t),
+    In v (fold_left (fun acc w => if existsb (V.eqb w) acc then acc else w :: acc) vs acc)
+      <-> In v vs \/ In v acc.
+  Proof.
+    induction vs as [|w vs IH]; intros acc v; cbn [fold_left].
+    - cbn [In]. tauto.
+    - rewrite IH, run_distinct_step_member. cbn [In]. intuition congruence.
+  Qed.
+
+  (** The distinct-value fold preserves a duplicate-free accumulator. *)
+  Lemma run_distinct_fold_nodup : forall vs acc,
+    NoDup acc ->
+    NoDup (fold_left (fun acc (v : V.t) =>
+      if existsb (V.eqb v) acc then acc else v :: acc) vs acc).
+  Proof.
+    induction vs as [|v vs IH]; intros acc Hdistinct; cbn [fold_left]; [exact Hdistinct|].
+    apply IH. destruct (existsb (V.eqb v) acc) eqn:Hseen; [exact Hdistinct|].
+    constructor; [|exact Hdistinct]. intro Hin.
+    pose proof (proj2 (run_value_seen v acc) Hin) as Htrue. congruence.
+  Qed.
+
+  (** Distinct values have precisely the original membership. *)
+  Lemma run_distinct_values_member : forall (vs : list V.t) v,
+    In v (distinct_values V.eqb vs) <-> In v vs.
+  Proof.
+    intros vs v. unfold distinct_values. rewrite run_distinct_fold_member. cbn [In]. tauto.
+  Qed.
+
+  (** Deduplication succeeds independently of where the values were collected. *)
+  Lemma run_distinct_values_nodup : forall vs : list V.t, NoDup (distinct_values V.eqb vs).
+  Proof.
+    intro vs. unfold distinct_values. apply run_distinct_fold_nodup. constructor.
+  Qed.
+
+  (** Different value prefixes keep duplicate-free tuple families disjoint. *)
+  Lemma run_value_prefixes_nodup : forall (vs : list V.t) ks,
+    NoDup vs -> NoDup ks ->
+    NoDup (flat_map (fun v => map (fun k => Val v :: k) ks) vs).
+  Proof.
+    intros vs ks Hvalues Htuples. induction Hvalues as [|v vs Hfresh Htail IH];
+      cbn [flat_map]; [constructor|].
+    apply NoDup_app; [|exact IH|].
+    - apply run_map_nodup; [intros a b Heq; now injection Heq|exact Htuples].
+    - intros key Hhere Hthere. apply in_map_iff in Hhere as [k [Heq Hk]].
+      apply in_flat_map in Hthere as [w [Hw Hthere]].
+      apply in_map_iff in Hthere as [tail [Hother Htailkey]].
+      assert (v = w) by congruence. subst w. contradiction.
+  Qed.
+
+  (** Cartesian tuples over distinct values are duplicate free at every width. *)
+  Lemma run_value_tuples_nodup : forall n (vs : list V.t),
+    NoDup vs -> NoDup (value_tuples n vs).
+  Proof.
+    induction n as [|n IH]; intros vs Hvalues; cbn [value_tuples].
+    - constructor; [intro Hin; contradiction|constructor].
+    - apply run_value_prefixes_nodup; [exact Hvalues|now apply IH].
+  Qed.
+
+  (** Cartesian enumeration gives exactly the tuples of its width over the supplied values. *)
+  Lemma run_value_tuples_member : forall n (vs : list V.t) k,
+    In k (value_tuples n vs) <-> length k = n /\
+      Forall (fun c => exists v, c = Val v /\ In v vs) k.
+  Proof.
+    induction n as [|n IH]; intros vs k; split.
+    - cbn [value_tuples] in *. intros [<-|Hbad]; [split; [reflexivity|constructor]|contradiction].
+    - intros [Hlength Hvalues]. destruct k; [now left|discriminate].
+    - intro Hin. cbn [value_tuples] in Hin.
+      apply in_flat_map in Hin as [v [Hv Hin]].
+      apply in_map_iff in Hin as [tail [<- Htail]].
+      apply IH in Htail as [Hlength Hvalues]. split; [cbn; now rewrite Hlength|].
+      constructor; [exists v; auto|exact Hvalues].
+    - intros [Hlength Hvalues]. destruct k as [|c k]; [discriminate|].
+      inversion Hvalues as [|c' k' Hhead Htail]; subst c' k'.
+      destruct Hhead as [v [-> Hv]]. cbn [value_tuples].
+      apply in_flat_map. exists v. split; [exact Hv|]. apply in_map.
+      apply IH. split; [now injection Hlength|exact Htail].
+  Qed.
+
+  (** Positive-name equality tests recognize the seen-name list. *)
+  Lemma run_positive_seen : forall f seen, existsb (Pos.eqb f) seen = true <-> In f seen.
+  Proof.
+    intros f seen. split.
+    - intro Hseen. apply existsb_exists in Hseen as [g [Hin Heq]].
+      apply Pos.eqb_eq in Heq. now subst g.
+    - intro Hin. apply existsb_exists. exists f. split; [exact Hin|apply Pos.eqb_refl].
+  Qed.
+
+  (** An emitted relation arity comes from the first unseen declaration of that name. *)
+  Lemma run_relation_arities_sound : forall ds seen f n,
+    In (f, n) (relation_arities ds seen) -> ~ In f seen /\
+    exists d, find (fun d => Pos.eqb (name d) f) ds = Some d /\
+      out d = ORel /\ length (arg_sorts d) = n.
+  Proof.
+    induction ds as [|[g ss kindout] ds IH]; intros seen f n Hin; [contradiction|].
+    cbn [relation_arities] in Hin. destruct (existsb (Pos.eqb g) seen) eqn:Hseen.
+    - destruct (IH seen f n Hin) as [Hfresh [d [Hfind [Hout Hwidth]]]].
+      split; [exact Hfresh|]. exists d. split; [|auto].
+      cbn [find name]. assert (Hdifferent : Pos.eqb g f = false).
+      { apply Pos.eqb_neq. intro Heq. subst f. apply Hfresh. now apply run_positive_seen. }
+      now rewrite Hdifferent.
+    - destruct kindout; [destruct Hin as [Heq|Hin]| |].
+      { injection Heq as <- <-. split.
+        - intro Hmem. apply (proj2 (run_positive_seen g seen)) in Hmem. congruence.
+        - exists (Decl g ss ORel). cbn [find name out arg_sorts].
+          rewrite Pos.eqb_refl. auto. }
+      all: destruct (IH (g :: seen) f n Hin) as [Hfresh [d [Hfind [Hout Hwidth]]]].
+      all: split; [intro Hmem; apply Hfresh; now right|].
+      all: exists d; split; [|auto].
+      all: cbn [find name]; assert (Hdifferent : Pos.eqb g f = false).
+      all: try (apply Pos.eqb_neq; intro Heq; subst f; apply Hfresh; now left).
+      all: now rewrite Hdifferent.
+  Qed.
+
+  (** A first relational declaration is emitted whenever its name has not been seen. *)
+  Lemma run_relation_arities_complete : forall ds seen f d,
+    ~ In f seen -> find (fun d => Pos.eqb (name d) f) ds = Some d -> out d = ORel ->
+    In (f, length (arg_sorts d)) (relation_arities ds seen).
+  Proof.
+    induction ds as [|[g ss kindout] ds IH]; intros seen f d Hfresh Hfind Hout;
+      [discriminate|].
+    cbn [find name] in Hfind. destruct (Pos.eqb g f) eqn:Hname.
+    - apply Pos.eqb_eq in Hname. subst g. injection Hfind as <-.
+      cbn [out] in Hout. subst kindout. cbn [relation_arities arg_sorts].
+      destruct (existsb (Pos.eqb f) seen) eqn:Hseen; [|now left].
+      exfalso. apply Hfresh. now apply run_positive_seen.
+    - cbn [relation_arities]. destruct (existsb (Pos.eqb g) seen).
+      + eapply IH; eassumption.
+      + assert (Hnew : ~ In f (g :: seen)).
+        { intros [Heq|Hin]; [subst g; rewrite Pos.eqb_refl in Hname; discriminate|contradiction]. }
+        pose proof (IH (g :: seen) f d Hnew Hfind Hout) as Htail.
+        destruct kindout; [now right|exact Htail|exact Htail].
+  Qed.
+
+  (** No relation name is emitted twice, even with malformed or repeated declarations. *)
+  Lemma run_relation_arities_nodup : forall ds seen,
+    NoDup (map fst (relation_arities ds seen)).
+  Proof.
+    induction ds as [|[f ss kindout] ds IH]; intro seen; cbn [relation_arities];
+      [constructor|].
+    destruct (existsb (Pos.eqb f) seen); [apply IH|].
+    destruct kindout; try apply IH. cbn [map fst]. constructor; [|apply IH].
+    intro Hin. apply in_map_iff in Hin as [[g n] [Heq Hin]]. cbn [fst] in Heq. subst g.
+    destruct (run_relation_arities_sound ds (f :: seen) f n Hin) as [Hfresh Hdecl].
+    apply Hfresh. now left.
+  Qed.
+
+  (** Distinct function names keep the Cartesian tuple families disjoint. *)
+  Lemma run_relation_tuples_nodup : forall (arities : list (positive * nat)) (vs : list V.t),
+    NoDup (map fst arities) -> NoDup vs ->
+    NoDup (flat_map (fun fa => map (fun k => (fst fa, k))
+      (value_tuples (snd fa) vs)) arities).
+  Proof.
+    intros arities vs. induction arities as [|[f n] rest IH]; intros Hnames Hvalues;
+      cbn [flat_map]; [constructor|].
+    inversion Hnames as [|f' names Hfresh Htail]; subst f' names.
+    apply NoDup_app; [|now apply IH|].
+    - apply run_map_nodup; [intros a b Heq; now injection Heq|].
+      now apply run_value_tuples_nodup.
+    - intros row Hhere Hthere. apply in_map_iff in Hhere as [k [Heq Hk]].
+      apply in_flat_map in Hthere as [[g width] [Hin Hthere]].
+      apply in_map_iff in Hthere as [key [Hother Hkey]]. cbn [fst snd] in *.
+      assert (f = g) by congruence. subst g. apply Hfresh.
+      apply in_map_iff. exists (f, width). split; [reflexivity|exact Hin].
+  Qed.
+
+  (** Universe deduplication needs no database or program well-formedness assumption. *)
+  Lemma run_universe_nodup : forall p db, NoDup (universe p db).
+  Proof.
+    intros p db. unfold universe. apply run_relation_tuples_nodup.
+    - apply run_relation_arities_nodup.
+    - apply run_distinct_values_nodup.
+  Qed.
+
+  (** Every collected index edge lies in a member suffix below the current prefix. *)
+  Lemma run_index_cells_sound : forall fuel a ix n pre c,
+    I.wf a ix -> I.node ix n pre -> In c (index_cells fuel ix n) ->
+    exists suffix, I.mem ix (pre ++ suffix) /\ In c suffix.
+  Proof.
+    induction fuel as [|fuel IH]; intros a ix n pre c Hwf Hnode Hin; [contradiction|].
+    cbn [index_cells] in Hin. apply in_flat_map in Hin as [edge [Hedge Hin]].
+    destruct (proj1 (proj1 (I.children_spec a ix n pre edge Hwf Hnode)) Hedge)
+      as [next Hchild].
+    rewrite Hchild in Hin.
+    pose proof (proj1 (proj1 (I.child_spec a ix n pre edge Hwf Hnode) next) Hchild)
+      as Hnext.
+    destruct Hin as [<-|Hin].
+    - assert (Hnonempty : pre ++ [edge] <> []).
+      { intro Heq. apply (f_equal (@length (cell V.t))) in Heq.
+        rewrite length_app in Heq. cbn [length] in Heq. lia. }
+      destruct (I.node_live a ix next (pre ++ [edge]) Hwf Hnext Hnonempty)
+        as [suffix Hmember].
+      exists (edge :: suffix). split; [|now left].
+      rewrite <- app_assoc in Hmember. exact Hmember.
+    - destruct (IH a ix next (pre ++ [edge]) c Hwf Hnext Hin)
+        as [suffix [Hmember Hinside]].
+      exists (edge :: suffix). split; [|now right].
+      rewrite <- app_assoc in Hmember. exact Hmember.
+  Qed.
+
+  (** Walking a member's length collects every cell of that member suffix. *)
+  Lemma run_index_cells_complete : forall a ix n pre suffix c,
+    I.wf a ix -> I.node ix n pre -> I.mem ix (pre ++ suffix) -> In c suffix ->
+    In c (index_cells (length suffix) ix n).
+  Proof.
+    intros a ix n pre suffix c Hwf. revert n pre.
+    induction suffix as [|edge suffix IH]; intros n pre Hnode Hmember Hin;
+      [contradiction|].
+    cbn [length index_cells]. destruct (I.child ix n edge) as [next|] eqn:Hchild.
+    - apply in_flat_map. exists edge. split.
+      + apply (proj2 (proj1 (I.children_spec a ix n pre edge Hwf Hnode))).
+        exists next. exact Hchild.
+      + rewrite Hchild. destruct Hin as [<-|Hin]; [now left|]. right.
+        apply (IH next (pre ++ [edge])).
+        * apply (proj1 (proj1 (I.child_spec a ix n pre edge Hwf Hnode) next)).
+          exact Hchild.
+        * rewrite <- app_assoc. exact Hmember.
+        * exact Hin.
+    - exfalso. apply (proj1 (proj2 (I.child_spec a ix n pre edge Hwf Hnode)) Hchild).
+      exists suffix. exact Hmember.
+  Qed.
+
+  (** At its declared width, root traversal collects exactly the cells of stored members. *)
+  Lemma run_index_cells_member : forall a ix c, I.wf a ix ->
+    (In c (index_cells a ix (I.root ix)) <-> exists u, I.mem ix u /\ In c u).
+  Proof.
+    intros a ix c Hwf. split.
+    - intro Hin. apply (run_index_cells_sound a a ix (I.root ix) [] c Hwf
+        (I.node_root a ix Hwf)) in Hin. exact Hin.
+    - intros [u [Hmember Hin]].
+      rewrite <- (I.mem_arity a ix u Hwf Hmember).
+      eapply run_index_cells_complete with (pre := []) (a := a).
+      + exact Hwf.
+      + apply I.node_root with a. exact Hwf.
+      + exact Hmember.
+      + exact Hin.
+  Qed.
+
+  (** Selecting value cells changes only their constructor wrapper. *)
+  Lemma run_cell_values_member : forall (cells : list (cell V.t)) v,
+    In v (flat_map (fun c => match c with Val w => [w] | Id _ => [] end) cells) <->
+    In (Val v) cells.
+  Proof.
+    induction cells as [|[i|w] cells IH]; intro v; cbn [flat_map app In].
+    - tauto.
+    - rewrite IH. intuition discriminate.
+    - rewrite IH. intuition congruence.
+  Qed.
+
+  (** Slot traversal records values at precisely their original numbered slot. *)
+  Lemma run_slot_values_member : forall sl db start v,
+    In v (slot_values db start sl) <-> exists j f perm,
+      nth_error sl j = Some (f, perm) /\
+      In (Val v) (index_cells (length perm) (D.index (N.of_nat (start + j)) false db)
+        (I.root (D.index (N.of_nat (start + j)) false db))).
+  Proof.
+    induction sl as [|[head positions] sl IH]; intros db start v.
+    - cbn [slot_values]. split; [contradiction|].
+      intros [j [f [perm [Hnth Hin]]]]. destruct j; discriminate.
+    - cbn [slot_values]. rewrite in_app_iff, run_cell_values_member, IH. split.
+      + intros [Hin|[j [f [perm [Hnth Hin]]]]].
+        * exists 0, head, positions. split; [reflexivity|]. now rewrite Nat.add_0_r.
+        * exists (S j), f, perm. split; [exact Hnth|].
+          replace (start + S j) with (S start + j) by lia. exact Hin.
+      + intros [j [f [perm [Hnth Hin]]]]. destruct j as [|j].
+        * cbn [nth_error] in Hnth. injection Hnth as <- <-. left.
+          now rewrite Nat.add_0_r in Hin.
+        * right. exists j, f, perm. split; [exact Hnth|].
+          replace (S start + j) with (start + S j) by lia. exact Hin.
+  Qed.
+
+  (** Full-slot traversal finds exactly the values mentioned by the active-value definition. *)
+  Lemma run_slot_values_active : forall db v, D.wf db ->
+    (In v (slot_values db 0 (D.slots db)) <-> exists s u,
+      N.to_nat s < length (D.slots db) /\ I.mem (D.index s false db) u /\ In (Val v) u).
+  Proof.
+    intros db v Hwf. rewrite run_slot_values_member. split.
+    - intros [j [f [perm [Hnth Hin]]]]. cbn [Nat.add] in Hin.
+      assert (Hslot : D.slot_of db (N.of_nat j) = Some (f, perm)).
+      { unfold D.slot_of. now rewrite Nat2N.id. }
+      pose proof (D.index_wf db (N.of_nat j) false f perm Hwf Hslot) as Hindex.
+      apply (proj1 (run_index_cells_member (length perm) _ (Val v) Hindex)) in Hin.
+      destruct Hin as [u [Hmember Hinside]]. exists (N.of_nat j), u.
+      split; [|auto]. rewrite Nat2N.id. apply nth_error_Some. now rewrite Hnth.
+    - intros [s [u [Hbound [Hmember Hin]]]].
+      destruct (nth_error (D.slots db) (N.to_nat s)) as [[f perm]|] eqn:Hnth.
+      + exists (N.to_nat s), f, perm. split; [exact Hnth|].
+        cbn [Nat.add]. rewrite N2Nat.id.
+        assert (Hslot : D.slot_of db s = Some (f, perm)) by exact Hnth.
+        pose proof (D.index_wf db s false f perm Hwf Hslot) as Hindex.
+        apply (proj2 (run_index_cells_member (length perm) _ (Val v) Hindex)).
+        exists u. auto.
+      + apply nth_error_None in Hnth. lia.
+  Qed.
+
+  (** Program literal collection retains exactly literal occurrences in program terms. *)
+  Lemma run_program_literals_member : forall p (v : V.t),
+    In v (program_literals p) <-> In (Lit v) (program_terms p).
+  Proof.
+    intros p v. unfold program_literals. split.
+    - intro Hin. apply in_flat_map in Hin as [[x|w] [Hterm Hin]]; [contradiction|].
+      destruct Hin as [<-|Hbad]; [exact Hterm|contradiction].
+    - intro Hin. apply in_flat_map. exists (Lit v). split; [exact Hin|now left].
+  Qed.
+
+  (** Distinct active-value enumeration agrees with the public literal-or-index predicate. *)
+  Lemma run_active_values_member : forall p db v, D.wf db ->
+    (In v (distinct_values V.eqb (program_literals p ++ slot_values db 0 (D.slots db))) <->
+      active_value p db v).
+  Proof.
+    intros p db v Hwf. unfold active_value.
+    rewrite run_distinct_values_member, in_app_iff, run_program_literals_member.
+    now rewrite run_slot_values_active by exact Hwf.
+  Qed.
+
+  (** Universe membership uses first declarations and exactly the active values. *)
+  Lemma run_universe_member : forall p db f k, D.wf db ->
+    (In (f, k) (universe p db) <->
+      program_kind p f = Some ORel /\
+      (exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
+        length k = length (arg_sorts d)) /\
+      Forall (fun c => exists v, c = Val v /\ active_value p db v) k).
+  Proof.
+    intros p db f k Hwf. unfold universe. split.
+    - intro Hin. apply in_flat_map in Hin as [[g n] [Harity Hin]].
+      apply in_map_iff in Hin as [key [Heq Htuple]]. cbn [fst snd] in Heq, Htuple.
+      injection Heq as Hfunction Hkey. subst g key.
+      destruct (run_relation_arities_sound (decls V.t p) [] f n Harity)
+        as [Hfresh [d [Hfind [Hout Hwidth]]]].
+      destruct (run_find_decl_fields (decls V.t p) f d Hfind) as [Hsort Hkind].
+      rewrite Hout in Hkind. apply run_value_tuples_member in Htuple as [Hlength Hvalues].
+      split; [exact Hkind|]. split.
+      + exists d. split; [exact Hfind|]. now rewrite Hlength, Hwidth.
+      + eapply Forall_impl; [|exact Hvalues]. intros c [v [Hcell Hvalue]].
+        exists v. split; [exact Hcell|]. now apply (proj1 (run_active_values_member p db v Hwf)).
+    - intros [Hkind [[d [Hfind Hlength]] Hvalues]].
+      destruct (run_find_decl_fields (decls V.t p) f d Hfind) as [Hsort Hdeclkind].
+      change (program_kind p f = Some (out d)) in Hdeclkind.
+      assert (Hout : out d = ORel) by congruence.
+      apply in_flat_map. exists (f, length (arg_sorts d)). split.
+      + apply run_relation_arities_complete; [intro Hbad; contradiction|exact Hfind|exact Hout].
+      + apply in_map. apply run_value_tuples_member. split; [exact Hlength|].
+        eapply Forall_impl; [|exact Hvalues]. intros c [v [Hcell Hvalue]].
+        exists v. split; [exact Hcell|]. now apply (proj2 (run_active_values_member p db v Hwf)).
+  Qed.
+
+  Lemma universe_spec : forall p db, D.wf db -> relational_fragment p = true ->
+    prim_free p = true -> no_ids db ->
+    NoDup (universe p db) /\
+    forall f k, In (f, k) (universe p db) <->
+      program_kind p f = Some ORel /\
+      (exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
+        length k = length (arg_sorts d)) /\
+      Forall (fun c => exists v, c = Val v /\ active_value p db v) k.
+  Proof.
+    intros p db Hwf _ _ _. split; [apply run_universe_nodup|].
+    intros f k. now apply run_universe_member.
   Qed.
 
   (** Every sorted action that writes a row has the declared number of arguments. *)
@@ -12237,7 +12619,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma F13_herbrand_size : forall p db,
     relational_fragment p = true -> prim_free p = true ->
     herbrand p db = length (universe p db) /\ NoDup (universe p db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p db _ _. split; [reflexivity|apply run_universe_nodup].
+  Qed.
 
   Lemma F14_universe_rows : forall p cp lim db nv current f k o,
     plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
