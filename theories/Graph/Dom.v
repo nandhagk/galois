@@ -3364,6 +3364,260 @@ Local Transparent dom_order_anchor_transfer T_dom_order_anchor_transfer
 
 (* END G2-G ANCHOR SUPPORT *)
 
+(** The assembly proof keeps its already-bounded executable phases abstract. *)
+Local Opaque dom_lt_numeric_of dom_lt_semidominators dom_lt_buckets dom_lt_correct.
+Local Opaque dom_order_source_maps T_dom_order_source_maps
+  dom_order_removal T_dom_order_removal dom_anchor_order T_dom_anchor_order
+  dom_order_sorted_rows T_dom_order_sorted_rows dom_order_emit T_dom_order_emit.
+
+(** * Composition from the two remaining phase clocks *)
+
+(** Raw finite inventories suffice for the complete order-of-result clock. *)
+Lemma dom_order_of_result_composition (source_coefficient removal_coefficient : N) width result :
+  let numeric := result_numeric result in
+  let semi := result_semi result in
+  let bucket := result_bucket result in
+  let parents := result_parent result in
+  let count := length (lt_numeric_order numeric) in
+  let bound := N.of_nat count in
+  let sources := dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents in
+  NoDup (lt_numeric_order numeric) ->
+  dom_lt_numeric_ranges bound numeric ->
+  (lt_numeric_limit numeric <= N.of_nat (count + 1))%N ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_semis semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_minimizer semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_relative bucket) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) parents ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N -> N.size_nat value <= width) ->
+  (T_dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents <= source_coefficient *
+      N.of_nat (dom_order_body_budget count
+        (dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric)) (lt_numeric_pred numeric)) width))%N ->
+  (T_dom_order_removal (lt_numeric_limit numeric) parents (lt_numeric_order numeric) sources <=
+    removal_coefficient * N.of_nat ((count + 1) * (width + 1)))%N ->
+  (T_dom_order_of_result result <= (source_coefficient + removal_coefficient + dom_order_anchor_coefficient +
+      dom_order_sorted_rows_coefficient + 3 * dom_order_emit_coefficient + 64) *
+    N.of_nat (dom_order_body_budget count
+      (dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric)) (lt_numeric_pred numeric)) width))%N.
+Proof.
+  intros numeric semi bucket parents count bound sources Hunique Hranges Hlimit
+    Hsemis Hminimizer Hrelative Hparents Hwidth Hsource_clock Hremove_clock.
+  set (order := lt_numeric_order numeric) in *.
+  set (predecessors := dom_lt_row_mass (map dom_lt_key order) (lt_numeric_pred numeric)) in *.
+  set (budget := N.of_nat (dom_order_body_budget count predecessors width)) in *.
+  assert (Horder : Forall (fun value => (value <= bound)%N) order).
+  { exact (dom_lt_numeric_order_range _ _ Hranges). }
+  assert (Hrank_width : forall value, (value <= bound)%N -> N.size_nat value <= width).
+  { intros value Hvalue. eapply dom_order_linear_value_width; [exact Hwidth|].
+    clear -Hvalue. lia. }
+  assert (Hparents_width : dom_lt_trie_all (fun value => N.size_nat value <= width) parents).
+  { now apply (dom_order_table_width bound width). }
+  assert (Hsources : dom_order_sources_range bound sources).
+  { exact (dom_order_source_maps_range bound numeric (lt_semis semi) (lt_minimizer semi)
+      (lt_relative bucket) parents Horder Hparents). }
+  set (removed := dom_order_removal (lt_numeric_limit numeric) parents order sources).
+  assert (Hrecords : Forall (fun entry => let '(vertex, anchor, witness) := entry in
+    (vertex <= bound /\ anchor <= bound /\ witness <= bound)%N) removed).
+  { exact (dom_order_removal_records_range bound (lt_numeric_limit numeric) parents order
+      sources Hparents Horder Hsources). }
+  assert (Hremoved_unique : NoDup (map (fun entry => dom_lt_key (fst (fst entry))) removed)).
+  { exact (dom_order_removal_keys_unique (lt_numeric_limit numeric) parents order sources). }
+  assert (Hremoved_length : length removed <= count).
+  { exact (dom_order_removal_length (lt_numeric_limit numeric) parents order sources). }
+  assert (Hremoved_count : (N.of_nat (length removed) <= bound)%N).
+  { apply time_of_nat_le. exact Hremoved_length. }
+  set (positions := dom_anchor_order parents removed).
+  pose proof (dom_order_anchor_endpoints bound parents removed Hparents Hrecords
+    Hremoved_unique Hremoved_count) as Hendpoints. fold positions in Hendpoints.
+  assert (Hpositions : dom_lt_trie_all (fun interval =>
+    (fst interval <= 8 * (bound + 1) * (bound + 1) /\
+      snd interval <= 8 * (bound + 1) * (bound + 1))%N) positions).
+  { intros key [lower upper] Hget. exact (Hendpoints key (lower, upper) Hget). }
+  assert (Hoperands : Forall (dom_order_merge_operand width positions) order).
+  { apply Forall_forall. intros vertex Hin. split.
+    - apply Hrank_width. exact (proj1 (Forall_forall _ _) Horder vertex Hin).
+    - apply Hwidth. now apply dom_order_anchor_start_bound. }
+  set (rows := dom_order_sorted_rows order parents positions).
+  assert (Hrows_range : dom_lt_trie_all (Forall (fun value => (value <= bound)%N)) rows).
+  { exact (dom_order_sorted_rows_forall (fun value => (value <= bound)%N)
+      order parents positions Horder). }
+  set (keys := dom_order_key_universe count).
+  assert (Hkeys_unique : NoDup keys) by apply dom_order_key_universe_unique.
+  assert (Hkeys_length : length keys = count + 2) by apply dom_order_key_universe_length.
+  assert (Hroot : In (dom_lt_key 1%N) keys) by apply dom_order_key_universe_root.
+  assert (Hrows_keys : dom_lt_trie_all (Forall (fun vertex => In (dom_lt_key vertex) keys)) rows).
+  { exact (dom_order_key_universe_rows count rows Hrows_range). }
+  assert (Hkeys_width : forall vertex, In (dom_lt_key vertex) keys -> N.size_nat vertex <= width).
+  { intros vertex Hin. apply dom_order_key_universe_bound in Hin.
+    eapply dom_order_linear_value_width; [exact Hwidth|].
+    rewrite Nat2N.inj_add in Hin. change (N.of_nat 1) with 1%N in Hin.
+    fold bound in Hin. clear -Hin. lia. }
+  assert (Hlimit_width : N.size_nat (lt_numeric_limit numeric) <= width).
+  { eapply dom_order_linear_value_width; [exact Hwidth|].
+    rewrite Nat2N.inj_add in Hlimit. change (N.of_nat 1) with 1%N in Hlimit.
+    fold bound in Hlimit. clear -Hlimit. lia. }
+  assert (Hmass : dom_lt_row_mass keys rows <= count).
+  { exact (dom_order_sorted_rows_mass keys order parents positions Hkeys_unique). }
+  assert (Hremove_paid :
+    (T_dom_order_removal (lt_numeric_limit numeric) parents order sources <=
+      removal_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hremove_clock|]. apply N.mul_le_mono_l.
+    unfold budget. apply time_of_nat_le. apply dom_order_body_budget_linear. }
+  pose proof (dom_order_anchor_time bound width parents removed Hparents Hrecords
+    Hremoved_unique Hremoved_count Hwidth) as Hanchor_clock.
+  assert (Hanchor_paid : (T_dom_anchor_order parents removed <=
+    dom_order_anchor_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hanchor_clock|]. apply N.mul_le_mono_l.
+    unfold budget. apply time_of_nat_le.
+    eapply Nat.le_trans with ((count + 1) * (width + 1)).
+    - apply Nat.mul_le_mono_r. clear -Hremoved_length. lia.
+    - apply dom_order_body_budget_linear. }
+  pose proof (dom_order_sorted_rows_time width order parents positions
+    Hoperands Hparents_width) as Hrows_clock.
+  assert (Hrows_paid : (T_dom_order_sorted_rows order parents positions <=
+    dom_order_sorted_rows_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hrows_clock|]. apply N.mul_le_mono_l.
+    unfold budget. apply time_of_nat_le. apply dom_order_body_budget_rows. }
+  pose proof (dom_order_emit_clock keys numeric rows width Hkeys_unique Hroot Hrows_keys
+    Hkeys_width Hlimit_width) as Hemit_clock.
+  rewrite Hkeys_length in Hemit_clock.
+  assert (Hemit_paid : (T_dom_order_emit numeric rows <=
+    3 * dom_order_emit_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hemit_clock|].
+    replace (3 * dom_order_emit_coefficient * budget)%N with
+      (dom_order_emit_coefficient * (3 * budget))%N by ring.
+    apply N.mul_le_mono_l. unfold budget.
+    change (N.of_nat ((dom_lt_row_mass keys rows + (count + 2) + 1) * (width + 1)) <=
+      N.of_nat 3 * N.of_nat (dom_order_body_budget count predecessors width))%N.
+    rewrite <- Nat2N.inj_mul. apply time_of_nat_le.
+    now apply dom_order_body_budget_emit. }
+  pose proof (dom_order_result_phase_clocks result) as Htotal.
+  cbn zeta in Htotal. fold numeric semi bucket parents order sources removed positions rows in Htotal.
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget. pose proof (dom_order_body_budget_positive count predecessors width) as Hpositive.
+    now apply time_of_nat_le in Hpositive. }
+  eapply dom_order_phase_sum_budget;
+    [exact Hpositive|exact Hsource_clock|exact Hremove_paid|exact Hanchor_paid|
+     exact Hrows_paid|exact Hemit_paid|exact Htotal].
+Qed.
+(** * Closed coefficient for the complete raw ordering body *)
+
+Definition dom_order_body_coefficient : N :=
+  (dom_order_source_maps_coefficient + dom_order_removal_coefficient +
+    dom_order_anchor_coefficient + dom_order_sorted_rows_coefficient +
+    3 * dom_order_emit_coefficient + 64)%N.
+
+(** The actual source and removal bounds discharge the two phase premises. *)
+Lemma dom_order_of_result_time width result :
+  let numeric := result_numeric result in
+  let semi := result_semi result in
+  let bucket := result_bucket result in
+  let parents := result_parent result in
+  let count := length (lt_numeric_order numeric) in
+  let bound := N.of_nat count in
+  NoDup (lt_numeric_order numeric) ->
+  dom_lt_numeric_ranges bound numeric ->
+  (lt_numeric_limit numeric <= N.of_nat (count + 1))%N ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_semis semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_minimizer semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_relative bucket) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) parents ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N -> N.size_nat value <= width) ->
+  (T_dom_order_of_result result <= dom_order_body_coefficient *
+    N.of_nat (dom_order_body_budget count
+      (dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric)) (lt_numeric_pred numeric)) width))%N.
+Proof.
+  intros numeric semi bucket parents count bound Hunique Hranges Hlimit
+    Hsemis Hminimizer Hrelative Hparents Hwidth.
+  pose proof (dom_order_source_maps_time width numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents Hunique Hranges Hlimit Hsemis Hminimizer Hrelative
+    Hparents Hwidth) as Hsource.
+  pose proof (dom_lt_numeric_order_range bound numeric Hranges) as Horder.
+  pose proof (dom_order_source_maps_range bound numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents Horder Hparents) as Hsources.
+  pose proof (dom_order_removal_time count width (lt_numeric_limit numeric) parents
+    (lt_numeric_order numeric)
+    (dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi) (lt_relative bucket) parents)
+    (Nat.le_refl count) Horder Hparents Hsources Hlimit Hwidth) as Hremove.
+  unfold dom_order_body_coefficient.
+  exact (dom_order_of_result_composition dom_order_source_maps_coefficient
+    dom_order_removal_coefficient width result Hunique Hranges Hlimit Hsemis Hminimizer
+    Hrelative Hparents Hwidth Hsource Hremove).
+Qed.
+(** * The ordering body on an actual prepared graph *)
+
+(** All numeric inventories and quadratic anchor ranks fit the graph's ordering budget. *)
+Lemma dom_order_graph_body_time g r : prepared_ok g ->
+  (T_dom_order_of_result (dom_lt_pipeline g r) <= 5 * dom_order_body_coefficient *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
+Proof.
+  intro Hprepared.
+  set (numeric := dom_lt_numeric_of g r).
+  set (semi := dom_lt_semidominators numeric).
+  set (bucket := dom_lt_buckets numeric (lt_semis semi)).
+  set (parents := dom_lt_correct numeric (lt_semis semi) (lt_relative bucket)).
+  set (count := length (lt_numeric_order numeric)).
+  set (bound := N.of_nat count).
+  set (predecessors := dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric))
+    (lt_numeric_pred numeric)).
+  assert (Hcount : count = length (dom_lt_dfs g r)) by apply dom_lt_numeric_order_length.
+  assert (Hnumeric : dom_lt_numeric_ranges bound numeric).
+  { unfold bound. rewrite Hcount. apply dom_lt_numeric_of_ranges. }
+  assert (Hunique : NoDup (lt_numeric_order numeric)) by apply dom_lt_numeric_order_unique.
+  assert (Hlimit : (lt_numeric_limit numeric <= N.of_nat (count + 1))%N).
+  { unfold numeric. rewrite dom_lt_numeric_limit_count, Hcount. apply N.le_refl. }
+  pose proof (dom_lt_semidominators_range bound numeric Hnumeric) as Hsemi.
+  fold semi in Hsemi.
+  pose proof (dom_lt_pipeline_buckets_range bound numeric (lt_semis semi) Hnumeric) as Hbucket.
+  fold bucket in Hbucket.
+  pose proof (dom_lt_pipeline_correct_range bound numeric (lt_semis semi)
+    (lt_relative bucket) (proj2 Hbucket)) as Hparents.
+  fold parents in Hparents.
+  destruct (dom_lt_dfs_inventory g r) as [Hdiscover_unique [Hlisted [Hvertices Hedges]]].
+  assert (Hwidth : forall value, (value <= 8 * (bound + 1) * (bound + 1))%N ->
+    N.size_nat value <= 2 * graph_width (base g) + 4).
+  { intros value Hvalue.
+    apply (dom_distinct_quadratic_width (dom_lt_dfs g r) (graph_width (base g)) value
+      Hdiscover_unique).
+    - intros key Hin. apply dom_listed_key_width. now apply Hlisted.
+    - unfold bound in Hvalue. now rewrite Hcount in Hvalue. }
+  assert (Hraw : (T_dom_order_of_result (dom_lt_pipeline g r) <=
+    dom_order_body_coefficient * N.of_nat (dom_order_body_budget count predecessors
+      (2 * graph_width (base g) + 4)))%N).
+  { apply (dom_order_of_result_time (2 * graph_width (base g) + 4)).
+    - exact Hunique.
+    - exact Hnumeric.
+    - exact Hlimit.
+    - exact (proj1 Hsemi).
+    - exact (proj1 (proj2 Hsemi)).
+    - exact (proj2 Hbucket).
+    - exact Hparents.
+    - exact Hwidth. }
+  assert (Hpredecessors : predecessors <= graph_e (base g)).
+  { unfold predecessors, dom_lt_row_mass. rewrite dom_lt_sum_map.
+    exact (dom_lt_numeric_pred_total g r Hprepared). }
+  assert (Hbudget : dom_order_body_budget count predecessors (2 * graph_width (base g) + 4) <=
+    5 * ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1))).
+  { unfold dom_order_body_budget. apply dom_order_graph_product; [now rewrite Hcount|exact Hpredecessors]. }
+  eapply N.le_trans; [exact Hraw|].
+  replace (5 * dom_order_body_coefficient *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N with
+    (dom_order_body_coefficient * N.of_nat (5 *
+      ((graph_n (base g) + graph_e (base g) + 1) *
+        (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1))))%N by
+    (rewrite !Nat2N.inj_mul; change (N.of_nat 5) with 5%N; ring).
+  apply N.mul_le_mono_l. now apply time_of_nat_le.
+Qed.
+
+Local Transparent dom_lt_numeric_of dom_lt_semidominators dom_lt_buckets dom_lt_correct.
+Local Transparent dom_order_source_maps T_dom_order_source_maps
+  dom_order_removal T_dom_order_removal dom_anchor_order T_dom_anchor_order
+  dom_order_sorted_rows T_dom_order_sorted_rows dom_order_emit T_dom_order_emit.
+
 (** A size observation traverses one key and adds its default-value branch. *)
 Local Lemma dom_time_size_get sizes v :
   T_dom_size_get sizes v = (1 + 2 * N.of_nat (Pos.size_nat v))%N.
@@ -4093,7 +4347,8 @@ Module DomT <: DOM_ALL.
   Definition k_dfs : N := dom_lt_dfs_coefficient.
   Definition k_semi : N := dom_lt_semi_coefficient.
   Definition k_le : N := (32 * 1024 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
-  Definition k_order : N := 1%N. (* STUB *)
+  Definition k_order : N :=
+    (5 * dom_order_body_coefficient + k_semi + 4 * k_le)%N.
   Definition k_build : N := 32%N.
   Definition k_check : N := 32%N.
 
@@ -4597,7 +4852,18 @@ Module DomT <: DOM_ALL.
     (T_lt_order g r <= k_order *
       N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared.
+    change (1 + T_dom_build_order g r <=
+      (5 * dom_order_body_coefficient + k_semi + 4 * k_le) *
+        N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+          (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
+    rewrite (N.add_comm 1 (T_dom_build_order g r)).
+    apply dom_order_graph_wrapper.
+    - exact Hprepared.
+    - now apply dom_order_graph_body_time.
+    - apply dom_lt_replay_time.
+  Qed.
 
   (** Parent containment tests charge each accepted order entry. *)
   Lemma T4b_sizes_ok : forall g r m o pos,
