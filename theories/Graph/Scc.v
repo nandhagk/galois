@@ -3518,6 +3518,252 @@ Proof.
       [contradiction|]. rewrite Hprefix. apply in_or_app. now left.
 Qed.
 
+(** Processed edges retain their source discovery and bound a pending target's source low link. *)
+Definition tarjan_processed (events : list event) (s : tarjan_state) : Prop :=
+  forall kind u v, In (Edge kind u v) events ->
+    exists source, trie_get u (tarjan_disc s) = Some source /\
+      (trie_get v (tarjan_disc s) = None \/
+        exists target, trie_get v (tarjan_disc s) = Some target /\
+          (In v (tarjan_pending s) -> forall low, trie_get u (tarjan_low s) = Some low ->
+            Pos.to_nat low <= Pos.to_nat target)).
+
+Lemma tarjan_processed_lower events u number s :
+  tarjan_processed events s -> tarjan_processed events (TarjanVisitor.lower u number s).
+Proof.
+  intro Hprocessed. unfold TarjanVisitor.lower.
+  destruct (trie_get u (tarjan_low s)) as [old|] eqn:Hold; [|exact Hprocessed].
+  intros kind a b Hin. destruct (Hprocessed kind a b Hin) as [source [Hsource Htarget]].
+  exists source. split; [exact Hsource|]. destruct Htarget as [Hnone|[target [Htarget Hbound]]].
+  - now left.
+  - right. exists target. split; [exact Htarget|]. intros Hpending low Hlow.
+    cbn [tarjan_low] in Hlow. destruct (Pos.eq_dec a u) as [Heq|Hne].
+    + subst a. rewrite PTrie.get_set_same in Hlow. injection Hlow as Heq. subst low.
+      rewrite Pos2Nat.inj_min. eapply Nat.le_trans; [apply Nat.le_min_l|].
+      exact (Hbound Hpending old Hold).
+    + rewrite PTrie.get_set_other in Hlow by exact Hne. exact (Hbound Hpending low Hlow).
+Qed.
+
+Lemma tarjan_processed_enter events v s :
+  tarjan_processed events s -> trie_get v (tarjan_disc s) = None ->
+  tarjan_values_below_clock s -> tarjan_processed events (TarjanVisitor.enter v s).
+Proof.
+  intros Hprocessed Hfresh Hvalues kind u w Hin.
+  destruct (Hprocessed kind u w Hin) as [source [Hsource Htarget]].
+  assert (Hsource_ne : u <> v) by (intro Heq; subst u; rewrite Hfresh in Hsource; discriminate).
+  exists source. cbn [TarjanVisitor.enter tarjan_disc tarjan_pending tarjan_low].
+  rewrite PTrie.get_set_other by exact Hsource_ne. split; [exact Hsource|].
+  destruct (Pos.eq_dec w v) as [Heq|Hne].
+  - subst w. rewrite PTrie.get_set_same. right. exists (tarjan_clock s).
+    split; [reflexivity|]. intros Hpending low Hlow.
+    rewrite PTrie.get_set_other in Hlow by exact Hsource_ne.
+    pose proof (proj2 Hvalues u low Hlow). lia.
+  - rewrite PTrie.get_set_other by exact Hne.
+    destruct Htarget as [Hnone|[target [Htarget Hbound]]]; [now left|].
+    right. exists target. split; [exact Htarget|]. intros Hpending low Hlow.
+    cbn [In] in Hpending. destruct Hpending as [Heq|Hpending]; [congruence|].
+    rewrite PTrie.get_set_other in Hlow by exact Hsource_ne. exact (Hbound Hpending low Hlow).
+Qed.
+
+Lemma tarjan_processed_edge_old events kind u v s :
+  tarjan_processed events s -> tarjan_processed events (TarjanVisitor.edge kind u v s).
+Proof.
+  intro Hprocessed. destruct kind; cbn [TarjanVisitor.edge]; try exact Hprocessed.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hprocessed.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hprocessed.
+  all: now apply tarjan_processed_lower.
+Qed.
+
+Lemma tarjan_processed_pop events s root index members tail low active owners frames emitted clock next :
+  tarjan_processed events s ->
+  tarjan_pop root index (tarjan_pending s) (tarjan_low s) (tarjan_active s) (tarjan_owners s) =
+    (members, tail, low, active, owners) ->
+  tarjan_processed events
+    (TarjanState (tarjan_disc s) low tail active frames emitted owners clock next).
+Proof.
+  intros Hprocessed Hpop kind u v Hin.
+  destruct (Hprocessed kind u v Hin) as [source [Hsource Htarget]].
+  exists source. split; [exact Hsource|]. destruct Htarget as [Hnone|[target [Htarget Hbound]]].
+  - now left.
+  - right. exists target. split; [exact Htarget|]. intros Hpending number Hlow.
+    cbn [tarjan_pending tarjan_low] in Hpending, Hlow.
+    destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hlookup].
+    rewrite (proj1 (Hlookup u)) in Hlow.
+    destruct (existsb (Pos.eqb u) members); [discriminate|].
+    apply (Hbound); [|exact Hlow]. rewrite Hsplit. apply in_or_app. now right.
+Qed.
+
+Lemma tarjan_processed_leave events v s :
+  tarjan_processed events s -> tarjan_processed events (TarjanVisitor.leave v s).
+Proof.
+  intro Hprocessed. unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|exact Hprocessed].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|exact Hprocessed].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    eapply tarjan_processed_pop; eassumption.
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end)
+      as [|parent frames]; [exact Hprocessed|]. now apply tarjan_processed_lower.
+Qed.
+
+Lemma tarjan_lower_target_bound u v source target s :
+  trie_get u (tarjan_disc s) = Some source -> trie_get v (tarjan_disc s) = Some target ->
+  exists number, trie_get u (tarjan_disc (TarjanVisitor.lower u target s)) = Some number /\
+    (trie_get v (tarjan_disc (TarjanVisitor.lower u target s)) = None \/
+      exists d, trie_get v (tarjan_disc (TarjanVisitor.lower u target s)) = Some d /\
+        (In v (tarjan_pending (TarjanVisitor.lower u target s)) -> forall low,
+          trie_get u (tarjan_low (TarjanVisitor.lower u target s)) = Some low ->
+          Pos.to_nat low <= Pos.to_nat d)).
+Proof.
+  intros Hsource Htarget. unfold TarjanVisitor.lower.
+  destruct (trie_get u (tarjan_low s)) as [old|] eqn:Hold;
+    exists source; split; [exact Hsource| |exact Hsource|];
+    right; exists target; split; [exact Htarget| |exact Htarget|];
+    intros Hpending low Hlow.
+  - cbn [tarjan_low] in Hlow. rewrite PTrie.get_set_same in Hlow.
+    injection Hlow as Heq. subst low. rewrite Pos2Nat.inj_min. apply Nat.le_min_r.
+  - rewrite Hold in Hlow. discriminate.
+Qed.
+
+Lemma tarjan_inactive_target_bound u v source s :
+  trie_get u (tarjan_disc s) = Some source -> ~ In v (tarjan_pending s) ->
+  exists number, trie_get u (tarjan_disc s) = Some number /\
+    (trie_get v (tarjan_disc s) = None \/
+      exists d, trie_get v (tarjan_disc s) = Some d /\
+        (In v (tarjan_pending s) -> forall low, trie_get u (tarjan_low s) = Some low ->
+          Pos.to_nat low <= Pos.to_nat d)).
+Proof.
+  intros Hsource Hnot. exists source. split; [exact Hsource|].
+  destruct (trie_get v (tarjan_disc s)) as [target|] eqn:Htarget.
+  - right. exists target. split; [reflexivity|]. intros Hin. contradiction.
+  - now left.
+Qed.
+
+Lemma tarjan_new_edge_bound kind u v s :
+  tarjan_pending_domains s -> (exists source, trie_get u (tarjan_disc s) = Some source) ->
+  (kind = Tree -> trie_get v (tarjan_disc s) = None) ->
+  exists source, trie_get u (tarjan_disc (TarjanVisitor.edge kind u v s)) = Some source /\
+    (trie_get v (tarjan_disc (TarjanVisitor.edge kind u v s)) = None \/
+      exists target, trie_get v (tarjan_disc (TarjanVisitor.edge kind u v s)) = Some target /\
+        (In v (tarjan_pending (TarjanVisitor.edge kind u v s)) -> forall low,
+          trie_get u (tarjan_low (TarjanVisitor.edge kind u v s)) = Some low ->
+          Pos.to_nat low <= Pos.to_nat target)).
+Proof.
+  intros Hdomains [source Hsource] Htree. destruct kind;
+    [exists source; split; [exact Hsource|left; now apply Htree]| |].
+  all: cbn [TarjanVisitor.edge].
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|] eqn:Hactive.
+  all: try solve [apply (tarjan_inactive_target_bound u v source s Hsource);
+    intro Hin; apply (proj2 (proj1 Hdomains v)) in Hin; rewrite Hactive in Hin; discriminate].
+  all: destruct (trie_get v (tarjan_disc s)) as [target|] eqn:Htarget.
+  all: try solve [exists source; split; [exact Hsource|now left]].
+  all: eapply tarjan_lower_target_bound; eassumption.
+Qed.
+
+Lemma tarjan_processed_edge events kind u v s :
+  tarjan_processed events s -> tarjan_pending_domains s ->
+  (exists source, trie_get u (tarjan_disc s) = Some source) ->
+  (kind = Tree -> trie_get v (tarjan_disc s) = None) ->
+  tarjan_processed (events ++ [Edge kind u v]) (TarjanVisitor.edge kind u v s).
+Proof.
+  intros Hprocessed Hdomains Hsource Htree k a b Hin.
+  apply in_app_iff in Hin. destruct Hin as [Hin|Hin].
+  - exact (tarjan_processed_edge_old events kind u v s Hprocessed k a b Hin).
+  - cbn [In] in Hin. destruct Hin as [Heq|Hfalse]; [inversion Heq; subst|contradiction].
+    now apply tarjan_new_edge_bound.
+Qed.
+
+Lemma tarjan_processed_enter_snoc events v s :
+  tarjan_processed events s -> trie_get v (tarjan_disc s) = None ->
+  tarjan_values_below_clock s ->
+  tarjan_processed (events ++ [Enter v]) (TarjanVisitor.enter v s).
+Proof.
+  intros Hprocessed Hfresh Hvalues kind u w Hin. apply in_app_iff in Hin.
+  destruct Hin as [Hin|[Hbad|Hfalse]]; [|discriminate|contradiction].
+  exact (tarjan_processed_enter events v s Hprocessed Hfresh Hvalues kind u w Hin).
+Qed.
+
+Lemma tarjan_processed_leave_snoc events v s :
+  tarjan_processed events s -> tarjan_processed (events ++ [Leave v]) (TarjanVisitor.leave v s).
+Proof.
+  intros Hprocessed kind u w Hin. apply in_app_iff in Hin.
+  destruct Hin as [Hin|[Hbad|Hfalse]]; [|discriminate|contradiction].
+  exact (tarjan_processed_leave events v s Hprocessed kind u w Hin).
+Qed.
+Lemma tarjan_discovery_member events v : NoDup (entered events) ->
+  (exists i, trie_get v (tarjan_disc
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial)) = Some i)
+  <-> In (Enter v) events.
+Proof.
+  intro Hunique. pose proof (tarjan_discovery_rows_fold events Hunique) as Hrows. split.
+  - intros [i Hget]. apply (Hrows v i) in Hget. destruct Hget as [n [Hnth _]].
+    apply (proj1 (search_entered_member events v)). eapply nth_error_In; exact Hnth.
+  - intro Hin. apply (proj2 (search_entered_member events v)) in Hin.
+    apply In_nth_error in Hin. destruct Hin as [n Hnth]. exists (Pos.of_succ_nat n).
+    apply (Hrows v (Pos.of_succ_nat n)). now exists n.
+Qed.
+
+Lemma tarjan_discovery_none events v : NoDup (entered events) -> ~ In (Enter v) events ->
+  trie_get v (tarjan_disc
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial)) = None.
+Proof.
+  intros Hunique Hnot. destruct (trie_get v (tarjan_disc
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial)))
+    as [i|] eqn:Hget; [|reflexivity].
+  exfalso. apply Hnot. apply (proj1 (tarjan_discovery_member events v Hunique)). now exists i.
+Qed.
+
+(** Every actual prefix retains the processed bound for each previously observed edge. *)
+Lemma tarjan_prefix_processed g prefix suffix : scc_trace g = prefix ++ suffix ->
+  tarjan_processed prefix
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial).
+Proof.
+  revert suffix. induction prefix as [|e events IH] using rev_ind; intros suffix Htrace.
+  - intros kind u v Hfalse. contradiction.
+  - assert (Hbefore : scc_trace g = events ++ e :: suffix).
+    { rewrite Htrace, <- app_assoc. reflexivity. }
+    pose proof (scc_trace_prefix_unique g events (e :: suffix) Hbefore) as Hunique.
+    specialize (IH (e :: suffix) Hbefore).
+    unfold fold_events at 1. rewrite fold_left_app.
+    change (tarjan_processed (events ++ [e])
+      (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial) e)).
+    destruct e as [v|v|kind u v]; cbn [visit_event].
+    + apply tarjan_processed_enter_snoc; [exact IH| |apply tarjan_values_fold, tarjan_values_initial].
+      apply tarjan_discovery_none; [exact Hunique|]. intro Hin.
+      apply (proj2 (search_entered_member events v)) in Hin.
+      pose proof (scc_trace_prefix_unique g (events ++ [Enter v]) suffix Htrace) as Hnew.
+      rewrite search_entered_app in Hnew. cbn [entered] in Hnew.
+      apply (tarjan_nodup_app_disjoint (entered events) [v] Hnew v Hin). now left.
+    + now apply tarjan_processed_leave_snoc.
+    + apply tarjan_processed_edge; [exact IH| | |].
+      * now apply tarjan_pending_domains_fold.
+      * apply (proj2 (tarjan_discovery_member events u Hunique)).
+        exact (scc_edge_source_prefix g events kind u v suffix Hbefore).
+      * intro Heq. subst kind. apply tarjan_discovery_none; [exact Hunique|].
+        exact (scc_trace_kinds g events Tree u v suffix Hbefore).
+Qed.
+
+(** A leave boundary has already resolved every target discovered by its past edge events. *)
+Lemma tarjan_leave_processed g prefix root suffix kind u v :
+  scc_trace g = prefix ++ Leave root :: suffix -> In (Edge kind u v) prefix ->
+  let s := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial in
+  exists source target, trie_get u (tarjan_disc s) = Some source /\
+    trie_get v (tarjan_disc s) = Some target /\
+    (In v (tarjan_pending s) -> forall low, trie_get u (tarjan_low s) = Some low ->
+      Pos.to_nat low <= Pos.to_nat target).
+Proof.
+  intros Htrace Hedge. cbn zeta.
+  destruct (tarjan_prefix_processed g prefix (Leave root :: suffix) Htrace kind u v Hedge)
+    as [source [Hsource [Hnone|[target [Htarget Hbound]]]]].
+  - pose proof (scc_trace_prefix_unique g prefix (Leave root :: suffix) Htrace) as Hunique.
+    pose proof (scc_leave_targets_entered g prefix root suffix kind u v Htrace Hedge) as Henter.
+    apply (proj2 (tarjan_discovery_member prefix v Hunique)) in Henter.
+    destruct Henter as [target Htarget]. rewrite Hnone in Htarget. discriminate.
+  - exists source, target. auto.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
