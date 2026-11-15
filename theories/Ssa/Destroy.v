@@ -393,6 +393,113 @@ Module Destroy (O : OPS)
     (PM : PARMOVE) (OL : LAWS O)
     <: DESTROY O K G P PM OL.
   Include DestroyCode O K G P PM.
+  (** The preflight copies read the whole source row without changing its values. *)
+  Lemma preflight_run : forall actuals tmp (e : env O.C), ~ In tmp actuals ->
+    exec_code O.eval (move_code (map (fun src => (tmp, src)) actuals)) e =
+      match read_vars e actuals with
+      | None => None
+      | Some values => Some (fold_left (fun acc c => (tmp, c) :: acc) values e)
+      end.
+  Proof.
+    induction actuals as [|src actuals IH]; intros tmp e Hfresh; [reflexivity|].
+    cbn [move_code map exec_code read_vars].
+    destruct (lookup src e) as [value|] eqn:Hsource; [|reflexivity].
+    rewrite OL.eval_mov.
+    rewrite IH.
+    - rewrite read_vars_other.
+      + destruct (read_vars e actuals); reflexivity.
+      + intro Hin. apply Hfresh. now right.
+    - intro Hin. apply Hfresh. now right.
+  Qed.
+
+  (** Repeated writes of the temporary preserve every other lookup. *)
+  Lemma preflight_agree : forall values (e : env O.C) tmp x, x <> tmp ->
+    lookup x (fold_left (fun acc c => (tmp, c) :: acc) values e) = lookup x e.
+  Proof.
+    induction values as [|c values IH]; intros e tmp x Hneq; [reflexivity|].
+    cbn [fold_left]. rewrite IH by exact Hneq. cbn [lookup].
+    destruct (Pos.eqb x tmp) eqn:Heq; [|reflexivity].
+    apply Pos.eqb_eq in Heq. contradiction.
+  Qed.
+
+  (** A nonempty successful preflight initializes the temporary. *)
+  Lemma preflight_defined : forall values (e : env O.C) tmp, values <> [] ->
+    exists c, lookup tmp (fold_left (fun acc c => (tmp, c) :: acc) values e) = Some c.
+  Proof.
+    induction values as [|c values IH]; intros e tmp Hnonempty; [contradiction|].
+    cbn [fold_left]. destruct values as [|d rest].
+    - exists c. cbn [fold_left lookup]. now rewrite Pos.eqb_refl.
+    - apply IH. discriminate.
+  Qed.
+
+  (** Defined move operands make concrete move instructions agree with sequential assignment. *)
+  Lemma move_code_defined : forall sq allowed (e : env O.C),
+    (forall m, In m sq -> In (snd m) allowed) ->
+    (forall x, In x allowed -> exists c, lookup x e = Some c) ->
+    exists out, exec_code O.eval (move_code sq) e = Some out /\
+      forall x, lookup x out = exec_seq sq (fun y => lookup y e) x.
+  Proof.
+    induction sq as [|[dst src] rest IH]; intros allowed e Hreads Hdefined.
+    - exists e. split; reflexivity.
+    - destruct (Hdefined src (Hreads (dst, src) (or_introl eq_refl))) as [c Hsource].
+      assert (Htail : forall m, In m rest -> In (snd m) allowed).
+      { intros m Hin. apply Hreads. now right. }
+      assert (Hdefined' : forall x, In x allowed -> exists c',
+          lookup x ((dst, c) :: e) = Some c').
+      { intros x Hin. cbn [lookup]. destruct (Pos.eqb x dst).
+        - exists c. reflexivity.
+        - apply Hdefined. exact Hin. }
+      destruct (IH allowed ((dst, c) :: e) Htail Hdefined') as [out [Hrun Hagree]].
+      exists out. split.
+      + cbn [move_code map exec_code read_vars]. rewrite Hsource, OL.eval_mov. exact Hrun.
+      + intro x. rewrite Hagree. cbn [exec_seq]. rewrite Hsource. reflexivity.
+  Qed.
+
+  (** Checked copies preserve missing-read failures and implement the parallel assignment. *)
+  Lemma checked_copy_run : forall par tmp (e : env O.C), par <> [] ->
+    NoDup (map fst par) -> ~ In tmp (map fst par ++ map snd par) ->
+    PM.check_moves par tmp (PM.seq par tmp) = true ->
+    match read_vars e (map snd par) with
+    | None => exec_code O.eval
+        (move_code (map (fun src => (tmp, src)) (map snd par)) ++
+          move_code (PM.seq par tmp)) e = None
+    | Some values => exists out, exec_code O.eval
+        (move_code (map (fun src => (tmp, src)) (map snd par)) ++
+          move_code (PM.seq par tmp)) e = Some out /\
+        forall x, x <> tmp -> lookup x out = exec_par par (fun y => lookup y e) x
+    end.
+  Proof.
+    intros par tmp e Hnonempty Hdistinct Hfresh Hchecked.
+    assert (Hsources : ~ In tmp (map snd par)).
+    { intro Hin. apply Hfresh. apply in_or_app. now right. }
+    rewrite exec_code_append, preflight_run by exact Hsources.
+    destruct (read_vars e (map snd par)) as [values|] eqn:Hread; [|reflexivity].
+    assert (Hvalues : values <> []).
+    { intro Heq. subst values.
+      pose proof (read_vars_length _ e [] Hread) as Hlength.
+      rewrite length_map in Hlength. destruct par; [contradiction|discriminate]. }
+    set (scratch := fold_left (fun acc c => (tmp, c) :: acc) values e).
+    assert (Hdefined : forall x, In x (tmp :: map snd par) ->
+        exists c, lookup x scratch = Some c).
+    { intros x [Heq|Hin].
+      - subst x. apply preflight_defined. exact Hvalues.
+      - destruct (read_vars_defined _ e values Hread x Hin) as [c Hvalue].
+        exists c. unfold scratch. rewrite preflight_agree; [exact Hvalue|].
+        intro Heq. subst x. contradiction. }
+    assert (Hreads : forall m, In m (PM.seq par tmp) -> In (snd m) (tmp :: map snd par)).
+    { intros m Hin. destruct (PM.seq_ids par tmp m Hin) as [Hdst [Hsrc|Htmp]].
+      - now right.
+      - now left. }
+    destruct (move_code_defined (PM.seq par tmp) (tmp :: map snd par)
+      scratch Hreads Hdefined) as [out [Hrun Hagree]].
+    exists out. split; [exact Hrun|].
+    intros x Hneq. rewrite Hagree.
+    rewrite (PM.check_moves_sound par tmp (PM.seq par tmp)
+      Hdistinct Hfresh Hchecked O.C (fun y => lookup y scratch) x Hneq).
+    apply exec_par_agree. intros y [Heq|Hin].
+    - subst y. apply preflight_agree. exact Hneq.
+    - apply preflight_agree. intro Heq. subst y. contradiction.
+  Qed.
 
   (** The distinctness pass rejects repeated variables and variables already seen. *)
   Lemma distinct_vars_sound : forall xs seen, distinct_vars xs seen = true ->
@@ -539,6 +646,270 @@ Module Destroy (O : OPS)
     unfold imp_form. cbn [blocks]. eapply copy_blocks_imp. exact Hblocks.
   Qed.
 
+  Definition entered_agree (s p : P.t) (ss sp : machine_state O.C) :=
+    let '(bs, actuals_s, es) := ss in
+    let '(bp, actuals_p, ep) := sp in
+    bs = bp /\
+    match find_block bs (blocks _ _ _ s), find_block bp (blocks _ _ _ p) with
+    | None, None => True
+    | Some sb, Some pb =>
+        match bind_vars (params _ _ _ sb) actuals_s es,
+          bind_vars (params _ _ _ pb) actuals_p ep with
+        | None, None => True
+        | Some entered_s, Some entered_p =>
+            forall x, In x (function_vars s) -> lookup x entered_s = lookup x entered_p
+        | _, _ => False
+        end
+    | _, _ => False
+    end.
+
+  Definition copy_outcomes s p (os op : machine_state O.C + result O.C) :=
+    match os, op with
+    | inl ss, inl sp => entered_agree s p ss sp
+    | inr rs, inr rp => rs = rp
+    | _, _ => False
+    end.
+
+  Definition finish_exit (e : exit positive O.G) (finished : env O.C)
+      : machine_state O.C + result O.C :=
+    match e with
+    | Jump next actuals =>
+      match read_vars finished actuals with
+      | Some values => inl (next, values, finished)
+      | None => inr Wrong
+      end
+    | Branch guard operands yes yes_args no no_args =>
+      match read_vars finished operands with
+      | None => inr Wrong
+      | Some values =>
+        match O.test guard values with
+        | None => inr Wrong
+        | Some choice =>
+          let next := if choice then yes else no in
+          let actuals := if choice then yes_args else no_args in
+          match read_vars finished actuals with
+          | Some passed => inl (next, passed, finished)
+          | None => inr Wrong
+          end
+        end
+      end
+    | Return values =>
+      match read_vars finished values with
+      | Some returned => inr (Returned returned)
+      | None => inr Wrong
+      end
+    end.
+
+  Definition execute_body (body : block positive O.K O.G) (entered : env O.C) :=
+    match exec_code O.eval (code _ _ _ body) entered with
+    | None => inr Wrong
+    | Some finished => finish_exit (term _ _ _ body) finished
+    end.
+
+  (** Pairing exact rows recovers both original rows. *)
+  Lemma pair_moves_rows : forall formals actuals par, pair_moves formals actuals = Some par ->
+    map fst par = formals /\ map snd par = actuals.
+  Proof.
+    induction formals as [|x xs IH]; intros actuals par Hpair.
+    - destruct actuals; inversion Hpair. split; reflexivity.
+    - destruct actuals as [|y ys]; [discriminate|]. cbn [pair_moves] in Hpair.
+      destruct (pair_moves xs ys) as [tail|] eqn:Htail; [|discriminate].
+      inversion Hpair; subst par. destruct (IH ys tail Htail) as [Hleft Hright].
+      cbn [map fst snd]. split; f_equal; assumption.
+  Qed.
+
+  (** The allocated identifier is greater than every identifier in its input row. *)
+  Lemma fresh_after_gt : forall xs x, In x xs -> (x < fresh_after xs)%positive.
+  Proof.
+    intros xs x Hin. unfold fresh_after. apply Pos.lt_succ_r.
+    induction xs as [|y ys IH]; [contradiction|]. cbn [fold_right].
+    destruct Hin as [Heq|Hin].
+    - subst y. apply Pos.le_max_l.
+    - eapply Pos.le_trans; [apply IH; exact Hin|apply Pos.le_max_r].
+  Qed.
+
+  (** A fresh identifier does not occur in the row used to allocate it. *)
+  Lemma fresh_after_fresh : forall xs, ~ In (fresh_after xs) xs.
+  Proof.
+    intros xs Hin. exact (Pos.lt_irrefl _ (fresh_after_gt xs _ Hin)).
+  Qed.
+
+  (** The parameter index follows the same first-block convention as the interpreter. *)
+  Lemma params_index_find : forall bs table, params_index bs = Some table -> forall id,
+    trie_get id table = option_map (params positive O.K O.G) (find_block id bs).
+  Proof.
+    induction bs as [|[id body] rest IH]; intros table Hindex query.
+    - inversion Hindex; subst table. apply PTrie.get_empty.
+    - cbn [params_index] in Hindex.
+      destruct (distinct_vars (params _ _ _ body) Empty); [|discriminate].
+      destruct (params_index rest) as [tail|] eqn:Htail; [|discriminate].
+      inversion Hindex; subst table. cbn [find_block].
+      destruct (Pos.eqb query id) eqn:Heq.
+      + apply Pos.eqb_eq in Heq. subst query. apply PTrie.get_set_same.
+      + apply Pos.eqb_neq in Heq. rewrite PTrie.get_set_other by exact Heq.
+        apply IH. reflexivity.
+  Qed.
+
+  (** Each looked-up output block is the rewrite of the corresponding first input block. *)
+  Lemma copy_blocks_find : forall table tmp bs out checked,
+    copy_blocks table tmp bs = Some (out, checked) -> forall id,
+    match find_block id bs with
+    | None => find_block id out = None
+    | Some body => exists body' one,
+        find_block id out = Some body' /\ copy_block table tmp body = Some (body', one)
+    end.
+  Proof.
+    intros table tmp bs. induction bs as [|[id body] rest IH]; intros out checked Hcopy query.
+    - inversion Hcopy; subst. reflexivity.
+    - cbn [copy_blocks] in Hcopy.
+      destruct (copy_block table tmp body) as [[body' one]|] eqn:Hbody; [|discriminate].
+      destruct (copy_blocks table tmp rest) as [[tail checks]|] eqn:Htail; [|discriminate].
+      inversion Hcopy; subst. cbn [find_block].
+      destruct (Pos.eqb query id).
+      + exists body', one. split; [reflexivity|exact Hbody].
+      + eapply IH. reflexivity.
+  Qed.
+
+  (** The copy wrapper exposes its successful index and rewriting passes. *)
+  Lemma copies_data : forall s p, copies s = Some p -> exists table checked,
+    params_index (blocks _ _ _ s) = Some table /\
+    trie_get (entry _ _ _ s) table = Some [] /\
+    copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s) =
+      Some (blocks _ _ _ p, checked) /\
+    entry _ _ _ p = entry _ _ _ s /\ inputs _ _ _ p = inputs _ _ _ s.
+  Proof.
+    intros s p Hcopies. unfold copies, copy_stage in Hcopies.
+    destruct (params_index (blocks _ _ _ s)) as [table|] eqn:Hindex; [|discriminate].
+    destruct (trie_get (entry _ _ _ s) table) as [[|x xs]|] eqn:Hentry; try discriminate.
+    destruct (copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s))
+      as [[bs checked]|] eqn:Hblocks; [|discriminate].
+    inversion Hcopies; subst p. exists table, checked. repeat split; try assumption.
+  Qed.
+
+  (** A successful block lookup identifies an actual source block. *)
+  Lemma find_source_block : forall (bs : list (positive * block positive O.K O.G)) id body,
+    find_block id bs = Some body -> In (id, body) bs.
+  Proof.
+    induction bs as [|[key head] rest IH]; intros id body Hfind; [discriminate|].
+    cbn [find_block] in Hfind. destruct (Pos.eqb id key) eqn:Heq.
+    - apply Pos.eqb_eq in Heq. inversion Hfind; subst. now left.
+    - right. apply IH. exact Hfind.
+  Qed.
+
+  (** Each operand of a listed instruction belongs to the source variable universe. *)
+  Lemma listed_code_args : forall (s : P.t) id body dst op args,
+    In (id, body) (blocks _ _ _ s) -> In (dst, op, args) (code _ _ _ body) ->
+    incl args (function_vars s).
+  Proof.
+    intros s id body dst op args Hbody Hin x Hx. unfold function_vars.
+    apply in_or_app. right. apply in_flat_map. exists (id, body). split; [exact Hbody|].
+    cbn [snd]. apply in_or_app. right. apply in_or_app. left.
+    apply in_flat_map. exists (dst, op, args). split; [exact Hin|]. cbn. now right.
+  Qed.
+
+  (** Every operand of a listed exit belongs to the source variable universe. *)
+  Lemma listed_exit_uses : forall (s : P.t) id body, In (id, body) (blocks _ _ _ s) ->
+    incl (exit_uses (term _ _ _ body)) (function_vars s).
+  Proof.
+    intros s id body Hbody x Hx. unfold function_vars.
+    apply in_or_app. right. apply in_flat_map. exists (id, body). split; [exact Hbody|].
+    cbn [snd]. apply in_or_app. right. apply in_or_app. now right.
+  Qed.
+
+  (** Successful empty-row checks identify the exact row stored in the index. *)
+  Lemma empty_params_sound : forall table target, empty_params table target = true ->
+    trie_get target table = Some [].
+  Proof.
+    intros table target Hempty. unfold empty_params in Hempty.
+    destruct (trie_get target table) as [[|x xs]|]; try discriminate. reflexivity.
+  Qed.
+
+  (** Empty edge rows re-establish the state relation without changing either environment. *)
+  Lemma entered_empty : forall s p table checked target es ep,
+    params_index (blocks _ _ _ s) = Some table ->
+    copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s) =
+      Some (blocks _ _ _ p, checked) -> trie_get target table = Some [] ->
+    (forall x, In x (function_vars s) -> lookup x es = lookup x ep) ->
+    entered_agree s p (target, [], es) (target, [], ep).
+  Proof.
+    intros s p table checked target es ep Hindex Hblocks Hrow Hagree.
+    rewrite (params_index_find _ table Hindex target) in Hrow.
+    destruct (find_block target (blocks _ _ _ s)) as [body|] eqn:Hsource;
+      [|discriminate].
+    cbn [option_map] in Hrow. injection Hrow as Hparams.
+    pose proof (copy_blocks_find _ _ _ _ _ Hblocks target) as Hfind.
+    rewrite Hsource in Hfind. destruct Hfind as [body' [one [Htarget Hcopy]]].
+    destruct (copy_block_imp _ _ _ _ _ Hcopy) as [Hparams' Hexit].
+    unfold entered_agree. rewrite Hsource, Htarget, Hparams, Hparams'.
+    split; [reflexivity|exact Hagree].
+  Qed.
+
+  (** Concrete parameter binding and the copied parallel assignment enter matching states. *)
+  Lemma entered_moves : forall s p table checked target par values es ep,
+    params_index (blocks _ _ _ s) = Some table ->
+    copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s) =
+      Some (blocks _ _ _ p, checked) -> trie_get target table = Some (map fst par) ->
+    NoDup (map fst par) -> read_vars es (map snd par) = Some values ->
+    (forall x, In x (function_vars s) ->
+      lookup x ep = exec_par par (fun y => lookup y es) x) ->
+    entered_agree s p (target, values, es) (target, [], ep).
+  Proof.
+    intros s p table checked target par values es ep Hindex Hblocks Hrow Hdistinct Hread Hagree.
+    rewrite (params_index_find _ table Hindex target) in Hrow.
+    destruct (find_block target (blocks _ _ _ s)) as [body|] eqn:Hsource;
+      [|discriminate].
+    cbn [option_map] in Hrow. injection Hrow as Hparams.
+    pose proof (copy_blocks_find _ _ _ _ _ Hblocks target) as Hfind.
+    rewrite Hsource in Hfind. destruct Hfind as [body' [one [Htarget Hcopy]]].
+    destruct (copy_block_imp _ _ _ _ _ Hcopy) as [Hparams' Hexit].
+    assert (Hlength : length (map fst par) = length values).
+    { rewrite length_map. pose proof (read_vars_length _ es values Hread) as Hlength.
+      now rewrite length_map in Hlength. }
+    destruct (bind_vars_exists _ values es Hlength) as [entered Hbind].
+    unfold entered_agree. rewrite Hsource, Htarget, Hparams, Hparams', Hbind.
+    split; [reflexivity|]. intros x Hin. rewrite (Hagree x Hin).
+    exact (bind_moves_agree par values es entered Hdistinct Hread Hbind x).
+  Qed.
+
+  (** A checked nonempty jump has the same outcome after its concrete copy sequence. *)
+  Lemma checked_jump_sim : forall s p table checked target par es ep,
+    params_index (blocks _ _ _ s) = Some table ->
+    copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s) =
+      Some (blocks _ _ _ p, checked) -> trie_get target table = Some (map fst par) ->
+    par <> [] -> moves_ok par (fresh_after (function_vars s)) = true ->
+    PM.check_moves par (fresh_after (function_vars s))
+      (PM.seq par (fresh_after (function_vars s))) = true ->
+    incl (map snd par) (function_vars s) ->
+    (forall x, In x (function_vars s) -> lookup x es = lookup x ep) ->
+    copy_outcomes s p (finish_exit (Jump target (map snd par)) es)
+      (match exec_code O.eval
+        (move_code (map (fun src => (fresh_after (function_vars s), src)) (map snd par)) ++
+          move_code (PM.seq par (fresh_after (function_vars s)))) ep with
+      | None => inr Wrong
+      | Some out => finish_exit (Jump target []) out
+      end).
+  Proof.
+    intros s p table checked target par es ep Hindex Hblocks Hrow Hnonempty
+      Hvalid Hchecked Hsources Hagree.
+    destruct (moves_ok_sound _ _ Hvalid) as [Hdistinct Hfresh].
+    pose proof (checked_copy_run par (fresh_after (function_vars s)) ep
+      Hnonempty Hdistinct Hfresh Hchecked) as Hrun.
+    assert (Hread : read_vars es (map snd par) = read_vars ep (map snd par)).
+    { apply read_vars_agree. intros x Hin. apply Hagree. now apply Hsources. }
+    unfold finish_exit at 1. rewrite Hread.
+    destruct (read_vars ep (map snd par)) as [values|] eqn:Hvalues.
+    - destruct Hrun as [out [Hrun Hout]]. rewrite Hrun.
+      cbn [finish_exit read_vars copy_outcomes].
+      eapply entered_moves; [exact Hindex|exact Hblocks|exact Hrow|exact Hdistinct| |].
+      + rewrite Hread. reflexivity.
+      + intros x Hin. rewrite Hout.
+        * apply exec_par_agree. intros y [Heq|Hsrc].
+          -- subst y. symmetry. apply Hagree. exact Hin.
+          -- symmetry. apply Hagree. now apply Hsources.
+        * intro Heq. subst x. exact (fresh_after_fresh _ Hin).
+    - rewrite Hrun. reflexivity.
+  Qed.
+
   (** Every successful destruction has imperative form. *)
   Lemma destroy_imp : forall s p, destroy s = Some p -> imp_form p.
   Proof.
@@ -588,28 +959,6 @@ Module DestroyT (O : OPS)
   Definition k_split : N := 1. (* STUB *)
   Definition k_copies : N := 1. (* STUB *)
   Definition k_wrap : N := 1. (* STUB *)
-  Definition entered_agree (s p : P.t) (ss sp : machine_state O.C) :=
-    let '(bs, actuals_s, es) := ss in
-    let '(bp, actuals_p, ep) := sp in
-    bs = bp /\
-    match find_block bs (blocks _ _ _ s), find_block bp (blocks _ _ _ p) with
-    | None, None => True
-    | Some sb, Some pb =>
-        match bind_vars (params _ _ _ sb) actuals_s es,
-          bind_vars (params _ _ _ pb) actuals_p ep with
-        | None, None => True
-        | Some entered_s, Some entered_p =>
-            forall x, In x (function_vars s) -> lookup x entered_s = lookup x entered_p
-        | _, _ => False
-        end
-    | _, _ => False
-    end.
-  Definition copy_outcomes s p (os op : machine_state O.C + result O.C) :=
-    match os, op with
-    | inl ss, inl sp => entered_agree s p ss sp
-    | inr rs, inr rp => rs = rp
-    | _, _ => False
-    end.
   Lemma F1_destroy_phases : forall s, destroy s =
     match split s with None => None | Some split_s => copies split_s end.
   Proof.
