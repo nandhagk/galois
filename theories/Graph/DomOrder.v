@@ -2028,3 +2028,888 @@ Proof.
 Qed.
 
 Local Transparent dom_lt_eval T_dom_lt_eval.
+
+(** * Logarithmic credit for descending shortcut paths *)
+
+(** The logarithm of a positive sum pays the average logarithm of both summands. *)
+Lemma dom_gap_log_pair : forall a b,
+  0 < a -> 0 < b -> 1 + Nat.log2 a + Nat.log2 b <= 2 * Nat.log2 (a + b).
+Proof.
+  intros a b Ha Hb.
+  pose proof (Nat.log2_le_mono a (a + b) ltac:(lia)) as Hleft.
+  pose proof (Nat.log2_le_mono b (a + b) ltac:(lia)) as Hright.
+  destruct (Nat.lt_trichotomy (Nat.log2 a) (Nat.log2 b)) as [Hlt|[Heq|Hgt]];
+    [lia| |lia].
+  pose proof (proj1 (Nat.log2_spec a Ha)) as Halower.
+  pose proof (proj1 (Nat.log2_spec b Hb)) as Hblower.
+  rewrite <- Heq in Hblower.
+  assert (Hpower : 2 ^ S (Nat.log2 a) <= a + b).
+  { change (2 * 2 ^ Nat.log2 a <= a + b). lia. }
+  assert (Hstrict : S (Nat.log2 a) <= Nat.log2 (a + b)).
+  { apply (proj1 (Nat.log2_le_pow2 (a + b) (S (Nat.log2 a)) ltac:(lia))).
+    exact Hpower. }
+  lia.
+Qed.
+
+Definition dom_gap_total (gaps : list nat) : nat := fold_right Nat.add 0 gaps.
+
+Definition dom_gap_old_levels (gaps : list nat) : nat :=
+  fold_right (fun gap levels => Nat.log2 gap + levels) 0 gaps.
+
+Fixpoint dom_gap_new_levels (gaps : list nat) : nat :=
+  match gaps with
+  | [] => 0
+  | gap :: rest => Nat.log2 (gap + dom_gap_total rest) + dom_gap_new_levels rest
+  end.
+
+(** Compression changes each old gap into its suffix sum. The level increase pays all
+    but a logarithmic number of frames, without classifying individual frames. *)
+Lemma dom_gap_path_credit : forall gaps,
+  Forall (fun gap => 0 < gap) gaps ->
+  length gaps + dom_gap_old_levels gaps <=
+    Nat.log2 (dom_gap_total gaps) + 1 + dom_gap_new_levels gaps.
+Proof.
+  intros gaps Hpositive. induction Hpositive as [|gap rest Hgap Hrest IH].
+  - cbn [length dom_gap_old_levels dom_gap_total dom_gap_new_levels fold_right]. lia.
+  - change (S (length rest) + (Nat.log2 gap + dom_gap_old_levels rest) <=
+      Nat.log2 (gap + dom_gap_total rest) + 1 +
+        (Nat.log2 (gap + dom_gap_total rest) + dom_gap_new_levels rest)).
+    destruct rest as [|next rest].
+    + cbn [length dom_gap_old_levels dom_gap_total dom_gap_new_levels fold_right].
+      rewrite !Nat.add_0_r. lia.
+    + assert (Htail : 0 < dom_gap_total (next :: rest)).
+      { inversion Hrest as [|head tail Hnext Hpositive']; subst head tail.
+        unfold dom_gap_total. cbn [fold_right]. lia. }
+      pose proof (dom_gap_log_pair gap (dom_gap_total (next :: rest)) Hgap Htail) as Hpair.
+      lia.
+Qed.
+
+(** A uniform gap bound also bounds the sum of the original logarithmic levels. *)
+Lemma dom_gap_old_levels_bound : forall gaps bound,
+  (forall gap, In gap gaps -> gap <= bound) ->
+  dom_gap_old_levels gaps <= length gaps * Nat.log2 bound.
+Proof.
+  intro gaps. induction gaps as [|gap rest IH]; intros bound Hbound; [reflexivity|].
+  assert (Hhead : Nat.log2 gap <= Nat.log2 bound).
+  { apply Nat.log2_le_mono. apply Hbound. now left. }
+  specialize (IH bound ltac:(intros x Hx; apply Hbound; now right)).
+  unfold dom_gap_old_levels in *. cbn [fold_right length]. lia.
+Qed.
+
+(** Every compressed suffix has at most the total gap's logarithmic level. *)
+Lemma dom_gap_suffix_bound : forall gaps bound,
+  dom_gap_total gaps <= bound ->
+  dom_gap_new_levels gaps <= length gaps * Nat.log2 bound.
+Proof.
+  intro gaps. induction gaps as [|gap rest IH]; intros bound Hbound; [reflexivity|].
+  assert (Htail : dom_gap_total rest <= bound).
+  { unfold dom_gap_total in *. cbn [fold_right] in Hbound. lia. }
+  specialize (IH bound Htail).
+  pose proof (Nat.log2_le_mono (dom_gap_total (gap :: rest)) bound Hbound) as Hhead.
+  change (Nat.log2 (gap + dom_gap_total rest) <= Nat.log2 bound) in Hhead.
+  cbn [dom_gap_new_levels length]. lia.
+Qed.
+
+Definition dom_gap_weight (domain : list nat) (weight : nat -> nat) : nat :=
+  fold_right (fun vertex total => weight vertex + total) 0 domain.
+
+(** Pointwise equality on a finite domain preserves its total weight. *)
+Lemma dom_gap_weight_ext : forall domain before after,
+  (forall vertex, In vertex domain -> before vertex = after vertex) ->
+  dom_gap_weight domain before = dom_gap_weight domain after.
+Proof.
+  intro domain. induction domain as [|vertex rest IH]; intros before after Hagree;
+    [reflexivity|].
+  unfold dom_gap_weight in *. cbn [fold_right].
+  rewrite (Hagree vertex ltac:(now left)), (IH before after).
+  - reflexivity.
+  - intros key Hin. apply Hagree. now right.
+Qed.
+
+(** Replacing one unique vertex transfers exactly its old and new level. *)
+Lemma dom_gap_weight_update : forall domain vertex before after,
+  NoDup domain -> In vertex domain ->
+  (forall key, In key domain -> key <> vertex -> after key = before key) ->
+  dom_gap_weight domain after + before vertex =
+    dom_gap_weight domain before + after vertex.
+Proof.
+  intros domain vertex before after Hunique.
+  induction Hunique as [|head rest Hfresh Hunique IH]; intros Hin Hagree;
+    [contradiction|].
+  destruct Hin as [<-|Hin].
+  - assert (Htail : dom_gap_weight rest after = dom_gap_weight rest before).
+    { apply dom_gap_weight_ext. intros key Hkey. apply Hagree.
+      - now right.
+      - intro Heq. subst key. contradiction. }
+    change (after head + dom_gap_weight rest after + before head =
+      before head + dom_gap_weight rest before + after head).
+    rewrite Htail. lia.
+  - assert (Hhead : after head = before head).
+    { apply Hagree; [now left|]. intro Heq. subst head. contradiction. }
+    specialize (IH Hin ltac:(intros key Hkey Hne; apply Hagree; [now right|exact Hne])).
+    change (after head + dom_gap_weight rest after + before vertex =
+      before head + dom_gap_weight rest before + after vertex).
+    rewrite Hhead. lia.
+Qed.
+
+(** A uniform pointwise bound limits the weight of a finite domain. *)
+Lemma dom_gap_weight_bound : forall domain weight bound,
+  (forall vertex, In vertex domain -> weight vertex <= bound) ->
+  dom_gap_weight domain weight <= length domain * bound.
+Proof.
+  intro domain. induction domain as [|vertex rest IH]; intros weight bound Hbound;
+    [reflexivity|].
+  pose proof (Hbound vertex ltac:(now left)) as Hhead.
+  specialize (IH weight bound ltac:(intros key Hin; apply Hbound; now right)).
+  change (weight vertex + dom_gap_weight rest weight <= (1 + length rest) * bound).
+  nia.
+Qed.
+
+Inductive dom_gap_path (parent : nat -> nat) : nat -> list nat -> nat -> Prop :=
+  | dom_gap_path_stop root : dom_gap_path parent root [] root
+  | dom_gap_path_step vertex next rest root :
+      parent vertex = next -> next < vertex -> dom_gap_path parent next rest root ->
+      dom_gap_path parent vertex (vertex :: rest) root.
+
+(** A descending path stays between its root and its starting vertex. *)
+Lemma dom_gap_path_range parent start path root : dom_gap_path parent start path root ->
+  root <= start /\ (forall vertex, In vertex path -> root < vertex <= start).
+Proof.
+  intro Hpath. induction Hpath as [root|vertex next rest root Hparent Hless Hpath IH].
+  - split; [lia|intros key Hin; contradiction].
+  - destruct IH as [Hroot Hrange]. split; [lia|].
+    intros key [<-|Hin]; [lia|]. specialize (Hrange key Hin). lia.
+Qed.
+
+(** Strict descent prevents repeated vertices on a path. *)
+Lemma dom_gap_path_unique parent start path root : dom_gap_path parent start path root ->
+  NoDup path.
+Proof.
+  intro Hpath. induction Hpath as [root|vertex next rest root Hparent Hless Hpath IH].
+  - constructor.
+  - constructor; [|exact IH]. intro Hin.
+    pose proof (proj2 (dom_gap_path_range parent next rest root Hpath) vertex Hin). lia.
+Qed.
+
+(** Every traversed shortcut contributes a positive numeric gap. *)
+Lemma dom_gap_path_positive parent start path root : dom_gap_path parent start path root ->
+  Forall (fun gap => 0 < gap) (map (fun vertex => vertex - parent vertex) path).
+Proof.
+  intro Hpath. induction Hpath as [root|vertex next rest root Hparent Hless Hpath IH].
+  - constructor.
+  - cbn [map]. constructor; [rewrite Hparent; lia|exact IH].
+Qed.
+
+(** Consecutive shortcut gaps telescope from the starting vertex to the root. *)
+Lemma dom_gap_path_total parent start path root : dom_gap_path parent start path root ->
+  dom_gap_total (map (fun vertex => vertex - parent vertex) path) + root = start.
+Proof.
+  intro Hpath. induction Hpath as [root|vertex next rest root Hparent Hless Hpath IH].
+  - reflexivity.
+  - change (vertex - parent vertex +
+      dom_gap_total (map (fun key => key - parent key) rest) + root = vertex).
+    rewrite Hparent. lia.
+Qed.
+
+(** Original gap levels equal the path's weight in the original parent map. *)
+Lemma dom_gap_path_before parent path :
+  dom_gap_old_levels (map (fun vertex => vertex - parent vertex) path) =
+    dom_gap_weight path (fun vertex => Nat.log2 (vertex - parent vertex)).
+Proof.
+  induction path as [|vertex rest IH]; [reflexivity|].
+  change (Nat.log2 (vertex - parent vertex) +
+      dom_gap_old_levels (map (fun key => key - parent key) rest) =
+    Nat.log2 (vertex - parent vertex) +
+      dom_gap_weight rest (fun key => Nat.log2 (key - parent key))).
+  now rewrite IH.
+Qed.
+
+(** Suffix-gap levels equal the path's weight after redirecting every vertex to the root. *)
+Lemma dom_gap_path_after parent start path root : dom_gap_path parent start path root ->
+  dom_gap_new_levels (map (fun vertex => vertex - parent vertex) path) =
+    dom_gap_weight path (fun vertex => Nat.log2 (vertex - root)).
+Proof.
+  intro Hpath. induction Hpath as [root|vertex next rest root Hparent Hless Hpath IH].
+  - reflexivity.
+  - pose proof (dom_gap_path_total parent next rest root Hpath) as Htotal.
+    change (Nat.log2 (vertex - parent vertex +
+      dom_gap_total (map (fun key => key - parent key) rest)) +
+        dom_gap_new_levels (map (fun key => key - parent key) rest) =
+      Nat.log2 (vertex - root) + dom_gap_weight rest (fun key => Nat.log2 (key - root))).
+    rewrite IH, Hparent.
+    replace (vertex - next + dom_gap_total (map (fun key => key - parent key) rest))
+      with (vertex - root) by lia.
+    reflexivity.
+Qed.
+
+(** The actual descending parent ranks instantiate the suffix-gap credit inequality. *)
+Lemma dom_gap_path_levels parent start path root : dom_gap_path parent start path root ->
+  length path + dom_gap_weight path (fun vertex => Nat.log2 (vertex - parent vertex)) <=
+    Nat.log2 (start - root) + 1 +
+      dom_gap_weight path (fun vertex => Nat.log2 (vertex - root)).
+Proof.
+  intro Hpath.
+  pose proof (dom_gap_path_credit _ (dom_gap_path_positive parent start path root Hpath))
+    as Hcredit.
+  pose proof (dom_gap_path_total parent start path root Hpath) as Htotal.
+  rewrite length_map, dom_gap_path_before,
+    (dom_gap_path_after parent start path root Hpath) in Hcredit.
+  replace (dom_gap_total (map (fun vertex => vertex - parent vertex) path))
+    with (start - root) in Hcredit by lia.
+  exact Hcredit.
+Qed.
+
+(** Pointwise growth decomposes total weight into its old value and nonnegative gain. *)
+Lemma dom_gap_weight_increase : forall domain before after,
+  (forall vertex, In vertex domain -> before vertex <= after vertex) ->
+  dom_gap_weight domain after = dom_gap_weight domain before +
+    dom_gap_weight domain (fun vertex => after vertex - before vertex).
+Proof.
+  intro domain. induction domain as [|vertex rest IH]; intros before after Hgrow;
+    [reflexivity|].
+  pose proof (Hgrow vertex ltac:(now left)) as Hhead.
+  specialize (IH before after ltac:(intros key Hin; apply Hgrow; now right)).
+  change (after vertex + dom_gap_weight rest after =
+    before vertex + dom_gap_weight rest before +
+      (after vertex - before vertex +
+        dom_gap_weight rest (fun key => after key - before key))).
+  lia.
+Qed.
+
+(** A unique compression path draws its level increase from the full forest potential. *)
+Lemma dom_gap_credit_transport domain path before after charge :
+  NoDup path -> incl path domain ->
+  (forall vertex, In vertex domain -> before vertex <= after vertex) ->
+  length path + dom_gap_weight path before <= charge + dom_gap_weight path after ->
+  length path + dom_gap_weight domain before <= charge + dom_gap_weight domain after.
+Proof.
+  intros Hunique Hincl Hgrow Hpath.
+  pose proof (dom_gap_weight_increase domain before after Hgrow) as Hdomain.
+  pose proof (dom_gap_weight_increase path before after
+    ltac:(intros vertex Hin; apply Hgrow; now apply Hincl)) as Hlocal.
+  pose proof (dom_nodup_sum_incl (fun vertex => after vertex - before vertex)
+    path domain Hunique Hincl) as Hgain.
+  change (dom_gap_weight path (fun vertex => after vertex - before vertex) <=
+    dom_gap_weight domain (fun vertex => after vertex - before vertex)) in Hgain.
+  lia.
+Qed.
+
+(** Positive gaps pay for the number of traversed shortcuts. *)
+Lemma dom_gap_length_total gaps : Forall (fun gap => 0 < gap) gaps ->
+  length gaps <= dom_gap_total gaps.
+Proof.
+  intro Hpositive. induction Hpositive as [|gap rest Hgap Hrest IH]; [reflexivity|].
+  change (S (length rest) <= gap + dom_gap_total rest). lia.
+Qed.
+
+(** * Guarded shortcut paths and forest levels *)
+
+Definition dom_lt_parent_rank (links : dom_lt_links) (vertex : nat) : nat :=
+  N.to_nat (dom_lt_identity (lt_shortcut links) (N.of_nat vertex)).
+
+Inductive dom_lt_walk_path (links : dom_lt_links) : N -> list N -> N -> Prop :=
+  | dom_lt_walk_path_stop root :
+      (forall parent, trie_get (dom_lt_key root) (lt_shortcut links) = Some parent ->
+        ~ (parent < root)%N) ->
+      dom_lt_walk_path links root [] root
+  | dom_lt_walk_path_step vertex parent rest root :
+      trie_get (dom_lt_key vertex) (lt_shortcut links) = Some parent ->
+      (parent < vertex)%N -> dom_lt_walk_path links parent rest root ->
+      dom_lt_walk_path links vertex (vertex :: rest) root.
+
+(** The executable strict-rank test gives a finite path even for malformed raw forests. *)
+Lemma dom_lt_walk_path_exists links : forall start,
+  exists path root, dom_lt_walk_path links start path root.
+Proof.
+  apply (well_founded_induction N.lt_wf_0).
+  intros vertex IH.
+  destruct (trie_get (dom_lt_key vertex) (lt_shortcut links)) as [parent|] eqn:Hget.
+  - destruct (N.ltb parent vertex) eqn:Hless.
+    + apply N.ltb_lt in Hless.
+      destruct (IH parent Hless) as [rest [root Hpath]].
+      exists (vertex :: rest), root. eapply dom_lt_walk_path_step; eassumption.
+    + exists [], vertex. apply dom_lt_walk_path_stop.
+      intros other Hother Hlt. rewrite Hget in Hother. injection Hother as <-.
+      apply N.ltb_ge in Hless. lia.
+  - exists [], vertex. apply dom_lt_walk_path_stop.
+    intros other Hother. rewrite Hget in Hother. discriminate.
+Qed.
+
+Lemma dom_lt_walk_path_natural links start path root :
+  dom_lt_walk_path links start path root ->
+  dom_gap_path (dom_lt_parent_rank links) (N.to_nat start)
+    (map N.to_nat path) (N.to_nat root).
+Proof.
+  intro Hpath.
+  induction Hpath as [root Hstop|vertex parent rest root Hget Hless Hpath IH].
+  - apply dom_gap_path_stop.
+  - cbn [map]. eapply dom_gap_path_step with (next := N.to_nat parent).
+    + unfold dom_lt_parent_rank, dom_lt_identity. rewrite N2Nat.id, Hget. reflexivity.
+    + lia.
+    + exact IH.
+Qed.
+
+Lemma dom_lt_walk_path_bound links start path root :
+  dom_lt_walk_path links start path root ->
+  length path <= N.to_nat start /\ (root <= start)%N.
+Proof.
+  intro Hpath. pose proof (dom_lt_walk_path_natural links start path root Hpath) as Hnatural.
+  pose proof (dom_gap_path_total _ _ _ _ Hnatural) as Htotal.
+  pose proof (dom_gap_length_total _ (dom_gap_path_positive _ _ _ _ Hnatural)) as Hlength.
+  rewrite !length_map in Hlength. split; lia.
+Qed.
+
+Lemma dom_lt_walk_path_parent links start path root :
+  dom_lt_walk_path links start path root -> forall vertex, In vertex path ->
+  exists parent, trie_get (dom_lt_key vertex) (lt_shortcut links) = Some parent /\
+    (root <= parent < vertex)%N.
+Proof.
+  intro Hpath.
+  induction Hpath as [root Hstop|vertex parent rest root Hget Hless Hpath IH];
+    intros key Hin; [contradiction|].
+  destruct Hin as [<-|Hin].
+  - exists parent. split; [exact Hget|].
+    pose proof (proj2 (dom_lt_walk_path_bound links parent rest root Hpath)). lia.
+  - now apply IH.
+Qed.
+
+Definition dom_lt_forest_level (links : dom_lt_links) (vertex : nat) : nat :=
+  Nat.log2 (vertex - dom_lt_parent_rank links vertex).
+
+(** Unlinked cells use their own rank as parent and contribute zero to the bounded sum. *)
+Definition dom_lt_forest_levels (bound : nat) (links : dom_lt_links) : nat :=
+  dom_gap_weight (seq 0 (S bound)) (dom_lt_forest_level links).
+
+Lemma dom_lt_forest_levels_bound bound links :
+  dom_lt_forest_levels bound links <= (bound + 1) * Nat.log2 bound.
+Proof.
+  unfold dom_lt_forest_levels. replace (bound + 1) with (S bound) by lia.
+  pose proof (dom_gap_weight_bound (seq 0 (S bound)) (dom_lt_forest_level links)
+    (Nat.log2 bound)) as Hbound.
+  rewrite length_seq in Hbound.
+  apply Hbound. intros vertex Hin. apply in_seq in Hin.
+  unfold dom_lt_forest_level. apply Nat.log2_le_mono. lia.
+Qed.
+
+Lemma dom_lt_parent_rank_update_same before after vertex root :
+  lt_shortcut after = PTrieCode.set (dom_lt_key vertex) root (lt_shortcut before) ->
+  dom_lt_parent_rank after (N.to_nat vertex) = N.to_nat root.
+Proof.
+  intro Hupdate. unfold dom_lt_parent_rank, dom_lt_identity.
+  rewrite N2Nat.id, Hupdate, PTrie.get_set_same. reflexivity.
+Qed.
+
+Lemma dom_lt_parent_rank_update_other before after vertex root key :
+  lt_shortcut after = PTrieCode.set (dom_lt_key vertex) root (lt_shortcut before) ->
+  key <> N.to_nat vertex -> dom_lt_parent_rank after key = dom_lt_parent_rank before key.
+Proof.
+  intros Hupdate Hne. unfold dom_lt_parent_rank, dom_lt_identity. rewrite Hupdate.
+  rewrite PTrie.get_set_other; [reflexivity|].
+  intro Heq. apply dom_lt_key_injective in Heq. apply Hne. lia.
+Qed.
+
+(** Redirecting a shortcut to an earlier ancestor never decreases a vertex level. *)
+Lemma dom_lt_forest_level_grows before after vertex root :
+  lt_shortcut after = PTrieCode.set (dom_lt_key vertex) root (lt_shortcut before) ->
+  N.to_nat root <= dom_lt_parent_rank before (N.to_nat vertex) ->
+  forall key, dom_lt_forest_level before key <= dom_lt_forest_level after key.
+Proof.
+  intros Hupdate Hearlier key. unfold dom_lt_forest_level.
+  destruct (Nat.eq_dec key (N.to_nat vertex)) as [->|Hne].
+  - rewrite (dom_lt_parent_rank_update_same before after vertex root Hupdate).
+    apply Nat.log2_le_mono. lia.
+  - rewrite (dom_lt_parent_rank_update_other before after vertex root key Hupdate Hne).
+    reflexivity.
+Qed.
+
+(** A newly linked vertex starts with zero shortcut level. *)
+Lemma dom_lt_link_levels_grow before vertex parent :
+  trie_get (dom_lt_key vertex) (lt_shortcut before) = None ->
+  forall key, dom_lt_forest_level before key <=
+    dom_lt_forest_level (dom_lt_link before vertex parent) key.
+Proof.
+  intros Hfresh key.
+  destruct (Nat.eq_dec key (N.to_nat vertex)) as [->|Hne].
+  - unfold dom_lt_forest_level, dom_lt_parent_rank, dom_lt_identity.
+    rewrite N2Nat.id, Hfresh, Nat.sub_diag. apply Nat.le_0_l.
+  - unfold dom_lt_forest_level.
+    rewrite (dom_lt_parent_rank_update_other before (dom_lt_link before vertex parent)
+      vertex parent key eq_refl Hne). reflexivity.
+Qed.
+
+Lemma dom_lt_empty_levels bound :
+  dom_lt_forest_levels bound (DomLtLinks Empty Empty []) = 0.
+Proof.
+  unfold dom_lt_forest_levels.
+  assert (Hzero : forall domain,
+    dom_gap_weight domain (dom_lt_forest_level (DomLtLinks Empty Empty [])) = 0).
+  { intro domain. induction domain as [|vertex rest IH]; [reflexivity|].
+    change (dom_lt_forest_level (DomLtLinks Empty Empty []) vertex +
+      dom_gap_weight rest (dom_lt_forest_level (DomLtLinks Empty Empty [])) = 0).
+    rewrite IH. unfold dom_lt_forest_level, dom_lt_parent_rank, dom_lt_identity.
+    cbn [lt_shortcut]. rewrite PTrie.get_empty, Nat2N.id, Nat.sub_diag. reflexivity. }
+  apply Hzero.
+Qed.
+
+Lemma dom_gap_path_parents parent start path root : dom_gap_path parent start path root ->
+  forall vertex, In vertex path -> root <= parent vertex < vertex.
+Proof.
+  intro Hpath. induction Hpath as [root|vertex next rest root Hparent Hless Hpath IH];
+    intros key Hin; [contradiction|].
+  destruct Hin as [<-|Hin].
+  - rewrite Hparent. pose proof (proj1 (dom_gap_path_range parent next rest root Hpath)).
+    lia.
+  - now apply IH.
+Qed.
+
+(** The path's actual shortcut changes pay its length from the bounded forest levels. *)
+Lemma dom_lt_compression_credit bound before after start path root :
+  dom_lt_walk_path before start path root -> N.to_nat start <= bound ->
+  (forall key, In key (map N.to_nat path) -> dom_lt_parent_rank after key = N.to_nat root) ->
+  (forall key, ~ In key (map N.to_nat path) ->
+    dom_lt_parent_rank after key = dom_lt_parent_rank before key) ->
+  length path + dom_lt_forest_levels bound before <=
+    Nat.log2 bound + 1 + dom_lt_forest_levels bound after.
+Proof.
+  intros Hpath Hstart Hcompressed Houtside.
+  pose proof (dom_lt_walk_path_natural before start path root Hpath) as Hnatural.
+  pose proof (dom_gap_path_range _ _ _ _ Hnatural) as Hrange.
+  assert (Hincl : incl (map N.to_nat path) (seq 0 (S bound))).
+  { intros key Hin. apply in_seq.
+    pose proof (proj2 Hrange key Hin). lia. }
+  assert (Hgrow : forall key, In key (seq 0 (S bound)) ->
+    dom_lt_forest_level before key <= dom_lt_forest_level after key).
+  { intros key Hin. unfold dom_lt_forest_level.
+    destruct (in_dec Nat.eq_dec key (map N.to_nat path)) as [Hpathkey|Hother].
+    - rewrite (Hcompressed key Hpathkey). apply Nat.log2_le_mono.
+      pose proof (dom_gap_path_parents _ _ _ _ Hnatural key Hpathkey). lia.
+    - rewrite (Houtside key Hother). reflexivity. }
+  assert (Hafter : dom_gap_weight (map N.to_nat path) (dom_lt_forest_level after) =
+    dom_gap_weight (map N.to_nat path) (fun key => Nat.log2 (key - N.to_nat root))).
+  { apply dom_gap_weight_ext. intros key Hin. unfold dom_lt_forest_level.
+    now rewrite (Hcompressed key Hin). }
+  pose proof (dom_gap_path_levels _ _ _ _ Hnatural) as Hlocal.
+  change (length (map N.to_nat path) +
+    dom_gap_weight (map N.to_nat path) (dom_lt_forest_level before) <=
+    Nat.log2 (N.to_nat start - N.to_nat root) + 1 +
+      dom_gap_weight (map N.to_nat path) (fun key => Nat.log2 (key - N.to_nat root)))
+    in Hlocal.
+  rewrite <- Hafter in Hlocal.
+  pose proof (dom_gap_credit_transport (seq 0 (S bound)) (map N.to_nat path)
+    (dom_lt_forest_level before) (dom_lt_forest_level after)
+    (Nat.log2 (N.to_nat start - N.to_nat root) + 1)
+    (dom_gap_path_unique _ _ _ _ Hnatural) Hincl Hgrow Hlocal) as Hglobal.
+  rewrite length_map in Hglobal.
+  pose proof (Nat.log2_le_mono (N.to_nat start - N.to_nat root) bound ltac:(lia)) as Hlog.
+  unfold dom_lt_forest_levels. lia.
+Qed.
+
+(** * Compression shape and remaining frames *)
+
+(** Pending frames retain their old parents, completed frames point to the root, and cells
+    outside the unique path stay unchanged. *)
+Definition dom_lt_unwind_shape (before current : dom_lt_links) (path stack : list N)
+    (root : N) : Prop :=
+  incl (map N.to_nat stack) (map N.to_nat path) /\
+  NoDup (map N.to_nat stack) /\
+  (forall key, In key (map N.to_nat stack) ->
+    dom_lt_parent_rank current key = dom_lt_parent_rank before key) /\
+  (forall key, In key (map N.to_nat path) -> ~ In key (map N.to_nat stack) ->
+    dom_lt_parent_rank current key = N.to_nat root) /\
+  (forall key, ~ In key (map N.to_nat path) ->
+    dom_lt_parent_rank current key = dom_lt_parent_rank before key).
+
+Lemma dom_lt_unwind_shape_initial before current path stack root :
+  lt_shortcut current = lt_shortcut before ->
+  NoDup (map N.to_nat stack) ->
+  (forall key, In key (map N.to_nat stack) <-> In key (map N.to_nat path)) ->
+  dom_lt_unwind_shape before current path stack root.
+Proof.
+  intros Hsame Hunique Hmembers.
+  assert (Hrank : forall key, dom_lt_parent_rank current key = dom_lt_parent_rank before key).
+  { intro key. unfold dom_lt_parent_rank. now rewrite Hsame. }
+  split; [intros key Hin; now apply Hmembers|]. split; [exact Hunique|].
+  split; [intros key Hin; apply Hrank|].
+  split; [|intros key Hin; apply Hrank].
+  intros key Hin Hnot. exfalso. apply Hnot. now apply Hmembers.
+Qed.
+
+(** One unwind update completes its unique head and preserves all other pending cells. *)
+Lemma dom_lt_unwind_shape_step before current next path vertex stack root :
+  dom_lt_unwind_shape before current path (vertex :: stack) root ->
+  lt_shortcut next = PTrieCode.set (dom_lt_key vertex) root (lt_shortcut current) ->
+  dom_lt_unwind_shape before next path stack root.
+Proof.
+  intros [Hincl [Hunique [Hpending [Hdone Houtside]]]] Hupdate.
+  cbn [map] in Hunique, Hpending, Hdone, Hincl.
+  inversion Hunique as [|head tail Hfresh Htail]; subst head tail.
+  assert (Hvertex : In (N.to_nat vertex) (map N.to_nat path)).
+  { apply Hincl. now left. }
+  split; [intros key Hin; apply Hincl; now right|]. split; [exact Htail|].
+  split.
+  - intros key Hin.
+    rewrite (dom_lt_parent_rank_update_other current next vertex root key Hupdate).
+    + apply Hpending. now right.
+    + intro Heq. subst key. contradiction.
+  - split.
+    + intros key Hin Hnot.
+      destruct (Nat.eq_dec key (N.to_nat vertex)) as [->|Hne].
+      * exact (dom_lt_parent_rank_update_same current next vertex root Hupdate).
+      * rewrite (dom_lt_parent_rank_update_other current next vertex root key Hupdate Hne).
+        apply Hdone; [exact Hin|]. intros [Heq|Hrest]; [congruence|contradiction].
+    + intros key Hnot.
+      rewrite (dom_lt_parent_rank_update_other current next vertex root key Hupdate).
+      * now apply Houtside.
+      * intro Heq. subst key. contradiction.
+Qed.
+
+Lemma dom_lt_unwind_shape_finished before current path root :
+  dom_lt_unwind_shape before current path [] root ->
+  (forall key, In key (map N.to_nat path) -> dom_lt_parent_rank current key = N.to_nat root) /\
+  (forall key, ~ In key (map N.to_nat path) ->
+    dom_lt_parent_rank current key = dom_lt_parent_rank before key).
+Proof.
+  intros [Hincl [Hunique [Hpending [Hdone Houtside]]]]. split; [|exact Houtside].
+  intros key Hin. apply Hdone; [exact Hin|]. cbn. tauto.
+Qed.
+
+Definition dom_lt_compress_shape (before : dom_lt_links) (path : list N) (root : N)
+    (st : dom_lt_walk) : Prop :=
+  match lt_walk_phase st with
+  | DomLtDescend vertex stack =>
+      lt_shortcut (lt_walk_links st) = lt_shortcut before /\
+      exists rest, dom_lt_walk_path before vertex rest root /\ path = rev stack ++ rest
+  | DomLtUnwind current_root part stack =>
+      current_root = root /\ dom_lt_unwind_shape before (lt_walk_links st) path stack root
+  end.
+
+(** Descent spends one frame per saved vertex; turning leaves only the unwind stack. *)
+Definition dom_lt_compress_frames (count : nat) (st : dom_lt_walk) : nat :=
+  match lt_walk_phase st with
+  | DomLtDescend _ stack => 2 * count - length stack + 1
+  | DomLtUnwind _ _ stack => length stack
+  end.
+
+Lemma dom_lt_compress_turn before current path stack root :
+  lt_shortcut current = lt_shortcut before -> NoDup (map N.to_nat path) ->
+  path = rev stack ->
+  dom_lt_compress_shape before path root (DomLtWalk current (DomLtUnwind root None stack)) /\
+  dom_lt_compress_frames (length path) (DomLtWalk current (DomLtUnwind root None stack)) <
+    dom_lt_compress_frames (length path) (DomLtWalk current (DomLtDescend root stack)).
+Proof.
+  intros Hsame Hunique Hpath. split.
+  - cbn [dom_lt_compress_shape lt_walk_phase lt_walk_links]. split; [reflexivity|].
+    apply dom_lt_unwind_shape_initial; [exact Hsame| |].
+    + rewrite Hpath, map_rev in Hunique. apply NoDup_rev in Hunique.
+      now rewrite rev_involutive in Hunique.
+    + intro key. rewrite Hpath, map_rev. apply in_rev.
+  - cbn [dom_lt_compress_frames lt_walk_phase]. rewrite Hpath, length_rev. lia.
+Qed.
+
+Lemma dom_lt_compress_descend before path root semis current vertex stack rest next :
+  lt_shortcut current = lt_shortcut before -> NoDup (map N.to_nat path) ->
+  dom_lt_walk_path before vertex rest root -> path = rev stack ++ rest ->
+  dom_lt_compress_step semis (DomLtWalk current (DomLtDescend vertex stack)) = inl next ->
+  dom_lt_compress_shape before path root next /\
+  dom_lt_compress_frames (length path) next <
+    dom_lt_compress_frames (length path) (DomLtWalk current (DomLtDescend vertex stack)).
+Proof.
+  intros Hsame Hunique Hpath Hfull Hstep.
+  destruct Hpath as [terminal Hstop|head parent remaining terminal Hget Hless Htail].
+  - rewrite app_nil_r in Hfull.
+    cbn [dom_lt_compress_step lt_walk_phase lt_walk_links] in Hstep.
+    rewrite Hsame in Hstep.
+    destruct (trie_get (dom_lt_key terminal) (lt_shortcut before)) as [parent|] eqn:Hget.
+    + assert (Hcmp : N.ltb parent terminal = false).
+      { apply N.ltb_ge. specialize (Hstop parent eq_refl). lia. }
+      rewrite Hcmp in Hstep. injection Hstep as <-.
+      exact (dom_lt_compress_turn before current path stack terminal Hsame Hunique Hfull).
+    + injection Hstep as <-.
+      exact (dom_lt_compress_turn before current path stack terminal Hsame Hunique Hfull).
+  - cbn [dom_lt_compress_step lt_walk_phase lt_walk_links] in Hstep.
+    rewrite Hsame, Hget in Hstep.
+    assert (Hcmp : N.ltb parent head = true) by now apply N.ltb_lt.
+    rewrite Hcmp in Hstep. injection Hstep as <-. split.
+    + cbn [dom_lt_compress_shape lt_walk_phase lt_walk_links]. split; [exact Hsame|].
+      exists remaining. split; [exact Htail|]. rewrite Hfull. cbn [rev].
+      rewrite <- app_assoc. reflexivity.
+    + cbn [dom_lt_compress_frames lt_walk_phase length].
+      rewrite Hfull, length_app, length_rev. cbn [length]. lia.
+Qed.
+
+Lemma dom_lt_compress_shape_step before path root semis st next :
+  NoDup (map N.to_nat path) -> dom_lt_compress_shape before path root st ->
+  dom_lt_compress_step semis st = inl next ->
+  dom_lt_compress_shape before path root next /\
+    dom_lt_compress_frames (length path) next < dom_lt_compress_frames (length path) st.
+Proof.
+  intros Hunique Hshape Hstep. destruct st as [current [vertex stack|current_root part stack]].
+  - cbn [dom_lt_compress_shape lt_walk_phase lt_walk_links] in Hshape.
+    destruct Hshape as [Hsame [rest [Hpath Hfull]]].
+    eapply dom_lt_compress_descend; eassumption.
+  - cbn [dom_lt_compress_shape lt_walk_phase lt_walk_links] in Hshape.
+    destruct Hshape as [-> Hunwind].
+    destruct stack as [|vertex stack].
+    + cbn [dom_lt_compress_step lt_walk_phase lt_walk_links] in Hstep. discriminate.
+    + cbn [dom_lt_compress_step lt_walk_phase lt_walk_links] in Hstep.
+      injection Hstep as <-. split.
+      * cbn [dom_lt_compress_shape lt_walk_phase lt_walk_links]. split; [reflexivity|].
+        eapply dom_lt_unwind_shape_step; [exact Hunwind|reflexivity].
+      * cbn [dom_lt_compress_frames lt_walk_phase length]. lia.
+Qed.
+
+Lemma dom_lt_compress_shape_stop before path root semis st result :
+  dom_lt_compress_shape before path root st -> dom_lt_compress_step semis st = inr result ->
+  dom_lt_unwind_shape before (fst result) path [] root.
+Proof.
+  intros Hshape Hstep. destruct st as [current [vertex stack|current_root part stack]].
+  - cbn [dom_lt_compress_step lt_walk_phase lt_walk_links] in Hstep.
+    destruct (trie_get (dom_lt_key vertex) (lt_shortcut current)) as [parent|];
+      [destruct (N.ltb parent vertex)|]; discriminate.
+  - cbn [dom_lt_compress_shape lt_walk_phase lt_walk_links] in Hshape.
+    destruct Hshape as [-> Hunwind]. destruct stack as [|vertex stack].
+    + cbn [dom_lt_compress_step lt_walk_phase lt_walk_links] in Hstep.
+      injection Hstep as <-. exact Hunwind.
+    + cbn [dom_lt_compress_step lt_walk_phase lt_walk_links] in Hstep. discriminate.
+Qed.
+
+(** Sufficient binary fuel completes exactly the guarded path and compresses every frame. *)
+Lemma dom_lt_eval_compressed fuel semis before start path root :
+  dom_lt_walk_path before start path root -> (start <= fuel)%N ->
+  dom_lt_unwind_shape before (fst (dom_lt_eval fuel semis before start)) path [] root.
+Proof.
+  intros Hpath Hfuel.
+  pose proof (dom_lt_walk_path_natural before start path root Hpath) as Hnatural.
+  pose proof (dom_gap_path_unique _ _ _ _ Hnatural) as Hunique.
+  pose proof (proj1 (dom_lt_walk_path_bound before start path root Hpath)) as Hlength.
+  set (initial := DomLtWalk
+    (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval start :: lt_operations before))
+    (DomLtDescend start [])).
+  assert (Hinitial : dom_lt_compress_shape before path root initial).
+  { unfold initial. cbn [dom_lt_compress_shape lt_walk_phase lt_walk_links lt_shortcut].
+    split; [reflexivity|]. exists path. split; [exact Hpath|reflexivity]. }
+  assert (Hgo : forall st next, dom_lt_compress_shape before path root st ->
+    dom_lt_compress_step semis st = inl next ->
+    dom_lt_compress_shape before path root next /\
+      dom_lt_compress_frames (length path) next < dom_lt_compress_frames (length path) st).
+  { intros st next Hshape Hstep.
+    exact (dom_lt_compress_shape_step before path root semis st next Hunique Hshape Hstep). }
+  assert (Hroom : (N.of_nat (dom_lt_compress_frames (length path) initial) <
+    N.double fuel + 3)%N).
+  { change (N.of_nat (2 * length path - 0 + 1) < N.double fuel + 3)%N.
+    rewrite Nat.sub_0_r, N.double_spec, !Nat2N.inj_add, !Nat2N.inj_mul. lia. }
+  destruct (loopN_done _ _ (dom_lt_compress_step semis)
+    (dom_lt_compress_shape before path root) (dom_lt_compress_frames (length path))
+    (N.double fuel + 3)%N initial Hgo Hinitial Hroom) as [result Hrun].
+  pose proof (dom_lt_loop_invariant (dom_lt_compress_step semis)
+    (dom_lt_compress_shape before path root)
+    (fun result => dom_lt_unwind_shape before (fst result) path [] root)
+    (N.double fuel + 3)%N initial
+    (fun st next Hshape Hstep => proj1 (Hgo st next Hshape Hstep))
+    (fun st result Hshape Hstep =>
+      dom_lt_compress_shape_stop before path root semis st result Hshape Hstep)
+    Hinitial) as Hresult.
+  rewrite Hrun in Hresult. unfold dom_lt_eval. fold initial. rewrite Hrun. exact Hresult.
+Qed.
+
+Lemma dom_lt_eval_level_credit bound fuel semis before start path root :
+  dom_lt_walk_path before start path root -> N.to_nat start <= bound -> (start <= fuel)%N ->
+  length path + dom_lt_forest_levels bound before <= Nat.log2 bound + 1 +
+    dom_lt_forest_levels bound (fst (dom_lt_eval fuel semis before start)).
+Proof.
+  intros Hpath Hbound Hfuel.
+  pose proof (dom_lt_eval_compressed fuel semis before start path root Hpath Hfuel) as Hshape.
+  destruct (dom_lt_unwind_shape_finished before
+    (fst (dom_lt_eval fuel semis before start)) path root Hshape) as [Hinside Houtside].
+  eapply dom_lt_compression_credit; eassumption.
+Qed.
+
+(** The binary loop charges the remaining frames and only the initial fuel's bit length. *)
+Lemma dom_lt_compress_path_time before path root semis (Inv : dom_lt_walk -> Prop)
+    unit fuel initial :
+  NoDup (map N.to_nat path) -> dom_lt_compress_shape before path root initial -> Inv initial ->
+  (forall state next, Inv state -> dom_lt_compress_step semis state = inl next -> Inv next) ->
+  (forall state, Inv state -> (T_dom_lt_compress_step semis state <= unit)%N) ->
+  (T_loopN (dom_lt_compress_step semis) (T_dom_lt_compress_step semis) fuel initial <=
+    c_loopN * ((unit + 1) * N.of_nat (dom_lt_compress_frames (length path) initial) +
+      unit + N.of_nat (N.size_nat fuel) + 1))%N.
+Proof.
+  intros Hunique Hshape Hinitial Hpreserve Hcost.
+  apply (T_loopN_le _ _ (dom_lt_compress_step semis) (T_dom_lt_compress_step semis)
+    (fun state => dom_lt_compress_shape before path root state /\ Inv state)
+    (fun state => ((unit + 1) * N.of_nat (dom_lt_compress_frames (length path) state))%N)
+    unit fuel initial).
+  - intros state next [Hstate Hinv] Hstep.
+    destruct (dom_lt_compress_shape_step before path root semis state next
+      Hunique Hstate Hstep) as [Hnext Hframes].
+    split; [split; [exact Hnext|now apply (Hpreserve state next)]|].
+    pose proof (Hcost state Hinv) as Htime. cbn beta. nia.
+  - intros state result [Hstate Hinv] Hstep. now apply Hcost.
+  - now split.
+Qed.
+
+(** * Shortcut domains and remaining forest credit *)
+
+Definition dom_lt_shortcut_domain (before current : dom_lt_links) : Prop :=
+  forall key, trie_get key (lt_shortcut current) = None <->
+    trie_get key (lt_shortcut before) = None.
+
+Lemma dom_lt_shortcut_domain_update before current next vertex root :
+  dom_lt_shortcut_domain before current ->
+  trie_get (dom_lt_key vertex) (lt_shortcut before) <> None ->
+  lt_shortcut next = PTrieCode.set (dom_lt_key vertex) root (lt_shortcut current) ->
+  dom_lt_shortcut_domain before next.
+Proof.
+  intros Hdomain Hpresent Hupdate key. rewrite Hupdate.
+  destruct (Pos.eq_dec key (dom_lt_key vertex)) as [->|Hne].
+  - rewrite PTrie.get_set_same. split; [discriminate|intro Hnone; contradiction].
+  - rewrite PTrie.get_set_other by exact Hne. apply Hdomain.
+Qed.
+
+(** Every pending frame names a cell already present before evaluation began. *)
+Definition dom_lt_walk_domain (before : dom_lt_links) (st : dom_lt_walk) : Prop :=
+  dom_lt_shortcut_domain before (lt_walk_links st) /\
+  Forall (fun vertex => trie_get (dom_lt_key vertex) (lt_shortcut before) <> None)
+    (match lt_walk_phase st with
+      | DomLtDescend _ stack | DomLtUnwind _ _ stack => stack
+      end).
+
+(** Every saved frame already has a shortcut; unwinding cannot create a fresh cell. *)
+Lemma dom_lt_compress_domain before semis st : dom_lt_walk_domain before st ->
+  match dom_lt_compress_step semis st with
+  | inl next => dom_lt_walk_domain before next
+  | inr result => dom_lt_shortcut_domain before (fst result)
+  end.
+Proof.
+  destruct st as [current [vertex stack|root part stack]];
+    cbn [dom_lt_walk_domain lt_walk_links lt_walk_phase]; intros [Hdomain Hstack].
+  - cbn [dom_lt_compress_step lt_walk_links lt_walk_phase].
+    destruct (trie_get (dom_lt_key vertex) (lt_shortcut current)) as [parent|] eqn:Hget.
+    + destruct (N.ltb parent vertex).
+      * split; [exact Hdomain|]. constructor; [|exact Hstack].
+        intro Hnone.
+        assert (Habsent : trie_get (dom_lt_key vertex) (lt_shortcut current) = None).
+        { exact (proj2 (Hdomain (dom_lt_key vertex)) Hnone). }
+        rewrite Hget in Habsent. discriminate.
+      * now split.
+    + now split.
+  - destruct stack as [|vertex stack].
+    + cbn [dom_lt_compress_step lt_walk_links lt_walk_phase fst]. exact Hdomain.
+    + inversion Hstack as [|head tail Hpresent Htail]; subst head tail.
+      cbn [dom_lt_compress_step lt_walk_links lt_walk_phase]. split; [|exact Htail].
+      eapply dom_lt_shortcut_domain_update; [exact Hdomain|exact Hpresent|reflexivity].
+Qed.
+
+(** Domain preservation is independent of fuel exhaustion and semidominator scores. *)
+Lemma dom_lt_eval_domain fuel semis before vertex :
+  dom_lt_shortcut_domain before (fst (dom_lt_eval fuel semis before vertex)).
+Proof.
+  set (initial := DomLtWalk
+    (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval vertex :: lt_operations before))
+    (DomLtDescend vertex [])).
+  assert (Hinitial : dom_lt_walk_domain before initial).
+  { split; [intro key; reflexivity|constructor]. }
+  pose proof (dom_lt_loop_invariant (dom_lt_compress_step semis)
+    (dom_lt_walk_domain before) (fun result => dom_lt_shortcut_domain before (fst result))
+    (N.double fuel + 3)%N initial) as Hrun.
+  assert (Hgo : forall state next, dom_lt_walk_domain before state ->
+    dom_lt_compress_step semis state = inl next -> dom_lt_walk_domain before next).
+  { intros state next Hinv Hstep.
+    pose proof (dom_lt_compress_domain before semis state Hinv) as Hnext.
+    now rewrite Hstep in Hnext. }
+  assert (Hstop : forall state result, dom_lt_walk_domain before state ->
+    dom_lt_compress_step semis state = inr result -> dom_lt_shortcut_domain before (fst result)).
+  { intros state result Hinv Hstep.
+    pose proof (dom_lt_compress_domain before semis state Hinv) as Hnext.
+    now rewrite Hstep in Hnext. }
+  specialize (Hrun Hgo Hstop Hinitial).
+  unfold dom_lt_eval. fold initial.
+  destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)
+    as [state|result]; [exact (proj1 Hrun)|exact Hrun].
+Qed.
+
+Lemma dom_gap_weight_mono : forall domain before after,
+  (forall key, In key domain -> before key <= after key) ->
+  dom_gap_weight domain before <= dom_gap_weight domain after.
+Proof.
+  intro domain. induction domain as [|key rest IH]; intros before after Hmono;
+    [reflexivity|].
+  pose proof (Hmono key ltac:(now left)) as Hhead.
+  specialize (IH before after ltac:(intros vertex Hin; apply Hmono; now right)).
+  change (before key + dom_gap_weight rest before <= after key + dom_gap_weight rest after).
+  lia.
+Qed.
+
+(** The unused part of the level bound pays for future path-compression work. *)
+Definition dom_lt_forest_credit (bound : nat) (links : dom_lt_links) : N :=
+  N.of_nat ((bound + 1) * Nat.log2 bound - dom_lt_forest_levels bound links).
+
+Lemma dom_lt_forest_credit_bound bound links :
+  (dom_lt_forest_credit bound links <= N.of_nat ((bound + 1) * Nat.log2 bound))%N.
+Proof.
+  unfold dom_lt_forest_credit. lia.
+Qed.
+
+Lemma dom_lt_empty_credit bound :
+  dom_lt_forest_credit bound (DomLtLinks Empty Empty []) =
+    N.of_nat ((bound + 1) * Nat.log2 bound).
+Proof.
+  unfold dom_lt_forest_credit. rewrite dom_lt_empty_levels, Nat.sub_0_r. reflexivity.
+Qed.
+
+Lemma dom_lt_link_credit bound before vertex parent :
+  trie_get (dom_lt_key vertex) (lt_shortcut before) = None ->
+  (dom_lt_forest_credit bound (dom_lt_link before vertex parent) <=
+    dom_lt_forest_credit bound before)%N.
+Proof.
+  intro Hfresh.
+  assert (Hgrow : dom_lt_forest_levels bound before <=
+    dom_lt_forest_levels bound (dom_lt_link before vertex parent)).
+  { apply dom_gap_weight_mono. intros key Hin. now apply dom_lt_link_levels_grow. }
+  unfold dom_lt_forest_credit. lia.
+Qed.
+
+Definition dom_lt_links_fresh (links : dom_lt_links) (children : list N) : Prop :=
+  forall vertex, In vertex children -> trie_get (dom_lt_key vertex) (lt_shortcut links) = None.
+
+Lemma dom_lt_empty_fresh children : dom_lt_links_fresh (DomLtLinks Empty Empty []) children.
+Proof.
+  intros vertex Hin. apply PTrie.get_empty.
+Qed.
+
+Lemma dom_lt_eval_fresh fuel semis before vertex children :
+  dom_lt_links_fresh before children ->
+  dom_lt_links_fresh (fst (dom_lt_eval fuel semis before vertex)) children.
+Proof.
+  intros Hfresh child Hin.
+  apply (proj2 (dom_lt_eval_domain fuel semis before vertex (dom_lt_key child))).
+  now apply Hfresh.
+Qed.
+
+Lemma dom_lt_link_fresh before vertex parent children :
+  ~ In vertex children -> dom_lt_links_fresh before children ->
+  dom_lt_links_fresh (dom_lt_link before vertex parent) children.
+Proof.
+  intros Hnew Hfresh child Hin. cbn [dom_lt_link lt_shortcut].
+  rewrite PTrie.get_set_other; [now apply Hfresh|].
+  intro Heq. apply dom_lt_key_injective in Heq. subst child. contradiction.
+Qed.
+
+Lemma dom_lt_replay_fields st op :
+  replay_semis (dom_lt_replay_step st op) = replay_semis st /\
+  replay_fuel (dom_lt_replay_step st op) = replay_fuel st /\
+  replay_boundary (dom_lt_replay_step st op) = replay_boundary st /\
+  replay_index (dom_lt_replay_step st op) = N.succ (replay_index st).
+Proof.
+  repeat split; reflexivity.
+Qed.
+
+Lemma dom_lt_replay_index ops : forall st,
+  replay_index (dom_lt_run_ops ops st) = (replay_index st + N.of_nat (length ops))%N.
+Proof.
+  induction ops as [|op rest IH]; intro st.
+  - unfold dom_lt_run_ops. cbn [fold_left length]. now rewrite N.add_0_r.
+  - change (replay_index (dom_lt_run_ops rest (dom_lt_replay_step st op)) =
+      replay_index st + N.of_nat (S (length rest)))%N.
+    rewrite IH, (proj2 (proj2 (proj2 (dom_lt_replay_fields st op)))). lia.
+Qed.
