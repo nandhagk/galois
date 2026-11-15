@@ -4129,6 +4129,38 @@ Proof.
   unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
 Qed.
 
+(** A bounded rotation uses one left shift and one nonnegative right shift. *)
+Lemma tnum_rotl_value_time : forall w k x, 0 <= k <= Zpos w ->
+  (T_tnum_rotl_value w k x <=
+    512 * N.of_nat (Pos.to_nat w + Z.size_nat x + 1))%N.
+Proof.
+  intros w k x Hk.
+  destruct (tnum_count_bits_width w k Hk) as [Hkbits Hknat].
+  destruct (tnum_count_bits_width w (Zpos w - k) ltac:(lia)) as [Htailbits Htailnat].
+  pose proof (tnum_positive_bits w) as Hwidth.
+  pose proof (wrap_is_word w x) as Hword. rewrite <- tnum_wrap_agrees in Hword.
+  pose proof (tnum_wrap_bits w x) as Hxbits.
+  pose proof (tnum_shiftl_time (tnum_wrap w x) k ltac:(lia)) as Hleft.
+  pose proof (tnum_shiftl_bits (tnum_wrap w x) k ltac:(lia)) as Hleftbits.
+  pose proof (tnum_shiftr_time (tnum_wrap w x) (Zpos w - k)
+    ltac:(destruct Hword; lia) ltac:(lia)) as Hright.
+  pose proof (tnum_shiftr_bits (tnum_wrap w x) (Zpos w - k)
+    ltac:(destruct Hword; lia) ltac:(lia)) as Hrightbits.
+  pose proof (tnum_lor_bits (Z.shiftl (tnum_wrap w x) k)
+    (Z.shiftr (tnum_wrap w x) (Zpos w - k))) as Horbits.
+  time_unfold T_tnum_rotl_value. cbn beta iota zeta.
+  try change (match -k with
+    | Z0 => Zpos w
+    | Zpos p => Zpos (w + p)%positive
+    | Zneg p => Z.pos_sub w p
+    end) with (Zpos w - k) in *.
+  time_pose.
+  change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in *.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_rotl_value_time.
+
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
