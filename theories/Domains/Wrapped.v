@@ -4,7 +4,7 @@
     For example, the eight-bit arc from 250 to 3 contains zero.
     Builds on: WrappedSig, Interval and the bit-vector operations. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
+From Stdlib Require Import ZArith NArith List Bool Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Op Fun Arith.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig IntervalSig Interval IntervalOps Thresholds BitsLang.
@@ -1442,6 +1442,119 @@ Proof.
   - exact (wrapped_interval_list_bits w _ lo hi Hfourth Hin).
 Qed.
 
+(** An all-ones mask fits the word width used to construct it. *)
+Lemma arc_ones_word : forall w, is_word w (Z.ones (Zpos w)).
+Proof.
+  intro w. unfold is_word, modulus. rewrite Z.ones_equiv.
+  pose proof (modulus_pos w). unfold modulus in *. lia.
+Qed.
+
+(** Constructing the mask performs linearly many bit operations. *)
+Lemma arc_ones_time : forall w,
+  (Word.Z.T_ones (Zpos w) <= 16 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w.
+  pose proof (Std.Z.T_shiftl_le 1 (Zpos w)) as Hshift.
+  pose proof (Std.Z.T_pred_le (Z.shiftl 1 (Zpos w))) as Hpred.
+  assert (Hbits : (Z.size_nat (Z.shiftl 1 (Zpos w)) <= Pos.to_nat w + 1)%nat).
+  { rewrite Z.shiftl_1_l. apply WordTime.word_modulus_size_bound. }
+  change (Std.Z.T_shiftl 1 (Zpos w) <= 6 * N.pos w + 1)%N in Hshift.
+  time_unfold Word.Z.T_ones. rewrite Nat2N.inj_add, positive_nat_N. nia.
+Qed.
+
+(** Masked normalization charges width and the raw integer's magnitude bits. *)
+Lemma arc_wrap_time : forall w z,
+  (T_arc_wrap w z <= 32 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z.
+  pose proof (arc_ones_time w) as Hones.
+  pose proof (WordTime.word_size_bound w _ (arc_ones_word w)) as Hbits.
+  pose proof (Std.Z.T_land_le z (Z.ones (Zpos w))) as Hland.
+  time_unfold T_arc_wrap. time_cbn.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound arc_wrap_time.
+
+(** Circular offsets are normalized words independently of their raw endpoints. *)
+Lemma wrapped_offset_bits : forall w origin x,
+  (Z.size_nat (wrapped_offset w origin x) <= Pos.to_nat w)%nat.
+Proof.
+  intros w origin x. unfold wrapped_offset. rewrite arc_wrap_agrees.
+  apply WordTime.word_wrap_size_bound.
+Qed.
+
+(** Computing an offset charges subtraction followed by a linear mask. *)
+Lemma wrapped_offset_time : forall w origin x,
+  (T_wrapped_offset w origin x <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat origin + Z.size_nat x + 1))%N.
+Proof.
+  intros w origin x.
+  pose proof (arc_wrap_time w (x - origin)) as Hwrap.
+  pose proof (Std.Z.T_sub_le x origin) as Hsub.
+  pose proof (WordTime.integer_sub_size x origin) as Hbits.
+  time_unfold T_wrapped_offset. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound wrapped_offset_time.
+
+(** Arc cardinality needs at most one more bit than a represented word. *)
+Lemma wrapped_size_bits : forall w a,
+  (Z.size_nat (wrapped_size w a) <= Pos.to_nat w + 1)%nat.
+Proof.
+  intros w a. pose proof (wrapped_size_bounds w a) as Hrange.
+  apply WordTime.integer_size_bound. split; [lia|].
+  eapply Z.le_lt_trans; [exact (proj2 Hrange)|].
+  unfold modulus. rewrite Nat2Z.inj_add, positive_nat_Z.
+  apply Z.pow_lt_mono_r; lia.
+Qed.
+
+(** Computing cardinality charges only width and the stored endpoints. *)
+Lemma wrapped_size_time : forall w a,
+  (T_wrapped_size w a <=
+    256 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi].
+  - time_unfold T_wrapped_size. cbn [wrapped_bits]. rewrite Nat2N.inj_add. nia.
+  - pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+    time_unfold T_wrapped_size. cbn [wrapped_bits]. rewrite !Nat2N.inj_add in *. nia.
+  - pose proof (wrapped_offset_time w lo hi) as Hoffset.
+    pose proof (wrapped_offset_bits w lo hi) as Hbits.
+    pose proof (Std.Z.T_add_le (wrapped_offset w lo hi) 1) as Hadd.
+    time_unfold T_wrapped_size. cbn [wrapped_bits]. rewrite !Nat2N.inj_add in *.
+    time_cbn_all. nia.
+Qed.
+TimeBound wrapped_size_time.
+
+(** The largest word has no more bits than the declared width. *)
+Lemma wrapped_last_word_bits : forall w,
+  (Z.size_nat (modulus w - 1) <= Pos.to_nat w)%nat.
+Proof.
+  intro w. apply WordTime.word_size_bound. unfold is_word.
+  pose proof (modulus_pos w). lia.
+Qed.
+
+(** Arc normalization charges two endpoint masks and a cardinality comparison. *)
+Lemma wrapped_norm_time : forall w a,
+  (T_wrapped_norm w a <=
+    512 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi].
+  - time_unfold T_wrapped_norm. cbn [wrapped_bits]. rewrite Nat2N.inj_add. nia.
+  - time_unfold T_wrapped_norm. cbn [wrapped_bits]. rewrite Nat2N.inj_add. nia.
+  - pose proof (wrapped_offset_time w lo hi) as Hoffset.
+    pose proof (wrapped_offset_bits w lo hi) as Hoffsetbits.
+    pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+    pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+    pose proof (wrapped_last_word_bits w) as Hlastbits.
+    pose proof (Std.Z.T_sub_le (modulus w) 1) as Hsub.
+    pose proof (Std.Z.T_eqb_le (wrapped_offset w lo hi) (modulus w - 1)) as Hequal.
+    pose proof (arc_wrap_time w lo) as Hlo.
+    pose proof (arc_wrap_time w hi) as Hhi.
+    time_unfold T_wrapped_norm. cbn [wrapped_bits].
+    destruct (wrapped_offset w lo hi =? modulus w - 1);
+      rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+TimeBound wrapped_norm_time.
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
@@ -1677,24 +1790,41 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   (** Constructing top fits the published width cost. *)
   Lemma T_ptop_le : forall w,
     (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_ptop. unfold c_payload. cbn [Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul. nia.
+  Qed.
   (** Constructing bottom fits the published width cost. *)
   Lemma T_pbot_le : forall w,
     (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_pbot. unfold c_payload. cbn [Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul. nia.
+  Qed.
   (** Top payload storage fits the published width cost. *)
   Lemma ptop_size : forall w,
     (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold c_payload, psize, ptop. cbn [wrapped_bits Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul. nia.
+  Qed.
   (** Bottom payload storage fits the published width cost. *)
   Lemma pbot_size : forall w,
     (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold c_payload, psize, pbot. cbn [wrapped_bits Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul. nia.
+  Qed.
   (** Constant payload storage fits its construction budget. *)
   Lemma pconst_size : forall w z,
     (N.of_nat (psize w (pconst w z)) <=
       c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (wrapped_norm_bits w (WItv z z)) as Hbits.
+    pose proof (Pos2Nat.is_pos w) as Hwidth.
+    unfold c_payload, psize, pconst. cbn [Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
+  Qed.
   (** Joined payload storage fits the combined input budget. *)
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <=
@@ -1739,7 +1869,10 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   (** Bottom recognition charges the stored value. *)
   Lemma T_pis_bot_le : forall w a,
     (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [| |lo hi]; time_unfold T_pis_bot;
+      unfold c_payload, psize; rewrite !Nat2N.inj_add; nia.
+  Qed.
   (** Point recognition charges the stored value. *)
   Lemma T_ppoint_le : forall w a,
     (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
