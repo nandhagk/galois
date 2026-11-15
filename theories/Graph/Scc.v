@@ -4848,7 +4848,7 @@ Module SccT <: SCC_ALL.
   Lemma F7_components : forall g, wf_graph (base g) -> forall u v,
     (exists i, trie_get u (comp (run g)) = Some i /\ trie_get v (comp (run g)) = Some i) <->
     In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
-  Proof. Admitted. (* STUB *)
+  Proof. exact comp_spec. Qed.
 
   Lemma T1_pop : forall w root index pending low active owners members tail low' active' owners',
     Forall (fun v => Pos.size_nat v <= w) pending ->
