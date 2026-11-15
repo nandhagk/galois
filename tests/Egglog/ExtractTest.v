@@ -5,22 +5,50 @@
     forward reference is rejected before costing.
     Builds on: Extract, Database and Index code towers. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Arith Lia.
+From Argent Require Import Time Std.
 From Galois.Base Require Import Trie.
-From Galois.Egglog Require Import ValueSig Syntax Index Database ExtractSig Extract.
+From Galois.Egglog Require Import ValueSig Syntax IndexSig DatabaseSig Index Database ExtractSig
+  Extract.
 
 Import List.ListNotations.
 
-Module InventoryValue <: VALUE_OPS.
+Module InventoryValue <: VALUE.
   Definition t := positive.
   Definition eqb := Pos.eqb.
   Definition encode (p : positive) := p.
   Definition prim (_ : positive) (_ : list positive) : option positive := None.
   Definition merge (_ : positive) := Pos.max.
+  Definition bits (v : t) := Pos.size_nat (encode v).
+  Lemma encode_inj : forall a b, encode a = encode b -> a = b.
+  Proof.
+    intros a b Heq. exact Heq.
+  Qed.
+  Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
+  Proof.
+    apply Pos.eqb_spec.
+  Qed.
+  Lemma merge_comm : forall m a b, merge m a b = merge m b a.
+  Proof.
+    intros m a b. apply Pos.max_comm.
+  Qed.
+  Lemma merge_assoc : forall m a b c, merge m a (merge m b c) = merge m (merge m a b) c.
+  Proof.
+    intros m a b c. apply Pos.max_assoc.
+  Qed.
+  Lemma merge_idem : forall m a, merge m a a = a.
+  Proof.
+    intros m a. apply Pos.max_id.
+  Qed.
 End InventoryValue.
 
 Module InventoryIndex := IndexCode InventoryValue.
 Module InventoryDatabase := DatabaseCode InventoryValue InventoryIndex.
+
+Module InventoryMeasuredIndex := Index InventoryValue.
+Module InventoryMeasuredDatabase := Database InventoryValue InventoryMeasuredIndex.
+Module InventoryRows :=
+  ConstructorRows InventoryValue InventoryMeasuredIndex InventoryMeasuredDatabase.
 
 Module InventoryCost <: COST_OPS InventoryValue.
   Definition fn_cost (_ : positive) (cs : list N) := N.succ (fold_right N.add 0%N cs).
@@ -170,6 +198,50 @@ Qed.
 
 Example dag_needed_excludes_unrelated_rows :
   dag_seen (dag_needed checker_graph (PTrieCode.set 1%positive tt Empty)) 2%positive = false.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+
+Example index_paths_single_tuple :
+  let ix := InventoryIndex.insert [Id 2%positive; Val 7%positive] InventoryIndex.empty in
+  index_paths (InventoryIndex.child ix) (InventoryIndex.children ix) 2
+    (InventoryIndex.root ix) = [[Id 2%positive; Val 7%positive]].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example index_paths_empty_positive_depth :
+  index_paths (InventoryIndex.child InventoryIndex.empty)
+    (InventoryIndex.children InventoryIndex.empty) 1
+    (InventoryIndex.root InventoryIndex.empty) = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example constructor_rows_count :
+  length (InventoryRows.rows checker_database) = 3.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example constructor_rows_maximum_arity :
+  InventoryRows.maximum_arity (InventoryRows.rows checker_database) = 2.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example constructor_rows_deduplicate_full_and_partial_slots :
+  let db := InventoryDatabase.init [Decl 30%positive [] OId]
+    [(30%positive, [0]); (30%positive, [0]); (30%positive, [])] in
+  let db := snd (InventoryDatabase.make 30%positive [] db) in
+  (length (InventoryRows.rows db), InventoryRows.maximum_arity (InventoryRows.rows db)) = (1, 0).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example constructor_rows_empty :
+  InventoryRows.rows (InventoryDatabase.init [] []) = [].
 Proof.
   vm_compute. reflexivity.
 Qed.

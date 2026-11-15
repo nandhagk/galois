@@ -1254,7 +1254,8 @@ Lemma dag_cost_root_cell_bound : forall V fn_cost val_cost,
     dag_get_cost costs c)%N.
 Proof.
   intros V fn_cost val_cost Hsuper g c Hordered needed costs i f k Hin Hmarked cell Hcell.
-  eapply N.le_trans; [|exact (dag_cost_root_bound V fn_cost val_cost Hsuper g c Hordered i Hmarked)].
+  eapply N.le_trans;
+    [|exact (dag_cost_root_bound V fn_cost val_cost Hsuper g c Hordered i Hmarked)].
   change (match cell with Id child => dag_get_cost costs child | Val v => val_cost v end <=
     dag_get_cost costs i)%N.
   unfold costs. rewrite (dag_cost_table_row V fn_cost val_cost needed g Empty i f k
@@ -1510,6 +1511,75 @@ Proof.
   nia.
 Qed.
 
+Module List.
+  TimeFun flat_map.
+End List.
+
+(** Bounded index walks enumerate suffixes by following each listed child once per depth. *)
+Fixpoint index_paths {A} (child : positive -> cell A -> option positive)
+    (children : positive -> list (cell A)) (fuel : nat) (n : positive)
+    : list (list (cell A)) :=
+  match fuel with
+  | 0 => [[]]
+  | S rest =>
+      flat_map (fun c =>
+        match child n c with
+        | Some next => map (cons c) (index_paths child children rest next)
+        | None => []
+        end) (children n)
+  end.
+TimeFun index_paths.
+
+(** Every enumerated suffix has exactly the supplied walk depth. *)
+Lemma index_paths_length : forall A child children fuel n (u : list (cell A)),
+  In u (index_paths child children fuel n) -> length u = fuel.
+Proof.
+  intros A child children fuel. induction fuel as [|fuel IH]; intros n u Hin.
+  - cbn [index_paths] in Hin. destruct Hin as [<-|Hbad]; [reflexivity|contradiction].
+  - cbn [index_paths] in Hin. apply in_flat_map in Hin.
+    destruct Hin as [c [Hchild Hin]].
+    destruct (child n c) as [next|] eqn:Hnext; [|contradiction].
+    apply in_map_iff in Hin. destruct Hin as [rest [<- Hin]]. cbn [length].
+    f_equal. exact (IH next rest Hin).
+Qed.
+
+Module IndexPaths (V : VALUE) (I : INDEX V).
+
+  (** Every member suffix is found by a walk using its own length as fuel. *)
+  Lemma index_paths_complete : forall fuel a ix n pre u,
+    I.wf a ix -> I.node ix n pre -> I.mem ix (pre ++ u) -> length u = fuel ->
+    In u (index_paths (I.child ix) (I.children ix) fuel n).
+  Proof.
+    intros fuel a ix n pre u Hwf Hnode Hmem Hlength. subst fuel.
+    revert n pre Hnode Hmem.
+    induction u as [|c u IH]; intros n pre Hnode Hmem.
+    - cbn [length index_paths]. left. reflexivity.
+    - cbn [length index_paths].
+      destruct (I.child ix n c) as [next|] eqn:Hchild.
+      + apply in_flat_map. exists c. split.
+        * apply (proj2 (proj1 (I.children_spec a ix n pre c Hwf Hnode))).
+          exists next. exact Hchild.
+        * rewrite Hchild. apply in_map. apply (IH next (pre ++ [c])).
+          -- apply (proj1 (proj1 (I.child_spec a ix n pre c Hwf Hnode) next)).
+             exact Hchild.
+          -- rewrite <- app_assoc. exact Hmem.
+      + exfalso. apply (proj1 (proj2 (I.child_spec a ix n pre c Hwf Hnode)) Hchild).
+        exists u. exact Hmem.
+  Qed.
+
+  (** A full member appears among the paths from the root at the declared index arity. *)
+  Lemma index_paths_root : forall a ix u, I.wf a ix -> I.mem ix u ->
+    In u (index_paths (I.child ix) (I.children ix) a (I.root ix)).
+  Proof.
+    intros a ix u Hwf Hmem. eapply index_paths_complete with (pre := []) (a := a).
+    - exact Hwf.
+    - apply I.node_root with a. exact Hwf.
+    - exact Hmem.
+    - eapply I.mem_arity; eassumption.
+  Qed.
+
+End IndexPaths.
+
 (** The first finalized entry for a class supplies its certificate cost budget. *)
 Fixpoint extraction_cost_lookup {V} (c : positive) (entries : extraction_best V) : option N :=
   match entries with
@@ -1567,6 +1637,158 @@ Proof.
   now apply N.leb_le.
 Qed.
 
+
+(** Ghost row enumeration uses declared slot depths and exact stored-row lookup. *)
+Module ConstructorRows (V : VALUE) (I : INDEX V) (D : DATABASE V I).
+  Module Paths := IndexPaths V I.
+  Module Cells := CellKey V.
+
+  (** Ghost row equality compares function names, complete keys and output identifiers. *)
+  Definition cell_eq_dec (x y : cell V.t) : {x = y} + {x <> y}.
+  Proof.
+    destruct (Cells.eqb x y) eqn:Hcheck.
+    - left. destruct (Cells.eqb_spec x y); [assumption |discriminate].
+    - right. destruct (Cells.eqb_spec x y); [discriminate |assumption].
+  Defined.
+
+  Definition row_eq_dec (x y : positive * list (cell V.t) * positive) :
+      {x = y} + {x <> y}.
+  Proof.
+    destruct x as [[f k] i], y as [[g l] j].
+    destruct (Pos.eq_dec f g) as [-> |Hname]; [|right; congruence].
+    destruct (list_eq_dec cell_eq_dec k l) as [-> |Hkey]; [|right; congruence].
+    destruct (Pos.eq_dec i j) as [-> |Houtput]; [left; reflexivity |right; congruence].
+  Defined.
+
+  (** A candidate tuple contributes a constructor row only after exact stored-row lookup. *)
+  Definition tuple_row (db : D.t) (f : positive) (u : list (cell V.t))
+      : list (positive * list (cell V.t) * positive) :=
+    match rev u with
+    | Id i :: tail =>
+      let k := rev tail in
+      match D.old db f k with
+      | Some (Some (Id j)) => if Pos.eqb i j then [(f, k, i)] else []
+      | _ => []
+      end
+    | _ => []
+    end.
+
+  (** The ghost collector knows every slot's depth from its specification metadata. *)
+  Definition slot_rows (db : D.t) (slot : nat)
+      : list (positive * list (cell V.t) * positive) :=
+    match nth_error (D.slots db) slot with
+    | Some (f, perm) =>
+      let ix := D.index (N.of_nat slot) false db in
+      flat_map (tuple_row db f)
+        (index_paths (I.child ix) (I.children ix) (length perm) (I.root ix))
+    | None => []
+    end.
+
+  Definition all_rows (db : D.t) : list (positive * list (cell V.t) * positive) :=
+    flat_map (slot_rows db) (seq 0 (length (D.slots db))).
+
+  (** Specification enumeration retains each exact constructor row once. *)
+  Definition rows (db : D.t) : list (positive * list (cell V.t) * positive) :=
+    nodup row_eq_dec (all_rows db).
+
+  Definition maximum_arity (rs : list (positive * list (cell V.t) * positive)) : nat :=
+    fold_right (fun entry n => Nat.max (length (snd (fst entry))) n) 0 rs.
+
+  (** Every retained candidate is an exact public constructor row. *)
+  Lemma tuple_row_sound : forall db f u g k i, D.wf db ->
+    In (g, k, i) (tuple_row db f u) -> Model.row (D.view db) g k (Some (Id i)).
+  Proof.
+    intros db f u g k i Hwf Hin. unfold tuple_row in Hin.
+    destruct (rev u) as [|[j|v] tail] eqn:Hrev; try contradiction.
+    destruct (D.old db f (rev tail)) as [[[outid|outval]|]|] eqn:Hstored;
+      try contradiction.
+    destruct (Pos.eqb j outid) eqn:Hout; [|contradiction].
+    apply Pos.eqb_eq in Hout. subst outid.
+    destruct Hin as [Heq |Hbad]; [|contradiction]. inversion Heq; subst.
+    apply (proj1 (D.old_row _ _ _ _ Hwf)). exact Hstored.
+  Qed.
+
+  (** A complete constructor tuple passes the exact-row filter. *)
+  Lemma tuple_row_complete : forall db f k i, D.wf db ->
+    Model.row (D.view db) f k (Some (Id i)) ->
+    tuple_row db f (k ++ [Id i]) = [(f, k, i)].
+  Proof.
+    intros db f k i Hwf Hrow.
+    pose proof (proj2 (D.old_row db f k (Some (Id i)) Hwf) Hrow) as Hstored.
+    unfold tuple_row. rewrite rev_app_distr. cbn [rev app].
+    rewrite rev_involutive, Hstored, Pos.eqb_refl. reflexivity.
+  Qed.
+
+  (** Filtering makes the whole slot enumeration sound even for partial or empty slots. *)
+  Lemma rows_sound : forall db f k i, D.wf db ->
+    In (f, k, i) (rows db) -> Model.row (D.view db) f k (Some (Id i)).
+  Proof.
+    intros db f k i Hwf Hin. unfold rows in Hin. apply nodup_In in Hin.
+    unfold all_rows in Hin. apply in_flat_map in Hin as [slot [_ Hin]].
+    unfold slot_rows in Hin.
+    destruct (nth_error (D.slots db) slot) as [[g perm]|] eqn:Hslot; [|contradiction].
+    apply in_flat_map in Hin as [u [_ Hin]].
+    eapply tuple_row_sound; eassumption.
+  Qed.
+
+  (** Any row with an unpermuted full slot appears in the finite enumeration. *)
+  Lemma rows_complete : forall db f k i, D.wf db ->
+    Model.row (D.view db) f k (Some (Id i)) ->
+    (exists slot perm, D.slot_of db slot = Some (f, perm) /\
+      D.permute perm (k ++ [Id i]) = k ++ [Id i]) ->
+    In (f, k, i) (rows db).
+  Proof.
+    intros db f k i Hwf Hrow [slot [perm [Hslot Hfull]]].
+    pose proof (D.index_wf db slot false f perm Hwf Hslot) as Hindex.
+    pose proof (D.index_all_complete db slot f perm k (Some (Id i)) Hwf Hslot Hrow)
+      as Hmember.
+    cbn [option_list] in Hmember. rewrite Hfull in Hmember.
+    pose proof (Paths.index_paths_root _ _ _ Hindex Hmember) as Hpath.
+    unfold rows. apply nodup_In. unfold all_rows. apply in_flat_map.
+    exists (N.to_nat slot). split.
+    - apply in_seq. split; [lia |]. unfold D.slot_of in Hslot.
+      apply nth_error_Some. intro Hnone. rewrite Hnone in Hslot. discriminate.
+    - unfold slot_rows. unfold D.slot_of in Hslot. rewrite Hslot, N2Nat.id.
+      apply in_flat_map. exists (k ++ [Id i]). split; [exact Hpath |].
+      rewrite (tuple_row_complete db f k i Hwf Hrow). now left.
+  Qed.
+
+  (** Exact-row enumeration has no duplicate triples. *)
+  Lemma rows_nodup : forall db, NoDup (rows db).
+  Proof.
+    intro db. apply NoDup_nodup.
+  Qed.
+
+  (** Each enumerated row key is bounded by the recorded maximum. *)
+  Lemma maximum_arity_member : forall rs f k i,
+    In (f, k, i) rs -> length k <= maximum_arity rs.
+  Proof.
+    induction rs as [|entry rs IH]; intros f k i Hin; [contradiction |].
+    cbn [maximum_arity fold_right]. destruct Hin as [-> |Hin].
+    - cbn [fst snd]. apply Nat.le_max_l.
+    - eapply Nat.le_trans; [eapply IH; exact Hin |apply Nat.le_max_r].
+  Qed.
+
+  (** The maximum is zero or is attained by one of the finite rows. *)
+  Lemma maximum_arity_attained : forall rs,
+    maximum_arity rs = 0 \/ exists f k i, In (f, k, i) rs /\ length k = maximum_arity rs.
+  Proof.
+    induction rs as [|[[f k] i] rs IH]; [now left |].
+    cbn [maximum_arity fold_right fst snd] in *.
+    destruct (Nat.le_ge_cases (length k) (maximum_arity rs)) as [Hle |Hge].
+    - change (Nat.max (length k) (maximum_arity rs) = 0 \/
+        exists g l j, In (g, l, j) ((f, k, i) :: rs) /\
+          length l = Nat.max (length k) (maximum_arity rs)).
+      rewrite Nat.max_r by exact Hle. destruct IH as [Hzero |[g [l [j [Hin Heq]]]]].
+      + now left.
+      + right. exists g, l, j. split; [now right |exact Heq].
+    - change (Nat.max (length k) (maximum_arity rs) = 0 \/
+        exists g l j, In (g, l, j) ((f, k, i) :: rs) /\
+          length l = Nat.max (length k) (maximum_arity rs)).
+      rewrite Nat.max_l by exact Hge. right. exists f, k, i. split; [now left |reflexivity].
+  Qed.
+End ConstructorRows.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
   Definition inventory (ds : list decl) (sl : list (positive * list nat))
@@ -1580,7 +1802,6 @@ Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
       : option (extraction_dag V.t) :=
     if N.ltb (D.ids db) (Npos c) then None else
       extraction_candidate (check_dag db) c (fst (D.find c db)) (best cs db).
-
 End ExtractCode.
 
 Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
@@ -1733,10 +1954,9 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   TimeFun check_dag.
   TimeFun extract.
   TimeFun unfold.
-  (* STUB-CODE *)
-  Definition R (_ : D.t) : nat := 0.
-  (* STUB-CODE *)
-  Definition a (_ : D.t) : nat := 0.
+  Module Rows := ConstructorRows V I D.
+  Definition R (db : D.t) : nat := length (Rows.rows db).
+  Definition a (db : D.t) : nat := Rows.maximum_arity (Rows.rows db).
   (* STUB-CODE *)
   Definition cost_width (_ : D.t) : nat := 0.
   Definition c_ex : N :=
@@ -1769,15 +1989,43 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     unfold inventory_slot_bits in Hsize. nia.
   Qed.
 
+  (** Constructor inventory supplies a full slot for each identifier-output row. *)
+  Lemma inventory_row_slot : forall cs db f k i, ctor_inventory cs db ->
+    Model.row (D.view db) f k (Some (Id i)) ->
+    exists slot perm, D.slot_of db slot = Some (f, perm) /\
+      D.permute perm (k ++ [Id i]) = k ++ [Id i].
+  Proof.
+    intros cs db f k i [_ [Hkinds [Hconstructors Hslots]]] Hrow.
+    pose proof (proj1 (Hkinds f) (Hconstructors f k i Hrow)) as Hname.
+    apply in_map_iff in Hname as [[g slot] [Heq Hin]]. cbn [fst] in Heq. subst g.
+    destruct (Hslots f slot Hin) as [perm [Hslot Hfull]].
+    exists slot, perm. split; [exact Hslot |].
+    exact (Hfull k (Some (Id i)) Hrow).
+  Qed.
+
   Lemma R_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
     exists rs, NoDup rs /\ length rs = R db /\
     forall f k i, In (f, k, i) rs <-> row (D.view db) f k (Some (Id i)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db Hwf Hinv. exists (Rows.rows db). split; [apply Rows.rows_nodup |].
+    split; [reflexivity |]. intros f k i. split.
+    - now apply Rows.rows_sound.
+    - intro Hrow. apply Rows.rows_complete; [exact Hwf |exact Hrow |].
+      eapply inventory_row_slot; eassumption.
+  Qed.
 
   Lemma a_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
     (forall f k i, row (D.view db) f k (Some (Id i)) -> length k <= a db) /\
     (a db = 0 \/ exists f k i, row (D.view db) f k (Some (Id i)) /\ length k = a db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db Hwf Hinv. unfold a. split.
+    - intros f k i Hrow. eapply Rows.maximum_arity_member.
+      apply Rows.rows_complete; [exact Hwf |exact Hrow |].
+      eapply inventory_row_slot; eassumption.
+    - destruct (Rows.maximum_arity_attained (Rows.rows db)) as [Hzero |[f [k [i [Hin Heq]]]]].
+      + now left.
+      + right. exists f, k, i. split; [now apply Rows.rows_sound |exact Heq].
+  Qed.
 
   Lemma cost_width_spec : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (forall f k i, row (D.view db) f k (Some (Id i)) ->
