@@ -412,6 +412,196 @@ Module Compile (V : VALUE) <: COMPILE V.
     exact (row_key_cells w f cells (Some (Id a)) Hrow).
   Qed.
 
+  (** Compilation preserves holes and literals and names each constructor by a variable. *)
+  Definition node_term (n : pnode V.t) (t : term V.t) : Prop :=
+    match n with
+    | PHole h => t = Var h
+    | PLit v => t = Lit v
+    | PApp _ _ => exists x, t = Var x
+    end.
+
+  (** Constructor names omit the unchanged hole and literal positions. *)
+  Fixpoint constructor_names (ns : list (pnode V.t)) (ts : list (term V.t))
+      : list positive :=
+    match ns, ts with
+    | PApp _ _ :: rest, Var x :: tail => x :: constructor_names rest tail
+    | _ :: rest, _ :: tail => constructor_names rest tail
+    | _, _ => []
+    end.
+
+  (** The term table preserves node forms and assigns distinct fresh constructor names. *)
+  Lemma pattern_terms_info : forall ns r rn fresh, (rn < fresh)%positive ->
+    let '(ts, last) := pattern_terms ns r rn fresh in
+    Forall2 node_term ns ts /\ (fresh <= last)%positive /\
+    (forall x, In x (constructor_names ns ts) ->
+      (x = rn /\ r <> None) \/ (fresh <= x < last)%positive) /\
+    NoDup (constructor_names ns ts).
+  Proof.
+    induction ns as [| n ns IH]; intros r rn fresh Hfresh.
+    - cbn [pattern_terms constructor_names]. split; [constructor |].
+      split; [lia |]. split; [intros x Hin; contradiction | constructor].
+    - destruct n as [h | f children | v].
+      + pose proof (IH (next_root r) rn fresh Hfresh) as Htail.
+        destruct (pattern_terms ns (next_root r) rn fresh) as [ts last] eqn:Hrun.
+        destruct Htail as [Hforms [Hlast [Hrange Hdistinct]]].
+        cbn [pattern_terms]. rewrite Hrun. cbn [constructor_names].
+        split; [constructor; [reflexivity | exact Hforms] |].
+        split; [exact Hlast |]. split; [|exact Hdistinct].
+        intros x Hin. destruct (Hrange x Hin) as [[Hx Hr] | Hx]; [left | now right].
+        split; [exact Hx |]. intro Heq. subst r. apply Hr. reflexivity.
+      + destruct r as [[| r] |].
+        * pose proof (IH None rn fresh Hfresh) as Htail.
+          destruct (pattern_terms ns None rn fresh) as [ts last] eqn:Hrun.
+          destruct Htail as [Hforms [Hlast [Hrange Hdistinct]]].
+          cbn [pattern_terms next_root]. rewrite Hrun. cbn [constructor_names].
+          split; [constructor; [exists rn; reflexivity | exact Hforms] |].
+          split; [exact Hlast |]. split.
+          -- intros x [<- | Hin].
+             ++ left. split; [reflexivity | discriminate].
+             ++ destruct (Hrange x Hin) as [[Hx Hnone] | Hx]; [contradiction | now right].
+          -- constructor; [|exact Hdistinct]. intro Hin.
+             destruct (Hrange rn Hin) as [[Hx Hnone] | Hx]; [contradiction | lia].
+        * pose proof (IH (Some r) rn (Pos.succ fresh) ltac:(lia)) as Htail.
+          destruct (pattern_terms ns (Some r) rn (Pos.succ fresh)) as [ts last] eqn:Hrun.
+          destruct Htail as [Hforms [Hlast [Hrange Hdistinct]]].
+          cbn [pattern_terms next_root]. rewrite Hrun. cbn [constructor_names].
+          split; [constructor; [exists fresh; reflexivity | exact Hforms] |].
+          split; [lia |]. split.
+          -- intros x [<- | Hin]; [right; lia |].
+             destruct (Hrange x Hin) as [[Hx Hr] | Hx].
+             ++ left. split; [exact Hx | discriminate].
+             ++ right. lia.
+          -- constructor; [|exact Hdistinct]. intro Hin.
+             destruct (Hrange fresh Hin) as [[Hx Hr] | Hx]; lia.
+        * pose proof (IH None rn (Pos.succ fresh) ltac:(lia)) as Htail.
+          destruct (pattern_terms ns None rn (Pos.succ fresh)) as [ts last] eqn:Hrun.
+          destruct Htail as [Hforms [Hlast [Hrange Hdistinct]]].
+          cbn [pattern_terms next_root]. rewrite Hrun. cbn [constructor_names].
+          split; [constructor; [exists fresh; reflexivity | exact Hforms] |].
+          split; [lia |]. split.
+          -- intros x [<- | Hin]; [right; lia |].
+             destruct (Hrange x Hin) as [[Hx Hr] | Hx]; [contradiction | right; lia].
+          -- constructor; [|exact Hdistinct]. intro Hin.
+             destruct (Hrange fresh Hin) as [[Hx Hr] | Hx]; [contradiction | lia].
+      + pose proof (IH (next_root r) rn fresh Hfresh) as Htail.
+        destruct (pattern_terms ns (next_root r) rn fresh) as [ts last] eqn:Hrun.
+        destruct Htail as [Hforms [Hlast [Hrange Hdistinct]]].
+        cbn [pattern_terms]. rewrite Hrun. cbn [constructor_names].
+        split; [constructor; [reflexivity | exact Hforms] |].
+        split; [exact Hlast |]. split; [|exact Hdistinct].
+        intros x Hin. destruct (Hrange x Hin) as [[Hx Hr] | Hx]; [left | now right].
+        split; [exact Hx |]. intro Heq. subst r. apply Hr. reflexivity.
+  Qed.
+
+  (** The countdown assigns the selected constructor exactly the requested root name. *)
+  Lemma pattern_terms_root : forall (ns : list (pnode V.t)) i f children rn fresh,
+    nth_error ns i = Some (PApp f children) ->
+    nth_error (fst (pattern_terms ns (Some i) rn fresh)) i = Some (Var rn).
+  Proof.
+    induction ns as [|n ns IH]; intros [|i] f children rn fresh Hnth;
+      cbn [nth_error] in Hnth; try discriminate.
+    - injection Hnth as Hn. subst n. cbn [pattern_terms next_root].
+      destruct (pattern_terms ns None rn fresh). reflexivity.
+    - destruct n as [h|fn ch|v]; cbn [pattern_terms next_root].
+      + pose proof (IH i f children rn fresh Hnth) as Hroot.
+        destruct (pattern_terms ns (Some i) rn fresh). exact Hroot.
+      + pose proof (IH i f children rn (Pos.succ fresh) Hnth) as Hroot.
+        destruct (pattern_terms ns (Some i) rn (Pos.succ fresh)). exact Hroot.
+      + pose proof (IH i f children rn fresh Hnth) as Hroot.
+        destruct (pattern_terms ns (Some i) rn fresh). exact Hroot.
+  Qed.
+
+  (** A constructor name at any aligned position occurs in the constructor-name list. *)
+  Lemma constructor_name_at : forall ns ts j f children x,
+    nth_error ns j = Some (PApp f children) -> nth_error ts j = Some (Var x) ->
+    In x (constructor_names ns ts).
+  Proof.
+    induction ns as [|n ns IH]; intros [|t ts] [|j] f children x Hnode Hterm;
+      cbn [nth_error] in Hnode, Hterm; try discriminate.
+    - injection Hnode as Hn. subst n. injection Hterm as Ht. subst t. now left.
+    - specialize (IH ts j f children x Hnode Hterm).
+      destruct n, t; cbn [constructor_names]; try exact IH. now right.
+  Qed.
+
+  (** Distinct constructor names distinguish their original positions. *)
+  Lemma constructor_names_injective : forall ns ts, NoDup (constructor_names ns ts) ->
+    forall i j f children h args x,
+      nth_error ns i = Some (PApp f children) -> nth_error ts i = Some (Var x) ->
+      nth_error ns j = Some (PApp h args) -> nth_error ts j = Some (Var x) -> i = j.
+  Proof.
+    induction ns as [|n ns IH]; intros [|t ts] Hdistinct [|i] [|j] f children h args x
+      Hni Hti Hnj Htj; cbn [nth_error] in Hni, Hti, Hnj, Htj; try discriminate.
+    - reflexivity.
+    - injection Hni as Hn. subst n. injection Hti as Ht. subst t.
+      inversion Hdistinct as [|x' rest Hfresh Htail]; subst.
+      exfalso. apply Hfresh. exact (constructor_name_at ns ts j h args x Hnj Htj).
+    - injection Hnj as Hn. subst n. injection Htj as Ht. subst t.
+      inversion Hdistinct as [|x' rest Hfresh Htail]; subst.
+      exfalso. apply Hfresh. exact (constructor_name_at ns ts i f children x Hni Hti).
+    - f_equal. apply (IH ts) with (f := f) (children := children) (h := h)
+        (args := args) (x := x); try assumption.
+      destruct n, t; cbn [constructor_names] in Hdistinct; try exact Hdistinct.
+      inversion Hdistinct. assumption.
+  Qed.
+
+  (** Aligned form preservation applies at every common list position. *)
+  Lemma node_term_at : forall ns ts, Forall2 node_term ns ts -> forall i n t,
+    nth_error ns i = Some n -> nth_error ts i = Some t -> node_term n t.
+  Proof.
+    intros ns ts Hforms. induction Hforms as [|n t ns ts Hhead Htail IH];
+      intros [|i] n' t' Hn Ht; cbn [nth_error] in Hn, Ht; try discriminate.
+    - injection Hn as <-. injection Ht as <-. exact Hhead.
+    - exact (IH i n' t' Hn Ht).
+  Qed.
+
+  (** The maximum helper bounds each of its inputs. *)
+  Lemma name_max_bounds : forall x y,
+    (x <= name_max x y /\ y <= name_max x y)%positive.
+  Proof.
+    intros x y. unfold name_max. destruct (Pos.compare x y) eqn:Hcompare.
+    - apply Pos.compare_eq_iff in Hcompare. subst y. split; apply Pos.le_refl.
+    - apply Pos.compare_lt_iff in Hcompare. split.
+      + apply Pos.lt_le_incl. exact Hcompare.
+      + apply Pos.le_refl.
+    - apply Pos.compare_gt_iff in Hcompare. split.
+      + apply Pos.le_refl.
+      + apply Pos.lt_le_incl. exact Hcompare.
+  Qed.
+
+  (** Every hole is bounded by the pattern's computed maximum name. *)
+  Lemma pattern_max_hole : forall (ns : list (pnode V.t)) h,
+    In (PHole h) ns -> (h <= pattern_max ns)%positive.
+  Proof.
+    induction ns as [|n ns IH]; intros h Hin; [contradiction |].
+    destruct Hin as [Heq | Hin].
+    - subst n. cbn [pattern_max]. apply name_max_bounds.
+    - specialize (IH h Hin). destruct n as [hole_name|f children|v];
+        cbn [pattern_max]; try exact IH.
+      pose proof (proj2 (name_max_bounds hole_name (pattern_max ns))). lia.
+  Qed.
+
+  (** A fold of name maxima bounds every variable term that it reads. *)
+  Lemma terms_name_max : forall (ts : list (term V.t)) seed x, In (Var x) ts ->
+    (x <= fold_right (fun t m => name_max (term_name t) m) seed ts)%positive.
+  Proof.
+    induction ts as [|t ts IH]; intros seed x Hin; [contradiction |].
+    cbn [fold_right]. destruct Hin as [Heq | Hin].
+    - subst t. apply name_max_bounds.
+    - specialize (IH seed x Hin).
+      pose proof (proj2 (name_max_bounds (term_name t)
+        (fold_right (fun t m => name_max (term_name t) m) seed ts))). lia.
+  Qed.
+
+  (** A fold of name maxima also bounds its starting value. *)
+  Lemma terms_name_seed : forall (ts : list (term V.t)) seed,
+    (seed <= fold_right (fun t m => name_max (term_name t) m) seed ts)%positive.
+  Proof.
+    induction ts as [|t ts IH]; intro seed; cbn [fold_right]; [lia |].
+    specialize (IH seed).
+    pose proof (proj2 (name_max_bounds (term_name t)
+      (fold_right (fun t m => name_max (term_name t) m) seed ts))). lia.
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
