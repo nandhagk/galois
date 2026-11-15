@@ -12838,7 +12838,8 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
     N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
     fst (run p cp lim db) = Saturated.
-  Proof. Admitted. (* STUB *)
+  Proof.
+  Admitted. (* SIG-QUESTION: initial change flag exceeds the stated round bound; see RunTest. *)
 
   (** An identifier-limit stop is produced only by a round above the requested bound. *)
   Lemma run_loop_id_limit : forall p cp lim fuel nv db result,
