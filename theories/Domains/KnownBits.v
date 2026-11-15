@@ -5075,7 +5075,7 @@ Qed.
 Theorem tnum_rank_bounded : forall w a, tnum_rank w a <= 2 * Pos.to_nat w.
 Proof.
   intros w a. rewrite tnum_rank_equation. unfold tnum_unknown.
- 
+
   pose proof (filter_length_le (fun i => negb (Z.testbit (zeros a) (Z.of_nat i)))
     (seq 0 (Pos.to_nat w))) as Hz.
   pose proof (filter_length_le (fun i => negb (Z.testbit (ones a) (Z.of_nat i)))

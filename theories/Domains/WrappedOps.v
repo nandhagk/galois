@@ -1393,8 +1393,1002 @@ Proof.
   rewrite Nat2N.inj_mul in HbudgetN. lia.
 Qed.
 
+(** Signed division pieces finish in normalized conversion or normalized negation. *)
+Lemma wrapped_signed_piece_bits : forall division w a b,
+  (wrapped_bits (wrapped_signed_piece division w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros division w a b.
+  destruct a as [|la ha]; [change (0 <= 2 * Pos.to_nat w)%nat; lia|].
+  destruct b as [|lb hb]; [change (0 <= 2 * Pos.to_nat w)%nat; lia|].
+  unfold wrapped_signed_piece.
+  destruct (WrappedIntervalBack.interval_sign w (I la ha)) as [sa|];
+    [|change (0 <= 2 * Pos.to_nat w)%nat; lia].
+  destruct (WrappedIntervalBack.interval_sign w (I lb hb)) as [sb|];
+    [|change (0 <= 2 * Pos.to_nat w)%nat; lia].
+  destruct (if division then xorb sa sb else sa).
+  - apply wrapped_neg_bits_bound.
+  - apply wrapped_of_interval_bits.
+Qed.
+
+(** Signed division pieces use a fixed number of quadratic endpoint operations. *)
+Lemma wrapped_signed_piece_time : forall division w a b,
+  (T_wrapped_signed_piece division w a b <= 16777216 * N.of_nat
+    ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2))%N.
+Proof.
+  intros division w a b.
+  set (n := (Pos.to_nat w + interval_bits a + interval_bits b + 1)%nat).
+  pose proof (WordTime.time_square_floor n n ltac:(lia) ltac:(unfold n; lia)) as Hlinear.
+  assert (Hasign : (WrappedIntervalBack.T_interval_sign w a <=
+    300 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_interval_sign_time|unfold n; lia]. }
+  assert (Hbsign : (WrappedIntervalBack.T_interval_sign w b <=
+    300 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_interval_sign_time|unfold n; lia]. }
+  assert (Haneg : (WrappedIntervalBack.T_interval_neg w a <=
+    1000 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_interval_neg_time|unfold n; lia]. }
+  assert (Hbneg : (WrappedIntervalBack.T_interval_neg w b <=
+    1000 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_interval_neg_time|unfold n; lia]. }
+  assert (Hwork : forall (sa sb : bool),
+    let aa := if sa then WrappedIntervalBack.interval_neg w a else a in
+    let bb := if sb then WrappedIntervalBack.interval_neg w b else b in
+    (WrappedIntervalBack.T_interval_udiv w aa bb <=
+      162000 * N.of_nat (n ^ 2))%N /\
+    (WrappedIntervalBack.T_interval_urem w aa bb <=
+      162000 * N.of_nat (n ^ 2))%N /\
+    (interval_bits (WrappedIntervalBack.interval_udiv w aa bb) <= 12 * n)%nat /\
+    (interval_bits (WrappedIntervalBack.interval_urem w aa bb) <= 30 * n)%nat).
+  { intros sa sb aa bb.
+    assert (Ha : (interval_bits aa <= 4 * n)%nat).
+    { unfold aa. destruct sa; [|unfold n; lia].
+      pose proof (WrappedIntervalTableBounds.table_neg_raw_bits w a) as Hneg.
+      change (interval_bits (WrappedIntervalBack.interval_neg w a) <=
+        3 * Pos.to_nat w + 2 * interval_bits a + 4)%nat in Hneg.
+      unfold n. lia. }
+    assert (Hb : (interval_bits bb <= 4 * n)%nat).
+    { unfold bb. destruct sb; [|unfold n; lia].
+      pose proof (WrappedIntervalTableBounds.table_neg_raw_bits w b) as Hneg.
+      change (interval_bits (WrappedIntervalBack.interval_neg w b) <=
+        3 * Pos.to_nat w + 2 * interval_bits b + 4)%nat in Hneg.
+      unfold n. lia. }
+    split.
+    - exact (WordTime.time_square_scale _ _ _ n 9
+        (wrapped_interval_udiv_time w aa bb) ltac:(unfold n; lia)).
+    - split.
+      + exact (WordTime.time_square_scale _ _ _ n 9
+          (wrapped_interval_urem_time w aa bb) ltac:(unfold n; lia)).
+      + pose proof (WrappedIntervalTableBounds.table_udiv_raw_bits w aa bb) as Hu.
+        pose proof (WrappedIntervalTableBounds.table_urem_raw_bits w aa bb) as Hr.
+        change (interval_bits (WrappedIntervalBack.interval_udiv w aa bb) <=
+          2 * Pos.to_nat w + 2 * interval_bits aa + 1)%nat in Hu.
+        change (interval_bits (WrappedIntervalBack.interval_urem w aa bb) <=
+          Pos.to_nat w + 4 * interval_bits aa + 2 * interval_bits bb + 4)%nat in Hr.
+        unfold n. split; lia. }
+  destruct a as [|la ha], b as [|lb hb];
+    try (time_unfold T_wrapped_signed_piece; cbn beta iota zeta; lia).
+  time_unfold T_wrapped_signed_piece. cbn beta iota zeta.
+  destruct (WrappedIntervalBack.interval_sign w (I la ha)) as [sa|],
+    (WrappedIntervalBack.interval_sign w (I lb hb)) as [sb|];
+    cbn beta iota zeta;
+    try (clear -Hasign Hbsign Hlinear; rewrite ?Nat2N.inj_add in *; lia).
+  destruct (Hwork sa sb) as [Hdiv [Hrem [Hdivbits Hrembits]]].
+  set (aa := if sa then WrappedIntervalBack.interval_neg w (I la ha) else I la ha) in *.
+  set (bb := if sb then WrappedIntervalBack.interval_neg w (I lb hb) else I lb hb) in *.
+  set (u := WrappedIntervalBack.interval_udiv w aa bb) in *.
+  set (r := WrappedIntervalBack.interval_urem w aa bb) in *.
+  pose proof (wrapped_of_interval_bits w u) as Hubits.
+  pose proof (wrapped_of_interval_bits w r) as Hrbits.
+  set (square := N.of_nat (n ^ 2)) in *.
+  assert (Hwidth : (Pos.to_nat w + 1 <= n)%nat) by (unfold n; lia).
+  clear Hwork. clearbody aa bb u r n square.
+  destruct division, sa, sb; cbn beta iota zeta delta [xorb];
+    time_simpl; time_pose; rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_signed_piece_time.
+
+(** * Forward clocks for the circular word table
+
+    This module composes the interval-table clocks with normalization, pole clipping and
+    the supplied wrapped operations. For example, a binary transfer charges the raw arcs
+    linearly before processing sixteen pairs of bounded interval pieces.
+
+    Builds on: WrappedTableClock wrapped_interval_forward_time wrapped_signed_piece_time
+    wrapped_project_time wrapped_join_bits_bound wrapped_pole_cut_bits_bound
+
+    Result-size dispatch selects the operation constructor before applying a bound. *)
+
+Module WrappedForwardClockProof (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
+  Module Raw := WrappedTableClock L W.
+
+  (** Every scalar transfer result is normalized to its requested result width. *)
+  Lemma piece_forward_bits : forall o xs rw,
+    (wrapped_bits (Raw.piece_forward o xs rw) <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros o xs rw. unfold Raw.piece_forward.
+    destruct (existsb (fun x => match snd x with IBot => true | _ => false end) xs).
+    - change (0 <= 2 * Pos.to_nat rw)%nat. lia.
+    - destruct (WrappedIntervalTable.wfwd o rw xs) as [r|].
+      + apply wrapped_of_interval_bits.
+      + change (0 <= 2 * Pos.to_nat rw)%nat. lia.
+  Qed.
+
+  (** At most two scalar inputs add a constant bottom check and one normalized conversion. *)
+  Lemma piece_forward_time : forall o xs rw, (length xs <= 2)%nat ->
+    (Raw.T_piece_forward o xs rw <= 17592186044416 * N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0%nat (map (fun x => interval_bits (snd x)) xs)))%N.
+  Proof.
+    intros o xs rw Hlength.
+    pose proof (wrapped_interval_forward_time o rw xs) as Htable.
+    set (widths := fold_right Nat.add 0%nat
+      (map (fun x : width * itv => Pos.to_nat (fst x)) xs)) in *.
+    set (bits := fold_right Nat.add 0%nat
+      (map (fun x : width * itv => interval_bits (snd x)) xs)) in *.
+    change (WrappedIntervalTable.T_wfwd o rw xs <= 8796093022208 * N.of_nat
+      ((Pos.to_nat rw + widths + 1) ^ 2 + bits))%N in Htable.
+    change (Raw.T_piece_forward o xs rw <= 17592186044416 * N.of_nat
+      ((Pos.to_nat rw + widths + 1) ^ 2 + bits))%N.
+    assert (Hresults : forall r, WrappedIntervalTable.wfwd o rw xs = Some r ->
+      (interval_bits r <= 128 * (Pos.to_nat rw + widths + 1))%nat).
+    { intros r Hresult. exact (wrapped_interval_forward_bits o rw xs r Hresult). }
+    clearbody widths bits.
+    pose proof (WordTime.time_square_floor (Pos.to_nat rw + widths + 1)
+      (Pos.to_nat rw + widths + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+    pose proof (time_of_nat_le _ _ Hlength) as HlengthN.
+    time_unfold Raw.T_piece_forward. cbn beta iota zeta.
+    lazymatch goal with
+    | |- context [Std.List.T_existsb ?f ?Tf xs] =>
+      pose proof (Std.List.T_existsb_le f Tf 8 xs
+        ltac:(intros [w [|lo hi]]; time_simpl; lia)) as Hexists
+    end.
+    revert Hexists. time_simpl. intro Hexists.
+    destruct (existsb (fun x => match snd x with IBot => true | _ => false end) xs);
+      cbn beta iota zeta.
+    - rewrite ?Nat2N.inj_add in *.
+      set (square := N.of_nat ((Pos.to_nat rw + widths + 1) ^ 2)) in *.
+      clearbody square. time_simpl. lia.
+    - destruct (WrappedIntervalTable.wfwd o rw xs) as [r|] eqn:Hresult;
+        cbn beta iota zeta.
+      + pose proof (Hresults r eq_refl) as Hbits.
+        pose proof (wrapped_of_interval_time rw r) as Hconvert.
+        rewrite ?Nat2N.inj_add in *.
+        set (square := N.of_nat ((Pos.to_nat rw + widths + 1) ^ 2)) in *.
+        clearbody square. time_simpl. lia.
+      + rewrite ?Nat2N.inj_add in *.
+        set (square := N.of_nat ((Pos.to_nat rw + widths + 1) ^ 2)) in *.
+        clearbody square. time_simpl. lia.
+  Qed.
+
+  (** Joining the two unsigned pieces keeps a unary result normalized. *)
+  Lemma forward_unary_bits : forall o w a rw,
+    (wrapped_bits (Raw.forward_unary o w a rw) <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros. unfold Raw.forward_unary. apply wrapped_join_bits_bound.
+  Qed.
+
+  (** Unary approximation normalizes once and transfers two bounded scalar pieces. *)
+  Lemma forward_unary_time : forall o w a rw,
+    (Raw.T_forward_unary o w a rw <= 140737488355328 * N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
+  Proof.
+    intros o w a rw.
+    pose proof (wrapped_parts_bits w a) as [Ha0 Ha1].
+    set (pa := wrapped_parts w a) in *.
+    pose proof (piece_forward_time o [(w, fst pa)] rw ltac:(cbn; lia)) as Htime0.
+    pose proof (piece_forward_time o [(w, snd pa)] rw ltac:(cbn; lia)) as Htime1.
+    cbn [map fold_right fst snd] in Htime0, Htime1.
+    rewrite !Nat.add_0_r in Htime0, Htime1.
+    pose proof (piece_forward_bits o [(w, fst pa)] rw) as Hbits0.
+    pose proof (piece_forward_bits o [(w, snd pa)] rw) as Hbits1.
+    set (r0 := Raw.piece_forward o [(w, fst pa)] rw) in *.
+    set (r1 := Raw.piece_forward o [(w, snd pa)] rw) in *.
+    pose proof (wrapped_parts_time w a) as Hparts.
+    pose proof (wrapped_join_time rw r0 r1) as Hjoin.
+    pose proof (WordTime.time_square_floor (Pos.to_nat rw + Pos.to_nat w + 1)
+      (Pos.to_nat rw + Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat ((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2)) in *.
+    time_unfold Raw.T_forward_unary. cbn beta iota zeta. fold pa r0 r1.
+    clearbody pa r0 r1 square. time_simpl. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** Both signed special cases and scalar fallback return normalized result arcs. *)
+  Lemma piece_binary_bits : forall o wa wb a b rw,
+    (wrapped_bits (Raw.piece_binary o wa wb a b rw) <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros o wa wb a b rw. destruct o.
+    all: lazymatch goal with
+    | |- (wrapped_bits (Raw.piece_binary bvsdiv _ _ _ _ _) <= _)%nat =>
+      exact (wrapped_signed_piece_bits true rw a b)
+    | |- (wrapped_bits (Raw.piece_binary bvsrem _ _ _ _ _) <= _)%nat =>
+      exact (wrapped_signed_piece_bits false rw a b)
+    | |- (wrapped_bits (Raw.piece_binary ?operation _ _ _ _ _) <= _)%nat =>
+      exact (piece_forward_bits operation [(wa, a); (wb, b)] rw)
+    end.
+  Qed.
+
+  (** Word-sized scalar inputs make every binary piece quadratic only in the widths. *)
+  Lemma piece_binary_time : forall o wa wb a b rw,
+    (interval_bits a <= Pos.to_nat wa)%nat ->
+    (interval_bits b <= Pos.to_nat wb)%nat ->
+    (Raw.T_piece_binary o wa wb a b rw <= 70368744177664 * N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2))%N.
+  Proof.
+    intros o wa wb a b rw Ha Hb.
+    pose proof (time_of_nat_le _ _ Ha) as HaN.
+    pose proof (time_of_nat_le _ _ Hb) as HbN.
+    pose proof (piece_forward_time o [(wa, a); (wb, b)] rw ltac:(cbn; lia)) as Hforward.
+    cbn [map fold_right fst snd] in Hforward. rewrite !Nat.add_0_r in Hforward.
+    replace (Pos.to_nat rw + (Pos.to_nat wa + Pos.to_nat wb) + 1)%nat with
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)%nat in Hforward by lia.
+    assert (Hdivision : (T_wrapped_signed_piece true rw a b <= 16777216 * N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2))%N).
+    { eapply WordTime.time_square_weaken; [apply wrapped_signed_piece_time|lia]. }
+    assert (Hremainder : (T_wrapped_signed_piece false rw a b <= 16777216 * N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2))%N).
+    { eapply WordTime.time_square_weaken; [apply wrapped_signed_piece_time|lia]. }
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2)) in *.
+    clearbody square.
+    assert (Hforward' : (Raw.T_piece_forward o [(wa, a); (wb, b)] rw <=
+      35184372088832 * square)%N) by lia.
+    destruct o; time_unfold Raw.T_piece_binary;
+      cbn beta iota zeta; time_simpl.
+    all: lazymatch goal with
+    | |- context [Raw.T_piece_forward _ _ _] =>
+      lazymatch type of Hforward' with
+      | (?cost <= _)%N => change (1 + cost <= 70368744177664 * square)%N
+      end
+    | _ => idtac
+    end.
+    all: lia.
+  Qed.
+
+  (** Joining four pole-clipped transfers keeps the result normalized. *)
+  Lemma piece_cut_bits : forall o wa wb a b rw,
+    (wrapped_bits (Raw.piece_cut o wa wb a b rw) <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros. unfold Raw.piece_cut. apply wrapped_join_four_bits.
+  Qed.
+
+  (** Pole clipping charges raw scalar storage linearly before four bounded transfers. *)
+  Lemma piece_cut_time : forall o wa wb a b rw,
+    (Raw.T_piece_cut o wa wb a b rw <= 562949953421312 * N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        interval_bits a + interval_bits b))%N.
+  Proof.
+    intros o wa wb a b rw.
+    pose proof (wrapped_pole_cut_bits_bound wa a) as [Ha0 Ha1].
+    pose proof (wrapped_pole_cut_bits_bound wb b) as [Hb0 Hb1].
+    set (pa := wrapped_pole_cut wa a) in *.
+    set (pb := wrapped_pole_cut wb b) in *.
+    pose proof (piece_binary_time o wa wb (fst pa) (fst pb) rw Ha0 Hb0) as HT00.
+    pose proof (piece_binary_time o wa wb (fst pa) (snd pb) rw Ha0 Hb1) as HT01.
+    pose proof (piece_binary_time o wa wb (snd pa) (fst pb) rw Ha1 Hb0) as HT10.
+    pose proof (piece_binary_time o wa wb (snd pa) (snd pb) rw Ha1 Hb1) as HT11.
+    pose proof (piece_binary_bits o wa wb (fst pa) (fst pb) rw) as H00.
+    pose proof (piece_binary_bits o wa wb (fst pa) (snd pb) rw) as H01.
+    pose proof (piece_binary_bits o wa wb (snd pa) (fst pb) rw) as H10.
+    pose proof (piece_binary_bits o wa wb (snd pa) (snd pb) rw) as H11.
+    set (r00 := Raw.piece_binary o wa wb (fst pa) (fst pb) rw) in *.
+    set (r01 := Raw.piece_binary o wa wb (fst pa) (snd pb) rw) in *.
+    set (r10 := Raw.piece_binary o wa wb (snd pa) (fst pb) rw) in *.
+    set (r11 := Raw.piece_binary o wa wb (snd pa) (snd pb) rw) in *.
+    pose proof (wrapped_pole_cut_time wa a) as Hcuta.
+    pose proof (wrapped_pole_cut_time wb b) as Hcutb.
+    pose proof (wrapped_join_four_time rw r00 r01 r10 r11) as Hjoin.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2)) in *.
+    time_unfold Raw.T_piece_cut. cbn beta iota zeta. fold pa pb r00 r01 r10 r11.
+    clearbody pa pb r00 r01 r10 r11 square.
+    time_simpl. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** Joining the four unsigned pairs keeps a binary result normalized. *)
+  Lemma forward_binary_bits : forall o wa wb a b rw,
+    (wrapped_bits (Raw.forward_binary o wa wb a b rw) <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros. unfold Raw.forward_binary. apply wrapped_join_four_bits.
+  Qed.
+
+  (** Binary approximation normalizes the raw arcs before processing sixteen scalar pairs. *)
+  Lemma forward_binary_time : forall o wa wb a b rw,
+    (Raw.T_forward_binary o wa wb a b rw <= 9007199254740992 * N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        wrapped_bits a + wrapped_bits b))%N.
+  Proof.
+    intros o wa wb a b rw.
+    pose proof (wrapped_parts_bits wa a) as [Ha0 Ha1].
+    pose proof (wrapped_parts_bits wb b) as [Hb0 Hb1].
+    set (pa := wrapped_parts wa a) in *.
+    set (pb := wrapped_parts wb b) in *.
+    pose proof (piece_cut_time o wa wb (fst pa) (fst pb) rw) as HT00.
+    pose proof (piece_cut_time o wa wb (fst pa) (snd pb) rw) as HT01.
+    pose proof (piece_cut_time o wa wb (snd pa) (fst pb) rw) as HT10.
+    pose proof (piece_cut_time o wa wb (snd pa) (snd pb) rw) as HT11.
+    pose proof (piece_cut_bits o wa wb (fst pa) (fst pb) rw) as H00.
+    pose proof (piece_cut_bits o wa wb (fst pa) (snd pb) rw) as H01.
+    pose proof (piece_cut_bits o wa wb (snd pa) (fst pb) rw) as H10.
+    pose proof (piece_cut_bits o wa wb (snd pa) (snd pb) rw) as H11.
+    set (r00 := Raw.piece_cut o wa wb (fst pa) (fst pb) rw) in *.
+    set (r01 := Raw.piece_cut o wa wb (fst pa) (snd pb) rw) in *.
+    set (r10 := Raw.piece_cut o wa wb (snd pa) (fst pb) rw) in *.
+    set (r11 := Raw.piece_cut o wa wb (snd pa) (snd pb) rw) in *.
+    pose proof (wrapped_parts_time wa a) as Hpartsa.
+    pose proof (wrapped_parts_time wb b) as Hpartsb.
+    pose proof (wrapped_join_four_time rw r00 r01 r10 r11) as Hjoin.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2)) in *.
+    time_unfold Raw.T_forward_binary. cbn beta iota zeta. fold pa pb r00 r01 r10 r11.
+    clearbody pa pb r00 r01 r10 r11 square.
+    time_simpl. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** A singleton raw call selects supplied negation, projection, or unary approximation. *)
+  Lemma forward_one_time : forall o rw w a,
+    (Raw.T_forward_raw o rw [(w, a)] <=
+      (W.c_wrapped + 4 * W.c_payload + 18014398509481984) * N.of_nat
+        ((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2 + wrapped_bits a))%N.
+  Proof.
+    intros o rw w a.
+    pose proof (W.T_wrapped_neg_le rw a) as Hneg.
+    pose proof (wrapped_project_time rw w a) as Hproject.
+    pose proof (forward_unary_time o w a rw) as Hforward.
+    assert (Hsmall : (N.of_nat ((Pos.to_nat rw + 1) ^ 2) <=
+      N.of_nat ((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2))%N).
+    { apply time_of_nat_le, Nat.pow_le_mono_l. lia. }
+    pose proof (WordTime.time_square_floor (Pos.to_nat rw + Pos.to_nat w + 1)
+      (Pos.to_nat rw + Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat ((Pos.to_nat rw + Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody square. destruct o; time_unfold Raw.T_forward_raw;
+      cbn beta iota zeta; time_simpl; nia.
+  Qed.
+
+  (** A binary raw call uses a supplied arithmetic clock or the bounded-piece approximation. *)
+  Lemma forward_two_time : forall o rw wa wb a b,
+    (Raw.T_forward_raw o rw [(wa, a); (wb, b)] <=
+      (W.c_wrapped + 4 * W.c_payload + 18014398509481984) * N.of_nat
+        ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+          wrapped_bits a + wrapped_bits b))%N.
+  Proof.
+    intros o rw wa wb a b.
+    pose proof (W.T_wrapped_add_le rw a b) as Hadd.
+    pose proof (W.T_wrapped_sub_le rw a b) as Hsub.
+    pose proof (W.T_wrapped_mul_le rw a b) as Hmul.
+    pose proof (forward_binary_time o wa wb a b rw) as Hforward.
+    assert (Hsmall : (N.of_nat ((Pos.to_nat rw + 1) ^ 2) <=
+      N.of_nat ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2))%N).
+    { apply time_of_nat_le, Nat.pow_le_mono_l. lia. }
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      (Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2)) in *.
+    clearbody square. destruct o; time_unfold Raw.T_forward_raw;
+      cbn beta iota zeta; time_simpl; nia.
+  Qed.
+
+  (** Ternary dispatch charges one supplied payload join only for conditional selection. *)
+  Lemma forward_three_time : forall o rw w v u a b c,
+    (Raw.T_forward_raw o rw [(w, a); (v, b); (u, c)] <=
+      (W.c_wrapped + 4 * W.c_payload + 18014398509481984) * N.of_nat
+        ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1) ^ 2 +
+          wrapped_bits a + wrapped_bits b + wrapped_bits c))%N.
+  Proof.
+    intros o rw w v u a b c.
+    pose proof (W.T_pjoin_le rw b c) as Hjoin. rewrite !W.psize_bits in Hjoin.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1)
+      (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1) ^ 2)) in *.
+    clearbody square. destruct o; time_unfold Raw.T_forward_raw;
+      cbn beta iota zeta; time_simpl; nia.
+  Qed.
+
+  (** Every raw forward shape fits a squared width budget plus linear raw endpoint storage. *)
+  Lemma forward_raw_time : forall o rw (xs : list (width * wrapped)),
+    (Raw.T_forward_raw o rw xs <=
+      (W.c_wrapped + 4 * W.c_payload + 18014398509481984) * N.of_nat
+        ((Pos.to_nat rw + fold_right Nat.add 0%nat
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+          fold_right Nat.add 0%nat (map (fun x => wrapped_bits (snd x)) xs)))%N.
+  Proof.
+    intros o rw xs.
+    destruct xs as [|[w a] [|[v b] [|[u c] [|[s d] xs]]]].
+    - cbn [map fold_right]. rewrite !Nat.add_0_r.
+      pose proof (WordTime.time_square_floor 1 (Pos.to_nat rw + 1)
+        ltac:(lia) ltac:(lia)) as Hpositive.
+      set (square := N.of_nat ((Pos.to_nat rw + 1) ^ 2)) in *.
+      clearbody square. time_unfold Raw.T_forward_raw.
+      cbn beta iota zeta. time_simpl. nia.
+    - cbn [map fold_right fst snd]. rewrite !Nat.add_0_r. apply forward_one_time.
+    - cbn [map fold_right fst snd]. rewrite !Nat.add_0_r.
+      replace (Pos.to_nat rw + (Pos.to_nat w + Pos.to_nat v) + 1)%nat with
+        (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1)%nat by lia.
+      rewrite Nat.add_assoc. apply forward_two_time.
+    - cbn [map fold_right fst snd]. rewrite !Nat.add_0_r.
+      replace (Pos.to_nat rw + (Pos.to_nat w + (Pos.to_nat v + Pos.to_nat u)) + 1)%nat with
+        (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1)%nat by lia.
+      rewrite !Nat.add_assoc. apply forward_three_time.
+    - set (budget := N.of_nat
+        ((Pos.to_nat rw + fold_right Nat.add 0%nat
+          (map (fun x : width * wrapped => Pos.to_nat (fst x))
+            ((w, a) :: (v, b) :: (u, c) :: (s, d) :: xs)) + 1) ^ 2 +
+          fold_right Nat.add 0%nat (map (fun x : width * wrapped => wrapped_bits (snd x))
+            ((w, a) :: (v, b) :: (u, c) :: (s, d) :: xs)))).
+      change (Raw.T_forward_raw o rw ((w, a) :: (v, b) :: (u, c) :: (s, d) :: xs) <=
+        (W.c_wrapped + 4 * W.c_payload + 18014398509481984) * budget)%N.
+      assert (Hpositive : (1 <= budget)%N).
+      { unfold budget. change 1%N with (N.of_nat 1%nat).
+        apply time_of_nat_le. cbn [Nat.pow]. nia. }
+      clearbody budget. time_unfold Raw.T_forward_raw.
+      cbn beta iota zeta. time_simpl. nia.
+  Qed.
+
+  (** Abstract payload storage covers every concrete wrapped endpoint bit. *)
+  Lemma input_bits_storage : forall xs : list (width * wrapped),
+    (fold_right Nat.add 0%nat (map (fun x => wrapped_bits (snd x)) xs) <=
+      fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs))%nat.
+  Proof.
+    induction xs as [|[w a] xs IH]; cbn [map fold_right fst snd]; [lia|].
+    rewrite W.psize_bits. lia.
+  Qed.
+
+  (** The public forward wrapper preserves the raw bound under the payload storage pin. *)
+  Lemma wfwd_time : forall o rw (xs : list (width * wrapped)),
+    (Raw.T_wfwd o rw xs <=
+      (W.c_wrapped + 4 * W.c_payload + 36028797018963968) * N.of_nat
+        ((Pos.to_nat rw + fold_right Nat.add 0%nat
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+          fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs)))%N.
+  Proof.
+    intros o rw xs. pose proof (forward_raw_time o rw xs) as Hraw.
+    pose proof (input_bits_storage xs) as Hstorage.
+    pose proof (time_of_nat_le _ _ Hstorage) as HstorageN.
+    pose proof (WordTime.time_square_floor 1
+      (Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x : width * wrapped => Pos.to_nat (fst x)) xs) + 1)
+      ltac:(lia) ltac:(lia)) as Hpositive.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x : width * wrapped => Pos.to_nat (fst x)) xs) + 1) ^ 2)) in *.
+    change (Raw.T_forward_raw o rw xs <=
+      (W.c_wrapped + 4 * W.c_payload + 18014398509481984) *
+        (square + N.of_nat (fold_right Nat.add 0%nat
+          (map (fun x : width * wrapped => wrapped_bits (snd x)) xs))))%N in Hraw.
+    change (Raw.T_wfwd o rw xs <=
+      (W.c_wrapped + 4 * W.c_payload + 36028797018963968) *
+        (square + N.of_nat (fold_right Nat.add 0%nat
+          (map (fun x : positive * W.p => W.psize (fst x) (snd x)) xs))))%N.
+    clearbody square. time_unfold Raw.T_wfwd. cbn beta iota zeta. time_simpl. nia.
+  Qed.
+End WrappedForwardClockProof.
+
+Module WrappedBackwardClockProof (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
+  Module ForwardClock := WrappedForwardClockProof L W.
+  Include ForwardClock.Raw.
+
+  (** Consistency computes one forward image and intersects its bounded result. *)
+  Lemma assume_consistent_time : forall o wa wb a b q,
+    (T_assume_consistent o wa wb a b q <= 70368744177664 * N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        interval_bits a + interval_bits b + interval_bits q))%N.
+  Proof.
+    intros o wa wb a b q.
+    set (n := (Pos.to_nat wa + Pos.to_nat wb + 1)%nat).
+    set (budget_nat := (n ^ 2 + interval_bits a + interval_bits b + interval_bits q)%nat).
+    pose proof (wrapped_backward_square_floor n ltac:(unfold n; lia)) as Hfloor.
+    pose proof (wrapped_binary_result_width_time o wa wb) as Hcheck.
+    fold n in Hcheck.
+    time_unfold T_assume_consistent. cbn beta iota zeta.
+    destruct (result_width o [wa; wb]) as [rw|] eqn:Hresult.
+    - pose proof (wrapped_binary_result_width_bits o wa wb rw Hresult) as Hwidth.
+      fold n in Hwidth.
+      pose proof (wrapped_interval_forward_time o rw [(wa, a); (wb, b)]) as Hforward.
+      cbn [map fold_right fst snd] in Hforward. rewrite !Nat.add_0_r in Hforward.
+      assert (Hsquare : ((Pos.to_nat rw + (Pos.to_nat wa + Pos.to_nat wb) + 1) ^ 2 <=
+        4 * n ^ 2)%nat).
+      { pose proof (wrapped_backward_square_scale
+          (Pos.to_nat rw + (Pos.to_nat wa + Pos.to_nat wb) + 1) n 2
+          ltac:(unfold n in *; lia)). lia. }
+      assert (Hforward_budget :
+        ((Pos.to_nat rw + (Pos.to_nat wa + Pos.to_nat wb) + 1) ^ 2 +
+          (interval_bits a + interval_bits b) <= 4 * budget_nat)%nat)
+        by (unfold budget_nat; lia).
+      pose proof (time_of_nat_le _ _ Hforward_budget) as HforwardN.
+      rewrite Nat2N.inj_mul in HforwardN.
+      pose proof (wrapped_backward_top_time rw) as Htop.
+      destruct (WrappedIntervalTable.wfwd o rw [(wa, a); (wb, b)]) as [r|] eqn:Hforward_result.
+      + pose proof (wrapped_interval_forward_bits o rw [(wa, a); (wb, b)] r
+          Hforward_result) as Hresult_bits.
+        cbn [map fold_right fst snd] in Hresult_bits. rewrite !Nat.add_0_r in Hresult_bits.
+        pose proof (WrappedScalar.T_interval_meet_le r q) as Hmeet.
+        change (WrappedScalar.T_interval_meet r q <=
+          32800 * N.of_nat (interval_bits r + interval_bits q + 1))%N in Hmeet.
+        assert (Hmeet_budget :
+          (interval_bits r + interval_bits q + 1 <= 258 * budget_nat)%nat)
+          by (unfold budget_nat, n in *; lia).
+        pose proof (time_of_nat_le _ _ Hmeet_budget) as HmeetN.
+        rewrite Nat2N.inj_mul in HmeetN.
+        assert (Hlinear_budget : (n <= budget_nat)%nat) by (unfold budget_nat; lia).
+        pose proof (time_of_nat_le _ _ Hlinear_budget) as HlinearN.
+        assert (Hpositive : (1 <= N.of_nat budget_nat)%N)
+          by (unfold budget_nat, n in *; lia).
+        fold budget_nat. set (budget := N.of_nat budget_nat) in *.
+        clearbody budget. destruct (WrappedScalar.interval_meet r q);
+          cbn beta iota zeta; time_simpl;
+          lazymatch type of Hcheck with
+          | (?tc <= _)%N => lazymatch type of Hforward with
+            | (?tf <= _)%N => lazymatch type of Hmeet with
+              | (?tm <= _)%N =>
+                change (1 + (tc + (tf + 0 + tm)) <= 70368744177664 * budget)%N
+              end
+            end
+          end;
+          change (N.of_nat 4) with 4%N in HforwardN;
+          change (N.of_nat 258) with 258%N in HmeetN;
+          clear -Hcheck Hforward HforwardN Hmeet HmeetN HlinearN Hpositive;
+          clearbody n; lia.
+      + pose proof (wrapped_backward_top_bits rw) as Htop_bits.
+        pose proof (WrappedScalar.T_interval_meet_le
+          (WrappedIntervalBack.interval_top rw) q) as Hmeet.
+        change (WrappedScalar.T_interval_meet (WrappedIntervalBack.interval_top rw) q <=
+          32800 * N.of_nat
+            (interval_bits (WrappedIntervalBack.interval_top rw) + interval_bits q + 1))%N
+          in Hmeet.
+        assert (Hmeet_budget :
+          (interval_bits (WrappedIntervalBack.interval_top rw) + interval_bits q + 1 <=
+            3 * budget_nat)%nat) by (unfold budget_nat, n in *; lia).
+        pose proof (time_of_nat_le _ _ Hmeet_budget) as HmeetN.
+        rewrite Nat2N.inj_mul in HmeetN.
+        assert (Hlinear_budget : (Pos.to_nat rw + 1 + n <= 3 * budget_nat)%nat)
+          by (unfold budget_nat, n in *; lia).
+        pose proof (time_of_nat_le _ _ Hlinear_budget) as HlinearN.
+        rewrite Nat2N.inj_mul, !Nat2N.inj_add in HlinearN.
+        assert (Hpositive : (1 <= N.of_nat budget_nat)%N)
+          by (unfold budget_nat, n in *; lia).
+        fold budget_nat. set (budget := N.of_nat budget_nat) in *.
+        clearbody budget. destruct (WrappedScalar.interval_meet
+          (WrappedIntervalBack.interval_top rw) q);
+          cbn beta iota zeta; time_simpl;
+          lazymatch type of Hcheck with
+          | (?tc <= _)%N => lazymatch type of Hforward with
+            | (?tf <= _)%N => lazymatch type of Htop with
+              | (?tt <= _)%N => lazymatch type of Hmeet with
+                | (?tm <= _)%N =>
+                  change (1 + (tc + (tf + tt + tm)) <= 70368744177664 * budget)%N
+                end
+              end
+            end
+          end;
+          rewrite ?Nat2N.inj_add in *; lia.
+    - assert (Hlinear_budget : (n <= budget_nat)%nat) by (unfold budget_nat; lia).
+      pose proof (time_of_nat_le _ _ Hlinear_budget) as HlinearN.
+      assert (Hpositive : (1 <= N.of_nat budget_nat)%N)
+        by (unfold budget_nat, n in *; lia).
+      fold budget_nat. set (budget := N.of_nat budget_nat) in *.
+      clearbody budget. cbn beta iota zeta. time_simpl.
+      lazymatch type of Hcheck with
+      | (?tc <= _)%N => change (1 + (tc + 0) <= 70368744177664 * budget)%N
+      end. lia.
+  Qed.
+  TimeBound assume_consistent_time.
+
+  (** A raw refined piece ends in normalized conversion at each operand width. *)
+  Lemma assume_piece_raw_bits : forall o wa wb a b q,
+    (wrapped_bits (fst (assume_piece_raw o wa wb a b q)) <= 2 * Pos.to_nat wa)%nat /\
+    (wrapped_bits (snd (assume_piece_raw o wa wb a b q)) <= 2 * Pos.to_nat wb)%nat.
+  Proof.
+    intros o wa wb [|la ha] [|lb hb] [|lq hq];
+      try (cbn [assume_piece_raw wrapped_bits fst snd]; lia).
+    unfold assume_piece_raw. destruct (assume_consistent o wa wb (I la ha) (I lb hb) (I lq hq));
+      cbn [fst snd]; [split; apply wrapped_of_interval_bits|cbn [wrapped_bits]; lia].
+  Qed.
+
+  (** Raw pieces keep the requested result size outside the quadratic work. *)
+  Lemma assume_piece_raw_time : forall o wa wb a b q,
+    (T_assume_piece_raw o wa wb a b q <= 1125899906842624 * N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + interval_bits a + interval_bits b + 1) ^ 2 +
+        interval_bits q))%N.
+  Proof.
+    intros o wa wb a b q.
+    set (n := (Pos.to_nat wa + Pos.to_nat wb + interval_bits a + interval_bits b + 1)%nat).
+    set (budget_nat := (n ^ 2 + interval_bits q)%nat).
+    pose proof (wrapped_backward_square_floor n ltac:(unfold n; lia)) as Hfloor.
+    pose proof (assume_consistent_time o wa wb a b q) as Hconsistent.
+    assert (Hsquare : ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 <= n ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold n; lia).
+    assert (Hconsistent_budget :
+      ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        interval_bits a + interval_bits b + interval_bits q <= 2 * budget_nat)%nat)
+      by (unfold budget_nat, n in *; lia).
+    pose proof (time_of_nat_le _ _ Hconsistent_budget) as HconsistentN.
+    rewrite Nat2N.inj_mul in HconsistentN.
+    pose proof (wrapped_interval_refine_time o wa a b q) as Hrefine.
+    assert (Hrefine_square :
+      ((Pos.to_nat wa + interval_bits a + interval_bits b + 1) ^ 2 <= n ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; unfold n; lia).
+    assert (Hrefine_budget :
+      ((Pos.to_nat wa + interval_bits a + interval_bits b + 1) ^ 2 + interval_bits q <=
+        budget_nat)%nat) by (unfold budget_nat; lia).
+    pose proof (time_of_nat_le _ _ Hrefine_budget) as HrefineN.
+    pose proof (wrapped_interval_refine_bits o wa a b q) as Hrefine_bits.
+    set (refined := WrappedIntervalBack.interval_assume_pair o wa a b q) in *.
+    pose proof (wrapped_of_interval_time wa (fst refined)) as Hleft.
+    pose proof (wrapped_of_interval_time wb (snd refined)) as Hright.
+    assert (Hconvert_budget :
+      (Pos.to_nat wa + interval_bits (fst refined) + 1 +
+        (Pos.to_nat wb + interval_bits (snd refined) + 1) <= 8 * budget_nat)%nat)
+      by (unfold budget_nat, n in *; lia).
+    pose proof (time_of_nat_le _ _ Hconvert_budget) as HconvertN.
+    rewrite Nat2N.inj_mul, Nat2N.inj_add in HconvertN.
+    assert (Hpositive : (1 <= N.of_nat budget_nat)%N)
+      by (unfold budget_nat, n in *; lia).
+    fold budget_nat. set (budget := N.of_nat budget_nat) in *.
+    destruct a as [|la ha], b as [|lb hb], q as [|lq hq];
+      time_unfold T_assume_piece_raw; cbn beta iota zeta;
+      try (clearbody budget; time_simpl; lia).
+    fold refined. clearbody refined budget.
+    destruct (assume_consistent o wa wb (I la ha) (I lb hb) (I lq hq));
+      cbn beta iota zeta; time_simpl; lia.
+  Qed.
+  TimeBound assume_piece_raw_time.
+
+  (** Width-bounded pieces admit a square containing only the two operand widths. *)
+  Lemma assume_piece_raw_time_word : forall o wa wb a b q,
+    (interval_bits a <= Pos.to_nat wa)%nat ->
+    (interval_bits b <= Pos.to_nat wb)%nat ->
+    (T_assume_piece_raw o wa wb a b q <= 4503599627370496 * N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 + interval_bits q))%N.
+  Proof.
+    intros o wa wb a b q Ha Hb.
+    pose proof (assume_piece_raw_time o wa wb a b q) as Htime.
+    pose proof (wrapped_backward_square_scale
+      (Pos.to_nat wa + Pos.to_nat wb + interval_bits a + interval_bits b + 1)
+      (Pos.to_nat wa + Pos.to_nat wb + 1) 2 ltac:(lia)) as Hsquare.
+    assert (Hbudget :
+      ((Pos.to_nat wa + Pos.to_nat wb + interval_bits a + interval_bits b + 1) ^ 2 +
+        interval_bits q <=
+        4 * ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 + interval_bits q))%nat) by lia.
+    pose proof (time_of_nat_le _ _ Hbudget) as HbudgetN.
+    rewrite Nat2N.inj_mul in HbudgetN. lia.
+  Qed.
+
+  (** A pole-cut piece joins four normalized coordinate pairs. *)
+  Lemma assume_piece_bits : forall o wa wb a b q,
+    (wrapped_bits (fst (assume_piece o wa wb a b q)) <= 2 * Pos.to_nat wa)%nat /\
+    (wrapped_bits (snd (assume_piece o wa wb a b q)) <= 2 * Pos.to_nat wb)%nat.
+  Proof.
+    intros. unfold assume_piece. apply wrapped_pair_join_bits.
+  Qed.
+
+  (** Pole clipping separates linear raw endpoint work from quadratic piece work. *)
+  Lemma assume_piece_time : forall o wa wb a b q,
+    (T_assume_piece o wa wb a b q <= 288230376151711744 * N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 +
+        interval_bits a + interval_bits b + interval_bits q))%N.
+  Proof.
+    intros o wa wb a b q.
+    pose proof (wrapped_backward_pole_bits wa a) as [Ha0 Ha1].
+    pose proof (wrapped_backward_pole_bits wb b) as [Hb0 Hb1].
+    pose proof (wrapped_pole_cut_time wa a) as Hcut_a.
+    pose proof (wrapped_pole_cut_time wb b) as Hcut_b.
+    set (pa := wrapped_pole_cut wa a) in *.
+    set (pb := wrapped_pole_cut wb b) in *.
+    pose proof (assume_piece_raw_time_word o wa wb (fst pa) (fst pb) q Ha0 Hb0) as HT00.
+    pose proof (assume_piece_raw_time_word o wa wb (fst pa) (snd pb) q Ha0 Hb1) as HT01.
+    pose proof (assume_piece_raw_time_word o wa wb (snd pa) (fst pb) q Ha1 Hb0) as HT10.
+    pose proof (assume_piece_raw_time_word o wa wb (snd pa) (snd pb) q Ha1 Hb1) as HT11.
+    pose proof (assume_piece_raw_bits o wa wb (fst pa) (fst pb) q) as [H00a H00b].
+    pose proof (assume_piece_raw_bits o wa wb (fst pa) (snd pb) q) as [H01a H01b].
+    pose proof (assume_piece_raw_bits o wa wb (snd pa) (fst pb) q) as [H10a H10b].
+    pose proof (assume_piece_raw_bits o wa wb (snd pa) (snd pb) q) as [H11a H11b].
+    set (r00 := assume_piece_raw o wa wb (fst pa) (fst pb) q) in *.
+    set (r01 := assume_piece_raw o wa wb (fst pa) (snd pb) q) in *.
+    set (r10 := assume_piece_raw o wa wb (snd pa) (fst pb) q) in *.
+    set (r11 := assume_piece_raw o wa wb (snd pa) (snd pb) q) in *.
+    pose proof (wrapped_pair_join_time wa wb r00 r01) as Hjoin_left.
+    pose proof (wrapped_pair_join_time wa wb r10 r11) as Hjoin_right.
+    pose proof (wrapped_pair_join_bits wa wb r00 r01) as [Hlefta Hleftb].
+    pose proof (wrapped_pair_join_bits wa wb r10 r11) as [Hrighta Hrightb].
+    set (left := wrapped_pair_join wa wb r00 r01) in *.
+    set (right := wrapped_pair_join wa wb r10 r11) in *.
+    pose proof (wrapped_pair_join_time wa wb left right) as Hjoin.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat wa + Pos.to_nat wb + 1) (Pos.to_nat wa + Pos.to_nat wb + 1)
+      (Nat.le_refl _) ltac:(lia)) as Hfloor.
+    rewrite !Nat2N.inj_add in *.
+    set (square := N.of_nat ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2)) in *.
+    time_unfold T_assume_piece. cbn beta iota zeta.
+    fold pa pb r00 r01 r10 r11 left right.
+    clearbody pa pb r00 r01 r10 r11 left right square.
+    time_simpl. lia.
+  Qed.
+  TimeBound assume_piece_time.
+
+  (** Splitting the requested result still returns normalized operand coordinates. *)
+  Lemma assume_result_bits : forall o wa wb a b rw q,
+    (wrapped_bits (fst (assume_result o wa wb a b rw q)) <= 2 * Pos.to_nat wa)%nat /\
+    (wrapped_bits (snd (assume_result o wa wb a b rw q)) <= 2 * Pos.to_nat wb)%nat.
+  Proof.
+    intros. unfold assume_result. apply wrapped_pair_join_bits.
+  Qed.
+
+  (** The requested circular result is normalized before its two piece checks. *)
+  Lemma assume_result_time : forall o wa wb a b rw q,
+    (T_assume_result o wa wb a b rw q <= 4611686018427387904 * N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2 +
+        interval_bits a + interval_bits b + wrapped_bits q))%N.
+  Proof.
+    intros o wa wb a b rw q.
+    pose proof (wrapped_parts_bits rw q) as [Hq0 Hq1].
+    pose proof (wrapped_parts_time rw q) as Hparts.
+    set (results := wrapped_parts rw q) in *.
+    pose proof (assume_piece_time o wa wb a b (fst results)) as Hleft.
+    pose proof (assume_piece_time o wa wb a b (snd results)) as Hright.
+    pose proof (assume_piece_bits o wa wb a b (fst results)) as [Hlefta Hleftb].
+    pose proof (assume_piece_bits o wa wb a b (snd results)) as [Hrighta Hrightb].
+    set (left := assume_piece o wa wb a b (fst results)) in *.
+    set (right := assume_piece o wa wb a b (snd results)) in *.
+    pose proof (wrapped_pair_join_time wa wb left right) as Hjoin.
+    assert (Hsquare : ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2 <=
+      (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2)%nat)
+      by (apply Nat.pow_le_mono_l; lia).
+    pose proof (time_of_nat_le _ _ Hsquare) as HsquareN.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+      (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+      (Nat.le_refl _) ltac:(lia)) as Hfloor.
+    rewrite !Nat2N.inj_add in *.
+    set (small_square := N.of_nat ((Pos.to_nat wa + Pos.to_nat wb + 1) ^ 2)) in *.
+    set (square := N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2)) in *.
+    time_unfold T_assume_result. cbn beta iota zeta.
+    fold results left right. clearbody results left right small_square square.
+    time_simpl. lia.
+  Qed.
+  TimeBound assume_result_time.
+
+  (** Four normalized operand-piece pairs are intersected with the original operands. *)
+  Lemma assume_binary_base_time : forall o wa wb a b rw q,
+    (T_assume_binary_base o wa wb a b rw q <= 295147905179352825856 * N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2 +
+        wrapped_bits a + wrapped_bits b + wrapped_bits q))%N.
+  Proof.
+    intros o wa wb a b rw q.
+    pose proof (wrapped_parts_bits wa a) as [Ha0 Ha1].
+    pose proof (wrapped_parts_bits wb b) as [Hb0 Hb1].
+    pose proof (wrapped_parts_time wa a) as Hparts_a.
+    pose proof (wrapped_parts_time wb b) as Hparts_b.
+    set (pa := wrapped_parts wa a) in *.
+    set (pb := wrapped_parts wb b) in *.
+    pose proof (assume_result_time o wa wb (fst pa) (fst pb) rw q) as HT00.
+    pose proof (assume_result_time o wa wb (fst pa) (snd pb) rw q) as HT01.
+    pose proof (assume_result_time o wa wb (snd pa) (fst pb) rw q) as HT10.
+    pose proof (assume_result_time o wa wb (snd pa) (snd pb) rw q) as HT11.
+    pose proof (assume_result_bits o wa wb (fst pa) (fst pb) rw q) as [H00a H00b].
+    pose proof (assume_result_bits o wa wb (fst pa) (snd pb) rw q) as [H01a H01b].
+    pose proof (assume_result_bits o wa wb (snd pa) (fst pb) rw q) as [H10a H10b].
+    pose proof (assume_result_bits o wa wb (snd pa) (snd pb) rw q) as [H11a H11b].
+    set (r00 := assume_result o wa wb (fst pa) (fst pb) rw q) in *.
+    set (r01 := assume_result o wa wb (fst pa) (snd pb) rw q) in *.
+    set (r10 := assume_result o wa wb (snd pa) (fst pb) rw q) in *.
+    set (r11 := assume_result o wa wb (snd pa) (snd pb) rw q) in *.
+    pose proof (wrapped_pair_join_time wa wb r00 r01) as Hjoin_left.
+    pose proof (wrapped_pair_join_time wa wb r10 r11) as Hjoin_right.
+    pose proof (wrapped_pair_join_bits wa wb r00 r01) as [Hlefta Hleftb].
+    pose proof (wrapped_pair_join_bits wa wb r10 r11) as [Hrighta Hrightb].
+    set (left := wrapped_pair_join wa wb r00 r01) in *.
+    set (right := wrapped_pair_join wa wb r10 r11) in *.
+    pose proof (wrapped_pair_join_time wa wb left right) as Hjoin.
+    pose proof (wrapped_pair_join_bits wa wb left right) as [Hcandidatesa Hcandidatesb].
+    set (candidates := wrapped_pair_join wa wb left right) in *.
+    pose proof (wrapped_meet_time wa a (fst candidates)) as Hmeet_a.
+    pose proof (wrapped_meet_time wb b (snd candidates)) as Hmeet_b.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+      (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+      (Nat.le_refl _) ltac:(lia)) as Hfloor.
+    rewrite !Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2)) in *.
+    time_unfold T_assume_binary_base. cbn beta iota zeta.
+    fold pa pb r00 r01 r10 r11 left right candidates.
+    clearbody pa pb r00 r01 r10 r11 left right candidates square.
+    time_simpl. lia.
+  Qed.
+  TimeBound assume_binary_base_time.
+
+  (** Addition and subtraction use direct inverses; other operations use piece refinement. *)
+  Lemma assume_binary_time : forall o wa wb a b rw q,
+    (T_assume_binary o wa wb a b rw q <= 590295810358705651712 * N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2 +
+        wrapped_bits a + wrapped_bits b + wrapped_bits q))%N.
+  Proof.
+    intros o wa wb a b rw q.
+    pose proof (assume_binary_base_time o wa wb a b rw q) as Hbase.
+    pose proof (wrapped_backward_sub_bits wa q b) as Hab.
+    pose proof (wrapped_backward_sub_bits wb q a) as Hba.
+    pose proof (wrapped_backward_add_bits wa q b) as Hplus.
+    pose proof (wrapped_backward_sub_bits wb a q) as Hminus.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+      (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+      (Nat.le_refl _) ltac:(lia)) as Hfloor.
+    rewrite !Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2)) in *.
+    clearbody square.
+    destruct o; time_unfold T_assume_binary; cbn beta iota zeta; time_simpl; try lia.
+    all: time_pose; rewrite ?Nat2N.inj_add in *; lia.
+  Qed.
+  TimeBound assume_binary_time.
+
+  (** Truncation checks four normalized interval pairs before a normalized intersection. *)
+  Lemma assume_trunc_time : forall w a rw q,
+    (T_assume_trunc w a rw q <= 281474976710656 * N.of_nat
+      ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2 + wrapped_bits a + wrapped_bits q))%N.
+  Proof.
+    intros w a rw q.
+    pose proof (wrapped_parts_bits w a) as [Ha0 Ha1].
+    pose proof (wrapped_parts_bits rw q) as [Hq0 Hq1].
+    pose proof (wrapped_parts_time w a) as Hparts_a.
+    pose proof (wrapped_parts_time rw q) as Hparts_q.
+    set (pa := wrapped_parts w a) in *.
+    set (pq := wrapped_parts rw q) in *.
+    pose proof (wrapped_interval_rewrap_time_word w rw (fst pa) (fst pq) Ha0 Hq0) as HT00.
+    pose proof (wrapped_interval_rewrap_time_word w rw (fst pa) (snd pq) Ha0 Hq1) as HT01.
+    pose proof (wrapped_interval_rewrap_time_word w rw (snd pa) (fst pq) Ha1 Hq0) as HT10.
+    pose proof (wrapped_interval_rewrap_time_word w rw (snd pa) (snd pq) Ha1 Hq1) as HT11.
+    pose proof (wrapped_interval_rewrap_bits rw (fst pa) (fst pq)) as H00.
+    pose proof (wrapped_interval_rewrap_bits rw (fst pa) (snd pq)) as H01.
+    pose proof (wrapped_interval_rewrap_bits rw (snd pa) (fst pq)) as H10.
+    pose proof (wrapped_interval_rewrap_bits rw (snd pa) (snd pq)) as H11.
+    set (r00 := WrappedIntervalBack.interval_assume_rewrap rw (fst pa) (fst pq)) in *.
+    set (r01 := WrappedIntervalBack.interval_assume_rewrap rw (fst pa) (snd pq)) in *.
+    set (r10 := WrappedIntervalBack.interval_assume_rewrap rw (snd pa) (fst pq)) in *.
+    set (r11 := WrappedIntervalBack.interval_assume_rewrap rw (snd pa) (snd pq)) in *.
+    pose proof (wrapped_of_interval_time w r00) as HC00.
+    pose proof (wrapped_of_interval_time w r01) as HC01.
+    pose proof (wrapped_of_interval_time w r10) as HC10.
+    pose proof (wrapped_of_interval_time w r11) as HC11.
+    pose proof (wrapped_of_interval_bits w r00) as HB00.
+    pose proof (wrapped_of_interval_bits w r01) as HB01.
+    pose proof (wrapped_of_interval_bits w r10) as HB10.
+    pose proof (wrapped_of_interval_bits w r11) as HB11.
+    set (c00 := wrapped_of_interval w r00) in *.
+    set (c01 := wrapped_of_interval w r01) in *.
+    set (c10 := wrapped_of_interval w r10) in *.
+    set (c11 := wrapped_of_interval w r11) in *.
+    pose proof (wrapped_join_four_time w c00 c01 c10 c11) as Hjoin.
+    pose proof (wrapped_join_four_bits w c00 c01 c10 c11) as Hjoinbits.
+    set (candidate := wrapped_join_four w c00 c01 c10 c11) in *.
+    pose proof (wrapped_meet_time w a candidate) as Hmeet.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat w + Pos.to_nat rw + 1) (Pos.to_nat w + Pos.to_nat rw + 1)
+      (Nat.le_refl _) ltac:(lia)) as Hfloor.
+    rewrite !Nat2N.inj_add in *.
+    set (square := N.of_nat ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2)) in *.
+    time_unfold T_assume_trunc. cbn beta iota zeta.
+    fold pa pq r00 r01 r10 r11 c00 c01 c10 c11 candidate.
+    clearbody pa pq r00 r01 r10 r11 c00 c01 c10 c11 candidate square.
+    time_simpl. lia.
+  Qed.
+  TimeBound assume_trunc_time.
+
+  (** Every unary path normalizes, projects, or uses the bounded truncation refinement. *)
+  Lemma assume_unary_time : forall o w a rw q,
+    (T_assume_unary o w a rw q <= 1125899906842624 * N.of_nat
+      ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2 + wrapped_bits a + wrapped_bits q))%N.
+  Proof.
+    intros o w a rw q.
+    pose proof (assume_trunc_time w a rw q) as Htrunc.
+    pose proof (wrapped_project_bits w rw q) as Hproject_bits.
+    pose proof (wrapped_project_time w rw q) as Hproject.
+    pose proof (wrapped_meet_time w a (wrapped_project w rw q)) as Hmeet.
+    pose proof (wrapped_norm_time w a) as Hnorm.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat w + Pos.to_nat rw + 1) (Pos.to_nat w + Pos.to_nat rw + 1)
+      (Nat.le_refl _) ltac:(lia)) as Hfloor.
+    rewrite !Nat2N.inj_add in *.
+    set (square := N.of_nat ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2)) in *.
+    clearbody square.
+    destruct o; time_unfold T_assume_unary; cbn beta iota zeta; time_simpl; lia.
+  Qed.
+  TimeBound assume_unary_time.
+
+  (** Backward dispatch reads at most two operands and charges their raw storage linearly. *)
+  Lemma backward_raw_time : forall o rw q xs,
+    (T_backward_raw o rw q xs <= 1180591620717411303424 * N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 + wrapped_bits q +
+        fold_right Nat.add 0%nat (map (fun x => wrapped_bits (snd x)) xs)))%N.
+  Proof.
+    intros o rw q [|[wa a] [|[wb b] [|extra xs]]];
+      cbn [map fold_right fst snd]; rewrite ?Nat.add_0_r.
+    - pose proof (WordTime.time_square_floor (Pos.to_nat rw + 1)
+        (Pos.to_nat rw + 1) (Nat.le_refl _) ltac:(lia)) as Hfloor.
+      time_unfold T_backward_raw. cbn beta iota zeta. time_simpl.
+      rewrite ?Nat2N.inj_add in *. lia.
+    - pose proof (assume_unary_time o wa a rw q) as Hunary.
+      replace (Pos.to_nat rw + Pos.to_nat wa + 1)%nat with
+        (Pos.to_nat wa + Pos.to_nat rw + 1)%nat by lia.
+      pose proof (WordTime.time_square_floor (Pos.to_nat wa + Pos.to_nat rw + 1)
+        (Pos.to_nat wa + Pos.to_nat rw + 1) (Nat.le_refl _) ltac:(lia)) as Hfloor.
+      rewrite ?Nat2N.inj_add in *.
+      set (square := N.of_nat ((Pos.to_nat wa + Pos.to_nat rw + 1) ^ 2)) in *.
+      clearbody square. time_unfold T_backward_raw. cbn beta iota zeta. time_simpl. lia.
+    - pose proof (assume_binary_time o wa wb a b rw q) as Hbinary.
+      replace (Pos.to_nat rw + (Pos.to_nat wa + Pos.to_nat wb) + 1)%nat with
+        (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)%nat by lia.
+      pose proof (WordTime.time_square_floor
+        (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+        (Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1)
+        (Nat.le_refl _) ltac:(lia)) as Hfloor.
+      rewrite ?Nat2N.inj_add in *.
+      set (square := N.of_nat
+        ((Pos.to_nat wa + Pos.to_nat wb + Pos.to_nat rw + 1) ^ 2)) in *.
+      clearbody square. time_unfold T_backward_raw. cbn beta iota zeta. time_simpl. lia.
+    - destruct extra as [wc c]. cbn [fst snd].
+      lazymatch goal with
+      | |- (_ <= _ * N.of_nat ((?base ^ 2 + _ + _)%nat))%N =>
+        assert (Hpositive : (1 <= N.of_nat (base ^ 2))%N)
+          by (apply (WordTime.time_square_floor 1 base); lia)
+      end.
+      time_unfold T_backward_raw. cbn beta iota zeta. time_simpl.
+      rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+  TimeBound backward_raw_time.
+
+  (** The public backward clock adds only a fixed call to raw backward dispatch. *)
+  Lemma backward_time_budget : forall o rw q xs,
+    (T_wbwd o rw q xs <= 4722366482869645213696 * N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 + wrapped_bits q +
+        fold_right Nat.add 0%nat (map (fun x => wrapped_bits (snd x)) xs)))%N.
+  Proof.
+    intros o rw q xs. pose proof (backward_raw_time o rw q xs) as Hraw.
+    time_unfold T_wbwd. cbn beta iota zeta. time_simpl.
+    lazymatch type of Hraw with
+    | (?t <= _ * ?budget)%N =>
+      change (1 + t <= 4722366482869645213696 * budget)%N;
+      assert (Hpositive : (1 <= budget)%N) by
+        (lazymatch budget with
+         | N.of_nat ((?base ^ 2 + _ + _)%nat) =>
+           pose proof (WordTime.time_square_floor 1 base ltac:(lia) ltac:(lia)) as Hfloor
+         end; rewrite ?Nat2N.inj_add in *; lia);
+      set (b := budget) in *; clearbody b; lia
+    end.
+  Qed.
+
+End WrappedBackwardClockProof.
+
 Module WrappedTableStorageProof (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
-  Module O := WrappedOpsCode L W.
+  Module O := WrappedBackwardClockProof L W.
 
   (** Every one-operand path ends in supplied negation or a normalized concrete join. *)
   Lemma forward_one_bits : forall o w rw a r,
@@ -1524,15 +2518,26 @@ End WrappedTableStorageProof.
 
 Module WrappedTableT (L : WORD_LANGUAGE_T) (W : WRAPPED_T L)
     <: WRAPPED_TABLE_T L W.
-  Include WrappedTableClock L W.
-  Definition c_word_table : N := 1. (* STUB *)
+  Module Storage := WrappedTableStorageProof L W.
+  Module BackwardClock := Storage.O.
+  Include BackwardClock.
+
+  Definition c_word_table : N :=
+    (1208925819614629174706176 * (W.c_wrapped + W.c_payload + 1))%N.
+
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw + fold_right Nat.add 0
           (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0
           (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs.
+    pose proof (ForwardClock.wfwd_time o rw xs) as Htime.
+    eapply N.le_trans; [exact Htime|].
+    apply N.mul_le_mono_r. unfold c_word_table. nia.
+  Qed.
+
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw + fold_right Nat.add 0
@@ -1540,14 +2545,28 @@ Module WrappedTableT (L : WORD_LANGUAGE_T) (W : WRAPPED_T L)
         W.psize rw q +
         fold_right Nat.add 0
           (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs.
+    eapply N.le_trans; [exact (BackwardClock.backward_time_budget o rw q xs)|].
+    apply N.mul_le_mono.
+    - unfold c_word_table. nia.
+    - apply time_of_nat_le. rewrite W.psize_bits.
+      pose proof (ForwardClock.input_bits_storage xs). lia.
+  Qed.
+
   Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
     (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
       (((Pos.to_nat rw + fold_right Nat.add 0
           (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0
           (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs r Hresult.
+    change (Storage.O.forward_raw o rw xs = Some r) in Hresult.
+    eapply N.le_trans; [exact (Storage.forward_storage o rw xs r Hresult)|].
+    apply N.mul_le_mono_r. unfold c_word_table. nia.
+  Qed.
+
   Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
     (N.of_nat ((length ys + fold_right Nat.add 0
       (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
@@ -1556,8 +2575,14 @@ Module WrappedTableT (L : WORD_LANGUAGE_T) (W : WRAPPED_T L)
             (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
           W.psize rw q + fold_right Nat.add 0
             (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs ys Hresult.
+    change (Storage.O.backward_raw o rw q xs = Some ys) in Hresult.
+    eapply N.le_trans; [exact (Storage.backward_storage o rw q xs ys Hresult)|].
+    apply N.mul_le_mono_r. unfold c_word_table. nia.
+  Qed.
 End WrappedTableT.
+
 
 (** Unsigned bounds retain precise endpoints for arcs that do not cross zero. *)
 Definition wrapped_unsigned_range (w : width) (a : wrapped) : bnd * bnd :=
