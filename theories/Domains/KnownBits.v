@@ -3115,6 +3115,406 @@ Proof.
       apply (tnum_top_bits 1%positive)].
 Qed.
 
+(** * Primitive time and size bounds
+
+    Bit-length bounds pay for the masked integer operations used by every transfer. *)
+
+(** The counter potential pays for carries while a bit count is incremented. *)
+Fixpoint tnum_counter_ones (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => tnum_counter_ones q
+  | xI q => (1 + tnum_counter_ones q)%N
+  end.
+
+(** Binary increment has constant amortized cost under the one-bit potential. *)
+Lemma tnum_succ_credit : forall p,
+  (Std.Pos.T_succ p + tnum_counter_ones (Pos.succ p) <=
+    2 + tnum_counter_ones p)%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Std.Pos.T_succ; time_cbn; lia.
+Qed.
+
+(** Computing a positive bit count makes linearly many amortized increments. *)
+Lemma tnum_size_credit : forall p,
+  (Fun.Pos.T_size p + tnum_counter_ones (Pos.size p) <=
+    3 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Fun.Pos.T_size; time_cbn.
+  all: try pose proof (tnum_succ_credit (Pos.size p)) as Hsucc.
+  all: lia.
+Qed.
+
+(** Integer logarithm scans its input bits with a binary counter. *)
+Lemma tnum_log2_time : forall z,
+  (Fun.Z.T_log2 z <= 4 * N.of_nat (Z.size_nat z + 1))%N.
+Proof.
+  intros [|[p|p|]|p]; time_unfold Fun.Z.T_log2; time_cbn.
+  all: try pose proof (tnum_size_credit p) as Hsize.
+  all: rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; lia.
+Qed.
+
+(** A positive bit count is bounded by the represented positive integer. *)
+Lemma tnum_positive_bits : forall p, (Pos.size_nat p <= Pos.to_nat p)%nat.
+Proof.
+  induction p as [p IH|p IH|]; cbn [Pos.size_nat];
+    rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1; lia.
+Qed.
+
+(** A nonnegative integer has no more bits than its value. *)
+Lemma tnum_nonnegative_bits : forall z, 0 <= z -> (Z.size_nat z <= Z.to_nat z)%nat.
+Proof.
+  intros [|p|p] Hnonnegative; cbn [Z.size_nat Z.to_nat]; try lia.
+  apply tnum_positive_bits.
+Qed.
+
+(** Negation preserves the magnitude bit count. *)
+Lemma tnum_opp_bits : forall z, Z.size_nat (- z) = Z.size_nat z.
+Proof. intros []; reflexivity. Qed.
+
+(** A power of two needs its exponent and one additional stored bit. *)
+Lemma tnum_pow2_bits : forall n, 0 <= n ->
+  (Z.size_nat (2 ^ n) <= Z.to_nat n + 1)%nat.
+Proof.
+  intros n Hn. pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn) as Hpositive.
+  destruct (2 ^ n) as [|p|p] eqn:Hpower; cbn [Z.size_nat]; try lia.
+  apply Zpower2_Psize. rewrite Nat2Z.inj_add, Z2Nat.id by exact Hn.
+  rewrite <- Hpower. apply Z.pow_lt_mono_r; lia.
+Qed.
+
+(** An all-ones mask is a normalized word of the requested width. *)
+Lemma tnum_ones_word : forall w, is_word w (Z.ones (Zpos w)).
+Proof.
+  intro w. unfold is_word, modulus. rewrite Z.ones_equiv.
+  pose proof (modulus_pos w). unfold modulus in *. lia.
+Qed.
+
+(** Making an all-ones mask performs linearly many bit operations. *)
+Lemma tnum_ones_time : forall n, 0 <= n ->
+  (Word.Z.T_ones n <= 16 * N.of_nat (Z.to_nat n + 1))%N.
+Proof.
+  intros n Hn.
+  pose proof (Std.Z.T_shiftl_le 1 n) as Hshift.
+  pose proof (Std.Z.T_pred_le (Z.shiftl 1 n)) as Hpred.
+  pose proof (tnum_pow2_bits n Hn) as Hbits. rewrite <- Z.shiftl_1_l in Hbits.
+  change (Std.Z.T_shiftl 1 n <= 6 * Z.abs_N n + 1)%N in Hshift.
+  assert (Habs : Z.abs_N n = N.of_nat (Z.to_nat n)).
+  { destruct n; cbn [Z.abs_N Z.to_nat]; try reflexivity; lia. }
+  rewrite Habs in Hshift.
+  time_unfold Word.Z.T_ones. rewrite Nat2N.inj_add. nia.
+Qed.
+
+(** Masked normalization is linear in width and raw integer bits. *)
+Lemma tnum_wrap_time : forall w z,
+  (T_tnum_wrap w z <= 32 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z.
+  pose proof (tnum_ones_time (Zpos w) ltac:(lia)) as Hones.
+  pose proof (tnum_word_bits w _ (tnum_ones_word w)) as Hbits.
+  pose proof (Std.Z.T_land_le z (Z.ones (Zpos w))) as Hland.
+  time_unfold T_tnum_wrap. time_cbn.
+  change (Word.Z.T_ones (Zpos w) <= 16 * N.of_nat (Pos.to_nat w + 1))%N in Hones.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Every integer magnitude is smaller than the next power of two above its bits. *)
+Lemma tnum_abs_bits_bound : forall z, Z.abs z < 2 ^ Z.of_nat (Z.size_nat z).
+Proof.
+  intros [|p|p]; cbn [Z.abs Z.size_nat]; try lia; apply Zpower2_Psize; lia.
+Qed.
+
+(** An absolute-value power bound gives a stored-bit bound. *)
+Lemma tnum_bits_of_abs_bound : forall z n,
+  Z.abs z < 2 ^ Z.of_nat n -> (Z.size_nat z <= n)%nat.
+Proof.
+  intros [|p|p] n Hbound; cbn [Z.abs Z.size_nat] in *; try lia;
+    now apply Zpower2_Psize in Hbound.
+Qed.
+
+(** Addition needs at most the operand bits and one carry bit. *)
+Lemma tnum_sum_bits : forall x y,
+  (Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros x y. apply tnum_bits_of_abs_bound.
+  pose proof (tnum_abs_bits_bound x) as Hx.
+  pose proof (tnum_abs_bits_bound y) as Hy.
+  pose proof (Z.abs_triangle x y) as Hsum.
+  pose proof (Z.pow_pos_nonneg 2 (Z.of_nat (Z.size_nat x)) ltac:(lia) ltac:(lia)) as Hxp.
+  pose proof (Z.pow_pos_nonneg 2 (Z.of_nat (Z.size_nat y)) ltac:(lia) ltac:(lia)) as Hyp.
+  rewrite !Nat2Z.inj_add, !Z.pow_add_r, Z.pow_1_r by lia. nia.
+Qed.
+
+(** Subtraction has the same bit budget as addition. *)
+Lemma tnum_difference_bits : forall x y,
+  (Z.size_nat (x - y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros x y. unfold Z.sub. pose proof (tnum_sum_bits x (- y)).
+  now rewrite tnum_opp_bits in H.
+Qed.
+
+(** Converting an unsigned integer preserves its magnitude bit count. *)
+Lemma tnum_of_N_bits : forall n, Z.size_nat (Z.of_N n) = N.size_nat n.
+Proof. intros []; reflexivity. Qed.
+
+(** Incrementing an unsigned integer needs at most one new bit. *)
+Lemma tnum_succ_pos_bits : forall n,
+  (Pos.size_nat (N.succ_pos n) <= N.size_nat n + 1)%nat.
+Proof.
+  intros [|p]; cbn [N.succ_pos N.size_nat Pos.size_nat]; [lia|].
+  apply Std.Z.size_nat_succ.
+Qed.
+
+(** Integer conjunction has a linear stored-bit bound, including negative masks. *)
+Lemma tnum_land_bits : forall x y,
+  (Z.size_nat (Z.land x y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros [|p|p] [|q|q]; cbn [Z.land Z.size_nat]; try lia; rewrite ?tnum_of_N_bits.
+  - pose proof (Std.N.size_nat_land p q). lia.
+  - pose proof (Std.N.size_nat_N_ldiff (N.pos p) (Pos.pred_N q)). cbn [N.size_nat] in H. lia.
+  - pose proof (Std.N.size_nat_N_ldiff (N.pos q) (Pos.pred_N p)). cbn [N.size_nat] in H. lia.
+  - pose proof (tnum_succ_pos_bits (N.lor (Pos.pred_N p) (Pos.pred_N q))).
+    pose proof (Std.N.size_nat_N_lor (Pos.pred_N p) (Pos.pred_N q)).
+    pose proof (Std.N.size_nat_pred_N p). pose proof (Std.N.size_nat_pred_N q). lia.
+Qed.
+
+(** Integer disjunction has a linear stored-bit bound, including negative masks. *)
+Lemma tnum_lor_bits : forall x y,
+  (Z.size_nat (Z.lor x y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros [|p|p] [|q|q]; cbn [Z.lor Z.size_nat]; try lia.
+  - pose proof (Std.N.size_nat_lor p q). lia.
+  - pose proof (tnum_succ_pos_bits (N.ldiff (Pos.pred_N q) (N.pos p))).
+    pose proof (Std.N.size_nat_N_ldiff (Pos.pred_N q) (N.pos p)).
+    pose proof (Std.N.size_nat_pred_N q). lia.
+  - pose proof (tnum_succ_pos_bits (N.ldiff (Pos.pred_N p) (N.pos q))).
+    pose proof (Std.N.size_nat_N_ldiff (Pos.pred_N p) (N.pos q)).
+    pose proof (Std.N.size_nat_pred_N p). lia.
+  - pose proof (tnum_succ_pos_bits (N.land (Pos.pred_N p) (Pos.pred_N q))).
+    pose proof (Std.N.size_nat_N_land (Pos.pred_N p) (Pos.pred_N q)).
+    pose proof (Std.N.size_nat_pred_N p). lia.
+Qed.
+
+(** Integer exclusive disjunction has a linear stored-bit bound. *)
+Lemma tnum_lxor_bits : forall x y,
+  (Z.size_nat (Z.lxor x y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros [|p|p] [|q|q]; cbn [Z.lxor Z.size_nat]; try lia; rewrite ?tnum_of_N_bits.
+  - pose proof (Std.N.size_nat_lxor p q). lia.
+  - pose proof (tnum_succ_pos_bits (N.lxor (N.pos p) (Pos.pred_N q))).
+    pose proof (Std.N.size_nat_N_lxor (N.pos p) (Pos.pred_N q)).
+    pose proof (Std.N.size_nat_pred_N q). cbn [N.size_nat] in *. lia.
+  - pose proof (tnum_succ_pos_bits (N.lxor (Pos.pred_N p) (N.pos q))).
+    pose proof (Std.N.size_nat_N_lxor (Pos.pred_N p) (N.pos q)).
+    pose proof (Std.N.size_nat_pred_N p). cbn [N.size_nat] in *. lia.
+  - pose proof (Std.N.size_nat_N_lxor (Pos.pred_N p) (Pos.pred_N q)).
+    pose proof (Std.N.size_nat_pred_N p). pose proof (Std.N.size_nat_pred_N q). lia.
+Qed.
+
+(** Integer complementation adds at most two magnitude bits. *)
+Lemma tnum_lnot_bits : forall z, (Z.size_nat (Z.lnot z) <= Z.size_nat z + 2)%nat.
+Proof.
+  intro z. rewrite lnot_value.
+  pose proof (tnum_difference_bits (- z) 1) as Hbits.
+  rewrite tnum_opp_bits in Hbits. cbn [Z.size_nat Pos.size_nat] in Hbits. lia.
+Qed.
+
+(** Complementation has linear cost in its input magnitude bits. *)
+Lemma tnum_lnot_time : forall z,
+  (Z.T_lnot z <= 8 * N.of_nat (Z.size_nat z + 1))%N.
+Proof.
+  intro z. pose proof (Std.Z.T_pred_le (- z)) as Hpred.
+  rewrite tnum_opp_bits in Hpred. time_unfold Z.T_lnot. time_cbn. time_pose.
+  rewrite Nat2N.inj_add. nia.
+Qed.
+
+(** A masked integer occupies no more bits than its word width. *)
+Lemma tnum_wrap_bits : forall w z,
+  (Z.size_nat (tnum_wrap w z) <= Pos.to_nat w)%nat.
+Proof.
+  intros w z. apply tnum_word_bits. rewrite tnum_wrap_agrees. apply wrap_is_word.
+Qed.
+
+(** Masked conjunction occupies no more bits than its word width. *)
+Lemma tnum_wand_bits : forall w x y,
+  (Z.size_nat (tnum_wand w x y) <= Pos.to_nat w)%nat.
+Proof.
+  intros w x y. apply tnum_word_bits. rewrite tnum_wand_agrees. apply wand_is_word.
+Qed.
+
+(** Masked disjunction occupies no more bits than its word width. *)
+Lemma tnum_wor_bits : forall w x y,
+  (Z.size_nat (tnum_wor w x y) <= Pos.to_nat w)%nat.
+Proof.
+  intros w x y. apply tnum_word_bits. rewrite tnum_wor_agrees. apply wor_is_word.
+Qed.
+
+(** Masked complement occupies no more bits than its word width. *)
+Lemma tnum_wnot_bits : forall w z,
+  (Z.size_nat (tnum_wnot w z) <= Pos.to_nat w)%nat.
+Proof.
+  intros w z. apply tnum_word_bits. rewrite tnum_wnot_agrees. apply wnot_is_word.
+Qed.
+
+(** The minimum endpoint occupies no more bits than its width. *)
+Lemma tnum_min_bits : forall w a, (Z.size_nat (tnum_min w a) <= Pos.to_nat w)%nat.
+Proof. intros. apply tnum_word_bits, tnum_min_word. Qed.
+
+(** The maximum endpoint occupies no more bits than its width. *)
+Lemma tnum_max_bits : forall w a, (Z.size_nat (tnum_max w a) <= Pos.to_nat w)%nat.
+Proof. intros. apply tnum_word_bits, tnum_max_word. Qed.
+
+(** The uncertainty mask occupies no more bits than its width. *)
+Lemma tnum_mask_bits : forall w a, (Z.size_nat (tnum_mask w a) <= Pos.to_nat w)%nat.
+Proof. intros. apply tnum_word_bits, tnum_mask_word. Qed.
+
+(** Reading the zero-mask field takes constant time. *)
+Lemma tnum_zeros_time : forall a, (T_zeros a <= 1)%N.
+Proof. intros [z o]. time_unfold T_zeros. time_cbn. lia. Qed.
+
+(** Reading the one-mask field takes constant time. *)
+Lemma tnum_ones_projection_time : forall a, (T_ones a <= 1)%N.
+Proof. intros [z o]. time_unfold T_ones. time_cbn. lia. Qed.
+
+TimeBound tnum_wrap_time tnum_lnot_time tnum_log2_time tnum_ones_time
+  tnum_zeros_time tnum_ones_projection_time.
+
+(** Masked conjunction reads its width and raw operands linearly. *)
+Lemma tnum_wand_time : forall w x y,
+  (T_tnum_wand w x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (tnum_land_bits x y) as Hbits.
+  time_unfold T_tnum_wand. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_wand_time.
+
+(** Masked disjunction reads its width and raw operands linearly. *)
+Lemma tnum_wor_time : forall w x y,
+  (T_tnum_wor w x y <=
+    128 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (tnum_lor_bits x y) as Hbits.
+  time_unfold T_tnum_wor. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_wor_time.
+
+(** Masked complementation reads the width and raw operand linearly. *)
+Lemma tnum_wnot_time : forall w z,
+  (T_tnum_wnot w z <= 128 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z. pose proof (tnum_lnot_bits z) as Hbits.
+  time_unfold T_tnum_wnot. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_wnot_time.
+
+(** The minimum endpoint reads only the known-one mask. *)
+Lemma tnum_min_time : forall w a,
+  (T_tnum_min w a <= 40 * N.of_nat (Pos.to_nat w + Z.size_nat (ones a) + 1))%N.
+Proof.
+  intros w a. time_unfold T_tnum_min. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_min_time.
+
+(** The maximum endpoint reads only the known-zero mask. *)
+Lemma tnum_max_time : forall w a,
+  (T_tnum_max w a <= 144 * N.of_nat (Pos.to_nat w + Z.size_nat (zeros a) + 1))%N.
+Proof.
+  intros w a. time_unfold T_tnum_max. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_max_time.
+
+(** Building the uncertainty mask reads the two stored masks linearly. *)
+Lemma tnum_mask_time : forall w a,
+  (T_tnum_mask w a <= 512 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (tnum_wor_bits w (zeros a) (ones a)) as Hbits.
+  time_unfold T_tnum_mask. time_cbn. time_pose. unfold tnum_bits.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_mask_time.
+
+(** Testing subset inclusion reads both raw masks linearly. *)
+Lemma tnum_subset_time : forall w x y,
+  (T_tnum_subset w x y <=
+    320 * N.of_nat (Pos.to_nat w + Z.size_nat x + Z.size_nat y + 1))%N.
+Proof.
+  intros w x y. pose proof (tnum_wand_bits w x y) as Hbits.
+  time_unfold T_tnum_subset. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_subset_time.
+
+(** Normalizing a payload reads its two raw masks linearly. *)
+Lemma tnum_normalise_time : forall w a,
+  (T_tnum_normalise w a <= 96 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. time_unfold T_tnum_normalise. time_cbn. time_pose.
+  unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_normalise_time.
+
+(** Constructing a constant payload reads its width and literal bits linearly. *)
+Lemma tnum_const_time : forall w z,
+  (T_tnum_const w z <= 192 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z. time_unfold T_tnum_const. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_const_time.
+
+(** Joining payloads reads their stored masks linearly. *)
+Lemma tnum_join_time : forall w a b,
+  (T_tnum_join w a b <= 288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_tnum_join. time_cbn. time_pose.
+  unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_join_time.
+
+(** Meeting payloads reads their stored masks linearly. *)
+Lemma tnum_meet_time : forall w a b,
+  (T_tnum_meet w a b <= 288 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_tnum_meet. time_cbn. time_pose.
+  unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_meet_time.
+
+(** Recognizing an empty payload reads its two masks linearly. *)
+Lemma tnum_empty_time : forall w a,
+  (T_tnum_empty w a <= 160 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (tnum_wand_bits w (zeros a) (ones a)) as Hbits.
+  time_unfold T_tnum_empty. time_cbn. time_pose.
+  unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_empty_time.
+
+(** Point recognition reads the two masks and constructs its returned endpoint linearly. *)
+Lemma tnum_constant_time : forall w a,
+  (T_tnum_constant w a <= 384 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (tnum_wrap_bits w (zeros a)) as Hbits.
+  time_unfold T_tnum_constant. time_cbn. time_pose.
+  destruct (tnum_wrap w (zeros a) =? tnum_wnot w (ones a));
+    unfold tnum_bits; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+TimeBound tnum_constant_time.
+
+(** Bitwise negation reads and normalizes the two masks linearly. *)
+Lemma tnum_not_time : forall w a,
+  (T_tnum_not w a <= 96 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. time_unfold T_tnum_not. time_cbn. time_pose.
+  unfold tnum_bits. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_not_time.
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
