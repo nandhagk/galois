@@ -1733,20 +1733,106 @@ Proof.
   repeat rewrite Nat2N.inj_add in Hsum. repeat rewrite Nat2N.inj_add. nia.
 Qed.
 
+Lemma frontier_fold_map {A B C : Type} : forall (f : B -> C -> C) (g : A -> B) initial xs,
+  fold_right f initial (map g xs) = fold_right (fun x total => f (g x) total) initial xs.
+Proof.
+  intros f g initial xs. induction xs as [|x rest IH]; cbn [map fold_right]; [reflexivity|].
+  now rewrite IH.
+Qed.
+
+Lemma frontier_df_rows_time : forall g t r,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  (T_df_transpose (map (fun y => (y, df_column g t y)) (nodes g)) + 1 <=
+    frontier_transpose_cost * N.of_nat (graph_n (base g) + Frontier.df_size g t + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros g t r Hgraph Hprepared Htree.
+  assert (Hwidth : Forall (fun entry => Pos.size_nat (fst entry) <= graph_width (base g) /\
+    forall x, In x (snd entry) -> Pos.size_nat x <= graph_width (base g))
+    (map (fun y => (y, df_column g t y)) (nodes g))).
+  { apply Forall_forall. intros [y xs] Hin. apply in_map_iff in Hin.
+    destruct Hin as [v [Heq Hv]]. injection Heq as Heqv Heqxs. subst v xs.
+    split; cbn [fst snd].
+    - now apply dom_listed_key_width.
+    - intros x Hx. apply dom_listed_key_width.
+      exact (proj1 (proj2 (df_column_correct g t r y Hgraph Hprepared Htree)) x Hx). }
+  pose proof (frontier_df_transpose_time _ _ Hwidth) as Htime.
+  rewrite length_map, frontier_fold_map in Htime. cbn [snd] in Htime.
+  rewrite (frontier_column_pairs g t r Hgraph Hprepared Htree) in Htime.
+  replace (length (nodes g)) with (graph_n (base g)) in Htime by
+    (destruct g as [[vertices adjacency] predecessors vertices_count edges_count]; reflexivity).
+  exact Htime.
+Qed.
+
+(** The outer constructor adds one traversal and the already bounded column and transpose calls. *)
+Lemma frontier_df_wrapper_time : forall g t,
+  (T_df g t + 1 <= 16 *
+    (N.of_nat (length (nodes g) + 1) +
+      fold_right (fun y total => (1 + T_df_column g t y) + total)%N 0%N (nodes g) +
+      (1 + T_df_transpose (map (fun y => (y, df_column g t y)) (nodes g)))))%N.
+Proof.
+  intros g t. time_unfold T_df. time_unfold T_nodes. rewrite frontier_map_time_sum.
+  lia.
+Qed.
+
+Lemma frontier_time_combine : forall setup columns transpose bound,
+  (setup <= bound -> columns <= frontier_column_cost * bound ->
+   transpose <= frontier_transpose_cost * bound ->
+   16 * (setup + columns + transpose) <= frontier_total_cost * bound)%N.
+Proof.
+  intros setup columns transpose bound Hsetup Hcolumns Htranspose.
+  assert (Hscale : (16 * (1 + frontier_column_cost + frontier_transpose_cost) <=
+    frontier_total_cost)%N).
+  { unfold frontier_column_cost, frontier_transpose_cost, frontier_total_cost, frontier_unit_cost. nia. }
+  assert (Hjoined : (16 * (setup + columns + transpose) <=
+    (16 * (1 + frontier_column_cost + frontier_transpose_cost)) * bound)%N) by nia.
+  eapply N.le_trans; [exact Hjoined|]. now apply N.mul_le_mono_r.
+Qed.
+
+(** Construction pays graph occurrences and its actual emitted frontier pairs. *)
+Lemma frontier_df_total_time : forall g t r,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  (T_df g t + 1 <= frontier_total_cost *
+    N.of_nat (graph_n (base g) + graph_e (base g) + Frontier.df_size g t + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros g t r Hgraph Hprepared Htree.
+  pose proof (frontier_df_wrapper_time g t) as Hwrapper.
+  pose proof (frontier_df_columns_time g t r Hgraph Hprepared Htree) as Hcolumns.
+  pose proof (frontier_df_rows_time g t r Hgraph Hprepared Htree) as Htranspose.
+  rewrite <- N.mul_assoc in Hcolumns |- *.
+  eapply N.le_trans; [exact Hwrapper|]. apply frontier_time_combine.
+  - replace (length (nodes g)) with (graph_n (base g)) by
+      (destruct g as [[vertices adjacency] predecessors vertices_count edges_count]; reflexivity).
+    repeat rewrite Nat2N.inj_add. nia.
+  - exact Hcolumns.
+  - eapply N.le_trans with (m :=
+      (frontier_transpose_cost * N.of_nat (graph_n (base g) + Frontier.df_size g t + 1) *
+        N.of_nat (graph_width (base g) + 1))%N).
+    + lia.
+    + rewrite <- N.mul_assoc. apply N.mul_le_mono_l. apply N.mul_le_mono_r.
+      repeat rewrite Nat2N.inj_add. lia.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
   TimeFun df.
   TimeFun idf.
 
-  Definition c_frontier : N := 1. (* STUB *)
+  Definition c_frontier : N := frontier_total_cost.
 
   Lemma T_df_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_df g t <= c_frontier * N.of_nat
       (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    pose proof (frontier_df_total_time g t r Hgraph Hprepared Htree) as Hbound.
+    change (Frontier.df_size g t) with (df_size g t) in Hbound.
+    unfold c_frontier. time_unfold T_df. lia.
+  Qed.
 
   Lemma T_idf_le : forall rows seeds,
     (T_idf rows seeds <= c_frontier * N.of_nat
@@ -1760,7 +1846,11 @@ Module FrontierT <: FRONTIER_ALL.
     (fun '(g, t, _) => N.of_nat
       ((graph_n (base g) + graph_e (base g) + df_size g t + 1) *
         (graph_width (base g) + 1))) (fun '(g, t, _) => T_df g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_frontier. intros [[g t] r] [Hgraph [Hprepared Htree]].
+    pose proof (T_df_le g t r Hgraph Hprepared Htree) as Hbound.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma idf_bigO : bigO (fun _ : ptrie (list positive) * list positive => True)
     (fun '(rows, seeds) => N.of_nat
@@ -1777,9 +1867,9 @@ Module FrontierT <: FRONTIER_ALL.
   TimeFun df_transpose.
   Definition k_df_step : N := 1. (* STUB *)
   Definition k_df_stop : N := 1. (* STUB *)
-  Definition k_df_column : N := 1. (* STUB *)
-  Definition k_df_transpose : N := 1. (* STUB *)
-  Definition k_df : N := 1. (* STUB *)
+  Definition k_df_column : N := frontier_column_cost.
+  Definition k_df_transpose : N := frontier_transpose_cost.
+  Definition k_df : N := 16.
 
   Definition df_initial g y := DfState (preds g y) Empty [].
 
@@ -1917,27 +2007,41 @@ Module FrontierT <: FRONTIER_ALL.
       k_df_column * N.of_nat
         (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
         N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    exact (frontier_df_columns_time g t r Hgraph Hprepared Htree).
+  Qed.
 
   Lemma T5_df_transpose : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_df_transpose (df_columns g t) <= k_df_transpose *
       N.of_nat (graph_n (base g) + df_size g t + 1) *
         N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    pose proof (frontier_df_rows_time g t r Hgraph Hprepared Htree) as Hbound.
+    change (Frontier.df_size g t) with (df_size g t) in Hbound.
+    unfold k_df_transpose, df_columns, df_column. time_unfold T_df_transpose. lia.
+  Qed.
 
   Lemma T6_df_wrapper : forall g t,
     (T_df g t <= k_df * (N.of_nat (length (nodes g) + 1) +
       fold_right (fun y cost => T_df_column g t y + cost)%N 0%N (nodes g) +
       T_df_transpose (df_columns g t)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t. pose proof (frontier_df_wrapper_time g t) as Hbound.
+    unfold k_df, df_columns, df_column. time_unfold T_df. time_unfold T_df_transpose.
+    unfold T_df_column. lia.
+  Qed.
 
   Lemma T7_df_public : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_df g t <= c_frontier *
       N.of_nat (graph_n (base g) + graph_e (base g) + df_size g t + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_df_le.
+  Qed.
 
   Definition idf_step := idf_step.
   TimeFun idf_step.
