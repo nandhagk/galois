@@ -5095,3 +5095,217 @@ Proof.
   induction Hxs as [|x rest Hx Hrest IH]; intros ys Hys; [exact Hys|].
   cbn [rev_append]. apply IH. now constructor.
 Qed.
+
+(** * Child-index structure and clocks *)
+
+(** Splitting preserves the original order and every occurrence. *)
+Lemma dom_order_split_partition n xs :
+  fst (dom_order_split n xs) ++ snd (dom_order_split n xs) = xs.
+Proof.
+  revert xs. induction n as [|n IH]; intros [|v rest]; cbn [dom_order_split fst snd app];
+    try reflexivity.
+  specialize (IH rest). destruct (dom_order_split n rest) as [lower upper].
+  cbn [fst snd app] in IH |- *. now rewrite IH.
+Qed.
+
+(** The two split parts retain exactly the input's total length. *)
+Lemma dom_order_split_length n xs :
+  length (fst (dom_order_split n xs)) + length (snd (dom_order_split n xs)) = length xs.
+Proof.
+  rewrite <- length_app, dom_order_split_partition. reflexivity.
+Qed.
+
+(** Each split part inherits every property of the original elements. *)
+Lemma dom_order_split_forall (P : N -> Prop) n xs :
+  Forall P xs ->
+  Forall P (fst (dom_order_split n xs)) /\ Forall P (snd (dom_order_split n xs)).
+Proof.
+  intro Hall. rewrite <- (dom_order_split_partition n xs) in Hall.
+  now apply Forall_app in Hall.
+Qed.
+
+(** Half of a unary count never exceeds that count. *)
+Lemma dom_order_half_twice n : 2 * dom_order_half n <= n.
+Proof.
+  revert n. fix IH 1. intros [|[|n]]; cbn [dom_order_half]; try lia.
+  pose proof (IH n). lia.
+Qed.
+
+(** Computing the half count reads at most one cell per original unit. *)
+Lemma dom_order_half_time n :
+  (T_dom_order_half n <= N.of_nat n + 1)%N.
+Proof.
+  revert n. fix IH 1. intros [|[|n]].
+  - time_step.
+  - time_step.
+  - pose proof (IH n). time_step.
+Qed.
+
+(** Splitting reads at most the supplied list's cells. *)
+Lemma dom_order_split_time n xs :
+  (T_dom_order_split n xs <= N.of_nat (length xs) + 1)%N.
+Proof.
+  revert n. induction xs as [|v rest IH]; intros [|n]; time_step.
+Qed.
+
+Fixpoint dom_order_index_height (index : dom_child_index) : nat :=
+  match index with
+  | DomChildEmpty => 0
+  | DomChildNode _ _ lower upper =>
+    S (Nat.max (dom_order_index_height lower) (dom_order_index_height upper))
+  end.
+
+Fixpoint dom_order_index_values (P Q : N -> Prop) (index : dom_child_index) : Prop :=
+  match index with
+  | DomChildEmpty => True
+  | DomChildNode child position lower upper =>
+    P child /\ Q position /\
+      dom_order_index_values P Q lower /\ dom_order_index_values P Q upper
+  end.
+
+(** The explicit recursion fuel bounds the constructed child index's height. *)
+Lemma dom_order_index_build_height fuel pre xs :
+  dom_order_index_height (dom_order_index_build fuel pre xs) <= fuel.
+Proof.
+  revert xs. induction fuel as [|fuel IH]; intros [|v rest];
+    cbn [dom_order_index_build dom_order_index_height]; try lia.
+  destruct (dom_order_split (dom_order_half (length (v :: rest))) (v :: rest))
+    as [lower [|pivot upper]]; cbn [dom_order_index_height]; [lia|].
+  pose proof (IH lower) as Hlower.
+  pose proof (IH upper) as Hupper. lia.
+Qed.
+
+(** The constructed index stores only supplied children and their supplied position values. *)
+Lemma dom_order_index_build_values (P Q : N -> Prop) fuel pre xs :
+  Forall P xs -> (forall v, P v -> Q (dom_order_number pre v)) ->
+  dom_order_index_values P Q (dom_order_index_build fuel pre xs).
+Proof.
+  revert xs. induction fuel as [|fuel IH]; intros [|v rest] Hall Hnumber;
+    cbn [dom_order_index_build dom_order_index_values]; try exact I.
+  pose proof (dom_order_split_forall P (dom_order_half (length (v :: rest)))
+    (v :: rest) Hall) as Hparts.
+  destruct (dom_order_split (dom_order_half (length (v :: rest))) (v :: rest))
+    as [lower [|pivot upper]]; cbn [fst snd dom_order_index_values] in *; [exact I|].
+  destruct Hparts as [Hlower Hupper].
+  inversion Hupper as [|head tail Hpivot Htail]; subst head tail.
+  split; [exact Hpivot|]. split; [now apply Hnumber|]. split; now apply IH.
+Qed.
+
+(** A successful index search returns one of its stored children. *)
+Lemma dom_order_index_search_value (P Q : N -> Prop) index position child :
+  dom_order_index_values P Q index -> dom_order_index_search position index = Some child ->
+  P child.
+Proof.
+  induction index as [|stored start lower IHlower upper IHupper]; intros Hvalues Hsearch.
+  - discriminate Hsearch.
+  - destruct Hvalues as [Hstored [Hstart [Hlower Hupper]]].
+    cbn [dom_order_index_search] in Hsearch.
+    destruct (N.ltb position start).
+    + now apply IHlower.
+    + destruct (dom_order_index_search position upper) as [found|] eqn:Hfound.
+      * injection Hsearch as <-. now apply IHupper.
+      * now injection Hsearch as <-.
+Qed.
+
+(** Two child budgets share one parent span after removing the pivot. *)
+Lemma dom_order_index_children_budget (unit depth lower upper total left_work right_work : N) :
+  (lower + upper + 1 = total)%N ->
+  (left_work <= unit * (depth * (lower + 1)))%N ->
+  (right_work <= unit * (depth * (upper + 1)))%N ->
+  (left_work + right_work <= unit * (depth * (total + 1)))%N.
+Proof.
+  intros Hspan Hleft Hright.
+  assert (Hbudget : (unit * (depth * (total + 1)) =
+    unit * (depth * (lower + 1)) + unit * (depth * (upper + 1)))%N).
+  { rewrite <- Hspan. ring. }
+  rewrite Hbudget. now apply N.add_le_mono.
+Qed.
+
+(** Building an index spends linear list work on each explicit recursion level. *)
+Lemma dom_order_index_build_time fuel pre xs k :
+  (forall v, In v xs -> (T_dom_order_number pre v <= k)%N) ->
+  (T_dom_order_index_build fuel pre xs <=
+    32 * (k + 1) * N.of_nat ((fuel + 1) * (length xs + 1)))%N.
+Proof.
+  revert xs. induction fuel as [|fuel IH]; intros xs Hnumber.
+  - time_unfold T_dom_order_index_build. time_simpl.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+  - destruct xs as [|v rest].
+    + time_unfold T_dom_order_index_build. time_simpl.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+    + pose proof (Datatypes.T_length_le (v :: rest)) as Hlength_time.
+      pose proof (dom_order_half_time (length (v :: rest))) as Hhalf.
+      pose proof (dom_order_split_time (dom_order_half (length (v :: rest)))
+        (v :: rest)) as Hsplit_time.
+      pose proof (dom_order_split_partition (dom_order_half (length (v :: rest)))
+        (v :: rest)) as Hpartition.
+      pose proof (dom_order_split_length (dom_order_half (length (v :: rest)))
+        (v :: rest)) as Hlength.
+      destruct (dom_order_split (dom_order_half (length (v :: rest))) (v :: rest))
+        as [lower upper] eqn:Hsplit.
+      cbn [fst snd] in Hpartition, Hlength.
+      destruct upper as [|pivot upper].
+      * time_unfold T_dom_order_index_build. rewrite Hsplit. time_simpl.
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+      * assert (Hlower : forall x, In x lower -> (T_dom_order_number pre x <= k)%N).
+        { intros x Hx. apply Hnumber. rewrite <- Hpartition.
+          apply in_or_app. now left. }
+        assert (Hupper : forall x, In x upper -> (T_dom_order_number pre x <= k)%N).
+        { intros x Hx. apply Hnumber. rewrite <- Hpartition.
+          apply in_or_app. right. now right. }
+        assert (Hpivot : (T_dom_order_number pre pivot <= k)%N).
+        { apply Hnumber. rewrite <- Hpartition. apply in_or_app. right. now left. }
+        pose proof (IH lower Hlower) as Hlower_time.
+        pose proof (IH upper Hupper) as Hupper_time.
+        assert (Hspan : (N.of_nat (length lower) + N.of_nat (length upper) + 1 =
+          N.of_nat (length (v :: rest)))%N).
+        { cbn [length] in Hlength |- *. lia. }
+        set (unit := (32 * (k + 1))%N).
+        assert (Hrecursive : (T_dom_order_index_build fuel pre lower +
+          T_dom_order_index_build fuel pre upper <=
+          unit * ((N.of_nat fuel + 1) * (N.of_nat (length (v :: rest)) + 1)))%N).
+        { rewrite !Nat2N.inj_mul, !Nat2N.inj_add in Hlower_time, Hupper_time.
+          fold unit in Hlower_time, Hupper_time.
+          eapply dom_order_index_children_budget;
+            [exact Hspan|exact Hlower_time|exact Hupper_time]. }
+        assert (Hoverhead : (16 + Datatypes.T_length (v :: rest) +
+          T_dom_order_half (length (v :: rest)) +
+          T_dom_order_split (dom_order_half (length (v :: rest))) (v :: rest) +
+          T_dom_order_number pre pivot <= unit * (N.of_nat (length (v :: rest)) + 1))%N).
+        { unfold unit. clear -Hlength_time Hhalf Hsplit_time Hpivot.
+          nia. }
+        time_unfold T_dom_order_index_build. rewrite Hsplit. time_simpl.
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add, (Nat2N.inj_succ fuel).
+        rewrite !N.mul_assoc.
+        rewrite N.mul_assoc in Hrecursive.
+        fold unit. replace (unit * (N.succ (N.of_nat fuel) + 1) *
+          (N.of_nat (length (v :: rest)) + 1))%N with
+          (unit * (N.of_nat fuel + 1) * (N.of_nat (length (v :: rest)) + 1) +
+            unit * (N.of_nat (length (v :: rest)) + 1))%N by (rewrite <- N.add_1_r; ring).
+        clear -Hrecursive Hoverhead. lia.
+Qed.
+
+(** An index search follows only one branch and compares the supplied position. *)
+Lemma dom_order_index_search_time position index :
+  (T_dom_order_index_search position index <=
+    (N.of_nat (N.size_nat position) + 8) *
+      N.of_nat (dom_order_index_height index + 1))%N.
+Proof.
+  induction index as [|child start lower IHlower upper IHupper].
+  - time_unfold T_dom_order_index_search. time_simpl.
+    cbn [dom_order_index_height]. nia.
+  - pose proof (dom_lt_time_ltb position start) as Hcompare.
+    time_unfold T_dom_order_index_search.
+    destruct (N.ltb position start).
+    + time_simpl. cbn [dom_order_index_height].
+      pose proof (Nat.le_max_l (dom_order_index_height lower)
+        (dom_order_index_height upper)) as Hheight.
+      apply time_of_nat_le in Hheight.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+    + destruct (dom_order_index_search position upper); time_simpl;
+        cbn [dom_order_index_height];
+        pose proof (Nat.le_max_r (dom_order_index_height lower)
+          (dom_order_index_height upper)) as Hheight;
+        apply time_of_nat_le in Hheight;
+        rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+Qed.
