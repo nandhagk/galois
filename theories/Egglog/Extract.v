@@ -5783,6 +5783,59 @@ Module SearchGhosts (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V).
   Qed.
 End SearchGhosts.
 
+(** Continuing steps spend their potential while the final call pays a separate stop bound. *)
+Lemma extraction_loop_clock_amort {St Out} (run : St -> St + Out) (T_run : St -> N)
+    (Inv : St -> Prop) (potential : St -> N) (allowance stop : N) :
+  (forall s next, Inv s -> run s = inl next ->
+    Inv next /\ (T_run s + potential next <= potential s + allowance)%N) ->
+  (forall s out, Inv s -> run s = inr out -> (T_run s <= stop)%N) ->
+  forall fuel s, Inv s ->
+    (T_loop_fuel run T_run fuel s <= potential s +
+      (allowance + 1) * N.of_nat fuel + stop + 1)%N.
+Proof.
+  intros Hgo Hstop fuel. induction fuel as [|fuel IH]; intros s Hinv;
+    time_unfold @T_loop_fuel.
+  - cbn [N.of_nat]. lia.
+  - rewrite Nat2N.inj_succ, N.mul_succ_r.
+    destruct (run s) as [next|out] eqn:Hrun.
+    + destruct (Hgo s next Hinv Hrun) as [Hnext Hcredit].
+      specialize (IH next Hnext). lia.
+    + specialize (Hstop s out Hinv Hrun). nia.
+Qed.
+
+(** Scaling a nonnegative amount by two factors at least one cannot reduce it. *)
+Lemma extraction_scale_ge : forall amount first second,
+  (1 <= first -> 1 <= second -> amount <= amount * first * second)%N.
+Proof.
+  intros amount first second Hfirst Hsecond.
+  pose proof (N.mul_le_mono_l 1 first amount Hfirst) as Hleft.
+  pose proof (N.mul_le_mono_l 1 second (amount * first) Hsecond) as Hright.
+  rewrite N.mul_1_r in Hleft, Hright. exact (N.le_trans _ _ _ Hleft Hright).
+Qed.
+
+(** The public coefficient covers loop-control and stopping overhead beyond the two main charges. *)
+Lemma extraction_driver_budget : forall rows budget first second coefficient,
+  (1 <= rows -> 2 * rows <= budget -> 1 <= first -> 1 <= second -> 1 <= coefficient ->
+    2 * coefficient * budget * first * second + 2 * coefficient * rows + rows + 1 <=
+      4 * coefficient * budget * first * second)%N.
+Proof.
+  intros rows budget first second coefficient Hrows Hbudget Hfirst Hsecond Hcoefficient.
+  assert (Hrow_credit : (rows <= coefficient * rows)%N).
+  { pose proof (N.mul_le_mono_r 1 coefficient rows Hcoefficient). now rewrite N.mul_1_l in H. }
+  assert (Hsmall : (2 * coefficient * rows + rows + 1 <= 4 * coefficient * rows)%N).
+  { clear - Hrows Hrow_credit. nia. }
+  assert (Hbase : (4 * coefficient * rows <= 2 * coefficient * budget)%N).
+  { pose proof (N.mul_le_mono_l (2 * rows) budget (2 * coefficient) Hbudget).
+    clear - H. nia. }
+  pose proof (extraction_scale_ge (2 * coefficient * budget) first second Hfirst Hsecond)
+    as Hscale.
+  assert (Hpaid : (2 * coefficient * rows + rows + 1 <=
+    2 * coefficient * budget * first * second)%N).
+  { exact (N.le_trans _ _ _ Hsmall (N.le_trans _ _ _ Hbase Hscale)). }
+  clear Hrows Hbudget Hfirst Hsecond Hcoefficient Hrow_credit Hsmall Hbase Hscale.
+  nia.
+Qed.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) (Q : PQ_OPS) <: EXTRACT_OPS V I D C.
   Include SearchCode V C Q.
