@@ -13,6 +13,7 @@ From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
 
+Import Lia.
 Import List.ListNotations.
 
 (** * Record readers *)
@@ -1284,12 +1285,16 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         fold_right (fun x m => Pos.size_nat x + 1 + m) 0 (var_of V.t c) +
         fold_right (fun i m => i + 1 + m) 0 (post V.t c) + 1 + n)
         0 (naive V.t cp ++ seminaive V.t cp).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma wbits_spec : forall p,
     wbits p = fold_right (fun x n => Nat.max (Pos.size_nat x) n)
       0 (program_words V.encode p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma T_plan_le : forall p,
     (T_plan p <= c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
@@ -1480,10 +1485,20 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma F15_unit_scale : forall (T C P P' : N) (u U : nat), 1 <= u -> u <= U ->
     (T + N.of_nat u * P' <= N.of_nat u * (C + P))%N ->
     (T + N.of_nat U * P' <= N.of_nat U * (C + P))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros T C P P' u U Hu HuU Hbound.
+    assert (HuN : (1 <= N.of_nat u)%N) by lia.
+    assert (HuUN : (N.of_nat u <= N.of_nat U)%N) by lia.
+    assert (Hpotential : (P' <= C + P)%N) by nia.
+    pose proof (N.mul_le_mono_l P' (C + P) (N.of_nat U - N.of_nat u) Hpotential)
+      as Hextra.
+    nia.
+  Qed.
 
   Lemma F16_unit_pos : forall db, 1 <= D.unit db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. unfold D.unit. nia.
+  Qed.
 
   Lemma F17_round_mono : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.wf (round p cp nv db) /\ loaded p cp (round p cp nv db) /\
@@ -1532,7 +1547,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
               (env_of c binding))%N)
           (bindings cp c db)))
         (if nv then naive V.t cp else seminaive V.t cp)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma F21_put_sorted : forall sorts f k o db, D.wf db -> D.kind_ok db f k o ->
     view_sorted sorts (D.view db) -> row_sorted sorts (kind (D.view db)) f k o ->
