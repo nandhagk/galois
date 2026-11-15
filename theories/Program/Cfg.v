@@ -65,6 +65,93 @@ Definition cfg_distinct {A} (encode : A -> positive) (xs : list A) : list A :=
     end) xs (Empty, []))) [].
 
 TimeFun cfg_distinct.
+
+(** The seen-key trie agrees with the distinct values accumulated so far. *)
+Lemma cfg_distinct_fold {A} (encode : A -> positive)
+    (Hinj : forall x y, encode x = encode y -> x = y) :
+  forall xs (m : ptrie unit) ys,
+    NoDup ys ->
+    (forall x, trie_get (encode x) m = Some tt <-> In x ys) ->
+    let acc := fold_left (fun acc x =>
+      let c := encode x in
+      match trie_get c (fst acc) with
+      | Some _ => acc
+      | None => (PTrieCode.set c tt (fst acc), x :: snd acc)
+      end) xs (m, ys) in
+    NoDup (snd acc) /\ forall x, In x (snd acc) <-> In x xs \/ In x ys.
+Proof.
+  induction xs as [|a xs IH]; intros m ys Hnodup Hseen.
+  - cbn [fold_left snd In]. split; [exact Hnodup | tauto].
+  - cbn [fold_left fst snd].
+    destruct (trie_get (encode a) m) as [[]|] eqn:Ha.
+    + destruct (IH m ys Hnodup Hseen) as [Hnd Hmem].
+      split; [exact Hnd |]. intro x. rewrite Hmem.
+      pose proof (proj1 (Hseen a) Ha) as Hin.
+      cbn [In]. split.
+      * tauto.
+      * intros [[Hax | Hxs] | Hys]; [subst x; tauto | tauto | tauto].
+    + assert (Hnew : NoDup (a :: ys)).
+      { constructor; [|exact Hnodup]. intro Hin.
+        apply (proj2 (Hseen a)) in Hin. congruence. }
+      assert (Hseen' : forall x,
+        trie_get (encode x) (PTrieCode.set (encode a) tt m) = Some tt <->
+        In x (a :: ys)).
+      { intro x. destruct (Pos.eq_dec (encode x) (encode a)) as [Heq | Hneq].
+        - apply Hinj in Heq; subst x.
+          change (PTrie.get (encode a) (PTrie.set (encode a) tt m) = Some tt <->
+            In a (a :: ys)).
+          rewrite PTrie.get_set_same. cbn [In]. tauto.
+        - change (PTrie.get (encode x) (PTrie.set (encode a) tt m) = Some tt <->
+            In x (a :: ys)).
+          rewrite PTrie.get_set_other by exact Hneq.
+          change (trie_get (encode x) m = Some tt <-> In x (a :: ys)).
+          rewrite Hseen. cbn [In]. split; [tauto |].
+          intros [Hax | Hin]; [subst x; contradiction | exact Hin]. }
+      destruct (IH (PTrieCode.set (encode a) tt m) (a :: ys) Hnew Hseen')
+        as [Hnd Hmem].
+      split; [exact Hnd |]. intro x. rewrite Hmem. cbn [In]. tauto.
+Qed.
+
+(** Deduplication retains exactly the input values and removes every duplicate. *)
+Lemma cfg_distinct_spec {A} (encode : A -> positive)
+    (Hinj : forall x y, encode x = encode y -> x = y) xs :
+  NoDup (cfg_distinct encode xs) /\
+    forall x, In x (cfg_distinct encode xs) <-> In x xs.
+Proof.
+  assert (Hseen : forall x, trie_get (encode x) Empty = Some tt <-> In x []).
+  { intro x. change (PTrie.get (encode x) PTrie.empty = Some tt <-> False).
+    rewrite PTrie.get_empty. split; [discriminate | contradiction]. }
+  destruct (cfg_distinct_fold encode Hinj xs Empty [] (NoDup_nil _) Hseen)
+    as [Hnd Hmem].
+  unfold cfg_distinct. rewrite rev_append_rev, app_nil_r.
+  split; [now apply NoDup_rev |]. intro x. rewrite <- in_rev, Hmem. cbn [In]. tauto.
+Qed.
+
+(** A bucket contains exactly the listed values whose encoded key selects it. *)
+Lemma cfg_bucket_spec {A} (key : A -> positive) xs k x :
+  In x (match trie_get k
+    (fold_right (fun a m => cfg_add (key a) a m) Empty xs) with
+    | Some ys => ys
+    | None => []
+    end) <-> In x xs /\ key x = k.
+Proof.
+  induction xs as [|a xs IH].
+  - cbn [fold_right]. change (In x (match PTrie.get k PTrie.empty with
+      | Some ys => ys | None => [] end) <-> In x [] /\ key x = k).
+    rewrite PTrie.get_empty. cbn [In]. tauto.
+  - cbn [fold_right]. unfold cfg_add.
+    destruct (Pos.eq_dec k (key a)) as [Heq | Hneq].
+    + subst k.
+      rewrite PTrie.get_set_same. cbn [In]. rewrite IH.
+      split.
+      * intros [Hax | [Hin Hkey]]; [subst x; auto | auto].
+      * intros [[Hax | Hin] Hkey]; [left; exact Hax | right; auto].
+    + rewrite PTrie.get_set_other by exact Hneq. rewrite IH. cbn [In].
+      split; [tauto |]. intros [[Hax | Hin] Hkey].
+      * subst x. congruence.
+      * auto.
+Qed.
+
 TimeFun cfg_program.
 TimeFun cfg_nodes.
 TimeFun cfg_out.
@@ -115,25 +202,51 @@ Module PreparedCfgLaws (P : TYPE) (N : KEY) (E : TYPE) (C : CFG_OPS P N E).
 
   (** Preparation establishes the cache and node correspondence used by the laws. *)
   Lemma prepare_wf : forall p, wf (Code.prepare p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma nodes_nodup : forall p, wf p -> NoDup (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf. unfold wf in Hwf. rewrite Hwf.
+    apply (proj1 (cfg_distinct_spec N.encode N.encode_inj _)).
+  Qed.
 
   Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n Hwf Hin. unfold wf in Hwf. rewrite Hwf.
+    apply (proj2 (cfg_distinct_spec N.encode N.encode_inj _) n).
+    apply in_or_app. left. exact Hin.
+  Qed.
 
   Lemma edges_nodes : forall p e, wf p -> In e (edges p) ->
     In (src p e) (nodes p) /\ In (dst p e) (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e Hwf Hin. unfold wf in Hwf. rewrite Hwf.
+    split; apply (proj2 (cfg_distinct_spec N.encode N.encode_inj _));
+      apply in_or_app; right; apply in_flat_map; exists e; split;
+      [exact Hin | cbn; auto | exact Hin | cbn; auto].
+  Qed.
 
   Lemma out_spec : forall p n e, wf p ->
     (In e (out p n) <-> In e (edges p) /\ src p e = n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n e Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold out, edges, src. cbn [Code.prepare cfg_program cfg_out].
+    rewrite cfg_bucket_spec. split.
+    - intros [Hin Hkey]. split; [exact Hin | now apply N.encode_inj].
+    - intros [Hin Hsrc]. split; [exact Hin | now rewrite Hsrc].
+  Qed.
 
   Lemma inc_spec : forall p n e, wf p ->
     (In e (inc p n) <-> In e (edges p) /\ dst p e = n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n e Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold inc, edges, dst. cbn [Code.prepare cfg_program cfg_inc].
+    rewrite cfg_bucket_spec. split.
+    - intros [Hin Hkey]. split; [exact Hin | now apply N.encode_inj].
+    - intros [Hin Hdst]. split; [exact Hin | now rewrite Hdst].
+  Qed.
   End Laws.
   Include Laws.
 End PreparedCfgLaws.
