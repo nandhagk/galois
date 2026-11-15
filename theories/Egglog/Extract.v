@@ -3955,6 +3955,285 @@ Module SearchFacts (V : VALUE) (C : COST V) (Q : PQ).
         destruct (trie_get i (search_final_costs s)); discriminate.
   Qed.
 
+  (** Setting a ready original row preserves validity of every live candidate. *)
+  Lemma search_candidates_set : forall rs costs candidates i n f k,
+    search_candidates_valid rs costs candidates -> trie_get i costs = None ->
+    In (f, k, i) rs -> Semantics.search_known costs k ->
+    n = C.fn_cost f (dag_cost_cells C.val_cost costs k) ->
+    search_candidates_valid rs costs (PTrieCode.set i (n, (f, k)) candidates).
+  Proof.
+    intros rs costs candidates i n f k Hvalid Hmissing Hrow Hknown Hcost j m g key Hget.
+    destruct (Pos.eq_dec j i) as [->|Hneq].
+    - rewrite PTrie.get_set_same in Hget. injection Hget as <- <- <-.
+      repeat split; assumption.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq. exact (Hvalid j m g key Hget).
+  Qed.
+
+  (** Parking a valid frame preserves validity of all old and new waiting entries. *)
+  Lemma search_waiters_set : forall rs costs waiters i frame,
+    search_waiters_valid rs costs waiters -> search_frame_valid rs costs frame ->
+    trie_get i costs = None -> (exists rest, frame_rest frame = Id i :: rest) ->
+    search_waiters_valid rs costs
+      (PTrieCode.set i (frame :: match trie_get i waiters with
+        | Some frames => frames | None => [] end) waiters).
+  Proof.
+    intros rs costs waiters i frame Hvalid Hframe Hmissing Hhead j frames entry Hget Hin.
+    destruct (Pos.eq_dec j i) as [->|Hneq].
+    - rewrite PTrie.get_set_same in Hget. injection Hget as <-.
+      destruct Hin as [<-|Hin].
+      + split; [exact Hframe|]. split; assumption.
+      + destruct (trie_get i waiters) as [old|] eqn:Hold; [|contradiction].
+        exact (Hvalid i old entry Hold Hin).
+    - rewrite PTrie.get_set_other in Hget by exact Hneq.
+      exact (Hvalid j frames entry Hget Hin).
+  Qed.
+
+  (** Offering a ready row preserves candidate and waiting-list validity. *)
+  Lemma search_offer_valid : forall DB rs i n f k (s : extraction_state V.t DB Q.t),
+    search_candidates_valid rs (search_final_costs s) (search_candidates s) ->
+    search_waiters_valid rs (search_final_costs s) (search_waiters s) ->
+    trie_get i (search_final_costs s) = None -> In (f, k, i) rs ->
+    Semantics.search_known (search_final_costs s) k ->
+    n = C.fn_cost f (dag_cost_cells C.val_cost (search_final_costs s) k) ->
+    search_candidates_valid rs (search_final_costs (search_offer i n (f, k) s))
+      (search_candidates (search_offer i n (f, k) s)) /\
+    search_waiters_valid rs (search_final_costs (search_offer i n (f, k) s))
+      (search_waiters (search_offer i n (f, k) s)).
+  Proof.
+    intros DB rs i n f k s Hcandidates Hwaiters Hmissing Hrow Hknown Hcost.
+    unfold search_offer. destruct (trie_get i (search_candidates s)) as [[old choice]|].
+    - destruct (N.ltb n old); split; try assumption.
+      now apply search_candidates_set.
+    - split; [now apply search_candidates_set|exact Hwaiters].
+  Qed.
+
+  (** A resumed valid row retains both class-map invariants. *)
+  Lemma search_resume_valid : forall DB rs frame (s : extraction_state V.t DB Q.t),
+    search_candidates_valid rs (search_final_costs s) (search_candidates s) ->
+    search_waiters_valid rs (search_final_costs s) (search_waiters s) ->
+    search_frame_valid rs (search_final_costs s) frame ->
+    search_candidates_valid rs (search_final_costs (search_resume frame s))
+      (search_candidates (search_resume frame s)) /\
+    search_waiters_valid rs (search_final_costs (search_resume frame s))
+      (search_waiters (search_resume frame s)).
+  Proof.
+    intros DB rs [[[f k] i] todo acc] s Hcandidates Hwaiters Hframe.
+    unfold search_resume. cbn [frame_row frame_rest frame_costs].
+    destruct (trie_get i (search_final_costs s)) as [old|] eqn:Hmissing; [now split|].
+    destruct (search_scan (search_final_costs s) acc todo)
+      as [[child [rest values]]|values] eqn:Hscan.
+    - destruct (search_frame_wait rs (search_final_costs s)
+        (ExtractionFrame (f, k, i) todo acc) child rest values Hframe Hscan)
+        as [Hnew [Hchild Hhead]].
+      split; [exact Hcandidates|]. apply search_waiters_set; assumption.
+    - destruct (search_frame_ready rs (search_final_costs s)
+        (ExtractionFrame (f, k, i) todo acc) values Hframe Hscan) as [Hknown Hvalues].
+      cbn [frame_row fst snd] in Hknown, Hvalues.
+      apply search_offer_valid; try assumption.
+      + exact (proj1 Hframe).
+      + now rewrite Hvalues.
+  Qed.
+
+  (** A new offer can only decrease a previously recorded candidate cost. *)
+  Lemma search_offer_decreases : forall DB i n row (s : extraction_state V.t DB Q.t) j m old,
+    trie_get j (search_candidates s) = Some (m, old) ->
+    exists p choice, trie_get j (search_candidates (search_offer i n row s)) =
+      Some (p, choice) /\ (p <= m)%N.
+  Proof.
+    intros DB i n row s j m old Hget. unfold search_offer.
+    destruct (trie_get i (search_candidates s)) as [[prior choice]|] eqn:Hi.
+    - destruct (N.ltb n prior) eqn:Hbetter.
+      + cbn [search_restate search_candidates]. destruct (Pos.eq_dec j i) as [->|Hneq].
+        * rewrite Hi in Hget. injection Hget as <- <-. exists n, row. split.
+          -- apply PTrie.get_set_same.
+          -- apply N.ltb_lt in Hbetter. lia.
+        * exists m, old. split; [now rewrite PTrie.get_set_other|apply N.le_refl].
+      + exists m, old. split; [exact Hget|apply N.le_refl].
+    - cbn [search_restate search_candidates].
+      destruct (Pos.eq_dec j i) as [->|Hneq]; [congruence|].
+      exists m, old. split; [now rewrite PTrie.get_set_other|apply N.le_refl].
+  Qed.
+
+  (** Every offer leaves a candidate whose cost is at most the supplied ready cost. *)
+  Lemma search_offer_supplied : forall DB i n row (s : extraction_state V.t DB Q.t),
+    exists p choice, trie_get i (search_candidates (search_offer i n row s)) =
+      Some (p, choice) /\ (p <= n)%N.
+  Proof.
+    intros DB i n row s. unfold search_offer.
+    destruct (trie_get i (search_candidates s)) as [[prior choice]|] eqn:Hi.
+    - destruct (N.ltb n prior) eqn:Hbetter.
+      + exists n, row. split; [apply PTrie.get_set_same|apply N.le_refl].
+      + exists prior, choice. split; [exact Hi|]. now apply N.ltb_ge in Hbetter.
+    - exists n, row. split; [apply PTrie.get_set_same|apply N.le_refl].
+  Qed.
+
+  (** Offering a new row preserves coverage already supplied by other ready rows. *)
+  Lemma search_offer_covered : forall DB i n choice (s : extraction_state V.t DB Q.t) row,
+    search_row_covered (search_final_costs s) (search_candidates s) row ->
+    search_row_covered (search_final_costs (search_offer i n choice s))
+      (search_candidates (search_offer i n choice s)) row.
+  Proof.
+    intros DB i n choice s row Hcovered.
+    destruct (search_offer_stable DB i n choice s) as [Hdb [Hrows [Hcount [Hcosts Hfinals]]]].
+    rewrite Hcosts. destruct Hcovered as [Hfinal|[Hknown [p [old [Hget Hbound]]]]].
+    - now left.
+    - right. split; [exact Hknown|].
+      destruct (search_offer_decreases DB i n choice s (snd row) p old Hget)
+        as [m [new [Hnew Hle]]].
+      exists m, new. split; [exact Hnew|]. eapply N.le_trans; eassumption.
+  Qed.
+
+  Lemma search_offer_waiters : forall DB i n choice (s : extraction_state V.t DB Q.t),
+    search_waiters (search_offer i n choice s) = search_waiters s.
+  Proof.
+    intros DB i n choice s. unfold search_offer.
+    destruct (trie_get i (search_candidates s)) as [[old row]|];
+      [destruct (N.ltb n old)|]; reflexivity.
+  Qed.
+
+  (** The row just offered is covered by the resulting candidate map. *)
+  Lemma search_offer_covers : forall DB i n f k (s : extraction_state V.t DB Q.t),
+    Semantics.search_known (search_final_costs s) k ->
+    n = C.fn_cost f (dag_cost_cells C.val_cost (search_final_costs s) k) ->
+    search_row_covered (search_final_costs (search_offer i n (f, k) s))
+      (search_candidates (search_offer i n (f, k) s)) (f, k, i).
+  Proof.
+    intros DB i n f k s Hknown Hcost.
+    destruct (search_offer_stable DB i n (f, k) s) as [Hdb [Hrows [Hcount [Hcosts Hfinals]]]].
+    rewrite Hcosts. right. split; [exact Hknown|].
+    destruct (search_offer_supplied DB i n (f, k) s) as [p [choice [Hget Hle]]].
+    exists p, choice. split; [exact Hget|]. cbn [fst snd]. now rewrite <- Hcost.
+  Qed.
+
+  (** A pending source in a nonempty active list is its head or remains pending in the tail. *)
+  Lemma search_pending_cons : forall waiters frame active row,
+    search_row_pending waiters (frame :: active) row ->
+    frame_row frame = row \/ search_row_pending waiters active row.
+  Proof.
+    intros waiters frame active row [Hwaiting|[entry [Hin Hrow]]].
+    - right. now left.
+    - destruct Hin as [<-|Hin].
+      + now left.
+      + right. right. exists entry. now split.
+  Qed.
+
+  (** Inserting a waiting frame preserves all older pending row sources. *)
+  Lemma search_pending_set : forall waiters i frame active row,
+    search_row_pending waiters active row ->
+    search_row_pending (PTrieCode.set i (frame :: match trie_get i waiters with
+      | Some frames => frames | None => [] end) waiters) active row.
+  Proof.
+    intros waiters i frame active row [Hwaiting|Hactive]; [left|now right].
+    destruct Hwaiting as [j [frames [entry [Hget [Hin Hrow]]]]].
+    destruct (Pos.eq_dec j i) as [->|Hneq].
+    - exists i, (frame :: frames), entry. split.
+      + rewrite PTrie.get_set_same, Hget. reflexivity.
+      + split; [now right|exact Hrow].
+    - exists j, frames, entry. split.
+      + now rewrite PTrie.get_set_other.
+      + now split.
+  Qed.
+
+  (** A newly parked frame accounts for its own source row. *)
+  Lemma search_pending_inserted : forall waiters i frame active,
+    search_row_pending (PTrieCode.set i (frame :: match trie_get i waiters with
+      | Some frames => frames | None => [] end) waiters) active (frame_row frame).
+  Proof.
+    intros waiters i frame active. left.
+    exists i, (frame :: match trie_get i waiters with Some frames => frames | None => [] end),
+      frame.
+    split; [apply PTrie.get_set_same|]. split; [now left|reflexivity].
+  Qed.
+
+  (** Consuming one active frame keeps all sources accounted for when old coverage persists. *)
+  Lemma search_tracking_consume : forall rs costs candidates waiters frame active
+      new_costs new_candidates new_waiters,
+    search_tracking rs costs candidates waiters (frame :: active) ->
+    (forall row, search_row_covered costs candidates row ->
+      search_row_covered new_costs new_candidates row) ->
+    (forall row, search_row_pending waiters active row ->
+      search_row_pending new_waiters active row) ->
+    (search_row_covered new_costs new_candidates (frame_row frame) \/
+      search_row_pending new_waiters active (frame_row frame)) ->
+    search_tracking rs new_costs new_candidates new_waiters active.
+  Proof.
+    intros rs costs candidates waiters frame active new_costs new_candidates new_waiters
+      Htracking Hcovered Hpending Hframe row Hin.
+    destruct (Htracking row Hin) as [Hcover|Hwait].
+    - left. now apply Hcovered.
+    - destruct (search_pending_cons waiters frame active row Hwait) as [<-|Htail].
+      + exact Hframe.
+      + right. now apply Hpending.
+  Qed.
+
+  (** Resuming the head of an active list preserves the source accounting of its tail. *)
+  Lemma search_resume_tracking : forall DB rs frame active (s : extraction_state V.t DB Q.t),
+    search_frame_valid rs (search_final_costs s) frame ->
+    search_tracking rs (search_final_costs s) (search_candidates s) (search_waiters s)
+      (frame :: active) ->
+    search_tracking rs (search_final_costs (search_resume frame s))
+      (search_candidates (search_resume frame s)) (search_waiters (search_resume frame s)) active.
+  Proof.
+    intros DB rs [[[f k] i] todo acc] active s Hframe Htracking.
+    unfold search_resume. cbn [frame_row frame_rest frame_costs].
+    destruct (trie_get i (search_final_costs s)) as [n|] eqn:Hmissing.
+    - eapply search_tracking_consume; [exact Htracking| | |].
+      + intros row Hcovered. exact Hcovered.
+      + intros row Hpending. exact Hpending.
+      + left. left. exists n. exact Hmissing.
+    - destruct (search_scan (search_final_costs s) acc todo)
+        as [[child [rest values]]|values] eqn:Hscan.
+      + eapply search_tracking_consume; [exact Htracking| | |].
+        * intros row Hcovered. exact Hcovered.
+        * intros row Hpending. now apply search_pending_set.
+        * right. exact (search_pending_inserted (search_waiters s) child
+            (ExtractionFrame (f, k, i) rest values) active).
+      + destruct (search_frame_ready rs (search_final_costs s)
+          (ExtractionFrame (f, k, i) todo acc) values Hframe Hscan) as [Hknown Hvalues].
+        cbn [frame_row fst snd] in Hknown, Hvalues.
+        eapply search_tracking_consume; [exact Htracking| | |].
+        * intros row Hcovered. now apply search_offer_covered.
+        * intros row Hpending. now rewrite search_offer_waiters.
+        * left. apply search_offer_covers; [exact Hknown|]. now rewrite Hvalues.
+  Qed.
+
+  (** Registering a whole active list restores the state invariant once the list is empty. *)
+  Lemma search_resume_list_registered : forall DB rs frames (s : extraction_state V.t DB Q.t),
+    search_candidates_valid rs (search_final_costs s) (search_candidates s) ->
+    search_waiters_valid rs (search_final_costs s) (search_waiters s) ->
+    search_queue_agrees (search_candidates s) (search_queue s) ->
+    Forall (search_frame_valid rs (search_final_costs s)) frames ->
+    search_tracking rs (search_final_costs s) (search_candidates s) (search_waiters s) frames ->
+    search_invariant rs (search_resume_list frames s).
+  Proof.
+    intros DB rs frames. induction frames as [|frame frames IH];
+      intros s Hcandidates Hwaiters Hqueue Hframes Htracking.
+    - split; [exact Hcandidates|]. split; [exact Hwaiters|]. now split.
+    - inversion Hframes as [|entry rest Hframe Hrest]; subst entry rest.
+      destruct (search_resume_valid DB rs frame s Hcandidates Hwaiters Hframe)
+        as [Hcandidates' Hwaiters'].
+      cbn [search_resume_list]. apply IH; try assumption.
+      + now apply search_resume_queue.
+      + destruct (search_resume_stable DB frame s)
+          as [Hdb [Hrows [Hcount [Hcosts Hfinals]]]].
+        now rewrite Hcosts.
+      + now apply search_resume_tracking.
+  Qed.
+
+  (** Every source row starts as an unconsumed active frame. *)
+  Lemma search_initial_invariant : forall DB (db : DB) rs,
+    search_invariant rs (search_initial db rs).
+  Proof.
+    intros DB db rs. unfold search_initial. apply search_resume_list_registered.
+    - intros i n f k Hget. rewrite PTrie.get_empty in Hget. discriminate.
+    - intros i frames frame Hget Hin. rewrite PTrie.get_empty in Hget. discriminate.
+    - apply search_queue_empty.
+    - apply Forall_forall. intros frame Hin. apply in_map_iff in Hin.
+      destruct Hin as [row [<- Hrow]]. now apply search_frame_new.
+    - intros row Hin. right. right. exists (search_new_frame row).
+      split; [now apply in_map|reflexivity].
+  Qed.
+
 End SearchFacts.
 
 (** A finite bound on distinct finalisations supplies a terminating unary loop. *)
