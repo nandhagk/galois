@@ -4,11 +4,30 @@
     For example, parallel edges do not duplicate a target in a frontier row.
     Builds on: prepared graphs, dominator trees and binary-fuel loops. *)
 
-From Stdlib Require Import PArith NArith List Bool.
-From Argent Require Import Time Tactics Std BigO.
+From Stdlib Require Import PArith NArith List Bool Arith Lia.
+From Stdlib.Sorting Require Import Permutation.
+From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig FrontierSig.
 Import List.ListNotations.
+
+(** A prepared predecessor occurrence is exactly an edge from a listed source. *)
+Lemma frontier_preds_member : forall g y x,
+  prepared_ok g ->
+  (In x (preds g y) <-> In x (nodes g) /\ edge (base g) x y).
+Proof.
+  intros g y x [_ [_ Hpred]].
+  split.
+  - intro Hin. apply (Permutation_in _ (Hpred y)) in Hin.
+    apply in_flat_map in Hin. destruct Hin as [u [Hu Hin]].
+    apply in_map_iff in Hin. destruct Hin as [v [Heq Hv]]. subst u.
+    apply filter_In in Hv. destruct Hv as [Hv Heq].
+    apply Pos.eqb_eq in Heq. subst v. split; assumption.
+  - intros [Hx Hedge]. eapply Permutation_in; [apply Permutation_sym, Hpred|].
+    apply in_flat_map. exists x. split; [exact Hx|].
+    apply in_map_iff. exists y. split; [reflexivity|].
+    apply filter_In. split; [exact Hedge|apply Pos.eqb_refl].
+Qed.
 
 Definition df_step (g : prepared) (t : domtree) (y : positive) (st : df_state) :
     df_state + list positive :=
@@ -63,6 +82,184 @@ Definition df (g : prepared) (t : domtree) : ptrie (list positive) :=
   df_transpose (map (fun y => (y, df_column g t y)) (nodes g)).
 TimeFun df.
 
+(** A transposition insertion maintains a separate membership table for each row. *)
+Definition df_insert (y x : positive)
+    (state : ptrie (list positive) * ptrie (ptrie unit)) :=
+  let '(rows, marks) := state in
+  let marked := match trie_get x marks with Some row => row | None => Empty end in
+  match trie_get y marked with
+  | Some _ => (rows, marks)
+  | None =>
+    (PTrieCode.set x (y :: frontier_row rows x) rows,
+      PTrieCode.set x (PTrieCode.set y tt marked) marks)
+  end.
+TimeFun df_insert.
+
+Definition df_insert_column (state : ptrie (list positive) * ptrie (ptrie unit))
+    (entry : positive * list positive) :=
+  let '(rows, marks) := state in
+  let '(y, xs) := entry in
+  fold_left (fun acc x => df_insert y x acc) xs (rows, marks).
+TimeFun df_insert_column.
+
+Definition df_rows_valid (state : ptrie (list positive) * ptrie (ptrie unit)) : Prop :=
+  (forall x, NoDup (frontier_row (fst state) x)) /\
+  forall x y,
+    trie_get y (match trie_get x (snd state) with Some row => row | None => Empty end) =
+      Some tt <-> In y (frontier_row (fst state) x).
+
+(** A fold preserves any invariant preserved by its individual transitions. *)
+Lemma frontier_fold_invariant {A S : Type} (step : S -> A -> S) (Inv : S -> Prop) :
+  (forall st x, Inv st -> Inv (step st x)) ->
+  forall xs st, Inv st -> Inv (fold_left step xs st).
+Proof.
+  intros Hstep xs. induction xs as [|x rest IH]; intros st Hst.
+  - exact Hst.
+  - cbn [fold_left]. apply IH. now apply Hstep.
+Qed.
+
+(** An accessibility loop returns a result certified by its state invariant. *)
+Lemma frontier_loop_invariant {S R : Type} (lt : S -> S -> Prop)
+    (step : forall st, {next : S | lt next st} + R)
+    (Inv : S -> Prop) (Result : R -> Prop) :
+  (forall st next Hnext, Inv st -> step st = inl (exist _ next Hnext) -> Inv next) ->
+  (forall st result, Inv st -> step st = inr result -> Result result) ->
+  forall st Hacc, Inv st -> Result (Argent.Loop.loop lt step st Hacc).
+Proof.
+  intros Hcontinue Hstop st Hacc.
+  induction Hacc as [st Hnext IH] using Acc_ind_dep. intro Hinv.
+  cbn [Argent.Loop.loop]. destruct (step st) as [[next Hlt]|result] eqn:Hstep.
+  - apply IH. eapply Hcontinue; eassumption.
+  - eapply Hstop; eassumption.
+Qed.
+
+(** Inserting one previously unseen pair preserves row uniqueness and exact marks. *)
+Lemma df_insert_valid : forall y x state,
+  df_rows_valid state -> df_rows_valid (df_insert y x state).
+Proof.
+  intros y x [rows marks] [Hunique Hmarks].
+  cbn [fst snd] in Hunique, Hmarks.
+  unfold df_insert.
+  set (marked := match trie_get x marks with Some row => row | None => Empty end).
+  destruct (trie_get y marked) as [[]|] eqn:Hmarked.
+  - split; assumption.
+  - assert (Hfresh : ~ In y (frontier_row rows x)).
+    { intro Hy. apply (proj2 (Hmarks x y)) in Hy.
+      change (trie_get y marked = Some tt) in Hy. congruence. }
+    split; cbn [fst snd].
+    + intro u. unfold frontier_row.
+      destruct (Pos.eq_dec u x) as [->|Hux].
+      * rewrite PTrie.get_set_same. constructor; [exact Hfresh|apply Hunique].
+      * rewrite PTrie.get_set_other by exact Hux. apply Hunique.
+    + intros u v. destruct (Pos.eq_dec u x) as [->|Hux].
+      * rewrite PTrie.get_set_same. unfold frontier_row.
+        rewrite PTrie.get_set_same. cbn [In].
+        destruct (Pos.eq_dec v y) as [->|Hvy].
+        -- rewrite PTrie.get_set_same. tauto.
+        -- rewrite PTrie.get_set_other by exact Hvy.
+           change (trie_get v marked = Some tt <-> y = v \/
+             In v (frontier_row rows x)).
+           unfold marked. rewrite Hmarks. intuition congruence.
+      * rewrite PTrie.get_set_other by exact Hux.
+        unfold frontier_row at 1.
+        rewrite PTrie.get_set_other by exact Hux. apply Hmarks.
+Qed.
+
+(** Transposition removes repeated source-target pairs on arbitrary raw columns. *)
+Lemma df_transpose_unique : forall columns x,
+  NoDup (frontier_row (df_transpose columns) x).
+Proof.
+  intros columns x. unfold df_transpose.
+  change (NoDup (frontier_row (fst
+    (fold_left df_insert_column columns (Empty, Empty))) x)).
+  assert (Hvalid : df_rows_valid
+    (fold_left df_insert_column columns (Empty, Empty))).
+  { apply frontier_fold_invariant.
+    - intros [rows marks] [y xs] Hst. cbn [df_insert_column].
+      apply frontier_fold_invariant; [intros; now apply df_insert_valid|exact Hst].
+    - split.
+      + intro u. unfold frontier_row. rewrite PTrie.get_empty. constructor.
+      + intros u v. rewrite !PTrie.get_empty. cbn [fst snd].
+        unfold frontier_row. rewrite PTrie.get_empty. cbn. split; [discriminate|contradiction]. }
+  exact (proj1 Hvalid x).
+Qed.
+
+(** One insertion adds precisely its source-target pair to the observed rows. *)
+Lemma df_insert_member : forall y x state u v,
+  df_rows_valid state ->
+  (In v (frontier_row (fst (df_insert y x state)) u) <->
+    In v (frontier_row (fst state) u) \/ (u = x /\ v = y)).
+Proof.
+  intros y x [rows marks] u v [_ Hmarks]. cbn [fst snd] in *.
+  unfold df_insert.
+  set (marked := match trie_get x marks with Some row => row | None => Empty end).
+  destruct (trie_get y marked) as [[]|] eqn:Hmarked; cbn [fst].
+  - split; [now left|]. intros [Hin|[-> ->]]; [exact Hin|].
+    apply (proj1 (Hmarks x y)). exact Hmarked.
+  - destruct (Pos.eq_dec u x) as [->|Hux].
+    + unfold frontier_row at 1. rewrite PTrie.get_set_same. cbn [In].
+      intuition congruence.
+    + unfold frontier_row at 1. rewrite PTrie.get_set_other by exact Hux.
+      change (In v (frontier_row rows u) <->
+        In v (frontier_row rows u) \/ (u = x /\ v = y)). tauto.
+Qed.
+
+(** Inserting a whole column adds its target to exactly the listed source rows. *)
+Lemma df_column_insert_member : forall y xs state u v,
+  df_rows_valid state ->
+  (In v (frontier_row (fst
+      (fold_left (fun acc x => df_insert y x acc) xs state)) u) <->
+    In v (frontier_row (fst state) u) \/ (v = y /\ In u xs)).
+Proof.
+  intros y xs. induction xs as [|x rest IH]; intros state u v Hvalid.
+  - cbn [fold_left In]. tauto.
+  - cbn [fold_left]. rewrite IH by now apply df_insert_valid.
+    rewrite df_insert_member by exact Hvalid. cbn [In]. intuition congruence.
+Qed.
+
+(** Transposition from a valid accumulator preserves exactly the accumulated pairs. *)
+Lemma df_columns_insert_member : forall columns state u v,
+  df_rows_valid state ->
+  (In v (frontier_row (fst
+      (fold_left df_insert_column columns state)) u) <->
+    In v (frontier_row (fst state) u) \/
+      exists column, In (v, column) columns /\ In u column).
+Proof.
+  intro columns. induction columns as [|[y xs] rest IH]; intros [rows marks] u v Hvalid.
+  - cbn [fold_left In]. split; [now left|]. intros [Hin|[column [Hbad _]]]; tauto.
+  - cbn [fold_left df_insert_column].
+    rewrite IH by
+      (apply frontier_fold_invariant; [intros; now apply df_insert_valid|exact Hvalid]).
+    rewrite df_column_insert_member by exact Hvalid. cbn [In].
+    split.
+    + intros [[Hin|[-> Hin]]|[column [Hcolumn Hin]]].
+      * now left.
+      * right. exists xs. auto.
+      * right. exists column. auto.
+    + intros [Hin|[column [[Heq|Hcolumn] Hin]]].
+      * left. now left.
+      * inversion Heq; subst. left. right. auto.
+      * right. exists column. auto.
+Qed.
+
+(** A row contains a target exactly when the corresponding column contains its source. *)
+Lemma df_transpose_member : forall columns x y,
+  In y (frontier_row (df_transpose columns) x) <->
+    exists column, In (y, column) columns /\ In x column.
+Proof.
+  intros columns x y. unfold df_transpose.
+  change (In y (frontier_row (fst
+    (fold_left df_insert_column columns (Empty, Empty))) x) <->
+    exists column, In (y, column) columns /\ In x column).
+  rewrite df_columns_insert_member.
+  - cbn [fst]. unfold frontier_row. rewrite PTrie.get_empty. cbn [In]. tauto.
+  - split.
+    + intro u. unfold frontier_row. rewrite PTrie.get_empty. constructor.
+    + intros u v. cbn [fst snd]. rewrite PTrie.get_empty.
+      unfold frontier_row. rewrite !PTrie.get_empty. cbn [In].
+      split; [discriminate|contradiction].
+Qed.
+
 Definition idf_step (rows : ptrie (list positive)) (st : idf_state) :
     idf_state + list positive :=
   match st with
@@ -110,19 +307,141 @@ Definition idf_measure rows seeds st : N :=
     | None => 2 + length (frontier_row rows v) + n
     end) 0 (idf_universe rows seeds) + length (idf_pending st)).
 
+(** Every seed and every supplied row target belongs to the finite proof universe. *)
+Lemma idf_universe_contains : forall rows seeds,
+  NoDup (idf_universe rows seeds) /\ incl seeds (idf_universe rows seeds) /\
+    forall x y, In y (frontier_row rows x) -> In y (idf_universe rows seeds).
+Proof.
+  intros rows seeds. unfold idf_universe. split; [apply NoDup_nodup|]. split.
+  - intros x Hx. apply nodup_In. apply in_or_app. now left.
+  - intros x y Hy. apply nodup_In. apply in_or_app. right.
+    unfold frontier_row in Hy. destruct (trie_get x rows) as [row|] eqn:Hrow;
+      [|contradiction].
+    apply in_flat_map. exists (x, row). split; [|exact Hy].
+    apply PTrie.elements_spec. exact Hrow.
+Qed.
+
+Definition idf_tasks_within (universe : list positive) (st : idf_state) : Prop :=
+  Forall (fun task =>
+    match task with IdfSeed v | IdfTarget v => In v universe end) (idf_pending st).
+
+(** Row expansion preserves a universe containing all supplied targets. *)
+Lemma idf_step_within : forall rows universe st next,
+  (forall x y, In y (frontier_row rows x) -> In y universe) ->
+  idf_tasks_within universe st -> idf_step rows st = inl next ->
+  idf_tasks_within universe next.
+Proof.
+  intros rows universe [pending expanded discovered answer] next Hrows Hwithin Hstep.
+  destruct pending as [|task rest]; [discriminate Hstep|].
+  inversion Hwithin as [|? ? Htask Hrest]; subst.
+  unfold idf_tasks_within. destruct task as [v|v]; cbn [idf_step] in Hstep;
+    [|destruct (trie_get v discovered) as [[]|] eqn:Hdiscovered];
+    destruct (trie_get v expanded) as [[]|] eqn:Hexpanded;
+    inversion Hstep; subst next; cbn [idf_pending]; try exact Hrest.
+  all: apply Forall_app; split; [|exact Hrest].
+  all: apply Forall_forall; intros task Htask'; apply in_map_iff in Htask';
+    destruct Htask' as [target [<- Htarget]]; now apply (Hrows v).
+Qed.
+
+(** Every reachable task is supported by a seed or a target in the supplied row map. *)
+Lemma idf_reachable_within : forall rows seeds st,
+  idf_reachable rows seeds st -> idf_tasks_within (idf_universe rows seeds) st.
+Proof.
+  intros rows seeds st [n <-].
+  destruct (idf_universe_contains rows seeds) as [_ [Hseeds Hrows]].
+  induction n as [|n IH].
+  - unfold idf_tasks_within. cbn [Nat.iter idf_initial idf_pending].
+    apply Forall_forall. intros task Htask. apply in_map_iff in Htask.
+    destruct Htask as [v [<- Hv]]. now apply Hseeds.
+  - rewrite Nat.iter_succ. unfold idf_advance at 1.
+    destruct (idf_step rows (Nat.iter n (idf_advance rows) (idf_initial seeds)))
+      as [next|result] eqn:Hstep.
+    + exact (idf_step_within rows (idf_universe rows seeds) _ next Hrows IH Hstep).
+    + exact IH.
+Qed.
+
+Definition idf_unexpanded rows vertices (expanded : ptrie unit) : nat :=
+  fold_right (fun v n =>
+    match trie_get v expanded with
+    | Some _ => n
+    | None => 2 + length (frontier_row rows v) + n
+    end) 0 vertices.
+
+(** Marking a key outside a vertex list leaves its unused row credit unchanged. *)
+Lemma idf_unexpanded_other : forall rows vertices expanded x,
+  ~ In x vertices ->
+  idf_unexpanded rows vertices (PTrieCode.set x tt expanded) =
+    idf_unexpanded rows vertices expanded.
+Proof.
+  intros rows vertices. induction vertices as [|v rest IH]; intros expanded x Hout.
+  - reflexivity.
+  - cbn [idf_unexpanded fold_right].
+    fold (idf_unexpanded rows rest (PTrieCode.set x tt expanded))
+      (idf_unexpanded rows rest expanded).
+    rewrite PTrie.get_set_other by (intro Heq; apply Hout; subst; now left).
+    rewrite IH by (intro Hin; apply Hout; now right). reflexivity.
+Qed.
+
+(** Marking a fresh listed key spends exactly its row-expansion credit. *)
+Lemma idf_unexpanded_fresh : forall rows vertices expanded x,
+  NoDup vertices -> In x vertices -> trie_get x expanded = None ->
+  idf_unexpanded rows vertices (PTrieCode.set x tt expanded) +
+    (2 + length (frontier_row rows x)) = idf_unexpanded rows vertices expanded.
+Proof.
+  intros rows vertices. induction vertices as [|v rest IH];
+    intros expanded x Hunique Hin Hfresh; [contradiction|].
+  inversion Hunique as [|? ? Hout Hrest]; subst.
+  destruct Hin as [->|Hin].
+  - cbn [idf_unexpanded fold_right].
+    fold (idf_unexpanded rows rest (PTrieCode.set x tt expanded))
+      (idf_unexpanded rows rest expanded).
+    rewrite PTrie.get_set_same, Hfresh.
+    rewrite idf_unexpanded_other by exact Hout. lia.
+  - assert (Hvx : v <> x) by (intro Heq; apply Hout; now rewrite Heq).
+    cbn [idf_unexpanded fold_right].
+    fold (idf_unexpanded rows rest (PTrieCode.set x tt expanded))
+      (idf_unexpanded rows rest expanded).
+    rewrite PTrie.get_set_other by exact Hvx.
+    specialize (IH expanded x Hrest Hin Hfresh).
+    destruct (trie_get v expanded) as [value|] eqn:Hget.
+    + change (PTrie.get v expanded = Some value) in Hget. rewrite Hget. exact IH.
+    + change (PTrie.get v expanded = None) in Hget. rewrite Hget. lia.
+Qed.
+
 Lemma idf_reachable_initial : forall rows seeds,
   idf_reachable rows seeds (idf_initial seeds).
-Proof. Admitted. (* STUB *)
+Proof.
+  intros rows seeds. exists 0. reflexivity.
+Qed.
 
 Lemma idf_reachable_step : forall rows seeds st next,
   idf_reachable rows seeds st -> idf_step rows st = inl next ->
   idf_reachable rows seeds next.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros rows seeds st next [n Hreach] Hstep.
+  exists (S n). rewrite Nat.iter_succ, Hreach.
+  unfold idf_advance. now rewrite Hstep.
+Qed.
 
 Lemma idf_measure_step : forall rows seeds st next,
   idf_reachable rows seeds st -> idf_step rows st = inl next ->
   (idf_measure rows seeds next < idf_measure rows seeds st)%N.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros rows seeds [pending expanded discovered answer] next Hreach Hstep.
+  pose proof (idf_reachable_within rows seeds _ Hreach) as Hwithin.
+  destruct (idf_universe_contains rows seeds) as [Hunique _].
+  destruct pending as [|task rest]; [discriminate Hstep|].
+  inversion Hwithin as [|? ? Htask Hrest]; subst.
+  destruct task as [v|v]; cbn [idf_step] in Hstep;
+    [|destruct (trie_get v discovered) as [[]|] eqn:Hdiscovered];
+    destruct (trie_get v expanded) as [[]|] eqn:Hexpanded;
+    inversion Hstep; subst next; unfold idf_measure; cbn [idf_expanded idf_pending].
+  all: try (cbn [length]; lia).
+  all: pose proof (idf_unexpanded_fresh rows (idf_universe rows seeds) expanded v
+    Hunique Htask Hexpanded) as Hcredit.
+  all: unfold idf_unexpanded in Hcredit;
+    rewrite length_app, length_map; cbn [length]; lia.
+Qed.
 
 Definition idf_private_state rows seeds := { st : idf_state | idf_reachable rows seeds st }.
 
@@ -150,6 +469,36 @@ Definition idf_checked_step rows seeds (st : idf_private_state rows seeds) :
   end eq_refl.
 TimeFun idf_checked_step.
 
+(** Erasing private loop evidence exposes exactly the raw IDF transition. *)
+Lemma idf_checked_step_raw : forall rows seeds st,
+  match idf_checked_step rows seeds st with
+  | inl next => inl (proj1_sig (proj1_sig next))
+  | inr result => inr result
+  end = idf_step rows (proj1_sig st).
+Proof.
+  intros rows seeds [st Hreach]. unfold idf_checked_step, idf_state_of.
+  cbn [proj1_sig proj2_sig].
+  assert (Hproject : forall (result : idf_state + list positive)
+      (Hresult : idf_step rows st = result),
+    match
+      (match result as answer return idf_step rows st = answer ->
+        {next : idf_private_state rows seeds |
+          idf_private_lt rows seeds next (exist _ st Hreach)} + list positive
+      with
+      | inl next => fun Hstep =>
+        inl (exist _
+          (exist _ next (idf_reachable_step rows seeds st next Hreach Hstep))
+          (idf_measure_step rows seeds st next Hreach Hstep))
+      | inr answer => fun _ => inr answer
+      end Hresult)
+    with
+    | inl next => inl (proj1_sig (proj1_sig next))
+    | inr answer => inr answer
+    end = result).
+  { intros [next|answer] Hresult; reflexivity. }
+  exact (Hproject _ eq_refl).
+Qed.
+
 Definition idf_accessible rows seeds (st : idf_private_state rows seeds) :
     Acc (idf_private_lt rows seeds) st :=
   Acc_intro_generator 32
@@ -160,6 +509,75 @@ Definition idf (rows : ptrie (list positive)) (seeds : list positive) : list pos
   Argent.Loop.loop (idf_private_lt rows seeds) (idf_checked_step rows seeds)
     initial (idf_accessible rows seeds initial).
 TimeFun idf.
+
+Definition idf_distinct (st : idf_state) : Prop :=
+  NoDup (idf_answer st) /\
+    forall v, trie_get v (idf_discovered st) = Some tt <-> In v (idf_answer st).
+
+(** Recording a fresh target keeps the accumulated answer and its table in agreement. *)
+Lemma idf_record_distinct : forall expanded pending discovered answer v,
+  idf_distinct (IdfState pending expanded discovered answer) ->
+  trie_get v discovered = None ->
+  NoDup (v :: answer) /\
+    forall x, trie_get x (PTrieCode.set v tt discovered) = Some tt <-> In x (v :: answer).
+Proof.
+  intros expanded pending discovered answer v [Hunique Hmarks] Hfresh.
+  cbn [idf_answer idf_discovered] in Hunique, Hmarks.
+  split.
+  - constructor; [|exact Hunique]. intro Hin.
+    apply (proj2 (Hmarks v)) in Hin. congruence.
+  - intro x. destruct (Pos.eq_dec x v) as [->|Hneq].
+    + rewrite PTrie.get_set_same. cbn [In]. tauto.
+    + rewrite PTrie.get_set_other by exact Hneq. rewrite Hmarks. cbn [In].
+      intuition congruence.
+Qed.
+
+(** Every raw IDF step preserves a duplicate-free answer and exact discovery marks. *)
+Lemma idf_step_distinct : forall rows st next,
+  idf_distinct st -> idf_step rows st = inl next -> idf_distinct next.
+Proof.
+  intros rows [pending expanded discovered answer] next Hdistinct Hstep.
+  destruct pending as [|task rest]; [discriminate Hstep|].
+  destruct task as [v|v]; cbn [idf_step] in Hstep.
+  - destruct (trie_get v expanded); inversion Hstep; subst; exact Hdistinct.
+  - destruct (trie_get v discovered) as [[]|] eqn:Hdiscovered;
+      destruct (trie_get v expanded); inversion Hstep; subst.
+    + exact Hdistinct.
+    + exact Hdistinct.
+    + apply (idf_record_distinct expanded (IdfTarget v :: rest)); assumption.
+    + apply (idf_record_distinct expanded (IdfTarget v :: rest)); assumption.
+Qed.
+
+(** The lazy driver always returns a duplicate-free list, including on raw row maps. *)
+Lemma idf_result_unique : forall rows seeds, NoDup (idf rows seeds).
+Proof.
+  intros rows seeds. unfold idf.
+  refine (frontier_loop_invariant (idf_private_lt rows seeds)
+    (idf_checked_step rows seeds)
+    (fun st => idf_distinct (proj1_sig st)) (@NoDup positive) _ _
+    (exist _ (idf_initial seeds) (idf_reachable_initial rows seeds))
+    (idf_accessible rows seeds
+      (exist _ (idf_initial seeds) (idf_reachable_initial rows seeds))) _).
+  - intros st next Hnext Hdistinct Hstep.
+    pose proof (idf_checked_step_raw rows seeds st) as Hraw.
+    rewrite Hstep in Hraw. cbn [proj1_sig] in Hraw.
+    eapply idf_step_distinct; [exact Hdistinct|symmetry; exact Hraw].
+  - intros state result Hdistinct Hstep.
+    pose proof (idf_checked_step_raw rows seeds state) as Hraw.
+    rewrite Hstep in Hraw. destruct state as [st Hreach]. cbn [proj1_sig] in Hraw.
+    destruct st as [pending expanded discovered answer].
+    destruct pending as [|task rest]; cbn [idf_step] in Hraw.
+    + inversion Hraw; subst result. rewrite rev_append_rev, app_nil_r.
+      apply NoDup_rev. exact (proj1 Hdistinct).
+    + destruct task as [v|v]; cbn [idf_step] in Hraw;
+        [|destruct (trie_get v discovered) as [[]|] eqn:Hdiscovered];
+        destruct (trie_get v expanded) as [[]|] eqn:Hexpanded; discriminate.
+  - split; [constructor|]. intro v. cbn [proj1_sig idf_initial idf_discovered idf_answer].
+    rewrite PTrie.get_empty. cbn [In]. split; [discriminate|contradiction].
+Qed.
+
+(* Keep wrapper conversion from expanding concrete accessibility drivers. *)
+Local Opaque Argent.Loop.loop Acc_intro_generator.
 
 Module FrontierCode <: FRONTIER_OPS.
   Definition df := df.
@@ -176,7 +594,9 @@ Module Frontier <: FRONTIER.
   Proof. Admitted. (* STUB *)
 
   Lemma df_unique : forall g t x, NoDup (frontier_row (df g t) x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t x. apply df_transpose_unique.
+  Qed.
 
   Lemma idf_spec : forall g t r seeds y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -184,7 +604,9 @@ Module Frontier <: FRONTIER.
   Proof. Admitted. (* STUB *)
 
   Lemma idf_unique : forall rows seeds, NoDup (idf rows seeds).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact idf_result_unique.
+  Qed.
 End Frontier.
 
 Module FrontierT <: FRONTIER_ALL.
@@ -269,7 +691,14 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma F1_df_initial : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y (df_initial g y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r y Hgraph Hprepared Htree Hy.
+    refine (conj (ex_intro _ 0 eq_refl) (conj (NoDup_nil _) (conj _ (conj _ _)))).
+    - intro x. change (trie_get x Empty = Some tt <-> In x []).
+      rewrite PTrie.get_empty. cbn [In]. split; [discriminate|contradiction].
+    - exact (@incl_nil_l positive (df_column g t y)).
+    - intros x Hx. exact (proj1 (proj1 (frontier_preds_member g y x Hprepared) Hx)).
+  Qed.
 
   Lemma F2_df_step : forall g t r y st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
@@ -297,10 +726,14 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma F6_df_transpose : forall columns x y,
     In y (frontier_row (df_transpose columns) x) <->
       exists column, In (y, column) columns /\ In x column.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact df_transpose_member.
+  Qed.
 
   Lemma F7_df_equation : forall g t, df g t = df_transpose (df_columns g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma F8_df_pairs : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -427,7 +860,9 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma F1_idf_finite : forall rows seeds,
     exists universe, NoDup universe /\ incl seeds universe /\
       forall x y, In y (frontier_row rows x) -> In y universe.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. exists (idf_universe rows seeds). apply idf_universe_contains.
+  Qed.
 
   Lemma F2_idf_done : forall rows seeds,
     exists n st result,
@@ -440,16 +875,39 @@ Module FrontierT <: FRONTIER_ALL.
   Proof. Admitted. (* STUB *)
 
   Lemma F4_idf_equation : forall rows seeds, idf rows seeds = idf_walk rows seeds.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma F5_idf_transport : forall g t r seeds y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (in_row_closure (df g t) seeds y <-> in_iterated_frontier (base g) r seeds y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r seeds y Hgraph Hprepared Htree. split; intro Hclosure.
+    - induction Hclosure as [x y Hseed Hrow|x y Hprevious IH Hrow].
+      + apply frontier_seed with x; [exact Hseed|].
+        now apply (proj1 (df_spec g t r x y Hgraph Hprepared Htree)).
+      + apply frontier_step with x; [exact IH|].
+        now apply (proj1 (df_spec g t r x y Hgraph Hprepared Htree)).
+    - induction Hclosure as [x y Hseed Hfrontier|x y Hprevious IH Hfrontier].
+      + apply row_seed with x; [exact Hseed|].
+        now apply (proj2 (df_spec g t r x y Hgraph Hprepared Htree)).
+      + apply row_step with x; [exact IH|].
+        now apply (proj2 (df_spec g t r x y Hgraph Hprepared Htree)).
+  Qed.
 
   Lemma F6_idf_initial : forall rows seeds,
     idf_invariant rows seeds (idf_initial seeds).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. unfold idf_invariant, idf_reachable, idf_initial.
+    cbn [idf_answer idf_discovered idf_expanded idf_pending].
+    split; [exists 0; reflexivity|]. split; [constructor|]. split.
+    - intro v. rewrite PTrie.get_empty. cbn [In]. split; [discriminate|contradiction].
+    - split; [intros v Hfalse; contradiction|]. split.
+      + intros v Hget. rewrite PTrie.get_empty in Hget. discriminate.
+      + apply Forall_forall. intros task Hin. apply in_map_iff in Hin.
+        destruct Hin as [v [<- Hv]]. exact Hv.
+  Qed.
 
   Lemma F7_idf_step : forall rows seeds st next,
     idf_invariant rows seeds st -> idf_step rows st = inl next ->
@@ -485,7 +943,11 @@ Module FrontierT <: FRONTIER_ALL.
 
   Lemma F8b_idf_accessible : forall rows seeds st,
     Acc (idf_decreases rows seeds) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st.
+    exact (Wellfounded.Inverse_Image.wf_inverse_image _ N N.lt
+      (fun state => idf_potential rows seeds (proj1_sig state)) N.lt_wf_0 st).
+  Qed.
 
   Lemma F8c_idf_loop : forall rows seeds,
     idf_walk rows seeds = Argent.Loop.loop (idf_decreases rows seeds)
