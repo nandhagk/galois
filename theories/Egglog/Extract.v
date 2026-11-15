@@ -2120,6 +2120,266 @@ Module SearchSemantics (V : VALUE) (C : COST V).
 
 End SearchSemantics.
 
+(** Finalized rows preserve their source, finite witnesses and exact class costs. *)
+Module SearchFinals (V : VALUE) (C : COST V).
+  Module Semantics := SearchSemantics V C.
+
+  (** The class trie and the duplicate-free output list record the same final costs. *)
+  Definition finalised_agrees (costs : ptrie N) (entries : extraction_best V.t) : Prop :=
+    NoDup (map fst entries) /\
+    forall i n, trie_get i costs = Some n <-> exists ch, In (i, (n, ch)) entries.
+
+  (** Selected rows come from the source and use only final child costs. *)
+  Definition finalised_rows_valid (rs : list (positive * list (cell V.t) * positive))
+      (costs : ptrie N) (entries : extraction_best V.t) : Prop :=
+    forall i n f k, In (i, (n, (f, k))) entries ->
+      In (f, k, i) rs /\ Semantics.search_known costs k /\
+      n = C.fn_cost f (dag_cost_cells C.val_cost costs k).
+
+  (** A valid finalized table has consistent observations and finite attained costs. *)
+  Definition finalised_valid (rs : list (positive * list (cell V.t) * positive))
+      (costs : ptrie N) (entries : extraction_best V.t) : Prop :=
+    finalised_agrees costs entries /\ finalised_rows_valid rs costs entries /\
+      Semantics.search_attained rs costs.
+
+  (** Empty observations agree before any class has been finalized. *)
+  Lemma finalised_agrees_empty : finalised_agrees Empty [].
+  Proof.
+    split; [constructor |]. intros i n. rewrite PTrie.get_empty.
+    split; [discriminate |intros [ch Hin]; contradiction].
+  Qed.
+
+  (** Initial finalized observations satisfy the complete table invariant. *)
+  Lemma finalised_empty : forall rs, finalised_valid rs Empty [].
+  Proof.
+    intro rs. split; [apply finalised_agrees_empty |]. split.
+    - intros i n f k Hin. contradiction.
+    - intros i n Hget. rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
+
+  (** No class occurs twice in a valid finalized list. *)
+  Lemma finalised_nodup : forall rs costs entries,
+    finalised_valid rs costs entries -> NoDup (map fst entries).
+  Proof.
+    intros rs costs entries [[Hnames _] _]. exact Hnames.
+  Qed.
+
+  (** The class-trie membership law exposes the exact listed cost. *)
+  Lemma finalised_lookup_spec : forall rs costs entries i n,
+    finalised_valid rs costs entries ->
+    (trie_get i costs = Some n <-> exists ch, In (i, (n, ch)) entries).
+  Proof.
+    intros rs costs entries i n [[_ Hlookup] _]. apply Hlookup.
+  Qed.
+
+  (** First-match list lookup returns exactly the class-trie observation. *)
+  Lemma finalised_lookup_agrees : forall costs entries,
+    finalised_agrees costs entries -> forall i,
+    extraction_cost_lookup i entries = trie_get i costs.
+  Proof.
+    intros costs entries [_ Hlookup] i.
+    destruct (extraction_cost_lookup i entries) as [n|] eqn:Hlist.
+    - symmetry. apply (proj2 (Hlookup i n)).
+      exact (extraction_cost_lookup_sound V.t entries i n Hlist).
+    - destruct (trie_get i costs) as [n|] eqn:Hget; [|reflexivity].
+      destruct (proj1 (Hlookup i n) Hget) as [ch Hin].
+      destruct (extraction_cost_lookup_present V.t entries i n ch Hin) as [m Hpresent].
+      congruence.
+  Qed.
+
+  (** Provisional cell costs agree with the class trie and the literal cost operation. *)
+  Lemma finalised_chosen_cost : forall costs entries,
+    finalised_agrees costs entries -> forall c,
+    chosen_cost C.val_cost entries c =
+      match c with Id i => dag_get_cost costs i | Val v => C.val_cost v end.
+  Proof.
+    intros costs entries Hagrees [i|v].
+    - rewrite chosen_cost_extraction_lookup, (finalised_lookup_agrees costs entries Hagrees i).
+      reflexivity.
+    - destruct entries; reflexivity.
+  Qed.
+
+  (** Reading a complete selected key agrees with the public list-based cost observation. *)
+  Lemma finalised_key_costs : forall costs entries,
+    finalised_agrees costs entries -> forall k,
+    map (chosen_cost C.val_cost entries) k = dag_cost_cells C.val_cost costs k.
+  Proof.
+    intros costs entries Hagrees k. rewrite dag_cost_cells_map.
+    apply map_ext. intro c. now apply finalised_chosen_cost.
+  Qed.
+
+  (** A class absent from the final-cost trie is absent from the finalized list. *)
+  Lemma finalised_fresh : forall costs entries,
+    finalised_agrees costs entries -> forall i,
+    trie_get i costs = None -> ~ In i (map fst entries).
+  Proof.
+    intros costs entries [_ Hlookup] i Hmissing Hin.
+    apply in_map_iff in Hin as [[j [n ch]] [Heq Hentry]]. cbn [fst] in Heq. subst j.
+    assert (Hget : trie_get i costs = Some n).
+    { apply (proj2 (Hlookup i n)). exists ch. exact Hentry. }
+    rewrite Hmissing in Hget. discriminate.
+  Qed.
+
+  (** Adding a fresh class updates both final-cost observations consistently. *)
+  Lemma finalised_agrees_add : forall costs entries i n row,
+    finalised_agrees costs entries -> trie_get i costs = None ->
+    finalised_agrees (PTrieCode.set i n costs) ((i, (n, row)) :: entries).
+  Proof.
+    intros costs entries i n row Hagrees Hmissing.
+    destruct Hagrees as [Hnames Hlookup]. split.
+    - cbn [map fst]. constructor; [|exact Hnames].
+      apply (finalised_fresh costs entries); [now split |exact Hmissing].
+    - intros j m. destruct (Pos.eq_dec j i) as [-> |Hneq].
+      + rewrite PTrie.get_set_same. split.
+        * intro Heq. injection Heq as <-. exists row. now left.
+        * intros [choice [Heq |Hin]].
+          -- now injection Heq as <- <-.
+          -- pose proof (proj2 (Hlookup i m) (ex_intro _ choice Hin)) as Hget.
+             rewrite Hmissing in Hget. discriminate.
+      + rewrite PTrie.get_set_other by exact Hneq. rewrite Hlookup.
+        split.
+        * intros [choice Hin]. exists choice. now right.
+        * intros [choice [Heq |Hin]].
+          -- injection Heq as Heq _ _. congruence.
+          -- exists choice. exact Hin.
+  Qed.
+
+  (** A known key remains known when a fresh class is finalized. *)
+  Lemma finalised_known_add : forall costs i n k,
+    trie_get i costs = None -> Semantics.search_known costs k ->
+    Semantics.search_known (PTrieCode.set i n costs) k.
+  Proof.
+    intros costs i n k Hmissing Hknown j Hin.
+    destruct (Hknown j Hin) as [m Hget]. exists m.
+    destruct (Pos.eq_dec j i) as [-> |Hneq].
+    - rewrite Hmissing in Hget. discriminate.
+    - now rewrite PTrie.get_set_other by exact Hneq.
+  Qed.
+
+  (** Adding a fresh final class does not change any previously known key cost. *)
+  Lemma finalised_key_add : forall costs i n k,
+    trie_get i costs = None -> Semantics.search_known costs k ->
+    dag_cost_cells C.val_cost (PTrieCode.set i n costs) k =
+      dag_cost_cells C.val_cost costs k.
+  Proof.
+    intros costs i n k Hmissing Hknown. apply dag_cost_cells_ext. intros j Hin.
+    destruct (Hknown j Hin) as [m Hget].
+    destruct (Pos.eq_dec j i) as [-> |Hneq].
+    - rewrite Hmissing in Hget. discriminate.
+    - unfold dag_get_cost. now rewrite PTrie.get_set_other by exact Hneq.
+  Qed.
+
+  (** A newly selected ready row preserves provenance and every constructor-cost equation. *)
+  Lemma finalised_rows_add : forall rs costs entries i n f k,
+    finalised_rows_valid rs costs entries -> trie_get i costs = None ->
+    In (f, k, i) rs -> Semantics.search_known costs k ->
+    n = C.fn_cost f (dag_cost_cells C.val_cost costs k) ->
+    finalised_rows_valid rs (PTrieCode.set i n costs) ((i, (n, (f, k))) :: entries).
+  Proof.
+    intros rs costs entries i n f k Hrows Hmissing Hrow Hknown Hcost.
+    intros j m g key [Heq |Hin].
+    - injection Heq as <- <- <- <-. split; [exact Hrow |]. split.
+      + now apply finalised_known_add.
+      + rewrite finalised_key_add by assumption. exact Hcost.
+    - destruct (Hrows j m g key Hin) as [Hsource [Hready Hvalue]].
+      split; [exact Hsource |]. split.
+      + now apply finalised_known_add.
+      + rewrite finalised_key_add by assumption. exact Hvalue.
+  Qed.
+
+  (** Finalizing a fresh ready row preserves the complete finalized-table invariant. *)
+  Lemma finalised_valid_add : forall rs costs entries i n f k,
+    finalised_valid rs costs entries -> trie_get i costs = None ->
+    In (f, k, i) rs -> Semantics.search_known costs k ->
+    n = C.fn_cost f (dag_cost_cells C.val_cost costs k) ->
+    finalised_valid rs (PTrieCode.set i n costs) ((i, (n, (f, k))) :: entries).
+  Proof.
+    intros rs costs entries i n f k [Hagrees [Hrows Hattained]] Hmissing Hrow Hknown Hcost.
+    split; [now apply finalised_agrees_add |]. split.
+    - now apply finalised_rows_add.
+    - apply Semantics.search_attained_set; [exact Hattained |].
+      destruct (Semantics.search_row_witness rs costs f k i Hrow Hattained Hknown)
+        as [e [Hrep Hvalue]].
+      exists e. split; [exact Hrep |]. now rewrite Hcost.
+  Qed.
+
+  (** The public selected-row equation follows from the internal cost-trie invariant. *)
+  Lemma finalised_row : forall rs costs entries i n f k,
+    finalised_valid rs costs entries -> In (i, (n, (f, k))) entries ->
+    In (f, k, i) rs /\ n = C.fn_cost f (map (chosen_cost C.val_cost entries) k).
+  Proof.
+    intros rs costs entries i n f k [Hagrees [Hrows _]] Hin.
+    destruct (Hrows i n f k Hin) as [Hsource [_ Hcost]]. split; [exact Hsource |].
+    rewrite (finalised_key_costs costs entries Hagrees k). exact Hcost.
+  Qed.
+
+  (** Every finalized list entry inherits an attained finite tree from its class cost. *)
+  Lemma finalised_attained : forall rs costs entries,
+    finalised_valid rs costs entries -> Semantics.search_best_attained rs entries.
+  Proof.
+    intros rs costs entries [[_ Hlookup] [_ Hattained]] i n ch Hin.
+    apply Hattained. apply (proj2 (Hlookup i n)). exists ch. exact Hin.
+  Qed.
+
+  (** The optimal-cost trie invariant gives the same bound for each finalized list entry. *)
+  Lemma finalised_optimal : forall rs costs entries,
+    finalised_valid rs costs entries -> Semantics.search_knuth rs costs ->
+    Semantics.search_best_optimal rs entries.
+  Proof.
+    intros rs costs entries [[_ Hlookup] _] Hoptimal i n ch Hin e Hrep.
+    apply (Hoptimal i n); [|exact Hrep]. apply (proj2 (Hlookup i n)). exists ch. exact Hin.
+  Qed.
+
+  (** An empty frontier leaves no finite represented class outside the finalized table. *)
+  Lemma finalised_complete : forall rs costs entries prio,
+    finalised_valid rs costs entries -> Semantics.search_knuth rs costs ->
+    Semantics.search_covered rs costs prio -> (forall i, prio i = None) ->
+    Semantics.search_best_complete rs entries.
+  Proof.
+    intros rs costs entries prio [[_ Hlookup] _] Hoptimal Hcovered Hempty i e Hrep.
+    destruct (trie_get i costs) as [n|] eqn:Hget.
+    - destruct (proj1 (Hlookup i n) Hget) as [ch Hin]. exists n, ch. exact Hin.
+    - destruct (Semantics.search_frontier rs costs prio i e Hoptimal Hcovered Hrep Hget)
+        as [j [n [Hprio _]]]. rewrite Hempty in Hprio. discriminate.
+  Qed.
+
+  (** Forgetting final costs retains each selected constructor row and its output class. *)
+  Definition selected_rows (entries : extraction_best V.t)
+      : list (positive * list (cell V.t) * positive) :=
+    map (fun '(i, (_, (f, k))) => (f, k, i)) entries.
+
+  (** Distinct finalized class names make their selected source rows distinct. *)
+  Lemma selected_rows_nodup : forall costs entries,
+    finalised_agrees costs entries -> NoDup (selected_rows entries).
+  Proof.
+    intros costs entries [Hnames _].
+    apply NoDup_map_inv with (f := @snd (positive * list (cell V.t)) positive).
+    assert (Houtputs : map snd (selected_rows entries) = map fst entries).
+    { unfold selected_rows. rewrite map_map. apply map_ext.
+      intros [i [n [f k]]]. reflexivity. }
+    now rewrite Houtputs.
+  Qed.
+
+  (** Every selected row belongs to the immutable source row list. *)
+  Lemma selected_rows_source : forall rs costs entries,
+    finalised_rows_valid rs costs entries -> incl (selected_rows entries) rs.
+  Proof.
+    intros rs costs entries Hrows r Hin. unfold selected_rows in Hin.
+    apply in_map_iff in Hin as [[i [n [f k]]] [<- Hentry]].
+    exact (proj1 (Hrows i n f k Hentry)).
+  Qed.
+
+  (** There can be no more finalized classes than source constructor rows. *)
+  Lemma finalised_cardinality : forall rs costs entries,
+    finalised_valid rs costs entries -> length entries <= length rs.
+  Proof.
+    intros rs costs entries [Hagrees [Hrows _]].
+    pose proof (NoDup_incl_length (selected_rows_nodup costs entries Hagrees)
+      (selected_rows_source rs costs entries Hrows)) as Hlength.
+    unfold selected_rows in Hlength. now rewrite length_map in Hlength.
+  Qed.
+End SearchFinals.
+
 (** Ghost row enumeration uses declared slot depths and exact stored-row lookup. *)
 Module ConstructorRows (V : VALUE) (I : INDEX V) (D : DATABASE V I).
   Module Paths := IndexPaths V I.
