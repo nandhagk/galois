@@ -512,7 +512,6 @@ Lemma dom_size_value n : (N.of_nat (N.size_nat n) <= n)%N.
 Proof.
   destruct n as [|p]; [reflexivity|apply dom_positive_size_value].
 Qed.
-
 (** Reconstruction credit counts trie nodes and all stored value bits. *)
 Fixpoint dom_rebuilt_weight_ne (t : trie_ne positive) : nat :=
   match t with
@@ -561,4 +560,61 @@ Proof.
   - specialize (IH (trie_left t)). unfold PTrieCode.set in IH.
     unfold PTrieCode.left, PTrieCode.value, PTrieCode.right in *. lia.
   - unfold PTrieCode.left, PTrieCode.right in *. lia.
+Qed.
+(** A bounded predicate is charged only on elements that the list contains. *)
+Lemma dom_time_forallb {A} (f : A -> bool) (T_f : A -> N) k xs :
+  (forall x, In x xs -> (T_f x <= k)%N) ->
+  (List.T_forallb f T_f xs <= (k + 2) * N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x xs IH]; intro Hbound.
+  - time_step.
+  - specialize (IH (fun y Hy => Hbound y (or_intror Hy))).
+    pose proof (Hbound x (or_introl eq_refl)) as Hx. time_step.
+Qed.
+
+(** A state invariant allows callback cost to vary with a nonnegative row weight. *)
+Lemma dom_time_fold_left_state {A B} (f : A -> B -> A) (T_f : A -> B -> N)
+    (Inv : A -> Prop) (weight : B -> nat) k xs acc :
+  Inv acc ->
+  (forall x, In x xs -> forall state, Inv state ->
+    Inv (f state x) /\ (T_f state x <= k * N.of_nat (weight x + 1))%N) ->
+  Inv (fold_left f xs acc) /\
+  (List.T_fold_left f T_f xs acc <=
+    (k + 1) * N.of_nat
+      (fold_right (fun x total => (weight x + total)%nat) 0%nat xs + length xs) + 1)%N.
+Proof.
+  revert acc. induction xs as [|x xs IH]; intros acc Hacc Hstep.
+  - cbn [fold_left fold_right length]. split; [exact Hacc|]. time_step.
+  - destruct (Hstep x (or_introl eq_refl) acc Hacc) as [Hnext Hcost].
+    destruct (IH (f acc x) Hnext
+      (fun y Hy state Hstate => Hstep y (or_intror Hy) state Hstate)) as [Hfinal Htail].
+    split; [exact Hfinal|]. time_unfold @List.T_fold_left.
+    cbn [fold_right length]. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+(** A duplicate-free sublist never contributes more nonnegative weight than its containing list. *)
+Lemma dom_nodup_sum_incl {A} (weight : A -> nat) xs ys :
+  NoDup xs -> incl xs ys ->
+  fold_right (fun x total => weight x + total) 0 xs <=
+    fold_right (fun x total => weight x + total) 0 ys.
+Proof.
+  revert ys. induction xs as [|x xs IH]; intros ys Hunique Hincl; [cbn; lia|].
+  inversion Hunique as [|head tail Hfresh Htail]; subst head tail.
+  destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [left [right Heq]].
+  subst ys. assert (Hrest : incl xs (left ++ right)).
+  { intros y Hy. specialize (Hincl y (or_intror Hy)).
+    apply in_app_iff in Hincl. apply in_app_iff.
+    destruct Hincl as [Hleft|[Heq|Hright]].
+    - now left.
+    - subst y. contradiction.
+    - now right. }
+  specialize (IH (left ++ right) Htail Hrest).
+  rewrite fold_right_app in IH |- *. cbn [fold_right].
+  assert (Hshift : forall ns start,
+    fold_right (fun y total => weight y + total) start ns =
+      fold_right (fun y total => weight y + total) 0 ns + start).
+  { intros ns. induction ns as [|a ns IHns]; intro start; cbn [fold_right]; [lia|].
+    rewrite IHns. lia. }
+  rewrite (Hshift left (fold_right (fun y total => weight y + total) 0 right)) in IH.
+  rewrite (Hshift left (weight x + fold_right (fun y total => weight y + total) 0 right)).
+  lia.
 Qed.
