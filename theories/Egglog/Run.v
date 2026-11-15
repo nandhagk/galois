@@ -4765,11 +4765,68 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     D.unit db <= D.unit (apply (actions V.t r) s db).
   Proof. Admitted. (* STUB *)
 
+  (** Interpreting a concrete term preserves its environment lookup. *)
+  Lemma run_model_term : forall (M : model (V := V.t)) nu s t c,
+    term_value s t c ->
+    model_term M (fun x => option_map (den nu) (s x)) t (den nu c).
+  Proof.
+    intros M nu s [x|v] c Hterm; cbn [term_value model_term] in *.
+    - now rewrite Hterm.
+    - subst c. reflexivity.
+  Qed.
+
+  (** Interpreting an argument list preserves each term witness. *)
+  Lemma run_model_terms : forall (M : model (V := V.t)) nu s ts cs,
+    terms_value s ts cs ->
+    Forall2 (model_term M (fun x => option_map (den nu) (s x))) ts (map (den nu) cs).
+  Proof.
+    intros M nu s ts cs Hterms. induction Hterms; cbn [map]; constructor; auto.
+    now apply run_model_term.
+  Qed.
+
+  (** Value-only argument lists have the same primitive inputs after interpretation. *)
+  Lemma run_model_values : forall (M : model (V := V.t)) nu cs vs,
+    values cs vs -> model_values M (map (den nu) cs) vs.
+  Proof.
+    intros M nu cs vs Hvalues. induction Hvalues; cbn [map]; constructor; auto.
+    subst x. reflexivity.
+  Qed.
+
+  (** Every satisfied concrete query atom is true in a model of its view. *)
+  Lemma run_model_atom : forall (M : model (V := V.t)) nu w kinds s a,
+    (forall f, kind w f = kinds f) -> sat V.merge M nu w ->
+    atom_holds V.prim w s a ->
+    model_atom V.prim M kinds (fun x => option_map (den nu) (s x)) a.
+  Proof.
+    intros M nu w kinds s [f args res|p args res] Hkind [Hrows Hsat] Hatom;
+      cbn [atom_holds model_atom] in *.
+    - destruct Hatom as [k [o [Hterms [Hresult Hrow]]]].
+      exists (map (den nu) k). split; [now apply run_model_terms|].
+      specialize (Hrows f k o Hrow). unfold holds in Hrows. rewrite Hkind in Hrows.
+      destruct (kinds f) as [out|]; [|contradiction].
+      destruct out; destruct o as [[i|v]|]; cbn in Hrows; try contradiction.
+      + destruct res as [t|]; [contradiction|exact Hrows].
+      + destruct res as [t|]; [|contradiction]. rewrite Hrows.
+        exact (run_model_term M nu s t (Id i) Hresult).
+      + destruct res as [t|]; [|contradiction]. exists v. split.
+        * exact (run_model_term M nu s t (Val v) Hresult).
+        * exact Hrows.
+    - destruct Hatom as [k [vs [v [Hterms [Hvalues [Hprim Hresult]]]]]].
+      exists (map (den nu) k), vs, v. split; [now apply run_model_terms|].
+      split; [now apply run_model_values|]. split; [exact Hprim|].
+      exact (run_model_term M nu s res (Val v) Hresult).
+  Qed.
+
   Lemma F4a_match_model : forall (M : model (V := V.t)) nu p cp db q s,
     D.wf db -> loaded p cp db -> sat V.merge M nu (D.view db) ->
     matches V.prim (D.view db) q s ->
     Forall (model_atom V.prim M (program_kind p) (fun x => option_map (den nu) (s x))) q.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu p cp db q s Hwf [Hkind Hloaded] Hsat Hmatch.
+    eapply Forall_impl; [|exact Hmatch]. intros a Hatom.
+    eapply run_model_atom; eassumption.
+  Qed.
+
 
   Lemma F4_apply_sat : forall (M : model (V := V.t)) nu p cp r s db,
     plans_ok p cp -> D.wf db -> loaded p cp db -> env_allocated db s ->
