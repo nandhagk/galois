@@ -51,9 +51,12 @@ Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
   Proof. Admitted. (* STUB *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  (* INTERVAL does not link raw order to endpoint meaning. The lawful PermutedRaw
+     in CutIntervalTest makes this order test false at top. The representation
+     pins in CUT_INTERVAL_PLAN require a stronger functional raw interface. *)
+  Proof. Admitted. (* SIG-QUESTION: the functional raw parameter lacks endpoint-order pins. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: PermutedRaw legally recognizes IBot as nonbottom. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
   Proof. Admitted. (* STUB *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
