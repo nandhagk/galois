@@ -2115,13 +2115,69 @@ Module WtoT <: WTO_ALL.
 
   Local Transparent loopN.
 
+  (** Every recorded history starts at its supplied state. *)
+  Lemma history_from_head : forall g fuel st,
+    exists rest, history_from g fuel st = st :: rest.
+  Proof.
+    intros g [|fuel] st; cbn [history_from]; destruct (wto_step g st); eexists; reflexivity.
+  Qed.
+
+  (** A finished fuel run gives a terminal history with each adjacent transition recorded. *)
+  Lemma history_from_complete : forall g fuel st w,
+    loop_fuel (wto_step g) fuel st = inr w ->
+    exists terminal prefix, history_from g fuel st = prefix ++ [terminal] /\
+      Forall2 (fun before after => wto_step g before = inl after)
+        prefix (tl (history_from g fuel st)) /\
+      wto_step g terminal = inr w.
+  Proof.
+    intros g fuel. induction fuel as [|fuel IH]; intros st w Hrun; [discriminate|].
+    cbn [loop_fuel] in Hrun.
+    destruct (wto_step g st) as [next|result] eqn:Hstep.
+    - destruct (IH next w Hrun) as [terminal [prefix [Hhistory [Hsteps Hterminal]]]].
+      destruct (history_from_head g fuel next) as [tail Hhead].
+      exists terminal, (st :: prefix). split.
+      + cbn [history_from]. rewrite Hstep. cbn [app]. now rewrite Hhistory.
+      + split.
+        * cbn [history_from]. rewrite Hstep. cbn [tl]. rewrite Hhead.
+          constructor; [exact Hstep|]. rewrite Hhead in Hsteps. exact Hsteps.
+        * exact Hterminal.
+    - injection Hrun as Heq. subst result. exists st, [].
+      cbn [history_from]. rewrite Hstep. cbn [app tl].
+      split; [reflexivity|]. split; [constructor|reflexivity].
+  Qed.
+
+  Local Opaque loopN.
+
   Lemma F17_history : forall g roots,
     exists terminal prefix, history g roots = prefix ++ [terminal] /\
       (match prefix with [] => terminal | first :: _ => first end) = initial g roots /\
       Forall2 (fun before after => wto_step g before = inl after)
         prefix (tl (history g roots)) /\
       wto_step g terminal = inr (build g roots).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots. destruct (F16_done g roots) as [w Hrun].
+    assert (Hbuild : build g roots = w).
+    { unfold build. rewrite rev_append_rev, app_nil_r.
+      change ((match loopN (wto_step g)
+        (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
+        (initial g roots) with
+        | inl st => wto_reverse_into (wto_partial st) WNil
+        | inr result => result
+        end) = w).
+      now rewrite Hrun. }
+    rewrite search_loopN_fuel, Nat2N.id in Hrun.
+    destruct (history_from_complete g _ (initial g roots) w Hrun)
+      as [terminal [prefix [Hhistory [Hsteps Hterminal]]]].
+    exists terminal, prefix. split; [exact Hhistory|]. split.
+    - destruct (history_from_head g
+        (3 * length (concat (comps (wto_components g roots))) + 1) (initial g roots))
+        as [tail Hhead].
+      rewrite Hhistory in Hhead. destruct prefix; cbn [app] in Hhead;
+        inversion Hhead; reflexivity.
+    - split; [exact Hsteps|]. now rewrite Hbuild.
+  Qed.
+
+  Local Transparent loopN.
 
   Lemma F18_level_mass : forall g roots level,
     level_mass g level (history g roots) <=
