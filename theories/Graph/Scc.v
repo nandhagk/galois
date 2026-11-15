@@ -457,6 +457,139 @@ Proof.
 Qed.
 
 
+(** Lowering preserves every counter and the frame and component lists. *)
+Local Lemma tarjan_lower_metadata v n s :
+  tarjan_clock (TarjanVisitor.lower v n s) = tarjan_clock s /\
+  tarjan_next (TarjanVisitor.lower v n s) = tarjan_next s /\
+  tarjan_emitted (TarjanVisitor.lower v n s) = tarjan_emitted s /\
+  tarjan_frames (TarjanVisitor.lower v n s) = tarjan_frames s.
+Proof.
+  unfold TarjanVisitor.lower. destruct (trie_get v (tarjan_low s)); repeat split; reflexivity.
+Qed.
+
+Local Lemma tarjan_edge_metadata kind u v s :
+  tarjan_clock (TarjanVisitor.edge kind u v s) = tarjan_clock s /\
+  tarjan_next (TarjanVisitor.edge kind u v s) = tarjan_next s /\
+  tarjan_emitted (TarjanVisitor.edge kind u v s) = tarjan_emitted s /\
+  tarjan_frames (TarjanVisitor.edge kind u v s) = tarjan_frames s.
+Proof.
+  destruct kind; cbn [TarjanVisitor.edge]; try (repeat split; reflexivity).
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try (repeat split; reflexivity).
+  all: destruct (trie_get v (tarjan_disc s)); try (repeat split; reflexivity).
+  all: apply tarjan_lower_metadata.
+Qed.
+
+(** Each event accounts exactly for its counter increments and frame operation. *)
+Lemma tarjan_event_metadata e s :
+  let next := visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e in
+  Pos.to_nat (tarjan_clock next) = length (entered [e]) + Pos.to_nat (tarjan_clock s) /\
+  Pos.to_nat (tarjan_next next) + length (tarjan_emitted s) =
+    Pos.to_nat (tarjan_next s) + length (tarjan_emitted next) /\
+  tarjan_frames next = match e with
+    | Enter v => v :: tarjan_frames s
+    | Leave _ => tl (tarjan_frames s)
+    | Edge _ _ _ => tarjan_frames s
+    end.
+Proof.
+  destruct e as [v|v|kind u v]; cbn [visit_event entered length].
+  - cbn [TarjanVisitor.enter tarjan_clock tarjan_next tarjan_emitted tarjan_frames].
+    rewrite Pos2Nat.inj_succ. repeat split; try reflexivity; lia.
+  - unfold TarjanVisitor.leave.
+    destruct (trie_get v (tarjan_low s)) as [low|];
+      [|repeat split; reflexivity].
+    destruct (trie_get v (tarjan_disc s)) as [disc|];
+      [|repeat split; reflexivity].
+    destruct (Pos.eqb low disc).
+    + destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+        (tarjan_active s) (tarjan_owners s))
+        as [[[[members tail] lows] actives] owners].
+      cbn [tarjan_clock tarjan_next tarjan_emitted tarjan_frames length].
+      rewrite Pos2Nat.inj_succ. repeat split; try reflexivity; lia.
+    + destruct (tarjan_frames s) as [|frame frames]; cbn [tl].
+      * repeat split; reflexivity.
+      * destruct frames as [|parent frames]; [repeat split; reflexivity|].
+        destruct (tarjan_lower_metadata parent low
+          (TarjanState (tarjan_disc s) (tarjan_low s) (tarjan_pending s)
+            (tarjan_active s) (parent :: frames) (tarjan_emitted s)
+            (tarjan_owners s) (tarjan_clock s) (tarjan_next s)))
+          as [Hclock [Hnext [Hemitted Hframes]]].
+        rewrite Hclock, Hnext, Hemitted, Hframes. repeat split; reflexivity.
+  - destruct (tarjan_edge_metadata kind u v s) as [Hclock [Hnext [Hemitted Hframes]]].
+    rewrite Hclock, Hnext, Hemitted, Hframes. repeat split; reflexivity.
+Qed.
+
+(** Discovery increments count entering events, and owner increments count emitted blocks. *)
+Lemma tarjan_fold_metadata es s :
+  let final := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s in
+  Pos.to_nat (tarjan_clock final) = length (entered es) + Pos.to_nat (tarjan_clock s) /\
+  Pos.to_nat (tarjan_next final) + length (tarjan_emitted s) =
+    Pos.to_nat (tarjan_next s) + length (tarjan_emitted final).
+Proof.
+  unfold fold_events. revert s. induction es as [|e es IH]; intros s.
+  - cbn [fold_left entered length]. split; reflexivity.
+  - cbn [fold_left].
+    destruct (IH (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e))
+      as [Hclock Hnext].
+    destruct (tarjan_event_metadata e s) as [Hstep_clock [Hstep_next Hframes]].
+    split; [destruct e; cbn [entered length] in *; lia|lia].
+Qed.
+
+(** Starting at one gives the next discovery number after all entries. *)
+Lemma tarjan_clock_count es :
+  Pos.to_nat (tarjan_clock
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)) =
+  S (length (entered es)).
+Proof.
+  pose proof (proj1 (tarjan_fold_metadata es tarjan_initial)) as Hclock.
+  cbn [tarjan_initial tarjan_clock Pos.to_nat] in Hclock. lia.
+Qed.
+
+(** Starting at one gives the next component number after all emissions. *)
+Lemma tarjan_next_count es :
+  Pos.to_nat (tarjan_next
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)) =
+  S (length (tarjan_emitted
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial))).
+Proof.
+  pose proof (proj2 (tarjan_fold_metadata es tarjan_initial)) as Hnext.
+  cbn [tarjan_initial tarjan_next tarjan_emitted Pos.to_nat length] in Hnext. lia.
+Qed.
+
+Local Lemma tarjan_nonempty_count blocks : Forall (fun block : list positive => block <> []) blocks ->
+  length blocks <= length (concat blocks).
+Proof.
+  intros Hblocks. induction Hblocks as [|block blocks Hnonempty Hblocks IH]; [reflexivity|].
+  destruct block; [contradiction|]. cbn [concat length]. rewrite length_app. cbn [length]. lia.
+Qed.
+
+(** Nonempty emitted blocks cannot outnumber the entered vertices they contain. *)
+Lemma tarjan_emitted_count es :
+  length (tarjan_emitted
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)) <=
+  length (entered es).
+Proof.
+  eapply Nat.le_trans; [apply tarjan_nonempty_count; apply tarjan_emitted_nonempty|].
+  apply tarjan_emitted_length.
+Qed.
+
+(** Frames only retain keys from their initial stack and entering events. *)
+Lemma tarjan_frames_domain (P : positive -> Prop) es s :
+  Forall P (entered es) -> Forall P (tarjan_frames s) ->
+  Forall P (tarjan_frames
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s)).
+Proof.
+  unfold fold_events. revert s. induction es as [|e es IH]; intros s Hentries Hframes;
+    cbn [fold_left]; [exact Hframes|].
+  destruct (tarjan_event_metadata e s) as [_ [_ Hstep]].
+  apply IH; destruct e; cbn [entered] in Hentries; try exact Hentries;
+    try (now inversion Hentries).
+  all: rewrite Hstep.
+  - inversion Hentries; subst. now constructor.
+  - destruct (tarjan_frames s); [constructor|now inversion Hframes].
+  - exact Hframes.
+Qed.
+
+
 Module TarjanSearchCode := SearchCode TarjanVisitor.
 Module TarjanSearch.
   Include TarjanSearchCode.
