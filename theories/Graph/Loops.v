@@ -5,7 +5,7 @@
     Builds on: prepared graphs, dominator trees and depth-first traces. *)
 
 From Stdlib Require Import PArith NArith List Bool.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig LoopsSig.
 Import List.ListNotations.
@@ -23,6 +23,19 @@ Definition loop_first (xs : list positive) : list positive :=
   | x :: _ => [x]
   end.
 TimeFun loop_first.
+
+(** Root discovery takes the same singleton prefix as the public plan. *)
+Local Lemma loop_first_equation : forall xs, loop_first xs = firstn 1 xs.
+Proof.
+  intros [|v rest]; reflexivity.
+Qed.
+
+Local Lemma loop_first_head : forall (xs : list positive) r,
+  hd_error xs = Some r -> firstn 1 xs = [r].
+Proof.
+  intros [|v rest] r Hhead; [discriminate|].
+  cbn in Hhead. injection Hhead as <-. reflexivity.
+Qed.
 
 Definition tree_step (g : prepared) (t : domtree) (st : loop_tree_state) :
     loop_tree_state + loop_scan :=
@@ -128,6 +141,13 @@ Definition assemble (rows : list (positive * list positive)) :=
   fold_left install rows (Loops Empty Empty Empty).
 TimeFun assemble.
 
+(** Assembly unfolds without reducing the computation that supplied its rows. *)
+Local Lemma loop_assemble_equation : forall rows,
+  assemble rows = fold_left install rows (Loops Empty Empty Empty).
+Proof.
+  reflexivity.
+Qed.
+
 Definition test_back (rows : ptrie (ptrie unit)) (es : list event) : bool :=
   forallb (fun e => match e with
     | Edge Back u v => match trie_get u rows with
@@ -137,6 +157,77 @@ Definition test_back (rows : ptrie (ptrie unit)) (es : list event) : bool :=
     | _ => true
     end) es.
 TimeFun test_back.
+
+(** Successor order fixes both the emitted trace and the final visited list. *)
+Scheme loop_dfs_visit_ind := Induction for dfs_visit Sort Prop
+with loop_dfs_rows_ind := Induction for dfs_rows Sort Prop.
+Combined Scheme loop_dfs_ind from loop_dfs_visit_ind, loop_dfs_rows_ind.
+
+Local Lemma loop_dfs_deterministic (g : digraph) :
+  (forall active seen v es final, dfs_visit g active seen v es final ->
+    forall es' final', dfs_visit g active seen v es' final' -> es = es' /\ final = final') /\
+  (forall active seen u vs es final, dfs_rows g active seen u vs es final ->
+    forall es' final', dfs_rows g active seen u vs es' final' -> es = es' /\ final = final').
+Proof.
+  apply loop_dfs_ind.
+  - intros active seen v inside final Hfresh Hrows IH es' final' Hother.
+    inversion Hother as [active' seen' v' inside' final'' Hfresh' Hrows']; subst.
+    destruct (IH _ _ Hrows') as [-> ->]. split; reflexivity.
+  - intros active seen u es' final' Hother.
+    inversion Hother. split; reflexivity.
+  - intros active seen u v rest inside middle outside final Hfresh Hvisit IHvisit
+      Hrows IHrows es' final' Hother.
+    inversion Hother as [|active' seen' u' v' rest' inside' middle' outside' final''
+      Hfresh' Hvisit' Hrows'|active' seen' u' v' rest' kind' outside' final''
+      Hseen' Hkind' Hrows']; subst.
+    + destruct (IHvisit _ _ Hvisit') as [Hinside Hmiddle]. subst inside' middle'.
+      destruct (IHrows _ _ Hrows') as [-> ->]. split; reflexivity.
+    + contradiction.
+  - intros active seen u v rest kind outside final Hseen Hkind Hrows IH
+      es' final' Hother.
+    inversion Hother as [|active' seen' u' v' rest' inside' middle' outside' final''
+      Hfresh' Hvisit' Hrows'|active' seen' u' v' rest' kind' outside' final''
+      Hseen' Hkind' Hrows']; subst.
+    + contradiction.
+    + assert (Hsame : kind = kind').
+      { destruct Hkind as [[-> Hin]|[-> Hnot]], Hkind' as [[-> Hin']|[-> Hnot']];
+          try reflexivity; contradiction. }
+      subst kind'. destruct (IH _ _ Hrows') as [-> ->]. split; reflexivity.
+Qed.
+
+Local Lemma loop_dfs_roots_deterministic : forall g seen roots es final,
+  dfs_roots g seen roots es final ->
+  forall es' final', dfs_roots g seen roots es' final' -> es = es' /\ final = final'.
+Proof.
+  intros g seen roots es final Hdfs.
+  induction Hdfs as [seen|seen v rest es final Hseen Hrest IH|
+    seen v rest inside middle outside final Hfresh Hvisit Hrest IH];
+    intros es' final' Hother.
+  - inversion Hother. split; reflexivity.
+  - inversion Hother as [|seen' v' rest' es'' final'' Hseen' Hrest'|
+      seen' v' rest' inside' middle' outside' final'' Hfresh' Hvisit' Hrest']; subst.
+    + now apply IH.
+    + contradiction.
+  - inversion Hother as [|seen' v' rest' es'' final'' Hseen' Hrest'|
+      seen' v' rest' inside' middle' outside' final'' Hfresh' Hvisit' Hrest']; subst.
+    + contradiction.
+    + destruct (proj1 (loop_dfs_deterministic g) [] seen v inside middle Hvisit
+        inside' middle' Hvisit') as [Hinside Hmiddle].
+      subst inside' middle'. destruct (IH _ _ Hrest') as [-> ->]. split; reflexivity.
+Qed.
+
+(** Search's trace laws do not depend on which visitor observes the events. *)
+Module LoopTraceVisitor <: VISITOR.
+  Definition state := unit.
+  Definition enter (_ : positive) (s : state) := s.
+  Definition leave (_ : positive) (s : state) := s.
+  Definition edge (_ : edge_kind) (_ _ : positive) (s : state) := s.
+  TimeFun enter.
+  TimeFun leave.
+  TimeFun edge.
+End LoopTraceVisitor.
+
+Module LoopTrace := Search LoopTraceVisitor.
 
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
@@ -153,6 +244,101 @@ End LoopsCode.
 Module Loops <: LOOPS.
   Include LoopsCode.
 
+  (** Every accumulated body vertex is marked before another pending task can add it. *)
+  Local Definition body_distinct (st : loop_body_state) : Prop :=
+    NoDup (loop_body_answer st) /\
+    forall v, In v (loop_body_answer st) -> trie_get v (loop_body_seen st) = Some tt.
+
+  Local Lemma body_step_distinct : forall g t h st,
+    body_distinct st ->
+    match body_step g t h st with
+    | inl next => body_distinct next
+    | inr result => NoDup result
+    end.
+  Proof.
+    intros g t h [pending seen answer] [Hunique Hmarked].
+    cbn [loop_body_answer loop_body_seen] in Hunique, Hmarked.
+    destruct pending as [|v rest].
+    - cbn [body_step]. rewrite rev_append_rev, app_nil_r. now apply NoDup_rev.
+    - cbn [body_step].
+      destruct (trie_get v seen) as [present|] eqn:Hseen;
+        destruct (trie_get v (pre t)) as [number|] eqn:Hpre;
+        try exact (conj Hunique Hmarked).
+      cbn [body_distinct loop_body_answer loop_body_seen].
+      split.
+      + constructor; [|exact Hunique].
+        intro Hin. specialize (Hmarked v Hin). congruence.
+      + intros x [Heq|Hin].
+        * subst x. apply PTrie.get_set_same.
+        * destruct (Pos.eq_dec x v) as [->|Hne].
+          -- apply PTrie.get_set_same.
+          -- change (PTrie.get x (PTrie.set v tt seen) = Some tt).
+             rewrite PTrie.get_set_other by exact Hne. now apply Hmarked.
+  Qed.
+
+  Local Lemma body_loop_distinct : forall g t h fs (Hacc : Acc loopN_lt fs),
+    body_distinct (snd fs) ->
+    match Argent.Loop.loop loopN_lt (loopN_step (body_step g t h)) fs Hacc with
+    | inl final => body_distinct final
+    | inr result => NoDup result
+    end.
+  Proof.
+    intros g t h fs Hacc.
+    induction Hacc as [[fuel st] Hnext IH] using Acc_ind_dep.
+    cbn [snd]. intro Hdistinct. destruct fuel as [|fuel].
+    - exact Hdistinct.
+    - cbn [Argent.Loop.loop loopN_step Acc_inv].
+      pose proof (body_step_distinct g t h st Hdistinct) as Hstep.
+      destruct (body_step g t h st) as [next|result] eqn:Hresult.
+      + apply IH. exact Hstep.
+      + exact Hstep.
+  Qed.
+
+  (** Raw graphs and trees still produce distinct body rows, even when fuel expires. *)
+  Local Lemma collect_distinct : forall g t h sources, NoDup (collect g t h sources).
+  Proof.
+    intros g t h sources.
+    assert (Hinitial : body_distinct (LoopBodyState sources (PTrieCode.set h tt Empty) [h])).
+    { split.
+      - constructor; [simpl; tauto|constructor].
+      - intros v [Heq|Hin]; [subst v; apply PTrie.get_set_same|contradiction]. }
+    unfold collect, loopN.
+    match goal with
+    | |- context [Argent.Loop.loop _ _ ?fs ?Hacc] =>
+        pose proof (body_loop_distinct g t h fs Hacc Hinitial) as Hloop
+    end.
+    match goal with
+    | Hloop : context [Argent.Loop.loop ?lt ?step ?fs ?Hacc] |- _ =>
+        destruct (Argent.Loop.loop lt step fs Hacc) as [final|result]
+    end.
+    - rewrite rev_append_rev, app_nil_r. apply NoDup_rev. exact (proj1 Hloop).
+    - exact Hloop.
+  Qed.
+
+  Local Lemma install_distinct : forall l h vs,
+    (forall key row, trie_get key (body l) = Some row -> NoDup row) -> NoDup vs ->
+    forall key row, trie_get key (body (install l (h, vs))) = Some row -> NoDup row.
+  Proof.
+    intros [owners parents rows] h vs Hrows Hunique key row Hget.
+    cbn [install loop_header_map loop_parent_map loop_body_map body] in Hget.
+    change (PTrie.get key (PTrie.set h vs rows) = Some row) in Hget.
+    destruct (Pos.eq_dec key h) as [->|Hne].
+    - rewrite PTrie.get_set_same in Hget. now injection Hget as <-.
+    - rewrite PTrie.get_set_other in Hget by exact Hne. now apply (Hrows key row).
+  Qed.
+
+  Local Lemma assemble_distinct : forall rows,
+    Forall (fun entry => NoDup (snd entry)) rows ->
+    forall l, (forall key row, trie_get key (body l) = Some row -> NoDup row) ->
+    forall key row, trie_get key (body (fold_left install rows l)) = Some row -> NoDup row.
+  Proof.
+    intros rows Hrows. induction Hrows as [|[h vs] rows Hunique Hrows IH];
+      intros l Hinitial key row Hget.
+    - exact (Hinitial key row Hget).
+    - eapply (IH (install l (h, vs))); [|exact Hget].
+      apply install_distinct; assumption.
+  Qed.
+
   Lemma headers_spec : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (exists vs, trie_get h (body (forest g t)) = Some vs) <-> natural_header (base g) r h.
@@ -164,7 +350,18 @@ Module Loops <: LOOPS.
   Proof. Admitted. (* STUB *)
 
   Lemma body_unique : forall g t h, NoDup (loop_body (forest g t) h).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t h.
+    assert (Hrows : forall key row, trie_get key (body (forest g t)) = Some row -> NoDup row).
+    { unfold forest, assemble. apply assemble_distinct.
+      - apply Forall_forall. intros entry Hin. apply in_map_iff in Hin.
+        destruct Hin as [key [<- Hkey]]. apply collect_distinct.
+      - intros key row Hget. change (PTrie.get key PTrie.empty = Some row) in Hget.
+        rewrite PTrie.get_empty in Hget. discriminate. }
+    unfold loop_body. destruct (forest g t) as [owners parents rows].
+    cbn [body] in Hrows.
+    destruct (trie_get h rows) as [vs|] eqn:Hget; [now apply (Hrows h vs)|constructor].
+  Qed.
 
   Lemma header_spec : forall g t r v h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -350,7 +547,18 @@ Module LoopsT <: LOOPS_ALL.
   Lemma F1_tree_initial : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r (tree_initial g).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    unfold tree_invariant, tree_initial.
+    cbn [loop_tree_output loop_order loop_tree_stack loop_tree_active tl combine].
+    split; [exists 0%nat; reflexivity|].
+    split; [constructor|].
+    split; [intros v Hin; contradiction|].
+    split; [constructor|].
+    split; [|constructor].
+    intro v. change (PTrie.get v PTrie.empty = Some tt <-> In v []).
+    rewrite PTrie.get_empty. simpl. split; [discriminate|contradiction].
+  Qed.
 
   Lemma F2_tree_step : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -427,7 +635,10 @@ Module LoopsT <: LOOPS_ALL.
       end /\
     header (install l (h, vs)) =
       fold_left (fun owners v => PTrieCode.set v h owners) vs (header l).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [owners parents rows] h vs.
+    repeat split; reflexivity.
+  Qed.
 
   Lemma F14_assembly : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -446,7 +657,9 @@ Module LoopsT <: LOOPS_ALL.
 
   Lemma F15a_assemble : forall rows,
     assemble rows = fold_left install rows (Loops Empty Empty Empty).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma F16_nesting_charge : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -464,17 +677,46 @@ Module LoopsT <: LOOPS_ALL.
   Lemma F18_test_back : forall scan es,
     test_back (loop_back_rows scan) es = true <->
       forall u v, In (Edge Back u v) es -> back_member scan u v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros scan es.
+    change ((forallb (fun e => match e with
+      | Edge Back u v => match trie_get u (loop_back_rows scan) with
+        | Some row => match trie_get v row with Some _ => true | None => false end
+        | None => false
+        end
+      | _ => true
+      end) es = true) <->
+      forall u v, In (Edge Back u v) es -> back_member scan u v).
+    rewrite forallb_forall. split.
+    - intros Hall u v Hin. specialize (Hall (Edge Back u v) Hin).
+      cbn in Hall. unfold back_member.
+      destruct (trie_get u (loop_back_rows scan)) as [row|] eqn:Hrow;
+        [|discriminate].
+      destruct (trie_get v row) as [[]|] eqn:Hget; [|discriminate].
+      now exists row.
+    - intros Hall e Hin. destruct e as [v|v|kind u v]; try reflexivity.
+      destruct kind; try reflexivity.
+      destruct (Hall u v Hin) as [row [Hrow Hget]]. now rewrite Hrow, Hget.
+  Qed.
 
   Lemma F19_retreat_reflect : forall g r es final,
     dfs_roots g [] [r] es final ->
     ((forall u v, In (Edge Back u v) es -> dominates g r v u) <-> reducible g r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r es final Hdfs. split.
+    - intros Hback u v [other [last [Hother Hin]]].
+      destruct (loop_dfs_roots_deterministic g [] [r] es final Hdfs other last Hother)
+        as [Hsame _]. subst other. now apply Hback.
+    - intros Hreducible u v Hin. apply Hreducible. now exists es, final.
+  Qed.
 
   Lemma F20_reducible_equation : forall g t,
     reducible_b g t = test_back (loop_back_rows (classify g t))
       (retreat_trace g (firstn 1 (loop_order (classify g t)))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t. unfold reducible_b, classify, test_back, retreat_trace.
+    now rewrite loop_first_equation.
+  Qed.
 
   Lemma T1_tree_step : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
