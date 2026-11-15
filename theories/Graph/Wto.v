@@ -3108,10 +3108,7 @@ Module WtoT <: WTO_ALL.
       reflexivity.
   Qed.
 
-  Lemma F15_step : forall g roots st next,
-    invariant g roots st -> wto_step g st = inl next ->
-    invariant g roots next /\ potential g next < potential g st.
-  Proof. Admitted. (* STUB *)
+
 
   Local Opaque loopN.
 
@@ -4601,6 +4598,160 @@ Module WtoT <: WTO_ALL.
       + inversion Hstep; subst next. exact Htail.
     - destruct parents; inversion Hstep; subst next; exact Htail.
   Qed.
+
+  Local Opaque prepared_search_trace.
+
+  Local Lemma inventory_rotate {A} (head : A) first rest :
+    Permutation (head :: first ++ rest) (first ++ head :: rest).
+  Proof.
+    induction first as [|x first IH]; cbn [app]; [reflexivity|].
+    eapply Permutation_trans; [apply perm_swap|]. now apply perm_skip.
+  Qed.
+
+  (** Reversing the outer constructors changes only the order of their vertex inventory. *)
+  Local Lemma inventory_reverse w tail :
+    Permutation (wto_order (Galois.Graph.Wto.wto_reverse_into w tail))
+      (wto_order w ++ wto_order tail).
+  Proof.
+    revert tail. induction w as [|v rest IH|h body IHbody rest IHrest]; intro tail.
+    - reflexivity.
+    - cbn [Galois.Graph.Wto.wto_reverse_into].
+      eapply Permutation_trans; [apply IH|]. cbn [wto_order].
+      apply Permutation_sym. apply inventory_rotate.
+    - cbn [Galois.Graph.Wto.wto_reverse_into].
+      eapply Permutation_trans; [apply IHrest|]. cbn [wto_order].
+      eapply Permutation_trans.
+      + exact (Permutation_sym (inventory_rotate h (wto_order rest)
+          (wto_order body ++ wto_order tail))).
+      + apply perm_skip. rewrite !app_assoc.
+        apply Permutation_app_tail. apply Permutation_app_comm.
+  Qed.
+
+  Local Lemma inventory_single_order c (h : positive) pending partial parents heads :
+    Permutation c [h] ->
+    Permutation (c ++ pending ++ partial ++ parents ++ heads)
+      (pending ++ h :: (partial ++ parents ++ heads)).
+  Proof.
+    intro Hselect. eapply Permutation_trans.
+    - apply Permutation_app_tail. exact Hselect.
+    - cbn [app]. apply inventory_rotate.
+  Qed.
+
+  Local Lemma inventory_expand_order c (h : positive) body children pending partial parents heads :
+    Permutation c (h :: body) -> Permutation children body ->
+    Permutation (c ++ pending ++ partial ++ parents ++ heads)
+      (children ++ pending ++ partial ++ parents ++ h :: heads).
+  Proof.
+    intros Hselect Hchildren. eapply Permutation_trans.
+    - apply Permutation_app_tail. exact Hselect.
+    - cbn [app]. eapply Permutation_trans.
+      + rewrite !app_assoc. apply inventory_rotate.
+      + rewrite <- !app_assoc. apply Permutation_app_tail.
+        now apply Permutation_sym.
+  Qed.
+
+  Local Lemma inventory_close_order (h : positive) pending partial reversed parent parents heads :
+    Permutation reversed partial ->
+    Permutation (pending ++ partial ++ parent ++ parents ++ h :: heads)
+      (pending ++ h :: (reversed ++ parent ++ parents ++ heads)).
+  Proof.
+    intro Hreverse. apply Permutation_app_head. eapply Permutation_trans.
+    - rewrite !app_assoc. apply Permutation_sym. apply inventory_rotate.
+    - apply perm_skip. rewrite <- !app_assoc. apply Permutation_app_tail.
+      now apply Permutation_sym.
+  Qed.
+
+
+  Local Lemma inventory_heads_app first rest :
+    fold_right (fun task hs => match task with WtoClose h => h :: hs | _ => hs end) []
+      (first ++ rest) =
+    fold_right (fun task hs => match task with WtoClose h => h :: hs | _ => hs end) [] first ++
+    fold_right (fun task hs => match task with WtoClose h => h :: hs | _ => hs end) [] rest.
+  Proof.
+    induction first as [|task first IH]; [reflexivity|].
+    destruct task; cbn [app fold_right]; now rewrite IH.
+  Qed.
+
+  (** Every reachable pending component remains distinct and nonempty. *)
+  Lemma inventory_iter_domain g roots n :
+    Forall (task_domain g) (wto_tasks (Nat.iter n (advance g) (initial g roots))).
+  Proof.
+    induction n as [|n IH]; [apply initial_task_domain|].
+    rewrite Nat.iter_succ. unfold advance at 1.
+    destruct (wto_step g (Nat.iter n (advance g) (initial g roots))) as [next|result] eqn:Hstep.
+    - eapply task_domain_step; eassumption.
+    - exact IH.
+  Qed.
+
+  (** Each transition moves, selects or closes vertices without changing their inventory. *)
+  Lemma inventory_step g vertices st next :
+    Forall (task_domain g) (wto_tasks st) ->
+    inventory vertices st -> wto_step g st = inl next -> inventory vertices next.
+  Proof.
+    intros Hdomain [Horder Hbalance] Hstep. split.
+    2: { change (frames_balanced next). eapply frames_balanced_step; eassumption. }
+    destruct st as [tasks partial parents].
+    destruct tasks as [|task tasks]; [discriminate Hstep|].
+    inversion Hdomain as [|? ? Hhead Htail]; subst.
+    destruct task as [within entries owners c|h].
+    - cbn [task_domain] in Hhead. destruct Hhead as [Hnonempty [Hunique [Hlisted Howners]]].
+      cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      destruct (Galois.Graph.Wto.wto_select
+        (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+      + pose proof (wto_select_spec _ _ _ _ Hselect) as Hselect_perm.
+        destruct body as [|v body]; inversion Hstep; subst next.
+        * cbn [wto_tasks wto_partial wto_parents map concat task_members fold_right] in Horder.
+          destruct (Galois.Graph.Wto.wto_member h (succs (base g) h));
+            cbn [wto_tasks wto_partial wto_parents wto_order app];
+            repeat rewrite <- app_assoc in Horder;
+            repeat rewrite <- app_assoc;
+            (eapply Permutation_trans; [exact Horder|now apply inventory_single_order]).
+        * assert (Hbody : NoDup (v :: body)).
+          { pose proof (Permutation_NoDup Hselect_perm Hunique) as Hselected.
+            inversion Hselected. assumption. }
+          pose proof (proj1 (F13_partition g (v :: body) Hbody)) as Hpartition.
+          rewrite !rev_append_rev, !app_nil_r.
+          cbn [wto_tasks wto_partial wto_parents wto_order].
+          rewrite map_app, concat_app, inventory_heads_app.
+          rewrite (proj1 (expand_inventory _ _ _ _)),
+            (proj1 (proj2 (expand_inventory _ _ _ _))).
+          cbn [map concat task_members fold_right wto_order app].
+          cbn [wto_tasks wto_partial wto_parents map concat task_members fold_right] in Horder.
+          repeat rewrite <- app_assoc in Horder. repeat rewrite <- app_assoc.
+          eapply Permutation_trans; [exact Horder|].
+          eapply inventory_expand_order; [exact Hselect_perm|].
+          eapply Permutation_trans; [apply Permutation_sym, components_reverse|exact Hpartition].
+      + apply wto_select_empty in Hselect. contradiction.
+    - cbn [wto_tasks wto_parents filter length] in Hbalance.
+      destruct parents as [|parent parents].
+      + cbn [length] in Hbalance. discriminate.
+      + inversion Hstep; subst next.
+        cbn [wto_tasks wto_partial wto_parents map concat task_members fold_right wto_order app] in Horder |- *.
+        repeat rewrite <- app_assoc in Horder. repeat rewrite <- app_assoc.
+        eapply Permutation_trans; [exact Horder|].
+        apply inventory_close_order.
+        pose proof (inventory_reverse partial WNil) as Hreverse.
+        cbn [wto_order] in Hreverse. now rewrite app_nil_r in Hreverse.
+  Qed.
+
+  Lemma F15_step : forall g roots st next,
+    invariant g roots st -> wto_step g st = inl next ->
+    invariant g roots next /\ potential g next < potential g st.
+  Proof.
+    intros g roots st next.
+    intros [[n Hreachable] Hinventory] Hstep.
+    pose proof (inventory_iter_domain g roots n) as Hdomain. rewrite Hreachable in Hdomain.
+    split.
+    - split.
+      + exists (S n). rewrite Nat.iter_succ, Hreachable. unfold advance. now rewrite Hstep.
+      + eapply inventory_step; eassumption.
+    - change (wto_pending_credit (wto_tasks next) < wto_pending_credit (wto_tasks st)).
+      apply (wto_step_credit g st next); [|exact Hstep].
+      unfold wto_expansions_nonempty. eapply Forall_impl; [|exact Hdomain].
+      intros task Htask. destruct task; [exact (proj1 Htask)|exact I].
+  Qed.
+
+  Local Transparent prepared_search_trace.
 
   Lemma history_from_domain : forall g fuel st,
     Forall (task_domain g) (wto_tasks st) ->
