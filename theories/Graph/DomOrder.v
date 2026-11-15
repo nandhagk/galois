@@ -4720,3 +4720,378 @@ Local Transparent dom_lt_eval T_dom_lt_eval dom_lt_predecessor T_dom_lt_predeces
 Local Transparent dom_lt_settle T_dom_lt_settle.
 Local Transparent T_dom_lt_numeric_of T_dom_lt_semidominators T_dom_lt_buckets.
 Local Transparent T_dom_lt_correct T_dom_lt_erase.
+
+(** * Amortized evaluation and producer operation support *)
+
+Definition dom_lt_eval_unit (width : nat) : N :=
+  (1024 * (c_loopN + 1) * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+
+(** Bounded forest levels turn their increase into a decrease in remaining capacity. *)
+Lemma dom_lt_forest_credit_budget (capacity before after steps logarithm : nat) :
+  before <= capacity -> after <= capacity -> steps + before <= logarithm + 1 + after ->
+  (N.of_nat (steps + 1) + N.of_nat (capacity - after) <=
+    N.of_nat (capacity - before) + N.of_nat (logarithm + 2))%N.
+Proof.
+  intros Hbefore Hafter Hlevels. lia.
+Qed.
+
+(** Forest credit pays every traversed frame, leaving a logarithmic evaluation charge. *)
+Lemma dom_lt_time_eval_credit bound width fuel semis before start :
+  dom_lt_trie_all (fun value => (value <= N.of_nat bound)%N) semis ->
+  (forall value, (value <= N.of_nat bound)%N -> N.size_nat value <= width) ->
+  dom_lt_links_bounded (N.of_nat bound) before -> (start <= N.of_nat bound)%N ->
+  (start <= fuel)%N -> N.size_nat fuel <= width + 1 ->
+  (T_dom_lt_eval fuel semis before start + dom_lt_eval_unit width *
+      dom_lt_forest_credit bound (fst (dom_lt_eval fuel semis before start)) <=
+    dom_lt_eval_unit width * dom_lt_forest_credit bound before +
+      dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 2))%N.
+Proof.
+  intros Hsemis Hwidth Hlinks Hstart Hfuel Hfuel_width.
+  destruct (dom_lt_walk_path_exists before start) as [path [root Hpath]].
+  pose proof (dom_lt_time_eval_path (N.of_nat bound) width fuel semis before start path root
+    Hpath Hsemis Hwidth Hlinks Hstart Hfuel_width) as Htime.
+  pose proof (dom_lt_eval_level_credit bound fuel semis before start path root
+    Hpath ltac:(lia) Hfuel) as Hlevels.
+  pose proof (dom_lt_forest_levels_bound bound before) as Hbefore.
+  pose proof (dom_lt_forest_levels_bound bound (fst (dom_lt_eval fuel semis before start)))
+    as Hafter.
+  assert (Hcredit : (N.of_nat (length path + 1) +
+      dom_lt_forest_credit bound (fst (dom_lt_eval fuel semis before start)) <=
+    dom_lt_forest_credit bound before + N.of_nat (Nat.log2 bound + 2))%N).
+  { unfold dom_lt_forest_credit. now apply dom_lt_forest_credit_budget. }
+  set (unit := dom_lt_eval_unit width).
+  assert (Hwork : (T_dom_lt_eval fuel semis before start <= unit *
+    N.of_nat (length path + 1))%N).
+  { unfold unit, dom_lt_eval_unit. rewrite Nat2N.inj_mul in Htime.
+    replace (1024 * (c_loopN + 1) * (PTrieT.c_trie + 1) * N.of_nat (width + 1) *
+      N.of_nat (length path + 1))%N with
+      (1024 * (c_loopN + 1) * (PTrieT.c_trie + 1) *
+        (N.of_nat (length path + 1) * N.of_nat (width + 1)))%N by
+      (clear -width path; nia).
+    exact Htime. }
+  fold unit.
+  eapply N.le_trans with (unit * N.of_nat (length path + 1) + unit *
+    dom_lt_forest_credit bound (fst (dom_lt_eval fuel semis before start)))%N.
+  - now apply N.add_le_mono_r.
+  - rewrite <- N.mul_add_distr_l, <- N.mul_add_distr_l.
+    now apply N.mul_le_mono_l.
+Qed.
+
+(** The link-child projection forgets queries while retaining every recorded link child. *)
+Fixpoint dom_lt_link_children (ops : list lt_op) : list N :=
+  match ops with
+  | [] => []
+  | LtLink child _ :: rest => child :: dom_lt_link_children rest
+  | LtEval _ :: rest => dom_lt_link_children rest
+  end.
+
+(** Evaluating one predecessor adds a query and leaves all recorded link children unchanged. *)
+Lemma dom_lt_predecessor_children limit semis links best witness source :
+  dom_lt_link_children (lt_operations (fst (fst
+    (dom_lt_predecessor limit semis (links, best, witness) source)))) =
+      dom_lt_link_children (lt_operations links).
+Proof.
+  pose proof (dom_lt_eval_operations limit semis links source) as Hlog.
+  unfold dom_lt_predecessor.
+  destruct (dom_lt_eval limit semis links source) as [result chosen].
+  cbn [fst] in Hlog. destruct (N.ltb (dom_lt_identity semis chosen) best);
+    cbn [fst]; rewrite Hlog; reflexivity.
+Qed.
+
+(** A whole predecessor row consists entirely of query operations. *)
+Lemma dom_lt_predecessors_children limit semis incoming links best witness :
+  dom_lt_link_children (lt_operations (fst (fst
+    (fold_left (dom_lt_predecessor limit semis) incoming (links, best, witness))))) =
+      dom_lt_link_children (lt_operations links).
+Proof.
+  apply (dom_lt_fold_invariant (dom_lt_predecessor limit semis)
+    (fun st => dom_lt_link_children (lt_operations (fst (fst st))) =
+      dom_lt_link_children (lt_operations links))).
+  - reflexivity.
+  - intros [[current selected] origin] source Hchildren.
+    rewrite dom_lt_predecessor_children. exact Hchildren.
+Qed.
+
+(** Settlement records at most the current traversal key as a new link child. *)
+Lemma dom_lt_settle_children numeric st v :
+  dom_lt_link_children (lt_operations (lt_semi_links (dom_lt_settle numeric st v))) =
+    match trie_get (dom_lt_key v) (lt_numeric_parent numeric) with
+    | None => dom_lt_link_children (lt_operations (lt_semi_links st))
+    | Some _ => v :: dom_lt_link_children (lt_operations (lt_semi_links st))
+    end.
+Proof.
+  unfold dom_lt_settle.
+  destruct (trie_get (dom_lt_key v) (lt_numeric_parent numeric)) as [p|]; [|reflexivity].
+  set (incoming := match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+    None => [] | Some row => row end).
+  pose proof (dom_lt_predecessors_children (lt_numeric_limit numeric)
+    (lt_semis st) incoming (lt_semi_links st) p p) as Hchildren.
+  revert Hchildren.
+  generalize (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st))
+    incoming (lt_semi_links st, p, p)).
+  intros [[links best] witness] Hchildren.
+  cbn [fst] in Hchildren. cbn [lt_semi_links dom_lt_link lt_operations dom_lt_link_children].
+  now rewrite Hchildren.
+Qed.
+
+(** Optional prepending of distinct input keys preserves uniqueness of the recorded keys. *)
+Lemma dom_lt_fold_optional_unique {A State : Type} (step : State -> A -> State)
+    (recorded : State -> list A) :
+  (forall st x, recorded (step st x) = recorded st \/
+    recorded (step st x) = x :: recorded st) ->
+  forall xs st, NoDup xs -> NoDup (recorded st) ->
+  (forall x, In x xs -> ~ In x (recorded st)) ->
+  NoDup (recorded (fold_left step xs st)).
+Proof.
+  intros Hstep xs. induction xs as [|x rest IH]; intros st Hunique Hrecorded Hfresh.
+  - exact Hrecorded.
+  - inversion Hunique as [|head tail Hhead Htail]; subst head tail. cbn [fold_left].
+    destruct (Hstep st x) as [Hsame|Hnew].
+    + apply IH; [exact Htail|now rewrite Hsame|].
+      intros v Hv. rewrite Hsame. apply Hfresh. now right.
+    + apply IH; [exact Htail| |].
+      * rewrite Hnew. constructor; [apply Hfresh; now left|exact Hrecorded].
+      * intros v Hv. rewrite Hnew. cbn [In]. intros [Heq|Hmember].
+        -- subst v. contradiction.
+        -- exact (Hfresh v (or_intror Hv) Hmember).
+Qed.
+
+(** The semidominator phase links each numeric traversal key at most once. *)
+Lemma dom_lt_semidominators_link_unique numeric :
+  NoDup (lt_numeric_order numeric) ->
+  NoDup (dom_lt_link_children
+    (lt_operations (lt_semi_links (dom_lt_semidominators numeric)))).
+Proof.
+  intro Hunique. unfold dom_lt_semidominators.
+  apply (dom_lt_fold_optional_unique (dom_lt_settle numeric)
+    (fun st => dom_lt_link_children (lt_operations (lt_semi_links st)))).
+  - intros st v. rewrite dom_lt_settle_children.
+    destruct (trie_get (dom_lt_key v) (lt_numeric_parent numeric)); auto.
+  - exact Hunique.
+  - constructor.
+  - intros v Hv Hbad. contradiction.
+Qed.
+
+(** Visiting a bucket member adds a query and leaves all recorded link children unchanged. *)
+Lemma dom_lt_bucket_member_children limit semis s st v :
+  dom_lt_link_children (lt_operations
+    (lt_bucket_links (dom_lt_bucket_member limit semis s st v))) =
+      dom_lt_link_children (lt_operations (lt_bucket_links st)).
+Proof.
+  pose proof (dom_lt_eval_operations limit semis (lt_bucket_links st) v) as Hlog.
+  unfold dom_lt_bucket_member.
+  destruct (dom_lt_eval limit semis (lt_bucket_links st) v) as [links chosen].
+  cbn [fst] in Hlog. cbn [lt_bucket_links]. rewrite Hlog. reflexivity.
+Qed.
+
+(** A whole bucket row consists entirely of query operations. *)
+Lemma dom_lt_bucket_members_children limit semis s row st :
+  dom_lt_link_children (lt_operations (lt_bucket_links
+    (fold_left (dom_lt_bucket_member limit semis s) row st))) =
+      dom_lt_link_children (lt_operations (lt_bucket_links st)).
+Proof.
+  apply (dom_lt_fold_invariant (dom_lt_bucket_member limit semis s)
+    (fun current => dom_lt_link_children (lt_operations (lt_bucket_links current)) =
+      dom_lt_link_children (lt_operations (lt_bucket_links st)))).
+  - reflexivity.
+  - intros current v Hchildren. rewrite dom_lt_bucket_member_children. exact Hchildren.
+Qed.
+
+(** A bucket step records at most its current traversal key as a new link child. *)
+Lemma dom_lt_bucket_step_children numeric semis buckets st s :
+  dom_lt_link_children
+    (lt_operations (lt_bucket_links (dom_lt_bucket_step numeric semis buckets st s))) =
+    match trie_get (dom_lt_key s) (lt_numeric_parent numeric) with
+    | None => dom_lt_link_children (lt_operations (lt_bucket_links st))
+    | Some _ => s :: dom_lt_link_children (lt_operations (lt_bucket_links st))
+    end.
+Proof.
+  unfold dom_lt_bucket_step.
+  set (row := match trie_get (dom_lt_key s) buckets with None => [] | Some row => row end).
+  pose proof (dom_lt_bucket_members_children (lt_numeric_limit numeric) semis s row st)
+    as Hchildren.
+  revert Hchildren.
+  generalize (fold_left (dom_lt_bucket_member (lt_numeric_limit numeric) semis s) row st).
+  intros current Hchildren.
+  destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric));
+    cbn [lt_bucket_links dom_lt_link lt_operations dom_lt_link_children];
+    now rewrite Hchildren.
+Qed.
+
+(** The bucket phase links each numeric traversal key at most once. *)
+Lemma dom_lt_buckets_link_unique numeric semis :
+  NoDup (lt_numeric_order numeric) ->
+  NoDup (dom_lt_link_children (lt_operations (lt_bucket_links (dom_lt_buckets numeric semis)))).
+Proof.
+  intro Hunique. unfold dom_lt_buckets.
+  apply (dom_lt_fold_optional_unique
+    (dom_lt_bucket_step numeric semis
+      (fold_left (dom_lt_bucket_add semis) (rev_append (lt_numeric_order numeric) []) Empty))
+    (fun st => dom_lt_link_children (lt_operations (lt_bucket_links st)))).
+  - intros st v. rewrite dom_lt_bucket_step_children.
+    destruct (trie_get (dom_lt_key v) (lt_numeric_parent numeric)); auto.
+  - exact Hunique.
+  - constructor.
+  - intros v Hv Hbad. contradiction.
+Qed.
+
+(** Link-child projection preserves concatenation of operation logs. *)
+Lemma dom_lt_link_children_app left right :
+  dom_lt_link_children (left ++ right) =
+    dom_lt_link_children left ++ dom_lt_link_children right.
+Proof.
+  induction left as [|op rest IH]; [reflexivity|].
+  destruct op; cbn [app dom_lt_link_children]; now rewrite IH.
+Qed.
+
+(** Reversing a log reverses exactly its link-child projection. *)
+Lemma dom_lt_link_children_rev ops :
+  dom_lt_link_children (rev ops) = rev (dom_lt_link_children ops).
+Proof.
+  induction ops as [|op rest IH]; [reflexivity|].
+  cbn [rev]. rewrite dom_lt_link_children_app, IH.
+  destruct op; cbn [dom_lt_link_children rev]; now rewrite ?app_nil_r.
+Qed.
+
+(** Both operands of a link and the operand of a query obey the same numeric bound. *)
+Definition dom_lt_op_bounded (bound : N) (op : lt_op) : Prop :=
+  match op with
+  | LtLink child parent => (child <= bound /\ parent <= bound)%N
+  | LtEval v => (v <= bound)%N
+  end.
+
+(** A predecessor callback records only its supplied numeric query operand. *)
+Lemma dom_lt_predecessor_log limit semis links best witness source :
+  lt_operations (fst (fst
+    (dom_lt_predecessor limit semis (links, best, witness) source))) =
+      LtEval source :: lt_operations links.
+Proof.
+  pose proof (dom_lt_eval_operations limit semis links source) as Hlog.
+  unfold dom_lt_predecessor.
+  destruct (dom_lt_eval limit semis links source) as [result chosen].
+  cbn [fst] in Hlog. destruct (N.ltb (dom_lt_identity semis chosen) best); exact Hlog.
+Qed.
+
+(** Folding bounded predecessor operands preserves a bounded operation log. *)
+Lemma dom_lt_predecessors_op_range bound limit semis incoming links best witness :
+  Forall (fun n => (n <= bound)%N) incoming ->
+  Forall (dom_lt_op_bounded bound) (lt_operations links) ->
+  Forall (dom_lt_op_bounded bound) (lt_operations (fst (fst
+    (fold_left (dom_lt_predecessor limit semis) incoming (links, best, witness))))).
+Proof.
+  intros Hinputs Hbefore.
+  apply (dom_lt_fold_forall (dom_lt_predecessor limit semis)
+    (fun st => Forall (dom_lt_op_bounded bound) (lt_operations (fst (fst st))))
+    (fun n => (n <= bound)%N)); [exact Hinputs|exact Hbefore|].
+  intros [[current selected] origin] source Hcurrent Hsource.
+  rewrite dom_lt_predecessor_log. now constructor.
+Qed.
+
+(** A settlement records only its current key, bounded parent and bounded predecessor operands. *)
+Lemma dom_lt_settle_op_range bound numeric st v :
+  dom_lt_numeric_ranges bound numeric ->
+  Forall (dom_lt_op_bounded bound) (lt_operations (lt_semi_links st)) -> (v <= bound)%N ->
+  Forall (dom_lt_op_bounded bound)
+    (lt_operations (lt_semi_links (dom_lt_settle numeric st v))).
+Proof.
+  intros [Horder Hparents Hpredecessors] Hbefore Hv. unfold dom_lt_settle.
+  destruct (trie_get (dom_lt_key v) (lt_numeric_parent numeric)) as [p|] eqn:Hparent;
+    [|exact Hbefore].
+  pose proof (Hparents (dom_lt_key v) p Hparent) as Hp.
+  set (incoming := match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+    None => [] | Some row => row end).
+  assert (Hincoming : Forall (fun n => (n <= bound)%N) incoming).
+  { unfold incoming.
+    destruct (trie_get (dom_lt_key v) (lt_numeric_pred numeric)) as [row|] eqn:Hrow;
+      [now apply (Hpredecessors (dom_lt_key v))|constructor]. }
+  pose proof (dom_lt_predecessors_op_range bound (lt_numeric_limit numeric) (lt_semis st)
+    incoming (lt_semi_links st) p p Hincoming Hbefore) as Hfold.
+  revert Hfold.
+  generalize (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st))
+    incoming (lt_semi_links st, p, p)).
+  intros [[links best] witness] Hfold. cbn [fst] in Hfold.
+  cbn [lt_semi_links dom_lt_link lt_operations]. constructor; [now split|exact Hfold].
+Qed.
+
+(** The semidominator phase records only operands from the numeric layout's range. *)
+Lemma dom_lt_semidominators_op_range bound numeric :
+  dom_lt_numeric_ranges bound numeric ->
+  Forall (dom_lt_op_bounded bound)
+    (lt_operations (lt_semi_links (dom_lt_semidominators numeric))).
+Proof.
+  intro Hranges. unfold dom_lt_semidominators.
+  apply (dom_lt_fold_forall (dom_lt_settle numeric)
+    (fun st => Forall (dom_lt_op_bounded bound) (lt_operations (lt_semi_links st)))
+    (fun n => (n <= bound)%N)).
+  - exact (dom_lt_numeric_order_range _ _ Hranges).
+  - constructor.
+  - intros st v Hbefore Hv. eapply dom_lt_settle_op_range; eassumption.
+Qed.
+
+(** A bucket callback records only its supplied member as a query operand. *)
+Lemma dom_lt_bucket_member_op_range bound limit semis s st v :
+  Forall (dom_lt_op_bounded bound) (lt_operations (lt_bucket_links st)) -> (v <= bound)%N ->
+  Forall (dom_lt_op_bounded bound)
+    (lt_operations (lt_bucket_links (dom_lt_bucket_member limit semis s st v))).
+Proof.
+  intros Hbefore Hv.
+  pose proof (dom_lt_eval_operations limit semis (lt_bucket_links st) v) as Hlog.
+  unfold dom_lt_bucket_member.
+  destruct (dom_lt_eval limit semis (lt_bucket_links st) v) as [links chosen].
+  cbn [fst] in Hlog. cbn [lt_bucket_links]. rewrite Hlog. now constructor.
+Qed.
+
+(** Processing one bounded bucket records bounded queries and one possible bounded parent link. *)
+Lemma dom_lt_bucket_step_op_range bound numeric semis buckets st s :
+  dom_lt_numeric_ranges bound numeric ->
+  dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets ->
+  Forall (dom_lt_op_bounded bound) (lt_operations (lt_bucket_links st)) -> (s <= bound)%N ->
+  Forall (dom_lt_op_bounded bound)
+    (lt_operations (lt_bucket_links (dom_lt_bucket_step numeric semis buckets st s))).
+Proof.
+  intros Hranges Hrows Hbefore Hs. unfold dom_lt_bucket_step.
+  set (row := match trie_get (dom_lt_key s) buckets with None => [] | Some row => row end).
+  assert (Hrow : Forall (fun n => (n <= bound)%N) row).
+  { unfold row. destruct (trie_get (dom_lt_key s) buckets) as [members|] eqn:Hmembers;
+      [now apply (Hrows (dom_lt_key s))|constructor]. }
+  assert (Hfold : Forall (dom_lt_op_bounded bound) (lt_operations (lt_bucket_links
+    (fold_left (dom_lt_bucket_member (lt_numeric_limit numeric) semis s) row st)))).
+  { apply (dom_lt_fold_forall (dom_lt_bucket_member (lt_numeric_limit numeric) semis s)
+      (fun current => Forall (dom_lt_op_bounded bound) (lt_operations (lt_bucket_links current)))
+      (fun n => (n <= bound)%N)); [exact Hrow|exact Hbefore|].
+    intros current v Hcurrent Hv. now apply dom_lt_bucket_member_op_range. }
+  revert Hfold.
+  generalize (fold_left (dom_lt_bucket_member (lt_numeric_limit numeric) semis s) row st).
+  intros current Hfold.
+  destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric)) as [p|] eqn:Hparent;
+    [|exact Hfold].
+  cbn [lt_bucket_links dom_lt_link lt_operations]. constructor; [|exact Hfold].
+  split; [exact Hs|]. exact (dom_lt_numeric_parent_range _ _ Hranges _ _ Hparent).
+Qed.
+
+(** The bucket phase records only operands from the numeric layout's range. *)
+Lemma dom_lt_buckets_op_range bound numeric semis :
+  dom_lt_numeric_ranges bound numeric ->
+  Forall (dom_lt_op_bounded bound) (lt_operations (lt_bucket_links (dom_lt_buckets numeric semis))).
+Proof.
+  intro Hranges. unfold dom_lt_buckets.
+  set (buckets := fold_left (dom_lt_bucket_add semis)
+    (rev_append (lt_numeric_order numeric) []) Empty).
+  assert (Hrows : dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets).
+  { apply dom_lt_bucket_build_range. exact (dom_lt_numeric_order_range _ _ Hranges). }
+  apply (dom_lt_fold_forall (dom_lt_bucket_step numeric semis buckets)
+    (fun st => Forall (dom_lt_op_bounded bound) (lt_operations (lt_bucket_links st)))
+    (fun n => (n <= bound)%N)).
+  - exact (dom_lt_numeric_order_range _ _ Hranges).
+  - constructor.
+  - intros st s Hbefore Hs. eapply dom_lt_bucket_step_op_range; eassumption.
+Qed.
+
+(** Reversing one operation prefix preserves any elementwise operand invariant. *)
+Lemma dom_lt_forall_rev_append {A : Type} (P : A -> Prop) xs ys :
+  Forall P xs -> Forall P ys -> Forall P (rev_append xs ys).
+Proof.
+  intro Hxs. revert ys.
+  induction Hxs as [|x rest Hx Hrest IH]; intros ys Hys; [exact Hys|].
+  cbn [rev_append]. apply IH. now constructor.
+Qed.
