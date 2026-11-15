@@ -11577,17 +11577,277 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Qed.
 
 
+  (** Evaluating one argument list in one environment determines its cells uniquely. *)
+  Lemma run_terms_value_unique : forall (s : Model.env (V := V.t)) ts first second,
+    terms_value s ts first -> terms_value s ts second -> first = second.
+  Proof.
+    intros s ts first second Hfirst. revert second.
+    induction Hfirst as [|t c ts cs Hterm Htail IH]; intros second Hsecond.
+    - inversion Hsecond. reflexivity.
+    - inversion Hsecond as [|t' c' ts' cs' Hterm' Htail']; subst.
+      f_equal.
+      + destruct t; cbn [term_value] in Hterm, Hterm'; congruence.
+      + now apply IH.
+  Qed.
+
+  (** A list of value cells determines its primitive arguments uniquely. *)
+  Lemma run_values_unique : forall (cs : list (cell V.t)) first second,
+    values cs first -> values cs second -> first = second.
+  Proof.
+    intros cs first second Hfirst. revert second.
+    induction Hfirst as [|c v cs vs Hvalue Htail IH]; intros second Hsecond.
+    - inversion Hsecond. reflexivity.
+    - inversion Hsecond as [|c' v' cs' vs' Hvalue' Htail']; subst.
+      f_equal; [congruence|now apply IH].
+  Qed.
+
+  (** Rows in a sorted relational comparison view have no output. *)
+  Lemma run_relational_view_outputs : forall (p : program V.t) (w : view (V := V.t)),
+    relational_fragment p = true -> (forall f, kind w f = program_kind p f) ->
+    view_sorted (program_sorts p) w -> forall f k o, row w f k o -> o = None.
+  Proof.
+    intros p w Hfragment Hkinds Hsorted f k o Hrow.
+    destruct (Hsorted f k o Hrow) as [out [Hsort [Hkind Houtput]]].
+    rewrite Hkinds in Hkind.
+    pose proof (run_relational_kind p f out Hfragment Hkind) as Hout. subst out.
+    destruct o; [discriminate|reflexivity].
+  Qed.
+
+  (** Every derivable action output occurs in a view where those actions are present. *)
+  Lemma run_derivation_action_present : forall (w : view (V := V.t)),
+    (forall f k o, row w f k o -> o = None) ->
+    forall s acts f k, derivation_action V.prim s acts f k ->
+      present V.prim V.merge w s acts -> row w f k None.
+  Proof.
+    intros w Houtputs s acts f k Hderivation.
+    induction Hderivation as
+      [s f args k rest Hterms
+      |s f args input rest g k Hterms Htail IH
+      |s x op args k vs v rest f output Hterms Hvalues Hprim Htail IH]; intro Hpresent.
+    - destruct Hpresent as [key [output [Hterms' [Hrow Hrest]]]].
+      pose proof (run_terms_value_unique s args k key Hterms Hterms') as Heq. subst key.
+      now rewrite (Houtputs f k output Hrow) in Hrow.
+    - destruct Hpresent as [key [output [Hterms' [Hrow [Hout Hrest]]]]].
+      now apply IH.
+    - destruct Hpresent as [key [values' [Hterms' [Hvalues' Hrest]]]].
+      pose proof (run_terms_value_unique s args k key Hterms Hterms') as Heq. subst key.
+      pose proof (run_values_unique k vs values' Hvalues Hvalues') as Heq. subst values'.
+      rewrite Hprim in Hrest. now apply IH.
+  Qed.
+
+  Scheme run_derives_ind := Induction for derives Sort Prop
+  with run_derivation_body_ind := Induction for derivation_body Sort Prop.
+
+  (** Relational derivations occur in every output-free closed extension of their facts. *)
+  Lemma run_derives_closed : forall p (initial final : view (V := V.t)),
+    closed V.prim V.merge p final -> includes initial final ->
+    (forall f k o, row final f k o -> o = None) ->
+    forall f k, derives V.prim p initial f k -> row final f k None.
+  Proof.
+    intros p initial final Hclosed Hinclude Houtputs.
+    refine (@run_derives_ind V.t V.prim p initial
+      (fun f k _ => row final f k None)
+      (fun s q _ => matches V.prim final q s) _ _ _ _ _).
+    - intros f k Hrow. now apply Hinclude.
+    - intros r s f k Hin Hbody IHbody Haction.
+      eapply run_derivation_action_present; [exact Houtputs|exact Haction|].
+      apply Hclosed; [exact Hin|exact IHbody].
+    - intro s. constructor.
+    - intros s f args k rest Hterms Hderive IHderive Hbody IHbody.
+      constructor; [|exact IHbody]. exists k, None.
+      split; [exact Hterms|]. split; [exact I|exact IHderive].
+    - intros s op args res k vs v rest Hterms Hvalues Hprim Hresult Hbody IHbody.
+      constructor; [|exact IHbody]. exists k, vs, v.
+      split; [exact Hterms|]. split; [exact Hvalues|]. split; assumption.
+  Qed.
+
+  Lemma F11_derives_least : forall p db w f k, relational_fragment p = true ->
+    no_ids db -> closed V.prim V.merge p w -> includes (D.view db) w ->
+    (forall g, kind w g = program_kind p g) -> view_sorted (program_sorts p) w ->
+    derives V.prim p (D.view db) f k -> row w f k None.
+  Proof.
+    intros p db w f k Hfragment Hnoids Hclosed Hinclude Hkinds Hsorted Hderive.
+    eapply run_derives_closed; [exact Hclosed|exact Hinclude| |exact Hderive].
+    eapply run_relational_view_outputs; eassumption.
+  Qed.
+
+  (** Every row of an identifier-free initial database is an initial derivation. *)
+  Lemma run_derived_initial : forall p db, no_ids db -> derived p db db.
+  Proof.
+    intros p db Hnoids f k o Hrow.
+    destruct ((proj2 Hnoids) f k o Hrow) as [-> Hvalues]. now apply derive_fact.
+  Qed.
+
+  (** Matches in a derived relational snapshot supply derivation bodies. *)
+  Lemma run_matches_derivation_body : forall p initial db q s,
+    no_ids db -> derived p initial db -> matches V.prim (D.view db) q s ->
+    derivation_body V.prim p (D.view initial) s q.
+  Proof.
+    intros p initial db q s Hnoids Hderived Hmatches.
+    induction Hmatches as [|a rest Hhead Htail IH]; [constructor|].
+    destruct a as [f args res|op args res].
+    - destruct Hhead as [k [o [Hargs [Hresult Hrow]]]].
+      destruct ((proj2 Hnoids) f k o Hrow) as [-> Hvalues].
+      destruct res as [term|]; [contradiction|].
+      eapply derive_body_fun; [exact Hargs|eapply Hderived; exact Hrow|exact IH].
+    - destruct Hhead as [k [vs [v [Hargs [Hvalues [Hprim Hresult]]]]]].
+      eapply derive_body_prim; eassumption.
+  Qed.
+
+  (** Checked saved jobs derive every inserted row from their original matched snapshot. *)
+  Lemma run_apply_jobs_derives : forall p cp initial original js db,
+    plans_ok p cp -> relational_fragment p = true ->
+    no_ids original -> derived p initial original -> Forall (run_job_facts p original) js ->
+    D.wf db -> loaded p cp db -> (D.ids original <= D.ids db)%N ->
+    no_ids db -> derived p initial db ->
+    no_ids (apply_jobs p js db) /\ derived p initial (apply_jobs p js db).
+  Proof.
+    intros p cp initial original js. induction js as [|[c b] rest IH]; intros db
+      Hchecked Hfragment Horiginal_noids Horiginal_derived Hjobs Hwf Hloaded Hids
+      Hnoids Hderived; [split; assumption|].
+    inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+    destruct Hjob as [Hrule [Henv [Hallocated Hmatches]]].
+    destruct (run_job_environment p original db c b Hids Henv Hallocated)
+      as [Htyped Hallocated_now].
+    assert (Hactual_matches : matches V.prim (D.view original) (query V.t (job_rule p c))
+        (fun x => trie_get x (bind_trie c b))).
+    { eapply run_matches_env; [|exact Hmatches]. intro x. symmetry. apply F30_bind_trie. }
+    pose proof (run_matches_derivation_body p initial original _ _ Horiginal_noids
+      Horiginal_derived Hactual_matches) as Hbody.
+    destruct (run_apply_state p cp (job_rule p c) (fun x => trie_get x (bind_trie c b)) db
+      Hchecked Hwf Hloaded Hrule Htyped Hallocated_now)
+      as [Hnext [Hloadnext [Hidnext Hpending]]].
+    destruct (run_apply_derives_checked p cp initial db (job_rule p c)
+      (fun x => trie_get x (bind_trie c b)) Hchecked Hwf Hloaded Hfragment Hnoids Hderived
+      Hrule Htyped Hallocated_now Hbody) as [Hnoidsnext Hderivednext].
+    cbn [apply_jobs]. eapply IH; try eassumption. eapply N.le_trans; eassumption.
+  Qed.
+
+  (** Rebuilding an identifier-free derived database retains its exact derivations. *)
+  Lemma run_rebuild_derives : forall p initial db,
+    D.wf db -> no_ids db -> derived p initial db ->
+    no_ids (D.rebuild db) /\ derived p initial (D.rebuild db).
+  Proof.
+    intros p initial db Hwf Hnoids Hderived. split.
+    - now apply run_no_ids_rebuild.
+    - intros f k o Hrow. apply Hderived with (o := o).
+      apply (proj1 (run_no_ids_rebuild_rows db Hwf Hnoids f k o)). exact Hrow.
+  Qed.
+
+  (** Advancing cannot introduce identifiers into an identifier-free database. *)
+  Lemma run_no_ids_advance : forall db, D.wf db -> no_ids db -> no_ids (D.advance db).
+  Proof.
+    intros db Hwf Hnoids. split.
+    - rewrite (proj1 (D.advance_keeps db Hwf)). exact (proj1 Hnoids).
+    - intros f k o Hrow.
+      rewrite (proj1 (proj2 (D.wf_advance db Hwf))) in Hrow.
+      exact ((proj2 Hnoids) f k o Hrow).
+  Qed.
+
+  (** Advancing retains every relational derivation because it retains the view. *)
+  Lemma run_advance_derives : forall p initial db,
+    D.wf db -> derived p initial db -> derived p initial (D.advance db).
+  Proof.
+    intros p initial db Hwf Hderived f k o Hrow.
+    rewrite (proj1 (proj2 (D.wf_advance db Hwf))) in Hrow. eapply Hderived. exact Hrow.
+  Qed.
+
+  (** Each checked relational round preserves derivability and has no identifiers. *)
+  Lemma run_round_derives : forall p cp initial nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    no_ids db -> derived p initial db ->
+    no_ids (round p cp nv db) /\ derived p initial (round p cp nv db).
+  Proof.
+    intros p cp initial nv db Hchecked Hwf Hloaded Hfragment Hnoids Hderived.
+    pose proof (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) as Hjobs.
+    destruct (run_apply_jobs_derives p cp initial db (jobs p cp nv db) db
+      Hchecked Hfragment Hnoids Hderived Hjobs Hwf Hloaded (N.le_refl _) Hnoids Hderived)
+      as [Hnoidsnext Hderivednext].
+    destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
+      Hloaded (N.le_refl _)) as [Hnext Hrest].
+    rewrite F32_round_jobs. now apply run_rebuild_derives.
+  Qed.
+
+  (** A checked relational round does not allocate identifiers. *)
+  Lemma run_round_no_ids : forall p cp nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    no_ids db -> no_ids (round p cp nv db).
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded Hfragment Hnoids.
+    exact (proj1 (run_round_derives p cp db nv db Hchecked Hwf Hloaded Hfragment
+      Hnoids (run_derived_initial p db Hnoids))).
+  Qed.
+
+  (** A checked relational run retains a derivation for every final row and allocates no ids. *)
+  Lemma run_derives_state : forall p cp lim db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    no_ids db -> no_ids (snd (run p cp lim db)) /\ derived p db (snd (run p cp lim db)).
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded Hfragment Hnoids.
+    assert (Hloop : match loopN (driver p cp lim) (max_iter lim) (false, db) with
+      | inl next => D.wf (snd next) /\ loaded p cp (snd next) /\
+          no_ids (snd next) /\ derived p db (snd next)
+      | inr result => D.wf (snd result) /\ loaded p cp (snd result) /\
+          no_ids (snd result) /\ derived p db (snd result)
+      end).
+    { refine (run_loop_database_invariant p cp lim
+        (fun current => D.wf current /\ loaded p cp current /\
+          no_ids current /\ derived p db current) _ _ (max_iter lim) false db _).
+      - intros nv current [Hcurrent [Hloadcurrent [Hnoidscurrent Hderivedcurrent]]].
+        destruct (run_round_state p cp nv current Hchecked Hcurrent Hloadcurrent)
+          as [Hnext [Hloadnext Hidnext]].
+        destruct (run_round_derives p cp db nv current Hchecked Hcurrent Hloadcurrent
+          Hfragment Hnoidscurrent Hderivedcurrent) as [Hnoidsnext Hderivednext].
+        split; [exact Hnext|]. split; [exact Hloadnext|]. split; assumption.
+      - intros current [Hcurrent [Hloadcurrent [Hnoidscurrent Hderivedcurrent]]].
+        destruct (run_advance_state p cp current Hcurrent Hloadcurrent)
+          as [Hnext [Hloadnext Hidnext]].
+        split; [exact Hnext|]. split; [exact Hloadnext|]. split.
+        + now apply run_no_ids_advance.
+        + now apply run_advance_derives.
+      - split; [exact Hwf|]. split; [exact Hloaded|]. split; [exact Hnoids|].
+        now apply run_derived_initial. }
+    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
+      as [[nv current]|[status current]].
+    all: rewrite Hrun; cbn [snd].
+    all: destruct Hloop as [Hcurrent [Hloadcurrent [Hnoidscurrent Hderivedcurrent]]].
+    all: apply run_rebuild_derives; assumption.
+  Qed.
+
+  (** A checked relational run never introduces identifiers. *)
+  Lemma run_no_ids : forall p cp lim db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    no_ids db -> no_ids (snd (run p cp lim db)).
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded Hfragment Hnoids.
+    exact (proj1 (run_derives_state p cp lim db Hchecked Hwf Hloaded Hfragment Hnoids)).
+  Qed.
+
   Lemma run_derives : forall p cp lim db f k o, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> no_ids db ->
     row (D.view (snd (run p cp lim db))) f k o -> derives V.prim p (D.view db) f k.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db f k o Hchecked Hwf Hloaded Hfragment Hnoids Hrow.
+    exact (proj2 (run_derives_state p cp lim db Hchecked Hwf Hloaded Hfragment Hnoids)
+      f k o Hrow).
+  Qed.
 
   Lemma run_least : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> no_ids db -> run p cp lim db = (Saturated, db') ->
     forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
       (forall f, kind w f = program_kind p f) -> view_sorted (program_sorts p) w ->
       includes (D.view db') w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db db' Hchecked Hwf Hloaded Hfragment Hnoids Hrun w
+      Hclosed Hinclude Hkinds Hsorted.
+    destruct (run_derives_state p cp lim db Hchecked Hwf Hloaded Hfragment Hnoids)
+      as [Hnoidsfinal Hderived].
+    rewrite Hrun in Hnoidsfinal, Hderived. cbn [snd] in Hnoidsfinal, Hderived.
+    intros f k o Hrow. destruct ((proj2 Hnoidsfinal) f k o Hrow) as [-> Hvalues].
+    eapply F11_derives_least; [exact Hfragment|exact Hnoids|exact Hclosed|exact Hinclude|
+      exact Hkinds|exact Hsorted|]. eapply Hderived. exact Hrow.
+  Qed.
 
   Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
@@ -11881,12 +12141,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     derivation_body V.prim p (D.view initial) s (query V.t r) ->
     derived p initial (apply (actions V.t r) s db).
   Proof. Admitted. (* PLAN-DEFECT: result-bearing relational Put; see RunTest. *)
-
-  Lemma F11_derives_least : forall p db w f k, relational_fragment p = true ->
-    no_ids db -> closed V.prim V.merge p w -> includes (D.view db) w ->
-    (forall g, kind w g = program_kind p g) -> view_sorted (program_sorts p) w ->
-    derives V.prim p (D.view db) f k -> row w f k None.
-  Proof. Admitted. (* STUB *)
 
   Lemma F12_herbrand_bound : forall p cp db nv, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> prim_free p = true -> no_ids db ->
