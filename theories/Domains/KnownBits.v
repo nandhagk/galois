@@ -4353,6 +4353,129 @@ Proof.
 Qed.
 TimeBound tnum_mul_time.
 
+(** The multiplication shift helper returns a normalized word. *)
+Lemma tnum_shl_scalar_value_word : forall w k x,
+  is_word w (tnum_shl_scalar_value w k x).
+Proof.
+  intros w k x. unfold tnum_shl_scalar_value, tnum_shl_value.
+  destruct (Zpos w <=? Z.min k (Zpos w)).
+  - unfold is_word. pose proof (modulus_pos w). lia.
+  - rewrite tnum_wrap_agrees. apply wrap_is_word.
+Qed.
+
+(** Clamping a bounded multiplication index is linear in the word width. *)
+Lemma tnum_shl_scalar_value_time : forall w k x, 0 <= k <= Zpos w ->
+  (T_tnum_shl_scalar_value w k x <=
+    512 * N.of_nat (Pos.to_nat w + Z.size_nat x + 1))%N.
+Proof.
+  intros w k x Hk. destruct (tnum_count_bits_width w k Hk) as [Hbits Hnat].
+  pose proof (tnum_shl_value_time w (Z.min k (Zpos w)) x ltac:(lia)) as Hshift.
+  time_unfold T_tnum_shl_scalar_value. cbn beta iota zeta. time_pose.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_shl_scalar_value_time.
+
+(** A multiplication shift maps two normalized endpoints. *)
+Lemma tnum_shl_scalar_time : forall w k a, 0 <= k <= Zpos w ->
+  (T_tnum_shl_scalar w k a <=
+    8192 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w k a Hk.
+  pose proof (tnum_map_time w w (tnum_shl_scalar_value w k)
+    (fun x => T_tnum_shl_scalar_value w k x) a
+    (fun x _ => tnum_shl_scalar_value_word w k x)) as Hmap.
+  pose proof (tnum_shl_scalar_value_time w k (tnum_max w a) Hk) as Hmax.
+  pose proof (tnum_shl_scalar_value_time w k (tnum_min w a) Hk) as Hmin.
+  pose proof (tnum_max_bits w a). pose proof (tnum_min_bits w a).
+  time_unfold T_tnum_shl_scalar. cbn beta iota zeta.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_shl_scalar_time.
+
+(** An uncertain payload stores only its complemented word mask. *)
+Lemma tnum_uncertain_bits : forall w m,
+  (tnum_bits (tnum_uncertain w m) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w m. unfold tnum_bits, tnum_uncertain. cbn [zeros ones Z.size_nat].
+  pose proof (tnum_wnot_bits w m). lia.
+Qed.
+
+(** Constructing an uncertain payload reads one raw mask. *)
+Lemma tnum_uncertain_time : forall w m,
+  (T_tnum_uncertain w m <=
+    256 * N.of_nat (Pos.to_nat w + Z.size_nat m + 1))%N.
+Proof.
+  intros w m. time_unfold T_tnum_uncertain. cbn beta iota zeta. time_pose. lia.
+Qed.
+TimeBound tnum_uncertain_time.
+
+(** The accumulating multiplier checks two bounded right shifts before stopping. *)
+Lemma tnum_mul_acc_done_time : forall w b i, 0 <= i <= Zpos w ->
+  (T_tnum_mul_acc_done w b i <=
+    1024 * N.of_nat (Pos.to_nat w + tnum_bits b + 1))%N.
+Proof.
+  intros w b i Hi. destruct (tnum_count_bits_width w i Hi) as [Hibits Hinat].
+  pose proof (tnum_min_word w b) as Hminword.
+  pose proof (tnum_mask_word w b) as Hmaskword.
+  pose proof (tnum_min_bits w b) as Hminbits.
+  pose proof (tnum_mask_bits w b) as Hmaskbits.
+  pose proof (tnum_shiftr_time (tnum_min w b) i ltac:(destruct Hminword; lia) ltac:(lia)) as Hmintime.
+  pose proof (tnum_shiftr_time (tnum_mask w b) i ltac:(destruct Hmaskword; lia) ltac:(lia)) as Hmasktime.
+  pose proof (tnum_shiftr_bits (tnum_min w b) i ltac:(destruct Hminword; lia) ltac:(lia)) as Hminshiftbits.
+  pose proof (tnum_shiftr_bits (tnum_mask w b) i ltac:(destruct Hmaskword; lia) ltac:(lia)) as Hmaskshiftbits.
+  time_unfold T_tnum_mul_acc_done. cbn beta iota zeta. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_mul_acc_done_time.
+
+(** One staged multiplication step reads the raw masks once. *)
+Lemma tnum_mul_stage_step_time : forall w a b i r, 0 <= i <= Zpos w ->
+  (T_tnum_mul_stage_step w a b (i, r) <= 131072 * N.of_nat
+    (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
+Proof.
+  intros w a b i r Hi.
+  pose proof (tnum_shl_scalar_time w i a Hi) as Hshift.
+  pose proof (tnum_shl_scalar_bits w i a) as Hshiftbits.
+  pose proof (tnum_add_bits w r (tnum_shl_scalar w i a)) as Haddbits.
+  time_unfold T_tnum_mul_stage_step. cbn beta iota zeta. time_pose.
+  destruct (Z.testbit (zeros b) i), (Z.testbit (ones b) i);
+    unfold tnum_bits in *; rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound tnum_mul_stage_step_time.
+
+(** One accumulating multiplication step forms only bounded intermediate masks. *)
+Lemma tnum_mul_acc_step_time : forall w a b i r, 0 <= i <= Zpos w ->
+  (T_tnum_mul_acc_step w a b (i, r) <= 131072 * N.of_nat
+    (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b + tnum_bits r + 1))%N.
+Proof.
+  intros w a b i r Hi.
+  pose proof (tnum_mul_acc_done_time w b i Hi) as Hdone.
+  pose proof (tnum_mask_bits w a) as Hmaskbits.
+  pose proof (tnum_min_bits w a) as Hminbits.
+  pose proof (tnum_wor_bits w (tnum_min w a) (tnum_mask w a)) as Hworb.
+  time_unfold T_tnum_mul_acc_step. cbn beta iota zeta.
+  destruct (tnum_mul_acc_done w b i);
+    [cbn beta iota zeta; time_pose; rewrite ?Nat2N.inj_add in *; lia|].
+  destruct (Z.testbit (zeros b) i).
+  { cbn beta iota zeta. time_pose. unfold tnum_bits in *.
+    change (Z.size_nat 1) with 1%nat in *.
+    rewrite ?Nat2N.inj_add in *. lia. }
+  destruct (Z.testbit (ones b) i).
+  - pose proof (tnum_uncertain_bits w (tnum_mask w a)) as Huncertain.
+    pose proof (tnum_shl_scalar_bits w i (tnum_uncertain w (tnum_mask w a))) as Hshiftbits.
+    pose proof (tnum_shl_scalar_time w i (tnum_uncertain w (tnum_mask w a)) Hi) as Hshift.
+    cbn beta iota zeta. time_pose. unfold tnum_bits in *.
+    change (Z.size_nat 1) with 1%nat in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+  - pose proof (tnum_uncertain_bits w (tnum_wor w (tnum_min w a) (tnum_mask w a))) as Huncertain.
+    pose proof (tnum_shl_scalar_bits w i (tnum_uncertain w (tnum_wor w (tnum_min w a) (tnum_mask w a)))) as Hshiftbits.
+    pose proof (tnum_shl_scalar_time w i (tnum_uncertain w (tnum_wor w (tnum_min w a) (tnum_mask w a))) Hi) as Hshift.
+    cbn beta iota zeta. time_pose. unfold tnum_bits in *.
+    change (Z.size_nat 1) with 1%nat in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_mul_acc_step_time.
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
@@ -5038,7 +5161,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   TimeFun mul_step.
   Definition acc_step := tnum_mul_acc_step.
   TimeFun acc_step.
-  Definition k_mul_step : N := 1. (* STUB *)
+  Definition k_mul_step : N := 64 * 4096.
   Lemma F3_rank : forall q w a, pis_bot w a = false ->
     (pwrank q w a = known_count w a)%nat.
   Proof. reflexivity. Qed.
@@ -5104,7 +5227,10 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Lemma T0_scalar_value : forall o w k x,
     (T_tnum_scalar_value o w k x <= k_mul_step * N.of_nat (Pos.to_nat w + Z.size_nat x +
       (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o w k x. pose proof (tnum_scalar_value_time o w k x) as Htime.
+    unfold T_tnum_scalar_value, k_mul_step. lia.
+  Qed.
   Lemma F7_mul_step : forall w a b x y i r,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     (0 <= i < Zpos w)%Z -> pgamma w r (L.wrap w (x * (y mod 2 ^ i))) ->
@@ -5145,7 +5271,10 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Lemma T0_tnum_wrap : forall w z,
     (T_tnum_wrap w z <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (tnum_wrap_time w z) as Htime.
+    unfold k_mul_step. lia.
+  Qed.
   (* Gamma, widening and multiplication laws now live in KNOWN_BITS_LAWS. *)
   (** One staged product step at an index within the width charges its index, accumulator
       and raw masks. *)
@@ -5153,12 +5282,20 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (T_mul_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
         tnum_bits r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b i r Hi. pose proof (tnum_mul_stage_step_time w a b i r Hi) as Htime.
+    time_unfold T_mul_step. cbn beta iota zeta. unfold k_mul_step.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   (** One accumulating step at an index within the width charges the width, its index and
       its accumulator. *)
   Lemma T2_acc_step : forall w a b i r, (0 <= i <= Zpos w)%Z ->
     (T_acc_step w a b (i, r) <= k_mul_step *
       N.of_nat (Pos.to_nat w + Z.size_nat i + tnum_bits a + tnum_bits b +
         tnum_bits r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b i r Hi. pose proof (tnum_mul_acc_step_time w a b i r Hi) as Htime.
+    time_unfold T_acc_step. cbn beta iota zeta. unfold k_mul_step.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
 End KnownBitsT.
