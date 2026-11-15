@@ -28,6 +28,16 @@ Proof.
   - intro Hin. exists v. split; [exact Hin|apply Pos.eqb_refl].
 Qed.
 
+(** Membership compares each candidate at most once using the sought key's width. *)
+Lemma wto_member_clock : forall v vs,
+  (T_wto_member v vs <=
+    (N.of_nat (Pos.size_nat v) + 2) * N.of_nat (length vs) + 2)%N.
+Proof.
+  intros v vs. pose proof (List.T_existsb_le (Pos.eqb v) (fun u => Pos.T_eqb v u)
+    (N.of_nat (Pos.size_nat v)) vs (Pos.T_eqb_le v)) as Hscan.
+  time_unfold @T_wto_member. time_cbn. lia.
+Qed.
+
 Definition wto_scoped (g : prepared) (within : option (list positive)) : prepared :=
   match within with
   | None => g
@@ -1560,7 +1570,7 @@ Module WtoT <: WTO_ALL.
   Definition search_trace := search_trace.
   TimeFun search_trace.
 
-  Definition k_member : N := 1%N. (* STUB *)
+  Definition k_member : N := 4%N.
   Definition k_index : N := 1%N. (* STUB *)
   Definition k_check : N := 1%N. (* STUB *)
   Definition k_scope : N := 1%N. (* STUB *)
@@ -1848,7 +1858,12 @@ Module WtoT <: WTO_ALL.
   Lemma T1_member : forall v vs,
     (T_wto_member v vs <= k_member * N.of_nat (length vs + 1) *
       N.of_nat (graph_max (Pos.size_nat v) (vertex_width vs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros v vs. pose proof (wto_member_clock v vs) as Hmember.
+    assert (Hwidth : Pos.size_nat v <= graph_max (Pos.size_nat v) (vertex_width vs)).
+    { rewrite wto_graph_max_nat. apply Nat.le_max_l. }
+    unfold k_member. time_step.
+  Qed.
 
   Lemma T3_scope : forall g vs,
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
