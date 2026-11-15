@@ -42,6 +42,14 @@ Proof.
   destruct (leb (snd q) bot); simpl; now rewrite IH.
 Qed.
 
+(** Inserting one labelled part adds at most one list entry. *)
+Lemma insert_part_length {K A} (eqb : K -> K -> bool) (join : A -> A -> A)
+    (q : option K * A) ps : length (insert_part eqb join q ps) <= length ps + 1.
+Proof.
+  induction ps as [|p ps IH]; cbn [insert_part length]; [lia|].
+  destruct (label_eqb eqb (fst p) (fst q)); cbn [length]; lia.
+Qed.
+
 Module PartitionCode (X Tk : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     (S : STATE_DOMAIN_OPS X L V) (C : CAP) <: PARTITION_OPS X Tk L V S C.
   Definition t := capped (option Tk.t * S.t) C.k.
@@ -832,24 +840,38 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (T_eval e a <= c_state * N.of_nat (eval_work e a + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma size_parts : forall a, size a = parts_size Tk.bits S.size (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma wunits_parts : forall a, wunits a = parts_units S.wunits (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma wsize_component : forall p, wsize p = S.wsize p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma assign_work_parts : forall x e a, assign_work x e a =
     fold_right Nat.add 0%nat (map (fun q => S.assign_work x e (snd q) + 1) (proj1_sig a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma havoc_work_parts : forall x a, havoc_work x a =
     fold_right Nat.add 0%nat (map (fun q => S.havoc_work x (snd q) + 1) (proj1_sig a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma assume_work_parts : forall g es a, assume_work g es a =
     fold_right Nat.add 0%nat
       (map (fun q => S.assume_work g es (snd q) + 1) (proj1_sig a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma eval_work_parts : forall e a, eval_work e a = fold_right Nat.add 0%nat (map (fun q =>
     S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1) (proj1_sig a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma T_inject_le : forall k s,
     (T_inject k s <= c_partition * N.of_nat (Tk.bits k + S.size s + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -883,16 +905,24 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
 
   Lemma F1_assign : forall x e a, proj1_sig (assign x e a) =
     map (fun q => (fst q, S.assign x e (snd q))) (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [ps Hbound]; reflexivity.
+  Qed.
   Lemma F2_havoc : forall x a, proj1_sig (havoc x a) =
     map (fun q => (fst q, S.havoc x (snd q))) (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [ps Hbound]; reflexivity.
+  Qed.
   Lemma F3_assume : forall g es a, proj1_sig (assume g es a) =
     map (fun q => (fst q, S.assume g es (snd q))) (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [ps Hbound]; reflexivity.
+  Qed.
   Lemma F4_eval : forall e a,
     eval e a = fold_left (fun v q => V.join v (S.eval e (snd q))) (proj1_sig a) V.bot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F5_widen : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
     if is_bot a then proj1_sig b else
@@ -900,12 +930,21 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     let fresh := fresh_parts S.leb S.bot old (proj1_sig b) in
     absorb Tk.eqb S.leb S.bot S.join (S.widen p)
       (stray_parts Tk.eqb S.leb S.bot old fresh) fresh old.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply widen_raw.
+  Qed.
   Lemma F6_narrow : forall a b, narrow a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F7_merge_parts_length : forall ps qs,
     length (merge_parts Tk.eqb S.join ps qs) <= length ps + length qs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ps qs; unfold merge_parts; revert ps.
+    induction qs as [|q qs IH]; intro ps; cbn [fold_left length]; [lia|].
+    specialize (IH (insert_part Tk.eqb S.join q ps)).
+    pose proof (insert_part_length Tk.eqb S.join q ps); lia.
+  Qed.
   Lemma F8_collapse_size : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.size (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
