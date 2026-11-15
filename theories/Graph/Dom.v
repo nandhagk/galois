@@ -1844,7 +1844,7 @@ Module DomT <: DOM_ALL.
   TimeFun lt_init.
   Definition run_ops := dom_lt_run_ops.
   TimeFun run_ops.
-  Definition k_scan : N := 1%N. (* STUB *)
+  Definition k_scan : N := (8 * PTrieT.c_trie + 512)%N.
   Definition k_read : N := 1%N. (* STUB *)
   Definition k_map : N := 1%N. (* STUB *)
   Definition k_size : N := 1%N. (* STUB *)
@@ -2003,7 +2003,26 @@ Module DomT <: DOM_ALL.
   Lemma T1_scan : forall g,
     (T_scan g <= k_scan * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro g.
+    pose proof (dom_time_graph_observations (base g)) as Hobservations.
+    pose proof (dom_time_fold_left
+      (fun acc v => PTrieCode.set v true acc)
+      (fun acc v => 1 + PTrieT.T_set v true acc)%N
+      ((PTrieT.c_trie + 2) * N.of_nat (graph_width (base g) + 1))%N
+      (nodes g) Empty) as Hlisted.
+    assert (Hnodes : nodes g = verts (base g)).
+    { destruct g as [[vs adjacency] predecessors count_v count_e]. reflexivity. }
+    specialize (Hlisted ltac:(intros v Hv acc;
+      pose proof (PTrieT.T_set_le bool v true acc) as Hset;
+      pose proof (proj1 (dom_time_graph_width (base g) v
+        ltac:(now rewrite <- Hnodes))) as Hwidth;
+      clear -Hset Hwidth; rewrite !Nat2N.inj_add in *; nia)).
+    unfold T_scan, T_dom_scan, scan, k_scan. time_simpl.
+    assert (Hlength : length (nodes g) = graph_n (base g)).
+    { rewrite Hnodes. destruct (base g). reflexivity. }
+    rewrite Hlength in Hlisted. rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma T2_read : forall g r o,
     (T_read (scan g) r o <= k_read * N.of_nat ((graph_n (base g) + 1) *

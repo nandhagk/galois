@@ -4,7 +4,7 @@
     For example, a discovered child records its active DFS parent.
     Builds on: filtered graph search and dominator operation data. *)
 
-From Stdlib Require Import List Bool PArith NArith.
+From Stdlib Require Import List Bool PArith NArith Arith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data DigraphSig SearchSig Search Scc DomSig.
@@ -297,3 +297,151 @@ Definition dom_lt_parents (g : prepared) (r : positive) : ptrie positive :=
   let buckets := dom_lt_buckets numeric (lt_semis semis) in
   dom_lt_erase numeric (dom_lt_correct numeric (lt_semis semis) (lt_relative buckets)).
 TimeFun dom_lt_parents.
+
+(** * Graph traversal cost helpers *)
+
+(** A listed key is no wider than its row's maximum key width. *)
+Lemma dom_time_width_member vs v : In v vs -> Pos.size_nat v <= vertex_width vs.
+Proof.
+  unfold vertex_width. induction vs as [|x xs IH]; cbn [In fold_right]; [tauto|].
+  change graph_max with Nat.max. intros [Heq|Hin].
+  - subst x. apply Nat.le_max_l.
+  - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** Taking a maximum examines no more than the first unary argument. *)
+Lemma dom_time_graph_max a b : (T_graph_max a b <= N.of_nat a + 1)%N.
+Proof.
+  revert b. induction a as [|a IH]; intros [|b]; time_step.
+Qed.
+
+(** Successor lookup pays two observations per key digit and its wrapper. *)
+Lemma dom_time_succs g v :
+  (T_succs g v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
+Proof.
+  destruct g as [vs adjacency]. unfold T_succs. time_simpl.
+  rewrite PTrieT.trie_get_clock. lia.
+Qed.
+
+(** Uniform callback costs need only hold on the list being folded. *)
+Lemma dom_time_fold_left {A B} (f : A -> B -> A) (T_f : A -> B -> N)
+    k xs acc :
+  (forall x, In x xs -> forall acc, (T_f acc x <= k)%N) ->
+  (List.T_fold_left f T_f xs acc <= (k + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  revert acc. induction xs as [|x xs IH]; intros acc Hbound.
+  - time_unfold @List.T_fold_left. cbn [length]. lia.
+  - pose proof (Hbound x (or_introl eq_refl) acc) as Hhead.
+    specialize (IH (f acc x) (fun y Hy => Hbound y (or_intror Hy))).
+    time_unfold @List.T_fold_left. cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** Computing a row maximum charges the width of each key in that row. *)
+Lemma dom_time_vertex_width vs w : vertex_width vs <= w ->
+  (T_vertex_width vs <= 8 * N.of_nat (length vs + 1) * N.of_nat (w + 1))%N.
+Proof.
+  revert w. induction vs as [|v vs IH]; intros w Hwidth.
+  - unfold T_vertex_width. time_unfold @List.T_fold_right. time_simpl.
+    cbn [length]. nia.
+  - assert (Hhead : Pos.size_nat v <= w).
+    { eapply Nat.le_trans; [apply (dom_time_width_member (v :: vs) v); now left|
+        exact Hwidth]. }
+    assert (Htail : vertex_width vs <= w).
+    { unfold vertex_width in Hwidth |- *. cbn [fold_right] in Hwidth.
+      change graph_max with Nat.max in Hwidth |- *. lia. }
+    specialize (IH w Htail).
+    pose proof (Pos.T_size_nat_le v) as Hbits.
+    pose proof (dom_time_graph_max (Pos.size_nat v) (vertex_width vs)) as Hmax.
+    unfold vertex_width in Hmax.
+    unfold T_vertex_width in IH |- *. time_unfold @List.T_fold_right.
+    time_simpl. cbn [length]. rewrite Nat2N.inj_add, Nat2N.inj_succ.
+    nia.
+Qed.
+
+(** Counting outgoing occurrences pays once for each row and each list entry. *)
+Lemma dom_time_edge_fold g vs w :
+  (forall v, In v vs -> Pos.size_nat v <= w) ->
+  (List.T_fold_right (fun v count => (length (succs g v) + count)%nat)
+      (fun v count => 1 + (T_succs g v + Datatypes.T_length (succs g v) +
+        Nat.T_add (length (succs g v)) count)) 0%nat vs <=
+    16 * N.of_nat (length vs +
+      fold_right (fun v count => (length (succs g v) + count)%nat) 0%nat vs + 1) *
+      N.of_nat (w + 1))%N.
+Proof.
+  induction vs as [|v vs IH]; intro Hwidth.
+  - time_unfold @List.T_fold_right. cbn [length fold_right]. nia.
+  - pose proof (Hwidth v (or_introl eq_refl)) as Hhead.
+    specialize (IH (fun x Hx => Hwidth x (or_intror Hx))).
+    pose proof (dom_time_succs g v) as Hrow.
+    pose proof (Datatypes.T_length_le (succs g v)) as Hlength.
+    pose proof (Nat.T_add_le (length (succs g v))
+      (fold_right (fun v count => length (succs g v) + count) 0 vs)) as Hadd.
+    time_unfold @List.T_fold_right. cbn [length fold_right].
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+Qed.
+
+(** Computing the graph maximum pays for its listed keys and successor entries. *)
+Lemma dom_time_width_fold g vs w :
+  (forall v, In v vs -> Pos.size_nat v <= w /\ vertex_width (succs g v) <= w) ->
+  (List.T_fold_right (fun v width => graph_max (vertex_width (succs g v)) width)
+      (fun v width => 1 + (T_succs g v + T_vertex_width (succs g v) +
+        T_graph_max (vertex_width (succs g v)) width)) 0%nat vs <=
+    32 * N.of_nat (length vs +
+      fold_right (fun v count => (length (succs g v) + count)%nat) 0%nat vs + 1) *
+      N.of_nat (w + 1))%N.
+Proof.
+  induction vs as [|v vs IH]; intro Hwidth.
+  - time_unfold @List.T_fold_right. cbn [length fold_right]. nia.
+  - destruct (Hwidth v (or_introl eq_refl)) as [Hhead Hrow_width].
+    specialize (IH (fun x Hx => Hwidth x (or_intror Hx))).
+    pose proof (dom_time_succs g v) as Hrow.
+    pose proof (dom_time_vertex_width (succs g v) w Hrow_width) as Hbits.
+    pose proof (dom_time_graph_max (vertex_width (succs g v))
+      (fold_right (fun v width => graph_max (vertex_width (succs g v)) width) 0 vs)) as Hmax.
+    time_unfold @List.T_fold_right. cbn [length fold_right].
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+Qed.
+
+(** The graph maximum bounds every listed key and every listed successor row. *)
+Lemma dom_time_graph_width g v : In v (verts g) ->
+  Pos.size_nat v <= graph_width g /\ vertex_width (succs g v) <= graph_width g.
+Proof.
+  destruct g as [vs adjacency]. intro Hin. split.
+  - eapply Nat.le_trans; [apply dom_time_width_member; exact Hin|].
+    cbn [graph_width]. change graph_max with Nat.max. apply Nat.le_max_l.
+  - cbn [verts] in Hin. cbn [graph_width]. change graph_max with Nat.max.
+    eapply Nat.le_trans; [|apply Nat.le_max_r].
+    induction vs as [|x xs IH]; cbn [In fold_right] in Hin |- *; [tauto|].
+    destruct Hin as [Heq|Hin].
+    + subst x. apply Nat.le_max_l.
+    + eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** Graph size and width observations fit the same occurrence-and-width scan budget. *)
+Lemma dom_time_graph_observations g :
+  (T_graph_n g + T_graph_e g + T_graph_width g <=
+    128 * N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1)))%N.
+Proof.
+  pose proof (dom_time_edge_fold g (verts g) (graph_width g)
+    (fun v Hv => proj1 (dom_time_graph_width g v Hv))) as Hedges.
+  pose proof (dom_time_width_fold g (verts g) (graph_width g)
+    (fun v Hv => dom_time_graph_width g v Hv)) as Hrows.
+  assert (Hvertices : vertex_width (verts g) <= graph_width g).
+  { destruct g as [vs adjacency]. cbn [verts graph_width].
+    change graph_max with Nat.max. apply Nat.le_max_l. }
+  pose proof (dom_time_vertex_width (verts g) (graph_width g) Hvertices) as Hkeys.
+  pose proof (dom_time_graph_max (vertex_width (verts g))
+    (fold_right (fun v w => graph_max (vertex_width (succs g v)) w) 0 (verts g))) as Hmax.
+  pose proof (Datatypes.T_length_le (verts g)) as Hlength.
+  destruct g as [vs adjacency]. cbn [verts] in *.
+  unfold T_graph_n, T_graph_e, T_graph_width. time_simpl.
+  cbn [graph_n graph_e] in *. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** A listed vertex is bounded by the prepared graph's maximum key width. *)
+Lemma dom_listed_key_width g v : In v (nodes g) ->
+  Pos.size_nat v <= graph_width (base g).
+Proof.
+  destruct g as [[vs adjacency] predecessors count_v count_e]. intro Hin.
+  exact (proj1 (dom_time_graph_width (Digraph vs adjacency) v Hin)).
+Qed.
