@@ -243,6 +243,68 @@ Proof.
 Qed.
 TimeBound table_ite_time.
 
+(** A shared magnitude bound gives a quadratic multiplication clock. *)
+Lemma table_product_time_budget : forall x y n,
+  (Z.size_nat x <= n)%nat -> (Z.size_nat y <= n)%nat ->
+  (Std.Z.T_mul x y <= 8 * N.of_nat ((n + 1) ^ 2))%N.
+Proof.
+  intros x y n Hx Hy. apply time_of_nat_le in Hx, Hy.
+  pose proof (Std.Z.T_mul_le x y).
+  cbn [Nat.pow]. rewrite ?Nat2N.inj_mul, ?Nat2N.inj_add. nia.
+Qed.
+
+(** Concatenation normalizes raw masks before its two width-bounded products. *)
+Lemma table_concat_time : forall w v a b,
+  (T_tnum_concat w v a b <= 8192 * N.of_nat
+    ((Pos.to_nat w + Pos.to_nat v + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w v a b.
+  pose proof (Pos2Nat.is_pos w) as Hw. pose proof (Pos2Nat.is_pos v) as Hv.
+  pose proof (tnum_positive_bits w). pose proof (tnum_positive_bits v).
+  pose proof (tnum_wrap_bits w (zeros a)) as Haz.
+  pose proof (tnum_wrap_bits w (ones a)) as Hao.
+  pose proof (tnum_wrap_bits v (zeros b)) as Hbz.
+  pose proof (tnum_wrap_bits v (ones b)) as Hbo.
+  pose proof (tnum_modulus_bits v) as Hmod.
+  pose proof (WordTime.integer_mul_size (tnum_wrap w (zeros a)) (modulus v)) as Hpzero.
+  pose proof (WordTime.integer_mul_size (tnum_wrap w (ones a)) (modulus v)) as Hpone.
+  pose proof (tnum_sum_bits (tnum_wrap w (zeros a) * modulus v)
+    (tnum_wrap v (zeros b))) as Hszero.
+  pose proof (tnum_sum_bits (tnum_wrap w (ones a) * modulus v)
+    (tnum_wrap v (ones b))) as Hsone.
+  pose proof (table_product_time_budget (tnum_wrap w (zeros a)) (modulus v)
+    (Pos.to_nat w + Pos.to_nat v) ltac:(lia) ltac:(lia)) as HTzero.
+  pose proof (table_product_time_budget (tnum_wrap w (ones a)) (modulus v)
+    (Pos.to_nat w + Pos.to_nat v) ltac:(lia) ltac:(lia)) as HTone.
+  time_unfold T_tnum_concat. cbn beta iota zeta. time_pose.
+  rewrite ?Pos2Nat.inj_add in *.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *.
+  set (square := N.of_nat ((Pos.to_nat w + Pos.to_nat v + 1) ^ 2)) in *.
+  assert (Hlinear : (N.of_nat (Pos.to_nat w + Pos.to_nat v + 1) <= square)%N).
+  { unfold square. clear - w v. apply time_of_nat_le. cbn [Nat.pow]. nia. }
+  clearbody square. rewrite ?Nat2N.inj_add in Hlinear. lia.
+Qed.
+TimeBound table_concat_time.
+
+(** Two bounded endpoint callbacks lift to the shared quadratic table budget. *)
+Lemma table_map_time_budget : forall sw rw f Tf a k,
+  (forall x, is_word sw x -> is_word rw (f x)) ->
+  (forall x, is_word sw x ->
+    (Tf x <= k * N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2))%N) ->
+  (T_tnum_map sw rw f Tf a <= (2 * k + 1024) * N.of_nat
+    ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2 + tnum_bits a))%N.
+Proof.
+  intros sw rw f Tf a k Hword Hcallback.
+  pose proof (tnum_map_time sw rw f Tf a Hword) as Hmap.
+  pose proof (Hcallback _ (tnum_max_word sw a)) as Hmax.
+  pose proof (Hcallback _ (tnum_min_word sw a)) as Hmin.
+  rewrite ?Nat2N.inj_add in *.
+  set (square := N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2)) in *.
+  assert (Hlinear : (N.of_nat (Pos.to_nat sw + Pos.to_nat rw + 1) <= square)%N).
+  { unfold square. clear - sw rw. apply time_of_nat_le. cbn [Nat.pow]. nia. }
+  clearbody square. rewrite ?Nat2N.inj_add in Hlinear. nia.
+Qed.
+
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
   Module P := KnownBitsCode L C.
   Module F := KnownBitsOpsCode L C P.
