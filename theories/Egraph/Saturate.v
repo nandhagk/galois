@@ -3139,6 +3139,114 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     time_cbn. lia.
   Qed.
 
+  (** An amortized inequality remains valid when its positive spending unit increases. *)
+  Lemma amort_scale : forall cost r u before after extra,
+    (0 < r <= u)%N -> (cost + r * after <= r * (extra + before))%N ->
+    (cost + u * after <= u * (extra + before))%N.
+  Proof.
+    intros cost r u before after extra [Hr Hu] Hcost.
+    assert (Hcredit : (after <= extra + before)%N) by nia. nia.
+  Qed.
+
+  (** Every database has a positive spending unit. *)
+  Lemma unit_positive : forall db, 1 <= D.unit db.
+  Proof.
+    intro db. unfold D.unit. nia.
+  Qed.
+
+  (** The common node budget is positive at every permitted spending unit. *)
+  Lemma node_budget_positive : forall B U db width, D.unit db <= U -> 1 <= width ->
+    (1 <= N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+      N.of_nat (D.num_slots db + 1) * N.of_nat width)%N.
+  Proof.
+    intros B U db width HU Hwidth.
+    assert (Hu : (1 <= N.of_nat U)%N).
+    { pose proof (unit_positive db). lia. }
+    assert (Hl : (1 <= N.of_nat (N.to_nat (N.log2 B) + 1))%N) by
+      lia.
+    assert (Hs : (1 <= N.of_nat (D.num_slots db + 1))%N) by
+      lia.
+    assert (Hwidth' : (1 <= N.of_nat width)%N) by lia.
+    pose proof (N.mul_le_mono 1 _ 1 _ Hu Hl) as Hul.
+    pose proof (N.mul_le_mono 1 _ 1 _ Hul Hs) as Huls.
+    exact (N.mul_le_mono 1 _ 1 _ Huls Hwidth').
+  Qed.
+
+  (** Node insertion transfers potential using a small portion of the public plan constant. *)
+  Lemma add_node_amort_bound : forall B U node cells db, D.wf db ->
+    (forall i, In (Id i) cells -> D.allocated db i) ->
+    match node with
+    | EApp f _ => kind (D.view db) f = Some OId /\ D.slots_fit db f (S (length cells))
+    | ELit _ => cells = []
+    end ->
+    (D.ids (snd (add_node node cells db)) <= B)%N ->
+    D.unit (snd (add_node node cells db)) <= U ->
+    (T_add_node node cells db + N.of_nat U * D.potential B (snd (add_node node cells db)) <=
+      32 * (D.c_db + 1) * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * N.of_nat ((length cells + 2) * (length cells + 2)) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U [f children | v] cells db Hwf Hallocated Hnode Hids HU.
+    - destruct Hnode as [Hkind Hfits].
+      pose proof (D.T_make_amort B f cells db Hwf Hfits) as Hmake_cost.
+      pose proof (T_add_node_overhead (EApp f children) cells db) as Hwrapper.
+      pose proof (D.layout_make f cells db Hwf) as Hlayout.
+      cbn [add_node] in Hids, HU |- *.
+      destruct (D.make f cells db) as [i next] eqn:Hmake.
+      cbn [fst snd] in Hids, HU, Hmake_cost, Hlayout |- *.
+      specialize (Hmake_cost Hids).
+      assert (Hr : (0 < N.of_nat (D.unit next) <= N.of_nat U)%N).
+      { split; [pose proof (unit_positive next); lia | lia]. }
+      pose proof (amort_scale _ _ _ _ _ _ Hr Hmake_cost) as Hscaled.
+      assert (Hslots : (N.of_nat (D.slots_of db f + 1) <=
+        N.of_nat (D.num_slots db + 1))%N).
+      { unfold D.slots_of, D.num_slots.
+        pose proof (filter_length_le (fun s => Pos.eqb (fst s) f) (D.slots db)). lia. }
+      assert (Hextra : (D.c_db * N.of_nat ((length cells + 2) * (length cells + 2)) *
+        N.of_nat (D.slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) <=
+        D.c_db * N.of_nat ((length cells + 2) * (length cells + 2)) *
+        N.of_nat (D.num_slots db + 1) * N.of_nat (N.to_nat (N.log2 B) + 1))%N).
+      { apply N.mul_le_mono_r. now apply N.mul_le_mono_l. }
+      assert (Hbudget : (N.of_nat U *
+        (D.c_db * N.of_nat ((length cells + 2) * (length cells + 2)) *
+          N.of_nat (D.slots_of db f + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          D.potential B db) <= N.of_nat U *
+        (D.c_db * N.of_nat ((length cells + 2) * (length cells + 2)) *
+          N.of_nat (D.num_slots db + 1) * N.of_nat (N.to_nat (N.log2 B) + 1) +
+          D.potential B db))%N).
+      { apply N.mul_le_mono_l. lia. }
+      set (q := (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) *
+        N.of_nat ((length cells + 2) * (length cells + 2)))%N).
+      assert (Hq : (1 <= q)%N).
+      { unfold q. apply node_budget_positive; [| nia].
+        destruct Hlayout as [Hkind' [Hslots' Hrest]].
+        pose proof (D.unit_mono_make f cells db Hwf) as Hmono.
+        rewrite Hmake in Hmono. cbn [snd] in Hmono. lia. }
+      assert (Hscaled' : (D.T_make f cells db + N.of_nat U * D.potential B next <=
+        D.c_db * q + N.of_nat U * D.potential B db)%N).
+      { eapply N.le_trans; [exact Hscaled |].
+        eapply N.le_trans; [exact Hbudget |]. unfold q. ring_simplify. reflexivity. }
+      replace (32 * (D.c_db + 1) * N.of_nat U *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1) *
+        N.of_nat ((length cells + 2) * (length cells + 2)))%N
+        with (32 * (D.c_db + 1) * q)%N by (unfold q; ring).
+      change (T_add_node (EApp f children) cells db <= D.T_make f cells db + 16)%N
+        in Hwrapper. nia.
+    - subst cells. cbn [add_node fst snd] in HU |- *.
+      pose proof (T_add_node_overhead (ELit v) [] db) as Hwrapper.
+      pose proof (node_budget_positive B U db ((length (@nil (cell V.t)) + 2) *
+        (length (@nil (cell V.t)) + 2)) HU ltac:(cbn; lia)) as Hpositive.
+      set (q := (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) *
+        N.of_nat ((length (@nil (cell V.t)) + 2) * (length (@nil (cell V.t)) + 2)))%N) in *.
+      replace (32 * (D.c_db + 1) * N.of_nat U *
+        N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1) *
+        N.of_nat ((length (@nil (cell V.t)) + 2) * (length (@nil (cell V.t)) + 2)))%N
+        with (32 * (D.c_db + 1) * q)%N by (unfold q; ring).
+      change (T_add_node (ELit v) [] db <= 16)%N in Hwrapper. nia.
+  Qed.
+
   Lemma T_check_front_le : forall ds rws ans es,
     (T_check_front ds rws ans es <= c_sat * N.of_nat (front_size ds rws ans es + 1))%N.
   Proof.
@@ -3453,5 +3561,11 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       k_sat * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
         N.of_nat (D.num_slots db + 1) * N.of_nat ((length cells + 2) * (length cells + 2)) +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B U node cells db Hwf Hallocated Hnode Hids HU.
+    pose proof (add_node_amort_bound B U node cells db Hwf Hallocated Hnode Hids HU)
+      as Hcost.
+    eapply N.le_trans; [exact Hcost |]. apply N.add_le_mono_r.
+    do 4 apply N.mul_le_mono_r. unfold k_sat. nia.
+  Qed.
 End SaturateT.
