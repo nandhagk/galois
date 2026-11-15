@@ -4,7 +4,7 @@
     For example, an address constraint seeds a row used by the first inclusion rule.
     Builds on: AndersenSig and the relational database and run interfaces. *)
 
-From Stdlib Require Import List PArith NArith Bool.
+From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
@@ -883,10 +883,10 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   TimeFun seed.
   TimeFun solve.
   TimeFun points.
-  Definition c_andersen : N := 1. (* STUB *)
-  Definition k_rules : N := 1. (* STUB *)
-  Definition k_seed : N := 1. (* STUB *)
-  Definition k_wrap : N := 1. (* STUB *)
+  Definition k_rules : N := (R.c_run * 512 * 512 * 512 + 1)%N.
+  Definition k_seed : N := (128 * (D.c_db + 1) * (k_rules + 32) * (k_rules + 32))%N.
+  Definition k_wrap : N := 32%N.
+  Definition c_andersen : N := (k_seed + D.c_db + k_wrap + 32)%N.
   Lemma T_seed_le : forall q,
     (T_seed q <= c_andersen *
       N.of_nat (length (constraints q) + length (initial_pointers q) + 1) *
@@ -894,17 +894,28 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Proof. Admitted. (* STUB *)
 
   Lemma T_compile_le : forall q, (T_compile q <= c_andersen)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q; time_unfold T_compile; time_simpl; unfold c_andersen, k_wrap; lia.
+  Qed.
 
   Lemma T_points_le : forall db x a, D.wf db ->
     (T_points db x a <= c_andersen * (N.of_nat (3 * D.unit db) +
       N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db x a Hwf.
+    pose proof (D.T_lookup_le 5 [Val x; Val a] db Hwf) as Hlookup.
+    time_unfold T_points; time_simpl.
+    cbn [length fold_right] in Hlookup.
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *.
+    unfold c_andersen, k_wrap; nia.
+  Qed.
 
   Lemma T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_andersen)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim; time_unfold T_solve; time_simpl; unfold c_andersen, k_wrap; lia.
+  Qed.
 
   Lemma F1_source_closed : forall q, pointer_closed q (may_points q).
   Proof.
@@ -972,7 +983,9 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Lemma T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim; time_unfold T_solve; time_simpl; unfold k_wrap; lia.
+  Qed.
 
 End AndersenT.
 
