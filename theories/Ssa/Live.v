@@ -4,7 +4,7 @@
     For example, a use propagates to predecessors until an edge defines its variable.
     Builds on: LiveSig and positive tries. *)
 
-From Stdlib Require Import List PArith NArith Bool Lia.
+From Stdlib Require Import List PeanoNat PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
@@ -620,6 +620,281 @@ Proof.
       * right; exists other; auto.
 Qed.
 
+(** Trie heights and list sums bound the indexed preprocessing clocks. *)
+Fixpoint live_height_ne {A} (tree : trie_ne A) : nat :=
+  match tree with
+  | N001 rgt => S (live_height_ne rgt)
+  | N010 _ => 1
+  | N011 _ rgt => S (live_height_ne rgt)
+  | N100 lft => S (live_height_ne lft)
+  | N101 lft rgt => S (Nat.max (live_height_ne lft) (live_height_ne rgt))
+  | N110 lft _ => S (live_height_ne lft)
+  | N111 lft _ rgt => S (Nat.max (live_height_ne lft) (live_height_ne rgt))
+  end.
+
+Definition live_height {A} (tree : ptrie A) : nat :=
+  match tree with Empty => 0 | Nodes nodes => live_height_ne nodes end.
+
+Lemma live_height_witness : forall A (tree : trie_ne A),
+  exists key value, trie_get key (Nodes tree) = Some value /\
+    Pos.size_nat key = live_height_ne tree.
+Proof.
+  intros A tree; induction tree as [rgt IH|value|value rgt IH|lft IH|
+    lft IHl rgt IHr|lft IH value|lft IHl value rgt IHr].
+  - destruct IH as [key [value [Hget Hsize]]]. exists (xI key), value; cbn; auto.
+  - exists xH, value; now split.
+  - destruct IH as [key [other [Hget Hsize]]]. exists (xI key), other; cbn; auto.
+  - destruct IH as [key [value [Hget Hsize]]]. exists (xO key), value; cbn; auto.
+  - destruct (Nat.le_ge_cases (live_height_ne lft) (live_height_ne rgt)) as [Hle|Hge].
+    + destruct IHr as [key [value [Hget Hsize]]]. exists (xI key), value; cbn.
+      rewrite Nat.max_r by exact Hle; auto.
+    + destruct IHl as [key [value [Hget Hsize]]]. exists (xO key), value; cbn.
+      rewrite Nat.max_l by exact Hge; auto.
+  - destruct IH as [key [other [Hget Hsize]]]. exists (xO key), other; cbn; auto.
+  - destruct (Nat.le_ge_cases (live_height_ne lft) (live_height_ne rgt)) as [Hle|Hge].
+    + destruct IHr as [key [other [Hget Hsize]]]. exists (xI key), other; cbn.
+      rewrite Nat.max_r by exact Hle; auto.
+    + destruct IHl as [key [other [Hget Hsize]]]. exists (xO key), other; cbn.
+      rewrite Nat.max_l by exact Hge; auto.
+Qed.
+
+Lemma live_height_bound : forall A (tree : ptrie A) width,
+  (forall key value, trie_get key tree = Some value -> Pos.size_nat key <= width) ->
+  live_height tree <= width.
+Proof.
+  intros A [|tree] width Hwidth; [cbn; lia|].
+  destruct (live_height_witness A tree) as [key [value [Hget Hsize]]].
+  cbn [live_height]. rewrite <- Hsize. now apply Hwidth with value.
+Qed.
+
+Lemma live_height_left : forall A (tree : trie_ne A),
+  live_height (trie_left (Nodes tree)) < live_height_ne tree.
+Proof.
+  intros A tree; destruct tree as [r|v|v r|l|l r|l v|l v r];
+    cbn [trie_left live_height live_height_ne]; try lia.
+  all: pose proof (Nat.le_max_l (live_height_ne l) (live_height_ne r)) as Hmax; lia.
+Qed.
+
+Lemma live_height_right : forall A (tree : trie_ne A),
+  live_height (trie_right (Nodes tree)) < live_height_ne tree.
+Proof.
+  intros A tree; destruct tree as [r|v|v r|l|l r|l v|l v r];
+    cbn [trie_right live_height live_height_ne]; try lia.
+  all: pose proof (Nat.le_max_r (live_height_ne l) (live_height_ne r)) as Hmax; lia.
+Qed.
+
+Lemma T_live_lookup_bound : forall A key (tree : ptrie A),
+  (T_live_lookup key tree <= 16 * N.of_nat (live_height tree + 1))%N.
+Proof.
+  intros A key; induction key as [key IH|key IH|]; intros [|tree];
+    time_unfold @T_live_lookup; try (cbn [live_height]; lia).
+  - specialize (IH (trie_right (Nodes tree))).
+    pose proof (live_height_right A tree) as Hheight.
+    assert (Hright : (T_trie_right (Nodes tree) <= 2)%N).
+    { time_unfold @T_trie_right; destruct tree; lia. }
+    cbn [live_height].
+    rewrite Nat2N.inj_add in IH. nia.
+  - specialize (IH (trie_left (Nodes tree))).
+    pose proof (live_height_left A tree) as Hheight.
+    assert (Hleft : (T_trie_left (Nodes tree) <= 2)%N).
+    { time_unfold @T_trie_left; destruct tree; lia. }
+    cbn [live_height].
+    rewrite Nat2N.inj_add in IH. nia.
+  - time_unfold @T_trie_value; destruct tree; cbn [live_height live_height_ne]; lia.
+Qed.
+
+Lemma T_live_member_bound : forall key tree,
+  (T_live_member key tree <= 4 * N.of_nat (Pos.size_nat key + 1))%N.
+Proof.
+  intros key tree. time_unfold T_live_member.
+  pose proof (PTrieT.trie_get_clock unit key tree).
+  destruct (trie_get key tree); rewrite Nat2N.inj_add; nia.
+Qed.
+
+Lemma live_seed_nodes : forall A encode n x (table : ptrie (ptrie unit * list A)),
+  PTrie.nodes (live_seed encode n x table) <= PTrie.nodes table + Pos.size_nat x.
+Proof.
+  intros A encode n x table. unfold live_seed.
+  destruct (trie_get x table) as [[seen row]|]; cbn [fst snd].
+  - destruct (live_member (encode n) seen); [lia|apply PTrie.nodes_set].
+  - destruct (live_member (encode n) Empty); [lia|apply PTrie.nodes_set].
+Qed.
+
+Lemma live_fold_clock_sum : forall A B (f : A -> B -> B) Tf cost xs base,
+  (forall item, In item xs -> forall acc, (Tf item acc <= cost item)%N) ->
+  (List.T_fold_right f Tf base xs <=
+    fold_right (fun item n => cost item + 1 + n)%N 0%N xs + 1)%N.
+Proof.
+  intros A B f Tf cost xs; induction xs as [|item rest IH]; intros base Hbound.
+  - time_step.
+  - pose proof (Hbound item (or_introl eq_refl) (fold_right f base rest)) as Hhead.
+    specialize (IH base ltac:(intros other Hin acc; apply Hbound; now right)).
+    time_unfold @List.T_fold_right. cbn [fold_right]. nia.
+Qed.
+
+Lemma live_fold_clock_uniform : forall A B (f : A -> B -> B) Tf xs bound base,
+  (forall item, In item xs -> forall acc, (Tf item acc <= bound)%N) ->
+  (List.T_fold_right f Tf base xs <= (bound + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros A B f Tf xs; induction xs as [|item rest IH]; intros bound base Hbound.
+  - time_step.
+  - pose proof (Hbound item (or_introl eq_refl) (fold_right f base rest)) as Hhead.
+    specialize (IH bound base ltac:(intros other Hin acc; apply Hbound; now right)).
+    time_step.
+Qed.
+
+Lemma live_map_clock_sum : forall A B (f : A -> B) Tf cost xs,
+  (forall item, In item xs -> (Tf item <= cost item)%N) ->
+  (ListDef.T_map f Tf xs <= fold_right (fun item n => cost item + 1 + n)%N 0%N xs + 1)%N.
+Proof.
+  intros A B f Tf cost xs; induction xs as [|item rest IH]; intro Hbound.
+  - time_step.
+  - pose proof (Hbound item (or_introl eq_refl)) as Hhead.
+    specialize (IH ltac:(intros other Hin; apply Hbound; now right)).
+    time_unfold @ListDef.T_map. cbn [fold_right]. nia.
+Qed.
+
+Lemma live_nat_sum_app : forall A (weight : A -> nat) xs ys,
+  fold_right (fun x n => weight x + n) 0 (xs ++ ys) =
+    fold_right (fun x n => weight x + n) 0 xs + fold_right (fun x n => weight x + n) 0 ys.
+Proof.
+  intros A weight xs; induction xs as [|x rest IH]; intro ys; cbn; [reflexivity|].
+  rewrite IH; lia.
+Qed.
+
+Lemma live_weighted_incl : forall A (weight : A -> nat) xs ys, NoDup xs -> incl xs ys ->
+  fold_right (fun x n => weight x + n) 0 xs <= fold_right (fun x n => weight x + n) 0 ys.
+Proof.
+  intros A weight xs ys Hdup; revert ys.
+  induction Hdup as [|x rest Hfresh Hdup IH]; intros ys Hsub; [cbn; lia|].
+  destruct (in_split x ys (Hsub x (or_introl eq_refl))) as [prefix [suffix ->]].
+  assert (Hrest : incl rest (prefix ++ suffix)).
+  { intros y Hin. specialize (Hsub y (or_intror Hin)).
+    rewrite in_app_iff in Hsub. apply in_app_iff. destruct Hsub as [Hp|[Heq|Hs]];
+      [now left|subst y; contradiction|now right]. }
+  specialize (IH _ Hrest). rewrite live_nat_sum_app in IH.
+  cbn [fold_right]. rewrite live_nat_sum_app. cbn [fold_right]. lia.
+Qed.
+
+Lemma live_pair_row_nodup : forall A (xs : list A) (x : positive),
+  NoDup xs -> NoDup (map (fun n => (n, x)) xs).
+Proof.
+  intros A xs x Hdup; induction Hdup as [|n rest Hfresh Hdup IH]; cbn; [constructor|].
+  constructor; [|exact IH]. intro Hin. apply in_map_iff in Hin.
+  destruct Hin as [m [Heq Hm]]. injection Heq as ->. now apply Hfresh.
+Qed.
+
+Lemma live_fold_clock_weight : forall A B (f : A -> B -> B) Tf weight xs price base,
+  (forall item, In item xs -> 1 <= weight item) ->
+  (forall item, In item xs -> forall acc, (Tf item acc <= price * N.of_nat (weight item))%N) ->
+  (List.T_fold_right f Tf base xs <=
+    (price + 1) * N.of_nat (fold_right (fun item n => (weight item + n)%nat) 0%nat xs) + 1)%N.
+Proof.
+  intros A B f Tf weight xs; induction xs as [|item rest IH]; intros price base Hweight Hbound.
+  - time_step.
+  - pose proof (Hbound item (or_introl eq_refl) (fold_right f base rest)) as Hhead.
+    pose proof (Hweight item (or_introl eq_refl)) as Hpositive.
+    specialize (IH price base ltac:(intros other Hin; apply Hweight; now right)
+      ltac:(intros other Hin acc; apply Hbound; now right)).
+    time_unfold @List.T_fold_right. cbn [fold_right]. rewrite Nat2N.inj_add. nia.
+Qed.
+
+Lemma live_map_clock_uniform : forall A B (f : A -> B) Tf xs price,
+  (forall item, In item xs -> (Tf item <= price)%N) ->
+  (ListDef.T_map f Tf xs <= (price + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros A B f Tf xs; induction xs as [|item rest IH]; intros price Hbound.
+  - time_step.
+  - pose proof (Hbound item (or_introl eq_refl)) as Hhead.
+    specialize (IH price ltac:(intros other Hin; apply Hbound; now right)). time_step.
+Qed.
+
+Lemma live_fold_lengths : forall A B (values : A -> list B) items,
+  fold_right (fun item n => length (values item) + 1 + n) 0 items =
+    length items + length (flat_map values items).
+Proof.
+  intros A B values items; induction items as [|item rest IH]; [reflexivity|].
+  change (length (values item) + 1 +
+    fold_right (fun item n => length (values item) + 1 + n) 0 rest =
+    S (length rest) + length (values item ++ flat_map values rest)).
+  rewrite IH, length_app. lia.
+Qed.
+
+Lemma live_flat_map_length_mono : forall A B C (f : A -> list B) (g : A -> list C) items,
+  (forall item, In item items -> length (f item) <= length (g item)) ->
+  length (flat_map f items) <= length (flat_map g items).
+Proof.
+  intros A B C f g items; induction items as [|item rest IH]; intro Hbound; [reflexivity|].
+  cbn [flat_map]. rewrite !length_app.
+  pose proof (Hbound item (or_introl eq_refl)) as Hhead.
+  specialize (IH ltac:(intros other Hin; apply Hbound; now right)). lia.
+Qed.
+
+Lemma live_seed_list_nodes : forall A encode n xs (table : ptrie (ptrie unit * list A)),
+  PTrie.nodes (fold_right (live_seed encode n) table xs) <=
+    PTrie.nodes table + fold_right (fun x amount => Pos.size_nat x + amount) 0 xs.
+Proof.
+  intros A encode n xs; induction xs as [|x rest IH]; intro table; cbn [fold_right]; [lia|].
+  pose proof (live_seed_nodes A encode n x (fold_right (live_seed encode n) table rest))
+    as Hhead. specialize (IH table). lia.
+Qed.
+
+Lemma live_seed_batch_nodes : forall A B encode (point : B -> A) values items table,
+  PTrie.nodes (live_seed_batch encode point values items table) <= PTrie.nodes table +
+    fold_right (fun x amount => Pos.size_nat x + amount) 0 (flat_map values items).
+Proof.
+  intros A B encode point values items; induction items as [|item rest IH]; intro table.
+  - cbn [live_seed_batch fold_right flat_map]; lia.
+  - cbn [live_seed_batch fold_right flat_map].
+    fold (live_seed_batch encode point values rest table).
+    pose proof (live_seed_list_nodes A encode (point item) (values item)
+      (live_seed_batch encode point values rest table)) as Hhead.
+    specialize (IH table). rewrite live_nat_sum_app. lia.
+Qed.
+
+Lemma live_bits_mass : forall xs width,
+  (forall x, In x xs -> Pos.size_nat x <= width) ->
+  fold_right (fun x amount => Pos.size_nat x + amount) 0 xs <= width * length xs.
+Proof.
+  intro xs; induction xs as [|x rest IH]; intros width Hwidth; cbn; [lia|].
+  pose proof (Hwidth x (or_introl eq_refl)) as Hhead.
+  specialize (IH width ltac:(intros y Hin; apply Hwidth; now right)). lia.
+Qed.
+
+Lemma live_sum_weight : forall A (cost : A -> N) (weight : A -> nat) xs price,
+  (forall item, In item xs -> (cost item <= price * N.of_nat (weight item))%N) ->
+  (fold_right N.add 0%N (map cost xs) <=
+    price * N.of_nat (fold_right (fun item n => (weight item + n)%nat) 0%nat xs))%N.
+Proof.
+  intros A cost weight xs; induction xs as [|item rest IH]; intros price Hbound; cbn; [lia|].
+  pose proof (Hbound item (or_introl eq_refl)) as Hhead.
+  specialize (IH price ltac:(intros other Hin; apply Hbound; now right)).
+  rewrite Nat2N.inj_add. nia.
+Qed.
+
+Lemma live_sum_uniform : forall A (cost : A -> N) xs price,
+  (forall item, In item xs -> (cost item <= price)%N) ->
+  (fold_right N.add 0%N (map cost xs) <= price * N.of_nat (length xs))%N.
+Proof.
+  intros A cost xs; induction xs as [|item rest IH]; intros price Hbound; cbn; [lia|].
+  pose proof (Hbound item (or_introl eq_refl)) as Hhead.
+  specialize (IH price ltac:(intros other Hin; apply Hbound; now right)). nia.
+Qed.
+
+Lemma live_sum_pair : forall A (f g : A -> N) xs,
+  fold_right N.add 0%N (map (fun item => f item + g item)%N xs) =
+    (fold_right N.add 0%N (map f xs) + fold_right N.add 0%N (map g xs))%N.
+Proof.
+  intros A f g xs; induction xs as [|item rest IH]; cbn; [reflexivity|]. rewrite IH. lia.
+Qed.
+
+Lemma live_sum_extra : forall A (weight : A -> nat) xs,
+  fold_right (fun item n => weight item + 1 + n) 0 xs =
+    fold_right (fun item n => weight item + n) 0 xs + length xs.
+Proof.
+  intros A weight xs; induction xs as [|item rest IH]; cbn; [reflexivity|]. rewrite IH. lia.
+Qed.
+
 Module LiveCode (O : OPS)
     (P : TYPE with Definition t := func positive O.K O.G)
     (Q : TYPE) (R : LANG_PREPARE_OPS O Q)
@@ -1209,6 +1484,227 @@ Module LiveT (O : OPS)
     { unfold live_size. apply live_weighted_length. }
     pose proof (PB.block_nodes_le p) as Hblocks. unfold bs, q in *. lia.
   Qed.
+  (** Dependency constants and syntax widths give a common primitive cost budget. *)
+  Definition live_clock_scale : N :=
+    (PTrieT.c_trie + N.c_key + E.c_key + C.c_cfg + C.c_cfg_adj + BC.c_cfg_adj +
+      U.c_vars + SP.c_points + R.c_prepare + PB.c_present + 1)%N.
+  Definition live_clock_width (p : P.t) := N.of_nat (function_width p + 1).
+  Definition live_clock_atom (p : P.t) :=
+    (64 * live_clock_scale * live_clock_scale * live_clock_width p)%N.
+
+  Lemma live_clock_scale_positive : (1 <= live_clock_scale)%N.
+  Proof.
+    unfold live_clock_scale; lia.
+  Qed.
+
+  Lemma live_clock_width_positive : forall p, (1 <= live_clock_width p)%N.
+  Proof.
+    intro p; unfold live_clock_width; rewrite Nat2N.inj_add; lia.
+  Qed.
+
+  Lemma live_clock_scale_le_atom : forall p, (live_clock_scale <= live_clock_atom p)%N.
+  Proof.
+    intro p. pose proof live_clock_scale_positive as Hscale.
+    pose proof (live_clock_width_positive p) as Hwidth. unfold live_clock_atom; nia.
+  Qed.
+
+  Lemma live_clock_atom_positive : forall p, (1 <= live_clock_atom p)%N.
+  Proof.
+    intro p. pose proof live_clock_scale_positive as Hscale.
+    pose proof (live_clock_scale_le_atom p) as Hbound. lia.
+  Qed.
+
+  Lemma live_clock_product : forall p c units,
+    (c <= live_clock_scale -> units <= live_clock_scale * live_clock_width p ->
+      c * units <= live_clock_atom p)%N.
+  Proof.
+    intros p c units Hc Hu. pose proof live_clock_scale_positive as Hscale.
+    unfold live_clock_atom. nia.
+  Qed.
+
+  Lemma live_clock_units : forall p units,
+    (units <= live_clock_scale * live_clock_width p -> 16 * units <= live_clock_atom p)%N.
+  Proof.
+    intros p units Hu. pose proof live_clock_scale_positive as Hscale.
+    unfold live_clock_atom. nia.
+  Qed.
+
+  Lemma live_occurrences_spec : forall q x,
+    In x (U.occurrences q) <-> In x (U.universe q).
+  Proof.
+    intros q x. unfold U.occurrences. rewrite in_app_iff, U.universe_spec.
+    split.
+    - intros [Hin|Hin]; apply in_flat_map in Hin; destruct Hin as [item [Hi Hx]].
+      + left; exists item; split; [exact Hi|now apply in_app_iff in Hx].
+      + right; exists item; now split.
+    - intros [[e [He Hx]]|[n [Hn Hx]]].
+      + left; apply in_flat_map; exists e; split; [exact He|now apply in_app_iff].
+      + right; apply in_flat_map; exists n; now split.
+  Qed.
+
+  Lemma live_universe_length : forall q, length (U.universe q) <= length (U.occurrences q).
+  Proof.
+    intro q. apply NoDup_incl_length; [apply U.universe_nodup|].
+    intros x Hin. now apply live_occurrences_spec.
+  Qed.
+
+  Lemma live_variable_width : forall p x, In x (U.universe (R.prepare p)) ->
+    Pos.size_nat x <= function_width p.
+  Proof.
+    intros p x Hin. apply live_occurrences_spec in Hin.
+    pose proof (PB.occurrence_width_le p) as Hwidth.
+    assert (Hmax : forall xs y, In y xs -> Pos.size_nat y <=
+      fold_right Nat.max 0 (map Pos.size_nat xs)).
+    { intros xs; induction xs as [|y rest IH]; intros z Hz; [contradiction|].
+      cbn. destruct Hz as [->|Hz].
+      - apply Nat.le_max_l.
+      - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r]. }
+    pose proof (Hmax (U.occurrences (R.prepare p)) x Hin) as Hx.
+    unfold U.occurrence_width in Hwidth. change
+      (fold_right Nat.max 0 (map Pos.size_nat (U.occurrences (R.prepare p))) <= function_width p)
+      in Hwidth. lia.
+  Qed.
+
+  Lemma live_node_key : forall p n, In n (C.nodes (R.prepare p)) ->
+    (N.of_nat (N.bits n + 1) <= live_clock_scale * live_clock_width p)%N.
+  Proof.
+    intros p n Hin. pose proof (PB.point_bits_le p n Hin) as Hbits.
+    assert (Hscale : (PB.c_present + 1 <= live_clock_scale)%N)
+      by (unfold live_clock_scale; lia).
+    pose proof (live_clock_width_positive p) as Hwidth.
+    fold (live_clock_width p) in Hbits. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma live_edge_key : forall p e, In e (C.edges (R.prepare p)) ->
+    (N.of_nat (E.bits e + 1) <= live_clock_scale * live_clock_width p)%N.
+  Proof.
+    intros p e Hin. pose proof (PB.edge_bits_le p e Hin) as Hbits.
+    assert (Hscale : (PB.c_present + 1 <= live_clock_scale)%N)
+      by (unfold live_clock_scale; lia).
+    pose proof (live_clock_width_positive p) as Hwidth.
+    fold (live_clock_width p) in Hbits. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma live_variable_key : forall p x, In x (U.universe (R.prepare p)) ->
+    (N.of_nat (Pos.size_nat x + 1) <= live_clock_scale * live_clock_width p)%N.
+  Proof.
+    intros p x Hin. pose proof (live_variable_width p x Hin) as Hx.
+    pose proof live_clock_scale_positive as Hscale. unfold live_clock_width. nia.
+  Qed.
+
+  Lemma live_block_key : forall p b, In b (BC.nodes (R.prepare p)) ->
+    (N.of_nat (Pos.size_nat b + 1) <= live_clock_scale * live_clock_width p)%N.
+  Proof.
+    intros p b Hin. pose proof (PB.block_bits_le p b (or_introl Hin)) as Hb.
+    change (Pos.size_nat b <= function_width p) in Hb.
+    pose proof live_clock_scale_positive as Hscale. unfold live_clock_width. nia.
+  Qed.
+
+  Lemma live_get_atom : forall A p key (table : ptrie A),
+    (N.of_nat (Pos.size_nat key + 1) <= live_clock_scale * live_clock_width p ->
+      T_trie_get key table <= live_clock_atom p)%N.
+  Proof.
+    intros A p key table Hkey. rewrite PTrieT.trie_get_clock.
+    pose proof (live_clock_units p _ Hkey) as Hbound. rewrite Nat2N.inj_add in Hbound. nia.
+  Qed.
+
+  Lemma live_set_atom : forall A p key (value : A) table,
+    (N.of_nat (Pos.size_nat key + 1) <= live_clock_scale * live_clock_width p ->
+      PTrieCode.T_set key value table <= live_clock_atom p)%N.
+  Proof.
+    intros A p key value table Hkey. eapply N.le_trans; [apply PTrieT.T_set_le|].
+    apply live_clock_product; [unfold live_clock_scale; lia|exact Hkey].
+  Qed.
+
+  Lemma live_member_atom : forall p key table,
+    (N.of_nat (Pos.size_nat key + 1) <= live_clock_scale * live_clock_width p ->
+      T_live_member key table <= live_clock_atom p)%N.
+  Proof.
+    intros p key table Hkey. pose proof (T_live_member_bound key table) as Hmember.
+    pose proof (live_clock_units p _ Hkey) as Hbound. lia.
+  Qed.
+
+  Lemma live_row_atom : forall A p (table : ptrie (list A)) key,
+    (N.of_nat (Pos.size_nat key + 1) <= live_clock_scale * live_clock_width p ->
+      T_index_row table key <= live_clock_atom p)%N.
+  Proof.
+    intros A p table key Hkey. time_unfold @T_index_row.
+    rewrite PTrieT.trie_get_clock. pose proof (live_clock_units p _ Hkey) as Hbound.
+    rewrite Nat2N.inj_add in Hbound. destruct (trie_get key table); nia.
+  Qed.
+
+  Lemma live_encode_node_atom : forall p n, In n (C.nodes (R.prepare p)) ->
+    (N.T_encode n <= live_clock_atom p)%N.
+  Proof.
+    intros p n Hin. eapply N.le_trans; [apply N.T_encode_le|].
+    apply live_clock_product; [unfold live_clock_scale; lia|now apply live_node_key].
+  Qed.
+
+  Lemma live_encode_edge_atom : forall p e, In e (C.edges (R.prepare p)) ->
+    (E.T_encode e <= live_clock_atom p)%N.
+  Proof.
+    intros p e Hin. eapply N.le_trans; [apply E.T_encode_le|].
+    apply live_clock_product; [unfold live_clock_scale; lia|now apply live_edge_key].
+  Qed.
+
+  Lemma live_eqb_node_atom : forall p n other, In n (C.nodes (R.prepare p)) ->
+    (N.T_eqb n other <= live_clock_atom p)%N.
+  Proof.
+    intros p n other Hin. eapply N.le_trans; [apply N.T_eqb_le|].
+    apply live_clock_product; [unfold live_clock_scale; lia|now apply live_node_key].
+  Qed.
+
+  Lemma live_reader_atom : forall p c bits amount clock,
+    (c <= live_clock_scale -> N.of_nat (bits + 1) <= live_clock_scale * live_clock_width p ->
+      clock <= c * N.of_nat (bits + amount + 1) ->
+      clock <= live_clock_atom p * N.of_nat (amount + 1))%N.
+  Proof.
+    intros p c bits amount clock Hc Hbits Hclock.
+    pose proof (live_clock_product p c _ Hc Hbits) as Hbase.
+    pose proof (live_clock_scale_le_atom p) as Hscale.
+    replace (bits + amount + 1) with ((bits + 1) + amount) in Hclock by lia.
+    rewrite Nat2N.inj_add in Hclock. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma live_uses_atom : forall p e, In e (C.edges (R.prepare p)) ->
+    (U.T_uses (R.prepare p) e <=
+      live_clock_atom p * N.of_nat (length (U.uses (R.prepare p) e) + 1))%N.
+  Proof.
+    intros p e Hin. eapply live_reader_atom with (c := U.c_vars) (bits := E.bits e);
+      [unfold live_clock_scale; lia| |apply U.T_uses_le].
+    now apply live_edge_key.
+  Qed.
+
+  Lemma live_defs_atom : forall p e, In e (C.edges (R.prepare p)) ->
+    (U.T_defs (R.prepare p) e <=
+      live_clock_atom p * N.of_nat (length (U.defs (R.prepare p) e) + 1))%N.
+  Proof.
+    intros p e Hin. eapply live_reader_atom with (c := U.c_vars) (bits := E.bits e);
+      [unfold live_clock_scale; lia| |apply U.T_defs_le].
+    now apply live_edge_key.
+  Qed.
+
+  Lemma live_exits_atom : forall p n, In n (C.nodes (R.prepare p)) ->
+    (U.T_exits (R.prepare p) n <=
+      live_clock_atom p * N.of_nat (length (U.exits (R.prepare p) n) + 1))%N.
+  Proof.
+    intros p n Hin. eapply live_reader_atom with (c := U.c_vars) (bits := N.bits n);
+      [unfold live_clock_scale; lia| |apply U.T_exits_le].
+    now apply live_node_key.
+  Qed.
+
+  Lemma live_inc_atom : forall p n, In n (C.nodes (R.prepare p)) ->
+    (C.T_inc (R.prepare p) n <=
+      live_clock_atom p * N.of_nat (length (C.inc (R.prepare p) n) + 1))%N.
+  Proof.
+    intros p n Hin. eapply live_reader_atom with (c := C.c_cfg_adj) (bits := N.bits n);
+      [unfold live_clock_scale; lia| |apply C.T_inc_le].
+    now apply live_node_key.
+  Qed.
+
+  Definition live_index_budget : N :=
+    (65536 * live_clock_scale * live_clock_scale * live_clock_scale)%N.
+
   Definition c_live : N := 1. (* STUB *)
   (** Path exploration pays for syntax and live predecessor incidences. *)
   Lemma T_live_in_le : forall p,
@@ -1255,7 +1751,7 @@ Module LiveT (O : OPS)
     live_done (plan_fuel (length (C.nodes q)) q kills x
       (live_initial N.encode (index_row seeds x))).
   TimeFun explore.
-  Definition k_index : N := 1. (* STUB *)
+  Definition k_index : N := live_index_budget.
   Definition k_explore : N := 1. (* STUB *)
   Definition k_rows : N := 1. (* STUB *)
   Definition visits p x := filter (fun pair => Pos.eqb (snd pair) x) (live_region p).
@@ -1382,16 +1878,446 @@ Module LiveT (O : OPS)
     apply live_weighted_partition; [apply U.universe_nodup|].
     intros [n x] Hin. apply (proj2 (live_region_spec p) n x) in Hin. tauto.
   Qed.
+  (** Each index scans syntax occurrences and updates only bounded identifier paths. *)
+  Definition live_graph_load (q : Q.t) : nat :=
+    length (C.nodes q) + length (C.edges q) + length (U.occurrences q) + 1.
+
+  Lemma live_graph_load_bound : forall p,
+    (N.of_nat (live_graph_load (R.prepare p)) <=
+      2 * live_clock_scale * N.of_nat (function_size p + 1))%N.
+  Proof.
+    intro p. pose proof (PB.points_le p) as Hpoints.
+    assert (Hpresent : (PB.c_present + 1 <= live_clock_scale)%N)
+      by (unfold live_clock_scale; lia).
+    pose proof live_clock_scale_positive as Hscale.
+    unfold live_graph_load. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma live_uses_universe : forall q e x, In e (C.edges q) -> In x (U.uses q e) ->
+    In x (U.universe q).
+  Proof.
+    intros q e x He Hx. apply U.universe_spec. left; exists e; split; [exact He|now left].
+  Qed.
+
+  Lemma live_defs_universe : forall q e x, In e (C.edges q) -> In x (U.defs q e) ->
+    In x (U.universe q).
+  Proof.
+    intros q e x He Hx. apply U.universe_spec. left; exists e; split; [exact He|now right].
+  Qed.
+
+  Lemma live_exits_universe : forall q n x, In n (C.nodes q) -> In x (U.exits q n) ->
+    In x (U.universe q).
+  Proof.
+    intros q n x Hn Hx. apply U.universe_spec. right; exists n; now split.
+  Qed.
+
+  Lemma live_seed_count : forall q,
+    length (flat_map (U.uses q) (C.edges q)) + length (flat_map (U.exits q) (C.nodes q)) <=
+      length (U.occurrences q).
+  Proof.
+    intro q. unfold U.occurrences; rewrite length_app.
+    assert (Hedges : length (flat_map (U.uses q) (C.edges q)) <=
+      length (flat_map (fun e => U.uses q e ++ U.defs q e) (C.edges q))).
+    { apply live_flat_map_length_mono; intros e Hin; rewrite length_app; lia. }
+    lia.
+  Qed.
+
+  Lemma live_def_count : forall q,
+    length (flat_map (U.defs q) (C.edges q)) <= length (U.occurrences q).
+  Proof.
+    intro q. unfold U.occurrences; rewrite length_app.
+    assert (Hedges : length (flat_map (U.defs q) (C.edges q)) <=
+      length (flat_map (fun e => U.uses q e ++ U.defs q e) (C.edges q))).
+    { apply live_flat_map_length_mono; intros e Hin; rewrite length_app; lia. }
+    lia.
+  Qed.
+
+  Lemma seed_table_nodes : forall p,
+    PTrie.nodes (seed_table (R.prepare p)) <=
+      function_width p * length (U.occurrences (R.prepare p)).
+  Proof.
+    intro p. set (q := R.prepare p).
+    pose proof (live_seed_batch_nodes N.t N.t N.encode (fun n => n) (U.exits q) (C.nodes q)
+      (live_seed_batch N.encode (C.src q) (U.uses q) (C.edges q) Empty)) as Hnodes.
+    pose proof (live_seed_batch_nodes N.t E.t N.encode (C.src q) (U.uses q) (C.edges q) Empty)
+      as Hedges.
+    assert (Huses : fold_right (fun x n => Pos.size_nat x + n) 0
+      (flat_map (U.uses q) (C.edges q)) <= function_width p *
+      length (flat_map (U.uses q) (C.edges q))).
+    { apply live_bits_mass; intros x Hin. apply in_flat_map in Hin.
+      destruct Hin as [e [He Hx]]. apply live_variable_width; eapply live_uses_universe;
+        eassumption. }
+    assert (Hexits : fold_right (fun x n => Pos.size_nat x + n) 0
+      (flat_map (U.exits q) (C.nodes q)) <= function_width p *
+      length (flat_map (U.exits q) (C.nodes q))).
+    { apply live_bits_mass; intros x Hin. apply in_flat_map in Hin.
+      destruct Hin as [n [Hn Hx]]. apply live_variable_width; eapply live_exits_universe;
+        eassumption. }
+    pose proof (live_seed_count q) as Hcount.
+    change (PTrie.nodes (seed_table q) <= function_width p * length (U.occurrences q)).
+    fold (seed_table q) in Hnodes. change (PTrie.nodes (@Empty (ptrie unit * list N.t))) with 0
+      in Hedges.
+    eapply Nat.le_trans; [exact Hnodes|].
+    eapply Nat.le_trans.
+    - apply Nat.add_le_mono; [eapply Nat.le_trans; [exact Hedges|exact Huses]|exact Hexits].
+    - rewrite <- Nat.mul_add_distr_l. apply Nat.mul_le_mono_l. exact Hcount.
+  Qed.
+
+  Lemma live_nodes_atom : forall p,
+    (C.T_nodes (R.prepare p) <= live_clock_atom p * N.of_nat (length (C.nodes (R.prepare p)) +
+      1))%N.
+  Proof.
+    intro p. pose proof (C.T_nodes_le (R.prepare p)) as Hnodes.
+    assert (Hc : (C.c_cfg_adj <= live_clock_scale)%N) by (unfold live_clock_scale; lia).
+    pose proof (live_clock_scale_le_atom p) as Hatom. nia.
+  Qed.
+
+  Lemma live_edges_atom : forall p,
+    (C.T_edges (R.prepare p) <= live_clock_atom p * N.of_nat (length (C.edges (R.prepare p)) +
+      1))%N.
+  Proof.
+    intro p. pose proof (C.T_edges_le (R.prepare p)) as Hedges.
+    assert (Hc : (C.c_cfg <= live_clock_scale)%N) by (unfold live_clock_scale; lia).
+    pose proof (live_clock_scale_le_atom p) as Hatom. nia.
+  Qed.
+
+  Lemma live_src_atom : forall p e, (C.T_src (R.prepare p) e <= live_clock_atom p)%N.
+  Proof.
+    intros p e. pose proof (C.T_src_le (R.prepare p) e) as Hsrc.
+    assert (Hc : (C.c_cfg <= live_clock_scale)%N) by (unfold live_clock_scale; lia).
+    pose proof (live_clock_scale_le_atom p) as Hatom. lia.
+  Qed.
+
+  Lemma live_dst_atom : forall p e, (C.T_dst (R.prepare p) e <= live_clock_atom p)%N.
+  Proof.
+    intros p e. pose proof (C.T_dst_le (R.prepare p) e) as Hdst.
+    assert (Hc : (C.c_cfg <= live_clock_scale)%N) by (unfold live_clock_scale; lia).
+    pose proof (live_clock_scale_le_atom p) as Hatom. lia.
+  Qed.
+
+  Lemma live_seed_atom : forall p n x table,
+    In n (C.nodes (R.prepare p)) -> In x (U.universe (R.prepare p)) ->
+    (T_live_seed N.encode N.T_encode n x table <= 16 * live_clock_atom p)%N.
+  Proof.
+    intros p n x table Hn Hx.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_node_key p n Hn) as Hnode.
+    pose proof (live_variable_key p x Hx) as Hvar.
+    pose proof (live_encode_node_atom p n Hn) as Hencode.
+    pose proof (live_get_atom _ p x table Hvar) as Hget.
+    time_unfold @T_live_seed.
+    destruct (trie_get x table) as [[seen row]|]; cbn [fst snd]; time_simpl.
+    all: let n := constr:(n) in match goal with
+      | |- context [T_live_member (N.encode n) ?seen] =>
+        pose proof (live_member_atom p (N.encode n) seen Hnode) as Hmember;
+        pose proof (live_set_atom _ p (N.encode n) tt seen Hnode) as Hsetnode;
+        destruct (live_member (N.encode n) seen)
+      end.
+    all: try nia.
+    all: let x := constr:(x) in let table := constr:(table) in match goal with
+      | |- context [PTrieCode.T_set x ?value table] =>
+        pose proof (live_set_atom _ p x value table Hvar) as Hsetvar
+      end; nia.
+  Qed.
+
+  Lemma live_seed_batch_atom : forall p B (point : B -> N.t) T_point values T_values items table,
+    (forall item, In item items -> (T_point item <= live_clock_atom p)%N) ->
+    (forall item, In item items -> In (point item) (C.nodes (R.prepare p))) ->
+    (forall item, In item items ->
+      (T_values item <= live_clock_atom p * N.of_nat (length (values item) + 1))%N) ->
+    (forall item, In item items -> incl (values item) (U.universe (R.prepare p))) ->
+    (T_live_seed_batch N.encode N.T_encode point T_point values T_values items table <=
+      32 * live_clock_atom p * N.of_nat (length items + length (flat_map values items) + 1))%N.
+  Proof.
+    intros p B point T_point values T_values items table Hpoint Hnode Hreader Hvars.
+    pose proof (live_clock_atom_positive p) as Hpositive. time_unfold @T_live_seed_batch.
+    let table := constr:(table) in let items := constr:(items) in match goal with
+    | |- (1 + List.T_fold_right ?step ?clock table items <= _)%N =>
+      assert (Hfold : (List.T_fold_right step clock table items <=
+        (24 * live_clock_atom p + 1) *
+          N.of_nat (fold_right (fun item n => (length (values item) + 1 + n)%nat) 0%nat items) +
+            1)%N)
+    end.
+    { apply live_fold_clock_weight; [intros; lia|]. intros item Hin state; cbn beta.
+      assert (Hinner : (List.T_fold_right (live_seed N.encode (point item))
+        (fun x acc => T_live_seed N.encode N.T_encode (point item) x acc) state (values item) <=
+        (16 * live_clock_atom p + 1) * N.of_nat (length (values item)) + 1)%N).
+      { apply live_fold_clock_uniform; intros x Hx acc.
+        apply live_seed_atom; [now apply Hnode|now apply (Hvars item Hin)]. }
+      eapply N.le_trans with (m := (1 + (live_clock_atom p +
+        live_clock_atom p * N.of_nat (length (values item) + 1) +
+        ((16 * live_clock_atom p + 1) * N.of_nat (length (values item)) + 1)))%N).
+      - apply N.add_le_mono_l. apply N.add_le_mono; [|exact Hinner].
+        apply N.add_le_mono; [now apply Hpoint|now apply Hreader].
+      - rewrite Nat2N.inj_add. nia. }
+    rewrite live_fold_lengths in Hfold.
+    eapply N.le_trans; [apply N.add_le_mono_l; exact Hfold|].
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma seed_table_atom : forall p,
+    (T_seed_table (R.prepare p) <=
+      128 * live_clock_atom p * N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. set (q := R.prepare p). pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_nodes_atom p) as Hnodes. pose proof (live_edges_atom p) as Hedges.
+    assert (Hedge_batch : (T_live_seed_batch N.encode N.T_encode (C.src q)
+      (fun e => C.T_src q e) (U.uses q) (fun e => U.T_uses q e) (C.edges q) Empty <=
+      32 * live_clock_atom p * N.of_nat
+        (length (C.edges q) + length (flat_map (U.uses q) (C.edges q)) + 1))%N).
+    { apply live_seed_batch_atom.
+      - intros e He; apply live_src_atom.
+      - intros e He; exact (proj1 (C.edges_nodes q e Hwf He)).
+      - intros e He; now apply live_uses_atom.
+      - intros e He x Hx; now apply live_uses_universe with e. }
+    assert (Hnode_batch : (T_live_seed_batch N.encode N.T_encode (fun n => n) (fun _ => 1%N)
+      (U.exits q) (fun n => U.T_exits q n) (C.nodes q)
+      (live_seed_batch N.encode (C.src q) (U.uses q) (C.edges q) Empty) <=
+      32 * live_clock_atom p * N.of_nat
+        (length (C.nodes q) + length (flat_map (U.exits q) (C.nodes q)) + 1))%N).
+    { apply live_seed_batch_atom.
+      - intros n Hn; exact Hpositive.
+      - intros n Hn; exact Hn.
+      - intros n Hn; now apply live_exits_atom.
+      - intros n Hn x Hx; now apply live_exits_universe with n. }
+    pose proof (live_seed_count q) as Hcount.
+    time_unfold T_seed_table.
+    fold q in Hnodes, Hedges |- *.
+    change (1 + (C.T_nodes q + (C.T_edges q +
+      T_live_seed_batch N.encode N.T_encode (C.src q) (fun e => C.T_src q e)
+        (U.uses q) (fun e => U.T_uses q e) (C.edges q) Empty) +
+      T_live_seed_batch N.encode N.T_encode (fun n => n) (fun _ => 1%N)
+        (U.exits q) (fun n => U.T_exits q n) (C.nodes q)
+        (live_seed_batch N.encode (C.src q) (U.uses q) (C.edges q) Empty)) <=
+      128 * live_clock_atom p * N.of_nat (live_graph_load q))%N.
+    unfold live_graph_load. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma seed_map_atom : forall p Tf,
+    (forall row : ptrie unit * list N.t, (Tf row <= 1)%N) ->
+    (PTrieT.T_map snd Tf (seed_table (R.prepare p)) <=
+      live_clock_atom p * N.of_nat (length (U.occurrences (R.prepare p)) + 1))%N.
+  Proof.
+    intros p Tf Hf. pose proof (PTrieT.T_map_le _ _ (@snd (ptrie unit) (list N.t)) Tf
+      (seed_table (R.prepare p)) 1%N Hf) as Hmap.
+    change (PTrieT.nodes (seed_table (R.prepare p))) with
+      (PTrie.nodes (seed_table (R.prepare p))) in Hmap.
+    pose proof (seed_table_nodes p) as Hnodes.
+    assert (HnodesN : (N.of_nat (PTrie.nodes (seed_table (R.prepare p))) <=
+      N.of_nat (function_width p) * N.of_nat (length (U.occurrences (R.prepare p))))%N).
+    { rewrite <- Nat2N.inj_mul. lia. }
+    assert (Htrie : (PTrieT.c_trie <= live_clock_scale)%N) by (unfold live_clock_scale; lia).
+    pose proof live_clock_scale_positive as Hscale.
+    assert (Hheight : (N.of_nat (PTrie.nodes (seed_table (R.prepare p)) + 1) <=
+      live_clock_width p * N.of_nat (length (U.occurrences (R.prepare p)) + 1))%N).
+    { unfold live_clock_width. rewrite !Nat2N.inj_add. nia. }
+    assert (Hcost : (PTrieT.c_trie * (1 + 1) * live_clock_width p <= live_clock_atom p)%N).
+    { unfold live_clock_atom. apply N.mul_le_mono_r. nia. }
+    eapply N.le_trans; [exact Hmap|].
+    eapply N.le_trans.
+    - apply N.mul_le_mono_l; exact Hheight.
+    - rewrite N.mul_assoc. apply N.mul_le_mono_r. exact Hcost.
+  Qed.
+
+  Lemma seed_index_atom : forall p,
+    (T_seed_index (R.prepare p) <=
+      256 * live_clock_atom p * N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. pose proof (seed_table_atom p) as Htable.
+    pose proof (seed_map_atom p (fun row => Datatypes.T_snd row)
+      ltac:(intros; time_simpl; lia)) as Hmap.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    time_unfold T_seed_index. unfold live_graph_load in *.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma use_index_atom : forall p,
+    (T_use_index (R.prepare p) <=
+      512 * live_clock_atom p * N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. pose proof (seed_index_atom p) as Hindex.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    time_unfold T_use_index. unfold live_graph_load in *.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma live_pair_insert_atom : forall p x edge table,
+    (N.of_nat (Pos.size_nat x + 1) <= live_clock_scale * live_clock_width p)%N ->
+    (N.of_nat (Pos.size_nat edge + 1) <= live_clock_scale * live_clock_width p)%N ->
+    (T_live_pair_insert x edge table <= 4 * live_clock_atom p)%N.
+  Proof.
+    intros p x edge table Hx Hedge.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_get_atom _ p x table Hx) as Hget.
+    time_unfold T_live_pair_insert.
+    destruct (trie_get x table) as [row|].
+    all: let edge := constr:(edge) in match goal with
+      | |- context [PTrieCode.T_set edge tt ?row] =>
+        pose proof (live_set_atom _ p edge tt row Hedge) as Hinner;
+        pose proof (live_set_atom _ p x (PTrieCode.set edge tt row) table Hx) as Houter
+      end; nia.
+  Qed.
+
+  Lemma kill_index_atom : forall p,
+    (T_kill_index (R.prepare p) <=
+      32 * live_clock_atom p * N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. set (q := R.prepare p).
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_edges_atom p) as Hedges.
+    pose proof (live_def_count q) as Hdefs.
+    time_unfold T_kill_index. fold q in Hedges |- *.
+    let q := constr:(q) in match goal with
+    | |- context [List.T_fold_right ?step ?clock Empty (C.edges q)] =>
+      assert (Hfold : (List.T_fold_right step clock Empty (C.edges q) <=
+        (16 * live_clock_atom p + 1) * N.of_nat
+          (fold_right (fun e n => (length (U.defs q e) + 1 + n)%nat) 0%nat (C.edges q))
+        + 1)%N)
+    end.
+    { apply live_fold_clock_weight; [intros; lia|]. intros e He state; cbn beta.
+      pose proof (live_defs_atom p e He) as Hreader.
+      pose proof (live_encode_edge_atom p e He) as Hencode.
+      pose proof (live_edge_key p e He) as Hedge.
+      let state := constr:(state) in let q := constr:(q) in let e := constr:(e) in
+      match goal with
+      | |- context [List.T_fold_right ?step ?clock state (U.defs q e)] =>
+        assert (Hinner : (List.T_fold_right step clock state (U.defs q e) <=
+          (8 * live_clock_atom p + 1) * N.of_nat (length (U.defs q e)) + 1)%N)
+      end.
+      { apply live_fold_clock_uniform; intros x Hx acc; cbn beta.
+        pose proof (live_variable_key p x (live_defs_universe q e x He Hx)) as Hvar.
+        pose proof (live_pair_insert_atom p x (E.encode e) acc Hvar Hedge) as Hinsert.
+        unfold T_live_pair_insert in Hinsert.
+        destruct (trie_get x acc); nia. }
+      eapply N.le_trans with (m := (1 + (live_clock_atom p *
+        N.of_nat (length (U.defs q e) + 1) +
+        ((8 * live_clock_atom p + 1) * N.of_nat (length (U.defs q e)) + 1)))%N).
+      - apply N.add_le_mono_l, N.add_le_mono; assumption.
+      - rewrite Nat2N.inj_add. nia. }
+    rewrite live_fold_lengths in Hfold. unfold live_graph_load.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma live_intersection_atom : forall p defs old,
+    incl defs (U.universe (R.prepare p)) ->
+    (T_live_intersection defs old <=
+      4 * live_clock_atom p * N.of_nat (length defs + 1))%N.
+  Proof.
+    intros p defs; induction defs as [|x rest IH]; intros old Hvars.
+    - pose proof (live_clock_atom_positive p) as Hpositive. time_step.
+    - pose proof (live_clock_atom_positive p) as Hpositive.
+      pose proof (live_variable_key p x (Hvars x (or_introl eq_refl))) as Hx.
+      specialize (IH old ltac:(intros y Hy; apply Hvars; now right)).
+      pose proof (live_set_atom _ p x tt (live_intersection rest old) Hx) as Hset.
+      time_unfold T_live_intersection. destruct old as [row|].
+      + pose proof (live_member_atom p x row Hx) as Hmember.
+        destruct (live_member x row); cbn [length]; rewrite !Nat2N.inj_add in *; nia.
+      + cbn [length]; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
+  Lemma live_kill_add_atom : forall p src dst defs table,
+    (N.of_nat (Pos.size_nat src + 1) <= live_clock_scale * live_clock_width p)%N ->
+    (N.of_nat (Pos.size_nat dst + 1) <= live_clock_scale * live_clock_width p)%N ->
+    incl defs (U.universe (R.prepare p)) ->
+    (T_live_kill_add src dst defs table <=
+      16 * live_clock_atom p * N.of_nat (length defs + 1))%N.
+  Proof.
+    intros p src dst defs table Hsrc Hdst Hvars.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_get_atom _ p dst table Hdst) as Hgetdst.
+    time_unfold T_live_kill_add. destruct (trie_get dst table) as [row|].
+    all: let defs := constr:(defs) in let src := constr:(src) in match goal with
+      | |- context [T_live_intersection defs (trie_get src ?row)] =>
+        pose proof (live_get_atom _ p src row Hsrc) as Hgetsrc;
+        pose proof (live_intersection_atom p defs (trie_get src row) Hvars) as Hinter;
+        pose proof (live_set_atom _ p src (live_intersection defs (trie_get src row))
+          row Hsrc) as Hsetsrc;
+        pose proof (live_set_atom _ p dst
+          (PTrieCode.set src (live_intersection defs (trie_get src row)) row) table Hdst)
+          as Hsetdst
+      end; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
+  Lemma reverse_index_atom : forall p es,
+    incl es (C.edges (R.prepare p)) ->
+    (T_reverse_index (R.prepare p) es <= 32 * live_clock_atom p *
+      N.of_nat (length es + length (flat_map (U.defs (R.prepare p)) es) + 1))%N.
+  Proof.
+    intros p es Hlisted. set (q := R.prepare p).
+    pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    time_unfold T_reverse_index. fold q in Hlisted, Hwf |- *.
+    let es := constr:(es) in match goal with
+    | |- context [List.T_fold_right ?step ?clock Empty es] =>
+      assert (Hfold : (List.T_fold_right step clock Empty es <=
+        (24 * live_clock_atom p + 1) * N.of_nat
+          (fold_right (fun e n => (length (U.defs q e) + 1 + n)%nat) 0%nat es) + 1)%N)
+    end.
+    { apply live_fold_clock_weight; [intros; lia|]. intros e He state; cbn beta.
+      pose proof (Hlisted e He) as Hedge.
+      destruct (C.edges_nodes q e Hwf Hedge) as [Hsrc Hdst].
+      pose proof (live_src_atom p e) as Hsrcclock.
+      pose proof (live_dst_atom p e) as Hdstclock.
+      pose proof (live_encode_node_atom p (C.src q e) Hsrc) as Hsrcenc.
+      pose proof (live_encode_node_atom p (C.dst q e) Hdst) as Hdstenc.
+      pose proof (live_defs_atom p e Hedge) as Hreader.
+      pose proof (live_kill_add_atom p (N.encode (C.src q e)) (N.encode (C.dst q e))
+        (U.defs q e) state (live_node_key p (C.src q e) Hsrc)
+        (live_node_key p (C.dst q e) Hdst)
+        ltac:(intros x Hx; exact (live_defs_universe q e x Hedge Hx))) as Hkill.
+      fold q in Hsrcclock, Hdstclock, Hreader.
+      rewrite !Nat2N.inj_add in *. nia. }
+    rewrite live_fold_lengths in Hfold. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma reverse_kills_atom : forall p,
+    (T_reverse_kills (R.prepare p) <=
+      64 * live_clock_atom p * N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_edges_atom p) as Hedges.
+    pose proof (live_def_count (R.prepare p)) as Hdefs.
+    pose proof (reverse_index_atom p (C.edges (R.prepare p)) (incl_refl _)) as Hreverse.
+    time_unfold T_reverse_kills. unfold live_graph_load. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma use_index_bound : forall p,
+    (T_use_index (R.prepare p) <= live_index_budget * N.of_nat (function_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro p. pose proof (use_index_atom p) as Hindex.
+    pose proof (live_graph_load_bound p) as Hload.
+    eapply N.le_trans; [exact Hindex|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hload|].
+    unfold live_clock_atom, live_clock_width, live_index_budget. nia.
+  Qed.
+
+  Lemma kill_index_bound : forall p,
+    (T_kill_index (R.prepare p) <= live_index_budget * N.of_nat (function_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro p. pose proof (kill_index_atom p) as Hindex.
+    pose proof (live_graph_load_bound p) as Hload.
+    eapply N.le_trans; [exact Hindex|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hload|].
+    unfold live_clock_atom, live_clock_width, live_index_budget. nia.
+  Qed.
+
   (** Indexing reads each variable occurrence once at the syntax width. *)
   Lemma T0_use_index : forall p,
     (T_use_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact use_index_bound.
+  Qed.
   (** The kill index reads each definition occurrence once at the syntax width. *)
   Lemma T0_kill_index : forall p,
     (T_kill_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact kill_index_bound.
+  Qed.
   (** A variable's search charges each visited point and incoming occurrence. *)
   Lemma T1_explore : forall p x, In x (U.universe (R.prepare p)) ->
     (T_explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)) x <=
