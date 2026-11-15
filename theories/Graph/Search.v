@@ -1880,6 +1880,108 @@ Proof.
   rewrite Hactive in Hcont. exists final. now apply search_continuation_roots.
 Qed.
 
+(** Successor-closed listed graphs produce the complete ordered DFS derivation. *)
+Lemma prepared_search_depth_first_closed g roots :
+  counts_ok g ->
+  (forall u v, In u (nodes g) -> edge (base g) u v -> In v (nodes g)) ->
+  (forall r, In r roots -> In r (nodes g)) ->
+  exists final, dfs_roots (base g) [] roots (prepared_search_trace g roots) final.
+Proof.
+  intros Hcounts Hclosed Hroots.
+  destruct (prepared_search_complete_closed g roots Hcounts Hclosed Hroots) as [es Hrun].
+  unfold prepared_search_trace. rewrite Hrun.
+  eapply search_finished_depth_first. rewrite <- search_loopN_fuel. exact Hrun.
+Qed.
+
+(** A trace's key width includes the supplied roots and rows of its entered vertices. *)
+Definition search_trace_width g roots es :=
+  graph_max (vertex_width roots)
+    (fold_right (fun u w => graph_max (vertex_width (succs g u)) w) 0 (entered es)).
+
+Lemma search_row_width_bound g vertices u : In u vertices ->
+  vertex_width (succs g u) <=
+    fold_right (fun x w => graph_max (vertex_width (succs g x)) w) 0 vertices.
+Proof.
+  induction vertices as [|v rest IH]; [contradiction|].
+  intros [Heq|Hin]; cbn [fold_right]; rewrite search_graph_max.
+  - subst v. apply Nat.le_max_l.
+  - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+Lemma search_trace_row_width g roots es u : In u (entered es) ->
+  vertex_width (succs g u) <= search_trace_width g roots es.
+Proof.
+  intro Hin. unfold search_trace_width. rewrite search_graph_max.
+  eapply Nat.le_trans; [apply search_row_width_bound; exact Hin|apply Nat.le_max_r].
+Qed.
+
+Lemma search_trace_root_width g roots es v : In v roots ->
+  Pos.size_nat v <= search_trace_width g roots es.
+Proof.
+  intro Hin. unfold search_trace_width. rewrite search_graph_max.
+  eapply Nat.le_trans; [apply search_vertex_width_member; exact Hin|apply Nat.le_max_l].
+Qed.
+
+(** An entered row's width suffices to transfer the task key-width invariant. *)
+Lemma search_tasks_width_step g w st next :
+  Forall (search_task_valid (fun v => Pos.size_nat v <= w)) (search_tasks st) ->
+  (forall v, In (Enter v) (search_events next) -> vertex_width (succs g v) <= w) ->
+  search_step g st = inl next ->
+  Forall (search_task_valid (fun v => Pos.size_nat v <= w)) (search_tasks next).
+Proof.
+  intros Hvalid Hrows Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hvalid as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [v|u row|v]; cbn [search_step] in Hstep.
+  - destruct (trie_get v colours); inversion Hstep; subst next.
+    + exact Htail.
+    + constructor.
+      * split; [exact Htask|]. apply Forall_forall. intros x Hin.
+        eapply Nat.le_trans; [apply search_vertex_width_member; exact Hin|].
+        apply Hrows. now left.
+      * constructor; [exact Htask|exact Htail].
+  - destruct row as [|v row].
+    + inversion Hstep; subst next. exact Htail.
+    + destruct Htask as [Hu Hrow].
+      inversion Hrow as [|v0 row0 Hv Hrest]; subst v0 row0.
+      destruct (trie_get v colours); inversion Hstep; subst next.
+      * constructor; [split; assumption|exact Htail].
+      * constructor; [exact Hv|]. constructor; [split; assumption|exact Htail].
+  - inversion Hstep; subst next. exact Htail.
+Qed.
+
+(** The bound uses the actual returned trace, even with incorrect cached counts. *)
+Lemma prepared_search_tasks_width g roots n : n <= N.to_nat (search_budget g roots) ->
+  Forall (search_task_valid (fun v => Pos.size_nat v <=
+      search_trace_width (base g) roots (prepared_search_trace g roots)))
+    (search_tasks (Nat.iter n (search_advance (base g))
+      (SearchState (map SearchRoot roots) Empty []))).
+Proof.
+  induction n as [|n IH]; intro Hfuel.
+  - change (Forall (search_task_valid (fun v => Pos.size_nat v <=
+      search_trace_width (base g) roots (prepared_search_trace g roots)))
+      (map SearchRoot roots)).
+    apply Forall_forall. intros task Hin. apply in_map_iff in Hin.
+    destruct Hin as [v [Heq Hin]]. subst task. apply search_trace_root_width. exact Hin.
+  - assert (Hbefore : n <= N.to_nat (search_budget g roots)) by lia.
+    specialize (IH Hbefore). rewrite Nat.iter_succ.
+    destruct (search_step (base g) (Nat.iter n (search_advance (base g))
+      (SearchState (map SearchRoot roots) Empty []))) as [next|es] eqn:Hstep.
+    + assert (Hadvance : search_advance (base g) (Nat.iter n (search_advance (base g))
+        (SearchState (map SearchRoot roots) Empty [])) = next).
+      { unfold search_advance at 1. now rewrite Hstep. }
+      rewrite Hadvance. eapply search_tasks_width_step; [exact IH| |exact Hstep].
+      intros v Hin. apply search_trace_row_width. apply search_entered_member.
+      destruct (prepared_search_iter_prefix g roots (S n) Hfuel) as [suffix Hprefix].
+      rewrite Nat.iter_succ, Hadvance in Hprefix. rewrite Hprefix.
+      apply in_or_app. left. rewrite <- in_rev. exact Hin.
+    + assert (Hadvance : search_advance (base g) (Nat.iter n (search_advance (base g))
+        (SearchState (map SearchRoot roots) Empty [])) =
+        Nat.iter n (search_advance (base g)) (SearchState (map SearchRoot roots) Empty [])).
+      { unfold search_advance at 1. now rewrite Hstep. }
+      rewrite Hadvance. exact IH.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -1898,7 +2000,11 @@ Module Search (V : VISITOR) <: SEARCH V.
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     exists final, dfs_roots (base g) [] roots (trace g roots) final.
-  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
+  Proof.
+    intros g roots Hcounts Hgraph Hroots.
+    apply prepared_search_depth_first_closed; [exact Hcounts| |exact Hroots].
+    exact (search_wf_closed g Hgraph).
+  Qed.
 
   Lemma dfs_fold : forall g roots s,
     counts_ok g -> wf_graph (base g) ->
