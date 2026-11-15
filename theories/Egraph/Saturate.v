@@ -368,6 +368,259 @@ Proof.
 Qed.
 
 
+(** * Pattern fold proofs *)
+
+(** Child constraints preserve length and mark exactly the listed child positions. *)
+Lemma front_require_children_layout : forall i ch ss sh sh',
+  front_require_children i ch ss sh = Some sh' ->
+  length sh' = length sh /\ forall k, front_used sh' k <-> In k ch \/ front_used sh k.
+Proof.
+  intros i ch. induction ch as [|j ch IH]; intros [|s ss] sh sh' Hrun;
+    cbn [front_require_children] in Hrun; try discriminate.
+  - injection Hrun as <-. split; [reflexivity|]. intro k. cbn [In]. tauto.
+  - destruct (Nat.leb (S j) i) eqn:Hlt; [|discriminate].
+    destruct (front_require j s sh) as [sh1|] eqn:Hrequire; [|discriminate].
+    destruct (IH ss sh1 sh' Hrun) as [Hlen Hused].
+    destruct (front_require_layout j s sh sh1 Hrequire) as [Hlen1 Hused1].
+    split; [congruence|]. intro k. rewrite Hused, Hused1. cbn [In]. intuition congruence.
+Qed.
+
+(** Successful child constraints validate the earlier indices and their node sorts. *)
+Lemma front_require_children_sound : forall V i ch ss sh sh',
+  front_require_children i ch ss sh = Some sh' ->
+  forall g (ns : list (pnode V)), front_shape_sat g ns sh' ->
+    front_shape_sat g ns sh /\
+    Forall2 (fun j s => j < i /\ exists n,
+      nth_error ns j = Some n /\ pnode_sort g n = Some s) ch ss.
+Proof.
+  intros V i ch. induction ch as [|j ch IH]; intros [|s ss] sh sh' Hrun g ns Hsat;
+    cbn [front_require_children] in Hrun; try discriminate.
+  - injection Hrun as <-. split; [exact Hsat|constructor].
+  - destruct (Nat.leb (S j) i) eqn:Hlt; [|discriminate].
+    destruct (front_require j s sh) as [sh1|] eqn:Hrequire; [|discriminate].
+    destruct (IH ss sh1 sh' Hrun g ns Hsat) as [Hsat1 Hrest].
+    destruct (front_require_sound V j s sh sh1 Hrequire g ns Hsat1) as [Hsat0 Hsort].
+    split; [exact Hsat0|]. constructor; [|exact Hrest].
+    split; [apply Nat.leb_le in Hlt; lia|exact Hsort].
+Qed.
+
+(** Earlier children of the required sorts are accepted by the constraint traversal. *)
+Lemma front_require_children_complete : forall V i ch ss sh g (ns : list (pnode V)),
+  front_shape_sat g ns sh ->
+  Forall2 (fun j s => j < i /\ exists n,
+    nth_error ns j = Some n /\ pnode_sort g n = Some s) ch ss ->
+  exists sh', front_require_children i ch ss sh = Some sh' /\ front_shape_sat g ns sh'.
+Proof.
+  intros V i ch ss sh g ns Hsat Hchildren. revert sh Hsat.
+  induction Hchildren as [|j s ch ss Hhead Htail IH]; intros sh Hsat.
+  - exists sh. split; [reflexivity|exact Hsat].
+  - destruct Hhead as [Hlt Hsort].
+    destruct (front_require_complete V j s sh g ns Hsat Hsort) as [sh1 [Hreq Hsat1]].
+    destruct (IH sh1 Hsat1) as [sh' [Hrun Hsat']]. exists sh'. split; [|exact Hsat'].
+    cbn [front_require_children].
+    rewrite (proj2 (Nat.leb_le (S j) i) ltac:(lia)), Hreq. exact Hrun.
+Qed.
+
+(** References in a node list come from its first constructor or its suffix. *)
+Lemma front_referenced_cons : forall V (n : pnode V) ns k,
+  front_referenced (n :: ns) k <->
+  (match n with PApp _ ch => In k ch | _ => False end) \/ front_referenced ns k.
+Proof.
+  intros V n ns k. split.
+  - intros [i [f [ch [Hnth Hin]]]]. destruct i as [|i]; cbn [nth_error] in Hnth.
+    + injection Hnth as Hnode. subst n. left. exact Hin.
+    + right. exists i, f, ch. split; assumption.
+  - intros [Hhead|[i [f [ch [Hnth Hin]]]]].
+    + destruct n as [h|f ch|v]; try contradiction.
+      exists 0, f, ch. split; [reflexivity|exact Hhead].
+    + exists (S i), f, ch. split; assumption.
+Qed.
+
+(** Walking constructors adds exactly the child marks of the visited nodes. *)
+Lemma front_require_nodes_layout : forall V tb i (ns : list (pnode V)) sh sh',
+  front_require_nodes tb i ns sh = Some sh' ->
+  length sh' = length sh /\
+    forall k, front_used sh' k <-> front_referenced ns k \/ front_used sh k.
+Proof.
+  intros V tb i ns. revert i. induction ns as [|n ns IH]; intros i sh sh' Hrun;
+    cbn [front_require_nodes] in Hrun.
+  - injection Hrun as <-. split; [reflexivity|]. intro k. split; [tauto|].
+    intros [[j [f [ch [Hbad _]]]]|Hused]; [destruct j; discriminate|exact Hused].
+  - destruct n as [h|f ch|v].
+    + destruct (IH (S i) sh sh' Hrun) as [Hlen Hused]. split; [exact Hlen|].
+      intro k. rewrite front_referenced_cons. cbn. rewrite Hused. tauto.
+    + destruct (trie_get f tb) as [[ss out]|]; [|discriminate].
+      destruct out; try discriminate.
+      destruct (front_require_children i ch ss sh) as [sh1|] eqn:Hchildren;
+        [|discriminate].
+      destruct (IH (S i) sh1 sh' Hrun) as [Hlen Hused].
+      destruct (front_require_children_layout i ch ss sh sh1 Hchildren) as [Hlen1 Hused1].
+      split; [congruence|]. intro k.
+      rewrite Hused, Hused1, front_referenced_cons. cbn. tauto.
+    + destruct (IH (S i) sh sh' Hrun) as [Hlen Hused]. split; [exact Hlen|].
+      intro k. rewrite front_referenced_cons. cbn. rewrite Hused. tauto.
+Qed.
+
+(** Successful constructor constraints validate every visited constructor declaration. *)
+Lemma front_require_nodes_sound : forall V ds i (ns : list (pnode V)) sh sh',
+  front_require_nodes (decl_table ds) i ns sh = Some sh' ->
+  forall g all, front_shape_sat g all sh' ->
+    front_shape_sat g all sh /\ front_nodes_ok ds g all i ns.
+Proof.
+  intros V ds i ns. revert i. induction ns as [|n ns IH];
+    intros i sh sh' Hrun g all Hsat; cbn [front_require_nodes] in Hrun.
+  - injection Hrun as <-. split; [exact Hsat|]. intros j f ch Hbad.
+    destruct j; discriminate Hbad.
+  - destruct n as [h|f ch|v].
+    + destruct (IH (S i) sh sh' Hrun g all Hsat) as [Hsat0 Hnodes].
+      split; [exact Hsat0|]. intros [|j] f ch Hnth; [discriminate|].
+      replace (i + S j) with (S i + j) by lia. apply Hnodes. exact Hnth.
+    + destruct (trie_get f (decl_table ds)) as [[ss out]|] eqn:Hlookup;
+        [|discriminate]. destruct out; try discriminate.
+      destruct (front_require_children i ch ss sh) as [sh1|] eqn:Hchildren;
+        [|discriminate].
+      destruct (IH (S i) sh1 sh' Hrun g all Hsat) as [Hsat1 Hnodes].
+      destruct (front_require_children_sound V i ch ss sh sh1 Hchildren g all Hsat1)
+        as [Hsat0 Htyped].
+      destruct (proj1 (decl_table_lookup ds f ss OId) Hlookup) as [Hss Hkind].
+      split; [exact Hsat0|]. intros [|j] f' ch' Hnth.
+      * cbn [nth_error] in Hnth. injection Hnth as <- <-.
+        split; [exact Hkind|]. exists ss. split; [exact Hss|].
+        rewrite Nat.add_0_r. exact Htyped.
+      * replace (i + S j) with (S i + j) by lia. apply Hnodes. exact Hnth.
+    + destruct (IH (S i) sh sh' Hrun g all Hsat) as [Hsat0 Hnodes].
+      split; [exact Hsat0|]. intros [|j] f ch Hnth; [discriminate|].
+      replace (i + S j) with (S i + j) by lia. apply Hnodes. exact Hnth.
+Qed.
+
+(** Well-sorted constructors are accepted while preserving an interpretation of the shapes. *)
+Lemma front_require_nodes_complete : forall V ds i (ns : list (pnode V)) sh g all,
+  front_shape_sat g all sh -> front_nodes_ok ds g all i ns ->
+  exists sh', front_require_nodes (decl_table ds) i ns sh = Some sh' /\
+    front_shape_sat g all sh'.
+Proof.
+  intros V ds i ns. revert i. induction ns as [|n ns IH]; intros i sh g all Hsat Hnodes.
+  - exists sh. split; [reflexivity|exact Hsat].
+  - assert (Htail : front_nodes_ok ds g all (S i) ns).
+    {
+      intros j f ch Hnth. replace (S i + j) with (i + S j) by lia.
+      apply Hnodes. exact Hnth.
+    }
+    destruct n as [h|f ch|v].
+    + apply (IH (S i) sh g all Hsat Htail).
+    + destruct (Hnodes 0 f ch eq_refl) as [Hkind [ss [Hss Htyped]]].
+      rewrite Nat.add_0_r in Htyped.
+      destruct (front_require_children_complete V i ch ss sh g all Hsat Htyped)
+        as [sh1 [Hchildren Hsat1]].
+      destruct (IH (S i) sh1 g all Hsat1 Htail) as [sh' [Hrun Hsat']].
+      exists sh'. split; [|exact Hsat']. cbn [front_require_nodes].
+      rewrite (proj2 (decl_table_lookup ds f ss OId) (conj Hss Hkind)), Hchildren.
+      exact Hrun.
+    + apply (IH (S i) sh g all Hsat Htail).
+Qed.
+
+
+(** * Completed pattern shapes *)
+
+(** Every final shape has a sort and is referenced by a root or constructor. *)
+Definition front_ready (sh : list front_shape) : Prop :=
+  Forall (fun shape => exists s, shape = (Some s, true)) sh.
+
+(** A shape list is ready exactly when every position is marked with a sort. *)
+Lemma front_ready_used : forall sh,
+  front_ready sh <-> forall j, j < length sh -> front_used sh j.
+Proof.
+  induction sh as [|shape sh IH].
+  - split.
+    + intros _ j Hlt. cbn [length] in Hlt. lia.
+    + intro. constructor.
+  - split.
+    + intro Hready. inversion Hready as [|shape' sh' [s Hshape] Htail]; subst.
+      intros [|j] Hlt.
+      * exists s. reflexivity.
+      * apply (proj1 IH Htail j). cbn [length] in Hlt. lia.
+    + intro Hused. destruct (Hused 0 ltac:(cbn [length]; lia)) as [s Hshape].
+      cbn [nth_error] in Hshape. injection Hshape as Hshape. constructor.
+      * exists s. exact Hshape.
+      * apply (proj2 IH). intros j Hlt. apply (Hused (S j)). cbn [length]. lia.
+Qed.
+
+(** Shape interpretation keeps one shape for each input node. *)
+Lemma front_shape_sat_length : forall V g (ns : list (pnode V)) sh,
+  front_shape_sat g ns sh -> length sh = length ns.
+Proof.
+  intros V g ns sh Hsat. induction Hsat; cbn [length]; congruence.
+Qed.
+
+(** Every child in a well-sorted constructor is earlier than that constructor. *)
+Lemma front_children_before : forall V i g (ns : list (pnode V)) ch ss,
+  Forall2 (fun j s => j < i /\ exists n,
+    nth_error ns j = Some n /\ pnode_sort g n = Some s) ch ss ->
+  forall j, In j ch -> j < i.
+Proof.
+  intros V i g ns ch ss Htyped. induction Htyped as [|k s ch ss Hhead Htail IH];
+    intros j Hin; cbn [In] in Hin; [contradiction|].
+  destruct Hin as [<-|Hin]; [exact (proj1 Hhead)|apply IH; exact Hin].
+Qed.
+
+(** A reference in a well-sorted node list comes from a later constructor. *)
+Lemma front_referenced_later : forall V ds g (ns : list (pnode V)) j,
+  front_nodes_ok ds g ns 0 ns -> front_referenced ns j ->
+  exists i f ch, j < i /\ nth_error ns i = Some (PApp f ch) /\ In j ch.
+Proof.
+  intros V ds g ns j Hnodes [i [f [ch [Hnth Hin]]]].
+  destruct (Hnodes i f ch Hnth) as [_ [ss [_ Htyped]]].
+  exists i, f, ch. split; [|split; assumption].
+  eapply front_children_before; [exact Htyped|exact Hin].
+Qed.
+
+(** A well-sorted pattern is exactly a complete compatible set of computed constraints. *)
+Lemma front_pattern_shapes : forall V ds (ns : list (pnode V)) r g,
+  pat_ok (lookup_sorts ds) (lookup_kind ds) g (FPat V ns r) <->
+  S r = length ns /\ exists sh sh',
+    front_require r SId (map front_initial ns) = Some sh /\
+    front_require_nodes (decl_table ds) 0 ns sh = Some sh' /\
+    front_shape_sat g ns sh' /\ front_ready sh'.
+Proof.
+  intros V ds ns r g. split.
+  - intros [Hlast [Hroot [Hcoverage Hnodes]]].
+    destruct (front_require_complete V r SId (map front_initial ns) g ns
+      (front_initial_sat V g ns) Hroot) as [sh [Hroot_run Hsat]].
+    assert (Htyped : front_nodes_ok ds g ns 0 ns).
+    { intros i f ch Hnth. apply Hnodes. exact Hnth. }
+    destruct (front_require_nodes_complete V ds 0 ns sh g ns Hsat Htyped)
+      as [sh' [Hnodes_run Hsat']].
+    split; [exact Hlast|]. exists sh, sh'. split; [exact Hroot_run|].
+    split; [exact Hnodes_run|]. split; [exact Hsat'|].
+    apply front_ready_used. intros j Hlt.
+    pose proof (front_shape_sat_length V g ns sh' Hsat') as Hlen.
+    destruct (front_require_nodes_layout V (decl_table ds) 0 ns sh sh' Hnodes_run)
+      as [_ Hnodes_used]. apply Hnodes_used.
+    destruct (Nat.eq_dec j r) as [->|Hneq].
+    + right. apply (proj2 (proj2 (front_require_layout r SId _ sh Hroot_run) r)).
+      left. reflexivity.
+    + left. assert (j < r) by (cbn [root nodes] in Hlast; lia).
+      destruct (Hcoverage j H) as [i [f [ch [_ [Hnth Hin]]]]].
+      exists i, f, ch. split; assumption.
+  - intros [Hlast [sh [sh' [Hroot_run [Hnodes_run [Hsat' Hready]]]]]].
+    destruct (front_require_nodes_sound V ds 0 ns sh sh' Hnodes_run g ns Hsat')
+      as [Hsat Hnodes].
+    destruct (front_require_sound V r SId _ sh Hroot_run g ns Hsat) as [_ Hroot].
+    unfold pat_ok. cbn [root nodes]. split; [exact Hlast|]. split; [exact Hroot|].
+    split.
+    + intros j Hlt. apply (front_referenced_later V ds g ns j Hnodes).
+      pose proof (front_shape_sat_length V g ns sh' Hsat') as Hlen.
+      pose proof (proj1 (front_ready_used sh') Hready j ltac:(lia)) as Hused.
+      destruct (front_require_nodes_layout V (decl_table ds) 0 ns sh sh' Hnodes_run)
+        as [_ Hnodes_used]. apply Hnodes_used in Hused. destruct Hused as [Href|Hused];
+        [exact Href|].
+      apply (proj2 (front_require_layout r SId _ sh Hroot_run) j) in Hused.
+      destruct Hused as [Heq|Hinitial]; [lia|].
+      exfalso. apply (front_initial_unused V ns j). exact Hinitial.
+    + intros i f ch Hnth. apply Hnodes. exact Hnth.
+Qed.
+
+
 (** The first-error traversal succeeds exactly when every item passes. *)
 Lemma front_first_bad_none : forall A (check : A -> bool) xs,
   front_first_bad check xs = None <-> Forall (fun x => check x = true) xs.
