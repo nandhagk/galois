@@ -7619,4 +7619,65 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         (search_row_count (initial cs db)) next)|]; lia.
   Qed.
 
+  (** Any valid initialization and continuing-step potential bounds pay for the full search. *)
+  Lemma T_best_potential_bound : forall cs db (potential : state -> N),
+    D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    (T_initial cs db + potential (initial cs db) <= k_step *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N ->
+    (forall s next, reachable cs db s -> step cs db s = inl next ->
+      (T_step cs db s + potential next <= potential s + k_step *
+        N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+        N.of_nat (cost_width db + 1))%N) ->
+    (T_best cs db <= c_ex *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + 1) +
+        (R db + 1) * (Nat.log2 (R db) + 1)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db potential Hwf Hcanonical Hinventory Hinitial Hstep.
+    assert (Hadvance : forall s next, reachable cs db s -> step cs db s = inl next ->
+      reachable cs db next /\
+      (T_step cs db s + potential next <= potential s + k_step *
+        N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+        N.of_nat (cost_width db + 1))%N).
+    { intros s next Hreach Hrun. split.
+      - unfold reachable in *. eapply rt_trans; [exact Hreach|]. now apply rt_step.
+      - exact (Hstep s next Hreach Hrun). }
+    assert (Hstop : forall s out, reachable cs db s -> step cs db s = inr out ->
+      (T_step cs db s <= k_step * N.of_nat (R db + 1))%N).
+    { intros s out Hreach Hrun.
+      exact (T1b_step_stop cs db s out Hwf Hcanonical Hinventory Hreach Hrun). }
+    assert (Hstart : reachable cs db (initial cs db)).
+    { unfold reachable. apply rt_refl. }
+    pose proof (extraction_loop_clock_amort (step cs db) (T_step cs db)
+      (reachable cs db) potential
+      (k_step * N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+        N.of_nat (cost_width db + 1))%N
+      (k_step * N.of_nat (R db + 1))%N Hadvance Hstop (R db + 1) (initial cs db) Hstart)
+      as Hloop.
+    pose proof (T2_best_loop cs db Hwf Hcanonical Hinventory) as Hdriver.
+    assert (Hcoefficient : (1 <= k_step)%N) by (unfold k_step; nia).
+    assert (Harity : N.of_nat (a db + Nat.log2 (R db) + 2) =
+      (N.of_nat (a db) + N.of_nat (Nat.log2 (R db)) + 2)%N).
+    { now rewrite !Nat2N.inj_add. }
+    assert (Hbudget : N.of_nat (inventory_bits cs + (R db + 1) *
+      (a db + Nat.log2 (R db) + 2)) =
+      (N.of_nat (inventory_bits cs) + N.of_nat (R db + 1) *
+        (N.of_nat (a db) + N.of_nat (Nat.log2 (R db)) + 2))%N).
+    { rewrite Nat2N.inj_add, Nat2N.inj_mul, Harity. reflexivity. }
+    rewrite Harity in Hloop. rewrite Hbudget in Hinitial.
+    pose proof (extraction_best_budget (T_initial cs db)
+      (T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db))
+      (T_best cs db) (potential (initial cs db)) k_step (N.of_nat (inventory_bits cs))
+      (N.of_nat (R db + 1)) (N.of_nat (a db)) (N.of_nat (Nat.log2 (R db)))
+      (N.of_nat (D.unit db + 1)) (N.of_nat (cost_width db + 1))
+      ltac:(lia) ltac:(lia) ltac:(lia) Hcoefficient Hinitial Hloop Hdriver) as Htotal.
+    rewrite <- Hbudget in Htotal.
+    assert (Hshape : inventory_bits cs + (R db + 1) * (a db + 1) +
+      (R db + 1) * (Nat.log2 (R db) + 1) =
+      inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) by ring.
+    assert (Hconstant : c_ex = (4 * k_step)%N) by (unfold c_ex, k_step; ring).
+    rewrite Hshape, Hconstant. exact Htotal.
+  Qed.
+
 End ExtractT.
