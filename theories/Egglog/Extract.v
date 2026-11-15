@@ -3234,6 +3234,533 @@ Module EnumeratedRows (V : VALUE) (I : INDEX V) (D : DATABASE V I).
     apply Permutation_length. now apply enumerated_rows_permutation.
   Qed.
 End EnumeratedRows.
+
+(** Flattening a list pays for each callback and each emitted element. *)
+Lemma extraction_flat_map_clock : forall A B (f : A -> list B) T_f a b xs,
+  (forall x, In x xs -> (T_f x <= a * N.of_nat (length (f x)) + b)%N) ->
+  (List.T_flat_map f T_f xs <=
+    (a + 1) * N.of_nat (length (flat_map f xs)) +
+    (b + 2) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros A B f T_f a b xs. induction xs as [|x xs IH]; intro Hcallback.
+  - time_unfold @List.T_flat_map. time_cbn. cbn [flat_map length]. nia.
+  - pose proof (Hcallback x ltac:(now left)) as Hhead.
+    specialize (IH ltac:(intros y Hy; apply Hcallback; now right)).
+    pose proof (Datatypes.T_app_le (f x) (flat_map f xs)) as Happ.
+    time_unfold @List.T_flat_map. time_simpl. time_cbn.
+    cbn [flat_map length]. rewrite length_app, !Nat2N.inj_add. cbn [N.of_nat]. nia.
+Qed.
+
+(** Nonempty branches account for every visited child in the flattened output. *)
+Lemma extraction_flat_map_live : forall A B (f : A -> list B) xs,
+  (forall x, In x xs -> f x <> []) -> length xs <= length (flat_map f xs).
+Proof.
+  intros A B f xs. induction xs as [|x xs IH]; intro Hlive; [cbn; lia |].
+  specialize (IH ltac:(intros y Hy; apply Hlive; now right)).
+  pose proof (Hlive x ltac:(now left)) as Hhead.
+  assert (Hlength : 1 <= length (f x)).
+  { destruct (f x); [contradiction |cbn; lia]. }
+  cbn [flat_map length]. rewrite length_app. lia.
+Qed.
+
+(** Productive index walks charge depth only to complete output paths. *)
+Lemma T_index_paths_productive : forall V child T_child children T_children
+    (valid : nat -> positive -> Prop) b,
+  (1 <= b)%N ->
+  (forall rest node c, valid (S rest) node -> In c (children node) ->
+    (T_child node c <= b)%N) ->
+  (forall rest node, valid (S rest) node ->
+    (T_children node <= b * N.of_nat (length (children node) + 1))%N) ->
+  (forall rest node c, valid (S rest) node -> In c (children node) ->
+    exists next, child node c = Some next /\ valid rest next /\
+      @index_paths V child children rest next <> []) ->
+  forall fuel node, valid fuel node ->
+    (T_index_paths child T_child children T_children fuel node <=
+      32 * b * N.of_nat (fuel * length (index_paths child children fuel node)) +
+      4 * b)%N.
+Proof.
+  intros V child T_child children T_children valid b Hb Hchild Hchildren Hlive fuel.
+  induction fuel as [|rest IH]; intros node Hvalid.
+  - time_unfold @T_index_paths. time_cbn. nia.
+  - set (branch := fun c => match child node c with
+      | Some next => map (cons c) (index_paths child children rest next)
+      | None => [] end).
+    set (clock := fun c => (1 + (T_child node c + match child node c with
+      | Some next => T_index_paths child T_child children T_children rest next +
+        ListDef.T_map (cons c) (fun _ => 1%N) (index_paths child children rest next)
+      | None => 0 end))%N).
+    assert (Hcallback : forall c, In c (children node) ->
+      (clock c <= (32 * b * N.of_nat rest + 2) * N.of_nat (length (branch c)) +
+        7 * b)%N).
+    { intros c Hin. destruct (Hlive rest node c Hvalid Hin)
+        as [next [Hnext [Hnextvalid Hnonempty]]].
+      pose proof (Hchild rest node c Hvalid Hin) as Hprobe.
+      pose proof (IH next Hnextvalid) as Hwalk.
+      pose proof (ListDef.T_map_le (cons c) (fun _ => 1%N) 1%N
+        (index_paths child children rest next) ltac:(intro; reflexivity)) as Hmap.
+      unfold clock, branch. rewrite Hnext, length_map.
+      rewrite Nat2N.inj_mul in Hwalk. nia. }
+    pose proof (extraction_flat_map_clock _ _ branch clock
+      (32 * b * N.of_nat rest + 2)%N (7 * b)%N (children node) Hcallback) as Hflat.
+    assert (Hcount : length (children node) <= length (flat_map branch (children node))).
+    { apply extraction_flat_map_live. intros c Hin.
+      destruct (Hlive rest node c Hvalid Hin) as [next [Hnext [_ Hnonempty]]].
+      unfold branch. rewrite Hnext. intro Hnil.
+      apply Hnonempty. now apply map_eq_nil in Hnil. }
+    pose proof (Hchildren rest node Hvalid) as Hlist.
+    change (1 + (T_children node + List.T_flat_map branch clock (children node)) <=
+      32 * b * N.of_nat (S rest * length (flat_map branch (children node))) + 4 * b)%N.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** Splitting an output identifier reads its tuple at most twice. *)
+Lemma T_extraction_decode_le : forall V f (u : list (cell V)),
+  (T_extraction_decode f u <= 4 * N.of_nat (length u + 1))%N.
+Proof.
+  intros V f u. pose proof (List.T_rev_append_le u []) as Hfirst.
+  assert (Hlength : length (rev_append u []) = length u).
+  { rewrite <- rev_alt, length_rev. reflexivity. }
+  time_unfold @T_extraction_decode. time_simpl. time_cbn.
+  destruct (rev_append u []) as [|[i|v] tail] eqn:Hreverse; try nia.
+  pose proof (List.T_rev_append_le tail []) as Hsecond.
+  cbn [length] in Hlength. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** One-element images preserve the number of source paths. *)
+Lemma extraction_flat_map_singletons : forall A B (f : A -> list B) xs,
+  (forall x, In x xs -> length (f x) = 1) -> length (flat_map f xs) = length xs.
+Proof.
+  intros A B f xs. induction xs as [|x xs IH]; intro Hsingle; [reflexivity |].
+  cbn [flat_map length]. rewrite length_app, Hsingle by now left.
+  rewrite IH; [reflexivity |]. intros y Hy. apply Hsingle. now right.
+Qed.
+
+(** A slot's logarithmic lookup budget fits its binary syntax. *)
+Lemma inventory_slot_log_width : forall n,
+  N.to_nat (N.log2 n) + 1 <= N.size_nat n + 1.
+Proof.
+  assert (Hsize : forall p, Pos.to_nat (Pos.size p) = Pos.size_nat p).
+  { induction p; cbn [Pos.size Pos.size_nat]; rewrite ?Pos2Nat.inj_succ, ?IHp;
+      reflexivity. }
+  intros [|[p|p|]]; cbn [N.log2 N.to_nat N.size_nat Pos.size_nat]; rewrite ?Hsize; lia.
+Qed.
+
+(** Scaling by positive navigation budgets covers each component's syntax allowance. *)
+Lemma enumeration_scale : forall b m u, (1 <= b)%N -> (1 <= u)%N ->
+  (m <= b * m * u)%N.
+Proof.
+  intros b m u Hb Hu. eapply N.le_trans; [|apply dag_budget_scale; exact Hu].
+  replace m with (1 * m)%N at 1 by ring. now apply N.mul_le_mono_r.
+Qed.
+
+(** Slot lookup, root access, traversal and decoding fit one entry allowance. *)
+Lemma enumeration_entry_budget : forall i d s q u index root paths decode,
+  (1 <= u)%N -> (index <= d * (s + 1))%N -> (root <= i)%N ->
+  (paths <= 128 * (i + 1) * (q + 1) * u)%N -> (decode <= 16 * (q + 1))%N ->
+  (2 + index + root + paths + decode <= 256 * (i + d + 1) * (s + q + 1) * u)%N.
+Proof.
+  intros i d s q u index root paths decode Hu Hindex Hroot Hpaths Hdecode.
+  set (b := (i + d + 1)%N). set (m := (s + q + 1)%N).
+  set (budget := (b * m * u)%N).
+  assert (Hb : (1 <= b)%N) by (unfold b; lia).
+  assert (Hm : (1 <= m)%N) by (unfold m; lia).
+  assert (Hmass : (m <= budget)%N) by (unfold budget; apply enumeration_scale; assumption).
+  assert (Hslot : (s + 1 <= m)%N) by (unfold m; lia).
+  assert (Hrows : (q + 1 <= m)%N) by (unfold m; lia).
+  assert (Hfunction : (i + 1 <= b)%N) by (unfold b; lia).
+  assert (Hdatabase : (d <= b)%N) by (unfold b; lia).
+  assert (Hlookup : (index <= budget)%N).
+  { eapply N.le_trans; [exact Hindex |]. eapply N.le_trans.
+    - apply N.mul_le_mono; [exact Hdatabase |exact Hslot].
+    - unfold budget. apply dag_budget_scale. exact Hu. }
+  assert (Hroot' : (root <= budget)%N).
+  { eapply N.le_trans; [exact Hroot |]. eapply N.le_trans with (m := b); [unfold b; lia |].
+    eapply N.le_trans with (m := (b * m)%N); [apply dag_budget_scale; exact Hm |].
+    unfold budget. apply dag_budget_scale. exact Hu. }
+  assert (Hwalk : (paths <= 128 * budget)%N).
+  { eapply N.le_trans; [exact Hpaths |].
+    replace (128 * (i + 1) * (q + 1) * u)%N with
+      (128 * ((i + 1) * (q + 1) * u))%N by ring.
+    apply N.mul_le_mono_l. unfold budget. apply N.mul_le_mono_r, N.mul_le_mono;
+      assumption. }
+  assert (Hsplit : (decode <= 16 * budget)%N).
+  { eapply N.le_trans; [exact Hdecode |]. apply N.mul_le_mono_l. lia. }
+  replace (256 * (i + d + 1) * (s + q + 1) * u)%N with (256 * budget)%N
+    by (unfold budget, b, m; ring).
+  clear - Hlookup Hroot' Hwalk Hsplit Hmass Hm. lia.
+Qed.
+
+(** Flattening one entry spends a fixed fraction of its allowance before the tail. *)
+Lemma enumeration_flat_budget : forall b u h m head tail append,
+  (1 <= b)%N -> (1 <= u)%N -> (1 <= h)%N ->
+  (head <= 256 * b * h * u)%N -> (tail <= 512 * b * m * u)%N -> (append <= h)%N ->
+  (1 + head + tail + append <= 512 * b * (h + m) * u)%N.
+Proof.
+  intros b u h m head tail append Hb Hu Hh Hhead Htail Happ.
+  pose proof (enumeration_scale b h u Hb Hu) as Hscale.
+  replace (512 * b * (h + m) * u)%N with
+    (512 * (b * h * u) + 512 * (b * m * u))%N by ring.
+  replace (256 * b * h * u)%N with (256 * (b * h * u))%N in Hhead by ring.
+  replace (512 * b * m * u)%N with (512 * (b * m * u))%N in Htail by ring.
+  clear - Hscale Hhead Htail Happ Hh. lia.
+Qed.
+
+(** Enumeration clocks depend on live tuple paths and public index width laws. *)
+Module EnumeratedRowsT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I).
+  Module Entries := EnumeratedRows V I D.
+  Module Rows := Entries.Rows.
+
+  (** Incrementing the fresh node counter adds at most one binary digit. *)
+  Lemma index_counter_succ_width : forall p,
+    Pos.size_nat (Pos.succ p) <= Pos.size_nat p + 1.
+  Proof.
+    induction p; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** A listed index child occurs in a stored tuple and fits its recorded width. *)
+  Lemma index_child_width : forall depth ix node pre c,
+    I.wf depth ix -> I.node ix node pre -> In c (I.children ix node) ->
+    cell_bits V.encode c <= I.max_cell_bits ix.
+  Proof.
+    intros depth ix node pre c Hwf Hnode Hin.
+    destruct (proj1 (proj1 (I.children_spec depth ix node pre c Hwf Hnode)) Hin)
+      as [next Hnext].
+    assert (Hnextnode : I.node ix next (pre ++ [c])).
+    { apply (proj1 (proj1 (I.child_spec depth ix node pre c Hwf Hnode) next)).
+      exact Hnext. }
+    destruct (I.node_live depth ix next (pre ++ [c]) Hwf Hnextnode
+      ltac:(destruct pre; discriminate)) as [suffix Hmember].
+    eapply I.max_cell_bits_mem; [exact Hwf |exact Hmember |].
+    apply in_or_app. left. apply in_or_app. right. now left.
+  Qed.
+
+  (** Empty and one-cell index probes fit the database's common spending unit. *)
+  Lemma stored_index_widths : forall db slot depth node pre,
+    D.wf db -> I.wf depth (D.index slot false db) ->
+    I.node (D.index slot false db) node pre ->
+    I.width (D.index slot false db) [] + 1 <= 4 * (D.unit db + 1) /\
+    forall c, In c (I.children (D.index slot false db) node) ->
+      I.width (D.index slot false db) [c] + 1 <= 4 * (D.unit db + 1).
+  Proof.
+    intros db slot depth node pre Hwf Hindex Hnode.
+    destruct (D.wmark_index db slot false Hwf) as [Hnext Hcells].
+    pose proof (dag_cost_size_mono _ _ Hnext) as Hcounter.
+    change (Pos.size_nat (I.next (D.index slot false db)) <=
+      N.size_nat (D.wmark db)) in Hcounter.
+    assert (Hunit : N.size_nat (D.wmark db) <= D.unit db) by (unfold D.unit; nia).
+    pose proof (index_counter_succ_width (I.next (D.index slot false db))) as Hsucc.
+    split.
+    - pose proof (I.width_le (D.index slot false db) []) as Hwidth.
+      change (I.width (D.index slot false db) [] <=
+        Pos.size_nat (I.next (D.index slot false db) + 1) + 0 +
+          I.max_cell_bits (D.index slot false db)) in Hwidth.
+      rewrite Pos.add_1_r in Hwidth. lia.
+    - intros c Hin. pose proof (I.width_le (D.index slot false db) [c]) as Hwidth.
+      pose proof (index_child_width depth _ node pre c Hindex Hnode Hin) as Hcell.
+      change (I.width (D.index slot false db) [c] <=
+        Pos.size_nat (I.next (D.index slot false db) + 1) +
+          Nat.max (cell_bits V.encode c) 0 + I.max_cell_bits (D.index slot false db))
+        in Hwidth.
+      rewrite Pos.add_1_r, Nat.max_0_r in Hwidth. lia.
+  Qed.
+
+  (** Complete inventory paths fund every navigation call and every copied prefix cell. *)
+  Lemma entry_paths_clock : forall db f slot arity,
+    D.wf db -> Entries.entry_ok db f slot arity ->
+    (T_index_paths (I.child (D.index slot false db)) (I.T_child (D.index slot false db))
+      (I.children (D.index slot false db)) (I.T_children (D.index slot false db))
+      (S arity) (I.root (D.index slot false db)) <=
+      128 * (I.c_ix + 1) * N.of_nat (S arity *
+        length (index_paths (I.child (D.index slot false db))
+          (I.children (D.index slot false db)) (S arity) (I.root (D.index slot false db))) + 1) *
+        N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros db f slot arity Hwf Hentry.
+    destruct Hentry as [perm [Hslot Hrows]].
+    assert (Hentry : Entries.entry_ok db f slot arity) by (exists perm; auto).
+    pose proof (D.index_wf db slot false f perm Hwf Hslot) as Hindex.
+    set (ix := D.index slot false db) in *.
+    set (b := (4 * (I.c_ix + 1) * N.of_nat (D.unit db + 1))%N).
+    assert (Hclock : (T_index_paths (I.child ix) (I.T_child ix)
+      (I.children ix) (I.T_children ix) (S arity) (I.root ix) <=
+      32 * b * N.of_nat (S arity *
+        length (index_paths (I.child ix) (I.children ix) (S arity) (I.root ix))) +
+      4 * b)%N).
+    { eapply T_index_paths_productive with
+        (valid := fun remaining node => exists pre, I.node ix node pre /\
+          length pre + remaining = S arity).
+      - unfold b. nia.
+      - intros remaining node c [pre [Hnode Hdepth]] Hin.
+        pose proof (proj2 (stored_index_widths db slot (length perm) node pre
+          Hwf Hindex Hnode) c Hin) as Hwidth.
+        pose proof (I.T_child_le ix node c) as Htime. fold ix in Hwidth.
+        unfold b. rewrite !Nat2N.inj_add in *. nia.
+      - intros remaining node [pre [Hnode Hdepth]].
+        pose proof (proj1 (stored_index_widths db slot (length perm) node pre
+          Hwf Hindex Hnode)) as Hwidth.
+        pose proof (I.T_children_le (length perm) ix node Hindex) as Htime.
+        rewrite (I.degree_spec (length perm) ix node pre Hindex Hnode) in Htime.
+        fold ix in Hwidth. unfold b. rewrite !Nat2N.inj_add in *. nia.
+      - intros remaining node c [pre [Hnode Hdepth]] Hin.
+        destruct (proj1 (proj1 (I.children_spec (length perm) ix node pre c Hindex Hnode)) Hin)
+          as [next Hnext].
+        exists next. split; [exact Hnext |]. split.
+        + exists (pre ++ [c]). split.
+          * apply (proj1 (proj1 (I.child_spec (length perm) ix node pre c
+              Hindex Hnode) next)). exact Hnext.
+          * rewrite length_app. cbn [length]. lia.
+        + destruct (Entries.entry_child_paths_live db f slot arity node pre c next remaining
+            Hwf Hentry Hnode Hdepth Hnext) as [suffix Hinpath].
+          fold ix in Hinpath. intro Hempty. rewrite Hempty in Hinpath. contradiction.
+      - exists []. split; [apply I.node_root with (length perm); exact Hindex |reflexivity]. }
+    unfold b in Hclock. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Every full-depth inventory path decodes to exactly one constructor row. *)
+  Lemma entry_rows_paths_length : forall db f slot arity,
+    D.wf db -> Entries.entry_ok db f slot arity ->
+    length (Entries.entry_rows db (f, (slot, arity))) =
+      length (index_paths (I.child (D.index slot false db))
+        (I.children (D.index slot false db)) (S arity) (I.root (D.index slot false db))).
+  Proof.
+    intros db f slot arity Hwf Hentry. unfold Entries.entry_rows, inventory_entry_rows.
+    apply extraction_flat_map_singletons. intros u Hin.
+    destruct (Entries.entry_paths_sound db f slot arity u Hwf Hentry Hin)
+      as [k [i [_ [_ ->]]]]. rewrite extraction_decode_complete. reflexivity.
+  Qed.
+
+  (** Splitting all paths costs their total tuple length plus a constant empty walk. *)
+  Lemma entry_decode_clock : forall db f slot arity,
+    D.wf db -> Entries.entry_ok db f slot arity ->
+    (List.T_flat_map (extraction_decode f) (T_extraction_decode f)
+      (index_paths (I.child (D.index slot false db))
+        (I.children (D.index slot false db)) (S arity) (I.root (D.index slot false db))) <=
+      16 * N.of_nat (S arity * length (Entries.entry_rows db (f, (slot, arity))) + 1))%N.
+  Proof.
+    intros db f slot arity Hwf Hentry.
+    pose proof (entry_rows_paths_length db f slot arity Hwf Hentry) as Hlength.
+    set (paths := index_paths (I.child (D.index slot false db))
+      (I.children (D.index slot false db)) (S arity) (I.root (D.index slot false db))) in *.
+    assert (Hcallback : forall u, In u paths ->
+      (T_extraction_decode f u <= 0 * N.of_nat (length (extraction_decode f u)) +
+        4 * N.of_nat (S arity + 1))%N).
+    { intros u Hin. pose proof (T_extraction_decode_le V.t f u) as Htime.
+      pose proof (index_paths_length V.t _ _ _ _ u Hin) as Hdepth. rewrite Hdepth in Htime.
+      exact Htime. }
+    pose proof (extraction_flat_map_clock _ _ (extraction_decode f) (T_extraction_decode f)
+      0%N (4 * N.of_nat (S arity + 1))%N paths Hcallback) as Hflat.
+    change (length (Entries.entry_rows db (f, (slot, arity))) = length paths) in Hlength.
+    change (List.T_flat_map (extraction_decode f) (T_extraction_decode f) paths <=
+      16 * N.of_nat (S arity * length (flat_map (extraction_decode f) paths) + 1))%N.
+    change (length (flat_map (extraction_decode f) paths) = length paths) in Hlength.
+    rewrite <- Hlength in Hflat. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *.
+    rewrite Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** An inventory entry pays for slot syntax and the tuples that it actually emits. *)
+  Lemma entry_rows_clock : forall db f slot arity,
+    D.wf db -> Entries.entry_ok db f slot arity ->
+    (T_inventory_entry_rows (fun s => D.index s false db)
+      (fun s => (1 + D.T_index s false db)%N) I.child I.T_child I.children I.T_children
+      I.root I.T_root (f, (slot, arity)) <=
+      256 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (N.size_nat slot + S arity *
+          length (Entries.entry_rows db (f, (slot, arity))) + 1) *
+        N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros db f slot arity Hwf Hentry.
+    pose proof (entry_paths_clock db f slot arity Hwf Hentry) as Hpaths.
+    pose proof (entry_decode_clock db f slot arity Hwf Hentry) as Hdecode.
+    pose proof (entry_rows_paths_length db f slot arity Hwf Hentry) as Hlength.
+    pose proof (D.T_index_le slot false db) as Hindex.
+    pose proof (inventory_slot_log_width slot) as Hslot.
+    pose proof (I.T_root_le (D.index slot false db)) as Hroot.
+    rewrite <- Hlength in Hpaths.
+    set (count := length (Entries.entry_rows db (f, (slot, arity)))) in *.
+    set (paths := T_index_paths (I.child (D.index slot false db))
+      (I.T_child (D.index slot false db)) (I.children (D.index slot false db))
+      (I.T_children (D.index slot false db)) (S arity) (I.root (D.index slot false db))) in *.
+    set (decode := List.T_flat_map (extraction_decode f) (T_extraction_decode f)
+      (index_paths (I.child (D.index slot false db))
+        (I.children (D.index slot false db)) (S arity) (I.root (D.index slot false db)))) in *.
+    change (1 + ((1 + D.T_index slot false db) +
+      (I.T_root (D.index slot false db) + paths + decode)) <=
+      256 * (I.c_ix + D.c_db + 1) * N.of_nat (N.size_nat slot + S arity * count + 1) *
+        N.of_nat (D.unit db + 1))%N.
+    assert (Hindex' : (D.T_index slot false db <=
+      D.c_db * (N.of_nat (N.size_nat slot) + 1))%N).
+    { eapply N.le_trans; [exact Hindex |]. apply N.mul_le_mono_l.
+      rewrite Nat2N.inj_add. cbn [N.of_nat]. lia. }
+    rewrite (Nat2N.inj_add (S arity * count) 1) in Hpaths, Hdecode.
+    pose proof (enumeration_entry_budget I.c_ix D.c_db (N.of_nat (N.size_nat slot))
+      (N.of_nat (S arity * count))
+      (N.of_nat (D.unit db + 1)) (D.T_index slot false db)
+      (I.T_root (D.index slot false db)) paths decode
+      ltac:(lia) Hindex' Hroot Hpaths Hdecode) as Hbudget.
+    rewrite (Nat2N.inj_add (N.size_nat slot + S arity * count) 1),
+      (Nat2N.inj_add (N.size_nat slot) (S arity * count)).
+    eapply N.le_trans; [|exact Hbudget]. lia.
+  Qed.
+
+  (** Empty slots contribute no arity charge, and nonempty slots use a recorded row arity. *)
+  Lemma entry_arity_mass : forall db f slot arity,
+    D.wf db -> Entries.entry_ok db f slot arity ->
+    S arity * length (Entries.entry_rows db (f, (slot, arity))) <=
+      (Rows.maximum_arity (Rows.rows db) + 1) *
+        length (Entries.entry_rows db (f, (slot, arity))).
+  Proof.
+    intros db f slot arity Hwf Hentry.
+    destruct (Entries.entry_rows db (f, (slot, arity))) as [|[[g k] i] rest] eqn:Hrows;
+      [cbn; lia |].
+    assert (Hin : In (g, k, i) (Entries.entry_rows db (f, (slot, arity)))).
+    { rewrite Hrows. now left. }
+    pose proof (Entries.entry_rows_sound db f slot arity g k i Hwf Hentry Hin) as Hrow.
+    pose proof (Entries.entry_rows_name db f slot arity g k i Hin) as Hname. subst g.
+    destruct Hentry as [perm [Hslot Hshape]].
+    destruct (Hshape k (Some (Id i)) Hrow) as [Harity [_ Hfull]].
+    assert (Hmember : In (f, k, i) (Rows.rows db)).
+    { apply Rows.rows_complete; [exact Hwf |exact Hrow |]. exists slot, perm. auto. }
+    pose proof (Rows.maximum_arity_member (Rows.rows db) f k i Hmember) as Hbound.
+    cbn [length]. nia.
+  Qed.
+
+  (** Concatenating entry enumerations pays their aggregate row count and inventory bits. *)
+  Lemma inventory_flat_clock : forall db cs, D.wf db ->
+    (forall f slot arity, In (f, (slot, arity)) cs -> Entries.entry_ok db f slot arity) ->
+    (List.T_flat_map
+      (inventory_entry_rows (fun s => D.index s false db) I.child I.children I.root)
+      (T_inventory_entry_rows (fun s => D.index s false db)
+        (fun s => (1 + D.T_index s false db)%N) I.child I.T_child I.children I.T_children
+        I.root I.T_root) cs <=
+      512 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (inventory_bits cs + (Rows.maximum_arity (Rows.rows db) + 1) *
+          length (Entries.enumerated_rows cs db) + 1) * N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros db cs Hwf.
+    set (emit := inventory_entry_rows (fun s => D.index s false db)
+      I.child I.children I.root).
+    set (clock := T_inventory_entry_rows (fun s => D.index s false db)
+      (fun s => (1 + D.T_index s false db)%N) I.child I.T_child I.children I.T_children
+      I.root I.T_root).
+    set (a := Rows.maximum_arity (Rows.rows db)).
+    change ((forall f slot arity, In (f, (slot, arity)) cs ->
+      Entries.entry_ok db f slot arity) ->
+      (List.T_flat_map emit clock cs <= 512 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (inventory_bits cs + (a + 1) * length (flat_map emit cs) + 1) *
+        N.of_nat (D.unit db + 1))%N).
+    induction cs as [|[f [slot arity]] cs IH]; intro Hentries.
+    - change (1 <= 512 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (0 + (a + 1) * 0 + 1) * N.of_nat (D.unit db + 1))%N.
+      rewrite Nat.mul_0_r. cbn [N.of_nat]. nia.
+    - pose proof (Hentries f slot arity ltac:(now left)) as Hentry.
+      pose proof (entry_rows_clock db f slot arity Hwf Hentry) as Hhead.
+      pose proof (entry_arity_mass db f slot arity Hwf Hentry) as Hmass.
+      specialize (IH ltac:(intros g s n Hin; apply Hentries; now right)).
+      set (headrows := emit (f, (slot, arity))). set (tailrows := flat_map emit cs).
+      change (clock (f, (slot, arity)) <= 256 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (N.size_nat slot + S arity * length headrows + 1) *
+        N.of_nat (D.unit db + 1))%N in Hhead.
+      change (S arity * length headrows <= (a + 1) * length headrows) in Hmass.
+      pose proof (Datatypes.T_app_le headrows tailrows) as Happ.
+      set (h := N.of_nat (Pos.size_nat f + N.size_nat slot + 1 +
+        (a + 1) * length headrows)).
+      set (m := N.of_nat (inventory_bits cs + (a + 1) * length tailrows + 1)).
+      assert (Hhead' : (clock (f, (slot, arity)) <=
+        256 * (I.c_ix + D.c_db + 1) * h * N.of_nat (D.unit db + 1))%N).
+      { eapply N.le_trans; [exact Hhead |]. apply N.mul_le_mono_r, N.mul_le_mono_l.
+        unfold h. clear - Hmass. lia. }
+      assert (Happ' : (Datatypes.T_app headrows tailrows <= h)%N).
+      { eapply N.le_trans; [exact Happ |]. unfold h.
+        replace (N.of_nat (length headrows) + 1)%N with
+          (N.of_nat (length headrows + 1)) by (rewrite Nat2N.inj_add; reflexivity).
+        clear - Hmass. nia. }
+      pose proof (enumeration_flat_budget (I.c_ix + D.c_db + 1)%N
+        (N.of_nat (D.unit db + 1)) h m _ _ _ ltac:(lia) ltac:(lia)
+        ltac:(unfold h; lia) Hhead' IH Happ') as Hbudget.
+      change (1 + (clock (f, (slot, arity)) + List.T_flat_map emit clock cs +
+        Datatypes.T_app headrows tailrows) <= 512 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (Pos.size_nat f + N.size_nat slot + 1 + inventory_bits cs +
+          (a + 1) * length (headrows ++ tailrows) + 1) * N.of_nat (D.unit db + 1))%N.
+      rewrite length_app.
+      assert (Hsize : (h + m)%N = N.of_nat (Pos.size_nat f + N.size_nat slot + 1 +
+        inventory_bits cs + (a + 1) * (length headrows + length tailrows) + 1)).
+      { unfold h, m. rewrite <- Nat2N.inj_add. f_equal. ring. }
+      rewrite Hsize in Hbudget. eapply N.le_trans; [|exact Hbudget]. lia.
+  Qed.
+
+  (** Executable inventory enumeration has an additive syntax and live-row budget. *)
+  Lemma inventory_rows_clock : forall db cs, D.wf db ->
+    (forall f slot arity, In (f, (slot, arity)) cs -> Entries.entry_ok db f slot arity) ->
+    (T_inventory_rows (fun s => D.index s false db)
+      (fun s => (1 + D.T_index s false db)%N) I.child I.T_child I.children I.T_children
+      I.root I.T_root cs <=
+      1024 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (inventory_bits cs + (Rows.maximum_arity (Rows.rows db) + 1) *
+          length (Entries.enumerated_rows cs db) + 1) * N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros db cs Hwf Hentries. pose proof (inventory_flat_clock db cs Hwf Hentries) as Hflat.
+    set (clock := List.T_flat_map
+      (inventory_entry_rows (fun s => D.index s false db) I.child I.children I.root)
+      (T_inventory_entry_rows (fun s => D.index s false db)
+        (fun s => (1 + D.T_index s false db)%N) I.child I.T_child I.children I.T_children
+        I.root I.T_root) cs) in *.
+    set (mass := N.of_nat (inventory_bits cs + (Rows.maximum_arity (Rows.rows db) + 1) *
+      length (Entries.enumerated_rows cs db) + 1)) in *.
+    set (b := (I.c_ix + D.c_db + 1)%N) in *.
+    set (u := N.of_nat (D.unit db + 1)) in *.
+    change (1 + clock <= 1024 * b * mass * u)%N.
+    assert (Hmass : (1 <= mass)%N) by (unfold mass; lia).
+    pose proof (enumeration_scale b mass u ltac:(unfold b; lia) ltac:(unfold u; lia)) as Hscale.
+    replace (512 * b * mass * u)%N with (512 * (b * mass * u))%N in Hflat by ring.
+    replace (1024 * b * mass * u)%N with (1024 * (b * mass * u))%N by ring.
+    clear - Hflat Hmass Hscale. lia.
+  Qed.
+
+  (** Semantic row arities and an executable count bound suffice for the public clock budget. *)
+  Lemma inventory_rows_clock_bounded : forall db cs arity count,
+    D.wf db ->
+    (forall f slot n, In (f, (slot, n)) cs -> Entries.entry_ok db f slot n) ->
+    (forall f k i, row (D.view db) f k (Some (Id i)) -> length k <= arity) ->
+    length (Entries.enumerated_rows cs db) <= count ->
+    (T_inventory_rows (fun s => D.index s false db)
+      (fun s => (1 + D.T_index s false db)%N) I.child I.T_child I.children I.T_children
+      I.root I.T_root cs <=
+      1024 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (inventory_bits cs + (arity + 1) * count + 1) *
+        N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros db cs arity count Hwf Hentries Harity Hcount.
+    pose proof (inventory_rows_clock db cs Hwf Hentries) as Hclock.
+    assert (Hmaximum : Rows.maximum_arity (Rows.rows db) <= arity).
+    { destruct (Rows.maximum_arity_attained (Rows.rows db))
+        as [Hzero |[f [k [i [Hin Heq]]]]]; [lia |].
+      rewrite <- Heq. apply Harity with f i. now apply Rows.rows_sound. }
+    assert (Hmass : (Rows.maximum_arity (Rows.rows db) + 1) *
+      length (Entries.enumerated_rows cs db) <= (arity + 1) * count).
+    { apply Nat.mul_le_mono; lia. }
+    eapply N.le_trans; [exact Hclock |]. apply N.mul_le_mono_r, N.mul_le_mono_l.
+    clear - Hmass. lia.
+  Qed.
+
+  (** A complete duplicate-free inventory replaces its executable count by the ghost count. *)
+  Lemma inventory_rows_clock_exact : forall db cs,
+    D.wf db -> NoDup (map fst cs) ->
+    (forall f slot arity, In (f, (slot, arity)) cs -> Entries.entry_ok db f slot arity) ->
+    (forall f k i, row (D.view db) f k (Some (Id i)) -> In f (map fst cs)) ->
+    (T_inventory_rows (fun s => D.index s false db)
+      (fun s => (1 + D.T_index s false db)%N) I.child I.T_child I.children I.T_children
+      I.root I.T_root cs <=
+      1024 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (inventory_bits cs + (Rows.maximum_arity (Rows.rows db) + 1) *
+          length (Rows.rows db) + 1) * N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros db cs Hwf Hnames Hentries Hcovers.
+    pose proof (inventory_rows_clock db cs Hwf Hentries) as Hclock.
+    rewrite (Entries.enumerated_rows_length cs db Hwf Hnames Hentries Hcovers) in Hclock.
+    exact Hclock.
+  Qed.
+End EnumeratedRowsT.
+
 (** Canonical database rows and exact finite-row witnesses have the same constructor trees. *)
 Module SearchDatabase (V : VALUE) (I : INDEX V) (D : DATABASE V I).
 
