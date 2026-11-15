@@ -712,6 +712,244 @@ Proof.
 Qed.
 
 
+(** Frame order is retained inside the pending stack until each matching leave. *)
+Inductive tarjan_embeds : list positive -> list positive -> Prop :=
+  | tarjan_embeds_nil : forall ys, tarjan_embeds [] ys
+  | tarjan_embeds_skip : forall x xs ys,
+      tarjan_embeds xs ys -> tarjan_embeds xs (x :: ys)
+  | tarjan_embeds_take : forall x xs ys,
+      tarjan_embeds xs ys -> tarjan_embeds (x :: xs) (x :: ys).
+
+Lemma tarjan_embeds_drop x xs ys :
+  tarjan_embeds (x :: xs) ys -> tarjan_embeds xs ys.
+Proof.
+  intro Hembed. remember (x :: xs) as front eqn:Hfront.
+  induction Hembed; inversion Hfront; subst; eauto using tarjan_embeds.
+Qed.
+
+Lemma tarjan_embeds_cons_inv x xs y ys :
+  tarjan_embeds (x :: xs) (y :: ys) ->
+  (x = y /\ tarjan_embeds xs ys) \/ tarjan_embeds (x :: xs) ys.
+Proof.
+  intro Hembed. inversion Hembed; subst; auto.
+Qed.
+
+Lemma tarjan_embeds_incl xs ys : tarjan_embeds xs ys -> incl xs ys.
+Proof.
+  intro Hembed. induction Hembed; intros v Hin; cbn [In] in *.
+  - contradiction.
+  - right. now apply IHHembed.
+  - destruct Hin as [Heq|Hin]; [now left|right; now apply IHHembed].
+Qed.
+
+(** Removing a prefix through the current frame retains all older embedded frames. *)
+Lemma tarjan_embeds_pop root index pending low active owners
+    members tail low' active' owners' frames :
+  tarjan_embeds (root :: frames) pending ->
+  tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
+  tarjan_embeds frames tail.
+Proof.
+  revert low active owners members tail low' active' owners'.
+  induction pending as [|v pending IH];
+    intros low active owners members tail low' active' owners' Hembed Hpop.
+  - inversion Hembed.
+  - cbn [tarjan_pop] in Hpop. destruct (Pos.eqb v root) eqn:Heq.
+    + apply Pos.eqb_eq in Heq. subst v.
+      assert (Htail : tarjan_embeds frames pending).
+      { destruct (tarjan_embeds_cons_inv root frames root pending Hembed)
+          as [[_ Hinside]|Hinside]; [exact Hinside|now apply tarjan_embeds_drop in Hinside]. }
+      inversion Hpop; subst. exact Htail.
+    + destruct (tarjan_embeds_cons_inv root frames v pending Hembed)
+        as [[Hequal _]|Htail].
+      { subst v. rewrite Pos.eqb_refl in Heq. discriminate. }
+      destruct (tarjan_pop root index pending (PTrieCode.remove v low)
+        (PTrieCode.remove v active) (PTrieCode.set v index owners))
+        as [[[[taken remaining] lows] actives] owned] eqn:Hrest.
+      inversion Hpop; subst. eapply IH; eassumption.
+Qed.
+
+Definition tarjan_frames_embedded s : Prop :=
+  tarjan_embeds (tarjan_frames s) (tarjan_pending s).
+
+Lemma tarjan_embeds_enter v s :
+  tarjan_frames_embedded s -> tarjan_frames_embedded (TarjanVisitor.enter v s).
+Proof.
+  intro Hembed. unfold tarjan_frames_embedded in *.
+  cbn [TarjanVisitor.enter tarjan_frames tarjan_pending]. now constructor.
+Qed.
+
+Lemma tarjan_embeds_lower v n s :
+  tarjan_frames_embedded s -> tarjan_frames_embedded (TarjanVisitor.lower v n s).
+Proof.
+  intro Hembed. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)); exact Hembed.
+Qed.
+
+Lemma tarjan_embeds_edge kind u v s :
+  tarjan_frames_embedded s -> tarjan_frames_embedded (TarjanVisitor.edge kind u v s).
+Proof.
+  intro Hembed. destruct kind; cbn [TarjanVisitor.edge]; try exact Hembed.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hembed.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hembed.
+  all: now apply tarjan_embeds_lower.
+Qed.
+
+Lemma tarjan_embeds_leave v frames s :
+  tarjan_frames s = v :: frames -> tarjan_frames_embedded s ->
+  tarjan_frames_embedded (TarjanVisitor.leave v s).
+Proof.
+  intros Hframes Hembed.
+  assert (Htail : tarjan_embeds frames (tarjan_pending s)).
+  { unfold tarjan_frames_embedded in Hembed. rewrite Hframes in Hembed.
+    now apply tarjan_embeds_drop in Hembed. }
+  unfold TarjanVisitor.leave. rewrite Hframes. cbn beta iota zeta.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|exact Htail].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|exact Htail].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members remaining] lows] actives] owners] eqn:Hpop.
+    unfold tarjan_frames_embedded. cbn [tarjan_frames tarjan_pending].
+    eapply tarjan_embeds_pop; [|exact Hpop].
+    unfold tarjan_frames_embedded in Hembed. now rewrite Hframes in Hembed.
+  - destruct frames as [|parent frames]; [exact Htail|].
+    apply tarjan_embeds_lower. exact Htail.
+Qed.
+
+(** A nested trace preserves the ordered embedding and records its final frame stack. *)
+Lemma tarjan_embeds_fold initial es final : trace_stack initial es final ->
+  forall s, tarjan_frames s = initial -> tarjan_frames_embedded s ->
+  let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s in
+  tarjan_frames result = final /\ tarjan_frames_embedded result.
+Proof.
+  intro Hstack. induction Hstack; intros s Hframes Hembed; cbn zeta.
+  - cbn [fold_events fold_left]. auto.
+  - unfold fold_events at 1. cbn [fold_left visit_event].
+    apply IHHstack.
+    + cbn [TarjanVisitor.enter tarjan_frames]. now rewrite Hframes.
+    + now apply tarjan_embeds_enter.
+  - unfold fold_events at 1. cbn [fold_left visit_event].
+    apply IHHstack.
+    + pose proof (proj2 (proj2 (tarjan_event_metadata (Leave v) s))) as Hstep.
+      cbn [visit_event] in Hstep. rewrite Hstep, Hframes. reflexivity.
+    + eapply tarjan_embeds_leave; eassumption.
+  - unfold fold_events at 1. cbn [fold_left visit_event].
+    apply IHHstack.
+    + pose proof (proj2 (proj2 (tarjan_event_metadata (Edge kind u v) s))) as Hstep.
+      cbn [visit_event] in Hstep. now rewrite Hstep.
+    + now apply tarjan_embeds_edge.
+Qed.
+
+Lemma tarjan_stack_prefix initial prefix suffix final :
+  trace_stack initial (prefix ++ suffix) final ->
+  exists middle, trace_stack initial prefix middle /\ trace_stack middle suffix final.
+Proof.
+  revert initial. induction prefix as [|e prefix IH]; intros initial Hstack.
+  - exists initial. split; [constructor|exact Hstack].
+  - destruct e as [v|v|kind u v]; cbn [app] in Hstack; inversion Hstack; subst;
+      match goal with H : trace_stack _ (prefix ++ suffix) _ |- _ =>
+        destruct (IH _ H) as [middle [Hprefix Hsuffix]]
+      end; exists middle; split; try exact Hsuffix.
+    + now apply stack_enter.
+    + now apply stack_leave.
+    + now apply stack_edge.
+Qed.
+
+(** Only an entering callback changes the discovery table. *)
+Lemma tarjan_inventory_disc_lower v n s :
+  tarjan_disc (TarjanVisitor.lower v n s) = tarjan_disc s.
+Proof.
+  unfold TarjanVisitor.lower. destruct (trie_get v (tarjan_low s)); reflexivity.
+Qed.
+
+Lemma tarjan_inventory_disc_event e s :
+  tarjan_disc (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e) =
+    match e with Enter v => PTrieCode.set v (tarjan_clock s) (tarjan_disc s)
+    | _ => tarjan_disc s end.
+Proof.
+  destruct e as [v|v|kind u v]; cbn [visit_event].
+  - reflexivity.
+  - unfold TarjanVisitor.leave.
+    destruct (trie_get v (tarjan_low s)); [|reflexivity].
+    destruct (trie_get v (tarjan_disc s)); [|reflexivity].
+    destruct (Pos.eqb p p0).
+    + destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+        (tarjan_active s) (tarjan_owners s)) as [[[[members tail] lows] active] owners].
+      reflexivity.
+    + destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end);
+        [reflexivity|rewrite tarjan_inventory_disc_lower; reflexivity].
+  - destruct kind; cbn [TarjanVisitor.edge]; try reflexivity.
+    all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try reflexivity.
+    all: destruct (trie_get v (tarjan_disc s)); try reflexivity.
+    all: apply tarjan_inventory_disc_lower.
+Qed.
+
+Definition tarjan_discovery_rows vs (disc : ptrie positive) : Prop :=
+  forall v i, trie_get v disc = Some i <->
+    exists n, nth_error vs n = Some v /\ i = Pos.of_succ_nat n.
+
+Lemma tarjan_discovery_append vs disc next v :
+  ~ In v vs -> tarjan_discovery_rows vs disc -> next = Pos.of_succ_nat (length vs) ->
+  tarjan_discovery_rows (vs ++ [v]) (PTrieCode.set v next disc).
+Proof.
+  intros Hfresh Hrows Hnext u i. destruct (Pos.eq_dec u v) as [Heq|Hne].
+  - subst u. rewrite PTrie.get_set_same. split.
+    + intro Hget. injection Hget as Hi. subst i.
+      exists (length vs). split; [|exact Hnext].
+      rewrite nth_error_app2 by lia. rewrite Nat.sub_diag. reflexivity.
+    + intros [n [Hnth Hi]].
+      assert (Heq : n = length vs).
+      { destruct (lt_dec n (length vs)) as [Hlt|Hge].
+        - rewrite nth_error_app1 in Hnth by exact Hlt.
+          exfalso. apply Hfresh. eapply nth_error_In; exact Hnth.
+        - rewrite nth_error_app2 in Hnth by lia.
+          destruct (n - length vs) as [|k] eqn:Hminus; [lia|].
+          cbn [nth_error] in Hnth. rewrite nth_error_nil in Hnth. discriminate. }
+      subst n. congruence.
+  - rewrite PTrie.get_set_other by exact Hne. rewrite (Hrows u i). split.
+    + intros [n [Hnth Hi]]. exists n. split; [|exact Hi].
+      rewrite nth_error_app1; [exact Hnth|].
+      apply nth_error_Some. now rewrite Hnth.
+    + intros [n [Hnth Hi]].
+      destruct (lt_dec n (length vs)) as [Hlt|Hge].
+      * exists n. split; [|exact Hi]. now rewrite nth_error_app1 in Hnth.
+      * rewrite nth_error_app2 in Hnth by lia.
+        destruct (n - length vs) as [|k] eqn:Hminus.
+        -- cbn [nth_error] in Hnth. injection Hnth as Heq.
+           exfalso. apply Hne. now symmetry.
+        -- cbn [nth_error] in Hnth. rewrite nth_error_nil in Hnth. discriminate.
+Qed.
+
+(** Discovery numbers are exactly the one-based positions of unique entering events. *)
+Lemma tarjan_discovery_rows_fold es : NoDup (entered es) ->
+  tarjan_discovery_rows (entered es)
+    (tarjan_disc (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      es tarjan_initial)).
+Proof.
+  induction es as [|e es IH] using rev_ind; intro Hunique.
+  - intros v i. cbn [fold_events fold_left entered tarjan_initial tarjan_disc].
+    rewrite PTrie.get_empty. split; [discriminate|].
+    intros [n [Hnth _]]. rewrite nth_error_nil in Hnth. discriminate.
+  - assert (Hprefix : NoDup (entered es)).
+    { rewrite search_entered_app in Hunique. now apply NoDup_app_remove_r in Hunique. }
+    specialize (IH Hprefix).
+    unfold fold_events at 1. rewrite fold_left_app.
+    change (tarjan_discovery_rows (entered (es ++ [e]))
+      (tarjan_disc (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+          es tarjan_initial) e))).
+    rewrite tarjan_inventory_disc_event, search_entered_app.
+    destruct e as [v|v|kind u v]; cbn [entered];
+      try (rewrite app_nil_r; exact IH).
+    apply tarjan_discovery_append; [|exact IH|].
+    + rewrite search_entered_app in Hunique. cbn [entered] in Hunique.
+      apply NoDup_rev in Hunique. rewrite rev_app_distr in Hunique.
+      cbn [rev app] in Hunique. apply NoDup_cons_iff in Hunique.
+      destruct Hunique as [Hfresh Hrest].
+      intro Hin. apply Hfresh. now apply (proj1 (in_rev (entered es) v)).
+    + apply Pos2Nat.inj. rewrite SuccNat2Pos.id_succ. apply tarjan_clock_count.
+Qed.
+
 Module TarjanSearchCode := SearchCode TarjanVisitor.
 Module TarjanSearch.
   Include TarjanSearchCode.
@@ -1096,6 +1334,19 @@ Lemma scc_trace_prefix_width g prefix suffix : scc_trace g = prefix ++ suffix ->
 Proof.
   intros Heq. pose proof (scc_trace_event_width g) as Hwidth.
   rewrite Heq, Forall_app in Hwidth. exact (proj1 Hwidth).
+Qed.
+
+Lemma tarjan_prefix_frames g prefix suffix : scc_trace g = prefix ++ suffix ->
+  incl (tarjan_frames (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+    prefix tarjan_initial))
+    (tarjan_pending (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      prefix tarjan_initial)).
+Proof.
+  intro Hprefix. pose proof (scc_trace_nested g) as Hnested. rewrite Hprefix in Hnested.
+  destruct (tarjan_stack_prefix [] prefix suffix [] Hnested) as [middle [Hstack _]].
+  destruct (tarjan_embeds_fold [] prefix middle Hstack tarjan_initial eq_refl
+    (tarjan_embeds_nil [])) as [_ Hembed].
+  now apply tarjan_embeds_incl.
 Qed.
 
 (** Owner bindings identify the chronological position of their emitted component. *)
@@ -2436,7 +2687,30 @@ Module SccT <: SCC_ALL.
     tarjan_trace g = prefix ++ suffix ->
     inventory prefix (prefix_state prefix) /\
     width_domain (graph_width (base g)) (prefix_state prefix).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g prefix suffix Htrace.
+    change (scc_trace g = prefix ++ suffix) in Htrace.
+    pose proof (scc_trace_prefix_unique g prefix suffix Htrace) as Hunique.
+    pose proof (tarjan_bag_inventory prefix) as Hbag.
+    pose proof (Permutation_NoDup (Permutation_sym Hbag) Hunique) as Hnodup.
+    pose proof (tarjan_prefix_frames g prefix suffix Htrace) as Hframes.
+    destruct (tarjan_pending_domains_fold prefix Hunique) as [Hactive Hlow].
+    pose proof (tarjan_discovery_rows_fold prefix Hunique) as Hdisc.
+    split.
+    - unfold inventory, prefix_state, tarjan_enter, tarjan_leave, tarjan_edge, tarjan_initial.
+      unfold tarjan_bag in Hbag, Hnodup.
+      split; [exact Hnodup|]. split; [exact Hbag|]. split; [exact Hframes|].
+      split.
+      { apply Pos2Nat.inj. rewrite SuccNat2Pos.id_succ. apply tarjan_clock_count. }
+      split.
+      { apply Pos2Nat.inj. rewrite SuccNat2Pos.id_succ. apply tarjan_next_count. }
+      split; [exact Hactive|]. split; [exact Hlow|exact Hdisc].
+    - unfold width_domain, prefix_state, tarjan_enter, tarjan_leave, tarjan_edge, tarjan_initial.
+      apply tarjan_fold_width; [exact Hunique|].
+      apply Forall_forall. intros v Hin. apply search_entered_member in Hin.
+      pose proof (scc_trace_prefix_width g prefix suffix Htrace) as Hwidth.
+      rewrite Forall_forall in Hwidth. exact (Hwidth (Enter v) Hin).
+  Qed.
 
   Lemma F5_pop : forall root index pending low active owners members tail low' active' owners',
     tarjan_pop root index pending low active owners =
