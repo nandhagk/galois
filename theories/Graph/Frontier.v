@@ -1182,6 +1182,133 @@ Proof.
     rewrite PTrie.get_empty. cbn [In]. split; [discriminate|contradiction].
 Qed.
 
+(** The private lazy driver returns from a reachable raw stopped state. *)
+Lemma idf_result_trace : forall rows seeds,
+  exists st, idf_reachable rows seeds st /\ idf_step rows st = inr (idf rows seeds).
+Proof.
+  intros rows seeds. unfold idf.
+  refine (frontier_loop_invariant (idf_private_lt rows seeds)
+    (idf_checked_step rows seeds) (fun _ => True)
+    (fun result => exists st, idf_reachable rows seeds st /\ idf_step rows st = inr result)
+    _ _ (exist _ (idf_initial seeds) (idf_reachable_initial rows seeds))
+    (idf_accessible rows seeds
+      (exist _ (idf_initial seeds) (idf_reachable_initial rows seeds))) I).
+  - intros state next Hnext Htrue Hstep. exact I.
+  - intros state result Htrue Hstep.
+    pose proof (idf_checked_step_raw rows seeds state) as Hraw.
+    rewrite Hstep in Hraw. destruct state as [st Hreach]. cbn [proj1_sig] in Hraw.
+    exists st. split; [exact Hreach|symmetry; exact Hraw].
+Qed.
+
+(** * Raw iterated-frontier closure *)
+
+(** Ready vertices have either been expanded or still have a typed pending task. *)
+Definition idf_ready (st : idf_state) (v : positive) : Prop :=
+  trie_get v (idf_expanded st) = Some tt \/
+  In (IdfSeed v) (idf_pending st) \/ In (IdfTarget v) (idf_pending st).
+
+(** A row target has either been discovered or still has its recording task pending. *)
+Definition idf_target_ready (st : idf_state) (v : positive) : Prop :=
+  trie_get v (idf_discovered st) = Some tt \/ In (IdfTarget v) (idf_pending st).
+
+(** Seed tasks belong to the supplied seeds, while target tasks already have a closure witness. *)
+Definition idf_supported_task rows seeds (task : idf_task) : Prop :=
+  match task with
+  | IdfSeed v => In v seeds
+  | IdfTarget v => in_row_closure rows seeds v
+  end.
+
+(** Typed task coverage preserves both closure soundness and every still-required expansion. *)
+Record idf_closure_invariant rows seeds st : Prop := {
+  idf_closure_distinct : idf_distinct st;
+  idf_closure_answer_sound : forall v, In v (idf_answer st) ->
+    in_row_closure rows seeds v;
+  idf_closure_expanded_supported : forall v,
+    trie_get v (idf_expanded st) = Some tt ->
+    In v seeds \/ in_row_closure rows seeds v;
+  idf_closure_pending_supported : Forall (idf_supported_task rows seeds) (idf_pending st);
+  idf_closure_seeds_ready : forall v, In v seeds -> idf_ready st v;
+  idf_closure_discovered_ready : forall v,
+    trie_get v (idf_discovered st) = Some tt -> idf_ready st v;
+  idf_closure_rows_ready : forall u v,
+    trie_get u (idf_expanded st) = Some tt -> In v (frontier_row rows u) ->
+    idf_target_ready st v
+}.
+
+(** Adding a mark preserves every existing mark. *)
+Lemma idf_set_keeps_mark marks v x :
+  trie_get x marks = Some tt -> trie_get x (PTrieCode.set v tt marks) = Some tt.
+Proof.
+  intro Hmark. destruct (Pos.eq_dec x v) as [->|Hother].
+  - apply PTrie.get_set_same.
+  - now rewrite PTrie.get_set_other.
+Qed.
+
+(** Consuming a task preserves readiness once its vertex is marked and its tail remains pending. *)
+Lemma idf_ready_consume task rest expanded expanded1 discovered answer pending x :
+  (forall v, trie_get v expanded = Some tt -> trie_get v expanded1 = Some tt) ->
+  incl rest pending ->
+  (forall v, task = IdfSeed v \/ task = IdfTarget v ->
+    trie_get v expanded1 = Some tt) ->
+  idf_ready (IdfState (task :: rest) expanded discovered answer) x ->
+  idf_ready (IdfState pending expanded1 discovered answer) x.
+Proof.
+  intros Hmarks Hpending Hhead.
+  cbn [idf_ready idf_expanded idf_pending]. intros [Hmark|[Hseed|Htarget]].
+  - left. now apply Hmarks.
+  - destruct Hseed as [Heq|Hin].
+    + left. apply Hhead. now left.
+    + right. left. now apply Hpending.
+  - destruct Htarget as [Heq|Hin].
+    + left. apply Hhead. now right.
+    + right. right. now apply Hpending.
+Qed.
+
+(** A consumed target task is covered by its discovery mark, and the remaining tasks persist. *)
+Lemma idf_target_ready_consume task rest expanded expanded1 discovered answer pending x :
+  incl rest pending ->
+  (forall v, task = IdfTarget v -> trie_get v discovered = Some tt) ->
+  idf_target_ready (IdfState (task :: rest) expanded discovered answer) x ->
+  idf_target_ready (IdfState pending expanded1 discovered answer) x.
+Proof.
+  intros Hpending Hhead.
+  cbn [idf_target_ready idf_discovered idf_pending]. intros [Hmark|[Heq|Hin]].
+  - now left.
+  - left. now apply Hhead.
+  - right. now apply Hpending.
+Qed.
+
+(** Recording one discovery preserves every previously covered row target. *)
+Lemma idf_target_ready_mark pending expanded discovered answer v x :
+  idf_target_ready (IdfState pending expanded discovered answer) x ->
+  idf_target_ready
+    (IdfState pending expanded (PTrieCode.set v tt discovered) (v :: answer)) x.
+Proof.
+  cbn [idf_target_ready idf_discovered idf_pending]. intros [Hmark|Htask].
+  - left. now apply idf_set_keeps_mark.
+  - now right.
+Qed.
+
+(** Initial seed tasks cover all requested seeds before any vertex is expanded or recorded. *)
+Lemma idf_closure_initial rows seeds :
+  idf_closure_invariant rows seeds (idf_initial seeds).
+Proof.
+  constructor.
+  - split; [constructor|]. intro v.
+    cbn [idf_initial idf_discovered idf_answer]. rewrite PTrie.get_empty.
+    cbn [In]. split; [discriminate|contradiction].
+  - intros v Hin. contradiction.
+  - intros v Hmark. cbn [idf_initial idf_expanded] in Hmark.
+    rewrite PTrie.get_empty in Hmark. discriminate Hmark.
+  - apply Forall_forall. intros task Hin.
+    apply in_map_iff in Hin as [v [<- Hin]]. exact Hin.
+  - intros v Hin. right. left. now apply in_map.
+  - intros v Hmark. cbn [idf_initial idf_discovered] in Hmark.
+    rewrite PTrie.get_empty in Hmark. discriminate Hmark.
+  - intros u v Hmark Hin. cbn [idf_initial idf_expanded] in Hmark.
+    rewrite PTrie.get_empty in Hmark. discriminate Hmark.
+Qed.
+
 (** Graph node observations agree with the underlying vertex list. *)
 Lemma frontier_nodes_verts : forall g, nodes g = verts (base g).
 Proof.
