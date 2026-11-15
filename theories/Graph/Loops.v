@@ -3957,6 +3957,225 @@ Qed.
 Local Definition loop_forest_cost : N := 64%N.
 
 
+(** * Classifier timing support *)
+
+Local Definition loop_task_keys (g : prepared) (task : loop_tree_task) : Prop :=
+  match task with
+  | LoopTreeRoot v | LoopTreeEnter v | LoopTreeLeave v => In v (nodes g)
+  | LoopTreeChildren vertices => incl vertices (nodes g)
+  | LoopTreeEdges u vertices => In u (nodes g) /\ incl vertices (nodes g)
+  end.
+
+Local Definition loop_task_width width (task : loop_tree_task) : Prop :=
+  match task with
+  | LoopTreeRoot v | LoopTreeEnter v | LoopTreeLeave v => Pos.size_nat v <= width
+  | LoopTreeChildren vertices => forall v, In v vertices -> Pos.size_nat v <= width
+  | LoopTreeEdges u vertices =>
+      Pos.size_nat u <= width /\ forall v, In v vertices -> Pos.size_nat v <= width
+  end.
+
+Local Lemma loop_parent_key_listed : forall g t r v p,
+  wf_graph (base g) -> domtree_exact g r t -> trie_get v (idom t) = Some p -> In v (nodes g).
+Proof.
+  intros g t r v p Hgraph Htree Hparent.
+  pose proof (proj1 (proj2 Htree)) as Hexact.
+  rewrite loop_nodes_verts. apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+  exact (proj1 (proj2 (proj1 Hexact v p Hparent))).
+Qed.
+
+(** The balanced grammar and current ancestor stack support every pending task key. *)
+Local Lemma loop_tasks_keys : forall g t r stack tasks,
+  wf_graph (base g) -> domtree_exact g r t -> loop_tasks_wf g t r stack tasks ->
+  Forall (fun v => In v (nodes g)) stack -> Forall (loop_task_keys g) tasks.
+Proof.
+  intros g t r stack tasks Hgraph Htree Htasks.
+  induction Htasks as [|v rest Hv Hrest IH|v stack rest Hparent Hrest IH|
+    p stack vertices rest Hparents Hrest IH|u stack vertices rest Hvertices Hrest IH|
+    v stack rest Hrest IH]; intro Hstack; constructor.
+  - exact Hv.
+  - now apply IH.
+  - cbn [loop_task_keys]. destruct stack as [|p stack]; cbn in Hparent.
+    + subst v. exact (loop_tree_root_listed g r t Htree).
+    + exact (loop_parent_key_listed g t r v p Hgraph Htree Hparent).
+  - now apply IH.
+  - cbn [loop_task_keys]. intros v Hv. apply Forall_forall with (x := v) in Hparents;
+      [|exact Hv]. exact (loop_parent_key_listed g t r v p Hgraph Htree Hparents).
+  - now apply IH.
+  - cbn [loop_task_keys]. inversion Hstack as [|u' stack' Hu Htail]; subst u' stack'.
+    split; [exact Hu|]. intros v Hv. rewrite loop_nodes_verts in Hu |- *.
+    exact (proj2 Hgraph u v Hu (Hvertices v Hv)).
+  - now apply IH.
+  - cbn [loop_task_keys]. inversion Hstack; assumption.
+  - apply IH. inversion Hstack; assumption.
+Qed.
+
+Local Lemma loop_task_keys_width : forall g task,
+  loop_task_keys g task -> loop_task_width (graph_width (base g)) task.
+Proof.
+  intros g [v|v|vertices|u vertices|v] Hkeys; cbn [loop_task_keys] in Hkeys;
+    cbn [loop_task_width]; try now apply loop_listed_width.
+  - intros v Hv. apply loop_listed_width. now apply Hkeys.
+  - destruct Hkeys as [Hu Hvertices]. split; [now apply loop_listed_width|].
+    intros v Hv. apply loop_listed_width. now apply Hvertices.
+Qed.
+
+Local Definition loop_tree_step_cost : N := (128 * (PTrieT.c_trie + c_loopN + 1))%N.
+Local Definition loop_classifier_cost : N :=
+  (4096 * (c_loopN + 1) * (loop_tree_step_cost + loop_body_unit_cost + 1))%N.
+
+Local Lemma loop_successor_clock : forall graph v,
+  (T_succs graph v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
+Proof.
+  intros [vertices adjacency] v. unfold T_succs. time_simpl.
+  rewrite PTrieT.trie_get_clock. lia.
+Qed.
+
+Local Lemma loop_children_clock : forall t v,
+  (T_children t v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
+Proof.
+  intros [parents rows preorder postorder] v. unfold T_children. time_simpl.
+  rewrite PTrieT.trie_get_clock. lia.
+Qed.
+
+Local Lemma loop_tail_clock : forall (vertices : list positive), (T_loop_tail vertices <= 1)%N.
+Proof.
+  intros [|v rest]; unfold T_loop_tail; time_simpl; lia.
+Qed.
+
+(** Continuing cursors make only a fixed number of trie operations at their task keys. *)
+Local Lemma loop_tree_continue_clock : forall g t st next width,
+  Forall (loop_task_width width) (loop_tree_pending st) -> tree_step g t st = inl next ->
+  (T_tree_step g t st + c_loopN + 1 <= loop_tree_step_cost * N.of_nat (width + 1))%N.
+Proof.
+  intros g t [tasks stack active [order latches backs]] next width Hkeys Hstep.
+  destruct tasks as [|task rest]; [discriminate Hstep|].
+  cbn [loop_tree_pending] in Hkeys. inversion Hkeys as [|task' rest' Hkey Hrest];
+    subst task' rest'. clear Hkeys Hrest.
+  destruct task as [v|v|vertices|u vertices|v]; cbn [loop_task_width] in Hkey.
+  - apply time_of_nat_le in Hkey.
+    unfold T_tree_step, T_pre, T_idom. time_simpl. rewrite !PTrieT.trie_get_clock.
+    unfold loop_tree_step_cost. repeat rewrite Nat2N.inj_add.
+    destruct (trie_get v (pre t)), (trie_get v (idom t)); nia.
+  - pose proof (loop_successor_clock (base g) v) as Hsuccessors.
+    pose proof (loop_children_clock t v) as Hchildren.
+    pose proof (PTrieT.T_set_le unit v tt active) as Hactive.
+    apply time_of_nat_le in Hkey.
+    unfold T_tree_step, T_base. time_simpl.
+    unfold loop_tree_step_cost. repeat rewrite Nat2N.inj_add in Hactive |- *. nia.
+  - destruct vertices as [|v vertices]; unfold T_tree_step; time_simpl;
+      unfold loop_tree_step_cost; rewrite Nat2N.inj_add; nia.
+  - destruct Hkey as [Hu Hvertices]. destruct vertices as [|v vertices].
+    + unfold T_tree_step. time_simpl. unfold loop_tree_step_cost.
+      rewrite Nat2N.inj_add. nia.
+    + pose proof (Hvertices v (or_introl eq_refl)) as Hv.
+      apply time_of_nat_le in Hu. apply time_of_nat_le in Hv.
+      unfold T_tree_step. time_simpl. rewrite !PTrieT.trie_get_clock.
+      destruct (trie_get v active) as [present|].
+      * set (sources := match trie_get v latches with Some xs => xs | None => [] end).
+        set (row := match trie_get u backs with Some xs => xs | None => Empty end).
+        pose proof (PTrieT.T_set_le (list positive) v (u :: sources) latches) as Hlatches.
+        pose proof (PTrieT.T_set_le unit v tt row) as Hrow.
+        pose proof (PTrieT.T_set_le (ptrie unit) u (PTrieCode.set v tt row) backs) as Hbacks.
+        change (PTrieCode.T_set v (u :: sources) latches <=
+          PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hlatches.
+        change (PTrieCode.T_set v tt row <=
+          PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hrow.
+        change (PTrieCode.T_set u (PTrieCode.set v tt row) backs <=
+          PTrieT.c_trie * N.of_nat (Pos.size_nat u + 1))%N in Hbacks.
+        unfold loop_tree_step_cost. repeat rewrite Nat2N.inj_add in Hlatches, Hrow, Hbacks |- *.
+        nia.
+      * unfold loop_tree_step_cost. rewrite Nat2N.inj_add. nia.
+  - pose proof (PTrieT.T_remove_le unit v active) as Hactive.
+    pose proof (loop_tail_clock stack) as Htail. apply time_of_nat_le in Hkey.
+    unfold T_tree_step. time_simpl. unfold loop_tree_step_cost.
+    repeat rewrite Nat2N.inj_add in Hactive |- *. nia.
+Qed.
+
+Local Lemma loop_eight_clock : forall n, (Code.N.T_mul 8 n <= 8)%N.
+Proof.
+  intros [|p]; time_unfold Code.N.T_mul; try lia.
+  do 4 time_unfold Pos.T_mul. time_cbn. lia.
+Qed.
+
+Local Lemma loop_classify_fuel_setup_clock : forall vertices edges,
+  (N.T_add vertices edges + N.T_add (vertices + edges) 1 +
+    Code.N.T_mul 8 (vertices + edges + 1) <=
+    8 * N.of_nat (N.size_nat (8 * (vertices + edges + 1))) + 8)%N.
+Proof.
+  intros vertices edges.
+  pose proof (N.T_add_le vertices edges) as Hfirst.
+  pose proof (N.T_add_le (vertices + edges) 1) as Hlast.
+  pose proof (loop_eight_clock (vertices + edges + 1)) as Height.
+  set (fuel := (8 * (vertices + edges + 1))%N) in *.
+  assert (Hwidth : forall n, (n <= fuel)%N ->
+    (N.of_nat (N.size_nat n) <= N.of_nat (N.size_nat fuel))%N).
+  { intros n Hn. apply time_of_nat_le. now apply loop_size_monotone. }
+  pose proof (Hwidth vertices ltac:(unfold fuel; lia)) as Hv.
+  pose proof (Hwidth edges ltac:(unfold fuel; lia)) as He.
+  pose proof (Hwidth (vertices + edges)%N ltac:(unfold fuel; lia)) as Hve.
+  pose proof (Hwidth 1%N ltac:(unfold fuel; lia)) as Hone.
+  change (1 <= N.of_nat (N.size_nat fuel))%N in Hone.
+  rewrite !Nat2N.inj_add in Hfirst, Hlast.
+  change (N.of_nat (N.size_nat 1%N)) with 1%N in Hlast.
+  lia.
+Qed.
+
+Local Lemma loop_nodes_clock : forall g, (T_nodes g <= 1)%N.
+Proof.
+  intros [[vertices adjacency] predecessors vertex_count edge_count].
+  unfold T_nodes. time_simpl. lia.
+Qed.
+
+(** Successful classification pays its task-list setup once before the binary driver. *)
+Local Lemma loop_classify_clock_wrapper : forall g t result,
+  loopN (tree_step g t) (8 * (nv g + ne g + 1))%N
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) =
+      inr result ->
+  (T_classify g t + 1 <=
+    T_loopN (tree_step g t) (loop_classify_callback_clock g t)
+      (8 * (nv g + ne g + 1))%N
+      (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) +
+    64 * loop_body_unit_cost * (N.of_nat (length (nodes g)) +
+      N.of_nat (N.size_nat (8 * (nv g + ne g + 1))) + 1))%N.
+Proof.
+  intros g t result Hdone.
+  pose proof (loop_classify_fuel_setup_clock (nv g) (ne g)) as Hfuel.
+  pose proof (loop_nodes_clock g) as Hnodes.
+  unfold T_classify, loop_classify_callback_clock. time_simpl. rewrite Hdone.
+  clear Hdone.
+  unfold T_nv, T_ne. time_simpl.
+  match goal with
+  | |- context [ListDef.T_map ?f ?clock (nodes g)] =>
+      assert (Hmap : (ListDef.T_map f clock (nodes g) <=
+        2 * N.of_nat (length (nodes g)) + 1)%N)
+  end.
+  { apply ListDef.T_map_le with (k := 1%N). intro v. cbn beta. lia. }
+  unfold loop_body_unit_cost. nia.
+Qed.
+
+(** Step credit, stopping, setup and fuel bits fit one classifier scale. *)
+Local Lemma loop_classify_arithmetic : forall overhead step_cost unit mass width,
+  (1 <= mass -> 1 <= width ->
+    overhead * ((step_cost * width + 1) * (8 * mass) + 8 * mass + 8 * mass + 1) +
+      64 * unit * (mass + 8 * mass + 1) <=
+    4096 * (overhead + 1) * (step_cost + unit + 1) * mass * width)%N.
+Proof.
+  intros overhead step_cost unit mass width Hmass Hwidth.
+  set (budget := (mass * width)%N).
+  assert (Hmasspaid : (mass <= budget)%N) by (unfold budget; nia).
+  assert (Hpositive : (1 <= budget)%N) by nia.
+  assert (Hinside : ((step_cost * width + 1) * (8 * mass) + 8 * mass + 8 * mass + 1 <=
+    32 * (step_cost + 1) * budget)%N) by (unfold budget; nia).
+  assert (Hsetupbase : (mass + 8 * mass + 1 <= 10 * budget)%N) by nia.
+  pose proof (N.mul_le_mono_l _ _ overhead Hinside) as Hloop.
+  pose proof (N.mul_le_mono_l _ _ (64 * unit)%N Hsetupbase) as Hsetup.
+  assert (Hcoefficient : (32 * overhead * (step_cost + 1) + 640 * unit <=
+    4096 * (overhead + 1) * (step_cost + unit + 1))%N) by nia.
+  pose proof (N.mul_le_mono_r _ _ budget Hcoefficient) as Hscaled.
+  clear -Hloop Hsetup Hscaled.
+  unfold budget in *. nia.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -4204,9 +4423,9 @@ Module LoopsT <: LOOPS_ALL.
   (** Proof wrappers use the driver laws without expanding accessibility witnesses. *)
   Local Opaque loopN Argent.Loop.loop.
 
-  Definition k_tree_step : N := 1. (* STUB *)
+  Definition k_tree_step : N := loop_tree_step_cost.
   Definition k_tree_stop : N := 8.
-  Definition k_classify : N := 1. (* STUB *)
+  Definition k_classify : N := loop_classifier_cost.
   Definition k_body_step : N := loop_body_step_cost.
   Definition k_body_stop : N := 8.
   Definition k_collect : N := loop_collect_cost.
@@ -4752,7 +4971,28 @@ Module LoopsT <: LOOPS_ALL.
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
     (T_tree_step g t st + tree_credit g t next + c_loopN <= tree_credit g t st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r st next Hgraph Hprepared Htree Hinv Hstep.
+    destruct (tree_history_core g t r st Hgraph Htree (proj1 Hinv))
+      as [Htasks [[Hchain Hactive] Hpartition]].
+    pose proof (loop_stack_reachable g r (idom t) (loop_tree_stack st)
+      (proj1 (proj2 Htree)) Hchain) as Hreachable.
+    assert (Hstack : Forall (fun v => In v (nodes g)) (loop_tree_stack st)).
+    { apply Forall_forall. intros v Hv.
+      apply Forall_forall with (x := v) in Hreachable; [|exact Hv].
+      rewrite loop_nodes_verts.
+      exact (loop_reachable_listed (base g) r v Hgraph (proj1 Htree) Hreachable). }
+    pose proof (loop_tasks_keys g t r (loop_tree_stack st) (loop_tree_pending st)
+      Hgraph Htree Htasks Hstack) as Hkeys.
+    assert (Hwidth : Forall (loop_task_width (graph_width (base g))) (loop_tree_pending st)).
+    { apply Forall_forall. intros task Hin. apply loop_task_keys_width.
+      now apply Forall_forall with (x := task) in Hkeys. }
+    pose proof (loop_tree_continue_clock g t st next (graph_width (base g)) Hwidth Hstep)
+      as Hclock.
+    pose proof (proj2 (F2_tree_step g t r st next Hgraph Hprepared Htree Hinv Hstep)) as Hdrop.
+    clear -Hclock Hdrop.
+    unfold T_tree_step. time_simpl. unfold tree_credit, k_tree_step. nia.
+  Qed.
 
   Lemma T2_tree_stop : forall g t r st scan,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -4777,12 +5017,90 @@ Module LoopsT <: LOOPS_ALL.
     unfold k_tree_stop. rewrite !Nat2N.inj_add in Hclock |- *. lia.
   Qed.
 
+  Local Lemma tree_loop_clock : forall g t r fuel,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    (T_loopN (tree_step g t) (loop_classify_callback_clock g t) fuel (tree_initial g) <=
+      c_loopN * (tree_credit g t (tree_initial g) +
+        k_tree_stop * N.of_nat (graph_n (base g) + 1) + N.of_nat (N.size_nat fuel) + 1))%N.
+  Proof.
+    intros g t r fuel Hgraph Hprepared Htree.
+    apply (T_loopN_le loop_tree_state loop_scan (tree_step g t)
+      (loop_classify_callback_clock g t) (tree_invariant g t r) (tree_credit g t)
+      (k_tree_stop * N.of_nat (graph_n (base g) + 1))%N).
+    - intros st next Hinv Hstep. split.
+      + exact (proj1 (F2_tree_step g t r st next Hgraph Hprepared Htree Hinv Hstep)).
+      + pose proof (T1_tree_step g t r st next Hgraph Hprepared Htree Hinv Hstep) as Hclock.
+        unfold T_tree_step in Hclock. cbn beta iota zeta in Hclock.
+        unfold loop_classify_callback_clock. lia.
+    - intros st result Hinv Hstep.
+      pose proof (T2_tree_stop g t r st result Hgraph Hprepared Htree Hinv Hstep) as Hclock.
+      unfold T_tree_step in Hclock. cbn beta iota zeta in Hclock.
+      unfold loop_classify_callback_clock. lia.
+    - now apply (F1_tree_initial g t r).
+  Qed.
+
   Lemma T3_classify : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_classify g t <= k_classify *
       N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    pose proof (F3_tree_driver g t r Hgraph Hprepared Htree) as Hdone.
+    pose proof (loop_classify_clock_wrapper g t (classify g t) Hdone) as Hwrapper.
+    fold (tree_fuel g) in Hwrapper.
+    fold (tree_initial g) in Hwrapper.
+    fold tree_step in Hwrapper.
+    pose proof (tree_loop_clock g t r (tree_fuel g) Hgraph Hprepared Htree) as Hloop.
+    pose proof (loop_tree_work_initial g t r Hgraph Htree) as Hinitial.
+    change (loop_tree_work g t (tree_initial g) <=
+      8 * graph_n (base g) + graph_e (base g)) in Hinitial.
+    pose proof (DomProducer.dom_size_value (tree_fuel g)) as Hbits.
+    assert (Hfuel : tree_fuel g =
+      (8 * N.of_nat (graph_n (base g) + graph_e (base g) + 1))%N).
+    { unfold tree_fuel. destruct Hprepared as [Hnv [Hne _]].
+      rewrite Hnv, Hne. repeat rewrite Nat2N.inj_add. reflexivity. }
+    assert (Hbitspaid : (N.of_nat (N.size_nat (tree_fuel g)) <=
+      8 * N.of_nat (graph_n (base g) + graph_e (base g) + 1))%N).
+    { eapply N.le_trans; [exact Hbits|]. rewrite Hfuel. apply N.le_refl. }
+    clear Hbits. rename Hbitspaid into Hbits.
+    assert (Hnodes : length (nodes g) = graph_n (base g)).
+    { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+    rewrite Hnodes in Hwrapper.
+    set (mass := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
+    set (width := N.of_nat (graph_width (base g) + 1)) in *.
+    assert (Hmass : (1 <= mass)%N) by (clear -mass; unfold mass; lia).
+    assert (Hwidth : (1 <= width)%N) by (clear -width; unfold width; lia).
+    assert (Hvertices : (N.of_nat (graph_n (base g) + 1) <= mass)%N)
+      by (clear -mass; unfold mass; lia).
+    assert (Hinitialpaid : (tree_potential g t (tree_initial g) <= 8 * mass)%N).
+    { rewrite tree_potential_work. clear -Hinitial mass. apply time_of_nat_le in Hinitial.
+      unfold mass. repeat rewrite Nat2N.inj_add in Hinitial |- *.
+      rewrite Nat2N.inj_mul in Hinitial. nia. }
+    assert (Hcreditpaid : (tree_credit g t (tree_initial g) <=
+      (k_tree_step * width + 1) * (8 * mass))%N).
+    { unfold tree_credit. fold width. now apply N.mul_le_mono_l. }
+    match type of Hloop with
+    | (?runtime <= _)%N =>
+        assert (Hlooppaid : (runtime <= c_loopN *
+          ((k_tree_step * width + 1) * (8 * mass) + 8 * mass + 8 * mass + 1))%N)
+    end.
+    { eapply N.le_trans; [exact Hloop|]. apply N.mul_le_mono_l.
+      clear -Hcreditpaid Hvertices Hbits. unfold k_tree_stop. nia. }
+    assert (Hsetuppaid :
+      (64 * loop_body_unit_cost *
+        (N.of_nat (graph_n (base g)) + N.of_nat (N.size_nat (tree_fuel g)) + 1) <=
+       64 * loop_body_unit_cost * (mass + 8 * mass + 1))%N).
+    { apply N.mul_le_mono_l. clear -Hvertices Hbits.
+      rewrite Nat2N.inj_add in Hvertices. nia. }
+    pose proof (loop_classify_arithmetic c_loopN loop_tree_step_cost loop_body_unit_cost
+      mass width Hmass Hwidth) as Hnumeric.
+    clear -Hwrapper Hlooppaid Hsetuppaid Hnumeric mass width.
+    clearbody mass width.
+    unfold T_classify. time_simpl.
+    unfold k_classify, loop_classifier_cost.
+    unfold k_tree_step in Hlooppaid. nia.
+  Qed.
 
   Local Lemma body_retire_amort : forall g t h v rest seen answer,
     Pos.size_nat v <= graph_width (base g) ->
