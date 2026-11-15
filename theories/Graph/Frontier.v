@@ -2531,6 +2531,61 @@ Proof.
   rewrite frontier_idf_unexpanded_empty, length_map. lia.
 Qed.
 
+(** The private accessible driver spends only actual-support credit and its returned answer. *)
+Lemma frontier_idf_private_loop_time : forall rows seeds st Hacc,
+  (Argent.Loop.T_loop (idf_private_lt rows seeds) (idf_checked_step rows seeds)
+      (T_idf_checked_step rows seeds) st Hacc <=
+    8 * frontier_idf_credit rows seeds (proj1_sig st) +
+      16 * N.of_nat (length (idf rows seeds) + 1) + 1)%N.
+Proof.
+  intros rows seeds st Hacc.
+  refine (T_loop_le (idf_private_lt rows seeds) (idf_checked_step rows seeds)
+    (T_idf_checked_step rows seeds) (fun _ => True)
+    (fun state => (8 * frontier_idf_credit rows seeds (proj1_sig state))%N)
+    (16 * N.of_nat (length (idf rows seeds) + 1))%N _ _ st Hacc I).
+  - intros state next Hnext Htrue Hstep.
+    pose proof (idf_checked_step_raw rows seeds state) as Hraw.
+    rewrite Hstep in Hraw. cbn [proj1_sig] in Hraw.
+    pose proof (idf_closure_reachable rows seeds (proj1_sig state) (proj2_sig state)) as Hinv.
+    pose proof (frontier_idf_tasks_within rows seeds (proj1_sig state)
+      (idf_closure_pending_supported rows seeds (proj1_sig state) Hinv)) as Hwithin.
+    pose proof (frontier_idf_step_credit rows seeds (proj1_sig state) (proj1_sig next)
+      Hwithin (eq_sym Hraw)) as Hcredit.
+    pose proof (frontier_idf_checked_clock rows seeds state) as Hclock.
+    split; [exact I|]. cbn beta. lia.
+  - intros state result Htrue Hstep.
+    pose proof (idf_checked_step_raw rows seeds state) as Hraw. rewrite Hstep in Hraw.
+    destruct (idf_step_stop rows (proj1_sig state) result (eq_sym Hraw)) as [Hpending Hanswer].
+    pose proof (idf_closure_reachable rows seeds (proj1_sig state) (proj2_sig state)) as Hinv.
+    pose proof (frontier_idf_answer_size rows seeds (proj1_sig state) Hinv) as Hlength.
+    rewrite frontier_idf_checked_clock.
+    destruct state as [[pending expanded discovered answer] Hreach].
+    cbn [proj1_sig idf_pending idf_answer] in Hpending, Hlength |- *. subst pending.
+    pose proof (frontier_idf_stop_time rows expanded discovered answer) as Hstop.
+    repeat rewrite Nat2N.inj_add in Hstop. repeat rewrite Nat2N.inj_add. lia.
+Qed.
+
+(** The lazy worklist pays initialization, actual-support credit and its final reversal. *)
+Lemma frontier_idf_walk_time : forall rows seeds,
+  (T_idf rows seeds + 2 <= 16 *
+    (frontier_idf_credit rows seeds (idf_initial seeds) +
+      16 * N.of_nat (length (idf rows seeds) + 1) + N.of_nat (length seeds) + 1))%N.
+Proof.
+  intros rows seeds. pose proof (frontier_idf_initial_clock seeds) as Hinitial.
+  time_unfold T_idf.
+  change (fun state => T_idf_checked_step rows seeds state) with (T_idf_checked_step rows seeds).
+  match goal with
+  | |- context [Argent.Loop.T_loop ?relation ?step ?clock ?initial ?Hacc] =>
+      pose proof (frontier_idf_private_loop_time rows seeds initial Hacc) as Hloop;
+      change (Argent.Loop.T_loop relation step clock initial Hacc <=
+        8 * frontier_idf_credit rows seeds (idf_initial seeds) +
+          16 * N.of_nat (length (idf rows seeds) + 1) + 1)%N in Hloop;
+      set (running := Argent.Loop.T_loop relation step clock initial Hacc) in *;
+      clearbody running
+  end.
+  lia.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
