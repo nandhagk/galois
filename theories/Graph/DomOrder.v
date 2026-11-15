@@ -1135,3 +1135,14 @@ Proof.
   - congruence.
   - contradiction.
 Qed.
+
+(** Two ancestors of one vertex are comparable along its unique parent chain. *)
+Lemma dom_anc_chain_comparable m a b v : tree_anc m a v -> tree_anc m b v ->
+  tree_anc m a b \/ tree_anc m b a.
+Proof.
+  intro Ha. induction Ha as [|p v Hvp Hap IH]; intro Hb.
+  - now right.
+  - destruct (dom_cert_anc_cases m b v Hb) as [Heq|[q [Hvq Hbq]]].
+    + subst b. left. eapply tree_anc_step; eassumption.
+    + rewrite Hvp in Hvq. injection Hvq as <-. now apply IH.
+Qed.
