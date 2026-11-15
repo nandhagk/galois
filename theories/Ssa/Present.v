@@ -487,7 +487,6 @@ Lemma flat_map_after_map {A B C} (f : B -> list C) (g : A -> B) xs :
 Proof.
   induction xs as [|x rest IH]; cbn [map flat_map]; [reflexivity|now rewrite IH].
 Qed.
-
 Fixpoint param_defs {K} (b : positive) (i : nat) (xs : list positive)
     : list (positive * definition positive positive K) :=
   match xs with
@@ -639,7 +638,6 @@ Lemma first_blocks_find {K G} (bs : list (positive * block positive K G)) b :
 Proof.
   rewrite first_blocks_selected, selected_blocks_find, PTrie.get_empty. reflexivity.
 Qed.
-
 (** Successful source lookup returns a block actually present in the source list. *)
 Lemma find_block_in {K G} (bs : list (positive * block positive K G)) b body :
   find_block b bs = Some body -> In (b, body) bs.
@@ -738,7 +736,6 @@ Lemma exit_targets_successor {G} (e : exit positive G) target :
 Proof.
   destruct e; cbn [exit_targets successor In]; intuition congruence.
 Qed.
-
 Record lang_prepared (K G : Type) := LangPrepared {
   lang_source : func positive K G;
   lang_entries : list positive;
@@ -851,7 +848,6 @@ Lemma graph_max_nat a b : graph_max a b = Nat.max a b.
 Proof.
   revert b; induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
 Qed.
-
 (** An identifier's width is bounded by the maximum over its containing list. *)
 Lemma vertex_width_in xs x : In x xs -> Pos.size_nat x <= vertex_width xs.
 Proof.
@@ -1915,7 +1911,6 @@ Lemma present_row_count_map {A B} (key : A -> positive) xs (rows : ptrie (list B
 Proof.
   rewrite <- (present_reader_length key xs rows). apply present_flat_length.
 Qed.
-
 Lemma listed_edge_args_nodup {A G} (kept : ptrie A) b (e : exit positive G) :
   NoDup (map fst (listed_edge_args kept b e)).
 Proof.
@@ -2171,6 +2166,154 @@ Proof.
 Qed.
 
 
+(** A unique encoded-key row is returned by the first-row table. *)
+Lemma present_table_lookup_unique {A B} (key : A -> positive) rows a (value : B) :
+  NoDup (map (fun row => key (fst row)) rows) -> In (a, value) rows ->
+  trie_get (key a) (first_table key rows) = Some value.
+Proof.
+  induction rows as [|[head stored] rest IH]; intros Hunique Hin; [contradiction|].
+  inversion Hunique as [|encoded encoded_rest Hfresh Hrest]; subst.
+  change (trie_get (key a) (PTrieCode.set (key head) stored (first_table key rest)) = Some value).
+  destruct Hin as [Heq|Hin].
+  - inversion Heq; subst head stored. apply PTrie.get_set_same.
+  - rewrite PTrie.get_set_other.
+    + now apply IH.
+    + intro Heq. apply Hfresh. apply in_map_iff.
+      exists (a, value); split; [exact Heq|exact Hin].
+Qed.
+
+(** A block-item table agrees with first source lookup even before deduplication. *)
+Lemma present_block_table_lookup {K G A} (f : positive * block positive K G -> A) bs b :
+  trie_get b (first_table PosKeyCode.encode (map (fun item => (fst item, f item)) bs)) =
+    option_map (fun body => f (b, body)) (find_block b bs).
+Proof.
+  induction bs as [|[a body] rest IH].
+  - change (trie_get b (@Empty A) = None). apply PTrie.get_empty.
+  - change (trie_get b (PTrieCode.set a (f (a, body))
+      (first_table PosKeyCode.encode (map (fun item => (fst item, f item)) rest))) =
+      option_map (fun body => f (b, body))
+        (if Pos.eqb b a then Some body else find_block b rest)).
+    destruct (Pos.eqb b a) eqn:Hsame.
+    + apply Pos.eqb_eq in Hsame; subst a. rewrite PTrie.get_set_same; reflexivity.
+    + rewrite PTrie.get_set_other by now apply Pos.eqb_neq. exact IH.
+Qed.
+
+(** Every block reader can use the original selected item, not just its identifier. *)
+Lemma present_block_table_item {K G A} (f : positive * block positive K G -> A) bs b body :
+  NoDup (map fst bs) -> In (b, body) bs ->
+  trie_get b (first_table PosKeyCode.encode (map (fun item => (fst item, f item)) bs)) =
+    Some (f (b, body)).
+Proof.
+  intros Hunique Hin.
+  change (trie_get (PosKeyCode.encode b)
+    (first_table PosKeyCode.encode (map (fun item => (fst item, f item)) bs)) = Some (f (b, body))).
+  apply present_table_lookup_unique.
+  - rewrite map_map. exact Hunique.
+  - apply in_map_iff. exists (b, body); split; [reflexivity|exact Hin].
+Qed.
+
+(** A multitable is exactly the original list filtered by its encoded key. *)
+Lemma present_multi_table_filter {A} (key : A -> positive) rows x :
+  index_row (multi_table key rows) x = filter (fun row => Pos.eqb (key row) x) rows.
+Proof.
+  induction rows as [|a rest IH].
+  - unfold multi_table, index_row; cbn [fold_right filter].
+    rewrite PTrie.get_empty; reflexivity.
+  - change (index_row
+      (PTrieCode.set (key a) (a :: index_row (multi_table key rest) (key a))
+        (multi_table key rest)) x =
+      if Pos.eqb (key a) x then a :: filter (fun row => Pos.eqb (key row) x) rest
+      else filter (fun row => Pos.eqb (key row) x) rest).
+    destruct (Pos.eqb (key a) x) eqn:Hsame.
+    + apply Pos.eqb_eq in Hsame; subst x. unfold index_row at 1.
+      rewrite PTrie.get_set_same. cbn. now rewrite IH.
+    + apply Pos.eqb_neq in Hsame. unfold index_row at 1.
+      rewrite PTrie.get_set_other by congruence. exact IH.
+Qed.
+
+Lemma present_multi_table_nodup {A} (key : A -> positive) rows x :
+  NoDup rows -> NoDup (index_row (multi_table key rows) x).
+Proof.
+  intro Hunique; rewrite present_multi_table_filter; now apply NoDup_filter.
+Qed.
+(** Code rows form the chain of consecutive instruction positions. *)
+Lemma present_code_chain {K} b : forall (cs : list (positive * K * list positive)) i edges,
+  incl (map (fun row => fst (fst row)) (fst (code_rows b i cs))) edges ->
+  presentation_chain edges point_src point_dst
+    ((b, i) :: map (fun row => point_dst (fst (fst row))) (fst (code_rows b i cs)))
+    (map (fun row => fst (fst row)) (fst (code_rows b i cs))).
+Proof.
+  induction cs as [|[[x op] xs] rest IH]; intros i edges Hin.
+  - cbn [code_rows fst map]; constructor.
+  - cbn [code_rows fst snd map] in Hin |- *.
+    eapply Chain_next.
+    + apply Hin; left; reflexivity.
+    + reflexivity.
+    + reflexivity.
+    + apply IH. intros edge Hedge; apply Hin; right; exact Hedge.
+Qed.
+
+Lemma present_summary_chain {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) edges :
+  incl (map (fun row => fst (fst row)) (summary_internal (summarize kept item))) edges ->
+  presentation_chain edges point_src point_dst (summary_points (summarize kept item))
+    (map (fun row => fst (fst row)) (summary_internal (summarize kept item))).
+Proof.
+  intro Hin.
+  change (presentation_chain edges point_src point_dst
+    ((fst item, 0%N) :: (fst item, 1%N) ::
+      map (fun row => point_dst (fst (fst row)))
+        (fst (code_rows (fst item) 1%N (code _ _ _ (snd item)))))
+    (PointEdge (fst item, 0%N) (fst item, 1%N) None ::
+      map (fun row => fst (fst row))
+        (fst (code_rows (fst item) 1%N (code _ _ _ (snd item)))))).
+  eapply Chain_next.
+  - apply Hin; left; reflexivity.
+  - reflexivity.
+  - reflexivity.
+  - apply present_code_chain. intros edge Hedge; apply Hin; right; exact Hedge.
+Qed.
+
+Lemma present_code_last {K} b : forall (cs : list (positive * K * list positive)) i default,
+  last ((b, i) :: map (fun row => point_dst (fst (fst row))) (fst (code_rows b i cs))) default =
+    (b, snd (code_rows b i cs)).
+Proof.
+  induction cs as [|[[x op] xs] rest IH]; intros i default.
+  - reflexivity.
+  - change (last ((b, N.succ i) :: map (fun row => point_dst (fst (fst row)))
+      (fst (code_rows b (N.succ i) rest))) default =
+      (b, snd (code_rows b (N.succ i) rest))).
+    apply IH.
+Qed.
+
+Lemma present_summary_last {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) default :
+  last (summary_points (summarize kept item)) default = summary_exit (summarize kept item).
+Proof.
+  change (last ((fst item, 1%N) :: map (fun row => point_dst (fst (fst row)))
+    (fst (code_rows (fst item) 1%N (code _ _ _ (snd item))))) default =
+    (fst item, snd (code_rows (fst item) 1%N (code _ _ _ (snd item))))).
+  apply present_code_last.
+Qed.
+
+Lemma present_summary_first {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  nth_error (summary_points (summarize kept item)) 0 = Some (fst item, 0%N).
+Proof.
+  reflexivity.
+Qed.
+Lemma present_summary_parameter {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  nth_error (map (fun row => fst (fst row)) (summary_internal (summarize kept item))) 0 =
+    Some (PointEdge (fst item, 0%N) (fst item, 1%N) None).
+Proof.
+  reflexivity.
+Qed.
+Lemma present_summary_nonempty {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) : summary_points (summarize kept item) <> [].
+Proof.
+  discriminate.
+Qed.
 Module PresentT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G).
   Module Q := Prepared O.
@@ -2263,6 +2406,121 @@ Module PresentT (O : OPS)
   Proof.
     intro p; split; reflexivity.
   Qed.
+  Definition pp_kept (p : func positive O.K O.G) := first_blocks (blocks _ _ _ p).
+  Definition pp_params (p : func positive O.K O.G) :=
+    first_table PosKeyCode.encode (map (fun item => (fst item, params _ _ _ (snd item))) (pp_kept p)).
+  Definition pp_summaries (p : func positive O.K O.G) := map (summarize (pp_params p)) (pp_kept p).
+
+  Lemma pp_kept_unique p : NoDup (map fst (pp_kept p)).
+  Proof.
+    unfold pp_kept; rewrite first_blocks_selected; apply selected_blocks_nodup.
+  Qed.
+  Lemma pp_points_lookup p b : SP.points_in_block (R.prepare p) b =
+    match find_block b (blocks _ _ _ p) with
+    | Some body => summary_points (summarize (pp_params p) (b, body))
+    | None => []
+    end.
+  Proof.
+    lazymatch goal with |- _ = ?rhs =>
+      change (index_row (first_table PosKeyCode.encode
+        (map (fun s => (summary_block s, summary_points s)) (pp_summaries p))) b = rhs) end.
+    unfold pp_summaries; rewrite map_map.
+    lazymatch goal with |- _ = ?rhs =>
+      change (index_row (first_table PosKeyCode.encode
+        (map (fun item => (fst item, summary_points (summarize (pp_params p) item))) (pp_kept p))) b = rhs) end.
+    unfold index_row; rewrite present_block_table_lookup.
+    unfold pp_kept; rewrite first_blocks_find.
+    destruct (find_block b (blocks _ _ _ p)); reflexivity.
+  Qed.
+
+  Lemma pp_instruction_lookup p b : SP.instruction_edges (R.prepare p) b =
+    match find_block b (blocks _ _ _ p) with
+    | Some body => map (fun row => fst (fst row)) (summary_internal (summarize (pp_params p) (b, body)))
+    | None => []
+    end.
+  Proof.
+    lazymatch goal with |- _ = ?rhs =>
+      change (index_row (first_table PosKeyCode.encode
+      (map (fun s => (summary_block s, map (fun row => fst (fst row)) (summary_internal s)))
+        (pp_summaries p))) b = rhs) end.
+    unfold pp_summaries; rewrite map_map.
+    lazymatch goal with |- _ = ?rhs =>
+      change (index_row (first_table PosKeyCode.encode
+      (map (fun item => (fst item,
+        map (fun row => fst (fst row)) (summary_internal (summarize (pp_params p) item))))
+        (pp_kept p))) b = rhs) end.
+    unfold index_row; rewrite present_block_table_lookup.
+    unfold pp_kept; rewrite first_blocks_find.
+    destruct (find_block b (blocks _ _ _ p)); reflexivity.
+  Qed.
+
+  Lemma pp_parameter_lookup p b body : find_block b (blocks _ _ _ p) = Some body ->
+    SP.parameter_edge (R.prepare p) b = PointEdge (b, 0%N) (b, 1%N) None.
+  Proof.
+    intro Hfind.
+    lazymatch goal with |- _ = ?rhs =>
+      change ((match trie_get b (first_table PosKeyCode.encode
+      (map (fun s => (summary_block s,
+        PointEdge (summary_block s, 0%N) (summary_block s, 1%N) None)) (pp_summaries p))) with
+      | Some e => e
+      | None => PointEdge (entry _ _ _ p, 0%N) (entry _ _ _ p, 1%N) None
+      end) = rhs) end.
+    unfold pp_summaries; rewrite map_map.
+    lazymatch goal with |- _ = ?rhs =>
+      change ((match trie_get b (first_table PosKeyCode.encode
+      (map (fun item => (fst item, PointEdge (fst item, 0%N) (fst item, 1%N) None)) (pp_kept p))) with
+      | Some e => e
+      | None => PointEdge (entry _ _ _ p, 0%N) (entry _ _ _ p, 1%N) None
+      end) = rhs) end.
+    rewrite present_block_table_lookup. unfold pp_kept; rewrite first_blocks_find, Hfind.
+    reflexivity.
+  Qed.
+
+  Lemma pp_listed_find p b : In b (BC.nodes (R.prepare p)) ->
+    exists body, find_block b (blocks _ _ _ p) = Some body /\ In (b, body) (pp_kept p).
+  Proof.
+    rewrite Link.nodes_agree. intro Hin; apply find_block_exists in Hin as [body Hfind].
+    exists body; split.
+    - rewrite first_blocks_find in Hfind; exact Hfind.
+    - now apply find_block_in.
+  Qed.
+
+  Lemma pp_point_out_unique p n : NoDup (C.out (R.prepare p) n).
+  Proof.
+    change (NoDup (index_row
+      (multi_table (fun e => PointKey.encode (point_src e)) (lang_point_edges (lang_prepare p)))
+      (PointKey.encode n))).
+    apply present_multi_table_nodup, lang_point_edges_nodup.
+  Qed.
+
+  Lemma pp_block_out_unique p b : NoDup (BC.out (R.prepare p) b).
+  Proof.
+    change (NoDup (index_row (multi_table edge_source (lang_edges (lang_prepare p))) b)).
+    apply present_multi_table_nodup, lang_block_edges_nodup.
+  Qed.
+
+  Lemma pp_points_unique p b : NoDup (SP.points_in_block (R.prepare p) b).
+  Proof.
+    rewrite pp_points_lookup. destruct (find_block b (blocks _ _ _ p)).
+    - apply summarize_points_nodup.
+    - constructor.
+  Qed.
+
+  Lemma pp_points_nonempty p b : In b (BC.nodes (R.prepare p)) ->
+    SP.points_in_block (R.prepare p) b <> [].
+  Proof.
+    intro Hin; destruct (pp_listed_find p b Hin) as [body [Hfind _]].
+    rewrite pp_points_lookup, Hfind; apply present_summary_nonempty.
+  Qed.
+
+  Lemma pp_parameter_first p b : In b (BC.nodes (R.prepare p)) ->
+    nth_error (SP.instruction_edges (R.prepare p) b) 0 = Some (SP.parameter_edge (R.prepare p) b).
+  Proof.
+    intro Hin; destruct (pp_listed_find p b Hin) as [body [Hfind _]].
+    rewrite pp_instruction_lookup, Hfind, (pp_parameter_lookup p b body Hfind).
+    apply present_summary_parameter.
+  Qed.
+
   (** The point laws hold on the prepared form of an SSA function. *)
   Lemma points_wf : forall p, ssa_wf p -> SP.wf (R.prepare p).
   Proof. Admitted. (* STUB *)
