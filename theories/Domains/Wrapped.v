@@ -2525,6 +2525,314 @@ Qed.
 TimeBound wrapped_not_time.
 
 
+(** Unsigned word division remains a word, including the integer zero-divisor case. *)
+Lemma wrapped_word_div_word : forall w x y,
+  is_word w x -> is_word w y -> is_word w (x / y).
+Proof.
+  intros w x y [Hx0 Hxhi] [Hy0 Hyhi].
+  destruct (Z.eq_dec y 0) as [-> | Hynonzero].
+  - rewrite Z.div_0_r. unfold is_word. pose proof (modulus_pos w). lia.
+  - assert (Hypos : 0 < y) by lia. unfold is_word. split.
+    + apply Z.div_pos; lia.
+    + eapply Z.le_lt_trans; [|exact Hxhi]. apply Z.div_le_upper_bound; [exact Hypos|].
+      replace x with (1 * x) at 1 by ring. apply Z.mul_le_mono_nonneg_r; lia.
+Qed.
+
+(** Finite word-shaped intervals store at most the declared width. *)
+Lemma wrapped_word_interval_bits : forall w a,
+  wrapped_interval_word_shape w a -> (interval_bits a <= Pos.to_nat w)%nat.
+Proof.
+  intros w a [-> | [lo [hi [-> [Hlo Hhi]]]]].
+  - change (0 <= Pos.to_nat w)%nat. lia.
+  - change (Nat.max (Z.size_nat lo) (Z.size_nat hi) <= Pos.to_nat w)%nat.
+    apply Nat.max_lub; apply WordTime.word_size_bound; assumption.
+Qed.
+
+(** Unsigned interval division stores only word-sized quotient endpoints. *)
+Lemma wrapped_interval_udiv_bits_word : forall w a b,
+  wrapped_interval_word_shape w a -> wrapped_interval_word_shape w b ->
+  (interval_bits (WrappedIntervalOps.interval_udiv w a b) <= 3 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b Ha Hb.
+  destruct Ha as [-> | [la [ha [-> [Hla Hha]]]]];
+    destruct Hb as [-> | [lb [hb [-> [Hlb Hhb]]]]];
+    try (cbn [WrappedIntervalOps.interval_udiv interval_finite_helper];
+      pose proof (wrapped_interval_top_bits w); lia).
+  pose proof (WordTime.word_size_bound w (la / hb)
+    (wrapped_word_div_word w la hb Hla Hhb)) as Hql.
+  pose proof (WordTime.word_size_bound w (ha / lb)
+    (wrapped_word_div_word w ha lb Hha Hlb)) as Hqr.
+  pose proof (wrapped_last_word_bits w) as Hlast.
+  pose proof (wrapped_interval_top_bits w) as Htop.
+  pose proof (wrapped_interval_checked_bits w (la / hb) (ha / lb)) as Hfirst.
+  pose proof (wrapped_interval_checked_bits w (la / hb) (modulus w - 1)) as Hsecond.
+  unfold WrappedIntervalOps.interval_udiv. cbn [interval_finite_helper].
+  destruct ((0 <=? la) && (0 <? lb))%bool; [exact (ltac:(lia))|].
+  destruct ((0 <=? la) && (lb =? 0) && (0 <? hb))%bool; [exact (ltac:(lia))|].
+  destruct ((lb =? 0) && (hb =? 0))%bool; [|exact (ltac:(lia))].
+  change (Nat.max (Z.size_nat (modulus w - 1)) (Z.size_nat (modulus w - 1)) <=
+    3 * Pos.to_nat w)%nat. lia.
+Qed.
+
+(** Unsigned interval division performs at most two quadratic word divisions. *)
+Lemma wrapped_interval_udiv_time_word : forall w a b,
+  wrapped_interval_word_shape w a -> wrapped_interval_word_shape w b ->
+  (WrappedIntervalOps.T_interval_udiv w a b <=
+    16384 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w a b Ha Hb.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+  destruct Ha as [-> | [la [ha [-> [Hla Hha]]]]];
+    destruct Hb as [-> | [lb [hb [-> [Hlb Hhb]]]]];
+    try (time_unfold WrappedIntervalOps.T_interval_udiv;
+      cbn beta iota zeta; cbn [interval_finite_helper]; time_simpl; time_pose;
+      rewrite !Nat2N.inj_add in *; lia).
+  pose proof (WordTime.word_size_bound w la Hla) as Hlabits.
+  pose proof (WordTime.word_size_bound w ha Hha) as Hhabits.
+  pose proof (WordTime.word_size_bound w lb Hlb) as Hlbbits.
+  pose proof (WordTime.word_size_bound w hb Hhb) as Hhbbits.
+  pose proof (WordTime.integer_div_word_time_bound w la hb Hla Hhb) as Hlefttime.
+  pose proof (WordTime.integer_div_word_time_bound w ha lb Hha Hlb) as Hrighttime.
+  pose proof (WordTime.word_size_bound w (la / hb)
+    (wrapped_word_div_word w la hb Hla Hhb)) as Hqlbits.
+  pose proof (WordTime.word_size_bound w (ha / lb)
+    (wrapped_word_div_word w ha lb Hha Hlb)) as Hqrbits.
+  pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  pose proof (wrapped_last_word_bits w) as Hlastbits.
+  set (ql := la / hb) in *.
+  set (qr := ha / lb) in *.
+  set (last := modulus w - 1) in *.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  time_unfold WrappedIntervalOps.T_interval_udiv.
+  cbn beta iota zeta. cbn [interval_finite_helper].
+  fold ql qr last. clearbody ql qr last square. time_simpl. time_pose.
+  repeat match goal with |- context [if ?choice then _ else _] => destruct choice end;
+    try change (Z.size_nat 0) with 0%nat in *;
+    try change (Z.size_nat 1) with 1%nat in *;
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+(** Remainder endpoints use one quotient product and one subtraction. *)
+Lemma wrapped_interval_urem_bits_word : forall w a b,
+  wrapped_interval_word_shape w a -> wrapped_interval_word_shape w b ->
+  (interval_bits (WrappedIntervalOps.interval_urem w a b) <=
+    7 * Pos.to_nat w + 2)%nat.
+Proof.
+  intros w a b Ha Hb.
+  destruct Ha as [-> | [la [ha [-> [Hla Hha]]]]];
+    destruct Hb as [-> | [lb [hb [-> [Hlb Hhb]]]]];
+    try (cbn [WrappedIntervalOps.interval_urem interval_finite_helper];
+      pose proof (wrapped_interval_top_bits w); lia).
+  pose proof (WordTime.word_size_bound w la Hla) as Hlabits.
+  pose proof (WordTime.word_size_bound w ha Hha) as Hhabits.
+  pose proof (WordTime.word_size_bound w lb Hlb) as Hlbbits.
+  pose proof (WordTime.word_size_bound w hb Hhb) as Hhbbits.
+  pose proof (WordTime.word_size_bound w (la / hb)
+    (wrapped_word_div_word w la hb Hla Hhb)) as Hqbits.
+  pose proof (WordTime.integer_mul_size (la / hb) hb) as Hplbits.
+  pose proof (WordTime.integer_mul_size (la / hb) lb) as Hprbits.
+  pose proof (WordTime.integer_sub_size la ((la / hb) * hb)) as Hleftbits.
+  pose proof (WordTime.integer_sub_size ha ((la / hb) * lb)) as Hrightbits.
+  pose proof (WordTime.integer_sub_size hb 1) as Hlastbits.
+  pose proof (wrapped_min_bits ha (hb - 1)) as Hminbits.
+  pose proof (wrapped_interval_checked_bits w (la - (la / hb) * hb)
+    (ha - (la / hb) * lb)) as Hfirst.
+  pose proof (wrapped_interval_checked_bits w 0 (Z.min ha (hb - 1))) as Hsecond.
+  pose proof (wrapped_interval_checked_bits w 0 ha) as Hthird.
+  try change (Z.size_nat 0) with 0%nat in *.
+  try change (Z.size_nat 1) with 1%nat in *.
+  unfold WrappedIntervalOps.interval_urem. cbn [interval_finite_helper].
+  destruct ((0 <=? la) && (0 <? lb) && (la / hb =? ha / lb))%bool;
+    [exact (ltac:(lia))|].
+  destruct (0 <? lb); lia.
+Qed.
+
+(** Interval remainder has a fixed number of word divisions and multiplications. *)
+Lemma wrapped_interval_urem_time_word : forall w a b,
+  wrapped_interval_word_shape w a -> wrapped_interval_word_shape w b ->
+  (WrappedIntervalOps.T_interval_urem w a b <=
+    32768 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w a b Ha Hb.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+  destruct Ha as [-> | [la [ha [-> [Hla Hha]]]]];
+    destruct Hb as [-> | [lb [hb [-> [Hlb Hhb]]]]];
+    try (time_unfold WrappedIntervalOps.T_interval_urem;
+      cbn beta iota zeta; cbn [interval_finite_helper]; time_simpl; time_pose;
+      rewrite !Nat2N.inj_add in *; lia).
+  pose proof (WordTime.word_size_bound w la Hla) as Hlabits.
+  pose proof (WordTime.word_size_bound w ha Hha) as Hhabits.
+  pose proof (WordTime.word_size_bound w lb Hlb) as Hlbbits.
+  pose proof (WordTime.word_size_bound w hb Hhb) as Hhbbits.
+  pose proof (wrapped_word_div_word w la hb Hla Hhb) as Hquotient.
+  pose proof (WordTime.word_size_bound w (la / hb) Hquotient) as Hqbits.
+  pose proof (WordTime.word_size_bound w (ha / lb)
+    (wrapped_word_div_word w ha lb Hha Hlb)) as Hqrbits.
+  pose proof (WordTime.integer_div_word_time_bound w la hb Hla Hhb) as Hlefttime.
+  pose proof (WordTime.integer_div_word_time_bound w ha lb Hha Hlb) as Hrighttime.
+  pose proof (WordTime.integer_mul_word_time_bound w (la / hb) hb Hquotient Hhb) as Hpltime.
+  pose proof (WordTime.integer_mul_word_time_bound w (la / hb) lb Hquotient Hlb) as Hprtime.
+  pose proof (WordTime.integer_mul_size (la / hb) hb) as Hplbits.
+  pose proof (WordTime.integer_mul_size (la / hb) lb) as Hprbits.
+  pose proof (WordTime.integer_sub_size la ((la / hb) * hb)) as Hleftbits.
+  pose proof (WordTime.integer_sub_size ha ((la / hb) * lb)) as Hrightbits.
+  pose proof (WordTime.integer_sub_size hb 1) as Hlastbits.
+  pose proof (wrapped_min_bits ha (hb - 1)) as Hminbits.
+  set (ql := la / hb) in *.
+  set (qr := ha / lb) in *.
+  set (pl := ql * hb) in *.
+  set (pr := ql * lb) in *.
+  set (left := la - pl) in *.
+  set (right := ha - pr) in *.
+  set (last := hb - 1) in *.
+  set (low := Z.min ha last) in *.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  time_unfold WrappedIntervalOps.T_interval_urem.
+  cbn beta iota zeta. cbn [interval_finite_helper].
+  fold ql qr pl pr left right last low.
+  clearbody ql qr pl pr left right last low square. time_simpl. time_pose.
+  repeat match goal with |- context [if ?choice then _ else _] => destruct choice end;
+    try change (Z.size_nat 0) with 0%nat in *;
+    try change (Z.size_nat 1) with 1%nat in *;
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+
+(** A normalized quotient or remainder piece stores at most two word endpoints. *)
+Lemma wrapped_div_piece_bits : forall remainder w a b,
+  (wrapped_bits (wrapped_div_piece remainder w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros remainder w [|la ha] [|lb hb];
+    try (change (0 <= 2 * Pos.to_nat w)%nat; lia).
+  unfold wrapped_div_piece. apply wrapped_of_interval_bits.
+Qed.
+
+(** Division of word-shaped pieces charges a fixed quadratic word budget. *)
+Lemma wrapped_div_piece_time_word : forall remainder w a b,
+  wrapped_interval_word_shape w a -> wrapped_interval_word_shape w b ->
+  (T_wrapped_div_piece remainder w a b <=
+    262144 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros remainder w a b Ha Hb.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+  destruct a as [|la ha], b as [|lb hb];
+    try (time_unfold T_wrapped_div_piece; cbn beta iota zeta;
+      rewrite !Nat2N.inj_add in *; lia).
+  pose proof (wrapped_interval_udiv_time_word w (I la ha) (I lb hb) Ha Hb) as Hdivision.
+  pose proof (wrapped_interval_urem_time_word w (I la ha) (I lb hb) Ha Hb) as Hremainder.
+  pose proof (wrapped_interval_udiv_bits_word w (I la ha) (I lb hb) Ha Hb) as Hdivisionbits.
+  pose proof (wrapped_interval_urem_bits_word w (I la ha) (I lb hb) Ha Hb) as Hremainderbits.
+  set (u := WrappedIntervalOps.interval_udiv w (I la ha) (I lb hb)) in *.
+  set (r := WrappedIntervalOps.interval_urem w (I la ha) (I lb hb)) in *.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  time_unfold T_wrapped_div_piece. cbn beta iota zeta.
+  fold u r. clearbody u r square.
+  destruct remainder; cbn beta iota zeta; time_simpl; time_pose;
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+(** Pole-clipped division joins four normalized result pieces. *)
+Lemma wrapped_div_cut_bits : forall remainder w a b,
+  (wrapped_bits (wrapped_div_cut remainder w a b) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. unfold wrapped_div_cut. apply wrapped_join_four_bits. Qed.
+
+(** Pole clipping separates raw input costs from quadratic word arithmetic. *)
+Lemma wrapped_div_cut_time : forall remainder w a b,
+  (T_wrapped_div_cut remainder w a b <= 33554432 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + interval_bits a + interval_bits b))%N.
+Proof.
+  intros remainder w a b.
+  pose proof (wrapped_pole_cut_word_shape w a) as [Ha0 Ha1].
+  pose proof (wrapped_pole_cut_word_shape w b) as [Hb0 Hb1].
+  set (pa := wrapped_pole_cut w a) in *.
+  set (pb := wrapped_pole_cut w b) in *.
+  pose proof (wrapped_div_piece_time_word remainder w (fst pa) (fst pb) Ha0 Hb0) as HT00.
+  pose proof (wrapped_div_piece_time_word remainder w (fst pa) (snd pb) Ha0 Hb1) as HT01.
+  pose proof (wrapped_div_piece_time_word remainder w (snd pa) (fst pb) Ha1 Hb0) as HT10.
+  pose proof (wrapped_div_piece_time_word remainder w (snd pa) (snd pb) Ha1 Hb1) as HT11.
+  pose proof (wrapped_div_piece_bits remainder w (fst pa) (fst pb)) as H00.
+  pose proof (wrapped_div_piece_bits remainder w (fst pa) (snd pb)) as H01.
+  pose proof (wrapped_div_piece_bits remainder w (snd pa) (fst pb)) as H10.
+  pose proof (wrapped_div_piece_bits remainder w (snd pa) (snd pb)) as H11.
+  set (r00 := wrapped_div_piece remainder w (fst pa) (fst pb)) in *.
+  set (r01 := wrapped_div_piece remainder w (fst pa) (snd pb)) in *.
+  set (r10 := wrapped_div_piece remainder w (snd pa) (fst pb)) in *.
+  set (r11 := wrapped_div_piece remainder w (snd pa) (snd pb)) in *.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+  rewrite !Nat2N.inj_add in *.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  time_unfold T_wrapped_div_cut. cbn beta iota zeta.
+  fold pa pb r00 r01 r10 r11.
+  clearbody pa pb r00 r01 r10 r11 square. time_simpl. time_pose.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_div_cut_time.
+
+(** Circular division separates raw endpoint normalization from bounded word pieces. *)
+Lemma wrapped_div_time : forall remainder w a b,
+  (T_wrapped_div remainder w a b <= 1073741824 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
+Proof.
+  intros remainder w a b.
+  pose proof (wrapped_parts_bits w a) as [Ha0 Ha1].
+  pose proof (wrapped_parts_bits w b) as [Hb0 Hb1].
+  set (pa := wrapped_parts w a) in *.
+  set (pb := wrapped_parts w b) in *.
+  pose proof (wrapped_div_cut_time remainder w (fst pa) (fst pb)) as HT00.
+  pose proof (wrapped_div_cut_time remainder w (fst pa) (snd pb)) as HT01.
+  pose proof (wrapped_div_cut_time remainder w (snd pa) (fst pb)) as HT10.
+  pose proof (wrapped_div_cut_time remainder w (snd pa) (snd pb)) as HT11.
+  pose proof (wrapped_div_cut_bits remainder w (fst pa) (fst pb)) as H00.
+  pose proof (wrapped_div_cut_bits remainder w (fst pa) (snd pb)) as H01.
+  pose proof (wrapped_div_cut_bits remainder w (snd pa) (fst pb)) as H10.
+  pose proof (wrapped_div_cut_bits remainder w (snd pa) (snd pb)) as H11.
+  set (r00 := wrapped_div_cut remainder w (fst pa) (fst pb)) in *.
+  set (r01 := wrapped_div_cut remainder w (fst pa) (snd pb)) in *.
+  set (r10 := wrapped_div_cut remainder w (snd pa) (fst pb)) in *.
+  set (r11 := wrapped_div_cut remainder w (snd pa) (snd pb)) in *.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    (Nat.le_refl _) (ltac:(lia))) as Hfloor.
+  rewrite !Nat2N.inj_add in *.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  time_unfold T_wrapped_div. cbn beta iota zeta.
+  fold pa pb r00 r01 r10 r11.
+  clearbody pa pb r00 r01 r10 r11 square. time_simpl. time_pose.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_div_time.
+
+(** Unsigned quotient dispatch adds one fixed step to circular division. *)
+Lemma wrapped_udiv_time : forall w a b,
+  (T_wrapped_udiv w a b <= 2147483648 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
+Proof.
+  intros w a b. pose proof (wrapped_div_time false w a b) as Htime.
+  pose proof (WordTime.time_square_floor 1 (Pos.to_nat w + 1)
+    (ltac:(lia)) (ltac:(lia))) as Hpositive.
+  time_unfold T_wrapped_udiv. cbn beta iota zeta. time_simpl.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_udiv_time.
+
+(** Unsigned remainder dispatch adds one fixed step to circular division. *)
+Lemma wrapped_urem_time : forall w a b,
+  (T_wrapped_urem w a b <= 2147483648 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
+Proof.
+  intros w a b. pose proof (wrapped_div_time true w a b) as Htime.
+  pose proof (WordTime.time_square_floor 1 (Pos.to_nat w + 1)
+    (ltac:(lia)) (ltac:(lia))) as Hpositive.
+  time_unfold T_wrapped_urem. cbn beta iota zeta. time_simpl.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_urem_time.
+
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
