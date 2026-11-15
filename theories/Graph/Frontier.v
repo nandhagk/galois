@@ -1399,8 +1399,7 @@ Module FrontierT <: FRONTIER_ALL.
       (df_credit g t y (df_initial g y) +
         k_df_stop * N.of_nat (length (df_column g t y) + 1) +
         N.of_nat (length (preds g y) + N.size_nat (df_fuel g y) + 1)))%N.
-  Proof. Admitted.
-  (* PLAN-DEFECT: take a single isolated root y with arbitrarily many key bits,
+  Proof. Admitted. (* PLAN-DEFECT: take a single isolated root y with arbitrarily many key bits,
      prepared predecessor map Empty and its exact one-node tree. The column and
      initial credit are empty, and fuel is 8, so this bound has constant RHS.
      Each predecessor lookup costs 2 * Pos.size_nat y even on Empty. A private
