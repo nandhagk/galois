@@ -1583,6 +1583,158 @@ Proof.
       now inversion Hunique.
 Qed.
 
+(** Every ancestor of a reachable target is reachable in an exact parent map. *)
+Local Lemma loop_ancestor_reachable g r m u v : dom_exact g r m ->
+  tree_anc m u v -> reach (base g) [r] v -> reach (base g) [r] u.
+Proof.
+  intros Hexact Hanc. induction Hanc as [|p v Hparent Hanc IH]; intro Hreach.
+  - exact Hreach.
+  - apply IH. exact (proj1 (proj1 Hexact v p Hparent)).
+Qed.
+
+(** A subtree consists of its root and the subtrees of its immediate children. *)
+Local Lemma loop_ancestor_children t v x :
+  (forall p c, In c (children t p) <-> trie_get c (idom t) = Some p) ->
+  (tree_anc (idom t) v x <-> x = v \/
+    exists c, In c (children t v) /\ tree_anc (idom t) c x).
+Proof.
+  intro Hchildren. split.
+  - intro Hanc. induction Hanc as [|p x Hparent Hanc IH]; [now left|].
+    destruct IH as [->|[c [Hc Hcx]]].
+    + right. exists x. split; [now apply Hchildren|constructor].
+    + right. exists c. split; [exact Hc|]. eapply tree_anc_step; eassumption.
+  - intros [->|[c [Hc Hcx]]]; [constructor|].
+    eapply dom_cert_anc_trans; [|exact Hcx].
+    eapply tree_anc_step; [exact (proj1 (Hchildren v c) Hc)|constructor].
+Qed.
+
+(** Two siblings cannot be distinct ancestors of the same vertex. *)
+Local Lemma loop_sibling_ancestor m p a b :
+  well_founded (fun u v => trie_get v m = Some u) ->
+  trie_get a m = Some p -> trie_get b m = Some p -> tree_anc m a b -> a = b.
+Proof.
+  intros Hwf Ha Hb Hanc. destruct (Pos.eq_dec a b) as [Heq|Hne]; [exact Heq|].
+  exfalso. apply (dom_map_no_return m p (Hwf p) a Ha).
+  eapply dom_cert_anc_parent; eassumption.
+Qed.
+
+Local Lemma loop_sibling_disjoint m p a b x :
+  well_founded (fun u v => trie_get v m = Some u) ->
+  trie_get a m = Some p -> trie_get b m = Some p ->
+  tree_anc m a x -> tree_anc m b x -> a = b.
+Proof.
+  intros Hwf Ha Hb Hax Hbx.
+  destruct (dom_anc_chain_comparable m a b x Hax Hbx) as [Hab|Hba].
+  - eapply loop_sibling_ancestor; eassumption.
+  - symmetry. eapply loop_sibling_ancestor; eassumption.
+Qed.
+
+(** Entered vertices and pairwise disjoint pending subtrees partition the reachable tree. *)
+Record loop_partition (g : prepared) (t : domtree) (r : positive)
+    (seen future : list positive) : Prop := {
+  loop_partition_seen_unique : NoDup seen;
+  loop_partition_future_unique : NoDup future;
+  loop_partition_seen_live : forall x, In x seen -> reach (base g) [r] x;
+  loop_partition_future_live : forall x, In x future -> reach (base g) [r] x;
+  loop_partition_separate : forall a x, In a future -> tree_anc (idom t) a x -> ~ In x seen;
+  loop_partition_disjoint : forall a b x, In a future -> In b future ->
+    tree_anc (idom t) a x -> tree_anc (idom t) b x -> a = b;
+  loop_partition_cover : forall x, reach (base g) [r] x ->
+    In x seen \/ exists a, In a future /\ tree_anc (idom t) a x
+}.
+
+Local Lemma loop_partition_root g t r : domtree_exact g r t ->
+  loop_partition g t r [] [r].
+Proof.
+  intro Htree. pose proof (proj1 (proj2 Htree)) as Hexact. constructor.
+  - constructor.
+  - constructor; [intro H; contradiction|constructor].
+  - intros x H; contradiction.
+  - intros x [<-|H]; [|contradiction]. exists r, [r]. split; [now left|constructor].
+  - intros a x Ha Hanc Hseen. contradiction.
+  - intros a b x [<-|Ha] [<-|Hb] Hax Hbx; try contradiction; reflexivity.
+  - intros x Hreach. right. exists r. split; [now left|].
+    apply (dom_exact_dominates_anc g r (idom t) r x Hexact Hreach).
+    apply loop_root_dominates.
+Qed.
+
+(** Entering one root replaces its future subtree by distinct child subtrees. *)
+Local Lemma loop_partition_enter g t r seen v future : domtree_exact g r t ->
+  loop_partition g t r seen (v :: future) ->
+  loop_partition g t r (v :: seen) (children t v ++ future).
+Proof.
+  intros Htree Hpart.
+  destruct Htree as [Hr [Hexact [Hwidth [Hchildren [Hrows [Hpre [Hpost Hinter]]]]]]].
+  pose proof (proj2 (proj2 Hexact)) as Hwf.
+  destruct Hpart as [Hseen Hfuture Hseen_live Hfuture_live Hseparate Hdisjoint Hcover].
+  inversion Hfuture as [|head tail Hfresh Htail]; subst head tail.
+  assert (Hv_live : reach (base g) [r] v) by (apply Hfuture_live; now left).
+  assert (Hv_seen : ~ In v seen).
+  { apply (Hseparate v v); [now left|constructor]. }
+  assert (Hchild_anc : forall c, In c (children t v) -> tree_anc (idom t) v c).
+  { intros c Hc. eapply tree_anc_step; [exact (proj1 (Hchildren v c) Hc)|constructor]. }
+  assert (Hchild_old : forall c, In c (children t v) -> ~ In c future).
+  { intros c Hc Hcfuture.
+    assert (Heq : v = c).
+    { apply (Hdisjoint v c c); [now left|now right|now apply Hchild_anc|constructor]. }
+    subst c. contradiction. }
+  constructor.
+  - now constructor.
+  - apply NoDup_app; [exact (proj1 (Hrows v))|exact Htail|exact Hchild_old].
+  - intros x [<-|Hx]; [exact Hv_live|now apply Hseen_live].
+  - intros x Hx. apply in_app_iff in Hx as [Hchild|Hfuturex].
+    + exact (proj1 (proj2 (proj1 Hexact x v (proj1 (Hchildren v x) Hchild)))).
+    + apply Hfuture_live. now right.
+  - intros a x Ha Hax Hx. apply in_app_iff in Ha as [Hchild|Ha].
+    + destruct Hx as [Heq|Hx].
+      * subst x. apply (dom_map_no_return (idom t) v (Hwf v) a
+          (proj1 (Hchildren v a) Hchild)). exact Hax.
+      * apply (Hseparate v x (or_introl eq_refl)); [|exact Hx].
+        eapply dom_cert_anc_trans; [exact (Hchild_anc a Hchild)|exact Hax].
+    + destruct Hx as [Heq|Hx].
+      * subst x. assert (Heq : a = v).
+        { apply (Hdisjoint a v v); [now right|now left|exact Hax|constructor]. }
+        subst a. contradiction.
+      * apply (Hseparate a x (or_intror Ha) Hax Hx).
+  - intros a b x Ha Hb Hax Hbx.
+    apply in_app_iff in Ha as [Ha|Ha]; apply in_app_iff in Hb as [Hb|Hb].
+    + apply (loop_sibling_disjoint (idom t) v a b x Hwf);
+        [now apply Hchildren|now apply Hchildren|exact Hax|exact Hbx].
+    + exfalso. assert (Heq : v = b).
+      { apply (Hdisjoint v b x); [now left|now right| |exact Hbx].
+        eapply dom_cert_anc_trans; [exact (Hchild_anc a Ha)|exact Hax]. }
+      subst b. contradiction.
+    + exfalso. assert (Heq : a = v).
+      { apply (Hdisjoint a v x); [now right|now left|exact Hax|].
+        eapply dom_cert_anc_trans; [exact (Hchild_anc b Hb)|exact Hbx]. }
+      subst a. contradiction.
+    + apply (Hdisjoint a b x); [now right|now right|exact Hax|exact Hbx].
+  - intros x Hlive. destruct (Hcover x Hlive) as [Hx|[a [[Ha|Ha] Hax]]].
+    + left. now right.
+    + subst a. apply (proj1 (loop_ancestor_children t v x Hchildren)) in Hax.
+      destruct Hax as [->|[c [Hc Hcx]]].
+      * left. now left.
+      * right. exists c. split; [apply in_or_app; now left|exact Hcx].
+    + right. exists a. split; [apply in_or_app; now right|exact Hax].
+Qed.
+
+(** Proper ancestors of a pending root have already been entered. *)
+Local Lemma loop_partition_ancestors_seen g t r seen future v u :
+  dom_exact g r (idom t) -> loop_partition g t r seen future ->
+  In v future -> tree_anc (idom t) u v -> u <> v -> In u seen.
+Proof.
+  intros Hexact Hpart Hv Hanc Hne.
+  destruct Hpart as [Hseen Hfuture Hseen_live Hfuture_live Hseparate Hdisjoint Hcover].
+  assert (Hu : reach (base g) [r] u).
+  { eapply loop_ancestor_reachable; [exact Hexact|exact Hanc|now apply Hfuture_live]. }
+  destruct (Hcover u Hu) as [Hu_seen|[a [Ha Hau]]]; [exact Hu_seen|].
+  assert (Hav : tree_anc (idom t) a v) by (eapply dom_cert_anc_trans; eassumption).
+  assert (Heq : a = v) by (apply (Hdisjoint a v v Ha Hv Hav); constructor).
+  subst a. exfalso. apply Hne.
+  eapply dom_anc_wf_antisym; [exact (proj2 (proj2 Hexact))|exact Hanc|exact Hau].
+Qed.
+
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
