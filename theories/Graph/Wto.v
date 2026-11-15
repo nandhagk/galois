@@ -142,6 +142,37 @@ Definition wto_expand_tasks within entries owners cs :=
   map (fun c => WtoExpand within entries owners c) cs.
 TimeFun wto_expand_tasks.
 
+(** Reversing a list pays one call per cons and its empty stopping call. *)
+Lemma wto_rev_append_clock : forall A (xs ys : list A),
+  List.T_rev_append xs ys = N.of_nat (length xs + 1).
+Proof.
+  intros A xs. induction xs as [|x rest IH]; intro ys;
+    time_unfold @List.T_rev_append; time_cbn; cbn [length]; rewrite ?IH; lia.
+Qed.
+
+Local Opaque loopN.
+
+(** Component production already pays for traversing its returned component list. *)
+Lemma wto_components_output_clock : forall g roots,
+  (N.of_nat (length (comps (wto_components g roots))) <= T_wto_components g roots)%N.
+Proof.
+  intros g roots. unfold wto_components at 1. cbn [comps].
+  rewrite rev_append_rev, app_nil_r, length_rev.
+  time_unfold @T_wto_components. rewrite wto_rev_append_clock. lia.
+Qed.
+
+Local Transparent loopN.
+
+(** Expansion-task construction traverses the outer component list once. *)
+Lemma wto_expand_tasks_clock : forall within entries owners cs,
+  (T_wto_expand_tasks within entries owners cs <= 2 * N.of_nat (length cs) + 2)%N.
+Proof.
+  intros within entries owners cs.
+  pose proof (ListDef.T_map_le (fun c => WtoExpand within entries owners c)
+    (fun _ => 1%N) 1%N cs ltac:(intro c; reflexivity)) as Hmap.
+  time_unfold @T_wto_expand_tasks. time_cbn. lia.
+Qed.
+
 Definition wto_step (g : prepared) (s : wto_state) : wto_state + wto :=
   match s with
   | WtoState [] partial _ => inr (wto_reverse_into partial WNil)
@@ -168,6 +199,41 @@ Definition wto_step (g : prepared) (s : wto_state) : wto_state + wto :=
     end
   end.
 TimeFun wto_step.
+
+(** A nontrivial expansion pays its scoped phases and their already charged output lists. *)
+Lemma wto_expand_step_clock : forall g within entries owners c tasks partial parents h body,
+  wto_select (wto_preferred owners entries c) c = Some (h, body) -> body <> [] ->
+  (T_wto_step g (WtoState (WtoExpand within entries owners c :: tasks) partial parents) <=
+    32 * (T_wto_preferred owners entries c +
+      T_wto_select (wto_preferred owners entries c) c + T_wto_scoped g (Some body) +
+      T_wto_components (wto_scoped g (Some body)) (rev body) +
+      T_wto_entries (wto_scoped g (Some body)) (rev body)
+        (wto_components (wto_scoped g (Some body)) (rev body)) +
+      N.of_nat (length body) + N.of_nat (length c) + 1))%N.
+Proof.
+  intros g within entries owners c tasks partial parents h [|first body] Hselect Hnonempty;
+    [contradiction|].
+  set (members := first :: body).
+  set (scoped := wto_scoped g (Some members)).
+  set (r := wto_components scoped (rev members)).
+  set (entries' := wto_entries scoped (rev members) r).
+  pose proof (wto_components_output_clock scoped (rev members)) as Houtput.
+  pose proof (List.T_rev_append_le members []) as Hroots.
+  pose proof (List.T_rev_append_le (comps r) []) as Hreverse.
+  pose proof (wto_expand_tasks_clock (Some members) entries' (comp r) (rev (comps r)))
+    as Htasks.
+  pose proof (Datatypes.T_app_le
+    (wto_expand_tasks (Some members) entries' (comp r) (rev (comps r)))
+    (WtoClose h :: tasks)) as Happ.
+  assert (Hlength :
+    length (wto_expand_tasks (Some members) entries' (comp r) (rev (comps r))) =
+      length (comps r)).
+  { unfold wto_expand_tasks. rewrite length_map, length_rev. reflexivity. }
+  rewrite Hlength in Happ. rewrite length_rev in Htasks. fold r in Houtput.
+  time_unfold @T_wto_step. rewrite Hselect. cbn beta iota zeta.
+  rewrite !rev_append_rev, !app_nil_r. fold members scoped r entries'.
+  time_simpl. nia.
+Qed.
 
 Fixpoint wto_unique (xs : list positive) :=
   match xs with
@@ -1574,7 +1640,7 @@ Module WtoT <: WTO_ALL.
   Definition k_index : N := 1%N. (* STUB *)
   Definition k_check : N := 1%N. (* STUB *)
   Definition k_scope : N := 1%N. (* STUB *)
-  Definition k_expand : N := 1%N. (* STUB *)
+  Definition k_expand : N := 32%N.
   Definition k_build : N := 1%N. (* STUB *)
   Definition k_heads : N := 1%N.
   Definition k_ranks : N := (PTrieT.c_trie + 4)%N.
@@ -1925,7 +1991,15 @@ Module WtoT <: WTO_ALL.
         T_wto_entries (wto_scoped g (Some body)) (rev body)
           (wto_components (wto_scoped g (Some body)) (rev body)) +
         N.of_nat (length body) + N.of_nat (length c) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g within entries owners c tasks partial parents h body Hselect Hbody.
+    pose proof (wto_expand_step_clock g within entries owners c tasks partial parents h body
+      Hselect Hbody) as Hstep.
+    unfold k_expand. time_unfold @T_wto_step. time_unfold @T_wto_preferred.
+    time_unfold @T_wto_select. time_unfold @T_wto_scoped. time_unfold @T_wto_components.
+    time_unfold @T_wto_entries. unfold wto_preferred, wto_scoped, wto_components.
+    time_simpl. nia.
+  Qed.
 
   Lemma T7_build_public : forall g roots,
     (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
