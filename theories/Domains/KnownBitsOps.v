@@ -305,6 +305,85 @@ Proof.
   clearbody square. rewrite ?Nat2N.inj_add in Hlinear. nia.
 Qed.
 
+(** A normalized endpoint makes the wrapping callback fit the width budget. *)
+Lemma table_wrap_callback_time : forall sw rw x, is_word sw x ->
+  (16 + T_tnum_wrap rw x <=
+    2048 * N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2))%N.
+Proof.
+  intros sw rw x Hword. pose proof (tnum_word_bits sw x Hword) as Hbits.
+  pose proof (tnum_wrap_time rw x) as Hwrap.
+  pose proof (WordTime.time_square_floor (Pos.to_nat rw + Z.size_nat x + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear - Hbits; lia) ltac:(clear; lia)) as Hlinear.
+  pose proof (WordTime.time_square_floor 1
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear; lia) ltac:(clear; lia)) as Hpositive.
+  clear Hword Hbits.
+  set (square := N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2)) in *.
+  clearbody square. lia.
+Qed.
+
+(** Sign extension reads a normalized source word before the destination mask. *)
+Lemma table_signed_callback_time : forall sw rw x, is_word sw x ->
+  (16 + T_signed sw x + T_tnum_wrap rw (signed sw x) <=
+    2048 * N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2))%N.
+Proof.
+  intros sw rw x Hword. pose proof (tnum_word_bits sw x Hword) as Hbits.
+  pose proof (WordTime.word_signed_size_bound sw x) as Hsignedbits.
+  assert (Hsigned : (T_signed sw x <=
+    512 * N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2))%N).
+  { eapply (WordTime.time_square_scale _ 128 _ _ 2);
+      [apply WordTime.word_signed_time_bound|clear - Hbits; lia]. }
+  pose proof (tnum_wrap_time rw (signed sw x)) as Hwrap.
+  pose proof (WordTime.time_square_floor (Pos.to_nat rw + Z.size_nat (signed sw x) + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear - Hsignedbits; lia) ltac:(clear; lia)) as Hlinear.
+  pose proof (WordTime.time_square_floor 1
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear; lia) ltac:(clear; lia)) as Hpositive.
+  clear Hword Hbits Hsignedbits.
+  set (square := N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2)) in *.
+  clearbody square. lia.
+Qed.
+
+(** A checked extraction offset bounds conversion, power construction and division. *)
+Lemma table_extract_callback_time : forall sw rw lo x,
+  (lo < Pos.to_nat sw)%nat -> is_word sw x ->
+  (16 + Op.Z.T_of_nat lo + Word.Z.T_pow 2 (Z.of_nat lo) +
+    Std.Z.T_div x (2 ^ Z.of_nat lo) + T_tnum_wrap rw (x / 2 ^ Z.of_nat lo) <=
+    2048 * N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2))%N.
+Proof.
+  intros sw rw lo x Hlo Hword.
+  pose proof (tnum_word_bits sw x Hword) as Hbits.
+  pose proof (tnum_pow2_bits (Z.of_nat lo) ltac:(clear; lia)) as Hpowerbits.
+  rewrite Nat2Z.id in Hpowerbits.
+  pose proof (WordTime.integer_div_size_time_bound (Pos.to_nat sw) x
+    (2 ^ Z.of_nat lo) Hbits ltac:(clear - Hlo Hpowerbits; lia)) as Hdivision.
+  pose proof (WordTime.integer_positive_div_size x (2 ^ Z.of_nat lo)
+    ltac:(clear; apply Z.pow_pos_nonneg; lia)) as Hquotientbits.
+  pose proof (tnum_wrap_time rw (x / 2 ^ Z.of_nat lo)) as Hwrap.
+  pose proof (tnum_pow2_time (Z.of_nat lo) ltac:(clear; lia)) as Hpower.
+  rewrite Nat2Z.id in Hpower.
+  pose proof (WordTime.natural_to_integer_time_bound lo) as Hconvert.
+  pose proof (WordTime.time_square_weaken _ 64 (Pos.to_nat sw + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1) Hdivision ltac:(clear; lia)) as Hdivisionwide.
+  pose proof (WordTime.time_square_weaken _ 8 (lo + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1) Hconvert
+    ltac:(clear - Hlo; lia)) as Hconvertwide.
+  pose proof (WordTime.time_square_floor (lo + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear - Hlo; lia) ltac:(clear; lia)) as Hpowerlinear.
+  pose proof (WordTime.time_square_floor (Pos.to_nat rw + Z.size_nat (x / 2 ^ Z.of_nat lo) + 1)
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear - Hquotientbits Hbits; lia) ltac:(clear; lia)) as Hwraplinear.
+  pose proof (WordTime.time_square_floor 1
+    (Pos.to_nat sw + Pos.to_nat rw + 1)
+    ltac:(clear; lia) ltac:(clear; lia)) as Hpositive.
+  clear Hlo Hword Hbits Hpowerbits Hquotientbits Hdivision Hconvert.
+  set (square := N.of_nat ((Pos.to_nat sw + Pos.to_nat rw + 1) ^ 2)) in *.
+  clearbody square. lia.
+Qed.
+
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
   Module P := KnownBitsCode L C.
   Module F := KnownBitsOpsCode L C P.
