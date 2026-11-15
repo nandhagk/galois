@@ -152,6 +152,97 @@ Proof.
 Qed.
 TimeBound table_srem_time.
 
+(** A recognized constant is a normalized endpoint. *)
+Lemma table_constant_bits : forall w a k, tnum_constant w a = Some k ->
+  (Z.size_nat k <= Pos.to_nat w)%nat.
+Proof.
+  intros w a k Hconstant. unfold tnum_constant in Hconstant.
+  destruct (tnum_wrap w (zeros a) =? tnum_wnot w (ones a)); [|discriminate].
+  injection Hconstant as <-. apply tnum_min_bits.
+Qed.
+
+(** An order comparison reads four bounded endpoints and returns a one-bit mask. *)
+Lemma table_order_time : forall strict w a b,
+  (T_tnum_order strict w a b <= 8192 *
+    N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros strict w a b.
+  pose proof (tnum_min_bits w a). pose proof (tnum_max_bits w a).
+  pose proof (tnum_min_bits w b). pose proof (tnum_max_bits w b).
+  destruct strict; time_unfold T_tnum_order; cbn beta iota zeta;
+    repeat match goal with
+    | |- context [if ?test then _ else _] => destruct test
+    end; time_pose; unfold tnum_bits in *;
+    cbn [Z.size_nat Pos.size_nat Pos.to_nat] in *;
+    rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound table_order_time.
+
+(** Equality comparison inspects the masks and at most two normalized constants. *)
+Lemma table_equal_time : forall w a b,
+  (T_tnum_equal w a b <= 8192 *
+    N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b. pose proof (tnum_meet_bits w a b) as Hmeet.
+  time_unfold T_tnum_equal. cbn beta iota zeta.
+  destruct (tnum_empty w (tnum_meet w a b)); [|].
+  - time_pose. unfold tnum_bits in *. cbn [Z.size_nat Pos.size_nat Pos.to_nat] in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+  - destruct (tnum_constant w a) as [x|] eqn:Ha;
+      destruct (tnum_constant w b) as [y|] eqn:Hb; cbn beta iota zeta;
+      try pose proof (table_constant_bits w a x Ha) as Hx;
+      try pose proof (table_constant_bits w b y Hb) as Hy;
+      time_pose;
+      repeat match goal with
+      | |- context [if ?test then _ else _] => destruct test
+      end; unfold tnum_bits in *; cbn [Z.size_nat Pos.size_nat Pos.to_nat] in *;
+      rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound table_equal_time.
+
+(** Flipping the sign bit adds only linear mask work. *)
+Lemma table_bias_time : forall w a,
+  (T_tnum_bias w a <= 16384 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (WordTime.word_half_time_bound w).
+  pose proof (WordTime.word_half_size_bound w).
+  pose proof (tnum_const_bits w (half w)).
+  time_unfold T_tnum_bias. cbn beta iota zeta. time_pose.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound table_bias_time.
+
+(** Every comparison uses a bounded number of linear mask transfers. *)
+Lemma table_compare_time : forall o w a b,
+  (T_tnum_compare o w a b <= 131072 *
+    N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros o w a b.
+  pose proof (tnum_equal_bits w a b).
+  pose proof (tnum_xor_bits w a (tnum_const w (half w))) as Ha.
+  pose proof (tnum_xor_bits w b (tnum_const w (half w))) as Hb.
+  change (tnum_bits (tnum_bias w a) <= 2 * Pos.to_nat w)%nat in Ha.
+  change (tnum_bits (tnum_bias w b) <= 2 * Pos.to_nat w)%nat in Hb.
+  destruct o; time_unfold T_tnum_compare; cbn beta iota zeta; time_pose;
+    cbn [Pos.to_nat] in *; rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound table_compare_time.
+
+(** Conditional selection inspects a one-bit condition and normalizes its result. *)
+Lemma table_ite_time : forall w c a b,
+  (T_tnum_ite w c a b <= 8192 *
+    N.of_nat (Pos.to_nat w + tnum_bits c + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w c a b. time_unfold T_tnum_ite. cbn beta iota zeta.
+  destruct (tnum_constant 1%positive c) as [k|] eqn:Hconstant;
+    cbn beta iota zeta.
+  - pose proof (table_constant_bits 1%positive c k Hconstant) as Hk.
+    destruct (k =? 1); time_pose; cbn [Pos.to_nat] in *;
+      rewrite ?Nat2N.inj_add in *; lia.
+  - time_pose. cbn [Pos.to_nat] in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound table_ite_time.
+
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
   Module P := KnownBitsCode L C.
   Module F := KnownBitsOpsCode L C P.
