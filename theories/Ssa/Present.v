@@ -4,7 +4,7 @@
     For example, two arms aimed at the same block remain distinct.
     Builds on: Ssa.Lang. *)
 
-From Stdlib Require Import List PArith NArith ZArith Bool Lia Arith.
+From Stdlib Require Import List PArith NArith ZArith Bool Lia Arith Wf_nat.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Graph Require Import DigraphSig.
@@ -4209,6 +4209,215 @@ Module PrepareT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   Qed.
 End PrepareT.
 
+(** Unique source definitions retain their order, owner, and exact prepared lookup. *)
+Lemma pl_param_defs_keys {K} b i xs : map fst (@param_defs K b i xs) = xs.
+Proof.
+  revert i. induction xs as [|x rest IH]; intro i; cbn [param_defs map fst];
+    [reflexivity|now rewrite IH].
+Qed.
+
+Lemma pl_block_value_keys {K G} (item : positive * block positive K G) :
+  map fst (block_value_defs item) = block_defs (snd item).
+Proof.
+  unfold block_value_defs, block_defs. rewrite map_app, pl_param_defs_keys, map_map.
+  reflexivity.
+Qed.
+
+Lemma pl_block_home_keys {K G} (item : positive * block positive K G) :
+  map fst (block_homes item) = block_defs (snd item).
+Proof.
+  unfold block_homes. rewrite map_map. apply map_id.
+Qed.
+(** A source with distinct labels is retained without deleting any block. *)
+Lemma pl_selected_identity {K G} (bs : list (positive * block positive K G)) seen :
+  NoDup (map fst bs) ->
+  (forall b, In b (map fst bs) -> trie_get b seen = None) ->
+  selected_blocks seen bs = bs.
+Proof.
+  revert seen. induction bs as [|[b body] rest IH]; intros seen Hdistinct Hfresh;
+    [reflexivity|].
+  inversion Hdistinct as [|head tail Hnot Htail]; subst.
+  cbn [selected_blocks fst]. rewrite Hfresh by now left. f_equal.
+  apply IH; [exact Htail|]. intros x Hx.
+  rewrite PTrie.get_set_other; [apply Hfresh; now right|].
+  intro Heq; subst x; contradiction.
+Qed.
+
+Lemma pl_first_identity {K G} (bs : list (positive * block positive K G)) :
+  NoDup (map fst bs) -> first_blocks bs = bs.
+Proof.
+  intro Hdistinct. rewrite first_blocks_selected. apply pl_selected_identity;
+    [exact Hdistinct|]. intros b Hin; apply PTrie.get_empty.
+Qed.
+
+(** A table with distinct encoded keys returns exactly its listed row. *)
+Lemma pl_first_lookup {A B} (key : A -> positive) rows a (value : B) :
+  (forall x y, key x = key y -> x = y) -> NoDup (map key (map fst rows)) ->
+  (trie_get (key a) (first_table key rows) = Some value <-> In (a, value) rows).
+Proof.
+  intros Hinj Hdistinct. rewrite map_map in Hdistinct. split.
+  - intro Hget. destruct (present_first_table_get key rows (key a) value Hget)
+      as [found [Hrow Hkey]].
+    apply Hinj in Hkey. now subst found.
+  - intro Hin. now apply present_table_lookup_unique.
+Qed.
+
+(** Parameter-definition rows preserve both the parameter position and the block label. *)
+Lemma pl_param_rows {K} b start xs x d :
+  In (x, d) (@param_defs K b start xs) <->
+  exists i, nth_error xs i = Some x /\ d = Param b (start + i).
+Proof.
+  revert start. induction xs as [|a rest IH]; intro start.
+  - cbn [param_defs]. split; [contradiction|]. intros [i [Hnth _]].
+    destruct i; discriminate.
+  - cbn [param_defs]. split.
+    + intros [Heq|Hin].
+      * inversion Heq; subst. exists 0; split; [reflexivity|]. now rewrite Nat.add_0_r.
+      * apply IH in Hin as [i [Hnth Hd]]. exists (S i); split; [exact Hnth|].
+        rewrite Hd. f_equal; lia.
+    + intros [[|i] [Hnth Hd]].
+      * cbn in Hnth. inversion Hnth; subst x. left. rewrite Hd, Nat.add_0_r. reflexivity.
+      * right. apply IH. exists i; split; [exact Hnth|]. rewrite Hd. f_equal; lia.
+Qed.
+
+Lemma pl_value_rows {K G} (item : positive * block positive K G) x d :
+  In (x, d) (block_value_defs item) <->
+  (exists i, nth_error (params _ _ _ (snd item)) i = Some x /\ d = Param (fst item) i) \/
+  (exists op args, In (x, op, args) (code _ _ _ (snd item)) /\ d = Op op args).
+Proof.
+  unfold block_value_defs. rewrite in_app_iff, pl_param_rows. cbn [Nat.add].
+  split.
+  - intros [Hparam|Hcode]; [now left|]. right.
+    apply in_map_iff in Hcode as [[[dst op] args] [Heq Hin]].
+    cbn [fst snd] in Heq. inversion Heq; subst. exists op, args; now split.
+  - intros [Hparam|[op [args [Hin Hd]]]]; [now left|]. right.
+    apply in_map_iff. exists (x, op, args). split; [now rewrite Hd|exact Hin].
+Qed.
+
+(** Every block definition appears once in the definition-table key list. *)
+Lemma pl_values_keys {K G} (bs : list (positive * block positive K G)) :
+  map fst (flat_map block_value_defs bs) = flat_map (fun item => block_defs (snd item)) bs.
+Proof.
+  induction bs as [|item rest IH]; [reflexivity|].
+  cbn [flat_map]. rewrite map_app, pl_block_value_keys, IH. reflexivity.
+Qed.
+
+Lemma pl_homes_keys {K G} (bs : list (positive * block positive K G)) :
+  map fst (flat_map block_homes bs) = flat_map (fun item => block_defs (snd item)) bs.
+Proof.
+  induction bs as [|item rest IH]; [reflexivity|].
+  cbn [flat_map]. rewrite map_app, pl_block_home_keys, IH. reflexivity.
+Qed.
+
+Lemma pl_home_rows {K G} (bs : list (positive * block positive K G)) x b :
+  In (x, b) (flat_map block_homes bs) <->
+  exists body, In (b, body) bs /\ In x (block_defs body).
+Proof.
+  split.
+  - intro Hin. apply in_flat_map in Hin as [[id body] [Hbody Hin]].
+    unfold block_homes in Hin. apply in_map_iff in Hin as [y [Heq Hy]].
+    cbn [fst snd] in Heq, Hy. inversion Heq; subst. exists body; now split.
+  - intros [body [Hbody Hx]]. apply in_flat_map. exists (b, body); split; [exact Hbody|].
+    unfold block_homes. apply in_map_iff. exists x; now split.
+Qed.
+
+(** The source inventory supplies a natural-number rank for every defined value. *)
+Fixpoint pl_rank (xs : list positive) (x : positive) : nat :=
+  match xs with [] => 0 | y :: rest => if Pos.eqb x y then 0 else S (pl_rank rest x) end.
+
+Lemma pl_rank_nth xs x i : NoDup xs -> nth_error xs i = Some x -> pl_rank xs x = i.
+Proof.
+  revert i; induction xs as [|y rest IH]; intros [|i] Hunique Hnth; try discriminate.
+  - cbn [nth_error] in Hnth; inversion Hnth; subst y.
+    cbn [pl_rank]. now rewrite Pos.eqb_refl.
+  - inversion Hunique as [|head tail Hfresh Htail]; subst.
+    cbn [nth_error] in Hnth. cbn [pl_rank].
+    assert (Hneq : Pos.eqb x y = false).
+    { apply Pos.eqb_neq; intro Heq; subst x; apply Hfresh; now apply nth_error_In in Hnth. }
+    rewrite Hneq. f_equal; now apply IH.
+Qed.
+
+Lemma pl_rank_segment whole pre xs post x i : NoDup whole -> whole = pre ++ xs ++ post ->
+  nth_error xs i = Some x -> pl_rank whole x = length pre + i.
+Proof.
+  intros Hunique Hwhole Hnth. apply pl_rank_nth; [exact Hunique|].
+  rewrite Hwhole, nth_error_app2 by lia.
+  replace (length pre + i - length pre) with i by lia.
+  rewrite nth_error_app1; [exact Hnth|]. apply nth_error_Some; rewrite Hnth; discriminate.
+Qed.
+
+Lemma pl_code_def_nth {K G} (body : block positive K G) i x op args :
+  nth_error (code _ _ _ body) i = Some (x, op, args) ->
+  nth_error (block_defs body) (length (params _ _ _ body) + i) = Some x.
+Proof.
+  intro Hnth; unfold block_defs. rewrite nth_error_app2 by lia.
+  replace (length (params _ _ _ body) + i - length (params _ _ _ body)) with i by lia.
+  rewrite nth_error_map, Hnth; reflexivity.
+Qed.
+
+Lemma pl_pair_args_fst xs ys : length xs = length ys -> map fst (pair_args xs ys) = xs.
+Proof.
+  revert ys; induction xs as [|x rest IH]; intros [|y tail] Hlength; try discriminate;
+    [reflexivity|]. cbn [pair_args map fst]. f_equal; apply IH; cbn in Hlength; lia.
+Qed.
+
+Lemma pl_pair_args_second xs ys x y : In (x, y) (pair_args xs ys) -> In y ys.
+Proof.
+  revert ys; induction xs as [|a rest IH]; intros [|b tail] Hin; try contradiction.
+  cbn [pair_args In] in Hin; destruct Hin as [Heq|Hin].
+  - inversion Heq; now left.
+  - right; now apply IH in Hin.
+Qed.
+
+Lemma pl_exit_arg_use {G} source (ending : exit positive G) be args x :
+  In (be, args) (exit_edge_args source ending) -> In x args -> In x (exit_uses ending).
+Proof.
+  destruct ending as [target values|guard values yes yesargs no noargs|values];
+    cbn [exit_edge_args exit_uses In].
+  - intros [Heq|[]] Hx; inversion Heq; subst; exact Hx.
+  - intros [Heq|[Heq|[]]] Hx; inversion Heq; subst;
+      apply in_or_app; right; apply in_or_app; [now left|now right].
+  - intros [] .
+Qed.
+
+Lemma pl_exit_guard_use {G} source (ending : exit positive G) be guards guard args x :
+  In (be, guards) (exit_guards source ending) -> In (guard, args) guards -> In x args ->
+    In x (exit_uses ending).
+Proof.
+  destruct ending as [target values|test values yes yesargs no noargs|values];
+    cbn [exit_guards exit_uses In].
+  - intros [Heq|[]] Hguard Hx; inversion Heq; subst; contradiction.
+  - intros [Heq|[Heq|[]]] Hguard Hx; inversion Heq; subst.
+    + destruct Hguard as [Hsame|[]]; inversion Hsame; subst.
+      apply in_or_app; now left.
+    + contradiction.
+  - intros [] .
+Qed.
+
+Lemma pl_exit_guard_source {G} source (ending : exit positive G) be guards :
+  In (be, guards) (exit_guards source ending) -> edge_source be = source.
+Proof.
+  destruct ending; cbn [exit_guards In].
+  - intros [Heq|[]]; inversion Heq; reflexivity.
+  - intros [Heq|[Heq|[]]]; inversion Heq; reflexivity.
+  - intros [].
+Qed.
+
+Lemma pl_param_def_nth {K G} (body : block positive K G) i x :
+  nth_error (params _ _ _ body) i = Some x -> nth_error (block_defs body) i = Some x.
+Proof.
+  intro Hnth; unfold block_defs; rewrite nth_error_app1; [exact Hnth|].
+  apply nth_error_Some; rewrite Hnth; discriminate.
+Qed.
+
+Lemma pl_flat_map_ext_in {A B} (f g : A -> list B) xs :
+  (forall x, In x xs -> f x = g x) -> flat_map f xs = flat_map g xs.
+Proof.
+  intro Hpoint; induction xs as [|x rest IH]; [reflexivity|].
+  cbn [flat_map]; rewrite Hpoint by now left.
+  f_equal; apply IH; intros y Hy; apply Hpoint; now right.
+Qed.
+
 Module PresentT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G).
   Module Q := Prepared O.
@@ -4289,8 +4498,470 @@ Module PresentT (O : OPS)
       unfold index_row. rewrite block_table_get, first_blocks_find.
       destruct (find_block b (blocks _ _ _ p)); reflexivity.
     Qed.
+    Definition pl_defs (p : func positive O.K O.G) := flat_map block_value_defs (blocks _ _ _ p).
+    Definition pl_homes (p : func positive O.K O.G) :=
+      map (fun x => (x, entry _ _ _ p)) (inputs _ _ _ p) ++ flat_map block_homes (blocks _ _ _ p).
+
+    Lemma pl_values p : ssa_wf p ->
+      S.values (R.prepare p) = inputs _ _ _ p ++ flat_map (fun item => block_defs (snd item)) (blocks _ _ _ p).
+    Proof.
+      intros [Hunique _].
+      change (inputs _ _ _ p ++ flat_map (fun item => block_defs (snd item)) (first_blocks (blocks _ _ _ p)) =
+        inputs _ _ _ p ++ flat_map (fun item => block_defs (snd item)) (blocks _ _ _ p)).
+      now rewrite pl_first_identity.
+    Qed.
+
+    Lemma pl_values_unique p : ssa_wf p -> NoDup (S.values (R.prepare p)).
+    Proof.
+      intro Hssa; rewrite pl_values by exact Hssa.
+      rewrite flat_map_concat_map; exact (proj1 (proj2 Hssa)).
+    Qed.
+
+    Lemma pl_def_keys p : ssa_wf p -> NoDup (map (fun row => PosKeyCode.encode (fst row)) (pl_defs p)).
+    Proof.
+      intro Hssa. change (NoDup (map fst (pl_defs p))). unfold pl_defs.
+      rewrite pl_values_keys, flat_map_concat_map.
+      eapply NoDup_app_remove_l; exact (proj1 (proj2 Hssa)).
+    Qed.
+
+    Lemma pl_home_keys p : ssa_wf p -> NoDup (map (fun row => PosKeyCode.encode (fst row)) (pl_homes p)).
+    Proof.
+      intro Hssa. change (NoDup (map fst (pl_homes p))). unfold pl_homes.
+      rewrite map_app, map_map, pl_homes_keys.
+      change (NoDup (map (fun x : positive => x) (inputs _ _ _ p) ++
+        flat_map (fun item => block_defs (snd item)) (blocks _ _ _ p))).
+      rewrite map_id, flat_map_concat_map; exact (proj1 (proj2 Hssa)).
+    Qed.
+
+    Lemma pl_def_reader p x : ssa_wf p ->
+      S.def (R.prepare p) x = match trie_get x (first_table PosKeyCode.encode (pl_defs p)) with
+        | Some d => d | None => Arbitrary end.
+    Proof.
+      intros [Hunique _]. unfold pl_defs.
+      lazymatch goal with |- _ = ?rhs => change ((match trie_get x (first_table PosKeyCode.encode
+        (flat_map block_value_defs (first_blocks (blocks _ _ _ p)))) with
+        Some d => d | None => Arbitrary end) = rhs) end.
+      now rewrite pl_first_identity.
+    Qed.
+
+    Lemma pl_home_reader p x : ssa_wf p ->
+      S.home (R.prepare p) x = match trie_get x (first_table PosKeyCode.encode (pl_homes p)) with
+        | Some b => b | None => entry _ _ _ p end.
+    Proof.
+      intros [Hunique _]. unfold pl_homes.
+      lazymatch goal with |- _ = ?rhs => change ((match trie_get x (first_table PosKeyCode.encode
+        (map (fun x => (x, entry _ _ _ p)) (inputs _ _ _ p) ++
+          flat_map block_homes (first_blocks (blocks _ _ _ p)))) with
+        | Some b => b | None => entry _ _ _ p end) = rhs) end.
+      now rewrite pl_first_identity.
+    Qed.
+
+    Lemma pl_home_input p x : ssa_wf p -> In x (inputs _ _ _ p) ->
+      S.home (R.prepare p) x = entry _ _ _ p.
+    Proof.
+      intros Hssa Hx; rewrite pl_home_reader by exact Hssa.
+      assert (Hget : trie_get x (first_table PosKeyCode.encode (pl_homes p)) = Some (entry _ _ _ p)).
+      { change (trie_get (PosKeyCode.encode x) (first_table PosKeyCode.encode (pl_homes p)) = Some (entry _ _ _ p)).
+        apply present_table_lookup_unique; [now apply pl_home_keys|].
+        unfold pl_homes; apply in_or_app; left; apply in_map_iff.
+        exists x; now split. }
+      now rewrite Hget.
+    Qed.
+
+    Lemma pl_home_block p b body x : ssa_wf p -> In (b, body) (blocks _ _ _ p) ->
+      In x (block_defs body) -> S.home (R.prepare p) x = b.
+    Proof.
+      intros Hssa Hbody Hx; rewrite pl_home_reader by exact Hssa.
+      assert (Hget : trie_get x (first_table PosKeyCode.encode (pl_homes p)) = Some b).
+      { change (trie_get (PosKeyCode.encode x) (first_table PosKeyCode.encode (pl_homes p)) = Some b).
+        apply present_table_lookup_unique; [now apply pl_home_keys|].
+        unfold pl_homes; apply in_or_app; right; apply pl_home_rows; exists body; now split. }
+      now rewrite Hget.
+    Qed.
+
+    Lemma pl_block_value p b body x : ssa_wf p -> In (b, body) (blocks _ _ _ p) ->
+      In x (block_defs body) -> In x (S.values (R.prepare p)).
+    Proof.
+      intros Hssa Hbody Hx; rewrite pl_values by exact Hssa.
+      apply in_or_app; right; apply in_flat_map; exists (b, body); now split.
+    Qed.
+
+    Lemma pl_body_node p b body : ssa_wf p -> In (b, body) (blocks _ _ _ p) ->
+      In b (BC.nodes (R.prepare p)).
+    Proof.
+      intros Hssa Hbody; rewrite nodes_agree, pl_first_identity by exact (proj1 Hssa).
+      apply in_map_iff; exists (b, body); now split.
+    Qed.
+
+    Lemma pl_home_listed p x : ssa_wf p -> In x (S.values (R.prepare p)) ->
+      In (S.home (R.prepare p) x) (BC.nodes (R.prepare p)).
+    Proof.
+      intros Hssa Hx; rewrite pl_values in Hx by exact Hssa.
+      apply in_app_or in Hx as [Hinput|Hdef].
+      - rewrite pl_home_input by assumption.
+        destruct Hssa as [Hu [Hv [Huses [[body Hbody] Hshapes]]]].
+        rewrite nodes_agree, pl_first_identity by exact Hu.
+        apply in_map_iff; exists (entry _ _ _ p, body); now split.
+      - apply in_flat_map in Hdef as [[b body] [Hbody Hdef]].
+        rewrite (pl_home_block p b body x Hssa Hbody Hdef).
+        now apply pl_body_node with (body := body).
+    Qed.
+
+    Lemma pl_param_def p x b i : ssa_wf p ->
+      (S.def (R.prepare p) x = Param b i <-> nth_error (S.params (R.prepare p) b) i = Some x).
+    Proof.
+      intro Hssa; split.
+      - intro Hdef; rewrite pl_def_reader in Hdef by exact Hssa.
+        destruct (trie_get x (first_table PosKeyCode.encode (pl_defs p))) as [d|] eqn:Hget;
+          [subst d|discriminate].
+        destruct (present_first_table_get PosKeyCode.encode (pl_defs p) x (Param b i) Hget)
+          as [found [Hrow Hkey]]. change (found = x) in Hkey; subst found.
+        unfold pl_defs in Hrow; apply in_flat_map in Hrow as [[owner body] [Hbody Hrow]].
+        apply pl_value_rows in Hrow as [[j [Hnth Heq]]|[op [args [Hcode Heq]]]];
+          [|discriminate]. cbn [fst snd] in Heq, Hnth. inversion Heq; subst.
+        rewrite params_agree, (find_block_of_in _ _ _ (proj1 Hssa) Hbody); exact Hnth.
+      - intro Hnth; rewrite params_agree in Hnth.
+        destruct (find_block b (blocks _ _ _ p)) as [body|] eqn:Hfind;
+          [|destruct i; discriminate].
+        assert (Hrow : In (x, Param b i) (pl_defs p)).
+        { unfold pl_defs; apply in_flat_map; exists (b, body); split.
+          - now apply find_block_in.
+          - apply pl_value_rows; left; exists i; now split. }
+        assert (Hget : trie_get x (first_table PosKeyCode.encode (pl_defs p)) = Some (Param b i)).
+        { change (trie_get (PosKeyCode.encode x) (first_table PosKeyCode.encode (pl_defs p)) = Some (Param b i)).
+          apply present_table_lookup_unique; [now apply pl_def_keys|exact Hrow]. }
+        rewrite pl_def_reader by exact Hssa; now rewrite Hget.
+    Qed.
+
+    Lemma pl_param_source p b x : In x (S.params (R.prepare p) b) ->
+      exists body, In (b, body) (blocks _ _ _ p) /\ In x (params _ _ _ body).
+    Proof.
+      rewrite params_agree; destruct (find_block b (blocks _ _ _ p)) as [body|] eqn:Hfind;
+        [|contradiction]. intro Hx; exists body; split; [now apply find_block_in|exact Hx].
+    Qed.
+
+    Lemma pl_param_home p b x : ssa_wf p -> In x (S.params (R.prepare p) b) ->
+      S.home (R.prepare p) x = b.
+    Proof.
+      intros Hssa Hx; apply pl_param_source in Hx as [body [Hbody Hx]].
+      eapply pl_home_block; [exact Hssa|exact Hbody|]. unfold block_defs; apply in_or_app; now left.
+    Qed.
+
+    Lemma pl_param_listed p b x : ssa_wf p -> In x (S.params (R.prepare p) b) ->
+      In x (S.values (R.prepare p)).
+    Proof.
+      intros Hssa Hx; apply pl_param_source in Hx as [body [Hbody Hx]].
+      eapply pl_block_value; [exact Hssa|exact Hbody|]. unfold block_defs; apply in_or_app; now left.
+    Qed.
+
+    Lemma pl_op_source p x op args : ssa_wf p -> S.def (R.prepare p) x = Op op args ->
+      exists b body i, In (b, body) (blocks _ _ _ p) /\
+        nth_error (code _ _ _ body) i = Some (x, op, args).
+    Proof.
+      intros Hssa Hdef; rewrite pl_def_reader in Hdef by exact Hssa.
+      destruct (trie_get x (first_table PosKeyCode.encode (pl_defs p))) as [d|] eqn:Hget;
+        [subst d|discriminate].
+      destruct (present_first_table_get PosKeyCode.encode (pl_defs p) x (Op op args) Hget)
+        as [found [Hrow Hkey]]. change (found = x) in Hkey; subst found.
+      unfold pl_defs in Hrow; apply in_flat_map in Hrow as [[b body] [Hbody Hrow]].
+      apply pl_value_rows in Hrow as [[j [Hnth Heq]]|[op' [args' [Hcode Heq]]]];
+        [discriminate|]. inversion Heq; subst op' args'.
+      apply In_nth_error in Hcode as [i Hnth]. exists b, body, i; now split.
+    Qed.
+
+    Lemma pl_targets (p : func positive O.K O.G) : ssa_wf p -> targets_listed p.
+    Proof.
+      intros [_ [_ [_ [_ Hshape]]]] b body target Hbody Htarget.
+      specialize (Hshape b body Hbody).
+      destruct (term _ _ _ body) as [dst args|g xs yes ya no na|xs];
+        cbn [exit_targets exit_shape In] in Htarget, Hshape.
+      - destruct Htarget as [Heq|[]]; subst target; destruct Hshape as [target [Hin _]].
+        apply in_map_iff; exists (dst, target); now split.
+      - destruct Hshape as [[yb [Hyb _]] [nb [Hnb _]]].
+        destruct Htarget as [Heq|[Heq|[]]]; subst target; apply in_map_iff;
+          [exists (yes, yb)|exists (no, nb)]; now split.
+      - contradiction.
+    Qed.
+
+    Lemma pl_path_start (p : func positive O.K O.G) a route b : Lang.path p a route b -> In a route.
+    Proof.
+      intro Hpath; destruct Hpath; now left.
+    Qed.
+
+    Lemma pl_path_end (p : func positive O.K O.G) a route b : Lang.path p a route b -> In b route.
+    Proof.
+      intro Hpath; induction Hpath; [now left|now right].
+    Qed.
+
+    (** Source availability gives both a listed value and dominance of its home. *)
+    Lemma pl_use_home p b body x i : ssa_wf p -> In (b, body) (blocks _ _ _ p) ->
+      use_at body x i ->
+      In x (S.values (R.prepare p)) /\ forall route,
+        Lang.path p (entry _ _ _ p) route b -> In (S.home (R.prepare p) x) route.
+    Proof.
+      intros Hssa Hbody Huse.
+      pose proof (proj1 (proj2 (proj2 Hssa)) b body x i Hbody Huse) as Havailable.
+      destruct Havailable as [Hinput|[Hlocal|[owner [source [Hsource [Hother [Hdef Hdom]]]]]]].
+      - split.
+        + rewrite pl_values by exact Hssa; apply in_or_app; now left.
+        + intros route Hpath; rewrite pl_home_input by assumption; now apply pl_path_start in Hpath.
+      - assert (Hdef : In x (block_defs body)).
+        { destruct Hlocal as [Hparam|[j [op [args [Hbefore Hnth]]]]].
+          - unfold block_defs; apply in_or_app; now left.
+          - pose proof (pl_code_def_nth body j x op args Hnth) as Hd.
+            now apply nth_error_In in Hd. }
+        split; [now apply pl_block_value with (b := b) (body := body)|].
+        intros route Hpath; rewrite (pl_home_block p b body x Hssa Hbody Hdef).
+        now apply pl_path_end in Hpath.
+      - split; [now apply pl_block_value with (b := owner) (body := source)|].
+        intros route Hpath; rewrite (pl_home_block p owner source x Hssa Hsource Hdef).
+        now apply Hdom.
+    Qed.
+
+    Lemma pl_presented_use_home p b body x i : ssa_wf p -> In (b, body) (blocks _ _ _ p) ->
+      use_at body x i ->
+      In x (S.values (R.prepare p)) /\ forall start route, In start (BC.entries (R.prepare p)) ->
+        presentation_path (BC.edges (R.prepare p)) (BC.src (R.prepare p)) (BC.dst (R.prepare p))
+          start route b -> In (S.home (R.prepare p) x) route.
+    Proof.
+      intros Hssa Hbody Huse. destruct (pl_use_home p b body x i Hssa Hbody Huse) as [Hx Hdom].
+      split; [exact Hx|]. intros start route Hstart Hpath.
+      assert (Hentry : In (entry _ _ _ p) (map fst (blocks _ _ _ p))).
+      { destruct (proj1 (proj2 (proj2 (proj2 Hssa)))) as [eb Heb].
+        apply in_map_iff; exists (entry _ _ _ p, eb); now split. }
+      rewrite entries_agree in Hstart by exact Hentry.
+      destruct Hstart as [Heq|[]]; subst start.
+      apply Hdom; apply (proj1 (paths_agree p _ _ _ (proj1 Hssa) (pl_targets p Hssa))); exact Hpath.
+    Qed.
+
+    Definition pl_kept (p : func positive O.K O.G) := first_blocks (blocks _ _ _ p).
+    Definition pl_params (p : func positive O.K O.G) := first_table PosKeyCode.encode
+      (map (fun item => (fst item, params _ _ _ (snd item))) (pl_kept p)).
+    Definition pl_block_rows (p : func positive O.K O.G) :=
+      flat_map (fun item => listed_edge_args (pl_params p) (fst item) (term _ _ _ (snd item))) (pl_kept p).
+
+    Lemma pl_args_lookup p be args : In (be, args) (pl_block_rows p) ->
+      S.args (R.prepare p) be = pair_args (index_row (pl_params p) (edge_target be)) args.
+    Proof.
+      intro Hrow.
+      set (rows := map (fun r =>
+        (fst r, pair_args (index_row (pl_params p) (edge_target (fst r))) (snd r))) (pl_block_rows p)).
+      assert (Hkeys : NoDup (map (fun row => BlockEdge.encode (fst row)) rows)).
+      { unfold rows; rewrite map_map.
+        change (NoDup (map (fun row => BlockEdge.encode (fst row)) (pl_block_rows p))).
+        rewrite <- map_map with (f := fst) (g := BlockEdge.encode).
+        apply present_map_injective_nodup; [exact BlockEdge.encode_inj|].
+        exact (lang_block_edges_nodup p). }
+      assert (Hget : trie_get (BlockEdge.encode be) (first_table BlockEdge.encode rows) =
+        Some (pair_args (index_row (pl_params p) (edge_target be)) args)).
+      { apply present_table_lookup_unique; [exact Hkeys|]. unfold rows; apply in_map_iff.
+        exists (be, args); now split. }
+      change (index_row (first_table BlockEdge.encode rows) (BlockEdge.encode be) =
+        pair_args (index_row (pl_params p) (edge_target be)) args).
+      unfold index_row; now rewrite Hget.
+    Qed.
+
+    Lemma pl_edge_row p be : In be (BC.edges (R.prepare p)) ->
+      exists args, In (be, args) (pl_block_rows p).
+    Proof.
+      intro Hin; change (In be (map fst (pl_block_rows p))) in Hin.
+      apply in_map_iff in Hin as [[edge args] [Heq Hrow]].
+      cbn in Heq; subst edge; now exists args.
+    Qed.
+
+    Lemma pl_row_source p be args : In (be, args) (pl_block_rows p) ->
+      exists body, In (edge_source be, body) (blocks _ _ _ p) /\
+        In (be, args) (exit_edge_args (edge_source be) (term _ _ _ body)).
+    Proof.
+      unfold pl_block_rows; intro Hrow.
+      apply in_flat_map in Hrow as [[b body] [Hbody Hrow]].
+      apply filter_In in Hrow as [Hsyntax _].
+      pose proof (proj1 (exit_edge_args_shape b _ be args Hsyntax)) as Hsource.
+      cbn [fst snd] in Hsource, Hsyntax. exists body; rewrite Hsource; split; [|exact Hsyntax].
+      unfold pl_kept in Hbody; rewrite first_blocks_selected in Hbody.
+      now apply selected_blocks_in in Hbody as [Hbody _].
+    Qed.
+
+    Lemma pl_args_params p be : ssa_wf p -> In be (BC.edges (R.prepare p)) ->
+      map fst (S.args (R.prepare p) be) = S.params (R.prepare p) (BC.dst (R.prepare p) be).
+    Proof.
+      intros Hssa Hbe; destruct (pl_edge_row p be Hbe) as [args Hrow].
+      rewrite (pl_args_lookup p be args Hrow).
+      change (map fst (pair_args (S.params (R.prepare p) (edge_target be)) args) =
+        S.params (R.prepare p) (edge_target be)).
+      apply pl_pair_args_fst.
+      destruct (pl_row_source p be args Hrow) as [body [Hbody Hsyntax]].
+      destruct (present_exit_shape_args p (edge_source be) (term _ _ _ body) be args
+        (proj2 (proj2 (proj2 (proj2 Hssa))) _ _ Hbody) Hsyntax) as [target [Htarget Hlength]].
+      rewrite params_agree, (find_block_of_in _ _ _ (proj1 Hssa) Htarget).
+      symmetry; exact Hlength.
+    Qed.
+
+    Lemma pl_args_dominate p be x y : ssa_wf p -> In be (BC.edges (R.prepare p)) ->
+      In (x, y) (S.args (R.prepare p) be) ->
+      In y (S.values (R.prepare p)) /\ forall start route, In start (BC.entries (R.prepare p)) ->
+        presentation_path (BC.edges (R.prepare p)) (BC.src (R.prepare p)) (BC.dst (R.prepare p))
+          start route (BC.src (R.prepare p) be) -> In (S.home (R.prepare p) y) route.
+    Proof.
+      intros Hssa Hbe Hpair. destruct (pl_edge_row p be Hbe) as [args Hrow].
+      rewrite (pl_args_lookup p be args Hrow) in Hpair; apply pl_pair_args_second in Hpair.
+      destruct (pl_row_source p be args Hrow) as [body [Hbody Hsyntax]].
+      eapply pl_presented_use_home; [exact Hssa|exact Hbody|].
+      right; split; [reflexivity|]. eapply pl_exit_arg_use; eassumption.
+    Qed.
+
+    Definition pl_guard_rows (p : func positive O.K O.G) :=
+      flat_map (fun item => listed_guards (pl_params p) (fst item) (term _ _ _ (snd item))) (pl_kept p).
+
+    Lemma pl_guard_source p be g xs : In (g, xs) (S.guards (R.prepare p) be) ->
+      exists body guards, In (edge_source be, body) (blocks _ _ _ p) /\
+        In (be, guards) (exit_guards (edge_source be) (term _ _ _ body)) /\ In (g, xs) guards.
+    Proof.
+      intro Hguard; change (In (g, xs) (index_row (first_table BlockEdge.encode (pl_guard_rows p))
+        (BlockEdge.encode be))) in Hguard.
+      unfold index_row in Hguard. destruct (trie_get (BlockEdge.encode be)
+        (first_table BlockEdge.encode (pl_guard_rows p))) as [guards|] eqn:Hget;
+        [|contradiction].
+      destruct (present_first_table_get BlockEdge.encode (pl_guard_rows p) _ _ Hget)
+        as [edge [Hrow Hkey]]. apply BlockEdge.encode_inj in Hkey; subst edge.
+      unfold pl_guard_rows in Hrow; apply in_flat_map in Hrow as [[b body] [Hbody Hrow]].
+      apply filter_In in Hrow as [Hsyntax _].
+      pose proof (pl_exit_guard_source b (term _ _ _ body) be guards Hsyntax) as Hsource.
+      exists body, guards. rewrite Hsource. split.
+      - unfold pl_kept in Hbody; rewrite first_blocks_selected in Hbody.
+        now apply selected_blocks_in in Hbody as [Hbody _].
+      - now split.
+    Qed.
+
+    Lemma pl_guards_dominate p be g xs x : ssa_wf p -> In (g, xs) (S.guards (R.prepare p) be) ->
+      In x xs -> In x (S.values (R.prepare p)) /\
+        forall start route, In start (BC.entries (R.prepare p)) ->
+        presentation_path (BC.edges (R.prepare p)) (BC.src (R.prepare p)) (BC.dst (R.prepare p))
+          start route (BC.src (R.prepare p) be) -> In (S.home (R.prepare p) x) route.
+    Proof.
+      intros Hssa Hguard Hx.
+      destruct (pl_guard_source p be g xs Hguard) as [body [guards [Hbody [Hsyntax Hmember]]]].
+      eapply pl_presented_use_home; [exact Hssa|exact Hbody|].
+      right; split; [reflexivity|]. eapply pl_exit_guard_use; eassumption.
+    Qed.
+
+    Lemma pl_op_args_dominate p x op args y : ssa_wf p -> S.def (R.prepare p) x = Op op args ->
+      In y args -> In y (S.values (R.prepare p)) /\
+        forall start route, In start (BC.entries (R.prepare p)) ->
+        presentation_path (BC.edges (R.prepare p)) (BC.src (R.prepare p)) (BC.dst (R.prepare p))
+          start route (S.home (R.prepare p) x) -> In (S.home (R.prepare p) y) route.
+    Proof.
+      intros Hssa Hdef Hy. destruct (pl_op_source p x op args Hssa Hdef) as [b [body [i [Hbody Hnth]]]].
+      pose proof (pl_code_def_nth body i x op args Hnth) as Hx; apply nth_error_In in Hx.
+      rewrite (pl_home_block p b body x Hssa Hbody Hx).
+      eapply pl_presented_use_home with (i := i); [exact Hssa|exact Hbody|].
+      left; exists op, args, x; now split.
+    Qed.
+
+    (** A block occupies one contiguous segment after the input values. *)
+    Lemma pl_block_ranks p b body : ssa_wf p -> In (b, body) (blocks _ _ _ p) ->
+      exists base, length (inputs _ _ _ p) <= base /\ forall x i,
+        nth_error (block_defs body) i = Some x -> pl_rank (S.values (R.prepare p)) x = base + i.
+    Proof.
+      intros Hssa Hbody. apply in_split in Hbody as [before [after Hsplit]].
+      set (pre := inputs _ _ _ p ++ flat_map (fun item => block_defs (snd item)) before).
+      assert (Hwhole : S.values (R.prepare p) =
+        pre ++ block_defs body ++ flat_map (fun item => block_defs (snd item)) after).
+      { rewrite pl_values by exact Hssa. rewrite Hsplit, flat_map_app.
+        cbn [flat_map snd]; unfold pre; now rewrite app_assoc. }
+      exists (length pre); split.
+      - unfold pre; rewrite length_app; lia.
+      - intros x i Hnth. eapply pl_rank_segment; [now apply pl_values_unique|exact Hwhole|exact Hnth].
+    Qed.
+
+    Lemma pl_input_rank p x i : ssa_wf p -> nth_error (inputs _ _ _ p) i = Some x ->
+      pl_rank (S.values (R.prepare p)) x = i.
+    Proof.
+      intros Hssa Hnth.
+      apply (pl_rank_segment (S.values (R.prepare p)) [] (inputs _ _ _ p)
+        (flat_map (fun item => block_defs (snd item)) (blocks _ _ _ p)) x i).
+      - now apply pl_values_unique.
+      - cbn [app]; now rewrite pl_values by exact Hssa.
+      - exact Hnth.
+    Qed.
+
+    Lemma pl_dependency_rank p y x : ssa_wf p -> S.home (R.prepare p) y = S.home (R.prepare p) x ->
+      (exists op args, S.def (R.prepare p) x = Op op args /\ In y args) ->
+      pl_rank (S.values (R.prepare p)) y < pl_rank (S.values (R.prepare p)) x.
+    Proof.
+      intros Hssa Hsame [op [args [Hdef Hy]]].
+      destruct (pl_op_source p x op args Hssa Hdef) as [b [body [i [Hbody Hcode]]]].
+      destruct (pl_block_ranks p b body Hssa Hbody) as [base [Hbase Hranks]].
+      pose proof (pl_code_def_nth body i x op args Hcode) as Hx.
+      pose proof (Hranks _ _ Hx) as Hrankx.
+      assert (Hhome : S.home (R.prepare p) x = b).
+      { eapply pl_home_block; [exact Hssa|exact Hbody|now apply nth_error_In in Hx]. }
+      assert (Huse : use_at body y i) by (left; exists op, args, x; now split).
+      pose proof (proj1 (proj2 (proj2 Hssa)) b body y i Hbody Huse) as Havailable.
+      destruct Havailable as [Hinput|[Hlocal|[owner [source [Hsource [Hother [Hdefy Hdom]]]]]]].
+      - apply In_nth_error in Hinput as [j Hnth].
+        pose proof (pl_input_rank p y j Hssa Hnth) as Hranky.
+        assert (Hj : j < length (inputs _ _ _ p)).
+        { apply nth_error_Some; rewrite Hnth; discriminate. }
+        lia.
+      - destruct Hlocal as [Hparam|[j [op' [args' [Hbefore Hnth]]]]].
+        + apply In_nth_error in Hparam as [j Hnth].
+          pose proof (pl_param_def_nth body j y Hnth) as Hydef.
+          pose proof (Hranks _ _ Hydef) as Hranky.
+          assert (Hj : j < length (params _ _ _ body)).
+          { apply nth_error_Some; rewrite Hnth; discriminate. }
+          lia.
+        + pose proof (pl_code_def_nth body j y op' args' Hnth) as Hydef.
+          pose proof (Hranks _ _ Hydef) as Hranky; lia.
+      - pose proof (pl_home_block p owner source y Hssa Hsource Hdefy) as Hhomey.
+        congruence.
+    Qed.
+
+    Lemma pl_dependencies_wf p : ssa_wf p -> well_founded (fun y x =>
+      In x (S.values (R.prepare p)) /\ S.home (R.prepare p) y = S.home (R.prepare p) x /\
+        exists op args, S.def (R.prepare p) x = Op op args /\ In y args).
+    Proof.
+      intro Hssa. apply well_founded_lt_compat with (f := pl_rank (S.values (R.prepare p))).
+      intros y x [_ [Hsame Hdef]]; now apply pl_dependency_rank.
+    Qed.
+
+    Lemma pl_entry_params p : S.entry_params (R.prepare p) =
+      flat_map (S.params (R.prepare p)) (BC.entries (R.prepare p)).
+    Proof.
+      reflexivity.
+    Qed.
+
+    Lemma pl_arg_rows p : S.arg_rows (R.prepare p) =
+      flat_map (fun be => map (pair be) (S.args (R.prepare p) be)) (BC.edges (R.prepare p)).
+    Proof.
+      change (flat_map (fun r => map (pair (fst r))
+          (pair_args (index_row (pl_params p) (edge_target (fst r))) (snd r))) (pl_block_rows p) =
+        flat_map (fun be => map (pair be) (S.args (R.prepare p) be)) (map fst (pl_block_rows p))).
+      rewrite flat_map_after_map. apply pl_flat_map_ext_in.
+      intros [be args] Hrow; cbn [fst snd]. now rewrite (pl_args_lookup p be args Hrow).
+    Qed.
+
+    Lemma pl_wf_complete p : ssa_wf p -> S.wf (R.prepare p).
+    Proof.
+      intro Hssa; unfold S.wf.
+      split; [reflexivity|].
+      split; [now apply pl_values_unique|].
+      split; [intros x Hx; now apply pl_home_listed|].
+      split; [intros x b i; now apply pl_param_def|].
+      split; [intros b x Hx; now apply pl_param_home|].
+      split; [intros b x Hb Hx; now apply pl_param_listed with (b := b)|].
+      split; [intros be Hbe; now apply pl_args_params|].
+      split; [intros be x y Hbe Hxy; now apply pl_args_dominate with (x := x)|].
+      split; [intros be g xs x Hbe Hg Hx; now apply pl_guards_dominate with (g := g) (xs := xs)|].
+      split; [intros x op args y Hx Hdef Hy; now apply pl_op_args_dominate with (op := op) (args := args)|].
+      split; [now apply pl_dependencies_wf|].
+      split; [apply pl_entry_params|apply pl_arg_rows].
+    Qed.
+
     Lemma wf_from_lang : forall p, ssa_wf p -> S.wf (R.prepare p).
-    Proof. Admitted. (* STUB *)
+    Proof.
+      exact pl_wf_complete.
+    Qed.
   End Link.
 
   Module Budget <: LANG_PRESENT_BUDGET O Q R BlockEdge PointEdge PointKey BC C U SP.
