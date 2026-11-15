@@ -82,3 +82,11 @@ Definition build_unavailable : TestSource.t :=
     [(1, Block positive positive positive [] [] (Return [2]))].
 Example build_rejects_unavailable_source : TestBuild.build build_unavailable = None.
 Proof. vm_compute; reflexivity. Qed.
+
+Definition build_duplicate_block : TestSource.t :=
+  Func positive positive positive 1 [1]
+    [(1, Block positive positive positive [] [] (Return [1]));
+     (1, Block positive positive positive [] [] (Return [1]))].
+Example build_rejects_duplicate_block_before_renaming :
+  TestBuild.produce build_duplicate_block = None.
+Proof. vm_compute; reflexivity. Qed.

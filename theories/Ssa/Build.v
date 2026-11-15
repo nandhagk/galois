@@ -36,6 +36,28 @@ Definition build_def_rows (b : positive) (xs : list positive)
     rows (build_unique xs Empty).
 TimeFun build_def_rows.
 
+(** Duplicate block identifiers stop the producer before any frontier search. *)
+Fixpoint build_blocks_unique {K G} (bs : list (positive * block positive K G))
+    (seen : ptrie unit) : bool :=
+  match bs with
+  | [] => true
+  | (b, _) :: rest =>
+    if val_mem seen b then false else build_blocks_unique rest (PTrieCode.set b tt seen)
+  end.
+TimeFun build_blocks_unique.
+
+Lemma build_blocks_unique_map {K G} (bs : list (positive * block positive K G)) seen :
+  build_blocks_unique bs seen = val_unique (map fst bs) seen.
+Proof.
+  revert seen; induction bs as [|[b body] rest IH]; intro seen; [reflexivity|].
+  cbn [build_blocks_unique val_unique map fst].
+  destruct (val_mem seen b); [reflexivity|apply IH].
+Qed.
+
+Definition build_live_rows_size (rows : list (positive * list positive)) : nat :=
+  fold_right (fun row n => 1 + length (snd row) + n) 0 rows.
+TimeFun build_live_rows_size.
+
 Lemma build_mem_set_false seen x y :
   val_mem (PTrieCode.set x tt seen) y = false <-> y <> x /\ val_mem seen y = false.
 Proof.
@@ -356,18 +378,30 @@ Module BuildCode (O : OPS)
     | inr answer => answer
     end.
 
+  (** A conservative guard caps repeated frontier scans by already charged input and rows. *)
+  Definition placement_allowed (p : P.t) (q : Q.t) (frontier : ptrie (list positive))
+      (live : list (positive * list positive)) (vars : list positive) : bool :=
+    let entries := fold_right (fun b n => length (frontier_row frontier b) + n) 0 (BC.nodes q) in
+    N.leb (N.of_nat (length vars) * N.of_nat entries)
+      (8 * N.of_nat (function_size p + build_live_rows_size live + entries + 1)).
+
   Definition produce (p : P.t) : option (P.t * cert) :=
     let q := R.prepare p in
+    if build_blocks_unique (blocks _ _ _ p) Empty then
     let g := DG.prepare (cfg_graph (BC.nodes q) (BC.edges q) (BC.src q) (BC.dst q)) in
     let result := D.build g (entry _ _ _ p) in
     if D.check g (entry _ _ _ p) (fst result) (snd result) then
       let t := D.tree g (entry _ _ _ p) (fst result) (snd result) in
       let frontier := F.df g t in
       let live := L.live_in p in
-      let defs := def_index p in
-      let sets := live_sets live in
-      let rows := placement_with frontier defs sets (U.universe q) in
-      rename p t rows live
+      let vars := U.universe q in
+      if placement_allowed p q frontier live vars then
+        let defs := def_index p in
+        let sets := live_sets live in
+        let rows := placement_with frontier defs sets vars in
+        rename p t rows live
+      else None
+    else None
     else None.
   Definition build (p : P.t) : option P.t :=
     match produce p with
@@ -469,6 +503,7 @@ Module BuildT (O : OPS)
   TimeFun rename_step_indexed.
   TimeFun rename_step.
   TimeFun rename.
+  TimeFun placement_allowed.
   TimeFun produce.
   TimeFun build.
   Definition c_build : N := 1. (* STUB *)
@@ -575,13 +610,20 @@ Module BuildT (O : OPS)
     D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true /\
     rename p (dom_tree p) (placement p) (L.live_in p) = Some (s, c).
   Proof.
-    intros p s c. change ((if D.check (graph p) (entry _ _ _ p)
+    intros p s c. unfold produce.
+    destruct (build_blocks_unique (blocks _ _ _ p) Empty); [|discriminate].
+    change ((if D.check (graph p) (entry _ _ _ p)
       (fst (dom_result p)) (snd (dom_result p)) then
-      rename p (dom_tree p) (placement p) (L.live_in p) else None) = Some (s, c) ->
+      if placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+        (U.universe (R.prepare p)) then
+        rename p (dom_tree p) (placement p) (L.live_in p) else None
+      else None) = Some (s, c) ->
       D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true /\
       rename p (dom_tree p) (placement p) (L.live_in p) = Some (s, c)).
     destruct (D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)))
-      eqn:Hchecked; [intro Hrename; now split|discriminate].
+      eqn:Hchecked; [|discriminate].
+    destruct (placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+      (U.universe (R.prepare p))); [intro Hrename; now split|discriminate].
   Qed.
   (** The two indexes charge syntax and emitted live rows once. *)
   Lemma T0_indexes : forall p,
