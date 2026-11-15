@@ -458,6 +458,65 @@ Proof.
     cbn [wto_order length]; rewrite ?length_app; time_step.
 Qed.
 
+(** A positive index below a natural bound uses at most its logarithmic number of bits. *)
+Lemma wto_rank_width : forall rank bound,
+  Pos.to_nat rank <= bound -> Pos.size_nat rank <= Nat.log2 bound + 1.
+Proof.
+  intros rank bound Hbound. apply Pos.size_nat_least.
+  pose proof (Pos2Nat.is_pos rank) as Hpositive.
+  pose proof (Nat.log2_spec bound ltac:(lia)) as Hlog.
+  replace (Nat.log2 bound + 1) with (S (Nat.log2 bound)) by lia. lia.
+Qed.
+
+(** Ranking a suffix pays its keys and each binary rank within a fixed final bound. *)
+Lemma wto_rank_rows_clock : forall vs start width bound,
+  Forall (fun v => Pos.size_nat v <= width) vs ->
+  Pos.to_nat start + length vs <= bound + 1 ->
+  (T_wto_rank_rows start vs <=
+    (PTrieT.c_trie + 3) * N.of_nat (length vs + 1) *
+      N.of_nat (width + Nat.log2 bound + 1))%N.
+Proof.
+  induction vs as [|v rest IH]; intros start width bound Hwidth Hbound.
+  - time_step.
+  - inversion Hwidth as [|v' rest' Hkey Hrest]; subst.
+    cbn [length] in Hbound.
+    pose proof (IH (Pos.succ start) width bound Hrest
+      ltac:(rewrite Pos2Nat.inj_succ; lia)) as Htail.
+    pose proof (wto_rank_width start bound ltac:(lia)) as Hrank.
+    pose proof (Pos.T_succ_le start) as Hsucc.
+    pose proof (PTrieT.T_set_le positive v start (wto_rank_rows (Pos.succ start) rest))
+      as Hset.
+    time_unfold @T_wto_rank_rows. time_cbn. cbn [length].
+    rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** The graph maximum agrees with the standard natural maximum. *)
+Lemma wto_graph_max_nat : forall a b, graph_max a b = Nat.max a b.
+Proof.
+  induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
+Qed.
+
+(** Structural width bounds every emitted vertex key. *)
+Lemma wto_vertex_width_all : forall vs,
+  Forall (fun v => Pos.size_nat v <= vertex_width vs) vs.
+Proof.
+  induction vs as [|v rest IH]; [constructor|]. cbn [vertex_width fold_right]. rewrite wto_graph_max_nat.
+  constructor.
+  - apply Nat.le_max_l.
+  - eapply Forall_impl; [|exact IH]. intros u Hu.
+    eapply Nat.le_trans; [exact Hu|apply Nat.le_max_r].
+Qed.
+
+(** Ranking from one has the advertised key-width and logarithmic-position bound. *)
+Lemma wto_rank_rows_one_clock : forall vs,
+  (T_wto_rank_rows 1%positive vs <=
+    (PTrieT.c_trie + 3) * N.of_nat (length vs + 1) *
+      N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
+Proof.
+  intro vs. apply wto_rank_rows_clock; [apply wto_vertex_width_all|].
+  cbn [Pos.to_nat]. lia.
+Qed.
+
 (** Accumulation appends the caller's suffix to each structural traversal. *)
 Lemma wto_into_spec : forall w acc,
   wto_heads_into w acc = wto_heads w ++ acc /\
@@ -1421,7 +1480,7 @@ Module WtoT <: WTO_ALL.
   TimeFun check.
   TimeFun heads.
   TimeFun ranks.
-  Definition c_wto : N := 4%N.
+  Definition c_wto : N := (PTrieT.c_trie + 8)%N.
 
   Lemma T_check_le : forall g roots w,
     (T_check g roots w <= c_wto *
@@ -1445,7 +1504,13 @@ Module WtoT <: WTO_ALL.
   Lemma T_ranks_le : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. pose proof (wto_order_into_clock w []) as Horder.
+    pose proof (wto_rank_rows_one_clock (wto_order w)) as Hrows.
+    unfold c_wto. time_unfold @T_ranks.
+    rewrite (proj2 (wto_into_spec w [])), app_nil_r. time_cbn.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
 
   Lemma check_bigO : bigO (fun _ : prepared * list positive * wto => True)
     (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
@@ -1502,7 +1567,7 @@ Module WtoT <: WTO_ALL.
   Definition k_expand : N := 1%N. (* STUB *)
   Definition k_build : N := 1%N. (* STUB *)
   Definition k_heads : N := 1%N.
-  Definition k_ranks : N := 1%N. (* STUB *)
+  Definition k_ranks : N := (PTrieT.c_trie + 4)%N.
 
   Definition live (g : prepared) roots := entered (search_trace (base g) roots).
   Definition checked_index w := wto_positions (wto_annotate [] w).
@@ -1869,12 +1934,18 @@ Module WtoT <: WTO_ALL.
   Lemma T10_ranks_source : forall w,
     (T_ranks w <= k_ranks *
       (T_wto_order_into w [] + T_wto_rank_rows 1%positive (wto_order w) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold k_ranks. time_unfold @T_ranks.
+    rewrite (proj2 (wto_into_spec w [])), app_nil_r.
+    time_unfold @T_wto_order_into. time_unfold @T_wto_rank_rows. time_cbn. nia.
+  Qed.
 
   Lemma T11_ranks_public : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
       N.of_nat (vertex_width (wto_order w) + Nat.log2 (length (wto_order w)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply T_ranks_le.
+  Qed.
 
   (** Accumulating traversals compute the structural lists. *)
   Lemma F20_into : forall w acc,
@@ -1904,7 +1975,10 @@ Module WtoT <: WTO_ALL.
   Lemma T10c_rank_rows : forall vs,
       (T_wto_rank_rows 1%positive vs <= k_ranks * N.of_nat (length vs + 1) *
         N.of_nat (vertex_width vs + Nat.log2 (length vs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro vs. pose proof (wto_rank_rows_one_clock vs) as Hrows.
+    unfold k_ranks. time_step.
+  Qed.
 
   (** Scoped components and entries read the materialized rows once. *)
   Lemma T12_scoped : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
