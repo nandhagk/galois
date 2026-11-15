@@ -2884,14 +2884,14 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma T3_df_loop : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     (T_df_column g t y <= k_df_column *
-      (df_credit g t y (df_initial g y) +
-        k_df_stop * N.of_nat (length (df_column g t y) + 1) +
-        N.of_nat (length (preds g y) + N.size_nat (df_fuel g y) + 1)))%N.
-  Proof. Admitted. (* PLAN-DEFECT: take a single isolated root y with arbitrarily many key bits,
-     prepared predecessor map Empty and its exact one-node tree. The column and
-     initial credit are empty, and fuel is 8, so this bound has constant RHS.
-     Each predecessor lookup costs 2 * Pos.size_nat y even on Empty. A private
-     column bound must also charge graph_width for this setup work. *)
+      N.of_nat (length (preds g y) + length (df_column g t y) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof.
+    intros g t r y Hgraph Hprepared Htree Hy.
+    pose proof (frontier_df_column_time g t r y Hgraph Hprepared Htree Hy) as Htime.
+    unfold k_df_column, T_df_column, df_column.
+    lia.
+  Qed.
 
   Lemma T4_df_columns : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->

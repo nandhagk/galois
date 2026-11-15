@@ -234,13 +234,13 @@ Module Type FRONTIER_PLAN (Import F : FRONTIER_T).
     df_invariant g t y st -> df_step g t y st = inr result ->
     (T_df_step g t y st <= k_df_stop * N.of_nat (length (df_column g t y) + 1))%N.
 
-  (** The loop bound charges initial credit, stopping, task setup and binary fuel width. *)
+  (** One column pays per predecessor occurrence and output entry at the key width, because
+      even an empty column reads the key of its vertex. *)
   Parameter T3_df_loop : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     (T_df_column g t y <= k_df_column *
-      (df_credit g t y (df_initial g y) +
-        k_df_stop * N.of_nat (length (df_column g t y) + 1) +
-        N.of_nat (length (preds g y) + N.size_nat (df_fuel g y) + 1)))%N.
+      N.of_nat (length (preds g y) + length (df_column g t y) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
 
   (** Summed fuel widths are absorbed by listed vertices, predecessor occurrences and keys. *)
   Parameter T4_df_columns : forall g t r,
