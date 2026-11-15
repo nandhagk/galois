@@ -5,7 +5,7 @@
     Builds on: filtered graph search and dominator operation data. *)
 
 From Stdlib Require Import List Bool PArith NArith Arith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data DigraphSig SearchSig Search Scc DomSig.
 Import List.ListNotations.
@@ -297,6 +297,244 @@ Definition dom_lt_parents (g : prepared) (r : positive) : ptrie positive :=
   let buckets := dom_lt_buckets numeric (lt_semis semis) in
   dom_lt_erase numeric (dom_lt_correct numeric (lt_semis semis) (lt_relative buckets)).
 TimeFun dom_lt_parents.
+
+(** * Producer operation inventories *)
+
+(** The invariant argument is independent of the driver's accessibility proof. *)
+Local Lemma dom_lt_loop_acc {S R : Type} (step : S -> S + R)
+    (Inv : S -> Prop) (Result : R -> Prop) :
+  (forall st next, Inv st -> step st = inl next -> Inv next) ->
+  (forall st result, Inv st -> step st = inr result -> Result result) ->
+  forall fs (Hacc : Acc loopN_lt fs), Inv (snd fs) ->
+  match Argent.Loop.loop loopN_lt (loopN_step step) fs Hacc with
+  | inl st => Inv st | inr result => Result result
+  end.
+Proof.
+  intros Hcontinue Hstop fs Hacc.
+  induction Hacc as [[remaining st] Hnext IH] using Acc_ind_dep.
+  cbn [snd]. intro Hinv. destruct remaining as [|p].
+  - cbn [Argent.Loop.loop loopN_step]. exact Hinv.
+  - cbn [Argent.Loop.loop loopN_step]. destruct (step st) as [next|result] eqn:Hstep.
+    + apply IH. eapply Hcontinue; eassumption.
+    + eapply Hstop; eassumption.
+Qed.
+
+Local Opaque Argent.Loop.loop Acc_intro_generator.
+
+(** A binary-fuel loop preserves state invariants even when its fuel is exhausted. *)
+Lemma dom_lt_loop_invariant {S R : Type} (step : S -> S + R)
+    (Inv : S -> Prop) (Result : R -> Prop) fuel s :
+  (forall st next, Inv st -> step st = inl next -> Inv next) ->
+  (forall st result, Inv st -> step st = inr result -> Result result) ->
+  Inv s ->
+  match loopN step fuel s with inl st => Inv st | inr result => Result result end.
+Proof.
+  intros Hcontinue Hstop Hinitial. unfold loopN.
+  match goal with
+  | |- context [Argent.Loop.loop _ _ _ ?Hacc] =>
+    exact (dom_lt_loop_acc step Inv Result Hcontinue Hstop (fuel, s) Hacc Hinitial)
+  end.
+Qed.
+
+(** Compression updates shortcuts and labels without changing its operation log. *)
+Lemma dom_lt_compress_operations semis st :
+  match dom_lt_compress_step semis st with
+  | inl next => lt_operations (lt_walk_links next)
+  | inr result => lt_operations (fst result)
+  end = lt_operations (lt_walk_links st).
+Proof.
+  destruct st as [links [v stack|root part stack]].
+  - cbn [dom_lt_compress_step lt_walk_links lt_walk_phase].
+    destruct (trie_get (dom_lt_key v) (lt_shortcut links)) as [p|]; [destruct (N.ltb p v)|];
+      reflexivity.
+  - destruct stack as [|v stack]; [destruct part; reflexivity|].
+    destruct part; reflexivity.
+Qed.
+
+(** Every evaluator call records exactly its own query, including fuel exhaustion. *)
+Lemma dom_lt_eval_operations fuel semis links v :
+  lt_operations (fst (dom_lt_eval fuel semis links v)) = LtEval v :: lt_operations links.
+Proof.
+  set (recorded := LtEval v :: lt_operations links).
+  pose proof (dom_lt_loop_invariant (dom_lt_compress_step semis)
+    (fun st => lt_operations (lt_walk_links st) = recorded)
+    (fun result => lt_operations (fst result) = recorded)
+    (N.double fuel + 3)%N
+    (DomLtWalk (DomLtLinks (lt_shortcut links) (lt_label links) recorded)
+      (DomLtDescend v []))) as Hrun.
+  assert (Hgo : forall st next,
+    lt_operations (lt_walk_links st) = recorded ->
+    dom_lt_compress_step semis st = inl next ->
+    lt_operations (lt_walk_links next) = recorded).
+  { intros st next Hinv Hstep. pose proof (dom_lt_compress_operations semis st) as Hlog.
+    rewrite Hstep in Hlog. now rewrite Hlog. }
+  assert (Hstop : forall st result,
+    lt_operations (lt_walk_links st) = recorded ->
+    dom_lt_compress_step semis st = inr result ->
+    lt_operations (fst result) = recorded).
+  { intros st result Hinv Hstep. pose proof (dom_lt_compress_operations semis st) as Hlog.
+    rewrite Hstep in Hlog. now rewrite Hlog. }
+  specialize (Hrun Hgo Hstop eq_refl).
+  unfold dom_lt_eval. fold recorded.
+  destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)
+    (DomLtWalk (DomLtLinks (lt_shortcut links) (lt_label links) recorded)
+      (DomLtDescend v []))) as [st|[result chosen]]; exact Hrun.
+Qed.
+
+Local Opaque dom_lt_eval.
+
+(** A predecessor visit appends one query to the accumulated operation count. *)
+Lemma dom_lt_predecessor_operations limit semis links best witness source :
+  length (lt_operations (fst (fst
+    (dom_lt_predecessor limit semis (links, best, witness) source)))) =
+    S (length (lt_operations links)).
+Proof.
+  pose proof (dom_lt_eval_operations limit semis links source) as Hlog.
+  unfold dom_lt_predecessor.
+  destruct (dom_lt_eval limit semis links source) as [result chosen].
+  cbn [fst] in Hlog. destruct (N.ltb (dom_lt_identity semis chosen) best);
+    cbn [fst]; now rewrite Hlog.
+Qed.
+
+Local Opaque dom_lt_predecessor.
+
+(** A fold whose callback adds one unit has exactly one unit per list entry. *)
+Lemma dom_lt_fold_count {A B : Type} (step : A -> B -> A) (count : A -> nat) :
+  (forall st x, count (step st x) = S (count st)) ->
+  forall xs st, count (fold_left step xs st) = length xs + count st.
+Proof.
+  intros Hstep xs. induction xs as [|x rest IH]; intro st; [reflexivity|].
+  cbn [fold_left length]. rewrite IH, Hstep, Nat.add_succ_r. reflexivity.
+Qed.
+
+(** A fold's accumulated count is bounded by the sum of its callback increments. *)
+Lemma dom_lt_fold_count_le {A B : Type} (step : A -> B -> A)
+    (count : A -> nat) (weight : B -> nat) :
+  (forall st x, count (step st x) <= count st + 1 + weight x) ->
+  forall xs st, count (fold_left step xs st) <= count st + length xs +
+    fold_right (fun x total => weight x + total) 0 xs.
+Proof.
+  intros Hstep xs. induction xs as [|x rest IH]; intro st.
+  - cbn [fold_left length fold_right]. lia.
+  - specialize (IH (step st x)). specialize (Hstep st x).
+    cbn [fold_left length fold_right]. lia.
+Qed.
+
+(** One optional link fits above the already counted row queries. *)
+Lemma dom_lt_count_link recorded row before :
+  recorded = row + before -> S recorded <= before + 1 + row.
+Proof.
+  lia.
+Qed.
+
+(** Folding a predecessor row records one query for each occurrence in that row. *)
+Lemma dom_lt_predecessors_operations limit semis incoming links best witness :
+  length (lt_operations (fst (fst
+    (fold_left (dom_lt_predecessor limit semis) incoming (links, best, witness))))) =
+    length incoming + length (lt_operations links).
+Proof.
+  apply (dom_lt_fold_count (dom_lt_predecessor limit semis)
+    (fun acc => length (lt_operations (fst (fst acc))))).
+  intros [[current current_best] current_witness] source.
+  apply dom_lt_predecessor_operations.
+Qed.
+
+(** A settlement records at most its predecessor queries and one parent link. *)
+Lemma dom_lt_settle_operations numeric st v :
+  length (lt_operations (lt_semi_links (dom_lt_settle numeric st v))) <=
+    length (lt_operations (lt_semi_links st)) + 1 +
+      length (match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+        None => [] | Some row => row end).
+Proof.
+  unfold dom_lt_settle.
+  destruct (trie_get (dom_lt_key v) (lt_numeric_parent numeric)) as [p|].
+  2: { eapply Nat.le_trans; [apply Nat.le_add_r|apply Nat.le_add_r]. }
+  set (incoming := match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+    None => [] | Some row => row end).
+  pose proof (dom_lt_predecessors_operations (lt_numeric_limit numeric)
+    (lt_semis st) incoming (lt_semi_links st) p p) as Hlog.
+  revert Hlog.
+  generalize (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st))
+    incoming (lt_semi_links st, p, p)).
+  intros [[links best] witness] Hlog.
+  cbn [fst] in Hlog. cbn [lt_semi_links dom_lt_link lt_operations length].
+  now apply dom_lt_count_link.
+Qed.
+
+Local Opaque dom_lt_settle.
+
+(** A semidominator fold has one possible link plus its row queries per numeric vertex. *)
+Lemma dom_lt_settlements_operations numeric order st :
+  length (lt_operations (lt_semi_links (fold_left (dom_lt_settle numeric) order st))) <=
+    length (lt_operations (lt_semi_links st)) + length order +
+      fold_right (fun v total =>
+        length (match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+          None => [] | Some row => row end) + total) 0 order.
+Proof.
+  apply (dom_lt_fold_count_le (dom_lt_settle numeric)
+    (fun current => length (lt_operations (lt_semi_links current)))
+    (fun v => length (match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+      None => [] | Some row => row end))).
+  apply dom_lt_settle_operations.
+Qed.
+
+(** Each bucket member records one evaluator query. *)
+Lemma dom_lt_bucket_member_operations limit semis s st v :
+  length (lt_operations (lt_bucket_links (dom_lt_bucket_member limit semis s st v))) =
+    S (length (lt_operations (lt_bucket_links st))).
+Proof.
+  pose proof (dom_lt_eval_operations limit semis (lt_bucket_links st) v) as Hlog.
+  unfold dom_lt_bucket_member.
+  destruct (dom_lt_eval limit semis (lt_bucket_links st) v) as [links chosen].
+  cbn [fst] in Hlog. cbn [lt_bucket_links]. now rewrite Hlog.
+Qed.
+
+Local Opaque dom_lt_bucket_member.
+
+(** Folding one bucket records exactly as many evaluations as it has members. *)
+Lemma dom_lt_bucket_members_operations limit semis s row st :
+  length (lt_operations (lt_bucket_links
+    (fold_left (dom_lt_bucket_member limit semis s) row st))) =
+    length row + length (lt_operations (lt_bucket_links st)).
+Proof.
+  apply (dom_lt_fold_count (dom_lt_bucket_member limit semis s)
+    (fun current => length (lt_operations (lt_bucket_links current)))).
+  apply dom_lt_bucket_member_operations.
+Qed.
+
+(** A bucket step records its members and at most one link. *)
+Lemma dom_lt_bucket_step_operations numeric semis buckets st s :
+  length (lt_operations (lt_bucket_links (dom_lt_bucket_step numeric semis buckets st s))) <=
+    length (lt_operations (lt_bucket_links st)) + 1 +
+      length (match trie_get (dom_lt_key s) buckets with None => [] | Some row => row end).
+Proof.
+  unfold dom_lt_bucket_step.
+  set (row := match trie_get (dom_lt_key s) buckets with None => [] | Some row => row end).
+  pose proof (dom_lt_bucket_members_operations (lt_numeric_limit numeric) semis s row st)
+    as Hlog.
+  destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric)) as [p|];
+    cbn [lt_bucket_links dom_lt_link lt_operations length].
+  - now apply dom_lt_count_link.
+  - eapply Nat.le_trans; [apply Nat.le_succ_diag_r|]. now apply dom_lt_count_link.
+Qed.
+
+Local Opaque dom_lt_bucket_step.
+
+(** A bucket fold charges each listed row once, plus one possible link per entry. *)
+Lemma dom_lt_bucket_steps_operations numeric semis buckets order st :
+  length (lt_operations (lt_bucket_links
+    (fold_left (dom_lt_bucket_step numeric semis buckets) order st))) <=
+    length (lt_operations (lt_bucket_links st)) + length order +
+      fold_right (fun v total =>
+        length (match trie_get (dom_lt_key v) buckets with None => [] | Some row => row end) +
+          total) 0 order.
+Proof.
+  apply (dom_lt_fold_count_le (dom_lt_bucket_step numeric semis buckets)
+    (fun current => length (lt_operations (lt_bucket_links current)))
+    (fun v => length (match trie_get (dom_lt_key v) buckets with
+      None => [] | Some row => row end))).
+  apply dom_lt_bucket_step_operations.
+Qed.
 
 (** * Graph traversal cost helpers *)
 
