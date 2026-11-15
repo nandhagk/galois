@@ -1146,6 +1146,84 @@ Proof.
     + now apply (search_row_ledger_stop g st).
 Qed.
 
+(** Target-list membership is exactly membership of a corresponding edge event. *)
+Lemma search_edge_targets_member es u v :
+  In v (edge_targets u es) <-> exists kind, In (Edge kind u v) es.
+Proof.
+  induction es as [|e es IH].
+  - cbn [edge_targets In]. split; [contradiction|].
+    intros [kind Hfalse]. contradiction.
+  - destruct e as [entered_vertex|left_vertex|kind source target].
+    + cbn [edge_targets In]. rewrite IH. split.
+      * intros [edge_kind Hin]. exists edge_kind. now right.
+      * intros [edge_kind [Hbad|Hin]]; [discriminate Hbad|now exists edge_kind].
+    + cbn [edge_targets In]. rewrite IH. split.
+      * intros [edge_kind Hin]. exists edge_kind. now right.
+      * intros [edge_kind [Hbad|Hin]]; [discriminate Hbad|now exists edge_kind].
+    + cbn [edge_targets]. destruct (Pos.eqb u source) eqn:Hsource.
+      * apply Pos.eqb_eq in Hsource. subst source. cbn [In]. rewrite IH. split.
+        -- intros [Heq|[edge_kind Hin]].
+           ++ subst target. exists kind. now left.
+           ++ exists edge_kind. now right.
+        -- intros [edge_kind [Heq|Hin]].
+           ++ injection Heq as Hkind Htarget. now left.
+           ++ right. now exists edge_kind.
+      * apply Pos.eqb_neq in Hsource. rewrite IH. cbn [In]. split.
+        -- intros [edge_kind Hin]. exists edge_kind. now right.
+        -- intros [edge_kind [Heq|Hin]].
+           ++ injection Heq as Hkind Hsource' Htarget. congruence.
+           ++ now exists edge_kind.
+Qed.
+
+(** Exact completed rows make every emitted edge real and its source entered. *)
+Lemma search_trace_rows_edge g es kind u v :
+  search_trace_rows g es -> In (Edge kind u v) es ->
+  In u (entered es) /\ edge g u v.
+Proof.
+  intros Hrows Hevent.
+  assert (Htarget : In v (edge_targets u es)).
+  { apply search_edge_targets_member. now exists kind. }
+  destruct (in_dec Pos.eq_dec u (entered es)) as [Hin|Hnot].
+  - split; [exact Hin|]. unfold edge.
+    rewrite <- (proj1 (Hrows u) Hin). exact Htarget.
+  - rewrite (proj2 (Hrows u) Hnot) in Htarget. contradiction.
+Qed.
+
+(** Graph well-formedness includes successor closure of its listed vertices. *)
+Lemma search_wf_closed g : wf_graph (base g) ->
+  forall u v, In u (nodes g) -> edge (base g) u v -> In v (nodes g).
+Proof.
+  destruct g as [[vertices adjacency] predecessors n e]. exact (fun H => proj2 H).
+Qed.
+
+(** Exact row observations hold whenever count caches ensure complete traversal. *)
+Lemma prepared_search_rows_closed g roots :
+  counts_ok g ->
+  (forall u v, In u (nodes g) -> edge (base g) u v -> In v (nodes g)) ->
+  (forall r, In r roots -> In r (nodes g)) ->
+  search_trace_rows (base g) (prepared_search_trace g roots).
+Proof.
+  intros Hcounts Hclosed Hroots.
+  destruct (prepared_search_complete_closed g roots Hcounts Hclosed Hroots) as [es Hdone].
+  pose proof (search_row_ledger_loop_fuel (base g) (N.to_nat (search_budget g roots))
+    (SearchState (map SearchRoot roots) Empty []) (search_shape_initial roots)
+    (search_row_ledger_initial (base g) roots)) as Hrows.
+  rewrite <- search_loopN_fuel, Hdone in Hrows.
+  unfold prepared_search_trace. rewrite Hdone. exact Hrows.
+Qed.
+
+(** Every edge kind records its target's exact preceding colour, even in a truncated run. *)
+Lemma prepared_search_kinds_raw g roots : search_event_kinds (prepared_search_trace g roots).
+Proof.
+  pose proof (search_event_kinds_loop_fuel (base g) (N.to_nat (search_budget g roots))
+    (SearchState (map SearchRoot roots) Empty []) (search_shape_initial roots)
+    search_event_kinds_nil) as Hkinds.
+  rewrite <- search_loopN_fuel in Hkinds. unfold prepared_search_trace.
+  destruct (loopN (search_step (base g)) (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty [])) as [st|es]; [|exact Hkinds].
+  rewrite rev_append_rev, app_nil_r. exact Hkinds.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -1205,19 +1283,36 @@ Module Search (V : VISITOR) <: SEARCH V.
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) -> reach (base g) roots u ->
     Permutation (edge_targets u (trace g roots)) (succs (base g) u).
-  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
+  Proof.
+    intros g roots u Hcounts Hgraph Hroots Hreach.
+    pose proof (prepared_search_rows_closed g roots Hcounts
+      (search_wf_closed g Hgraph) Hroots) as Hrows.
+    pose proof (proj2 (trace_reach g roots u Hcounts Hgraph Hroots) Hreach) as Hin.
+    change (In u (entered (prepared_search_trace g roots))) in Hin.
+    unfold trace. rewrite (proj1 (Hrows u) Hin). apply Permutation_refl.
+  Qed.
 
   Lemma trace_edges_sound : forall g roots kind u v,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     In (Edge kind u v) (trace g roots) -> reach (base g) roots u /\ edge (base g) u v.
-  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
+  Proof.
+    intros g roots kind u v Hcounts Hgraph Hroots Hevent.
+    pose proof (prepared_search_rows_closed g roots Hcounts
+      (search_wf_closed g Hgraph) Hroots) as Hrows.
+    destruct (search_trace_rows_edge (base g) (trace g roots) kind u v Hrows Hevent)
+      as [Hentered Hedge]. split; [|exact Hedge].
+    apply (proj1 (trace_reach g roots u Hcounts Hgraph Hroots)). exact Hentered.
+  Qed.
 
   Lemma trace_kinds : forall g roots prefix kind u v suffix,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     trace g roots = prefix ++ Edge kind u v :: suffix -> event_kind_correct prefix kind v.
-  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
+  Proof.
+    intros g roots prefix kind u v suffix Hcounts Hgraph Hroots Htrace.
+    exact (prepared_search_kinds_raw g roots prefix kind u v suffix Htrace).
+  Qed.
 End Search.
 
 Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
@@ -1344,7 +1439,20 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     invariant g roots (initial roots) /\
     potential g roots (initial roots) =
       N.of_nat (4 * n_reach g roots + 2 * e_reach g roots + length roots).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots Hcounts Hgraph Hroots. split.
+    - unfold invariant. split.
+      + exists 0. reflexivity.
+      + split.
+        * unfold representation. split.
+          -- exact (search_shape_entered_unique _ (search_shape_initial roots)).
+          -- exact (search_shape_colours _ (search_shape_initial roots)).
+        * exists (trace g roots). reflexivity.
+    - change (N.of_nat (search_finite_credit (base g) (support g roots)
+        (SearchState (map SearchRoot roots) Empty [])) =
+        N.of_nat (4 * n_reach g roots + 2 * e_reach g roots + length roots)).
+      rewrite search_finite_initial. reflexivity.
+  Qed.
 
   Lemma F4_step : forall g roots st next,
     counts_ok g -> wf_graph (base g) ->
