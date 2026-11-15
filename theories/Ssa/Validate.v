@@ -1243,6 +1243,322 @@ Proof.
   intros x y; revert x; induction y; intros [x|x|]; time_step.
 Qed.
 
+Lemma val_nat_mono a b : a <= b -> (N.of_nat a <= N.of_nat b)%N.
+Proof.
+  intro H; unfold N.le; rewrite <- Nat2N.inj_compare; apply Nat.compare_le_iff; exact H.
+Qed.
+
+
+Lemma val_rows_length {A} : forall (rows : list (positive * list A)),
+  length rows + fold_right (fun item n => length (snd item) + n) 0 rows =
+    fold_right (fun item n => 1 + length (snd item) + n) 0 rows.
+Proof.
+  induction rows as [|row rest IH]; cbn [length fold_right]; lia.
+Qed.
+
+Lemma val_cert_units c :
+  length (fst c) + fold_right (fun item n => length (snd item) + n) 0 (fst c) +
+  length (snd c) + fold_right (fun item n => length (snd item) + n) 0 (snd c) <= cert_size c.
+Proof.
+  destruct c as [envs lives]; cbn [fst snd]; unfold cert_size; cbn [fst snd].
+  assert (Henv : length envs + fold_right (fun item n => length (snd item) + n) 0 envs <=
+    fold_right (fun item n => 1 + 2 * length (snd item) + n) 0 envs).
+  { clear lives; induction envs as [|[b row] rest IH]; cbn [length fold_right snd]; lia. }
+  pose proof (val_rows_length lives) as Hlive; lia.
+Qed.
+
+Lemma val_row_length_lookup {A} (rows : list (positive * list A)) b :
+  length (index_row (val_index rows) b) =
+    match lookup b rows with Some values => length values | None => 0 end.
+Proof.
+  unfold index_row; rewrite val_index_lookup; destruct (lookup b rows); reflexivity.
+Qed.
+
+Lemma val_row_index_sum {A} (rows : list (positive * list A)) ids : NoDup ids ->
+  fold_right (fun b n => length (index_row (val_index rows) b) + n) 0 ids <=
+    fold_right (fun item n => length (snd item) + n) 0 rows.
+Proof.
+  intro Hdistinct.
+  eapply Nat.le_trans with (m := fold_right (fun b n =>
+    (match lookup b rows with Some values => length values | None => 0 end) + n) 0 ids).
+  - apply val_sum_mono; intros b Hin; rewrite val_row_length_lookup; apply Nat.le_refl.
+  - apply val_lookup_sum; exact Hdistinct.
+Qed.
+
+Lemma val_sum_ge_length {A} : forall (charge : A -> nat) xs,
+  (forall x, In x xs -> 1 <= charge x) ->
+  length xs <= fold_right (fun x n => charge x + n) 0 xs.
+Proof.
+  intros charge xs; induction xs as [|x rest IH]; intro Hpositive; cbn [length fold_right].
+  - lia.
+  - pose proof (Hpositive x ltac:(left; reflexivity)) as Hhead.
+    specialize (IH ltac:(intros y Hin; apply Hpositive; right; exact Hin)); lia.
+Qed.
+
+Lemma val_list_charge : forall time work n total c width,
+  (time <= 2 * N.of_nat n + 1 + work)%N ->
+  (work <= c * N.of_nat total * width)%N ->
+  n <= total -> (1 <= width)%N ->
+  (time <= (c + 4) * N.of_nat (total + 1) * width)%N.
+Proof.
+  intros time work n total c width Htime Hwork Hcount Hwidth.
+  assert (Hover : (2 * N.of_nat n + 1 <= 4 * N.of_nat (total + 1) * width)%N).
+  { eapply N.le_trans with (m := (4 * N.of_nat (total + 1))%N); [lia|].
+    replace (4 * N.of_nat (total + 1))%N with
+      ((4 * N.of_nat (total + 1)) * 1)%N at 1 by ring.
+    apply N.mul_le_mono_l; exact Hwidth. }
+  assert (Hwork' : (work <= c * N.of_nat (total + 1) * width)%N).
+  { eapply N.le_trans; [exact Hwork|].
+    apply N.mul_le_mono_r; apply N.mul_le_mono_l; lia. }
+  eapply N.le_trans; [exact Htime|].
+  replace ((c + 4) * N.of_nat (total + 1) * width)%N with
+    (4 * N.of_nat (total + 1) * width + c * N.of_nat (total + 1) * width)%N by ring.
+  apply N.add_le_mono; assumption.
+Qed.
+
+Lemma val_forallb_charge {A} : forall (f : A -> bool) Tf charge xs c width,
+  (1 <= width)%N -> (forall x, In x xs -> 1 <= charge x) ->
+  (forall x, In x xs -> (Tf x <= c * N.of_nat (charge x) * width)%N) ->
+  (List.T_forallb f Tf xs <= (c + 4) *
+    N.of_nat (fold_right (fun x n => (charge x + n)%nat) 0%nat xs + 1) * width)%N.
+Proof.
+  intros f Tf charge xs c width Hwidth Hpositive Hbound.
+  pose proof (val_forallb_time f Tf xs) as Htime.
+  pose proof (val_sum_time charge Tf xs c width Hbound) as Hwork.
+  pose proof (val_sum_ge_length charge xs Hpositive) as Hcount.
+  eapply val_list_charge; eassumption.
+Qed.
+
+Lemma val_map_charge {A B} : forall (f : A -> B) Tf charge xs c width,
+  (1 <= width)%N -> (forall x, In x xs -> 1 <= charge x) ->
+  (forall x, In x xs -> (Tf x <= c * N.of_nat (charge x) * width)%N) ->
+  (ListDef.T_map f Tf xs <= (c + 4) *
+    N.of_nat (fold_right (fun x n => (charge x + n)%nat) 0%nat xs + 1) * width)%N.
+Proof.
+  intros f Tf charge xs c width Hwidth Hpositive Hbound.
+  pose proof (val_map_time f Tf xs) as Htime.
+  pose proof (val_sum_time charge Tf xs c width Hbound) as Hwork.
+  pose proof (val_sum_ge_length charge xs Hpositive) as Hcount.
+  eapply val_list_charge; [|exact Hwork|exact Hcount|exact Hwidth].
+  eapply N.le_trans; [exact Htime|]; lia.
+Qed.
+
+Lemma val_allowance_time {A} : forall (xs : list A) env live,
+  (Datatypes.T_length xs + Nat.T_add (length xs) env +
+    Nat.T_add (length xs + env)%nat live + Nat.T_add (length xs + env + live)%nat 1 <=
+    4 * N.of_nat (length xs + env + live + 1))%N.
+Proof.
+  intros xs env live; pose proof (Datatypes.T_length_le xs).
+  pose proof (Nat.T_add_le (length xs) env).
+  pose proof (Nat.T_add_le (length xs + env) live).
+  pose proof (Nat.T_add_le (length xs + env + live) 1).
+  rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+Lemma val_exit_targets_length {G} (e : exit positive G) : length (exit_targets e) <= 2.
+Proof.
+  destruct e; cbn; lia.
+Qed.
+
+Lemma val_cert_contents c :
+  fold_right (fun item n => length (snd item) + n) 0 (fst c) +
+    fold_right (fun item n => length (snd item) + n) 0 (snd c) <= cert_size c.
+Proof.
+  eapply Nat.le_trans; [|exact (val_cert_units c)].
+  set (env := fold_right (fun item n => length (snd item) + n) 0 (fst c)).
+  set (live := fold_right (fun item n => length (snd item) + n) 0 (snd c)).
+  change (env + live <= length (fst c) + env + length (snd c) + live).
+  replace (length (fst c) + env + length (snd c) + live) with
+    (env + live + (length (fst c) + length (snd c))) by ring.
+  apply Nat.le_add_r.
+Qed.
+
+Definition val_row_charge {K G} (c : cert) (item : positive * block positive K G) : nat :=
+  length (code _ _ _ (snd item)) + length (index_row (val_index (fst c)) (fst item)) +
+    length (index_row (val_index (snd c)) (fst item)) + 1.
+
+Lemma val_row_charge_sum {K G} (p : func positive K G) c :
+  fold_right (fun item n => val_row_charge c item + n) 0
+    (first_blocks (blocks _ _ _ p)) <= function_size p + cert_size c.
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  assert (Hdecomp : fold_right (fun item n => val_row_charge c item + n) 0 bs <=
+    fold_right (fun item n => val_body_units (snd item) + n) 0 bs +
+    fold_right (fun b n => length (index_row (val_index (fst c)) b) + n) 0 (map fst bs) +
+    fold_right (fun b n => length (index_row (val_index (snd c)) b) + n) 0 (map fst bs)).
+  { clearbody bs; clear - bs c; induction bs as [|[b body] rest IH];
+      cbn [fold_right map val_row_charge fst snd] in *; [lia|].
+    pose proof (val_body_counts body); unfold val_row_charge at 1; cbn [fst snd]; lia. }
+  assert (Hdistinct : NoDup (map fst bs)).
+  { unfold bs; rewrite val_first_selected; apply val_selected_nodup. }
+  pose proof (val_row_index_sum (fst c) (map fst bs) Hdistinct) as Henv.
+  pose proof (val_row_index_sum (snd c) (map fst bs) Hdistinct) as Hlive.
+  assert (Hbody : fold_right (fun item n => val_body_units (snd item) + n) 0 bs <=
+    function_size p).
+  { unfold bs; rewrite val_first_selected;
+      eapply Nat.le_trans; [apply val_selected_sum|apply val_function_units]. }
+  assert (Hrows : fold_right (fun item n => length (snd item) + n) 0 (fst c) +
+    fold_right (fun item n => length (snd item) + n) 0 (snd c) <= cert_size c).
+  { exact (val_cert_contents c). }
+  eapply Nat.le_trans; [exact Hdecomp|].
+  rewrite <- Nat.add_assoc; apply Nat.add_le_mono; [exact Hbody|].
+  eapply Nat.le_trans; [apply Nat.add_le_mono; [exact Henv|exact Hlive]|exact Hrows].
+Qed.
+
+Lemma val_index_row_member {A} : forall (rows : list (positive * list A)) b x,
+  In x (index_row (val_index rows) b) ->
+  exists row, In (b, row) rows /\ In x row.
+Proof.
+  intros rows b x Hin; unfold index_row in Hin; rewrite val_index_lookup in Hin.
+  destruct (lookup b rows) as [row|] eqn:Hrow; [|contradiction].
+  exists row; split; [apply val_lookup_in; exact Hrow|exact Hin].
+Qed.
+
+Lemma val_env_row_width c b x y : In (x, y) (index_row (val_index (fst c)) b) ->
+  Pos.size_nat x <= vertex_width (cert_ids c) /\
+    Pos.size_nat y <= vertex_width (cert_ids c).
+Proof.
+  intro Hin; apply val_index_row_member in Hin as [row [Hrow Hpair]].
+  exact (val_cert_pair_width c b row x y Hrow Hpair).
+Qed.
+
+Lemma val_live_row_width c b x : In x (index_row (val_index (snd c)) b) ->
+  Pos.size_nat x <= vertex_width (cert_ids c).
+Proof.
+  intro Hin; apply val_index_row_member in Hin as [row [Hrow Hvar]].
+  exact (val_cert_member_width c b row x Hrow Hvar).
+Qed.
+
+Lemma val_index_row_length {A} (rows : list (positive * list A)) b :
+  length (index_row (val_index rows) b) <=
+    fold_right (fun item n => length (snd item) + n) 0 rows.
+Proof.
+  pose proof (val_row_index_sum rows [b] ltac:(constructor; [intro H; contradiction|constructor]))
+    as Hsum.
+  cbn [fold_right] in Hsum; rewrite Nat.add_0_r in Hsum; exact Hsum.
+Qed.
+
+Lemma val_inverse_member rho y x : trie_get y (val_inverse rho) = Some x -> In (x, y) rho.
+Proof.
+  intro Hlookup; unfold val_inverse in Hlookup; rewrite val_index_lookup in Hlookup.
+  apply val_lookup_in in Hlookup; apply in_map_iff in Hlookup as [[a b] [Heq Hin]].
+  cbn in Heq; injection Heq as Hb Ha; subst a b; exact Hin.
+Qed.
+
+Record val_body_bounded {K G} (body : block positive K G) (w : nat) : Prop := {
+  val_params_bounded : forall x, In x (params _ _ _ body) -> Pos.size_nat x <= w;
+  val_code_bounded : forall i, In i (code _ _ _ body) ->
+    Pos.size_nat (fst (fst i)) <= w /\ forall x, In x (snd i) -> Pos.size_nat x <= w;
+  val_exit_bounded : forall x, In x (exit_uses (term _ _ _ body)) -> Pos.size_nat x <= w;
+  val_targets_bounded : forall x, In x (exit_targets (term _ _ _ body)) -> Pos.size_nat x <= w
+}.
+Arguments val_params_bounded {K G body w} _ _ _.
+Arguments val_code_bounded {K G body w} _ _ _.
+Arguments val_exit_bounded {K G body w} _ _ _.
+Arguments val_targets_bounded {K G body w} _ _ _.
+
+Lemma val_body_bounded_function {K G} (p : func positive K G) b body w :
+  In (b, body) (blocks _ _ _ p) -> function_width p <= w -> val_body_bounded body w.
+Proof.
+  intros Hin Hwidth; constructor.
+  - intros x Hx; eapply Nat.le_trans; [eapply val_body_var_width; [exact Hin|]|exact Hwidth].
+    unfold val_body_vars; apply in_or_app; left; exact Hx.
+  - intros [[x op] args] Hi; cbn [fst snd]; split.
+    + eapply Nat.le_trans; [eapply val_body_var_width; [exact Hin|]|exact Hwidth].
+      unfold val_body_vars; apply in_or_app; right; apply in_or_app; left;
+        apply in_flat_map; exists (x, op, args); split; [exact Hi|left; reflexivity].
+    + intros y Hy; eapply Nat.le_trans;
+        [eapply val_body_var_width; [exact Hin|]|exact Hwidth].
+      unfold val_body_vars; apply in_or_app; right; apply in_or_app; left;
+        apply in_flat_map; exists (x, op, args); split; [exact Hi|right; exact Hy].
+  - intros x Hx; eapply Nat.le_trans; [eapply val_body_var_width; [exact Hin|]|exact Hwidth].
+    unfold val_body_vars; apply in_or_app; right; apply in_or_app; right; exact Hx.
+  - intros x Hx; eapply Nat.le_trans; [eapply val_target_width; eassumption|exact Hwidth].
+Qed.
+
+Record val_table_bounded {K G} (t : check_tables K G) (w : nat) : Prop := {
+  val_source_bounded : forall b body, trie_get b (source_bodies t) = Some body ->
+    val_body_bounded body w;
+  val_target_bounded : forall b body, trie_get b (target_bodies t) = Some body ->
+    val_body_bounded body w;
+  val_env_bounded : forall b x y, In (x, y) (index_row (cert_envs t) b) ->
+    Pos.size_nat x <= w /\ Pos.size_nat y <= w;
+  val_live_bounded : forall b x, In x (index_row (cert_rows t) b) -> Pos.size_nat x <= w
+}.
+Arguments val_source_bounded {K G t w} _ _ _ _.
+Arguments val_target_bounded {K G t w} _ _ _ _.
+Arguments val_env_bounded {K G t w} _ _ _ _ _.
+Arguments val_live_bounded {K G t w} _ _ _ _.
+
+
+Lemma val_common_cost : forall time count total coefficient extra width,
+  (time <= coefficient * N.of_nat count * width + extra)%N -> count <= total ->
+  (1 <= width)%N ->
+  (time <= (coefficient + extra) * (N.of_nat (total + 1) * width))%N.
+Proof.
+  intros time count total coefficient extra width Htime Hcount Hwidth.
+  assert (Hmain : (coefficient * N.of_nat count * width <=
+    coefficient * N.of_nat (total + 1) * width)%N).
+  { apply N.mul_le_mono_r; apply N.mul_le_mono_l; lia. }
+  assert (Hunit : (1 <= N.of_nat (total + 1) * width)%N) by nia.
+  assert (Hextra : (extra <= extra * N.of_nat (total + 1) * width)%N).
+  { replace extra with (extra * 1)%N at 1 by ring;
+      rewrite <- N.mul_assoc; apply N.mul_le_mono_l; exact Hunit. }
+  eapply N.le_trans; [exact Htime|].
+  replace ((coefficient + extra) * (N.of_nat (total + 1) * width))%N with
+    (coefficient * N.of_nat (total + 1) * width +
+      extra * N.of_nat (total + 1) * width)%N by ring.
+  apply N.add_le_mono; assumption.
+Qed.
+
+Definition val_target_live (known : ptrie unit) (next forward bound : ptrie positive)
+    (x : positive) : bool :=
+  val_mem known x &&
+  match trie_get x next, trie_get x forward with
+  | Some y, Some z => Pos.eqb (val_symbol bound y) z
+  | _, _ => false
+  end.
+TimeFun val_target_live.
+
+Lemma val_target_live_time nextrow rho known bound x w :
+  (forall a b, In (a, b) nextrow -> Pos.size_nat a <= w /\ Pos.size_nat b <= w) ->
+  (forall a b, In (a, b) rho -> Pos.size_nat a <= w /\ Pos.size_nat b <= w) ->
+  Pos.size_nat x <= w ->
+  (T_val_target_live known (val_index nextrow) (val_index rho) bound x <=
+    16 * N.of_nat (w + 1))%N.
+Proof.
+  intros Hnext Hrho Hx.
+  pose proof (val_mem_time known x w Hx) as Hmem.
+  time_unfold T_val_target_live; time_simpl; rewrite !PTrieT.trie_get_clock.
+  destruct (trie_get x (val_index nextrow)) as [y|] eqn:Hy; [|lia].
+  destruct (trie_get x (val_index rho)) as [z|] eqn:Hz; [|lia].
+  rewrite val_index_lookup in Hy, Hz.
+  pose proof (proj2 (Hnext x y (val_lookup_in nextrow x y Hy))) as Hywidth.
+  pose proof (proj2 (Hrho x z (val_lookup_in rho x z Hz))) as Hzwidth.
+  pose proof (val_symbol_time bound y w Hywidth) as Hsymbol.
+  pose proof (val_pos_eqb_right (val_symbol bound y) z) as Heq.
+  lia.
+Qed.
+
+Lemma val_forallb_budget {A} : forall (f : A -> bool) Tf xs coefficient total width,
+  length xs <= total -> (1 <= width)%N ->
+  (forall x, In x xs -> (Tf x <= coefficient * width)%N) ->
+  (List.T_forallb f Tf xs <= (coefficient + 3) *
+    (N.of_nat (total + 1) * width))%N.
+Proof.
+  intros f Tf xs coefficient total width Hlength Hwidth Hbound.
+  pose proof (val_forallb_uniform f Tf xs (coefficient * width)%N Hbound) as Hscan.
+  assert (Hscan' : (List.T_forallb f Tf xs <=
+    (coefficient + 2) * N.of_nat (length xs) * width + 1)%N).
+  { eapply N.le_trans; [exact Hscan|].
+    replace ((coefficient + 2) * N.of_nat (length xs) * width + 1)%N with
+      (((coefficient + 2) * width) * N.of_nat (length xs) + 1)%N by ring.
+    apply N.add_le_mono_r; apply N.mul_le_mono_r; nia. }
+  pose proof (val_common_cost _ _ total _ _ width Hscan' Hlength Hwidth) as Htotal.
+  replace (coefficient + 2 + 1)%N with (coefficient + 3)%N in Htotal by ring;
+    exact Htotal.
+Qed.
+
 Module ValidateCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
     (P : TYPE with Definition t := func positive O.K O.G)
