@@ -539,20 +539,28 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Assignment work is the component work of every alternative. *)
   Lemma assign_work_alternatives : forall x e d, assign_work x e d =
     fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Havoc work is the component work of every alternative. *)
   Lemma havoc_work_alternatives : forall x d, havoc_work x d =
     fold_right Nat.add 0%nat (map (fun s => S.havoc_work x s + 1) (proj1_sig d)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assumption work is the component work of every alternative. *)
   Lemma assume_work_alternatives : forall g es d, assume_work g es d =
     fold_right Nat.add 0%nat (map (fun s => S.assume_work g es s + 1) (proj1_sig d)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Evaluation work is the component work and the value size of every alternative. *)
   Lemma eval_work_alternatives : forall e d, eval_work e d =
     fold_right Nat.add 0%nat (map (fun s =>
       S.eval_work e s + V.size (S.eval e s) + 1) (proj1_sig d)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof. Admitted. (* STUB *)
   Lemma T_leb_le : forall a b,
@@ -599,9 +607,13 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma wunits_alternatives : forall d,
     wunits d = fold_right Nat.add 0%nat (map S.wunits (proj1_sig d)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma wsize_component : forall p, wsize p = S.wsize p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma T_collapse_le : forall xs, length xs <= C.k + 1 ->
     (T_collapse xs <= c_disjunction * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
@@ -627,20 +639,30 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     replace_first S.is_bot
       (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))))
       (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact widen_raw.
+  Qed.
   Lemma F3_rank : forall p d, wrank p d =
     fold_right Nat.add 0%nat (map (S.wrank p) (proj1_sig d)) +
       if forallb S.is_bot (proj1_sig d) then 1 + S.wrank p S.top else 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F4_assign : forall x e d,
     proj1_sig (assign x e d) = map (S.assign x e) (proj1_sig d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e [xs Hbound]; reflexivity.
+  Qed.
   Lemma F5_havoc : forall x d,
     proj1_sig (havoc x d) = map (S.havoc x) (proj1_sig d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x [xs Hbound]; reflexivity.
+  Qed.
   Lemma F6_assume : forall g es d,
     proj1_sig (assume g es d) = map (S.assume g es) (proj1_sig d).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es [xs Hbound]; reflexivity.
+  Qed.
   Lemma T1_widen : forall p a b,
     (T_widen p a b <= k_disjunction *
       (T_leb b a + T_is_bot a + P.T_clip [S.top] + N.of_nat (length (proj1_sig a) + 1) +
@@ -655,7 +677,9 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   (** Evaluation joins the values of the alternatives from bottom. *)
   Lemma F7_eval : forall e d,
     eval e d = fold_left (fun a s => V.join a (S.eval e s)) (proj1_sig d) V.bot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Evaluation charges each alternative's evaluation and the value joins. *)
   Lemma T2_eval : forall e d, (T_eval e d <= k_disjunction *
     (fold_right N.add 0%N (map (fun s => S.T_eval e s + 1) (proj1_sig d)) +
@@ -733,7 +757,9 @@ Module StateDisjunctionClaims (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
 
   Theorem disjunction_leb_equation a b : leb a b =
     forallb (fun x => existsb (S.leb x) (proj1_sig b)) (proj1_sig a).
-  Proof. Admitted. (* CONVERT: disjunction_leb_equation: The reference disjunction_leb was not found in the current *)
+  Proof.
+    apply leb_hoare.
+  Qed.
 
   Theorem disjunction_leb_spec a b : leb a b = true <->
     forall x, In x (proj1_sig a) ->
@@ -744,13 +770,19 @@ Proof.
 Qed.
 
   Theorem join_disjunction a b : join a b = P.clip (proj1_sig a ++ proj1_sig b).
-  Proof. Admitted. (* CONVERT: join_disjunction: The reference Cost.value_bind was not found in the current *)
+  Proof.
+    apply join_compact.
+  Qed.
 
   Theorem disjunction_join_size a b : length (proj1_sig (join a b)) <= C.k.
-  Proof. Admitted. (* CONVERT: disjunction_join_size: No product even after head-reduction. *)
+  Proof.
+    apply Nat.leb_le; exact (proj2_sig (join a b)).
+  Qed.
 
   Theorem join_all_upper xs x : In x xs -> S.leb x (collapse xs) = true.
-  Proof. Admitted. (* CONVERT: join_all_upper: The variable fold_upper_start was not found in the current environment. *)
+  Proof.
+    apply collapse_covers.
+  Qed.
 End StateDisjunctionClaims.
 
 (* The old fold equation named a charged helper whose pure value is now collapse.
