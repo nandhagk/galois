@@ -7,6 +7,7 @@
 From Stdlib Require Import List PArith NArith Bool Lia Arith.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Code KeySig Key Trie.
+From Galois.Graph Require Import DigraphSig.
 From Galois.Program Require Import CfgSig VarsSig Vars SsaSig Ssa.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig.
 Import List.ListNotations.
@@ -646,6 +647,48 @@ Definition lang_prepare {K G} (p : func positive K G) : lang_prepared K G :=
         (flat_map (fun r => map (fun x => (x, point_src (fst (fst r)))) (snd r)) rows))).
 TimeFun lang_prepare.
 
+(** The structural maximum is the ordinary maximum of its two sizes. *)
+Lemma graph_max_nat a b : graph_max a b = Nat.max a b.
+Proof.
+  revert b; induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
+Qed.
+
+(** An identifier's width is bounded by the maximum over its containing list. *)
+Lemma vertex_width_in xs x : In x xs -> Pos.size_nat x <= vertex_width xs.
+Proof.
+  induction xs as [|a rest IH]; cbn [vertex_width fold_right]; intro Hin.
+  - contradiction.
+  - rewrite graph_max_nat. fold (vertex_width rest). destruct Hin as [Heq|Hin].
+    + subst x. apply Nat.le_max_l.
+    + specialize (IH Hin). pose proof (Nat.le_max_r (Pos.size_nat a) (vertex_width rest)).
+      lia.
+Qed.
+
+(** The public function width covers every syntax identifier. *)
+Lemma function_id_width {K G} (p : func positive K G) x :
+  In x (function_ids p) -> Pos.size_nat x <= function_width p.
+Proof.
+  intro Hin. unfold function_width. rewrite graph_max_nat.
+  eapply Nat.le_trans; [apply vertex_width_in; exact Hin|apply Nat.le_max_l].
+Qed.
+
+(** Every listed block identifier belongs to the source identifier inventory. *)
+Lemma block_id_in_function {K G} (p : func positive K G) b body :
+  In (b, body) (blocks _ _ _ p) -> In b (function_ids p).
+Proof.
+  intro Hin. unfold function_ids. right. apply in_or_app; right.
+  apply in_flat_map. exists (b, body). split; [exact Hin|]. cbn; now left.
+Qed.
+
+(** Every listed block's exit target belongs to the source identifier inventory. *)
+Lemma target_in_function {K G} (p : func positive K G) b body t :
+  In (b, body) (blocks _ _ _ p) -> In t (exit_targets (term _ _ _ body)) ->
+    In t (function_ids p).
+Proof.
+  intros Hin Htarget. unfold function_ids. right. apply in_or_app; right.
+  apply in_flat_map. exists (b, body). split; [exact Hin|]. cbn; now right.
+Qed.
+
 (** Every retained entry is the identifier of a retained block. *)
 Lemma lang_entries_nodes {K G} (p : func positive K G) b :
   In b (lang_entries (lang_prepare p)) -> In b (lang_blocks (lang_prepare p)).
@@ -1069,7 +1112,7 @@ Module PresentT (O : OPS)
   End Link.
 
   Module Budget <: LANG_PRESENT_BUDGET O Q R BlockEdge PointEdge PointKey BC C U SP.
-    Definition c_present : N := 1. (* STUB *)
+    Definition c_present : N := 128.
 
   (** Both prepared graphs are well formed for every raw function. *)
   Lemma prepared_wf : forall p, BC.wf (R.prepare p) /\ C.wf (R.prepare p).
@@ -1097,7 +1140,18 @@ Module PresentT (O : OPS)
     (In b (BC.nodes (R.prepare p)) \/ exists e, In e (BC.edges (R.prepare p)) /\
       (BC.src (R.prepare p) e = b \/ BC.dst (R.prepare p) e = b)) ->
     PosKeyT.bits b <= function_width p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b [Hnode|[e [Hedge Hside]]]; change (Pos.size_nat b <= function_width p).
+    - apply function_id_width. rewrite Link.nodes_agree in Hnode.
+      apply in_map_iff in Hnode. destruct Hnode as [[id body] [Heq Hin]].
+      cbn in Heq; subst id. rewrite first_blocks_selected in Hin.
+      apply selected_blocks_in in Hin as [Hin _].
+      now apply (block_id_in_function p b body).
+    - destruct (Link.edges_syntax p e Hedge) as [body [Hsource Htarget]].
+      apply function_id_width. destruct Hside as [Heq|Heq]; subst b.
+      + now apply (block_id_in_function p (BC.src (R.prepare p) e) body).
+      + now apply (target_in_function p (BC.src (R.prepare p) e) body).
+  Qed.
   (** Parameter rows of listed blocks and argument rows of listed edges are syntax. *)
   Lemma block_rows_le : forall p,
     fold_right (fun b n => length (SP.block_params (R.prepare p) b) + n) 0
@@ -1126,7 +1180,22 @@ Module PresentT (O : OPS)
   (** Listed block-edge keys are within a constant factor of the syntax width. *)
   Lemma block_edge_bits_le : forall p e, In e (BC.edges (R.prepare p)) ->
     (N.of_nat (BlockEdge.bits e) <= c_present * N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e Hin.
+    assert (Hsource : Pos.size_nat (edge_source e) <= function_width p).
+    { apply (block_bits_le p (edge_source e)). right; exists e; split; [exact Hin|].
+      left; reflexivity. }
+    assert (Htarget : Pos.size_nat (edge_target e) <= function_width p).
+    { apply (block_bits_le p (edge_target e)). right; exists e; split; [exact Hin|].
+      right; reflexivity. }
+    unfold c_present.
+    assert (Hbits : BlockEdge.bits e <= 128 * (function_width p + 1)).
+    { unfold BlockEdge.bits, BlockEdge.encode, block_edge_tuple,
+        EdgeTupleKey.encode, EdgeArmTargetKey.encode, pair_code.
+      cbn [fst snd PosKeyT.encode]. rewrite !glue_bits.
+      destruct (edge_arm e); cbn [ArmKeyT.encode Pos.size_nat]; lia. }
+    apply time_of_nat_le in Hbits. rewrite Nat2N.inj_mul in Hbits. exact Hbits.
+  Qed.
 
   End Budget.
 End PresentT.
