@@ -2947,6 +2947,432 @@ Module Compile (V : VALUE) <: COMPILE V.
 
 End Compile.
 
+(** * Compiler sizes and running time *)
+
+(** The set bits pay for carries while the compiler advances its fresh-name counter. *)
+Fixpoint compile_ones (p : positive) : nat :=
+  match p with
+  | xI q => S (compile_ones q)
+  | xO q => compile_ones q
+  | xH => 1
+  end.
+
+Lemma compile_ones_size : forall p, compile_ones p <= Pos.size_nat p.
+Proof.
+  induction p; cbn [compile_ones Pos.size_nat]; lia.
+Qed.
+
+Lemma compile_succ_size : forall p, Pos.size_nat (Pos.succ p) <= Pos.size_nat p + 1.
+Proof.
+  induction p; cbn [Pos.succ Pos.size_nat]; lia.
+Qed.
+
+Lemma compile_succ_clock : forall p,
+  (Pos.T_succ p + N.of_nat (compile_ones (Pos.succ p)) <=
+    2 + N.of_nat (compile_ones p))%N.
+Proof.
+  induction p; time_unfold Pos.T_succ; time_simpl;
+    cbn [Pos.succ compile_ones]; rewrite ?Nat2N.inj_succ; lia.
+Qed.
+
+Lemma pattern_terms_clock : forall A (ns : list (pnode A)) r root_name fresh,
+  (T_pattern_terms ns r root_name fresh +
+      N.of_nat (compile_ones (snd (pattern_terms ns r root_name fresh))) <=
+    16 * N.of_nat (length ns + 1) + N.of_nat (compile_ones fresh))%N.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros r root_name fresh.
+  - time_unfold @T_pattern_terms. cbn [pattern_terms snd length]. time_simpl. lia.
+  - destruct n as [h|f children|v]; destruct r as [[|r]|];
+      time_unfold @T_pattern_terms; time_simpl;
+      cbn [pattern_terms next_root].
+    all: match goal with
+    | |- context [pattern_terms ?tail ?r' ?root' ?fresh'] =>
+        pose proof (IH r' root' fresh') as Htail;
+        destruct (pattern_terms tail r' root' fresh') as [ts last] eqn:Hterms;
+        cbn [snd] in Htail
+    end.
+    all: cbn [snd length]; pose proof (compile_succ_clock fresh) as Hsucc;
+      rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; lia.
+Qed.
+
+Definition compile_nodes_size {A} (ns : list (pnode A)) : nat :=
+  fold_right (fun n m => pnode_size n + m) 0 ns.
+
+Definition compile_query_size {A} (qs : list (atom A)) : nat :=
+  fold_right (fun a m => atom_bits a + m) 0 qs.
+
+Lemma compile_node_positive : forall A (n : pnode A), 1 <= pnode_size n.
+Proof.
+  intros A [h|f children|v]; cbn [pnode_size]; lia.
+Qed.
+
+Lemma compile_nodes_length : forall A (ns : list (pnode A)),
+  length ns <= compile_nodes_size ns.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; cbn [length compile_nodes_size fold_right] in *.
+  - lia.
+  - pose proof (compile_node_positive A n). unfold compile_nodes_size in IH. lia.
+Qed.
+
+Lemma compile_pat_size : forall A (ns : list (pnode A)) r,
+  pat_size (FPat A ns r) = compile_nodes_size ns + r + 1.
+Proof.
+  intros A ns r. unfold pat_size, compile_nodes_size. cbn [nodes root].
+  induction ns as [|n ns IH]; cbn [compile_nodes_size fold_right] in *; lia.
+Qed.
+
+Lemma compile_pat_length : forall A (p : fpat A),
+  length (nodes A p) + 1 <= pat_size p.
+Proof.
+  intros A [ns r]. rewrite compile_pat_size. cbn [nodes].
+  pose proof (compile_nodes_length A ns). lia.
+Qed.
+
+Lemma name_max_size : forall x y,
+  Pos.size_nat (name_max x y) <= Pos.size_nat x + Pos.size_nat y.
+Proof.
+  intros x y. unfold name_max. destruct (Pos.compare x y); lia.
+Qed.
+
+Lemma name_max_clock : forall x y,
+  (T_name_max x y <= 4 * N.of_nat (Pos.size_nat x + 1))%N.
+Proof.
+  intros x y. pose proof (Pos.T_compare_le x y).
+  time_unfold T_name_max. time_simpl. destruct (Pos.compare x y);
+    rewrite Nat2N.inj_add; lia.
+Qed.
+
+Lemma pattern_max_size : forall A (ns : list (pnode A)),
+  Pos.size_nat (pattern_max ns) <= compile_nodes_size ns + 1.
+Proof.
+  intros A ns. induction ns as [|[h|f children|v] ns IH];
+    cbn [pattern_max compile_nodes_size pnode_size fold_right Pos.size_nat] in *;
+    unfold compile_nodes_size in *;
+    try lia.
+  pose proof (name_max_size h (pattern_max ns)). lia.
+Qed.
+
+Lemma pattern_max_clock : forall A (ns : list (pnode A)),
+  (T_pattern_max ns <= 8 * N.of_nat (compile_nodes_size ns + 1))%N.
+Proof.
+  intros A ns. induction ns as [|[h|f children|v] ns IH];
+    time_unfold @T_pattern_max; time_simpl;
+    cbn [compile_nodes_size pnode_size fold_right] in *;
+    unfold compile_nodes_size in *;
+    rewrite ?Nat2N.inj_add in *; try lia.
+  pose proof (name_max_clock h (pattern_max ns)). rewrite Nat2N.inj_add in H. lia.
+Qed.
+
+Lemma term_name_size : forall A (t : term A), Pos.size_nat (term_name t) <= term_bits t.
+Proof.
+  intros A [x|v]; cbn [term_name term_bits Pos.size_nat]; lia.
+Qed.
+
+Lemma term_name_clock : forall A (t : term A), (T_term_name t <= 2)%N.
+Proof.
+  intros A [x|v]; time_unfold @T_term_name; time_simpl; lia.
+Qed.
+
+Lemma compile_term_positive : forall A (t : term A), 1 <= term_bits t.
+Proof.
+  intros A [x|v]; cbn [term_bits]; lia.
+Qed.
+
+Lemma term_names_size : forall A (ts : list (term A)) seed,
+  Pos.size_nat (fold_right (fun t m => name_max (term_name t) m) seed ts) <=
+    terms_bits ts + Pos.size_nat seed.
+Proof.
+  intros A ts. induction ts as [|t ts IH]; intros seed;
+    cbn [fold_right terms_bits]; [lia|].
+  pose proof (name_max_size (term_name t)
+    (fold_right (fun t m => name_max (term_name t) m) seed ts)).
+  pose proof (term_name_size A t). specialize (IH seed). unfold terms_bits in IH. lia.
+Qed.
+
+Lemma term_names_clock : forall A (ts : list (term A)) seed,
+  (List.T_fold_right (fun t m => name_max (term_name t) m)
+      (fun t m => 1 + (T_term_name t + T_name_max (term_name t) m)) seed ts <=
+    16 * N.of_nat (terms_bits ts + 1))%N.
+Proof.
+  intros A ts. induction ts as [|t ts IH]; intros seed.
+  - time_unfold @List.T_fold_right. time_simpl.
+    cbn [terms_bits fold_right]. lia.
+  - time_unfold @List.T_fold_right. time_simpl.
+    pose proof (name_max_clock (term_name t)
+      (fold_right (fun t m => name_max (term_name t) m) seed ts)).
+    pose proof (term_name_size A t).
+    pose proof (term_name_clock A t).
+    pose proof (compile_term_positive A t).
+    specialize (IH seed). cbn [terms_bits fold_right] in *.
+    unfold terms_bits, T_term_name in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+
+Lemma atom_name_size : forall A (a : atom A),
+  Pos.size_nat (atom_name_max a) <= atom_bits a.
+Proof.
+  intros A [f args [res|]|p args res]; cbn [atom_name_max atom_bits result_bits].
+  - pose proof (term_names_size A args (term_name res)).
+    pose proof (term_name_size A res). lia.
+  - pose proof (term_names_size A args 1%positive). cbn [Pos.size_nat] in H. lia.
+  - pose proof (term_names_size A args (term_name res)).
+    pose proof (term_name_size A res). lia.
+Qed.
+
+Lemma atom_name_clock : forall A (a : atom A),
+  (T_atom_name_max a <= 32 * N.of_nat (atom_bits a + 1))%N.
+Proof.
+  intros A [f args [res|]|p args res]; time_unfold @T_atom_name_max; time_simpl;
+    cbn [atom_bits result_bits].
+  - pose proof (term_names_clock A args (term_name res)).
+    pose proof (term_name_clock A res). unfold T_term_name in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+  - pose proof (term_names_clock A args 1%positive).
+    unfold T_term_name in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+  - pose proof (term_names_clock A args (term_name res)).
+    pose proof (term_name_clock A res). unfold T_term_name in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+
+Lemma query_names_size : forall A (qs : list (atom A)) seed,
+  Pos.size_nat (fold_right (fun a m => name_max (atom_name_max a) m) seed qs) <=
+    compile_query_size qs + Pos.size_nat seed.
+Proof.
+  intros A qs. induction qs as [|a qs IH]; intros seed;
+    cbn [fold_right compile_query_size]; [lia|].
+  pose proof (name_max_size (atom_name_max a)
+    (fold_right (fun a m => name_max (atom_name_max a) m) seed qs)).
+  pose proof (atom_name_size A a). specialize (IH seed).
+  unfold compile_query_size in IH. lia.
+Qed.
+
+Lemma atom_bits_positive : forall A (a : atom A), 1 <= atom_bits a.
+Proof.
+  intros A [f args res|p args res]; cbn [atom_bits]; lia.
+Qed.
+
+Lemma query_names_clock : forall A (qs : list (atom A)) seed,
+  (List.T_fold_right (fun a m => name_max (atom_name_max a) m)
+      (fun a m => 1 + (T_atom_name_max a + T_name_max (atom_name_max a) m)) seed qs <=
+    128 * N.of_nat (compile_query_size qs + 1))%N.
+Proof.
+  intros A qs. induction qs as [|a qs IH]; intros seed.
+  - time_unfold @List.T_fold_right. time_simpl.
+    cbn [compile_query_size fold_right]. lia.
+  - time_unfold @List.T_fold_right. time_simpl.
+    pose proof (name_max_clock (atom_name_max a)
+      (fold_right (fun a m => name_max (atom_name_max a) m) seed qs)).
+    pose proof (atom_name_size A a).
+    pose proof (atom_name_clock A a).
+    pose proof (atom_bits_positive A a).
+    specialize (IH seed). cbn [compile_query_size fold_right] in *.
+    unfold compile_query_size in *.
+    rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+
+Lemma pattern_terms_last_size : forall A (ns : list (pnode A)) r root_name fresh,
+  Pos.size_nat (snd (pattern_terms ns r root_name fresh)) <=
+    Pos.size_nat fresh + length ns.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros r root_name fresh.
+  - cbn [pattern_terms snd length]. lia.
+  - destruct n as [h|f children|v]; destruct r as [[|r]|];
+      cbn [pattern_terms next_root].
+    all: match goal with
+    | |- context [pattern_terms ?tail ?r' ?root' ?fresh'] =>
+        pose proof (IH r' root' fresh') as Htail;
+        destruct (pattern_terms tail r' root' fresh') as [ts last] eqn:Hterms;
+        cbn [snd] in Htail
+    end.
+    all: cbn [snd length]; pose proof (compile_succ_size fresh); lia.
+Qed.
+
+Lemma pattern_terms_bits : forall A (ns : list (pnode A)) r root_name fresh,
+  Forall (fun t => term_bits t <= compile_nodes_size ns + Pos.size_nat root_name +
+    Pos.size_nat fresh + length ns + 1) (fst (pattern_terms ns r root_name fresh)).
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros r root_name fresh.
+  - constructor.
+  - destruct n as [h|f children|v]; destruct r as [[|r]|];
+      cbn [pattern_terms next_root].
+    all: match goal with
+    | |- context [pattern_terms ?tail ?r' ?root' ?fresh'] =>
+        pose proof (IH r' root' fresh') as Htail;
+        destruct (pattern_terms tail r' root' fresh') as [ts last] eqn:Hterms;
+        cbn [fst] in Htail
+    end.
+    all: cbn [fst]; constructor.
+    all: try (cbn [term_bits compile_nodes_size pnode_size fold_right length]; lia).
+    all: eapply Forall_impl; [|exact Htail]; intros t Ht;
+      cbn [compile_nodes_size pnode_size fold_right length] in *;
+      unfold compile_nodes_size in *;
+      pose proof (compile_succ_size fresh); lia.
+Qed.
+
+Lemma pattern_table_last_size : forall A (p : fpat A) root_name,
+  Pos.size_nat (snd (pattern_table p root_name)) <=
+    Pos.size_nat root_name + length (nodes A p) + 1.
+Proof.
+  intros A [ns r] root_name. unfold pattern_table. cbn [nodes].
+  pose proof (pattern_terms_last_size A ns (Some r) root_name (Pos.succ root_name)).
+  pose proof (compile_succ_size root_name). lia.
+Qed.
+
+Lemma pattern_table_bits : forall A (p : fpat A) root_name,
+  Forall (fun t => term_bits t <= compile_nodes_size (nodes A p) +
+    2 * Pos.size_nat root_name + length (nodes A p) + 2) (fst (pattern_table p root_name)).
+Proof.
+  intros A [ns r] root_name. unfold pattern_table. cbn [nodes].
+  eapply Forall_impl; [|apply pattern_terms_bits]. intros t Ht.
+  cbn beta in Ht. pose proof (compile_succ_size root_name). lia.
+Qed.
+
+Lemma pattern_table_clock : forall A (p : fpat A) root_name,
+  (T_pattern_table p root_name <=
+    32 * N.of_nat (length (nodes A p) + Pos.size_nat root_name + 1))%N.
+Proof.
+  intros A [ns r] root_name. time_unfold @T_pattern_table. time_simpl. cbn [nodes].
+  pose proof (pattern_terms_clock A ns (Some r) root_name (Pos.succ root_name)).
+  pose proof (compile_succ_clock root_name).
+  pose proof (compile_ones_size root_name).
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+
+Lemma pattern_get_clock : forall A (default : term A) j ts,
+  (T_pattern_get default j ts <= 4 * N.of_nat (j + 1))%N.
+Proof.
+  intros A default j ts. time_unfold @T_pattern_get. time_simpl.
+  pose proof (List.T_nth_error_le ts j). destruct (nth_error ts j);
+    rewrite Nat2N.inj_add; lia.
+Qed.
+
+Lemma pattern_children_clock : forall A (default : term A) children all,
+  (ListDef.T_map (fun j => pattern_get default j all)
+      (fun j => 1 + T_pattern_get default j all) children <=
+    8 * N.of_nat ((fold_right (fun j n => (j + 1 + n)%nat) 0%nat children + 1)%nat))%N.
+Proof.
+  intros A default children all. induction children as [|j children IH].
+  - time_unfold @ListDef.T_map. time_simpl. cbn [fold_right]. lia.
+  - time_unfold @ListDef.T_map. time_simpl.
+    pose proof (pattern_get_clock A default j all).
+    cbn [fold_right]. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+
+Lemma pattern_atoms_clock : forall A (ns : list (pnode A)) ts all,
+  (T_pattern_atoms ns ts all <= 16 * N.of_nat (compile_nodes_size ns + 1))%N.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros [|t ts] all;
+    time_unfold @T_pattern_atoms; time_simpl;
+    cbn [compile_nodes_size fold_right] in *; unfold compile_nodes_size in *; try lia.
+  destruct n as [h|f children|v]; time_simpl; specialize (IH ts all);
+    cbn [pnode_size]; rewrite ?Nat2N.inj_add in *; try lia.
+  pose proof (pattern_children_clock A (Var 1%positive) children all).
+  rewrite ?Nat2N.inj_add in H. lia.
+Qed.
+
+Lemma pattern_actions_clock : forall A (ns : list (pnode A)) ts all,
+  (T_pattern_actions ns ts all <= 16 * N.of_nat (compile_nodes_size ns + 1))%N.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros [|t ts] all;
+    time_unfold @T_pattern_actions; time_simpl;
+    cbn [compile_nodes_size fold_right] in *; unfold compile_nodes_size in *; try lia.
+  destruct n as [h|f children|v]; destruct t as [x|v'];
+    time_simpl; specialize (IH ts all);
+    cbn [pnode_size]; rewrite ?Nat2N.inj_add in *; try lia.
+  pose proof (pattern_children_clock A (Var 1%positive) children all).
+  rewrite ?Nat2N.inj_add in H. lia.
+Qed.
+
+Lemma pattern_atoms_length : forall A (ns : list (pnode A)) ts all,
+  length (pattern_atoms ns ts all) <= length ns.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros [|t ts] all;
+    cbn [pattern_atoms length]; try lia.
+  destruct n; cbn [length]; specialize (IH ts all); lia.
+Qed.
+
+Lemma pattern_actions_length : forall A (ns : list (pnode A)) ts all,
+  length (pattern_actions ns ts all) <= length ns.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros [|t ts] all;
+    cbn [pattern_actions length]; try lia.
+  destruct n; destruct t; cbn [length]; specialize (IH ts all); lia.
+Qed.
+
+Lemma compile_refs_length : forall children,
+  length children <= fold_right (fun j n => j + 1 + n) 0 children.
+Proof.
+  induction children as [|j children IH]; cbn [length fold_right]; lia.
+Qed.
+
+Lemma pattern_get_bits : forall A (default : term A) j ts b,
+  term_bits default <= b -> Forall (fun t => term_bits t <= b) ts ->
+  term_bits (pattern_get default j ts) <= b.
+Proof.
+  intros A default j ts b Hdefault Hts. unfold pattern_get.
+  destruct (nth_error ts j) as [t|] eqn:Hget; [|exact Hdefault].
+  apply (proj1 (Forall_forall _ _) Hts t).
+  eapply nth_error_In. exact Hget.
+Qed.
+
+Lemma pattern_children_bits : forall A (default : term A) children all b,
+  term_bits default <= b -> Forall (fun t => term_bits t <= b) all ->
+  terms_bits (map (fun j => pattern_get default j all) children) <= b * length children.
+Proof.
+  intros A default children all b Hdefault Hall. induction children as [|j children IH].
+  - cbn [map terms_bits fold_right length]. lia.
+  - cbn [map terms_bits fold_right length] in *.
+    unfold terms_bits in *.
+    pose proof (pattern_get_bits A default j all b Hdefault Hall). nia.
+Qed.
+
+Lemma pattern_atoms_bits : forall A (ns : list (pnode A)) ts all b,
+  2 <= b -> Forall (fun t => term_bits t <= b) ts ->
+  Forall (fun t => term_bits t <= b) all ->
+  compile_query_size (pattern_atoms ns ts all) <= (b + 1) * compile_nodes_size ns.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros [|t ts] all b Hb Hts Hall;
+    cbn [pattern_atoms compile_query_size compile_nodes_size fold_right]; try lia.
+  inversion Hts as [|t' ts' Ht Htail]; subst t' ts'.
+  specialize (IH ts all b Hb Htail Hall).
+  unfold compile_query_size, compile_nodes_size in IH.
+  destruct n as [h|f children|v];
+    cbn [pnode_size compile_query_size fold_right]; try nia.
+  cbn [atom_bits result_bits].
+  assert (Hdefault : term_bits (Var (V := A) 1%positive) <= b) by
+    (cbn [term_bits Pos.size_nat]; lia).
+  pose proof (pattern_children_bits A (Var 1%positive) children all b Hdefault Hall).
+  pose proof (compile_refs_length children). unfold compile_query_size in IH. nia.
+Qed.
+
+Lemma pattern_actions_bits : forall A (ns : list (pnode A)) ts all b,
+  2 <= b -> Forall (fun t => term_bits t <= b) ts ->
+  Forall (fun t => term_bits t <= b) all ->
+  fold_right (fun a m => action_bits a + m) 0 (pattern_actions ns ts all) <=
+    (b + 1) * compile_nodes_size ns.
+Proof.
+  intros A ns. induction ns as [|n ns IH]; intros [|t ts] all b Hb Hts Hall;
+    cbn [pattern_actions compile_nodes_size fold_right]; try lia.
+  inversion Hts as [|t' ts' Ht Htail]; subst t' ts'.
+  specialize (IH ts all b Hb Htail Hall). unfold compile_nodes_size in IH.
+  destruct n as [h|f children|v];
+    destruct t as [x|v']; cbn [pnode_size fold_right]; try nia.
+  cbn [action_bits]. cbn [term_bits] in Ht.
+  assert (Hdefault : term_bits (Var (V := A) 1%positive) <= b) by
+    (cbn [term_bits Pos.size_nat]; lia).
+  pose proof (pattern_children_bits A (Var 1%positive) children all b Hdefault Hall).
+  pose proof (compile_refs_length children). nia.
+Qed.
+
+Lemma compile_sum_app : forall A (weight : A -> nat) xs ys,
+  fold_right (fun x n => weight x + n) 0 (xs ++ ys) =
+    fold_right (fun x n => weight x + n) 0 xs +
+    fold_right (fun x n => weight x + n) 0 ys.
+Proof.
+  intros A weight xs ys. induction xs as [|x xs IH]; cbn [app fold_right]; lia.
+Qed.
+
 Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   Include Compile V.
   TimeFun root_var.
@@ -2954,13 +3380,218 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   TimeFun flatten_lhs.
   TimeFun compile_rule.
   TimeFun compile.
-  Definition c_compile : N := 1. (* STUB *)
-  Definition k_compile : N := 1. (* STUB *)
+
+  Lemma root_var_size : forall rw,
+    Pos.size_nat (root_var rw) <= 2 * (rewrite_size rw + 1).
+  Proof.
+    intros [[ln lr] [rn rr] conditions]. cbn [root_var].
+    unfold rewrite_size. cbn [lhs rhs cond]. rewrite !compile_pat_size.
+    pose proof (pattern_max_size V.t ln) as Hl.
+    pose proof (pattern_max_size V.t rn) as Hr.
+    set (q := fold_right (fun a m => name_max (atom_name_max a) m)
+      1%positive conditions).
+    pose proof (query_names_size V.t conditions 1%positive) as Hq.
+    change (Pos.size_nat q <= compile_query_size conditions + 1) in Hq.
+    pose proof (name_max_size (pattern_max rn) q) as Hqr.
+    pose proof (name_max_size (pattern_max ln) (name_max (pattern_max rn) q)) as Hall.
+    pose proof (compile_succ_size (name_max (pattern_max ln)
+      (name_max (pattern_max rn) q))) as Hsucc.
+    unfold compile_query_size in Hq. lia.
+  Qed.
+
+  Lemma root_var_clock : forall rw,
+    (T_root_var rw <= 256 * N.of_nat (rewrite_size rw + 1))%N.
+  Proof.
+    intros [[ln lr] [rn rr] conditions].
+    time_unfold T_root_var. time_simpl. unfold rewrite_size. cbn [lhs rhs cond].
+    rewrite !compile_pat_size.
+    pose proof (pattern_max_clock V.t ln) as Hlc.
+    pose proof (pattern_max_clock V.t rn) as Hrc.
+    pose proof (pattern_max_size V.t ln) as Hls.
+    pose proof (pattern_max_size V.t rn) as Hrs.
+    set (q := fold_right (fun a m => name_max (atom_name_max a) m)
+      1%positive conditions).
+    pose proof (query_names_clock V.t conditions 1%positive) as Hqc.
+    pose proof (query_names_size V.t conditions 1%positive) as Hqs.
+    change (Pos.size_nat q <= compile_query_size conditions + 1) in Hqs.
+    pose proof (name_max_clock (pattern_max rn) q) as Hmaxr.
+    pose proof (name_max_clock (pattern_max ln) (name_max (pattern_max rn) q)) as Hmaxl.
+    pose proof (name_max_size (pattern_max rn) q) as Hmr.
+    pose proof (name_max_size (pattern_max ln) (name_max (pattern_max rn) q)) as Hml.
+    pose proof (Pos.T_succ_le (name_max (pattern_max ln)
+      (name_max (pattern_max rn) q))) as Hsucc.
+    unfold compile_query_size in *. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  Lemma flatten_pat_clock : forall p x,
+    (T_flatten_pat p x <= 64 * N.of_nat (pat_size p + Pos.size_nat x + 1))%N.
+  Proof.
+    intros [ns r] x. time_unfold T_flatten_pat. time_simpl.
+    pose proof (pattern_table_clock V.t (FPat V.t ns r) x) as Htable.
+    pose proof (pattern_atoms_clock V.t ns
+      (fst (pattern_table (FPat V.t ns r) x))
+      (fst (pattern_table (FPat V.t ns r) x))) as Hatoms.
+    pose proof (compile_nodes_length V.t ns) as Hlength.
+    cbn [nodes] in Htable. rewrite compile_pat_size.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  Lemma flatten_pat_length : forall p x, length (flatten_pat p x) <= length (nodes V.t p).
+  Proof.
+    intros [ns r] x. apply pattern_atoms_length.
+  Qed.
+
+  Lemma rewrite_size_parts : forall rw,
+    pat_size (lhs V.t rw) + pat_size (rhs V.t rw) +
+      compile_query_size (cond V.t rw) = rewrite_size rw /\
+    1 <= pat_size (lhs V.t rw) /\ 1 <= pat_size (rhs V.t rw).
+  Proof.
+    intros [[ln lr] [rn rr] conditions]. unfold rewrite_size. cbn [lhs rhs cond].
+    rewrite !compile_pat_size. unfold compile_query_size. lia.
+  Qed.
+
+  Lemma flatten_lhs_clock : forall rw,
+    (T_flatten_lhs rw <= 512 * N.of_nat (rewrite_size rw + 1))%N.
+  Proof.
+    intros [lp rp conditions]. time_unfold T_flatten_lhs. time_simpl.
+    pose proof (root_var_clock (Rewrite V.t lp rp conditions)) as Hroot.
+    pose proof (root_var_size (Rewrite V.t lp rp conditions)) as Hroot_size.
+    pose proof (flatten_pat_clock lp (root_var (Rewrite V.t lp rp conditions))) as Hflat.
+    pose proof (flatten_pat_length lp (root_var (Rewrite V.t lp rp conditions))) as Hlength.
+    pose proof (Datatypes.T_app_le (flatten_pat lp (root_var (Rewrite V.t lp rp conditions)))
+      conditions) as Happ.
+    pose proof (compile_pat_length V.t lp) as Hnodes.
+    pose proof (rewrite_size_parts (Rewrite V.t lp rp conditions)) as Hparts.
+    cbn [lhs rhs] in Hparts. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  Lemma compile_rule_clock : forall rw,
+    (T_compile_rule rw <= 2048 * N.of_nat (rewrite_size rw + 1))%N.
+  Proof.
+    intros [lp [ns r] conditions]. time_unfold T_compile_rule. time_simpl.
+    set (rw := Rewrite V.t lp (FPat V.t ns r) conditions).
+    set (x := root_var rw).
+    set (next := snd (pattern_table lp x)).
+    set (ts := fst (pattern_table (FPat V.t ns r) next)).
+    pose proof (root_var_clock rw) as Hroot.
+    pose proof (root_var_size rw) as Hroot_size.
+    pose proof (pattern_table_clock V.t lp x) as Hleft.
+    pose proof (pattern_table_last_size V.t lp x) as Hnext.
+    pose proof (pattern_table_clock V.t (FPat V.t ns r) next) as Hright.
+    pose proof (flatten_lhs_clock rw) as Hquery.
+    pose proof (pattern_actions_clock V.t ns ts ts) as Hactions.
+    pose proof (pattern_actions_length V.t ns ts ts) as Hlength.
+    pose proof (Datatypes.T_app_le (pattern_actions ns ts ts)
+      [Union (Var x) (pattern_get (Var next) r ts)]) as Happ.
+    pose proof (pattern_get_clock V.t (Var next) r ts) as Hget.
+    pose proof (compile_pat_length V.t lp) as Hnodes.
+    pose proof (compile_nodes_length V.t ns) as Hnodes'.
+    pose proof (rewrite_size_parts rw) as Hparts.
+    change (Pos.size_nat x <= 2 * (rewrite_size rw + 1)) in Hroot_size.
+    change (Pos.size_nat next <= Pos.size_nat x + length (nodes V.t lp) + 1) in Hnext.
+    cbn [nodes] in Hright. unfold rw in Hparts.
+    cbn [lhs rhs] in Hparts. rewrite compile_pat_size in Hparts.
+    fold rw in Hparts. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  Lemma compile_map_clock : forall rws,
+    (ListDef.T_map compile_rule (fun rw => T_compile_rule rw) rws <=
+      fold_right (fun rw n => T_compile_rule rw + n) 0 rws +
+      2 * N.of_nat (length rws + 1))%N.
+  Proof.
+    induction rws as [|rw rws IH];
+      time_unfold @ListDef.T_map; time_simpl;
+      cbn [fold_right length]; rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ in *; lia.
+  Qed.
+
+  Lemma compile_clock_split : forall ds rws ans,
+    (T_compile ds rws ans <= fold_right (fun rw n => T_compile_rule rw + n) 0 rws +
+      8 * N.of_nat (length rws + length ans + 1))%N.
+  Proof.
+    intros ds rws ans. time_unfold T_compile. time_simpl.
+    pose proof (compile_map_clock rws) as Hmap.
+    pose proof (Datatypes.T_app_le (map compile_rule rws) ans) as Happ.
+    rewrite length_map in Happ. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  Lemma compile_rules_clock : forall rws,
+    (fold_right (fun rw n => T_compile_rule rw + n) 0 rws <=
+      4096 * N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0%nat rws))%N.
+  Proof.
+    induction rws as [|rw rws IH]; cbn [fold_right]; [lia|].
+    pose proof (compile_rule_clock rw).
+    pose proof (rewrite_size_parts rw).
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  Lemma compile_rewrites_length : forall (rws : list (rewrite V.t)),
+    length rws <= fold_right (fun rw n => rewrite_size rw + n) 0 rws.
+  Proof.
+    induction rws as [|rw rws IH]; cbn [length fold_right]; [lia|].
+    pose proof (rewrite_size_parts rw). lia.
+  Qed.
+
+  Lemma compile_clock : forall ds rws ans,
+    (T_compile ds rws ans <= (8 * 1024) *
+      N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0%nat rws +
+        length ans + 1))%N.
+  Proof.
+    intros ds rws ans. pose proof (compile_clock_split ds rws ans).
+    pose proof (compile_rules_clock rws). pose proof (compile_rewrites_length rws).
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  Lemma compile_rule_bits_bound : forall rw,
+    rule_bits (compile_rule rw) <= 128 * (rewrite_size rw + 1) * (rewrite_size rw + 1).
+  Proof.
+    intros [[ln lr] [rn rr] conditions].
+    set (rw := Rewrite V.t (FPat V.t ln lr) (FPat V.t rn rr) conditions).
+    set (w := rewrite_size rw + 1).
+    set (x := root_var rw).
+    set (next := snd (pattern_table (FPat V.t ln lr) x)).
+    set (lt := fst (pattern_table (FPat V.t ln lr) x)).
+    set (rt := fst (pattern_table (FPat V.t rn rr) next)).
+    set (b := 16 * w).
+    assert (Hw : 1 <= w) by (unfold w; lia).
+    assert (Hb : 2 <= b) by (unfold b; lia).
+    pose proof (root_var_size rw) as Hx.
+    change (Pos.size_nat x <= 2 * w) in Hx.
+    pose proof (pattern_table_last_size V.t (FPat V.t ln lr) x) as Hnext.
+    change (Pos.size_nat next <= Pos.size_nat x + length ln + 1) in Hnext.
+    pose proof (compile_nodes_length V.t ln) as Hln.
+    pose proof (compile_nodes_length V.t rn) as Hrn.
+    assert (Hsize : compile_nodes_size ln + lr + 1 +
+      (compile_nodes_size rn + rr + 1) + compile_query_size conditions + 1 = w).
+    { unfold w, rw, rewrite_size. cbn [lhs rhs cond].
+      rewrite !compile_pat_size. reflexivity. }
+    assert (Hleft : Forall (fun t => term_bits t <= b) lt).
+    { unfold lt. eapply Forall_impl; [|apply pattern_table_bits].
+      intros t Ht. cbn [nodes] in Ht. unfold b. lia. }
+    assert (Hright : Forall (fun t => term_bits t <= b) rt).
+    { unfold rt. eapply Forall_impl; [|apply pattern_table_bits].
+      intros t Ht. cbn [nodes] in Ht. unfold b. lia. }
+    pose proof (pattern_atoms_bits V.t ln lt lt b Hb Hleft Hleft) as Hatoms.
+    pose proof (pattern_actions_bits V.t rn rt rt b Hb Hright Hright) as Hactions.
+    assert (Hdefault : term_bits (Var (V := V.t) next) <= b).
+    { cbn [term_bits]. unfold b. lia. }
+    pose proof (pattern_get_bits V.t (Var next) rr rt b Hdefault Hright) as Hget.
+    change (compile_query_size (pattern_atoms ln lt lt ++ conditions) +
+      fold_right (fun a n => action_bits a + n) 0
+        (pattern_actions rn rt rt ++ [Union (Var x) (pattern_get (Var next) rr rt)]) + 1 <=
+      128 * w * w).
+    unfold compile_query_size in *. rewrite !compile_sum_app.
+    cbn [fold_right action_bits term_bits]. unfold b in *. nia.
+  Qed.
+
+  Definition c_compile : N := (8 * 1024)%N.
+  Definition k_compile : N := (2 * 1024)%N.
   Lemma T_compile_le : forall ds rws ans,
     (T_compile ds rws ans <= c_compile *
       N.of_nat (fold_right (fun rw n => (rewrite_size rw + n)%nat) 0 rws +
         length ans + 1)%nat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact compile_clock.
+  Qed.
 
   Lemma F1_compile_rule_valid : forall (M : model (V := V.t)) ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
@@ -2986,15 +3617,28 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   Lemma T1_compile_split : forall ds rws ans,
     (T_compile ds rws ans <= fold_right (fun rw n => T_compile_rule rw + n) 0 rws +
       k_compile * N.of_nat (length rws + length ans + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans. unfold k_compile.
+    pose proof (compile_clock_split ds rws ans). lia.
+  Qed.
 
   Lemma T2_compile_rule_le : forall rw,
     (T_compile_rule rw <= k_compile * N.of_nat (rewrite_size rw + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact compile_rule_clock.
+  Qed.
 
   (** The compiled rule's bit size is bounded by the square of its rewrite size. *)
   Lemma compile_rule_bits : forall rw,
     (N.of_nat (rule_bits (compile_rule rw)) <=
       c_compile * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rw. unfold c_compile. pose proof (compile_rule_bits_bound rw) as Hbits.
+    assert (Hconvert : (N.of_nat (rule_bits (compile_rule rw)) <=
+      N.of_nat (128 * (rewrite_size rw + 1) * (rewrite_size rw + 1)))%N) by lia.
+    rewrite !Nat2N.inj_mul in Hconvert.
+    change (N.of_nat (rule_bits (compile_rule rw)) <=
+      128 * N.of_nat (rewrite_size rw + 1) * N.of_nat (rewrite_size rw + 1))%N in Hconvert.
+    nia.
+  Qed.
 End CompileT.
