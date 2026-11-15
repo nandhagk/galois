@@ -6244,6 +6244,35 @@ Proof.
   nia.
 Qed.
 
+(** Initialization, amortized iterations and control overhead fit the public extraction budget. *)
+Lemma extraction_best_budget : forall initial running total credit coefficient syntax rows
+    arity depth first second,
+  (1 <= rows -> 1 <= first -> 1 <= second -> 1 <= coefficient ->
+    initial + credit <= coefficient * (syntax + rows * (arity + depth + 2)) * first * second ->
+    running <= credit + (coefficient * (arity + depth + 2) * first * second + 1) * rows +
+      coefficient * rows + 1 ->
+    total <= initial + running + coefficient * rows ->
+    total <= 4 * coefficient * (syntax + rows * (arity + depth + 2)) * first * second)%N.
+Proof.
+  intros initial running total credit coefficient syntax rows arity depth first second
+    Hrows Hfirst Hsecond Hcoefficient Hinitial Hrunning Htotal.
+  assert (Hmass : (coefficient * (arity + depth + 2) * first * second * rows <=
+    coefficient * (syntax + rows * (arity + depth + 2)) * first * second)%N).
+  { replace (coefficient * (arity + depth + 2) * first * second * rows)%N with
+      (coefficient * (rows * (arity + depth + 2)) * first * second)%N by ring.
+    apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_l. lia. }
+  rewrite N.mul_add_distr_r, N.mul_1_l in Hrunning.
+  assert (Hcombined : (total <=
+    2 * (coefficient * (syntax + rows * (arity + depth + 2)) * first * second) +
+      2 * (coefficient * rows) + rows + 1)%N) by lia.
+  eapply N.le_trans; [exact Hcombined|].
+  replace (2 * (coefficient * (syntax + rows * (arity + depth + 2)) * first * second) +
+      2 * (coefficient * rows) + rows + 1)%N with
+    (2 * coefficient * (syntax + rows * (arity + depth + 2)) * first * second +
+      2 * coefficient * rows + rows + 1)%N by ring.
+  apply extraction_driver_budget; try assumption. nia.
+Qed.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) (Q : PQ_OPS) <: EXTRACT_OPS V I D C.
   Include SearchCode V C Q.
