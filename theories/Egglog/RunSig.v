@@ -287,10 +287,12 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Parameter run_derives : forall p cp lim db f k o, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> no_ids db ->
     row (D.view (snd (run p cp lim db))) f k o -> derives V.prim p (D.view db) f k.
-  (** A saturated relational result is included in every closed extension of its seed. *)
+  (** A saturated relational result is included in every closed extension of its seed that
+      keeps the program's kinds and sorts, so a relation row of the extension has no output. *)
   Parameter run_least : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> no_ids db -> run p cp lim db = (Saturated, db') ->
     forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
+      (forall f, kind w f = program_kind p f) -> view_sorted (program_sorts p) w ->
       includes (D.view db') w.
   (** A relational run reaches saturation within its finite Herbrand budget. *)
   Parameter run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
@@ -511,9 +513,11 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     | inl (_, db') => run p cp lim db = (IterLimit, D.rebuild db')
     | inr (st, db') => run p cp lim db = (st, D.rebuild db')
     end.
-  (** Derivations are contained in every relational closed extension of their seed. *)
+  (** Derivations are contained in every relational closed extension of their seed that keeps
+      the program's kinds and sorts. *)
   Parameter F11_derives_least : forall p db w f k, relational_fragment p = true ->
     no_ids db -> closed V.prim V.merge p w -> includes (D.view db) w ->
+    (forall g, kind w g = program_kind p g) -> view_sorted (program_sorts p) w ->
     derives V.prim p (D.view db) f k -> row w f k None.
   (** Every relational round preserves the finite Herbrand bound. *)
   Parameter F12_herbrand_bound : forall p cp db nv, plans_ok p cp -> D.wf db -> loaded p cp db ->

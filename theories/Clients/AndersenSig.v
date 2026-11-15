@@ -7,7 +7,7 @@
 From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Std.
 From Galois.Base Require Import Trie.
-From Galois.Egglog Require Import Syntax Model ValueSig IndexSig JoinSig DatabaseSig RunSig.
+From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
 Import List.ListNotations.
 
 Inductive pointer_constraint :=
@@ -226,9 +226,12 @@ Module Type ANDERSEN_PLAN (V : VALUE_T with Definition t := positive)
   (** Engine derivations of points-to rows yield source inclusion derivations. *)
   Parameter F5_derives_source : forall q x a,
     derives V.prim (compile q) (D.view (seed q)) 5 [Val x; Val a] -> may_points q x a.
-  (** Source inclusion derivations occur in every closed extension of the seed view. *)
+  (** Source inclusion derivations occur in every closed extension of the seed view that keeps
+      the program's kinds and sorts. *)
   Parameter F6_closed_source : forall q w, closed V.prim V.merge (compile q) w ->
     (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
+    (forall f, kind w f = program_kind (compile q) f) ->
+    view_sorted (program_sorts (compile q)) w ->
     forall x a, may_points q x a -> row w 5 [Val x; Val a] None.
   (** Concrete updates preserve coverage by every source-closed relation. *)
   Parameter F7_step_covered : forall q r instruction before after,

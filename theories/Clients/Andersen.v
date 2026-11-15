@@ -1357,9 +1357,25 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
 
   Lemma F6_closed_source : forall q w, closed V.prim V.merge (compile q) w ->
     (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
+    (forall f, kind w f = program_kind (compile q) f) ->
+    view_sorted (program_sorts (compile q)) w ->
     forall x a, may_points q x a -> row w 5 [Val x; Val a] None.
-  Proof. Admitted. (* PLAN-DEFECT: pointer_closed_source_counterexample
-    has only Some (Val 1) outputs at relation 5. *)
+  Proof.
+    intros q w Hclosed Hseed Hkinds Hsorted.
+    apply (pointer_closed_source V.prim V.merge q w Hclosed).
+    - intros f key output Hrow.
+      apply Hseed.
+      apply (proj2 (seed_rows q f key output)).
+      exact Hrow.
+    - intros key output Hrow.
+      destruct (Hsorted 5%positive key output Hrow) as [kind_out [_ [Hkind Hout]]].
+      rewrite Hkinds in Hkind.
+      apply andersen_kind_relation in Hkind.
+      subst kind_out.
+      destruct output as [cell |]; [| reflexivity].
+      cbn in Hout.
+      discriminate Hout.
+  Qed.
 
   Lemma F7_step_covered : forall q r instruction before after,
     pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
