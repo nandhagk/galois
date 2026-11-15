@@ -98,29 +98,199 @@ Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Definition wrank (p : wparam) (d : t) : nat :=
     fold_right Nat.add 0 (map (fun q =>
       if S.leb (snd q) S.bot then 0 else S.wrank p (snd q)) (proj1_sig d)).
+
+  (** Coverage gives a target part unless the source part lies below bottom. *)
+  Lemma leb_spec a b : leb a b = true <-> forall q, In q (proj1_sig a) ->
+    S.leb (snd q) S.bot = true \/
+    exists r, In r (proj1_sig b) /\ S.leb (snd q) (snd r) = true.
+  Proof.
+    unfold leb; rewrite forallb_forall.
+    split; intros Hcover q Hq; specialize (Hcover q Hq).
+    - apply orb_true_iff in Hcover; destruct Hcover as [Hbot|Hcover]; auto.
+      right; now apply existsb_exists in Hcover.
+    - apply orb_true_iff; destruct Hcover as [Hbot|Hcover]; auto.
+      right; now apply existsb_exists.
+  Qed.
+
+  (** A positive cap retains a singleton without changing its label. *)
+  Lemma fit_singleton q : proj1_sig (fit [q]) = [q].
+  Proof.
+    unfold fit; cbn [proj1_sig].
+    unfold fit_parts; destruct C.k as [|n] eqn:Hcap; simpl; auto.
+    pose proof C.k_pos as Hpos; rewrite Hcap in Hpos; lia.
+  Qed.
+
+  (** A join fold remains above its initial state. *)
+  Lemma fold_join_start xs a : S.leb a (fold_left S.join xs a) = true.
+  Proof.
+    revert a; induction xs as [|x xs IH]; intro a; cbn [fold_left].
+    - apply S.leb_refl.
+    - eapply S.leb_trans; [apply S.join_ub_l | apply IH].
+  Qed.
+
+  (** A join fold remains above every state it visits. *)
+  Lemma fold_join_member xs a x : In x xs -> S.leb x (fold_left S.join xs a) = true.
+  Proof.
+    revert a; induction xs as [|y xs IH]; intros a Hin; cbn in Hin; [contradiction|].
+    cbn [fold_left]; destruct Hin as [<-|Hin].
+    - eapply S.leb_trans; [apply S.join_ub_r | apply fold_join_start].
+    - now apply IH.
+  Qed.
+
+  (** Collapsing states covers every member of the input. *)
+  Lemma collapse_covers xs x : In x xs ->
+    S.leb x (collapse_with S.bot S.join xs) = true.
+  Proof.
+    destruct xs as [|a xs]; cbn; [contradiction|].
+    intros [<-|Hin]; [apply fold_join_start | now apply fold_join_member].
+  Qed.
+
+  (** Raw coverage keeps every source part below an explicit target part. *)
+  Definition parts_cover (ps qs : list (option Tk.t * S.t)) : Prop :=
+    forall q, In q ps -> exists r, In r qs /\ S.leb (snd q) (snd r) = true.
+
+  Lemma parts_cover_refl ps : parts_cover ps ps.
+  Proof.
+    intros q Hq; exists q; split; [exact Hq | apply S.leb_refl].
+  Qed.
+
+  Lemma parts_cover_trans ps qs rs :
+    parts_cover ps qs -> parts_cover qs rs -> parts_cover ps rs.
+  Proof.
+    intros Hpq Hqr q Hq.
+    destruct (Hpq q Hq) as [r [Hr Hle]], (Hqr r Hr) as [s [Hs Hle']].
+    exists s; split; [exact Hs | eapply S.leb_trans; eassumption].
+  Qed.
+
+  (** Joining the suffix preserves coverage of the whole list. *)
+  Lemma fit_tail_covers n ps : parts_cover ps (fit_tail S.bot S.join n ps).
+  Proof.
+    revert ps; induction n as [|n IH]; intros ps q Hq.
+    - exists (None, collapse_with S.bot S.join (map snd ps)); split; simpl; auto.
+      apply collapse_covers; now apply in_map.
+    - destruct ps as [|r ps]; [contradiction|].
+      cbn [fit_tail]; destruct Hq as [<-|Hq].
+      + exists r; split; simpl; auto using S.leb_refl.
+      + destruct (IH ps q Hq) as [s [Hs Hle]].
+        exists s; split; simpl; auto.
+  Qed.
+
+  (** Restoring a positive cap preserves all input parts. *)
+  Lemma fit_covers ps : parts_cover ps (proj1_sig (fit ps)).
+  Proof.
+    unfold fit; cbn [proj1_sig]; unfold fit_parts.
+    destruct C.k as [|n] eqn:Hcap.
+    - pose proof C.k_pos as Hpos; rewrite Hcap in Hpos; lia.
+    - destruct (Nat.leb (length ps) (Datatypes.S n));
+        [apply parts_cover_refl | apply fit_tail_covers].
+  Qed.
+
+  (** Insertion covers the inserted part and every previous part. *)
+  Lemma insert_covers q ps : parts_cover (q :: ps) (insert_part Tk.eqb S.join q ps).
+  Proof.
+    induction ps as [|p ps IH]; intros r Hr; cbn [insert_part].
+    - destruct Hr as [<-|Hr]; [|contradiction].
+      exists q; split; simpl; auto using S.leb_refl.
+    - destruct (label_eqb Tk.eqb (fst p) (fst q));
+        destruct Hr as [<-|[<-|Hr]].
+      + exists (fst p, S.join (snd p) (snd q)); split; simpl; auto using S.join_ub_r.
+      + exists (fst p, S.join (snd p) (snd q)); split; simpl; auto using S.join_ub_l.
+      + exists r; split; simpl; auto using S.leb_refl.
+      + destruct (IH q (or_introl eq_refl)) as [s [Hs Hle]].
+        exists s; split; simpl; auto.
+      + exists p; split; simpl; auto using S.leb_refl.
+      + destruct (IH r (or_intror Hr)) as [s [Hs Hle]].
+        exists s; split; simpl; auto.
+  Qed.
+
+  (** Merging retains every part of its initial accumulator. *)
+  Lemma merge_covers_left ps qs : parts_cover ps (merge_parts Tk.eqb S.join ps qs).
+  Proof.
+    unfold merge_parts; revert ps; induction qs as [|q qs IH]; intro ps; cbn [fold_left].
+    - apply parts_cover_refl.
+    - eapply parts_cover_trans; [|apply IH].
+      intros p Hp; apply insert_covers; now right.
+  Qed.
+
+  (** Merging retains every part of the inserted list. *)
+  Lemma merge_covers_right ps qs : parts_cover qs (merge_parts Tk.eqb S.join ps qs).
+  Proof.
+    unfold merge_parts; revert ps; induction qs as [|q qs IH]; intros ps r Hr.
+    - contradiction.
+    - cbn [fold_left]; destruct Hr as [<-|Hr].
+      + destruct (insert_covers q ps q (or_introl eq_refl)) as [s [Hs Hle]].
+        destruct (merge_covers_left (insert_part Tk.eqb S.join q ps) qs s Hs)
+          as [t [Ht Hle']].
+        exists t; split; [exact Ht | eapply S.leb_trans; eassumption].
+      + now apply IH.
+  Qed.
+
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; apply leb_spec; intros q Hq; right.
+    exists q; split; [exact Hq | apply S.leb_refl].
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c Hab Hbc.
+    pose proof (proj1 (leb_spec a b) Hab) as Hcoverab.
+    pose proof (proj1 (leb_spec b c) Hbc) as Hcoverbc.
+    apply leb_spec; intros q Hq; destruct (Hcoverab q Hq) as [Hbot|[r [Hr Hqr]]]; auto.
+    destruct (Hcoverbc r Hr) as [Hbot|[s [Hs Hrs]]].
+    - left; eapply S.leb_trans; eassumption.
+    - right; exists s; split; [exact Hs | eapply S.leb_trans; eassumption].
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hbot; unfold is_bot in Hbot; rewrite forallb_forall in Hbot.
+    apply leb_spec; intros q Hq; left; now apply Hbot.
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; apply leb_spec; intros q Hq; right.
+    eapply parts_cover_trans; [apply merge_covers_left | apply fit_covers | exact Hq].
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; apply leb_spec; intros q Hq; right.
+    eapply parts_cover_trans; [apply merge_covers_right | apply fit_covers | exact Hq].
+  Qed.
 
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; apply leb_spec; intros q Hq; right.
+    exists (None, S.top); split.
+    - unfold top; rewrite fit_singleton; simpl; auto.
+    - apply S.top_greatest.
+  Qed.
+
+  (** Widening exposes the same three branches on the bounded raw lists. *)
+  Lemma widen_raw p a b : proj1_sig (widen p a b) =
+    if leb b a then proj1_sig a else
+    if is_bot a then proj1_sig b else
+    let old := proj1_sig a in
+    let fresh := fresh_parts S.leb S.bot old (proj1_sig b) in
+    absorb Tk.eqb S.leb S.bot S.join (S.widen p)
+      (stray_parts Tk.eqb S.leb S.bot old fresh) fresh old.
+  Proof.
+    destruct a as [old Hbound]; unfold widen.
+    destruct (leb b (exist _ old Hbound)); [reflexivity|].
+    destruct (is_bot (exist _ old Hbound)); reflexivity.
+  Qed.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
@@ -130,7 +300,9 @@ Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Proof. Admitted. (* STUB *)
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [old Hbound] b Hstable; unfold widen; rewrite Hstable; reflexivity.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
@@ -141,65 +313,155 @@ Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hle; split; [exact Hle | apply leb_refl].
+  Qed.
 
   (** Abstract inclusion entails inclusion of concrete environments. *)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b st Hle Hgamma; pose proof (proj1 (leb_spec a b) Hle) as Hcover.
+    apply Exists_exists in Hgamma; destruct Hgamma as [q [Hq Hgamma]].
+    destruct (Hcover q Hq) as [Hbot|[r [Hr Hqr]]].
+    - exfalso; apply (S.gamma_bot st); eapply S.gamma_mono; eassumption.
+    - apply Exists_exists; exists r; split; [exact Hr|].
+      eapply S.gamma_mono; eassumption.
+  Qed.
   (** Bottom describes no concrete environment. *)
   Lemma gamma_bot : forall st, ~ gamma bot st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros st Hgamma; inversion Hgamma.
+  Qed.
   (** Top describes every concrete environment. *)
   Lemma gamma_top : forall st, gamma top st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro st; unfold gamma, top; rewrite fit_singleton.
+    apply Exists_cons_hd; apply S.gamma_top.
+  Qed.
+
+  (** Mapping a sound component transfer retains the corresponding concrete environment. *)
+  Lemma map_bounded_sound f a st st' :
+    (forall s, S.gamma s st -> S.gamma (f s) st') ->
+    gamma a st -> gamma (map_bounded f a) st'.
+  Proof.
+    intros Hf Hgamma; apply Exists_exists in Hgamma.
+    destruct Hgamma as [q [Hq Hgamma]]; destruct a as [ps Hbound].
+    unfold gamma, map_bounded; cbn [proj1_sig]; apply Exists_exists.
+    exists (fst q, f (snd q)); split.
+    - apply in_map_iff; exists q; split; [reflexivity|exact Hq].
+    - now apply Hf.
+  Qed.
   (** Assignment contains each successful concrete update. *)
   Lemma assign_sound : forall x e s st c,
     gamma s st -> eval_term L.eval st e = Some c ->
     gamma (assign x e s) (upd X.eqb st x c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e s st c Hgamma Heval; apply map_bounded_sound with (st := st); auto.
+    intros a Ha; eapply S.assign_sound; eassumption.
+  Qed.
   (** Havoc contains every concrete update of the selected variable. *)
   Lemma havoc_sound : forall x s st c,
     gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x s st c Hgamma; apply map_bounded_sound with (st := st); auto.
+    intros a Ha; now apply S.havoc_sound.
+  Qed.
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
     gamma (assume g es s) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es s st cs Hgamma Heval Hholds.
+    apply map_bounded_sound with (st := st); auto.
+    intros a Ha; eapply S.assume_sound; eassumption.
+  Qed.
+
+  (** Evaluation's fold remains above its initial abstract value. *)
+  Lemma eval_fold_start e (ps : list (option Tk.t * S.t)) v :
+    V.leb v (fold_left (fun a q => V.join a (S.eval e (snd q))) ps v) = true.
+  Proof.
+    revert v; induction ps as [|q ps IH]; intro v; cbn [fold_left].
+    - apply V.leb_refl.
+    - eapply V.leb_trans; [apply V.join_ub_l | apply IH].
+  Qed.
+
+  (** Evaluation's fold covers each part's abstract result. *)
+  Lemma eval_fold_member e (ps : list (option Tk.t * S.t)) v q : In q ps ->
+    V.leb (S.eval e (snd q))
+      (fold_left (fun a q => V.join a (S.eval e (snd q))) ps v) = true.
+  Proof.
+    revert v; induction ps as [|r ps IH]; intros v Hq; [contradiction|].
+    cbn [fold_left]; destruct Hq as [<-|Hq].
+    - eapply V.leb_trans; [apply V.join_ub_r | apply eval_fold_start].
+    - now apply IH.
+  Qed.
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e s st c Hgamma Heval; apply Exists_exists in Hgamma.
+    destruct Hgamma as [q [Hq Hgamma]].
+    eapply V.gamma_mono; [exact (eval_fold_member e (proj1_sig s) V.bot q Hq) |].
+    eapply S.eval_sound; eassumption.
+  Qed.
   Lemma gamma_parts : forall a st,
     gamma a st <-> Exists (fun q => S.gamma (snd q) st) (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma leb_cover : forall a b, leb a b = forallb (fun q => S.leb (snd q) S.bot ||
     existsb (fun r => S.leb (snd q) (snd r)) (proj1_sig b)) (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma is_bot_parts : forall a,
     is_bot a = forallb (fun q => S.leb (snd q) S.bot) (proj1_sig a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma bot_raw : proj1_sig bot = [].
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma top_raw : proj1_sig top = [(None, S.top)].
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply fit_singleton.
+  Qed.
   Lemma join_parts : forall a b, proj1_sig (join a b) =
     fit_parts S.bot S.join C.k (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma wrank_parts : forall p a, wrank p a = fold_right Nat.add 0 (map (fun q =>
     if S.leb (snd q) S.bot then 0 else S.wrank p (snd q)) (proj1_sig a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma inject_raw : forall k s, proj1_sig (inject k s) = [(Some k, s)].
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; apply fit_singleton.
+  Qed.
   Lemma merge_eq : forall k a,
     merge k a = inject k (collapse_with S.bot S.join (map snd (proj1_sig a))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma retag_eq : forall k a, retag k a = merge k a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma gamma_inject : forall k s st, S.gamma s st -> gamma (inject k s) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s st Hgamma; unfold gamma; rewrite inject_raw.
+    now apply Exists_cons_hd.
+  Qed.
   Lemma merge_sound : forall k a st, gamma a st -> gamma (merge k a) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k a st Hgamma; apply Exists_exists in Hgamma.
+    destruct Hgamma as [q [Hq Hgamma]]; apply gamma_inject.
+    eapply S.gamma_mono; [|exact Hgamma].
+    apply collapse_covers; apply in_map_iff; exists q; auto.
+  Qed.
 End Partition.
 
 Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
