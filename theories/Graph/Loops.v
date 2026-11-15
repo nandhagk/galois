@@ -5,6 +5,7 @@
     Builds on: prepared graphs, dominator trees and depth-first traces. *)
 
 From Stdlib Require Import PArith NArith Arith Lia List Bool.
+From Stdlib.Sorting Require Import Permutation.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig LoopsSig.
@@ -639,6 +640,605 @@ Proof.
   unfold T_body_step. time_simpl. rewrite Nat2N.inj_add. lia.
 Qed.
 
+(** Reverse edges preserve membership until the premarked header is reached. *)
+Local Lemma loop_natural_predecessor : forall g r h v u,
+  natural_loop g r h v -> v <> h -> edge g u v -> reach g [r] u ->
+  natural_loop g r h u.
+Proof.
+  intros g r h v u [Hheader Hmember] Hne Hedge Hreach.
+  split; [exact Hheader|]. destruct (Pos.eq_dec u h) as [Heq|Hune]; [now left|].
+  right. destruct Hmember as [Heq|[latch [xs [Hv [Hlatch [Hback [Hdom [Hpath Havoid]]]]]]]];
+    [contradiction|].
+  exists latch, (u :: xs). repeat split; try assumption.
+  - now apply path_step with v.
+  - intros x [<-|Hin]; [exact Hune|now apply Havoid].
+Qed.
+
+Local Lemma loop_natural_latch : forall g r h latch,
+  reach g [r] latch -> edge g latch h -> dominates g r h latch ->
+  natural_loop g r h latch.
+Proof.
+  intros g r h latch Hreach Hedge Hdom. split.
+  - now exists latch.
+  - destruct (Pos.eq_dec latch h) as [Heq|Hne]; [now left|].
+    right. exists latch, [latch]. repeat split; try assumption.
+    + constructor.
+    + intros x [<-|Hfalse]; [exact Hne|contradiction].
+Qed.
+
+Local Lemma loop_tree_pre_reachable : forall g r t v,
+  domtree_exact g r t ->
+  ((exists a, trie_get v (pre t) = Some a) <-> reach (base g) [r] v).
+Proof.
+  intros g r t v [_ [_ [_ [_ [_ [Hpre _]]]]]]. apply Hpre.
+Qed.
+
+Local Lemma loop_predecessor_edge : forall g u v,
+  prepared_ok g -> In u (preds g v) -> edge (base g) u v.
+Proof.
+  intros g u v [_ [_ Hpred]] Hin.
+  apply (Permutation_in u (Hpred v)) in Hin.
+  apply in_flat_map in Hin. destruct Hin as [source [Hsource Hrow]].
+  apply in_map_iff in Hrow. destruct Hrow as [target [Heq Htarget]]. subst source.
+  apply filter_In in Htarget. destruct Htarget as [Hedge Heq].
+  apply Pos.eqb_eq in Heq. now subst target.
+Qed.
+
+Local Lemma loop_edge_predecessor : forall g u v,
+  prepared_ok g -> In u (nodes g) -> edge (base g) u v -> In u (preds g v).
+Proof.
+  intros g u v [_ [_ Hpred]] Hlisted Hedge.
+  apply (Permutation_in u (Permutation_sym (Hpred v))).
+  apply in_flat_map. exists u. split; [exact Hlisted|].
+  apply in_map_iff. exists v. split; [reflexivity|].
+  apply filter_In. split; [exact Hedge|apply Pos.eqb_refl].
+Qed.
+
+Local Definition loop_body_covered (st : loop_body_state) (v : positive) : Prop :=
+  In v (loop_body_answer st) \/ In v (loop_body_pending st).
+
+(** Sound members and queued predecessor obligations describe every collector prefix. *)
+Local Definition loop_body_semantic g (t : domtree) r h sources (st : loop_body_state) : Prop :=
+  In h (loop_body_answer st) /\
+  NoDup (loop_body_answer st) /\
+  (forall v, trie_get v (loop_body_seen st) = Some tt <-> In v (loop_body_answer st)) /\
+  Forall (natural_loop (base g) r h) (loop_body_answer st) /\
+  Forall (natural_loop (base g) r h) (loop_body_pending st) /\
+  (forall v, In v sources -> loop_body_covered st v) /\
+  (forall v u, In v (loop_body_answer st) -> v <> h ->
+    In u (preds g v) -> reach (base g) [r] u -> loop_body_covered st u).
+
+Local Lemma loop_body_semantic_initial : forall g t r h sources,
+  natural_header (base g) r h -> Forall (natural_loop (base g) r h) sources ->
+  loop_body_semantic g t r h sources
+    (LoopBodyState sources (PTrieCode.set h tt Empty) [h]).
+Proof.
+  intros g t r h sources Hheader Hsources. split; [now left|].
+  split; [constructor; [simpl; tauto|constructor]|]. split.
+  - intro v. destruct (Pos.eq_dec v h) as [->|Hne].
+    + change (PTrie.get h (PTrie.set h tt PTrie.empty) = Some tt <-> In h [h]).
+      rewrite PTrie.get_set_same. split; [intros _; now left|intros _; reflexivity].
+    + change (PTrie.get v (PTrie.set h tt PTrie.empty) = Some tt <-> In v [h]).
+      rewrite PTrie.get_set_other by exact Hne. rewrite PTrie.get_empty.
+      split; [discriminate|]. intros [Heq|Hfalse]; [congruence|contradiction].
+  - split; [constructor; [split; [exact Hheader|now left]|constructor]|].
+    split; [exact Hsources|]. split.
+    + intros v Hin. now right.
+    + intros v u [<-|Hfalse] Hne; [contradiction|contradiction].
+Qed.
+
+Local Lemma loop_body_semantic_skip : forall g t r h sources v rest seen answer,
+  loop_body_semantic g t r h sources (LoopBodyState (v :: rest) seen answer) ->
+  trie_get v seen = Some tt ->
+  loop_body_semantic g t r h sources (LoopBodyState rest seen answer).
+Proof.
+  intros g t r h sources v rest seen answer
+    [Hheader [Hunique [Hseen [Hanswer [Hpending [Hsources Hclosed]]]]]] Hmarked.
+  cbn [loop_body_answer loop_body_seen loop_body_pending] in Hheader, Hunique, Hseen,
+    Hanswer, Hpending, Hclosed.
+  assert (Hmember : In v answer) by now apply (proj1 (Hseen v)).
+  assert (Hcovered : forall x,
+    loop_body_covered (LoopBodyState (v :: rest) seen answer) x ->
+    loop_body_covered (LoopBodyState rest seen answer) x).
+  { intros x [Hin|[<-|Hin]]; [now left|now left|now right]. }
+  split; [exact Hheader|]. split; [exact Hunique|].
+  split; [exact Hseen|]. split; [exact Hanswer|].
+  split; [now inversion Hpending|]. split.
+  - intros x Hin. now apply Hcovered, Hsources.
+  - intros x u Hin Hne Hpred Hreach. apply Hcovered.
+    now apply (Hclosed x u).
+Qed.
+
+Local Lemma loop_body_semantic_fresh : forall g t r h sources v rest seen answer,
+  prepared_ok g -> domtree_exact g r t ->
+  loop_body_semantic g t r h sources (LoopBodyState (v :: rest) seen answer) ->
+  trie_get v seen = None ->
+  loop_body_semantic g t r h sources
+    (LoopBodyState (filter (fun u => match trie_get u (pre t) with
+      | Some _ => true | None => false end) (preds g v) ++ rest)
+      (PTrieCode.set v tt seen) (v :: answer)).
+Proof.
+  intros g t r h sources v rest seen answer Hprepared Htree
+    [Hheader [Hunique [Hseen [Hanswer [Hpending [Hsources Hclosed]]]]]] Hfresh.
+  cbn [loop_body_answer loop_body_seen loop_body_pending] in Hheader, Hunique, Hseen,
+    Hanswer, Hpending, Hclosed.
+  inversion Hpending as [|v' rest' Hmember Hrest]; subst v' rest'.
+  assert (Hne : v <> h).
+  { intro Heq. subst v. apply (proj2 (Hseen h)) in Hheader. congruence. }
+  assert (Hcovered : forall x,
+    loop_body_covered (LoopBodyState (v :: rest) seen answer) x ->
+    loop_body_covered
+      (LoopBodyState (filter (fun u => match trie_get u (pre t) with
+        | Some _ => true | None => false end) (preds g v) ++ rest)
+        (PTrieCode.set v tt seen) (v :: answer)) x).
+  { intros x [Hin|[<-|Hin]]; [left; now right|left; now left|].
+    right. now apply in_or_app; right. }
+  split; [now right|]. split.
+  - constructor; [|exact Hunique].
+    intro Hin. apply (proj2 (Hseen v)) in Hin. congruence.
+  - split.
+    + intro x. destruct (Pos.eq_dec x v) as [->|Hneq].
+      * change (PTrie.get v (PTrie.set v tt seen) = Some tt <-> In v (v :: answer)).
+        rewrite PTrie.get_set_same. split; [intros _; now left|intros _; reflexivity].
+      * change (PTrie.get x (PTrie.set v tt seen) = Some tt <-> In x (v :: answer)).
+        rewrite PTrie.get_set_other by exact Hneq. rewrite (Hseen x).
+        split; [now right|]. intros [Heq|Hin]; [congruence|exact Hin].
+    + split; [now constructor|]. split.
+      * apply Forall_app. split; [|exact Hrest]. apply Forall_forall.
+        intros u Hin. apply filter_In in Hin. destruct Hin as [Hpred Hpre].
+        destruct (trie_get u (pre t)) as [a|] eqn:Hnumber; [|discriminate].
+        apply (loop_natural_predecessor (base g) r h v u Hmember Hne).
+        -- now apply loop_predecessor_edge.
+        -- apply (proj1 (loop_tree_pre_reachable g r t u Htree)). now exists a.
+      * split.
+        -- intros x Hin. now apply Hcovered, Hsources.
+        -- intros x u [<-|Hin] Hneq Hpred Hreach.
+           ++ right. apply in_or_app. left. apply filter_In. split; [exact Hpred|].
+              destruct (proj2 (loop_tree_pre_reachable g r t u Htree) Hreach) as [a Ha].
+              now rewrite Ha.
+           ++ apply Hcovered. now apply (Hclosed x u).
+Qed.
+
+(** An empty worklist leaves a sound body closed under every required reverse edge. *)
+Local Definition loop_body_result g r h sources (result : list positive) : Prop :=
+  In h result /\ NoDup result /\ Forall (natural_loop (base g) r h) result /\ incl sources result /\
+  forall v u, In v result -> v <> h -> In u (preds g v) ->
+    reach (base g) [r] u -> In u result.
+
+Local Lemma loop_body_semantic_stop : forall g t r h sources seen answer,
+  loop_body_semantic g t r h sources (LoopBodyState [] seen answer) ->
+  loop_body_result g r h sources (rev_append answer []).
+Proof.
+  intros g t r h sources seen answer
+    [Hheader [Hunique [Hseen [Hanswer [Hpending [Hsources Hclosed]]]]]].
+  rewrite rev_append_rev, app_nil_r. split.
+  - now apply (proj1 (in_rev answer h)).
+  - split; [now apply NoDup_rev|]. split.
+    + apply Forall_forall. intros v Hin. apply (proj2 (in_rev answer v)) in Hin.
+      now apply (proj1 (Forall_forall _ _) Hanswer v).
+    + split.
+      * intros v Hin. apply (proj1 (in_rev answer v)).
+        destruct (Hsources v Hin) as [Hfound|Hempty]; [exact Hfound|contradiction].
+      * intros v u Hin Hne Hpred Hreach. apply (proj1 (in_rev answer u)).
+        apply (proj2 (in_rev answer v)) in Hin.
+        destruct (Hclosed v u Hin Hne Hpred Hreach) as [Hfound|Hempty];
+          [exact Hfound|contradiction].
+Qed.
+
+Local Lemma loop_body_step_semantic : forall g t r h sources st,
+  prepared_ok g -> domtree_exact g r t -> loop_body_semantic g t r h sources st ->
+  match body_step g t h st with
+  | inl next => loop_body_semantic g t r h sources next
+  | inr result => loop_body_result g r h sources result
+  end.
+Proof.
+  intros g t r h sources [pending seen answer] Hprepared Htree Hinv.
+  destruct pending as [|v rest].
+  - cbn [body_step]. now apply (loop_body_semantic_stop g t r h sources seen answer).
+  - cbn [body_step]. destruct (trie_get v seen) as [[]|] eqn:Hseen.
+    + destruct (trie_get v (pre t)); now apply (loop_body_semantic_skip g t r h sources v).
+    + destruct (trie_get v (pre t)) as [a|] eqn:Hpre.
+      * now apply (loop_body_semantic_fresh g t r h sources v).
+      * exfalso. destruct Hinv as [_ [_ [_ [_ [Hpending _]]]]].
+        inversion Hpending as [|v' rest' Hmember Hrest]; subst v' rest'.
+        pose proof (loop_member_reachable (base g) r h v Hmember) as Hreach.
+        destruct (proj2 (loop_tree_pre_reachable g r t v Htree) Hreach) as [a Ha].
+        congruence.
+Qed.
+
+Local Lemma loop_body_loop_semantic : forall g t r h sources,
+  prepared_ok g -> domtree_exact g r t ->
+  forall fs (Hacc : Acc loopN_lt fs), loop_body_semantic g t r h sources (snd fs) ->
+  match Argent.Loop.loop loopN_lt (loopN_step (body_step g t h)) fs Hacc with
+  | inl final => loop_body_semantic g t r h sources final
+  | inr result => loop_body_result g r h sources result
+  end.
+Proof.
+  intros g t r h sources Hprepared Htree fs Hacc.
+  induction Hacc as [[fuel st] Hnext IH] using Acc_ind_dep.
+  cbn [snd]. intro Hinv. destruct fuel as [|fuel].
+  - exact Hinv.
+  - cbn [Argent.Loop.loop loopN_step Acc_inv].
+    pose proof (loop_body_step_semantic g t r h sources st Hprepared Htree Hinv) as Hstep.
+    destruct (body_step g t h st) as [next|result] eqn:Hresult.
+    + apply IH. exact Hstep.
+    + exact Hstep.
+Qed.
+
+Local Lemma loop_body_finished_semantic : forall g t r h sources fuel result,
+  prepared_ok g -> domtree_exact g r t -> natural_header (base g) r h ->
+  Forall (natural_loop (base g) r h) sources ->
+  loopN (body_step g t h) fuel
+    (LoopBodyState sources (PTrieCode.set h tt Empty) [h]) = inr result ->
+  loop_body_result g r h sources result.
+Proof.
+  intros g t r h sources fuel result Hprepared Htree Hheader Hsources Hdone.
+  pose proof (loop_body_semantic_initial g t r h sources Hheader Hsources) as Hinitial.
+  assert (Hloop : match loopN (body_step g t h) fuel
+    (LoopBodyState sources (PTrieCode.set h tt Empty) [h]) with
+    | inl final => loop_body_semantic g t r h sources final
+    | inr found => loop_body_result g r h sources found
+    end).
+  { unfold loopN. now apply loop_body_loop_semantic. }
+  now rewrite Hdone in Hloop.
+Qed.
+
+Local Lemma loop_reachable_edge : forall g r u v,
+  reach g [r] u -> edge g u v -> reach g [r] v.
+Proof.
+  intros g r u v Hreach Hedge. destruct (loop_reach_path g r u Hreach) as [xs Hpath].
+  exists r, (xs ++ [v]). split; [now left|]. now apply loop_path_snoc with u.
+Qed.
+
+Local Lemma loop_reverse_closed_path : forall g r h body,
+  (forall u v, reach g [r] u -> edge g u v -> v <> h -> In v body -> In u body) ->
+  forall v xs latch, path g v xs latch ->
+  (forall x, In x xs -> x <> h) -> reach g [r] v -> In latch body -> In v body.
+Proof.
+  intros g r h body Hclosed v xs latch Hpath.
+  induction Hpath as [v|u v xs latch Hedge Hpath IH]; intros Havoid Hreach Hlast.
+  - exact Hlast.
+  - apply (Hclosed u v Hreach Hedge).
+    + apply Havoid. right. now apply loop_path_start in Hpath.
+    + apply IH.
+      * intros x Hin. apply Havoid. now right.
+      * now apply (loop_reachable_edge g r u v).
+      * exact Hlast.
+Qed.
+
+(** Soundness and reverse closure characterize exactly the natural-loop paths. *)
+Local Lemma loop_body_result_exact : forall g r h sources result,
+  wf_graph (base g) -> prepared_ok g -> In r (verts (base g)) ->
+  (forall latch, reach (base g) [r] latch -> edge (base g) latch h ->
+    dominates (base g) r h latch -> In latch sources) ->
+  loop_body_result g r h sources result ->
+  forall v, In v result <-> natural_loop (base g) r h v.
+Proof.
+  intros g r h sources result Hgraph Hprepared Hroot Hlatches
+    [Hheader [Hunique [Hsound [Hsources Hclosed]]]] v. split.
+  - intro Hin. now apply (proj1 (Forall_forall _ _) Hsound v).
+  - intros [_ [->|[latch [xs [Hreach [Hlatch [Hedge [Hdom [Hpath Havoid]]]]]]]]];
+      [exact Hheader|].
+    apply (loop_reverse_closed_path (base g) r h result) with (xs := xs) (latch := latch);
+      try assumption.
+    + intros u target Hureach Hutarget Hne Hin.
+      apply (Hclosed target u Hin Hne); [|exact Hureach].
+      apply loop_edge_predecessor; [exact Hprepared| |exact Hutarget].
+      assert (Hlisted : In u (verts (base g))).
+      { now apply (loop_reachable_listed (base g) r u). }
+      destruct g as [[vertices edges] predecessors vertex_count edge_count]. exact Hlisted.
+    + apply Hsources. now apply Hlatches.
+Qed.
+
+Local Lemma loop_sum_ext {A : Type} : forall (xs : list A) (f g : A -> nat),
+  (forall x, In x xs -> f x = g x) ->
+  fold_right (fun x total => f x + total) 0 xs =
+  fold_right (fun x total => g x + total) 0 xs.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros f g Heq; [reflexivity|].
+  cbn [fold_right]. rewrite (Heq x (or_introl eq_refl)). f_equal.
+  apply IH. intros u Hu. apply Heq. now right.
+Qed.
+
+Local Lemma loop_sum_update {A : Type} : forall (xs : list A) x (f g : A -> nat),
+  NoDup xs -> In x xs -> g x = S (f x) -> (forall u, u <> x -> g u = f u) ->
+  fold_right (fun u total => g u + total) 0 xs =
+  S (fold_right (fun u total => f u + total) 0 xs).
+Proof.
+  intro xs. induction xs as [|v rest IH]; intros x f g Hunique Hin Hx Hother.
+  - contradiction.
+  - inversion Hunique as [|? ? Hnot Hrest]; subst.
+    destruct Hin as [Heq|Hin].
+    + subst v. cbn [fold_right]. rewrite Hx.
+      assert (Htail : fold_right (fun u total => g u + total) 0 rest =
+        fold_right (fun u total => f u + total) 0 rest).
+      { apply loop_sum_ext. intros u Hu. apply Hother. intro Heq. subst u. contradiction. }
+      now rewrite Htail.
+    + assert (Hvx : v <> x) by (intro Heq; subst v; contradiction).
+      cbn [fold_right]. rewrite (Hother v Hvx), (IH x f g Hrest Hin Hx Hother). lia.
+Qed.
+
+Local Lemma loop_nodes_verts : forall g, nodes g = verts (base g).
+Proof.
+  intros [[vertices adjacency] predecessors vertices_count edges_count]. reflexivity.
+Qed.
+
+Local Lemma loop_nodes_unique : forall g, wf_graph (base g) -> NoDup (nodes g).
+Proof.
+  intros g Hgraph. rewrite loop_nodes_verts. exact (proj1 Hgraph).
+Qed.
+
+Local Lemma loop_sum_add {A : Type} : forall (xs : list A) (f g : A -> nat),
+  fold_right (fun x total => f x + g x + total) 0 xs =
+  fold_right (fun x total => f x + total) 0 xs +
+    fold_right (fun x total => g x + total) 0 xs.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros f g; [reflexivity|].
+  cbn [fold_right]. rewrite IH. lia.
+Qed.
+
+Local Lemma loop_sum_swap {A B : Type} : forall (xs : list A) (ys : list B) (f : A -> B -> nat),
+  fold_right (fun x total => fold_right (fun y subtotal => f x y + subtotal) 0 ys + total) 0 xs =
+  fold_right (fun y total => fold_right (fun x subtotal => f x y + subtotal) 0 xs + total) 0 ys.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros ys f.
+  - cbn [fold_right]. induction ys; cbn [fold_right]; assumption || reflexivity.
+  - cbn [fold_right]. rewrite IH. symmetry. apply loop_sum_add.
+Qed.
+
+Local Lemma loop_flat_map_length {A B : Type} : forall (f : A -> list B) xs,
+  length (flat_map f xs) = fold_right (fun x total => length (f x) + total) 0 xs.
+Proof.
+  intros f xs. induction xs as [|x rest IH]; [reflexivity|].
+  cbn [flat_map fold_right]. now rewrite length_app, IH.
+Qed.
+
+Local Lemma loop_filter_partition : forall vertices successors,
+  NoDup vertices -> incl successors vertices ->
+  fold_right (fun y total => length (filter (Pos.eqb y) successors) + total) 0 vertices =
+    length successors.
+Proof.
+  intros vertices successors Hunique. induction successors as [|v rest IH]; intro Hincl.
+  - assert (Hzero : forall xs, fold_right
+      (fun y total => length (filter (Pos.eqb y) []) + total) 0 xs = 0).
+    { intro xs. induction xs; cbn [fold_right filter length]; assumption || reflexivity. }
+    apply Hzero.
+  - assert (Hrest : incl rest vertices) by (intros u Hu; apply Hincl; now right).
+    specialize (IH Hrest).
+    pose proof (loop_sum_update vertices v
+      (fun y => length (filter (Pos.eqb y) rest))
+      (fun y => length (filter (Pos.eqb y) (v :: rest))) Hunique
+      (Hincl v (or_introl eq_refl))) as Hsum.
+    assert (Hsame : length (filter (Pos.eqb v) (v :: rest)) =
+      S (length (filter (Pos.eqb v) rest))).
+    { cbn [filter]. now rewrite Pos.eqb_refl. }
+    assert (Hother : forall u, u <> v ->
+      length (filter (Pos.eqb u) (v :: rest)) = length (filter (Pos.eqb u) rest)).
+    { intros u Hne. cbn [filter]. apply Pos.eqb_neq in Hne. now rewrite Hne. }
+    specialize (Hsum Hsame Hother). cbn [length]. now rewrite Hsum, IH.
+Qed.
+
+Local Lemma loop_preds_length : forall g y,
+  prepared_ok g -> length (preds g y) =
+    fold_right (fun x total => length (filter (Pos.eqb y) (succs (base g) x)) + total) 0 (nodes g).
+Proof.
+  intros g y [_ [_ Hpreds]]. rewrite (Permutation_length (Hpreds y)).
+  rewrite loop_flat_map_length. apply loop_sum_ext. intros x Hx. apply length_map.
+Qed.
+
+Local Lemma loop_predecessor_sum : forall g,
+  wf_graph (base g) -> prepared_ok g ->
+  fold_right (fun y total => length (preds g y) + total) 0 (nodes g) = graph_e (base g).
+Proof.
+  intros g Hgraph Hprepared.
+  rewrite (loop_sum_ext (nodes g) (fun y => length (preds g y))
+    (fun y => fold_right (fun x total => length (filter (Pos.eqb y) (succs (base g) x)) + total)
+      0 (nodes g))) by (intros y Hy; now apply loop_preds_length).
+  rewrite loop_sum_swap.
+  replace (graph_e (base g)) with
+    (fold_right (fun x total => length (succs (base g) x) + total) 0 (nodes g)) by
+    (destruct g as [[vertices adjacency] predecessors vertices_count edges_count]; reflexivity).
+  apply loop_sum_ext. intros x Hx. apply loop_filter_partition.
+  - now apply loop_nodes_unique.
+  - intros y Hy. rewrite loop_nodes_verts in *. eapply (proj2 Hgraph); eassumption.
+Qed.
+
+
+(** Each unseen vertex reserves credit for its eventual predecessor expansion. *)
+Local Definition loop_unseen_work (weight : positive -> nat) (vertices : list positive)
+    (seen : ptrie unit) : nat :=
+  fold_right (fun v total => match trie_get v seen with
+    | Some _ => total | None => weight v + total end) 0 vertices.
+
+Local Lemma loop_unseen_work_absent : forall weight vertices seen x,
+  ~ In x vertices ->
+  loop_unseen_work weight vertices (PTrieCode.set x tt seen) =
+    loop_unseen_work weight vertices seen.
+Proof.
+  intros weight vertices. induction vertices as [|v rest IH]; intros seen x Hnot; [reflexivity|].
+  unfold loop_unseen_work at 1 2. cbn [fold_right].
+  rewrite PTrie.get_set_other by (intro Heq; subst v; apply Hnot; now left).
+  fold (loop_unseen_work weight rest seen)
+    (loop_unseen_work weight rest (PTrieCode.set x tt seen)).
+  rewrite IH by (intro Hin; apply Hnot; now right). reflexivity.
+Qed.
+
+Local Lemma loop_unseen_work_fresh : forall weight vertices seen x,
+  NoDup vertices -> In x vertices -> trie_get x seen = None ->
+  loop_unseen_work weight vertices seen =
+    weight x + loop_unseen_work weight vertices (PTrieCode.set x tt seen).
+Proof.
+  intros weight vertices. induction vertices as [|v rest IH]; intros seen x Hunique Hin Hfresh.
+  - contradiction.
+  - inversion Hunique as [|? ? Hnot Hrest]; subst.
+    destruct Hin as [<-|Hin].
+    + unfold loop_unseen_work at 1 2. cbn [fold_right].
+      rewrite Hfresh, PTrie.get_set_same.
+      fold (loop_unseen_work weight rest seen)
+        (loop_unseen_work weight rest (PTrieCode.set v tt seen)).
+      now rewrite loop_unseen_work_absent.
+    + assert (Hne : v <> x) by (intro Heq; subst v; contradiction).
+      specialize (IH seen x Hrest Hin Hfresh).
+      unfold loop_unseen_work at 1 2. cbn [fold_right].
+      rewrite PTrie.get_set_other by exact Hne.
+      fold (loop_unseen_work weight rest seen)
+        (loop_unseen_work weight rest (PTrieCode.set x tt seen)).
+      destruct (trie_get v seen) as [[]|] eqn:Hget.
+      * change (PTrie.get v seen = Some tt) in Hget. rewrite Hget. lia.
+      * change (PTrie.get v seen = None) in Hget. rewrite Hget. lia.
+Qed.
+
+Local Lemma loop_unseen_work_bound : forall weight vertices seen,
+  loop_unseen_work weight vertices seen <= fold_right (fun v n => weight v + n) 0 vertices.
+Proof.
+  intros weight vertices. induction vertices as [|v rest IH]; intro seen; [reflexivity|].
+  specialize (IH seen). unfold loop_unseen_work in *. cbn [fold_right].
+  destruct (trie_get v seen); lia.
+Qed.
+
+Local Definition loop_body_global_potential (g : prepared) (st : loop_body_state) : nat :=
+  2 * loop_unseen_work (fun v => 2 + length (preds g v)) (nodes g) (loop_body_seen st) +
+    length (loop_body_pending st).
+
+Local Lemma loop_body_global_step : forall g t r h st next,
+  wf_graph (base g) -> domtree_exact g r t -> body_step g t h st = inl next ->
+  loop_body_global_potential g next < loop_body_global_potential g st.
+Proof.
+  intros g t r h [pending seen answer] next Hgraph Htree Hstep.
+  destruct pending as [|v rest]; [discriminate Hstep|].
+  cbn [body_step] in Hstep.
+  destruct (trie_get v seen) as [[]|] eqn:Hseen;
+    destruct (trie_get v (pre t)) as [a|] eqn:Hpre;
+    injection Hstep as <-;
+    try (unfold loop_body_global_potential; cbn [loop_body_seen loop_body_pending length]; lia).
+  assert (Hlisted : In v (nodes g)).
+  { rewrite loop_nodes_verts. apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+    apply (proj1 (loop_tree_pre_reachable g r t v Htree)). now exists a. }
+  pose proof (loop_unseen_work_fresh (fun x => 2 + length (preds g x))
+    (nodes g) seen v (loop_nodes_unique g Hgraph) Hlisted Hseen) as Hcredit.
+  pose proof (filter_length_le (fun u => match trie_get u (pre t) with
+    | Some _ => true | None => false end) (preds g v)) as Hlength.
+  unfold loop_body_global_potential. cbn [loop_body_seen loop_body_pending].
+  rewrite length_app, Hcredit. cbn beta. cbn [length]. lia.
+Qed.
+
+Local Lemma loop_body_global_initial : forall g h sources,
+  wf_graph (base g) -> prepared_ok g ->
+  loop_body_global_potential g (LoopBodyState sources (PTrieCode.set h tt Empty) [h]) <=
+    4 * graph_n (base g) + 2 * graph_e (base g) + length sources.
+Proof.
+  intros g h sources Hgraph Hprepared.
+  pose proof (loop_unseen_work_bound (fun v => 2 + length (preds g v))
+    (nodes g) (PTrieCode.set h tt Empty)) as Hwhite.
+  assert (Hweight : forall vertices,
+    fold_right (fun v n => 2 + length (preds g v) + n) 0 vertices =
+      2 * length vertices + fold_right (fun v n => length (preds g v) + n) 0 vertices).
+  { intro vertices. induction vertices as [|v rest IH]; cbn [fold_right length]; lia. }
+  rewrite Hweight, (loop_predecessor_sum g Hgraph Hprepared) in Hwhite.
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices edges] predecessors vertex_count edge_count]. reflexivity. }
+  rewrite Hnodes in Hwhite.
+  unfold loop_body_global_potential. cbn [loop_body_seen loop_body_pending]. lia.
+Qed.
+
+(** The public binary fuel exceeds a private decreasing worklist measure. *)
+Local Lemma loop_collect_finishes : forall g t r h sources,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  exists result, loopN (body_step g t h)
+    (4 * (nv g + ne g + N.of_nat (length sources) + 1))%N
+    (LoopBodyState sources (PTrieCode.set h tt Empty) [h]) = inr result.
+Proof.
+  intros g t r h sources Hgraph Hprepared Htree.
+  apply (loopN_done loop_body_state (list positive) (body_step g t h)
+    (fun _ => True) (loop_body_global_potential g)).
+  - intros st next _ Hstep. split; [exact I|].
+    now apply (loop_body_global_step g t r h st next Hgraph Htree).
+  - exact I.
+  - pose proof (loop_body_global_initial g h sources Hgraph Hprepared) as Hbound.
+    destruct Hprepared as [Hn [He _]]. rewrite Hn, He. lia.
+Qed.
+
+Local Lemma loop_collect_driver : forall g t r h sources,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  loopN (body_step g t h) (4 * (nv g + ne g + N.of_nat (length sources) + 1))%N
+    (LoopBodyState sources (PTrieCode.set h tt Empty) [h]) = inr (collect g t h sources).
+Proof.
+  intros g t r h sources Hgraph Hprepared Htree.
+  destruct (loop_collect_finishes g t r h sources Hgraph Hprepared Htree) as [result Hdone].
+  unfold collect. now rewrite Hdone.
+Qed.
+
+(** Any complete latch row produces precisely its semantic natural-loop body. *)
+Local Lemma loop_collect_exact : forall g t r h sources,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  natural_header (base g) r h ->
+  (forall v, In v sources <->
+    reach (base g) [r] v /\ edge (base g) v h /\ dominates (base g) r h v) ->
+  NoDup (collect g t h sources) /\ incl (collect g t h sources) (nodes g) /\
+    forall v, In v (collect g t h sources) <-> natural_loop (base g) r h v.
+Proof.
+  intros g t r h sources Hgraph Hprepared Htree Hheader Hlatches.
+  assert (Hsources : Forall (natural_loop (base g) r h) sources).
+  { apply Forall_forall. intros v Hin. apply Hlatches in Hin.
+    destruct Hin as [Hreach [Hedge Hdom]]. now apply loop_natural_latch. }
+  pose proof (loop_collect_driver g t r h sources Hgraph Hprepared Htree) as Hdone.
+  pose proof (loop_body_finished_semantic g t r h sources _ _ Hprepared Htree
+    Hheader Hsources Hdone) as Hresult.
+  assert (Hexact : forall v, In v (collect g t h sources) <-> natural_loop (base g) r h v).
+  { apply (loop_body_result_exact g r h sources _ Hgraph Hprepared (proj1 Htree));
+      [|exact Hresult].
+    intros v Hreach Hedge Hdom. apply Hlatches. now repeat split. }
+  split; [exact (proj1 (proj2 Hresult))|]. split; [|exact Hexact].
+  intros v Hin. rewrite loop_nodes_verts.
+  apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+  apply (loop_member_reachable (base g) r h v), Hexact, Hin.
+Qed.
+
+Local Lemma loop_body_semantic_iteration : forall g t r h sources,
+  prepared_ok g -> domtree_exact g r t -> natural_header (base g) r h ->
+  Forall (natural_loop (base g) r h) sources -> forall n,
+  loop_body_semantic g t r h sources
+    (Nat.iter n (fun st => match body_step g t h st with
+      | inl next => next | inr _ => st end)
+      (LoopBodyState sources (PTrieCode.set h tt Empty) [h])).
+Proof.
+  intros g t r h sources Hprepared Htree Hheader Hsources n.
+  induction n as [|n IH].
+  - now apply loop_body_semantic_initial.
+  - rewrite Nat.iter_succ.
+    pose proof (loop_body_step_semantic g t r h sources _ Hprepared Htree IH) as Hstep.
+    destruct (body_step g t h
+      (Nat.iter n (fun st => match body_step g t h st with
+        | inl next => next | inr _ => st end)
+        (LoopBodyState sources (PTrieCode.set h tt Empty) [h])));
+      [exact Hstep|exact IH].
+Qed.
+
+
+(** Charging only a closed output set still pays every queued expansion. *)
+Local Lemma loop_body_work_step : forall g t h vertices st next,
+  NoDup vertices -> incl (loop_body_pending st) vertices -> body_step g t h st = inl next ->
+  2 * loop_unseen_work (fun v => 2 + length (preds g v)) vertices (loop_body_seen next) +
+      length (loop_body_pending next) <
+    2 * loop_unseen_work (fun v => 2 + length (preds g v)) vertices (loop_body_seen st) +
+      length (loop_body_pending st).
+Proof.
+  intros g t h vertices [pending seen answer] next Hunique Hpending Hstep.
+  destruct pending as [|v rest]; [discriminate Hstep|].
+  cbn [body_step] in Hstep.
+  destruct (trie_get v seen) as [[]|] eqn:Hseen;
+    destruct (trie_get v (pre t)) as [a|] eqn:Hpre;
+    injection Hstep as <-;
+    try (cbn [loop_body_seen loop_body_pending length]; lia).
+  pose proof (loop_unseen_work_fresh (fun x => 2 + length (preds g x))
+    vertices seen v Hunique (Hpending v (or_introl eq_refl)) Hseen) as Hcredit.
+  pose proof (filter_length_le (fun u => match trie_get u (pre t) with
+    | Some _ => true | None => false end) (preds g v)) as Hlength.
+  cbn [loop_body_seen loop_body_pending]. rewrite length_app, Hcredit.
+  cbn beta. cbn [length]. lia.
+Qed.
+
+
 (** A present parentless vertex of an exact tree is its distinguished root. *)
 Local Lemma loop_exact_root_iff g t r v : domtree_exact g r t ->
   ((exists n, trie_get v (pre t) = Some n) /\ trie_get v (idom t) = None <-> v = r).
@@ -1092,6 +1692,80 @@ Module LoopsT <: LOOPS_ALL.
       graph_e (base g).
   Proof. Admitted. (* STUB *)
 
+  Local Lemma latch_exact : forall g t r h v,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+    (In v (latches (classify g t) h) <->
+      reach (base g) [r] v /\ edge (base g) v h /\ dominates (base g) r h v).
+  Proof.
+    intros g t r h v Hgraph Hprepared Htree.
+    destruct (F5_back_edges g t r v h Hgraph Hprepared Htree) as [Hback Hlatch].
+    now rewrite Hlatch, Hback.
+  Qed.
+
+  Local Lemma selected_header : forall g t r h,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
+    natural_header (base g) r h.
+  Proof.
+    intros g t r h Hgraph Hprepared Htree Hin.
+    unfold headers, loop_headers_of in Hin. apply filter_In in Hin.
+    destruct Hin as [Horder Hselected].
+    destruct (loop_latches_at (classify g t) h) as [|v rest] eqn:Hrow; [discriminate|].
+    assert (Hmember : In v (latches (classify g t) h)).
+    { unfold latches. rewrite Hrow. now left. }
+    apply (proj1 (latch_exact g t r h v Hgraph Hprepared Htree)) in Hmember.
+    now exists v.
+  Qed.
+
+  Local Lemma collected_exact : forall g t r h,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
+    NoDup (collected g t h) /\ incl (collected g t h) (nodes g) /\
+      forall v, In v (collected g t h) <-> natural_loop (base g) r h v.
+  Proof.
+    intros g t r h Hgraph Hprepared Htree Hheader.
+    unfold collected, collect. apply (loop_collect_exact g t r h).
+    - exact Hgraph.
+    - exact Hprepared.
+    - exact Htree.
+    - now apply (selected_header g t r h).
+    - intro v. now apply (latch_exact g t r h v).
+  Qed.
+
+  Local Lemma body_history_semantic : forall g t r h st,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
+    (exists n, Nat.iter n (body_advance g t h)
+      (body_initial h (latches (classify g t) h)) = st) ->
+    loop_body_semantic g t r h (latches (classify g t) h) st.
+  Proof.
+    intros g t r h st Hgraph Hprepared Htree Hheader [n Hhistory].
+    assert (Hsources : Forall (natural_loop (base g) r h) (latches (classify g t) h)).
+    { apply Forall_forall. intros v Hin.
+      apply (proj1 (latch_exact g t r h v Hgraph Hprepared Htree)) in Hin.
+      destruct Hin as [Hreach [Hedge Hdom]]. now apply loop_natural_latch. }
+    pose proof (loop_body_semantic_iteration g t r h (latches (classify g t) h)
+      Hprepared Htree (selected_header g t r h Hgraph Hprepared Htree Hheader)
+      Hsources n) as Hsemantic.
+    change (loop_body_semantic g t r h (latches (classify g t) h)
+      (Nat.iter n (body_advance g t h)
+        (body_initial h (latches (classify g t) h)))) in Hsemantic.
+    now rewrite Hhistory in Hsemantic.
+  Qed.
+
+  Local Lemma body_semantic_observed : forall g t r h st,
+    (exists n, Nat.iter n (body_advance g t h)
+      (body_initial h (latches (classify g t) h)) = st) ->
+    (forall v, natural_loop (base g) r h v -> In v (collected g t h)) ->
+    loop_body_semantic g t r h (latches (classify g t) h) st ->
+    body_invariant g t r h st.
+  Proof.
+    intros g t r h st Hhistory Hcomplete
+      [Hheader [Hunique [Hseen [Hanswer [Hpending [Hsources Hclosed]]]]]].
+    split; [exact Hhistory|]. split; [exact Hunique|]. split; [exact Hheader|].
+    split; [exact Hseen|]. split.
+    - intros v Hin. apply Hcomplete. now apply (proj1 (Forall_forall _ _) Hanswer v).
+    - intros v Hin. apply (loop_member_reachable (base g) r h v).
+      now apply (proj1 (Forall_forall _ _) Hpending v).
+  Qed.
+
   Lemma F7_body_initial : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h (body_initial h (latches (classify g t) h)).
@@ -1121,19 +1795,54 @@ Module LoopsT <: LOOPS_ALL.
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
     body_invariant g t r h next /\ (body_potential g t h next < body_potential g t h st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h st next Hgraph Hprepared Htree Hheader Hinv Hstep.
+    pose proof (proj1 Hinv) as Hhistory.
+    pose proof (body_history_semantic g t r h st Hgraph Hprepared Htree Hheader Hhistory)
+      as Hsemantic.
+    pose proof (loop_body_step_semantic g t r h (latches (classify g t) h) st
+      Hprepared Htree Hsemantic) as Hnext.
+    change (match body_step g t h st with
+      | inl after => loop_body_semantic g t r h (latches (classify g t) h) after
+      | inr result => loop_body_result g r h (latches (classify g t) h) result
+      end) in Hnext.
+    rewrite Hstep in Hnext.
+    destruct (collected_exact g t r h Hgraph Hprepared Htree Hheader)
+      as [Hunique [Hlisted Hexact]].
+    split.
+    - apply body_semantic_observed; [|intros v Hv; now apply Hexact|exact Hnext].
+      destruct Hhistory as [n Hhistory]. exists (S n). rewrite Nat.iter_succ, Hhistory.
+      unfold body_advance. now rewrite Hstep.
+    - assert (Hpending : incl (loop_body_pending st) (collected g t h)).
+      { intros v Hin. apply Hexact.
+        destruct Hsemantic as [_ [_ [_ [_ [Hpending _]]]]].
+        now apply (proj1 (Forall_forall _ _) Hpending v). }
+      pose proof (loop_body_work_step g t h (collected g t h) st next
+        Hunique Hpending Hstep) as Hprogress.
+      unfold body_potential, body_white. unfold loop_unseen_work in Hprogress. lia.
+  Qed.
+
 
   Lemma F9_body_driver : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     loopN (body_step g t h) (body_fuel g (latches (classify g t) h))
       (body_initial h (latches (classify g t) h)) = inr (collected g t h).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h Hgraph Hprepared Htree Hheader.
+    unfold body_fuel, body_initial, collected, collect, body_step.
+    exact (loop_collect_driver g t r h _ Hgraph Hprepared Htree).
+  Qed.
+
 
   Lemma F10_body_exact : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     NoDup (collected g t h) /\ incl (collected g t h) (nodes g) /\
       forall v, In v (collected g t h) <-> natural_loop (base g) r h v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h Hgraph Hprepared Htree Hheader.
+    now apply (collected_exact g t r h).
+  Qed.
+
 
   Lemma F11_laminar : forall g r h outer v,
     natural_loop g r h v -> natural_loop g r outer v -> h <> outer ->
