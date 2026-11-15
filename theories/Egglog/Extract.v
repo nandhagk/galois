@@ -5197,6 +5197,194 @@ Module SearchResources (V : VALUE) (C : COST V) (Q : PQ).
   Qed.
 End SearchResources.
 
+(** Local search clocks and resource credits use only the public timed dependencies. *)
+Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
+  Include SearchCode V C Q.
+  TimeFun search_scan.
+  TimeFun search_park.
+  TimeFun search_offer.
+  TimeFun search_resume.
+  TimeFun search_resume_list.
+  TimeFun search_start.
+  TimeFun search_initial.
+  TimeFun search_finish.
+  TimeFun search_step.
+  TimeFun best_rows.
+  Module Facts := SearchFacts V C Q.
+  Module Resources := SearchResources V C Q.
+
+  (** A scan budget covers one cell observation and the recursive-call step. *)
+  Definition search_cell_bound (costs : ptrie N) (budget : N) (todo : list (cell V.t)) :=
+    forall item, In item todo ->
+      (match item with
+       | Id i => 1 + T_trie_get i costs
+       | Val v => 1 + C.T_val_cost v
+       end <= budget)%N.
+
+  Lemma search_cell_bound_tail : forall costs budget item todo,
+    search_cell_bound costs budget (item :: todo) -> search_cell_bound costs budget todo.
+  Proof.
+    intros costs budget item todo Hbound other Hin. apply Hbound. now right.
+  Qed.
+
+  (** A suspended scan charges only consumed cells and one unsuccessful lookup. *)
+  Lemma T_search_scan_wait : forall todo costs acc child rest values budget,
+    search_cell_bound costs budget todo ->
+    search_scan costs acc todo = inl (child, (rest, values)) ->
+    (T_search_scan costs acc todo + budget * N.of_nat (length rest) <=
+      budget * N.of_nat (length todo + 1))%N.
+  Proof.
+    induction todo as [|[i|v] todo IH]; intros costs acc child rest values budget Hbound Hscan.
+    - discriminate.
+    - pose proof (Hbound (Id i) (or_introl eq_refl)) as Hhead.
+      pose proof (search_cell_bound_tail _ _ _ _ Hbound) as Htail.
+      cbn [search_scan] in Hscan.
+      destruct (trie_get i costs) as [n|] eqn:Hget.
+      + specialize (IH costs (n :: acc) child rest values budget Htail Hscan).
+        time_unfold @T_search_scan. time_simpl. time_cbn. rewrite Hget.
+        cbn [length] in *. rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+      + injection Hscan as <- <- <-.
+        time_unfold @T_search_scan. time_simpl. time_cbn. rewrite Hget.
+        cbn [length] in *. rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+    - pose proof (Hbound (Val v) (or_introl eq_refl)) as Hhead.
+      pose proof (search_cell_bound_tail _ _ _ _ Hbound) as Htail.
+      cbn [search_scan] in Hscan.
+      specialize (IH costs (C.val_cost v :: acc) child rest values budget Htail Hscan).
+      time_unfold @T_search_scan. time_simpl. time_cbn.
+      cbn [length] in *. rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** A completed scan reverses its accumulated full key exactly once. *)
+  Lemma T_search_scan_ready : forall todo costs acc values budget,
+    search_cell_bound costs budget todo -> search_scan costs acc todo = inr values ->
+    (T_search_scan costs acc todo <= budget * N.of_nat (length todo) +
+      N.of_nat (length acc + length todo) + 2)%N.
+  Proof.
+    induction todo as [|[i|v] todo IH]; intros costs acc values budget Hbound Hscan.
+    - pose proof (Argent.Std.List.T_rev_append_le acc ([] : list N)) as Hreverse.
+      time_unfold @T_search_scan. time_simpl. time_cbn.
+      cbn [length]. rewrite Nat.add_0_r. nia.
+    - pose proof (Hbound (Id i) (or_introl eq_refl)) as Hhead.
+      pose proof (search_cell_bound_tail _ _ _ _ Hbound) as Htail.
+      cbn [search_scan] in Hscan.
+      destruct (trie_get i costs) as [n|] eqn:Hget; [|discriminate].
+      specialize (IH costs (n :: acc) values budget Htail Hscan).
+      time_unfold @T_search_scan. time_simpl. time_cbn. rewrite Hget.
+      cbn [length] in *. rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+    - pose proof (Hbound (Val v) (or_introl eq_refl)) as Hhead.
+      pose proof (search_cell_bound_tail _ _ _ _ Hbound) as Htail.
+      cbn [search_scan] in Hscan.
+      specialize (IH costs (C.val_cost v :: acc) values budget Htail Hscan).
+      time_unfold @T_search_scan. time_simpl. time_cbn.
+      cbn [length] in *. rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** A detached frame consumes its newly final head before it can be parked again. *)
+  Lemma search_scan_progress : forall costs acc i todo n child rest values,
+    trie_get i costs = Some n ->
+    search_scan costs acc (Id i :: todo) = inl (child, (rest, values)) ->
+    length rest < length (Id i :: todo).
+  Proof.
+    intros costs acc i todo n child rest values Hget Hscan.
+    cbn [search_scan] in Hscan. rewrite Hget in Hscan.
+    destruct (Facts.search_scan_wait _ _ _ _ _ _ Hscan)
+      as [pre [tail [Htodo [Hrest Hfacts]]]].
+    rewrite Htodo, Hrest. cbn [length]. rewrite length_app. cbn [length]. lia.
+  Qed.
+
+
+  (** Source cell widths give a uniform price for each scan observation. *)
+  Lemma search_cell_bound_width : forall costs w todo,
+    (forall i, In (Id i) todo -> Pos.size_nat i <= w) ->
+    (forall v, In (Val v) todo -> V.bits v <= w) ->
+    search_cell_bound costs ((C.c_cost + 3) * N.of_nat (w + 1))%N todo.
+  Proof.
+    intros costs w todo Hids Hvalues [i|v] Hin.
+    - specialize (Hids i Hin). rewrite PTrieT.trie_get_clock.
+      rewrite Nat2N.inj_add. nia.
+    - specialize (Hvalues v Hin). pose proof (C.T_val_cost_le v) as Hcost.
+      rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** A constructor cost bounds the bit width of each argument because it dominates that cost. *)
+  Lemma T_search_fn_cost_le : forall f values w,
+    N.size_nat (C.fn_cost f values) <= w ->
+    (C.T_fn_cost f values <= C.c_cost * N.of_nat (length values + 1) *
+      N.of_nat (w + 1))%N.
+  Proof.
+    intros f values w Hwidth.
+    pose proof (dag_cost_width_le values (C.fn_cost f values)
+      (C.fn_cost_super f values)) as Hchildren.
+    eapply N.le_trans; [apply C.T_fn_cost_le|]. apply N.mul_le_mono_l. lia.
+  Qed.
+
+  Lemma search_frame_length : forall rs costs frame,
+    Facts.search_frame_valid rs costs frame ->
+    length (frame_costs frame) + length (frame_rest frame) =
+      length (snd (fst (frame_row frame))).
+  Proof.
+    intros rs costs frame [Hrow [pre [Hkey [Hknown Hcosts]]]].
+    rewrite Hcosts, Hkey, length_rev, length_app, dag_cost_cells_map, length_map.
+    reflexivity.
+  Qed.
+
+  (** Parking touches one class-keyed binding and copies the fixed state fields. *)
+  Lemma T_search_park_le : forall DB i frame (s : extraction_state V.t DB Q.t) w,
+    Pos.size_nat i <= w ->
+    (T_search_park i frame s <=
+      64 * (PTrieT.c_trie + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros DB i frame s w Hwidth.
+    pose proof (PTrieT.T_set_le _ i
+      (frame :: match trie_get i (search_waiters s) with
+        | Some frames => frames | None => [] end) (search_waiters s)) as Hset.
+    change (PTrieCode.T_set i
+      (frame :: match trie_get i (search_waiters s) with
+        | Some frames => frames | None => [] end) (search_waiters s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
+    time_unfold @T_search_park. time_simpl. time_cbn.
+    time_unfold @T_search_restate. time_simpl. time_cbn.
+    rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma T_search_ltb_le : forall n old,
+    (N.T_ltb n old <= N.of_nat (N.size_nat n) + 3)%N.
+  Proof.
+    intros n old. pose proof (N.T_compare_le n old) as Hcompare.
+    time_unfold N.T_ltb. time_simpl. time_cbn. lia.
+  Qed.
+
+  (** A candidate offer pays at most one amortized heap insertion. *)
+  Lemma T_search_offer_amort : forall DB P w i n row (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.fits w (search_queue s) ->
+    Q.pending (search_queue s) < P -> Pos.size_nat i + N.size_nat n <= w ->
+    (T_search_offer i n row s + Q.phi P w (search_queue (search_offer i n row s)) <=
+      64 * (PTrieT.c_trie + 1) * N.of_nat (w + 1) +
+      Q.c_pq * N.of_nat (Q.unit_pq P w) + Q.phi P w (search_queue s))%N.
+  Proof.
+    intros DB P w i n row s Hwf Hfits Hpending Hwidth.
+    pose proof (Q.T_push_amort P w n i (search_queue s) Hwf Hfits Hpending Hwidth)
+      as Hpush.
+    pose proof (PTrieT.T_set_le _ i (n, row) (search_candidates s)) as Hset.
+    change (PTrieCode.T_set i (n, row) (search_candidates s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
+    unfold search_offer.
+    destruct (trie_get i (search_candidates s)) as [[old choice]|] eqn:Hget.
+    - pose proof (T_search_ltb_le n old) as Hcompare.
+      destruct (N.ltb n old) eqn:Hbetter.
+      + time_unfold @T_search_offer. time_simpl. time_cbn. rewrite Hget, Hbetter.
+        time_unfold @T_search_restate. time_simpl. time_cbn.
+        cbn [search_restate search_queue]. rewrite PTrieT.trie_get_clock.
+        rewrite !Nat2N.inj_add in *. nia.
+      + time_unfold @T_search_offer. time_simpl. time_cbn. rewrite Hget, Hbetter.
+        rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+    - time_unfold @T_search_offer. time_simpl. time_cbn. rewrite Hget.
+      time_unfold @T_search_restate. time_simpl. time_cbn.
+      cbn [search_restate search_queue]. rewrite PTrieT.trie_get_clock.
+      rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+End SearchResourceT.
+
 (** A finite bound on distinct finalisations supplies a terminating unary loop. *)
 Lemma extraction_loop_complete {St Out} (step : St -> St + Out)
     (Inv : St -> Prop) (count : St -> nat) (bound : nat) :
