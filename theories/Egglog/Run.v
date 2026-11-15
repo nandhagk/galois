@@ -11194,6 +11194,93 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     rewrite F32_round_jobs in Hchanged |- *. now apply Hraised.
   Qed.
 
+  (** A finite driver trace always starts with its supplied state. *)
+  Lemma run_driver_trace_head : forall A B (step : A -> A + B) fuel start,
+    nth_error (driver_trace step fuel start) 0 = Some start.
+  Proof.
+    intros A B step [|fuel] start; reflexivity.
+  Qed.
+
+  (** The trace contains at most the initial state and one state per continuing step. *)
+  Lemma run_driver_trace_length : forall A B (step : A -> A + B) fuel start,
+    length (driver_trace step fuel start) <= fuel + 1.
+  Proof.
+    intros A B step fuel. induction fuel as [|fuel IH]; intro start.
+    - cbn [driver_trace length]. lia.
+    - cbn [driver_trace]. destruct (step start) as [next|result]; cbn [length].
+      + specialize (IH next). lia.
+      + lia.
+  Qed.
+
+  (** Adjacent trace entries are exactly one continuing driver transition apart. *)
+  Lemma run_driver_trace_chain : forall A B (step : A -> A + B) fuel start n s s',
+    nth_error (driver_trace step fuel start) n = Some s ->
+    nth_error (driver_trace step fuel start) (S n) = Some s' -> step s = inl s'.
+  Proof.
+    intros A B step fuel. induction fuel as [|fuel IH]; intros start n s s' Hfirst Hsecond.
+    - destruct n; cbn [driver_trace nth_error] in Hsecond; discriminate.
+    - cbn [driver_trace] in Hfirst, Hsecond. destruct n as [|n].
+      + cbn [nth_error] in Hfirst. injection Hfirst as <-.
+        destruct (step start) as [next|result] eqn:Hstep.
+        * change (nth_error (driver_trace step fuel next) 0 = Some s') in Hsecond.
+          rewrite run_driver_trace_head in Hsecond. injection Hsecond as <-. reflexivity.
+        * discriminate Hsecond.
+      + destruct (step start) as [next|result] eqn:Hstep.
+        * change (nth_error (driver_trace step fuel next) n = Some s) in Hfirst.
+          change (nth_error (driver_trace step fuel next) (S n) = Some s') in Hsecond.
+          eapply IH; eassumption.
+        * destruct n; discriminate Hfirst.
+  Qed.
+
+  (** A state invariant preserved by continuing steps holds at every traced state. *)
+  Lemma run_driver_trace_invariant : forall A B (step : A -> A + B) (P : A -> Prop),
+    (forall state next, P state -> step state = inl next -> P next) ->
+    forall fuel start, P start -> Forall P (driver_trace step fuel start).
+  Proof.
+    intros A B step P Hstep fuel. induction fuel as [|fuel IH]; intros start Hstart.
+    - cbn [driver_trace]. constructor; [exact Hstart|constructor].
+    - cbn [driver_trace]. constructor; [exact Hstart|].
+      destruct (step start) as [next|result] eqn:Hnext; [|constructor].
+      apply IH. eapply Hstep; eassumption.
+  Qed.
+
+  Lemma trace_spec : forall p cp lim db,
+    trace p cp lim db =
+      driver_trace (driver p cp lim) (N.to_nat (max_iter lim)) (false, db).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** A preserved driver invariant holds throughout the public run trace. *)
+  Lemma run_trace_invariant : forall p cp lim db (P : bool * D.t -> Prop),
+    P (false, db) ->
+    (forall state next, P state -> driver p cp lim state = inl next -> P next) ->
+    Forall P (trace p cp lim db).
+  Proof.
+    intros p cp lim db P Hstart Hstep. rewrite trace_spec.
+    eapply run_driver_trace_invariant; eassumption.
+  Qed.
+
+  Lemma F19_trace_chain : forall p cp lim db,
+    hd_error (trace p cp lim db) = Some (false, db) /\
+    length (trace p cp lim db) <= N.to_nat (max_iter lim) + 1 /\
+    forall n s s', nth_error (trace p cp lim db) n = Some s ->
+      nth_error (trace p cp lim db) (S n) = Some s' -> driver p cp lim s = inl s'.
+  Proof.
+    intros p cp lim db. rewrite trace_spec. split.
+    - change (nth_error (driver_trace (driver p cp lim)
+        (N.to_nat (max_iter lim)) (false, db)) 0 = Some (false, db)).
+      apply run_driver_trace_head.
+    - split; [apply run_driver_trace_length|].
+      intros n s s' Hfirst Hsecond. eapply run_driver_trace_chain; eassumption.
+  Qed.
+
+  Lemma F18_round_idle : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.canonical (round p cp nv db) /\ D.pending (round p cp nv db) = 0.
+  Proof.
+    exact run_round_canonical.
+  Qed.
+
   Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.wf (snd (run p cp lim db)) /\ D.canonical (snd (run p cp lim db)) /\
     loaded p cp (snd (run p cp lim db)).
@@ -12168,26 +12255,43 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma F16_unit_pos : forall db, 1 <= D.unit db.
   Proof. Admitted. (* STUB *)
 
+  (** Applying saved typed jobs never lowers the database's spending unit. *)
+  Lemma run_apply_jobs_unit : forall p cp original js db,
+    plans_ok p cp -> Forall (run_job_facts p original) js ->
+    D.wf db -> loaded p cp db -> (D.ids original <= D.ids db)%N ->
+    D.unit db <= D.unit (apply_jobs p js db).
+  Proof.
+    intros p cp original js. induction js as [|[c b] rest IH]; intros db
+      Hchecked Hjobs Hwf Hloaded Hids; [cbn [apply_jobs]; lia|].
+    inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+    destruct Hjob as [Hrule [Henv [Hallocated Hmatch]]].
+    destruct (run_job_environment p original db c b Hids Henv Hallocated)
+      as [Htyped Hallocated_now].
+    destruct (F3_apply_wf p cp (job_rule p c)
+      (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
+      Htyped Hallocated_now) as [Hnext [Hloadnext [Hidnext Hunit]]].
+    cbn [apply_jobs]. eapply Nat.le_trans; [exact Hunit|].
+    eapply IH; [exact Hchecked|exact Hrest|exact Hnext|exact Hloadnext|].
+    eapply N.le_trans; eassumption.
+  Qed.
+
   Lemma F17_round_mono : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.wf (round p cp nv db) /\ loaded p cp (round p cp nv db) /\
     (D.ids db <= D.ids (round p cp nv db))%N /\ D.unit db <= D.unit (round p cp nv db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded.
+    destruct (run_round_state p cp nv db Hchecked Hwf Hloaded)
+      as [Hnext [Hloadnext Hids]].
+    split; [exact Hnext|]. split; [exact Hloadnext|]. split; [exact Hids|].
+    pose proof (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) as Hjobs.
+    pose proof (run_apply_jobs_unit p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
+      Hloaded (N.le_refl _)) as Hunit.
+    destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
+      Hloaded (N.le_refl _)) as [Happlied Hstate].
+    rewrite F32_round_jobs. eapply Nat.le_trans; [exact Hunit|].
+    apply D.unit_mono_rebuild. exact Happlied.
+  Qed.
 
-  Lemma F18_round_idle : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    D.canonical (round p cp nv db) /\ D.pending (round p cp nv db) = 0.
-  Proof. Admitted. (* STUB *)
-
-  Lemma trace_spec : forall p cp lim db,
-    trace p cp lim db =
-      driver_trace (driver p cp lim) (N.to_nat (max_iter lim)) (false, db).
-  Proof. Admitted. (* STUB *)
-
-  Lemma F19_trace_chain : forall p cp lim db,
-    hd_error (trace p cp lim db) = Some (false, db) /\
-    length (trace p cp lim db) <= N.to_nat (max_iter lim) + 1 /\
-    forall n s s', nth_error (trace p cp lim db) n = Some s ->
-      nth_error (trace p cp lim db) (S n) = Some s' -> driver p cp lim s = inl s'.
-  Proof. Admitted. (* STUB *)
 
   Lemma F20_round_work : forall p cp nv db,
     round_work p cp nv db =
