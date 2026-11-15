@@ -1456,10 +1456,190 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
   Lemma plan_checked : forall p, program_ok p -> plans_ok p (plan p).
   Proof. Admitted. (* STUB *)
 
+  (** The unary slot-position code preserves its natural argument. *)
+  Lemma planner_nat_code_inj : forall n m, nat_code n = nat_code m -> n = m.
+  Proof.
+    induction n as [| n IH]; intros [| m] Hcode; cbn [nat_code] in Hcode;
+      try discriminate Hcode.
+    - reflexivity.
+    - injection Hcode as Htail. f_equal. now apply IH.
+  Qed.
+
+  (** The code of a permutation preserves all its positions. *)
+  Lemma planner_perm_code_inj : forall xs ys,
+    list_code nat_code xs = list_code nat_code ys -> xs = ys.
+  Proof.
+    induction xs as [| x xs IH]; intros [| y ys] Hcode; cbn [list_code] in Hcode.
+    - reflexivity.
+    - destruct (nat_code y); cbn [glue] in Hcode; discriminate Hcode.
+    - destruct (nat_code x); cbn [glue] in Hcode; discriminate Hcode.
+    - destruct (glue_inj _ _ _ _ Hcode) as [Hhead Htail].
+      f_equal.
+      + now apply planner_nat_code_inj.
+      + now apply IH.
+  Qed.
+
+  (** Equal slot keys identify the function and permutation. *)
+  Lemma planner_slot_code_inj : forall f perm g other,
+    slot_code f perm = slot_code g other -> f = g /\ perm = other.
+  Proof.
+    intros f perm g other Hcode.
+    unfold slot_code in Hcode.
+    destruct (glue_inj _ _ _ _ Hcode) as [Hname Hperm].
+    split; [exact Hname | now apply planner_perm_code_inj].
+  Qed.
+
+  Definition planner_rows (st : slot_state) : list (positive * list nat) :=
+    match st with
+    | SlotState _ _ rows => rows
+    end.
+
+  (** Every registered slot key witnesses its exact row in the reversed slot list. *)
+  Definition planner_slots_present (st : slot_state) : Prop :=
+    match st with
+    | SlotState table _ rows =>
+        forall f perm s, trie_get (slot_code f perm) table = Some s -> In (f, perm) rows
+    end.
+
+  (** Registering a slot retains every previously registered row. *)
+  Lemma add_slot_rows : forall f perm st,
+    incl (planner_rows st) (planner_rows (snd (add_slot f perm st))).
+  Proof.
+    intros f perm [table next rows] x Hin.
+    cbn [add_slot planner_rows].
+    destruct (trie_get (slot_code f perm) table); cbn; auto.
+  Qed.
+
+  (** Registering a slot retains the table invariant and makes that slot present. *)
+  Lemma add_slot_present : forall f perm st, planner_slots_present st ->
+    planner_slots_present (snd (add_slot f perm st)) /\
+    In (f, perm) (planner_rows (snd (add_slot f perm st))).
+  Proof.
+    intros f perm [table next rows] Hpresent.
+    cbn [add_slot].
+    destruct (trie_get (slot_code f perm) table) as [s |] eqn:Hget.
+    - split; [exact Hpresent | now apply (Hpresent f perm s)].
+    - split; [| now left].
+      intros g other s Hlookup.
+      destruct (Pos.eq_dec (slot_code g other) (slot_code f perm)) as [Hsame | Hother].
+      + destruct (planner_slot_code_inj _ _ _ _ Hsame) as [-> ->]. now left.
+      + rewrite PTrie.get_set_other in Hlookup by exact Hother.
+        right. now apply (Hpresent g other s).
+  Qed.
+
+  (** Full-slot registration retains the slots it receives. *)
+  Lemma full_slots_rows : forall ds seen st,
+    incl (planner_rows st) (planner_rows (full_slots ds seen st)).
+  Proof.
+    induction ds as [| [f ss out] rest IH]; intros seen st x Hin.
+    - exact Hin.
+    - cbn [full_slots].
+      destruct (trie_get f seen) as [u |].
+      + now apply IH.
+      + destruct out; apply IH; try exact Hin.
+        now apply add_slot_rows.
+  Qed.
+
+  (** An unseen identifier declaration gets its full slot from its first occurrence. *)
+  Lemma full_slots_complete : forall ds seen st f ss,
+    planner_slots_present st -> trie_get f seen = None ->
+    lookup_kind ds f = Some OId -> lookup_sorts ds f = Some ss ->
+    In (f, count_from 0 (S (length ss))) (planner_rows (full_slots ds seen st)).
+  Proof.
+    induction ds as [| [g sorts o] rest IH]; intros seen st f ss
+      Hpresent Hunseen Hkind Hsorts; cbn [lookup_kind lookup_sorts name arg_sorts Syntax.out]
+      in Hkind, Hsorts.
+    - discriminate Hkind.
+    - destruct (Pos.eqb_spec g f) as [Hname | Hname].
+      + subst g. injection Hkind as ->. injection Hsorts as ->.
+        cbn [full_slots]. rewrite Hunseen.
+        apply full_slots_rows.
+        exact (proj2 (add_slot_present _ _ _ Hpresent)).
+      + cbn [full_slots].
+        destruct (trie_get g seen) as [u |] eqn:Hseen.
+        * eapply IH; eassumption.
+        * assert (Hunseen' : trie_get f (PTrieCode.set g tt seen) = None).
+          { rewrite PTrie.get_set_other by congruence. exact Hunseen. }
+          destruct o; eapply IH; try eassumption.
+          exact (proj1 (add_slot_present _ _ _ Hpresent)).
+  Qed.
+
+  (** Planning query atoms only adds slots. *)
+  Lemma plan_atoms_rows : forall (base : nat) (q : list (atom V.t)) ai lay st outs post
+      lay' st' outs' post',
+    plan_atoms base q ai lay st outs post = (lay', st', outs', post') ->
+    incl (planner_rows st) (planner_rows st').
+  Proof.
+    intros base q. induction q as [| a rest IH]; intros ai lay st outs post
+      lay' st' outs' post' Hplan x Hin.
+    - cbn [plan_atoms] in Hplan. inversion Hplan; subst. exact Hin.
+    - destruct a as [f args res | f args res]; cbn [plan_atoms] in Hplan.
+      + destruct (place_terms base (args ++ option_list res) 0 Empty lay [] [] false)
+          as [[[next pairs] lits] copied] eqn:Hplaced.
+        destruct (add_slot f (map snd (sort_pairs pairs)) st)
+          as [slot nextst] eqn:Hslot.
+        eapply IH; [exact Hplan |].
+        pose proof (add_slot_rows f (map snd (sort_pairs pairs)) st x Hin) as Hkeep.
+        rewrite Hslot in Hkeep. exact Hkeep.
+      + eapply IH; eassumption.
+  Qed.
+
+  (** Planning one rule retains the slots already registered. *)
+  Lemma plan_rule_rows : forall i (r : rule V.t) st st' c cs,
+    plan_rule i r st = (st', c, cs) -> incl (planner_rows st) (planner_rows st').
+  Proof.
+    intros i [q acts] st st' c cs Hplan.
+    cbn [plan_rule] in Hplan.
+    destruct (plan_atoms (query_copies q 0) q 0
+        (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] []) st [] [])
+      as [[[lay nextst] outs] post] eqn:Hatoms.
+    destruct lay as [names nc nm fresh cn mn].
+    inversion Hplan; subst.
+    eapply plan_atoms_rows. exact Hatoms.
+  Qed.
+
+  (** Planning later rules retains the full slots from the declarations. *)
+  Lemma plan_rules_rows : forall (rs : list (rule V.t)) i st naive semi st' naive' semi',
+    plan_rules rs i st naive semi = (st', naive', semi') ->
+    incl (planner_rows st) (planner_rows st').
+  Proof.
+    induction rs as [| r rest IH]; intros i st naive semi st' naive' semi'
+      Hplan x Hin.
+    - cbn [plan_rules] in Hplan. inversion Hplan; subst. exact Hin.
+    - cbn [plan_rules] in Hplan.
+      destruct (plan_rule i r st) as [[nextst c] cs] eqn:Hrule.
+      eapply IH; [exact Hplan |].
+      eapply plan_rule_rows; eassumption.
+  Qed.
+
+  (** The executable position counter is the standard interval enumeration. *)
+  Lemma count_from_seq : forall len start, count_from start len = seq start len.
+  Proof.
+    induction len as [| len IH]; intro start; cbn [count_from seq].
+    - reflexivity.
+    - now rewrite IH.
+  Qed.
+
   Lemma plan_full_slots : forall p f ss, program_kind p f = Some OId ->
     program_sorts p f = Some ss ->
     In (f, seq 0 (S (length ss))) (Syntax.slots V.t (plan p)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [ds rs] f ss Hkind Hsorts.
+    unfold plan, plan_program.
+    destruct (plan_rules rs 0%N (full_slots ds Empty (SlotState Empty 0%N [])) [] [])
+      as [[[table next rows] naive] semi] eqn:Hrules.
+    cbn [Syntax.slots]. rewrite rev_append_rev, app_nil_r.
+    apply (proj1 (in_rev rows (f, seq 0 (S (length ss))))).
+    pose proof (plan_rules_rows _ _ _ _ _ _ _ _ Hrules) as Hkeep.
+    apply Hkeep.
+    rewrite <- count_from_seq.
+    eapply full_slots_complete.
+    - intros g perm s Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+    - apply PTrie.get_empty.
+    - exact Hkind.
+    - exact Hsorts.
+  Qed.
+
 
   Lemma load_spec : forall p cp,
     load p cp = D.init (decls V.t p) (Syntax.slots V.t cp).
