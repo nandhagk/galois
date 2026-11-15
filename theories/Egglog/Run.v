@@ -9955,10 +9955,315 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     intros p cp nv db. unfold round. rewrite apply_all_jobs. reflexivity.
   Qed.
 
-  Lemma F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
-    closed V.prim V.merge p (D.view db).
-  Proof. Admitted. (* STUB *)
+  (** Two views agree when they have the same rows, identifier equalities and kinds. *)
+  Definition run_view_agrees (before after : view (V := V.t)) : Prop :=
+    (forall f k o, row before f k o <-> row after f k o) /\
+    (forall i j, same before i j <-> same after i j) /\
+    (forall f, kind before f = kind after f).
+
+  (** A view agrees with itself. *)
+  Lemma run_view_agrees_refl : forall w, run_view_agrees w w.
+  Proof.
+    intro w. split; [intros f k o; reflexivity|].
+    split; [intros i j; reflexivity|intro f; reflexivity].
+  Qed.
+
+  (** Observable view agreement composes. *)
+  Lemma run_view_agrees_trans : forall before middle after,
+    run_view_agrees before middle -> run_view_agrees middle after ->
+    run_view_agrees before after.
+  Proof.
+    intros before middle after [Hrows1 [Hsame1 Hkind1]] [Hrows2 [Hsame2 Hkind2]].
+    split.
+    - intros f k o. rewrite Hrows1. apply Hrows2.
+    - split; [intros i j; rewrite Hsame1; apply Hsame2|].
+      intro f. rewrite Hkind1. apply Hkind2.
+  Qed.
+
+  (** Observable view agreement is symmetric. *)
+  Lemma run_view_agrees_sym : forall before after,
+    run_view_agrees before after -> run_view_agrees after before.
+  Proof.
+    intros before after [Hrows [Hsame Hkinds]]. split.
+    - intros f k o. symmetry. apply Hrows.
+    - split; [intros i j; symmetry; apply Hsame|]. intro f. symmetry. apply Hkinds.
+  Qed.
+
+  (** Equivalent view observations preserve uniqueness of row identifiers. *)
+  Lemma run_view_agrees_unique : forall before after,
+    run_view_agrees before after -> row_ids_unique before -> row_ids_unique after.
+  Proof.
+    intros before after [Hrows [Hsame Hkind]] Hunique f k o g key output i j
+      Hrow Hother Hi Hj Hij.
+    eapply Hunique; [apply (proj2 (Hrows f k o)); exact Hrow|
+      apply (proj2 (Hrows g key output)); exact Hother|exact Hi|exact Hj|].
+    apply (proj2 (Hsame i j)). exact Hij.
+  Qed.
+
+  (** Canonical row identifiers are unique within each identifier-equality class. *)
+  Lemma run_canonical_unique : forall db, D.wf db -> D.canonical db ->
+    row_ids_unique (D.view db).
+  Proof.
+    intros db Hwf Hcanonical f k o g key output i j Hrow Hother Hi Hj Hij.
+    apply (proj1 (D.same_repr db i j Hwf)) in Hij.
+    rewrite (Hcanonical f k o Hrow i Hi), (Hcanonical g key output Hother j Hj) in Hij.
+    exact Hij.
+  Qed.
+
+  (** Retaining rows retains every concrete query match. *)
+  Lemma run_matches_rows : forall (before after : view (V := V.t)) q s,
+    (forall f k o, row before f k o -> row after f k o) ->
+    matches V.prim before q s -> matches V.prim after q s.
+  Proof.
+    intros before after q s Hrows Hmatches.
+    induction Hmatches as [|a rest Hhead Htail IH]; constructor; [|exact IH].
+    destruct a as [f args res|op args res]; [|exact Hhead].
+    destruct Hhead as [k [o [Hargs [Hresult Hrow]]]]. exists k, o.
+    split; [exact Hargs|]. split; [exact Hresult|now apply Hrows].
+  Qed.
+
+  (** Pointwise environment equality retains every concrete query match. *)
+  Lemma run_matches_env : forall (w : view (V := V.t)) q s t,
+    (forall x, s x = t x) -> matches V.prim w q s -> matches V.prim w q t.
+  Proof.
+    intros w q s t Heq Hmatches. induction Hmatches as [|a rest Hhead Htail IH];
+      constructor; [|exact IH].
+    destruct a as [f args res|op args res].
+    - destruct Hhead as [k [o [Hargs [Hresult Hrow]]]]. exists k, o.
+      split; [eapply run_terms_value_env; eassumption|]. split; [|exact Hrow].
+      destruct res as [term|], o as [c|]; try contradiction; [|exact I].
+      eapply run_term_value_env; eassumption.
+    - destruct Hhead as [k [vs [v [Hargs [Hvalues [Hprim Hresult]]]]]]. exists k, vs, v.
+      split; [eapply run_terms_value_env; eassumption|]. split; [exact Hvalues|].
+      split; [exact Hprim|]. eapply run_term_value_env; eassumption.
+  Qed.
+
+  (** Observable view agreement transports action presence back to the earlier view. *)
+  Lemma run_view_agrees_present : forall before after acts s,
+    run_view_agrees before after -> present V.prim V.merge after s acts ->
+    present V.prim V.merge before s acts.
+  Proof.
+    intros before after acts s [Hrows [Hsame Hkinds]] Hpresent.
+    eapply run_present_transport; [| |exact Hkinds|exact Hpresent].
+    - intros f k o Hrow. apply (proj2 (Hrows f k o)). exact Hrow.
+    - intros i j Hij. apply (proj2 (Hsame i j)). exact Hij.
+  Qed.
+
+  (** Observable view agreement preserves closure under the program's rules. *)
+  Lemma run_view_agrees_closed : forall p before after,
+    run_view_agrees before after -> closed V.prim V.merge p before ->
+    closed V.prim V.merge p after.
+  Proof.
+    intros p before after Hagree Hclosed r s Hin Hmatches.
+    eapply run_view_agrees_present; [exact (run_view_agrees_sym _ _ Hagree)|].
+    apply Hclosed; [exact Hin|]. eapply run_matches_rows; [|exact Hmatches].
+    intros f k o Hrow. apply (proj2 (proj1 Hagree f k o)). exact Hrow.
+  Qed.
+
+  (** A quiet union preserves all observable view components. *)
+  Lemma run_quiet_union_view : forall i j db, D.wf db -> D.changed db = false ->
+    D.changed (D.union i j db) = false -> run_view_agrees (D.view db) (D.view (D.union i j db)).
+  Proof.
+    intros i j db Hwf Hquiet Hnext. split.
+    - intros f k o. now rewrite (D.union_rows i j db Hwf).
+    - split.
+      + intros a b. split.
+        * intro Hab. apply (proj2 (D.union_same i j db a b Hwf)). apply rst_step. now left.
+        * eapply run_quiet_union_same; eassumption.
+      + intro f. now rewrite (proj1 (D.layout_union i j db Hwf)).
+  Qed.
+
+  (** Quiet typed action execution preserves all observable view components. *)
+  Lemma run_apply_go_quiet_view : forall p cp acts g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    D.changed db = false -> D.changed (apply_go acts s locals db) = false ->
+    run_view_agrees (D.view db) (D.view (apply_go acts s locals db)).
+  Proof.
+    intros p cp acts. induction acts as [|a rest IH]; intros g s locals db
+      Hchecked Hwf Hloaded Hacts Henv Hallocated Hquiet Hfinal;
+      [apply run_view_agrees_refl|].
+    destruct a as [x f args|f args res|t u|x op args]; cbn [actions_ok] in Hacts.
+    - destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+      destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+        as [cells [Hcells Hsorts]].
+      pose proof (run_term_cells_allocated db s locals args cells Hallocated Hcells) as Hids.
+      assert (Hkinddb : kind (D.view db) f = Some OId).
+      { rewrite (proj1 Hloaded). exact Hkind. }
+      assert (Hfit : D.slots_fit db f (S (length cells))).
+      { eapply run_slots_fit; [exact Hchecked|exact Hloaded|exact Hsort|exact Hkind|].
+        rewrite <- Hsorts, length_map. cbn. lia. }
+      cbn [apply_go] in Hfinal |- *. rewrite Hcells in Hfinal |- *.
+      destruct (D.make f cells db) as [i next] eqn:Hmake.
+      pose proof (run_apply_go_quiet_start rest s (PTrieCode.set x (Id i) locals) next Hfinal)
+        as Hnextquiet.
+      assert (Hafter : D.changed (snd (D.make f cells db)) = false).
+      { rewrite Hmake. exact Hnextquiet. }
+      destruct (run_quiet_make_reuse db f cells Hwf Hkinddb Hids Hfit Hquiet Hafter)
+        as [ri [rn [j [Hcall [Hsame Hrow]]]]].
+      rewrite Hmake in Hcall. injection Hcall as Heqi Heqn. subst ri rn next.
+      assert (Hnew : D.allocated db i).
+      { pose proof (D.layout_make f cells db Hwf) as Hlayout. rewrite Hmake in Hlayout.
+        destruct Hlayout as [_ [_ [_ [Hnew _]]]]. exact Hnew. }
+      eapply IH; [exact Hchecked|exact Hwf|exact Hloaded|exact Hrest| | |exact Hquiet|exact Hfinal].
+      + apply run_env_sorted_set; [exact Henv|reflexivity].
+      + apply run_env_allocated_set; [exact Hallocated|].
+        intros k Heq. injection Heq as <-. exact Hnew.
+    - destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+      destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+        as [cells [Hcells Hsorts]].
+      destruct (run_result_cell_typed g s locals out res Henv Hresult)
+        as [output [Houtput Houtsort]].
+      assert (Hrow : row_sorted (program_sorts p) (program_kind p) f cells output).
+      { exists out. rewrite Hsorts. repeat split; assumption. }
+      assert (Hids : forall i, In (Id i) (cells ++ option_list output) -> D.allocated db i).
+      { intros i Hin. apply in_app_iff in Hin as [Hin|Hin].
+        - eapply run_term_cells_allocated; eauto.
+        - eapply run_result_cell_allocated; eauto. }
+      pose proof (run_put_allowed p cp db f cells output Hchecked Hloaded Hrow Hids) as Hallowed.
+      destruct (run_put_state p cp f cells output db Hchecked Hwf Hloaded Hrow Hids)
+        as [Hwf' [Hloaded' [Hids' _]]].
+      cbn [apply_go] in Hfinal |- *. rewrite Hcells, Houtput in Hfinal |- *.
+      pose proof (run_apply_go_quiet_start rest s locals (D.put f cells output db) Hfinal)
+        as Hnextquiet.
+      pose proof (proj1 (D.put_quiet f cells output db Hwf Hallowed Hquiet Hnextquiet)) as Hview.
+      assert (Hallocated' : env_allocated (D.put f cells output db) (look s locals)).
+      { eapply run_env_allocated_mono with (db := db);
+          [rewrite Hids'; reflexivity|exact Hallocated]. }
+      pose proof (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated' Hnextquiet Hfinal)
+        as Htail. rewrite Hview in Htail. exact Htail.
+    - destruct Hacts as [Ht [Hu Hrest]].
+      destruct (run_term_cell_typed g s locals t SId Henv Ht)
+        as [[i|v] [Hi Hitype]]; [|discriminate].
+      destruct (run_term_cell_typed g s locals u SId Henv Hu)
+        as [[j|v] [Hj Hjtype]]; [|discriminate].
+      pose proof (run_term_cell_allocated db s locals t i Hallocated Hi) as Hiall.
+      pose proof (run_term_cell_allocated db s locals u j Hallocated Hj) as Hjall.
+      destruct (run_union_state p cp i j db Hwf Hloaded Hiall Hjall)
+        as [Hwf' [Hloaded' [Hids' _]]].
+      cbn [apply_go] in Hfinal |- *. rewrite Hi, Hj in Hfinal |- *.
+      pose proof (run_apply_go_quiet_start rest s locals (D.union i j db) Hfinal) as Hnextquiet.
+      assert (Hallocated' : env_allocated (D.union i j db) (look s locals)).
+      { eapply run_env_allocated_mono with (db := db);
+          [rewrite Hids'; reflexivity|exact Hallocated]. }
+      eapply run_view_agrees_trans.
+      + eapply run_quiet_union_view; eassumption.
+      + exact (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated' Hnextquiet Hfinal).
+    - destruct Hacts as [Hargs Hrest].
+      destruct (run_term_values_typed g s locals args Henv Hargs) as [vs Hvalues].
+      cbn [apply_go] in Hfinal |- *. rewrite Hvalues in Hfinal |- *.
+      destruct (V.prim op vs) as [v|]; [|apply run_view_agrees_refl].
+      eapply IH; [exact Hchecked|exact Hwf|exact Hloaded|exact Hrest| | |exact Hquiet|exact Hfinal].
+      + apply run_env_sorted_set; [exact Henv|reflexivity].
+      + apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate.
+  Qed.
+
+  (** A quiet checked rule application preserves rows, equality and declarations. *)
+  Lemma run_apply_quiet_view : forall p cp r s db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    D.changed db = false -> D.changed (apply (actions V.t r) s db) = false ->
+    run_view_agrees (D.view db) (D.view (apply (actions V.t r) s db)).
+  Proof.
+    intros p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated Hquiet Hfinal.
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
+    unfold apply in *. eapply run_apply_go_quiet_view; try eassumption.
+    - intros x ty Hbound. destruct (Hsorted x ty Hbound) as [c [Hc Hsort]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated; exact Hcell.
+  Qed.
+
+  (** Environments agree on a context when all of its bound variables agree. *)
+  Definition run_context_agrees (g : ctx) (s t : Model.env (V := V.t)) : Prop :=
+    forall x ty, g x = Some ty -> s x = t x.
+
+  (** Context agreement preserves the value of a typed term. *)
+  Lemma run_term_context : forall g s t (a : term V.t) ty c,
+    run_context_agrees g s t -> has g a ty -> term_value s a c -> term_value t a c.
+  Proof.
+    intros g s t [x|v] ty c Hagree Hhas Hvalue; [|exact Hvalue].
+    cbn [has term_value] in *. rewrite <- (Hagree x ty Hhas). exact Hvalue.
+  Qed.
+
+  (** Context agreement preserves the values of typed arguments. *)
+  Lemma run_terms_context : forall g s t (args : list (term V.t)) ss cs,
+    run_context_agrees g s t -> Forall2 (has g) args ss ->
+    terms_value s args cs -> terms_value t args cs.
+  Proof.
+    intros g s t args ss cs Hagree Htyped. revert cs.
+    induction Htyped as [|a ty rest types Hhead Htail IH]; intros cs Hvalues.
+    - inversion Hvalues. constructor.
+    - inversion Hvalues as [|a' c rest' more Hvalue Hmore]; subst a' rest' cs.
+      constructor; [eapply run_term_context; eassumption|now apply IH].
+  Qed.
+
+  (** Context agreement preserves a list of value-typed arguments. *)
+  Lemma run_values_context : forall g s t (args : list (term V.t)) cs,
+    run_context_agrees g s t -> Forall (fun a => has g a SVal) args ->
+    terms_value s args cs -> terms_value t args cs.
+  Proof.
+    intros g s t args cs Hagree Htyped. revert cs.
+    induction Htyped as [|a rest Hhead Htail IH]; intros cs Hvalues.
+    - inversion Hvalues. constructor.
+    - inversion Hvalues as [|a' c rest' more Hvalue Hmore]; subst a' rest' cs.
+      constructor; [eapply run_term_context; eassumption|now apply IH].
+  Qed.
+
+  (** Updating both environments with one cell preserves agreement on the updated context. *)
+  Lemma run_context_update : forall g s t x c ty,
+    run_context_agrees g s t ->
+    run_context_agrees (ctx_set g x ty) (update s x c) (update t x c).
+  Proof.
+    intros g s t x c ty Hagree y other Hbound. unfold ctx_set in Hbound. unfold update.
+    destruct (Pos.eqb x y); [reflexivity|]. eapply Hagree. exact Hbound.
+  Qed.
+
+  (** Presence of typed actions depends only on the context's current bindings. *)
+  Lemma run_present_agrees : forall sorts kinds acts g w source target,
+    @actions_ok V.t sorts kinds g acts -> run_context_agrees g source target ->
+    present V.prim V.merge w source acts -> present V.prim V.merge w target acts.
+  Proof.
+    intros sorts kinds acts. induction acts as [|action rest IH]; intros g w source target
+      Htyped Hagree Hpresent; [exact I|].
+    destruct action as [x f args|f args res|a b|x op args];
+      cbn [actions_ok] in Htyped; cbn [present] in Hpresent |- *.
+    - destruct Htyped as [ss [Hsort [Hkind [Hargs Hrest]]]].
+      destruct Hpresent as [k [i [Hvalues [Hrow Htail]]]]. exists k, i.
+      split; [eapply run_terms_context; eassumption|]. split; [exact Hrow|].
+      eapply IH; [exact Hrest| |exact Htail]. now apply run_context_update.
+    - destruct Htyped as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+      destruct Hpresent as [k [o [Hvalues [Hrow [Hout Htail]]]]]. exists k, o.
+      split; [eapply run_terms_context; eassumption|]. split; [exact Hrow|]. split.
+      + destruct res as [a|]; [|exact I]. destruct Hout as [c [d [Ha [Ho Hle]]]].
+        exists c, d. split; [|split; assumption].
+        destruct out; cbn [has_result out_sort] in Hresult; [contradiction| |];
+          eapply run_term_context; eassumption.
+      + eapply IH; eassumption.
+    - destruct Htyped as [Ha [Hb Hrest]].
+      destruct Hpresent as [c [d [Hc [Hd [Hrel Htail]]]]]. exists c, d.
+      split; [eapply run_term_context; [exact Hagree|exact Ha|exact Hc]|].
+      split; [eapply run_term_context; [exact Hagree|exact Hb|exact Hd]|].
+      split; [exact Hrel|]. eapply IH; eassumption.
+    - destruct Htyped as [Hargs Hrest].
+      destruct Hpresent as [k [vs [Hvalues [Hvals Htail]]]]. exists k, vs.
+      split; [eapply run_values_context; eassumption|]. split; [exact Hvals|].
+      destruct (V.prim op vs) as [v|]; [|exact I].
+      eapply IH; [exact Hrest| |exact Htail]. now apply run_context_update.
+  Qed.
+
+  (** Agreement on a closed query's variables covers its final typing context. *)
+  Lemma run_query_context_agrees : forall sorts kinds (q : list (atom V.t)) g source target,
+    query_ok sorts kinds ctx_empty q g -> agrees source target (flat_map atom_vars q) ->
+    run_context_agrees g source target.
+  Proof.
+    intros sorts kinds q g source target Hquery Hagree x ty Hbound.
+    destruct (run_query_bound_fun sorts kinds q g Hquery x ty Hbound)
+      as [f [args [res [Hfun Hvar]]]].
+    apply Hagree. apply in_flat_map. exists (Fun V.t f args res). split; [exact Hfun|].
+    rewrite run_atom_vars_terms. cbn [atom_terms].
+    apply run_term_vars_member. exact Hvar.
+  Qed.
 
   Lemma F9_round_progress : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> no_ids db -> D.changed db = false ->
@@ -10030,6 +10335,125 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       exists cell. rewrite F30_bind_trie. split; assumption.
     - eapply run_env_allocated_mono; [exact Hids|].
       intros x i Hcell. rewrite F30_bind_trie in Hcell. eapply Hallocated; exact Hcell.
+  Qed.
+
+  (** Every kept binding of a naive plan occurs in the naive job list. *)
+  Lemma run_naive_job_member : forall p cp db c b,
+    In c (naive V.t cp) -> In b (bindings cp c db) ->
+    keep p c (bind_trie c b) = true -> In (c, b) (jobs p cp true db).
+  Proof.
+    intros p cp db c b Hplan Hbinding Hkeep. rewrite F31_jobs.
+    apply in_flat_map. exists c. split; [exact Hplan|].
+    apply in_map. apply filter_In. split; assumption.
+  Qed.
+
+  (** Job facts survive view agreement and an increasing allocation counter. *)
+  Lemma run_job_facts_agrees : forall p before after cb,
+    (D.ids before <= D.ids after)%N -> run_view_agrees (D.view before) (D.view after) ->
+    run_job_facts p before cb -> run_job_facts p after cb.
+  Proof.
+    intros p before after [c b] Hids [Hrows [Hsame Hkinds]]
+      [Hrule [Henv [Hallocated Hmatches]]]. cbn [run_job_facts].
+    split; [exact Hrule|]. split; [exact Henv|]. split.
+    - eapply run_env_allocated_mono; eassumption.
+    - eapply run_matches_rows; [|exact Hmatches].
+      intros f k o Hrow. apply (proj1 (Hrows f k o)). exact Hrow.
+  Qed.
+
+  (** Executing jobs cannot clear a raised change flag. *)
+  Lemma run_apply_jobs_changed : forall p js db, D.changed db = true ->
+    D.changed (apply_jobs p js db) = true.
+  Proof.
+    intros p js. induction js as [|[c b] rest IH]; intros db Hchanged;
+      [exact Hchanged|].
+    cbn [apply_jobs]. apply IH. unfold apply. now apply run_apply_go_changed.
+  Qed.
+
+  (** A quiet completed job list started with a quiet database. *)
+  Lemma run_apply_jobs_quiet_start : forall p js db,
+    D.changed (apply_jobs p js db) = false -> D.changed db = false.
+  Proof.
+    intros p js db Hquiet. destruct (D.changed db) eqn:Hchanged; [|reflexivity].
+    pose proof (run_apply_jobs_changed p js db Hchanged) as Hraised. congruence.
+  Qed.
+
+  (** A quiet job list preserves the view and every scheduled action was already present. *)
+  Lemma run_apply_jobs_quiet : forall p cp js db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> row_ids_unique (D.view db) ->
+    D.changed db = false -> D.changed (apply_jobs p js db) = false ->
+    Forall (run_job_facts p db) js ->
+    run_view_agrees (D.view db) (D.view (apply_jobs p js db)) /\
+    Forall (fun cb => let '(c, b) := cb in
+      present V.prim V.merge (D.view db) (fun x => trie_get x (bind_trie c b))
+        (actions V.t (job_rule p c))) js.
+  Proof.
+    intros p cp js. induction js as [|[c b] rest IH]; intros db Hchecked Hwf Hloaded
+      Hunique Hquiet Hfinal Hjobs.
+    - split; [apply run_view_agrees_refl|constructor].
+    - inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+      destruct Hjob as [Hrule [Henv [Hallocated Hmatches]]].
+      destruct (run_job_environment p db db c b (N.le_refl _) Henv Hallocated)
+        as [Htyped Hactual_allocated].
+      assert (Hactual_matches : matches V.prim (D.view db) (query V.t (job_rule p c))
+          (fun x => trie_get x (bind_trie c b))).
+      { eapply run_matches_env; [|exact Hmatches]. intro x. symmetry. apply F30_bind_trie. }
+      pose (next := apply (actions V.t (job_rule p c))
+        (fun x => trie_get x (bind_trie c b)) db).
+      change (D.changed (apply_jobs p rest next) = false) in Hfinal.
+      pose proof (run_apply_jobs_quiet_start p rest next Hfinal) as Hnextquiet.
+      destruct (run_apply_state p cp (job_rule p c)
+        (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
+        Htyped Hactual_allocated) as [Hnext [Hloadnext [Hidnext Hpending]]].
+      assert (Hview : run_view_agrees (D.view db) (D.view next)).
+      { eapply run_apply_quiet_view; eassumption. }
+      assert (Hunique' : row_ids_unique (D.view next)).
+      { eapply run_view_agrees_unique; eassumption. }
+      assert (Hfacts' : Forall (run_job_facts p next) rest).
+      { eapply Forall_impl; [|exact Hrest]. intros cb Hfact.
+        eapply run_job_facts_agrees; eassumption. }
+      destruct (IH next Hchecked Hnext Hloadnext Hunique' Hnextquiet Hfinal Hfacts')
+        as [Htailview Htail]. split.
+      + change (run_view_agrees (D.view db) (D.view (apply_jobs p rest next))).
+        eapply run_view_agrees_trans; eassumption.
+      + constructor.
+        * eapply F5_apply_quiet_present; eassumption.
+        * eapply Forall_impl; [|exact Htail]. intros [plan binding] Hpresent.
+          eapply run_view_agrees_present; eassumption.
+  Qed.
+
+  (** A quiet naive round has already made every match's actions present. *)
+  Lemma F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
+    closed V.prim V.merge p (D.view db).
+  Proof.
+    intros p cp db Hchecked Hwf Hloaded Hcanonical Hquiet Hroundquiet.
+    assert (Hjobsquiet : D.changed (apply_jobs p (jobs p cp true db) db) = false).
+    { rewrite F32_round_jobs in Hroundquiet.
+      destruct (D.changed (apply_jobs p (jobs p cp true db) db)) eqn:Hchanged;
+        [|reflexivity].
+      pose proof (D.changed_rebuild _ Hchanged) as Hraised. congruence. }
+    pose proof (run_jobs_facts p cp true db Hchecked Hwf Hloaded) as Hfacts.
+    destruct (run_apply_jobs_quiet p cp (jobs p cp true db) db Hchecked Hwf Hloaded
+      (run_canonical_unique db Hwf Hcanonical) Hquiet Hjobsquiet Hfacts) as [_ Hpresent].
+    intros r s Hin Hmatches.
+    destruct (F2_naive_plans_complete p cp db r s Hchecked Hwf Hloaded Hcanonical Hin Hmatches)
+      as [c [b [Hnaive [Hrule [Hbinding [Hkeep Hagree]]]]]].
+    pose proof (run_naive_job_member p cp db c b Hnaive Hbinding Hkeep) as Hjob.
+    apply Forall_forall with (x := (c, b)) in Hpresent; [|exact Hjob].
+    assert (Hplan : In c (all_plans cp)).
+    { unfold all_plans. apply in_or_app. now left. }
+    pose proof (F33_plan_rule p cp c Hchecked Hplan) as Hselected.
+    assert (Heq : job_rule p c = r) by congruence.
+    change (present V.prim V.merge (D.view db) (fun x => trie_get x (bind_trie c b))
+      (actions V.t (job_rule p c))) in Hpresent.
+    rewrite Heq in Hpresent.
+    pose proof (plans_ok_sorted p cp Hchecked) as Hprogram.
+    unfold program_ok in Hprogram.
+    apply Forall_forall with (x := r) in Hprogram; [|exact Hin].
+    destruct Hprogram as [g [Hquery Hacts]].
+    pose proof (run_query_context_agrees _ _ _ _ _ _ Hquery Hagree) as Hcontext.
+    eapply run_present_agrees; [exact Hacts| |exact Hpresent].
+    intros x ty Hbound. rewrite F30_bind_trie. exact (Hcontext x ty Hbound).
   Qed.
 
   (** Applying saved jobs preserves the loaded state and grows the allocation counter. *)
