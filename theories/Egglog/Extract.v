@@ -4839,6 +4839,43 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       + right. exists f, k, i. split; [now apply Rows.rows_sound |exact Heq].
   Qed.
 
+  (** Ghost row enumeration has the same exact stored-row support as the runtime source. *)
+  Lemma ghost_rows_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
+    forall f k i, In (f, k, i) (Rows.rows db) <-> row (D.view db) f k (Some (Id i)).
+  Proof.
+    intros cs db Hwf Hinventory f k i. split.
+    - now apply Rows.rows_sound.
+    - intro Hrow. apply Rows.rows_complete; [exact Hwf|exact Hrow|].
+      eapply inventory_row_slot; eassumption.
+  Qed.
+
+  (** Exact optimal costs do not depend on the ghost and executable row-list orders. *)
+  Lemma cost_width_source : forall cs db, D.wf db -> ctor_inventory cs db ->
+    cost_width db = extraction_rows_width C.fn_cost C.val_cost (best cs db) (Rows.rows db).
+  Proof.
+    intros cs db Hwf Hinventory.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    pose proof (ghost_rows_spec cs db Hwf Hinventory) as Hghost.
+    destruct (best_rows_spec db (Rows.rows db)) as [left_costs [Hleft [Hleft_opt Hleft_all]]].
+    destruct (best_result cs db) as [right_costs [Hright [Hright_opt Hright_all]]].
+    assert (Hsame : forall r, In r (Rows.rows db) <->
+      In r (Enumeration.enumerated_rows cs db)).
+    { intros [[f k] i]. rewrite Hghost, Hrows. reflexivity. }
+    assert (Hagree : forall c,
+      chosen_cost C.val_cost (best_rows db (Rows.rows db)) c =
+      chosen_cost C.val_cost (best cs db) c).
+    { eapply Semantics.search_best_costs_agree; [exact Hsame| | |exact Hleft_all| | |exact Hright_all].
+      - exact (Finals.finalised_attained (Rows.rows db) left_costs
+          (best_rows db (Rows.rows db)) Hleft).
+      - exact (Finals.finalised_optimal (Rows.rows db) left_costs
+          (best_rows db (Rows.rows db)) Hleft Hleft_opt).
+      - exact (Finals.finalised_attained (Enumeration.enumerated_rows cs db) right_costs
+          (best cs db) Hright).
+      - exact (Finals.finalised_optimal (Enumeration.enumerated_rows cs db) right_costs
+          (best cs db) Hright Hright_opt). }
+    unfold cost_width. now apply extraction_rows_width_agrees.
+  Qed.
+
   Lemma cost_width_spec : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (forall f k i, row (D.view db) f k (Some (Id i)) ->
       N.size_nat (C.fn_cost f (map (cost_of (best cs db)) k)) <= cost_width db) /\
@@ -4849,8 +4886,26 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         N.size_nat (C.fn_cost f (map (cost_of (best cs db)) k)) = cost_width db) \/
       (exists f k i v, row (D.view db) f k (Some (Id i)) /\ In (Val v) k /\
         N.size_nat (C.val_cost v) = cost_width db)).
-  Proof. Admitted. (* STUB *)
-
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    rewrite (cost_width_source cs db Hwf Hinventory).
+    pose proof (ghost_rows_spec cs db Hwf Hinventory) as Hrows.
+    split.
+    - intros f k i Hrow. apply extraction_rows_width_constructor with (i := i).
+      now apply (proj2 (Hrows f k i)).
+    - split.
+      + intros f k i v Hrow Hin. eapply extraction_rows_width_literal.
+        * exact (proj2 (Hrows f k i) Hrow).
+        * exact Hin.
+      + destruct (extraction_rows_width_attained V.t C.fn_cost C.val_cost
+          (best cs db) (Rows.rows db)) as [Hzero|[Hconstructor|Hliteral]].
+        * now left.
+        * right. left. destruct Hconstructor as [f [k [i [Hin Hwidth]]]].
+          exists f, k, i. split; [now apply (proj1 (Hrows f k i))|exact Hwidth].
+        * right. right. destruct Hliteral as [f [k [i [v [Hrow [Hin Hwidth]]]]]].
+          exists f, k, i, v. split; [now apply (proj1 (Hrows f k i))|].
+          now split.
+  Qed.
   Lemma T_best_le : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_best cs db <= c_ex *
       N.of_nat (inventory_bits cs + (R db + 1) * (a db + 1) +
