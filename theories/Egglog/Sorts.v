@@ -673,3 +673,225 @@ Proof.
     apply (Hrules r s Hin Hmatches).
   - exact Hmerge.
 Qed.
+
+(** * Pointwise checker reflection *)
+
+(** The empty trie agrees pointwise with the empty context. *)
+Lemma trie_ctx_empty : forall x, trie_get x (@Empty sort) = ctx_empty x.
+Proof.
+  intro x. apply PTrie.get_empty.
+Qed.
+
+(** Trie updates agree pointwise with context updates. *)
+Lemma trie_ctx_set : forall tr g x ty, (forall x, trie_get x tr = g x) ->
+  (forall y, trie_get y (PTrieCode.set x ty tr) = ctx_set g x ty y).
+Proof.
+  intros tr g x ty Hrep y. unfold ctx_set.
+  destruct (Pos.eqb x y) eqn:Hxy.
+  - apply Pos.eqb_eq in Hxy. subst y. apply PTrie.get_set_same.
+  - rewrite PTrie.get_set_other; [apply Hrep|].
+    apply Pos.eqb_neq in Hxy. congruence.
+Qed.
+
+(** The sort comparison decides equality. *)
+Lemma sort_eqb_spec : forall a b, sort_eqb a b = true <-> a = b.
+Proof.
+  intros [] []; cbn [sort_eqb]; split; congruence.
+Qed.
+
+(** The term checker reflects its declarative sort judgment. *)
+Lemma has_b_spec : forall V tr g (t : term V) ty, (forall x, trie_get x tr = g x) ->
+  has_b tr t ty = true <-> has g t ty.
+Proof.
+  intros V.
+  intros tr g [x|v] ty Hrep; cbn [has_b has].
+  - rewrite Hrep. destruct (g x) as [ty'|]; [rewrite sort_eqb_spec|]; split; congruence.
+  - apply sort_eqb_spec.
+Qed.
+
+(** The argument checker reflects the pairwise sort judgment. *)
+Lemma has_list_b_spec : forall V tr g (ts : list (term V)) ss, (forall x, trie_get x tr = g x) ->
+  has_list_b tr ts ss = true <-> Forall2 (has g) ts ss.
+Proof.
+  intros V.
+  intros tr g ts. induction ts as [|t ts IH]; intros [|ty ss] Hrep;
+    cbn [has_list_b]; try (split; [discriminate|intro H; inversion H]).
+  - split; [intro; constructor|intro; reflexivity].
+  - rewrite andb_true_iff, (has_b_spec V tr g t ty Hrep), (IH ss Hrep).
+    split.
+    + intros [Ht Hts]. constructor; assumption.
+    + intro H. inversion H; subst. split; assumption.
+Qed.
+
+(** The primitive-argument checker reflects value sorts. *)
+Lemma has_vals_b_spec : forall V tr g (ts : list (term V)), (forall x, trie_get x tr = g x) ->
+  has_vals_b tr ts = true <-> Forall (fun t => has g t SVal) ts.
+Proof.
+  intros V.
+  intros tr g ts. induction ts as [|t ts IH]; intro Hrep; cbn [has_vals_b].
+  - split; [intro; constructor|intro; reflexivity].
+  - rewrite andb_true_iff, (has_b_spec V tr g t SVal Hrep), (IH Hrep).
+    split.
+    + intros [Ht Hts]. constructor; assumption.
+    + intro H. inversion H; subst. split; assumption.
+Qed.
+
+(** The result checker reflects the declared output sort. *)
+Lemma has_result_b_spec : forall V tr g out (res : option (term V)), (forall x, trie_get x tr = g x) ->
+  has_result_b tr out res = true <-> has_result g out res.
+Proof.
+  intros V.
+  intros tr g out [t|] Hrep; destruct out;
+    cbn [has_result_b has_result out_sort]; try (split; tauto || discriminate).
+  all: apply (has_b_spec V); exact Hrep.
+Qed.
+
+(** A successful term binding constructs an agreeing context. *)
+Lemma bind_b_sound : forall V tr g (t : term V) ty tr', (forall x, trie_get x tr = g x) ->
+  bind_b tr t ty = Some tr' -> exists g', binds g t ty g' /\ (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V.
+  intros tr g [x|v] ty tr' Hrep Hcheck; cbn [bind_b] in Hcheck.
+  - destruct (trie_get x tr) as [ty'|] eqn:Hlookup.
+    + destruct (sort_eqb ty' ty) eqn:Hty; [|discriminate].
+      apply sort_eqb_spec in Hty. subst ty'. inversion Hcheck; subst tr'.
+      exists g. split; [apply binds_old; rewrite <- Hrep; exact Hlookup|exact Hrep].
+    + inversion Hcheck; subst tr'. exists (ctx_set g x ty). split.
+      * apply binds_new. rewrite <- Hrep. exact Hlookup.
+      * apply trie_ctx_set. exact Hrep.
+  - destruct (sort_eqb ty SVal) eqn:Hty; [|discriminate].
+    apply sort_eqb_spec in Hty. subst ty. inversion Hcheck; subst tr'.
+    exists g. split; [constructor|exact Hrep].
+Qed.
+
+(** A declarative term binding is accepted by its agreeing trie. *)
+Lemma bind_b_complete : forall V tr g (t : term V) ty g', (forall x, trie_get x tr = g x) ->
+  binds g t ty g' -> exists tr', bind_b tr t ty = Some tr' /\ (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V.
+  intros tr g t ty g' Hrep Hb. destruct Hb as [x ty Hlookup | x ty Hlookup | v].
+  - exists tr. split; [|exact Hrep]. cbn [bind_b]. rewrite Hrep, Hlookup.
+    rewrite (proj2 (sort_eqb_spec ty ty) eq_refl). reflexivity.
+  - exists (PTrieCode.set x ty tr). split.
+    + cbn [bind_b]. rewrite Hrep, Hlookup. reflexivity.
+    + apply trie_ctx_set. exact Hrep.
+  - exists tr. split; [reflexivity|exact Hrep].
+Qed.
+
+(** Successful argument binding constructs an agreeing context. *)
+Lemma bind_list_b_sound : forall V ts ss tr g tr', (forall x, trie_get x tr = g x) ->
+  @bind_list_b V tr ts ss = Some tr' ->
+  exists g', binds_list g ts ss g' /\ (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V.
+  induction ts as [|t ts IH]; intros [|ty ss] tr g tr' Hrep Hcheck;
+    cbn [bind_list_b] in Hcheck; try discriminate.
+  - inversion Hcheck; subst tr'. exists g. split; [constructor|exact Hrep].
+  - destruct (bind_b tr t ty) as [tr1|] eqn:Hhead; [|discriminate].
+    destruct (bind_b_sound V tr g t ty tr1 Hrep Hhead) as [g1 [Hb Hrep1]].
+    destruct (IH ss tr1 g1 tr' Hrep1 Hcheck) as [g' [Hbs Hrep']].
+    exists g'. split; [econstructor; eauto|exact Hrep'].
+Qed.
+
+(** Declarative argument binding is accepted by an agreeing trie. *)
+Lemma bind_list_b_complete : forall V tr g ts ss g', (forall x, trie_get x tr = g x) ->
+  @binds_list V g ts ss g' ->
+  exists tr', bind_list_b tr ts ss = Some tr' /\ (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V.
+  intros tr g ts ss g' Hrep Hb. revert tr Hrep.
+  induction Hb as [g | g g1 g2 t ts ty ss Hhead Htail IH]; intros tr Hrep.
+  - exists tr. split; [reflexivity|exact Hrep].
+  - destruct (bind_b_complete V tr g t ty g1 Hrep Hhead) as [tr1 [Hcheck1 Hrep1]].
+    destruct (IH tr1 Hrep1) as [tr2 [Hcheck2 Hrep2]].
+    exists tr2. split; [cbn [bind_list_b]; rewrite Hcheck1; exact Hcheck2|exact Hrep2].
+Qed.
+
+(** Successful result binding constructs an agreeing context. *)
+Lemma bind_result_b_sound : forall V tr g out res tr', (forall x, trie_get x tr = g x) ->
+  @bind_result_b V tr out res = Some tr' ->
+  exists g', binds_result g out res g' /\ (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V.
+  intros tr g out [t|] tr' Hrep Hcheck; destruct out;
+    cbn [bind_result_b binds_result out_sort] in *; try discriminate.
+  - eapply (bind_b_sound V); eauto.
+  - eapply (bind_b_sound V); eauto.
+  - inversion Hcheck; subst tr'. exists g. split; [reflexivity|exact Hrep].
+Qed.
+
+(** Declarative result binding is accepted by an agreeing trie. *)
+Lemma bind_result_b_complete : forall V tr g out res g', (forall x, trie_get x tr = g x) ->
+  @binds_result V g out res g' ->
+  exists tr', bind_result_b tr out res = Some tr' /\ (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V.
+  intros tr g out [t|] g' Hrep Hb; destruct out;
+    cbn [bind_result_b binds_result out_sort] in *; try contradiction.
+  - eapply (bind_b_complete V); eauto.
+  - eapply (bind_b_complete V); eauto.
+  - subst g'. exists tr. split; [reflexivity|exact Hrep].
+Qed.
+
+(** The declaration trie preserves the first declaration of every function name. *)
+Lemma decl_table_lookup : forall ds f ss out,
+  trie_get f (decl_table ds) = Some (ss, out) <->
+  lookup_sorts ds f = Some ss /\ lookup_kind ds f = Some out.
+Proof.
+  induction ds as [|d ds IH]; intros f ss out; cbn [decl_table lookup_sorts lookup_kind].
+  - rewrite PTrie.get_empty. split; [discriminate|intros [H _]; discriminate].
+  - destruct (Pos.eqb (name d) f) eqn:Hname.
+    + apply Pos.eqb_eq in Hname. subst f. rewrite PTrie.get_set_same.
+      split; [intro H; inversion H; subst; split; reflexivity|intros [Hss Hout]; congruence].
+    + rewrite PTrie.get_set_other.
+      * apply IH.
+      * apply Pos.eqb_neq in Hname. congruence.
+Qed.
+
+(** Successful query binding constructs a declarative context agreeing with the final trie. *)
+Lemma bind_query_b_sound : forall V ds q tr g tr', (forall x, trie_get x tr = g x) ->
+  @bind_query_b V (decl_table ds) tr q = Some tr' ->
+  exists g', query_ok (lookup_sorts ds) (lookup_kind ds) g q g' /\
+    (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V ds. induction q as [|a q IH]; intros tr g tr' Hrep Hcheck;
+    cbn [bind_query_b] in Hcheck.
+  - inversion Hcheck; subst tr'. exists g. split; [constructor|exact Hrep].
+  - destruct a as [f args res | op args res].
+    + destruct (trie_get f (decl_table ds)) as [[ss out]|] eqn:Hlookup;
+        [|discriminate].
+      destruct (bind_list_b tr args ss) as [tr1|] eqn:Hargs; [|discriminate].
+      destruct (bind_result_b tr1 out res) as [tr2|] eqn:Hres; [|discriminate].
+      destruct (proj1 (decl_table_lookup ds f ss out) Hlookup) as [Hss Hout].
+      destruct (bind_list_b_sound V args ss tr g tr1 Hrep Hargs) as [g1 [Hb Hrep1]].
+      destruct (bind_result_b_sound V tr1 g1 out res tr2 Hrep1 Hres) as [g2 [Hr Hrep2]].
+      destruct (IH tr2 g2 tr' Hrep2 Hcheck) as [g' [Hq Hrep']].
+      exists g'. split; [econstructor; eauto|exact Hrep'].
+    + destruct (has_vals_b tr args && has_b tr res SVal) eqn:Hargs; [|discriminate].
+      apply andb_true_iff in Hargs. destruct Hargs as [Hargs Hres].
+      apply (has_vals_b_spec V tr g args Hrep) in Hargs.
+      apply (has_b_spec V tr g res SVal Hrep) in Hres.
+      destruct (IH tr g tr' Hrep Hcheck) as [g' [Hq Hrep']].
+      exists g'. split; [econstructor; eauto|exact Hrep'].
+Qed.
+
+(** A declarative query is accepted by a trie agreeing with its initial context. *)
+Lemma bind_query_b_complete : forall V ds tr g q g', (forall x, trie_get x tr = g x) ->
+  @query_ok V (lookup_sorts ds) (lookup_kind ds) g q g' ->
+  exists tr', bind_query_b (decl_table ds) tr q = Some tr' /\
+    (forall x, trie_get x tr' = g' x).
+Proof.
+  intros V ds tr g q g' Hrep Hq. revert tr Hrep.
+  induction Hq as
+    [g | g g1 g2 g3 f args res ss out rest Hss Hout Hargs Hres Hrest IH
+       | g g1 op args res rest Hargs Hres Hrest IH]; intros tr Hrep.
+  - exists tr. split; [reflexivity|exact Hrep].
+  - destruct (bind_list_b_complete V tr g args ss g1 Hrep Hargs) as [tr1 [Hb Hrep1]].
+    destruct (bind_result_b_complete V tr1 g1 out res g2 Hrep1 Hres) as [tr2 [Hr Hrep2]].
+    destruct (IH tr2 Hrep2) as [tr3 [Hq Hrep3]]. exists tr3. split; [|exact Hrep3].
+    cbn [bind_query_b].
+    rewrite (proj2 (decl_table_lookup ds f ss out) (conj Hss Hout)), Hb, Hr. exact Hq.
+  - destruct (IH tr Hrep) as [tr' [Hq Hrep']]. exists tr'. split; [|exact Hrep'].
+    cbn [bind_query_b]. rewrite (proj2 (has_vals_b_spec V tr g args Hrep) Hargs),
+      (proj2 (has_b_spec V tr g res SVal Hrep) Hres). exact Hq.
+Qed.
