@@ -2059,6 +2059,31 @@ Proof.
   rewrite IH; reflexivity.
 Qed.
 
+Lemma val_pair_clock_charge : forall first second budget a d g c ops guards extra,
+  (1 <= budget)%N ->
+  (first <= a * budget + a * (ops + 1))%N ->
+  (second <= d * budget + g * guards)%N ->
+  (2 * a + d + extra <= c)%N -> (a <= c)%N -> (g <= c)%N ->
+  (first + second + extra * budget <= c * budget + c * (ops + guards))%N.
+Proof.
+  intros first second budget a d g c ops guards extra Hunit Hfirst Hsecond Hcoeff Ha Hg.
+  assert (Haunit : (a <= a * budget)%N).
+  { replace a with (a * 1)%N at 1 by ring; apply N.mul_le_mono_l; exact Hunit. }
+  eapply N.le_trans with (m :=
+    ((a * budget + a * (ops + 1)) + (d * budget + g * guards) + extra * budget)%N).
+  { apply N.add_le_mono; [apply N.add_le_mono; assumption|apply N.le_refl]. }
+  replace ((a * budget + a * (ops + 1)) + (d * budget + g * guards) + extra * budget)%N
+    with ((a + d + extra) * budget + a * ops + g * guards + a)%N by ring.
+  eapply N.le_trans with
+    (m := ((a + d + extra) * budget + a * ops + g * guards + a * budget)%N).
+  { apply N.add_le_mono; [apply N.le_refl|exact Haunit]. }
+  replace ((a + d + extra) * budget + a * ops + g * guards + a * budget)%N with
+    ((2 * a + d + extra) * budget + a * ops + g * guards)%N by ring.
+  replace (c * budget + c * (ops + guards))%N with
+    (c * budget + c * ops + c * guards)%N by ring.
+  apply N.add_le_mono; [apply N.add_le_mono|]; apply N.mul_le_mono_r; assumption.
+Qed.
+
 Module ValidateCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
     (P : TYPE with Definition t := func positive O.K O.G)
@@ -2850,7 +2875,21 @@ Module ValidateT (O : OPS)
   TimeFun ssa_local.
   TimeFun check_ssa.
   TimeFun graph.
-  Definition c_val : N := 1. (* STUB *)
+  Definition val_block_cost : N :=
+    (1024 * PTrieT.c_trie + 16 * K.c_key + 16 * G.c_key + 65536)%N.
+
+  Definition val_translation_cost : N :=
+    (4 * val_block_cost + 64 * PTrieT.c_trie + 16384)%N.
+
+  Definition ssa_graph_coefficient : N :=
+    32 * (R.c_prepare + C.c_cfg + C.c_cfg_adj + PTrieT.c_trie + DG.c_prepare + 1).
+
+  Definition ssa_syntax_coefficient : N := 256 * (PTrieT.c_trie + D.c_dom + 64).
+
+  Definition ssa_total_coefficient : N :=
+    16 * ssa_graph_coefficient + 8 * ssa_syntax_coefficient + 16 * D.c_dom + 64.
+
+  Definition c_val : N := (val_translation_cost + ssa_total_coefficient)%N.
   Definition dom_bound s := N.of_nat ((graph_n (base (graph s)) +
     graph_e (base (graph s)) + 1) * (Nat.log2 (graph_n (base (graph s))) + 1)).
   Definition check_width (p s : P.t) (c : cert) :=
@@ -2917,8 +2956,6 @@ Module ValidateT (O : OPS)
   Lemma ssa_graph_prepared s : prepared_ok (graph s).
   Proof. apply DG.prepare_correct. Qed.
 
-  Definition ssa_graph_coefficient : N :=
-    32 * (R.c_prepare + C.c_cfg + C.c_cfg_adj + PTrieT.c_trie + DG.c_prepare + 1).
 
   Lemma ssa_graph_clock s :
     (T_graph s <= ssa_graph_coefficient *
@@ -3600,26 +3637,800 @@ Module ValidateT (O : OPS)
       nia.
   Qed.
 
+
+  Lemma arm_time : forall t target rho known ie se choice w,
+    val_table_bounded t w -> Pos.size_nat target <= w ->
+    (forall x y, In (x, y) rho -> Pos.size_nat x <= w /\ Pos.size_nat y <= w) ->
+    (forall x, In x (exit_uses se) -> Pos.size_nat x <= w) ->
+    (forall x, In x (exit_targets ie) -> Pos.size_nat x <= w) ->
+    (T_check_arm t target rho known ie se choice <= (8 * PTrieT.c_trie + 288) *
+      N.of_nat (length rho + length (exit_uses se) +
+        length (index_row (cert_envs t) target) + length (index_row (cert_rows t) target) + 1) *
+      N.of_nat (w + 1))%N.
+  Proof.
+    intros t target rho known ie se choice w Htable Htarget Hrho Huses Htargets.
+    set (total := length rho + length (exit_uses se) +
+      length (index_row (cert_envs t) target) + length (index_row (cert_rows t) target) + 1).
+    set (width := N.of_nat (w + 1)).
+    set (budget := (N.of_nat total * width)%N).
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    assert (Htotal : 1 <= total) by (unfold total; lia).
+    assert (Hbudget : (width <= budget)%N) by (unfold budget; nia).
+    pose proof (val_edge_choice_time ie choice) as Hie.
+    pose proof (val_edge_choice_time se choice) as Hse.
+    replace ((8 * PTrieT.c_trie + 288) * N.of_nat total * width)%N with
+      ((8 * PTrieT.c_trie + 288) * budget)%N by (unfold budget; ring).
+    time_unfold T_check_arm; time_simpl.
+    destruct (edge_choice ie choice) as [[u xs]|] eqn:Hichoice;
+      destruct (edge_choice se choice) as [[v ys]|] eqn:Hschoice;
+      [|destruct xs; nia|nia|nia].
+    destruct xs; [|nia].
+    pose proof (Htargets u (val_edge_choice_target ie choice u [] Hichoice)) as Hu.
+    destruct (val_edge_choice_args se choice v ys Hschoice) as [Hmembers Hlength].
+    pose proof (target_time t target rho known ys w Htable Htarget Hrho
+      ltac:(intros x Hin; apply Huses; apply Hmembers; exact Hin)) as Hcall.
+    assert (Hsize : length rho + length ys + length (index_row (cert_envs t) target) +
+      length (index_row (cert_rows t) target) + 1 <= total) by (unfold total; lia).
+    assert (Hcall' : (T_check_target t target rho known ys <=
+      (8 * PTrieT.c_trie + 256) * budget)%N).
+    { eapply N.le_trans; [exact Hcall|].
+      unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r;
+        apply N.mul_le_mono_l; apply val_nat_mono; exact Hsize. }
+    pose proof (Pos.T_eqb_le u target) as Hcompare.
+    pose proof (Pos.T_eqb_le u v) as Heq.
+    assert (Hubits : (N.of_nat (Pos.size_nat u) <= width)%N) by (unfold width; lia).
+    clear Hcall Hmembers Hlength Hsize Htarget Hrho Huses Htargets Htable.
+    clearbody budget width total; unfold PTrieT.c_trie in *.
+    destruct (Pos.eqb u target); time_simpl; lia.
+  Qed.
+
+  Lemma edge_time : forall t b target rho ib sb w,
+    val_table_bounded t w -> Pos.size_nat b <= w ->
+    trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
+    In target (exit_targets (term _ _ _ ib)) -> val_destinations_bounded t b ib ->
+    length rho <= length (index_row (cert_envs t) b) + length (code _ _ _ ib) ->
+    (forall x y, In (x, y) rho -> Pos.size_nat x <= w /\ Pos.size_nat y <= w) ->
+    (T_check_edge t b target rho <= (128 * PTrieT.c_trie + 8192) *
+      N.of_nat (val_block_charge t b) * N.of_nat (w + 1))%N.
+  Proof.
+    intros t b target rho ib sb w Htable Hb Hib Hsb Htarget Hfit Hrholen Hrho.
+    pose proof (val_source_bounded Htable b ib Hib) as Hibwidth.
+    pose proof (val_target_bounded Htable b sb Hsb) as Hsbwidth.
+    pose proof (val_targets_bounded Hibwidth target Htarget) as Htargetwidth.
+    destruct (Hfit target Htarget) as [Henvnext Hlivenext].
+    pose proof (val_body_counts ib) as Hicounts.
+    pose proof (val_body_counts sb) as Hscounts.
+    set (charge := val_block_charge t b).
+    assert (Hcharge : 1 <= charge) by (apply val_block_charge_positive).
+    assert (Hlocal : length (code _ _ _ ib) + length (index_row (cert_rows t) b) + 1 <= charge).
+    { unfold charge, val_block_charge; rewrite Hib, Hsb; lia. }
+    assert (Harm : length rho + length (exit_uses (term _ _ _ sb)) +
+      length (index_row (cert_envs t) target) + length (index_row (cert_rows t) target) + 1 <=
+        5 * charge).
+    { unfold charge, val_block_charge; rewrite Hib, Hsb; lia. }
+    set (width := N.of_nat (w + 1)).
+    set (budget := (N.of_nat charge * width)%N).
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbudget : (width <= budget)%N) by (unfold budget; nia).
+    set (known := val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++
+      index_row (cert_rows t) b)).
+    pose proof (val_known_time (code _ _ _ ib) (index_row (cert_rows t) b) w
+      ltac:(intros i Hin; exact (proj1 (val_code_bounded Hibwidth i Hin)))
+      (val_live_bounded Htable b)) as Hknown.
+    assert (Hknown' : (ListDef.T_map (fun i => fst (fst i))
+      (fun i => (1 + (Datatypes.T_fst i + Datatypes.T_fst (fst i)))%N) (code _ _ _ ib) +
+      Datatypes.T_app (map (fun i => fst (fst i)) (code _ _ _ ib))
+        (index_row (cert_rows t) b) +
+      T_val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++ index_row (cert_rows t) b) <=
+        (PTrieT.c_trie + 16) * budget)%N).
+    { eapply N.le_trans; [exact Hknown|]; unfold budget; rewrite N.mul_assoc;
+        apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply val_nat_mono; exact Hlocal. }
+    assert (Harms : forall choice, (T_check_arm t target rho known
+      (term _ _ _ ib) (term _ _ _ sb) choice <=
+        (5 * (8 * PTrieT.c_trie + 288)) * budget)%N).
+    { intro choice; eapply N.le_trans.
+      - apply arm_time; [exact Htable|exact Htargetwidth|exact Hrho|
+          exact (val_exit_bounded Hsbwidth)|exact (val_targets_bounded Hibwidth)].
+      - replace ((5 * (8 * PTrieT.c_trie + 288)) * budget)%N with
+          ((8 * PTrieT.c_trie + 288) * N.of_nat (5 * charge) * width)%N
+          by (unfold budget; rewrite Nat2N.inj_mul; change (N.of_nat 5) with 5%N; ring).
+        apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply val_nat_mono; exact Harm. }
+    pose proof (Harms true) as Hyes; pose proof (Harms false) as Hno.
+    pose proof (val_row_time (cert_rows t) b w Hb) as Hrow; fold width in Hrow.
+    assert (Hbits : (N.of_nat (Pos.size_nat b) <= width)%N) by (unfold width; lia).
+    replace ((128 * PTrieT.c_trie + 8192) * N.of_nat charge * width)%N with
+      ((128 * PTrieT.c_trie + 8192) * budget)%N by (unfold budget; ring).
+    clear Hknown Harms Hfit Hrholen Hrho Htable Hibwidth Hsbwidth
+      Hicounts Hscounts Hlocal Harm Henvnext Hlivenext Htarget Htargetwidth.
+    time_unfold T_check_edge; rewrite Hib, Hsb; time_simpl;
+      rewrite !PTrieT.trie_get_clock; fold known.
+    revert Hknown'; time_simpl; intro Hknown'.
+    clearbody budget width charge; unfold PTrieT.c_trie in *; lia.
+  Qed.
+
+  Definition val_exit_bits (e : exit positive O.G) : nat :=
+    match e with Branch g _ _ _ _ _ => G.bits g | _ => 0 end.
+
+  Lemma exit_time : forall t b ib sb rho w,
+    val_table_bounded t w -> Pos.size_nat b <= w ->
+    trie_get b (source_bodies t) = Some ib -> trie_get b (target_bodies t) = Some sb ->
+    val_destinations_bounded t b ib ->
+    length rho <= length (index_row (cert_envs t) b) + length (code _ _ _ ib) ->
+    (forall x y, In (x, y) rho -> Pos.size_nat x <= w /\ Pos.size_nat y <= w) ->
+    (T_check_exit t b ib sb rho <= (512 * PTrieT.c_trie + 8 * G.c_key + 32768) *
+      N.of_nat (val_block_charge t b) * N.of_nat (w + 1) +
+      G.c_key * N.of_nat (val_exit_bits (term _ _ _ ib)))%N.
+  Proof.
+    intros t b ib sb rho w Htable Hb Hib Hsb Hfit Hrholen Hrho.
+    pose proof (val_source_bounded Htable b ib Hib) as Hibwidth.
+    pose proof (val_target_bounded Htable b sb Hsb) as Hsbwidth.
+    pose proof (val_body_counts ib) as Hicounts.
+    set (charge := val_block_charge t b).
+    assert (Hcharge : 1 <= charge) by (apply val_block_charge_positive).
+    assert (Hlocal : length (code _ _ _ ib) + length (index_row (cert_rows t) b) + 1 <= charge).
+    { unfold charge, val_block_charge; rewrite Hib, Hsb; lia. }
+    assert (Hrhosize : length rho <= charge).
+    { unfold charge, val_block_charge; rewrite Hib, Hsb; lia. }
+    assert (Hexitsize : length (exit_uses (term _ _ _ ib)) <= charge).
+    { unfold charge, val_block_charge; rewrite Hib, Hsb; lia. }
+    set (width := N.of_nat (w + 1)).
+    set (budget := (N.of_nat charge * width)%N).
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbudget : (width <= budget)%N) by (unfold budget; nia).
+    set (known := val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++
+      index_row (cert_rows t) b)).
+    pose proof (val_known_time (code _ _ _ ib) (index_row (cert_rows t) b) w
+      ltac:(intros i Hin; exact (proj1 (val_code_bounded Hibwidth i Hin)))
+      (val_live_bounded Htable b)) as Hknown.
+    assert (Hknown' : (ListDef.T_map (fun i => fst (fst i))
+      (fun i => (1 + (Datatypes.T_fst i + Datatypes.T_fst (fst i)))%N) (code _ _ _ ib) +
+      Datatypes.T_app (map (fun i => fst (fst i)) (code _ _ _ ib))
+        (index_row (cert_rows t) b) +
+      T_val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++ index_row (cert_rows t) b) <=
+        (PTrieT.c_trie + 16) * budget)%N).
+    { eapply N.le_trans; [exact Hknown|]; unfold budget; rewrite N.mul_assoc;
+        apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply val_nat_mono; exact Hlocal. }
+    pose proof (val_index_time rho w ltac:(intros x y Hin; exact (proj1 (Hrho x y Hin))))
+      as Hindex.
+    pose proof (val_exact_cost _ _ charge _ _ width Hindex Hrhosize Hcharge Hwidth)
+      as Hindex'; fold budget in Hindex'.
+    assert (Hedges : forall target, In target (exit_targets (term _ _ _ ib)) ->
+      (T_check_edge t b target rho <= (128 * PTrieT.c_trie + 8192) * budget)%N).
+    { intros target Hin; unfold budget; rewrite N.mul_assoc;
+        apply (edge_time t b target rho ib sb w); assumption. }
+    assert (Hargs : forall xs ys,
+      (forall x, In x xs -> In x (exit_uses (term _ _ _ ib))) ->
+      (forall y, In y ys -> In y (exit_uses (term _ _ _ sb))) ->
+      length xs <= length (exit_uses (term _ _ _ ib)) ->
+      (T_val_args (val_index rho) known xs ys <= 11 * budget)%N).
+    { intros xs ys Hxs Hys Hlength.
+      pose proof (val_args_time xs ys (val_index rho) known w
+        ltac:(intros x Hin; apply (val_exit_bounded Hibwidth); apply Hxs; exact Hin)
+        ltac:(intros y Hin; apply (val_exit_bounded Hsbwidth); apply Hys; exact Hin)) as Hscan.
+      unfold budget; apply (val_exact_cost _ _ charge 10 1 width Hscan);
+        [lia|exact Hcharge|exact Hwidth]. }
+    pose proof (val_row_time (cert_rows t) b w Hb) as Hrow; fold width in Hrow.
+    assert (Htargets : forall target, In target (exit_targets (term _ _ _ ib)) ->
+      (N.of_nat (Pos.size_nat target) <= width)%N).
+    { intros target Hin; pose proof (val_targets_bounded Hibwidth target Hin);
+        unfold width; lia. }
+    replace ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * N.of_nat charge * width)%N with
+      ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * budget)%N
+      by (unfold budget; ring).
+    clear Hknown Hindex Htable Hibwidth Hsbwidth Hicounts Hlocal Hrhosize
+      Hexitsize Hfit Hrholen Hrho.
+    clearbody budget width charge; unfold PTrieT.c_trie in *.
+    time_unfold T_check_exit; time_simpl; fold known.
+    revert Hknown'; time_simpl; intro Hknown'.
+    destruct (term _ _ _ ib) as [u ua|g xs u ua v va|xs] eqn:Hie
+      in Hedges, Htargets, Hargs |- *;
+      cbn [val_exit_bits] in *.
+    - destruct ua; [|nia].
+      destruct (term _ _ _ sb) as [v ya|h ys su ya sv na|ys] eqn:Hse in Hargs |- *; try nia.
+      pose proof (Hedges u ltac:(cbn; left; reflexivity)) as Hedge.
+      pose proof (Htargets u ltac:(cbn; left; reflexivity)) as Hu.
+      pose proof (Pos.T_eqb_le u v) as Heq; time_simpl; nia.
+    - destruct ua; [|nia]; destruct va; [|nia].
+      destruct (term _ _ _ sb) as [su ya|h ys su ya sv na|ys] eqn:Hse in Hargs |- *; try nia.
+      pose proof (Hedges u ltac:(cbn; left; reflexivity)) as Hyes.
+      pose proof (Hedges v ltac:(cbn; right; left; reflexivity)) as Hno.
+      pose proof (Htargets u ltac:(cbn; left; reflexivity)) as Hu.
+      pose proof (Htargets v ltac:(cbn; right; left; reflexivity)) as Hv.
+      pose proof (Pos.T_eqb_le u su) as Heqyes.
+      pose proof (Pos.T_eqb_le v sv) as Heqno.
+      pose proof (G.T_eqb_le g h) as Hop; rewrite Nat2N.inj_add in Hop.
+      pose proof (Hargs xs ys ltac:(intros x Hin; cbn; repeat rewrite in_app_iff; tauto)
+        ltac:(intros y Hin; cbn; repeat rewrite in_app_iff; tauto)
+        ltac:(cbn; rewrite !length_app; cbn; lia)) as Hguard.
+      time_simpl; nia.
+    - destruct (term _ _ _ sb) as [su ya|h ys su ya sv na|ys] eqn:Hse in Hargs |- *; try nia.
+      pose proof (Hargs xs ys ltac:(intros x Hin; exact Hin)
+        ltac:(intros y Hin; exact Hin) ltac:(apply Nat.le_refl)) as Hreturn.
+      time_simpl; nia.
+  Qed.
+
+  Definition val_body_bits (body : block positive O.K O.G) : nat :=
+    fold_right (fun i n => K.bits (snd (fst i)) + n) 0 (code _ _ _ body) +
+      val_exit_bits (term _ _ _ body).
+
+  Definition val_checked_bits (t : check_tables O.K O.G) b : nat :=
+    match trie_get b (source_bodies t) with Some body => val_body_bits body | None => 0 end.
+
+
+  Lemma block_time : forall t b w,
+    val_table_bounded t w -> Pos.size_nat b <= w ->
+    (forall ib, trie_get b (source_bodies t) = Some ib -> val_destinations_bounded t b ib) ->
+    (T_check_block t b <= val_block_cost * N.of_nat (val_block_charge t b) *
+      N.of_nat (w + 1) + val_block_cost * N.of_nat (val_checked_bits t b))%N.
+  Proof.
+    intros t b w Htable Hb Hfit.
+    set (charge := val_block_charge t b).
+    set (width := N.of_nat (w + 1)).
+    set (budget := (N.of_nat charge * width)%N).
+    assert (Hcharge : 1 <= charge) by apply val_block_charge_positive.
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbudget : (width <= budget)%N) by (unfold budget; nia).
+    assert (Hbits : (N.of_nat (Pos.size_nat b) <= width)%N) by (unfold width; lia).
+    pose proof (val_row_time (cert_envs t) b w Hb) as Henvrow; fold width in Henvrow.
+    pose proof (val_row_time (cert_rows t) b w Hb) as Hliverow; fold width in Hliverow.
+    replace (val_block_cost * N.of_nat charge * width)%N with
+      (val_block_cost * budget)%N by (unfold budget; ring).
+    time_unfold T_check_block; time_simpl; rewrite !PTrieT.trie_get_clock.
+    unfold val_checked_bits; destruct (trie_get b (source_bodies t)) as [ib|] eqn:Hib;
+      [|unfold val_block_cost; nia].
+    destruct (trie_get b (target_bodies t)) as [sb|] eqn:Hsb;
+      [|unfold val_block_cost; nia].
+    destruct (params _ _ _ ib); [|unfold val_block_cost; nia].
+    pose proof (val_source_bounded Htable b ib Hib) as Hibwidth.
+    pose proof (val_target_bounded Htable b sb Hsb) as Hsbwidth.
+    assert (Hrho : forall x y, In (x, y) (index_row (cert_envs t) b) ->
+      Pos.size_nat x <= w /\ Pos.size_nat y <= w)
+      by (intros x y Hin; exact (val_env_bounded Htable b x y Hin)).
+    assert (Hcode : forall i, In i (code _ _ _ ib ++ code _ _ _ sb) ->
+      Pos.size_nat (fst (fst i)) <= w /\ forall x, In x (snd i) -> Pos.size_nat x <= w).
+    { intros i Hin; apply in_app_iff in Hin as [Hin|Hin];
+        [exact (val_code_bounded Hibwidth i Hin)|exact (val_code_bounded Hsbwidth i Hin)]. }
+    pose proof (code_time_from_width (code _ _ _ ib) (code _ _ _ sb)
+      (index_row (cert_envs t) b) (index_row (cert_rows t) b) w
+      (val_live_bounded Htable b) Hrho Hcode) as Hscan.
+    assert (Hsize : length (index_row (cert_envs t) b) + length (index_row (cert_rows t) b) +
+      length (code _ _ _ ib) + length (code _ _ _ sb) +
+      fold_right (fun i n => length (snd i) + n) 0 (code _ _ _ ib ++ code _ _ _ sb) + 1 <=
+        charge).
+    { pose proof (val_body_counts ib) as Hi; pose proof (val_body_counts sb) as Hs.
+      unfold charge, val_block_charge; rewrite Hib, Hsb, val_sum_app; lia. }
+    assert (Hscan' : (T_check_code (code _ _ _ ib) (code _ _ _ sb)
+      (index_row (cert_envs t) b) (index_row (cert_rows t) b) <=
+      (8 * PTrieT.c_trie + 4 * K.c_key + 256) * budget +
+      (8 * PTrieT.c_trie + 4 * K.c_key + 256) * N.of_nat
+        (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat (code _ _ _ ib) + 1))%N).
+    { eapply N.le_trans; [exact Hscan|]; apply N.add_le_mono_r.
+      unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r;
+        apply N.mul_le_mono_l; apply val_nat_mono; exact Hsize. }
+    clear Hscan Hsize.
+    destruct (check_code (code _ _ _ ib) (code _ _ _ sb)
+      (index_row (cert_envs t) b) (index_row (cert_rows t) b)) as [rho|] eqn:Hcheck.
+    - destruct (check_code_bounded _ _ _ _ rho w Hrho
+        ltac:(intros i Hin; exact (proj1 (Hcode i Hin))) Hcheck) as [Hrholen Hrhowidth].
+      pose proof (exit_time t b ib sb rho w Htable Hb Hib Hsb (Hfit ib eq_refl)
+        Hrholen Hrhowidth) as Hexit.
+      fold width in Hexit; fold charge in Hexit.
+      replace ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * N.of_nat charge * width)%N
+        with ((512 * PTrieT.c_trie + 8 * G.c_key + 32768) * budget)%N in Hexit
+        by (unfold budget; ring).
+      clearbody budget width charge.
+      clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan' Hexit.
+      unfold val_body_bits; rewrite Nat2N.inj_add in Hscan' |- *.
+      change (N.of_nat 1) with 1%N in Hscan'.
+      eapply N.le_trans with (m :=
+        (T_check_code (code _ _ _ ib) (code _ _ _ sb)
+          (index_row (cert_envs t) b) (index_row (cert_rows t) b) +
+          T_check_exit t b ib sb rho + 32 * budget)%N).
+      { lia. }
+      eapply val_pair_clock_charge; [lia|exact Hscan'|exact Hexit| | |];
+        unfold val_block_cost; lia.
+    - clearbody budget width charge.
+      clear - Hwidth Hbudget Hbits Henvrow Hliverow Hscan'.
+      unfold val_body_bits; rewrite Nat2N.inj_add in Hscan' |- *.
+      change (N.of_nat 1) with 1%N in Hscan'.
+      eapply N.le_trans with (m :=
+        (T_check_code (code _ _ _ ib) (code _ _ _ sb)
+          (index_row (cert_envs t) b) (index_row (cert_rows t) b) + 0 + 32 * budget)%N).
+      { lia. }
+      eapply val_pair_clock_charge with (a := (8 * PTrieT.c_trie + 4 * K.c_key + 256)%N)
+        (d := 0%N) (g := 0%N); [lia|exact Hscan'|lia| | |];
+        unfold val_block_cost; lia.
+  Qed.
+
+  Lemma block_charge_sum p s c :
+    fold_right (fun item n => val_block_charge (tables p s c) (fst item) + n) 0
+      (first_blocks (blocks _ _ _ p)) <= 2 * function_size p + function_size s + cert_size c.
+  Proof.
+    set (bs := first_blocks (blocks _ _ _ p)).
+    set (ids := map fst bs).
+    assert (Hdistinct : NoDup ids).
+    { unfold ids, bs; rewrite val_first_selected; apply val_selected_nodup. }
+    pose proof (val_lookup_sum (blocks _ _ _ p) ids val_body_units Hdistinct) as Hsource.
+    pose proof (val_lookup_sum (blocks _ _ _ s) ids val_body_units Hdistinct) as Htarget.
+    pose proof (val_row_index_sum (fst c) ids Hdistinct) as Henv.
+    pose proof (val_row_index_sum (snd c) ids Hdistinct) as Hlive.
+    pose proof (Nat.le_trans _ _ _ Hsource (val_function_units p)) as Hsource'.
+    pose proof (Nat.le_trans _ _ _ Htarget (val_function_units s)) as Htarget'.
+    assert (Hrows : fold_right (fun b n => length (index_row (val_index (fst c)) b) + n) 0 ids +
+      fold_right (fun b n => length (index_row (val_index (snd c)) b) + n) 0 ids <= cert_size c).
+    { eapply Nat.le_trans; [apply Nat.add_le_mono; [exact Henv|exact Hlive]|].
+      apply val_cert_contents. }
+    assert (Hlength : length ids <= function_size p).
+    { unfold ids, bs; rewrite length_map, val_first_selected;
+        eapply Nat.le_trans; [apply val_selected_length|unfold function_size; lia]. }
+    rewrite <- (val_sum_map (val_block_charge (tables p s c)) fst bs); fold ids.
+    unfold val_block_charge; cbn [tables source_bodies target_bodies cert_envs cert_rows].
+    eapply Nat.le_trans with (m := fold_right (fun b n =>
+      (match lookup b (blocks _ _ _ p) with Some body => val_body_units body | None => 0 end) +
+      (match lookup b (blocks _ _ _ s) with Some body => val_body_units body | None => 0 end) +
+      length (index_row (val_index (fst c)) b) +
+      length (index_row (val_index (snd c)) b) + 1 + n) 0 ids).
+    { apply val_sum_mono; intros b Hin; rewrite !val_index_lookup; apply Nat.le_refl. }
+    rewrite !val_sum_add, val_sum_one; cbn beta in *.
+    replace (2 * function_size p + function_size s + cert_size c) with
+      (function_size p + function_size s + cert_size c + function_size p) by ring.
+    rewrite <- (Nat.add_assoc
+      (fold_right (fun b n =>
+        (match lookup b (blocks _ _ _ p) with Some body => val_body_units body | None => 0 end) + n)
+        0 ids + fold_right (fun b n =>
+        (match lookup b (blocks _ _ _ s) with Some body => val_body_units body | None => 0 end) + n)
+        0 ids)
+      (fold_right (fun b n => length (index_row (val_index (fst c)) b) + n) 0 ids)
+      (fold_right (fun b n => length (index_row (val_index (snd c)) b) + n) 0 ids)).
+    apply Nat.add_le_mono; [|exact Hlength].
+    apply Nat.add_le_mono; [apply Nat.add_le_mono; [exact Hsource'|exact Htarget']|exact Hrows].
+  Qed.
+
+  Lemma block_bits_sum p s c :
+    fold_right (fun item n => val_checked_bits (tables p s c) (fst item) + n) 0
+      (first_blocks (blocks _ _ _ p)) <= op_bits p.
+  Proof.
+    set (bs := first_blocks (blocks _ _ _ p)).
+    set (ids := map fst bs).
+    assert (Hdistinct : NoDup ids).
+    { unfold ids, bs; rewrite val_first_selected; apply val_selected_nodup. }
+    rewrite <- (val_sum_map (val_checked_bits (tables p s c)) fst bs); fold ids.
+    unfold val_checked_bits; cbn [tables source_bodies].
+    pose proof (val_lookup_sum (blocks _ _ _ p) ids val_body_bits Hdistinct) as Hsum.
+    unfold val_body_bits, val_exit_bits in Hsum.
+    eapply Nat.le_trans; [|exact Hsum].
+    apply val_sum_mono; intros b Hin; rewrite val_index_lookup; apply Nat.le_refl.
+  Qed.
+
+  Lemma blocks_time p s c : row_budget p c = true ->
+    (fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
+      (first_blocks (blocks _ _ _ p))) <=
+      (2 * val_block_cost) * N.of_nat (function_size p + function_size s + cert_size c + 1) *
+        N.of_nat (check_width p s c + 1) + val_block_cost * N.of_nat (op_bits p))%N.
+  Proof.
+    intro Hbudget; set (bs := first_blocks (blocks _ _ _ p)).
+    pose proof (tables_bounded p s c) as Htable.
+    pose proof (val_sum_time2 (fun item => val_block_charge (tables p s c) (fst item))
+      (fun item => val_checked_bits (tables p s c) (fst item))
+      (fun item => T_check_block (tables p s c) (fst item)) bs val_block_cost
+      (N.of_nat (check_width p s c + 1))
+      ltac:(intros [b body] Hin; cbn [fst snd]; apply block_time; [exact Htable| |];
+        [unfold bs in Hin; rewrite val_first_selected in Hin;
+         apply val_selected_in in Hin as [Hin _];
+         pose proof (val_block_width p b body Hin); unfold check_width; lia|
+         intros ib Hget target Htarget;
+         rewrite (proj1 (tables_agree p s c b)) in Hget;
+         exact (row_budget_lengths p c b ib target Hbudget Hget Htarget)])) as Hsum.
+    cbn beta in Hsum; eapply N.le_trans; [exact Hsum|].
+    apply N.add_le_mono.
+    - pose proof (block_charge_sum p s c) as Hcharge; fold bs in Hcharge.
+      assert (Hsize : fold_right
+        (fun item n => val_block_charge (tables p s c) (fst item) + n) 0 bs <=
+          2 * (function_size p + function_size s + cert_size c + 1)) by lia.
+      replace ((2 * val_block_cost) *
+        N.of_nat (function_size p + function_size s + cert_size c + 1) *
+        N.of_nat (check_width p s c + 1))%N with
+        (val_block_cost * N.of_nat (2 * (function_size p + function_size s + cert_size c + 1)) *
+          N.of_nat (check_width p s c + 1))%N
+          by (rewrite Nat2N.inj_mul; change (N.of_nat 2) with 2%N; ring).
+      apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply val_nat_mono; exact Hsize.
+    - apply N.mul_le_mono_l; apply val_nat_mono; apply block_bits_sum.
+  Qed.
+
+
+  Lemma translation_time : forall p s c,
+    (T_check p s c <= val_translation_cost *
+      N.of_nat (function_size p + function_size s + cert_size c + 1) *
+        N.of_nat (check_width p s c + 1) +
+      val_translation_cost * N.of_nat (op_bits p + 1))%N.
+  Proof.
+    intros p s c; set (size := N.of_nat (function_size p + function_size s + cert_size c + 1)).
+    set (width := N.of_nat (check_width p s c + 1)).
+    set (budget := (size * width)%N).
+    assert (Hsize : (1 <= size)%N) by (unfold size; lia).
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; nia).
+    pose proof (tables_time p s c) as Htables.
+    pose proof (entry_time p s c) as Hentry.
+    fold size width in Htables, Hentry.
+    replace ((8 * (PTrieT.c_trie + 2)) * size * width)%N with
+      ((8 * (PTrieT.c_trie + 2)) * budget)%N in Htables by (unfold budget; ring).
+    replace ((16 * PTrieT.c_trie + 4096) * size * width)%N with
+      ((16 * PTrieT.c_trie + 4096) * budget)%N in Hentry by (unfold budget; ring).
+    replace (val_translation_cost * size * width)%N with
+      (val_translation_cost * budget)%N by (unfold budget; ring).
+    destruct (check_entry p s c (tables p s c)) eqn:Haccepted.
+    - assert (Hguard : row_budget p c = true).
+      { unfold check_entry in Haccepted; destruct (row_budget p c); [reflexivity|discriminate]. }
+      pose proof (blocks_time p s c Hguard) as Hblocks.
+      pose proof (checks_time p s c) as Hcheck.
+      assert (Htraversal : ((8 * (PTrieT.c_trie + 16)) * N.of_nat (function_size p + 1) *
+        N.of_nat (check_width p s c + 1) <= (8 * (PTrieT.c_trie + 16)) * budget)%N).
+      { unfold budget, size, width; rewrite N.mul_assoc;
+          apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply val_nat_mono; lia. }
+      fold size width in Hblocks; replace ((2 * val_block_cost) * size * width)%N with
+        ((2 * val_block_cost) * budget)%N in Hblocks by (unfold budget; ring).
+      eapply N.le_trans; [exact Hcheck|].
+      eapply N.le_trans with (m :=
+        (8 * (PTrieT.c_trie + 2) * budget +
+          8 * (PTrieT.c_trie + 16) * budget +
+          (16 * PTrieT.c_trie + 4096) * budget +
+          (2 * val_block_cost * budget + val_block_cost * N.of_nat (op_bits p)))%N).
+      { repeat apply N.add_le_mono; assumption. }
+      replace (8 * (PTrieT.c_trie + 2) * budget +
+        8 * (PTrieT.c_trie + 16) * budget +
+        (16 * PTrieT.c_trie + 4096) * budget +
+        (2 * val_block_cost * budget + val_block_cost * N.of_nat (op_bits p)))%N with
+        ((32 * PTrieT.c_trie + 4240 + 2 * val_block_cost) * budget +
+          val_block_cost * N.of_nat (op_bits p))%N by ring.
+      apply N.add_le_mono.
+      + apply N.mul_le_mono_r; unfold val_translation_cost; lia.
+      + eapply N.le_trans with
+          (m := (val_block_cost * N.of_nat (op_bits p + 1))%N).
+        * apply N.mul_le_mono_l; lia.
+        * apply N.mul_le_mono_r; unfold val_translation_cost; lia.
+    - time_unfold T_check; rewrite Haccepted; time_simpl.
+      eapply N.le_trans with (m := ((24 * PTrieT.c_trie + 4113) * budget)%N).
+      + clearbody budget size width; unfold PTrieT.c_trie in *; lia.
+      + eapply N.le_trans; [|apply N.le_add_r].
+        apply N.mul_le_mono_r; unfold val_translation_cost; lia.
+  Qed.
+
+
+
+  Lemma ssa_precheck_clock s :
+    (T_ssa_precheck s <= ssa_syntax_coefficient *
+      N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    set (w := function_width s).
+    set (total := function_size s + 1).
+    set (budget := (N.of_nat total * N.of_nat (w + 1))%N).
+    assert (Htotal : 1 <= total) by (unfold total; lia).
+    assert (Hwidth : (1 <= N.of_nat (w + 1))%N) by lia.
+    pose proof (val_ssa_counts s) as Hcounts.
+    pose proof (val_index_time (blocks _ _ _ s) w
+      ltac:(intros b body Hin; unfold w; now apply (val_block_width s b body))) as Hindex.
+    pose proof (val_positive_cost _ (length (blocks _ _ _ s)) total
+      (PTrieT.c_trie + 2)%N 1%N (N.of_nat (w + 1)) Hindex
+      ltac:(unfold total; lia) Htotal Hwidth) as Hindex'.
+    pose proof (val_unique_time (map fst (blocks _ _ _ s)) Empty w
+      ltac:(intros b Hin; apply in_map_iff in Hin as [[id body] [Heq Hin]];
+        cbn in Heq; subst id; unfold w; now apply (val_block_width s b body))) as Hids.
+    rewrite length_map in Hids.
+    pose proof (val_positive_cost _ (length (blocks _ _ _ s)) total
+      (PTrieT.c_trie + 5)%N 1%N (N.of_nat (w + 1)) Hids
+      ltac:(unfold total; lia) Htotal Hwidth) as Hids'.
+    pose proof (val_unique_time
+      (inputs _ _ _ s ++ flat_map (fun item => block_defs (snd item)) (blocks _ _ _ s))
+      Empty w ltac:(intros x Hin; apply in_app_or in Hin as [Hinput|Hdef];
+        [unfold w; now apply val_input_width|];
+        apply in_flat_map in Hdef as [[b body] [Hbody Hx]]; cbn [snd] in Hx;
+        unfold w; apply (val_body_var_width s b body x Hbody); now apply val_block_defs_vars)) as Hdefs.
+    pose proof (val_positive_cost _
+      (length (inputs _ _ _ s ++ flat_map (fun item => block_defs (snd item)) (blocks _ _ _ s)))
+      total (PTrieT.c_trie + 5)%N 1%N (N.of_nat (w + 1)) Hdefs
+      ltac:(unfold total; lia) Htotal Hwidth) as Hdefs'.
+    pose proof (val_defs_flat_clock (blocks _ _ _ s)) as Hflat.
+    pose proof (val_unscaled_cost _
+      (length (blocks _ _ _ s) + length (flat_map (fun item => block_defs (snd item)) (blocks _ _ _ s)) + 1)
+      total 16%N 0%N (N.of_nat (w + 1)) ltac:(rewrite N.add_0_r; exact Hflat)
+      ltac:(unfold total; rewrite length_app in Hcounts; lia) Htotal Hwidth) as Hflat'.
+    pose proof (Datatypes.T_app_le (inputs _ _ _ s)
+      (flat_map (fun item => block_defs (snd item)) (blocks _ _ _ s))) as Happend.
+    pose proof (val_unscaled_cost _ (length (inputs _ _ _ s)) total 1%N 1%N
+      (N.of_nat (w + 1)) ltac:(rewrite N.mul_1_l; exact Happend)
+      ltac:(unfold total; rewrite length_app in Hcounts; lia) Htotal Hwidth) as Happend'.
+    assert (Hentry : (@T_trie_get (block positive O.K O.G) (entry _ _ _ s)
+      (val_index (blocks _ _ _ s)) <= 2 * budget)%N).
+    { rewrite PTrieT.trie_get_clock. apply N.mul_le_mono_l.
+      eapply N.le_trans with (m := N.of_nat (w + 1)).
+      - pose proof (val_entry_width s); unfold w; lia.
+      - unfold budget. replace (N.of_nat (w + 1)) with (1 * N.of_nat (w + 1))%N at 1 by ring.
+        apply N.mul_le_mono_r; lia. }
+    clear Hindex Hids Hdefs Hflat Happend.
+    fold budget in Hindex', Hids', Hdefs', Hflat', Happend'.
+    rewrite !N.add_0_r in Hflat'.
+    time_unfold T_ssa_precheck; time_simpl.
+    lazymatch goal with |- context [ListDef.T_map ?f ?Tf ?xs] =>
+      pose proof (ListDef.T_map_le f Tf 2%N xs ltac:(intros; time_simpl; lia)) as Hmap end.
+    pose proof (val_unscaled_cost _ (length (blocks _ _ _ s)) total 3%N 1%N
+      (N.of_nat (w + 1)) Hmap ltac:(unfold total; lia) Htotal Hwidth) as Hmap'.
+    clear Hmap; fold budget in Hmap'.
+    lazymatch goal with |- context [List.T_forallb ?f ?Tf ?bs] =>
+      pose proof (val_forallb_charge f Tf (fun item => val_body_units (snd item)) bs 40%N
+        (N.of_nat (w + 1)) Hwidth
+        ltac:(intros item Hin; unfold val_body_units; lia)
+        ltac:(intros [b body] Hbody; cbn [snd];
+          pose proof (val_body_bounded_function s b body w Hbody ltac:(unfold w; lia)) as Hbounded;
+          pose proof (ssa_exit_shape_clock (val_index (blocks _ _ _ s)) (term _ _ _ body) w
+            (val_targets_bounded Hbounded)) as Hshape;
+          pose proof (val_body_counts body) as Hbodycount;
+          time_simpl; cbn [snd]; rewrite !Nat2N.inj_add in *; nia)) as Hshapes
+    end.
+    pose proof (val_function_units s) as Hunits.
+    lazymatch type of Hshapes with (?lhs <= _)%N =>
+      assert (Hshapes' : (lhs <= 44 * budget)%N) end.
+    { eapply N.le_trans; [exact Hshapes|]. unfold budget; rewrite N.mul_assoc.
+      apply N.mul_le_mono_r; apply N.mul_le_mono_l; unfold total; lia. }
+    clear Hshapes Hunits Hcounts Htotal Hwidth.
+    unfold Datatypes.T_snd in Hflat'.
+    lazymatch goal with |- context [Code.List.T_flat_map ?f ?Tf ?xs] =>
+      change (Code.List.T_flat_map f Tf xs <= 16 * budget)%N in Hflat' end.
+    change (@T_trie_get (block positive O.K O.G) (entry _ _ _ s)
+      (val_index (blocks _ _ _ s)) <= 2 * budget)%N in Hentry.
+    assert (Hunit : (1 <= budget)%N) by (unfold budget, total; nia).
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (ssa_syntax_coefficient * budget)%N by (unfold budget, total, w; ring) end.
+    clearbody budget. clear total w.
+    eapply N.le_trans with (m := ((3 * PTrieT.c_trie + 128) * budget)%N).
+    - nia.
+    - apply N.mul_le_mono_r; unfold ssa_syntax_coefficient; lia.
+  Qed.
+
+  Definition ssa_scan (s : P.t) tree :=
+    let homes := val_index (val_home_rows (blocks _ _ _ s)) in
+    let inputs := val_set (inputs _ _ _ s) in
+    forallb (fun item => ssa_local tree homes (fst item)
+      (val_add (params _ _ _ (snd item)) inputs) (code _ _ _ (snd item))
+      (exit_uses (term _ _ _ (snd item)))) (blocks _ _ _ s).
+  TimeFun ssa_scan.
+
+  Lemma ssa_scan_clock s m order :
+    D.check (graph s) (entry _ _ _ s) m order = true ->
+    (T_ssa_scan s (D.tree (graph s) (entry _ _ _ s) m order) <=
+      ssa_syntax_coefficient * N.of_nat (function_size s + 1) *
+        N.of_nat (function_width s + 1))%N.
+  Proof.
+    intro Hcheck.
+    set (w := function_width s).
+    set (total := function_size s + 1).
+    set (budget := (N.of_nat total * N.of_nat (w + 1))%N).
+    assert (Htotal : 1 <= total) by (unfold total; lia).
+    assert (Hwidth : (1 <= N.of_nat (w + 1))%N) by lia.
+    pose proof (val_home_size s) as Hhome_size.
+    pose proof (val_home_rows_clock (blocks _ _ _ s)) as Hhomes.
+    pose proof (val_unscaled_cost _
+      (length (blocks _ _ _ s) + length (val_home_rows (blocks _ _ _ s)) + 1)
+      total 64%N 0%N (N.of_nat (w + 1)) ltac:(rewrite N.add_0_r; exact Hhomes)
+      ltac:(unfold total; lia) Htotal Hwidth) as Hhomes'.
+    pose proof (val_index_time (val_home_rows (blocks _ _ _ s)) w
+      ltac:(intros x b Hin; unfold w; now apply (val_home_key_width s x b))) as Hindex.
+    pose proof (val_positive_cost _ (length (val_home_rows (blocks _ _ _ s))) total
+      (PTrieT.c_trie + 2)%N 1%N (N.of_nat (w + 1)) Hindex
+      ltac:(unfold total; lia) Htotal Hwidth) as Hindex'.
+    pose proof (val_set_time (inputs _ _ _ s) w
+      ltac:(intros x Hin; unfold w; now apply val_input_width)) as Hinputs.
+    pose proof (val_ssa_counts s) as Hcounts; rewrite length_app in Hcounts.
+    pose proof (val_positive_cost _ (length (inputs _ _ _ s)) total
+      (PTrieT.c_trie + 2)%N 1%N (N.of_nat (w + 1)) Hinputs
+      ltac:(unfold total; lia) Htotal Hwidth) as Hinputs'.
+    clear Hhomes Hindex Hinputs Hhome_size Hcounts.
+    fold budget in Hhomes', Hindex', Hinputs'. rewrite N.add_0_r in Hhomes'.
+    time_unfold T_ssa_scan; time_simpl.
+    lazymatch goal with |- context [List.T_forallb ?f ?Tf ?bs] =>
+      pose proof (val_forallb_charge f Tf (fun item => val_body_units (snd item)) bs
+        (4 * PTrieT.c_trie + 4 * D.c_dom + 256)%N (N.of_nat (w + 1)) Hwidth
+        ltac:(intros item Hin; unfold val_body_units; lia)
+        ltac:(intros [b body] Hbody; cbn [snd];
+          pose proof (val_body_bounded_function s b body w Hbody ltac:(unfold w; lia)) as Hbounded;
+          pose proof (val_add_time (params _ _ _ body) (val_set (inputs _ _ _ s)) w
+            (val_params_bounded Hbounded)) as Hadd;
+          pose proof (ssa_local_clock s (graph s) m order b w Hcheck
+            (ssa_graph_width s) ltac:(unfold w; lia)
+            ltac:(unfold w; now apply (val_block_width s b body))
+            (code _ _ _ body) (val_add (params _ _ _ body) (val_set (inputs _ _ _ s)))
+            (exit_uses (term _ _ _ body)) (val_code_bounded Hbounded)
+            (val_exit_bounded Hbounded)) as Hlocal;
+          pose proof (val_exit_uses_clock (term _ _ _ body)) as Hexit;
+          pose proof (val_body_counts body) as Hbodycount;
+          assert (Hrowpos : 1 <= val_body_units body) by (unfold val_body_units; lia);
+          pose proof (val_positive_cost _ (length (params _ _ _ body)) (val_body_units body)
+            (PTrieT.c_trie + 2)%N 1%N (N.of_nat (w + 1)) Hadd
+            ltac:(lia) Hrowpos Hwidth) as Hadd';
+          pose proof (val_positive_cost _
+            (length (code _ _ _ body) +
+              fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (code _ _ _ body) +
+              length (exit_uses (term _ _ _ body)) + 1)
+            (val_body_units body) (PTrieT.c_trie + D.c_dom + 32)%N 0%N
+            (N.of_nat (w + 1)) ltac:(rewrite N.add_0_r; exact Hlocal)
+            ltac:(lia) Hrowpos Hwidth) as Hlocal';
+          pose proof (val_unscaled_cost _ (length (exit_uses (term _ _ _ body)) + 1)
+            (val_body_units body) 4%N 0%N (N.of_nat (w + 1))
+            ltac:(rewrite N.add_0_r; exact Hexit) ltac:(lia) Hrowpos Hwidth) as Hexit';
+          set (local_budget := (N.of_nat (val_body_units body) * N.of_nat (w + 1))%N);
+          fold local_budget in Hadd', Hlocal', Hexit';
+          rewrite N.add_0_r in Hlocal', Hexit';
+          assert (Hlocalunit : (1 <= local_budget)%N) by
+            (clear -Hrowpos Hwidth; unfold local_budget; nia);
+          clear -Hadd' Hlocal' Hexit' Hlocalunit;
+          time_simpl; cbn [fst snd];
+          lazymatch goal with |- (_ <= ?rhs)%N =>
+            replace rhs with ((4 * PTrieT.c_trie + 4 * D.c_dom + 256) * local_budget)%N
+              by (unfold local_budget; ring) end;
+          clearbody local_budget; nia)) as Hscan
+    end.
+    lazymatch type of Hscan with (?lhs <= _)%N =>
+      assert (Hscan' : (lhs <= (4 * PTrieT.c_trie + 4 * D.c_dom + 260) * budget)%N) end.
+    { eapply N.le_trans; [exact Hscan|].
+      replace (4 * PTrieT.c_trie + 4 * D.c_dom + 256 + 4)%N with
+        (4 * PTrieT.c_trie + 4 * D.c_dom + 260)%N by ring.
+      unfold budget; rewrite N.mul_assoc.
+      pose proof (val_function_units s) as Hunits.
+      apply N.mul_le_mono_r; apply N.mul_le_mono_l; unfold total; lia. }
+    clear Hscan Htotal Hwidth Hcheck.
+    assert (Hunit : (1 <= budget)%N) by (unfold budget, total; nia).
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (ssa_syntax_coefficient * budget)%N by (unfold budget, total, w; ring) end.
+    clearbody budget. unfold ssa_syntax_coefficient. nia.
+  Qed.
+
+  Lemma ssa_dom_lower s :
+    (N.of_nat (graph_n (base (graph s)) + graph_e (base (graph s)) + 1) <= dom_bound s)%N.
+  Proof.
+    unfold dom_bound; rewrite Nat2N.inj_mul.
+    assert (Hlog : (1 <= N.of_nat (Nat.log2 (graph_n (base (graph s))) + 1))%N) by lia.
+    replace (N.of_nat (graph_n (base (graph s)) + graph_e (base (graph s)) + 1)) with
+      (N.of_nat (graph_n (base (graph s)) + graph_e (base (graph s)) + 1) * 1)%N at 1 by ring.
+    apply N.mul_le_mono_l; exact Hlog.
+  Qed.
+
+  Lemma ssa_graph_total_clock s :
+    (T_graph s <= ssa_graph_coefficient *
+      (N.of_nat (function_size s + 1) + dom_bound s) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    eapply N.le_trans; [exact (ssa_graph_clock s)|].
+    apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+    pose proof (ssa_dom_lower s) as Hdom; rewrite !Nat2N.inj_add in *; lia.
+  Qed.
+
+  Lemma ssa_build_total_clock s :
+    (D.T_build (graph s) (entry _ _ _ s) <= D.c_dom *
+      (N.of_nat (function_size s + 1) + dom_bound s) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    pose proof (D.T_build_le (graph s) (entry _ _ _ s) (ssa_graph_prepared s)) as Hbuild.
+    eapply N.le_trans; [exact Hbuild|].
+    apply N.mul_le_mono.
+    - unfold dom_bound; rewrite Nat2N.inj_mul.
+      rewrite <- N.mul_assoc; apply N.mul_le_mono_l; lia.
+    - pose proof (ssa_graph_width s); lia.
+  Qed.
+
+  Lemma ssa_check_total_clock s m order :
+    (D.T_check (graph s) (entry _ _ _ s) m order <= D.c_dom *
+      (N.of_nat (function_size s + 1) + dom_bound s) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    eapply N.le_trans; [exact (D.T_check_le (graph s) (entry _ _ _ s) m order)|].
+    apply N.mul_le_mono.
+    - apply N.mul_le_mono_l; pose proof (ssa_dom_lower s); lia.
+    - pose proof (ssa_graph_width s); lia.
+  Qed.
+
+  Lemma ssa_tree_total_clock s m order : D.check (graph s) (entry _ _ _ s) m order = true ->
+    (D.T_tree (graph s) (entry _ _ _ s) m order <= D.c_dom *
+      (N.of_nat (function_size s + 1) + dom_bound s) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    intro Hcheck.
+    eapply N.le_trans; [exact (D.T_tree_le (graph s) (entry _ _ _ s) m order Hcheck)|].
+    apply N.mul_le_mono.
+    - apply N.mul_le_mono_l; pose proof (ssa_dom_lower s); lia.
+    - pose proof (ssa_graph_width s); lia.
+  Qed.
+
+  Lemma ssa_check_clock_parts s :
+    (T_check_ssa s <= T_ssa_precheck s + T_graph s + T_dom_cert s +
+      D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+      (if D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) then
+        D.T_tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+        T_ssa_scan s (D.tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)))
+       else 0) + 32)%N.
+  Proof.
+    time_unfold T_check_ssa. time_unfold T_graph. time_unfold T_ssa_scan. time_simpl.
+    unfold graph.
+    destruct (ssa_precheck s); [|lia].
+    destruct (dom_cert s) as [m order]; cbn [fst snd].
+    destruct (D.check (DG.prepare (cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (C.dst (R.prepare s)))) (entry _ _ _ s) m order); lia.
+  Qed.
+
+
+  Lemma ssa_public_clock s :
+    (T_check_ssa s <= ssa_total_coefficient *
+      (N.of_nat (function_size s + 1) + dom_bound s) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    set (budget := ((N.of_nat (function_size s + 1) + dom_bound s) *
+      N.of_nat (function_width s + 1))%N).
+    assert (Hunit : (1 <= budget)%N) by (unfold budget; nia).
+    pose proof (ssa_graph_total_clock s) as Hgraph.
+    pose proof (ssa_build_total_clock s) as Hbuild.
+    pose proof (ssa_dom_clock s) as Hdom.
+    pose proof (ssa_check_total_clock s (fst (dom_cert s)) (snd (dom_cert s))) as Hcheck.
+    pose proof (ssa_precheck_clock s) as Hpre.
+    assert (Hpre' : (T_ssa_precheck s <= ssa_syntax_coefficient * budget)%N).
+    { eapply N.le_trans; [exact Hpre|]. unfold budget; rewrite N.mul_assoc.
+      apply N.mul_le_mono_r; apply N.mul_le_mono_l; lia. }
+    clear Hpre.
+    rewrite <- N.mul_assoc in Hgraph, Hbuild, Hcheck.
+    fold budget in Hgraph, Hbuild, Hcheck.
+    pose proof (ssa_check_clock_parts s) as Hparts.
+    destruct (D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))) eqn:Haccepted.
+    - pose proof (ssa_tree_total_clock s _ _ Haccepted) as Htree.
+      pose proof (ssa_scan_clock s _ _ Haccepted) as Hscan.
+      assert (Hscan' : (T_ssa_scan s
+        (D.tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))) <=
+        ssa_syntax_coefficient * budget)%N).
+      { eapply N.le_trans; [exact Hscan|]. unfold budget; rewrite N.mul_assoc.
+        apply N.mul_le_mono_r; apply N.mul_le_mono_l; lia. }
+      clear Hscan. rewrite <- N.mul_assoc in Htree; fold budget in Htree.
+      lazymatch goal with |- (_ <= ?rhs)%N =>
+        replace rhs with (ssa_total_coefficient * budget)%N by (unfold budget; ring) end.
+      clearbody budget. unfold ssa_total_coefficient. nia.
+    - lazymatch goal with |- (_ <= ?rhs)%N =>
+        replace rhs with (ssa_total_coefficient * budget)%N by (unfold budget; ring) end.
+      clearbody budget. unfold ssa_total_coefficient. nia.
+  Qed.
+
   (** Translation checking charges both functions and the supplied certificate. *)
   Lemma T_check_le : forall p s c,
     (T_check p s c <= c_val * N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1) + c_val * N.of_nat (op_bits p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s c; eapply N.le_trans; [apply translation_time|].
+    apply N.add_le_mono.
+    - apply N.mul_le_mono_r; apply N.mul_le_mono_r; unfold c_val; apply N.le_add_r.
+    - apply N.mul_le_mono_r; unfold c_val; apply N.le_add_r.
+  Qed.
   (** SSA checking includes the core dominator construction budget. *)
   Lemma T_check_ssa_le : forall s,
     (T_check_ssa s <= c_val * (N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro s; eapply N.le_trans; [apply ssa_public_clock|].
+    apply N.mul_le_mono_r; apply N.mul_le_mono_r; unfold c_val; apply N.le_add_l.
+  Qed.
   (** Translation checking has the published certificate-sensitive bit-cost bound. *)
   Lemma check_bigO : bigO (fun _ : P.t * P.t * cert => True)
     (fun '(p, s, c) => N.of_nat ((function_size p + function_size s + cert_size c + 1) *
       (check_width p s c + 1) + op_bits p + 1)) (fun '(p, s, c) => T_check p s c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val; intros [[p s] c] Htrue.
+    eapply N.le_trans; [apply T_check_le|].
+    lazymatch goal with |- (?lhs <= ?rhs)%N =>
+      replace rhs with (lhs + c_val)%N by (rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_add;
+        replace (N.of_nat 1) with 1%N by reflexivity; ring)
+    end.
+    apply N.le_add_r.
+  Qed.
   (** SSA checking has the published syntax and dominator bit-cost bound. *)
   Lemma check_ssa_bigO : bigO (fun _ : P.t => True)
     (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N) T_check_ssa.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_val; intros s Htrue; eapply N.le_trans; [apply T_check_ssa_le|].
+    lazymatch goal with |- (?lhs <= ?rhs)%N =>
+      replace rhs with (lhs + c_val)%N by ring
+    end.
+    apply N.le_add_r.
+  Qed.
   Definition k_entry : N := 1. (* STUB *)
   Definition k_code : N := 1. (* STUB *)
   Definition k_edge : N := 1. (* STUB *)
@@ -3747,7 +4558,9 @@ Module ValidateT (O : OPS)
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) <=
       k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
         N.of_nat (function_width s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: the private graph, build, and check clocks prove this
+    budget with a larger coefficient. The shared k_ssa also controls defective
+    T3_ssa and therefore remains unchanged. *)
   (** Entry checking charges both input lists and the indexed certificate row. *)
   Lemma T2b_entry : forall p s c,
     (T_check_entry p s c (tables p s c) <= k_entry *
@@ -3816,7 +4629,11 @@ Module ValidateT (O : OPS)
     (T_check_ssa s <= T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
       k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: successful checking also evaluates D.tree, whose
+    graph-sensitive cost is absent here. The presentation laws permit arbitrarily
+    many distinct parallel edges for a fixed source jump; tree work can therefore
+    grow independently of the added syntax budget. The public SSA bound charges
+    graph_e through dom_bound. *)
   (** The tables retain the first body and certificate row for each identifier. *)
   Lemma F0_tables : forall p s c b,
     trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
