@@ -1565,3 +1565,466 @@ Proof.
   - apply dom_lt_trie_all_empty.
   - intros buckets v Hrows Hv. now apply dom_lt_bucket_add_range.
 Qed.
+
+Local Opaque dom_lt_eval T_dom_lt_eval.
+
+(** * Producer work outside the evaluator and linker
+
+    The generated evaluator and linker clocks retain coefficient one.
+    The remaining work is charged to key widths and visited row occurrences. *)
+
+(** A predecessor visit pays only its score lookup and comparison outside evaluation. *)
+Lemma dom_lt_semi_predecessor_clock width limit semis links best witness source :
+  let chosen := snd (dom_lt_eval limit semis links source) in
+  N.size_nat chosen <= width ->
+  N.size_nat (dom_lt_identity semis chosen) <= width ->
+  (T_dom_lt_predecessor limit semis (links, best, witness) source <=
+    T_dom_lt_eval limit semis links source + 64 * N.of_nat (width + 1))%N.
+Proof.
+  cbn zeta. destruct (dom_lt_eval limit semis links source) as [after chosen] eqn:Heval.
+  cbn [snd]. intros Hchosen Hscore.
+  pose proof (dom_lt_time_identity semis chosen) as Hidentity.
+  pose proof (dom_lt_time_ltb (dom_lt_identity semis chosen) best) as Hcompare.
+  unfold T_dom_lt_predecessor. time_simpl. rewrite Heval.
+  destruct (N.ltb (dom_lt_identity semis chosen) best); time_simpl;
+    rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** A root settlement performs only its encoded-parent lookup. *)
+Lemma dom_lt_semi_settle_stop_clock width numeric st v :
+  N.size_nat v <= width ->
+  trie_get (dom_lt_key v) (lt_numeric_parent numeric) = None ->
+  (T_dom_lt_settle numeric st v <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hparent.
+  pose proof (dom_lt_time_key v) as Hkey.
+  pose proof (dom_lt_key_width v) as Hwidth.
+  unfold T_dom_lt_settle. time_simpl. rewrite Hparent. time_simpl.
+  rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** A live settlement retains its exact predecessor fold and final link clock. *)
+Lemma dom_lt_semi_settle_live_clock width numeric st v p :
+  let incoming := match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+    None => [] | Some row => row end in
+  let result := fold_left
+    (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st)) incoming
+    (lt_semi_links st, p, p) in
+  N.size_nat v <= width ->
+  trie_get (dom_lt_key v) (lt_numeric_parent numeric) = Some p ->
+  (T_dom_lt_settle numeric st v <=
+    List.T_fold_left
+      (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st))
+      (T_dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st)) incoming
+      (lt_semi_links st, p, p) +
+    T_dom_lt_link (fst (fst result)) v p +
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  cbn zeta. intros Hv Hparent.
+  pose proof (dom_lt_time_key v) as Hkey.
+  pose proof (dom_lt_key_width v) as Hwidth.
+  unfold T_dom_lt_settle. time_simpl. rewrite Hparent. time_simpl.
+  change (fun (acc : dom_lt_links * N * N) (source : N) =>
+    T_dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st) acc source) with
+    (T_dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st)).
+  destruct (fold_left
+    (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis st))
+    (match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+      None => [] | Some row => row end) (lt_semi_links st, p, p))
+    as [[links best] witness].
+  cbn [fst].
+  pose proof (PTrieT.T_set_le N (dom_lt_key v) best (lt_semis st)) as Hsemi.
+  pose proof (PTrieT.T_set_le N (dom_lt_key v) witness (lt_minimizer st)) as Hmin.
+  change (PTrieCode.T_set (dom_lt_key v) best (lt_semis st) <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hsemi.
+  change (PTrieCode.T_set (dom_lt_key v) witness (lt_minimizer st) <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hmin.
+  rewrite !PTrieT.trie_get_clock. time_simpl.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Bucket insertion needs only widths of its input rank and stored semidominator. *)
+Lemma dom_lt_semi_bucket_add_clock width semis buckets v :
+  N.size_nat v <= width ->
+  dom_lt_trie_all (fun n => N.size_nat n <= width) semis ->
+  (T_dom_lt_bucket_add semis buckets v <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hsemis.
+  pose proof (dom_lt_time_key v) as Hvkey.
+  pose proof (dom_lt_key_width v) as Hvwidth.
+  unfold T_dom_lt_bucket_add.
+  destruct (trie_get (dom_lt_key v) semis) as [s|] eqn:Hget.
+  - pose proof (Hsemis _ _ Hget) as Hs.
+    change (N.size_nat s <= width) in Hs.
+    pose proof (dom_lt_time_key s) as Hskey.
+    pose proof (dom_lt_key_width s) as Hswidth.
+    set (row := match trie_get (dom_lt_key s) buckets with None => [] | Some xs => xs end).
+    pose proof (PTrieT.T_set_le (list N) (dom_lt_key s) (v :: row) buckets) as Hset.
+    change (PTrieCode.T_set (dom_lt_key s) (v :: row) buckets <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key s) + 1))%N in Hset.
+    fold row. time_simpl. rewrite !PTrieT.trie_get_clock.
+    clearbody row. clear -Hv Hs Hvkey Hvwidth Hskey Hswidth Hset.
+    rewrite !Nat2N.inj_add in *. nia.
+  - time_simpl. rewrite PTrieT.trie_get_clock.
+    clear -Hv Hvkey Hvwidth. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** A bucket member retains its exact evaluator clock and pays one relative-parent write. *)
+Lemma dom_lt_semi_bucket_member_clock width limit semis s st v :
+  let chosen := snd (dom_lt_eval limit semis (lt_bucket_links st) v) in
+  N.size_nat v <= width -> N.size_nat chosen <= width ->
+  N.size_nat (dom_lt_identity semis chosen) <= width ->
+  (T_dom_lt_bucket_member limit semis s st v <=
+    T_dom_lt_eval limit semis (lt_bucket_links st) v +
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  cbn zeta.
+  destruct (dom_lt_eval limit semis (lt_bucket_links st) v) as [links chosen] eqn:Heval.
+  cbn [snd]. intros Hv Hchosen Hscore.
+  pose proof (dom_lt_time_key v) as Hkey.
+  pose proof (dom_lt_key_width v) as Hwidth.
+  pose proof (dom_lt_time_identity semis chosen) as Hidentity.
+  pose proof (dom_lt_time_ltb (dom_lt_identity semis chosen) s) as Hcompare.
+  unfold T_dom_lt_bucket_member. time_simpl. rewrite Heval.
+  destruct (N.ltb (dom_lt_identity semis chosen) s).
+  - pose proof (PTrieT.T_set_le N (dom_lt_key v) chosen (lt_relative st)) as Hset.
+    change (PTrieCode.T_set (dom_lt_key v) chosen (lt_relative st) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hset.
+    time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  - pose proof (PTrieT.T_set_le N (dom_lt_key v) s (lt_relative st)) as Hset.
+    change (PTrieCode.T_set (dom_lt_key v) s (lt_relative st) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hset.
+    time_simpl. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** A bucket step retains its exact member fold and optional linker clock. *)
+Lemma dom_lt_semi_bucket_step_clock width numeric semis buckets st s :
+  let row := match trie_get (dom_lt_key s) buckets with None => [] | Some xs => xs end in
+  let result := fold_left (dom_lt_bucket_member (lt_numeric_limit numeric) semis s) row st in
+  N.size_nat s <= width ->
+  (T_dom_lt_bucket_step numeric semis buckets st s <=
+    List.T_fold_left (dom_lt_bucket_member (lt_numeric_limit numeric) semis s)
+      (T_dom_lt_bucket_member (lt_numeric_limit numeric) semis s) row st +
+    (match trie_get (dom_lt_key s) (lt_numeric_parent numeric) with
+      None => 0 | Some p => T_dom_lt_link (lt_bucket_links result) s p end) +
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  cbn zeta. intro Hs.
+  pose proof (dom_lt_time_key s) as Hkey.
+  pose proof (dom_lt_key_width s) as Hwidth.
+  unfold T_dom_lt_bucket_step. time_simpl.
+  change (fun (current : dom_lt_bucket_state) (v : N) =>
+    T_dom_lt_bucket_member (lt_numeric_limit numeric) semis s current v) with
+    (T_dom_lt_bucket_member (lt_numeric_limit numeric) semis s).
+  destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric));
+    time_simpl; rewrite !PTrieT.trie_get_clock;
+    rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Correction needs only the current key and stored relative parent's width. *)
+Lemma dom_lt_semi_correct_step_clock width semis relative corrected v :
+  N.size_nat v <= width ->
+  dom_lt_trie_all (fun n => N.size_nat n <= width) relative ->
+  (T_dom_lt_correct_step semis relative corrected v <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hrelative.
+  pose proof (dom_lt_time_key v) as Hkey.
+  pose proof (dom_lt_key_width v) as Hwidth.
+  pose proof (dom_lt_time_identity semis v) as Hscore.
+  unfold T_dom_lt_correct_step.
+  destruct (trie_get (dom_lt_key v) relative) as [p|] eqn:Hget.
+  - pose proof (Hrelative _ _ Hget) as Hp.
+    change (N.size_nat p <= width) in Hp.
+    pose proof (dom_lt_time_identity corrected p) as Hparent.
+    pose proof (N.T_eqb_le p (dom_lt_identity semis v)) as Hcompare.
+    destruct (N.eqb p (dom_lt_identity semis v)).
+    + pose proof (PTrieT.T_set_le N (dom_lt_key v) p corrected) as Hset.
+      change (PTrieCode.T_set (dom_lt_key v) p corrected <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hset.
+      time_simpl. rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+    + pose proof (PTrieT.T_set_le N (dom_lt_key v) (dom_lt_identity corrected p) corrected)
+        as Hset.
+      change (PTrieCode.T_set (dom_lt_key v) (dom_lt_identity corrected p) corrected <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key v) + 1))%N in Hset.
+      time_simpl. rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+  - time_simpl. rewrite PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Building buckets scans the order once and performs one bounded insertion per rank. *)
+Lemma dom_lt_semi_bucket_build_clock width semis order :
+  Forall (fun n => N.size_nat n <= width) order ->
+  dom_lt_trie_all (fun n => N.size_nat n <= width) semis ->
+  (List.T_rev_append order [] +
+    List.T_fold_left (dom_lt_bucket_add semis) (T_dom_lt_bucket_add semis)
+      (rev_append order []) Empty <=
+    256 * (PTrieT.c_trie + 1) * N.of_nat ((length order + 1) * (width + 1)))%N.
+Proof.
+  intros Horder Hsemis.
+  pose proof (List.T_rev_append_le order []) as Hreverse.
+  pose proof (dom_time_fold_left (dom_lt_bucket_add semis) (T_dom_lt_bucket_add semis)
+    (128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N
+    (rev_append order []) Empty) as Hfold.
+  specialize (Hfold ltac:(intros v Hv current; apply dom_lt_semi_bucket_add_clock;
+    [apply (proj1 (Forall_forall _ _) Horder v);
+      rewrite rev_append_rev, app_nil_r, <- in_rev in Hv; exact Hv|exact Hsemis])).
+  replace (length (rev_append order [])) with (length order) in Hfold by
+    (rewrite rev_append_rev, length_app, length_rev; cbn [length]; lia).
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Correction is one reversal followed by one bounded callback per numeric vertex. *)
+Lemma dom_lt_semi_correct_clock width numeric semis relative :
+  Forall (fun n => N.size_nat n <= width) (lt_numeric_order numeric) ->
+  dom_lt_trie_all (fun n => N.size_nat n <= width) relative ->
+  (T_dom_lt_correct numeric semis relative <=
+    256 * (PTrieT.c_trie + 1) *
+      N.of_nat ((length (lt_numeric_order numeric) + 1) * (width + 1)))%N.
+Proof.
+  intros Horder Hrelative.
+  pose proof (List.T_rev_append_le (lt_numeric_order numeric) []) as Hreverse.
+  pose proof (dom_time_fold_left (dom_lt_correct_step semis relative)
+    (T_dom_lt_correct_step semis relative)
+    (128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N
+    (rev_append (lt_numeric_order numeric) []) Empty) as Hfold.
+  specialize (Hfold ltac:(intros v Hv current; apply dom_lt_semi_correct_step_clock;
+    [apply (proj1 (Forall_forall _ _) Horder v);
+      rewrite rev_append_rev, app_nil_r, <- in_rev in Hv; exact Hv|exact Hrelative])).
+  unfold T_dom_lt_correct. time_simpl.
+  change (fun (current : ptrie N) (v : N) =>
+    T_dom_lt_correct_step semis relative current v) with
+    (T_dom_lt_correct_step semis relative).
+  replace (length (rev_append (lt_numeric_order numeric) [])) with
+    (length (lt_numeric_order numeric)) in Hfold by
+    (rewrite rev_append_rev, length_app, length_rev; cbn [length]; lia).
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Original-key rank lookup has the same digit charge as the underlying trie read. *)
+Lemma dom_lt_pipeline_rank_get_clock ranks v :
+  (T_dom_lt_rank_get ranks v <= 2 * N.of_nat (Pos.size_nat v) + 2)%N.
+Proof.
+  unfold T_dom_lt_rank_get. destruct (trie_get v ranks); time_simpl;
+    rewrite PTrieT.trie_get_clock; lia.
+Qed.
+
+(** Reading a prepared predecessor row has only an original-key trie lookup. *)
+Lemma dom_lt_pipeline_preds_clock g v :
+  (T_preds g v <= 2 * N.of_nat (Pos.size_nat v) + 2)%N.
+Proof.
+  destruct g as [graph predecessors vertex_count edge_count].
+  unfold T_preds. time_simpl. rewrite PTrieT.trie_get_clock. lia.
+Qed.
+
+(** A right fold needs a uniform callback bound only on the entries it actually visits. *)
+Lemma dom_lt_pipeline_fold_right_clock {A B : Type} (step : B -> A -> A)
+    (T_step : B -> A -> N) k row initial :
+  (forall v, In v row -> forall rest, (T_step v rest <= k)%N) ->
+  (List.T_fold_right step T_step initial row <=
+    (k + 1) * N.of_nat (length row) + 1)%N.
+Proof.
+  induction row as [|v rest IH]; intro Hbound.
+  - time_unfold @List.T_fold_right. cbn [length]. lia.
+  - pose proof (Hbound v (or_introl eq_refl) (fold_right step initial rest)) as Hhead.
+    specialize (IH (fun x Hx => Hbound x (or_intror Hx))).
+    time_unfold @List.T_fold_right. fold (List.T_fold_right step T_step).
+    cbn [length]. rewrite Nat2N.inj_succ. clear -Hhead IH. nia.
+Qed.
+
+(** Rank filtering reads every predecessor occurrence once, preserving duplicate charges. *)
+Lemma dom_lt_pipeline_ranked_row_clock width ranks row :
+  Forall (fun v => Pos.size_nat v <= width) row ->
+  (T_dom_lt_ranked_row ranks row <=
+    8 * N.of_nat ((length row + 1) * (width + 1)))%N.
+Proof.
+  intro Hrow. unfold T_dom_lt_ranked_row. time_simpl.
+  match goal with
+  | |- context [List.T_fold_right ?step ?T_step ?initial ?xs] =>
+    pose proof (dom_lt_pipeline_fold_right_clock step T_step
+      (4 * N.of_nat (width + 1))%N xs initial) as Hfold
+  end.
+  specialize (Hfold ltac:(intros v Hv rest;
+    pose proof (proj1 (Forall_forall _ _) Hrow v Hv) as Hwidth;
+    change (Pos.size_nat v <= width) in Hwidth;
+    time_simpl; destruct (trie_get v ranks); time_simpl;
+    rewrite PTrieT.trie_get_clock; clear -Hwidth; rewrite !Nat2N.inj_add in *; lia)).
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. clear -Hfold. nia.
+Qed.
+
+(** Numeric insertion pays three encoded-key writes and one pass over its predecessor row. *)
+Lemma dom_lt_pipeline_numeric_add_clock width g layout st v :
+  Pos.size_nat v <= width ->
+  N.size_nat (dom_lt_rank_get (lt_rank layout) v) <= width ->
+  dom_lt_trie_all (fun p => Pos.size_nat p <= width) (lt_dfs_parent layout) ->
+  Forall (fun p => Pos.size_nat p <= width) (preds g v) ->
+  (T_dom_lt_numeric_add g layout st v <=
+    128 * (PTrieT.c_trie + 1) *
+      N.of_nat ((length (preds g v) + 1) * (width + 1)))%N.
+Proof.
+  intros Hv Hrank Hparents Hrow.
+  set (rank := dom_lt_rank_get (lt_rank layout) v).
+  set (key := dom_lt_key rank).
+  pose proof (dom_lt_pipeline_rank_get_clock (lt_rank layout) v) as Hrankget.
+  pose proof (dom_lt_time_key rank) as Hkey.
+  pose proof (dom_lt_key_width rank) as Hkeywidth.
+  pose proof (dom_lt_pipeline_preds_clock g v) as Hpreds.
+  pose proof (dom_lt_pipeline_ranked_row_clock width (lt_rank layout) (preds g v) Hrow)
+    as Hranked.
+  pose proof (PTrieT.T_set_le (list N) key
+    (dom_lt_ranked_row (lt_rank layout) (preds g v)) (lt_numeric_pred st)) as Hsetpred.
+  pose proof (PTrieT.T_set_le positive key v (lt_numeric_vertex st)) as Hsetvertex.
+  change (PTrieCode.T_set key (dom_lt_ranked_row (lt_rank layout) (preds g v))
+    (lt_numeric_pred st) <= PTrieT.c_trie * N.of_nat (Pos.size_nat key + 1))%N in Hsetpred.
+  change (PTrieCode.T_set key v (lt_numeric_vertex st) <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat key + 1))%N in Hsetvertex.
+  fold rank in Hrank. fold key in Hkeywidth.
+  unfold T_dom_lt_numeric_add. time_simpl. fold rank key.
+  destruct (trie_get v (lt_dfs_parent layout)) as [parent|] eqn:Hget.
+  - pose proof (Hparents _ _ Hget) as Hparent.
+    change (Pos.size_nat parent <= width) in Hparent.
+    pose proof (dom_lt_pipeline_rank_get_clock (lt_rank layout) parent) as Hparentget.
+    pose proof (PTrieT.T_set_le N key (dom_lt_rank_get (lt_rank layout) parent)
+      (lt_numeric_parent st)) as Hsetparent.
+    change (PTrieCode.T_set key (dom_lt_rank_get (lt_rank layout) parent)
+      (lt_numeric_parent st) <= PTrieT.c_trie * N.of_nat (Pos.size_nat key + 1))%N in Hsetparent.
+    time_simpl. rewrite PTrieT.trie_get_clock.
+    clearbody rank key.
+    clear -Hv Hrank Hrankget Hkey Hkeywidth Hpreds Hranked Hsetpred Hsetvertex
+      Hparent Hparentget Hsetparent.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  - time_simpl. rewrite PTrieT.trie_get_clock.
+    clearbody rank key.
+    clear -Hv Hrank Hrankget Hkey Hkeywidth Hpreds Hranked Hsetpred Hsetvertex.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Layout stacks and stored original parents obey the width of every entered key. *)
+Definition dom_lt_pipeline_layout_width (width : nat) (layout : dom_lt_layout) : Prop :=
+  Forall (fun v => Pos.size_nat v <= width) (lt_stack layout) /\
+  dom_lt_trie_all (fun v => Pos.size_nat v <= width) (lt_dfs_parent layout).
+
+(** A layout event preserves its original-key payload widths. *)
+Lemma dom_lt_pipeline_layout_event_width width st event :
+  dom_lt_pipeline_layout_width width st ->
+  (match event with SearchSig.Enter v => Pos.size_nat v <= width | _ => True end) ->
+  dom_lt_pipeline_layout_width width (dom_lt_event st event).
+Proof.
+  destruct st as [order ranks parents stack next]. intros [Hstack Hparents].
+  destruct event as [v|v|kind u v]; cbn [dom_lt_event].
+  - intro Hv. destruct stack as [|parent rest].
+    + split; [now constructor|exact Hparents].
+    + inversion Hstack as [|head tail Hparent Hrest]; subst head tail.
+      split; [now constructor|]. apply dom_lt_trie_all_set; assumption.
+  - intro Htrivial. destruct stack as [|parent rest];
+      split; try exact Hparents; [constructor|].
+    now inversion Hstack.
+  - intro Htrivial. now split.
+Qed.
+
+(** The real layout contains only original parent keys whose widths fit the input graph. *)
+Lemma dom_lt_pipeline_layout_of_width g r :
+  dom_lt_pipeline_layout_width (graph_width (base g)) (dom_lt_layout_of g r).
+Proof.
+  unfold dom_lt_layout_of.
+  apply (dom_lt_fold_forall dom_lt_event
+    (dom_lt_pipeline_layout_width (graph_width (base g)))
+    (fun event => match event with
+      SearchSig.Enter v => Pos.size_nat v <= graph_width (base g) | _ => True end)).
+  - apply Forall_forall. intros event Hevent. destruct event as [v|v|kind u v];
+      [|exact I|exact I].
+    apply dom_listed_key_width.
+    destruct (dom_lt_trace_inventory g r) as [_ [Hlisted _]].
+    apply Hlisted. now apply Search.search_entered_member.
+  - split; [constructor|apply dom_lt_trie_all_empty].
+  - intros st event Hst Hevent. now apply dom_lt_pipeline_layout_event_width.
+Qed.
+
+(** Every prepared predecessor occurrence names a listed original source vertex. *)
+Lemma dom_lt_pipeline_preds_listed g v p :
+  prepared_ok g -> In p (preds g v) -> In p (nodes g).
+Proof.
+  intros [_ [_ Hpreds]] Hp.
+  apply (Permutation.Permutation_in p (Hpreds v)) in Hp.
+  apply in_flat_map in Hp. destruct Hp as [source [Hsource Hp]].
+  apply in_map_iff in Hp. destruct Hp as [ignored [Heq Hin]]. subst p. exact Hsource.
+Qed.
+
+(** Every bounded discovery rank fits in the graph's original key width. *)
+Lemma dom_lt_pipeline_discovery_width g r n :
+  (n <= N.of_nat (length (dom_lt_dfs g r)))%N ->
+  N.size_nat n <= graph_width (base g).
+Proof.
+  intro Hn. destruct (dom_lt_dfs_inventory g r) as [Hunique [Hlisted Hcounts]].
+  apply (dom_distinct_value_width (dom_lt_dfs g r) (graph_width (base g)) n Hunique);
+    [|exact Hn].
+  intros v Hv. apply dom_listed_key_width. now apply Hlisted.
+Qed.
+
+(** Numeric vertex payloads retain the widths of their original discovered keys. *)
+Lemma dom_lt_pipeline_numeric_vertex_width g r :
+  dom_lt_trie_all (fun v => Pos.size_nat v <= graph_width (base g))
+    (lt_numeric_vertex (dom_lt_numeric_of g r)).
+Proof.
+  unfold dom_lt_numeric_of.
+  apply (dom_lt_fold_forall (dom_lt_numeric_add g (dom_lt_layout_of g r))
+    (fun st => dom_lt_trie_all (fun v => Pos.size_nat v <= graph_width (base g))
+      (lt_numeric_vertex st)) (fun v => In v (nodes g))).
+  - change (Forall (fun v => In v (nodes g)) (dom_lt_dfs g r)).
+    apply Forall_forall. exact (proj1 (proj2 (dom_lt_dfs_inventory g r))).
+  - apply dom_lt_trie_all_empty.
+  - intros st v Hst Hv. cbn [dom_lt_numeric_add lt_numeric_vertex].
+    apply dom_lt_trie_all_set; [exact Hst|now apply dom_listed_key_width].
+Qed.
+
+(** One closed coefficient pays layout construction and all numeric row conversion. *)
+Definition dom_lt_numeric_coefficient : N :=
+  (1024 * (Search.search_trace_coefficient + PTrieT.c_trie + 4096))%N.
+
+
+(** Erasure pays bounded numeric reads and one write at an original vertex key. *)
+Lemma dom_lt_pipeline_erase_clock width numeric parents :
+  Forall (fun n => N.size_nat n <= width) (lt_numeric_order numeric) ->
+  dom_lt_trie_all (fun n => N.size_nat n <= width) parents ->
+  dom_lt_trie_all (fun v => Pos.size_nat v <= width) (lt_numeric_vertex numeric) ->
+  (T_dom_lt_erase numeric parents <=
+    512 * (PTrieT.c_trie + 1) *
+      N.of_nat ((length (lt_numeric_order numeric) + 1) * (width + 1)))%N.
+Proof.
+  intros Horder Hparents Hvertices.
+  unfold T_dom_lt_erase. time_simpl.
+  match goal with
+  | |- context [List.T_fold_left ?step ?T_step ?order ?initial] =>
+    assert (Hcallbacks : forall v, In v order -> forall result,
+      (T_step result v <=
+        256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N) by
+      (intros v Hv result;
+       pose proof (proj1 (Forall_forall _ _) Horder v Hv) as Hwidth;
+       change (N.size_nat v <= width) in Hwidth;
+       pose proof (dom_lt_time_key v) as Hkey;
+       pose proof (dom_lt_key_width v) as Hkeywidth;
+       time_simpl;
+       destruct (trie_get (dom_lt_key v) parents) as [p|] eqn:Hparent;
+       destruct (trie_get (dom_lt_key v) (lt_numeric_vertex numeric)) as [child|] eqn:Hchild;
+       [pose proof (Hparents _ _ Hparent) as Hp;
+        change (N.size_nat p <= width) in Hp;
+        pose proof (Hvertices _ _ Hchild) as Hchildwidth;
+        change (Pos.size_nat child <= width) in Hchildwidth;
+        pose proof (dom_lt_time_key p) as Hpkey;
+        pose proof (dom_lt_key_width p) as Hpkeywidth;
+        destruct (trie_get (dom_lt_key p) (lt_numeric_vertex numeric)) as [parent|];
+        [pose proof (PTrieT.T_set_le positive child parent result) as Hset;
+         change (PTrieCode.T_set child parent result <=
+           PTrieT.c_trie * N.of_nat (Pos.size_nat child + 1))%N in Hset|]
+       | | | ];
+       time_simpl; rewrite !PTrieT.trie_get_clock;
+       rewrite !Nat2N.inj_add in *; nia);
+    pose proof (dom_time_fold_left step T_step
+      (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N
+      order initial Hcallbacks) as Hfold
+  end.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+Local Transparent dom_lt_eval T_dom_lt_eval.
