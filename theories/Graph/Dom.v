@@ -2201,6 +2201,132 @@ Proof.
   exact (dom_position_fold_nth o v 0%N 0%N i Hunique Hi).
 Qed.
 
+(** Unit weights expose each remaining cell's ordinary additive contribution. *)
+Local Lemma dom_size_mass_cons_one sizes v xs :
+  dom_size_mass (fun _ => 1%N) (v :: xs) sizes =
+    (dom_size_get sizes v + dom_size_mass (fun _ => 1%N) xs sizes)%N.
+Proof.
+  unfold dom_size_mass. cbn [fold_right]. now rewrite N.mul_1_l.
+Qed.
+
+(** A cell in a remaining list contributes its entire value to that list's mass. *)
+Local Lemma dom_size_mass_member xs sizes x : In x xs ->
+  (dom_size_get sizes x <= dom_size_mass (fun _ => 1%N) xs sizes)%N.
+Proof.
+  induction xs as [|v xs IH]; intros Hin; [contradiction|].
+  rewrite dom_size_mass_cons_one.
+  destruct Hin as [<-|Hin]; [lia|]. specialize (IH Hin). lia.
+Qed.
+
+(** Remaining cells hold at most the original mass; retired cells may retain one extra copy. *)
+Local Definition dom_size_budget (limit : N) remaining sizes : Prop :=
+  (dom_size_mass (fun _ => 1%N) remaining sizes <= limit)%N /\
+  forall x, ~ In x remaining ->
+    (dom_size_get sizes x + dom_size_mass (fun _ => 1%N) remaining sizes <=
+      2 * limit + 1)%N.
+
+(** The mass invariant bounds every cell, including cells outside the candidate order. *)
+Local Lemma dom_size_budget_value limit remaining sizes x :
+  dom_size_budget limit remaining sizes ->
+  (dom_size_get sizes x <= 2 * limit + 1)%N.
+Proof.
+  intros [Hmass Hretired]. destruct (in_dec Pos.eq_dec x remaining) as [Hin|Houtside].
+  - pose proof (dom_size_mass_member remaining sizes x Hin). lia.
+  - specialize (Hretired x Houtside). lia.
+Qed.
+
+(** The remaining-parent case conserves mass and retires a cell without duplicating its pool. *)
+Local Lemma dom_size_budget_transfer limit remaining m sizes v p :
+  NoDup (v :: remaining) -> dom_size_budget limit (v :: remaining) sizes ->
+  trie_get v m = Some p -> In p remaining ->
+  dom_size_budget limit remaining (dom_add_size m sizes v).
+Proof.
+  intros Hunique [Hmass Hretired] Hparent Hp.
+  inversion Hunique as [|head tail Hfresh Htail]; subst head tail.
+  pose proof (dom_size_mass_transfer (fun _ => 1%N) remaining m sizes v p
+    Htail Hparent Hp eq_refl) as Htransfer.
+  split; [now rewrite Htransfer|]. intros x Houtside.
+  rewrite Htransfer, dom_add_size_value, Hparent.
+  assert (Hxp : x <> p) by (intro Heq; subst x; contradiction).
+  rewrite (proj2 (Pos.eqb_neq x p) Hxp).
+  destruct (Pos.eq_dec x v) as [->|Hne].
+  - rewrite dom_size_mass_cons_one in Hmass |- *. nia.
+  - apply Hretired. intros [Heq|Hin]; [congruence|exact (Houtside Hin)].
+Qed.
+
+(** Retiring a cell releases enough mass to pay a late write, including a self-parent. *)
+Local Lemma dom_size_budget_retire limit remaining m sizes v :
+  dom_size_budget limit (v :: remaining) sizes ->
+  (forall p, trie_get v m = Some p -> ~ In p remaining) ->
+  dom_size_budget limit remaining (dom_add_size m sizes v).
+Proof.
+  intros [Hmass Hretired] Houtside.
+  pose proof (dom_size_mass_absent (fun _ => 1%N) remaining m sizes v Houtside) as Hsame.
+  rewrite dom_size_mass_cons_one in Hmass.
+  split; [rewrite Hsame; lia|]. intros x Hx.
+  rewrite Hsame, dom_add_size_value.
+  destruct (Pos.eq_dec x v) as [->|Hne].
+  - destruct (trie_get v m) as [p|] eqn:Hparent; [|lia].
+    destruct (Pos.eqb v p) eqn:Heq; [|lia]. apply Pos.eqb_eq in Heq. subst p. nia.
+  - assert (Hnot : ~ In x (v :: remaining)).
+    { intros [Heq|Hin]; [congruence|exact (Hx Hin)]. }
+    specialize (Hretired x Hnot).
+    rewrite dom_size_mass_cons_one in Hretired.
+    destruct (trie_get v m) as [p|] eqn:Hparent; [|lia].
+    destruct (Pos.eqb x p) eqn:Heq; [|lia]. apply Pos.eqb_eq in Heq. subst p. nia.
+Qed.
+
+(** Distinct processing preserves the mass bound even when candidate parents form cycles. *)
+Local Lemma dom_size_budget_step limit remaining m sizes v :
+  NoDup (v :: remaining) -> dom_size_budget limit (v :: remaining) sizes ->
+  dom_size_budget limit remaining (dom_add_size m sizes v).
+Proof.
+  intros Hunique Hbudget. destruct (trie_get v m) as [p|] eqn:Hparent.
+  - destruct (in_dec Pos.eq_dec p remaining) as [Hin|Houtside].
+    + eapply dom_size_budget_transfer; eassumption.
+    + apply dom_size_budget_retire; [exact Hbudget|].
+      intros q Hget. rewrite Hparent in Hget. injection Hget as <-. exact Houtside.
+  - apply dom_size_budget_retire; [exact Hbudget|].
+    intros p Hget. rewrite Hparent in Hget. discriminate Hget.
+Qed.
+
+(** Empty storage gives one unit to each candidate occurrence. *)
+Local Lemma dom_size_mass_empty xs :
+  dom_size_mass (fun _ => 1%N) xs Empty = N.of_nat (length xs).
+Proof.
+  induction xs as [|v xs IH]; [reflexivity|].
+  rewrite dom_size_mass_cons_one, IH. cbn [length].
+  unfold dom_size_get. rewrite PTrie.get_empty, Nat2N.inj_succ. lia.
+Qed.
+
+(** The original number of distinct entries initializes the remaining-mass budget. *)
+Local Lemma dom_size_budget_empty xs :
+  dom_size_budget (N.of_nat (length xs)) xs Empty.
+Proof.
+  split; [rewrite dom_size_mass_empty; reflexivity|].
+  intros x Houtside. rewrite dom_size_mass_empty. unfold dom_size_get.
+  rewrite PTrie.get_empty. lia.
+Qed.
+
+(** Distinct processing bounds every final size even for cyclic or unclosed maps. *)
+Lemma dom_sizes_value_bound m o x : NoDup o ->
+  (dom_size_get (dom_sizes m o) x <= 2 * N.of_nat (length o) + 1)%N.
+Proof.
+  intro Hunique.
+  assert (Hfold : forall remaining sizes limit, NoDup remaining ->
+    dom_size_budget limit remaining sizes ->
+    dom_size_budget limit [] (fold_left (dom_add_size m) remaining sizes)).
+  { intro remaining. induction remaining as [|v rest IH]; intros sizes limit Hnodup Hbudget.
+    - exact Hbudget.
+    - inversion Hnodup as [|head tail Hfresh Hrest]; subst head tail.
+      cbn [fold_left]. apply IH; [exact Hrest|].
+      eapply dom_size_budget_step; eassumption. }
+  unfold dom_sizes. rewrite rev_append_rev, app_nil_r.
+  eapply dom_size_budget_value. apply Hfold.
+  - now apply NoDup_rev.
+  - rewrite <- length_rev. apply dom_size_budget_empty.
+Qed.
+
 Module DomT <: DOM_ALL.
   Include Dom.
   TimeFun build.
