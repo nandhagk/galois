@@ -875,60 +875,110 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Lemma rank_bound : forall q a, wrank q a <= 2 * (length (T.vals q) + 1).
   Proof. Admitted. (* STUB *)
 
+  (** Projecting packed refinements preserves every paired inward result. *)
+  Lemma refinement_projections : forall (xs : list t) (ys : list itv),
+    Forall2 (fun y old => R.leb y old = true) ys (map cut_raw xs) ->
+    map cut_raw
+      (map (fun yx => pack_cut C.bits (cut_within C.bits (snd yx) (fst yx)))
+        (combine ys (map cut_raw xs))) =
+    map (fun yx => cut_within C.bits (snd yx) (fst yx))
+      (combine ys (map cut_raw xs)).
+  Proof.
+    induction xs as [|x xs IH]; intros ys Hrefines.
+    - inversion Hrefines. reflexivity.
+    - inversion Hrefines as [|y old ys' olds' Hhead Htail]; subst.
+      cbn [map combine fst snd].
+      assert (Hvalid : cut_interval_ok C.bits (cut_within C.bits (cut_raw x) y) = true).
+      { apply cut_within_valid; [apply cut_raw_valid|].
+        rewrite <- RL.raw_leb. exact Hhead. }
+      rewrite (pack_cut_agrees C.bits _ Hvalid).
+      f_equal. apply IH. exact Htail.
+  Qed.
+
   (** Concrete membership uses the projected inclusive interval. *)
   Lemma F_gamma : forall a z, gamma a z <-> in_cut a z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a z. reflexivity.
+  Qed.
   (** Inclusion compares normalized bounded projections directly. *)
   Lemma F_leb : forall a b, leb a b = R.leb (cut_raw a) (cut_raw b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. reflexivity.
+  Qed.
   (** Bottom has the normalized empty representation. *)
   Lemma F_bot : cut_raw bot = IBot.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Top has two infinite endpoints. *)
   Lemma F_top : cut_raw top = I NegInf PosInf.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Bottom recognition agrees with the raw domain. *)
   Lemma F_is_bot : forall a, is_bot a = R.is_bot (cut_raw a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. reflexivity.
+  Qed.
   (** Joining cuts the raw join before it enters the bounded carrier. *)
   Lemma F_join : forall a b,
     cut_raw (join a b) = cut_interval C.bits (R.join (cut_raw a) (cut_raw b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. apply cut_agrees.
+  Qed.
   (** Meeting cuts the normalized raw intersection. *)
   Lemma F_meet : forall a b,
     cut_raw (meet a b) = cut_interval C.bits (R.meet (cut_raw a) (cut_raw b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. apply cut_agrees.
+  Qed.
   (** Every threshold parameter is accepted and its result is cut outward. *)
   Lemma F_widen : forall q a b,
     cut_raw (widen q a b) = cut_interval C.bits (R.widen q (cut_raw a) (cut_raw b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q a b. apply cut_agrees.
+  Qed.
   (** Narrowing cuts the raw narrowed result. *)
   Lemma F_narrow : forall a b,
     cut_raw (narrow a b) = cut_interval C.bits (R.narrow (cut_raw a) (cut_raw b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. apply cut_agrees.
+  Qed.
   (** Forward transfer cuts every raw result, including constants and shifts. *)
   Lemma F_forward : forall o xs,
     cut_raw (forward o xs) = cut_interval C.bits (R.forward o (map cut_raw xs)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs. apply cut_agrees.
+  Qed.
   (** Backward transfer cuts each result in its original operand position. *)
   Lemma F_backward : forall o r xs,
     map cut_raw (backward o r xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))
         (combine (R.backward o (cut_raw r) (map cut_raw xs)) (map cut_raw xs)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. unfold backward.
+    apply refinement_projections, R.backward_refines.
+  Qed.
   (** Guard refinement cuts each returned operand. *)
   Lemma F_guard : forall g xs,
     map cut_raw (guard g xs) =
       map (fun yx => cut_within C.bits (snd yx) (fst yx))
         (combine (R.guard g (map cut_raw xs)) (map cut_raw xs)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold guard.
+    apply refinement_projections, R.guard_refines.
+  Qed.
   (** Widening rank counts thresholds beyond the retained finite endpoints. *)
   Lemma F_rank : forall q a, wrank q a = R.interval_wrank q (cut_raw a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q a. reflexivity.
+  Qed.
   (** Normalization and outward cutoff cannot increase the raw threshold rank. *)
   Lemma F_cut_rank : forall q a,
     R.interval_wrank q (cut_interval C.bits a) <= R.interval_wrank q a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply cut_rank_nonincreasing.
+  Qed.
   (** The total raw helper clock includes all endpoint inspections. *)
   Lemma T_cut_helper : forall a,
     (T_cut_interval C.bits a <=
