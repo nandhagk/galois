@@ -4,11 +4,41 @@
     For example, its placeholder rejects every input.
     Builds on: DestroySig. *)
 
-From Stdlib Require Import List PArith NArith.
-From Argent Require Import Time Tactics Std BigO.
+From Stdlib Require Import List PArith NArith Lia.
+From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import KeySig Key.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig ParMoveSig DestroySig.
 Import List.ListNotations.
+
+(** A finite loop result persists when the fuel increases. *)
+Lemma loop_fuel_result_mono {A B} (next : A -> A + B) :
+  forall n m a r, n <= m -> loop_fuel next n a = inr r ->
+    loop_fuel next m a = inr r.
+Proof.
+  induction n as [|n IH]; intros m a r Hle Hrun.
+  - discriminate Hrun.
+  - destruct m as [|m]; [lia|].
+    cbn [loop_fuel] in *.
+    destruct (next a) as [a'|out].
+    + eapply IH; [lia|exact Hrun].
+    + exact Hrun.
+Qed.
+
+(** Additional fuel retains both returned values and errors of a function run. *)
+Lemma run_with_mono {K G C} (eval : K -> list C -> option C)
+    (test : G -> list C -> option bool) :
+  forall (p : func positive K G) n m ins r, n <= m -> r <> Timeout ->
+    run_with eval test n p ins = r -> run_with eval test m p ins = r.
+Proof.
+  intros p n m ins r Hle Hfinite Hrun.
+  unfold run_with in *.
+  destruct (bind_vars (inputs _ _ _ p) ins []) as [initial|] eqn:Hbind.
+  - destruct (loop_fuel (step eval test p) n (entry _ _ _ p, [], initial))
+      as [st|out] eqn:Hloop.
+    + exfalso. apply Hfinite. symmetry. exact Hrun.
+    + rewrite (loop_fuel_result_mono _ _ _ _ _ Hle Hloop). exact Hrun.
+  - exact Hrun.
+Qed.
 
 Module DestroyCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
@@ -111,7 +141,9 @@ Module DestroyT (O : OPS)
   Proof. Admitted. (* STUB *)
   Lemma F8_run_mono : forall (p : P.t) n m ins r, n <= m -> r <> Timeout ->
     run_with O.eval O.test n p ins = r -> run_with O.eval O.test m p ins = r.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply run_with_mono.
+  Qed.
   Lemma T1_split : forall s,
     (T_split s <= k_split * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
   Proof. Admitted. (* STUB *)
