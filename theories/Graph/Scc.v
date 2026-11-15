@@ -250,6 +250,102 @@ Proof.
   exact (proj2 (tarjan_nonempty_fold es tarjan_initial tarjan_nonempty_initial)).
 Qed.
 
+(** Pending vertices and emitted components together retain the complete entered inventory. *)
+Definition tarjan_bag (s : tarjan_state) : list positive :=
+  tarjan_pending s ++ concat (tarjan_emitted s).
+
+Local Lemma tarjan_bag_lower v n s :
+  tarjan_bag (TarjanVisitor.lower v n s) = tarjan_bag s.
+Proof.
+  unfold TarjanVisitor.lower. destruct (trie_get v (tarjan_low s)); reflexivity.
+Qed.
+
+Local Lemma tarjan_bag_edge kind u v s :
+  tarjan_bag (TarjanVisitor.edge kind u v s) = tarjan_bag s.
+Proof.
+  destruct kind; cbn [TarjanVisitor.edge]; try reflexivity.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try reflexivity.
+  all: destruct (trie_get v (tarjan_disc s)); try reflexivity.
+  all: apply tarjan_bag_lower.
+Qed.
+
+Local Lemma tarjan_bag_leave v s :
+  Permutation (tarjan_bag (TarjanVisitor.leave v s)) (tarjan_bag s).
+Proof.
+  unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|reflexivity].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|reflexivity].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    pose proof (proj1 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop)) as Hsplit.
+    unfold tarjan_bag. cbn [tarjan_pending tarjan_emitted concat]. rewrite Hsplit.
+    rewrite !app_assoc. apply Permutation_app_tail. apply Permutation_app_comm.
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end).
+    + reflexivity.
+    + rewrite tarjan_bag_lower. reflexivity.
+Qed.
+
+(** Entry adds its vertex, while edge and leave callbacks only rearrange the inventory. *)
+Lemma tarjan_bag_event e s :
+  Permutation
+    (tarjan_bag (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e))
+    (entered [e] ++ tarjan_bag s).
+Proof.
+  destruct e; cbn [visit_event entered app].
+  - reflexivity.
+  - apply tarjan_bag_leave.
+  - rewrite tarjan_bag_edge. reflexivity.
+Qed.
+
+(** An arbitrary visitor fold adds exactly its entering events to the initial inventory. *)
+Lemma tarjan_bag_fold es s :
+  Permutation
+    (tarjan_bag (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s))
+    (rev (entered es) ++ tarjan_bag s).
+Proof.
+  unfold fold_events. revert s. induction es as [|e es IH]; intros s.
+  - reflexivity.
+  - cbn [fold_left]. eapply Permutation_trans; [apply IH|].
+    eapply Permutation_trans.
+    + apply Permutation_app_head. apply tarjan_bag_event.
+    + destruct e; cbn [entered rev app]; [rewrite <- app_assoc| |]; reflexivity.
+Qed.
+
+(** From the initial state, pending and emitted vertices partition all entries with multiplicity. *)
+Lemma tarjan_bag_inventory es :
+  Permutation
+    (tarjan_bag
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial))
+    (entered es).
+Proof.
+  pose proof (tarjan_bag_fold es tarjan_initial) as Hfold.
+  cbn [tarjan_bag tarjan_initial tarjan_pending tarjan_emitted concat app] in Hfold.
+  rewrite app_nil_r in Hfold. eapply Permutation_trans; [exact Hfold|].
+  apply Permutation_sym. apply Permutation_rev.
+Qed.
+
+(** A trace with unique entries yields disjoint, duplicate-free emitted components. *)
+Lemma tarjan_emitted_unique es : NoDup (entered es) ->
+  NoDup (concat (tarjan_emitted
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial))).
+Proof.
+  intros Hunique. pose proof (tarjan_bag_inventory es) as Hbag.
+  apply Permutation_sym in Hbag. apply (Permutation_NoDup Hbag) in Hunique.
+  unfold tarjan_bag in Hunique. now apply NoDup_app_remove_l in Hunique.
+Qed.
+
+(** Emitted vertices never exceed the number of entering events. *)
+Lemma tarjan_emitted_length es :
+  length (concat (tarjan_emitted
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial))) <=
+  length (entered es).
+Proof.
+  pose proof (Permutation_length (tarjan_bag_inventory es)) as Hlength.
+  unfold tarjan_bag in Hlength. rewrite length_app in Hlength. lia.
+Qed.
+
 Module TarjanSearchCode := SearchCode TarjanVisitor.
 Module TarjanSearch.
   Include TarjanSearchCode.
