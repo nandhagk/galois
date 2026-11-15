@@ -4201,10 +4201,6 @@ Module WtoT <: WTO_ALL.
     unfold k_member. time_step.
   Qed.
 
-  Lemma T3_scope : forall g vs,
-    (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
-  Proof. Admitted. (* PLAN-DEFECT: unlisted scope rows can contain unbounded-width successors. *)
-
   (** A left fold charges a separate occurrence budget for every visited element. *)
   Local Lemma scope_fold_left_budget {A X} (f : A -> X -> A) (clock : A -> X -> N)
       (weight : X -> nat) xs initial coefficient width :
@@ -4487,6 +4483,13 @@ Module WtoT <: WTO_ALL.
     unfold scope_work. rewrite Nat2N.inj_mul, N.mul_assoc.
     eapply N.le_trans; [exact Htime|].
     apply N.mul_le_mono_r. apply N.mul_le_mono_r. unfold k_scope, k_build. lia.
+  Qed.
+
+  Lemma T3_scope : forall g vs,
+    (forall v, In v vs -> In v (nodes g)) ->
+    (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
+  Proof.
+    exact T3_scope_listed.
   Qed.
 
   (** The index loop checks each key's width and listing before it reads a trie. *)

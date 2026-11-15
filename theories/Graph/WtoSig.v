@@ -423,8 +423,10 @@ Module Type WTO_PLAN (Import W : WTO_T).
     (T_wto_member v vs <= k_member * N.of_nat (length vs + 1) *
       N.of_nat (graph_max (Pos.size_nat v) (vertex_width vs) + 1))%N.
 
-  (** Materialized filtering pays a list membership scan for each outgoing occurrence. *)
+  (** Materialized filtering of listed scope vertices pays a list membership scan for each
+      outgoing occurrence. An unlisted vertex may have successors of any key width. *)
   Parameter T3_scope : forall g vs,
+    (forall v, In v vs -> In v (nodes g)) ->
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
 
   (** The index loop checks each key's width and listing before it reads a trie. *)
