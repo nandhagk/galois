@@ -1,8 +1,8 @@
-(** * Placeholder expression extraction
+(** * Minimum-cost extraction with checked finite witnesses
 
-    These operations provide the interfaces for extraction and certificate checking.
-    For example, the placeholder extractor returns no certificate.
-    Builds on: ExtractSig. *)
+    A class queue finalises optimal constructor rows and resumes their waiting parents.
+    For example, a finite nullary alternative can seed extraction through a cyclic e-graph.
+    Builds on: ExtractSig, class tries, priority queues and bounded loops. *)
 
 From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
   Sorting.Permutation.
@@ -3039,12 +3039,45 @@ Module SearchFacts (V : VALUE) (C : COST V) (Q : PQ).
 
 End SearchFacts.
 
+(** A finite bound on distinct finalisations supplies a terminating unary loop. *)
+Lemma extraction_loop_complete {St Out} (step : St -> St + Out)
+    (Inv : St -> Prop) (count : St -> nat) (bound : nat) :
+  (forall s, Inv s -> count s <= bound) ->
+  (forall s next, Inv s -> step s = inl next ->
+    Inv next /\ count next = S (count s)) ->
+  forall fuel s, Inv s -> bound < count s + fuel ->
+    exists out last, loop_fuel step fuel s = inr out /\
+      Inv last /\ step last = inr out.
+Proof.
+  intros Hbound Hstep fuel. induction fuel as [|fuel IH]; intros s Hinv Hfuel.
+  - pose proof (Hbound s Hinv). lia.
+  - cbn [loop_fuel]. destruct (step s) as [next|out] eqn:Hnext.
+    + destruct (Hstep s next Hinv Hnext) as [Hinvnext Hcount].
+      apply IH; [exact Hinvnext|]. rewrite Hcount. lia.
+    + exists out, s. auto.
+Qed.
+
+(** A step invariant holds at every state reachable through continuing steps. *)
+Lemma extraction_reachable_invariant {St Out} (step : St -> St + Out)
+    (Inv : St -> Prop) :
+  (forall s next, Inv s -> step s = inl next -> Inv next) ->
+  forall s last, clos_refl_trans St (fun before after => step before = inl after) s last ->
+    Inv s -> Inv last.
+Proof.
+  intros Hstep s last Hreach. induction Hreach; intro Hinv.
+  - eapply Hstep; eassumption.
+  - exact Hinv.
+  - apply IHHreach2. now apply IHHreach1.
+Qed.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
-    (C : COST_OPS V) <: EXTRACT_OPS V I D C.
+    (C : COST_OPS V) (Q : PQ_OPS) <: EXTRACT_OPS V I D C.
+  Include SearchCode V C Q.
   Definition inventory (ds : list decl) (sl : list (positive * list nat))
       : list (positive * (N * nat)) := inventory_scan (inventory_decl_table ds) sl 0%N.
-  (* STUB-CODE *)
-  Definition best (_ : list (positive * (N * nat))) (_ : D.t) : extraction_best V.t := [].
+  Definition best (cs : list (positive * (N * nat))) (db : D.t) : extraction_best V.t :=
+    best_rows db (inventory_rows (fun slot => D.index slot false db)
+      I.child I.children I.root cs).
   Definition check_dag (db : D.t) (c : positive) (g : extraction_dag V.t) : option N :=
     dag_check (dag_check_row (D.ids db) (fun i => fst (D.find i db))
       (fun f k => fst (D.lookup f k db))) C.fn_cost C.val_cost g c.
@@ -3054,10 +3087,36 @@ Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
       extraction_candidate (check_dag db) c (fst (D.find c db)) (best cs db).
 End ExtractCode.
 
-Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
+Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V) (Q : PQ)
     <: EXTRACT V I D C.
-  Include ExtractCode V I D C.
+  Include ExtractCode V I D C Q.
   Include EXTRACT_SPEC V I D C.
+  Module SearchProof := SearchFacts V C Q.
+  Module Enumeration := EnumeratedRows V I D.
+  Module Semantics := SearchSemantics V C.
+  Module DatabaseTrees := SearchDatabase V I D.
+
+  (** A valid inventory enumerates every constructor row exactly once. *)
+  Lemma inventory_rows_spec : forall cs db,
+    D.wf db -> ctor_inventory cs db ->
+    NoDup (Enumeration.enumerated_rows cs db) /\
+    (forall f k i, In (f, k, i) (Enumeration.enumerated_rows cs db) <->
+      row (D.view db) f k (Some (Id i))) /\
+    length (Enumeration.enumerated_rows cs db) = length (Enumeration.Rows.rows db).
+  Proof.
+    intros cs db Hwf [Hnames [Hkinds [Hctors Hentries]]].
+    assert (Hcovers : forall f k i, row (D.view db) f k (Some (Id i)) ->
+      In f (map fst cs)).
+    { intros f k i Hrow. apply (proj1 (Hkinds f)). now apply Hctors with k i. }
+    split.
+    - now apply Enumeration.enumerated_rows_nodup.
+    - split.
+      + intros f k i. split.
+        * exact (Enumeration.enumerated_rows_sound cs db f k i Hwf Hentries).
+        * exact (Enumeration.enumerated_rows_complete cs db f k i Hwf Hentries Hcovers).
+      + now apply Enumeration.enumerated_rows_length.
+  Qed.
+
   Definition unfold (g : extraction_dag V.t) (c : positive) : option (@Model.expr V.t) :=
     dag_unfold g c.
   Lemma inventory_spec : forall ds sl db, D.wf db -> D.slots db = sl ->
@@ -3198,8 +3257,19 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
 End Extract.
 
 Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V)
+    (Q : PQ_T)
     <: EXTRACT_ALL V I D C.
-  Include Extract V I D C.
+  Include Extract V I D C Q.
+  TimeFun search_scan.
+  TimeFun search_park.
+  TimeFun search_offer.
+  TimeFun search_resume.
+  TimeFun search_resume_list.
+  TimeFun search_start.
+  TimeFun search_initial.
+  TimeFun search_finish.
+  TimeFun search_step.
+  TimeFun best_rows.
   TimeFun inventory.
   TimeFun best.
   TimeFun check_dag.
@@ -3411,14 +3481,13 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       N.of_nat (a db + 1) * N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Definition state := unit.
-  (* STUB-CODE *)
-  Definition initial (_ : list (positive * (N * nat))) (_ : D.t) : state := tt.
-  (* STUB-CODE *)
-  Definition step (_ : list (positive * (N * nat))) (_ : D.t) (_ : state)
-      : state + extraction_best V.t := inr [].
-  (* STUB-CODE *)
-  Definition finalised (_ : state) : extraction_best V.t := [].
+  Definition state := extraction_state V.t D.t Q.t.
+  Definition initial (cs : list (positive * (N * nat))) (db : D.t) : state :=
+    search_initial db (inventory_rows (fun slot => D.index slot false db)
+      I.child I.children I.root cs).
+  Definition step (_ : list (positive * (N * nat))) (_ : D.t) (s : state)
+      : state + extraction_best V.t := search_step s.
+  Definition finalised (s : state) : extraction_best V.t := search_finalised s.
   (* STUB-CODE *)
   Definition counter (_ : state) (_ : positive) : nat := 0.
   (* STUB-CODE *)
@@ -3442,7 +3511,15 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       forall e, represents (D.view db) (Id c) e -> (n <= tree_cost e)%N.
   Lemma F1_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     finalised (initial cs db) = [] /\ knuth_inv db (initial cs db).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    destruct (SearchProof.search_initial_fields D.t db
+      (inventory_rows (fun slot => D.index slot false db) I.child I.children I.root cs))
+      as [_ [_ [_ [_ Hfinals]]]].
+    assert (Hempty : finalised (initial cs db) = []) by exact Hfinals.
+    split; [exact Hempty|]. unfold knuth_inv. rewrite Hempty.
+    intros c n ch Hin. contradiction.
+  Qed.
 
   Lemma F2_counter_spec : forall cs db s c, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s ->

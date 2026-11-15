@@ -6,7 +6,7 @@
     Builds on: Extract, Database and Index code towers. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Galois.Base Require Import Trie.
+From Galois.Base Require Import Trie Heap.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig DatabaseSig Index Database ExtractSig
   Extract.
 
@@ -55,7 +55,90 @@ Module InventoryCost <: COST_OPS InventoryValue.
 End InventoryCost.
 
 Module InventoryExtract :=
-  ExtractCode InventoryValue InventoryIndex InventoryDatabase InventoryCost.
+  ExtractCode InventoryValue InventoryIndex InventoryDatabase InventoryCost HeapCode.
+
+(** A nullary alternative seeds a class that also contains a self cycle. *)
+Definition cheapest_cycle_database : InventoryDatabase.t :=
+  let db := InventoryDatabase.init
+    [Decl 10%positive [SVal] OId; Decl 20%positive [] OId; Decl 30%positive [SId] OId]
+    [(10%positive, [0; 1]); (20%positive, [0]); (30%positive, [0; 1])] in
+  let db := snd (InventoryDatabase.make 10%positive [Val 7%positive] db) in
+  let db := snd (InventoryDatabase.make 20%positive [] db) in
+  let db := snd (InventoryDatabase.make 30%positive [Id 1%positive] db) in
+  InventoryDatabase.rebuild
+    (InventoryDatabase.union 1%positive 2%positive
+      (InventoryDatabase.union 1%positive 3%positive db)).
+
+Definition cheapest_cycle_inventory : list (positive * (N * nat)) :=
+  [(10%positive, (0%N, 1)); (20%positive, (1%N, 0)); (30%positive, (2%N, 1))].
+
+Example best_cheapest_alternative_in_cycle :
+  InventoryExtract.best cheapest_cycle_inventory cheapest_cycle_database =
+    [(1%positive, (1%N, (20%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example extract_cheapest_finite_cycle_witness :
+  InventoryExtract.extract cheapest_cycle_inventory cheapest_cycle_database 1%positive =
+    Some [(1%positive, (20%positive, []))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example extract_noncanonical_root_is_rejected :
+  InventoryExtract.extract cheapest_cycle_inventory cheapest_cycle_database 3%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_pure_cycle_has_no_finite_witness :
+  InventoryExtract.best_rows tt [(30%positive, [Id 1%positive], 1%positive)] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_repeated_waiting_child :
+  InventoryExtract.best_rows tt
+    [(20%positive, [Id 1%positive; Id 1%positive], 2%positive);
+     (10%positive, [Val 7%positive], 1%positive)] =
+    [(2%positive, (5%N, (20%positive, [Id 1%positive; Id 1%positive])));
+     (1%positive, (2%N, (10%positive, [Val 7%positive])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_decrease_keeps_cheapest_candidate :
+  InventoryExtract.best_rows tt
+    [(10%positive, [Val 7%positive], 1%positive);
+     (20%positive, [], 1%positive)] =
+    [(1%positive, (1%N, (20%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example best_equal_cost_preserves_first_candidate :
+  InventoryExtract.best_rows tt
+    [(10%positive, [], 1%positive); (20%positive, [], 1%positive)] =
+    [(1%positive, (1%N, (10%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Module ZeroCost <: COST_OPS InventoryValue.
+  Definition fn_cost (_ : positive) (cs : list N) := fold_right N.max 0%N cs.
+  Definition val_cost (_ : positive) := 0%N.
+End ZeroCost.
+
+Module ZeroSearch := SearchCode InventoryValue ZeroCost HeapCode.
+
+Example best_zero_cost_cycle_uses_finite_seed :
+  ZeroSearch.best_rows tt
+    [(30%positive, [Id 1%positive], 1%positive); (20%positive, [], 1%positive)] =
+    [(1%positive, (0%N, (20%positive, [])))].
+Proof.
+  vm_compute. reflexivity.
+Qed.
 
 Example inventory_full_slots_only :
   InventoryExtract.inventory
