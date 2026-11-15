@@ -2451,6 +2451,1173 @@ Proof.
   - rewrite <- length_rev. apply dom_size_budget_empty.
 Qed.
 
+(* BEGIN G2-G ANCHOR SUPPORT *)
+(** * Anchor interval bounds
+
+    Distinct removed keys let each anchor transfer reuse the retired-cell budget.
+    The resulting bounds also cover cyclic and self anchors. *)
+
+(** This named callback has exactly the body of the existing anchor-size fold. *)
+Definition dom_order_anchor_transfer (parents : ptrie N) (sizes : ptrie N)
+    (entry : N * N * N) : ptrie N :=
+  let '(v, anchor, _) := entry in
+  let own := dom_anchor_size sizes v in
+  let sizes := PTrieCode.set (dom_lt_key v) own sizes in
+  if N.eqb anchor (dom_lt_identity parents v) then sizes else
+    PTrieCode.set (dom_lt_key anchor) (N.add own (dom_anchor_size sizes anchor)) sizes.
+TimeFun dom_order_anchor_transfer.
+
+(** This named callback has exactly the body of the existing anchor-capacity fold. *)
+Definition dom_order_anchor_capacity_step (parents sizes caps : ptrie N)
+    (entry : N * N * N) : ptrie N :=
+  let '(v, anchor, _) := entry in
+  let p := dom_lt_identity parents v in
+  if N.eqb anchor p then PTrieCode.set (dom_lt_key p)
+    (N.add (dom_order_number caps p) (dom_anchor_size sizes v)) caps else caps.
+TimeFun dom_order_anchor_capacity_step.
+
+(** Every anchor transfer is a raw size transfer under an empty or singleton parent map. *)
+Lemma dom_anchor_transfer_as_size parents sizes vertex anchor witness :
+  dom_order_anchor_transfer parents sizes (vertex, anchor, witness) =
+  dom_add_size
+    (if N.eqb anchor (dom_lt_identity parents vertex) then Empty else
+      PTrieCode.set (dom_lt_key vertex) (dom_lt_key anchor) Empty)
+    sizes (dom_lt_key vertex).
+Proof.
+  unfold dom_order_anchor_transfer. cbn beta iota zeta.
+  unfold dom_add_size, dom_anchor_size, dom_size_get.
+  destruct (N.eqb anchor (dom_lt_identity parents vertex)).
+  - now rewrite PTrie.get_empty.
+  - rewrite PTrie.get_set_same, N.add_comm. reflexivity.
+Qed.
+
+(** Distinct retirement preserves the size budget even when anchors are cyclic. *)
+Lemma dom_order_anchor_transfer_budget limit parents (remaining : list (N * N * N))
+    sizes v anchor witness :
+  NoDup (dom_lt_key v :: map (fun entry => dom_lt_key (fst (fst entry))) remaining) ->
+  dom_size_budget limit
+    (dom_lt_key v :: map (fun entry => dom_lt_key (fst (fst entry))) remaining) sizes ->
+  dom_size_budget limit (map (fun entry => dom_lt_key (fst (fst entry))) remaining)
+    (dom_order_anchor_transfer parents sizes (v, anchor, witness)).
+Proof.
+  intros Hunique Hbudget. rewrite dom_anchor_transfer_as_size.
+  eapply dom_size_budget_step; eassumption.
+Qed.
+
+(** The full size fold retires every input key while retaining its original budget. *)
+Lemma dom_order_anchor_sizes_fold_budget limit parents entries sizes :
+  NoDup (map (fun entry => dom_lt_key (fst (fst entry))) entries) ->
+  dom_size_budget limit (map (fun entry => dom_lt_key (fst (fst entry))) entries) sizes ->
+  dom_size_budget limit [] (fold_left (dom_order_anchor_transfer parents) entries sizes).
+Proof.
+  revert sizes. induction entries as [|[[v anchor] witness] rest IH];
+    intros sizes Hunique Hbudget; [exact Hbudget|].
+  cbn [map fst] in Hunique, Hbudget.
+  inversion Hunique as [|head tail Hfresh Hrest]; subst head tail.
+  cbn [fold_left]. apply IH; [exact Hrest|].
+  now apply dom_order_anchor_transfer_budget.
+Qed.
+
+(** Every anchor-size observation is bounded by twice the distinct retirement count plus one. *)
+Lemma dom_anchor_sizes_value_bound parents removed vertex :
+  NoDup (map (fun entry => dom_lt_key (fst (fst entry))) removed) ->
+  (dom_anchor_size (dom_anchor_sizes parents removed) vertex <=
+    2 * N.of_nat (length removed) + 1)%N.
+Proof.
+  intro Hunique.
+  change (dom_size_get
+    (fold_left (dom_order_anchor_transfer parents) (rev_append removed []) Empty)
+    (dom_lt_key vertex) <= 2 * N.of_nat (length removed) + 1)%N.
+  eapply dom_size_budget_value. apply dom_order_anchor_sizes_fold_budget.
+  - rewrite rev_append_rev, app_nil_r, map_rev. now apply NoDup_rev.
+  - replace (N.of_nat (length removed)) with
+      (N.of_nat (length (map (fun entry => dom_lt_key (fst (fst entry)))
+        (rev_append removed [])))).
+    + apply dom_size_budget_empty.
+    + rewrite length_map, rev_append_rev, app_nil_r, length_rev. reflexivity.
+Qed.
+
+(** A capacity lookup returns a stored bounded value or zero. *)
+Lemma dom_order_anchor_number_bound bound caps v :
+  dom_lt_trie_all (fun n => (n <= bound)%N) caps ->
+  (dom_order_number caps v <= bound)%N.
+Proof.
+  intro Hcaps. unfold dom_order_number.
+  destruct (trie_get (dom_lt_key v) caps) as [value|] eqn:Hget; [|lia].
+  exact (Hcaps _ _ Hget).
+Qed.
+
+(** Enlarging a numeric payload budget preserves the trie invariant. *)
+Lemma dom_order_anchor_values_mono smaller larger values :
+  (smaller <= larger)%N -> dom_lt_trie_all (fun n => (n <= smaller)%N) values ->
+  dom_lt_trie_all (fun n => (n <= larger)%N) values.
+Proof.
+  intros Hle Hvalues key value Hget.
+  eapply N.le_trans; [exact (Hvalues _ _ Hget)|exact Hle].
+Qed.
+
+(** A capacity callback adds at most one bounded anchor size to its old payload maximum. *)
+Lemma dom_order_anchor_capacity_step_bound unit current parents sizes caps entry :
+  (forall v, (dom_anchor_size sizes v <= unit)%N) ->
+  dom_lt_trie_all (fun n => (n <= current)%N) caps ->
+  dom_lt_trie_all (fun n => (n <= current + unit)%N)
+    (dom_order_anchor_capacity_step parents sizes caps entry).
+Proof.
+  intros Hsizes Hcaps. destruct entry as [[v anchor] witness].
+  pose proof (dom_order_anchor_values_mono current (current + unit)%N caps ltac:(lia) Hcaps)
+    as Hlarger.
+  unfold dom_order_anchor_capacity_step. cbn beta iota zeta.
+  destruct (N.eqb anchor (dom_lt_identity parents v)); [|exact Hlarger].
+  apply dom_lt_trie_all_set; [exact Hlarger|].
+  pose proof (dom_order_anchor_number_bound current caps (dom_lt_identity parents v) Hcaps)
+    as Hnumber.
+  pose proof (Hsizes v) as Hsize. lia.
+Qed.
+
+(** A capacity fold adds at most one size budget per processed record. *)
+Lemma dom_order_anchor_capacity_fold_bound unit parents sizes entries caps current :
+  (forall v, (dom_anchor_size sizes v <= unit)%N) ->
+  dom_lt_trie_all (fun n => (n <= current)%N) caps ->
+  dom_lt_trie_all (fun n => (n <= current + N.of_nat (length entries) * unit)%N)
+    (fold_left (dom_order_anchor_capacity_step parents sizes) entries caps).
+Proof.
+  intros Hsizes. revert caps current. induction entries as [|entry rest IH];
+    intros caps current Hcaps.
+  - change (dom_lt_trie_all (fun n => (n <= current + 0)%N) caps).
+    rewrite N.add_0_r. exact Hcaps.
+  - cbn [fold_left length]. rewrite Nat2N.inj_succ.
+    replace (current + N.succ (N.of_nat (length rest)) * unit)%N with
+      ((current + unit) + N.of_nat (length rest) * unit)%N by nia.
+    apply IH. now apply dom_order_anchor_capacity_step_bound.
+Qed.
+
+(** Initial empty capacities are bounded by the number of records times one size budget. *)
+Lemma dom_order_anchor_capacity_bound unit parents sizes removed :
+  (forall v, (dom_anchor_size sizes v <= unit)%N) ->
+  dom_lt_trie_all (fun n => (n <= N.of_nat (length removed) * unit)%N)
+    (dom_anchor_capacity parents sizes removed).
+Proof.
+  intro Hsizes.
+  change (dom_lt_trie_all (fun n => (n <= 0 + N.of_nat (length removed) * unit)%N)
+    (fold_left (dom_order_anchor_capacity_step parents sizes) removed Empty)).
+  apply dom_order_anchor_capacity_fold_bound; [exact Hsizes|apply dom_lt_trie_all_empty].
+Qed.
+
+(** Both interval endpoints and free-block endpoints share one numeric upper bound. *)
+Definition dom_order_anchor_state_bound (bound : N) (st : dom_anchor_state) : Prop :=
+  dom_lt_trie_all (fun pair => (fst pair <= bound /\ snd pair <= bound)%N)
+    (anchor_intervals st) /\
+  dom_lt_trie_all (fun pair => (fst pair <= bound /\ snd pair <= bound)%N)
+    (anchor_free st).
+
+(** Enlarging an endpoint budget preserves both anchor maps. *)
+Lemma dom_order_anchor_state_mono smaller larger st :
+  (smaller <= larger)%N -> dom_order_anchor_state_bound smaller st ->
+  dom_order_anchor_state_bound larger st.
+Proof.
+  intros Hle [Hintervals Hfree]. split; intros key [lo hi] Hget.
+  - destruct (Hintervals _ _ Hget) as [Hlo Hhi]. cbn [fst snd] in *. split; lia.
+  - destruct (Hfree _ _ Hget) as [Hlo Hhi]. cbn [fst snd] in *. split; lia.
+Qed.
+
+(** Parent placement increases the largest observed endpoint by at most the new size. *)
+Lemma dom_order_anchor_at_parent_bound unit current capacity caps st v p size :
+  (size <= unit)%N -> (capacity <= current)%N ->
+  dom_lt_trie_all (fun n => (n <= capacity)%N) caps ->
+  dom_order_anchor_state_bound current st ->
+  dom_order_anchor_state_bound (current + unit)%N (dom_anchor_at_parent caps st v p size).
+Proof.
+  intros Hsize Hcapacity Hcaps Hstate.
+  destruct (dom_order_anchor_state_mono current (current + unit)%N st ltac:(lia) Hstate)
+    as [Hintervals Hfree].
+  unfold dom_anchor_at_parent.
+  destruct (trie_get (dom_lt_key p) (anchor_free st)) as [[lo hi]|] eqn:Hget.
+  - destruct (proj2 Hstate _ _ Hget) as [Hlo Hhi]. cbn [fst snd] in Hlo, Hhi.
+    split; cbn [anchor_intervals anchor_free]; apply dom_lt_trie_all_set;
+      try assumption; cbn [fst snd]; split; lia.
+  - pose proof (dom_order_anchor_number_bound capacity caps p Hcaps) as Hnumber.
+    split; cbn [anchor_intervals anchor_free]; apply dom_lt_trie_all_set;
+      try assumption; cbn [fst snd]; split; lia.
+Qed.
+
+(** Interior placement increases an endpoint by at most its size or the single successor. *)
+Lemma dom_order_anchor_insert_bound unit current capacity parents sizes caps st entry :
+  (1 <= unit)%N -> (capacity <= current)%N ->
+  (forall v, (dom_anchor_size sizes v <= unit)%N) ->
+  dom_lt_trie_all (fun n => (n <= capacity)%N) caps ->
+  dom_order_anchor_state_bound current st ->
+  dom_order_anchor_state_bound (current + unit)%N
+    (dom_anchor_insert parents sizes caps st entry).
+Proof.
+  intros Hunit Hcapacity Hsizes Hcaps Hstate. destruct entry as [[v anchor] witness].
+  pose proof (Hsizes v) as Hsize.
+  unfold dom_anchor_insert. cbn beta iota zeta.
+  destruct (N.eqb anchor (dom_lt_identity parents v)).
+  - eapply dom_order_anchor_at_parent_bound; eassumption.
+  - destruct (trie_get (dom_lt_key anchor) (anchor_intervals st)) as [[lo hi]|] eqn:Hget.
+    + destruct (proj1 Hstate _ _ Hget) as [Hlo Hhi]. cbn [fst snd] in Hlo, Hhi.
+      destruct (dom_order_anchor_state_mono current (current + unit)%N st ltac:(lia) Hstate)
+        as [Hintervals Hfree].
+      destruct (N.ltb (dom_anchor_start (anchor_intervals st) witness) lo);
+        split; cbn [anchor_intervals anchor_free]; try exact Hfree.
+      all: apply dom_lt_trie_all_set;
+        [apply dom_lt_trie_all_set; [exact Hintervals|]|]; cbn [fst snd]; split; lia.
+    + eapply dom_order_anchor_at_parent_bound; eassumption.
+Qed.
+
+(** A fold of insertions pays one endpoint increment per record. *)
+Lemma dom_order_anchor_insert_fold_bound unit capacity parents sizes caps entries st current :
+  (1 <= unit)%N -> (capacity <= current)%N ->
+  (forall v, (dom_anchor_size sizes v <= unit)%N) ->
+  dom_lt_trie_all (fun n => (n <= capacity)%N) caps ->
+  dom_order_anchor_state_bound current st ->
+  dom_order_anchor_state_bound (current + N.of_nat (length entries) * unit)%N
+    (fold_left (dom_anchor_insert parents sizes caps) entries st).
+Proof.
+  intros Hunit Hcapacity Hsizes Hcaps. revert st current Hcapacity.
+  induction entries as [|entry rest IH]; intros st current Hcapacity Hstate.
+  - change (dom_order_anchor_state_bound (current + 0)%N st).
+    rewrite N.add_0_r. exact Hstate.
+  - cbn [fold_left length]. rewrite Nat2N.inj_succ.
+    replace (current + N.succ (N.of_nat (length rest)) * unit)%N with
+      ((current + unit) + N.of_nat (length rest) * unit)%N by nia.
+    apply IH; [lia|]. eapply dom_order_anchor_insert_bound; eassumption.
+Qed.
+
+(** Every constructed anchor interval has polynomially bounded numeric endpoints. *)
+Lemma dom_order_anchor_endpoints bound parents removed :
+  dom_lt_trie_all (fun n => (n <= bound)%N) parents ->
+  Forall (fun entry => let '(v, anchor, witness) := entry in
+    (v <= bound /\ anchor <= bound /\ witness <= bound)%N) removed ->
+  NoDup (map (fun entry => dom_lt_key (fst (fst entry))) removed) ->
+  (N.of_nat (length removed) <= bound)%N ->
+  dom_lt_trie_all (fun pair => let '(lo, hi) := pair in
+    (lo <= 8 * (bound + 1) * (bound + 1) /\
+     hi <= 8 * (bound + 1) * (bound + 1))%N) (dom_anchor_order parents removed).
+Proof.
+  intros Hparents Hrecords Hunique Hcount.
+  set (count := N.of_nat (length removed)).
+  set (unit := (2 * count + 1)%N).
+  set (sizes := dom_anchor_sizes parents removed).
+  set (caps := dom_anchor_capacity parents sizes removed).
+  assert (Hsizes : forall v, (dom_anchor_size sizes v <= unit)%N).
+  { intro v. now apply dom_anchor_sizes_value_bound. }
+  assert (Hcaps : dom_lt_trie_all (fun n => (n <= count * unit)%N) caps).
+  { apply dom_order_anchor_capacity_bound. exact Hsizes. }
+  assert (Hinitial : dom_order_anchor_state_bound (count * unit)%N (DomAnchorState Empty Empty)).
+  { split; apply dom_lt_trie_all_empty. }
+  pose proof (dom_order_anchor_insert_fold_bound unit (count * unit)%N parents sizes caps
+    removed (DomAnchorState Empty Empty) (count * unit)%N ltac:(unfold unit; lia)
+    (N.le_refl _) Hsizes Hcaps Hinitial) as Hfinal.
+  fold count in Hfinal.
+  destruct Hfinal as [Hintervals Hfree].
+  unfold dom_anchor_order. fold sizes caps.
+  intros key [lo hi] Hget. destruct (Hintervals _ _ Hget) as [Hlo Hhi].
+  cbn [fst snd] in Hlo, Hhi. fold count in Hcount. unfold unit in Hlo, Hhi.
+  assert (Hsquare : (count * count <= bound * bound)%N).
+  { apply N.mul_le_mono; exact Hcount. }
+  clearbody count sizes caps. clear -Hlo Hhi Hcount Hsquare. split; nia.
+Qed.
+
+(** * Anchor callback clocks
+
+    Public trie clock bounds and binary operand budgets account for each callback. *)
+
+(** Subtraction reads no more than both binary operands and its outer branch. *)
+Lemma dom_order_anchor_sub_clock left right :
+  (N.T_sub left right <= N.of_nat (N.size_nat left + N.size_nat right) + 1)%N.
+Proof.
+  destruct left as [|left], right as [|right];
+    try pose proof (proj1 (Pos.T_sub_mask_both left right)); time_step.
+Qed.
+
+(** A write through a numeric key pays for its encoded key and the trie traversal. *)
+Lemma dom_order_anchor_set_clock {A : Type} width rank (value : A) table :
+  N.size_nat rank <= width ->
+  (PTrieCode.T_set (dom_lt_key rank) value table <=
+    2 * PTrieT.c_trie * N.of_nat (width + 1))%N.
+Proof.
+  intro Hrank. pose proof (dom_lt_key_width rank) as Hkey.
+  pose proof (PTrieT.T_set_le A (dom_lt_key rank) value table) as Hset.
+  change (PTrieCode.T_set (dom_lt_key rank) value table <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key rank) + 1))%N in Hset.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** A size lookup has the same bounded-key traversal as an identity lookup. *)
+Lemma dom_order_anchor_size_clock width sizes v :
+  N.size_nat v <= width ->
+  (T_dom_anchor_size sizes v <= 16 * N.of_nat (width + 1))%N.
+Proof.
+  intro Hv. pose proof (dom_lt_time_key v) as Hkey.
+  pose proof (dom_lt_key_width v) as Hwidth.
+  unfold T_dom_anchor_size. time_simpl. rewrite PTrieT.trie_get_clock.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** A zero-default numeric lookup spends only its encoded input-key width. *)
+Lemma dom_order_anchor_number_clock width table v :
+  N.size_nat v <= width ->
+  (T_dom_order_number table v <= 16 * N.of_nat (width + 1))%N.
+Proof.
+  intro Hv. pose proof (dom_lt_time_key v) as Hkey.
+  pose proof (dom_lt_key_width v) as Hwidth.
+  unfold T_dom_order_number. time_simpl. rewrite PTrieT.trie_get_clock.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Reinstalling a size observation preserves every later size observation. *)
+Lemma dom_order_anchor_size_set_own sizes v x :
+  dom_anchor_size (PTrieCode.set (dom_lt_key v) (dom_anchor_size sizes v) sizes) x =
+    dom_anchor_size sizes x.
+Proof.
+  change (dom_size_get
+    (PTrieCode.set (dom_lt_key v) (dom_size_get sizes (dom_lt_key v)) sizes)
+    (dom_lt_key x) = dom_size_get sizes (dom_lt_key x)).
+  apply dom_size_set_own.
+Qed.
+
+(** One size transfer performs two bounded lookups and at most two bounded writes. *)
+Lemma dom_order_anchor_transfer_clock width parents sizes v anchor witness :
+  N.size_nat v <= width -> N.size_nat anchor <= width ->
+  (forall x, N.size_nat (dom_anchor_size sizes x) <= width) ->
+  (T_dom_order_anchor_transfer parents sizes (v, anchor, witness) <=
+    256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hanchor Hvalues.
+  set (own := dom_anchor_size sizes v).
+  set (stored := PTrieCode.set (dom_lt_key v) own sizes).
+  pose proof (dom_order_anchor_size_clock width sizes v Hv) as Hsize.
+  pose proof (dom_lt_time_key v) as Hvkey.
+  pose proof (dom_lt_time_key anchor) as Hakey.
+  pose proof (dom_lt_time_identity parents v) as Hparent.
+  pose proof (N.T_eqb_le anchor (dom_lt_identity parents v)) as Hcompare.
+  pose proof (dom_order_anchor_set_clock width v own sizes Hv) as Hsetv.
+  unfold T_dom_order_anchor_transfer. cbn beta iota zeta. fold own stored.
+  destruct (N.eqb anchor (dom_lt_identity parents v)).
+  - time_simpl. fold own stored. rewrite !Nat2N.inj_add in *.
+    clear -Hv Hanchor Hsize Hvkey Hparent Hcompare Hsetv. nia.
+  - pose proof (dom_order_anchor_size_clock width stored anchor Hanchor) as Hanchor_size.
+    pose proof (dom_order_anchor_set_clock width anchor
+      (own + dom_anchor_size stored anchor)%N stored Hanchor) as Hseta.
+    pose proof (N.T_add_le own (dom_anchor_size stored anchor)) as Hadd.
+    assert (Hown : N.size_nat own <= width) by (apply Hvalues).
+    assert (Hstored : N.size_nat (dom_anchor_size stored anchor) <= width).
+    { unfold stored, own. rewrite dom_order_anchor_size_set_own. apply Hvalues. }
+    time_simpl. fold own stored. rewrite !Nat2N.inj_add in *.
+    clearbody own stored. clear -Hv Hanchor Hown Hstored Hsize Hanchor_size
+      Hvkey Hakey Hparent Hcompare Hsetv Hseta Hadd. nia.
+Qed.
+
+(** One capacity transfer reads one parent and adds one bounded size to one bounded capacity. *)
+Lemma dom_order_anchor_capacity_step_clock width parents sizes caps v anchor witness :
+  N.size_nat v <= width -> N.size_nat anchor <= width ->
+  N.size_nat (dom_lt_identity parents v) <= width ->
+  N.size_nat (dom_order_number caps (dom_lt_identity parents v)) <= width ->
+  N.size_nat (dom_anchor_size sizes v) <= width ->
+  (T_dom_order_anchor_capacity_step parents sizes caps (v, anchor, witness) <=
+    256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hanchor Hp Hcapacity Hsize.
+  set (p := dom_lt_identity parents v).
+  fold p in Hp, Hcapacity.
+  pose proof (dom_lt_time_identity parents v) as Hparent.
+  pose proof (N.T_eqb_le anchor p) as Hcompare.
+  pose proof (dom_lt_time_key p) as Hkey.
+  pose proof (dom_order_anchor_number_clock width caps p Hp) as Hnumber.
+  pose proof (dom_order_anchor_size_clock width sizes v Hv) as Hsize_clock.
+  pose proof (N.T_add_le (dom_order_number caps p) (dom_anchor_size sizes v)) as Hadd.
+  pose proof (dom_order_anchor_set_clock width p
+    (dom_order_number caps p + dom_anchor_size sizes v)%N caps Hp) as Hset.
+  unfold T_dom_order_anchor_capacity_step. cbn beta iota zeta. fold p.
+  destruct (N.eqb anchor p); time_simpl; fold p;
+    rewrite !Nat2N.inj_add in *; clearbody p;
+    clear -Hv Hanchor Hp Hcapacity Hsize Hparent Hcompare Hkey Hnumber Hsize_clock Hadd Hset;
+    nia.
+Qed.
+
+(** Every observed interval start is within its endpoint budget. *)
+Lemma dom_order_anchor_start_bound bound intervals v :
+  dom_lt_trie_all (fun pair => (fst pair <= bound /\ snd pair <= bound)%N) intervals ->
+  (dom_anchor_start intervals v <= bound)%N.
+Proof.
+  intro Hintervals. unfold dom_anchor_start.
+  destruct (trie_get (dom_lt_key v) intervals) as [[lo hi]|] eqn:Hget; [|lia].
+  exact (proj1 (Hintervals _ _ Hget)).
+Qed.
+
+(** Parent insertion reads and writes bounded keys and endpoint arithmetic operands. *)
+Lemma dom_order_anchor_at_parent_clock width current unit caps st v p size :
+  N.size_nat v <= width -> N.size_nat p <= width -> (size <= unit)%N ->
+  dom_lt_trie_all (fun n => (n <= current)%N) caps ->
+  dom_order_anchor_state_bound current st ->
+  (forall n, (n <= current + unit + 1)%N -> N.size_nat n <= width) ->
+  (T_dom_anchor_at_parent caps st v p size <=
+    512 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hp Hsize Hcaps Hstate Hwidth.
+  pose proof (dom_lt_time_key v) as Hvkey.
+  pose proof (dom_lt_time_key p) as Hpkey.
+  pose proof (dom_lt_key_width p) as Hpwidth.
+  assert (Hsize_width : N.size_nat size <= width) by (apply Hwidth; lia).
+  unfold T_dom_anchor_at_parent. time_simpl. rewrite PTrieT.trie_get_clock.
+  destruct (trie_get (dom_lt_key p) (anchor_free st)) as [[lo hi]|] eqn:Hget.
+  - destruct (proj2 Hstate _ _ Hget) as [Hlo Hhi]. cbn [fst snd] in Hlo, Hhi.
+    assert (Hlo_width : N.size_nat lo <= width) by (apply Hwidth; lia).
+    assert (Hsum_width : N.size_nat (lo + size) <= width) by (apply Hwidth; lia).
+    pose proof (N.T_add_le lo size) as Hadd.
+    pose proof (N.T_pred_le (lo + size)) as Hpred.
+    pose proof (dom_order_anchor_set_clock width v (lo, N.pred (lo + size))
+      (anchor_intervals st) Hv) as Hsetv.
+    pose proof (dom_order_anchor_set_clock width p (lo + size, hi)%N
+      (anchor_free st) Hp) as Hsetp.
+    time_simpl. rewrite !Nat2N.inj_add in *.
+    set (v_bits := N.size_nat v) in *.
+    set (p_bits := N.size_nat p) in *.
+    set (key_bits := Pos.size_nat (dom_lt_key p)) in *.
+    set (size_bits := N.size_nat size) in *.
+    set (lo_bits := N.size_nat lo) in *.
+    set (sum_bits := N.size_nat (lo + size)) in *.
+    set (key_v_work := T_dom_lt_key v) in *.
+    set (key_p_work := T_dom_lt_key p) in *.
+    set (add_work := N.T_add lo size) in *.
+    set (pred_work := N.T_pred (lo + size)) in *.
+    set (set_v_work := PTrieCode.T_set (dom_lt_key v)
+      (lo, N.pred (lo + size)) (anchor_intervals st)) in *.
+    set (set_p_work := PTrieCode.T_set (dom_lt_key p)
+      (lo + size, hi)%N (anchor_free st)) in *.
+    set (trie_coefficient := PTrieT.c_trie) in *.
+    clearbody v_bits p_bits key_bits size_bits lo_bits sum_bits key_v_work key_p_work
+      add_work pred_work set_v_work set_p_work trie_coefficient.
+    clear -Hv Hp Hsize_width Hlo_width Hsum_width Hvkey Hpkey Hpwidth Hadd Hpred Hsetv Hsetp.
+    change (N.of_nat 1) with 1%N in *.
+    set (write_budget := (trie_coefficient * (N.of_nat width + 1))%N).
+    replace (2 * trie_coefficient * (N.of_nat width + 1))%N with
+      (2 * write_budget)%N in Hsetv, Hsetp by (unfold write_budget; ring).
+    replace (512 * (trie_coefficient + 1) * (N.of_nat width + 1))%N with
+      (512 * write_budget + 512 * (N.of_nat width + 1))%N
+      by (unfold write_budget; ring).
+    clearbody write_budget. lia.
+  - pose proof (dom_order_anchor_number_bound current caps p Hcaps) as Hnumber_bound.
+    assert (Hnumber_width : N.size_nat (dom_order_number caps p) <= width).
+    { apply Hwidth. lia. }
+    pose proof (dom_order_anchor_number_clock width caps p Hp) as Hnumber.
+    pose proof (N.T_pred_le (dom_order_number caps p)) as Hcapacity_pred.
+    pose proof (N.T_add_le 0 size) as Hadd.
+    pose proof (N.T_pred_le (0 + size)) as Hpred.
+    pose proof (dom_order_anchor_set_clock width v (0%N, N.pred (0 + size))
+      (anchor_intervals st) Hv) as Hsetv.
+    pose proof (dom_order_anchor_set_clock width p (0 + size, N.pred (dom_order_number caps p))%N
+      (anchor_free st) Hp) as Hsetp.
+    time_simpl.
+    change (0 + size)%N with size in *.
+    change (N.T_add 0 size <= N.of_nat (N.size_nat size) + 1)%N in Hadd.
+    change (N.T_pred size <= N.of_nat (N.size_nat size) + 2)%N in Hpred.
+    rewrite !Nat2N.inj_add in *.
+    set (v_bits := N.size_nat v) in *.
+    set (p_bits := N.size_nat p) in *.
+    set (key_bits := Pos.size_nat (dom_lt_key p)) in *.
+    set (size_bits := N.size_nat size) in *.
+    set (number_bits := N.size_nat (dom_order_number caps p)) in *.
+    set (key_v_work := T_dom_lt_key v) in *.
+    set (key_p_work := T_dom_lt_key p) in *.
+    set (number_work := T_dom_order_number caps p) in *.
+    set (capacity_pred_work := N.T_pred (dom_order_number caps p)) in *.
+    set (add_work := N.T_add 0 size) in *.
+    set (pred_work := N.T_pred size) in *.
+    set (set_v_work := PTrieCode.T_set (dom_lt_key v)
+      (0%N, N.pred size) (anchor_intervals st)) in *.
+    set (set_p_work := PTrieCode.T_set (dom_lt_key p)
+      (size, N.pred (dom_order_number caps p)) (anchor_free st)) in *.
+    set (trie_coefficient := PTrieT.c_trie) in *.
+    clearbody v_bits p_bits key_bits size_bits number_bits key_v_work key_p_work
+      number_work capacity_pred_work add_work pred_work set_v_work set_p_work trie_coefficient.
+    clear -Hv Hp Hsize_width Hnumber_width Hvkey Hpkey Hpwidth Hnumber
+      Hcapacity_pred Hadd Hpred Hsetv Hsetp.
+    change (N.of_nat 1) with 1%N in *.
+    set (write_budget := (trie_coefficient * (N.of_nat width + 1))%N).
+    replace (2 * trie_coefficient * (N.of_nat width + 1))%N with
+      (2 * write_budget)%N in Hsetv, Hsetp by (unfold write_budget; ring).
+    replace (512 * (trie_coefficient + 1) * (N.of_nat width + 1))%N with
+      (512 * write_budget + 512 * (N.of_nat width + 1))%N
+      by (unfold write_budget; ring).
+    clearbody write_budget. lia.
+Qed.
+
+Local Opaque dom_anchor_at_parent T_dom_anchor_at_parent.
+
+(** One anchor insertion has bounded lookup, comparison, arithmetic and write costs. *)
+Lemma dom_order_anchor_insert_clock width current unit parents sizes caps st v anchor witness :
+  N.size_nat v <= width -> N.size_nat anchor <= width -> N.size_nat witness <= width ->
+  N.size_nat (dom_lt_identity parents v) <= width ->
+  (forall x, (dom_anchor_size sizes x <= unit)%N) ->
+  dom_lt_trie_all (fun n => (n <= current)%N) caps ->
+  dom_order_anchor_state_bound current st ->
+  (forall n, (n <= current + unit + 1)%N -> N.size_nat n <= width) ->
+  (T_dom_anchor_insert parents sizes caps st (v, anchor, witness) <=
+    1024 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hanchor Hw Hp Hsizes Hcaps Hstate Hwidth.
+  set (p := dom_lt_identity parents v).
+  fold p in Hp.
+  set (size := dom_anchor_size sizes v).
+  pose proof (Hsizes v) as Hsize. fold size in Hsize.
+  pose proof (dom_lt_time_identity parents v) as Hparent.
+  pose proof (dom_order_anchor_size_clock width sizes v Hv) as Hsize_clock.
+  pose proof (N.T_eqb_le anchor p) as Hcompare.
+  pose proof (dom_order_anchor_at_parent_clock width current unit caps st v p size
+    Hv Hp Hsize Hcaps Hstate Hwidth) as Hatparent.
+  pose proof (dom_lt_time_key anchor) as Hakey.
+  pose proof (dom_lt_key_width anchor) as Hawidth.
+  unfold T_dom_anchor_insert. cbn beta iota zeta. fold p size.
+  destruct (N.eqb anchor p).
+  - time_simpl. fold p size. rewrite !Nat2N.inj_add in *.
+    clearbody p size. clear -Hv Hanchor Hparent Hsize_clock Hcompare Hatparent.
+    change (N.of_nat 1) with 1%N in *.
+    set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N).
+    replace (512 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
+      (512 * write_budget + 512 * (N.of_nat width + 1))%N
+      in Hatparent by (unfold write_budget; ring).
+    replace (1024 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
+      (1024 * write_budget + 1024 * (N.of_nat width + 1))%N
+      by (unfold write_budget; ring).
+    clearbody write_budget. lia.
+  - destruct (trie_get (dom_lt_key anchor) (anchor_intervals st)) as [[lo hi]|] eqn:Hget.
+    2: { time_simpl. rewrite PTrieT.trie_get_clock. fold p size.
+         rewrite !Nat2N.inj_add in *. clearbody p size.
+         clear -Hv Hanchor Hparent Hsize_clock Hcompare Hatparent Hakey Hawidth.
+         change (N.of_nat 1) with 1%N in *.
+         set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N).
+         replace (512 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
+           (512 * write_budget + 512 * (N.of_nat width + 1))%N
+           in Hatparent by (unfold write_budget; ring).
+         replace (1024 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
+           (1024 * write_budget + 1024 * (N.of_nat width + 1))%N
+           by (unfold write_budget; ring).
+         clearbody write_budget. lia. }
+    destruct (proj1 Hstate _ _ Hget) as [Hlo Hhi]. cbn [fst snd] in Hlo, Hhi.
+    pose proof (dom_order_anchor_start_bound current (anchor_intervals st) witness
+      (proj1 Hstate)) as Hwstart.
+    assert (Hstart_width : N.size_nat (dom_anchor_start (anchor_intervals st) witness) <= width)
+      by (apply Hwidth; lia).
+    assert (Hlo_width : N.size_nat lo <= width) by (apply Hwidth; lia).
+    assert (Hhi_width : N.size_nat hi <= width) by (apply Hwidth; lia).
+    assert (Hsize_width : N.size_nat size <= width) by (apply Hwidth; lia).
+    assert (Hsum_width : N.size_nat (lo + size) <= width) by (apply Hwidth; lia).
+    assert (Hsucc_width : N.size_nat (N.succ hi) <= width) by (apply Hwidth; lia).
+    pose proof (dom_order_anchor_start_clock width (anchor_intervals st) witness Hw) as Hstart.
+    pose proof (dom_lt_time_ltb (dom_anchor_start (anchor_intervals st) witness) lo) as Hltb.
+    pose proof (dom_lt_time_key v) as Hvkey.
+    destruct (N.ltb (dom_anchor_start (anchor_intervals st) witness) lo).
+    + pose proof (N.T_add_le lo size) as Hadd.
+      pose proof (N.T_pred_le (lo + size)) as Hpred.
+      pose proof (dom_order_anchor_set_clock width anchor (lo + size, hi)%N
+        (anchor_intervals st) Hanchor) as Hseta.
+      pose proof (dom_order_anchor_set_clock width v (lo, N.pred (lo + size))
+        (PTrieCode.set (dom_lt_key anchor) (lo + size, hi)%N (anchor_intervals st)) Hv) as Hsetv.
+      time_simpl. rewrite PTrieT.trie_get_clock. fold p size.
+      rewrite !Nat2N.inj_add in *. clearbody p size.
+      clear -Hv Hanchor Hparent Hsize_clock Hcompare Hakey Hawidth Hstart Hltb Hvkey
+        Hstart_width Hlo_width Hsize_width Hsum_width Hadd Hpred Hseta Hsetv.
+      change (N.of_nat 1) with 1%N in *.
+      set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N).
+      replace (2 * PTrieT.c_trie * (N.of_nat width + 1))%N with
+        (2 * write_budget)%N in Hseta, Hsetv by (unfold write_budget; ring).
+      replace (1024 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
+        (1024 * write_budget + 1024 * (N.of_nat width + 1))%N
+        by (unfold write_budget; ring).
+      clearbody write_budget. lia.
+    + pose proof (N.T_succ_le hi) as Hsucc.
+      pose proof (dom_order_anchor_sub_clock (N.succ hi) size) as Hsubown.
+      pose proof (dom_order_anchor_sub_clock hi size) as Hsubrest.
+      pose proof (dom_order_anchor_set_clock width anchor (lo, hi - size)%N
+        (anchor_intervals st) Hanchor) as Hseta.
+      pose proof (dom_order_anchor_set_clock width v (N.succ hi - size, hi)%N
+        (PTrieCode.set (dom_lt_key anchor) (lo, hi - size)%N (anchor_intervals st)) Hv) as Hsetv.
+      time_simpl. rewrite PTrieT.trie_get_clock. fold p size.
+      rewrite !Nat2N.inj_add in *. clearbody p size.
+      clear -Hv Hanchor Hparent Hsize_clock Hcompare Hakey Hawidth Hstart Hltb Hvkey
+        Hstart_width Hhi_width Hsize_width Hsucc_width Hsucc Hsubown Hsubrest Hseta Hsetv.
+      change (N.of_nat 1) with 1%N in *.
+      set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N).
+      replace (2 * PTrieT.c_trie * (N.of_nat width + 1))%N with
+        (2 * write_budget)%N in Hseta, Hsetv by (unfold write_budget; ring).
+      replace (1024 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
+        (1024 * write_budget + 1024 * (N.of_nat width + 1))%N
+        by (unfold write_budget; ring).
+      clearbody write_budget. lia.
+Qed.
+
+(** * Complete anchor clock composition
+
+    All three linear anchor passes share one polynomial numeric value budget. *)
+
+(** A bounded callback fold pays one uniform callback charge and one list-cell charge. *)
+Lemma dom_order_anchor_fold_linear {A B : Type} (step : A -> B -> A)
+    (T_step : A -> B -> N) (Valid : B -> Prop) (Bound : N -> A -> Prop)
+    increment limit charge :
+  (forall current st value, (current + increment <= limit)%N ->
+    Valid value -> Bound current st -> Bound (current + increment)%N (step st value)) ->
+  (forall current st value, (current + increment <= limit)%N ->
+    Valid value -> Bound current st -> (T_step st value <= charge)%N) ->
+  forall entries st current, Forall Valid entries ->
+  (current + N.of_nat (length entries) * increment <= limit)%N -> Bound current st ->
+  (List.T_fold_left step T_step entries st <=
+    (charge + 1) * N.of_nat (length entries) + 1)%N.
+Proof.
+  intros Hpreserve Hclock entries. induction entries as [|value rest IH];
+    intros st current Hentries Htotal Hbound.
+  - cbn [length]. time_unfold @List.T_fold_left. nia.
+  - inversion Hentries as [|head tail Hvalue Hrest]; subst head tail.
+    assert (Hhead : (current + increment <= limit)%N).
+    { cbn [length] in Htotal. rewrite Nat2N.inj_succ in Htotal. nia. }
+    pose proof (Hclock current st value Hhead Hvalue Hbound) as Hstep.
+    pose proof (Hpreserve current st value Hhead Hvalue Hbound) as Hnext.
+    assert (Htail : (current + increment + N.of_nat (length rest) * increment <= limit)%N).
+    { cbn [length] in Htotal. rewrite Nat2N.inj_succ in Htotal. nia. }
+    specialize (IH (step st value) (current + increment)%N Hrest Htail Hnext).
+    time_unfold @List.T_fold_left. fold (List.T_fold_left step T_step).
+    cbn [length]. rewrite Nat2N.inj_succ. clear -Hstep IH. nia.
+Qed.
+
+(** The anchor-size wrapper is its reversal and the generated transfer-fold clock. *)
+Lemma dom_order_anchor_sizes_clock_equation parents removed :
+  T_dom_anchor_sizes parents removed =
+    (1 + (List.T_rev_append removed [] +
+      List.T_fold_left (dom_order_anchor_transfer parents)
+        (T_dom_order_anchor_transfer parents) (rev_append removed []) Empty))%N.
+Proof.
+  unfold T_dom_anchor_sizes, T_dom_order_anchor_transfer, dom_order_anchor_transfer.
+  time_simpl. reflexivity.
+Qed.
+
+(** The capacity wrapper is the generated capacity-fold clock and its own call. *)
+Lemma dom_order_anchor_capacity_clock_equation parents sizes removed :
+  T_dom_anchor_capacity parents sizes removed =
+    (1 + List.T_fold_left (dom_order_anchor_capacity_step parents sizes)
+      (T_dom_order_anchor_capacity_step parents sizes) removed Empty)%N.
+Proof.
+  unfold T_dom_anchor_capacity, T_dom_order_anchor_capacity_step,
+    dom_order_anchor_capacity_step.
+  time_simpl. reflexivity.
+Qed.
+
+Local Opaque dom_order_anchor_transfer T_dom_order_anchor_transfer
+  dom_order_anchor_capacity_step T_dom_order_anchor_capacity_step
+  dom_anchor_insert T_dom_anchor_insert.
+
+(** Distinct retirement keeps every intermediate size operand within the original budget. *)
+Lemma dom_order_anchor_size_fold_clock width limit bound parents entries sizes :
+  (forall value, (value <= bound)%N -> N.size_nat value <= width) ->
+  (forall value, (value <= 2 * limit + 1)%N -> N.size_nat value <= width) ->
+  Forall (fun entry => let '(v, anchor, witness) := entry in
+    (v <= bound /\ anchor <= bound /\ witness <= bound)%N) entries ->
+  NoDup (map (fun entry => dom_lt_key (fst (fst entry))) entries) ->
+  dom_size_budget limit (map (fun entry => dom_lt_key (fst (fst entry))) entries) sizes ->
+  (List.T_fold_left (dom_order_anchor_transfer parents)
+    (T_dom_order_anchor_transfer parents) entries sizes <=
+    (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1) + 1) *
+      N.of_nat (length entries) + 1)%N.
+Proof.
+  intros Hkeys Hvalues Hentries Hunique Hbudget.
+  set (Inv := fun remaining state =>
+    Forall (fun entry => let '(v, anchor, witness) := entry in
+      (v <= bound /\ anchor <= bound /\ witness <= bound)%N) remaining /\
+    NoDup (map (fun entry => dom_lt_key (fst (fst entry))) remaining) /\
+    dom_size_budget limit
+      (map (fun entry => dom_lt_key (fst (fst entry))) remaining) state).
+  assert (Hpreserve : forall entry rest state, Inv (entry :: rest) state ->
+    Inv rest (dom_order_anchor_transfer parents state entry)).
+  { intros [[v anchor] witness] rest state [Hr [Hu Hb]].
+    inversion Hr as [|head tail Hhead Hrest]; subst head tail.
+    cbn [map fst] in Hu, Hb. inversion Hu as [|head tail Hfresh Htail]; subst head tail.
+    split; [exact Hrest|]. split; [exact Htail|].
+    now apply dom_order_anchor_transfer_budget. }
+  assert (Hcost : forall entry rest state, Inv (entry :: rest) state ->
+    (T_dom_order_anchor_transfer parents state entry + 0 <=
+      0 + 256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+  { intros [[v anchor] witness] rest state [Hr [Hu Hb]].
+    inversion Hr as [|head tail Hhead Hrest]; subst head tail.
+    cbn beta iota zeta in Hhead. destruct Hhead as [Hv [Ha Hw]].
+    rewrite N.add_0_r, N.add_0_l. apply dom_order_anchor_transfer_clock;
+      [now apply Hkeys|now apply Hkeys|].
+    intro x. apply Hvalues.
+    change (dom_size_get state (dom_lt_key x) <= 2 * limit + 1)%N.
+    eapply dom_size_budget_value; exact Hb. }
+  pose proof (dom_lt_fold_credit (dom_order_anchor_transfer parents)
+    (T_dom_order_anchor_transfer parents) Inv (fun _ => 0%N)
+    (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N entries Hpreserve Hcost sizes
+    (conj Hentries (conj Hunique Hbudget))) as Hfold.
+  cbn beta in Hfold. destruct Hfold as [Hfinal Htime].
+  rewrite N.add_0_r, N.add_0_l in Htime. exact Htime.
+Qed.
+
+(** The public polynomial budget covers input ranks, sizes, capacities and endpoint successors. *)
+Lemma dom_order_anchor_budget_arithmetic bound count : (count <= bound)%N ->
+  (bound <= 8 * (bound + 1) * (bound + 1) /\
+   2 * count + 1 <= 8 * (bound + 1) * (bound + 1) /\
+   2 * count * (2 * count + 1) + (2 * count + 1) + 1 <=
+     8 * (bound + 1) * (bound + 1))%N.
+Proof.
+  intro Hcount.
+  assert (Hsquare : (count * count <= bound * bound)%N).
+  { apply N.mul_le_mono; exact Hcount. }
+  nia.
+Qed.
+
+(** Constructing anchor sizes takes linear work at the polynomial operand width. *)
+Lemma dom_order_anchor_sizes_clock bound width parents removed :
+  Forall (fun entry => let '(v, anchor, witness) := entry in
+    (v <= bound /\ anchor <= bound /\ witness <= bound)%N) removed ->
+  NoDup (map (fun entry => dom_lt_key (fst (fst entry))) removed) ->
+  (N.of_nat (length removed) <= bound)%N ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N ->
+    N.size_nat value <= width) ->
+  (T_dom_anchor_sizes parents removed <=
+    512 * (PTrieT.c_trie + 1) * N.of_nat ((length removed + 1) * (width + 1)))%N.
+Proof.
+  intros Hrecords Hunique Hcount Hwidth.
+  destruct (dom_order_anchor_budget_arithmetic bound (N.of_nat (length removed)) Hcount)
+    as [Hbound [Hunit Hendpoints]].
+  assert (Hkeys : forall value, (value <= bound)%N -> N.size_nat value <= width).
+  { intros value Hvalue. apply Hwidth. eapply N.le_trans; eassumption. }
+  assert (Hvalues : forall value, (value <= 2 * N.of_nat (length removed) + 1)%N ->
+    N.size_nat value <= width).
+  { intros value Hvalue. apply Hwidth. eapply N.le_trans; eassumption. }
+  assert (Hreverse : Forall (fun entry => let '(v, anchor, witness) := entry in
+    (v <= bound /\ anchor <= bound /\ witness <= bound)%N) (rev_append removed [])).
+  { rewrite rev_append_rev, app_nil_r. now apply Forall_rev. }
+  assert (Hreverse_unique : NoDup
+    (map (fun entry => dom_lt_key (fst (fst entry))) (rev_append removed []))).
+  { rewrite rev_append_rev, app_nil_r, map_rev. now apply NoDup_rev. }
+  assert (Hbudget : dom_size_budget (N.of_nat (length removed))
+    (map (fun entry => dom_lt_key (fst (fst entry))) (rev_append removed [])) Empty).
+  { replace (N.of_nat (length removed)) with
+      (N.of_nat (length (map (fun entry => dom_lt_key (fst (fst entry)))
+        (rev_append removed [])))); [apply dom_size_budget_empty|].
+    now rewrite length_map, rev_append_rev, app_nil_r, length_rev. }
+  pose proof (dom_order_anchor_size_fold_clock width (N.of_nat (length removed)) bound
+    parents (rev_append removed []) Empty Hkeys Hvalues Hreverse Hreverse_unique Hbudget)
+    as Hfold.
+  replace (length (rev_append removed [])) with (length removed) in Hfold
+    by (rewrite rev_append_rev, app_nil_r, length_rev; reflexivity).
+  pose proof (List.T_rev_append_le removed []) as Hreverse_clock.
+  rewrite dom_order_anchor_sizes_clock_equation.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  clear -Hfold Hreverse_clock. nia.
+Qed.
+
+(** Constructing capacities adds at most one bounded size per removal. *)
+Lemma dom_order_anchor_capacity_clock bound width parents sizes removed :
+  dom_lt_trie_all (fun n => (n <= bound)%N) parents ->
+  Forall (fun entry => let '(v, anchor, witness) := entry in
+    (v <= bound /\ anchor <= bound /\ witness <= bound)%N) removed ->
+  (N.of_nat (length removed) <= bound)%N ->
+  (forall v, (dom_anchor_size sizes v <= 2 * N.of_nat (length removed) + 1)%N) ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N ->
+    N.size_nat value <= width) ->
+  (T_dom_anchor_capacity parents sizes removed <=
+    512 * (PTrieT.c_trie + 1) * N.of_nat ((length removed + 1) * (width + 1)))%N.
+Proof.
+  intros Hparents Hrecords Hcount Hsizes Hwidth.
+  set (count := N.of_nat (length removed)). set (unit := (2 * count + 1)%N).
+  fold count in Hcount, Hsizes.
+  destruct (dom_order_anchor_budget_arithmetic bound count Hcount)
+    as [Hbound [Hunit Hendpoints]].
+  assert (Hkeys : forall value, (value <= bound)%N -> N.size_nat value <= width).
+  { intros value Hvalue. apply Hwidth. eapply N.le_trans; eassumption. }
+  pose proof (dom_order_anchor_fold_linear
+    (dom_order_anchor_capacity_step parents sizes)
+    (T_dom_order_anchor_capacity_step parents sizes)
+    (fun entry => let '(v, anchor, witness) := entry in
+      (v <= bound /\ anchor <= bound /\ witness <= bound)%N)
+    (fun current caps => dom_lt_trie_all (fun n => (n <= current)%N) caps)
+    unit (count * unit)%N (256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N)
+    as Hfold.
+  assert (Hpreserve : forall current caps entry, (current + unit <= count * unit)%N ->
+    (let '(v, anchor, witness) := entry in (v <= bound /\ anchor <= bound /\ witness <= bound)%N) ->
+    dom_lt_trie_all (fun n => (n <= current)%N) caps ->
+    dom_lt_trie_all (fun n => (n <= current + unit)%N)
+      (dom_order_anchor_capacity_step parents sizes caps entry)).
+  { intros current caps entry Hcurrent Hentry Hcaps.
+    apply dom_order_anchor_capacity_step_bound; [exact Hsizes|exact Hcaps]. }
+  assert (Hclock : forall current caps entry, (current + unit <= count * unit)%N ->
+    (let '(v, anchor, witness) := entry in (v <= bound /\ anchor <= bound /\ witness <= bound)%N) ->
+    dom_lt_trie_all (fun n => (n <= current)%N) caps ->
+    (T_dom_order_anchor_capacity_step parents sizes caps entry <=
+      256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+  { intros current caps [[v anchor] witness] Hcurrent [Hv [Ha Hw]] Hcaps.
+    pose proof (dom_lt_identity_bounded bound parents v Hparents Hv) as Hp.
+    apply dom_order_anchor_capacity_step_clock; try now apply Hkeys.
+    - apply Hwidth. pose proof (dom_order_anchor_number_bound current caps
+        (dom_lt_identity parents v) Hcaps) as Hnumber.
+      fold unit in Hendpoints. nia.
+    - apply Hwidth. pose proof (Hsizes v) as Hsize. fold unit in Hsize, Hunit. nia. }
+  specialize (Hfold Hpreserve Hclock removed Empty 0%N Hrecords ltac:(unfold count; nia)
+    (dom_lt_trie_all_empty _)).
+  rewrite dom_order_anchor_capacity_clock_equation.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  clear -Hfold. nia.
+Qed.
+
+(** The insertion fold has linear cost while its endpoint budget grows by one size per record. *)
+Lemma dom_order_anchor_insert_fold_clock bound width parents sizes caps removed :
+  dom_lt_trie_all (fun n => (n <= bound)%N) parents ->
+  Forall (fun entry => let '(v, anchor, witness) := entry in
+    (v <= bound /\ anchor <= bound /\ witness <= bound)%N) removed ->
+  (N.of_nat (length removed) <= bound)%N ->
+  (forall v, (dom_anchor_size sizes v <= 2 * N.of_nat (length removed) + 1)%N) ->
+  dom_lt_trie_all (fun n =>
+    (n <= N.of_nat (length removed) * (2 * N.of_nat (length removed) + 1))%N) caps ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N ->
+    N.size_nat value <= width) ->
+  (List.T_fold_left (dom_anchor_insert parents sizes caps)
+    (T_dom_anchor_insert parents sizes caps) removed (DomAnchorState Empty Empty) <=
+    2048 * (PTrieT.c_trie + 1) * N.of_nat ((length removed + 1) * (width + 1)))%N.
+Proof.
+  intros Hparents Hrecords Hcount Hsizes Hcaps Hwidth.
+  set (count := N.of_nat (length removed)). set (unit := (2 * count + 1)%N).
+  fold count in Hcount, Hsizes, Hcaps.
+  destruct (dom_order_anchor_budget_arithmetic bound count Hcount)
+    as [Hbound [Hunit Hendpoints]].
+  fold unit in Hsizes, Hcaps, Hunit, Hendpoints.
+  assert (Hkeys : forall value, (value <= bound)%N -> N.size_nat value <= width).
+  { intros value Hvalue. apply Hwidth. eapply N.le_trans; eassumption. }
+  set (Bound := fun current st =>
+    (count * unit <= current)%N /\ dom_order_anchor_state_bound current st).
+  assert (Hpreserve : forall current st entry, (current + unit <= 2 * count * unit)%N ->
+    (let '(v, anchor, witness) := entry in (v <= bound /\ anchor <= bound /\ witness <= bound)%N) ->
+    Bound current st -> Bound (current + unit)%N (dom_anchor_insert parents sizes caps st entry)).
+  { intros current st entry Hcurrent Hentry [Hlower Hstate]. split; [lia|].
+    eapply dom_order_anchor_insert_bound with (capacity := (count * unit)%N);
+      try eassumption. unfold unit. lia. }
+  assert (Hclock : forall current st entry, (current + unit <= 2 * count * unit)%N ->
+    (let '(v, anchor, witness) := entry in (v <= bound /\ anchor <= bound /\ witness <= bound)%N) ->
+    Bound current st ->
+    (T_dom_anchor_insert parents sizes caps st entry <=
+      1024 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+  { intros current st [[v anchor] witness] Hcurrent [Hv [Ha Hw]] [Hlower Hstate].
+    apply (dom_order_anchor_insert_clock width current unit parents sizes caps st
+      v anchor witness).
+    - exact (Hkeys v Hv).
+    - exact (Hkeys anchor Ha).
+    - exact (Hkeys witness Hw).
+    - apply Hkeys. exact (dom_lt_identity_bounded bound parents v Hparents Hv).
+    - exact Hsizes.
+    - exact (dom_order_anchor_values_mono (count * unit)%N current caps Hlower Hcaps).
+    - exact Hstate.
+    - intros value Hvalue. apply Hwidth.
+      clear -Hvalue Hcurrent Hendpoints. nia. }
+  assert (Hinitial : Bound (count * unit)%N (DomAnchorState Empty Empty)).
+  { split; [reflexivity|]. split; apply dom_lt_trie_all_empty. }
+  pose proof (dom_order_anchor_fold_linear (dom_anchor_insert parents sizes caps)
+    (T_dom_anchor_insert parents sizes caps)
+    (fun entry => let '(v, anchor, witness) := entry in
+      (v <= bound /\ anchor <= bound /\ witness <= bound)%N)
+    Bound unit (2 * count * unit)%N
+    (1024 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N Hpreserve Hclock
+    removed (DomAnchorState Empty Empty) (count * unit)%N Hrecords
+    ltac:(unfold count; nia) Hinitial) as Hfold.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  clear -Hfold. nia.
+Qed.
+
+(** The anchor constructor has one closed coefficient for all three linear passes. *)
+Definition dom_order_anchor_coefficient : N := (8192 * (PTrieT.c_trie + 1))%N.
+
+(** Full anchor construction is linear in removals at the polynomial operand width. *)
+Lemma dom_order_anchor_time bound width parents removed :
+  dom_lt_trie_all (fun n => (n <= bound)%N) parents ->
+  Forall (fun entry => let '(v, anchor, witness) := entry in
+    (v <= bound /\ anchor <= bound /\ witness <= bound)%N) removed ->
+  NoDup (map (fun entry => dom_lt_key (fst (fst entry))) removed) ->
+  (N.of_nat (length removed) <= bound)%N ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N ->
+    N.size_nat value <= width) ->
+  (T_dom_anchor_order parents removed <= dom_order_anchor_coefficient *
+    N.of_nat ((length removed + 1) * (width + 1)))%N.
+Proof.
+  intros Hparents Hrecords Hunique Hcount Hwidth.
+  set (sizes := dom_anchor_sizes parents removed).
+  set (caps := dom_anchor_capacity parents sizes removed).
+  assert (Hsizes : forall v, (dom_anchor_size sizes v <= 2 * N.of_nat (length removed) + 1)%N).
+  { intro v. now apply dom_anchor_sizes_value_bound. }
+  pose proof (dom_order_anchor_capacity_bound (2 * N.of_nat (length removed) + 1)%N
+    parents sizes removed Hsizes) as Hcaps. fold caps in Hcaps.
+  pose proof (dom_order_anchor_sizes_clock bound width parents removed
+    Hrecords Hunique Hcount Hwidth) as Hsize_clock.
+  pose proof (dom_order_anchor_capacity_clock bound width parents sizes removed
+    Hparents Hrecords Hcount Hsizes Hwidth) as Hcapacity_clock.
+  pose proof (dom_order_anchor_insert_fold_clock bound width parents sizes caps removed
+    Hparents Hrecords Hcount Hsizes Hcaps Hwidth) as Hinsert_clock.
+  unfold T_dom_anchor_order. time_simpl. fold sizes caps.
+  change (fun (st : dom_anchor_state) (entry : N * N * N) =>
+    T_dom_anchor_insert parents sizes caps st entry) with
+    (T_dom_anchor_insert parents sizes caps).
+  unfold dom_order_anchor_coefficient. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  clearbody sizes caps. clear -Hsize_clock Hcapacity_clock Hinsert_clock. nia.
+Qed.
+
+Local Transparent dom_order_anchor_transfer T_dom_order_anchor_transfer
+  dom_order_anchor_capacity_step T_dom_order_anchor_capacity_step
+  dom_anchor_insert T_dom_anchor_insert dom_anchor_at_parent T_dom_anchor_at_parent.
+
+(* END G2-G ANCHOR SUPPORT *)
+
+(** The assembly proof keeps its already-bounded executable phases abstract. *)
+Local Opaque dom_lt_numeric_of dom_lt_semidominators dom_lt_buckets dom_lt_correct.
+Local Opaque dom_order_source_maps T_dom_order_source_maps
+  dom_order_removal T_dom_order_removal dom_anchor_order T_dom_anchor_order
+  dom_order_sorted_rows T_dom_order_sorted_rows dom_order_emit T_dom_order_emit.
+
+(** * Composition from the two remaining phase clocks *)
+
+(** Raw finite inventories suffice for the complete order-of-result clock. *)
+Lemma dom_order_of_result_composition (source_coefficient removal_coefficient : N) width result :
+  let numeric := result_numeric result in
+  let semi := result_semi result in
+  let bucket := result_bucket result in
+  let parents := result_parent result in
+  let count := length (lt_numeric_order numeric) in
+  let bound := N.of_nat count in
+  let sources := dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents in
+  NoDup (lt_numeric_order numeric) ->
+  dom_lt_numeric_ranges bound numeric ->
+  (lt_numeric_limit numeric <= N.of_nat (count + 1))%N ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_semis semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_minimizer semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_relative bucket) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) parents ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N -> N.size_nat value <= width) ->
+  (T_dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents <= source_coefficient *
+      N.of_nat (dom_order_body_budget count
+        (dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric)) (lt_numeric_pred numeric)) width))%N ->
+  (T_dom_order_removal (lt_numeric_limit numeric) parents (lt_numeric_order numeric) sources <=
+    removal_coefficient * N.of_nat ((count + 1) * (width + 1)))%N ->
+  (T_dom_order_of_result result <= (source_coefficient + removal_coefficient + dom_order_anchor_coefficient +
+      dom_order_sorted_rows_coefficient + 3 * dom_order_emit_coefficient + 64) *
+    N.of_nat (dom_order_body_budget count
+      (dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric)) (lt_numeric_pred numeric)) width))%N.
+Proof.
+  intros numeric semi bucket parents count bound sources Hunique Hranges Hlimit
+    Hsemis Hminimizer Hrelative Hparents Hwidth Hsource_clock Hremove_clock.
+  set (order := lt_numeric_order numeric) in *.
+  set (predecessors := dom_lt_row_mass (map dom_lt_key order) (lt_numeric_pred numeric)) in *.
+  set (budget := N.of_nat (dom_order_body_budget count predecessors width)) in *.
+  assert (Horder : Forall (fun value => (value <= bound)%N) order).
+  { exact (dom_lt_numeric_order_range _ _ Hranges). }
+  assert (Hrank_width : forall value, (value <= bound)%N -> N.size_nat value <= width).
+  { intros value Hvalue. eapply dom_order_linear_value_width; [exact Hwidth|].
+    clear -Hvalue. lia. }
+  assert (Hparents_width : dom_lt_trie_all (fun value => N.size_nat value <= width) parents).
+  { now apply (dom_order_table_width bound width). }
+  assert (Hsources : dom_order_sources_range bound sources).
+  { exact (dom_order_source_maps_range bound numeric (lt_semis semi) (lt_minimizer semi)
+      (lt_relative bucket) parents Horder Hparents). }
+  set (removed := dom_order_removal (lt_numeric_limit numeric) parents order sources).
+  assert (Hrecords : Forall (fun entry => let '(vertex, anchor, witness) := entry in
+    (vertex <= bound /\ anchor <= bound /\ witness <= bound)%N) removed).
+  { exact (dom_order_removal_records_range bound (lt_numeric_limit numeric) parents order
+      sources Hparents Horder Hsources). }
+  assert (Hremoved_unique : NoDup (map (fun entry => dom_lt_key (fst (fst entry))) removed)).
+  { exact (dom_order_removal_keys_unique (lt_numeric_limit numeric) parents order sources). }
+  assert (Hremoved_length : length removed <= count).
+  { exact (dom_order_removal_length (lt_numeric_limit numeric) parents order sources). }
+  assert (Hremoved_count : (N.of_nat (length removed) <= bound)%N).
+  { apply time_of_nat_le. exact Hremoved_length. }
+  set (positions := dom_anchor_order parents removed).
+  pose proof (dom_order_anchor_endpoints bound parents removed Hparents Hrecords
+    Hremoved_unique Hremoved_count) as Hendpoints. fold positions in Hendpoints.
+  assert (Hpositions : dom_lt_trie_all (fun interval =>
+    (fst interval <= 8 * (bound + 1) * (bound + 1) /\
+      snd interval <= 8 * (bound + 1) * (bound + 1))%N) positions).
+  { intros key [lower upper] Hget. exact (Hendpoints key (lower, upper) Hget). }
+  assert (Hoperands : Forall (dom_order_merge_operand width positions) order).
+  { apply Forall_forall. intros vertex Hin. split.
+    - apply Hrank_width. exact (proj1 (Forall_forall _ _) Horder vertex Hin).
+    - apply Hwidth. now apply dom_order_anchor_start_bound. }
+  set (rows := dom_order_sorted_rows order parents positions).
+  assert (Hrows_range : dom_lt_trie_all (Forall (fun value => (value <= bound)%N)) rows).
+  { exact (dom_order_sorted_rows_forall (fun value => (value <= bound)%N)
+      order parents positions Horder). }
+  set (keys := dom_order_key_universe count).
+  assert (Hkeys_unique : NoDup keys) by apply dom_order_key_universe_unique.
+  assert (Hkeys_length : length keys = count + 2) by apply dom_order_key_universe_length.
+  assert (Hroot : In (dom_lt_key 1%N) keys) by apply dom_order_key_universe_root.
+  assert (Hrows_keys : dom_lt_trie_all (Forall (fun vertex => In (dom_lt_key vertex) keys)) rows).
+  { exact (dom_order_key_universe_rows count rows Hrows_range). }
+  assert (Hkeys_width : forall vertex, In (dom_lt_key vertex) keys -> N.size_nat vertex <= width).
+  { intros vertex Hin. apply dom_order_key_universe_bound in Hin.
+    eapply dom_order_linear_value_width; [exact Hwidth|].
+    rewrite Nat2N.inj_add in Hin. change (N.of_nat 1) with 1%N in Hin.
+    fold bound in Hin. clear -Hin. lia. }
+  assert (Hlimit_width : N.size_nat (lt_numeric_limit numeric) <= width).
+  { eapply dom_order_linear_value_width; [exact Hwidth|].
+    rewrite Nat2N.inj_add in Hlimit. change (N.of_nat 1) with 1%N in Hlimit.
+    fold bound in Hlimit. clear -Hlimit. lia. }
+  assert (Hmass : dom_lt_row_mass keys rows <= count).
+  { exact (dom_order_sorted_rows_mass keys order parents positions Hkeys_unique). }
+  assert (Hremove_paid :
+    (T_dom_order_removal (lt_numeric_limit numeric) parents order sources <=
+      removal_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hremove_clock|]. apply N.mul_le_mono_l.
+    unfold budget. apply time_of_nat_le. apply dom_order_body_budget_linear. }
+  pose proof (dom_order_anchor_time bound width parents removed Hparents Hrecords
+    Hremoved_unique Hremoved_count Hwidth) as Hanchor_clock.
+  assert (Hanchor_paid : (T_dom_anchor_order parents removed <=
+    dom_order_anchor_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hanchor_clock|]. apply N.mul_le_mono_l.
+    unfold budget. apply time_of_nat_le.
+    eapply Nat.le_trans with ((count + 1) * (width + 1)).
+    - apply Nat.mul_le_mono_r. clear -Hremoved_length. lia.
+    - apply dom_order_body_budget_linear. }
+  pose proof (dom_order_sorted_rows_time width order parents positions
+    Hoperands Hparents_width) as Hrows_clock.
+  assert (Hrows_paid : (T_dom_order_sorted_rows order parents positions <=
+    dom_order_sorted_rows_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hrows_clock|]. apply N.mul_le_mono_l.
+    unfold budget. apply time_of_nat_le. apply dom_order_body_budget_rows. }
+  pose proof (dom_order_emit_clock keys numeric rows width Hkeys_unique Hroot Hrows_keys
+    Hkeys_width Hlimit_width) as Hemit_clock.
+  rewrite Hkeys_length in Hemit_clock.
+  assert (Hemit_paid : (T_dom_order_emit numeric rows <=
+    3 * dom_order_emit_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hemit_clock|].
+    replace (3 * dom_order_emit_coefficient * budget)%N with
+      (dom_order_emit_coefficient * (3 * budget))%N by ring.
+    apply N.mul_le_mono_l. unfold budget.
+    change (N.of_nat ((dom_lt_row_mass keys rows + (count + 2) + 1) * (width + 1)) <=
+      N.of_nat 3 * N.of_nat (dom_order_body_budget count predecessors width))%N.
+    rewrite <- Nat2N.inj_mul. apply time_of_nat_le.
+    now apply dom_order_body_budget_emit. }
+  pose proof (dom_order_result_phase_clocks result) as Htotal.
+  cbn zeta in Htotal. fold numeric semi bucket parents order sources removed positions rows in Htotal.
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget. pose proof (dom_order_body_budget_positive count predecessors width) as Hpositive.
+    now apply time_of_nat_le in Hpositive. }
+  eapply dom_order_phase_sum_budget;
+    [exact Hpositive|exact Hsource_clock|exact Hremove_paid|exact Hanchor_paid|
+     exact Hrows_paid|exact Hemit_paid|exact Htotal].
+Qed.
+(** * Closed coefficient for the complete raw ordering body *)
+
+Definition dom_order_body_coefficient : N :=
+  (dom_order_source_maps_coefficient + dom_order_removal_coefficient +
+    dom_order_anchor_coefficient + dom_order_sorted_rows_coefficient +
+    3 * dom_order_emit_coefficient + 64)%N.
+
+(** The actual source and removal bounds discharge the two phase premises. *)
+Lemma dom_order_of_result_time width result :
+  let numeric := result_numeric result in
+  let semi := result_semi result in
+  let bucket := result_bucket result in
+  let parents := result_parent result in
+  let count := length (lt_numeric_order numeric) in
+  let bound := N.of_nat count in
+  NoDup (lt_numeric_order numeric) ->
+  dom_lt_numeric_ranges bound numeric ->
+  (lt_numeric_limit numeric <= N.of_nat (count + 1))%N ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_semis semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_minimizer semi) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_relative bucket) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) parents ->
+  (forall value, (value <= 8 * (bound + 1) * (bound + 1))%N -> N.size_nat value <= width) ->
+  (T_dom_order_of_result result <= dom_order_body_coefficient *
+    N.of_nat (dom_order_body_budget count
+      (dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric)) (lt_numeric_pred numeric)) width))%N.
+Proof.
+  intros numeric semi bucket parents count bound Hunique Hranges Hlimit
+    Hsemis Hminimizer Hrelative Hparents Hwidth.
+  pose proof (dom_order_source_maps_time width numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents Hunique Hranges Hlimit Hsemis Hminimizer Hrelative
+    Hparents Hwidth) as Hsource.
+  pose proof (dom_lt_numeric_order_range bound numeric Hranges) as Horder.
+  pose proof (dom_order_source_maps_range bound numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents Horder Hparents) as Hsources.
+  pose proof (dom_order_removal_time count width (lt_numeric_limit numeric) parents
+    (lt_numeric_order numeric)
+    (dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi) (lt_relative bucket) parents)
+    (Nat.le_refl count) Horder Hparents Hsources Hlimit Hwidth) as Hremove.
+  unfold dom_order_body_coefficient.
+  exact (dom_order_of_result_composition dom_order_source_maps_coefficient
+    dom_order_removal_coefficient width result Hunique Hranges Hlimit Hsemis Hminimizer
+    Hrelative Hparents Hwidth Hsource Hremove).
+Qed.
+(** * The ordering body on an actual prepared graph *)
+
+(** All numeric inventories and quadratic anchor ranks fit the graph's ordering budget. *)
+Lemma dom_order_graph_body_time g r : prepared_ok g ->
+  (T_dom_order_of_result (dom_lt_pipeline g r) <= 5 * dom_order_body_coefficient *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
+Proof.
+  intro Hprepared.
+  set (numeric := dom_lt_numeric_of g r).
+  set (semi := dom_lt_semidominators numeric).
+  set (bucket := dom_lt_buckets numeric (lt_semis semi)).
+  set (parents := dom_lt_correct numeric (lt_semis semi) (lt_relative bucket)).
+  set (count := length (lt_numeric_order numeric)).
+  set (bound := N.of_nat count).
+  set (predecessors := dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric))
+    (lt_numeric_pred numeric)).
+  assert (Hcount : count = length (dom_lt_dfs g r)) by apply dom_lt_numeric_order_length.
+  assert (Hnumeric : dom_lt_numeric_ranges bound numeric).
+  { unfold bound. rewrite Hcount. apply dom_lt_numeric_of_ranges. }
+  assert (Hunique : NoDup (lt_numeric_order numeric)) by apply dom_lt_numeric_order_unique.
+  assert (Hlimit : (lt_numeric_limit numeric <= N.of_nat (count + 1))%N).
+  { unfold numeric. rewrite dom_lt_numeric_limit_count, Hcount. apply N.le_refl. }
+  pose proof (dom_lt_semidominators_range bound numeric Hnumeric) as Hsemi.
+  fold semi in Hsemi.
+  pose proof (dom_lt_pipeline_buckets_range bound numeric (lt_semis semi) Hnumeric) as Hbucket.
+  fold bucket in Hbucket.
+  pose proof (dom_lt_pipeline_correct_range bound numeric (lt_semis semi)
+    (lt_relative bucket) (proj2 Hbucket)) as Hparents.
+  fold parents in Hparents.
+  destruct (dom_lt_dfs_inventory g r) as [Hdiscover_unique [Hlisted [Hvertices Hedges]]].
+  assert (Hwidth : forall value, (value <= 8 * (bound + 1) * (bound + 1))%N ->
+    N.size_nat value <= 2 * graph_width (base g) + 4).
+  { intros value Hvalue.
+    apply (dom_distinct_quadratic_width (dom_lt_dfs g r) (graph_width (base g)) value
+      Hdiscover_unique).
+    - intros key Hin. apply dom_listed_key_width. now apply Hlisted.
+    - unfold bound in Hvalue. now rewrite Hcount in Hvalue. }
+  assert (Hraw : (T_dom_order_of_result (dom_lt_pipeline g r) <=
+    dom_order_body_coefficient * N.of_nat (dom_order_body_budget count predecessors
+      (2 * graph_width (base g) + 4)))%N).
+  { apply (dom_order_of_result_time (2 * graph_width (base g) + 4)).
+    - exact Hunique.
+    - exact Hnumeric.
+    - exact Hlimit.
+    - exact (proj1 Hsemi).
+    - exact (proj1 (proj2 Hsemi)).
+    - exact (proj2 Hbucket).
+    - exact Hparents.
+    - exact Hwidth. }
+  assert (Hpredecessors : predecessors <= graph_e (base g)).
+  { unfold predecessors, dom_lt_row_mass. rewrite dom_lt_sum_map.
+    exact (dom_lt_numeric_pred_total g r Hprepared). }
+  assert (Hbudget : dom_order_body_budget count predecessors (2 * graph_width (base g) + 4) <=
+    5 * ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1))).
+  { unfold dom_order_body_budget. apply dom_order_graph_product; [now rewrite Hcount|exact Hpredecessors]. }
+  eapply N.le_trans; [exact Hraw|].
+  replace (5 * dom_order_body_coefficient *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N with
+    (dom_order_body_coefficient * N.of_nat (5 *
+      ((graph_n (base g) + graph_e (base g) + 1) *
+        (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1))))%N by
+    (rewrite !Nat2N.inj_mul; change (N.of_nat 5) with 5%N; ring).
+  apply N.mul_le_mono_l. now apply time_of_nat_le.
+Qed.
+
+Local Transparent dom_lt_numeric_of dom_lt_semidominators dom_lt_buckets dom_lt_correct.
+Local Transparent dom_order_source_maps T_dom_order_source_maps
+  dom_order_removal T_dom_order_removal dom_anchor_order T_dom_anchor_order
+  dom_order_sorted_rows T_dom_order_sorted_rows dom_order_emit T_dom_order_emit.
+
 (** A size observation traverses one key and adds its default-value branch. *)
 Local Lemma dom_time_size_get sizes v :
   T_dom_size_get sizes v = (1 + 2 * N.of_nat (Pos.size_nat v))%N.
@@ -3177,10 +4344,11 @@ Module DomT <: DOM_ALL.
   Definition k_edge : N :=
     (4 * (k_scan + k_read + k_size + PTrieT.c_trie + 1024))%N.
   Definition k_tree : N := (2 * k_size + 16 * PTrieT.c_trie + 512)%N.
-  Definition k_dfs : N := 1%N. (* STUB *)
-  Definition k_semi : N := 1%N. (* STUB *)
-  Definition k_le : N := 1%N. (* STUB *)
-  Definition k_order : N := 1%N. (* STUB *)
+  Definition k_dfs : N := dom_lt_dfs_coefficient.
+  Definition k_semi : N := dom_lt_semi_coefficient.
+  Definition k_le : N := (32 * 1024 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
+  Definition k_order : N :=
+    (5 * dom_order_body_coefficient + k_semi + 4 * k_le)%N.
   Definition k_build : N := 32%N.
   Definition k_check : N := 32%N.
 
@@ -3639,28 +4807,63 @@ Module DomT <: DOM_ALL.
   Lemma T7_dfs : forall g r, prepared_ok g ->
     (T_lt_dfs g r <= k_dfs * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared.
+    change (1 + T_dom_lt_dfs g r <= dom_lt_dfs_coefficient *
+      N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+        (graph_width (base g) + 1)))%N.
+    rewrite (N.add_comm 1 (T_dom_lt_dfs g r)).
+    apply dom_time_lt_dfs.
+  Qed.
 
   Lemma F13_ops_length : forall g r, prepared_ok g ->
     length (lt_ops g r) <= 2 * (graph_n (base g) + graph_e (base g)) + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared. apply dom_lt_operations_length. exact Hprepared.
+  Qed.
 
   Lemma T8_link_eval : forall g r, prepared_ok g ->
     (T_run_ops (lt_ops g r) (lt_init g r) <= k_le *
       N.of_nat ((length (lt_ops g r) + graph_n (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared.
+    change (1 + T_dom_lt_run_ops (dom_lt_ops g r) (dom_lt_replay_initial g r) <=
+      (32 * 1024 * (c_loopN + 1) * (PTrieT.c_trie + 1)) *
+        N.of_nat ((length (dom_lt_ops g r) + graph_n (base g) + 1) *
+          (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
+    rewrite N.add_comm. apply dom_lt_replay_time.
+  Qed.
 
   Lemma T9_semi : forall g r, prepared_ok g ->
     (T_lt_semi g r <= k_semi * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)) + T_run_ops (lt_ops g r) (lt_init g r))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared.
+    pose proof (dom_lt_parents_replay_clock g r Hprepared) as Hclock.
+    change (1 + T_dom_lt_parents g r <= dom_lt_semi_coefficient *
+      N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+        (graph_width (base g) + 1)) +
+      (1 + T_dom_lt_run_ops (dom_lt_ops g r) (dom_lt_replay_initial g r)))%N.
+    lia.
+  Qed.
 
   Lemma T10_order : forall g r, prepared_ok g ->
     (T_lt_order g r <= k_order *
       N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared.
+    change (1 + T_dom_build_order g r <=
+      (5 * dom_order_body_coefficient + k_semi + 4 * k_le) *
+        N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+          (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
+    rewrite (N.add_comm 1 (T_dom_build_order g r)).
+    apply dom_order_graph_wrapper.
+    - exact Hprepared.
+    - now apply dom_order_graph_body_time.
+    - apply dom_lt_replay_time.
+  Qed.
 
   (** Parent containment tests charge each accepted order entry. *)
   Lemma T4b_sizes_ok : forall g r m o pos,

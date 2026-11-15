@@ -1395,3 +1395,885 @@ Proof.
     (destruct g as [[vertices adjacency] predecessors count_v count_e]; reflexivity).
   apply dom_lt_sum_le. intros x Hx. now apply dom_lt_filter_sum_bound.
 Qed.
+
+(** * Numeric layout inventories *)
+
+(** A left fold preserves an invariant proved for every callback. *)
+Lemma dom_lt_fold_invariant {A B : Type} (step : A -> B -> A) (Inv : A -> Prop) xs st :
+  Inv st -> (forall state x, Inv state -> Inv (step state x)) ->
+  Inv (fold_left step xs st).
+Proof.
+  intros Hinitial Hstep. revert st Hinitial.
+  induction xs as [|x rest IH]; intros st Hinitial; [exact Hinitial|].
+  cbn [fold_left]. apply IH. now apply Hstep.
+Qed.
+
+Definition dom_lt_rank_injective (ranks : ptrie N) : Prop :=
+  forall u v n, trie_get u ranks = Some n -> trie_get v ranks = Some n -> u = v.
+
+Definition dom_lt_rank_below (ranks : ptrie N) (next : N) : Prop :=
+  forall v n, trie_get v ranks = Some n -> (n < next)%N.
+
+(** A fresh rank cannot collide with any earlier stored rank. *)
+Lemma dom_lt_rank_set_injective ranks next key :
+  dom_lt_rank_injective ranks -> dom_lt_rank_below ranks next ->
+  dom_lt_rank_injective (PTrieCode.set key next ranks).
+Proof.
+  intros Hinjective Hbelow u v n Hu Hv.
+  destruct (Pos.eq_dec u key) as [->|Hu_key], (Pos.eq_dec v key) as [->|Hv_key].
+  - reflexivity.
+  - rewrite PTrie.get_set_same in Hu. injection Hu as <-.
+    rewrite PTrie.get_set_other in Hv by exact Hv_key.
+    pose proof (Hbelow v next Hv). lia.
+  - rewrite PTrie.get_set_same in Hv. injection Hv as <-.
+    rewrite PTrie.get_set_other in Hu by exact Hu_key.
+    pose proof (Hbelow u next Hu). lia.
+  - rewrite PTrie.get_set_other in Hu by exact Hu_key.
+    rewrite PTrie.get_set_other in Hv by exact Hv_key.
+    eapply Hinjective; eassumption.
+Qed.
+
+(** The updated rank map is bounded by the incremented discovery counter. *)
+Lemma dom_lt_rank_set_below ranks next key :
+  dom_lt_rank_below ranks next ->
+  dom_lt_rank_below (PTrieCode.set key next ranks) (N.succ next).
+Proof.
+  intros Hbelow v n Hget. destruct (Pos.eq_dec v key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same in Hget. injection Hget as <-. lia.
+  - rewrite PTrie.get_set_other in Hget by exact Hdifferent.
+    specialize (Hbelow v n Hget). lia.
+Qed.
+
+(** Assigning a positive discovery rank preserves positivity of every stored rank. *)
+Lemma dom_lt_rank_set_positive ranks next key :
+  (forall v n, trie_get v ranks = Some n -> (0 < n)%N) -> (0 < next)%N ->
+  forall v n, trie_get v (PTrieCode.set key next ranks) = Some n -> (0 < n)%N.
+Proof.
+  intros Hpositive Hnext v n Hget. destruct (Pos.eq_dec v key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same in Hget. now injection Hget as <-.
+  - rewrite PTrie.get_set_other in Hget by exact Hdifferent. now apply (Hpositive v).
+Qed.
+
+(** Inserting a rank extends the lookup domain by exactly its key. *)
+Lemma dom_lt_rank_set_domain (ranks : ptrie N) key rank v :
+  (exists n, trie_get v (PTrieCode.set key rank ranks) = Some n) <->
+    v = key \/ exists n, trie_get v ranks = Some n.
+Proof.
+  destruct (Pos.eq_dec v key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same. split; [now left|]. intros _. now exists rank.
+  - rewrite PTrie.get_set_other by exact Hdifferent. tauto.
+Qed.
+
+(** Numeric layout fields retain the exact discovered domain and its consecutive counter. *)
+Record dom_lt_layout_inventory (st : dom_lt_layout) : Prop := DomLtLayoutInventory {
+  dom_lt_layout_injective : dom_lt_rank_injective (lt_rank st);
+  dom_lt_layout_bounded : dom_lt_rank_below (lt_rank st) (lt_next st);
+  dom_lt_layout_domain : forall v,
+    In v (lt_reverse_order st) <-> exists n, trie_get v (lt_rank st) = Some n;
+  dom_lt_layout_next : lt_next st = N.of_nat (length (lt_reverse_order st) + 1);
+  dom_lt_layout_positive : forall v n, trie_get v (lt_rank st) = Some n -> (0 < n)%N
+}.
+
+(** Each trace event preserves rank injectivity, the exact domain and its discovery counter. *)
+Lemma dom_lt_layout_event_inventory st event :
+  dom_lt_layout_inventory st -> dom_lt_layout_inventory (dom_lt_event st event).
+Proof.
+  intros [Hinjective Hbounded Hdomain Hnext Hpositive].
+  destruct event as [v|v|kind u v];
+    cbn [dom_lt_event lt_reverse_order lt_rank lt_next].
+  - constructor; cbn [lt_rank lt_next lt_reverse_order].
+    + now apply dom_lt_rank_set_injective.
+    + now apply dom_lt_rank_set_below.
+    + intro x. rewrite dom_lt_rank_set_domain, <- Hdomain. cbn [In]. intuition congruence.
+    + cbn [length]. now rewrite Hnext, <- Nat2N.inj_succ.
+    + apply dom_lt_rank_set_positive; [exact Hpositive|]. rewrite Hnext. lia.
+  - constructor; cbn [lt_rank lt_next lt_reverse_order]; assumption.
+  - constructor; assumption.
+Qed.
+
+(** The producer layout assigns distinct bounded numeric ranks to precisely its discovered keys. *)
+Lemma dom_lt_layout_of_inventory g r : dom_lt_layout_inventory (dom_lt_layout_of g r).
+Proof.
+  unfold dom_lt_layout_of. apply (dom_lt_fold_invariant dom_lt_event dom_lt_layout_inventory).
+  - constructor; cbn [lt_rank lt_next lt_reverse_order length].
+    + intros u v n Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+    + intros v n Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+    + intro v. split; [intro Hbad; contradiction|].
+      intros [n Hget]. rewrite PTrie.get_empty in Hget. discriminate Hget.
+    + reflexivity.
+    + intros v n Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+  - intros st event Hinv. now apply dom_lt_layout_event_inventory.
+Qed.
+
+(** The layout's reverse order is the reversed enter subsequence of the trace. *)
+Lemma dom_lt_layout_reverse events st :
+  lt_reverse_order (fold_left dom_lt_event events st) =
+    rev (entered events) ++ lt_reverse_order st.
+Proof.
+  revert st. induction events as [|event rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH.
+  destruct event; cbn [dom_lt_event lt_reverse_order entered rev];
+    [now rewrite <- app_assoc|reflexivity|reflexivity].
+Qed.
+
+(** The public DFS order is exactly the trace's enter subsequence. *)
+Lemma dom_lt_dfs_entered g r : dom_lt_dfs g r = entered (dom_lt_trace g r).
+Proof.
+  unfold dom_lt_dfs, dom_lt_layout_of. rewrite dom_lt_layout_reverse.
+  cbn [lt_reverse_order]. rewrite app_nil_r, rev_append_rev, app_nil_r, rev_involutive.
+  reflexivity.
+Qed.
+
+(** The producer's DFS order is distinct, listed and bounded by vertices and occurrences. *)
+Lemma dom_lt_dfs_inventory g r :
+  NoDup (dom_lt_dfs g r) /\ incl (dom_lt_dfs g r) (nodes g) /\
+  length (dom_lt_dfs g r) <= graph_n (base g) /\
+  length (dom_lt_dfs g r) <= graph_e (base g) + 1.
+Proof.
+  rewrite dom_lt_dfs_entered. apply dom_lt_trace_inventory.
+Qed.
+
+(** Rank filtering can only discard predecessor occurrences. *)
+Lemma dom_lt_ranked_row_length ranks row :
+  length (dom_lt_ranked_row ranks row) <= length row.
+Proof.
+  induction row as [|v rest IH]; [reflexivity|].
+  unfold dom_lt_ranked_row in *. cbn [fold_right].
+  destruct (trie_get v ranks); cbn [length]; lia.
+Qed.
+
+Local Opaque dom_lt_layout_of.
+
+(** Reversing a list does not change its summed nonnegative weight. *)
+Lemma dom_lt_sum_rev {A : Type} (weight : A -> nat) xs :
+  fold_right (fun x total => weight x + total) 0 (rev xs) =
+    fold_right (fun x total => weight x + total) 0 xs.
+Proof.
+  assert (Hshift : forall ys initial,
+    fold_right (fun x total => weight x + total) initial ys =
+      fold_right (fun x total => weight x + total) 0 ys + initial).
+  { intro ys. induction ys as [|y rest IH]; intro initial; cbn [fold_right]; [lia|].
+    rewrite IH. lia. }
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [rev fold_right]. rewrite fold_right_app, Hshift, IH. cbn [fold_right]. lia.
+Qed.
+
+(** Mapping input keys merely composes the weight in a finite sum. *)
+Lemma dom_lt_sum_map {A B : Type} (weight : B -> nat) (key : A -> B) xs :
+  fold_right (fun x total => weight x + total) 0 (map key xs) =
+    fold_right (fun x total => weight (key x) + total) 0 xs.
+Proof.
+  induction xs as [|x rest IH]; cbn [map fold_right]; [reflexivity|now rewrite IH].
+Qed.
+
+(** A key map injective on a distinct input list produces distinct output keys. *)
+Lemma dom_lt_map_unique_on {A B : Type} (key : A -> B) xs :
+  NoDup xs ->
+  (forall u v, In u xs -> In v xs -> key u = key v -> u = v) ->
+  NoDup (map key xs).
+Proof.
+  intro Hunique. induction Hunique as [|v rest Hfresh Hunique IH]; intro Hinjective.
+  - constructor.
+  - cbn [map]. constructor.
+    + intro Hin. apply in_map_iff in Hin. destruct Hin as [u [Heq Hu]].
+      assert (u = v) by (apply Hinjective; [now right|now left|exact Heq]).
+      now subst u.
+    + apply IH. intros u w Hu Hw Heq.
+      apply Hinjective; [now right|now right|exact Heq].
+Qed.
+
+(** Key-dependent writes preserve a previously installed value when all collisions agree. *)
+Lemma dom_lt_fold_keys_preserve {A B : Type} (key : A -> positive) (value : A -> B)
+    xs rows p stored :
+  trie_get p rows = Some stored ->
+  (forall x, In x xs -> key x = p -> value x = stored) ->
+  trie_get p (fold_left (fun acc x => PTrieCode.set (key x) (value x) acc) xs rows) =
+    Some stored.
+Proof.
+  revert rows. induction xs as [|x rest IH]; intros rows Hget Hagree; [exact Hget|].
+  cbn [fold_left]. apply IH.
+  - destruct (Pos.eq_dec p (key x)) as [->|Hdifferent].
+    + rewrite PTrie.get_set_same. f_equal. apply Hagree; [now left|reflexivity].
+    + now rewrite PTrie.get_set_other.
+  - intros y Hy Hkey. apply Hagree; [now right|exact Hkey].
+Qed.
+
+(** A keyed fold exposes the assigned value at every input key when collisions agree. *)
+Lemma dom_lt_fold_keys_present {A B : Type} (key : A -> positive) (value : A -> B)
+    xs rows v :
+  In v xs ->
+  (forall x, In x xs -> key x = key v -> value x = value v) ->
+  trie_get (key v)
+    (fold_left (fun acc x => PTrieCode.set (key x) (value x) acc) xs rows) = Some (value v).
+Proof.
+  revert rows. induction xs as [|x rest IH]; intros rows Hin Hagree; [contradiction|].
+  cbn [fold_left]. destruct Hin as [<-|Hin].
+  - apply dom_lt_fold_keys_preserve; [apply PTrie.get_set_same|].
+    intros y Hy Hkey. apply Hagree; [now right|exact Hkey].
+  - apply IH; [exact Hin|]. intros y Hy Hkey. apply Hagree; [now right|exact Hkey].
+Qed.
+
+(** DFS membership is exactly membership in the layout's rank map. *)
+Lemma dom_lt_dfs_rank_domain g r v :
+  In v (dom_lt_dfs g r) <-> exists n, trie_get v (lt_rank (dom_lt_layout_of g r)) = Some n.
+Proof.
+  pose proof (dom_lt_layout_domain _ (dom_lt_layout_of_inventory g r) v) as Hdomain.
+  unfold dom_lt_dfs. rewrite rev_append_rev, app_nil_r, <- in_rev. exact Hdomain.
+Qed.
+
+(** Rank lookup is injective on the actual DFS order. *)
+Lemma dom_lt_dfs_rank_injective g r u v :
+  In u (dom_lt_dfs g r) -> In v (dom_lt_dfs g r) ->
+  dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) u =
+    dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v -> u = v.
+Proof.
+  intros Hu Hv Heq.
+  destruct (proj1 (dom_lt_dfs_rank_domain g r u) Hu) as [nu Hnu].
+  destruct (proj1 (dom_lt_dfs_rank_domain g r v) Hv) as [nv Hnv].
+  unfold dom_lt_rank_get in Heq. rewrite Hnu, Hnv in Heq. subst nv.
+  exact (dom_lt_layout_injective _ (dom_lt_layout_of_inventory g r) u v nu Hnu Hnv).
+Qed.
+
+(** Numeric construction records the input ranks in reverse input order. *)
+Lemma dom_lt_numeric_order_fold g layout xs st :
+  lt_numeric_order (fold_left (dom_lt_numeric_add g layout) xs st) =
+    rev (map (dom_lt_rank_get (lt_rank layout)) xs) ++ lt_numeric_order st.
+Proof.
+  revert st. induction xs as [|v rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH.
+  cbn [dom_lt_numeric_add lt_numeric_order map rev]. now rewrite <- app_assoc.
+Qed.
+
+(** Numeric predecessor construction is the corresponding keyed row fold. *)
+Lemma dom_lt_numeric_pred_fold g layout xs st :
+  lt_numeric_pred (fold_left (dom_lt_numeric_add g layout) xs st) =
+    fold_left (fun rows v => PTrieCode.set (dom_lt_key (dom_lt_rank_get (lt_rank layout) v))
+      (dom_lt_ranked_row (lt_rank layout) (preds g v)) rows) xs (lt_numeric_pred st).
+Proof.
+  revert st. induction xs as [|v rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH. reflexivity.
+Qed.
+
+(** The numeric order is the reversed rank image of the producer's DFS order. *)
+Lemma dom_lt_numeric_order_of g r :
+  lt_numeric_order (dom_lt_numeric_of g r) =
+    rev (map (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r))) (dom_lt_dfs g r)).
+Proof.
+  unfold dom_lt_numeric_of, dom_lt_dfs. rewrite dom_lt_numeric_order_fold.
+  cbn [lt_numeric_order]. now rewrite app_nil_r.
+Qed.
+
+(** The numeric predecessor map is built from exactly the producer's DFS order. *)
+Lemma dom_lt_numeric_pred_of g r :
+  lt_numeric_pred (dom_lt_numeric_of g r) =
+    fold_left (fun rows v =>
+      PTrieCode.set (dom_lt_key (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v))
+        (dom_lt_ranked_row (lt_rank (dom_lt_layout_of g r)) (preds g v)) rows)
+      (dom_lt_dfs g r) Empty.
+Proof.
+  unfold dom_lt_numeric_of, dom_lt_dfs. rewrite dom_lt_numeric_pred_fold. reflexivity.
+Qed.
+
+(** Each numeric predecessor lookup returns the filtered row of its original vertex. *)
+Lemma dom_lt_numeric_pred_lookup g r v :
+  In v (dom_lt_dfs g r) ->
+  trie_get (dom_lt_key (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v))
+    (lt_numeric_pred (dom_lt_numeric_of g r)) =
+      Some (dom_lt_ranked_row (lt_rank (dom_lt_layout_of g r)) (preds g v)).
+Proof.
+  intro Hv. rewrite dom_lt_numeric_pred_of.
+  apply (dom_lt_fold_keys_present
+    (fun u => dom_lt_key (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) u))
+    (fun u => dom_lt_ranked_row (lt_rank (dom_lt_layout_of g r)) (preds g u))
+    (dom_lt_dfs g r) Empty v); [exact Hv|].
+  intros u Hu Hkeys. apply dom_lt_key_injective in Hkeys.
+  assert (u = v) by (eapply dom_lt_dfs_rank_injective; eassumption). now subst u.
+Qed.
+
+(** Actual numeric traversal ranks are distinct. *)
+Lemma dom_lt_numeric_order_unique g r : NoDup (lt_numeric_order (dom_lt_numeric_of g r)).
+Proof.
+  rewrite dom_lt_numeric_order_of. apply NoDup_rev. apply dom_lt_map_unique_on.
+  - exact (proj1 (dom_lt_dfs_inventory g r)).
+  - intros u v Hu Hv Hkeys. eapply dom_lt_dfs_rank_injective; eassumption.
+Qed.
+
+(** Numeric construction preserves the number of discovered vertices. *)
+Lemma dom_lt_numeric_order_length g r :
+  length (lt_numeric_order (dom_lt_numeric_of g r)) = length (dom_lt_dfs g r).
+Proof.
+  rewrite dom_lt_numeric_order_of, length_rev, length_map. reflexivity.
+Qed.
+
+(** Numeric predecessor occurrences fit the original graph's total occurrence count. *)
+Lemma dom_lt_numeric_pred_total g r :
+  prepared_ok g ->
+  fold_right (fun v total => length
+    (match trie_get (dom_lt_key v) (lt_numeric_pred (dom_lt_numeric_of g r)) with
+      None => [] | Some row => row end) + total) 0
+        (lt_numeric_order (dom_lt_numeric_of g r)) <= graph_e (base g).
+Proof.
+  intro Hprepared. rewrite dom_lt_numeric_order_of, dom_lt_sum_rev, dom_lt_sum_map.
+  eapply Nat.le_trans.
+  - apply (dom_lt_sum_le _ (fun v => length (preds g v))).
+    intros v Hv. rewrite (dom_lt_numeric_pred_lookup g r v Hv).
+    apply dom_lt_ranked_row_length.
+  - apply dom_lt_predecessor_total; [exact Hprepared|].
+    exact (proj1 (dom_lt_dfs_inventory g r)).
+Qed.
+
+(** The semidominator pass records one possible link and one query per predecessor occurrence. *)
+Lemma dom_lt_semidominators_operations numeric :
+  length (lt_operations (lt_semi_links (dom_lt_semidominators numeric))) <=
+    length (lt_numeric_order numeric) +
+      fold_right (fun v total => length
+        (match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+          None => [] | Some row => row end) + total) 0 (lt_numeric_order numeric).
+Proof.
+  unfold dom_lt_semidominators.
+  exact (dom_lt_settlements_operations numeric (lt_numeric_order numeric)
+    (DomLtSemiState Empty Empty (DomLtLinks Empty Empty []))).
+Qed.
+
+(** * Numeric operand ranges *)
+
+(** The reverse layout order and forward DFS order contain the same number of discoveries. *)
+Lemma dom_lt_layout_order_length g r :
+  length (lt_reverse_order (dom_lt_layout_of g r)) = length (dom_lt_dfs g r).
+Proof.
+  unfold dom_lt_dfs. rewrite rev_append_rev, length_app, length_rev. cbn [length]. lia.
+Qed.
+
+(** Every stored producer rank is positive and no greater than the distinct discovery count. *)
+Lemma dom_lt_layout_rank_discovered g r v rank :
+  trie_get v (lt_rank (dom_lt_layout_of g r)) = Some rank ->
+  (0 < rank <= N.of_nat (length (dom_lt_dfs g r)))%N.
+Proof.
+  intro Hget. pose proof (dom_lt_layout_of_inventory g r) as Hlayout.
+  pose proof (dom_lt_layout_positive _ Hlayout v rank Hget) as Hpositive.
+  pose proof (dom_lt_layout_bounded _ Hlayout v rank Hget) as Hbelow.
+  pose proof (dom_lt_layout_next _ Hlayout) as Hnext.
+  rewrite dom_lt_layout_order_length, Nat2N.inj_add in Hnext.
+  split; [exact Hpositive|]. lia.
+Qed.
+
+(** The discovery rank bound also fits the original vertex inventory. *)
+Lemma dom_lt_layout_rank_bound g r v rank :
+  trie_get v (lt_rank (dom_lt_layout_of g r)) = Some rank ->
+  (0 < rank <= N.of_nat (graph_n (base g)))%N.
+Proof.
+  intro Hget. pose proof (dom_lt_layout_rank_discovered g r v rank Hget) as Hrank.
+  destruct (dom_lt_dfs_inventory g r) as [_ [_ [Hvertices Hedges]]]. lia.
+Qed.
+
+(** Rank lookup stays within the distinct discovery inventory, including its default zero. *)
+Lemma dom_lt_rank_get_discovered g r v :
+  (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v <=
+    N.of_nat (length (dom_lt_dfs g r)))%N.
+Proof.
+  unfold dom_lt_rank_get.
+  destruct (trie_get v (lt_rank (dom_lt_layout_of g r))) as [rank|] eqn:Hget; [|lia].
+  exact (proj2 (dom_lt_layout_rank_discovered g r v rank Hget)).
+Qed.
+
+(** The rank lookup's default zero obeys the same upper bound as every stored rank. *)
+Lemma dom_lt_rank_get_bound g r v :
+  (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v <=
+    N.of_nat (graph_n (base g)))%N.
+Proof.
+  unfold dom_lt_rank_get.
+  destruct (trie_get v (lt_rank (dom_lt_layout_of g r))) as [rank|] eqn:Hget; [|lia].
+  exact (proj2 (dom_lt_layout_rank_bound g r v rank Hget)).
+Qed.
+
+(** Numeric construction leaves its discovery-limit field unchanged. *)
+Lemma dom_lt_numeric_limit_fold g layout xs st :
+  lt_numeric_limit (fold_left (dom_lt_numeric_add g layout) xs st) = lt_numeric_limit st.
+Proof.
+  revert st. induction xs as [|v rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH. reflexivity.
+Qed.
+
+(** Numeric evaluation fuel is the discovery count plus one. *)
+Lemma dom_lt_numeric_limit_count g r :
+  lt_numeric_limit (dom_lt_numeric_of g r) = N.of_nat (length (dom_lt_dfs g r) + 1).
+Proof.
+  unfold dom_lt_numeric_of. rewrite dom_lt_numeric_limit_fold. cbn [lt_numeric_limit].
+  rewrite (dom_lt_layout_next _ (dom_lt_layout_of_inventory g r)).
+  now rewrite dom_lt_layout_order_length.
+Qed.
+
+(** Every rank in the numeric traversal order names a positive bounded discovery. *)
+Lemma dom_lt_numeric_order_discovered g r rank :
+  In rank (lt_numeric_order (dom_lt_numeric_of g r)) ->
+  (0 < rank <= N.of_nat (length (dom_lt_dfs g r)))%N.
+Proof.
+  rewrite dom_lt_numeric_order_of, <- in_rev. intro Hin.
+  apply in_map_iff in Hin. destruct Hin as [v [<- Hv]].
+  destruct (proj1 (dom_lt_dfs_rank_domain g r v) Hv) as [n Hget].
+  unfold dom_lt_rank_get. rewrite Hget. now apply (dom_lt_layout_rank_discovered g r v n).
+Qed.
+
+(** Numeric traversal ranks also fit the original vertex inventory. *)
+Lemma dom_lt_numeric_order_bound g r rank :
+  In rank (lt_numeric_order (dom_lt_numeric_of g r)) ->
+  (0 < rank <= N.of_nat (graph_n (base g)))%N.
+Proof.
+  intro Hin. pose proof (dom_lt_numeric_order_discovered g r rank Hin) as Hrank.
+  destruct (dom_lt_dfs_inventory g r) as [_ [_ [Hvertices Hedges]]]. lia.
+Qed.
+
+(** A trie payload invariant constrains every successful lookup independently of its key. *)
+Definition dom_lt_trie_all {A : Type} (P : A -> Prop) (m : ptrie A) : Prop :=
+  forall key value, trie_get key m = Some value -> P value.
+
+(** An empty trie satisfies every payload invariant. *)
+Lemma dom_lt_trie_all_empty {A : Type} (P : A -> Prop) : dom_lt_trie_all P Empty.
+Proof.
+  intros key value Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+Qed.
+
+(** A trie write preserves a payload invariant when the installed value satisfies it. *)
+Lemma dom_lt_trie_all_set {A : Type} (P : A -> Prop) m key value :
+  dom_lt_trie_all P m -> P value -> dom_lt_trie_all P (PTrieCode.set key value m).
+Proof.
+  intros Hbefore Hvalue query stored Hget.
+  destruct (Pos.eq_dec query key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same in Hget. now injection Hget as <-.
+  - rewrite PTrie.get_set_other in Hget by exact Hdifferent. now apply (Hbefore query).
+Qed.
+
+(** Identity-default lookup preserves any upper bound on payloads and its default key. *)
+Lemma dom_lt_identity_bounded bound m v :
+  dom_lt_trie_all (fun n => (n <= bound)%N) m -> (v <= bound)%N ->
+  (dom_lt_identity m v <= bound)%N.
+Proof.
+  intros Hvalues Hv. unfold dom_lt_identity.
+  destruct (trie_get (dom_lt_key v) m) as [stored|] eqn:Hget; [|exact Hv].
+  now apply (Hvalues (dom_lt_key v)).
+Qed.
+
+(** Filtering a row through bounded ranks produces a row of bounded numeric operands. *)
+Lemma dom_lt_ranked_row_bounded bound ranks row :
+  dom_lt_trie_all (fun n => (n <= bound)%N) ranks ->
+  Forall (fun n => (n <= bound)%N) (dom_lt_ranked_row ranks row).
+Proof.
+  intro Hvalues. unfold dom_lt_ranked_row. induction row as [|v rest IH]; cbn [fold_right].
+  - constructor.
+  - destruct (trie_get v ranks) as [stored|] eqn:Hget; [|exact IH].
+    constructor; [now apply (Hvalues v)|exact IH].
+Qed.
+
+(** Numeric layout order, parents and predecessor rows all stay inside one numeric range. *)
+Record dom_lt_numeric_ranges (bound : N) (numeric : dom_lt_numeric) : Prop :=
+  DomLtNumericRanges {
+    dom_lt_numeric_order_range : Forall (fun n => (n <= bound)%N) (lt_numeric_order numeric);
+    dom_lt_numeric_parent_range :
+      dom_lt_trie_all (fun n => (n <= bound)%N) (lt_numeric_parent numeric);
+    dom_lt_numeric_predecessor_range :
+      dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) (lt_numeric_pred numeric)
+  }.
+
+(** Adding an original vertex keeps every numeric payload within the distinct discovery bound. *)
+Lemma dom_lt_numeric_add_ranges g r st v :
+  dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r))) st ->
+  dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r)))
+    (dom_lt_numeric_add g (dom_lt_layout_of g r) st v).
+Proof.
+  intros [Horder Hparents Hpredecessors]. unfold dom_lt_numeric_add.
+  constructor; cbn [lt_numeric_order lt_numeric_parent lt_numeric_pred].
+  - constructor; [apply dom_lt_rank_get_discovered|exact Horder].
+  - destruct (trie_get v (lt_dfs_parent (dom_lt_layout_of g r))) as [p|];
+      [|exact Hparents].
+    apply dom_lt_trie_all_set; [exact Hparents|apply dom_lt_rank_get_discovered].
+  - apply dom_lt_trie_all_set; [exact Hpredecessors|].
+    apply dom_lt_ranked_row_bounded. intros key value Hget.
+    exact (proj2 (dom_lt_layout_rank_discovered g r key value Hget)).
+Qed.
+
+(** Numeric layout construction bounds every operand by its distinct discovery count. *)
+Lemma dom_lt_numeric_of_ranges g r :
+  dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r))) (dom_lt_numeric_of g r).
+Proof.
+  unfold dom_lt_numeric_of.
+  apply (dom_lt_fold_invariant (dom_lt_numeric_add g (dom_lt_layout_of g r))
+    (dom_lt_numeric_ranges (N.of_nat (length (dom_lt_dfs g r))))).
+  - constructor; cbn [lt_numeric_order lt_numeric_parent lt_numeric_pred].
+    + constructor.
+    + apply dom_lt_trie_all_empty.
+    + apply dom_lt_trie_all_empty.
+  - intros st v Hrange. now apply dom_lt_numeric_add_ranges.
+Qed.
+
+(** A larger numeric budget preserves all three numeric payload-range invariants. *)
+Lemma dom_lt_numeric_ranges_mono smaller larger numeric :
+  (smaller <= larger)%N -> dom_lt_numeric_ranges smaller numeric ->
+  dom_lt_numeric_ranges larger numeric.
+Proof.
+  intros Hle [Horder Hparents Hpredecessors]. constructor.
+  - apply Forall_forall. intros n Hin.
+    pose proof (proj1 (Forall_forall _ _) Horder n Hin) as Hsmall.
+    eapply N.le_trans; [exact Hsmall|exact Hle].
+  - intros key value Hget. specialize (Hparents key value Hget).
+    eapply N.le_trans; [exact Hparents|exact Hle].
+  - intros key row Hget. specialize (Hpredecessors key row Hget).
+    apply Forall_forall. intros n Hin.
+    pose proof (proj1 (Forall_forall _ _) Hpredecessors n Hin) as Hsmall.
+    eapply N.le_trans; [exact Hsmall|exact Hle].
+Qed.
+
+(** The distinct discovery range weakens to the original vertex-count range for work budgets. *)
+Lemma dom_lt_numeric_graph_ranges g r :
+  dom_lt_numeric_ranges (N.of_nat (graph_n (base g))) (dom_lt_numeric_of g r).
+Proof.
+  apply (dom_lt_numeric_ranges_mono (N.of_nat (length (dom_lt_dfs g r)))).
+  - pose proof (proj1 (proj2 (proj2 (dom_lt_dfs_inventory g r)))) as Hvertices. lia.
+  - apply dom_lt_numeric_of_ranges.
+Qed.
+
+(** * Producer traversal clocks *)
+
+(** A fold may spend credit carried by its changing accumulator. *)
+Lemma dom_time_fold_credit {A B : Type} (step : A -> B -> A) (T_step : A -> B -> N)
+    (credit : A -> N) k xs st :
+  (forall x, In x xs -> forall state,
+    (T_step state x + credit (step state x) <= k + credit state)%N) ->
+  (List.T_fold_left step T_step xs st + credit (fold_left step xs st) <=
+    (k + 1) * N.of_nat (length xs) + 1 + credit st)%N.
+Proof.
+  revert st. induction xs as [|x rest IH]; intros st Hstep.
+  - time_unfold @List.T_fold_left. cbn [fold_left length]. lia.
+  - specialize (IH (step st x) (fun y Hy => Hstep y (or_intror Hy))).
+    pose proof (Hstep x (or_introl eq_refl) st) as Hhead.
+    time_unfold @List.T_fold_left. cbn [fold_left length]. rewrite Nat2N.inj_succ.
+    clear -IH Hhead. nia.
+Qed.
+
+(** The root-width guard stops after at most its supplied unary width. *)
+Lemma dom_time_lt_key_fits width v :
+  (T_dom_lt_key_fits width v <= N.of_nat width + 1)%N.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|]; time_step.
+Qed.
+
+(** Discovery-counter carry credit pays the binary increment in each enter event. *)
+Lemma dom_time_lt_event st event width :
+  (match event with Enter v => Pos.size_nat v <= width | _ => True end) ->
+  (T_dom_lt_event st event + dom_counter_credit (lt_next (dom_lt_event st event)) <=
+    (2 * PTrieT.c_trie + 32) * N.of_nat (width + 1) +
+      dom_counter_credit (lt_next st))%N.
+Proof.
+  destruct st as [order ranks parents stack next]. destruct event as [v|v|kind u v].
+  - intro Hwidth.
+    pose proof (PTrieT.T_set_le N v next ranks) as Hrank.
+    change (PTrieCode.T_set v next ranks <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hrank.
+    pose proof (dom_time_counter_succ next) as Hcounter.
+    destruct stack as [|parent rest].
+    + unfold T_dom_lt_event. time_simpl.
+      cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order].
+      rewrite !Nat2N.inj_add in *. nia.
+    + pose proof (PTrieT.T_set_le positive v parent parents) as Hparent.
+      change (PTrieCode.T_set v parent parents <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hparent.
+      unfold T_dom_lt_event. time_simpl.
+      cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order].
+      rewrite !Nat2N.inj_add in *. nia.
+  - intro Htrivial. destruct stack; unfold T_dom_lt_event; time_simpl;
+      cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order]; nia.
+  - intro Htrivial. unfold T_dom_lt_event. time_simpl.
+    cbn [dom_lt_event lt_next lt_rank lt_dfs_parent lt_stack lt_reverse_order]. nia.
+Qed.
+
+(** A successful width guard permits lookup of the otherwise arbitrary root key. *)
+Lemma dom_lt_key_fits_bound width v :
+  dom_lt_key_fits width v = true -> Pos.size_nat v <= width.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|] Hfits;
+    cbn [dom_lt_key_fits Pos.size_nat] in Hfits |- *; try discriminate; try lia.
+  all: specialize (IH v Hfits); lia.
+Qed.
+
+(** Building the listed-key trie charges one bounded insertion per original list entry. *)
+Lemma dom_time_lt_listed g :
+  (List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+    (fun acc v => 1 + PTrieCode.T_set v true acc)%N (nodes g) Empty <=
+      (PTrieT.c_trie + 4) *
+        N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_fold_left (fun acc v => PTrieCode.set v true acc)
+    (fun acc v => 1 + PTrieCode.T_set v true acc)%N
+    ((PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N
+    (nodes g) Empty) as Hfold.
+  specialize (Hfold ltac:(intros v Hv acc;
+    pose proof (PTrieT.T_set_le bool v true acc) as Hset;
+    change (PTrieCode.T_set v true acc <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset;
+    pose proof (dom_listed_key_width g v Hv) as Hwidth;
+    rewrite !Nat2N.inj_add in *; nia)).
+  replace (length (nodes g)) with (graph_n (base g)) in Hfold by
+    (destruct g as [[vs adjacency] predecessors count_v count_e]; reflexivity).
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+(** The producer trace contains at most two events per discovery and one per edge occurrence. *)
+Lemma dom_lt_trace_events g r :
+  length (dom_lt_trace g r) <= 2 * graph_n (base g) + graph_e (base g).
+Proof.
+  pose proof (dom_lt_trace_inventory g r) as Htrace.
+  unfold dom_lt_trace in Htrace |- *. rewrite dom_lt_listed_lookup in Htrace |- *.
+  destruct (dom_lt_key_fits (graph_width (base g)) r); [|cbn; lia].
+  destruct (existsb (Pos.eqb r) (nodes g)); [|cbn; lia].
+  destruct Htrace as [Hunique [Hlisted [Hvertices Hedges]]].
+  pose proof (dom_lt_filtered_rows g _ Hunique Hlisted) as Hrows.
+  pose proof (prepared_search_event_bound (scc_graph g) [r]) as Hevents.
+  rewrite search_event_supply_entered in Hevents.
+  clear -Hevents Hrows Hvertices. lia.
+Qed.
+
+(** The trace's component bounds scale to one common graph budget before they are added. *)
+Lemma dom_lt_trace_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work root_width filter_work search_work :
+  (listed_work <= (trie_coefficient + 4) * ((vertices + 1) * (width + 1)))%N ->
+  (width_scan <= 128 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (guard_work <= width + 1)%N -> (root_width <= width)%N ->
+  (filter_work <= 16384 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (search_work <= 2 * search_coefficient * (vertices + edges + 1 + 1) * (width + 1))%N ->
+  (1 + (1 + listed_work + (1 + width_scan + guard_work +
+    (2 * root_width + (filter_work + search_work)))) <=
+    8 * (search_coefficient + trie_coefficient + 4096) *
+      ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hlisted Hscan Hguard Hroot Hfilter Hsearch.
+  set (budget := ((vertices + edges + 1) * (width + 1))%N).
+  assert (Hfactor : (width + 1 <= budget)%N).
+  { unfold budget. replace (width + 1)%N with (1 * (width + 1))%N at 1 by lia.
+    apply N.mul_le_mono_r. lia. }
+  assert (Hpositive : (1 <= budget)%N) by lia.
+  assert (Hlisted_big : (listed_work <= (trie_coefficient + 4) * budget)%N).
+  { eapply N.le_trans; [exact Hlisted|]. apply N.mul_le_mono_l.
+    unfold budget. apply N.mul_le_mono_r. lia. }
+  assert (Hguard_big : (guard_work <= budget)%N) by lia.
+  assert (Hroot_big : (root_width <= budget)%N) by lia.
+  assert (Htwice : ((vertices + edges + 1 + 1) * (width + 1) <= 2 * budget)%N).
+  { rewrite N.mul_add_distr_r, N.mul_1_l. fold budget. lia. }
+  assert (Hscaled : (2 * search_coefficient *
+    ((vertices + edges + 1 + 1) * (width + 1)) <=
+      2 * search_coefficient * (2 * budget))%N).
+  { now apply N.mul_le_mono_l. }
+  replace (2 * search_coefficient * (2 * budget))%N with
+    (4 * search_coefficient * budget)%N in Hscaled by
+    (clearbody budget; clear -search_coefficient budget; nia).
+  assert (Hsearch_big : (search_work <= 4 * search_coefficient * budget)%N).
+  { rewrite <- N.mul_assoc in Hsearch. eapply N.le_trans; eassumption. }
+  fold budget in Hscan, Hfilter |- *.
+  clearbody budget.
+  clear -Hlisted_big Hguard_big Hroot_big Hscan Hfilter Hsearch_big Hpositive.
+  nia.
+Qed.
+
+(** Missing listed roots pay the guard and lookup without filtered search work. *)
+Lemma dom_lt_trace_missing_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work root_width :
+  (listed_work <= (trie_coefficient + 4) * ((vertices + 1) * (width + 1)))%N ->
+  (width_scan <= 128 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (guard_work <= width + 1)%N -> (root_width <= width)%N ->
+  (1 + (1 + listed_work + (1 + width_scan + guard_work + 2 * root_width)) <=
+    8 * (search_coefficient + trie_coefficient + 4096) *
+      ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hlisted Hscan Hguard Hroot.
+  pose proof (dom_lt_trace_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work root_width 0%N 0%N
+    Hlisted Hscan Hguard Hroot (N.le_0_l _) (N.le_0_l _)) as Htime.
+  clear -Htime. lia.
+Qed.
+
+(** Rejected root widths stop before either the listed lookup or the search. *)
+Lemma dom_lt_trace_rejected_budget vertices edges width trie_coefficient search_coefficient
+    listed_work width_scan guard_work :
+  (listed_work <= (trie_coefficient + 4) * ((vertices + 1) * (width + 1)))%N ->
+  (width_scan <= 128 * ((vertices + edges + 1) * (width + 1)))%N ->
+  (guard_work <= width + 1)%N ->
+  (1 + (1 + listed_work + (1 + width_scan + guard_work)) <=
+    8 * (search_coefficient + trie_coefficient + 4096) *
+      ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hlisted Hscan Hguard.
+  pose proof (dom_lt_trace_missing_budget vertices edges width trie_coefficient
+    search_coefficient listed_work width_scan guard_work 0%N
+    Hlisted Hscan Hguard (N.le_0_l _)) as Htime.
+  clear -Htime. lia.
+Qed.
+
+(** The guarded trace pays its membership scan, width scan and filtered search. *)
+Lemma dom_time_lt_trace g r :
+  (T_dom_lt_trace g r <= (8 * (search_trace_coefficient + PTrieT.c_trie + 4096)) *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  set (listed := fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty).
+  pose proof (dom_time_lt_listed g) as Hlisted.
+  pose proof (dom_time_graph_observations (base g)) as Hobservations.
+  pose proof (dom_time_lt_key_fits (graph_width (base g)) r) as Hguard.
+  unfold T_dom_lt_trace. time_simpl. fold listed.
+  destruct (dom_lt_key_fits (graph_width (base g)) r) eqn:Hfits.
+  - pose proof (dom_lt_key_fits_bound (graph_width (base g)) r Hfits) as Hroot_width.
+    assert (Hroot_bits : (N.of_nat (Pos.size_nat r) <=
+      N.of_nat (graph_width (base g)))%N) by lia.
+    destruct (trie_get r listed) as [present|] eqn:Hroot.
+    + assert (Hr : In r (nodes g)).
+      { unfold listed in Hroot. rewrite dom_lt_listed_lookup in Hroot.
+        destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hmember; [|discriminate Hroot].
+        now apply dom_lt_existsb_key. }
+      assert (Hroots : forall v, In v [r] -> In v (nodes g)).
+      { intros v [<-|Hbad]; [exact Hr|contradiction]. }
+      pose proof (scc_search_time g [r] Hroots) as Hsearch.
+      pose proof (scc_graph_time g) as Hfilter.
+      cbn [length] in Hsearch.
+      rewrite PTrieT.trie_get_clock. time_simpl.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+      apply dom_lt_trace_budget.
+      * exact Hlisted.
+      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
+      * exact Hguard.
+      * exact Hroot_bits.
+      * now rewrite <- N.mul_assoc in Hfilter.
+      * eapply N.le_trans; [apply N.le_add_l|exact Hsearch].
+    + rewrite PTrieT.trie_get_clock. time_simpl. rewrite ?N.add_0_r.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+      apply dom_lt_trace_missing_budget.
+      * exact Hlisted.
+      * eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
+      * exact Hguard.
+      * exact Hroot_bits.
+  - time_simpl. rewrite ?N.add_0_r.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    apply dom_lt_trace_rejected_budget.
+    + exact Hlisted.
+    + eapply N.le_trans; [apply N.le_add_l|exact Hobservations].
+    + exact Hguard.
+Qed.
+
+(** Event count and callback cost scale to one layout-fold budget. *)
+Lemma dom_lt_layout_fold_budget vertices edges width trie_coefficient count work credit :
+  (count <= 2 * vertices + edges)%N ->
+  (work + credit <= ((2 * trie_coefficient + 32) * (width + 1) + 1) * count + 1 + 1)%N ->
+  (work <= (4 * trie_coefficient + 128) *
+    ((vertices + edges + 1) * (width + 1)))%N.
+Proof.
+  intros Hcount Hwork.
+  set (budget := ((vertices + edges + 1) * (width + 1))%N).
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget. clear -vertices edges width. nia. }
+  assert (Hunit : ((2 * trie_coefficient + 32) * (width + 1) + 1 <=
+    (2 * trie_coefficient + 33) * (width + 1))%N).
+  { clear -trie_coefficient width. nia. }
+  assert (Hcount_big : (count <= 2 * (vertices + edges + 1))%N) by lia.
+  assert (Hscaled : (((2 * trie_coefficient + 32) * (width + 1) + 1) * count <=
+    ((2 * trie_coefficient + 33) * (width + 1)) * (2 * (vertices + edges + 1)))%N).
+  { now apply N.mul_le_mono. }
+  replace (((2 * trie_coefficient + 33) * (width + 1)) *
+    (2 * (vertices + edges + 1)))%N with ((4 * trie_coefficient + 66) * budget)%N
+    in Hscaled by (unfold budget; clear -trie_coefficient vertices edges width; nia).
+  assert (Hsmall : (work <= (4 * trie_coefficient + 66) * budget + 2)%N).
+  { clear -Hwork Hscaled. lia. }
+  fold budget. clearbody budget. clear -Hsmall Hpositive. nia.
+Qed.
+
+(** The layout fold pays bounded-key updates and amortized binary carries over the trace. *)
+Lemma dom_time_lt_layout_fold g r :
+  (List.T_fold_left dom_lt_event T_dom_lt_event (dom_lt_trace g r)
+    (DomLtLayout [] Empty Empty [] 1%N) <=
+    (4 * PTrieT.c_trie + 128) *
+      N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+        (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_fold_credit dom_lt_event T_dom_lt_event
+    (fun st => dom_counter_credit (lt_next st))
+    ((2 * PTrieT.c_trie + 32) * N.of_nat (graph_width (base g) + 1))%N
+    (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)) as Hfold.
+  destruct (dom_lt_trace_inventory g r) as [Hunique [Hlisted [Hvertices Hedges]]].
+  assert (Hcallback : forall event, In event (dom_lt_trace g r) -> forall st,
+    (T_dom_lt_event st event + dom_counter_credit (lt_next (dom_lt_event st event)) <=
+      (2 * PTrieT.c_trie + 32) * N.of_nat (graph_width (base g) + 1) +
+        dom_counter_credit (lt_next st))%N).
+  { intros event Hevent st. apply dom_time_lt_event.
+    destruct event as [v|v|kind u v]; [|exact I|exact I].
+    apply dom_listed_key_width. apply Hlisted.
+    now apply search_entered_member. }
+  specialize (Hfold Hcallback).
+  pose proof (dom_lt_trace_events g r) as Hlength.
+  cbn beta in Hfold.
+  change (dom_counter_credit (lt_next (DomLtLayout [] Empty Empty [] 1%N))) with 1%N in Hfold.
+  apply time_of_nat_le in Hlength.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  rewrite Nat2N.inj_mul in Hlength.
+  eapply dom_lt_layout_fold_budget with (count := N.of_nat (length (dom_lt_trace g r)));
+    [exact Hlength|exact Hfold].
+Qed.
+
+(** The complete layout construction includes the guarded trace and its event fold. *)
+Lemma dom_time_lt_layout g r :
+  (T_dom_lt_layout_of g r <= (16 * (search_trace_coefficient + PTrieT.c_trie + 4096)) *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_lt_trace g r) as Htrace.
+  pose proof (dom_time_lt_layout_fold g r) as Hfold.
+  set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+    (graph_width (base g) + 1))) in *.
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget. clear -g. rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+  unfold T_dom_lt_layout_of. time_simpl.
+  change (List.T_fold_left dom_lt_event (fun st event => T_dom_lt_event st event)
+    (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)) with
+    (List.T_fold_left dom_lt_event T_dom_lt_event
+      (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)).
+  set (trace_work := T_dom_lt_trace g r) in *.
+  set (fold_work := List.T_fold_left dom_lt_event T_dom_lt_event
+    (dom_lt_trace g r) (DomLtLayout [] Empty Empty [] 1%N)) in *.
+  set (search_coefficient := search_trace_coefficient) in *.
+  set (trie_coefficient := PTrieT.c_trie) in *.
+  clearbody trace_work fold_work search_coefficient trie_coefficient budget.
+  clear -Htrace Hfold Hpositive. nia.
+Qed.
+
+Definition dom_lt_dfs_coefficient : N :=
+  (32 * (search_trace_coefficient + PTrieT.c_trie + 4096))%N.
+
+(** The DFS wrapper also reverses the discovered order once and pays its public alias. *)
+Lemma dom_time_lt_dfs g r :
+  (T_dom_lt_dfs g r + 1 <= dom_lt_dfs_coefficient *
+    N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1)))%N.
+Proof.
+  pose proof (dom_time_lt_layout g r) as Hlayout.
+  pose proof (List.T_rev_append_le (lt_reverse_order (dom_lt_layout_of g r)) []) as Hreverse.
+  pose proof (dom_lt_layout_order_length g r) as Hlength.
+  destruct (dom_lt_dfs_inventory g r) as [Hunique [Hlisted [Hvertices Hedges]]].
+  rewrite Hlength in Hreverse.
+  set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+    (graph_width (base g) + 1))) in *.
+  assert (Hsize : (N.of_nat (length (dom_lt_dfs g r)) + 1 <= budget)%N).
+  { assert (Hnatural : length (dom_lt_dfs g r) + 1 <=
+      (graph_n (base g) + graph_e (base g) + 1) * (graph_width (base g) + 1)).
+    { clear -Hvertices.
+      eapply Nat.le_trans with (graph_n (base g) + graph_e (base g) + 1); [lia|].
+      replace (graph_n (base g) + graph_e (base g) + 1) with
+        ((graph_n (base g) + graph_e (base g) + 1) * 1) at 1 by lia.
+      apply Nat.mul_le_mono_l. lia. }
+    apply time_of_nat_le in Hnatural. rewrite Nat2N.inj_add in Hnatural.
+    exact Hnatural. }
+  assert (Hpositive : (1 <= budget)%N) by (clear -Hsize; lia).
+  assert (Hreverse_big : (List.T_rev_append
+    (lt_reverse_order (dom_lt_layout_of g r)) [] <= budget)%N).
+  { eapply N.le_trans; [exact Hreverse|exact Hsize]. }
+  unfold T_dom_lt_dfs, dom_lt_dfs_coefficient. time_simpl.
+  set (layout_work := T_dom_lt_layout_of g r) in *.
+  set (reverse_work := List.T_rev_append (lt_reverse_order (dom_lt_layout_of g r)) []) in *.
+  set (search_coefficient := search_trace_coefficient) in *.
+  set (trie_coefficient := PTrieT.c_trie) in *.
+  clearbody layout_work reverse_work search_coefficient trie_coefficient budget.
+  clear -Hlayout Hreverse_big Hpositive. nia.
+Qed.
