@@ -278,6 +278,130 @@ Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     - apply S.top_greatest.
   Qed.
 
+  (** A failed existential Boolean test rejects every list member. *)
+  Lemma existsb_false_spec {A} (f : A -> bool) xs :
+    existsb f xs = false <-> forall x, In x xs -> f x = false.
+  Proof.
+    induction xs as [|x xs IH]; cbn [existsb].
+    - split; [intros _ y Hy; contradiction | reflexivity].
+    - rewrite orb_false_iff, IH; split.
+      + intros [Hx Hxs] y [<-|Hy]; auto.
+      + intro Hall; split; [apply Hall; now left | intros y Hy; apply Hall; now right].
+  Qed.
+
+  (** A failed universal Boolean test supplies a rejected member. *)
+  Lemma forallb_false_member {A} (f : A -> bool) xs :
+    forallb f xs = false -> exists x, In x xs /\ f x = false.
+  Proof.
+    induction xs as [|x xs IH]; cbn [forallb]; intro Hfalse; [discriminate|].
+    destruct (f x) eqn:Hx.
+    - cbn in Hfalse; destruct (IH Hfalse) as [y [Hy Hfy]].
+      exists y; split; simpl; auto.
+    - exists x; split; simpl; auto.
+  Qed.
+
+  (** Fresh parts are nonbottom candidate parts uncovered by every previous part. *)
+  Lemma fresh_spec (old new : list (option Tk.t * S.t)) q :
+    In q (fresh_parts S.leb S.bot old new) <->
+    In q new /\ S.leb (snd q) S.bot = false /\
+      (forall r, In r old -> S.leb (snd q) (snd r) = false).
+  Proof.
+    unfold fresh_parts, uncovered; rewrite !filter_In, !negb_true_iff.
+    rewrite existsb_false_spec; tauto.
+  Qed.
+
+  (** A failed coverage test supplies at least one fresh part. *)
+  Lemma fresh_exists a b : leb b a = false ->
+    exists q, In q (fresh_parts S.leb S.bot (proj1_sig a) (proj1_sig b)).
+  Proof.
+    unfold leb; intro Hfalse.
+    destruct (forallb_false_member _ _ Hfalse) as [q [Hq Hfalseq]].
+    apply orb_false_iff in Hfalseq; destruct Hfalseq as [Hbot Hcover].
+    exists q; apply fresh_spec; split; [exact Hq|].
+    split; [exact Hbot | now apply existsb_false_spec].
+  Qed.
+
+  (** Absorption keeps each previous part below its corresponding result part. *)
+  Lemma absorb_covers_old p strays fresh old :
+    parts_cover old (absorb Tk.eqb S.leb S.bot S.join (S.widen p) strays fresh old).
+  Proof.
+    revert strays; induction old as [|r old IH]; intros strays q Hq; [contradiction|].
+    cbn [absorb]; destruct (S.leb (snd r) S.bot); destruct Hq as [<-|Hq].
+    - exists r; split; simpl; auto using S.leb_refl.
+    - destruct (IH strays q Hq) as [s [Hs Hle]]; exists s; split; simpl; auto.
+    - eexists; split; [left; reflexivity | apply S.widen_ub_l].
+    - destruct (IH [] q Hq) as [s [Hs Hle]]; exists s; split; simpl; auto.
+  Qed.
+
+  (** A receiving part covers both its same-label inputs and its assigned strays. *)
+  Lemma absorb_head_covers p strays fresh r old q :
+    S.leb (snd r) S.bot = false ->
+    (In q strays \/ (In q fresh /\ label_eqb Tk.eqb (fst r) (fst q) = true)) ->
+    exists s, In s (absorb Tk.eqb S.leb S.bot S.join (S.widen p) strays fresh (r :: old)) /\
+      S.leb (snd q) (snd s) = true.
+  Proof.
+    intros Hnonbot Hreceive; cbn [absorb]; rewrite Hnonbot.
+    eexists; split; [left; reflexivity|].
+    cbn [snd]; eapply S.leb_trans; [apply collapse_covers | apply S.widen_ub_r].
+    right; apply in_map_iff; exists q; split; [reflexivity|].
+    apply in_or_app; destruct Hreceive as [Hstray|[Hfresh Hlabel]]; auto.
+    left; apply filter_In; auto.
+  Qed.
+
+  (** A fresh part with a live matching label reaches a receiver. *)
+  Lemma absorb_covers_label p strays fresh old q : In q fresh ->
+    (exists r, In r old /\ S.leb (snd r) S.bot = false /\
+      label_eqb Tk.eqb (fst r) (fst q) = true) ->
+    exists s, In s (absorb Tk.eqb S.leb S.bot S.join (S.widen p) strays fresh old) /\
+      S.leb (snd q) (snd s) = true.
+  Proof.
+    revert strays; induction old as [|r old IH]; intros strays Hfresh [s [Hs [Hbot Hlabel]]].
+    - contradiction.
+    - destruct Hs as [<-|Hs].
+      + apply absorb_head_covers; auto.
+      + cbn [absorb]; destruct (S.leb (snd r) S.bot).
+        * destruct (IH strays Hfresh (ex_intro _ s (conj Hs (conj Hbot Hlabel))))
+            as [t [Ht Hle]].
+          exists t; split; simpl; auto.
+        * destruct (IH [] Hfresh (ex_intro _ s (conj Hs (conj Hbot Hlabel))))
+            as [t [Ht Hle]].
+          exists t; split; simpl; auto.
+  Qed.
+
+  (** A stray reaches the first previous part above bottom. *)
+  Lemma absorb_covers_stray p strays fresh old q : In q strays ->
+    (exists r, In r old /\ S.leb (snd r) S.bot = false) ->
+    exists s, In s (absorb Tk.eqb S.leb S.bot S.join (S.widen p) strays fresh old) /\
+      S.leb (snd q) (snd s) = true.
+  Proof.
+    induction old as [|r old IH]; intros Hstray [s [Hs Hnonbot]]; [contradiction|].
+    destruct (S.leb (snd r) S.bot) eqn:Hbot.
+    - destruct Hs as [<-|Hs]; [congruence|].
+      cbn [absorb]; rewrite Hbot.
+      destruct (IH Hstray (ex_intro _ s (conj Hs Hnonbot))) as [t [Ht Hle]].
+      exists t; split; simpl; auto.
+    - apply absorb_head_covers; auto.
+  Qed.
+
+  (** Every fresh part is covered after routing from a nonbottom partition. *)
+  Lemma absorb_covers_fresh p old fresh q :
+    (exists r, In r old /\ S.leb (snd r) S.bot = false) -> In q fresh ->
+    exists s, In s (absorb Tk.eqb S.leb S.bot S.join (S.widen p)
+      (stray_parts Tk.eqb S.leb S.bot old fresh) fresh old) /\
+      S.leb (snd q) (snd s) = true.
+  Proof.
+    intros Hlive Hfresh.
+    destruct (existsb (fun r => negb (S.leb (snd r) S.bot) &&
+      label_eqb Tk.eqb (fst r) (fst q)) old) eqn:Hlabel.
+    - apply absorb_covers_label; [exact Hfresh|].
+      apply existsb_exists in Hlabel; destruct Hlabel as [r [Hr Hlabel]].
+      apply andb_true_iff in Hlabel; destruct Hlabel as [Hbot Hlabel].
+      apply negb_true_iff in Hbot; exists r; auto.
+    - apply absorb_covers_stray; [|exact Hlive].
+      unfold stray_parts; apply filter_In; split; [exact Hfresh|].
+      now rewrite Hlabel.
+  Qed.
+
   (** Widening exposes the same three branches on the bounded raw lists. *)
   Lemma widen_raw p a b : proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
@@ -294,10 +418,39 @@ Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b; destruct (leb b a) eqn:Hstable.
+    - apply leb_spec; intros q Hq; right; rewrite widen_raw, Hstable.
+      apply parts_cover_refl; exact Hq.
+    - destruct (is_bot a) eqn:Hbot; [now apply is_bot_least|].
+      apply leb_spec; intros q Hq; right; rewrite widen_raw, Hstable, Hbot.
+      now apply absorb_covers_old.
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b; destruct (leb b a) eqn:Hstable.
+    - apply leb_spec; intros q Hq; rewrite widen_raw, Hstable.
+      exact (proj1 (leb_spec b a) Hstable q Hq).
+    - destruct (is_bot a) eqn:Hbot.
+      + apply leb_spec; intros q Hq; right; rewrite widen_raw, Hstable, Hbot.
+        apply parts_cover_refl; exact Hq.
+      + apply leb_spec; intros q Hq.
+        destruct (S.leb (snd q) S.bot) eqn:Hqbot; [now left|]; right.
+        rewrite widen_raw, Hstable, Hbot.
+        destruct (existsb (fun r => S.leb (snd q) (snd r)) (proj1_sig a)) eqn:Hcover.
+        * apply existsb_exists in Hcover; destruct Hcover as [r [Hr Hqr]].
+          destruct (absorb_covers_old p
+            (stray_parts Tk.eqb S.leb S.bot (proj1_sig a)
+              (fresh_parts S.leb S.bot (proj1_sig a) (proj1_sig b)))
+            (fresh_parts S.leb S.bot (proj1_sig a) (proj1_sig b))
+            (proj1_sig a) r Hr) as [s [Hs Hrs]].
+          exists s; split; [exact Hs | eapply S.leb_trans; eassumption].
+        * apply absorb_covers_fresh.
+          -- exact (forallb_false_member _ _ Hbot).
+          -- apply fresh_spec; split; [exact Hq|].
+             split; [exact Hqbot | now apply existsb_false_spec].
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof.
