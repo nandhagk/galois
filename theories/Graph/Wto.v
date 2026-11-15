@@ -2124,6 +2124,164 @@ Proof.
   time_unfold @T_wto_edges_ok. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
+(** The unary maximum only reads as far as its first argument. *)
+Lemma wto_graph_max_clock a b : (T_graph_max a b <= 4 * N.of_nat (a + 1))%N.
+Proof.
+  revert b. induction a as [|a IH]; intros [|b]; time_step.
+Qed.
+
+Lemma wto_width_value vs width :
+  Forall (fun v => Pos.size_nat v <= width) vs -> vertex_width vs <= width.
+Proof.
+  intro Hwidth. unfold vertex_width. induction Hwidth as [|v vs Hv Hwidth IH];
+    cbn [fold_right]; [lia|]. rewrite search_graph_max. lia.
+Qed.
+
+Lemma wto_fold_right_clock {A B} (f : A -> B -> B) T_f initial xs rate :
+  Forall (fun x => forall acc, (T_f x acc <= rate)%N) xs ->
+  (List.T_fold_right f T_f initial xs <= (rate + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intro Hbound. induction Hbound as [|x xs Hx Hbound IH].
+  - time_unfold @List.T_fold_right. cbn [length]. lia.
+  - specialize (Hx (fold_right f initial xs)). time_unfold @List.T_fold_right.
+    time_cbn. cbn [length]. rewrite ?Nat2N.inj_succ. nia.
+Qed.
+
+(** Computing an identifier-width maximum scans each actual key once. *)
+Lemma wto_vertex_width_time vs width :
+  Forall (fun v => Pos.size_nat v <= width) vs ->
+  (T_vertex_width vs <= 16 * N.of_nat (length vs + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth.
+  assert (Hcallback : Forall (fun v => forall acc,
+      (1 + (Pos.T_size_nat v + T_graph_max (Pos.size_nat v) acc) <=
+        8 * N.of_nat (width + 1))%N) vs).
+  { rewrite Forall_forall in *. intros v Hv acc.
+    specialize (Hwidth v Hv). pose proof (Pos.T_size_nat_le v) as Hsize.
+    pose proof (wto_graph_max_clock (Pos.size_nat v) acc) as Hmax.
+    rewrite !Nat2N.inj_add in *. nia. }
+  pose proof (wto_fold_right_clock (fun v acc => graph_max (Pos.size_nat v) acc)
+    (fun v acc => 1 + (Pos.T_size_nat v + T_graph_max (Pos.size_nat v) acc))%N
+    0%nat vs (8 * N.of_nat (width + 1))%N Hcallback) as Hfold.
+  time_unfold @T_vertex_width. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Lemma wto_graph_width_occurrences b :
+  Forall (fun u => Pos.size_nat u <= graph_width b /\
+    Forall (fun v => Pos.size_nat v <= graph_width b) (succs b u)) (verts b).
+Proof.
+  destruct b as [vertices adjacency]. apply Forall_forall. intros u Hu. split.
+  - eapply Nat.le_trans; [apply search_vertex_width_member; exact Hu|].
+    cbn [graph_width]. rewrite search_graph_max. apply Nat.le_max_l.
+  - apply Forall_forall. intros v Hv. eapply Nat.le_trans.
+    + exact (search_row_width_member (Digraph vertices adjacency) vertices u v Hu Hv).
+    + cbn [graph_width]. rewrite search_graph_max. apply Nat.le_max_r.
+Qed.
+
+(** Row-width computation charges source occurrences and all targets in those rows. *)
+Lemma wto_width_rows_time b vs width :
+  Forall (fun u => Pos.size_nat u <= width /\
+    Forall (fun v => Pos.size_nat v <= width) (succs b u)) vs ->
+  (List.T_fold_right (fun u acc => graph_max (vertex_width (succs b u)) acc)
+    (fun u acc => 1 + ((T_succs b u + T_vertex_width (succs b u)) +
+      T_graph_max (vertex_width (succs b u)) acc))%N 0%nat vs <=
+    64 * N.of_nat (length vs +
+      fold_right (fun u n => (length (succs b u) + n)%nat) 0%nat vs + 1) *
+      N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth. induction Hwidth as [|u vs [Hu Hrow] Hwidth IH].
+  - time_unfold @List.T_fold_right. cbn [length fold_right]. nia.
+  - pose proof (search_succs_clock b u) as Hread.
+    pose proof (wto_vertex_width_time (succs b u) width Hrow) as Hrowtime.
+    pose proof (wto_width_value (succs b u) width Hrow) as Hrowvalue.
+    pose proof (wto_graph_max_clock (vertex_width (succs b u))
+      (fold_right (fun v acc => graph_max (vertex_width (succs b v)) acc) 0 vs)) as Hmax.
+    time_unfold @List.T_fold_right. time_cbn. cbn [length fold_right].
+    rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *. nia.
+Qed.
+
+Lemma wto_graph_width_time b :
+  (T_graph_width b <= 128 * N.of_nat (graph_n b + graph_e b + 1) *
+    N.of_nat (graph_width b + 1))%N.
+Proof.
+  pose proof (wto_graph_width_occurrences b) as Hwidth.
+  assert (Hnodes : Forall (fun v => Pos.size_nat v <= graph_width b) (verts b)).
+  { eapply Forall_impl; [|exact Hwidth]. intros u [Hu Hrow]. exact Hu. }
+  pose proof (wto_vertex_width_time (verts b) (graph_width b) Hnodes) as Hvertices.
+  pose proof (wto_width_rows_time b (verts b) (graph_width b) Hwidth) as Hrows.
+  pose proof (wto_width_value (verts b) (graph_width b) Hnodes) as Hvalue.
+  pose proof (wto_graph_max_clock (vertex_width (verts b))
+    (fold_right (fun v acc => graph_max (vertex_width (succs b v)) acc) 0 (verts b))) as Hmax.
+  destruct b as [vertices adjacency]. cbn [verts graph_n graph_e] in *.
+  time_unfold @T_graph_width. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Fuel computation scans the listed vertices and converts their count once. *)
+Lemma wto_check_fuel_time g : (T_check_fuel g <= 64 * N.of_nat (graph_n (base g) + 1))%N.
+Proof.
+  pose proof (digraph_vertex_count_time (base g)) as Hcount.
+  pose proof (graph_of_nat_time (graph_n (base g))) as Hconvert.
+  pose proof (search_double_clock (N.of_nat (graph_n (base g)))) as Hdouble.
+  pose proof (search_double_clock (N.double (N.of_nat (graph_n (base g))))) as Htwice.
+  pose proof (N.T_add_le (N.double (N.double (N.of_nat (graph_n (base g))))) 2) as Hadd.
+  pose proof (search_N_size_value (N.double (N.double (N.of_nat (graph_n (base g)))))) as Hsize.
+  rewrite !N2Nat.inj_double, Nat2N.id in Hsize.
+  cbn [N.size_nat Pos.size_nat] in Hadd.
+  time_unfold @T_check_fuel. unfold T_base. time_cbn.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Membership tables pay only their inserted keys, independently of previous bindings. *)
+Lemma wto_set_members_time vs width acc :
+  Forall (fun v => Pos.size_nat v <= width) vs ->
+  (List.T_fold_left (fun table v => PTrieCode.set v true table)
+    (fun table v => 1 + PTrieCode.T_set v true table)%N vs acc <=
+    16 * (PTrieT.c_trie + 1) * N.of_nat (length vs + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth. revert acc. induction Hwidth as [|v vs Hv Hwidth IH]; intro acc.
+  - time_unfold @List.T_fold_left. cbn [length]. nia.
+  - specialize (IH (PTrieCode.set v true acc)).
+    pose proof (PTrieT.T_set_le bool v true acc) as Hset.
+    time_unfold @List.T_fold_left. time_cbn. cbn [length].
+    rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *. nia.
+Qed.
+
+Lemma wto_listed_time g :
+  (T_listed_of g <= 32 * (PTrieT.c_trie + 1) * N.of_nat (graph_n (base g) + 1) *
+    N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  assert (Hwidth : Forall (fun v => Pos.size_nat v <= graph_width (base g)) (nodes g)).
+  { apply Forall_forall. intros v Hv. now apply scc_node_width. }
+  pose proof (wto_set_members_time (nodes g) (graph_width (base g)) Empty Hwidth) as Hfold.
+  assert (Hnodecount : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  rewrite Hnodecount in Hfold.
+  time_unfold @T_listed_of. unfold T_nodes. time_cbn. nia.
+Qed.
+
+Lemma wto_presence_time {A} (table : ptrie A) vs width :
+  Forall (fun v => Pos.size_nat v <= width) vs ->
+  (List.T_forallb (fun v => match trie_get v table with Some _ => true | None => false end)
+    (fun v => 1 + T_trie_get v table)%N vs <=
+    8 * N.of_nat (length vs + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth.
+  assert (Hcallback : Forall (fun v => (1 + T_trie_get v table <=
+      4 * N.of_nat (width + 1))%N) vs).
+  { eapply Forall_impl; [|exact Hwidth]. intros v Hv.
+    cbn beta in Hv.
+    rewrite (PTrieT.trie_get_clock A v table), Nat2N.inj_add. nia. }
+  pose proof (wto_forallb_clock
+    (fun v => match trie_get v table with Some _ => true | None => false end)
+    (fun v => 1 + T_trie_get v table)%N vs (4 * N.of_nat (width + 1))%N Hcallback) as Hscan.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Lemma wto_entered_time es : (T_entered es <= 4 * N.of_nat (length es + 1))%N.
+Proof.
+  induction es as [|e es IH]; [time_step|]. destruct e; time_step.
+Qed.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
