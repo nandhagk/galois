@@ -3136,54 +3136,104 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
   (** Bitwise negation retains each concrete result. *)
   Lemma tnum_not_sound : forall w a x z, L.is_word w x -> pgamma w a x ->
     L.eval_op Op.bvnot ((w, x) :: nil) = Some (w, z) -> pgamma w (tnum_not w a) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a x z Hx Ha Heval.
+    change (eval_op bvnot [(w, x)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_not_sound.
+  Qed.
   (** Arithmetic negation retains each concrete result. *)
   Lemma tnum_neg_sound : forall w a x z, L.is_word w x -> pgamma w a x ->
     L.eval_op Op.bvneg ((w, x) :: nil) = Some (w, z) -> pgamma w (tnum_neg w a) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a x z Hx Ha Heval.
+    change (eval_op bvneg [(w, x)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_neg_sound.
+  Qed.
   (** Addition retains each concrete result. *)
   Lemma tnum_add_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvadd ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (tnum_add w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvadd [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvadd w x y BAdd eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_add_sound.
+  Qed.
   (** Subtraction retains each concrete result. *)
   Lemma tnum_sub_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvsub ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (tnum_sub w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvsub [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvsub w x y BSub eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_sub_sound.
+  Qed.
   (** Conjunction retains each concrete result. *)
   Lemma tnum_and_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvand ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (tnum_and w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvand [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvand w x y BAnd eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_and_sound.
+  Qed.
   (** Disjunction retains each concrete result. *)
   Lemma tnum_or_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvor ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (tnum_or w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvor [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvor w x y BOr eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_or_sound.
+  Qed.
   (** Exclusive disjunction retains each concrete result. *)
   Lemma tnum_xor_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvxor ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (tnum_xor w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvxor [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvxor w x y BXor eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_xor_sound.
+  Qed.
   (** Every multiplier choice retains each concrete product. *)
   Lemma tnum_mul_with_sound : forall choice w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvmul ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (tnum_mul_with choice w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros choice w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvmul [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvmul w x y BMul eq_refl) in Heval.
+    injection Heval as <-. now apply tnum_mul_with_sound.
+  Qed.
   (** An unknown shift or rotation retains each concrete result. *)
   Lemma tnum_variable_sound : forall o w a b x y z,
     In o (Op.bvshl :: Op.bvlshr :: Op.bvashr :: Op.bvrotl :: Op.bvrotr :: nil) ->
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op o ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (tnum_variable o w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o w a b x y z Ho Hx Hy Ha Hb Heval.
+    assert (Hshift : tnum_shift_op o) by
+      (unfold tnum_shift_op; cbn in Ho; intuition congruence).
+    destruct (word_fun2 o) as [f|] eqn:Hf.
+    - change (eval_op o [(w, x); (w, y)] = Some (w, z)) in Heval.
+      rewrite (eval_op_fun2 o w x y f Hf) in Heval. injection Heval as <-.
+      eapply tnum_variable_sound; eassumption.
+    - destruct Hshift as [Hshift|[Hshift|[Hshift|[Hshift|Hshift]]]];
+        subst o; discriminate.
+  Qed.
 
 End KnownBits.
 Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
@@ -3332,14 +3382,20 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Definition k_mul_step : N := 1. (* STUB *)
   Lemma F3_rank : forall q w a, pis_bot w a = false ->
     (pwrank q w a = known_count w a)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
   Lemma F4_rank_bound : forall q w a, pis_bot w a = false ->
     (pwrank q w a <= Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a _. unfold pwrank, known_count.
+    pose proof (filter_length_le
+      (fun i => Z.testbit (Z.lor (zeros a) (ones a)) (Z.of_nat i))
+      (seq 0 (Pos.to_nat w))) as Hbound.
+    now rewrite length_seq in Hbound.
+  Qed.
   (** Payload size includes width and stored mask bits. *)
   Lemma psize_bits : forall w a,
     psize w a = (Pos.to_nat w + tnum_bits a + 1)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
   (** Unary transfer results store no more than two masks of the width. *)
   Lemma tnum_unary_bits : forall w a,
     (tnum_bits (tnum_not w a) <= 2 * Pos.to_nat w)%nat /\
@@ -3362,7 +3418,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Proof. Admitted. (* STUB *)
   (** The bit mask agrees with modular word reduction. *)
   Lemma F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
-  Proof. Admitted. (* STUB *)
+  Proof. exact tnum_wrap_agrees. Qed.
   (** Masked scalar shifts agree with the word operations for a nonnegative amount. *)
   Lemma F0_scalar_value : forall o w k x, (0 <= k)%Z ->
     tnum_scalar_value o w k x =
@@ -3389,7 +3445,13 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     | inl (j, s) => j = (i + 1)%Z /\ pgamma w s (L.wrap w (x * (y mod 2 ^ j)))
     | inr s => pgamma w s (L.wrap w (x * y))
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y i r Hx Hy Ha Hb Hi Hr.
+    pose proof (tnum_mul_step_sound w a b x y i r Hi Hx Ha Hb Hr) as Hstep.
+    unfold mul_step. destruct (tnum_mul_stage_step w a b (i, r)) as [[j q]|q].
+    - destruct Hstep as [Hj Hq]. split; [exact Hj|]. now rewrite Hj.
+    - contradiction.
+  Qed.
   (** A staged step keeps its output masks within the width. *)
   Lemma F8_mul_step_bits : forall w a b i r j s,
     (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
