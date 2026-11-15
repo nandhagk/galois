@@ -4,7 +4,7 @@
     For example, an address constraint equates a pointer's dereference with an addressed cell.
     Builds on: SteensgaardSig, Andersen and the database and run interfaces. *)
 
-From Stdlib Require Import List PArith NArith Bool.
+From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model ModelFacts Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
@@ -655,10 +655,28 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   TimeFun solve.
   TimeFun lookup_id.
   TimeFun points.
-  Definition c_steensgaard : N := 1. (* STUB *)
-  Definition k_rules : N := 1. (* STUB *)
-  Definition k_seed : N := 1. (* STUB *)
-  Definition k_wrap : N := 1. (* STUB *)
+  Definition k_rules : N := (R.c_run * 512 * 512 * 512 + 1)%N.
+  Definition k_seed : N := (128 * (D.c_db + 1) * (k_rules + 32) * (k_rules + 32))%N.
+  Definition k_wrap : N := 32%N.
+  Definition c_steensgaard : N := (k_seed + D.c_db + k_wrap + 32)%N.
+
+  (** Inspecting a lookup result adds only a constant number of constructor tests. *)
+  Lemma lookup_id_time : forall f key db,
+    (T_lookup_id f key db <= D.T_lookup f key db + 4)%N.
+  Proof.
+    intros f key db; time_unfold T_lookup_id; time_simpl; time_cases; lia.
+  Qed.
+
+  (** A stored constructor output fits in the database spending unit. *)
+  Lemma lookup_id_unit : forall db f key i, D.wf db -> lookup_id f key db = Some i ->
+    cell_bits V.encode (Id i) <= D.unit db.
+  Proof.
+    intros db f key i Hwf Hlookup.
+    apply (proj1 (lookup_id_spec f key db i Hwf)) in Hlookup.
+    pose proof (D.wmark_cells db f (map (D.canon db) key) (Some (Id i)) (Id i)
+      Hwf Hlookup ltac:(apply in_or_app; right; left; reflexivity)) as Hbits.
+    unfold D.unit; nia.
+  Qed.
   Lemma T_seed_le : forall q,
     (T_seed q <= c_steensgaard *
       N.of_nat (length (constraints q) + length (initial_pointers q) + 1) *
@@ -666,17 +684,51 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Proof. Admitted. (* STUB *)
 
   Lemma T_compile_le : forall q, (T_compile q <= c_steensgaard)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q; time_unfold T_compile; time_simpl; unfold c_steensgaard, k_wrap; lia.
+  Qed.
 
   Lemma T_points_le : forall db x a, D.wf db ->
     (T_points db x a <= c_steensgaard * (N.of_nat (8 * D.unit db) +
       N.of_nat (cell_bits V.encode (Val x) + cell_bits V.encode (Val a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db x a Hwf.
+    pose proof (D.T_lookup_le 6 [Val x] db Hwf) as Hlookup_x.
+    pose proof (D.T_lookup_le 6 [Val a] db Hwf) as Hlookup_a.
+    pose proof (lookup_id_time 6 [Val x] db) as Htime_x.
+    pose proof (lookup_id_time 6 [Val a] db) as Htime_a.
+    cbn [length fold_right] in Hlookup_x, Hlookup_a.
+    time_unfold T_points; time_simpl.
+    destruct (lookup_id 6 [Val x] db) as [pointer |] eqn:Hx;
+      destruct (lookup_id 6 [Val a] db) as [address |] eqn:Ha; time_simpl.
+    - pose proof (D.T_lookup_le 7 [Id pointer] db Hwf) as Hlookup_p.
+      pose proof (lookup_id_time 7 [Id pointer] db) as Htime_p.
+      pose proof (lookup_id_unit db 6 [Val x] pointer Hwf Hx) as Hbits_p.
+      cbn [length fold_right] in Hlookup_p.
+      destruct (lookup_id 7 [Id pointer] db) as [target |] eqn:Ht; time_simpl.
+      + pose proof (lookup_id_unit db 7 [Id pointer] target Hwf Ht) as Hbits_t.
+        pose proof (Std.Pos.T_eqb_le target address) as Heq.
+        cbn [cell_bits Pos.size_nat] in Hbits_t.
+        apply time_of_nat_le in Hbits_p; apply time_of_nat_le in Hbits_t.
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *.
+        unfold c_steensgaard, k_wrap; nia.
+      + apply time_of_nat_le in Hbits_p.
+        rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *.
+        unfold c_steensgaard, k_wrap; nia.
+    - rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *.
+      unfold c_steensgaard, k_wrap; nia.
+    - rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *.
+      unfold c_steensgaard, k_wrap; nia.
+    - rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *.
+      unfold c_steensgaard, k_wrap; nia.
+  Qed.
 
   Lemma T_solve_le : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + c_steensgaard)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim; time_unfold T_solve; time_simpl; unfold c_steensgaard, k_wrap; lia.
+  Qed.
 
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
@@ -733,7 +785,9 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
   Lemma T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
       R.T_run p cp lim (seed q) + k_wrap)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim; time_unfold T_solve; time_simpl; unfold k_wrap; lia.
+  Qed.
 
 End SteensgaardT.
 
