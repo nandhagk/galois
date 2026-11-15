@@ -152,6 +152,203 @@ Proof.
   - contradiction.
 Qed.
 
+(** Evaluating the same list of terms twice yields the same list of cells. *)
+Lemma pointer_terms_unique : forall (rho : env (V := positive)) ts first second,
+  terms_value rho ts first -> terms_value rho ts second -> first = second.
+Proof.
+  intros rho ts first second Hfirst; revert second.
+  induction Hfirst as [|t c ts cs Hvalue Htail IH]; intros second Hsecond.
+  - inversion Hsecond; reflexivity.
+  - inversion Hsecond as [|t' c' ts' cs' Hvalue' Htail']; subst.
+    f_equal.
+    + destruct t; cbn [term_value] in Hvalue, Hvalue'; congruence.
+    + apply IH; exact Htail'.
+Qed.
+
+(** A binary relation row satisfies the corresponding variable-only query atom. *)
+Lemma pointer_atom_row : forall prim w rho f u v x y,
+  rho u = Some (Val x) -> rho v = Some (Val y) -> row w f [Val x; Val y] None ->
+  atom_holds prim w rho (Fun positive f [Var u; Var v] None).
+Proof.
+  intros prim w rho f u v x y Hx Hy Hrow; exists [Val x; Val y], None; split.
+  - constructor; [exact Hx | constructor; [exact Hy | constructor]].
+  - split; [exact I | exact Hrow].
+Qed.
+
+(** A present relational action gives its precise row when that relation has no outputs. *)
+Lemma pointer_present_row : forall prim merge (w : view (V := positive)) rho u v x a,
+  rho u = Some (Val x) -> rho v = Some (Val a) ->
+  (forall key output, row w 5 key output -> output = None) ->
+  present prim merge w rho [Put 5 [Var u; Var v] None] -> row w 5 [Val x; Val a] None.
+Proof.
+  intros prim merge w rho u v x a Hx Ha Houtputs [key [output [Hterms [Hrow Hrest]]]].
+  assert (Hkey : key = [Val x; Val a]).
+  { eapply pointer_terms_unique; [exact Hterms |].
+    constructor; [exact Hx | constructor; [exact Ha | constructor]]. }
+  subst key; rewrite (Houtputs [Val x; Val a] output Hrow) in Hrow; exact Hrow.
+Qed.
+
+(** Closure of the address rule creates its points-to row. *)
+Lemma pointer_closed_addr : forall prim merge w x a,
+  closed prim merge andersen_program w ->
+  (forall key output, row w 5 key output -> output = None) ->
+  row w 1 [Val x; Val a] None -> row w 5 [Val x; Val a] None.
+Proof.
+  intros prim merge w x a Hclosed Houtputs Haddr.
+  set (rho := binding_env [1%positive; 2%positive] [Val x; Val a]).
+  apply (pointer_present_row prim merge w rho 1 2 x a); try reflexivity; [exact Houtputs |].
+  apply (Hclosed (Rule positive [Fun positive 1 [Var 1; Var 2] None]
+    [Put 5 [Var 1; Var 2] None]) rho).
+  - left; reflexivity.
+  - constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Haddr] | constructor].
+Qed.
+
+(** Closure of the copy rule propagates an existing pointee. *)
+Lemma pointer_closed_copy : forall prim merge w x y a,
+  closed prim merge andersen_program w ->
+  (forall key output, row w 5 key output -> output = None) ->
+  row w 2 [Val x; Val y] None -> row w 5 [Val y; Val a] None ->
+  row w 5 [Val x; Val a] None.
+Proof.
+  intros prim merge w x y a Hclosed Houtputs Hcopy Hpoints.
+  set (rho := binding_env [1%positive; 2%positive; 3%positive] [Val x; Val y; Val a]).
+  apply (pointer_present_row prim merge w rho 1 3 x a); try reflexivity; [exact Houtputs |].
+  apply (Hclosed (Rule positive [Fun positive 2 [Var 1; Var 2] None;
+    Fun positive 5 [Var 2; Var 3] None] [Put 5 [Var 1; Var 3] None]) rho).
+  - right; left; reflexivity.
+  - constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hcopy] |].
+    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
+Qed.
+
+(** Closure of the load rule follows the two source pointer edges. *)
+Lemma pointer_closed_load : forall prim merge w x y location a,
+  closed prim merge andersen_program w ->
+  (forall key output, row w 5 key output -> output = None) ->
+  row w 3 [Val x; Val y] None -> row w 5 [Val y; Val location] None ->
+  row w 5 [Val location; Val a] None -> row w 5 [Val x; Val a] None.
+Proof.
+  intros prim merge w x y location a Hclosed Houtputs Hload Hlocation Hpoints.
+  set (rho := binding_env [1%positive; 2%positive; 3%positive; 4%positive]
+    [Val x; Val y; Val location; Val a]).
+  apply (pointer_present_row prim merge w rho 1 4 x a); try reflexivity; [exact Houtputs |].
+  apply (Hclosed (Rule positive [Fun positive 3 [Var 1; Var 2] None;
+    Fun positive 5 [Var 2; Var 3] None; Fun positive 5 [Var 3; Var 4] None]
+    [Put 5 [Var 1; Var 4] None]) rho).
+  - right; right; left; reflexivity.
+  - constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hload] |].
+    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hlocation] |].
+    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
+Qed.
+
+(** Closure of the store rule adds the stored pointee at the destination location. *)
+Lemma pointer_closed_store : forall prim merge w x y location a,
+  closed prim merge andersen_program w ->
+  (forall key output, row w 5 key output -> output = None) ->
+  row w 4 [Val x; Val y] None -> row w 5 [Val x; Val location] None ->
+  row w 5 [Val y; Val a] None -> row w 5 [Val location; Val a] None.
+Proof.
+  intros prim merge w x y location a Hclosed Houtputs Hstore Hlocation Hpoints.
+  set (rho := binding_env [1%positive; 2%positive; 3%positive; 4%positive]
+    [Val x; Val y; Val location; Val a]).
+  apply (pointer_present_row prim merge w rho 3 4 location a); try reflexivity;
+    [exact Houtputs |].
+  apply (Hclosed (Rule positive [Fun positive 4 [Var 1; Var 2] None;
+    Fun positive 5 [Var 1; Var 3] None; Fun positive 5 [Var 2; Var 4] None]
+    [Put 5 [Var 3; Var 4] None]) rho).
+  - right; right; right; left; reflexivity.
+  - constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hstore] |].
+    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hlocation] |].
+    constructor; [eapply pointer_atom_row; [reflexivity | reflexivity | exact Hpoints] | constructor].
+Qed.
+
+(** An output-free closed extension contains every source inclusion derivation. *)
+Lemma pointer_closed_source : forall prim merge q w,
+  closed prim merge andersen_program w ->
+  (forall f key output, pointer_seed_row q f key output -> row w f key output) ->
+  (forall key output, row w 5 key output -> output = None) ->
+  forall x a, may_points q x a -> row w 5 [Val x; Val a] None.
+Proof.
+  intros prim merge q w Hclosed Hseed Houtputs x a Hpoints.
+  induction Hpoints as [x a Hin | x a Hin | x y a Hin Hpoints IH |
+    x y location a Hin Hlocation IHlocation Hpoints IHpoints |
+    x y location a Hin Hlocation IHlocation Hpoints IHpoints].
+  - apply Hseed; split; [reflexivity | exists x, a; split; [reflexivity |]].
+    right; right; right; right; auto.
+  - eapply pointer_closed_addr; [exact Hclosed | exact Houtputs |].
+    apply Hseed; split; [reflexivity | exists x, a; split; [reflexivity | left; auto]].
+  - eapply pointer_closed_copy; [exact Hclosed | exact Houtputs | | exact IH].
+    apply Hseed; split; [reflexivity | exists x, y; split; [reflexivity | right; left; auto]].
+  - eapply pointer_closed_load;
+      [exact Hclosed | exact Houtputs | | exact IHlocation | exact IHpoints].
+    apply Hseed; split; [reflexivity | exists x, y; split; [reflexivity | right; right; left; auto]].
+  - eapply pointer_closed_store;
+      [exact Hclosed | exact Houtputs | | exact IHlocation | exact IHpoints].
+    apply Hseed; split; [reflexivity | exists x, y; split; [reflexivity |]].
+    right; right; right; left; auto.
+Qed.
+
+(** Every declared function of the inclusion program is a relation. *)
+Lemma andersen_kind_relation : forall f output,
+  program_kind andersen_program f = Some output -> output = ORel.
+Proof.
+  intros f output Hkind; unfold program_kind, andersen_program in Hkind.
+  cbn [decls lookup_kind] in Hkind.
+  repeat match type of Hkind with context [if ?b then _ else _] => destruct b end;
+    inversion Hkind; reflexivity.
+Qed.
+
+(** This source needs the single points-to consequence from its address constraint. *)
+Definition pointer_defect_input : pointer_input := PointerInput [Addr 1 2] [].
+
+(** This unsorted view replaces all points-to relation outputs with a value output. *)
+Definition pointer_defect_view : view (V := positive) :=
+  View (fun f _ output => output = Some (Val 1%positive) \/
+      (f <> 5%positive /\ output = None))
+    (fun i j => i = j) (fun _ => Some ORel).
+
+(** A relation-5 query cannot match the deliberately malformed value-output rows. *)
+Lemma pointer_defect_no_match : forall prim rho u v,
+  ~ atom_holds prim pointer_defect_view rho (Fun positive 5 [Var u; Var v] None).
+Proof.
+  intros prim rho u v [key [output [Hterms [Hresult Hrow]]]].
+  destruct output as [c |]; [contradiction |].
+  cbn [pointer_defect_view row] in Hrow; intuition discriminate.
+Qed.
+
+(** Presence accepts the malformed address consequence, while other rules cannot match. *)
+Lemma pointer_defect_closed : forall prim merge,
+  closed prim merge andersen_program pointer_defect_view.
+Proof.
+  intros prim merge r rho Hin Hquery.
+  destruct Hin as [Hr | [Hr | [Hr | [Hr | Hnone]]]];
+    [subst r | subst r | subst r | subst r |].
+  - destruct (Forall_inv Hquery) as [key [output [Hterms [Hresult Hrow]]]].
+    exists key, (Some (Val 1%positive)); split; [exact Hterms |].
+    split; [left; reflexivity | split; exact I].
+  - exfalso; eapply pointer_defect_no_match; exact (Forall_inv (Forall_inv_tail Hquery)).
+  - exfalso; eapply pointer_defect_no_match; exact (Forall_inv (Forall_inv_tail Hquery)).
+  - exfalso; eapply pointer_defect_no_match; exact (Forall_inv (Forall_inv_tail Hquery)).
+  - contradiction.
+Qed.
+
+(** The frozen arbitrary-view plan fails because closure does not enforce output kinds. *)
+Lemma pointer_closed_source_counterexample : forall prim merge,
+  closed prim merge andersen_program pointer_defect_view /\
+  (forall f key output, pointer_seed_row pointer_defect_input f key output ->
+    row pointer_defect_view f key output) /\
+  may_points pointer_defect_input 1 2 /\
+  ~ row pointer_defect_view 5 [Val 1%positive; Val 2%positive] None.
+Proof.
+  intros prim merge; split; [apply pointer_defect_closed | split].
+  - intros f key output [Ho [x [y [Hkey Hsource]]]]; subst output.
+    destruct Hsource as [[Hf Hin] | [[Hf Hin] | [[Hf Hin] | [[Hf Hin] | [Hf Hin]]]]];
+      subst f; try (right; split; [discriminate | reflexivity]).
+    exact (False_rect _ Hin).
+  - split.
+    + apply May_addr; left; reflexivity.
+    + cbn [pointer_defect_view row]; intuition discriminate.
+Qed.
+
 (** Each source instruction is stored in its own binary relation. *)
 Definition pointer_constraint_entry (instruction : pointer_constraint) :
     positive * (positive * positive) :=
@@ -528,9 +725,94 @@ Module Andersen (V : VALUE with Definition t := positive)
     - exact Hfuel.
   Qed.
 
+  (** The exact seed rows satisfy the independent inclusion model. *)
+  Lemma seed_sat : forall q, sat V.merge (andersen_model q) (fun _ => tt) (D.view (seed q)).
+  Proof.
+    intro q; split.
+    - intros f key output Hrow; apply seed_rows in Hrow.
+      destruct Hrow as [Ho [x [y [Hkey Hsource]]]]; subst output key.
+      unfold holds; rewrite (proj1 (seed_loaded q) f).
+      destruct Hsource as [[Hf Hin] | [[Hf Hin] | [[Hf Hin] | [[Hf Hin] | [Hf Hin]]]]];
+        subst f; cbn [compile program_kind andersen_program decls lookup_kind map den
+          andersen_model rel]; exists x, y; split; try reflexivity;
+        unfold pointer_relation; intuition eauto using May_initial.
+    - split; [intros i j Hsame; reflexivity |].
+      intros f m key a b Hkind Hlat Hlat'; exact Hlat.
+  Qed.
+
+  (** Every returned database retains the declarations, layout and row sorts. *)
+  Lemma solve_loaded : forall q lim,
+    R.loaded (compile q) (R.plan (compile q)) (snd (solve q lim)).
+  Proof.
+    intros q lim; rewrite solve_run.
+    exact (proj2 (proj2 (R.run_wf (compile q) (R.plan (compile q)) lim (seed q)
+      (R.plan_checked (compile q) (program_sorted q)) (proj1 (seed_wf q)) (seed_loaded q)))).
+  Qed.
+
+  (** Sorted rows of the inclusion program have no output cells. *)
+  Lemma solve_no_outputs : forall q lim f key output,
+    row (D.view (snd (solve q lim))) f key output -> output = None.
+  Proof.
+    intros q lim f key output Hrow.
+    destruct (solve_loaded q lim) as [Hkinds [Hslots Hsorted]].
+    destruct (Hsorted f key output Hrow) as [out [Hsort [Hkind Houtput]]].
+    rewrite Hkinds in Hkind; apply andersen_kind_relation in Hkind; subst out.
+    destruct output as [[i | v] |]; [discriminate | discriminate | reflexivity].
+  Qed.
+
+  (** Every source seed row persists exactly through the inclusion run. *)
+  Lemma solve_seed_rows : forall q lim f key output, pointer_seed_row q f key output ->
+    row (D.view (snd (solve q lim))) f key output.
+  Proof.
+    intros q lim f key output Hseed.
+    pose proof (proj2 (seed_rows q f key output) Hseed) as Hrow.
+    destruct Hseed as [Ho [x [y [Hkey Hsource]]]]; subst key output.
+    destruct (R.run_grows (compile q) (R.plan (compile q)) lim (seed q)
+      (R.plan_checked (compile q) (program_sorted q)) (proj1 (seed_wf q)) (seed_loaded q))
+      as [Hsame Hrows].
+    rewrite <- solve_run in Hrows.
+    destruct (Hrows f [Val x; Val y] None Hrow) as [output [Hnew Hle]].
+    change (row (D.view (snd (solve q lim))) f [Val x; Val y] output) in Hnew.
+    rewrite (solve_no_outputs q lim f [Val x; Val y] output Hnew) in Hnew; exact Hnew.
+  Qed.
+
   Lemma solve_exact : forall q lim db, solve q lim = (Saturated, db) ->
     forall x a, points db x a = true <-> may_points q x a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim db Hsolve x a.
+    pose proof (solve_wf q lim) as Hvalid; rewrite Hsolve in Hvalid; cbn [snd] in Hvalid.
+    destruct Hvalid as [Hwf Hcanonical]; split.
+    - intro Hpoints.
+      assert (Hrow : row (D.view db) 5 [Val x; Val a] None).
+      { destruct (points_spec db x a Hwf Hcanonical); [assumption | discriminate]. }
+      destruct (R.run_sat (compile q) (R.plan (compile q)) lim (seed q)
+        (andersen_model q) (fun _ => tt)
+        (R.plan_checked (compile q) (program_sorted q)) (proj1 (seed_wf q)) (seed_loaded q)
+        (valid_sorted_of_valid V.t V.prim V.merge (andersen_model q) (compile q) (rules_valid q))
+        (seed_sat q)) as [nu [Hextends [Hrows Hrest]]].
+      rewrite <- solve_run, Hsolve in Hrows; cbn [snd] in Hrows.
+      specialize (Hrows 5%positive [Val x; Val a] None Hrow).
+      pose proof (proj1 (solve_loaded q lim) 5%positive) as Hkind.
+      rewrite Hsolve in Hkind; cbn [snd] in Hkind.
+      unfold holds in Hrows; rewrite Hkind in Hrows.
+      change (exists y b, ([inr x; inr a] : list (unit + positive)) = [inr y; inr b] /\
+        pointer_relation q 5 y b) in Hrows.
+      destruct Hrows as [y [b [Heq Hsource]]]; inversion Heq; subst y b.
+      unfold pointer_relation in Hsource; intuition discriminate.
+    - intro Hpoints; destruct (points_spec db x a Hwf Hcanonical) as [Hrow | Hnot];
+        [reflexivity | exfalso; apply Hnot].
+      apply (pointer_closed_source V.prim V.merge q (D.view db)).
+      + apply (R.run_closed (compile q) (R.plan (compile q)) lim (seed q) db).
+        * apply R.plan_checked; apply program_sorted.
+        * exact (proj1 (seed_wf q)).
+        * apply seed_loaded.
+        * rewrite <- solve_run; exact Hsolve.
+      + intros f key output Hseed; pose proof (solve_seed_rows q lim f key output Hseed) as Hrow.
+        rewrite Hsolve in Hrow; exact Hrow.
+      + intros key output Hrow; apply (solve_no_outputs q lim 5 key output).
+        rewrite Hsolve; exact Hrow.
+      + exact Hpoints.
+  Qed.
 
 End Andersen.
 
@@ -586,7 +868,9 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
 
   Lemma F4_seed_sat : forall q,
     sat V.merge (andersen_model q) (fun _ => tt) (D.view (seed q)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact seed_sat.
+  Qed.
 
   Lemma F5_derives_source : forall q x a,
     derives V.prim (compile q) (D.view (seed q)) 5 [Val x; Val a] -> may_points q x a.
@@ -595,7 +879,7 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
   Lemma F6_closed_source : forall q w, closed V.prim V.merge (compile q) w ->
     (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
     forall x a, may_points q x a -> row w 5 [Val x; Val a] None.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: pointer_closed_source_counterexample has only Some (Val 1) outputs. *)
 
   Lemma F7_step_covered : forall q r instruction before after,
     pointer_closed q r -> In instruction (constraints q) -> memory_covered r before ->
