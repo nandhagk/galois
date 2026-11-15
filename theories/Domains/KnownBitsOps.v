@@ -384,6 +384,57 @@ Proof.
   clearbody square. lia.
 Qed.
 
+Module KnownBitsForwardClockProof (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS_T L C).
+  Module Raw := KnownBitsOpsClock L C K.
+
+  (** Unary dispatch pays for one supplied transfer or two bounded endpoint callbacks. *)
+  Lemma forward_one_time : forall o w rw a,
+    (forall hi lo, o = bvextract hi lo -> (lo < Pos.to_nat w)%nat) ->
+    (Raw.T_tnum_forward_raw o [(w, a)] rw <= (K.c_tnum + 1048576) *
+      N.of_nat ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2 + tnum_bits a))%N.
+  Proof.
+    intros o w rw a Hbounded.
+    set (budget := N.of_nat
+      ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2 + tnum_bits a)).
+    assert (Hbudget : budget = N.of_nat
+      ((Pos.to_nat w + Pos.to_nat rw + 1) ^ 2 + tnum_bits a)) by reflexivity.
+    pose proof (WordTime.time_square_floor (Pos.to_nat rw + 1)
+      (Pos.to_nat w + Pos.to_nat rw + 1) ltac:(lia) ltac:(lia)) as Hwidth.
+    assert (Hlinear : (N.of_nat (Pos.to_nat rw + tnum_bits a + 1) <= budget)%N).
+    { unfold budget. rewrite ?Nat2N.inj_add in *. lia. }
+    assert (Hcount : (N.of_nat (Pos.to_nat rw + 1) <= budget)%N).
+    { unfold budget. rewrite ?Nat2N.inj_add. lia. }
+    assert (Hpositive : (1 <= budget)%N).
+    { rewrite ?Nat2N.inj_add in Hcount. lia. }
+    pose proof (K.T_tnum_not_le rw a) as Hnot.
+    pose proof (K.T_tnum_neg_le rw a) as Hneg.
+    pose proof (table_count_time rw) as Hcounter.
+    clearbody budget.
+    destruct o; time_unfold Raw.T_tnum_forward_raw; cbn beta iota zeta;
+      try solve [clear Hbudget; time_simpl; rewrite ?Nat2N.inj_add in *; nia].
+    all: match goal with
+    | |- context [T_tnum_map ?sw ?dw ?f ?Tf ?input] =>
+      assert (Hmapword : forall x, is_word sw x -> is_word dw (f x)) by
+        (intros x Hx; cbn beta iota zeta; rewrite tnum_wrap_agrees; apply wrap_is_word);
+      assert (Hcallback : forall x, is_word sw x ->
+        (Tf x <= 2048 * N.of_nat ((Pos.to_nat sw + Pos.to_nat dw + 1) ^ 2))%N) by
+        (intros x Hx; cbn beta iota zeta;
+          first
+          [ eapply N.le_trans; [|exact (table_wrap_callback_time sw dw x Hx)]; lia
+          | eapply N.le_trans; [|exact (table_signed_callback_time sw dw x Hx)]; lia
+          | assert (Hlo : (lo < Pos.to_nat sw)%nat) by
+              (apply (Hbounded hi lo); reflexivity);
+            eapply N.le_trans;
+              [|exact (table_extract_callback_time sw dw lo x Hlo Hx)]; lia ]);
+      pose proof (table_map_time_budget sw dw f Tf input 2048 Hmapword Hcallback) as Hmap;
+      rewrite <- Hbudget in Hmap;
+      clear Hbudget Hmapword Hcallback;
+      time_simpl; nia
+    end.
+  Qed.
+End KnownBitsForwardClockProof.
+
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
   Module P := KnownBitsCode L C.
   Module F := KnownBitsOpsCode L C P.
