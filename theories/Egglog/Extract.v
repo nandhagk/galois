@@ -305,6 +305,152 @@ Proof.
       unfold PTrieT.c_trie in *; nia.
 Qed.
 
+(** Resolving a row replaces literals directly and looks up its identifier children. *)
+Fixpoint dag_resolve_cells {V} (resolve : positive -> option (@Model.expr V))
+    (k : list (cell V)) : option (list (@Model.expr V)) :=
+  match k with
+  | [] => Some []
+  | Val v :: rest =>
+    match dag_resolve_cells resolve rest with
+    | Some es => Some (Model.ELit v :: es)
+    | None => None
+    end
+  | Id i :: rest =>
+    match resolve i, dag_resolve_cells resolve rest with
+    | Some e, Some es => Some (e :: es)
+    | _, _ => None
+    end
+  end.
+TimeFun dag_resolve_cells.
+
+(** A reverse scan unfolds a selected entry only through its earlier prefix. *)
+Fixpoint dag_unfold_reverse {V} (g : extraction_dag V) (c : positive)
+    : option (@Model.expr V) :=
+  match g with
+  | [] => None
+  | (i, (f, k)) :: rest =>
+    if Pos.eqb c i then
+      match dag_resolve_cells (dag_unfold_reverse rest) k with
+      | Some es => Some (Model.EApp f es)
+      | None => None
+      end
+    else dag_unfold_reverse rest c
+  end.
+TimeFun dag_unfold_reverse.
+
+(** Specification unfolding follows the certificate's prefix order. *)
+Definition dag_unfold {V} (g : extraction_dag V) (c : positive)
+    : option (@Model.expr V) := dag_unfold_reverse (rev g) c.
+TimeFun dag_unfold.
+
+(** Sound identifier resolution gives a prefix representation of the whole key. *)
+Lemma dag_resolve_cells_sound : forall V (g : extraction_dag V) resolve,
+  (forall i e, resolve i = Some e -> dag_represents g i e) ->
+  forall k es, dag_resolve_cells resolve k = Some es -> dag_cells g k es.
+Proof.
+  intros V g resolve Hresolve k.
+  induction k as [|[i|v] k IH]; intros es Hrun.
+  - inversion Hrun. constructor.
+  - cbn [dag_resolve_cells] in Hrun.
+    destruct (resolve i) as [e|] eqn:Hi; [|discriminate].
+    destruct (dag_resolve_cells resolve k) as [rest|] eqn:Hrest; [|discriminate].
+    inversion Hrun; subst es. constructor.
+    + apply Hresolve. exact Hi.
+    + apply IH. reflexivity.
+  - cbn [dag_resolve_cells] in Hrun.
+    destruct (dag_resolve_cells resolve k) as [rest|] eqn:Hrest; [|discriminate].
+    inversion Hrun; subst es. constructor. apply IH. reflexivity.
+Qed.
+
+(** Complete identifier resolution recovers every represented key. *)
+Lemma dag_resolve_cells_complete : forall V (g : extraction_dag V) resolve,
+  (forall i e, dag_represents g i e -> resolve i = Some e) ->
+  forall k es, dag_cells g k es -> dag_resolve_cells resolve k = Some es.
+Proof.
+  intros V g resolve Hresolve k es Hcells.
+  induction Hcells as [g |g v k es Hcells IH |g i e k es Hrep Hcells IH].
+  - reflexivity.
+  - cbn [dag_resolve_cells]. rewrite IH by exact Hresolve. reflexivity.
+  - cbn [dag_resolve_cells]. rewrite (Hresolve i e Hrep), IH by exact Hresolve.
+    reflexivity.
+Qed.
+
+(** Successful reverse unfolding yields a finite prefix derivation. *)
+Lemma dag_unfold_reverse_sound : forall V (g : extraction_dag V) c e,
+  dag_unfold_reverse g c = Some e -> dag_represents (rev g) c e.
+Proof.
+  intros V g. induction g as [|[i [f k]] g IH]; intros c e Hrun.
+  - discriminate.
+  - cbn [dag_unfold_reverse] in Hrun.
+    cbn [rev]. destruct (Pos.eqb c i) eqn:Hci.
+    + apply Pos.eqb_eq in Hci. subst c.
+      destruct (dag_resolve_cells (dag_unfold_reverse g) k) as [es|] eqn:Hcells;
+        [|discriminate].
+      inversion Hrun; subst e. constructor.
+      eapply dag_resolve_cells_sound; [exact IH |exact Hcells].
+    + apply dag_later. apply IH. exact Hrun.
+Qed.
+
+(** A represented class identifier is named by the certificate. *)
+Lemma dag_represents_name : forall V (g : extraction_dag V) c e,
+  dag_represents g c e -> In c (map fst g).
+Proof.
+  intros V g c e Hrep. induction Hrep as [pre c f k es Hcells |pre c e entry Hrep IH].
+  - rewrite map_app. apply in_or_app. right. now left.
+  - rewrite map_app. apply in_or_app. now left.
+Qed.
+
+(** A final entry either introduces the represented tree or preserves an earlier one. *)
+Lemma dag_represents_last : forall V (pre : extraction_dag V) i f k c e,
+  dag_represents (pre ++ [(i, (f, k))]) c e ->
+  (c = i /\ exists es, e = Model.EApp f es /\ dag_cells pre k es) \/
+    dag_represents pre c e.
+Proof.
+  intros V pre i f k c e Hrep.
+  remember (pre ++ [(i, (f, k))]) as g eqn:Hg in Hrep.
+  destruct Hrep as [prefix c f' k' es Hcells |prefix c e entry Hrep].
+  - apply app_inj_tail in Hg as [Hprefix Hentry].
+    subst prefix. injection Hentry as Hci Hf Hk. subst c f' k'.
+    left. split; [reflexivity |]. exists es. auto.
+  - apply app_inj_tail in Hg as [Hprefix Hentry]. subst prefix.
+    now right.
+Qed.
+
+(** Distinct certificate names make every finite prefix derivation executable. *)
+Lemma dag_unfold_complete : forall V (g : extraction_dag V) c e,
+  NoDup (map fst g) -> dag_represents g c e -> dag_unfold g c = Some e.
+Proof.
+  intros V g. induction g as [|entry g IH] using rev_ind; intros c e Hnodup Hrep.
+  - pose proof (dag_represents_name _ _ _ _ Hrep) as Hname. contradiction.
+  - destruct entry as [i [f k]].
+    rewrite map_app in Hnodup. cbn [map fst] in Hnodup.
+    destruct (NoDup_remove (map fst g) [] i Hnodup) as [Hprefix Hfresh].
+    rewrite app_nil_r in Hprefix, Hfresh.
+    apply dag_represents_last in Hrep as [[Hci [es [He Hcells]]] |Hrep].
+    + subst c e. unfold dag_unfold. rewrite rev_app_distr.
+      cbn [rev app dag_unfold_reverse]. rewrite Pos.eqb_refl.
+      assert (Hresolved : dag_resolve_cells (dag_unfold_reverse (rev g)) k = Some es).
+      { eapply dag_resolve_cells_complete; [|exact Hcells].
+        intros child tree Hchild. exact (IH child tree Hprefix Hchild). }
+      rewrite Hresolved. reflexivity.
+    + assert (Hci : Pos.eqb c i = false).
+      { apply Pos.eqb_neq. intro Heq. subst c. apply Hfresh.
+        eapply dag_represents_name. exact Hrep. }
+      unfold dag_unfold. rewrite rev_app_distr.
+      cbn [rev app dag_unfold_reverse]. rewrite Hci.
+      exact (IH c e Hprefix Hrep).
+Qed.
+
+(** Unfolding agrees exactly with prefix representation when names are distinct. *)
+Lemma dag_unfold_spec : forall V (g : extraction_dag V) c e,
+  NoDup (map fst g) -> (dag_unfold g c = Some e <-> dag_represents g c e).
+Proof.
+  intros V g c e Hnodup. split.
+  - intro Hrun. apply dag_unfold_reverse_sound in Hrun.
+    now rewrite rev_involutive in Hrun.
+  - apply dag_unfold_complete. exact Hnodup.
+Qed.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
   Definition inventory (ds : list decl) (sl : list (positive * list nat))
@@ -322,8 +468,8 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
     <: EXTRACT V I D C.
   Include ExtractCode V I D C.
   Include EXTRACT_SPEC V I D C.
-  (* STUB-CODE *)
-  Definition unfold (_ : extraction_dag V.t) (_ : positive) : option (@Model.expr V.t) := None.
+  Definition unfold (g : extraction_dag V.t) (c : positive) : option (@Model.expr V.t) :=
+    dag_unfold g c.
   Lemma inventory_spec : forall ds sl db, D.wf db -> D.slots db = sl ->
     (forall f, kind (D.view db) f = lookup_kind ds f) ->
     view_sorted (lookup_sorts ds) (D.view db) ->
@@ -372,7 +518,9 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
 
   Lemma unfold_spec : forall g c e, NoDup (map fst g) ->
     (unfold g c = Some e <-> dag_represents g c e).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply dag_unfold_spec.
+  Qed.
 
   Lemma best_row : forall cs db c n f k, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     In (c, (n, (f, k))) (best cs db) ->

@@ -60,3 +60,41 @@ Example inventory_empty_layout :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Example unfold_shared_children :
+  dag_unfold [(1%positive, (10%positive, [Val 7%positive]));
+    (2%positive, (20%positive, [Id 1%positive; Id 1%positive]))] 2%positive =
+    Some (Model.EApp 20%positive
+      [Model.EApp 10%positive [Model.ELit 7%positive];
+       Model.EApp 10%positive [Model.ELit 7%positive]]).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example unfold_forward_reference :
+  @dag_unfold positive
+    [(1%positive, (10%positive, [Id 2%positive])); (2%positive, (20%positive, []))]
+    1%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example unfold_self_reference :
+  @dag_unfold positive [(1%positive, (10%positive, [Id 1%positive]))] 1%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example unfold_independent_root :
+  @dag_unfold positive
+    [(1%positive, (10%positive, [Id 1%positive])); (2%positive, (20%positive, []))]
+    2%positive = Some (Model.EApp 20%positive []).
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example unfold_missing_root :
+  @dag_unfold positive [(1%positive, (10%positive, []))] 2%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
