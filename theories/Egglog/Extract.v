@@ -4525,7 +4525,8 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   TimeFun children.
   TimeFun ready.
   TimeFun heap_potential.
-  Definition k_step : N := 1. (* STUB *)
+  Definition k_step : N :=
+    (256 * 1024) * (PTrieT.c_trie + I.c_ix + D.c_db + C.c_cost + Q.c_pq + 1).
   Definition reachable (sl : list (positive * (N * nat))) (db : D.t) (s : state) : Prop :=
     clos_refl_trans state (fun a b => step sl db a = inl b) (initial sl db) s.
   Definition knuth_inv (db : D.t) (s : state) : Prop :=
@@ -4581,10 +4582,32 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       N.of_nat (cost_width db + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** A stopping search reads cached queue size and returns the stored table. *)
+  Lemma T_step_stopped_le : forall cs db s out, step cs db s = inr out ->
+    (T_step cs db s <= Q.c_pq + 4)%N.
+  Proof.
+    intros cs db s out Hstop. unfold step, search_step in Hstop.
+    destruct (Q.size (search_queue s)) as [|size] eqn:Hsize.
+    - pose proof (Q.T_size_le (search_queue s)) as Hclock.
+      time_unfold @T_step. time_simpl. time_cbn.
+      time_unfold @T_search_step. time_simpl. time_cbn.
+      rewrite Hsize. lia.
+    - destruct (Q.pop (search_queue s)) as [[[n i] queue]|]; [|discriminate].
+      destruct (trie_get i (search_candidates s)) as [[value row]|];
+        destruct (trie_get i (search_final_costs s)); discriminate.
+  Qed.
+
   Lemma T1b_step_stop : forall cs db s out, D.wf db -> D.canonical db ->
     ctor_inventory cs db -> reachable cs db s -> step cs db s = inr out ->
     (T_step cs db s <= k_step * N.of_nat (R db + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db s out Hwf Hcanonical Hinventory Hreachable Hstop.
+    pose proof (T_step_stopped_le cs db s out Hstop) as Hclock.
+    assert (Hconstant : (Q.c_pq + 4 <= k_step)%N) by (unfold k_step; nia).
+    eapply N.le_trans; [exact Hclock |].
+    eapply N.le_trans; [exact Hconstant |].
+    rewrite <- (N.mul_1_r k_step) at 1. apply N.mul_le_mono_l. lia.
+  Qed.
 
   (** The bounded extraction loop charges its initialization, steps and fuel. *)
   Lemma T2_best_loop : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
