@@ -1151,20 +1151,6 @@ Module PrepareCode (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.
   Definition prepare (p : func positive O.K O.G) : Q.t := lang_prepare p.
 End PrepareCode.
 
-Module PrepareT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
-    <: LANG_PREPARE_T O Q.
-  Include PrepareCode O Q.
-  TimeFun prepare.
-  Definition c_prepare : N := 1. (* STUB *)
-  Lemma T_prepare_le : forall p,
-    (T_prepare p <= c_prepare * N.of_nat (function_size p + 1) *
-      N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma prepare_bigO : bigO (fun _ : func positive O.K O.G => True)
-    (fun p => N.of_nat ((function_size p + 1) * (function_width p + 1))) T_prepare.
-  Proof. Admitted. (* STUB *)
-End PrepareT.
-
 Module BlockCfgCode (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     <: CFG_INDEXED_OPS Q PosKeyCode BlockEdge.
   Definition entries (q : Q.t) := lang_entries q.
@@ -2383,6 +2369,1845 @@ Proof.
   - intros [Hyes Hno] [Heq|[Heq|[]]]; inversion Heq; subst; assumption.
   - intros _ [].
 Qed.
+
+(** * Preparation clock combinators *)
+
+Lemma prep_fold_right_uniform {A B} (f : A -> B -> B) Tf xs bound :
+  (forall x, In x xs -> forall acc, (Tf x acc <= bound)%N) -> forall acc,
+  (List.T_fold_right f Tf acc xs <= (bound + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros Hbound acc.
+  - time_step.
+  - pose proof (Hbound x (or_introl eq_refl) (fold_right f acc rest)) as Hhead.
+    specialize (IH ltac:(intros y Hy state; apply Hbound; now right) acc). time_step.
+Qed.
+
+Lemma prep_fold_left_uniform {A B} (f : A -> B -> A) Tf xs bound :
+  (forall acc x, In x xs -> (Tf acc x <= bound)%N) -> forall acc,
+  (List.T_fold_left f Tf xs acc <= (bound + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros Hbound acc.
+  - time_step.
+  - pose proof (Hbound acc x (or_introl eq_refl)) as Hhead.
+    specialize (IH ltac:(intros state y Hy; apply Hbound; now right) (f acc x)). time_step.
+Qed.
+
+Lemma prep_map_uniform {A B} (f : A -> B) Tf xs bound :
+  (forall x, In x xs -> (Tf x <= bound)%N) ->
+  (ListDef.T_map f Tf xs <= (bound + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hbound.
+  - time_step.
+  - pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+    specialize (IH ltac:(intros y Hy; apply Hbound; now right)). time_step.
+Qed.
+
+Lemma prep_map_weight {A B} (f : A -> B) Tf charge xs bound :
+  (forall x, In x xs -> 1 <= charge x) ->
+  (forall x, In x xs -> (Tf x <= bound * N.of_nat (charge x))%N) ->
+  (ListDef.T_map f Tf xs <=
+    (bound + 1) * N.of_nat (present_weight charge xs) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros Hpositive Hbound.
+  - time_step.
+  - pose proof (Hpositive x (or_introl eq_refl)) as Hcharge.
+    pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+    specialize (IH ltac:(intros y Hy; apply Hpositive; now right)
+      ltac:(intros y Hy; apply Hbound; now right)).
+    time_unfold @ListDef.T_map. cbn [present_weight fold_right].
+    fold (present_weight charge rest).
+    rewrite Nat2N.inj_add. nia.
+Qed.
+
+Lemma prep_flat_weight {A B} (f : A -> list B) Tf charge xs bound :
+  (forall x, In x xs -> 1 <= charge x) ->
+  (forall x, In x xs ->
+    (Tf x + N.of_nat (length (f x) + 1) <= bound * N.of_nat (charge x))%N) ->
+  (Code.List.T_flat_map f Tf xs <=
+    (bound + 1) * N.of_nat (present_weight charge xs) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros Hpositive Hbound.
+  - time_step.
+  - pose proof (Hpositive x (or_introl eq_refl)) as Hcharge.
+    pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+    specialize (IH ltac:(intros y Hy; apply Hpositive; now right)
+      ltac:(intros y Hy; apply Hbound; now right)).
+    pose proof (Datatypes.T_app_le (f x) (flat_map f rest)) as Happend.
+    time_unfold @Code.List.T_flat_map. cbn [present_weight fold_right].
+    fold (present_weight charge rest).
+    rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Lemma prep_first_table_clock {A B} (key : A -> positive) Tkey rows bound :
+  (1 <= bound)%N ->
+  (forall row, In row rows -> (Tkey (fst row) <= bound)%N) ->
+  (forall row, In row rows -> forall table : ptrie B,
+    (PTrieCode.T_set (key (fst row)) (snd row) table <= bound)%N) ->
+  (T_first_table key Tkey rows <= 8 * bound * N.of_nat (length rows + 1))%N.
+Proof.
+  intros Hpositive Hkey Hset. time_unfold @T_first_table.
+  match goal with
+  | |- context [List.T_fold_right ?step ?clock Empty rows] =>
+    assert (Hfold : (List.T_fold_right step clock Empty rows <=
+      (5 * bound + 1) * N.of_nat (length rows) + 1)%N)
+  end.
+  { apply prep_fold_right_uniform. intros row Hin table.
+    pose proof (Hkey row Hin) as Hencode. pose proof (Hset row Hin table) as Hinsert.
+    time_simpl. nia. }
+  assert (Hslope : ((5 * bound + 1) * N.of_nat (length rows) <=
+    8 * bound * N.of_nat (length rows))%N) by (apply N.mul_le_mono_r; lia).
+  rewrite Nat2N.inj_add. nia.
+Qed.
+
+Lemma prep_multi_table_clock {A} (key : A -> positive) Tkey rows bound :
+  (1 <= bound)%N ->
+  (forall row, In row rows -> (Tkey row <= bound)%N) ->
+  (forall row, In row rows -> forall table : ptrie (list A),
+    (T_index_row table (key row) <= bound)%N) ->
+  (forall row, In row rows -> forall table : ptrie (list A),
+    (PTrieCode.T_set (key row) (row :: index_row table (key row)) table <= bound)%N) ->
+  (T_multi_table key Tkey rows <= 8 * bound * N.of_nat (length rows + 1))%N.
+Proof.
+  intros Hpositive Hkey Hrow Hset. time_unfold @T_multi_table.
+  match goal with
+  | |- context [List.T_fold_right ?step ?clock Empty rows] =>
+    assert (Hfold : (List.T_fold_right step clock Empty rows <=
+      (5 * bound + 1) * N.of_nat (length rows) + 1)%N)
+  end.
+  { apply prep_fold_right_uniform. intros row Hin table.
+    pose proof (Hkey row Hin) as Hencode. pose proof (Hrow row Hin table) as Hlookup.
+    pose proof (Hset row Hin table) as Hinsert. time_simpl. nia. }
+  assert (Hslope : ((5 * bound + 1) * N.of_nat (length rows) <=
+    8 * bound * N.of_nat (length rows))%N) by (apply N.mul_le_mono_r; lia).
+  rewrite Nat2N.inj_add. nia.
+Qed.
+
+Lemma prep_first_blocks_clock {K G} (bs : list (positive * block positive K G)) width :
+  (forall b body, In (b, body) bs -> Pos.size_nat b <= width) ->
+  (T_first_blocks bs <=
+    (PTrieT.c_trie + 16) * N.of_nat (length bs + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth. time_unfold @T_first_blocks; time_simpl.
+  lazymatch goal with
+  | |- context [List.T_fold_left ?f ?Tf bs (Empty, [])] =>
+    pose proof (prep_fold_left_uniform f Tf bs
+      ((PTrieT.c_trie + 12) * N.of_nat (width + 1))%N
+      ltac:(intros [seen kept] [b body] Hin;
+        pose proof (Hwidth b body Hin) as Hb;
+        pose proof (PTrieT.T_set_le unit b tt seen) as Hset;
+        time_cbn; rewrite PTrieT.trie_get_clock;
+        destruct (trie_get b seen); time_simpl; time_cbn; nia) (Empty, [])) as Hfold
+  end.
+  lazymatch goal with
+  | |- context [List.T_rev_append ?items []] =>
+    assert (Hlength : length items <= length bs)
+      by (rewrite first_blocks_fold, app_nil_r, length_rev; apply selected_blocks_length);
+    pose proof (List.T_rev_append_le items []) as Hrev
+  end.
+  rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+
+(** * Preparation counters and list primitives *)
+
+(** The positive source-width budget also covers empty syntax. *)
+Definition prep_width {K G} (p : func positive K G) := N.of_nat (function_width p + 1).
+
+Lemma prep_width_positive {K G} (p : func positive K G) : (1 <= prep_width p)%N.
+Proof.
+  unfold prep_width. rewrite Nat2N.inj_add. lia.
+Qed.
+
+Lemma prep_counter_bits i : N.size_nat i <= Pos.size_nat (N.succ_pos i).
+Proof.
+  destruct i as [|p]; [cbn; lia|].
+  change (Pos.size_nat p <= Pos.size_nat (Pos.succ p)).
+  induction p as [p IH|p IH|]; cbn [Pos.succ Pos.size_nat]; lia.
+Qed.
+
+Lemma prep_counter_clock {K G} (p : func positive K G) i :
+  (i <= N.of_nat (function_size p + 1))%N ->
+  (N.T_succ i <= 4 * prep_width p)%N.
+Proof.
+  intro Hindex. pose proof (function_index_width p i Hindex) as Hwidth.
+  pose proof (prep_counter_bits i) as Hbits.
+  pose proof (N.T_succ_le i) as Hclock.
+  unfold prep_width. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Lemma prep_code_rows_clock {K G} (p : func positive K G) b i
+    (cs : list (positive * K * list positive)) :
+  (i + N.of_nat (length cs) <= N.of_nat (function_size p + 1))%N ->
+  (T_code_rows b i cs <= 16 * prep_width p * N.of_nat (length cs + 1))%N.
+Proof.
+  revert i. induction cs as [|[[x op] ys] rest IH]; intros i Hindex.
+  - pose proof (prep_width_positive p) as Hpositive. time_step.
+  - assert (Hcurrent : (i <= N.of_nat (function_size p + 1))%N) by lia.
+    pose proof (prep_counter_clock p i Hcurrent) as Hsucc.
+    assert (Hnext : (N.succ i + N.of_nat (length rest) <=
+      N.of_nat (function_size p + 1))%N).
+    { cbn [length] in Hindex. rewrite Nat2N.inj_succ in Hindex. lia. }
+    specialize (IH (N.succ i) Hnext).
+    pose proof (prep_width_positive p) as Hpositive.
+    time_unfold @T_code_rows. time_simpl. cbn [length].
+    rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Lemma prep_pair_args_clock xs ys :
+  (T_pair_args xs ys <= 2 * N.of_nat (length ys + 1))%N.
+Proof.
+  revert xs. induction ys as [|y rest IH]; intros [|x xs]; time_step.
+Qed.
+
+Lemma prep_pair_args_length xs ys : length (pair_args xs ys) <= length ys.
+Proof.
+  revert xs. induction ys as [|y rest IH]; intros [|x xs]; cbn [pair_args length];
+    [lia|lia|lia|pose proof (IH xs); lia].
+Qed.
+
+Lemma prep_param_defs_clock {K} b i xs :
+  (@T_param_defs K b i xs <= 2 * N.of_nat (length xs + 1))%N.
+Proof.
+  revert i. induction xs as [|x rest IH]; intro i.
+  - time_step.
+  - specialize (IH (S i)). time_step.
+Qed.
+
+Lemma prep_param_defs_length {K} b i xs : length (@param_defs K b i xs) = length xs.
+Proof.
+  revert i. induction xs as [|x rest IH]; intro i; cbn [param_defs length];
+    [reflexivity|now rewrite IH].
+Qed.
+
+(** * Preparation key budgets *)
+
+(** The common scale contains every key and trie coefficient used during preparation. *)
+Definition prep_scale : N :=
+  (PTrieT.c_trie + PointKey.c_key + PointEdge.c_key + BlockEdge.c_key + 16)%N.
+
+(** One syntax item pays for any encoded-key lookup or insertion at its source width. *)
+Definition prep_atom {K G} (p : func positive K G) : N :=
+  (1024 * prep_scale * prep_width p)%N.
+
+(** The tuple encodings used by preparation stay within this uniform width allowance. *)
+Definition prep_key_bounded {K G} (p : func positive K G) (key : positive) : Prop :=
+  Pos.size_nat key <= 128 * (function_width p + 1).
+
+Lemma prep_scale_positive : (16 <= prep_scale)%N.
+Proof.
+  unfold prep_scale. lia.
+Qed.
+
+Lemma prep_atom_positive {K G} (p : func positive K G) : (1 <= prep_atom p)%N.
+Proof.
+  pose proof prep_scale_positive as Hscale. pose proof (prep_width_positive p) as Hwidth.
+  unfold prep_atom. change (1 * 1 * 1 <= 1024 * prep_scale * prep_width p)%N.
+  repeat apply N.mul_le_mono; lia.
+Qed.
+
+Lemma prep_width_atom {K G} (p : func positive K G) : (prep_width p <= prep_atom p)%N.
+Proof.
+  pose proof prep_scale_positive as Hscale. unfold prep_atom.
+  rewrite <- (N.mul_1_l (prep_width p)) at 1. apply N.mul_le_mono_r.
+  nia.
+Qed.
+
+Lemma prep_units_inflation {K G} (p : func positive K G) units :
+  (N.of_nat units <= prep_atom p * N.of_nat units)%N.
+Proof.
+  rewrite <- (N.mul_1_l (N.of_nat units)) at 1. apply N.mul_le_mono_r.
+  apply prep_atom_positive.
+Qed.
+
+Lemma prep_units_positive {K G} (p : func positive K G) units :
+  1 <= units -> (1 <= prep_atom p * N.of_nat units)%N.
+Proof.
+  intro Hpositive. eapply N.le_trans; [|apply prep_units_inflation]. lia.
+Qed.
+
+Lemma prep_product {K G} (p : func positive K G) c units :
+  (c <= prep_scale -> units <= 129 * prep_width p -> c * units <= prep_atom p)%N.
+Proof.
+  intros Hc Hu. eapply N.le_trans.
+  - apply N.mul_le_mono; [exact Hc|exact Hu].
+  - unfold prep_atom. replace (prep_scale * (129 * prep_width p))%N with
+      (129 * (prep_scale * prep_width p))%N by ring.
+    replace (1024 * prep_scale * prep_width p)%N with
+      (1024 * (prep_scale * prep_width p))%N by ring.
+    apply N.mul_le_mono_r. lia.
+Qed.
+
+Lemma prep_key_units {K G} (p : func positive K G) key : prep_key_bounded p key ->
+  (N.of_nat (Pos.size_nat key + 1) <= 129 * prep_width p)%N.
+Proof.
+  intro Hkey. unfold prep_key_bounded in Hkey. unfold prep_width.
+  rewrite Nat2N.inj_add. lia.
+Qed.
+
+Lemma prep_set_clock {K G A} (p : func positive K G) key (value : A) table :
+  prep_key_bounded p key -> (PTrieCode.T_set key value table <= prep_atom p)%N.
+Proof.
+  intro Hkey. eapply N.le_trans; [apply PTrieT.T_set_le|]. apply prep_product.
+  - unfold prep_scale; lia.
+  - now apply prep_key_units.
+Qed.
+
+Lemma prep_get_clock {K G A} (p : func positive K G) key (table : ptrie A) :
+  prep_key_bounded p key -> (T_trie_get key table <= prep_atom p)%N.
+Proof.
+  intro Hkey. rewrite PTrieT.trie_get_clock.
+  apply prep_product; [pose proof prep_scale_positive; lia|].
+  pose proof (prep_key_units p key Hkey). lia.
+Qed.
+
+Lemma prep_row_clock {K G A} (p : func positive K G) key (table : ptrie (list A)) :
+  prep_key_bounded p key -> (T_index_row table key <= 2 * prep_atom p)%N.
+Proof.
+  intro Hkey. pose proof (prep_get_clock p key table Hkey) as Hget.
+  pose proof (prep_atom_positive p) as Hpositive. time_unfold @T_index_row.
+  destruct (trie_get key table); nia.
+Qed.
+
+Lemma prep_listed_clock {K G A} (p : func positive K G) key (table : ptrie A) :
+  prep_key_bounded p key -> (T_is_listed table key <= 2 * prep_atom p)%N.
+Proof.
+  intro Hkey. pose proof (prep_get_clock p key table Hkey) as Hget.
+  pose proof (prep_atom_positive p) as Hpositive. time_unfold @T_is_listed.
+  destruct (trie_get key table); nia.
+Qed.
+
+Lemma prep_id_key {K G} (p : func positive K G) x :
+  In x (function_ids p) -> prep_key_bounded p x.
+Proof.
+  intro Hin. pose proof (function_id_width p x Hin). unfold prep_key_bounded; lia.
+Qed.
+
+Lemma prep_entry_key {K G} (p : func positive K G) :
+  prep_key_bounded p (entry _ _ _ p).
+Proof.
+  apply prep_id_key. unfold function_ids; now left.
+Qed.
+
+Lemma prep_block_key {K G} (p : func positive K G) b body :
+  In (b, body) (blocks _ _ _ p) -> prep_key_bounded p b.
+Proof.
+  intro Hin. apply prep_id_key. now apply (block_id_in_function p b body).
+Qed.
+
+Lemma prep_var_key {K G} (p : func positive K G) x :
+  In x (function_vars p) -> prep_key_bounded p x.
+Proof.
+  intro Hin. apply prep_id_key. unfold function_ids; right. apply in_or_app; now left.
+Qed.
+
+Lemma prep_point_key {K G} (p : func positive K G) n :
+  In n (lang_points (lang_prepare p)) -> prep_key_bounded p (PointKey.encode n).
+Proof.
+  intro Hin. pose proof (lang_point_key_width p n Hin) as Hwidth.
+  change (Pos.size_nat (PointKey.encode n) <= 4 * (function_width p + 1)) in Hwidth.
+  unfold prep_key_bounded. lia.
+Qed.
+
+Lemma prep_point_edge_key {K G} (p : func positive K G) e :
+  In e (lang_point_edges (lang_prepare p)) -> prep_key_bounded p (PointEdge.encode e).
+Proof.
+  intro Hin. destruct (lang_point_edges_nodes _ _ Hin) as [Hsrc Hdst].
+  pose proof (lang_point_key_width _ _ Hsrc) as Hsrc_key.
+  pose proof (lang_point_key_width _ _ Hdst) as Hdst_key.
+  assert (Hblock : forall be, point_block_edge e = Some be ->
+    BlockEdge.bits be <= 4 * (function_width p + 1)).
+  { intros be Hbe. destruct (lang_point_edge_block_sides _ _ _ Hin Hbe) as [Hs Ht].
+    destruct (lang_point_bounds _ _ Hsrc) as [Hsrc_block _].
+    destruct (lang_point_bounds _ _ Hdst) as [Hdst_block _].
+    apply block_edge_width_from_ends; [now rewrite Hs|now rewrite Ht]. }
+  change (PointEdge.bits e <= 128 * (function_width p + 1)).
+  unfold PointEdge.bits, PointEdge.encode, point_edge_tuple,
+    PointEdgeTupleKey.encode, PointTargetEdgeKey.encode, pair_code.
+  cbn [fst snd]. rewrite !glue_bits.
+  fold (PointKey.bits (point_src e)). fold (PointKey.bits (point_dst e)).
+  destruct (point_block_edge e) as [be|] eqn:Hbe.
+  - specialize (Hblock be eq_refl). cbn [OptionalBlockEdgeKey.encode option_code Pos.size_nat].
+    fold (BlockEdge.bits be). lia.
+  - cbn [OptionalBlockEdgeKey.encode option_code Pos.size_nat]. lia.
+Qed.
+
+Lemma prep_point_encode {K G} (p : func positive K G) n :
+  In n (lang_points (lang_prepare p)) -> (PointKey.T_encode n <= prep_atom p)%N.
+Proof.
+  intro Hin. eapply N.le_trans; [apply PointKey.T_encode_le|]. apply prep_product.
+  - unfold prep_scale; lia.
+  - apply prep_key_units. now apply prep_point_key.
+Qed.
+
+Lemma prep_point_edge_encode {K G} (p : func positive K G) e :
+  In e (lang_point_edges (lang_prepare p)) -> (PointEdge.T_encode e <= prep_atom p)%N.
+Proof.
+  intro Hin. eapply N.le_trans; [apply PointEdge.T_encode_le|]. apply prep_product.
+  - unfold prep_scale; lia.
+  - apply prep_key_units. now apply prep_point_edge_key.
+Qed.
+
+(** * Preparation syntax counts *)
+
+(** A retained block pays for its header, instructions, and variable occurrences. *)
+Definition prep_body_units {K G} (body : block positive K G) : nat :=
+  1 + length (code _ _ _ body) + length (present_body_vars body).
+
+Lemma prep_weight_one {A} (xs : list A) : present_weight (fun _ => 1) xs = length xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  change (S (present_weight (fun _ : A => 1) rest) = S (length rest)).
+  now rewrite IH.
+Qed.
+
+Lemma prep_source_units {K G} (p : func positive K G) :
+  present_weight (fun item => prep_body_units (snd item)) (blocks _ _ _ p) <=
+    function_size p.
+Proof.
+  unfold prep_body_units. rewrite !present_weight_plus, prep_weight_one.
+  unfold function_size, function_vars. rewrite length_app, present_flat_length.
+  unfold present_body_vars, present_weight. lia.
+Qed.
+
+Lemma prep_kept_units {K G} (p : func positive K G) :
+  present_weight (fun item => prep_body_units (snd item))
+    (first_blocks (blocks _ _ _ p)) <= function_size p.
+Proof.
+  rewrite first_blocks_selected. eapply Nat.le_trans; [apply selected_blocks_weight|].
+  apply prep_source_units.
+Qed.
+
+Lemma prep_weight_length {A} (weight : A -> nat) xs :
+  (forall x, In x xs -> 1 <= weight x) -> length xs <= present_weight weight xs.
+Proof.
+  induction xs as [|x rest IH]; intro Hpositive; [reflexivity|].
+  pose proof (Hpositive x (or_introl eq_refl)) as Hhead.
+  specialize (IH ltac:(intros y Hy; apply Hpositive; now right)).
+  change (S (length rest) <= weight x + present_weight weight rest). lia.
+Qed.
+
+Lemma prep_kept_length {K G} (p : func positive K G) :
+  length (first_blocks (blocks _ _ _ p)) <= function_size p.
+Proof.
+  eapply Nat.le_trans; [|apply prep_kept_units]. apply prep_weight_length.
+  intros item Hin. unfold prep_body_units; lia.
+Qed.
+
+Lemma prep_kept_original {K G} (p : func positive K G) item :
+  In item (first_blocks (blocks _ _ _ p)) -> In item (blocks _ _ _ p).
+Proof.
+  rewrite first_blocks_selected. intro Hin. now apply selected_blocks_in in Hin as [Hin _].
+Qed.
+
+Lemma prep_kept_body_vars {K G} (p : func positive K G) :
+  length (flat_map (fun item => present_body_vars (snd item))
+    (first_blocks (blocks _ _ _ p))) <= function_size p.
+Proof.
+  rewrite present_flat_length. eapply Nat.le_trans; [|apply prep_kept_units].
+  apply present_weight_mono. intros item Hin. unfold prep_body_units; lia.
+Qed.
+
+Lemma prep_input_length {K G} (p : func positive K G) :
+  length (inputs _ _ _ p) <= function_size p.
+Proof.
+  unfold function_size, function_vars. rewrite length_app. lia.
+Qed.
+
+Lemma prep_source_length {K G} (p : func positive K G) :
+  length (blocks _ _ _ p) <= function_size p.
+Proof.
+  unfold function_size; lia.
+Qed.
+
+Lemma prep_kept_key {K G} (p : func positive K G) item :
+  In item (first_blocks (blocks _ _ _ p)) -> prep_key_bounded p (fst item).
+Proof.
+  intro Hin. apply prep_kept_original in Hin.
+  destruct item as [b body]; cbn [fst]. now apply (prep_block_key p b body).
+Qed.
+
+Lemma prep_kept_var_key {K G} (p : func positive K G) item x :
+  In item (first_blocks (blocks _ _ _ p)) -> In x (present_body_vars (snd item)) ->
+  prep_key_bounded p x.
+Proof.
+  intros Hitem Hx. apply prep_var_key. now apply (kept_body_vars_in_function p item x).
+Qed.
+
+Lemma prep_block_edge_key {K G} (p : func positive K G) edge :
+  In edge (lang_edges (lang_prepare p)) -> prep_key_bounded p (BlockEdge.encode edge).
+Proof.
+  intro Hin. destruct (lang_edges_shape p edge Hin) as [body [Hsource [Htarget Hlisted]]].
+  apply prep_kept_original in Hsource.
+  pose proof (function_id_width p (edge_source edge)
+    (block_id_in_function p (edge_source edge) body Hsource)) as Hsrc.
+  pose proof (function_id_width p (edge_target edge)
+    (target_in_function p (edge_source edge) body (edge_target edge) Hsource Htarget)) as Hdst.
+  pose proof (block_edge_width_from_ends edge (function_width p) Hsrc Hdst) as Hwidth.
+  change (BlockEdge.bits edge <= 128 * (function_width p + 1)). lia.
+Qed.
+
+Lemma prep_block_edge_encode {K G} (p : func positive K G) edge :
+  In edge (lang_edges (lang_prepare p)) -> (BlockEdge.T_encode edge <= prep_atom p)%N.
+Proof.
+  intro Hin. eapply N.le_trans; [apply BlockEdge.T_encode_le|]. apply prep_product.
+  - unfold prep_scale; lia.
+  - apply prep_key_units. now apply prep_block_edge_key.
+Qed.
+
+Lemma prep_block_args_count {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) :
+  present_weight (fun row => length (snd row))
+    (flat_map (fun item => listed_edge_args kept (fst item) (term _ _ _ (snd item))) bs) <=
+    length (flat_map (fun item => present_body_vars (snd item)) bs).
+Proof.
+  rewrite present_weight_flat_map, present_flat_length. apply present_weight_mono.
+  intros item Hin. pose proof (listed_edge_args_length kept (fst item)
+    (term _ _ _ (snd item))) as Hargs.
+  unfold present_body_vars. rewrite !length_app. lia.
+Qed.
+
+Lemma prep_params_row_length {K G} (p : func positive K G) key :
+  length (index_row (first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item)))
+      (first_blocks (blocks _ _ _ p)))) key) <= function_size p.
+Proof.
+  pose proof (present_first_table_count PosKeyCode.encode [key]
+    (map (fun item => (fst item, params _ _ _ (snd item)))
+      (first_blocks (blocks _ _ _ p)))
+    ltac:(constructor; [tauto|constructor])) as Hcount.
+  change (length (index_row (first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item)))
+      (first_blocks (blocks _ _ _ p)))) key) + 0 <=
+    present_weight (fun row => length (snd row))
+      (map (fun item => (fst item, params _ _ _ (snd item)))
+        (first_blocks (blocks _ _ _ p)))) in Hcount.
+  rewrite present_weight_map in Hcount. cbn [snd] in Hcount.
+  rewrite Nat.add_0_r in Hcount.
+  eapply Nat.le_trans; [exact Hcount|]. eapply Nat.le_trans; [|apply prep_kept_units].
+  apply present_weight_mono. intros item Hin. unfold prep_body_units, present_body_vars.
+  rewrite !length_app. lia.
+Qed.
+
+Lemma prep_pipeline_counts {K G} (p : func positive K G) :
+  let bs := first_blocks (blocks _ _ _ p) in
+  let kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs) in
+  let ss := map (summarize kept) bs in
+  let block_rows := flat_map (fun item =>
+    listed_edge_args kept (fst item) (term _ _ _ (snd item))) bs in
+  let rows := flat_map (fun s => summary_internal s ++ summary_outgoing s) ss in
+  length bs <= function_size p /\
+  length ss <= function_size p /\
+  length block_rows <= 2 * function_size p /\
+  length rows <= 5 * function_size p /\
+  length (flat_map summary_points ss) <= 5 * function_size p /\
+  present_weight present_row_vars rows <= 2 * function_size p /\
+  present_weight (fun s => length (summary_returns s)) ss <= 2 * function_size p /\
+  present_weight (fun row => length (snd row)) block_rows <= function_size p.
+Proof.
+  cbn zeta.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  set (ss := map (summarize kept) bs).
+  set (block_rows := flat_map (fun item =>
+    listed_edge_args kept (fst item) (term _ _ _ (snd item))) bs).
+  set (rows := flat_map (fun s => summary_internal s ++ summary_outgoing s) ss).
+  pose proof (prep_kept_length p) as Hblocks. fold bs in Hblocks.
+  assert (Hsummaries : length ss = length bs) by (unfold ss; apply length_map).
+  pose proof (prep_kept_body_vars p) as Hbodyvars. fold bs in Hbodyvars.
+  pose proof (lang_edges_length p) as Hedges.
+  change (length (map fst block_rows) <= 2 * length (map fst bs)) in Hedges.
+  rewrite !length_map in Hedges.
+  pose proof (lang_structure_length p) as Hstructure.
+  change (length (flat_map summary_points ss) +
+    length (map (fun row => fst (fst row)) rows) <= 5 * function_size p) in Hstructure.
+  rewrite length_map in Hstructure.
+  pose proof (summaries_vars_count kept bs) as Hvars. fold ss rows in Hvars.
+  pose proof (prep_block_args_count kept bs) as Hargs. fold block_rows in Hargs.
+  change (length bs <= function_size p /\
+    length ss <= function_size p /\
+    length block_rows <= 2 * function_size p /\
+    length rows <= 5 * function_size p /\
+    length (flat_map summary_points ss) <= 5 * function_size p /\
+    present_weight present_row_vars rows <= 2 * function_size p /\
+    present_weight (fun s => length (summary_returns s)) ss <= 2 * function_size p /\
+    present_weight (fun row => length (snd row)) block_rows <= function_size p).
+  repeat split; try lia.
+  eapply Nat.le_trans; [apply Nat.le_add_l|exact Hstructure].
+Qed.
+
+(** * Preparation exit clocks *)
+
+Lemma prep_filter_uniform {A} (predicate : A -> bool) Tpredicate xs bound :
+  (forall x, In x xs -> (Tpredicate x <= bound)%N) ->
+  (List.T_filter predicate Tpredicate xs <= (bound + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hbound.
+  - time_step.
+  - pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+    specialize (IH ltac:(intros y Hy; apply Hbound; now right)).
+    time_unfold @List.T_filter. destruct (predicate x);
+      change (1 + (Tpredicate x + List.T_filter predicate Tpredicate rest) <=
+        (bound + 1) * N.of_nat (S (length rest)) + 1)%N;
+      rewrite Nat2N.inj_succ; nia.
+Qed.
+
+Lemma prep_exit_args_clock {G} b (e : exit positive G) : T_exit_edge_args b e = 1%N.
+Proof.
+  destruct e; reflexivity.
+Qed.
+
+Lemma prep_exit_guards_clock {G} b (e : exit positive G) : T_exit_guards b e = 1%N.
+Proof.
+  destruct e; reflexivity.
+Qed.
+
+Lemma prep_guard_uses_clock {G} (e : exit positive G) : T_guard_uses e = 1%N.
+Proof.
+  destruct e; reflexivity.
+Qed.
+
+Lemma prep_exit_returns_clock {G} (e : exit positive G) : T_exit_returns e = 1%N.
+Proof.
+  destruct e; reflexivity.
+Qed.
+
+Lemma prep_exit_args_length {G} b (e : exit positive G) : length (exit_edge_args b e) <= 2.
+Proof.
+  destruct e; cbn [exit_edge_args length]; lia.
+Qed.
+
+Lemma prep_exit_guards_length {G} b (e : exit positive G) : length (exit_guards b e) <= 2.
+Proof.
+  destruct e; cbn [exit_guards length]; lia.
+Qed.
+
+Lemma prep_listed_args_clock {K G A} (p : func positive K G) (kept : ptrie A) b
+    (e : exit positive G) :
+  (forall target, In target (exit_targets e) -> prep_key_bounded p target) ->
+  (T_listed_edge_args kept b e <= 16 * prep_atom p)%N.
+Proof.
+  intro Htargets. pose proof (prep_atom_positive p) as Hpositive.
+  pose proof (prep_exit_args_length b e) as Hlength.
+  time_unfold @T_listed_edge_args. rewrite prep_exit_args_clock.
+  lazymatch goal with
+  | |- context [List.T_filter ?predicate ?clock (exit_edge_args b e)] =>
+    assert (Hfilter : (List.T_filter predicate clock (exit_edge_args b e) <=
+      (5 * prep_atom p + 1) * N.of_nat (length (exit_edge_args b e)) + 1)%N)
+  end.
+  { apply prep_filter_uniform. intros [edge args] Hin.
+    destruct (exit_edge_args_shape b e edge args Hin) as [_ Htarget].
+    pose proof (prep_listed_clock p (edge_target edge) kept (Htargets _ Htarget)) as Hlisted.
+    time_simpl. cbn [fst snd]. nia. }
+  assert (Hsmall : ((5 * prep_atom p + 1) * N.of_nat (length (exit_edge_args b e)) <=
+    (5 * prep_atom p + 1) * 2)%N) by (apply N.mul_le_mono_l; lia).
+  nia.
+Qed.
+
+Lemma prep_exit_guard_target {G} b (e : exit positive G) edge guards :
+  In (edge, guards) (exit_guards b e) -> In (edge_target edge) (exit_targets e).
+Proof.
+  destruct e; cbn [exit_guards exit_targets]; intro Hin.
+  - destruct Hin as [Heq|[]]; inversion Heq; subst; cbn; auto.
+  - destruct Hin as [Heq|[Heq|[]]]; inversion Heq; subst; cbn; auto.
+  - contradiction.
+Qed.
+
+Lemma prep_listed_guards_clock {K G A} (p : func positive K G) (kept : ptrie A) b
+    (e : exit positive G) :
+  (forall target, In target (exit_targets e) -> prep_key_bounded p target) ->
+  (T_listed_guards kept b e <= 16 * prep_atom p)%N.
+Proof.
+  intro Htargets. pose proof (prep_atom_positive p) as Hpositive.
+  pose proof (prep_exit_guards_length b e) as Hlength.
+  time_unfold @T_listed_guards. rewrite prep_exit_guards_clock.
+  lazymatch goal with
+  | |- context [List.T_filter ?predicate ?clock (exit_guards b e)] =>
+    assert (Hfilter : (List.T_filter predicate clock (exit_guards b e) <=
+      (5 * prep_atom p + 1) * N.of_nat (length (exit_guards b e)) + 1)%N)
+  end.
+  { apply prep_filter_uniform. intros [edge guards] Hin.
+    pose proof (prep_exit_guard_target b e edge guards Hin) as Htarget.
+    pose proof (prep_listed_clock p (edge_target edge) kept (Htargets _ Htarget)) as Hlisted.
+    time_simpl. cbn [fst snd]. nia. }
+  assert (Hsmall : ((5 * prep_atom p + 1) * N.of_nat (length (exit_guards b e)) <=
+    (5 * prep_atom p + 1) * 2)%N) by (apply N.mul_le_mono_l; lia).
+  nia.
+Qed.
+
+Lemma prep_listed_args_length {A G} (kept : ptrie A) b (e : exit positive G) :
+  length (listed_edge_args kept b e) <= 2.
+Proof.
+  unfold listed_edge_args. eapply Nat.le_trans; [apply filter_length_le|].
+  apply prep_exit_args_length.
+Qed.
+
+Lemma prep_listed_guards_length {A G} (kept : ptrie A) b (e : exit positive G) :
+  length (listed_guards kept b e) <= 2.
+Proof.
+  unfold listed_guards. eapply Nat.le_trans; [apply filter_length_le|].
+  apply prep_exit_guards_length.
+Qed.
+
+Lemma prep_guard_uses_length {G} (e : exit positive G) :
+  length (guard_uses e) <= length (exit_uses e).
+Proof.
+  destruct e; cbn [guard_uses exit_uses length]; repeat rewrite length_app; lia.
+Qed.
+
+Lemma prep_guard_edge_keys {A G} (kept : ptrie A) b (e : exit positive G) :
+  map fst (listed_guards kept b e) = map fst (listed_edge_args kept b e).
+Proof.
+  destruct e; cbn [listed_guards listed_edge_args exit_guards exit_edge_args filter
+    fst edge_target]; repeat match goal with
+    | |- context [if ?flag then _ else _] => destruct flag
+    end; reflexivity.
+Qed.
+
+(** * Preparation definition clocks *)
+
+Lemma prep_block_defs_length {K G} (body : block positive K G) :
+  length (block_defs body) = length (params _ _ _ body) + length (code _ _ _ body).
+Proof.
+  unfold block_defs. now rewrite length_app, length_map.
+Qed.
+
+Lemma prep_block_defs_vars {K G} (body : block positive K G) x :
+  In x (block_defs body) -> In x (present_body_vars body).
+Proof.
+  unfold block_defs, present_body_vars. intro Hin. apply in_app_or in Hin as [Hparam|Hcode].
+  - apply in_or_app; now left.
+  - apply in_or_app; right. apply in_or_app; left.
+    apply in_map_iff in Hcode as [[[dst op] args] [Heq Hin]]. cbn in Heq; subst dst.
+    apply in_flat_map; exists (x, op, args). split; [exact Hin|now left].
+Qed.
+
+Lemma prep_block_defs_units {K G} (body : block positive K G) :
+  length (block_defs body) + 1 <= prep_body_units body.
+Proof.
+  rewrite prep_block_defs_length. unfold prep_body_units, present_body_vars.
+  rewrite !length_app. lia.
+Qed.
+
+Lemma prep_param_defs_keys {K} b i xs : map fst (@param_defs K b i xs) = xs.
+Proof.
+  revert i. induction xs as [|x rest IH]; intro i; cbn [param_defs map fst];
+    [reflexivity|now rewrite IH].
+Qed.
+
+Lemma prep_value_defs_keys {K G} (item : positive * block positive K G) :
+  map fst (block_value_defs item) = block_defs (snd item).
+Proof.
+  unfold block_value_defs, block_defs. rewrite map_app, prep_param_defs_keys, map_map.
+  reflexivity.
+Qed.
+
+Lemma prep_value_defs_length {K G} (item : positive * block positive K G) :
+  length (block_value_defs item) = length (block_defs (snd item)).
+Proof.
+  rewrite <- prep_value_defs_keys, length_map. reflexivity.
+Qed.
+
+Lemma prep_homes_keys {K G} (item : positive * block positive K G) :
+  map fst (block_homes item) = block_defs (snd item).
+Proof.
+  unfold block_homes. rewrite map_map. apply map_id.
+Qed.
+
+Lemma prep_homes_length {K G} (item : positive * block positive K G) :
+  length (block_homes item) = length (block_defs (snd item)).
+Proof.
+  unfold block_homes. apply length_map.
+Qed.
+
+Lemma prep_block_defs_clock {K G} (body : block positive K G) :
+  (T_block_defs body <=
+    8 * N.of_nat (length (params _ _ _ body) + length (code _ _ _ body) + 1))%N.
+Proof.
+  pose proof (Datatypes.T_app_le (params _ _ _ body)
+    (map (fun instruction => fst (fst instruction)) (code _ _ _ body))) as Happend.
+  time_unfold @T_block_defs. time_simpl.
+  lazymatch goal with
+  | |- context [ListDef.T_map ?f ?Tf (code _ _ _ body)] =>
+    pose proof (prep_map_uniform f Tf (code _ _ _ body) 3%N
+      ltac:(intros item Hin; time_simpl; lia)) as Hmap
+  end.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+Lemma prep_block_homes_clock {K G} (item : positive * block positive K G) :
+  (T_block_homes item <= 16 * N.of_nat (prep_body_units (snd item)))%N.
+Proof.
+  pose proof (prep_block_defs_clock (snd item)) as Hdefs.
+  pose proof (prep_block_defs_units (snd item)) as Hcount.
+  pose proof (prep_block_defs_length (snd item)) as Hlength.
+  time_unfold @T_block_homes. time_simpl.
+  lazymatch goal with
+  | |- context [ListDef.T_map ?f ?Tf (block_defs (snd item))] =>
+    pose proof (prep_map_uniform f Tf (block_defs (snd item)) 2%N
+      ltac:(intros x Hin; time_simpl; lia)) as Hmap
+  end.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+Lemma prep_block_values_clock {K G} (item : positive * block positive K G) :
+  (T_block_value_defs item <= 16 * N.of_nat (prep_body_units (snd item)))%N.
+Proof.
+  pose proof (prep_param_defs_clock (K := K) (fst item) 0
+    (params _ _ _ (snd item))) as Hparams.
+  pose proof (Datatypes.T_app_le (param_defs (K := K) (fst item) 0
+    (params _ _ _ (snd item)))
+    (map (fun i => (fst (fst i), Op (snd (fst i)) (snd i))) (code _ _ _ (snd item))))
+    as Happend.
+  rewrite prep_param_defs_length in Happend.
+  pose proof (prep_block_defs_units (snd item)) as Hcount.
+  rewrite prep_block_defs_length in Hcount.
+  time_unfold @T_block_value_defs. time_simpl.
+  lazymatch goal with
+  | |- context [ListDef.T_map ?f ?Tf (code _ _ _ (snd item))] =>
+    pose proof (prep_map_uniform f Tf (code _ _ _ (snd item)) 6%N
+      ltac:(intros instruction Hin; time_simpl; lia)) as Hmap
+  end.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+(** * Preparation table clocks *)
+
+Lemma prep_first_clock {K G A B} (p : func positive K G) (key : A -> positive)
+    Tkey (rows : list (A * B)) :
+  (forall row, In row rows -> (Tkey (fst row) <= prep_atom p)%N) ->
+  (forall row, In row rows -> prep_key_bounded p (key (fst row))) ->
+  (T_first_table key Tkey rows <= 8 * prep_atom p * N.of_nat (length rows + 1))%N.
+Proof.
+  intros Hclock Hwidth. apply prep_first_table_clock; [apply prep_atom_positive|exact Hclock|].
+  intros row Hin table. apply prep_set_clock. now apply Hwidth.
+Qed.
+
+Lemma prep_multi_clock {K G A} (p : func positive K G) (key : A -> positive)
+    Tkey (rows : list A) :
+  (forall row, In row rows -> (Tkey row <= 4 * prep_atom p)%N) ->
+  (forall row, In row rows -> prep_key_bounded p (key row)) ->
+  (T_multi_table key Tkey rows <= 32 * prep_atom p * N.of_nat (length rows + 1))%N.
+Proof.
+  intros Hclock Hwidth. pose proof (prep_atom_positive p) as Hpositive.
+  replace (32 * prep_atom p * N.of_nat (length rows + 1))%N with
+    (8 * (4 * prep_atom p) * N.of_nat (length rows + 1))%N by ring.
+  apply prep_multi_table_clock; [lia|exact Hclock| |].
+  - intros row Hin table. pose proof (prep_row_clock p (key row) table (Hwidth row Hin)); lia.
+  - intros row Hin table. pose proof (prep_set_clock p (key row)
+      (row :: index_row table (key row)) table (Hwidth row Hin)); lia.
+Qed.
+
+Lemma prep_first_positive_clock {K G A} (p : func positive K G)
+    (rows : list (positive * A)) :
+  (forall row, In row rows -> prep_key_bounded p (fst row)) ->
+  (T_first_table PosKeyCode.encode PosKeyT.T_encode rows <=
+    8 * prep_atom p * N.of_nat (length rows + 1))%N.
+Proof.
+  intro Hwidth. apply prep_first_clock; [|exact Hwidth].
+  intros row Hin. time_simpl. apply prep_atom_positive.
+Qed.
+
+Lemma prep_first_point_clock {K G A} (p : func positive K G)
+    (rows : list (point_key * A)) :
+  (forall row, In row rows -> In (fst row) (lang_points (lang_prepare p))) ->
+  (T_first_table PointKey.encode PointKey.T_encode rows <=
+    8 * prep_atom p * N.of_nat (length rows + 1))%N.
+Proof.
+  intro Hkeys. apply prep_first_clock.
+  - intros row Hin. apply prep_point_encode. now apply Hkeys.
+  - intros row Hin. apply prep_point_key. now apply Hkeys.
+Qed.
+
+Lemma prep_first_point_edge_clock {K G A} (p : func positive K G)
+    (rows : list (point_edge * A)) :
+  (forall row, In row rows -> In (fst row) (lang_point_edges (lang_prepare p))) ->
+  (T_first_table PointEdge.encode PointEdge.T_encode rows <=
+    8 * prep_atom p * N.of_nat (length rows + 1))%N.
+Proof.
+  intro Hkeys. apply prep_first_clock.
+  - intros row Hin. apply prep_point_edge_encode. now apply Hkeys.
+  - intros row Hin. apply prep_point_edge_key. now apply Hkeys.
+Qed.
+
+Lemma prep_first_block_edge_clock {K G A} (p : func positive K G)
+    (rows : list (block_edge * A)) :
+  (forall row, In row rows -> In (fst row) (lang_edges (lang_prepare p))) ->
+  (T_first_table BlockEdge.encode BlockEdge.T_encode rows <=
+    8 * prep_atom p * N.of_nat (length rows + 1))%N.
+Proof.
+  intro Hkeys. apply prep_first_clock.
+  - intros row Hin. apply prep_block_edge_encode. now apply Hkeys.
+  - intros row Hin. apply prep_block_edge_key. now apply Hkeys.
+Qed.
+
+(** * Preparation aggregate budgets *)
+
+(** The total preparation budget charges each source item once at the common key cost. *)
+Definition prep_total {K G} (p : func positive K G) : N :=
+  (prep_atom p * N.of_nat (function_size p + 1))%N.
+
+Lemma prep_total_positive {K G} (p : func positive K G) : (1 <= prep_total p)%N.
+Proof.
+  unfold prep_total. apply prep_units_positive. lia.
+Qed.
+
+Lemma prep_atom_total {K G} (p : func positive K G) : (prep_atom p <= prep_total p)%N.
+Proof.
+  unfold prep_total. rewrite <- (N.mul_1_r (prep_atom p)) at 1.
+  apply N.mul_le_mono_l. lia.
+Qed.
+
+Lemma prep_count_cost {K G} (p : func positive K G) time price count factor :
+  (time <= price * prep_atom p * N.of_nat (count + 1))%N ->
+  count <= factor * function_size p ->
+  (time <= price * N.of_nat (factor + 1) * prep_total p)%N.
+Proof.
+  intros Htime Hcount.
+  assert (Hcount' : count + 1 <= (factor + 1) * (function_size p + 1)) by nia.
+  apply time_of_nat_le in Hcount'. rewrite Nat2N.inj_mul in Hcount'.
+  eapply N.le_trans; [exact Htime|].
+  replace (price * N.of_nat (factor + 1) * prep_total p)%N with
+    (price * prep_atom p * (N.of_nat (factor + 1) * N.of_nat (function_size p + 1)))%N
+    by (unfold prep_total; ring).
+  now apply N.mul_le_mono_l.
+Qed.
+
+Lemma prep_weight_cost {K G} (p : func positive K G) time price units :
+  (time <= (price * prep_atom p + 1) * N.of_nat units + 1)%N ->
+  units <= function_size p ->
+  (time <= (price + 2) * prep_total p)%N.
+Proof.
+  intros Htime Hcount. pose proof (prep_atom_positive p) as Hatom.
+  pose proof (prep_total_positive p) as Htotal.
+  assert (Hcoefficient : (price * prep_atom p + 1 <= (price + 1) * prep_atom p)%N) by nia.
+  assert (Hwork : ((price * prep_atom p + 1) * N.of_nat units <=
+    (price + 1) * prep_total p)%N).
+  { unfold prep_total. rewrite N.mul_assoc.
+    apply N.mul_le_mono; [exact Hcoefficient|lia]. }
+  replace ((price + 2) * prep_total p)%N with
+    ((price + 1) * prep_total p + prep_total p)%N by ring.
+  lia.
+Qed.
+
+Lemma prep_weight_factor_cost {K G} (p : func positive K G) time price units factor :
+  (time <= (price * prep_atom p + 1) * N.of_nat units + 1)%N ->
+  units <= factor * function_size p ->
+  (time <= (price + 2) * N.of_nat (factor + 1) * prep_total p)%N.
+Proof.
+  intros Htime Hcount. pose proof (prep_atom_positive p) as Hatom.
+  pose proof (prep_units_inflation p units) as Hunits.
+  apply (prep_count_cost p time (price + 2)%N units factor); [|exact Hcount].
+  rewrite Nat2N.inj_add. nia.
+Qed.
+
+Lemma prep_map_total {K G A B} (p : func positive K G) (f : A -> B) Tf xs price factor :
+  (forall x, In x xs -> (Tf x <= price * prep_atom p)%N) ->
+  length xs <= factor * function_size p ->
+  (ListDef.T_map f Tf xs <= (price + 2) * N.of_nat (factor + 1) * prep_total p)%N.
+Proof.
+  intros Hclock Hcount. apply (prep_weight_factor_cost p _ price (length xs) factor).
+  - now apply prep_map_uniform.
+  - exact Hcount.
+Qed.
+
+Lemma prep_map_weight_total {K G A B} (p : func positive K G) (f : A -> B)
+    Tf charge xs price factor :
+  (forall x, In x xs -> 1 <= charge x) ->
+  (forall x, In x xs -> (Tf x <= price * prep_atom p * N.of_nat (charge x))%N) ->
+  present_weight charge xs <= factor * function_size p ->
+  (ListDef.T_map f Tf xs <= (price + 2) * N.of_nat (factor + 1) * prep_total p)%N.
+Proof.
+  intros Hpositive Hclock Hcount.
+  apply (prep_weight_factor_cost p _ price (present_weight charge xs) factor).
+  - now apply prep_map_weight.
+  - exact Hcount.
+Qed.
+
+Lemma prep_flat_total {K G A B} (p : func positive K G) (f : A -> list B)
+    Tf charge xs price factor :
+  (forall x, In x xs -> 1 <= charge x) ->
+  (forall x, In x xs -> (Tf x + N.of_nat (length (f x) + 1) <=
+    price * prep_atom p * N.of_nat (charge x))%N) ->
+  present_weight charge xs <= factor * function_size p ->
+  (Code.List.T_flat_map f Tf xs <=
+    (price + 2) * N.of_nat (factor + 1) * prep_total p)%N.
+Proof.
+  intros Hpositive Hclock Hcount.
+  apply (prep_weight_factor_cost p _ price (present_weight charge xs) factor).
+  - now apply prep_flat_weight.
+  - exact Hcount.
+Qed.
+
+Lemma prep_row_defs_charge (rows : list point_row) :
+  present_weight (fun row => 1 + length (snd row)) rows <=
+    length rows + present_weight present_row_vars rows.
+Proof.
+  rewrite present_weight_plus, prep_weight_one. apply Nat.add_le_mono_l.
+  apply present_weight_mono. intros row Hin. unfold present_row_vars; lia.
+Qed.
+
+Lemma prep_summary_points_charge (ss : list block_summary) :
+  present_weight (fun s => 1 + length (summary_points s)) ss =
+    length ss + length (flat_map summary_points ss).
+Proof.
+  rewrite present_weight_plus, prep_weight_one, present_flat_length. reflexivity.
+Qed.
+
+Lemma prep_summary_internal_charge (ss : list block_summary) :
+  present_weight (fun s => 1 + length (summary_internal s)) ss <=
+    length ss + length (flat_map (fun s => summary_internal s ++ summary_outgoing s) ss).
+Proof.
+  rewrite present_weight_plus, prep_weight_one, present_flat_length.
+  apply Nat.add_le_mono_l. apply present_weight_mono. intros s Hin. rewrite length_app; lia.
+Qed.
+
+(** * Preparation summary clocks *)
+
+Lemma prep_summarize_clock {K G A} (p : func positive K G) (kept : ptrie A) item :
+  In item (blocks _ _ _ p) ->
+  (T_summarize kept item <=
+    128 * prep_atom p * N.of_nat (prep_body_units (snd item)))%N.
+Proof.
+  destruct item as [b body]. intro Hitem. cbn [snd].
+  set (units := prep_body_units body).
+  set (budget := (prep_atom p * N.of_nat units)%N).
+  set (cr := code_rows b 1%N (code _ _ _ body)).
+  set (internal := (PointEdge (b, 0%N) (b, 1%N) None, [], params _ _ _ body) :: fst cr).
+  assert (Hunits : 1 <= units) by (unfold units, prep_body_units; lia).
+  assert (Hbudget : (1 <= budget)%N) by now apply prep_units_positive.
+  assert (Hunitpaid : (N.of_nat units <= budget)%N) by apply prep_units_inflation.
+  assert (Hatompaid : (prep_atom p <= budget)%N).
+  { unfold budget. rewrite <- (N.mul_1_r (prep_atom p)) at 1.
+    apply N.mul_le_mono_l. lia. }
+  assert (Hcodecount : length (code _ _ _ body) + 1 <= units)
+    by (unfold units, prep_body_units; lia).
+  assert (Hguardcount : length (guard_uses (term _ _ _ body)) + 1 <= units).
+  { pose proof (prep_guard_uses_length (term _ _ _ body)) as Hguard.
+    unfold units, prep_body_units, present_body_vars. rewrite !length_app. lia. }
+  assert (Hguardpaid : (N.of_nat (length (guard_uses (term _ _ _ body)) + 1) <= budget)%N)
+    by (eapply N.le_trans; [|exact Hunitpaid]; lia).
+  pose proof (block_code_size p b body Hitem) as Hcodesize.
+  pose proof (prep_code_rows_clock p b 1%N (code _ _ _ body)
+    ltac:(rewrite Nat2N.inj_add; lia)) as Hcode.
+  assert (Hcodepaid : (T_code_rows b 1%N (code _ _ _ body) <= 16 * budget)%N).
+  { eapply N.le_trans; [exact Hcode|]. unfold budget.
+    replace (16 * (prep_atom p * N.of_nat units))%N with
+      (16 * prep_atom p * N.of_nat units)%N by ring.
+    apply N.mul_le_mono; [apply N.mul_le_mono_l; apply prep_width_atom|lia]. }
+  assert (Htargets : forall target, In target (exit_targets (term _ _ _ body)) ->
+    prep_key_bounded p target).
+  { intros target Htarget. apply prep_id_key.
+    exact (target_in_function p b body target Hitem Htarget). }
+  pose proof (prep_listed_args_clock p kept b (term _ _ _ body) Htargets) as Hlisted.
+  assert (Hlistedpaid : (T_listed_edge_args kept b (term _ _ _ body) <= 16 * budget)%N).
+  { eapply N.le_trans; [exact Hlisted|]. now apply N.mul_le_mono_l. }
+  assert (Hinternal : length internal <= units).
+  { unfold internal, cr. cbn [length]. rewrite code_rows_length. lia. }
+  pose proof (prep_listed_args_length kept b (term _ _ _ body)) as Houtlength.
+  time_unfold @T_summarize. cbn beta zeta. time_simpl. cbn [fst snd].
+  fold cr internal. rewrite ?prep_guard_uses_clock, ?prep_exit_returns_clock.
+  lazymatch goal with
+  | |- context [ListDef.T_map ?f ?Tf internal] =>
+    assert (Hpoints : (ListDef.T_map f Tf internal <= 6 * budget)%N)
+  end.
+  { eapply N.le_trans.
+    - apply prep_map_uniform with (bound := 4%N). intros row Hin; time_simpl; lia.
+    - lia. }
+  lazymatch goal with
+  | |- context [ListDef.T_map ?f ?Tf (listed_edge_args kept b (term _ _ _ body))] =>
+    assert (Houtgoing : (ListDef.T_map f Tf
+      (listed_edge_args kept b (term _ _ _ body)) <= 36 * budget)%N)
+  end.
+  { eapply N.le_trans.
+    - apply prep_map_uniform with (bound := (16 * budget)%N).
+      intros row Hin. pose proof (Datatypes.T_app_le (guard_uses (term _ _ _ body))
+        (snd row)) as Happend. time_simpl. rewrite ?prep_guard_uses_clock.
+      rewrite Nat2N.inj_add in Hguardpaid. lia.
+    - assert (Hsmall : ((16 * budget + 1) *
+        N.of_nat (length (listed_edge_args kept b (term _ _ _ body))) <=
+        (16 * budget + 1) * 2)%N) by (apply N.mul_le_mono_l; lia).
+      lia. }
+  replace (128 * prep_atom p * N.of_nat units)%N with (128 * budget)%N by
+    (unfold budget; ring).
+  clearbody budget.
+  clear - p b body kept units budget cr internal Hbudget Hcodepaid Hlistedpaid Hpoints Houtgoing.
+  lia.
+Qed.
+
+(** * Preparation block traversal clocks *)
+
+Lemma prep_first_blocks_total {K G} (p : func positive K G) :
+  (T_first_blocks (blocks _ _ _ p) <= prep_total p)%N.
+Proof.
+  pose proof (prep_first_blocks_clock (blocks _ _ _ p) (function_width p)
+    ltac:(intros b body Hin; apply function_id_width;
+      now apply (block_id_in_function p b body))) as Hfirst.
+  assert (Hfactor : ((PTrieT.c_trie + 16) * prep_width p <= prep_atom p)%N).
+  { apply prep_product; [unfold prep_scale; lia|].
+    rewrite <- (N.mul_1_l (prep_width p)) at 1. apply N.mul_le_mono_r; lia. }
+  pose proof (prep_source_length p) as Hlength.
+  eapply N.le_trans; [exact Hfirst|]. fold (prep_width p).
+  replace ((PTrieT.c_trie + 16) * N.of_nat (length (blocks _ _ _ p) + 1) *
+    prep_width p)%N with
+    (((PTrieT.c_trie + 16) * prep_width p) *
+      N.of_nat (length (blocks _ _ _ p) + 1))%N by ring.
+  unfold prep_total. apply N.mul_le_mono; [exact Hfactor|lia].
+Qed.
+
+Lemma prep_summaries_total {K G A} (p : func positive K G) (kept : ptrie A) :
+  (ListDef.T_map (summarize kept) (fun item => T_summarize kept item)
+    (first_blocks (blocks _ _ _ p)) <= 130 * prep_total p)%N.
+Proof.
+  apply (prep_weight_cost p _ 128%N
+    (present_weight (fun item => prep_body_units (snd item))
+      (first_blocks (blocks _ _ _ p)))); [|apply prep_kept_units].
+  apply prep_map_weight.
+  - intros item Hin. unfold prep_body_units; lia.
+  - intros item Hin. apply prep_summarize_clock. now apply prep_kept_original.
+Qed.
+
+Lemma prep_block_rows_total {K G A} (p : func positive K G) (kept : ptrie A) :
+  (Code.List.T_flat_map
+    (fun item => listed_edge_args kept (fst item) (term _ _ _ (snd item)))
+    (fun item => 1 + (Datatypes.T_fst item +
+      (Datatypes.T_snd item + T_term _ _ _ (snd item)) +
+      T_listed_edge_args kept (fst item) (term _ _ _ (snd item))))%N
+    (first_blocks (blocks _ _ _ p)) <= 26 * prep_total p)%N.
+Proof.
+  pose proof (prep_atom_positive p) as Hpositive.
+  apply (prep_weight_cost p _ 24%N (length (first_blocks (blocks _ _ _ p))));
+    [|apply prep_kept_length].
+  rewrite <- (prep_weight_one (first_blocks (blocks _ _ _ p))).
+  apply prep_flat_weight; [intros; lia|]. intros [b body] Hin.
+  assert (Hbody : In (b, body) (blocks _ _ _ p)) by now apply prep_kept_original.
+  assert (Htargets : forall t, In t (exit_targets (term _ _ _ body)) -> prep_key_bounded p t).
+  { intros t Ht. apply prep_id_key. now apply (target_in_function p b body t). }
+  pose proof (prep_listed_args_clock p kept b (term _ _ _ body) Htargets) as Hlisted.
+  pose proof (prep_listed_args_length kept b (term _ _ _ body)) as Hlength.
+  time_simpl. cbn [fst snd]. lia.
+Qed.
+
+Lemma prep_guards_total {K G A} (p : func positive K G) (kept : ptrie A) :
+  (Code.List.T_flat_map
+    (fun item => listed_guards kept (fst item) (term _ _ _ (snd item)))
+    (fun item => 1 + (Datatypes.T_fst item +
+      (Datatypes.T_snd item + T_term _ _ _ (snd item)) +
+      T_listed_guards kept (fst item) (term _ _ _ (snd item))))%N
+    (first_blocks (blocks _ _ _ p)) <= 26 * prep_total p)%N.
+Proof.
+  pose proof (prep_atom_positive p) as Hpositive.
+  apply (prep_weight_cost p _ 24%N (length (first_blocks (blocks _ _ _ p))));
+    [|apply prep_kept_length].
+  rewrite <- (prep_weight_one (first_blocks (blocks _ _ _ p))).
+  apply prep_flat_weight; [intros; lia|]. intros [b body] Hin.
+  assert (Hbody : In (b, body) (blocks _ _ _ p)) by now apply prep_kept_original.
+  assert (Htargets : forall t, In t (exit_targets (term _ _ _ body)) -> prep_key_bounded p t).
+  { intros t Ht. apply prep_id_key. now apply (target_in_function p b body t). }
+  pose proof (prep_listed_guards_clock p kept b (term _ _ _ body) Htargets) as Hlisted.
+  pose proof (prep_listed_guards_length kept b (term _ _ _ body)) as Hlength.
+  time_simpl. cbn [fst snd]. lia.
+Qed.
+
+Lemma prep_defs_flat_length {K G} (p : func positive K G) :
+  length (flat_map (fun item => block_defs (snd item))
+    (first_blocks (blocks _ _ _ p))) <= function_size p.
+Proof.
+  rewrite present_flat_length. eapply Nat.le_trans; [|apply prep_kept_units].
+  apply present_weight_mono. intros item Hin.
+  pose proof (prep_block_defs_units (snd item)); lia.
+Qed.
+
+Lemma prep_values_flat_length {K G} (p : func positive K G) :
+  length (flat_map block_value_defs (first_blocks (blocks _ _ _ p))) <= function_size p.
+Proof.
+  rewrite present_flat_length. eapply Nat.le_trans; [|apply prep_kept_units].
+  apply present_weight_mono. intros item Hin. rewrite prep_value_defs_length.
+  pose proof (prep_block_defs_units (snd item)); lia.
+Qed.
+
+Lemma prep_homes_flat_length {K G} (p : func positive K G) :
+  length (flat_map block_homes (first_blocks (blocks _ _ _ p))) <= function_size p.
+Proof.
+  rewrite present_flat_length. eapply Nat.le_trans; [|apply prep_kept_units].
+  apply present_weight_mono. intros item Hin. rewrite prep_homes_length.
+  pose proof (prep_block_defs_units (snd item)); lia.
+Qed.
+
+Lemma prep_defs_flat_total {K G} (p : func positive K G) :
+  (Code.List.T_flat_map (fun item => block_defs (snd item))
+    (fun item => 1 + (Datatypes.T_snd item + T_block_defs (snd item)))%N
+    (first_blocks (blocks _ _ _ p)) <= 18 * prep_total p)%N.
+Proof.
+  apply (prep_weight_cost p _ 16%N
+    (present_weight (fun item => prep_body_units (snd item))
+      (first_blocks (blocks _ _ _ p)))); [|apply prep_kept_units].
+  apply prep_flat_weight; [intros; unfold prep_body_units; lia|].
+  intros item Hin. pose proof (prep_block_defs_clock (snd item)) as Hdefs.
+  pose proof (prep_block_defs_units (snd item)) as Hunits.
+  pose proof (prep_units_inflation p (prep_body_units (snd item))) as Hpaid.
+  rewrite prep_block_defs_length in Hunits |- *. time_simpl.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Lemma prep_values_flat_total {K G} (p : func positive K G) :
+  (Code.List.T_flat_map block_value_defs (fun item => T_block_value_defs item)
+    (first_blocks (blocks _ _ _ p)) <= 22 * prep_total p)%N.
+Proof.
+  apply (prep_weight_cost p _ 20%N
+    (present_weight (fun item => prep_body_units (snd item))
+      (first_blocks (blocks _ _ _ p)))); [|apply prep_kept_units].
+  apply prep_flat_weight; [intros; unfold prep_body_units; lia|].
+  intros item Hin. pose proof (prep_block_values_clock item) as Hvalues.
+  pose proof (prep_block_defs_units (snd item)) as Hunits.
+  pose proof (prep_units_inflation p (prep_body_units (snd item))) as Hpaid.
+  rewrite prep_value_defs_length. nia.
+Qed.
+
+Lemma prep_homes_flat_total {K G} (p : func positive K G) :
+  (Code.List.T_flat_map block_homes (fun item => T_block_homes item)
+    (first_blocks (blocks _ _ _ p)) <= 22 * prep_total p)%N.
+Proof.
+  apply (prep_weight_cost p _ 20%N
+    (present_weight (fun item => prep_body_units (snd item))
+      (first_blocks (blocks _ _ _ p)))); [|apply prep_kept_units].
+  apply prep_flat_weight; [intros; unfold prep_body_units; lia|].
+  intros item Hin. pose proof (prep_block_homes_clock item) as Hhomes.
+  pose proof (prep_block_defs_units (snd item)) as Hunits.
+  pose proof (prep_units_inflation p (prep_body_units (snd item))) as Hpaid.
+  rewrite prep_homes_length. nia.
+Qed.
+
+Lemma prep_values_flat_key {K G} (p : func positive K G) row :
+  In row (flat_map block_value_defs (first_blocks (blocks _ _ _ p))) ->
+  prep_key_bounded p (fst row).
+Proof.
+  intro Hin. apply in_flat_map in Hin as [item [Hitem Hrow]].
+  apply (prep_kept_var_key p item (fst row) Hitem). apply prep_block_defs_vars.
+  rewrite <- prep_value_defs_keys. now apply in_map.
+Qed.
+
+Lemma prep_homes_flat_key {K G} (p : func positive K G) row :
+  In row (flat_map block_homes (first_blocks (blocks _ _ _ p))) ->
+  prep_key_bounded p (fst row).
+Proof.
+  intro Hin. apply in_flat_map in Hin as [item [Hitem Hrow]].
+  apply (prep_kept_var_key p item (fst row) Hitem). apply prep_block_defs_vars.
+  rewrite <- prep_homes_keys. now apply in_map.
+Qed.
+
+(** * Preparation definition row clocks *)
+
+Lemma prep_guard_rows_length {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) :
+  length (flat_map (fun item => listed_guards kept (fst item) (term _ _ _ (snd item))) bs) <=
+    2 * length bs.
+Proof.
+  induction bs as [|item rest IH]; [reflexivity|].
+  cbn [flat_map length]. rewrite length_app.
+  pose proof (prep_listed_guards_length kept (fst item) (term _ _ _ (snd item))); lia.
+Qed.
+
+Lemma prep_guard_rows_keys {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) :
+  map fst (flat_map (fun item => listed_guards kept (fst item) (term _ _ _ (snd item))) bs) =
+  map fst (flat_map (fun item => listed_edge_args kept (fst item) (term _ _ _ (snd item))) bs).
+Proof.
+  induction bs as [|item rest IH]; [reflexivity|].
+  cbn [flat_map]. rewrite !map_app, prep_guard_edge_keys, IH. reflexivity.
+Qed.
+
+Lemma prep_owner_rows_length (ss : list block_summary) :
+  length (flat_map (fun s => map (fun n => (n, summary_block s)) (summary_points s)) ss) =
+    length (flat_map summary_points ss).
+Proof.
+  induction ss as [|s rest IH]; [reflexivity|].
+  cbn [flat_map]. rewrite !length_app, length_map, IH. reflexivity.
+Qed.
+
+Lemma prep_owner_rows_point (ss : list block_summary) n b :
+  In (n, b) (flat_map (fun s => map (fun m => (m, summary_block s)) (summary_points s)) ss) ->
+  In n (flat_map summary_points ss).
+Proof.
+  intro Hin. apply in_flat_map in Hin as [s [Hs Hin]].
+  apply in_map_iff in Hin as [m [Heq Hm]]. inversion Heq; subst.
+  apply in_flat_map. exists s; now split.
+Qed.
+
+Lemma prep_projection_rows_length (rows : list point_row) :
+  length (flat_map (fun r => match point_block_edge (fst (fst r)) with
+    | Some be => [(fst (fst r), be)] | None => [] end) rows) <= length rows.
+Proof.
+  rewrite present_flat_length, <- (prep_weight_one rows). apply present_weight_mono.
+  intros row Hin. destruct (point_block_edge (fst (fst row))); cbn [length]; lia.
+Qed.
+
+Lemma prep_projection_rows_edge (rows : list point_row) edge be :
+  In (edge, be) (flat_map (fun r => match point_block_edge (fst (fst r)) with
+    | Some owner => [(fst (fst r), owner)] | None => [] end) rows) ->
+  In edge (map (fun r => fst (fst r)) rows).
+Proof.
+  intro Hin. apply in_flat_map in Hin as [row [Hrow Hin]].
+  destruct (point_block_edge (fst (fst row))); [|contradiction].
+  destruct Hin as [Heq|[]]. inversion Heq; subst.
+  apply in_map_iff. exists row; now split.
+Qed.
+
+Lemma prep_point_defs_length (rows : list point_row) :
+  length (flat_map (fun r => map (fun x => (x, point_src (fst (fst r)))) (snd r)) rows) =
+    present_weight (fun r => length (snd r)) rows.
+Proof.
+  rewrite present_flat_length. apply Nat.le_antisymm; apply present_weight_mono;
+    intros row Hin; rewrite length_map; reflexivity.
+Qed.
+
+Lemma prep_point_defs_count (rows : list point_row) :
+  length (flat_map (fun r => map (fun x => (x, point_src (fst (fst r)))) (snd r)) rows) <=
+    present_weight present_row_vars rows.
+Proof.
+  rewrite prep_point_defs_length. apply present_weight_mono.
+  intros row Hin. unfold present_row_vars; lia.
+Qed.
+
+Lemma prep_pair_row_budget {K G A} (p : func positive K G) (table : ptrie (list A))
+    target (args : list positive) :
+  prep_key_bounded p target ->
+  (T_index_row table target <= 2 * prep_atom p * N.of_nat (length args + 1))%N.
+Proof.
+  intro Htarget. eapply N.le_trans; [exact (prep_row_clock p target table Htarget)|].
+  rewrite <- (N.mul_1_r (2 * prep_atom p)) at 1. apply N.mul_le_mono_l; lia.
+Qed.
+
+Lemma prep_entry_params_total {K G} (p : func positive K G) :
+  let kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item)))
+      (first_blocks (blocks _ _ _ p))) in
+  (Code.List.T_flat_map (index_row kept) (fun b => T_index_row kept b)
+    (if is_listed kept (entry _ _ _ p) then [entry _ _ _ p] else []) <=
+    8 * prep_total p)%N.
+Proof.
+  cbn zeta. set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item)))
+      (first_blocks (blocks _ _ _ p)))).
+  pose proof (prep_row_clock p (entry _ _ _ p) kept (prep_entry_key p)) as Hrow.
+  pose proof (prep_params_row_length p (entry _ _ _ p)) as Hlength. fold kept in Hlength.
+  pose proof (prep_atom_total p) as Hatom. pose proof (prep_total_positive p) as Htotal.
+  pose proof (prep_units_inflation p (function_size p + 1)) as Hsize.
+  fold (prep_total p) in Hsize.
+  pose proof (Datatypes.T_app_le (index_row kept (entry _ _ _ p)) []) as Happend.
+  destruct (is_listed kept (entry _ _ _ p)).
+  - change (1 + (T_index_row kept (entry _ _ _ p) + 1 +
+      Datatypes.T_app (index_row kept (entry _ _ _ p)) []) <= 8 * prep_total p)%N.
+    lia.
+  - change (1 <= 8 * prep_total p)%N. lia.
+Qed.
+
+(** * Preparation nested row clocks *)
+
+Lemma prep_summary_rows_total {K G} (p : func positive K G) ss :
+  length ss <= function_size p ->
+  length (flat_map (fun s => summary_internal s ++ summary_outgoing s) ss) <=
+    5 * function_size p ->
+  (Code.List.T_flat_map (fun s => summary_internal s ++ summary_outgoing s)
+    (fun s => 1 + (T_summary_internal s + T_summary_outgoing s +
+      Datatypes.T_app (summary_internal s) (summary_outgoing s)))%N ss <=
+    70 * prep_total p)%N.
+Proof.
+  intros Hss Hrows.
+  apply (prep_flat_total p _ _
+    (fun s => 1 + length (summary_internal s ++ summary_outgoing s)) ss 8%N 6).
+  - intros; lia.
+  - intros s Hin.
+    pose proof (Datatypes.T_app_le (summary_internal s) (summary_outgoing s)) as Happ.
+    pose proof (prep_units_inflation p
+      (1 + length (summary_internal s ++ summary_outgoing s))) as Hpaid.
+    rewrite length_app in *. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  - rewrite present_weight_plus, prep_weight_one, <- present_flat_length. lia.
+Qed.
+
+Lemma prep_summary_points_total {K G} (p : func positive K G) ss :
+  length ss <= function_size p ->
+  length (flat_map summary_points ss) <= 5 * function_size p ->
+  (Code.List.T_flat_map summary_points (fun s => T_summary_points s) ss <=
+    28 * prep_total p)%N.
+Proof.
+  intros Hss Hpoints.
+  apply (prep_flat_total p _ _ (fun s => 1 + length (summary_points s)) ss 2%N 6).
+  - intros; lia.
+  - intros s Hin.
+    pose proof (prep_units_inflation p (1 + length (summary_points s))) as Hpaid.
+    time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  - rewrite prep_summary_points_charge. lia.
+Qed.
+
+Lemma prep_internal_map_total {K G} (p : func positive K G) ss :
+  length ss <= function_size p ->
+  length (flat_map (fun s => summary_internal s ++ summary_outgoing s) ss) <=
+    5 * function_size p ->
+  (ListDef.T_map
+    (fun s => (summary_block s, map (fun r => fst (fst r)) (summary_internal s)))
+    (fun s => 1 + (T_summary_block s + (T_summary_internal s +
+      ListDef.T_map (fun r : point_row => fst (fst r))
+        (fun r => 1 + (Datatypes.T_fst r + Datatypes.T_fst (fst r)))
+        (summary_internal s))))%N ss <= 70 * prep_total p)%N.
+Proof.
+  intros Hss Hrows.
+  apply (prep_map_weight_total p _ _ (fun s => 1 + length (summary_internal s))
+    ss 8%N 6).
+  - intros; lia.
+  - intros s Hin.
+    pose proof (prep_map_uniform (fun r : point_row => fst (fst r))
+      (fun r => 1 + (Datatypes.T_fst r + Datatypes.T_fst (fst r)))%N
+      (summary_internal s) 3%N ltac:(intros; time_simpl; lia)) as Hmap.
+    pose proof (prep_units_inflation p (1 + length (summary_internal s))) as Hpaid.
+    revert Hmap; time_simpl; intro Hmap. rewrite !Nat2N.inj_add in *. nia.
+  - pose proof (prep_summary_internal_charge ss). lia.
+Qed.
+
+Lemma prep_owner_flat_total {K G} (p : func positive K G) ss :
+  length ss <= function_size p ->
+  length (flat_map summary_points ss) <= 5 * function_size p ->
+  (Code.List.T_flat_map
+    (fun s => map (fun n => (n, summary_block s)) (summary_points s))
+    (fun s => 1 + (T_summary_points s +
+      ListDef.T_map (fun n => (n, summary_block s))
+        (fun _ => 1 + T_summary_block s) (summary_points s)))%N ss <=
+    70 * prep_total p)%N.
+Proof.
+  intros Hss Hpoints.
+  apply (prep_flat_total p _ _ (fun s => 1 + length (summary_points s)) ss 8%N 6).
+  - intros; lia.
+  - intros s Hin.
+    pose proof (prep_map_uniform (fun n => (n, summary_block s))
+      (fun _ => 1 + T_summary_block s)%N (summary_points s) 2%N
+      ltac:(intros; time_simpl; lia)) as Hmap.
+    pose proof (prep_units_inflation p (1 + length (summary_points s))) as Hpaid.
+    rewrite length_map. revert Hmap; time_simpl; intro Hmap.
+    rewrite !Nat2N.inj_add in *. nia.
+  - rewrite prep_summary_points_charge. lia.
+Qed.
+
+Lemma prep_projection_flat_total {K G} (p : func positive K G) rows :
+  length rows <= 5 * function_size p ->
+  (Code.List.T_flat_map
+    (fun r : point_row => match point_block_edge (fst (fst r)) with
+      | Some be => [(fst (fst r), be)] | None => [] end)
+    (fun r => 1 + (Datatypes.T_fst r + Datatypes.T_fst (fst r) +
+      T_point_block_edge (fst (fst r)) +
+      match point_block_edge (fst (fst r)) with
+      | Some _ => Datatypes.T_fst r + Datatypes.T_fst (fst r) | None => 0 end))%N
+    rows <= 60 * prep_total p)%N.
+Proof.
+  intro Hrows.
+  apply (prep_flat_total p _ _ (fun _ => 1) rows 8%N 5).
+  - intros; lia.
+  - intros row Hin. pose proof (prep_atom_positive p) as Hatom.
+    time_simpl. destruct (point_block_edge (fst (fst row))); cbn [length]; nia.
+  - now rewrite prep_weight_one.
+Qed.
+
+Lemma prep_point_defs_flat_total {K G} (p : func positive K G) rows :
+  length rows <= 5 * function_size p ->
+  present_weight present_row_vars rows <= 2 * function_size p ->
+  (Code.List.T_flat_map
+    (fun r : point_row => map (fun x => (x, point_src (fst (fst r)))) (snd r))
+    (fun r => 1 + (Datatypes.T_snd r +
+      ListDef.T_map (fun x => (x, point_src (fst (fst r))))
+        (fun _ => 1 + (Datatypes.T_fst r + Datatypes.T_fst (fst r) +
+          T_point_src (fst (fst r)))) (snd r)))%N rows <=
+    80 * prep_total p)%N.
+Proof.
+  intros Hrows Hvars.
+  apply (prep_flat_total p _ _ (fun r => 1 + length (snd r)) rows 8%N 7).
+  - intros; lia.
+  - intros row Hin.
+    pose proof (prep_map_uniform (fun x => (x, point_src (fst (fst row))))
+      (fun _ => 1 + (Datatypes.T_fst row + Datatypes.T_fst (fst row) +
+        T_point_src (fst (fst row))))%N (snd row) 4%N
+      ltac:(intros; time_simpl; lia)) as Hmap.
+    pose proof (prep_units_inflation p (1 + length (snd row))) as Hpaid.
+    rewrite length_map. revert Hmap; time_simpl; intro Hmap.
+    rewrite !Nat2N.inj_add in *. nia.
+  - pose proof (prep_row_defs_charge rows). lia.
+Qed.
+
+Lemma prep_phi_map_total {K G} (p : func positive K G) (kept : ptrie (list positive)) rows :
+  length rows <= 2 * function_size p ->
+  present_weight (fun row => length (snd row)) rows <= function_size p ->
+  (forall row, In row rows -> prep_key_bounded p (edge_target (fst row))) ->
+  (ListDef.T_map
+    (fun r => (fst r, pair_args (index_row kept (edge_target (fst r))) (snd r)))
+    (fun r => 1 + (Datatypes.T_fst r + (Datatypes.T_fst r + T_edge_target (fst r) +
+      T_index_row kept (edge_target (fst r)) + Datatypes.T_snd r +
+      T_pair_args (index_row kept (edge_target (fst r))) (snd r))))%N rows <=
+    56 * prep_total p)%N.
+Proof.
+  intros Hrows Hargs Hkeys.
+  apply (prep_map_weight_total p _ _ (fun r => 1 + length (snd r)) rows 12%N 3).
+  - intros; lia.
+  - intros row Hin.
+    pose proof (prep_row_clock p (edge_target (fst row)) kept (Hkeys row Hin)) as Hrow.
+    pose proof (prep_pair_args_clock (index_row kept (edge_target (fst row))) (snd row)) as Hpair.
+    pose proof (prep_units_inflation p (1 + length (snd row))) as Hpaid.
+    pose proof (prep_atom_positive p) as Hatom.
+    time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  - rewrite present_weight_plus, prep_weight_one. lia.
+Qed.
+
+Lemma prep_phi_flat_total {K G} (p : func positive K G) (kept : ptrie (list positive)) rows :
+  length rows <= 2 * function_size p ->
+  present_weight (fun row => length (snd row)) rows <= function_size p ->
+  (forall row, In row rows -> prep_key_bounded p (edge_target (fst row))) ->
+  (Code.List.T_flat_map
+    (fun r => map (pair (fst r))
+      (pair_args (index_row kept (edge_target (fst r))) (snd r)))
+    (fun r => 1 + (Datatypes.T_fst r + (Datatypes.T_fst r + T_edge_target (fst r) +
+      T_index_row kept (edge_target (fst r)) + Datatypes.T_snd r +
+      T_pair_args (index_row kept (edge_target (fst r))) (snd r)) +
+      ListDef.T_map (pair (fst r)) (fun _ => 1)
+        (pair_args (index_row kept (edge_target (fst r))) (snd r))))%N rows <=
+    72 * prep_total p)%N.
+Proof.
+  intros Hrows Hargs Hkeys.
+  apply (prep_flat_total p _ _ (fun r => 1 + length (snd r)) rows 16%N 3).
+  - intros; lia.
+  - intros row Hin.
+    pose proof (prep_row_clock p (edge_target (fst row)) kept (Hkeys row Hin)) as Hrow.
+    pose proof (prep_pair_args_clock (index_row kept (edge_target (fst row))) (snd row)) as Hpair.
+    pose proof (prep_pair_args_length
+      (index_row kept (edge_target (fst row))) (snd row)) as Hlength.
+    pose proof (prep_map_uniform (pair (fst row)) (fun _ => 1%N)
+      (pair_args (index_row kept (edge_target (fst row))) (snd row)) 1%N
+      ltac:(intros; apply N.le_refl)) as Hmap.
+    pose proof (prep_units_inflation p (1 + length (snd row))) as Hpaid.
+    pose proof (prep_atom_positive p) as Hatom.
+    rewrite length_map. time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  - rewrite present_weight_plus, prep_weight_one. lia.
+Qed.
+
+(** * Preparation table key bounds *)
+
+Lemma prep_block_edge_sides {K G} (p : func positive K G) edge :
+  In edge (lang_edges (lang_prepare p)) ->
+  prep_key_bounded p (edge_source edge) /\ prep_key_bounded p (edge_target edge).
+Proof.
+  intro Hin. destruct (lang_edges_shape p edge Hin) as [body [Hsource [Htarget _]]].
+  apply prep_kept_original in Hsource. split.
+  - now apply (prep_block_key p (edge_source edge) body).
+  - apply prep_id_key. now apply (target_in_function p (edge_source edge) body).
+Qed.
+
+Lemma prep_summary_block_key {K G A} (p : func positive K G) (kept : ptrie A) s :
+  In s (map (summarize kept) (first_blocks (blocks _ _ _ p))) ->
+  prep_key_bounded p (summary_block s).
+Proof.
+  intro Hin. apply in_map_iff in Hin as [item [Heq Hitem]]. subst s.
+  change (prep_key_bounded p (fst item)). now apply prep_kept_key.
+Qed.
+
+Lemma prep_summary_exit_in {K G} (p : func positive K G) s :
+  In s (map (summarize (first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item)))
+      (first_blocks (blocks _ _ _ p))))) (first_blocks (blocks _ _ _ p))) ->
+  In (summary_exit s) (lang_points (lang_prepare p)).
+Proof.
+  intro Hin. apply in_map_iff in Hin as [item [Heq Hitem]]. subst s.
+  eapply lang_summary_points; [exact Hitem|apply summarize_exit_listed].
+Qed.
+
+Lemma prep_raw_point_var_key {K G} (p : func positive K G) row x :
+  In row (flat_map (fun s => summary_internal s ++ summary_outgoing s)
+    (map (summarize (first_table PosKeyCode.encode
+      (map (fun item => (fst item, params _ _ _ (snd item)))
+        (first_blocks (blocks _ _ _ p))))) (first_blocks (blocks _ _ _ p)))) ->
+  In x (snd row) -> prep_key_bounded p x.
+Proof.
+  intros Hrow Hx. apply in_flat_map in Hrow as [s [Hs Hrow]].
+  apply in_map_iff in Hs as [item [Heq Hitem]]. subst s.
+  eapply prep_kept_var_key; [exact Hitem|].
+  eapply summary_vars_in; [exact Hrow|]. apply in_or_app; now right.
+Qed.
+
+Lemma prep_first_total {K G A B} (p : func positive K G) (key : A -> positive)
+    Tkey (rows : list (A * B)) :
+  (forall row, In row rows -> (Tkey (fst row) <= prep_atom p)%N) ->
+  (forall row, In row rows -> prep_key_bounded p (key (fst row))) ->
+  length rows <= 7 * function_size p ->
+  (T_first_table key Tkey rows <= 256 * prep_total p)%N.
+Proof.
+  intros Hclock Hwidth Hcount.
+  pose proof (prep_first_clock p key Tkey rows Hclock Hwidth) as Htime.
+  pose proof (prep_count_cost p _ 8%N (length rows) 7 Htime Hcount) as Htotal.
+  lia.
+Qed.
+
+Lemma prep_multi_total {K G A} (p : func positive K G) (key : A -> positive)
+    Tkey (rows : list A) :
+  (forall row, In row rows -> (Tkey row <= 4 * prep_atom p)%N) ->
+  (forall row, In row rows -> prep_key_bounded p (key row)) ->
+  length rows <= 7 * function_size p ->
+  (T_multi_table key Tkey rows <= 256 * prep_total p)%N.
+Proof.
+  intros Hclock Hwidth Hcount.
+  pose proof (prep_multi_clock p key Tkey rows Hclock Hwidth) as Htime.
+  exact (prep_count_cost p _ 32%N (length rows) 7 Htime Hcount).
+Qed.
+
+Lemma prep_positive_total {K G A} (p : func positive K G) (rows : list (positive * A)) :
+  (forall row, In row rows -> prep_key_bounded p (fst row)) ->
+  length rows <= 7 * function_size p ->
+  (T_first_table PosKeyCode.encode (fun x => PosKeyT.T_encode x) rows <=
+    256 * prep_total p)%N.
+Proof.
+  intros Hkeys Hcount. apply prep_first_total; [|exact Hkeys|exact Hcount].
+  intros; time_simpl; apply prep_atom_positive.
+Qed.
+
+Lemma prep_point_total {K G A} (p : func positive K G) (rows : list (point_key * A)) :
+  (forall row, In row rows -> In (fst row) (lang_points (lang_prepare p))) ->
+  length rows <= 7 * function_size p ->
+  (T_first_table PointKey.encode (fun x => PointKey.T_encode x) rows <=
+    256 * prep_total p)%N.
+Proof.
+  intros Hkeys Hcount. apply prep_first_total; [| |exact Hcount].
+  - intros; apply prep_point_encode; now apply Hkeys.
+  - intros; apply prep_point_key; now apply Hkeys.
+Qed.
+
+Lemma prep_point_edge_total {K G A} (p : func positive K G) (rows : list (point_edge * A)) :
+  (forall row, In row rows -> In (fst row) (lang_point_edges (lang_prepare p))) ->
+  length rows <= 7 * function_size p ->
+  (T_first_table PointEdge.encode (fun x => PointEdge.T_encode x) rows <=
+    256 * prep_total p)%N.
+Proof.
+  intros Hkeys Hcount. apply prep_first_total; [| |exact Hcount].
+  - intros; apply prep_point_edge_encode; now apply Hkeys.
+  - intros; apply prep_point_edge_key; now apply Hkeys.
+Qed.
+
+Lemma prep_block_edge_total {K G A} (p : func positive K G) (rows : list (block_edge * A)) :
+  (forall row, In row rows -> In (fst row) (lang_edges (lang_prepare p))) ->
+  length rows <= 7 * function_size p ->
+  (T_first_table BlockEdge.encode (fun x => BlockEdge.T_encode x) rows <=
+    256 * prep_total p)%N.
+Proof.
+  intros Hkeys Hcount. apply prep_first_total; [| |exact Hcount].
+  - intros; apply prep_block_edge_encode; now apply Hkeys.
+  - intros; apply prep_block_edge_key; now apply Hkeys.
+Qed.
+
+(** * Preparation pipeline clock *)
+
+(** Replace one derived subclock by its established common pipeline budget. *)
+Local Ltac prep_clock_bound p term solver :=
+  let clock := fresh "clock" in let Hclock := fresh "Hclock" in
+  set (clock := term);
+  assert (Hclock : (clock <= 256 * prep_total p)%N) by (unfold clock; solver);
+  clearbody clock.
+
+(** Compose the stored row counts without unfolding their locally named lists. *)
+Local Ltac prep_count_bound :=
+  repeat first [rewrite length_map | rewrite length_app | rewrite prep_owner_rows_length];
+  first [assumption | lia |
+    eapply Nat.le_trans; [eassumption |
+      first [lia | eapply Nat.le_trans; [eassumption | lia]]]].
+
+(** All prepared tables share a linear syntax-and-key budget, including malformed inputs. *)
+Lemma prep_lang_prepare_bound {K G} (p : func positive K G) :
+  (T_lang_prepare p <= 16384 * prep_total p)%N.
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  set (ss := map (summarize kept) bs).
+  set (block_rows := flat_map (fun item =>
+    listed_edge_args kept (fst item) (term _ _ _ (snd item))) bs).
+  set (edges := map fst block_rows).
+  set (rows := flat_map (fun s => summary_internal s ++ summary_outgoing s) ss).
+  set (pedges := map (fun r => fst (fst r)) rows).
+  set (entries := if is_listed kept (entry _ _ _ p) then [entry _ _ _ p] else []).
+  pose proof (prep_pipeline_counts p) as Hcounts.
+  change (length bs <= function_size p /\ length ss <= function_size p /\
+    length block_rows <= 2 * function_size p /\ length rows <= 5 * function_size p /\
+    length (flat_map summary_points ss) <= 5 * function_size p /\
+    present_weight present_row_vars rows <= 2 * function_size p /\
+    present_weight (fun s => length (summary_returns s)) ss <= 2 * function_size p /\
+    present_weight (fun row => length (snd row)) block_rows <= function_size p) in Hcounts.
+  destruct Hcounts as [Hbs [Hss [Hbr [Hrows [Hpoints [Hvars [Hreturns Hargs]]]]]]].
+  assert (Hedges : length edges <= 2 * function_size p)
+    by (unfold edges; rewrite length_map; exact Hbr).
+  assert (Hpedges : length pedges <= 5 * function_size p)
+    by (unfold pedges; rewrite length_map; exact Hrows).
+  pose proof (prep_atom_positive p) as Hatom.
+  pose proof (prep_total_positive p) as Htotal.
+  pose proof (prep_atom_total p) as Hatomtotal.
+  pose proof (prep_input_length p) as Hinputs.
+  pose proof (prep_values_flat_length p) as Hvalues; fold bs in Hvalues.
+  pose proof (prep_homes_flat_length p) as Hhomes; fold bs in Hhomes.
+  pose proof (prep_guard_rows_length kept bs) as Hguards.
+  pose proof (prep_projection_rows_length rows) as Hprojection.
+  pose proof (prep_point_defs_count rows) as Hpointdefs.
+  assert (Hblockrow : forall row, In row block_rows ->
+    In (fst row) (lang_edges (lang_prepare p))).
+  { intros row Hin. change (In (fst row) (map fst block_rows)). now apply in_map. }
+  assert (Hedge : forall edge, In edge edges ->
+    prep_key_bounded p (edge_source edge) /\ prep_key_bounded p (edge_target edge)).
+  { intros edge Hin. apply prep_block_edge_sides. exact Hin. }
+  assert (Htarget : forall row, In row block_rows -> prep_key_bounded p (edge_target (fst row))).
+  { intros row Hin. exact (proj2 (prep_block_edge_sides p (fst row) (Hblockrow row Hin))). }
+  assert (Hrow : forall row, In row rows -> In (fst (fst row)) (lang_point_edges (lang_prepare p))).
+  { intros row Hin. change (In (fst (fst row)) (map (fun r => fst (fst r)) rows)).
+    apply in_map_iff. exists row; now split. }
+  assert (Hsummary : forall s, In s ss -> prep_key_bounded p (summary_block s)).
+  { intros s Hin. apply (prep_summary_block_key p kept s). exact Hin. }
+  assert (Hexit : forall s, In s ss -> In (summary_exit s) (lang_points (lang_prepare p))).
+  { intros s Hin. now apply prep_summary_exit_in. }
+  assert (Hkept : forall item, In item bs -> prep_key_bounded p (fst item)).
+  { intros item Hin. now apply prep_kept_key. }
+  assert (Hvaluekeys : forall row, In row (flat_map block_value_defs bs) ->
+    prep_key_bounded p (fst row)).
+  { intros row Hin. now apply prep_values_flat_key. }
+  assert (Hhomekeys : forall row,
+    In row (map (fun x => (x, entry _ _ _ p)) (inputs _ _ _ p) ++ flat_map block_homes bs) ->
+    prep_key_bounded p (fst row)).
+  { intros row Hin. apply in_app_or in Hin as [Hin|Hin].
+    - apply in_map_iff in Hin as [x [<- Hx]]. cbn [fst]. apply prep_var_key.
+      unfold function_vars. apply in_or_app; now left.
+    - now apply prep_homes_flat_key. }
+  assert (Hguardkeys : forall row,
+    In row (flat_map (fun item => listed_guards kept (fst item) (term _ _ _ (snd item))) bs) ->
+    In (fst row) (lang_edges (lang_prepare p))).
+  { intros row Hin. change (In (fst row) (map fst block_rows)). unfold block_rows.
+    rewrite <- prep_guard_rows_keys. now apply in_map. }
+  assert (Hownerkeys : forall row,
+    In row (flat_map (fun s => map (fun n => (n, summary_block s)) (summary_points s)) ss) ->
+    In (fst row) (lang_points (lang_prepare p))).
+  { intros [n b] Hin. change (In n (flat_map summary_points ss)).
+    now apply (prep_owner_rows_point ss n b). }
+  assert (Hprojectionkeys : forall row,
+    In row (flat_map (fun r => match point_block_edge (fst (fst r)) with
+      | Some be => [(fst (fst r), be)] | None => [] end) rows) ->
+    In (fst row) (lang_point_edges (lang_prepare p))).
+  { intros [edge be] Hin. change (In edge (map (fun r => fst (fst r)) rows)).
+    now apply (prep_projection_rows_edge rows edge be). }
+  assert (Hpointdefkeys : forall out,
+    In out (flat_map (fun r => map (fun x => (x, point_src (fst (fst r)))) (snd r)) rows) ->
+    prep_key_bounded p (fst out)).
+  { intros out Hin. apply in_flat_map in Hin as [row [Hrowin Hin]].
+    apply in_map_iff in Hin as [x [<- Hx]]. cbn [fst].
+    eapply prep_raw_point_var_key; [exact Hrowin|exact Hx]. }
+  assert (Hpends : forall edge, In edge pedges ->
+    In (point_src edge) (lang_points (lang_prepare p)) /\
+    In (point_dst edge) (lang_points (lang_prepare p))).
+  { intros edge Hin. now apply lang_point_edges_nodes. }
+  time_unfold @T_lang_prepare. cbn beta zeta.
+  fold bs kept ss block_rows edges rows pedges entries.
+  repeat lazymatch goal with
+  | |- context [T_first_table ?key ?Tkey ?rs] =>
+    prep_clock_bound p (T_first_table key Tkey rs)
+      ltac:(first
+        [ apply prep_positive_total
+        | apply prep_point_total
+        | apply prep_point_edge_total
+        | apply prep_block_edge_total ];
+        [ intros out Hin;
+          try solve [eauto];
+          apply in_map_iff in Hin as [source [<- Hin]];
+          cbn [fst snd]; eauto
+        | prep_count_bound ])
+  end.
+  repeat lazymatch goal with
+  | |- context [T_multi_table ?key ?Tkey ?rs] =>
+    prep_clock_bound p (T_multi_table key Tkey rs)
+      ltac:(apply prep_multi_total;
+        [ intros edge Hin; first
+          [ time_simpl; lia
+          | let H := fresh in
+            assert (H : (PointKey.T_encode (point_src edge) <= prep_atom p)%N)
+              by (apply prep_point_encode; exact (proj1 (Hpends edge Hin)));
+            time_simpl; lia
+          | let H := fresh in
+            assert (H : (PointKey.T_encode (point_dst edge) <= prep_atom p)%N)
+              by (apply prep_point_encode; exact (proj2 (Hpends edge Hin)));
+            time_simpl; lia ]
+        | intros edge Hin; first
+          [ exact (proj1 (Hedge edge Hin)) | exact (proj2 (Hedge edge Hin))
+          | apply prep_point_key; exact (proj1 (Hpends edge Hin))
+          | apply prep_point_key; exact (proj2 (Hpends edge Hin)) ]
+        | prep_count_bound ])
+  end.
+  repeat lazymatch goal with
+  | |- context [Code.List.T_flat_map ?f ?Tf ?xs] =>
+    prep_clock_bound p (Code.List.T_flat_map f Tf xs)
+      ltac:(first
+        [ solve [eapply N.le_trans; [apply (prep_block_rows_total p) | lia]]
+        | solve [eapply N.le_trans; [apply (prep_summary_rows_total p); eassumption | lia]]
+        | solve [eapply N.le_trans; [apply (prep_summary_points_total p); eassumption | lia]]
+        | solve [eapply N.le_trans; [apply (prep_defs_flat_total p) | lia]]
+        | solve [eapply N.le_trans; [apply (prep_entry_params_total p) | lia]]
+        | solve [eapply N.le_trans; [apply (prep_phi_flat_total p); eassumption | lia]]
+        | solve [eapply N.le_trans; [apply (prep_values_flat_total p) | lia]]
+        | solve [eapply N.le_trans; [apply (prep_homes_flat_total p) | lia]]
+        | solve [eapply N.le_trans; [apply (prep_guards_total p) | lia]]
+        | solve [eapply N.le_trans; [apply (prep_owner_flat_total p); eassumption | lia]]
+        | solve [eapply N.le_trans; [apply (prep_projection_flat_total p); eassumption | lia]]
+        | solve [eapply N.le_trans; [apply (prep_point_defs_flat_total p); eassumption | lia]] ])
+  end.
+  repeat lazymatch goal with
+  | |- context [ListDef.T_map ?f ?Tf ?xs] =>
+    prep_clock_bound p (ListDef.T_map f Tf xs)
+      ltac:(first
+        [ solve [eapply N.le_trans; [apply (prep_summaries_total p) | lia]]
+        | solve [eapply N.le_trans; [apply (prep_internal_map_total p); eassumption | lia]]
+        | solve [eapply N.le_trans; [apply (prep_phi_map_total p); eassumption | lia]]
+        | solve [eapply N.le_trans;
+            [ eapply (prep_map_total p f Tf xs 8%N 7);
+              [ intros; time_simpl; lia | prep_count_bound ] | lia ]] ])
+  end.
+  pose proof (prep_first_blocks_total p) as Hfirst. fold bs in Hfirst.
+  pose proof (prep_listed_clock p (entry _ _ _ p) kept (prep_entry_key p)) as Hlisted.
+  pose proof (Datatypes.T_app_le (inputs _ _ _ p)
+    (flat_map (fun item => block_defs (snd item)) bs)) as Happdefs.
+  pose proof (Datatypes.T_app_le
+    (map (fun x => (x, entry _ _ _ p)) (inputs _ _ _ p))
+    (flat_map block_homes bs)) as Happhomes.
+  rewrite length_map in Happhomes.
+  pose proof (prep_units_inflation p (function_size p + 1)) as Hsize.
+  fold (prep_total p) in Hsize.
+  cbv beta iota zeta delta [T_blocks T_entry T_inputs].
+  destruct (is_listed kept (entry _ _ _ p)); try lia.
+Qed.
+
+Module PrepareT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
+    <: LANG_PREPARE_T O Q.
+  Include PrepareCode O Q.
+  TimeFun prepare.
+  Definition c_prepare : N := (33554432 * prep_scale)%N.
+  (** Preparation reads the complete source within the published linear bit-cost bound. *)
+  Lemma T_prepare_le : forall p,
+    (T_prepare p <= c_prepare * N.of_nat (function_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro p. pose proof (prep_lang_prepare_bound p) as Hprepare.
+    pose proof (prep_total_positive p) as Hpositive.
+    replace (c_prepare * N.of_nat (function_size p + 1) *
+      N.of_nat (function_width p + 1))%N with (32768 * prep_total p)%N
+      by (unfold c_prepare, prep_total, prep_atom, prep_width; ring).
+    time_unfold T_prepare. lia.
+  Qed.
+  (** The concrete preparation clock has the published asymptotic bound. *)
+  Lemma prepare_bigO : bigO (fun _ : func positive O.K O.G => True)
+    (fun p => N.of_nat ((function_size p + 1) * (function_width p + 1))) T_prepare.
+  Proof.
+    unfold bigO. exists c_prepare. intros p Hdomain.
+    pose proof (T_prepare_le p) as Htime. rewrite Nat2N.inj_mul.
+    replace (c_prepare *
+      (N.of_nat (function_size p + 1) * N.of_nat (function_width p + 1) + 1))%N with
+      (c_prepare * N.of_nat (function_size p + 1) * N.of_nat (function_width p + 1) +
+        c_prepare)%N by ring.
+    lia.
+  Qed.
+End PrepareT.
 
 Module PresentT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G).
