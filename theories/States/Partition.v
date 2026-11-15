@@ -9,7 +9,7 @@ From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig.
-From Galois.States Require Import StateSig DisjunctionSig PartitionSig.
+From Galois.States Require Import StateSig DisjunctionSig Disjunction PartitionSig.
 Import List.ListNotations.
 Local Open Scope nat_scope.
 
@@ -94,9 +94,7 @@ Module PartitionCode (X Tk : KEY_OPS) (L : LANG_OPS) (V : VALUE_DOMAIN_OPS L)
     fold_left (fun v q => V.join v (S.eval e (snd q))) (proj1_sig a) V.bot.
 End PartitionCode.
 
-Module Specif.
-  TimeFun proj1_sig.
-End Specif.
+Module Specif := Disjunction.Specif.
 
 Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     (S : STATE_DOMAIN X L V) (C : POS_CAP) <: PARTITION X Tk L V S C.
@@ -776,6 +774,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (C : POS_CAP) <: PARTITION_ALL X Tk L V S JS JU C.
   Module Plain := Partition X Tk L V S C.
   Include Plain.
+  Module ValueJoins := ValueJoinBudget L V C.
   TimeFun fit.
   TimeFun leb.
   TimeFun is_bot.
@@ -806,7 +805,7 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     fold_right Nat.add 0%nat (map (fun q =>
       S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1) (proj1_sig a)).
   (** One growth step reserves every public component rate and fixed boundary size. *)
-  Local Definition growth : N := (2 * (Tk.c_key + S.c_lat + S.c_state + V.c_val +
+  Local Definition growth : N := (4 * (Tk.c_key + S.c_lat + S.c_state + V.c_val +
     N.of_nat (C.k + S.size S.bot + S.wunits S.bot + V.size V.bot + 1) + 3))%N.
   Local Definition scale : N := (growth ^ N.of_nat (2 * C.k + 4))%N.
   Definition k_partition : N := (64 * (scale + 1) * (scale + 1) *
@@ -846,6 +845,58 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Local Lemma k_partition_min : (64 <= k_partition)%N.
   Proof.
     unfold k_partition; nia.
+  Qed.
+
+  (** The shared value-join coefficient fits the partition's fixed plan coefficient. *)
+  Local Lemma value_coefficient : (ValueJoins.coefficient <= k_partition)%N.
+  Proof.
+    assert (Hvalue : (ValueJoins.growth <= growth)%N).
+    { unfold ValueJoins.growth, growth; lia. }
+    assert (Hbot : (N.of_nat (V.size V.bot) + 1 <= growth)%N).
+    { unfold growth; repeat rewrite Nat2N.inj_add; lia. }
+    pose proof (N.pow_le_mono_l _ _ (N.of_nat (C.k + 1)) Hvalue) as Hpower.
+    pose proof (N.mul_le_mono _ _ _ _ Hpower Hbot) as Hbase.
+    assert (Hcombined : (growth ^ N.of_nat (C.k + 1) * growth =
+      growth ^ N.of_nat (C.k + 2))%N).
+    { replace (C.k + 2) with (Datatypes.S (C.k + 1)) by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r'; ring. }
+    rewrite Hcombined in Hbase.
+    pose proof (scale_power (C.k + 2) ltac:(lia)) as Hscale.
+    pose proof growth_cap; pose proof scale_growth.
+    unfold ValueJoins.coefficient, ValueJoins.base_scale, k_partition; nia.
+  Qed.
+
+  (** Adding a fixed callback overhead only changes the common coefficient. *)
+  Local Lemma sum_shift {A} (f : A -> N) c xs : (1 <= c)%N ->
+    (fold_right N.add 0%N (map (fun x => f x + c)%N xs) <=
+      c * fold_right N.add 0%N (map (fun x => f x + 1)%N xs))%N.
+  Proof.
+    intro Hc; induction xs as [|x xs IH]; cbn [map fold_right]; nia.
+  Qed.
+
+  (** Mapping parts pays for the value callback and constant label projections. *)
+  Local Lemma map_bounded_clock f T_f a :
+    (T_map_bounded f T_f a <= 4 *
+      (fold_right N.add 0%N (map (fun q => T_f (snd q) + 1)%N (proj1_sig a)) + 1))%N.
+  Proof.
+    destruct a as [ps Hbound]; time_unfold @T_map_bounded; time_simpl.
+    cbn [proj1_sig]; clear Hbound; induction ps as [|q ps IH];
+      time_unfold @ListDef.T_map; time_simpl; cbn [map fold_right] in *; nia.
+  Qed.
+
+  (** The mapped transfer contract sums the component work of every part. *)
+  Local Lemma map_transfer_clock f T_f work c a :
+    (forall s, (T_f s <= c * N.of_nat (work s + 1))%N) ->
+    (T_map_bounded f T_f a + 1 <= 8 * (c + 1) * N.of_nat
+      (fold_right Nat.add 0%nat (map (fun q => work (snd q) + 1)%nat (proj1_sig a)) + 1))%N.
+  Proof.
+    intro Hwork; pose proof (map_bounded_clock f T_f a) as Hmap.
+    pose proof (ValueJoins.sum_cost (fun q => (T_f (snd q) + 1)%N)
+      (fun q => work (snd q) + 1)%nat (c + 1)%N (proj1_sig a)) as Hsum.
+    assert (Hcallback : forall q, In q (proj1_sig a) ->
+      (T_f (snd q) + 1 <= (c + 1) * N.of_nat (work (snd q) + 1))%N).
+    { intros q Hq; pose proof (Hwork (snd q)); rewrite Nat2N.inj_add in *; nia. }
+    specialize (Hsum Hcallback); rewrite Nat2N.inj_add; nia.
   Qed.
 
   (** State-list size pays for each input cell as well as its stored value. *)
@@ -968,19 +1019,382 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hscale]; lia.
   Qed.
 
+  Local Lemma parts_size_cons q ps : parts_size Tk.bits S.size (q :: ps) =
+    S.size (snd q) + label_bits Tk.bits (fst q) + 1 + parts_size Tk.bits S.size ps.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Local Lemma parts_units_cons (q : option Tk.t * S.t) ps :
+    parts_units S.wunits (q :: ps) = S.wunits (snd q) + parts_units S.wunits ps.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Local Lemma parts_size_length ps : length ps + 1 <= parts_size Tk.bits S.size ps.
+  Proof.
+    induction ps as [|q ps IH]; [reflexivity|].
+    rewrite parts_size_cons; cbn [length]; lia.
+  Qed.
+
+  Local Lemma parts_size_member q ps : In q ps -> S.size (snd q) + 1 <=
+    parts_size Tk.bits S.size ps.
+  Proof.
+    induction ps as [|r ps IH]; intro Hq; [contradiction|].
+    rewrite parts_size_cons; destruct Hq as [<-|Hq]; [lia|].
+    specialize (IH Hq); lia.
+  Qed.
+
+  Local Definition comparison_work (ps qs : list (option Tk.t * S.t)) : N :=
+    fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot +
+      fold_right N.add 0%N (map (fun r => S.T_leb (snd q) (snd r) + 1)%N qs) + 1)%N ps).
+
+  Local Lemma exists_parts_clock (q : option Tk.t * S.t) (qs : list (option Tk.t * S.t)) :
+    (List.T_existsb (fun r => S.leb (snd q) (snd r))
+      (fun r => 1 + (Datatypes.T_snd q + Datatypes.T_snd r +
+        S.T_leb (snd q) (snd r)))%N qs <=
+      5 * (fold_right N.add 0%N (map (fun r => S.T_leb (snd q) (snd r) + 1)%N qs) + 1))%N.
+  Proof.
+    induction qs as [|r qs IH]; time_unfold @List.T_existsb; time_simpl;
+      cbn [map fold_right]; [nia|].
+    revert IH; time_simpl; intro IH; nia.
+  Qed.
+
+  Local Lemma leb_clock_work a b :
+    (T_leb a b <= 16 * (comparison_work (proj1_sig a) (proj1_sig b) + 1))%N.
+  Proof.
+    destruct a as [ps Hps], b as [qs Hqs].
+    time_unfold @T_leb; time_simpl; cbn [proj1_sig]; unfold comparison_work.
+    clear Hps Hqs; induction ps as [|q ps IH].
+    - time_unfold @List.T_forallb; cbn [map fold_right]; nia.
+    - pose proof (exists_parts_clock q qs) as Hrow.
+      revert Hrow; time_simpl; intro Hrow.
+      time_unfold @List.T_forallb; time_simpl; cbn [map fold_right] in *; nia.
+  Qed.
+
+  Local Lemma is_bot_clock_work a :
+    (T_is_bot a <= 8 * (comparison_work (proj1_sig a) [] + 1))%N.
+  Proof.
+    destruct a as [ps Hps]; time_unfold @T_is_bot; time_simpl; cbn [proj1_sig].
+    unfold comparison_work; clear Hps; induction ps as [|q ps IH];
+      time_unfold @List.T_forallb; time_simpl; cbn [map fold_right] in *; nia.
+  Qed.
+
+  Local Lemma sum_uniform {A} (f : A -> N) xs budget :
+    (forall x, In x xs -> (f x <= budget)%N) ->
+    (fold_right N.add 0%N (map f xs) <= N.of_nat (length xs) * budget)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hbound; cbn [map fold_right length]; [lia|].
+    specialize (IH (fun y Hy => Hbound y (or_intror Hy))).
+    pose proof (Hbound x (or_introl eq_refl)); rewrite Nat2N.inj_succ; nia.
+  Qed.
+
+  (** The capped comparison grid has a linear budget in the two partitions' total size. *)
+  Local Lemma comparison_budget ps qs : length ps <= C.k -> length qs <= C.k ->
+    (comparison_work ps qs <= 3 * growth * growth * growth *
+      N.of_nat (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
+  Proof.
+    intros Hps Hqs; set (mass := N.of_nat
+      (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1)).
+    assert (Hmass : (1 <= mass)%N) by (unfold mass; lia).
+    assert (Hnp : (N.of_nat (length ps) <= growth)%N) by
+      (pose proof growth_cap; apply time_of_nat_le in Hps; lia).
+    assert (Hnq : (N.of_nat (length qs) <= growth)%N) by
+      (pose proof growth_cap; apply time_of_nat_le in Hqs; lia).
+    assert (Hrate : (S.c_lat + 1 <= growth)%N) by (pose proof growth_lat; lia).
+    assert (Hbot : (N.of_nat (S.size S.bot + 1) <= growth)%N).
+    { unfold growth; repeat rewrite Nat2N.inj_add; lia. }
+    assert (Hrow : forall q, In q ps ->
+      (S.T_leb (snd q) S.bot + fold_right N.add 0%N
+        (map (fun r => S.T_leb (snd q) (snd r) + 1)%N qs) + 1 <=
+        (2 * growth * growth + 1) * mass)%N).
+    { intros q Hq; pose proof (parts_size_member q ps Hq) as Hsizeq.
+      assert (Hinner : forall r, In r qs ->
+        (S.T_leb (snd q) (snd r) + 1 <= (S.c_lat + 1) * mass)%N).
+      { intros r Hr; pose proof (parts_size_member r qs Hr) as Hsizer.
+        pose proof (S.T_leb_le (snd q) (snd r)); unfold mass;
+          repeat rewrite Nat2N.inj_add in *; nia. }
+      pose proof (sum_uniform (fun r => (S.T_leb (snd q) (snd r) + 1)%N)
+        qs ((S.c_lat + 1) * mass)%N Hinner) as Hsum.
+      pose proof (S.T_leb_le (snd q) S.bot) as Hbottom.
+      assert (Hinput : (N.of_nat (S.size (snd q) + S.size S.bot + 1) <=
+        N.of_nat (S.size S.bot + 1) * mass)%N).
+      { unfold mass; repeat rewrite Nat2N.inj_add; nia. }
+      assert (Hsum_bound : (fold_right N.add 0%N
+        (map (fun r => S.T_leb (snd q) (snd r) + 1)%N qs) <=
+        growth * growth * mass)%N).
+      { eapply N.le_trans; [exact Hsum|].
+        replace (N.of_nat (length qs) * ((S.c_lat + 1) * mass))%N with
+          ((N.of_nat (length qs) * (S.c_lat + 1)) * mass)%N by ring.
+        apply N.mul_le_mono_r, N.mul_le_mono; assumption. }
+      assert (Hbottom_bound : (S.T_leb (snd q) S.bot <= growth * growth * mass)%N).
+      { eapply N.le_trans; [exact Hbottom|].
+        eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinput|].
+        replace (S.c_lat * (N.of_nat (S.size S.bot + 1) * mass))%N with
+          ((S.c_lat * N.of_nat (S.size S.bot + 1)) * mass)%N by ring.
+        apply N.mul_le_mono_r, N.mul_le_mono; [lia|exact Hbot]. }
+      nia. }
+    pose proof (sum_uniform _ ps ((2 * growth * growth + 1) * mass)%N Hrow) as Hsum.
+    unfold comparison_work; eapply N.le_trans; [exact Hsum|].
+    replace (N.of_nat (length ps) * ((2 * growth * growth + 1) * mass))%N with
+      ((N.of_nat (length ps) * (2 * growth * growth + 1)) * mass)%N by ring.
+    apply N.mul_le_mono_r.
+    eapply N.le_trans; [apply N.mul_le_mono_r; exact Hnp|].
+    pose proof growth_positive; nia.
+  Qed.
+
+  Local Lemma comparison_coefficient : (16 * (3 * growth * growth * growth + 1) <=
+    k_partition)%N.
+  Proof.
+    assert (Hcube : (growth * growth * growth <= scale * scale * scale)%N).
+    { apply N.mul_le_mono; [apply N.mul_le_mono |]; exact scale_growth. }
+    unfold k_partition; nia.
+  Qed.
+
+  Local Lemma leb_budget a b :
+    (T_leb a b <= k_partition * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    pose proof (leb_clock_work a b) as Hclock.
+    pose proof (comparison_budget (proj1_sig a) (proj1_sig b)
+      (proj1 (Nat.leb_le _ _) (proj2_sig a))
+      (proj1 (Nat.leb_le _ _) (proj2_sig b))) as Hwork.
+    pose proof comparison_coefficient; unfold size; rewrite Nat2N.inj_add; nia.
+  Qed.
+
+  Local Lemma is_bot_budget a :
+    (T_is_bot a <= k_partition * N.of_nat (size a + 1))%N.
+  Proof.
+    pose proof (is_bot_clock_work a) as Hclock.
+    pose proof (comparison_budget (proj1_sig a) []
+      (proj1 (Nat.leb_le _ _) (proj2_sig a)) ltac:(cbn; lia)) as Hwork.
+    pose proof comparison_coefficient; unfold size; cbn [parts_size fold_right] in Hwork.
+    repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  Local Lemma states_size_parts ps :
+    states_size (map snd ps) + 1 <= parts_size Tk.bits S.size ps.
+  Proof.
+    induction ps as [|q ps IH]; [reflexivity|].
+    change (S.size (snd q) + 1 + states_size (map snd ps) + 1 <=
+      S.size (snd q) + label_bits Tk.bits (fst q) + 1 + parts_size Tk.bits S.size ps).
+    lia.
+  Qed.
+
+  Local Lemma parts_units_map (ps : list (option Tk.t * S.t)) :
+    fold_right Nat.add 0 (map S.wunits (map snd ps)) = parts_units S.wunits ps.
+  Proof.
+    induction ps as [|q ps IH]; [reflexivity|].
+    change (S.wunits (snd q) + fold_right Nat.add 0 (map S.wunits (map snd ps)) =
+      S.wunits (snd q) + parts_units S.wunits ps).
+    now rewrite IH.
+  Qed.
+
+  Local Lemma map_snd_clock (ps : list (option Tk.t * S.t)) :
+    (ListDef.T_map snd (fun q => Datatypes.T_snd q) ps <=
+      2 * N.of_nat (length ps) + 1)%N.
+  Proof.
+    apply (ListDef.T_map_le snd (fun q => Datatypes.T_snd q) 1%N ps).
+    intro q; time_step.
+  Qed.
+
+  (** Keeping a prefix and collapsing its suffix pays for the same raw input size. *)
+  Local Lemma fit_tail_budget n ps : length ps <= 2 * C.k ->
+    (T_fit_tail S.bot S.join S.T_join n ps +
+      N.of_nat (parts_size Tk.bits S.size (fit_tail S.bot S.join n ps)) + 1 <=
+      (scale + 8) * N.of_nat (parts_size Tk.bits S.size ps + 1))%N.
+  Proof.
+    assert (Hbase : forall ps, length ps <= 2 * C.k ->
+      (T_fit_tail S.bot S.join S.T_join 0 ps +
+        N.of_nat (parts_size Tk.bits S.size (fit_tail S.bot S.join 0 ps)) + 1 <=
+        (scale + 8) * N.of_nat (parts_size Tk.bits S.size ps + 1))%N).
+    { intros qs Hlength.
+      pose proof (collapse_budget (map snd qs) ltac:(rewrite length_map; lia)) as Hcollapse.
+      pose proof (map_snd_clock qs) as Hmap.
+      pose proof (states_size_parts qs) as Hsize; apply time_of_nat_le in Hsize.
+      pose proof (parts_size_length qs) as Hlen; apply time_of_nat_le in Hlen.
+      time_unfold @T_fit_tail; cbn [fit_tail parts_size fold_right label_bits fst snd].
+      repeat rewrite Nat2N.inj_add in *; nia. }
+    revert ps; induction n as [|n IH]; intros ps Hlength; [now apply Hbase|].
+    destruct ps as [|q ps]; [apply Hbase; exact Hlength|].
+    specialize (IH ps ltac:(cbn [length] in Hlength; lia)).
+    time_unfold @T_fit_tail; cbn [fit_tail]; rewrite !parts_size_cons.
+    repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Prefix retention and suffix collapse also preserve a linear unit budget. *)
+  Local Lemma fit_tail_units n (ps : list (option Tk.t * S.t)) : length ps <= 2 * C.k ->
+    (N.of_nat (parts_units S.wunits (fit_tail S.bot S.join n ps)) <=
+      scale * N.of_nat (parts_units S.wunits ps + 1))%N.
+  Proof.
+    assert (Hbase : forall ps : list (option Tk.t * S.t), length ps <= 2 * C.k ->
+      (N.of_nat (parts_units S.wunits (fit_tail S.bot S.join 0 ps)) <=
+        scale * N.of_nat (parts_units S.wunits ps + 1))%N).
+    { intros qs Hlength.
+      pose proof (collapse_units_budget (map snd qs) ltac:(rewrite length_map; lia)) as Hbound.
+      rewrite parts_units_map in Hbound.
+      cbn [fit_tail parts_units fold_right snd]; now rewrite Nat.add_0_r. }
+    revert ps; induction n as [|n IH]; intros ps Hlength; [now apply Hbase|].
+    destruct ps as [|q ps]; [apply Hbase; exact Hlength|].
+    specialize (IH ps ltac:(cbn [length] in Hlength; lia)).
+    change (N.of_nat (S.wunits (snd q) +
+      parts_units S.wunits (fit_tail S.bot S.join n ps)) <=
+      scale * N.of_nat (S.wunits (snd q) + parts_units S.wunits ps + 1))%N.
+    pose proof growth_positive; pose proof scale_growth.
+    repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Restoring the cap charges its count, comparison and one fitted suffix. *)
+  Local Lemma fit_budget ps : length ps <= 2 * C.k ->
+    (T_fit_parts S.bot S.join S.T_join C.k ps +
+      N.of_nat (parts_size Tk.bits S.size (fit_parts S.bot S.join C.k ps)) + 1 <=
+      (scale + 16) * N.of_nat (parts_size Tk.bits S.size ps + 1))%N.
+  Proof.
+    intro Hlength; pose proof (Datatypes.T_length_le ps) as Hcount.
+    pose proof (Nat.T_leb_le (length ps) C.k) as Hcompare.
+    pose proof (parts_size_length ps) as Hlen; apply time_of_nat_le in Hlen.
+    time_unfold @T_fit_parts; unfold fit_parts; destruct C.k as [|n] eqn:Hcap.
+    - cbn [parts_size fold_right]; rewrite Nat2N.inj_add; nia.
+    - pose proof (fit_tail_budget n ps ltac:(rewrite Hcap; exact Hlength)) as Htail.
+      destruct (Nat.leb (length ps) (Datatypes.S n));
+        repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  Local Definition part_size (q : option Tk.t * S.t) :=
+    S.size (snd q) + label_bits Tk.bits (fst q) + 1.
+
+  (** Optional-label comparison charges only the first label's bits. *)
+  Local Lemma label_clock a b :
+    (T_label_eqb Tk.eqb Tk.T_eqb a b <=
+      (Tk.c_key + 1) * N.of_nat (label_bits Tk.bits a + 1))%N.
+  Proof.
+    destruct a as [a|], b as [b|]; time_unfold @T_label_eqb; cbn [label_bits];
+      repeat rewrite Nat2N.inj_add; try nia.
+    pose proof (Tk.T_eqb_le a b); rewrite Nat2N.inj_add in H; nia.
+  Qed.
+
+  (** Inserting a part accounts for one label scan and at most one component join. *)
+  Local Lemma insert_budget q ps :
+    (T_insert_part Tk.eqb Tk.T_eqb S.join S.T_join q ps +
+      N.of_nat (parts_size Tk.bits S.size (insert_part Tk.eqb S.join q ps)) + 2 <=
+      growth * N.of_nat (parts_size Tk.bits S.size ps + part_size q + 1))%N.
+  Proof.
+    assert (Hrate : (Tk.c_key + 2 * S.c_lat + 12 <= growth)%N) by
+      (unfold growth; lia).
+    induction ps as [|r ps IH].
+    - time_unfold @T_insert_part; cbn [insert_part parts_size fold_right].
+      unfold part_size; repeat rewrite Nat2N.inj_add; nia.
+    - pose proof (label_clock (fst r) (fst q)) as Hlabel.
+      time_unfold @T_insert_part; time_simpl; cbn [insert_part].
+      destruct (label_eqb Tk.eqb (fst r) (fst q)); rewrite !parts_size_cons; cbn [fst snd].
+      + pose proof (S.T_join_le (snd r) (snd q)) as Hclock.
+        pose proof (JS.join_size (snd r) (snd q)) as Hsize.
+        unfold part_size in *; repeat rewrite Nat2N.inj_add in *; nia.
+      + unfold part_size in *; repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Repeated insertion tracks its changing accumulator size and actual clock. *)
+  Local Lemma merge_fold_budget qs : forall ps,
+    (List.T_fold_left (fun acc q => insert_part Tk.eqb S.join q acc)
+      (fun acc q => 1 + T_insert_part Tk.eqb Tk.T_eqb S.join S.T_join q acc)%N qs ps +
+      N.of_nat (parts_size Tk.bits S.size
+        (fold_left (fun acc q => insert_part Tk.eqb S.join q acc) qs ps)) + 1 <=
+      growth ^ N.of_nat (length qs + 1) *
+        N.of_nat (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
+  Proof.
+    induction qs as [|q qs IH]; intro ps.
+    - time_unfold @List.T_fold_left; cbn [fold_left length].
+      change (1 + N.of_nat (parts_size Tk.bits S.size ps) + 1 <=
+        growth ^ 1 * N.of_nat (parts_size Tk.bits S.size ps + 1 + 1))%N.
+      rewrite N.pow_1_r; pose proof growth_positive; repeat rewrite Nat2N.inj_add; nia.
+    - specialize (IH (insert_part Tk.eqb S.join q ps)).
+      pose proof (insert_budget q ps) as Hinsert.
+      pose proof growth_positive as Hgrowth.
+      set (power := (growth ^ N.of_nat (length qs + 1))%N) in *.
+      assert (Hpower : (1 <= power)%N).
+      { unfold power; apply N.pow_lower_bound; lia. }
+      pose proof (N.mul_le_mono_l _ _ power Hinsert) as Hscaled.
+      pose proof (N.mul_le_mono_r 1 power
+        (2 + T_insert_part Tk.eqb Tk.T_eqb S.join S.T_join q ps)%N Hpower) as Hpaid.
+      time_unfold @List.T_fold_left; cbn [fold_left length].
+      replace (Datatypes.S (length qs) + 1) with (Datatypes.S (length qs + 1)) by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r', parts_size_cons; fold power.
+      unfold part_size in Hinsert, Hscaled.
+      assert (Htail : (1 <= N.of_nat (parts_size Tk.bits S.size qs))%N).
+      { pose proof (parts_size_length qs); lia. }
+      repeat rewrite Nat2N.inj_add in IH, Hscaled |- *.
+      repeat rewrite N.mul_add_distr_l in IH, Hscaled, Hpaid.
+      rewrite N.mul_1_l in Hpaid; nia.
+  Qed.
+
+  Local Lemma merge_budget ps qs : length qs <= C.k ->
+    (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join ps qs +
+      N.of_nat (parts_size Tk.bits S.size (merge_parts Tk.eqb S.join ps qs)) + 1 <=
+      scale * N.of_nat (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
+  Proof.
+    intro Hlength; pose proof (merge_fold_budget qs ps) as Hfold.
+    pose proof (scale_power (length qs + 2) ltac:(lia)) as Hscale.
+    assert (Hpositive : (1 <= growth ^ N.of_nat (length qs + 1))%N).
+    { apply N.pow_lower_bound; pose proof growth_positive; lia. }
+    replace (length qs + 2) with (Datatypes.S (length qs + 1)) in Hscale by lia.
+    rewrite Nat2N.inj_succ, N.pow_succ_r' in Hscale.
+    pose proof growth_positive; time_unfold @T_merge_parts; unfold merge_parts.
+    repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  Local Lemma insert_units_budget q ps :
+    (N.of_nat (parts_units S.wunits (insert_part Tk.eqb S.join q ps)) + 1 <=
+      growth * N.of_nat (parts_units S.wunits ps + S.wunits (snd q) + 1))%N.
+  Proof.
+    induction ps as [|r ps IH]; cbn [insert_part].
+    - cbn [parts_units fold_right]; pose proof growth_positive.
+      repeat rewrite Nat2N.inj_add; nia.
+    - destruct (label_eqb Tk.eqb (fst r) (fst q)); cbn [parts_units fold_right snd].
+      + pose proof (JU.join_wunits (snd r) (snd q)); pose proof growth_lat.
+        repeat rewrite Nat2N.inj_add in *; nia.
+      + unfold parts_units in IH; pose proof growth_positive.
+        repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  Local Lemma merge_fold_units qs : forall ps,
+    (N.of_nat (parts_units S.wunits
+      (fold_left (fun acc q => insert_part Tk.eqb S.join q acc) qs ps)) + 1 <=
+      growth ^ N.of_nat (length qs + 1) *
+        N.of_nat (parts_units S.wunits ps + parts_units S.wunits qs + 1))%N.
+  Proof.
+    induction qs as [|q qs IH]; intro ps.
+    - change (N.of_nat (parts_units S.wunits ps) + 1 <=
+        growth ^ 1 * N.of_nat (parts_units S.wunits ps + 0 + 1))%N.
+      rewrite N.pow_1_r.
+      pose proof growth_positive; repeat rewrite Nat2N.inj_add; nia.
+    - specialize (IH (insert_part Tk.eqb S.join q ps)).
+      pose proof (insert_units_budget q ps) as Hinsert.
+      pose proof (N.mul_le_mono_l _ _ (growth ^ N.of_nat (length qs + 1))%N Hinsert)
+        as Hscaled.
+      cbn [fold_left length]; rewrite parts_units_cons.
+      replace (Datatypes.S (length qs) + 1) with (Datatypes.S (length qs + 1)) by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r'; pose proof growth_positive.
+      repeat rewrite Nat2N.inj_add in IH, Hscaled |- *; nia.
+  Qed.
+
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
     unfold c_lat; nia.
   Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; eapply N.le_trans; [apply leb_budget|].
+    apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; eapply N.le_trans; [apply is_bot_budget|].
+    apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
@@ -990,13 +1404,25 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma T_assign_le : forall x e a,
     (T_assign x e a <= c_state * N.of_nat (assign_work x e a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e a; pose proof (map_transfer_clock (S.assign x e) (fun s => S.T_assign x e s)
+      (S.assign_work x e) S.c_state a (S.T_assign_le x e)) as Hmap.
+    time_unfold @T_assign; unfold assign_work, c_state; pose proof k_partition_min; nia.
+  Qed.
   Lemma T_havoc_le : forall x a,
     (T_havoc x a <= c_state * N.of_nat (havoc_work x a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x a; pose proof (map_transfer_clock (S.havoc x) (fun s => S.T_havoc x s)
+      (S.havoc_work x) S.c_state a (S.T_havoc_le x)) as Hmap.
+    time_unfold @T_havoc; unfold havoc_work, c_state; pose proof k_partition_min; nia.
+  Qed.
   Lemma T_assume_le : forall g es a,
     (T_assume g es a <= c_state * N.of_nat (assume_work g es a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es a; pose proof (map_transfer_clock (S.assume g es) (fun s => S.T_assume g es s)
+      (S.assume_work g es) S.c_state a (S.T_assume_le g es)) as Hmap.
+    time_unfold @T_assume; unfold assume_work, c_state; pose proof k_partition_min; nia.
+  Qed.
   Lemma T_eval_le : forall e a,
     (T_eval e a <= c_state * N.of_nat (eval_work e a + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -1126,51 +1552,108 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (N.of_nat (parts_size Tk.bits S.size
       (merge_parts Tk.eqb S.join ps qs)) <= k_partition * N.of_nat
         (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ps qs Hps Hqs; pose proof (merge_budget ps qs Hqs) as Hbound.
+    assert (Hconstant : (scale <= k_partition)%N) by (unfold k_partition; nia).
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
+  Qed.
   Lemma F11_merge_parts_units : forall ps qs,
     length ps <= C.k -> length qs <= C.k ->
     (N.of_nat (parts_units S.wunits
       (merge_parts Tk.eqb S.join ps qs)) <= k_partition * N.of_nat
         (parts_units S.wunits ps + parts_units S.wunits qs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ps qs Hps Hqs; pose proof (merge_fold_units qs ps) as Hfold.
+    pose proof (scale_power (length qs + 1) ltac:(lia)) as Hscale.
+    assert (Hconstant : (scale <= k_partition)%N) by (unfold k_partition; nia).
+    assert (Hcoefficient : (growth ^ N.of_nat (length qs + 1) <= k_partition)%N).
+    { eapply N.le_trans; [exact Hscale | exact Hconstant]. }
+    unfold merge_parts; eapply N.le_trans;
+      [|apply N.mul_le_mono_r; exact Hcoefficient]; lia.
+  Qed.
   Lemma F12_fit_size : forall ps, length ps <= 2 * C.k ->
     (N.of_nat (parts_size Tk.bits S.size
       (fit_parts S.bot S.join C.k ps)) <= k_partition * N.of_nat
         (parts_size Tk.bits S.size ps + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ps Hlength; pose proof (fit_budget ps Hlength) as Hbound.
+    assert (Hconstant : (scale + 16 <= k_partition)%N) by (unfold k_partition; nia).
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
+  Qed.
   Lemma F13_fit_units : forall (ps : list (option Tk.t * S.t)), length ps <= 2 * C.k ->
     (N.of_nat (parts_units S.wunits
       (fit_parts S.bot S.join C.k ps)) <= k_partition * N.of_nat
         (parts_units S.wunits ps + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ps Hlength; unfold fit_parts; destruct C.k as [|n] eqn:Hcap.
+    - cbn [parts_units fold_right]; lia.
+    - destruct (Nat.leb (length ps) (Datatypes.S n)).
+      + pose proof k_partition_min; rewrite Nat2N.inj_add; nia.
+      + pose proof (fit_tail_units n ps ltac:(rewrite Hcap; exact Hlength)) as Hbound.
+        assert (Hconstant : (scale <= k_partition)%N) by (unfold k_partition; nia).
+        eapply N.le_trans; [exact Hbound | now apply N.mul_le_mono_r].
+  Qed.
   Lemma T1_leb : forall a b,
     (T_leb a b <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot +
         fold_right N.add 0%N (map (fun r => S.T_leb (snd q) (snd r) + 1) (proj1_sig b)) + 1)
         (proj1_sig a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof (leb_clock_work a b); pose proof k_partition_min.
+    unfold comparison_work in *; nia.
+  Qed.
   Lemma T2_is_bot : forall a,
     (T_is_bot a <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_leb (snd q) S.bot + 1) (proj1_sig a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; pose proof (is_bot_clock_work a); pose proof k_partition_min.
+    unfold comparison_work in *; cbn [map fold_right] in *.
+    assert (Heq : map (fun q => (S.T_leb (snd q) S.bot + 0 + 1)%N) (proj1_sig a) =
+      map (fun q => (S.T_leb (snd q) S.bot + 1)%N) (proj1_sig a)).
+    { apply map_ext; intro q; now rewrite N.add_0_r. }
+    rewrite Heq in H; nia.
+  Qed.
   Lemma T3_join : forall a b,
     (T_join a b <= k_partition *
       (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join (proj1_sig a) (proj1_sig b) +
        T_fit_parts S.bot S.join S.T_join C.k
          (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [ps Hps] [qs Hqs]; pose proof k_partition_min.
+    time_unfold @T_join; time_unfold @T_fit; time_simpl; cbn [proj1_sig].
+    change (fun x y => Tk.T_eqb x y) with Tk.T_eqb.
+    change (fun x y => S.T_join x y) with S.T_join.
+    nia.
+  Qed.
   Lemma T4_merge_parts : forall ps qs, length ps <= C.k -> length qs <= C.k ->
     (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join ps qs <= k_partition *
       N.of_nat (parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ps qs Hps Hqs; pose proof (merge_budget ps qs Hqs) as Hbound.
+    assert (Hconstant : (scale <= k_partition)%N) by (unfold k_partition; nia).
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
+  Qed.
   Lemma T5_fit_parts : forall ps, length ps <= 2 * C.k ->
     (T_fit_parts S.bot S.join S.T_join C.k ps <= k_partition *
       N.of_nat (parts_size Tk.bits S.size ps + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ps Hlength; pose proof (fit_budget ps Hlength) as Hbound.
+    assert (Hconstant : (scale + 16 <= k_partition)%N) by (unfold k_partition; nia).
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hconstant]; lia.
+  Qed.
   Lemma T6_widen : forall p a b,
     (T_widen p a b <= k_partition *
       (T_leb b a + T_is_bot a + route_time p (proj1_sig a) (proj1_sig b) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [old Hbound] [new Hnew]; pose proof k_partition_min.
+    unfold route_time; time_unfold @T_widen; time_simpl; cbn [proj1_sig].
+    change (fun x y => Tk.T_eqb x y) with Tk.T_eqb.
+    change (fun x y => S.T_leb x y) with S.T_leb.
+    change (fun x y => S.T_join x y) with S.T_join.
+    change (fun x y => S.T_widen p x y) with (S.T_widen p).
+    destruct (leb (exist _ new Hnew) (exist _ old Hbound)); [nia|].
+    destruct (is_bot (exist _ old Hbound)); nia.
+  Qed.
   Lemma T7_route : forall p old new,
     length old <= C.k -> length new <= C.k ->
     (route_time p old new <= k_partition * N.of_nat
@@ -1193,9 +1676,18 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof. Admitted. (* STUB *)
   Lemma T10_retag : forall k a,
     (T_retag k a <= k_partition * (T_merge k a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k a; pose proof k_partition_min; time_unfold @T_retag; nia.
+  Qed.
   Lemma T11_inject : forall k s, (T_inject k s <= k_partition)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k s; pose proof k_partition_min.
+    time_unfold @T_inject; time_unfold @T_fit; time_unfold @T_fit_parts.
+    destruct C.k as [|n]; time_simpl; time_cbn.
+    - lia.
+    - time_unfold @Datatypes.T_length; time_unfold @Datatypes.T_length.
+      time_unfold @Nat.T_leb; time_unfold @Nat.T_leb; time_simpl; time_cbn; lia.
+  Qed.
   Lemma T12_eval : forall e a,
     (T_eval e a <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_eval e (snd q) + 1) (proj1_sig a)) +
@@ -1204,21 +1696,36 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T13_eval_joins : forall e ps, length ps <= C.k ->
     (eval_joins e ps <= k_partition * N.of_nat (fold_right Nat.add 0%nat
       (map (fun q => (V.size (S.eval e (snd q)) + 1)%nat) ps) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e ps Hlength; unfold eval_joins.
+    eapply N.le_trans; [apply ValueJoins.joins_capped; exact Hlength|].
+    apply N.mul_le_mono_r; exact value_coefficient.
+  Qed.
   Lemma T14_assign : forall x e a,
     (T_assign x e a <= k_partition *
       (fold_right N.add 0%N
         (map (fun q => S.T_assign x e (snd q) + 1) (proj1_sig a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e a; pose proof (map_bounded_clock (S.assign x e) (fun s => S.T_assign x e s) a).
+    pose proof k_partition_min; time_unfold @T_assign; nia.
+  Qed.
   Lemma T15_havoc : forall x a,
     (T_havoc x a <= k_partition *
       (fold_right N.add 0%N (map (fun q => S.T_havoc x (snd q) + 1) (proj1_sig a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x a; pose proof (map_bounded_clock (S.havoc x) (fun s => S.T_havoc x s) a).
+    pose proof k_partition_min; time_unfold @T_havoc; nia.
+  Qed.
   Lemma T16_assume : forall g es a,
     (T_assume g es a <= k_partition *
       (fold_right N.add 0%N
         (map (fun q => S.T_assume g es (snd q) + 1) (proj1_sig a)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es a; pose proof (map_bounded_clock (S.assume g es) (fun s => S.T_assume g es s) a).
+    pose proof k_partition_min; time_unfold @T_assume; nia.
+  Qed.
   Lemma T17_narrow : forall a b, (T_narrow a b <= k_partition)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof k_partition_min; time_step.
+  Qed.
 End PartitionT.
