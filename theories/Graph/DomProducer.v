@@ -874,3 +874,311 @@ Lemma dom_add_width : forall n m,
 Proof.
   intros [|p] [|q]; cbn [N.add N.size_nat]; try lia. apply dom_positive_add_width.
 Qed.
+(** Search tasks retain the source row and the discovered vertices that justify them. *)
+Definition dom_lt_search_task_ok (g : digraph) (domain seen : list positive)
+    (task : search_task) : Prop :=
+  match task with
+  | SearchRoot v => In v domain
+  | SearchRow v row => In v seen /\ incl row (succs g v)
+  | SearchLeave v => In v seen
+  end.
+
+Definition dom_lt_search_pending (tasks : list search_task) : nat :=
+  fold_right (fun task total =>
+    match task with
+    | SearchRoot _ => 1 + total
+    | SearchRow _ row => length row + total
+    | SearchLeave _ => total
+    end) 0 tasks.
+
+Definition dom_lt_search_marks (seen : list positive) (marks : ptrie bool) : Prop :=
+  forall v, trie_get v marks = None <-> ~ In v seen.
+
+Record dom_lt_search_inventory (g : digraph) (domain : list positive)
+    (roots : nat) (st : search_state) : Prop := DomLtSearchInventory {
+  dom_lt_search_unique : NoDup (entered (search_events st));
+  dom_lt_search_listed : incl (entered (search_events st)) domain;
+  dom_lt_search_marked : dom_lt_search_marks (entered (search_events st)) (search_colours st);
+  dom_lt_search_tasks : Forall
+    (dom_lt_search_task_ok g domain (entered (search_events st))) (search_tasks st);
+  dom_lt_search_budget :
+    length (entered (search_events st)) + dom_lt_search_pending (search_tasks st) <=
+      roots + fold_right (fun v total => length (succs g v) + total) 0
+        (entered (search_events st))
+}.
+
+(** Marking a vertex extends exactly the discovered-key domain. *)
+Lemma dom_lt_search_mark seen marks v b :
+  dom_lt_search_marks seen marks ->
+  dom_lt_search_marks (v :: seen) (PTrieCode.set v b marks).
+Proof.
+  unfold dom_lt_search_marks.
+  intros Hmarks x. destruct (Pos.eq_dec x v) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same. cbn [In]. split; [discriminate|tauto].
+  - rewrite PTrie.get_set_other by exact Hdifferent.
+    rewrite (Hmarks x). cbn [In]. intuition congruence.
+Qed.
+
+(** Changing a discovered colour leaves the discovered-key domain unchanged. *)
+Lemma dom_lt_search_mark_old seen marks v b :
+  dom_lt_search_marks seen marks -> In v seen ->
+  dom_lt_search_marks seen (PTrieCode.set v b marks).
+Proof.
+  intros Hmarks Hseen x. pose proof (dom_lt_search_mark seen marks v b Hmarks x) as Hnew.
+  cbn [In] in Hnew. destruct (Pos.eq_dec v x) as [->|Hdifferent]; tauto.
+Qed.
+
+(** A task supported by earlier discoveries remains supported after further discovery. *)
+Lemma dom_lt_search_tasks_extend g domain seen seen1 tasks :
+  incl seen seen1 ->
+  Forall (dom_lt_search_task_ok g domain seen) tasks ->
+  Forall (dom_lt_search_task_ok g domain seen1) tasks.
+Proof.
+  intros Hincl Htasks. apply Forall_forall. intros task Htask.
+  apply Forall_forall with (x := task) in Htasks; [|exact Htask].
+  destruct task; cbn [dom_lt_search_task_ok] in *; intuition.
+Qed.
+
+(** Every raw search transition preserves the discovered inventory and occurrence budget. *)
+Lemma dom_lt_search_inventory_step g domain roots st next :
+  (forall u v, In u domain -> In v (succs g u) -> In v domain) ->
+  dom_lt_search_inventory g domain roots st ->
+  search_step g st = inl next -> dom_lt_search_inventory g domain roots next.
+Proof.
+  intros Hclosed Hinv Hstep. destruct st as [tasks marks events].
+  destruct Hinv as [Hunique Hlisted Hmarks Htasks Hbudget].
+  cbn [search_tasks search_colours search_events] in *.
+  destruct tasks as [|task rest]; [discriminate Hstep|].
+  inversion Htasks as [|head tail Htask Hrest]; subst head tail.
+  destruct task as [v|u row|v]; cbn [dom_lt_search_task_ok] in Htask.
+  - cbn [search_step] in Hstep.
+    destruct (trie_get v marks) as [colour|] eqn:Hget; injection Hstep as <-.
+    + constructor; cbn [search_tasks search_colours search_events]; try assumption.
+      unfold dom_lt_search_pending in Hbudget |- *. cbn [fold_right] in Hbudget. lia.
+    + constructor; cbn [search_tasks search_colours search_events entered].
+      * constructor; [now apply (proj1 (Hmarks v))|exact Hunique].
+      * intros x [->|Hx]; [exact Htask|now apply Hlisted].
+      * now apply dom_lt_search_mark.
+      * constructor.
+        -- cbn [dom_lt_search_task_ok]. split; [now left|apply incl_refl].
+        -- constructor; [cbn [dom_lt_search_task_ok]; now left|].
+           apply (dom_lt_search_tasks_extend g domain (entered events)); [|exact Hrest].
+           intros x Hx. now right.
+      * unfold dom_lt_search_pending in Hbudget |- *.
+        cbn [length fold_right] in Hbudget |- *. lia.
+  - destruct Htask as [Hsource Hrow]. destruct row as [|v row].
+    + cbn [search_step] in Hstep. injection Hstep as <-.
+      constructor; cbn [search_tasks search_colours search_events]; try assumption.
+    + assert (Hv : In v domain).
+      { apply (Hclosed u v); [now apply Hlisted|apply Hrow; now left]. }
+      assert (Htail : incl row (succs g u)).
+      { intros x Hx. apply Hrow. now right. }
+      cbn [search_step] in Hstep.
+      destruct (trie_get v marks) as [colour|] eqn:Hget; injection Hstep as <-.
+      * constructor; cbn [search_tasks search_colours search_events entered]; try assumption.
+        -- constructor; [cbn [dom_lt_search_task_ok]; now split|exact Hrest].
+        -- unfold dom_lt_search_pending in Hbudget |- *.
+           cbn [fold_right length] in Hbudget |- *. lia.
+      * constructor; cbn [search_tasks search_colours search_events entered]; try assumption.
+        -- constructor; [exact Hv|].
+           constructor; [cbn [dom_lt_search_task_ok]; now split|exact Hrest].
+  - cbn [search_step] in Hstep. injection Hstep as <-.
+    constructor; cbn [search_tasks search_colours search_events entered]; try assumption.
+    eapply dom_lt_search_mark_old; eassumption.
+Qed.
+
+(** The initial root tasks own one pending unit each and no discovered vertices. *)
+Lemma dom_lt_search_inventory_initial g domain roots :
+  incl roots domain ->
+  dom_lt_search_inventory g domain (length roots)
+    (SearchState (map SearchRoot roots) Empty []).
+Proof.
+  intro Hroots. constructor; cbn [search_tasks search_colours search_events entered].
+  - constructor.
+  - intros v Hv. contradiction.
+  - intros v. split; [intros _ Hin; contradiction|intro Hfresh; apply PTrie.get_empty].
+  - apply Forall_forall. intros task Htask. apply in_map_iff in Htask.
+    destruct Htask as [v [<- Hv]]. now apply Hroots.
+  - unfold dom_lt_search_pending. clear Hroots.
+    induction roots as [|v rest IH]; cbn [map length fold_right] in *; lia.
+Qed.
+
+(** Reversing a trace reverses precisely its enter subsequence. *)
+Lemma dom_lt_entered_rev events : entered (rev events) = rev (entered events).
+Proof.
+  assert (Happ : forall left right,
+    entered (left ++ right) = entered left ++ entered right).
+  { intro left. induction left as [|event rest IH]; intro right; [reflexivity|].
+    destruct event; cbn [app entered]; now rewrite IH. }
+  induction events as [|event rest IH]; [reflexivity|].
+  cbn [rev]. rewrite Happ, IH. destruct event; cbn [entered rev]; now rewrite ?app_nil_r.
+Qed.
+
+(** Every returned prefix is duplicate-free, listed and charged to entered successor rows. *)
+Lemma dom_lt_search_trace_inventory g domain roots fuel :
+  incl roots domain ->
+  (forall u v, In u domain -> In v (succs g u) -> In v domain) ->
+  let trace := match loopN (search_step g) fuel
+      (SearchState (map SearchRoot roots) Empty []) with
+    | inl st => rev_append (search_events st) []
+    | inr events => events
+    end in
+  NoDup (entered trace) /\ incl (entered trace) domain /\
+    length (entered trace) <= length roots +
+      fold_right (fun v total => length (succs g v) + total) 0 (entered trace).
+Proof.
+  intros Hroots Hclosed.
+  set (Result := fun events => NoDup (entered events) /\ incl (entered events) domain /\
+    length (entered events) <= length roots +
+      fold_right (fun v total => length (succs g v) + total) 0 (entered events)).
+  assert (Houtput : forall st, dom_lt_search_inventory g domain (length roots) st ->
+    Result (rev_append (search_events st) [])).
+  { intros st [Hunique Hlisted Hmarks Htasks Hbudget].
+    unfold Result. rewrite rev_append_rev, app_nil_r, dom_lt_entered_rev, length_rev.
+    split; [now apply NoDup_rev|]. split.
+    - intros v Hv. apply Hlisted. now apply in_rev in Hv.
+    - assert (Hsum : forall xs, fold_right (fun v total => length (succs g v) + total) 0
+          (rev xs) = fold_right (fun v total => length (succs g v) + total) 0 xs).
+      { intro xs. induction xs as [|v rest IH]; [reflexivity|].
+        cbn [rev fold_right]. rewrite fold_right_app.
+        assert (Hshift : forall ys n,
+          fold_right (fun v total => length (succs g v) + total) n ys =
+          fold_right (fun v total => length (succs g v) + total) 0 ys + n).
+        { intro ys. induction ys as [|y ys IHys]; intro n; cbn [fold_right]; [lia|].
+          rewrite IHys. lia. }
+        rewrite Hshift, IH. cbn [fold_right]. lia. }
+      rewrite Hsum. lia. }
+  pose proof (dom_lt_loop_invariant (search_step g)
+    (dom_lt_search_inventory g domain (length roots)) Result fuel
+    (SearchState (map SearchRoot roots) Empty [])) as Hrun.
+  specialize (Hrun (fun st next =>
+    dom_lt_search_inventory_step g domain (length roots) st next Hclosed)).
+  assert (Hstop : forall st events,
+    dom_lt_search_inventory g domain (length roots) st ->
+    search_step g st = inr events -> Result events).
+  { intros [tasks colours events] result Hinv Hstep.
+    destruct tasks as [|task rest].
+    - cbn [search_step] in Hstep. injection Hstep as <-.
+      exact (Houtput (SearchState [] colours events) Hinv).
+    - destruct task as [v|v row|v]; cbn [search_step] in Hstep;
+        try destruct row as [|u row];
+        repeat match type of Hstep with
+        | context [match trie_get ?v ?m with _ => _ end] => destruct (trie_get v m)
+        end; discriminate Hstep. }
+  specialize (Hrun Hstop (dom_lt_search_inventory_initial g domain roots Hroots)).
+  revert Hrun.
+  generalize (loopN (search_step g) fuel (SearchState (map SearchRoot roots) Empty [])).
+  intros [st|events] Hrun; [exact (Houtput st Hrun)|exact Hrun].
+Qed.
+(** Numeric keys retain their natural-number identity. *)
+Lemma dom_lt_key_injective u v : dom_lt_key u = dom_lt_key v -> u = v.
+Proof.
+  intro Hkeys. apply (f_equal N.pos) in Hkeys.
+  unfold dom_lt_key in Hkeys. rewrite !N.succ_pos_spec in Hkeys. now apply N.succ_inj.
+Qed.
+
+Definition dom_lt_row_mass {A : Type} (keys : list positive) (rows : ptrie (list A)) : nat :=
+  fold_right (fun key total =>
+    length (match trie_get key rows with None => [] | Some row => row end) + total) 0 keys.
+
+(** An empty bucket map has no members at any queried keys. *)
+Lemma dom_lt_row_mass_empty {A : Type} keys :
+  dom_lt_row_mass keys (Empty : ptrie (list A)) = 0.
+Proof.
+  unfold dom_lt_row_mass. induction keys as [|key rest IH]; [reflexivity|].
+  cbn [fold_right]. rewrite PTrie.get_empty. cbn [length]. exact IH.
+Qed.
+
+(** A row outside the counted domain does not affect its mass. *)
+Lemma dom_lt_row_mass_absent {A : Type} keys (rows : ptrie (list A)) key row :
+  ~ In key keys -> dom_lt_row_mass keys (PTrieCode.set key row rows) =
+    dom_lt_row_mass keys rows.
+Proof.
+  induction keys as [|head rest IH]; intro Hfresh; [reflexivity|].
+  unfold dom_lt_row_mass in *. cbn [fold_right].
+  rewrite PTrie.get_set_other by (intro Heq; apply Hfresh; now left).
+  rewrite IH by (intro Hin; apply Hfresh; now right). reflexivity.
+Qed.
+
+(** Prepending to one bucket increases duplicate-free row mass by at most one. *)
+Lemma dom_lt_row_mass_push {A : Type} keys (rows : ptrie (list A)) key value :
+  NoDup keys ->
+  dom_lt_row_mass keys (PTrieCode.set key
+    (value :: match trie_get key rows with None => [] | Some row => row end) rows) <=
+    S (dom_lt_row_mass keys rows).
+Proof.
+  intro Hunique. induction Hunique as [|head rest Hfresh Hunique IH]; [cbn; lia|].
+  destruct (Pos.eq_dec head key) as [->|Hdifferent].
+  - cbn [dom_lt_row_mass fold_right]. rewrite PTrie.get_set_same.
+    change (S (length (match trie_get key rows with None => [] | Some row => row end)) +
+      dom_lt_row_mass rest (PTrieCode.set key
+        (value :: match trie_get key rows with None => [] | Some row => row end) rows) <=
+      S (length (match trie_get key rows with None => [] | Some row => row end) +
+        dom_lt_row_mass rest rows)).
+    rewrite dom_lt_row_mass_absent by exact Hfresh. reflexivity.
+  - unfold dom_lt_row_mass in *. cbn [fold_right].
+    rewrite PTrie.get_set_other by exact Hdifferent.
+    rewrite <- Nat.add_succ_r. now apply Nat.add_le_mono_l.
+Qed.
+
+(** Every bucket insertion contributes at most one member to any distinct counted keys. *)
+Lemma dom_lt_bucket_add_mass keys semis buckets v :
+  NoDup keys ->
+  dom_lt_row_mass keys (dom_lt_bucket_add semis buckets v) <=
+    S (dom_lt_row_mass keys buckets).
+Proof.
+  intro Hunique. unfold dom_lt_bucket_add.
+  destruct (trie_get (dom_lt_key v) semis) as [s|];
+    [now apply dom_lt_row_mass_push|lia].
+Qed.
+
+(** A fold of bucket insertions contributes at most one member per input vertex. *)
+Lemma dom_lt_bucket_build_mass keys semis order buckets :
+  NoDup keys ->
+  dom_lt_row_mass keys (fold_left (dom_lt_bucket_add semis) order buckets) <=
+    length order + dom_lt_row_mass keys buckets.
+Proof.
+  intro Hunique. revert buckets. induction order as [|v rest IH]; intro buckets.
+  - cbn [fold_left length]. reflexivity.
+  - pose proof (dom_lt_bucket_add_mass keys semis buckets v Hunique) as Hhead.
+    specialize (IH (dom_lt_bucket_add semis buckets v)).
+    cbn [fold_left length]. clear -Hhead IH. lia.
+Qed.
+
+(** Numeric bucket keys are distinct whenever their numeric traversal order is distinct. *)
+Lemma dom_lt_key_map_unique order : NoDup order -> NoDup (map dom_lt_key order).
+Proof.
+  intro Hunique. induction Hunique as [|v rest Hfresh Hunique IH]; cbn [map]; constructor.
+  - intro Hin. apply in_map_iff in Hin. destruct Hin as [u [Hkey Hin]].
+    apply dom_lt_key_injective in Hkey. subst u. contradiction.
+  - exact IH.
+Qed.
+
+(** Reading every bucket in a distinct numeric order charges each inserted member at most once. *)
+Lemma dom_lt_buckets_operations numeric semis :
+  NoDup (lt_numeric_order numeric) ->
+  length (lt_operations (lt_bucket_links (dom_lt_buckets numeric semis))) <=
+    2 * length (lt_numeric_order numeric).
+Proof.
+  intro Hunique.
+  set (order := lt_numeric_order numeric).
+  set (buckets := fold_left (dom_lt_bucket_add semis) (rev_append order []) Empty).
+  pose proof (dom_lt_bucket_build_mass (map dom_lt_key order) semis
+    (rev_append order []) Empty (dom_lt_key_map_unique order Hunique)) as Hmass.
+  fold buckets in Hmass. rewrite rev_append_rev, app_nil_r, length_rev in Hmass.
+  rewrite dom_lt_row_mass_empty in Hmass.
+  pose proof (dom_lt_bucket_steps_operations numeric semis buckets order
+    (DomLtBucketState (DomLtLinks Empty Empty []) Empty)) as Hsteps.
+  cbn [lt_bucket_links lt_operations length] in Hsteps.
+  assert (Hrows : fold_right (fun v total =>
+    length (match trie_get (dom_lt_key v) buckets with None => [] | Some row => row end) + total)
+      0 order = dom_lt_row_mass (map dom_lt_key order) buckets).
+  { clearbody buckets order. clear -buckets order.
+    unfold dom_lt_row_mass. induction order as [|v rest IH];
+      cbn [map fold_right]; [reflexivity|now rewrite IH]. }
+  rewrite Hrows in Hsteps.
+  change (length (lt_operations (lt_bucket_links
+    (fold_left (dom_lt_bucket_step numeric semis buckets) order
+      (DomLtBucketState (DomLtLinks Empty Empty []) Empty)))) <= 2 * length order).
+  clearbody buckets order. clear -Hsteps Hmass. lia.
+Qed.
