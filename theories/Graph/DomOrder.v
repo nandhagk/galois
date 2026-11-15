@@ -5,7 +5,7 @@
     Builds on: the numeric Lengauer and Tarjan producer and binary-fuel loops. *)
 
 From Stdlib Require Import List Bool PArith NArith Arith Lia.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer.
 Import List.ListNotations.
@@ -3014,3 +3014,697 @@ Lemma dom_lt_result_branch {A B : Type} (result : A + B) :
 Proof.
   destruct result; lia.
 Qed.
+
+(** * Exact producer and replay agreement *)
+
+Local Transparent Argent.Loop.loop T_loopN.
+Local Transparent dom_lt_identity T_dom_lt_identity dom_lt_minimum T_dom_lt_minimum.
+Local Transparent dom_lt_compress_step T_dom_lt_compress_step dom_lt_eval T_dom_lt_eval.
+Local Transparent dom_lt_settle.
+
+(** Two accessibility loops agree without proof irrelevance when they share the same proof. *)
+Lemma dom_lt_accessibility_agree {S R : Type} (lt : S -> S -> Prop)
+    (left right : forall state, {next : S | lt next state} + R)
+    (T_left T_right : S -> N) (Inv : S -> Prop) :
+  (forall state, Inv state -> left state = right state /\ T_left state = T_right state) ->
+  (forall state next decrease, Inv state -> left state = inl (exist _ next decrease) ->
+    Inv next) ->
+  forall state (access : Acc lt state), Inv state ->
+    Argent.Loop.loop lt left state access = Argent.Loop.loop lt right state access /\
+    T_loop lt left T_left state access = T_loop lt right T_right state access.
+Proof.
+  intros Hagree Hpreserve state access.
+  induction access as [state Hacc IH] using Acc_ind_dep. intro Hinv.
+  destruct (Hagree state Hinv) as [Hstep Hclock].
+  cbn [Argent.Loop.loop]. time_unfold @T_loop. rewrite <- Hstep, <- Hclock.
+  destruct (left state) as [[next decrease]|result] eqn:Hnext.
+  - specialize (IH next decrease (Hpreserve state next decrease Hinv Hnext)).
+    cbn [Acc_inv]. destruct IH as [Hvalue Htime]. split; [exact Hvalue|now rewrite Htime].
+  - split; reflexivity.
+Qed.
+
+(** Binary-fuel evaluation and its generated clock preserve callback agreement. *)
+Lemma dom_lt_binary_loop_agree {S R : Type} (left right : S -> S + R)
+    (T_left T_right : S -> N) (Inv : S -> Prop) :
+  (forall state, Inv state -> left state = right state /\ T_left state = T_right state) ->
+  (forall state next, Inv state -> left state = inl next -> Inv next) ->
+  forall fuel state, Inv state ->
+    loopN left fuel state = loopN right fuel state /\
+    T_loopN left T_left fuel state = T_loopN right T_right fuel state.
+Proof.
+  intros Hagree Hpreserve fuel state Hinv.
+  assert (Hstep : forall fs : N * S, Inv (snd fs) ->
+    loopN_step left fs = loopN_step right fs /\
+      T_loopN_step left T_left fs = T_loopN_step right T_right fs).
+  { intros [[|positive] current] Hcurrent.
+    - split; [reflexivity|time_unfold @T_loopN_step; reflexivity].
+    - destruct (Hagree current Hcurrent) as [Hvalue Hclock].
+      split.
+      + cbn [loopN_step]. now rewrite Hvalue.
+      + time_unfold @T_loopN_step. now rewrite Hvalue, Hclock. }
+  assert (Hnext : forall fs next decrease, Inv (snd fs) ->
+    loopN_step left fs = inl (exist _ next decrease) -> Inv (snd next)).
+  { intros [[|positive] current] next decrease Hcurrent Hcontinue; [discriminate|].
+    cbn [loopN_step] in Hcontinue.
+    destruct (left current) as [following|result] eqn:Hcallback; [|discriminate].
+    inversion Hcontinue; subst next. cbn [snd].
+    now apply (Hpreserve current following). }
+  unfold loopN. time_unfold @T_loopN.
+  match goal with
+  | |- context [Argent.Loop.loop _ _ _ ?access] =>
+    pose proof (dom_lt_accessibility_agree loopN_lt (loopN_step left) (loopN_step right)
+      (fun fs => T_loopN_step left T_left fs) (fun fs => T_loopN_step right T_right fs)
+      (fun fs => Inv (snd fs)) Hstep Hnext (fuel, state) access Hinv) as Hloop
+  end.
+  destruct Hloop as [Hvalue Htime]. split; [exact Hvalue|]. now rewrite Htime.
+Qed.
+
+Local Opaque Argent.Loop.loop T_loopN.
+
+(** Identity lookup performs the same work for every table at a fixed numeric key. *)
+Lemma dom_lt_identity_clock_table left right vertex :
+  T_dom_lt_identity left vertex = T_dom_lt_identity right vertex.
+Proof.
+  unfold T_dom_lt_identity. rewrite !PTrieT.trie_get_clock.
+  destruct (trie_get (dom_lt_key vertex) left), (trie_get (dom_lt_key vertex) right);
+    time_simpl; reflexivity.
+Qed.
+
+Definition dom_lt_scores_agree (known : N -> Prop) (left right : ptrie N) : Prop :=
+  forall vertex, known vertex -> dom_lt_identity left vertex = dom_lt_identity right vertex.
+
+(** A minimum examines only the scores of the two labels it is given. *)
+Lemma dom_lt_minimum_agree known left right first second :
+  dom_lt_scores_agree known left right -> known first -> known second ->
+  dom_lt_minimum left first second = dom_lt_minimum right first second /\
+    T_dom_lt_minimum left first second = T_dom_lt_minimum right first second.
+Proof.
+  intros Hagree Hfirst Hsecond.
+  pose proof (Hagree first Hfirst) as Hfirst_score.
+  pose proof (Hagree second Hsecond) as Hsecond_score.
+  split.
+  - unfold dom_lt_minimum. now rewrite Hfirst_score, Hsecond_score.
+  - unfold T_dom_lt_minimum.
+    rewrite Hfirst_score, Hsecond_score.
+    rewrite (dom_lt_identity_clock_table left right first),
+      (dom_lt_identity_clock_table left right second). reflexivity.
+Qed.
+
+Definition dom_lt_links_known (known : N -> Prop) (links : dom_lt_links) : Prop :=
+  dom_lt_trie_all known (lt_label links) /\
+  forall vertex parent, trie_get (dom_lt_key vertex) (lt_shortcut links) = Some parent ->
+    exists label, trie_get (dom_lt_key vertex) (lt_label links) = Some label.
+
+Lemma dom_lt_linked_label_known known links vertex :
+  dom_lt_links_known known links ->
+  trie_get (dom_lt_key vertex) (lt_shortcut links) <> None ->
+  known (dom_lt_identity (lt_label links) vertex).
+Proof.
+  intros [Hlabels Hdomain] Hpresent.
+  destruct (trie_get (dom_lt_key vertex) (lt_shortcut links)) as [parent|] eqn:Hget;
+    [|contradiction].
+  destruct (Hdomain vertex parent Hget) as [label Hlabel].
+  unfold dom_lt_identity. rewrite Hlabel. now apply (Hlabels (dom_lt_key vertex)).
+Qed.
+
+Lemma dom_lt_minimum_known known semis first second : known first -> known second ->
+  known (dom_lt_minimum semis first second).
+Proof.
+  intros Hfirst Hsecond. unfold dom_lt_minimum.
+  destruct (N.ltb (dom_lt_identity semis second) (dom_lt_identity semis first)); assumption.
+Qed.
+
+Lemma dom_lt_links_known_set known before vertex root label operations :
+  dom_lt_links_known known before -> known label ->
+  dom_lt_links_known known
+    (DomLtLinks (PTrieCode.set (dom_lt_key vertex) root (lt_shortcut before))
+      (PTrieCode.set (dom_lt_key vertex) label (lt_label before)) operations).
+Proof.
+  intros [Hlabels Hdomain] Hlabel. split.
+  - apply dom_lt_trie_all_set; assumption.
+  - intros query parent Hget. cbn [lt_shortcut lt_label] in *.
+    destruct (Pos.eq_dec (dom_lt_key query) (dom_lt_key vertex)) as [Heq|Hne].
+    + exists label. rewrite Heq. apply PTrie.get_set_same.
+    + rewrite PTrie.get_set_other in Hget by exact Hne.
+      destruct (Hdomain query parent Hget) as [stored Hstored].
+      exists stored. now rewrite PTrie.get_set_other by exact Hne.
+Qed.
+
+Lemma dom_lt_shortcut_set_present before vertex root query :
+  trie_get (dom_lt_key query) (lt_shortcut before) <> None ->
+  trie_get (dom_lt_key query) (PTrieCode.set (dom_lt_key vertex) root (lt_shortcut before))
+    <> None.
+Proof.
+  intro Hpresent.
+  destruct (Pos.eq_dec (dom_lt_key query) (dom_lt_key vertex)) as [->|Hne].
+  - rewrite PTrie.get_set_same. discriminate.
+  - now rewrite PTrie.get_set_other by exact Hne.
+Qed.
+
+Definition dom_lt_walk_known (known : N -> Prop) (st : dom_lt_walk) : Prop :=
+  dom_lt_links_known known (lt_walk_links st) /\
+  match lt_walk_phase st with
+  | DomLtDescend _ stack =>
+      Forall (fun vertex => trie_get (dom_lt_key vertex) (lt_shortcut (lt_walk_links st))
+        <> None) stack
+  | DomLtUnwind _ part stack =>
+      (match part with None => True | Some label => known label end) /\
+      Forall (fun vertex => trie_get (dom_lt_key vertex) (lt_shortcut (lt_walk_links st))
+        <> None) stack
+  end.
+
+(** The optional minimum ranges over linked labels and excludes the unlinked stopping root. *)
+Lemma dom_lt_compress_known known semis st : dom_lt_walk_known known st ->
+  match dom_lt_compress_step semis st with
+  | inl next => dom_lt_walk_known known next
+  | inr result => dom_lt_links_known known (fst result)
+  end.
+Proof.
+  destruct st as [links [vertex stack|root part stack]].
+  - cbn [dom_lt_walk_known lt_walk_links lt_walk_phase]. intros [Hlinks Hstack].
+    cbn [dom_lt_compress_step lt_walk_links lt_walk_phase].
+    destruct (trie_get (dom_lt_key vertex) (lt_shortcut links)) as [parent|] eqn:Hget.
+    + destruct (N.ltb parent vertex).
+      * split; [exact Hlinks|]. constructor; [cbn [lt_walk_links]; congruence|exact Hstack].
+      * split; [exact Hlinks|]. now split.
+    + split; [exact Hlinks|]. now split.
+  - cbn [dom_lt_walk_known lt_walk_links lt_walk_phase]. intros [Hlinks [Hpart Hstack]].
+    destruct stack as [|vertex stack].
+    + exact Hlinks.
+    + inversion Hstack as [|head tail Hpresent Htail]; subst head tail.
+      set (label := dom_lt_identity (lt_label links) vertex).
+      set (best := match part with None => label |
+        Some previous => dom_lt_minimum semis label previous end).
+      assert (Hlabel : known label) by (unfold label; now apply dom_lt_linked_label_known).
+      assert (Hbest : known best).
+      { unfold best. destruct part; [now apply dom_lt_minimum_known|exact Hlabel]. }
+      change (dom_lt_walk_known known
+        (DomLtWalk (DomLtLinks
+          (PTrieCode.set (dom_lt_key vertex) root (lt_shortcut links))
+          (PTrieCode.set (dom_lt_key vertex) best (lt_label links)) (lt_operations links))
+          (DomLtUnwind root (Some best) stack))).
+      split; [now apply dom_lt_links_known_set|]. split; [exact Hbest|].
+      apply Forall_forall. intros query Hin. apply dom_lt_shortcut_set_present.
+      now apply (proj1 (Forall_forall _ _) Htail query).
+Qed.
+
+Lemma dom_lt_compress_agree known left right st :
+  dom_lt_scores_agree known left right -> dom_lt_walk_known known st ->
+  dom_lt_compress_step left st = dom_lt_compress_step right st /\
+    T_dom_lt_compress_step left st = T_dom_lt_compress_step right st.
+Proof.
+  intros Hagree. destruct st as [links [vertex stack|root part stack]].
+  - intro Hinv. split; reflexivity.
+  - cbn [dom_lt_walk_known lt_walk_links lt_walk_phase]. intros [Hlinks [Hpart Hstack]].
+    destruct stack as [|vertex stack]; [split; reflexivity|].
+    destruct part as [previous|]; [|split; reflexivity].
+    inversion Hstack as [|head tail Hpresent Htail]; subst head tail.
+    pose proof (dom_lt_linked_label_known known links vertex Hlinks Hpresent) as Hlabel.
+    destruct (dom_lt_minimum_agree known left right
+      (dom_lt_identity (lt_label links) vertex) previous Hagree Hlabel Hpart)
+      as [Hvalue Htime].
+    split.
+    + cbn [dom_lt_compress_step lt_walk_links lt_walk_phase]. now rewrite Hvalue.
+    + unfold T_dom_lt_compress_step. cbn [lt_walk_links lt_walk_phase].
+      now rewrite Hvalue, Htime.
+Qed.
+
+(** Replay may use final semidominators once they agree on every already-linked label. *)
+Lemma dom_lt_eval_agree known left right fuel before vertex :
+  dom_lt_scores_agree known left right -> dom_lt_links_known known before ->
+  dom_lt_eval fuel left before vertex = dom_lt_eval fuel right before vertex /\
+    T_dom_lt_eval fuel left before vertex = T_dom_lt_eval fuel right before vertex.
+Proof.
+  intros Hagree Hlinks.
+  set (initial := DomLtWalk
+    (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval vertex :: lt_operations before))
+    (DomLtDescend vertex [])).
+  assert (Hinitial : dom_lt_walk_known known initial).
+  { split; [exact Hlinks|constructor]. }
+  assert (Hstep : forall st, dom_lt_walk_known known st ->
+    dom_lt_compress_step left st = dom_lt_compress_step right st /\
+      T_dom_lt_compress_step left st = T_dom_lt_compress_step right st).
+  { intros st Hst. now apply (dom_lt_compress_agree known). }
+  assert (Hpreserve : forall st next, dom_lt_walk_known known st ->
+    dom_lt_compress_step left st = inl next -> dom_lt_walk_known known next).
+  { intros st next Hst Hnext.
+    pose proof (dom_lt_compress_known known left st Hst) as Hknown. now rewrite Hnext in Hknown. }
+  destruct (dom_lt_binary_loop_agree (dom_lt_compress_step left) (dom_lt_compress_step right)
+    (T_dom_lt_compress_step left) (T_dom_lt_compress_step right) (dom_lt_walk_known known)
+    Hstep Hpreserve (N.double fuel + 3)%N initial Hinitial) as [Hvalue Htime].
+  split.
+  - unfold dom_lt_eval. fold initial. now rewrite Hvalue.
+  - unfold T_dom_lt_eval. fold initial. time_simpl.
+    change (T_loopN (dom_lt_compress_step left)
+      (fun st => T_dom_lt_compress_step left st) (N.double fuel + 3)%N initial)
+      with (T_loopN (dom_lt_compress_step left) (T_dom_lt_compress_step left)
+        (N.double fuel + 3)%N initial).
+    change (T_loopN (dom_lt_compress_step right)
+      (fun st => T_dom_lt_compress_step right st) (N.double fuel + 3)%N initial)
+      with (T_loopN (dom_lt_compress_step right) (T_dom_lt_compress_step right)
+        (N.double fuel + 3)%N initial).
+    now rewrite Hvalue, Htime.
+Qed.
+
+(** Evaluating a query preserves the known-label invariant, including fuel exhaustion. *)
+Lemma dom_lt_eval_known known fuel semis before vertex :
+  dom_lt_links_known known before ->
+  dom_lt_links_known known (fst (dom_lt_eval fuel semis before vertex)).
+Proof.
+  intro Hlinks.
+  set (initial := DomLtWalk
+    (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval vertex :: lt_operations before))
+    (DomLtDescend vertex [])).
+  assert (Hinitial : dom_lt_walk_known known initial).
+  { split; [exact Hlinks|constructor]. }
+  pose proof (dom_lt_loop_invariant (dom_lt_compress_step semis)
+    (dom_lt_walk_known known) (fun result => dom_lt_links_known known (fst result))
+    (N.double fuel + 3)%N initial) as Hrun.
+  assert (Hgo : forall st next, dom_lt_walk_known known st ->
+    dom_lt_compress_step semis st = inl next -> dom_lt_walk_known known next).
+  { intros st next Hst Hnext.
+    pose proof (dom_lt_compress_known known semis st Hst) as Hknown.
+    now rewrite Hnext in Hknown. }
+  assert (Hstop : forall st result, dom_lt_walk_known known st ->
+    dom_lt_compress_step semis st = inr result -> dom_lt_links_known known (fst result)).
+  { intros st result Hst Hnext.
+    pose proof (dom_lt_compress_known known semis st Hst) as Hknown.
+    now rewrite Hnext in Hknown. }
+  specialize (Hrun Hgo Hstop Hinitial).
+  unfold dom_lt_eval. fold initial.
+  destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)
+    as [st|result]; [exact (proj1 Hrun)|exact Hrun].
+Qed.
+
+Local Opaque dom_lt_eval T_dom_lt_eval.
+
+(** Enlarging the known set preserves its invariant on every stored label. *)
+Lemma dom_lt_links_known_mono smaller larger links :
+  (forall vertex, smaller vertex -> larger vertex) ->
+  dom_lt_links_known smaller links -> dom_lt_links_known larger links.
+Proof.
+  intros Hincl [Hlabels Hdomain]. split; [|exact Hdomain].
+  intros key value Hget. now apply Hincl, (Hlabels key value).
+Qed.
+
+(** Linking a newly settled vertex extends the known-label invariant. *)
+Lemma dom_lt_link_known known links vertex parent :
+  dom_lt_links_known known links -> known vertex ->
+  dom_lt_links_known known (dom_lt_link links vertex parent).
+Proof.
+  intros Hlinks Hvertex. unfold dom_lt_link. now apply dom_lt_links_known_set.
+Qed.
+
+(** A settlement changes the score table only at its own vertex. *)
+Lemma dom_lt_settle_score_other numeric before vertex query :
+  query <> vertex ->
+  dom_lt_identity (lt_semis (dom_lt_settle numeric before vertex)) query =
+    dom_lt_identity (lt_semis before) query.
+Proof.
+  intro Hdifferent. unfold dom_lt_settle.
+  destruct (trie_get (dom_lt_key vertex) (lt_numeric_parent numeric)) as [parent|];
+    [|reflexivity].
+  destruct (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis before))
+    (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+      None => [] | Some row => row end) (lt_semi_links before, parent, parent))
+    as [[links best] witness].
+  cbn [lt_semis]. unfold dom_lt_identity.
+  rewrite PTrie.get_set_other; [reflexivity|].
+  intro Heq. apply Hdifferent, dom_lt_key_injective, Heq.
+Qed.
+
+(** Later settlements preserve the final score of every vertex outside their order. *)
+Lemma dom_lt_settlements_score_frame numeric order before query :
+  ~ In query order ->
+  dom_lt_identity (lt_semis (fold_left (dom_lt_settle numeric) order before)) query =
+    dom_lt_identity (lt_semis before) query.
+Proof.
+  revert before. induction order as [|vertex rest IH]; intros before Houtside;
+    [reflexivity|].
+  cbn [fold_left]. rewrite IH by (intro Hin; apply Houtside; now right).
+  apply dom_lt_settle_score_other. intro Heq. apply Houtside. left. now symmetry.
+Qed.
+
+(** The operation-only phase uses the same evaluator and linker as the producer. *)
+Definition dom_lt_phase_step (fuel : N) (semis : ptrie N)
+    (links : dom_lt_links) (op : lt_op) : dom_lt_links :=
+  match op with
+  | LtLink child parent => dom_lt_link links child parent
+  | LtEval vertex => fst (dom_lt_eval fuel semis links vertex)
+  end.
+TimeFun dom_lt_phase_step.
+
+(** Executing a recorded phase prepends its reversed operation list to the old log. *)
+Lemma dom_lt_phase_operations fuel semis operations before :
+  lt_operations (fold_left (dom_lt_phase_step fuel semis) operations before) =
+    rev operations ++ lt_operations before.
+Proof.
+  revert before. induction operations as [|op rest IH]; intros before.
+  - reflexivity.
+  - cbn [fold_left]. rewrite IH.
+    assert (Hhead : lt_operations (dom_lt_phase_step fuel semis before op) =
+      op :: lt_operations before).
+    { destruct op; cbn [dom_lt_phase_step];
+        [reflexivity|apply dom_lt_eval_operations]. }
+    rewrite Hhead. cbn [rev]. now rewrite <- app_assoc.
+Qed.
+
+(** A settlement's operation sequence depends only on its numeric parent and row. *)
+Definition dom_lt_settle_sequence (numeric : dom_lt_numeric) (vertex : N) : list lt_op :=
+  match trie_get (dom_lt_key vertex) (lt_numeric_parent numeric) with
+  | None => []
+  | Some parent =>
+      map LtEval (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+        None => [] | Some row => row end) ++ [LtLink vertex parent]
+  end.
+
+Definition dom_lt_settlements_sequence (numeric : dom_lt_numeric) (order : list N) :=
+  flat_map (dom_lt_settle_sequence numeric) order.
+
+(** A replay callback uses its phase computation after applying the single boundary reset. *)
+Lemma dom_lt_replay_step_phase fuel semis before boundary index op :
+  dom_lt_replay_step (DomLtReplay before semis fuel boundary index) op =
+    DomLtReplay
+      (dom_lt_phase_step fuel semis
+        (if N.eqb index boundary then DomLtLinks Empty Empty [] else before) op)
+      semis fuel boundary (N.succ index).
+Proof.
+  destruct op; reflexivity.
+Qed.
+
+(** Replay includes the generated clock of the same evaluator or linker. *)
+Lemma dom_lt_replay_clock_phase fuel semis before boundary index op :
+  (T_dom_lt_phase_step fuel semis
+    (if N.eqb index boundary then DomLtLinks Empty Empty [] else before) op <=
+    T_dom_lt_replay_step (DomLtReplay before semis fuel boundary index) op)%N.
+Proof.
+  destruct op; unfold T_dom_lt_phase_step, T_dom_lt_replay_step;
+    cbn [replay_links replay_semis replay_fuel replay_boundary replay_index];
+    destruct (N.eqb index boundary); time_simpl; nia.
+Qed.
+
+(** A segment wholly before or strictly after the boundary performs no reset. *)
+Lemma dom_lt_replay_phase_segment fuel semis operations : forall before boundary index,
+  ((boundary < index) \/ (index + N.of_nat (length operations) <= boundary))%N ->
+  fold_left dom_lt_replay_step operations (DomLtReplay before semis fuel boundary index) =
+    DomLtReplay (fold_left (dom_lt_phase_step fuel semis) operations before)
+      semis fuel boundary (index + N.of_nat (length operations))%N /\
+  (List.T_fold_left (dom_lt_phase_step fuel semis) (T_dom_lt_phase_step fuel semis)
+    operations before <=
+    List.T_fold_left dom_lt_replay_step T_dom_lt_replay_step operations
+      (DomLtReplay before semis fuel boundary index))%N.
+Proof.
+  induction operations as [|op rest IH]; intros before boundary index Hside.
+  - cbn [fold_left length]. rewrite N.add_0_r. split; [reflexivity|].
+    time_unfold @List.T_fold_left. reflexivity.
+  - assert (Hdifferent : N.eqb index boundary = false).
+    { apply N.eqb_neq. cbn [length] in Hside. rewrite Nat2N.inj_succ in Hside. lia. }
+    assert (Hrest : ((boundary < N.succ index) \/
+      (N.succ index + N.of_nat (length rest) <= boundary))%N).
+    { cbn [length] in Hside. rewrite Nat2N.inj_succ in Hside. lia. }
+    destruct (IH (dom_lt_phase_step fuel semis before op) boundary (N.succ index) Hrest)
+      as [Hvalue Hclock].
+    pose proof (dom_lt_replay_clock_phase fuel semis before boundary index op) as Hhead.
+    rewrite Hdifferent in Hhead.
+    assert (Hstep : dom_lt_replay_step (DomLtReplay before semis fuel boundary index) op =
+      DomLtReplay (dom_lt_phase_step fuel semis before op) semis fuel boundary (N.succ index)).
+    { rewrite dom_lt_replay_step_phase, Hdifferent. reflexivity. }
+    split.
+    + cbn [fold_left]. rewrite Hstep, Hvalue. cbn [length]. rewrite Nat2N.inj_succ.
+      f_equal. lia.
+    + time_unfold @List.T_fold_left. rewrite Hstep. clear -Hhead Hclock. lia.
+Qed.
+
+(** A bucket suffix starts at the reset boundary and then remains strictly beyond it. *)
+Lemma dom_lt_replay_bucket_phase fuel semis operations before boundary :
+  (List.T_fold_left (dom_lt_phase_step fuel semis) (T_dom_lt_phase_step fuel semis)
+    operations (DomLtLinks Empty Empty []) <=
+    List.T_fold_left dom_lt_replay_step T_dom_lt_replay_step operations
+      (DomLtReplay before semis fuel boundary boundary))%N.
+Proof.
+  destruct operations as [|op rest].
+  - time_unfold @List.T_fold_left. reflexivity.
+  - destruct (dom_lt_replay_phase_segment fuel semis rest
+      (dom_lt_phase_step fuel semis (DomLtLinks Empty Empty []) op)
+      boundary (N.succ boundary)) as [_ Htail]; [left; lia|].
+    pose proof (dom_lt_replay_clock_phase fuel semis before boundary boundary op) as Hhead.
+    rewrite N.eqb_refl in Hhead.
+    assert (Hstep : dom_lt_replay_step (DomLtReplay before semis fuel boundary boundary) op =
+      DomLtReplay (dom_lt_phase_step fuel semis (DomLtLinks Empty Empty []) op)
+        semis fuel boundary (N.succ boundary)).
+    { rewrite dom_lt_replay_step_phase, N.eqb_refl. reflexivity. }
+    time_unfold @List.T_fold_left. rewrite Hstep. clear -Hhead Htail. lia.
+Qed.
+
+(** Two separately run producer forests are paid by replay, including its one reset. *)
+Lemma dom_lt_pipeline_replay_two_phases fuel semis semi_ops bucket_ops :
+  (List.T_fold_left (dom_lt_phase_step fuel semis) (T_dom_lt_phase_step fuel semis)
+      semi_ops (DomLtLinks Empty Empty []) +
+    List.T_fold_left (dom_lt_phase_step fuel semis) (T_dom_lt_phase_step fuel semis)
+      bucket_ops (DomLtLinks Empty Empty []) <=
+    T_dom_lt_run_ops (semi_ops ++ bucket_ops)
+      (DomLtReplay (DomLtLinks Empty Empty []) semis fuel
+        (N.of_nat (length semi_ops)) 0%N) + 1)%N.
+Proof.
+  set (initial := DomLtReplay (DomLtLinks Empty Empty []) semis fuel
+    (N.of_nat (length semi_ops)) 0%N).
+  destruct (dom_lt_replay_phase_segment fuel semis semi_ops (DomLtLinks Empty Empty [])
+    (N.of_nat (length semi_ops)) 0%N) as [Hvalue Hsemi]; [right; lia|].
+  cbn [N.add] in Hvalue. fold initial in Hvalue, Hsemi.
+  pose proof (dom_lt_replay_bucket_phase fuel semis bucket_ops
+    (fold_left (dom_lt_phase_step fuel semis) semi_ops (DomLtLinks Empty Empty []))
+    (N.of_nat (length semi_ops))) as Hbucket.
+  pose proof (dom_lt_fold_clock_app dom_lt_replay_step T_dom_lt_replay_step
+    semi_ops bucket_ops initial) as Hsplit.
+  rewrite Hvalue in Hsplit. unfold T_dom_lt_run_ops. fold initial. time_simpl.
+  change (fun (st : dom_lt_replay) (op : lt_op) => T_dom_lt_replay_step st op)
+    with T_dom_lt_replay_step.
+  clear -Hsemi Hbucket Hsplit. nia.
+Qed.
+
+(** A state projection commutes with a fold when it commutes with each guarded step. *)
+Lemma dom_lt_fold_project {A B C : Type} (step : A -> B -> A) (target : C -> B -> C)
+    (project : A -> C) (Inv : A -> Prop) :
+  (forall st value, Inv st -> Inv (step st value)) ->
+  (forall st value, Inv st -> project (step st value) = target (project st) value) ->
+  forall values initial, Inv initial ->
+  project (fold_left step values initial) = fold_left target values (project initial) /\
+    Inv (fold_left step values initial).
+Proof.
+  intros Hpreserve Hproject values. induction values as [|value rest IH]; intros initial Hinv.
+  - split; [reflexivity|exact Hinv].
+  - destruct (IH (step initial value) (Hpreserve initial value Hinv)) as [Hvalue Hafter].
+    split; [|exact Hafter].
+    exact (eq_trans Hvalue
+      (f_equal (fold_left target rest) (Hproject initial value Hinv))).
+Qed.
+
+(** Mapping the input operations is equivalent to supplying the mapped operation to the step. *)
+Lemma dom_lt_fold_mapped {A B C : Type} (step : A -> B -> A) (key : C -> B) values :
+  forall initial, fold_left step (map key values) initial =
+    fold_left (fun st value => step st (key value)) values initial.
+Proof.
+  induction values as [|value rest IH]; intros initial; [reflexivity|].
+  exact (IH (step initial (key value))).
+Qed.
+
+Local Opaque dom_lt_eval T_dom_lt_eval.
+Local Transparent dom_lt_predecessor T_dom_lt_predecessor dom_lt_settle T_dom_lt_settle.
+
+(** A predecessor visit changes its link state only through its evaluator. *)
+Lemma dom_lt_predecessor_links limit semis acc source :
+  fst (fst (dom_lt_predecessor limit semis acc source)) =
+    fst (dom_lt_eval limit semis (fst (fst acc)) source).
+Proof.
+  destruct acc as [[links best] witness]. cbn [fst]. unfold dom_lt_predecessor.
+  destruct (dom_lt_eval limit semis links source) as [after chosen].
+  destruct (N.ltb (dom_lt_identity semis chosen) best); reflexivity.
+Qed.
+
+Local Opaque dom_lt_predecessor T_dom_lt_predecessor.
+
+(** Replaying one predecessor row with final scores reproduces its exact link state. *)
+Lemma dom_lt_predecessors_phase known limit current final incoming :
+  dom_lt_scores_agree known current final -> forall acc,
+  dom_lt_links_known known (fst (fst acc)) ->
+  fst (fst (fold_left (dom_lt_predecessor limit current) incoming acc)) =
+    fold_left (dom_lt_phase_step limit final) (map LtEval incoming) (fst (fst acc)) /\
+  dom_lt_links_known known
+    (fst (fst (fold_left (dom_lt_predecessor limit current) incoming acc))).
+Proof.
+  intros Hscores acc Hknown.
+  assert (Hpreserve : forall state source,
+    dom_lt_links_known known (fst (fst state)) ->
+    dom_lt_links_known known (fst (fst (dom_lt_predecessor limit current state source)))).
+  { intros state source Hstate. rewrite dom_lt_predecessor_links.
+    now apply dom_lt_eval_known. }
+  assert (Hproject : forall state source,
+    dom_lt_links_known known (fst (fst state)) ->
+    fst (fst (dom_lt_predecessor limit current state source)) =
+      dom_lt_phase_step limit final (fst (fst state)) (LtEval source)).
+  { intros state source Hstate. eapply eq_trans; [apply dom_lt_predecessor_links|].
+    change (fst (dom_lt_eval limit current (fst (fst state)) source) =
+      fst (dom_lt_eval limit final (fst (fst state)) source)).
+    exact (f_equal (@fst dom_lt_links N)
+      (proj1 (dom_lt_eval_agree known current final limit (fst (fst state)) source
+        Hscores Hstate))). }
+  destruct (dom_lt_fold_project (dom_lt_predecessor limit current)
+    (fun links source => dom_lt_phase_step limit final links (LtEval source))
+    (fun state => fst (fst state)) (fun state => dom_lt_links_known known (fst (fst state)))
+    Hpreserve Hproject incoming acc Hknown) as [Hvalue Hafter].
+  split; [|exact Hafter].
+  exact (eq_trans Hvalue (eq_sym
+    (dom_lt_fold_mapped (dom_lt_phase_step limit final) LtEval incoming (fst (fst acc))))).
+Qed.
+
+(** One settlement's final-score replay matches all row evaluations followed by its link. *)
+Lemma dom_lt_settle_phase known numeric before vertex final :
+  dom_lt_scores_agree known (lt_semis before) final ->
+  dom_lt_links_known known (lt_semi_links before) ->
+  lt_semi_links (dom_lt_settle numeric before vertex) =
+    fold_left (dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (dom_lt_settle_sequence numeric vertex) (lt_semi_links before) /\
+  dom_lt_links_known (fun query => known query \/ query = vertex)
+    (lt_semi_links (dom_lt_settle numeric before vertex)).
+Proof.
+  intros Hscores Hknown. unfold dom_lt_settle, dom_lt_settle_sequence.
+  destruct (trie_get (dom_lt_key vertex) (lt_numeric_parent numeric)) as [parent|].
+  2: { split; [reflexivity|].
+       eapply dom_lt_links_known_mono; [|exact Hknown]. intros query Hquery. now left. }
+  set (incoming := match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+    None => [] | Some row => row end).
+  destruct (dom_lt_predecessors_phase known (lt_numeric_limit numeric)
+    (lt_semis before) final incoming Hscores (lt_semi_links before, parent, parent) Hknown)
+    as [Hvalue Hafter].
+  destruct (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis before))
+    incoming (lt_semi_links before, parent, parent)) as [[links best] witness].
+  cbn [fst] in Hvalue, Hafter. cbn [lt_semi_links]. split.
+  - rewrite fold_left_app.
+    change (dom_lt_link links vertex parent =
+      dom_lt_link (fold_left (dom_lt_phase_step (lt_numeric_limit numeric) final)
+        (map LtEval incoming) (lt_semi_links before)) vertex parent).
+    now rewrite <- Hvalue.
+  - apply dom_lt_link_known; [|now right].
+    eapply dom_lt_links_known_mono; [|exact Hafter]. intros query Hquery. now left.
+Qed.
+
+Local Opaque dom_lt_settle T_dom_lt_settle.
+
+(** The current score of a linked label is already its score after every later settlement. *)
+Lemma dom_lt_settlements_phase numeric order : NoDup order -> forall before,
+  dom_lt_links_known (fun query => ~ In query order) (lt_semi_links before) ->
+  lt_semi_links (fold_left (dom_lt_settle numeric) order before) =
+    fold_left (dom_lt_phase_step (lt_numeric_limit numeric)
+      (lt_semis (fold_left (dom_lt_settle numeric) order before)))
+      (dom_lt_settlements_sequence numeric order) (lt_semi_links before).
+Proof.
+  intro Hunique. induction Hunique as [|vertex rest Hfresh Hunique IH]; intros before Hknown.
+  - reflexivity.
+  - set (after := dom_lt_settle numeric before vertex).
+    set (final := lt_semis (fold_left (dom_lt_settle numeric) rest after)).
+    assert (Hscores : dom_lt_scores_agree (fun query => ~ In query (vertex :: rest))
+      (lt_semis before) final).
+    { intros query Houtside. unfold final, after. symmetry.
+      change (dom_lt_identity
+        (lt_semis (fold_left (dom_lt_settle numeric) (vertex :: rest) before)) query =
+        dom_lt_identity (lt_semis before) query).
+      now apply dom_lt_settlements_score_frame. }
+    destruct (dom_lt_settle_phase (fun query => ~ In query (vertex :: rest))
+      numeric before vertex final Hscores Hknown) as [Hstep Hlinked].
+    fold after in Hstep, Hlinked.
+    assert (Hnext : dom_lt_links_known (fun query => ~ In query rest) (lt_semi_links after)).
+    { eapply dom_lt_links_known_mono; [|exact Hlinked].
+      intros query [Houtside|Heq] Hin.
+      - apply Houtside. now right.
+      - subst query. contradiction. }
+    specialize (IH after Hnext). fold final in IH.
+    cbn [fold_left]. fold after. fold final.
+    unfold dom_lt_settlements_sequence. cbn [flat_map]. rewrite fold_left_app.
+    rewrite <- Hstep. exact IH.
+Qed.
+
+(** The initial empty forest has no labels that could depend on an unsettled score. *)
+Lemma dom_lt_empty_links_known known :
+  dom_lt_links_known known (DomLtLinks Empty Empty []).
+Proof.
+  split.
+  - apply dom_lt_trie_all_empty.
+  - intros vertex parent Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+Qed.
+
+(** The complete semidominator forest is the replay of its fixed numeric operation list. *)
+Lemma dom_lt_semidominators_phase numeric : NoDup (lt_numeric_order numeric) ->
+  lt_semi_links (dom_lt_semidominators numeric) =
+    fold_left (dom_lt_phase_step (lt_numeric_limit numeric)
+      (lt_semis (dom_lt_semidominators numeric)))
+      (dom_lt_settlements_sequence numeric (lt_numeric_order numeric))
+      (DomLtLinks Empty Empty []).
+Proof.
+  intro Hunique. unfold dom_lt_semidominators.
+  apply dom_lt_settlements_phase; [exact Hunique|apply dom_lt_empty_links_known].
+Qed.
+
+(** The producer's reverse log is exactly the reverse of its forward phase sequence. *)
+Lemma dom_lt_semidominators_log numeric : NoDup (lt_numeric_order numeric) ->
+  lt_operations (lt_semi_links (dom_lt_semidominators numeric)) =
+    rev (dom_lt_settlements_sequence numeric (lt_numeric_order numeric)).
+Proof.
+  intro Hunique. rewrite dom_lt_semidominators_phase by exact Hunique.
+  rewrite dom_lt_phase_operations. cbn [lt_operations]. now rewrite app_nil_r.
+Qed.
+
+(** One list cell combines two clock bounds without exposing either computation. *)
+Lemma dom_lt_phase_clock_row head tail replay_head replay_tail extra_head extra_tail total :
+  (head <= replay_head + extra_head)%N ->
+  (tail <= replay_tail + extra_tail)%N ->
+  (extra_head + extra_tail <= total)%N ->
+  (1 + (head + tail) <= 1 + (replay_head + replay_tail) + total)%N.
+Proof.
+  nia.
+Qed.
+
+(** A row followed by one link pays the empty-call adjustment of concatenation. *)
+Lemma dom_lt_phase_clock_settle step row link replay_row replay_link replay_total
+    extra row_extra total :
+  (step <= row + link + extra)%N ->
+  (row <= replay_row + row_extra)%N ->
+  (link <= replay_link)%N ->
+  (replay_total + 1 = replay_row + (replay_link + 2))%N ->
+  (row_extra + extra + 1 <= total)%N ->
+  (step + 2 <= replay_total + total)%N.
+Proof.
+  nia.
+Qed.
+
+(** Flattening a list of phases counts only one final empty call. *)
+Lemma dom_lt_phase_clock_flatten head tail replay_head replay_tail replay_total
+    extra_head extra_tail total :
+  (head + 2 <= replay_head + extra_head)%N ->
+  (tail <= replay_tail + extra_tail)%N ->
+  (replay_total + 1 = replay_head + replay_tail)%N ->
+  (extra_head + extra_tail <= total)%N ->
+  (1 + (head + tail) <= replay_total + total)%N.
+Proof.
+  nia.
+Qed.
+
+(** One wrapper call is paid from the extra linear budget. *)
+Lemma dom_lt_phase_clock_wrapper clock replay extra total :
+  (clock <= replay + extra)%N -> (extra + 1 <= total)%N ->
+  (1 + clock <= replay + total)%N.
+Proof.
+  nia.
+Qed.
+
+(** The generated fold clock counts both the singleton call and its empty continuation. *)
+Lemma dom_lt_single_fold_clock {A B : Type} (step : A -> B -> A) (T_step : A -> B -> N)
+    before value :
+  List.T_fold_left step T_step [value] before = (T_step before value + 2)%N.
+Proof.
+  time_unfold @List.T_fold_left. time_unfold @List.T_fold_left. lia.
+Qed.
+
+(** Restore the clock-proof transparency boundary for following sections. *)
+Local Transparent dom_lt_eval T_dom_lt_eval dom_lt_predecessor T_dom_lt_predecessor.
+Local Transparent dom_lt_settle T_dom_lt_settle.
+Local Opaque Argent.Loop.loop T_loopN.
