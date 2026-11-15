@@ -3117,7 +3117,28 @@ Module FrontierT <: FRONTIER_ALL.
     | inl next => inl (proj1_sig (proj1_sig next))
     | inr result => inr result
     end = idf_step rows (proj1_sig st).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds [st Hinv]. unfold idf_checked_step, idf_guard_state.
+    cbn [proj1_sig proj2_sig].
+    assert (Hproject : forall (result : idf_state + list positive)
+        (Hresult : idf_step rows st = result),
+      match
+        (match result as answer return idf_step rows st = answer ->
+          { next : idf_guard rows seeds |
+            idf_decreases rows seeds next (exist _ st Hinv) } + list positive
+        with
+        | inl next => fun Hstep =>
+          let Hstep_inv := F7_idf_step rows seeds st next Hinv Hstep in
+          inl (exist _ (exist _ next (proj1 Hstep_inv)) (proj2 Hstep_inv))
+        | inr answer => fun _ => inr answer
+        end Hresult)
+      with
+      | inl next => inl (proj1_sig (proj1_sig next))
+      | inr answer => inr answer
+      end = result).
+    { intros [next|answer] Hresult; reflexivity. }
+    exact (Hproject _ eq_refl).
+  Qed.
 
   Lemma F8b_idf_accessible : forall rows seeds st,
     Acc (idf_decreases rows seeds) st.
@@ -3132,7 +3153,19 @@ Module FrontierT <: FRONTIER_ALL.
       (idf_checked_step rows seeds)
       (exist _ (idf_initial seeds) (F6_idf_initial rows seeds))
       (F8b_idf_accessible rows seeds _).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. symmetry.
+    refine (frontier_loop_invariant (idf_decreases rows seeds) (idf_checked_step rows seeds)
+      (fun _ => True) (fun result => result = idf rows seeds) _ _
+      (exist _ (idf_initial seeds) (F6_idf_initial rows seeds))
+      (F8b_idf_accessible rows seeds
+        (exist _ (idf_initial seeds) (F6_idf_initial rows seeds))) I).
+    - intros state next Hnext Htrue Hstep. exact I.
+    - intros state result Htrue Hstep.
+      pose proof (F8a_idf_checked rows seeds state) as Hraw. rewrite Hstep in Hraw.
+      exact (proj2 (proj2 (F8_idf_stop rows seeds (proj1_sig state) result
+        (proj2_sig state) (eq_sym Hraw)))).
+  Qed.
 
   Lemma F9_idf_output : forall rows seeds,
     length (idf rows seeds) <= idf_work idf rows seeds.
@@ -3181,23 +3214,54 @@ Module FrontierT <: FRONTIER_ALL.
     repeat rewrite Nat2N.inj_add in Htime. repeat rewrite Nat2N.inj_add. lia.
   Qed.
 
+  (** The public guard adds only its projection and callback call. *)
+  Lemma idf_guard_clock : forall rows seeds st,
+    (T_idf_checked_step rows seeds st = 2 + T_idf_step rows (proj1_sig st))%N.
+  Proof.
+    intros rows seeds [st Hinv]. unfold T_idf_checked_step, T_idf_guard_state.
+    cbn [idf_guard_state proj1_sig]. lia.
+  Qed.
+
   Lemma T2a_idf_checked_step : forall rows seeds st next Hnext,
     idf_checked_step rows seeds st = inl (exist _ next Hnext) ->
     (T_idf_checked_step rows seeds st + idf_loop_credit rows seeds next <
       idf_loop_credit rows seeds st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st next Hnext Hstep.
+    pose proof (F8a_idf_checked rows seeds st) as Hraw. rewrite Hstep in Hraw.
+    cbn [proj1_sig] in Hraw.
+    pose proof (T1_idf_step rows seeds (proj1_sig st) (proj1_sig next)
+      (proj2_sig st) (eq_sym Hraw)) as Hcredit.
+    rewrite idf_guard_clock. unfold idf_loop_credit, k_idf_walk. lia.
+  Qed.
 
   Lemma T2b_idf_checked_stop : forall rows seeds st result,
     idf_checked_step rows seeds st = inr result ->
     (T_idf_checked_step rows seeds st <=
       k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st result Hstep.
+    pose proof (F8a_idf_checked rows seeds st) as Hraw. rewrite Hstep in Hraw.
+    pose proof (T2_idf_stop rows seeds (proj1_sig st) result
+      (proj2_sig st) (eq_sym Hraw)) as Hcost.
+    rewrite idf_guard_clock. unfold k_idf_walk. lia.
+  Qed.
 
   Lemma T2c_idf_loop : forall rows seeds st Hacc,
     (Argent.Loop.T_loop (idf_decreases rows seeds) (idf_checked_step rows seeds)
       (T_idf_checked_step rows seeds) st Hacc <= idf_loop_credit rows seeds st +
       k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1) + 1)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st Hacc.
+    refine (T_loop_le (idf_decreases rows seeds) (idf_checked_step rows seeds)
+      (T_idf_checked_step rows seeds) (fun _ => True) (idf_loop_credit rows seeds)
+      (k_idf_walk * (k_idf_stop * N.of_nat (length (idf rows seeds) + 1) + 1))%N
+      _ _ st Hacc I).
+    - intros state next Hnext Htrue Hstep. split; [exact I|].
+      exact (T2a_idf_checked_step rows seeds state next Hnext Hstep).
+    - intros state result Htrue Hstep.
+      exact (T2b_idf_checked_stop rows seeds state result Hstep).
+  Qed.
 
   Lemma T3_idf_walk : forall rows seeds,
     (T_idf_walk rows seeds <= k_idf_walk *
