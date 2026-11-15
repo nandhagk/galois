@@ -2204,7 +2204,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
 
   Definition psize (w : positive) (a : p) : nat := Pos.to_nat w + wrapped_bits a + 1.
   Definition pwsize (_ : pwparam) : nat := 0.
-  Definition c_payload : N := 1. (* STUB *)
+  Definition c_payload : N := 67108864.
   Definition c_wrapped : N := 1. (* STUB *)
 
   (** Constructing top fits the published width cost. *)
@@ -2249,43 +2249,84 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_join_bits w a b) as Hbits.
+    unfold c_payload, psize, pjoin. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Met payload storage fits the combined input budget. *)
   Lemma pmeet_size : forall w a b,
     (N.of_nat (psize w (pmeet w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_meet_bits w a b) as Hbits.
+    unfold c_payload, psize, pmeet. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Widened storage fits both inputs and its parameter. *)
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a).
+    - unfold c_payload, psize, pwsize. rewrite !Nat2N.inj_add in *. lia.
+    - pose proof (wrapped_join_bits w (wrapped_double w a) b) as Hbits.
+      unfold wrapped_double in Hbits.
+      unfold c_payload, psize, pwsize, pjoin. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Narrowed storage fits both inputs. *)
   Lemma pnarrow_size : forall w a b,
     (N.of_nat (psize w (pnarrow w a b)) <=
       c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_narrow_bits w a b) as Hbits.
+    unfold c_payload, psize, pnarrow. rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Payload widening charges both values and the parameter. *)
   Lemma T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <=
       c_payload * N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b.
+    pose proof (wrapped_leb_time w b a) as Hcompare.
+    pose proof (wrapped_double_time w a) as Hdouble.
+    pose proof (wrapped_double_bits w a) as Hdoublebits.
+    pose proof (wrapped_join_time w (wrapped_double w a) b) as Hjoin.
+    unfold wrapped_double in Hjoin.
+    time_unfold T_pwiden. time_unfold T_pleb. time_unfold T_pjoin. cbn beta iota zeta. time_simpl.
+    destruct (pleb w b a); unfold c_payload, psize, pwsize;
+      rewrite !Nat2N.inj_add in *; lia.
+  Qed.
   (** Payload narrowing charges both input values. *)
   Lemma T_pnarrow_le : forall w a b,
     (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_narrow_time w a b) as Htime.
+    time_unfold T_pnarrow. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
+    rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Payload comparison charges both values. *)
   Lemma T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_leb_time w a b) as Htime.
+    time_unfold T_pleb. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
+    rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Payload join charges both values. *)
   Lemma T_pjoin_le : forall w a b,
     (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_join_time w a b) as Htime.
+    time_unfold T_pjoin. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
+    rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Payload meet charges both values. *)
   Lemma T_pmeet_le : forall w a b,
     (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (wrapped_meet_time w a b) as Htime.
+    time_unfold T_pmeet. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
+    rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Bottom recognition charges the stored value. *)
   Lemma T_pis_bot_le : forall w a,
     (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
@@ -2296,12 +2337,20 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   (** Point recognition charges the stored value. *)
   Lemma T_ppoint_le : forall w a,
     (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (wrapped_point_time w a) as Htime.
+    time_unfold T_ppoint. cbn beta iota zeta. time_simpl. unfold c_payload, psize.
+    rewrite !Nat2N.inj_add in *. lia.
+  Qed.
   (** Constant construction charges width and literal size. *)
   Lemma T_pconst_le : forall w z,
     (T_pconst w z <= c_payload *
       N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (wrapped_norm_time w (WItv z z)) as Htime.
+    time_unfold T_pconst. cbn beta iota zeta. time_simpl. unfold c_payload. cbn [wrapped_bits Nat.pow] in *.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
 
   (** Arc normalization charges raw endpoints and output width. *)
   Lemma T_wrapped_norm_le : forall w a,
