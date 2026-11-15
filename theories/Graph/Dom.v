@@ -1915,7 +1915,8 @@ Local Definition dom_child_push (m : ptrie positive) (rows : ptrie (list positiv
     (v : positive) : ptrie (list positive) :=
   match trie_get v m with
   | None => rows
-  | Some p => PTrieCode.set p (v :: dom_child_row rows p) rows
+  | Some p => PTrieCode.set p
+      (v :: match trie_get p rows with Some vs => vs | None => [] end) rows
   end.
 TimeFun dom_child_push.
 
@@ -2685,6 +2686,204 @@ Proof.
   rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
 Qed.
 
+(** Trie shape and stored child occurrences jointly pay for reversing every row. *)
+Fixpoint dom_child_weight_ne (t : trie_ne (list positive)) : nat :=
+  match t with
+  | N001 r => 1 + dom_child_weight_ne r
+  | N010 vs => 1 + length vs
+  | N011 vs r => 1 + length vs + dom_child_weight_ne r
+  | N100 l => 1 + dom_child_weight_ne l
+  | N101 l r => 1 + dom_child_weight_ne l + dom_child_weight_ne r
+  | N110 l vs => 1 + dom_child_weight_ne l + length vs
+  | N111 l vs r => 1 + dom_child_weight_ne l + length vs + dom_child_weight_ne r
+  end.
+
+Definition dom_child_weight (t : ptrie (list positive)) : nat :=
+  match t with Empty => 0 | Nodes n => dom_child_weight_ne n end.
+
+Local Lemma dom_child_weight_node l o r :
+  dom_child_weight (PTrieCode.node l o r) <=
+    1 + dom_child_weight l +
+      (match o with None => 0 | Some vs => length vs end) + dom_child_weight r.
+Proof.
+  destruct l, o, r; cbn [PTrieCode.node dom_child_weight dom_child_weight_ne]; lia.
+Qed.
+
+Local Lemma dom_child_weight_parts t :
+  dom_child_weight (trie_left t) +
+    (match trie_value t with None => 0 | Some vs => length vs end) +
+    dom_child_weight (trie_right t) <= dom_child_weight t.
+Proof.
+  destruct t as [|t]; [reflexivity|]. destruct t;
+    cbn [trie_left trie_value trie_right dom_child_weight dom_child_weight_ne]; lia.
+Qed.
+
+(** Replacement refunds the old row rather than charging it again. *)
+Local Lemma dom_child_weight_set p vs t :
+  dom_child_weight (PTrieCode.set p vs t) +
+    (match trie_get p t with None => 0 | Some old => length old end) <=
+    dom_child_weight t + Pos.size_nat p + length vs.
+Proof.
+  revert t. induction p as [p IH|p IH|]; intro t;
+    cbn [PTrieCode.set PTrieCode.replace Pos.size_nat trie_get].
+  all: eapply Nat.le_trans;
+    [apply Nat.add_le_mono_r; apply dom_child_weight_node|].
+  all: pose proof (dom_child_weight_parts t) as Hparts.
+  - specialize (IH (trie_right t)). unfold PTrieCode.set in IH.
+    unfold PTrieCode.left, PTrieCode.value, PTrieCode.right in *. lia.
+  - specialize (IH (trie_left t)). unfold PTrieCode.set in IH.
+    unfold PTrieCode.left, PTrieCode.value, PTrieCode.right in *. lia.
+  - unfold PTrieCode.left, PTrieCode.right in *. lia.
+Qed.
+
+(** One child insertion introduces one occurrence and at most one key path. *)
+Local Lemma dom_child_weight_push m rows v width :
+  (forall p, trie_get v m = Some p -> Pos.size_nat p <= width) ->
+  dom_child_weight (dom_child_push m rows v) <= dom_child_weight rows + width + 1.
+Proof.
+  intro Hparents. unfold dom_child_push, dom_child_row.
+  destruct (trie_get v m) as [p|] eqn:Hparent; [|lia].
+  specialize (Hparents p eq_refl).
+  pose proof (dom_child_weight_set p
+    (v :: match trie_get p rows with None => [] | Some vs => vs end) rows) as Hset.
+  destruct (trie_get p rows) as [old|]; cbn [length] in Hset; lia.
+Qed.
+
+(** Grouping charges each input occurrence once, even when parents have many children. *)
+Local Lemma dom_child_weight_fold m xs rows width :
+  (forall v p, In v xs -> trie_get v m = Some p -> Pos.size_nat p <= width) ->
+  dom_child_weight (fold_left (dom_child_push m) xs rows) <=
+    dom_child_weight rows + length xs * (width + 1).
+Proof.
+  revert rows. induction xs as [|v rest IH]; intros rows Hparents;
+    cbn [fold_left length]; [lia|].
+  pose proof (dom_child_weight_push m rows v width
+    (fun p Hp => Hparents v p (or_introl eq_refl) Hp)) as Hstep.
+  specialize (IH (dom_child_push m rows v)
+    (fun x p Hx Hp => Hparents x p (or_intror Hx) Hp)). lia.
+Qed.
+
+(** The derived filter clock pays exactly once for each stored row's reversal. *)
+Local Lemma dom_time_child_filter_ne n :
+  (PTrieT.T_filter_ne
+    (fun vs : list positive => Some (rev_append vs []))
+    (fun vs : list positive => (1 + (1 + List.T_rev_append vs []))%N) n <=
+    32 * N.of_nat (dom_child_weight_ne n))%N.
+Proof.
+  induction n as [r IHr|vs|vs r IHr|l IHl|l IHl r IHr|l IHl vs|l IHl vs r IHr];
+    time_unfold @PTrieT.T_filter_ne; time_unfold @PTrieT.T_filter_value; time_simpl;
+    cbn [dom_child_weight_ne].
+  all: try pose proof (List.T_rev_append_le vs []) as Hreverse.
+  all: rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+Local Lemma dom_time_child_map rows :
+  (PTrieT.T_map (fun vs : list positive => rev_append vs [])
+    (fun vs : list positive => (1 + List.T_rev_append vs [])%N) rows <=
+    32 * N.of_nat (dom_child_weight rows + 1))%N.
+Proof.
+  destruct rows as [|n]; unfold PTrieT.T_map,
+    PTrieT.T_filter_map; time_simpl; [cbn [dom_child_weight]; lia|].
+  pose proof (dom_time_child_filter_ne n) as Hfilter.
+  cbn [dom_child_weight]. rewrite Nat2N.inj_add. lia.
+Qed.
+
+(** The numbering callback shares the producer's amortized binary counter credit. *)
+Local Definition dom_number_push (state : N * ptrie N) (v : positive) : N * ptrie N :=
+  let '(next, positions) := state in
+    (N.succ next, PTrieCode.set v next positions).
+TimeFun dom_number_push.
+
+Local Lemma dom_time_number_push state v width : Pos.size_nat v <= width ->
+  (T_dom_number_push state v + dom_counter_credit (fst (dom_number_push state v)) <=
+    (PTrieT.c_trie + 8) * N.of_nat (width + 1) +
+      dom_counter_credit (fst state))%N.
+Proof.
+  destruct state as [next positions]. intro Hwidth.
+  pose proof (PTrieT.T_set_le N v next positions) as Hset.
+  change (PTrieCode.T_set v next positions <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+  pose proof (dom_time_counter_succ next) as Hcounter.
+  unfold T_dom_number_push, dom_number_push. time_simpl. cbn [fst].
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Local Lemma dom_time_number_fold xs next positions width :
+  (forall v, In v xs -> Pos.size_nat v <= width) ->
+  (List.T_fold_left dom_number_push T_dom_number_push xs (next, positions) <=
+    ((PTrieT.c_trie + 8) * N.of_nat (width + 1) + 1) * N.of_nat (length xs) +
+      dom_counter_credit next + 1)%N.
+Proof.
+  revert next positions. induction xs as [|v rest IH]; intros next positions Hkeys.
+  - time_step.
+  - pose proof (dom_time_number_push (next, positions) v width
+      (Hkeys v (or_introl eq_refl))) as Hstep.
+    specialize (IH (N.succ next) (PTrieCode.set v next positions)
+      (fun x Hx => Hkeys x (or_intror Hx))).
+    time_unfold @List.T_fold_left. cbn [dom_number_push fst length] in *.
+    rewrite Nat2N.inj_succ, N.mul_succ_r.
+    set (charge := ((PTrieT.c_trie + 8) * N.of_nat (width + 1))%N) in *.
+    set (running := List.T_fold_left dom_number_push T_dom_number_push rest
+      (N.succ next, PTrieCode.set v next positions)) in *.
+    set (step_cost := T_dom_number_push (next, positions) v) in *.
+    set (before_credit := dom_counter_credit next) in *.
+    set (after_credit := dom_counter_credit (N.succ next)) in *.
+    change (running <= (charge + 1) * N.of_nat (length rest) + after_credit + 1)%N in IH.
+    clearbody charge running step_cost before_credit after_credit.
+    clear -IH Hstep. lia.
+Qed.
+
+Local Lemma dom_time_positions o width :
+  (forall v, In v o -> Pos.size_nat v <= width) ->
+  (T_dom_positions o <=
+    (4 * PTrieT.c_trie + 64) * N.of_nat ((length o + 1) * (width + 1)))%N.
+Proof.
+  intro Hkeys. pose proof (dom_time_number_fold o 0%N Empty width Hkeys) as Hfold.
+  unfold T_dom_positions. time_simpl.
+  change (1 + (List.T_fold_left dom_number_push T_dom_number_push o (0%N, Empty) + 1) <=
+    (4 * PTrieT.c_trie + 64) * N.of_nat ((length o + 1) * (width + 1)))%N.
+  cbn [dom_counter_credit] in Hfold.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
+Local Lemma dom_time_child_push m rows v width :
+  Pos.size_nat v <= width ->
+  (forall p, trie_get v m = Some p -> Pos.size_nat p <= width) ->
+  (T_dom_child_push m rows v <= (PTrieT.c_trie + 8) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hparents. unfold T_dom_child_push. time_simpl.
+  destruct (trie_get v m) as [p|] eqn:Hparent.
+  - specialize (Hparents p eq_refl).
+    pose proof (PTrieT.T_set_le (list positive) p
+      (v :: match trie_get p rows with None => [] | Some vs => vs end) rows) as Hset.
+    change (PTrieCode.T_set p
+      (v :: match trie_get p rows with None => [] | Some vs => vs end) rows <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat p + 1))%N in Hset.
+    rewrite !PTrieT.trie_get_clock. rewrite !Nat2N.inj_add in *. nia.
+  - rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia.
+Qed.
+
+Local Lemma dom_time_end_push pos sizes ends v width :
+  Pos.size_nat v <= width ->
+  (forall n, trie_get v pos = Some n -> N.size_nat n <= width) ->
+  N.size_nat (dom_size_get sizes v) <= width + 1 ->
+  (T_dom_end_push pos sizes ends v <=
+    (PTrieT.c_trie + 32) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hpositions Hsizes. unfold T_dom_end_push. time_simpl.
+  destruct (trie_get v pos) as [pv|] eqn:Hposition.
+  - specialize (Hpositions pv eq_refl).
+    pose proof (N.T_add_le pv (dom_size_get sizes v)) as Hadd.
+    pose proof (dom_add_width pv (dom_size_get sizes v)) as Hsum.
+    pose proof (N.T_pred_le (pv + dom_size_get sizes v)%N) as Hpred.
+    pose proof (PTrieT.T_set_le N v (N.pred (pv + dom_size_get sizes v)) ends) as Hset.
+    change (PTrieCode.T_set v (N.pred (pv + dom_size_get sizes v)) ends <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+    rewrite PTrieT.trie_get_clock, dom_time_size_get.
+    rewrite !Nat2N.inj_add in *. nia.
+  - rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia.
+Qed.
+
 (** Minima retain the width bound of their two possible results. *)
 Local Lemma dom_min_width width a b :
   N.size_nat a <= width -> N.size_nat b <= width ->
@@ -2977,7 +3176,7 @@ Module DomT <: DOM_ALL.
   Definition k_size : N := (16 * PTrieT.c_trie + 256)%N.
   Definition k_edge : N :=
     (4 * (k_scan + k_read + k_size + PTrieT.c_trie + 1024))%N.
-  Definition k_tree : N := 1%N. (* STUB *)
+  Definition k_tree : N := (2 * k_size + 16 * PTrieT.c_trie + 512)%N.
   Definition k_dfs : N := 1%N. (* STUB *)
   Definition k_semi : N := 1%N. (* STUB *)
   Definition k_le : N := 1%N. (* STUB *)
@@ -3336,13 +3535,106 @@ Module DomT <: DOM_ALL.
       clear -Hscan_time Hread_big Hsizes_big Hedges_big. clearbody budget.
       nia.
     - time_simpl. unfold k_edge.
-      clear -Hscan_time Hread_big. clearbody budget. nia.
+      clear -Hscan_time Hread_big. clearbody budget.
+      nia.
   Qed.
 
   Lemma T6_tree : forall g r m o, check g r m o = true ->
     (T_tree g r m o <= k_tree * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck. unfold check in Hcheck.
+    destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread;
+      [|discriminate Hcheck].
+    destruct (dom_map_check_known (dom_scan g) r m o) eqn:Hmap;
+      [|discriminate Hcheck].
+    destruct (dom_read_known_success g r o pos Hread)
+      as [Hunique [Hlength [_ [Hlisted _]]]].
+    assert (Hkeys : forall v, In v o -> Pos.size_nat v <= graph_width (base g)).
+    { intros v Hv. apply dom_listed_key_width. now apply Hlisted. }
+    pose proof (dom_map_check_domain g r m o Hmap) as Hdomain.
+    assert (Hparents : forall v p, In v o -> trie_get v m = Some p -> In p o).
+    { intros v p Hv Hp. exact (proj2 (Hdomain v p Hp)). }
+    pose proof (dom_read_positions_width g r o pos Hread) as Hpositions.
+    rewrite (dom_read_known_positions (dom_scan g) r o pos Hread) in Hpositions.
+    assert (Hvalues : forall x,
+      N.size_nat (dom_size_get (dom_sizes m o) x) <= graph_width (base g) + 1).
+    { intro x. eapply dom_distinct_twice_width; [exact Hunique|exact Hkeys|].
+      now apply dom_sizes_value_bound. }
+    pose proof (dom_time_positions o (graph_width (base g)) Hkeys) as Hnumber.
+    pose proof (T4_sizes g m o Hunique Hlength Hlisted Hparents) as Hsizes_time.
+    unfold T_sizes in Hsizes_time.
+    pose proof (@dom_time_fold_left (ptrie (list positive)) positive
+      (dom_child_push m) (T_dom_child_push m)
+      ((PTrieT.c_trie + 8) * N.of_nat (graph_width (base g) + 1))%N o Empty
+      ltac:(intros v Hv rows; apply dom_time_child_push;
+        [now apply Hkeys|intros p Hp; apply Hkeys; now apply (Hparents v p)])) as Hchildren.
+    pose proof (@dom_time_fold_left (ptrie N) positive
+      (dom_end_push (dom_positions o) (dom_sizes m o))
+      (T_dom_end_push (dom_positions o) (dom_sizes m o))
+      ((PTrieT.c_trie + 32) * N.of_nat (graph_width (base g) + 1))%N o Empty
+      ltac:(intros v Hv ends; apply dom_time_end_push;
+        [now apply Hkeys|intros n Hn; now apply (Hpositions v n)|apply Hvalues])) as Hends.
+    pose proof (dom_child_weight_fold m o Empty (graph_width (base g))
+      (fun v p Hv Hp => Hkeys p (Hparents v p Hv Hp))) as Hweight.
+    pose proof (dom_time_child_map (dom_child_rows m o)) as Hreverse.
+    change (dom_child_weight (dom_child_rows m o) <=
+      length o * (graph_width (base g) + 1)) in Hweight.
+    unfold T_tree. time_simpl.
+    set (child_cost := List.T_fold_left (dom_child_push m) (T_dom_child_push m) o Empty) in *.
+    change (1 + (T_dom_positions o + (T_dom_sizes m o +
+      (child_cost +
+      (List.T_fold_left (dom_end_push (dom_positions o) (dom_sizes m o))
+        (T_dom_end_push (dom_positions o) (dom_sizes m o)) o Empty +
+      PTrieT.T_map (fun vs : list positive => rev_append vs [])
+        (fun vs : list positive => (1 + List.T_rev_append vs [])%N)
+        (dom_child_rows m o))))) <=
+      k_tree * N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1)))%N.
+    set (end_cost := List.T_fold_left (dom_end_push (dom_positions o) (dom_sizes m o))
+      (T_dom_end_push (dom_positions o) (dom_sizes m o)) o Empty) in *.
+    set (reverse_cost := PTrieT.T_map (fun vs : list positive => rev_append vs [])
+      (fun vs : list positive => (1 + List.T_rev_append vs [])%N)
+      (dom_child_rows m o)) in *.
+    change (child_cost <=
+      ((PTrieT.c_trie + 8) * N.of_nat (graph_width (base g) + 1) + 1) *
+        N.of_nat (length o) + 1)%N in Hchildren.
+    change (end_cost <=
+      ((PTrieT.c_trie + 32) * N.of_nat (graph_width (base g) + 1) + 1) *
+        N.of_nat (length o) + 1)%N in Hends.
+    change (reverse_cost <= 32 * N.of_nat (dom_child_weight (dom_child_rows m o) + 1))%N
+      in Hreverse.
+    clearbody child_cost end_cost reverse_cost.
+    set (budget := N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1))).
+    assert (Hsmall : (N.of_nat ((length o + 1) * (graph_width (base g) + 1)) <= budget)%N).
+    { assert (Hnatural : (length o + 1) * (graph_width (base g) + 1) <=
+        (graph_n (base g) + 1) * (graph_width (base g) + 1)).
+      { apply Nat.mul_le_mono_r. lia. }
+      unfold budget. lia. }
+    assert (Hnumber_big : (T_dom_positions o <= (4 * PTrieT.c_trie + 64) * budget)%N).
+    { eapply N.le_trans; [exact Hnumber|]. now apply N.mul_le_mono_l. }
+    assert (Hsizes_big : (T_dom_sizes m o <= k_size * budget)%N).
+    { change (1 + T_dom_sizes m o <= k_size * budget)%N in Hsizes_time. lia. }
+    assert (Hchildren_big : (child_cost <= (PTrieT.c_trie + 16) * budget)%N).
+    { eapply N.le_trans; [exact Hchildren|].
+      eapply N.le_trans; [|apply N.mul_le_mono_l; exact Hsmall].
+      clear -Hchildren. rewrite !Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+    assert (Hends_big : (end_cost <= (PTrieT.c_trie + 64) * budget)%N).
+    { eapply N.le_trans; [exact Hends|].
+      eapply N.le_trans; [|apply N.mul_le_mono_l; exact Hsmall].
+      clear -Hends. rewrite !Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+    assert (Hreverse_big : (reverse_cost <= 32 * budget)%N).
+    { eapply N.le_trans; [exact Hreverse|]. apply N.mul_le_mono_l.
+      assert (Hnatural : dom_child_weight (dom_child_rows m o) + 1 <=
+        (graph_n (base g) + 1) * (graph_width (base g) + 1)).
+      { clear -Hweight Hlength. nia. }
+      unfold budget. lia. }
+    assert (Hpositive : (1 <= budget)%N).
+    { unfold budget. rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+    fold budget. unfold k_tree.
+    clear -Hnumber_big Hsizes_big Hchildren_big Hends_big Hreverse_big Hpositive.
+    clearbody budget.
+    nia.
+  Qed.
 
   Lemma T7_dfs : forall g r, prepared_ok g ->
     (T_lt_dfs g r <= k_dfs * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
