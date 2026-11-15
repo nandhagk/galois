@@ -3385,6 +3385,139 @@ Proof.
   eapply Permutation_in; [exact Hrev|]. eapply nth_error_In; exact Hblock.
 Qed.
 
+(** Every edge source has already been entered unless it was initially open. *)
+Lemma tarjan_stack_source initial prefix kind u v suffix final :
+  trace_stack initial (prefix ++ Edge kind u v :: suffix) final ->
+  In u initial \/ In (Enter u) prefix.
+Proof.
+  revert initial. induction prefix as [|e prefix IH]; intros initial Hstack.
+  - cbn [app] in Hstack. inversion Hstack; subst. left. now left.
+  - cbn [app] in Hstack. inversion Hstack; subst.
+    + match goal with H : trace_stack _ (prefix ++ Edge kind u v :: suffix) _ |- _ =>
+        destruct (IH _ H) as [Hin|Hin] end.
+      * cbn [In] in Hin. destruct Hin as [Heq|Hin].
+        -- subst. right. now left.
+        -- now left.
+      * right. now right.
+    + match goal with H : trace_stack _ (prefix ++ Edge kind u v :: suffix) _ |- _ =>
+        destruct (IH _ H) as [Hin|Hin] end.
+      * left. now right.
+      * right. now right.
+    + match goal with H : trace_stack _ (prefix ++ Edge kind u v :: suffix) _ |- _ =>
+        destruct (IH _ H) as [Hin|Hin] end.
+      * now left.
+      * right. now right.
+Qed.
+
+Lemma scc_edge_source_prefix g prefix kind u v suffix :
+  scc_trace g = prefix ++ Edge kind u v :: suffix -> In (Enter u) prefix.
+Proof.
+  intro Htrace. pose proof (scc_trace_nested g) as Hstack. rewrite Htrace in Hstack.
+  destruct (tarjan_stack_source [] prefix kind u v suffix [] Hstack); [contradiction|assumption].
+Qed.
+
+Fixpoint tarjan_tree_pairs (events : list event) : Prop :=
+  match events with
+  | [] => True
+  | Edge Tree _ v :: rest => (exists tail, rest = Enter v :: tail) /\ tarjan_tree_pairs rest
+  | _ :: rest => tarjan_tree_pairs rest
+  end.
+
+Lemma tarjan_tree_pairs_app first last :
+  tarjan_tree_pairs first -> tarjan_tree_pairs last -> tarjan_tree_pairs (first ++ last).
+Proof.
+  induction first as [|e first IH]; [cbn [app]; tauto|].
+  destruct e as [v|v|kind u v]; [cbn [app tarjan_tree_pairs]; exact IH|
+    cbn [app tarjan_tree_pairs]; exact IH|].
+  destruct kind; cbn [app tarjan_tree_pairs]; try exact IH.
+  intros [Hpair Hfirst] Hlast. split.
+  - destruct Hpair as [tail Hfirst_shape]. exists (tail ++ last). now rewrite Hfirst_shape.
+  - now apply IH.
+Qed.
+
+Lemma tarjan_tree_pairs_suffix first last :
+  tarjan_tree_pairs (first ++ last) -> tarjan_tree_pairs last.
+Proof.
+  induction first as [|e first IH]; [cbn [app]; tauto|].
+  destruct e as [v|v|kind u v]; [cbn [app tarjan_tree_pairs]; exact IH|
+    cbn [app tarjan_tree_pairs]; exact IH|].
+  destruct kind; cbn [app tarjan_tree_pairs]; tauto.
+Qed.
+
+Lemma tarjan_visit_starts g active seen v events final :
+  dfs_visit g active seen v events final -> exists tail, events = Enter v :: tail.
+Proof. intro Hvisit. inversion Hvisit; subst. eexists. reflexivity. Qed.
+
+Lemma tarjan_dfs_tree_pairs g :
+  (forall active seen v events final, dfs_visit g active seen v events final ->
+    tarjan_tree_pairs events) /\
+  (forall active seen u row events final, dfs_rows g active seen u row events final ->
+    tarjan_tree_pairs events).
+Proof.
+  apply tarjan_dfs_mutual_ind.
+  - intros active seen v inside final Hfresh Hrows IH.
+    cbn [tarjan_tree_pairs]. apply tarjan_tree_pairs_app; [exact IH|exact I].
+  - intros active seen u. exact I.
+  - intros active seen u v rest inside middle outside final Hfresh Hvisit IHvisit Hrows IHrows.
+    cbn [tarjan_tree_pairs]. split.
+    + destruct (tarjan_visit_starts _ _ _ _ _ _ Hvisit) as [tail Hinside].
+      exists (tail ++ outside). now rewrite Hinside.
+    + now apply tarjan_tree_pairs_app.
+  - intros active seen u v rest kind outside final Hseen Hkind Hrows IH.
+    destruct Hkind as [[Heq _]|[Heq _]]; subst kind; exact IH.
+Qed.
+
+Lemma tarjan_roots_tree_pairs g seen roots events final :
+  dfs_roots g seen roots events final -> tarjan_tree_pairs events.
+Proof.
+  intro Hroots. induction Hroots; [exact I|exact IHHroots|].
+  apply tarjan_tree_pairs_app; [eapply (proj1 (tarjan_dfs_tree_pairs g)); eassumption|exact IHHroots].
+Qed.
+
+Lemma scc_trace_tree_pairs g : tarjan_tree_pairs (scc_trace g).
+Proof.
+  destruct (prepared_search_depth_first_closed (scc_graph g) (nodes g)
+    (scc_graph_counts g) (scc_search_closed g)
+    ltac:(intros r Hr; now rewrite scc_graph_nodes)) as [final Hdfs].
+  now apply tarjan_roots_tree_pairs in Hdfs.
+Qed.
+
+Lemma scc_trace_kinds g : search_event_kinds (scc_trace g).
+Proof. apply prepared_search_kinds_raw. Qed.
+
+Lemma scc_tree_next_enter g prefix u v suffix :
+  scc_trace g = prefix ++ Edge Tree u v :: suffix ->
+  exists rest, suffix = Enter v :: rest.
+Proof.
+  intro Htrace. pose proof (scc_trace_tree_pairs g) as Hpairs. rewrite Htrace in Hpairs.
+  apply tarjan_tree_pairs_suffix in Hpairs. exact (proj1 Hpairs).
+Qed.
+
+(** No pending tree-entry event remains immediately before a matching leave. *)
+Lemma scc_leave_targets_entered g prefix root suffix kind u v :
+  scc_trace g = prefix ++ Leave root :: suffix -> In (Edge kind u v) prefix ->
+  In (Enter v) prefix.
+Proof.
+  intros Htrace Hedge. apply in_split in Hedge. destruct Hedge as [before [after Hprefix]].
+  assert (Hfull : scc_trace g = before ++ Edge kind u v :: (after ++ Leave root :: suffix)).
+  { rewrite Htrace, Hprefix, <- app_assoc. reflexivity. }
+  pose proof (scc_trace_kinds g before kind u v (after ++ Leave root :: suffix) Hfull) as Hkind.
+  destruct kind.
+  - destruct (scc_tree_next_enter g before u v (after ++ Leave root :: suffix) Hfull)
+      as [rest Hnext].
+    destruct after as [|e after]; [discriminate Hnext|].
+    cbn [app] in Hnext. injection Hnext as Heq Hrest. subst e.
+    rewrite Hprefix. apply in_or_app. right. now right; left.
+  - cbn [event_kind_correct] in Hkind. rewrite Hprefix.
+    apply in_or_app. left. exact (proj1 Hkind).
+  - cbn [event_kind_correct] in Hkind.
+    pose proof (scc_trace_nested g) as Hstack. rewrite Hfull in Hstack.
+    destruct (tarjan_stack_prefix [] before (Edge Done u v :: after ++ Leave root :: suffix) [] Hstack)
+      as [middle [Hbefore Hsuffix]].
+    destruct (scc_stack_leave_member [] before middle v Hbefore Hkind) as [Hfalse|Hin];
+      [contradiction|]. rewrite Hprefix. apply in_or_app. now left.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
