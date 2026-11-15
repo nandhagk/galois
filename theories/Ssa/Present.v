@@ -634,27 +634,54 @@ Module BlockCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   TimeFun nodes.
   TimeFun out.
   TimeFun inc.
-  Definition c_cfg : N := 1. (* STUB *)
-  Definition c_cfg_adj : N := 1. (* STUB *)
+  Definition c_cfg : N := 4.
+  Definition c_cfg_adj : N := 8.
   Lemma T_entries_le : forall p,
     (T_entries p <= c_cfg * N.of_nat (length (entries p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold c_cfg. time_unfold T_entries. time_unfold @T_lang_entries.
+    rewrite Nat2N.inj_add. time_cbn; nia.
+  Qed.
   Lemma T_edges_le : forall p,
     (T_edges p <= c_cfg * N.of_nat (length (edges p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold c_cfg. time_unfold T_edges. time_unfold @T_lang_edges.
+    rewrite Nat2N.inj_add. time_cbn; nia.
+  Qed.
   Lemma T_src_le : forall p e, (T_src p e <= c_cfg)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. unfold c_cfg. time_unfold T_src. time_unfold T_edge_source.
+    time_cbn; lia.
+  Qed.
   Lemma T_dst_le : forall p e, (T_dst p e <= c_cfg)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. unfold c_cfg. time_unfold T_dst. time_unfold T_edge_target.
+    time_cbn; lia.
+  Qed.
   Lemma T_nodes_le : forall p,
     (T_nodes p <= c_cfg_adj * N.of_nat (length (nodes p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold c_cfg_adj. time_unfold T_nodes. time_unfold @T_lang_blocks.
+    rewrite Nat2N.inj_add. time_cbn; nia.
+  Qed.
   Lemma T_out_le : forall p n,
     (T_out p n <= c_cfg_adj * N.of_nat (PosKeyT.bits n + length (out p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. unfold c_cfg_adj. time_unfold T_out.
+    time_unfold @T_lang_out. time_unfold @T_index_row.
+    time_unfold PosKeyT.T_encode. rewrite PTrieT.trie_get_clock.
+    rewrite !Nat2N.inj_add. time_cbn.
+    unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; nia.
+  Qed.
   Lemma T_inc_le : forall p n,
     (T_inc p n <= c_cfg_adj * N.of_nat (PosKeyT.bits n + length (inc p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. unfold c_cfg_adj. time_unfold T_inc.
+    time_unfold @T_lang_inc. time_unfold @T_index_row.
+    time_unfold PosKeyT.T_encode. rewrite PTrieT.trie_get_clock.
+    rewrite !Nat2N.inj_add. time_cbn.
+    unfold PosKeyT.bits, PosKeyT.encode, PosKeyCode.encode; nia.
+  Qed.
 End BlockCfgT.
 
 Module PointCfgCode (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
@@ -712,36 +739,77 @@ Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   TimeFun nodes.
   TimeFun out.
   TimeFun inc.
-  Definition c_cfg : N := 1. (* STUB *)
-  Definition c_cfg_adj : N := 1. (* STUB *)
+  Definition c_cfg : N := 8.
+  Definition c_cfg_adj : N := 8 * (PointKey.c_key + 1).
   Lemma T_entries_le : forall p,
     (T_entries p <= c_cfg * N.of_nat (length (entries p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold c_cfg, entries. rewrite length_map.
+    pose proof (ListDef.T_map_le (fun b : positive => (b, 0%N)) (fun _ => 1%N)
+      1%N (lang_entries p) (fun _ => N.le_refl _)) as Hmap.
+    time_unfold T_entries. time_unfold @T_lang_entries.
+    time_simpl; time_cbn. rewrite Nat2N.inj_add; nia.
+  Qed.
   Lemma T_edges_le : forall p,
     (T_edges p <= c_cfg * N.of_nat (length (edges p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold c_cfg. time_unfold T_edges. time_unfold @T_lang_point_edges.
+    rewrite Nat2N.inj_add. time_cbn; nia.
+  Qed.
   Lemma T_src_le : forall p e, (T_src p e <= c_cfg)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. unfold c_cfg. time_unfold T_src. time_unfold T_point_src.
+    time_cbn; lia.
+  Qed.
   Lemma T_dst_le : forall p e, (T_dst p e <= c_cfg)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. unfold c_cfg. time_unfold T_dst. time_unfold T_point_dst.
+    time_cbn; lia.
+  Qed.
   Lemma T_nodes_le : forall p,
     (T_nodes p <= c_cfg_adj * N.of_nat (length (nodes p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold c_cfg_adj. time_unfold T_nodes. time_unfold @T_lang_points.
+    rewrite Nat2N.inj_add. time_cbn; nia.
+  Qed.
   Lemma T_out_le : forall p n,
     (T_out p n <= c_cfg_adj * N.of_nat (PointKey.bits n + length (out p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. pose proof (PointKey.T_encode_le n) as Hkey.
+    unfold c_cfg_adj. time_unfold T_out.
+    time_unfold @T_lang_point_out. time_unfold @T_index_row.
+    rewrite PTrieT.trie_get_clock.
+    change (1 + (1 + PointKey.T_encode n +
+      (1 + 2 * N.of_nat (PointKey.bits n))) <=
+      8 * (PointKey.c_key + 1) *
+      N.of_nat (PointKey.bits n + length (out p n) + 1))%N.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_inc_le : forall p n,
     (T_inc p n <= c_cfg_adj * N.of_nat (PointKey.bits n + length (inc p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. pose proof (PointKey.T_encode_le n) as Hkey.
+    unfold c_cfg_adj. time_unfold T_inc.
+    time_unfold @T_lang_point_inc. time_unfold @T_index_row.
+    rewrite PTrieT.trie_get_clock.
+    change (1 + (1 + PointKey.T_encode n +
+      (1 + 2 * N.of_nat (PointKey.bits n))) <=
+      8 * (PointKey.c_key + 1) *
+      N.of_nat (PointKey.bits n + length (inc p n) + 1))%N.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
 End PointCfgT.
 
 Module PresentVarsData (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     <: VARS_DATA_T Q PosKeyT.
   Definition tables (q : Q.t) := lang_vars q.
   TimeFun tables.
-  Definition c_tables : N := 1. (* STUB *)
+  Definition c_tables : N := 2.
   Lemma T_tables_le : forall q, (T_tables q <= c_tables)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q. unfold c_tables. time_unfold T_tables. time_unfold @T_lang_vars.
+    time_cbn; lia.
+  Qed.
 End PresentVarsData.
 
 Module PresentSsaData (O : OPS)
@@ -750,18 +818,24 @@ Module PresentSsaData (O : OPS)
     <: SSA_DATA_T Q PosKeyT BlockEdge PosKeyT K G.
   Definition tables (q : Q.t) := lang_ssa q.
   TimeFun tables.
-  Definition c_tables : N := 1. (* STUB *)
+  Definition c_tables : N := 2.
   Lemma T_tables_le : forall q, (T_tables q <= c_tables)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q. unfold c_tables. time_unfold T_tables. time_unfold @T_lang_ssa.
+    time_cbn; lia.
+  Qed.
 End PresentSsaData.
 
 Module PresentPointsData (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
     <: SSA_POINTS_DATA_T Q PosKeyT BlockEdge PointKey PointEdge PosKeyT.
   Definition tables (q : Q.t) := lang_point_tables q.
   TimeFun tables.
-  Definition c_tables : N := 1. (* STUB *)
+  Definition c_tables : N := 2.
   Lemma T_tables_le : forall q, (T_tables q <= c_tables)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q. unfold c_tables. time_unfold T_tables. time_unfold @T_lang_point_tables.
+    time_cbn; lia.
+  Qed.
 End PresentPointsData.
 
 Module PresentT (O : OPS)
