@@ -374,4 +374,10 @@ Proof. Admitted. (* STUB *)
 (** Validity in every environment gives validity in well-sorted environments. *)
 Lemma valid_sorted_of_valid : forall V prim merge (M : model (V := V)) (p : program V),
   valid prim merge M p -> valid_sorted prim merge M p.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros V prim merge M p [Hrules Hmerge].
+  split.
+  - apply Forall_forall. intros r Hin g s Hquery Hsorted Hmatches.
+    apply (Hrules r s Hin Hmatches).
+  - exact Hmerge.
+Qed.
