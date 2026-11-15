@@ -1662,6 +1662,584 @@ Proof.
 Qed.
 
 
+(** Every low link belongs to a discovered vertex and never exceeds its discovery number. *)
+Definition tarjan_low_disc (s : tarjan_state) : Prop :=
+  forall v low, trie_get v (tarjan_low s) = Some low ->
+    exists disc, trie_get v (tarjan_disc s) = Some disc /\
+      Pos.to_nat low <= Pos.to_nat disc.
+
+Lemma tarjan_low_disc_enter v s :
+  tarjan_low_disc s -> tarjan_low_disc (TarjanVisitor.enter v s).
+Proof.
+  intros Hbound u i Hlookup.
+  cbn [TarjanVisitor.enter tarjan_low] in Hlookup.
+  cbn [TarjanVisitor.enter tarjan_disc].
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same in Hlookup. injection Hlookup as Heq. subst i.
+    exists (tarjan_clock s). split; [apply PTrie.get_set_same|lia].
+  - rewrite PTrie.get_set_other in Hlookup by exact Hneq.
+    destruct (Hbound u i Hlookup) as [disc [Hdisc Hle]].
+    exists disc. split; [now rewrite PTrie.get_set_other by exact Hneq|exact Hle].
+Qed.
+
+Lemma tarjan_low_disc_lower v n s :
+  tarjan_low_disc s -> tarjan_low_disc (TarjanVisitor.lower v n s).
+Proof.
+  intros Hbound. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hlookup; [|exact Hbound].
+  intros u i Hget. cbn [tarjan_low] in Hget. cbn [tarjan_disc].
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same in Hget. injection Hget as Heq. subst i.
+    destruct (Hbound v old Hlookup) as [disc [Hdisc Hle]].
+    exists disc. split; [exact Hdisc|]. rewrite Pos2Nat.inj_min.
+    eapply Nat.le_trans; [apply Nat.le_min_l|exact Hle].
+  - rewrite PTrie.get_set_other in Hget by exact Hneq. now apply (Hbound u i).
+Qed.
+
+Lemma tarjan_low_disc_edge kind u v s :
+  tarjan_low_disc s -> tarjan_low_disc (TarjanVisitor.edge kind u v s).
+Proof.
+  intros Hbound. destruct kind; cbn [TarjanVisitor.edge]; try exact Hbound.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hbound.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hbound.
+  all: now apply tarjan_low_disc_lower.
+Qed.
+
+Lemma tarjan_low_disc_leave v s :
+  tarjan_low_disc s -> tarjan_low_disc (TarjanVisitor.leave v s).
+Proof.
+  intros Hbound. unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|exact Hbound].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|exact Hbound].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    intros u i Hlookup. cbn [tarjan_low] in Hlookup. cbn [tarjan_disc].
+    destruct (proj2 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) u)
+      as [Hget _]. rewrite Hget in Hlookup.
+    destruct (existsb (Pos.eqb u) members); [discriminate|now apply (Hbound u i)].
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end).
+    + exact Hbound.
+    + apply tarjan_low_disc_lower. exact Hbound.
+Qed.
+
+(** Arbitrary event folds preserve the paired low/discovery relation. *)
+Lemma tarjan_low_disc_fold es s : tarjan_low_disc s ->
+  tarjan_low_disc
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s).
+Proof.
+  unfold fold_events. revert s. induction es as [|e es IH]; intros s Hbound;
+    cbn [fold_left]; [exact Hbound|].
+  apply IH. destruct e; cbn [visit_event].
+  - now apply tarjan_low_disc_enter.
+  - now apply tarjan_low_disc_leave.
+  - now apply tarjan_low_disc_edge.
+Qed.
+
+Lemma tarjan_low_disc_initial : tarjan_low_disc tarjan_initial.
+Proof.
+  intros v i Hlookup. cbn [tarjan_initial tarjan_low] in Hlookup.
+  rewrite PTrie.get_empty in Hlookup. discriminate Hlookup.
+Qed.
+
+(** Active and low-link tables have exactly the current pending support. *)
+Definition tarjan_pending_domains (s : tarjan_state) : Prop :=
+  (forall v, trie_get v (tarjan_active s) = Some true <-> In v (tarjan_pending s)) /\
+  (forall v, (exists i, trie_get v (tarjan_low s) = Some i) <-> In v (tarjan_pending s)).
+
+Lemma tarjan_pending_domains_enter v s :
+  tarjan_pending_domains s -> tarjan_pending_domains (TarjanVisitor.enter v s).
+Proof.
+  intros [Hactive Hlow]. split; intro u;
+    cbn [TarjanVisitor.enter tarjan_active tarjan_low tarjan_pending];
+    destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same. cbn [In]. intuition.
+  - rewrite PTrie.get_set_other by exact Hneq. rewrite (Hactive u).
+    cbn [In]. intuition congruence.
+  - subst u. rewrite PTrie.get_set_same. cbn [In]. split.
+    + intros _. now left.
+    + intros _. exists (tarjan_clock s). reflexivity.
+  - rewrite PTrie.get_set_other by exact Hneq. rewrite (Hlow u).
+    cbn [In]. intuition congruence.
+Qed.
+
+Lemma tarjan_pending_domains_lower v n s :
+  tarjan_pending_domains s -> tarjan_pending_domains (TarjanVisitor.lower v n s).
+Proof.
+  intros Hdomains. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hlookup; [|exact Hdomains].
+  destruct Hdomains as [Hactive Hlow]. split; [exact Hactive|].
+  intro u. cbn [tarjan_low tarjan_pending].
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same. split.
+    + intros _. apply (proj1 (Hlow v)). exists old. exact Hlookup.
+    + intros _. exists (Pos.min old n). reflexivity.
+  - rewrite PTrie.get_set_other by exact Hneq. apply Hlow.
+Qed.
+
+Lemma tarjan_pending_domains_edge kind u v s :
+  tarjan_pending_domains s -> tarjan_pending_domains (TarjanVisitor.edge kind u v s).
+Proof.
+  intros Hdomains. destruct kind; cbn [TarjanVisitor.edge]; try exact Hdomains.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hdomains.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hdomains.
+  all: now apply tarjan_pending_domains_lower.
+Qed.
+
+Lemma tarjan_positive_existsb v xs :
+  existsb (Pos.eqb v) xs = true <-> In v xs.
+Proof.
+  rewrite existsb_exists. split.
+  - intros [u [Hin Heq]]. apply Pos.eqb_eq in Heq. now subst u.
+  - intros Hin. exists v. split; [exact Hin|apply Pos.eqb_refl].
+Qed.
+
+Lemma tarjan_nodup_app_disjoint {A} (xs ys : list A) :
+  NoDup (xs ++ ys) -> forall v, In v xs -> In v ys -> False.
+Proof.
+  induction xs as [|x xs IH]; intros Hunique v Hleft Hright; [contradiction|].
+  cbn [app] in Hunique. inversion Hunique as [|x' xs' Hfresh Hrest]; subst x' xs'.
+  destruct Hleft as [Heq|Hin].
+  - subst v. apply Hfresh. apply in_or_app. now right.
+  - exact (IH Hrest v Hin Hright).
+Qed.
+
+(** A pop removes precisely its prefix support from both live tables. *)
+Lemma tarjan_pop_domains root index pending low active owners
+    members tail low' active' owners' :
+  NoDup pending ->
+  (forall v, trie_get v active = Some true <-> In v pending) ->
+  (forall v, (exists i, trie_get v low = Some i) <-> In v pending) ->
+  tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
+  (forall v, trie_get v active' = Some true <-> In v tail) /\
+  (forall v, (exists i, trie_get v low' = Some i) <-> In v tail).
+Proof.
+  intros Hunique Hactive Hlow Hpop.
+  destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hlookups].
+  assert (Hdisjoint : forall v, In v tail -> ~ In v members).
+  { intros v Htail Hmember. eapply tarjan_nodup_app_disjoint.
+    - rewrite <- Hsplit. exact Hunique.
+    - exact Hmember.
+    - exact Htail. }
+  assert (Hretained : forall v, existsb (Pos.eqb v) members = false ->
+      (In v pending <-> In v tail)).
+  { intros v Hfalse. rewrite Hsplit, in_app_iff. split; [|now right].
+    intros [Hmember|Htail]; [|exact Htail].
+    apply (proj2 (tarjan_positive_existsb v members)) in Hmember. congruence. }
+  split; intro v; destruct (Hlookups v) as [Hlow' [Hactive' Howners']].
+  - rewrite Hactive'. destruct (existsb (Pos.eqb v) members) eqn:Hmember.
+    + split; [discriminate|]. intro Htail. exfalso. apply (Hdisjoint v Htail).
+      now apply (proj1 (tarjan_positive_existsb v members)).
+    + rewrite (Hactive v). now apply Hretained.
+  - rewrite Hlow'. destruct (existsb (Pos.eqb v) members) eqn:Hmember.
+    + split; [intros [i Hfalse]; discriminate|]. intro Htail. exfalso.
+      apply (Hdisjoint v Htail). now apply (proj1 (tarjan_positive_existsb v members)).
+    + rewrite (Hlow v). now apply Hretained.
+Qed.
+
+Lemma tarjan_pending_domains_leave v s :
+  NoDup (tarjan_pending s) -> tarjan_pending_domains s ->
+  tarjan_pending_domains (TarjanVisitor.leave v s).
+Proof.
+  intros Hunique Hdomains. unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|exact Hdomains].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|exact Hdomains].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    destruct Hdomains as [Hactive Hlow].
+    exact (tarjan_pop_domains _ _ _ _ _ _ _ _ _ _ _ Hunique Hactive Hlow Hpop).
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end).
+    + exact Hdomains.
+    + apply tarjan_pending_domains_lower. exact Hdomains.
+Qed.
+
+Lemma tarjan_pending_domains_initial : tarjan_pending_domains tarjan_initial.
+Proof.
+  split; intro v; cbn [tarjan_initial tarjan_active tarjan_low tarjan_pending In];
+    rewrite PTrie.get_empty.
+  - split; [discriminate|contradiction].
+  - split; [intros [i Hfalse]; discriminate|contradiction].
+Qed.
+
+(** Unique entry traces retain exact pending support throughout the visitor fold. *)
+Lemma tarjan_pending_domains_fold es : NoDup (entered es) ->
+  tarjan_pending_domains
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial).
+Proof.
+  induction es as [|e es IH] using rev_ind; intro Hunique.
+  - apply tarjan_pending_domains_initial.
+  - assert (Hprefix : NoDup (entered es)).
+    { rewrite search_entered_app in Hunique. now apply NoDup_app_remove_r in Hunique. }
+    specialize (IH Hprefix).
+    pose proof (Permutation_NoDup (Permutation_sym (tarjan_bag_inventory es)) Hprefix) as Hbag.
+    unfold tarjan_bag in Hbag. apply NoDup_app_remove_r in Hbag.
+    unfold fold_events at 1. rewrite fold_left_app.
+    change (tarjan_pending_domains
+      (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial) e)).
+    destruct e; cbn [visit_event].
+    + now apply tarjan_pending_domains_enter.
+    + now apply tarjan_pending_domains_leave.
+    + now apply tarjan_pending_domains_edge.
+Qed.
+
+(** The oldest pending vertex remains on the active frame stack and bounds all live numbers. *)
+Definition tarjan_bottom (s : tarjan_state) : Prop :=
+  forall prefix root, tarjan_pending s = prefix ++ [root] ->
+    In root (tarjan_frames s) /\
+    exists bound, trie_get root (tarjan_disc s) = Some bound /\
+      (forall v disc, In v (tarjan_pending s) ->
+        trie_get v (tarjan_disc s) = Some disc -> Pos.to_nat bound <= Pos.to_nat disc) /\
+      (forall v low, trie_get v (tarjan_low s) = Some low ->
+        Pos.to_nat bound <= Pos.to_nat low).
+
+Lemma tarjan_bottom_enter v s :
+  ~ In v (tarjan_pending s) -> tarjan_pending_domains s ->
+  tarjan_values_below_clock s -> tarjan_bottom s ->
+  tarjan_bottom (TarjanVisitor.enter v s).
+Proof.
+  intros Hfresh Hdomains Hvalues Hbottom prefix root Hpending.
+  cbn [TarjanVisitor.enter tarjan_pending] in Hpending.
+  destruct prefix as [|first prefix].
+  - cbn [app] in Hpending. injection Hpending as Hroot Hempty. subst root.
+    split; [cbn [TarjanVisitor.enter tarjan_frames In]; now left|].
+    exists (tarjan_clock s). split.
+    + cbn [TarjanVisitor.enter tarjan_disc]. apply PTrie.get_set_same.
+    + split.
+      * intros u i Hin Hget. cbn [TarjanVisitor.enter tarjan_pending] in Hin.
+        rewrite Hempty in Hin. cbn [In] in Hin. destruct Hin as [Heq|Hfalse]; [subst u|contradiction].
+        cbn [TarjanVisitor.enter tarjan_disc] in Hget.
+        rewrite PTrie.get_set_same in Hget. injection Hget as Heq. subst i. lia.
+      * intros u i Hget. cbn [TarjanVisitor.enter tarjan_low] in Hget.
+        destruct (Pos.eq_dec u v) as [Heq|Hneq].
+        -- subst u. rewrite PTrie.get_set_same in Hget. injection Hget as Heq. subst i. lia.
+        -- rewrite PTrie.get_set_other in Hget by exact Hneq.
+           assert (Hin : In u (tarjan_pending s)).
+           { apply (proj1 ((proj2 Hdomains) u)). exists i. exact Hget. }
+           rewrite Hempty in Hin. contradiction.
+  - cbn [app] in Hpending. injection Hpending as Hfirst Htail. subst first.
+    destruct (Hbottom prefix root Htail) as [Hframe [bound [Hroot [Hdisc Hlow]]]].
+    assert (Hdifferent : root <> v).
+    { intros Heq. subst root. apply Hfresh. rewrite Htail. apply in_or_app. right. now left. }
+    pose proof ((proj1 Hvalues) root bound Hroot) as Hclock.
+    split; [cbn [TarjanVisitor.enter tarjan_frames In]; now right|].
+    exists bound. split.
+    + cbn [TarjanVisitor.enter tarjan_disc]. now rewrite PTrie.get_set_other by exact Hdifferent.
+    + split.
+      * intros u i Hin Hget. cbn [TarjanVisitor.enter tarjan_pending] in Hin.
+        cbn [TarjanVisitor.enter tarjan_disc] in Hget.
+        destruct (Pos.eq_dec u v) as [Heq|Hneq].
+        -- subst u. rewrite PTrie.get_set_same in Hget. injection Hget as Heq. subst i. lia.
+        -- rewrite PTrie.get_set_other in Hget by exact Hneq.
+           apply (Hdisc u i); [destruct Hin as [Heq|Hin]; [congruence|exact Hin]|exact Hget].
+      * intros u i Hget. cbn [TarjanVisitor.enter tarjan_low] in Hget.
+        destruct (Pos.eq_dec u v) as [Heq|Hneq].
+        -- subst u. rewrite PTrie.get_set_same in Hget. injection Hget as Heq. subst i. lia.
+        -- rewrite PTrie.get_set_other in Hget by exact Hneq. now apply (Hlow u i).
+Qed.
+
+(** Lowering preserves the pending minimum when the supplied number respects that minimum. *)
+Lemma tarjan_bottom_lower v n s :
+  tarjan_bottom s ->
+  (forall prefix root bound, tarjan_pending s = prefix ++ [root] ->
+    trie_get root (tarjan_disc s) = Some bound -> Pos.to_nat bound <= Pos.to_nat n) ->
+  tarjan_bottom (TarjanVisitor.lower v n s).
+Proof.
+  intros Hbottom Hnumber. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hlookup; [|exact Hbottom].
+  intros prefix root Hpending. cbn [tarjan_pending] in Hpending.
+  destruct (Hbottom prefix root Hpending) as [Hframe [bound [Hroot [Hdisc Hlow]]]].
+  split; [exact Hframe|]. exists bound. split; [exact Hroot|]. split; [exact Hdisc|].
+  intros u i Hget. cbn [tarjan_low] in Hget.
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same in Hget. injection Hget as Heq. subst i.
+    rewrite Pos2Nat.inj_min. apply Nat.min_glb.
+    + exact (Hlow v old Hlookup).
+    + exact (Hnumber prefix root bound Hpending Hroot).
+  - rewrite PTrie.get_set_other in Hget by exact Hneq. now apply (Hlow u i).
+Qed.
+
+Lemma tarjan_bottom_edge kind u v s :
+  tarjan_pending_domains s -> tarjan_bottom s ->
+  tarjan_bottom (TarjanVisitor.edge kind u v s).
+Proof.
+  intros Hdomains Hbottom. destruct kind; cbn [TarjanVisitor.edge]; try exact Hbottom.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|] eqn:Hactive; try exact Hbottom.
+  all: destruct (trie_get v (tarjan_disc s)) as [disc|] eqn:Hlookup; try exact Hbottom.
+  all: apply tarjan_bottom_lower; [exact Hbottom|].
+  all: intros prefix root bound Hpending Hroot.
+  all: destruct (Hbottom prefix root Hpending) as [Hframe [minimum [Hminimum [Hdisc Hlow]]]].
+  all: assert (Heq : minimum = bound) by congruence; subst minimum.
+  all: apply (Hdisc v disc); [now apply (proj1 ((proj1 Hdomains) v))|exact Hlookup].
+Qed.
+
+(** A present pop root occurs in the consumed prefix. *)
+Lemma tarjan_pop_root_member root index pending low active owners
+    members tail low' active' owners' :
+  In root pending ->
+  tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
+  In root members.
+Proof.
+  revert low active owners members tail low' active' owners'.
+  induction pending as [|v pending IH];
+    intros low active owners members tail low' active' owners' Hin Hpop; [contradiction|].
+  cbn [tarjan_pop] in Hpop. destruct (Pos.eqb v root) eqn:Hsame.
+  - apply Pos.eqb_eq in Hsame. subst v. inversion Hpop; subst. now left.
+  - destruct (tarjan_pop root index pending (PTrieCode.remove v low)
+      (PTrieCode.remove v active) (PTrieCode.set v index owners))
+      as [[[[popped remaining] lows] actives] assigned] eqn:Hrest.
+    inversion Hpop; subst members tail low' active' owners'. right.
+    apply Pos.eqb_neq in Hsame. eapply IH; [|exact Hrest].
+    destruct Hin as [Heq|Hin]; [congruence|exact Hin].
+Qed.
+
+(** Changing only frames needs only membership of each possible pending bottom. *)
+Lemma tarjan_bottom_reframe s frames :
+  tarjan_bottom s ->
+  (forall prefix root, tarjan_pending s = prefix ++ [root] -> In root frames) ->
+  tarjan_bottom
+    (TarjanState (tarjan_disc s) (tarjan_low s) (tarjan_pending s) (tarjan_active s)
+      frames (tarjan_emitted s) (tarjan_owners s) (tarjan_clock s) (tarjan_next s)).
+Proof.
+  intros Hbottom Hframes prefix root Hpending.
+  cbn [tarjan_pending] in Hpending.
+  destruct (Hbottom prefix root Hpending) as [_ [bound [Hroot [Hdisc Hlow]]]].
+  split; [now apply (Hframes prefix root)|].
+  exists bound. split; [exact Hroot|]. split; [exact Hdisc|exact Hlow].
+Qed.
+
+(** A matching leave preserves the pending bottom, or removes it in its own root pop. *)
+Lemma tarjan_bottom_leave v frames s :
+  tarjan_frames s = v :: frames -> NoDup (tarjan_pending s) ->
+  tarjan_pending_domains s -> tarjan_low_disc s -> tarjan_bottom s ->
+  tarjan_bottom (TarjanVisitor.leave v s).
+Proof.
+  intros Hframes Hunique Hdomains Hpaired Hbottom.
+  unfold TarjanVisitor.leave. rewrite Hframes. cbn beta iota zeta.
+  destruct (trie_get v (tarjan_low s)) as [low|] eqn:Hlow.
+  2: {
+    apply tarjan_bottom_reframe; [exact Hbottom|]. intros prefix root Hpending.
+    destruct (Hbottom prefix root Hpending) as [Hmember Hnumbers].
+    rewrite Hframes in Hmember. destruct Hmember as [Heq|Hin]; [|exact Hin].
+    subst root. assert (Hin : In v (tarjan_pending s)).
+    { rewrite Hpending. apply in_or_app. right. now left. }
+    apply (proj2 ((proj2 Hdomains) v)) in Hin.
+    destruct Hin as [i Hlookup]. congruence.
+  }
+  destruct (trie_get v (tarjan_disc s)) as [disc|] eqn:Hdisc.
+  2: { destruct (Hpaired v low Hlow) as [i [Hlookup Hle]]. congruence. }
+  destruct (Pos.eqb low disc) eqn:Hsame.
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    intros prefix root Htail. cbn [tarjan_pending] in Htail.
+    destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hlookups].
+    assert (Hpending : tarjan_pending s = (members ++ prefix) ++ [root]).
+    { now rewrite Hsplit, Htail, app_assoc. }
+    destruct (Hbottom (members ++ prefix) root Hpending)
+      as [Hmember [bound [Hroot [Hdiscs Hlows]]]].
+    assert (Hin_tail : In root tail).
+    { rewrite Htail. apply in_or_app. right. now left. }
+    assert (Hdifferent : root <> v).
+    { intros Heq. subst root.
+      assert (Hin_pending : In v (tarjan_pending s)).
+      { apply (proj1 ((proj2 Hdomains) v)). exists low. exact Hlow. }
+      pose proof (tarjan_pop_root_member _ _ _ _ _ _ _ _ _ _ _ Hin_pending Hpop) as Hin_members.
+      eapply tarjan_nodup_app_disjoint; [rewrite <- Hsplit; exact Hunique|exact Hin_members|exact Hin_tail]. }
+    split.
+    + cbn [tarjan_frames]. rewrite Hframes in Hmember.
+      destruct Hmember as [Heq|Hin]; [congruence|exact Hin].
+    + exists bound. split; [exact Hroot|]. split.
+      * intros u i Hin Hlookup. cbn [tarjan_pending] in Hin.
+        apply (Hdiscs u i); [rewrite Hsplit; apply in_or_app; now right|exact Hlookup].
+      * intros u i Hlookup. cbn [tarjan_low] in Hlookup.
+        destruct (Hlookups u) as [Hget _]. rewrite Hget in Hlookup.
+        destruct (existsb (Pos.eqb u) members); [discriminate|now apply (Hlows u i)].
+  - assert (Hremaining : forall prefix root,
+        tarjan_pending s = prefix ++ [root] -> In root frames).
+    { intros prefix root Hpending.
+      destruct (Hbottom prefix root Hpending) as [Hmember [bound [Hroot [Hdiscs Hlows]]]].
+      rewrite Hframes in Hmember. destruct Hmember as [Heq|Hin]; [|exact Hin].
+      subst root. rewrite Hdisc in Hroot. injection Hroot as Heq. subst bound.
+      pose proof (Hlows v low Hlow) as Hfloor.
+      destruct (Hpaired v low Hlow) as [number [Hnumber Hupper]].
+      rewrite Hdisc in Hnumber. injection Hnumber as Heq. subst number.
+      assert (Heq : low = disc) by (apply Pos2Nat.inj; lia).
+      apply Pos.eqb_neq in Hsame. contradiction. }
+    pose proof (tarjan_bottom_reframe s frames Hbottom Hremaining) as Hreframed.
+    destruct frames as [|parent frames]; [exact Hreframed|].
+    apply tarjan_bottom_lower; [exact Hreframed|].
+    intros prefix root bound Hpending Hroot.
+    cbn [tarjan_pending tarjan_disc] in Hpending, Hroot.
+    destruct (Hbottom prefix root Hpending) as [_ [minimum [Hminimum [Hdiscs Hlows]]]].
+    assert (Heq : minimum = bound) by congruence. subst minimum.
+    exact (Hlows v low Hlow).
+Qed.
+
+Lemma tarjan_current_pending_unique es s :
+  NoDup (rev (entered es) ++ tarjan_bag s) -> NoDup (tarjan_pending s).
+Proof.
+  intros Hunique. apply NoDup_app_remove_l in Hunique.
+  unfold tarjan_bag in Hunique. now apply NoDup_app_remove_r in Hunique.
+Qed.
+
+(** One callback moves its entry from the remaining trace into the state inventory. *)
+Lemma tarjan_future_unique e es s :
+  NoDup (rev (entered (e :: es)) ++ tarjan_bag s) ->
+  NoDup (rev (entered es) ++
+    tarjan_bag (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e)).
+Proof.
+  intros Hunique.
+  assert (Hperm : Permutation
+      (rev (entered es) ++
+        tarjan_bag (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e))
+      (rev (entered (e :: es)) ++ tarjan_bag s)).
+  { eapply Permutation_trans.
+    - apply Permutation_app_head. apply tarjan_bag_event.
+    - destruct e; cbn [entered rev app]; [rewrite <- app_assoc| |]; reflexivity. }
+  eapply Permutation_NoDup; [apply Permutation_sym; exact Hperm|exact Hunique].
+Qed.
+
+Lemma tarjan_event_support e s :
+  NoDup (tarjan_pending s) -> tarjan_pending_domains s ->
+  tarjan_low_disc s -> tarjan_values_below_clock s ->
+  let next := visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e in
+  tarjan_pending_domains next /\ tarjan_low_disc next /\ tarjan_values_below_clock next.
+Proof.
+  intros Hunique Hdomains Hpaired Hvalues. cbn zeta. split.
+  - destruct e; cbn [visit_event].
+    + now apply tarjan_pending_domains_enter.
+    + now apply tarjan_pending_domains_leave.
+    + now apply tarjan_pending_domains_edge.
+  - split.
+    + change (tarjan_low_disc
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge [e] s)).
+      now apply tarjan_low_disc_fold.
+    + change (tarjan_values_below_clock
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge [e] s)).
+      now apply tarjan_values_fold.
+Qed.
+
+(** Nested unique entries preserve the pending-bottom invariant and the exact frame stack. *)
+Lemma tarjan_nested_bottom before es after : trace_stack before es after -> forall s,
+  tarjan_frames s = before -> NoDup (rev (entered es) ++ tarjan_bag s) ->
+  tarjan_pending_domains s -> tarjan_low_disc s -> tarjan_values_below_clock s ->
+  tarjan_bottom s ->
+  tarjan_bottom (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s) /\
+  tarjan_frames (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s) = after.
+Proof.
+  intros Htrace. induction Htrace as
+    [stack|stack v rest final Htrace IH|stack v rest final Htrace IH|
+      stack kind u v rest final Htrace IH];
+    intros s Hframes Hunique Hdomains Hpaired Hvalues Hbottom.
+  - cbn [fold_events fold_left]. split; assumption.
+  - assert (Hfresh : ~ In v (tarjan_pending s)).
+    { intros Hin. pose proof Hunique as Hnew.
+      cbn [entered rev] in Hnew. rewrite <- app_assoc in Hnew. cbn [app] in Hnew.
+      apply NoDup_app_remove_l in Hnew.
+      inversion Hnew as [|v' bag Habsent Htail]; subst v' bag.
+      apply Habsent. unfold tarjan_bag. apply in_or_app. now left. }
+    pose proof (tarjan_current_pending_unique _ _ Hunique) as Hpending_unique.
+    destruct (tarjan_event_support (Enter v) s Hpending_unique Hdomains Hpaired Hvalues)
+      as [Hdomains' [Hpaired' Hvalues']].
+    cbn [fold_events fold_left visit_event]. apply IH.
+    + cbn [TarjanVisitor.enter tarjan_frames]. now rewrite Hframes.
+    + exact (tarjan_future_unique (Enter v) rest s Hunique).
+    + exact Hdomains'.
+    + exact Hpaired'.
+    + exact Hvalues'.
+    + now apply tarjan_bottom_enter.
+  - pose proof (tarjan_current_pending_unique _ _ Hunique) as Hpending_unique.
+    destruct (tarjan_event_support (Leave v) s Hpending_unique Hdomains Hpaired Hvalues)
+      as [Hdomains' [Hpaired' Hvalues']].
+    cbn [fold_events fold_left visit_event]. apply IH.
+    + pose proof (proj2 (proj2 (tarjan_event_metadata (Leave v) s))) as Hnext.
+      cbn [visit_event] in Hnext. now rewrite Hframes in Hnext.
+    + exact (tarjan_future_unique (Leave v) rest s Hunique).
+    + exact Hdomains'.
+    + exact Hpaired'.
+    + exact Hvalues'.
+    + now apply (tarjan_bottom_leave v stack).
+  - pose proof (tarjan_current_pending_unique _ _ Hunique) as Hpending_unique.
+    destruct (tarjan_event_support (Edge kind u v) s Hpending_unique Hdomains Hpaired Hvalues)
+      as [Hdomains' [Hpaired' Hvalues']].
+    cbn [fold_events fold_left visit_event]. apply IH.
+    + pose proof (proj2 (proj2 (tarjan_event_metadata (Edge kind u v) s))) as Hnext.
+      cbn [visit_event] in Hnext. now rewrite Hframes in Hnext.
+    + exact (tarjan_future_unique (Edge kind u v) rest s Hunique).
+    + exact Hdomains'.
+    + exact Hpaired'.
+    + exact Hvalues'.
+    + now apply tarjan_bottom_edge.
+Qed.
+
+Lemma tarjan_bottom_initial : tarjan_bottom tarjan_initial.
+Proof.
+  intros prefix root Hpending. cbn [tarjan_initial tarjan_pending] in Hpending.
+  destruct prefix; discriminate Hpending.
+Qed.
+
+Lemma tarjan_last_split (xs : list positive) : xs <> [] ->
+  exists prefix root, xs = prefix ++ [root].
+Proof.
+  induction xs as [|v xs IH]; intro Hnonempty; [contradiction|].
+  destruct xs as [|u xs].
+  - exists [], v. reflexivity.
+  - destruct (IH ltac:(discriminate)) as [prefix [root Hsplit]].
+    exists (v :: prefix), root. cbn [app]. now rewrite Hsplit.
+Qed.
+
+(** A complete nested trace with unique entries leaves neither pending vertices nor frames. *)
+Lemma tarjan_complete_nested es : NoDup (entered es) -> trace_stack [] es [] ->
+  let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial in
+  tarjan_pending result = [] /\ tarjan_frames result = [].
+Proof.
+  intros Hunique Htrace. cbn zeta.
+  assert (Hfuture : NoDup (rev (entered es) ++ tarjan_bag tarjan_initial)).
+  { cbn [tarjan_bag tarjan_initial tarjan_pending tarjan_emitted concat app].
+    rewrite app_nil_r. now apply NoDup_rev. }
+  destruct (tarjan_nested_bottom [] es [] Htrace tarjan_initial eq_refl Hfuture
+    tarjan_pending_domains_initial tarjan_low_disc_initial tarjan_values_initial tarjan_bottom_initial)
+    as [Hbottom Hframes].
+  split; [|exact Hframes].
+  destruct (tarjan_pending
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial))
+    as [|v pending] eqn:Hpending; [reflexivity|].
+  destruct (tarjan_last_split (v :: pending) ltac:(discriminate)) as [prefix [root Hsplit]].
+  assert (Hlast : tarjan_pending
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial) =
+      prefix ++ [root]) by now rewrite Hpending, Hsplit.
+  destruct (Hbottom prefix root Hlast) as [Hin Hnumbers].
+  rewrite Hframes in Hin. contradiction.
+Qed.
+
+(** Complete nested traces emit exactly their entries, in the public component ordering. *)
+Lemma tarjan_complete_components es :
+  NoDup (entered es) -> trace_stack [] es [] ->
+  Permutation
+    (concat (rev (tarjan_emitted
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial))))
+    (entered es).
+Proof.
+  intros Hunique Htrace.
+  destruct (tarjan_complete_nested es Hunique Htrace) as [Hpending Hframes].
+  pose proof (tarjan_bag_inventory es) as Hbag.
+  unfold tarjan_bag in Hbag. rewrite Hpending in Hbag. cbn [app] in Hbag.
+  eapply Permutation_trans; [|exact Hbag].
+  change (Permutation
+    (flat_map (fun c : list positive => c)
+      (rev (tarjan_emitted
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial))))
+    (flat_map (fun c : list positive => c)
+      (tarjan_emitted
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)))).
+  apply Permutation_flat_map. apply Permutation_sym. apply Permutation_rev.
+Qed.
+
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
