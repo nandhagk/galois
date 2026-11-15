@@ -4,7 +4,7 @@
     For example, an edge to an active vertex produces a back-edge event.
     Builds on: graph data, binary-fuel loops and the search signature. *)
 
-From Stdlib Require Import List NArith PArith Sorting.Permutation.
+From Stdlib Require Import List NArith PArith Lia Arith Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig.
@@ -65,6 +65,8 @@ Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
 End SearchCode.
 
 Opaque search_trace.
+Local Opaque prepared_search_trace.
+Local Opaque loopN.
 
 Module Search (V : VISITOR) <: SEARCH V.
   Include SearchCode V.
@@ -81,7 +83,10 @@ Module Search (V : VISITOR) <: SEARCH V.
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     dfs g roots s = fold_events V.enter V.leave V.edge (trace g roots) s.
-  Proof. Admitted. (* CONVERT: GraphSearch: preserve the visitor-fold equation. *)
+  Proof.
+    intros g roots s Hcounts Hgraph Hroots. unfold dfs, trace.
+    reflexivity.
+  Qed.
 
   Lemma trace_reach : forall g roots v,
     counts_ok g -> wf_graph (base g) ->
@@ -209,7 +214,14 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
 
   Lemma F1_budget : forall g roots,
     search_budget g roots = (4 * (nv g + ne g + N.of_nat (length roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots.
+    change (N.double (N.double (nv g + ne g + N.of_nat (length roots) + 1)) =
+      4 * (nv g + ne g + N.of_nat (length roots) + 1))%N.
+    rewrite !N.double_spec. lia.
+  Qed.
+
+  Local Transparent prepared_search_trace.
 
   Lemma F2_trace : forall g roots,
     trace g roots = search_trace g roots /\
@@ -218,7 +230,16 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       | inl st => rev (search_events st)
       | inr es => es
       end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots. split; [reflexivity|].
+    unfold search_trace, prepared_search_trace, initial.
+    fold search_step search_budget.
+    destruct (loopN (search_step (base g)) (search_budget g roots)
+      (SearchState (map SearchRoot roots) Empty [])) as [st|es]; [|reflexivity].
+    rewrite rev_append_rev, app_nil_r. reflexivity.
+  Qed.
+
+  Local Opaque prepared_search_trace.
 
   Lemma F3_initial : forall g roots,
     counts_ok g -> wf_graph (base g) ->
@@ -358,3 +379,5 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
 End SearchT.
 
 Transparent search_trace.
+Transparent prepared_search_trace.
+Transparent loopN.
