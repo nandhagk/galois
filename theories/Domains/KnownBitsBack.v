@@ -4,7 +4,7 @@
     For example, a known sum can refine the first operand when the second is fixed.
     Builds on: KnownBitsSig and the bit-vector operations. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
+From Stdlib Require Import ZArith NArith List Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
 From Galois.Domains Require Import WordSig KnownBitsSig KnownBits KnownBitsOps.
@@ -117,17 +117,44 @@ Fixpoint tnum_refine (wps : list (width * tnum)) (qs : list tnum) : list tnum :=
   end.
 TimeFun tnum_refine.
 
+(** Reject an extraction offset before converting it or constructing its power.
+    Every well-typed extraction passes this width-bounded check. *)
+Definition tnum_table_bounded (o : op) (xs : list (width * tnum)) : bool :=
+  match o, xs with
+  | bvextract _ lo, [(w, _)] => Nat.ltb lo (Pos.to_nat w)
+  | _, _ => true
+  end.
+TimeFun tnum_table_bounded.
+
 Module KnownBitsTableCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     (K : KNOWN_BITS_OPS L C) <: WORD_TABLE_OPS L K.
   Module Ops := KnownBitsOpsCode L C K.
   Include Ops.
   Definition wfwd (o : L.op) (rw : positive) (xs : list (positive * K.p)) : option K.p :=
-    if Nat.eqb (length xs) (arity o) then Some (tnum_forward_raw o xs rw) else None.
+    if Nat.eqb (length xs) (arity o) then
+      if tnum_table_bounded o xs then Some (tnum_forward_raw o xs rw) else None
+    else None.
   Definition wbwd (o : L.op) (rw : positive) (q : K.p)
       (xs : list (positive * K.p)) : option (list K.p) :=
-    if Nat.eqb (length xs) (arity o) then Some (tnum_refine xs (tnum_backward_raw o xs rw q))
+    if Nat.eqb (length xs) (arity o) then
+      if tnum_table_bounded o xs then Some (tnum_refine xs (tnum_backward_raw o xs rw q))
+      else None
     else None.
 End KnownBitsTableCode.
+
+(** Successful width checking always admits the guarded table computation. *)
+Lemma tnum_table_bounded_width : forall o xs rw,
+  result_width o (map fst xs) = Some rw -> tnum_table_bounded o xs = true.
+Proof.
+  intros o xs rw Hwidth. destruct o; try reflexivity.
+  destruct xs as [|[w a] [|[v b] rest]]; try reflexivity.
+  cbn [result_width map fst] in Hwidth.
+  destruct (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w)) eqn:Hbounds;
+    [|discriminate].
+  apply andb_true_iff in Hbounds. destruct Hbounds as [Hlo Hhi].
+  apply Nat.leb_le in Hlo. apply Nat.ltb_lt in Hhi.
+  cbn [tnum_table_bounded]. apply Nat.ltb_lt. lia.
+Qed.
 
 
 Theorem tnum_refine_equation : forall wps qs,
@@ -734,6 +761,28 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
     <: KNOWN_BITS_TABLE L C K.
   Include KnownBitsTableCode L C K.
   Module ForwardSound := KnownBitsSuppliedForwardProof L C K.
+  (** A width-checked forward request keeps the original transfer result. *)
+  Lemma wfwd_width_checked : forall o rw xs,
+    L.result_width o (map fst xs) = Some rw ->
+    wfwd o rw xs = Some (tnum_forward_raw o xs rw).
+  Proof.
+    intros o rw xs Hwidth.
+    pose proof (result_width_arity o (map fst xs) rw Hwidth) as Harity.
+    rewrite length_map in Harity. unfold wfwd.
+    rewrite Harity, Nat.eqb_refl, (tnum_table_bounded_width o xs rw Hwidth).
+    reflexivity.
+  Qed.
+  (** A width-checked backward request keeps the original refined operands. *)
+  Lemma wbwd_width_checked : forall o rw q xs,
+    L.result_width o (map fst xs) = Some rw ->
+    wbwd o rw q xs = Some (tnum_refine xs (tnum_backward_raw o xs rw q)).
+  Proof.
+    intros o rw q xs Hwidth.
+    pose proof (result_width_arity o (map fst xs) rw Hwidth) as Harity.
+    rewrite length_map in Harity. unfold wbwd.
+    rewrite Harity, Nat.eqb_refl, (tnum_table_bounded_width o xs rw Hwidth).
+    reflexivity.
+  Qed.
   Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
     Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
       K.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
@@ -742,6 +791,7 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
     intros o rw wps cs z r Hforward Hgamma Heval.
     unfold wfwd in Hforward.
     destruct (Nat.eqb (length wps) (arity o)); [|discriminate].
+    destruct (tnum_table_bounded o wps); [|discriminate].
     injection Hforward as <-.
     apply (proj2 (K.gamma_tnum _ _ _)).
     eapply ForwardSound.tnum_forward_raw_sound; [|exact Heval].
@@ -760,6 +810,7 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
     intros o rw q wps ys cs z Hback Hgamma Heval Hq.
     unfold wbwd in Hback.
     destruct (Nat.eqb (length wps) (arity o)); [|discriminate].
+    destruct (tnum_table_bounded o wps); [|discriminate].
     injection Hback as <-.
     assert (Hpayload : Forall2 kb_payload_sound wps cs).
     { clear Heval Hq.
@@ -783,6 +834,29 @@ Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BI
   TimeFun wfwd.
   TimeFun wbwd.
   Definition c_word_table : N := 1. (* STUB *)
+
+  (** Every operand contributes at least one bit of width. *)
+  Local Lemma operand_count_width : forall (xs : list (positive * K.p)),
+    (length xs <= fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs))%nat.
+  Proof.
+    induction xs as [|[w a] xs IH]; cbn [length map fold_right fst]; [lia|].
+    pose proof (Pos2Nat.is_pos w). lia.
+  Qed.
+
+  (** Refinement adds at most two normalized masks per operand width. *)
+  Local Lemma refine_storage : forall (xs : list (positive * K.p)) (qs : list tnum),
+    (fold_right Nat.add 0
+      (map (fun wy => K.psize (fst wy) (snd wy))
+        (combine (map fst xs) (tnum_refine xs qs))) <=
+      fold_right Nat.add 0 (map (fun x => K.psize (fst x) (snd x)) xs) +
+      2 * fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs))%nat.
+  Proof.
+    induction xs as [|[w a] xs IH]; intros [|q qs];
+      rewrite tnum_refine_equation; cbn [map combine fold_right fst snd]; try lia.
+    - specialize (IH []). lia.
+    - specialize (IH qs). pose proof (tnum_meet_bits w a q) as Hbits.
+      rewrite (K.psize_bits w (tnum_meet w a q)), (K.psize_bits w a). lia.
+  Qed.
   Lemma T_wbwd_le : forall o rw q xs,
     (T_wbwd o rw q xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
@@ -795,12 +869,104 @@ Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BI
         (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
           K.psize rw q + fold_right Nat.add 0
             (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw q xs ys Hback. unfold wbwd in Hback.
+    destruct (Nat.eqb (length xs) (arity o)); [|discriminate].
+    destruct (tnum_table_bounded o xs); [|discriminate].
+    injection Hback as <-.
+    unfold c_word_table. rewrite N.mul_1_l.
+    rewrite <- N.compare_le_iff, <- Nat2N.inj_compare, Nat.compare_le_iff.
+    rewrite tnum_refine_length.
+    pose proof (refine_storage xs (tnum_backward_raw o xs rw q)) as Hstorage.
+    pose proof (operand_count_width xs) as Hlength.
+    pose proof (Pos2Nat.is_pos rw) as Hwidth.
+    set (widths := fold_right Nat.add 0%nat (map (fun x : positive * K.p =>
+      Pos.to_nat (fst x)) xs)) in *.
+    assert (Hsquare : (3 * widths <= (Pos.to_nat rw + widths + 1) ^ 2)%nat).
+    { assert (Hsmall : (3 * widths <= (widths + 2) ^ 2)%nat).
+      { cbn [Nat.pow]. nia. }
+      assert (Hlarge : ((widths + 2) ^ 2 <= (Pos.to_nat rw + widths + 1) ^ 2)%nat).
+      { apply Nat.pow_le_mono_l. lia. }
+      lia. }
+    set (inputs := fold_right Nat.add 0%nat
+      (map (fun x : positive * K.p => K.psize (fst x) (snd x)) xs)).
+    set (outputs := fold_right Nat.add 0%nat
+      (map (fun wy : positive * K.p => K.psize (fst wy) (snd wy))
+        (combine (map fst xs) (tnum_refine xs (tnum_backward_raw o xs rw q))))).
+    change (outputs <= inputs + 2 * widths)%nat in Hstorage.
+    change (length xs <= widths)%nat in Hlength.
+    change (length xs + outputs <=
+      (Pos.to_nat rw + widths + 1) ^ 2 + K.psize rw q + inputs)%nat.
+    clearbody widths inputs outputs.
+    lia.
+  Qed.
 End KnownBitsTableClock.
 
 Module KnownBitsTableT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
     (K : KNOWN_BITS_T L C) <: KNOWN_BITS_TABLE_T L C K.
   Include KnownBitsTableClock L C K.
+
+  Local Lemma forward_one_bits : forall o rw w a,
+    (tnum_bits (tnum_forward_raw o [(w, a)] rw) <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros o rw w a.
+    pose proof (K.tnum_unary_bits rw a) as [Hnot [Hneg Hnormalise]].
+    destruct o; cbn [tnum_forward_raw];
+      first [exact Hnot|exact Hneg|apply tnum_count_bits|apply tnum_map_bits|
+        apply tnum_top_bits].
+  Qed.
+
+  Local Lemma forward_two_bits : forall o rw w v a b,
+    (tnum_bits (tnum_forward_raw o [(w, a); (v, b)] rw) <=
+      2 * (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v))%nat.
+  Proof.
+    intros o rw w v a b.
+    pose proof (K.tnum_binary_bits rw a b) as [Hadd [Hsub [Hand [Hor [Hxor Hmul]]]]].
+    pose proof (K.tnum_stage_bits MulLow o rw a b) as [Hchoice Hvariable].
+    pose proof (tnum_top_bits rw) as Htop.
+    pose proof (Pos2Nat.is_pos rw) as Hwidth.
+    destruct o; cbn [tnum_forward_raw]; try lia.
+    all: try match goal with
+    | |- context [tnum_udiv ?w ?a ?b] =>
+      pose proof (tnum_udiv_bits w a b) as Hbound; lia
+    | |- context [tnum_urem ?w ?a] =>
+      pose proof (tnum_urem_bits w a) as Hbound; lia
+    | |- context [tnum_srem ?w ?a] =>
+      pose proof (tnum_srem_bits w a) as Hbound; lia
+    | |- context [tnum_compare ?tag ?w ?a ?b] =>
+      pose proof (tnum_compare_bits tag w a b) as Hbound;
+        change (tnum_bits (tnum_compare tag w a b) <= 2)%nat in Hbound; lia
+    | |- context [tnum_concat ?w ?v ?a ?b] =>
+      pose proof (tnum_concat_bits w v a b) as Hbound;
+        rewrite Pos2Nat.inj_add in Hbound; lia
+    end.
+    destruct (Pos.eqb w rw && Pos.eqb v rw); [lia|].
+    pose proof (tnum_mul_bits rw a b). lia.
+  Qed.
+
+  Local Lemma forward_three_bits : forall o rw w v u a b c,
+    (tnum_bits (tnum_forward_raw o [(w, a); (v, b); (u, c)] rw) <=
+      2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros o rw w v u a b c. destruct o; cbn [tnum_forward_raw];
+      first [apply tnum_ite_bits|apply tnum_top_bits].
+  Qed.
+
+  (** Forward storage is bounded even for unchecked result-width requests. *)
+  Local Lemma forward_storage : forall o rw (xs : list (positive * K.p)),
+    (tnum_bits (tnum_forward_raw o xs rw) <=
+      2 * (Pos.to_nat rw +
+        fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs)))%nat.
+  Proof.
+    intros o rw [|[w a] [|[v b] [|[u c] [|wp xs]]]];
+      cbn [map fold_right fst snd].
+    - rewrite Nat.add_0_r. destruct o; apply tnum_top_bits.
+    - eapply Nat.le_trans; [apply forward_one_bits|lia].
+    - eapply Nat.le_trans; [apply forward_two_bits|lia].
+    - eapply Nat.le_trans; [apply forward_three_bits|lia].
+    - pose proof (tnum_top_bits rw) as Htop.
+      destruct o; (eapply Nat.le_trans; [exact Htop|lia]).
+  Qed.
   Lemma T_wfwd_le : forall o rw xs,
     (T_wfwd o rw xs <= c_word_table * N.of_nat
       (((Pos.to_nat rw + fold_right Nat.add 0
@@ -814,5 +980,15 @@ Module KnownBitsTableT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
           (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
         fold_right Nat.add 0
           (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o rw xs r Hforward. unfold wfwd in Hforward.
+    destruct (Nat.eqb (length xs) (arity o)); [|discriminate].
+    destruct (tnum_table_bounded o xs); [|discriminate].
+    injection Hforward as <-.
+    unfold c_word_table. rewrite N.mul_1_l.
+    rewrite <- N.compare_le_iff, <- Nat2N.inj_compare, Nat.compare_le_iff.
+    rewrite K.psize_bits.
+    pose proof (forward_storage o rw xs) as Hstorage.
+    pose proof (Pos2Nat.is_pos rw) as Hwidth. cbn [Nat.pow]. nia.
+  Qed.
 End KnownBitsTableT.
