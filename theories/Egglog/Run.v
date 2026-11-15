@@ -4547,178 +4547,11 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     unfold loopN. apply Hacc. exact Hinitial.
   Qed.
 
-  Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    D.wf (snd (run p cp lim db)) /\ D.canonical (snd (run p cp lim db)) /\
-    loaded p cp (snd (run p cp lim db)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_grows : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    grows db (snd (run p cp lim db)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_sat : forall p cp lim db (M : model (V := V.t)) nu,
-    plans_ok p cp -> D.wf db -> loaded p cp db -> valid_sorted V.prim V.merge M p ->
-    sat V.merge M nu (D.view db) -> exists nu',
-      (forall i, D.allocated db i -> nu' i = nu i) /\
-      sat V.merge M nu' (D.view (snd (run p cp lim db))).
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_closed : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
-    run p cp lim db = (Saturated, db') -> closed V.prim V.merge p (D.view db').
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_derives : forall p cp lim db f k o, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    relational_fragment p = true -> no_ids db ->
-    row (D.view (snd (run p cp lim db))) f k o -> derives V.prim p (D.view db) f k.
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_least : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
-    relational_fragment p = true -> no_ids db -> run p cp lim db = (Saturated, db') ->
-    forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
-      (forall f, kind w f = program_kind p f) -> view_sorted (program_sorts p) w ->
-      includes (D.view db') w.
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
-    loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
-    N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
-    fst (run p cp lim db) = Saturated.
-  Proof. Admitted. (* STUB *)
-
-  Lemma run_limits : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    fst (run p cp lim db) = IdLimit -> (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
-  Proof. Admitted. (* STUB *)
-
-End Run.
-
-Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
-    <: RUN_ALL V I J D.
-  Include Run V I J D.
-  TimeFun plan.
-  TimeFun check_shape.
-  TimeFun check_plan.
-  TimeFun load.
-  TimeFun apply_go.
-  TimeFun apply.
-  TimeFun bind_trie.
-  TimeFun keep.
-  TimeFun source_ix.
-  TimeFun plan_bindings.
-  TimeFun jobs.
-  TimeFun apply_all.
-  TimeFun round.
-  TimeFun driver.
-  TimeFun run.
   Definition trace (p : program V.t) (cp : compiled V.t) (lim : limits) (db : D.t)
       : list (bool * D.t) :=
     driver_trace (driver p cp lim) (N.to_nat (max_iter lim)) (false, db).
   Definition job_rule (p : program V.t) (c : cplan V.t) : rule V.t :=
     nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []).
-  (** Post work counts the position and the terms of each listed atom. *)
-  Definition post_work (p : program V.t) (c : cplan V.t) : nat :=
-    fold_right (fun i n => i + 1 +
-      match nth_error (query V.t (job_rule p c)) i with
-      | Some a => length (atom_terms a)
-      | None => 0
-      end + n) 0 (post V.t c).
-  (** Finding the rule of a plan walks the rule list with a binary counter. *)
-  Definition rule_work (p : program V.t) (c : cplan V.t) : nat :=
-    (length (rules V.t p) + 1) * (N.size_nat (rule_ix V.t c) + 1).
-  Definition round_work (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t) : nat :=
-    length (Syntax.slots V.t cp) +
-      fold_right Nat.add 0 (map (fun c =>
-        (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
-          length (sources V.t c) + 2) *
-          (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
-        length (bindings cp c db) *
-          (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
-           post_work p c + rule_work p c + 1 +
-           fold_right (fun a n => match a with
-             | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
-                 (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n
-             | Union _ _ => 1 + n
-             | Let _ _ args => length args + 1 + n
-             end) 0 (actions V.t (nth (N.to_nat (rule_ix V.t c)) (rules V.t p)
-               (Rule V.t [] [])))) +
-        fold_right Nat.add 0 (map (fun binding =>
-          let r := nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []) in
-          N.to_nat (query_prim_work V.prim_work (query V.t r) (env_of c binding) +
-            action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r)
-              (env_of c binding))%N)
-          (bindings cp c db)))
-        (if nv then naive V.t cp else seminaive V.t cp)).
-  Definition size_program (p : program V.t) : nat := program_bits p.
-  Definition size_compiled (cp : compiled V.t) : nat :=
-    fold_right (fun sl n => Pos.size_nat (fst sl) +
-        fold_right (fun i m => i + 1 + m) 0 (snd sl) + 1 + n) 0 (Syntax.slots V.t cp) +
-      fold_right (fun c n => N.size_nat (rule_ix V.t c) + nvars (join V.t c) +
-        fold_right (fun col m => fold_right (fun i k => i + 1 + k) 0 col + 1 + m)
-          0 (cols (join V.t c)) +
-        fold_right (fun src m => match src with
-          | All _ i | New _ i => N.size_nat i + 1 + m
-          | Const _ value => cell_bits V.encode value + 1 + m
-          end) 0 (sources V.t c) +
-        fold_right (fun x m => Pos.size_nat x + 1 + m) 0 (var_of V.t c) +
-        fold_right (fun i m => i + 1 + m) 0 (post V.t c) + 1 + n)
-        0 (naive V.t cp ++ seminaive V.t cp).
-  Definition wbits (p : program V.t) : nat :=
-    fold_right (fun x n => Nat.max (Pos.size_nat x) n)
-      0 (program_words V.encode p).
-  Definition c_run : N := 1. (* STUB *)
-  Lemma size_compiled_spec : forall cp,
-    size_compiled cp =
-      fold_right (fun sl n => Pos.size_nat (fst sl) +
-        fold_right (fun i m => i + 1 + m) 0 (snd sl) + 1 + n) 0 (Syntax.slots V.t cp) +
-      fold_right (fun c n => N.size_nat (rule_ix V.t c) + nvars (join V.t c) +
-        fold_right (fun col m => fold_right (fun i k => i + 1 + k) 0 col + 1 + m)
-          0 (cols (join V.t c)) +
-        fold_right (fun src m => match src with
-          | All _ i | New _ i => N.size_nat i + 1 + m
-          | Const _ value => cell_bits V.encode value + 1 + m
-          end) 0 (sources V.t c) +
-        fold_right (fun x m => Pos.size_nat x + 1 + m) 0 (var_of V.t c) +
-        fold_right (fun i m => i + 1 + m) 0 (post V.t c) + 1 + n)
-        0 (naive V.t cp ++ seminaive V.t cp).
-  Proof. Admitted. (* STUB *)
-
-  Lemma wbits_spec : forall p,
-    wbits p = fold_right (fun x n => Nat.max (Pos.size_nat x) n)
-      0 (program_words V.encode p).
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_plan_le : forall p,
-    (T_plan p <= c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
-      N.of_nat (size_program p + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma plan_slots_le : forall p,
-    (N.of_nat (fold_right (fun s n =>
-      (Pos.size_nat (fst s) + length (snd s) + 1 + n)%nat) 0%nat
-      (Syntax.slots V.t (plan p))) <=
-      c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
-        N.of_nat (size_program p + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_load_le : forall p cp,
-    (T_load p cp <= D.T_init (decls V.t p) (Syntax.slots V.t cp) + c_run)%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_run_le : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
-    (T_run p cp lim db <=
-      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
-        (fold_right N.add 0 (map (fun start =>
-          N.of_nat (round_work p cp (fst start) (snd start) + 1)) (trace p cp lim db)) +
-         N.of_nat (D.pending db + 1)) +
-      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
-      N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_check_plan_le : forall p cp,
-    (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
-      N.of_nat (wbits p + 1))%N.
-  Proof. Admitted. (* STUB *)
-
   Definition query_vars (r : rule V.t) : list positive := flat_map atom_vars (query V.t r).
   Fixpoint apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : D.t :=
@@ -4728,18 +4561,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         apply_jobs p rest
           (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db)
     end.
-  Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
-      (db : D.t) : N :=
-    match js with
-    | [] => 0%N
-    | (c, b) :: rest =>
-        (T_apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b))
-            (fun x => 1 + T_trie_get x (bind_trie c b)) db +
-          T_apply_jobs p rest
-            (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db))%N
-    end.
-
-  Definition k_driver : N := 1. (* STUB *)
   Definition env_allocated (db : D.t) (s : Model.env (V := V.t)) : Prop :=
     forall x i, s x = Some (Id i) -> D.allocated db i.
   Definition agrees (s t : Model.env (V := V.t)) (xs : list positive) : Prop :=
@@ -4754,7 +4575,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (forall f k o, row (D.view db) f k o -> exists k' o',
       row (D.view db') f k' o' /\ Forall2 (cell_rel (same (D.view db'))) k k' /\
       D.out_le db' f (option_map (D.canon db') o) o').
-  Definition k_check : N := 1. (* STUB *)
   (** Two identifiers that occur in rows and are equal in the view are identical. *)
   Definition row_ids_unique (w : Model.view (V := V.t)) : Prop :=
     forall f k o f' k' o' i j, row w f k o -> row w f' k' o' ->
@@ -8250,7 +8070,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (forall i, In (Id i) k -> D.allocated db i) ->
     D.wf (snd (D.make f k db)) /\ loaded p cp (snd (D.make f k db)) /\
     (D.ids db <= D.ids (snd (D.make f k db)))%N /\
-    D.unit db <= D.unit (snd (D.make f k db)) /\
     D.allocated (snd (D.make f k db)) (fst (D.make f k db)) /\
     D.pending (snd (D.make f k db)) = D.pending db.
   Proof.
@@ -8265,7 +8084,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       split; [intro g; rewrite Hkinds; apply Hdecls|].
       split; [now rewrite Hslots|]. apply F22_make_sorted; assumption.
     - split; [apply run_make_ids; assumption|].
-      split; [apply D.unit_mono_make; exact Hwf|]. split; assumption.
+      split; assumption.
   Qed.
 
   (** A typed insertion preserves the loaded state and queues at most one entry. *)
@@ -8274,7 +8093,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     row_sorted (program_sorts p) (program_kind p) f k o ->
     (forall i, In (Id i) (k ++ option_list o) -> D.allocated db i) ->
     D.wf (D.put f k o db) /\ loaded p cp (D.put f k o db) /\
-    D.ids (D.put f k o db) = D.ids db /\ D.unit db <= D.unit (D.put f k o db) /\
+    D.ids (D.put f k o db) = D.ids db /\
     D.pending (D.put f k o db) <= D.pending db + 1.
   Proof.
     intros p cp f k o db Hchecked Hwf Hloaded Hrow Hallocated.
@@ -8286,14 +8105,14 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       apply F21_put_sorted; try assumption.
       destruct Hrow as [out [Hsort [Hkind Hout]]]. exists out.
       split; [exact Hsort|]. split; [rewrite Hdecls; exact Hkind|exact Hout].
-    - split; [exact Hids|]. split; [apply D.unit_mono_put; exact Hwf|exact Hpending].
+    - split; assumption.
   Qed.
 
   (** An allocated union preserves the loaded state and queues at most one entry. *)
   Lemma run_union_state : forall p cp i j db,
     D.wf db -> loaded p cp db -> D.allocated db i -> D.allocated db j ->
     D.wf (D.union i j db) /\ loaded p cp (D.union i j db) /\
-    D.ids (D.union i j db) = D.ids db /\ D.unit db <= D.unit (D.union i j db) /\
+    D.ids (D.union i j db) = D.ids db /\
     D.pending (D.union i j db) <= D.pending db + 1.
   Proof.
     intros p cp i j db Hwf Hloaded Hi Hj.
@@ -8302,7 +8121,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     - destruct Hloaded as [Hdecls [Hlayout Hsorted]].
       split; [intro g; rewrite Hkinds; apply Hdecls|]. split; [now rewrite Hslots|].
       apply F23_union_sorted; assumption.
-    - split; [exact Hids|]. split; [apply D.unit_mono_union; exact Hwf|exact Hpending].
+    - split; assumption.
   Qed.
 
   (** Typed actions preserve loaded well-formed states and bound their pending work. *)
@@ -8312,7 +8131,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     env_sorted g (look s locals) -> env_allocated db (look s locals) ->
     D.wf (apply_go acts s locals db) /\ loaded p cp (apply_go acts s locals db) /\
     (D.ids db <= D.ids (apply_go acts s locals db))%N /\
-    D.unit db <= D.unit (apply_go acts s locals db) /\
     D.pending (apply_go acts s locals db) <= D.pending db + length acts.
   Proof.
     intros p cp acts. induction acts as [|a rest IH]; intros g s locals db
@@ -8327,7 +8145,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         pose proof (run_make_state p cp f cells db Hchecked Hwf Hloaded Hkind Hsort Hids)
           as Hstate.
         destruct (D.make f cells db) as [i next] eqn:Hmake. cbn [fst snd] in Hstate.
-        destruct Hstate as [Hwf' [Hloaded' [Hids' [Hunit' [Hnew Hpending]]]]].
+        destruct Hstate as [Hwf' [Hloaded' [Hids' [Hnew Hpending]]]].
         assert (Henv' : env_sorted (ctx_set g x SId)
             (look s (PTrieCode.set x (Id i) locals))).
         { apply run_env_sorted_set; [exact Henv|reflexivity]. }
@@ -8336,7 +8154,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           - eapply run_env_allocated_mono; [exact Hids'|exact Hallocated].
           - intros j Heq. injection Heq as <-. exact Hnew. }
         destruct (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv' Hallocated')
-          as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+          as [Hfinal [Hloadfinal [Hidfinal Hpendfinal]]].
         cbn [apply_go]. rewrite Hcells, Hmake.
         split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
       + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
@@ -8351,12 +8169,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           - eapply run_term_cells_allocated; eauto.
           - eapply run_result_cell_allocated; eauto. }
         destruct (run_put_state p cp f cells output db Hchecked Hwf Hloaded Hrow Hids)
-          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+          as [Hwf' [Hloaded' [Hids' Hpending]]].
         assert (Hallocated' : env_allocated (D.put f cells output db) (look s locals)).
         { eapply run_env_allocated_mono with (db := db);
             [rewrite Hids'; reflexivity|exact Hallocated]. }
         destruct (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated')
-          as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+          as [Hfinal [Hloadfinal [Hidfinal Hpendfinal]]].
         cbn [apply_go]. rewrite Hcells, Houtput.
         split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
       + destruct Hacts as [Ht [Hu Hrest]].
@@ -8367,12 +8185,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         pose proof (run_term_cell_allocated db s locals t i Hallocated Hi) as Hiall.
         pose proof (run_term_cell_allocated db s locals u j Hallocated Hj) as Hjall.
         destruct (run_union_state p cp i j db Hwf Hloaded Hiall Hjall)
-          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+          as [Hwf' [Hloaded' [Hids' Hpending]]].
         assert (Hallocated' : env_allocated (D.union i j db) (look s locals)).
         { eapply run_env_allocated_mono with (db := db);
             [rewrite Hids'; reflexivity|exact Hallocated]. }
         destruct (IH _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated')
-          as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+          as [Hfinal [Hloadfinal [Hidfinal Hpendfinal]]].
         cbn [apply_go]. rewrite Hi, Hj.
         split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
       + destruct Hacts as [Hargs Hrest].
@@ -8384,7 +8202,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           assert (Hallocated' : env_allocated db (look s (PTrieCode.set x (Val v) locals))).
           { apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate. }
           destruct (IH _ _ _ _ Hchecked Hwf Hloaded Hrest Henv' Hallocated')
-            as [Hfinal [Hloadfinal [Hidfinal [Hunitfinal Hpendfinal]]]].
+            as [Hfinal [Hloadfinal [Hidfinal Hpendfinal]]].
           split; [exact Hfinal|]. split; [exact Hloadfinal|]. cbn [length]. repeat split; lia.
         * split; [exact Hwf|]. split; [exact Hloaded|]. cbn [length]. repeat split; lia.
   Qed.
@@ -8395,7 +8213,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     actions_ok (program_sorts p) (program_kind p) g acts -> env_sorted g s ->
     env_allocated db s ->
     D.wf (apply acts s db) /\ loaded p cp (apply acts s db) /\
-    (D.ids db <= D.ids (apply acts s db))%N /\ D.unit db <= D.unit (apply acts s db) /\
+    (D.ids db <= D.ids (apply acts s db))%N /\
     D.pending (apply acts s db) <= D.pending db + length acts.
   Proof.
     intros p cp acts g s db Hchecked Hwf Hloaded Hacts Henv Hallocated.
@@ -8405,18 +8223,18 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated. exact Hcell.
   Qed.
 
-  Lemma F3_apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+  (** Applying a checked rule preserves the functional state and bounds pending work. *)
+  Lemma run_apply_state : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
     env_allocated db s ->
     D.wf (apply (actions V.t r) s db) /\ loaded p cp (apply (actions V.t r) s db) /\
     (D.ids db <= D.ids (apply (actions V.t r) s db))%N /\
-    D.unit db <= D.unit (apply (actions V.t r) s db).
+    D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
   Proof.
     intros p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated.
     destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
-    destruct (run_apply_typed p cp (actions V.t r) g s db Hchecked Hwf Hloaded Hacts
-      Hsorted Hallocated) as [Hwf' [Hloaded' [Hids [Hunit _]]]].
-    split; [exact Hwf'|]. split; [exact Hloaded'|]. split; assumption.
+    exact (run_apply_typed p cp (actions V.t r) g s db Hchecked Hwf Hloaded Hacts
+      Hsorted Hallocated).
   Qed.
 
   (** Applying a rule queues at most one pending entry per action. *)
@@ -8426,9 +8244,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     D.pending (apply (actions V.t r) s db) <= D.pending db + length (actions V.t r).
   Proof.
     intros p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated.
-    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
-    exact (proj2 (proj2 (proj2 (proj2 (run_apply_typed p cp (actions V.t r) g s db
-      Hchecked Hwf Hloaded Hacts Hsorted Hallocated))))).
+    exact (proj2 (proj2 (proj2 (run_apply_state p cp r s db Hchecked Hwf Hloaded
+      Hin Henv Hallocated)))).
   Qed.
 
   (** Interpreting a concrete term preserves its environment lookup. *)
@@ -8712,7 +8529,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         pose proof (run_make_state p cp f cells db Hchecked Hwf Hloaded Hkind Hsort Hids)
           as Hstate.
         destruct (D.make f cells db) as [i next] eqn:Hmake. cbn [fst snd] in Hstate.
-        destruct Hstate as [Hwf' [Hloaded' [Hids' [Hunit' [Hnew Hpending]]]]].
+        destruct Hstate as [Hwf' [Hloaded' [Hids' [Hnew Hpending]]]].
         assert (Hkinddb : kind (D.view db) f = Some OId).
         { rewrite (proj1 Hloaded). exact Hkind. }
         destruct (run_make_model M nu db f cells i next Hwf Hkinddb Hids Hsat Hmake)
@@ -8750,7 +8567,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         pose proof (run_put_allowed p cp db f cells output Hchecked Hloaded Hrow Hids)
           as Hallowed.
         destruct (run_put_state p cp f cells output db Hchecked Hwf Hloaded Hrow Hids)
-          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+          as [Hwf' [Hloaded' [Hids' Hpending]]].
         destruct Hmodel as [vals [Hvals [Hput Hmodelrest]]].
         assert (Hholds : holds M nu (D.view db) f cells output).
         { eapply run_model_fun_holds.
@@ -8775,7 +8592,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         pose proof (run_term_cell_allocated db s locals t i Hallocated Hi) as Hiall.
         pose proof (run_term_cell_allocated db s locals u j Hallocated Hj) as Hjall.
         destruct (run_union_state p cp i j db Hwf Hloaded Hiall Hjall)
-          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+          as [Hwf' [Hloaded' [Hids' Hpending]]].
         destruct Hmodel as [a [b [Hma [Hmb [Hequal Hmodelrest]]]]].
         pose proof (run_model_term_unique M nu (look s locals) t (Id i) a
           (proj1 (run_term_cell_spec s locals t (Id i)) Hi) Hma) as Ha.
@@ -9110,7 +8927,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       pose proof (run_make_grows (program_sorts p) f cells db Hwf (proj1 Hstate)
         ltac:(rewrite (proj1 Hloaded); exact Hkind) (proj2 (proj2 Hloaded))) as Hstep.
       destruct (D.make f cells db) as [i next] eqn:Hmake. cbn [fst snd] in Hstate, Hstep.
-      destruct Hstate as [Hwf' [Hloaded' [Hids' [_ [Hnew _]]]]].
+      destruct Hstate as [Hwf' [Hloaded' [Hids' [Hnew _]]]].
       cbn [apply_go]. rewrite Hcells, Hmake.
       eapply IH; [exact Hchecked|exact Hwf'|exact Hloaded'|exact Hrest| | |].
       + apply run_env_sorted_set; [exact Henv|reflexivity].
@@ -9847,12 +9664,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       + now apply run_cell_rel_refl.
   Qed.
 
-  Lemma F7_apply_derives : forall p initial db r s, relational_fragment p = true ->
-    no_ids initial -> D.wf db -> derived p initial db -> In r (rules V.t p) ->
-    derivation_body V.prim p (D.view initial) s (query V.t r) ->
-    derived p initial (apply (actions V.t r) s db).
-  Proof. Admitted. (* PLAN-DEFECT: result-bearing relational Put; see RunTest. *)
-
   (** Relational declarations never assign a constructor or lattice output. *)
   Lemma run_relational_kind : forall (p : program V.t) f out,
     relational_fragment p = true -> program_kind p f = Some out -> out = ORel.
@@ -10041,6 +9852,109 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       eapply run_derivation_action_env; [intro x; apply run_look_empty|exact Haction].
   Qed.
 
+  Lemma F26_bindings_env : forall p cp db c b r, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> In c (all_plans cp) ->
+    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r -> In b (bindings cp c db) ->
+    rule_env (program_sorts p) (program_kind p) r (env_of c b) /\ env_allocated db (env_of c b).
+  Proof.
+    intros p cp db c b r Hplans Hwf Hloaded Hin Hrule Hbinding. split.
+    - pose proof (plans_ok_sorted p cp Hplans) as Hprogram.
+      unfold program_ok in Hprogram.
+      assert (Hmember : In r (rules V.t p)) by (eapply nth_error_In; exact Hrule).
+      apply Forall_forall with (x := r) in Hprogram; [|exact Hmember].
+      destruct Hprogram as [g [Htyped Hactions]]. exists g. split; [exact Htyped|].
+      destruct (run_plan_member p cp c Hplans Hin)
+        as [table [newok [checked_r [Htable [Hchecked_rule Hcheck]]]]].
+      rewrite Hrule in Hchecked_rule. injection Hchecked_rule as <-.
+      destruct (run_check_cplan_parts newok table (rule_ix V.t c) r c Hcheck)
+        as [_ [Hlength [names [expected [Hnames [Hlayout [Hquery Hpost]]]]]]].
+      pose proof (run_plan_join_wf p cp db c Hplans Hwf Hloaded Hin) as Hjoin.
+      pose proof (J.run_sound (join V.t c) (map (source_index db) (sources V.t c)) b
+        Hjoin Hbinding) as Hanswer.
+      destruct Hanswer as [Hbinding_length Hprojections].
+      assert (Hsources : run_sources_satisfied db b (sources V.t c) (cols (join V.t c))).
+      { apply (run_join_answer_sources db b (join V.t c) (sources V.t c)).
+        split; assumption. }
+      assert (Hname_cells : forall x j, trie_get x names = Some j -> exists cell,
+          nth_error b (N.to_nat j) = Some cell /\ env_of c b x = Some cell).
+      { intros x j Hget. unfold env_of.
+        eapply run_checked_names_cells; [exact Hnames|lia|exact Hget]. }
+      eapply (run_check_query_sorted p cp db table Hwf Hloaded Htable ctx_empty
+        (query V.t r) g Htyped newok names (nvars (join V.t c)) 0 0 Empty 0
+        (sources V.t c) (cols (join V.t c)) [] (nat_n (nvars (join V.t c))) [] [] expected
+        b (env_of c b) Hquery Hsources Hname_cells).
+      intros x ty Hempty. discriminate.
+    - eapply run_plan_bindings_allocated; eassumption.
+  Qed.
+
+
+  Lemma F27_check_plan_split : forall p cp,
+    check_plan p cp = check_program p && check_shape p cp.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma F29_shape_slots : forall p cp f perm, plans_ok p cp ->
+    In (f, perm) (Syntax.slots V.t cp) -> exists ss out,
+      program_sorts p f = Some ss /\ program_kind p f = Some out /\
+      NoDup perm /\ Forall (fun i => i < length ss +
+        match out_sort out with
+        | Some _ => 1
+        | None => 0
+        end) perm.
+  Proof.
+    intros p cp f perm Hplan Hslot.
+    destruct (check_plan_slots p cp f perm Hplan Hslot)
+      as [d [Hdecl [Hnodup Hbound]]].
+    destruct (run_find_decl_fields (decls V.t p) f d Hdecl) as [Hsort Hkind].
+    exists (arg_sorts d), (out d).
+    split; [exact Hsort|]. split; [exact Hkind|].
+    split; [exact Hnodup|]. destruct (out d); exact Hbound.
+  Qed.
+
+
+  Lemma F21_driver_step : forall p cp lim nv db,
+    driver p cp lim (nv, db) =
+      let next := round p cp nv db in
+      if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
+      else if andb nv (negb (D.changed next)) then inr (Saturated, next)
+      else inl (negb (D.changed next), D.advance next).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** The trie of a binding gives the plan's binding environment. *)
+  Lemma F30_bind_trie : forall c b x, trie_get x (bind_trie c b) = env_of c b x.
+  Proof.
+    intros c b x. unfold bind_trie, env_of.
+    rewrite bind_cells_get, PTrie.get_empty. reflexivity.
+  Qed.
+
+  (** A round's jobs are the kept bindings of its plans, plan by plan. *)
+  Lemma F31_jobs : forall p cp nv db,
+    jobs p cp nv db = flat_map (fun c => map (fun b => (c, b))
+      (filter (fun b => keep p c (bind_trie c b)) (bindings cp c db)))
+      (if nv then naive V.t cp else seminaive V.t cp).
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** The job loop of a round applies the jobs as the plan's job application does. *)
+  Lemma apply_all_jobs : forall p js db, apply_all p js db = apply_jobs p js db.
+  Proof.
+    intros p js. induction js as [| [c b] rest IH]; intro db.
+    - reflexivity.
+    - cbn [apply_all apply_jobs]. rewrite IH.
+      unfold job_rule. rewrite rule_at_nth. reflexivity.
+  Qed.
+
+  (** A round applies its jobs in order and rebuilds the resulting database once. *)
+  Lemma F32_round_jobs : forall p cp nv db,
+    round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
+  Proof.
+    intros p cp nv db. unfold round. rewrite apply_all_jobs. reflexivity.
+  Qed.
+
   Lemma F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
     closed V.prim V.merge p (D.view db).
@@ -10063,6 +9977,297 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     destruct (loopN (driver p cp lim) (max_iter lim) (false, db)) as [[nv db'] | [st db']];
       reflexivity.
   Qed.
+
+  Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.wf (snd (run p cp lim db)) /\ D.canonical (snd (run p cp lim db)) /\
+    loaded p cp (snd (run p cp lim db)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma run_grows : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    grows db (snd (run p cp lim db)).
+  Proof. Admitted. (* STUB *)
+
+  Lemma run_sat : forall p cp lim db (M : model (V := V.t)) nu,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> valid_sorted V.prim V.merge M p ->
+    sat V.merge M nu (D.view db) -> exists nu',
+      (forall i, D.allocated db i -> nu' i = nu i) /\
+      sat V.merge M nu' (D.view (snd (run p cp lim db))).
+  Proof. Admitted. (* STUB *)
+
+  Lemma run_closed : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
+    run p cp lim db = (Saturated, db') -> closed V.prim V.merge p (D.view db').
+  Proof. Admitted. (* STUB *)
+
+  Lemma run_derives : forall p cp lim db f k o, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    relational_fragment p = true -> no_ids db ->
+    row (D.view (snd (run p cp lim db))) f k o -> derives V.prim p (D.view db) f k.
+  Proof. Admitted. (* STUB *)
+
+  Lemma run_least : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
+    relational_fragment p = true -> no_ids db -> run p cp lim db = (Saturated, db') ->
+    forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
+      (forall f, kind w f = program_kind p f) -> view_sorted (program_sorts p) w ->
+      includes (D.view db') w.
+  Proof. Admitted. (* STUB *)
+
+  Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
+    N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
+    fst (run p cp lim db) = Saturated.
+  Proof. Admitted. (* STUB *)
+
+  Lemma run_limits : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    fst (run p cp lim db) = IdLimit -> (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
+  Proof. Admitted. (* STUB *)
+
+End Run.
+
+Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
+    <: RUN_ALL V I J D.
+  Include Run V I J D.
+  TimeFun plan.
+  TimeFun check_shape.
+  TimeFun check_plan.
+  TimeFun load.
+  TimeFun apply_go.
+  TimeFun apply.
+  TimeFun bind_trie.
+  TimeFun keep.
+  TimeFun source_ix.
+  TimeFun plan_bindings.
+  TimeFun jobs.
+  TimeFun apply_all.
+  TimeFun round.
+  TimeFun driver.
+  TimeFun run.
+  (** Post work counts the position and the terms of each listed atom. *)
+  Definition post_work (p : program V.t) (c : cplan V.t) : nat :=
+    fold_right (fun i n => i + 1 +
+      match nth_error (query V.t (job_rule p c)) i with
+      | Some a => length (atom_terms a)
+      | None => 0
+      end + n) 0 (post V.t c).
+  (** Finding the rule of a plan walks the rule list with a binary counter. *)
+  Definition rule_work (p : program V.t) (c : cplan V.t) : nat :=
+    (length (rules V.t p) + 1) * (N.size_nat (rule_ix V.t c) + 1).
+  Definition round_work (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t) : nat :=
+    length (Syntax.slots V.t cp) +
+      fold_right Nat.add 0 (map (fun c =>
+        (J.work (join V.t c) (map (source_index db) (sources V.t c)) +
+          length (sources V.t c) + 2) *
+          (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
+        length (bindings cp c db) *
+          (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
+           post_work p c + rule_work p c + 1 +
+           fold_right (fun a n => match a with
+             | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
+                 (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n
+             | Union _ _ => 1 + n
+             | Let _ _ args => length args + 1 + n
+             end) 0 (actions V.t (nth (N.to_nat (rule_ix V.t c)) (rules V.t p)
+               (Rule V.t [] [])))) +
+        fold_right Nat.add 0 (map (fun binding =>
+          let r := nth (N.to_nat (rule_ix V.t c)) (rules V.t p) (Rule V.t [] []) in
+          N.to_nat (query_prim_work V.prim_work (query V.t r) (env_of c binding) +
+            action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r)
+              (env_of c binding))%N)
+          (bindings cp c db)))
+        (if nv then naive V.t cp else seminaive V.t cp)).
+  Definition size_program (p : program V.t) : nat := program_bits p.
+  Definition size_compiled (cp : compiled V.t) : nat :=
+    fold_right (fun sl n => Pos.size_nat (fst sl) +
+        fold_right (fun i m => i + 1 + m) 0 (snd sl) + 1 + n) 0 (Syntax.slots V.t cp) +
+      fold_right (fun c n => N.size_nat (rule_ix V.t c) + nvars (join V.t c) +
+        fold_right (fun col m => fold_right (fun i k => i + 1 + k) 0 col + 1 + m)
+          0 (cols (join V.t c)) +
+        fold_right (fun src m => match src with
+          | All _ i | New _ i => N.size_nat i + 1 + m
+          | Const _ value => cell_bits V.encode value + 1 + m
+          end) 0 (sources V.t c) +
+        fold_right (fun x m => Pos.size_nat x + 1 + m) 0 (var_of V.t c) +
+        fold_right (fun i m => i + 1 + m) 0 (post V.t c) + 1 + n)
+        0 (naive V.t cp ++ seminaive V.t cp).
+  Definition wbits (p : program V.t) : nat :=
+    fold_right (fun x n => Nat.max (Pos.size_nat x) n)
+      0 (program_words V.encode p).
+  Definition c_run : N := 1. (* STUB *)
+  Lemma size_compiled_spec : forall cp,
+    size_compiled cp =
+      fold_right (fun sl n => Pos.size_nat (fst sl) +
+        fold_right (fun i m => i + 1 + m) 0 (snd sl) + 1 + n) 0 (Syntax.slots V.t cp) +
+      fold_right (fun c n => N.size_nat (rule_ix V.t c) + nvars (join V.t c) +
+        fold_right (fun col m => fold_right (fun i k => i + 1 + k) 0 col + 1 + m)
+          0 (cols (join V.t c)) +
+        fold_right (fun src m => match src with
+          | All _ i | New _ i => N.size_nat i + 1 + m
+          | Const _ value => cell_bits V.encode value + 1 + m
+          end) 0 (sources V.t c) +
+        fold_right (fun x m => Pos.size_nat x + 1 + m) 0 (var_of V.t c) +
+        fold_right (fun i m => i + 1 + m) 0 (post V.t c) + 1 + n)
+        0 (naive V.t cp ++ seminaive V.t cp).
+  Proof. Admitted. (* STUB *)
+
+  Lemma wbits_spec : forall p,
+    wbits p = fold_right (fun x n => Nat.max (Pos.size_nat x) n)
+      0 (program_words V.encode p).
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_plan_le : forall p,
+    (T_plan p <= c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
+      N.of_nat (size_program p + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma plan_slots_le : forall p,
+    (N.of_nat (fold_right (fun s n =>
+      (Pos.size_nat (fst s) + length (snd s) + 1 + n)%nat) 0%nat
+      (Syntax.slots V.t (plan p))) <=
+      c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
+        N.of_nat (size_program p + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_load_le : forall p cp,
+    (T_load p cp <= D.T_init (decls V.t p) (Syntax.slots V.t cp) + c_run)%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_run_le : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
+    (T_run p cp lim db <=
+      c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        (fold_right N.add 0 (map (fun start =>
+          N.of_nat (round_work p cp (fst start) (snd start) + 1)) (trace p cp lim db)) +
+         N.of_nat (D.pending db + 1)) +
+      c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
+      N.of_nat U * D.potential B db)%N.
+  Proof. Admitted. (* STUB *)
+
+  Lemma T_check_plan_le : forall p cp,
+    (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
+      N.of_nat (wbits p + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
+      (db : D.t) : N :=
+    match js with
+    | [] => 0%N
+    | (c, b) :: rest =>
+        (T_apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b))
+            (fun x => 1 + T_trie_get x (bind_trie c b)) db +
+          T_apply_jobs p rest
+            (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db))%N
+    end.
+
+  Definition k_driver : N := 1. (* STUB *)
+  Definition k_check : N := 1. (* STUB *)
+  (** A well-sorted action list has well-sorted prefixes in its initial context. *)
+  Lemma run_actions_ok_prefix : forall sorts kinds (pre suffix : list (action V.t)) g,
+    actions_ok sorts kinds g (pre ++ suffix) -> actions_ok sorts kinds g pre.
+  Proof.
+    intros sorts kinds pre. induction pre as [|a pre IH]; intros suffix g Hacts.
+    - exact I.
+    - destruct a as [x f args|f args res|t u|x op args]; cbn [app actions_ok] in *.
+      + destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]]. exists ss.
+        split; [exact Hsort|]. split; [exact Hkind|]. split; [exact Hargs|].
+        eapply IH. exact Hrest.
+      + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+        exists ss, out. split; [exact Hsort|]. split; [exact Hkind|].
+        split; [exact Hargs|]. split; [exact Hres|]. eapply IH. exact Hrest.
+      + destruct Hacts as [Ht [Hu Hrest]]. split; [exact Ht|]. split; [exact Hu|].
+        eapply IH. exact Hrest.
+      + destruct Hacts as [Hargs Hrest]. split; [exact Hargs|]. eapply IH. exact Hrest.
+  Qed.
+
+  (** Action execution never lowers the unit when every executed prefix is well formed. *)
+  Lemma run_apply_go_unit : forall acts s locals db,
+    (forall pre suffix, acts = pre ++ suffix -> D.wf (apply_go pre s locals db)) ->
+    D.unit db <= D.unit (apply_go acts s locals db).
+  Proof.
+    intros acts. induction acts as [|a rest IH]; intros s locals db Hprefix.
+    - cbn [apply_go]. lia.
+    - assert (Hwf : D.wf db).
+      { exact (Hprefix [] (a :: rest) eq_refl). }
+      destruct a as [x f args|f args res|t u|x op args]; cbn [apply_go].
+      + destruct (term_cells s locals args) as [cells|] eqn:Hcells; [|lia].
+        pose proof (D.unit_mono_make f cells db Hwf) as Hunit.
+        destruct (D.make f cells db) as [i next] eqn:Hmake. cbn [snd] in Hunit.
+        eapply Nat.le_trans; [exact Hunit|]. apply IH. intros pre suffix Hrest.
+        pose proof (Hprefix (Make x f args :: pre) suffix
+          ltac:(cbn [app]; now rewrite Hrest)) as Hstate.
+        cbn [apply_go] in Hstate. rewrite Hcells, Hmake in Hstate. exact Hstate.
+      + destruct (term_cells s locals args) as [cells|] eqn:Hcells; [|lia].
+        destruct (result_cell s locals res) as [out|] eqn:Hout; [|lia].
+        eapply Nat.le_trans with (m := D.unit (D.put f cells out db)).
+        * apply D.unit_mono_put. exact Hwf.
+        * apply IH. intros pre suffix Hrest.
+          pose proof (Hprefix (Put f args res :: pre) suffix
+            ltac:(cbn [app]; now rewrite Hrest)) as Hstate.
+          cbn [apply_go] in Hstate. rewrite Hcells, Hout in Hstate. exact Hstate.
+      + destruct (term_cell s locals t) as [ct|] eqn:Ht; [|lia].
+        destruct (term_cell s locals u) as [cu|] eqn:Hu; [|destruct ct; cbn; lia].
+        destruct ct as [i|v]; destruct cu as [j|w].
+        * eapply Nat.le_trans with (m := D.unit (D.union i j db));
+            [apply D.unit_mono_union; exact Hwf|].
+          apply IH. intros pre suffix Hrest.
+          pose proof (Hprefix (Union t u :: pre) suffix
+            ltac:(cbn [app]; now rewrite Hrest)) as Hstate.
+          cbn [apply_go] in Hstate. rewrite Ht, Hu in Hstate. exact Hstate.
+        * apply IH. intros pre suffix Hrest.
+          pose proof (Hprefix (Union t u :: pre) suffix
+            ltac:(cbn [app]; now rewrite Hrest)) as Hstate.
+          cbn [apply_go] in Hstate. rewrite Ht, Hu in Hstate. exact Hstate.
+        * apply IH. intros pre suffix Hrest.
+          pose proof (Hprefix (Union t u :: pre) suffix
+            ltac:(cbn [app]; now rewrite Hrest)) as Hstate.
+          cbn [apply_go] in Hstate. rewrite Ht, Hu in Hstate. exact Hstate.
+        * apply IH. intros pre suffix Hrest.
+          pose proof (Hprefix (Union t u :: pre) suffix
+            ltac:(cbn [app]; now rewrite Hrest)) as Hstate.
+          cbn [apply_go] in Hstate. rewrite Ht, Hu in Hstate. exact Hstate.
+      + destruct (term_values s locals args) as [values|] eqn:Hvalues; [|lia].
+        destruct (V.prim op values) as [v|] eqn:Hprim; [|lia].
+        apply IH. intros pre suffix Hrest.
+        pose proof (Hprefix (Let x op args :: pre) suffix
+          ltac:(cbn [app]; now rewrite Hrest)) as Hstate.
+        cbn [apply_go] in Hstate. rewrite Hvalues, Hprim in Hstate. exact Hstate.
+  Qed.
+
+  (** The functional action invariant supplies the well-formed prefixes for unit monotonicity. *)
+  Lemma run_apply_go_typed_unit : forall p cp acts g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    D.unit db <= D.unit (apply_go acts s locals db).
+  Proof.
+    intros p cp acts g s locals db Hchecked Hwf Hloaded Hacts Henv Hallocated.
+    apply run_apply_go_unit. intros pre suffix Hsplit.
+    assert (Hpre : actions_ok (program_sorts p) (program_kind p) g pre).
+    { eapply run_actions_ok_prefix with (suffix := suffix). now rewrite <- Hsplit. }
+    exact (proj1 (run_apply_go_typed p cp pre g s locals db Hchecked Hwf Hloaded
+      Hpre Henv Hallocated)).
+  Qed.
+
+  Lemma F3_apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
+    env_allocated db s ->
+    D.wf (apply (actions V.t r) s db) /\ loaded p cp (apply (actions V.t r) s db) /\
+    (D.ids db <= D.ids (apply (actions V.t r) s db))%N /\
+    D.unit db <= D.unit (apply (actions V.t r) s db).
+  Proof.
+    intros p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated.
+    destruct (run_apply_state p cp r s db Hchecked Hwf Hloaded Hin Henv Hallocated)
+      as [Hwf' [Hloaded' [Hids Hpending]]].
+    split; [exact Hwf'|]. split; [exact Hloaded'|]. split; [exact Hids|].
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
+    unfold apply. eapply run_apply_go_typed_unit; try eassumption.
+    - intros x ty Hctx. destruct (Hsorted x ty Hctx) as [c [Hc Hty]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated. exact Hcell.
+  Qed.
+
+  Lemma F7_apply_derives : forall p initial db r s, relational_fragment p = true ->
+    no_ids initial -> D.wf db -> derived p initial db -> In r (rules V.t p) ->
+    derivation_body V.prim p (D.view initial) s (query V.t r) ->
+    derived p initial (apply (actions V.t r) s db).
+  Proof. Admitted. (* PLAN-DEFECT: result-bearing relational Put; see RunTest. *)
 
   Lemma F11_derives_least : forall p db w f k, relational_fragment p = true ->
     no_ids db -> closed V.prim V.merge p w -> includes (D.view db) w ->
@@ -10145,67 +10350,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         (if nv then naive V.t cp else seminaive V.t cp)).
   Proof. Admitted. (* STUB *)
 
-  Lemma F26_bindings_env : forall p cp db c b r, plans_ok p cp -> D.wf db ->
-    loaded p cp db -> In c (all_plans cp) ->
-    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r -> In b (bindings cp c db) ->
-    rule_env (program_sorts p) (program_kind p) r (env_of c b) /\ env_allocated db (env_of c b).
-  Proof.
-    intros p cp db c b r Hplans Hwf Hloaded Hin Hrule Hbinding. split.
-    - pose proof (plans_ok_sorted p cp Hplans) as Hprogram.
-      unfold program_ok in Hprogram.
-      assert (Hmember : In r (rules V.t p)) by (eapply nth_error_In; exact Hrule).
-      apply Forall_forall with (x := r) in Hprogram; [|exact Hmember].
-      destruct Hprogram as [g [Htyped Hactions]]. exists g. split; [exact Htyped|].
-      destruct (run_plan_member p cp c Hplans Hin)
-        as [table [newok [checked_r [Htable [Hchecked_rule Hcheck]]]]].
-      rewrite Hrule in Hchecked_rule. injection Hchecked_rule as <-.
-      destruct (run_check_cplan_parts newok table (rule_ix V.t c) r c Hcheck)
-        as [_ [Hlength [names [expected [Hnames [Hlayout [Hquery Hpost]]]]]]].
-      pose proof (run_plan_join_wf p cp db c Hplans Hwf Hloaded Hin) as Hjoin.
-      pose proof (J.run_sound (join V.t c) (map (source_index db) (sources V.t c)) b
-        Hjoin Hbinding) as Hanswer.
-      destruct Hanswer as [Hbinding_length Hprojections].
-      assert (Hsources : run_sources_satisfied db b (sources V.t c) (cols (join V.t c))).
-      { apply (run_join_answer_sources db b (join V.t c) (sources V.t c)).
-        split; assumption. }
-      assert (Hname_cells : forall x j, trie_get x names = Some j -> exists cell,
-          nth_error b (N.to_nat j) = Some cell /\ env_of c b x = Some cell).
-      { intros x j Hget. unfold env_of.
-        eapply run_checked_names_cells; [exact Hnames|lia|exact Hget]. }
-      eapply (run_check_query_sorted p cp db table Hwf Hloaded Htable ctx_empty
-        (query V.t r) g Htyped newok names (nvars (join V.t c)) 0 0 Empty 0
-        (sources V.t c) (cols (join V.t c)) [] (nat_n (nvars (join V.t c))) [] [] expected
-        b (env_of c b) Hquery Hsources Hname_cells).
-      intros x ty Hempty. discriminate.
-    - eapply run_plan_bindings_allocated; eassumption.
-  Qed.
-
-
-  Lemma F27_check_plan_split : forall p cp,
-    check_plan p cp = check_program p && check_shape p cp.
-  Proof.
-    reflexivity.
-  Qed.
-
-  Lemma F29_shape_slots : forall p cp f perm, plans_ok p cp ->
-    In (f, perm) (Syntax.slots V.t cp) -> exists ss out,
-      program_sorts p f = Some ss /\ program_kind p f = Some out /\
-      NoDup perm /\ Forall (fun i => i < length ss +
-        match out_sort out with
-        | Some _ => 1
-        | None => 0
-        end) perm.
-  Proof.
-    intros p cp f perm Hplan Hslot.
-    destruct (check_plan_slots p cp f perm Hplan Hslot)
-      as [d [Hdecl [Hnodup Hbound]]].
-    destruct (run_find_decl_fields (decls V.t p) f d Hdecl) as [Hsort Hkind].
-    exists (arg_sorts d), (out d).
-    split; [exact Hsort|]. split; [exact Hkind|].
-    split; [exact Hnodup|]. destruct (out d); exact Hbound.
-  Qed.
-
-
   Lemma T4_check_plan_split : forall p cp,
     (T_check_plan p cp <= T_check_program p + T_check_shape p cp + k_check)%N.
   Proof. Admitted. (* STUB *)
@@ -10214,23 +10358,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
       N.of_nat (wbits p + 1))%N.
   Proof. Admitted. (* STUB *)
-
-  Lemma F21_driver_step : forall p cp lim nv db,
-    driver p cp lim (nv, db) =
-      let next := round p cp nv db in
-      if N.ltb (max_ids lim) (D.ids next) then inr (IdLimit, next)
-      else if andb nv (negb (D.changed next)) then inr (Saturated, next)
-      else inl (negb (D.changed next), D.advance next).
-  Proof.
-    reflexivity.
-  Qed.
-
-  (** The trie of a binding gives the plan's binding environment. *)
-  Lemma F30_bind_trie : forall c b x, trie_get x (bind_trie c b) = env_of c b x.
-  Proof.
-    intros c b x. unfold bind_trie, env_of.
-    rewrite bind_cells_get, PTrie.get_empty. reflexivity.
-  Qed.
 
   (** Building the trie of a binding pays for the bits of the plan's variables. *)
   Lemma T6_bind_trie_le : forall c b,
@@ -10247,31 +10374,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
       k_driver * N.of_nat (rule_work p c))%N.
   Proof. Admitted. (* STUB *)
-
-  (** A round's jobs are the kept bindings of its plans, plan by plan. *)
-  Lemma F31_jobs : forall p cp nv db,
-    jobs p cp nv db = flat_map (fun c => map (fun b => (c, b))
-      (filter (fun b => keep p c (bind_trie c b)) (bindings cp c db)))
-      (if nv then naive V.t cp else seminaive V.t cp).
-  Proof.
-    reflexivity.
-  Qed.
-
-  (** The job loop of a round applies the jobs as the plan's job application does. *)
-  Lemma apply_all_jobs : forall p js db, apply_all p js db = apply_jobs p js db.
-  Proof.
-    intros p js. induction js as [| [c b] rest IH]; intro db.
-    - reflexivity.
-    - cbn [apply_all apply_jobs]. rewrite IH.
-      unfold job_rule. rewrite rule_at_nth. reflexivity.
-  Qed.
-
-  (** A round applies its jobs in order and rebuilds the resulting database once. *)
-  Lemma F32_round_jobs : forall p cp nv db,
-    round p cp nv db = D.rebuild (apply_jobs p (jobs p cp nv db) db).
-  Proof.
-    intros p cp nv db. unfold round. rewrite apply_all_jobs. reflexivity.
-  Qed.
 
   (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
   Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
