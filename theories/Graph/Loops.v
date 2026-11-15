@@ -2691,6 +2691,277 @@ Proof.
 Qed.
 
 
+(** Recording a classified edge updates two equivalent incidence indexes. *)
+Local Definition loop_back_present (scan : loop_scan) (u v : positive) : Prop :=
+  match trie_get u (loop_back_rows scan) with
+  | Some row => trie_get v row = Some tt
+  | None => False
+  end.
+
+Local Definition loop_scan_push (scan : loop_scan) (u v : positive) : loop_scan :=
+  match scan with
+  | LoopScan order latches backs =>
+    let sources := match trie_get v latches with Some xs => xs | None => [] end in
+    let row := match trie_get u backs with Some xs => xs | None => Empty end in
+    LoopScan order (PTrieCode.set v (u :: sources) latches)
+      (PTrieCode.set u (PTrieCode.set v tt row) backs)
+  end.
+TimeFun loop_scan_push.
+
+Local Lemma loop_back_present_row scan u v :
+  loop_back_present scan u v <->
+    exists row, trie_get u (loop_back_rows scan) = Some row /\ trie_get v row = Some tt.
+Proof.
+  unfold loop_back_present. destruct (trie_get u (loop_back_rows scan)) as [row|] eqn:Hrow.
+  - split; [intro Hv; exists row; now split|]. intros [other [Heq Hv]].
+    injection Heq as <-. exact Hv.
+  - split; [contradiction|]. intros [row [Hrow' Hv]]. discriminate Hrow'.
+Qed.
+
+Local Lemma loop_back_push scan u v x y :
+  loop_back_present (loop_scan_push scan u v) x y <->
+    (x = u /\ y = v) \/ loop_back_present scan x y.
+Proof.
+  destruct scan as [order latches backs]. unfold loop_back_present, loop_scan_push.
+  cbn [loop_back_rows]. destruct (Pos.eq_dec x u) as [->|Hxu].
+  - rewrite PTrie.get_set_same. destruct (Pos.eq_dec y v) as [->|Hyv].
+    + rewrite PTrie.get_set_same. tauto.
+    + rewrite PTrie.get_set_other by exact Hyv.
+      destruct (trie_get u backs) as [row|] eqn:Hrow; [tauto|].
+      rewrite PTrie.get_empty. split; [discriminate|tauto].
+  - rewrite PTrie.get_set_other by exact Hxu. tauto.
+Qed.
+
+Local Lemma loop_latches_push scan u v x y :
+  In x (loop_latches_at (loop_scan_push scan u v) y) <->
+    (x = u /\ y = v) \/ In x (loop_latches_at scan y).
+Proof.
+  destruct scan as [order latches backs]. unfold loop_scan_push, loop_latches_at.
+  cbn [loop_latches]. destruct (Pos.eq_dec y v) as [->|Hyv].
+  - rewrite PTrie.get_set_same. cbn [In]. intuition congruence.
+  - rewrite PTrie.get_set_other by exact Hyv. tauto.
+Qed.
+
+Local Definition loop_task_edge (task : loop_tree_task) (u v : positive) : Prop :=
+  match task with LoopTreeEdges x vs => x = u /\ In v vs | _ => False end.
+
+Local Fixpoint loop_pending_edge (tasks : list loop_tree_task) (u v : positive) : Prop :=
+  match tasks with
+  | [] => False
+  | task :: rest => loop_task_edge task u v \/ loop_pending_edge rest u v
+  end.
+
+Local Definition loop_back_sound g t r scan : Prop :=
+  forall u v, loop_back_present scan u v ->
+    reach (base g) [r] u /\ edge (base g) u v /\ tree_anc (idom t) v u.
+
+Local Definition loop_latches_agree scan : Prop :=
+  forall u v, In u (loop_latches_at scan v) <-> loop_back_present scan u v.
+
+Local Definition loop_back_complete g t st : Prop :=
+  forall u v, In u (loop_order (loop_tree_output st)) ->
+    edge (base g) u v -> tree_anc (idom t) v u ->
+    loop_pending_edge (loop_tree_pending st) u v \/ loop_back_present (loop_tree_output st) u v.
+
+Local Definition loop_back_invariant g t r st : Prop :=
+  loop_back_sound g t r (loop_tree_output st) /\
+  loop_latches_agree (loop_tree_output st) /\ loop_back_complete g t st.
+
+Local Lemma loop_back_initial g t r :
+  loop_back_invariant g t r
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)).
+Proof.
+  split.
+  - intros u v Hback. unfold loop_back_present in Hback.
+    cbn [loop_tree_output loop_back_rows] in Hback. rewrite PTrie.get_empty in Hback.
+    contradiction.
+  - split.
+    + intros u v. unfold loop_latches_at, loop_back_present.
+      cbn [loop_tree_output loop_latches loop_back_rows]. rewrite !PTrie.get_empty. tauto.
+    + intros u v Hin. contradiction.
+Qed.
+
+(** The balanced task grammar identifies the current source with the active stack head. *)
+Local Lemma loop_edges_stack g t r u vs rest stack :
+  loop_tasks_wf g t r stack (LoopTreeEdges u vs :: rest) ->
+  hd_error stack = Some u /\ incl vs (succs (base g) u).
+Proof.
+  intro Htasks. inversion Htasks; subst. now split.
+Qed.
+
+Local Lemma loop_active_ancestor g t r st u : domtree_exact g r t ->
+  loop_stack_state t r st -> hd_error (loop_tree_stack st) = Some u ->
+  forall v, trie_get v (loop_tree_active st) = Some tt <-> tree_anc (idom t) v u.
+Proof.
+  intros Htree [Hchain Hagree] Hhead v. rewrite Hagree.
+  exact (loop_stack_ancestors (idom t) r (loop_tree_stack st)
+    (loop_exact_root_none g t r Htree) Hchain u Hhead v).
+Qed.
+
+Local Lemma loop_back_push_sound g t r scan u v :
+  loop_back_sound g t r scan -> reach (base g) [r] u -> edge (base g) u v ->
+  tree_anc (idom t) v u -> loop_back_sound g t r (loop_scan_push scan u v).
+Proof.
+  intros Hsound Hreach Hedge Hanc x y Hback. apply loop_back_push in Hback.
+  destruct Hback as [[-> ->]|Hback]; [now repeat split|now apply Hsound].
+Qed.
+
+Local Lemma loop_back_push_agree scan u v : loop_latches_agree scan ->
+  loop_latches_agree (loop_scan_push scan u v).
+Proof.
+  intros Hagree x y. rewrite loop_latches_push, loop_back_push, (Hagree x y). reflexivity.
+Qed.
+
+Local Lemma loop_stack_head_reachable g t r stack u : domtree_exact g r t ->
+  loop_stack_chain (idom t) r stack -> hd_error stack = Some u -> reach (base g) [r] u.
+Proof.
+  intros Htree Hchain Hhead.
+  pose proof (loop_stack_reachable g r (idom t) stack (proj1 (proj2 Htree)) Hchain) as Hlive.
+  destruct stack as [|v rest]; [discriminate Hhead|]. cbn in Hhead.
+  injection Hhead as <-. now inversion Hlive.
+Qed.
+
+(** Tasks with no unprocessed edge change only the worklist representation. *)
+Local Lemma loop_back_pending_transfer g t r scan tasks stack active tasks' stack' active' :
+  loop_back_invariant g t r (LoopTreeState tasks stack active scan) ->
+  (forall u v, tree_anc (idom t) v u ->
+    loop_pending_edge tasks u v -> loop_pending_edge tasks' u v) ->
+  loop_back_invariant g t r (LoopTreeState tasks' stack' active' scan).
+Proof.
+  intros [Hsound [Hagree Hcomplete]] Hpending. split; [exact Hsound|].
+  split; [exact Hagree|]. intros u v Hin Hedge Hanc.
+  destruct (Hcomplete u v Hin Hedge Hanc) as [Hwork|Hback].
+  - left. now apply Hpending.
+  - now right.
+Qed.
+
+Local Lemma loop_back_enter g t r v rest stack active order latches backs :
+  loop_back_invariant g t r
+    (LoopTreeState (LoopTreeEnter v :: rest) stack active (LoopScan order latches backs)) ->
+  loop_back_invariant g t r
+    (LoopTreeState (LoopTreeEdges v (succs (base g) v) :: LoopTreeChildren (children t v) ::
+      LoopTreeLeave v :: rest) (v :: stack) (PTrieCode.set v tt active)
+      (LoopScan (v :: order) latches backs)).
+Proof.
+  intros [Hsound [Hagree Hcomplete]]. split; [exact Hsound|]. split; [exact Hagree|].
+  intros u x Hin Hedge Hanc. cbn [loop_tree_output loop_order In] in Hin.
+  cbn [loop_tree_pending loop_pending_edge loop_task_edge]. destruct Hin as [<-|Hin].
+  - left. left. split; [reflexivity|exact Hedge].
+  - destruct (Hcomplete u x Hin Hedge Hanc) as [Hwork|Hback]; [|now right].
+    cbn [loop_tree_pending loop_pending_edge loop_task_edge] in Hwork. tauto.
+Qed.
+
+Local Lemma loop_back_record g t r scan u v vs rest stack active :
+  loop_back_invariant g t r
+    (LoopTreeState (LoopTreeEdges u (v :: vs) :: rest) stack active scan) ->
+  reach (base g) [r] u -> edge (base g) u v -> tree_anc (idom t) v u ->
+  loop_back_invariant g t r
+    (LoopTreeState (LoopTreeEdges u vs :: rest) stack active (loop_scan_push scan u v)).
+Proof.
+  intros [Hsound [Hagree Hcomplete]] Hreach Hedge Hanc. split.
+  - now apply loop_back_push_sound.
+  - split; [now apply loop_back_push_agree|]. intros x y Hin Hxy Hyx.
+    destruct scan as [order latches backs].
+    cbn [loop_scan_push loop_tree_output loop_order] in Hin.
+    destruct (Hcomplete x y Hin Hxy Hyx) as [Hwork|Hback].
+    + cbn [loop_tree_pending loop_pending_edge loop_task_edge In] in Hwork.
+      destruct Hwork as [[Hux [Hvy|Htail]]|Hrest].
+      * subst x y. right. apply loop_back_push. left. now split.
+      * left. cbn [loop_tree_pending loop_pending_edge loop_task_edge]. now left.
+      * left. cbn [loop_tree_pending loop_pending_edge loop_task_edge]. now right.
+    + right. apply loop_back_push. now right.
+Qed.
+
+Local Lemma loop_back_step g t r st next : domtree_exact g r t ->
+  loop_tree_core g t r st -> loop_back_invariant g t r st ->
+  tree_step g t st = inl next -> loop_back_invariant g t r next.
+Proof.
+  intros Htree [Htasks [Hstack Hpart]] Hback Hstep.
+  destruct st as [tasks stack active [order latches backs]].
+  destruct tasks as [|task rest]; [discriminate Hstep|].
+  destruct task as [v|v|vs|u vs|v]; cbn [tree_step] in Hstep.
+  - destruct (trie_get v (pre t)); destruct (trie_get v (idom t));
+      injection Hstep as <-; (eapply loop_back_pending_transfer; [exact Hback|]);
+      intros x y Hanc; cbn [loop_pending_edge loop_task_edge]; tauto.
+  - injection Hstep as <-. now apply loop_back_enter.
+  - destruct vs as [|v vs]; injection Hstep as <-;
+      (eapply loop_back_pending_transfer; [exact Hback|]);
+      intros x y Hanc; cbn [loop_pending_edge loop_task_edge]; tauto.
+  - destruct (loop_edges_stack g t r u vs rest stack Htasks) as [Hhead Hrow].
+    pose proof (loop_active_ancestor g t r
+      (LoopTreeState (LoopTreeEdges u vs :: rest) stack active (LoopScan order latches backs))
+      u Htree Hstack Hhead) as Hactive.
+    destruct vs as [|v vs].
+    + injection Hstep as <-. eapply loop_back_pending_transfer; [exact Hback|].
+      intros x y Hanc. cbn [loop_pending_edge loop_task_edge In]. tauto.
+    + destruct (trie_get v active) as [[]|] eqn:Hget.
+      * injection Hstep as <-. change (loop_back_invariant g t r
+          (LoopTreeState (LoopTreeEdges u vs :: rest) stack active
+            (loop_scan_push (LoopScan order latches backs) u v))).
+        apply loop_back_record; [exact Hback| | |].
+        -- exact (loop_stack_head_reachable g t r stack u Htree (proj1 Hstack) Hhead).
+        -- apply Hrow. now left.
+        -- exact (proj1 (Hactive v) Hget).
+      * injection Hstep as <-. eapply loop_back_pending_transfer; [exact Hback|].
+        intros x y Hanc Hwork. cbn [loop_pending_edge loop_task_edge In] in Hwork |- *.
+        destruct Hwork as [[Hux [Hvy|Htail]]|Hrest].
+        -- subst x y. pose proof (proj2 (Hactive v) Hanc) as Hpresent.
+           cbn [loop_tree_active] in Hpresent. congruence.
+        -- left. now split.
+        -- now right.
+  - injection Hstep as <-. eapply loop_back_pending_transfer; [exact Hback|].
+    intros x y Hanc. cbn [loop_pending_edge loop_task_edge]. tauto.
+Qed.
+
+Local Definition loop_back_result g r (scan : loop_scan) : Prop :=
+  forall u v,
+    (loop_back_present scan u v <->
+      reach (base g) [r] u /\ edge (base g) u v /\ dominates (base g) r v u) /\
+    (In u (loop_latches_at scan v) <-> loop_back_present scan u v).
+
+Local Lemma loop_back_stop g t r st result : domtree_exact g r t ->
+  loop_tree_core g t r st -> loop_back_invariant g t r st ->
+  tree_step g t st = inr result -> loop_back_result g r result.
+Proof.
+  intros Htree Hcore [Hsound [Hagree Hcomplete]] Hstep.
+  pose proof (loop_tree_stop_pending g t st result Hstep) as Hempty.
+  destruct st as [tasks stack active [order latches backs]]. cbn in Hempty. subst tasks.
+  cbn [tree_step] in Hstep. injection Hstep as <-.
+  intros u v. split; [|exact (Hagree u v)]. split.
+  - intro Hback. destruct (Hsound u v Hback) as [Hreach [Hedge Hanc]].
+    split; [exact Hreach|]. split; [exact Hedge|].
+    exact (dom_exact_anc_dominates g r (idom t) v u (proj1 (proj2 Htree)) Hanc).
+  - intros [Hreach [Hedge Hdom]].
+    assert (Hseen : In u order).
+    { destruct Hcore as [_ [_ Hpart]].
+      destruct Hpart as [_ _ _ _ _ _ Hcover].
+      destruct (Hcover u Hreach) as [Hin|[a [Hin Hanc]]]; [exact Hin|contradiction]. }
+    pose proof (dom_exact_dominates_anc g r (idom t) v u
+      (proj1 (proj2 Htree)) Hreach Hdom) as Hanc.
+    destruct (Hcomplete u v Hseen Hedge Hanc) as [Hwork|Hback]; [contradiction|exact Hback].
+Qed.
+
+Local Lemma loop_classify_backs g t r :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  loop_back_result g r (classify g t).
+Proof.
+  intros Hgraph Hprepared Htree.
+  pose proof (loop_classify_driver g t r Hgraph Hprepared Htree) as Hdone.
+  assert (Hloop : match loopN (tree_step g t) (8 * (nv g + ne g + 1))%N
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) with
+    | inl final => loop_tree_core g t r final /\ loop_back_invariant g t r final
+    | inr result => loop_back_result g r result end).
+  { unfold loopN. apply (loop_state_result (tree_step g t)
+      (fun st => loop_tree_core g t r st /\ loop_back_invariant g t r st) (loop_back_result g r)).
+    - intros st next [Hcore Hback] Hstep. split.
+      + exact (loop_tree_core_step g t r st next Htree Hcore Hstep).
+      + exact (loop_back_step g t r st next Htree Hcore Hback Hstep).
+    - intros st result [Hcore Hback] Hstep.
+      exact (loop_back_stop g t r st result Htree Hcore Hback Hstep).
+    - split; [now apply loop_tree_core_initial|apply loop_back_initial]. }
+  now rewrite Hdone in Hloop.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -3115,7 +3386,11 @@ Module LoopsT <: LOOPS_ALL.
     (back_member (classify g t) u v <->
       reach (base g) [r] u /\ edge (base g) u v /\ dominates (base g) r v u) /\
     (In u (latches (classify g t) v) <-> back_member (classify g t) u v).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r u v Hgraph Hprepared Htree.
+    destruct (loop_classify_backs g t r Hgraph Hprepared Htree u v) as [Hback Hlatches].
+    unfold back_member. rewrite <- loop_back_present_row. now split.
+  Qed.
 
   Lemma F6_latch_count : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
