@@ -7,7 +7,7 @@
 From Stdlib Require Import PArith NArith Arith Lia List Bool.
 From Stdlib.Sorting Require Import Permutation.
 From Argent Require Import Time Tactics Std BigO Loop.
-From Galois.Base Require Import Trie Loop.
+From Galois.Base Require Import Key Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig DomOrder LoopsSig.
 Import List.ListNotations.
 
@@ -1735,6 +1735,132 @@ Proof.
 Qed.
 
 
+(** Unary source counts pay for binary conversion through amortized carries. *)
+Local Fixpoint loop_positive_credit (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => loop_positive_credit q
+  | xI q => (1 + loop_positive_credit q)%N
+  end.
+
+Local Lemma loop_positive_succ_clock : forall p,
+  (Pos.T_succ p + loop_positive_credit (Pos.succ p) <=
+    2 + loop_positive_credit p)%N.
+Proof.
+  intro p. induction p as [p IH|p IH|]; time_unfold Pos.T_succ;
+    cbn [Pos.succ loop_positive_credit]; lia.
+Qed.
+
+Local Lemma loop_of_succ_nat_clock : forall n,
+  (Key.Pos.T_of_succ_nat n + loop_positive_credit (Pos.of_succ_nat n) <=
+    3 * N.of_nat n + 2)%N.
+Proof.
+  intro n. induction n as [|n IH]; time_unfold Key.Pos.T_of_succ_nat.
+  - reflexivity.
+  - pose proof (loop_positive_succ_clock (Pos.of_succ_nat n)) as Hcarry.
+    cbn [Pos.of_succ_nat]. lia.
+Qed.
+
+Local Lemma loop_of_nat_clock : forall n,
+  (TimeHelpers.N.T_of_nat n <= 3 * N.of_nat n + 2)%N.
+Proof.
+  intros [|n]; time_unfold TimeHelpers.N.T_of_nat; [lia|].
+  pose proof (loop_of_succ_nat_clock n). lia.
+Qed.
+
+Local Lemma loop_size_monotone : forall n m,
+  (n <= m)%N -> N.size_nat n <= N.size_nat m.
+Proof.
+  intros [|p] [|q] Hle; cbn [N.size_nat]; try lia.
+  destruct (Pos.eq_dec p q) as [->|Hne]; [reflexivity|].
+  apply Pos.size_nat_monotone. change (N.pos p < N.pos q)%N. lia.
+Qed.
+
+Local Lemma loop_four_clock : forall n, (Code.N.T_mul 4 n <= 4)%N.
+Proof.
+  intros [|p]; time_unfold Code.N.T_mul; try lia.
+  do 3 time_unfold Pos.T_mul. time_cbn. lia.
+Qed.
+
+(** Every intermediate binary sum fits the fuel whose bit count the plan charges. *)
+Local Lemma loop_fuel_setup_clock : forall vertices edges sources,
+  (N.T_add vertices edges + N.T_add (vertices + edges) sources +
+    N.T_add (vertices + edges + sources) 1 + Code.N.T_mul 4 (vertices + edges + sources + 1) <=
+    8 * N.of_nat (N.size_nat (4 * (vertices + edges + sources + 1))) + 8)%N.
+Proof.
+  intros vertices edges sources.
+  pose proof (N.T_add_le vertices edges) as Hfirst.
+  pose proof (N.T_add_le (vertices + edges) sources) as Hsecond.
+  pose proof (N.T_add_le (vertices + edges + sources) 1) as Hlast.
+  pose proof (loop_four_clock (vertices + edges + sources + 1)) as Hfour.
+  set (fuel := (4 * (vertices + edges + sources + 1))%N) in *.
+  assert (Hwidth : forall n, (n <= fuel)%N ->
+    (N.of_nat (N.size_nat n) <= N.of_nat (N.size_nat fuel))%N).
+  { intros n Hn. apply time_of_nat_le. now apply loop_size_monotone. }
+  pose proof (Hwidth vertices ltac:(unfold fuel; lia)) as Hv.
+  pose proof (Hwidth edges ltac:(unfold fuel; lia)) as He.
+  pose proof (Hwidth (vertices + edges)%N ltac:(unfold fuel; lia)) as Hve.
+  pose proof (Hwidth sources ltac:(unfold fuel; lia)) as Hs.
+  pose proof (Hwidth (vertices + edges + sources)%N ltac:(unfold fuel; lia)) as Hves.
+  pose proof (Hwidth 1%N ltac:(unfold fuel; lia)) as Hone.
+  rewrite !Nat2N.inj_add in Hfirst, Hsecond, Hlast. lia.
+Qed.
+
+Local Definition loop_body_clock g t h := fun st => T_body_step g t h st.
+Local Definition loop_collect_cost : N := (4096 * (c_loopN + 1) * loop_body_unit_cost)%N.
+
+(** Successful collection pays setup once and exposes the actual binary-loop clock. *)
+Local Lemma loop_collect_clock_wrapper : forall g t h sources result width,
+  Pos.size_nat h <= width ->
+  loopN (body_step g t h) (4 * (nv g + ne g + N.of_nat (length sources) + 1))%N
+    (LoopBodyState sources (PTrieCode.set h tt Empty) [h]) = inr result ->
+  (T_collect g t h sources + 1 <=
+    T_loopN (body_step g t h) (loop_body_clock g t h)
+      (4 * (nv g + ne g + N.of_nat (length sources) + 1))%N
+      (LoopBodyState sources (PTrieCode.set h tt Empty) [h]) +
+    32 * loop_body_unit_cost *
+      (N.of_nat (width + length sources + 1) +
+        N.of_nat (N.size_nat (4 * (nv g + ne g + N.of_nat (length sources) + 1)))))%N.
+Proof.
+  intros g t h sources result width Hwidth Hdone.
+  pose proof (PTrieT.T_set_le unit h tt Empty) as Hset.
+  pose proof (Datatypes.T_length_le sources) as Hlength.
+  pose proof (loop_of_nat_clock (length sources)) as Hconvert.
+  pose proof (loop_fuel_setup_clock (nv g) (ne g) (N.of_nat (length sources))) as Hfuel.
+  apply time_of_nat_le in Hwidth.
+  unfold T_collect, loop_body_clock. time_simpl. rewrite Hdone.
+  unfold T_nv, T_ne. time_simpl.
+  unfold loop_body_unit_cost. repeat rewrite Nat2N.inj_add in Hset |- *. nia.
+Qed.
+
+Local Lemma loop_unseen_body_work : forall g vertices seen,
+  loop_unseen_work (fun v => 2 + length (preds g v)) vertices seen <=
+    2 * fold_right (fun v n => 1 + length (preds g v) + n) 0 vertices.
+Proof.
+  intros g vertices seen. eapply Nat.le_trans; [apply loop_unseen_work_bound|].
+  induction vertices as [|v rest IH]; cbn [fold_right]; lia.
+Qed.
+
+(** Callback, stop, setup and fuel-bit costs fit one closed collection scale. *)
+Local Lemma loop_collect_arithmetic : forall overhead unit width work inputs bits,
+  (1 <= unit -> 1 <= width ->
+    overhead * ((64 * unit * width + 1) * (4 * work + inputs) +
+      8 * (work + 1) + bits + 1) + 32 * unit * (width + inputs + bits) <=
+    4096 * (overhead + 1) * unit * ((work + inputs + 1) * width + bits))%N.
+Proof.
+  intros overhead unit width work inputs bits Hunit Hwidth.
+  set (total := ((work + inputs + 1) * width + bits)%N).
+  assert (Hinside : ((64 * unit * width + 1) * (4 * work + inputs) +
+    8 * (work + 1) + bits + 1 <= 512 * unit * total)%N) by (unfold total; nia).
+  assert (Hsetup : (32 * unit * (width + inputs + bits) <= 32 * unit * total)%N)
+    by (unfold total; nia).
+  assert (Hpaid : (overhead * ((64 * unit * width + 1) * (4 * work + inputs) +
+    8 * (work + 1) + bits + 1) <= overhead * (512 * unit * total))%N).
+  { apply N.mul_le_mono_l. exact Hinside. }
+  nia.
+Qed.
+
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -1949,7 +2075,7 @@ Module LoopsT <: LOOPS_ALL.
   Definition k_classify : N := 1. (* STUB *)
   Definition k_body_step : N := loop_body_step_cost.
   Definition k_body_stop : N := 8.
-  Definition k_collect : N := 1. (* STUB *)
+  Definition k_collect : N := loop_collect_cost.
   Definition k_install : N := 1. (* STUB *)
   Definition k_trace : N := 1. (* STUB *)
   Definition k_test : N := 1. (* STUB *)
@@ -2528,6 +2654,51 @@ Module LoopsT <: LOOPS_ALL.
     unfold k_body_stop. rewrite !Nat2N.inj_add in Hclock |- *. lia.
   Qed.
 
+  Local Lemma body_work_length : forall g vertices,
+    length vertices <= body_work g vertices.
+  Proof.
+    intros g vertices. induction vertices as [|v rest IH]; unfold body_work in *;
+      cbn [fold_right length]; lia.
+  Qed.
+
+  Local Lemma body_credit_initial : forall g t h sources,
+    (body_credit g t h (body_initial h sources) <=
+      (k_body_step * N.of_nat (graph_width (base g) + 1) + 1) *
+        N.of_nat (4 * body_work g (collected g t h) + length sources))%N.
+  Proof.
+    intros g t h sources. unfold body_credit. apply N.mul_le_mono_l.
+    unfold body_potential, body_white, body_initial.
+    cbn [loop_body_seen loop_body_pending]. apply time_of_nat_le.
+    pose proof (loop_unseen_body_work g (collected g t h) (PTrieCode.set h tt Empty)) as Hwork.
+    unfold loop_unseen_work, body_work in *. lia.
+  Qed.
+
+  Local Lemma body_loop_clock : forall g t r h fuel,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
+    (T_loopN (body_step g t h) (loop_body_clock g t h) fuel
+      (body_initial h (latches (classify g t) h)) <=
+      c_loopN * (body_credit g t h (body_initial h (latches (classify g t) h)) +
+        k_body_stop * N.of_nat (length (collected g t h) + 1) +
+        N.of_nat (N.size_nat fuel) + 1))%N.
+  Proof.
+    intros g t r h fuel Hgraph Hprepared Htree Hheader.
+    apply (T_loopN_le loop_body_state (list positive) (body_step g t h)
+      (loop_body_clock g t h) (body_invariant g t r h) (body_credit g t h)
+      (k_body_stop * N.of_nat (length (collected g t h) + 1))%N).
+    - intros st next Hinv Hstep. split.
+      + exact (proj1 (F8_body_step g t r h st next Hgraph Hprepared Htree Hheader Hinv Hstep)).
+      + pose proof (T4_body_step g t r h st next Hgraph Hprepared Htree Hheader Hinv Hstep)
+          as Hclock.
+        unfold T_body_step in Hclock. cbn beta iota zeta in Hclock.
+        unfold loop_body_clock. lia.
+    - intros st result Hinv Hstep.
+      pose proof (T5_body_stop g t r h st result Hgraph Hprepared Htree Hheader Hinv Hstep)
+        as Hclock.
+      unfold T_body_step in Hclock. cbn beta iota zeta in Hclock.
+      unfold loop_body_clock. lia.
+    - now apply (F7_body_initial g t r h).
+  Qed.
+
   Lemma T6_collect : forall g t r h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     (T_collect g t h (latches (classify g t) h) <= k_collect *
@@ -2535,7 +2706,47 @@ Module LoopsT <: LOOPS_ALL.
         length (latches (classify g t) h) + 1) *
         N.of_nat (graph_width (base g) + 1) +
         N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h)))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h Hgraph Hprepared Htree Hheader.
+    pose proof (F9_body_driver g t r h Hgraph Hprepared Htree Hheader) as Hdone.
+    assert (Hheaderwidth : Pos.size_nat h <= graph_width (base g)).
+    { apply loop_listed_width. rewrite loop_nodes_verts.
+      apply (loop_reachable_listed (base g) r h Hgraph (proj1 Htree)).
+      apply loop_header_reachable. now apply (selected_header g t r h). }
+    pose proof (loop_collect_clock_wrapper g t h (latches (classify g t) h)
+      (collected g t h) _ Hheaderwidth Hdone) as Hwrapper.
+    fold (body_fuel g (latches (classify g t) h)) in Hwrapper.
+    fold (body_initial h (latches (classify g t) h)) in Hwrapper.
+    fold body_step in Hwrapper.
+    pose proof (body_loop_clock g t r h (body_fuel g (latches (classify g t) h))
+      Hgraph Hprepared Htree Hheader) as Hloop.
+    pose proof (body_credit_initial g t h (latches (classify g t) h)) as Hinitial.
+    pose proof (body_work_length g (collected g t h)) as Hlength.
+    match type of Hloop with
+    | (?runtime <= _)%N =>
+        assert (Hloop_upper : (runtime <= c_loopN *
+          ((k_body_step * N.of_nat (graph_width (base g) + 1) + 1) *
+            N.of_nat (4 * body_work g (collected g t h) +
+              length (latches (classify g t) h)) +
+            8 * N.of_nat (body_work g (collected g t h) + 1) +
+            N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h))) + 1))%N)
+    end.
+    { eapply N.le_trans; [exact Hloop|]. apply N.mul_le_mono_l.
+      unfold k_body_stop. rewrite !Nat2N.inj_add in Hinitial |- *. nia. }
+    assert (Hunit : (1 <= loop_body_unit_cost)%N) by (unfold loop_body_unit_cost; lia).
+    assert (Hwidth : (1 <= N.of_nat (graph_width (base g) + 1))%N) by lia.
+    pose proof (loop_collect_arithmetic c_loopN loop_body_unit_cost
+      (N.of_nat (graph_width (base g) + 1)) (N.of_nat (body_work g (collected g t h)))
+      (N.of_nat (length (latches (classify g t) h)))
+      (N.of_nat (N.size_nat (body_fuel g (latches (classify g t) h)))) Hunit Hwidth)
+      as Hnumeric.
+    clear Hgraph Hprepared Htree Hheader Hdone Hheaderwidth Hloop Hinitial Hlength Hunit Hwidth.
+    unfold T_collect. time_simpl.
+    unfold k_collect, loop_collect_cost, k_body_step, loop_body_step_cost in Hloop_upper |- *.
+    repeat rewrite Nat2N.inj_add in Hloop_upper, Hwrapper, Hnumeric |- *.
+    repeat rewrite Nat2N.inj_mul in Hloop_upper. nia.
+  Qed.
+
 
   Lemma T7_install : forall g l h vs,
     forest_supported g l -> In h (nodes g) -> incl vs (nodes g) ->
