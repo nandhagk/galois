@@ -1409,6 +1409,85 @@ Proof.
     + eapply search_event_ledger_stop; eassumption.
 Qed.
 
+(** Every input, including a truncated one, pays no more than its entered rows supply. *)
+Lemma prepared_search_event_bound g roots :
+  length (prepared_search_trace g roots) <=
+    search_event_supply (base g) (prepared_search_trace g roots).
+Proof.
+  pose proof (search_event_ledger_loop (base g) (N.to_nat (search_budget g roots))
+    (SearchState (map SearchRoot roots) Empty [])
+    (search_event_ledger_initial (base g) roots)) as Hledger.
+  rewrite <- search_loopN_fuel in Hledger. unfold prepared_search_trace.
+  destruct (loopN (search_step (base g)) (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty [])) as [st|es].
+  - rewrite rev_append_rev, app_nil_r, length_rev.
+    unfold search_event_ledger in Hledger. lia.
+  - lia.
+Qed.
+
+(** A completed run consumes exactly the events supplied by its entered rows. *)
+Lemma prepared_search_event_exact g roots :
+  counts_ok g ->
+  (forall u v, In u (nodes g) -> edge (base g) u v -> In v (nodes g)) ->
+  (forall r, In r roots -> In r (nodes g)) ->
+  length (prepared_search_trace g roots) =
+    search_event_supply (base g) (prepared_search_trace g roots).
+Proof.
+  intros Hcounts Hclosed Hroots.
+  destruct (prepared_search_complete_closed g roots Hcounts Hclosed Hroots) as [es Hrun].
+  pose proof (search_event_ledger_loop (base g) (N.to_nat (search_budget g roots))
+    (SearchState (map SearchRoot roots) Empty [])
+    (search_event_ledger_initial (base g) roots)) as Hledger.
+  rewrite <- search_loopN_fuel, Hrun in Hledger.
+  unfold prepared_search_trace. rewrite Hrun. exact Hledger.
+Qed.
+
+(** The local maximum is the standard maximum, so membership gives a width bound. *)
+Lemma search_graph_max a b : graph_max a b = Nat.max a b.
+Proof.
+  revert b. induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
+Qed.
+
+Lemma search_vertex_width_member vs v : In v vs -> Pos.size_nat v <= vertex_width vs.
+Proof.
+  induction vs as [|u rest IH]; [contradiction|]. intros [Heq|Hin].
+  - subst u. unfold vertex_width. cbn [fold_right]. rewrite search_graph_max.
+    apply Nat.le_max_l.
+  - unfold vertex_width in *. cbn [fold_right]. rewrite search_graph_max.
+    eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+Lemma search_row_width_member g vertices u v : In u vertices -> edge g u v ->
+  Pos.size_nat v <= fold_right
+    (fun x w => graph_max (vertex_width (succs g x)) w) 0 vertices.
+Proof.
+  intros Hin Hedge. induction vertices as [|x rest IH]; [contradiction|].
+  cbn [fold_right]. rewrite search_graph_max. destruct Hin as [Heq|Hin].
+  - subst x. eapply Nat.le_trans; [apply search_vertex_width_member; exact Hedge|].
+    apply Nat.le_max_l.
+  - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** A nontrivial path exposes its last edge, with a path to its source. *)
+Lemma search_path_last g u vs v : path g u vs v ->
+  u = v \/ exists x prefix, path g u prefix x /\ edge g x v.
+Proof.
+  intro Hpath. induction Hpath as [v|u v vs w Hedge Hpath IH].
+  - now left.
+  - right. destruct IH as [Heq|[x [prefix [Hprefix Hlast]]]].
+    + subst w. exists u, [u]. split; [constructor|exact Hedge].
+    + exists x, (u :: prefix). split; [econstructor; eassumption|exact Hlast].
+Qed.
+
+Lemma search_reach_origin g roots v : reach g roots v ->
+  In v roots \/ exists u, reach g roots u /\ edge g u v.
+Proof.
+  intros [r [vs [Hroot Hpath]]].
+  destruct (search_path_last g r vs v Hpath) as [Heq|[u [prefix [Hprefix Hedge]]]].
+  - subst v. now left.
+  - right. exists u. split; [exists r, prefix; now split|exact Hedge].
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -1753,7 +1832,12 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     length (trace g roots) = 2 * n_reach g roots + e_reach g roots.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots Hcounts Hgraph Hroots.
+    pose proof (prepared_search_event_exact g roots Hcounts
+      (search_wf_closed g Hgraph) Hroots) as Hevents.
+    rewrite search_event_supply_entered in Hevents. exact Hevents.
+  Qed.
 
   Lemma F8_fuel : forall g roots,
     counts_ok g -> wf_graph (base g) ->
@@ -1858,7 +1942,10 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   (** Each entered vertex contributes at most two events and its row on every input. *)
   Lemma F7b_events_raw : forall g roots,
       length (trace g roots) <= 2 * n_reach g roots + e_reach g roots.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots. pose proof (prepared_search_event_bound g roots) as Hevents.
+    rewrite search_event_supply_entered in Hevents. exact Hevents.
+  Qed.
 
 End SearchT.
 
