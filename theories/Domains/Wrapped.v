@@ -2356,6 +2356,175 @@ Qed.
 TimeBound wrapped_mul_time.
 
 
+(** Extracting one finite interval inspects only its constructors. *)
+Lemma wrapped_interval_list_time : forall a, (T_wrapped_interval_list a <= 4)%N.
+Proof.
+  intros [|[|lo|] [|hi|]]; time_unfold T_wrapped_interval_list; lia.
+Qed.
+TimeBound wrapped_interval_list_time.
+
+(** Splitting charges normalization, two pole cuts and bounded list concatenations. *)
+Lemma wrapped_split_time : forall w a,
+  (T_wrapped_split w a <=
+    8388608 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w a.
+  pose proof (wrapped_parts_bits w a) as [Hleftbits Hrightbits].
+  pose proof (wrapped_parts_time w a) as Hparts.
+  set (pieces := wrapped_parts w a) in *.
+  pose proof (wrapped_pole_cut_time w (fst pieces)) as Hleftcut.
+  pose proof (wrapped_pole_cut_time w (snd pieces)) as Hrightcut.
+  set (low := wrapped_pole_cut w (fst pieces)) in *.
+  set (high := wrapped_pole_cut w (snd pieces)) in *.
+  pose proof (wrapped_interval_list_length (fst low)) as H00.
+  pose proof (wrapped_interval_list_length (snd low)) as H01.
+  pose proof (wrapped_interval_list_length (fst high)) as H10.
+  pose proof (wrapped_interval_list_length (snd high)) as H11.
+  set (l00 := wrapped_interval_list (fst low)) in *.
+  set (l01 := wrapped_interval_list (snd low)) in *.
+  set (l10 := wrapped_interval_list (fst high)) in *.
+  set (l11 := wrapped_interval_list (snd high)) in *.
+  time_unfold T_wrapped_split. cbn beta iota zeta. time_simpl.
+  fold pieces low high l00 l01 l10 l11.
+  clearbody pieces low high l00 l01 l10 l11.
+  time_pose. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_split_time.
+
+
+(** Reading finite endpoints inspects only interval constructors. *)
+Lemma wrapped_finite_helper_time : forall a,
+  (T_interval_finite_helper a <= 4)%N.
+Proof.
+  intros [|[|lo|] [|hi|]]; time_unfold T_interval_finite_helper;
+    cbn beta iota zeta; time_simpl; lia.
+Qed.
+TimeBound wrapped_finite_helper_time.
+
+(** A full unsigned interval stores at most the declared word width. *)
+Lemma wrapped_interval_top_bits : forall w,
+  (interval_bits (WrappedIntervalOps.interval_top w) <= Pos.to_nat w)%nat.
+Proof.
+  intro w. change (Z.size_nat (modulus w - 1) <= Pos.to_nat w)%nat.
+  apply wrapped_last_word_bits.
+Qed.
+
+(** Constructing the full interval computes one last-word endpoint. *)
+Lemma wrapped_interval_top_time : forall w,
+  (WrappedIntervalOps.T_interval_top w <= 64 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w. pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  time_unfold WrappedIntervalOps.T_interval_top. cbn beta iota zeta. time_simpl. time_pose.
+  try change (Z.size_nat 1) with 1%nat in *. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_interval_top_time.
+
+(** Checked construction stores either the supplied endpoints or the full range. *)
+Lemma wrapped_interval_checked_bits : forall w lo hi,
+  (interval_bits (WrappedIntervalOps.interval_checked w lo hi) <=
+    Pos.to_nat w + Z.size_nat lo + Z.size_nat hi)%nat.
+Proof.
+  intros w lo hi. unfold WrappedIntervalOps.interval_checked.
+  destruct ((0 <=? lo) && (hi <? modulus w))%bool.
+  - change (Nat.max (Z.size_nat lo) (Z.size_nat hi) <=
+      Pos.to_nat w + Z.size_nat lo + Z.size_nat hi)%nat. lia.
+  - pose proof (wrapped_interval_top_bits w). lia.
+Qed.
+
+(** Checked endpoints charge their comparison and possible full-range fallback. *)
+Lemma wrapped_interval_checked_time : forall w lo hi,
+  (WrappedIntervalOps.T_interval_checked w lo hi <=
+    256 * N.of_nat (Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + 1))%N.
+Proof.
+  intros w lo hi. pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  time_unfold WrappedIntervalOps.T_interval_checked. cbn beta iota zeta. time_simpl. time_pose.
+  destruct ((0 <=? lo) && (hi <? modulus w))%bool;
+    try change (Z.size_nat 0) with 0%nat in *; rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_interval_checked_time.
+
+(** Interval complement grows endpoint magnitude by at most the word width. *)
+Lemma wrapped_interval_not_bits : forall w a,
+  (interval_bits (WrappedIntervalOps.interval_not w a) <=
+    3 * Pos.to_nat w + 2 * interval_bits a + 2)%nat.
+Proof.
+  intros w [|[|lo|] [|hi|]];
+    cbn [WrappedIntervalOps.interval_not interval_finite_helper];
+    try (pose proof (wrapped_interval_top_bits w); lia).
+  pose proof (wrapped_interval_checked_bits w (modulus w - 1 - hi) (modulus w - 1 - lo))
+    as Hchecked.
+  pose proof (WordTime.integer_sub_size (modulus w - 1) lo) as Hlo.
+  pose proof (WordTime.integer_sub_size (modulus w - 1) hi) as Hhi.
+  pose proof (wrapped_last_word_bits w) as Hlast.
+  change (interval_bits (WrappedIntervalOps.interval_checked w
+    (modulus w - 1 - hi) (modulus w - 1 - lo)) <=
+    3 * Pos.to_nat w + 2 * Nat.max (Z.size_nat lo) (Z.size_nat hi) + 2)%nat.
+  lia.
+Qed.
+
+(** Interval complement computes two linear endpoint differences. *)
+Lemma wrapped_interval_not_time : forall w a,
+  (WrappedIntervalOps.T_interval_not w a <=
+    4096 * N.of_nat (Pos.to_nat w + interval_bits a + 1))%N.
+Proof.
+  intros w [|[|lo|] [|hi|]];
+    try (time_unfold WrappedIntervalOps.T_interval_not; cbn beta iota zeta;
+      cbn [interval_finite_helper]; time_simpl; time_pose; cbn [interval_bits]; rewrite !Nat2N.inj_add in *; lia).
+  pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  pose proof (wrapped_last_word_bits w) as Hlast.
+  pose proof (WordTime.integer_sub_size (modulus w - 1) lo) as Hlo.
+  pose proof (WordTime.integer_sub_size (modulus w - 1) hi) as Hhi.
+  set (last := modulus w - 1) in *.
+  time_unfold WrappedIntervalOps.T_interval_not. cbn beta iota zeta. cbn [interval_finite_helper].
+  fold last. clearbody last. time_simpl. time_pose.
+  cbn [interval_bits]. try change (Z.size_nat 1) with 1%nat in *.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_interval_not_time.
+
+(** Every complemented piece is normalized before being joined. *)
+Lemma wrapped_not_piece_bits : forall w a,
+  (wrapped_bits (wrapped_not_piece w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w [|lo hi].
+  - change (0 <= 2 * Pos.to_nat w)%nat. lia.
+  - unfold wrapped_not_piece. apply wrapped_of_interval_bits.
+Qed.
+
+(** Complementing one piece composes interval complement and normalization. *)
+Lemma wrapped_not_piece_time : forall w a,
+  (T_wrapped_not_piece w a <=
+    65536 * N.of_nat (Pos.to_nat w + interval_bits a + 1))%N.
+Proof.
+  intros w [|lo hi].
+  - time_unfold T_wrapped_not_piece. cbn [interval_bits]. rewrite Nat2N.inj_add. lia.
+  - pose proof (wrapped_interval_not_bits w (I lo hi)) as Hbits.
+    set (result := WrappedIntervalOps.interval_not w (I lo hi)) in *.
+    time_unfold T_wrapped_not_piece. cbn beta iota zeta.
+    fold result. clearbody result. time_simpl. time_pose.
+    rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_not_piece_time.
+
+(** Word complement splits normalized inputs and joins two normalized results. *)
+Lemma wrapped_not_time : forall w a,
+  (T_wrapped_not w a <= 1048576 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (wrapped_parts_bits w a) as [Hleft Hright].
+  set (parts := wrapped_parts w a) in *.
+  pose proof (wrapped_not_piece_bits w (fst parts)) as Hleftbits.
+  pose proof (wrapped_not_piece_bits w (snd parts)) as Hrightbits.
+  set (left := wrapped_not_piece w (fst parts)) in *.
+  set (right := wrapped_not_piece w (snd parts)) in *.
+  time_unfold T_wrapped_not. cbn beta iota zeta.
+  fold parts left right. clearbody parts left right. time_simpl. time_pose.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_not_time.
+
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
