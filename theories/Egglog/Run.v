@@ -5524,6 +5524,328 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
 
+  (** A concrete term determines its value in the interpreted environment. *)
+  Lemma run_model_term_unique : forall (M : model (V := V.t)) nu s t c value,
+    term_value s t c -> model_term M (fun x => option_map (den nu) (s x)) t value ->
+    value = den nu c.
+  Proof.
+    intros M nu s [x|v] c value Hcell Hvalue; cbn [term_value model_term] in *.
+    - rewrite Hcell in Hvalue. now injection Hvalue.
+    - subst c value. reflexivity.
+  Qed.
+
+  (** Concrete argument witnesses determine the model's argument list. *)
+  Lemma run_model_terms_unique : forall (M : model (V := V.t)) nu s ts cs values,
+    terms_value s ts cs ->
+    Forall2 (model_term M (fun x => option_map (den nu) (s x))) ts values ->
+    values = map (den nu) cs.
+  Proof.
+    intros M nu s ts cs values Hterms. revert values.
+    induction Hterms as [|t c rest cells Hterm Hterms IH]; intros vals Hvals.
+    - inversion Hvals. reflexivity.
+    - inversion Hvals as [|t' v rest' vals' Hvalue Htail]; subst t' rest' vals.
+      cbn [map]. f_equal; [eapply run_model_term_unique; eassumption|now apply IH].
+  Qed.
+
+  (** Concrete value arguments determine the primitive inputs in the model. *)
+  Lemma run_model_values_unique : forall (M : model (V := V.t)) nu cs vs ws,
+    values cs vs -> model_values M (map (den nu) cs) ws -> ws = vs.
+  Proof.
+    intros M nu cs vs ws Hvalues. revert ws.
+    induction Hvalues as [|c v cells vals Hcell Hvalues IH]; intros ws Hmodel.
+    - inversion Hmodel. reflexivity.
+    - subst c. inversion Hmodel as [|c' w cells' ws' Hhead Htail]; subst c' cells' ws.
+      cbn [den] in Hhead. injection Hhead as <-. f_equal. now apply IH.
+  Qed.
+
+  (** Interpreting a sorted environment preserves its sorts. *)
+  Lemma run_model_env_sorted : forall (M : model (V := V.t)) nu g s,
+    env_sorted g s -> model_env_sorted M g (fun x => option_map (den nu) (s x)).
+  Proof.
+    intros M nu g s Henv x ty Htype.
+    destruct (Henv x ty Htype) as [c [Hlookup Hsort]].
+    exists (den nu c). rewrite Hlookup. split; [reflexivity|].
+    destruct c; exact Hsort.
+  Qed.
+
+  (** Pointwise agreement preserves a model term. *)
+  Lemma run_model_term_agree : forall (M : model (V := V.t)) s t term value,
+    (forall x, s x = t x) -> model_term M s term value -> model_term M t term value.
+  Proof.
+    intros M s t [x|v] value Henv Hterm.
+    - cbn [model_term] in *. now rewrite <- Henv.
+    - exact Hterm.
+  Qed.
+
+  (** Pointwise agreement preserves a list of model terms. *)
+  Lemma run_model_terms_agree : forall (M : model (V := V.t)) s t terms values,
+    (forall x, s x = t x) -> Forall2 (model_term M s) terms values ->
+    Forall2 (model_term M t) terms values.
+  Proof.
+    intros M s t terms values Henv Hterms. induction Hterms; constructor; auto.
+    eapply run_model_term_agree; eassumption.
+  Qed.
+
+  (** A common assignment preserves pointwise model-environment agreement. *)
+  Lemma run_model_update_agree : forall (M : model (V := V.t)) s t x c,
+    (forall y, s y = t y) ->
+    forall y, model_update M s x c y = model_update M t x c y.
+  Proof.
+    intros M s t x c Henv y. unfold model_update. destruct (Pos.eqb x y); auto.
+  Qed.
+
+  (** Model action semantics depends only on pointwise environment observations. *)
+  Lemma run_model_actions_agree : forall (M : model (V := V.t)) kinds acts s t,
+    (forall x, s x = t x) -> model_actions V.prim M kinds s acts ->
+    model_actions V.prim M kinds t acts.
+  Proof.
+    intros M kinds acts. induction acts as [|a rest IH]; intros s t Henv Hacts;
+      [exact I|].
+    destruct a as [x f args|f args res|a b|x p args]; cbn [model_actions] in *.
+    - destruct Hacts as [k [Hargs [Hkind Hrest]]]. exists k. split.
+      + eapply run_model_terms_agree; eassumption.
+      + split; [exact Hkind|]. eapply IH; [apply run_model_update_agree; exact Henv|exact Hrest].
+    - destruct Hacts as [k [Hargs [Hput Hrest]]]. exists k. split.
+      + eapply run_model_terms_agree; eassumption.
+      + split; [|eapply IH; eassumption].
+        destruct (kinds f) as [out|]; [|contradiction].
+        destruct out; destruct res as [term|]; try contradiction; try exact Hput.
+        * eapply run_model_term_agree; eassumption.
+        * destruct Hput as [v [Hterm Hlat]]. exists v. split;
+            [eapply run_model_term_agree; eassumption|exact Hlat].
+    - destruct Hacts as [c [d [Ha [Hb [Hsame Hrest]]]]]. exists c, d. split.
+      + eapply run_model_term_agree; eassumption.
+      + split; [eapply run_model_term_agree; eassumption|].
+        split; [exact Hsame|eapply IH; eassumption].
+    - destruct Hacts as [k [vs [Hargs [Hvalues Hrest]]]]. exists k, vs. split.
+      + eapply run_model_terms_agree; eassumption.
+      + split; [exact Hvalues|]. destruct (V.prim p vs); [|exact I].
+        eapply IH; [apply run_model_update_agree; exact Henv|exact Hrest].
+  Qed.
+
+  (** A true model function atom justifies the corresponding concrete insertion. *)
+  Lemma run_model_fun_holds : forall (M : model (V := V.t)) nu s w kinds f args res k o,
+    (forall g, kind w g = kinds g) -> terms_value s args k ->
+    (match res, o with
+     | None, None => True
+     | Some t, Some c => term_value s t c
+     | _, _ => False
+     end) ->
+    model_atom V.prim M kinds (fun x => option_map (den nu) (s x))
+      (Fun V.t f args res) -> holds M nu w f k o.
+  Proof.
+    intros M nu s w kinds f args res k o Hkind Hargs Hres [vals [Hvals Hhead]].
+    pose proof (run_model_terms_unique M nu s args k vals Hargs Hvals) as Hlist.
+    subst vals. unfold holds. rewrite Hkind.
+    destruct (kinds f) as [out|]; [|contradiction].
+    destruct out; destruct res as [term|]; try contradiction.
+    - destruct o; [contradiction|exact Hhead].
+    - destruct o as [[i|v]|]; [| |contradiction].
+      + pose proof (run_model_term_unique M nu s term (Id i) _ Hres Hhead) as Hvalue.
+        now injection Hvalue.
+      + pose proof (run_model_term_unique M nu s term (Val v) _ Hres Hhead) as Hvalue.
+        discriminate Hvalue.
+    - destruct Hhead as [v [Hterm Hlat]]. destruct o as [[i|w']|]; [| |contradiction].
+      + pose proof (run_model_term_unique M nu s term (Id i) _ Hres Hterm) as Hvalue.
+        discriminate Hvalue.
+      + pose proof (run_model_term_unique M nu s term (Val w') _ Hres Hterm) as Hvalue.
+        injection Hvalue as ->. exact Hlat.
+  Qed.
+
+  (** Canonical representatives have their identifiers' original model meaning. *)
+  Lemma run_canon_den : forall (M : model (V := V.t)) nu db c,
+    D.wf db -> sat V.merge M nu (D.view db) -> den nu (D.canon db c) = den nu c.
+  Proof.
+    intros M nu db [i|v] Hwf [_ [Hsame Hlat]]; [|reflexivity].
+    cbn [D.canon den]. f_equal. apply Hsame.
+    apply (proj2 (D.same_repr db (D.repr db i) i Hwf)). now rewrite D.repr_idem.
+  Qed.
+
+  (** Canonicalizing arguments preserves their full interpreted key. *)
+  Lemma run_canon_key_den : forall (M : model (V := V.t)) nu db k,
+    D.wf db -> sat V.merge M nu (D.view db) ->
+    map (den nu) (map (D.canon db) k) = map (den nu) k.
+  Proof.
+    intros M nu db k Hwf Hsat. rewrite map_map. apply map_ext.
+    intro c. now apply run_canon_den.
+  Qed.
+
+  (** Constructor allocation extends the interpretation of every old allocated identifier. *)
+  Lemma run_make_model : forall (M : model (V := V.t)) nu db f k i next,
+    D.wf db -> kind (D.view db) f = Some OId ->
+    (forall j, In (Id j) k -> D.allocated db j) -> sat V.merge M nu (D.view db) ->
+    D.make f k db = (i, next) ->
+    exists nu', extends db M nu nu' /\
+      nu' i = con M f (map (den nu) k) /\ sat V.merge M nu' (D.view next).
+  Proof.
+    intros M nu db f k i next Hwf Hkind Hallocated Hsat Hmake.
+    pose proof (D.make_spec f k db Hwf Hkind) as Hspec.
+    pose proof (D.make_sat M nu db f k Hwf Hkind Hallocated Hsat) as Hmodel.
+    rewrite Hmake in Hspec, Hmodel.
+    destruct Hmodel as [nu' [Hother [Hmeaning Hsat']]].
+    exists nu'. split; [|split; assumption].
+    intros j Hj. destruct (Pos.eq_dec j i) as [->|Hdifferent]; [|now apply Hother].
+    destruct Hspec as [[old [Hrow [Hrepr Hnext]]]|[Hfresh Hnew]].
+    - pose proof (proj1 Hsat f (map (D.canon db) k) (Some (Id old)) Hrow) as Hholds.
+      unfold holds in Hholds. rewrite Hkind in Hholds.
+      rewrite (run_canon_key_den M nu db k Hwf Hsat) in Hholds.
+      rewrite Hmeaning, Hholds, Hrepr.
+      destruct Hsat as [_ [Hequal _]]. symmetry. apply Hequal.
+      apply (proj2 (D.same_repr db (D.repr db old) old Hwf)). now rewrite D.repr_idem.
+    - unfold D.fresh_id in Hfresh. unfold D.allocated in Hj. rewrite Hfresh in Hj.
+      rewrite N.succ_pos_spec in Hj. lia.
+  Qed.
+
+  (** An interpretation extension preserves every allocated environment observation. *)
+  Lemma run_env_den_ext : forall (M : model (V := V.t)) nu nu' db s,
+    extends db M nu nu' -> env_allocated db s ->
+    forall x, option_map (den nu') (s x) = option_map (den nu) (s x).
+  Proof.
+    intros M nu nu' db s Hext Hallocated x. destruct (s x) as [[i|v]|] eqn:Hlookup;
+      [|reflexivity|reflexivity].
+    cbn [option_map den]. rewrite Hext; [reflexivity|eapply Hallocated; exact Hlookup].
+  Qed.
+
+  (** Extensions through growing identifier counters compose on the original allocation. *)
+  Lemma run_extends_trans : forall (M : model (V := V.t)) before middle nu nu' nu'',
+    (D.ids before <= D.ids middle)%N -> extends before M nu nu' ->
+    extends middle M nu' nu'' -> extends before M nu nu''.
+  Proof.
+    intros M before middle nu nu' nu'' Hids Hfirst Hsecond i Hallocated.
+    rewrite Hsecond; [now apply Hfirst|]. unfold D.allocated in *. lia.
+  Qed.
+
+  (** Executing true typed actions preserves a model while extending allocated meanings. *)
+  Lemma run_apply_go_sat : forall p cp (M : model (V := V.t)) acts g s locals db nu,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    model_actions V.prim M (program_kind p)
+      (fun x => option_map (den nu) (look s locals x)) acts ->
+    sat V.merge M nu (D.view db) ->
+    exists nu', extends db M nu nu' /\ sat V.merge M nu' (D.view (apply_go acts s locals db)).
+  Proof.
+    intros p cp M acts. induction acts as [|a rest IH]; intros g s locals db nu
+      Hchecked Hwf Hloaded Hacts Henv Hallocated Hmodel Hsat.
+    - exists nu. split; [intros i Hi; reflexivity|exact Hsat].
+    - destruct a as [x f args|f args res|t u|x op args];
+        cbn [actions_ok] in Hacts; cbn [model_actions] in Hmodel.
+      + destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+        destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+          as [cells [Hcells Hsorts]].
+        rewrite <- Hsorts in Hsort.
+        pose proof (run_term_cells_allocated db s locals args cells Hallocated Hcells) as Hids.
+        destruct Hmodel as [vals [Hvals [Hmodelkind Hmodelrest]]].
+        pose proof (run_model_terms_unique M nu (look s locals) args cells vals
+          (proj1 (run_term_cells_spec s locals args cells) Hcells) Hvals) as Hargsmodel.
+        subst vals.
+        pose proof (run_make_state p cp f cells db Hchecked Hwf Hloaded Hkind Hsort Hids)
+          as Hstate.
+        destruct (D.make f cells db) as [i next] eqn:Hmake. cbn [fst snd] in Hstate.
+        destruct Hstate as [Hwf' [Hloaded' [Hids' [Hunit' [Hnew Hpending]]]]].
+        assert (Hkinddb : kind (D.view db) f = Some OId).
+        { rewrite (proj1 Hloaded). exact Hkind. }
+        destruct (run_make_model M nu db f cells i next Hwf Hkinddb Hids Hsat Hmake)
+          as [middle [Hextension [Hmeaning Hsat']]].
+        assert (Henv' : env_sorted (ctx_set g x SId)
+            (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_env_sorted_set; [exact Henv|reflexivity]. }
+        assert (Hallocated' : env_allocated next (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_env_allocated_set.
+          - eapply run_env_allocated_mono; [exact Hids'|exact Hallocated].
+          - intros j Heq. injection Heq as <-. exact Hnew. }
+        assert (Hmodel' : model_actions V.prim M (program_kind p)
+            (fun y => option_map (den middle) (look s (PTrieCode.set x (Id i) locals) y)) rest).
+        { eapply run_model_actions_agree; [|exact Hmodelrest].
+          intro y. rewrite run_look_set. unfold model_update, update.
+          destruct (Pos.eqb x y).
+          - cbn [option_map den]. now rewrite Hmeaning.
+          - symmetry. eapply run_env_den_ext; eassumption. }
+        destruct (IH _ _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv' Hallocated' Hmodel' Hsat')
+          as [final [Hfinal Hsatfinal]].
+        cbn [apply_go]. rewrite Hcells, Hmake. exists final. split.
+        * eapply run_extends_trans; eassumption.
+        * exact Hsatfinal.
+      + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+        destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+          as [cells [Hcells Hsorts]].
+        destruct (run_result_cell_typed g s locals out res Henv Hresult)
+          as [output [Houtput Houtsort]].
+        assert (Hrow : row_sorted (program_sorts p) (program_kind p) f cells output).
+        { exists out. rewrite Hsorts. repeat split; assumption. }
+        assert (Hids : forall i, In (Id i) (cells ++ option_list output) -> D.allocated db i).
+        { intros i Hin. apply in_app_iff in Hin as [Hin|Hin].
+          - eapply run_term_cells_allocated; eauto.
+          - eapply run_result_cell_allocated; eauto. }
+        pose proof (run_put_allowed p cp db f cells output Hchecked Hloaded Hrow Hids)
+          as Hallowed.
+        destruct (run_put_state p cp f cells output db Hchecked Hwf Hloaded Hrow Hids)
+          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+        destruct Hmodel as [vals [Hvals [Hput Hmodelrest]]].
+        assert (Hholds : holds M nu (D.view db) f cells output).
+        { eapply run_model_fun_holds.
+          - exact (proj1 Hloaded).
+          - apply run_term_cells_spec. exact Hcells.
+          - apply run_result_cell_spec. exact Houtput.
+          - exists vals. split; assumption. }
+        pose proof (D.put_sat M nu db f cells output Hwf Hallowed Hsat Hholds) as Hsat'.
+        assert (Hallocated' : env_allocated (D.put f cells output db) (look s locals)).
+        { eapply run_env_allocated_mono with (db := db);
+            [rewrite Hids'; reflexivity|exact Hallocated]. }
+        destruct (IH _ _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated' Hmodelrest Hsat')
+          as [final [Hfinal Hsatfinal]].
+        cbn [apply_go]. rewrite Hcells, Houtput. exists final. split.
+        * intros i Hi. apply Hfinal. unfold D.allocated in *. now rewrite Hids'.
+        * exact Hsatfinal.
+      + destruct Hacts as [Ht [Hu Hrest]].
+        destruct (run_term_cell_typed g s locals t SId Henv Ht)
+          as [[i|v] [Hi Hitype]]; [|discriminate].
+        destruct (run_term_cell_typed g s locals u SId Henv Hu)
+          as [[j|v] [Hj Hjtype]]; [|discriminate].
+        pose proof (run_term_cell_allocated db s locals t i Hallocated Hi) as Hiall.
+        pose proof (run_term_cell_allocated db s locals u j Hallocated Hj) as Hjall.
+        destruct (run_union_state p cp i j db Hwf Hloaded Hiall Hjall)
+          as [Hwf' [Hloaded' [Hids' [Hunit' Hpending]]]].
+        destruct Hmodel as [a [b [Hma [Hmb [Hequal Hmodelrest]]]]].
+        pose proof (run_model_term_unique M nu (look s locals) t (Id i) a
+          (proj1 (run_term_cell_spec s locals t (Id i)) Hi) Hma) as Ha.
+        pose proof (run_model_term_unique M nu (look s locals) u (Id j) b
+          (proj1 (run_term_cell_spec s locals u (Id j)) Hj) Hmb) as Hb.
+        rewrite Ha, Hb in Hequal. change (nu i = nu j) in Hequal.
+        pose proof (D.union_sat M nu db i j Hwf Hsat Hequal) as Hsat'.
+        assert (Hallocated' : env_allocated (D.union i j db) (look s locals)).
+        { eapply run_env_allocated_mono with (db := db);
+            [rewrite Hids'; reflexivity|exact Hallocated]. }
+        destruct (IH _ _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated' Hmodelrest Hsat')
+          as [final [Hfinal Hsatfinal]].
+        cbn [apply_go]. rewrite Hi, Hj. exists final. split.
+        * intros k Hk. apply Hfinal. unfold D.allocated in *. now rewrite Hids'.
+        * exact Hsatfinal.
+      + destruct Hacts as [Hargs Hrest].
+        destruct (run_term_values_typed g s locals args Henv Hargs) as [vs Hvalues].
+        destruct Hmodel as [vals [inputs [Hvals [Hinputs Hmodelrest]]]].
+        pose proof (run_term_values_spec s locals args vs Hvalues) as Hcells.
+        pose proof (run_model_terms_unique M nu (look s locals) args (map Val vs) vals
+          Hcells Hvals) as Hlist. subst vals.
+        pose proof (run_model_values_unique M nu (map Val vs) vs inputs
+          (run_value_cells vs) Hinputs) as Hinputs_eq. subst inputs.
+        cbn [apply_go]. rewrite Hvalues. destruct (V.prim op vs) as [v|] eqn:Hprim.
+        * assert (Henv' : env_sorted (ctx_set g x SVal)
+              (look s (PTrieCode.set x (Val v) locals))).
+          { apply run_env_sorted_set; [exact Henv|reflexivity]. }
+          assert (Hallocated' : env_allocated db (look s (PTrieCode.set x (Val v) locals))).
+          { apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate. }
+          assert (Hmodel' : model_actions V.prim M (program_kind p)
+              (fun y => option_map (den nu) (look s (PTrieCode.set x (Val v) locals) y)) rest).
+          { eapply run_model_actions_agree; [|exact Hmodelrest].
+            intro y. rewrite run_look_set. unfold model_update, update.
+            destruct (Pos.eqb x y); reflexivity. }
+          destruct (IH _ _ _ _ _ Hchecked Hwf Hloaded Hrest Henv' Hallocated' Hmodel' Hsat)
+            as [final [Hfinal Hsatfinal]].
+          exists final. split; assumption.
+        * exists nu. split; [intros i Hi; reflexivity|exact Hsat].
+  Qed.
+
   Lemma F4_apply_sat : forall (M : model (V := V.t)) nu p cp r s db,
     plans_ok p cp -> D.wf db -> loaded p cp db -> env_allocated db s ->
     rule_env (program_sorts p) (program_kind p) r s ->
@@ -5533,7 +5855,22 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     sat V.merge M nu (D.view db) ->
     exists nu', extends db M nu nu' /\
       sat V.merge M nu' (D.view (apply (actions V.t r) s db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M nu p cp r s db Hchecked Hwf Hloaded Hallocated Henv [Hvalid Hlat] Hin
+      Hmatch Hsat.
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [Hquery [Hacts Hsorted]]].
+    pose proof ((proj1 (Forall_forall _ _)) Hvalid r Hin) as Hrule.
+    specialize (Hrule g (fun x => option_map (den nu) (s x)) Hquery
+      (run_model_env_sorted M nu g s Hsorted) Hmatch).
+    unfold apply. eapply run_apply_go_sat;
+      [exact Hchecked|exact Hwf|exact Hloaded|exact Hacts| | | |exact Hsat].
+    - intros x ty Hctx. destruct (Hsorted x ty Hctx) as [c [Hc Hty]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated. exact Hcell.
+    - eapply run_model_actions_agree; [|exact Hrule].
+      intro x. now rewrite run_look_empty.
+  Qed.
+
 
   Lemma F5_apply_quiet_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
