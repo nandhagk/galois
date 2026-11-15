@@ -2025,6 +2025,492 @@ Proof.
   intro xs. induction xs as [|x rest IH]; cbn [map fold_right]; [reflexivity|now rewrite IH].
 Qed.
 
+(** Root tasks contribute a subtree only when their vertex has no parent and is present. *)
+Local Definition loop_root_test (t : domtree) (v : positive) : bool :=
+  match trie_get v (pre t), trie_get v (idom t) with
+  | Some _, None => true
+  | _, _ => false
+  end.
+
+Local Lemma loop_root_test_spec t v : loop_root_test t v = true <->
+  (exists n, trie_get v (pre t) = Some n) /\ trie_get v (idom t) = None.
+Proof.
+  unfold loop_root_test.
+  destruct (trie_get v (pre t)) as [n|]; destruct (trie_get v (idom t)) as [p|].
+  - split; [discriminate|intros [_ Hnone]; discriminate].
+  - split; [intros _; split; [now exists n|reflexivity]|intros _; reflexivity].
+  - split; [discriminate|intros [[a Ha] _]; discriminate].
+  - split; [discriminate|intros [[a Ha] _]; discriminate].
+Qed.
+
+Local Lemma loop_root_test_exact g t r v : domtree_exact g r t ->
+  (loop_root_test t v = true <-> v = r).
+Proof.
+  intro Htree. rewrite loop_root_test_spec. exact (loop_exact_root_iff g t r v Htree).
+Qed.
+
+Local Definition loop_task_roots (t : domtree) (task : loop_tree_task) : list positive :=
+  match task with
+  | LoopTreeRoot v => if loop_root_test t v then [v] else []
+  | LoopTreeEnter v => [v]
+  | LoopTreeChildren vs => vs
+  | LoopTreeEdges _ _ | LoopTreeLeave _ => []
+  end.
+
+Local Definition loop_future (t : domtree) (tasks : list loop_tree_task) : list positive :=
+  flat_map (loop_task_roots t) tasks.
+
+Local Lemma loop_future_roots t vertices :
+  loop_future t (map LoopTreeRoot vertices) = filter (loop_root_test t) vertices.
+Proof.
+  unfold loop_future. induction vertices as [|v rest IH];
+    cbn [map flat_map loop_task_roots filter]; [reflexivity|].
+  rewrite IH. destruct (loop_root_test t v); reflexivity.
+Qed.
+
+Local Lemma loop_unique_singleton (xs : list positive) r : NoDup xs -> In r xs ->
+  (forall x, In x xs -> x = r) -> xs = [r].
+Proof.
+  intros Hunique Hr Hall. destruct xs as [|v xs]; [contradiction|].
+  assert (Hv : v = r) by (apply Hall; now left). subst v.
+  inversion Hunique as [|head tail Hfresh Htail]; subst head tail.
+  f_equal. destruct xs as [|x xs]; [reflexivity|]. exfalso. apply Hfresh.
+  assert (Hx : x = r) by (apply Hall; now right; left). subst x. now left.
+Qed.
+
+Local Lemma loop_future_initial g t r : wf_graph (base g) -> domtree_exact g r t ->
+  loop_future t (map LoopTreeRoot (nodes g)) = [r].
+Proof.
+  intros Hgraph Htree. rewrite loop_future_roots. apply loop_unique_singleton.
+  - apply NoDup_filter. now apply loop_nodes_unique.
+  - apply filter_In. split.
+    + rewrite loop_nodes_verts. exact (proj1 Htree).
+    + apply (proj2 (loop_root_test_exact g t r r Htree)). reflexivity.
+  - intros x Hx. apply filter_In in Hx as [_ Htest].
+    exact (proj1 (loop_root_test_exact g t r x Htree) Htest).
+Qed.
+
+Local Definition loop_partition_state g t r st : Prop :=
+  loop_partition g t r (loop_order (loop_tree_output st))
+    (loop_future t (loop_tree_pending st)).
+
+Local Lemma loop_partition_initial g t r : wf_graph (base g) -> domtree_exact g r t ->
+  loop_partition_state g t r
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)).
+Proof.
+  intros Hgraph Htree. unfold loop_partition_state.
+  cbn [loop_tree_output loop_tree_pending loop_order].
+  rewrite (loop_future_initial g t r Hgraph Htree). now apply loop_partition_root.
+Qed.
+
+(** Only entry changes the partition; all other cursors preserve the same pending roots. *)
+Local Lemma loop_partition_step g t r st next : domtree_exact g r t ->
+  loop_partition_state g t r st -> tree_step g t st = inl next ->
+  loop_partition_state g t r next.
+Proof.
+  intros Htree Hpart Hstep. destruct st as [tasks stack active [order latches backs]].
+  destruct tasks as [|task rest]; [discriminate Hstep|].
+  destruct task as [v|v|vs|u vs|v]; cbn [tree_step] in Hstep.
+  - destruct (trie_get v (pre t)) as [n|] eqn:Hpre;
+      destruct (trie_get v (idom t)) as [p|] eqn:Hparent;
+      injection Hstep as <-; unfold loop_partition_state in *;
+      cbn [loop_tree_output loop_tree_pending loop_order loop_future flat_map
+        loop_task_roots loop_root_test app] in *;
+      unfold loop_root_test in Hpart; rewrite Hpre in Hpart;
+      try rewrite Hparent in Hpart; exact Hpart.
+  - injection Hstep as <-. unfold loop_partition_state in *.
+    cbn [loop_tree_output loop_tree_pending loop_order loop_future flat_map
+      loop_task_roots app] in *.
+    now apply loop_partition_enter.
+  - destruct vs as [|v vs]; injection Hstep as <-; unfold loop_partition_state in *;
+      cbn [loop_tree_output loop_tree_pending loop_order loop_future flat_map
+        loop_task_roots app] in *; exact Hpart.
+  - destruct vs as [|v vs].
+    + injection Hstep as <-. unfold loop_partition_state in *.
+      cbn [loop_tree_output loop_tree_pending loop_order loop_future flat_map
+        loop_task_roots app] in *; exact Hpart.
+    + destruct (trie_get v active) as [[]|]; injection Hstep as <-;
+        unfold loop_partition_state in *;
+        cbn [loop_tree_output loop_tree_pending loop_order loop_future flat_map
+          loop_task_roots app] in *; exact Hpart.
+  - injection Hstep as <-. unfold loop_partition_state in *.
+    cbn [loop_tree_output loop_tree_pending loop_order loop_future flat_map
+      loop_task_roots app] in *; exact Hpart.
+Qed.
+
+(** The reachable-state invariant combines balanced tasks, the ancestor stack and a partition. *)
+Local Definition loop_tree_core g t r st : Prop :=
+  loop_tasks_wf g t r (loop_tree_stack st) (loop_tree_pending st) /\
+  loop_stack_state t r st /\ loop_partition_state g t r st.
+
+Local Lemma loop_tree_core_initial g t r : wf_graph (base g) -> domtree_exact g r t ->
+  loop_tree_core g t r
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)).
+Proof.
+  intros Hgraph Htree. split.
+  - apply loop_tasks_initial.
+  - split; [|now apply loop_partition_initial].
+    split; [constructor|]. intro x. cbn [loop_tree_active loop_tree_stack].
+    rewrite PTrie.get_empty. split; [discriminate|contradiction].
+Qed.
+
+Local Lemma loop_tree_core_step g t r st next : domtree_exact g r t ->
+  loop_tree_core g t r st -> tree_step g t st = inl next -> loop_tree_core g t r next.
+Proof.
+  intros Htree [Htasks [Hstack Hpartition]] Hstep. split.
+  - exact (loop_tasks_step g t r st next Htree Htasks Hstep).
+  - split.
+    + exact (loop_stack_state_step g t r st next Htree Htasks Hstack Hstep).
+    + exact (loop_partition_step g t r st next Htree Hpartition Hstep).
+Qed.
+
+Local Lemma loop_tree_core_iteration g t r : wf_graph (base g) -> domtree_exact g r t ->
+  forall n, loop_tree_core g t r
+    (Nat.iter n (fun st => match tree_step g t st with inl next => next | inr _ => st end)
+      (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty))).
+Proof.
+  intros Hgraph Htree n. induction n as [|n IH].
+  - now apply loop_tree_core_initial.
+  - rewrite Nat.iter_succ.
+    destruct (tree_step g t (Nat.iter n
+      (fun st => match tree_step g t st with inl next => next | inr _ => st end)
+      (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty))))
+      as [next|result] eqn:Hstep; [|exact IH].
+    eapply loop_tree_core_step; [exact Htree|exact IH|exact Hstep].
+Qed.
+
+(** A fresh tree entry spends exactly its weighted unvisited-node allowance. *)
+Local Fixpoint loop_unseen_order (weight : positive -> nat)
+    (vertices seen : list positive) : nat :=
+  match vertices with
+  | [] => 0
+  | v :: rest => if existsb (Pos.eqb v) seen then loop_unseen_order weight rest seen
+      else weight v + loop_unseen_order weight rest seen
+  end.
+
+Local Lemma loop_existsb_member v seen : existsb (Pos.eqb v) seen = true <-> In v seen.
+Proof.
+  rewrite existsb_exists. split.
+  - intros [x [Hin Heq]]. apply Pos.eqb_eq in Heq. now subst x.
+  - intro Hin. exists v. split; [exact Hin|apply Pos.eqb_refl].
+Qed.
+
+Local Lemma loop_existsb_fresh v seen : ~ In v seen -> existsb (Pos.eqb v) seen = false.
+Proof.
+  intro Hfresh. destruct (existsb (Pos.eqb v) seen) eqn:Htest; [|reflexivity].
+  exfalso. apply Hfresh. now apply loop_existsb_member.
+Qed.
+
+Local Lemma loop_unseen_order_absent weight vertices seen v : ~ In v vertices ->
+  loop_unseen_order weight vertices (v :: seen) = loop_unseen_order weight vertices seen.
+Proof.
+  induction vertices as [|x rest IH]; intro Habsent; [reflexivity|].
+  assert (Hne : x <> v) by (intro Heq; apply Habsent; now left).
+  assert (Htest : Pos.eqb x v = false) by now apply Pos.eqb_neq.
+  cbn [loop_unseen_order existsb]. rewrite Htest. cbn [orb].
+  rewrite IH by (intro Hin; apply Habsent; now right). reflexivity.
+Qed.
+
+Local Lemma loop_unseen_order_mark weight vertices : NoDup vertices ->
+  forall seen v, In v vertices -> ~ In v seen ->
+  loop_unseen_order weight vertices seen =
+    weight v + loop_unseen_order weight vertices (v :: seen).
+Proof.
+  intro Hunique. induction Hunique as [|x rest Hfresh Hunique IH];
+    intros seen v Hin Hseen; [contradiction|].
+  cbn [loop_unseen_order]. destruct Hin as [<-|Hin].
+  - rewrite (loop_existsb_fresh x seen Hseen). cbn [existsb].
+    rewrite Pos.eqb_refl. cbn [orb].
+    now rewrite (loop_unseen_order_absent weight rest seen x Hfresh).
+  - assert (Hne : x <> v) by (intro Heq; subst v; contradiction).
+    assert (Htest : Pos.eqb x v = false) by now apply Pos.eqb_neq.
+    cbn [existsb]. rewrite Htest. cbn [orb].
+    rewrite (IH seen v Hin Hseen). destruct (existsb (Pos.eqb x) seen); lia.
+Qed.
+
+Local Definition loop_entry_weight g t v : nat :=
+  4 + length (succs (base g) v) + 2 * length (children t v).
+
+Local Definition loop_task_weight task : nat :=
+  match task with
+  | LoopTreeRoot _ => 2
+  | LoopTreeEnter _ | LoopTreeLeave _ => 1
+  | LoopTreeChildren vs => 2 * length vs + 1
+  | LoopTreeEdges _ vs => length vs + 1
+  end.
+
+Local Definition loop_tree_work g t st : nat :=
+  loop_unseen_order (loop_entry_weight g t) (nodes g) (loop_order (loop_tree_output st)) +
+  fold_right (fun task n => loop_task_weight task + n) 0 (loop_tree_pending st).
+
+Local Lemma loop_tree_work_step g t r st next : wf_graph (base g) -> domtree_exact g r t ->
+  loop_partition_state g t r st -> tree_step g t st = inl next ->
+  loop_tree_work g t next < loop_tree_work g t st.
+Proof.
+  intros Hgraph Htree Hpart Hstep. destruct st as [tasks stack active [order latches backs]].
+  destruct tasks as [|task rest]; [discriminate Hstep|].
+  destruct task as [v|v|vs|u vs|v]; cbn [tree_step] in Hstep.
+  - destruct (trie_get v (pre t)); destruct (trie_get v (idom t));
+      injection Hstep as <-; unfold loop_tree_work;
+      cbn [loop_tree_output loop_order loop_tree_pending fold_right loop_task_weight]; lia.
+  - assert (Hin : In v (nodes g)).
+    { rewrite loop_nodes_verts. apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+      destruct Hpart as [_ _ _ Hlive _ _ _]. apply Hlive. now left. }
+    assert (Hfresh : ~ In v order).
+    { destruct Hpart as [_ _ _ _ Hseparate _ _].
+      exact (Hseparate v v (or_introl eq_refl) (tree_anc_refl (idom t) v)). }
+    pose proof (loop_unseen_order_mark (loop_entry_weight g t) (nodes g)
+      (loop_nodes_unique g Hgraph) order v Hin Hfresh) as Hmark.
+    injection Hstep as <-. unfold loop_tree_work.
+    cbn [loop_tree_output loop_order loop_tree_pending fold_right loop_task_weight].
+    rewrite Hmark. unfold loop_entry_weight. lia.
+  - destruct vs as [|v vs]; injection Hstep as <-; unfold loop_tree_work;
+      cbn [loop_tree_output loop_order loop_tree_pending fold_right loop_task_weight length]; lia.
+  - destruct vs as [|v vs].
+    + injection Hstep as <-. unfold loop_tree_work.
+      cbn [loop_tree_output loop_order loop_tree_pending fold_right loop_task_weight length]; lia.
+    + destruct (trie_get v active) as [[]|]; injection Hstep as <-; unfold loop_tree_work;
+        cbn [loop_tree_output loop_order loop_tree_pending fold_right loop_task_weight length]; lia.
+  - injection Hstep as <-. unfold loop_tree_work.
+    cbn [loop_tree_output loop_order loop_tree_pending fold_right loop_task_weight]; lia.
+Qed.
+
+(** Exact child rows contain each non-root tree vertex at most once in total. *)
+Local Lemma loop_children_flat_unique g t r : domtree_exact g r t ->
+  forall vertices, NoDup vertices -> NoDup (flat_map (children t) vertices).
+Proof.
+  intros Htree vertices Hunique.
+  pose proof (proj1 (proj2 (proj2 (proj2 Htree)))) as Hchildren.
+  pose proof (proj1 (proj2 (proj2 (proj2 (proj2 Htree))))) as Hrows.
+  induction Hunique as [|v rest Hfresh Hunique IH]; cbn [flat_map]; [constructor|].
+  apply NoDup_app; [exact (proj1 (Hrows v))|exact IH|].
+  intros x Hleft Hright. apply in_flat_map in Hright as [p [Hp Hright]].
+  apply (proj1 (Hchildren v x)) in Hleft.
+  apply (proj1 (Hchildren p x)) in Hright.
+  assert (Heq : v = p) by congruence. subst p. contradiction.
+Qed.
+
+Local Lemma loop_children_total g t r : wf_graph (base g) -> domtree_exact g r t ->
+  fold_right (fun v n => length (children t v) + n) 0 (nodes g) <= graph_n (base g).
+Proof.
+  intros Hgraph Htree.
+  pose proof (loop_children_flat_unique g t r Htree (nodes g) (loop_nodes_unique g Hgraph))
+    as Hunique.
+  assert (Hincluded : incl (flat_map (children t) (nodes g)) (nodes g)).
+  { intros x Hin. apply in_flat_map in Hin as [p [Hp Hchild]].
+    pose proof (proj1 (proj1 (proj2 (proj2 (proj2 Htree))) p x) Hchild) as Hparent.
+    rewrite loop_nodes_verts. apply (loop_reachable_listed (base g) r x Hgraph (proj1 Htree)).
+    exact (proj1 (proj2 (proj1 (proj1 (proj2 Htree)) x p Hparent))). }
+  pose proof (NoDup_incl_length Hunique Hincluded) as Hlength.
+  assert (Hsum : forall vertices,
+    length (flat_map (children t) vertices) =
+      fold_right (fun v n => length (children t v) + n) 0 vertices).
+  { intro vertices. induction vertices as [|v rest IH]; cbn [flat_map fold_right length];
+      [reflexivity|now rewrite length_app, IH]. }
+  rewrite Hsum in Hlength.
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+  now rewrite Hnodes in Hlength.
+Qed.
+
+Local Lemma loop_tree_work_initial g t r : wf_graph (base g) -> domtree_exact g r t ->
+  loop_tree_work g t
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) <=
+      8 * graph_n (base g) + graph_e (base g).
+Proof.
+  intros Hgraph Htree. pose proof (loop_children_total g t r Hgraph Htree) as Hchildren.
+  assert (Hwhite : forall vertices,
+    loop_unseen_order (loop_entry_weight g t) vertices [] =
+      4 * length vertices + fold_right (fun v n => length (succs (base g) v) + n) 0 vertices +
+      2 * fold_right (fun v n => length (children t v) + n) 0 vertices).
+  { intro vertices. induction vertices as [|v rest IH]; [reflexivity|].
+    cbn [loop_unseen_order existsb length fold_right]. rewrite IH.
+    unfold loop_entry_weight. lia. }
+  assert (Hpending : forall vertices,
+    fold_right (fun task n => loop_task_weight task + n) 0 (map LoopTreeRoot vertices) =
+      2 * length vertices).
+  { intro vertices. induction vertices as [|v rest IH]; [reflexivity|].
+    cbn [map fold_right length]. rewrite IH. cbn [loop_task_weight]. lia. }
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+  assert (Hedges : fold_right (fun v n => length (succs (base g) v) + n) 0 (nodes g) =
+    graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+  unfold loop_tree_work. cbn [loop_tree_output loop_order loop_tree_pending].
+  rewrite Hwhite, Hpending, Hnodes, Hedges. lia.
+Qed.
+
+Local Lemma loop_classify_finishes g t r :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  exists result, loopN (tree_step g t) (8 * (nv g + ne g + 1))%N
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) = inr result.
+Proof.
+  intros Hgraph Hprepared Htree.
+  apply (loopN_done loop_tree_state loop_scan (tree_step g t)
+    (loop_tree_core g t r) (loop_tree_work g t)).
+  - intros st next Hcore Hstep. split.
+    + exact (loop_tree_core_step g t r st next Htree Hcore Hstep).
+    + exact (loop_tree_work_step g t r st next Hgraph Htree (proj2 (proj2 Hcore)) Hstep).
+  - now apply loop_tree_core_initial.
+  - pose proof (loop_tree_work_initial g t r Hgraph Htree) as Hbound.
+    destruct Hprepared as [Hn [He _]]. rewrite Hn, He. lia.
+Qed.
+
+Local Lemma loop_classify_driver g t r :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  loopN (tree_step g t) (8 * (nv g + ne g + 1))%N
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) =
+      inr (classify g t).
+Proof.
+  intros Hgraph Hprepared Htree.
+  destruct (loop_classify_finishes g t r Hgraph Hprepared Htree) as [result Hdone].
+  unfold classify. now rewrite Hdone.
+Qed.
+
+(** Appending later visits preserves every earlier strict list position. *)
+Local Lemma loop_order_append xs suffix u v :
+  order_before xs u v -> order_before (xs ++ suffix) u v.
+Proof.
+  intros [i [j [Hi [Hj Hij]]]]. exists i, j. split.
+  - rewrite nth_error_app1; [exact Hi|]. apply nth_error_Some. rewrite Hi. discriminate.
+  - split; [|exact Hij]. rewrite nth_error_app1; [exact Hj|].
+    apply nth_error_Some. rewrite Hj. discriminate.
+Qed.
+
+Local Lemma loop_order_append_last xs u v : In u xs -> order_before (xs ++ [v]) u v.
+Proof.
+  intro Hin. apply In_nth_error in Hin as [i Hi]. exists i, (length xs). split.
+  - rewrite nth_error_app1; [exact Hi|]. apply nth_error_Some. rewrite Hi. discriminate.
+  - split.
+    + rewrite nth_error_app2 by lia. now rewrite Nat.sub_diag.
+    + apply nth_error_Some. rewrite Hi. discriminate.
+Qed.
+
+Local Definition loop_tree_ordered t st : Prop :=
+  forall u v, In v (loop_order (loop_tree_output st)) -> tree_anc (idom t) u v -> u <> v ->
+    order_before (rev (loop_order (loop_tree_output st))) u v.
+
+Local Lemma loop_tree_ordered_initial g t :
+  loop_tree_ordered t
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)).
+Proof. intros u v Hin. contradiction. Qed.
+
+Local Lemma loop_tree_ordered_step g t r st next : domtree_exact g r t ->
+  loop_partition_state g t r st -> loop_tree_ordered t st -> tree_step g t st = inl next ->
+  loop_tree_ordered t next.
+Proof.
+  intros Htree Hpart Hordered Hstep. destruct st as [tasks stack active [order latches backs]].
+  destruct tasks as [|task rest]; [discriminate Hstep|].
+  destruct task as [v|v|vs|u vs|v]; cbn [tree_step] in Hstep.
+  - destruct (trie_get v (pre t)); destruct (trie_get v (idom t));
+      injection Hstep as <-; exact Hordered.
+  - injection Hstep as <-. intros u x Hx Hanc Hne.
+    cbn [loop_tree_output loop_order In] in Hx. destruct Hx as [<-|Hx].
+    + cbn [loop_tree_output loop_order rev]. apply loop_order_append_last.
+      apply (proj1 (in_rev order u)).
+      exact (loop_partition_ancestors_seen g t r order (v :: loop_future t rest)
+        v u (proj1 (proj2 Htree)) Hpart (or_introl eq_refl) Hanc Hne).
+    + cbn [loop_tree_output loop_order rev]. apply loop_order_append.
+      exact (Hordered u x Hx Hanc Hne).
+  - destruct vs; injection Hstep as <-; exact Hordered.
+  - destruct vs as [|v vs]; [injection Hstep as <-; exact Hordered|].
+    destruct (trie_get v active) as [[]|]; injection Hstep as <-; exact Hordered.
+  - injection Hstep as <-. exact Hordered.
+Qed.
+
+Local Lemma loop_tree_stop_pending g t st result : tree_step g t st = inr result ->
+  loop_tree_pending st = [].
+Proof.
+  destruct st as [tasks stack active [order latches backs]]. destruct tasks as [|task rest].
+  - reflexivity.
+  - destruct task as [v|v|vs|u vs|v]; cbn [tree_step].
+    + destruct (trie_get v (pre t)); destruct (trie_get v (idom t)); discriminate.
+    + discriminate.
+    + destruct vs; discriminate.
+    + destruct vs as [|v vs]; [discriminate|]. destruct (trie_get v active); discriminate.
+    + discriminate.
+Qed.
+
+Local Definition loop_order_result g (t : domtree) r (result : loop_scan) : Prop :=
+  NoDup (loop_order result) /\ hd_error (loop_order result) = Some r /\
+  (forall v, In v (loop_order result) <-> reach (base g) [r] v) /\
+  forall u v, reach (base g) [r] v -> strictly_dominates (base g) r u v ->
+    order_before (loop_order result) u v.
+
+Local Lemma loop_tree_order_stop g t r st result : domtree_exact g r t ->
+  loop_tree_core g t r st -> loop_tree_ordered t st -> tree_step g t st = inr result ->
+  loop_order_result g t r result.
+Proof.
+  intros Htree Hcore Hordered Hstep.
+  pose proof (loop_tree_stop_pending g t st result Hstep) as Hempty.
+  destruct st as [tasks stack active [order latches backs]]. cbn in Hempty. subst tasks.
+  cbn [tree_step] in Hstep. injection Hstep as <-.
+  rewrite rev_append_rev, app_nil_r. unfold loop_order_result.
+  cbn [loop_order]. destruct Hcore as [_ [_ Hpart]].
+  destruct Hpart as [Hunique Hfuture Hlive Hfuturelive Hseparate Hdisjoint Hcover].
+  cbn [loop_tree_output loop_order loop_tree_pending loop_future flat_map] in *.
+  assert (Hmembers : forall v, In v (rev order) <-> reach (base g) [r] v).
+  { intro v. rewrite <- in_rev. split; [apply Hlive|]. intro Hreach.
+    destruct (Hcover v Hreach) as [Hin|[a [Hin Hanc]]]; [exact Hin|contradiction]. }
+  assert (Hstrict : forall u v, reach (base g) [r] v -> strictly_dominates (base g) r u v ->
+    order_before (rev order) u v).
+  { intros u v Hreach [Hdom Hne]. apply Hordered.
+    - apply (proj2 (in_rev order v)). now apply Hmembers.
+    - exact (dom_exact_dominates_anc g r (idom t) u v (proj1 (proj2 Htree)) Hreach Hdom).
+    - exact Hne. }
+  assert (Hrevunique : NoDup (rev order)) by now apply NoDup_rev.
+  split; [exact Hrevunique|]. split.
+  - assert (Hr : In r (rev order)).
+    { apply Hmembers. exists r, [r]. split; [now left|constructor]. }
+    destruct (rev order) as [|v rest] eqn:Horder; [contradiction|].
+    cbn [hd_error]. destruct (Pos.eq_dec v r) as [->|Hne]; [reflexivity|].
+    exfalso. assert (Hreach : reach (base g) [r] v) by (apply Hmembers; now left).
+    assert (Hrv : r <> v) by congruence.
+    pose proof (Hstrict r v Hreach (conj (loop_root_dominates (base g) r v) Hrv)) as Hbefore.
+    pose proof (dom_cert_before_positions (v :: rest) r v Hrevunique Hbefore) as Hlt.
+    rewrite (dom_cert_position_nth (v :: rest) Hrevunique 0 v eq_refl) in Hlt. lia.
+  - split; assumption.
+Qed.
+
+(** The raw loop invariant handles both early fuel exhaustion and normal termination. *)
+Local Lemma loop_state_result {S R : Type} (step : S -> S + R)
+    (Inv : S -> Prop) (Result : R -> Prop) :
+  (forall st next, Inv st -> step st = inl next -> Inv next) ->
+  (forall st result, Inv st -> step st = inr result -> Result result) ->
+  forall fs (Hacc : Acc loopN_lt fs), Inv (snd fs) ->
+  match Argent.Loop.loop loopN_lt (loopN_step step) fs Hacc with
+  | inl final => Inv final | inr result => Result result end.
+Proof.
+  intros Hcontinue Hstop fs Hacc.
+  induction Hacc as [[fuel st] Hnext IH] using Acc_ind_dep.
+  cbn [snd]. intro Hinv. destruct fuel as [|fuel]; [exact Hinv|].
+  cbn [Argent.Loop.loop loopN_step Acc_inv].
+  destruct (step st) as [next|result] eqn:Hstep.
+  - apply IH. eapply Hcontinue; eassumption.
+  - eapply Hstop; eassumption.
+Qed.
+
+Local Lemma loop_classify_order g t r :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  loop_order_result g t r (classify g t).
+Proof.
+  intros Hgraph Hprepared Htree.
+  pose proof (loop_classify_driver g t r Hgraph Hprepared Htree) as Hdone.
+  assert (Hloop : match loopN (tree_step g t) (8 * (nv g + ne g + 1))%N
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)) with
+    | inl final => loop_tree_core g t r final /\ loop_tree_ordered t final
+    | inr result => loop_order_result g t r result end).
+  { unfold loopN. apply (loop_state_result (tree_step g t)
+      (fun st => loop_tree_core g t r st /\ loop_tree_ordered t st) (loop_order_result g t r)).
+    - intros st next [Hcore Hordered] Hstep. split.
+      + exact (loop_tree_core_step g t r st next Htree Hcore Hstep).
+      + exact (loop_tree_ordered_step g t r st next Htree (proj2 (proj2 Hcore)) Hordered Hstep).
+    - intros st result [Hcore Hordered] Hstep.
+      exact (loop_tree_order_stop g t r st result Htree Hcore Hordered Hstep).
+    - split; [now apply loop_tree_core_initial|apply loop_tree_ordered_initial]. }
+  now rewrite Hdone in Hloop.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -2359,16 +2845,79 @@ Module LoopsT <: LOOPS_ALL.
     rewrite PTrie.get_empty. simpl. split; [discriminate|contradiction].
   Qed.
 
+  Local Lemma tree_history_core : forall g t r st,
+    wf_graph (base g) -> domtree_exact g r t ->
+    (exists n, Nat.iter n (tree_advance g t) (tree_initial g) = st) ->
+    loop_tree_core g t r st.
+  Proof.
+    intros g t r st Hgraph Htree [n Hhistory].
+    pose proof (loop_tree_core_iteration g t r Hgraph Htree n) as Hcore.
+    change (loop_tree_core g t r (Nat.iter n (tree_advance g t) (tree_initial g))) in Hcore.
+    now rewrite Hhistory in Hcore.
+  Qed.
+
+  Local Lemma tree_core_observed : forall g t r st,
+    domtree_exact g r t ->
+    (exists n, Nat.iter n (tree_advance g t) (tree_initial g) = st) ->
+    loop_tree_core g t r st -> tree_invariant g t r st.
+  Proof.
+    intros g t r st Htree Hhistory [Htasks [[Hchain Hagree] Hpart]].
+    destruct Hpart as [Hunique Hfuture Hlive Hfuturelive Hseparate Hdisjoint Hcover].
+    split; [exact Hhistory|]. split; [exact Hunique|]. split; [exact Hlive|].
+    split.
+    - apply (loop_stack_unique (idom t) r (loop_tree_stack st)); [| |exact Hchain].
+      + exact (proj2 (proj2 (proj1 (proj2 Htree)))).
+      + exact (loop_exact_root_none g t r Htree).
+    - split; [exact Hagree|]. exact (loop_stack_links (idom t) r (loop_tree_stack st) Hchain).
+  Qed.
+
+  Local Lemma tree_potential_work : forall g t st,
+    tree_potential g t st = N.of_nat (loop_tree_work g t st).
+  Proof.
+    intros g t st. unfold tree_potential, tree_white, tree_pending, loop_tree_work.
+    assert (Hwhite : forall vertices seen,
+      fold_right (fun v n => if existsb (Pos.eqb v) seen then n
+        else 4 + length (succs (base g) v) + 2 * length (children t v) + n) 0 vertices =
+      loop_unseen_order (loop_entry_weight g t) vertices seen).
+    { intro vertices. induction vertices as [|v rest IH]; intro seen; [reflexivity|].
+      cbn [fold_right loop_unseen_order loop_entry_weight]. now rewrite IH. }
+    assert (Hpending : forall tasks,
+      fold_right (fun task n => match task with
+        | LoopTreeRoot _ => 2 + n
+        | LoopTreeEnter _ | LoopTreeLeave _ => 1 + n
+        | LoopTreeChildren vs => 2 * length vs + 1 + n
+        | LoopTreeEdges _ vs => length vs + 1 + n
+        end) 0 tasks = fold_right (fun task n => loop_task_weight task + n) 0 tasks).
+    { intro tasks. induction tasks as [|task rest IH]; [reflexivity|].
+      destruct task; cbn [fold_right loop_task_weight]; now rewrite IH. }
+    now rewrite Hwhite, Hpending.
+  Qed.
+
   Lemma F2_tree_step : forall g t r st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     tree_invariant g t r st -> tree_step g t st = inl next ->
     tree_invariant g t r next /\ (tree_potential g t next < tree_potential g t st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r st next Hgraph Hprepared Htree Hinv Hstep.
+    pose proof (proj1 Hinv) as Hhistory.
+    pose proof (tree_history_core g t r st Hgraph Htree Hhistory) as Hcore.
+    pose proof (loop_tree_core_step g t r st next Htree Hcore Hstep) as Hnext.
+    split.
+    - apply (tree_core_observed g t r next Htree); [|exact Hnext].
+      destruct Hhistory as [n Hhistory]. exists (S n). rewrite Nat.iter_succ, Hhistory.
+      unfold tree_advance. now rewrite Hstep.
+    - pose proof (loop_tree_work_step g t r st next Hgraph Htree
+        (proj2 (proj2 Hcore)) Hstep) as Hprogress.
+      rewrite !tree_potential_work. lia.
+  Qed.
 
   Lemma F3_tree_driver : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     loopN (tree_step g t) (tree_fuel g) (tree_initial g) = inr (classify g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    exact (loop_classify_driver g t r Hgraph Hprepared Htree).
+  Qed.
 
   Lemma F4_tree_order : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -2376,7 +2925,10 @@ Module LoopsT <: LOOPS_ALL.
     (forall v, In v (loop_order (classify g t)) <-> reach (base g) [r] v) /\
     forall u v, reach (base g) [r] v -> strictly_dominates (base g) r u v ->
       order_before (loop_order (classify g t)) u v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    exact (loop_classify_order g t r Hgraph Hprepared Htree).
+  Qed.
 
   Lemma F5_back_edges : forall g t r u v,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
