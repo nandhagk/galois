@@ -7,7 +7,7 @@
 From Stdlib Require Import List NArith PArith Arith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
-From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search SccSig.
+From Galois.Graph Require Import Data Spec DigraphSig Digraph SearchSig Search SccSig.
 Import List.ListNotations.
 
 Module Pos.
@@ -1478,6 +1478,190 @@ Proof.
 Qed.
 
 
+(** Every input successor occurrence is covered by the input graph width. *)
+Lemma scc_input_row_width g v : In v (nodes g) ->
+  Forall (fun u => Pos.size_nat u <= graph_width (base g)) (succs (base g) v).
+Proof.
+  intros Hin. apply Forall_forall. intros u Hedge.
+  destruct g as [[vertices adjacency] predecessors n e].
+  cbn [nodes base] in *. unfold graph_width. rewrite search_graph_max.
+  eapply Nat.le_trans.
+  - exact (search_row_width_member (Digraph vertices adjacency) vertices v u Hin Hedge).
+  - apply Nat.le_max_r.
+Qed.
+
+Local Lemma scc_listed_fold_time w vertices listed :
+  Forall (fun v => Pos.size_nat v <= w) vertices ->
+  (List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+    (fun acc v => 1 + PTrieCode.T_set v true acc)%N vertices listed <=
+    2048 * N.of_nat (length vertices + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Hwidth. revert listed. induction Hwidth as [|v vertices Hv Hwidth IH]; intros listed.
+  - time_unfold @List.T_fold_left. cbn [length]. lia.
+  - pose proof (PTrieT.T_set_le bool v true listed) as Hset.
+    change (PTrieCode.T_set v true listed <=
+      1024 * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+    specialize (IH (PTrieCode.set v true listed)).
+    time_unfold @List.T_fold_left. cbn beta. cbn [length].
+    rewrite !Nat2N.inj_add, ?time_of_nat_succ in *. nia.
+Qed.
+
+Local Lemma scc_filter_time w (listed : ptrie bool) vertices :
+  Forall (fun v => Pos.size_nat v <= w) vertices ->
+  (List.T_filter (fun v => match trie_get v listed with Some _ => true | None => false end)
+    (fun v => 1 + T_trie_get v listed)%N vertices <=
+    4 * N.of_nat (length vertices + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Hwidth. induction Hwidth as [|v vertices Hv Hwidth IH].
+  - time_unfold @List.T_filter. cbn [length]. lia.
+  - time_unfold @List.T_filter. cbn beta. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get v listed); time_cbn; cbn [length];
+      rewrite !Nat2N.inj_add, ?time_of_nat_succ in *; nia.
+Qed.
+
+Local Lemma scc_row_time g w (listed : ptrie bool) v rows :
+  Pos.size_nat v <= w -> Forall (fun u => Pos.size_nat u <= w) (succs g v) ->
+  (1 + (((1 + T_succs g v) +
+    List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (fun u => 1 + T_trie_get u listed)%N (succs g v)) +
+    PTrieCode.T_set v
+      (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+        (succs g v)) rows) <=
+    2048 * N.of_nat (length (succs g v) + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Hv Hrow. pose proof (scc_filter_time w listed (succs g v) Hrow) as Hfilter.
+  pose proof (search_succs_clock g v) as Hread.
+  pose proof (PTrieT.T_set_le (list positive) v
+    (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (succs g v)) rows) as Hset.
+  change (PTrieCode.T_set v
+    (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+      (succs g v)) rows <= 1024 * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Local Lemma scc_rows_fold_time g w (listed : ptrie bool) vertices rows :
+  Forall (fun v => Pos.size_nat v <= w /\
+    Forall (fun u => Pos.size_nat u <= w) (succs g v)) vertices ->
+  (List.T_fold_left
+    (fun acc v => PTrieCode.set v
+      (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+        (succs g v)) acc)
+    (fun acc v => 1 + (((1 + T_succs g v) +
+      List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+        (fun u => 1 + T_trie_get u listed)%N (succs g v)) +
+      PTrieCode.T_set v
+        (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+          (succs g v)) acc))%N vertices rows <=
+    4096 * N.of_nat (length vertices +
+      fold_right (fun v n => (length (succs g v) + n)%nat) 0%nat vertices + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Hwidth. revert rows. induction Hwidth as [|v vertices [Hv Hrow] Hwidth IH]; intros rows.
+  - time_unfold @List.T_fold_left. cbn [length fold_right]. lia.
+  - pose proof (scc_row_time g w listed v rows Hv Hrow) as Hhead.
+    specialize (IH (PTrieCode.set v
+      (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+        (succs g v)) rows)).
+    time_unfold @List.T_fold_left. cbn beta. cbn [length fold_right].
+    rewrite !Nat2N.inj_add, ?time_of_nat_succ in *. clear - IH Hhead. nia.
+Qed.
+
+(** Rebuilding membership, filtered rows, and both count caches has the input size cost. *)
+Lemma scc_graph_time g :
+  (T_scc_graph g <= 16384 * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+    N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  assert (Hkeys : Forall (fun v => Pos.size_nat v <= graph_width (base g)) (nodes g)).
+  { apply Forall_forall. intros v Hin. now apply scc_node_width. }
+  assert (Hrows : Forall (fun v => Pos.size_nat v <= graph_width (base g) /\
+      Forall (fun u => Pos.size_nat u <= graph_width (base g)) (succs (base g) v)) (nodes g)).
+  { apply Forall_forall. intros v Hin. split.
+    - now apply scc_node_width.
+    - now apply scc_input_row_width. }
+  pose proof (scc_listed_fold_time (graph_width (base g)) (nodes g) Empty Hkeys) as Hlisted_time.
+  pose proof (scc_rows_fold_time (base g) (graph_width (base g))
+    (fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty)
+    (nodes g) Empty Hrows) as Hrows_time.
+  pose proof (digraph_vertex_count_time (base (scc_graph g))) as Hvertices_time.
+  pose proof (digraph_edge_count_time (base (scc_graph g))) as Hedges_time.
+  pose proof (graph_of_nat_time (graph_n (base (scc_graph g)))) as Hvertices_conversion.
+  pose proof (graph_of_nat_time (graph_e (base (scc_graph g)))) as Hedges_conversion.
+  destruct (scc_graph_size g) as [Hvertices Hedges].
+  pose proof (scc_graph_width g) as Hwidth.
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedge_sum : fold_right (fun v n => length (succs (base g) v) + n) 0 (nodes g) =
+      graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  rewrite Hnodes in Hlisted_time. rewrite Hnodes, Hedge_sum in Hrows_time.
+  clear Hkeys Hrows Hnodes Hedge_sum.
+  set (size := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
+  set (width := N.of_nat (graph_width (base g) + 1)) in *.
+  set (budget := (size * width)%N).
+  assert (Hwidth_positive : (1 <= width)%N) by (unfold width; lia).
+  assert (Hsize_budget : (size <= budget)%N).
+  { unfold budget. rewrite <- (N.mul_1_r size) at 1.
+    apply N.mul_le_mono_l. exact Hwidth_positive. }
+  assert (Hvertex_count : (N.of_nat (graph_n (base (scc_graph g)) + 1) <= size)%N).
+  { unfold size. lia. }
+  assert (Hedge_count : (N.of_nat (graph_e (base (scc_graph g)) + 1) <= size)%N).
+  { unfold size. lia. }
+  assert (Hlisted_product : (N.of_nat (graph_n (base g) + 1) * width <= budget)%N).
+  { unfold budget. apply N.mul_le_mono_r. unfold size. lia. }
+  assert (Hfiltered_product :
+    (N.of_nat (graph_n (base (scc_graph g)) + graph_e (base (scc_graph g)) + 1) *
+      N.of_nat (graph_width (base (scc_graph g)) + 1) <= budget)%N).
+  { unfold budget, size, width. apply N.mul_le_mono; lia. }
+  rewrite <- N.mul_assoc in Hlisted_time, Hrows_time, Hedges_time.
+  assert (Hlisted_scale :
+    (2048 * (N.of_nat (graph_n (base g) + 1) * width) <= 2048 * budget)%N).
+  { apply N.mul_le_mono_l. exact Hlisted_product. }
+  pose proof (N.le_trans _ _ _ Hlisted_time Hlisted_scale) as Hlisted_final.
+  fold budget in Hrows_time.
+  assert (Hedges_final : (T_graph_e (base (scc_graph g)) <= 16 * budget)%N).
+  { eapply N.le_trans; [exact Hedges_time|].
+    apply N.mul_le_mono_l. exact Hfiltered_product. }
+  assert (Hvertices_final : (T_graph_n (base (scc_graph g)) <= 2 * budget)%N) by lia.
+  assert (Hvertices_convert :
+    (TimeHelpers.N.T_of_nat (graph_n (base (scc_graph g))) <= 3 * budget)%N) by lia.
+  assert (Hedges_convert :
+    (TimeHelpers.N.T_of_nat (graph_e (base (scc_graph g))) <= 3 * budget)%N) by lia.
+  assert (Hpositive : (1 <= budget)%N).
+  { eapply N.le_trans; [|exact Hsize_budget]. unfold size. lia. }
+  assert (Hrebuilt :
+    Digraph (nodes g)
+      (fold_left (fun acc v => PTrieCode.set v
+        (filter (fun u => match trie_get u
+          (fold_left (fun table key => PTrieCode.set key true table) (nodes g) Empty) with
+          | Some _ => true | None => false end) (succs (base g) v)) acc)
+        (nodes g) Empty) = base (scc_graph g)) by reflexivity.
+  time_unfold @T_scc_graph. unfold T_nodes, T_base. cbn beta iota zeta.
+  rewrite Hrebuilt.
+  rewrite <- N.mul_assoc. fold budget. clearbody budget.
+  clear - Hlisted_final Hrows_time Hvertices_final Hedges_final
+    Hvertices_convert Hedges_convert Hpositive.
+  lia.
+Qed.
+
+(** Filtered trace construction includes preprocessing, root access, and the raw search clock. *)
+Lemma scc_trace_time g :
+  (1 + T_scc_trace g <= (8 * (search_trace_coefficient + 4096)) *
+    N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  pose proof (scc_graph_time g) as Hgraph.
+  pose proof (prepared_search_time (scc_graph g) (nodes (scc_graph g))) as Hsearch.
+  pose proof (scc_trace_raw_work g) as Hwork.
+  assert (Hscaled : (search_trace_coefficient *
+      search_trace_raw_work (scc_graph g) (nodes (scc_graph g)) <=
+      search_trace_coefficient * (4 *
+        N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+        N.of_nat (graph_width (base g) + 1)))%N).
+  { apply N.mul_le_mono_l. exact Hwork. }
+  clear Hwork. time_unfold @T_scc_trace. unfold T_nodes. cbn beta iota zeta. nia.
+Qed.
+
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
@@ -1555,7 +1739,7 @@ Module SccT <: SCC_ALL.
   Definition k_pop : N := 4096%N.
   Definition k_callback : N := 65536%N.
   Definition k_result : N := 8%N.
-  Definition k_search : N := 1%N. (* STUB *)
+  Definition k_search : N := (8 * (search_trace_coefficient + 4096))%N.
 
   Definition apply_event (s : tarjan_state) (e : event) : tarjan_state :=
     visit_event tarjan_enter tarjan_leave tarjan_edge s e.
@@ -1968,7 +2152,9 @@ Module SccT <: SCC_ALL.
   Lemma T4_trace : forall g,
     (T_tarjan_trace g <= k_search * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g. unfold k_search. time_unfold @T_tarjan_trace. apply scc_trace_time.
+  Qed.
 
   Local Opaque scc_trace prepared_search_trace.
 
