@@ -427,6 +427,180 @@ Proof.
   - eapply Hstop; eassumption.
 Qed.
 
+(** Unseen listed vertices provide a finite private fuel measure. *)
+Definition df_unseen (vertices : list positive) (seen : ptrie unit) : nat :=
+  length (filter (fun x => match trie_get x seen with None => true | Some _ => false end) vertices).
+
+Lemma df_unseen_other : forall vertices seen x,
+  ~ In x vertices -> df_unseen vertices (PTrieCode.set x tt seen) = df_unseen vertices seen.
+Proof.
+  intros vertices seen x Hnot. unfold df_unseen. f_equal.
+  apply filter_ext_in. intros u Hu. rewrite PTrie.get_set_other; [reflexivity|].
+  intro Heq. subst u. contradiction.
+Qed.
+
+Lemma df_unseen_fresh : forall vertices seen x,
+  NoDup vertices -> In x vertices -> trie_get x seen = None ->
+  df_unseen vertices seen = S (df_unseen vertices (PTrieCode.set x tt seen)).
+Proof.
+  intro vertices. induction vertices as [|v rest IH]; intros seen x Hunique Hin Hfresh.
+  - contradiction.
+  - inversion Hunique as [|? ? Hnot Hrest]; subst.
+    destruct Hin as [Heq|Hin].
+    + subst v. unfold df_unseen at 1 2. cbn [filter].
+      rewrite Hfresh, PTrie.get_set_same. cbn [length].
+      fold (df_unseen rest seen) (df_unseen rest (PTrieCode.set x tt seen)).
+      now rewrite df_unseen_other.
+    + assert (Hvx : v <> x) by (intro Heq; subst v; contradiction).
+      specialize (IH seen x Hrest Hin Hfresh).
+      unfold df_unseen at 1 2. cbn [filter]. rewrite PTrie.get_set_other by exact Hvx.
+      destruct (trie_get v seen) as [[]|] eqn:Hget.
+      * change (PTrie.get v seen = Some tt) in Hget. rewrite Hget. cbn [length]. exact IH.
+      * change (PTrie.get v seen = None) in Hget. rewrite Hget. cbn [length].
+        fold (df_unseen rest seen) (df_unseen rest (PTrieCode.set x tt seen)). now rewrite IH.
+Qed.
+
+Lemma df_unseen_empty : forall vertices, df_unseen vertices Empty = length vertices.
+Proof.
+  intro vertices. induction vertices as [|v rest IH]; [reflexivity|].
+  unfold df_unseen. cbn [filter]. rewrite PTrie.get_empty. cbn [length].
+  fold (df_unseen rest Empty). now rewrite IH.
+Qed.
+
+Definition df_progress (g : prepared) (st : df_state) : nat :=
+  2 * df_unseen (nodes g) (df_seen st) + length (df_pending st).
+
+Lemma df_progress_step : forall g t r y st next,
+  wf_graph (base g) -> domtree_exact g r t -> df_valid g t y st ->
+  df_step g t y st = inl next -> df_progress g next < df_progress g st.
+Proof.
+  intros g t r y [pending seen answer] next Hgraph Htree Hvalid Hstep.
+  destruct pending as [|x rest]; [discriminate Hstep|].
+  destruct (df_step_behavior g t y x rest seen answer next Hstep)
+    as [[-> Hretire]|[-> [Hfresh Henabled]]].
+  - unfold df_progress. cbn [df_seen df_pending length]. lia.
+  - assert (Hnodes : NoDup (nodes g)).
+    { destruct g as [[vertices adjacency] predecessors vertices_count edges_count].
+      exact (proj1 Hgraph). }
+    pose proof (df_unseen_fresh (nodes g) seen x Hnodes
+      (df_valid_pending_nodes _ _ _ _ Hvalid x (or_introl eq_refl)) Hfresh) as Hcredit.
+    pose proof (df_follow_length t x rest) as Hlength.
+    unfold df_progress. cbn [df_seen df_pending length]. lia.
+Qed.
+
+Lemma df_progress_initial : forall g y,
+  prepared_ok g ->
+  (N.of_nat (df_progress g (DfState (preds g y) Empty [])) <
+    4 * (nv g + N.of_nat (length (preds g y)) + 1))%N.
+Proof.
+  intros g y [Hnv Hprepared]. unfold df_progress. cbn [df_seen df_pending].
+  rewrite df_unseen_empty.
+  replace (graph_n (base g)) with (length (nodes g)) in Hnv by
+    (destruct g as [[vertices adjacency] predecessors vertices_count edges_count]; reflexivity).
+  lia.
+Qed.
+
+(** A bounded driver preserves the state invariant and certifies every normal return. *)
+Lemma frontier_loopN_invariant {S R : Type} (step : S -> S + R)
+    (Inv : S -> Prop) (Out : R -> Prop) :
+  (forall st next, Inv st -> step st = inl next -> Inv next) ->
+  (forall st result, Inv st -> step st = inr result -> Out result) ->
+  forall fuel st, Inv st ->
+    match loopN step fuel st with inl next => Inv next | inr result => Out result end.
+Proof.
+  intros Hcontinue Hstop fuel st Hinv.
+  assert (Hloop : forall fs Hacc, Inv (snd fs) ->
+    match Argent.Loop.loop loopN_lt (loopN_step step) fs Hacc with
+    | inl next => Inv next | inr result => Out result
+    end).
+  { apply (frontier_loop_invariant loopN_lt (loopN_step step)
+      (fun fs => Inv (snd fs))
+      (fun answer => match answer with inl next => Inv next | inr result => Out result end)).
+    - intros [fuel0 st0] [fuel1 st1] Hlt Hvalid Hnext.
+      destruct fuel0 as [|p]; [discriminate Hnext|].
+      cbn [loopN_step] in Hnext.
+      destruct (step st0) as [next|result] eqn:Hstep; [|discriminate Hnext].
+      injection Hnext as Heq. inversion Heq; subst.
+      eapply Hcontinue; eassumption.
+    - intros [fuel0 st0] answer Hvalid Hdone.
+      destruct fuel0 as [|p].
+      + cbn [loopN_step] in Hdone. injection Hdone as <-. exact Hvalid.
+      + cbn [loopN_step] in Hdone.
+        destruct (step st0) as [next|result] eqn:Hstep; [discriminate Hdone|].
+        injection Hdone as <-. eapply Hstop; eassumption. }
+  unfold loopN.
+  match goal with
+  | |- context [Argent.Loop.loop _ _ ?fs ?Hacc] => exact (Hloop fs Hacc Hinv)
+  end.
+Qed.
+
+Lemma df_step_stopping : forall g t y st result,
+  df_step g t y st = inr result ->
+  df_pending st = [] /\ result = rev (df_column_answer st).
+Proof.
+  intros g t y [pending seen answer] result Hstep.
+  destruct pending as [|x rest]; cbn [df_step] in Hstep.
+  - injection Hstep as <-. split; [reflexivity|]. now rewrite rev_append_rev, app_nil_r.
+  - destruct (trie_get x (pre t)); [|discriminate Hstep].
+    destruct (trie_get x seen); [discriminate Hstep|].
+    destruct (trie_get y (idom t)) as [b|].
+    + destruct (Pos.eqb x b); [discriminate Hstep|].
+      destruct (trie_get x (idom t)); discriminate Hstep.
+    + destruct (trie_get x (idom t)); discriminate Hstep.
+Qed.
+
+(* Opaque drivers keep conversion from expanding their concrete accessibility proofs. *)
+Local Opaque Argent.Loop.loop Acc_intro_generator.
+
+Lemma df_column_finished : forall g t r y,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  exists st result,
+    df_valid g t y st /\ df_step g t y st = inr result /\
+    loopN (df_step g t y) (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N
+      (DfState (preds g y) Empty []) = inr result /\ df_column g t y = result.
+Proof.
+  intros g t r y Hgraph Hprepared Htree.
+  pose proof (df_valid_initial g t y Hprepared) as Hinitial.
+  assert (Hcontinue : forall st next, df_valid g t y st -> df_step g t y st = inl next ->
+    df_valid g t y next /\ df_progress g next < df_progress g st).
+  { intros st next Hvalid Hstep. split.
+    - eapply df_valid_step; eassumption.
+    - eapply df_progress_step; eassumption. }
+  destruct (loopN_done df_state (list positive) (df_step g t y) (df_valid g t y)
+    (df_progress g) (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N
+    (DfState (preds g y) Empty []) Hcontinue Hinitial (df_progress_initial g y Hprepared))
+    as [result Hrun].
+  pose proof (frontier_loopN_invariant (df_step g t y) (df_valid g t y)
+    (fun result => exists st, df_valid g t y st /\ df_step g t y st = inr result)
+    (fun st next Hvalid Hstep => proj1 (Hcontinue st next Hvalid Hstep))
+    (fun st result Hvalid Hstop => ex_intro _ st (conj Hvalid Hstop))
+    (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N
+    (DfState (preds g y) Empty []) Hinitial) as Hresult.
+  rewrite Hrun in Hresult. destruct Hresult as [st [Hvalid Hstop]].
+  exists st, result. split; [exact Hvalid|]. split; [exact Hstop|]. split; [exact Hrun|].
+  unfold df_column. now rewrite Hrun.
+Qed.
+
+Lemma df_column_correct : forall g t r y,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  NoDup (df_column g t y) /\ incl (df_column g t y) (nodes g) /\
+    forall x, In x (df_column g t y) <-> in_frontier (base g) r x y.
+Proof.
+  intros g t r y Hgraph Hprepared Htree.
+  destruct (df_column_finished g t r y Hgraph Hprepared Htree)
+    as [[pending seen answer] [result [Hvalid [Hstop [Hrun Hcolumn]]]]].
+  destruct (df_step_stopping g t y _ result Hstop) as [Hpending Hresult].
+  cbn [df_pending df_column_answer] in Hpending, Hresult. subst pending.
+  rewrite Hresult in Hcolumn.
+  rewrite Hcolumn. split.
+  - apply NoDup_rev. exact (df_valid_unique _ _ _ _ Hvalid).
+  - split.
+    + intros x Hx. apply (proj2 (in_rev answer x)) in Hx.
+      exact (df_valid_answer_nodes _ _ _ _ Hvalid x Hx).
+    + intro x. rewrite <- (in_rev answer x). rewrite (df_valid_closed g t y seen answer Hvalid x).
+      apply (df_route_spec g t r x y Hgraph Hprepared Htree).
+Qed.
+
 (** Inserting one previously unseen pair preserves row uniqueness and exact marks. *)
 Lemma df_insert_valid : forall y x state,
   df_rows_valid state -> df_rows_valid (df_insert y x state).
@@ -870,9 +1044,6 @@ Proof.
     rewrite PTrie.get_empty. cbn [In]. split; [discriminate|contradiction].
 Qed.
 
-(* Keep wrapper conversion from expanding concrete accessibility drivers. *)
-Local Opaque Argent.Loop.loop Acc_intro_generator.
-
 Module FrontierCode <: FRONTIER_OPS.
   Definition df := df.
   Definition idf := idf.
@@ -885,7 +1056,22 @@ Module Frontier <: FRONTIER.
   Lemma df_spec : forall g t r x y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     In y (frontier_row (df g t) x) <-> in_frontier (base g) r x y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r x y Hgraph Hprepared Htree.
+    change (In y (frontier_row
+      (df_transpose (map (fun v => (v, df_column g t v)) (nodes g))) x) <->
+      in_frontier (base g) r x y).
+    rewrite df_transpose_member. split.
+    - intros [column [Hcolumn Hx]]. apply in_map_iff in Hcolumn.
+      destruct Hcolumn as [v [Heq Hv]]. injection Heq as Heqv Heqcolumn. subst v column.
+      exact (proj1 (proj2 (proj2 (df_column_correct g t r y Hgraph Hprepared Htree)) x) Hx).
+    - intro Hfrontier. exists (df_column g t y). split.
+      + apply in_map_iff. exists y. split; [reflexivity|].
+        destruct Hfrontier as [[p [Hp [Hedge Hdom]]] Hstrict].
+        apply (frontier_reach_listed g r y Hgraph (proj1 Htree)).
+        eapply frontier_reach_edge; eassumption.
+      + exact (proj2 (proj2 (proj2 (df_column_correct g t r y Hgraph Hprepared Htree)) x) Hfrontier).
+  Qed.
 
   Lemma df_unique : forall g t x, NoDup (frontier_row (df g t) x).
   Proof.
@@ -1009,13 +1195,21 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma F4_df_driver : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     loopN (df_step g t y) (df_fuel g y) (df_initial g y) = inr (df_column g t y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r y Hgraph Hprepared Htree Hy.
+    destruct (df_column_finished g t r y Hgraph Hprepared Htree)
+      as [st [result [Hvalid [Hstop [Hrun Hcolumn]]]]].
+    exact (eq_trans Hrun (f_equal (fun answer : list positive =>
+      @inr df_state (list positive) answer) (eq_sym Hcolumn))).
+  Qed.
 
   Lemma F5_df_column : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     NoDup (df_column g t y) /\ incl (df_column g t y) (nodes g) /\
       forall x, In x (df_column g t y) <-> in_frontier (base g) r x y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact df_column_correct.
+  Qed.
 
   Lemma F6_df_transpose : forall columns x y,
     In y (frontier_row (df_transpose columns) x) <->
@@ -1052,7 +1246,12 @@ Module FrontierT <: FRONTIER_ALL.
       (df_credit g t y (df_initial g y) +
         k_df_stop * N.of_nat (length (df_column g t y) + 1) +
         N.of_nat (length (preds g y) + N.size_nat (df_fuel g y) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted.
+  (* PLAN-DEFECT: take a single isolated root y with arbitrarily many key bits,
+     prepared predecessor map Empty and its exact one-node tree. The column and
+     initial credit are empty, and fuel is 8, so this bound has constant RHS.
+     Each predecessor lookup costs 2 * Pos.size_nat y even on Empty. A private
+     column bound must also charge graph_width for this setup work. *)
 
   Lemma T4_df_columns : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
