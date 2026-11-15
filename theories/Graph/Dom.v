@@ -1583,6 +1583,133 @@ Proof.
 Qed.
 
 
+Lemma dom_preorder_parent_before : forall r m o,
+  cert_preorder r m o -> forall v p, trie_get v m = Some p -> order_before o p v.
+Proof.
+  intros r m o [_ [_ [Hroot [Hparents [Hdomain Hcontiguous]]]]] v p Hparent.
+  assert (Hv : In v o) by (eapply Hdomain; exact Hparent).
+  assert (Hne : v <> r) by (intro Heq; subst v; congruence).
+  destruct (Hparents v Hv Hne) as [q [Hq Hbefore]].
+  rewrite Hparent in Hq. injection Hq as <-. exact Hbefore.
+Qed.
+
+Lemma dom_preorder_between_ancestor : forall r m o u w i x,
+  cert_preorder r m o -> In u o -> In w o -> tree_anc m u w ->
+  nth_error o i = Some x -> dom_cert_position o u <= i -> i <= dom_cert_position o w ->
+  tree_anc m u x.
+Proof.
+  intros r m o u w i x [Hunique [_ [_ [_ [_ Hcontiguous]]]]] Hu Hw Hanc Hnth Hlo Hhi.
+  assert (Hx : In x o) by (eapply nth_error_In; exact Hnth).
+  pose proof (dom_cert_position_nth o Hunique i x Hnth) as Hposition.
+  destruct (Nat.eq_dec i (dom_cert_position o u)) as [Heq|Hne].
+  - assert (Hsame : x = u) by (eapply dom_cert_positions_eq; eassumption || lia).
+    subst x. constructor.
+  - destruct (Nat.eq_dec i (dom_cert_position o w)) as [Heq|Hne'].
+    + assert (Hsame : x = w) by (eapply dom_cert_positions_eq; eassumption || lia).
+      now subst x.
+    + apply (Hcontiguous u x w Hanc).
+      * apply dom_cert_positions_before; try assumption; lia.
+      * apply dom_cert_positions_before; try assumption; lia.
+Qed.
+
+(** Contiguity bounds each descendant by the cardinality of its header's subtree. *)
+Lemma dom_preorder_ancestry_point : forall r m o u v,
+  cert_preorder r m o -> In u o -> In v o -> tree_anc m u v ->
+  (N.of_nat (dom_cert_position o u) <= N.of_nat (dom_cert_position o v) /\
+   N.of_nat (dom_cert_position o v) <
+     N.of_nat (dom_cert_position o u) + dom_size_get (dom_sizes m o) u)%N.
+Proof.
+  intros r m o u v Hpre Hu Hv Hanc.
+  pose proof (proj1 Hpre) as Hunique.
+  pose proof (dom_preorder_parent_before r m o Hpre) as Hparents.
+  assert (Hstart : dom_cert_position o u <= dom_cert_position o v).
+  { destruct (Pos.eq_dec u v) as [->|Hne]; [lia|].
+    pose proof (dom_order_anc_before m o Hunique Hparents u v Hanc Hne) as Hbefore.
+    pose proof (dom_cert_before_positions o u v Hunique Hbefore). lia. }
+  set (test := fun x => if dom_order_anc_dec m o Hunique Hparents u x then true else false).
+  assert (Hselected : forall x, In x o -> (test x = true <-> tree_anc m u x)).
+  { intros x Hx. unfold test. destruct (dom_order_anc_dec m o Hunique Hparents u x);
+      split; intro H; try assumption; try reflexivity; try discriminate; contradiction. }
+  pose proof (dom_sizes_cardinality m o u test Hunique Hparents Hu Hselected) as Hcount.
+  assert (Hrange : incl (seq (dom_cert_position o u)
+    (S (dom_cert_position o v) - dom_cert_position o u))
+    (map (dom_cert_position o) (filter test o))).
+  { intros i Hin. apply in_seq in Hin as [Hlow Hhigh].
+    pose proof (dom_cert_position_bound o v Hunique Hv) as Hv_bound.
+    destruct (nth_error o i) as [x|] eqn:Hnth.
+    - assert (Hx : In x o) by (eapply nth_error_In; exact Hnth).
+      apply in_map_iff. exists x. split; [now apply dom_cert_position_nth|].
+      apply filter_In. split; [exact Hx|]. apply (proj2 (Hselected x Hx)).
+      exact (dom_preorder_between_ancestor r m o u v i x Hpre Hu Hv Hanc Hnth Hlow ltac:(lia)).
+    - exfalso. apply nth_error_None in Hnth. lia. }
+  assert (Hrange_unique : NoDup (seq (dom_cert_position o u)
+    (S (dom_cert_position o v) - dom_cert_position o u))) by apply seq_NoDup.
+  pose proof (@NoDup_incl_length nat _ _ Hrange_unique Hrange) as Hlength.
+  rewrite length_seq, length_map in Hlength.
+  split; [now apply dom_nat_N_le|].
+  rewrite Hcount, <- Nat2N.inj_add. apply dom_nat_N_lt. lia.
+Qed.
+
+(** A contained descendant set cannot extend beyond its ancestor's contiguous interval. *)
+Lemma dom_preorder_ancestry_interval : forall r m o u v,
+  cert_preorder r m o -> In u o -> In v o -> tree_anc m u v ->
+  dom_interval (dom_positions o) (dom_sizes m o) u v = true.
+Proof.
+  intros r m o u v Hpre Hu Hv Hanc.
+  pose proof (proj1 Hpre) as Hunique.
+  pose proof (dom_preorder_parent_before r m o Hpre) as Hparents.
+  pose proof (dom_preorder_ancestry_point r m o u v Hpre Hu Hv Hanc) as [Hstart Hinside].
+  set (test := fun x => if dom_order_anc_dec m o Hunique Hparents v x then true else false).
+  assert (Hselected : forall x, In x o -> (test x = true <-> tree_anc m v x)).
+  { intros x Hx. unfold test. destruct (dom_order_anc_dec m o Hunique Hparents v x);
+      split; intro H; try assumption; try reflexivity; try discriminate; contradiction. }
+  pose proof (dom_sizes_cardinality m o v test Hunique Hparents Hv Hselected) as Hcount.
+  set (stop := dom_cert_position o u + N.to_nat (dom_size_get (dom_sizes m o) u)).
+  assert (Hstop : dom_cert_position o v < stop).
+  { unfold stop. apply dom_nat_N_lt. rewrite Nat2N.inj_add, N2Nat.id. exact Hinside. }
+  assert (Hsubset : incl (map (dom_cert_position o) (filter test o))
+    (seq (dom_cert_position o v) (stop - dom_cert_position o v))).
+  { intros i Hin. apply in_map_iff in Hin as [x [<- Hx]].
+    apply filter_In in Hx as [Hx Htest].
+    pose proof (proj1 (Hselected x Hx) Htest) as Hvx.
+    assert (Hux : tree_anc m u x) by (eapply dom_cert_anc_trans; eassumption).
+    pose proof (dom_preorder_ancestry_point r m o v x Hpre Hv Hx Hvx) as [Hlow _].
+    pose proof (dom_preorder_ancestry_point r m o u x Hpre Hu Hx Hux) as [_ Hhigh].
+    assert (Hend : dom_cert_position o x < stop).
+    { unfold stop. apply dom_nat_N_lt. rewrite Nat2N.inj_add, N2Nat.id. exact Hhigh. }
+    apply dom_nat_N_le in Hlow. apply in_seq. split; lia. }
+  assert (Hdistinct : NoDup (map (dom_cert_position o) (filter test o))).
+  { apply dom_rank_map_distinct; [exact Hunique|now apply NoDup_filter|].
+    intros x Hx. now apply filter_In in Hx as [Hx Htest]. }
+  pose proof (@NoDup_incl_length nat _ _ Hdistinct Hsubset) as Hlength.
+  rewrite length_map, length_seq in Hlength.
+  assert (Hends : dom_cert_position o v + length (filter test o) <= stop) by lia.
+  apply dom_nat_N_le in Hends. unfold stop in Hends.
+  rewrite !Nat2N.inj_add, N2Nat.id, <- Hcount in Hends.
+  unfold dom_interval. rewrite (dom_positions_rank o u Hunique Hu),
+    (dom_positions_rank o v Hunique Hv).
+  apply andb_true_iff. split; apply N.leb_le; assumption.
+Qed.
+
+(** Every semantic tree preorder passes the computed parent-interval checks. *)
+Lemma dom_preorder_sizes_ok : forall r m o, cert_preorder r m o ->
+  dom_sizes_ok m (dom_positions o) (dom_sizes m o) o = true.
+Proof.
+  intros r m o Hpre. unfold dom_sizes_ok. apply forallb_forall. intros v Hv.
+  destruct (trie_get v m) as [p|] eqn:Hparent; [|reflexivity].
+  pose proof (dom_preorder_parent_before r m o Hpre v p Hparent) as Hbefore.
+  pose proof (proj1 (dom_cert_before_members o p v Hbefore)) as Hp.
+  apply (dom_preorder_ancestry_interval r m o p v Hpre Hp Hv).
+  eapply tree_anc_step; [exact Hparent|constructor].
+Qed.
+
+Lemma dom_cert_sizes_ok : forall g r m o, dom_cert g r m o ->
+  dom_sizes_ok m (dom_positions o) (dom_sizes m o) o = true.
+Proof.
+  intros g r m o Hcert. exact (dom_preorder_sizes_ok r m o (proj1 Hcert)).
+Qed.
+
+
 Module DomCode <: DOM_OPS.
   Definition build := dom_build_candidate.
 
