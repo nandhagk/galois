@@ -1705,17 +1705,10 @@ Module LiveT (O : OPS)
   Definition live_index_budget : N :=
     (65536 * live_clock_scale * live_clock_scale * live_clock_scale)%N.
 
-  Definition c_live : N := 1. (* STUB *)
-  (** Path exploration pays for syntax and live predecessor incidences. *)
-  Lemma T_live_in_le : forall p,
-    (T_live_in p <= c_live * N.of_nat (function_size p + live_size p + 1) *
-      N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** The producer has the published output-sensitive bit-cost bound. *)
-  Lemma live_in_bigO : bigO (fun _ : P.t => True)
-    (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
-    T_live_in.
-  Proof. Admitted. (* STUB *)
+  Definition live_driver_budget : N :=
+    (1048576 * live_clock_scale * live_clock_scale * live_clock_scale * live_clock_scale)%N.
+
+  Definition c_live : N := live_driver_budget.
   Definition use_index (q : Q.t) : ptrie (list N.t) := seed_index q.
   TimeFun use_index.
   Definition kill_index (q : Q.t) : ptrie (ptrie unit) :=
@@ -1753,7 +1746,7 @@ Module LiveT (O : OPS)
   TimeFun explore.
   Definition k_index : N := live_index_budget.
   Definition k_explore : N := 1. (* STUB *)
-  Definition k_rows : N := 1. (* STUB *)
+  Definition k_rows : N := live_driver_budget.
   Definition visits p x := filter (fun pair => Pos.eqb (snd pair) x) (live_region p).
   Definition variable_work p x := fold_right (fun pair n =>
     1 + length (C.inc (R.prepare p) (fst pair)) + n) 0 (visits p x).
@@ -2304,6 +2297,826 @@ Module LiveT (O : OPS)
     unfold live_clock_atom, live_clock_width, live_index_budget. nia.
   Qed.
 
+  (** This proof-only trace records expanded points; the producer does not construct it. *)
+  Fixpoint live_trace (fuel : nat) (q : Q.t) (kills : ptrie (ptrie (ptrie unit)))
+      (x : positive) (st : live_state N.t) : list N.t :=
+    match fuel with
+    | 0 => []
+    | S rest =>
+      match live_todo st with
+      | [] => []
+      | n :: pending => n :: live_trace rest q kills x
+          (add_predecessors q kills x n (C.inc q n)
+            {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |})
+      end
+    end.
+
+  Lemma live_discover_keep_processed : forall st n m,
+    live_valid N.encode st -> In m (live_done st) -> ~ In m (live_todo st) ->
+    In m (live_done (live_discover N.encode n st)) /\
+      ~ In m (live_todo (live_discover N.encode n st)).
+  Proof.
+    intros st n m Hvalid Hdone Htodo. split.
+    - apply live_discover_done; [exact Hvalid|now right].
+    - rewrite live_discover_todo by exact Hvalid.
+      intros [[-> Hfresh]|Hin]; contradiction.
+  Qed.
+
+  Lemma add_predecessors_keep_processed : forall q kills x n es st m,
+    live_valid N.encode st -> In m (live_done st) -> ~ In m (live_todo st) ->
+    In m (live_done (add_predecessors q kills x n es st)) /\
+      ~ In m (live_todo (add_predecessors q kills x n es st)).
+  Proof.
+    intros q kills x n es; induction es as [|e rest IH]; intros st m Hvalid Hdone Htodo.
+    - now split.
+    - cbn [add_predecessors fold_right]. fold (add_predecessors q kills x n rest st).
+      destruct (live_killed kills (N.encode (C.src q e)) (N.encode n) x).
+      + now apply IH.
+      + destruct (IH st m Hvalid Hdone Htodo) as [Hdone' Htodo'].
+        apply live_discover_keep_processed; [now apply
+          add_predecessors_valid|assumption|assumption].
+  Qed.
+
+  Lemma live_trace_excludes : forall fuel q kills x st m,
+    live_valid N.encode st -> In m (live_done st) -> ~ In m (live_todo st) ->
+    ~ In m (live_trace fuel q kills x st).
+  Proof.
+    induction fuel as [|fuel IH]; intros q kills x st m Hvalid Hdone Htodo;
+      cbn [live_trace]; [tauto|].
+    destruct (live_todo st) as [|n pending] eqn:Hpending; [tauto|].
+    intros [Heq|Hin].
+    - subst m. apply Htodo. now left.
+    - assert (Hpop := live_pop_valid st n pending Hvalid Hpending).
+      assert (Hnot : ~ In m pending).
+      { intro Hm; apply Htodo. now right. }
+      destruct (add_predecessors_keep_processed q kills x n (C.inc q n)
+        {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+        m Hpop Hdone Hnot) as [Hdone' Htodo'].
+      eapply (IH q kills x (add_predecessors q kills x n (C.inc q n)
+        {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}) m).
+      + apply add_predecessors_valid; exact Hpop.
+      + exact Hdone'.
+      + exact Htodo'.
+      + exact Hin.
+  Qed.
+
+  Lemma live_trace_nodup : forall fuel q kills x st,
+    live_valid N.encode st -> NoDup (live_trace fuel q kills x st).
+  Proof.
+    induction fuel as [|fuel IH]; intros q kills x st Hvalid;
+      cbn [live_trace]; [constructor|].
+    destruct (live_todo st) as [|n pending] eqn:Hpending; [constructor|].
+    assert (Hpop := live_pop_valid st n pending Hvalid Hpending).
+    assert (Hnext : live_valid N.encode (add_predecessors q kills x n (C.inc q n)
+      {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |})).
+    { now apply add_predecessors_valid. }
+    constructor; [|now apply IH].
+    assert (Hdone : In n (live_done st)).
+    { apply (proj2 (proj2 (proj2 Hvalid))). rewrite Hpending; now left. }
+    assert (Hnot : ~ In n pending).
+    { pose proof (proj1 (proj2 (proj2 Hvalid))) as Hdup.
+      rewrite Hpending in Hdup. now inversion Hdup. }
+    destruct (add_predecessors_keep_processed q kills x n (C.inc q n)
+      {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+      n Hpop Hdone Hnot) as [Hdone' Htodo'].
+    eapply live_trace_excludes; eassumption.
+  Qed.
+
+  Lemma live_trace_sound : forall fuel q x st,
+    C.wf q -> live_valid N.encode st -> live_sound q x st ->
+    forall n, In n (live_trace fuel q (reverse_kills q) x st) ->
+      In n (C.nodes q) /\
+      point_live (C.nodes q) (C.out q) (C.dst q) (U.uses q) (U.defs q) (U.exits q) x n.
+  Proof.
+    induction fuel as [|fuel IH]; intros q x st Hwf Hvalid Hsound m Hin;
+      cbn [live_trace] in Hin; [contradiction|].
+    destruct (live_todo st) as [|n pending] eqn:Hpending; [contradiction|].
+    destruct Hin as [<-|Hin].
+    - apply Hsound. apply (proj2 (proj2 (proj2 Hvalid))). rewrite Hpending; now left.
+    - eapply (IH q x (add_predecessors q (reverse_kills q) x n (C.inc q n)
+        {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}) Hwf).
+      + apply add_predecessors_valid. eapply live_pop_valid; eassumption.
+      + eapply live_step_sound; eassumption.
+      + exact Hin.
+  Qed.
+
+  Definition live_trace_work (q : Q.t) (ns : list N.t) : nat :=
+    fold_right (fun n amount => 1 + length (C.inc q n) + amount) 0 ns.
+
+  Lemma live_trace_map : forall q (x : positive) ns,
+    fold_right (fun pair amount => 1 + length (C.inc q (fst pair)) + amount) 0
+      (map (fun n => (n, x)) ns) = live_trace_work q ns.
+  Proof.
+    intros q x ns; induction ns as [|n rest IH]; [reflexivity|].
+    change (1 + length (C.inc q n) +
+      fold_right (fun pair amount => 1 + length (C.inc q (fst pair)) + amount) 0
+        (map (fun m => (m, x)) rest) =
+      1 + length (C.inc q n) + live_trace_work q rest).
+    now rewrite IH.
+  Qed.
+
+  Lemma live_point_charge : forall p x ns,
+    NoDup ns -> (forall n, In n ns -> In (n, x) (live_region p)) ->
+    live_trace_work (R.prepare p) ns <= variable_work p x.
+  Proof.
+    intros p x ns Hdup Hregion.
+    pose proof (live_weighted_incl (N.t * positive)
+      (fun pair => 1 + length (C.inc (R.prepare p) (fst pair)))
+      (map (fun n => (n, x)) ns) (visits p x)
+      (live_pair_row_nodup N.t ns x Hdup)) as Hweight.
+    assert (Hincl : incl (map (fun n => (n, x)) ns) (visits p x)).
+    { intros pair Hin. apply in_map_iff in Hin. destruct Hin as [n [<- Hn]].
+      unfold visits. apply filter_In. split; [now apply Hregion|].
+      cbn; apply Pos.eqb_refl. }
+    specialize (Hweight Hincl).
+    change (fold_right (fun pair amount =>
+      1 + length (C.inc (R.prepare p) (fst pair)) + amount) 0
+      (map (fun n => (n, x)) ns) <= variable_work p x) in Hweight.
+    rewrite live_trace_map in Hweight. exact Hweight.
+  Qed.
+
+  Lemma live_trace_charge : forall p x fuel st,
+    In x (U.universe (R.prepare p)) -> live_valid N.encode st ->
+    live_sound (R.prepare p) x st ->
+    live_trace_work (R.prepare p)
+      (live_trace fuel (R.prepare p) (reverse_kills (R.prepare p)) x st) <= variable_work p x.
+  Proof.
+    intros p x fuel st Hx Hvalid Hsound. apply live_point_charge.
+    - now apply live_trace_nodup.
+    - intros n Hin. apply (proj2 (live_region_spec p) n x).
+      destruct (live_trace_sound fuel (R.prepare p) x st
+        (proj2 (PB.prepared_wf p)) Hvalid Hsound n Hin) as [Hnode Hlive].
+      repeat split; assumption.
+  Qed.
+
+  Lemma live_points_length : forall q ns, length ns <= live_trace_work q ns.
+  Proof.
+    intros q ns; unfold live_trace_work. induction ns as [|n rest IH]; cbn in *; lia.
+  Qed.
+
+  Lemma live_seed_charge : forall p x,
+    length (index_row (seed_index (R.prepare p)) x) <= variable_work p x.
+  Proof.
+    intros p x. eapply Nat.le_trans; [apply live_points_length|].
+    apply live_point_charge; [apply seed_index_nodup|].
+    intros n Hn. exact (proj2 (F0_use_index p x) n Hn).
+  Qed.
+
+  Lemma live_search_charge : forall p x,
+    In x (U.universe (R.prepare p)) ->
+    length (search (length (C.nodes (R.prepare p))) (R.prepare p)
+      (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x) <= variable_work p x.
+  Proof.
+    intros p x Hx. eapply Nat.le_trans; [apply live_points_length|].
+    pose proof (search_spec (R.prepare p) x (proj2 (PB.prepared_wf p))) as [Hdup Hspec].
+    apply live_point_charge; [exact Hdup|]. intros n Hin.
+    apply (proj2 (live_region_spec p) n x). apply Hspec in Hin; tauto.
+  Qed.
+
+  (** Each expansion pays for its bounded keys and actual incoming incidences. *)
+  Lemma live_kill_row_atom : forall p table src dst,
+    (N.of_nat (Pos.size_nat src + 1) <= live_clock_scale * live_clock_width p)%N ->
+    (N.of_nat (Pos.size_nat dst + 1) <= live_clock_scale * live_clock_width p)%N ->
+    (T_live_kill_row table src dst <= 3 * live_clock_atom p)%N.
+  Proof.
+    intros p table src dst Hsrc Hdst.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_get_atom _ p dst table Hdst) as Hgetdst.
+    time_unfold T_live_kill_row. destruct (trie_get dst table) as [row|]; [|nia].
+    pose proof (live_get_atom _ p src row Hsrc) as Hgetsrc. nia.
+  Qed.
+
+  Lemma live_killed_atom : forall p table src dst x,
+    (N.of_nat (Pos.size_nat src + 1) <= live_clock_scale * live_clock_width p)%N ->
+    (N.of_nat (Pos.size_nat dst + 1) <= live_clock_scale * live_clock_width p)%N ->
+    In x (U.universe (R.prepare p)) ->
+    (T_live_killed table src dst x <= 5 * live_clock_atom p)%N.
+  Proof.
+    intros p table src dst x Hsrc Hdst Hx.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_kill_row_atom p table src dst Hsrc Hdst) as Hrow.
+    time_unfold T_live_killed. destruct (live_kill_row table src dst) as [defs|]; [|nia].
+    pose proof (live_member_atom p x defs (live_variable_key p x Hx)) as Hmember. nia.
+  Qed.
+
+  Lemma live_discover_atom : forall p n st,
+    In n (C.nodes (R.prepare p)) ->
+    (T_live_discover N.encode N.T_encode n st <= 16 * live_clock_atom p)%N.
+  Proof.
+    intros p n st Hn.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_node_key p n Hn) as Hkey.
+    pose proof (live_encode_node_atom p n Hn) as Hencode.
+    pose proof (live_member_atom p (N.encode n) (live_seen st) Hkey) as Hmember.
+    pose proof (live_set_atom _ p (N.encode n) tt (live_seen st) Hkey) as Hset.
+    time_unfold @T_live_discover. time_simpl.
+    destruct (live_member (N.encode n) (live_seen st)); nia.
+  Qed.
+
+  Lemma live_initial_atom : forall p seeds,
+    incl seeds (C.nodes (R.prepare p)) ->
+    (T_live_initial N.encode N.T_encode seeds <=
+      20 * live_clock_atom p * N.of_nat (length seeds + 1))%N.
+  Proof.
+    intros p seeds Hseeds. pose proof (live_clock_atom_positive p) as Hpositive.
+    time_unfold @T_live_initial.
+    let seeds := constr:(seeds) in match goal with
+    | |- context [List.T_fold_right ?step ?clock ?initial seeds] =>
+      assert (Hfold : (List.T_fold_right step clock initial seeds <=
+        (16 * live_clock_atom p + 1) * N.of_nat (length seeds) + 1)%N)
+    end.
+    { apply live_fold_clock_uniform. intros n Hn st. apply live_discover_atom; now apply Hseeds. }
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma add_predecessors_atom : forall p kills x n es st,
+    In x (U.universe (R.prepare p)) -> In n (C.nodes (R.prepare p)) ->
+    incl es (C.edges (R.prepare p)) ->
+    (T_add_predecessors (R.prepare p) kills x n es st <=
+      48 * live_clock_atom p * N.of_nat (length es + 1))%N.
+  Proof.
+    intros p kills x n es st Hx Hn Hes.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    time_unfold T_add_predecessors.
+    let st := constr:(st) in let es := constr:(es) in match goal with
+    | |- context [List.T_fold_right ?step ?clock st es] =>
+      assert (Hfold : (List.T_fold_right step clock st es <=
+        (32 * live_clock_atom p + 1) * N.of_nat (length es) + 1)%N)
+    end.
+    { apply live_fold_clock_uniform. intros e He state; cbn beta zeta.
+      pose proof (proj1 (C.edges_nodes (R.prepare p) e Hwf (Hes e He))) as Hsrc.
+      pose proof (live_src_atom p e) as Hsrcclock.
+      pose proof (live_encode_node_atom p (C.src (R.prepare p) e) Hsrc) as Hpredenc.
+      pose proof (live_encode_node_atom p n Hn) as Hnenc.
+      pose proof (live_killed_atom p kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x
+        (live_node_key p (C.src (R.prepare p) e) Hsrc) (live_node_key p n Hn) Hx) as Hkilled.
+      pose proof (live_discover_atom p (C.src (R.prepare p) e) state Hsrc) as Hdiscover.
+      change (1 + (C.T_src (R.prepare p) e +
+        (N.T_encode (C.src (R.prepare p) e) + N.T_encode n +
+          T_live_killed kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x +
+          (if live_killed kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x
+           then 0 else T_live_discover N.encode N.T_encode (C.src (R.prepare p) e) state))) <=
+        32 * live_clock_atom p)%N.
+      destruct (live_killed kills (N.encode (C.src (R.prepare p) e)) (N.encode n) x); nia. }
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma explore_fuel_atom : forall fuel p x st,
+    In x (U.universe (R.prepare p)) -> live_valid N.encode st ->
+    live_sound (R.prepare p) x st ->
+    (T_explore_fuel fuel (R.prepare p) (reverse_kills (R.prepare p)) x st <=
+      64 * live_clock_atom p * N.of_nat
+        (live_trace_work (R.prepare p)
+          (live_trace fuel (R.prepare p) (reverse_kills (R.prepare p)) x st) + 1))%N.
+  Proof.
+    induction fuel as [|fuel IH]; intros p x st Hx Hvalid Hsound.
+    - pose proof (live_clock_atom_positive p) as Hpositive. time_step.
+    - pose proof (live_clock_atom_positive p) as Hpositive.
+      pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+      time_unfold T_explore_fuel. time_simpl.
+      cbn [live_trace]. destruct (live_todo st) as [|n pending] eqn:Hpending.
+      + cbn [live_trace_work fold_right]. nia.
+      + set (next := add_predecessors (R.prepare p) (reverse_kills (R.prepare p)) x n
+          (C.inc (R.prepare p) n)
+          {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}).
+        assert (Hnext : live_valid N.encode next).
+        { apply add_predecessors_valid. eapply live_pop_valid; eassumption. }
+        assert (Hnextsound : live_sound (R.prepare p) x next).
+        { eapply live_step_sound; eassumption. }
+        specialize (IH p x next Hx Hnext Hnextsound).
+        assert (Hnode : In n (C.nodes (R.prepare p))).
+        { assert (Hdone : In n (live_done st)).
+          { apply (proj2 (proj2 (proj2 Hvalid))). rewrite Hpending; now left. }
+          exact (proj1 (Hsound n Hdone)). }
+        pose proof (live_inc_atom p n Hnode) as Hinc.
+        pose proof (add_predecessors_atom p (reverse_kills (R.prepare p)) x n
+          (C.inc (R.prepare p) n)
+          {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+          Hx Hnode ltac:(intros e He; exact (proj1 (proj1 (C.inc_spec _ _ _ Hwf) He))))
+          as Hpred.
+        fold next. change (1 + (1 + (C.T_inc (R.prepare p) n + (1 + 1) +
+          T_add_predecessors (R.prepare p) (reverse_kills (R.prepare p)) x n
+            (C.inc (R.prepare p) n)
+            {| live_seen := live_seen st; live_todo := pending; live_done := live_done st |}
+          + T_explore_fuel fuel (R.prepare p) (reverse_kills (R.prepare p)) x next)) <=
+          64 * live_clock_atom p * N.of_nat
+            (1 + length (C.inc (R.prepare p) n) +
+              live_trace_work (R.prepare p)
+                (live_trace fuel (R.prepare p) (reverse_kills (R.prepare p)) x next) + 1))%N.
+        rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma search_atom : forall p x, In x (U.universe (R.prepare p)) ->
+    (T_search (length (C.nodes (R.prepare p))) (R.prepare p)
+      (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x <=
+      128 * live_clock_atom p * N.of_nat (variable_work p x + 1))%N.
+  Proof.
+    intros p x Hx. set (q := R.prepare p).
+    set (initial := live_initial N.encode (index_row (seed_index q) x)).
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (proj2 (PB.prepared_wf p)) as Hwf.
+    assert (Hvalid : live_valid N.encode initial).
+    { apply live_initial_valid; exact N.encode_inj. }
+    assert (Hsound : live_sound q x initial).
+    { intros n Hn. apply live_initial_done in Hn; [|exact N.encode_inj].
+      destruct (seed_index_live q x n Hwf Hn) as [Hnode [_ Hlive]]; now split. }
+    pose proof (live_trace_charge p x (length (C.nodes q)) initial Hx Hvalid Hsound) as Hcharge.
+    pose proof (explore_fuel_atom (length (C.nodes q)) p x initial Hx Hvalid Hsound) as Hfuel.
+    pose proof (live_seed_charge p x) as Hseeds.
+    pose proof (live_initial_atom p (index_row (seed_index q) x)
+      ltac:(intros n Hn; exact (proj1 (seed_index_live q x n Hwf Hn)))) as Hinitial.
+    pose proof (live_row_atom _ p (seed_index q) x (live_variable_key p x Hx)) as Hrow.
+    time_unfold T_search. time_simpl. fold q initial.
+    fold q in Hcharge, Hfuel, Hseeds, Hinitial, Hrow.
+    change (1 + (T_index_row (seed_index q) x +
+      T_live_initial N.encode N.T_encode (index_row (seed_index q) x) +
+      T_explore_fuel (length (C.nodes q)) q (reverse_kills q) x initial + 1) <=
+      128 * live_clock_atom p * N.of_nat (variable_work p x + 1))%N.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma block_index_binding : forall bs key value,
+    trie_get key (block_index bs) = Some value -> In value bs /\ key = value.
+  Proof.
+    intro bs; induction bs as [|b rest IH]; intros key value Hget.
+    - unfold block_index in Hget; cbn [fold_right] in Hget.
+      rewrite PTrie.get_empty in Hget; discriminate.
+    - cbn [block_index fold_right] in Hget. fold (block_index rest) in Hget.
+      destruct (Pos.eq_dec key b) as [->|Hneq].
+      + rewrite PTrie.get_set_same in Hget. inversion Hget; subst; split; [now left|reflexivity].
+      + rewrite PTrie.get_set_other in Hget by exact Hneq.
+        destruct (IH key value Hget) as [Hin Heq]. split; [now right|exact Heq].
+  Qed.
+
+  Lemma block_index_height : forall p,
+    live_height (block_index (BC.nodes (R.prepare p))) <= function_width p.
+  Proof.
+    intro p. apply live_height_bound. intros key value Hget.
+    destruct (block_index_binding _ _ _ Hget) as [Hin ->].
+    exact (PB.block_bits_le p value (or_introl Hin)).
+  Qed.
+
+  Lemma block_lookup_atom : forall p key,
+    (T_live_lookup key (block_index (BC.nodes (R.prepare p))) <= live_clock_atom p)%N.
+  Proof.
+    intros p key. pose proof (T_live_lookup_bound positive key
+      (block_index (BC.nodes (R.prepare p)))) as Hlookup.
+    pose proof (block_index_height p) as Hheight.
+    pose proof live_clock_scale_positive as Hscale.
+    unfold live_clock_atom, live_clock_width. nia.
+  Qed.
+
+  Lemma block_index_atom : forall p,
+    (T_block_index (BC.nodes (R.prepare p)) <=
+      4 * live_clock_atom p * N.of_nat (length (BC.nodes (R.prepare p)) + 1))%N.
+  Proof.
+    intro p. pose proof (live_clock_atom_positive p) as Hpositive.
+    time_unfold T_block_index.
+    let p := constr:(p) in match goal with
+    | |- context [List.T_fold_right ?step ?clock Empty (BC.nodes (R.prepare p))] =>
+      assert (Hfold : (List.T_fold_right step clock Empty (BC.nodes (R.prepare p)) <=
+        (2 * live_clock_atom p + 1) * N.of_nat (length (BC.nodes (R.prepare p))) + 1)%N)
+    end.
+    { apply live_fold_clock_uniform; intros b Hb table; cbn beta.
+      pose proof (live_set_atom _ p b b table (live_block_key p b Hb)) as Hset.
+      change (1 + PTrieCode.T_set b b table <= 2 * live_clock_atom p)%N. nia. }
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma block_nodes_atom : forall p,
+    (BC.T_nodes (R.prepare p) <=
+      live_clock_atom p * N.of_nat (length (BC.nodes (R.prepare p)) + 1))%N.
+  Proof.
+    intro p. pose proof (BC.T_nodes_le (R.prepare p)) as Hnodes.
+    assert (Hc : (BC.c_cfg_adj <= live_clock_scale)%N) by (unfold live_clock_scale; lia).
+    pose proof (live_clock_scale_le_atom p) as Hatom. nia.
+  Qed.
+
+  Lemma group_point_atom : forall p x n rows,
+    In n (C.nodes (R.prepare p)) ->
+    (T_group_point (R.prepare p) (block_index (BC.nodes (R.prepare p))) x n rows <=
+      16 * live_clock_atom p)%N.
+  Proof.
+    intros p x n rows Hn. set (q := R.prepare p).
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (block_lookup_atom p (SP.block_of_point q n)) as Hlookup.
+    assert (Howner : (SP.T_block_of_point q n <= live_clock_atom p)%N).
+    { eapply N.le_trans; [apply SP.T_block_of_point_le|]. apply live_clock_product;
+        [unfold live_clock_scale; lia|now apply live_node_key]. }
+    time_unfold T_group_point. fold q in Hn, Hlookup, Howner |- *.
+    destruct (live_lookup (SP.block_of_point q n) (block_index (BC.nodes q))) as [b|]
+      eqn:Hget; [|nia].
+    rewrite live_lookup_correct in Hget.
+    destruct (block_index_binding _ _ _ Hget) as [Hb Hkey].
+    pose proof (live_block_key p b Hb) as Hblock.
+    assert (Hparam : (SP.T_parameter_edge q b <= live_clock_atom p)%N).
+    { eapply N.le_trans; [apply SP.T_parameter_edge_le|]. apply live_clock_product;
+        [unfold live_clock_scale; lia|exact Hblock]. }
+    pose proof (live_src_atom p (SP.parameter_edge q b)) as Hsrc.
+    fold q in Hsrc.
+    pose proof (live_eqb_node_atom p n (C.src q (SP.parameter_edge q b)) Hn) as Heqb.
+    pose proof (live_row_atom _ p rows b Hblock) as Hrow.
+    pose proof (live_set_atom _ p b (x :: index_row rows b) rows Hblock) as Hset.
+    destruct (N.eqb n (C.src q (SP.parameter_edge q b))); nia.
+  Qed.
+
+  Lemma group_search_atom : forall p x rows, In x (U.universe (R.prepare p)) ->
+    (List.T_fold_right (group_point (R.prepare p) (block_index (BC.nodes (R.prepare p))) x)
+      (fun n acc => T_group_point (R.prepare p) (block_index (BC.nodes (R.prepare p)))
+        x n acc) rows
+      (search (length (C.nodes (R.prepare p))) (R.prepare p)
+        (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x) <=
+      20 * live_clock_atom p * N.of_nat (variable_work p x + 1))%N.
+  Proof.
+    intros p x rows Hx.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_search_charge p x Hx) as Hcharge.
+    pose proof (search_spec (R.prepare p) x (proj2 (PB.prepared_wf p))) as [Hdup Hspec].
+    eapply N.le_trans.
+    - apply live_fold_clock_uniform with (bound := (16 * live_clock_atom p)%N).
+      intros n Hn acc. apply group_point_atom. exact (proj1 (proj1 (Hspec n) Hn)).
+    - rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Lemma live_rows_atom : forall p (rows : ptrie (list positive)),
+    (ListDef.T_map (fun b => (b, index_row rows b))
+      (fun b => 1 + T_index_row rows b)%N (BC.nodes (R.prepare p)) <=
+      4 * live_clock_atom p * N.of_nat (length (BC.nodes (R.prepare p)) + 1))%N.
+  Proof.
+    intros p rows. pose proof (live_clock_atom_positive p) as Hpositive.
+    eapply N.le_trans.
+    - apply live_map_clock_uniform with (price := (2 * live_clock_atom p)%N).
+      intros b Hb. pose proof (live_row_atom _ p rows b (live_block_key p b Hb)) as Hrow. nia.
+    - rewrite Nat2N.inj_add, N.mul_add_distr_l, N.mul_1_r.
+      apply N.add_le_mono; [apply N.mul_le_mono_r; lia|lia].
+  Qed.
+
+  Lemma live_width_le_atom : forall p, (live_clock_width p <= live_clock_atom p)%N.
+  Proof.
+    intro p. pose proof live_clock_scale_positive as Hscale.
+    unfold live_clock_atom.
+    rewrite <- (N.mul_1_l (live_clock_width p)) at 1.
+    apply N.mul_le_mono_r. change (1 * 1 * 1 <=
+      64 * live_clock_scale * live_clock_scale)%N.
+    repeat apply N.mul_le_mono; lia.
+  Qed.
+
+  Lemma live_uses_total : forall p,
+    (fold_right N.add 0%N (map (U.T_uses (R.prepare p)) (C.edges (R.prepare p))) <=
+      live_clock_atom p * N.of_nat (length (C.edges (R.prepare p)) +
+        length (flat_map (U.uses (R.prepare p)) (C.edges (R.prepare p)))))%N.
+  Proof.
+    intro p. rewrite <- live_fold_lengths. apply live_sum_weight.
+    intros e He; now apply live_uses_atom.
+  Qed.
+
+  Lemma live_defs_total : forall p,
+    (fold_right N.add 0%N (map (U.T_defs (R.prepare p)) (C.edges (R.prepare p))) <=
+      live_clock_atom p * N.of_nat (length (C.edges (R.prepare p)) +
+        length (flat_map (U.defs (R.prepare p)) (C.edges (R.prepare p)))))%N.
+  Proof.
+    intro p. rewrite <- live_fold_lengths. apply live_sum_weight.
+    intros e He; now apply live_defs_atom.
+  Qed.
+
+  Lemma live_exits_total : forall p,
+    (fold_right N.add 0%N (map (U.T_exits (R.prepare p)) (C.nodes (R.prepare p))) <=
+      live_clock_atom p * N.of_nat (length (C.nodes (R.prepare p)) +
+        length (flat_map (U.exits (R.prepare p)) (C.nodes (R.prepare p)))))%N.
+  Proof.
+    intro p. rewrite <- live_fold_lengths. apply live_sum_weight.
+    intros n Hn; now apply live_exits_atom.
+  Qed.
+
+  Lemma live_universe_work_atom : forall p,
+    (U.universe_work (R.prepare p) <=
+      16 * live_clock_atom p * N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. set (q := R.prepare p).
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_nodes_atom p) as Hnodes.
+    pose proof (live_edges_atom p) as Hedges.
+    pose proof (live_uses_total p) as Huses.
+    pose proof (live_defs_total p) as Hdefs.
+    pose proof (live_exits_total p) as Hexits.
+    pose proof (live_seed_count q) as Hseeds.
+    pose proof (live_def_count q) as Hdefcount.
+    assert (Hwidth : (N.of_nat (U.occurrence_width q + 1) <= live_clock_atom p)%N).
+    { pose proof (PB.occurrence_width_le p) as Hwidth.
+      fold q in Hwidth.
+      pose proof (live_width_le_atom p) as Hatom. unfold live_clock_width in Hatom. lia. }
+    assert (Henc : (fold_right N.add 0%N (map PosKeyT.T_encode (U.occurrences q)) <=
+      live_clock_atom p * N.of_nat (length (U.occurrences q)))%N).
+    { apply live_sum_uniform. intros x Hx. time_simpl. exact Hpositive. }
+    assert (Hwidthpaid : (N.of_nat (length (C.edges q) + length (C.nodes q) +
+      length (U.occurrences q) + 1) * N.of_nat (U.occurrence_width q + 1) <=
+      live_clock_atom p * N.of_nat (length (C.edges q) + length (C.nodes q) +
+        length (U.occurrences q) + 1))%N).
+    { rewrite N.mul_comm. apply N.mul_le_mono_r. exact Hwidth. }
+    assert (Hseedpaid : (live_clock_atom p * N.of_nat
+      (length (flat_map (U.uses q) (C.edges q)) +
+        length (flat_map (U.exits q) (C.nodes q))) <=
+      live_clock_atom p * N.of_nat (length (U.occurrences q)))%N).
+    { apply N.mul_le_mono_l. lia. }
+    assert (Hdefpaid : (live_clock_atom p * N.of_nat
+      (length (flat_map (U.defs q) (C.edges q))) <=
+      live_clock_atom p * N.of_nat (length (U.occurrences q)))%N).
+    { apply N.mul_le_mono_l. lia. }
+    unfold U.universe_work. rewrite live_sum_pair.
+    fold q in Hnodes, Hedges, Huses, Hdefs, Hexits |- *.
+    unfold live_graph_load. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma live_universe_atom : forall p,
+    (U.T_universe (R.prepare p) <=
+      16 * live_clock_atom p * live_clock_scale *
+        N.of_nat (live_graph_load (R.prepare p)))%N.
+  Proof.
+    intro p. pose proof (U.T_universe_le (R.prepare p)) as Huniverse.
+    pose proof (live_universe_work_atom p) as Hwork.
+    assert (Hc : (U.c_vars <= live_clock_scale)%N) by (unfold live_clock_scale; lia). nia.
+  Qed.
+
+  Lemma live_prepare_atom : forall p,
+    (R.T_prepare p <= live_clock_atom p * N.of_nat (function_size p + 1))%N.
+  Proof.
+    intro p. pose proof (R.T_prepare_le p) as Hprepare.
+    assert (Hc : (R.c_prepare <= live_clock_scale)%N) by (unfold live_clock_scale; lia).
+    pose proof live_clock_scale_positive as Hscale.
+    assert (Hfactor : (R.c_prepare * N.of_nat (function_width p + 1) <=
+      live_clock_atom p)%N).
+    { apply live_clock_product; [exact Hc|]. fold (live_clock_width p).
+      rewrite <- (N.mul_1_l (live_clock_width p)) at 1.
+      apply N.mul_le_mono_r. exact Hscale. }
+    eapply N.le_trans; [exact Hprepare|].
+    replace (R.c_prepare * N.of_nat (function_size p + 1) *
+      N.of_nat (function_width p + 1))%N with
+      (R.c_prepare * N.of_nat (function_width p + 1) *
+        N.of_nat (function_size p + 1))%N by ring.
+    now apply N.mul_le_mono_r.
+  Qed.
+
+  Lemma live_blocks_size : forall p,
+    length (BC.nodes (R.prepare p)) <= function_size p.
+  Proof.
+    intro p. pose proof (PB.block_nodes_le p) as Hnodes.
+    assert (Hblocks : length (blocks _ _ _ p) <= function_size p).
+    { unfold function_size. lia. }
+    lia.
+  Qed.
+
+  Lemma live_all_variables_atom : forall p,
+    (List.T_fold_right
+      (fun x acc => fold_right
+        (group_point (R.prepare p) (block_index (BC.nodes (R.prepare p))) x) acc
+        (search (length (C.nodes (R.prepare p))) (R.prepare p)
+          (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x))
+      (fun x acc => 1 +
+        (T_search (length (C.nodes (R.prepare p))) (R.prepare p)
+          (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x +
+        List.T_fold_right (group_point (R.prepare p) (block_index (BC.nodes (R.prepare p))) x)
+          (fun n rows => T_group_point (R.prepare p) (block_index (BC.nodes (R.prepare p)))
+            x n rows) acc
+          (search (length (C.nodes (R.prepare p))) (R.prepare p)
+            (seed_index (R.prepare p)) (reverse_kills (R.prepare p)) x)))%N
+      Empty (U.universe (R.prepare p)) <=
+      (192 * live_clock_atom p + 1) *
+        N.of_nat (live_size p + length (U.universe (R.prepare p))) + 1)%N.
+  Proof.
+    intro p. pose proof (live_clock_atom_positive p) as Hpositive.
+    rewrite <- (F3_partition p), <- live_sum_extra.
+    apply live_fold_clock_weight; [intros; lia|]. intros x Hx rows.
+    pose proof (search_atom p x Hx) as Hsearch.
+    pose proof (group_search_atom p x rows Hx) as Hgroup.
+    rewrite Nat2N.inj_add in *. nia.
+  Qed.
+
+  Lemma live_driver_atom : forall p,
+    (T_live_in p <= 4096 * live_clock_atom p * live_clock_scale * live_clock_scale *
+      N.of_nat (function_size p + live_size p + 1))%N.
+  Proof.
+    intro p. set (q := R.prepare p).
+    pose proof live_clock_scale_positive as Hscale.
+    pose proof (live_clock_atom_positive p) as Hpositive.
+    pose proof (live_prepare_atom p) as Hprepare.
+    pose proof (live_nodes_atom p) as Hnodes.
+    pose proof (Datatypes.T_length_le (C.nodes q)) as Hlength.
+    pose proof (seed_index_atom p) as Hseeds.
+    pose proof (reverse_kills_atom p) as Hkills.
+    pose proof (block_nodes_atom p) as Hblocks.
+    pose proof (block_index_atom p) as Hlisted.
+    pose proof (live_universe_atom p) as Huniverse.
+    pose proof (live_all_variables_atom p) as Hvariables.
+    pose proof (live_universe_length q) as Hvars.
+    pose proof (live_blocks_size p) as Hblockcount.
+    pose proof (live_graph_load_bound p) as Hload.
+    time_unfold T_live_in. cbn beta zeta.
+    fold q in Hnodes, Hlength, Hseeds, Hkills, Hblocks, Hlisted, Huniverse,
+      Hvariables, Hvars, Hblockcount, Hload |- *.
+    match goal with
+    | |- context [ListDef.T_map (fun b => (b, index_row ?rows b)) _ _] =>
+      pose proof (live_rows_atom p rows) as Hrows
+    end.
+    fold q in Hrows.
+    assert (Hnodecount : (N.of_nat (length (C.nodes q) + 1) <=
+      N.of_nat (live_graph_load q))%N) by (unfold live_graph_load; lia).
+    assert (Hnodepaid : (live_clock_atom p * N.of_nat (length (C.nodes q) + 1) <=
+      live_clock_atom p * N.of_nat (live_graph_load q))%N).
+    { now apply N.mul_le_mono_l. }
+    assert (Hunit : (N.of_nat (live_graph_load q) <=
+      live_clock_atom p * N.of_nat (live_graph_load q))%N).
+    { rewrite <- (N.mul_1_l (N.of_nat (live_graph_load q))) at 1.
+      now apply N.mul_le_mono_r. }
+    assert (Hstart : (1 <= live_clock_atom p * N.of_nat (live_graph_load q))%N).
+    { eapply N.le_trans; [|exact Hunit]. unfold live_graph_load; lia. }
+    assert (Hlift : (live_clock_atom p * N.of_nat (live_graph_load q) <=
+      live_clock_atom p * live_clock_scale * N.of_nat (live_graph_load q))%N).
+    { apply N.mul_le_mono_r. rewrite <- (N.mul_1_r (live_clock_atom p)) at 1.
+      now apply N.mul_le_mono_l. }
+    assert (Hblockpaid : (live_clock_atom p * N.of_nat (length (BC.nodes q) + 1) <=
+      live_clock_atom p * N.of_nat (function_size p + 1))%N).
+    { apply N.mul_le_mono_l. lia. }
+    assert (Hvarfactor : ((192 * live_clock_atom p + 1) *
+      N.of_nat (live_size p + length (U.universe q)) <=
+      193 * live_clock_atom p * N.of_nat (live_size p + length (U.universe q)))%N).
+    { apply N.mul_le_mono_r. lia. }
+    assert (Hvariablepaid : (193 * live_clock_atom p *
+      N.of_nat (live_size p + length (U.universe q)) <=
+      193 * live_clock_atom p * N.of_nat (live_size p) +
+      193 * live_clock_atom p * N.of_nat (live_graph_load q))%N).
+    { rewrite Nat2N.inj_add, N.mul_add_distr_l. apply N.add_le_mono_l.
+      apply N.mul_le_mono_l. unfold live_graph_load. lia. }
+    assert (Hlocal : (T_live_in p <=
+      1024 * live_clock_atom p * live_clock_scale * N.of_nat (live_graph_load q) +
+      16 * live_clock_atom p * N.of_nat (function_size p + 1) +
+      256 * live_clock_atom p * N.of_nat (live_size p))%N).
+    { time_unfold T_live_in. cbn beta zeta. fold q.
+      set (graph_budget := (live_clock_atom p * live_clock_scale *
+        N.of_nat (live_graph_load q))%N).
+      set (syntax_budget := (live_clock_atom p * N.of_nat (function_size p + 1))%N).
+      set (live_budget := (live_clock_atom p * N.of_nat (live_size p))%N).
+      assert (Hgraphscale : forall k, (k * live_clock_atom p *
+        N.of_nat (live_graph_load q) <= k * graph_budget)%N).
+      { intro k. replace (k * live_clock_atom p * N.of_nat (live_graph_load q))%N
+          with (k * (live_clock_atom p * N.of_nat (live_graph_load q)))%N by ring.
+        now apply N.mul_le_mono_l. }
+      assert (Hblockscale : forall k, (k * live_clock_atom p *
+        N.of_nat (length (BC.nodes q) + 1) <= k * syntax_budget)%N).
+      { intro k. replace (k * live_clock_atom p * N.of_nat (length (BC.nodes q) + 1))%N
+          with (k * (live_clock_atom p * N.of_nat (length (BC.nodes q) + 1)))%N by ring.
+        now apply N.mul_le_mono_l. }
+      assert (Hprepare_budget : (R.T_prepare p <= syntax_budget)%N) by exact Hprepare.
+      assert (Hnode_budget : (C.T_nodes q <= graph_budget)%N).
+      { eapply N.le_trans; [exact Hnodes|].
+        eapply N.le_trans; [exact Hnodepaid|exact Hlift]. }
+      assert (Hlength_budget : (Datatypes.T_length (C.nodes q) <= graph_budget)%N).
+      { eapply N.le_trans; [exact Hlength|].
+        eapply N.le_trans; [|exact Hlift].
+        eapply N.le_trans; [|exact Hunit].
+        change (N.of_nat (length (C.nodes q)) + N.of_nat 1 <=
+          N.of_nat (live_graph_load q))%N.
+        rewrite <- Nat2N.inj_add. exact Hnodecount. }
+      pose proof (N.le_trans _ _ _ Hseeds (Hgraphscale 256%N)) as Hseed_budget.
+      pose proof (N.le_trans _ _ _ Hkills (Hgraphscale 64%N)) as Hkill_budget.
+      assert (Hblocks_budget : (BC.T_nodes q <= syntax_budget)%N).
+      { eapply N.le_trans; [exact Hblocks|exact Hblockpaid]. }
+      pose proof (N.le_trans _ _ _ Hlisted (Hblockscale 4%N)) as Hlisted_budget.
+      pose proof (N.le_trans _ _ _ Hrows (Hblockscale 4%N)) as Hrows_budget.
+      assert (Huniverse_budget : (U.T_universe q <= 16 * graph_budget)%N).
+      { eapply N.le_trans; [exact Huniverse|]. unfold graph_budget. ring_simplify.
+        apply N.le_refl. }
+      assert (Hvs : ((192 * live_clock_atom p + 1) *
+        N.of_nat (live_size p + length (U.universe q)) + 1 <=
+        193 * live_budget + 193 * graph_budget + 1)%N).
+      { apply N.add_le_mono_r. eapply N.le_trans; [exact Hvarfactor|].
+        eapply N.le_trans; [exact Hvariablepaid|].
+        replace (193 * live_clock_atom p * N.of_nat (live_size p))%N with
+          (193 * live_budget)%N by (unfold live_budget; ring).
+        apply N.add_le_mono_l. apply Hgraphscale. }
+      pose proof (N.le_trans _ _ _ Hvariables Hvs) as Hvars_budget.
+      assert (Hstart_budget : (1 <= graph_budget)%N).
+      { eapply N.le_trans; [exact Hstart|exact Hlift]. }
+      replace (1024 * live_clock_atom p * live_clock_scale *
+        N.of_nat (live_graph_load q) + 16 * live_clock_atom p *
+        N.of_nat (function_size p + 1) + 256 * live_clock_atom p *
+        N.of_nat (live_size p))%N with
+        (1024 * graph_budget + 16 * syntax_budget + 256 * live_budget)%N by
+          (unfold graph_budget, syntax_budget, live_budget; ring).
+      clearbody graph_budget syntax_budget live_budget.
+      clear - p q graph_budget syntax_budget live_budget Hprepare_budget Hnode_budget
+        Hlength_budget Hseed_budget Hkill_budget Hblocks_budget Hlisted_budget
+        Huniverse_budget Hvars_budget Hrows_budget Hstart_budget.
+      lia. }
+    assert (Hloadpaid : (live_clock_atom p * live_clock_scale *
+      N.of_nat (live_graph_load q) <= 2 * live_clock_atom p * live_clock_scale *
+      live_clock_scale * N.of_nat (function_size p + 1))%N).
+    { replace (2 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (function_size p + 1))%N with
+        (live_clock_atom p * live_clock_scale *
+          (2 * live_clock_scale * N.of_nat (function_size p + 1)))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hraise : (live_clock_atom p <=
+      live_clock_atom p * live_clock_scale * live_clock_scale)%N).
+    { rewrite <- (N.mul_1_r (live_clock_atom p)) at 1.
+      rewrite <- (N.mul_1_r (live_clock_atom p * 1)) at 1.
+      repeat apply N.mul_le_mono; lia. }
+    assert (Hsyntaxpaid : (live_clock_atom p * N.of_nat (function_size p + 1) <=
+      live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (function_size p + 1))%N) by now apply N.mul_le_mono_r.
+    assert (Hlivepaid : (live_clock_atom p * N.of_nat (live_size p) <=
+      live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (live_size p))%N) by now apply N.mul_le_mono_r.
+    assert (Hfirst : (1024 * live_clock_atom p * live_clock_scale *
+      N.of_nat (live_graph_load q) <= 2048 * live_clock_atom p * live_clock_scale *
+      live_clock_scale * N.of_nat (function_size p + 1))%N).
+    { replace (1024 * live_clock_atom p * live_clock_scale *
+        N.of_nat (live_graph_load q))%N with
+        (1024 * (live_clock_atom p * live_clock_scale *
+          N.of_nat (live_graph_load q)))%N by ring.
+      replace (2048 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (function_size p + 1))%N with
+        (1024 * (2 * live_clock_atom p * live_clock_scale * live_clock_scale *
+          N.of_nat (function_size p + 1)))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hsecond : (16 * live_clock_atom p * N.of_nat (function_size p + 1) <=
+      16 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (function_size p + 1))%N).
+    { replace (16 * live_clock_atom p * N.of_nat (function_size p + 1))%N with
+        (16 * (live_clock_atom p * N.of_nat (function_size p + 1)))%N by ring.
+      replace (16 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (function_size p + 1))%N with
+        (16 * (live_clock_atom p * live_clock_scale * live_clock_scale *
+          N.of_nat (function_size p + 1)))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hthird : (256 * live_clock_atom p * N.of_nat (live_size p) <=
+      256 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (live_size p))%N).
+    { replace (256 * live_clock_atom p * N.of_nat (live_size p))%N with
+        (256 * (live_clock_atom p * N.of_nat (live_size p)))%N by ring.
+      replace (256 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (live_size p))%N with
+        (256 * (live_clock_atom p * live_clock_scale * live_clock_scale *
+          N.of_nat (live_size p)))%N by ring.
+      now apply N.mul_le_mono_l. }
+    eapply N.le_trans; [exact Hlocal|]. eapply N.le_trans.
+    - apply N.add_le_mono; [apply N.add_le_mono; [exact Hfirst|exact Hsecond]|exact Hthird].
+    - replace (2048 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (function_size p + 1) + 16 * live_clock_atom p * live_clock_scale *
+        live_clock_scale * N.of_nat (function_size p + 1) +
+        256 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (live_size p))%N with
+        (live_clock_atom p * live_clock_scale * live_clock_scale *
+          (2064 * N.of_nat (function_size p + 1) + 256 * N.of_nat (live_size p)))%N by ring.
+      replace (4096 * live_clock_atom p * live_clock_scale * live_clock_scale *
+        N.of_nat (function_size p + live_size p + 1))%N with
+        (live_clock_atom p * live_clock_scale * live_clock_scale *
+          (4096 * N.of_nat (function_size p + live_size p + 1)))%N by ring.
+      apply N.mul_le_mono_l. rewrite !Nat2N.inj_add. lia.
+  Qed.
+
+  Lemma live_driver_bound : forall p,
+    (T_live_in p <= live_driver_budget * N.of_nat (function_size p + live_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro p. pose proof (live_driver_atom p) as Hdriver.
+    unfold live_clock_atom, live_clock_width, live_driver_budget in *. nia.
+  Qed.
+
+  Lemma live_driver_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
+    T_live_in.
+  Proof.
+    exists live_driver_budget. intros p Htrue. pose proof (live_driver_bound p) as Hclock.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+  Lemma live_rows_bound : forall p,
+    (T_live_in p <= R.T_prepare p +
+      live_driver_budget * N.of_nat (function_size p + live_size p + 1) *
+        N.of_nat (function_width p + 1) + T_use_index (R.prepare p) +
+      T_kill_index (R.prepare p) +
+      fold_right N.add 0%N
+        (map (T_explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)))
+          (U.universe (R.prepare p))))%N.
+  Proof.
+    intro p. pose proof (live_driver_bound p) as Hclock. lia.
+  Qed.
+
+  (** Path exploration pays for syntax and live predecessor incidences. *)
+  Lemma T_live_in_le : forall p,
+    (T_live_in p <= c_live * N.of_nat (function_size p + live_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    exact live_driver_bound.
+  Qed.
+  (** The producer has the published output-sensitive bit-cost bound. *)
+  Lemma live_in_bigO : bigO (fun _ : P.t => True)
+    (fun p => N.of_nat ((function_size p + live_size p + 1) * (function_width p + 1)))
+    T_live_in.
+  Proof.
+    exact live_driver_bigO.
+  Qed.
   (** Indexing reads each variable occurrence once at the syntax width. *)
   Lemma T0_use_index : forall p,
     (T_use_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
@@ -2336,7 +3149,11 @@ Module LiveT (O : OPS)
       fold_right N.add 0%N
         (map (T_explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)))
           (U.universe (R.prepare p))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    (* The independent driver bound covers this allowance; the separate plan clocks
+       are nonnegative. LiveCode traverses the grouped reverse index. *)
+    exact live_rows_bound.
+  Qed.
 
   (** Emitted rows name listed blocks and variables of the universe. *)
   Lemma live_in_ids : forall p row, In row (live_in p) ->
