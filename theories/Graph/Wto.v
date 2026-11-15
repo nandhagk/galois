@@ -2282,6 +2282,161 @@ Proof.
   induction es as [|e es IH]; [time_step|]. destruct e; time_step.
 Qed.
 
+Definition wto_check_work g roots : N :=
+  (N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+    N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+
+Definition wto_check_coefficient : N :=
+  (262144 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
+
+Lemma wto_check_work_bounds g roots :
+  (1 <= wto_check_work g roots)%N /\
+  (N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+    N.of_nat (graph_width (base g) + 1) <= wto_check_work g roots)%N /\
+  (N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+    N.of_nat (graph_width (base g) + 1) <= wto_check_work g roots)%N /\
+  (N.of_nat (length roots + 1) * N.of_nat (vertex_width roots + 1) <=
+    wto_check_work g roots)%N.
+Proof.
+  pose proof (Nat.le_max_l (graph_width (base g)) (vertex_width roots)) as Hgraph.
+  pose proof (Nat.le_max_r (graph_width (base g)) (vertex_width roots)) as Hroots.
+  unfold wto_check_work. rewrite search_graph_max. rewrite !Nat2N.inj_add in *.
+  repeat split; nia.
+Qed.
+
+Lemma wto_check_coefficient_envelope :
+  (2 * search_trace_coefficient + 8192 * (PTrieT.c_trie + 1) + 32768 <=
+    wto_check_coefficient)%N.
+Proof.
+  unfold search_trace_coefficient, wto_check_coefficient. nia.
+Qed.
+
+Local Opaque loopN scc_graph prepared_search_trace wto_check_work.
+
+(** Every checker phase is bounded on arbitrary prepared values and candidate trees. *)
+Lemma wto_check_linear_time g roots w :
+  (1 + T_wto_check_linear g roots w <= wto_check_coefficient * wto_check_work g roots)%N.
+Proof.
+  destruct (wto_check_work_bounds g roots) as [Hpositive [Hbase [Hsearchwork Hrootwork]]].
+  pose proof wto_check_coefficient_envelope as Henvelope.
+  pose proof (wto_listed_time g) as Hlisted0.
+  pose proof (wto_presence_time (listed_of g) roots (vertex_width roots)
+    (wto_vertex_width_all roots)) as Hroots0.
+  assert (Hlisted : (T_listed_of g <=
+      32 * (PTrieT.c_trie + 1) * wto_check_work g roots)%N).
+  { eapply N.le_trans; [exact Hlisted0|]. clear - Hbase.
+    rewrite !Nat2N.inj_add in *. nia. }
+  assert (Hrootscan : (List.T_forallb
+      (fun v => match trie_get v (listed_of g) with Some _ => true | None => false end)
+      (fun v => 1 + T_trie_get v (listed_of g))%N roots <= 8 * wto_check_work g roots)%N).
+  { eapply N.le_trans; [exact Hroots0|]. clear - Hrootwork. nia. }
+  time_unfold @T_wto_check_linear. unfold T_base.
+  destruct (forallb
+    (fun v => match trie_get v (listed_of g) with Some _ => true | None => false end) roots)
+    eqn:Hroot_test.
+  - assert (Hroot_listed : forall r, In r roots -> In r (nodes g)).
+    { intros r Hr. rewrite forallb_forall in Hroot_test.
+      specialize (Hroot_test r Hr). apply (proj1 (scc_listed_lookup (nodes g) r)).
+      destruct (trie_get r (listed_of g)) as [b|] eqn:Hget; [now exists b|discriminate]. }
+    pose proof (wto_check_fuel_time g) as Hfuel0.
+    pose proof (wto_graph_width_time (base g)) as Hwidth0.
+    pose proof (wto_check_index_clock g w) as Hindex0.
+    assert (Hfuel : (T_check_fuel g <= 64 * wto_check_work g roots)%N).
+    { eapply N.le_trans; [exact Hfuel0|]. clear - Hbase.
+      rewrite !Nat2N.inj_add in *. nia. }
+    assert (Hwidth : (T_graph_width (base g) <= 128 * wto_check_work g roots)%N).
+    { eapply N.le_trans; [exact Hwidth0|]. clear - Hbase. nia. }
+    assert (Hindex_time : (T_wto_check_index (check_fuel g) (graph_width (base g))
+        (listed_of g) [WtoCheckVisit w] 0 Empty Empty [] <=
+        4096 * (PTrieT.c_trie + 1) * wto_check_work g roots)%N).
+    { eapply N.le_trans; [apply N.le_add_l|]. eapply N.le_trans; [exact Hindex0|].
+      clear - Hbase. rewrite !Nat2N.inj_add in *. nia. }
+    destruct (wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+      [WtoCheckVisit w] 0 Empty Empty []) as [[[ranks intervals] vs]|] eqn:Hindex.
+    + pose proof (scc_graph_time g) as Hready0.
+      pose proof (scc_search_time g roots Hroot_listed) as Hsearch0.
+      destruct (scc_search_sizes g roots Hroot_listed) as [Hlive_size Hrow_size].
+      pose proof (prepared_search_event_bound (scc_graph g) roots) as Hevents.
+      rewrite search_event_supply_entered in Hevents.
+      assert (Htrace_size : length (prepared_search_trace (scc_graph g) roots) <=
+          2 * graph_n (base g) + graph_e (base g)).
+      { clear - Hlive_size Hrow_size Hevents. lia. }
+      assert (Hlive_width : Forall (fun v => Pos.size_nat v <= graph_width (base g))
+          (entered (prepared_search_trace (scc_graph g) roots))).
+      { apply Forall_forall. intros v Hv. apply scc_node_width.
+        now apply (scc_search_entered g roots Hroot_listed). }
+      destruct (wto_check_index_seen _ _ _ _ _ _ _ Hindex) as [Hvs_unique Hvs_listed].
+      assert (Hvs_incl : incl vs (nodes g)).
+      { intros v Hv. apply (proj1 (scc_listed_lookup (nodes g) v)). now apply Hvs_listed. }
+      pose proof (NoDup_incl_length Hvs_unique Hvs_incl) as Hvs_size.
+      assert (Hnodecount : length (nodes g) = graph_n (base g)).
+      { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+      rewrite Hnodecount in Hvs_size.
+      assert (Hvs_width : Forall (fun v => Pos.size_nat v <= graph_width (base g)) vs).
+      { apply Forall_forall. intros v Hv. apply scc_node_width. now apply Hvs_incl. }
+      pose proof (wto_entered_time (prepared_search_trace (scc_graph g) roots)) as Hentered0.
+      pose proof (wto_set_members_time (entered (prepared_search_trace (scc_graph g) roots))
+        (graph_width (base g)) Empty Hlive_width) as Htable0.
+      pose proof (wto_presence_time
+        (fold_left (fun acc v => PTrieCode.set v true acc)
+          (entered (prepared_search_trace (scc_graph g) roots)) Empty)
+        vs (graph_width (base g)) Hvs_width) as Hcover0.
+      pose proof (wto_presence_time ranks (entered (prepared_search_trace (scc_graph g) roots))
+        (graph_width (base g)) Hlive_width) as Hreverse0.
+      pose proof (wto_checked_edges_clock g w ranks intervals vs Hindex) as Hedges0.
+      assert (Hready : (T_scc_graph g <= 16384 * wto_check_work g roots)%N).
+      { eapply N.le_trans; [exact Hready0|]. clear - Hbase. nia. }
+      assert (Hsearch : (T_prepared_search_trace (scc_graph g) roots <=
+          2 * search_trace_coefficient * wto_check_work g roots)%N).
+      { eapply N.le_trans; [apply N.le_add_l|]. eapply N.le_trans; [exact Hsearch0|].
+        clear - Hsearchwork. nia. }
+      assert (Hentered : (T_entered (prepared_search_trace (scc_graph g) roots) <=
+          8 * wto_check_work g roots)%N).
+      { eapply N.le_trans; [exact Hentered0|]. clear - Htrace_size Hbase.
+        rewrite !Nat2N.inj_add in *. nia. }
+      assert (Htable : (List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+          (fun acc v => 1 + PTrieCode.T_set v true acc)%N
+          (entered (prepared_search_trace (scc_graph g) roots)) Empty <=
+          16 * (PTrieT.c_trie + 1) * wto_check_work g roots)%N).
+      { eapply N.le_trans; [exact Htable0|]. clear - Hlive_size Hbase.
+        rewrite !Nat2N.inj_add in *. nia. }
+      assert (Hcover : (List.T_forallb
+          (fun v => match trie_get v (fold_left (fun acc v => PTrieCode.set v true acc)
+            (entered (prepared_search_trace (scc_graph g) roots)) Empty)
+            with Some _ => true | None => false end)
+          (fun v => 1 + T_trie_get v (fold_left (fun acc v => PTrieCode.set v true acc)
+            (entered (prepared_search_trace (scc_graph g) roots)) Empty))%N vs <=
+          8 * wto_check_work g roots)%N).
+      { eapply N.le_trans; [exact Hcover0|]. clear - Hvs_size Hbase.
+        rewrite !Nat2N.inj_add in *. nia. }
+      assert (Hreverse : (List.T_forallb
+          (fun v => match trie_get v ranks with Some _ => true | None => false end)
+          (fun v => 1 + T_trie_get v ranks)%N
+          (entered (prepared_search_trace (scc_graph g) roots)) <=
+          8 * wto_check_work g roots)%N).
+      { eapply N.le_trans; [exact Hreverse0|]. clear - Hlive_size Hbase.
+        rewrite !Nat2N.inj_add in *. nia. }
+      assert (Hedges : (T_wto_edges_ok (base g) ranks intervals vs <=
+          512 * wto_check_work g roots)%N).
+      { eapply N.le_trans; [apply N.le_add_l|]. eapply N.le_trans; [exact Hedges0|].
+        clear - Hbase. nia. }
+      clear - g roots w ranks intervals vs Hpositive Henvelope Hlisted Hrootscan
+        Hfuel Hwidth Hindex_time Hready Hsearch Hentered Htable Hcover Hreverse Hedges.
+      time_cbn.
+      destruct (forallb (fun v => match trie_get v
+        (fold_left (fun acc v => PTrieCode.set v true acc)
+          (entered (prepared_search_trace (scc_graph g) roots)) Empty)
+        with Some _ => true | None => false end) vs);
+      destruct (forallb (fun v => match trie_get v ranks with Some _ => true | None => false end)
+        (entered (prepared_search_trace (scc_graph g) roots)));
+        unfold Datatypes.T_andb; time_cbn; nia.
+    + clear - Hpositive Henvelope Hlisted Hrootscan Hfuel Hwidth Hindex_time.
+      time_cbn. nia.
+  - clear - Hpositive Henvelope Hlisted Hrootscan. time_cbn. nia.
+Qed.
+
+Local Transparent loopN scc_graph prepared_search_trace wto_check_work.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
@@ -2429,13 +2584,24 @@ Module WtoT <: WTO_ALL.
     unfold c_wto. lia.
   Qed.
 
+  Lemma c_wto_check_coefficient : (wto_check_coefficient <= c_wto)%N.
+  Proof.
+    unfold c_wto, wto_check_coefficient. lia.
+  Qed.
+
   Local Opaque loopN.
 
   Lemma T_check_le : forall g roots w,
     (T_check g roots w <= c_wto *
       N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots w. pose proof (wto_check_linear_time g roots w) as Hcheck.
+    time_unfold @T_check.
+    eapply N.le_trans; [exact Hcheck|].
+    unfold wto_check_work. rewrite <- N.mul_assoc.
+    apply N.mul_le_mono_r. exact c_wto_check_coefficient.
+  Qed.
 
   Lemma T_build_le : forall g roots,
     (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
@@ -2465,7 +2631,11 @@ Module WtoT <: WTO_ALL.
     (fun '(g, roots, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
       (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
     (fun '(g, roots, w) => T_check g roots w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_wto. intros [[g roots] w] _.
+    eapply N.le_trans; [apply T_check_le|].
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma build_bigO : bigO (fun _ : prepared * list positive => True)
     (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
@@ -3324,7 +3494,9 @@ Module WtoT <: WTO_ALL.
     (T_check g roots w <= c_wto *
       N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
       N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T_check_le.
+  Qed.
 
   Lemma T6_expand : forall g within entries owners c tasks partial parents h body,
     wto_select (wto_preferred owners entries c) c = Some (h, body) -> body <> [] ->
