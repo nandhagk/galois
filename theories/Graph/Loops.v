@@ -247,6 +247,248 @@ Proof.
   intros [[vertices successors] predecessors n e] r t Htree. exact (proj1 Htree).
 Qed.
 
+(** Simple paths expose the order of dominators without assumptions on raw graphs. *)
+Local Lemma loop_path_start : forall g a xs b, path g a xs b -> In a xs.
+Proof.
+  intros g a xs b Hpath. destruct Hpath; now left.
+Qed.
+
+Local Lemma loop_path_end : forall g a xs b, path g a xs b -> In b xs.
+Proof.
+  intros g a xs b Hpath. induction Hpath; [now left|now right].
+Qed.
+
+Local Lemma loop_path_join : forall g a xs b ys c,
+  path g a xs b -> path g b ys c ->
+  exists zs, path g a zs c /\ forall x, In x zs -> In x xs \/ In x ys.
+Proof.
+  intros g a xs b ys c Hfirst. revert ys c.
+  induction Hfirst as [b|a v xs b Hedge Hpath IH]; intros ys c Hlast.
+  - exists ys. split; [exact Hlast|]. intros x Hin. now right.
+  - destruct (IH ys c Hlast) as [zs [Hz Hmembers]].
+    exists (a :: zs). split; [now apply path_step with v|].
+    intros x [<-|Hin]; [left; now left|].
+    destruct (Hmembers x Hin) as [Hleft|Hright]; [left; now right|now right].
+Qed.
+
+Local Lemma loop_path_snoc : forall g a xs b c,
+  path g a xs b -> edge g b c -> path g a (xs ++ [c]) c.
+Proof.
+  intros g a xs b c Hpath. induction Hpath as [v|u v xs w Hfirst Hpath IH]; intro Hedge.
+  - cbn. apply path_step with c; [exact Hedge|constructor].
+  - cbn. apply path_step with v; [exact Hfirst|now apply IH].
+Qed.
+
+Local Lemma loop_path_split : forall g a xs b,
+  path g a xs b -> forall x, In x xs ->
+  exists before after, xs = before ++ after /\
+    path g a (before ++ [x]) x /\ path g x after b.
+Proof.
+  intros g a xs b Hpath.
+  induction Hpath as [v|a v xs b Hedge Hpath IH]; intros x Hin.
+  - destruct Hin as [<-|Hin]; [|contradiction].
+    exists [], [v]. split; [reflexivity|]. split; constructor.
+  - destruct Hin as [<-|Hin].
+    + exists [], (a :: xs). split; [reflexivity|].
+      split; [constructor|now apply path_step with v].
+    + destruct (IH x Hin) as [before [after [Hxs [Hprefix Hsuffix]]]].
+      exists (a :: before), after. split; [now cbn; rewrite Hxs|].
+      split; [cbn; now apply path_step with v|exact Hsuffix].
+Qed.
+
+Local Lemma loop_nodup_disjoint : forall (before after : list positive),
+  NoDup (before ++ after) -> forall x, In x before -> ~ In x after.
+Proof.
+  intros before. induction before as [|v before IH]; intros after Hunique x Hin.
+  - contradiction.
+  - cbn in Hunique. inversion Hunique as [|head tail Hfresh Hrest]; subst.
+    destruct Hin as [<-|Hin].
+    + intro Hafter. apply Hfresh, in_or_app. now right.
+    + now apply (IH after Hrest x Hin).
+Qed.
+
+Local Lemma loop_path_simple : forall g a xs b,
+  path g a xs b -> exists ys, path g a ys b /\ NoDup ys.
+Proof.
+  intros g a xs b Hpath.
+  induction Hpath as [v|a v xs b Hedge Hpath IH].
+  - exists [v]. split; [constructor|]. constructor; [simpl; tauto|constructor].
+  - destruct IH as [ys [Hys Hunique]].
+    destruct (in_dec Pos.eq_dec a ys) as [Hin|Hfresh].
+    + destruct (loop_path_split g v ys b Hys a Hin)
+        as [before [after [Heq [Hprefix Hsuffix]]]].
+      exists after. split; [exact Hsuffix|].
+      rewrite Heq in Hunique. now apply NoDup_app_remove_l in Hunique.
+    + exists (a :: ys). split; [now apply path_step with v|].
+      now constructor.
+Qed.
+
+Local Lemma loop_reach_path : forall g r v,
+  reach g [r] v -> exists xs, path g r xs v.
+Proof.
+  intros g r v [root [xs [Hin Hpath]]].
+  destruct Hin as [<-|Hin]; [now exists xs|contradiction].
+Qed.
+
+Local Lemma loop_root_dominates : forall g r v, dominates g r r v.
+Proof.
+  intros g r v xs Hpath. now apply loop_path_start in Hpath.
+Qed.
+
+Local Lemma loop_self_dominates : forall g r v, dominates g r v v.
+Proof.
+  intros g r v xs Hpath. now apply loop_path_end in Hpath.
+Qed.
+
+Local Lemma loop_backward_dominates : forall g r h a xs b,
+  dominates g r h b -> path g a xs b -> (forall x, In x xs -> x <> h) ->
+  dominates g r h a.
+Proof.
+  intros g r h a xs b Hdom Hpath Havoid prefix Hprefix.
+  destruct (loop_path_join g r prefix a xs b Hprefix Hpath) as [ys [Hys Hmembers]].
+  destruct (Hmembers h (Hdom ys Hys)) as [Hin|Hin]; [exact Hin|].
+  exfalso. exact (Havoid h Hin eq_refl).
+Qed.
+
+Local Lemma loop_simple_suffix : forall g r outer inner v xs,
+  path g r xs v -> NoDup xs -> dominates g r outer inner -> inner <> outer ->
+  In inner xs -> exists suffix, path g inner suffix v /\
+    forall x, In x suffix -> x <> outer.
+Proof.
+  intros g r outer inner v xs Hpath Hunique Hdom Hne Hin.
+  destruct (loop_path_split g r xs v Hpath inner Hin)
+    as [before [after [Heq [Hprefix Hsuffix]]]].
+  assert (Hbefore : In outer before).
+  { destruct (in_app_or before [inner] outer (Hdom _ Hprefix)) as [Hfirst|Hlast].
+    - exact Hfirst.
+    - destruct Hlast as [Hequal|Hfalse]; [congruence|contradiction]. }
+  exists after. split; [exact Hsuffix|].
+  intros x Hafter Hequal. subst x. rewrite Heq in Hunique.
+  exact (loop_nodup_disjoint before after Hunique outer Hbefore Hafter).
+Qed.
+
+Local Lemma loop_strict_dominance_asym : forall g r outer inner,
+  reach g [r] inner -> dominates g r outer inner -> inner <> outer ->
+  ~ dominates g r inner outer.
+Proof.
+  intros g r outer inner Hreach Hdom Hne Hreverse.
+  destruct (loop_reach_path g r inner Hreach) as [xs Hpath].
+  destruct (loop_path_simple g r xs inner Hpath) as [ys [Hys Hunique]].
+  destruct (loop_simple_suffix g r inner outer inner ys Hys Hunique Hreverse
+    ltac:(congruence) (Hdom ys Hys)) as [suffix [Hsuffix Havoid]].
+  exact (Havoid inner (loop_path_end g outer suffix inner Hsuffix) eq_refl).
+Qed.
+
+Local Lemma loop_dominators_comparable : forall g r a b v,
+  reach g [r] v -> dominates g r a v -> dominates g r b v ->
+  dominates g r a b \/ dominates g r b a.
+Proof.
+  intros g r a b v Hreach Ha Hb.
+  destruct (Pos.eq_dec a b) as [->|Hne]; [left; apply loop_self_dominates|].
+  destruct (loop_reach_path g r v Hreach) as [xs Hpath].
+  destruct (loop_path_simple g r xs v Hpath) as [ys [Hys Hunique]].
+  destruct (loop_path_split g r ys v Hys a (Ha ys Hys))
+    as [before [after [Heq [Hprefix Hsuffix]]]].
+  assert (Hbmember : In b (before ++ after)) by (rewrite <- Heq; apply Hb; exact Hys).
+  destruct (in_app_or before after b Hbmember) as [Hbefore|Hafter].
+  - right. eapply loop_backward_dominates; [exact Hb|exact Hsuffix|].
+    intros x Hin Hequal. subst x. rewrite Heq in Hunique.
+    exact (loop_nodup_disjoint before after Hunique b Hbefore Hin).
+  - assert (Hafter_unique : NoDup after).
+    { rewrite Heq in Hunique. now apply NoDup_app_remove_l in Hunique. }
+    destruct (loop_simple_suffix g a a b v after Hsuffix Hafter_unique
+      (loop_root_dominates g a b) ltac:(congruence) Hafter)
+      as [suffix [Htail Havoid]].
+    left. eapply loop_backward_dominates; eassumption.
+Qed.
+
+Local Lemma loop_header_reachable : forall g r h,
+  natural_header g r h -> reach g [r] h.
+Proof.
+  intros g r h [latch [Hreach [Hedge Hdom]]].
+  destruct (loop_reach_path g r latch Hreach) as [xs Hpath].
+  exists r, (xs ++ [h]). split; [now left|].
+  now apply loop_path_snoc with latch.
+Qed.
+
+Local Lemma loop_member_reachable : forall g r h v,
+  natural_loop g r h v -> reach g [r] v.
+Proof.
+  intros g r h v [Hheader [->|[latch [xs [Hreach Hrest]]]]].
+  - now apply loop_header_reachable.
+  - exact Hreach.
+Qed.
+
+Local Lemma loop_header_dominates : forall g r h v,
+  natural_loop g r h v -> dominates g r h v.
+Proof.
+  intros g r h v [Hheader [->|[latch [xs [Hreach [Hlatch [Hedge [Hdom [Hpath Havoid]]]]]]]]].
+  - apply loop_self_dominates.
+  - eapply loop_backward_dominates; eassumption.
+Qed.
+
+(** Every body vertex reaches its header through vertices dominated by that header. *)
+Local Lemma loop_member_header_path : forall g r h v,
+  natural_loop g r h v -> exists xs, path g v xs h /\
+    forall x, In x xs -> dominates g r h x.
+Proof.
+  intros g r h v [Hheader [->|[latch [xs [Hreach [Hlatch [Hedge [Hdom [Hpath Havoid]]]]]]]]].
+  - exists [h]. split; [constructor|].
+    intros x [<-|Hin]; [apply loop_self_dominates|contradiction].
+  - exists (xs ++ [h]). split; [now apply loop_path_snoc with latch|].
+    intros x Hin. destruct (in_app_or xs [h] x Hin) as [Hxs|Hlast].
+    + destruct (loop_path_split g v xs latch Hpath x Hxs)
+        as [before [after [Heq [Hprefix Hsuffix]]]].
+      eapply loop_backward_dominates; [exact Hdom|exact Hsuffix|].
+      intros y Hy. apply Havoid. rewrite Heq. apply in_or_app. now right.
+    + destruct Hlast as [<-|Hfalse]; [apply loop_self_dominates|contradiction].
+Qed.
+
+Local Lemma loop_meeting_header : forall g r inner outer v,
+  natural_loop g r inner v -> natural_loop g r outer v ->
+  dominates g r outer inner -> inner <> outer -> natural_loop g r outer inner.
+Proof.
+  intros g r inner outer v Hinner Houter Hdom Hne.
+  pose proof (loop_member_reachable g r inner v Hinner) as Hreach.
+  pose proof (loop_header_dominates g r inner v Hinner) as Hinnerdom.
+  destruct (loop_reach_path g r v Hreach) as [xs Hpath].
+  destruct (loop_path_simple g r xs v Hpath) as [ys [Hys Hunique]].
+  destruct (loop_simple_suffix g r outer inner v ys Hys Hunique Hdom Hne
+    (Hinnerdom ys Hys)) as [suffix [Hsuffix Havoid]].
+  destruct Houter as [Houterheader [Hequal|[latch [zs [Hv [Hlatch [Hedge [Hldom [Hlast Hlastavoid]]]]]]]]].
+  - subst v. exfalso. exact (Havoid outer (loop_path_end g inner suffix outer Hsuffix) eq_refl).
+  - destruct (loop_path_join g inner suffix v zs latch Hsuffix Hlast)
+      as [joined [Hjoined Hmembers]].
+    split; [exact Houterheader|]. right. exists latch, joined.
+    split; [apply loop_header_reachable; exact (proj1 Hinner)|].
+    split; [exact Hlatch|]. split; [exact Hedge|]. split; [exact Hldom|].
+    split; [exact Hjoined|]. intros x Hin.
+    destruct (Hmembers x Hin) as [Hfirst|Hsecond]; [now apply Havoid|now apply Hlastavoid].
+Qed.
+
+Local Lemma loop_member_containment : forall g r inner outer,
+  natural_header g r inner -> natural_loop g r outer inner ->
+  dominates g r outer inner -> inner <> outer -> loop_inside g r inner outer.
+Proof.
+  intros g r inner outer Hinner Houter Hdom Hne.
+  pose proof (loop_header_reachable g r inner Hinner) as Hreach.
+  pose proof (loop_strict_dominance_asym g r outer inner Hreach Hdom Hne) as Hreverse.
+  split; [exact Hne|]. split; [exact Hinner|]. split; [exact (proj1 Houter)|].
+  intros v Hbody.
+  destruct (loop_member_header_path g r inner v Hbody) as [xs [Hpath Hdominated]].
+  assert (Havoid : forall x, In x xs -> x <> outer).
+  { intros x Hin Hequal. subst x. exact (Hreverse (Hdominated outer Hin)). }
+  destruct Houter as [Houterheader [Hequal|[latch [ys [Hinnerreach [Hlatch [Hedge [Hldom [Hlast Hlastavoid]]]]]]]]];
+    [contradiction|].
+  destruct (loop_path_join g v xs inner ys latch Hpath Hlast)
+    as [joined [Hjoined Hmembers]].
+  split; [exact Houterheader|]. right. exists latch, joined.
+  split; [now apply loop_member_reachable with inner|].
+  split; [exact Hlatch|]. split; [exact Hedge|]. split; [exact Hldom|].
+  split; [exact Hjoined|]. intros x Hin.
+  destruct (Hmembers x Hin) as [Hfirst|Hsecond]; [now apply Havoid|now apply Hlastavoid].
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -640,7 +882,19 @@ Module LoopsT <: LOOPS_ALL.
   Lemma F11_laminar : forall g r h outer v,
     natural_loop g r h v -> natural_loop g r outer v -> h <> outer ->
     loop_inside g r h outer \/ loop_inside g r outer h.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r h outer v Hinner Houter Hne.
+    pose proof (loop_member_reachable g r h v Hinner) as Hreach.
+    pose proof (loop_header_dominates g r h v Hinner) as Hinnerdom.
+    pose proof (loop_header_dominates g r outer v Houter) as Houterdom.
+    destruct (loop_dominators_comparable g r h outer v Hreach Hinnerdom Houterdom)
+      as [Hfirst|Hsecond].
+    - right. assert (Hreverse : outer <> h) by congruence.
+      exact (loop_member_containment g r outer h (proj1 Houter)
+        (loop_meeting_header g r outer h v Houter Hinner Hfirst Hreverse) Hfirst Hreverse).
+    - left. exact (loop_member_containment g r h outer (proj1 Hinner)
+        (loop_meeting_header g r h outer v Hinner Houter Hsecond Hne) Hsecond Hne).
+  Qed.
 
   Lemma F12_header_order : forall g t r inner outer,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
