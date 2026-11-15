@@ -44,6 +44,197 @@ Proof.
   - exact Hrun.
 Qed.
 
+(** Reading a row depends only on the variables occurring in that row. *)
+Lemma read_vars_agree {C} : forall xs (e f : env C),
+  (forall x, In x xs -> lookup x e = lookup x f) -> read_vars e xs = read_vars f xs.
+Proof.
+  induction xs as [|x xs IH]; intros e f Hagree; [reflexivity|].
+  cbn [read_vars]. rewrite (Hagree x (or_introl eq_refl)), (IH e f).
+  - reflexivity.
+  - intros y Hin. apply Hagree. now right.
+Qed.
+
+(** A fresh binding leaves reads of other variables unchanged. *)
+Lemma read_vars_other {C} : forall xs x c (e : env C),
+  ~ In x xs -> read_vars ((x, c) :: e) xs = read_vars e xs.
+Proof.
+  intros xs x c e Hfresh. apply read_vars_agree.
+  intros y Hin. cbn [lookup]. destruct (Pos.eqb y x) eqn:Heq; [|reflexivity].
+  apply Pos.eqb_eq in Heq. subst y. contradiction.
+Qed.
+
+(** Executing concatenated instruction lists agrees with sequential execution. *)
+Lemma exec_code_append {K C} (eval : K -> list C -> option C) :
+  forall left right (e : env C), exec_code eval (left ++ right) e =
+    match exec_code eval left e with None => None | Some out => exec_code eval right out end.
+Proof.
+  induction left as [|[[dst op] args] rest IH]; intros right e; [reflexivity|].
+  cbn [app exec_code]. destruct (read_vars e args) as [values|]; [|reflexivity].
+  destruct (eval op values) as [value|]; [apply IH|reflexivity].
+Qed.
+
+(** The same instructions preserve agreement on a set containing all their reads. *)
+Lemma exec_code_agree {K C} (eval : K -> list C -> option C) :
+  forall instructions universe (e f : env C),
+  (forall dst op args, In (dst, op, args) instructions -> incl args universe) ->
+  (forall x, In x universe -> lookup x e = lookup x f) ->
+  match exec_code eval instructions e, exec_code eval instructions f with
+  | None, None => True
+  | Some out, Some out' => forall x, In x universe -> lookup x out = lookup x out'
+  | _, _ => False
+  end.
+Proof.
+  induction instructions as [|[[dst op] args] rest IH]; intros universe e f Hreads Hagree.
+  - exact Hagree.
+  - cbn [exec_code].
+    rewrite (read_vars_agree args e f).
+    2: { intros x Hin. apply Hagree. exact (Hreads dst op args (or_introl eq_refl) x Hin). }
+    destruct (read_vars f args) as [values|]; [|exact I].
+    destruct (eval op values) as [value|]; [|exact I].
+    apply IH.
+    + intros dst' op' args' Hin. apply (Hreads dst' op' args'). now right.
+    + intros x Hin. cbn [lookup]. destruct (Pos.eqb x dst); [reflexivity|].
+      apply Hagree. exact Hin.
+Qed.
+
+(** Binding parameters leaves variables outside the parameter list unchanged. *)
+Lemma bind_vars_other {C} : forall xs values (e out : env C),
+  bind_vars xs values e = Some out ->
+  forall x, ~ In x xs -> lookup x out = lookup x e.
+Proof.
+  induction xs as [|y ys IH]; intros values e out Hbind x Hfresh.
+  - destruct values; inversion Hbind; reflexivity.
+  - destruct values as [|value values]; [discriminate|].
+    cbn [bind_vars] in Hbind.
+    rewrite (IH values ((y, value) :: e) out Hbind x).
+    + cbn [lookup]. destruct (Pos.eqb x y) eqn:Heq; [|reflexivity].
+      apply Pos.eqb_eq in Heq. subst y. exfalso. apply Hfresh. now left.
+    + intro Hin. apply Hfresh. now right.
+Qed.
+
+(** A distinct parameter retains the value supplied at its own position. *)
+Lemma bind_vars_nth {C} : forall xs values (e out : env C) i x c,
+  NoDup xs -> nth_error xs i = Some x -> nth_error values i = Some c ->
+  bind_vars xs values e = Some out -> lookup x out = Some c.
+Proof.
+  induction xs as [|y ys IH]; intros values e out i x c Hdistinct Hx Hc Hbind.
+  - destruct i; discriminate.
+  - destruct values as [|value values]; [discriminate|].
+    inversion Hdistinct as [|head tail Hfresh Htail]; subst.
+    cbn [bind_vars] in Hbind. destruct i as [|i].
+    + inversion Hx; inversion Hc; subst.
+      rewrite (bind_vars_other ys values ((x, c) :: e) out Hbind x Hfresh).
+      cbn [lookup]. now rewrite Pos.eqb_refl.
+    + eapply IH; eassumption.
+Qed.
+
+(** A successful row read supplies the original value at every row position. *)
+Lemma read_vars_nth {C} : forall xs (e : env C) values i x,
+  read_vars e xs = Some values -> nth_error xs i = Some x ->
+  exists c, nth_error values i = Some c /\ lookup x e = Some c.
+Proof.
+  induction xs as [|y ys IH]; intros e values i x Hread Hx.
+  - destruct i; discriminate.
+  - cbn [read_vars] in Hread.
+    destruct (lookup y e) as [value|] eqn:Hvalue; [|discriminate].
+    destruct (read_vars e ys) as [tail|] eqn:Htail; [|discriminate].
+    inversion Hread; subst values. destruct i as [|i].
+    + inversion Hx; subst x. exists value. split; [reflexivity|exact Hvalue].
+    + exact (IH e tail i x Htail Hx).
+Qed.
+
+(** Every member of a successfully read row has a value. *)
+Lemma read_vars_defined {C} : forall xs (e : env C) values,
+  read_vars e xs = Some values -> forall x, In x xs -> exists c, lookup x e = Some c.
+Proof.
+  intros xs e values Hread x Hin.
+  apply In_nth_error in Hin as [i Hi].
+  destruct (read_vars_nth xs e values i x Hread Hi) as [c [Hc Hvalue]].
+  exists c. exact Hvalue.
+Qed.
+
+(** Successful reads preserve the number of operands. *)
+Lemma read_vars_length {C} : forall xs (e : env C) values,
+  read_vars e xs = Some values -> length xs = length values.
+Proof.
+  induction xs as [|x xs IH]; intros e values Hread.
+  - inversion Hread. reflexivity.
+  - cbn [read_vars] in Hread.
+    destruct (lookup x e) as [value|]; [|discriminate].
+    destruct (read_vars e xs) as [tail|] eqn:Htail; [|discriminate].
+    inversion Hread; subst values. cbn [length]. f_equal. eapply IH. exact Htail.
+Qed.
+
+(** Equal row lengths suffice for parameter binding to succeed. *)
+Lemma bind_vars_exists {C} : forall xs values (e : env C),
+  length xs = length values -> exists out, bind_vars xs values e = Some out.
+Proof.
+  induction xs as [|x xs IH]; intros values e Hlength.
+  - destruct values; [exists e; reflexivity|discriminate].
+  - destruct values as [|value values]; [discriminate|].
+    cbn [bind_vars]. apply IH. cbn [length] in Hlength. now injection Hlength.
+Qed.
+
+(** A distinct parallel destination receives its listed original source. *)
+Lemma exec_par_hit {A} : forall par (rho : positive -> option A) dst src,
+  NoDup (map fst par) -> In (dst, src) par -> exec_par par rho dst = rho src.
+Proof.
+  induction par as [|[x y] par IH]; intros rho dst src Hdistinct Hin; [contradiction|].
+  inversion Hdistinct as [|head tail Hfresh Htail]; subst.
+  cbn [exec_par]. destruct Hin as [Heq|Hin].
+  - inversion Heq; subst. now rewrite Pos.eqb_refl.
+  - destruct (Pos.eqb dst x) eqn:Heq.
+    + apply Pos.eqb_eq in Heq. subst dst. exfalso. apply Hfresh. apply in_map_iff.
+      exists (x, src). split; [reflexivity|exact Hin].
+    + apply IH; assumption.
+Qed.
+
+(** Variables outside a parallel destination row retain their previous values. *)
+Lemma exec_par_miss {A} : forall par (rho : positive -> option A) x,
+  ~ In x (map fst par) -> exec_par par rho x = rho x.
+Proof.
+  induction par as [|[dst src] par IH]; intros rho x Hfresh; [reflexivity|].
+  cbn [exec_par]. destruct (Pos.eqb x dst) eqn:Heq.
+  - apply Pos.eqb_eq in Heq. subst dst. exfalso. apply Hfresh. now left.
+  - apply IH. intro Hin. apply Hfresh. now right.
+Qed.
+
+(** Binding a row of read values agrees with the associated parallel assignment. *)
+Lemma bind_moves_agree {C} : forall par values (e out : env C),
+  NoDup (map fst par) -> read_vars e (map snd par) = Some values ->
+  bind_vars (map fst par) values e = Some out ->
+  forall x, lookup x out = exec_par par (fun y => lookup y e) x.
+Proof.
+  intros par values e out Hdistinct Hread Hbind x.
+  destruct (in_dec Pos.eq_dec x (map fst par)) as [Hin|Hfresh].
+  - apply in_map_iff in Hin as [[dst src] [Heq Hin]]. cbn [fst] in Heq. subst dst.
+    pose proof Hin as Hindex. apply In_nth_error in Hindex as [i Hi].
+    assert (Hdst : nth_error (map fst par) i = Some x).
+    { rewrite nth_error_map, Hi. reflexivity. }
+    assert (Hsrc : nth_error (map snd par) i = Some src).
+    { rewrite nth_error_map, Hi. reflexivity. }
+    destruct (read_vars_nth _ e values i src Hread Hsrc) as [c [Hc Hvalue]].
+    rewrite (bind_vars_nth _ values e out i x c Hdistinct Hdst Hc Hbind).
+    rewrite (exec_par_hit par (fun y => lookup y e) x src Hdistinct Hin).
+    symmetry. exact Hvalue.
+  - rewrite (bind_vars_other _ values e out Hbind x Hfresh).
+    symmetry. exact (exec_par_miss par (fun y => lookup y e) x Hfresh).
+Qed.
+
+(** Parallel assignment observes only its queried variable and its source row. *)
+Lemma exec_par_agree {A} : forall par (rho sigma : positive -> option A) x,
+  (forall y, y = x \/ In y (map snd par) -> rho y = sigma y) ->
+  exec_par par rho x = exec_par par sigma x.
+Proof.
+  induction par as [|[dst src] par IH]; intros rho sigma x Hagree.
+  - apply Hagree. now left.
+  - cbn [exec_par]. destruct (Pos.eqb x dst).
+    + apply Hagree. right. now left.
+    + apply IH. intros y [Heq|Hin].
+      * apply Hagree. now left.
+      * apply Hagree. right. now right.
+Qed.
+
 Module DestroyCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
     (P : TYPE with Definition t := func positive O.K O.G)
