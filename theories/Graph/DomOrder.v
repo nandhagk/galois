@@ -4358,3 +4358,365 @@ Proof.
   - lia.
   - apply dom_lt_eval_path_budget with (run_width := run_width); try assumption. lia.
 Qed.
+
+(** * Semidominator phase clocks and complete parent-producer composition *)
+
+Local Opaque dom_lt_eval T_dom_lt_eval dom_lt_predecessor T_dom_lt_predecessor.
+Local Opaque dom_lt_settle T_dom_lt_settle.
+
+(** Predecessor overhead is linear; every evaluator call is charged to its exact replay. *)
+Lemma dom_lt_predecessors_phase_clock bound width known limit current final incoming :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_scores_agree known current final ->
+  dom_lt_trie_all (fun n => (n <= bound)%N) current ->
+  Forall (fun n => (n <= bound)%N) incoming -> forall acc,
+  dom_lt_predecessor_bounded bound acc ->
+  dom_lt_links_known known (fst (fst acc)) ->
+  (List.T_fold_left (dom_lt_predecessor limit current)
+      (T_dom_lt_predecessor limit current) incoming acc <=
+    List.T_fold_left (dom_lt_phase_step limit final) (T_dom_lt_phase_step limit final)
+      (map LtEval incoming) (fst (fst acc)) +
+    64 * N.of_nat (length incoming) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hwidth Hscores Hcurrent Hincoming.
+  induction Hincoming as [|source rest Hsource Hrest IH]; intros acc Hbounded Hknown.
+  - cbn [map length]. time_unfold @List.T_fold_left. nia.
+  - pose proof (dom_lt_predecessor_range bound limit current acc source
+      Hcurrent Hbounded Hsource) as Hnextbound.
+    assert (Hnextknown : dom_lt_links_known known
+      (fst (fst (dom_lt_predecessor limit current acc source)))).
+    { rewrite dom_lt_predecessor_links. now apply dom_lt_eval_known. }
+    specialize (IH (dom_lt_predecessor limit current acc source) Hnextbound Hnextknown).
+    destruct (dom_lt_eval_agree known current final limit (fst (fst acc)) source
+      Hscores Hknown) as [Heval Hclock].
+    assert (Hnext : fst (fst (dom_lt_predecessor limit current acc source)) =
+      dom_lt_phase_step limit final (fst (fst acc)) (LtEval source)).
+    { rewrite dom_lt_predecessor_links, Heval. reflexivity. }
+    rewrite Hnext in IH.
+    assert (Hhead : (T_dom_lt_predecessor limit current acc source <=
+      T_dom_lt_phase_step limit final (fst (fst acc)) (LtEval source) +
+      64 * N.of_nat (width + 1))%N).
+    { destruct acc as [[links best] witness].
+      destruct Hbounded as [Hlinks [Hbest Hwitness]].
+      destruct (dom_lt_eval_bounded bound limit current links source Hlinks Hsource)
+        as [Hafter Hchosen].
+      pose proof (dom_lt_identity_bounded bound current
+        (snd (dom_lt_eval limit current links source)) Hcurrent Hchosen) as Hcandidate.
+      pose proof (dom_lt_semi_predecessor_clock width limit current links best witness source
+        (Hwidth _ Hchosen) (Hwidth _ Hcandidate)) as Hcost.
+      cbn [fst] in Hclock. rewrite Hclock in Hcost.
+      pose proof (dom_lt_phase_eval_clock limit final links source) as Hphase.
+      cbn [fst]. clear -Hcost Hphase. lia. }
+    cbn [map length]. time_unfold @List.T_fold_left.
+    fold (List.T_fold_left (dom_lt_predecessor limit current)
+      (T_dom_lt_predecessor limit current)).
+    fold (List.T_fold_left (dom_lt_phase_step limit final) (T_dom_lt_phase_step limit final)).
+    eapply dom_lt_phase_clock_row; [exact Hhead|exact IH|].
+    clear -width rest. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** Settlement pays its two writes outside the row replay and one final link. *)
+Lemma dom_lt_settle_phase_clock bound width known numeric before vertex final :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_numeric_ranges bound numeric -> dom_lt_semi_bounded bound before ->
+  (vertex <= bound)%N ->
+  dom_lt_scores_agree known (lt_semis before) final ->
+  dom_lt_links_known known (lt_semi_links before) ->
+  (T_dom_lt_settle numeric before vertex + 2 <=
+    List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (dom_lt_settle_sequence numeric vertex) (lt_semi_links before) +
+    256 * (PTrieT.c_trie + 1) *
+      N.of_nat ((length (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+        None => [] | Some row => row end) + 1) * (width + 1)))%N.
+Proof.
+  intros Hwidth Hnumeric Hbefore Hvertex Hscores Hknown.
+  destruct Hnumeric as [Horder Hparents Hpreds].
+  destruct Hbefore as [Hsemis [Hmin Hlinks]].
+  unfold dom_lt_settle_sequence.
+  destruct (trie_get (dom_lt_key vertex) (lt_numeric_parent numeric)) as [parent|] eqn:Hparent.
+  - set (incoming := match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+      None => [] | Some row => row end).
+    assert (Hincoming : Forall (fun n => (n <= bound)%N) incoming).
+    { unfold incoming.
+      destruct (trie_get (dom_lt_key vertex) (lt_numeric_pred numeric)) as [row|] eqn:Hrow;
+        [now apply (Hpreds (dom_lt_key vertex))|constructor]. }
+    pose proof (Hparents (dom_lt_key vertex) parent Hparent) as Hp.
+    assert (Hinitial : dom_lt_predecessor_bounded bound
+      (lt_semi_links before, parent, parent)).
+    { split; [exact Hlinks|now split]. }
+    pose proof (dom_lt_predecessors_phase_clock bound width known (lt_numeric_limit numeric)
+      (lt_semis before) final incoming Hwidth Hscores Hsemis Hincoming
+      (lt_semi_links before, parent, parent) Hinitial Hknown) as Hrow.
+    destruct (dom_lt_predecessors_phase known (lt_numeric_limit numeric)
+      (lt_semis before) final incoming Hscores (lt_semi_links before, parent, parent) Hknown)
+      as [Hvalue Hafter].
+    cbn [fst] in Hvalue, Hafter.
+    pose proof (dom_lt_semi_settle_live_clock width numeric before vertex parent
+      (Hwidth _ Hvertex) Hparent) as Hsettle. cbn zeta in Hsettle. fold incoming in Hsettle.
+    pose proof (dom_lt_fold_clock_app
+      (dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (map LtEval incoming) [LtLink vertex parent] (lt_semi_links before)) as Hsplit.
+    rewrite <- Hvalue in Hsplit. cbn [fst] in Hrow.
+    pose proof (dom_lt_phase_link_clock (lt_numeric_limit numeric) final
+      (fst (fst (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis before))
+        incoming (lt_semi_links before, parent, parent)))) vertex parent) as Hlink.
+    rewrite dom_lt_single_fold_clock in Hsplit.
+    eapply dom_lt_phase_clock_settle;
+      [exact Hsettle|exact Hrow|exact Hlink|exact Hsplit|].
+    clear -width incoming. rewrite Nat2N.inj_mul, Nat2N.inj_add.
+    assert (Hw : (1 <= N.of_nat (width + 1))%N) by lia. nia.
+  - pose proof (dom_lt_semi_settle_stop_clock width numeric before vertex
+      (Hwidth _ Hvertex) Hparent) as Hstop.
+    time_unfold @List.T_fold_left. clear -Hstop.
+    rewrite Nat2N.inj_mul, Nat2N.inj_add.
+    assert (Hw : (1 <= N.of_nat (width + 1))%N) by lia. nia.
+Qed.
+
+(** The settlement work measure counts each numeric vertex and each predecessor occurrence. *)
+Definition dom_lt_settlement_work (numeric : dom_lt_numeric) (order : list N) : nat :=
+  fold_right (fun vertex total =>
+    length (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+      None => [] | Some row => row end) + 1 + total) 0 order.
+
+(** The measure is the vertex count plus the total predecessor-row length. *)
+Lemma dom_lt_settlement_work_sum numeric order :
+  dom_lt_settlement_work numeric order = length order +
+    fold_right (fun vertex total =>
+      length (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+        None => [] | Some row => row end) + total) 0 order.
+Proof.
+  induction order as [|vertex rest IH]; [reflexivity|].
+  unfold dom_lt_settlement_work in *. cbn [fold_right length] in *. lia.
+Qed.
+
+(** The original settlement fold is its exact final-score replay plus linear overhead. *)
+Lemma dom_lt_settlements_phase_clock bound width numeric order :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_numeric_ranges bound numeric -> NoDup order ->
+  Forall (fun n => (n <= bound)%N) order -> forall before,
+  dom_lt_semi_bounded bound before ->
+  dom_lt_links_known (fun query => ~ In query order) (lt_semi_links before) ->
+  (List.T_fold_left (dom_lt_settle numeric) (T_dom_lt_settle numeric) order before <=
+    List.T_fold_left
+      (dom_lt_phase_step (lt_numeric_limit numeric)
+        (lt_semis (fold_left (dom_lt_settle numeric) order before)))
+      (T_dom_lt_phase_step (lt_numeric_limit numeric)
+        (lt_semis (fold_left (dom_lt_settle numeric) order before)))
+      (dom_lt_settlements_sequence numeric order) (lt_semi_links before) +
+    256 * (PTrieT.c_trie + 1) *
+      N.of_nat (dom_lt_settlement_work numeric order * (width + 1)))%N.
+Proof.
+  intros Hwidth Hnumeric Hunique.
+  induction Hunique as [|vertex rest Hfresh Hunique IH]; intros Hranges before Hbefore Hknown.
+  - cbn [dom_lt_settlements_sequence flat_map dom_lt_settlement_work fold_right].
+    time_unfold @List.T_fold_left. nia.
+  - inversion Hranges as [|head tail Hvertex Hrest]; subst head tail.
+    set (after := dom_lt_settle numeric before vertex).
+    set (final := lt_semis (fold_left (dom_lt_settle numeric) rest after)).
+    assert (Hscores : dom_lt_scores_agree (fun query => ~ In query (vertex :: rest))
+      (lt_semis before) final).
+    { intros query Houtside. unfold final, after. symmetry.
+      change (dom_lt_identity
+        (lt_semis (fold_left (dom_lt_settle numeric) (vertex :: rest) before)) query =
+        dom_lt_identity (lt_semis before) query).
+      now apply dom_lt_settlements_score_frame. }
+    destruct (dom_lt_settle_phase (fun query => ~ In query (vertex :: rest))
+      numeric before vertex final Hscores Hknown) as [Hstep Hlinked].
+    fold after in Hstep, Hlinked.
+    assert (Hnext : dom_lt_links_known (fun query => ~ In query rest) (lt_semi_links after)).
+    { eapply dom_lt_links_known_mono; [|exact Hlinked].
+      intros query [Houtside|Heq] Hin.
+      - apply Houtside. now right.
+      - subst query. contradiction. }
+    assert (Hafter : dom_lt_semi_bounded bound after).
+    { unfold after. now apply dom_lt_settle_range. }
+    specialize (IH Hrest after Hafter Hnext). fold final in IH.
+    pose proof (dom_lt_settle_phase_clock bound width
+      (fun query => ~ In query (vertex :: rest)) numeric before vertex final
+      Hwidth Hnumeric Hbefore Hvertex Hscores Hknown) as Hhead.
+    pose proof (dom_lt_fold_clock_app (dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (dom_lt_settle_sequence numeric vertex) (dom_lt_settlements_sequence numeric rest)
+      (lt_semi_links before)) as Hsplit.
+    rewrite <- Hstep in Hsplit.
+    change (List.T_fold_left (dom_lt_settle numeric) (T_dom_lt_settle numeric)
+      (vertex :: rest) before <=
+      List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) final)
+        (T_dom_lt_phase_step (lt_numeric_limit numeric) final)
+        (dom_lt_settle_sequence numeric vertex ++ dom_lt_settlements_sequence numeric rest)
+        (lt_semi_links before) + 256 * (PTrieT.c_trie + 1) *
+        N.of_nat (dom_lt_settlement_work numeric (vertex :: rest) * (width + 1)))%N.
+    time_unfold @List.T_fold_left. fold after.
+    fold (List.T_fold_left (dom_lt_settle numeric) (T_dom_lt_settle numeric)).
+    fold (List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) final)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) final)).
+    change (dom_lt_settlement_work numeric (vertex :: rest)) with
+      (length (match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+        None => [] | Some row => row end) + 1 + dom_lt_settlement_work numeric rest).
+    eapply dom_lt_phase_clock_flatten; [exact Hhead|exact IH|exact Hsplit|].
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add.
+    clear -width numeric vertex rest. nia.
+Qed.
+
+(** The semidominator wrapper and its order projection add two calls to the settlement fold. *)
+Lemma dom_lt_semidominators_phase_clock bound width numeric :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_numeric_ranges bound numeric -> NoDup (lt_numeric_order numeric) ->
+  (T_dom_lt_semidominators numeric <=
+    List.T_fold_left
+      (dom_lt_phase_step (lt_numeric_limit numeric) (lt_semis (dom_lt_semidominators numeric)))
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) (lt_semis (dom_lt_semidominators numeric)))
+      (dom_lt_settlements_sequence numeric (lt_numeric_order numeric))
+      (DomLtLinks Empty Empty []) +
+    512 * (PTrieT.c_trie + 1) *
+      N.of_nat ((dom_lt_settlement_work numeric (lt_numeric_order numeric) + 1) *
+        (width + 1)))%N.
+Proof.
+  intros Hwidth Hnumeric Hunique.
+  pose proof (dom_lt_settlements_phase_clock bound width numeric (lt_numeric_order numeric)
+    Hwidth Hnumeric Hunique (dom_lt_numeric_order_range bound numeric Hnumeric)
+    (DomLtSemiState Empty Empty (DomLtLinks Empty Empty []))) as Hfold.
+  assert (Hempty : dom_lt_semi_bounded bound
+    (DomLtSemiState Empty Empty (DomLtLinks Empty Empty []))).
+  { repeat split; apply dom_lt_trie_all_empty. }
+  specialize (Hfold Hempty (dom_lt_empty_links_known _)).
+  cbn [lt_semi_links] in Hfold. fold (dom_lt_semidominators numeric) in Hfold.
+  unfold T_dom_lt_semidominators. time_simpl.
+  change (fun (state : dom_lt_semi_state) (vertex : N) => T_dom_lt_settle numeric state vertex)
+    with (T_dom_lt_settle numeric).
+  eapply dom_lt_phase_clock_wrapper with
+    (extra := (256 * (PTrieT.c_trie + 1) *
+      N.of_nat (dom_lt_settlement_work numeric (lt_numeric_order numeric) * (width + 1)) + 1)%N).
+  - eapply dom_lt_phase_clock_wrapper; [exact Hfold|reflexivity].
+  - rewrite !Nat2N.inj_mul, !Nat2N.inj_add.
+    assert (Hw : (1 <= N.of_nat (width + 1))%N) by lia.
+    clear -Hw width numeric. nia.
+Qed.
+
+Local Opaque T_dom_lt_numeric_of T_dom_lt_semidominators T_dom_lt_buckets.
+Local Opaque T_dom_lt_correct T_dom_lt_erase.
+
+(** The pipeline does no more work than the parent producer, which also erases numeric keys. *)
+Lemma dom_lt_pipeline_parent_clock g r :
+  (T_dom_lt_pipeline g r <= T_dom_lt_parents g r)%N.
+Proof.
+  unfold T_dom_lt_pipeline, T_dom_lt_parents. time_simpl. lia.
+Qed.
+
+(** A closed coefficient covers numeric conversion and all work outside replay. *)
+Definition dom_lt_semi_coefficient : N :=
+  (dom_lt_numeric_coefficient + (16 * 4096) * (PTrieT.c_trie + 1))%N.
+
+(** The full parent producer is linear outside the two exactly replayed link forests. *)
+Lemma dom_lt_parents_replay_clock g r : prepared_ok g ->
+  (T_dom_lt_parents g r + 1 <=
+    dom_lt_semi_coefficient *
+      N.of_nat ((graph_n (base g) + graph_e (base g) + 1) * (graph_width (base g) + 1)) +
+    T_dom_lt_run_ops (dom_lt_ops g r) (dom_lt_replay_initial g r))%N.
+Proof.
+  intro Hprepared.
+  set (numeric := dom_lt_numeric_of g r).
+  set (semi := dom_lt_semidominators numeric).
+  set (bucket := dom_lt_buckets numeric (lt_semis semi)).
+  set (parents := dom_lt_correct numeric (lt_semis semi) (lt_relative bucket)).
+  set (bound := N.of_nat (length (dom_lt_dfs g r))).
+  set (width := graph_width (base g)).
+  set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) * (width + 1))).
+  assert (Hnumeric : dom_lt_numeric_ranges bound numeric) by apply dom_lt_numeric_of_ranges.
+  assert (Hunique : NoDup (lt_numeric_order numeric)) by apply dom_lt_numeric_order_unique.
+  assert (Hwidth : forall n, (n <= bound)%N -> N.size_nat n <= width).
+  { intros n Hn. now apply (dom_lt_pipeline_discovery_width g r). }
+  pose proof (dom_lt_semidominators_range bound numeric Hnumeric) as Hsemi_range.
+  fold semi in Hsemi_range.
+  pose proof (dom_lt_pipeline_buckets_range bound numeric (lt_semis semi) Hnumeric)
+    as Hbucket_range. fold bucket in Hbucket_range.
+  pose proof (dom_lt_pipeline_correct_range bound numeric (lt_semis semi) (lt_relative bucket)
+    (proj2 Hbucket_range)) as Hparent_range. fold parents in Hparent_range.
+  assert (Horder_width : Forall (fun n => N.size_nat n <= width) (lt_numeric_order numeric)).
+  { apply Forall_forall. intros n Hin. apply Hwidth.
+    exact (proj1 (Forall_forall _ _) (dom_lt_numeric_order_range _ _ Hnumeric) n Hin). }
+  assert (Hrelative_width : dom_lt_trie_all (fun n => N.size_nat n <= width)
+    (lt_relative bucket)).
+  { intros key n Hget. apply Hwidth. exact (proj2 Hbucket_range key n Hget). }
+  assert (Hparent_width : dom_lt_trie_all (fun n => N.size_nat n <= width) parents).
+  { intros key n Hget. apply Hwidth. exact (Hparent_range key n Hget). }
+  pose proof (dom_lt_pipeline_numeric_clock g r Hprepared) as Hnumeric_clock.
+  fold width in Hnumeric_clock. fold budget in Hnumeric_clock.
+  pose proof (dom_lt_semidominators_phase_clock bound width numeric Hwidth Hnumeric Hunique)
+    as Hsemi_clock. fold semi in Hsemi_clock.
+  pose proof (dom_lt_pipeline_buckets_clock bound width numeric (lt_semis semi)
+    Hwidth Hnumeric Hunique (proj1 Hsemi_range)) as Hbucket_clock.
+  fold bucket in Hbucket_clock.
+  pose proof (dom_lt_semi_correct_clock width numeric (lt_semis semi) (lt_relative bucket)
+    Horder_width Hrelative_width) as Hcorrect_clock.
+  pose proof (dom_lt_pipeline_erase_clock width numeric parents Horder_width Hparent_width
+    (dom_lt_pipeline_numeric_vertex_width g r)) as Herase_clock.
+  assert (Horder : length (lt_numeric_order numeric) <= graph_n (base g)).
+  { unfold numeric. rewrite dom_lt_numeric_order_length.
+    exact (proj1 (proj2 (proj2 (dom_lt_dfs_inventory g r)))). }
+  assert (Hwork : dom_lt_settlement_work numeric (lt_numeric_order numeric) <=
+    graph_n (base g) + graph_e (base g)).
+  { rewrite dom_lt_settlement_work_sum.
+    pose proof (dom_lt_numeric_pred_total g r Hprepared) as Hpredecessors.
+    fold numeric in Hpredecessors. lia. }
+  assert (Horderbudget : (N.of_nat ((length (lt_numeric_order numeric) + 1) * (width + 1))
+    <= budget)%N).
+  { unfold budget. apply time_of_nat_le, Nat.mul_le_mono_r. lia. }
+  assert (Hworkbudget : (N.of_nat
+    ((dom_lt_settlement_work numeric (lt_numeric_order numeric) + 1) * (width + 1)) <=
+    budget)%N).
+  { unfold budget. apply time_of_nat_le, Nat.mul_le_mono_r. lia. }
+  set (semi_ops := dom_lt_settlements_sequence numeric (lt_numeric_order numeric)).
+  set (bucket_ops := rev_append (lt_operations (lt_bucket_links bucket)) []).
+  fold semi_ops in Hsemi_clock. fold bucket_ops in Hbucket_clock.
+  pose proof (dom_lt_pipeline_replay_two_phases (lt_numeric_limit numeric)
+    (lt_semis semi) semi_ops bucket_ops) as Hreplay.
+  assert (Hsemilog : lt_operations (lt_semi_links semi) = rev semi_ops).
+  { apply dom_lt_semidominators_log, Hunique. }
+  assert (Hoperations : dom_lt_ops g r = semi_ops ++ bucket_ops).
+  { unfold dom_lt_ops, dom_lt_pipeline. fold numeric. fold semi. fold bucket.
+    cbn [result_semi result_bucket]. fold bucket_ops.
+    rewrite rev_append_rev, Hsemilog, rev_involutive. reflexivity. }
+  assert (Hinitial : dom_lt_replay_initial g r =
+    DomLtReplay (DomLtLinks Empty Empty []) (lt_semis semi) (lt_numeric_limit numeric)
+      (N.of_nat (length semi_ops)) 0%N).
+  { unfold dom_lt_replay_initial, dom_lt_pipeline. fold numeric. fold semi. fold bucket.
+    cbn [result_semi result_numeric]. rewrite Hsemilog, length_rev. reflexivity. }
+  rewrite <- Hoperations, <- Hinitial in Hreplay.
+  assert (Hsemi_paid : (T_dom_lt_semidominators numeric <=
+    List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) (lt_semis semi))
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) (lt_semis semi))
+      semi_ops (DomLtLinks Empty Empty []) + 512 * (PTrieT.c_trie + 1) * budget)%N).
+  { pose proof (N.mul_le_mono_l _ _ (512 * (PTrieT.c_trie + 1))%N Hworkbudget) as Hscale.
+    clear -Hsemi_clock Hscale. nia. }
+  assert (Hbucket_paid : (T_dom_lt_buckets numeric (lt_semis semi) <=
+    List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) (lt_semis semi))
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) (lt_semis semi))
+      bucket_ops (DomLtLinks Empty Empty []) + 2048 * (PTrieT.c_trie + 1) * budget)%N).
+  { pose proof (N.mul_le_mono_l _ _ (2048 * (PTrieT.c_trie + 1))%N Horderbudget) as Hscale.
+    clear -Hbucket_clock Hscale. nia. }
+  assert (Hcorrect_paid : (T_dom_lt_correct numeric (lt_semis semi) (lt_relative bucket) <=
+    256 * (PTrieT.c_trie + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hcorrect_clock|]. now apply N.mul_le_mono_l. }
+  assert (Herase_paid : (T_dom_lt_erase numeric parents <=
+    512 * (PTrieT.c_trie + 1) * budget)%N).
+  { eapply N.le_trans; [exact Herase_clock|]. now apply N.mul_le_mono_l. }
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget. clear -g width. rewrite Nat2N.inj_mul.
+    change (1 * 1 <= N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (width + 1))%N.
+    apply N.mul_le_mono; lia. }
+  fold width. fold budget. unfold T_dom_lt_parents. time_simpl.
+  fold numeric. fold semi. fold bucket. fold parents.
+  unfold dom_lt_semi_coefficient.
+  clearbody numeric semi bucket parents bound width budget semi_ops bucket_ops.
+  clear -Hnumeric_clock Hsemi_paid Hbucket_paid Hcorrect_paid Herase_paid Hreplay Hpositive.
+  nia.
+Qed.
+
+Local Transparent dom_lt_eval T_dom_lt_eval dom_lt_predecessor T_dom_lt_predecessor.
+Local Transparent dom_lt_settle T_dom_lt_settle.
+Local Transparent T_dom_lt_numeric_of T_dom_lt_semidominators T_dom_lt_buckets.
+Local Transparent T_dom_lt_correct T_dom_lt_erase.
