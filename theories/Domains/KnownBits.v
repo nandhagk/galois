@@ -4419,10 +4419,14 @@ Proof.
   pose proof (tnum_mask_word w b) as Hmaskword.
   pose proof (tnum_min_bits w b) as Hminbits.
   pose proof (tnum_mask_bits w b) as Hmaskbits.
-  pose proof (tnum_shiftr_time (tnum_min w b) i ltac:(destruct Hminword; lia) ltac:(lia)) as Hmintime.
-  pose proof (tnum_shiftr_time (tnum_mask w b) i ltac:(destruct Hmaskword; lia) ltac:(lia)) as Hmasktime.
-  pose proof (tnum_shiftr_bits (tnum_min w b) i ltac:(destruct Hminword; lia) ltac:(lia)) as Hminshiftbits.
-  pose proof (tnum_shiftr_bits (tnum_mask w b) i ltac:(destruct Hmaskword; lia) ltac:(lia)) as Hmaskshiftbits.
+  pose proof (tnum_shiftr_time (tnum_min w b) i ltac:(destruct Hminword; lia) ltac:(lia)) as
+    Hmintime.
+  pose proof (tnum_shiftr_time (tnum_mask w b) i ltac:(destruct Hmaskword; lia) ltac:(lia)) as
+    Hmasktime.
+  pose proof (tnum_shiftr_bits (tnum_min w b) i ltac:(destruct Hminword; lia) ltac:(lia)) as
+    Hminshiftbits.
+  pose proof (tnum_shiftr_bits (tnum_mask w b) i ltac:(destruct Hmaskword; lia) ltac:(lia)) as
+    Hmaskshiftbits.
   time_unfold T_tnum_mul_acc_done. cbn beta iota zeta. time_pose.
   unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
 Qed.
@@ -4468,13 +4472,501 @@ Proof.
     change (Z.size_nat 1) with 1%nat in *.
     rewrite ?Nat2N.inj_add in *. lia.
   - pose proof (tnum_uncertain_bits w (tnum_wor w (tnum_min w a) (tnum_mask w a))) as Huncertain.
-    pose proof (tnum_shl_scalar_bits w i (tnum_uncertain w (tnum_wor w (tnum_min w a) (tnum_mask w a)))) as Hshiftbits.
-    pose proof (tnum_shl_scalar_time w i (tnum_uncertain w (tnum_wor w (tnum_min w a) (tnum_mask w a))) Hi) as Hshift.
+    pose proof (tnum_shl_scalar_bits w i (tnum_uncertain w (tnum_wor w (tnum_min w a) (tnum_mask w
+      a)))) as Hshiftbits.
+    pose proof (tnum_shl_scalar_time w i (tnum_uncertain w (tnum_wor w (tnum_min w a) (tnum_mask w
+      a))) Hi) as Hshift.
     cbn beta iota zeta. time_pose. unfold tnum_bits in *.
     change (Z.size_nat 1) with 1%nat in *.
     rewrite ?Nat2N.inj_add in *. lia.
 Qed.
 TimeBound tnum_mul_acc_step_time.
+
+(** A staged loop with bounded masks spends a linear width budget at each live index. *)
+Lemma tnum_mul_stage_loop_time : forall w a b,
+  (tnum_bits a <= 2 * Pos.to_nat w)%nat ->
+  (tnum_bits b <= 2 * Pos.to_nat w)%nat ->
+  (T_loopN (tnum_mul_stage_step w a b)
+    (fun s => T_tnum_mul_stage_step w a b s) (N.pos w) (0%Z, tnum_const w 0) <=
+    2097152 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w a b Ha Hb.
+  set (Inv := fun n (s : Z * tnum) =>
+    (0 <= fst s /\ fst s + Z.of_N n <= Zpos w) /\
+    (tnum_bits (snd s) <= 2 * Pos.to_nat w)%nat).
+  assert (Hcost : forall n s, Inv n s -> n <> 0%N ->
+    (T_tnum_mul_stage_step w a b s <=
+      131072 * N.of_nat (8 * Pos.to_nat w + 1))%N).
+  { intros n [i r] [[Hi Hfuel] Hr] Hn.
+    cbn [fst snd] in Hi, Hfuel, Hr.
+    pose proof (tnum_mul_stage_step_time w a b i r ltac:(lia)) as Htime.
+    destruct (tnum_count_bits_width w i ltac:(lia)) as [Hibits _].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add in *. lia. }
+  assert (Hpreserve : forall n s next, Inv n s -> n <> 0%N ->
+    tnum_mul_stage_step w a b s = inl next -> Inv (N.pred n) next).
+  { intros n [i r] [j q] [[Hi Hfuel] Hr] Hn Hstep.
+    pose proof (tnum_mul_step_bits w a b (i, r) Hr) as Hbits.
+    rewrite Hstep in Hbits. cbn [snd] in Hbits.
+    assert (Hindex : j = i + 1).
+    { unfold tnum_mul_stage_step in Hstep. injection Hstep as Hindex Hvalue. lia. }
+    assert (Hpred : (N.pred n + 1 = n)%N) by lia.
+    apply (f_equal Z.of_N) in Hpred. rewrite N2Z.inj_add in Hpred.
+    unfold Inv. cbn [fst snd] in *. repeat split; lia. }
+  assert (Hinitial : Inv (N.pos w) (0%Z, tnum_const w 0)).
+  { unfold Inv. cbn [fst snd]. repeat split; try lia. apply tnum_const_bits. }
+  pose proof (tnum_loopN_indexed_time (Z * tnum)%type tnum
+    (tnum_mul_stage_step w a b) (fun s => T_tnum_mul_stage_step w a b s)
+    Inv (131072 * N.of_nat (8 * Pos.to_nat w + 1))%N
+    (N.pos w) (0%Z, tnum_const w 0) Hcost Hpreserve Hinitial) as Hloop.
+  pose proof (tnum_positive_bits w) as Hwidth.
+  assert (Hconvert : N.of_nat (Pos.to_nat w) = N.pos w).
+  { change (N.of_nat (N.to_nat (N.pos w)) = N.pos w). apply N2Nat.id. }
+  cbn [N.size_nat Nat.pow] in *. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add in *. nia.
+Qed.
+
+(** An accumulating loop uses the same bounded live-index budget and may stop early. *)
+Lemma tnum_mul_acc_loop_time : forall w a b,
+  (tnum_bits a <= 2 * Pos.to_nat w)%nat ->
+  (tnum_bits b <= 2 * Pos.to_nat w)%nat ->
+  (T_loopN (tnum_mul_acc_step w a b)
+    (fun s => T_tnum_mul_acc_step w a b s) (N.pos w) (0%Z, tnum_const w 0) <=
+    2097152 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w a b Ha Hb.
+  set (Inv := fun n (s : Z * tnum) =>
+    (0 <= fst s /\ fst s + Z.of_N n <= Zpos w) /\
+    (tnum_bits (snd s) <= 2 * Pos.to_nat w)%nat).
+  assert (Hcost : forall n s, Inv n s -> n <> 0%N ->
+    (T_tnum_mul_acc_step w a b s <=
+      131072 * N.of_nat (8 * Pos.to_nat w + 1))%N).
+  { intros n [i r] [[Hi Hfuel] Hr] Hn.
+    cbn [fst snd] in Hi, Hfuel, Hr.
+    pose proof (tnum_mul_acc_step_time w a b i r ltac:(lia)) as Htime.
+    destruct (tnum_count_bits_width w i ltac:(lia)) as [Hibits _].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add in *. lia. }
+  assert (Hpreserve : forall n s next, Inv n s -> n <> 0%N ->
+    tnum_mul_acc_step w a b s = inl next -> Inv (N.pred n) next).
+  { intros n [i r] [j q] [[Hi Hfuel] Hr] Hn Hstep.
+    pose proof (tnum_acc_step_bits w a b (i, r) Hr) as Hbits.
+    rewrite Hstep in Hbits. cbn [snd] in Hbits.
+    assert (Hindex : j = i + 1).
+    { unfold tnum_mul_acc_step in Hstep.
+      destruct (tnum_mul_acc_done w b i); [discriminate|].
+      injection Hstep as Hindex Hvalue. lia. }
+    assert (Hpred : (N.pred n + 1 = n)%N) by lia.
+    apply (f_equal Z.of_N) in Hpred. rewrite N2Z.inj_add in Hpred.
+    unfold Inv. cbn [fst snd] in *. repeat split; lia. }
+  assert (Hinitial : Inv (N.pos w) (0%Z, tnum_const w 0)).
+  { unfold Inv. cbn [fst snd]. repeat split; try lia. apply tnum_const_bits. }
+  pose proof (tnum_loopN_indexed_time (Z * tnum)%type tnum
+    (tnum_mul_acc_step w a b) (fun s => T_tnum_mul_acc_step w a b s)
+    Inv (131072 * N.of_nat (8 * Pos.to_nat w + 1))%N
+    (N.pos w) (0%Z, tnum_const w 0) Hcost Hpreserve Hinitial) as Hloop.
+  pose proof (tnum_positive_bits w) as Hwidth.
+  assert (Hconvert : N.of_nat (Pos.to_nat w) = N.pos w).
+  { change (N.of_nat (N.to_nat (N.pos w)) = N.pos w). apply N2Nat.id. }
+  cbn [N.size_nat Nat.pow] in *. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add in *. nia.
+Qed.
+
+(** The staged multiplier normalizes raw inputs before entering its bounded loop. *)
+Lemma tnum_mul_stages_time : forall w a b,
+  (T_tnum_mul_stages w a b <= 4194304 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_normalise_bits w a) as Ha.
+  pose proof (tnum_normalise_bits w b) as Hb.
+  pose proof (tnum_mul_stage_loop_time w (tnum_normalise w a)
+    (tnum_normalise w b) Ha Hb) as Hloop.
+  time_unfold T_tnum_mul_stages. cbn beta iota zeta.
+  destruct (tnum_empty w (tnum_normalise w a) || tnum_empty w (tnum_normalise w b)).
+  - time_pose. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - destruct (loopN (tnum_mul_stage_step w (tnum_normalise w a)
+      (tnum_normalise w b)) (N.pos w) (0%Z, tnum_const w 0)) as [state|result];
+      cbn beta iota zeta; time_pose;
+      change (Z.size_nat 0) with 0%nat in *;
+      rewrite ?Nat2N.inj_add in *;
+      set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *;
+      clearbody budget; lia.
+Qed.
+TimeBound tnum_mul_stages_time.
+
+(** Both exits of the accumulating loop retain bounded mask storage. *)
+Lemma tnum_mul_acc_loop_bits : forall w a b fuel s,
+  (tnum_bits (snd s) <= 2 * Pos.to_nat w)%nat ->
+  (tnum_bits (match loopN (tnum_mul_acc_step w a b) fuel s with
+    | inl next => snd next | inr r => r end) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b fuel s Hs.
+  pose proof (tnum_runs_preserved (Z * tnum)%type tnum (tnum_mul_acc_step w a b)
+    (fun next => (tnum_bits (snd next) <= 2 * Pos.to_nat w)%nat)
+    (fun r => (tnum_bits r <= 2 * Pos.to_nat w)%nat)
+    (tnum_acc_step_bits w a b) _ _ _
+    (tnum_loop_runs _ _ (tnum_mul_acc_step w a b) fuel s) Hs) as Hbound.
+  destruct (loopN (tnum_mul_acc_step w a b) fuel s); exact Hbound.
+Qed.
+
+(** The accumulating multiplier adds two bounded accumulators after its bounded loop. *)
+Lemma tnum_mul_acc_time : forall w a b,
+  (T_tnum_mul_acc w a b <= 4194304 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_normalise_bits w a) as Ha.
+  pose proof (tnum_normalise_bits w b) as Hb.
+  pose proof (tnum_mul_acc_loop_time w (tnum_normalise w a) (tnum_normalise w b) Ha Hb) as Hloop.
+  pose proof (tnum_mul_acc_loop_bits w (tnum_normalise w a) (tnum_normalise w b)
+    (N.pos w) (0%Z, tnum_const w 0) (tnum_const_bits w 0)) as Hloopbits.
+  pose proof (tnum_word_mul_time w (tnum_min w (tnum_normalise w a))
+    (tnum_min w (tnum_normalise w b)) (tnum_min_word w _) (tnum_min_word w _)) as Hmul.
+  assert (Hproduct : (Z.size_nat (wmul w (tnum_min w (tnum_normalise w a))
+    (tnum_min w (tnum_normalise w b))) <= Pos.to_nat w)%nat).
+  { apply tnum_word_bits. unfold wmul. apply wrap_is_word. }
+  pose proof (tnum_const_bits w (wmul w (tnum_min w (tnum_normalise w a))
+    (tnum_min w (tnum_normalise w b)))) as Hvaluebits.
+  time_unfold T_tnum_mul_acc. cbn beta iota zeta.
+  destruct (tnum_empty w (tnum_normalise w a) || tnum_empty w (tnum_normalise w b)).
+  - time_pose. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - destruct (loopN (tnum_mul_acc_step w (tnum_normalise w a)
+      (tnum_normalise w b)) (N.pos w) (0%Z, tnum_const w 0)) as [state|result]
+      in Hloopbits |- *;
+      cbn beta iota zeta in *; time_pose; unfold tnum_bits in *;
+      change (Z.size_nat 0) with 0%nat in *;
+      rewrite ?Nat2N.inj_add in *;
+      set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *;
+      clearbody budget; lia.
+Qed.
+TimeBound tnum_mul_acc_time.
+
+(** Selecting or intersecting multiplier choices preserves the quadratic width bound. *)
+Lemma tnum_mul_with_time : forall choice w a b,
+  (T_tnum_mul_with choice w a b <= 16777216 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros choice w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_mul_stages_bits w a b) as Hstages.
+  pose proof (tnum_mul_acc_bits w a b) as Hacc.
+  destruct choice; time_unfold T_tnum_mul_with; cbn beta iota zeta; time_pose;
+    rewrite ?Nat2N.inj_add in *;
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *;
+    clearbody budget; lia.
+Qed.
+TimeBound tnum_mul_with_time.
+
+
+(** Integer logarithms never occupy more bits than their inputs. *)
+Lemma tnum_log2_bits : forall z,
+  (Z.size_nat (Z.log2 z) <= Z.size_nat z)%nat.
+Proof.
+  intros [|p|p]; [reflexivity| |cbn [Z.log2 Z.size_nat]; lia].
+  pose proof (tnum_abs_bits_bound (Zpos p)) as Hpower.
+  cbn [Z.abs Z.size_nat] in Hpower.
+  apply Z.log2_lt_pow2 in Hpower; [|lia].
+  pose proof (Z.log2_nonneg (Zpos p)) as Hnonnegative.
+  pose proof (tnum_nonnegative_bits (Z.log2 (Zpos p)) Hnonnegative) as Hbits.
+  pose proof (Z2Nat.id (Z.log2 (Zpos p)) Hnonnegative) as Hcast.
+  change (Z.size_nat (Zpos p)) with (Pos.size_nat p) in *. lia.
+Qed.
+
+(** Bit-length calculation traverses the input's magnitude bits linearly. *)
+Lemma tnum_bitlen_time : forall z,
+  (T_tnum_bitlen z <= 32 * N.of_nat (Z.size_nat z + 1))%N.
+Proof.
+  intro z. pose proof (tnum_log2_bits z).
+  time_unfold T_tnum_bitlen. cbn beta iota zeta. time_pose.
+  destruct (z =? 0); rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound tnum_bitlen_time.
+
+(** Computing the shift cutoff is linear in the width. *)
+Lemma tnum_shift_cutoff_time : forall w,
+  (T_tnum_shift_cutoff w <= 128 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w. pose proof (tnum_positive_bits w) as Hwidth.
+  destruct (tnum_count_bits_width w (Zpos w - 1) ltac:(lia)) as [Hbits _].
+  time_unfold T_tnum_shift_cutoff. cbn beta iota zeta. time_pose.
+  cbn [Z.size_nat Pos.size_nat] in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound tnum_shift_cutoff_time.
+
+(** Recognizing rotation operators uses constant dispatch work. *)
+Lemma tnum_rotation_time : forall o, (T_tnum_rotation o <= 1)%N.
+Proof.
+  intros []; time_unfold T_tnum_rotation; cbn beta iota zeta; reflexivity.
+Qed.
+TimeBound tnum_rotation_time.
+
+(** Doubling a stride adds one bit; modular rotation strides remain bounded. *)
+Lemma tnum_stride_bits : forall o w d, 0 <= d ->
+  if tnum_rotation o
+  then (Z.size_nat (tnum_stride o w d) <= Pos.size_nat w)%nat
+  else (Z.size_nat (tnum_stride o w d) <= Z.size_nat d + 1)%nat.
+Proof.
+  intros o w d Hd. unfold tnum_stride. destruct (tnum_rotation o).
+  - apply tnum_positive_modulo_bits.
+  - pose proof (Std.Z.size_nat_double d Hd). lia.
+Qed.
+
+(** A stride with logarithmic bit size costs linearly in the width. *)
+Lemma tnum_stride_time : forall o w d, 0 <= d ->
+  (Z.size_nat d <= Pos.size_nat w + 2)%nat ->
+  (T_tnum_stride o w d <= 8192 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intros o w d Hd Hbits.
+  pose proof (tnum_width_bits_square w) as Hsquare.
+  pose proof (Std.Z.size_nat_double d Hd) as Hdouble.
+  pose proof (Std.Z.T_mul_two_le d) as Hmul.
+  pose proof (tnum_positive_modulo_time (2 * d) w) as Hmod.
+  assert (Hproduct : ((Z.size_nat (2 * d) + 1) * (Pos.size_nat w + 1) <=
+    32 * (Pos.to_nat w + 1))%nat).
+  { cbn [Nat.pow] in Hsquare. nia. }
+  pose proof (time_of_nat_le _ _ Hproduct) as Hbudget.
+  rewrite !Nat2N.inj_mul in Hbudget.
+  assert (Hmodlinear : (Std.Z.T_modulo (2 * d) (Zpos w) <=
+    4096 * N.of_nat (Pos.to_nat w + 1))%N).
+  { rewrite <- N.mul_assoc in Hmod.
+    eapply N.le_trans; [exact Hmod|].
+    replace 4096%N with (128 * 32)%N by reflexivity.
+    rewrite <- N.mul_assoc. apply N.mul_le_mono_l.
+    rewrite ?Nat2N.inj_add in Hbudget. rewrite ?Nat2N.inj_add. exact Hbudget. }
+  time_unfold T_tnum_stride. cbn beta iota zeta. time_pose.
+  destruct (tnum_rotation o); rewrite ?Nat2N.inj_add in *; lia.
+Qed.
+TimeBound tnum_stride_time.
+
+(** A logarithmic-size stride and bounded masks give a linear scalar charge. *)
+Lemma tnum_scalar_stride_time : forall o w d r,
+  (Z.size_nat d <= Pos.size_nat w + 2)%nat ->
+  (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
+  (T_tnum_scalar o w d r <= 1048576 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intros o w d r Hd Hr.
+  pose proof (tnum_scalar_time o w d r) as Htime.
+  pose proof (tnum_width_bits_square w) as Hsquare.
+  assert (Hsize : (Pos.to_nat w + tnum_bits r +
+    (Z.size_nat d + 1) * (Pos.size_nat w + 1) <= 32 * (Pos.to_nat w + 1))%nat).
+  { cbn [Nat.pow] in Hsquare. nia. }
+  pose proof (time_of_nat_le _ _ Hsize) as Hbudget.
+  rewrite Nat2N.inj_mul in Hbudget. lia.
+Qed.
+
+(** Each positive-mask digit performs at most one bounded scalar transfer. *)
+Lemma tnum_expand_time : forall o w p d r,
+  0 <= d -> (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
+  (if tnum_rotation o
+   then (Z.size_nat d <= Pos.size_nat w + 2)%nat
+   else (Z.size_nat d + Pos.size_nat p <= Pos.size_nat w + 2)%nat) ->
+  (T_tnum_expand o w p d r <=
+    2097152 * N.of_nat ((Pos.to_nat w + 1) * Pos.size_nat p))%N.
+Proof.
+  intros o w p. induction p as [p IH|p IH|]; intros d r Hd Hr Hbudget.
+  all: assert (Hdsize : (Z.size_nat d <= Pos.size_nat w + 2)%nat)
+    by (destruct (tnum_rotation o); cbn [Pos.size_nat] in Hbudget; lia).
+  all: pose proof (tnum_scalar_stride_time o w d r Hdsize Hr) as Hscalar.
+  all: pose proof (tnum_scalar_bits_bound o w d r) as Hscalarbits.
+  all: pose proof (tnum_join_bits_bound w r (tnum_scalar o w d r)) as Hjoinbits.
+  all: pose proof (tnum_stride_time o w d Hd Hdsize) as Hstride.
+  all: try assert (Hnextbudget : if tnum_rotation o
+       then (Z.size_nat (tnum_stride o w d) <= Pos.size_nat w + 2)%nat
+       else (Z.size_nat (tnum_stride o w d) + Pos.size_nat p <= Pos.size_nat w + 2)%nat)
+    by (pose proof (tnum_stride_bits o w d Hd) as Hnext;
+      destruct (tnum_rotation o); cbn [Pos.size_nat] in Hbudget; lia).
+  - pose proof (IH (tnum_stride o w d) (tnum_join w r (tnum_scalar o w d r))
+      (tnum_stride_nonnegative o w d Hd) Hjoinbits Hnextbudget) as Htail.
+    time_unfold T_tnum_expand. cbn beta iota zeta. time_pose.
+    cbn [Pos.size_nat] in *.
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add, ?Nat2N.inj_succ in *.
+    rewrite ?N.mul_succ_r in *. lia.
+  - pose proof (IH (tnum_stride o w d) r
+      (tnum_stride_nonnegative o w d Hd) Hr Hnextbudget) as Htail.
+    time_unfold T_tnum_expand. cbn beta iota zeta. time_pose.
+    cbn [Pos.size_nat] in *.
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add, ?Nat2N.inj_succ in *.
+    rewrite ?N.mul_succ_r in *. lia.
+  - time_unfold T_tnum_expand. cbn beta iota zeta. time_pose.
+    cbn [Pos.size_nat] in *.
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add, ?Nat2N.inj_succ in *.
+    rewrite ?N.mul_succ_r in *. lia.
+Qed.
+
+(** Normalized expansion masks require at most a quadratic width budget. *)
+Lemma tnum_expand_mask_time : forall o w u r,
+  0 <= u -> (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
+  (if tnum_rotation o then (Z.size_nat u <= Pos.to_nat w)%nat
+    else (Z.size_nat u <= Pos.size_nat w)%nat) ->
+  (T_tnum_expand_mask o w u r <=
+    4194304 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros o w [|p|p] r Hu Hr Hbits; [| |lia].
+  all: pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  - time_unfold T_tnum_expand_mask. cbn beta iota zeta. time_pose.
+    rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - assert (Hbudget : if tnum_rotation o
+      then (Z.size_nat 1 <= Pos.size_nat w + 2)%nat
+      else (Z.size_nat 1 + Pos.size_nat p <= Pos.size_nat w + 2)%nat).
+    { destruct (tnum_rotation o); cbn [Z.size_nat Pos.size_nat] in *; lia. }
+    pose proof (tnum_expand_time o w p 1 r ltac:(lia) Hr Hbudget) as Hexpand.
+    pose proof (tnum_positive_bits w) as Hwidth.
+    assert (Hlength : (Pos.size_nat p <= Pos.to_nat w)%nat).
+    { destruct (tnum_rotation o); cbn [Z.size_nat] in Hbits; lia. }
+    assert (Hwork : ((Pos.to_nat w + 1) * Pos.size_nat p <=
+      (Pos.to_nat w + 1) ^ 2)%nat).
+    { cbn [Nat.pow]. nia. }
+    pose proof (time_of_nat_le _ _ Hwork) as HworkN.
+    time_unfold T_tnum_expand_mask. cbn beta iota zeta.
+    rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+Qed.
+
+(** A width-bounded amount bit count gives a quadratic scalar budget and one raw read. *)
+Lemma tnum_scalar_word_amount_time : forall o w k a,
+  (Z.size_nat k <= Pos.to_nat w)%nat ->
+  (T_tnum_scalar o w k a <=
+    131072 * N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a))%N.
+Proof.
+  intros o w k a Hk.
+  pose proof (tnum_scalar_time o w k a) as Htime.
+  pose proof (tnum_positive_bits w) as Hwidth.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  assert (Hproduct : ((Z.size_nat k + 1) * (Pos.size_nat w + 1) <=
+    (Pos.to_nat w + 1) ^ 2)%nat).
+  { cbn [Nat.pow]. nia. }
+  pose proof (time_of_nat_le _ _ Hproduct) as Hbudget.
+  rewrite ?Nat2N.inj_add in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody budget. lia.
+Qed.
+
+(** Two width-bounded magnitudes fit the standard quadratic modulo clock. *)
+Lemma tnum_modulo_width_time : forall w x y,
+  (Z.size_nat x <= Pos.to_nat w)%nat ->
+  (Z.size_nat y <= Pos.to_nat w + 1)%nat ->
+  (Std.Z.T_modulo x y <= 128 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w x y Hx Hy.
+  pose proof (Std.Z.T_modulo_le x y) as Htime.
+  pose proof (WordTime.time_square_floor 1
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+  assert (Hproduct : ((Z.size_nat x + 1) *
+    (Z.size_nat x + Z.size_nat y + 2) <= 4 * (Pos.to_nat w + 1) ^ 2)%nat).
+  { cbn [Nat.pow]. nia. }
+  pose proof (time_of_nat_le _ _ Hproduct) as Hbudget.
+  rewrite (Nat2N.inj_mul (Z.size_nat x + 1)
+    (Z.size_nat x + Z.size_nat y + 2)) in Hbudget.
+  rewrite (Nat2N.inj_mul 4 ((Pos.to_nat w + 1) ^ 2)) in Hbudget.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody budget. clear Hproduct.
+  rewrite ?Nat2N.inj_add in Hbudget, Htime.
+  rewrite <- N.mul_assoc in Htime. lia.
+Qed.
+
+(** Raw variable transfer pays a fixed quadratic budget and constant-many mask reads. *)
+Lemma tnum_variable_raw_clock_bound : forall o w a b,
+  (T_tnum_variable_raw o w a b <=
+    6291456 * N.of_nat ((Pos.to_nat w + 1) ^ 2) +
+    262144 * N.of_nat (tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros o w a b.
+  pose proof (tnum_positive_bits w) as Hwidth.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_min_bits w b) as Hbasebits.
+  pose proof (tnum_mask_bits w b) as Humaskbits.
+  pose proof (tnum_mask_word w b) as Humaskword.
+  pose proof (tnum_scalar_bits_bound o w (tnum_min w b) a) as Hr.
+  pose proof (tnum_scalar_bits_bound o w (Zpos w) a) as Hlarge.
+  pose proof (tnum_scalar_word_amount_time o w (tnum_min w b) a Hbasebits) as Hbase.
+  pose proof (tnum_scalar_word_amount_time o w (Zpos w) a Hwidth) as Htop.
+  destruct (tnum_shift_cutoff_size w) as [Hcutoff Hcutoffsize].
+  pose proof (tnum_pow2_time (tnum_shift_cutoff w) Hcutoff) as Hpow.
+  pose proof (tnum_pow2_bits (tnum_shift_cutoff w) Hcutoff) as Hpowbits.
+  pose proof (Z.pow_pos_nonneg 2 (tnum_shift_cutoff w) ltac:(lia) Hcutoff) as Hpositive.
+  pose proof (Z.mod_pos_bound (tnum_mask w b) (2 ^ tnum_shift_cutoff w) Hpositive) as Hmodrange.
+  pose proof (tnum_cutoff_modulo_bits w (tnum_mask w b)) as Hmodbits.
+  pose proof (tnum_modulo_width_time w (tnum_mask w b) (2 ^ tnum_shift_cutoff w)
+    Humaskbits ltac:(lia)) as Hmodtime.
+  pose proof (tnum_expand_mask_bits o w (tnum_mask w b mod 2 ^ tnum_shift_cutoff w)
+    (tnum_scalar o w (tnum_min w b) a)) as Hlowbits.
+  time_unfold T_tnum_variable_raw. cbn beta iota zeta.
+  destruct (tnum_rotation o) eqn:Hrotation.
+  - pose proof (tnum_expand_mask_time o w (tnum_mask w b)
+      (tnum_scalar o w (tnum_min w b) a) ltac:(destruct Humaskword; lia) Hr
+      ltac:(rewrite Hrotation; exact Humaskbits)) as Hexpand.
+    cbn beta iota zeta. time_pose. unfold tnum_bits in *.
+    rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - pose proof (tnum_expand_mask_time o w (tnum_mask w b mod 2 ^ tnum_shift_cutoff w)
+      (tnum_scalar o w (tnum_min w b) a) ltac:(lia) Hr
+      ltac:(rewrite Hrotation; exact Hmodbits)) as Hexpand.
+    destruct (tnum_mask w b <? 2 ^ tnum_shift_cutoff w);
+      cbn beta iota zeta; time_pose; unfold tnum_bits in *;
+      rewrite ?Nat2N.inj_add in *;
+      set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *;
+      clearbody budget; lia.
+Qed.
+
+(** Bounded raw inputs absorb their mask reads into the quadratic width budget. *)
+Lemma tnum_variable_raw_time : forall o w a b,
+  (tnum_bits a <= 2 * Pos.to_nat w)%nat ->
+  (tnum_bits b <= 2 * Pos.to_nat w)%nat ->
+  (T_tnum_variable_raw o w a b <=
+    8388608 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros o w a b Ha Hb.
+  pose proof (tnum_variable_raw_clock_bound o w a b) as Hraw.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  rewrite ?Nat2N.inj_add in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody budget. lia.
+Qed.
+
+(** Unnormalized raw variable transfer keeps its stored input sizes linear. *)
+Lemma tnum_variable_raw_general_time : forall o w a b,
+  (T_tnum_variable_raw o w a b <= 16777216 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros o w a b. pose proof (tnum_variable_raw_clock_bound o w a b) as Hraw.
+  rewrite ?Nat2N.inj_add in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody budget. lia.
+Qed.
+TimeBound tnum_variable_raw_general_time.
+
+(** Variable transfers pay raw storage only during their initial normalization. *)
+Lemma tnum_variable_time : forall o w a b,
+  (T_tnum_variable o w a b <= 16777216 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros o w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_normalise_bits w a) as Ha.
+  pose proof (tnum_normalise_bits w b) as Hb.
+  pose proof (tnum_variable_raw_time o w (tnum_normalise w a) (tnum_normalise w b) Ha Hb) as Hraw.
+  time_unfold T_tnum_variable. cbn beta iota zeta. time_pose.
+  destruct (tnum_empty w (tnum_normalise w a) || tnum_empty w (tnum_normalise w b));
+    cbn beta iota zeta; rewrite ?Nat2N.inj_add in *;
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *;
+    clearbody budget; lia.
+Qed.
+TimeBound tnum_variable_time.
 
 Local Open Scope nat_scope.
 
@@ -4991,7 +5483,7 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Qed.
 
   Definition c_payload : N := 2 * 1024.
-  Definition c_tnum : N := 1. (* STUB *)
+  Definition c_tnum : N := 8192 * 4096.
   Lemma T_ptop_le : forall w,
     (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
   Proof.
@@ -5111,51 +5603,115 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Lemma T_tnum_normalise_le : forall w a,
     (T_tnum_normalise w a <= c_tnum *
       N.of_nat ((Pos.to_nat w + tnum_bits a + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (tnum_normalise_time w a) as Htime.
+    pose proof (WordTime.time_square_floor (Pos.to_nat w + tnum_bits a + 1)
+      (Pos.to_nat w + tnum_bits a + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+    time_unfold T_tnum_normalise. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + tnum_bits a + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  Qed.
   Lemma T_tnum_not_le : forall w a,
     (T_tnum_not w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (tnum_not_time w a) as Htime.
+    time_unfold T_tnum_not. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   Lemma T_tnum_neg_le : forall w a,
     (T_tnum_neg w a <= c_tnum * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. pose proof (tnum_neg_time w a) as Htime.
+    time_unfold T_tnum_neg. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   Lemma T_tnum_add_le : forall w a b,
     (T_tnum_add w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_add_time w a b) as Htime.
+    time_unfold T_tnum_add. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   Lemma T_tnum_sub_le : forall w a b,
     (T_tnum_sub w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_sub_time w a b) as Htime.
+    time_unfold T_tnum_sub. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   Lemma T_tnum_and_le : forall w a b,
     (T_tnum_and w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_and_time w a b) as Htime.
+    time_unfold T_tnum_and. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   Lemma T_tnum_or_le : forall w a b,
     (T_tnum_or w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_or_time w a b) as Htime.
+    time_unfold T_tnum_or. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   Lemma T_tnum_xor_le : forall w a b,
     (T_tnum_xor w a b <= c_tnum *
       N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_xor_time w a b) as Htime.
+    time_unfold T_tnum_xor. cbn beta iota zeta. unfold c_tnum.
+    rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
   Lemma T_tnum_mul_with_le : forall choice w a b,
     (T_tnum_mul_with choice w a b <= c_tnum *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros choice w a b. pose proof (tnum_mul_with_time choice w a b) as Htime.
+    time_unfold T_tnum_mul_with. cbn beta iota zeta.
+    pose proof (WordTime.time_square_floor 1
+      (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    unfold c_tnum. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  Qed.
   Lemma T_tnum_mul_le : forall w a b,
     (T_tnum_mul w a b <= c_tnum *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_mul_with_time C.multiplier w a b) as Htime.
+    time_unfold T_tnum_mul. try time_unfold T_tnum_mul_with. cbn beta iota zeta.
+    pose proof (WordTime.time_square_floor 1
+      (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    unfold c_tnum. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  Qed.
   Lemma T_tnum_variable_le : forall o w a b,
     (T_tnum_variable o w a b <= c_tnum *
       N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o w a b. pose proof (tnum_variable_time o w a b) as Htime.
+    time_unfold T_tnum_variable. cbn beta iota zeta.
+    pose proof (WordTime.time_square_floor 1
+      (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+    unfold c_tnum. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  Qed.
   Lemma mul_bigO : bigO (fun _ => True)
     (fun x : positive * (tnum * tnum) => N.of_nat
       ((Pos.to_nat (fst x) + 1) ^ 2 + tnum_bits (fst (snd x)) +
         tnum_bits (snd (snd x))))
     (fun x => T_tnum_mul (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_tnum. intros [w [a b]] _. cbn [fst snd].
+    eapply N.le_trans; [exact (T_tnum_mul_le w a b)|].
+    apply N.mul_le_mono_l. lia.
+  Qed.
 
   Definition mul_step := tnum_mul_stage_step.
   TimeFun mul_step.
