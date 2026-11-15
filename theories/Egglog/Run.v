@@ -9978,21 +9978,481 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       reflexivity.
   Qed.
 
+  (** A scheduled job is a kept binding of one of the compiled plans. *)
+  Lemma run_jobs_member : forall p cp nv db c b,
+    In (c, b) (jobs p cp nv db) ->
+    In c (all_plans cp) /\ In b (bindings cp c db) /\ keep p c (bind_trie c b) = true.
+  Proof.
+    intros p cp nv db c b Hin. rewrite F31_jobs in Hin.
+    apply in_flat_map in Hin as [plan [Hplan Hbinding]].
+    apply in_map_iff in Hbinding as [binding [Heq Hkept]].
+    inversion Heq; subst plan binding.
+    apply filter_In in Hkept as [Hbinding Hkeep].
+    split; [|split; assumption]. unfold all_plans.
+    apply in_or_app. destruct nv; [left|right]; exact Hplan.
+  Qed.
+
+  (** Job facts refer to the database where the bindings were collected. *)
+  Definition run_job_facts (p : program V.t) (original : D.t)
+      (job : cplan V.t * list (cell V.t)) : Prop :=
+    let '(c, b) := job in
+    In (job_rule p c) (rules V.t p) /\
+    rule_env (program_sorts p) (program_kind p) (job_rule p c) (env_of c b) /\
+    env_allocated original (env_of c b) /\
+    matches V.prim (D.view original) (query V.t (job_rule p c)) (env_of c b).
+
+  (** Every collected job has a typed, allocated environment and a true query. *)
+  Lemma run_jobs_facts : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    Forall (run_job_facts p db) (jobs p cp nv db).
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded. apply Forall_forall.
+    intros [c b] Hin. cbn [run_job_facts].
+    destruct (run_jobs_member p cp nv db c b Hin) as [Hplan [Hbinding Hkeep]].
+    pose proof (F33_plan_rule p cp c Hchecked Hplan) as Hrule.
+    destruct (F26_bindings_env p cp db c b (job_rule p c) Hchecked Hwf Hloaded
+      Hplan Hrule Hbinding) as [Henv Hallocated].
+    split; [now apply nth_error_In in Hrule|]. split; [exact Henv|].
+    split; [exact Hallocated|]. eapply F1_plan_match_sound; eassumption.
+  Qed.
+
+  (** The execution trie keeps the job's typing and its original allocated identifiers. *)
+  Lemma run_job_environment : forall p original db c b,
+    (D.ids original <= D.ids db)%N ->
+    rule_env (program_sorts p) (program_kind p) (job_rule p c) (env_of c b) ->
+    env_allocated original (env_of c b) ->
+    rule_env (program_sorts p) (program_kind p) (job_rule p c)
+      (fun x => trie_get x (bind_trie c b)) /\
+    env_allocated db (fun x => trie_get x (bind_trie c b)).
+  Proof.
+    intros p original db c b Hids [g [Hquery Hsorted]] Hallocated. split.
+    - exists g. split; [exact Hquery|]. intros x ty Hbound.
+      destruct (Hsorted x ty Hbound) as [cell [Hcell Hsort]].
+      exists cell. rewrite F30_bind_trie. split; assumption.
+    - eapply run_env_allocated_mono; [exact Hids|].
+      intros x i Hcell. rewrite F30_bind_trie in Hcell. eapply Hallocated; exact Hcell.
+  Qed.
+
+  (** Applying saved jobs preserves the loaded state and grows the allocation counter. *)
+  Lemma run_apply_jobs_state : forall p cp original js db,
+    plans_ok p cp -> Forall (run_job_facts p original) js ->
+    D.wf db -> loaded p cp db -> (D.ids original <= D.ids db)%N ->
+    D.wf (apply_jobs p js db) /\ loaded p cp (apply_jobs p js db) /\
+    (D.ids db <= D.ids (apply_jobs p js db))%N.
+  Proof.
+    intros p cp original js. induction js as [|[c b] rest IH]; intros db
+      Hchecked Hjobs Hwf Hloaded Hids.
+    - cbn [apply_jobs]. split; [exact Hwf|]. split; [exact Hloaded|lia].
+    - inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+      destruct Hjob as [Hrule [Henv [Hallocated Hmatch]]].
+      destruct (run_job_environment p original db c b Hids Henv Hallocated)
+        as [Htyped Hallocated_now].
+      destruct (run_apply_state p cp (job_rule p c)
+        (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
+        Htyped Hallocated_now) as [Hnext [Hloadnext [Hidnext Hpending]]].
+      destruct (IH _ Hchecked Hrest Hnext Hloadnext (N.le_trans _ _ _ Hids Hidnext))
+        as [Hfinal [Hloadfinal Hidfinal]].
+      cbn [apply_jobs]. split; [exact Hfinal|]. split; [exact Hloadfinal|lia].
+  Qed.
+
+  (** Rebuilding preserves the loaded declarations, slot layout and row sorts. *)
+  Lemma run_rebuild_state : forall p cp db, D.wf db -> loaded p cp db ->
+    D.wf (D.rebuild db) /\ loaded p cp (D.rebuild db) /\
+    D.ids (D.rebuild db) = D.ids db.
+  Proof.
+    intros p cp db Hwf [Hkinds [Hslots Hsorted]].
+    destruct (D.layout_rebuild db Hwf) as [Hkind [Hslot Hids]].
+    split; [apply D.wf_rebuild; exact Hwf|]. split; [|exact Hids].
+    split; [intro f; rewrite Hkind; apply Hkinds|].
+    split; [now rewrite Hslot|]. apply F24_rebuild_sorted; assumption.
+  Qed.
+
+  (** Advancing keeps the loaded state and its allocation counter. *)
+  Lemma run_advance_state : forall p cp db, D.wf db -> loaded p cp db ->
+    D.wf (D.advance db) /\ loaded p cp (D.advance db) /\
+    D.ids (D.advance db) = D.ids db.
+  Proof.
+    intros p cp db Hwf [Hkinds [Hslots Hsorted]].
+    destruct (D.wf_advance db Hwf) as [Hnext [Hview Hchanged]].
+    split; [exact Hnext|]. split; [|exact (proj1 (D.advance_keeps db Hwf))].
+    split; [intro f; rewrite Hview; apply Hkinds|].
+    split; [rewrite D.layout_advance; exact Hslots|]. now rewrite Hview.
+  Qed.
+
+  (** One round preserves the loaded state and never loses allocated identifiers. *)
+  Lemma run_round_state : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.wf (round p cp nv db) /\ loaded p cp (round p cp nv db) /\
+    (D.ids db <= D.ids (round p cp nv db))%N.
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded.
+    pose proof (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) as Hjobs.
+    destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
+      Hloaded (N.le_refl _)) as [Hnext [Hloadnext Hids]].
+    destruct (run_rebuild_state p cp _ Hnext Hloadnext) as [Hfinal [Hloadfinal Hfinalids]].
+    rewrite F32_round_jobs. split; [exact Hfinal|]. split; [exact Hloadfinal|lia].
+  Qed.
+
+  (** Canonicalizing a key preserves each cell up to the database's identifier equality. *)
+  Lemma run_key_canon_rel : forall db (key : list (cell V.t)), D.wf db ->
+    Forall2 (cell_rel (same (D.view db))) key (map (D.canon db) key).
+  Proof.
+    intros db key Hwf. induction key as [|[i|v] rest IH]; cbn [map D.canon].
+    - constructor.
+    - constructor; [|exact IH]. constructor.
+      apply (proj2 (D.same_repr db i (D.repr db i) Hwf)).
+      now rewrite D.repr_idem.
+    - constructor; [constructor|exact IH].
+  Qed.
+
+  (** Canonical growth also supplies the more general row witnesses used by action folds. *)
+  Lemma run_grows_upto_of_grows : forall before after, D.wf after ->
+    grows before after -> grows_upto before after.
+  Proof.
+    intros before after Hwf [Hsame Hrows]. split; [exact Hsame|].
+    intros f key output Hrow. destruct (Hrows f key output Hrow) as [out [Hfound Hout]].
+    exists (map (D.canon after) key), out. split; [exact Hfound|].
+    split; [now apply run_key_canon_rel|exact Hout].
+  Qed.
+
+  (** A saved job sequence preserves every row and equality from an earlier state. *)
+  Lemma run_apply_jobs_grows : forall p cp original js db before,
+    plans_ok p cp -> Forall (run_job_facts p original) js ->
+    D.wf db -> loaded p cp db -> (D.ids original <= D.ids db)%N ->
+    grows_upto before db -> grows_upto before (apply_jobs p js db).
+  Proof.
+    intros p cp original js. induction js as [|[c b] rest IH]; intros db before
+      Hchecked Hjobs Hwf Hloaded Hids Hbefore; [exact Hbefore|].
+    inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+    destruct Hjob as [Hrule [Henv [Hallocated Hmatch]]].
+    destruct (run_job_environment p original db c b Hids Henv Hallocated)
+      as [Htyped Hallocated_now].
+    destruct (run_apply_state p cp (job_rule p c)
+      (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
+      Htyped Hallocated_now) as [Hnext [Hloadnext [Hidnext Hpending]]].
+    pose proof (F6_apply_grows p cp (job_rule p c)
+      (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
+      Htyped Hallocated_now) as Hstep.
+    cbn [apply_jobs]. eapply IH; [exact Hchecked|exact Hrest|exact Hnext
+      |exact Hloadnext|eapply N.le_trans; eassumption|].
+    exact (run_loaded_growth_trans p cp before db _ Hwf Hnext Hloaded Hloadnext Hbefore Hstep).
+  Qed.
+
+  (** Rebuilding a completed round gives canonical witnesses for every earlier row. *)
+  Lemma run_round_grows_from : forall p cp nv before db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> grows_upto before db ->
+    grows before (round p cp nv db).
+  Proof.
+    intros p cp nv before db Hchecked Hwf Hloaded Hbefore.
+    pose proof (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) as Hjobs.
+    destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
+      Hloaded (N.le_refl _)) as [Hnext Hstate].
+    rewrite F32_round_jobs. apply F6a_rebuild_grows; [exact Hnext|].
+    eapply run_apply_jobs_grows; eassumption || apply N.le_refl.
+  Qed.
+
+  (** Each round grows its input database. *)
+  Lemma run_round_grows : forall p cp nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> grows db (round p cp nv db).
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded.
+    eapply run_round_grows_from; [exact Hchecked|exact Hwf|exact Hloaded|].
+    apply (run_grows_upto_refl (program_sorts p)); [exact Hwf|exact (proj2 (proj2 Hloaded))].
+  Qed.
+
+  (** Clearing the delta frontier preserves an existing growth relation. *)
+  Lemma run_advance_grows : forall before db, D.wf db ->
+    grows_upto before db -> grows_upto before (D.advance db).
+  Proof.
+    intros before db Hwf [Hsame Hrows].
+    pose proof (proj1 (proj2 (D.wf_advance db Hwf))) as Hview.
+    pose proof (proj2 (proj2 (D.advance_keeps db Hwf))) as Hrepr.
+    split; [intros i j Hij; rewrite Hview; now apply Hsame|].
+    intros f key output Hrow. destruct (Hrows f key output Hrow)
+      as [key' [output' [Hfound [Hkey Hout]]]].
+    exists key', output'. split; [now rewrite Hview|].
+    split; [now rewrite Hview|]. unfold D.out_le, D.canon in *.
+    now rewrite Hview, Hrepr.
+  Qed.
+
+  (** A model query atom depends only on pointwise observations of its environment. *)
+  Lemma run_model_atom_agree : forall (M : model (V := V.t)) kinds s t a,
+    (forall x, s x = t x) -> model_atom V.prim M kinds s a ->
+    model_atom V.prim M kinds t a.
+  Proof.
+    intros M kinds s t [f args res|op args res] Heq Hatom; cbn [model_atom] in *.
+    - destruct Hatom as [key [Hterms Hresult]]. exists key. split.
+      + eapply run_model_terms_agree; eassumption.
+      + destruct (kinds f) as [[| |m]|]; destruct res as [result|];
+          cbn in Hresult |- *; try contradiction; try exact Hresult.
+        * eapply run_model_term_agree; eassumption.
+        * destruct Hresult as [value [Hterm Hlat]]. exists value.
+          split; [eapply run_model_term_agree; eassumption|exact Hlat].
+    - destruct Hatom as [cells [values [value [Hterms [Hvalues [Hprim Hresult]]]]]].
+      exists cells, values, value. split; [eapply run_model_terms_agree; eassumption|].
+      split; [exact Hvalues|]. split; [exact Hprim|].
+      eapply run_model_term_agree; eassumption.
+  Qed.
+
+  (** Saved jobs keep their original model queries as later actions extend the interpretation. *)
+  Lemma run_apply_jobs_sat : forall p cp original (M : model (V := V.t)) initial_nu js db nu,
+    plans_ok p cp -> D.wf original -> loaded p cp original ->
+    sat V.merge M initial_nu (D.view original) -> valid_sorted V.prim V.merge M p ->
+    Forall (run_job_facts p original) js ->
+    D.wf db -> loaded p cp db -> (D.ids original <= D.ids db)%N ->
+    extends original M initial_nu nu -> sat V.merge M nu (D.view db) ->
+    exists final_nu, extends db M nu final_nu /\
+      sat V.merge M final_nu (D.view (apply_jobs p js db)).
+  Proof.
+    intros p cp original M initial_nu js.
+    induction js as [|[c b] rest IH]; intros db nu Hchecked Horiginal Hloadoriginal
+      Hsatoriginal Hvalid Hjobs Hwf Hloaded Hids Hext Hsat.
+    - exists nu. split; [intros i Hi; reflexivity|exact Hsat].
+    - inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+      destruct Hjob as [Hrule [Henv [Hallocated Hmatch]]].
+      destruct (run_job_environment p original db c b Hids Henv Hallocated)
+        as [Htyped Hallocated_now].
+      assert (Hmodel : Forall
+          (model_atom V.prim M (program_kind p)
+            (fun x => option_map (den nu) (trie_get x (bind_trie c b))))
+          (query V.t (job_rule p c))).
+      { pose proof (F4a_match_model M initial_nu p cp original
+          (query V.t (job_rule p c)) (env_of c b) Horiginal Hloadoriginal
+          Hsatoriginal Hmatch) as Hinitial.
+        eapply Forall_impl; [|exact Hinitial]. intros atom Hatom.
+        eapply run_model_atom_agree; [|exact Hatom]. intro x.
+        rewrite F30_bind_trie. symmetry.
+        exact (run_env_den_ext M initial_nu nu original (env_of c b) Hext Hallocated x). }
+      destruct (F4_apply_sat M nu p cp (job_rule p c)
+        (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hallocated_now
+        Htyped Hvalid Hrule Hmodel Hsat) as [next_nu [Hextnext Hsatnext]].
+      destruct (run_apply_state p cp (job_rule p c)
+        (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hrule
+        Htyped Hallocated_now) as [Hnext [Hloadnext [Hidnext Hpending]]].
+      destruct (IH _ next_nu Hchecked Horiginal Hloadoriginal Hsatoriginal Hvalid Hrest
+        Hnext Hloadnext (N.le_trans _ _ _ Hids Hidnext)
+        (run_extends_trans M original db initial_nu nu next_nu Hids Hext Hextnext) Hsatnext)
+        as [final_nu [Hextfinal Hsatfinal]].
+      exists final_nu. cbn [apply_jobs]. split; [|exact Hsatfinal].
+      eapply run_extends_trans; eassumption.
+  Qed.
+
+  (** A round preserves every sorted model and extends only freshly allocated meanings. *)
+  Lemma run_round_sat : forall p cp nv db (M : model (V := V.t)) nu,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> valid_sorted V.prim V.merge M p ->
+    sat V.merge M nu (D.view db) ->
+    exists nu', extends db M nu nu' /\ sat V.merge M nu' (D.view (round p cp nv db)).
+  Proof.
+    intros p cp nv db M nu Hchecked Hwf Hloaded Hvalid Hsat.
+    pose proof (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) as Hjobs.
+    destruct (run_apply_jobs_sat p cp db M nu (jobs p cp nv db) db nu Hchecked Hwf Hloaded
+      Hsat Hvalid Hjobs Hwf Hloaded (N.le_refl _) (fun i Hi => eq_refl) Hsat)
+      as [final_nu [Hext Hsatfinal]].
+    destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf Hloaded
+      (N.le_refl _)) as [Hnext Hstate].
+    exists final_nu. split; [exact Hext|]. rewrite F32_round_jobs.
+    apply D.rebuild_sat; assumption.
+  Qed.
+
+  (** A driver step keeps any database invariant respected by rounds and advancing. *)
+  Lemma run_driver_database_invariant : forall p cp lim (P : D.t -> Prop),
+    (forall nv db, P db -> P (round p cp nv db)) ->
+    (forall db, P db -> P (D.advance db)) ->
+    forall nv db, P db ->
+    match driver p cp lim (nv, db) with
+    | inl next => P (snd next)
+    | inr result => P (snd result)
+    end.
+  Proof.
+    intros p cp lim P Hround Hadvance nv db Hcurrent.
+    pose proof (Hround nv db Hcurrent) as Hnext.
+    cbn [driver]. destruct (N.ltb (limits_ids lim) (D.ids (round p cp nv db)));
+      [exact Hnext|].
+    destruct (andb nv (negb (D.changed (round p cp nv db))));
+      [exact Hnext|now apply Hadvance].
+  Qed.
+
+  (** The round's final rebuild canonicalizes its rows and empties pending repairs. *)
+  Lemma run_round_canonical : forall p cp nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.canonical (round p cp nv db) /\ D.pending (round p cp nv db) = 0.
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded.
+    destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked
+      (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) Hwf Hloaded (N.le_refl _))
+      as [Hnext Hstate].
+    rewrite F32_round_jobs. apply D.rebuild_canonical. exact Hnext.
+  Qed.
+
+  (** Advancing changes neither the rows nor their representatives. *)
+  Lemma run_advance_canonical : forall db, D.wf db -> D.canonical db ->
+    D.canonical (D.advance db).
+  Proof.
+    intros db Hwf Hcanonical. unfold D.canonical in *.
+    rewrite (proj1 (proj2 (D.wf_advance db Hwf))),
+      (proj2 (proj2 (D.advance_keeps db Hwf))). exact Hcanonical.
+  Qed.
+
+  (** A naive phase begins only after a canonical quiet frontier has been established. *)
+  Definition run_driver_state (p : program V.t) (cp : compiled V.t)
+      (state : bool * D.t) : Prop :=
+    let '(nv, db) := state in
+    D.wf db /\ loaded p cp db /\
+      (nv = true -> D.canonical db /\ D.pending db = 0 /\ D.changed db = false).
+
+  (** Every continuing driver state carries the invariant needed for a later naive check. *)
+  Lemma run_driver_state_continue : forall p cp lim start next,
+    plans_ok p cp -> run_driver_state p cp start ->
+    driver p cp lim start = inl next -> run_driver_state p cp next.
+  Proof.
+    intros p cp lim [nv db] [nv' db'] Hchecked [Hwf [Hloaded Hfrontier]] Hstep.
+    cbn [driver] in Hstep.
+    destruct (N.ltb (limits_ids lim) (D.ids (round p cp nv db))) eqn:Hlimit;
+      [discriminate|].
+    destruct (andb nv (negb (D.changed (round p cp nv db)))) eqn:Hquiet;
+      [discriminate|].
+    injection Hstep as Hflag Hdb. subst nv' db'. cbn [run_driver_state].
+    destruct (run_round_state p cp nv db Hchecked Hwf Hloaded)
+      as [Hnext [Hloadnext Hids]].
+    destruct (run_round_canonical p cp nv db Hchecked Hwf Hloaded) as [Hcanon Hpending].
+    destruct (run_advance_state p cp _ Hnext Hloadnext) as [Hfinal [Hloadfinal Hfinalids]].
+    split; [exact Hfinal|]. split; [exact Hloadfinal|]. intro Hflag.
+    split; [now apply run_advance_canonical|]. split.
+    - rewrite (proj1 (proj2 (D.advance_keeps _ Hnext))). exact Hpending.
+    - exact (proj2 (proj2 (D.wf_advance _ Hnext))).
+  Qed.
+
+  (** Binary-fuel iteration keeps a database invariant in both result variants. *)
+  Lemma run_loop_database_invariant : forall p cp lim (P : D.t -> Prop),
+    (forall nv db, P db -> P (round p cp nv db)) ->
+    (forall db, P db -> P (D.advance db)) ->
+    forall fuel nv db, P db ->
+    match loopN (driver p cp lim) fuel (nv, db) with
+    | inl next => P (snd next)
+    | inr result => P (snd result)
+    end.
+  Proof.
+    intros p cp lim P Hround Hadvance fuel nv db Hinitial.
+    eapply (run_loopN_invariant (bool * D.t) (stop * D.t) (driver p cp lim)
+      (fun state => P (snd state)) (fun result => P (snd result))).
+    - intros [flag current] next Hcurrent Hstep.
+      pose proof (run_driver_database_invariant p cp lim P Hround Hadvance
+        flag current Hcurrent) as Hnext. rewrite Hstep in Hnext. exact Hnext.
+    - intros [flag current] result Hcurrent Hstep.
+      pose proof (run_driver_database_invariant p cp lim P Hround Hadvance
+        flag current Hcurrent) as Hnext. rewrite Hstep in Hnext. exact Hnext.
+    - exact Hinitial.
+  Qed.
+
+  (** Every intermediate or stopped loop state is loaded and retains the original allocation. *)
+  Lemma run_loop_state : forall p cp lim fuel nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    match loopN (driver p cp lim) fuel (nv, db) with
+    | inl next => D.wf (snd next) /\ loaded p cp (snd next) /\
+        (D.ids db <= D.ids (snd next))%N
+    | inr result => D.wf (snd result) /\ loaded p cp (snd result) /\
+        (D.ids db <= D.ids (snd result))%N
+    end.
+  Proof.
+    intros p cp lim fuel nv db Hchecked Hwf Hloaded.
+    refine (run_loop_database_invariant p cp lim
+      (fun current => D.wf current /\ loaded p cp current /\
+        (D.ids db <= D.ids current)%N) _ _ fuel nv db _).
+    - intros flag current [Hcurrent [Hloadcurrent Hids]].
+      destruct (run_round_state p cp flag current Hchecked Hcurrent Hloadcurrent)
+        as [Hnext [Hloadnext Hidnext]].
+      split; [exact Hnext|]. split; [exact Hloadnext|lia].
+    - intros current [Hcurrent [Hloadcurrent Hids]].
+      destruct (run_advance_state p cp current Hcurrent Hloadcurrent)
+        as [Hnext [Hloadnext Hidnext]].
+      split; [exact Hnext|]. split; [exact Hloadnext|lia].
+    - split; [exact Hwf|]. split; [exact Hloaded|lia].
+  Qed.
+
+
   Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.wf (snd (run p cp lim db)) /\ D.canonical (snd (run p cp lim db)) /\
     loaded p cp (snd (run p cp lim db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded.
+    pose proof (run_loop_state p cp lim (limits_iter lim) false db Hchecked Hwf Hloaded)
+      as Hloop. unfold run.
+    destruct (loopN (driver p cp lim) (limits_iter lim) (false, db))
+      as [[flag final]|[status final]]; cbn [snd] in *.
+    all: destruct Hloop as [Hfinal [Hloadfinal Hids]].
+    all: destruct (run_rebuild_state p cp final Hfinal Hloadfinal)
+      as [Hrebuilt [Hloadrebuilt Hrebuiltids]].
+    all: split; [exact Hrebuilt|].
+    all: split; [exact (proj1 (D.rebuild_canonical final Hfinal))|exact Hloadrebuilt].
+  Qed.
 
   Lemma run_grows : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     grows db (snd (run p cp lim db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded.
+    assert (Hloop : match loopN (driver p cp lim) (limits_iter lim) (false, db) with
+      | inl next => D.wf (snd next) /\ loaded p cp (snd next) /\ grows_upto db (snd next)
+      | inr result => D.wf (snd result) /\ loaded p cp (snd result) /\
+          grows_upto db (snd result)
+      end).
+    { refine (run_loop_database_invariant p cp lim
+        (fun current => D.wf current /\ loaded p cp current /\ grows_upto db current)
+        _ _ (limits_iter lim) false db _).
+      - intros flag current [Hcurrent [Hloadcurrent Hgrowth]].
+        destruct (run_round_state p cp flag current Hchecked Hcurrent Hloadcurrent)
+          as [Hnext [Hloadnext Hids]].
+        split; [exact Hnext|]. split; [exact Hloadnext|].
+        apply run_grows_upto_of_grows; [exact Hnext|].
+        eapply run_round_grows_from; eassumption.
+      - intros current [Hcurrent [Hloadcurrent Hgrowth]].
+        destruct (run_advance_state p cp current Hcurrent Hloadcurrent)
+          as [Hnext [Hloadnext Hids]].
+        split; [exact Hnext|]. split; [exact Hloadnext|].
+        now apply run_advance_grows.
+      - split; [exact Hwf|]. split; [exact Hloaded|].
+        apply (run_grows_upto_refl (program_sorts p));
+          [exact Hwf|exact (proj2 (proj2 Hloaded))]. }
+    unfold run. destruct (loopN (driver p cp lim) (limits_iter lim) (false, db))
+      as [[flag final]|[status final]]; cbn [snd] in *;
+      destruct Hloop as [Hfinal [Hloadfinal Hgrowth]];
+      apply F6a_rebuild_grows; assumption.
+  Qed.
 
   Lemma run_sat : forall p cp lim db (M : model (V := V.t)) nu,
     plans_ok p cp -> D.wf db -> loaded p cp db -> valid_sorted V.prim V.merge M p ->
     sat V.merge M nu (D.view db) -> exists nu',
       (forall i, D.allocated db i -> nu' i = nu i) /\
       sat V.merge M nu' (D.view (snd (run p cp lim db))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db M nu Hchecked Hwf Hloaded Hvalid Hsat.
+    set (Inv := fun current => D.wf current /\ loaded p cp current /\
+      (D.ids db <= D.ids current)%N /\
+      exists current_nu, extends db M nu current_nu /\
+        sat V.merge M current_nu (D.view current)).
+    assert (Hloop : match loopN (driver p cp lim) (limits_iter lim) (false, db) with
+      | inl next => Inv (snd next)
+      | inr result => Inv (snd result)
+      end).
+    { refine (run_loop_database_invariant p cp lim Inv _ _ (limits_iter lim) false db _).
+      - intros flag current [Hcurrent [Hloadcurrent [Hids [current_nu [Hext Hsatcurrent]]]]].
+        destruct (run_round_state p cp flag current Hchecked Hcurrent Hloadcurrent)
+          as [Hnext [Hloadnext Hidnext]].
+        destruct (run_round_sat p cp flag current M current_nu Hchecked Hcurrent
+          Hloadcurrent Hvalid Hsatcurrent) as [next_nu [Hextnext Hsatnext]].
+        split; [exact Hnext|]. split; [exact Hloadnext|]. split; [lia|].
+        exists next_nu. split; [|exact Hsatnext].
+        eapply run_extends_trans; eassumption.
+      - intros current [Hcurrent [Hloadcurrent [Hids [current_nu [Hext Hsatcurrent]]]]].
+        destruct (run_advance_state p cp current Hcurrent Hloadcurrent)
+          as [Hnext [Hloadnext Hidnext]].
+        split; [exact Hnext|]. split; [exact Hloadnext|]. split; [lia|].
+        exists current_nu. split; [exact Hext|].
+        rewrite (proj1 (proj2 (D.wf_advance current Hcurrent))). exact Hsatcurrent.
+      - split; [exact Hwf|]. split; [exact Hloaded|]. split; [lia|].
+        exists nu. split; [intros i Hi; reflexivity|exact Hsat]. }
+    unfold run. destruct (loopN (driver p cp lim) (limits_iter lim) (false, db))
+      as [[flag final]|[status final]]; cbn [snd] in *.
+    all: destruct Hloop as [Hfinal [Hloadfinal [Hids [final_nu [Hext Hsatfinal]]]]].
+    all: exists final_nu; split; [exact Hext|]; apply D.rebuild_sat; assumption.
+  Qed.
 
   Lemma run_closed : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
     run p cp lim db = (Saturated, db') -> closed V.prim V.merge p (D.view db').
@@ -10016,9 +10476,43 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     fst (run p cp lim db) = Saturated.
   Proof. Admitted. (* STUB *)
 
+  (** An identifier-limit stop is produced only by a round above the requested bound. *)
+  Lemma run_loop_id_limit : forall p cp lim fuel nv db result,
+    loopN (driver p cp lim) fuel (nv, db) = inr (IdLimit, result) ->
+    (max_ids lim < D.ids result)%N.
+  Proof.
+    intros p cp lim fuel nv db result Hresult.
+    assert (Hlimit : match loopN (driver p cp lim) fuel (nv, db) with
+      | inl _ => True
+      | inr stopped => fst stopped = IdLimit -> (max_ids lim < D.ids (snd stopped))%N
+      end).
+    { eapply run_loopN_invariant with (P := fun _ => True).
+      - intros state next _ _. exact I.
+      - intros [naive current] [status next] _ Hdriver Hstatus.
+        cbn [fst snd] in Hstatus |- *. subst status. unfold driver in Hdriver.
+        destruct (N.ltb (limits_ids lim) (D.ids (round p cp naive current))) eqn:Hids.
+        + injection Hdriver as <-. apply N.ltb_lt in Hids. exact Hids.
+        + destruct (naive && negb (D.changed (round p cp naive current))); discriminate.
+      - exact I. }
+    rewrite Hresult in Hlimit. apply Hlimit. reflexivity.
+  Qed.
+
   Lemma run_limits : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     fst (run p cp lim db) = IdLimit -> (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db Hchecked Hwf Hloaded Hstatus.
+    pose proof (run_loop_state p cp lim (max_iter lim) false db Hchecked Hwf Hloaded)
+      as Hstate.
+    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hresult.
+    destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
+      as [[naive current]|[status current]] eqn:Hloop.
+    - rewrite Hresult in Hstatus. discriminate.
+    - rewrite Hresult in Hstatus |- *. cbn [fst snd] in Hstatus |- *. subst status.
+      destruct Hstate as [Hcurrent _].
+      rewrite (proj2 (proj2 (D.layout_rebuild current Hcurrent))).
+      pose proof (run_loop_id_limit p cp lim (max_iter lim) false db current Hloop) as Hlimit.
+      apply N.lt_gt. exact Hlimit.
+  Qed.
 
 End Run.
 
