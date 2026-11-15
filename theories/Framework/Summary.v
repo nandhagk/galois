@@ -4,8 +4,8 @@
     For example, a call row emits its callee entry as a side contribution.
     Builds on: Framework.SummarySig and Fixpoint.Query. *)
 
-From Stdlib Require Import List Bool NArith Lia.
-From Argent Require Import Time Std Loop.
+From Stdlib Require Import List Bool Arith NArith Lia.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Fixpoint Require Import Query SystemSig.
@@ -170,47 +170,150 @@ Module SummaryT (P : TYPE) (F Site : KEY_T) (CL : CALLS_T P F Site)
   Definition row_work p s := (B.body_work p s + N.of_nat
     (fold_right Nat.max 0%nat (map (fun sg => Site.bits (fst sg)) (CL.calls p))))%N.
   Definition kw := CL.function_width.
-  Definition c_sys : N := 1%N. (* STUB *)
+  Definition c_sys : N := (F.c_key + 4 * CL.c_calls + B.c_body + 32)%N.
   Lemma row_work_mono : forall p s t, s <= t ->
     (row_work p s <= row_work p t)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s t Hst; unfold row_work.
+    pose proof (B.body_work_mono p s t Hst) as Hmono; lia.
+  Qed.
+
+  (** A member's code width is bounded by the maximum of the inventory widths. *)
+  Local Lemma function_bits_max : forall fs f, In f fs ->
+    F.bits f <= fold_right Nat.max 0 (map F.bits fs).
+  Proof.
+    induction fs as [|g fs IH]; intros f Hin; [contradiction|].
+    cbn [map fold_right]; destruct Hin as [<-|Hin].
+    - apply Nat.le_max_l.
+    - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+  Qed.
+
+  (** A listed call row comes from the prepared call inventory. *)
+  Local Lemma call_row_inventory : forall p site g,
+    In (SummaryCall site g) (rows p) -> In (site, g) (CL.calls p).
+  Proof.
+    intros p site g Hrow; unfold rows in Hrow; apply in_app_or in Hrow.
+    destruct Hrow as [Hrow|Hrow]; apply in_map_iff in Hrow.
+    - destruct Hrow as [f [Heq _]]; discriminate.
+    - destruct Hrow as [[site' g'] [Heq Hin]]; injection Heq as <- <-; exact Hin.
+  Qed.
+
+  (** The prepared call inventory bounds the width of each occurring call site. *)
+  Local Lemma call_site_width : forall (calls : list (Site.t * F.t)) site g,
+    In (site, g) calls ->
+    Site.bits site <= fold_right Nat.max 0
+      (map (fun sg => Site.bits (fst sg)) calls).
+  Proof.
+    induction calls as [|[site' g'] calls IH]; intros site g Hin; [contradiction|].
+    cbn [map fold_right fst]; destruct Hin as [Heq|Hin].
+    - injection Heq as <- <-; apply Nat.le_max_l.
+    - eapply Nat.le_trans; [eapply IH; exact Hin|apply Nat.le_max_r].
+  Qed.
   Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [f|site g] x Hwf Hrow Hkey;
+      change (F.bits x <= kw p); unfold kw, CL.function_width;
+      apply function_bits_max; apply in_or_app; left.
+    - unfold rows in Hrow; apply in_app_or in Hrow; destruct Hrow as [Hrow|Hrow];
+        apply in_map_iff in Hrow.
+      + destruct Hrow as [f' [Heq Hf]]; injection Heq as <-.
+        cbn [writes sides target deps app] in Hkey; destruct Hkey as [<-|[]]; exact Hf.
+      + destruct Hrow as [[site g] [Heq _]]; discriminate.
+    - apply call_row_inventory in Hrow; rewrite (CL.calls_spec p Hwf) in Hrow.
+      apply in_flat_map in Hrow; destruct Hrow as [f [Hf Hrow]].
+      apply in_flat_map in Hrow; destruct Hrow as [site' [Hsite Hrow]].
+      apply in_map_iff in Hrow; destruct Hrow as [g' [Heq Hg]].
+      injection Heq as <- <-.
+      destruct (CL.sites_caller p f site' Hwf Hsite) as [Hcaller Hlisted].
+      cbn [writes sides target deps app] in Hkey.
+      destruct Hkey as [<-|[<-|[<-|[]]]].
+      + now rewrite Hcaller.
+      + exact (CL.resolve_listed p site' g' Hwf Hg).
+      + exact (CL.resolve_listed p site' g' Hwf Hg).
+  Qed.
   Lemma T_key_code_le : forall x,
     (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro x; pose proof (F.T_encode_le x) as Htime.
+    change (T_key_code x <= c_sys * N.of_nat (F.bits x + 1))%N.
+    unfold T_key_code, c_sys; nia.
+  Qed.
   Lemma T_key_eqb_le : forall a b,
     (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof (F.T_eqb_le a b) as Htime.
+    change (T_key_eqb a b <= c_sys * N.of_nat (F.bits a + 1))%N.
+    unfold T_key_eqb, c_sys; nia.
+  Qed.
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf; unfold c_sys; time_step.
+    pose proof (ListDef.T_map_le (@SummaryLocal F.t Site.t) (fun _ => 1%N) 1%N
+      (CL.functions p) (fun _ => N.le_refl 1)) as Hlocals.
+    pose proof (ListDef.T_map_le (fun sg => SummaryCall (fst sg) (snd sg))
+      (fun _ => (1 + (1 + 1))%N) 3%N (CL.calls p) (fun _ => N.le_refl 3)) as Hcalls.
+    unfold rows; rewrite length_app, !length_map in *; time_cbn_all; nia.
+  Qed.
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
     (T_target p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [f|site g] Hwf Hrow.
+    - unfold c_sys; time_step.
+    - pose proof (call_site_width (CL.calls p) site g
+        (call_row_inventory p site g Hrow)) as Hwidth.
+      assert (HwidthN : (N.of_nat (Site.bits site) <= N.of_nat
+        (fold_right Nat.max 0%nat (map (fun sg => Site.bits (fst sg)) (CL.calls p))))%N)
+        by lia.
+      unfold c_sys, row_work; time_step.
+  Qed.
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [f|site g] Hwf Hrow; unfold c_sys, row_work; time_step.
+  Qed.
   Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
     (forall y, L.size (look y) <= s) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) ->
     (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look s n q acc x [site g] Hwf Hrow Hsize Hloop Hpeel.
+    pose proof (B.body_work_mono p (L.size (look x)) s (Hsize x)) as Hmono.
+    unfold c_sys, row_work; time_step.
+  Qed.
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [f|site g] Hwf Hrow; unfold c_sys; time_step.
+  Qed.
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [f|site g] Hwf Hrow; unfold c_sys; time_step.
+  Qed.
   Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
     (forall x, L.size (look x) <= s) -> eval p r look = Some (a, ss) ->
     (N.of_nat (L.size a) <= row_work p s)%N /\
     Forall (fun xb => (N.of_nat (L.size (snd xb)) <= row_work p s)%N) ss.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [f|site g] look s a ss Hwf Hrow Hsize Heval.
+    - rewrite eval_local in Heval; injection Heval as <- <-; split; [|constructor].
+      pose proof (B.local_size p f) as Hlocal.
+      pose proof (B.body_work_mono p 0 s (Nat.le_0_l s)) as Hmono.
+      unfold row_work; lia.
+    - rewrite eval_call in Heval; injection Heval as <- <-; split.
+      + pose proof (B.via_call_size p site g (look g)) as Hcall.
+        pose proof (B.body_work_mono p (L.size (look g)) s (Hsize g)) as Hmono.
+        unfold row_work; lia.
+      + constructor; [|constructor]; cbn [snd].
+        pose proof (B.entry_size p site g) as Hentry.
+        pose proof (B.body_work_mono p 0 s (Nat.le_0_l s)) as Hmono.
+        unfold row_work; lia.
+  Qed.
 End SummaryT.
 
 Module SummarySound (P : TYPE) (F Site : KEY) (CL : CALLS P F Site)
