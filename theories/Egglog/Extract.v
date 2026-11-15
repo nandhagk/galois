@@ -1510,18 +1510,77 @@ Proof.
   nia.
 Qed.
 
+(** The first finalized entry for a class supplies its certificate cost budget. *)
+Fixpoint extraction_cost_lookup {V} (c : positive) (entries : extraction_best V) : option N :=
+  match entries with
+  | [] => None
+  | (i, (cost, _)) :: rest =>
+    if Pos.eqb c i then Some cost else extraction_cost_lookup c rest
+  end.
+TimeFun extraction_cost_lookup.
+
+(** Reversing finalization order builds the proposed constructor certificate. *)
+Definition extraction_certificate {V} (entries : extraction_best V) : extraction_dag V :=
+  rev_append (map (fun entry => (fst entry, snd (snd entry))) entries) [].
+TimeFun extraction_certificate.
+
+(** A candidate is returned only after checking its certificate and selected cost budget. *)
+Definition extraction_candidate {V}
+    (check : positive -> extraction_dag V -> option N) (c target : positive)
+    (entries : extraction_best V) : option (extraction_dag V) :=
+  match extraction_cost_lookup target entries with
+  | None => None
+  | Some budget =>
+    let g := extraction_certificate entries in
+    match check c g with
+    | None => None
+    | Some cost => if N.leb cost budget then Some g else None
+    end
+  end.
+TimeFun extraction_candidate.
+
+(** A successful cost lookup comes from an actual finalized row. *)
+Lemma extraction_cost_lookup_sound : forall V (entries : extraction_best V) c n,
+  extraction_cost_lookup c entries = Some n -> exists ch, In (c, (n, ch)) entries.
+Proof.
+  intros V entries. induction entries as [|[i [cost ch]] rest IH]; intros c n Hlookup;
+    cbn [extraction_cost_lookup] in Hlookup; [discriminate|].
+  destruct (Pos.eqb c i) eqn:Hci.
+  - apply Pos.eqb_eq in Hci. subst i. injection Hlookup as <-.
+    exists ch. now left.
+  - destruct (IH c n Hlookup) as [row Hin]. exists row. now right.
+Qed.
+
+(** A returned candidate has an accepted cost bounded by its selected finalized entry. *)
+Lemma extraction_candidate_checked : forall V check c target (entries : extraction_best V) g,
+  extraction_candidate check c target entries = Some g -> exists n m ch,
+    check c g = Some n /\ In (target, (m, ch)) entries /\ (n <= m)%N.
+Proof.
+  intros V check c target entries g Hcandidate. unfold extraction_candidate in Hcandidate.
+  destruct (extraction_cost_lookup target entries) as [budget|] eqn:Hbudget;
+    [|discriminate].
+  destruct (check c (extraction_certificate entries)) as [cost|] eqn:Hcheck;
+    [|discriminate].
+  destruct (N.leb cost budget) eqn:Hle; [|discriminate]. injection Hcandidate as <-.
+  destruct (extraction_cost_lookup_sound V entries target budget Hbudget) as [ch Hin].
+  exists cost, budget, ch. split; [exact Hcheck|]. split; [exact Hin|].
+  now apply N.leb_le.
+Qed.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
   Definition inventory (ds : list decl) (sl : list (positive * list nat))
       : list (positive * N) := inventory_scan (inventory_decl_table ds) sl 0%N.
   (* STUB-CODE *)
   Definition best (_ : list (positive * N)) (_ : D.t) : extraction_best V.t := [].
-  (* STUB-CODE *)
-  Definition extract (_ : list (positive * N)) (_ : D.t) (_ : positive)
-      : option (extraction_dag V.t) := None.
   Definition check_dag (db : D.t) (c : positive) (g : extraction_dag V.t) : option N :=
     dag_check (dag_check_row (D.ids db) (fun i => fst (D.find i db))
       (fun f k => fst (D.lookup f k db))) C.fn_cost C.val_cost g c.
+  Definition extract (cs : list (positive * N)) (db : D.t) (c : positive)
+      : option (extraction_dag V.t) :=
+    if N.ltb (D.ids db) (Npos c) then None else
+      extraction_candidate (check_dag db) c (fst (D.find c db)) (best cs db).
+
 End ExtractCode.
 
 Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
@@ -1655,7 +1714,14 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
   Lemma extract_checked : forall cs db c g, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     extract cs db c = Some g -> exists n m ch,
       check_dag db c g = Some n /\ In (D.repr db c, (m, ch)) (best cs db) /\ (n <= m)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db c g Hwf Hcanonical Hinventory Hextract. unfold extract in Hextract.
+    destruct (N.ltb (D.ids db) (Npos c)); [discriminate|].
+    destruct (extraction_candidate_checked V.t (check_dag db) c
+      (fst (D.find c db)) (best cs db) g Hextract) as [n [m [ch [Hcheck [Hin Hcost]]]]].
+    rewrite (proj1 (D.find_spec c db Hwf)) in Hin.
+    exists n, m, ch. split; [exact Hcheck|]. split; assumption.
+  Qed.
 
 End Extract.
 
@@ -1664,8 +1730,8 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Include Extract V I D C.
   TimeFun inventory.
   TimeFun best.
-  TimeFun extract.
   TimeFun check_dag.
+  TimeFun extract.
   TimeFun unfold.
   (* STUB-CODE *)
   Definition R (_ : D.t) : nat := 0.
