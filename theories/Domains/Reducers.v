@@ -621,6 +621,49 @@ Proof.
   all: time_pose; cbn [Z.size_nat] in *; rewrite !Nat2N.inj_add in *; nia.
 Qed.
 
+(** The interval extracted from known bits has width-bounded finite endpoints. *)
+Lemma reducer_bits_interval_bits : forall w b,
+  (interval_bits (bits_interval w b) <= Pos.to_nat w)%nat.
+Proof.
+  intros w b.
+  pose proof (reducer_word_bits w _ (reducer_wrap_word w (ones b))) as Hlo.
+  pose proof (reducer_word_bits w _ (reducer_bits_upper_word w b)) as Hhi.
+  unfold bits_interval, bits_hull; destruct (Z.leb _ _); cbn [interval_bits]; lia.
+Qed.
+
+(** Converting the known-bit hull to an interval adds only a constant charge. *)
+Lemma reducer_bits_interval_time : forall w b,
+  (T_bits_interval w b <= 256 * N.of_nat (Pos.to_nat w + tnum_bits b + 1))%N.
+Proof.
+  intros w b; pose proof (reducer_hull_time w b) as Hhull.
+  time_unfold T_bits_interval; destruct (bits_hull w b); time_cbn.
+  all: rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** The interval common prefix emits at most two word-sized masks. *)
+Lemma reducer_interval_prefix_bits : forall w a,
+  (tnum_bits (interval_prefix w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a; unfold interval_prefix.
+  destruct (interval_word_clip w a) as [|[|lo|] [|hi|]];
+    first [exact (Nat.le_0_l _) | apply reducer_arc_prefix_bits].
+Qed.
+
+(** Clipping makes interval-prefix extraction linear in the word width. *)
+Lemma reducer_interval_prefix_time : forall w a,
+  (T_interval_prefix w a <= 2048 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intros w a; pose proof (reducer_clip_time w a) as Hcliptime.
+  time_unfold T_interval_prefix.
+  destruct (interval_word_clip w a) as [|[|lo|] [|hi|]] eqn:Hclip; time_cbn;
+    try (rewrite !Nat2N.inj_add in *; nia).
+  pose proof (reducer_clip_bounds w a lo hi Hclip) as Hbounds.
+  pose proof (reducer_word_bits w lo ltac:(unfold Word.is_word; lia)) as Hlobits.
+  pose proof (reducer_word_bits w hi ltac:(unfold Word.is_word; lia)) as Hhibits.
+  pose proof (reducer_arc_prefix_time w (WItv lo hi)) as Hprefix.
+  cbn [wrapped_bits] in Hprefix; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
 (** The residue extracted from a clipped interval stores at most one word. *)
 Lemma reducer_interval_congr_bits : forall w a,
   (congr_bits (interval_congr (interval_word_clip w a)) <= Pos.to_nat w + 1)%nat.
@@ -1753,23 +1796,69 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   TimeFun to_left.
   TimeFun to_right.
   TimeFun reduce.
-  Definition c_exchange : N := 1. (* STUB *)
+  Definition c_exchange : N := 1024 * (A0.c_payload + B0.c_payload + 1).
   Definition c_reduce : N := 1. (* STUB *)
   Definition k_exchange : N := 1.
   Lemma T_to_left_le : forall a b, (T_to_left (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; time_unfold T_to_left; time_cbn;
+      unfold A.size, B.size, tagged_size, c_exchange, A0.psize;
+      rewrite ?B0.psize_bits, ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (reducer_width_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_bits_interval_time w b) as Hhull.
+    pose proof (reducer_bits_interval_bits w b) as Hbits.
+    pose proof (A0.T_pmeet_le w a (bits_interval w b)) as Hmeet.
+    unfold A0.psize in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_to_right_le : forall a b, (T_to_right (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; time_unfold T_to_right; time_cbn;
+      unfold A.size, B.size, tagged_size, c_exchange, A0.psize;
+      rewrite ?B0.psize_bits, ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (reducer_width_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_interval_prefix_time w a) as Hprefix.
+    pose proof (reducer_interval_prefix_bits w a) as Hbits.
+    pose proof (B0.T_pmeet_le w b (interval_prefix w a)) as Hmeet.
+    rewrite !B0.psize_bits in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma left_size : forall a b,
     (N.of_nat (A.size (fst (to_left (a, b))) + B.size b) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; unfold to_left; cbn [fst];
+      unfold A.size, B.size, tagged_size, c_exchange, A0.psize;
+      try (rewrite !Nat2N.inj_add; time_cbn; nia).
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?B0.psize_bits, ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_bits_interval_bits w b) as Hbits.
+    pose proof (A0.pmeet_size w a (bits_interval w b)) as Hmeet.
+    unfold A0.psize in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma right_size : forall a b,
     (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; unfold to_right; cbn [snd];
+      unfold A.size, B.size, tagged_size, c_exchange, A0.psize;
+      try (rewrite !Nat2N.inj_add; time_cbn; nia).
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?B0.psize_bits, ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_interval_prefix_bits w a) as Hbits.
+    pose proof (B0.pmeet_size w b (interval_prefix w a)) as Hmeet.
+    rewrite !B0.psize_bits in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_reduce_le : forall a b,
     (T_reduce (a, b) <= c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
   Proof. Admitted. (* STUB *)
