@@ -3751,6 +3751,212 @@ Proof.
 Qed.
 
 
+(** Every emitted order entry reserves its own key-width cost for the forest wrapper. *)
+Local Definition loop_order_work (vertices : list positive) : N :=
+  fold_right (fun v cost => N.of_nat (Pos.size_nat v + 1) + cost)%N 0%N vertices.
+
+Local Lemma loop_order_work_perm : forall xs ys,
+  Permutation xs ys -> loop_order_work xs = loop_order_work ys.
+Proof.
+  intros xs ys Hperm. induction Hperm; unfold loop_order_work in *; cbn [fold_right] in *; nia.
+Qed.
+
+Local Lemma loop_order_work_reverse : forall xs,
+  loop_order_work (rev_append xs []) = loop_order_work xs.
+Proof.
+  intro xs. rewrite rev_append_rev, app_nil_r. symmetry.
+  apply loop_order_work_perm, Permutation_rev.
+Qed.
+
+Local Lemma loop_order_work_filter : forall test vertices,
+  (loop_order_work (filter test vertices) <= loop_order_work vertices)%N.
+Proof.
+  intros test vertices. induction vertices as [|v rest IH]; unfold loop_order_work in *;
+    cbn [filter fold_right]; [lia|]. destruct (test v); cbn [fold_right]; lia.
+Qed.
+
+Local Lemma loop_order_work_length : forall vertices,
+  (N.of_nat (length vertices) <= loop_order_work vertices)%N.
+Proof.
+  intro vertices. induction vertices as [|v rest IH]; unfold loop_order_work in *;
+    cbn [length fold_right]; [lia|]. rewrite Nat2N.inj_succ, Nat2N.inj_add. lia.
+Qed.
+
+Local Definition loop_tree_order_work st := loop_order_work (loop_order (loop_tree_output st)).
+Local Definition loop_scan_work scan := loop_order_work (loop_order scan).
+Local Definition loop_result_work result :=
+  match result with inl st => loop_tree_order_work st | inr scan => loop_scan_work scan end.
+Local Definition loop_classify_callback_clock g t := fun st => T_tree_step g t st.
+
+Local Lemma loop_children_clock_lower : forall t v,
+  (N.of_nat (Pos.size_nat v) <= T_children t v)%N.
+Proof.
+  intros [parents rows preorder postorder] v. unfold T_children. time_simpl.
+  rewrite PTrieT.trie_get_clock. lia.
+Qed.
+
+(** Entering pays for its recorded key through the child-row lookup, including raw trees. *)
+Local Lemma loop_tree_order_growth : forall g t st,
+  (loop_result_work (tree_step g t st) <=
+    loop_tree_order_work st + T_tree_step g t st)%N.
+Proof.
+  intros g t [tasks stack active [order latches backs]].
+  unfold loop_result_work, loop_tree_order_work, loop_scan_work.
+  destruct tasks as [|task rest].
+  - change (loop_order_work (rev_append order []) <= loop_order_work order +
+      T_tree_step g t (LoopTreeState [] stack active (LoopScan order latches backs)))%N.
+    rewrite loop_order_work_reverse. lia.
+  - destruct task as [v|v|vertices|u vertices|v].
+    + cbn [tree_step]. destruct (trie_get v (pre t)), (trie_get v (idom t));
+        cbn [loop_result_work loop_tree_order_work loop_tree_output loop_order];
+        lia.
+    + pose proof (loop_children_clock_lower t v) as Hchildren.
+      cbn [tree_step loop_result_work loop_tree_order_work loop_tree_output loop_order].
+      unfold T_tree_step. time_simpl. unfold loop_order_work. cbn [fold_right].
+      rewrite Nat2N.inj_add. lia.
+    + destruct vertices as [|v vertices];
+        cbn [tree_step loop_result_work loop_tree_order_work loop_tree_output loop_order]; lia.
+    + destruct vertices as [|v vertices].
+      * cbn [tree_step loop_result_work loop_tree_order_work loop_tree_output loop_order]; lia.
+      * cbn [tree_step]. destruct (trie_get v active);
+          cbn [loop_result_work loop_tree_order_work loop_tree_output loop_order]; lia.
+    + cbn [tree_step loop_result_work loop_tree_order_work loop_tree_output loop_order]; lia.
+Qed.
+
+(** Abstract accessibility induction bounds result growth by the callback clocks already spent. *)
+Local Lemma loop_clock_output_growth {State Result : Type} (lt : State -> State -> Prop)
+    (step : forall st, {next : State | lt next st} + Result) (clock : State -> N)
+    (state_work : State -> N) (result_work : Result -> N) :
+  (forall st, (match step st with
+    | inl (exist _ next _) => state_work next | inr result => result_work result end <=
+      state_work st + clock st)%N) ->
+  forall st (Hacc : Acc lt st),
+    (result_work (Argent.Loop.loop lt step st Hacc) <=
+      state_work st + T_loop lt step clock st Hacc)%N.
+Proof.
+  intros Hstep st Hacc. induction Hacc as [st Hacc IH] using Acc_ind_dep.
+  time_unfold @T_loop. cbn [Argent.Loop.loop Acc_inv].
+  specialize (Hstep st). destruct (step st) as [[next Hlt]|result].
+  - specialize (IH next Hlt). lia.
+  - lia.
+Qed.
+
+Local Lemma loop_tree_loop_order_work : forall g t fuel st,
+  (loop_result_work (loopN (tree_step g t) fuel st) <= loop_tree_order_work st +
+    T_loopN (tree_step g t) (loop_classify_callback_clock g t) fuel st)%N.
+Proof.
+  intros g t fuel st.
+  assert (Hstep : forall fs,
+    (match loopN_step (tree_step g t) fs with
+      | inl (exist _ next _) => loop_tree_order_work (snd next)
+      | inr result => loop_result_work result end <=
+      loop_tree_order_work (snd fs) +
+        T_loopN_step (tree_step g t) (loop_classify_callback_clock g t) fs)%N).
+  { intros [remaining current]. destruct remaining as [|p].
+    - cbn [loopN_step loop_result_work fst snd]. time_unfold @T_loopN_step. lia.
+    - pose proof (loop_tree_order_growth g t current) as Hgrowth.
+      cbn [loopN_step]. destruct (tree_step g t current) as [next|scan] eqn:Hnext;
+        cbn [loop_result_work fst snd] in Hgrowth |- *;
+        time_unfold @T_loopN_step; cbn [fst snd]; rewrite Hnext;
+        unfold loop_classify_callback_clock; lia. }
+  unfold loopN. time_unfold @T_loopN.
+  match goal with
+  | |- context [T_loop _ _ _ _ ?Hacc] =>
+      pose proof (loop_clock_output_growth loopN_lt (loopN_step (tree_step g t))
+        (fun fs => T_loopN_step (tree_step g t) (loop_classify_callback_clock g t) fs)
+        (fun fs => loop_tree_order_work (snd fs)) loop_result_work Hstep (fuel, st) Hacc)
+        as Hgrowth
+  end.
+  cbn [snd] in Hgrowth. lia.
+Qed.
+
+Local Definition loop_classify_finish (result : loop_tree_state + loop_scan) : loop_scan :=
+  match result with
+  | inl st => let '(LoopScan order latches backs) := loop_tree_output st in
+      LoopScan (rev_append order []) latches backs
+  | inr scan => scan
+  end.
+
+Local Lemma loop_classify_finish_work : forall result,
+  loop_scan_work (loop_classify_finish result) = loop_result_work result.
+Proof.
+  intros [[tasks stack active [order latches backs]]|[order latches backs]];
+    cbn [loop_classify_finish loop_scan_work loop_result_work loop_tree_order_work
+      loop_tree_output loop_order]; [apply loop_order_work_reverse|reflexivity].
+Qed.
+
+(** Even a fuel-exhausted classifier has paid for the widths of the order it exposes. *)
+Local Lemma loop_classify_order_clock : forall g t,
+  (loop_scan_work (classify g t) <= T_classify g t)%N.
+Proof.
+  intros g t.
+  pose proof (loop_tree_loop_order_work g t (8 * (nv g + ne g + 1))%N
+    (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty))) as Hgrowth.
+  cbn [loop_tree_order_work loop_tree_output loop_order loop_order_work fold_right] in Hgrowth.
+  change (loop_scan_work (loop_classify_finish
+    (loopN (tree_step g t) (8 * (nv g + ne g + 1))%N
+      (LoopTreeState (map LoopTreeRoot (nodes g)) [] Empty (LoopScan [] Empty Empty)))) <=
+    T_classify g t)%N.
+  rewrite loop_classify_finish_work. unfold T_classify. time_simpl.
+  unfold loop_classify_callback_clock in Hgrowth. lia.
+Qed.
+
+Local Lemma loop_latches_clock : forall scan h,
+  (T_loop_latches_at scan h <= 4 * N.of_nat (Pos.size_nat h + 1))%N.
+Proof.
+  intros [order latches backs] h. unfold T_loop_latches_at, T_loop_latches. time_simpl.
+  rewrite PTrieT.trie_get_clock, Nat2N.inj_add. lia.
+Qed.
+
+Local Lemma loop_headers_work : forall scan,
+  (loop_order_work (loop_headers_of scan) <= loop_scan_work scan)%N.
+Proof.
+  intro scan. unfold loop_headers_of, loop_scan_work. apply loop_order_work_filter.
+Qed.
+
+Local Lemma loop_filter_order_clock (test : positive -> bool) (clock : positive -> N) scale :
+  (forall v, (clock v + 1 <= scale * N.of_nat (Pos.size_nat v + 1))%N) ->
+  forall vertices,
+    (List.T_filter test clock vertices <= scale * loop_order_work vertices + 1)%N.
+Proof.
+  intros Hclock vertices. induction vertices as [|v rest IH].
+  - time_unfold List.T_filter. unfold loop_order_work. cbn [fold_right]. lia.
+  - pose proof (Hclock v) as Hhead. time_unfold List.T_filter.
+    unfold loop_order_work in IH |- *. cbn [fold_right]. destruct (test v); nia.
+Qed.
+
+Local Lemma loop_headers_clock : forall scan,
+  (T_loop_headers_of scan <= 16 * loop_scan_work scan + 8)%N.
+Proof.
+  intro scan. unfold T_loop_headers_of, T_loop_order. time_simpl.
+  match goal with
+  | |- context [List.T_filter ?test ?clock (loop_order scan)] =>
+      assert (Hfilter : (List.T_filter test clock (loop_order scan) <=
+        8 * loop_order_work (loop_order scan) + 1)%N)
+  end.
+  { apply loop_filter_order_clock. intro v.
+    pose proof (loop_latches_clock scan v) as Hlatches. cbn beta.
+    destruct (loop_latches_at scan v); cbn beta iota zeta; lia. }
+  unfold loop_scan_work. lia.
+Qed.
+
+Local Lemma loop_map_order_clock {A : Type} (f : positive -> A) (clock charge : positive -> N)
+    scale :
+  (forall v, (clock v + 1 <= charge v + scale * N.of_nat (Pos.size_nat v + 1))%N) ->
+  forall vertices,
+    (ListDef.T_map f clock vertices <=
+      fold_right (fun v cost => charge v + cost)%N 0%N vertices +
+        scale * loop_order_work vertices + 1)%N.
+Proof.
+  intros Hclock vertices. induction vertices as [|v rest IH].
+  - time_unfold ListDef.T_map. unfold loop_order_work. cbn [fold_right]. lia.
+  - pose proof (Hclock v) as Hhead. time_unfold ListDef.T_map.
+    unfold loop_order_work in IH |- *. cbn [fold_right]. nia.
+Qed.
+
+Local Definition loop_forest_cost : N := 64%N.
+
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -4007,7 +4213,7 @@ Module LoopsT <: LOOPS_ALL.
   Definition k_install : N := loop_install_cost.
   Definition k_trace : N := loop_trace_cost.
   Definition k_test : N := loop_test_cost.
-  Definition k_forest : N := 1. (* STUB *)
+  Definition k_forest : N := loop_forest_cost.
   Definition k_reducible : N := 16.
 
   Definition latches := loop_latches_at.
@@ -4851,7 +5057,28 @@ Module LoopsT <: LOOPS_ALL.
         T_collect g t h (latches (classify g t) h) + cost)%N 0%N (headers g t) +
       T_assemble (forest_rows g t) +
       N.of_nat (graph_n (base g) + 1) * N.of_nat (graph_width (base g) + 1) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t.
+    pose proof (loop_classify_order_clock g t) as Horder.
+    pose proof (loop_headers_clock (classify g t)) as Hheaders.
+    pose proof (loop_headers_work (classify g t)) as Hweights.
+    unfold T_forest. time_simpl.
+    match goal with
+    | |- context [ListDef.T_map ?f ?clock ?vertices] =>
+        assert (Hmap : (ListDef.T_map f clock vertices <=
+          fold_right (fun h cost => T_collect g t h (latches (classify g t) h) + cost)%N
+            0%N (headers g t) + 16 * loop_order_work (headers g t) + 1)%N)
+    end.
+    { apply loop_map_order_clock. intro v.
+      pose proof (loop_latches_clock (classify g t) v) as Hlatches.
+      cbn beta. unfold T_collect, latches. time_simpl.
+      unfold classify in Hlatches |- *. lia. }
+    unfold T_classify, T_assemble. time_simpl.
+    unfold k_forest, loop_forest_cost, forest_rows, headers in *.
+    unfold classify, collect, assemble, latches in Hheaders, Hweights, Hmap |- *.
+    unfold loop_scan_work in Horder, Hheaders, Hweights. nia.
+  Qed.
+
 
   Lemma T8_forest : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
