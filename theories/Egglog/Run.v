@@ -309,13 +309,15 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       same w i j -> i = j.
 
   Lemma F1_plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
-    In c (all_plans cp) -> nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r ->
+    loaded p cp db -> In c (all_plans cp) ->
+    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r ->
     In b (bindings cp c db) -> keep p c (bind_trie c b) = true ->
     matches V.prim (D.view db) (query V.t r) (env_of c b).
   Proof. Admitted. (* STUB *)
 
   Lemma F2_naive_plans_complete : forall p cp db r s, plans_ok p cp -> D.wf db ->
-    D.canonical db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
+    loaded p cp db -> D.canonical db -> In r (rules V.t p) ->
+    matches V.prim (D.view db) (query V.t r) s ->
     exists c b, In c (naive V.t cp) /\
       nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r /\
       In b (bindings cp c db) /\ keep p c (bind_trie c b) = true /\
