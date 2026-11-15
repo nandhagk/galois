@@ -1942,6 +1942,89 @@ Proof.
   cbn [fold_right]. now rewrite IH, Nat2N.inj_add.
 Qed.
 
+(** Fold clocks only need a callback bound at keys that occur in their input list. *)
+Local Lemma loop_fold_clock_bound {A B : Type} (f : A -> B -> A) (clock : A -> B -> N) :
+  forall xs cost initial,
+  (forall acc x, In x xs -> (clock acc x <= cost)%N) ->
+  (List.T_fold_left f clock xs initial <= (cost + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros cost initial Hclock.
+  - time_unfold List.T_fold_left. cbn [length]. lia.
+  - pose proof (Hclock initial x (or_introl eq_refl)) as Hhead.
+    specialize (IH cost (f initial x)
+      (fun acc y Hy => Hclock acc y (or_intror Hy))).
+    time_unfold List.T_fold_left. cbn [length]. rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Local Definition loop_install_step_cost : N := (64 * (PTrieT.c_trie + 1))%N.
+Local Definition loop_install_cost : N := (128 * (PTrieT.c_trie + 1))%N.
+
+(** Installing a row only uses its header and body members as trie keys. *)
+Local Lemma loop_install_clock : forall l h vertices width,
+  Pos.size_nat h <= width ->
+  (forall v, In v vertices -> Pos.size_nat v <= width) ->
+  (T_install l (h, vertices) + 2 <= loop_install_step_cost *
+    N.of_nat (length vertices + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros [owners parents bodies] h vertices width Hheader Hvertices.
+  pose proof (PTrieT.T_set_le (list positive) h vertices bodies) as Hbody.
+  apply time_of_nat_le in Hheader.
+  unfold T_install, T_loop_header_map, T_loop_parent_map, T_loop_body_map. time_simpl.
+  cbn [loop_header_map loop_parent_map loop_body_map].
+  rewrite PTrieT.trie_get_clock.
+  match goal with
+  | |- context [List.T_fold_left ?f ?clock vertices owners] =>
+      assert (Hfold : (List.T_fold_left f clock vertices owners <=
+        (8 * (PTrieT.c_trie + 1) * N.of_nat (width + 1) + 1) * N.of_nat (length vertices) + 1)%N)
+  end.
+  { apply loop_fold_clock_bound. intros acc v Hin.
+    pose proof (PTrieT.T_set_le positive v h acc) as Hset.
+    pose proof (Hvertices v Hin) as Hwidth. apply time_of_nat_le in Hwidth.
+    cbn beta. repeat rewrite Nat2N.inj_add in Hset |- *. nia. }
+  unfold loop_install_step_cost. repeat rewrite Nat2N.inj_add in Hbody, Hfold |- *.
+  destruct (trie_get h owners) as [outer|].
+  - pose proof (PTrieT.T_set_le positive h outer parents) as Hparent.
+    repeat rewrite Nat2N.inj_add in Hparent. nia.
+  - nia.
+Qed.
+
+(** The outer fold adds one constant per row to the sum of installation costs. *)
+Local Lemma loop_assemble_clock : forall rows width,
+  (forall h vertices, In (h, vertices) rows ->
+    Pos.size_nat h <= width /\ forall v, In v vertices -> Pos.size_nat v <= width) ->
+  (T_assemble rows + 1 <= loop_install_cost *
+    N.of_nat (fold_right (fun entry total => (length (snd entry) + 1 + total)%nat) 0%nat rows + 1) *
+      N.of_nat (width + 1))%N.
+Proof.
+  intros rows width Hwidth.
+  assert (Hfold : forall entries initial,
+    (forall h vertices, In (h, vertices) entries ->
+      Pos.size_nat h <= width /\ forall v, In v vertices -> Pos.size_nat v <= width) ->
+    (List.T_fold_left install (fun acc entry => T_install acc entry) entries initial <=
+      loop_install_step_cost *
+        N.of_nat (fold_right (fun entry total => (length (snd entry) + 1 + total)%nat) 0%nat entries) *
+          N.of_nat (width + 1) + 1)%N).
+  { intro entries. induction entries as [|[h vertices] rest IH]; intros initial Hentries.
+    - time_unfold List.T_fold_left. cbn [fold_right]. lia.
+    - destruct (Hentries h vertices (or_introl eq_refl)) as [Hheader Hvertices].
+      pose proof (loop_install_clock initial h vertices width Hheader Hvertices) as Hinstall.
+      specialize (IH (install initial (h, vertices))
+        (fun k vs Hin => Hentries k vs (or_intror Hin))).
+      time_unfold List.T_fold_left. cbn [fold_right snd].
+      repeat rewrite Nat2N.inj_add in Hinstall |- *. nia. }
+  specialize (Hfold rows (Loops Empty Empty Empty) Hwidth).
+  unfold T_assemble. time_simpl.
+  unfold loop_install_cost, loop_install_step_cost in Hfold |- *.
+  repeat rewrite Nat2N.inj_add. nia.
+Qed.
+
+Local Lemma loop_fold_map {A B C : Type} (f : B -> C -> C) (key : A -> B) (zero : C) :
+  forall xs, fold_right f zero (map key xs) =
+    fold_right (fun x total => f (key x) total) zero xs.
+Proof.
+  intro xs. induction xs as [|x rest IH]; cbn [map fold_right]; [reflexivity|now rewrite IH].
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -2157,7 +2240,7 @@ Module LoopsT <: LOOPS_ALL.
   Definition k_body_step : N := loop_body_step_cost.
   Definition k_body_stop : N := 8.
   Definition k_collect : N := loop_collect_cost.
-  Definition k_install : N := 1. (* STUB *)
+  Definition k_install : N := loop_install_cost.
   Definition k_trace : N := 1. (* STUB *)
   Definition k_test : N := 1. (* STUB *)
   Definition k_forest : N := 1. (* STUB *)
@@ -2833,7 +2916,15 @@ Module LoopsT <: LOOPS_ALL.
     forest_supported g l -> In h (nodes g) -> incl vs (nodes g) ->
     (T_install l (h, vs) <= k_install * N.of_nat (length vs + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g l h vs Hsupported Hheader Hvertices.
+    pose proof (loop_install_clock l h vs (graph_width (base g))
+      (loop_listed_width g h Hheader)
+      (fun v Hin => loop_listed_width g v (Hvertices v Hin))) as Hclock.
+    unfold T_install. time_simpl.
+    unfold k_install, loop_install_cost, loop_install_step_cost in Hclock |- *. nia.
+  Qed.
+
 
   Lemma T7a_assemble : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -2841,7 +2932,24 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat
         (fold_right (fun h n => (length (collected g t h) + 1 + n)%nat)
           0%nat (headers g t) + 1) * N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    destruct (F6_latch_count g t r Hgraph Hprepared Htree) as [_ [Hheaders _]].
+    assert (Hrows : forall h vertices, In (h, vertices) (forest_rows g t) ->
+      Pos.size_nat h <= graph_width (base g) /\
+        forall v, In v vertices -> Pos.size_nat v <= graph_width (base g)).
+    { intros h vertices Hin. unfold forest_rows in Hin. apply in_map_iff in Hin.
+      destruct Hin as [key [Heq Hin]]. inversion Heq; subst h vertices.
+      split; [apply loop_listed_width; now apply Hheaders|].
+      intros v Hv. apply loop_listed_width.
+      apply (proj1 (proj2 (F10_body_exact g t r key Hgraph Hprepared Htree Hin))).
+      exact Hv. }
+    pose proof (loop_assemble_clock (forest_rows g t) (graph_width (base g)) Hrows) as Hclock.
+    unfold forest_rows in Hclock. rewrite loop_fold_map in Hclock.
+    cbn beta iota zeta in Hclock. cbn [snd] in Hclock.
+    unfold T_assemble. time_simpl. rewrite (N.add_comm 1). exact Hclock.
+  Qed.
+
 
   Lemma T7b_fuel_widths : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
