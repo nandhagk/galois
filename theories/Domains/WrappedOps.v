@@ -387,6 +387,56 @@ Qed.
 Definition wrapped_interval_payload_sound (wp : width * itv) (y : word) : Prop :=
   fst wp = fst y /\ interval_pgamma (fst wp) (snd wp) (snd y).
 
+
+Module WrappedIntervalCheckedPayload := IntervalPayload WordLanguage ThresholdsT WrappedScalar.
+Module WrappedIntervalCheckedTable := IntervalWordTable WordLanguage ThresholdsT WrappedScalar
+  WrappedIntervalCheckedPayload.
+
+(** Piece operands supply the checked interval table's payload relation. *)
+Local Lemma wrapped_interval_inputs xs cs :
+  Forall2 wrapped_interval_payload_sound xs cs ->
+  Forall2 (fun wp c => fst wp = fst c /\ WordLanguage.is_word (fst c) (snd c) /\
+    WrappedIntervalCheckedPayload.pgamma (fst wp) (snd wp) (snd c)) xs cs.
+Proof.
+  intro Hinputs. induction Hinputs as [|[w a] [v x] xs cs Hhead Htail IH].
+  - constructor.
+  - unfold wrapped_interval_payload_sound in Hhead. cbn [fst snd] in Hhead.
+    destruct Hhead as [Hwidth Ha]. subst v. constructor; [|exact IH].
+    split; [reflexivity|]. split; [exact (proj1 Ha)|].
+    apply WrappedIntervalCheckedPayload.F_pgamma. exact Ha.
+Qed.
+
+(** Successful evaluation belongs to the interval entry or its top fallback. *)
+Local Lemma wrapped_interval_forward_sound o xs cs rw z :
+  Forall2 wrapped_interval_payload_sound xs cs -> eval_op o cs = Some (rw, z) ->
+  interval_pgamma rw
+    (match WrappedIntervalTable.wfwd o rw xs with
+     | Some result => result
+     | None => WrappedIntervalBack.interval_top rw
+     end) z.
+Proof.
+  intros Hinputs Heval.
+  destruct (WrappedIntervalTable.wfwd o rw xs) as [result|] eqn:Hentry.
+  - apply (proj1 (WrappedIntervalCheckedPayload.F_pgamma rw result z)).
+    eapply WrappedIntervalCheckedTable.wfwd_sound;
+      [exact Hentry|exact (wrapped_interval_inputs xs cs Hinputs)|exact Heval].
+  - apply WrappedIntervalSound.interval_pgamma_spec.
+    apply WrappedIntervalSound.interval_top_sound.
+    exact (eval_op_is_word _ _ _ Heval).
+Qed.
+
+(** Represented interval operands cannot trigger the syntactic bottom test. *)
+Local Lemma wrapped_interval_inputs_nonbottom xs cs :
+  Forall2 wrapped_interval_payload_sound xs cs ->
+  existsb (fun x => match snd x with IBot => true | _ => false end) xs = false.
+Proof.
+  intro Hinputs. induction Hinputs as [|[w a] [v x] xs cs Hhead Htail IH].
+  - reflexivity.
+  - destruct Hhead as [Hwidth Ha]. destruct a as [|lo hi].
+    + exact (False_rect _ (proj2 Ha)).
+    + exact IH.
+Qed.
+
 Module WrappedTransferClaims (L : WORD_LANGUAGE_OPS).
   Module P := WrappedCode L.
   Module O := WrappedOpsCode L P.
@@ -394,7 +444,27 @@ Theorem wrapped_assume_consistent_sound o wa wb a b q x y rw z :
   interval_pgamma wa a x -> interval_pgamma wb b y -> interval_pgamma rw q z ->
   eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
   O.assume_consistent o wa wb a b q = true.
-Proof. Admitted. (* CONVERT: wrapped_assume_consistent_sound: Ha has type interval_pgamma while in_bnd is expected. *)
+Proof.
+  intros Ha Hb Hq Heval.
+  assert (Hinputs : Forall2 wrapped_interval_payload_sound
+      [(wa, a); (wb, b)] [(wa, x); (wb, y)]).
+  { constructor; [split; [reflexivity|exact Ha]|].
+    constructor; [split; [reflexivity|exact Hb]|constructor]. }
+  pose proof (wrapped_interval_forward_sound o _ _ rw z Hinputs Heval) as Hforward.
+  pose proof (wrapped_interval_meet_sound rw _ _ z Hforward Hq) as Hmeet.
+  pose proof (eval_op_width _ _ _ Heval) as Hwidth.
+  change (result_width o [wa; wb] = Some rw) in Hwidth.
+  unfold O.assume_consistent. rewrite Hwidth.
+  change (match WrappedScalar.interval_meet
+    (match WrappedIntervalTable.wfwd o rw [(wa, a); (wb, b)] with
+     | Some r => r | None => WrappedIntervalBack.interval_top rw end) q with
+    | IBot => false | I _ _ => true end = true).
+  destruct (WrappedScalar.interval_meet
+    (match WrappedIntervalTable.wfwd o rw [(wa, a); (wb, b)] with
+     | Some r => r | None => WrappedIntervalBack.interval_top rw end) q).
+  - exact (False_rect _ (proj2 Hmeet)).
+  - reflexivity.
+Qed.
 
 Theorem wrapped_assume_binary_base_sound o wa wb a b rw q x y z :
   wrapped_gamma wa a x -> wrapped_gamma wb b y -> wrapped_gamma rw q z ->
@@ -442,18 +512,79 @@ Qed.
 Theorem wrapped_piece_forward_sound o xs cs rw z :
   Forall2 wrapped_interval_payload_sound xs cs -> eval_op o cs = Some (rw, z) ->
   wrapped_gamma rw (O.piece_forward o xs rw) z.
-Proof. Admitted. (* CONVERT: wrapped_piece_forward_sound: The reference wrapped_piece_forward_c was not found in the current *)
+Proof.
+  intros Hinputs Heval. unfold O.piece_forward.
+  rewrite (wrapped_interval_inputs_nonbottom xs cs Hinputs).
+  pose proof (wrapped_interval_forward_sound o xs cs rw z Hinputs Heval) as Hforward.
+  destruct (WrappedIntervalTable.wfwd o rw xs).
+  - now apply wrapped_interval_value_sound.
+  - exact (proj1 Hforward).
+Qed.
 
 Theorem wrapped_forward_unary_sound o w a x rw z :
   wrapped_gamma w a x -> eval_op o [(w, x)] = Some (rw, z) ->
   wrapped_gamma rw (O.forward_unary o w a rw) z.
-Proof. Admitted. (* CONVERT: wrapped_forward_unary_sound: The reference wrapped_forward_unary_c was not found in the current *)
+Proof.
+  intros Ha Heval. apply wrapped_parts_spec in Ha.
+  unfold O.forward_unary. apply wrapped_join_sound. destruct Ha as [Ha|Ha].
+  - left. eapply wrapped_piece_forward_sound; [|exact Heval].
+    constructor; [split; [reflexivity|exact Ha]|constructor].
+  - right. eapply wrapped_piece_forward_sound; [|exact Heval].
+    constructor; [split; [reflexivity|exact Ha]|constructor].
+Qed.
+
+
+(** Signed division and remainder use their pole-piece magnitude calculation. *)
+Local Lemma wrapped_piece_binary_sound o wa wb a b x y rw z :
+  interval_pgamma wa a x -> interval_pgamma wb b y ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_gamma rw (O.piece_binary o wa wb a b rw) z.
+Proof.
+  intros Ha Hb Heval.
+  assert (Hbase : wrapped_gamma rw (O.piece_forward o [(wa, a); (wb, b)] rw) z).
+  { eapply wrapped_piece_forward_sound; [|exact Heval].
+    constructor; [split; [reflexivity|exact Ha]|].
+    constructor; [split; [reflexivity|exact Hb]|constructor]. }
+  op_cases o by exact Hbase.
+  - pose proof (eval_op_fun2_width bvsdiv BSdiv wa wb x y (rw, z) eq_refl Heval) as ->.
+    rewrite (eval_op_fun2 bvsdiv wb x y BSdiv eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst rw z.
+    apply (wrapped_signed_piece_sound true); assumption.
+  - pose proof (eval_op_fun2_width bvsrem BSrem wa wb x y (rw, z) eq_refl Heval) as ->.
+    rewrite (eval_op_fun2 bvsrem wb x y BSrem eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst rw z.
+    apply (wrapped_signed_piece_sound false); assumption.
+Qed.
+
+(** Cutting both operands at their signed poles retains the concrete pair. *)
+Local Lemma wrapped_piece_forward_cut_sound o wa wb a b x y rw z :
+  interval_pgamma wa a x -> interval_pgamma wb b y ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_gamma rw (O.piece_cut o wa wb a b rw) z.
+Proof.
+  intros Ha Hb Heval.
+  apply wrapped_pole_cut_sound in Ha. apply wrapped_pole_cut_sound in Hb.
+  unfold O.piece_cut. apply wrapped_join_four_sound.
+  destruct Ha as [Ha|Ha]; destruct Hb as [Hb|Hb].
+  - left. eapply wrapped_piece_binary_sound; eassumption.
+  - right; left. eapply wrapped_piece_binary_sound; eassumption.
+  - right; right; left. eapply wrapped_piece_binary_sound; eassumption.
+  - right; right; right. eapply wrapped_piece_binary_sound; eassumption.
+Qed.
 
 Theorem wrapped_forward_binary_sound o wa wb a b x y rw z :
   wrapped_gamma wa a x -> wrapped_gamma wb b y ->
   eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
   wrapped_gamma rw (O.forward_binary o wa wb a b rw) z.
-Proof. Admitted. (* CONVERT: wrapped_forward_binary_sound: The reference wrapped_forward_binary_c was not found in the current *)
+Proof.
+  intros Ha Hb Heval. apply wrapped_parts_spec in Ha. apply wrapped_parts_spec in Hb.
+  unfold O.forward_binary. apply wrapped_join_four_sound.
+  destruct Ha as [Ha|Ha]; destruct Hb as [Hb|Hb].
+  - left. eapply wrapped_piece_forward_cut_sound; eassumption.
+  - right; left. eapply wrapped_piece_forward_cut_sound; eassumption.
+  - right; right; left. eapply wrapped_piece_forward_cut_sound; eassumption.
+  - right; right; right. eapply wrapped_piece_forward_cut_sound; eassumption.
+Qed.
 End WrappedTransferClaims.
 
 Definition wrapped_rewrap (target source : width) (q : wrapped) : wrapped :=
