@@ -2913,3 +2913,104 @@ Proof.
       replay_index st + N.of_nat (S (length rest)))%N.
     rewrite IH, (proj2 (proj2 (proj2 (dom_lt_replay_fields st op)))). lia.
 Qed.
+
+(** * Generated compression clocks and amortized evaluation *)
+
+(** The callback bounds use the public loop contract rather than reducing its driver. *)
+Local Opaque Argent.Loop.loop T_loopN.
+
+(** Selecting the lower score costs a bounded number of numeric-width operations. *)
+Lemma dom_lt_time_minimum bound width semis left right :
+  dom_lt_trie_all (fun value => (value <= bound)%N) semis ->
+  (forall value, (value <= bound)%N -> N.size_nat value <= width) ->
+  (left <= bound)%N -> (right <= bound)%N ->
+  (T_dom_lt_minimum semis left right <= 32 * N.of_nat (width + 1))%N.
+Proof.
+  intros Hsemis Hwidth Hleft Hright.
+  pose proof (dom_lt_time_identity semis left) as Hleft_time.
+  pose proof (dom_lt_time_identity semis right) as Hright_time.
+  pose proof (dom_lt_identity_bounded bound semis right Hsemis Hright) as Hscore.
+  pose proof (Hwidth left Hleft) as Hleft_width.
+  pose proof (Hwidth right Hright) as Hright_width.
+  pose proof (Hwidth (dom_lt_identity semis right) Hscore) as Hscore_width.
+  pose proof (dom_lt_time_ltb (dom_lt_identity semis right) (dom_lt_identity semis left)) as Hlt.
+  unfold T_dom_lt_minimum.
+  destruct (N.ltb (dom_lt_identity semis right) (dom_lt_identity semis left));
+    time_simpl; rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+(** One compression transition costs a constant multiple of the bounded key width. *)
+Lemma dom_lt_time_compress_step bound width semis st :
+  dom_lt_trie_all (fun value => (value <= bound)%N) semis ->
+  (forall value, (value <= bound)%N -> N.size_nat value <= width) ->
+  dom_lt_walk_bounded bound st ->
+  (T_dom_lt_compress_step semis st <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hsemis Hwidth. destruct st as [links [vertex stack|root part stack]].
+  - cbn [dom_lt_walk_bounded lt_walk_links lt_walk_phase].
+    intros [[Hshort Hlabels] [Hvertex Hstack]].
+    pose proof (Hwidth vertex Hvertex) as Hvertex_width.
+    pose proof (dom_lt_key_width vertex) as Hkey_width.
+    pose proof (dom_lt_time_key vertex) as Hkey_time.
+    unfold T_dom_lt_compress_step. cbn [lt_walk_links lt_walk_phase].
+    destruct (trie_get (dom_lt_key vertex) (lt_shortcut links)) as [parent|] eqn:Hget.
+    + pose proof (Hshort (dom_lt_key vertex) parent Hget) as Hparent.
+      pose proof (Hwidth parent Hparent) as Hparent_width.
+      pose proof (dom_lt_time_ltb parent vertex) as Hcompare.
+      destruct (N.ltb parent vertex); rewrite PTrieT.trie_get_clock; time_simpl;
+        clear -Hvertex_width Hkey_width Hkey_time Hparent_width Hcompare;
+        rewrite !Nat2N.inj_add in *; nia.
+    + rewrite PTrieT.trie_get_clock. time_simpl.
+      clear -Hvertex_width Hkey_width Hkey_time. rewrite !Nat2N.inj_add in *. nia.
+  - cbn [dom_lt_walk_bounded lt_walk_links lt_walk_phase].
+    intros [[Hshort Hlabels] [Hroot [Hpart Hstack]]].
+    destruct stack as [|vertex stack].
+    + unfold T_dom_lt_compress_step. cbn [lt_walk_links lt_walk_phase].
+      destruct part; time_simpl; rewrite Nat2N.inj_add; nia.
+    + inversion Hstack as [|head tail Hvertex Htail]; subst head tail.
+      set (label := dom_lt_identity (lt_label links) vertex).
+      set (previous := match part with None => 0%N | Some value => value end).
+      set (best := match part with None => label |
+        Some value => dom_lt_minimum semis label value end).
+      assert (Hlabel : (label <= bound)%N).
+      { unfold label. now apply dom_lt_identity_bounded. }
+      assert (Hprevious : (previous <= bound)%N).
+      { unfold previous. destruct part; [exact Hpart|lia]. }
+      pose proof (Hwidth vertex Hvertex) as Hvertex_width.
+      pose proof (dom_lt_key_width vertex) as Hkey_width.
+      pose proof (dom_lt_time_key vertex) as Hkey_time.
+      pose proof (dom_lt_time_identity (lt_label links) vertex) as Hlabel_time.
+      pose proof (dom_lt_time_minimum bound width semis label previous
+        Hsemis Hwidth Hlabel Hprevious) as Hmin_time.
+      pose proof (PTrieT.T_set_le N (dom_lt_key vertex) root (lt_shortcut links)) as Hshort_set.
+      pose proof (PTrieT.T_set_le N (dom_lt_key vertex) best (lt_label links)) as Hlabel_set.
+      change (PTrieCode.T_set (dom_lt_key vertex) root (lt_shortcut links) <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hshort_set.
+      change (PTrieCode.T_set (dom_lt_key vertex) best (lt_label links) <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hlabel_set.
+      destruct part as [part|]; unfold previous in Hmin_time; unfold best in Hlabel_set;
+        unfold T_dom_lt_compress_step; cbn [lt_walk_links lt_walk_phase]; fold label;
+        time_simpl;
+        clear -Hvertex_width Hkey_width Hkey_time Hlabel_time Hmin_time Hshort_set Hlabel_set;
+        rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Doubling a binary value adds at most one representation bit. *)
+Lemma dom_lt_double_width value : N.size_nat (N.double value) <= N.size_nat value + 1.
+Proof.
+  destruct value; cbn [N.double N.size_nat Pos.size_nat]; lia.
+Qed.
+
+(** Binary doubling is a constant-time constructor operation. *)
+Lemma dom_lt_time_double value : (N.T_double value <= 1)%N.
+Proof.
+  destruct value; time_step.
+Qed.
+
+(** Selecting the exhausted-loop result adds at most one call. *)
+Lemma dom_lt_result_branch {A B : Type} (result : A + B) :
+  (match result with inl _ => 1 | inr _ => 0 end <= 1)%N.
+Proof.
+  destruct result; lia.
+Qed.
