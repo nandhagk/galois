@@ -29,6 +29,40 @@ TimeFun tnum_wor.
 Definition tnum_wnot (w : width) (x : Z) : Z := tnum_wrap w (Z.lnot x).
 TimeFun tnum_wnot.
 
+(** Masking an integer agrees with reduction modulo the word modulus. *)
+Lemma tnum_wrap_agrees : forall w z, tnum_wrap w z = wrap w z.
+Proof.
+  intros w z. unfold tnum_wrap, wrap, modulus.
+  apply Z.land_ones. lia.
+Qed.
+
+(** Masked conjunction agrees with the concrete word operation. *)
+Lemma tnum_wand_agrees : forall w x y, tnum_wand w x y = wand w x y.
+Proof.
+  intros w x y. unfold tnum_wand, wand.
+  rewrite tnum_wrap_agrees. apply Z.bits_inj'. intros i Hi.
+  rewrite !testbit_wrap, !Z.land_spec, !testbit_wrap by exact Hi.
+  destruct (i <? Zpos w); reflexivity.
+Qed.
+
+(** Masked disjunction agrees with the concrete word operation. *)
+Lemma tnum_wor_agrees : forall w x y, tnum_wor w x y = wor w x y.
+Proof.
+  intros w x y. unfold tnum_wor, wor.
+  rewrite tnum_wrap_agrees. apply Z.bits_inj'. intros i Hi.
+  rewrite !testbit_wrap, !Z.lor_spec, !testbit_wrap by exact Hi.
+  destruct (i <? Zpos w); reflexivity.
+Qed.
+
+(** Masked complement agrees with the concrete word operation. *)
+Lemma tnum_wnot_agrees : forall w x, tnum_wnot w x = wnot w x.
+Proof.
+  intros w x. unfold tnum_wnot.
+  rewrite tnum_wrap_agrees. apply Z.bits_inj'. intros i Hi.
+  rewrite testbit_wrap, Z.lnot_spec, testbit_wnot_full by exact Hi.
+  destruct (i <? Zpos w), (Z.testbit x i); reflexivity.
+Qed.
+
 Definition tnum_normalise (w : width) (t : tnum) : tnum :=
   Tnum (tnum_wrap w (zeros t)) (tnum_wrap w (ones t)).
 TimeFun tnum_normalise.
