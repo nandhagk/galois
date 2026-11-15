@@ -4,8 +4,8 @@
     For example, a divisor range excluding zero rules out division by zero.
     Builds on: BitsChecksSig, ChecksSig, BitsLang and ValueSig. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
-From Argent Require Import Time.
+From Stdlib Require Import ZArith Zpow_facts NArith List Bool Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op.
 From Galois.Domains Require Import LangSig ValueSig BitsLang.
 From Galois.Alarms Require Import ChecksSig BitsChecksSig.
@@ -320,6 +320,310 @@ Module BitsChecks (V : VALUE_DOMAIN BitsLang)
   Qed.
 End BitsChecks.
 
+(** * Costs of endpoint arithmetic *)
+
+Module ChecksCost.
+  Local Open Scope nat_scope.
+
+  (** Adding positive integers adds at most one carry bit. *)
+  Lemma positive_add_bits : forall p q,
+    Pos.size_nat (p + q) <= Pos.size_nat p + Pos.size_nat q + 1.
+  Proof.
+    intros p q. apply Std.Pos.size_nat_least.
+    rewrite Pos2Nat.inj_add, !Nat.pow_add_r. cbn [Nat.pow].
+    pose proof (Std.Pos.size_nat_upper p).
+    pose proof (Std.Pos.size_nat_upper q).
+    pose proof (Pos2Nat.is_pos p). pose proof (Pos2Nat.is_pos q). nia.
+  Qed.
+
+  (** A signed difference fits the combined bit sizes of its positive operands. *)
+  Lemma positive_difference_bits : forall p q,
+    Z.size_nat (Z.pos_sub p q) <= Pos.size_nat p + Pos.size_nat q.
+  Proof.
+    intros p q. rewrite Z.pos_sub_spec. destruct (Pos.compare p q);
+      cbn [Z.size_nat]; try lia;
+      pose proof (Std.Pos.size_nat_sub p q);
+      pose proof (Std.Pos.size_nat_sub q p); lia.
+  Qed.
+
+  (** Negation preserves the stored integer bit count. *)
+  Lemma opp_bits : forall z, Z.size_nat (- z) = Z.size_nat z.
+  Proof.
+    intros []; reflexivity.
+  Qed.
+
+  (** Integer addition has a linear result-size bound. *)
+  Lemma add_bits : forall x y,
+    Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y + 1.
+  Proof.
+    intros [|p|p] [|q|q]; cbn [Z.add Z.size_nat]; try lia;
+      try apply positive_add_bits;
+      pose proof (positive_difference_bits p q);
+      pose proof (positive_difference_bits q p); lia.
+  Qed.
+
+  (** Integer subtraction has the same result-size bound as addition. *)
+  Lemma sub_bits : forall x y,
+    Z.size_nat (x - y) <= Z.size_nat x + Z.size_nat y + 1.
+  Proof.
+    intros x y. change (Z.size_nat (x + - y) <= Z.size_nat x + Z.size_nat y + 1).
+    pose proof (add_bits x (- y)). rewrite opp_bits in *. lia.
+  Qed.
+
+  (** Integer multiplication adds the operand bit bounds. *)
+  Lemma mul_bits : forall x y,
+    Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y.
+  Proof.
+    intros [|p|p] [|q|q]; cbn [Z.mul Z.size_nat]; try lia;
+      apply Std.Pos.size_nat_mul.
+  Qed.
+
+  (** A minimum selects one of the two stored integers. *)
+  Lemma min_bits : forall x y,
+    Z.size_nat (Z.min x y) <= Nat.max (Z.size_nat x) (Z.size_nat y).
+  Proof.
+    intros x y. unfold Z.min. destruct (Z.compare x y);
+      first [apply Nat.le_max_l | apply Nat.le_max_r].
+  Qed.
+
+  (** A maximum selects one of the two stored integers. *)
+  Lemma max_bits : forall x y,
+    Z.size_nat (Z.max x y) <= Nat.max (Z.size_nat x) (Z.size_nat y).
+  Proof.
+    intros x y. unfold Z.max. destruct (Z.compare x y);
+      first [apply Nat.le_max_l | apply Nat.le_max_r].
+  Qed.
+
+  (** A minimum respects a common bound on its two operand sizes. *)
+  Lemma min_bits_bound : forall x y budget,
+    Z.size_nat x <= budget -> Z.size_nat y <= budget ->
+    Z.size_nat (Z.min x y) <= budget.
+  Proof.
+    intros x y budget Hx Hy. eapply Nat.le_trans; [apply min_bits|].
+    apply Nat.max_lub; assumption.
+  Qed.
+
+  (** A maximum respects a common bound on its two operand sizes. *)
+  Lemma max_bits_bound : forall x y budget,
+    Z.size_nat x <= budget -> Z.size_nat y <= budget ->
+    Z.size_nat (Z.max x y) <= budget.
+  Proof.
+    intros x y budget Hx Hy. eapply Nat.le_trans; [apply max_bits|].
+    apply Nat.max_lub; assumption.
+  Qed.
+
+  (** Each produced result endpoint fits the combined input endpoint sizes. *)
+  Lemma result_bits : forall o ra rb r, range_result o ra rb = Some r ->
+    Z.size_nat (fst r) + Z.size_nat (snd r) <=
+      2 * (range_bits ra + range_bits rb + 1).
+  Proof.
+    intros o [[|la|] [|ha|]] [[|lb|] [|hb|]] r Hresult;
+      cbn [range_result] in Hresult; try discriminate.
+    destruct o; cbn [range_result] in Hresult; try discriminate;
+      inversion Hresult; subst r; unfold range_bits; cbn [fst snd].
+    - pose proof (add_bits la lb). pose proof (add_bits ha hb). lia.
+    - pose proof (sub_bits la hb). pose proof (sub_bits ha lb). lia.
+    - set (budget := Z.size_nat la + Z.size_nat ha + Z.size_nat lb + Z.size_nat hb).
+      assert (Hlo : Z.size_nat
+        (Z.min (Z.min (la * lb) (la * hb)) (Z.min (ha * lb) (ha * hb))) <= budget).
+      { repeat apply min_bits_bound;
+          (eapply Nat.le_trans; [apply mul_bits|unfold budget; lia]). }
+      assert (Hhi : Z.size_nat
+        (Z.max (Z.max (la * lb) (la * hb)) (Z.max (ha * lb) (ha * hb))) <= budget).
+      { repeat apply max_bits_bound;
+          (eapply Nat.le_trans; [apply mul_bits|unfold budget; lia]). }
+      unfold budget in Hlo, Hhi. lia.
+  Qed.
+
+  (** A shared bit budget bounds integer addition, subtraction and multiplication. *)
+  Lemma arithmetic_time : forall x y budget,
+    Z.size_nat x + Z.size_nat y + 1 <= budget ->
+    (Std.Z.T_add x y <= 4 * N.of_nat budget /\
+     Std.Z.T_sub x y <= 4 * N.of_nat budget /\
+     Std.Z.T_mul x y <= 2 * (N.of_nat budget * N.of_nat budget))%N.
+  Proof.
+    intros x y budget Hsize.
+    assert (HsizeN : (N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y) + 1 <=
+      N.of_nat budget)%N) by lia.
+    split; [pose proof (Std.Z.T_add_le x y); rewrite Nat2N.inj_add in *; lia|].
+    split; [pose proof (Std.Z.T_sub_le x y); rewrite Nat2N.inj_add in *; lia|].
+    pose proof (Std.Z.T_mul_le x y). nia.
+  Qed.
+
+  (** Selecting an integer endpoint is linear in its inspected operand size. *)
+  Lemma choice_time : forall x y budget, Z.size_nat x + 1 <= budget ->
+    (Std.Z.T_min x y <= 4 * N.of_nat budget /\
+     Std.Z.T_max x y <= 4 * N.of_nat budget)%N.
+  Proof.
+    intros x y budget Hsize. pose proof (Std.Z.T_min_le x y).
+    pose proof (Std.Z.T_max_le x y). lia.
+  Qed.
+
+  (** Finite range arithmetic uses four corner products and six endpoint selections. *)
+  Lemma finite_result_time : forall o la ha lb hb,
+    (T_range_result o (Fin la, Fin ha) (Fin lb, Fin hb) <= 128 * N.of_nat
+      (((Z.size_nat la + Z.size_nat ha) + (Z.size_nat lb + Z.size_nat hb) + 1) ^ 2))%N.
+  Proof.
+    intros o la ha lb hb.
+    set (bits := (Z.size_nat la + Z.size_nat ha) + (Z.size_nat lb + Z.size_nat hb)).
+    set (budget := N.of_nat (bits + 1)).
+    assert (Hpositive : (1 <= budget)%N) by (unfold budget; rewrite Nat2N.inj_add; lia).
+    assert (Hsquare : (budget <= budget * budget)%N) by nia.
+    pose proof (arithmetic_time la lb (bits + 1) ltac:(unfold bits; lia)) as [Hall [_ Hmll]].
+    pose proof (arithmetic_time ha hb (bits + 1) ltac:(unfold bits; lia)) as [Hahh [_ Hmhh]].
+    pose proof (arithmetic_time la hb (bits + 1) ltac:(unfold bits; lia)) as [_ [Hslh Hmlh]].
+    pose proof (arithmetic_time ha lb (bits + 1) ltac:(unfold bits; lia)) as [_ [Hshl Hmhl]].
+    assert (Hll : Z.size_nat (la * lb) <= bits).
+    { eapply Nat.le_trans; [apply mul_bits|unfold bits; lia]. }
+    assert (Hlh : Z.size_nat (la * hb) <= bits).
+    { eapply Nat.le_trans; [apply mul_bits|unfold bits; lia]. }
+    assert (Hhl : Z.size_nat (ha * lb) <= bits).
+    { eapply Nat.le_trans; [apply mul_bits|unfold bits; lia]. }
+    assert (Hmin : Z.size_nat (Z.min (la * lb) (la * hb)) <= bits).
+    { apply min_bits_bound; assumption. }
+    assert (Hmax : Z.size_nat (Z.max (la * lb) (la * hb)) <= bits).
+    { apply max_bits_bound; assumption. }
+    pose proof (choice_time (la * lb) (la * hb) (bits + 1) ltac:(lia)) as [Hminl Hmaxl].
+    pose proof (choice_time (ha * lb) (ha * hb) (bits + 1) ltac:(lia)) as [Hminh Hmaxh].
+    pose proof (choice_time (Z.min (la * lb) (la * hb))
+      (Z.min (ha * lb) (ha * hb)) (bits + 1) ltac:(lia)) as [Hminout _].
+    pose proof (choice_time (Z.max (la * lb) (la * hb))
+      (Z.max (ha * lb) (ha * hb)) (bits + 1) ltac:(lia)) as [_ Hmaxout].
+    rewrite Nat.pow_2_r, Nat2N.inj_mul.
+    fold budget in Hall, Hahh, Hslh, Hshl, Hmll, Hmlh, Hmhl, Hmhh,
+      Hminl, Hmaxl, Hminh, Hmaxh, Hminout, Hmaxout |- *.
+    destruct o; time_unfold T_range_result; time_simpl; lia.
+  Qed.
+
+  (** Endpoint arithmetic takes quadratic time in the combined finite endpoint sizes. *)
+  Lemma result_time : forall o ra rb,
+    (T_range_result o ra rb <=
+      128 * N.of_nat ((range_bits ra + range_bits rb + 1) ^ 2))%N.
+  Proof.
+    intros o ra rb.
+    assert (Hpositive : (1 <= N.of_nat ((range_bits ra + range_bits rb + 1) ^ 2))%N).
+    { rewrite Nat.pow_2_r, Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+    destruct ra as [[|la|] [|ha|]], rb as [[|lb|] [|hb|]];
+      try apply finite_result_time; time_unfold T_range_result; time_simpl; lia.
+  Qed.
+
+  (** A positive width's bit count is no greater than the width itself. *)
+  Lemma positive_bits_value : forall p, Pos.size_nat p <= Pos.to_nat p.
+  Proof.
+    induction p as [p IH|p IH|]; cbn [Pos.size_nat];
+      rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1; lia.
+  Qed.
+
+  (** A nonnegative integer below a power of two fits within its exponent. *)
+  Lemma bits_below_power : forall z n,
+    (0 <= z < 2 ^ Z.of_nat n)%Z -> Z.size_nat z <= n.
+  Proof.
+    intros [|z|z] n Hrange; cbn [Z.size_nat]; try lia.
+    now apply Zpower2_Psize.
+  Qed.
+
+  (** A power of two stores its exponent plus one bit. *)
+  Lemma power_bits : forall n, (0 <= n)%Z ->
+    Z.size_nat (2 ^ n) <= Z.to_nat n + 1.
+  Proof.
+    intros n Hn. apply bits_below_power. split.
+    - pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn). lia.
+    - rewrite Nat2Z.inj_add, Z2Nat.id by exact Hn. apply Z.pow_lt_mono_r; lia.
+  Qed.
+
+  (** Both word boundaries fit the width plus one bit. *)
+  Lemma width_boundary_bits : forall w,
+    Z.size_nat (Word.modulus w) <= Pos.to_nat w + 1 /\
+    Z.size_nat (Word.half w) <= Pos.to_nat w + 1.
+  Proof.
+    intro w. pose proof (power_bits (Z.pos w) ltac:(lia)) as Hmodulus.
+    pose proof (power_bits (Z.pos w - 1) ltac:(lia)) as Hhalf.
+    pose proof (Z2Nat.id (Z.pos w - 1) ltac:(lia)) as Hhalfwidth.
+    pose proof (positive_nat_Z w) as Hwidth.
+    change (Z.to_nat (Z.pos w)) with (Pos.to_nat w) in Hmodulus.
+    unfold Word.modulus, Word.half. lia.
+  Qed.
+
+  (** Power-of-two construction spends constant work for each generated bit. *)
+  Lemma power_time : forall z, (Word.Z.T_pow 2 z <= 5 * Z.abs_N z + 2)%N.
+  Proof.
+    intros [|p|p]; unfold Word.Z.T_pow, Word.Z.T_pow_pos;
+      cbn beta iota zeta; try nia.
+    pose proof (Std.Pos.T_iter_le (Z.mul 2)
+      (fun x => Std.Z.T_mul 2 x) (fun _ => True) 3 1%Z p
+      ltac:(easy) ltac:(intros; apply Std.Z.T_mul_two_le) ltac:(constructor)) as Hiter.
+    change (Z.abs_N (Z.pos p)) with (N.pos p). nia.
+  Qed.
+
+  (** Absolute-value conversion agrees with natural conversion on nonnegative integers. *)
+  Lemma abs_N_nat : forall z, (0 <= z)%Z -> Z.abs_N z = N.of_nat (Z.to_nat z).
+  Proof.
+    intros [|p|p] Hz; cbn [Z.abs_N Z.to_nat]; try reflexivity; lia.
+  Qed.
+
+  (** Constructing either word boundary is linear in the width value. *)
+  Lemma width_boundary_time : forall w,
+    (Word.T_modulus w <= 16 * N.of_nat (Pos.to_nat w + 1) /\
+     Word.T_half w <= 16 * N.of_nat (Pos.to_nat w + 1))%N.
+  Proof.
+    intro w. pose proof (power_time (Z.pos w)) as Hmodulus.
+    pose proof (power_time (Z.pos w - 1)) as Hhalf.
+    rewrite !abs_N_nat in Hmodulus, Hhalf by lia.
+    change (Z.to_nat (Z.pos w)) with (Pos.to_nat w) in Hmodulus.
+    pose proof (Z2Nat.id (Z.pos w - 1) ltac:(lia)) as Hhalfwidth.
+    pose proof (positive_nat_Z w) as Hwidth.
+    pose proof (positive_bits_value w) as Hwidthbits.
+    pose proof (Std.Z.T_sub_le (Z.pos w) 1) as Hdecrement.
+    change (Z.size_nat 1) with 1 in Hdecrement.
+    change (Z.size_nat (Z.pos w)) with (Pos.size_nat w) in Hdecrement.
+    split; [time_unfold Word.T_modulus|time_unfold Word.T_half];
+      time_simpl; rewrite ?Nat2N.inj_add in *; lia.
+  Qed.
+
+  (** The zero test reads at most its finite endpoint bits and fixed bookkeeping. *)
+  Lemma zero_time : forall r,
+    (T_range_zero r <= 32 * N.of_nat (range_bits r + 1))%N.
+  Proof.
+    intros [[|lo|] [|hi|]]; unfold range_bits; cbn [fst snd];
+      time_unfold T_range_zero; time_simpl; cbn beta iota zeta delta [fst snd];
+      time_pose; try change (Z.size_nat 0) with 0 in *.
+    all: rewrite ?Nat2N.inj_add; lia.
+  Qed.
+
+  (** Nonnegativity testing reads at most the lower endpoint. *)
+  Lemma nonnegative_time : forall r,
+    (T_range_nonnegative r <= 16 * N.of_nat (range_bits r + 1))%N.
+  Proof.
+    intros [[|lo|] hi]; unfold range_bits; cbn [fst snd];
+      time_unfold T_range_nonnegative; time_simpl; cbn beta iota zeta delta [fst snd];
+      time_pose; try change (Z.size_nat 0) with 0 in *.
+    all: rewrite ?Nat2N.inj_add; lia.
+  Qed.
+
+  (** Strict endpoint comparison is linear in the endpoints it inspects. *)
+  Lemma comparison_time : forall ra rb,
+    (T_bound_lt (snd ra) (fst rb) <=
+      16 * N.of_nat (range_bits ra + range_bits rb + 1))%N.
+  Proof.
+    intros [la [|ha|]] [[|lb|] hb]; unfold range_bits; cbn [fst snd];
+      time_unfold T_bound_lt; time_simpl; cbn beta iota zeta delta [fst snd];
+      time_pose; rewrite ?Nat2N.inj_add; lia.
+  Qed.
+
+  (** Testing a result range pays for its upper endpoint and the two word boundaries. *)
+  Lemma fits_time : forall s w r,
+    (T_range_fits s w r <=
+      128 * N.of_nat (Pos.to_nat w + Z.size_nat (fst r) + Z.size_nat (snd r) + 1))%N.
+  Proof.
+    intros s w r. pose proof (width_boundary_time w) as [Hmodulus Hhalf].
+    pose proof (width_boundary_bits w) as [Hmodulusbits Hhalfbits].
+    pose proof (opp_bits (Word.half w)) as Hopp.
+    destruct s; time_unfold T_range_fits; time_simpl; time_pose;
+      try change (Z.size_nat 0) with 0 in *.
+    all: rewrite ?Nat2N.inj_add in *; lia.
+  Qed.
+End ChecksCost.
+
 Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
     (Q : BITS_RANGE_T NumU V) (QS : BITS_RANGE_T NumS V) (W : BITS_WIDTH_T V)
     <: BITS_CHECKS_ALL V Q QS W.
@@ -327,25 +631,283 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
   Definition work (_ : kd) (xs : list V.t) : nat :=
     ((fold_right Nat.add 0%nat (map V.size xs) + length xs + 1) ^ 2)%nat.
   TimeFun may_fail.
-  Definition c_bits_checks : N := 1. (* STUB *)
+  Definition k_inputs : N := (Q.c_range + QS.c_range + W.c_width + 16)%N.
+  Definition c_bits_checks : N := (4096 * k_inputs * k_inputs)%N.
   Definition c_checks : N := c_bits_checks.
-  Definition k_bits_checks : N := 1. (* STUB *)
+  Definition k_bits_checks : N := 32%N.
+
+  (** The shared check coefficient covers each fixed endpoint coefficient. *)
+  Local Lemma coefficient_lower : (128 <= c_bits_checks)%N.
+  Proof.
+    unfold c_bits_checks, k_inputs. nia.
+  Qed.
+
+  (** A zero check adds fixed bookkeeping to its query and membership test. *)
+  Local Lemma zero_components : forall d,
+    (T_may_fail DivZero [d] <=
+      64 * (Q.T_range d + N.of_nat (range_bits (Q.range d) + 1)))%N.
+  Proof.
+    intro d. pose proof (ChecksCost.zero_time (Q.range d)) as Hzero.
+    time_unfold T_may_fail. time_simpl. time_pose. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** Bounds checking reads the index range twice and the length range once. *)
+  Local Lemma bounds_components : forall i len,
+    (T_may_fail Bounds [i; len] <= 64 *
+      (Q.T_range i + Q.T_range len +
+        N.of_nat (range_bits (Q.range i) + range_bits (Q.range len) + 1)))%N.
+  Proof.
+    intros i len. pose proof (ChecksCost.nonnegative_time (Q.range i)) as Hnonnegative.
+    pose proof (ChecksCost.comparison_time (Q.range i) (Q.range len)) as Hcompare.
+    time_unfold T_may_fail. time_simpl. time_pose. rewrite ?Nat2N.inj_add in *. lia.
+  Qed.
+
+  (** Either numeric view's range query fits the common input coefficient. *)
+  Local Lemma query_time_bound : forall (s : bool) a,
+    ((if s then QS.T_range a else Q.T_range a) <=
+      k_inputs * N.of_nat (V.size a + 1))%N.
+  Proof.
+    intros s a. destruct s; eapply N.le_trans;
+      [apply QS.T_range_le| |apply Q.T_range_le|];
+      apply N.mul_le_mono_r; unfold k_inputs; lia.
+  Qed.
+
+  (** Either numeric view's endpoint bits fit the common input coefficient. *)
+  Local Lemma query_bits_bound : forall (s : bool) a,
+    (N.of_nat (range_bits (if s then QS.range a else Q.range a)) <=
+      k_inputs * N.of_nat (V.size a + 1))%N.
+  Proof.
+    intros s a. destruct s; eapply N.le_trans;
+      [apply QS.range_bits_le| |apply Q.range_bits_le|];
+      apply N.mul_le_mono_r; unfold k_inputs; lia.
+  Qed.
+
+  (** Both queried ranges fit the combined operand budget. *)
+  Local Lemma pair_range_bits : forall (s : bool) a b,
+    (N.of_nat (range_bits (if s then QS.range a else Q.range a) +
+      range_bits (if s then QS.range b else Q.range b) + 1) <=
+      k_inputs * N.of_nat (V.size a + V.size b + 3))%N.
+  Proof.
+    intros s a b. pose proof (query_bits_bound s a) as Ha.
+    pose proof (query_bits_bound s b) as Hb.
+    assert (Hcoefficient : (1 <= k_inputs)%N) by (unfold k_inputs; lia).
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** A positive input budget is bounded by its scaled square. *)
+  Local Lemma scaled_square : forall n, (1 <= n)%nat ->
+    (1 <= k_inputs * N.of_nat n /\ N.of_nat n <= k_inputs * N.of_nat n /\
+      k_inputs * N.of_nat n <= (k_inputs * N.of_nat n) * (k_inputs * N.of_nat n))%N.
+  Proof.
+    intros n Hn. assert (Hcoefficient : (1 <= k_inputs)%N) by (unfold k_inputs; lia).
+    assert (HnN : (1 <= N.of_nat n)%N) by lia.
+    assert (Hpositive : (1 <= k_inputs * N.of_nat n)%N) by nia.
+    split; [exact Hpositive|]. split; [nia|].
+    replace (k_inputs * N.of_nat n)%N with ((k_inputs * N.of_nat n) * 1)%N at 1 by ring.
+    apply N.mul_le_mono_l. exact Hpositive.
+  Qed.
+
+  (** The published coefficient covers the internal quadratic budget. *)
+  Local Lemma finish_budget : forall n,
+    (1024 * ((k_inputs * N.of_nat n) * (k_inputs * N.of_nat n)) <=
+      c_checks * N.of_nat (n ^ 2 + 1))%N.
+  Proof.
+    intro n. unfold c_checks, c_bits_checks.
+    rewrite Nat.pow_2_r, Nat2N.inj_add, Nat2N.inj_mul.
+    replace (1024 * ((k_inputs * N.of_nat n) * (k_inputs * N.of_nat n)))%N with
+      (1024 * (k_inputs * k_inputs) * (N.of_nat n * N.of_nat n))%N by ring.
+    replace (4096 * k_inputs * k_inputs)%N with (4096 * (k_inputs * k_inputs))%N by ring.
+    eapply N.le_trans with (m :=
+      (4096 * (k_inputs * k_inputs) * (N.of_nat n * N.of_nat n))%N).
+    - apply N.mul_le_mono_r. lia.
+    - apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** A unary zero check fits the squared operand-size budget. *)
+  Local Lemma zero_size_time : forall a,
+    (T_may_fail DivZero [a] <= c_checks * N.of_nat ((V.size a + 2) ^ 2 + 1))%N.
+  Proof.
+    intro a. set (linear := (k_inputs * N.of_nat (V.size a + 2))%N).
+    pose proof (query_time_bound false a) as Hquery.
+    pose proof (query_bits_bound false a) as Hbits. cbn beta iota zeta in Hquery, Hbits.
+    assert (Hcoefficient : (1 <= k_inputs)%N) by (unfold k_inputs; lia).
+    assert (Hquery' : (Q.T_range a <= linear)%N).
+    { unfold linear. rewrite !Nat2N.inj_add in *. nia. }
+    assert (Hbits' : (N.of_nat (range_bits (Q.range a) + 1) <= linear)%N).
+    { unfold linear. rewrite !Nat2N.inj_add in *. nia. }
+    pose proof (scaled_square (V.size a + 2)%nat ltac:(lia)) as [_ [_ Hsquare]].
+    fold linear in Hsquare. eapply N.le_trans; [apply zero_components|].
+    eapply N.le_trans with (m := (1024 * (linear * linear))%N); [lia|apply finish_budget].
+  Qed.
+
+  (** Bounds checking fits the squared combined operand-size budget. *)
+  Local Lemma bounds_size_time : forall a b,
+    (T_may_fail Bounds [a; b] <=
+      c_checks * N.of_nat ((V.size a + V.size b + 3) ^ 2 + 1))%N.
+  Proof.
+    intros a b. set (linear := (k_inputs * N.of_nat (V.size a + V.size b + 3))%N).
+    pose proof (query_time_bound false a) as Ha.
+    pose proof (query_time_bound false b) as Hb. cbn beta iota zeta in Ha, Hb.
+    assert (Ha' : (Q.T_range a <= linear)%N).
+    { eapply N.le_trans; [exact Ha|]. apply N.mul_le_mono_l. lia. }
+    assert (Hb' : (Q.T_range b <= linear)%N).
+    { eapply N.le_trans; [exact Hb|]. apply N.mul_le_mono_l. lia. }
+    pose proof (pair_range_bits false a b) as Hbits. cbn beta iota zeta in Hbits.
+    fold linear in Hbits.
+    pose proof (scaled_square (V.size a + V.size b + 3)%nat ltac:(lia)) as [_ [_ Hsquare]].
+    fold linear in Hsquare. eapply N.le_trans; [apply bounds_components|].
+    eapply N.le_trans with (m := (1024 * (linear * linear))%N); [lia|apply finish_budget].
+  Qed.
+
+  (** The two range queries and width queries fit their common operand budget. *)
+  Local Lemma pair_clocks : forall (s : bool) a b,
+    let budget := (k_inputs * N.of_nat (V.size a + V.size b + 3))%N in
+    ((if s then QS.T_range a else Q.T_range a) <= budget /\
+     (if s then QS.T_range b else Q.T_range b) <= budget /\
+     W.T_width a <= budget /\ W.T_width b <= budget)%N.
+  Proof.
+    intros s a b budget. repeat split.
+    - eapply N.le_trans; [apply query_time_bound|]. apply N.mul_le_mono_l. lia.
+    - eapply N.le_trans; [apply query_time_bound|]. apply N.mul_le_mono_l. lia.
+    - eapply N.le_trans; [apply W.T_width_le|]. apply N.mul_le_mono.
+      + unfold k_inputs. lia.
+      + lia.
+    - eapply N.le_trans; [apply W.T_width_le|]. apply N.mul_le_mono.
+      + unfold k_inputs. lia.
+      + lia.
+  Qed.
+
+  (** Range arithmetic fits the square of the common endpoint budget. *)
+  Local Lemma result_time_scaled : forall o (s : bool) a b,
+    (T_range_result o (if s then QS.range a else Q.range a)
+      (if s then QS.range b else Q.range b) <= 128 *
+      ((k_inputs * N.of_nat (V.size a + V.size b + 3)) *
+       (k_inputs * N.of_nat (V.size a + V.size b + 3))))%N.
+  Proof.
+    intros o s a b. eapply N.le_trans; [apply ChecksCost.result_time|].
+    rewrite Nat.pow_2_r, Nat2N.inj_mul. apply N.mul_le_mono_l.
+    apply N.mul_le_mono; apply pair_range_bits.
+  Qed.
+
+  (** The actual result range and reported width pay for the overflow range test. *)
+  Local Lemma fits_time_scaled : forall o (s : bool) a b w r,
+    W.width a = Some w ->
+    range_result o (if s then QS.range a else Q.range a)
+      (if s then QS.range b else Q.range b) = Some r ->
+    (T_range_fits s w r <= 512 *
+      ((k_inputs * N.of_nat (V.size a + V.size b + 3)) *
+       (k_inputs * N.of_nat (V.size a + V.size b + 3))))%N.
+  Proof.
+    intros o s a b w r Hwidth Hresult.
+    set (linear := (k_inputs * N.of_nat (V.size a + V.size b + 3))%N).
+    pose proof (scaled_square (V.size a + V.size b + 3)%nat ltac:(lia))
+      as [Hpositive [Hbase Hsquare]]. fold linear in Hpositive, Hbase, Hsquare.
+    pose proof (pair_range_bits s a b) as Hrange. fold linear in Hrange.
+    pose proof (ChecksCost.result_bits o _ _ r Hresult) as Hsize.
+    assert (HsizeN : (N.of_nat (Z.size_nat (fst r) + Z.size_nat (snd r)) <=
+      2 * N.of_nat (range_bits (if s then QS.range a else Q.range a) +
+        range_bits (if s then QS.range b else Q.range b) + 1))%N) by lia.
+    assert (Hendpoints : (N.of_nat (Z.size_nat (fst r) + Z.size_nat (snd r)) <=
+      2 * linear)%N) by lia.
+    pose proof (W.width_size a w Hwidth) as Hwidthsize.
+    assert (HwidthN : (N.of_nat (Pos.to_nat w) <=
+      N.of_nat (V.size a + V.size b + 3))%N) by lia.
+    assert (Hmeasure : (N.of_nat (Pos.to_nat w + Z.size_nat (fst r) +
+      Z.size_nat (snd r) + 1) <= 4 * (linear * linear))%N).
+    { rewrite !Nat2N.inj_add in Hendpoints |- *. lia. }
+    eapply N.le_trans; [apply ChecksCost.fits_time|].
+    eapply N.le_trans with (m := (128 * (4 * (linear * linear)))%N).
+    - apply N.mul_le_mono_l. exact Hmeasure.
+    - lia.
+  Qed.
+
+  (** Overflow checking combines bounded queries, corner arithmetic and a width test. *)
+  Local Lemma overflow_size_time : forall o s a b,
+    (T_may_fail (Overflow o s) [a; b] <=
+      c_checks * N.of_nat ((V.size a + V.size b + 3) ^ 2 + 1))%N.
+  Proof.
+    intros o s a b. set (linear := (k_inputs * N.of_nat (V.size a + V.size b + 3))%N).
+    destruct (pair_clocks s a b) as [Hqa [Hqb [Hwa Hwb]]].
+    fold linear in Hqa, Hqb, Hwa, Hwb.
+    pose proof (scaled_square (V.size a + V.size b + 3)%nat ltac:(lia))
+      as [Hpositive [Hbase Hsquare]]. fold linear in Hpositive, Hbase, Hsquare.
+    pose proof (result_time_scaled o s a b) as Hresulttime. fold linear in Hresulttime.
+    eapply N.le_trans with (m := (1024 * (linear * linear))%N); [|apply finish_budget].
+    time_unfold T_may_fail. time_simpl.
+    destruct (W.width a) as [wa|] eqn:Hwidtha; cbn beta iota zeta;
+      [|destruct s; cbn beta iota zeta in *; lia].
+    destruct (W.width b) as [wb|] eqn:Hwidthb; cbn beta iota zeta;
+      [|destruct s; cbn beta iota zeta in *; lia].
+    destruct (range_result o (if s then QS.range a else Q.range a)
+      (if s then QS.range b else Q.range b)) as [r|] eqn:Hresult;
+      cbn beta iota zeta; [|destruct s; cbn beta iota zeta in *; lia].
+    pose proof (fits_time_scaled o s a b wa r Hwidtha Hresult) as Hfits.
+    fold linear in Hfits.
+    pose proof (Std.Pos.T_eqb_le wa wb) as Heqb.
+    pose proof (ChecksCost.positive_bits_value wa) as Hwidthbits.
+    pose proof (W.width_size a wa Hwidtha) as Hwidthsize.
+    assert (Heqb' : (Std.Pos.T_eqb wa wb <= linear)%N) by lia.
+    time_simpl. destruct s; cbn beta iota zeta in *; lia.
+  Qed.
+
+  (** Unary check work is the square of the value size and its two list charges. *)
+  Local Lemma work_one : forall k a, work k [a] = ((V.size a + 2) ^ 2)%nat.
+  Proof.
+    intros k a. unfold work. cbn [map fold_right length]. f_equal. lia.
+  Qed.
+
+  (** Binary check work is the square of both value sizes and three list charges. *)
+  Local Lemma work_two : forall k a b,
+    work k [a; b] = ((V.size a + V.size b + 3) ^ 2)%nat.
+  Proof.
+    intros k a b. unfold work. cbn [map fold_right length]. f_equal. lia.
+  Qed.
+
+  (** The complete check is quadratic in the sizes of its operands. *)
   Lemma T_may_fail_le : forall k xs,
     (T_may_fail k xs <= c_checks * N.of_nat (work k xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k xs. destruct k as [|o s| |]; destruct xs as [|a [|b [|c xs]]];
+      try solve [time_unfold T_may_fail; time_simpl; unfold c_checks;
+        rewrite Nat2N.inj_add; pose proof coefficient_lower; nia].
+    - rewrite work_one. apply zero_size_time.
+    - rewrite work_two. apply overflow_size_time.
+    - rewrite work_two. apply bounds_size_time.
+    - rewrite work_one.
+      change (T_may_fail DivZero [a] <= c_checks * N.of_nat ((V.size a + 2) ^ 2 + 1))%N.
+      apply zero_size_time.
+  Qed.
+
+  (** A zero alarm charges its range query and the returned endpoint bits. *)
   Lemma T_divzero_le : forall d,
     (T_may_fail DivZero [d] <= c_bits_checks *
       (Q.T_range d + N.of_nat (range_bits (Q.range d) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro d. eapply N.le_trans; [apply zero_components|].
+    apply N.mul_le_mono_r. pose proof coefficient_lower. lia.
+  Qed.
+
+  (** Null checks use the same range work as division-by-zero checks. *)
   Lemma T_null_le : forall d,
     (T_may_fail NullDeref [d] <= c_bits_checks *
       (Q.T_range d + N.of_nat (range_bits (Q.range d) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro d. change (T_may_fail DivZero [d] <= c_bits_checks *
+      (Q.T_range d + N.of_nat (range_bits (Q.range d) + 1)))%N.
+    apply T_divzero_le.
+  Qed.
+
+  (** Bounds alarms charge both range queries and their endpoint bits. *)
   Lemma T_bounds_le : forall i len,
     (T_may_fail Bounds [i; len] <= c_bits_checks *
       (Q.T_range i + Q.T_range len +
         N.of_nat (range_bits (Q.range i) + range_bits (Q.range len) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros i len. eapply N.le_trans; [apply bounds_components|].
+    apply N.mul_le_mono_r. pose proof coefficient_lower. lia.
+  Qed.
+
+  (** The work measure squares the sum of operand sizes and list overhead. *)
   Lemma work_sizes : forall k xs, work k xs =
     ((fold_right Nat.add 0%nat (map V.size xs) + length xs + 1) ^ 2)%nat.
   Proof. reflexivity. Qed.
@@ -362,7 +924,11 @@ Module BitsChecksT (V : VALUE_DOMAIN_T BitsLangT)
   Proof.
     exact bounds_safe.
   Qed.
+
+  (** Testing whether an interval contains zero is linear in its endpoint bits. *)
   Lemma T1_zero : forall r,
     (T_range_zero r <= k_bits_checks * N.of_nat (range_bits r + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact ChecksCost.zero_time.
+  Qed.
 End BitsChecksT.
