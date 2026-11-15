@@ -2008,6 +2008,134 @@ Proof.
   subst st'. congruence.
 Qed.
 
+(** The remaining row credit and pending tasks measure work over any sufficient support. *)
+Definition frontier_idf_progress rows vertices st : nat :=
+  2 * idf_unexpanded rows vertices (idf_expanded st) + length (idf_pending st).
+
+(** Only a fresh expansion pays to map and append the selected row. *)
+Definition frontier_idf_expansion rows st : nat :=
+  match idf_pending st with
+  | [] => 0
+  | IdfSeed v :: _ | IdfTarget v :: _ =>
+    match trie_get v (idf_expanded st) with
+    | Some _ => 0
+    | None => length (frontier_row rows v)
+    end
+  end.
+
+(** A raw transition spends at least one task plus its newly enqueued row entries. *)
+Lemma frontier_idf_step_progress : forall rows vertices st next,
+  NoDup vertices -> idf_tasks_within vertices st -> idf_step rows st = inl next ->
+  frontier_idf_progress rows vertices next + 1 + frontier_idf_expansion rows st <=
+    frontier_idf_progress rows vertices st.
+Proof.
+  intros rows vertices [pending expanded discovered answer] next Hunique Hwithin Hstep.
+  destruct pending as [|task rest]; [discriminate Hstep|].
+  inversion Hwithin as [|? ? Htask Hrest]; subst.
+  destruct task as [v|v]; cbn [idf_step] in Hstep;
+    [|destruct (trie_get v discovered) as [[]|] eqn:Hdiscovered];
+    destruct (trie_get v expanded) as [[]|] eqn:Hexpanded;
+    inversion Hstep; subst next; unfold frontier_idf_progress, frontier_idf_expansion;
+    cbn [idf_expanded idf_pending]; rewrite Hexpanded.
+  all: try (cbn [length]; lia).
+  all: pose proof (idf_unexpanded_fresh rows vertices expanded v
+    Hunique Htask Hexpanded) as Hcredit.
+  all: rewrite length_app, length_map; cbn [length]; lia.
+Qed.
+
+(** Multiplying a positive work decrease leaves a strict unit of credit after its charged work. *)
+Lemma frontier_credit_spend : forall scale before after work cost,
+  (0 < work -> after + work <= before -> cost <= scale * work ->
+   cost + (scale + 1) * after < (scale + 1) * before)%N.
+Proof.
+  intros scale before after work cost Hpositive Hprogress Hcost.
+  assert (Hpaid : ((scale + 1) * (after + work) <= (scale + 1) * before)%N).
+  { now apply N.mul_le_mono_l. }
+  rewrite N.mul_add_distr_l in Hpaid.
+  replace ((scale + 1) * work)%N with (scale * work + work)%N in Hpaid by nia.
+  lia.
+Qed.
+
+(** Mapping a constructor costs one callback and one list step per occurrence. *)
+Lemma frontier_map_unit_clock {A B : Type} (f : A -> B) : forall xs,
+  (ListDef.T_map f (fun _ => 1%N) xs = 2 * N.of_nat (length xs) + 1)%N.
+Proof.
+  intro xs. induction xs as [|x rest IH].
+  - time_unfold @ListDef.T_map. reflexivity.
+  - time_unfold @ListDef.T_map. cbn [length]. rewrite IH, Nat2N.inj_succ. lia.
+Qed.
+
+(** Appending a list traverses exactly its first argument. *)
+Lemma frontier_append_clock {A : Type} : forall (xs ys : list A),
+  Datatypes.T_app xs ys = N.of_nat (length xs + 1).
+Proof.
+  intro xs. induction xs as [|x rest IH]; intro ys.
+  - time_unfold @Datatypes.T_app. reflexivity.
+  - time_unfold @Datatypes.T_app. cbn [length]. rewrite IH.
+    repeat rewrite Nat2N.inj_add. try rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** A task pays bounded key work and, only on first expansion, its outgoing row occurrences. *)
+Lemma frontier_idf_step_time : forall rows task rest expanded discovered answer width,
+  (match task with IdfSeed v | IdfTarget v => Pos.size_nat v end) <= width ->
+  (T_idf_step rows (IdfState (task :: rest) expanded discovered answer) + 1 <=
+    frontier_step_cost * N.of_nat (width + 1) *
+      N.of_nat (1 + frontier_idf_expansion rows
+        (IdfState (task :: rest) expanded discovered answer)))%N.
+Proof.
+  intros rows task rest expanded discovered answer width Hwidth.
+  destruct task as [v|v]; cbn in Hwidth; apply time_of_nat_le in Hwidth.
+  all: pose proof (PTrieT.T_set_le unit v tt expanded) as Hexpand;
+    pose proof (PTrieT.T_set_le unit v tt discovered) as Hdiscover.
+  all: change (PTrieCode.T_set v tt expanded <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hexpand;
+    change (PTrieCode.T_set v tt discovered <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hdiscover.
+  all: set (budget := (frontier_step_cost * N.of_nat (width + 1))%N).
+  all: assert (Hkey : (6 + 6 * N.of_nat (Pos.size_nat v) +
+      PTrieCode.T_set v tt expanded + PTrieCode.T_set v tt discovered <= budget)%N)
+    by (unfold budget, frontier_step_cost, frontier_unit_cost;
+      repeat rewrite Nat2N.inj_add in Hexpand;
+      repeat rewrite Nat2N.inj_add in Hdiscover;
+      repeat rewrite Nat2N.inj_add; nia).
+  all: assert (Hthree : (3 <= budget)%N)
+    by (unfold budget, frontier_step_cost, frontier_unit_cost;
+      rewrite Nat2N.inj_add; nia).
+  all: fold budget; clearbody budget; clear Hexpand Hdiscover Hwidth.
+  all: time_unfold T_idf_step; time_unfold T_frontier_row;
+    unfold frontier_idf_expansion; cbn [idf_pending idf_expanded];
+    repeat rewrite PTrieT.trie_get_clock.
+  all: destruct (trie_get v discovered) as [mark|] eqn:Hdiscovered;
+    destruct (trie_get v expanded) as [done|] eqn:Hexpanded;
+    cbn beta iota zeta;
+    rewrite ?frontier_map_unit_clock, ?frontier_append_clock, ?length_map;
+    repeat rewrite Nat2N.inj_add; nia.
+Qed.
+
+Lemma frontier_idf_stop_time : forall rows expanded discovered answer,
+  (T_idf_step rows (IdfState [] expanded discovered answer) + 1 <=
+    N.of_nat (length answer + 3))%N.
+Proof.
+  intros rows expanded discovered answer.
+  pose proof (List.T_rev_append_le answer []) as Hreverse.
+  time_unfold T_idf_step. rewrite Nat2N.inj_add. lia.
+Qed.
+
+(** The private guard adds only its projection and callback call. *)
+Lemma frontier_idf_checked_clock : forall rows seeds st,
+  (T_idf_checked_step rows seeds st = 2 + T_idf_step rows (proj1_sig st))%N.
+Proof.
+  intros rows seeds [st Hreach]. unfold T_idf_checked_step, T_idf_state_of.
+  cbn [idf_state_of proj1_sig]. lia.
+Qed.
+
+(** Initialization traverses the supplied seed occurrences once. *)
+Lemma frontier_idf_initial_clock : forall seeds,
+  (T_idf_initial seeds = 2 * N.of_nat (length seeds) + 2)%N.
+Proof.
+  intro seeds. time_unfold T_idf_initial. rewrite frontier_map_unit_clock. lia.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
