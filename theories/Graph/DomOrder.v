@@ -3708,3 +3708,526 @@ Qed.
 Local Transparent dom_lt_eval T_dom_lt_eval dom_lt_predecessor T_dom_lt_predecessor.
 Local Transparent dom_lt_settle T_dom_lt_settle.
 Local Opaque Argent.Loop.loop T_loopN.
+
+(* BEGIN G2-G BUCKET SUPPORT *)
+Local Opaque dom_lt_eval T_dom_lt_eval.
+
+Lemma dom_lt_phase_eval_clock fuel semis links source :
+  (T_dom_lt_eval fuel semis links source <=
+    T_dom_lt_phase_step fuel semis links (LtEval source))%N.
+Proof.
+  unfold T_dom_lt_phase_step. time_simpl. lia.
+Qed.
+
+Lemma dom_lt_phase_link_clock fuel semis links child parent :
+  (T_dom_lt_link links child parent <=
+    T_dom_lt_phase_step fuel semis links (LtLink child parent))%N.
+Proof.
+  unfold T_dom_lt_phase_step. time_simpl. lia.
+Qed.
+
+(** * Bucket phase correspondence
+
+    Bucket link states and clocks agree with the exact operation-only phase.
+    The numeric range invariants also bound the later correction pass. *)
+
+Local Transparent dom_lt_bucket_member T_dom_lt_bucket_member
+  dom_lt_bucket_step T_dom_lt_bucket_step dom_lt_correct_step T_dom_lt_correct_step.
+
+(** A bucket state's link payloads and relative parents stay in one numeric range. *)
+Definition dom_lt_pipeline_bucket_bounded (bound : N) (st : dom_lt_bucket_state) : Prop :=
+  dom_lt_links_bounded bound (lt_bucket_links st) /\
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_relative st).
+
+(** Processing a member chooses either a bounded evaluator result or the bucket key. *)
+Lemma dom_lt_pipeline_bucket_member_range bound fuel semis s st v :
+  dom_lt_pipeline_bucket_bounded bound st -> (s <= bound)%N -> (v <= bound)%N ->
+  dom_lt_pipeline_bucket_bounded bound (dom_lt_bucket_member fuel semis s st v).
+Proof.
+  intros [Hlinks Hrelative] Hs Hv.
+  pose proof (dom_lt_eval_bounded bound fuel semis (lt_bucket_links st) v Hlinks Hv)
+    as Heval.
+  unfold dom_lt_bucket_member.
+  destruct (dom_lt_eval fuel semis (lt_bucket_links st) v) as [links chosen].
+  cbn [fst snd] in Heval. destruct Heval as [Hafter Hchosen].
+  split; [exact Hafter|]. apply dom_lt_trie_all_set; [exact Hrelative|].
+  destruct (N.ltb (dom_lt_identity semis chosen) s); assumption.
+Qed.
+
+(** A row fold preserves bounded link payloads and relative parents. *)
+Lemma dom_lt_pipeline_bucket_members_range bound fuel semis s row st :
+  Forall (fun n => (n <= bound)%N) row ->
+  dom_lt_pipeline_bucket_bounded bound st -> (s <= bound)%N ->
+  dom_lt_pipeline_bucket_bounded bound (fold_left (dom_lt_bucket_member fuel semis s) row st).
+Proof.
+  intros Hrow Hst Hs.
+  apply (dom_lt_fold_forall (dom_lt_bucket_member fuel semis s)
+    (dom_lt_pipeline_bucket_bounded bound) (fun n => (n <= bound)%N));
+    [exact Hrow|exact Hst|].
+  intros current v Hcurrent Hv. now apply dom_lt_pipeline_bucket_member_range.
+Qed.
+
+(** A complete bucket step also installs only a bounded numeric parent link. *)
+Lemma dom_lt_pipeline_bucket_step_range bound numeric semis buckets st s :
+  dom_lt_numeric_ranges bound numeric ->
+  dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets ->
+  dom_lt_pipeline_bucket_bounded bound st -> (s <= bound)%N ->
+  dom_lt_pipeline_bucket_bounded bound (dom_lt_bucket_step numeric semis buckets st s).
+Proof.
+  intros Hnumeric Hrows Hst Hs. unfold dom_lt_bucket_step.
+  set (row := match trie_get (dom_lt_key s) buckets with None => [] | Some xs => xs end).
+  assert (Hrow : Forall (fun n => (n <= bound)%N) row).
+  { unfold row. destruct (trie_get (dom_lt_key s) buckets) as [xs|] eqn:Hget;
+      [exact (Hrows _ _ Hget)|constructor]. }
+  pose proof (dom_lt_pipeline_bucket_members_range bound (lt_numeric_limit numeric)
+    semis s row st Hrow Hst Hs) as Hfold.
+  destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric)) as [parent|] eqn:Hget;
+    [|exact Hfold].
+  destruct Hfold as [Hlinks Hrelative]. split; [|exact Hrelative].
+  apply dom_lt_link_bounded; [exact Hlinks|exact Hs|].
+  exact (dom_lt_numeric_parent_range _ _ Hnumeric _ _ Hget).
+Qed.
+
+(** The complete bucket phase starts empty and preserves the numeric operand bound. *)
+Lemma dom_lt_pipeline_buckets_range bound numeric semis :
+  dom_lt_numeric_ranges bound numeric ->
+  dom_lt_pipeline_bucket_bounded bound (dom_lt_buckets numeric semis).
+Proof.
+  intro Hnumeric. unfold dom_lt_buckets.
+  set (buckets := fold_left (dom_lt_bucket_add semis)
+    (rev_append (lt_numeric_order numeric) []) Empty).
+  assert (Hrows : dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets).
+  { apply dom_lt_bucket_build_range. exact (dom_lt_numeric_order_range _ _ Hnumeric). }
+  apply (dom_lt_fold_forall (dom_lt_bucket_step numeric semis buckets)
+    (dom_lt_pipeline_bucket_bounded bound) (fun n => (n <= bound)%N)).
+  - exact (dom_lt_numeric_order_range _ _ Hnumeric).
+  - repeat split; apply dom_lt_trie_all_empty.
+  - intros st s Hst Hs. eapply dom_lt_pipeline_bucket_step_range; eassumption.
+Qed.
+
+(** Correction retains bounded relative parents, including its identity-default lookup. *)
+Lemma dom_lt_pipeline_correct_step_range bound semis relative corrected v :
+  dom_lt_trie_all (fun n => (n <= bound)%N) relative ->
+  dom_lt_trie_all (fun n => (n <= bound)%N) corrected ->
+  dom_lt_trie_all (fun n => (n <= bound)%N)
+    (dom_lt_correct_step semis relative corrected v).
+Proof.
+  intros Hrelative Hcorrected. unfold dom_lt_correct_step.
+  destruct (trie_get (dom_lt_key v) relative) as [parent|] eqn:Hget;
+    [|exact Hcorrected].
+  pose proof (Hrelative _ _ Hget) as Hparent.
+  apply dom_lt_trie_all_set; [exact Hcorrected|].
+  destruct (N.eqb parent (dom_lt_identity semis v)); [exact Hparent|].
+  now apply dom_lt_identity_bounded.
+Qed.
+
+(** The correction fold produces only parents in the relative-parent range. *)
+Lemma dom_lt_pipeline_correct_range bound numeric semis relative :
+  dom_lt_trie_all (fun n => (n <= bound)%N) relative ->
+  dom_lt_trie_all (fun n => (n <= bound)%N) (dom_lt_correct numeric semis relative).
+Proof.
+  intro Hrelative. unfold dom_lt_correct.
+  apply (dom_lt_fold_invariant (dom_lt_correct_step semis relative)
+    (dom_lt_trie_all (fun n => (n <= bound)%N))).
+  - apply dom_lt_trie_all_empty.
+  - intros st v Hst. now apply dom_lt_pipeline_correct_step_range.
+Qed.
+
+(** The member callback changes its link projection exactly as its recorded evaluation. *)
+Lemma dom_lt_pipeline_bucket_member_links fuel semis s st v :
+  lt_bucket_links (dom_lt_bucket_member fuel semis s st v) =
+    dom_lt_phase_step fuel semis (lt_bucket_links st) (LtEval v).
+Proof.
+  unfold dom_lt_bucket_member, dom_lt_phase_step.
+  destruct (dom_lt_eval fuel semis (lt_bucket_links st) v). reflexivity.
+Qed.
+
+Local Opaque dom_lt_bucket_member T_dom_lt_bucket_member.
+
+(** A bucket row has exactly the links obtained by replaying its member evaluations. *)
+Lemma dom_lt_pipeline_bucket_members_links fuel semis s row st :
+  lt_bucket_links (fold_left (dom_lt_bucket_member fuel semis s) row st) =
+    fold_left (dom_lt_phase_step fuel semis) (map LtEval row) (lt_bucket_links st).
+Proof.
+  pose proof (dom_lt_fold_project (dom_lt_bucket_member fuel semis s)
+    (fun links v => dom_lt_phase_step fuel semis links (LtEval v)) lt_bucket_links
+    (fun _ => True) (fun _ _ _ => I)
+    (fun state vertex _ => dom_lt_pipeline_bucket_member_links fuel semis s state vertex)
+    row st I) as Hproject.
+  exact (eq_trans (proj1 Hproject) (eq_sym
+    (dom_lt_fold_mapped (dom_lt_phase_step fuel semis) LtEval row (lt_bucket_links st)))).
+Qed.
+
+(** A bucket's recorded sequence is its member evaluations followed by its optional link. *)
+Definition dom_lt_pipeline_bucket_sequence (numeric : dom_lt_numeric)
+    (buckets : ptrie (list N)) (s : N) : list lt_op :=
+  map LtEval (match trie_get (dom_lt_key s) buckets with None => [] | Some row => row end) ++
+    match trie_get (dom_lt_key s) (lt_numeric_parent numeric) with
+      None => [] | Some p => [LtLink s p] end.
+
+(** The whole bucket phase concatenates the sequence of each processed key. *)
+Definition dom_lt_pipeline_buckets_sequence numeric buckets order : list lt_op :=
+  flat_map (dom_lt_pipeline_bucket_sequence numeric buckets) order.
+
+(** Flattening an input list runs each associated segment in the same left-fold order. *)
+Lemma dom_lt_pipeline_fold_flatten {A B C : Type} (step : A -> B -> A)
+    (segment : C -> list B) values initial :
+  fold_left step (flat_map segment values) initial =
+    fold_left (fun st value => fold_left step (segment value) st) values initial.
+Proof.
+  revert initial. induction values as [|value rest IH]; intro initial; [reflexivity|].
+  cbn [flat_map]. rewrite fold_left_app. exact (IH (fold_left step (segment value) initial)).
+Qed.
+
+(** A complete bucket step agrees exactly with its operation-only phase. *)
+Lemma dom_lt_pipeline_bucket_step_links numeric semis buckets st s :
+  lt_bucket_links (dom_lt_bucket_step numeric semis buckets st s) =
+    fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (dom_lt_pipeline_bucket_sequence numeric buckets s) (lt_bucket_links st).
+Proof.
+  unfold dom_lt_bucket_step, dom_lt_pipeline_bucket_sequence.
+  rewrite fold_left_app.
+  set (row := match trie_get (dom_lt_key s) buckets with None => [] | Some xs => xs end).
+  destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric)) as [parent|].
+  - change (dom_lt_link (lt_bucket_links
+      (fold_left (dom_lt_bucket_member (lt_numeric_limit numeric) semis s) row st)) s parent =
+      dom_lt_link (fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+        (map LtEval row) (lt_bucket_links st)) s parent).
+    exact (f_equal (fun links => dom_lt_link links s parent)
+      (dom_lt_pipeline_bucket_members_links (lt_numeric_limit numeric) semis s row st)).
+  - exact (dom_lt_pipeline_bucket_members_links (lt_numeric_limit numeric) semis s row st).
+Qed.
+
+Local Opaque dom_lt_bucket_step T_dom_lt_bucket_step.
+
+(** Folding bucket steps concatenates their exact operation-only phases. *)
+Lemma dom_lt_pipeline_bucket_steps_links numeric semis buckets order st :
+  lt_bucket_links (fold_left (dom_lt_bucket_step numeric semis buckets) order st) =
+    fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (dom_lt_pipeline_buckets_sequence numeric buckets order) (lt_bucket_links st).
+Proof.
+  pose proof (dom_lt_fold_project (dom_lt_bucket_step numeric semis buckets)
+    (fun links s => fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (dom_lt_pipeline_bucket_sequence numeric buckets s) links) lt_bucket_links
+    (fun _ => True) (fun _ _ _ => I)
+    (fun state s _ => dom_lt_pipeline_bucket_step_links numeric semis buckets state s)
+    order st I) as Hproject.
+  exact (eq_trans (proj1 Hproject) (eq_sym
+    (dom_lt_pipeline_fold_flatten (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (dom_lt_pipeline_bucket_sequence numeric buckets) order (lt_bucket_links st)))).
+Qed.
+
+(** The bucket phase records precisely the reverse of its forward operation sequence. *)
+Lemma dom_lt_pipeline_bucket_steps_log numeric semis buckets order st :
+  lt_operations (lt_bucket_links
+    (fold_left (dom_lt_bucket_step numeric semis buckets) order st)) =
+    rev (dom_lt_pipeline_buckets_sequence numeric buckets order) ++
+      lt_operations (lt_bucket_links st).
+Proof.
+  rewrite dom_lt_pipeline_bucket_steps_links. apply dom_lt_phase_operations.
+Qed.
+
+(** Reversing the empty-initial bucket log recovers the exact forward phase. *)
+Lemma dom_lt_pipeline_buckets_log numeric semis :
+  let buckets := fold_left (dom_lt_bucket_add semis)
+    (rev_append (lt_numeric_order numeric) []) Empty in
+  rev_append (lt_operations (lt_bucket_links (dom_lt_buckets numeric semis))) [] =
+    dom_lt_pipeline_buckets_sequence numeric buckets (lt_numeric_order numeric).
+Proof.
+  cbn zeta. unfold dom_lt_buckets. rewrite dom_lt_pipeline_bucket_steps_log.
+  cbn [lt_bucket_links lt_operations].
+  rewrite app_nil_r, rev_append_rev, app_nil_r, rev_involutive. reflexivity.
+Qed.
+
+(** A bounded member row adds only linear trie overhead to its exact phase clock. *)
+Lemma dom_lt_pipeline_bucket_members_clock bound width fuel semis s row st :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_trie_all (fun n => (n <= bound)%N) semis ->
+  Forall (fun n => (n <= bound)%N) row ->
+  dom_lt_pipeline_bucket_bounded bound st -> (s <= bound)%N ->
+  (List.T_fold_left (dom_lt_bucket_member fuel semis s)
+    (T_dom_lt_bucket_member fuel semis s) row st <=
+    List.T_fold_left (dom_lt_phase_step fuel semis) (T_dom_lt_phase_step fuel semis)
+      (map LtEval row) (lt_bucket_links st) +
+    128 * (PTrieT.c_trie + 1) * N.of_nat (length row * (width + 1)))%N.
+Proof.
+  intros Hwidth Hsemis Hrow. revert st.
+  induction Hrow as [|v rest Hv Hrest IH]; intros st Hst Hs.
+  - cbn [map length]. time_unfold @List.T_fold_left. lia.
+  - pose proof (dom_lt_pipeline_bucket_member_range bound fuel semis s st v Hst Hs Hv)
+      as Hnext.
+    specialize (IH (dom_lt_bucket_member fuel semis s st v) Hnext Hs).
+    pose proof (dom_lt_eval_bounded bound fuel semis (lt_bucket_links st) v
+      (proj1 Hst) Hv) as Heval.
+    pose proof (dom_lt_semi_bucket_member_clock width fuel semis s st v
+      (Hwidth v Hv) (Hwidth _ (proj2 Heval))
+      (Hwidth _ (dom_lt_identity_bounded bound semis _ Hsemis (proj2 Heval)))) as Hhead.
+    pose proof (dom_lt_phase_eval_clock fuel semis (lt_bucket_links st) v)
+      as Hphase.
+    rewrite dom_lt_pipeline_bucket_member_links in IH.
+    cbn [map length]. time_unfold @List.T_fold_left.
+    fold (List.T_fold_left (dom_lt_bucket_member fuel semis s)
+      (T_dom_lt_bucket_member fuel semis s)).
+    fold (List.T_fold_left (dom_lt_phase_step fuel semis) (T_dom_lt_phase_step fuel semis)).
+    eapply dom_lt_phase_clock_row; [|exact IH|].
+    + eapply N.le_trans; [exact Hhead|].
+      apply N.add_le_mono; [exact Hphase|apply N.le_refl].
+    + clear Hwidth Hsemis Hrest Hst Hs Hv Hnext Heval Hhead Hphase IH.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_succ. nia.
+Qed.
+
+(** An empty optional link adds only the two fold-boundary call charges. *)
+Lemma dom_lt_pipeline_phase_no_link_clock step row replay extra row_extra total :
+  (step <= row + 0 + extra)%N -> (row <= replay + row_extra)%N ->
+  (row_extra + extra + 2 <= total)%N -> (step + 2 <= replay + total)%N.
+Proof.
+  nia.
+Qed.
+
+(** One bucket step adds bounded row work to its exact operation-only phase. *)
+Lemma dom_lt_pipeline_bucket_step_clock bound width numeric semis buckets st s :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_numeric_ranges bound numeric ->
+  dom_lt_trie_all (fun n => (n <= bound)%N) semis ->
+  dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets ->
+  dom_lt_pipeline_bucket_bounded bound st -> (s <= bound)%N ->
+  (T_dom_lt_bucket_step numeric semis buckets st s + 2 <=
+    List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (dom_lt_pipeline_bucket_sequence numeric buckets s) (lt_bucket_links st) +
+    256 * (PTrieT.c_trie + 1) * N.of_nat
+      ((length (match trie_get (dom_lt_key s) buckets with
+        None => [] | Some row => row end) + 1) * (width + 1)))%N.
+Proof.
+  intros Hwidth Hnumeric Hsemis Hrows Hst Hs.
+  set (row := match trie_get (dom_lt_key s) buckets with None => [] | Some xs => xs end).
+  set (after := fold_left (dom_lt_bucket_member (lt_numeric_limit numeric) semis s) row st).
+  assert (Hrow : Forall (fun n => (n <= bound)%N) row).
+  { unfold row. destruct (trie_get (dom_lt_key s) buckets) as [xs|] eqn:Hget;
+      [exact (Hrows _ _ Hget)|constructor]. }
+  pose proof (dom_lt_pipeline_bucket_members_clock bound width (lt_numeric_limit numeric)
+    semis s row st Hwidth Hsemis Hrow Hst Hs) as Hmembers.
+  pose proof (dom_lt_pipeline_bucket_members_links (lt_numeric_limit numeric)
+    semis s row st) as Hlinks. fold after in Hlinks.
+  pose proof (dom_lt_semi_bucket_step_clock width numeric semis buckets st s
+    (Hwidth s Hs)) as Hraw. fold row after in Hraw.
+  unfold dom_lt_pipeline_bucket_sequence. fold row.
+  destruct (trie_get (dom_lt_key s) (lt_numeric_parent numeric)) as [parent|] eqn:Hparent.
+  - pose proof (dom_lt_fold_clock_app
+      (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (map LtEval row) [LtLink s parent] (lt_bucket_links st)) as Happ.
+    rewrite <- Hlinks in Happ.
+    assert (Hsingle : List.T_fold_left
+      (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      [LtLink s parent] (lt_bucket_links after) =
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis
+        (lt_bucket_links after) (LtLink s parent) + 2)%N).
+    { apply dom_lt_single_fold_clock. }
+    rewrite Hsingle in Happ.
+    pose proof (dom_lt_phase_link_clock (lt_numeric_limit numeric) semis
+      (lt_bucket_links after) s parent) as Hlink.
+    eapply dom_lt_phase_clock_settle;
+      [exact Hraw|exact Hmembers|exact Hlink|exact Happ|].
+    clear Hwidth Hnumeric Hsemis Hrows Hst Hs Hrow Hlinks Hraw Hmembers Happ Hlink Hsingle.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+  - rewrite app_nil_r.
+    eapply dom_lt_pipeline_phase_no_link_clock; [exact Hraw|exact Hmembers|].
+    clear Hwidth Hnumeric Hsemis Hrows Hst Hs Hrow Hlinks Hraw Hmembers.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add. nia.
+Qed.
+
+(** A bucket-order fold adds linear visited-row overhead to its exact phase clock. *)
+Lemma dom_lt_pipeline_bucket_steps_clock bound width numeric semis buckets order st :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_numeric_ranges bound numeric ->
+  dom_lt_trie_all (fun n => (n <= bound)%N) semis ->
+  dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets ->
+  Forall (fun n => (n <= bound)%N) order ->
+  dom_lt_pipeline_bucket_bounded bound st ->
+  (List.T_fold_left (dom_lt_bucket_step numeric semis buckets)
+    (T_dom_lt_bucket_step numeric semis buckets) order st <=
+    List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (dom_lt_pipeline_buckets_sequence numeric buckets order) (lt_bucket_links st) +
+    512 * (PTrieT.c_trie + 1) * N.of_nat
+      ((dom_lt_row_mass (map dom_lt_key order) buckets + length order) * (width + 1)))%N.
+Proof.
+  intros Hwidth Hnumeric Hsemis Hrows Horder. revert st.
+  induction Horder as [|s rest Hs Hrest IH]; intros st Hst.
+  - cbn [map length dom_lt_row_mass fold_right dom_lt_pipeline_buckets_sequence flat_map].
+    time_unfold @List.T_fold_left. lia.
+  - pose proof (dom_lt_pipeline_bucket_step_range bound numeric semis buckets st s
+      Hnumeric Hrows Hst Hs) as Hnext.
+    specialize (IH (dom_lt_bucket_step numeric semis buckets st s) Hnext).
+    pose proof (dom_lt_pipeline_bucket_step_clock bound width numeric semis buckets st s
+      Hwidth Hnumeric Hsemis Hrows Hst Hs) as Hhead.
+    pose proof (dom_lt_fold_clock_app
+      (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (dom_lt_pipeline_bucket_sequence numeric buckets s)
+      (dom_lt_pipeline_buckets_sequence numeric buckets rest) (lt_bucket_links st)) as Happ.
+    rewrite dom_lt_pipeline_bucket_step_links in IH.
+    cbn [map length dom_lt_row_mass fold_right dom_lt_pipeline_buckets_sequence flat_map].
+    time_unfold @List.T_fold_left.
+    fold (List.T_fold_left (dom_lt_bucket_step numeric semis buckets)
+      (T_dom_lt_bucket_step numeric semis buckets)).
+    fold (List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis)).
+    eapply dom_lt_phase_clock_flatten; [exact Hhead|exact IH|exact Happ|].
+    clear Hwidth Hnumeric Hsemis Hrows Hs Hrest Hst Hnext Hhead Happ IH.
+    unfold dom_lt_row_mass.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add, !Nat2N.inj_succ. nia.
+Qed.
+
+(** With distinct numeric keys, all bucket work is linear outside its exact recorded phase. *)
+Lemma dom_lt_pipeline_buckets_clock bound width numeric semis :
+  (forall n, (n <= bound)%N -> N.size_nat n <= width) ->
+  dom_lt_numeric_ranges bound numeric ->
+  NoDup (lt_numeric_order numeric) ->
+  dom_lt_trie_all (fun n => (n <= bound)%N) semis ->
+  (T_dom_lt_buckets numeric semis <=
+    List.T_fold_left (dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (T_dom_lt_phase_step (lt_numeric_limit numeric) semis)
+      (rev_append (lt_operations (lt_bucket_links (dom_lt_buckets numeric semis))) [])
+      (DomLtLinks Empty Empty []) +
+    2048 * (PTrieT.c_trie + 1) *
+      N.of_nat ((length (lt_numeric_order numeric) + 1) * (width + 1)))%N.
+Proof.
+  intros Hwidth Hnumeric Hunique Hsemis.
+  set (order := lt_numeric_order numeric).
+  set (buckets := fold_left (dom_lt_bucket_add semis) (rev_append order []) Empty).
+  assert (Horder : Forall (fun n => (n <= bound)%N) order).
+  { exact (dom_lt_numeric_order_range _ _ Hnumeric). }
+  assert (Horder_width : Forall (fun n => N.size_nat n <= width) order).
+  { apply Forall_forall. intros n Hin. apply Hwidth.
+    exact (proj1 (Forall_forall _ _) Horder n Hin). }
+  assert (Hsemis_width : dom_lt_trie_all (fun n => N.size_nat n <= width) semis).
+  { intros key value Hget. apply Hwidth. exact (Hsemis _ _ Hget). }
+  assert (Hrows : dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets).
+  { apply dom_lt_bucket_build_range. exact Horder. }
+  assert (Hinitial : dom_lt_pipeline_bucket_bounded bound
+    (DomLtBucketState (DomLtLinks Empty Empty []) Empty)).
+  { repeat split; apply dom_lt_trie_all_empty. }
+  pose proof (dom_lt_semi_bucket_build_clock width semis order Horder_width Hsemis_width)
+    as Hbuild.
+  pose proof (dom_lt_pipeline_bucket_steps_clock bound width numeric semis buckets order
+    (DomLtBucketState (DomLtLinks Empty Empty []) Empty)
+    Hwidth Hnumeric Hsemis Hrows Horder Hinitial) as Hsteps.
+  pose proof (dom_lt_bucket_build_mass (map dom_lt_key order) semis
+    (rev_append order []) Empty (dom_lt_key_map_unique order Hunique)) as Hmass.
+  fold buckets in Hmass. rewrite rev_append_rev, app_nil_r, length_rev,
+    dom_lt_row_mass_empty in Hmass.
+  rewrite dom_lt_pipeline_buckets_log. fold order buckets.
+  unfold T_dom_lt_buckets. time_simpl. fold order buckets.
+  change (fun (current : ptrie (list N)) (v : N) =>
+    T_dom_lt_bucket_add semis current v) with (T_dom_lt_bucket_add semis).
+  change (fun (current : dom_lt_bucket_state) (s : N) =>
+    T_dom_lt_bucket_step numeric semis buckets current s) with
+    (T_dom_lt_bucket_step numeric semis buckets).
+  cbn [lt_bucket_links] in Hsteps.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  clear -Hbuild Hsteps Hmass. nia.
+Qed.
+
+Local Transparent dom_lt_bucket_member T_dom_lt_bucket_member
+  dom_lt_bucket_step T_dom_lt_bucket_step.
+
+Local Transparent dom_lt_eval T_dom_lt_eval.
+
+(** Isolated numeric conversion arithmetic uses one graph budget for both row mass and width. *)
+Lemma dom_lt_pipeline_numeric_fold_budget coefficient width mass budget work :
+  (mass * width <= budget)%N -> (mass + 1 <= budget)%N ->
+  (work <= (128 * (coefficient + 1) * width + 1) * mass + 1)%N ->
+  (work <= 129 * (coefficient + 1) * budget)%N.
+Proof.
+  intros Hweighted Hunit Hwork. eapply N.le_trans; [exact Hwork|].
+  replace ((128 * (coefficient + 1) * width + 1) * mass + 1)%N with
+    (128 * (coefficient + 1) * (mass * width) + (mass + 1))%N by ring.
+  eapply N.le_trans with (128 * (coefficient + 1) * budget + budget)%N.
+  - apply N.add_le_mono; [now apply N.mul_le_mono_l|exact Hunit].
+  - nia.
+Qed.
+
+(** Three nonnegative clocks combine after their common budget has been established. *)
+Lemma dom_lt_pipeline_numeric_budget search trie budget layout reverse rows :
+  (1 <= budget)%N ->
+  (layout <= 16 * (search + trie + 4096) * budget)%N ->
+  (reverse <= budget)%N -> (rows <= 129 * (trie + 1) * budget)%N ->
+  (1 + (layout + ((1 + reverse + 1) + rows)) <=
+    1024 * (search + trie + 4096) * budget)%N.
+Proof.
+  nia.
+Qed.
+
+(** Numeric conversion is the layout traversal plus linear work over discovered rows. *)
+Lemma dom_lt_pipeline_numeric_clock g r : prepared_ok g ->
+  (T_dom_lt_numeric_of g r <=
+    dom_lt_numeric_coefficient *
+      N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+        (graph_width (base g) + 1)))%N.
+Proof.
+  intro Hprepared.
+  pose proof (dom_time_lt_layout g r) as Hlayout.
+  pose proof (List.T_rev_append_le (lt_reverse_order (dom_lt_layout_of g r)) []) as Hreverse.
+  pose proof (dom_lt_pipeline_layout_of_width g r) as Hlayout_width.
+  destruct (dom_lt_dfs_inventory g r) as [Hunique [Hlisted [Hvertices Hedges]]].
+  pose proof (dom_lt_predecessor_total g (dom_lt_dfs g r) Hprepared Hunique) as Hpredtotal.
+  pose proof (dom_time_fold_left_state (dom_lt_numeric_add g (dom_lt_layout_of g r))
+    (T_dom_lt_numeric_add g (dom_lt_layout_of g r)) (fun _ => True)
+    (fun v => length (preds g v))
+    (128 * (PTrieT.c_trie + 1) * N.of_nat (graph_width (base g) + 1))%N
+    (dom_lt_dfs g r)
+    (DomLtNumeric [] Empty Empty Empty (lt_next (dom_lt_layout_of g r))) I) as Hfold.
+  specialize (Hfold ltac:(intros v Hv st Hst; split; [exact I|];
+    pose proof (dom_lt_pipeline_numeric_add_clock (graph_width (base g)) g
+      (dom_lt_layout_of g r) st v) as Hcallback;
+    specialize (Hcallback
+      (dom_listed_key_width g v (Hlisted v Hv))
+      (dom_lt_pipeline_discovery_width g r _ (dom_lt_rank_get_discovered g r v))
+      (proj2 Hlayout_width));
+    assert (Hrow : Forall (fun p => Pos.size_nat p <= graph_width (base g)) (preds g v))
+      by (apply Forall_forall; intros p Hp; apply dom_listed_key_width;
+        eapply dom_lt_pipeline_preds_listed; eassumption);
+    specialize (Hcallback Hrow); rewrite Nat2N.inj_mul in Hcallback; nia)).
+  destruct Hfold as [Htrivial Hfold].
+  rewrite dom_lt_layout_order_length in Hreverse.
+  unfold T_dom_lt_numeric_of. time_simpl. fold (dom_lt_dfs g r).
+  change (fun (st : dom_lt_numeric) (v : positive) =>
+    T_dom_lt_numeric_add g (dom_lt_layout_of g r) st v) with
+    (T_dom_lt_numeric_add g (dom_lt_layout_of g r)).
+  set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+    (graph_width (base g) + 1))) in *.
+  set (mass := fold_right (fun v total => length (preds g v) + total) 0
+    (dom_lt_dfs g r) + length (dom_lt_dfs g r)).
+  assert (Hmass : mass <= graph_n (base g) + graph_e (base g)).
+  { unfold mass. clear -Hpredtotal Hvertices. lia. }
+  assert (Hweighted : (N.of_nat mass * N.of_nat (graph_width (base g) + 1) <= budget)%N).
+  { unfold budget. rewrite <- Nat2N.inj_mul. apply time_of_nat_le, Nat.mul_le_mono_r. lia. }
+  assert (Hunit : (N.of_nat mass + 1 <= budget)%N).
+  { assert (Hnatural : mass + 1 <=
+      (graph_n (base g) + graph_e (base g) + 1) * (graph_width (base g) + 1)).
+    { eapply Nat.le_trans with (graph_n (base g) + graph_e (base g) + 1); [lia|].
+      replace (graph_n (base g) + graph_e (base g) + 1) with
+        ((graph_n (base g) + graph_e (base g) + 1) * 1) at 1 by lia.
+      apply Nat.mul_le_mono_l. lia. }
+    apply time_of_nat_le in Hnatural. rewrite Nat2N.inj_add in Hnatural.
+    exact Hnatural. }
+  fold mass in Hfold.
+  pose proof (dom_lt_pipeline_numeric_fold_budget PTrieT.c_trie
+    (N.of_nat (graph_width (base g) + 1)) (N.of_nat mass) budget _
+    Hweighted Hunit Hfold) as Hfold_paid.
+  assert (Hreverse_paid : (List.T_rev_append
+    (lt_reverse_order (dom_lt_layout_of g r)) [] <= budget)%N).
+  { eapply N.le_trans; [exact Hreverse|].
+    eapply N.le_trans; [|exact Hunit].
+    unfold mass. rewrite Nat2N.inj_add. lia. }
+  assert (Hpositive : (1 <= budget)%N) by (clear -Hunit; lia).
+  unfold dom_lt_numeric_coefficient.
+  eapply dom_lt_pipeline_numeric_budget;
+    [exact Hpositive|exact Hlayout|exact Hreverse_paid|exact Hfold_paid].
+Qed.
+
+
+(* END G2-G BUCKET SUPPORT *)
