@@ -3177,7 +3177,7 @@ Module DomT <: DOM_ALL.
   Definition k_edge : N :=
     (4 * (k_scan + k_read + k_size + PTrieT.c_trie + 1024))%N.
   Definition k_tree : N := (2 * k_size + 16 * PTrieT.c_trie + 512)%N.
-  Definition k_dfs : N := 1%N. (* STUB *)
+  Definition k_dfs : N := dom_lt_dfs_coefficient.
   Definition k_semi : N := 1%N. (* STUB *)
   Definition k_le : N := 1%N. (* STUB *)
   Definition k_order : N := 1%N. (* STUB *)
@@ -3639,7 +3639,14 @@ Module DomT <: DOM_ALL.
   Lemma T7_dfs : forall g r, prepared_ok g ->
     (T_lt_dfs g r <= k_dfs * N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared.
+    change (1 + T_dom_lt_dfs g r <= dom_lt_dfs_coefficient *
+      N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+        (graph_width (base g) + 1)))%N.
+    rewrite (N.add_comm 1 (T_dom_lt_dfs g r)).
+    apply dom_time_lt_dfs.
+  Qed.
 
   Lemma F13_ops_length : forall g r, prepared_ok g ->
     length (lt_ops g r) <= 2 * (graph_n (base g) + graph_e (base g)) + 1.
