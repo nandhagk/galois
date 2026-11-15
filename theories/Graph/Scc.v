@@ -4375,7 +4375,150 @@ Proof.
   lia.
 Qed.
 
+Definition ranked (g : digraph) (owners : ptrie positive) : Prop :=
+  forall u v i, trie_get u owners = Some i -> edge g u v ->
+    exists j, trie_get v owners = Some j /\ (j <= i)%positive.
+
+Lemma pop_member_owner root index pending low active owners members tail lows actives assigned v :
+  tarjan_pop root index pending low active owners = (members, tail, lows, actives, assigned) ->
+  In v members -> trie_get v assigned = Some index.
+Proof.
+  intros Hpop Hin.
+  destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [_ Hlookup].
+  rewrite (proj2 (proj2 (Hlookup v))).
+  now rewrite (proj2 (tarjan_positive_existsb v members) Hin).
+Qed.
+
+Lemma pop_old_owner prefix root members tail low active owners v i :
+  NoDup (entered prefix) ->
+  tarjan_pop root (tarjan_next (prefix_state prefix)) (tarjan_pending (prefix_state prefix))
+    (tarjan_low (prefix_state prefix)) (tarjan_active (prefix_state prefix))
+    (tarjan_owners (prefix_state prefix)) = (members, tail, low, active, owners) ->
+  trie_get v (tarjan_owners (prefix_state prefix)) = Some i -> trie_get v owners = Some i.
+Proof.
+  intros Hunique Hpop Howner.
+  pose proof (proj1 (tarjan_owners_domain prefix v Hunique) (ex_intro _ i Howner)) as Hblack.
+  pose proof (Permutation_NoDup (Permutation_sym (tarjan_bag_inventory prefix)) Hunique) as Hbag.
+  unfold tarjan_bag in Hbag.
+  destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hlookup].
+  rewrite (proj2 (proj2 (Hlookup v))).
+  destruct (existsb (Pos.eqb v) members) eqn:Hmember; [|exact Howner].
+  apply tarjan_positive_existsb in Hmember. exfalso.
+  apply (nodup_disjoint (tarjan_pending (prefix_state prefix))
+    (concat (tarjan_emitted (prefix_state prefix))) Hbag v); [|exact Hblack].
+  rewrite Hsplit. apply in_or_app. now left.
+Qed.
+
+Lemma pop_ranked g prefix root members tail low active owners :
+  NoDup (entered prefix) ->
+  tarjan_pop root (tarjan_next (prefix_state prefix)) (tarjan_pending (prefix_state prefix))
+    (tarjan_low (prefix_state prefix)) (tarjan_active (prefix_state prefix))
+    (tarjan_owners (prefix_state prefix)) = (members, tail, low, active, owners) ->
+  ranked g (tarjan_owners (prefix_state prefix)) ->
+  (forall u v, In u members -> edge g u v ->
+    In v members \/ In v (concat (tarjan_emitted (prefix_state prefix)))) ->
+  ranked g owners.
+Proof.
+  intros Hunique Hpop Hrank Hclosed u v i Howner Hedge.
+  destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hlookup].
+  rewrite (proj2 (proj2 (Hlookup u))) in Howner.
+  destruct (existsb (Pos.eqb u) members) eqn:Hmember.
+  - injection Howner as Heq. subst i. apply tarjan_positive_existsb in Hmember.
+    destruct (Hclosed u v Hmember Hedge) as [Htarget|Htarget].
+    + exists (tarjan_next (prefix_state prefix)). split; [|apply Pos.le_refl].
+      eapply pop_member_owner; eassumption.
+    + destruct (proj2 (tarjan_owners_domain prefix v Hunique) Htarget) as [j Hj].
+      exists j. split.
+      * eapply pop_old_owner; eassumption.
+      * apply Pos2Nat.inj_le, Nat.lt_le_incl.
+        exact (tarjan_owner_before_next prefix v j Hunique Hj).
+  - destruct (Hrank u v i Howner Hedge) as [j [Hj Hbound]].
+    exists j. split; [|exact Hbound]. eapply pop_old_owner; eassumption.
+Qed.
+
+Lemma lower_ranked g s v n :
+  ranked g (tarjan_owners s) -> ranked g (tarjan_owners (TarjanVisitor.lower v n s)).
+Proof.
+  intro Hrank. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)); exact Hrank.
+Qed.
+
+Lemma edge_ranked g s kind u v :
+  ranked g (tarjan_owners s) -> ranked g (tarjan_owners (TarjanVisitor.edge kind u v s)).
+Proof.
+  intro Hrank. destruct kind; cbn [TarjanVisitor.edge]; try exact Hrank.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hrank.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hrank.
+  all: now apply lower_ranked.
+Qed.
+
+Lemma leave_ranked g prefix root suffix :
+  wf_graph (base g) -> scc_trace g = prefix ++ Leave root :: suffix ->
+  ranked (base g) (tarjan_owners (prefix_state prefix)) ->
+  ranked (base g) (tarjan_owners (TarjanVisitor.leave root (prefix_state prefix))).
+Proof.
+  intros Hwf Htrace Hrank. unfold TarjanVisitor.leave.
+  destruct (trie_get root (tarjan_low (prefix_state prefix))) as [l|] eqn:Hlow;
+    destruct (trie_get root (tarjan_disc (prefix_state prefix))) as [d|] eqn:Hdisc;
+    try exact Hrank.
+  destruct (Pos.eqb l d) eqn:Hequal.
+  - apply Pos.eqb_eq in Hequal. subst l.
+    destruct (tarjan_pop root (tarjan_next (prefix_state prefix))
+      (tarjan_pending (prefix_state prefix)) (tarjan_low (prefix_state prefix))
+      (tarjan_active (prefix_state prefix)) (tarjan_owners (prefix_state prefix)))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    change (ranked (base g) owners). eapply pop_ranked.
+    + exact (scc_trace_prefix_unique g prefix (Leave root :: suffix) Htrace).
+    + exact Hpop.
+    + exact Hrank.
+    + exact (emission_closed g prefix root suffix members tail lows actives owners d
+        Hwf Htrace Hdisc Hlow Hpop).
+  - destruct (match tarjan_frames (prefix_state prefix) with [] => [] | _ :: rest => rest end)
+      as [|parent frames]; [exact Hrank|]. now apply lower_ranked.
+Qed.
+
+(** Every owned source already has owned successors of no greater chronological index. *)
+Lemma prefix_ranked g prefix suffix :
+  wf_graph (base g) -> scc_trace g = prefix ++ suffix ->
+  ranked (base g) (tarjan_owners (prefix_state prefix)).
+Proof.
+  intro Hwf. revert suffix. induction prefix as [|e prefix IH] using rev_ind;
+    intros suffix Htrace.
+  - intros u v i Howner. change (trie_get u (@Empty positive) = Some i) in Howner.
+    rewrite PTrie.get_empty in Howner. discriminate.
+  - assert (Hprior : scc_trace g = prefix ++ e :: suffix).
+    { rewrite Htrace. now rewrite <- app_assoc. }
+    specialize (IH (e :: suffix) Hprior).
+    rewrite prefix_state_snoc. destruct e as [v|v|kind u v]; cbn [visit_event].
+    + exact IH.
+    + exact (leave_ranked g prefix v suffix Hwf Hprior IH).
+    + now apply edge_ranked.
+Qed.
+
 End TarjanFrontierFacts.
+
+(** Prefix owners are already closed under outgoing edges in reverse topological order. *)
+Lemma tarjan_prefix_rank g prefix suffix :
+  wf_graph (base g) -> scc_trace g = prefix ++ suffix ->
+  forall u v i, trie_get u (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial)) = Some i ->
+  edge (base g) u v -> exists j, trie_get v (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial)) = Some j /\
+    (j <= i)%positive.
+Proof. intros Hwf Htrace. exact (TarjanFrontierFacts.prefix_ranked g prefix suffix Hwf Htrace). Qed.
+
+Lemma tarjan_final_rank g : wf_graph (base g) ->
+  forall u v i, trie_get u (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial)) = Some i ->
+  edge (base g) u v -> exists j, trie_get v (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial)) = Some j /\ (j <= i)%positive.
+Proof.
+  intro Hwf. apply (tarjan_prefix_rank g (scc_trace g) [] Hwf).
+  now rewrite app_nil_r.
+Qed.
+
 
 
 Opaque search_trace.
@@ -4426,7 +4569,11 @@ Module Scc <: SCC.
   Lemma comps_order : forall g, wf_graph (base g) -> forall u v i j,
     edge (base g) u v -> trie_get u (comp (run g)) = Some i ->
     trie_get v (comp (run g)) = Some j -> (j <= i)%positive.
-  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
+  Proof.
+    intros g Hwf u v i j Hedge Hu Hv. unfold run in Hu, Hv. cbn [comp] in Hu, Hv.
+    destruct (tarjan_final_rank g Hwf u v i Hu Hedge) as [target [Htarget Hbound]].
+    rewrite Hv in Htarget. injection Htarget as Heq. now subst target.
+  Qed.
 End Scc.
 
 Transparent search_trace.
