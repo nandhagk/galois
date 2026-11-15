@@ -1813,6 +1813,168 @@ Proof.
 Qed.
 TimeBound wrapped_point_time.
 
+(** Masking produces an endpoint within the declared bit width. *)
+Lemma arc_wrap_bits : forall w z,
+  (Z.size_nat (arc_wrap w z) <= Pos.to_nat w)%nat.
+Proof. intros w z. rewrite arc_wrap_agrees. apply WordTime.word_wrap_size_bound. Qed.
+
+(** Splitting a raw circular arc stores only normalized word endpoints. *)
+Lemma wrapped_parts_raw_bits : forall w a,
+  (interval_bits (fst (wrapped_parts_raw w a)) <= Pos.to_nat w)%nat /\
+  (interval_bits (snd (wrapped_parts_raw w a)) <= Pos.to_nat w)%nat.
+Proof.
+  intros w [| |lo hi].
+  - change ((0 <= Pos.to_nat w)%nat /\ (0 <= Pos.to_nat w)%nat).
+    split; apply Nat.le_0_l.
+  - change ((Z.size_nat (modulus w - 1) <= Pos.to_nat w)%nat /\
+      (0 <= Pos.to_nat w)%nat).
+    split; [apply wrapped_last_word_bits | apply Nat.le_0_l].
+  - unfold wrapped_parts_raw. destruct (arc_wrap w lo <=? arc_wrap w hi).
+    + change ((Nat.max (Z.size_nat (arc_wrap w lo)) (Z.size_nat (arc_wrap w hi))
+        <= Pos.to_nat w)%nat /\ (0 <= Pos.to_nat w)%nat).
+      split; [apply Nat.max_lub; apply arc_wrap_bits | apply Nat.le_0_l].
+    + change ((Nat.max (Z.size_nat (arc_wrap w lo)) (Z.size_nat (modulus w - 1))
+        <= Pos.to_nat w)%nat /\ (Z.size_nat (arc_wrap w hi) <= Pos.to_nat w)%nat).
+      split; [apply Nat.max_lub; [apply arc_wrap_bits | apply wrapped_last_word_bits]
+             | apply arc_wrap_bits].
+Qed.
+
+(** Normalized circular parts retain the same width-bounded endpoints. *)
+Lemma wrapped_parts_bits : forall w a,
+  (interval_bits (fst (wrapped_parts w a)) <= Pos.to_nat w)%nat /\
+  (interval_bits (snd (wrapped_parts w a)) <= Pos.to_nat w)%nat.
+Proof. intros w a. unfold wrapped_parts. apply wrapped_parts_raw_bits. Qed.
+
+(** Raw splitting charges two masks and one comparison at the numeric pole. *)
+Lemma wrapped_parts_raw_time : forall w a,
+  (T_wrapped_parts_raw w a <=
+    128 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intro w.
+  pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  intros [| |lo hi]; time_unfold T_wrapped_parts_raw; cbn beta iota zeta; time_simpl; time_pose.
+  all: try change (Z.size_nat 1) with 1%nat in *.
+  - cbn [wrapped_bits]. rewrite !Nat2N.inj_add in *. lia.
+  - cbn [wrapped_bits]. rewrite !Nat2N.inj_add in *. time_simpl. lia.
+  - pose proof (arc_wrap_bits w lo) as Hlo.
+    destruct (arc_wrap w lo <=? arc_wrap w hi);
+      cbn [wrapped_bits]; rewrite !Nat2N.inj_add in *; time_simpl; lia.
+Qed.
+TimeBound wrapped_parts_raw_time.
+
+(** Normalization followed by raw splitting is linear in stored input bits. *)
+Lemma wrapped_parts_time : forall w a,
+  (T_wrapped_parts w a <=
+    2048 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (wrapped_norm_bits w a) as Hbits.
+  time_unfold T_wrapped_parts. cbn beta iota zeta. time_simpl. time_pose.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_parts_time.
+
+(** Interval conversion stores only normalized endpoint values. *)
+Lemma wrapped_of_interval_bits : forall w a,
+  (wrapped_bits (wrapped_of_interval w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w [|[|lo|] [|hi|]]; cbn [wrapped_of_interval wrapped_bits]; try lia.
+  unfold wrapped_range. destruct (hi <? lo), (modulus w - 1 <=? hi - lo);
+    try (cbn [wrapped_bits]; lia). apply wrapped_norm_bits.
+Qed.
+
+(** Converting an interval charges its largest endpoint and the target width. *)
+Lemma wrapped_of_interval_time : forall w a,
+  (T_wrapped_of_interval w a <=
+    4096 * N.of_nat (Pos.to_nat w + interval_bits a + 1))%N.
+Proof.
+  intros w [|[|lo|] [|hi|]]; time_unfold T_wrapped_of_interval;
+    cbn beta iota zeta; time_simpl; time_pose; cbn [interval_bits]; rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_of_interval_time.
+
+(** Joining four pieces ends in a normalized circular join. *)
+Lemma wrapped_join_four_bits : forall w a b c d,
+  (wrapped_bits (wrapped_join_four w a b c d) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. unfold wrapped_join_four. apply wrapped_join_bits. Qed.
+
+(** Joining four pieces charges a fixed tree of three linear joins. *)
+Lemma wrapped_join_four_time : forall w a b c d,
+  (T_wrapped_join_four w a b c d <= 524288 * N.of_nat
+    (Pos.to_nat w + wrapped_bits a + wrapped_bits b + wrapped_bits c + wrapped_bits d + 1))%N.
+Proof.
+  intros w a b c d.
+  pose proof (wrapped_join_bits w a b) as Hleft.
+  pose proof (wrapped_join_bits w c d) as Hright.
+  set (left := wrapped_join w a b) in *.
+  set (right := wrapped_join w c d) in *.
+  time_unfold T_wrapped_join_four. cbn beta iota zeta.
+  fold left right. clearbody left right. time_simpl. time_pose.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_join_four_time.
+
+(** Intersecting circular arcs returns a normalized candidate or normalized left input. *)
+Lemma wrapped_meet_bits : forall w a b,
+  (wrapped_bits (wrapped_meet w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. unfold wrapped_meet.
+  lazymatch goal with
+  | |- context [if ?choice then _ else _] => destruct choice
+  end.
+  - apply wrapped_join_four_bits.
+  - apply wrapped_norm_bits.
+Qed.
+
+(** Circular intersection performs four scalar intersections and a fixed join tree. *)
+Lemma wrapped_meet_time : forall w a b,
+  (T_wrapped_meet w a b <=
+    16777216 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intros w a b.
+  pose proof (wrapped_parts_bits w a) as [Ha0 Ha1].
+  pose proof (wrapped_parts_bits w b) as [Hb0 Hb1].
+  set (pa := wrapped_parts w a) in *.
+  set (pb := wrapped_parts w b) in *.
+  pose proof (WrappedScalar.interval_meet_bits (fst pa) (fst pb)) as H00.
+  pose proof (WrappedScalar.interval_meet_bits (fst pa) (snd pb)) as H01.
+  pose proof (WrappedScalar.interval_meet_bits (snd pa) (fst pb)) as H10.
+  pose proof (WrappedScalar.interval_meet_bits (snd pa) (snd pb)) as H11.
+  pose proof (WrappedScalar.T_interval_meet_le (fst pa) (fst pb)) as HT00.
+  pose proof (WrappedScalar.T_interval_meet_le (fst pa) (snd pb)) as HT01.
+  pose proof (WrappedScalar.T_interval_meet_le (snd pa) (fst pb)) as HT10.
+  pose proof (WrappedScalar.T_interval_meet_le (snd pa) (snd pb)) as HT11.
+  pose proof (wrapped_of_interval_bits w (WrappedScalar.interval_meet (fst pa) (fst pb)))
+    as Hr00.
+  pose proof (wrapped_of_interval_bits w (WrappedScalar.interval_meet (fst pa) (snd pb)))
+    as Hr01.
+  pose proof (wrapped_of_interval_bits w (WrappedScalar.interval_meet (snd pa) (fst pb)))
+    as Hr10.
+  pose proof (wrapped_of_interval_bits w (WrappedScalar.interval_meet (snd pa) (snd pb)))
+    as Hr11.
+  set (r00 := wrapped_of_interval w (WrappedScalar.interval_meet (fst pa) (fst pb))) in *.
+  set (r01 := wrapped_of_interval w (WrappedScalar.interval_meet (fst pa) (snd pb))) in *.
+  set (r10 := wrapped_of_interval w (WrappedScalar.interval_meet (snd pa) (fst pb))) in *.
+  set (r11 := wrapped_of_interval w (WrappedScalar.interval_meet (snd pa) (snd pb))) in *.
+  pose proof (wrapped_join_four_bits w r00 r01 r10 r11) as Hcandidatebits.
+  set (candidate := wrapped_join_four w r00 r01 r10 r11) in *.
+  time_unfold T_wrapped_meet. cbn beta iota zeta. fold pa pb r00 r01 r10 r11 candidate.
+  clearbody pa pb r00 r01 r10 r11 candidate.
+  time_simpl. time_pose. destruct (wrapped_leb w candidate a).
+  all: unfold WrappedScalar.c_scalar, ThresholdsT.c_thresholds in *;
+    rewrite !Nat2N.inj_add in *; time_cbn_all; lia.
+Qed.
+TimeBound wrapped_meet_time.
+
+(** Expansion normalizes every resulting finite arc. *)
+Lemma wrapped_double_bits : forall w a,
+  (wrapped_bits (wrapped_double w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w [| |lo hi]; cbn [wrapped_double wrapped_bits]; try lia.
+  destruct (modulus w <=? 3 * wrapped_size w (WItv lo hi));
+    [cbn [wrapped_bits]; lia|apply wrapped_norm_bits].
+Qed.
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
