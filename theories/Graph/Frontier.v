@@ -1182,6 +1182,124 @@ Proof.
     rewrite PTrie.get_empty. cbn [In]. split; [discriminate|contradiction].
 Qed.
 
+(** Graph node observations agree with the underlying vertex list. *)
+Lemma frontier_nodes_verts : forall g, nodes g = verts (base g).
+Proof.
+  intros [[vertices adjacency] predecessors vertices_count edges_count]. reflexivity.
+Qed.
+
+Lemma frontier_nodes_unique : forall g, wf_graph (base g) -> NoDup (nodes g).
+Proof.
+  intros g Hgraph. rewrite frontier_nodes_verts. exact (proj1 Hgraph).
+Qed.
+
+Lemma frontier_sum_add {A : Type} : forall (xs : list A) (f g : A -> nat),
+  fold_right (fun x total => f x + g x + total) 0 xs =
+  fold_right (fun x total => f x + total) 0 xs +
+    fold_right (fun x total => g x + total) 0 xs.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros f g; [reflexivity|].
+  cbn [fold_right]. rewrite IH. lia.
+Qed.
+
+Lemma frontier_sum_swap {A B : Type} : forall (xs : list A) (ys : list B) (f : A -> B -> nat),
+  fold_right (fun x total => fold_right (fun y subtotal => f x y + subtotal) 0 ys + total) 0 xs =
+  fold_right (fun y total => fold_right (fun x subtotal => f x y + subtotal) 0 xs + total) 0 ys.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros ys f.
+  - cbn [fold_right]. induction ys; cbn [fold_right]; assumption || reflexivity.
+  - cbn [fold_right]. rewrite IH. symmetry. apply frontier_sum_add.
+Qed.
+
+Lemma frontier_flat_map_length {A B : Type} : forall (f : A -> list B) xs,
+  length (flat_map f xs) = fold_right (fun x total => length (f x) + total) 0 xs.
+Proof.
+  intros f xs. induction xs as [|x rest IH]; [reflexivity|].
+  cbn [flat_map fold_right]. now rewrite length_app, IH.
+Qed.
+
+(** Filtering once for each distinct listed target counts every successor occurrence once. *)
+Lemma frontier_filter_partition : forall vertices successors,
+  NoDup vertices -> incl successors vertices ->
+  fold_right (fun y total => length (filter (Pos.eqb y) successors) + total) 0 vertices =
+    length successors.
+Proof.
+  intros vertices successors Hunique. induction successors as [|v rest IH]; intro Hincl.
+  - assert (Hzero : forall xs, fold_right
+      (fun y total => length (filter (Pos.eqb y) []) + total) 0 xs = 0).
+    { intro xs. induction xs; cbn [fold_right filter length]; assumption || reflexivity. }
+    apply Hzero.
+  - assert (Hrest : incl rest vertices) by (intros u Hu; apply Hincl; now right).
+    specialize (IH Hrest).
+    pose proof (frontier_sum_update vertices v
+      (fun y => length (filter (Pos.eqb y) rest))
+      (fun y => length (filter (Pos.eqb y) (v :: rest))) Hunique
+      (Hincl v (or_introl eq_refl))) as Hsum.
+    assert (Hsame : length (filter (Pos.eqb v) (v :: rest)) =
+      S (length (filter (Pos.eqb v) rest))).
+    { cbn [filter]. now rewrite Pos.eqb_refl. }
+    assert (Hother : forall u, u <> v ->
+      length (filter (Pos.eqb u) (v :: rest)) = length (filter (Pos.eqb u) rest)).
+    { intros u Hne. cbn [filter]. apply Pos.eqb_neq in Hne. now rewrite Hne. }
+    specialize (Hsum Hsame Hother). cbn [length]. now rewrite Hsum, IH.
+Qed.
+
+Lemma frontier_preds_length : forall g y,
+  prepared_ok g -> length (preds g y) =
+    fold_right (fun x total => length (filter (Pos.eqb y) (succs (base g) x)) + total) 0 (nodes g).
+Proof.
+  intros g y [_ [_ Hpreds]]. rewrite (Permutation_length (Hpreds y)).
+  rewrite frontier_flat_map_length. apply frontier_sum_ext. intros x Hx. apply length_map.
+Qed.
+
+(** Preparation preserves the total number of predecessor occurrences, including parallel edges. *)
+Lemma frontier_predecessor_sum : forall g,
+  wf_graph (base g) -> prepared_ok g ->
+  fold_right (fun y total => length (preds g y) + total) 0 (nodes g) = graph_e (base g).
+Proof.
+  intros g Hgraph Hprepared.
+  rewrite (frontier_sum_ext (nodes g) (fun y => length (preds g y))
+    (fun y => fold_right (fun x total => length (filter (Pos.eqb y) (succs (base g) x)) + total)
+      0 (nodes g))) by (intros y Hy; now apply frontier_preds_length).
+  rewrite frontier_sum_swap.
+  replace (graph_e (base g)) with
+    (fold_right (fun x total => length (succs (base g) x) + total) 0 (nodes g)) by
+    (destruct g as [[vertices adjacency] predecessors vertices_count edges_count]; reflexivity).
+  apply frontier_sum_ext. intros x Hx. apply frontier_filter_partition.
+  - now apply frontier_nodes_unique.
+  - intros y Hy. rewrite frontier_nodes_verts in *. eapply (proj2 Hgraph); eassumption.
+Qed.
+
+Definition df_column_progress (g : prepared) (t : domtree) (y : positive) (st : df_state) : nat :=
+  2 * df_unseen (df_column g t y) (df_seen st) + length (df_pending st).
+
+(** Each continuing runner consumes credit from its actual output column. *)
+Lemma df_column_progress_step : forall g t r y st next,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  df_valid g t y st -> df_step g t y st = inl next ->
+  df_column_progress g t y next < df_column_progress g t y st.
+Proof.
+  intros g t r y [pending seen answer] next Hgraph Hprepared Htree Hvalid Hstep.
+  destruct pending as [|x rest]; [discriminate Hstep|].
+  destruct (df_step_behavior g t y x rest seen answer next Hstep)
+    as [[-> Hretire]|[-> [Hfresh Henabled]]].
+  - unfold df_column_progress. cbn [df_seen df_pending length]. lia.
+  - pose proof (df_column_correct g t r y Hgraph Hprepared Htree) as [Hunique [Hwithin Hcolumn]].
+    assert (Hx : In x (df_column g t y)).
+    { apply (proj2 (Hcolumn x)), (proj1 (df_route_spec g t r x y Hgraph Hprepared Htree)).
+      apply (df_valid_pending_routes _ _ _ _ Hvalid x); [now left|exact Henabled]. }
+    pose proof (df_unseen_fresh (df_column g t y) seen x Hunique Hx Hfresh) as Hcredit.
+    pose proof (df_follow_length t x rest) as Hlength.
+    unfold df_column_progress. cbn [df_seen df_pending length]. lia.
+Qed.
+
+Lemma df_column_progress_initial : forall g t y,
+  df_column_progress g t y (DfState (preds g y) Empty []) =
+    2 * length (df_column g t y) + length (preds g y).
+Proof.
+  intros g t y. unfold df_column_progress. cbn [df_seen df_pending]. now rewrite df_unseen_empty.
+Qed.
+
 Module FrontierCode <: FRONTIER_OPS.
   Definition df := df.
   Definition idf := idf.
