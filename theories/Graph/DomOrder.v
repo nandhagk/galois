@@ -4231,3 +4231,130 @@ Qed.
 
 
 (* END G2-G BUCKET SUPPORT *)
+
+Local Opaque Argent.Loop.loop T_loopN.
+
+(** One abstract loop budget absorbs the primitive setup and result-selection costs. *)
+Lemma dom_lt_eval_path_budget loop_coefficient trie_coefficient count width
+    loop_work setup_work double_work branch_work run_width :
+  (loop_work <= loop_coefficient *
+    ((128 * (trie_coefficient + 1) * (width + 1) + 1) * (2 * count + 1) +
+      128 * (trie_coefficient + 1) * (width + 1) + run_width + 1))%N ->
+  (setup_work <= width + 5)%N -> (double_work <= 1)%N -> (branch_work <= 1)%N ->
+  (run_width <= width + 4)%N ->
+  (8 + double_work + setup_work + loop_work + branch_work <=
+    1024 * (loop_coefficient + 1) * (trie_coefficient + 1) *
+      ((count + 1) * (width + 1)))%N.
+Proof.
+  intros Hloop Hsetup Hdouble Hbranch Hrun_width.
+  set (base_unit := ((trie_coefficient + 1) * (width + 1))%N).
+  set (frames := (count + 1)%N).
+  set (budget := (base_unit * frames)%N).
+  assert (Hbase_positive : (1 <= base_unit)%N) by (unfold base_unit; nia).
+  assert (Hwidth_base : (width + 1 <= base_unit)%N) by (unfold base_unit; nia).
+  assert (Hframes_positive : (1 <= frames)%N) by (unfold frames; lia).
+  assert (Hbase_budget : (base_unit <= budget)%N) by (unfold budget; nia).
+  assert (Hbudget_positive : (1 <= budget)%N) by lia.
+  assert (Hunit : (128 * (trie_coefficient + 1) * (width + 1) =
+    128 * base_unit)%N) by (unfold base_unit; nia).
+  rewrite !Hunit in Hloop.
+  assert (Hstep_unit : (128 * base_unit + 1 <= 129 * base_unit)%N) by lia.
+  assert (Hframe_count : (2 * count + 1 <= 2 * frames)%N) by (unfold frames; lia).
+  assert (Hscaled : ((128 * base_unit + 1) * (2 * count + 1) <=
+    (129 * base_unit) * (2 * frames))%N) by (now apply N.mul_le_mono).
+  replace ((129 * base_unit) * (2 * frames))%N with (258 * budget)%N
+    in Hscaled by (unfold budget; nia).
+  assert (Hremainder : (128 * base_unit + run_width + 1 <= 133 * budget)%N).
+  { eapply N.le_trans with (133 * base_unit)%N; [lia|]. now apply N.mul_le_mono_l. }
+  assert (Hinterior : ((128 * base_unit + 1) * (2 * count + 1) +
+    128 * base_unit + run_width + 1 <= 391 * budget)%N).
+  { clearbody budget. clear -Hscaled Hremainder. lia. }
+  assert (Hloop_big : (loop_work <= 391 * loop_coefficient * budget)%N).
+  { replace (391 * loop_coefficient * budget)%N with
+      (loop_coefficient * (391 * budget))%N by nia.
+    eapply N.le_trans; [exact Hloop|]. now apply N.mul_le_mono_l. }
+  assert (Hsetup_big : (setup_work <= 5 * budget)%N).
+  { eapply N.le_trans with (5 * base_unit)%N; [lia|]. now apply N.mul_le_mono_l. }
+  replace (1024 * (loop_coefficient + 1) * (trie_coefficient + 1) *
+    (frames * (width + 1)))%N with
+      (1024 * (loop_coefficient + 1) * budget)%N by (unfold budget, base_unit; nia).
+  clearbody budget base_unit frames.
+  clear -Hloop_big Hsetup_big Hdouble Hbranch Hbudget_positive.
+  assert (Hrest : (8 + double_work + setup_work + branch_work <= 15 * budget)%N) by lia.
+  assert (Htotal : (8 + double_work + setup_work + loop_work + branch_work <=
+    391 * loop_coefficient * budget + 15 * budget)%N) by lia.
+  eapply N.le_trans; [exact Htotal|].
+  rewrite <- N.mul_add_distr_r. apply N.mul_le_mono_r. lia.
+Qed.
+
+(** Evaluation time is bounded by the guarded path length times the numeric key width. *)
+Lemma dom_lt_time_eval_path bound width fuel semis before start path root :
+  dom_lt_walk_path before start path root ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) semis ->
+  (forall value, (value <= bound)%N -> N.size_nat value <= width) ->
+  dom_lt_links_bounded bound before -> (start <= bound)%N -> N.size_nat fuel <= width + 1 ->
+  (T_dom_lt_eval fuel semis before start <=
+    1024 * (c_loopN + 1) * (PTrieT.c_trie + 1) *
+      N.of_nat ((length path + 1) * (width + 1)))%N.
+Proof.
+  intros Hpath Hsemis Hwidth Hlinks Hstart Hfuel_width.
+  pose proof (dom_lt_walk_path_natural before start path root Hpath) as Hnatural.
+  pose proof (dom_gap_path_unique _ _ _ _ Hnatural) as Hunique.
+  set (initial := DomLtWalk
+    (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval start :: lt_operations before))
+    (DomLtDescend start [])).
+  set (unit := (128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+  assert (Hshape : dom_lt_compress_shape before path root initial).
+  { unfold initial. split; [reflexivity|]. exists path. split; [exact Hpath|reflexivity]. }
+  assert (Hinitial : dom_lt_walk_bounded bound initial).
+  { split; [exact Hlinks|]. split; [exact Hstart|constructor]. }
+  assert (Hpreserve : forall state next, dom_lt_walk_bounded bound state ->
+    dom_lt_compress_step semis state = inl next -> dom_lt_walk_bounded bound next).
+  { intros state next Hinv Hstep.
+    pose proof (dom_lt_compress_bounded bound semis state Hinv) as Hnext.
+    now rewrite Hstep in Hnext. }
+  assert (Hcost : forall state, dom_lt_walk_bounded bound state ->
+    (T_dom_lt_compress_step semis state <= unit)%N).
+  { intros state Hinv. unfold unit. now apply (dom_lt_time_compress_step bound width). }
+  pose proof (dom_lt_compress_path_time before path root semis (dom_lt_walk_bounded bound)
+    unit (N.double fuel + 3)%N initial Hunique Hshape Hinitial Hpreserve Hcost) as Hloop.
+  set (loop_cost := T_loopN (dom_lt_compress_step semis) (T_dom_lt_compress_step semis)
+    (N.double fuel + 3)%N initial).
+  change (loop_cost <= c_loopN * ((unit + 1) * N.of_nat (2 * length path - 0 + 1) +
+    unit + N.of_nat (N.size_nat (N.double fuel + 3)) + 1))%N in Hloop.
+  rewrite Nat.sub_0_r in Hloop.
+  pose proof (dom_lt_double_width fuel) as Hdouble_width.
+  pose proof (dom_add_width (N.double fuel) 3%N) as Hsum_width.
+  change (N.size_nat (N.double fuel + 3) <= N.size_nat (N.double fuel) + 2) in Hsum_width.
+  assert (Hactual_width : N.size_nat (N.double fuel + 3) <= width + 4) by lia.
+  pose proof (N.T_add_le (N.double fuel) 3%N) as Hsetup.
+  change (N.T_add (N.double fuel) 3 <=
+    N.of_nat (N.size_nat (N.double fuel) + 2) + 1)%N in Hsetup.
+  pose proof (dom_lt_time_double fuel) as Hdouble.
+  pose proof (dom_lt_result_branch
+    (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)) as Hbranch.
+  unfold T_dom_lt_eval. fold initial. time_simpl.
+  change (T_loopN (dom_lt_compress_step semis)
+    (fun state => T_dom_lt_compress_step semis state) (N.double fuel + 3)%N initial)
+    with loop_cost.
+  unfold unit in Hloop. clearbody loop_cost.
+  apply time_of_nat_le in Hactual_width, Hdouble_width, Hfuel_width.
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_add in *.
+  set (walk_result := loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial) in *.
+  set (branch_work := (match walk_result with inl _ => 1 | inr _ => 0 end)%N) in *.
+  set (setup_work := N.T_add (N.double fuel) 3%N) in *.
+  set (double_work := N.T_double fuel) in *.
+  set (run_width := N.of_nat (N.size_nat (N.double fuel + 3))) in *.
+  set (double_width := N.of_nat (N.size_nat (N.double fuel))) in *.
+  set (fuel_width := N.of_nat (N.size_nat fuel)) in *.
+  set (width_bits := N.of_nat width) in *.
+  set (path_count := N.of_nat (length path)) in *.
+  set (loop_coefficient := c_loopN) in *.
+  set (trie_coefficient := PTrieT.c_trie) in *.
+  clearbody branch_work walk_result setup_work double_work run_width double_width fuel_width
+    width_bits path_count loop_coefficient trie_coefficient.
+  clear -Hloop Hactual_width Hsetup Hdouble Hdouble_width Hfuel_width Hbranch.
+  eapply N.le_trans with (8 + double_work + setup_work + loop_cost + branch_work)%N.
+  - lia.
+  - apply dom_lt_eval_path_budget with (run_width := run_width); try assumption. lia.
+Qed.
