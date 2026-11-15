@@ -2882,67 +2882,254 @@ Module KnownBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) <: KNOWN_BITS L C.
   Include KNOWN_BITS_SPEC L C.
   Definition pgamma := tnum_gamma.
   Definition pwrank (_ : pwparam) (w : positive) (a : p) : nat := known_count w a.
-  Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted. (* STUB *)
-  Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted. (* STUB *)
-  Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted. (* STUB *)
-  Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
-    (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted. (* STUB *)
-  Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
-    (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted. (* STUB *)
-  Lemma pnarrow_between : forall w a b, pleb w b a = true ->
-    pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted. (* STUB *)
+
+  (** Mask inclusion is reflexive before bottom recognition. *)
+  Local Lemma tnum_raw_refl : forall w a, tnum_leb w a a = true.
+  Proof. intros w a. apply tnum_leb_bits. auto. Qed.
+
+  (** The raw join contains its left mask. *)
+  Local Lemma tnum_raw_join_left : forall w a b,
+    tnum_leb w a (tnum_join w a b) = true.
+  Proof.
+    intros w a b. exact (proj1 (proj1 (tnum_join_leb w a b (tnum_join w a b))
+      (tnum_raw_refl w (tnum_join w a b)))).
+  Qed.
+
+  (** The raw join contains its right mask. *)
+  Local Lemma tnum_raw_join_right : forall w a b,
+    tnum_leb w b (tnum_join w a b) = true.
+  Proof.
+    intros w a b. exact (proj2 (proj1 (tnum_join_leb w a b (tnum_join w a b))
+      (tnum_raw_refl w (tnum_join w a b)))).
+  Qed.
+
+  (** A raw refinement of a contradictory mask is contradictory. *)
+  Local Lemma tnum_raw_empty_below : forall w a b,
+    tnum_leb w a b = true -> tnum_empty w b = true -> tnum_empty w a = true.
+  Proof.
+    intros w a b Hle Hb. destruct (tnum_empty w a) eqn:Ha; [reflexivity|].
+    pose proof (proj1 (tnum_endpoints_sound w a Ha)) as Hamin.
+    pose proof (tnum_gamma_monotone w a b _ Hle Hamin) as Hbmin.
+    pose proof (tnum_empty_sound w b _ Hbmin). congruence.
+  Qed.
+
+  (** Raw inclusion can only remove positions with known facts. *)
+  Local Lemma known_count_subset : forall w a b,
+    tnum_leb w a b = true -> forall i, In i (seq 0 (Pos.to_nat w)) ->
+    Z.testbit (Z.lor (zeros b) (ones b)) (Z.of_nat i) = true ->
+    Z.testbit (Z.lor (zeros a) (ones a)) (Z.of_nat i) = true.
+  Proof.
+    intros w a b Hle i Hi Hbit. apply tnum_leb_bits in Hle as [Hz Ho].
+    apply in_seq in Hi. rewrite Z.lor_spec in Hbit |- *.
+    apply orb_true_iff in Hbit as [Hbit|Hbit]; apply orb_true_iff.
+    - left. apply Hz; [rewrite <- positive_nat_Z; lia|exact Hbit].
+    - right. apply Ho; [rewrite <- positive_nat_Z; lia|exact Hbit].
+  Qed.
+
+  (** Raw inclusion does not increase the count of known positions. *)
+  Local Lemma known_count_mono : forall w a b, tnum_leb w a b = true ->
+    (known_count w b <= known_count w a)%nat.
+  Proof.
+    intros w a b Hle. unfold known_count. apply tnum_filter_count_monotone.
+    exact (known_count_subset w a b Hle).
+  Qed.
+
+  (** Equal known-position counts make consistent raw inclusion symmetric. *)
+  Local Lemma known_count_equal : forall w a b,
+    tnum_empty w a = false -> tnum_leb w a b = true ->
+    known_count w a = known_count w b -> tnum_leb w b a = true.
+  Proof.
+    intros w a b Ha Hle Hcount.
+    assert (Hsame : forall i, 0 <= i < Zpos w ->
+      Z.testbit (Z.lor (zeros b) (ones b)) i =
+      Z.testbit (Z.lor (zeros a) (ones a)) i).
+    { intros i Hi.
+      pose proof (tnum_filter_count_equal nat _ _ _ (known_count_subset w a b Hle)
+        (eq_sym Hcount) (Z.to_nat i)
+        ltac:(apply in_seq; cbn [Nat.add]; split; [lia|]; apply Nat2Z.inj_lt;
+          rewrite Z2Nat.id, positive_nat_Z by lia; lia)) as Heq.
+      cbn beta in Heq. now rewrite Z2Nat.id in Heq by lia. }
+    assert (Hdisjoint : forall i, 0 <= i < Zpos w ->
+      Z.testbit (zeros a) i && Z.testbit (ones a) i = false).
+    { unfold tnum_empty in Ha. apply negb_false_iff, Z.eqb_eq in Ha.
+      intros i Hi. apply (f_equal (fun z => Z.testbit z i)) in Ha.
+      now rewrite tnum_wand_agrees, tnum_and_bit, Z.bits_0 in Ha by exact Hi. }
+    apply tnum_leb_bits in Hle as [Hz Ho]. apply tnum_leb_bits.
+    split; intros i Hi Hbit; specialize (Hsame i Hi); specialize (Hdisjoint i Hi);
+      specialize (Hz i Hi); specialize (Ho i Hi); rewrite !Z.lor_spec in Hsame;
+      destruct (Z.testbit (zeros a) i), (Z.testbit (ones a) i),
+        (Z.testbit (zeros b) i), (Z.testbit (ones b) i);
+      cbn in *; intuition discriminate.
+  Qed.
+
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted. (* STUB *)
-  Lemma pleb_trans : forall w a b c,
-    pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted. (* STUB *)
-  Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
-  Proof. Admitted. (* STUB *)
-  Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. change (tnum_empty w a || tnum_leb w a a = true).
+    rewrite tnum_raw_refl, orb_true_r. reflexivity.
+  Qed.
+
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. change (tnum_empty w (tnum_bot w) = true).
+    destruct (tnum_empty w (tnum_bot w)) eqn:Hbot; [reflexivity|].
+    exfalso. apply (tnum_gamma_bot_empty w (tnum_min w (tnum_bot w))).
+    exact (proj1 (tnum_endpoints_sound w (tnum_bot w) Hbot)).
+  Qed.
+
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Ha. change (tnum_empty w a = true) in Ha.
+    change (tnum_empty w a || tnum_leb w a b = true). now rewrite Ha.
+  Qed.
+
+  Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
+  Proof. intros w a. apply pis_bot_least, pis_bot_bot. Qed.
+
+  Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
+  Proof.
+    intros w a. change (tnum_empty w a || tnum_leb w a tnum_top = true).
+    apply orb_true_iff. right. apply tnum_leb_bits.
+    split; intros i Hi Hbit; cbn [tnum_top zeros ones] in Hbit;
+      rewrite Z.bits_0 in Hbit; discriminate.
+  Qed.
+
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. change (tnum_empty w a || tnum_leb w a (tnum_join w a b) = true).
+    rewrite tnum_raw_join_left, orb_true_r. reflexivity.
+  Qed.
+
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. change (tnum_empty w b || tnum_leb w b (tnum_join w a b) = true).
+    rewrite tnum_raw_join_right, orb_true_r. reflexivity.
+  Qed.
+
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. change (tnum_empty w (tnum_meet w a b) ||
+      tnum_leb w (tnum_meet w a b) a = true).
+    rewrite tnum_meet_lower_left, orb_true_r. reflexivity.
+  Qed.
+
   Lemma pmeet_lb_r : forall w a b, pleb w (pmeet w a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. change (tnum_empty w (tnum_meet w a b) ||
+      tnum_leb w (tnum_meet w a b) b = true).
+    apply orb_true_iff. right. apply tnum_leb_bits.
+    split; intros i Hi Hbit; cbn [tnum_meet zeros ones];
+      rewrite tnum_wor_agrees, tnum_or_bit, Hbit, orb_true_r by exact Hi; reflexivity.
+  Qed.
+
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b z Hle Ha.
+    change (tnum_empty w a || tnum_leb w a b = true) in Hle.
+    rewrite (tnum_empty_sound w a z Ha) in Hle. cbn in Hle.
+    exact (tnum_gamma_monotone w a b z Hle Ha).
+  Qed.
+
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
-  Proof. Admitted. (* STUB *)
+  Proof. exact tnum_gamma_bot_empty. Qed.
+
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted. (* STUB *)
+  Proof. intros w z _. apply tnum_top_sound. Qed.
+
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof. exact tnum_meet_sound. Qed.
+
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a z Hempty Ha. pose proof (tnum_empty_sound w a z Ha).
+    change (tnum_empty w a = true) in Hempty. congruence.
+  Qed.
+
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Hle Hb.
+    change (tnum_empty w a || tnum_leb w a b = true) in Hle.
+    change (tnum_empty w a = true).
+    destruct (tnum_empty w a) eqn:Ha; [reflexivity|].
+    cbn in Hle. pose proof (tnum_raw_empty_below w a b Hle Hb). congruence.
+  Qed.
+
+  Lemma pleb_trans : forall w a b c,
+    pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
+  Proof.
+    intros w a b c Hab Hbc.
+    change (tnum_empty w a || tnum_leb w a b = true) in Hab.
+    change (tnum_empty w b || tnum_leb w b c = true) in Hbc.
+    change (tnum_empty w a || tnum_leb w a c = true).
+    destruct (tnum_empty w a) eqn:Ha; [reflexivity|].
+    cbn in Hab |- *. destruct (tnum_empty w b) eqn:Hb.
+    - pose proof (tnum_raw_empty_below w a b Hab Hb). congruence.
+    - cbn in Hbc. apply tnum_leb_bits in Hab, Hbc. apply tnum_leb_bits.
+      destruct Hab as [Haz Hao], Hbc as [Hbz Hbo]. split; eauto.
+  Qed.
+
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
-  Proof. Admitted. (* STUB *)
+  Proof. exact tnum_const_sound. Qed.
+
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a z v Hpoint Hz Ha. exact (tnum_constant_value w a z v Hz Ha Hpoint).
+  Qed.
+
+  Lemma pnarrow_between : forall w a b, pleb w b a = true ->
+    pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
+  Proof. intros w a b Hle. split; [exact Hle|apply pleb_refl]. Qed.
+
+  Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
+  Proof. intros q w a b Hle. unfold pwiden. now rewrite Hle. Qed.
+
+  Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a);
+      [apply pleb_refl|apply pjoin_ub_l].
+  Qed.
+
+  Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Hle;
+      [exact Hle|apply pjoin_ub_r].
+  Qed.
+
+  Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
+    (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
+  Proof.
+    intros q w a b Ha Hunstable. unfold pwiden. rewrite Hunstable.
+    change (known_count w (tnum_join w a b) < known_count w a)%nat.
+    pose proof (tnum_raw_join_left w a b) as Hjoin.
+    pose proof (known_count_mono w a (tnum_join w a b) Hjoin) as Hmono.
+    destruct (Nat.lt_ge_cases (known_count w (tnum_join w a b)) (known_count w a))
+      as [Hlt|Hge]; [exact Hlt|].
+    assert (Hcount : known_count w a = known_count w (tnum_join w a b)) by lia.
+    pose proof (known_count_equal w a (tnum_join w a b) Ha Hjoin Hcount) as Hreverse.
+    apply tnum_join_leb in Hreverse as [_ Hba].
+    assert (Hstable : pleb w b a = true).
+    { change (tnum_empty w b || tnum_leb w b a = true).
+      now rewrite Hba, orb_true_r. }
+    congruence.
+  Qed.
+
+  Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
+    (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
+  Proof.
+    intros q w a b Ha. destruct (pleb w b a) eqn:Hstable.
+    - rewrite (pwiden_stable q w a b Hstable). lia.
+    - pose proof (pwrank_widen q w a b Ha Hstable). lia.
+  Qed.
+
   Lemma F_pwiden : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w a b.
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
+
   Lemma multiplier_selected : forall w a b, tnum_mul w a b = tnum_mul_with C.multiplier w a b.
-  Proof. Admitted. (* STUB *)
+  Proof. reflexivity. Qed.
   (** Payload concretization is the zero-mask and one-mask meaning. *)
   Lemma gamma_tnum : forall w a z, pgamma w a z <-> tnum_gamma w a z.
   Proof. intros; reflexivity. Qed.
