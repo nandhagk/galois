@@ -4506,4 +4506,151 @@ Module WtoT <: WTO_ALL.
 
   Local Transparent loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
 
+  Local Opaque loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
+
+  Definition builder_scope_bound g : Prop :=
+    forall vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
+      (T_wto_scoped g (Some vs) +
+        T_wto_components (wto_scoped g (Some vs)) (rev vs) +
+        T_wto_entries (wto_scoped g (Some vs)) (rev vs)
+          (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
+        4 * k_build * N.of_nat (scope_work g vs))%N.
+
+  Definition builder_partial_bound g roots : Prop :=
+    forall level,
+      fold_right (fun st n =>
+        if Nat.eqb (length (wto_parents st)) level then state_partial_mass st + n else n)
+        0 (history g roots) <= length (concat (comps (wto_components g roots))).
+
+  Definition builder_initial_bound g roots : Prop :=
+    (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
+      k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+
+  Lemma execution_budget_arithmetic : forall coefficient work width size depth cost,
+    (work <= 5 * size * depth)%N ->
+    (cost <= 512 * coefficient * width * work)%N ->
+    (cost <= 2560 * coefficient * size * depth * width)%N.
+  Proof.
+    intros coefficient work width size depth cost Hwork Hcost.
+    eapply N.le_trans; [exact Hcost|].
+    eapply N.le_trans with (512 * coefficient * width * (5 * size * depth))%N.
+    - now apply N.mul_le_mono_l.
+    - nia.
+  Qed.
+
+  Lemma execution_cost_from_bounds : forall g roots,
+    builder_scope_bound g -> builder_partial_bound g roots ->
+    (execution_cost g (history g roots) <= 2560 * k_build *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof.
+    intros g roots Hscope Hpartial.
+    pose proof (sum_clock_weight wto_state
+      (fun st => state_expansion_mass g st + state_partial_mass st + 1) (T_wto_step g)
+      (history g roots) (512 * k_build * N.of_nat (graph_width (base g) + 1))%N)
+      as Hsum.
+    assert (Hper : forall st, In st (history g roots) ->
+      (T_wto_step g st <= 512 * k_build * N.of_nat (graph_width (base g) + 1) *
+        N.of_nat (state_expansion_mass g st + state_partial_mass st + 1))%N).
+    { intros st Hin.
+      pose proof (builder_state_clock_from_scope g roots st k_build
+        builder_coefficient_positive Hscope Hin) as Hclock.
+      nia. }
+    specialize (Hsum Hper).
+    pose proof (history_mass_bound_from_levels g roots Hpartial) as Hmass.
+    apply time_of_nat_le in Hmass. rewrite !Nat2N.inj_mul in Hmass.
+    change (execution_cost g (history g roots) <=
+      512 * k_build * N.of_nat (graph_width (base g) + 1) *
+      N.of_nat (fold_right (fun st n =>
+        (state_expansion_mass g st + state_partial_mass st + 1 + n)%nat) 0%nat
+        (history g roots)))%N in Hsum.
+    eapply execution_budget_arithmetic; [exact Hmass|exact Hsum].
+  Qed.
+
+  Lemma build_budget_arithmetic : forall coefficient size depth width initial count execution cost,
+    (128 <= coefficient)%N -> (1 <= size)%N -> (1 <= depth)%N -> (1 <= width)%N ->
+    (initial <= coefficient * size * width)%N -> (count + 1 <= size)%N ->
+    (execution <= 2560 * coefficient * size * depth * width)%N ->
+    (cost <= coefficient * (initial + count + execution + 1))%N ->
+    (cost <= 4096 * coefficient * coefficient * size * depth * width)%N.
+  Proof.
+    intros coefficient size depth width initial count execution cost
+      Hcoefficient Hsize Hdepth Hwidth Hinitial Hcount Hexecution Hcost.
+    set (budget := (size * depth * width)%N).
+    assert (Hsize_budget : (size <= budget)%N).
+    { unfold budget. eapply N.le_trans with (size * depth)%N.
+      - replace size with (size * 1)%N at 1 by nia. now apply N.mul_le_mono_l.
+      - replace (size * depth)%N with (size * depth * 1)%N at 1 by nia.
+        now apply N.mul_le_mono_l. }
+    assert (Hinitial_budget : (initial <= coefficient * budget)%N).
+    { eapply N.le_trans; [exact Hinitial|]. unfold budget.
+      replace (coefficient * (size * depth * width))%N with
+        (coefficient * size * depth * width)%N by nia.
+      apply N.mul_le_mono_r. replace (coefficient * size)%N with
+        (coefficient * size * 1)%N at 1 by nia. now apply N.mul_le_mono_l. }
+    assert (Hexecution_budget : (execution <= 2560 * coefficient * budget)%N).
+    { unfold budget. replace (2560 * coefficient * (size * depth * width))%N with
+        (2560 * coefficient * size * depth * width)%N by nia. exact Hexecution. }
+    assert (Hinside : (initial + count + execution + 1 <= (2561 * coefficient + 1) * budget)%N)
+      by nia.
+    eapply N.le_trans; [exact Hcost|].
+    eapply N.le_trans with (coefficient * ((2561 * coefficient + 1) * budget))%N.
+    - now apply N.mul_le_mono_l.
+    - replace (coefficient * ((2561 * coefficient + 1) * budget))%N with
+        ((2561 * coefficient * coefficient + coefficient) * budget)%N by nia.
+      replace (4096 * coefficient * coefficient * size * depth * width)%N with
+        ((4096 * coefficient * coefficient) * budget)%N by (unfold budget; nia).
+      apply N.mul_le_mono_r. nia.
+  Qed.
+
+  Lemma positive_nat_successor : forall value, (1 <= N.of_nat (value + 1))%N.
+  Proof. intro value. rewrite Nat2N.inj_add. nia. Qed.
+
+  Lemma initial_count_margin : forall count n e roots,
+    count <= n -> count + 1 <= n + e + roots + 1.
+  Proof. intros. lia. Qed.
+
+  Lemma build_clock_from_bounds : forall g roots,
+    builder_initial_bound g roots -> builder_scope_bound g -> builder_partial_bound g roots ->
+    (T_build g roots <= 4096 * k_build * k_build *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof.
+    intros g roots Hinitial Hscope Hpartial.
+    pose proof (T16_build g roots) as Hbuild.
+    pose proof (execution_cost_from_bounds g roots Hscope Hpartial) as Hexecution.
+    pose proof (wto_components_size g roots) as Hsize. rewrite listed_graph_size in Hsize.
+    pose proof (initial_count_margin _ _ (graph_e (base g)) (length roots) Hsize) as Hmargin.
+    apply time_of_nat_le in Hmargin. rewrite Nat2N.inj_add in Hmargin.
+    assert (Hwidth : (N.of_nat (graph_width (base g) + 1) <=
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N).
+    { apply time_of_nat_le. apply Nat.add_le_mono_r.
+      rewrite wto_graph_max_nat. apply Nat.le_max_l. }
+    assert (Hexecution_full : (execution_cost g (history g roots) <= 2560 * k_build *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N).
+    { eapply N.le_trans; [exact Hexecution|]. now apply N.mul_le_mono_l. }
+    eapply (build_budget_arithmetic k_build
+      (N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1))
+      (N.of_nat (wto_depth (build g roots) + 1))
+      (N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))
+      (T_wto_components g roots + T_wto_entries g roots (wto_components g roots))%N
+      (N.of_nat (length (concat (comps (wto_components g roots)))))
+      (execution_cost g (history g roots))).
+    - exact builder_coefficient_positive.
+    - apply positive_nat_successor.
+    - apply positive_nat_successor.
+    - apply positive_nat_successor.
+    - exact Hinitial.
+    - exact Hmargin.
+    - exact Hexecution_full.
+    - exact Hbuild.
+  Qed.
+
+  Local Transparent loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
+
 End WtoT.
