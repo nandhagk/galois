@@ -288,6 +288,52 @@ Proof.
       * inversion Hselect; subst. apply Permutation_refl.
 Qed.
 
+(** Selection scans each candidate with a comparison bounded by that candidate's width. *)
+Lemma wto_select_clock : forall preferred c width,
+  Forall (fun v => Pos.size_nat v <= width) c ->
+  (T_wto_select preferred c <=
+    2 * N.of_nat (length c + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros preferred c. induction c as [|v rest IH]; intros width Hwidth.
+  - time_step.
+  - inversion Hwidth as [|? ? Hvertex Hrest]; subst. specialize (IH width Hrest).
+    destruct preferred as [h|].
+    + pose proof (Pos.T_eqb_le v h) as Hequal. time_step.
+    + time_step.
+Qed.
+
+(** Preference reads a graph key and, when present, a bounded component identifier. *)
+Lemma wto_preferred_clock : forall owners entries c width,
+  Forall (fun v => Pos.size_nat v <= width) c ->
+  (forall v i, trie_get v owners = Some i -> Pos.size_nat i <= width + 1) ->
+  (T_wto_preferred owners entries c <= 8 * N.of_nat (width + 1))%N.
+Proof.
+  intros owners entries [|v rest] width Hwidth Howners.
+  - time_step.
+  - inversion Hwidth as [|? ? Hvertex Hrest]; subst.
+    pose proof (PTrieT.trie_get_clock positive v owners) as Hget.
+    time_unfold @T_wto_preferred. cbn beta iota zeta.
+    destruct (trie_get v owners) as [i|] eqn:Howner.
+    + pose proof (Howners v i Howner) as Hidentifier.
+      pose proof (PTrieT.trie_get_clock positive i entries) as Hentry.
+      time_simpl. rewrite !Nat2N.inj_add in *. nia.
+    + time_simpl. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** Preference and selection together cost a constant multiple of component key occurrences. *)
+Lemma wto_selection_clock : forall owners entries c width,
+  Forall (fun v => Pos.size_nat v <= width) c ->
+  (forall v i, trie_get v owners = Some i -> Pos.size_nat i <= width + 1) ->
+  (T_wto_preferred owners entries c +
+    T_wto_select (wto_preferred owners entries c) c <=
+    16 * N.of_nat (length c + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros owners entries c width Hwidth Howners.
+  pose proof (wto_preferred_clock owners entries c width Hwidth Howners) as Hpreferred.
+  pose proof (wto_select_clock (wto_preferred owners entries c) c width Hwidth) as Hselect.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
 Fixpoint wto_reverse_into (w tail : wto) : wto :=
   match w with
   | WNil => tail
@@ -2867,12 +2913,162 @@ Module WtoT <: WTO_ALL.
         N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  Local Opaque loopN Galois.Graph.Wto.wto_components.
+
+  (** A globally unique component inventory makes every individual block unique. *)
+  Lemma component_lists_unique : forall cs,
+    NoDup (concat cs) -> Forall (@NoDup positive) cs.
+  Proof.
+    intro cs. induction cs as [|c rest IH]; intro Hunique; [constructor|].
+    cbn [concat] in Hunique. constructor.
+    - now apply NoDup_app_remove_r in Hunique.
+    - apply IH. now apply NoDup_app_remove_l in Hunique.
+  Qed.
+
+  (** Actual expansion tasks retain listed distinct vertices and bounded component identifiers. *)
+  Definition task_domain g task :=
+    match task with
+    | WtoExpand _ _ owners c => c <> [] /\ NoDup c /\
+        (forall v, In v c -> In v (nodes g)) /\
+        (forall v i, trie_get v owners = Some i ->
+          Pos.size_nat i <= graph_width (base g) + 1)
+    | WtoClose _ => True
+    end.
+
+  Lemma components_task_domain : forall g graph roots within entries,
+    (forall v, In v (nodes graph) -> In v (nodes g)) ->
+    Forall (task_domain g)
+      (wto_expand_tasks within entries (comp (wto_components graph roots))
+        (rev (comps (wto_components graph roots)))).
+  Proof.
+    intros g graph roots within entries Hsub.
+    pose proof (component_lists_unique _ (wto_components_unique graph roots)) as Hunique.
+    pose proof (wto_components_nonempty graph roots) as Hnonempty.
+    rewrite Forall_forall in Hunique, Hnonempty.
+    assert (Howners : forall v i, trie_get v (comp (wto_components graph roots)) = Some i ->
+      Pos.size_nat i <= graph_width (base g) + 1).
+    { intros v i Howner. eapply (wto_components_owner_bound graph roots).
+      - apply Forall_forall. intros u Hu. apply wto_listed_width, Hsub, Hu.
+      - exact Howner. }
+    change (wto_expand_tasks within entries (comp (wto_components graph roots))
+      (rev (comps (wto_components graph roots)))) with
+      (map (fun c => WtoExpand within entries (comp (wto_components graph roots)) c)
+        (rev (comps (wto_components graph roots)))).
+    rewrite Forall_map. apply Forall_rev. apply Forall_forall. intros c Hc.
+    cbn [task_domain]. split; [now apply Hnonempty|]. split; [now apply Hunique|].
+    split; [|exact Howners]. intros v Hv. apply Hsub.
+    apply (wto_components_listed graph roots v). apply in_concat. exists c. auto.
+  Qed.
+
+  Lemma initial_task_domain : forall g roots,
+    Forall (task_domain g) (wto_tasks (initial g roots)).
+  Proof.
+    intros g roots. unfold initial. cbn [wto_tasks]. apply components_task_domain.
+    intros v Hin. exact Hin.
+  Qed.
+
+  Lemma task_domain_step : forall g st next,
+    Forall (task_domain g) (wto_tasks st) -> wto_step g st = inl next ->
+    Forall (task_domain g) (wto_tasks next).
+  Proof.
+    intros g [tasks partial parents] next Hdomain Hstep.
+    destruct tasks as [|task tasks]; [discriminate Hstep|].
+    inversion Hdomain as [|? ? Hhead Htail]; subst.
+    destruct task as [within entries owners c|h].
+    - cbn [task_domain] in Hhead. destruct Hhead as [Hnonempty [Hunique [Hlisted Howners]]].
+      cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      destruct (Galois.Graph.Wto.wto_select
+        (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+      + destruct body as [|v body]; inversion Hstep; subst next.
+        * exact Htail.
+        * cbn [wto_tasks]. rewrite !rev_append_rev, !app_nil_r.
+          apply Forall_app. split.
+          -- apply components_task_domain. intros u Hu.
+             change (In u (v :: body)) in Hu. apply Hlisted.
+             eapply Permutation_in.
+             ++ apply Permutation_sym. exact (wto_select_spec _ _ _ _ Hselect).
+             ++ right. exact Hu.
+          -- constructor; [exact I|exact Htail].
+      + inversion Hstep; subst next. exact Htail.
+    - destruct parents; inversion Hstep; subst next; exact Htail.
+  Qed.
+
+  Lemma history_from_domain : forall g fuel st,
+    Forall (task_domain g) (wto_tasks st) ->
+    Forall (fun current => Forall (task_domain g) (wto_tasks current))
+      (history_from g fuel st).
+  Proof.
+    intros g fuel. induction fuel as [|fuel IH]; intros st Hdomain.
+    - cbn [history_from]. destruct (wto_step g st); constructor; auto.
+    - cbn [history_from]. destruct (wto_step g st) as [next|result] eqn:Hstep.
+      + constructor; [exact Hdomain|]. apply IH. eapply task_domain_step; eassumption.
+      + constructor; [exact Hdomain|constructor].
+  Qed.
+
+  Lemma history_task_domain : forall g roots st,
+    In st (history g roots) -> Forall (task_domain g) (wto_tasks st).
+  Proof.
+    intros g roots st Hin.
+    pose proof (history_from_domain g
+      (3 * length (concat (comps (wto_components g roots))) + 1)
+      (initial g roots) (initial_task_domain g roots)) as Hall.
+    apply Forall_forall with (x := st) in Hall; [exact Hall|exact Hin].
+  Qed.
+
+  Lemma history_component_domain : forall g roots st within entries owners c tasks,
+    In st (history g roots) -> wto_tasks st = WtoExpand within entries owners c :: tasks ->
+    c <> [] /\ NoDup c /\ (forall v, In v c -> In v (nodes g)) /\
+    (forall v i, trie_get v owners = Some i -> Pos.size_nat i <= graph_width (base g) + 1).
+  Proof.
+    intros g roots st within entries owners c tasks Hin Htasks.
+    pose proof (history_task_domain g roots st Hin) as Hall. rewrite Htasks in Hall.
+    inversion Hall as [|? ? Hhead Htail]. exact Hhead.
+  Qed.
+
+  Lemma history_body_domain : forall g roots st within entries owners c tasks h body,
+    In st (history g roots) -> wto_tasks st = WtoExpand within entries owners c :: tasks ->
+    wto_select (wto_preferred owners entries c) c = Some (h, body) ->
+    NoDup body /\ (forall v, In v body -> In v (nodes g)).
+  Proof.
+    intros g roots st within entries owners c tasks h body Hin Htasks Hselect.
+    destruct (history_component_domain g roots st within entries owners c tasks Hin Htasks)
+      as [Hnonempty [Hunique [Hlisted Howners]]].
+    pose proof (wto_select_spec _ _ _ _ Hselect) as Hselection. split.
+    - apply (Permutation_NoDup Hselection) in Hunique. now inversion Hunique.
+    - intros v Hv. apply Hlisted. eapply Permutation_in.
+      + exact (Permutation_sym Hselection).
+      + right. exact Hv.
+  Qed.
+
+  (** Every vertex contributes at least one unit of source mass. *)
+  Lemma source_mass_length : forall g vs, length vs <= source_mass g vs.
+  Proof.
+    intros g vs. unfold source_mass. induction vs as [|v rest IH]; cbn [length fold_right]; lia.
+  Qed.
+
   (** Preference and selection scan an actual component once. *)
   Lemma T14_select : forall g roots st within entries owners c tasks,
       In st (history g roots) -> wto_tasks st = WtoExpand within entries owners c :: tasks ->
       (T_wto_preferred owners entries c + T_wto_select (wto_preferred owners entries c) c <=
         k_expand * N.of_nat (scope_work g c))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st within entries owners c tasks Hin Htasks.
+    destruct (history_component_domain g roots st within entries owners c tasks Hin Htasks)
+      as [Hnonempty [Hunique [Hlisted Howners]]].
+    assert (Hwidth : Forall (fun v => Pos.size_nat v <= graph_width (base g)) c).
+    { apply Forall_forall. intros v Hv. apply wto_listed_width, Hlisted, Hv. }
+    pose proof (wto_selection_clock owners entries c (graph_width (base g)) Hwidth Howners)
+      as Hclock.
+    pose proof (source_mass_length g c) as Hmass.
+    assert (Hmax : graph_width (base g) <=
+      graph_max (graph_width (base g)) (vertex_width c)).
+    { rewrite wto_graph_max_nat. apply Nat.le_max_l. }
+    clear - Hclock Hmass Hmax.
+    unfold T_wto_preferred, T_wto_select, wto_preferred, k_expand, scope_work.
+    time_simpl. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
+
+  Local Transparent loopN Galois.Graph.Wto.wto_components.
 
   (** Close, terminal and singleton steps pay the reversed partial order and one row. *)
   Lemma T15_short_step : forall g roots st,
