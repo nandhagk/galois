@@ -1871,7 +1871,9 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
   Lemma best_optimal : forall cs db c e, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     represents (D.view db) (Id c) e ->
     exists n ch, In (D.repr db c, (n, ch)) (best cs db) /\ (n <= tree_cost e)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* OPEN: Operations-only enumeration needs a proved depth bound or exposed arity.
+    INDEX.next has no such lower-bound law; IndexFuelCounterexample in ExtractTest
+    validates a lawful constant-next index containing a deeper tuple. *)
 
   Lemma best_attained : forall cs db c n ch, D.wf db -> D.canonical db ->
     ctor_inventory cs db ->

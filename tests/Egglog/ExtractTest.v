@@ -6,7 +6,6 @@
     Builds on: Extract, Database and Index code towers. *)
 
 From Stdlib Require Import List PArith NArith Arith Lia.
-From Argent Require Import Time Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax IndexSig DatabaseSig Index Database ExtractSig
   Extract.
@@ -245,3 +244,94 @@ Example constructor_rows_empty :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+Definition candidate_entries : extraction_best positive :=
+  [(3%positive, (1%N, (30%positive, [])));
+   (2%positive, (5%N, (20%positive, [Id 1%positive; Id 1%positive])));
+   (1%positive, (2%N, (10%positive, [Val 7%positive])))].
+
+Example extraction_candidate_accepts_shared_tree :
+  extraction_candidate (InventoryExtract.check_dag checker_database)
+    2%positive 2%positive candidate_entries = Some checker_graph.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example extraction_candidate_checks_budget :
+  extraction_candidate (InventoryExtract.check_dag checker_database)
+    2%positive 2%positive
+    [(2%positive, (4%N, (20%positive, [Id 1%positive; Id 1%positive])));
+     (1%positive, (2%N, (10%positive, [Val 7%positive])))] = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example extraction_candidate_rejects_missing_root :
+  extraction_candidate (InventoryExtract.check_dag checker_database)
+    4%positive 4%positive candidate_entries = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example extraction_candidate_rejects_cycle :
+  extraction_candidate (fun c g => dag_check (fun _ _ _ => true)
+    InventoryCost.fn_cost InventoryCost.val_cost g c)
+    1%positive 1%positive [(1%positive, (0%N, (10%positive, [Id 1%positive])))] = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** The public index laws remain valid when its next counter is constantly one. *)
+Module ConstantNextIndex (V : VALUE) (I : INDEX V) <: INDEX V.
+  Definition t := I.t.
+  Definition empty := I.empty.
+  Definition insert := I.insert.
+  Definition remove := I.remove.
+  Definition next (_ : t) := 1%positive.
+  Definition root := I.root.
+  Definition child := I.child.
+  Definition children := I.children.
+  Definition degree := I.degree.
+  Definition wf := I.wf.
+  Definition mem := I.mem.
+  Definition node := I.node.
+  Definition next_empty : next empty = 1%positive := eq_refl.
+  Lemma next_insert : forall a r ix, wf a ix ->
+    (next (insert r ix) <= next ix + Pos.of_nat (length r))%positive.
+  Proof.
+    intros a r ix Hwf. unfold next. lia.
+  Qed.
+  Lemma next_remove : forall a r ix, wf a ix -> next (remove r ix) = next ix.
+  Proof.
+    reflexivity.
+  Qed.
+  Definition wf_empty := I.wf_empty.
+  Definition mem_empty := I.mem_empty.
+  Definition wf_insert := I.wf_insert.
+  Definition wf_remove := I.wf_remove.
+  Definition mem_insert := I.mem_insert.
+  Definition mem_remove := I.mem_remove.
+  Definition mem_arity := I.mem_arity.
+  Definition node_root := I.node_root.
+  Definition node_live := I.node_live.
+  Definition node_fun := I.node_fun.
+  Definition child_spec := I.child_spec.
+  Definition children_spec := I.children_spec.
+  Definition degree_spec := I.degree_spec.
+End ConstantNextIndex.
+
+(** A stored tuple may be deeper than the next counter under the published index interface. *)
+Module IndexFuelCounterexample (V : VALUE) (I : INDEX V).
+  Module C := ConstantNextIndex V I.
+  Lemma next_does_not_bound_stored_arity : forall v : V.t,
+    exists ix, C.wf 2 ix /\ C.mem ix [Val v; Val v] /\
+      Pos.to_nat (C.next ix) < length [Val v; Val v].
+  Proof.
+    intro v. exists (C.insert [Val v; Val v] C.empty). split.
+    - apply (C.wf_insert 2 [Val v; Val v] C.empty (C.wf_empty 2) eq_refl).
+    - split.
+      + apply (proj2 (C.mem_insert 2 [Val v; Val v] C.empty [Val v; Val v]
+          (C.wf_empty 2) eq_refl)). now left.
+      + change (1 < 2). lia.
+  Qed.
+End IndexFuelCounterexample.
