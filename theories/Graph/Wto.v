@@ -2739,6 +2739,367 @@ Qed.
 
 Local Transparent loopN scc_graph prepared_search_trace wto_check_work.
 
+
+(** Every enclosed vertex occurs in the structural order of its containing tree. *)
+Lemma wto_enclosed_vertex_member h v w :
+  wto_encloses h v w -> In v (wto_order w).
+Proof.
+  intro Henclosed. induction Henclosed; cbn [wto_order].
+  - destruct H as [Heq|Hin].
+    + subst v. now left.
+    + right. apply in_or_app. now left.
+  - now right.
+  - right. apply in_or_app. now left.
+  - right. apply in_or_app. now right.
+Qed.
+
+(** A unique concatenation has disjoint left and right inventories. *)
+Local Lemma wto_interval_disjoint {A} (first rest : list A) v :
+  NoDup (first ++ rest) -> In v first -> ~ In v rest.
+Proof.
+  induction first as [|x first IH]; [contradiction|].
+  cbn [app]. intro Hunique. inversion Hunique as [|? ? Hfresh Htail]; subst.
+  intros [Heq|Hin] Hrest.
+  - subst x. apply Hfresh. apply in_or_app. now right.
+  - exact (IH Htail Hin Hrest).
+Qed.
+
+(** Every structural subtree inherits the candidate's unique vertex inventory. *)
+Local Lemma wto_interval_subtree_unique whole tree :
+  wto_subtree whole tree -> NoDup (wto_order whole) -> NoDup (wto_order tree).
+Proof.
+  intro Htree. induction Htree; intro Hunique; [exact Hunique| | |].
+  - specialize (IHHtree Hunique). inversion IHHtree. assumption.
+  - specialize (IHHtree Hunique). inversion IHHtree as [|? ? Hfresh Htail].
+    now apply NoDup_app_remove_r in Htail.
+  - specialize (IHHtree Hunique). inversion IHHtree as [|? ? Hfresh Htail].
+    now apply NoDup_app_remove_l in Htail.
+Qed.
+
+Local Lemma wto_interval_vertex_head v tail h :
+  NoDup (wto_order (WVertex v tail)) -> ~ wto_encloses h v (WVertex v tail).
+Proof.
+  intros Hunique Henclosed. cbn [wto_order] in Hunique.
+  inversion Hunique as [|? ? Hfresh Htail]; subst.
+  inversion Henclosed as [inside rest Hmember|head rest Hinside|
+    head inside rest Hinside|head inside rest Hinside]; subst.
+  apply Hfresh. exact (wto_enclosed_vertex_member _ _ _ Hinside).
+Qed.
+
+Local Lemma wto_interval_loop_head h body tail k :
+  NoDup (wto_order (WLoop h body tail)) -> wto_encloses k h (WLoop h body tail) -> k = h.
+Proof.
+  intros Hunique Henclosed. cbn [wto_order] in Hunique.
+  inversion Hunique as [|? ? Hfresh Htail]; subst.
+  inversion Henclosed as [inside rest Hmember|head rest Hinside|
+    head inside rest Hinside|head inside rest Hinside]; subst; [reflexivity| |].
+  - exfalso. apply Hfresh. apply in_or_app. left.
+    exact (wto_enclosed_vertex_member _ _ _ Hinside).
+  - exfalso. apply Hfresh. apply in_or_app. right.
+    exact (wto_enclosed_vertex_member _ _ _ Hinside).
+Qed.
+
+Local Lemma wto_interval_loop_body h body tail k u :
+  NoDup (wto_order (WLoop h body tail)) -> In u (wto_order body) ->
+  wto_encloses k u (WLoop h body tail) -> k = h \/ wto_encloses k u body.
+Proof.
+  intros Hunique Hu Henclosed. cbn [wto_order] in Hunique.
+  inversion Hunique as [|? ? Hfresh Htail]; subst.
+  inversion Henclosed as [inside rest Hmember|head rest Hinside|
+    head inside rest Hinside|head inside rest Hinside]; subst; [now left|now right|].
+  exfalso. apply (wto_interval_disjoint (wto_order body) (wto_order tail) u Htail Hu).
+  exact (wto_enclosed_vertex_member _ _ _ Hinside).
+Qed.
+
+Local Lemma wto_interval_loop_rest h body tail k u :
+  NoDup (wto_order (WLoop h body tail)) -> In u (wto_order tail) ->
+  wto_encloses k u (WLoop h body tail) -> wto_encloses k u tail.
+Proof.
+  intros Hunique Hu Henclosed. cbn [wto_order] in Hunique.
+  inversion Hunique as [|? ? Hfresh Htail]; subst.
+  inversion Henclosed as [inside rest Hmember|head rest Hinside|
+    head inside rest Hinside|head inside rest Hinside]; subst; [| |exact Hinside].
+  - destruct Hmember as [Heq|Hin].
+    + subst u. exfalso. apply Hfresh. apply in_or_app. now right.
+    + exfalso. exact (wto_interval_disjoint _ _ _ Htail Hin Hu).
+  - exfalso. apply (wto_interval_disjoint (wto_order body) (wto_order tail) u Htail).
+    + exact (wto_enclosed_vertex_member _ _ _ Hinside).
+    + exact Hu.
+Qed.
+
+(** Enclosure of a future vertex is internal to its visit or awaits a later close. *)
+Fixpoint wto_interval_cover (whole : wto) (tasks : list wto_check_task) : Prop :=
+  match tasks with
+  | [] => True
+  | WtoCheckVisit tree :: rest =>
+      (forall h u, In u (wto_order tree) -> wto_encloses h u whole ->
+        wto_encloses h u tree \/ In (WtoCheckClose h) rest) /\
+      wto_interval_cover whole rest
+  | WtoCheckClose _ :: rest => wto_interval_cover whole rest
+  end.
+
+Local Lemma wto_interval_cover_vertex whole v tail tasks :
+  wto_interval_cover whole (WtoCheckVisit (WVertex v tail) :: tasks) ->
+  wto_interval_cover whole (WtoCheckVisit tail :: tasks).
+Proof.
+  intros [Hcover Hrest]. split; [|exact Hrest].
+  intros h u Hu Henclosed. destruct (Hcover h u (or_intror Hu) Henclosed) as [Hinside|Hclose].
+  - left. inversion Hinside; assumption.
+  - now right.
+Qed.
+
+Local Lemma wto_interval_cover_loop whole h body tail tasks :
+  NoDup (wto_order (WLoop h body tail)) ->
+  wto_interval_cover whole (WtoCheckVisit (WLoop h body tail) :: tasks) ->
+  wto_interval_cover whole
+    (WtoCheckVisit body :: WtoCheckClose h :: WtoCheckVisit tail :: tasks).
+Proof.
+  intros Hunique [Hcover Hrest]. split.
+  - intros k u Hu Henclosed.
+    assert (Hu_parent : In u (wto_order (WLoop h body tail))).
+    { right. apply in_or_app. now left. }
+    destruct (Hcover k u Hu_parent Henclosed) as [Hinside|Hclose].
+    + destruct (wto_interval_loop_body h body tail k u Hunique Hu Hinside) as [Heq|Hbody].
+      * subst k. right. now left.
+      * now left.
+    + right. now right; right.
+  - split; [|exact Hrest]. intros k u Hu Henclosed.
+    assert (Hu_parent : In u (wto_order (WLoop h body tail))).
+    { right. apply in_or_app. now right. }
+    destruct (Hcover k u Hu_parent Henclosed) as [Hinside|Hclose].
+    + left. exact (wto_interval_loop_rest h body tail k u Hunique Hu Hinside).
+    + now right.
+Qed.
+
+(** Every emitted enclosed vertex is covered by an active close or a stored interval. *)
+Definition wto_interval_seen (whole : wto) (s : wto_check_state) : Prop :=
+  forall h u ru, trie_get u (wto_check_ranks s) = Some ru -> wto_encloses h u whole ->
+  exists lo, trie_get h (wto_check_ranks s) = Some lo /\ (lo <= ru)%N /\
+    (In (WtoCheckClose h) (wto_check_tasks s) \/
+      exists hi, trie_get h (wto_check_intervals s) = Some (lo, hi) /\ (ru < hi)%N).
+
+Local Lemma wto_interval_rank_bound whole listed s u ru :
+  wto_index_invariant whole listed s -> trie_get u (wto_check_ranks s) = Some ru ->
+  (ru < wto_check_next s)%N.
+Proof.
+  intros Hinv Hget. destruct Hinv as [_ Hnext _ Hranks _ _ _ _].
+  destruct (Hranks u ru Hget) as [i [Hi [Hr Hbound]]].
+  rewrite Hr, Hnext. lia.
+Qed.
+
+(** Emitting a vertex preserves existing ranges and records all of its enclosing heads. *)
+Local Lemma wto_interval_seen_emit whole listed tasks next ranks intervals vs v tasks' :
+  wto_index_invariant whole listed (WtoCheckState tasks next ranks intervals vs) ->
+  wto_interval_seen whole (WtoCheckState tasks next ranks intervals vs) ->
+  trie_get v ranks = None ->
+  (forall h, In (WtoCheckClose h) tasks -> In (WtoCheckClose h) tasks') ->
+  (forall h, wto_encloses h v whole ->
+    (h = v /\ In (WtoCheckClose h) tasks') \/ In (WtoCheckClose h) tasks) ->
+  wto_interval_seen whole
+    (WtoCheckState tasks' (N.succ next) (PTrieCode.set v next ranks) intervals (v :: vs)).
+Proof.
+  intros Hinv Hseen Hfresh Hcloses Hnew.
+  unfold wto_interval_seen in Hseen |- *.
+  cbn [wto_check_ranks wto_check_tasks wto_check_intervals] in Hseen |- *.
+  intros h u ru Hget Henclosed.
+  destruct (wto_get_set_cases N ranks v next u ru Hget) as [[Heq Hr]|[Hdifferent Hold]].
+  - subst u ru. destruct (Hnew h Henclosed) as [[Heq Hclose]|Hclose].
+    + subst h. exists next. split; [apply PTrie.get_set_same|].
+      split; [reflexivity|now left].
+    + destruct (@index_active whole listed _ Hinv h Hclose) as [lo [Hlo Hinside]].
+      cbn [wto_check_ranks] in Hlo.
+      assert (Hne : h <> v) by (intro Heq; subst h; congruence).
+      pose proof (wto_interval_rank_bound whole listed _ h lo Hinv Hlo) as Hbound.
+      cbn [wto_check_next] in Hbound. exists lo. split.
+      * now rewrite PTrie.get_set_other by exact Hne.
+      * split; [now apply N.lt_le_incl|]. left. now apply Hcloses.
+  - destruct (Hseen h u ru Hold Henclosed) as [lo [Hlo [Hrange Hcover]]].
+    assert (Hne : h <> v) by (intro Heq; subst h; congruence).
+    exists lo. split; [now rewrite PTrie.get_set_other by exact Hne|].
+    split; [exact Hrange|]. destruct Hcover as [Hclose|Hclosed]; [left; now apply Hcloses|now right].
+Qed.
+
+(** Closing a loop replaces its active coverage by the interval ending at the next rank. *)
+Local Lemma wto_interval_seen_close whole listed tasks next ranks intervals vs h start :
+  wto_index_invariant whole listed
+    (WtoCheckState (WtoCheckClose h :: tasks) next ranks intervals vs) ->
+  wto_interval_seen whole
+    (WtoCheckState (WtoCheckClose h :: tasks) next ranks intervals vs) ->
+  trie_get h ranks = Some start ->
+  wto_interval_seen whole
+    (WtoCheckState tasks next ranks (PTrieCode.set h (start, next) intervals) vs).
+Proof.
+  intros Hinv Hseen Hstart. unfold wto_interval_seen in Hseen |- *.
+  cbn [wto_check_ranks wto_check_tasks wto_check_intervals] in Hseen |- *.
+  intros head u ru Hget Henclosed.
+  destruct (Hseen head u ru Hget Henclosed) as [lo [Hlo [Hrange Hcover]]].
+  destruct (Pos.eq_dec head h) as [Heq|Hne].
+  - subst head. assert (lo = start) by congruence. subst lo.
+    exists start. split; [exact Hstart|]. split; [exact Hrange|]. right.
+    exists next. split; [apply PTrie.get_set_same|].
+    exact (wto_interval_rank_bound whole listed _ u ru Hinv Hget).
+  - exists lo. split; [exact Hlo|]. split; [exact Hrange|].
+    destruct Hcover as [[Heq|Hclose]|[hi [Hinterval Hbound]]].
+    + injection Heq as Heq. congruence.
+    + now left.
+    + right. exists hi. split; [now rewrite PTrie.get_set_other by exact Hne|exact Hbound].
+Qed.
+
+Definition wto_interval_invariant whole listed s : Prop :=
+  wto_index_invariant whole listed s /\ wto_interval_cover whole (wto_check_tasks s) /\
+    wto_interval_seen whole s.
+
+Definition wto_interval_result whole listed
+    (result : option (ptrie N * ptrie (N * N) * list positive)) : Prop :=
+  match result with
+  | None => True
+  | Some (ranks, intervals, vs) => exists s,
+      wto_interval_invariant whole listed s /\ wto_check_tasks s = [] /\
+      wto_check_ranks s = ranks /\ wto_check_intervals s = intervals /\
+      rev (wto_check_vertices s) = vs
+  end.
+
+Local Lemma wto_interval_seen_tasks whole tasks tasks' next ranks intervals vs :
+  (forall h, In (WtoCheckClose h) tasks -> In (WtoCheckClose h) tasks') ->
+  wto_interval_seen whole (WtoCheckState tasks next ranks intervals vs) ->
+  wto_interval_seen whole (WtoCheckState tasks' next ranks intervals vs).
+Proof.
+  intros Htasks Hseen. unfold wto_interval_seen in Hseen |- *.
+  cbn [wto_check_ranks wto_check_tasks wto_check_intervals] in Hseen |- *.
+  intros h u ru Hget Henclosed. destruct (Hseen h u ru Hget Henclosed) as [lo [Hlo [Hrange Hcover]]].
+  exists lo. split; [exact Hlo|]. split; [exact Hrange|].
+  destruct Hcover; [left; now apply Htasks|now right].
+Qed.
+
+(** Successful index transitions retain complete enclosure coverage. *)
+Lemma wto_interval_step whole width listed s :
+  NoDup (wto_order whole) -> wto_interval_invariant whole listed s ->
+  match wto_check_step width listed s with
+  | inl next => wto_interval_invariant whole listed next
+  | inr result => wto_interval_result whole listed result
+  end.
+Proof.
+  intros Hunique [Hinv [Hcover Hseen]].
+  pose proof (wto_index_step whole width listed s Hinv) as Hchecked.
+  destruct s as [tasks next ranks intervals vs].
+  cbn [wto_check_tasks] in Hcover.
+  destruct tasks as [|task tasks].
+  - cbn [wto_check_step wto_interval_result].
+    exists (WtoCheckState [] next ranks intervals vs). split.
+    + split; [exact Hinv|]. now split.
+    + repeat split; try reflexivity. now rewrite rev_append_rev, app_nil_r.
+  - destruct task as [tree|h].
+    + destruct tree as [|v tail|h body tail].
+      * cbn [wto_check_step] in Hchecked |- *. split; [exact Hchecked|].
+        split; [exact (proj2 Hcover)|].
+        eapply wto_interval_seen_tasks; [|exact Hseen].
+        intros head [Heq|Hin]; [discriminate|exact Hin].
+      * cbn [wto_check_step] in Hchecked |- *.
+        destruct (wto_key_fits width v); [|exact I].
+        destruct (trie_get v listed) as [b|] eqn:Hlisted; [|exact I].
+        destruct (trie_get v ranks) as [r|] eqn:Hfresh; [exact I|].
+        split; [exact Hchecked|]. split.
+        -- now apply wto_interval_cover_vertex in Hcover.
+        -- eapply wto_interval_seen_emit; [exact Hinv|exact Hseen|exact Hfresh| |].
+           ++ intros head [Heq|Hin]; [discriminate|]. now right.
+           ++ intros head Henclosed.
+              destruct (proj1 Hcover head v (or_introl eq_refl) Henclosed) as [Hinside|Hclose].
+              ** exfalso. apply (wto_interval_vertex_head v tail head); [|exact Hinside].
+                 apply (wto_interval_subtree_unique whole _); [|exact Hunique].
+                 apply (@index_origins whole listed _ Hinv). now left.
+              ** right. now right.
+      * cbn [wto_check_step] in Hchecked |- *.
+        destruct (wto_key_fits width h); [|exact I].
+        destruct (trie_get h listed) as [b|] eqn:Hlisted; [|exact I].
+        destruct (trie_get h ranks) as [r|] eqn:Hfresh; [exact I|].
+        assert (Hcurrent : NoDup (wto_order (WLoop h body tail))).
+        { apply (wto_interval_subtree_unique whole _); [|exact Hunique].
+          apply (@index_origins whole listed _ Hinv). now left. }
+        split; [exact Hchecked|]. split.
+        -- now apply wto_interval_cover_loop.
+        -- eapply wto_interval_seen_emit; [exact Hinv|exact Hseen|exact Hfresh| |].
+           ++ intros head [Heq|Hin]; [discriminate|]. now right; right; right.
+           ++ intros head Henclosed.
+              destruct (proj1 Hcover head h (or_introl eq_refl) Henclosed) as [Hinside|Hclose].
+              ** left. split; [exact (wto_interval_loop_head h body tail head Hcurrent Hinside)|].
+                 assert (head = h) by exact (wto_interval_loop_head h body tail head Hcurrent Hinside).
+                 subst head. now right; left.
+              ** right. now right.
+    + cbn [wto_check_step] in Hchecked |- *.
+      destruct (trie_get h ranks) as [lo|] eqn:Hlo; [|exact I].
+      split; [exact Hchecked|]. split; [exact Hcover|].
+      eapply wto_interval_seen_close; eassumption.
+Qed.
+
+(** The empty index has no emitted enclosure obligation. *)
+Lemma wto_interval_initial whole listed :
+  wto_interval_invariant whole listed
+    (WtoCheckState [WtoCheckVisit whole] 0 Empty Empty []).
+Proof.
+  split; [apply wto_index_initial|]. split.
+  - split; [intros h u Hu Henclosed; now left|exact I].
+  - intros h u ru Hget Henclosed. cbn [wto_check_ranks] in Hget.
+    rewrite PTrie.get_empty in Hget. discriminate.
+Qed.
+
+Local Lemma wto_interval_loop whole width listed fuel :
+  forall s, NoDup (wto_order whole) -> wto_interval_invariant whole listed s ->
+  match loop_fuel (wto_check_step width listed) fuel s with
+  | inl _ => True
+  | inr result => wto_interval_result whole listed result
+  end.
+Proof.
+  induction fuel as [|fuel IH]; intros s Hunique Hinv; [exact I|].
+  cbn [loop_fuel]. pose proof (wto_interval_step whole width listed s Hunique Hinv) as Hstep.
+  destruct (wto_check_step width listed s) as [next|result].
+  - apply IH; assumption.
+  - exact Hstep.
+Qed.
+
+Local Opaque loopN.
+
+Lemma wto_interval_run whole fuel width listed s :
+  NoDup (wto_order whole) -> wto_interval_invariant whole listed s ->
+  match loopN (wto_check_step width listed) fuel s with
+  | inl _ => True
+  | inr result => wto_interval_result whole listed result
+  end.
+Proof.
+  rewrite search_loopN_fuel. apply wto_interval_loop.
+Qed.
+
+(** Every structural enclosure is represented by the successful numeric interval index. *)
+Lemma wto_check_index_complete_intervals fuel width listed w ranks intervals vs :
+  wto_check_index fuel width listed [WtoCheckVisit w] 0 Empty Empty [] =
+    Some (ranks, intervals, vs) ->
+  forall h u, wto_encloses h u w ->
+    exists lo hi ru, trie_get h intervals = Some (lo, hi) /\
+      trie_get u ranks = Some ru /\ (lo <= ru < hi)%N.
+Proof.
+  intro Hindex.
+  destruct (wto_check_index_spec fuel width listed w ranks intervals vs Hindex)
+    as [Hunique [Horder [Hdomain Hedge]]].
+  pose proof (wto_interval_run w fuel width listed
+    (WtoCheckState [WtoCheckVisit w] 0 Empty Empty []) Hunique
+    (wto_interval_initial w listed)) as Hresult.
+  unfold wto_check_index in Hindex.
+  destruct (loopN (wto_check_step width listed) fuel
+    (WtoCheckState [WtoCheckVisit w] 0 Empty Empty [])) as [s|result]; [discriminate|].
+  destruct result as [[[ranks' intervals'] vs']|]; [|discriminate].
+  inversion Hindex; subst.
+  destruct Hresult as [[tasks next ranks' intervals' seen]
+    [[Hinv [Hcover Hseen]] [Htasks [Hranks [Hintervals Hvs]]]]].
+  cbn [wto_check_tasks wto_check_ranks wto_check_intervals wto_check_vertices] in *.
+  subst tasks ranks' intervals'.
+  intros h u Henclosed.
+  destruct (proj2 (Hdomain u) (wto_enclosed_vertex_member h u w Henclosed)) as [ru Hru].
+  destruct (Hseen h u ru Hru Henclosed) as [lo [Hlo [Hlower [Hactive|[hi [Hinterval Hupper]]]]]].
+  - contradiction.
+  - exists lo, hi, ru. auto.
+Qed.
+
+Local Transparent loopN.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
