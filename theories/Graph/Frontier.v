@@ -1814,6 +1814,73 @@ Proof.
       repeat rewrite Nat2N.inj_add. lia.
 Qed.
 
+(** Iteration preserves an invariant when stopped states remain fixed. *)
+Lemma frontier_iter_invariant {S R : Type} (step : S -> S + R)
+    (Inv : S -> Prop) :
+  (forall st next, Inv st -> step st = inl next -> Inv next) ->
+  forall initial, Inv initial -> forall n,
+    Inv (Nat.iter n (fun st => match step st with inl next => next | inr _ => st end)
+      initial).
+Proof.
+  intros Hcontinue initial Hinitial n. induction n as [|n IH]; [exact Hinitial|].
+  rewrite Nat.iter_succ. destruct (step (Nat.iter n
+    (fun st => match step st with inl next => next | inr _ => st end) initial))
+    as [next|result] eqn:Hstep; [eapply Hcontinue; eassumption|exact IH].
+Qed.
+
+(** Every normal bounded-loop return occurs at a finite deterministic trace position. *)
+Lemma frontier_loopN_trace {S R : Type} (step : S -> S + R) : forall fuel initial result,
+  loopN step fuel initial = inr result ->
+  exists n st,
+    Nat.iter n (fun st => match step st with inl next => next | inr _ => st end) initial = st /\
+    step st = inr result.
+Proof.
+  intros fuel initial result Hrun.
+  set (advance := fun state => match step state with inl next => next | inr _ => state end).
+  assert (Hcontinue : forall st next,
+    (exists n, Nat.iter n advance initial = st) -> step st = inl next ->
+    exists n, Nat.iter n advance initial = next).
+  { intros st next [n Hreach] Hstep. exists (Nat.succ n). rewrite Nat.iter_succ, Hreach.
+    unfold advance. now rewrite Hstep. }
+  assert (Hstop : forall st answer,
+    (exists n, Nat.iter n advance initial = st) -> step st = inr answer ->
+    exists n state, Nat.iter n advance initial = state /\ step state = inr answer).
+  { intros st answer [n Hreach] Hstep. exists n, st. now split. }
+  pose proof (frontier_loopN_invariant step
+    (fun st => exists n, Nat.iter n advance initial = st)
+    (fun answer => exists n st, Nat.iter n advance initial = st /\ step st = inr answer)
+    Hcontinue Hstop fuel initial (ex_intro _ 0 eq_refl)) as Htrace.
+  rewrite Hrun in Htrace. exact Htrace.
+Qed.
+
+Lemma frontier_iter_fixed {S : Type} (advance : S -> S) : forall st,
+  advance st = st -> forall n, Nat.iter n advance st = st.
+Proof.
+  intros st Hfixed n. induction n as [|n IH]; [reflexivity|].
+  rewrite Nat.iter_succ, IH. exact Hfixed.
+Qed.
+
+(** Two stopped points on one deterministic trace return exactly the same result. *)
+Lemma frontier_trace_result {S R : Type} (step : S -> S + R) :
+  forall initial n m st st' result result',
+  Nat.iter n (fun state => match step state with inl next => next | inr _ => state end)
+    initial = st ->
+  Nat.iter m (fun state => match step state with inl next => next | inr _ => state end)
+    initial = st' ->
+  step st = inr result -> step st' = inr result' -> result = result'.
+Proof.
+  intros initial n m st st' result result' Hreach Hreach' Hstop Hstop'.
+  set (advance := fun state => match step state with inl next => next | inr _ => state end)
+    in Hreach, Hreach'.
+  assert (Hfixed : advance st = st) by (unfold advance; now rewrite Hstop).
+  assert (Hfixed' : advance st' = st') by (unfold advance; now rewrite Hstop').
+  assert (Hsame : st = st').
+  { transitivity (Nat.iter (m + n) advance initial).
+    - rewrite Nat.iter_add, Hreach. symmetry. now apply frontier_iter_fixed.
+    - rewrite Nat.add_comm, Nat.iter_add, Hreach'. now apply frontier_iter_fixed. }
+  subst st'. congruence.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
@@ -1865,8 +1932,8 @@ Module FrontierT <: FRONTIER_ALL.
   TimeFun df_column.
   Definition df_transpose := df_transpose.
   TimeFun df_transpose.
-  Definition k_df_step : N := 1. (* STUB *)
-  Definition k_df_stop : N := 1. (* STUB *)
+  Definition k_df_step : N := frontier_step_cost.
+  Definition k_df_stop : N := 16.
   Definition k_df_column : N := frontier_column_cost.
   Definition k_df_transpose : N := frontier_transpose_cost.
   Definition k_df : N := 16.
@@ -1918,13 +1985,43 @@ Module FrontierT <: FRONTIER_ALL.
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inl next ->
     df_invariant g t y next /\ (df_potential g t y next < df_potential g t y st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r y st next Hgraph Hprepared Htree Hy Hinv Hstep.
+    assert (Hvalid : df_valid g t y st).
+    { destruct Hinv as [[n <-] Hrest].
+      exact (frontier_iter_invariant (df_step g t y) (df_valid g t y)
+        (fun state next Hvalid Hstep =>
+          df_valid_step g t r y state next Hgraph Htree Hvalid Hstep)
+        (df_initial g y) (df_valid_initial g t y Hprepared) n). }
+    pose proof (df_valid_step g t r y st next Hgraph Htree Hvalid Hstep) as Hnext.
+    split.
+    - destruct Hinv as [[n Hreach] Hrest].
+      refine (conj _ (conj (df_valid_unique _ _ _ _ Hnext)
+        (conj (df_valid_marks _ _ _ _ Hnext) (conj _ _)))).
+      + exists (S n). rewrite Nat.iter_succ, Hreach. unfold df_advance. now rewrite Hstep.
+      + exact (df_valid_answer_subset g t r y next Hgraph Hprepared Htree Hnext).
+      + exact (df_valid_pending_nodes _ _ _ _ Hnext).
+    - change (N.of_nat (df_column_progress g t y next) <
+        N.of_nat (df_column_progress g t y st))%N.
+      pose proof (df_column_progress_step g t r y st next
+        Hgraph Hprepared Htree Hvalid Hstep). lia.
+  Qed.
 
   Lemma F3_df_stop : forall g t r y st result,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inr result ->
     df_pending st = [] /\ result = rev (df_column_answer st) /\ result = df_column g t y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r y st result Hgraph Hprepared Htree Hy [[n Hreach] Hrest] Hstep.
+    destruct (df_step_stopping g t y st result Hstep) as [Hpending Hresult].
+    split; [exact Hpending|]. split; [exact Hresult|].
+    destruct (df_column_finished g t r y Hgraph Hprepared Htree)
+      as [finished [answer [Hvalid [Hstop [Hrun Hcolumn]]]]].
+    destruct (frontier_loopN_trace (df_step g t y) _ _ _ Hrun)
+      as [m [finished' [Hreach' Hstop']]].
+    unfold df_column. rewrite Hcolumn. exact (frontier_trace_result (df_step g t y)
+      (df_initial g y) n m st finished' result answer Hreach Hreach' Hstep Hstop').
+  Qed.
 
   Lemma F4_df_driver : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
@@ -1981,13 +2078,35 @@ Module FrontierT <: FRONTIER_ALL.
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inl next ->
     (T_df_step g t y st + df_credit g t y next + c_loopN <= df_credit g t y st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r y st next Hgraph Hprepared Htree Hy Hinv Hstep.
+    pose proof (proj2 (F2_df_step g t r y st next
+      Hgraph Hprepared Htree Hy Hinv Hstep)) as Hdecrease.
+    destruct Hinv as [Hreach [Hunique [Hmarks [Hsubset Hpending]]]].
+    destruct st as [pending seen answer]. destruct pending as [|x rest];
+      [discriminate Hstep|].
+    pose proof (dom_listed_key_width g y Hy) as Hywidth.
+    pose proof (dom_listed_key_width g x (Hpending x (or_introl eq_refl))) as Hxwidth.
+    pose proof (frontier_df_step_time g t y x rest seen answer
+      (graph_width (base g)) Hxwidth Hywidth) as Htime.
+    unfold df_credit, k_df_step. time_unfold T_df_step. nia.
+  Qed.
 
   Lemma T2_df_stop : forall g t r y st result,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
     df_invariant g t y st -> df_step g t y st = inr result ->
     (T_df_step g t y st <= k_df_stop * N.of_nat (length (df_column g t y) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r y st result Hgraph Hprepared Htree Hy Hinv Hstep.
+    destruct (df_step_stopping g t y st result Hstep) as [Hpending Hresult].
+    destruct Hinv as [Hreach [Hunique [Hmarks [Hsubset Hnodes]]]].
+    assert (Hlength : length (df_column_answer st) <= length (df_column g t y)).
+    { eapply NoDup_incl_length; eassumption. }
+    destruct st as [pending seen answer]. cbn [df_pending df_column_answer] in Hpending, Hlength.
+    subst pending. pose proof (frontier_df_stop_time g t y seen answer) as Htime.
+    unfold k_df_stop. time_unfold T_df_step.
+    repeat rewrite Nat2N.inj_add in Htime. repeat rewrite Nat2N.inj_add. lia.
+  Qed.
 
   Lemma T3_df_loop : forall g t r y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
