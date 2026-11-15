@@ -7297,12 +7297,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
           exists f, k, i, v. split; [now apply (proj1 (Hrows f k i))|].
           now split.
   Qed.
-  Lemma T_best_le : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
-    (T_best cs db <= c_ex *
-      N.of_nat (inventory_bits cs + (R db + 1) * (a db + 1) +
-        (R db + 1) * (Nat.log2 (R db) + 1)) *
-      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
-  Proof. Admitted. (* STUB *)
+
 
   Definition checker_row_budget (db : D.t) : N :=
     4 * (D.c_db + 1) * N.of_nat (D.unit db + 1).
@@ -8323,11 +8318,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     exact (initial_registration_potential cs db Hwf Hcanonical Hinventory).
   Qed.
 
-  Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
-    (T_initial cs db + heap_potential (initial cs db) <= k_step *
-      N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
-      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
-  Proof. Admitted. (* STUB *)
+
 
   (** Every continuing reachable step spends the internal credit at the public row allowance. *)
   Lemma extraction_step_amort : forall cs db s next,
@@ -8360,13 +8351,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     clear - Hgeneric Hallowance. lia.
   Qed.
 
-  Lemma T1_step_amort : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
-    reachable cs db s -> knuth_inv db s ->
-    step cs db s = inl s' ->
-    (T_step cs db s + heap_potential s' <= heap_potential s + k_step *
-      N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
-      N.of_nat (cost_width db + 1))%N.
-  Proof. Admitted. (* STUB *)
+
 
   (** A stopping search reads cached queue size and returns the stored table. *)
   Lemma T_step_stopped_le : forall cs db s out, step cs db s = inr out ->
@@ -8490,6 +8475,72 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) by ring.
     assert (Hconstant : c_ex = (4 * k_step)%N) by (unfold c_ex, k_step; ring).
     rewrite Hshape, Hconstant. exact Htotal.
+  Qed.
+
+  (** The state's immutable database supplies the fixed parameters of its internal credit. *)
+  Definition extraction_observer_potential (s : state) : N :=
+    extraction_potential (search_database s) s.
+
+  (** The proposed specification observer gives initialization precisely its proved credit. *)
+  Lemma T_initial_observer_potential : forall cs db,
+    D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    (T_initial cs db + extraction_observer_potential (initial cs db) <= k_step *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    assert (Hreach : reachable cs db (initial cs db)).
+    { unfold reachable. apply rt_refl. }
+    unfold extraction_observer_potential.
+    rewrite (proj1 (reachable_source cs db (initial cs db) Hreach)).
+    exact (T_initial_potential cs db Hwf Hcanonical Hinventory).
+  Qed.
+
+  (** The proposed specification observer uses the same fixed credit parameters across a step. *)
+  Lemma T_step_observer_potential : forall cs db s next,
+    D.wf db -> D.canonical db -> ctor_inventory cs db -> reachable cs db s ->
+    step cs db s = inl next ->
+    (T_step cs db s + extraction_observer_potential next <= extraction_observer_potential s +
+      k_step * N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+      N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db s next Hwf Hcanonical Hinventory Hreach Hstep.
+    assert (Hnext : reachable cs db next).
+    { unfold reachable in *. eapply rt_trans; [exact Hreach|]. now apply rt_step. }
+    unfold extraction_observer_potential.
+    rewrite (proj1 (reachable_source cs db s Hreach)), (proj1 (reachable_source cs db next Hnext)).
+    exact (extraction_step_amort cs db s next Hwf Hcanonical Hinventory Hreach Hstep).
+  Qed.
+
+  Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    (T_initial cs db + heap_potential (initial cs db) <= k_step *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    eapply N.le_trans; [|exact (T_initial_observer_potential cs db Hwf Hcanonical Hinventory)].
+    unfold heap_potential, extraction_observer_potential. lia.
+  Qed.
+
+  Lemma T1_step_amort : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    reachable cs db s -> knuth_inv db s ->
+    step cs db s = inl s' ->
+    (T_step cs db s + heap_potential s' <= heap_potential s + k_step *
+      N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+      N.of_nat (cost_width db + 1))%N.
+  Proof. Admitted. (* OPEN: genuine observer bound is proved; its required TimeFun needs an owner ruling. *)
+
+  Lemma T_best_le : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    (T_best cs db <= c_ex *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + 1) +
+        (R db + 1) * (Nat.log2 (R db) + 1)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    apply (T_best_potential_bound cs db (extraction_potential db) Hwf Hcanonical Hinventory).
+    - exact (T_initial_potential cs db Hwf Hcanonical Hinventory).
+    - intros s next Hreach Hstep.
+      exact (extraction_step_amort cs db s next Hwf Hcanonical Hinventory Hreach Hstep).
   Qed.
 
 End ExtractT.
