@@ -3861,6 +3861,37 @@ Proof.
 Qed.
 
 
+(** Prefix ownership closure combines with the independent strong-block invariant. *)
+Lemma scc_prefix_components_closed g prefix suffix : scc_trace g = prefix ++ suffix ->
+  (forall u v i, trie_get u (tarjan_owners
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial)) = Some i ->
+    edge (base g) u v -> exists j, trie_get v (tarjan_owners
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial)) = Some j /\
+      (j <= i)%positive) ->
+  let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial in
+  Forall (fun block => block <> [] /\
+    (forall u v, In u block -> In v block -> mutually_reachable (base g) u v) /\
+    (forall u v, In u block -> edge (base g) u v -> In v (concat (tarjan_emitted result))))
+    (tarjan_emitted result).
+Proof.
+  intros Htrace Hrank. cbn zeta.
+  pose proof (scc_trace_prefix_unique g prefix suffix Htrace) as Hunique.
+  pose proof (tarjan_emitted_nonempty prefix) as Hnonempty.
+  pose proof (scc_prefix_semantic g prefix suffix Htrace) as Hsemantic.
+  pose proof (tarjan_semantic_output _ _ Hsemantic) as Hstrong.
+  apply Forall_forall. intros block Hblock. split.
+  - rewrite Forall_forall in Hnonempty. exact (Hnonempty block Hblock).
+  - split.
+    + intros u v Hu Hv. exact (Hstrong block Hblock u v Hu Hv).
+    + intros u v Hu Huv.
+      assert (Hu_emitted : In u (concat (tarjan_emitted
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge prefix tarjan_initial)))).
+      { apply in_concat. now exists block. }
+      apply (proj2 (tarjan_owners_domain prefix u Hunique)) in Hu_emitted.
+      destruct Hu_emitted as [i Hi]. destruct (Hrank u v i Hi Huv) as [j [Hj Hbound]].
+      apply (proj1 (tarjan_owners_domain prefix v Hunique)). now exists j.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
@@ -4738,11 +4769,6 @@ Module SccT <: SCC_ALL.
       now rewrite !N.mul_0_r.
   Qed.
 
-  Lemma F4_prefix : forall g prefix suffix,
-    wf_graph (base g) -> tarjan_trace g = prefix ++ suffix ->
-    invariant g prefix (prefix_state prefix).
-  Proof. Admitted. (* STUB *)
-
   (** Actual prefixes keep the inventory and widths that the cost proof reads. *)
   Lemma F4b_prefix_cost : forall g prefix suffix,
     tarjan_trace g = prefix ++ suffix ->
@@ -4771,6 +4797,20 @@ Module SccT <: SCC_ALL.
       apply Forall_forall. intros v Hin. apply search_entered_member in Hin.
       pose proof (scc_trace_prefix_width g prefix suffix Htrace) as Hwidth.
       rewrite Forall_forall in Hwidth. exact (Hwidth (Enter v) Hin).
+  Qed.
+
+  Lemma F4_prefix : forall g prefix suffix,
+    wf_graph (base g) -> tarjan_trace g = prefix ++ suffix ->
+    invariant g prefix (prefix_state prefix).
+  Proof.
+    intros g prefix suffix Hwf Htrace.
+    unfold invariant. split; [reflexivity|].
+    destruct (F4b_prefix_cost g prefix suffix Htrace) as [Hinventory Hwidth].
+    split; [exact Hinventory|]. split; [exact Hwidth|].
+    unfold emitted_closed, prefix_state, tarjan_enter, tarjan_leave,
+      tarjan_edge, tarjan_initial.
+    apply (scc_prefix_components_closed g prefix suffix Htrace).
+    exact (tarjan_prefix_rank g prefix suffix Hwf Htrace).
   Qed.
 
   Lemma F5_pop : forall root index pending low active owners members tail low' active' owners',
