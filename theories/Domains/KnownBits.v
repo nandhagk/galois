@@ -3515,6 +3515,48 @@ Proof.
 Qed.
 TimeBound tnum_not_time.
 
+(** Computing a power of two uses a constant-cost doubling callback. *)
+Lemma tnum_pow2_time : forall n, 0 <= n ->
+  (Word.Z.T_pow 2 n <= 8 * N.of_nat (Z.to_nat n + 1))%N.
+Proof.
+  intros [|p|p] Hn; [| |lia].
+  - time_unfold Word.Z.T_pow. time_cbn. nia.
+  - pose proof (Std.Pos.T_iter_le (Z.mul 2) (fun x => Std.Z.T_mul 2 x) (fun _ => True)
+      3 1 p (fun _ _ => I) (fun x _ => Std.Z.T_mul_two_le x) I) as Hiter.
+    time_unfold Word.Z.T_pow. time_unfold Word.Z.T_pow_pos. time_cbn.
+    cbn [Z.to_nat]. rewrite Nat2N.inj_add.
+    change (N.of_nat (Pos.to_nat p)) with (N.of_nat (N.to_nat (N.pos p))).
+    rewrite N2Nat.id.
+    nia.
+Qed.
+TimeBound tnum_pow2_time.
+
+(** Constructing the word modulus performs linearly many doublings. *)
+Lemma tnum_modulus_time : forall w,
+  (T_modulus w <= 16 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w. pose proof (tnum_pow2_time (Zpos w) ltac:(lia)) as Hpow.
+  time_unfold T_modulus. time_cbn.
+  change (Word.Z.T_pow 2 (Zpos w) <= 8 * N.of_nat (Pos.to_nat w + 1))%N in Hpow.
+  nia.
+Qed.
+TimeBound tnum_modulus_time.
+
+(** The word modulus occupies the width and one leading bit. *)
+Lemma tnum_modulus_bits : forall w, (Z.size_nat (modulus w) <= Pos.to_nat w + 1)%nat.
+Proof. intro w. apply (tnum_pow2_bits (Zpos w) ltac:(lia)). Qed.
+
+(** Constructing the contradictory payload is linear in the word width. *)
+Lemma tnum_bot_time : forall w,
+  (T_tnum_bot w <= 64 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w. pose proof (tnum_modulus_bits w) as Hbits.
+  time_unfold T_tnum_bot. time_cbn. time_pose.
+  change (Z.size_nat (Z.pow_pos 2 w) <= Pos.to_nat w + 1)%nat in Hbits.
+  cbn [Z.size_nat Pos.size_nat] in *. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_bot_time.
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
@@ -4020,66 +4062,132 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
   Definition psize (w : positive) (a : p) : nat := Pos.to_nat w + tnum_bits a + 1.
   Definition pwsize (_ : pwparam) : nat := 0.
 
-  Definition c_payload : N := 1. (* STUB *)
+  (** Bottom-aware inclusion reads the two stored payloads linearly. *)
+  Local Lemma pleb_time : forall w a b,
+    (T_pleb w a b <=
+      1024 * N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+  Proof.
+    intros w a b. time_unfold T_pleb. time_cbn. time_pose.
+    unfold tnum_bits in *. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  Definition c_payload : N := 2 * 1024.
   Definition c_tnum : N := 1. (* STUB *)
   Lemma T_ptop_le : forall w,
     (T_ptop w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_ptop. time_unfold T_tnum_top. time_cbn.
+    unfold c_payload. cbn [Nat.pow]. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
+  Qed.
   Lemma T_pbot_le : forall w,
     (T_pbot w <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. time_unfold T_pbot. time_cbn. time_pose.
+    unfold c_payload. cbn [Nat.pow]. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
+  Qed.
   Lemma ptop_size : forall w,
     (N.of_nat (psize w (ptop w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. pose proof (tnum_top_bits w) as Hbits.
+    unfold c_payload, psize, ptop, pbot, pconst. cbn [Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
+  Qed.
   Lemma pbot_size : forall w,
     (N.of_nat (psize w (pbot w)) <= c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. pose proof (tnum_bot_bits w) as Hbits.
+    unfold c_payload, psize, ptop, pbot, pconst. cbn [Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
+  Qed.
   Lemma pconst_size : forall w z,
     (N.of_nat (psize w (pconst w z)) <=
       c_payload * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. pose proof (tnum_const_bits w z) as Hbits.
+    unfold c_payload, psize, ptop, pbot, pconst. cbn [Nat.pow].
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
+  Qed.
   Lemma pjoin_size : forall w a b,
     (N.of_nat (psize w (pjoin w a b)) <= c_payload *
       N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_join_bits_bound w a b) as Hbits.
+    unfold c_payload, psize, pjoin, pmeet. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma pmeet_size : forall w a b,
     (N.of_nat (psize w (pmeet w a b)) <= c_payload *
       N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (tnum_meet_bits w a b) as Hbits.
+    unfold c_payload, psize, pjoin, pmeet. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma pwiden_size : forall q w a b,
     (N.of_nat (psize w (pwiden q w a b)) <= c_payload *
       N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a).
+    - unfold c_payload, psize, pwsize. rewrite !Nat2N.inj_add. nia.
+    - pose proof (tnum_join_bits_bound w a b) as Hbits.
+      unfold c_payload, psize, pwsize, pjoin. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma pnarrow_size : forall w a b,
     (N.of_nat (psize w (pnarrow w a b)) <= c_payload *
       N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. unfold pnarrow, c_payload. nia.
+  Qed.
   Lemma T_pwiden_le : forall q w a b,
     (T_pwiden q w a b <= c_payload *
       N.of_nat (psize w a + psize w b + pwsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. pose proof (pleb_time w b a) as Hle.
+    time_unfold T_pwiden. time_unfold T_pjoin. time_cbn. time_pose.
+    destruct (pleb w b a); unfold c_payload, psize, pwsize;
+      rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_pnarrow_le : forall w a b,
     (T_pnarrow w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. time_unfold T_pnarrow. time_cbn. time_pose.
+    unfold c_payload, psize. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T_pleb_le : forall w a b,
     (T_pleb w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. pose proof (pleb_time w a b) as Htime.
+    unfold c_payload, psize. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T_pjoin_le : forall w a b,
     (T_pjoin w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. time_unfold T_pjoin. time_cbn. time_pose.
+    unfold c_payload, psize. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T_pmeet_le : forall w a b,
     (T_pmeet w a b <= c_payload * N.of_nat (psize w a + psize w b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. time_unfold T_pmeet. time_cbn. time_pose.
+    unfold c_payload, psize. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T_pis_bot_le : forall w a,
     (T_pis_bot w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. time_unfold T_pis_bot. time_cbn. time_pose.
+    unfold c_payload, psize. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T_ppoint_le : forall w a,
     (T_ppoint w a <= c_payload * N.of_nat (psize w a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. time_unfold T_ppoint. time_cbn. time_pose.
+    unfold c_payload, psize. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
   Lemma T_pconst_le : forall w z,
     (T_pconst w z <= c_payload *
       N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. time_unfold T_pconst. time_cbn. time_pose.
+    unfold c_payload. cbn [Nat.pow]. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *. nia.
+  Qed.
 
   Lemma T_tnum_normalise_le : forall w a,
     (T_tnum_normalise w a <= c_tnum *
