@@ -4,7 +4,7 @@
     For example, a system key uses its existing code for both encoding and equality.
     Builds on: Base.KeySig and Fixpoint.SystemSig. *)
 
-From Stdlib Require Import Bool PArith NArith.
+From Stdlib Require Import Bool PArith NArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
@@ -28,7 +28,9 @@ Module SystemKey (L : LATTICE) (S : SYSTEM L) <: KEY.
 
   (** Equality of codes decides equality of system keys. *)
   Theorem eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact S.key_eqb_spec.
+  Qed.
 End SystemKey.
 
 (** Row operations use codes whose injectivity is scoped to each program's listed rows.
@@ -43,15 +45,23 @@ Module SystemKeyT (L : LATTICE_T) (S : SYSTEM_T L) <: KEY_T.
   Include SystemKey L S.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := S.c_sys.
+  Definition c_key : N := S.c_sys + 1.
 
   (** Encoding uses the system's code budget. *)
   Lemma T_encode_le : forall x,
     (T_encode x <= c_key * N.of_nat (bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro x. pose proof (S.T_key_code_le x) as Hencode.
+    unfold c_key, bits, encode, S.key_bits in *.
+    time_unfold T_encode. rewrite Nat2N.inj_add in *. nia.
+  Qed.
 
   (** Equality uses the system's first-operand budget. *)
   Lemma T_eqb_le : forall a b,
     (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. pose proof (S.T_key_eqb_le a b) as Hcompare.
+    unfold c_key, bits, encode, S.key_bits in *.
+    time_unfold T_eqb. rewrite Nat2N.inj_add in *. nia.
+  Qed.
 End SystemKeyT.
