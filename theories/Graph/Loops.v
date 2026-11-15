@@ -1239,6 +1239,137 @@ Proof.
 Qed.
 
 
+(** Key operations and loop dispatch have one fixed unit scale. *)
+Local Definition loop_body_unit_cost : N := (PTrieT.c_trie + c_loopN + 1)%N.
+Local Definition loop_body_step_cost : N := (64 * loop_body_unit_cost)%N.
+
+Local Lemma loop_predecessor_listed : forall g u v,
+  prepared_ok g -> In u (preds g v) -> In u (nodes g).
+Proof.
+  intros g u v [_ [_ Hpred]] Hin. apply (Permutation_in u (Hpred v)) in Hin.
+  apply in_flat_map in Hin. destruct Hin as [source [Hsource Hrow]].
+  apply in_map_iff in Hrow. destruct Hrow as [target [Heq Htarget]]. now subst source.
+Qed.
+
+Local Lemma loop_vertex_width_member : forall vertices v,
+  In v vertices -> Pos.size_nat v <= vertex_width vertices.
+Proof.
+  intros vertices. induction vertices as [|u rest IH]; intros v Hin; [contradiction|].
+  unfold vertex_width at 1. cbn [fold_right]. fold (vertex_width rest).
+  change graph_max with Nat.max. destruct Hin as [<-|Hin].
+  - apply Nat.le_max_l.
+  - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
+Qed.
+
+Local Lemma loop_listed_width : forall g v,
+  In v (nodes g) -> Pos.size_nat v <= graph_width (base g).
+Proof.
+  intros [[vertices adjacency] predecessors vertex_count edge_count] v Hin.
+  cbn [nodes base graph_width] in Hin |- *. change graph_max with Nat.max.
+  eapply Nat.le_trans; [exact (loop_vertex_width_member vertices v Hin)|apply Nat.le_max_l].
+Qed.
+
+Local Lemma loop_filter_clock_bound {A : Type} (test : A -> bool) (clock : A -> N) :
+  forall xs cost,
+  (forall x, In x xs -> (clock x <= cost)%N) ->
+  (List.T_filter test clock xs <= (cost + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros cost Hclock.
+  - time_unfold List.T_filter. cbn [length]. lia.
+  - pose proof (Hclock x (or_introl eq_refl)) as Hhead.
+    specialize (IH cost (fun y Hy => Hclock y (or_intror Hy))).
+    time_unfold List.T_filter. cbn [length]. rewrite Nat2N.inj_succ.
+    destruct (test x); lia.
+Qed.
+
+Local Lemma loop_preds_clock : forall g v,
+  (T_preds g v <= 2 * N.of_nat (Pos.size_nat v) + 1)%N.
+Proof.
+  intros [graph predecessors vertex_count edge_count] v.
+  unfold T_preds. time_simpl. rewrite PTrieT.trie_get_clock. lia.
+Qed.
+
+(** Retiring an already marked or unreachable task only reads its two key cells. *)
+Local Lemma loop_body_skip_clock : forall g t h v rest seen answer width,
+  Pos.size_nat v <= width ->
+  (trie_get v seen = Some tt \/ trie_get v (pre t) = None) ->
+  (T_body_step g t h (LoopBodyState (v :: rest) seen answer) + c_loopN + 1 <=
+    loop_body_step_cost * N.of_nat (width + 1))%N.
+Proof.
+  intros g t h v rest seen answer width Hv Hskip.
+  apply time_of_nat_le in Hv. unfold loop_body_step_cost, loop_body_unit_cost.
+  unfold T_body_step, T_pre. time_simpl. rewrite !PTrieT.trie_get_clock.
+  rewrite Nat2N.inj_add. destruct Hskip as [Hseen|Hpre].
+  - rewrite Hseen. destruct (trie_get v (pre t)); nia.
+  - rewrite Hpre. destruct (trie_get v seen); nia.
+Qed.
+
+(** A fresh task charges each filtered predecessor and append cell once. *)
+Local Lemma loop_body_fresh_clock : forall g t h v rest seen answer width a,
+  Pos.size_nat v <= width ->
+  (forall u, In u (preds g v) -> Pos.size_nat u <= width) ->
+  trie_get v seen = None -> trie_get v (pre t) = Some a ->
+  (T_body_step g t h (LoopBodyState (v :: rest) seen answer) + c_loopN + 1 <=
+    loop_body_step_cost * N.of_nat (width + 1) * N.of_nat (length (preds g v) + 1))%N.
+Proof.
+  intros g t h v rest seen answer width a Hv Hwidth Hseen Hpre.
+  pose proof (PTrieT.T_set_le unit v tt seen) as Hset.
+  pose proof (loop_preds_clock g v) as Hpreds.
+  pose proof (filter_length_le (fun u => match trie_get u (pre t) with
+    | Some _ => true | None => false end) (preds g v)) as Hlength.
+  apply time_of_nat_le in Hv.
+  unfold T_body_step, T_pre. time_simpl. rewrite Hseen, Hpre.
+  rewrite !PTrieT.trie_get_clock.
+  match goal with
+  | |- context [List.T_filter ?test ?clock (preds g v)] =>
+      assert (Hfilter : (List.T_filter test clock (preds g v) <=
+        (8 * N.of_nat (width + 1) + 1) * N.of_nat (length (preds g v)) + 1)%N)
+  end.
+  { apply loop_filter_clock_bound. intros u Hin.
+    pose proof (Hwidth u Hin) as Hu. apply time_of_nat_le in Hu.
+    cbn beta. rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia. }
+  match goal with
+  | |- context [Datatypes.T_app ?xs rest] =>
+      pose proof (Datatypes.T_app_le xs rest) as Happ
+  end.
+  unfold loop_body_step_cost, loop_body_unit_cost.
+  rewrite !Nat2N.inj_add in Hset, Hfilter |- *. nia.
+Qed.
+
+Local Lemma loop_body_fresh_work : forall g vertices v rest seen,
+  NoDup vertices -> In v vertices -> trie_get v seen = None -> forall queued,
+  length queued <= length (preds g v) ->
+  2 * loop_unseen_work (fun x => 2 + length (preds g x)) vertices
+        (PTrieCode.set v tt seen) + length (queued ++ rest) + length (preds g v) + 1 <=
+    2 * loop_unseen_work (fun x => 2 + length (preds g x)) vertices seen +
+      length (v :: rest).
+Proof.
+  intros g vertices v rest seen Hunique Hin Hfresh queued Hlength.
+  pose proof (loop_unseen_work_fresh (fun x => 2 + length (preds g x))
+    vertices seen v Hunique Hin Hfresh) as Hwork.
+  rewrite length_app, Hwork. cbn beta. cbn [length]. lia.
+Qed.
+
+Local Lemma loop_body_step_behavior : forall g t h v rest seen answer next,
+  body_step g t h (LoopBodyState (v :: rest) seen answer) = inl next ->
+  (next = LoopBodyState rest seen answer /\
+    (trie_get v seen = Some tt \/ trie_get v (pre t) = None)) \/
+  exists a, next = LoopBodyState
+    (filter (fun u => match trie_get u (pre t) with
+      | Some _ => true | None => false end) (preds g v) ++ rest)
+    (PTrieCode.set v tt seen) (v :: answer) /\
+    trie_get v seen = None /\ trie_get v (pre t) = Some a.
+Proof.
+  intros g t h v rest seen answer next Hstep. cbn [body_step] in Hstep.
+  destruct (trie_get v seen) as [[]|] eqn:Hseen;
+    destruct (trie_get v (pre t)) as [a|] eqn:Hpre; injection Hstep as <-.
+  - left. split; [reflexivity|now left].
+  - left. split; [reflexivity|now left].
+  - right. exists a. repeat split; reflexivity.
+  - left. split; [reflexivity|now right].
+Qed.
+
+
 (** A present parentless vertex of an exact tree is its distinguished root. *)
 Local Lemma loop_exact_root_iff g t r v : domtree_exact g r t ->
   ((exists n, trie_get v (pre t) = Some n) /\ trie_get v (idom t) = None <-> v = r).
@@ -1537,7 +1668,7 @@ Module LoopsT <: LOOPS_ALL.
   Definition k_tree_step : N := 1. (* STUB *)
   Definition k_tree_stop : N := 8.
   Definition k_classify : N := 1. (* STUB *)
-  Definition k_body_step : N := 1. (* STUB *)
+  Definition k_body_step : N := loop_body_step_cost.
   Definition k_body_stop : N := 8.
   Definition k_collect : N := 1. (* STUB *)
   Definition k_install : N := 1. (* STUB *)
@@ -2031,11 +2162,75 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat (graph_width (base g) + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  Local Lemma body_retire_amort : forall g t h v rest seen answer,
+    Pos.size_nat v <= graph_width (base g) ->
+    (trie_get v seen = Some tt \/ trie_get v (pre t) = None) ->
+    (T_body_step g t h (LoopBodyState (v :: rest) seen answer) +
+      body_credit g t h (LoopBodyState rest seen answer) + c_loopN <=
+      body_credit g t h (LoopBodyState (v :: rest) seen answer))%N.
+  Proof.
+    intros g t h v rest seen answer Hwidth Hskip.
+    pose proof (loop_body_skip_clock g t h v rest seen answer _ Hwidth Hskip) as Hclock.
+    unfold T_body_step. time_simpl.
+    unfold body_credit, body_potential, body_white, k_body_step.
+    cbn [loop_body_seen loop_body_pending length]. rewrite !Nat2N.inj_add.
+    nia.
+  Qed.
+
+  Local Lemma body_fresh_amort : forall g t r h v rest seen answer a,
+    wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
+    Pos.size_nat v <= graph_width (base g) -> In v (collected g t h) ->
+    trie_get v seen = None -> trie_get v (pre t) = Some a ->
+    (T_body_step g t h (LoopBodyState (v :: rest) seen answer) +
+      body_credit g t h
+        (LoopBodyState (filter (fun u => match trie_get u (pre t) with
+          | Some _ => true | None => false end) (preds g v) ++ rest)
+          (PTrieCode.set v tt seen) (v :: answer)) + c_loopN <=
+      body_credit g t h (LoopBodyState (v :: rest) seen answer))%N.
+  Proof.
+    intros g t r h v rest seen answer a Hgraph Hprepared Htree Hheader
+      Hwidth Hin Hseen Hpre.
+    assert (Hpredwidth : forall u, In u (preds g v) ->
+      Pos.size_nat u <= graph_width (base g)).
+    { intros u Hu. apply loop_listed_width. now apply (loop_predecessor_listed g u v). }
+    pose proof (loop_body_fresh_clock g t h v rest seen answer _ a
+      Hwidth Hpredwidth Hseen Hpre) as Hclock.
+    pose proof (filter_length_le (fun u => match trie_get u (pre t) with
+      | Some _ => true | None => false end) (preds g v)) as Hlength.
+    pose proof (loop_body_fresh_work g (collected g t h) v rest seen
+      (proj1 (F10_body_exact g t r h Hgraph Hprepared Htree Hheader)) Hin Hseen _ Hlength)
+      as Hwork.
+    rewrite length_app in Hwork. cbn [length] in Hwork.
+    apply time_of_nat_le in Hwork. rewrite !Nat2N.inj_add in Hwork, Hclock.
+    unfold T_body_step. time_simpl.
+    unfold body_credit, body_potential, body_white, k_body_step.
+    cbn [loop_body_seen loop_body_pending]. rewrite length_app.
+    cbn [length]. rewrite !Nat2N.inj_add.
+    unfold loop_unseen_work in Hwork. cbn beta in Hwork. nia.
+  Qed.
+
   Lemma T4_body_step : forall g t r h st next,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
     body_invariant g t r h st -> body_step g t h st = inl next ->
     (T_body_step g t h st + body_credit g t h next + c_loopN <= body_credit g t h st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r h [pending seen answer] next Hgraph Hprepared Htree Hheader Hinv Hstep.
+    pose proof (F8_body_step g t r h _ next Hgraph Hprepared Htree Hheader Hinv Hstep)
+      as [Hnext _].
+    destruct Hinv as [_ [_ [_ [_ [_ Hpending]]]]].
+    destruct Hnext as [_ [_ [_ [_ [Hsubset _]]]]].
+    destruct pending as [|v rest]; [discriminate Hstep|].
+    assert (Hwidth : Pos.size_nat v <= graph_width (base g)).
+    { apply loop_listed_width. rewrite loop_nodes_verts.
+      apply (loop_reachable_listed (base g) r v Hgraph (proj1 Htree)).
+      now apply Hpending; left. }
+    destruct (loop_body_step_behavior g t h v rest seen answer next Hstep)
+      as [[-> Hskip]|[a [-> [Hseen Hpre]]]].
+    - now apply body_retire_amort.
+    - apply (body_fresh_amort g t r h v rest seen answer a); try assumption.
+      apply Hsubset. now left.
+  Qed.
+
 
   Lemma T5_body_stop : forall g t r h st result,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In h (headers g t) ->
