@@ -2810,14 +2810,41 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     invariant g roots st -> Forall (event_width w) (trace g roots) ->
     vertex_width roots <= w -> search_step (base g) st = inl next ->
     (T_search_step (base g) st <= k_step * N.of_nat (w + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st next w Hcounts Hgraph Hroots Hinv Hwidth Hrootwidth Hstep.
+    assert (Hkeys : forall v, reach (base g) roots v -> Pos.size_nat v <= w).
+    { intros v Hreach.
+      apply (proj2 (trace_reach g roots v Hcounts Hgraph Hroots)) in Hreach.
+      apply search_entered_member in Hreach.
+      rewrite Forall_forall in Hwidth. exact (Hwidth (Enter v) Hreach). }
+    pose proof (proj1 (machine_reach g roots st (proj1 Hinv))) as Hreachable.
+    assert (Htasks : Forall (search_task_valid (fun v => Pos.size_nat v <= w))
+      (search_tasks st)).
+    { eapply Forall_impl; [|exact Hreachable].
+      intros task Htask. destruct task as [v|u row|v]; cbn [search_task_valid] in *.
+      - now apply Hkeys.
+      - destruct Htask as [Hu Hrow]. split; [now apply Hkeys|].
+        eapply Forall_impl; [exact Hkeys|exact Hrow].
+      - now apply Hkeys. }
+    pose proof (search_step_clock (base g) st next w Htasks Hstep) as Hclock.
+    unfold k_step. time_unfold @T_search_step. lia.
+  Qed.
 
   Lemma T2_stop : forall g roots st es,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     (T_search_step (base g) st <= stop_budget g roots)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st es Hcounts Hgraph Hroots Hinv Hstop.
+    pose proof (search_stop_clock (base g) st es Hstop) as Hclock.
+    destruct (F5_stop g roots st es Hcounts Hgraph Hroots Hinv Hstop) as [_ Hevents].
+    rewrite Hevents in Hclock.
+    assert (Hfactor : (5 <= k_trace)%N) by (unfold k_trace; nia).
+    assert (Hlength : (1 <= N.of_nat (length (trace g roots) + 1))%N) by lia.
+    unfold stop_budget. time_unfold @T_search_step.
+    clear - Hclock Hfactor Hlength. nia.
+  Qed.
 
   Lemma T3_loop : forall g roots w,
     counts_ok g -> wf_graph (base g) ->
@@ -2827,7 +2854,18 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       (search_budget g roots) (initial roots) <=
     c_loopN * (driver_credit g roots w (initial roots) + stop_budget g roots +
       N.of_nat (N.size_nat (search_budget g roots)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots w Hcounts Hgraph Hroots Hwidth Hrootwidth.
+    eapply T_loopN_le with (Inv := invariant g roots).
+    - intros st next Hinv Hstep.
+      destruct (F4_step g roots st next Hcounts Hgraph Hroots Hinv Hstep)
+        as [Hnext Hdecrease]. split; [exact Hnext|].
+      pose proof (T1_step g roots st next w Hcounts Hgraph Hroots Hinv
+        Hwidth Hrootwidth Hstep) as Hclock.
+      unfold driver_credit. clear - Hclock Hdecrease. nia.
+    - intros st es Hinv Hstop. eapply T2_stop; eassumption.
+    - exact (proj1 (F3_initial g roots Hcounts Hgraph Hroots)).
+  Qed.
 
   Lemma T4_trace : forall g roots w,
     counts_ok g -> wf_graph (base g) ->
