@@ -1559,6 +1559,385 @@ Proof.
     exact Htotal.
 Qed.
 
+Lemma val_fold_right_uniform {A B} : forall (f : A -> B -> B) Tf xs k,
+  (forall x acc, In x xs -> (Tf x acc <= k)%N) -> forall initial,
+  (List.T_fold_right f Tf initial xs <= (k + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros f Tf xs; induction xs as [|x rest IH]; intros k Hbound initial.
+  - time_step.
+  - pose proof (Hbound x (fold_right f initial rest) ltac:(left; reflexivity)) as Hhead.
+    specialize (IH k ltac:(intros y state Hin; apply Hbound; right; exact Hin) initial).
+    time_step.
+Qed.
+
+Lemma val_cfg_clock {E} vs es (src dst : E -> positive) Tsrc Tdst c w :
+  (forall e, In e es -> Pos.size_nat (src e) <= w) ->
+  (forall e, In e es -> (Tsrc e <= c)%N) ->
+  (forall e, In e es -> (Tdst e <= c)%N) ->
+  (T_cfg_graph vs es src Tsrc dst Tdst <=
+    (PTrieT.c_trie + 2 * c + 8) * N.of_nat (length es) * N.of_nat (w + 1) + 2)%N.
+Proof.
+  intros Hwidth Hsrc Hdst. time_unfold @T_cfg_graph.
+  lazymatch goal with
+  | |- context [List.T_fold_right ?f ?Tf ?initial ?xs] =>
+    pose proof (val_fold_right_uniform f Tf xs
+      ((PTrieT.c_trie + 2 * c + 5) * N.of_nat (w + 1))%N
+      ltac:(intros e rows Hin;
+        pose proof (Hwidth e Hin) as Hkey;
+        pose proof (Hsrc e Hin) as Hs;
+        pose proof (Hdst e Hin) as Hd;
+        pose proof (PTrieT.T_set_le (list positive) (src e)
+          (dst e :: index_row rows (src e)) rows) as Hset;
+        time_simpl; rewrite PTrieT.trie_get_clock;
+        change (1 + (Tsrc e + (Tdst e +
+          (2 * N.of_nat (Pos.size_nat (src e))) +
+          PTrieCode.T_set (src e) (dst e :: index_row rows (src e)) rows)) <=
+          (PTrieT.c_trie + 2 * c + 5) * N.of_nat (w + 1))%N;
+        rewrite !Nat2N.inj_add in *; nia) initial) as Hfold
+  end.
+  rewrite Nat2N.inj_add in *; nia.
+Qed.
+
+Lemma val_exit_uses_clock {G} (e : exit positive G) :
+  (T_exit_uses e <= 4 * N.of_nat (length (exit_uses e) + 1))%N.
+Proof.
+  destruct e as [target actuals|guard operands yes ys no ns|values].
+  - unfold T_exit_uses; cbn [exit_uses]; nia.
+  - pose proof (Datatypes.T_app_le ys ns) as Hargs.
+    pose proof (Datatypes.T_app_le operands (ys ++ ns)) as Hoperands.
+    unfold T_exit_uses; cbn [exit_uses]. rewrite !length_app, !Nat2N.inj_add in *; nia.
+  - unfold T_exit_uses; cbn [exit_uses]; nia.
+Qed.
+
+Lemma val_flat_map_output_clock {A B} (f : A -> list B) Tf k xs :
+  (forall x, In x xs -> (Tf x <= k * N.of_nat (length (f x) + 1))%N) ->
+  (Code.List.T_flat_map f Tf xs <=
+    (k + 4) * N.of_nat (length xs + length (flat_map f xs) + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hcallback.
+  - time_unfold Code.List.T_flat_map; cbn [length flat_map]; nia.
+  - pose proof (Hcallback x (or_introl eq_refl)) as Hhead.
+    specialize (IH (fun y Hy => Hcallback y (or_intror Hy))).
+    pose proof (Datatypes.T_app_le (f x) (flat_map f rest)) as Happend.
+    time_unfold Code.List.T_flat_map; cbn [flat_map length]. rewrite length_app.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+Qed.
+
+Lemma val_block_defs_vars {K G} (body : block positive K G) x :
+  In x (block_defs body) -> In x (val_body_vars body).
+Proof.
+  unfold block_defs, val_body_vars. intro Hin; apply in_app_or in Hin as [Hp|Hc].
+  - apply in_or_app; left; exact Hp.
+  - apply in_or_app; right; apply in_or_app; left.
+    apply in_map_iff in Hc as [[[dst op] args] [Heq Hin]]. cbn in Heq; subst dst.
+    apply in_flat_map; exists (x, op, args); split; [exact Hin|now left].
+Qed.
+
+Lemma val_block_defs_count {K G} (body : block positive K G) :
+  length (block_defs body) <= length (val_body_vars body).
+Proof.
+  unfold block_defs, val_body_vars. rewrite !length_app, length_map, val_code_vars_length; lia.
+Qed.
+
+Lemma val_block_defs_clock {K G} (body : block positive K G) :
+  (T_block_defs body <= 8 * N.of_nat (length (block_defs body) + 1))%N.
+Proof.
+  pose proof (ListDef.T_map_le (fun i : positive * K * list positive => fst (fst i))
+    (fun i => (1 + (Datatypes.T_fst i + Datatypes.T_fst (fst i)))%N)
+    3%N (code _ _ _ body) ltac:(intros; reflexivity)) as Hmap.
+  pose proof (Datatypes.T_app_le (params _ _ _ body)
+    (map (fun i => fst (fst i)) (code _ _ _ body))) as Happend.
+  unfold Datatypes.T_fst in Hmap.
+  time_unfold @T_block_defs. time_simpl.
+  unfold block_defs; rewrite length_app, length_map, !Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+
+Lemma val_home_rows_length {K G} (bs : list (positive * block positive K G)) :
+  length (val_home_rows bs) = length (flat_map (fun item => block_defs (snd item)) bs).
+Proof.
+  unfold val_home_rows. induction bs as [|item rest IH]; [reflexivity|].
+  cbn [flat_map]. rewrite !length_app, length_map, IH. reflexivity.
+Qed.
+
+Lemma val_function_defs_count {K G} (s : func positive K G) :
+  length (inputs _ _ _ s ++ flat_map (fun item => block_defs (snd item)) (blocks _ _ _ s)) <=
+    length (function_vars s).
+Proof.
+  unfold function_vars; rewrite !length_app. apply Nat.add_le_mono_l.
+  induction (blocks _ _ _ s) as [|item rest IH]; [reflexivity|].
+  cbn [flat_map]; rewrite !length_app. apply Nat.add_le_mono; [|exact IH].
+  pose proof (val_block_defs_count (snd item)) as Hhead.
+  unfold val_body_vars in Hhead; rewrite !length_app in Hhead; exact Hhead.
+Qed.
+
+Lemma val_home_rows_clock {K G} (bs : list (positive * block positive K G)) :
+  (T_val_home_rows bs <= 64 * N.of_nat (length bs + length (val_home_rows bs) + 1))%N.
+Proof.
+  time_unfold @T_val_home_rows.
+  lazymatch goal with
+  | |- context [Code.List.T_flat_map ?f ?Tf ?xs] =>
+    pose proof (val_flat_map_output_clock f Tf 32%N xs
+      ltac:(intros item Hin;
+        pose proof (val_block_defs_clock (snd item)) as Hdefs;
+        pose proof (ListDef.T_map_le (fun x : positive => (x, fst item))
+          (fun _ : positive => (1 + Datatypes.T_fst item)%N) 2%N
+          (block_defs (snd item)) ltac:(intros; reflexivity)) as Hmap;
+        unfold Datatypes.T_fst in Hmap;
+        time_simpl; rewrite length_map, !Nat2N.inj_add in *; nia)) as Hflat
+  end.
+  unfold val_home_rows; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+
+(** A positive aggregate absorbs the fixed cost without enlarging the row count. *)
+Lemma val_positive_cost : forall time count total coefficient extra width,
+  (time <= coefficient * N.of_nat count * width + extra)%N -> count <= total ->
+  1 <= total -> (1 <= width)%N ->
+  (time <= (coefficient + extra) * (N.of_nat total * width))%N.
+Proof.
+  intros time count total coefficient extra width Htime Hcount Htotal Hwidth.
+  assert (Hmain : (coefficient * N.of_nat count * width <=
+    coefficient * (N.of_nat total * width))%N).
+  { replace (coefficient * (N.of_nat total * width))%N with
+      (coefficient * N.of_nat total * width)%N by ring.
+    apply N.mul_le_mono_r; apply N.mul_le_mono_l; lia. }
+  assert (Hunit : (1 <= N.of_nat total * width)%N) by nia.
+  assert (Hextra : (extra <= extra * (N.of_nat total * width))%N).
+  { replace extra with (extra * 1)%N at 1 by ring.
+    apply N.mul_le_mono_l; exact Hunit. }
+  eapply N.le_trans; [exact Htime|].
+  replace ((coefficient + extra) * (N.of_nat total * width))%N with
+    (coefficient * (N.of_nat total * width) + extra * (N.of_nat total * width))%N by ring.
+  apply N.add_le_mono; assumption.
+Qed.
+
+Lemma val_unscaled_cost : forall time count total coefficient extra width,
+  (time <= coefficient * N.of_nat count + extra)%N -> count <= total ->
+  1 <= total -> (1 <= width)%N ->
+  (time <= (coefficient + extra) * (N.of_nat total * width))%N.
+Proof.
+  intros time count total coefficient extra width Htime Hcount Htotal Hwidth.
+  apply (val_positive_cost time count total coefficient extra width); try assumption.
+  eapply N.le_trans; [exact Htime|]. apply N.add_le_mono_r.
+  replace (coefficient * N.of_nat count)%N with (coefficient * N.of_nat count * 1)%N at 1 by ring.
+  apply N.mul_le_mono_l; exact Hwidth.
+Qed.
+
+
+
+Lemma val_ssa_counts {K G} (s : func positive K G) :
+  length (blocks _ _ _ s) +
+    length (inputs _ _ _ s ++ flat_map (fun item => block_defs (snd item)) (blocks _ _ _ s)) <=
+      function_size s.
+Proof.
+  pose proof (val_function_defs_count s) as Hdefs.
+  unfold function_size; lia.
+Qed.
+
+Lemma val_defs_flat_clock {K G} (bs : list (positive * block positive K G)) :
+  (Code.List.T_flat_map (fun item => block_defs (snd item))
+    (fun item => (1 + (Datatypes.T_snd item + T_block_defs (snd item)))%N) bs <=
+    16 * N.of_nat (length bs + length (flat_map (fun item => block_defs (snd item)) bs) + 1))%N.
+Proof.
+  eapply N.le_trans.
+  - apply (val_flat_map_output_clock _ _ 12%N).
+    intros item Hin. pose proof (val_block_defs_clock (snd item)) as Hdefs.
+    unfold Datatypes.T_snd. rewrite Nat2N.inj_add in *; nia.
+  - reflexivity.
+Qed.
+
+Lemma val_home_key_width {K G} (s : func positive K G) x b :
+  In (x, b) (val_home_rows (blocks _ _ _ s)) -> Pos.size_nat x <= function_width s.
+Proof.
+  unfold val_home_rows; intro Hin.
+  apply in_flat_map in Hin as [[id body] [Hbody Hin]]. cbn [snd] in Hin.
+  apply in_map_iff in Hin as [y [Heq Hy]]. cbn [fst] in Heq.
+  injection Heq as Heqx Heqb; subst y id.
+  apply (val_body_var_width s b body x Hbody); now apply val_block_defs_vars.
+Qed.
+
+Lemma val_home_size {K G} (s : func positive K G) :
+  length (blocks _ _ _ s) + length (val_home_rows (blocks _ _ _ s)) <= function_size s.
+Proof.
+  rewrite val_home_rows_length.
+  pose proof (val_ssa_counts s) as Hcounts; rewrite length_app in Hcounts; lia.
+Qed.
+
+
+
+Definition val_target_budget (env_sizes live_sizes : ptrie nat) (allowance : nat)
+    (target : positive) : bool :=
+  Nat.leb (val_size env_sizes target) allowance &&
+    Nat.leb (val_size live_sizes target) allowance.
+TimeFun val_target_budget.
+
+Definition val_block_budget {K G} (env_sizes live_sizes : ptrie nat)
+    (item : positive * block positive K G) : bool :=
+  let allowance := length (code _ _ _ (snd item)) + val_size env_sizes (fst item) +
+    val_size live_sizes (fst item) + 1 in
+  forallb (val_target_budget env_sizes live_sizes allowance)
+    (exit_targets (term _ _ _ (snd item))).
+TimeFun val_block_budget.
+
+Lemma val_target_budget_time : forall env_sizes live_sizes allowance target w,
+  1 <= allowance -> Pos.size_nat target <= w ->
+  (T_val_target_budget env_sizes live_sizes allowance target <=
+    16 * N.of_nat allowance * N.of_nat (w + 1))%N.
+Proof.
+  intros env_sizes live_sizes allowance target w Hpositive Hwidth.
+  pose proof (val_size_time env_sizes target w Hwidth) as Henv.
+  pose proof (val_size_time live_sizes target w Hwidth) as Hlive.
+  pose proof (val_nat_leb_right (val_size env_sizes target) allowance) as Henv_le.
+  pose proof (val_nat_leb_right (val_size live_sizes target) allowance) as Hlive_le.
+  assert (Hw : (1 <= N.of_nat (w + 1))%N) by lia.
+  time_unfold T_val_target_budget; time_simpl; nia.
+Qed.
+
+Lemma val_block_budget_time {K G} : forall env_sizes live_sizes
+    (item : positive * block positive K G) w,
+  Pos.size_nat (fst item) <= w ->
+  (forall target, In target (exit_targets (term _ _ _ (snd item))) ->
+    Pos.size_nat target <= w) ->
+  (T_val_block_budget env_sizes live_sizes item <=
+    128 * N.of_nat (length (code _ _ _ (snd item)) + val_size env_sizes (fst item) +
+      val_size live_sizes (fst item) + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros env_sizes live_sizes [b body] w Hb Htargets; cbn [fst snd] in *.
+  set (allowance := length (code _ _ _ body) + val_size env_sizes b +
+    val_size live_sizes b + 1).
+  assert (Hpositive : 1 <= allowance) by (unfold allowance; lia).
+  pose proof (val_size_time env_sizes b w Hb) as Henv.
+  pose proof (val_size_time live_sizes b w Hb) as Hlive.
+  pose proof (val_allowance_time (code _ _ _ body)
+    (val_size env_sizes b) (val_size live_sizes b)) as Hallowance.
+  fold allowance in Hallowance.
+  time_unfold @T_val_block_budget; time_simpl; fold allowance.
+  lazymatch goal with
+  | |- context [List.T_forallb ?f ?Tf ?targets] =>
+    pose proof (val_forallb_uniform f Tf targets
+      (16 * N.of_nat allowance * N.of_nat (w + 1))%N
+      ltac:(intros target Hin; apply val_target_budget_time;
+        [exact Hpositive|apply Htargets; exact Hin])) as Hscan
+  end.
+  pose proof (val_exit_targets_length (term _ _ _ body)) as Hlength.
+  assert (Hw : (1 <= N.of_nat (w + 1))%N) by lia.
+  assert (Hscan' : (List.T_forallb
+    (val_target_budget env_sizes live_sizes allowance)
+    (fun target => T_val_target_budget env_sizes live_sizes allowance target)
+    (exit_targets (term _ _ _ body)) <=
+      40 * N.of_nat allowance * N.of_nat (w + 1))%N).
+  { eapply N.le_trans; [exact Hscan|].
+    eapply N.le_trans with (m :=
+      ((16 * N.of_nat allowance * N.of_nat (w + 1) + 2) * 2 + 1)%N).
+    - apply N.add_le_mono_r; apply N.mul_le_mono_l;
+        change (N.of_nat (length (exit_targets (term _ _ _ body))) <= N.of_nat 2)%N;
+        apply val_nat_mono; exact Hlength.
+    - nia. }
+  clear Hscan Hlength Hb Htargets; cbn [fst snd]; fold allowance; nia.
+Qed.
+
+Lemma val_block_budget_cached_time {K G} : forall c (item : positive * block positive K G) w,
+  Pos.size_nat (fst item) <= w ->
+  (forall target, In target (exit_targets (term _ _ _ (snd item))) ->
+    Pos.size_nat target <= w) ->
+  (T_val_block_budget (val_row_sizes (fst c)) (val_row_sizes (snd c)) item <=
+    128 * N.of_nat (val_row_charge c item) * N.of_nat (w + 1))%N.
+Proof.
+  intros c item w Hb Htargets.
+  pose proof (val_block_budget_time (val_row_sizes (fst c)) (val_row_sizes (snd c))
+    item w Hb Htargets) as Hblock.
+  rewrite (val_row_sizes_lookup (fst c) (fst item)),
+    (val_row_sizes_lookup (snd c) (fst item)) in Hblock.
+  exact Hblock.
+Qed.
+
+Lemma val_cert_env_units c :
+  length (fst c) + fold_right (fun item n => length (snd item) + n) 0 (fst c) <= cert_size c.
+Proof.
+  eapply Nat.le_trans; [|exact (val_cert_units c)].
+  rewrite <- Nat.add_assoc; apply Nat.le_add_r.
+Qed.
+
+Lemma val_cert_live_units c :
+  length (snd c) + fold_right (fun item n => length (snd item) + n) 0 (snd c) <= cert_size c.
+Proof.
+  eapply Nat.le_trans; [|exact (val_cert_units c)].
+  rewrite <- Nat.add_assoc; apply Nat.le_add_l.
+Qed.
+
+
+Definition val_rows_budget {K G} (p : func positive K G) (c : cert) : bool :=
+  let env_sizes := val_row_sizes (fst c) in
+  let live_sizes := val_row_sizes (snd c) in
+  forallb (val_block_budget env_sizes live_sizes) (first_blocks (blocks _ _ _ p)).
+TimeFun val_rows_budget.
+
+Lemma val_rows_budget_time {K G} : forall (p : func positive K G) c w,
+  function_width p <= w -> vertex_width (cert_ids c) <= w ->
+  (T_val_rows_budget p c <= (8 * PTrieT.c_trie + 2048) *
+    N.of_nat (function_size p + cert_size c + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros p c w Hfunction Hcert.
+  pose proof (val_row_sizes_time (fst c) w
+    ltac:(intros b row Hin; pose proof (val_cert_env_width c b row Hin); lia)) as Henv.
+  pose proof (val_row_sizes_time (snd c) w
+    ltac:(intros b row Hin; pose proof (val_cert_live_width c b row Hin); lia)) as Hlive.
+  pose proof (val_first_time (blocks _ _ _ p) w
+    ltac:(intros b body Hin; pose proof (val_block_width p b body Hin); lia)) as Hfirst.
+  assert (Hwidth : (1 <= N.of_nat (w + 1))%N) by lia.
+  pose proof (val_forallb_charge
+    (val_block_budget (val_row_sizes (fst c)) (val_row_sizes (snd c)))
+    (fun item => T_val_block_budget (val_row_sizes (fst c)) (val_row_sizes (snd c)) item)
+    (val_row_charge c) (first_blocks (blocks _ _ _ p)) 128%N (N.of_nat (w + 1)) Hwidth
+    ltac:(intros item Hin; unfold val_row_charge; lia)
+    ltac:(intros [b body] Hin; apply val_block_budget_cached_time;
+      rewrite val_first_selected in Hin; apply val_selected_in in Hin as [Hin _];
+      cbn [fst snd];
+      [pose proof (val_block_width p b body Hin); lia|
+       intros target Htarget; pose proof (val_target_width p b body target Hin Htarget); lia]))
+    as Hscan.
+  pose proof (val_row_charge_sum p c) as Hcharge.
+  assert (Hblocks : length (blocks _ _ _ p) <= function_size p)
+    by (unfold function_size; lia).
+  set (size := N.of_nat (function_size p + cert_size c + 1)).
+  set (width := N.of_nat (w + 1)).
+  assert (Henv' : (T_val_row_sizes (fst c) <= (PTrieT.c_trie + 10) * size * width + 3)%N).
+  { eapply N.le_trans; [exact Henv|]; apply N.add_le_mono_r;
+      apply N.mul_le_mono_r; apply N.mul_le_mono_l; unfold size; apply val_nat_mono.
+    eapply Nat.le_trans; [apply val_cert_env_units|].
+    replace (function_size p + cert_size c + 1) with
+      (cert_size c + (function_size p + 1)) by ring; apply Nat.le_add_r. }
+  assert (Hlive' : (T_val_row_sizes (snd c) <= (PTrieT.c_trie + 10) * size * width + 3)%N).
+  { eapply N.le_trans; [exact Hlive|]; apply N.add_le_mono_r;
+      apply N.mul_le_mono_r; apply N.mul_le_mono_l; unfold size; apply val_nat_mono.
+    eapply Nat.le_trans; [apply val_cert_live_units|].
+    replace (function_size p + cert_size c + 1) with
+      (cert_size c + (function_size p + 1)) by ring; apply Nat.le_add_r. }
+  assert (Hfirst' : (T_first_blocks (blocks _ _ _ p) <=
+    (PTrieT.c_trie + 16) * size * width)%N).
+  { eapply N.le_trans; [exact Hfirst|]; apply N.mul_le_mono_r;
+      apply N.mul_le_mono_l; unfold size; apply val_nat_mono; apply Nat.add_le_mono_r.
+    eapply Nat.le_trans; [exact Hblocks|apply Nat.le_add_r]. }
+  assert (Hscan' : (List.T_forallb
+    (val_block_budget (val_row_sizes (fst c)) (val_row_sizes (snd c)))
+    (fun item => T_val_block_budget (val_row_sizes (fst c)) (val_row_sizes (snd c)) item)
+    (first_blocks (blocks _ _ _ p)) <= 132 * size * width)%N).
+  { eapply N.le_trans; [exact Hscan|]; apply N.mul_le_mono_r;
+      apply N.mul_le_mono_l; unfold size; apply val_nat_mono; apply Nat.add_le_mono_r; exact Hcharge. }
+  pose proof (N.add_le_mono _ _ _ _ Henv' Hlive') as Hrows.
+  pose proof (N.add_le_mono _ _ _ _ Hrows Hfirst') as Hprepared.
+  pose proof (N.add_le_mono _ _ _ _ Hprepared Hscan') as Htotal.
+  lazymatch type of Htotal with
+  | (_ <= ?rhs)%N => replace rhs with
+      ((3 * PTrieT.c_trie + 168) * size * width + 6)%N in Htotal by ring
+  end.
+  assert (Hsize : (1 <= size)%N) by (unfold size; lia).
+  clear Henv Hlive Hfirst Hscan Henv' Hlive' Hfirst' Hscan' Hrows Hprepared
+    Hcharge Hblocks Hfunction Hcert.
+  time_unfold @T_val_rows_budget; time_simpl; fold size width; fold width in Hwidth.
+  clearbody size width; unfold PTrieT.c_trie in *; nia.
+Qed.
+
 Module ValidateCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
     (P : TYPE with Definition t := func positive O.K O.G)
@@ -2362,6 +2741,257 @@ Module ValidateT (O : OPS)
       | Branch g _ _ _ _ _ => G.bits g
       | _ => 0
       end + n) 0 (blocks _ _ _ p).
+
+
+  Lemma row_budget_clock p c : T_row_budget p c = T_val_rows_budget p c.
+  Proof. reflexivity. Qed.
+
+  Lemma ssa_graph_node_width s b : In b (C.nodes (R.prepare s)) ->
+    Pos.size_nat b <= function_width s.
+  Proof.
+    rewrite B.nodes_agree. intro Hin. apply in_map_iff in Hin as [[id body] [Heq Hin]].
+    cbn in Heq; subst id. rewrite val_first_selected in Hin.
+    apply val_selected_in in Hin as [Hin _]. now apply (val_block_width s b body).
+  Qed.
+
+  Lemma ssa_graph_edge_width s e : In e (C.edges (R.prepare s)) ->
+    Pos.size_nat (C.src (R.prepare s) e) <= function_width s /\
+    Pos.size_nat (C.dst (R.prepare s) e) <= function_width s.
+  Proof.
+    intro Hin. destruct (B.edges_syntax s e Hin) as [body [Hbody Htarget]]. split.
+    - now apply (val_block_width s _ body).
+    - exact (val_target_width s (C.src (R.prepare s) e) body
+        (C.dst (R.prepare s) e) Hbody Htarget).
+  Qed.
+
+  Lemma ssa_cfg_edges s :
+    graph_e (cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (C.dst (R.prepare s))) = length (C.edges (R.prepare s)).
+  Proof.
+    apply val_cfg_edge_count.
+    - rewrite B.nodes_agree, val_first_selected; apply val_selected_nodup.
+    - intros e Hin. destruct (B.edges_syntax s e Hin) as [body [Hbody Htarget]].
+      rewrite B.nodes_agree. apply val_first_blocks_ids.
+      apply in_map_iff; exists (C.src (R.prepare s) e, body); auto.
+  Qed.
+
+  Lemma ssa_cfg_width s :
+    graph_width (cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (C.dst (R.prepare s))) <= function_width s.
+  Proof.
+    apply val_cfg_width.
+    - intros b Hin; now apply ssa_graph_node_width.
+    - intros e Hin; exact (proj2 (ssa_graph_edge_width s e Hin)).
+  Qed.
+
+  Lemma ssa_graph_width s : graph_width (base (graph s)) <= function_width s.
+  Proof. unfold graph; rewrite DG.prepare_base; apply ssa_cfg_width. Qed.
+
+  Lemma ssa_graph_nodes s : graph_n (base (graph s)) = length (C.nodes (R.prepare s)).
+  Proof. unfold graph; rewrite DG.prepare_base; reflexivity. Qed.
+
+  Lemma ssa_graph_edges s : graph_e (base (graph s)) = length (C.edges (R.prepare s)).
+  Proof. unfold graph; rewrite DG.prepare_base; apply ssa_cfg_edges. Qed.
+
+  Lemma ssa_graph_prepared s : prepared_ok (graph s).
+  Proof. apply DG.prepare_correct. Qed.
+
+  Definition ssa_graph_coefficient : N :=
+    32 * (R.c_prepare + C.c_cfg + C.c_cfg_adj + PTrieT.c_trie + DG.c_prepare + 1).
+
+  Lemma ssa_graph_clock s :
+    (T_graph s <= ssa_graph_coefficient *
+      N.of_nat (function_size s + graph_n (base (graph s)) + graph_e (base (graph s)) + 1) *
+      N.of_nat (function_width s + 1))%N.
+  Proof.
+    pose proof (R.T_prepare_le s) as Hr.
+    pose proof (C.T_nodes_le (R.prepare s)) as Hnodes.
+    pose proof (C.T_edges_le (R.prepare s)) as Hedges.
+    pose proof (val_cfg_clock (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (C.dst (R.prepare s))
+      (C.T_src (R.prepare s)) (C.T_dst (R.prepare s)) C.c_cfg (function_width s)
+      ltac:(intros e Hin; exact (proj1 (ssa_graph_edge_width s e Hin)))
+      ltac:(intros e Hin; apply C.T_src_le)
+      ltac:(intros e Hin; apply C.T_dst_le)) as Hcfg.
+    pose proof (DG.T_prepare_le (cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (C.dst (R.prepare s)))) as Hdg.
+    rewrite ssa_cfg_edges in Hdg. cbn [graph_n cfg_graph] in Hdg.
+    assert (Hdg' : (DG.T_prepare (cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (C.dst (R.prepare s))) <=
+      DG.c_prepare * N.of_nat (length (C.nodes (R.prepare s)) + length (C.edges (R.prepare s)) + 1) *
+      N.of_nat (function_width s + 1))%N).
+    { eapply N.le_trans; [exact Hdg|]. apply N.mul_le_mono_l.
+      pose proof (ssa_cfg_width s); lia. }
+    clear Hdg. rewrite ssa_graph_nodes, ssa_graph_edges.
+    set (total := function_size s + length (C.nodes (R.prepare s)) +
+      length (C.edges (R.prepare s)) + 1).
+    set (width := N.of_nat (function_width s + 1)).
+    set (budget := (N.of_nat total * width)%N).
+    assert (Htotal : 1 <= total) by (unfold total; lia).
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    pose proof (val_positive_cost _ (function_size s + 1) total R.c_prepare 0%N width
+      ltac:(rewrite N.add_0_r; exact Hr) ltac:(unfold total; lia) Htotal Hwidth) as Hr'.
+    pose proof (val_unscaled_cost _ (length (C.nodes (R.prepare s)) + 1) total C.c_cfg_adj 0%N width
+      ltac:(rewrite N.add_0_r; exact Hnodes) ltac:(unfold total; lia) Htotal Hwidth) as Hnodes'.
+    pose proof (val_unscaled_cost _ (length (C.edges (R.prepare s)) + 1) total C.c_cfg 0%N width
+      ltac:(rewrite N.add_0_r; exact Hedges) ltac:(unfold total; lia) Htotal Hwidth) as Hedges'.
+    pose proof (val_positive_cost _ (length (C.edges (R.prepare s))) total
+      (PTrieT.c_trie + 2 * C.c_cfg + 8)%N 2%N width
+      Hcfg ltac:(unfold total; lia) Htotal Hwidth) as Hcfg'.
+    pose proof (val_positive_cost _
+      (length (C.nodes (R.prepare s)) + length (C.edges (R.prepare s)) + 1) total DG.c_prepare 0%N width
+      ltac:(rewrite N.add_0_r; exact Hdg') ltac:(unfold total; lia) Htotal Hwidth) as Hprepare.
+    clear Hr Hnodes Hedges Hcfg Hdg'. fold budget in Hr', Hnodes', Hedges', Hcfg', Hprepare.
+    rewrite N.add_0_r in Hr', Hnodes', Hedges', Hprepare.
+    assert (Hunit : (1 <= budget)%N) by (unfold budget; nia).
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (ssa_graph_coefficient * budget)%N by (unfold budget, total, width; ring)
+    end.
+    clear Htotal Hwidth.
+    change (T_cfg_graph (C.nodes (R.prepare s)) (C.edges (R.prepare s))
+      (C.src (R.prepare s)) (fun e => C.T_src (R.prepare s) e)
+      (C.dst (R.prepare s)) (fun e => C.T_dst (R.prepare s) e) <=
+      (PTrieT.c_trie + 2 * C.c_cfg + 8 + 2) * budget)%N in Hcfg'.
+    clearbody budget. unfold ssa_graph_coefficient. time_unfold T_graph; time_simpl.
+    nia.
+  Qed.
+
+  Lemma ssa_dom_clock s :
+    (T_dom_cert s <= T_graph s + D.T_build (graph s) (entry _ _ _ s) + 1)%N.
+  Proof.
+    time_unfold T_dom_cert. time_unfold T_graph. time_simpl.
+    unfold graph. lia.
+  Qed.
+
+  Lemma ssa_query_width g r m order u v w :
+    D.check g r m order = true -> graph_width (base g) <= w ->
+    Pos.size_nat u <= w -> Pos.size_nat v <= w ->
+      D.query_width (D.tree g r m order) u v <= w.
+  Proof.
+    intros Hcheck Hgraph Hu Hv.
+    destruct (D.tree_exact g r m order Hcheck) as [_ [_ [Hinterval _]]].
+    unfold D.query_width. rewrite !val_max_nat. repeat apply Nat.max_lub; try assumption.
+    all: lazymatch goal with |- context [trie_get ?key ?rows] =>
+      destruct (trie_get key rows) as [number|] eqn:Hget end; [|lia].
+    all: eapply Nat.le_trans; [eapply Hinterval; first [left; exact Hget|right; exact Hget]|exact Hgraph].
+  Qed.
+
+  Lemma ssa_cross_clock (s : P.t) g m order b x w :
+    D.check g (entry _ _ _ s) m order = true -> graph_width (base g) <= w ->
+    function_width s <= w -> Pos.size_nat b <= w -> Pos.size_nat x <= w ->
+    (T_ssa_cross (D.tree g (entry _ _ _ s) m order)
+      (val_index (val_home_rows (blocks _ _ _ s))) b x <=
+      (D.c_dom + 8) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hcheck Hgraph Hsyntax Hb Hx.
+    time_unfold T_ssa_cross. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get x (val_index (val_home_rows (blocks _ _ _ s)))) as [home|] eqn:Hhome.
+    - destruct (val_home_source _ _ _ Hhome) as [body [Hbody Hdefinition]].
+      pose proof (val_block_width s home body Hbody) as Hhome_width.
+      pose proof (Pos.T_eqb_le home b) as Heq.
+      pose proof (D.T_dominates_b_le (D.tree g (entry _ _ _ s) m order) home b) as Hdom.
+      pose proof (ssa_query_width g (entry _ _ _ s) m order home b w Hcheck Hgraph
+        ltac:(lia) Hb) as Hquery.
+      assert (Hdom' : (D.T_dominates_b (D.tree g (entry _ _ _ s) m order) home b <=
+        D.c_dom * N.of_nat (w + 1))%N).
+      { eapply N.le_trans; [exact Hdom|]. apply N.mul_le_mono_l; lia. }
+      clear Hdom Hquery. time_simpl; time_cbn; nia.
+    - time_cbn; nia.
+  Qed.
+
+  Definition ssa_operand (tree : domtree) (homes : ptrie positive) b known x :=
+    val_mem known x || ssa_cross tree homes b x.
+  TimeFun ssa_operand.
+
+  Lemma ssa_operand_clock (s : P.t) g m order b known x w :
+    D.check g (entry _ _ _ s) m order = true -> graph_width (base g) <= w ->
+    function_width s <= w -> Pos.size_nat b <= w -> Pos.size_nat x <= w ->
+    (T_ssa_operand (D.tree g (entry _ _ _ s) m order)
+      (val_index (val_home_rows (blocks _ _ _ s))) b known x <=
+      (D.c_dom + 16) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hcheck Hgraph Hsyntax Hb Hx.
+    pose proof (ssa_cross_clock s g m order b x w Hcheck Hgraph Hsyntax Hb Hx) as Hcross.
+    pose proof (val_mem_time known x w Hx) as Hmem.
+    time_unfold T_ssa_operand. time_simpl. rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  Lemma ssa_edge_shape_clock bodies target args w : Pos.size_nat target <= w ->
+    (T_ssa_edge_shape bodies target args <=
+      8 * N.of_nat (length args + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intro Hwidth. time_unfold T_ssa_edge_shape. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get target bodies) as [body|].
+    - pose proof (val_same_length_time args (params _ _ _ body)) as Hlength.
+      time_simpl; rewrite !Nat2N.inj_add in *; nia.
+    - rewrite !Nat2N.inj_add; nia.
+  Qed.
+
+  Lemma ssa_exit_shape_clock bodies e w :
+    (forall target, In target (exit_targets e) -> Pos.size_nat target <= w) ->
+    (T_ssa_exit_shape bodies e <=
+      32 * N.of_nat (length (exit_uses e) + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intro Hwidth. destruct e as [target args|guard xs yes ys no ns|returns].
+    - pose proof (ssa_edge_shape_clock bodies target args w
+        ltac:(apply Hwidth; now left)) as Hshape.
+      time_unfold T_ssa_exit_shape; cbn [exit_uses]; rewrite !Nat2N.inj_add in *; nia.
+    - pose proof (ssa_edge_shape_clock bodies yes ys w
+        ltac:(apply Hwidth; now left)) as Hyes.
+      pose proof (ssa_edge_shape_clock bodies no ns w
+        ltac:(apply Hwidth; right; now left)) as Hno.
+      time_unfold T_ssa_exit_shape; time_simpl; cbn [exit_uses].
+      rewrite !length_app, !Nat2N.inj_add in *; nia.
+    - time_unfold T_ssa_exit_shape; cbn [exit_uses]; rewrite !Nat2N.inj_add; nia.
+  Qed.
+
+  Lemma ssa_local_clock (s : P.t) g m order b w :
+    D.check g (entry _ _ _ s) m order = true -> graph_width (base g) <= w ->
+    function_width s <= w -> Pos.size_nat b <= w ->
+    forall ic known out,
+    (forall i, In i ic -> Pos.size_nat (fst (fst i)) <= w /\
+      forall x, In x (snd i) -> Pos.size_nat x <= w) ->
+    (forall x, In x out -> Pos.size_nat x <= w) ->
+    (T_ssa_local (D.tree g (entry _ _ _ s) m order)
+      (val_index (val_home_rows (blocks _ _ _ s))) b known ic out <=
+      (PTrieT.c_trie + D.c_dom + 32) *
+        N.of_nat (length ic + fold_right (fun i n => (length (snd i) + n)%nat) 0%nat ic + length out + 1) *
+        N.of_nat (w + 1))%N.
+  Proof.
+    intros Hcheck Hgraph Hsyntax Hb ic; induction ic as [|[[dst op] args] rest IH];
+      intros known out Hcode Hout.
+    - time_unfold T_ssa_local.
+      lazymatch goal with
+      | |- context [List.T_forallb ?f ?Tf ?xs] =>
+        pose proof (val_forallb_uniform f Tf xs
+          ((D.c_dom + 16) * N.of_nat (w + 1))%N
+          ltac:(intros x Hin; change (T_ssa_operand (D.tree g (entry _ _ _ s) m order)
+            (val_index (val_home_rows (blocks _ _ _ s))) b known x <=
+            (D.c_dom + 16) * N.of_nat (w + 1))%N;
+            apply ssa_operand_clock; try assumption; now apply Hout)) as Hscan
+      end.
+      cbn [length fold_right]; rewrite !Nat2N.inj_add in *; nia.
+    - destruct (Hcode (dst, op, args) ltac:(now left)) as [Hdst Hargs].
+      cbn [fst snd] in Hdst, Hargs.
+      specialize (IH (PTrieCode.set dst tt known) out
+        ltac:(intros i Hin; apply Hcode; now right) Hout).
+      pose proof (PTrieT.T_set_le unit dst tt known) as Hset.
+      time_unfold T_ssa_local.
+      lazymatch goal with
+      | |- context [List.T_forallb ?f ?Tf args] =>
+        pose proof (val_forallb_uniform f Tf args
+          ((D.c_dom + 16) * N.of_nat (w + 1))%N
+          ltac:(intros x Hin; change (T_ssa_operand (D.tree g (entry _ _ _ s) m order)
+            (val_index (val_home_rows (blocks _ _ _ s))) b known x <=
+            (D.c_dom + 16) * N.of_nat (w + 1))%N;
+            apply ssa_operand_clock; try assumption; now apply Hargs)) as Hscan
+      end.
+      destruct (forallb (fun x => val_mem known x ||
+        ssa_cross (D.tree g (entry _ _ _ s) m order)
+          (val_index (val_home_rows (blocks _ _ _ s))) b x) args).
+      all: cbn [length fold_right snd]; rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+  Qed.
+
 
 
   Definition val_scan_cost : N := (4 * PTrieT.c_trie + K.c_key + 64)%N.
