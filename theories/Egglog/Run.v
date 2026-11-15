@@ -8822,13 +8822,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Qed.
 
 
-  Lemma F5_apply_quiet_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
-    loaded p cp db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
-    row_ids_unique (D.view db) ->
-    D.changed db = false -> D.changed (apply (actions V.t r) s db) = false ->
-    present V.prim V.merge (D.view db) s (actions V.t r).
-  Proof. Admitted. (* STUB *)
-
   (** Database equality is reflexive on every identifier. *)
   Lemma run_same_refl : forall db i, D.wf db -> same (D.view db) i i.
   Proof.
@@ -9208,6 +9201,630 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       + eapply run_out_le_mono; [intro g; now rewrite Hkind|exact Hkeep|].
         exact (proj1 (run_out_canon_left db f o o' Hwf) Hout).
       + exact (proj1 (run_out_canon_left (D.rebuild db) f o' out Hwf') Hle).
+  Qed.
+
+  (** A semantic identifier is supported when it occurs in a stored row. *)
+  Definition run_supported (db : D.t) (c : cell V.t) : Prop :=
+    match c with
+    | Id i => exists f k o, row (D.view db) f k o /\ In (Id i) (k ++ option_list o)
+    | Val _ => True
+    end.
+
+  (** Only context-bound variables need allocated action identifiers. *)
+  Definition run_allocated_on (db : D.t) (g : ctx) (s : Model.env (V := V.t)) : Prop :=
+    forall x ty i, g x = Some ty -> s x = Some (Id i) -> D.allocated db i.
+
+  (** Semantic bindings use supported cells related to the evaluator's bindings. *)
+  Definition run_env_related (db : D.t) (g : ctx)
+      (actual semantic : Model.env (V := V.t)) : Prop :=
+    forall x ty c, g x = Some ty -> actual x = Some c ->
+    exists d, semantic x = Some d /\ run_supported db d /\
+      cell_rel (same (D.view db)) c d.
+
+  (** A cell occurring in a row is supported. *)
+  Lemma run_row_supported : forall db f k o c, row (D.view db) f k o ->
+    In c (k ++ option_list o) -> run_supported db c.
+  Proof.
+    intros db f k o [i|v] Hrow Hin; [exists f, k, o; now split|exact I].
+  Qed.
+
+  (** Supported identifiers are allocated in well-formed databases. *)
+  Lemma run_supported_allocated : forall db i, D.wf db -> run_supported db (Id i) ->
+    D.allocated db i.
+  Proof.
+    intros db i Hwf [f [k [o [Hrow Hin]]]]. eapply D.row_allocated; eassumption.
+  Qed.
+
+  (** Every cell is related to itself by database equality. *)
+  Lemma run_cell_rel_refl : forall db (c : cell V.t), D.wf db ->
+    cell_rel (same (D.view db)) c c.
+  Proof.
+    intros db [i|v] Hwf; constructor. now apply run_same_refl.
+  Qed.
+
+  (** Relating cells preserves their sorts. *)
+  Lemma run_cell_rel_sort : forall db (c d : cell V.t), cell_rel (same (D.view db)) c d ->
+    cell_sort c = cell_sort d.
+  Proof.
+    intros db c d Hrel. destruct Hrel; reflexivity.
+  Qed.
+
+  (** A variable's semantic cell occurs in every argument list that reads that variable. *)
+  Lemma run_terms_var_cell : forall (s : Model.env (V := V.t)) ts cs x c,
+    terms_value s ts cs -> In (Var x) ts -> s x = Some c -> In c cs.
+  Proof.
+    intros s ts cs x c Hterms. induction Hterms as [|t d rest more Hhead Htail IH];
+      intros Hin Hlookup; [contradiction|].
+    destruct Hin as [Heq|Hin].
+    - subst t. cbn [term_value] in Hhead. rewrite Hlookup in Hhead.
+      injection Hhead as <-. now left.
+    - right. now apply IH.
+  Qed.
+
+  (** A matched function atom reads its arguments and result from one stored row. *)
+  Lemma run_matched_fun_terms : forall db (s : Model.env (V := V.t)) f args res,
+    atom_holds V.prim (D.view db) s (Fun V.t f args res) ->
+    exists k o, row (D.view db) f k o /\
+      terms_value s (args ++ option_list res) (k ++ option_list o).
+  Proof.
+    intros db s f args res [k [o [Hargs [Hresult Hrow]]]]. exists k, o.
+    split; [exact Hrow|]. apply Forall2_app; [exact Hargs|].
+    destruct res as [t|], o as [c|]; cbn [option_list] in *; try contradiction.
+    - constructor; [exact Hresult|constructor].
+    - constructor.
+  Qed.
+
+  (** Every variable bound by a closed query occurs in a function atom. *)
+  Lemma run_query_bound_fun : forall sorts kinds q g,
+    @query_ok V.t sorts kinds ctx_empty q g -> forall x ty, g x = Some ty ->
+    exists f args res, In (Fun V.t f args res) q /\ In (Var x) (args ++ option_list res).
+  Proof.
+    intros sorts kinds q g Hquery x ty Hbound.
+    destruct (run_query_scope sorts kinds ctx_empty q g Hquery x ty Hbound)
+      as [Hempty|[a [Hin Hvar]]]; [discriminate|].
+    apply (run_query_vars_fun sorts kinds q g Hquery x).
+    apply in_flat_map. exists a. split; [exact Hin|]. rewrite run_atom_vars_terms.
+    apply in_flat_map. exists (Var x). split; [exact Hvar|now left].
+  Qed.
+
+  (** Matched query bindings use supported cells, independently of unrelated environment entries. *)
+  Lemma run_query_supported : forall sorts kinds q g db s,
+    @query_ok V.t sorts kinds ctx_empty q g -> matches V.prim (D.view db) q s ->
+    forall x ty c, g x = Some ty -> s x = Some c -> run_supported db c.
+  Proof.
+    intros sorts kinds q g db s Hquery Hmatches x ty c Hbound Hlookup.
+    destruct (run_query_bound_fun sorts kinds q g Hquery x ty Hbound)
+      as [f [args [res [Hfun Hvar]]]].
+    destruct (run_matched_fun_terms db s f args res
+      ((proj1 (Forall_forall _ _)) Hmatches _ Hfun)) as [k [o [Hrow Hterms]]].
+    eapply run_row_supported; [exact Hrow|]. eapply run_terms_var_cell; eassumption.
+  Qed.
+
+  (** A well-typed identifier read uses only a context-bound allocation. *)
+  Lemma run_term_allocated_on : forall db g s locals t ty i,
+    run_allocated_on db g (look s locals) -> has g t ty ->
+    term_cell s locals t = Some (Id i) -> D.allocated db i.
+  Proof.
+    intros db g s locals [x|v] ty i Hallocated Hhas Hcell; [|discriminate].
+    eapply Hallocated; eassumption.
+  Qed.
+
+  (** Well-typed argument lookups require allocation only on their context. *)
+  Lemma run_terms_allocated_on : forall db g s locals ts ss cs,
+    run_allocated_on db g (look s locals) -> Forall2 (has g) ts ss ->
+    term_cells s locals ts = Some cs -> forall i, In (Id i) cs -> D.allocated db i.
+  Proof.
+    intros db g s locals ts ss cs Hallocated Htyped. revert cs.
+    induction Htyped as [|t ty rest types Hhead Htail IH]; intros cs Hcells i Hin.
+    - injection Hcells as <-. contradiction.
+    - cbn [term_cells] in Hcells.
+      destruct (term_cell s locals t) as [c|] eqn:Hcell; [|discriminate].
+      destruct (term_cells s locals rest) as [more|] eqn:Hmore; [|discriminate].
+      injection Hcells as <-. destruct Hin as [Heq|Hin].
+      + subst c. eapply run_term_allocated_on; eassumption.
+      + eapply IH; eauto.
+  Qed.
+
+  (** Well-typed result lookups require allocation only on their context. *)
+  Lemma run_result_allocated_on : forall db g s locals out res o,
+    run_allocated_on db g (look s locals) -> has_result g out res ->
+    result_cell s locals res = Some o ->
+    forall i, In (Id i) (option_list o) -> D.allocated db i.
+  Proof.
+    intros db g s locals out res o Hallocated Htyped Hresult i Hin.
+    destruct res as [t|]; cbn [result_cell] in Hresult.
+    - destruct (term_cell s locals t) as [c|] eqn:Hcell; [|discriminate].
+      injection Hresult as <-. destruct Hin as [Heq|[]]. subst c.
+      destruct out; cbn [has_result out_sort] in Htyped; [contradiction| |];
+        eapply run_term_allocated_on; eassumption.
+    - injection Hresult as <-. contradiction.
+  Qed.
+
+  (** Related environments give related supported cells to every typed action term. *)
+  Lemma run_term_related : forall db g s locals semantic t ty c,
+    run_env_related db g (look s locals) semantic -> has g t ty ->
+    term_cell s locals t = Some c ->
+    exists d, term_value semantic t d /\ run_supported db d /\
+      cell_rel (same (D.view db)) c d.
+  Proof.
+    intros db g s locals semantic [x|v] ty c Hrelated Hhas Hcell.
+    - exact (Hrelated x ty c Hhas Hcell).
+    - injection Hcell as <-. exists (Val v). split; [reflexivity|].
+      split; [exact I|constructor].
+  Qed.
+
+  (** Related environments give related supported cells to a typed argument list. *)
+  Lemma run_terms_related : forall db g s locals semantic ts ss cs,
+    run_env_related db g (look s locals) semantic -> Forall2 (has g) ts ss ->
+    term_cells s locals ts = Some cs ->
+    exists ds, terms_value semantic ts ds /\ Forall (run_supported db) ds /\
+      Forall2 (cell_rel (same (D.view db))) cs ds.
+  Proof.
+    intros db g s locals semantic ts ss cs Hrelated Htyped. revert cs.
+    induction Htyped as [|t ty rest types Hhead Htail IH]; intros cs Hcells.
+    - injection Hcells as <-. exists []. repeat split; constructor.
+    - cbn [term_cells] in Hcells.
+      destruct (term_cell s locals t) as [c|] eqn:Hcell; [|discriminate].
+      destruct (term_cells s locals rest) as [more|] eqn:Hmore; [|discriminate].
+      injection Hcells as <-.
+      destruct (run_term_related db g s locals semantic t ty c Hrelated Hhead Hcell)
+        as [d [Hvalue [Hsupport Hrel]]].
+      destruct (IH more eq_refl) as [ds [Hvalues [Hsupports Hrels]]].
+      exists (d :: ds). split; [now constructor|]. split; now constructor.
+  Qed.
+
+  (** Related environments agree on the value arguments supplied to a primitive. *)
+  Lemma run_values_related : forall db g s locals semantic ts vs,
+    run_env_related db g (look s locals) semantic -> Forall (fun t => has g t SVal) ts ->
+    term_values s locals ts = Some vs -> terms_value semantic ts (map Val vs).
+  Proof.
+    intros db g s locals semantic ts vs Hrelated Htyped. revert vs.
+    induction Htyped as [|t rest Hhead Htail IH]; intros vs Hvalues.
+    - injection Hvalues as <-. constructor.
+    - cbn [term_values] in Hvalues.
+      destruct (term_cell s locals t) as [[i|v]|] eqn:Hcell; try discriminate.
+      destruct (term_values s locals rest) as [more|] eqn:Hmore; [|discriminate].
+      injection Hvalues as <-.
+      destruct (run_term_related db g s locals semantic t SVal (Val v)
+        Hrelated Hhead Hcell) as [d [Hvalue [_ Hrel]]].
+      inversion Hrel; subst d. constructor; [exact Hvalue|now apply IH].
+  Qed.
+
+  (** A supported semantic cell equals a related canonical cell occurring in a row. *)
+  Lemma run_canon_related_supported : forall db f k o c d,
+    D.wf db -> row_ids_unique (D.view db) -> row (D.view db) f k o ->
+    In (D.canon db c) (k ++ option_list o) -> run_supported db d ->
+    cell_rel (same (D.view db)) c d -> D.canon db c = d.
+  Proof.
+    intros db f k o c d Hwf Hunique Hrow Hin Hsupport Hrel.
+    destruct Hrel as [i j Hij|v]; [|reflexivity].
+    destruct Hsupport as [g [key [output [Hother Hj]]]]. cbn [D.canon] in Hin |- *.
+    f_equal. eapply Hunique; [exact Hrow|exact Hother|exact Hin|exact Hj|].
+    apply (proj2 (D.same_repr db (D.repr db i) j Hwf)).
+    rewrite D.repr_idem by exact Hwf. apply (proj1 (D.same_repr db i j Hwf)). exact Hij.
+  Qed.
+
+  (** A canonical row key equals its related supported semantic argument list. *)
+  Lemma run_canon_key_related : forall db f key output actual semantic,
+    D.wf db -> row_ids_unique (D.view db) -> row (D.view db) f key output ->
+    (forall c, In c actual -> In (D.canon db c) (key ++ option_list output)) ->
+    Forall2 (cell_rel (same (D.view db))) actual semantic ->
+    Forall (run_supported db) semantic -> map (D.canon db) actual = semantic.
+  Proof.
+    intros db f key output actual semantic Hwf Hunique Hrow Hin Hrelated.
+    revert Hin. induction Hrelated as [|a b rest more Hab Hrest IH]; intros Hin Hsupport.
+    - reflexivity.
+    - inversion Hsupport as [|b' more' Hb Hmore]; subst b' more'. cbn [map].
+      f_equal.
+      + eapply run_canon_related_supported; [exact Hwf|exact Hunique|exact Hrow| |exact Hb|].
+        * apply Hin. now left.
+        * exact Hab.
+      + apply IH; [intros c Hc; apply Hin; now right|exact Hmore].
+  Qed.
+
+  (** A row read by actual arguments has exactly their supported semantic key. *)
+  Lemma run_related_row_arguments : forall db f actual semantic output,
+    D.wf db -> row_ids_unique (D.view db) ->
+    row (D.view db) f (map (D.canon db) actual) output ->
+    Forall2 (cell_rel (same (D.view db))) actual semantic ->
+    Forall (run_supported db) semantic -> map (D.canon db) actual = semantic.
+  Proof.
+    intros db f actual semantic output Hwf Hunique Hrow Hrel Hsupport.
+    eapply run_canon_key_related; [exact Hwf|exact Hunique|exact Hrow| |exact Hrel|exact Hsupport].
+    intros c Hin. apply in_app_iff. left. now apply in_map.
+  Qed.
+
+  (** A typed result term has a related supported semantic result. *)
+  Lemma run_result_related_term : forall db g s locals semantic out t c,
+    run_env_related db g (look s locals) semantic -> has_result g out (Some t) ->
+    term_cell s locals t = Some c ->
+    exists d, term_value semantic t d /\ run_supported db d /\
+      cell_rel (same (D.view db)) c d.
+  Proof.
+    intros db g s locals semantic out t c Hrelated Hhas Hcell.
+    destruct out; cbn [has_result out_sort] in Hhas; [contradiction| |];
+      eapply run_term_related; eassumption.
+  Qed.
+
+  (** Action execution cannot clear a raised change flag. *)
+  Lemma run_apply_go_changed : forall acts s locals db, D.changed db = true ->
+    D.changed (apply_go acts s locals db) = true.
+  Proof.
+    intro acts. induction acts as [|a rest IH]; intros s locals db Hchanged;
+      [exact Hchanged|].
+    destruct a as [x f args|f args res|t u|x op args]; cbn [apply_go].
+    - destruct (term_cells s locals args) as [cells|]; [|exact Hchanged].
+      pose proof (D.changed_make f cells db Hchanged) as Hnext.
+      destruct (D.make f cells db) as [i next]. apply IH. exact Hnext.
+    - destruct (term_cells s locals args) as [cells|]; [|exact Hchanged].
+      destruct (result_cell s locals res) as [output|]; [|exact Hchanged].
+      apply IH. now apply D.changed_put.
+    - destruct (term_cell s locals t) as [[i|v]|]; [| |exact Hchanged];
+        destruct (term_cell s locals u) as [[j|w]|]; try exact Hchanged;
+        apply IH; try exact Hchanged.
+      now apply D.changed_union.
+    - destruct (term_values s locals args) as [vs|]; [|exact Hchanged].
+      destruct (V.prim op vs); [apply IH|]; exact Hchanged.
+  Qed.
+
+  (** A quiet completed suffix started with a quiet database. *)
+  Lemma run_apply_go_quiet_start : forall acts s locals db,
+    D.changed (apply_go acts s locals db) = false -> D.changed db = false.
+  Proof.
+    intros acts s locals db Hquiet. destruct (D.changed db) eqn:Hchanged; [|reflexivity].
+    pose proof (run_apply_go_changed acts s locals db Hchanged) as Hraised. congruence.
+  Qed.
+
+  (** Context-restricted allocation survives a growing identifier counter. *)
+  Lemma run_allocated_on_mono : forall db next g s,
+    (D.ids db <= D.ids next)%N -> run_allocated_on db g s -> run_allocated_on next g s.
+  Proof.
+    intros db next g s Hids Hallocated x ty i Hbound Hcell.
+    specialize (Hallocated x ty i Hbound Hcell). unfold D.allocated in *. lia.
+  Qed.
+
+  (** A typed local assignment preserves context-restricted allocation. *)
+  Lemma run_allocated_on_set : forall db g s locals x c ty,
+    run_allocated_on db g (look s locals) ->
+    (forall i, c = Id i -> D.allocated db i) ->
+    run_allocated_on db (ctx_set g x ty) (look s (PTrieCode.set x c locals)).
+  Proof.
+    intros db g s locals x c ty Hallocated Hnew y other i Hbound Hcell.
+    rewrite run_look_set in Hcell. unfold ctx_set in Hbound. unfold update in Hcell.
+    destruct (Pos.eqb x y).
+    - apply Hnew. now injection Hcell.
+    - eapply Hallocated; eassumption.
+  Qed.
+
+  (** A pair of related local assignments preserves the environment relation. *)
+  Lemma run_env_related_set : forall db g s locals semantic x c d ty,
+    run_env_related db g (look s locals) semantic -> run_supported db d ->
+    cell_rel (same (D.view db)) c d ->
+    run_env_related db (ctx_set g x ty) (look s (PTrieCode.set x c locals))
+      (update semantic x d).
+  Proof.
+    intros db g s locals semantic x c d ty Hrelated Hsupport Hrel y other a Hbound Hcell.
+    rewrite run_look_set in Hcell. unfold ctx_set in Hbound. unfold update in Hcell |- *.
+    destruct (Pos.eqb x y).
+    - injection Hcell as <-. exists d. split; [reflexivity|]. split; assumption.
+    - eapply Hrelated; eassumption.
+  Qed.
+
+  (** Retaining rows retains supported semantic identifiers. *)
+  Lemma run_supported_mono : forall db next c,
+    (forall f k o, row (D.view db) f k o -> row (D.view next) f k o) ->
+    run_supported db c -> run_supported next c.
+  Proof.
+    intros db next [i|v] Hrows Hsupport; [|exact I].
+    destruct Hsupport as [f [k [o [Hrow Hin]]]]. exists f, k, o. split; [now apply Hrows|exact Hin].
+  Qed.
+
+  (** Retaining rows and equalities preserves related semantic bindings. *)
+  Lemma run_env_related_mono : forall db next g actual semantic,
+    (forall f k o, row (D.view db) f k o -> row (D.view next) f k o) ->
+    (forall i j, same (D.view db) i j -> same (D.view next) i j) ->
+    run_env_related db g actual semantic -> run_env_related next g actual semantic.
+  Proof.
+    intros db next g actual semantic Hrows Hsame Hrelated x ty c Hbound Hcell.
+    destruct (Hrelated x ty c Hbound Hcell) as [d [Hd [Hsupport Hrel]]].
+    exists d. split; [exact Hd|]. split.
+    - eapply run_supported_mono; eassumption.
+    - eapply run_cell_rel_mono; eassumption.
+  Qed.
+
+  (** Database equality is symmetric. *)
+  Lemma run_same_sym : forall db i j, D.wf db ->
+    same (D.view db) i j -> same (D.view db) j i.
+  Proof.
+    intros db i j Hwf Hij. apply (proj2 (D.same_repr db j i Hwf)).
+    symmetry. apply (proj1 (D.same_repr db i j Hwf)). exact Hij.
+  Qed.
+
+  (** Related source cells have the same output-containment consequences. *)
+  Lemma run_cell_le_related : forall db f a b c, D.wf db ->
+    cell_rel (same (D.view db)) a b -> cell_le V.merge (D.view db) f a c ->
+    cell_le V.merge (D.view db) f b c.
+  Proof.
+    intros db f a b c Hwf Hrel Hle. destruct Hrel as [i j Hij|v]; [|exact Hle].
+    destruct c as [k|w]; [|contradiction].
+    eapply run_same_trans; [exact Hwf| |exact Hle]. now apply run_same_sym.
+  Qed.
+
+  (** A quiet union adds no new identifier equality. *)
+  Lemma run_quiet_union_same : forall i j db, D.wf db -> D.changed db = false ->
+    D.changed (D.union i j db) = false ->
+    forall a b, same (D.view (D.union i j db)) a b -> same (D.view db) a b.
+  Proof.
+    intros i j db Hwf Hquiet Hnext a b Hsame.
+    pose proof (D.union_quiet i j db Hwf Hquiet Hnext) as Hij.
+    apply (proj1 (D.union_same i j db a b Hwf)) in Hsame.
+    induction Hsame as [a b Hstep|a|a b Hstep IH|a b c Hab IH1 Hbc IH2].
+    - destruct Hstep as [Hstep|Hpair]; [exact Hstep|].
+      injection Hpair as Hai Hbj. subst a b. exact Hij.
+    - now apply run_same_refl.
+    - now apply run_same_sym.
+    - eapply run_same_trans; eassumption.
+  Qed.
+
+  (** A quiet union preserves uniqueness of identifiers that occur in rows. *)
+  Lemma run_quiet_union_unique : forall i j db, D.wf db -> D.changed db = false ->
+    D.changed (D.union i j db) = false -> row_ids_unique (D.view db) ->
+    row_ids_unique (D.view (D.union i j db)).
+  Proof.
+    intros i j db Hwf Hquiet Hnext Hunique f k o g key output a b Hrow Hother Ha Hb Hab.
+    rewrite (D.union_rows i j db Hwf) in Hrow, Hother.
+    eapply Hunique; [exact Hrow|exact Hother|exact Ha|exact Hb|].
+    eapply run_quiet_union_same; eassumption.
+  Qed.
+
+  (** Row, equality and kind inclusion transports cell output containment. *)
+  Lemma run_cell_le_transport : forall (before after : view (V := V.t)) f a b,
+    (forall i j, same after i j -> same before i j) ->
+    (forall g, kind before g = kind after g) ->
+    cell_le V.merge after f a b -> cell_le V.merge before f a b.
+  Proof.
+    intros before after f [i|v] [j|w] Hsame Hkinds Hle; cbn [cell_le] in *;
+      try contradiction.
+    - now apply Hsame.
+    - destruct Hle as [m [Hkind Hmerge]]. exists m. split; [now rewrite Hkinds|exact Hmerge].
+  Qed.
+
+  (** Keeping semantic rows, equalities and kinds transports action presence. *)
+  Lemma run_present_transport : forall (before after : view (V := V.t)) acts semantic,
+    (forall f k o, row after f k o -> row before f k o) ->
+    (forall i j, same after i j -> same before i j) ->
+    (forall f, kind before f = kind after f) ->
+    present V.prim V.merge after semantic acts -> present V.prim V.merge before semantic acts.
+  Proof.
+    intros before after acts. induction acts as [|a rest IH]; intros semantic Hrows Hsame
+      Hkinds Hpresent; [exact I|].
+    destruct a as [x f args|f args res|t u|x op args]; cbn [present] in Hpresent |- *.
+    - destruct Hpresent as [k [i [Hterms [Hrow Htail]]]]. exists k, i.
+      split; [exact Hterms|]. split; [now apply Hrows|]. eapply IH; eassumption.
+    - destruct Hpresent as [k [o [Hterms [Hrow [Hresult Htail]]]]]. exists k, o.
+      split; [exact Hterms|]. split; [now apply Hrows|]. split.
+      + destruct res as [t|]; [|exact I].
+        destruct Hresult as [c [d [Ht [Ho Hle]]]]. exists c, d.
+        split; [exact Ht|]. split; [exact Ho|]. eapply run_cell_le_transport; eassumption.
+      + eapply IH; eassumption.
+    - destruct Hpresent as [c [d [Ht [Hu [Hrel Htail]]]]]. exists c, d.
+      split; [exact Ht|]. split; [exact Hu|]. split.
+      + destruct c as [i|v], d as [j|w]; try exact I. now apply Hsame.
+      + eapply IH; eassumption.
+    - destruct Hpresent as [k [vs [Hterms [Hvalues Htail]]]]. exists k, vs.
+      split; [exact Hterms|]. split; [exact Hvalues|].
+      destruct (V.prim op vs) as [v|]; [eapply IH; eassumption|exact I].
+  Qed.
+
+  (** A quiet constructor call reuses an old row and leaves the database itself unchanged. *)
+  Lemma run_quiet_make_reuse : forall db f k, D.wf db ->
+    kind (D.view db) f = Some OId ->
+    (forall j, In (Id j) k -> D.allocated db j) -> D.slots_fit db f (S (length k)) ->
+    D.changed db = false -> D.changed (snd (D.make f k db)) = false ->
+    exists i next j, D.make f k db = (i, next) /\ next = db /\
+      row (D.view db) f (map (D.canon db) k) (Some (Id j)) /\ i = D.repr db j.
+  Proof.
+    intros db f k Hwf Hkind Hallocated Hfit Hquiet Hafter.
+    destruct (D.make_quiet f k db Hwf Hquiet Hafter) as [old Hrowold].
+    pose proof (D.make_spec f k db Hwf Hkind) as Hspec.
+    pose proof (D.wf_make f k db Hwf Hallocated Hfit) as Hwfnext.
+    destruct (D.make f k db) as [i next] eqn:Hmake. cbn [snd] in Hwfnext.
+    destruct Hspec as [[j [Hrow [Hrepr Hnext]]]|[Hfresh [Hrow Hextension]]].
+    - exists i, next, j. split; [reflexivity|]. split; [exact Hnext|]. split; assumption.
+    - destruct Hextension as [Hids [Hkinds [Hsame Hrows]]].
+      assert (Hold : row (D.view next) f (map (D.canon db) k) (Some (Id old))).
+      { apply (proj2 (Hrows f (map (D.canon db) k) (Some (Id old)))). now left. }
+      pose proof (D.row_functional next f (map (D.canon db) k) (Some (Id i))
+        (Some (Id old)) Hwfnext Hrow Hold) as Heq. injection Heq as Heqold. subst old.
+      assert (Hi : D.allocated db i).
+      { eapply D.row_allocated; [exact Hwf|exact Hrowold|].
+        apply in_app_iff. right. now left. }
+      unfold D.fresh_id in Hfresh. unfold D.allocated in Hi.
+      rewrite Hfresh, N.succ_pos_spec in Hi. lia.
+  Qed.
+
+  (** Quiet typed execution already has each action present in its semantic environment. *)
+  Lemma run_apply_go_present : forall p cp acts g s locals semantic db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> run_allocated_on db g (look s locals) ->
+    run_env_related db g (look s locals) semantic -> row_ids_unique (D.view db) ->
+    D.changed db = false -> D.changed (apply_go acts s locals db) = false ->
+    present V.prim V.merge (D.view db) semantic acts.
+  Proof.
+    intros p cp acts. induction acts as [|a rest IH]; intros g s locals semantic db
+      Hchecked Hwf Hloaded Hacts Henv Hallocated Hrelated Hunique Hquiet Hfinal;
+      [exact I|].
+    destruct a as [x f args|f args res|t u|x op args]; cbn [actions_ok] in Hacts.
+    - destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+      destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+        as [cells [Hcells Hsorts]].
+      destruct (run_terms_related db g s locals semantic args ss cells Hrelated Hargs Hcells)
+        as [semcells [Hsemterms [Hsupports Hrels]]].
+      assert (Hargs_allocated : forall i, In (Id i) cells -> D.allocated db i).
+      { eapply run_terms_allocated_on; eassumption. }
+      assert (Hkinddb : kind (D.view db) f = Some OId).
+      { rewrite (proj1 Hloaded). exact Hkind. }
+      assert (Hfit : D.slots_fit db f (S (length cells))).
+      { eapply run_slots_fit; [exact Hchecked|exact Hloaded|exact Hsort|exact Hkind|].
+        rewrite <- Hsorts, length_map. cbn. lia. }
+      cbn [apply_go] in Hfinal. rewrite Hcells in Hfinal.
+      destruct (D.make f cells db) as [i next] eqn:Hmake.
+      pose proof (run_apply_go_quiet_start rest s (PTrieCode.set x (Id i) locals) next Hfinal)
+        as Hnextquiet.
+      assert (Hafter : D.changed (snd (D.make f cells db)) = false).
+      { rewrite Hmake. exact Hnextquiet. }
+      destruct (run_quiet_make_reuse db f cells Hwf Hkinddb Hargs_allocated Hfit Hquiet Hafter)
+        as [ri [rn [j [Hcall [Hsame [Hrow Hrepr]]]]]].
+      rewrite Hmake in Hcall. injection Hcall as Heqi Heqn. subst ri rn next.
+      assert (Hnew : D.allocated db i).
+      { pose proof (D.layout_make f cells db Hwf) as Hlayout. rewrite Hmake in Hlayout.
+        destruct Hlayout as [_ [_ [_ [Hnew _]]]]. exact Hnew. }
+      pose proof (run_related_row_arguments db f cells semcells (Some (Id j))
+        Hwf Hunique Hrow Hrels Hsupports) as Hkey.
+      rewrite Hkey in Hrow. cbn [present]. exists semcells, j.
+      split; [exact Hsemterms|]. split; [exact Hrow|].
+      assert (Henv' : env_sorted (ctx_set g x SId)
+          (look s (PTrieCode.set x (Id i) locals))).
+      { apply run_env_sorted_set; [exact Henv|reflexivity]. }
+      assert (Hallocated' : run_allocated_on db (ctx_set g x SId)
+          (look s (PTrieCode.set x (Id i) locals))).
+      { apply run_allocated_on_set; [exact Hallocated|].
+        intros k Heq. injection Heq as <-. exact Hnew. }
+      assert (Hrelated' : run_env_related db (ctx_set g x SId)
+          (look s (PTrieCode.set x (Id i) locals)) (update semantic x (Id j))).
+      { apply run_env_related_set; [exact Hrelated| |].
+        - eapply run_row_supported; [exact Hrow|]. apply in_app_iff. right. now left.
+        - constructor. apply (proj2 (D.same_repr db i j Hwf)).
+          rewrite Hrepr, D.repr_idem by exact Hwf. reflexivity. }
+      exact (IH _ _ _ _ _ Hchecked Hwf Hloaded Hrest Henv' Hallocated' Hrelated'
+        Hunique Hquiet Hfinal).
+    - destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+      destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+        as [cells [Hcells Hsorts]].
+      destruct (run_result_cell_typed g s locals out res Henv Hresult)
+        as [output [Houtput Houtsort]].
+      destruct (run_terms_related db g s locals semantic args ss cells Hrelated Hargs Hcells)
+        as [semcells [Hsemterms [Hsupports Hrels]]].
+      assert (Hrowtyped : row_sorted (program_sorts p) (program_kind p) f cells output).
+      { exists out. rewrite Hsorts. repeat split; assumption. }
+      assert (Hargs_allocated : forall i, In (Id i) (cells ++ option_list output) ->
+          D.allocated db i).
+      { intros i Hin. apply in_app_iff in Hin as [Hin|Hin].
+        - eapply run_terms_allocated_on; eassumption.
+        - eapply run_result_allocated_on; eassumption. }
+      pose proof (run_put_allowed p cp db f cells output Hchecked Hloaded Hrowtyped
+        Hargs_allocated) as Hallowed.
+      destruct (run_put_state p cp f cells output db Hchecked Hwf Hloaded Hrowtyped
+        Hargs_allocated) as [Hwf' [Hloaded' [Hids _]]].
+      cbn [apply_go] in Hfinal. rewrite Hcells, Houtput in Hfinal.
+      pose proof (run_apply_go_quiet_start rest s locals (D.put f cells output db) Hfinal)
+        as Hnextquiet.
+      destruct (D.put_quiet f cells output db Hwf Hallowed Hquiet Hnextquiet)
+        as [Hview [stored [Hrow Hcontained]]].
+      pose proof (run_related_row_arguments db f cells semcells stored Hwf Hunique Hrow
+        Hrels Hsupports) as Hkey. rewrite Hkey in Hrow.
+      assert (Hallocated' : run_allocated_on (D.put f cells output db) g (look s locals)).
+      { eapply run_allocated_on_mono with (db := db);
+          [rewrite Hids; reflexivity|exact Hallocated]. }
+      assert (Hrelated' : run_env_related (D.put f cells output db) g (look s locals) semantic).
+      { eapply run_env_related_mono; [| |exact Hrelated]; intros; now rewrite Hview. }
+      assert (Hunique' : row_ids_unique (D.view (D.put f cells output db))).
+      { now rewrite Hview. }
+      pose proof (IH _ _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated' Hrelated'
+        Hunique' Hnextquiet Hfinal) as Htail.
+      rewrite Hview in Htail. cbn [present]. exists semcells, stored.
+      split; [exact Hsemterms|]. split; [exact Hrow|]. split; [|exact Htail].
+      destruct res as [t|]; [|exact I]. cbn [result_cell] in Houtput.
+      destruct (term_cell s locals t) as [c|] eqn:Hcell; [|discriminate].
+      injection Houtput as Heqoutput. subst output.
+      destruct (run_result_related_term db g s locals semantic out t c
+        Hrelated Hresult Hcell) as [d [Hterm [_ Hrel]]].
+      destruct stored as [target|]; [|contradiction]. exists d, target.
+      split; [exact Hterm|]. split; [reflexivity|].
+      eapply run_cell_le_related; eassumption.
+    - destruct Hacts as [Ht [Hu Hrest]].
+      destruct (run_term_cell_typed g s locals t SId Henv Ht)
+        as [[i|v] [Hi Hitype]]; [|discriminate].
+      destruct (run_term_cell_typed g s locals u SId Henv Hu)
+        as [[j|v] [Hj Hjtype]]; [|discriminate].
+      pose proof (run_term_allocated_on db g s locals t SId i Hallocated Ht Hi) as Hiall.
+      pose proof (run_term_allocated_on db g s locals u SId j Hallocated Hu Hj) as Hjall.
+      destruct (run_union_state p cp i j db Hwf Hloaded Hiall Hjall)
+        as [Hwf' [Hloaded' [Hids _]]].
+      cbn [apply_go] in Hfinal. rewrite Hi, Hj in Hfinal.
+      pose proof (run_apply_go_quiet_start rest s locals (D.union i j db) Hfinal) as Hnextquiet.
+      pose proof (D.union_quiet i j db Hwf Hquiet Hnextquiet) as Hij.
+      destruct (run_term_related db g s locals semantic t SId (Id i) Hrelated Ht Hi)
+        as [c [Hsemantic_t [_ Hic]]].
+      destruct (run_term_related db g s locals semantic u SId (Id j) Hrelated Hu Hj)
+        as [d [Hsemantic_u [_ Hjd]]].
+      inversion Hic as [i0 a Hia|]; subst.
+      inversion Hjd as [j0 b Hjb|]; subst.
+      assert (Hab : same (D.view db) a b).
+      { eapply run_same_trans with (j := i); [exact Hwf|now apply run_same_sym|].
+        eapply run_same_trans; [exact Hwf|exact Hij|exact Hjb]. }
+      assert (Hallocated' : run_allocated_on (D.union i j db) g (look s locals)).
+      { eapply run_allocated_on_mono with (db := db);
+          [rewrite Hids; reflexivity|exact Hallocated]. }
+      assert (Hrelated' : run_env_related (D.union i j db) g (look s locals) semantic).
+      { eapply run_env_related_mono; [| |exact Hrelated].
+        - intros f k o Hrow. now rewrite (D.union_rows i j db Hwf).
+        - intros k l Hkl. apply (proj2 (D.union_same i j db k l Hwf)).
+          apply rst_step. now left. }
+      assert (Hunique' : row_ids_unique (D.view (D.union i j db))).
+      { eapply run_quiet_union_unique; eassumption. }
+      pose proof (IH _ _ _ _ _ Hchecked Hwf' Hloaded' Hrest Henv Hallocated' Hrelated'
+        Hunique' Hnextquiet Hfinal) as Htail.
+      cbn [present]. exists (Id a), (Id b).
+      split; [exact Hsemantic_t|]. split; [exact Hsemantic_u|]. split; [exact Hab|].
+      eapply run_present_transport; [| | |exact Htail].
+      + intros f k o Hrow. rewrite (D.union_rows i j db Hwf) in Hrow. exact Hrow.
+      + eapply run_quiet_union_same; eassumption.
+      + intro f. rewrite (proj1 (D.layout_union i j db Hwf)). reflexivity.
+    - destruct Hacts as [Hargs Hrest].
+      destruct (run_term_values_typed g s locals args Henv Hargs) as [vs Hvalues].
+      pose proof (run_values_related db g s locals semantic args vs Hrelated Hargs Hvalues)
+        as Hsemterms.
+      cbn [apply_go] in Hfinal. rewrite Hvalues in Hfinal.
+      cbn [present]. exists (map Val vs), vs.
+      split; [exact Hsemterms|]. split; [apply run_value_cells|].
+      destruct (V.prim op vs) as [v|]; [|exact I].
+      assert (Henv' : env_sorted (ctx_set g x SVal)
+          (look s (PTrieCode.set x (Val v) locals))).
+      { apply run_env_sorted_set; [exact Henv|reflexivity]. }
+      assert (Hallocated' : run_allocated_on db (ctx_set g x SVal)
+          (look s (PTrieCode.set x (Val v) locals))).
+      { apply run_allocated_on_set; [exact Hallocated|]. intros i Heq. discriminate. }
+      assert (Hrelated' : run_env_related db (ctx_set g x SVal)
+          (look s (PTrieCode.set x (Val v) locals)) (update semantic x (Val v))).
+      { apply run_env_related_set; [exact Hrelated|exact I|constructor]. }
+      exact (IH _ _ _ _ _ Hchecked Hwf Hloaded Hrest Henv' Hallocated' Hrelated'
+        Hunique Hquiet Hfinal).
+  Qed.
+
+  Lemma F5_apply_quiet_present : forall p cp r s db, plans_ok p cp -> D.wf db ->
+    loaded p cp db -> In r (rules V.t p) -> matches V.prim (D.view db) (query V.t r) s ->
+    row_ids_unique (D.view db) ->
+    D.changed db = false -> D.changed (apply (actions V.t r) s db) = false ->
+    present V.prim V.merge (D.view db) s (actions V.t r).
+  Proof.
+    intros p cp r s db Hchecked Hwf Hloaded Hin Hmatches Hunique Hquiet Hfinal.
+    pose proof (plans_ok_sorted p cp Hchecked) as Hprogram.
+    destruct ((proj1 (Forall_forall _ _)) Hprogram r Hin) as [g [Hquery Hacts]].
+    pose proof (matches_rule_env V.t V.prim (D.view db) (program_sorts p) (program_kind p)
+      r g s (proj2 (proj2 Hloaded)) (proj1 Hloaded) Hquery Hmatches) as Henv.
+    assert (Hsupport : forall x ty c, g x = Some ty -> s x = Some c -> run_supported db c).
+    { eapply run_query_supported; eassumption. }
+    unfold apply in Hfinal. eapply run_apply_go_present; try eassumption.
+    - intros x ty Hbound. destruct (Henv x ty Hbound) as [c [Hc Hsort]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x ty i Hbound Hcell. rewrite run_look_empty in Hcell.
+      apply run_supported_allocated; [exact Hwf|]. eapply Hsupport; eassumption.
+    - intros x ty c Hbound Hcell. rewrite run_look_empty in Hcell.
+      exists c. split; [exact Hcell|]. split.
+      + eapply Hsupport; eassumption.
+      + now apply run_cell_rel_refl.
   Qed.
 
   Lemma F7_apply_derives : forall p initial db r s, relational_fragment p = true ->
