@@ -2021,6 +2021,94 @@ Proof.
     time_unfold @T_search_step. time_cbn. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
+(** A path records exactly the source states of its continuing transitions. *)
+Inductive search_machine_path {St Out : Type} (step : St -> St + Out) :
+    St -> list St -> St -> Prop :=
+  | search_path_nil : forall st, search_machine_path step st [] st
+  | search_path_cons : forall st next states last,
+      step st = inl next -> search_machine_path step next states last ->
+      search_machine_path step st (st :: states) last.
+
+(** The binary driver spends at most four units beyond a callback and its borrow credit. *)
+Lemma search_loop_continue_clock {St Out : Type} (step : St -> St + Out) T_step
+    fs fs1 Hlt : loopN_step step fs = inl (exist _ fs1 Hlt) ->
+  step (snd fs) = inl (snd fs1) /\ fst fs1 = N.pred (fst fs) /\ (0 < fst fs)%N /\
+  (T_loopN_step step T_step fs + loopN_zero_bits (fst fs1) <=
+    T_step (snd fs) + loopN_zero_bits (fst fs) + 4)%N.
+Proof.
+  destruct fs as [fuel st], fs1 as [fuel1 next]. intro Hgo.
+  destruct fuel as [|p]; [discriminate Hgo|]. cbn [loopN_step] in Hgo.
+  destruct (step st) as [after|result] eqn:Hstep; [|discriminate Hgo].
+  assert (Hpair : (N.pred (N.pos p), after) = (fuel1, next)).
+  { exact (f_equal (fun answer =>
+      match answer with inl smaller => proj1_sig smaller | inr _ => (0%N, st) end) Hgo). }
+  injection Hpair as Hfuel Hstate. subst fuel1 next.
+  split; [exact Hstep|]. split; [reflexivity|]. split; [cbn [fst]; lia|].
+  pose proof (loopN_pred_credit (N.pos p)) as Hborrow.
+  time_unfold @T_loopN_step. cbn [fst snd]. rewrite Hstep.
+  change (1 + (T_step st + N.T_pred (N.pos p)) +
+    loopN_zero_bits (N.pred (N.pos p)) <=
+    T_step st + loopN_zero_bits (N.pos p) + 4)%N.
+  lia.
+Qed.
+
+(** Exhaustion is constant-time; genuine stopping also pays the final callback. *)
+Lemma search_loop_stop_clock {St Out : Type} (step : St -> St + Out) T_step fs result :
+  loopN_step step fs = inr result ->
+  (T_loopN_step step T_step fs <= 1 +
+    match step (snd fs) with inl _ => 0 | inr _ => T_step (snd fs) end)%N.
+Proof.
+  destruct fs as [fuel st]. intro Hstop. destruct fuel as [|p].
+  - time_unfold @T_loopN_step. cbn [snd]. lia.
+  - cbn [loopN_step] in Hstop.
+    destruct (step st) as [next|out] eqn:Hstep; [discriminate Hstop|].
+    time_unfold @T_loopN_step. cbn [snd]. rewrite Hstep. lia.
+Qed.
+
+(** The accessibility loop exposes a path whose length never exceeds its binary fuel. *)
+Lemma search_loop_acc_clock {St Out : Type} (step : St -> St + Out) T_step fs
+    (Hacc : Acc (@loopN_lt St) fs) :
+  exists states last, search_machine_path step (snd fs) states last /\
+    length states <= N.to_nat (fst fs) /\
+    (T_loop loopN_lt (loopN_step step) (fun fs => T_loopN_step step T_step fs) fs Hacc <=
+      fold_right N.add 0%N (map T_step states) + 5 * N.of_nat (length states) +
+      loopN_zero_bits (fst fs) + 2 +
+      match step last with inl _ => 0 | inr _ => T_step last end)%N.
+Proof.
+  induction Hacc as [fs Hacc IH] using Acc_ind_dep.
+  destruct (loopN_step step fs) as [[fs1 Hlt]|result] eqn:Hdriver.
+  - destruct (IH fs1 Hlt) as [states [last [Hpath [Hlength Hclock]]]].
+    destruct (search_loop_continue_clock step T_step fs fs1 Hlt Hdriver)
+      as [Hstep [Hfuel [Hpositive Hborrow]]].
+    exists (snd fs :: states), last. split; [econstructor; eassumption|]. split.
+    + cbn [length]. rewrite Hfuel, N2Nat.inj_pred in Hlength. lia.
+    + time_unfold @T_loop. cbn [Acc_inv]. rewrite Hdriver.
+      cbn [map fold_right length]. rewrite Nat2N.inj_succ. lia.
+  - exists [], (snd fs). split; [constructor|]. split; [cbn [length]; lia|].
+    pose proof (search_loop_stop_clock step T_step fs result Hdriver) as Hstop.
+    time_unfold @T_loop. cbn [Acc_inv]. rewrite Hdriver.
+    cbn [map fold_right length]. lia.
+Qed.
+
+(** The binary loop adds only its call and the initial fuel's bit length to that path cost. *)
+Lemma search_loop_trace_clock {St Out : Type} (step : St -> St + Out) T_step fuel initial :
+  exists states last, search_machine_path step initial states last /\
+    length states <= N.to_nat fuel /\
+    (T_loopN step T_step fuel initial <=
+      fold_right N.add 0%N (map T_step states) + 5 * N.of_nat (length states) +
+      N.of_nat (N.size_nat fuel) + 3 +
+      match step last with inl _ => 0 | inr _ => T_step last end)%N.
+Proof.
+  time_unfold @T_loopN.
+  match goal with
+  | |- context [T_loop _ _ _ _ ?Hacc] =>
+      destruct (search_loop_acc_clock step T_step (fuel, initial) Hacc)
+        as [states [last [Hpath [Hlength Hclock]]]]
+  end.
+  exists states, last. split; [exact Hpath|]. split; [exact Hlength|].
+  pose proof (loopN_zero_bits_le_size fuel) as Hbits. cbn [fst snd] in Hclock. lia.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
