@@ -943,6 +943,184 @@ Module Compile (V : VALUE) <: COMPILE V.
     - exact (IH ts all w s Htail).
   Qed.
 
+  (** A queried variable has a value among the corresponding argument cells. *)
+  Lemma terms_value_occurs : forall s ts cs, @terms_value V.t s ts cs ->
+    forall x, In (Var x) ts -> exists c, In c cs /\ s x = Some c.
+  Proof.
+    intros s ts cs Hvalues. induction Hvalues as [|t c ts cs Hhead Htail IH];
+      intros x Hin; cbn in Hin; [contradiction |].
+    destruct Hin as [Ht | Hin].
+    - subst t. exists c. split; [now left | exact Hhead].
+    - destruct (IH x Hin) as [d [Hd Hvalue]]. exists d. split; [now right | exact Hvalue].
+  Qed.
+
+  (** A primitive argument cell is a literal value. *)
+  Lemma values_cells : forall cs vs, @values V.t cs vs ->
+    forall c, In c cs -> exists v, c = Val v.
+  Proof.
+    intros cs vs Hvalues. induction Hvalues as [|d v cs vs Hhead Htail IH];
+      intros c Hin; cbn in Hin; [contradiction |].
+    destruct Hin as [<- | Hin]; [now exists v | exact (IH c Hin)].
+  Qed.
+
+  (** A variable used by a matching atom denotes a row cell or a literal. *)
+  Lemma atom_bound_canonical : forall w s a x c,
+    atom_holds V.prim w s a -> In (Var x) (atom_terms a) -> s x = Some c ->
+    row_cell w c \/ exists v, c = Val v.
+  Proof.
+    intros w s [f args res | p args res] x c Hatom Hin Hvalue;
+      cbn [atom_terms] in Hin.
+    - destruct Hatom as [k [o [Hargs [Hres Hrow]]]]. apply in_app_or in Hin.
+      destruct Hin as [Hin | Hin].
+      + destruct (terms_value_occurs s args k Hargs x Hin) as [d [Hd Hlookup]].
+        rewrite Hvalue in Hlookup. injection Hlookup as <-. left.
+        exists f, k, o. split; [exact Hrow | apply in_or_app; now left].
+      + destruct res as [t|]; cbn in Hin; [|contradiction].
+        destruct Hin as [Ht | Hin]; [subst t |contradiction].
+        destruct o as [d|]; [|contradiction]. cbn [term_value] in Hres.
+        rewrite Hvalue in Hres. injection Hres as <-. left.
+        exists f, k, (Some c). split; [exact Hrow |]. apply in_or_app. right. now left.
+    - destruct Hatom as [k [vs [v [Hargs [Hvals [Hprim Hres]]]]]].
+      apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+      + destruct (terms_value_occurs s args k Hargs x Hin) as [d [Hd Hlookup]].
+        rewrite Hvalue in Hlookup. injection Hlookup as <-. right.
+        exact (values_cells k vs Hvals c Hd).
+      + cbn in Hin. destruct Hin as [Ht | Hin]; [subst res |contradiction].
+        cbn [term_value] in Hres. rewrite Hvalue in Hres. injection Hres as Hc.
+        right. exists v. exact Hc.
+  Qed.
+
+  (** A canonical row representative agrees exactly with any represented atom value. *)
+  Lemma represented_occurrence_unique : forall w c d e,
+    canonical_view w -> row_cell w c -> (row_cell w d \/ exists v, d = Val v) ->
+    represents w c e -> represents w d e -> c = d.
+  Proof.
+    intros w c d e Hcanonical Hc Hd Hrep Hrep'.
+    pose proof (represents_unique w c e Hcanonical Hrep d Hrep') as Hrel.
+    destruct Hd as [Hd | [v ->]].
+    - exact (canonical_cell_unique w c d Hcanonical Hc Hd Hrel).
+    - inversion Hrel. reflexivity.
+  Qed.
+
+  (** Argument values are preserved by environments agreeing on their mentioned variables. *)
+  Lemma terms_value_agrees : forall s s' ts cs,
+    (forall x, In (Var x) ts -> s' x = s x) ->
+    @terms_value V.t s ts cs -> terms_value s' ts cs.
+  Proof.
+    intros s s' ts cs Hagree Hvalues. revert Hagree.
+    induction Hvalues as [|t c ts cs Hhead Htail IH]; intros Hagree; [constructor |].
+    constructor.
+    - destruct t as [x|v]; cbn [term_value] in *; [|exact Hhead].
+      rewrite Hagree; [exact Hhead | now left].
+    - apply IH. intros x Hin. apply Hagree. now right.
+  Qed.
+
+  (** An atom match depends only on the variable names occurring in that atom. *)
+  Lemma atom_holds_agrees : forall w s s' a,
+    (forall x, In (Var x) (atom_terms a) -> s' x = s x) ->
+    atom_holds V.prim w s a -> atom_holds V.prim w s' a.
+  Proof.
+    intros w s s' [f args res|p args res] Hagree Hatom;
+      cbn [atom_terms] in Hagree.
+    - destruct Hatom as [k [o [Hargs [Hres Hrow]]]]. exists k, o. split.
+      + apply (terms_value_agrees s s' args k); [|exact Hargs].
+        intros x Hin. apply Hagree. apply in_or_app. now left.
+      + split; [|exact Hrow]. destruct res as [t|], o as [c|]; try contradiction;
+          [|exact I]. destruct t as [x|v]; cbn [term_value] in *; [|exact Hres].
+        rewrite Hagree; [exact Hres |]. apply in_or_app. right. now left.
+    - destruct Hatom as [k [vs [v [Hargs [Hvals [Hprim Hres]]]]]].
+      exists k, vs, v. split.
+      + apply (terms_value_agrees s s' args k); [|exact Hargs].
+        intros x Hin. apply Hagree. apply in_or_app. now left.
+      + split; [exact Hvals |]. split; [exact Hprim |].
+        destruct res as [x|u]; cbn [term_value] in *; [|exact Hres].
+        rewrite Hagree; [exact Hres |]. apply in_or_app. right. now left.
+  Qed.
+
+  (** Binding represented pattern nodes preserves an already matching source atom. *)
+  Lemma pattern_atom_agrees : forall (p : fpat V.t) rn w tau cs s a,
+    canonical_view w -> represents_subst w tau s -> atom_holds V.prim w s a ->
+    (forall i c, nth_error cs i = Some c -> represents_node w tau (nodes V.t p) i c) ->
+    (forall x, In (Var x) (atom_terms a) -> (x < rn)%positive) ->
+    forall x, In (Var x) (atom_terms a) ->
+      table_bind (fst (pattern_table p rn)) cs s x = s x.
+  Proof.
+    intros p rn w tau cs s a Hcanonical Hsubst Hatom Hall Hsmall x Hvar.
+    apply table_bind_agrees. intros i c Hterm Hcell.
+    pose proof (pattern_table_small_var p rn i x (Hsmall x Hvar) Hterm) as Hhole.
+    destruct (represents_node_hole w tau _ i c x Hhole (Hall i c Hcell))
+      as [e [Htau Hrep]].
+    destruct (Hsubst x e Htau) as [d [Hlookup Hrep']].
+    assert (c = d).
+    { exact (represented_occurrence_unique w c d e Hcanonical
+        (proj1 (Hall i c Hcell))
+        (atom_bound_canonical w s a x d Hatom Hvar Hlookup) Hrep Hrep'). }
+    now subst d.
+  Qed.
+
+  (** The represented table preserves each well-scoped substitution binding. *)
+  Lemma pattern_bind_represents : forall (p : fpat V.t) rn w tau cs s g,
+    represents_subst w tau s ->
+    (forall i c, nth_error cs i = Some c -> represents_node w tau (nodes V.t p) i c) ->
+    (forall h t, g h = Some t -> (h < rn)%positive) ->
+    represents_on g w tau (table_bind (fst (pattern_table p rn)) cs s).
+  Proof.
+    intros p rn w tau cs s g Hsubst Hall Hsmall h t e Hsort Htau.
+    destruct (table_bind_case _ (fst (pattern_table p rn)) cs s h)
+      as [Hbase | [i [c [Hterm [Hcell Hlookup]]]]].
+    - destruct (Hsubst h e Htau) as [c [Hlookup Hrep]]. exists c.
+      split; [now rewrite Hbase | exact Hrep].
+    - exists c. split; [exact Hlookup |].
+      pose proof (pattern_table_small_var p rn i h (Hsmall h t Hsort) Hterm) as Hhole.
+      destruct (represents_node_hole w tau _ i c h Hhole (Hall i c Hcell))
+        as [e' [Htau' Hrep]]. assert (e = e') by congruence. now subst e'.
+  Qed.
+
+  (** A constructor node can only be represented by an identifier cell. *)
+  Lemma represents_node_app_id : forall w tau ns i c f children,
+    nth_error ns i = Some (PApp f children) -> represents_node w tau ns i c ->
+    exists j, c = Id j.
+  Proof.
+    intros w tau ns i c f children Hnode [_ [e [Hunfold Hrep]]].
+    inversion Hunfold as [j h t Hnth Htau|j v Hnth|j g ch args Hnth Hbefore Hargs];
+      subst; try congruence.
+    inversion Hrep. now eexists.
+  Qed.
+
+  (** The represented cell table supplies a canonical row at the constructor root. *)
+  Lemma pattern_root_row : forall (p : fpat V.t) w tau cs c e,
+    canonical_view w -> app_rooted p ->
+    unfolds_pat tau (nodes V.t p) (root V.t p) e -> represents w (Id c) e ->
+    length cs = length (nodes V.t p) ->
+    (forall i d, nth_error cs i = Some d -> represents_node w tau (nodes V.t p) i d) ->
+    exists j, nth_error cs (root V.t p) = Some (Id j) /\ same w c j /\
+      exists f k, row w f k (Some (Id j)).
+  Proof.
+    intros p w tau cs c e Hcanonical [f [children Hroot]] Hunfold Hrep Hlength Hall.
+    assert (Hindex : root V.t p < length cs).
+    { rewrite Hlength. apply nth_error_Some. rewrite Hroot. discriminate. }
+    destruct (nth_error cs (root V.t p)) as [d|] eqn:Hcell;
+      [|apply nth_error_None in Hcell; lia].
+    destruct (represents_node_app_id w tau _ _ d f children Hroot
+      (Hall _ d Hcell)) as [j ->]. exists j. split; [reflexivity |].
+    split.
+    - destruct (Hall _ (Id j) Hcell) as [Hrow [e' [Hunfold' Hrep']]].
+      assert (e = e') by (eapply unfolds_pat_unique; eassumption). subst e'.
+      pose proof (represents_unique w (Id c) e Hcanonical Hrep (Id j) Hrep') as Hrel.
+      now inversion Hrel.
+    - destruct (represents_node_constructor w tau _ _ (Id j) f children Hcanonical Hroot
+        (Hall _ (Id j) Hcell)) as [cells [Hrow Hchildren]]. now exists f, cells.
+  Qed.
+
+  (** The root constructor uses the reserved table name. *)
+  Lemma pattern_table_root : forall (p : fpat V.t) rn,
+    app_rooted p -> nth_error (fst (pattern_table p rn)) (root V.t p) = Some (Var rn).
+  Proof.
+    intros [ns r] rn [f [children Hroot]]. cbn [nodes root] in Hroot.
+    cbn [pattern_table root]. apply (pattern_terms_root ns r f children rn (Pos.succ rn)).
+    exact Hroot.
+  Qed.
+
   (** * Sorting compiled patterns *)
 
   (** A context includes another when it preserves every existing sort assignment. *)
@@ -1615,7 +1793,47 @@ Module Compile (V : VALUE) <: COMPILE V.
     exists s j, matches V.prim w (flatten_lhs rw) s /\ represents_on g w tau s /\
       s (root_var rw) = Some (Id j) /\ same w c j /\
       exists f k, row w f k (Some (Id j)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds w rw g tau c e Hrw Hcanonical Hunfold Hrep [base [Hsubst Hcond]].
+    pose proof Hrw as Hrw_all.
+    destruct Hrw as [g0 [Hroot [Hleft [Hscope [Hquery Hright]]]]].
+    destruct (pattern_cell_table _ _ g0 (lhs V.t rw) tau w c e
+      Hcanonical Hleft Hunfold Hrep) as [cs [Hlength Hall]].
+    set (ts := fst (pattern_table (lhs V.t rw) (root_var rw))).
+    assert (Hcompatible : table_compatible ts cs).
+    { apply (pattern_table_compatible (lhs V.t rw) (root_var rw) w tau cs
+        Hcanonical); [|exact Hall]. intros h Hin. exact (root_var_hole rw h Hin). }
+    assert (Hvalues : terms_value (table_bind ts cs base) ts cs).
+    { apply table_bind_values; [|exact Hcompatible |].
+      - destruct (pattern_table_facts (lhs V.t rw) (root_var rw)) as [Hforms Hrest].
+        pose proof (Forall2_length Hforms). unfold ts. lia.
+      - exact (pattern_table_literals (lhs V.t rw) (root_var rw) w tau cs Hall). }
+    destruct (pattern_root_row (lhs V.t rw) w tau cs c e Hcanonical Hroot
+      Hunfold Hrep Hlength Hall) as [j [Hrootcell [Hsame Hrow]]].
+    exists (table_bind ts cs base), j. split.
+    - assert (Hflat : flatten_lhs rw =
+        pattern_atoms (nodes V.t (lhs V.t rw)) ts ts ++ cond V.t rw).
+      { unfold ts. destruct rw as [[ns r] rp conditions]. reflexivity. }
+      rewrite Hflat. apply Forall_app. split.
+      + apply pattern_atoms_match. intros i f children t Hnode Hterm.
+        exact (pattern_atom_holds (lhs V.t rw) (root_var rw) w tau cs _
+          Hcanonical Hlength Hvalues Hall i f children t Hnode Hterm).
+      + apply Forall_forall. intros a Hin.
+        assert (Hatom : atom_holds V.prim w base a).
+        { apply (proj1 (Forall_forall _ _) Hcond a Hin). }
+        apply (atom_holds_agrees w base _ a); [|exact Hatom].
+        apply (pattern_atom_agrees (lhs V.t rw) (root_var rw) w tau cs base a
+          Hcanonical Hsubst Hatom Hall).
+        intros x Hvar. exact (proj2 (proj2 (root_var_bounds rw)) a x Hin Hvar).
+    - split.
+      + apply (pattern_bind_represents (lhs V.t rw) (root_var rw) w tau cs base g
+          Hsubst Hall).
+        intros h t Hsort. exact (rewrite_context_bound ds rw g Hrw_all h t Hsort).
+      + split.
+        * exact (table_bind_at _ ts cs base Hcompatible (root V.t (lhs V.t rw))
+            (root_var rw) (Id j) (pattern_table_root _ _ Hroot) Hrootcell).
+        * split; assumption.
+  Qed.
 
   Lemma present_represents : forall ds w rw g s tau c r,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
