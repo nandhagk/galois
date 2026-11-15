@@ -602,6 +602,68 @@ Module Compile (V : VALUE) <: COMPILE V.
       (fold_right (fun t m => name_max (term_name t) m) seed ts))). lia.
   Qed.
 
+  (** Query atoms mention the terms in their arguments and optional result. *)
+  Definition atom_terms (a : atom V.t) : list (term V.t) :=
+    match a with
+    | Fun _ _ args res => args ++ option_list res
+    | Prim _ _ args res => args ++ [res]
+    end.
+
+  (** An atom's maximum name bounds every variable that the atom mentions. *)
+  Lemma atom_name_bound : forall a x, In (Var x) (atom_terms a) ->
+    (x <= atom_name_max a)%positive.
+  Proof.
+    intros [f args res | p args res] x Hin; cbn [atom_terms atom_name_max] in *.
+    - apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
+      + now apply terms_name_max.
+      + destruct res as [t |]; cbn [option_list] in Hin; [| contradiction].
+        destruct Hin as [Heq | Hfalse]; [subst t | contradiction].
+        apply terms_name_seed.
+    - apply in_app_iff in Hin. destruct Hin as [Hin | Hin].
+      + now apply terms_name_max.
+      + destruct Hin as [Heq | Hfalse]; [subst res | contradiction].
+        apply terms_name_seed.
+  Qed.
+
+  (** The condition maximum bounds each atom in the condition. *)
+  Lemma condition_name_bound : forall (q : list (atom V.t)) a, In a q ->
+    (atom_name_max a <=
+      fold_right (fun a m => name_max (atom_name_max a) m) 1%positive q)%positive.
+  Proof.
+    induction q as [|head q IH]; intros a Hin; [contradiction |].
+    cbn [fold_right]. destruct Hin as [Heq | Hin].
+    - subst head. apply name_max_bounds.
+    - eapply Pos.le_trans; [exact (IH a Hin) |]. apply name_max_bounds.
+  Qed.
+
+  (** The chosen root name is above both pattern maxima and every condition variable. *)
+  Lemma root_var_bounds : forall rw,
+    (pattern_max (nodes V.t (lhs V.t rw)) < root_var rw)%positive /\
+    (pattern_max (nodes V.t (rhs V.t rw)) < root_var rw)%positive /\
+    forall a x, In a (cond V.t rw) -> In (Var x) (atom_terms a) ->
+      (x < root_var rw)%positive.
+  Proof.
+    intros [[ln lr] [rn rr] conditions]. cbn [root_var nodes lhs rhs cond].
+    pose proof (name_max_bounds (pattern_max ln)
+      (name_max (pattern_max rn)
+        (fold_right (fun a m => name_max (atom_name_max a) m) 1%positive conditions)))
+      as [Hleft Hrest].
+    pose proof (name_max_bounds (pattern_max rn)
+      (fold_right (fun a m => name_max (atom_name_max a) m) 1%positive conditions))
+      as [Hright Hconditions].
+    split; [lia |]. split; [lia |]. intros a x Hin Hterm.
+    pose proof (condition_name_bound conditions a Hin) as Hatom.
+    pose proof (atom_name_bound a x Hterm) as Hname. lia.
+  Qed.
+
+  (** Original left-side holes are strictly below every fresh constructor name. *)
+  Lemma root_var_hole : forall rw h, In (PHole h) (nodes V.t (lhs V.t rw)) ->
+    (h < root_var rw)%positive.
+  Proof.
+    intros rw h Hin. pose proof (pattern_max_hole _ h Hin) as Hhole.
+    pose proof (proj1 (root_var_bounds rw)) as Hroot. lia.
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
