@@ -281,12 +281,12 @@ Proof.
   vm_compute. reflexivity.
 Qed.
 
-(** A nullary relation atom is well sorted, but no join column can read it, so the checker
-    rejects its plan. *)
+(** A nullary relation atom reads no column, so the sort checker rejects the program and the
+    plan checker rejects its plan. *)
 Example nullary_atom_rejected :
   let p := Program positive [Decl 1 [] ORel; Decl 2 [] ORel]
     [Rule positive [Fun positive 1 [] None] [Put 2 [] None]] in
-  (check_program p, PlanRun.check_plan p (PlanRun.plan p)) = (true, false).
+  (check_program p, PlanRun.check_plan p (PlanRun.plan p)) = (false, false).
 Proof.
   vm_compute. reflexivity.
 Qed.

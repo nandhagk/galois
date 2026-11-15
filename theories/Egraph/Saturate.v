@@ -1021,6 +1021,7 @@ Proof.
   - destruct a as [f args res | op args res].
     + time_step. rewrite PTrieT.trie_get_clock.
       destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+      destruct (reads_b ss out); time_cbn; [|nia].
       pose proof (front_bind_list_clock V args ss g).
       destruct (bind_list_b g args ss) as [g1|]; time_cbn; [|nia].
       pose proof (front_bind_result_clock V g1 out res).

@@ -58,12 +58,15 @@ Definition binds_result {V} (g : ctx) (out : output) (res : option (term V))
   end.
 
 (** A query is well sorted when each function atom names a declared function with matching
-    argument and result sorts, and each primitive atom reads values bound before it. *)
+    argument and result sorts and reads an argument or an output, and each primitive atom reads
+    values bound before it. The engine joins function atoms on their columns, so a query cannot
+    read a nullary relation. Actions can still write one. *)
 Inductive query_ok {V : Type} (sorts : positive -> option (list sort))
     (kinds : positive -> option output) : ctx -> list (atom V) -> ctx -> Prop :=
   | query_nil g : query_ok sorts kinds g [] g
   | query_fun g g1 g2 g3 f args res ss out rest :
-      sorts f = Some ss -> kinds f = Some out -> binds_list g args ss g1 ->
+      sorts f = Some ss -> kinds f = Some out -> (ss <> [] \/ out <> ORel) ->
+      binds_list g args ss g1 ->
       binds_result g1 out res g2 -> query_ok sorts kinds g2 rest g3 ->
       query_ok sorts kinds g (Fun V f args res :: rest) g3
   | query_prim g g1 p args res rest :
@@ -238,6 +241,14 @@ Fixpoint decl_table (ds : list decl) : ptrie (list sort * output) :=
   end.
 TimeFun decl_table.
 
+(** A function atom reads a column when its function takes an argument or has an output. *)
+Definition reads_b (ss : list sort) (out : output) : bool :=
+  match ss, out with
+  | [], ORel => false
+  | _, _ => true
+  end.
+TimeFun reads_b.
+
 Fixpoint bind_query_b {V} (tb : ptrie (list sort * output)) (g : ptrie sort)
     (q : list (atom V)) : option (ptrie sort) :=
   match q with
@@ -247,14 +258,16 @@ Fixpoint bind_query_b {V} (tb : ptrie (list sort * output)) (g : ptrie sort)
       | Fun _ f args res =>
           match trie_get f tb with
           | Some (ss, out) =>
-              match bind_list_b g args ss with
-              | Some g1 =>
-                  match bind_result_b g1 out res with
-                  | Some g2 => bind_query_b tb g2 rest
-                  | None => None
-                  end
-              | None => None
-              end
+              if reads_b ss out then
+                match bind_list_b g args ss with
+                | Some g1 =>
+                    match bind_result_b g1 out res with
+                    | Some g2 => bind_query_b tb g2 rest
+                    | None => None
+                    end
+                | None => None
+                end
+              else None
           | None => None
           end
       | Prim _ _ args res =>
@@ -351,6 +364,16 @@ Definition program_bits {V} (p : program V) : nat :=
   fold_right (fun r n => rule_bits r + n) 0 (rules V p) + 1.
 
 (** * Lemmas *)
+
+(** The column test accepts exactly the functions that take an argument or have an output. *)
+Lemma reads_b_spec : forall ss out, reads_b ss out = true <-> ss <> [] \/ out <> ORel.
+Proof.
+  intros [|s ss] out; [destruct out as [| |m]|]; cbn [reads_b].
+  - split; [discriminate|]. intros [Hss|Hout]; exfalso; [apply Hss|apply Hout]; reflexivity.
+  - split; [intros _; right; discriminate|intros _; reflexivity].
+  - split; [intros _; right; discriminate|intros _; reflexivity].
+  - split; [intros _; left; discriminate|intros _; reflexivity].
+Qed.
 
 (** The checker decides well-sortedness. *)
 Lemma check_program_spec : forall V (p : program V),
@@ -532,6 +555,8 @@ Proof.
     - destruct a as [f args res | op args res].
       + destruct (trie_get f (decl_table (decls V p))) as [[ss out]|] eqn:Hlookup;
           [|discriminate].
+        destruct (reads_b ss out) eqn:Hreads; [|discriminate].
+        apply reads_b_spec in Hreads.
         destruct (bind_list_b tr args ss) as [tr1|] eqn:Hargs; [|discriminate].
         destruct (bind_result_b tr1 out res) as [tr2|] eqn:Hres; [|discriminate].
         destruct (proj1 (Htable f ss out) Hlookup) as [Hss Hout].
@@ -551,13 +576,14 @@ Proof.
   {
     intros tr g q g' Hrep Hq. revert tr Hrep.
     induction Hq as
-      [g | g g1 g2 g3 f args res ss out rest Hss Hout Hargs Hres Hrest IH
+      [g | g g1 g2 g3 f args res ss out rest Hss Hout Hreads Hargs Hres Hrest IH
          | g g1 op args res rest Hargs Hres Hrest IH]; intros tr Hrep.
     - exists tr. split; [reflexivity|exact Hrep].
     - destruct (Hbind_list_complete tr g args ss g1 Hrep Hargs) as [tr1 [Hb Hrep1]].
       destruct (Hbind_result_complete tr1 g1 out res g2 Hrep1 Hres) as [tr2 [Hr Hrep2]].
       destruct (IH tr2 Hrep2) as [tr3 [Hq Hrep3]]. exists tr3. split; [|exact Hrep3].
-      cbn [bind_query_b]. rewrite (proj2 (Htable f ss out) (conj Hss Hout)), Hb, Hr.
+      cbn [bind_query_b]. rewrite (proj2 (Htable f ss out) (conj Hss Hout)),
+        (proj2 (reads_b_spec ss out) Hreads), Hb, Hr.
       exact Hq.
     - destruct (IH tr Hrep) as [tr' [Hq Hrep']]. exists tr'. split; [|exact Hrep'].
       cbn [bind_query_b]. rewrite (proj2 (Hhas_vals tr g args Hrep) Hargs),
@@ -665,6 +691,7 @@ Proof.
     - destruct a as [f args res | op args res].
       + time_step. rewrite PTrieT.trie_get_clock.
         destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+        destruct (reads_b ss out); time_cbn; [|nia].
         pose proof (Hbind_list args ss g).
         destruct (bind_list_b g args ss) as [g1|]; time_cbn; [|nia].
         pose proof (Hbind_result g1 out res).
@@ -765,7 +792,7 @@ Proof.
   {
     intros h q h' e Htyped.
     induction Htyped as
-      [h | h h1 h2 h3 f args res ss out rest Hss Hout Hargs Hres Hrest IH
+      [h | h h1 h2 h3 f args res ss out rest Hss Hout _ Hargs Hres Hrest IH
          | h h1 p args res rest Hargs Hres Hrest IH]; intros Hmatch Henv.
     - exact Henv.
     - inversion Hmatch as [|a q' Hatom Htail]; subst.
@@ -981,6 +1008,8 @@ Proof.
   - destruct a as [f args res | op args res].
     + destruct (trie_get f (decl_table ds)) as [[ss out]|] eqn:Hlookup;
         [|discriminate].
+      destruct (reads_b ss out) eqn:Hreads; [|discriminate].
+      apply reads_b_spec in Hreads.
       destruct (bind_list_b tr args ss) as [tr1|] eqn:Hargs; [|discriminate].
       destruct (bind_result_b tr1 out res) as [tr2|] eqn:Hres; [|discriminate].
       destruct (proj1 (decl_table_lookup ds f ss out) Hlookup) as [Hss Hout].
@@ -1004,14 +1033,16 @@ Lemma bind_query_b_complete : forall V ds tr g q g', (forall x, trie_get x tr = 
 Proof.
   intros V ds tr g q g' Hrep Hq. revert tr Hrep.
   induction Hq as
-    [g | g g1 g2 g3 f args res ss out rest Hss Hout Hargs Hres Hrest IH
+    [g | g g1 g2 g3 f args res ss out rest Hss Hout Hreads Hargs Hres Hrest IH
        | g g1 op args res rest Hargs Hres Hrest IH]; intros tr Hrep.
   - exists tr. split; [reflexivity|exact Hrep].
   - destruct (bind_list_b_complete V tr g args ss g1 Hrep Hargs) as [tr1 [Hb Hrep1]].
     destruct (bind_result_b_complete V tr1 g1 out res g2 Hrep1 Hres) as [tr2 [Hr Hrep2]].
     destruct (IH tr2 Hrep2) as [tr3 [Hq Hrep3]]. exists tr3. split; [|exact Hrep3].
     cbn [bind_query_b].
-    rewrite (proj2 (decl_table_lookup ds f ss out) (conj Hss Hout)), Hb, Hr. exact Hq.
+    rewrite (proj2 (decl_table_lookup ds f ss out) (conj Hss Hout)),
+      (proj2 (reads_b_spec ss out) Hreads), Hb, Hr.
+    exact Hq.
   - destruct (IH tr Hrep) as [tr' [Hq Hrep']]. exists tr'. split; [|exact Hrep'].
     cbn [bind_query_b]. rewrite (proj2 (has_vals_b_spec V tr g args Hrep) Hargs),
       (proj2 (has_b_spec V tr g res SVal Hrep) Hres). exact Hq.

@@ -1335,7 +1335,7 @@ Module Compile (V : VALUE) <: COMPILE V.
   Proof.
     intros sorts kinds g q g' Hquery.
     induction Hquery as
-      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind _ Hargs Hres Hrest IH|
        g g1 op args res rest Hargs Hres Hrest IH].
     - apply ctx_includes_refl.
     - eapply ctx_includes_trans; [eapply binds_list_includes; exact Hargs|].
@@ -1350,7 +1350,7 @@ Module Compile (V : VALUE) <: COMPILE V.
   Proof.
     intros sorts kinds g q g' Hquery.
     induction Hquery as
-      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind _ Hargs Hres Hrest IH|
        g g1 op args res rest Hargs Hres Hrest IH]; intros x s Hbound.
     - left. exact Hbound.
     - destruct (IH x s Hbound) as [Hnew|[a [Hin Hvar]]].
@@ -1443,7 +1443,7 @@ Module Compile (V : VALUE) <: COMPILE V.
   Proof.
     intros sorts kinds g q g' Hquery.
     induction Hquery as
-      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hreads Hargs Hres Hrest IH|
        g g1 op args res rest Hargs Hres Hrest IH];
       intros h target Hstart Hpart Htarget.
     - exists h. split; [constructor|]. split; assumption.
@@ -1658,7 +1658,8 @@ Module Compile (V : VALUE) <: COMPILE V.
       assert (Hkeep1 : ctx_includes g1 g3).
       { eapply ctx_includes_trans; [eapply binds_includes; exact Hbresult|exact Hkeep2]. }
       exists g3. split.
-      + eapply query_fun; [exact Hsort|exact Hkind|exact Hbargs|exact Hbresult|exact Hquery].
+      + eapply query_fun;
+          [exact Hsort|exact Hkind|right; discriminate|exact Hbargs|exact Hbresult|exact Hquery].
       + split; [exact Hpart3|]. intros a t s [Heq|Hin] Hterm Htyped.
         * subst a. cbn [atom_terms option_list] in Hterm. apply in_app_or in Hterm.
           destruct Hterm as [Harg|[Heq|Hbad]]; [|subst t|contradiction].
@@ -2419,11 +2420,11 @@ Module Compile (V : VALUE) <: COMPILE V.
   Proof.
     intros sorts kinds g q g' Hquery.
     induction Hquery as
-      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind _ Hargs Hres Hrest IH|
        g g1 op args res rest Hargs Hres Hrest IH]; intros h h' Hother Hinc.
     - inversion Hother; subst. exact Hinc.
     - inversion Hother as
-        [|h0 h1 h2 h3 f' args' res' ss' out' rest' Hsort' Hkind' Hargs' Hres' Hrest'|];
+        [|h0 h1 h2 h3 f' args' res' ss' out' rest' Hsort' Hkind' _ Hargs' Hres' Hrest'|];
         subst.
       assert (ss' = ss) by congruence. subst ss'.
       assert (out' = out) by congruence. subst out'.
