@@ -4,7 +4,7 @@
     For example, repeated targets produce repeated graph successors.
     Builds on: Program.CallsSig and Base.Trie. *)
 
-From Stdlib Require Import List NArith.
+From Stdlib Require Import List Arith NArith Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Graph Require Import Data Spec.
@@ -274,20 +274,168 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
       N.of_nat (length (functions p) + length (sites p) + length (targets p) + 1) *
         N.of_nat (function_width p + 1))%N.
 
-  Definition c_calls : N := 1%N. (* STUB *)
+  (** Mapping charges the sum of its callback costs and one step per element. *)
+  Local Lemma map_time_sum {A B} (f : A -> B) (T_f : A -> N) : forall xs,
+    ListDef.T_map f T_f xs =
+      (fold_right N.add 0%N (map T_f xs) + N.of_nat (length xs) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; time_unfold ListDef.T_map; time_cbn_all; lia.
+  Qed.
+
+  (** A fold with state-independent callback budgets pays their sum. *)
+  Local Lemma fold_time_sum {A B} (f : A -> B -> A) (T_f : A -> B -> N)
+      (budget : B -> N) : forall xs a,
+    (forall st x, In x xs -> (T_f st x <= budget x)%N) ->
+    (List.T_fold_left f T_f xs a <=
+      fold_right N.add 0%N (map budget xs) + 2 * N.of_nat (length xs) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; intros a Hcost.
+    - time_step.
+    - pose proof (Hcost a x (or_introl eq_refl)) as Hhead.
+      specialize (IH (f a x) (fun st y Hin => Hcost st y (or_intror Hin))).
+      time_step.
+  Qed.
+
+  (** Summing an appended inventory splits at the append boundary. *)
+  Local Lemma sum_app {A} (cost : A -> N) : forall xs ys,
+    fold_right N.add 0%N (map cost (xs ++ ys)) =
+      (fold_right N.add 0%N (map cost xs) + fold_right N.add 0%N (map cost ys))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro ys; cbn [app map fold_right]; rewrite ?IH; lia.
+  Qed.
+
+  (** A flattened inventory's sum is the sum of its constituent inventories. *)
+  Local Lemma sum_flat_map {A B} (items : A -> list B) (cost : B -> N) : forall xs,
+    fold_right N.add 0%N (map cost (flat_map items xs)) =
+    fold_right N.add 0%N
+      (map (fun x => fold_right N.add 0%N (map cost (items x))) xs).
+  Proof.
+    induction xs as [|x xs IH]; cbn [flat_map map fold_right]; [reflexivity|].
+    rewrite sum_app, IH; reflexivity.
+  Qed.
+
+  (** Pointwise addition distributes over finite cost sums. *)
+  Local Lemma sum_add {A} (left right : A -> N) : forall xs,
+    fold_right N.add 0%N (map (fun x => left x + right x)%N xs) =
+      (fold_right N.add 0%N (map left xs) + fold_right N.add 0%N (map right xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [map fold_right]; rewrite ?IH; lia.
+  Qed.
+
+  (** Multiplication by a constant distributes over finite cost sums. *)
+  Local Lemma sum_scale {A} (cost : A -> N) c : forall xs,
+    fold_right N.add 0%N (map (fun x => c * cost x)%N xs) =
+      (c * fold_right N.add 0%N (map cost xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [map fold_right]; rewrite ?IH; nia.
+  Qed.
+
+  (** A constant cost contributes once for every inventory entry. *)
+  Local Lemma sum_constant {A} c : forall xs : list A,
+    fold_right N.add 0%N (map (fun _ => c) xs) = (c * N.of_nat (length xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; cbn [map fold_right length]; rewrite ?IH;
+      time_cbn_all; nia.
+  Qed.
+
+  (** Pointwise bounds give bounds on the corresponding finite sums. *)
+  Local Lemma sum_le {A} (left right : A -> N) : forall xs,
+    (forall x, In x xs -> (left x <= right x)%N) ->
+    (fold_right N.add 0%N (map left xs) <=
+      fold_right N.add 0%N (map right xs))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hpoint; cbn [map fold_right]; [lia|].
+    pose proof (Hpoint x (or_introl eq_refl)) as Hhead.
+    specialize (IH (fun y Hin => Hpoint y (or_intror Hin))); lia.
+  Qed.
+
+  (** Flattening preserves the total number of target occurrences. *)
+  Local Lemma sum_lengths {A B} (items : A -> list B) : forall xs,
+    fold_right N.add 0%N (map (fun x => N.of_nat (length (items x))) xs) =
+      N.of_nat (length (flat_map items xs)).
+  Proof.
+    induction xs as [|x xs IH]; cbn [flat_map map fold_right]; [reflexivity|].
+    rewrite length_app, Nat2N.inj_add, IH; reflexivity.
+  Qed.
+
+  (** Each row's extra unit contributes one unit per outer inventory entry. *)
+  Local Lemma sum_lengths_succ {A B} (items : A -> list B) : forall xs,
+    fold_right N.add 0%N (map (fun x => N.of_nat (length (items x) + 1)) xs) =
+      N.of_nat (length (flat_map items xs) + length xs).
+  Proof.
+    induction xs as [|x xs IH]; cbn [flat_map map fold_right length]; [reflexivity|].
+    rewrite length_app, IH; time_cbn_all; lia.
+  Qed.
+
+  (** Grouping targets by function preserves the complete target inventory. *)
+  Local Lemma targets_partition : forall p,
+    targets p = flat_map (fun f => flat_map (resolve p) (sites_of p f)) (functions p).
+  Proof.
+    intro p; unfold targets, sites.
+    induction (functions p) as [|f fs IH]; cbn [flat_map]; [reflexivity|].
+    rewrite flat_map_app, IH; reflexivity.
+  Qed.
+
+  (** Projecting tagged call edges recovers the resolver targets in order. *)
+  Local Lemma call_edges_targets : forall p ss,
+    map call_edge_target (call_edges (resolve p) ss) = flat_map (resolve p) ss.
+  Proof.
+    intros p ss; unfold call_edges.
+    induction ss as [|site ss IH]; cbn [flat_map]; [reflexivity|].
+    rewrite map_app, map_map, IH; cbn [call_edge_target].
+    now rewrite map_id.
+  Qed.
+
+  (** The tagged edge list has one entry per resolver target occurrence. *)
+  Local Lemma call_edges_length : forall p ss,
+    length (call_edges (resolve p) ss) = length (flat_map (resolve p) ss).
+  Proof.
+    intros p ss; rewrite <- (length_map call_edge_target), call_edges_targets; reflexivity.
+  Qed.
+
+  (** Every listed function fits the maximum code width used for adjacency insertion. *)
+  Local Lemma listed_function_width : forall p f, In f (functions p) ->
+    F.bits f <= function_width p.
+  Proof.
+    intros p f Hin; unfold function_width.
+    assert (Hmember : In f (functions p ++ targets p)) by (apply in_or_app; now left).
+    clear Hin; induction (functions p ++ targets p) as [|g fs IH]; [contradiction|].
+    cbn [map fold_right]; destruct Hmember as [<-|Hmember].
+    - apply Nat.le_max_l.
+    - eapply Nat.le_trans; [apply IH; exact Hmember|apply Nat.le_max_r].
+  Qed.
+
+  Definition c_calls : N :=
+    (2 * D.c_tables + F.c_key + S.c_key + 136 * (1024 + 1))%N.
+
+  (** The common coefficient covers the fixed reader and key-operation coefficients. *)
+  Local Lemma reader_coefficient :
+    (2 * D.c_tables + F.c_key + S.c_key + 16 <= c_calls)%N.
+  Proof.
+    unfold c_calls; lia.
+  Qed.
+
+  (** The common coefficient also covers the composed graph construction factors. *)
+  Local Lemma graph_coefficient : (136 * (1024 + 1) <= c_calls)%N.
+  Proof.
+    unfold c_calls; lia.
+  Qed.
+
+  (** A reader with fixed cost fits every output-length budget. *)
+  Local Lemma fixed_reader_bound : forall cost n,
+    (cost <= D.c_tables + 2)%N ->
+    (cost <= c_calls * N.of_nat (n + 1))%N.
+  Proof.
+    intros cost n Hcost; pose proof reader_coefficient as Hcoefficient.
+    rewrite Nat2N.inj_add; time_cbn; nia.
+  Qed.
 
   Lemma T_calls_le : forall p,
     (T_calls p <= c_calls * N.of_nat (length (calls p) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Graph construction charges the inventory readers and encoded adjacency work. *)
-  Lemma T_call_graph_le : forall p,
-    (T_call_graph p <= c_calls * call_graph_work p)%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Call graph construction has the aggregate reader and bit-width bound. *)
-  Lemma call_graph_bigO : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; apply fixed_reader_bound.
+    pose proof (D.T_tables_le p) as Htables; unfold T_calls, T_call_inventory; lia.
+  Qed.
 
   (** A site contributes exactly its resolver targets to its outgoing list. *)
   Lemma F1_call_edge : forall p f site target,
@@ -297,35 +445,162 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
     intros p f site target Hsite Htarget; unfold out_edges, call_edges.
     apply in_flat_map; exists site; split; [exact Hsite|now apply in_map].
   Qed.
-  Definition k_edges : N := 1%N. (* STUB *)
-  Definition k_adj : N := 1%N. (* STUB *)
+  Definition k_edges : N := 16%N.
+  Definition k_adj : N := (8 * (1024 + 1))%N.
 
   Lemma T_functions_le : forall p,
     (T_functions p <= c_calls * N.of_nat (length (functions p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; apply fixed_reader_bound.
+    pose proof (D.T_tables_le p) as Htables; unfold T_functions, T_call_functions; lia.
+  Qed.
 
   Lemma T_roots_le : forall p,
     (T_roots p <= c_calls * N.of_nat (length (roots p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; apply fixed_reader_bound.
+    pose proof (D.T_tables_le p) as Htables; unfold T_roots, T_call_roots; lia.
+  Qed.
 
   Lemma T_sites_of_le : forall p f,
     (T_sites_of p f <= c_calls * N.of_nat (F.bits f + length (sites_of p f) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p f.
+    pose proof (PTrieT.trie_get_clock (list S.t) (F.encode f)
+      (call_sites (D.tables p))) as Hget.
+    pose proof (D.T_tables_le p) as Htables.
+    pose proof (F.T_encode_le f) as Hencode.
+    eapply N.le_trans with
+      (m := ((F.c_key + D.c_tables + 4) * N.of_nat (F.bits f + 1))%N).
+    - unfold T_sites_of; rewrite Hget; unfold T_call_sites, F.bits in *.
+      time_cbn_all; nia.
+    - apply N.mul_le_mono.
+      + pose proof reader_coefficient; lia.
+      + lia.
+  Qed.
 
   Lemma T_caller_of_le : forall p site,
     (T_caller_of p site <= c_calls * N.of_nat (S.bits site + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p site.
+    pose proof (PTrieT.trie_get_clock F.t (S.encode site)
+      (call_callers (D.tables p))) as Hget.
+    pose proof (D.T_tables_le p) as Htables.
+    pose proof (S.T_encode_le site) as Hencode.
+    eapply N.le_trans with
+      (m := ((S.c_key + 2 * D.c_tables + 6) * N.of_nat (S.bits site + 1))%N).
+    - unfold T_caller_of; rewrite Hget.
+      unfold T_call_callers, T_call_default_caller, S.bits in *.
+      destruct (trie_get (S.encode site) (call_callers (D.tables p)));
+        time_cbn_all; nia.
+    - apply N.mul_le_mono_r; pose proof reader_coefficient; lia.
+  Qed.
 
   Lemma T_resolve_le : forall p site,
     (T_resolve p site <= c_calls * N.of_nat (S.bits site + length (resolve p site) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p site.
+    pose proof (PTrieT.trie_get_clock (list F.t) (S.encode site)
+      (call_targets (D.tables p))) as Hget.
+    pose proof (D.T_tables_le p) as Htables.
+    pose proof (S.T_encode_le site) as Hencode.
+    eapply N.le_trans with
+      (m := ((S.c_key + D.c_tables + 4) * N.of_nat (S.bits site + 1))%N).
+    - unfold T_resolve; rewrite Hget; unfold T_call_targets, S.bits in *.
+      time_cbn_all; nia.
+    - apply N.mul_le_mono.
+      + pose proof reader_coefficient; lia.
+      + lia.
+  Qed.
+
+  (** Each resolver read includes at least one charged operation. *)
+  Local Lemma resolve_time_positive : forall p site, (1 <= T_resolve p site)%N.
+  Proof.
+    intros p site; time_unfold T_resolve; time_cbn; lia.
+  Qed.
+
+  (** Actual resolver clocks pay for one traversal of the site list. *)
+  Local Lemma resolver_sum_length : forall p ss,
+    (N.of_nat (length ss) <= fold_right N.add 0%N (map (T_resolve p) ss))%N.
+  Proof.
+    intros p ss; induction ss as [|site ss IH]; cbn [length map fold_right].
+    - lia.
+    - pose proof (resolve_time_positive p site); rewrite Nat2N.inj_succ; lia.
+  Qed.
+
+  (** Building tagged edges pays each resolver and each output occurrence. *)
+  Local Lemma call_edges_time : forall p ss,
+    (T_call_edges (resolve p) (fun site => T_resolve p site) ss <=
+      8 * (fold_right N.add 0%N (map (T_resolve p) ss) +
+        N.of_nat (length ss + length (flat_map (resolve p) ss) + 1)))%N.
+  Proof.
+    intros p ss; induction ss as [|site ss IH].
+    - time_unfold @T_call_edges; time_unfold @Code.List.T_flat_map; time_cbn; nia.
+    - pose proof (ListDef.T_map_le (CallEdge site) (fun _ : F.t => 1%N) 1%N
+        (resolve p site) (fun _ => N.le_refl 1)) as Hmap.
+      pose proof (Datatypes.T_app_le (map (CallEdge site) (resolve p site))
+        (call_edges (resolve p) ss)) as Happ.
+      unfold call_edges in Happ.
+      unfold T_call_edges in IH; time_unfold @T_call_edges.
+      time_unfold @Code.List.T_flat_map; time_cbn_all.
+      rewrite !length_app, !length_map in *; time_cbn_all; lia.
+  Qed.
+
+  (** Tagged-edge construction charges at least one unit for each output occurrence. *)
+  Local Lemma call_edges_output_le : forall p ss,
+    (N.of_nat (length (flat_map (resolve p) ss)) <=
+      T_call_edges (resolve p) (fun site => T_resolve p site) ss)%N.
+  Proof.
+    intros p ss; induction ss as [|site ss IH].
+    - time_unfold @T_call_edges; time_unfold @Code.List.T_flat_map; time_cbn; lia.
+    - unfold T_call_edges in IH; time_unfold @T_call_edges.
+      time_unfold @Code.List.T_flat_map; rewrite map_time_sum.
+      cbn [flat_map length]; rewrite length_app; time_cbn_all; lia.
+  Qed.
+
+  (** Outgoing-edge construction pays for the length of its result. *)
+  Local Lemma out_edges_output_le : forall p f,
+    (N.of_nat (length (flat_map (resolve p) (sites_of p f))) <= T_out_edges p f)%N.
+  Proof.
+    intros p f; pose proof (call_edges_output_le p (sites_of p f)) as Houtput.
+    time_unfold T_out_edges; time_cbn; lia.
+  Qed.
+
+  (** The outgoing-row clock includes its site reader and tagged-edge construction. *)
+  Local Lemma out_edges_steps_le : forall p f,
+    (T_sites_of p f + T_call_edges (resolve p) (fun site => T_resolve p site) (sites_of p f) <=
+      T_out_edges p f)%N.
+  Proof.
+    intros p f; time_unfold T_out_edges; time_cbn; lia.
+  Qed.
+
+  (** Encoding tagged targets charges their encoded values and a fixed projection cost. *)
+  Local Lemma encoded_edges_time : forall p ss clock,
+    (forall e, (clock e <= F.T_encode (call_edge_target e) + 3)%N) ->
+    (ListDef.T_map (fun e => F.encode (call_edge_target e)) clock
+      (call_edges (resolve p) ss) <=
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) ss)) +
+        4 * N.of_nat (length (flat_map (resolve p) ss)) + 1)%N.
+  Proof.
+    intros p ss clock Hclock; rewrite map_time_sum.
+    pose proof (sum_le clock (fun e => F.T_encode (call_edge_target e) + 3)%N
+      (call_edges (resolve p) ss) (fun e _ => Hclock e)) as Hsum.
+    rewrite sum_add, sum_constant in Hsum.
+    rewrite <- (map_map call_edge_target F.T_encode (call_edges (resolve p) ss)),
+      call_edges_targets in Hsum.
+    rewrite call_edges_length in *; lia.
+  Qed.
 
   Lemma T1_out_edges : forall p f,
     (T_out_edges p f <= k_edges * (T_sites_of p f +
       fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
       fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
       N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p f; pose proof (call_edges_time p (sites_of p f)) as Hedges.
+    pose proof (resolver_sum_length p (sites_of p f)) as Hsites.
+    unfold k_edges; time_unfold T_out_edges; time_cbn_all; lia.
+  Qed.
 
   Lemma T2_adjacency : forall p,
     (T_call_graph p <= k_adj * (T_functions p +
@@ -333,5 +608,116 @@ Module CallsT (P : TYPE) (F S : KEY_T) (D : CALLS_DATA_T P F S)
         fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N
         (functions p)) +
       N.of_nat (length (functions p) + 1) * N.of_nat (function_width p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; time_unfold T_call_graph.
+    match goal with
+    | |- context [Std.List.T_fold_left ?update ?clock (functions p) ?initial] =>
+      assert (Hfold : (Std.List.T_fold_left update clock (functions p) initial <=
+        fold_right N.add 0%N (map (fun f => 4 * (1024 + 1) *
+          (T_out_edges p f + F.T_encode f +
+            fold_right N.add 0%N
+              (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+            N.of_nat (function_width p + 1)))%N (functions p)) +
+          2 * N.of_nat (length (functions p)) + 1)%N)
+    end.
+    { apply fold_time_sum; intros adj f Hin; cbn beta iota zeta.
+      pose proof (listed_function_width p f Hin) as Hwidth.
+      pose proof (out_edges_output_le p f) as Houtput.
+      pose proof (out_edges_steps_le p f) as Hsteps.
+      pose proof (PTrieT.T_set_le (list positive) (F.encode f)
+        (map (fun e => F.encode (call_edge_target e))
+          (call_edges (resolve p) (sites_of p f))) adj) as Hset.
+      unfold PTrieT.c_trie in Hset; unfold F.bits in Hwidth.
+      match goal with
+      | |- context [ListDef.T_map _ ?clock _] =>
+        assert (Hmap : (ListDef.T_map (fun e => F.encode (call_edge_target e)) clock
+          (call_edges (resolve p) (sites_of p f)) <=
+            fold_right N.add 0%N
+              (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+            4 * N.of_nat (length (flat_map (resolve p) (sites_of p f))) + 1)%N)
+      end.
+      { apply encoded_edges_time; intros [site g]; time_unfold @T_call_edge_target;
+          time_cbn; lia. }
+      time_cbn_all; lia. }
+    assert (Hfunctions :
+      ListDef.T_map F.encode (fun f => F.T_encode f) (functions p) =
+        (fold_right N.add 0%N (map F.T_encode (functions p)) +
+          N.of_nat (length (functions p)) + 1)%N).
+    { apply map_time_sum. }
+    rewrite (sum_scale (fun f => T_out_edges p f + F.T_encode f +
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+      N.of_nat (function_width p + 1))%N (4 * (1024 + 1))%N (functions p)) in Hfold.
+    rewrite (sum_add (fun f => T_out_edges p f + F.T_encode f +
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N
+      (fun _ => N.of_nat (function_width p + 1)) (functions p)), sum_constant in Hfold.
+    assert (Hencodes : (fold_right N.add 0%N (map F.T_encode (functions p)) <=
+      fold_right N.add 0%N (map (fun f => T_out_edges p f + F.T_encode f +
+        fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N
+        (functions p)))%N).
+    { apply sum_le; intros f Hin; lia. }
+    unfold k_adj; time_cbn_all; nia.
+  Qed.
+
+  (** Summing outgoing-row bounds recovers the program's reader and target inventories. *)
+  Local Lemma out_edges_sum : forall p,
+    (fold_right N.add 0%N (map (T_out_edges p) (functions p)) <= k_edges *
+      (fold_right N.add 0%N (map (T_sites_of p) (functions p)) +
+        fold_right N.add 0%N (map (T_resolve p) (sites p)) +
+        fold_right N.add 0%N (map F.T_encode (targets p)) +
+        N.of_nat (length (targets p) + length (functions p))))%N.
+  Proof.
+    intro p; pose proof (sum_le (T_out_edges p)
+      (fun f => k_edges * (T_sites_of p f +
+        fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
+        fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+        N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1)))%N
+      (functions p) (fun f _ => T1_out_edges p f)) as Hsum.
+    rewrite (sum_scale (fun f => T_sites_of p f +
+      fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))) +
+      N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1))%N
+      k_edges (functions p)) in Hsum.
+    rewrite (sum_add (fun f => T_sites_of p f +
+      fold_right N.add 0%N (map (T_resolve p) (sites_of p f)) +
+      fold_right N.add 0%N (map F.T_encode (flat_map (resolve p) (sites_of p f))))%N
+      (fun f => N.of_nat (length (flat_map (resolve p) (sites_of p f)) + 1))
+      (functions p)) in Hsum.
+    rewrite (sum_add (fun f => T_sites_of p f +
+      fold_right N.add 0%N (map (T_resolve p) (sites_of p f)))%N
+      (fun f => fold_right N.add 0%N
+        (map F.T_encode (flat_map (resolve p) (sites_of p f)))) (functions p)) in Hsum.
+    rewrite (sum_add (T_sites_of p)
+      (fun f => fold_right N.add 0%N (map (T_resolve p) (sites_of p f))) (functions p)),
+      sum_lengths_succ in Hsum.
+    rewrite <- (sum_flat_map (sites_of p) (T_resolve p) (functions p)) in Hsum.
+    rewrite <- (sum_flat_map (fun f => flat_map (resolve p) (sites_of p f))
+      F.T_encode (functions p)) in Hsum.
+    rewrite <- targets_partition in Hsum; exact Hsum.
+  Qed.
+
+  (** Graph construction charges the inventory readers and encoded adjacency work. *)
+  Lemma T_call_graph_le : forall p,
+    (T_call_graph p <= c_calls * call_graph_work p)%N.
+  Proof.
+    intro p; pose proof (T2_adjacency p) as Hadjacency.
+    pose proof (out_edges_sum p) as Hrows.
+    eapply N.le_trans with (m := (136 * (1024 + 1) * call_graph_work p)%N).
+    - unfold call_graph_work, k_adj, k_edges in *.
+      rewrite (sum_add (fun f => T_out_edges p f + F.T_encode f)%N
+        (fun f => fold_right N.add 0%N
+          (map F.T_encode (flat_map (resolve p) (sites_of p f)))) (functions p)),
+        (sum_add (T_out_edges p) F.T_encode (functions p)) in Hadjacency.
+      rewrite (sum_add (T_sites_of p) F.T_encode (functions p)).
+      rewrite <- (sum_flat_map (fun f => flat_map (resolve p) (sites_of p f))
+        F.T_encode (functions p)) in Hadjacency.
+      rewrite <- targets_partition in Hadjacency.
+      time_cbn_all; nia.
+    - apply N.mul_le_mono_r; exact graph_coefficient.
+  Qed.
+
+  (** Call graph construction has the aggregate reader and bit-width bound. *)
+  Lemma call_graph_bigO : bigO (fun _ : P.t => True) call_graph_work T_call_graph.
+  Proof.
+    exists c_calls; intros p Htrue; pose proof (T_call_graph_le p); nia.
+  Qed.
 End CallsT.
