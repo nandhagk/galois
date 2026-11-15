@@ -4,8 +4,8 @@
     For example, a direct parent edge supplies the low-high witness of its child.
     Builds on: first-order graphs, canonical tries and dominator certificate signatures. *)
 
-From Stdlib Require Import List Bool PArith NArith Sorting.Sorted.
-From Argent Require Import Time Tactics Std BigO.
+From Stdlib Require Import List Bool PArith NArith Lia Sorting.Sorted Wellfounded.Inverse_Image.
+From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer DomOrder.
 Import List.ListNotations.
@@ -228,6 +228,196 @@ Definition dom_positions (o : list positive) : ptrie N :=
     (N.succ next, PTrieCode.set v next pos)) o (0%N, Empty)).
 TimeFun dom_positions.
 
+(** A vertex on a path has a prefix using only vertices of that path. *)
+Local Lemma dom_path_prefix : forall g a vs b, path g a vs b ->
+  forall y, In y vs -> exists prefix, path g a prefix y /\ incl prefix vs.
+Proof.
+  intros g a vs b Hpath.
+  induction Hpath as [v | u v vs w Huv Hpath IH]; intros y Hin.
+  - destruct Hin as [<- | Hin]; [| contradiction].
+    exists [v]. split; [constructor | intros z Hz; exact Hz].
+  - destruct Hin as [<- | Hin].
+    + exists [u]. split; [constructor |].
+      intros z [<- | Hz]; [now left | contradiction].
+    + destruct (IH y Hin) as [prefix [Hprefix Hincl]].
+      exists (u :: prefix). split.
+      * eapply path_step; eassumption.
+      * intros z [<- | Hz]; [now left | right; now apply Hincl].
+Qed.
+
+(** Structural comparison accepts precisely the reconstructed parent map. *)
+Local Lemma dom_map_eq_ne_spec : forall expected candidate,
+  dom_map_eq_ne expected candidate = true <-> expected = candidate.
+Proof.
+  intros expected.
+  induction expected as [r IHr | v | v r IHr | l IHl | l IHl r IHr |
+      l IHl v | l IHl v r IHr];
+    intros candidate; destruct candidate; cbn [dom_map_eq_ne];
+    rewrite ?andb_true_iff, ?Pos.eqb_eq, ?IHl, ?IHr;
+    split; intro H; try discriminate; intuition congruence.
+Qed.
+
+Local Lemma dom_map_eq_spec : forall expected candidate,
+  dom_map_eq expected candidate = true <-> expected = candidate.
+Proof.
+  intros [| expected] [| candidate]; cbn [dom_map_eq];
+    rewrite ?dom_map_eq_ne_spec; split; intro H; try discriminate; congruence.
+Qed.
+
+(** Reading inserts each remaining vertex once and preserves earlier positions. *)
+Local Definition dom_read_success (listed : ptrie bool) (s : dom_read_state)
+    (result : ptrie N) : Prop :=
+  NoDup (read_remaining s) /\
+  (N.of_nat (length (read_remaining s)) <= read_budget s)%N /\
+  (forall v, In v (read_remaining s) ->
+    (exists b, trie_get v listed = Some b) /\
+    trie_get v (read_positions s) = None /\
+    exists i, trie_get v result = Some i) /\
+  forall v i, trie_get v (read_positions s) = Some i -> trie_get v result = Some i.
+
+Local Lemma dom_read_step_success : forall width listed s s1 result,
+  dom_read_step width listed s = inl s1 ->
+  dom_read_success listed s1 result -> dom_read_success listed s result.
+Proof.
+  intros width listed [remaining budget next pos] s1 result Hstep Hrest.
+  destruct remaining as [| v rest]; [discriminate Hstep |].
+  cbn [dom_read_step] in Hstep.
+  destruct (N.eqb budget 0) eqn:Hbudget; [discriminate Hstep |].
+  destruct (dom_key_fits width v); [| discriminate Hstep].
+  destruct (trie_get v listed) as [flag |] eqn:Hlisted; [| discriminate Hstep].
+  destruct (trie_get v pos) as [old |] eqn:Hnew; [discriminate Hstep |].
+  injection Hstep as Hstate. subst s1.
+  cbn [dom_read_success read_remaining read_budget read_positions] in Hrest |- *.
+  destruct Hrest as [Hdistinct [Hlength [Hmembers Hpreserved]]].
+  assert (Hfresh : ~ In v rest).
+  { intro Hin. destruct (Hmembers v Hin) as [_ [Hnone _]].
+    change (trie_get v (PTrieCode.set v next pos) = None) in Hnone.
+    rewrite PTrie.get_set_same in Hnone. discriminate Hnone. }
+  split; [now constructor |]. split.
+  - change (N.of_nat (S (length rest)) <= budget)%N. rewrite Nat2N.inj_succ.
+    change (N.of_nat (length rest) <= N.pred budget)%N in Hlength.
+    apply N.eqb_neq in Hbudget. lia.
+  - split.
+    + intros q [Heq | Hin].
+      * subst q. split; [now exists flag |]. split; [exact Hnew |].
+        exists next. apply Hpreserved. apply PTrie.get_set_same.
+      * destruct (Hmembers q Hin) as [Hlistedq [Hnone Hresult]].
+        assert (Hneq : q <> v) by (intro Heq; subst q; contradiction).
+        change (trie_get q (PTrieCode.set v next pos) = None) in Hnone.
+        rewrite PTrie.get_set_other in Hnone by exact Hneq.
+        exact (conj Hlistedq (conj Hnone Hresult)).
+    + intros q i Hget. change (trie_get q pos = Some i) in Hget. apply Hpreserved.
+      change (trie_get q (PTrieCode.set v next pos) = Some i).
+      rewrite PTrie.get_set_other; [exact Hget |].
+      intro Heq. subst q. rewrite Hnew in Hget. discriminate Hget.
+Qed.
+
+Local Lemma dom_read_stop_success : forall width listed s result,
+  dom_read_step width listed s = inr (Some result) -> dom_read_success listed s result.
+Proof.
+  intros width listed [remaining budget next pos] result Hstep.
+  destruct remaining as [| v rest].
+  - cbn [dom_read_step] in Hstep. injection Hstep as Hresult. subst result.
+    cbn [dom_read_success read_remaining read_budget read_positions].
+    split; [constructor |]. split; [change (0 <= budget)%N; lia |].
+    split; [intros v Hin; contradiction | intros v i Hget; exact Hget].
+  - cbn [dom_read_step] in Hstep.
+    destruct (N.eqb budget 0); [discriminate Hstep |].
+    destruct (dom_key_fits width v); [| discriminate Hstep].
+    destruct (trie_get v listed), (trie_get v pos); discriminate Hstep.
+Qed.
+
+Local Lemma dom_read_loop_success : forall width listed fs
+    (Hacc : Acc (@loopN_lt dom_read_state) fs) result,
+  loop loopN_lt (loopN_step (dom_read_step width listed)) fs Hacc = inr (Some result) ->
+  dom_read_success listed (snd fs) result.
+Proof.
+  intros width listed fs Hacc.
+  induction Hacc as [[fuel s] Hacc IH] using Acc_ind_dep.
+  intros result Hrun. destruct fuel as [| p]; [discriminate Hrun |].
+  cbn [loop loopN_step Acc_inv] in Hrun.
+  destruct (dom_read_step width listed s) as [s1 | answer] eqn:Hstep.
+  - eapply dom_read_step_success; [exact Hstep |].
+    eapply (IH (N.pred (N.pos p), s1) _ result). exact Hrun.
+  - destruct answer as [final |]; [| discriminate Hrun].
+    injection Hrun as Hresult. subst final.
+    eapply dom_read_stop_success. exact Hstep.
+Qed.
+
+(** Abstract loop equations do not require expanding the accessibility generator. *)
+Local Opaque loop Acc_intro_generator.
+
+(** A successful optional result cannot come from exhausted fuel. *)
+Local Lemma dom_read_return_some (run : dom_read_state + option (ptrie N)) result :
+  (match run with inl _ => None | inr answer => answer end) = Some result ->
+  run = inr (Some result).
+Proof.
+  destruct run as [state | answer]; intro Hresult; [discriminate Hresult |].
+  now subst answer.
+Qed.
+
+Local Lemma dom_read_order_success : forall count width listed o next pos result,
+  dom_read_order count width listed o next pos = Some result ->
+  dom_read_success listed (DomReadState o (N.of_nat count) next pos) result.
+Proof.
+  intros count width listed o next pos result Hread.
+  unfold dom_read_order in Hread.
+  apply dom_read_return_some in Hread. unfold loopN in Hread.
+  lazymatch type of Hread with
+  | loop _ _ ?state ?Hacc = _ =>
+    exact (dom_read_loop_success width listed state Hacc result Hread)
+  end.
+Qed.
+
+Local Lemma dom_listed_fold : forall vs acc v,
+  (exists b, trie_get v (fold_left (fun seen u => PTrieCode.set u true seen) vs acc) = Some b)
+  <-> In v vs \/ exists b, trie_get v acc = Some b.
+Proof.
+  intros vs. induction vs as [| u rest IH]; intros acc v; cbn [fold_left In].
+  - tauto.
+  - rewrite IH. destruct (Pos.eq_dec v u) as [Heq | Hneq].
+    + subst v. rewrite PTrie.get_set_same. split.
+      * intros _. left. now left.
+      * intros _. right. exists true. reflexivity.
+    + rewrite PTrie.get_set_other by exact Hneq. intuition congruence.
+Qed.
+
+Local Lemma dom_scan_listed : forall g v,
+  (exists b, trie_get v (dom_listed (dom_scan g)) = Some b) <-> In v (nodes g).
+Proof.
+  intros g v. unfold dom_scan. cbn [dom_listed]. rewrite dom_listed_fold.
+  split.
+  - intros [Hin | [b Hget]]; [exact Hin |].
+    rewrite PTrie.get_empty in Hget. discriminate Hget.
+  - intro Hin. now left.
+Qed.
+
+Local Lemma dom_read_known_success : forall g r o pos,
+  dom_read_known (dom_scan g) r o = Some pos ->
+  NoDup o /\ length o <= graph_n (base g) /\ hd_error o = Some r /\
+  (forall v, In v o -> In v (nodes g)) /\
+  (forall v, In v o -> exists i, trie_get v pos = Some i).
+Proof.
+  intros g r [| h rest] pos Hread; [discriminate Hread |].
+  unfold dom_read_known in Hread.
+  destruct (dom_key_fits (dom_width (dom_scan g)) r); [| discriminate Hread].
+  destruct (Pos.eqb h r) eqn:Hroot; [| discriminate Hread].
+  apply Pos.eqb_eq in Hroot. subst h.
+  apply dom_read_order_success in Hread.
+  cbn [dom_read_success read_remaining read_budget read_positions dom_scan dom_count]
+    in Hread.
+  destruct Hread as [Hdistinct [Hlength [Hmembers Hpreserved]]].
+  change (N.of_nat (length (r :: rest)) <= N.of_nat (graph_n (base g)))%N in Hlength.
+  split; [exact Hdistinct |]. split; [lia |]. split; [reflexivity |]. split.
+  - intros v Hin. apply dom_scan_listed. exact (proj1 (Hmembers v Hin)).
+  - intros v Hin. exact (proj2 (proj2 (Hmembers v Hin))).
+Qed.
+
+Local Lemma dom_nodes_verts : forall g, nodes g = verts (base g).
+Proof.
+  intros [[vs adjacency] predecessors count_v count_e]. reflexivity.
+Qed.
+
 Module DomCode <: DOM_OPS.
   Definition build := dom_build_candidate.
 
@@ -274,7 +464,9 @@ Module Dom <: DOM.
   Proof. Admitted. (* STUB *)
 
   Lemma tree_idom : forall g r m o, check g r m o = true -> idom (tree g r m o) = m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o _. reflexivity.
+  Qed.
 
   Lemma tree_exact : forall g r m o, check g r m o = true -> domtree_exact g r (tree g r m o).
   Proof. Admitted. (* STUB *)
@@ -282,13 +474,38 @@ Module Dom <: DOM.
   Lemma dominates_b_spec : forall g r m o u v,
     check g r m o = true -> reach (base g) [r] v ->
     reflect (dominates (base g) r u v) (dominates_b (tree g r m o) u v).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o u v Hcheck Hreach.
+    destruct (tree_exact g r m o Hcheck) as
+      [_ [_ [_ [_ [_ [_ [_ Hinterval]]]]]]].
+    apply iff_reflect. split.
+    - intro Hdom. apply (proj1 (Hinterval u v Hreach)) in Hdom.
+      destruct Hdom as [a [b [c [d [Ha [Hb [Hc [Hd [Hac Hdb]]]]]]]]].
+      unfold dominates_b. rewrite Ha, Hb, Hc, Hd.
+      apply andb_true_iff. split; apply N.leb_le; assumption.
+    - intro Hquery. unfold dominates_b in Hquery.
+      destruct (trie_get u (pre (tree g r m o))) as [a |] eqn:Ha;
+        destruct (trie_get u (post (tree g r m o))) as [b |] eqn:Hb;
+        destruct (trie_get v (pre (tree g r m o))) as [c |] eqn:Hc;
+        destruct (trie_get v (post (tree g r m o))) as [d |] eqn:Hd;
+        try discriminate Hquery.
+      apply andb_true_iff in Hquery as [Hac Hdb].
+      apply N.leb_le in Hac. apply N.leb_le in Hdb.
+      apply (proj2 (Hinterval u v Hreach)). exists a, b, c, d.
+      repeat split; assumption.
+  Qed.
 
   Lemma kids_spec : forall g r m o, check g r m o = true -> forall u,
     (forall v, In v (children (tree g r m o) u) <-> trie_get v m = Some u) /\
     NoDup (children (tree g r m o) u) /\
     StronglySorted (preorder_before (tree g r m o)) (children (tree g r m o) u).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck u.
+    destruct (tree_exact g r m o Hcheck) as [_ [_ [_ [Hchildren [Hsorted _]]]]].
+    split.
+    - intro v. rewrite Hchildren, (tree_idom g r m o Hcheck). reflexivity.
+    - exact (Hsorted u).
+  Qed.
 End Dom.
 
 Module DomT <: DOM_ALL.
@@ -352,11 +569,26 @@ Module DomT <: DOM_ALL.
   Lemma F0_path_last : forall g a vs b, path g a vs b ->
   (vs = [b] /\ a = b) \/
   exists vs' c, path g a vs' c /\ edge g c b /\ vs = vs' ++ [b].
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g a vs b Hpath.
+    induction Hpath as [v | u v vs w Huv Hpath IH].
+    - left. split; reflexivity.
+    - destruct IH as [[Hvs Hvw] | [prefix [c [Hprefix [Hcw Hvs]]]]].
+      + subst vs w. right. exists [u], u.
+        split; [constructor | split; [exact Huv | reflexivity]].
+      + right. exists (u :: prefix), c. split.
+        * eapply path_step; eassumption.
+        * split; [exact Hcw | now rewrite Hvs].
+  Qed.
 
   Lemma F1_dominates_trans : forall g r x y v,
   dominates g r x y -> dominates g r y v -> dominates g r x v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r x y v Hxy Hyv vs Hpath.
+    destruct (dom_path_prefix g r vs v Hpath y (Hyv vs Hpath)) as
+      [prefix [Hprefix Hincl]].
+    apply Hincl. exact (Hxy prefix Hprefix).
+  Qed.
 
   Lemma F2_check_cert : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
   Proof. Admitted. (* STUB *)
@@ -364,50 +596,82 @@ Module DomT <: DOM_ALL.
   (** An accepted order holds listed vertices only. *)
   Lemma F2b_check_listed : forall g r m o, check g r m o = true ->
     forall v, In v o -> In v (verts (base g)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck v Hin. unfold check in Hcheck.
+    destruct (dom_read_known (dom_scan g) r o) as [pos |] eqn:Hread;
+      [| discriminate Hcheck].
+    destruct (dom_read_known_success g r o pos Hread) as [_ [_ [_ [Hlisted _]]]].
+    rewrite <- (dom_nodes_verts g).
+    exact (Hlisted v Hin).
+  Qed.
 
   Lemma F3_anc_before : forall g r m o u v, dom_cert g r m o ->
   tree_anc m u v -> u <> v -> order_before o u v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o u v Hcert Hanc Hneq.
+    exact (dom_cert_anc_before g r m o u v Hcert Hanc Hneq).
+  Qed.
 
   Lemma F4_root_anc : forall g r m o v, dom_cert g r m o -> In v o -> tree_anc m r v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o v Hcert Hin. exact (dom_cert_root_anc g r m o v Hcert Hin).
+  Qed.
 
   Lemma F5_reach_listed : forall g r m o v, dom_cert g r m o ->
   reach g [r] v -> In v o.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o v Hcert Hreach. exact (dom_cert_reach_listed g r m o v Hcert Hreach).
+  Qed.
 
   Lemma F6_listed_reach : forall g r m o v, dom_cert g r m o ->
   In v o -> reach g [r] v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o v Hcert Hin. exact (dom_cert_listed_reach g r m o v Hcert Hin).
+  Qed.
 
   Lemma F7_anc_dominates : forall g r m o u v, dom_cert g r m o ->
   In v o -> tree_anc m u v -> dominates g r u v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o u v Hcert Hin Hanc.
+    exact (dom_cert_anc_dominates g r m o u v Hcert Hin Hanc).
+  Qed.
 
   Lemma F8_anc_dec : forall g r m o u v, dom_cert g r m o -> In v o ->
   tree_anc m u v \/ ~ tree_anc m u v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o u v Hcert _. exact (dom_cert_anc_dec g r m o u v Hcert).
+  Qed.
 
   Lemma F9a_low_path : forall g r m o v, dom_cert g r m o -> In v o ->
   exists vs, path g r vs v /\ forall y, In y vs -> y = v \/ order_before o y v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o v Hcert Hin. exact (dom_cert_low_path g r m o v Hcert Hin).
+  Qed.
 
   Lemma F9b_high_path : forall g r m o v p, dom_cert g r m o -> trie_get v m = Some p ->
   exists vs, path g p vs v /\
     forall y, In y vs -> y = p \/ y = v \/ order_before o v y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o v p Hcert Hget. exact (dom_cert_high_path g r m o v p Hcert Hget).
+  Qed.
 
   Lemma F9c_avoid : forall g r m o x v, dom_cert g r m o -> In v o ->
   ~ tree_anc m x v -> exists vs, path g r vs v /\ ~ In x vs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o x v Hcert Hin Hnot. exact (dom_cert_avoid g r m o x v Hcert Hin Hnot).
+  Qed.
 
   Lemma F9_dominates_anc : forall g r m o x v, dom_cert g r m o ->
   In v o -> dominates g r x v -> tree_anc m x v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o x v Hcert Hin Hdom.
+    exact (dom_cert_dominates_anc g r m o x v Hcert Hin Hdom).
+  Qed.
 
   Lemma F10_cert_exact : forall g r m o, dom_cert (base g) r m o -> dom_exact g r m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcert. exact (dom_cert_exact g r m o Hcert).
+  Qed.
 
   Lemma F11_intervals : forall g r m o u v, dom_cert g r m o -> In u o -> In v o ->
   (tree_anc m u v <->
@@ -416,6 +680,20 @@ Module DomT <: DOM_ALL.
 
   Lemma F12_tree_exact : forall g r m o, check g r m o = true ->
   domtree_exact g r (tree g r m o).
+  Proof. Admitted. (* STUB *)
+
+  (** A successful read lists distinct listed vertices within the budget, headed by the root. *)
+  Lemma F2c_read : forall g r o pos, read (scan g) r o = Some pos ->
+    NoDup o /\ length o <= graph_n (base g) /\ hd_error o = Some r /\
+    (forall v, In v o -> In v (nodes g)) /\
+    (forall v, In v o -> exists i, trie_get v pos = Some i).
+  Proof.
+    intros g r o pos Hread. exact (dom_read_known_success g r o pos Hread).
+  Qed.
+
+  (** A successful parent check keeps every parent of an ordered vertex in the order. *)
+  Lemma F2d_map : forall g r m o, map_check (scan g) r m o = true ->
+    forall v p, In v o -> trie_get v m = Some p -> In p o.
   Proof. Admitted. (* STUB *)
 
   Lemma T1_scan : forall g,
@@ -516,18 +794,6 @@ Module DomT <: DOM_ALL.
     (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
       (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
     (fun '(g, r) => T_build g r).
-  Proof. Admitted. (* STUB *)
-
-  (** A successful read lists distinct listed vertices within the budget, headed by the root. *)
-  Lemma F2c_read : forall g r o pos, read (scan g) r o = Some pos ->
-    NoDup o /\ length o <= graph_n (base g) /\ hd_error o = Some r /\
-    (forall v, In v o -> In v (nodes g)) /\
-    (forall v, In v o -> exists i, trie_get v pos = Some i).
-  Proof. Admitted. (* STUB *)
-
-  (** A successful parent check keeps every parent of an ordered vertex in the order. *)
-  Lemma F2d_map : forall g r m o, map_check (scan g) r m o = true ->
-    forall v p, In v o -> trie_get v m = Some p -> In p o.
   Proof. Admitted. (* STUB *)
 
   (** Parent containment tests charge each accepted order entry. *)
