@@ -10,7 +10,7 @@
 
 From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
   Sorting.Sorted Sorting.Permutation.
-From Argent Require Import Time Tactics Std.
+From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
 
@@ -4525,6 +4525,26 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     load p cp = D.init (decls V.t p) (Syntax.slots V.t cp).
   Proof.
     reflexivity.
+  Qed.
+
+  (** Binary-fuel iteration preserves continuing invariants and stopping postconditions. *)
+  Lemma run_loopN_invariant : forall S R (step : S -> S + R) (P : S -> Prop)
+      (Q : R -> Prop) fuel start,
+    (forall s next, P s -> step s = inl next -> P next) ->
+    (forall s result, P s -> step s = inr result -> Q result) -> P start ->
+    match loopN step fuel start with inl s => P s | inr r => Q r end.
+  Proof.
+    intros S R step P Q fuel start Hgo Hstop Hinitial.
+    assert (Hacc : forall fs (H : Acc loopN_lt fs), P (snd fs) ->
+      match loop loopN_lt (loopN_step step) fs H with
+      | inl s => P s | inr r => Q r end).
+    { intros fs H. induction H as [[n s] Hsmaller IH] using Acc_ind_dep.
+      cbn [snd]. intro Hstate. destruct n as [|p].
+      - cbn [loop loopN_step]. exact Hstate.
+      - cbn [loop loopN_step Acc_inv]. destruct (step s) as [next|result] eqn:Hstep.
+        + apply IH. cbn [snd]. eapply Hgo; eassumption.
+        + eapply Hstop; eassumption. }
+    unfold loopN. apply Hacc. exact Hinitial.
   Qed.
 
   Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
@@ -9832,6 +9852,194 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     derivation_body V.prim p (D.view initial) s (query V.t r) ->
     derived p initial (apply (actions V.t r) s db).
   Proof. Admitted. (* PLAN-DEFECT: result-bearing relational Put; see RunTest. *)
+
+  (** Relational declarations never assign a constructor or lattice output. *)
+  Lemma run_relational_kind : forall (p : program V.t) f out,
+    relational_fragment p = true -> program_kind p f = Some out -> out = ORel.
+  Proof.
+    intros p f out Hfragment Hkind. apply andb_true_iff in Hfragment as [Hdecls _].
+    unfold program_kind in Hkind. revert Hdecls Hkind.
+    generalize (decls V.t p) as ds. intro ds. induction ds as [|d rest IH];
+      intros Hdecls Hkind; [discriminate|].
+    cbn [forallb] in Hdecls. apply andb_true_iff in Hdecls as [Hout Hrest].
+    cbn [lookup_kind] in Hkind. destruct (Pos.eqb (name d) f).
+    - injection Hkind as <-. unfold relational_output in Hout.
+      destruct (Syntax.out d); try discriminate; reflexivity.
+    - now apply IH.
+  Qed.
+
+  (** Relational rules contain only insertion and primitive actions. *)
+  Lemma run_relational_actions : forall (p : program V.t) r, relational_fragment p = true ->
+    In r (rules V.t p) -> forallb relational_action (actions V.t r) = true.
+  Proof.
+    intros p r Hfragment Hin. apply andb_true_iff in Hfragment as [_ Hrules].
+    exact ((proj1 (forallb_forall _ _)) Hrules r Hin).
+  Qed.
+
+  (** Value-only keys are unchanged by canonicalization. *)
+  Lemma run_value_key_canon : forall db k,
+    Forall (fun c : cell V.t => exists v, c = Val v) k -> map (D.canon db) k = k.
+  Proof.
+    intros db k Hvalues. induction Hvalues as [|c rest [v ->] Hrest IH];
+      cbn [map D.canon]; [reflexivity|now rewrite IH].
+  Qed.
+
+  (** With no allocated identifiers, action argument lists contain values only. *)
+  Lemma run_no_ids_terms : forall db s locals ts cs,
+    no_ids db -> env_allocated db (look s locals) -> term_cells s locals ts = Some cs ->
+    Forall (fun c : cell V.t => exists v, c = Val v) cs.
+  Proof.
+    intros db s locals ts cs [Hzero Hrows] Hallocated Hcells.
+    apply Forall_forall. intros [i|v] Hin; [|exists v; reflexivity].
+    pose proof (run_term_cells_allocated db s locals ts cs Hallocated Hcells i Hin) as Hi.
+    unfold D.allocated in Hi. rewrite Hzero in Hi. lia.
+  Qed.
+
+  (** Inserting an output-free row in an identifier-free database only adds that row. *)
+  Lemma run_put_none_origin : forall db f k, D.wf db -> no_ids db ->
+    D.kind_ok db f k None ->
+    Forall (fun c : cell V.t => exists v, c = Val v) k ->
+    forall g key output, row (D.view (D.put f k None db)) g key output ->
+      row (D.view db) g key output \/ (g = f /\ key = k /\ output = None).
+  Proof.
+    intros db f k Hwf Hnoids Hallowed Hvalues g key output Hrow.
+    apply (proj1 (D.put_rows f k None db Hwf Hallowed g key output)) in Hrow.
+    rewrite (run_value_key_canon db k Hvalues) in Hrow.
+    destruct Hrow as [[Hrow _]|[-> [-> Houtput]]]; [now left|].
+    right. split; [reflexivity|]. split; [reflexivity|].
+    destruct (D.old db f k) as [old|] eqn:Hold.
+    - apply (proj1 (D.old_row db f k old Hwf)) in Hold.
+      destruct ((proj2 Hnoids) f k old Hold) as [-> _].
+      cbn [D.combine] in Houtput. symmetry. exact Houtput.
+    - cbn [D.combine] in Houtput. symmetry. exact Houtput.
+  Qed.
+
+  (** Value-only relational insertion preserves the absence of identifiers. *)
+  Lemma run_put_no_ids : forall db f k, D.wf db -> no_ids db ->
+    D.kind_ok db f k None ->
+    Forall (fun c : cell V.t => exists v, c = Val v) k -> no_ids (D.put f k None db).
+  Proof.
+    intros db f k Hwf Hnoids Hallowed Hvalues. split.
+    - rewrite (proj1 (proj2 (proj2 (D.layout_put f k None db Hwf)))). exact (proj1 Hnoids).
+    - intros g key output Hrow.
+      destruct (run_put_none_origin db f k Hwf Hnoids Hallowed Hvalues g key output Hrow)
+        as [Holdrow|[-> [-> ->]]].
+      + exact ((proj2 Hnoids) g key output Holdrow).
+      + split; [reflexivity|exact Hvalues].
+  Qed.
+
+  (** Pointwise environment equality transports concrete term values. *)
+  Lemma run_term_value_env : forall (s t : Model.env (V := V.t)) a c,
+    (forall x, s x = t x) -> term_value s a c -> term_value t a c.
+  Proof.
+    intros s t [x|v] c Heq Hvalue; [unfold term_value in *; now rewrite <- Heq|exact Hvalue].
+  Qed.
+
+  (** Pointwise environment equality transports concrete argument lists. *)
+  Lemma run_terms_value_env : forall (s t : Model.env (V := V.t)) args cs,
+    (forall x, s x = t x) -> terms_value s args cs -> terms_value t args cs.
+  Proof.
+    intros s t args cs Heq Hvalues. induction Hvalues as [|a c rest more Hhead Htail IH];
+      constructor; [eapply run_term_value_env; eassumption|exact IH].
+  Qed.
+
+  (** Pointwise environment equality transports relational action derivations. *)
+  Lemma run_derivation_action_env : forall (s t : Model.env (V := V.t)) acts f k,
+    (forall x, s x = t x) -> derivation_action V.prim s acts f k ->
+    derivation_action V.prim t acts f k.
+  Proof.
+    intros s t acts f k Heq Hderivation. revert t Heq.
+    induction Hderivation as
+      [s f args k rest Hterms
+      |s f args input rest g k Hterms Htail IH
+      |s x q args k vs v rest f out Hterms Hvalues Hprim Htail IH]; intros t Heq.
+    - apply derive_put. eapply run_terms_value_env; eassumption.
+    - eapply derive_put_later; [eapply run_terms_value_env; eassumption|now apply IH].
+    - eapply derive_let; [eapply run_terms_value_env; eassumption|exact Hvalues|exact Hprim|].
+      apply IH. intro y. unfold update. destruct (Pos.eqb x y); [reflexivity|apply Heq].
+  Qed.
+
+  (** Checked relational actions preserve derivability and introduce no identifiers. *)
+  Lemma run_apply_go_derives_checked : forall p cp initial acts g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    forallb relational_action acts = true ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    no_ids db -> derived p initial db ->
+    (forall f k, derivation_action V.prim (look s locals) acts f k ->
+      derives V.prim p (D.view initial) f k) ->
+    no_ids (apply_go acts s locals db) /\ derived p initial (apply_go acts s locals db).
+  Proof.
+    intros p cp initial acts. induction acts as [|a rest IH]; intros g s locals db
+      Hchecked Hwf Hloaded Hfragment Hrel Hacts Henv Hallocated Hnoids Hderived Hjustify.
+    - split; assumption.
+    - cbn [forallb] in Hrel. apply andb_true_iff in Hrel as [Haction Hrestrel].
+      destruct a as [x f args|f args res|t u|x op args]; try discriminate.
+      + cbn [actions_ok] in Hacts.
+        destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+        pose proof (run_relational_kind p f out Hfragment Hkind) as Hout. subst out.
+        destruct res as [t|]; [contradiction|].
+        destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+          as [cells [Hcells Hsorts]].
+        assert (Hrowtyped : row_sorted (program_sorts p) (program_kind p) f cells None).
+        { exists ORel. rewrite Hsorts. repeat split; assumption. }
+        assert (Hids : forall i, In (Id i) (cells ++ option_list None) -> D.allocated db i).
+        { intros i Hin. rewrite app_nil_r in Hin.
+          eapply run_term_cells_allocated; eassumption. }
+        pose proof (run_put_allowed p cp db f cells None Hchecked Hloaded Hrowtyped Hids)
+          as Hallowed.
+        destruct (run_put_state p cp f cells None db Hchecked Hwf Hloaded Hrowtyped Hids)
+          as [Hwf' [Hloaded' [Hids' _]]].
+        pose proof (run_no_ids_terms db s locals args cells Hnoids Hallocated Hcells) as Hvalues.
+        pose proof (run_put_no_ids db f cells Hwf Hnoids Hallowed Hvalues) as Hnoids'.
+        assert (Hderived' : derived p initial (D.put f cells None db)).
+        { intros name key output Hrow.
+          destruct (run_put_none_origin db f cells Hwf Hnoids Hallowed Hvalues
+            name key output Hrow) as [Holdrow|[-> [-> ->]]].
+          - eapply Hderived; exact Holdrow.
+          - apply Hjustify. apply derive_put. now apply run_term_cells_spec. }
+        assert (Hallocated' : env_allocated (D.put f cells None db) (look s locals)).
+        { eapply run_env_allocated_mono with (db := db);
+            [rewrite Hids'; reflexivity|exact Hallocated]. }
+        cbn [apply_go result_cell]. rewrite Hcells.
+        eapply IH; try eassumption. intros name key Htail. apply Hjustify.
+        eapply derive_put_later with (input := cells).
+        * exact ((proj1 (run_term_cells_spec s locals args cells)) Hcells).
+        * exact Htail.
+      + cbn [actions_ok] in Hacts. destruct Hacts as [Hargs Hrest].
+        destruct (run_term_values_typed g s locals args Henv Hargs) as [vs Hvalues].
+        cbn [apply_go]. rewrite Hvalues. destruct (V.prim op vs) as [v|] eqn:Hprim.
+        * assert (Henv' : env_sorted (ctx_set g x SVal)
+              (look s (PTrieCode.set x (Val v) locals))).
+          { apply run_env_sorted_set; [exact Henv|reflexivity]. }
+          assert (Hallocated' : env_allocated db (look s (PTrieCode.set x (Val v) locals))).
+          { apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate. }
+          eapply IH; try eassumption. intros name key Htail. apply Hjustify.
+          eapply derive_let; [eapply run_term_values_spec; exact Hvalues
+            |apply run_value_cells|exact Hprim|].
+          eapply run_derivation_action_env; [intro y; apply run_look_set|exact Htail].
+        * split; assumption.
+  Qed.
+
+  (** The checked replacement for F7 uses the loaded action sorts and current allocation. *)
+  Lemma run_apply_derives_checked : forall p cp initial db r s,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    no_ids db -> derived p initial db -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    derivation_body V.prim p (D.view initial) s (query V.t r) ->
+    no_ids (apply (actions V.t r) s db) /\ derived p initial (apply (actions V.t r) s db).
+  Proof.
+    intros p cp initial db r s Hchecked Hwf Hloaded Hfragment Hnoids Hderived
+      Hin Henv Hallocated Hbody.
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
+    unfold apply. eapply run_apply_go_derives_checked; try eassumption.
+    - eapply run_relational_actions; eassumption.
+    - intros x ty Hbound. destruct (Hsorted x ty Hbound) as [c [Hc Hsort]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated; exact Hcell.
+    - intros f k Haction. eapply derive_rule; [exact Hin|exact Hbody|].
+      eapply run_derivation_action_env; [intro x; apply run_look_empty|exact Haction].
+  Qed.
 
   Lemma F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
