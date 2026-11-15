@@ -1944,6 +1944,89 @@ Module Compile (V : VALUE) <: COMPILE V.
       + intros acts Hacts. rewrite pattern_actions_cons. apply Hstep, Hcontinue. exact Hacts.
   Qed.
 
+
+  (** Reserving names from an earlier threshold preserves a later fresh-name context. *)
+  Lemma fresh_context_lower : forall g low high,
+    (low <= high)%positive -> (forall x s, g x = Some s -> (x < low)%positive) ->
+    ctx_includes (fresh_context g high) (fresh_context g low).
+  Proof.
+    intros g low high Horder Hbound x s Hsort. unfold fresh_context in Hsort.
+    destruct (Pos.leb high x) eqn:Hhigh.
+    - apply Pos.leb_le in Hhigh. rewrite fresh_context_high; [exact Hsort|lia].
+    - rewrite fresh_context_low; [exact Hsort|eapply Hbound; exact Hsort].
+  Qed.
+
+  (** Every typed pattern table remains typed when its target context grows. *)
+  Lemma sorted_pattern_table_includes : forall g target target' ns ts,
+    sorted_pattern_table g target ns ts -> ctx_includes target target' ->
+    sorted_pattern_table g target' ns ts.
+  Proof.
+    intros g target target' ns ts Htable Hgrow i n t s Hnode Hterm Hsort.
+    eapply has_includes; [exact Hgrow|]. eapply Htable; eassumption.
+  Qed.
+
+  (** Ordered constructor actions finish with a well-sorted union of the two roots. *)
+  Lemma pattern_actions_sorted : forall sorts kinds g target (p : fpat V.t) ts h old_root default,
+    pat_ok sorts kinds g p -> Forall2 node_term (nodes V.t p) ts ->
+    sorted_pattern_table g target (nodes V.t p) ts ->
+    ctx_includes g h -> ctx_includes h target -> h old_root = Some SId ->
+    actions_ok sorts kinds h
+      (pattern_actions (nodes V.t p) ts ts ++
+        [Union (Var old_root) (pattern_get default (root V.t p) ts)]).
+  Proof.
+    intros sorts kinds g target p ts h old_root default
+      [Hlast [Hroot [_ Hnodes]]] Hforms Htable Hsource Hpart Hold.
+    assert (Hprefix0 : prefix_terms_sorted g h (nodes V.t p) ts 0).
+    { intros j n t s Hlt. lia. }
+    destruct (pattern_actions_sorted_fold sorts kinds g target (nodes V.t p) ts
+      Hforms Htable Hnodes (nodes V.t p) ts Hforms 0 h
+      (fun j => eq_refl) (fun j => eq_refl) Hsource Hpart Hprefix0)
+      as [h' [Hkeep [Hpart' [Hprefix Hcontinue]]]].
+    apply Hcontinue. cbn [actions_ok]. split; [apply Hkeep; exact Hold|].
+    split; [|exact I].
+    eapply (prefix_get_typed g h' (nodes V.t p) ts (length (nodes V.t p))
+      (root V.t p) SId default); [exact Hforms|exact Hprefix|lia|exact Hroot].
+  Qed.
+
+  (** A compiled rewrite has a typed query followed by typed constructor and union actions. *)
+  Lemma compile_rule_sorted : forall ds rw g,
+    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
+    rule_ok (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
+  Proof.
+    intros ds rw g Hrw.
+    destruct (flatten_lhs_sorted ds rw g Hrw)
+      as [h [Hquery [Hsource [Hpart Hroot]]]].
+    destruct (root_var_bounds rw) as [Hleft [Hright Hconditions]].
+    destruct (pattern_table_sorted (lhs V.t rw) (root_var rw) g Hleft)
+      as [_ [_ Hnext]].
+    set (next := snd (pattern_table (lhs V.t rw) (root_var rw))).
+    assert (Hfresh : (pattern_max (nodes V.t (rhs V.t rw)) < next)%positive) by
+      (unfold next; lia).
+    destruct (pattern_table_sorted (rhs V.t rw) next g Hfresh)
+      as [Hforms [Htable Hlast]].
+    assert (Htarget : ctx_includes (fresh_context g next) (fresh_context g (root_var rw))).
+    { apply fresh_context_lower; [unfold next; lia|].
+      intros x s Hsort. eapply rewrite_context_bound; eassumption. }
+    assert (Htyped : sorted_pattern_table g (fresh_context g (root_var rw))
+      (nodes V.t (rhs V.t rw)) (fst (pattern_table (rhs V.t rw) next))).
+    { eapply sorted_pattern_table_includes; eassumption. }
+    exists h. split.
+    { assert (Heq : query V.t (compile_rule rw) = flatten_lhs rw).
+      { destruct rw as [lp [ns r] conditions]. reflexivity. }
+      rewrite Heq. exact Hquery. }
+    assert (Hactions : actions V.t (compile_rule rw) =
+      pattern_actions (nodes V.t (rhs V.t rw))
+        (fst (pattern_table (rhs V.t rw) next))
+        (fst (pattern_table (rhs V.t rw) next)) ++
+      [Union (Var (root_var rw))
+        (pattern_get (Var next) (root V.t (rhs V.t rw))
+          (fst (pattern_table (rhs V.t rw) next)))]).
+    { unfold next. destruct rw as [lp [ns r] conditions]. reflexivity. }
+    destruct Hrw as [g0 [Hrooted [Hleftpat [Hscope [Hcond Hrightpat]]]]].
+    rewrite Hactions. eapply pattern_actions_sorted; eassumption.
+  Qed.
+
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
@@ -1958,7 +2041,15 @@ Module Compile (V : VALUE) <: COMPILE V.
 
   Lemma compile_sorted : forall ds rws ans, rules_ok ds rws ans ->
     program_ok (compile ds rws ans).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans [Hrewrites Hanalyses]. unfold program_ok.
+    change (Forall (rule_ok (lookup_sorts ds) (lookup_kind ds))
+      (map compile_rule rws ++ ans)).
+    apply Forall_app. split.
+    - apply Forall_map. eapply Forall_impl; [|exact Hrewrites].
+      intros rw [g Hrw]. eapply compile_rule_sorted; exact Hrw.
+    - eapply Forall_impl; [|exact Hanalyses]. intros r [Hrule Hactions]. exact Hrule.
+  Qed.
 
   Lemma compile_valid : forall (M : model (V := V.t)) ds rws ans, rules_ok ds rws ans ->
     Forall (valid_rw V.prim M (lookup_sorts ds) (lookup_kind ds)) rws ->
@@ -2053,7 +2144,9 @@ Module CompileT (V : VALUE_T) <: COMPILE_ALL V.
   Lemma F2_compile_rule_sorted : forall ds rw g,
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
     rule_ok (lookup_sorts ds) (lookup_kind ds) (compile_rule rw).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact compile_rule_sorted.
+  Qed.
 
   Lemma F3_flatten_spec : forall rw,
     flatten_lhs rw = flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw.
