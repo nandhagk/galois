@@ -1121,6 +1121,67 @@ Module Compile (V : VALUE) <: COMPILE V.
     exact Hroot.
   Qed.
 
+  (** A term has a unique value in a fixed environment. *)
+  Lemma term_value_unique : forall s (t : term V.t) c d,
+    term_value s t c -> term_value s t d -> c = d.
+  Proof.
+    intros s [x|v] c d Hc Hd; cbn [term_value] in *; congruence.
+  Qed.
+
+  (** Updating a different variable preserves a term's value. *)
+  Lemma term_value_update_other : forall s x d (t : term V.t) c,
+    t <> Var x -> term_value s t c -> term_value (update s x d) t c.
+  Proof.
+    intros s x d [y|v] c Hdifferent Hvalue; cbn [term_value] in *; [|exact Hvalue].
+    unfold update. destruct (Pos.eqb x y) eqn:Hxy; [|exact Hvalue].
+    apply Pos.eqb_eq in Hxy. subst y. contradiction.
+  Qed.
+
+  (** The assigned variable takes the newly inserted cell. *)
+  Lemma term_value_update_same : forall s x c,
+    @term_value V.t (update s x c) (Var x) c.
+  Proof.
+    intros s x c. unfold term_value, update. now rewrite Pos.eqb_refl.
+  Qed.
+
+  (** Every generated constructor variable belongs to exactly one table position. *)
+  Lemma pattern_constructor_name_unique : forall (p : fpat V.t) rn i f children x j,
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    nth_error (nodes V.t p) i = Some (PApp f children) ->
+    nth_error (fst (pattern_table p rn)) i = Some (Var x) ->
+    nth_error (fst (pattern_table p rn)) j = Some (Var x) -> i = j.
+  Proof.
+    intros p rn i f children x j Hholes Hnode Hterm Hother.
+    destruct (pattern_table_facts p rn) as [Hforms [Hdistinct Hrange]].
+    pose proof (Hrange i f children x Hnode Hterm) as Hfresh.
+    destruct (node_term_lookup _ _ Hforms j (Var x) Hother) as [n [Hnth Hform]].
+    destruct n as [h|g ch|v]; cbn [node_term] in Hform.
+    - injection Hform as Heq. subst h.
+      pose proof (Hholes x (nth_error_In _ _ Hnth)). lia.
+    - exact (constructor_names_injective _ _ Hdistinct i j f children g ch x
+        Hnode Hterm Hnth Hother).
+    - discriminate.
+  Qed.
+
+  (** Related child unfoldings and their current table values give represented row keys. *)
+  Lemma pattern_arguments_represent : forall w tau ns ts s children args cells,
+    Forall2 (@unfolds_pat V.t tau ns) children args ->
+    terms_value s (map (fun j => pattern_get (Var 1%positive) j ts) children) cells ->
+    (forall j e, In j children -> unfolds_pat tau ns j e ->
+      exists c, term_value s (pattern_get (Var 1%positive) j ts) c /\ represents w c e) ->
+    Forall2 (represents w) cells args.
+  Proof.
+    intros w tau ns ts s children args cells Hunfold. revert cells.
+    induction Hunfold as [|j e children args Hhead Htail IH];
+      intros cells Hvalues Hready; inversion Hvalues as [|t c terms rest Hvalue Hrest];
+      subst; [constructor|].
+    constructor.
+    - destruct (Hready j e (or_introl eq_refl) Hhead) as [d [Hd Hrep]].
+      assert (c = d) by (eapply term_value_unique; eassumption). now subst c.
+    - apply IH; [exact Hrest |]. intros k r Hin Hr. apply Hready; [now right |exact Hr].
+  Qed.
+
+
   (** * Sorting compiled patterns *)
 
   (** A context includes another when it preserves every existing sort assignment. *)
