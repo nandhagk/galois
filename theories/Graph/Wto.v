@@ -4,7 +4,7 @@
     For example, a singleton self edge produces an empty loop body.
     Builds on: Tarjan search, first-order graph data and the WTO signature. *)
 
-From Stdlib Require Import List Bool PArith NArith Sorting.Permutation.
+From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search SccSig Scc WtoSig.
@@ -18,6 +18,14 @@ End TimeHelpers.
 
 Definition wto_member (v : positive) xs := existsb (Pos.eqb v) xs.
 TimeFun wto_member.
+
+(** Boolean membership recognizes exactly the supplied vertex list. *)
+Lemma wto_member_spec : forall v vs, wto_member v vs = true <-> In v vs.
+Proof.
+  intros v vs. unfold wto_member. rewrite existsb_exists. split.
+  - intros [x [Hin Heq]]. apply Pos.eqb_eq in Heq. now subst x.
+  - intro Hin. exists v. split; [exact Hin|apply Pos.eqb_refl].
+Qed.
 
 Definition wto_scoped (g : prepared) (within : option (list positive)) : prepared :=
   match within with
@@ -128,6 +136,15 @@ Fixpoint wto_unique (xs : list positive) :=
   | v :: rest => negb (wto_member v rest) && wto_unique rest
   end.
 TimeFun wto_unique.
+
+(** Duplicate checking reflects uniqueness of the vertex occurrences. *)
+Lemma wto_unique_spec : forall vs, wto_unique vs = true <-> NoDup vs.
+Proof.
+  induction vs as [|v rest IH]; cbn [wto_unique].
+  - split; [intro H; constructor|intro H; reflexivity].
+  - rewrite andb_true_iff, negb_true_iff, <- not_true_iff_false, wto_member_spec, IH.
+    split; [intros [Hfresh Hrest]; now constructor|intro H; now inversion H].
+Qed.
 
 Fixpoint wto_annotate (stack : list positive) (w : wto) :
     list (positive * list positive) :=
@@ -272,6 +289,231 @@ Fixpoint wto_order_into (w : wto) (acc : list positive) : list positive :=
   end.
 TimeFun wto_order_into.
 
+(** Accumulation appends the caller's suffix to each structural traversal. *)
+Lemma wto_into_spec : forall w acc,
+  wto_heads_into w acc = wto_heads w ++ acc /\
+  wto_order_into w acc = wto_order w ++ acc.
+Proof.
+  induction w as [|v rest IH|h body IHbody rest IHrest]; intro acc.
+  - split; reflexivity.
+  - cbn [wto_heads_into wto_order_into wto_heads wto_order].
+    destruct (IH acc) as [Hheads Horder]. now rewrite Hheads, Horder.
+  - cbn [wto_heads_into wto_order_into wto_heads wto_order].
+    destruct (IHrest acc) as [Hheads Horder]. rewrite Hheads, Horder.
+    rewrite (proj1 (IHbody (wto_heads rest ++ acc))).
+    rewrite (proj2 (IHbody (wto_order rest ++ acc))).
+    now rewrite !app_assoc.
+Qed.
+
+(** A rank-row lookup at a unique list position returns its starting rank plus that position. *)
+Lemma wto_rank_rows_at : forall vs start,
+  NoDup vs -> forall i v, nth_error vs i = Some v ->
+  exists p, trie_get v (wto_rank_rows start vs) = Some p /\
+    Pos.to_nat p = Pos.to_nat start + i.
+Proof.
+  induction vs as [|x rest IH]; intros start Hunique i v Hnth.
+  - rewrite nth_error_nil in Hnth. discriminate.
+  - inversion Hunique as [|head tail Hfresh Hrest]; subst.
+    destruct i as [|i].
+    + cbn [nth_error] in Hnth. inversion Hnth; subst v.
+      exists start. split.
+      * apply PTrie.get_set_same.
+      * lia.
+    + cbn [nth_error] in Hnth.
+      assert (Hneq : v <> x).
+      { intro Heq. subst v. apply Hfresh. now apply nth_error_In in Hnth. }
+      destruct (IH (Pos.succ start) Hrest i v Hnth) as [p [Hget Hcount]].
+      exists p. split.
+      * cbn [wto_rank_rows]. rewrite PTrie.get_set_other by exact Hneq. exact Hget.
+      * rewrite Pos2Nat.inj_succ in Hcount. lia.
+Qed.
+
+(** Rank rows never create a binding for an absent vertex. *)
+Lemma wto_rank_rows_absent : forall vs start v,
+  ~ In v vs -> trie_get v (wto_rank_rows start vs) = None.
+Proof.
+  induction vs as [|x rest IH]; intros start v Habsent.
+  - apply PTrie.get_empty.
+  - cbn [wto_rank_rows]. rewrite PTrie.get_set_other.
+    + apply IH. intro Hin. apply Habsent. now right.
+    + intro Heq. apply Habsent. now left.
+Qed.
+
+(** Every enclosing head occurs in both structural projections. *)
+Lemma wto_encloses_member : forall w h v,
+  wto_encloses h v w -> In h (wto_heads w) /\ In h (wto_order w).
+Proof.
+  intros w h v Hencloses. induction Hencloses; cbn [wto_heads wto_order].
+  - split; now left.
+  - destruct IHHencloses as [Hheads Horder]. split; [exact Hheads|now right].
+  - destruct IHHencloses as [Hheads Horder]. split; right;
+      apply in_or_app; now left.
+  - destruct IHHencloses as [Hheads Horder]. split; right;
+      apply in_or_app; now right.
+Qed.
+
+(** Textual precedence is strict comparison between two occurrence positions. *)
+Lemma graph_before_indices : forall vs u v,
+  graph_before vs u v <-> exists i j,
+    i < j /\ nth_error vs i = Some u /\ nth_error vs j = Some v.
+Proof.
+  intros vs u v. split.
+  - intros [prefix [middle [suffix ->]]].
+    exists (length prefix), (length prefix + S (length middle)). split; [lia|]. split.
+    + rewrite nth_error_app2 by lia. rewrite Nat.sub_diag. reflexivity.
+    + rewrite nth_error_app2 by lia.
+      replace (length prefix + S (length middle) - length prefix) with
+        (S (length middle)) by lia.
+      cbn [nth_error]. rewrite nth_error_app2 by lia. rewrite Nat.sub_diag. reflexivity.
+  - intros [i [j [Hlt [Hu Hv]]]]. revert i j Hlt Hu Hv.
+    induction vs as [|x rest IH]; intros [|i] [|j] Hlt Hu Hv;
+      cbn [nth_error] in *; try lia; try discriminate.
+    + inversion Hu; subst x.
+      destruct (nth_error_split rest j Hv) as [middle [suffix [Heq Hlength]]].
+      exists [], middle, suffix. now rewrite Heq.
+    + destruct (IH i j ltac:(lia) Hu Hv) as [prefix [middle [suffix Heq]]].
+      exists (x :: prefix), middle, suffix. cbn. now rewrite Heq.
+Qed.
+
+(** Unique lists give a unique position to each present vertex. *)
+Lemma wto_nth_unique : forall (vs : list positive) i j v,
+  NoDup vs -> nth_error vs i = Some v -> nth_error vs j = Some v -> i = j.
+Proof.
+  intros vs i j v Hunique Hi Hj.
+  apply (proj1 (NoDup_nth_error _) Hunique).
+  - apply nth_error_Some. congruence.
+  - congruence.
+Qed.
+
+(** Strict list order cannot precede the same unique vertex. *)
+Lemma graph_before_irrefl : forall vs v, NoDup vs -> ~ graph_before vs v v.
+Proof.
+  intros vs v Hunique Hbefore.
+  apply graph_before_indices in Hbefore. destruct Hbefore as [i [j [Hlt [Hi Hj]]]].
+  pose proof (wto_nth_unique vs i j v Hunique Hi Hj). lia.
+Qed.
+
+(** Strict list order composes on duplicate-free vertex lists. *)
+Lemma graph_before_trans : forall vs u v z,
+  NoDup vs -> graph_before vs u v -> graph_before vs v z -> graph_before vs u z.
+Proof.
+  intros vs u v z Hunique Huv Hvz.
+  apply graph_before_indices in Huv. apply graph_before_indices in Hvz.
+  destruct Huv as [i [j [Hij [Hi Hj]]]].
+  destruct Hvz as [k [l [Hkl [Hk Hl]]]].
+  pose proof (wto_nth_unique vs j k v Hunique Hj Hk) as Heq.
+  apply graph_before_indices. exists i, l. repeat split; auto; lia.
+Qed.
+
+(** Adding a prefix preserves textual precedence. *)
+Lemma wto_before_prefix : forall prefix vs u v,
+  graph_before vs u v -> graph_before (prefix ++ vs) u v.
+Proof.
+  intros prefix vs u v [first [middle [last ->]]].
+  exists (prefix ++ first), middle, last. now rewrite app_assoc.
+Qed.
+
+(** Adding a suffix preserves textual precedence. *)
+Lemma wto_before_suffix : forall vs suffix u v,
+  graph_before vs u v -> graph_before (vs ++ suffix) u v.
+Proof.
+  intros vs suffix u v [first [middle [last ->]]].
+  exists first, middle, (last ++ suffix). rewrite <- !app_assoc.
+  cbn [app]. now rewrite <- !app_assoc.
+Qed.
+
+(** A loop head is either its enclosed vertex or occurs before that vertex. *)
+Lemma wto_encloses_before : forall w h v,
+  wto_encloses h v w -> h = v \/ graph_before (wto_order w) h v.
+Proof.
+  intros w h v Hencloses. induction Hencloses; cbn [wto_order].
+  - destruct H as [Heq|Hin]; [now left|right].
+    destruct (in_split v _ Hin) as [first [last Hbody]].
+    exists [], first, (last ++ wto_order rest). cbn [app].
+    rewrite Hbody. now rewrite <- app_assoc.
+  - destruct IHHencloses as [Heq|Hbefore]; [now left|right].
+    exact (wto_before_prefix [u] _ h v Hbefore).
+  - destruct IHHencloses as [Heq|Hbefore]; [now left|right].
+    apply (wto_before_prefix [u]). now apply wto_before_suffix.
+  - destruct IHHencloses as [Heq|Hbefore]; [now left|right].
+    apply (wto_before_prefix [u]). now apply wto_before_prefix.
+Qed.
+
+(** A path contains its initial vertex. *)
+Lemma wto_path_first : forall g u vs v, path g u vs v -> In u vs.
+Proof.
+  intros g u vs v Hpath. destruct Hpath; now left.
+Qed.
+
+(** Appending an edge extends the path at its recorded endpoint. *)
+Lemma wto_path_snoc : forall g u vs v,
+  path g u vs v -> forall z, edge g v z -> path g u (vs ++ [z]) z.
+Proof.
+  intros g u vs v Hpath. induction Hpath; intros z Hedge; cbn [app].
+  - econstructor; [exact Hedge|constructor].
+  - econstructor; [eassumption|now apply IHHpath].
+Qed.
+
+(** Rooted reachability is closed under a successor edge. *)
+Lemma wto_reach_step : forall g roots u v,
+  reach g roots u -> edge g u v -> reach g roots v.
+Proof.
+  intros g roots u v [r [vs [Hroot Hpath]]] Hedge.
+  exists r, (vs ++ [v]). split; [exact Hroot|]. now apply wto_path_snoc with (v := u).
+Qed.
+
+(** A head-free rooted path advances through the unique structural order. *)
+Lemma wto_path_forward : forall g roots w,
+  is_wto g roots w -> forall u vs v, path (base g) u vs v ->
+  reach (base g) roots u ->
+  (forall x, In x vs -> ~ In x (wto_heads w)) ->
+  u = v \/ graph_before (wto_order w) u v.
+Proof.
+  intros g roots w [Hunique [Hcover Hedges]] u vs v Hpath.
+  induction Hpath as [v|u v vs z Hedge Hpath IH]; intros Hreach Hnoheads.
+  - now left.
+  - assert (Hbefore : graph_before (wto_order w) u v).
+    { destruct (Hedges u v Hedge Hreach) as [Hbefore|Hencloses]; [exact Hbefore|].
+      exfalso. apply (Hnoheads v).
+      - right. now apply wto_path_first in Hpath.
+      - exact (proj1 (wto_encloses_member w v u Hencloses)). }
+    assert (Hreachv : reach (base g) roots v).
+    { eapply wto_reach_step; eassumption. }
+    destruct (IH Hreachv ltac:(intros x Hin; apply Hnoheads; now right)) as [Heq|Hlater].
+    + subst z. now right.
+    + right. eapply graph_before_trans; eassumption.
+Qed.
+
+(** Every reachable cycle in a structural weak order visits a loop head. *)
+Lemma wto_cycle_head : forall g roots w,
+  is_wto g roots w -> forall vs, cycle (base g) vs ->
+  (forall v, In v vs -> reach (base g) roots v) ->
+  exists h, In h vs /\ In h (wto_heads w).
+Proof.
+  intros g roots w Hvalid vs Hcycle Hreachable.
+  destruct (existsb (fun v => wto_member v (wto_heads w)) vs) eqn:Hheads.
+  - apply existsb_exists in Hheads. destruct Hheads as [h [Hin Hhead]].
+    exists h. split; [exact Hin|now apply wto_member_spec in Hhead].
+  - assert (Hnoheads : forall v, In v vs -> ~ In v (wto_heads w)).
+    { intros v Hin Hhead. assert (Hyes : existsb (fun v =>
+        wto_member v (wto_heads w)) vs = true).
+      { apply existsb_exists. exists v. split; [exact Hin|now apply wto_member_spec]. }
+      congruence. }
+    destruct Hcycle as [u [v [tail [Heq [Hedge Hpath]]]]]. subst vs.
+    destruct Hvalid as [Hunique [Hcover Hedges]].
+    assert (Hreachu : reach (base g) roots u) by (apply Hreachable; now left).
+    assert (Hreachv : reach (base g) roots v) by (apply Hreachable; now right; left).
+    destruct (Hedges u v Hedge Hreachu) as [Hbefore|Hencloses].
+    + destruct (wto_path_forward g roots w (conj Hunique (conj Hcover Hedges))
+        v (v :: tail) u Hpath Hreachv
+        ltac:(intros x Hin; apply Hnoheads; now right)) as [Heq|Hback].
+      * subst v. exfalso. exact (graph_before_irrefl _ _ Hunique Hbefore).
+      * exfalso. apply (graph_before_irrefl _ u Hunique).
+        eapply graph_before_trans; eassumption.
+    + exfalso. apply (Hnoheads v); [now right; left|].
+      exact (proj1 (wto_encloses_member w v u Hencloses)).
+Qed.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
@@ -301,32 +543,86 @@ Module Wto <: WTO.
 
   (** Heads are the structural loop heads in traversal order. *)
   Lemma heads_spec : forall w, heads w = wto_heads w.
-  Proof. Admitted. (* CONVERT: heads_spec: accumulating traversal is not convertible. *)
+  Proof.
+    intro w. unfold heads. rewrite (proj1 (wto_into_spec w [])).
+    apply app_nil_r.
+  Qed.
 
   (** Ranks number the unique linear order starting at one. *)
   Lemma ranks_spec : forall w, NoDup (wto_order w) -> forall v i,
     nth_error (wto_order w) i = Some v ->
     trie_get v (ranks w) = Some (Pos.of_succ_nat i).
-  Proof. Admitted. (* CONVERT: WeakOrder.ranks_spec uses membership and advance ranks. *)
+  Proof.
+    intros w Hunique v i Hnth. unfold ranks.
+    rewrite (proj2 (wto_into_spec w [])), app_nil_r.
+    destruct (wto_rank_rows_at (wto_order w) 1%positive Hunique i v Hnth)
+      as [p [Hget Hcount]].
+    rewrite Hget. f_equal. apply Pos2Nat.inj.
+    rewrite SuccNat2Pos.id_succ. cbn [Pos.to_nat] in Hcount. lia.
+  Qed.
 
   (** Vertices outside the linear order have no rank. *)
   Lemma ranks_absent : forall w v,
     ~ In v (wto_order w) -> trie_get v (ranks w) = None.
-  Proof. Admitted. (* CONVERT: landed rank lemmas do not state absent-key lookup. *)
+  Proof.
+    intros w v Habsent. unfold ranks.
+    rewrite (proj2 (wto_into_spec w [])), app_nil_r.
+    now apply wto_rank_rows_absent.
+  Qed.
+
+  (** Textually ordered vertices have increasing rank bindings. *)
+  Lemma ranks_before : forall w u v,
+    NoDup (wto_order w) -> graph_before (wto_order w) u v ->
+    exists ru rv, trie_get u (ranks w) = Some ru /\
+      trie_get v (ranks w) = Some rv /\ (ru < rv)%positive.
+  Proof.
+    intros w u v Hunique Hbefore. apply graph_before_indices in Hbefore.
+    destruct Hbefore as [i [j [Hij [Hi Hj]]]].
+    exists (Pos.of_succ_nat i), (Pos.of_succ_nat j). split.
+    - now apply ranks_spec.
+    - split; [now apply ranks_spec|].
+      apply Pos2Nat.inj_lt. rewrite !SuccNat2Pos.id_succ. lia.
+  Qed.
+
+  (** Every vertex in the structural order has a rank binding. *)
+  Lemma ranks_present : forall w v,
+    NoDup (wto_order w) -> In v (wto_order w) ->
+    exists r, trie_get v (ranks w) = Some r.
+  Proof.
+    intros w v Hunique Hin. apply In_nth_error in Hin. destruct Hin as [i Hi].
+    exists (Pos.of_succ_nat i). now apply ranks_spec.
+  Qed.
 
   (** Every reachable cycle contains a structural loop head. *)
   Lemma check_cuts : forall g roots w,
     check g roots w = true -> forall vs, cycle (base g) vs ->
     (forall v, In v vs -> reach (base g) roots v) ->
     exists h, In h vs /\ In h (heads w).
-  Proof. Admitted. (* CONVERT: WeakOrder.cycles_have_head concerns producer token annotations. *)
+  Proof.
+    intros g roots w Hcheck vs Hcycle Hreachable. rewrite heads_spec.
+    exact (wto_cycle_head g roots w (check_sound g roots w Hcheck) vs Hcycle Hreachable).
+  Qed.
 
   (** Edges increase rank unless their target is a backward loop head. *)
   Lemma ranks_forward : forall g roots w u v,
     check g roots w = true -> edge (base g) u v -> reach (base g) roots u ->
     exists ru rv, trie_get u (ranks w) = Some ru /\ trie_get v (ranks w) = Some rv /\
       ((ru < rv)%positive \/ (In v (heads w) /\ (rv <= ru)%positive)).
-  Proof. Admitted. (* CONVERT: WeakOrder.ranks_forward concludes annotation membership. *)
+  Proof.
+    intros g roots w u v Hcheck Hedge Hreach.
+    destruct (check_sound g roots w Hcheck) as [Hunique [Hcover Hedges]].
+    destruct (Hedges u v Hedge Hreach) as [Hbefore|Hencloses].
+    - destruct (ranks_before w u v Hunique Hbefore) as [ru [rv [Hu [Hv Hlt]]]].
+      exists ru, rv. auto.
+    - pose proof (proj1 (wto_encloses_member w v u Hencloses)) as Hhead.
+      rewrite <- heads_spec in Hhead.
+      destruct (wto_encloses_before w v u Hencloses) as [Heq|Hbefore].
+      + subst v. destruct (ranks_present w u Hunique (proj2 (Hcover u) Hreach)) as [r Hr].
+        exists r, r. repeat split; auto. right. split; [exact Hhead|apply Pos.le_refl].
+      + destruct (ranks_before w v u Hunique Hbefore) as [rv [ru [Hv [Hu Hlt]]]].
+        exists ru, rv. repeat split; auto. right. split; [exact Hhead|].
+        now apply Pos.lt_le_incl.
+  Qed.
 End Wto.
 
 Module WtoT <: WTO_ALL.
@@ -507,7 +803,9 @@ Module WtoT <: WTO_ALL.
   Lemma F1_lists :
     (forall v vs, wto_member v vs = true <-> In v vs) /\
     (forall vs, wto_unique vs = true <-> NoDup vs).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    split; [apply wto_member_spec|apply wto_unique_spec].
+  Qed.
 
   Lemma F2_annotation : forall w, NoDup (wto_order w) ->
     map fst (wto_annotate [] w) = wto_order w /\
@@ -529,13 +827,17 @@ Module WtoT <: WTO_ALL.
 
   Lemma F7_encloses : forall w h v,
     wto_encloses h v w -> In h (wto_heads w) /\ In h (wto_order w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wto_encloses_member.
+  Qed.
 
   Lemma F8_cycle : forall g roots w,
     is_wto g roots w -> forall vs, cycle (base g) vs ->
     (forall v, In v vs -> reach (base g) roots v) ->
     exists h, In h vs /\ In h (wto_heads w).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wto_cycle_head.
+  Qed.
 
   Lemma F9_ranks : forall w,
     ranks w = wto_rank_rows 1%positive (wto_order w) /\
@@ -543,13 +845,19 @@ Module WtoT <: WTO_ALL.
     (NoDup (wto_order w) -> forall v i,
       nth_error (wto_order w) i = Some v ->
       trie_get v (ranks w) = Some (Pos.of_succ_nat i)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. split.
+    - unfold ranks. rewrite (proj2 (wto_into_spec w [])), app_nil_r. reflexivity.
+    - split; [apply ranks_absent|apply ranks_spec].
+  Qed.
 
   Lemma F10_forward : forall g roots w u v,
     check g roots w = true -> edge (base g) u v -> reach (base g) roots u ->
     exists ru rv, trie_get u (ranks w) = Some ru /\ trie_get v (ranks w) = Some rv /\
       ((ru < rv)%positive \/ (In v (heads w) /\ (rv <= ru)%positive)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply ranks_forward.
+  Qed.
 
   Lemma F11_select : forall preferred c h body,
     wto_select preferred c = Some (h, body) -> Permutation c (h :: body).
@@ -686,7 +994,9 @@ Module WtoT <: WTO_ALL.
   Lemma F20_into : forall w acc,
       wto_heads_into w acc = wto_heads w ++ acc /\
       wto_order_into w acc = wto_order w ++ acc.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wto_into_spec.
+  Qed.
 
   (** An accumulating traversal visits each constructor once. *)
   Lemma T8b_heads_into : forall w acc,
