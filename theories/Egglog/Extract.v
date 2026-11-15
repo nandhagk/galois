@@ -4234,6 +4234,126 @@ Module SearchFacts (V : VALUE) (C : COST V) (Q : PQ).
       split; [now apply in_map|reflexivity].
   Qed.
 
+  (** Finalizing a fresh class preserves all other candidate rows and their costs. *)
+  Lemma search_candidates_remove : forall rs costs candidates i n,
+    search_candidates_valid rs costs candidates -> trie_get i costs = None ->
+    search_candidates_valid rs (PTrieCode.set i n costs) (PTrieCode.remove i candidates).
+  Proof.
+    intros rs costs candidates i n Hvalid Hmissing j m f k Hget.
+    destruct (Pos.eq_dec j i) as [->|Hneq].
+    - rewrite PTrie.get_remove_same in Hget. discriminate.
+    - rewrite PTrie.get_remove_other in Hget by exact Hneq.
+      destruct (Hvalid j m f k Hget) as [Habsent [Hrow [Hknown Hcost]]].
+      pose proof (search_costs_extend_set costs i n Hmissing) as Hextend.
+      split; [now rewrite PTrie.get_set_other|]. split; [exact Hrow|]. split.
+      + eapply search_known_extend; eassumption.
+      + rewrite (search_cells_extend k costs (PTrieCode.set i n costs) Hextend Hknown).
+        exact Hcost.
+  Qed.
+
+  (** Undetached frames still wait at absent classes after one fresh finalization. *)
+  Lemma search_waiters_remove : forall rs costs waiters i n,
+    search_waiters_valid rs costs waiters -> trie_get i costs = None ->
+    search_waiters_valid rs (PTrieCode.set i n costs) (PTrieCode.remove i waiters).
+  Proof.
+    intros rs costs waiters i n Hvalid Hmissing j frames frame Hget Hin.
+    destruct (Pos.eq_dec j i) as [->|Hneq].
+    - rewrite PTrie.get_remove_same in Hget. discriminate.
+    - rewrite PTrie.get_remove_other in Hget by exact Hneq.
+      destruct (Hvalid j frames frame Hget Hin) as [Hframe [Habsent Hhead]].
+      split.
+      + eapply search_frame_extend; [now apply search_costs_extend_set|exact Hframe].
+      + split; [now rewrite PTrie.get_set_other|exact Hhead].
+  Qed.
+
+  (** The detached waiting list contains valid frames in the extended final-cost map. *)
+  Lemma search_detached_valid : forall rs costs waiters i n,
+    search_waiters_valid rs costs waiters -> trie_get i costs = None ->
+    Forall (search_frame_valid rs (PTrieCode.set i n costs))
+      (match trie_get i waiters with Some frames => frames | None => [] end).
+  Proof.
+    intros rs costs waiters i n Hvalid Hmissing.
+    destruct (trie_get i waiters) as [frames|] eqn:Hget; [|constructor].
+    apply Forall_forall. intros frame Hin.
+    destruct (Hvalid i frames frame Hget Hin) as [Hframe Hrest].
+    eapply search_frame_extend; [now apply search_costs_extend_set|exact Hframe].
+  Qed.
+
+  (** Old coverage survives finalization because ready child costs are already fixed. *)
+  Lemma search_covered_finish : forall costs candidates i n row,
+    trie_get i costs = None -> search_row_covered costs candidates row ->
+    search_row_covered (PTrieCode.set i n costs) (PTrieCode.remove i candidates) row.
+  Proof.
+    intros costs candidates i n row Hmissing Hcovered.
+    destruct (Pos.eq_dec (snd row) i) as [Heq|Hneq].
+    - left. exists n. rewrite Heq. apply PTrie.get_set_same.
+    - pose proof (search_costs_extend_set costs i n Hmissing) as Hextend.
+      destruct Hcovered as [[m Hget]|[Hknown [m [choice [Hget Hbound]]]]].
+      + left. exists m. now apply Hextend.
+      + right. split.
+        * eapply search_known_extend; eassumption.
+        * exists m, choice. split; [now rewrite PTrie.get_remove_other|].
+          rewrite (search_cells_extend (snd (fst row)) costs (PTrieCode.set i n costs)
+            Hextend Hknown). exact Hbound.
+  Qed.
+
+  (** Detaching one waiting list moves its sources to the active list and keeps all others. *)
+  Lemma search_pending_detach : forall waiters i row,
+    search_row_pending waiters [] row ->
+    search_row_pending (PTrieCode.remove i waiters)
+      (match trie_get i waiters with Some frames => frames | None => [] end) row.
+  Proof.
+    intros waiters i row [Hwaiting|[frame [Hin Hrow]]]; [|contradiction].
+    destruct Hwaiting as [j [frames [frame [Hget [Hin Hrow]]]]].
+    destruct (Pos.eq_dec j i) as [->|Hneq].
+    - right. rewrite Hget. exists frame. now split.
+    - left. exists j, frames, frame. split; [now rewrite PTrie.get_remove_other|].
+      now split.
+  Qed.
+
+  (** The finalization update accounts for every source before resuming the detached list. *)
+  Lemma search_tracking_finish : forall rs costs candidates waiters i n,
+    trie_get i costs = None -> search_tracking rs costs candidates waiters [] ->
+    search_tracking rs (PTrieCode.set i n costs) (PTrieCode.remove i candidates)
+      (PTrieCode.remove i waiters)
+      (match trie_get i waiters with Some frames => frames | None => [] end).
+  Proof.
+    intros rs costs candidates waiters i n Hmissing Htracking row Hin.
+    destruct (Htracking row Hin) as [Hcovered|Hpending].
+    - left. now apply search_covered_finish.
+    - right. now apply search_pending_detach.
+  Qed.
+
+  (** Finalizing a live heap candidate and resuming its waiting list preserves bookkeeping. *)
+  Lemma search_finish_invariant : forall DB rs (s : extraction_state V.t DB Q.t)
+      i n f k queue,
+    search_invariant rs s -> Q.pop (search_queue s) = Some (n, i, queue) ->
+    trie_get i (search_candidates s) = Some (n, (f, k)) ->
+    search_invariant rs (search_finish i n (f, k) queue s).
+  Proof.
+    intros DB rs s i n f k queue [Hcandidates [Hwaiters [Hqueue Htracking]]]
+      Hpop Hcandidate.
+    destruct (Hcandidates i n f k Hcandidate) as [Hmissing Hrow].
+    destruct (search_queue_remove _ _ _ _ _ Hqueue Hpop)
+      as [choice [Hchoice Hnextqueue]].
+    unfold search_finish. apply search_resume_list_registered.
+    - now apply search_candidates_remove.
+    - now apply search_waiters_remove.
+    - exact Hnextqueue.
+    - now apply search_detached_valid.
+    - now apply search_tracking_finish.
+  Qed.
+
+  (** Every continuing search step preserves the invariant on the same finite source. *)
+  Lemma search_step_invariant : forall DB rs (s next : extraction_state V.t DB Q.t),
+    search_invariant rs s -> search_step s = inl next -> search_invariant rs next.
+  Proof.
+    intros DB rs s next Hinv Hstep.
+    destruct (search_step_cases DB rs s next Hinv Hstep)
+      as [i [n [f [k [queue [Hpop [Hcandidate ->]]]]]]].
+    eapply search_finish_invariant; eassumption.
+  Qed.
+
 End SearchFacts.
 
 (** A finite bound on distinct finalisations supplies a terminating unary loop. *)
