@@ -98,6 +98,116 @@ Definition scc_graph (g : prepared) : prepared :=
   Prepared b Empty (N.of_nat (graph_n b)) (N.of_nat (graph_e b)).
 TimeFun scc_graph.
 
+(** Repeated row keys retain the same row function at every occurrence. *)
+Lemma scc_rows_lookup {A} (row : positive -> A) vs initial v :
+  trie_get v (fold_left (fun acc u => PTrieCode.set u (row u) acc) vs initial) =
+    if existsb (Pos.eqb v) vs then Some (row v) else trie_get v initial.
+Proof.
+  revert initial. induction vs as [|u vs IH]; intro initial.
+  - reflexivity.
+  - cbn [fold_left existsb]. rewrite IH.
+    destruct (Pos.eqb v u) eqn:Heq; destruct (existsb (Pos.eqb v) vs); cbn.
+    + reflexivity.
+    + apply Pos.eqb_eq in Heq. subst u. apply PTrie.get_set_same.
+    + reflexivity.
+    + apply PTrie.get_set_other. now apply Pos.eqb_neq.
+Qed.
+
+(** A finite listed-vertex table records precisely list membership, including duplicates. *)
+Lemma scc_listed_lookup vs v :
+  (exists b, trie_get v
+    (fold_left (fun acc u => PTrieCode.set u true acc) vs Empty) = Some b) <-> In v vs.
+Proof.
+  rewrite (scc_rows_lookup (fun _ => true)), PTrie.get_empty.
+  destruct (existsb (Pos.eqb v) vs) eqn:Hmember.
+  - split; [intros _|intros _; now exists true].
+    apply existsb_exists in Hmember. destruct Hmember as [u [Hin Heq]].
+    apply Pos.eqb_eq in Heq. now subst u.
+  - split.
+    + intros [b Hget]. discriminate.
+    + intro Hin. assert (Hexists : existsb (Pos.eqb v) vs = true).
+      { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+      congruence.
+Qed.
+
+(** The executable listed test agrees with the list's Boolean membership test. *)
+Lemma scc_listed_test vs v :
+  (match trie_get v
+    (fold_left (fun acc u => PTrieCode.set u true acc) vs Empty) with
+   | Some _ => true | None => false end) = existsb (Pos.eqb v) vs.
+Proof.
+  rewrite (scc_rows_lookup (fun _ => true)), PTrie.get_empty.
+  destruct (existsb (Pos.eqb v) vs); reflexivity.
+Qed.
+
+(** Filtering preserves the source vertex list, including its multiplicities. *)
+Lemma scc_graph_nodes g : nodes (scc_graph g) = nodes g.
+Proof.
+  destruct g as [[vs rows] predecessors vertices edges]. reflexivity.
+Qed.
+
+(** Filtering computes both count caches from its rebuilt graph. *)
+Lemma scc_graph_counts g : counts_ok (scc_graph g).
+Proof.
+  unfold counts_ok, scc_graph. split; reflexivity.
+Qed.
+
+(** Filtered rows keep exactly the listed successor occurrences, in their original order. *)
+Lemma scc_graph_succs g v :
+  succs (base (scc_graph g)) v =
+    if existsb (Pos.eqb v) (nodes g) then
+      filter (fun u => existsb (Pos.eqb u) (nodes g)) (succs (base g) v)
+    else [].
+Proof.
+  unfold scc_graph. cbn [base succs]. rewrite scc_rows_lookup, PTrie.get_empty.
+  destruct (existsb (Pos.eqb v) (nodes g)); [|reflexivity].
+  apply filter_ext. intro u. apply scc_listed_test.
+Qed.
+
+(** A listed source has the filtered original row. *)
+Lemma scc_graph_succs_listed g v : In v (nodes g) ->
+  succs (base (scc_graph g)) v =
+    filter (fun u => existsb (Pos.eqb u) (nodes g)) (succs (base g) v).
+Proof.
+  intro Hin. rewrite scc_graph_succs.
+  assert (Hexists : existsb (Pos.eqb v) (nodes g) = true).
+  { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+  now rewrite Hexists.
+Qed.
+
+(** Every successor of a filtered row is a listed source vertex. *)
+Lemma scc_graph_closed g u v : edge (base (scc_graph g)) u v -> In v (nodes g).
+Proof.
+  unfold edge. rewrite scc_graph_succs.
+  destruct (existsb (Pos.eqb u) (nodes g)); [|contradiction].
+  intro Hin. apply filter_In in Hin. destruct Hin as [_ Hlisted].
+  apply existsb_exists in Hlisted. destruct Hlisted as [w [Hin Heq]].
+  apply Pos.eqb_eq in Heq. now subst w.
+Qed.
+
+(** Distinct source vertices suffice for well-formedness after filtering. *)
+Lemma scc_graph_wf g : NoDup (nodes g) -> wf_graph (base (scc_graph g)).
+Proof.
+  intro Hdistinct. split.
+  - change (NoDup (nodes (scc_graph g))). now rewrite scc_graph_nodes.
+  - intros u v _ Hedge. change (In v (nodes (scc_graph g))).
+    rewrite scc_graph_nodes. now apply (scc_graph_closed g u).
+Qed.
+
+(** Filtering does not remove any successor of a well-formed listed source. *)
+Lemma scc_graph_agrees g v : wf_graph (base g) -> In v (nodes g) ->
+  succs (base (scc_graph g)) v = succs (base g) v.
+Proof.
+  assert (Hnodes : nodes g = verts (base g)).
+  { destruct g as [[vs rows] predecessors vertices edges]. reflexivity. }
+  intros [_ Hclosed] Hin. rewrite scc_graph_succs_listed by exact Hin.
+  rewrite <- (filter_true (succs (base g) v)) at 2.
+  apply filter_ext_in. intros u Hu. apply existsb_exists. exists u.
+  split.
+  - rewrite Hnodes. apply (Hclosed v u); [now rewrite <- Hnodes|exact Hu].
+  - apply Pos.eqb_refl.
+Qed.
+
 (** The filtered traversal reads neither predecessor nor count caches of its input. *)
 Definition scc_trace (g : prepared) : list event :=
   let ready := scc_graph g in
