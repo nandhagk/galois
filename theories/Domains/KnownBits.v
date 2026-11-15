@@ -983,19 +983,144 @@ Proof.
       ?tnum_wor_agrees, ?tnum_wnot_agrees, (Hao i Hi Hl), (Hbz i Hi Hr).
 Qed.
 
+Definition tnum_carry (a b c : Z) (initial : bool) : Prop :=
+  c / 2 = Z.lor (Z.land a b) (Z.land c (Z.lor a b)) /\ Z.testbit c 0 = initial.
+
+Local Lemma tnum_carry_step : forall a b c initial i,
+  tnum_carry a b c initial -> 0 <= i ->
+  Z.testbit c (Z.succ i) =
+    ((Z.testbit a i && Z.testbit b i) ||
+      (Z.testbit c i && (Z.testbit a i || Z.testbit b i))).
+Proof.
+  intros a b c initial i [Hstep _] Hi.
+  rewrite <- Z.div2_bits by exact Hi.
+  rewrite Hstep, !Z.lor_spec, !Z.land_spec, !Z.lor_spec. reflexivity.
+Qed.
+
+Local Lemma tnum_carry_monotone : forall w a b a' b' c c' initial,
+  tnum_carry a b c initial -> tnum_carry a' b' c' initial ->
+  (forall i, 0 <= i < Zpos w -> Z.testbit a i = true -> Z.testbit a' i = true) ->
+  (forall i, 0 <= i < Zpos w -> Z.testbit b i = true -> Z.testbit b' i = true) ->
+  forall i, 0 <= i <= Zpos w -> Z.testbit c i = true -> Z.testbit c' i = true.
+Proof.
+  intros w a b a' b' c c' initial Hc Hc' Ha Hb i Hi.
+  assert (Hnat : forall n, (n <= Pos.to_nat w)%nat ->
+    Z.testbit c (Z.of_nat n) = true -> Z.testbit c' (Z.of_nat n) = true).
+  { intro n. induction n as [|n IH]; intros Hn Hbit.
+    - change (Z.testbit c 0 = true) in Hbit. rewrite (proj2 Hc) in Hbit.
+      change (Z.testbit c' 0 = true). now rewrite (proj2 Hc').
+    - rewrite Nat2Z.inj_succ,
+        (tnum_carry_step a b c initial (Z.of_nat n) Hc ltac:(lia)) in Hbit.
+      rewrite Nat2Z.inj_succ,
+        (tnum_carry_step a' b' c' initial (Z.of_nat n) Hc' ltac:(lia)).
+      pose proof (Ha (Z.of_nat n) ltac:(rewrite <- positive_nat_Z; lia)) as Haa.
+      pose proof (Hb (Z.of_nat n) ltac:(rewrite <- positive_nat_Z; lia)) as Hbb.
+      specialize (IH ltac:(lia)).
+      destruct (Z.testbit a (Z.of_nat n)), (Z.testbit b (Z.of_nat n)),
+        (Z.testbit a' (Z.of_nat n)), (Z.testbit b' (Z.of_nat n)),
+        (Z.testbit c (Z.of_nat n)), (Z.testbit c' (Z.of_nat n));
+        cbn in *; intuition discriminate. }
+  replace i with (Z.of_nat (Z.to_nat i)) by (rewrite Z2Nat.id; lia).
+  apply Hnat. apply Nat2Z.inj_le. rewrite positive_nat_Z, Z2Nat.id by lia. lia.
+Qed.
+
+Local Lemma tnum_sum_known : forall w a b x y initial i,
+  tnum_gamma w a x -> tnum_gamma w b y -> 0 <= i < Zpos w ->
+  Z.testbit (tnum_mask w a) i = false -> Z.testbit (tnum_mask w b) i = false ->
+  Z.testbit (tnum_min w a + tnum_min w b + Z.b2z initial) i =
+    Z.testbit (tnum_max w a + tnum_max w b + Z.b2z initial) i ->
+  Z.testbit (x + y + Z.b2z initial) i =
+    Z.testbit (tnum_min w a + tnum_min w b + Z.b2z initial) i.
+Proof.
+  intros w a b x y initial i Ha Hb Hi Hma Hmb Heq.
+  destruct (Z.add_carry_bits x y initial) as [c [Hsum [Hstep Hzero]]].
+  destruct (Z.add_carry_bits (tnum_min w a) (tnum_min w b) initial)
+    as [cl [Hsuml [Hstepl Hzerol]]].
+  destruct (Z.add_carry_bits (tnum_max w a) (tnum_max w b) initial)
+    as [ch [Hsumh [Hsteph Hzeroh]]].
+  destruct (tnum_value_bounds w a x Ha) as [Hal Hah].
+  destruct (tnum_value_bounds w b y Hb) as [Hbl Hbh].
+  pose proof (tnum_carry_monotone w _ _ _ _ _ _ initial (conj Hstepl Hzerol)
+    (conj Hstep Hzero) Hal Hbl i ltac:(lia)) as Hlower.
+  pose proof (tnum_carry_monotone w _ _ _ _ _ _ initial (conj Hstep Hzero)
+    (conj Hsteph Hzeroh) Hah Hbh i ltac:(lia)) as Hupper.
+  destruct (tnum_known_bit w a x i Ha Hi Hma) as [Halbit Hahbit].
+  destruct (tnum_known_bit w b y i Hb Hi Hmb) as [Hblbit Hbhbit].
+  rewrite Hsuml, Hsumh, !Z.lxor_spec, Halbit, Hahbit, Hblbit, Hbhbit in Heq.
+  rewrite Hsum, Hsuml, !Z.lxor_spec, Halbit, Hblbit.
+  destruct (Z.testbit x i), (Z.testbit y i), (Z.testbit c i),
+    (Z.testbit cl i), (Z.testbit ch i); cbn in *; intuition discriminate.
+Qed.
+
+Local Lemma tnum_adc_known : forall w a b x y initial i,
+  tnum_gamma w a x -> tnum_gamma w b y -> 0 <= i < Zpos w ->
+  Z.testbit (tnum_adc_uncertain w a b initial) i = false ->
+  Z.testbit (x + y + Z.b2z initial) i =
+    Z.testbit (tnum_min w a + tnum_min w b + Z.b2z initial) i.
+Proof.
+  intros w a b x y initial i Ha Hb Hi Hm.
+  unfold tnum_adc_uncertain in Hm. rewrite !Z.lor_spec, Z.lxor_spec in Hm.
+  apply orb_false_iff in Hm as [Hsum Hm]. apply orb_false_iff in Hm as [Hma Hmb].
+  eapply tnum_sum_known; try eassumption.
+  destruct (Z.testbit (tnum_min w a + tnum_min w b + Z.b2z initial) i),
+    (Z.testbit (tnum_max w a + tnum_max w b + Z.b2z initial) i);
+    cbn in Hsum; congruence.
+Qed.
+
 Theorem tnum_adc_sound : forall w a b x y initial,
   tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_adc w a b initial) (wrap w (x + y + Z.b2z initial)).
-Proof. Admitted. (* CONVERT: tnum_adc_sound: The variable tnum_adc_known was not found in the current environment. *)
+Proof.
+  intros w a b x y initial Ha Hb. apply tnum_gamma_bits. split; intros i Hi Hbit;
+    cbn [tnum_adc zeros ones] in Hbit;
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, tnum_wrap_bit, ?Z.land_spec, ?Z.lnot_spec, ?Z.lor_spec in Hbit by
+      (try exact Hi; lia).
+  - apply negb_true_iff in Hbit. apply orb_false_iff in Hbit as [Hv Hm].
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, tnum_wrap_bit, (tnum_adc_known w a b x y initial i Ha Hb Hi Hm)
+      by exact Hi. exact Hv.
+  - apply andb_true_iff in Hbit as [Hv Hm]. apply negb_true_iff in Hm.
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, tnum_wrap_bit, (tnum_adc_known w a b x y initial i Ha Hb Hi Hm)
+      by exact Hi. exact Hv.
+Qed.
 
 Theorem tnum_add_sound : forall w a b x y,
   tnum_gamma w a x -> tnum_gamma w b y -> tnum_gamma w (tnum_add w a b) (wadd w x y).
-Proof. Admitted. (* CONVERT: tnum_add_sound: The variable tnum_adc_sound was not found in the current environment. *)
+Proof.
+  intros w a b x y Ha Hb. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, wadd_value. unfold tnum_add.
+  replace (x + y) with (x + y + Z.b2z false) by (cbn [Z.b2z]; ring).
+  now apply tnum_adc_sound.
+Qed.
 
 Theorem tnum_sub_sound : forall w a b x y,
   is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_sub w a b) (wsub w x y).
-Proof. Admitted. (* CONVERT: tnum_sub_sound: The variable tnum_adc_sound was not found in the current environment. *)
+Proof.
+  intros w a b x y Hy Ha Hb.
+  pose proof (tnum_adc_sound w a (tnum_not w b) x (wnot w y) true Ha
+    (tnum_not_sound w b y Hb)) as Hresult.
+  unfold tnum_sub. cbn [Z.b2z] in Hresult.
+  assert (Hnot : wnot w y = modulus w - 1 - y).
+  { pose proof (wnot_lnot w y) as Hnot.
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, (wrap_id w y Hy), lnot_value in Hnot.
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, wrap_mod in Hnot. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Hnot.
+    symmetry. apply Z.mod_unique with (q := -1).
+    - left. unfold is_word in Hy. lia.
+    - ring. }
+  rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Hnot in Hresult.
+  replace (x + (modulus w - 1 - y) + 1) with ((x - y) + 1 * modulus w)
+    in Hresult by ring.
+  rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, wrap_add_modulus in Hresult. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, wsub_value. exact Hresult.
+Qed.
 
 Theorem tnum_neg_sound : forall w a x,
   is_word w x -> tnum_gamma w a x -> tnum_gamma w (tnum_neg w a) (wneg w x).
@@ -1006,14 +1131,52 @@ Proof.
   pose proof (tnum_const_sound w 0) as Hzero. now rewrite wrap_0 in Hzero.
 Qed.
 
+Local Lemma tnum_bitlen_bound : forall h, 0 <= h ->
+  0 <= tnum_bitlen h /\ h < 2 ^ tnum_bitlen h.
+Proof.
+  intros h Hh. unfold tnum_bitlen. destruct (h =? 0) eqn:Hz.
+  - apply Z.eqb_eq in Hz. subst h. cbn. lia.
+  - apply Z.eqb_neq in Hz. pose proof (Z.log2_nonneg h).
+    pose proof (Z.log2_spec h ltac:(lia)). lia.
+Qed.
+
 Theorem tnum_upper_sound : forall w h x,
   0 <= x <= h -> tnum_gamma w (tnum_upper w h) x.
-Proof. Admitted. (* CONVERT: tnum_upper_sound: The variable tnum_bitlen_bound was not found in the current *)
+Proof.
+  intros w h x Hx. pose proof (tnum_bitlen_bound h ltac:(lia)) as [Hk Hbound].
+  apply tnum_gamma_bits. split; intros i Hi Hbit.
+  - cbn [tnum_upper zeros] in Hbit. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, tnum_not_bit in Hbit by exact Hi.
+    apply negb_true_iff in Hbit.
+    assert (Hhigh : tnum_bitlen h <= i).
+    { destruct (Z_lt_ge_dec i (tnum_bitlen h)); [|lia].
+      rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Z.ones_spec_low in Hbit by lia. discriminate. }
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, <- (Z.mod_small x (2 ^ tnum_bitlen h) ltac:(lia)).
+    apply Z.mod_pow2_bits_high. lia.
+  - cbn [tnum_upper ones] in Hbit. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Z.bits_0 in Hbit. discriminate.
+Qed.
 
 Theorem tnum_udiv_sound : forall w a b x y,
   is_word w x -> is_word w y -> tnum_gamma w a x -> tnum_gamma w b y ->
   tnum_gamma w (tnum_udiv w a b) (wudiv w x y).
-Proof. Admitted. (* CONVERT: tnum_udiv_sound: Unable to unify *)
+Proof.
+  intros w a b x y Hx Hy Ha Hb. unfold tnum_udiv. rewrite tnum_wrap_agrees.
+  destruct (wrap w (ones b) =? 0) eqn:Hnonzero; [apply tnum_top_sound|].
+  apply Z.eqb_neq in Hnonzero.
+  pose proof (tnum_unsigned_bounds w b y Hy Hb) as Hbounds.
+  pose proof (wrap_is_word w (ones b)) as Hones.
+  assert (Hynz : y <> 0).
+  { unfold tnum_min, is_word in *. rewrite tnum_wrap_agrees in Hbounds. lia. }
+  pose proof (tnum_unsigned_bounds w a x Hx Ha) as Hdividend.
+  rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, wudiv_spec by assumption. apply tnum_upper_sound.
+  split; [apply Z.div_pos; unfold is_word in *; lia|].
+  eapply Z.le_trans; [|exact (proj2 Hdividend)].
+  apply Z.div_le_upper_bound; unfold is_word in *; nia.
+Qed.
 
 Theorem tnum_urem_sound : forall w a x y,
   is_word w x -> is_word w y -> tnum_gamma w a x ->
