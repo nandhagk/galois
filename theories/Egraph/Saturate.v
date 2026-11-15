@@ -1491,6 +1491,38 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     - reflexivity.
   Qed.
 
+  (** The node table retains its shape and records exactly one cell of each node's sort. *)
+  Lemma build_nodes_shape : forall ns t db, table_valid t ->
+    table_valid (fst (build_nodes ns t db)) /\
+    map cell_sort (table_list (fst (build_nodes ns t db))) =
+      map cell_sort (table_list t) ++ map enode_sort ns.
+  Proof.
+    induction ns as [| n rest IH]; intros t db Hvalid.
+    - cbn [build_nodes fst]. split; [exact Hvalid | now rewrite app_nil_r].
+    - set (cells := match n with
+        | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+        | ELit _ => []
+        end).
+      pose proof (add_node_sort n cells db) as Hsort.
+      cbn [build_nodes]. fold cells.
+      destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+      cbn [fst] in Hsort.
+      destruct (IH (table_push c t) next (table_push_valid _ c t Hvalid))
+        as [Hvalid' Hsorts].
+      split; [exact Hvalid' |].
+      rewrite Hsorts, table_push_list, map_app. cbn [map].
+      rewrite Hsort. now rewrite <- app_assoc.
+  Qed.
+
+  (** Reading a valid table agrees with the list-index operation in the plan. *)
+  Lemma table_get_nth : forall (default : cell V.t) j t, table_valid t ->
+    table_get default j t = nth j (table_list t) default.
+  Proof.
+    intros default j t Hvalid. rewrite table_get_list by exact Hvalid.
+    generalize (table_list t). intro cells. revert j.
+    induction cells as [| c rest IH]; intros [| j]; cbn; auto.
+  Qed.
+
   Definition table_allocated (db : D.t) (t : cell_table (cell V.t)) : Prop :=
     Forall (fun c => forall i, c = Id i -> D.allocated db i) (table_list t).
 
@@ -2315,6 +2347,16 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
           T_add_nodes rest (cs ++ [fst (add_node n (node_args n cs) db)])
             (snd (add_node n (node_args n cs) db)))%N
     end.
+  (** Adding a node never reduces the database's unit budget. *)
+  Lemma add_node_unit : forall node cells db, D.wf db ->
+    D.unit db <= D.unit (snd (add_node node cells db)).
+  Proof.
+    intros [f children | v] cells db Hwf; cbn [add_node].
+    - pose proof (D.unit_mono_make f cells db Hwf) as Hunit.
+      destruct (D.make f cells db). exact Hunit.
+    - apply Nat.le_refl.
+  Qed.
+
   Lemma F1_add_expr_step : forall ds node cells db, D.wf db ->
     view_sorted (lookup_sorts ds) (D.view db) ->
     (forall f, kind (D.view db) f = lookup_kind ds f) ->
@@ -2333,7 +2375,48 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     cell_sort (fst (add_node node cells db)) = enode_sort node /\
     (D.ids db <= D.ids (snd (add_node node cells db)))%N /\
     D.unit db <= D.unit (snd (add_node node cells db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds node cells db Hwf Hsorted Hkind Hallocated Hnode.
+    destruct (add_node_properties ds node cells db Hwf Hsorted Hkind Hallocated Hnode)
+      as [Hwf' [Hsorted' [Hkind' [Hslots [Hnew [Hids Hgrowth]]]]]].
+    split; [exact Hwf' |]. split; [exact Hsorted' |]. split; [exact Hkind' |].
+    split; [exact Hslots |]. split; [exact Hnew |]. split; [apply add_node_sort |].
+    split; [exact Hids |]. now apply add_node_unit.
+  Qed.
+
+  (** The well-typed node fold never reduces the database's unit budget. *)
+  Lemma build_nodes_unit : forall ds ns t db, D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) ns ->
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) ns ->
+    D.unit db <= D.unit (snd (build_nodes ns t db)).
+  Proof.
+    intros ds ns t db Hwf Hsorted Hkind Hvalid Hallocated Htyped Hslots.
+    apply (build_nodes_frame ds (fun _ _ next => D.unit db <= D.unit next))
+      with (ns := ns) (t := t) (db := db); try assumption; [| apply Nat.le_refl].
+    intros n rest cells_db current Hwf' Hsorted' Hkind' Hvalid' Hallocated' Htyped'
+      Hslots' Hunit. cbv zeta.
+    eapply Nat.le_trans; [exact Hunit |]. now apply add_node_unit.
+  Qed.
+
+  (** Adding an admissible expression never reduces the database's unit budget. *)
+  Lemma add_expr_unit : forall ds e db, D.wf db -> expr_ok ds db e ->
+    view_sorted (lookup_sorts ds) (D.view db) ->
+    D.unit db <= D.unit (snd (add_expr e db)).
+  Proof.
+    intros ds [ns root_index] db Hwf [Hexpr [Hkind Hslots]] Hsorted.
+    pose proof (expr_nodes_typed V.t ds (FExpr V.t ns root_index) Hexpr) as Htyped.
+    assert (Hallocated : table_allocated db (@table_empty (cell V.t))) by constructor.
+    pose proof (build_nodes_unit ds ns table_empty db Hwf Hsorted Hkind
+      (table_empty_valid (cell V.t)) Hallocated Htyped Hslots) as Hunit.
+    unfold add_expr. destruct (build_nodes ns table_empty db) as [t final].
+    destruct (table_get (Id 1%positive) root_index t); exact Hunit.
+  Qed.
 
   Lemma F2_add_expr_wf : forall ds e db, D.wf db -> expr_ok ds db e ->
     view_sorted (lookup_sorts ds) (D.view db) ->
@@ -2344,7 +2427,14 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     D.allocated (snd (add_expr e db)) (fst (add_expr e db)) /\
     (D.ids db <= D.ids (snd (add_expr e db)))%N /\
     D.unit db <= D.unit (snd (add_expr e db)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds e db Hwf Hexpr Hsorted.
+    destruct (add_expr_properties ds e db Hwf Hexpr Hsorted)
+      as [Hwf' [Hsorted' [Hkind [Hslots [Hroot [Hids Hgrowth]]]]]].
+    split; [exact Hwf' |]. split; [exact Hsorted' |]. split; [exact Hkind |].
+    split; [exact Hslots |]. split; [exact Hroot |]. split; [exact Hids |].
+    exact (add_expr_unit ds e db Hwf Hexpr Hsorted).
+  Qed.
 
   Lemma F3_represents_den : forall (M : model (V := V.t)) nu db c e,
     D.wf db -> sat V.merge M nu (D.view db) -> represents (D.view db) c e ->
@@ -2433,12 +2523,57 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
         N.of_nat (fold_right (fun e n => (expr_work e + 1 + n)%nat) 1%nat es))%N.
   Proof. Admitted. (* STUB *)
   (** Adding a flat expression folds over its nodes in order and returns its root cell. *)
+  (** The optimized node table computes the same ordered fold as the plan's lists. *)
+  Lemma build_nodes_reference : forall ns t db, table_valid t ->
+    add_nodes ns (table_list t) db =
+      (table_list (fst (build_nodes ns t db)), snd (build_nodes ns t db)).
+  Proof.
+    induction ns as [| n rest IH]; intros t db Hvalid; [reflexivity |].
+    assert (Hargs : node_args n (table_list t) = match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end).
+    { destruct n as [f children | v]; [| reflexivity]. cbn [node_args].
+      apply map_ext. intro j. symmetry. now apply table_get_nth. }
+    cbn [add_nodes build_nodes]. rewrite Hargs.
+    destruct (add_node n
+      (match n with
+       | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+       | ELit _ => []
+       end) db) as [c next] eqn:Hnode_result.
+    cbn [fst snd]. rewrite <- table_push_list.
+    apply IH. now apply table_push_valid.
+  Qed.
+
   Lemma F10_add_expr_nodes : forall ds e db,
     expr_sorted (lookup_sorts ds) (lookup_kind ds) e ->
     snd (add_expr e db) = snd (add_nodes (expr_nodes V.t e) [] db) /\
     nth_error (fst (add_nodes (expr_nodes V.t e) [] db)) (expr_root V.t e) =
       Some (Id (fst (add_expr e db))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds [ns root_index] db [[f [children Hroot]] Hnodes].
+    pose proof (build_nodes_shape ns table_empty db (table_empty_valid (cell V.t)))
+      as Hshape.
+    change (table_valid (fst (build_nodes ns table_empty db)) /\
+      map cell_sort (table_list (fst (build_nodes ns table_empty db))) = map enode_sort ns)
+      in Hshape.
+    pose proof (build_nodes_reference ns table_empty db (table_empty_valid (cell V.t)))
+      as Hreference.
+    change (add_nodes ns [] db =
+      (table_list (fst (build_nodes ns table_empty db)), snd (build_nodes ns table_empty db)))
+      in Hreference.
+    unfold add_expr. destruct (build_nodes ns table_empty db) as [t final] eqn:Hresult.
+    cbn [expr_nodes expr_root] in Hroot |- *.
+    cbn [fst snd] in Hshape, Hreference. rewrite Hreference. cbn [fst snd].
+    destruct Hshape as [Hvalid Hsorts].
+    change (map cell_sort (table_list t) = map enode_sort ns) in Hsorts.
+    assert (Hroot_sort : nth_error (map cell_sort (table_list t)) root_index = Some SId).
+    { rewrite Hsorts, nth_error_map, Hroot. reflexivity. }
+    rewrite nth_error_map in Hroot_sort.
+    destruct (nth_error (table_list t) root_index) as [[i |v] |] eqn:Hcell;
+      try discriminate Hroot_sort.
+    rewrite table_get_list by exact Hvalid. rewrite Hcell. split; reflexivity.
+  Qed.
   (** Adding an expression separates node insertion cost from child-index work. *)
   Lemma T3_add_expr_split : forall e db,
     (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
