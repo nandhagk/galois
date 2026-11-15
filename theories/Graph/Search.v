@@ -1224,6 +1224,102 @@ Proof.
   rewrite rev_append_rev, app_nil_r. exact Hkinds.
 Qed.
 
+(** Advancing a stopped machine leaves its state unchanged. *)
+Definition search_advance g st :=
+  match search_step g st with inl next => next | inr _ => st end.
+
+Lemma search_iter_invariant g (Inv : search_state -> Prop) :
+  (forall st next, Inv st -> search_step g st = inl next -> Inv next) ->
+  forall n st, Inv st -> Inv (Nat.iter n (search_advance g) st).
+Proof.
+  intros Hstep n. induction n as [|n IH]; intros st Hinv; [exact Hinv|].
+  rewrite Nat.iter_succ.
+  change (Inv (match search_step g (Nat.iter n (search_advance g) st) with
+    | inl next => next | inr _ => Nat.iter n (search_advance g) st end)).
+  destruct (search_step g (Nat.iter n (search_advance g) st)) as [next|es] eqn:Hnext.
+  - eapply Hstep; [apply IH; exact Hinv|exact Hnext].
+  - apply IH. exact Hinv.
+Qed.
+
+Lemma search_iter_stopped g st es : search_step g st = inr es ->
+  forall n, Nat.iter n (search_advance g) st = st.
+Proof.
+  intros Hstop n. induction n as [|n IH]; [reflexivity|].
+  rewrite Nat.iter_succ, IH. unfold search_advance. now rewrite Hstop.
+Qed.
+
+(** Every continuing step appends either one event or no event. *)
+Lemma search_step_prefix g st next : search_step g st = inl next ->
+  exists emitted, rev (search_events next) = rev (search_events st) ++ emitted.
+Proof.
+  intro Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  destruct task as [v|u vs|v]; cbn [search_step] in Hstep.
+  - destruct (trie_get v colours); inversion Hstep; subst next.
+    + exists []. now rewrite app_nil_r.
+    + exists [Enter v]. reflexivity.
+  - destruct vs as [|v vs].
+    + inversion Hstep; subst next. exists []. now rewrite app_nil_r.
+    + destruct (trie_get v colours) as [active|]; inversion Hstep; subst next.
+      * exists [Edge (if active then Back else Done) u v]. reflexivity.
+      * exists [Edge Tree u v]. reflexivity.
+  - inversion Hstep; subst next. exists [Leave v]. reflexivity.
+Qed.
+
+(** Completed runs contain the event prefix of every reachable state. *)
+Lemma search_completed_prefix g fuel st es :
+  loop_fuel (search_step g) fuel st = inr es ->
+  forall n, exists suffix,
+    es = rev (search_events (Nat.iter n (search_advance g) st)) ++ suffix.
+Proof.
+  revert st es. induction fuel as [|fuel IH]; intros st es Hrun n; [discriminate Hrun|].
+  cbn [loop_fuel] in Hrun. destruct (search_step g st) as [next|result] eqn:Hstep.
+  - destruct n as [|n].
+    + destruct (IH next es Hrun 0) as [suffix Hsuffix].
+      destruct (search_step_prefix g st next Hstep) as [emitted Hemitted].
+      change (es = rev (search_events next) ++ suffix) in Hsuffix.
+      exists (emitted ++ suffix).
+      change (es = rev (search_events st) ++ emitted ++ suffix).
+      rewrite Hsuffix, Hemitted, app_assoc. reflexivity.
+    + assert (Hadvance : search_advance g st = next).
+      { unfold search_advance. now rewrite Hstep. }
+      rewrite Nat.iter_succ_r, Hadvance.
+      apply IH. exact Hrun.
+  - inversion Hrun; subst result. rewrite (search_iter_stopped g st es Hstep n).
+    destruct (search_stop_events g st es Hstep) as [Hevents Htasks].
+    exists []. now rewrite app_nil_r.
+Qed.
+
+(** A completed fuel run reaches an absorbing terminal state. *)
+Lemma search_completed_terminal g fuel st es :
+  loop_fuel (search_step g) fuel st = inr es ->
+  search_step g (Nat.iter fuel (search_advance g) st) = inr es.
+Proof.
+  revert st es. induction fuel as [|fuel IH]; intros st es Hrun; [discriminate Hrun|].
+  cbn [loop_fuel] in Hrun. destruct (search_step g st) as [next|result] eqn:Hstep.
+  - assert (Hadvance : search_advance g st = next).
+      { unfold search_advance. now rewrite Hstep. }
+      rewrite Nat.iter_succ_r, Hadvance.
+    apply IH. exact Hrun.
+  - inversion Hrun; subst result. rewrite (search_iter_stopped g st es Hstep (S fuel)).
+    exact Hstep.
+Qed.
+
+(** Determinism and terminal absorption make every terminal result equal. *)
+Lemma search_iter_terminal_unique g st n m es result :
+  search_step g (Nat.iter n (search_advance g) st) = inr es ->
+  search_step g (Nat.iter m (search_advance g) st) = inr result -> es = result.
+Proof.
+  revert st m es result. induction n as [|n IH]; intros st m es result Hfirst Hsecond.
+  - change (search_step g st = inr es) in Hfirst.
+    rewrite (search_iter_stopped g st es Hfirst m) in Hsecond.
+    congruence.
+  - destruct m as [|m].
+    + change (search_step g st = inr result) in Hsecond.
+      rewrite (search_iter_stopped g st result Hsecond (S n)) in Hfirst. congruence.
+    + rewrite Nat.iter_succ_r in Hfirst, Hsecond. eapply IH; eassumption.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -1452,6 +1548,54 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
         (SearchState (map SearchRoot roots) Empty [])) =
         N.of_nat (4 * n_reach g roots + 2 * e_reach g roots + length roots)).
       rewrite search_finite_initial. reflexivity.
+  Qed.
+
+  (** Machine reachability retains the independently proved shape and reach invariants. *)
+  Local Lemma machine_shape g roots st :
+    machine_reachable g roots st -> search_shape st.
+  Proof.
+    intros [n Hstate]. subst st.
+    change (search_shape (Nat.iter n (search_advance (base g))
+      (SearchState (map SearchRoot roots) Empty []))).
+    eapply search_iter_invariant.
+    - intros before after Hshape Hstep. eapply search_shape_step; eassumption.
+    - apply search_shape_initial.
+  Qed.
+
+  Local Lemma machine_reach g roots st :
+    machine_reachable g roots st -> search_reach_invariant (base g) roots st.
+  Proof.
+    intros [n Hstate]. subst st.
+    change (search_reach_invariant (base g) roots
+      (Nat.iter n (search_advance (base g))
+        (SearchState (map SearchRoot roots) Empty []))).
+    eapply search_iter_invariant.
+    - intros before after Hreach Hstep. eapply search_reach_preserved; eassumption.
+    - apply search_reach_initial.
+  Qed.
+
+  Local Lemma machine_invariant g roots st :
+    counts_ok g -> wf_graph (base g) ->
+    (forall r, In r roots -> In r (nodes g)) ->
+    machine_reachable g roots st -> invariant g roots st.
+  Proof.
+    intros Hcounts Hgraph Hroots Hreachable.
+    split; [exact Hreachable|]. split.
+    - pose proof (machine_shape g roots st Hreachable) as Hshape.
+      split; [exact (search_shape_entered_unique st Hshape)|
+        exact (search_shape_colours st Hshape)].
+    - destruct (prepared_search_complete_closed g roots Hcounts
+        (search_wf_closed g Hgraph) Hroots) as [es Hrun].
+      assert (Htrace : trace g roots = es).
+      { destruct (F2_trace g roots) as [Htrace Hmachine].
+        change (loopN (search_step (base g)) (search_budget g roots)
+          (initial roots) = inr es) in Hrun.
+        rewrite Htrace, Hmachine, Hrun. reflexivity. }
+      rewrite Htrace. destruct Hreachable as [n Hstate]. subst st.
+      change (exists suffix, es =
+        rev (search_events (Nat.iter n (search_advance (base g))
+          (SearchState (map SearchRoot roots) Empty []))) ++ suffix).
+      eapply search_completed_prefix. rewrite <- search_loopN_fuel. exact Hrun.
   Qed.
 
   Lemma F4_step : forall g roots st next,
