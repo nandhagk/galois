@@ -165,6 +165,65 @@ Proof.
     + apply IH; exact Htail'.
 Qed.
 
+(** A list of value cells determines its underlying values uniquely. *)
+Lemma pointer_values_unique : forall (cells : list (cell positive)) first second,
+  values cells first -> values cells second -> first = second.
+Proof.
+  intros cells first second Hfirst; revert second.
+  induction Hfirst as [|c v cells vals Hvalue Htail IH]; intros second Hsecond.
+  - inversion Hsecond; reflexivity.
+  - inversion Hsecond as [|c' v' cells' vals' Hvalue' Htail']; subst.
+    f_equal; [congruence | apply IH; exact Htail'].
+Qed.
+
+(** A derivable action output occurs in every output-free view where the actions are present. *)
+Lemma pointer_action_present : forall prim merge (w : view (V := positive)),
+  (forall f key output, row w f key output -> output = None) ->
+  forall rho acts f key, derivation_action prim rho acts f key ->
+    present prim merge w rho acts -> row w f key None.
+Proof.
+  intros prim merge w Houtputs rho acts f key Hderive.
+  induction Hderive as
+    [rho f args key rest Hterms |
+     rho f args input rest g key Hterms Hderive IH |
+     rho x p args key vals value rest f output Hterms Hvalues Hprim Hderive IH];
+    intro Hpresent.
+  - destruct Hpresent as [key' [output [Hterms' [Hrow Hrest]]]].
+    pose proof (pointer_terms_unique rho args key key' Hterms Hterms') as Hkey; subst key'.
+    rewrite (Houtputs f key output Hrow) in Hrow; exact Hrow.
+  - destruct Hpresent as [key' [output [Hterms' [Hrow [Houtput Hrest]]]]]; apply IH; exact Hrest.
+  - destruct Hpresent as [key' [vals' [Hterms' [Hvalues' Hrest]]]].
+    pose proof (pointer_terms_unique rho args key key' Hterms Hterms') as Hkey; subst key'.
+    pose proof (pointer_values_unique key vals vals' Hvalues Hvalues') as Hvals; subst vals'.
+    rewrite Hprim in Hrest; apply IH; exact Hrest.
+Qed.
+
+Scheme pointer_derives_ind := Induction for derives Sort Prop
+with pointer_body_ind := Induction for derivation_body Sort Prop.
+
+(** Derivations belong to every output-free closed extension of their seed view. *)
+Lemma pointer_derives_closed : forall prim merge (p : program positive) initial final,
+  closed prim merge p final ->
+  (forall f key output, row initial f key output -> row final f key output) ->
+  (forall f key output, row final f key output -> output = None) ->
+  forall f key, derives prim p initial f key -> row final f key None.
+Proof.
+  intros prim merge p initial final Hclosed Hinclude Houtputs.
+  refine (@pointer_derives_ind positive prim p initial
+    (fun f key _ => row final f key None)
+    (fun rho body _ => matches prim final body rho) _ _ _ _ _).
+  - intros f key Hrow; apply Hinclude; exact Hrow.
+  - intros r rho f key Hin Hbody IHbody Haction.
+    eapply pointer_action_present; [exact Houtputs | exact Haction |].
+    apply Hclosed; [exact Hin | exact IHbody].
+  - intro rho; constructor.
+  - intros rho f args key rest Hterms Hderive IHderive Hbody IHbody.
+    constructor; [exists key, None; split; [exact Hterms | split; [exact I | exact IHderive]] |].
+    exact IHbody.
+  - intros rho p' args result key vals value rest Hterms Hvalues Hprim Hresult Hbody IHbody.
+    constructor; [exists key, vals, value; auto | exact IHbody].
+Qed.
+
 (** A binary relation row satisfies the corresponding variable-only query atom. *)
 Lemma pointer_atom_row : forall prim w rho f u v x y,
   rho u = Some (Val x) -> rho v = Some (Val y) -> row w f [Val x; Val y] None ->
@@ -874,7 +933,29 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
 
   Lemma F5_derives_source : forall q x a,
     derives V.prim (compile q) (D.view (seed q)) 5 [Val x; Val a] -> may_points q x a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q x a Hderive.
+    set (lim := Limits (N.of_nat (2 * R.herbrand (compile q) (seed q) + 2)) 0%N).
+    assert (Hsaturated : fst (solve q lim) = Saturated).
+    { apply solve_saturates; unfold lim; cbn [max_iter]; rewrite Nat2N.id; apply le_n. }
+    destruct (solve q lim) as [st db] eqn:Hsolve; cbn [fst] in Hsaturated; subst st.
+    apply (proj1 (solve_exact q lim db Hsolve x a)).
+    pose proof (solve_wf q lim) as Hvalid; rewrite Hsolve in Hvalid; cbn [snd] in Hvalid.
+    destruct Hvalid as [Hwf Hcanonical].
+    destruct (points_spec db x a Hwf Hcanonical) as [Hrow | Hnot]; [reflexivity |].
+    exfalso; apply Hnot.
+    apply (pointer_derives_closed V.prim V.merge (compile q) (D.view (seed q)) (D.view db)).
+    - apply (R.run_closed (compile q) (R.plan (compile q)) lim (seed q) db).
+      + apply R.plan_checked; apply program_sorted.
+      + exact (proj1 (seed_wf q)).
+      + apply seed_loaded.
+      + rewrite <- solve_run; exact Hsolve.
+    - intros f key output Hrow; apply seed_rows in Hrow.
+      pose proof (solve_seed_rows q lim f key output Hrow) as Hnew; rewrite Hsolve in Hnew; exact Hnew.
+    - intros f key output Hrow; apply (solve_no_outputs q lim f key output).
+      rewrite Hsolve; exact Hrow.
+    - exact Hderive.
+  Qed.
 
   Lemma F6_closed_source : forall q w, closed V.prim V.merge (compile q) w ->
     (forall f k o, row (D.view (seed q)) f k o -> row w f k o) ->
