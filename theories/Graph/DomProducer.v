@@ -1395,3 +1395,342 @@ Proof.
     (destruct g as [[vertices adjacency] predecessors count_v count_e]; reflexivity).
   apply dom_lt_sum_le. intros x Hx. now apply dom_lt_filter_sum_bound.
 Qed.
+
+(** * Numeric layout inventories *)
+
+(** A left fold preserves an invariant proved for every callback. *)
+Lemma dom_lt_fold_invariant {A B : Type} (step : A -> B -> A) (Inv : A -> Prop) xs st :
+  Inv st -> (forall state x, Inv state -> Inv (step state x)) ->
+  Inv (fold_left step xs st).
+Proof.
+  intros Hinitial Hstep. revert st Hinitial.
+  induction xs as [|x rest IH]; intros st Hinitial; [exact Hinitial|].
+  cbn [fold_left]. apply IH. now apply Hstep.
+Qed.
+
+Definition dom_lt_rank_injective (ranks : ptrie N) : Prop :=
+  forall u v n, trie_get u ranks = Some n -> trie_get v ranks = Some n -> u = v.
+
+Definition dom_lt_rank_below (ranks : ptrie N) (next : N) : Prop :=
+  forall v n, trie_get v ranks = Some n -> (n < next)%N.
+
+(** A fresh rank cannot collide with any earlier stored rank. *)
+Lemma dom_lt_rank_set_injective ranks next key :
+  dom_lt_rank_injective ranks -> dom_lt_rank_below ranks next ->
+  dom_lt_rank_injective (PTrieCode.set key next ranks).
+Proof.
+  intros Hinjective Hbelow u v n Hu Hv.
+  destruct (Pos.eq_dec u key) as [->|Hu_key], (Pos.eq_dec v key) as [->|Hv_key].
+  - reflexivity.
+  - rewrite PTrie.get_set_same in Hu. injection Hu as <-.
+    rewrite PTrie.get_set_other in Hv by exact Hv_key.
+    pose proof (Hbelow v next Hv). lia.
+  - rewrite PTrie.get_set_same in Hv. injection Hv as <-.
+    rewrite PTrie.get_set_other in Hu by exact Hu_key.
+    pose proof (Hbelow u next Hu). lia.
+  - rewrite PTrie.get_set_other in Hu by exact Hu_key.
+    rewrite PTrie.get_set_other in Hv by exact Hv_key.
+    eapply Hinjective; eassumption.
+Qed.
+
+(** The updated rank map is bounded by the incremented discovery counter. *)
+Lemma dom_lt_rank_set_below ranks next key :
+  dom_lt_rank_below ranks next ->
+  dom_lt_rank_below (PTrieCode.set key next ranks) (N.succ next).
+Proof.
+  intros Hbelow v n Hget. destruct (Pos.eq_dec v key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same in Hget. injection Hget as <-. lia.
+  - rewrite PTrie.get_set_other in Hget by exact Hdifferent.
+    specialize (Hbelow v n Hget). lia.
+Qed.
+
+(** Assigning a positive discovery rank preserves positivity of every stored rank. *)
+Lemma dom_lt_rank_set_positive ranks next key :
+  (forall v n, trie_get v ranks = Some n -> (0 < n)%N) -> (0 < next)%N ->
+  forall v n, trie_get v (PTrieCode.set key next ranks) = Some n -> (0 < n)%N.
+Proof.
+  intros Hpositive Hnext v n Hget. destruct (Pos.eq_dec v key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same in Hget. now injection Hget as <-.
+  - rewrite PTrie.get_set_other in Hget by exact Hdifferent. now apply (Hpositive v).
+Qed.
+
+(** Inserting a rank extends the lookup domain by exactly its key. *)
+Lemma dom_lt_rank_set_domain (ranks : ptrie N) key rank v :
+  (exists n, trie_get v (PTrieCode.set key rank ranks) = Some n) <->
+    v = key \/ exists n, trie_get v ranks = Some n.
+Proof.
+  destruct (Pos.eq_dec v key) as [->|Hdifferent].
+  - rewrite PTrie.get_set_same. split; [now left|]. intros _. now exists rank.
+  - rewrite PTrie.get_set_other by exact Hdifferent. tauto.
+Qed.
+
+(** Numeric layout fields retain the exact discovered domain and its consecutive counter. *)
+Record dom_lt_layout_inventory (st : dom_lt_layout) : Prop := DomLtLayoutInventory {
+  dom_lt_layout_injective : dom_lt_rank_injective (lt_rank st);
+  dom_lt_layout_bounded : dom_lt_rank_below (lt_rank st) (lt_next st);
+  dom_lt_layout_domain : forall v,
+    In v (lt_reverse_order st) <-> exists n, trie_get v (lt_rank st) = Some n;
+  dom_lt_layout_next : lt_next st = N.of_nat (length (lt_reverse_order st) + 1);
+  dom_lt_layout_positive : forall v n, trie_get v (lt_rank st) = Some n -> (0 < n)%N
+}.
+
+(** Each trace event preserves rank injectivity, the exact domain and its discovery counter. *)
+Lemma dom_lt_layout_event_inventory st event :
+  dom_lt_layout_inventory st -> dom_lt_layout_inventory (dom_lt_event st event).
+Proof.
+  intros [Hinjective Hbounded Hdomain Hnext Hpositive].
+  destruct event as [v|v|kind u v];
+    cbn [dom_lt_event lt_reverse_order lt_rank lt_next].
+  - constructor; cbn [lt_rank lt_next lt_reverse_order].
+    + now apply dom_lt_rank_set_injective.
+    + now apply dom_lt_rank_set_below.
+    + intro x. rewrite dom_lt_rank_set_domain, <- Hdomain. cbn [In]. intuition congruence.
+    + cbn [length]. now rewrite Hnext, <- Nat2N.inj_succ.
+    + apply dom_lt_rank_set_positive; [exact Hpositive|]. rewrite Hnext. lia.
+  - constructor; cbn [lt_rank lt_next lt_reverse_order]; assumption.
+  - constructor; assumption.
+Qed.
+
+(** The producer layout assigns distinct bounded numeric ranks to precisely its discovered keys. *)
+Lemma dom_lt_layout_of_inventory g r : dom_lt_layout_inventory (dom_lt_layout_of g r).
+Proof.
+  unfold dom_lt_layout_of. apply (dom_lt_fold_invariant dom_lt_event dom_lt_layout_inventory).
+  - constructor; cbn [lt_rank lt_next lt_reverse_order length].
+    + intros u v n Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+    + intros v n Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+    + intro v. split; [intro Hbad; contradiction|].
+      intros [n Hget]. rewrite PTrie.get_empty in Hget. discriminate Hget.
+    + reflexivity.
+    + intros v n Hget. rewrite PTrie.get_empty in Hget. discriminate Hget.
+  - intros st event Hinv. now apply dom_lt_layout_event_inventory.
+Qed.
+
+(** The layout's reverse order is the reversed enter subsequence of the trace. *)
+Lemma dom_lt_layout_reverse events st :
+  lt_reverse_order (fold_left dom_lt_event events st) =
+    rev (entered events) ++ lt_reverse_order st.
+Proof.
+  revert st. induction events as [|event rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH.
+  destruct event; cbn [dom_lt_event lt_reverse_order entered rev];
+    [now rewrite <- app_assoc|reflexivity|reflexivity].
+Qed.
+
+(** The public DFS order is exactly the trace's enter subsequence. *)
+Lemma dom_lt_dfs_entered g r : dom_lt_dfs g r = entered (dom_lt_trace g r).
+Proof.
+  unfold dom_lt_dfs, dom_lt_layout_of. rewrite dom_lt_layout_reverse.
+  cbn [lt_reverse_order]. rewrite app_nil_r, rev_append_rev, app_nil_r, rev_involutive.
+  reflexivity.
+Qed.
+
+(** The producer's DFS order is distinct, listed and bounded by vertices and occurrences. *)
+Lemma dom_lt_dfs_inventory g r :
+  NoDup (dom_lt_dfs g r) /\ incl (dom_lt_dfs g r) (nodes g) /\
+  length (dom_lt_dfs g r) <= graph_n (base g) /\
+  length (dom_lt_dfs g r) <= graph_e (base g) + 1.
+Proof.
+  rewrite dom_lt_dfs_entered. apply dom_lt_trace_inventory.
+Qed.
+
+(** Rank filtering can only discard predecessor occurrences. *)
+Lemma dom_lt_ranked_row_length ranks row :
+  length (dom_lt_ranked_row ranks row) <= length row.
+Proof.
+  induction row as [|v rest IH]; [reflexivity|].
+  unfold dom_lt_ranked_row in *. cbn [fold_right].
+  destruct (trie_get v ranks); cbn [length]; lia.
+Qed.
+
+Local Opaque dom_lt_layout_of.
+
+(** Reversing a list does not change its summed nonnegative weight. *)
+Lemma dom_lt_sum_rev {A : Type} (weight : A -> nat) xs :
+  fold_right (fun x total => weight x + total) 0 (rev xs) =
+    fold_right (fun x total => weight x + total) 0 xs.
+Proof.
+  assert (Hshift : forall ys initial,
+    fold_right (fun x total => weight x + total) initial ys =
+      fold_right (fun x total => weight x + total) 0 ys + initial).
+  { intro ys. induction ys as [|y rest IH]; intro initial; cbn [fold_right]; [lia|].
+    rewrite IH. lia. }
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [rev fold_right]. rewrite fold_right_app, Hshift, IH. cbn [fold_right]. lia.
+Qed.
+
+(** Mapping input keys merely composes the weight in a finite sum. *)
+Lemma dom_lt_sum_map {A B : Type} (weight : B -> nat) (key : A -> B) xs :
+  fold_right (fun x total => weight x + total) 0 (map key xs) =
+    fold_right (fun x total => weight (key x) + total) 0 xs.
+Proof.
+  induction xs as [|x rest IH]; cbn [map fold_right]; [reflexivity|now rewrite IH].
+Qed.
+
+(** A key map injective on a distinct input list produces distinct output keys. *)
+Lemma dom_lt_map_unique_on {A B : Type} (key : A -> B) xs :
+  NoDup xs ->
+  (forall u v, In u xs -> In v xs -> key u = key v -> u = v) ->
+  NoDup (map key xs).
+Proof.
+  intro Hunique. induction Hunique as [|v rest Hfresh Hunique IH]; intro Hinjective.
+  - constructor.
+  - cbn [map]. constructor.
+    + intro Hin. apply in_map_iff in Hin. destruct Hin as [u [Heq Hu]].
+      assert (u = v) by (apply Hinjective; [now right|now left|exact Heq]).
+      now subst u.
+    + apply IH. intros u w Hu Hw Heq.
+      apply Hinjective; [now right|now right|exact Heq].
+Qed.
+
+(** Key-dependent writes preserve a previously installed value when all collisions agree. *)
+Lemma dom_lt_fold_keys_preserve {A B : Type} (key : A -> positive) (value : A -> B)
+    xs rows p stored :
+  trie_get p rows = Some stored ->
+  (forall x, In x xs -> key x = p -> value x = stored) ->
+  trie_get p (fold_left (fun acc x => PTrieCode.set (key x) (value x) acc) xs rows) =
+    Some stored.
+Proof.
+  revert rows. induction xs as [|x rest IH]; intros rows Hget Hagree; [exact Hget|].
+  cbn [fold_left]. apply IH.
+  - destruct (Pos.eq_dec p (key x)) as [->|Hdifferent].
+    + rewrite PTrie.get_set_same. f_equal. apply Hagree; [now left|reflexivity].
+    + now rewrite PTrie.get_set_other.
+  - intros y Hy Hkey. apply Hagree; [now right|exact Hkey].
+Qed.
+
+(** A keyed fold exposes the assigned value at every input key when collisions agree. *)
+Lemma dom_lt_fold_keys_present {A B : Type} (key : A -> positive) (value : A -> B)
+    xs rows v :
+  In v xs ->
+  (forall x, In x xs -> key x = key v -> value x = value v) ->
+  trie_get (key v)
+    (fold_left (fun acc x => PTrieCode.set (key x) (value x) acc) xs rows) = Some (value v).
+Proof.
+  revert rows. induction xs as [|x rest IH]; intros rows Hin Hagree; [contradiction|].
+  cbn [fold_left]. destruct Hin as [<-|Hin].
+  - apply dom_lt_fold_keys_preserve; [apply PTrie.get_set_same|].
+    intros y Hy Hkey. apply Hagree; [now right|exact Hkey].
+  - apply IH; [exact Hin|]. intros y Hy Hkey. apply Hagree; [now right|exact Hkey].
+Qed.
+
+(** DFS membership is exactly membership in the layout's rank map. *)
+Lemma dom_lt_dfs_rank_domain g r v :
+  In v (dom_lt_dfs g r) <-> exists n, trie_get v (lt_rank (dom_lt_layout_of g r)) = Some n.
+Proof.
+  pose proof (dom_lt_layout_domain _ (dom_lt_layout_of_inventory g r) v) as Hdomain.
+  unfold dom_lt_dfs. rewrite rev_append_rev, app_nil_r, <- in_rev. exact Hdomain.
+Qed.
+
+(** Rank lookup is injective on the actual DFS order. *)
+Lemma dom_lt_dfs_rank_injective g r u v :
+  In u (dom_lt_dfs g r) -> In v (dom_lt_dfs g r) ->
+  dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) u =
+    dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v -> u = v.
+Proof.
+  intros Hu Hv Heq.
+  destruct (proj1 (dom_lt_dfs_rank_domain g r u) Hu) as [nu Hnu].
+  destruct (proj1 (dom_lt_dfs_rank_domain g r v) Hv) as [nv Hnv].
+  unfold dom_lt_rank_get in Heq. rewrite Hnu, Hnv in Heq. subst nv.
+  exact (dom_lt_layout_injective _ (dom_lt_layout_of_inventory g r) u v nu Hnu Hnv).
+Qed.
+
+(** Numeric construction records the input ranks in reverse input order. *)
+Lemma dom_lt_numeric_order_fold g layout xs st :
+  lt_numeric_order (fold_left (dom_lt_numeric_add g layout) xs st) =
+    rev (map (dom_lt_rank_get (lt_rank layout)) xs) ++ lt_numeric_order st.
+Proof.
+  revert st. induction xs as [|v rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH.
+  cbn [dom_lt_numeric_add lt_numeric_order map rev]. now rewrite <- app_assoc.
+Qed.
+
+(** Numeric predecessor construction is the corresponding keyed row fold. *)
+Lemma dom_lt_numeric_pred_fold g layout xs st :
+  lt_numeric_pred (fold_left (dom_lt_numeric_add g layout) xs st) =
+    fold_left (fun rows v => PTrieCode.set (dom_lt_key (dom_lt_rank_get (lt_rank layout) v))
+      (dom_lt_ranked_row (lt_rank layout) (preds g v)) rows) xs (lt_numeric_pred st).
+Proof.
+  revert st. induction xs as [|v rest IH]; intro st; [reflexivity|].
+  cbn [fold_left]. rewrite IH. reflexivity.
+Qed.
+
+(** The numeric order is the reversed rank image of the producer's DFS order. *)
+Lemma dom_lt_numeric_order_of g r :
+  lt_numeric_order (dom_lt_numeric_of g r) =
+    rev (map (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r))) (dom_lt_dfs g r)).
+Proof.
+  unfold dom_lt_numeric_of, dom_lt_dfs. rewrite dom_lt_numeric_order_fold.
+  cbn [lt_numeric_order]. now rewrite app_nil_r.
+Qed.
+
+(** The numeric predecessor map is built from exactly the producer's DFS order. *)
+Lemma dom_lt_numeric_pred_of g r :
+  lt_numeric_pred (dom_lt_numeric_of g r) =
+    fold_left (fun rows v =>
+      PTrieCode.set (dom_lt_key (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v))
+        (dom_lt_ranked_row (lt_rank (dom_lt_layout_of g r)) (preds g v)) rows)
+      (dom_lt_dfs g r) Empty.
+Proof.
+  unfold dom_lt_numeric_of, dom_lt_dfs. rewrite dom_lt_numeric_pred_fold. reflexivity.
+Qed.
+
+(** Each numeric predecessor lookup returns the filtered row of its original vertex. *)
+Lemma dom_lt_numeric_pred_lookup g r v :
+  In v (dom_lt_dfs g r) ->
+  trie_get (dom_lt_key (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) v))
+    (lt_numeric_pred (dom_lt_numeric_of g r)) =
+      Some (dom_lt_ranked_row (lt_rank (dom_lt_layout_of g r)) (preds g v)).
+Proof.
+  intro Hv. rewrite dom_lt_numeric_pred_of.
+  apply (dom_lt_fold_keys_present
+    (fun u => dom_lt_key (dom_lt_rank_get (lt_rank (dom_lt_layout_of g r)) u))
+    (fun u => dom_lt_ranked_row (lt_rank (dom_lt_layout_of g r)) (preds g u))
+    (dom_lt_dfs g r) Empty v); [exact Hv|].
+  intros u Hu Hkeys. apply dom_lt_key_injective in Hkeys.
+  assert (u = v) by (eapply dom_lt_dfs_rank_injective; eassumption). now subst u.
+Qed.
+
+(** Actual numeric traversal ranks are distinct. *)
+Lemma dom_lt_numeric_order_unique g r : NoDup (lt_numeric_order (dom_lt_numeric_of g r)).
+Proof.
+  rewrite dom_lt_numeric_order_of. apply NoDup_rev. apply dom_lt_map_unique_on.
+  - exact (proj1 (dom_lt_dfs_inventory g r)).
+  - intros u v Hu Hv Hkeys. eapply dom_lt_dfs_rank_injective; eassumption.
+Qed.
+
+(** Numeric construction preserves the number of discovered vertices. *)
+Lemma dom_lt_numeric_order_length g r :
+  length (lt_numeric_order (dom_lt_numeric_of g r)) = length (dom_lt_dfs g r).
+Proof.
+  rewrite dom_lt_numeric_order_of, length_rev, length_map. reflexivity.
+Qed.
+
+(** Numeric predecessor occurrences fit the original graph's total occurrence count. *)
+Lemma dom_lt_numeric_pred_total g r :
+  prepared_ok g ->
+  fold_right (fun v total => length
+    (match trie_get (dom_lt_key v) (lt_numeric_pred (dom_lt_numeric_of g r)) with
+      None => [] | Some row => row end) + total) 0
+        (lt_numeric_order (dom_lt_numeric_of g r)) <= graph_e (base g).
+Proof.
+  intro Hprepared. rewrite dom_lt_numeric_order_of, dom_lt_sum_rev, dom_lt_sum_map.
+  eapply Nat.le_trans.
+  - apply (dom_lt_sum_le _ (fun v => length (preds g v))).
+    intros v Hv. rewrite (dom_lt_numeric_pred_lookup g r v Hv).
+    apply dom_lt_ranked_row_length.
+  - apply dom_lt_predecessor_total; [exact Hprepared|].
+    exact (proj1 (dom_lt_dfs_inventory g r)).
+Qed.
+
+(** The semidominator pass records one possible link and one query per predecessor occurrence. *)
+Lemma dom_lt_semidominators_operations numeric :
+  length (lt_operations (lt_semi_links (dom_lt_semidominators numeric))) <=
+    length (lt_numeric_order numeric) +
+      fold_right (fun v total => length
+        (match trie_get (dom_lt_key v) (lt_numeric_pred numeric) with
+          None => [] | Some row => row end) + total) 0 (lt_numeric_order numeric).
+Proof.
+  unfold dom_lt_semidominators.
+  exact (dom_lt_settlements_operations numeric (lt_numeric_order numeric)
+    (DomLtSemiState Empty Empty (DomLtLinks Empty Empty []))).
+Qed.

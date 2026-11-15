@@ -3643,7 +3643,9 @@ Module DomT <: DOM_ALL.
 
   Lemma F13_ops_length : forall g r, prepared_ok g ->
     length (lt_ops g r) <= 2 * (graph_n (base g) + graph_e (base g)) + 1.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r Hprepared. apply dom_lt_operations_length. exact Hprepared.
+  Qed.
 
   Lemma T8_link_eval : forall g r, prepared_ok g ->
     (T_run_ops (lt_ops g r) (lt_init g r) <= k_le *

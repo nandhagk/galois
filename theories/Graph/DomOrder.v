@@ -7,7 +7,7 @@
 From Stdlib Require Import List Bool PArith NArith Arith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data Spec DomSig DomProducer.
+From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer.
 Import List.ListNotations.
 
 Definition dom_order_row (rows : ptrie (list N)) (v : N) : list N :=
@@ -545,6 +545,45 @@ TimeFun dom_lt_replay_initial.
 Definition dom_lt_run_ops (ops : list lt_op) (st : dom_lt_replay) : dom_lt_replay :=
   fold_left dom_lt_replay_step ops st.
 TimeFun dom_lt_run_ops.
+
+(** Discovery and predecessor inventories imply the public linear operation-count budget. *)
+Lemma dom_lt_operation_count_budget vertices edges discovered predecessors :
+  discovered <= vertices -> discovered <= edges + 1 -> predecessors <= edges ->
+  (discovered + predecessors) + 2 * discovered <= 2 * (vertices + edges) + 1.
+Proof.
+  lia.
+Qed.
+
+(** The two producer phases record at most the published number of links and evaluations. *)
+Lemma dom_lt_operations_length g r :
+  prepared_ok g ->
+  length (dom_lt_ops g r) <= 2 * (graph_n (base g) + graph_e (base g)) + 1.
+Proof.
+  intro Hprepared.
+  set (numeric := dom_lt_numeric_of g r).
+  set (semi := dom_lt_semidominators numeric).
+  set (bucket := dom_lt_buckets numeric (lt_semis semi)).
+  pose proof (dom_lt_semidominators_operations numeric) as Hsemi.
+  fold semi in Hsemi.
+  pose proof (dom_lt_buckets_operations numeric (lt_semis semi)
+    (dom_lt_numeric_order_unique g r)) as Hbucket.
+  fold bucket in Hbucket.
+  pose proof (dom_lt_numeric_pred_total g r Hprepared) as Hpredecessors.
+  fold numeric in Hpredecessors.
+  destruct (dom_lt_dfs_inventory g r) as [_ [_ [Hvertices Hedges]]].
+  rewrite <- (dom_lt_numeric_order_length g r) in Hvertices, Hedges.
+  fold numeric in Hvertices, Hedges.
+  unfold dom_lt_ops, dom_lt_pipeline.
+  fold numeric. fold semi. fold bucket.
+  change (length (rev_append (lt_operations (lt_semi_links semi))
+    (rev_append (lt_operations (lt_bucket_links bucket)) [])) <=
+      2 * (graph_n (base g) + graph_e (base g)) + 1).
+  rewrite !rev_append_rev, !length_app, !length_rev. cbn [length].
+  rewrite Nat.add_0_r.
+  eapply Nat.le_trans.
+  - apply Nat.add_le_mono; [exact Hsemi|exact Hbucket].
+  - apply dom_lt_operation_count_budget; assumption.
+Qed.
 
 (** * Semantic consequences of a low-high certificate *)
 
