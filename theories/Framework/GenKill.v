@@ -8,7 +8,7 @@ From Stdlib Require Import List Bool NArith.
 From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig SetSig.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Fixpoint Require Import SystemSig.
+From Galois.Fixpoint Require Import Query SystemSig.
 From Galois.Program Require Import CfgSig.
 From Galois.Framework Require Import DenseSig Dense GenKillSig.
 
@@ -54,50 +54,97 @@ Module GenKillMayDomain (F : KEY) (S : SET F) <: GENKILL_MAY_DOMAIN F S.
   Include GenKillMayDomainCode F S.
   (** Every value is below itself. *)
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; apply S.subset_spec; intros p Hp; exact Hp.
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c Hab Hbc; apply S.subset_spec.
+    unfold leb in Hab, Hbc.
+    rewrite S.subset_spec in Hab; rewrite S.subset_spec in Hbc.
+    intros p Hp; apply Hbc, Hab; exact Hp.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; apply S.subset_spec; intros p Hp.
+    rewrite S.has_empty in Hp; discriminate.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply leb_refl.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Ha; eapply leb_trans; [exact Ha|apply bot_least].
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; apply S.subset_spec; intros p Hp.
+    rewrite S.has_union, Hp; reflexivity.
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; apply S.subset_spec; intros p Hp.
+    rewrite S.has_union, Hp; apply orb_true_r.
+  Qed.
 End GenKillMayDomain.
 
 Module GenKillMustDomain (F : KEY) (S : SET F) <: GENKILL_MUST_DOMAIN F S.
   Include GenKillMustDomainCode F S.
   (** Every value is below itself. *)
   Lemma leb_refl  : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|]; [|reflexivity].
+    apply S.subset_spec; intros p Hp; exact Hp.
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|] [b|] [c|]; cbn [leb genkill_must_leb];
+      try discriminate; try reflexivity.
+    intros Hab Hbc; apply S.subset_spec.
+    rewrite S.subset_spec in Hab; rewrite S.subset_spec in Hbc.
+    intros p Hp; apply Hab, Hbc; exact Hp.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; reflexivity.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|] b Ha; [discriminate|reflexivity].
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|] [b|]; cbn [leb join genkill_must_leb genkill_must_join];
+      try reflexivity.
+    - apply S.subset_spec; intros p Hp.
+      rewrite S.has_inter in Hp; apply andb_true_iff in Hp; exact (proj1 Hp).
+    - apply S.subset_spec; intros p Hp; exact Hp.
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|] [b|]; cbn [leb join genkill_must_leb genkill_must_join];
+      try reflexivity.
+    - apply S.subset_spec; intros p Hp.
+      rewrite S.has_inter in Hp; apply andb_true_iff in Hp; exact (proj2 Hp).
+    - apply S.subset_spec; intros p Hp; exact Hp.
+  Qed.
 End GenKillMustDomain.
 
 Module GenKillMayCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
@@ -145,25 +192,187 @@ Module GenKillSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     genkill_may_start (C.nodes p) (C.entries p) S.empty (G.init p) root initial /\
     route p root path n /\
     S.mem d (genkill_path S.union S.diff (G.gen p) (G.kill p) initial path) = true.
+
+  (** Set inclusion transports membership without a representation invariant. *)
+  Lemma subset_mem : forall a b d, S.subset a b = true ->
+    S.mem d a = true -> S.mem d b = true.
+  Proof.
+    intros a b d Hab Hd; rewrite !S.mem_has in *.
+    rewrite S.subset_spec in Hab; apply Hab; exact Hd.
+  Qed.
+
+  (** Set inclusion composes through the same intermediate set. *)
+  Lemma subset_trans : forall a b c, S.subset a b = true ->
+    S.subset b c = true -> S.subset a c = true.
+  Proof.
+    intros a b c Hab Hbc; apply S.subset_spec.
+    rewrite S.subset_spec in Hab; rewrite S.subset_spec in Hbc.
+    intros q Hq; apply Hbc, Hab; exact Hq.
+  Qed.
+
+  (** A gen/kill transfer preserves inclusion of its incoming facts. *)
+  Lemma transfer_subset : forall p e a b, S.subset a b = true ->
+    S.subset (S.union (G.gen p e) (S.diff a (G.kill p e)))
+      (S.union (G.gen p e) (S.diff b (G.kill p e))) = true.
+  Proof.
+    intros p e a b Hab; apply S.subset_spec.
+    rewrite S.subset_spec in Hab; intros q Hq.
+    rewrite !S.has_union, !S.has_diff in *.
+    apply orb_true_iff in Hq; apply orb_true_iff.
+    destruct Hq as [Hgen|Hkeep]; [left; exact Hgen|right].
+    apply andb_true_iff in Hkeep; apply andb_true_iff.
+    split; [apply Hab; exact (proj1 Hkeep)|exact (proj2 Hkeep)].
+  Qed.
+
+  (** A may post-solution includes each actual boundary. *)
+  Lemma may_seed_closed : forall p look n, May.post_solution p look ->
+    In n (C.entries p) -> S.subset (G.init p) (look n) = true.
+  Proof.
+    intros p look n Hpost Hentry.
+    assert (Hrow : In (Seed n) (May.rows p)).
+    { rewrite May.rows_spec; apply in_or_app; left; apply in_map; exact Hentry. }
+    specialize (Hpost _ Hrow).
+    rewrite May.eval_seed, May.target_seed in Hpost.
+    cbn [row_ok forallb] in Hpost; rewrite andb_true_r in Hpost; exact Hpost.
+  Qed.
+
+  (** A may post-solution includes every listed directional transfer. *)
+  Lemma may_flow_closed : forall p look e, May.post_solution p look ->
+    In e (C.edges p) ->
+    S.subset (S.union (G.gen p e)
+      (S.diff (look (match G.dir with Forward => C.src p e | Backward => C.dst p e end))
+        (G.kill p e)))
+      (look (match G.dir with Forward => C.dst p e | Backward => C.src p e end)) = true.
+  Proof.
+    intros p look e Hpost Hedge.
+    assert (Hrow : In (Flow e) (May.rows p)).
+    { rewrite May.rows_spec; apply in_or_app; right; apply in_map; exact Hedge. }
+    specialize (Hpost _ Hrow).
+    rewrite May.eval_flow, May.target_flow in Hpost.
+    cbn [row_ok forallb] in Hpost; rewrite andb_true_r in Hpost; exact Hpost.
+  Qed.
+
+  (** Initial inclusion propagates along every route of a may post-solution. *)
+  Lemma may_route_bound : forall p look root path n, May.post_solution p look ->
+    route p root path n -> forall initial, S.subset initial (look root) = true ->
+    S.subset (genkill_path S.union S.diff (G.gen p) (G.kill p) initial path)
+      (look n) = true.
+  Proof.
+    intros p look root path n Hpost Hroute.
+    induction Hroute as [n|e es n Hedge Hroute IH]; intros initial Hinitial.
+    - exact Hinitial.
+    - cbn [genkill_path fold_left]; apply IH.
+      eapply subset_trans; [apply transfer_subset; exact Hinitial|].
+      apply may_flow_closed; assumption.
+  Qed.
+
+  (** Must inclusion composes in the reversed set order. *)
+  Lemma must_order_trans : forall a b c,
+    genkill_must_leb S.subset a b = true ->
+    genkill_must_leb S.subset b c = true ->
+    genkill_must_leb S.subset a c = true.
+  Proof.
+    intros [a|] [b|] [c|]; cbn [genkill_must_leb];
+      try discriminate; try reflexivity.
+    intros Hab Hbc; eapply subset_trans; [exact Hbc|exact Hab].
+  Qed.
+
+  (** The strict must transfer preserves the reversed set order. *)
+  Lemma must_transfer_mono : forall p e a b,
+    genkill_must_leb S.subset a b = true ->
+    genkill_must_leb S.subset (UT.transfer p e a) (UT.transfer p e b) = true.
+  Proof.
+    intros p e [a|] [b|]; cbn [UT.transfer genkill_must_leb];
+      try discriminate; try reflexivity.
+    apply transfer_subset.
+  Qed.
+
+  (** Every actual boundary forces a reached must value. *)
+  Lemma must_seed_closed : forall p look n, Must.post_solution p look ->
+    In n (C.entries p) ->
+    genkill_must_leb S.subset (Some (G.init p)) (look n) = true.
+  Proof.
+    intros p look n Hpost Hentry.
+    assert (Hrow : In (Seed n) (Must.rows p)).
+    { rewrite Must.rows_spec; apply in_or_app; left; apply in_map; exact Hentry. }
+    specialize (Hpost _ Hrow).
+    rewrite Must.eval_seed, Must.target_seed in Hpost.
+    cbn [row_ok forallb] in Hpost; rewrite andb_true_r in Hpost; exact Hpost.
+  Qed.
+
+  (** A must post-solution accepts every listed directional transfer. *)
+  Lemma must_flow_closed : forall p look e, Must.post_solution p look ->
+    In e (C.edges p) ->
+    genkill_must_leb S.subset
+      (UT.transfer p e
+        (look (match G.dir with Forward => C.src p e | Backward => C.dst p e end)))
+      (look (match G.dir with Forward => C.dst p e | Backward => C.src p e end)) = true.
+  Proof.
+    intros p look e Hpost Hedge.
+    assert (Hrow : In (Flow e) (Must.rows p)).
+    { rewrite Must.rows_spec; apply in_or_app; right; apply in_map; exact Hedge. }
+    specialize (Hpost _ Hrow).
+    rewrite Must.eval_flow, Must.target_flow in Hpost.
+    cbn [row_ok forallb] in Hpost; rewrite andb_true_r in Hpost; exact Hpost.
+  Qed.
+
+  (** A reached path value bounds the must result at the route endpoint. *)
+  Lemma must_route_bound : forall p look root path n, Must.post_solution p look ->
+    route p root path n -> forall initial,
+    genkill_must_leb S.subset (Some initial) (look root) = true ->
+    genkill_must_leb S.subset
+      (Some (genkill_path S.union S.diff (G.gen p) (G.kill p) initial path))
+      (look n) = true.
+  Proof.
+    intros p look root path n Hpost Hroute.
+    induction Hroute as [n|e es n Hedge Hroute IH]; intros initial Hinitial.
+    - exact Hinitial.
+    - cbn [genkill_path fold_left]; apply IH.
+      eapply must_order_trans; [|apply must_flow_closed; eassumption].
+      apply (must_transfer_mono p e (Some initial)); exact Hinitial.
+  Qed.
+
   (** Every produced path fact belongs to a may post-solution. *)
   Lemma may_covers : forall p look, G.may = true -> May.post_solution p look ->
     forall n d, produces p n d -> S.mem d (look n) = true.
-  Proof. Admitted. (* CONVERT: produces_in_post: The reference Bitvector.may_source_post_iff was not found *)
+  Proof.
+    intros p look Hmay Hpost n d [root [initial [path [Hstart [Hroute Hd]]]]].
+    eapply subset_mem; [eapply may_route_bound; [exact Hpost|exact Hroute|]|exact Hd].
+    destruct Hstart as [root Hroot|root Hentry].
+    - apply S.subset_spec; intros q Hq; rewrite S.has_empty in Hq; discriminate.
+    - apply may_seed_closed; assumption.
+  Qed.
   (** Every fact generated on an actual boundary path belongs to a may post-solution. *)
   Lemma may_boundary_covers : forall p look, G.may = true -> May.post_solution p look ->
     forall entry path n d, In entry (C.entries p) -> route p entry path n ->
       S.mem d (path_facts p path) = true -> S.mem d (look n) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p look Hmay Hpost entry path n d Hentry Hroute Hd.
+    eapply may_covers; [exact Hmay|exact Hpost|].
+    exists entry, (G.init p), path; split.
+    - apply Genkill_boundary; exact Hentry.
+    - split; assumption.
+  Qed.
   (** A reached must post-solution contains facts present on every boundary path. *)
   Lemma must_covers : forall p look, G.may = false -> Must.post_solution p look ->
     forall entry path n facts d, In entry (C.entries p) -> route p entry path n ->
       look n = Some facts -> S.mem d facts = true -> S.mem d (path_facts p path) = true.
-  Proof. Admitted. (* CONVERT: must_post_keeps: The reference Bitvector.must_source_post_iff was not found *)
+  Proof.
+    intros p look Hmust Hpost entry path n facts d Hentry Hroute Hlook Hd.
+    pose proof (must_route_bound p look entry path n Hpost Hroute (G.init p)
+      (must_seed_closed p look entry Hpost Hentry)) as Hbound.
+    rewrite Hlook in Hbound; eapply subset_mem; [exact Hbound|exact Hd].
+  Qed.
   (** A boundary path has a reached must value in every post-solution. *)
   Lemma must_reached : forall p look, G.may = false -> Must.post_solution p look ->
     forall entry path n, In entry (C.entries p) -> route p entry path n ->
       exists facts, look n = Some facts.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p look Hmust Hpost entry path n Hentry Hroute.
+    pose proof (must_route_bound p look entry path n Hpost Hroute (G.init p)
+      (must_seed_closed p look entry Hpost Hentry)) as Hbound.
+    destruct (look n) as [facts|]; [exists facts; reflexivity|discriminate].
+  Qed.
   (** A least may post-solution equals production from empty listed starts and boundaries. *)
   Lemma may_exact : forall p look, C.wf p -> G.may = true -> May.post_solution p look ->
     (forall other, May.post_solution p other -> forall n, S.subset (look n) (other n) = true) ->
