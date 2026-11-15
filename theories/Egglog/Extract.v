@@ -1845,6 +1845,20 @@ Proof.
   apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r. nia.
 Qed.
 
+(** The closed step coefficient pays a fixed wrapper and the generic queue-step fee. *)
+Lemma extraction_step_fee_budget : forall t i d c q fee allowance : N,
+  (1 <= allowance)%N -> (fee <= allowance)%N ->
+  (1 + 64 * (t + q + 1) * fee <=
+    (256 * 1024) * (t + i + d + c + q + 1) * allowance)%N.
+Proof.
+  intros t i d c q fee allowance Hpositive Hfee.
+  eapply N.le_trans with (m := (allowance + 64 * (t + q + 1) * allowance)%N).
+  - apply N.add_le_mono; [exact Hpositive |]. now apply N.mul_le_mono_l.
+  - replace (allowance + 64 * (t + q + 1) * allowance)%N with
+      ((64 * (t + q + 1) + 1) * allowance)%N by ring.
+    apply N.mul_le_mono_r. nia.
+Qed.
+
 Module List.
   TimeFun flat_map.
 End List.
@@ -6529,6 +6543,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   TimeFun extract.
   TimeFun unfold.
   Module Rows := ConstructorRows V I D.
+  Module ResourceClocks := SearchResourceT V C Q.
   Definition R (db : D.t) : nat := length (Rows.rows db).
   Definition a (db : D.t) : nat := Rows.maximum_arity (Rows.rows db).
   Definition cost_width (db : D.t) : nat :=
@@ -7193,6 +7208,10 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Qed.
 
   Definition state := extraction_state V.t D.t Q.t.
+  (** Internal credit pays suspended row work and the queue's stale-entry potential. *)
+  Definition extraction_potential (db : D.t) (s : state) : N :=
+    ResourceClocks.search_potential (R db) (D.unit db + cost_width db) s.
+
   Definition initial (cs : list (positive * (N * nat))) (db : D.t) : state :=
     search_initial db (inventory_rows (fun slot => D.index slot false db)
       I.child I.children I.root cs).
@@ -7216,6 +7235,42 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   TimeFun heap_potential.
   Definition k_step : N :=
     (256 * 1024) * (PTrieT.c_trie + I.c_ix + D.c_db + C.c_cost + Q.c_pq + 1).
+  (** The public step adds one wrapper call to the generic derived search-step clock. *)
+  Lemma extraction_step_clock : forall cs db s,
+    T_step cs db s = (1 + ResourceClocks.T_search_step s)%N.
+  Proof.
+    intros cs db s. time_unfold @T_step. time_simpl. reflexivity.
+  Qed.
+
+  (** A queue step and its wrapper fit the public arity, logarithm and width allowance. *)
+  Lemma extraction_step_allowance : forall db,
+    (1 + 64 * (PTrieT.c_trie + Q.c_pq + 1) *
+      N.of_nat (Q.unit_pq (R db) (D.unit db + cost_width db)) <=
+      k_step * N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+        N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intro db.
+    assert (Hwidth : Q.unit_pq (R db) (D.unit db + cost_width db) <=
+      (a db + Nat.log2 (R db) + 2) * (D.unit db + 1) * (cost_width db + 1)).
+    { unfold Q.unit_pq.
+      replace ((a db + Nat.log2 (R db) + 2) * (D.unit db + 1) * (cost_width db + 1)) with
+        ((a db + Nat.log2 (R db) + 2) * ((D.unit db + 1) * (cost_width db + 1))) by ring.
+      apply Nat.mul_le_mono; [lia |nia]. }
+    unfold k_step.
+    replace ((256 * 1024) *
+      (PTrieT.c_trie + I.c_ix + D.c_db + C.c_cost + Q.c_pq + 1) *
+      N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+      N.of_nat (cost_width db + 1))%N with
+      ((256 * 1024) * (PTrieT.c_trie + I.c_ix + D.c_db + C.c_cost + Q.c_pq + 1) *
+        (N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+          N.of_nat (cost_width db + 1)))%N by ring.
+    apply extraction_step_fee_budget.
+    - change (1 * 1 * 1 <= N.of_nat (a db + Nat.log2 (R db) + 2) *
+        N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+      apply N.mul_le_mono; [apply N.mul_le_mono; lia |lia].
+    - rewrite <- !Nat2N.inj_mul. lia.
+  Qed.
+
   Definition reachable (sl : list (positive * (N * nat))) (db : D.t) (s : state) : Prop :=
     clos_refl_trans state (fun a b => step sl db a = inl b) (initial sl db) s.
   Definition knuth_inv (db : D.t) (s : state) : Prop :=
