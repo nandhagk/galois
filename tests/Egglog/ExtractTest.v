@@ -63,7 +63,7 @@ Example inventory_full_slots_only :
      Decl 3%positive [] ORel; Decl 5%positive [] OId; Decl 6%positive [] (OLat 1%positive)]
     [(3%positive, [0; 2; 1]); (4%positive, []); (3%positive, [0; 1; 2]);
      (5%positive, [0]); (3%positive, [0; 1; 2]); (99%positive, [0])] =
-    [(3%positive, 2%N); (5%positive, 3%N)].
+    [(3%positive, (2%N, 2)); (5%positive, (3%N, 0))].
 Proof.
   vm_compute. reflexivity.
 Qed.
@@ -78,7 +78,7 @@ Qed.
 Example inventory_matching_arity :
   InventoryExtract.inventory [Decl 3%positive [SVal] OId]
     [(3%positive, [0]); (3%positive, [0; 1; 2]); (3%positive, [0; 1])] =
-    [(3%positive, 2%N)].
+    [(3%positive, (2%N, 1))].
 Proof.
   vm_compute. reflexivity.
 Qed.

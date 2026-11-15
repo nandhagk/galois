@@ -20,9 +20,10 @@ Definition cert_size {V} (encode : V -> positive) (g : extraction_dag V) : nat :
     fold_right (fun c m => cell_bits encode c + 1 + m) 0 (snd (snd e)) + 1 + n) 0 g.
 TimeFun cert_size.
 
-(** Bits of the names and slot numbers of an inventory. *)
-Definition inventory_bits (cs : list (positive * N)) : nat :=
-  fold_right (fun e n => Pos.size_nat (fst e) + N.size_nat (snd e) + 1 + n) 0 cs.
+(** Bits of the names and slot numbers of an inventory. A walk pays for an argument count
+    only along the paths that it descends, so the counts are not charged here. *)
+Definition inventory_bits (cs : list (positive * (N * nat))) : nat :=
+  fold_right (fun e n => Pos.size_nat (fst e) + N.size_nat (fst (snd e)) + 1 + n) 0 cs.
 
 (** Bits of a declaration list and of a slot layout, with each position read in unary. *)
 Definition layout_bits (ds : list decl) (sl : list (positive * list nat)) : nat :=
@@ -99,24 +100,26 @@ Module Type COST_T (V : VALUE_T) := COST V <+ COST_TIME V.
 
 Module Type EXTRACT_OPS (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V).
-  Parameter inventory : list decl -> list (positive * list nat) -> list (positive * N).
-  Parameter best : list (positive * N) -> D.t -> extraction_best V.t.
-  Parameter extract : list (positive * N) -> D.t -> positive -> option (extraction_dag V.t).
+  Parameter inventory : list decl -> list (positive * list nat) -> list (positive * (N * nat)).
+  Parameter best : list (positive * (N * nat)) -> D.t -> extraction_best V.t.
+  Parameter extract : list (positive * (N * nat)) -> D.t -> positive -> option (extraction_dag V.t).
   Parameter check_dag : D.t -> positive -> extraction_dag V.t -> option N.
 End EXTRACT_OPS.
 
 Module Type EXTRACT_SPEC (V : VALUE) (I : INDEX V) (D : DATABASE V I)
     (C : COST V) (Import X : EXTRACT_OPS V I D C).
-  (** The inventory names each constructor once, with a slot that stores its tuples
-      unpermuted, and it names nothing else. *)
-  Definition ctor_inventory (cs : list (positive * N)) (db : D.t) : Prop :=
+  (** The inventory names each constructor once, with its argument count and a slot that
+      stores its tuples unpermuted, and it names nothing else. Every row of a named
+      constructor has that many arguments and an identifier output. *)
+  Definition ctor_inventory (cs : list (positive * (N * nat))) (db : D.t) : Prop :=
     NoDup (map fst cs) /\
     (forall f, kind (D.view db) f = Some OId <-> In f (map fst cs)) /\
     (forall f k i, row (D.view db) f k (Some (Id i)) ->
       kind (D.view db) f = Some OId) /\
-    forall f s, In (f, s) cs -> exists perm,
+    forall f s n, In (f, (s, n)) cs -> exists perm,
       D.slot_of db s = Some (f, perm) /\
       forall k o, row (D.view db) f k o ->
+        length k = n /\ (exists i, o = Some (Id i)) /\
         D.permute perm (k ++ option_list o) = k ++ option_list o.
 
   Definition tree_cost := expression_cost C.fn_cost C.val_cost.
@@ -177,8 +180,8 @@ Module Type EXTRACT (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V) :=
 Module Type EXTRACT_TIME (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     (C : COST_T V) (Import X : EXTRACT V I D C).
   Parameter T_inventory : list decl -> list (positive * list nat) -> N.
-  Parameter T_best : list (positive * N) -> D.t -> N.
-  Parameter T_extract : list (positive * N) -> D.t -> positive -> N.
+  Parameter T_best : list (positive * (N * nat)) -> D.t -> N.
+  Parameter T_extract : list (positive * (N * nat)) -> D.t -> positive -> N.
   Parameter T_check_dag : D.t -> positive -> extraction_dag V.t -> N.
   Parameter c_ex : N.
   (* spec: R a cost_width *)
@@ -237,17 +240,17 @@ Module Type EXTRACT_T (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
 Module Type EXTRACT_PLAN (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I)
     (C : COST_T V) (Import X : EXTRACT_T V I D C).
   Parameter state : Type.
-  Parameter initial : list (positive * N) -> D.t -> state.
-  Parameter step : list (positive * N) -> D.t -> state -> state + extraction_best V.t.
+  Parameter initial : list (positive * (N * nat)) -> D.t -> state.
+  Parameter step : list (positive * (N * nat)) -> D.t -> state -> state + extraction_best V.t.
   Parameter finalised : state -> extraction_best V.t.
   Parameter counter : state -> positive -> nat.
   Parameter children : D.t -> positive -> list positive.
   Parameter ready : state -> list (positive * N).
   Parameter heap_potential : state -> N.
-  Parameter T_initial : list (positive * N) -> D.t -> N.
-  Parameter T_step : list (positive * N) -> D.t -> state -> N.
+  Parameter T_initial : list (positive * (N * nat)) -> D.t -> N.
+  Parameter T_step : list (positive * (N * nat)) -> D.t -> state -> N.
   Parameter k_step : N.
-  Definition reachable (cs : list (positive * N)) (db : D.t) (s : state) : Prop :=
+  Definition reachable (cs : list (positive * (N * nat))) (db : D.t) (s : state) : Prop :=
     clos_refl_trans state (fun a b => step cs db a = inl b) (initial cs db) s.
   Definition knuth_inv (db : D.t) (s : state) : Prop :=
     forall c n ch, In (c, (n, ch)) (finalised s) ->

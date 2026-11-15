@@ -30,24 +30,29 @@ Fixpoint inventory_sequence (start count : nat) (positions : list nat) : bool :=
   end.
 TimeFun inventory_sequence.
 
-(** Only a constructor's unpermuted full slot is selected. *)
+(** Only a constructor's unpermuted full slot is selected. The check returns the
+    constructor's argument count for a selected slot. *)
 Definition inventory_slot (tb : ptrie (nat * output)) (f : positive)
-    (positions : list nat) : bool :=
+    (positions : list nat) : option nat :=
   match trie_get f tb with
-  | Some (arity, OId) => inventory_sequence 0 (S arity) positions
-  | _ => false
+  | Some (arity, OId) =>
+    if inventory_sequence 0 (S arity) positions then Some arity else None
+  | _ => None
   end.
 TimeFun inventory_slot.
 
-(** A selected constructor is removed so that a later full slot cannot emit it again. *)
+(** A selected constructor is removed so that a later full slot cannot emit it again. Each
+    emitted entry holds the slot number and the argument count. *)
 Fixpoint inventory_scan (tb : ptrie (nat * output)) (sl : list (positive * list nat))
-    (slot : N) : list (positive * N) :=
+    (slot : N) : list (positive * (N * nat)) :=
   match sl with
   | [] => []
   | (f, positions) :: rest =>
-    if inventory_slot tb f positions then
-      (f, slot) :: inventory_scan (PTrieCode.remove f tb) rest (N.succ slot)
-    else inventory_scan tb rest (N.succ slot)
+    match inventory_slot tb f positions with
+    | Some arity =>
+      (f, (slot, arity)) :: inventory_scan (PTrieCode.remove f tb) rest (N.succ slot)
+    | None => inventory_scan tb rest (N.succ slot)
+    end
   end.
 TimeFun inventory_scan.
 
@@ -82,42 +87,48 @@ Proof.
     + intro Heq. injection Heq as -> ->. auto.
 Qed.
 
-(** Slot acceptance records the constructor arity and its full permutation. *)
-Lemma inventory_slot_spec : forall tb f positions,
-  inventory_slot tb f positions = true <->
-    exists n, trie_get f tb = Some (n, OId) /\ positions = seq 0 (S n).
+(** The check returns n exactly for a constructor with n arguments whose slot lists the
+    positions 0 to n in order. *)
+Lemma inventory_slot_spec : forall tb f positions n,
+  inventory_slot tb f positions = Some n <->
+    trie_get f tb = Some (n, OId) /\ positions = seq 0 (S n).
 Proof.
-  intros tb f positions. unfold inventory_slot.
-  destruct (trie_get f tb) as [[n out]|] eqn:Hget.
-  - destruct out; try (split; [discriminate | intros [? [H _]]; discriminate]).
-    rewrite inventory_sequence_spec. split.
-    + intro Hseq. exists n. auto.
-    + intros [m [Hpair Hseq]]. injection Hpair as <-. exact Hseq.
-  - split; [discriminate | intros [? [H _]]; discriminate].
+  intros tb f positions n. unfold inventory_slot.
+  destruct (trie_get f tb) as [[arity out]|] eqn:Hget.
+  - destruct out; try (split; [discriminate | intros [Hpair _]; discriminate]).
+    destruct (inventory_sequence 0 (S arity) positions) eqn:Hseq.
+    + apply inventory_sequence_spec in Hseq. split.
+      * intro Hsome. injection Hsome as <-. auto.
+      * intros [Hpair _]. injection Hpair as <-. reflexivity.
+    + split; [discriminate |].
+      intros [Hpair Hpositions]. injection Hpair as <-.
+      apply inventory_sequence_spec in Hpositions. congruence.
+  - split; [discriminate | intros [Hpair _]; discriminate].
 Qed.
 
-(** Each selected entry identifies its original position and declaration. *)
-Lemma inventory_scan_sound : forall sl tb offset f slot,
-  In (f, slot) (inventory_scan tb sl offset) ->
-  exists n positions j, nth_error sl j = Some (f, positions) /\
+(** Each selected entry identifies its original position, its declaration and its argument
+    count. *)
+Lemma inventory_scan_sound : forall sl tb offset f slot n,
+  In (f, (slot, n)) (inventory_scan tb sl offset) ->
+  exists positions j, nth_error sl j = Some (f, positions) /\
     slot = (offset + N.of_nat j)%N /\ trie_get f tb = Some (n, OId) /\
     positions = seq 0 (S n).
 Proof.
-  induction sl as [|[head positions] sl IH]; intros tb offset f slot Hin;
+  induction sl as [|[head positions] sl IH]; intros tb offset f slot n Hin;
     cbn [inventory_scan] in Hin; [contradiction |].
-  destruct (inventory_slot tb head positions) eqn:Hslot.
+  destruct (inventory_slot tb head positions) as [arity|] eqn:Hslot.
   - destruct Hin as [Heq | Hin].
-    + injection Heq as <- <-.
-      apply inventory_slot_spec in Hslot as [n [Hget Hseq]].
-      exists n, positions, 0. cbn [nth_error N.of_nat]. repeat split; auto; lia.
-    + destruct (IH _ _ _ _ Hin) as [n [perm [j [Hnth [Hindex [Hget Hseq]]]]]].
+    + injection Heq as <- <- <-.
+      apply inventory_slot_spec in Hslot as [Hget Hseq].
+      exists positions, 0. cbn [nth_error N.of_nat]. repeat split; auto; lia.
+    + destruct (IH _ _ _ _ _ Hin) as [perm [j [Hnth [Hindex [Hget Hseq]]]]].
       assert (Hneq : f <> head).
       { intro Heq. subst f. rewrite PTrie.get_remove_same in Hget. discriminate. }
       rewrite PTrie.get_remove_other in Hget by exact Hneq.
-      exists n, perm, (S j). cbn [nth_error]. repeat split; auto.
+      exists perm, (S j). cbn [nth_error]. repeat split; auto.
       rewrite Nat2N.inj_succ. lia.
-  - destruct (IH _ _ _ _ Hin) as [n [perm [j [Hnth [Hindex [Hget Hseq]]]]]].
-    exists n, perm, (S j). cbn [nth_error]. repeat split; auto.
+  - destruct (IH _ _ _ _ _ Hin) as [perm [j [Hnth [Hindex [Hget Hseq]]]]].
+    exists perm, (S j). cbn [nth_error]. repeat split; auto.
     rewrite Nat2N.inj_succ. lia.
 Qed.
 
@@ -127,12 +138,12 @@ Lemma inventory_scan_nodup : forall sl tb offset,
 Proof.
   induction sl as [|[f positions] sl IH]; intros tb offset; cbn [inventory_scan].
   - constructor.
-  - destruct (inventory_slot tb f positions); [|apply IH].
+  - destruct (inventory_slot tb f positions) as [arity|]; [|apply IH].
     cbn [map fst]. constructor; [|apply IH].
-    intro Hin. apply in_map_iff in Hin as [[g slot] [Heq Hin]].
+    intro Hin. apply in_map_iff in Hin as [[g [slot n]] [Heq Hin]].
     cbn [fst] in Heq. subst g.
-    destruct (inventory_scan_sound _ _ _ _ _ Hin)
-      as [n [perm [j [_ [_ [Hget _]]]]]].
+    destruct (inventory_scan_sound _ _ _ _ _ _ Hin)
+      as [perm [j [_ [_ [Hget _]]]]].
     rewrite PTrie.get_remove_same in Hget. discriminate.
 Qed.
 
@@ -143,7 +154,8 @@ Lemma inventory_scan_complete : forall sl tb offset f n,
 Proof.
   induction sl as [|[head positions] sl IH]; intros tb offset f n Hget Hin;
     [contradiction |].
-  cbn [inventory_scan]. destruct (inventory_slot tb head positions) eqn:Hslot.
+  cbn [inventory_scan].
+  destruct (inventory_slot tb head positions) as [arity|] eqn:Hslot.
   - cbn [map fst]. destruct (Pos.eq_dec f head) as [-> | Hneq]; [now left |].
     right. eapply IH.
     + rewrite PTrie.get_remove_other by exact Hneq. exact Hget.
@@ -151,9 +163,9 @@ Proof.
   - eapply IH; [exact Hget |].
     destruct Hin as [Heq | Hin]; [|exact Hin].
     injection Heq as Hhead Hpositions. subst head positions.
-    assert (Haccept : inventory_slot tb f (seq 0 (S n)) = true).
-    { apply inventory_slot_spec. exists n. auto. }
-    change (inventory_slot tb f (seq 0 (S n)) = false) in Hslot.
+    assert (Haccept : inventory_slot tb f (seq 0 (S n)) = Some n).
+    { apply inventory_slot_spec. auto. }
+    change (inventory_slot tb f (seq 0 (S n)) = None) in Hslot.
     rewrite Haccept in Hslot. discriminate.
 Qed.
 
@@ -220,7 +232,7 @@ Proof.
     { rewrite N2Nat.inj_succ. cbn [length] in Hbound. lia. }
     pose proof (inventory_counter_width offset bound ltac:(cbn [length] in Hbound; lia))
       as Hwidth.
-    cbn [inventory_scan]. destruct (inventory_slot tb f positions).
+    cbn [inventory_scan]. destruct (inventory_slot tb f positions) as [arity|].
     + specialize (IH (PTrieCode.remove f tb) (N.succ offset) bound Hnext).
       cbn [inventory_bits inventory_slot_bits fold_right fst snd] in *.
       unfold inventory_bits, inventory_slot_bits in IH. nia.
@@ -298,7 +310,7 @@ Proof.
     assert (HwidthN : (N.of_nat (N.size_nat offset) <=
       N.of_nat (Nat.log2 bound + 1))%N) by lia.
     time_unfold @T_inventory_scan. time_simpl. time_cbn.
-    destruct (inventory_slot tb f positions);
+    destruct (inventory_slot tb f positions) as [arity|];
       unfold inventory_slot_bits in *;
       cbn [fold_right fst snd] in *;
       rewrite !Nat2N.inj_add in *;
@@ -1792,13 +1804,13 @@ End ConstructorRows.
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
   Definition inventory (ds : list decl) (sl : list (positive * list nat))
-      : list (positive * N) := inventory_scan (inventory_decl_table ds) sl 0%N.
+      : list (positive * (N * nat)) := inventory_scan (inventory_decl_table ds) sl 0%N.
   (* STUB-CODE *)
-  Definition best (_ : list (positive * N)) (_ : D.t) : extraction_best V.t := [].
+  Definition best (_ : list (positive * (N * nat))) (_ : D.t) : extraction_best V.t := [].
   Definition check_dag (db : D.t) (c : positive) (g : extraction_dag V.t) : option N :=
     dag_check (dag_check_row (D.ids db) (fun i => fst (D.find i db))
       (fun f k => fst (D.lookup f k db))) C.fn_cost C.val_cost g c.
-  Definition extract (cs : list (positive * N)) (db : D.t) (c : positive)
+  Definition extract (cs : list (positive * (N * nat))) (db : D.t) (c : positive)
       : option (extraction_dag V.t) :=
     if N.ltb (D.ids db) (Npos c) then None else
       extraction_candidate (check_dag db) c (fst (D.find c db)) (best cs db).
@@ -1826,10 +1838,10 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
         eapply inventory_scan_complete.
         * rewrite inventory_decl_lookup, Hkind, Hsorts. reflexivity.
         * exact (Hfull f ss Hkind Hsorts).
-      + intro Hin. apply in_map_iff in Hin as [[g slot] [Heq Hin]].
+      + intro Hin. apply in_map_iff in Hin as [[g [slot n]] [Heq Hin]].
         cbn [fst] in Heq. subst g.
-        destruct (inventory_scan_sound _ _ _ _ _ Hin)
-          as [n [positions [j [_ [_ [Hget _]]]]]].
+        destruct (inventory_scan_sound _ _ _ _ _ _ Hin)
+          as [positions [j [_ [_ [Hget _]]]]].
         rewrite inventory_decl_lookup in Hget.
         destruct (lookup_sorts ds f), (lookup_kind ds f) as [out|];
           try discriminate.
@@ -1838,9 +1850,9 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
       + intros f k i Hrow.
         destruct (Hsorted _ _ _ Hrow) as [out [_ [Hkind Hout]]].
         destruct out; [discriminate |exact Hkind |discriminate].
-      + intros f slot Hin.
-        destruct (inventory_scan_sound _ _ _ _ _ Hin)
-          as [n [positions [j [Hnth [Hindex [Hget Hpositions]]]]]].
+      + intros f slot n Hin.
+        destruct (inventory_scan_sound _ _ _ _ _ _ Hin)
+          as [positions [j [Hnth [Hindex [Hget Hpositions]]]]].
         cbn [N.add] in Hindex. subst slot positions.
         exists (seq 0 (S n)). split.
         * unfold D.slot_of. rewrite Hslots, Nat2N.id. exact Hnth.
@@ -1848,12 +1860,13 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
           destruct (Hsorted _ _ _ Hrow) as [out [Hsorts [Hkind Hout]]].
           rewrite inventory_decl_lookup, Hsorts, <- Hkinds, Hkind in Hget.
           injection Hget as Hlen Hout_kind. subst out.
+          rewrite length_map in Hlen.
           destruct o as [[i|v]|]; try discriminate.
+          split; [exact Hlen |]. split; [exists i; reflexivity |].
           cbn [option_list]. unfold D.permute.
           replace (S n) with (length (k ++ [Id i])).
           -- apply inventory_permute_full.
-          -- rewrite length_map in Hlen. rewrite length_app.
-             cbn [length]. lia.
+          -- rewrite length_app. cbn [length]. lia.
   Qed.
 
   Lemma unfold_spec : forall g c e, NoDup (map fst g) ->
@@ -1871,9 +1884,7 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V)
   Lemma best_optimal : forall cs db c e, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     represents (D.view db) (Id c) e ->
     exists n ch, In (D.repr db c, (n, ch)) (best cs db) /\ (n <= tree_cost e)%N.
-  Proof. Admitted. (* OPEN: Operations-only enumeration needs a proved depth bound or exposed arity.
-    INDEX.next has no such lower-bound law; IndexFuelCounterexample in ExtractTest
-    validates a lawful constant-next index containing a deeper tuple. *)
+  Proof. Admitted. (* STUB *)
 
   Lemma best_attained : forall cs db c n ch, D.wf db -> D.canonical db ->
     ctor_inventory cs db ->
@@ -1999,10 +2010,11 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Proof.
     intros cs db f k i [_ [Hkinds [Hconstructors Hslots]]] Hrow.
     pose proof (proj1 (Hkinds f) (Hconstructors f k i Hrow)) as Hname.
-    apply in_map_iff in Hname as [[g slot] [Heq Hin]]. cbn [fst] in Heq. subst g.
-    destruct (Hslots f slot Hin) as [perm [Hslot Hfull]].
+    apply in_map_iff in Hname as [[g [slot n]] [Heq Hin]]. cbn [fst] in Heq. subst g.
+    destruct (Hslots f slot n Hin) as [perm [Hslot Hfull]].
     exists slot, perm. split; [exact Hslot |].
-    exact (Hfull k (Some (Id i)) Hrow).
+    destruct (Hfull k (Some (Id i)) Hrow) as [_ [_ Hpermute]].
+    exact Hpermute.
   Qed.
 
   Lemma R_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
@@ -2163,9 +2175,9 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
 
   Definition state := unit.
   (* STUB-CODE *)
-  Definition initial (_ : list (positive * N)) (_ : D.t) : state := tt.
+  Definition initial (_ : list (positive * (N * nat))) (_ : D.t) : state := tt.
   (* STUB-CODE *)
-  Definition step (_ : list (positive * N)) (_ : D.t) (_ : state)
+  Definition step (_ : list (positive * (N * nat))) (_ : D.t) (_ : state)
       : state + extraction_best V.t := inr [].
   (* STUB-CODE *)
   Definition finalised (_ : state) : extraction_best V.t := [].
@@ -2185,7 +2197,7 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   TimeFun ready.
   TimeFun heap_potential.
   Definition k_step : N := 1. (* STUB *)
-  Definition reachable (sl : list (positive * N)) (db : D.t) (s : state) : Prop :=
+  Definition reachable (sl : list (positive * (N * nat))) (db : D.t) (s : state) : Prop :=
     clos_refl_trans state (fun a b => step sl db a = inl b) (initial sl db) s.
   Definition knuth_inv (db : D.t) (s : state) : Prop :=
     forall c n ch, In (c, (n, ch)) (finalised s) ->
