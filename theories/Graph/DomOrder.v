@@ -9378,3 +9378,1495 @@ Qed.
 
 
 Local Transparent dom_order_derived T_dom_order_derived.
+
+(** * Active-source credit for stale inverse rows *)
+
+Definition dom_order_live (weight : positive -> nat) (keys : list positive)
+    (active : ptrie bool) : nat :=
+  fold_right (fun key total =>
+    (match trie_get key active with Some true => weight key | _ => 0 end) + total) 0 keys.
+
+Definition dom_order_live_rows keys active (rows : ptrie (list N)) : nat :=
+  dom_order_live
+    (fun key => length (match trie_get key rows with None => [] | Some row => row end)) keys active.
+
+(** A flag update outside the finite domain changes no live credit. *)
+Lemma dom_order_live_absent weight keys active key flag :
+  ~ In key keys ->
+  dom_order_live weight keys (PTrieCode.set key flag active) = dom_order_live weight keys active.
+Proof.
+  induction keys as [|head rest IH]; intro Houtside; [reflexivity|].
+  unfold dom_order_live in *. cbn [fold_right].
+  rewrite PTrie.get_set_other by (intro Heq; apply Houtside; now left).
+  rewrite IH; [reflexivity|]. intro Hin. apply Houtside. now right.
+Qed.
+
+(** Retiring a live key consumes exactly its weight from a distinct inventory. *)
+Lemma dom_order_live_retire weight keys active key :
+  NoDup keys -> In key keys -> trie_get key active = Some true ->
+  dom_order_live weight keys (PTrieCode.set key false active) + weight key =
+    dom_order_live weight keys active.
+Proof.
+  intro Hunique. induction Hunique as [|head rest Hfresh Hunique IH];
+    intros Hin Hactive; [contradiction|].
+  destruct Hin as [<-|Hin].
+  - cbn [dom_order_live fold_right]. rewrite PTrie.get_set_same, Hactive.
+    change (dom_order_live weight rest (PTrieCode.set head false active) + weight head =
+      weight head + dom_order_live weight rest active).
+    rewrite dom_order_live_absent by exact Hfresh. lia.
+  - assert (Hdifferent : head <> key) by (intro Heq; subst head; contradiction).
+    specialize (IH Hin Hactive).
+    change ((match trie_get head (PTrieCode.set key false active) with
+      | Some true => weight head | _ => 0 end) +
+        dom_order_live weight rest (PTrieCode.set key false active) + weight key =
+      (match trie_get head active with Some true => weight head | _ => 0 end) +
+        dom_order_live weight rest active).
+    rewrite PTrie.get_set_other by exact Hdifferent.
+    rewrite <- Nat.add_assoc, IH. reflexivity.
+Qed.
+
+(** Live unit credit never exceeds the original finite domain. *)
+Lemma dom_order_live_count_bound keys active : dom_order_live (fun _ => 1%nat) keys active <= length keys.
+Proof.
+  induction keys as [|key rest IH]; [reflexivity|].
+  unfold dom_order_live in *. cbn [fold_right length].
+  destruct (trie_get key active) as [[|]|]; lia.
+Qed.
+
+(** Live row credit is bounded by the total row mass of the same finite domain. *)
+Lemma dom_order_live_rows_bound keys active rows :
+  dom_order_live_rows keys active rows <= dom_lt_row_mass keys rows.
+Proof.
+  induction keys as [|key rest IH]; [reflexivity|].
+  unfold dom_order_live_rows, dom_order_live, dom_lt_row_mass in *.
+  cbn [fold_right]. destruct (trie_get key active) as [[|]|]; lia.
+Qed.
+
+(** Agreement of weights on the counted keys determines live credit. *)
+Lemma dom_order_live_weights weight other keys active :
+  (forall key, In key keys -> weight key = other key) ->
+  dom_order_live weight keys active = dom_order_live other keys active.
+Proof.
+  induction keys as [|head rest IH]; intro Hweights; [reflexivity|].
+  unfold dom_order_live in *. cbn [fold_right].
+  rewrite Hweights by now left.
+  rewrite IH; [reflexivity|]. intros key Hin. apply Hweights. now right.
+Qed.
+
+(** An inverse-row update outside the counted domain changes no live row credit. *)
+Lemma dom_order_live_rows_absent keys active rows key row :
+  ~ In key keys -> dom_order_live_rows keys active (PTrieCode.set key row rows) =
+    dom_order_live_rows keys active rows.
+Proof.
+  intro Houtside. unfold dom_order_live_rows. apply dom_order_live_weights.
+  intros other Hother. rewrite PTrie.get_set_other; [reflexivity|].
+  intro Heq. subst other. contradiction.
+Qed.
+
+(** Appending an inverse entry adds at most one live credit, even at an already retired source. *)
+Lemma dom_order_live_rows_push keys active rows key value :
+  NoDup keys ->
+  dom_order_live_rows keys active (PTrieCode.set key
+    (value :: match trie_get key rows with None => [] | Some row => row end) rows) <=
+    S (dom_order_live_rows keys active rows).
+Proof.
+  intro Hunique. induction Hunique as [|head rest Hfresh Hunique IH]; [cbn; lia|].
+  destruct (Pos.eq_dec head key) as [->|Hdifferent].
+  - unfold dom_order_live_rows, dom_order_live. cbn [fold_right].
+    rewrite PTrie.get_set_same. cbn [length].
+    change ((match trie_get key active with
+      | Some true => S (length (match trie_get key rows with None => [] | Some row => row end))
+      | _ => 0
+      end) + dom_order_live_rows rest active (PTrieCode.set key
+        (value :: match trie_get key rows with None => [] | Some row => row end) rows) <=
+      S ((match trie_get key active with
+      | Some true => length (match trie_get key rows with None => [] | Some row => row end)
+      | _ => 0
+      end) + dom_order_live_rows rest active rows)).
+    rewrite dom_order_live_rows_absent by exact Hfresh.
+    destruct (trie_get key active) as [[|]|]; lia.
+  - change ((match trie_get head active with
+      | Some true => length (match trie_get head (PTrieCode.set key
+          (value :: match trie_get key rows with None => [] | Some row => row end) rows) with
+          None => [] | Some row => row end)
+      | _ => 0 end) + dom_order_live_rows rest active (PTrieCode.set key
+        (value :: match trie_get key rows with None => [] | Some row => row end) rows) <=
+      S ((match trie_get head active with
+        | Some true => length (match trie_get head rows with None => [] | Some row => row end)
+        | _ => 0 end) + dom_order_live_rows rest active rows)).
+    rewrite PTrie.get_set_other by exact Hdifferent.
+    rewrite <- Nat.add_succ_r. now apply Nat.add_le_mono_l.
+Qed.
+
+(** One queried row is part of any finite row inventory containing its key. *)
+Lemma dom_order_row_mass_member {A : Type} keys (rows : ptrie (list A)) key :
+  In key keys ->
+  length (match trie_get key rows with None => [] | Some row => row end) <=
+    dom_lt_row_mass keys rows.
+Proof.
+  induction keys as [|head rest IH]; intro Hin; [contradiction|].
+  change (length (match trie_get key rows with None => [] | Some row => row end) <=
+    length (match trie_get head rows with None => [] | Some row => row end) +
+      dom_lt_row_mass rest rows).
+  destruct Hin as [<-|Hin]; [lia|]. specialize (IH Hin). lia.
+Qed.
+
+(** A true activity observation exposes the exact stored flag needed by retirement accounting. *)
+Lemma dom_order_active_get active vertex :
+  dom_order_active active vertex = true -> trie_get (dom_lt_key vertex) active = Some true.
+Proof.
+  unfold dom_order_active. destruct (trie_get (dom_lt_key vertex) active) as [[|]|];
+    intro Hactive; try discriminate Hactive; reflexivity.
+Qed.
+
+(** Retiring an active source consumes its entire retained inverse row. *)
+Lemma dom_order_live_rows_retire keys active rows vertex :
+  NoDup keys -> In (dom_lt_key vertex) keys -> dom_order_active active vertex = true ->
+  dom_order_live_rows keys (PTrieCode.set (dom_lt_key vertex) false active) rows +
+    length (dom_order_row rows vertex) = dom_order_live_rows keys active rows.
+Proof.
+  intros Hunique Hmember Hactive. unfold dom_order_live_rows, dom_order_row.
+  apply dom_order_live_retire; [exact Hunique|exact Hmember|].
+  now apply dom_order_active_get.
+Qed.
+
+Definition dom_order_removal_credit keys (st : dom_order_removal_state) : nat :=
+  length (removal_queue st) + 2 * length (removal_fallback st) +
+  5 * dom_order_live (fun _ => 1%nat) keys (removal_active st) +
+  2 * (dom_order_live_rows keys (removal_active st) (source_children (removal_blue st)) +
+    dom_order_live_rows keys (removal_active st) (source_children (removal_red st))) + 1.
+(** * Stale source rows bound all source counts *)
+
+Definition dom_source_counts_fit (tree : dom_source_tree) : Prop :=
+  forall vertex, (dom_order_number (source_count tree) vertex <=
+    N.of_nat (length (dom_order_row (source_children tree) vertex)))%N.
+
+(** Empty source tables have zero counts and empty inverse rows. *)
+Lemma dom_source_empty_counts : dom_source_counts_fit (DomSourceTree Empty Empty Empty).
+Proof.
+  intro vertex. unfold dom_order_number, dom_order_row.
+  cbn [source_count source_children]. now rewrite !PTrie.get_empty.
+Qed.
+
+(** Incrementing a source count also retains one new inverse-row occurrence. *)
+Lemma dom_source_add_counts tree vertex source parent :
+  dom_source_counts_fit tree -> dom_source_counts_fit (dom_source_add tree vertex source parent).
+Proof.
+  intros Hcounts query. unfold dom_source_add.
+  destruct (N.eqb source parent); [exact (Hcounts query)|].
+  cbn [source_count source_children].
+  destruct (N.eq_dec query source) as [->|Hdifferent].
+  - unfold dom_order_number at 1. unfold dom_order_row at 1.
+    rewrite !PTrie.get_set_same. cbn [length].
+    pose proof (Hcounts source) as Hsource. rewrite Nat2N.inj_succ. lia.
+  - unfold dom_order_number, dom_order_row in *.
+    rewrite !PTrie.get_set_other by
+      (intro Hkey; apply dom_lt_key_injective in Hkey; contradiction).
+    exact (Hcounts query).
+Qed.
+
+(** Decrementing a source count preserves its upper bound by the retained stale row. *)
+Lemma dom_source_remove_counts tree vertex parent :
+  dom_source_counts_fit tree -> dom_source_counts_fit (dom_source_remove tree vertex parent).
+Proof.
+  intros Hcounts query. unfold dom_source_remove.
+  destruct (N.eqb (dom_lt_identity (source_parent tree) vertex) parent);
+    [exact (Hcounts query)|].
+  cbn [source_count source_children].
+  destruct (N.eq_dec query (dom_lt_identity (source_parent tree) vertex)) as [->|Hdifferent].
+  - unfold dom_order_number at 1. rewrite PTrie.get_set_same.
+    eapply N.le_trans; [apply N.le_pred_l|apply Hcounts].
+  - unfold dom_order_number at 1. rewrite PTrie.get_set_other;
+      [apply Hcounts|].
+    intro Hkey. apply dom_lt_key_injective in Hkey. contradiction.
+Qed.
+
+(** Redirection preserves the count-to-stale-row inequality through its remove and add steps. *)
+Lemma dom_source_redirect_counts tree vertex source parent :
+  dom_source_counts_fit tree ->
+  dom_source_counts_fit (dom_source_redirect tree vertex source parent).
+Proof.
+  intro Hcounts. unfold dom_source_redirect.
+  apply dom_source_add_counts. now apply dom_source_remove_counts.
+Qed.
+
+(** Initial source counts are bounded by the inverse rows created by the same fold. *)
+Lemma dom_source_initial_counts parents sources order :
+  dom_source_counts_fit (dom_source_initial parents sources order).
+Proof.
+  unfold dom_source_initial.
+  eapply dom_lt_fold_forall with (Inv := dom_source_counts_fit) (P := fun _ => True).
+  - apply Forall_forall. auto.
+  - apply dom_source_empty_counts.
+  - intros tree vertex Htree Hvertex.
+    destruct (trie_get (dom_lt_key vertex) parents); [now apply dom_source_add_counts|exact Htree].
+Qed.
+
+(** Source insertion adds at most one retained inverse entry over a distinct finite key domain. *)
+Lemma dom_source_add_mass keys tree vertex source parent :
+  NoDup keys -> dom_lt_row_mass keys (source_children (dom_source_add tree vertex source parent)) <=
+    S (dom_lt_row_mass keys (source_children tree)).
+Proof.
+  intro Hunique. unfold dom_source_add.
+  destruct (N.eqb source parent); cbn [source_children]; [lia|].
+  unfold dom_order_row. now apply dom_lt_row_mass_push.
+Qed.
+
+(** Removing a count retains the complete stale inverse-row table. *)
+Lemma dom_source_remove_children tree vertex parent :
+  source_children (dom_source_remove tree vertex parent) = source_children tree.
+Proof.
+  unfold dom_source_remove.
+  destruct (N.eqb (dom_lt_identity (source_parent tree) vertex) parent); reflexivity.
+Qed.
+
+(** A redirection creates at most one new stale inverse occurrence. *)
+Lemma dom_source_redirect_mass keys tree vertex source parent :
+  NoDup keys ->
+  dom_lt_row_mass keys (source_children (dom_source_redirect tree vertex source parent)) <=
+    S (dom_lt_row_mass keys (source_children tree)).
+Proof.
+  intro Hunique. unfold dom_source_redirect.
+  pose proof (dom_source_add_mass keys (dom_source_remove tree vertex parent)
+    vertex source parent Hunique) as Hmass.
+  now rewrite dom_source_remove_children in Hmass.
+Qed.
+
+(** A source insertion creates at most one live inverse occurrence under any activity mask. *)
+Lemma dom_source_add_live keys active tree vertex source parent :
+  NoDup keys ->
+  dom_order_live_rows keys active (source_children (dom_source_add tree vertex source parent)) <=
+    S (dom_order_live_rows keys active (source_children tree)).
+Proof.
+  intro Hunique. unfold dom_source_add.
+  destruct (N.eqb source parent); cbn [source_children]; [lia|].
+  unfold dom_order_row. now apply dom_order_live_rows_push.
+Qed.
+
+(** A redirection creates at most one live inverse occurrence under the new activity mask. *)
+Lemma dom_source_redirect_live keys active tree vertex source parent :
+  NoDup keys ->
+  dom_order_live_rows keys active
+    (source_children (dom_source_redirect tree vertex source parent)) <=
+    S (dom_order_live_rows keys active (source_children tree)).
+Proof.
+  intro Hunique. unfold dom_source_redirect.
+  pose proof (dom_source_add_live keys active (dom_source_remove tree vertex parent)
+    vertex source parent Hunique) as Hmass.
+  now rewrite dom_source_remove_children in Hmass.
+Qed.
+(** * Prefix scans of inverse rows and the shrinking fallback suffix *)
+
+Fixpoint dom_order_fallback_steps active (remaining : list N) : nat :=
+  match remaining with
+  | [] => 0
+  | vertex :: rest =>
+    if dom_order_active active vertex then 1 else S (dom_order_fallback_steps active rest)
+  end.
+
+(** An exhausted fallback has scanned its entire remaining suffix. *)
+Lemma dom_order_fallback_none_steps active remaining :
+  dom_order_fallback active remaining = None ->
+  dom_order_fallback_steps active remaining = length remaining.
+Proof.
+  induction remaining as [|vertex rest IH]; intro Hnone; [reflexivity|].
+  cbn [dom_order_fallback] in Hnone. cbn [dom_order_fallback_steps length].
+  destruct (dom_order_active active vertex); [discriminate Hnone|].
+  now rewrite (IH Hnone).
+Qed.
+
+(** A successful fallback consumes exactly the prefix before its returned residual suffix. *)
+Lemma dom_order_fallback_some_steps active remaining vertex rest :
+  dom_order_fallback active remaining = Some (vertex, rest) ->
+  dom_order_fallback_steps active remaining + length rest = length remaining.
+Proof.
+  induction remaining as [|head tail IH]; intro Hsome; [discriminate Hsome|].
+  cbn [dom_order_fallback] in Hsome. cbn [dom_order_fallback_steps length].
+  destruct (dom_order_active active head).
+  - injection Hsome as <- <-. lia.
+  - specialize (IH Hsome). lia.
+Qed.
+
+(** A successful retirement charges both retained inverse rows, whichever row it actually scans. *)
+Definition dom_order_removal_work (st : dom_order_removal_state) : nat :=
+  match removal_queue st with
+  | [] => dom_order_fallback_steps (removal_active st) (removal_fallback st) + 1
+  | vertex :: _ =>
+    let blue := removal_blue st in
+    let red := removal_red st in
+    if dom_order_active (removal_active st) vertex then
+      if N.ltb (N.add (dom_order_number (source_count blue) vertex)
+          (dom_order_number (source_count red) vertex))
+        (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+          (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N) then
+        length (dom_order_row (source_children blue) vertex) +
+          length (dom_order_row (source_children red) vertex) + 1
+      else 1
+    else 1
+  end.
+
+(** Every removal callback carries at least its administrative work unit. *)
+Lemma dom_order_removal_work_positive st : 1 <= dom_order_removal_work st.
+Proof.
+  destruct st as [blue red active queue remaining records].
+  unfold dom_order_removal_work. cbn [removal_blue removal_red removal_active
+    removal_queue removal_fallback].
+  destruct queue as [|vertex rest]; [lia|].
+  destruct (dom_order_active active vertex); [|lia].
+  destruct (N.ltb
+    (N.add (dom_order_number (source_count blue) vertex) (dom_order_number (source_count red) vertex))
+    (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+      (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N)); lia.
+Qed.
+(** * Linear stale-row and retirement budgets *)
+
+Definition dom_order_active_domain keys active : Prop :=
+  forall vertex, dom_order_active active vertex = true -> In (dom_lt_key vertex) keys.
+
+(** Retiring a key introduces no new active numeric key. *)
+Lemma dom_order_active_domain_retire keys active vertex :
+  dom_order_active_domain keys active ->
+  dom_order_active_domain keys (PTrieCode.set (dom_lt_key vertex) false active).
+Proof.
+  intros Hdomain query Hquery. rewrite dom_order_active_set in Hquery.
+  destruct (N.eqb query vertex); [discriminate Hquery|now apply Hdomain].
+Qed.
+
+(** Initial activation uses only the explicitly supplied finite key universe. *)
+Lemma dom_order_active_domain_initial keys order :
+  Forall (fun vertex => In (dom_lt_key vertex) keys) order ->
+  dom_order_active_domain keys
+    (fold_left (fun active vertex => PTrieCode.set (dom_lt_key vertex) true active) order Empty).
+Proof.
+  intros Horder vertex Hactive. apply dom_order_active_fold_domain in Hactive.
+  destruct Hactive as [Hin|Hempty].
+  - now apply Forall_forall with (x := vertex) in Horder.
+  - unfold dom_order_active in Hempty. rewrite PTrie.get_empty in Hempty. discriminate Hempty.
+Qed.
+
+Definition dom_order_stale_credit keys (st : dom_order_removal_state) : nat :=
+  dom_lt_row_mass keys (source_children (removal_blue st)) +
+  dom_lt_row_mass keys (source_children (removal_red st)) +
+  dom_order_live (fun _ => 1%nat) keys (removal_active st).
+
+(** Each removal callback keeps its live vertices inside the original finite domain. *)
+Lemma dom_order_remove_step_domain keys parents st :
+  dom_order_active_domain keys (removal_active st) ->
+  match dom_order_remove_step parents st with
+  | inl next => dom_order_active_domain keys (removal_active next)
+  | inr _ => True
+  end.
+Proof.
+  destruct st as [blue red active queue remaining records]. intro Hdomain.
+  cbn [removal_active] in Hdomain.
+  unfold dom_order_remove_step.
+  cbn [removal_blue removal_red removal_active removal_queue
+    removal_fallback removal_records].
+  destruct queue as [|vertex queue].
+  - destruct (dom_order_fallback active remaining) as [[vertex rest]|]; [|exact I].
+    cbn [removal_active]. now apply dom_order_active_domain_retire.
+  - destruct (dom_order_active active vertex); [|exact Hdomain].
+    destruct (N.ltb
+      (N.add (dom_order_number (source_count blue) vertex)
+        (dom_order_number (source_count red) vertex))
+      (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+        (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N)); [|exact Hdomain].
+    cbn [removal_active]. now apply dom_order_active_domain_retire.
+Qed.
+
+(** Source-count bounds remain valid while removals and redirects retain stale rows. *)
+Lemma dom_order_remove_step_counts parents st :
+  dom_source_counts_fit (removal_blue st) -> dom_source_counts_fit (removal_red st) ->
+  match dom_order_remove_step parents st with
+  | inl next => dom_source_counts_fit (removal_blue next) /\ dom_source_counts_fit (removal_red next)
+  | inr _ => True
+  end.
+Proof.
+  destruct st as [blue red active queue remaining records]. intros Hblue Hred.
+  cbn [removal_blue removal_red] in Hblue, Hred.
+  unfold dom_order_remove_step.
+  cbn [removal_blue removal_red removal_active removal_queue
+    removal_fallback removal_records].
+  destruct queue as [|vertex queue].
+  - destruct (dom_order_fallback active remaining) as [[vertex rest]|];
+      [exact (conj Hblue Hred)|exact I].
+  - destruct (dom_order_active active vertex); [|exact (conj Hblue Hred)].
+    destruct (N.ltb
+      (N.add (dom_order_number (source_count blue) vertex)
+        (dom_order_number (source_count red) vertex))
+      (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+        (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N));
+      [|exact (conj Hblue Hred)].
+    destruct (N.eqb (dom_order_number (source_count red) vertex) 0%N);
+      cbn [removal_blue removal_red].
+    + destruct (dom_source_child (source_parent blue) active vertex
+        (dom_order_row (source_children blue) vertex)).
+      * split.
+        -- apply dom_source_redirect_counts. now apply dom_source_remove_counts.
+        -- now apply dom_source_remove_counts.
+      * split; now apply dom_source_remove_counts.
+    + destruct (dom_source_child (source_parent red) active vertex
+        (dom_order_row (source_children red) vertex)).
+      * split.
+        -- now apply dom_source_remove_counts.
+        -- apply dom_source_redirect_counts. now apply dom_source_remove_counts.
+      * split; now apply dom_source_remove_counts.
+Qed.
+
+(** Retiring one source pays for the at most one stale inverse entry created by its redirect. *)
+Lemma dom_order_remove_step_stale keys parents st :
+  NoDup keys -> dom_order_active_domain keys (removal_active st) ->
+  match dom_order_remove_step parents st with
+  | inl next => dom_order_stale_credit keys next <= dom_order_stale_credit keys st
+  | inr _ => True
+  end.
+Proof.
+  destruct st as [blue red active queue remaining records]. intros Hunique Hdomain.
+  cbn [removal_active] in Hdomain.
+  unfold dom_order_remove_step.
+  cbn [removal_blue removal_red removal_active removal_queue
+    removal_fallback removal_records].
+  destruct queue as [|vertex queue].
+  - destruct (dom_order_fallback active remaining) as [[vertex rest]|] eqn:Hfallback;
+      [|exact I].
+    pose proof (proj1 (dom_order_fallback_active active remaining vertex rest Hfallback)) as Hactive.
+    pose proof (dom_order_live_retire (fun _ => 1%nat) keys active (dom_lt_key vertex)
+      Hunique (Hdomain vertex Hactive) (dom_order_active_get active vertex Hactive)) as Hretire.
+    unfold dom_order_stale_credit. cbn [removal_blue removal_red removal_active].
+    cbn beta in Hretire. lia.
+  - destruct (dom_order_active active vertex) eqn:Hactive; [|reflexivity].
+    destruct (N.ltb
+      (N.add (dom_order_number (source_count blue) vertex)
+        (dom_order_number (source_count red) vertex))
+      (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+        (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N)); [|reflexivity].
+    pose proof (dom_order_live_retire (fun _ => 1%nat) keys active (dom_lt_key vertex)
+      Hunique (Hdomain vertex Hactive) (dom_order_active_get active vertex Hactive)) as Hretire.
+    cbn beta in Hretire.
+    destruct (N.eqb (dom_order_number (source_count red) vertex) 0%N).
+    + destruct (dom_source_child (source_parent blue) active vertex
+        (dom_order_row (source_children blue) vertex)) as [child|].
+      * pose proof (dom_source_redirect_mass keys
+          (dom_source_remove blue vertex (dom_lt_identity parents vertex)) child
+          (dom_lt_identity (source_parent blue) vertex) (dom_lt_identity parents vertex)
+          Hunique) as Hredirect.
+        rewrite dom_source_remove_children in Hredirect.
+        unfold dom_order_stale_credit. cbn [removal_blue removal_red removal_active].
+        rewrite dom_source_remove_children. clear -Hretire Hredirect. lia.
+      * unfold dom_order_stale_credit. cbn [removal_blue removal_red removal_active].
+        rewrite !dom_source_remove_children. lia.
+    + destruct (dom_source_child (source_parent red) active vertex
+        (dom_order_row (source_children red) vertex)) as [child|].
+      * pose proof (dom_source_redirect_mass keys
+          (dom_source_remove red vertex (dom_lt_identity parents vertex)) child
+          (dom_lt_identity (source_parent red) vertex) (dom_lt_identity parents vertex)
+          Hunique) as Hredirect.
+        rewrite dom_source_remove_children in Hredirect.
+        unfold dom_order_stale_credit. cbn [removal_blue removal_red removal_active].
+        rewrite dom_source_remove_children. clear -Hretire Hredirect. lia.
+      * unfold dom_order_stale_credit. cbn [removal_blue removal_red removal_active].
+        rewrite !dom_source_remove_children. lia.
+Qed.
+
+(** Each initial source insertion contributes at most one stale inverse entry. *)
+Lemma dom_source_initial_mass keys parents sources order :
+  NoDup keys -> dom_lt_row_mass keys (source_children (dom_source_initial parents sources order)) <=
+    length order.
+Proof.
+  intro Hunique.
+  assert (Hfold : forall xs tree,
+    dom_lt_row_mass keys (source_children (fold_left
+      (fun tree vertex => match trie_get (dom_lt_key vertex) parents with
+      | None => tree
+      | Some parent => dom_source_add tree vertex (dom_lt_identity sources vertex) parent
+      end) xs tree)) <= length xs + dom_lt_row_mass keys (source_children tree)).
+  { induction xs as [|vertex rest IH]; intro tree; [cbn [fold_left length]; lia|].
+    cbn [fold_left length].
+    destruct (trie_get (dom_lt_key vertex) parents) as [parent|].
+    - pose proof (dom_source_add_mass keys tree vertex (dom_lt_identity sources vertex)
+        parent Hunique) as Hhead.
+      specialize (IH (dom_source_add tree vertex (dom_lt_identity sources vertex) parent)). lia.
+    - specialize (IH tree). lia. }
+  unfold dom_source_initial.
+  pose proof (Hfold order (DomSourceTree Empty Empty Empty)) as Hmass.
+  cbn [source_children] in Hmass. now rewrite dom_lt_row_mass_empty, Nat.add_0_r in Hmass.
+Qed.
+
+(** A continuing removal spends enough queue, suffix and live-row credit for its chosen work. *)
+Lemma dom_order_remove_step_credit keys parents st next :
+  NoDup keys -> dom_order_active_domain keys (removal_active st) ->
+  dom_order_remove_step parents st = inl next ->
+  dom_order_removal_credit keys next + dom_order_removal_work st <=
+    dom_order_removal_credit keys st.
+Proof.
+  destruct st as [blue red active queue remaining records].
+  intros Hunique Hdomain Hstep. cbn [removal_active] in Hdomain.
+  unfold dom_order_remove_step in Hstep.
+  cbn [removal_blue removal_red removal_active removal_queue
+    removal_fallback removal_records] in Hstep.
+  unfold dom_order_removal_work.
+  cbn [removal_blue removal_red removal_active removal_queue removal_fallback].
+  destruct queue as [|vertex queue].
+  - destruct (dom_order_fallback active remaining) as [[vertex rest]|] eqn:Hfallback;
+      [|discriminate Hstep]. injection Hstep as <-.
+    pose proof (proj1 (dom_order_fallback_active active remaining vertex rest Hfallback)) as Hactive.
+    pose proof (dom_order_live_retire (fun _ => 1%nat) keys active (dom_lt_key vertex)
+      Hunique (Hdomain vertex Hactive) (dom_order_active_get active vertex Hactive)) as Hretire.
+    pose proof (dom_order_live_rows_retire keys active (source_children blue) vertex
+      Hunique (Hdomain vertex Hactive) Hactive) as Hblue.
+    pose proof (dom_order_live_rows_retire keys active (source_children red) vertex
+      Hunique (Hdomain vertex Hactive) Hactive) as Hred.
+    pose proof (dom_order_fallback_some_steps active remaining vertex rest Hfallback) as Hsuffix.
+    unfold dom_order_removal_credit.
+    cbn [removal_blue removal_red removal_active removal_queue removal_fallback length].
+    cbn beta in Hretire. clear -Hretire Hblue Hred Hsuffix. lia.
+  - destruct (dom_order_active active vertex) eqn:Hactive.
+    + destruct (N.ltb
+        (N.add (dom_order_number (source_count blue) vertex)
+          (dom_order_number (source_count red) vertex))
+        (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+          (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N)).
+      * pose proof (dom_order_live_retire (fun _ => 1%nat) keys active (dom_lt_key vertex)
+          Hunique (Hdomain vertex Hactive) (dom_order_active_get active vertex Hactive)) as Hretire.
+        pose proof (dom_order_live_rows_retire keys active (source_children blue) vertex
+          Hunique (Hdomain vertex Hactive) Hactive) as Hblue.
+        pose proof (dom_order_live_rows_retire keys active (source_children red) vertex
+          Hunique (Hdomain vertex Hactive) Hactive) as Hred.
+        cbn beta in Hretire.
+        destruct (N.eqb (dom_order_number (source_count red) vertex) 0%N).
+        -- destruct (dom_source_child (source_parent blue) active vertex
+            (dom_order_row (source_children blue) vertex)) as [child|]; injection Hstep as <-.
+           ++ pose proof (dom_source_redirect_live keys
+                (PTrieCode.set (dom_lt_key vertex) false active)
+                (dom_source_remove blue vertex (dom_lt_identity parents vertex)) child
+                (dom_lt_identity (source_parent blue) vertex) (dom_lt_identity parents vertex)
+                Hunique) as Hredirect.
+              rewrite dom_source_remove_children in Hredirect.
+              unfold dom_order_removal_credit.
+              cbn [removal_blue removal_red removal_active removal_queue removal_fallback length].
+              rewrite dom_source_remove_children.
+              clear -Hretire Hblue Hred Hredirect. lia.
+           ++ unfold dom_order_removal_credit.
+              cbn [removal_blue removal_red removal_active removal_queue removal_fallback length].
+              rewrite !dom_source_remove_children. clear -Hretire Hblue Hred. lia.
+        -- destruct (dom_source_child (source_parent red) active vertex
+            (dom_order_row (source_children red) vertex)) as [child|]; injection Hstep as <-.
+           ++ pose proof (dom_source_redirect_live keys
+                (PTrieCode.set (dom_lt_key vertex) false active)
+                (dom_source_remove red vertex (dom_lt_identity parents vertex)) child
+                (dom_lt_identity (source_parent red) vertex) (dom_lt_identity parents vertex)
+                Hunique) as Hredirect.
+              rewrite dom_source_remove_children in Hredirect.
+              unfold dom_order_removal_credit.
+              cbn [removal_blue removal_red removal_active removal_queue removal_fallback length].
+              rewrite dom_source_remove_children.
+              clear -Hretire Hblue Hred Hredirect. lia.
+           ++ unfold dom_order_removal_credit.
+              cbn [removal_blue removal_red removal_active removal_queue removal_fallback length].
+              rewrite !dom_source_remove_children. clear -Hretire Hblue Hred. lia.
+      * injection Hstep as <-. unfold dom_order_removal_credit.
+        cbn [removal_blue removal_red removal_active removal_queue removal_fallback length]. lia.
+    + injection Hstep as <-. unfold dom_order_removal_credit.
+      cbn [removal_blue removal_red removal_active removal_queue removal_fallback length]. lia.
+Qed.
+
+(** Terminal removal spends the remaining fallback suffix from its permanent credit. *)
+Lemma dom_order_remove_stop_credit keys parents st result :
+  dom_order_remove_step parents st = inr result ->
+  dom_order_removal_work st <= dom_order_removal_credit keys st.
+Proof.
+  destruct st as [blue red active queue remaining records]. intro Hstep.
+  unfold dom_order_remove_step in Hstep.
+  cbn [removal_blue removal_red removal_active removal_queue
+    removal_fallback removal_records] in Hstep.
+  destruct queue as [|vertex queue].
+  - destruct (dom_order_fallback active remaining) as [[vertex rest]|] eqn:Hfallback;
+      [discriminate Hstep|].
+    pose proof (dom_order_fallback_none_steps active remaining Hfallback) as Hsuffix.
+    unfold dom_order_removal_credit, dom_order_removal_work.
+    cbn [removal_blue removal_red removal_active removal_queue removal_fallback length]. lia.
+  - destruct (dom_order_active active vertex); [|discriminate Hstep].
+    destruct (N.ltb
+      (N.add (dom_order_number (source_count blue) vertex)
+        (dom_order_number (source_count red) vertex))
+      (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+        (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N)); discriminate Hstep.
+Qed.
+(** A count is bounded by the complete stale-row inventory whenever its query key is included. *)
+Lemma dom_source_count_bound keys tree vertex :
+  dom_source_counts_fit tree -> In (dom_lt_key vertex) keys ->
+  (dom_order_number (source_count tree) vertex <=
+    N.of_nat (dom_lt_row_mass keys (source_children tree)))%N.
+Proof.
+  intros Hcounts Hmember. eapply N.le_trans; [exact (Hcounts vertex)|].
+  apply time_of_nat_le. unfold dom_order_row. now apply dom_order_row_mass_member.
+Qed.
+
+(** * Numeric bounds for removal clocks *)
+
+(** The enlarged removal fuel adds six bits even for a zero or unit limit. *)
+Lemma dom_order_removal_fuel_bits limit :
+  N.size_nat (N.double (N.double (N.double (N.double limit))) + 3)%N <=
+    N.size_nat limit + 6.
+Proof.
+  pose proof (dom_lt_double_width limit) as Hfirst.
+  pose proof (dom_lt_double_width (N.double limit)) as Hsecond.
+  pose proof (dom_lt_double_width (N.double (N.double limit))) as Hthird.
+  pose proof (dom_lt_double_width (N.double (N.double (N.double limit)))) as Hfourth.
+  pose proof (dom_add_width (N.double (N.double (N.double (N.double limit)))) 3%N) as Hadd.
+  change (N.size_nat (N.double (N.double (N.double (N.double limit))) + 3)%N <=
+    N.size_nat (N.double (N.double (N.double (N.double limit)))) + 2) in Hadd.
+  lia.
+Qed.
+
+(** The common polynomial budget includes all source-count sums and numeric operands. *)
+Lemma dom_order_removal_linear_bound (bound value : N) :
+  (value <= 6 * bound + 4)%N ->
+  (value <= 8 * (bound + 1) * (bound + 1))%N.
+Proof.
+  intro Hvalue. nia.
+Qed.
+
+(** Every original numeric operand inherits the polynomial width allowance. *)
+Lemma dom_order_removal_base_width count width :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  forall value, (value <= N.of_nat count)%N -> N.size_nat value <= width.
+Proof.
+  intros Hwidth value Hvalue. apply Hwidth. apply dom_order_removal_linear_bound. lia.
+Qed.
+
+(** Operand ranges, live-domain membership, counts, and stale mass form the clock invariant. *)
+Record dom_order_removal_invariant (count : nat) (st : dom_order_removal_state) : Prop := {
+  dom_order_removal_inv_range : dom_order_removal_range (N.of_nat count) st;
+  dom_order_removal_inv_domain :
+    dom_order_active_domain (dom_order_key_universe count) (removal_active st);
+  dom_order_removal_inv_blue_counts : dom_source_counts_fit (removal_blue st);
+  dom_order_removal_inv_red_counts : dom_source_counts_fit (removal_red st);
+  dom_order_removal_inv_stale :
+    dom_order_stale_credit (dom_order_key_universe count) st <= 3 * count + 2
+}.
+
+(** A continuing callback preserves every numeric premise needed by its next clock. *)
+Lemma dom_order_removal_invariant_step count parents st next :
+  dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) parents ->
+  dom_order_removal_invariant count st ->
+  dom_order_remove_step parents st = inl next -> dom_order_removal_invariant count next.
+Proof.
+  intros Hparents [Hrange Hdomain Hblue Hred Hstale] Hstep.
+  pose proof (dom_order_remove_step_range (N.of_nat count) parents st Hparents Hrange) as Hranges.
+  pose proof (dom_order_remove_step_domain (dom_order_key_universe count) parents st Hdomain)
+    as Hdomains.
+  pose proof (dom_order_remove_step_counts parents st Hblue Hred) as Hcounts.
+  pose proof (dom_order_remove_step_stale (dom_order_key_universe count) parents st
+    (dom_order_key_universe_unique count) Hdomain) as Hmass.
+  rewrite Hstep in Hranges, Hdomains, Hcounts, Hmass.
+  destruct Hcounts as [Hblue_next Hred_next]. constructor; try assumption.
+  eapply Nat.le_trans; eassumption.
+Qed.
+
+Definition dom_source_numeric_bounded (count : nat) (tree : dom_source_tree) : Prop :=
+  dom_source_range (N.of_nat count) tree /\ dom_source_counts_fit tree /\
+    dom_lt_row_mass (dom_order_key_universe count) (source_children tree) <= 3 * count + 2.
+
+(** Each source tree fits the shared stale-mass ceiling. *)
+Lemma dom_order_removal_trees_bounded count st :
+  dom_order_removal_invariant count st ->
+  dom_source_numeric_bounded count (removal_blue st) /\
+    dom_source_numeric_bounded count (removal_red st).
+Proof.
+  intros [Hrange Hdomain Hblue Hred Hstale].
+  destruct Hrange as [Hblue_range [Hred_range Hrest]].
+  unfold dom_source_numeric_bounded. unfold dom_order_stale_credit in Hstale.
+  split.
+  - split; [exact Hblue_range|]. split; [exact Hblue|lia].
+  - split; [exact Hred_range|]. split; [exact Hred|lia].
+Qed.
+
+(** Initialization allocates at most one inverse entry per input and a linear total credit. *)
+Lemma dom_order_removal_initial_invariant count parents sources children :
+  length children <= count ->
+  Forall (fun value => (value <= N.of_nat count)%N) children ->
+  dom_order_sources_range (N.of_nat count) sources ->
+  let initial := DomOrderRemovalState
+    (dom_source_initial parents (source_blue sources) children)
+    (dom_source_initial parents (source_red sources) children)
+    (fold_left (fun active vertex => PTrieCode.set (dom_lt_key vertex) true active)
+      children Empty) children children [] in
+  dom_order_removal_invariant count initial /\
+    dom_order_removal_credit (dom_order_key_universe count) initial <= 12 * (count + 1).
+Proof.
+  intros Hlength Hchildren [Hblue_source Hred_source]. cbn zeta.
+  set (blue := dom_source_initial parents (source_blue sources) children).
+  set (red := dom_source_initial parents (source_red sources) children).
+  set (active := fold_left (fun active vertex => PTrieCode.set (dom_lt_key vertex) true active)
+    children Empty).
+  pose proof (dom_source_initial_range (N.of_nat count) parents (source_blue sources)
+    children Hblue_source Hchildren) as Hblue_range. fold blue in Hblue_range.
+  pose proof (dom_source_initial_range (N.of_nat count) parents (source_red sources)
+    children Hred_source Hchildren) as Hred_range. fold red in Hred_range.
+  pose proof (dom_source_initial_counts parents (source_blue sources) children) as Hblue_counts.
+  pose proof (dom_source_initial_counts parents (source_red sources) children) as Hred_counts.
+  fold blue in Hblue_counts. fold red in Hred_counts.
+  pose proof (dom_source_initial_mass (dom_order_key_universe count) parents
+    (source_blue sources) children (dom_order_key_universe_unique count)) as Hblue_mass.
+  pose proof (dom_source_initial_mass (dom_order_key_universe count) parents
+    (source_red sources) children (dom_order_key_universe_unique count)) as Hred_mass.
+  fold blue in Hblue_mass. fold red in Hred_mass.
+  assert (Hmembers : Forall (fun vertex =>
+      In (dom_lt_key vertex) (dom_order_key_universe count)) children).
+  { apply Forall_forall. intros vertex Hin.
+    apply Forall_forall with (x := vertex) in Hchildren; [|exact Hin].
+    apply dom_order_key_universe_member. eapply N.le_trans; [exact Hchildren|].
+    rewrite Nat2N.inj_add. apply N.le_add_r. }
+  pose proof (dom_order_active_domain_initial (dom_order_key_universe count) children Hmembers)
+    as Hdomain. fold active in Hdomain.
+  pose proof (dom_order_live_count_bound (dom_order_key_universe count) active) as Hactive_count.
+  rewrite dom_order_key_universe_length in Hactive_count.
+  pose proof (dom_order_live_rows_bound (dom_order_key_universe count) active
+    (source_children blue)) as Hblue_live.
+  pose proof (dom_order_live_rows_bound (dom_order_key_universe count) active
+    (source_children red)) as Hred_live.
+  split.
+  - constructor.
+    + apply dom_order_removal_range_make; try assumption. constructor.
+    + exact Hdomain.
+    + exact Hblue_counts.
+    + exact Hred_counts.
+    + unfold dom_order_stale_credit. cbn [removal_blue removal_red removal_active].
+      clearbody blue red active. clear -Hblue_mass Hred_mass Hactive_count Hlength. lia.
+  - unfold dom_order_removal_credit.
+    cbn [removal_blue removal_red removal_active removal_queue removal_fallback length].
+    clearbody blue red active.
+    clear -Hblue_mass Hred_mass Hactive_count Hblue_live Hred_live Hlength. lia.
+Qed.
+
+(** Removing one count preserves source ranges, fitted counts, and the stale-mass ceiling. *)
+Lemma dom_source_remove_numeric_bounded count tree vertex parent :
+  dom_source_numeric_bounded count tree ->
+  dom_source_numeric_bounded count (dom_source_remove tree vertex parent).
+Proof.
+  intros [Hrange [Hcounts Hmass]]. split.
+  - now apply dom_source_remove_range.
+  - split; [now apply dom_source_remove_counts|].
+    now rewrite dom_source_remove_children.
+Qed.
+
+(** Every bounded query count is covered by the finite stale-row inventory. *)
+Lemma dom_source_numeric_count count tree vertex :
+  dom_source_numeric_bounded count tree -> (vertex <= N.of_nat count)%N ->
+  (dom_order_number (source_count tree) vertex <= N.of_nat (3 * count + 2))%N.
+Proof.
+  intros [Hrange [Hcounts Hmass]] Hvertex.
+  assert (Hmember : In (dom_lt_key vertex) (dom_order_key_universe count)).
+  { apply dom_order_key_universe_member.
+    eapply N.le_trans; [exact Hvertex|]. rewrite Nat2N.inj_add. apply N.le_add_r. }
+  eapply N.le_trans; [exact (dom_source_count_bound (dom_order_key_universe count)
+    tree vertex Hcounts Hmember)|].
+  now apply time_of_nat_le.
+Qed.
+
+(** Source counts inherit the common width without assumptions about active children. *)
+Lemma dom_source_numeric_count_width count width tree vertex :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_source_numeric_bounded count tree -> (vertex <= N.of_nat count)%N ->
+  N.size_nat (dom_order_number (source_count tree) vertex) <= width.
+Proof.
+  intros Hwidth Htree Hvertex. apply Hwidth. apply dom_order_removal_linear_bound.
+  pose proof (dom_source_numeric_count count tree vertex Htree Hvertex) as Hcount.
+  clear -Hcount. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in Hcount. lia.
+Qed.
+
+(** Stored or defaulted source values remain in the original numeric range. *)
+Lemma dom_source_numeric_value count tree vertex :
+  dom_source_numeric_bounded count tree -> (vertex <= N.of_nat count)%N ->
+  (dom_lt_identity (source_parent tree) vertex <= N.of_nat count)%N.
+Proof.
+  intros [[Hparents Hrows] Hrest] Hvertex.
+  exact (dom_lt_identity_bounded (N.of_nat count) (source_parent tree) vertex Hparents Hvertex).
+Qed.
+
+(** The two count operands and their sum fit the polynomial numeric width. *)
+Lemma dom_source_numeric_sum_width count width blue red vertex :
+  (forall value, (value <= 8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N ->
+    N.size_nat value <= width) ->
+  dom_source_numeric_bounded count blue -> dom_source_numeric_bounded count red ->
+  (vertex <= N.of_nat count)%N ->
+  N.size_nat (dom_order_number (source_count blue) vertex +
+    dom_order_number (source_count red) vertex)%N <= width.
+Proof.
+  intros Hwidth Hblue Hred Hvertex. apply Hwidth. apply dom_order_removal_linear_bound.
+  pose proof (dom_source_numeric_count count blue vertex Hblue Hvertex) as Hblue_count.
+  pose proof (dom_source_numeric_count count red vertex Hred Hvertex) as Hred_count.
+  clear -Hblue_count Hred_count.
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul in Hblue_count, Hred_count. lia.
+Qed.
+
+Local Opaque dom_order_derived T_dom_order_derived.
+
+(** Bounded numeric sources and logarithmic indexes supply the two search charges. *)
+Lemma dom_order_colour_clock width height numeric semis minimizer relative parents indexes
+    walk st vertex :
+  N.size_nat vertex <= width ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) semis ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) minimizer ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) relative ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) (lt_numeric_parent numeric) ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) parents ->
+  dom_lt_trie_all (dom_order_index_values (fun child => N.size_nat child <= width)
+    (fun _ => True)) indexes ->
+  dom_lt_trie_all (fun index => dom_order_index_height index <= height) indexes ->
+  dom_lt_trie_all (fun position => N.size_nat position <= width) (order_pre walk) ->
+  (T_dom_order_colour numeric semis minimizer relative parents indexes walk st vertex <=
+    1024 * (PTrieT.c_trie + 1) *
+      N.of_nat ((length (dom_order_row (lt_numeric_pred numeric) vertex) + height + 1) *
+        (width + 1)))%N.
+Proof.
+  intros Hvertex Hsemis Hminimizer Hrelative Hnumeric_parent Hparents Hchildren Hheight Hpositions.
+  pose proof (dom_order_identity_property _ relative vertex Hvertex Hrelative) as Hrelative_value.
+  pose proof (dom_order_identity_property _ semis vertex Hvertex Hsemis) as Hsemi_value.
+  pose proof (dom_order_identity_property _ minimizer vertex Hvertex Hminimizer) as Hminimizer_value.
+  pose proof (dom_order_identity_property _ (lt_numeric_parent numeric) vertex
+    Hvertex Hnumeric_parent) as Hnumeric_value.
+  pose proof (dom_order_colour_base_clock width
+    (64 * N.of_nat ((height + 1) * (width + 1)))%N numeric semis minimizer relative
+    parents indexes walk st vertex Hvertex Hrelative_value Hsemi_value Hparents) as Hclock.
+  specialize (Hclock ltac:(intros parent Hparent;
+    pose proof (Hparents (dom_lt_key vertex) parent Hparent) as Hparent_width;
+    change (N.size_nat parent <= width) in Hparent_width;
+    split; apply dom_order_derived_clock; assumption)).
+  set (row := dom_order_row (lt_numeric_pred numeric) vertex) in *.
+  set (w := N.of_nat (width + 1)).
+  set (budget := N.of_nat ((length row + height + 1) * (width + 1))).
+  assert (Hw : (1 <= w)%N) by (unfold w; lia).
+  assert (Hwidth_budget : (w <= budget)%N).
+  { unfold budget. rewrite Nat2N.inj_mul. fold w.
+    replace w with (1 * w)%N at 1 by ring.
+    apply N.mul_le_mono_r. lia. }
+  assert (Hsearch_budget : (N.of_nat ((height + 1) * (width + 1)) <= budget)%N).
+  { unfold budget. apply time_of_nat_le. apply Nat.mul_le_mono_r. lia. }
+  assert (Hscan_budget : ((w + 2) * N.of_nat (length row) <= 3 * budget)%N).
+  { eapply N.le_trans with ((3 * w) * N.of_nat (length row))%N.
+    - apply N.mul_le_mono_r. lia.
+    - unfold budget. rewrite Nat2N.inj_mul. fold w.
+      replace (3 * w * N.of_nat (length row))%N with
+        (3 * (N.of_nat (length row) * w))%N by ring.
+      apply N.mul_le_mono_l. apply N.mul_le_mono_r. apply time_of_nat_le. lia. }
+  fold w in Hclock. fold budget.
+  set (trie_budget := ((PTrieT.c_trie + 1) * budget)%N).
+  assert (Hbase_paid : (256 * (PTrieT.c_trie + 1) * w <= 256 * trie_budget)%N).
+  { unfold trie_budget.
+    replace (256 * ((PTrieT.c_trie + 1) * budget))%N with
+      ((256 * (PTrieT.c_trie + 1)) * budget)%N by ring.
+    now apply N.mul_le_mono_l. }
+  assert (Hbudget_paid : (budget <= trie_budget)%N).
+  { unfold trie_budget. replace budget with (1 * budget)%N at 1 by ring.
+    apply N.mul_le_mono_r. lia. }
+  replace (1024 * (PTrieT.c_trie + 1) * budget)%N with (1024 * trie_budget)%N
+    by (unfold trie_budget; ring).
+  clearbody budget trie_budget.
+  clear -Hclock Hbase_paid Hsearch_budget Hscan_budget Hbudget_paid. lia.
+Qed.
+
+(** Summing colouring callbacks charges predecessor cells and one index height per input. *)
+Lemma dom_order_colour_fold_clock width height numeric semis minimizer relative parents indexes
+    walk order st :
+  Forall (fun vertex => N.size_nat vertex <= width) order ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) semis ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) minimizer ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) relative ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) (lt_numeric_parent numeric) ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) parents ->
+  dom_lt_trie_all (dom_order_index_values (fun child => N.size_nat child <= width)
+    (fun _ => True)) indexes ->
+  dom_lt_trie_all (fun index => dom_order_index_height index <= height) indexes ->
+  dom_lt_trie_all (fun position => N.size_nat position <= width) (order_pre walk) ->
+  (List.T_fold_left (dom_order_colour numeric semis minimizer relative parents indexes walk)
+    (T_dom_order_colour numeric semis minimizer relative parents indexes walk) order st <=
+    2048 * (PTrieT.c_trie + 1) *
+      N.of_nat ((dom_lt_row_mass (map dom_lt_key order) (lt_numeric_pred numeric) +
+        (height + 1) * length order + 1) * (width + 1)))%N.
+Proof.
+  intros Horder Hsemis Hminimizer Hrelative Hnumeric_parent Hparents Hchildren Hheight Hpositions.
+  set (unit := (1024 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+  assert (Hunit : (1 <= unit)%N).
+  { unfold unit. clear -width. rewrite Nat2N.inj_add. nia. }
+  assert (Hcallback : forall vertex, In vertex order -> forall current,
+    (T_dom_order_colour numeric semis minimizer relative parents indexes walk current vertex <=
+      unit * N.of_nat (length (dom_order_row (lt_numeric_pred numeric) vertex) + (height + 1)))%N).
+  { intros vertex Hin current.
+    pose proof (dom_order_colour_clock width height numeric semis minimizer relative parents indexes
+      walk current vertex (proj1 (Forall_forall _ _) Horder vertex Hin) Hsemis Hminimizer
+      Hrelative Hnumeric_parent Hparents Hchildren Hheight Hpositions) as Hclock.
+    replace (length (dom_order_row (lt_numeric_pred numeric) vertex) + (height + 1))
+      with (length (dom_order_row (lt_numeric_pred numeric) vertex) + height + 1) by lia.
+    unfold unit. rewrite Nat2N.inj_mul in Hclock.
+    replace (1024 * (PTrieT.c_trie + 1) * N.of_nat (width + 1) *
+      N.of_nat (length (dom_order_row (lt_numeric_pred numeric) vertex) + height + 1))%N with
+      (1024 * (PTrieT.c_trie + 1) *
+        (N.of_nat (length (dom_order_row (lt_numeric_pred numeric) vertex) + height + 1) *
+          N.of_nat (width + 1)))%N by ring. exact Hclock. }
+  pose proof (dom_order_fold_sum_clock
+    (dom_order_colour numeric semis minimizer relative parents indexes walk)
+    (T_dom_order_colour numeric semis minimizer relative parents indexes walk)
+    (fun vertex => unit *
+      N.of_nat (length (dom_order_row (lt_numeric_pred numeric) vertex) + (height + 1)))%N
+    order st Hcallback) as Hfold.
+  rewrite dom_order_sum_scaled in Hfold.
+  rewrite (dom_order_sum_allowance
+    (fun vertex => length (dom_order_row (lt_numeric_pred numeric) vertex)) order (height + 1)),
+    dom_order_rows_sum in Hfold.
+  set (mass := (dom_lt_row_mass (map dom_lt_key order) (lt_numeric_pred numeric) +
+    (height + 1) * length order)%nat) in *.
+  assert (Hcount : length order <= mass) by (unfold mass; nia).
+  apply time_of_nat_le in Hcount.
+  rewrite Nat2N.inj_mul.
+  replace (2048 * (PTrieT.c_trie + 1) *
+    (N.of_nat (mass + 1) * N.of_nat (width + 1)))%N with
+    (2 * unit * N.of_nat (mass + 1))%N by (unfold unit; ring).
+  rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N in *.
+  clearbody unit mass. clear -Hfold Hunit Hcount. nia.
+Qed.
+
+Local Transparent dom_order_derived T_dom_order_derived.
+
+(** Each phase fits the same linear removal budget. *)
+Lemma dom_order_removal_final_budget (c loop budget filter_work active blue red run total : N) :
+  (filter_work <= 32 * budget)%N ->
+  (active <= 128 * (c + 1) * budget)%N ->
+  (blue <= 512 * (c + 1) * budget)%N ->
+  (red <= 512 * (c + 1) * budget)%N ->
+  (run <= (49152 * (c + 1) + 19 * loop) * budget)%N ->
+  (total <= filter_work + active + blue + red + run + 64 * budget)%N ->
+  (total <= 65536 * (loop + 1) * (c + 1) * budget)%N.
+Proof.
+  intros Hfilter Hactive Hblue Hred Hrun Htotal.
+  assert (Hsum : (total <= (50304 * (c + 1) + 19 * loop + 96) * budget)%N).
+  { replace ((50304 * (c + 1) + 19 * loop + 96) * budget)%N with
+      (32 * budget + 128 * (c + 1) * budget + 512 * (c + 1) * budget +
+        512 * (c + 1) * budget + (49152 * (c + 1) + 19 * loop) * budget +
+        64 * budget)%N by ring. lia. }
+  eapply N.le_trans; [exact Hsum|]. apply N.mul_le_mono_r. nia.
+Qed.
+
+Definition dom_order_removal_coefficient : N :=
+  (65536 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
+
+(** * Removal callback clocks *)
+
+Local Opaque Argent.Loop.loop T_loopN.
+
+Definition dom_order_removal_unit (width : nat) : N :=
+  ((PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+
+(** One unit covers the common width and is positive even for empty inputs. *)
+Lemma dom_order_removal_unit_width width :
+  (N.of_nat (width + 1) <= dom_order_removal_unit width)%N.
+Proof.
+  unfold dom_order_removal_unit.
+  rewrite <- (N.mul_1_l (N.of_nat (width + 1))) at 1.
+  apply N.mul_le_mono_r. lia.
+Qed.
+
+(** A bounded numeric key makes one write fit two common units. *)
+Lemma dom_order_removal_set_clock {A} width (table : ptrie A) vertex value :
+  N.size_nat vertex <= width ->
+  (PTrieCode.T_set (dom_lt_key vertex) value table <=
+    2 * dom_order_removal_unit width)%N.
+Proof.
+  intro Hwidth. pose proof (dom_lt_key_width vertex) as Hkey.
+  pose proof (PTrieT.T_set_le A (dom_lt_key vertex) value table) as Hset.
+  change (PTrieCode.T_set (dom_lt_key vertex) value table <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hset.
+  eapply N.le_trans; [exact Hset|]. unfold dom_order_removal_unit.
+  replace (2 * ((PTrieT.c_trie + 1) * N.of_nat (width + 1)))%N with
+    ((PTrieT.c_trie + 1) * (2 * N.of_nat (width + 1)))%N by ring.
+  apply N.mul_le_mono; [lia|].
+  change (N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1) <=
+    N.of_nat 2 * N.of_nat (width + 1))%N.
+  rewrite <- Nat2N.inj_mul. apply time_of_nat_le. lia.
+Qed.
+
+(** Source insertion performs three bounded-key writes and at most one count increment. *)
+Lemma dom_source_add_clock width tree vertex source parent :
+  N.size_nat vertex <= width -> N.size_nat source <= width ->
+  N.size_nat (dom_order_number (source_count tree) source) <= width ->
+  (T_dom_source_add tree vertex source parent <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hvertex Hsource Hcount.
+  pose proof (dom_lt_time_key vertex) as Hvertex_key.
+  pose proof (dom_lt_time_key source) as Hsource_key.
+  pose proof (dom_lt_key_width vertex) as Hvertex_bits.
+  pose proof (dom_lt_key_width source) as Hsource_bits.
+  pose proof (N.T_eqb_le source parent) as Hcompare.
+  pose proof (dom_order_row_clock (source_children tree) source) as Hrow.
+  pose proof (dom_order_number_clock (source_count tree) source) as Hnumber.
+  pose proof (N.T_succ_le (dom_order_number (source_count tree) source)) as Hsucc.
+  pose proof (dom_order_removal_set_clock width (source_parent tree) vertex source Hvertex)
+    as Hparent_set.
+  pose proof (dom_order_removal_set_clock width (source_children tree) source
+    (vertex :: dom_order_row (source_children tree) source) Hsource) as Hrow_set.
+  pose proof (dom_order_removal_set_clock width (source_count tree) source
+    (N.succ (dom_order_number (source_count tree) source)) Hsource) as Hcount_set.
+  pose proof (dom_order_removal_unit_width width) as Hunit_width.
+  set (unit := dom_order_removal_unit width) in *.
+  replace (128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N with
+    (128 * unit)%N by (unfold unit, dom_order_removal_unit; ring).
+  unfold T_dom_source_add. time_simpl.
+  destruct (N.eqb source parent); time_simpl; rewrite !Nat2N.inj_add in *;
+    change (N.of_nat 1) with 1%N in *; clearbody unit;
+    clear -Hvertex Hsource Hcount Hvertex_key Hsource_key Hvertex_bits Hsource_bits
+      Hcompare Hrow Hnumber Hsucc Hparent_set Hrow_set Hcount_set Hunit_width; lia.
+Qed.
+
+(** Source removal reads one bounded source and decrements its bounded count. *)
+Lemma dom_source_remove_clock width tree vertex parent :
+  N.size_nat vertex <= width ->
+  N.size_nat (dom_lt_identity (source_parent tree) vertex) <= width ->
+  N.size_nat (dom_order_number (source_count tree)
+    (dom_lt_identity (source_parent tree) vertex)) <= width ->
+  (T_dom_source_remove tree vertex parent <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hvertex Hsource Hcount.
+  pose proof (dom_lt_time_identity (source_parent tree) vertex) as Hidentity.
+  pose proof (dom_lt_time_key (dom_lt_identity (source_parent tree) vertex)) as Hkey.
+  pose proof (dom_lt_key_width (dom_lt_identity (source_parent tree) vertex)) as Hbits.
+  pose proof (N.T_eqb_le (dom_lt_identity (source_parent tree) vertex) parent) as Hcompare.
+  pose proof (dom_order_number_clock (source_count tree)
+    (dom_lt_identity (source_parent tree) vertex)) as Hnumber.
+  pose proof (N.T_pred_le (dom_order_number (source_count tree)
+    (dom_lt_identity (source_parent tree) vertex))) as Hpred.
+  pose proof (dom_order_removal_set_clock width (source_count tree)
+    (dom_lt_identity (source_parent tree) vertex)
+    (N.pred (dom_order_number (source_count tree)
+      (dom_lt_identity (source_parent tree) vertex))) Hsource) as Hset.
+  pose proof (dom_order_removal_unit_width width) as Hunit_width.
+  set (unit := dom_order_removal_unit width) in *.
+  replace (128 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N with
+    (128 * unit)%N by (unfold unit, dom_order_removal_unit; ring).
+  unfold T_dom_source_remove. time_simpl.
+  destruct (N.eqb (dom_lt_identity (source_parent tree) vertex) parent); time_simpl;
+    rewrite !Nat2N.inj_add in *;
+    change (N.of_nat 1) with 1%N in *; clearbody unit;
+    clear -Hvertex Hsource Hcount Hidentity Hkey Hbits Hcompare Hnumber Hpred Hset Hunit_width; lia.
+Qed.
+
+(** Redirection is one bounded removal followed by one bounded insertion. *)
+Lemma dom_source_redirect_clock width tree vertex source parent :
+  N.size_nat vertex <= width ->
+  N.size_nat (dom_lt_identity (source_parent tree) vertex) <= width ->
+  N.size_nat (dom_order_number (source_count tree)
+    (dom_lt_identity (source_parent tree) vertex)) <= width ->
+  N.size_nat source <= width ->
+  N.size_nat (dom_order_number (source_count (dom_source_remove tree vertex parent)) source) <= width ->
+  (T_dom_source_redirect tree vertex source parent <=
+    512 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hvertex Hold Hcount Hsource Hnext.
+  pose proof (dom_source_remove_clock width tree vertex parent Hvertex Hold Hcount) as Hremove.
+  pose proof (dom_source_add_clock width (dom_source_remove tree vertex parent)
+    vertex source parent Hvertex Hsource Hnext) as Hadd.
+  unfold T_dom_source_redirect. time_simpl.
+  set (remove_work := T_dom_source_remove tree vertex parent) in *.
+  set (add_work := T_dom_source_add (dom_source_remove tree vertex parent)
+    vertex source parent) in *.
+  clearbody remove_work add_work. clear -Hremove Hadd.
+  rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** * Prefix scans of inverse rows and the shrinking fallback suffix *)
+
+(** Fallback scanning pays only the consumed prefix, at the common numeric-key width. *)
+Lemma dom_order_fallback_clock width active remaining :
+  Forall (fun vertex => N.size_nat vertex <= width) remaining ->
+  (T_dom_order_fallback active remaining <=
+    16 * N.of_nat (width + 1) * N.of_nat (dom_order_fallback_steps active remaining + 1))%N.
+Proof.
+  intro Hremaining. induction Hremaining as [|vertex rest Hvertex Hrest IH].
+  - unfold T_dom_order_fallback. time_simpl. cbn [dom_order_fallback_steps].
+    rewrite Nat2N.inj_add. nia.
+  - pose proof (dom_order_active_clock active vertex) as Hactive.
+    time_unfold T_dom_order_fallback. cbn [dom_order_fallback_steps].
+    destruct (dom_order_active active vertex); time_simpl;
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+Qed.
+
+(** Searching a stale inverse row charges each tested vertex at most one bounded lookup chain. *)
+Lemma dom_source_child_clock bound width sources active source row :
+  dom_lt_trie_all (fun value => (value <= bound)%N) sources ->
+  (forall value, (value <= bound)%N -> N.size_nat value <= width) ->
+  Forall (fun value => (value <= bound)%N) row ->
+  (T_dom_source_child sources active source row <=
+    32 * N.of_nat (width + 1) * N.of_nat (length row + 1))%N.
+Proof.
+  intros Hsources Hwidth Hrow. induction Hrow as [|vertex rest Hvertex Hrest IH].
+  - unfold T_dom_source_child. time_simpl. cbn [length]. rewrite Nat2N.inj_add. nia.
+  - pose proof (Hwidth vertex Hvertex) as Hvertex_width.
+    assert (Hsource_value : (dom_lt_identity sources vertex <= bound)%N)
+      by now apply dom_lt_identity_bounded.
+    pose proof (Hwidth _ Hsource_value) as Hsource_width.
+    pose proof (dom_order_active_clock active vertex) as Hactive.
+    pose proof (dom_lt_time_identity sources vertex) as Hidentity.
+    pose proof (N.T_eqb_le (dom_lt_identity sources vertex) source) as Hcompare.
+    time_unfold T_dom_source_child.
+    destruct (dom_order_active active vertex && N.eqb (dom_lt_identity sources vertex) source);
+      time_simpl; cbn [length]; rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *;
+      clear -Hvertex_width Hsource_width Hactive Hidentity Hcompare IH; nia.
+Qed.
+
+(** A named successful continuation exposes exactly the original retirement operations. *)
+Definition dom_order_remove_success (parents : ptrie N) (blue red : dom_source_tree)
+    (active : ptrie bool) (vertex : N) (queue remaining : list N)
+    (records : list (N * N * N)) (b r nr : N) : dom_order_removal_state :=
+  let p := dom_lt_identity parents vertex in
+  let red_leaf := N.eqb nr 0%N in
+  let anchor := if red_leaf then b else r in
+  let witness := if red_leaf then r else b in
+  let source_tree := if red_leaf then blue else red in
+  let child := dom_source_child (source_parent source_tree) active vertex
+    (dom_order_row (source_children source_tree) vertex) in
+  let blue := dom_source_remove blue vertex p in
+  let red := dom_source_remove red vertex p in
+  let blue := match child with
+    | Some w => if red_leaf then dom_source_redirect blue w anchor p else blue
+    | None => blue
+    end in
+  let red := match child with
+    | Some w => if red_leaf then red else dom_source_redirect red w anchor p
+    | None => red
+    end in
+  let queue := anchor :: witness ::
+    match child with None => queue | Some w => w :: queue end in
+  DomOrderRemovalState blue red (PTrieCode.set (dom_lt_key vertex) false active)
+    queue remaining ((vertex, anchor, witness) :: records).
+TimeFun dom_order_remove_success.
+
+(** The retirement continuation has one row search, two removals and at most one redirect. *)
+Lemma dom_order_remove_success_overhead parents blue red active vertex queue remaining records b r nr :
+  let p := dom_lt_identity parents vertex in
+  let red_leaf := N.eqb nr 0%N in
+  let tree := if red_leaf then blue else red in
+  let child := dom_source_child (source_parent tree) active vertex
+    (dom_order_row (source_children tree) vertex) in
+  (T_dom_order_remove_success parents blue red active vertex queue remaining records b r nr <=
+    T_dom_lt_identity parents vertex + N.T_eqb nr 0%N +
+    T_dom_order_row (source_children tree) vertex +
+    T_dom_source_child (source_parent tree) active vertex
+      (dom_order_row (source_children tree) vertex) +
+    T_dom_source_remove blue vertex p + T_dom_source_remove red vertex p +
+    (match child with
+    | None => 0
+    | Some child => if red_leaf then
+        T_dom_source_redirect (dom_source_remove blue vertex p) child b p else
+        T_dom_source_redirect (dom_source_remove red vertex p) child r p
+    end) + T_dom_lt_key vertex + PTrieCode.T_set (dom_lt_key vertex) false active + 64)%N.
+Proof.
+  cbn zeta. unfold T_dom_order_remove_success.
+  destruct (N.eqb nr 0%N); cbn beta iota zeta.
+  - destruct (dom_source_child (source_parent blue) active vertex
+      (dom_order_row (source_children blue) vertex)); time_simpl; lia.
+  - destruct (dom_source_child (source_parent red) active vertex
+      (dom_order_row (source_children red) vertex)); time_simpl; lia.
+Qed.
+
+(** Queue processing adds only guard clocks around the named successful continuation. *)
+Lemma dom_order_remove_queue_overhead parents blue red active vertex queue remaining records :
+  let b := dom_lt_identity (source_parent blue) vertex in
+  let r := dom_lt_identity (source_parent red) vertex in
+  let nb := dom_order_number (source_count blue) vertex in
+  let nr := dom_order_number (source_count red) vertex in
+  let eligible := N.ltb (N.add nb nr) (if N.eqb b r then 1%N else 2%N) in
+  (T_dom_order_remove_step parents
+      (DomOrderRemovalState blue red active (vertex :: queue) remaining records) <=
+    T_dom_order_active active vertex +
+    T_dom_lt_identity (source_parent blue) vertex +
+    T_dom_lt_identity (source_parent red) vertex +
+    T_dom_order_number (source_count blue) vertex +
+    T_dom_order_number (source_count red) vertex +
+    N.T_eqb b r + N.T_add nb nr +
+    N.T_ltb (N.add nb nr) (if N.eqb b r then 1%N else 2%N) +
+    (if dom_order_active active vertex then
+      if eligible then
+        T_dom_order_remove_success parents blue red active vertex queue remaining records b r nr
+      else 0
+    else 0) + 64)%N.
+Proof.
+  cbn zeta. unfold T_dom_order_remove_step.
+  cbn [removal_blue removal_red removal_active removal_queue removal_fallback removal_records].
+  destruct (dom_order_active active vertex); [|time_simpl; lia].
+  destruct (N.ltb
+    (N.add (dom_order_number (source_count blue) vertex)
+      (dom_order_number (source_count red) vertex))
+    (if N.eqb (dom_lt_identity (source_parent blue) vertex)
+      (dom_lt_identity (source_parent red) vertex) then 1%N else 2%N));
+    [|time_simpl; lia].
+  unfold T_dom_order_remove_success.
+  destruct (N.eqb (dom_order_number (source_count red) vertex) 0%N); cbn beta iota zeta.
+  - destruct (dom_source_child (source_parent blue) active vertex
+      (dom_order_row (source_children blue) vertex)); time_simpl; lia.
+  - destruct (dom_source_child (source_parent red) active vertex
+      (dom_order_row (source_children red) vertex)); time_simpl; lia.
+Qed.
+
+(** Naming the two original setup callbacks bounds the generated wrapper without changing it. *)
+Lemma dom_order_removal_overhead limit parents order sources :
+  let children := filter (dom_order_removal_keep parents) order in
+  let initial := DomOrderRemovalState
+    (dom_source_initial parents (source_blue sources) children)
+    (dom_source_initial parents (source_red sources) children)
+    (fold_left dom_order_removal_activate children Empty) children children [] in
+  (T_dom_order_removal limit parents order sources <=
+    List.T_filter (dom_order_removal_keep parents) (T_dom_order_removal_keep parents) order +
+    List.T_fold_left dom_order_removal_activate T_dom_order_removal_activate children Empty +
+    T_dom_source_initial parents (source_blue sources) children +
+    T_dom_source_initial parents (source_red sources) children +
+    T_loopN (dom_order_remove_step parents) (T_dom_order_remove_step parents)
+      (N.double (N.double (N.double (N.double limit))) + 3)%N initial +
+    64 * N.of_nat (N.size_nat limit + 1))%N.
+Proof.
+  cbn zeta.
+  pose proof (dom_lt_double_width limit) as Hfirst.
+  pose proof (dom_lt_double_width (N.double limit)) as Hsecond.
+  pose proof (dom_lt_double_width (N.double (N.double limit))) as Hthird.
+  pose proof (dom_lt_double_width (N.double (N.double (N.double limit)))) as Hfourth.
+  pose proof (N.T_add_le (N.double (N.double (N.double (N.double limit)))) 3%N) as Hadd.
+  unfold T_dom_order_removal. time_simpl.
+  fold (dom_order_removal_keep parents).
+  fold dom_order_removal_activate.
+  set (children := filter (dom_order_removal_keep parents) order) in *.
+  set (initial := DomOrderRemovalState
+    (dom_source_initial parents (source_blue sources) children)
+    (dom_source_initial parents (source_red sources) children)
+    (fold_left dom_order_removal_activate children Empty) children children []) in *.
+  lazymatch goal with
+  | |- context [List.T_filter ?predicate ?clock order] =>
+      assert (Hfilter : (List.T_filter predicate clock order <=
+        List.T_filter (dom_order_removal_keep parents) (T_dom_order_removal_keep parents) order)%N)
+        by (apply dom_order_removal_filter_mono; intro vertex;
+          unfold T_dom_order_removal_keep; time_simpl; lia)
+  end.
+  lazymatch goal with
+  | |- context [List.T_fold_left ?step ?clock children Empty] =>
+      assert (Hactive : (List.T_fold_left step clock children Empty <=
+        List.T_fold_left dom_order_removal_activate T_dom_order_removal_activate children Empty)%N)
+        by (apply dom_order_fold_clock_mono; intros active vertex;
+          unfold T_dom_order_removal_activate; time_simpl; lia)
+  end.
+  change (fun (active : ptrie bool) (vertex : N) =>
+    PTrieCode.set (dom_lt_key vertex) true active) with dom_order_removal_activate in *.
+  fold initial.
+  lazymatch goal with
+  | |- (?lhs <= _)%N => lazymatch lhs with
+    | context [T_loopN ?step ?clock ?fuel ?state] =>
+        change (T_loopN step clock fuel state) with
+          (T_loopN (dom_order_remove_step parents) (T_dom_order_remove_step parents)
+            (N.double (N.double (N.double (N.double limit))) + 3)%N initial)
+    end
+  end.
+  clearbody initial children.
+  lazymatch goal with
+  | |- context [match ?outcome with inl _ => 1%N | inr _ => 0%N end] => destruct outcome
+  end;
+    time_simpl; cbn [N.size_nat Pos.size_nat] in Hadd;
+    rewrite !Nat2N.inj_add in *;
+    clear -Hfirst Hsecond Hthird Hfourth Hadd Hfilter Hactive; lia.
+Qed.
+
+Local Opaque dom_order_colour T_dom_order_colour dom_order_indexes T_dom_order_indexes dom_order_number_tree T_dom_order_number_tree.
+
+(** * Complete source-map construction clocks
+
+    Finite child rows and numbering counters share the polynomial operand budget.
+    The two index-related passes add only one logarithmic factor. *)
+
+(** Reversing the source order preserves the exact predecessor-row mass. *)
+Lemma dom_order_rows_mass_reverse order (rows : ptrie (list N)) :
+  dom_lt_row_mass (map dom_lt_key (rev_append order [])) rows =
+    dom_lt_row_mass (map dom_lt_key order) rows.
+Proof.
+  rewrite <- !dom_order_rows_sum.
+  rewrite rev_append_rev, app_nil_r. apply dom_lt_sum_rev.
+Qed.
+
+(** The source-map wrapper adds only projection calls around its four measured passes. *)
+Lemma dom_order_source_maps_overhead numeric semis minimizer relative parents :
+  let order := lt_numeric_order numeric in
+  let rows := fold_left (dom_order_child_add parents) order Empty in
+  let walk := dom_order_number_tree (lt_numeric_limit numeric) rows in
+  let indexes := dom_order_indexes order rows (order_pre walk) in
+  (T_dom_order_source_maps numeric semis minimizer relative parents <=
+    List.T_fold_left (dom_order_child_add parents) (T_dom_order_child_add parents) order Empty +
+    T_dom_order_number_tree (lt_numeric_limit numeric) rows +
+    T_dom_order_indexes order rows (order_pre walk) +
+    List.T_fold_left (dom_order_colour numeric semis minimizer relative parents indexes walk)
+      (T_dom_order_colour numeric semis minimizer relative parents indexes walk)
+      (rev_append order []) (DomOrderSources Empty Empty Empty) +
+    (List.T_rev_append order [] + 16))%N.
+Proof.
+  intros order rows walk indexes.
+  unfold T_dom_order_source_maps. time_simpl. fold order rows walk indexes.
+  change (fun (current : ptrie (list N)) (vertex : N) =>
+    T_dom_order_child_add parents current vertex) with (T_dom_order_child_add parents).
+  change (fun (current : dom_order_sources) (vertex : N) =>
+    T_dom_order_colour numeric semis minimizer relative parents indexes walk current vertex)
+    with (T_dom_order_colour numeric semis minimizer relative parents indexes walk).
+  clearbody order rows walk indexes. lia.
+Qed.
+
+(** One closed coefficient covers child rows, numbering, indexes and colouring. *)
+Definition dom_order_source_maps_coefficient : N :=
+  (3 * dom_order_number_coefficient + 16384 * (PTrieT.c_trie + 1) + 64)%N.
+
+(** Source maps cost linear work in order and predecessor cells with one logarithmic factor. *)
+Lemma dom_order_source_maps_time width numeric semis minimizer relative parents :
+  NoDup (lt_numeric_order numeric) ->
+  dom_lt_numeric_ranges (N.of_nat (length (lt_numeric_order numeric))) numeric ->
+  (lt_numeric_limit numeric <= N.of_nat (length (lt_numeric_order numeric) + 1))%N ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat (length (lt_numeric_order numeric)))%N) semis ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat (length (lt_numeric_order numeric)))%N) minimizer ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat (length (lt_numeric_order numeric)))%N) relative ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat (length (lt_numeric_order numeric)))%N) parents ->
+  (forall value, (value <= 8 * (N.of_nat (length (lt_numeric_order numeric)) + 1) *
+    (N.of_nat (length (lt_numeric_order numeric)) + 1))%N -> N.size_nat value <= width) ->
+  (T_dom_order_source_maps numeric semis minimizer relative parents <=
+    dom_order_source_maps_coefficient *
+    N.of_nat ((length (lt_numeric_order numeric) +
+      dom_lt_row_mass (map dom_lt_key (lt_numeric_order numeric)) (lt_numeric_pred numeric) + 1) *
+      (Nat.log2 (length (lt_numeric_order numeric)) + 1) * (width + 1)))%N.
+Proof.
+  intros Hunique Hranges Hlimit Hsemis Hminimizer Hrelative Hparents Hwidth.
+  set (order := lt_numeric_order numeric) in *.
+  set (count := length order) in *.
+  set (levels := Nat.log2 count + 1).
+  set (predecessors := dom_lt_row_mass (map dom_lt_key order) (lt_numeric_pred numeric)).
+  fold levels predecessors.
+  destruct Hranges as [Horder Hnumeric_parent Hpredecessors]. fold order in Horder.
+  assert (Hsmall : (N.of_nat (count + 2) <=
+    8 * (N.of_nat count + 1) * (N.of_nat count + 1))%N).
+  { rewrite Nat2N.inj_add. change (N.of_nat 2) with 2%N.
+    clearbody count. clear -count. nia. }
+  assert (Hsmall_width : forall value, (value <= N.of_nat (count + 2))%N ->
+    N.size_nat value <= width).
+  { intros value Hvalue. apply Hwidth. eapply N.le_trans; eassumption. }
+  assert (Hrank_width : forall value, (value <= N.of_nat count)%N ->
+    N.size_nat value <= width).
+  { intros value Hvalue. apply Hsmall_width.
+    eapply N.le_trans; [exact Hvalue|]. apply time_of_nat_le. lia. }
+  assert (Htables : forall table,
+    dom_lt_trie_all (fun value => (value <= N.of_nat count)%N) table ->
+    dom_lt_trie_all (fun value => N.size_nat value <= width) table).
+  { intros table Htable key value Hget. apply Hrank_width. exact (Htable _ _ Hget). }
+  assert (Horder_width : Forall (fun vertex => N.size_nat vertex <= width) order).
+  { apply Forall_forall. intros vertex Hin. apply Hrank_width.
+    exact (proj1 (Forall_forall _ _) Horder vertex Hin). }
+  set (rows := fold_left (dom_order_child_add parents) order Empty).
+  assert (Hrows : dom_lt_trie_all (Forall (fun value => (value <= N.of_nat count)%N)) rows).
+  { apply dom_order_child_fold_forall; [exact Horder|apply dom_lt_trie_all_empty]. }
+  assert (Hrows_width : dom_lt_trie_all (Forall (fun value => N.size_nat value <= width)) rows).
+  { apply dom_order_child_fold_forall; [exact Horder_width|apply dom_lt_trie_all_empty]. }
+  set (keys := dom_order_key_universe count).
+  assert (Hkeys_unique : NoDup keys) by (apply dom_order_key_universe_unique).
+  assert (Hkeys_length : length keys = count + 2) by (apply dom_order_key_universe_length).
+  assert (Hroot : In (dom_lt_key 1%N) keys) by (apply dom_order_key_universe_root).
+  assert (Hrows_members : dom_lt_trie_all
+    (Forall (fun vertex => In (dom_lt_key vertex) keys)) rows).
+  { apply dom_order_key_universe_rows. exact Hrows. }
+  assert (Hkeys_width : forall vertex, In (dom_lt_key vertex) keys ->
+    N.size_nat vertex <= width).
+  { intros vertex Hin. apply Hsmall_width.
+    pose proof (dom_order_key_universe_bound count vertex Hin) as Hbound.
+    eapply N.le_trans; [exact Hbound|]. apply time_of_nat_le. lia. }
+  assert (Hcounter_width : forall value, (value <= N.of_nat (length keys))%N ->
+    N.size_nat value <= width).
+  { intros value Hvalue. apply Hsmall_width. now rewrite Hkeys_length in Hvalue. }
+  assert (Hlimit_width : N.size_nat (lt_numeric_limit numeric) <= width).
+  { apply Hsmall_width. eapply N.le_trans; [exact Hlimit|]. apply time_of_nat_le. lia. }
+  set (walk := dom_order_number_tree (lt_numeric_limit numeric) rows).
+  pose proof (dom_order_number_tree_inventory keys (lt_numeric_limit numeric) rows
+    Hkeys_unique Hroot Hrows_members) as Hwalk. fold walk in Hwalk.
+  destruct Hwalk as [_ [_ [Hpre Hpost]]].
+  assert (Hpre_width : dom_lt_trie_all (fun value => N.size_nat value <= width) (order_pre walk)).
+  { intros key value Hget. apply Hcounter_width. exact (Hpre _ _ Hget). }
+  assert (Hheight : forall vertex, In vertex order ->
+    N.size_nat (N.of_nat (length (dom_order_row rows vertex))) <= levels).
+  { intros vertex Hin. unfold levels. apply dom_order_value_log_width.
+    apply time_of_nat_le. unfold rows, count. apply dom_order_children_row_length. }
+  set (indexes := dom_order_indexes order rows (order_pre walk)).
+  assert (Hindex_values : dom_lt_trie_all
+    (dom_order_index_values (fun value => N.size_nat value <= width) (fun _ => True)) indexes).
+  { apply dom_order_indexes_values. exact Hrows_width. }
+  assert (Hindex_height : dom_lt_trie_all
+    (fun index => dom_order_index_height index <= levels) indexes).
+  { apply dom_order_indexes_height. exact Hheight. }
+  assert (Hencoded_unique : NoDup (map dom_lt_key order)).
+  { apply dom_lt_map_unique_on; [exact Hunique|].
+    intros left right Hleft Hright Heq. now apply dom_lt_key_injective in Heq. }
+  pose proof (dom_order_children_mass keys parents order Hkeys_unique) as Huniverse_mass.
+  pose proof (dom_order_children_mass (map dom_lt_key order) parents order Hencoded_unique)
+    as Hindex_mass.
+  fold rows count in Huniverse_mass, Hindex_mass.
+  pose proof (dom_order_child_fold_clock width parents Empty order Horder_width
+    (Htables parents Hparents)) as Hchild_clock. fold count in Hchild_clock.
+  pose proof (dom_order_number_tree_clock keys rows (lt_numeric_limit numeric) width
+    Hkeys_unique Hroot Hrows_members Hkeys_width Hcounter_width Hlimit_width) as Hnumber_clock.
+  assert (Hnumber_paid : (T_dom_order_number_tree (lt_numeric_limit numeric) rows <=
+    dom_order_number_coefficient * N.of_nat ((2 * count + 3) * (width + 1)))%N).
+  { eapply N.le_trans; [exact Hnumber_clock|]. apply N.mul_le_mono_l.
+    apply time_of_nat_le. apply Nat.mul_le_mono_r. rewrite Hkeys_length. lia. }
+  pose proof (dom_order_indexes_clock width levels order rows (order_pre walk)
+    Horder_width Hrows_width Hheight) as Hindex_clock. fold count in Hindex_clock.
+  assert (Hindex_paid : (T_dom_order_indexes order rows (order_pre walk) <=
+    2048 * (PTrieT.c_trie + 1) *
+      N.of_nat ((2 * count + 1) * (levels + 1) * (width + 1)))%N).
+  { eapply N.le_trans; [exact Hindex_clock|]. apply N.mul_le_mono_l.
+    apply time_of_nat_le. apply Nat.mul_le_mono_r. apply Nat.mul_le_mono_r. lia. }
+  assert (Hreverse_width : Forall (fun vertex => N.size_nat vertex <= width)
+    (rev_append order [])).
+  { rewrite rev_append_rev, app_nil_r. now apply Forall_rev. }
+  pose proof (dom_order_colour_fold_clock width levels numeric semis minimizer relative
+    parents indexes walk (rev_append order []) (DomOrderSources Empty Empty Empty)
+    Hreverse_width (Htables semis Hsemis) (Htables minimizer Hminimizer)
+    (Htables relative Hrelative) (Htables (lt_numeric_parent numeric) Hnumeric_parent)
+    (Htables parents Hparents) Hindex_values Hindex_height Hpre_width) as Hcolour_clock.
+  rewrite dom_order_rows_mass_reverse in Hcolour_clock.
+  replace (length (rev_append order [])) with count in Hcolour_clock
+    by (unfold count; rewrite rev_append_rev, app_nil_r, length_rev; reflexivity).
+  fold predecessors in Hcolour_clock.
+  pose proof (List.T_rev_append_le order []) as Hreverse. fold count in Hreverse.
+  assert (Hsetup : (List.T_rev_append order [] + 16 <=
+    64 * N.of_nat ((count + 1) * (width + 1)))%N).
+  { rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    change (N.of_nat 1) with 1%N in *. clear -Hreverse. nia. }
+  pose proof (dom_order_source_maps_overhead numeric semis minimizer relative parents) as Htotal.
+  fold order rows walk indexes in Htotal.
+  assert (Hlevels : (1 <= N.of_nat levels)%N).
+  { unfold levels. rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. lia. }
+  assert (Hwidth_positive : (1 <= N.of_nat (width + 1))%N)
+    by (rewrite Nat2N.inj_add; change (N.of_nat 1) with 1%N; lia).
+  repeat first [rewrite Nat2N.inj_mul in Hchild_clock | rewrite Nat2N.inj_add in Hchild_clock].
+  repeat first [rewrite Nat2N.inj_mul in Hnumber_paid | rewrite Nat2N.inj_add in Hnumber_paid].
+  repeat first [rewrite Nat2N.inj_mul in Hindex_paid | rewrite Nat2N.inj_add in Hindex_paid].
+  repeat first [rewrite Nat2N.inj_mul in Hcolour_clock | rewrite Nat2N.inj_add in Hcolour_clock].
+  repeat first [rewrite Nat2N.inj_mul in Hsetup | rewrite Nat2N.inj_add in Hsetup].
+  pose proof (dom_order_source_maps_budget PTrieT.c_trie dom_order_number_coefficient
+    (N.of_nat count) (N.of_nat predecessors) (N.of_nat levels) (N.of_nat (width + 1))
+    (List.T_fold_left (dom_order_child_add parents) (T_dom_order_child_add parents) order Empty)
+    (T_dom_order_number_tree (lt_numeric_limit numeric) rows)
+    (T_dom_order_indexes order rows (order_pre walk))
+    (List.T_fold_left (dom_order_colour numeric semis minimizer relative parents indexes walk)
+      (T_dom_order_colour numeric semis minimizer relative parents indexes walk)
+      (rev_append order []) (DomOrderSources Empty Empty Empty))
+    (List.T_rev_append order [] + 16)%N
+    (T_dom_order_source_maps numeric semis minimizer relative parents)) as Htime.
+  repeat rewrite Nat2N.inj_add in Htime.
+  repeat rewrite Nat2N.inj_add in Hwidth_positive.
+  specialize (Htime Hlevels Hwidth_positive Hchild_clock Hnumber_paid Hindex_paid
+    Hcolour_clock Hsetup Htotal).
+  unfold dom_order_source_maps_coefficient.
+  repeat first [rewrite Nat2N.inj_mul | rewrite Nat2N.inj_add]. exact Htime.
+Qed.
+
+Local Transparent dom_order_colour T_dom_order_colour dom_order_indexes T_dom_order_indexes dom_order_number_tree T_dom_order_number_tree.
