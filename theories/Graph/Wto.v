@@ -2882,11 +2882,194 @@ Module WtoT <: WTO_ALL.
   Local Transparent loopN.
 
 
+  (** Reversing a sibling sequence preserves its maximal nesting depth. *)
+  Lemma reverse_into_depth : forall w tail,
+    wto_depth (wto_reverse_into w tail) = Nat.max (wto_depth w) (wto_depth tail).
+  Proof.
+    intro w. unfold wto_reverse_into. induction w as
+      [|v rest IH|h body IHbody rest IHrest]; intro tail.
+    - cbn [Galois.Graph.Wto.wto_reverse_into wto_depth]. lia.
+    - cbn [Galois.Graph.Wto.wto_reverse_into wto_depth]. rewrite IH. reflexivity.
+    - cbn [Galois.Graph.Wto.wto_reverse_into wto_depth]. rewrite IHrest.
+      cbn [wto_depth].
+      change (Nat.max (wto_depth rest) (Nat.max (S (wto_depth body)) (wto_depth tail)) =
+        Nat.max (Nat.max (S (wto_depth body)) (wto_depth rest)) (wto_depth tail)).
+      lia.
+  Qed.
+
+  (** Closing the suspended parents computes the depth already promised by a state. *)
+  Definition state_depth st :=
+    fold_left (fun depth parent => Nat.max (S depth) (wto_depth parent))
+      (wto_parents st) (wto_depth (wto_partial st)).
+
+  Lemma parents_depth_monotone : forall parents first second,
+    first <= second ->
+    fold_left (fun depth parent => Nat.max (S depth) (wto_depth parent)) parents first <=
+    fold_left (fun depth parent => Nat.max (S depth) (wto_depth parent)) parents second.
+  Proof.
+    intro parents. induction parents as [|parent parents IH]; intros first second Hle.
+    - exact Hle.
+    - cbn [fold_left]. apply IH. lia.
+  Qed.
+
+  Lemma parents_depth_lower : forall parents depth,
+    length parents + depth <=
+      fold_left (fun current parent => Nat.max (S current) (wto_depth parent)) parents depth.
+  Proof.
+    intro parents. induction parents as [|parent parents IH]; intro depth.
+    - cbn [length fold_left]. lia.
+    - cbn [length fold_left]. specialize (IH (Nat.max (S depth) (wto_depth parent))).
+      pose proof (Nat.le_max_l (S depth) (wto_depth parent)). lia.
+  Qed.
+
+  Lemma state_depth_lower : forall st, length (wto_parents st) <= state_depth st.
+  Proof.
+    intro st. unfold state_depth.
+    pose proof (parents_depth_lower (wto_parents st) (wto_depth (wto_partial st))). lia.
+  Qed.
+
+  Local Opaque Galois.Graph.Wto.wto_components.
+
+  (** Every task transition preserves or increases the depth promised by suspended loops. *)
+  Lemma state_depth_step : forall g st next,
+    wto_step g st = inl next -> state_depth st <= state_depth next.
+  Proof.
+    intros g [tasks partial parents] next Hstep.
+    destruct tasks as [|task tasks]; [discriminate Hstep|].
+    destruct task as [within entries owners c|h].
+    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      destruct (Galois.Graph.Wto.wto_select (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+      + destruct body as [|v body]; inversion Hstep; subst next;
+          unfold state_depth; cbn [wto_partial wto_parents fold_left wto_depth].
+        * apply parents_depth_monotone.
+          destruct (Galois.Graph.Wto.wto_member h (succs (base g) h)); cbn [wto_depth].
+          -- change (wto_depth partial <= Nat.max 1 (wto_depth partial)).
+             apply Nat.le_max_r.
+          -- lia.
+        * apply parents_depth_monotone. apply Nat.le_max_r.
+      + inversion Hstep; subst next. reflexivity.
+    - destruct parents as [|parent parents]; inversion Hstep; subst next;
+        unfold state_depth; cbn [wto_partial wto_parents fold_left wto_depth].
+      + reflexivity.
+      + rewrite reverse_into_depth. cbn [wto_depth].
+        rewrite Nat.max_0_r. reflexivity.
+  Qed.
+
+  (** Each suspended parent has exactly one future close task. *)
+  Definition frames_balanced st :=
+    length (wto_parents st) =
+      length (filter (fun task => match task with WtoClose _ => true | _ => false end)
+        (wto_tasks st)).
+
+  Lemma frames_balanced_step : forall g st next,
+    frames_balanced st -> wto_step g st = inl next -> frames_balanced next.
+  Proof.
+    intros g [tasks partial parents] next Hbalance Hstep.
+    unfold frames_balanced in *. cbn [wto_tasks wto_parents] in Hbalance.
+    destruct tasks as [|task tasks]; [discriminate Hstep|].
+    destruct task as [within entries owners c|h].
+    - cbn [filter] in Hbalance. cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      destruct (Galois.Graph.Wto.wto_select (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+      + destruct body as [|v body]; inversion Hstep; subst next;
+          cbn [wto_tasks wto_parents length].
+        * exact Hbalance.
+        * rewrite filter_app, (proj2 (proj2 (expand_inventory _ _ _ _))).
+          cbn [filter app length]. lia.
+      + inversion Hstep; subst next. exact Hbalance.
+    - cbn [filter length] in Hbalance.
+      destruct parents as [|parent parents]; inversion Hstep; subst next;
+        cbn [wto_tasks wto_parents length] in *; lia.
+  Qed.
+
+  Lemma frames_balanced_initial : forall g roots, frames_balanced (initial g roots).
+  Proof.
+    intros g roots. unfold initial, frames_balanced. cbn [wto_tasks wto_parents length].
+    rewrite (proj2 (proj2 (expand_inventory _ _ _ _))). reflexivity.
+  Qed.
+
+  (** A terminal task state returns the reversal of its accumulated partial output. *)
+  Lemma step_terminal_shape : forall g st w,
+    wto_step g st = inr w -> wto_tasks st = [] /\
+      w = wto_reverse_into (wto_partial st) WNil.
+  Proof.
+    intros g [tasks partial parents] w Hstep. destruct tasks as [|task tasks].
+    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      inversion Hstep; subst w. split; reflexivity.
+    - destruct task as [within entries owners c|h].
+      + cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+        destruct (Galois.Graph.Wto.wto_select (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|];
+          [destruct body|]; discriminate.
+      + destruct parents; discriminate Hstep.
+  Qed.
+
+  (** A balanced completed run realizes all depth already promised by its starting state. *)
+  Lemma completed_state_depth : forall g fuel st w,
+    frames_balanced st -> loop_fuel (wto_step g) fuel st = inr w ->
+      state_depth st <= wto_depth w.
+  Proof.
+    intros g fuel. induction fuel as [|fuel IH]; intros st w Hbalance Hrun;
+      [discriminate|].
+    cbn [loop_fuel] in Hrun. destruct (wto_step g st) as [next|result] eqn:Hstep.
+    - eapply Nat.le_trans; [apply (state_depth_step g st next Hstep)|].
+      apply (IH next w); [eapply frames_balanced_step; eassumption|exact Hrun].
+    - injection Hrun as Heq. subst result.
+      destruct (step_terminal_shape g st w Hstep) as [Htasks Hresult].
+      unfold frames_balanced in Hbalance. rewrite Htasks in Hbalance.
+      cbn [filter length] in Hbalance. apply length_zero_iff_nil in Hbalance.
+      unfold state_depth. rewrite Hbalance. cbn [fold_left]. rewrite Hresult.
+      rewrite reverse_into_depth. cbn [wto_depth]. lia.
+  Qed.
+
+  (** Every state in a balanced completed history fits inside the eventual result depth. *)
+  Lemma history_state_depth : forall g fuel st w,
+    frames_balanced st -> loop_fuel (wto_step g) fuel st = inr w ->
+    Forall (fun current => state_depth current <= wto_depth w) (history_from g fuel st).
+  Proof.
+    intros g fuel. induction fuel as [|fuel IH]; intros st w Hbalance Hrun;
+      [discriminate|].
+    pose proof (completed_state_depth g (S fuel) st w Hbalance Hrun) as Hdepth.
+    cbn [history_from]. destruct (wto_step g st) as [next|result] eqn:Hstep.
+    - constructor; [exact Hdepth|]. apply (IH next w).
+      + eapply frames_balanced_step; eassumption.
+      + cbn [loop_fuel] in Hrun. now rewrite Hstep in Hrun.
+    - constructor; [exact Hdepth|constructor].
+  Qed.
+
+  Local Opaque loopN.
+
+  (** Every recorded state has at most the nesting depth of the completed output. *)
+  Lemma history_depth_bound : forall g roots st,
+    In st (history g roots) ->
+    length (wto_parents st) <= wto_depth (build g roots).
+  Proof.
+    intros g roots st Hin.
+    destruct (F16_done g roots) as [w Hrun].
+    assert (Hbuild : build g roots = w).
+    { unfold build. rewrite rev_append_rev, app_nil_r.
+      change ((match loopN (wto_step g)
+        (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
+        (initial g roots) with
+        | inl current => wto_reverse_into (wto_partial current) WNil
+        | inr result => result
+        end) = w).
+      now rewrite Hrun. }
+    rewrite Hbuild. rewrite search_loopN_fuel, Nat2N.id in Hrun.
+    pose proof (history_state_depth g _ _ w (frames_balanced_initial g roots) Hrun) as Hdepth.
+    apply Forall_forall with (x := st) in Hdepth; [|exact Hin].
+    eapply Nat.le_trans; [apply state_depth_lower|exact Hdepth].
+  Qed.
+
   Lemma F19_depth : forall g roots st within entries owners c tasks,
     In st (history g roots) ->
     wto_tasks st = WtoExpand within entries owners c :: tasks ->
     length (wto_parents st) <= wto_depth (build g roots).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st within entries owners c tasks Hin Htasks.
+    now apply history_depth_bound.
+  Qed.
+
+  Local Transparent loopN Galois.Graph.Wto.wto_components.
+
 
   Lemma T1_member : forall v vs,
     (T_wto_member v vs <= k_member * N.of_nat (length vs + 1) *
