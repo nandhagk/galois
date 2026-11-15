@@ -103,6 +103,55 @@ Proof.
   rewrite ?Nat2N.inj_add in *. nia.
 Qed.
 
+(** The coarse unsigned quotient only inspects the divisor and dividend masks. *)
+Lemma table_udiv_time : forall w a b,
+  (T_tnum_udiv w a b <= 8192 *
+    N.of_nat (Pos.to_nat w + tnum_bits a + tnum_bits b + 1))%N.
+Proof.
+  intros w a b.
+  pose proof (table_upper_time w (tnum_max w a) (proj1 (tnum_max_word w a))).
+  pose proof (tnum_max_bits w a). pose proof (tnum_wrap_bits w (ones b)).
+  time_unfold T_tnum_udiv. time_cbn. time_pose.
+  destruct (tnum_wrap w (ones b) =? 0); unfold tnum_bits in *;
+    rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+TimeBound table_udiv_time.
+
+(** The coarse unsigned remainder reads the dividend's maximum endpoint. *)
+Lemma table_urem_time : forall w a,
+  (T_tnum_urem w a <= 8192 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a.
+  pose proof (table_upper_time w (tnum_max w a) (proj1 (tnum_max_word w a))).
+  pose proof (tnum_max_bits w a).
+  time_unfold T_tnum_urem. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound table_urem_time.
+
+(** Count transfers construct an upper bound from the width itself. *)
+Lemma table_count_time : forall w,
+  (T_tnum_count w <= 8192 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intro w. pose proof (table_upper_time w (Zpos w) ltac:(lia)) as Hupper.
+  pose proof (tnum_positive_bits w).
+  time_unfold T_tnum_count. time_cbn.
+  change (Z.size_nat (Zpos w)) with (Pos.size_nat w) in Hupper.
+  rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound table_count_time.
+
+(** The signed remainder approximation reads the sign mask linearly. *)
+Lemma table_srem_time : forall w a,
+  (T_tnum_srem w a <= 1024 * N.of_nat (Pos.to_nat w + tnum_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (WordTime.word_half_time_bound w).
+  pose proof (WordTime.word_half_size_bound w).
+  time_unfold T_tnum_srem. time_cbn. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound table_srem_time.
+
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
   Module P := KnownBitsCode L C.
   Module F := KnownBitsOpsCode L C P.
