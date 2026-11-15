@@ -3946,6 +3946,58 @@ Proof.
   exact (nodup_disjoint (entered prefix) (entered suffix) Hunique source Hentered Henter).
 Qed.
 
+(** A component pop removes every possible future source occurrence of its members. *)
+Lemma popped_no_future g prefix root suffix members tail low active owners :
+  scc_trace g = prefix ++ Leave root :: suffix ->
+  tarjan_pop root (tarjan_next (prefix_state prefix)) (tarjan_pending (prefix_state prefix))
+    (tarjan_low (prefix_state prefix)) (tarjan_active (prefix_state prefix))
+    (tarjan_owners (prefix_state prefix)) = (members, tail, low, active, owners) ->
+  forall w, In w members -> forall kind target, ~ In (Edge kind w target) suffix.
+Proof.
+  intros Htrace Hpop w Hw.
+  destruct (prefix_frames g prefix (Leave root :: suffix) Htrace) as [Hembed Hstack].
+  destruct (leave_shape _ root suffix [] Hstack) as [open [Hframes Hfuture]].
+  unfold tarjan_frames_embedded in Hembed. rewrite Hframes in Hembed.
+  pose proof (tarjan_embeds_pop _ _ _ _ _ _ _ _ _ _ _ _ Hembed Hpop) as Hopen.
+  pose proof (proj1 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop)) as Hsplit.
+  pose proof (prefix_pending_unique g prefix (Leave root :: suffix) Htrace) as Hpending.
+  rewrite Hsplit in Hpending.
+  assert (Hclosed : ~ In w open).
+  { intro Hin. apply (nodup_disjoint members tail Hpending w Hw).
+    now apply (tarjan_embeds_incl _ _ Hopen). }
+  assert (Hentered : In w (entered prefix)).
+  { apply prefix_pending_entered. rewrite Hsplit. apply in_or_app. now left. }
+  pose proof (scc_trace_unique g) as Hunique.
+  rewrite Htrace, search_entered_app in Hunique. cbn [entered] in Hunique.
+  exact (future_edge_excluded prefix suffix open w Hfuture Hunique Hentered Hclosed).
+Qed.
+
+(** Completed rows put every outgoing edge of a popped source before its root leave. *)
+Lemma popped_edges_seen g prefix root suffix members tail low active owners :
+  wf_graph (base g) -> scc_trace g = prefix ++ Leave root :: suffix ->
+  tarjan_pop root (tarjan_next (prefix_state prefix)) (tarjan_pending (prefix_state prefix))
+    (tarjan_low (prefix_state prefix)) (tarjan_active (prefix_state prefix))
+    (tarjan_owners (prefix_state prefix)) = (members, tail, low, active, owners) ->
+  forall w target, In w members -> edge (base g) w target ->
+    exists kind, In (Edge kind w target) prefix.
+Proof.
+  intros Hwf Htrace Hpop w target Hw Hedge.
+  pose proof (proj1 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop)) as Hsplit.
+  assert (Hentered : In w (entered prefix)).
+  { apply prefix_pending_entered. rewrite Hsplit. apply in_or_app. now left. }
+  assert (Hfull : In w (entered (scc_trace g))).
+  { rewrite Htrace, search_entered_app. apply in_or_app. now left. }
+  assert (Htargets : In target (edge_targets w (scc_trace g))).
+  { rewrite (proj1 (scc_trace_rows g w) Hfull).
+    rewrite (scc_graph_agrees g w Hwf (proj1 (scc_trace_entered g w) Hfull)). exact Hedge. }
+  destruct (proj1 (search_edge_targets_member _ _ _) Htargets) as [kind Hin].
+  rewrite Htrace, in_app_iff in Hin. destruct Hin as [Hin|[Hfalse|Hin]].
+  - now exists kind.
+  - discriminate Hfalse.
+  - exfalso. exact (popped_no_future g prefix root suffix members tail low active owners
+      Htrace Hpop w Hw kind target Hin).
+Qed.
+
 End TarjanFrontierFacts.
 
 
