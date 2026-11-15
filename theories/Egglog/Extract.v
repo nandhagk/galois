@@ -3988,6 +3988,129 @@ Proof.
   - apply IHHreach2. now apply IHHreach1.
 Qed.
 
+(** Queue coverage and finalized-table validity together establish the complete search laws. *)
+Module SearchCorrect (V : VALUE) (C : COST V) (Q : PQ).
+  Module Search := SearchFacts V C Q.
+  Module Finals := SearchFinals V C.
+  Module Semantics := SearchSemantics V C.
+
+  Definition search_verified {DB} (rs : list (search_row V.t))
+      (s : extraction_state V.t DB Q.t) : Prop :=
+    Search.search_invariant rs s /\
+    Finals.finalised_valid rs (search_final_costs s) (search_finalised s) /\
+    Semantics.search_knuth rs (search_final_costs s).
+
+  (** Initialization combines the queue invariant with empty final observations. *)
+  Lemma search_verified_initial : forall DB (db : DB) rs,
+    Search.search_invariant rs (Search.search_initial db rs) ->
+    search_verified rs (Search.search_initial db rs).
+  Proof.
+    intros DB db rs Hsearch. split; [exact Hsearch|].
+    destruct (Search.search_initial_fields DB db rs) as [_ [_ [_ [Hcosts Hfinals]]]].
+    rewrite Hcosts, Hfinals. split; [apply Finals.finalised_empty|].
+    intros i n Hget. rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
+
+  (** A real minimum pop preserves finite attainment and optimality. *)
+  Lemma search_verified_step : forall DB rs (s next : extraction_state V.t DB Q.t),
+    search_verified rs s -> Search.search_step s = inl next ->
+    Search.search_invariant rs next -> search_verified rs next.
+  Proof.
+    intros DB rs s next [Hsearch [Hfinals Hoptimal]] Hstep Hnext.
+    split; [exact Hnext|].
+    destruct (Search.search_step_choice DB rs s next Hsearch Hstep)
+      as [i [n [f [k [Hmissing [Hrow [Hknown [Hcost [Hprio [Hminimum
+        [Hcosts Hentries]]]]]]]]]]].
+    rewrite Hcosts, Hentries. split.
+    - exact (Finals.finalised_valid_add rs (search_final_costs s) (search_finalised s)
+        i n f k Hfinals Hmissing Hrow Hknown Hcost).
+    - eapply Semantics.search_finalise_optimal.
+      + exact Hoptimal.
+      + exact (Search.search_invariant_covered DB rs s Hsearch).
+      + exact Hmissing.
+      + exact Hprio.
+      + exact Hminimum.
+  Qed.
+
+  (** The source row count bounds every verified finalized list. *)
+  Lemma search_verified_cardinality : forall DB rs (s : extraction_state V.t DB Q.t),
+    search_verified rs s -> length (search_finalised s) <= length rs.
+  Proof.
+    intros DB rs s [_ [Hfinals _]].
+    exact (Finals.finalised_cardinality rs (search_final_costs s) (search_finalised s) Hfinals).
+  Qed.
+
+  (** Each continuing verified step finalizes exactly one previously absent class. *)
+  Lemma search_verified_grows : forall DB rs (s next : extraction_state V.t DB Q.t),
+    search_verified rs s -> Search.search_step s = inl next ->
+    length (search_finalised next) = S (length (search_finalised s)).
+  Proof.
+    intros DB rs s next [Hsearch _] Hstep.
+    destruct (Search.search_step_choice DB rs s next Hsearch Hstep)
+      as [i [n [f [k Hchoice]]]].
+    destruct Hchoice as [_ [_ [_ [_ [_ [_ [_ Hentries]]]]]]].
+    now rewrite Hentries.
+  Qed.
+
+  (** A verified stopping state contains every class with a finite represented tree. *)
+  Lemma search_verified_stopped : forall DB rs (s : extraction_state V.t DB Q.t) entries,
+    search_verified rs s -> Search.search_step s = inr entries ->
+    Finals.finalised_valid rs (search_final_costs s) entries /\
+    Semantics.search_knuth rs (search_final_costs s) /\
+    Semantics.search_best_complete rs entries.
+  Proof.
+    intros DB rs s entries [Hsearch [Hfinals Hoptimal]] Hstep.
+    destruct (Search.search_step_stopped DB s entries Hstep) as [-> Hsize].
+    split; [exact Hfinals|]. split; [exact Hoptimal|].
+    eapply Finals.finalised_complete.
+    - exact Hfinals.
+    - exact Hoptimal.
+    - exact (Search.search_invariant_covered DB rs s Hsearch).
+    - destruct Hsearch as [_ [_ [Hqueue _]]].
+      exact (Search.search_queue_zero (search_candidates s) (search_queue s) Hqueue Hsize).
+  Qed.
+
+  (** The stored row-count fuel terminates and returns a complete optimal finite table. *)
+  Lemma best_rows_correct : forall DB (db : DB) rs,
+    Search.search_invariant rs (Search.search_initial db rs) ->
+    (forall (s next : extraction_state V.t DB Q.t),
+      Search.search_invariant rs s -> Search.search_step s = inl next ->
+      Search.search_invariant rs next) ->
+    loop_fuel Search.search_step (length rs + 1) (Search.search_initial db rs) =
+      inr (Search.best_rows db rs) /\
+    exists costs, Finals.finalised_valid rs costs (Search.best_rows db rs) /\
+      Semantics.search_knuth rs costs /\
+      Semantics.search_best_complete rs (Search.best_rows db rs).
+  Proof.
+    intros DB db rs Hinitial Hpreserve.
+    assert (Hverified : search_verified rs (Search.search_initial db rs)).
+    { now apply search_verified_initial. }
+    assert (Hadvance : forall (s next : extraction_state V.t DB Q.t), search_verified rs s ->
+      Search.search_step s = inl next -> search_verified rs next /\
+      length (search_finalised next) = S (length (search_finalised s))).
+    { intros s next Hinv Hstep. split.
+      - apply (search_verified_step DB rs s next Hinv Hstep).
+        apply (Hpreserve s next (proj1 Hinv) Hstep).
+      - exact (search_verified_grows DB rs s next Hinv Hstep). }
+    destruct (Search.search_initial_fields DB db rs)
+      as [_ [_ [Hcount [_ Hentries]]]].
+    destruct (extraction_loop_complete Search.search_step (search_verified rs)
+      (fun s => length (search_finalised s)) (length rs)
+      (search_verified_cardinality DB rs) Hadvance (length rs + 1)
+      (Search.search_initial db rs) Hverified
+      ltac:(change (length rs < length (search_finalised (Search.search_initial db rs)) +
+        (length rs + 1)); lia))
+      as [entries [last [Hrun [Hlast Hstop]]]].
+    assert (Hbest : Search.best_rows db rs = entries).
+    { unfold Search.best_rows. rewrite Hcount.
+      replace (S (length rs)) with (length rs + 1) by lia.
+      rewrite Hrun. reflexivity. }
+    split; [now rewrite Hbest|]. rewrite Hbest.
+    exists (search_final_costs last).
+    exact (search_verified_stopped DB rs last entries Hlast Hstop).
+  Qed.
+End SearchCorrect.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) (Q : PQ_OPS) <: EXTRACT_OPS V I D C.
   Include SearchCode V C Q.
@@ -4196,8 +4319,8 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Module Rows := ConstructorRows V I D.
   Definition R (db : D.t) : nat := length (Rows.rows db).
   Definition a (db : D.t) : nat := Rows.maximum_arity (Rows.rows db).
-  (* STUB-CODE *)
-  Definition cost_width (_ : D.t) : nat := 0.
+  Definition cost_width (db : D.t) : nat :=
+    extraction_rows_width C.fn_cost C.val_cost (best_rows db (Rows.rows db)) (Rows.rows db).
   Definition c_ex : N :=
     (64 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1).
   Lemma T_inventory_le : forall ds sl,
