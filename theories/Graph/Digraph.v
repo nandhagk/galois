@@ -4,9 +4,9 @@
     For example, parallel edges contribute repeated predecessors.
     Builds on: graph data and the public preparation signature. *)
 
-From Stdlib Require Import List NArith PArith Sorting.Permutation.
+From Stdlib Require Import List NArith PArith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
-From Galois.Base Require Import Trie.
+From Galois.Base Require Import Key Trie.
 From Galois.Graph Require Import Data DigraphSig.
 
 Module DigraphCode <: DIGRAPH_OPS.
@@ -74,6 +74,44 @@ Module Digraph <: DIGRAPH.
     rewrite predecessor_rows, PTrie.get_empty, app_nil_r. reflexivity.
   Qed.
 End Digraph.
+
+(** A one bit reserves the carry work needed when a unary size becomes binary. *)
+Fixpoint graph_ones (p : positive) : N :=
+  match p with
+  | xI q => (1 + graph_ones q)%N
+  | xO q => graph_ones q
+  | xH => 1%N
+  end.
+
+(** Incrementing pays its carry chain from the one bits it removes. *)
+Lemma graph_succ_time p :
+  (Std.Pos.T_succ p + graph_ones (Pos.succ p) <= graph_ones p + 2)%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Std.Pos.T_succ;
+    cbn [Pos.succ graph_ones]; time_cbn_all; nia.
+Qed.
+
+(** Unary-to-positive conversion has linear amortised cost. *)
+Lemma graph_of_succ_nat_time n :
+  (Key.Pos.T_of_succ_nat n + graph_ones (Pos.of_succ_nat n) <=
+    3 * N.of_nat n + 2)%N.
+Proof.
+  induction n as [|n IH].
+  - time_unfold Key.Pos.T_of_succ_nat.
+    cbn [Pos.of_succ_nat graph_ones]. time_cbn. lia.
+  - pose proof (graph_succ_time (Pos.of_succ_nat n)) as Hcarry.
+    time_unfold Key.Pos.T_of_succ_nat.
+    cbn [Pos.of_succ_nat]. rewrite Nat2N.inj_succ. time_cbn_all. nia.
+Qed.
+
+(** Computing a binary count from its unary size takes linear time. *)
+Lemma graph_of_nat_time n : (TimeHelpers.N.T_of_nat n <= 3 * N.of_nat n + 3)%N.
+Proof.
+  destruct n as [|n].
+  - time_unfold TimeHelpers.N.T_of_nat. time_cbn. lia.
+  - pose proof (graph_of_succ_nat_time n) as Hconversion.
+    time_unfold TimeHelpers.N.T_of_nat. rewrite Nat2N.inj_succ. time_cbn_all. nia.
+Qed.
 
 Module DigraphT <: DIGRAPH_T.
   Include Digraph.
