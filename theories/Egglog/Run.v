@@ -4741,6 +4741,102 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       In (Id i) (k ++ option_list o) -> In (Id j) (k' ++ option_list o') ->
       same w i j -> i = j.
 
+  (** Every accepted plan carries the rule index used for checking it. *)
+  Lemma run_check_cplan_index : forall newok table i r c,
+    check_cplan V.eqb newok table i r c = true -> rule_ix V.t c = i.
+  Proof.
+    intros newok table i [q acts] [ix [n cols] srcs vars post] Hcheck.
+    cbn [check_cplan rule_ix] in *.
+    destruct (N.eqb ix i) eqn:Hindex; [now apply N.eqb_eq|discriminate].
+  Qed.
+
+  (** A successful semi-naive scan consumes exactly a prefix of accepted plans. *)
+  Lemma run_check_semis_split : forall k table i r cs tail,
+    check_semis V.eqb table i r k cs = Some tail ->
+    exists prefix, cs = prefix ++ tail /\
+      Forall (fun c => check_cplan V.eqb true table i r c = true) prefix.
+  Proof.
+    induction k as [|k IH]; intros table i r cs tail Hcheck.
+    - cbn [check_semis] in Hcheck. inversion Hcheck; subst tail.
+      exists []. split; [reflexivity|constructor].
+    - destruct cs as [|c cs]; cbn [check_semis] in Hcheck; [discriminate|].
+      destruct (check_cplan V.eqb true table i r c) eqn:Hplan; [|discriminate].
+      destruct (IH table i r cs tail Hcheck) as [prefix [Hprefix Hall]].
+      exists (c :: prefix). split; [cbn; now rewrite Hprefix|].
+      constructor; assumption.
+  Qed.
+
+  (** Every plan accepted with a rule list is checked against its indexed rule. *)
+  Lemma run_check_rule_plans_member : forall rs table i naive semi,
+    check_rule_plans V.eqb table rs i naive semi = true ->
+    forall c, In c (naive ++ semi) -> exists k r newok,
+      nth_error rs k = Some r /\ N.to_nat (rule_ix V.t c) = N.to_nat i + k /\
+      check_cplan V.eqb newok table (rule_ix V.t c) r c = true.
+  Proof.
+    induction rs as [|[q acts] rs IH]; intros table i naive semi Hcheck c Hin.
+    - destruct naive as [|d naive]; cbn [check_rule_plans] in Hcheck; [|discriminate].
+      destruct semi; [contradiction|discriminate].
+    - destruct naive as [|d naive]; cbn [check_rule_plans] in Hcheck; [discriminate|].
+      destruct (check_cplan V.eqb false table i (Rule V.t q acts) d)
+        eqn:Hplan; [|discriminate].
+      destruct (check_semis V.eqb table i (Rule V.t q acts) (fun_count q) semi)
+        as [tail|] eqn:Hsemis; [|discriminate].
+      destruct (run_check_semis_split (fun_count q) table i (Rule V.t q acts)
+        semi tail Hsemis) as [prefix [Hprefix Hall]].
+      assert (Hhere : forall newok,
+          check_cplan V.eqb newok table i (Rule V.t q acts) c = true ->
+          exists k r newok,
+            nth_error (Rule V.t q acts :: rs) k = Some r /\
+            N.to_nat (rule_ix V.t c) = N.to_nat i + k /\
+            check_cplan V.eqb newok table (rule_ix V.t c) r c = true).
+      { intros newok Hc. pose proof (run_check_cplan_index newok table i
+          (Rule V.t q acts) c Hc) as Hindex.
+        exists 0, (Rule V.t q acts), newok. split; [reflexivity|].
+        rewrite Hindex. split; [lia|exact Hc]. }
+      assert (Hlater : In c (naive ++ tail) -> exists k r newok,
+          nth_error (Rule V.t q acts :: rs) k = Some r /\
+          N.to_nat (rule_ix V.t c) = N.to_nat i + k /\
+          check_cplan V.eqb newok table (rule_ix V.t c) r c = true).
+      { intro Htail. destruct (IH table (N.succ i) naive tail Hcheck c Htail)
+          as [k [r [newok [Hnth [Hindex Hc]]]]].
+        exists (S k), r, newok. split; [exact Hnth|].
+        split; [rewrite N2Nat.inj_succ in Hindex; lia|exact Hc]. }
+      apply in_app_or in Hin. destruct Hin as [[Heq|Hin]|Hin].
+      + subst c. now apply (Hhere false).
+      + apply Hlater. apply in_or_app. now left.
+      + rewrite Hprefix in Hin. apply in_app_or in Hin. destruct Hin as [Hin|Hin].
+        * apply (Hhere true). now apply Forall_forall with (x := c) in Hall.
+        * apply Hlater. apply in_or_app. now right.
+  Qed.
+
+  (** A checked compiled plan has a valid slot table and an accepted indexed rule. *)
+  Lemma run_plan_member : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
+    exists table newok r,
+      slot_table (decl_widths (decls V.t p) Empty) (Syntax.slots V.t cp) 0 Empty =
+        Some table /\
+      nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r /\
+      check_cplan V.eqb newok table (rule_ix V.t c) r c = true.
+  Proof.
+    intros [ds rs] [sl naive semi] c Hplan Hin.
+    unfold plans_ok, check_plan in Hplan. apply andb_true_iff in Hplan.
+    destruct Hplan as [_ Hshape]. unfold check_shape, check_shape_with in Hshape.
+    destruct (slot_table (decl_widths ds Empty) sl 0 Empty)
+      as [table|] eqn:Htable; [|discriminate].
+    destruct (run_check_rule_plans_member rs table 0 naive semi Hshape c Hin)
+      as [k [r [newok [Hnth [Hindex Hc]]]]].
+    cbn in Hindex. exists table, newok, r. split; [exact Htable|].
+    split; [now rewrite Hindex|exact Hc].
+  Qed.
+
+  (** A checked plan names a rule of its program. *)
+  Lemma F33_plan_rule : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
+    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c).
+  Proof.
+    intros p cp c Hplan Hin.
+    destruct (run_plan_member p cp c Hplan Hin) as [table [newok [r [_ [Hnth _]]]]].
+    unfold job_rule. erewrite nth_error_nth; [exact Hnth|exact Hnth].
+  Qed.
+
   Lemma F1_plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In c (all_plans cp) ->
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r ->
@@ -4756,6 +4852,145 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       In b (bindings cp c db) /\ keep p c (bind_trie c b) = true /\
       agrees (env_of c b) s (query_vars r).
   Proof. Admitted. (* STUB *)
+
+  (** Canonicalization changes an identifier name without changing its sort. *)
+  Lemma run_canon_sort : forall db (c : cell V.t), cell_sort (D.canon db c) = cell_sort c.
+  Proof.
+    intros db [i|v]; reflexivity.
+  Qed.
+
+  (** Canonicalizing a row keeps all argument sorts. *)
+  Lemma run_canon_sorts : forall db (k : list (cell V.t)),
+    map cell_sort (map (D.canon db) k) = map cell_sort k.
+  Proof.
+    intros db k. induction k as [|c rest IH]; cbn [map]; [reflexivity|].
+    rewrite run_canon_sort, IH. reflexivity.
+  Qed.
+
+  (** Canonicalizing an optional output keeps its sort. *)
+  Lemma run_canon_output_sort : forall db (o : option (cell V.t)),
+    option_map cell_sort (option_map (D.canon db) o) = option_map cell_sort o.
+  Proof.
+    intros db [c|]; cbn [option_map]; [now rewrite run_canon_sort|reflexivity].
+  Qed.
+
+  (** Combining outputs of one declared kind preserves their output sort. *)
+  Lemma run_combine_sorted : forall db f out previous o,
+    kind (D.view db) f = Some out ->
+    (match previous with
+     | Some old => option_map cell_sort old = out_sort out
+     | None => True
+     end) ->
+    option_map cell_sort o = out_sort out ->
+    option_map cell_sort (D.combine db f previous o) = out_sort out.
+  Proof.
+    intros db f out previous o Hkind Hprevious Hout.
+    unfold D.combine. rewrite Hkind.
+    destruct previous as [[[i|v]|]|]; cbn in Hprevious |- *; try assumption.
+    destruct out; destruct o as [[j|w]|]; cbn in *; congruence.
+  Qed.
+
+  (** Folding compatible outputs keeps their common sort. *)
+  Lemma run_fold_outputs_sorted : forall db f out os acc,
+    kind (D.view db) f = Some out ->
+    Forall (fun o => option_map cell_sort o = out_sort out) os ->
+    option_map cell_sort acc = out_sort out ->
+    option_map cell_sort
+      (fold_left (fun a o => D.combine db f (Some a) o) os acc) = out_sort out.
+  Proof.
+    intros db f out os. induction os as [|o rest IH]; intros acc Hkind Hsort Hacc.
+    - exact Hacc.
+    - inversion Hsort as [|o' rest' Ho Hrest]; subst o' rest'. cbn [fold_left].
+      apply IH; [exact Hkind|exact Hrest|].
+      apply run_combine_sorted; assumption.
+  Qed.
+
+  (** Merging a nonempty group of compatible outputs keeps their common sort. *)
+  Lemma run_merged_sorted : forall db f out os,
+    kind (D.view db) f = Some out -> os <> [] ->
+    Forall (fun o => option_map cell_sort o = out_sort out) os ->
+    option_map cell_sort (D.merged db f os) = out_sort out.
+  Proof.
+    intros db f out [|o rest] Hkind Hnonempty Hsort; [contradiction|].
+    inversion Hsort as [|o' rest' Ho Hrest]; subst o' rest'.
+    cbn [D.merged map]. apply run_fold_outputs_sorted; [exact Hkind| |].
+    - apply Forall_forall. intros output Hin. apply in_map_iff in Hin as [old [<- Hin]].
+      rewrite run_canon_output_sort. exact ((proj1 (Forall_forall _ _)) Hrest old Hin).
+    - now rewrite run_canon_output_sort.
+  Qed.
+
+  Lemma F21_put_sorted : forall sorts f k o db, D.wf db -> D.kind_ok db f k o ->
+    view_sorted sorts (D.view db) -> row_sorted sorts (kind (D.view db)) f k o ->
+    view_sorted sorts (D.view (D.put f k o db)).
+  Proof.
+    intros sorts f k o db Hwf Hallowed Hsorted [out [Hsort [Hkind Hout]]].
+    intros g key output Hrow. unfold row_sorted.
+    rewrite (proj1 (D.layout_put f k o db Hwf)).
+    apply (proj1 (D.put_rows f k o db Hwf Hallowed g key output)) in Hrow.
+    destruct Hrow as [[Hrow _]|[-> [-> <-]]].
+    - exact (Hsorted g key output Hrow).
+    - exists out. split; [now rewrite run_canon_sorts|]. split; [exact Hkind|].
+      apply run_combine_sorted; [exact Hkind| |now rewrite run_canon_output_sort].
+      destruct (D.old db f (map (D.canon db) k)) as [old|] eqn:Hold; [|exact I].
+      apply (proj1 (D.old_row db f (map (D.canon db) k) old Hwf)) in Hold.
+      destruct (Hsorted f (map (D.canon db) k) old Hold)
+        as [oldout [_ [Holdkind Holdsort]]].
+      rewrite Hkind in Holdkind. injection Holdkind as <-. exact Holdsort.
+  Qed.
+
+  Lemma F22_make_sorted : forall sorts f k db, D.wf db -> kind (D.view db) f = Some OId ->
+    sorts f = Some (map cell_sort k) -> view_sorted sorts (D.view db) ->
+    view_sorted sorts (D.view (snd (D.make f k db))).
+  Proof.
+    intros sorts f k db Hwf Hkind Hsort Hsorted.
+    pose proof (D.make_spec f k db Hwf Hkind) as Hmake.
+    destruct (D.make f k db) as [i next]. cbn [snd].
+    destruct Hmake as [[j [_ [_ ->]]]|[_ [_ [_ [Hkinds [_ Hrows]]]]]].
+    - exact Hsorted.
+    - intros g key output Hrow. unfold row_sorted. rewrite Hkinds.
+      apply (proj1 (Hrows g key output)) in Hrow.
+      destruct Hrow as [Hrow|[-> [-> ->]]].
+      + exact (Hsorted g key output Hrow).
+      + exists OId. split; [now rewrite run_canon_sorts|]. split; [exact Hkind|reflexivity].
+  Qed.
+
+  Lemma F23_union_sorted : forall sorts i j db, D.wf db ->
+    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.union i j db)).
+  Proof.
+    intros sorts i j db Hwf Hsorted f k o Hrow.
+    rewrite (D.union_rows i j db Hwf) in Hrow.
+    unfold row_sorted. rewrite (proj1 (D.layout_union i j db Hwf)).
+    exact (Hsorted f k o Hrow).
+  Qed.
+
+  Lemma F24_rebuild_sorted : forall sorts db, D.wf db ->
+    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.rebuild db)).
+  Proof.
+    intros sorts db Hwf Hsorted f key output Hrow.
+    destruct (D.rebuild_from db f key output Hwf Hrow)
+      as [srcs [Hnonempty [Hsources Houtput]]].
+    destruct srcs as [|[first old] rest]; [contradiction|].
+    inversion Hsources as [|pair rest' [Hfirst Hkey] Hrest]; subst pair rest'.
+    destruct (Hsorted f first old Hfirst) as [out [Hsort [Hkind Hout]]].
+    assert (Hkind' : kind (D.view (D.rebuild db)) f = Some out).
+    { rewrite (proj1 (D.layout_rebuild db Hwf)). exact Hkind. }
+    exists out. split.
+    - cbn [fst] in Hkey. rewrite <- Hkey, run_canon_sorts. exact Hsort.
+    - split; [exact Hkind'|]. rewrite Houtput.
+      apply run_merged_sorted; [exact Hkind'|discriminate|].
+      apply Forall_forall. intros result Hin.
+      apply in_map_iff in Hin as [[k o] [Heq Hin]]. cbn in Heq. subst result.
+      destruct ((proj1 (Forall_forall _ _)) Hsources (k, o) Hin) as [Hsource _].
+      destruct (Hsorted f k o Hsource) as [other [_ [Hother Hresult]]].
+      rewrite Hkind in Hother. injection Hother as <-. exact Hresult.
+  Qed.
+
+  Lemma F25_advance_sorted : forall sorts db, D.wf db ->
+    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.advance db)).
+  Proof.
+    intros sorts db Hwf Hsorted. rewrite (proj1 (proj2 (D.wf_advance db Hwf))).
+    exact Hsorted.
+  Qed.
 
   Lemma F3_apply_wf : forall p cp r s db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
@@ -4966,28 +5201,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         (if nv then naive V.t cp else seminaive V.t cp)).
   Proof. Admitted. (* STUB *)
 
-  Lemma F21_put_sorted : forall sorts f k o db, D.wf db -> D.kind_ok db f k o ->
-    view_sorted sorts (D.view db) -> row_sorted sorts (kind (D.view db)) f k o ->
-    view_sorted sorts (D.view (D.put f k o db)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma F22_make_sorted : forall sorts f k db, D.wf db -> kind (D.view db) f = Some OId ->
-    sorts f = Some (map cell_sort k) -> view_sorted sorts (D.view db) ->
-    view_sorted sorts (D.view (snd (D.make f k db))).
-  Proof. Admitted. (* STUB *)
-
-  Lemma F23_union_sorted : forall sorts i j db, D.wf db ->
-    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.union i j db)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma F24_rebuild_sorted : forall sorts db, D.wf db ->
-    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.rebuild db)).
-  Proof. Admitted. (* STUB *)
-
-  Lemma F25_advance_sorted : forall sorts db, D.wf db ->
-    view_sorted sorts (D.view db) -> view_sorted sorts (D.view (D.advance db)).
-  Proof. Admitted. (* STUB *)
-
   Lemma F26_bindings_env : forall p cp db c b r, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In c (all_plans cp) ->
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r -> In b (bindings cp c db) ->
@@ -5069,11 +5282,6 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Proof.
     reflexivity.
   Qed.
-
-  (** A checked plan names a rule of its program. *)
-  Lemma F33_plan_rule : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
-    nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some (job_rule p c).
-  Proof. Admitted. (* STUB *)
 
   (** Applying a rule queues at most one pending entry per action. *)
   Lemma F34_apply_pending : forall p cp r s db, plans_ok p cp -> D.wf db ->
