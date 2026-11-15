@@ -456,13 +456,159 @@ Module Partition (X Tk : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   Proof.
     intros p [old Hbound] b Hstable; unfold widen; rewrite Hstable; reflexivity.
   Qed.
+
+  (** A state above bottom cannot be recognized as bottom. *)
+  Lemma nonbottom_test s : S.leb s S.bot = false -> S.is_bot s = false.
+  Proof.
+    intro Hnonbot; destruct (S.is_bot s) eqn:Hbot; auto.
+    pose proof (S.is_bot_least s S.bot Hbot); congruence.
+  Qed.
+
+  (** Only states above bottom contribute to the partition rank. *)
+  Definition live_rank p s := if S.leb s S.bot then 0 else S.wrank p s.
+
+  (** Raw rank sums the ranks that survive the bottom test. *)
+  Definition raw_rank p (ps : list (option Tk.t * S.t)) :=
+    fold_right Nat.add 0 (map (fun q => live_rank p (snd q)) ps).
+
+  Lemma raw_rank_cons p q ps :
+    raw_rank p (q :: ps) = live_rank p (snd q) + raw_rank p ps.
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Widening a live receiver never raises its contribution to the rank. *)
+  Lemma live_widen_le p a b : S.leb a S.bot = false ->
+    live_rank p (S.widen p a b) <= live_rank p a.
+  Proof.
+    intro Hbot; pose proof (S.wrank_widen_le p a b (nonbottom_test a Hbot)) as Hrank.
+    unfold live_rank; rewrite Hbot; destruct (S.leb (S.widen p a b) S.bot); lia.
+  Qed.
+
+  (** An unstable live receiver strictly lowers its contribution to the rank. *)
+  Lemma live_widen_lt p a b : S.leb a S.bot = false -> S.leb b a = false ->
+    live_rank p (S.widen p a b) < live_rank p a.
+  Proof.
+    intros Hbot Hunstable.
+    pose proof (S.wrank_widen p a b (nonbottom_test a Hbot) Hunstable) as Hrank.
+    unfold live_rank; rewrite Hbot; destruct (S.leb (S.widen p a b) S.bot); lia.
+  Qed.
+
+  (** A receiver of an uncovered part has an unstable collapsed candidate. *)
+  Lemma received_unstable a (qs : list (option Tk.t * S.t)) q :
+    In q qs -> S.leb (snd q) a = false ->
+    S.leb (collapse_with S.bot S.join (a :: map snd qs)) a = false.
+  Proof.
+    intros Hq Hnot; destruct (S.leb (collapse_with S.bot S.join (a :: map snd qs)) a)
+      eqn:Hle; auto.
+    assert (Hcover : S.leb (snd q) (collapse_with S.bot S.join (a :: map snd qs)) = true).
+    { apply collapse_covers; right; apply in_map; exact Hq. }
+    pose proof (S.leb_trans _ _ _ Hcover Hle); congruence.
+  Qed.
+
+  (** Absorption never raises the sum of the live component ranks. *)
+  Lemma absorb_rank_le p strays fresh old :
+    raw_rank p (absorb Tk.eqb S.leb S.bot S.join (S.widen p) strays fresh old) <=
+      raw_rank p old.
+  Proof.
+    revert strays; induction old as [|r old IH]; intro strays; cbn [absorb].
+    - reflexivity.
+    - destruct (S.leb (snd r) S.bot) eqn:Hbot; rewrite !raw_rank_cons; cbn [snd].
+      + specialize (IH strays); lia.
+      + pose proof (live_widen_le p (snd r)
+          (collapse_with S.bot S.join (snd r :: map snd
+            (filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh ++ strays))) Hbot).
+        specialize (IH []); lia.
+  Qed.
+
+  (** Receiving one uncovered input strictly lowers the head contribution. *)
+  Lemma receive_rank_lt p strays fresh r q : S.leb (snd r) S.bot = false ->
+    S.leb (snd q) (snd r) = false ->
+    (In q strays \/ (In q fresh /\ label_eqb Tk.eqb (fst r) (fst q) = true)) ->
+    live_rank p (S.widen p (snd r) (collapse_with S.bot S.join (snd r :: map snd
+      (filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh ++ strays)))) <
+      live_rank p (snd r).
+  Proof.
+    intros Hbot Hnot Hreceive; apply live_widen_lt; [exact Hbot|].
+    eapply received_unstable; [|exact Hnot].
+    apply in_or_app; destruct Hreceive as [Hstray|[Hfresh Hlabel]]; auto.
+    left; apply filter_In; auto.
+  Qed.
+
+  (** A fresh input routed by its label forces one strict rank decrease. *)
+  Lemma absorb_rank_label p strays fresh old q : In q fresh ->
+    (forall r, In r old -> S.leb (snd q) (snd r) = false) ->
+    (exists r, In r old /\ S.leb (snd r) S.bot = false /\
+      label_eqb Tk.eqb (fst r) (fst q) = true) ->
+    raw_rank p (absorb Tk.eqb S.leb S.bot S.join (S.widen p) strays fresh old) <
+      raw_rank p old.
+  Proof.
+    revert strays; induction old as [|r old IH]; intros strays Hfresh Hnot [s [Hs [Hsbot Hlabel]]].
+    - contradiction.
+    - destruct Hs as [<-|Hs].
+      + cbn [absorb]; rewrite Hsbot, !raw_rank_cons; cbn [snd].
+        pose proof (receive_rank_lt p strays fresh r q Hsbot
+          (Hnot r (or_introl eq_refl)) (or_intror (conj Hfresh Hlabel))) as Hhead.
+        pose proof (absorb_rank_le p [] fresh old); lia.
+      + assert (Hnot_tail : forall t, In t old -> S.leb (snd q) (snd t) = false).
+        { intros t Ht; apply Hnot; now right. }
+        cbn [absorb]; destruct (S.leb (snd r) S.bot) eqn:Hbot;
+          rewrite !raw_rank_cons; cbn [snd].
+        * specialize (IH strays Hfresh Hnot_tail
+            (ex_intro _ s (conj Hs (conj Hsbot Hlabel)))); lia.
+        * specialize (IH [] Hfresh Hnot_tail
+            (ex_intro _ s (conj Hs (conj Hsbot Hlabel)))).
+          pose proof (live_widen_le p (snd r)
+            (collapse_with S.bot S.join (snd r :: map snd
+              (filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh ++ strays))) Hbot).
+          lia.
+  Qed.
+
+  (** A stray forces a strict decrease at the first live receiver. *)
+  Lemma absorb_rank_stray p strays fresh old q : In q strays ->
+    (forall r, In r old -> S.leb (snd q) (snd r) = false) ->
+    (exists r, In r old /\ S.leb (snd r) S.bot = false) ->
+    raw_rank p (absorb Tk.eqb S.leb S.bot S.join (S.widen p) strays fresh old) <
+      raw_rank p old.
+  Proof.
+    induction old as [|r old IH]; intros Hstray Hnot [s [Hs Hsbot]]; [contradiction|].
+    cbn [absorb]; destruct (S.leb (snd r) S.bot) eqn:Hbot;
+      rewrite !raw_rank_cons; cbn [snd].
+    - destruct Hs as [<-|Hs]; [congruence|].
+      assert (Hnot_tail : forall t, In t old -> S.leb (snd q) (snd t) = false).
+      { intros t Ht; apply Hnot; now right. }
+      specialize (IH Hstray Hnot_tail (ex_intro _ s (conj Hs Hsbot))); lia.
+    - pose proof (receive_rank_lt p strays fresh r q Hbot
+        (Hnot r (or_introl eq_refl)) (or_introl Hstray)) as Hhead.
+      pose proof (absorb_rank_le p [] fresh old); lia.
+  Qed.
+
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hbot Hunstable.
+    change (raw_rank p (proj1_sig (widen p a b)) < raw_rank p (proj1_sig a)).
+    rewrite widen_raw, Hunstable, Hbot.
+    destruct (fresh_exists a b Hunstable) as [q Hfresh].
+    pose proof (proj1 (fresh_spec _ _ q) Hfresh) as [_ [_ Hnot]].
+    destruct (existsb (fun r => negb (S.leb (snd r) S.bot) &&
+      label_eqb Tk.eqb (fst r) (fst q)) (proj1_sig a)) eqn:Hlabel.
+    - eapply absorb_rank_label; [exact Hfresh | exact Hnot |].
+      apply existsb_exists in Hlabel; destruct Hlabel as [r [Hr Hlabel]].
+      apply andb_true_iff in Hlabel; destruct Hlabel as [Hrbot Hlabel].
+      apply negb_true_iff in Hrbot; exists r; auto.
+    - eapply absorb_rank_stray; [|exact Hnot |exact (forallb_false_member _ _ Hbot)].
+      unfold stray_parts; apply filter_In; split; [exact Hfresh|].
+      now rewrite Hlabel.
+  Qed.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hbot; destruct (leb b a) eqn:Hstable.
+    - rewrite widen_stable by exact Hstable; reflexivity.
+    - apply Nat.lt_le_incl, wrank_widen; assumption.
+  Qed.
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
