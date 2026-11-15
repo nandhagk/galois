@@ -1861,6 +1861,87 @@ Proof.
 Qed.
 
 
+(** A geometric tail pays the bit positions beyond the graph's key width. *)
+Local Lemma loop_width_geometric : forall width extra,
+  width + extra + 1 <= (width + 1) * 2 ^ extra.
+Proof.
+  intros width extra. induction extra as [|extra IH]; cbn [Nat.pow]; nia.
+Qed.
+
+Local Lemma loop_positive_size_lower : forall p,
+  2 ^ (Pos.size_nat p - 1) <= Pos.to_nat p.
+Proof.
+  intro p. destruct (Nat.le_gt_cases (2 ^ (Pos.size_nat p - 1)) (Pos.to_nat p))
+    as [Hle|Hlt]; [exact Hle|].
+  pose proof (Pos.size_nat_least p (Pos.size_nat p - 1) Hlt) as Hsize.
+  assert (Hpositive : 0 < Pos.size_nat p) by (destruct p; cbn [Pos.size_nat]; lia).
+  lia.
+Qed.
+
+Local Lemma loop_size_lower : forall n,
+  n <> 0%N -> 2 ^ (N.size_nat n - 1) <= N.to_nat n.
+Proof.
+  intros [|p] Hne; [contradiction|]. apply loop_positive_size_lower.
+Qed.
+
+(** Distinct graph keys pay a logarithm for every header even when edge multiplicity is large. *)
+Local Lemma loop_count_log_product : forall count total width,
+  count < 2 ^ width -> count <= total ->
+  count * N.size_nat (N.of_nat total) <= total * (width + 1).
+Proof.
+  intros count total width Hcount Htotal.
+  set (bits := N.size_nat (N.of_nat total)).
+  destruct (Nat.le_gt_cases bits width) as [Hsmall|Hlarge]; [nia|].
+  assert (Hpositive : N.of_nat total <> 0%N).
+  { intro Heq. unfold bits in Hlarge. rewrite Heq in Hlarge.
+    cbn [N.size_nat] in Hlarge. lia. }
+  pose proof (loop_size_lower (N.of_nat total) Hpositive) as Hlower.
+  rewrite Nat2N.id in Hlower. fold bits in Hlower.
+  set (extra := bits - S width).
+  assert (Hbits : bits = width + extra + 1) by (unfold extra; lia).
+  pose proof (loop_width_geometric width extra) as Hgeometric.
+  assert (Hpower : 2 ^ (bits - 1) = 2 ^ width * 2 ^ extra).
+  { replace (bits - 1) with (width + extra) by lia. apply Nat.pow_add_r. }
+  eapply Nat.le_trans with (2 ^ width * bits).
+  - apply Nat.mul_le_mono_r. lia.
+  - eapply Nat.le_trans with (2 ^ width * ((width + 1) * 2 ^ extra)).
+    + apply Nat.mul_le_mono_l. now rewrite Hbits.
+    + replace (2 ^ width * ((width + 1) * 2 ^ extra)) with
+        ((width + 1) * 2 ^ (bits - 1)) by (rewrite Hpower; nia).
+      rewrite (Nat.mul_comm total (width + 1)). now apply Nat.mul_le_mono_l.
+Qed.
+
+Local Lemma loop_size_eight : forall n,
+  N.size_nat (8 * n) <= N.size_nat n + 3.
+Proof.
+  intros [|p]; cbn [N.mul Pos.mul N.size_nat Pos.size_nat]; lia.
+Qed.
+
+Local Lemma loop_sum_member_le {A : Type} : forall (xs : list A) (f : A -> nat) x,
+  In x xs -> f x <= fold_right (fun y total => f y + total) 0 xs.
+Proof.
+  intro xs. induction xs as [|y rest IH]; intros f x Hin; [contradiction|].
+  cbn [fold_right]. destruct Hin as [<-|Hin]; [lia|].
+  specialize (IH f x Hin). lia.
+Qed.
+
+Local Lemma loop_sum_uniform {A : Type} : forall (xs : list A) (f : A -> nat) bound,
+  (forall x, In x xs -> f x <= bound) ->
+  fold_right (fun x total => f x + total) 0 xs <= length xs * bound.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros f bound Hbound; [cbn; lia|].
+  cbn [fold_right length]. pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+  specialize (IH f bound ltac:(intros y Hy; apply Hbound; now right)). lia.
+Qed.
+
+Local Lemma loop_sum_of_nat {A : Type} : forall (xs : list A) (f : A -> nat),
+  fold_right (fun x total => N.of_nat (f x) + total)%N 0%N xs =
+    N.of_nat (fold_right (fun x total => f x + total) 0 xs).
+Proof.
+  intro xs. induction xs as [|x rest IH]; intro f; [reflexivity|].
+  cbn [fold_right]. now rewrite IH, Nat2N.inj_add.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -2769,7 +2850,45 @@ Module LoopsT <: LOOPS_ALL.
         0%N (headers g t) <= k_collect *
       N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
         N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    destruct (F6_latch_count g t r Hgraph Hprepared Htree)
+      as [Hunique [Hlisted Hedges]].
+    assert (Hnodes : length (nodes g) = graph_n (base g)).
+    { destruct g as [[vertices adjacency] predecessors vertex_count edge_count]. reflexivity. }
+    pose proof (dom_distinct_keys_cardinality (nodes g) (graph_width (base g))
+      (loop_nodes_unique g Hgraph) (loop_listed_width g)) as Hcapacity.
+    rewrite Hnodes in Hcapacity.
+    pose proof (NoDup_incl_length Hunique Hlisted) as Hheaders.
+    rewrite Hnodes in Hheaders.
+    set (total := graph_n (base g) + graph_e (base g) + 1).
+    pose proof (loop_count_log_product (graph_n (base g)) total (graph_width (base g))
+      Hcapacity ltac:(unfold total; lia)) as Hlogarithm.
+    assert (Hsources : forall h, In h (headers g t) ->
+      length (latches (classify g t) h) <= graph_e (base g)).
+    { intros h Hin. eapply Nat.le_trans; [|exact Hedges].
+      exact (loop_sum_member_le (headers g t)
+        (fun h => length (latches (classify g t) h)) h Hin). }
+    assert (Hbits : forall h, In h (headers g t) ->
+      N.size_nat (body_fuel g (latches (classify g t) h)) <=
+        N.size_nat (N.of_nat total) + 3).
+    { intros h Hin. eapply Nat.le_trans; [|apply loop_size_eight].
+      apply loop_size_monotone. unfold body_fuel.
+      destruct Hprepared as [Hnv [Hne Hpreds]]. rewrite Hnv, Hne.
+      specialize (Hsources h Hin). unfold total. repeat rewrite Nat2N.inj_add. lia. }
+    pose proof (loop_sum_uniform (headers g t)
+      (fun h => N.size_nat (body_fuel g (latches (classify g t) h)))
+      (N.size_nat (N.of_nat total) + 3) Hbits) as Hsum.
+    assert (Hpaid : fold_right (fun h cost =>
+      N.size_nat (body_fuel g (latches (classify g t) h)) + cost) 0 (headers g t) <=
+      4 * total * (graph_width (base g) + 1)).
+    { assert (Hcount : graph_n (base g) <= total) by (unfold total; lia). nia. }
+    apply time_of_nat_le in Hpaid.
+    rewrite loop_sum_of_nat. fold total.
+    unfold k_collect, loop_collect_cost, loop_body_unit_cost.
+    repeat rewrite Nat2N.inj_mul in Hpaid. nia.
+  Qed.
+
 
   Lemma T7c_forest_wrapper : forall g t,
     (T_forest g t <= k_forest * (T_classify g t +
