@@ -4,9 +4,9 @@
     For example, evaluating a zero-preserving operator keeps known zero bits.
     Builds on: KnownBits and the bit-vector operations. *)
 
-From Stdlib Require Import ZArith List Bool.
+From Stdlib Require Import ZArith List Bool Lia.
 From Argent Require Import Time Tactics Std.
-From Galois.Bits Require Import Word Op Fun.
+From Galois.Bits Require Import Word Op Fun Arith.
 From Galois.Domains Require Import WordSig KnownBitsSig KnownBits.
 Import List.ListNotations.
 Local Open Scope Z_scope.
@@ -50,32 +50,109 @@ End KnownBitsOpsClock.
 Definition tnum_payload_sound (wp : width * tnum) (y : word) : Prop :=
   fst wp = fst y /\ is_word (fst y) (snd y) /\ tnum_gamma (fst wp) (snd wp) (snd y).
 
-Module KnownBitsForwardProof (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
-  Module P := KnownBitsCode L C.
-  Module F := KnownBitsOpsCode L C P.
+(** Pointwise agreement suffices because a mask map reads only its two endpoints. *)
+Lemma tnum_map_ext : forall sw rw f g a,
+  (forall x, f x = g x) -> tnum_map sw rw f a = tnum_map sw rw g a.
+Proof.
+  intros sw rw f g a Hagree. unfold tnum_map. now rewrite !Hagree.
+Qed.
 
-  Theorem tnum_forward_raw_sound : forall o wps ys rw z,
-    Forall2 tnum_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
-    tnum_gamma rw (F.tnum_forward_raw o wps rw) z.
-  Proof. Admitted. (* CONVERT: tnum_forward_raw_sound: The variable tnum_forward_one_sound was not found in the current environment. *)
-End KnownBitsForwardProof.
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
   Module P := KnownBitsCode L C.
   Module F := KnownBitsOpsCode L C P.
 Lemma tnum_forward_mul_same : forall w a b,
   F.tnum_forward_raw bvmul [(w, a); (w, b)] w =
     tnum_mul_with (C.multiplier) w a b.
-Proof. Admitted. (* CONVERT: tnum_forward_mul_same: The reference tnum_forward_raw was not found in the current *)
+Proof.
+  intros w a b. unfold F.tnum_forward_raw. now rewrite !Pos.eqb_refl.
+Qed.
 Lemma tnum_forward_one_sound : forall o w a x rw z,
   is_word w x -> tnum_gamma w a x -> eval_op o [(w, x)] = Some (rw, z) ->
   tnum_gamma rw (F.tnum_forward_raw o [(w, a)] rw) z.
-Proof. Admitted. (* CONVERT: tnum_forward_one_sound: wnot has function type but unary_tag is expected. *)
+Proof.
+  intros o w a x rw z Hx Ha Heval. destruct o; try apply tnum_top_sound.
+  - rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval.
+    injection Heval as <- <-. now apply tnum_not_sound.
+  - rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
+    injection Heval as <- <-. now apply tnum_neg_sound.
+  - rewrite (eval_op_fun1 bvclz w x UClz eq_refl) in Heval.
+    injection Heval as <- <-. exact (tnum_count_sound bvclz w UClz x ltac:(tauto) eq_refl).
+  - rewrite (eval_op_fun1 bvctz w x UCtz eq_refl) in Heval.
+    injection Heval as <- <-. exact (tnum_count_sound bvctz w UCtz x ltac:(tauto) eq_refl).
+  - rewrite (eval_op_fun1 bvpopcnt w x UPopcnt eq_refl) in Heval.
+    injection Heval as <- <-.
+    exact (tnum_count_sound bvpopcnt w UPopcnt x ltac:(tauto) eq_refl).
+  - rewrite eval_op_zext in Heval. injection Heval as <- <-.
+    rewrite (wrap_id w x Hx).
+    change (tnum_gamma (w + extra)%positive
+      (tnum_map w (w + extra)%positive (tnum_wrap (w + extra)%positive) a)
+      (wrap (w + extra)%positive x)).
+    rewrite (tnum_map_ext _ _ _ (wrap (w + extra)%positive) a) by
+      apply tnum_wrap_agrees.
+    apply tnum_map_sound; try assumption. apply tnum_zext_copy, width_add_le.
+  - rewrite eval_op_sext in Heval. injection Heval as <- <-.
+    change (tnum_gamma (w + extra)%positive
+      (tnum_map w (w + extra)%positive
+        (fun v => tnum_wrap (w + extra)%positive (signed w v)) a)
+      (wrap (w + extra)%positive (signed w x))).
+    rewrite (tnum_map_ext _ _ _
+      (fun v => wrap (w + extra)%positive (signed w v)) a) by
+      (intro v; apply tnum_wrap_agrees).
+    apply (tnum_map_sound w (w + extra)%positive
+      (fun v => wrap (w + extra)%positive (signed w v)) a x); try assumption.
+    apply tnum_sext_copy.
+  - rewrite eval_op_trunc in Heval. destruct (Pos.leb target w) eqn:Hle;
+      [|discriminate].
+    injection Heval as <- <-. rewrite (wrap_id w x Hx).
+    change (tnum_gamma target (tnum_map w target (tnum_wrap target) a) (wrap target x)).
+    rewrite (tnum_map_ext _ _ _ (wrap target) a) by apply tnum_wrap_agrees.
+    apply tnum_map_sound; try assumption. apply tnum_trunc_copy. now apply Pos.leb_le.
+  - rewrite eval_op_extract in Heval.
+    destruct (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w)) eqn:Hshape;
+      [|discriminate].
+    injection Heval as <- <-. rewrite (wrap_id w x Hx).
+    apply andb_true_iff in Hshape as [Hlo Hhi].
+    apply Nat.leb_le in Hlo. apply Nat.ltb_lt in Hhi.
+    change (tnum_gamma (Pos.of_nat (S (hi - lo)))
+      (tnum_map w (Pos.of_nat (S (hi - lo)))
+        (fun v => tnum_wrap (Pos.of_nat (S (hi - lo))) (v / 2 ^ Z.of_nat lo)) a)
+      (wrap (Pos.of_nat (S (hi - lo))) (x / 2 ^ Z.of_nat lo))).
+    rewrite (tnum_map_ext _ _ _
+      (fun v => wrap (Pos.of_nat (S (hi - lo))) (v / 2 ^ Z.of_nat lo)) a) by
+      (intro v; apply tnum_wrap_agrees).
+    apply (tnum_map_sound w (Pos.of_nat (S (hi - lo)))
+      (fun v => wrap (Pos.of_nat (S (hi - lo))) (v / 2 ^ Z.of_nat lo)) a x);
+      try assumption. apply tnum_extract_copy; [lia|].
+    rewrite <- positive_nat_Z, Nat2Pos.id by lia.
+    rewrite <- (positive_nat_Z w). lia.
+Qed.
+
+Lemma tnum_binary_transfer_sound : forall o w f a b x y,
+  word_fun2 o = Some f -> is_word w x -> is_word w y ->
+  tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma w (F.tnum_forward_raw o [(w, a); (w, b)] w) (eval_binary_tag f w x y).
+Proof.
+  intros o w f a b x y Hf Hx Hy Ha Hb.
+  destruct o; try discriminate Hf; injection Hf as <-;
+    first [now apply tnum_add_sound|now apply tnum_sub_sound|
+      rewrite tnum_forward_mul_same; now apply tnum_mul_with_sound|
+      now apply tnum_udiv_sound|now apply tnum_urem_sound|apply tnum_top_sound|
+      now apply tnum_srem_sound|now apply tnum_and_sound|now apply tnum_or_sound|
+      now apply tnum_xor_sound|
+      eapply tnum_variable_sound; try eassumption; try reflexivity;
+        unfold tnum_shift_op; tauto].
+Qed.
 Lemma tnum_forward_fun2_sound : forall o w v f a b x y rw z,
   word_fun2 o = Some f -> is_word w x -> is_word v y ->
   tnum_gamma w a x -> tnum_gamma v b y ->
   eval_op o [(w, x); (v, y)] = Some (rw, z) ->
   tnum_gamma rw (F.tnum_forward_raw o [(w, a); (v, b)] rw) z.
-Proof. Admitted. (* CONVERT: tnum_forward_fun2_sound: The variable tnum_binary_transfer_sound was not found in the current *)
+Proof.
+  intros o w v f a b x y rw z Hf Hx Hy Ha Hb Heval.
+  pose proof (eval_op_fun2_width o f w v x y (rw, z) Hf Heval) as ->.
+  rewrite (eval_op_fun2 o v x y f Hf) in Heval.
+  injection Heval as <- <-. now apply (tnum_binary_transfer_sound o v f).
+Qed.
 Lemma tnum_forward_cmp_sound : forall o w v f a b x y rw z,
   word_cmp o = Some f -> is_word w x -> is_word v y ->
   tnum_gamma w a x -> tnum_gamma v b y ->
@@ -92,7 +169,15 @@ Lemma tnum_forward_two_sound : forall o w v a b x y rw z,
   is_word w x -> is_word v y -> tnum_gamma w a x -> tnum_gamma v b y ->
   eval_op o [(w, x); (v, y)] = Some (rw, z) ->
   tnum_gamma rw (F.tnum_forward_raw o [(w, a); (v, b)] rw) z.
-Proof. Admitted. (* CONVERT: tnum_forward_two_sound: Found no subterm matching *)
+Proof.
+  intros o w v a b x y rw z Hx Hy Ha Hb Heval.
+  destruct o; try apply tnum_top_sound;
+    try (eapply tnum_forward_fun2_sound; try eassumption; reflexivity);
+    try (eapply tnum_forward_cmp_sound; try eassumption; reflexivity).
+  rewrite eval_op_concat in Heval. injection Heval as <- <-.
+  rewrite (wrap_id w x Hx), (wrap_id v y Hy).
+  apply tnum_gamma_wrap. now apply tnum_concat_sound.
+Qed.
 Lemma tnum_forward_three_sound : forall o w v u c a b k x y rw z,
   is_word w k -> is_word v x -> is_word u y ->
   tnum_gamma w c k -> tnum_gamma v a x -> tnum_gamma u b y ->
@@ -106,24 +191,43 @@ Proof.
   rewrite (wrap_id 1%positive k Hk), (wrap_id v x Hx), (wrap_id v y Hy).
   now apply tnum_ite_sound.
 Qed.
-Lemma tnum_binary_transfer_sound : forall o w f a b x y,
-  word_fun2 o = Some f -> is_word w x -> is_word w y ->
-  tnum_gamma w a x -> tnum_gamma w b y ->
-  tnum_gamma w (F.tnum_forward_raw o [(w, a); (w, b)] w) (eval_binary_tag f w x y).
-Proof.
-  intros o w f a b x y Hf Hx Hy Ha Hb.
-  destruct o; try discriminate Hf; injection Hf as <-;
-    first [now apply tnum_add_sound|now apply tnum_sub_sound|
-      rewrite tnum_forward_mul_same; now apply tnum_mul_with_sound|
-      now apply tnum_udiv_sound|now apply tnum_urem_sound|apply tnum_top_sound|
-      now apply tnum_srem_sound|now apply tnum_and_sound|now apply tnum_or_sound|
-      now apply tnum_xor_sound|
-      eapply tnum_variable_sound; try eassumption; try reflexivity;
-        unfold tnum_shift_op; tauto].
-Qed.
 Theorem known_bits_nullary : forall o rw, F.tnum_forward_raw o [] rw = tnum_top.
 Proof. destruct o; reflexivity. Qed.
 End ForwardClaims.
+
+Module KnownBitsForwardProof (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
+  Module P := KnownBitsCode L C.
+  Module F := KnownBitsOpsCode L C P.
+  Module Claims := ForwardClaims L C.
+
+  (** Every supplied forward entry preserves successful concrete evaluation. *)
+  Theorem tnum_forward_raw_sound : forall o wps ys rw z,
+    Forall2 tnum_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o wps rw) z.
+  Proof.
+    intros o wps ys rw z Hgamma Heval.
+    destruct wps as [|[w a] [|[v b] [|[u c] [|wp rest]]]].
+    - destruct o; apply tnum_top_sound.
+    - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst. inversion Htail; subst.
+      destruct y as [wy x]. destruct Hhead as [Hwx [Hx Ha]]. cbn in Hwx, Hx, Ha. subst wy.
+      exact (Claims.tnum_forward_one_sound o w a x rw z Hx Ha Heval).
+    - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst.
+      inversion Htail as [|wp y' wps' tail' Hhead' Htail']; subst. inversion Htail'; subst.
+      destruct y as [wy x], y' as [vy y].
+      destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]].
+      cbn in Hwx, Hvy, Hx, Hy, Ha, Hb. subst wy vy.
+      exact (Claims.tnum_forward_two_sound o w v a b x y rw z Hx Hy Ha Hb Heval).
+    - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst.
+      inversion Htail as [|wp y' wps' tail' Hhead' Htail']; subst.
+      inversion Htail' as [|wp y'' wps' tail'' Hhead'' Htail'']; subst.
+      inversion Htail''; subst. destruct y as [wy x], y' as [vy y], y'' as [uy t].
+      destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]], Hhead'' as [Hut [Ht Hc]].
+      cbn in Hwx, Hvy, Hut, Hx, Hy, Ht, Ha, Hb, Hc. subst wy vy uy.
+      exact (Claims.tnum_forward_three_sound o w v u a b c x y t rw z
+        Hx Hy Ht Ha Hb Hc Heval).
+    - destruct o; apply tnum_top_sound.
+  Qed.
+End KnownBitsForwardProof.
 Theorem known_bits_eval_primitive_bound : forall o (xs : list word),
   Nat.eqb (length xs) (arity o) = true -> (length xs <= 3)%nat.
 Proof.
