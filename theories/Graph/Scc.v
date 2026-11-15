@@ -3830,6 +3830,37 @@ Proof.
   pose proof (Pos2Nat.is_pos i). cbn zeta. lia.
 Qed.
 
+(** Strong blocks and a decreasing owner assignment characterize mutual reachability. *)
+Lemma scc_components_exact g :
+  (forall u v i, trie_get u (tarjan_owners
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+        (scc_trace g) tarjan_initial)) = Some i -> edge (base g) u v ->
+    exists j, trie_get v (tarjan_owners
+      (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+        (scc_trace g) tarjan_initial)) = Some j /\ (j <= i)%positive) ->
+  forall u v,
+    (exists i, trie_get u (tarjan_owners
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+          (scc_trace g) tarjan_initial)) = Some i /\
+      trie_get v (tarjan_owners
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+          (scc_trace g) tarjan_initial)) = Some i) <->
+    In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
+Proof.
+  intros Hrank u v. split.
+  - intros [i [Hu Hv]]. split; [now apply (scc_final_owner_listed g u i)|].
+    split; [now apply (scc_final_owner_listed g v i)|].
+    eapply scc_same_owner_strong; eassumption.
+  - intros [Hu [Hv Hmutual]].
+    destruct (scc_final_owner_present g u Hu) as [i Hi].
+    destruct (scc_final_owner_present g v Hv) as [j Hj].
+    pose proof (tarjan_owner_mutual (base g)
+      (tarjan_owners (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+        (scc_trace g) tarjan_initial)) Hrank u v i j Hmutual Hi Hj) as Heq.
+    subst j. now exists i.
+Qed.
+
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
@@ -4531,7 +4562,10 @@ Module Scc <: SCC.
     (exists i, trie_get u (comp (run g)) = Some i /\
       trie_get v (comp (run g)) = Some i) <->
     In u (nodes g) /\ In v (nodes g) /\ mutually_reachable (base g) u v.
-  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
+  Proof.
+    intros g Hwf. unfold run. cbn [comp].
+    apply scc_components_exact. exact (tarjan_final_rank g Hwf).
+  Qed.
 
   Lemma comps_partition : forall g, wf_graph (base g) ->
     NoDup (concat (comps (run g))) /\
