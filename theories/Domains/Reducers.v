@@ -284,6 +284,81 @@ Proof.
   intros []; reflexivity.
 Qed.
 
+(** Absolute value preserves the stored magnitude bits. *)
+Lemma reducer_abs_bits : forall z, Z.size_nat (Z.abs z) = Z.size_nat z.
+Proof. intros []; reflexivity. Qed.
+
+(** Every integer magnitude lies below the power of two given by its stored bits. *)
+Lemma reducer_abs_bits_bound : forall z, Z.abs z < 2 ^ Z.of_nat (Z.size_nat z).
+Proof.
+  intros [|p|p]; cbn [Z.abs Z.size_nat]; try lia; apply Zpower2_Psize; lia.
+Qed.
+
+(** A magnitude bound gives a corresponding upper bound on stored bits. *)
+Lemma reducer_bits_of_abs_bound : forall z n,
+  Z.abs z < 2 ^ Z.of_nat n -> (Z.size_nat z <= n)%nat.
+Proof.
+  intros [|p|p] n Hbound; cbn [Z.abs Z.size_nat] in *; try lia;
+    now apply Zpower2_Psize in Hbound.
+Qed.
+
+(** Addition needs at most the operand bits and one carry bit. *)
+Lemma reducer_sum_bits : forall x y,
+  (Z.size_nat (x + y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros x y; apply reducer_bits_of_abs_bound.
+  pose proof (reducer_abs_bits_bound x) as Hx.
+  pose proof (reducer_abs_bits_bound y) as Hy.
+  pose proof (Z.abs_triangle x y) as Hsum.
+  pose proof (Z.pow_pos_nonneg 2 (Z.of_nat (Z.size_nat x)) ltac:(lia) ltac:(lia)) as Hxp.
+  pose proof (Z.pow_pos_nonneg 2 (Z.of_nat (Z.size_nat y)) ltac:(lia) ltac:(lia)) as Hyp.
+  rewrite !Nat2Z.inj_add, !Z.pow_add_r, Z.pow_1_r by lia; nia.
+Qed.
+
+(** Subtraction has the same storage bound as addition. *)
+Lemma reducer_sub_bits : forall x y,
+  (Z.size_nat (x - y) <= Z.size_nat x + Z.size_nat y + 1)%nat.
+Proof.
+  intros x y; pose proof (reducer_sum_bits x (- y)) as Hsum.
+  rewrite reducer_opp_bits in Hsum; exact Hsum.
+Qed.
+
+(** A remainder modulo a nonzero magnitude fits within that magnitude's bits. *)
+Lemma reducer_modulo_bits : forall x m, m <> 0 ->
+  (Z.size_nat (x mod Z.abs m) <= Z.size_nat m)%nat.
+Proof.
+  intros x m Hm; assert (Hpositive : 0 < Z.abs m) by (apply Z.abs_pos; exact Hm).
+  pose proof (Z.mod_pos_bound x (Z.abs m) Hpositive) as Hrange.
+  rewrite <- (reducer_abs_bits m); apply Std.Z.size_nat_mono; lia.
+Qed.
+
+(** Two operands within a positive bit budget give a quadratic remainder clock. *)
+Lemma reducer_modulo_time_budget : forall x y s,
+  (Z.size_nat x <= s)%nat -> (Z.size_nat y <= s)%nat -> (1 <= s)%nat ->
+  (Std.Z.T_modulo x y <= 256 * N.of_nat (s ^ 2))%N.
+Proof.
+  intros x y s Hx Hy Hpositive.
+  pose proof (Std.Z.T_modulo_le x y) as Htime.
+  rewrite Nat2N.inj_add in Htime.
+  set (n := N.of_nat s).
+  rewrite Nat.pow_2_r, Nat2N.inj_mul; fold n.
+  assert (HxN : (N.of_nat (Z.size_nat x) <= n)%N) by (unfold n; lia).
+  assert (HyN : (N.of_nat (Z.size_nat y) <= n)%N) by (unfold n; lia).
+  assert (Hn : (1 <= n)%N) by (unfold n; lia).
+  clearbody n.
+  assert (Hproduct : ((N.of_nat (Z.size_nat x) + 1) *
+    (N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y) + 2) <= 8 * (n * n))%N).
+  { replace (8 * (n * n))%N with ((2 * n) * (4 * n))%N by (clear; ring).
+    apply N.mul_le_mono; lia. }
+  replace (16 * (N.of_nat (Z.size_nat x) + 1) *
+    (N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y) + 2) + 1)%N with
+    (16 * ((N.of_nat (Z.size_nat x) + 1) *
+      (N.of_nat (Z.size_nat x) + N.of_nat (Z.size_nat y) + 2)) + 1)%N in Htime by (clear; ring).
+  assert (Hsquare : (1 <= n * n)%N).
+  { change (1 * 1 <= n * n)%N; apply N.mul_le_mono; exact Hn. }
+  clear -Htime Hproduct Hsquare; lia.
+Qed.
+
 (** A power of two needs its exponent and one additional stored bit. *)
 Lemma reducer_pow2_bits : forall n, 0 <= n ->
   (Z.size_nat (2 ^ n) <= Z.to_nat n + 1)%nat.
@@ -508,6 +583,190 @@ Proof.
   apply time_of_nat_le, reducer_positive_bits.
 Qed.
 
+(** Positive comparison stops after traversing either operand's digits. *)
+Lemma reducer_compare_right_time : forall c p q,
+  (Std.Pos.T_compare_cont c p q <= N.of_nat (Pos.size_nat q))%N.
+Proof.
+  intros c p q; revert p c.
+  induction q as [q IH | q IH |]; intros [p | p |] c; time_step.
+Qed.
+
+(** A nonnegative left operand can be compared against an upper-bounded right one
+    using at most the word width, even when either raw magnitude is very large. *)
+Lemma reducer_upper_compare_time : forall w x y, 0 <= x -> y < Word.modulus w ->
+  (Std.Z.T_leb x y <= N.of_nat (Pos.to_nat w) + 4)%N.
+Proof.
+  intros w [|p|p] [|q|q] Hnonnegative Hupper; try lia.
+  all: time_unfold Std.Z.T_leb; time_unfold Std.Z.T_compare;
+    try time_unfold Std.Pos.T_compare; time_cbn; try lia.
+  pose proof (reducer_compare_right_time Eq p q) as Hcompare.
+  pose proof (reducer_word_bits w (Zpos q) ltac:(unfold Word.is_word; lia)) as Hbits.
+  cbn [Z.size_nat] in Hbits; nia.
+Qed.
+
+(** Word clipping compares raw endpoints against width-bounded sentinels. *)
+Lemma reducer_clip_time : forall w a,
+  (T_interval_word_clip w a <= 128 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intros w a.
+  pose proof (reducer_ones_time (Zpos w) ltac:(lia)) as Hmask.
+  change (Z.to_nat (Zpos w)) with (Pos.to_nat w) in Hmask.
+  pose proof (reducer_word_bits w _ (reducer_ones_word w)) as Hmaskbits.
+  pose proof (reducer_ones_word w) as Hword; unfold Word.is_word in Hword.
+  destruct a as [|[|lo|] [|hi|]]; time_unfold T_interval_word_clip; time_cbn.
+  all: try match goal with
+    | |- context [Std.Z.T_leb ?x ?y] =>
+      pose proof (reducer_upper_compare_time w x y ltac:(lia) ltac:(lia)) as Hcompare
+    end.
+  all: time_pose; cbn [Z.size_nat] in *; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** The residue extracted from a clipped interval stores at most one word. *)
+Lemma reducer_interval_congr_bits : forall w a,
+  (congr_bits (interval_congr (interval_word_clip w a)) <= Pos.to_nat w + 1)%nat.
+Proof.
+  intros w a.
+  destruct (interval_word_clip w a) as [|[|lo|] [|hi|]] eqn:Hclip;
+    cbn [interval_congr congr_bits Z.size_nat Pos.size_nat]; try lia.
+  pose proof (reducer_clip_bounds w a lo hi Hclip) as Hbounds.
+  pose proof (reducer_word_bits w lo ltac:(unfold Word.is_word; lia)) as Hbits.
+  destruct (lo =? hi); cbn [congr_bits Z.size_nat Pos.size_nat]; lia.
+Qed.
+
+(** Singleton extraction compares only already clipped endpoints. *)
+Lemma reducer_interval_congr_time : forall w a,
+  (T_interval_congr (interval_word_clip w a) <= 16 * N.of_nat (Pos.to_nat w + 1))%N.
+Proof.
+  intros w a.
+  destruct (interval_word_clip w a) as [|[|lo|] [|hi|]] eqn:Hclip;
+    time_unfold T_interval_congr; time_cbn; try (rewrite !Nat2N.inj_add; nia).
+  pose proof (reducer_clip_bounds w a lo hi Hclip) as Hbounds.
+  pose proof (reducer_word_bits w lo ltac:(unfold Word.is_word; lia)) as Hbits.
+  time_pose; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Canonical word intervals are either bottom or ordered finite word endpoints. *)
+Definition reducer_interval_range (w : positive) (a : itv) : Prop :=
+  match a with
+  | IBot => True
+  | I (Fin lo) (Fin hi) => 0 <= lo <= hi /\ hi < Word.modulus w
+  | _ => False
+  end.
+
+Module ReducerIntervalFacts (T : THRESHOLDS) (S : INTERVAL_SCALAR_OPS T).
+  (** Scalar payload clipping always produces a canonical word interval. *)
+  Lemma clip_range : forall w a,
+    reducer_interval_range w (interval_payload_clip S.interval_meet w a).
+  Proof.
+    intros w [|[|lo|] [|hi|]].
+    all: unfold interval_payload_clip, S.interval_meet, S.bound_max, S.bound_min,
+      S.bounds_nonempty, S.bound_leb; cbn beta iota zeta.
+    all: repeat match goal with
+      | |- context [if ?c then _ else _] => destruct c eqn:?; cbn beta iota zeta
+      end.
+    all: repeat match goal with
+      | H : (?x <=? ?y) = true |- _ => apply Z.leb_le in H
+      | H : (?x <=? ?y) = false |- _ => apply Z.leb_gt in H
+      end.
+    all: cbn [reducer_interval_range]; pose proof (Word.modulus_pos w); lia.
+  Qed.
+
+  (** Clipping fixes ordered endpoints already in the word range. *)
+  Lemma clip_finite : forall w lo hi, 0 <= lo <= hi -> hi < Word.modulus w ->
+    interval_payload_clip S.interval_meet w (I (Fin lo) (Fin hi)) = I (Fin lo) (Fin hi).
+  Proof.
+    intros w lo hi Hbounds Hupper.
+    unfold interval_payload_clip, S.interval_meet, S.bound_max, S.bound_min,
+      S.bounds_nonempty, S.bound_leb; cbn beta iota zeta.
+    assert (Hhi : (hi <=? Word.modulus w - 1) = true) by (apply Z.leb_le; lia).
+    rewrite Hhi.
+    destruct (lo <=? 0) eqn:Hlo; cbn beta iota zeta.
+    - apply Z.leb_le in Hlo; assert (lo = 0) by lia; subst lo.
+      assert (Horder : (0 <=? hi) = true) by (apply Z.leb_le; lia).
+      rewrite Horder; reflexivity.
+    - assert (Horder : (lo <=? hi) = true) by (apply Z.leb_le; lia).
+      rewrite Horder; reflexivity.
+  Qed.
+
+  (** Finite scalar maximum agrees with integer maximum. *)
+  Lemma bound_max_finite : forall x y,
+    S.bound_max (Fin x) (Fin y) = Fin (Z.max x y).
+  Proof.
+    intros x y; unfold S.bound_max, S.bound_leb; destruct (x <=? y) eqn:Horder.
+    - apply Z.leb_le in Horder; rewrite Z.max_r by exact Horder; reflexivity.
+    - apply Z.leb_gt in Horder; rewrite Z.max_l by lia; reflexivity.
+  Qed.
+
+  (** Finite scalar minimum agrees with integer minimum. *)
+  Lemma bound_min_finite : forall x y,
+    S.bound_min (Fin x) (Fin y) = Fin (Z.min x y).
+  Proof.
+    intros x y; unfold S.bound_min, S.bound_leb; destruct (x <=? y) eqn:Horder.
+    - apply Z.leb_le in Horder; rewrite Z.min_l by exact Horder; reflexivity.
+    - apply Z.leb_gt in Horder; rewrite Z.min_r by lia; reflexivity.
+  Qed.
+
+  (** The direct word clip agrees with the scalar payload clip. *)
+  Lemma word_clip_agrees : forall w a,
+    interval_payload_clip S.interval_meet w a = interval_word_clip w a.
+  Proof.
+    intros w a.
+    assert (Hmask : Z.ones (Zpos w) = Word.modulus w - 1)
+      by (rewrite Z.ones_equiv; unfold Word.modulus; lia).
+    destruct a as [|[|lo|] [|hi|]].
+    all: unfold interval_payload_clip, interval_word_clip, S.interval_meet;
+      cbn beta iota zeta; rewrite ?bound_max_finite, ?bound_min_finite.
+    all: unfold S.bound_max, S.bound_min, S.bound_leb, S.bounds_nonempty;
+      cbn beta iota zeta; rewrite ?Hmask; try reflexivity.
+    all: try match goal with
+      | |- context [Z.max ?x 0] => rewrite (Z.max_comm x 0)
+      end.
+    all: try match goal with
+      | |- context [Z.min ?x (Word.modulus ?width - 1)] =>
+        rewrite (Z.min_comm x (Word.modulus width - 1))
+      end.
+    all: reflexivity.
+  Qed.
+
+  (** Every canonical interval is fixed by scalar clipping. *)
+  Lemma clip_canonical : forall w a, reducer_interval_range w a ->
+    interval_payload_clip S.interval_meet w a = a.
+  Proof.
+    intros w [|[|lo|] [|hi|]] Hrange;
+      cbn [reducer_interval_range] in Hrange; try contradiction.
+    - reflexivity.
+    - apply clip_finite; lia.
+  Qed.
+
+  (** Scalar clipping is idempotent. *)
+  Lemma clip_idempotent : forall w a,
+    interval_payload_clip S.interval_meet w (interval_payload_clip S.interval_meet w a) =
+      interval_payload_clip S.interval_meet w a.
+  Proof. intros; apply clip_canonical, clip_range. Qed.
+
+  (** The direct word clip has the same canonical endpoint invariant. *)
+  Lemma word_clip_range : forall w a, reducer_interval_range w (interval_word_clip w a).
+  Proof. intros; rewrite <- word_clip_agrees; apply clip_range. Qed.
+
+  (** Meeting two canonical word intervals preserves their endpoint bounds. *)
+  Lemma meet_range : forall w a b, reducer_interval_range w a ->
+    reducer_interval_range w b -> reducer_interval_range w (S.interval_meet a b).
+  Proof.
+    intros w [|[|lo|] [|hi|]] [|[|lo'|] [|hi'|]] Ha Hb;
+      cbn [reducer_interval_range] in Ha, Hb; try contradiction.
+    all: unfold S.interval_meet, S.bound_max, S.bound_min,
+      S.bounds_nonempty, S.bound_leb; cbn beta iota zeta.
+    all: repeat match goal with
+      | |- context [if ?c then _ else _] => destruct c eqn:?; cbn beta iota zeta
+      end.
+    all: repeat match goal with
+      | H : (?x <=? ?y) = true |- _ => apply Z.leb_le in H
+      | H : (?x <=? ?y) = false |- _ => apply Z.leb_gt in H
+      end.
+    all: cbn [reducer_interval_range]; lia.
+  Qed.
+End ReducerIntervalFacts.
+
 (** The order used by tagged word domains. *)
 Definition reducer_tagged_leb {P} (pleb : positive -> P -> P -> bool)
     (pis_bot : positive -> P -> bool) (a b : tagged P) : bool :=
@@ -691,10 +950,13 @@ Module IntervalCongrCode (L : WORD_LANGUAGE_OPS) (A0 : WORD_PAYLOAD_OPS L with D
     (A : VALUE_DOMAIN_OPS BitsLangCode with Definition t := tagged A0.p)
     (B : VALUE_DOMAIN_OPS BitsLangCode with Definition t := tagged B0.p)
     <: REDUCTION_STEPS_OPS BitsLangCode A B.
+  (** Normalize the derived interval before passing it to the payload meet. *)
   Definition to_left (x : A.t * B.t) : A.t * B.t :=
     match x with
     | (TVal w a, TVal v b) =>
-      if Pos.eqb w v then (TVal w (A0.pmeet w a (congr_interval w a b)), TVal v b) else x
+      if Pos.eqb w v
+      then (TVal w (A0.pmeet w a (interval_word_clip w (congr_interval w a b))), TVal v b)
+      else x
     | _ => x
     end.
   Definition to_right (x : A.t * B.t) : A.t * B.t :=
@@ -719,6 +981,15 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
       with Definition gamma := tagged_gamma L.is_word B0.pgamma)
     <: REDUCTION_STEPS BitsLang A B.
   Include IntervalCongrCode L A0 B0 A B.
+  Module PrecisionFacts := ReducerIntervalFacts T S.
+
+  (** Normalizing a meet operand preserves the exact pinned payload result. *)
+  Lemma meet_word_clip_right : forall w a b,
+    A0.pmeet w a (interval_word_clip w b) = A0.pmeet w a b.
+  Proof.
+    intros w a b; rewrite !A0.F_pmeet, <- PrecisionFacts.word_clip_agrees,
+      PrecisionFacts.clip_idempotent; reflexivity.
+  Qed.
 
   (** Inward rounding preserves each interval member in the supplied residue class. *)
   Lemma round_sound : forall w a b z, A0.pgamma w a z -> B0.pgamma w b z ->
@@ -781,6 +1052,7 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
     change (u = w /\ L.is_word w z /\ A0.pgamma w a z) in Ha.
     change (u = w /\ L.is_word w z /\ B0.pgamma w b z) in Hb.
     destruct Ha as [Hu [Hword Ha]]; destruct Hb as [_ [_ Hb]].
+    rewrite meet_word_clip_right.
     change (u = w /\ L.is_word w z /\
       A0.pgamma w (A0.pmeet w a (congr_interval w a b)) z).
     split; [exact Hu|]; split; [exact Hword|].
@@ -824,7 +1096,7 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
   Lemma F_to_left : forall w a b, to_left (TVal w a, TVal w b) =
     (TVal w (A0.pmeet w a (congr_interval w a b)), TVal w b).
   Proof.
-    intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
+    intros; unfold to_left; rewrite Pos.eqb_refl, meet_word_clip_right; reflexivity.
   Qed.
   Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (B0.pmeet w b (interval_congr (interval_word_clip w a)))).
@@ -1178,33 +1450,261 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
       with Definition gamma := tagged_gamma L.is_word B0.pgamma)
     <: INTERVAL_CONGR_ALL A B.
   Include IntervalCongr L T S A0 B0 A B.
+  Module IntervalFacts := ReducerIntervalFacts T S.
   TimeFun to_left.
   TimeFun to_right.
   TimeFun reduce.
-  Definition c_exchange : N := 1. (* STUB *)
-  Definition c_reduce : N := 1. (* STUB *)
+  Definition c_exchange : N := 131072 * (A0.c_payload + 1) * (A0.c_payload + 1) *
+    (A0.c_payload + 1) * (B0.c_payload + 1).
+  Definition c_reduce : N := (c_exchange + 1) * (c_exchange + 1).
   Definition k_exchange : N := 1.
+
+  (** Canonical interval storage is bounded by joining its endpoint constants. *)
+  Lemma canonical_payload_size : forall w a, reducer_interval_range w a ->
+    (N.of_nat (A0.psize w a) <= 16 * (A0.c_payload + 1) * (A0.c_payload + 1) *
+      N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+  Proof.
+    intros w [|[|lo|] [|hi|]] Hrange;
+      cbn [reducer_interval_range] in Hrange; try contradiction.
+    - rewrite <- (A0.F_pbot w).
+      eapply N.le_trans; [apply A0.pbot_size|].
+      apply N.mul_le_mono_r; nia.
+    - assert (Hlo : Word.is_word w lo) by (unfold Word.is_word; lia).
+      assert (Hhi : Word.is_word w hi) by (unfold Word.is_word; lia).
+      pose proof (reducer_word_bits w lo Hlo) as Hlobits.
+      pose proof (reducer_word_bits w hi Hhi) as Hhibits.
+      assert (Hjoin : A0.pjoin w (A0.pconst w lo) (A0.pconst w hi) = I (Fin lo) (Fin hi)).
+      { rewrite A0.F_pjoin, !A0.F_pconst.
+        unfold L.wrap; rewrite !Word.wrap_id by assumption.
+        rewrite !IntervalFacts.clip_finite by lia.
+        unfold S.interval_join, S.bound_min, S.bound_max, S.bound_leb; cbn beta iota zeta.
+        assert (Horder : (lo <=? hi) = true) by (apply Z.leb_le; lia).
+        rewrite Horder; reflexivity. }
+      pose proof (A0.pjoin_size w (A0.pconst w lo) (A0.pconst w hi)) as Hjoin_size.
+      rewrite Hjoin in Hjoin_size; rewrite !Nat2N.inj_add in Hjoin_size.
+      assert (Hliteral : forall z, (Z.size_nat z <= Pos.to_nat w)%nat ->
+        (N.of_nat (A0.psize w (A0.pconst w z)) <=
+          4 * A0.c_payload * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+      { intros z Hz; pose proof (A0.pconst_size w z) as Hsize.
+        assert (Hbudget : (N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2) <=
+          4 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+        { rewrite !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add; nia. }
+        nia. }
+      pose proof (Hliteral lo Hlobits) as Hlosize.
+      pose proof (Hliteral hi Hhibits) as Hhisize.
+      assert (Hwidth : (1 <= N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+      { rewrite Nat.pow_2_r, Nat2N.inj_mul, Nat2N.inj_add; nia. }
+      clear -Hjoin_size Hlosize Hhisize Hwidth; nia.
+  Qed.
+
+  (** Every payload meet is canonical because its two operands are clipped. *)
+  Lemma meet_payload_range : forall w a b, reducer_interval_range w (A0.pmeet w a b).
+  Proof.
+    intros w a b; rewrite A0.F_pmeet; apply IntervalFacts.meet_range;
+      apply IntervalFacts.clip_range.
+  Qed.
+
+  (** Residue rounding charges the width and the two raw congruence integers quadratically. *)
+  Lemma congr_interval_time : forall w a b,
+    (T_congr_interval w a b <=
+      4096 * N.of_nat ((Pos.to_nat w + congr_bits b + 1) ^ 2))%N.
+  Proof.
+    intros w a b.
+    pose proof (reducer_clip_time w a) as Hcliptime.
+    pose proof (IntervalFacts.word_clip_range w a) as Hrange.
+    time_unfold T_congr_interval.
+    destruct (interval_word_clip w a) as [|[|lo|] [|hi|]] eqn:Hclip;
+      cbn [reducer_interval_range] in Hrange; try contradiction.
+    all: destruct b as [|m r]; time_cbn; unfold congr_bits;
+      try (rewrite ?Nat.pow_2_r, ?Nat2N.inj_mul, ?Nat2N.inj_add in *; nia).
+    pose proof (reducer_word_bits w lo ltac:(unfold Word.is_word; lia)) as Hlobits.
+    pose proof (reducer_word_bits w hi ltac:(unfold Word.is_word; lia)) as Hhibits.
+    pose proof (Std.Z.T_eqb_le m 0) as Heqb.
+    destruct (m =? 0) eqn:Hmodulus; time_cbn.
+    - clear Hrange Hclip.
+      rewrite ?Nat.pow_2_r, ?Nat2N.inj_mul, ?Nat2N.inj_add in *; nia.
+    - apply Z.eqb_neq in Hmodulus.
+      pose proof (reducer_sub_bits r lo) as Hlowerbits.
+      pose proof (reducer_sub_bits hi r) as Hupperbits.
+      pose proof (reducer_modulo_bits (r - lo) m Hmodulus) as Hlowmod.
+      pose proof (reducer_modulo_bits (hi - r) m Hmodulus) as Hhighmod.
+      set (s := (Pos.to_nat w + (Z.size_nat m + Z.size_nat r) + 1)%nat).
+      assert (Hs : (1 <= s)%nat) by (unfold s; lia).
+      assert (Hmodlo : (Std.Z.T_modulo (r - lo) (Z.abs m) <=
+        256 * N.of_nat (s ^ 2))%N).
+      { apply reducer_modulo_time_budget; rewrite ?reducer_abs_bits; unfold s; lia. }
+      assert (Hmodhi : (Std.Z.T_modulo (hi - r) (Z.abs m) <=
+        256 * N.of_nat (s ^ 2))%N).
+      { apply reducer_modulo_time_budget; rewrite ?reducer_abs_bits; unfold s; lia. }
+      assert (Hsublo : (Std.Z.T_sub r lo <= 3 * N.of_nat s)%N).
+      { pose proof (Std.Z.T_sub_le r lo); unfold s; rewrite !Nat2N.inj_add in *; lia. }
+      assert (Hsubhi : (Std.Z.T_sub hi r <= 3 * N.of_nat s)%N).
+      { pose proof (Std.Z.T_sub_le hi r); unfold s; rewrite !Nat2N.inj_add in *; lia. }
+      assert (Haddlo : (Std.Z.T_add lo ((r - lo) mod Z.abs m) <= 3 * N.of_nat s)%N).
+      { pose proof (Std.Z.T_add_le lo ((r - lo) mod Z.abs m)).
+        unfold s; rewrite !Nat2N.inj_add in *; lia. }
+      assert (Hsubend : (Std.Z.T_sub hi ((hi - r) mod Z.abs m) <= 3 * N.of_nat s)%N).
+      { pose proof (Std.Z.T_sub_le hi ((hi - r) mod Z.abs m)).
+        unfold s; rewrite !Nat2N.inj_add in *; lia. }
+      assert (Heqb_bound : (Std.Z.T_eqb m 0 <= N.of_nat s)%N).
+      { unfold s; rewrite !Nat2N.inj_add; lia. }
+      assert (Hclip_bound : (T_interval_word_clip w a <= 128 * N.of_nat s)%N).
+      { unfold s; rewrite !Nat2N.inj_add in *; lia. }
+      pose proof (Std.Z.T_abs_le m) as Habs.
+      fold s; clearbody s.
+      assert (Hlinear : (N.of_nat s <= N.of_nat (s ^ 2))%N).
+      { clear -Hs; rewrite Nat.pow_2_r, Nat2N.inj_mul; nia. }
+      clear -Hmodlo Hmodhi Hsublo Hsubhi Haddlo Hsubend Heqb_bound Hclip_bound Habs Hlinear Hs.
+      rewrite ?Nat.pow_2_r, ?Nat.mul_1_r in *; lia.
+  Qed.
+
   Lemma T_to_left_le : forall a b, (T_to_left (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    set (bound := (16 * (A0.c_payload + 1) * (A0.c_payload + 1))%N).
+    assert (Hconstant : (A0.c_payload * bound + A0.c_payload + 8192 <= c_exchange)%N)
+      by (unfold bound, c_exchange; nia).
+    intros [|w a|] [|v b|]; time_unfold T_to_left; time_cbn;
+      unfold A.size, B.size, tagged_size;
+      try (rewrite ?Nat2N.inj_add; time_cbn; nia).
+    pose proof (reducer_width_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (congr_interval_time w a b) as Hround.
+    rewrite <- B0.psize_congr in Hround.
+    pose proof (reducer_clip_time w (congr_interval w a b)) as Hclip.
+    pose proof (A0.T_pmeet_le w a (interval_word_clip w (congr_interval w a b))) as Hmeet.
+    pose proof (canonical_payload_size w (interval_word_clip w (congr_interval w a b))
+      (IntervalFacts.word_clip_range w (congr_interval w a b))) as Hsize.
+    fold bound in Hsize.
+    assert (Hbudget : (N.of_nat ((Pos.to_nat w + 1) ^ 2) <=
+      N.of_nat (B0.psize w b))%N).
+    { rewrite B0.psize_congr, !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add; nia. }
+    assert (Hderived : (N.of_nat (A0.psize w (interval_word_clip w (congr_interval w a b))) <=
+      bound * N.of_nat (B0.psize w b))%N).
+    { eapply N.le_trans; [exact Hsize|]. apply N.mul_le_mono_l; exact Hbudget. }
+    clear Hsize Hbudget; clearbody bound.
+    rewrite !Nat2N.inj_add in *.
+    match goal with |- (_ <= ?coefficient * ?size)%N => set (total := size) end.
+    assert (Hleft_budget : (N.of_nat (A0.psize w a) + 1 <= total)%N)
+      by (unfold total; lia).
+    assert (Hright_budget : (N.of_nat (B0.psize w b) <= total)%N)
+      by (unfold total; lia).
+    assert (Hwidth_budget : (N.of_nat (Pos.to_nat w) + 1 <= total)%N)
+      by (unfold total; lia).
+    assert (Hderived_total : (N.of_nat (A0.psize w (interval_word_clip w (congr_interval w a b))) <=
+      bound * total)%N).
+    { eapply N.le_trans; [exact Hderived|]. apply N.mul_le_mono_l; exact Hright_budget. }
+    assert (Hmeet_total : (A0.T_pmeet w a (interval_word_clip w (congr_interval w a b)) <=
+      (A0.c_payload * bound + A0.c_payload) * total)%N).
+    { eapply N.le_trans; [exact Hmeet|].
+      replace ((A0.c_payload * bound + A0.c_payload) * total)%N with
+        (A0.c_payload * (bound * total + total))%N by (clear; ring).
+      apply N.mul_le_mono_l; lia. }
+    assert (Hround_total : (T_congr_interval w a b <= 4096 * total)%N).
+    { eapply N.le_trans; [exact Hround|]. apply N.mul_le_mono_l; exact Hright_budget. }
+    assert (Hclip_total : (T_interval_word_clip w (congr_interval w a b) <= 128 * total)%N).
+    { eapply N.le_trans; [exact Hclip|]. apply N.mul_le_mono_l; exact Hwidth_budget. }
+    clearbody total.
+    eapply N.le_trans with (m := ((A0.c_payload * bound + A0.c_payload + 8192) * total)%N).
+    - rewrite N.mul_add_distr_r.
+      clear -Hmeet_total Hround_total Hclip_total Hwidth Hwidth_budget; lia.
+    - apply N.mul_le_mono_r; exact Hconstant.
+  Qed.
   Lemma T_to_right_le : forall a b, (T_to_right (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    assert (Hconstant : (256 * (B0.c_payload + 1) <= c_exchange)%N)
+      by (unfold c_exchange; nia).
+    intros [|w a|] [|v b|]; time_unfold T_to_right; time_cbn;
+      unfold A.size, B.size, tagged_size;
+      try (rewrite ?Nat2N.inj_add; time_cbn; nia).
+    pose proof (reducer_width_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_clip_time w a) as Hclip.
+    pose proof (reducer_interval_congr_time w a) as Hsingleton.
+    pose proof (reducer_interval_congr_bits w a) as Hbits.
+    pose proof (B0.T_pmeet_le w b (interval_congr (interval_word_clip w a))) as Hmeet.
+    assert (Hderived : (N.of_nat (B0.psize w (interval_congr (interval_word_clip w a))) <=
+      4 * N.of_nat (B0.psize w b))%N).
+    { rewrite !B0.psize_congr, !Nat.pow_2_r.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add; nia. }
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma left_size : forall a b,
     (N.of_nat (A.size (fst (to_left (a, b))) + B.size b) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    set (bound := (16 * (A0.c_payload + 1) * (A0.c_payload + 1))%N).
+    assert (Hconstant : (2 * bound + 1 <= c_exchange)%N)
+      by (unfold bound, c_exchange; nia).
+    intros [|w a|] [|v b|]; unfold to_left; cbn [fst];
+      unfold A.size, B.size, tagged_size;
+      try (rewrite ?Nat2N.inj_add; time_cbn; nia).
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    rewrite meet_word_clip_right.
+    pose proof (canonical_payload_size w (A0.pmeet w a (congr_interval w a b))
+      (meet_payload_range w a (congr_interval w a b))) as Houtput.
+    fold bound in Houtput.
+    assert (Hbudget : (N.of_nat ((Pos.to_nat w + 1) ^ 2) <=
+      N.of_nat (B0.psize w b))%N).
+    { rewrite B0.psize_congr, !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add; nia. }
+    assert (Hresult : (N.of_nat (A0.psize w (A0.pmeet w a (congr_interval w a b))) <=
+      bound * N.of_nat (B0.psize w b))%N).
+    { eapply N.le_trans; [exact Houtput|]. apply N.mul_le_mono_l; exact Hbudget. }
+    clearbody bound; clear -Hconstant Hresult; nia.
+  Qed.
   Lemma right_size : forall a b,
     (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    assert (Hconstant : (1 <= c_exchange)%N) by (unfold c_exchange; nia).
+    assert (Hpayload : (8 * (B0.c_payload + 1) <= c_exchange)%N)
+      by (unfold c_exchange; nia).
+    intros [|w a|] [|v b|]; unfold to_right; cbn [snd];
+      unfold A.size, B.size, tagged_size;
+      try (rewrite !Nat2N.inj_add; time_cbn; nia).
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_interval_congr_bits w a) as Hbits.
+    pose proof (B0.pmeet_size w b (interval_congr (interval_word_clip w a))) as Hmeet.
+    assert (Hderived : (N.of_nat (B0.psize w (interval_congr (interval_word_clip w a))) <=
+      4 * N.of_nat (B0.psize w b))%N).
+    { rewrite !B0.psize_congr, !Nat.pow_2_r.
+      rewrite !Nat2N.inj_mul, !Nat2N.inj_add; nia. }
+    rewrite !Nat2N.inj_add in Hmeet; nia.
+  Qed.
   Lemma T_reduce_le : forall a b,
     (T_reduce (a, b) <= c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b.
+    pose proof (T_to_left_le a b) as Hleft.
+    pose proof (left_size a b) as Hsize.
+    pose proof (left_frame (a, b)) as Hframe.
+    destruct (to_left (a, b)) as [a' b'] eqn:Hstep.
+    cbn [fst snd] in Hsize, Hframe; subst b'.
+    pose proof (T_to_right_le a' b) as Hright.
+    time_unfold T_reduce; cbn beta iota zeta; rewrite Hstep.
+    unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma reduce_size_le : forall a b,
     (N.of_nat (A.size (fst (reduce (a, b))) + B.size (snd (reduce (a, b)))) <=
       c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; unfold reduce; rewrite right_frame.
+    pose proof (left_size a b) as Hleft.
+    pose proof (left_frame (a, b)) as Hframe.
+    destruct (to_left (a, b)) as [a' b'] eqn:Hstep.
+    cbn [fst snd] in Hleft, Hframe; subst b'.
+    pose proof (right_size a' b) as Hright.
+    cbn [fst]; unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
@@ -1224,7 +1724,10 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Qed.
   Lemma reduce_bigO : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_reduce; intros [a b] _; cbn [fst snd].
+    pose proof (T_reduce_le a b); nia.
+  Qed.
 End IntervalCongrT.
 
 Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
