@@ -2168,7 +2168,7 @@ Module DestroyT (O : OPS)
   TimeFun copies.
   TimeFun checked_moves.
   TimeFun destroy.
-  Definition c_ds : N := 1. (* STUB *)
+  Definition c_ds : N := 4097 + 16384 * (PTrieT.c_trie + PM.c_pm + 1).
   Definition destroy_work (s : P.t) :=
     function_size s + destroy_edge_args s + split_count s + 1.
   (** The maximum comparison pays only for the width of its first identifier. *)
@@ -2276,14 +2276,555 @@ Module DestroyT (O : OPS)
     unfold destroy_work. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
   Qed.
 
+  (** Distinctness checking charges one trie lookup and update for each variable. *)
+  Lemma distinct_vars_clock xs w :
+    (forall x, In x xs -> Pos.size_nat x <= w) -> forall seen,
+    (T_distinct_vars xs seen <=
+      8 * (PTrieT.c_trie + 1) * N.of_nat (length xs + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    induction xs as [|x rest IH]; intros Hwidth seen.
+    - time_unfold T_distinct_vars. cbn [length]. rewrite Nat2N.inj_add. nia.
+    - pose proof (Hwidth x (or_introl eq_refl)) as Hx.
+      pose proof (PTrieT.trie_get_clock unit x seen) as Hget.
+      pose proof (PTrieT.T_set_le unit x tt seen) as Hset.
+      specialize (IH (fun y Hy => Hwidth y (or_intror Hy)) (PTrieCode.set x tt seen)).
+      apply time_of_nat_le in Hx.
+      time_unfold T_distinct_vars. rewrite Hget.
+      destruct (trie_get x seen); cbn [length];
+        rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+  Qed.
+
+  (** Pairing rows scans no more cells than the supplied actual row. *)
+  Lemma pair_moves_clock : forall formals actuals,
+    (T_pair_moves formals actuals <= N.of_nat (length actuals + 1))%N.
+  Proof.
+    induction formals as [|x xs IH]; intros [|y ys]; time_unfold T_pair_moves;
+      cbn [length]; rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ;
+      try specialize (IH ys); nia.
+  Qed.
+
+  (** Constructing move instructions is linear in the sequence length. *)
+  Lemma move_code_clock sq :
+    (T_move_code sq <= 4 * N.of_nat (length sq + 1))%N.
+  Proof.
+    pose proof (ListDef.T_map_le (fun '(dst, src) => (dst, O.mov, [src]))
+      (fun _ : positive * positive => 1%N) 1%N sq ltac:(intro; reflexivity)) as Hmap.
+    time_unfold T_move_code. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Checking destinations and temporary freshness is linear in move count and width. *)
+  Lemma moves_ok_clock par tmp w :
+    (forall x, In x (map fst par) -> Pos.size_nat x <= w) -> Pos.size_nat tmp <= w ->
+    (T_moves_ok par tmp <=
+      64 * (PTrieT.c_trie + 1) * N.of_nat (length par + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hwidth Htmp.
+    pose proof (distinct_vars_clock (map fst par) w Hwidth Empty) as Hdistinct.
+    pose proof (ListDef.T_map_le fst (fun pair : positive * positive => Datatypes.T_fst pair)
+      1%N par ltac:(intros []; reflexivity)) as Hfst.
+    pose proof (ListDef.T_map_le snd (fun pair : positive * positive => Datatypes.T_snd pair)
+      1%N par ltac:(intros []; reflexivity)) as Hsnd.
+    pose proof (Datatypes.T_app_le (map fst par) (map snd par)) as Happend.
+    assert (Hcallback : forall x, (1 + Pos.T_eqb tmp x <= N.of_nat w + 1)%N).
+    { intro x. pose proof (Pos.T_eqb_le tmp x). apply time_of_nat_le in Htmp. nia. }
+    pose proof (List.T_existsb_le (fun x => Pos.eqb tmp x)
+      (fun x => (1 + Pos.T_eqb tmp x)%N) (N.of_nat w + 1)%N
+      (map fst par ++ map snd par) Hcallback) as Hexists.
+    time_unfold T_moves_ok. unfold Datatypes.T_andb, Datatypes.T_negb.
+    rewrite !length_map in Hdistinct, Happend.
+    rewrite length_app, !length_map in Hexists.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The producer retains the common width of its input variables and temporary. *)
+  Lemma sequence_var_width par tmp w :
+    (forall x, In x (map fst par ++ map snd par) -> Pos.size_nat x <= w) ->
+    Pos.size_nat tmp <= w ->
+    forall x, In x (map fst (PM.seq par tmp) ++ map snd (PM.seq par tmp)) ->
+      Pos.size_nat x <= w.
+  Proof.
+    intros Hpar Htmp x Hx. apply in_app_or in Hx as [Hx|Hx];
+      apply in_map_iff in Hx as [m [Heq Hm]]; subst x.
+    - destruct (proj1 (PM.seq_ids par tmp m Hm)) as [Hin|Heq].
+      + apply Hpar. apply in_or_app. now left.
+      + now rewrite Heq.
+    - destruct (proj2 (PM.seq_ids par tmp m Hm)) as [Hin|Heq].
+      + apply Hpar. apply in_or_app. now right.
+      + now rewrite Heq.
+  Qed.
+
+  (** The producer and checker calls satisfy a common move-count and width bound. *)
+  Lemma sequence_checks_clock par tmp w :
+    (forall x, In x (map fst par ++ map snd par) -> Pos.size_nat x <= w) ->
+    Pos.size_nat tmp <= w ->
+    (PM.T_seq par tmp + PM.T_check_moves par tmp (PM.seq par tmp) <=
+      8 * (PM.c_pm + 1) * N.of_nat (length par + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hwidth Htmp.
+    pose proof (par_bits_bound par w Hwidth) as Hpar.
+    assert (Hall : bits_of (par ++ PM.seq par tmp) <= w).
+    { apply par_bits_bound. intros x Hx.
+      rewrite !map_app in Hx. apply in_app_or in Hx as [Hx|Hx];
+        apply in_app_or in Hx as [Hx|Hx].
+      - apply Hwidth. apply in_or_app. now left.
+      - apply (sequence_var_width par tmp w Hwidth Htmp). apply in_or_app. now left.
+      - apply Hwidth. apply in_or_app. now right.
+      - apply (sequence_var_width par tmp w Hwidth Htmp). apply in_or_app. now right. }
+    pose proof (PM.T_seq_le par tmp) as Hseq.
+    pose proof (PM.T_check_moves_le par tmp (PM.seq par tmp)) as Hcheck.
+    pose proof (PM.seq_length par tmp) as Hlength.
+    apply time_of_nat_le in Hpar. apply time_of_nat_le in Hall.
+    apply time_of_nat_le in Hlength. rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
+
+  (** Parameter indexing is linear in block count and parameter count at the input width. *)
+  Lemma params_index_clock bs w :
+    (forall id body, In (id, body) bs -> Pos.size_nat id <= w /\
+      forall x, In x (params _ _ _ body) -> Pos.size_nat x <= w) ->
+    (T_params_index bs <= 32 * (PTrieT.c_trie + 1) *
+      N.of_nat (length bs + block_sum (fun body => length (params _ _ _ body)) bs + 1) *
+      N.of_nat (w + 1))%N.
+  Proof.
+    induction bs as [|[id body] rest IH]; intro Hwidth.
+    - time_unfold T_params_index. cbn [length block_sum fold_right].
+      rewrite Nat2N.inj_add. nia.
+    - destruct (Hwidth id body (or_introl eq_refl)) as [Hid Hparams].
+      specialize (IH (fun key b Hin => Hwidth key b (or_intror Hin))).
+      pose proof (distinct_vars_clock (params _ _ _ body) w Hparams Empty) as Hdistinct.
+      apply time_of_nat_le in Hid.
+      time_unfold T_params_index. unfold T_params.
+      cbn [length block_sum fold_right snd]. unfold block_sum in IH.
+      destruct (distinct_vars (params _ _ _ body) Empty).
+      + destruct (params_index rest) as [table|].
+        * pose proof (PTrieT.T_set_le (list positive) id (params _ _ _ body) table) as Hset.
+          rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+        * rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+      + rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** An empty-parameter check performs a single trie lookup. *)
+  Lemma empty_params_clock table target w : Pos.size_nat target <= w ->
+    (T_empty_params table target <= 4 * N.of_nat (w + 1))%N.
+  Proof.
+    intro Hwidth. pose proof (PTrieT.trie_get_clock (list positive) target table) as Hget.
+    time_unfold T_empty_params. rewrite Hget.
+    apply time_of_nat_le in Hwidth. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Preflight reads and emitted move instructions fit the source code and argument budget. *)
+  Lemma inserted_moves_clock instructions actuals par tmp : length par = length actuals ->
+    (ListDef.T_map (fun src : positive => (tmp, src)) (fun _ => 1%N) actuals +
+      T_move_code (map (fun src => (tmp, src)) actuals) + T_move_code (PM.seq par tmp) +
+      Datatypes.T_app (move_code (map (fun src => (tmp, src)) actuals))
+        (move_code (PM.seq par tmp)) +
+      Datatypes.T_app instructions (move_code (map (fun src => (tmp, src)) actuals) ++
+        move_code (PM.seq par tmp)) <=
+      32 * N.of_nat (length instructions + length actuals + 1))%N.
+  Proof.
+    intro Hlength. pose proof (PM.seq_length par tmp) as Hsequence_length.
+    pose proof (ListDef.T_map_le (fun src : positive => (tmp, src))
+      (fun _ : positive => 1%N) 1%N actuals ltac:(intro; reflexivity)) as Hmap.
+    pose proof (move_code_clock (map (fun src => (tmp, src)) actuals)) as Hreads.
+    pose proof (move_code_clock (PM.seq par tmp)) as Hsequence.
+    pose proof (Datatypes.T_app_le (move_code (map (fun src => (tmp, src)) actuals))
+      (move_code (PM.seq par tmp))) as Hreads_append.
+    pose proof (Datatypes.T_app_le instructions
+      (move_code (map (fun src => (tmp, src)) actuals) ++ move_code (PM.seq par tmp)))
+      as Hcode_append.
+    assert (Hreads_length : length (move_code (map (fun src => (tmp, src)) actuals)) =
+        length actuals).
+    { unfold move_code. now rewrite !length_map. }
+    rewrite Hreads_length in Hreads_append. rewrite length_map in Hreads.
+    rewrite Hlength in Hsequence_length. apply time_of_nat_le in Hsequence_length.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. lia.
+  Qed.
+
+  (** The component clock bounds combine within the declared block-copy budget. *)
+  Lemma copy_move_cost_bound syntax checked pairing target n m w :
+    (syntax <= 32 * (m + n + 1))%N ->
+    (checked <= (8 * (PM.c_pm + 1) + 64 * (PTrieT.c_trie + 1)) *
+      (n + 1) * (w + 1))%N ->
+    (pairing <= n + 1)%N -> (target <= w)%N ->
+    (4 + 2 * target + pairing + checked + syntax <=
+      256 * (PTrieT.c_trie + PM.c_pm + 1) * (m + n + 1) * (w + 1))%N.
+  Proof.
+    intros Hsyntax Hchecked Hpairing Htarget.
+    assert (Hchecked_bound : (checked <=
+        128 * (PTrieT.c_trie + PM.c_pm + 1) * (m + n + 1) * (w + 1))%N).
+    { eapply N.le_trans; [exact Hchecked|]. apply N.mul_le_mono_r.
+      apply N.mul_le_mono; lia. }
+    assert (Hoverhead : (4 + 2 * target + pairing + syntax <=
+        64 * (m + n + 1) * (w + 1))%N).
+    { clear -Hsyntax Hpairing Htarget. nia. }
+    assert (Hoverhead_bound : (4 + 2 * target + pairing + syntax <=
+        64 * (PTrieT.c_trie + PM.c_pm + 1) * (m + n + 1) * (w + 1))%N).
+    { eapply N.le_trans; [exact Hoverhead|]. apply N.mul_le_mono_r.
+      apply N.mul_le_mono_r. lia. }
+    replace (4 + 2 * target + pairing + checked + syntax)%N with
+      (checked + (4 + 2 * target + pairing + syntax))%N by ring.
+    eapply N.le_trans.
+    - apply N.add_le_mono; [exact Hchecked_bound|exact Hoverhead_bound].
+    - replace (128 * (PTrieT.c_trie + PM.c_pm + 1) * (m + n + 1) * (w + 1) +
+        64 * (PTrieT.c_trie + PM.c_pm + 1) * (m + n + 1) * (w + 1))%N with
+        (192 * (PTrieT.c_trie + PM.c_pm + 1) * (m + n + 1) * (w + 1))%N by ring.
+      apply N.mul_le_mono_r. apply N.mul_le_mono_r. lia.
+  Qed.
+
+  (** Rewriting one block charges its code, edge arguments and bounded move calls. *)
+  Lemma copy_block_clock table tmp body w :
+    (forall x, In x (exit_targets (term _ _ _ body)) -> Pos.size_nat x <= w) ->
+    (forall x, In x (exit_uses (term _ _ _ body)) -> Pos.size_nat x <= w) ->
+    (forall target formals, trie_get target table = Some formals ->
+      forall x, In x formals -> Pos.size_nat x <= w) ->
+    Pos.size_nat tmp <= w ->
+    (T_copy_block table tmp body <= 256 * (PTrieT.c_trie + PM.c_pm + 1) *
+      N.of_nat (length (code _ _ _ body) + exit_arg_count (term _ _ _ body) + 1) *
+      N.of_nat (w + 1))%N.
+  Proof.
+    destruct body as [parameters instructions ending].
+    intros Htargets Huses Htable Htmp.
+    destruct ending as [target actuals|guard operands yes ys no ns|values];
+      cbn [term code exit_targets exit_uses exit_arg_count] in *.
+    - pose proof (Htargets target (or_introl eq_refl)) as Htarget.
+      pose proof (PTrieT.trie_get_clock (list positive) target table) as Hget.
+      unfold T_copy_block, T_term, T_code. cbn [term code]. rewrite Hget.
+      destruct (trie_get target table) as [formals|] eqn:Hrow.
+      + pose proof (pair_moves_clock formals actuals) as Hpairtime.
+        destruct (pair_moves formals actuals) as [[|first par]|] eqn:Hpair.
+        * apply time_of_nat_le in Htarget. rewrite !Nat2N.inj_add in *. nia.
+        * assert (Hparwidth : forall x, In x (map fst (first :: par) ++
+              map snd (first :: par)) -> Pos.size_nat x <= w).
+          { destruct (pair_moves_rows _ _ _ Hpair) as [Hleft Hright].
+            intros x Hx. apply in_app_or in Hx as [Hx|Hx].
+            - rewrite Hleft in Hx. exact (Htable target formals Hrow x Hx).
+            - rewrite Hright in Hx. exact (Huses x Hx). }
+          assert (Hparlength : length (first :: par) = length actuals).
+          { destruct (pair_moves_rows _ _ _ Hpair) as [Hleft Hright].
+            pose proof (f_equal (@length positive) Hright) as Hlength.
+            now rewrite length_map in Hlength. }
+          pose proof (moves_ok_clock (first :: par) tmp w
+            (fun x Hx => Hparwidth x (in_or_app _ _ _ (or_introl Hx))) Htmp) as Hmoves.
+          pose proof (sequence_checks_clock (first :: par) tmp w Hparwidth Htmp) as Hcalls.
+          pose proof (inserted_moves_clock instructions actuals (first :: par) tmp Hparlength)
+            as Hinsert.
+          pose proof (N.add_le_mono _ _ _ _ Hcalls Hmoves) as Hchecked.
+          apply time_of_nat_le in Htarget. rewrite Hparlength in Hchecked.
+          rewrite !Nat2N.inj_add in Hinsert.
+          rewrite !Nat2N.inj_add in Hchecked.
+          rewrite Nat2N.inj_add in Hpairtime. rewrite !Nat2N.inj_add.
+          change (N.of_nat 1) with 1%N in Hinsert, Hchecked, Hpairtime |- *.
+          assert (Hchecked' : (PM.T_seq (first :: par) tmp +
+              PM.T_check_moves (first :: par) tmp (PM.seq (first :: par) tmp) +
+              T_moves_ok (first :: par) tmp <=
+              (8 * (PM.c_pm + 1) + 64 * (PTrieT.c_trie + 1)) *
+                (N.of_nat (length actuals) + 1) * (N.of_nat w + 1))%N).
+          { eapply N.le_trans; [exact Hchecked|]. apply N.eq_le_incl. ring. }
+          pose proof (copy_move_cost_bound _ _ _ _ (N.of_nat (length actuals))
+            (N.of_nat (length instructions)) (N.of_nat w)
+            Hinsert Hchecked' Hpairtime Htarget) as Hcost.
+          clear -Hcost.
+          unfold Datatypes.T_andb. destruct (andb (moves_ok (first :: par) tmp)
+            (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))); lia.
+        * apply time_of_nat_le in Htarget. rewrite !Nat2N.inj_add in *. nia.
+      + apply time_of_nat_le in Htarget. rewrite !Nat2N.inj_add in *. nia.
+    - destruct ys as [|y ys]; [|unfold T_copy_block, T_term; cbn [term];
+          rewrite !Nat2N.inj_add; nia].
+      destruct ns as [|n ns]; [|unfold T_copy_block, T_term; cbn [term];
+          rewrite !Nat2N.inj_add; nia].
+      pose proof (empty_params_clock table yes w (Htargets yes (or_introl eq_refl))) as Hyes.
+      pose proof (empty_params_clock table no w (Htargets no (or_intror (or_introl eq_refl))))
+        as Hno.
+      unfold T_copy_block, T_term, T_code, Datatypes.T_andb. cbn [term code].
+      destruct (andb (empty_params table yes) (empty_params table no));
+        rewrite !Nat2N.inj_add; nia.
+    - unfold T_copy_block, T_term, T_code. cbn [term code]. rewrite !Nat2N.inj_add. nia.
+  Qed.
+
+  (** The complete copy pass sums the per-block syntax and argument budgets. *)
+  Lemma copy_blocks_clock table tmp bs w :
+    (forall id body, In (id, body) bs ->
+      (forall x, In x (exit_targets (term _ _ _ body)) -> Pos.size_nat x <= w) /\
+      (forall x, In x (exit_uses (term _ _ _ body)) -> Pos.size_nat x <= w)) ->
+    (forall target formals, trie_get target table = Some formals ->
+      forall x, In x formals -> Pos.size_nat x <= w) ->
+    Pos.size_nat tmp <= w ->
+    (T_copy_blocks table tmp bs <= 512 * (PTrieT.c_trie + PM.c_pm + 1) *
+      N.of_nat (block_sum (fun body =>
+        (length (code _ _ _ body) + exit_arg_count (term _ _ _ body) + 1)%nat) bs + 1) *
+      N.of_nat (w + 1))%N.
+  Proof.
+    induction bs as [|[id body] rest IH]; intros Hwidth Htable Htmp.
+    - time_unfold T_copy_blocks. cbn [block_sum fold_right]. rewrite Nat2N.inj_add. nia.
+    - destruct (Hwidth id body (or_introl eq_refl)) as [Htargets Huses].
+      pose proof (copy_block_clock table tmp body w Htargets Huses Htable Htmp) as Hhead.
+      specialize (IH (fun key b Hin => Hwidth key b (or_intror Hin)) Htable Htmp).
+      time_unfold T_copy_blocks. destruct (copy_block table tmp body) as [[body' one]|];
+        cbn [block_sum fold_right snd]; unfold block_sum in IH;
+        rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** All listed parameters are included in the block variable inventory. *)
+  Lemma block_params_budget bs :
+    block_sum (fun body => length (params _ _ _ body)) bs <= length (block_variables bs).
+  Proof.
+    induction bs as [|[id body] rest IH]; [reflexivity|].
+    change (length (params _ _ _ body) +
+      block_sum (fun body => length (params _ _ _ body)) rest <=
+      length (body_variables body ++ block_variables rest)).
+    rewrite length_app. unfold body_variables. rewrite !length_app. lia.
+  Qed.
+
+  (** Block count and parameter count fit the function syntax budget. *)
+  Lemma function_params_budget (s : P.t) :
+    length (blocks _ _ _ s) +
+      block_sum (fun body => length (params _ _ _ body)) (blocks _ _ _ s) <= function_size s.
+  Proof.
+    pose proof (block_params_budget (blocks _ _ _ s)) as Hparams.
+    assert (Hvars : length (block_variables (blocks _ _ _ s)) <= length (function_vars s)).
+    { change (length (block_variables (blocks _ _ _ s)) <=
+        length (inputs _ _ _ s ++ block_variables (blocks _ _ _ s))).
+      rewrite length_app. lia. }
+    unfold function_size. lia.
+  Qed.
+
+  (** The copy-pass weight is exactly code count, edge arguments and block count. *)
+  Lemma copy_weight_sum bs :
+    block_sum (fun body => length (code _ _ _ body) + exit_arg_count (term _ _ _ body) + 1) bs =
+    block_sum (fun body => length (code _ _ _ body)) bs +
+      block_sum (fun body => exit_arg_count (term _ _ _ body)) bs + length bs.
+  Proof.
+    induction bs as [|[id body] rest IH]; [reflexivity|].
+    unfold block_sum in *. cbn [fold_right snd length]. rewrite IH. lia.
+  Qed.
+
+  (** The complete copy-pass weight fits function syntax and edge-argument counts. *)
+  Lemma function_copy_budget (s : P.t) :
+    block_sum (fun body => length (code _ _ _ body) + exit_arg_count (term _ _ _ body) + 1)
+      (blocks _ _ _ s) <= function_size s + destroy_edge_args s.
+  Proof.
+    rewrite copy_weight_sum, <- destroy_args_sum. unfold function_size, block_sum. lia.
+  Qed.
+
+  (** The common copy budget includes the public trie and move-operation constants. *)
+  Definition copy_budget (s : P.t) w : N :=
+    (PTrieT.c_trie + PM.c_pm + 1) * N.of_nat (function_size s + destroy_edge_args s + 1) *
+      N.of_nat (w + 2).
+
+  (** Smaller coefficients, syntax measures and widths fit the common copy budget. *)
+  Lemma copy_budget_mono s w c n b : (c <= PTrieT.c_trie + PM.c_pm + 1)%N ->
+    n <= function_size s + destroy_edge_args s + 1 -> b <= w + 2 ->
+    (c * N.of_nat n * N.of_nat b <= copy_budget s w)%N.
+  Proof.
+    intros Hc Hn Hb. unfold copy_budget.
+    apply N.mul_le_mono; [apply N.mul_le_mono; [exact Hc|]|];
+      apply time_of_nat_le; assumption.
+  Qed.
+
+  (** The common copy budget is positive even for empty or malformed programs. *)
+  Lemma copy_budget_positive s w : (1 <= copy_budget s w)%N.
+  Proof.
+    change (1 * N.of_nat 1 * N.of_nat 1 <= copy_budget s w)%N.
+    apply copy_budget_mono; lia.
+  Qed.
+
+  (** Variable collection fits the common copy budget. *)
+  Lemma copy_syntax_clock s w : (T_function_vars s <= 128 * copy_budget s w)%N.
+  Proof.
+    eapply N.le_trans; [apply destroy_function_vars_clock|].
+    replace (128 * N.of_nat (function_size s + 1))%N with
+      (128 * (1 * N.of_nat (function_size s + 1) * N.of_nat 1))%N
+      by (cbn [N.of_nat]; ring).
+    apply N.mul_le_mono_l. apply copy_budget_mono; lia.
+  Qed.
+
+  (** An identifier-width bound also bounds every function variable. *)
+  Lemma bounded_function_vars (s : P.t) w :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
+    forall x, In x (function_vars s) -> Pos.size_nat x <= w.
+  Proof.
+    intros Hids x Hx. apply Hids. unfold function_ids. right. apply in_or_app. now left.
+  Qed.
+
+  (** An identifier-width bound is positive because it includes the entry identifier. *)
+  Lemma bounded_function_positive (s : P.t) w :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) -> 1 <= w.
+  Proof.
+    intro Hids. pose proof (Hids (entry _ _ _ s) (or_introl eq_refl)) as Hentry.
+    pose proof (Pos.size_nat_pos (entry _ _ _ s)). lia.
+  Qed.
+
+  (** The fresh-temporary scan fits the common copy budget. *)
+  Lemma copy_fresh_clock s w :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
+    (T_fresh_after (function_vars s) <= 8 * copy_budget s w)%N.
+  Proof.
+    intro Hids. eapply N.le_trans.
+    - apply fresh_after_clock; [exact (bounded_function_positive s w Hids)|].
+      exact (bounded_function_vars s w Hids).
+    - replace (8 * N.of_nat (length (function_vars s) + 1) * N.of_nat (w + 1))%N with
+        (8 * (1 * N.of_nat (length (function_vars s) + 1) * N.of_nat (w + 1)))%N by ring.
+      apply N.mul_le_mono_l. apply copy_budget_mono; try lia.
+      unfold function_size. lia.
+  Qed.
+
+  (** The parameter-index pass fits the common copy budget. *)
+  Lemma copy_index_clock s w :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
+    (T_params_index (blocks _ _ _ s) <= 32 * copy_budget s w)%N.
+  Proof.
+    intro Hids. eapply N.le_trans.
+    - apply (params_index_clock (blocks _ _ _ s) w).
+      intros id body Hbody. split.
+      + apply Hids. exact (split_block_id_in s id body Hbody).
+      + intros x Hx. apply (bounded_function_vars s w Hids).
+        exact (listed_params s id body Hbody x Hx).
+    - replace (32 * (PTrieT.c_trie + 1) *
+        N.of_nat (length (blocks _ _ _ s) +
+          block_sum (fun body => length (params _ _ _ body)) (blocks _ _ _ s) + 1) *
+        N.of_nat (w + 1))%N with
+        (32 * ((PTrieT.c_trie + 1) *
+          N.of_nat (length (blocks _ _ _ s) +
+            block_sum (fun body => length (params _ _ _ body)) (blocks _ _ _ s) + 1) *
+          N.of_nat (w + 1)))%N by ring.
+      apply N.mul_le_mono_l. apply copy_budget_mono; try lia.
+      pose proof (function_params_budget s). lia.
+  Qed.
+
+  (** Looking up the entry parameter row fits the common copy budget. *)
+  Lemma copy_entry_clock s w (table : ptrie (list positive)) :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
+    (T_trie_get (entry _ _ _ s) table <= 2 * copy_budget s w)%N.
+  Proof.
+    intro Hids. rewrite (PTrieT.trie_get_clock (list positive) (entry _ _ _ s) table).
+    replace (2 * N.of_nat (Pos.size_nat (entry _ _ _ s)))%N with
+      (2 * (1 * N.of_nat 1 * N.of_nat (Pos.size_nat (entry _ _ _ s))))%N
+      by (cbn [N.of_nat]; ring).
+    apply N.mul_le_mono_l. apply copy_budget_mono; try lia.
+    pose proof (Hids (entry _ _ _ s) (or_introl eq_refl)). lia.
+  Qed.
+
+  (** A successful parameter index stores only variables within the source width. *)
+  Lemma copy_index_width s w table :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
+    params_index (blocks _ _ _ s) = Some table ->
+    forall target formals, trie_get target table = Some formals ->
+      forall x, In x formals -> Pos.size_nat x <= w + 1.
+  Proof.
+    intros Hids Hindex target formals Hrow x Hx.
+    rewrite (params_index_find _ _ Hindex) in Hrow.
+    destruct (find_block target (blocks _ _ _ s)) as [body|] eqn:Hfind; [|discriminate].
+    injection Hrow as Hrow. subst formals.
+    pose proof (bounded_function_vars s w Hids x
+      (listed_params s target body (find_source_block _ _ _ Hfind) x Hx)). lia.
+  Qed.
+
+  (** Rewriting all indexed blocks fits the common copy budget. *)
+  Lemma copy_body_clocks s w table :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
+    params_index (blocks _ _ _ s) = Some table ->
+    (T_copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s) <=
+      512 * copy_budget s w)%N.
+  Proof.
+    intros Hids Hindex. eapply N.le_trans.
+    - apply (copy_blocks_clock table (fresh_after (function_vars s)) (blocks _ _ _ s) (w + 1)).
+      + intros id body Hbody. split.
+        * intros x Hx. pose proof (Hids x (split_target_id_in s id body x Hbody Hx)). lia.
+        * intros x Hx. pose proof (bounded_function_vars s w Hids x
+            (listed_exit_uses s id body Hbody x Hx)). lia.
+      + exact (copy_index_width s w table Hids Hindex).
+      + apply fresh_after_width; [exact (bounded_function_positive s w Hids)|].
+        exact (bounded_function_vars s w Hids).
+    - replace (512 * (PTrieT.c_trie + PM.c_pm + 1) *
+        N.of_nat (block_sum (fun body =>
+          (length (code _ _ _ body) + exit_arg_count (term _ _ _ body) + 1)%nat)
+          (blocks _ _ _ s) + 1) * N.of_nat (w + 1 + 1))%N with
+        (512 * ((PTrieT.c_trie + PM.c_pm + 1) *
+          N.of_nat (block_sum (fun body =>
+            (length (code _ _ _ body) + exit_arg_count (term _ _ _ body) + 1)%nat)
+            (blocks _ _ _ s) + 1) * N.of_nat (w + 1 + 1)))%N by ring.
+      apply N.mul_le_mono_l. apply copy_budget_mono; try lia.
+      pose proof (function_copy_budget s). lia.
+  Qed.
+
+  (** The copy wrapper satisfies its budget on successful and rejected inputs alike. *)
+  Lemma copies_clock s w :
+    (forall x, In x (function_ids s) -> Pos.size_nat x <= w) ->
+    (T_copies s <= 4096 * copy_budget s w)%N.
+  Proof.
+    intro Hids.
+    pose proof (copy_budget_positive s w) as Hpositive.
+    pose proof (copy_syntax_clock s w) as Hsyntax.
+    pose proof (copy_fresh_clock s w Hids) as Hfresh.
+    pose proof (copy_index_clock s w Hids) as Hparams.
+    time_unfold T_copies. time_unfold T_copy_stage.
+    unfold T_blocks, T_entry, T_inputs.
+    destruct (params_index (blocks _ _ _ s)) as [table|] eqn:Hindex; [|lia].
+    pose proof (copy_entry_clock s w table Hids) as Hentry.
+    pose proof (copy_body_clocks s w table Hids Hindex) as Hblocks.
+    destruct (trie_get (entry _ _ _ s) table) as [[|x xs]|]; try lia.
+    destruct (copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s))
+      as [[bs checked]|]; lia.
+  Qed.
+
+  (** Copy insertion after splitting fits the original function budget. *)
+  Lemma copies_source_clock s split_s : split s = Some split_s ->
+    (T_copies split_s <= 16384 * (PTrieT.c_trie + PM.c_pm + 1) *
+      N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    intro Hsplit.
+    pose proof (copies_clock split_s (function_width s + 2)
+      (split_ids_width s split_s Hsplit)) as Hcopies.
+    assert (Hwork : function_size split_s + destroy_edge_args split_s + 1 = destroy_work s).
+    { destruct (split_inventory _ _ Hsplit) as [_ [Hsize [Hargs Hblocks]]].
+      rewrite Hsize, Hargs. unfold destroy_work. lia. }
+    unfold copy_budget in Hcopies. rewrite Hwork in Hcopies.
+    eapply N.le_trans; [exact Hcopies|].
+    replace (16384 * (PTrieT.c_trie + PM.c_pm + 1) * N.of_nat (destroy_work s) *
+      N.of_nat (function_width s + 1))%N with
+      ((4096 * (PTrieT.c_trie + PM.c_pm + 1) * N.of_nat (destroy_work s)) *
+        (4 * N.of_nat (function_width s + 1)))%N by ring.
+    replace (4096 * ((PTrieT.c_trie + PM.c_pm + 1) * N.of_nat (destroy_work s) *
+      N.of_nat (function_width s + 2 + 2)))%N with
+      ((4096 * (PTrieT.c_trie + PM.c_pm + 1) * N.of_nat (destroy_work s)) *
+        N.of_nat (function_width s + 2 + 2))%N by ring.
+    apply N.mul_le_mono_l. rewrite !Nat2N.inj_add. lia.
+  Qed.
+
+  (** The wrapper combines both transformation phases within the published source budget. *)
+  Lemma destroy_source_clock s :
+    (T_destroy s <= (4097 + 16384 * (PTrieT.c_trie + PM.c_pm + 1)) *
+      N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
+  Proof.
+    pose proof (split_source_clock s) as Hsplit.
+    assert (Hwork : (1 <= N.of_nat (destroy_work s))%N).
+    { change (N.of_nat 1 <= N.of_nat (destroy_work s))%N.
+      apply time_of_nat_le. unfold destroy_work. lia. }
+    assert (Hwidth : (1 <= N.of_nat (function_width s + 1))%N).
+    { change (N.of_nat 1 <= N.of_nat (function_width s + 1))%N.
+      apply time_of_nat_le. lia. }
+    assert (Hunit : (1 <= N.of_nat (destroy_work s) *
+        N.of_nat (function_width s + 1))%N).
+    { change (1 * 1 <= N.of_nat (destroy_work s) *
+        N.of_nat (function_width s + 1))%N. apply N.mul_le_mono; assumption. }
+    time_unfold T_destroy. destruct (split s) as [split_s|] eqn:Hphase.
+    - pose proof (copies_source_clock s split_s Hphase) as Hcopies. nia.
+    - nia.
+  Qed.
+
+
   Lemma T_destroy_le : forall s,
     (T_destroy s <= c_ds * N.of_nat (destroy_work s) * N.of_nat (function_width s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro s. unfold c_ds. apply destroy_source_clock.
+  Qed.
   Lemma destroy_bigO : bigO (fun _ : P.t => True)
     (fun s => N.of_nat (destroy_work s * (function_width s + 1))) T_destroy.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_ds. intros s Htrue. pose proof (T_destroy_le s) as Hclock.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
   Definition k_split : N := 4096.
-  Definition k_copies : N := 1. (* STUB *)
+  Definition k_copies : N := 16384 * (PTrieT.c_trie + PM.c_pm + 1).
   Definition k_wrap : N := 1.
   Lemma F1_destroy_phases : forall s, destroy s =
     match split s with None => None | Some split_s => copies split_s end.
@@ -2370,7 +2911,10 @@ Module DestroyT (O : OPS)
         PM.T_seq (fst (fst mc)) (snd (fst mc)) +
         PM.T_check_moves (fst (fst mc)) (snd (fst mc)) (snd mc))%N
         (checked_moves split_s)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s split_s Hsplit. pose proof (copies_source_clock s split_s Hsplit) as Hcopies.
+    unfold k_copies. lia.
+  Qed.
   Lemma T3_wrapper : forall s,
     (T_destroy s <= T_split s +
       match split s with None => k_wrap | Some split_s => T_copies split_s + k_wrap end)%N.
