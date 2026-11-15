@@ -4,7 +4,7 @@
     For example, an address constraint seeds a row used by the first inclusion rule.
     Builds on: AndersenSig and the relational database and run interfaces. *)
 
-From Stdlib Require Import List PArith NArith Bool Lia.
+From Stdlib Require Import List PArith NArith Bool Lia Arith.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
@@ -429,6 +429,35 @@ Definition pointer_seed_entries (initial_relation : positive) (q : pointer_input
   end.
 TimeFun pointer_seed_entries.
 
+(** Each source item contributes exactly one seed entry. *)
+Lemma pointer_seed_entries_length : forall initial_relation q,
+  length (pointer_seed_entries initial_relation q) =
+    length (constraints q) + length (initial_pointers q).
+Proof.
+  intros initial_relation [instructions initial]; cbn [pointer_seed_entries constraints initial_pointers].
+  rewrite length_app, !length_map; reflexivity.
+Qed.
+
+(** Encoding and concatenating the source seed entries takes linear list work. *)
+Lemma pointer_seed_entries_time : forall initial_relation q,
+  (T_pointer_seed_entries initial_relation q <=
+    16 * N.of_nat (length (constraints q) + length (initial_pointers q) + 1))%N.
+Proof.
+  intros initial_relation [instructions initial].
+  assert (Hconstraint : forall c, (T_pointer_constraint_entry c <= 1)%N).
+  { intro c; destruct c; reflexivity. }
+  pose proof (ListDef.T_map_le pointer_constraint_entry T_pointer_constraint_entry 1 instructions
+    Hconstraint) as Hmap.
+  pose proof (ListDef.T_map_le (fun pointer : positive * positive => (initial_relation, pointer))
+    (fun _ => 1%N) 1 initial ltac:(intros; reflexivity)) as Hinitial.
+  pose proof (Datatypes.T_app_le (map pointer_constraint_entry instructions)
+    (map (fun pointer => (initial_relation, pointer)) initial)) as Happ.
+  rewrite length_map in Happ.
+  time_unfold T_pointer_seed_entries; time_simpl.
+  cbn [constraints initial_pointers]; rewrite !Nat2N.inj_add.
+  unfold T_pointer_constraint_entry in Hmap; nia.
+Qed.
+
 (** Reading a plan's slot layout is one record elimination. *)
 Definition pointer_plan_slots {V} (plan : compiled V) : list (positive * list nat) :=
   match plan with Compiled _ layout _ _ => layout end.
@@ -641,6 +670,229 @@ Module PointerSeedFacts (V : VALUE with Definition t := positive)
     destruct Hin as [v Heq]; discriminate.
   Qed.
 End PointerSeedFacts.
+
+(** A fixed plan is charged for each function name and each selected position. *)
+Definition pointer_layout_size (sl : list (positive * list nat)) : nat :=
+  fold_right (fun s n => Pos.size_nat (fst s) + length (snd s) + 1 + n) 0 sl.
+
+(** The plan-size sum bounds its slot count, tuple lengths and function-name sizes. *)
+Lemma pointer_layout_size_bounds : forall sl,
+  length sl <= pointer_layout_size sl /\
+  fold_right (fun s n => length (snd s) + n) 0 sl <= pointer_layout_size sl /\
+  fold_right (fun s n => Pos.size_nat (fst s) + n) 0 sl <= pointer_layout_size sl.
+Proof.
+  intro sl; induction sl as [|[f perm] rest [Hcount [Hlength Hnames]]].
+  - repeat split; reflexivity.
+  - unfold pointer_layout_size in *; cbn [length fold_right fst snd] in *.
+    split; [|split]; lia.
+Qed.
+
+(** A permutation of at most two positions has a fixed preparation budget. *)
+Lemma pointer_permutation_work : forall perm, NoDup perm -> Forall (fun i => i < 2) perm ->
+  (length perm + 1) * (fold_right Nat.add 0 (map S perm) + length perm + 1) <= 21.
+Proof.
+  intros perm Hdistinct Hbounds.
+  assert (Hlength : length perm <= 2).
+  { change (length perm <= length [0; 1]); apply NoDup_incl_length; [exact Hdistinct |].
+    intros i Hin; apply (proj1 (Forall_forall _ _) Hbounds) in Hin.
+    cbn; lia. }
+  assert (Hsum : fold_right Nat.add 0 (map S perm) <= 2 * length perm).
+  { clear Hlength Hdistinct.
+    induction Hbounds as [|i rest Hi Hrest IH]; cbn [map fold_right length]; lia. }
+  nia.
+Qed.
+
+(** Preparing binary slots costs at most a fixed multiple of their encoded size. *)
+Lemma pointer_layout_work : forall sl,
+  Forall (fun s => NoDup (snd s) /\ Forall (fun i => i < 2) (snd s)) sl ->
+  layout_work sl <= 21 * pointer_layout_size sl.
+Proof.
+  intros sl Hslots; induction Hslots as [|[f perm] rest [Hdistinct Hbounds] Hrest IH].
+  - reflexivity.
+  - pose proof (pointer_permutation_work perm Hdistinct Hbounds) as Hperm.
+    unfold layout_work, pointer_layout_size in *; cbn [map fold_right fst snd] in *; nia.
+Qed.
+
+Module PointerSeedTime (V : VALUE_T with Definition t := positive)
+    (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D).
+  Module Facts := PointerSeedFacts V I J D R.
+
+  (** Checked plans for binary tuples have only permutations of the two positions. *)
+  Lemma binary_plan_slots : forall p, R.plans_ok p (R.plan p) ->
+    Forall (fun d => length (arg_sorts d) + match out d with ORel => 0 | _ => 1 end <= 2)
+      (decls V.t p) ->
+    Forall (fun s => NoDup (snd s) /\ Forall (fun i => i < 2) (snd s))
+      (Syntax.slots V.t (R.plan p)).
+  Proof.
+    intros p Hplan Hdecls; apply Forall_forall; intros [f perm] Hin.
+    destruct (R.check_plan_slots p (R.plan p) f perm Hplan Hin)
+      as [d [Hfind [Hdistinct Hbounds]]].
+    split; [exact Hdistinct |].
+    apply find_some in Hfind; destruct Hfind as [Hdecl Hname].
+    apply (proj1 (Forall_forall _ _) Hdecls) in Hdecl.
+    apply Forall_forall; intros i Hin_position.
+    apply (proj1 (Forall_forall _ _) Hbounds) in Hin_position; lia.
+  Qed.
+
+  (** Initializing a binary fixed program is quadratic in the bounded plan size. *)
+  Lemma init_time : forall p K, R.plans_ok p (R.plan p) ->
+    Forall (fun d => length (arg_sorts d) + match out d with ORel => 0 | _ => 1 end <= 2)
+      (decls V.t p) ->
+    length (decls V.t p) <= 8 ->
+    fold_right (fun d n => Pos.size_nat (name d) + n) 0 (decls V.t p) <= 32 ->
+    (N.of_nat (pointer_layout_size (Syntax.slots V.t (R.plan p))) <= K)%N ->
+    (D.T_init (decls V.t p) (Syntax.slots V.t (R.plan p)) <=
+      64 * (D.c_db + 1) * (K + 8) * (K + 8))%N.
+  Proof.
+    intros p K Hplan Hdecls Hcount Hnames Hsize.
+    pose proof (D.T_init_le (decls V.t p) (Syntax.slots V.t (R.plan p))) as Hinit.
+    pose proof (pointer_layout_size_bounds (Syntax.slots V.t (R.plan p)))
+      as [Hslots [Hlengths Hslot_names]].
+    pose proof (pointer_layout_work (Syntax.slots V.t (R.plan p))
+      (binary_plan_slots p Hplan Hdecls)) as Hwork.
+    apply time_of_nat_le in Hcount; apply time_of_nat_le in Hnames.
+    apply time_of_nat_le in Hslots; apply time_of_nat_le in Hlengths.
+    apply time_of_nat_le in Hslot_names; apply time_of_nat_le in Hwork.
+    rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul in *; nia.
+  Qed.
+(** Scaling a nonnegative amortized credit to a larger positive unit is sound. *)
+  Lemma credit_scale : forall (ticks charge before after : N) (u U : nat),
+    (1 <= u)%nat -> (u <= U)%nat ->
+    (ticks + N.of_nat u * after <= N.of_nat u * (charge + before))%N ->
+    (ticks + N.of_nat U * after <= N.of_nat U * (charge + before))%N.
+  Proof.
+    intros ticks charge before after u U Hpositive Hunit Hcredit.
+    assert (Hu : (0 < N.of_nat u)%N) by lia.
+    assert (HuU : (N.of_nat u <= N.of_nat U)%N) by lia.
+    assert (Hbalance : (after <= charge + before)%N) by nia.
+    nia.
+  Qed.
+
+  (** Every database spending unit is positive by its manifest definition. *)
+  Lemma unit_positive : forall db, (1 <= D.unit db)%nat.
+  Proof.
+    intro db. unfold D.unit. nia.
+  Qed.
+
+  (** A loaded database has at most as many matching slots as the complete plan. *)
+  Lemma entry_slots : forall p db f, R.loaded p (R.plan p) db ->
+    (D.slots_of db f <= length (Syntax.slots V.t (R.plan p)))%nat.
+  Proof.
+    intros p db f [_ [Hslots _]]. unfold D.slots_of. rewrite Hslots.
+    apply filter_length_le.
+  Qed.
+
+  (** The unit of every intermediate seed is bounded by the completed fold's unit. *)
+  Lemma fold_unit_mono : forall p entries db,
+    R.plans_ok p (R.plan p) -> Facts.invariant p db ->
+    Forall (Facts.entry_ok p) entries ->
+    (D.unit db <= D.unit (fold_left Facts.put_entry entries db))%nat.
+  Proof.
+    intros p entries. induction entries as [|entry rest IH]; intros db Hplan Hinv Hentries.
+    - reflexivity.
+    - inversion Hentries as [|entry' rest' Hentry Hrest]; subst.
+      cbn [fold_left]. eapply Nat.le_trans.
+      + unfold Facts.put_entry. apply D.unit_mono_put. exact (proj1 Hinv).
+      + apply IH; [exact Hplan| |exact Hrest].
+        exact (Facts.entry_invariant p db entry Hplan Hinv Hentry).
+  Qed.
+
+  (** A binary value-row insertion pays its clock and credit at any final upper unit. *)
+  Lemma entry_credit : forall p (T_entry : D.t -> positive * (positive * positive) -> N)
+      (K : N) (U : nat) db entry,
+    R.plans_ok p (R.plan p) -> Facts.invariant p db -> Facts.entry_ok p entry ->
+    (N.of_nat (length (Syntax.slots V.t (R.plan p)) + 1) <= K)%N ->
+    (D.unit (Facts.put_entry db entry) <= U)%nat ->
+    (T_entry db entry <= D.T_put (fst entry)
+      [Val (fst (snd entry)); Val (snd (snd entry))] None db + 32)%N ->
+    (T_entry db entry + N.of_nat U * D.potential 0 (Facts.put_entry db entry) <=
+      N.of_nat U * ((16 * D.c_db * K + 32) + D.potential 0 db))%N.
+  Proof.
+    intros p T_entry K U db [f [x y]] Hplan Hinv Hentry HK HU Hclock.
+    pose proof (Facts.entry_invariant p db (f, (x, y)) Hplan Hinv Hentry) as Hnext.
+    pose proof (Facts.entry_kind_ok p db (f, (x, y)) Hplan
+      (proj1 (proj2 Hinv)) Hentry) as Hkind.
+    assert (Hids : (D.ids (D.put f [Val x; Val y] None db) <= 0)%N).
+    { change (D.ids (Facts.put_entry db (f, (x, y))) <= 0)%N.
+      rewrite (proj1 (proj2 (proj2 Hnext))). reflexivity. }
+    pose proof (D.T_put_amort 0 f [Val x; Val y] None db (proj1 Hinv)
+      (proj1 (proj2 Hkind)) Hids) as Hraw.
+    change (D.T_put f [Val x; Val y] None db +
+      N.of_nat (D.unit (Facts.put_entry db (f, (x, y)))) *
+        D.potential 0 (Facts.put_entry db (f, (x, y))) <=
+      N.of_nat (D.unit (Facts.put_entry db (f, (x, y)))) *
+        (D.c_db * 16 * N.of_nat (D.slots_of db f + 1) * 1 + D.potential 0 db))%N in Hraw.
+    rewrite N.mul_1_r in Hraw.
+    pose proof (credit_scale _ _ _ _ _ U
+      (unit_positive (Facts.put_entry db (f, (x, y)))) HU Hraw) as Hscaled.
+    pose proof (entry_slots p db f (proj1 (proj2 Hinv))) as Hslots.
+    assert (HslotN : (N.of_nat (D.slots_of db f + 1) <= K)%N) by lia.
+    assert (Hcharge : (D.c_db * 16 * N.of_nat (D.slots_of db f + 1) <=
+      16 * D.c_db * K)%N) by nia.
+    pose proof (N.mul_le_mono_l _ _ (N.of_nat U) Hcharge) as Hcharged.
+    assert (HUpositive : (1 <= N.of_nat U)%N).
+    { pose proof (unit_positive (Facts.put_entry db (f, (x, y)))). lia. }
+    cbn [fst snd] in Hclock.
+    repeat rewrite N.mul_add_distr_l in Hscaled |- *. lia.
+  Qed.
+
+  (** A seed fold telescopes potential at one fixed upper bound on its final unit. *)
+  Lemma fold_credit : forall p entries
+      (T_entry : D.t -> positive * (positive * positive) -> N) (K : N) (U : nat),
+    R.plans_ok p (R.plan p) ->
+    (N.of_nat (length (Syntax.slots V.t (R.plan p)) + 1) <= K)%N ->
+    (forall db entry, (T_entry db entry <= D.T_put (fst entry)
+      [Val (fst (snd entry)); Val (snd (snd entry))] None db + 32)%N) ->
+    forall db, Facts.invariant p db -> Forall (Facts.entry_ok p) entries ->
+    (D.unit (fold_left Facts.put_entry entries db) <= U)%nat ->
+    (Std.List.T_fold_left Facts.put_entry T_entry entries db +
+      N.of_nat U * D.potential 0 (fold_left Facts.put_entry entries db) <=
+      N.of_nat U * ((16 * D.c_db * K + 33) * N.of_nat (length entries) +
+        D.potential 0 db) + 1)%N.
+  Proof.
+    intros p entries T_entry K U Hplan HK Hclock.
+    induction entries as [|entry rest IH]; intros db Hinv Hentries Hfinal.
+    - time_unfold @Std.List.T_fold_left. cbn [fold_left length]. nia.
+    - inversion Hentries as [|entry' rest' Hentry Hrest]; subst.
+      pose proof (Facts.entry_invariant p db entry Hplan Hinv Hentry) as Hnext.
+      assert (Hnext_unit : (D.unit (Facts.put_entry db entry) <= U)%nat).
+      { eapply Nat.le_trans; [apply (fold_unit_mono p rest _ Hplan Hnext Hrest)|].
+        exact Hfinal. }
+      pose proof (entry_credit p T_entry K U db entry Hplan Hinv Hentry HK Hnext_unit
+        (Hclock db entry)) as Hstep.
+      specialize (IH (Facts.put_entry db entry) Hnext Hrest Hfinal).
+      assert (HUpositive : (1 <= N.of_nat U)%N).
+      { pose proof (unit_positive (Facts.put_entry db entry)). lia. }
+      time_unfold @Std.List.T_fold_left. cbn [fold_left length].
+      rewrite Nat2N.inj_succ.
+      set (tail_charge := ((16 * D.c_db * K + 33) * N.of_nat (length rest))%N) in *.
+      replace ((16 * D.c_db * K + 33) * N.succ (N.of_nat (length rest)))%N with
+        (tail_charge + (16 * D.c_db * K + 33))%N by (unfold tail_charge; nia).
+      repeat rewrite N.mul_add_distr_l in Hstep, IH |- *. lia.
+  Qed.
+
+  (** Initialization has zero credit, giving a plain bound for the complete seed fold. *)
+  Lemma fold_time : forall p entries
+      (T_entry : D.t -> positive * (positive * positive) -> N) (K : N),
+    R.plans_ok p (R.plan p) ->
+    (N.of_nat (length (Syntax.slots V.t (R.plan p)) + 1) <= K)%N ->
+    (forall db entry, (T_entry db entry <= D.T_put (fst entry)
+      [Val (fst (snd entry)); Val (snd (snd entry))] None db + 32)%N) ->
+    Forall (Facts.entry_ok p) entries ->
+    let initial := D.init (decls V.t p) (Syntax.slots V.t (R.plan p)) in
+    (Std.List.T_fold_left Facts.put_entry T_entry entries initial <=
+      N.of_nat (D.unit (fold_left Facts.put_entry entries initial)) *
+        (16 * D.c_db * K + 33) * N.of_nat (length entries) + 1)%N.
+  Proof.
+    intros p entries T_entry K Hplan HK Hclock Hentries initial.
+    pose proof (fold_credit p entries T_entry K
+      (D.unit (fold_left Facts.put_entry entries initial)) Hplan HK Hclock initial
+      (Facts.init_invariant p) Hentries (Nat.le_refl _)) as Hfold.
+    unfold initial in Hfold. rewrite D.potential_init in Hfold.
+    fold initial in Hfold. nia.
+  Qed.
+
+End PointerSeedTime.
 
 Module AndersenCode (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
