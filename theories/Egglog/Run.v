@@ -11280,9 +11280,302 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     all: exists final_nu; split; [exact Hext|]; apply D.rebuild_sat; assumption.
   Qed.
 
+  (** Renaming a supported cell and returning to its canonical source recovers the cell. *)
+  Lemma run_canon_roundtrip : forall before after c,
+    D.wf before -> D.wf after -> D.canonical before ->
+    (forall i j, same (D.view after) i j -> same (D.view before) i j) ->
+    run_supported before c -> D.canon before (D.canon after c) = c.
+  Proof.
+    intros before after [i|v] Hbefore Hafter Hcanonical Hsame Hsupport; [|reflexivity].
+    destruct Hsupport as [f [k [o [Hrow Hin]]]].
+    pose proof (Hcanonical f k o Hrow i Hin) as Hfixed. cbn [D.canon]. f_equal.
+    assert (Hrel : same (D.view after) (D.repr after i) i).
+    { apply (proj2 (D.same_repr after (D.repr after i) i Hafter)).
+      now rewrite D.repr_idem by exact Hafter. }
+    pose proof (proj1 (D.same_repr before (D.repr after i) i Hbefore) (Hsame _ _ Hrel))
+      as Heq. now rewrite Hfixed in Heq.
+  Qed.
+
+  (** A supported key is recovered after a round trip between equivalent representatives. *)
+  Lemma run_canon_key_roundtrip : forall before after k,
+    D.wf before -> D.wf after -> D.canonical before ->
+    (forall i j, same (D.view after) i j -> same (D.view before) i j) ->
+    Forall (run_supported before) k ->
+    map (D.canon before) (map (D.canon after) k) = k.
+  Proof.
+    intros before after k Hbefore Hafter Hcanonical Hsame Hsupport.
+    induction Hsupport as [|c rest Hc Hrest IH]; cbn [map]; [reflexivity|].
+    rewrite IH. f_equal. eapply run_canon_roundtrip; eassumption.
+  Qed.
+
+  (** A stored output is recovered after a round trip between equivalent representatives. *)
+  Lemma run_canon_output_roundtrip : forall before after f k o,
+    D.wf before -> D.wf after -> D.canonical before ->
+    (forall i j, same (D.view after) i j -> same (D.view before) i j) ->
+    row (D.view before) f k o ->
+    option_map (D.canon before) (option_map (D.canon after) o) = o.
+  Proof.
+    intros before after f k [c|] Hbefore Hafter Hcanonical Hsame Hrow; [|reflexivity].
+    cbn [option_map]. f_equal. eapply run_canon_roundtrip; try eassumption.
+    eapply run_row_supported; [exact Hrow|]. apply in_app_iff. right. now left.
+  Qed.
+
+  (** Canonically renamed environments preserve concrete term evaluation. *)
+  Lemma run_term_value_canon : forall db source target (term : term V.t) c,
+    (forall x, target x = option_map (D.canon db) (source x)) ->
+    term_value source term c -> term_value target term (D.canon db c).
+  Proof.
+    intros db source target [x|v] c Henv Hterm.
+    - cbn [term_value] in *. now rewrite Henv, Hterm.
+    - cbn [term_value] in *. subst c. reflexivity.
+  Qed.
+
+  (** Canonically renamed environments preserve argument evaluation. *)
+  Lemma run_terms_value_canon : forall db source target args cs,
+    (forall x, target x = option_map (D.canon db) (source x)) ->
+    terms_value source args cs -> terms_value target args (map (D.canon db) cs).
+  Proof.
+    intros db source target args cs Henv Hterms.
+    induction Hterms as [|term c rest more Hhead Htail IH]; cbn [map]; constructor.
+    - eapply run_term_value_canon; eassumption.
+    - exact IH.
+  Qed.
+
+  (** Canonicalization leaves the value arguments of primitives unchanged. *)
+  Lemma run_values_canon : forall db cs vs, values cs vs -> values (map (D.canon db) cs) vs.
+  Proof.
+    intros db cs vs Hvalues. induction Hvalues as [|c v rest more Hhead Htail IH];
+      cbn [map]; constructor; [subst c; reflexivity|exact IH].
+  Qed.
+
+  (** Equal identifiers have equal canonical representatives in the same database. *)
+  Lemma run_same_canon : forall db i j, D.wf db -> same (D.view db) i j ->
+    same (D.view db) (D.repr db i) (D.repr db j).
+  Proof.
+    intros db i j Hwf Hsame. apply (proj2 (D.same_repr db _ _ Hwf)).
+    rewrite !D.repr_idem by exact Hwf. now apply (proj1 (D.same_repr db i j Hwf)).
+  Qed.
+
+  (** Canonical renaming preserves output containment when equality and kinds are retained. *)
+  Lemma run_cell_le_canon : forall (before : view (V := V.t)) after f c d,
+    D.wf after ->
+    (forall i j, same before i j -> same (D.view after) i j) ->
+    (forall g, kind (D.view after) g = kind before g) ->
+    cell_le V.merge before f c d ->
+    cell_le V.merge (D.view after) f (D.canon after c) (D.canon after d).
+  Proof.
+    intros before after f [i|v] [j|w] Hwf Hsame Hkinds Hle;
+      cbn [cell_le D.canon] in *; try contradiction.
+    - apply run_same_canon; [exact Hwf|now apply Hsame].
+    - destruct Hle as [m [Hkind Hmerge]]. exists m. split; [now rewrite Hkinds|exact Hmerge].
+  Qed.
+
+  (** Presence transports through an exact canonical renaming of rows. *)
+  Lemma run_present_canon : forall (before : view (V := V.t)) after acts source target,
+    D.wf after ->
+    (forall f k o, row before f k o ->
+      row (D.view after) f (map (D.canon after) k) (option_map (D.canon after) o)) ->
+    (forall i j, same before i j -> same (D.view after) i j) ->
+    (forall f, kind (D.view after) f = kind before f) ->
+    (forall x, target x = option_map (D.canon after) (source x)) ->
+    present V.prim V.merge before source acts ->
+    present V.prim V.merge (D.view after) target acts.
+  Proof.
+    intros before after acts. induction acts as [|action rest IH]; intros source target
+      Hwf Hrows Hsame Hkinds Henv Hpresent; [exact I|].
+    destruct action as [x f args|f args res|a b|x op args];
+      cbn [present] in Hpresent |- *.
+    - destruct Hpresent as [k [i [Hterms [Hrow Htail]]]].
+      exists (map (D.canon after) k), (D.repr after i).
+      split; [eapply run_terms_value_canon; eassumption|]. split; [exact (Hrows _ _ _ Hrow)|].
+      eapply IH; try eassumption. intro y. unfold update.
+      destruct (Pos.eqb x y); [reflexivity|apply Henv].
+    - destruct Hpresent as [k [o [Hterms [Hrow [Hresult Htail]]]]].
+      exists (map (D.canon after) k), (option_map (D.canon after) o).
+      split; [eapply run_terms_value_canon; eassumption|]. split; [exact (Hrows _ _ _ Hrow)|].
+      split.
+      + destruct res as [term|]; [|exact I].
+        destruct Hresult as [c [d [Hterm [Ho Hle]]]].
+        exists (D.canon after c), (D.canon after d).
+        split; [eapply run_term_value_canon; eassumption|]. split; [now rewrite Ho|].
+        eapply run_cell_le_canon; eassumption.
+      + eapply IH; eassumption.
+    - destruct Hpresent as [c [d [Ha [Hb [Hrel Htail]]]]].
+      exists (D.canon after c), (D.canon after d).
+      split; [eapply run_term_value_canon; [exact Henv|exact Ha]|].
+      split; [eapply run_term_value_canon; [exact Henv|exact Hb]|]. split.
+      + destruct c as [i|v], d as [j|w]; try exact I.
+        apply run_same_canon; [exact Hwf|now apply Hsame].
+      + eapply IH; eassumption.
+    - destruct Hpresent as [k [vs [Hterms [Hvalues Htail]]]].
+      exists (map (D.canon after) k), vs.
+      split; [eapply run_terms_value_canon; eassumption|]. split; [now apply run_values_canon|].
+      destruct (V.prim op vs) as [v|]; [|exact I].
+      eapply IH; try eassumption. intro y. unfold update.
+      destruct (Pos.eqb x y); [reflexivity|apply Henv].
+  Qed.
+
+  (** Pulling rows back through canonicalization also pulls matching queries back. *)
+  Lemma run_matches_pullback : forall before after q source,
+    (forall f k o, row (D.view after) f k o ->
+      row (D.view before) f (map (D.canon before) k) (option_map (D.canon before) o)) ->
+    matches V.prim (D.view after) q source ->
+    matches V.prim (D.view before) q (fun x => option_map (D.canon before) (source x)).
+  Proof.
+    intros before after q source Hrows Hmatches.
+    induction Hmatches as [|atom rest Hatom Hrest IH]; constructor; [|exact IH].
+    destruct atom as [f args res|op args result]; cbn [atom_holds] in Hatom |- *.
+    - destruct Hatom as [k [o [Hterms [Hresult Hrow]]]].
+      exists (map (D.canon before) k), (option_map (D.canon before) o).
+      split; [eapply run_terms_value_canon; [reflexivity|exact Hterms]|].
+      split; [|now apply Hrows].
+      destruct res as [term|], o as [c|]; try contradiction; [|exact I].
+      eapply run_term_value_canon; [reflexivity|exact Hresult].
+    - destruct Hatom as [k [vs [v [Hterms [Hvalues [Hprim Hresult]]]]]].
+      exists (map (D.canon before) k), vs, v.
+      split; [eapply run_terms_value_canon; [reflexivity|exact Hterms]|].
+      split; [now apply run_values_canon|]. split; [exact Hprim|].
+      change (term_value (fun x => option_map (D.canon before) (source x)) result
+        (D.canon before (Val v))).
+      eapply run_term_value_canon; [reflexivity|exact Hresult].
+  Qed.
+
+  (** Rule closure is invariant under a bijective canonical renaming of stored identifiers. *)
+  Lemma run_closed_canonical_rename : forall p before after,
+    program_ok p -> D.wf before -> D.wf after -> D.canonical before -> D.canonical after ->
+    (forall i j, same (D.view after) i j <-> same (D.view before) i j) ->
+    (forall f, kind (D.view after) f = kind (D.view before) f) ->
+    (forall f key output, row (D.view after) f key output <->
+      exists k o, row (D.view before) f k o /\ key = map (D.canon after) k /\
+        output = option_map (D.canon after) o) ->
+    closed V.prim V.merge p (D.view before) -> closed V.prim V.merge p (D.view after).
+  Proof.
+    intros p before after Hprogram Hbefore Hafter Hcanonical Hcanonical_after
+      Hsame Hkinds Hrows Hclosed.
+    unfold program_ok in Hprogram.
+    assert (Hpush : forall f k o, row (D.view before) f k o ->
+      row (D.view after) f (map (D.canon after) k) (option_map (D.canon after) o)).
+    { intros f k o Hrow. apply (proj2 (Hrows _ _ _)). exists k, o.
+      split; [exact Hrow|]. split; reflexivity. }
+    assert (Hpull : forall f k o, row (D.view after) f k o ->
+      row (D.view before) f (map (D.canon before) k) (option_map (D.canon before) o)).
+    { intros f key output Hrow. apply (proj1 (Hrows _ _ _)) in Hrow.
+      destruct Hrow as [k [o [Hsource [-> ->]]]].
+      rewrite (run_canon_key_roundtrip before after k Hbefore Hafter Hcanonical
+        (fun i j => proj1 (Hsame i j)) (run_row_key_supported before f k o Hsource)).
+      rewrite (run_canon_output_roundtrip before after f k o Hbefore Hafter Hcanonical
+        (fun i j => proj1 (Hsame i j)) Hsource). exact Hsource. }
+    intros r source Hin Hmatches.
+    destruct ((proj1 (Forall_forall _ _)) Hprogram r Hin) as [g [Hquery Hacts]].
+    pose (back := fun x => option_map (D.canon before) (source x)).
+    assert (Hback : matches V.prim (D.view before) (query V.t r) back).
+    { eapply run_matches_pullback; eassumption. }
+    pose proof (Hclosed r back Hin Hback) as Hpresent.
+    pose (forward := fun x => option_map (D.canon after) (back x)).
+    assert (Hforward : present V.prim V.merge (D.view after) forward (actions V.t r)).
+    { eapply run_present_canon; [exact Hafter|exact Hpush| |exact Hkinds| |exact Hpresent].
+      - intros i j Hij. exact (proj2 (Hsame i j) Hij).
+      - reflexivity. }
+    eapply run_present_agrees; [exact Hacts| |exact Hforward].
+    intros x ty Hbound. unfold forward, back. destruct (source x) as [c|] eqn:Hlookup;
+      cbn [option_map]; [|reflexivity]. f_equal.
+    eapply run_canon_roundtrip; [exact Hafter|exact Hbefore|exact Hcanonical_after| |].
+    - intros i j Hij. exact (proj2 (Hsame i j) Hij).
+    - eapply run_query_supported; eassumption.
+  Qed.
+
+  (** Rebuilding a view equivalent to a canonical closed view retains rule closure. *)
+  Lemma run_quiet_rebuild_closed : forall p cp before current,
+    plans_ok p cp -> D.wf before -> D.wf current -> D.canonical before ->
+    run_view_agrees (D.view before) (D.view current) ->
+    closed V.prim V.merge p (D.view before) ->
+    closed V.prim V.merge p (D.view (D.rebuild current)).
+  Proof.
+    intros p cp before current Hchecked Hbefore Hcurrent Hcanonical Hagree Hclosed.
+    assert (Hunique : row_ids_unique (D.view current)).
+    { eapply run_view_agrees_unique; [exact Hagree|]. now apply run_canonical_unique. }
+    destruct Hagree as [Hrows [Hsame Hkinds]].
+    eapply run_closed_canonical_rename; [exact (plans_ok_sorted p cp Hchecked)|exact Hbefore|
+      apply D.wf_rebuild; exact Hcurrent|exact Hcanonical|
+      exact (proj1 (D.rebuild_canonical current Hcurrent))| | | |exact Hclosed].
+    - intros i j. rewrite (run_rebuild_unique_same current Hcurrent Hunique i j).
+      symmetry. apply Hsame.
+    - intro f. rewrite (proj1 (D.layout_rebuild current Hcurrent)). symmetry. apply Hkinds.
+    - intros f key output. rewrite (run_rebuild_unique_rows current Hcurrent Hunique).
+      split; intros [k [o [Hrow [Hkey Hout]]]]; exists k, o; split.
+      + apply (proj2 (Hrows _ _ _)). exact Hrow.
+      + split; assumption.
+      + apply (proj1 (Hrows _ _ _)). exact Hrow.
+      + split; assumption.
+  Qed.
+
+  (** A quiet naive confirmation is closed also in its rebuilt output view. *)
+  Lemma run_quiet_round_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
+    closed V.prim V.merge p (D.view (round p cp true db)).
+  Proof.
+    intros p cp db Hchecked Hwf Hloaded Hcanonical Hquiet Hroundquiet.
+    pose proof (F8_naive_quiet_closed p cp db Hchecked Hwf Hloaded Hcanonical
+      Hquiet Hroundquiet) as Hclosed.
+    pose proof (run_jobs_facts p cp true db Hchecked Hwf Hloaded) as Hjobs.
+    assert (Hjobsquiet : D.changed (apply_jobs p (jobs p cp true db) db) = false).
+    { rewrite F32_round_jobs in Hroundquiet.
+      destruct (D.changed (apply_jobs p (jobs p cp true db) db)) eqn:Hchanged;
+        [|reflexivity]. pose proof (D.changed_rebuild _ Hchanged) as Hraised. congruence. }
+    destruct (run_apply_jobs_state p cp db (jobs p cp true db) db Hchecked Hjobs
+      Hwf Hloaded (N.le_refl _)) as [Hnext Hrest].
+    destruct (run_apply_jobs_quiet p cp (jobs p cp true db) db Hchecked Hwf Hloaded
+      (run_canonical_unique db Hwf Hcanonical) Hquiet Hjobsquiet Hjobs) as [Hview Hpresent].
+    rewrite F32_round_jobs.
+    exact (run_quiet_rebuild_closed p cp db (apply_jobs p (jobs p cp true db) db)
+      Hchecked Hwf Hnext Hcanonical Hview Hclosed).
+  Qed.
+
+  (** A saturated driver result is canonical, has no pending repairs, and is closed. *)
+  Lemma run_driver_closed_stop : forall p cp lim start result,
+    plans_ok p cp -> run_driver_state p cp start ->
+    driver p cp lim start = inr (Saturated, result) ->
+    D.wf result /\ D.canonical result /\ D.pending result = 0 /\
+      closed V.prim V.merge p (D.view result).
+  Proof.
+    intros p cp lim [nv db] result Hchecked [Hwf [Hloaded Hfrontier]] Hstep.
+    cbn [driver] in Hstep.
+    destruct (N.ltb (limits_ids lim) (D.ids (round p cp nv db))); [discriminate|].
+    destruct (nv && negb (D.changed (round p cp nv db))) eqn:Hquiet; [|discriminate].
+    injection Hstep as <-. apply andb_true_iff in Hquiet as [Hnaive Hquiet].
+    subst nv. apply negb_true_iff in Hquiet.
+    destruct (Hfrontier eq_refl) as [Hcanonical [Hpending Hunchanged]].
+    destruct (run_round_state p cp true db Hchecked Hwf Hloaded) as [Hnext Hrest].
+    destruct (run_round_canonical p cp true db Hchecked Hwf Hloaded) as [Hcanon Hempty].
+    split; [exact Hnext|]. split; [exact Hcanon|]. split; [exact Hempty|].
+    eapply run_quiet_round_closed; eassumption.
+  Qed.
+
   Lemma run_closed : forall p cp lim db db', plans_ok p cp -> D.wf db -> loaded p cp db ->
     run p cp lim db = (Saturated, db') -> closed V.prim V.merge p (D.view db').
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db db' Hchecked Hwf Hloaded Hresult.
+    assert (Hloop : match loopN (driver p cp lim) (max_iter lim) (false, db) with
+      | inl next => run_driver_state p cp next
+      | inr stopped => fst stopped = Saturated ->
+          D.wf (snd stopped) /\ D.canonical (snd stopped) /\ D.pending (snd stopped) = 0 /\
+            closed V.prim V.merge p (D.view (snd stopped))
+      end).
+    { eapply run_loopN_invariant with (P := run_driver_state p cp).
+      - intros start next Hstate Hstep. eapply run_driver_state_continue; eassumption.
+      - intros start [status result] Hstate Hstep Hstatus. cbn [fst] in Hstatus. subst status.
+        eapply run_driver_closed_stop; eassumption.
+      - cbn [run_driver_state]. split; [exact Hwf|]. split; [exact Hloaded|]. discriminate. }
+    pose proof (F10_run_loop p cp lim db Hchecked Hwf Hloaded) as Hrun.
+    destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
+      as [[nv current]|[status current]].
+    - rewrite Hrun in Hresult. discriminate.
+    - rewrite Hrun in Hresult.
+      injection Hresult as Hstatus Hdb. subst status db'.
+      destruct (Hloop eq_refl) as [Hcurrent [Hcanonical [Hpending Hclosed]]].
+      now rewrite (D.rebuild_idle current Hcurrent Hcanonical Hpending).
+  Qed.
+
 
   Lemma run_derives : forall p cp lim db f k o, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> no_ids db ->
