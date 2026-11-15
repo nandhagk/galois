@@ -5968,7 +5968,51 @@ Module LoopsT <: LOOPS_ALL.
       N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    pose proof (T3_classify g t r Hgraph Hprepared Htree) as Hclassify.
+    pose proof (T9_retreat_test g t r Hgraph Hprepared Htree) as Htest.
+    pose proof (T10_reducible_wrapper g t) as Hwrapper.
+    clear Hgraph Hprepared Htree.
+    set (size := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
+    set (depth := N.of_nat (loop_depth g (forest g t) + 1)) in *.
+    set (width := N.of_nat (graph_width (base g) + 1)) in *.
+    set (budget := (size * depth * width)%N).
+    assert (Hsize : (1 <= size)%N) by (clear -size; unfold size; lia).
+    assert (Hdepth : (1 <= depth)%N) by (clear -depth; unfold depth; lia).
+    assert (Hwidth : (1 <= width)%N) by (clear -width; unfold width; lia).
+    assert (Hbase : (size * width <= budget)%N) by (clear -Hdepth budget; unfold budget; nia).
+    assert (Hpositive : (1 <= budget)%N)
+      by (clear -Hsize Hdepth Hwidth budget; unfold budget; nia).
+    clearbody size depth width.
+    assert (Hclassifypaid : (T_classify g t <= k_classify * budget)%N).
+    { eapply N.le_trans; [exact Hclassify|].
+      pose proof (N.mul_le_mono_l _ _ k_classify Hbase) as Hscaled. clear -Hscaled. nia. }
+    assert (Htestpaid :
+      (T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
+        T_test_back (loop_back_rows (classify g t))
+          (retreat_trace g (firstn 1 (loop_order (classify g t)))) <=
+        (k_trace + k_test) * budget)%N).
+    { eapply N.le_trans; [exact Htest|].
+      pose proof (N.mul_le_mono_l _ _ (k_trace + k_test)%N Hbase) as Hscaled.
+      clear -Hscaled. nia. }
+    set (factor := (k_classify + k_trace + k_test + 1)%N).
+    assert (Hinside : (T_classify g t +
+      T_retreat_trace g (firstn 1 (loop_order (classify g t))) +
+      T_test_back (loop_back_rows (classify g t))
+        (retreat_trace g (firstn 1 (loop_order (classify g t)))) + 1 <=
+      factor * budget)%N) by (clear -Hclassifypaid Htestpaid Hpositive factor; unfold factor; nia).
+    assert (Hwrapped : (T_reducible_b g t <= (k_reducible * factor) * budget)%N).
+    { eapply N.le_trans; [exact Hwrapper|].
+      pose proof (N.mul_le_mono_l _ _ k_reducible Hinside) as Hscaled. clear -Hscaled. nia. }
+    assert (Hfactor : (k_reducible * factor <= c_loops)%N).
+    { clear -factor.
+      assert (Hscaled : (k_reducible * factor <= (k_reducible + 1) * factor)%N).
+      { apply N.mul_le_mono_r. lia. }
+      unfold c_loops. fold factor. lia. }
+    pose proof (N.mul_le_mono_r _ _ budget Hfactor) as Hpaid.
+    clear -Hwrapped Hpaid. unfold budget in *. nia.
+  Qed.
 
 
   Lemma T_forest_le : forall g t r,
@@ -5976,14 +6020,18 @@ Module LoopsT <: LOOPS_ALL.
     (T_forest g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T8_forest.
+  Qed.
 
   Lemma T_reducible_b_le : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     (T_reducible_b g t <= c_loops * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
       N.of_nat (loop_depth g (forest g t) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact T11_reducible_public.
+  Qed.
 
   Lemma forest_bigO : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
@@ -5991,7 +6039,11 @@ Module LoopsT <: LOOPS_ALL.
       ((graph_n (base g) + graph_e (base g) + 1) *
         (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
     (fun '(g, t, _) => T_forest g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_loops. intros [[g t] r] [Hgraph [Hprepared Htree]].
+    pose proof (T_forest_le g t r Hgraph Hprepared Htree) as Hbound.
+    clear -Hbound. rewrite !Nat2N.inj_mul. nia.
+  Qed.
 
   Lemma reducible_b_bigO : bigO (fun '(g, t, r) =>
       wf_graph (base g) /\ prepared_ok g /\ domtree_exact g r t)
@@ -5999,6 +6051,10 @@ Module LoopsT <: LOOPS_ALL.
       ((graph_n (base g) + graph_e (base g) + 1) *
         (loop_depth g (forest g t) + 1) * (graph_width (base g) + 1)))
     (fun '(g, t, _) => T_reducible_b g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_loops. intros [[g t] r] [Hgraph [Hprepared Htree]].
+    pose proof (T_reducible_b_le g t r Hgraph Hprepared Htree) as Hbound.
+    clear -Hbound. rewrite !Nat2N.inj_mul. nia.
+  Qed.
 
 End LoopsT.
