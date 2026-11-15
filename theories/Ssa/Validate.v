@@ -4431,11 +4431,10 @@ Module ValidateT (O : OPS)
     end.
     apply N.le_add_r.
   Qed.
-  Definition k_entry : N := 1. (* STUB *)
-  Definition k_code : N := 1. (* STUB *)
-  Definition k_edge : N := 1. (* STUB *)
+  Definition k_entry : N := (16 * PTrieT.c_trie + 4096)%N.
+  Definition k_code : N := (2 * val_block_cost)%N.
   Definition k_blocks : N := (8 * (PTrieT.c_trie + 16))%N.
-  Definition k_ssa : N := 1. (* STUB *)
+  Definition k_ssa : N := ssa_total_coefficient.
   Definition agrees (rho : renaming) (xs : list positive) (ss si : env O.C) :=
     forall x, In x xs -> exists y, lookup x rho = Some y /\ lookup y ss = lookup x si.
   Definition code_defs (xs : list (positive * O.K * list positive)) :=
@@ -4506,28 +4505,21 @@ Module ValidateT (O : OPS)
     - rewrite Hvalues, Hmap; exact Heq.
   Qed.
   Lemma F4_block_sim : forall p s c ss si,
-    imp_form p -> check p s c = true -> state_sim p s c ss si ->
-    outcome_sim p s c (step O.eval O.test s ss) (step O.eval O.test p si).
-  Proof. Admitted. (* PLAN-DEFECT: option equality permits absent live values; an SSA
-    edge can fail while reading a parameter argument that the imperative edge does not read.
-    The public theorem uses state_ready and step_ready, which also track defined live values. *)
+    imp_form p -> check p s c = true -> state_ready p s c ss si ->
+    outcome_ready p s c (step O.eval O.test s ss) (step O.eval O.test p si).
+  Proof.
+    intros p s c ss si _ Hcheck Hready; exact (step_ready p s c ss si Hcheck Hready).
+  Qed.
   Lemma F5_entry_sim : forall p s c ins ss si,
     imp_form p -> check p s c = true ->
     bind_vars (inputs _ _ _ s) ins [] = Some ss ->
     bind_vars (inputs _ _ _ p) ins [] = Some si ->
-    state_sim p s c (entry _ _ _ s, [], ss) (entry _ _ _ p, [], si).
+    state_ready p s c (entry _ _ _ s, [], ss) (entry _ _ _ p, [], si).
   Proof.
     intros p s c ins ss si _ Hcheck Hss Hsi.
     destruct (entry_ready p s c ins si Hcheck Hsi) as [entered [Hentered Hready]].
     rewrite Hss in Hentered; injection Hentered as Heq; subst entered.
-    destruct Hready as [Hid Hready]; unfold state_sim; split; [exact Hid|]; cbn in Hready.
-    destruct (find_block (entry _ _ _ s) (blocks _ _ _ s)) as [sb|]; [|contradiction].
-    destruct (find_block (entry _ _ _ p) (blocks _ _ _ p)) as [ib|]; [|contradiction].
-    destruct Hready as [es [ei [Hbs [Hbi [Hagree _]]]]]; rewrite Hbs, Hbi.
-    intros x Hin; pose proof (tables_agree p s c (entry _ _ _ p)) as [_ [_ [Henv Hrow]]].
-    rewrite <- Hrow in Hin; destruct (Hagree x Hin) as [y [Hmap Hvalue]].
-    exists y; split; [|exact Hvalue]; unfold cert_env; rewrite <- Henv.
-    rewrite val_row_lookup in Hmap; exact Hmap.
+    exact Hready.
   Qed.
   Lemma F6_input_arity : forall p s c, check p s c = true ->
     length (inputs _ _ _ s) = length (inputs _ _ _ p).
@@ -4535,11 +4527,12 @@ Module ValidateT (O : OPS)
     exact check_input_arity.
   Qed.
   Lemma F7_run_sim : forall p s c n ss si,
-    imp_form p -> check p s c = true -> state_sim p s c ss si ->
-    outcome_sim p s c (loop_fuel (step O.eval O.test s) n ss)
+    imp_form p -> check p s c = true -> state_ready p s c ss si ->
+    outcome_ready p s c (loop_fuel (step O.eval O.test s) n ss)
       (loop_fuel (step O.eval O.test p) n si).
-  Proof. Admitted. (* PLAN-DEFECT: the one-step counterexample to F4_block_sim also
-    refutes this statement at fuel one; loop_ready supplies the required stronger invariant. *)
+  Proof.
+    intros p s c n ss si _ Hcheck Hready; exact (loop_ready p s c n ss si Hcheck Hready).
+  Qed.
   Lemma F8_dom_checked : forall s, check_ssa s = true ->
     D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) = true.
   Proof.
@@ -4558,18 +4551,30 @@ Module ValidateT (O : OPS)
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) <=
       k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
         N.of_nat (function_width s + 1))%N.
-  Proof. Admitted. (* OPEN: the private graph, build, and check clocks prove this
-    budget with a larger coefficient. The shared k_ssa also controls defective
-    T3_ssa and therefore remains unchanged. *)
-  (** Entry checking charges both input lists and the indexed certificate row. *)
+  Proof.
+    intro s.
+    set (budget := ((N.of_nat (function_size s + 1) + dom_bound s) *
+      N.of_nat (function_width s + 1))%N).
+    assert (Hunit : (1 <= budget)%N) by (unfold budget; nia).
+    pose proof (ssa_graph_total_clock s) as Hgraph.
+    pose proof (ssa_build_total_clock s) as Hbuild.
+    pose proof (ssa_dom_clock s) as Hdom.
+    pose proof (ssa_check_total_clock s (fst (dom_cert s)) (snd (dom_cert s))) as Hcheck.
+    rewrite <- N.mul_assoc in Hgraph, Hbuild, Hcheck.
+    fold budget in Hgraph, Hbuild, Hcheck.
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (k_ssa * budget)%N by (unfold budget; ring) end.
+    clearbody budget; unfold k_ssa, ssa_total_coefficient; nia.
+  Qed.
+  (** Entry checking, with its certificate row-size guard, charges both functions and the
+      certificate. *)
   Lemma T2b_entry : forall p s c,
     (T_check_entry p s c (tables p s c) <= k_entry *
-      N.of_nat (length (inputs _ _ _ p) + length (inputs _ _ _ s) +
-        length (cert_live c (entry _ _ _ p)) + 1) *
+      N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: a singleton empty return with entry row
-    repeat (1,1) n has constant input/live lengths and width, but indexing and scanning
-    the environment row takes unbounded work. The precheck also pays for other rows. *)
+  Proof.
+    intros p s c; unfold k_entry; exact (entry_time p s c).
+  Qed.
   (** Code checking indexes its initial renaming and reads both instruction streams once. *)
   Lemma T2c_code : forall ic sc rho live,
     (T_check_code ic sc rho live <= k_code *
@@ -4580,21 +4585,12 @@ Module ValidateT (O : OPS)
         flat_map (fun i => fst (fst i) :: snd i) (ic ++ sc)) + 1) +
       k_code * N.of_nat
         (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic + 1))%N.
-  Proof. Admitted. (* OPEN: code_time proves this bound with a private constant.
-    k_code stays 1 because the shared T2a_block budget is false, and the session permits
-    a constant change only after every field using that constant is proved. *)
-  (** Indexed edge checking charges the two exits and the destination certificate row. *)
-  Lemma T2d_edge : forall p s c b target rho ib sb,
-    find_block b (blocks _ _ _ p) = Some ib ->
-    find_block b (blocks _ _ _ s) = Some sb ->
-    (T_check_edge (tables p s c) b target rho <= k_edge *
-      N.of_nat (length rho + length (exit_uses (term _ _ _ ib)) +
-        length (exit_uses (term _ _ _ sb)) + length (cert_live c target) + 1) *
-      N.of_nat (check_width p s c +
-        vertex_width (flat_map (fun xy => [fst xy; snd xy]) rho) + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: with empty Jump 2 exits, rho=[] and empty live rows,
-    a destination environment row repeat (1,1) n is indexed although n is absent from
-    this budget. The public check rejects oversized destination rows before block checks. *)
+  Proof.
+    intros ic sc rho live; eapply N.le_trans; [exact (code_time ic sc rho live)|].
+    apply N.add_le_mono.
+    - apply N.mul_le_mono_r, N.mul_le_mono_r; unfold k_code, val_block_cost; lia.
+    - apply N.mul_le_mono_r; unfold k_code, val_block_cost; lia.
+  Qed.
   (** Translation checking indexes the certificate, checks the entry and every source block. *)
   Lemma T2_checks : forall p s c,
     (T_check p s c <= T_tables p s c +
@@ -4605,35 +4601,48 @@ Module ValidateT (O : OPS)
   Proof.
     exact checks_time.
   Qed.
-  (** One block check charges its two bodies, its operands, its live row, its exit and its
-      operators. *)
-  Lemma T2a_block : forall p s c b ib,
-    find_block b (blocks _ _ _ p) = Some ib ->
-    (T_check_block (tables p s c) b <= k_code *
-      N.of_nat (length (block_defs ib) + length (exit_uses (term _ _ _ ib)) +
-        length (code _ _ _ ib) +
-        fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (code _ _ _ ib) +
-        length (cert_live c b) + 1) *
-      N.of_nat (check_width p s c + 1) +
-      k_code * N.of_nat (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat
-        (code _ _ _ ib) +
-        match term _ _ _ ib with
-        | Branch g _ _ _ _ _ => G.bits g
-        | _ => 0
-        end + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: an empty return block with entry environment row
-    repeat (1,1) n performs unbounded indexing work, while every listed size stays fixed.
-    The target body and outgoing environment rows are also absent from this local budget. *)
-  (** SSA checking adds the strict local-order and dominance queries to the graph phase. *)
+  (** After an accepted entry check, the block checks together charge both functions, the
+      certificate and the operators. *)
+  Lemma T2a_block : forall p s c,
+    check_entry p s c (tables p s c) = true ->
+    (fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
+      (first_blocks (blocks _ _ _ p))) <=
+      k_code * N.of_nat (function_size p + function_size s + cert_size c + 1) *
+        N.of_nat (check_width p s c + 1) + k_code * N.of_nat (op_bits p))%N.
+  Proof.
+    intros p s c Hentry.
+    assert (Hguard : row_budget p c = true).
+    { unfold check_entry in Hentry; destruct (row_budget p c); [reflexivity|discriminate]. }
+    eapply N.le_trans; [exact (blocks_time p s c Hguard)|].
+    apply N.add_le_mono.
+    - apply N.mul_le_mono_r, N.mul_le_mono_r; unfold k_code; lia.
+    - apply N.mul_le_mono_r; unfold k_code; lia.
+  Qed.
+  (** SSA checking adds the syntax scans, and the dominator tree of an accepted certificate,
+      to the graph phase. *)
   Lemma T3_ssa : forall s,
     (T_check_ssa s <= T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+      (if D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))
+       then D.T_tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))
+       else 0) +
       k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: successful checking also evaluates D.tree, whose
-    graph-sensitive cost is absent here. The presentation laws permit arbitrarily
-    many distinct parallel edges for a fixed source jump; tree work can therefore
-    grow independently of the added syntax budget. The public SSA bound charges
-    graph_e through dom_bound. *)
+  Proof.
+    intro s.
+    set (budget := (N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N).
+    assert (Hunit : (1 <= budget)%N) by (unfold budget; nia).
+    pose proof (ssa_precheck_clock s) as Hpre.
+    rewrite <- N.mul_assoc in Hpre; fold budget in Hpre.
+    pose proof (ssa_check_clock_parts s) as Hparts.
+    replace (k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N
+      with (k_ssa * budget)%N by (unfold budget; ring).
+    destruct (D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)))
+      eqn:Haccepted.
+    - pose proof (ssa_scan_clock s _ _ Haccepted) as Hscan.
+      rewrite <- N.mul_assoc in Hscan; fold budget in Hscan.
+      clearbody budget; unfold k_ssa, ssa_total_coefficient; nia.
+    - clearbody budget; unfold k_ssa, ssa_total_coefficient; nia.
+  Qed.
   (** The tables retain the first body and certificate row for each identifier. *)
   Lemma F0_tables : forall p s c b,
     trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\

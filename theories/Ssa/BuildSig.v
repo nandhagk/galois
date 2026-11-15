@@ -174,7 +174,6 @@ Module Type BUILD_PLAN (O : OPS)
   Parameter T_place_var : ptrie (list positive) -> ptrie (list positive) ->
     ptrie (ptrie unit) -> positive -> N.
   Parameter placement : P.t -> ptrie (list positive).
-  Parameter T_placement : P.t -> N.
   Parameter rename : P.t -> domtree -> ptrie (list positive) ->
     list (positive * list positive) -> option (P.t * cert).
   Parameter rename_init : P.t -> rename_state O.K O.G.
@@ -184,8 +183,6 @@ Module Type BUILD_PLAN (O : OPS)
   Parameter T_rename : P.t -> domtree -> ptrie (list positive) ->
     list (positive * list positive) -> N.
   Parameter T_rename_init : P.t -> N.
-  Parameter T_rename_step : P.t -> domtree -> ptrie (list positive) ->
-    list (positive * list positive) -> rename_state O.K O.G -> N.
   Parameter k_graph k_place k_rename k_wrap k_size : N.
   Definition placed p x :=
     place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x.
@@ -224,42 +221,26 @@ Module Type BUILD_PLAN (O : OPS)
   Parameter T0_indexes : forall p,
     (T_def_index p + T_live_sets (L.live_in p) <= k_place *
       N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
-  (** One placement search for a variable of the universe charges seed and
-      discovered-frontier incidences. *)
+  (** One placement search for a variable of the universe charges its seeds, their frontier
+      rows and the discovered frontier rows. *)
   Parameter T1_place_var : forall p x, In x (U.universe (R.prepare p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
     (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <= k_place *
       N.of_nat (length (definition_blocks p x) +
+        fold_right (fun b n => (length (frontier_row (frontiers p) b) + n)%nat)
+          0%nat (definition_blocks p x) +
         fold_right (fun b n => (1 + length (frontier_row (frontiers p) b) + n)%nat)
           0%nat (phi_sites p x) + 1) * N.of_nat (function_width p + 1))%N.
-  (** Placement indexes the rows once and sums the indexed variable searches. *)
-  Parameter T1a_placement : forall p,
-    (T_placement p <= k_place * N.of_nat (function_size p + placement_work p + 1) *
-      N.of_nat (function_width p + 1) +
-      fold_right N.add 0%N (map
-        (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)))
-        (U.universe (R.prepare p))))%N.
   (** Initialization charges the source inventory at its syntax width. *)
   Parameter T2a_rename_init : forall p,
     (T_rename_init p <= k_rename * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
-  (** The driver counts the blocks for its fuel and runs its bounded rename loop. *)
-  Parameter T2b_rename_driver : forall p,
-    (T_rename p (dom_tree p) (placement p) (L.live_in p) <= T_rename_init p +
-      T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
-        (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-        (2 * length (blocks _ _ _ p) + 1) (rename_init p) +
-      k_rename * N.of_nat (length (blocks _ _ _ p) + 1))%N.
-  (** Both visits to each block charge their statements and emitted incoming arguments. *)
-  Parameter T2c_rename_loop : forall p,
-    (T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
-      (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-      (2 * length (blocks _ _ _ p) + 1) (rename_init p) <=
-      k_rename * N.of_nat (function_size p + placement_work p + phi_args p + 1) *
-        N.of_nat (function_width p + 1))%N.
-  (** Renaming charges statements and the incoming arguments it emits. *)
-  Parameter T2_rename : forall p,
+  (** Renaming distinct blocks along a checked dominator tree charges the source, the live
+      rows and the placement work. *)
+  Parameter T2_rename : forall p, NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
     (T_rename p (dom_tree p) (placement p) (L.live_in p) <=
-      k_rename * N.of_nat (function_size p + placement_work p + phi_args p + 1) *
+      k_rename * N.of_nat (function_size p + L.live_size p + placement_work p + 1) *
         N.of_nat (function_width p + 1))%N.
   (** A candidate keeps the source blocks and stays within the published work and width. *)
   Parameter F6_produce_size : forall p s c, produce p = Some (s, c) ->
@@ -267,22 +248,9 @@ Module Type BUILD_PLAN (O : OPS)
     (N.of_nat (function_size s + cert_size c) <= k_size * N.of_nat (build_work p))%N /\
     (N.of_nat (function_width s + vertex_width (cert_ids c)) <=
       k_size * N.of_nat (function_width p + 1))%N.
-  (** The producer prepares once, builds and prepares the graph, and stops when the
-      dominator check rejects. *)
+  (** The producer stays within the published construction work at the source width. *)
   Parameter T3_produce : forall p,
-    (T_produce p <= R.T_prepare p + k_graph +
-      k_graph * N.of_nat (length (BC.nodes (R.prepare p)) +
-        length (BC.edges (R.prepare p)) + 1) * N.of_nat (function_width p + 1) +
-      DG.T_prepare (cfg_graph (BC.nodes (R.prepare p)) (BC.edges (R.prepare p))
-        (BC.src (R.prepare p)) (BC.dst (R.prepare p))) +
-      D.T_build (graph p) (entry _ _ _ p) +
-      D.T_check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-      (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p))
-       then D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-         F.T_df (graph p) (dom_tree p) + L.T_live_in p + T_def_index p +
-         T_live_sets (L.live_in p) + T_placement p +
-         T_rename p (dom_tree p) (placement p) (L.live_in p)
-       else 0))%N.
+    (T_produce p <= k_graph * N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N.
   (** The wrapper charges the actual certificate and candidate validators. *)
   Parameter T4_wrapper : forall p,
     (T_build p <= T_produce p +

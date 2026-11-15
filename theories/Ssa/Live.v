@@ -1745,7 +1745,6 @@ Module LiveT (O : OPS)
       (live_initial N.encode (index_row seeds x))).
   TimeFun explore.
   Definition k_index : N := live_index_budget.
-  Definition k_explore : N := 1. (* STUB *)
   Definition k_rows : N := live_driver_budget.
   Definition visits p x := filter (fun pair => Pos.eqb (snd pair) x) (live_region p).
   Definition variable_work p x := fold_right (fun pair n =>
@@ -3131,14 +3130,6 @@ Module LiveT (O : OPS)
   Proof.
     exact kill_index_bound.
   Qed.
-  (** A variable's search charges each visited point and incoming occurrence. *)
-  Lemma T1_explore : forall p x, In x (U.universe (R.prepare p)) ->
-    (T_explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)) x <=
-      k_explore * N.of_nat (variable_work p x + 1) * N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: this interface supplies no cached graph bound. Counting
-    nodes for the finite traversal costs the whole graph even when a variable is live only
-    in one fixed return block; arbitrarily many disconnected empty blocks keep its region
-    fixed. The driver computes this fuel once and its public clock is bounded separately. *)
   (** The driver prepares once, builds both indexes, searches each variable and groups
       rows. *)
   Lemma T2_rows : forall p,

@@ -242,13 +242,36 @@ Module Type VALIDATE_PLAN (O : OPS)
   Parameter T_check_block : check_tables O.K O.G -> positive -> N.
   Parameter T_check_code : list (positive * O.K * list positive) ->
     list (positive * O.K * list positive) -> renaming -> list positive -> N.
-  Parameter T_check_edge : check_tables O.K O.G -> positive -> positive -> renaming -> N.
   Parameter T_dom_cert : P.t -> N.
-  Parameter k_entry k_code k_edge k_blocks k_ssa : N.
+  Parameter k_entry k_code k_blocks k_ssa : N.
   Definition agrees (rho : renaming) (xs : list positive) (ss si : env O.C) :=
     forall x, In x xs -> exists y, lookup x rho = Some y /\ lookup y ss = lookup x si.
   Definition code_defs (xs : list (positive * O.K * list positive)) :=
     map (fun i => fst (fst i)) xs.
+  (** Ready states enter the same listed block with agreeing entry environments, and every
+      variable of its certificate row has an imperative value. *)
+  Definition state_ready (p s : P.t) (c : cert) (ss si : machine_state O.C) : Prop :=
+    let '(bs, actuals_s, es) := ss in
+    let '(bi, actuals_i, ei) := si in
+    bs = bi /\
+    match find_block bs (blocks _ _ _ s), find_block bi (blocks _ _ _ p) with
+    | Some sb, Some ib =>
+      exists entered_s entered_i,
+        bind_vars (params _ _ _ sb) actuals_s es = Some entered_s /\
+        bind_vars (params _ _ _ ib) actuals_i ei = Some entered_i /\
+        agrees (index_row (cert_envs (tables p s c)) bi)
+          (index_row (cert_rows (tables p s c)) bi) entered_s entered_i /\
+        forall x, In x (index_row (cert_rows (tables p s c)) bi) ->
+          exists value, lookup x entered_i = Some value
+    | _, _ => False
+    end.
+  (** Ready outcomes are ready states or equal results. *)
+  Definition outcome_ready p s c (os oi : machine_state O.C + result O.C) : Prop :=
+    match os, oi with
+    | inl ss, inl si => state_ready p s c ss si
+    | inr rs, inr ri => rs = ri
+    | _, _ => False
+    end.
   (** The tables keep the first block and the first certificate row of each identifier. *)
   Parameter F0_tables : forall p s c b,
     trie_get b (source_bodies (tables p s c)) = find_block b (blocks _ _ _ p) /\
@@ -277,23 +300,23 @@ Module Type VALIDATE_PLAN (O : OPS)
     read_vars ss sx = Some sa -> read_vars si ix = Some ia ->
     agrees rho (cert_live c target) ss si ->
     state_sim p s c (target, sa, ss) (target, ia, si).
-  (** A checked block has equal ending outcomes or related successor states. *)
+  (** A checked block takes ready states to equal ending outcomes or ready successor states. *)
   Parameter F4_block_sim : forall p s c ss si,
-    imp_form p -> check p s c = true -> state_sim p s c ss si ->
-    outcome_sim p s c (step O.eval O.test s ss) (step O.eval O.test p si).
-  (** A successful input binding establishes the entry simulation. *)
+    imp_form p -> check p s c = true -> state_ready p s c ss si ->
+    outcome_ready p s c (step O.eval O.test s ss) (step O.eval O.test p si).
+  (** A successful input binding makes the two entry states ready. *)
   Parameter F5_entry_sim : forall p s c ins ss si,
     imp_form p -> check p s c = true ->
     bind_vars (inputs _ _ _ s) ins [] = Some ss ->
     bind_vars (inputs _ _ _ p) ins [] = Some si ->
-    state_sim p s c (entry _ _ _ s, [], ss) (entry _ _ _ p, [], si).
+    state_ready p s c (entry _ _ _ s, [], ss) (entry _ _ _ p, [], si).
   (** The checked input lists reject the same arity mismatches. *)
   Parameter F6_input_arity : forall p s c, check p s c = true ->
     length (inputs _ _ _ s) = length (inputs _ _ _ p).
   (** Induction on fuel transports the block simulation to matching loop outcomes. *)
   Parameter F7_run_sim : forall p s c n ss si,
-    imp_form p -> check p s c = true -> state_sim p s c ss si ->
-    outcome_sim p s c (loop_fuel (step O.eval O.test s) n ss)
+    imp_form p -> check p s c = true -> state_ready p s c ss si ->
+    outcome_ready p s c (loop_fuel (step O.eval O.test s) n ss)
       (loop_fuel (step O.eval O.test p) n si).
   (** The SSA checker validates the dominator certificate it uses. *)
   Parameter F8_dom_checked : forall s, check_ssa s = true ->
@@ -306,11 +329,11 @@ Module Type VALIDATE_PLAN (O : OPS)
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) <=
       k_ssa * (N.of_nat (function_size s + 1) + dom_bound s) *
         N.of_nat (function_width s + 1))%N.
-  (** Entry checking charges both input lists and the indexed certificate row. *)
+  (** Entry checking, with its certificate row-size guard, charges both functions and the
+      certificate. *)
   Parameter T2b_entry : forall p s c,
     (T_check_entry p s c (tables p s c) <= k_entry *
-      N.of_nat (length (inputs _ _ _ p) + length (inputs _ _ _ s) +
-        length (cert_live c (entry _ _ _ p)) + 1) *
+      N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1))%N.
   (** Code checking indexes its initial renaming and reads both instruction streams once. *)
   Parameter T2c_code : forall ic sc rho live,
@@ -322,15 +345,6 @@ Module Type VALIDATE_PLAN (O : OPS)
         flat_map (fun i => fst (fst i) :: snd i) (ic ++ sc)) + 1) +
       k_code * N.of_nat
         (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat ic + 1))%N.
-  (** Indexed edge checking charges the two exits and the destination certificate row. *)
-  Parameter T2d_edge : forall p s c b target rho ib sb,
-    find_block b (blocks _ _ _ p) = Some ib ->
-    find_block b (blocks _ _ _ s) = Some sb ->
-    (T_check_edge (tables p s c) b target rho <= k_edge *
-      N.of_nat (length rho + length (exit_uses (term _ _ _ ib)) +
-        length (exit_uses (term _ _ _ sb)) + length (cert_live c target) + 1) *
-      N.of_nat (check_width p s c +
-        vertex_width (flat_map (fun xy => [fst xy; snd xy]) rho) + 1))%N.
   (** Indexing reads both functions and the certificate once. *)
   Parameter T0_tables : forall p s c,
     (T_tables p s c <= k_blocks *
@@ -344,26 +358,22 @@ Module Type VALIDATE_PLAN (O : OPS)
       T_check_entry p s c (tables p s c) +
       fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
         (first_blocks (blocks _ _ _ p))))%N.
-  (** One block check charges its two bodies, its operands, its live row, its exit and its
-      operators. *)
-  Parameter T2a_block : forall p s c b ib,
-    find_block b (blocks _ _ _ p) = Some ib ->
-    (T_check_block (tables p s c) b <= k_code *
-      N.of_nat (length (block_defs ib) + length (exit_uses (term _ _ _ ib)) +
-        length (code _ _ _ ib) +
-        fold_right (fun i n => (length (snd i) + n)%nat) 0%nat (code _ _ _ ib) +
-        length (cert_live c b) + 1) *
-      N.of_nat (check_width p s c + 1) +
-      k_code * N.of_nat (fold_right (fun i n => (K.bits (snd (fst i)) + n)%nat) 0%nat
-        (code _ _ _ ib) +
-        match term _ _ _ ib with
-        | Branch g _ _ _ _ _ => G.bits g
-        | _ => 0
-        end + 1))%N.
-  (** SSA checking adds the strict local-order and dominance queries to the graph phase. *)
+  (** After an accepted entry check, the block checks together charge both functions, the
+      certificate and the operators. *)
+  Parameter T2a_block : forall p s c,
+    check_entry p s c (tables p s c) = true ->
+    (fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
+      (first_blocks (blocks _ _ _ p))) <=
+      k_code * N.of_nat (function_size p + function_size s + cert_size c + 1) *
+        N.of_nat (check_width p s c + 1) + k_code * N.of_nat (op_bits p))%N.
+  (** SSA checking adds the syntax scans, and the dominator tree of an accepted certificate,
+      to the graph phase. *)
   Parameter T3_ssa : forall s,
     (T_check_ssa s <= T_graph s + T_dom_cert s +
       D.T_check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) +
+      (if D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))
+       then D.T_tree (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s))
+       else 0) +
       k_ssa * N.of_nat (function_size s + 1) * N.of_nat (function_width s + 1))%N.
 End VALIDATE_PLAN.
 

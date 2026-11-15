@@ -142,7 +142,8 @@ Proof.
   exists 10; split; reflexivity.
 Qed.
 
-(** This is the one-step counterexample to F4 and the fuel-one counterexample to F7. *)
+(** One step and one unit of fuel separate these weakly related states, which the ready
+    relation of F4 and F7 excludes. *)
 Example weak_state_distinct_outcomes :
   (step Ops.eval Ops.test weak_target (1, [], []),
    step Ops.eval Ops.test weak_source (1, [], []),
@@ -174,7 +175,8 @@ Definition empty_edge_program : Source.t :=
     [(1, Block positive positive positive [] [] (Jump 2 []));
      (2, Block positive positive positive [] [] (Return []))].
 
-(** A target environment row is absent from the edge plan's size expression. *)
+(** Padding the certificate environment row of the edge target keeps the edge check
+    accepting, and the row budget rejects the larger padding. *)
 Example padded_edge_checker_and_budget_family :
   let a := padded_unused 1 in let b := padded_unused 8 in
   let ta := V.tables empty_edge_program empty_edge_program a in

@@ -1652,9 +1652,6 @@ Module BuildT (O : OPS)
       (Nat.log2 (graph_n (base (graph p))) + 1).
   Definition build_work p := function_size p + length (BC.nodes (R.prepare p)) + length (BC.edges (R.prepare p)) +
     dom_work p + df_size p + placement_work p + L.live_size p + phi_args p + 1.
-  Definition k_graph : N := 1. (* STUB *)
-  Definition k_place : N := 1. (* STUB *)
-  Definition k_rename : N := 1. (* STUB *)
   Definition k_wrap : N := 16.
   Definition k_size : N := 16.
   Definition placed p x :=
@@ -2998,84 +2995,6 @@ Module BuildT (O : OPS)
     unfold place_index_coefficient, PTrieT.c_trie in *; lia.
   Qed.
 
-  (** The two indexes charge syntax and emitted live rows once. *)
-  Lemma T0_indexes : forall p,
-    (T_def_index p + T_live_sets (L.live_in p) <= k_place *
-      N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* OPEN: the indexed implementation requires a private index
-    coefficient. The shared k_place also controls T1_place_var and T1a_placement,
-    whose omitted work makes those plans defective, so k_place remains unchanged. *)
-  (** One placement search charges seed and discovered-frontier incidences. *)
-  Lemma T1_place_var : forall p x, In x (U.universe (R.prepare p)) ->
-    (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <= k_place *
-      N.of_nat (length (definition_blocks p x) +
-        fold_right (fun b n => (1 + length (frontier_row (frontiers p) b) + n)%nat)
-          0%nat (phi_sites p x) + 1) * N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: IDF scans frontier rows of definition seeds,
-    but this budget counts only the number of seeds and the discovered rows.
-    In an acyclic graph, t definition regions can each branch through a chain
-    into the same t return joins. Each seed frontier has t members, while the
-    joins have empty frontier rows. The scan visits t*t seed incidences, but
-    the displayed count is only 2*t+1, at source width O(log t). The guarded
-    producer uses the private cached-placement bound, which charges seed rows. *)
-  (** Placement indexes the rows once and sums the indexed variable searches. *)
-  Lemma T1a_placement : forall p,
-    (T_placement p <= k_place * N.of_nat (function_size p + placement_work p + 1) *
-      N.of_nat (function_width p + 1) +
-      fold_right N.add 0%N (map
-        (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)))
-        (U.universe (R.prepare p))))%N.
-  Proof. Admitted. (* PLAN-DEFECT: placement recomputes the graph, frontiers,
-    liveness and universe before constructing its indexes. In a chain of t
-    blocks with t inputs used at the final return, frontier rows are empty,
-    placement_work is zero, and live_in emits Theta(t*t) variable entries.
-    Source size and the summed indexed searches charge only O(t*log t), so
-    the omitted live rows cannot be absorbed by a uniform k_place. The public
-    producer caches these inputs and charges live_size in its private bound. *)
-  (** Initialization charges the source inventory at its syntax width. *)
-  Lemma T2a_rename_init : forall p,
-    (T_rename_init p <= k_rename * N.of_nat (function_size p + 1) *
-      N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: with k_rename = 1, one empty Return block has
-    generated initialization clock 19 and displayed bound 6. The shared constant
-    cannot repair the omitted work in T2c_rename_loop and T2_rename. The private
-    cached-driver bound includes initialization with a sufficient coefficient. *)
-  (** The driver charges the clock of its actual bounded rename loop. *)
-  Lemma T2b_rename_driver : forall p,
-    (T_rename p (dom_tree p) (placement p) (L.live_in p) <= T_rename_init p +
-      T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
-        (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-        (2 * length (blocks _ _ _ p) + 1) (rename_init p) +
-      k_rename * N.of_nat (length (blocks _ _ _ p) + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: with k_rename = 1, an empty block list has
-    generated driver clock 26 and displayed bound 19. This comparison also uses
-    the uncached public step clock. The shared constant remains unchanged because
-    T2c_rename_loop and T2_rename omit asymptotically necessary work; the actual
-    cached driver is bounded by rename_cached_time. *)
-  (** Both visits to each block charge their statements and emitted incoming arguments. *)
-  Lemma T2c_rename_loop : forall p,
-    (T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
-      (T_rename_step p (dom_tree p) (placement p) (L.live_in p))
-      (2 * length (blocks _ _ _ p) + 1) (rename_init p) <=
-      k_rename * N.of_nat (function_size p + placement_work p + phi_args p + 1) *
-        N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: the public rename_step rebuilds the live-row
-    and input indexes on every iteration. For n distinct empty Return blocks,
-    fallback tasks visit all n blocks and rebuild n empty live rows each time.
-    Its clock is Omega(n*n), while this budget is O(n*log n). Four such blocks
-    give generated clock 708 and bound 20 at k_rename = 1. The actual driver
-    caches both indexes once, as accounted for by rename_cached_time. *)
-  (** Renaming charges statements and the incoming arguments it emits. *)
-  Lemma T2_rename : forall p,
-    (T_rename p (dom_tree p) (placement p) (L.live_in p) <=
-      k_rename * N.of_nat (function_size p + placement_work p + phi_args p + 1) *
-        N.of_nat (function_width p + 1))%N.
-  Proof. Admitted. (* PLAN-DEFECT: this budget omits live_size. A chain of n blocks
-    with n inputs returned at the last block has source size 3*n, no placement,
-    and no emitted edge arguments. Each nonentry block projects all n live bindings,
-    giving Omega(n*n) work against O(n*log n). Four blocks give generated clock
-    1362 and bound 65 at k_rename = 1. The private rename_cached_time bound charges
-    live_size and suffices for the unchanged public construction contract. *)
   (** A candidate keeps the source blocks and stays within the published work and width. *)
   Lemma F6_produce_size : forall p s c, produce p = Some (s, c) ->
     map fst (blocks _ _ _ s) = map fst (blocks _ _ _ p) /\
@@ -5119,28 +5038,6 @@ Module BuildT (O : OPS)
     apply N.mul_le_mono_l. exact Hloadpaid.
   Qed.
 
-  (** The producer checks the graph before preparing it and stops at the first rejection. *)
-  Lemma T3_produce : forall p,
-    (T_produce p <= R.T_prepare p + k_graph +
-      k_graph * N.of_nat (length (BC.nodes (R.prepare p)) +
-        length (BC.edges (R.prepare p)) + 1) * N.of_nat (function_width p + 1) +
-      DG.T_prepare (cfg_graph (BC.nodes (R.prepare p)) (BC.edges (R.prepare p))
-        (BC.src (R.prepare p)) (BC.dst (R.prepare p))) +
-      D.T_build (graph p) (entry _ _ _ p) +
-      D.T_check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-      (if D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p))
-       then D.T_tree (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) +
-         F.T_df (graph p) (dom_tree p) + L.T_live_in p + T_def_index p +
-         T_live_sets (L.live_in p) + T_placement p +
-         T_rename p (dom_tree p) (placement p) (L.live_in p)
-       else 0))%N.
-  Proof. Admitted. (* OPEN: the producer evaluates native source, live-row and
-    frontier-row scans in placement_allowed. Their cost is not bounded by the
-    displayed block-graph inventory alone. Closing this plan needs a payment
-    relation with the repeated dependency calls inside T_placement; their public
-    interfaces provide upper bounds only. The public producer bound charges the
-    guard directly. No actual-clock asymptotic counterexample is established, and
-    k_graph remains unchanged. *)
   (** The wrapper charges the actual certificate and candidate validators. *)
   Lemma T4_wrapper : forall p,
     (T_build p <= T_produce p +
@@ -5220,6 +5117,58 @@ Module BuildT (O : OPS)
         rewrite !N.mul_add_distr_r, <- !N.mul_assoc in *; lia.
     - unfold budget_producer_coefficient.
       rewrite !N.mul_add_distr_r, <- !N.mul_assoc in *; lia.
+  Qed.
+
+  Definition k_graph : N := budget_producer_coefficient.
+  Definition k_place : N := (place_index_coefficient + place_variable_coefficient)%N.
+  Definition k_rename : N := rename_cached_coefficient.
+
+  (** The two indexes charge syntax and emitted live rows once. *)
+  Lemma T0_indexes : forall p,
+    (T_def_index p + T_live_sets (L.live_in p) <= k_place *
+      N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro p; eapply N.le_trans; [exact (place_indexes_clock p)|].
+    apply N.mul_le_mono_r, N.mul_le_mono_r; unfold k_place; lia.
+  Qed.
+  (** One placement search for a variable of the universe charges its seeds, their frontier
+      rows and the discovered frontier rows. *)
+  Lemma T1_place_var : forall p x, In x (U.universe (R.prepare p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <= k_place *
+      N.of_nat (length (definition_blocks p x) +
+        fold_right (fun b n => (length (frontier_row (frontiers p) b) + n)%nat)
+          0%nat (definition_blocks p x) +
+        fold_right (fun b n => (1 + length (frontier_row (frontiers p) b) + n)%nat)
+          0%nat (phi_sites p x) + 1) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    intros p x Hx Hcheck; eapply N.le_trans; [exact (place_variable_clock p x Hx Hcheck)|].
+    apply N.mul_le_mono_r, N.mul_le_mono_r; unfold k_place; lia.
+  Qed.
+  (** Initialization charges the source inventory at its syntax width. *)
+  Lemma T2a_rename_init : forall p,
+    (T_rename_init p <= k_rename * N.of_nat (function_size p + 1) *
+      N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro p; eapply N.le_trans; [exact (rename_initial_time p)|].
+    apply N.mul_le_mono_r, N.mul_le_mono_r.
+    unfold k_rename, rename_cached_coefficient, rename_clock_common; lia.
+  Qed.
+  (** Renaming distinct blocks along a checked dominator tree charges the source, the live
+      rows and the placement work. *)
+  Lemma T2_rename : forall p, NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    (T_rename p (dom_tree p) (placement p) (L.live_in p) <=
+      k_rename * N.of_nat (function_size p + L.live_size p + placement_work p + 1) *
+        N.of_nat (function_width p + 1))%N.
+  Proof.
+    intros p Hunique Hcheck; unfold k_rename; exact (rename_cached_time p Hunique Hcheck).
+  Qed.
+  (** The producer stays within the published construction work at the source width. *)
+  Lemma T3_produce : forall p,
+    (T_produce p <= k_graph * N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro p; unfold k_graph; exact (budget_producer_clock p).
   Qed.
 
   Definition c_build : N :=

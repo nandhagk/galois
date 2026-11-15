@@ -218,7 +218,7 @@ Module Type LIVE_PLAN (O : OPS)
   Parameter explore : Q.t -> ptrie (list N.t) -> ptrie (ptrie unit) -> positive -> list N.t.
   Parameter T_explore : Q.t -> ptrie (list N.t) -> ptrie (ptrie unit) -> positive -> N.
   Parameter k_index : N.
-  Parameter k_explore k_rows : N.
+  Parameter k_rows : N.
   Definition visits p x := filter (fun pair => Pos.eqb (snd pair) x) (live_region p).
   Definition variable_work p x := fold_right (fun pair n =>
     1 + length (C.inc (R.prepare p) (fst pair)) + n) 0 (visits p x).
@@ -249,11 +249,6 @@ Module Type LIVE_PLAN (O : OPS)
   Parameter T0_kill_index : forall p,
     (T_kill_index (R.prepare p) <= k_index * N.of_nat (function_size p + 1) *
       N.of_nat (function_width p + 1))%N.
-  (** A search for a variable of the universe charges each visited point and incoming
-      occurrence. *)
-  Parameter T1_explore : forall p x, In x (U.universe (R.prepare p)) ->
-    (T_explore (R.prepare p) (use_index (R.prepare p)) (kill_index (R.prepare p)) x <=
-      k_explore * N.of_nat (variable_work p x + 1) * N.of_nat (function_width p + 1))%N.
   (** The driver prepares once, builds both indexes, searches each variable and groups
       rows. *)
   Parameter T2_rows : forall p,
