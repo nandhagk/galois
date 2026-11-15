@@ -75,6 +75,80 @@ Definition val_symbol (m : ptrie positive) (x : positive) : positive :=
   match trie_get x m with Some y => y | None => x end.
 TimeFun val_symbol.
 
+Fixpoint val_add (xs : list positive) (known : ptrie unit) : ptrie unit :=
+  match xs with
+  | [] => known
+  | x :: rest => PTrieCode.set x tt (val_add rest known)
+  end.
+TimeFun val_add.
+
+Fixpoint val_unique (xs : list positive) (seen : ptrie unit) : bool :=
+  match xs with
+  | [] => true
+  | x :: rest => if val_mem seen x then false else
+      val_unique rest (PTrieCode.set x tt seen)
+  end.
+TimeFun val_unique.
+
+Fixpoint val_same_length (xs ys : list positive) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | _ :: xr, _ :: yr => val_same_length xr yr
+  | _, _ => false
+  end.
+TimeFun val_same_length.
+
+Definition val_home_rows {K G} (bs : list (positive * block positive K G))
+    : list (positive * positive) :=
+  flat_map (fun item => map (fun x => (x, fst item)) (block_defs (snd item))) bs.
+TimeFun val_home_rows.
+
+Definition val_use {K} (ic : list (positive * K * list positive))
+    (out : list positive) (x : positive) (i : nat) : Prop :=
+  (exists op args dst, nth_error ic i = Some (dst, op, args) /\ In x args) \/
+  (i = length ic /\ In x out).
+
+Lemma val_mem_set : forall seen x y,
+  val_mem (PTrieCode.set x tt seen) y = true <-> y = x \/ val_mem seen y = true.
+Proof.
+  intros seen x y; destruct (Pos.eq_dec y x) as [Heq|Hneq].
+  - subst y; unfold val_mem; rewrite PTrie.get_set_same; tauto.
+  - unfold val_mem at 1; rewrite PTrie.get_set_other by exact Hneq.
+    change (val_mem seen y = true <-> y = x \/ val_mem seen y = true); tauto.
+Qed.
+
+Lemma val_unique_sound : forall xs seen, val_unique xs seen = true ->
+  NoDup xs /\ forall x, In x xs -> val_mem seen x = false.
+Proof.
+  induction xs as [|x rest IH]; intros seen Hcheck; cbn [val_unique] in Hcheck.
+  - split; [constructor|intros y Hin; contradiction].
+  - destruct (val_mem seen x) eqn:Hfresh; [discriminate|].
+    destruct (IH _ Hcheck) as [Hnd Hdisjoint]; split.
+    + constructor; [|exact Hnd]; intro Hin.
+      specialize (Hdisjoint x Hin); unfold val_mem in Hdisjoint;
+        rewrite PTrie.get_set_same in Hdisjoint; discriminate.
+    + intros y [Heq|Hin]; [subst y; exact Hfresh|].
+      specialize (Hdisjoint y Hin); destruct (Pos.eq_dec y x) as [Heq|Hneq].
+      * subst y; exact Hfresh.
+      * unfold val_mem in Hdisjoint; rewrite PTrie.get_set_other in Hdisjoint by exact Hneq;
+          exact Hdisjoint.
+Qed.
+
+Lemma val_add_member : forall xs known x,
+  val_mem (val_add xs known) x = true <-> In x xs \/ val_mem known x = true.
+Proof.
+  induction xs as [|y rest IH]; intros known x; cbn [val_add]; [cbn; tauto|].
+  rewrite val_mem_set, IH; cbn; intuition congruence.
+Qed.
+
+Lemma val_same_length_sound : forall xs ys,
+  val_same_length xs ys = true -> length xs = length ys.
+Proof.
+  induction xs as [|x rest IH]; intros ys Hcheck; destruct ys as [|y yr];
+    cbn [val_same_length] in Hcheck; try discriminate; [reflexivity|].
+  cbn; f_equal; apply IH; exact Hcheck.
+Qed.
+
 Lemma val_index_lookup {A} : forall (rows : list (positive * A)) x,
   trie_get x (val_index rows) = lookup x rows.
 Proof.
@@ -120,6 +194,42 @@ Proof.
   - destruct (Pos.eqb x z) eqn:Hxz.
     + apply Pos.eqb_eq in Hxz; inversion Hlookup; subst; left; reflexivity.
     + right; eapply IH; exact Hlookup.
+Qed.
+
+Lemma val_home_source {K G} : forall (bs : list (positive * block positive K G)) x b,
+  trie_get x (val_index (val_home_rows bs)) = Some b ->
+  exists body, In (b, body) bs /\ In x (block_defs body).
+Proof.
+  intros bs x b Hget; rewrite val_index_lookup in Hget; apply val_lookup_in in Hget.
+  unfold val_home_rows in Hget; apply in_flat_map in Hget as [[id body] [Hin Hrow]].
+  apply in_map_iff in Hrow as [y [Heq Hy]]; cbn in Heq; injection Heq as Heqx Heqb;
+    subst y id; exists body; auto.
+Qed.
+
+Lemma val_cfg_graph_edge {E} : forall vs es (src dst : E -> positive) e,
+  In e es -> Spec.edge (cfg_graph vs es src dst) (src e) (dst e).
+Proof.
+  intros vs es src dst; induction es as [|a rest IH]; intros e Hin; [contradiction|].
+  change (In (dst e) (index_row (PTrieCode.set (src a)
+    (dst a :: succs (cfg_graph vs rest src dst) (src a))
+    (succ (cfg_graph vs rest src dst))) (src e))).
+  unfold index_row at 1.
+  destruct (Pos.eq_dec (src e) (src a)) as [Heq|Hneq].
+  - rewrite Heq, PTrie.get_set_same; cbn.
+    destruct Hin as [Ha|Hin].
+    + subst e; left; reflexivity.
+    + right; specialize (IH e Hin); unfold Spec.edge in IH.
+      rewrite Heq in IH; exact IH.
+  - rewrite PTrie.get_set_other by exact Hneq.
+    destruct Hin as [Ha|Hin]; [subst e; contradiction|]; apply IH; exact Hin.
+Qed.
+
+Lemma val_cfg_graph_path {E} : forall vs es (src dst : E -> positive) a route b,
+  presentation_path es src dst a route b -> Spec.path (cfg_graph vs es src dst) a route b.
+Proof.
+  intros vs es src dst a route b Hpath; induction Hpath as [n|e rest target Hin Hpath IH].
+  - apply Spec.path_refl.
+  - eapply Spec.path_step; [apply val_cfg_graph_edge; exact Hin|exact IH].
 Qed.
 
 Definition val_inverse_ok (rho : renaming) (inverse : ptrie positive) : Prop :=
@@ -487,12 +597,64 @@ Module ValidateCode (O : OPS)
     check_entry p s c t &&
       forallb (fun item => check_block t (fst item)) (first_blocks (blocks _ _ _ p)).
 
-  (* STUB-CODE *)
-  Definition check_ssa (_ : P.t) : bool := false.
-
   Definition dom_cert (s : P.t) : ptrie positive * list positive :=
     D.build (DG.prepare (cfg_graph (C.nodes (R.prepare s))
       (C.edges (R.prepare s)) (C.src (R.prepare s)) (C.dst (R.prepare s)))) (entry _ _ _ s).
+
+  Definition ssa_edge_shape (bodies : ptrie (block positive O.K O.G)) target args : bool :=
+    match trie_get target bodies with
+    | Some body => val_same_length args (params _ _ _ body)
+    | None => false
+    end.
+
+  Definition ssa_exit_shape (bodies : ptrie (block positive O.K O.G))
+      (e : exit positive O.G) : bool :=
+    match e with
+    | Jump target args => ssa_edge_shape bodies target args
+    | Branch _ _ yes yes_args no no_args =>
+      ssa_edge_shape bodies yes yes_args && ssa_edge_shape bodies no no_args
+    | Return _ => true
+    end.
+
+  Definition ssa_precheck (s : P.t) : bool :=
+    let bs := blocks _ _ _ s in
+    let bodies := val_index bs in
+    val_unique (map fst bs) Empty &&
+    val_unique (inputs _ _ _ s ++ flat_map (fun item => block_defs (snd item)) bs) Empty &&
+    match trie_get (entry _ _ _ s) bodies with Some _ => true | None => false end &&
+    forallb (fun item => ssa_exit_shape bodies (term _ _ _ (snd item))) bs.
+
+  Definition ssa_cross (tree : domtree) (homes : ptrie positive) (b x : positive) : bool :=
+    match trie_get x homes with
+    | Some d => negb (Pos.eqb d b) && D.dominates_b tree d b
+    | None => false
+    end.
+
+  Fixpoint ssa_local (tree : domtree) (homes : ptrie positive) (b : positive)
+      (known : ptrie unit) (ic : list (positive * O.K * list positive))
+      (out : list positive) : bool :=
+    match ic with
+    | [] => forallb (fun x => val_mem known x || ssa_cross tree homes b x) out
+    | (dst, _, args) :: rest =>
+      if forallb (fun x => val_mem known x || ssa_cross tree homes b x) args then
+        ssa_local tree homes b (PTrieCode.set dst tt known) rest out
+      else false
+    end.
+
+  Definition check_ssa (s : P.t) : bool :=
+    if ssa_precheck s then
+      let g := DG.prepare (cfg_graph (C.nodes (R.prepare s))
+        (C.edges (R.prepare s)) (C.src (R.prepare s)) (C.dst (R.prepare s))) in
+      let '(m, order) := dom_cert s in
+      if D.check g (entry _ _ _ s) m order then
+        let tree := D.tree g (entry _ _ _ s) m order in
+        let homes := val_index (val_home_rows (blocks _ _ _ s)) in
+        let inputs := val_set (inputs _ _ _ s) in
+        forallb (fun item => ssa_local tree homes (fst item)
+          (val_add (params _ _ _ (snd item)) inputs) (code _ _ _ (snd item))
+          (exit_uses (term _ _ _ (snd item)))) (blocks _ _ _ s)
+      else false
+    else false.
 End ValidateCode.
 
 Module Validate (O : OPS)
@@ -905,10 +1067,148 @@ Module Validate (O : OPS)
       destruct (val_bind_length (inputs _ _ _ p) ins [] Hlength) as [si Hbind].
       rewrite Hbindi in Hbind; discriminate.
   Qed.
+
+  Lemma ssa_edge_shape_sound : forall s target args,
+    ssa_edge_shape (val_index (blocks _ _ _ s)) target args = true ->
+    edge_shape s target args.
+  Proof.
+    intros s target args Hcheck; unfold ssa_edge_shape in Hcheck;
+      rewrite val_index_block in Hcheck.
+    destruct (find_block target (blocks _ _ _ s)) as [body|] eqn:Hfind; [|discriminate].
+    exists body; split.
+    - apply val_lookup_in; rewrite <- val_index_lookup, val_index_block; exact Hfind.
+    - apply val_same_length_sound; exact Hcheck.
+  Qed.
+
+  Lemma ssa_exit_shape_sound : forall s e,
+    ssa_exit_shape (val_index (blocks _ _ _ s)) e = true -> exit_shape s e.
+  Proof.
+    intros s e; destruct e; cbn [ssa_exit_shape exit_shape]; intro Hcheck.
+    - apply ssa_edge_shape_sound; exact Hcheck.
+    - apply andb_true_iff in Hcheck as [Hyes Hno]; split;
+        apply ssa_edge_shape_sound; assumption.
+    - exact I.
+  Qed.
+
+  Lemma ssa_precheck_sound : forall s, ssa_precheck s = true ->
+    NoDup (map fst (blocks _ _ _ s)) /\
+    NoDup (inputs _ _ _ s ++ concat (map (fun item => block_defs (snd item))
+      (blocks _ _ _ s))) /\
+    (exists body, In (entry _ _ _ s, body) (blocks _ _ _ s)) /\
+    forall id body, In (id, body) (blocks _ _ _ s) -> exit_shape s (term _ _ _ body).
+  Proof.
+    intros s Hcheck; unfold ssa_precheck in Hcheck; repeat rewrite andb_true_iff in Hcheck.
+    destruct Hcheck as [[[Hids Hdefs] Hentry] Hshapes].
+    split; [apply (proj1 (val_unique_sound _ _ Hids))|].
+    split.
+    - pose proof (proj1 (val_unique_sound _ _ Hdefs)) as Hnd.
+      rewrite flat_map_concat_map in Hnd; exact Hnd.
+    - split.
+      + rewrite val_index_block in Hentry.
+        destruct (find_block (entry _ _ _ s) (blocks _ _ _ s)) as [body|] eqn:Hfind;
+          [|discriminate].
+        exists body; apply val_lookup_in; rewrite <- val_index_lookup, val_index_block;
+          exact Hfind.
+      + intros id body Hin; rewrite forallb_forall in Hshapes.
+        apply ssa_exit_shape_sound; exact (Hshapes (id, body) Hin).
+  Qed.
+
+  Lemma ssa_targets_listed : forall s : P.t,
+    (forall id body, In (id, body) (blocks _ _ _ s) -> exit_shape s (term _ _ _ body)) ->
+    targets_listed s.
+  Proof.
+    intros s Hshapes id body target Hin Htarget; specialize (Hshapes id body Hin).
+    destruct (term _ _ _ body) as [u args|g xs u ua v va|xs];
+      cbn [exit_shape exit_targets] in *; try contradiction.
+    - destruct Htarget as [Heq|Hfalse]; [subst target|contradiction].
+      destruct Hshapes as [dest [Hdest _]]; apply in_map_iff; exists (u, dest); auto.
+    - destruct Hshapes as [Hyes Hno]; destruct Htarget as [Heq|[Heq|Hfalse]];
+        try contradiction; subst target.
+      + destruct Hyes as [dest [Hdest _]]; apply in_map_iff; exists (u, dest); auto.
+      + destruct Hno as [dest [Hdest _]]; apply in_map_iff; exists (v, dest); auto.
+  Qed.
+
+  Lemma checked_dominance : forall s m order d b,
+    NoDup (map fst (blocks _ _ _ s)) -> targets_listed s ->
+    D.check (graph s) (entry _ _ _ s) m order = true ->
+    D.dominates_b (D.tree (graph s) (entry _ _ _ s) m order) d b = true ->
+    Lang.dominates s d b.
+  Proof.
+    intros s m order d b Hids Htargets Hchecked Hquery route Hpath.
+    pose proof (proj2 (B.paths_agree s (entry _ _ _ s) route b Hids Htargets) Hpath)
+      as Hpresent.
+    assert (Hgraphpath : Spec.path (base (graph s)) (entry _ _ _ s) route b).
+    { unfold graph; rewrite DG.prepare_base; apply val_cfg_graph_path; exact Hpresent. }
+    assert (Hreach : reach (base (graph s)) [entry _ _ _ s] b).
+    { exists (entry _ _ _ s), route; split; [left; reflexivity|exact Hgraphpath]. }
+    destruct (D.dominates_b_spec (graph s) (entry _ _ _ s) m order d b Hchecked Hreach)
+      as [Hdom|Hnot]; [apply Hdom; exact Hgraphpath|discriminate].
+  Qed.
+
+  Lemma ssa_local_sound : forall tree homes b ic out known,
+    ssa_local tree homes b known ic out = true -> forall x i, val_use ic out x i ->
+    val_mem known x = true \/
+    (exists j op args, j < i /\ nth_error ic j = Some (x, op, args)) \/
+    ssa_cross tree homes b x = true.
+  Proof.
+    intros tree homes b ic; induction ic as [|[[dst op] args] rest IH];
+      intros out known Hcheck x i Huse.
+    - cbn [ssa_local] in Hcheck; rewrite forallb_forall in Hcheck.
+      destruct Huse as [[k [ys [v [Hnth _]]]]|[Hi Hin]].
+      + destruct i; discriminate.
+      + specialize (Hcheck x Hin); apply orb_true_iff in Hcheck; tauto.
+    - cbn [ssa_local] in Hcheck.
+      destruct (forallb (fun x => val_mem known x || ssa_cross tree homes b x) args)
+        eqn:Hargs; [|discriminate].
+      destruct i as [|i].
+      + destruct Huse as [[k [ys [v [Hnth Hin]]]]|[Hi _]]; [|cbn in Hi; lia].
+        cbn in Hnth; injection Hnth as Hv Hk Hys; subst v k ys.
+        rewrite forallb_forall in Hargs; specialize (Hargs x Hin);
+          apply orb_true_iff in Hargs; tauto.
+      + assert (Htail : val_use rest out x i).
+        { destruct Huse as [[k [ys [v [Hnth Hin]]]]|[Hi Hin]].
+          - left; exists k, ys, v; exact (conj Hnth Hin).
+          - right; split; [cbn in Hi; lia|exact Hin]. }
+        destruct (IH out (PTrieCode.set dst tt known) Hcheck x i Htail)
+          as [Hknown|[[j [k [ys [Hlt Hnth]]]]|Hcross]].
+        * apply val_mem_set in Hknown; destruct Hknown as [Heq|Hknown].
+          -- subst x; right; left; exists 0, op, args; split; [lia|reflexivity].
+          -- left; exact Hknown.
+        * right; left; exists (S j), k, ys; split; [lia|exact Hnth].
+        * right; right; exact Hcross.
+  Qed.
+
   Lemma check_ssa_sound : forall s, check_ssa s = true -> ssa_wf s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s Hcheck; unfold check_ssa in Hcheck.
+    destruct (ssa_precheck s) eqn:Hpre; [|discriminate]; fold (graph s) in Hcheck.
+    destruct (dom_cert s) as [m order] eqn:Hcert.
+    destruct (D.check (graph s) (entry _ _ _ s) m order) eqn:Hdom; [|discriminate].
+    destruct (ssa_precheck_sound s Hpre) as [Hids [Hdefs [Hentry Hshapes]]].
+    split; [exact Hids|]; split; [exact Hdefs|]; split; [|auto].
+    intros id body x i Hin Huse; rewrite forallb_forall in Hcheck;
+      specialize (Hcheck (id, body) Hin).
+    destruct (ssa_local_sound _ _ id (code _ _ _ body) (exit_uses (term _ _ _ body))
+      _ Hcheck x i Huse) as [Hknown|[Hbefore|Hcross]].
+    - apply val_add_member in Hknown; destruct Hknown as [Hparam|Hinput].
+      + right; left; left; exact Hparam.
+      + left; apply val_set_member; exact Hinput.
+    - right; left; right; exact Hbefore.
+    - unfold ssa_cross in Hcross.
+      destruct (trie_get x (val_index (val_home_rows (blocks _ _ _ s)))) as [d|] eqn:Hhome;
+        [|discriminate].
+      apply andb_true_iff in Hcross as [Hneq Hquery].
+      apply negb_true_iff in Hneq; apply Pos.eqb_neq in Hneq.
+      destruct (val_home_source _ x d Hhome) as [def_body [Hlisted Hdefinition]].
+      right; right; exists d, def_body; split; [exact Hlisted|]; split; [exact Hneq|];
+        split; [exact Hdefinition|].
+      eapply checked_dominance; [exact Hids|apply ssa_targets_listed; exact Hshapes|
+        exact Hdom|exact Hquery].
+  Qed.
   Lemma check_core_ssa_sound : forall s, check_ssa s = true -> S.wf (R.prepare s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s Hcheck; apply B.wf_from_lang; apply check_ssa_sound; exact Hcheck.
+  Qed.
 End Validate.
 
 Module ValidateT (O : OPS)
@@ -930,6 +1230,12 @@ Module ValidateT (O : OPS)
   TimeFun check_exit.
   TimeFun check_block.
   TimeFun check.
+  TimeFun dom_cert.
+  TimeFun ssa_edge_shape.
+  TimeFun ssa_exit_shape.
+  TimeFun ssa_precheck.
+  TimeFun ssa_cross.
+  TimeFun ssa_local.
   TimeFun check_ssa.
   TimeFun graph.
   Definition c_val : N := 1. (* STUB *)
@@ -964,7 +1270,6 @@ Module ValidateT (O : OPS)
     (fun s => ((N.of_nat (function_size s + 1) + dom_bound s) *
       N.of_nat (function_width s + 1))%N) T_check_ssa.
   Proof. Admitted. (* STUB *)
-  TimeFun dom_cert.
   Definition k_entry : N := 1. (* STUB *)
   Definition k_code : N := 1. (* STUB *)
   Definition k_edge : N := 1. (* STUB *)
@@ -1026,9 +1331,16 @@ Module ValidateT (O : OPS)
     refutes this statement at fuel one; loop_ready supplies the required stronger invariant. *)
   Lemma F8_dom_checked : forall s, check_ssa s = true ->
     D.check (graph s) (entry _ _ _ s) (fst (dom_cert s)) (snd (dom_cert s)) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s Hcheck; unfold check_ssa in Hcheck.
+    destruct (ssa_precheck s); [|discriminate]; fold (graph s) in Hcheck.
+    destruct (dom_cert s) as [m order]; cbn [fst snd].
+    destruct (D.check (graph s) (entry _ _ _ s) m order); [reflexivity|discriminate].
+  Qed.
   Lemma F9_ssa_wf : forall s, check_ssa s = true -> ssa_wf s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact check_ssa_sound.
+  Qed.
   (** Graph preparation and certificate work fit the syntax and dominator budget. *)
   Lemma T1_dom : forall s,
     (T_graph s + T_dom_cert s +
