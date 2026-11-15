@@ -590,6 +590,128 @@ Proof.
 Qed.
 
 
+(** Every stored discovery number and low link remains below the discovery counter. *)
+Definition tarjan_values_below_clock (s : tarjan_state) : Prop :=
+  (forall v i, trie_get v (tarjan_disc s) = Some i ->
+    Pos.to_nat i < Pos.to_nat (tarjan_clock s)) /\
+  (forall v i, trie_get v (tarjan_low s) = Some i ->
+    Pos.to_nat i < Pos.to_nat (tarjan_clock s)).
+
+Local Lemma tarjan_values_set v clock values :
+  (forall u i, trie_get u values = Some i -> Pos.to_nat i < Pos.to_nat clock) ->
+  forall u i, trie_get u (PTrieCode.set v clock values) = Some i ->
+    Pos.to_nat i < Pos.to_nat (Pos.succ clock).
+Proof.
+  intros Hvalues u i Hlookup. rewrite Pos2Nat.inj_succ.
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same in Hlookup. injection Hlookup as Heq. subst i. lia.
+  - rewrite PTrie.get_set_other in Hlookup by exact Hneq.
+    specialize (Hvalues u i Hlookup). lia.
+Qed.
+
+Local Lemma tarjan_values_enter v s :
+  tarjan_values_below_clock s -> tarjan_values_below_clock (TarjanVisitor.enter v s).
+Proof.
+  intros [Hdisc Hlow]. split; cbn [TarjanVisitor.enter tarjan_disc tarjan_low tarjan_clock];
+    apply tarjan_values_set; assumption.
+Qed.
+
+Local Lemma tarjan_values_lower v n s :
+  tarjan_values_below_clock s -> tarjan_values_below_clock (TarjanVisitor.lower v n s).
+Proof.
+  intros Hvalues. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hlookup; [|exact Hvalues].
+  destruct Hvalues as [Hdisc Hlow]. split; [exact Hdisc|].
+  intros u i Hget. cbn [tarjan_low] in Hget. cbn [tarjan_clock].
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same in Hget. injection Hget as Heq. subst i.
+    rewrite Pos2Nat.inj_min. eapply Nat.le_lt_trans; [apply Nat.le_min_l|].
+    now apply (Hlow v old).
+  - rewrite PTrie.get_set_other in Hget by exact Hneq. now apply (Hlow u i).
+Qed.
+
+Local Lemma tarjan_values_edge kind u v s :
+  tarjan_values_below_clock s -> tarjan_values_below_clock (TarjanVisitor.edge kind u v s).
+Proof.
+  intros Hvalues. destruct kind; cbn [TarjanVisitor.edge]; try exact Hvalues.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hvalues.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hvalues.
+  all: now apply tarjan_values_lower.
+Qed.
+
+Local Lemma tarjan_values_leave v s :
+  tarjan_values_below_clock s -> tarjan_values_below_clock (TarjanVisitor.leave v s).
+Proof.
+  intros [Hdisc Hlow]. unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|split; assumption].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|split; assumption].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    split; [exact Hdisc|]. intros u i Hlookup.
+    cbn [tarjan_low] in Hlookup. cbn [tarjan_clock].
+    destruct (proj2 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) u)
+      as [Hget _]. rewrite Hget in Hlookup.
+    destruct (existsb (Pos.eqb u) members); [discriminate|now apply (Hlow u i)].
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end).
+    + split; assumption.
+    + apply tarjan_values_lower. split; assumption.
+Qed.
+
+(** The stored-value bound is preserved by arbitrary event folds. *)
+Lemma tarjan_values_fold es s : tarjan_values_below_clock s ->
+  tarjan_values_below_clock
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es s).
+Proof.
+  unfold fold_events. revert s. induction es as [|e es IH]; intros s Hvalues;
+    cbn [fold_left]; [exact Hvalues|].
+  apply IH. destruct e; cbn [visit_event].
+  - now apply tarjan_values_enter.
+  - now apply tarjan_values_leave.
+  - now apply tarjan_values_edge.
+Qed.
+
+Lemma tarjan_values_initial : tarjan_values_below_clock tarjan_initial.
+Proof.
+  split; intros v i Hlookup;
+    cbn [tarjan_initial tarjan_disc tarjan_low] in Hlookup;
+    rewrite PTrie.get_empty in Hlookup; discriminate Hlookup.
+Qed.
+
+(** Unique bounded entry keys bound the operational state, regardless of other event order. *)
+Lemma tarjan_fold_width w es :
+  NoDup (entered es) -> Forall (fun v => Pos.size_nat v <= w) (entered es) ->
+  let final := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial in
+  Forall (fun v => Pos.size_nat v <= w) (tarjan_pending final) /\
+  Forall (fun v => Pos.size_nat v <= w) (tarjan_frames final) /\
+  Pos.size_nat (tarjan_clock final) <= w + 1 /\
+  Pos.size_nat (tarjan_next final) <= w + 1 /\
+  (forall v i, trie_get v (tarjan_disc final) = Some i -> Pos.size_nat i <= w + 1) /\
+  (forall v i, trie_get v (tarjan_low final) = Some i -> Pos.size_nat i <= w + 1).
+Proof.
+  intros Hunique Hwidth. cbn zeta.
+  pose proof (tarjan_clock_count es) as Hclock.
+  pose proof (tarjan_next_count es) as Hnext.
+  pose proof (tarjan_emitted_count es) as Hemitted.
+  destruct (tarjan_values_fold es tarjan_initial tarjan_values_initial) as [Hdisc Hlow].
+  split.
+  - pose proof (Permutation_Forall (Permutation_sym (tarjan_bag_inventory es)) Hwidth) as Hbag.
+    unfold tarjan_bag in Hbag. rewrite Forall_app in Hbag. exact (proj1 Hbag).
+  - split.
+    + apply tarjan_frames_domain; [exact Hwidth|constructor].
+    + split.
+      * eapply tarjan_counter_width; [exact Hunique|exact Hwidth|lia].
+      * split.
+        -- eapply tarjan_counter_width; [exact Hunique|exact Hwidth|lia].
+        -- split; intros v i Hlookup.
+           ++ specialize (Hdisc v i Hlookup).
+              eapply tarjan_counter_width; [exact Hunique|exact Hwidth|lia].
+           ++ specialize (Hlow v i Hlookup).
+              eapply tarjan_counter_width; [exact Hunique|exact Hwidth|lia].
+Qed.
+
+
 Module TarjanSearchCode := SearchCode TarjanVisitor.
 Module TarjanSearch.
   Include TarjanSearchCode.
