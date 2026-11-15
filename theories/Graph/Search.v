@@ -2379,6 +2379,93 @@ Proof.
   cbn [N.size_nat Pos.size_nat] in Hthird. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
+(** Raw trace work uses entered rows, supplied roots and the two cached bit widths. *)
+Definition search_trace_mass g roots :=
+  length (entered (prepared_search_trace g roots)) +
+    fold_right (fun u n => length (succs (base g) u) + n) 0
+      (entered (prepared_search_trace g roots)) + length roots + 1.
+
+Definition search_trace_raw_work g roots : N :=
+  (N.of_nat (search_trace_mass g roots) *
+    N.of_nat (search_trace_width (base g) roots (prepared_search_trace g roots) + 1) +
+    N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N.
+
+Definition search_trace_coefficient : N :=
+  (16384 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
+
+(** Basic run sizes fit the raw work expression without graph validity assumptions. *)
+Lemma search_trace_work_measures g roots :
+  (1 <= search_trace_raw_work g roots)%N /\
+  (N.of_nat (search_trace_mass g roots) <= search_trace_raw_work g roots)%N /\
+  (N.of_nat (length roots + N.size_nat (nv g) + N.size_nat (ne g) + 1) <=
+    search_trace_raw_work g roots)%N /\
+  (N.of_nat (length (prepared_search_trace g roots) + 1) <=
+    2 * search_trace_raw_work g roots)%N /\
+  (N.of_nat (N.size_nat (search_budget g roots)) + 1 <=
+    2 * search_trace_raw_work g roots)%N.
+Proof.
+  pose proof (prepared_search_event_bound g roots) as Hevents.
+  rewrite search_event_supply_entered in Hevents.
+  pose proof (search_budget_size g roots) as Hbits.
+  assert (Hwidth : (1 <= N.of_nat
+    (search_trace_width (base g) roots (prepared_search_trace g roots) + 1))%N) by lia.
+  unfold search_trace_raw_work, search_trace_mass.
+  rewrite !Nat2N.inj_add in *. repeat split; nia.
+Qed.
+
+(** The exact path-clock estimate fits a uniform reachable-size work budget. *)
+Lemma prepared_search_loop_work g roots :
+  (T_loopN (search_step (base g)) (fun st => 1 + T_search_step (base g) st)%N
+      (search_budget g roots) (SearchState (map SearchRoot roots) Empty []) <=
+    512 * (c_loopN + 1) * (PTrieT.c_trie + 1) * search_trace_raw_work g roots)%N.
+Proof.
+  pose proof (prepared_search_loop_clock g roots) as Hloop.
+  pose proof (prepared_search_event_bound g roots) as Hevents.
+  rewrite search_event_supply_entered in Hevents.
+  destruct (search_trace_work_measures g roots) as [Hpositive [Hmass [Hbudget [Htrace Hbits]]]].
+  assert (Hpath : (N.of_nat (length (prepared_search_trace g roots) + length roots +
+      length (entered (prepared_search_trace g roots)) + 1) <=
+      3 * N.of_nat (search_trace_mass g roots))%N).
+  { unfold search_trace_mass. lia. }
+  assert (Hproduct : (N.of_nat (search_trace_mass g roots) *
+      N.of_nat (search_trace_width (base g) roots (prepared_search_trace g roots) + 1) <=
+      search_trace_raw_work g roots)%N).
+  { unfold search_trace_raw_work. lia. }
+  assert (Hsteps : (search_step_rate
+      (search_trace_width (base g) roots (prepared_search_trace g roots)) *
+      N.of_nat (length (prepared_search_trace g roots) + length roots +
+        length (entered (prepared_search_trace g roots)) + 1) <=
+      384 * (PTrieT.c_trie + 1) * search_trace_raw_work g roots)%N).
+  { unfold search_step_rate. nia. }
+  clear Hevents Hpositive Hmass Hbudget Hpath Hproduct.
+  unfold c_loopN in *. nia.
+Qed.
+
+(** The global clock includes one alias call, so functor wrappers need no extra allowance. *)
+Lemma prepared_search_time g roots :
+  (1 + T_prepared_search_trace g roots <=
+    search_trace_coefficient * search_trace_raw_work g roots)%N.
+Proof.
+  pose proof (prepared_search_trace_clock g roots) as Htrace.
+  pose proof (prepared_search_loop_work g roots) as Hloop.
+  pose proof (search_budget_clock g roots) as Hbudget.
+  assert (Hcallback : forall st,
+    (T_search_step (base g) st <= 1 + T_search_step (base g) st)%N).
+  { intro st. lia. }
+  pose proof (search_binary_clock_mono (search_step (base g))
+    (fun st => T_search_step (base g) st)
+    (fun st => (1 + T_search_step (base g) st)%N)
+    Hcallback (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty [])) as Hmono.
+  destruct (search_trace_work_measures g roots) as [Hpositive [Hmass [Hbudgetsize [Hlength Hbits]]]].
+  assert (Hroots : (N.of_nat (length roots) <= search_trace_raw_work g roots)%N).
+  { eapply N.le_trans; [|exact Hmass]. unfold search_trace_mass. lia. }
+  assert (Hbudgetwork : (T_search_budget g roots <= 32 * search_trace_raw_work g roots)%N).
+  { eapply N.le_trans; [exact Hbudget|]. apply N.mul_le_mono_l. exact Hbudgetsize. }
+  clear Hmass Hbudgetsize Hbudget Hbits. unfold search_trace_coefficient.
+  nia.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -2876,7 +2963,24 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
         T_loopN (search_step (base g)) (T_search_step (base g))
           (search_budget g roots) (initial roots) +
         N.of_nat (length (trace g roots)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots w Hcounts Hgraph Hroots Hwidth Hrootwidth.
+    pose proof (prepared_search_trace_clock g roots) as Htrace.
+    assert (Hmono : forall st,
+      (Galois.Graph.Search.T_search_step (base g) st <= T_search_step (base g) st)%N).
+    { intro st. time_unfold @T_search_step. lia. }
+    pose proof (search_binary_clock_mono (search_step (base g))
+      (Galois.Graph.Search.T_search_step (base g)) (T_search_step (base g)) Hmono
+      (search_budget g roots) (initial roots)) as Hloop.
+    assert (Hfactor : (8 <= k_trace)%N) by (unfold k_trace; nia).
+    change (Galois.Graph.Search.T_prepared_search_trace g roots <= 8 *
+      (Galois.Graph.Search.T_search_budget g roots + N.of_nat (length roots) +
+        T_loopN (search_step (base g)) (Galois.Graph.Search.T_search_step (base g))
+          (search_budget g roots) (initial roots) +
+        N.of_nat (length (trace g roots)) + 1))%N in Htrace.
+    time_unfold @T_search_trace. time_unfold @T_search_budget.
+    clear - Htrace Hloop Hfactor. nia.
+  Qed.
 
   (** A continuing step taken within the fuel costs one key width of the run. *)
   Lemma T1_raw_step : forall g roots n st next,
@@ -2920,7 +3024,18 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     c_loopN * (k_step * N.of_nat (run_width g roots + 1) *
       N.of_nat (length (trace g roots) + length roots + n_reach g roots + 1) +
       stop_budget g roots + N.of_nat (N.size_nat (search_budget g roots)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots. pose proof (prepared_search_loop_clock g roots) as Hloop.
+    change (T_loopN (search_step (base g)) (T_search_step (base g))
+      (search_budget g roots) (initial roots) <=
+      c_loopN * (k_step * N.of_nat (run_width g roots + 1) *
+        N.of_nat (length (trace g roots) + length roots + n_reach g roots + 1) +
+        8 * N.of_nat (length (trace g roots) + 1) +
+        N.of_nat (N.size_nat (search_budget g roots)) + 1))%N in Hloop.
+    eapply N.le_trans; [exact Hloop|]. apply N.mul_le_mono_l.
+    unfold stop_budget, k_trace. nia.
+  Qed.
+
 
   (** Every step emits an event or retires a root or row task, at the width of the run. *)
   Lemma T4_raw : forall g roots,
@@ -2928,7 +3043,12 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
       (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
         N.of_nat (run_width g roots + 1) +
        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots. pose proof (prepared_search_time g roots) as Htrace.
+    unfold search_trace_coefficient, search_trace_raw_work, search_trace_mass in Htrace.
+    unfold k_trace. time_unfold @T_search_trace. exact Htrace.
+  Qed.
+
 
   (** Event dispatch charges the callback selected by the event at the current state. *)
   Lemma event_time_bound s e B : V.vwork s <= B ->
