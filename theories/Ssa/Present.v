@@ -226,6 +226,47 @@ Fixpoint code_rows {K} (b : positive) (i : N) (cs : list (positive * K * list po
   end.
 TimeFun code_rows.
 
+(** Instruction destinations stay in their block and strictly advance their index. *)
+Lemma code_rows_dest_bounds {K} b i (cs : list (positive * K * list positive)) n :
+  In n (map (fun r => point_dst (fst (fst r))) (fst (code_rows b i cs))) ->
+    fst n = b /\ (i < snd n <= i + N.of_nat (length cs))%N.
+Proof.
+  revert i; induction cs as [|[[x op] xs] rest IH]; intros i Hin.
+  - contradiction.
+  - cbn [code_rows fst snd map point_dst] in Hin.
+    cbn [length]. rewrite Nat2N.inj_succ.
+    destruct Hin as [Heq|Hin].
+    + subst n; cbn; split; [reflexivity|lia].
+    + destruct (IH (N.succ i) Hin) as [Hb Hbound]. split; [exact Hb|lia].
+Qed.
+
+(** The instruction destinations within one block are pairwise distinct. *)
+Lemma code_rows_dest_nodup {K} b i (cs : list (positive * K * list positive)) :
+  NoDup (map (fun r => point_dst (fst (fst r))) (fst (code_rows b i cs))).
+Proof.
+  revert i; induction cs as [|[[x op] xs] rest IH]; intro i.
+  - constructor.
+  - cbn [code_rows fst snd map point_dst]. constructor; [|apply IH].
+    intro Hin. destruct (code_rows_dest_bounds _ _ _ _ Hin) as [_ Hbound].
+    cbn in Hbound; lia.
+Qed.
+
+(** A complete instruction chain contains every source and its final endpoint. *)
+Lemma code_rows_endpoints {K} b i (cs : list (positive * K * list positive)) :
+  In (b, snd (code_rows b i cs))
+      ((b, i) :: map (fun r => point_dst (fst (fst r))) (fst (code_rows b i cs))) /\
+  forall row, In row (fst (code_rows b i cs)) ->
+    In (point_src (fst (fst row)))
+      ((b, i) :: map (fun r => point_dst (fst (fst r))) (fst (code_rows b i cs))).
+Proof.
+  revert i; induction cs as [|[[x op] xs] rest IH]; intro i.
+  - cbn [code_rows fst snd map]. split; [now left|intros row Hin; contradiction].
+  - cbn [code_rows fst snd map point_dst]. destruct (IH (N.succ i)) as [Hlast Hsource].
+    split; [now right|]. intros row [Heq|Hin].
+    + subst row; cbn; now left.
+    + right; now apply Hsource.
+Qed.
+
 (** Each exit edge with the arguments that it passes. *)
 Definition exit_edge_args {G} (source : positive) (e : exit positive G)
     : list (block_edge * list positive) :=
@@ -323,6 +364,91 @@ Definition summarize {A K G} (kept : ptrie A) (item : positive * block positive 
       (listed_edge_args kept b (term _ _ _ body)))
     (exit_returns (term _ _ _ body)).
 TimeFun summarize.
+
+(** Every point of a summary keeps the identifier of its owning block. *)
+Lemma summarize_point_owner {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) n :
+  In n (summary_points (summarize kept item)) -> fst n = fst item.
+Proof.
+  change (In n ((fst item, 0%N) :: (fst item, 1%N) ::
+    map (fun r => point_dst (fst (fst r)))
+      (fst (code_rows (fst item) 1%N (code _ _ _ (snd item))))) -> fst n = fst item).
+  intros [Heq|[Heq|Hin]]; try (subst n; reflexivity).
+  now apply code_rows_dest_bounds in Hin as [Howner _].
+Qed.
+
+(** The entry and instruction points of a summary never repeat. *)
+Lemma summarize_points_nodup {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  NoDup (summary_points (summarize kept item)).
+Proof.
+  change (NoDup ((fst item, 0%N) :: (fst item, 1%N) ::
+    map (fun r => point_dst (fst (fst r)))
+      (fst (code_rows (fst item) 1%N (code _ _ _ (snd item)))))).
+  constructor.
+  - intros [Heq|Hin]; [discriminate|].
+    apply code_rows_dest_bounds in Hin as [_ Hbound]; cbn in Hbound; lia.
+  - constructor; [|apply code_rows_dest_nodup].
+    intro Hin. apply code_rows_dest_bounds in Hin as [_ Hbound]; cbn in Hbound; lia.
+Qed.
+
+(** The exit point of a summary is one of its listed points. *)
+Lemma summarize_exit_listed {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) :
+  In (summary_exit (summarize kept item)) (summary_points (summarize kept item)).
+Proof.
+  change (In (fst item, snd (code_rows (fst item) 1%N (code _ _ _ (snd item))))
+    ((fst item, 0%N) :: (fst item, 1%N) ::
+      map (fun r => point_dst (fst (fst r)))
+        (fst (code_rows (fst item) 1%N (code _ _ _ (snd item)))))).
+  right. apply code_rows_endpoints.
+Qed.
+
+(** Both ends of an internal edge belong to its summary. *)
+Lemma summarize_internal_endpoints {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) row :
+  In row (summary_internal (summarize kept item)) ->
+    In (point_src (fst (fst row))) (summary_points (summarize kept item)) /\
+    In (point_dst (fst (fst row))) (summary_points (summarize kept item)).
+Proof.
+  change (In row ((PointEdge (fst item, 0%N) (fst item, 1%N) None,
+      [], params _ _ _ (snd item)) ::
+    fst (code_rows (fst item) 1%N (code _ _ _ (snd item)))) ->
+    In (point_src (fst (fst row))) (summary_points (summarize kept item)) /\
+    In (point_dst (fst (fst row))) (summary_points (summarize kept item))).
+  intros [Heq|Hin].
+  - subst row; split; [now left|now right; left].
+  - split.
+    + right. now apply (proj2 (code_rows_endpoints (fst item) 1%N
+        (code _ _ _ (snd item)))).
+    + right; right. apply in_map_iff. exists row; now split.
+Qed.
+
+(** Summary point lists of distinct blocks are disjoint. *)
+Lemma summaries_points_nodup {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) :
+  NoDup (map fst bs) ->
+    NoDup (flat_map (fun item => summary_points (summarize kept item)) bs).
+Proof.
+  induction bs as [|item rest IH]; intro Hdistinct.
+  - constructor.
+  - inversion Hdistinct as [|id ids Hfresh Hrest]; subst.
+    cbn [flat_map]. apply NoDup_app.
+    + apply summarize_points_nodup.
+    + now apply IH.
+    + intros n Hitem Hin. apply in_flat_map in Hin.
+      destruct Hin as [other [Hother Hpoint]].
+      apply summarize_point_owner in Hitem.
+      apply summarize_point_owner in Hpoint.
+      apply Hfresh. rewrite <- Hitem, Hpoint. now apply in_map.
+Qed.
+
+(** Mapping the block summaries commutes with flattening their point lists. *)
+Lemma flat_map_after_map {A B C} (f : B -> list C) (g : A -> B) xs :
+  flat_map f (map g xs) = flat_map (fun x => f (g x)) xs.
+Proof.
+  induction xs as [|x rest IH]; cbn [map flat_map]; [reflexivity|now rewrite IH].
+Qed.
 
 Fixpoint param_defs {K} (b : positive) (i : nat) (xs : list positive)
     : list (positive * definition positive positive K) :=
@@ -812,6 +938,62 @@ Proof.
     lia.
 Qed.
 
+(** A retained block contributes all of its summary points to the point graph. *)
+Lemma lang_summary_points {K G} (p : func positive K G) item n :
+  In item (first_blocks (blocks _ _ _ p)) ->
+  In n (summary_points (summarize
+    (first_table PosKeyCode.encode (map (fun item =>
+      (fst item, params _ _ _ (snd item))) (first_blocks (blocks _ _ _ p)))) item)) ->
+  In n (lang_points (lang_prepare p)).
+Proof.
+  intros Hitem Hpoint. change (In n (flat_map summary_points
+    (map (summarize (first_table PosKeyCode.encode
+      (map (fun item => (fst item, params _ _ _ (snd item)))
+        (first_blocks (blocks _ _ _ p))))) (first_blocks (blocks _ _ _ p))))).
+  apply in_flat_map. eexists; split; [|exact Hpoint]. now apply in_map.
+Qed.
+
+(** Every retained block has its entry point in the point graph. *)
+Lemma lang_point_zero {K G} (p : func positive K G) b :
+  In b (lang_blocks (lang_prepare p)) -> In (b, 0%N) (lang_points (lang_prepare p)).
+Proof.
+  change (In b (map fst (first_blocks (blocks _ _ _ p))) ->
+    In (b, 0%N) (lang_points (lang_prepare p))).
+  intro Hin. apply in_map_iff in Hin. destruct Hin as [item [Heq Hin]].
+  subst b. eapply lang_summary_points; [exact Hin|]. now left.
+Qed.
+
+(** Every point edge joins two points of the prepared graph. *)
+Lemma lang_point_edges_nodes {K G} (p : func positive K G) edge :
+  In edge (lang_point_edges (lang_prepare p)) ->
+  In (point_src edge) (lang_points (lang_prepare p)) /\
+  In (point_dst edge) (lang_points (lang_prepare p)).
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  change (In edge (map (fun r => fst (fst r))
+    (flat_map (fun s => summary_internal s ++ summary_outgoing s)
+      (map (summarize kept) bs))) ->
+    In (point_src edge) (lang_points (lang_prepare p)) /\
+    In (point_dst edge) (lang_points (lang_prepare p))).
+  intro Hin. apply in_map_iff in Hin. destruct Hin as [row [Heq Hin]].
+  subst edge. apply in_flat_map in Hin. destruct Hin as [summary [Hsummary Hin]].
+  apply in_map_iff in Hsummary. destruct Hsummary as [item [Heq Hitem]].
+  subst summary. apply in_app_or in Hin. destruct Hin as [Hinternal|Houtgoing].
+  - destruct (summarize_internal_endpoints _ _ _ Hinternal) as [Hsrc Hdst].
+    split; eapply lang_summary_points; eauto.
+  - change (In row (map (fun ea =>
+      (PointEdge (summary_exit (summarize kept item)) (edge_target (fst ea), 0%N)
+        (Some (fst ea)), guard_uses (term _ _ _ (snd item)) ++ snd ea, []))
+      (listed_edge_args kept (fst item) (term _ _ _ (snd item))))) in Houtgoing.
+    apply in_map_iff in Houtgoing. destruct Houtgoing as [[be args] [Heq Hedge]].
+    subst row. cbn [fst point_src point_dst]. split.
+    + eapply lang_summary_points; [exact Hitem|apply summarize_exit_listed].
+    + apply lang_point_zero. apply filter_In in Hedge as [_ Hlisted].
+      unfold kept in Hlisted. now apply block_table_listed in Hlisted.
+Qed.
+
 Module Prepared (O : OPS) <: TYPE.
   Definition t := lang_prepared O.K O.G.
 End Prepared.
@@ -964,12 +1146,29 @@ Module PointCfg (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   Include PointCfgCode O Q.
   Definition wf (p : Q.t) := p = lang_prepare (lang_source p).
   Lemma nodes_nodup : forall p, wf p -> NoDup (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf. unfold wf in Hwf. rewrite Hwf.
+    change (NoDup (flat_map summary_points
+      (map (summarize (first_table PosKeyCode.encode
+        (map (fun item => (fst item, params _ _ _ (snd item)))
+          (first_blocks (blocks _ _ _ (lang_source p))))))
+        (first_blocks (blocks _ _ _ (lang_source p)))))).
+    rewrite flat_map_after_map. apply summaries_points_nodup.
+    rewrite first_blocks_selected. apply selected_blocks_nodup.
+  Qed.
   Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold entries, nodes. intro Hin. apply in_map_iff in Hin.
+    destruct Hin as [b [Heq Hin]]. subst n. apply lang_point_zero.
+    now apply lang_entries_nodes.
+  Qed.
   Lemma edges_nodes : forall p e, wf p -> In e (edges p) ->
     In (src p e) (nodes p) /\ In (dst p e) (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e Hwf. unfold wf in Hwf. rewrite Hwf.
+    apply lang_point_edges_nodes.
+  Qed.
   Lemma out_spec : forall p n e, wf p ->
     (In e (out p n) <-> In e (edges p) /\ src p e = n).
   Proof.
