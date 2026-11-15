@@ -4,8 +4,8 @@
     For example, a known-bit payload can refine an interval endpoint.
     Builds on: ReducersSig and Tagged. *)
 
-From Stdlib Require Import NArith ZArith.
-From Argent Require Import Time Std BigO.
+From Stdlib Require Import NArith ZArith Lia Bool.
+From Argent Require Import Time Tactics Std BigO.
 From Galois.Domains Require Import ValueSig BitsLang WordSig KnownBitsSig WrappedSig
   IntervalSig CongruenceSig ThresholdsSig ReducersSig Tagged.
 
@@ -50,16 +50,19 @@ Module WrappedBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (A0 : WRAPPED L)
       with Definition gamma := tagged_gamma L.is_word B0.pgamma)
     <: REDUCTION_STEPS BitsLang A B.
   Include WrappedBitsCode L A0 B0 A B.
-  Lemma reduce_lower : forall a b,
-    A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
-  Proof. Admitted. (* STUB *)
   Lemma reduce_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (reduce (a, b))) c /\ B.gamma (snd (reduce (a, b))) c.
   Proof. Admitted. (* STUB *)
   Lemma left_frame : forall x, snd (to_left x) = snd x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]]; cbn [to_left]; try reflexivity.
+    destruct (Pos.eqb w v); reflexivity.
+  Qed.
   Lemma right_frame : forall x, fst (to_right x) = fst x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]]; cbn [to_right]; try reflexivity.
+    destruct (Pos.eqb w v); reflexivity.
+  Qed.
   Lemma left_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_left (a, b))) c.
   Proof. Admitted. (* STUB *)
@@ -67,20 +70,56 @@ Module WrappedBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (A0 : WRAPPED L)
     B.gamma (snd (to_right (a, b))) c.
   Proof. Admitted. (* STUB *)
   Lemma left_lower : forall a b, A.leb (fst (to_left (a, b))) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; cbn [to_left fst]; try apply A.leb_refl.
+    destruct (Pos.eqb w v); cbn [fst]; [|apply A.leb_refl].
+    unfold A.leb, reducer_tagged_leb.
+    rewrite Pos.eqb_refl.
+    apply A0.pmeet_lb_l.
+  Qed.
   Lemma right_lower : forall a b, B.leb (snd (to_right (a, b))) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; cbn [to_right snd]; try apply B.leb_refl.
+    destruct (Pos.eqb w v) eqn:Hwv; cbn [snd]; [|apply B.leb_refl].
+    apply Pos.eqb_eq in Hwv; subst v.
+    unfold B.leb, reducer_tagged_leb.
+    rewrite Pos.eqb_refl.
+    apply B0.pmeet_lb_l.
+  Qed.
   Lemma reduce_steps : forall x, reduce x = to_right (to_left x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_to_left : forall w a b, to_left (TVal w a, TVal w b) =
     (TVal w (A0.pmeet w a (bits_hull w b)), TVal w b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
+  Qed.
   Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (B0.pmeet w b (arc_prefix w a))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
+  Qed.
   Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     to_left x = x /\ to_right x = x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]] Hshape; cbn [to_left to_right];
+      try (split; reflexivity).
+    destruct (Pos.eqb w v) eqn:Hwv; [|split; reflexivity].
+    apply Pos.eqb_eq in Hwv; subst v.
+    exfalso; apply (Hshape w a b); reflexivity.
+  Qed.
+
+  Lemma reduce_lower : forall a b,
+    A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
+  Proof.
+    intros a b; unfold reduce; split.
+    - rewrite right_frame; apply left_lower.
+    - destruct (to_left (a, b)) as [a' b'] eqn:Hleft.
+      pose proof (left_frame (a, b)) as Hframe.
+      rewrite Hleft in Hframe; cbn in Hframe; subst b'.
+      apply right_lower.
+  Qed.
 
 End WrappedBits.
 
@@ -117,16 +156,19 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
       with Definition gamma := tagged_gamma L.is_word B0.pgamma)
     <: REDUCTION_STEPS BitsLang A B.
   Include IntervalCongrCode L A0 B0 A B.
-  Lemma reduce_lower : forall a b,
-    A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
-  Proof. Admitted. (* STUB *)
   Lemma reduce_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (reduce (a, b))) c /\ B.gamma (snd (reduce (a, b))) c.
   Proof. Admitted. (* STUB *)
   Lemma left_frame : forall x, snd (to_left x) = snd x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]]; cbn [to_left]; try reflexivity.
+    destruct (Pos.eqb w v); reflexivity.
+  Qed.
   Lemma right_frame : forall x, fst (to_right x) = fst x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]]; cbn [to_right]; try reflexivity.
+    destruct (Pos.eqb w v); reflexivity.
+  Qed.
   Lemma left_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_left (a, b))) c.
   Proof. Admitted. (* STUB *)
@@ -134,20 +176,56 @@ Module IntervalCongr (L : WORD_LANGUAGE) (T : THRESHOLDS)
     B.gamma (snd (to_right (a, b))) c.
   Proof. Admitted. (* STUB *)
   Lemma left_lower : forall a b, A.leb (fst (to_left (a, b))) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; cbn [to_left fst]; try apply A.leb_refl.
+    destruct (Pos.eqb w v); cbn [fst]; [|apply A.leb_refl].
+    unfold A.leb, reducer_tagged_leb.
+    rewrite Pos.eqb_refl.
+    apply A0.pmeet_lb_l.
+  Qed.
   Lemma right_lower : forall a b, B.leb (snd (to_right (a, b))) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; cbn [to_right snd]; try apply B.leb_refl.
+    destruct (Pos.eqb w v) eqn:Hwv; cbn [snd]; [|apply B.leb_refl].
+    apply Pos.eqb_eq in Hwv; subst v.
+    unfold B.leb, reducer_tagged_leb.
+    rewrite Pos.eqb_refl.
+    apply B0.pmeet_lb_l.
+  Qed.
   Lemma reduce_steps : forall x, reduce x = to_right (to_left x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_to_left : forall w a b, to_left (TVal w a, TVal w b) =
     (TVal w (A0.pmeet w a (congr_interval w a b)), TVal w b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
+  Qed.
   Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (B0.pmeet w b (interval_congr (interval_word_clip w a)))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
+  Qed.
   Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     to_left x = x /\ to_right x = x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]] Hshape; cbn [to_left to_right];
+      try (split; reflexivity).
+    destruct (Pos.eqb w v) eqn:Hwv; [|split; reflexivity].
+    apply Pos.eqb_eq in Hwv; subst v.
+    exfalso; apply (Hshape w a b); reflexivity.
+  Qed.
+
+  Lemma reduce_lower : forall a b,
+    A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
+  Proof.
+    intros a b; unfold reduce; split.
+    - rewrite right_frame; apply left_lower.
+    - destruct (to_left (a, b)) as [a' b'] eqn:Hleft.
+      pose proof (left_frame (a, b)) as Hframe.
+      rewrite Hleft in Hframe; cbn in Hframe; subst b'.
+      apply right_lower.
+  Qed.
 
 End IntervalCongr.
 
@@ -182,16 +260,19 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
       with Definition gamma := tagged_gamma L.is_word B0.pgamma)
     <: REDUCTION_STEPS BitsLang A B.
   Include IntervalBitsCode L A0 B0 A B.
-  Lemma reduce_lower : forall a b,
-    A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
-  Proof. Admitted. (* STUB *)
   Lemma reduce_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (reduce (a, b))) c /\ B.gamma (snd (reduce (a, b))) c.
   Proof. Admitted. (* STUB *)
   Lemma left_frame : forall x, snd (to_left x) = snd x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]]; cbn [to_left]; try reflexivity.
+    destruct (Pos.eqb w v); reflexivity.
+  Qed.
   Lemma right_frame : forall x, fst (to_right x) = fst x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]]; cbn [to_right]; try reflexivity.
+    destruct (Pos.eqb w v); reflexivity.
+  Qed.
   Lemma left_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_left (a, b))) c.
   Proof. Admitted. (* STUB *)
@@ -199,20 +280,56 @@ Module IntervalBits (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (T : THRESHOLDS)
     B.gamma (snd (to_right (a, b))) c.
   Proof. Admitted. (* STUB *)
   Lemma left_lower : forall a b, A.leb (fst (to_left (a, b))) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; cbn [to_left fst]; try apply A.leb_refl.
+    destruct (Pos.eqb w v); cbn [fst]; [|apply A.leb_refl].
+    unfold A.leb, reducer_tagged_leb.
+    rewrite Pos.eqb_refl.
+    apply A0.pmeet_lb_l.
+  Qed.
   Lemma right_lower : forall a b, B.leb (snd (to_right (a, b))) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; cbn [to_right snd]; try apply B.leb_refl.
+    destruct (Pos.eqb w v) eqn:Hwv; cbn [snd]; [|apply B.leb_refl].
+    apply Pos.eqb_eq in Hwv; subst v.
+    unfold B.leb, reducer_tagged_leb.
+    rewrite Pos.eqb_refl.
+    apply B0.pmeet_lb_l.
+  Qed.
   Lemma reduce_steps : forall x, reduce x = to_right (to_left x).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F_to_left : forall w a b, to_left (TVal w a, TVal w b) =
     (TVal w (A0.pmeet w a (bits_interval w b)), TVal w b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
+  Qed.
   Lemma F_to_right : forall w a b, to_right (TVal w a, TVal w b) =
     (TVal w a, TVal w (B0.pmeet w b (interval_prefix w a))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros; unfold to_left, to_right; rewrite Pos.eqb_refl; reflexivity.
+  Qed.
   Lemma F_other : forall x, (forall w a b, x <> (TVal w a, TVal w b)) ->
     to_left x = x /\ to_right x = x.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[|w a|] [|v b|]] Hshape; cbn [to_left to_right];
+      try (split; reflexivity).
+    destruct (Pos.eqb w v) eqn:Hwv; [|split; reflexivity].
+    apply Pos.eqb_eq in Hwv; subst v.
+    exfalso; apply (Hshape w a b); reflexivity.
+  Qed.
+
+  Lemma reduce_lower : forall a b,
+    A.leb (fst (reduce (a, b))) a = true /\ B.leb (snd (reduce (a, b))) b = true.
+  Proof.
+    intros a b; unfold reduce; split.
+    - rewrite right_frame; apply left_lower.
+    - destruct (to_left (a, b)) as [a' b'] eqn:Hleft.
+      pose proof (left_frame (a, b)) as Hframe.
+      rewrite Hleft in Hframe; cbn in Hframe; subst b'.
+      apply right_lower.
+  Qed.
 
 End IntervalBits.
 
