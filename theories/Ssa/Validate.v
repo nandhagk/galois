@@ -39,7 +39,7 @@ Definition val_mem (xs : ptrie unit) (x : positive) : bool :=
 TimeFun val_mem.
 
 Definition val_maps (rho : ptrie positive) (x y : positive) : bool :=
-  match trie_get x rho with Some z => Pos.eqb z y | None => false end.
+  match trie_get x rho with Some z => Pos.eqb y z | None => false end.
 TimeFun val_maps.
 
 Definition val_inverse (rho : renaming) : ptrie positive :=
@@ -74,6 +74,14 @@ TimeFun val_bind_symbols.
 Definition val_symbol (m : ptrie positive) (x : positive) : positive :=
   match trie_get x m with Some y => y | None => x end.
 TimeFun val_symbol.
+
+Definition val_row_sizes {A} (rows : list (positive * list A)) : ptrie nat :=
+  val_index (map (fun item => (fst item, length (snd item))) rows).
+TimeFun val_row_sizes.
+
+Definition val_size (sizes : ptrie nat) (b : positive) : nat :=
+  match trie_get b sizes with Some n => n | None => 0 end.
+TimeFun val_size.
 
 Fixpoint val_add (xs : list positive) (known : ptrie unit) : ptrie unit :=
   match xs with
@@ -257,7 +265,7 @@ Proof. reflexivity. Qed.
 
 Lemma val_inverse_extend : forall rho inverse x y,
   val_inverse_ok rho inverse ->
-  (match trie_get y inverse with Some owner => Pos.eqb owner x | None => true end) = true ->
+  (match trie_get y inverse with Some owner => Pos.eqb x owner | None => true end) = true ->
   val_inverse_ok ((x, y) :: rho) (PTrieCode.set y x inverse).
 Proof.
   intros rho inverse x y Hinv Hfresh z value Hlookup.
@@ -267,7 +275,7 @@ Proof.
     pose proof (Hinv z value Hlookup) as Hold.
     assert (Hneq : value <> y).
     { intro Heq; subst value; rewrite Hold in Hfresh; apply Pos.eqb_eq in Hfresh;
-        contradiction. }
+        congruence. }
     rewrite PTrie.get_set_other by exact Hneq; exact Hold.
 Qed.
 
@@ -292,7 +300,7 @@ Qed.
 
 Lemma val_agrees_extend {A} : forall rho inverse live x y (value : A) ss si,
   val_inverse_ok rho inverse -> val_agrees rho live ss si ->
-  (match trie_get y inverse with Some owner => Pos.eqb owner x | None => true end) = true ->
+  (match trie_get y inverse with Some owner => Pos.eqb x owner | None => true end) = true ->
   val_agrees ((x, y) :: rho) (x :: live) ((y, value) :: ss) ((x, value) :: si).
 Proof.
   intros rho inverse live x y value ss si Hinv Hagree Hfresh z Hin.
@@ -302,7 +310,7 @@ Proof.
     destruct (Hagree z Hin) as [v [Hv Hvalue]].
     assert (Hvy : v <> y).
     { intro Heq; subst v; rewrite (Hinv z y Hv) in Hfresh.
-      apply Pos.eqb_eq in Hfresh; contradiction. }
+      apply Pos.eqb_eq in Hfresh; congruence. }
     apply Pos.eqb_neq in Hneq; apply Pos.eqb_neq in Hvy.
     exists v; cbn [lookup]; rewrite Hneq, Hvy; auto.
 Qed.
@@ -484,7 +492,20 @@ Module ValidateCode (O : OPS)
     CheckTables (val_index (blocks _ _ _ p)) (val_index (blocks _ _ _ s))
       (val_index (fst c)) (val_index (snd c)).
 
-  Definition check_entry (p s : P.t) (_ : cert) (t : check_tables O.K O.G) : bool :=
+  (** Reject oversized destination rows before any block check scans them repeatedly.
+      Canonical live-only rows fit the predecessor's live variables and code definitions. *)
+  Definition row_budget (p : P.t) (c : cert) : bool :=
+    let env_sizes := val_row_sizes (fst c) in
+    let live_sizes := val_row_sizes (snd c) in
+    forallb (fun item =>
+      let allowance := length (code _ _ _ (snd item)) + val_size env_sizes (fst item) +
+        val_size live_sizes (fst item) + 1 in
+      forallb (fun target => Nat.leb (val_size env_sizes target) allowance &&
+        Nat.leb (val_size live_sizes target) allowance)
+        (exit_targets (term _ _ _ (snd item)))) (first_blocks (blocks _ _ _ p)).
+
+  Definition check_entry (p s : P.t) (c : cert) (t : check_tables O.K O.G) : bool :=
+    if row_budget p c then
     let rho := index_row (cert_envs t) (entry _ _ _ p) in
     let known := val_set (inputs _ _ _ p) in
     Pos.eqb (entry _ _ _ p) (entry _ _ _ s) &&
@@ -499,7 +520,8 @@ Module ValidateCode (O : OPS)
       | _, _ => false
       end
     | _, _ => false
-    end.
+    end
+    else false.
 
   Fixpoint code_scan (ic sc : list (positive * O.K * list positive))
       (rho : renaming) (forward inverse : ptrie positive) (known : ptrie unit)
@@ -508,7 +530,7 @@ Module ValidateCode (O : OPS)
     | [], [] => Some rho
     | (x, op, args) :: ir, (y, sop, sargs) :: sr =>
       if K.eqb op sop && val_args forward known args sargs &&
-        match trie_get y inverse with Some owner => Pos.eqb owner x | None => true end
+        match trie_get y inverse with Some owner => Pos.eqb x owner | None => true end
       then code_scan ir sr ((x, y) :: rho) (PTrieCode.set x y forward)
         (PTrieCode.set y x inverse) (PTrieCode.set x tt known)
       else None
@@ -601,8 +623,9 @@ Module ValidateCode (O : OPS)
 
   Definition check (p s : P.t) (c : cert) : bool :=
     let t := tables p s c in
-    check_entry p s c t &&
-      forallb (fun item => check_block t (fst item)) (first_blocks (blocks _ _ _ p)).
+    if check_entry p s c t then
+      forallb (fun item => check_block t (fst item)) (first_blocks (blocks _ _ _ p))
+    else false.
 
   Definition dom_cert (s : P.t) : ptrie positive * list positive :=
     D.build (DG.prepare (cfg_graph (C.nodes (R.prepare s))
@@ -689,8 +712,10 @@ Module Validate (O : OPS)
     check_entry p s c (tables p s c) = true /\ forall b body,
       In (b, body) (blocks _ _ _ p) -> check_block (tables p s c) b = true.
   Proof.
-    intros p s c Hcheck; apply andb_true_iff in Hcheck as [Hentry Hblocks].
-    split; [exact Hentry|]; intros b body Hin.
+    intros p s c Hcheck; unfold check in Hcheck.
+    destruct (check_entry p s c (tables p s c)) eqn:Hentry; [|discriminate].
+    rename Hcheck into Hblocks.
+    split; [reflexivity|]; intros b body Hin.
     assert (Hid : In b (map fst (first_blocks (blocks _ _ _ p)))).
     { apply val_first_blocks_ids; apply in_map_iff; exists (b, body); auto. }
     apply in_map_iff in Hid as [item [Heq Hitem]]; rewrite forallb_forall in Hblocks.
@@ -807,7 +832,7 @@ Module Validate (O : OPS)
       try discriminate.
     - injection Hcheck as Heq; subst rho'; exact Hagree.
     - destruct (K.eqb op sop && val_args (val_index rho) (val_set live) args sargs &&
-        match trie_get y inverse with Some owner => Pos.eqb owner x | None => true end)
+        match trie_get y inverse with Some owner => Pos.eqb x owner | None => true end)
         eqn:Hhead; [|discriminate].
       apply andb_true_iff in Hhead as [Hfirst Hfresh].
       apply andb_true_iff in Hfirst as [Hop Hargs].
@@ -848,7 +873,8 @@ Module Validate (O : OPS)
     length (inputs _ _ _ s) = length (inputs _ _ _ p).
   Proof.
     intros p s c Hcheck; pose proof (proj1 (check_checks p s c Hcheck)) as Hentry.
-    unfold check_entry in Hentry; apply andb_true_iff in Hentry as [_ Hentry].
+    unfold check_entry in Hentry; destruct (row_budget p c); [|discriminate].
+    apply andb_true_iff in Hentry as [_ Hentry].
     destruct (trie_get (entry _ _ _ p) (source_bodies (tables p s c))) as [ib|];
       [|discriminate].
     destruct (trie_get (entry _ _ _ s) (target_bodies (tables p s c))) as [sb|];
@@ -865,7 +891,8 @@ Module Validate (O : OPS)
   Proof.
     intros p s c ins si Hcheck Hbind.
     pose proof (proj1 (check_checks p s c Hcheck)) as Hentry.
-    unfold check_entry in Hentry; apply andb_true_iff in Hentry as [Hid Hentry].
+    unfold check_entry in Hentry; destruct (row_budget p c); [|discriminate].
+    apply andb_true_iff in Hentry as [Hid Hentry].
     apply Pos.eqb_eq in Hid.
     destruct (trie_get (entry _ _ _ p) (source_bodies (tables p s c))) as [ib|] eqn:Hib;
       [|discriminate].
@@ -1227,6 +1254,7 @@ Module ValidateT (O : OPS)
     <: VALIDATE_ALL O K G P Q R E C S DG D B.
   Include Validate O K G P Q R E C S DG D B.
   TimeFun tables.
+  TimeFun row_budget.
   TimeFun check_entry.
   TimeFun code_scan.
   TimeFun check_code.
