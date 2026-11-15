@@ -1309,6 +1309,245 @@ Proof.
     rewrite PTrie.get_empty in Hmark. discriminate Hmark.
 Qed.
 
+(** Recording a pending fresh target adds only a justified answer and keeps all work covered. *)
+Lemma idf_closure_record rows seeds v rest expanded discovered answer :
+  idf_closure_invariant rows seeds
+    (IdfState (IdfTarget v :: rest) expanded discovered answer) ->
+  trie_get v discovered = None ->
+  idf_closure_invariant rows seeds
+    (IdfState (IdfTarget v :: rest) expanded (PTrieCode.set v tt discovered) (v :: answer)).
+Proof.
+  intros Hinv Hfresh.
+  destruct Hinv as [Hdistinct Hsound Hexpanded Htasks Hseeds Hdiscovered Hrows].
+  assert (Htarget : in_row_closure rows seeds v).
+  { inversion Htasks as [|task tail Hhead Htail]. exact Hhead. }
+  constructor.
+  - apply (idf_record_distinct expanded (IdfTarget v :: rest) discovered answer v);
+      assumption.
+  - intros x [<-|Hin]; [exact Htarget|now apply Hsound].
+  - exact Hexpanded.
+  - exact Htasks.
+  - exact Hseeds.
+  - intros x Hmark. cbn [idf_discovered] in Hmark.
+    destruct (Pos.eq_dec x v) as [->|Hother].
+    + right. right. now left.
+    + rewrite PTrie.get_set_other in Hmark by exact Hother. now apply Hdiscovered.
+  - intros u x Hmark Hin. apply idf_target_ready_mark. now apply (Hrows u).
+Qed.
+
+(** Retiring an expanded task preserves coverage once every target task has been recorded. *)
+Lemma idf_closure_retire rows seeds task rest expanded discovered answer :
+  idf_closure_invariant rows seeds
+    (IdfState (task :: rest) expanded discovered answer) ->
+  (forall v, task = IdfSeed v \/ task = IdfTarget v ->
+    trie_get v expanded = Some tt) ->
+  (forall v, task = IdfTarget v -> trie_get v discovered = Some tt) ->
+  idf_closure_invariant rows seeds (IdfState rest expanded discovered answer).
+Proof.
+  intros Hinv Hhead Hrecorded.
+  destruct Hinv as [Hdistinct Hsound Hexpanded Htasks Hseeds Hdiscovered Hrows].
+  assert (Hready : forall x,
+    idf_ready (IdfState (task :: rest) expanded discovered answer) x ->
+    idf_ready (IdfState rest expanded discovered answer) x).
+  { intro x. apply idf_ready_consume; [intros v Hv; exact Hv|intros q Hq; exact Hq|exact Hhead]. }
+  assert (Hcovered : forall x,
+    idf_target_ready (IdfState (task :: rest) expanded discovered answer) x ->
+    idf_target_ready (IdfState rest expanded discovered answer) x).
+  { intro x. apply idf_target_ready_consume; [intros q Hq; exact Hq|exact Hrecorded]. }
+  constructor.
+  - exact Hdistinct.
+  - exact Hsound.
+  - exact Hexpanded.
+  - exact (Forall_inv_tail Htasks).
+  - intros v Hv. apply Hready. now apply Hseeds.
+  - intros v Hv. apply Hready. now apply Hdiscovered.
+  - intros u v Hu Hv. apply Hcovered. now apply (Hrows u).
+Qed.
+
+(** Marking the current vertex and queueing its targets preserves all previously ready vertices. *)
+Lemma idf_ready_expand task rest expanded discovered answer v targets x :
+  task = IdfSeed v \/ task = IdfTarget v ->
+  idf_ready (IdfState (task :: rest) expanded discovered answer) x ->
+  idf_ready (IdfState (map IdfTarget targets ++ rest)
+    (PTrieCode.set v tt expanded) discovered answer) x.
+Proof.
+  intro Hkind. apply idf_ready_consume.
+  - intros u Hu. now apply idf_set_keeps_mark.
+  - intros pending Hin. apply in_or_app. now right.
+  - intros u Hhead. destruct Hkind as [Hkind|Hkind];
+      destruct Hhead as [Hhead|Hhead]; rewrite Hkind in Hhead;
+      inversion Hhead; subst; apply PTrie.get_set_same.
+Qed.
+
+(** Every target in the row of a supported vertex already has a closure derivation. *)
+Lemma idf_supported_row rows seeds v :
+  In v seeds \/ in_row_closure rows seeds v ->
+  Forall (idf_supported_task rows seeds) (map IdfTarget (frontier_row rows v)).
+Proof.
+  intros Hsource. apply Forall_forall. intros task Hin.
+  apply in_map_iff in Hin as [x [<- Hrow]].
+  cbn [idf_supported_task]. destruct Hsource as [Hseed|Hclosure].
+  - now apply (row_seed rows seeds v x).
+  - now apply (row_step rows seeds v x).
+Qed.
+
+(** Expanding a supported pending vertex covers its entire row with typed target tasks. *)
+Lemma idf_closure_expand rows seeds task rest expanded discovered answer v :
+  idf_closure_invariant rows seeds
+    (IdfState (task :: rest) expanded discovered answer) ->
+  (task = IdfSeed v \/ task = IdfTarget v) ->
+  (forall x, task = IdfTarget x -> trie_get x discovered = Some tt) ->
+  idf_closure_invariant rows seeds
+    (IdfState (map IdfTarget (frontier_row rows v) ++ rest)
+      (PTrieCode.set v tt expanded) discovered answer).
+Proof.
+  intros Hinv Hkind Hrecorded.
+  destruct Hinv as [Hdistinct Hsound Hexpanded Htasks Hseeds Hdiscovered Hrows].
+  assert (Hsource : In v seeds \/ in_row_closure rows seeds v).
+  { pose proof (Forall_inv Htasks) as Hhead.
+    destruct Hkind as [-> | ->]; [now left|now right]. }
+  constructor.
+  - exact Hdistinct.
+  - exact Hsound.
+  - intros x Hmark. cbn [idf_expanded] in Hmark.
+    destruct (Pos.eq_dec x v) as [->|Hother]; [exact Hsource|].
+    rewrite PTrie.get_set_other in Hmark by exact Hother. now apply Hexpanded.
+  - apply Forall_app. split; [now apply idf_supported_row|exact (Forall_inv_tail Htasks)].
+  - intros x Hseed.
+    apply (idf_ready_expand task rest expanded discovered answer v (frontier_row rows v) x);
+      [exact Hkind|now apply Hseeds].
+  - intros x Hmark.
+    apply (idf_ready_expand task rest expanded discovered answer v (frontier_row rows v) x);
+      [exact Hkind|now apply Hdiscovered].
+  - intros u x Hmark Hrow. cbn [idf_expanded] in Hmark.
+    destruct (Pos.eq_dec u v) as [->|Hother].
+    + right. apply in_or_app. left. now apply in_map.
+    + rewrite PTrie.get_set_other in Hmark by exact Hother.
+      apply (idf_target_ready_consume task rest expanded
+        (PTrieCode.set v tt expanded) discovered answer
+        (map IdfTarget (frontier_row rows v) ++ rest) x).
+      * intros pending Hin. apply in_or_app. now right.
+      * exact Hrecorded.
+      * now apply (Hrows u).
+Qed.
+
+(** A supported task may retire or expand once its target-recording obligation is discharged. *)
+Lemma idf_closure_dispatch rows seeds task rest expanded discovered answer v :
+  idf_closure_invariant rows seeds
+    (IdfState (task :: rest) expanded discovered answer) ->
+  (task = IdfSeed v \/ task = IdfTarget v) ->
+  (forall x, task = IdfTarget x -> trie_get x discovered = Some tt) ->
+  idf_closure_invariant rows seeds
+    (match trie_get v expanded with
+    | Some _ => IdfState rest expanded discovered answer
+    | None => IdfState (map IdfTarget (frontier_row rows v) ++ rest)
+        (PTrieCode.set v tt expanded) discovered answer
+    end).
+Proof.
+  intros Hinv Hkind Hrecorded. destruct (trie_get v expanded) as [[]|] eqn:Hexpanded.
+  - apply (idf_closure_retire rows seeds task rest expanded discovered answer);
+      [exact Hinv| |exact Hrecorded].
+    intros x Hhead. destruct Hkind as [Hkind|Hkind];
+      destruct Hhead as [Hhead|Hhead]; congruence.
+  - apply (idf_closure_expand rows seeds task rest expanded discovered answer v); assumption.
+Qed.
+
+(** Every raw transition preserves justified answers and complete typed work coverage. *)
+Lemma idf_closure_step rows seeds st next :
+  idf_closure_invariant rows seeds st -> idf_step rows st = inl next ->
+  idf_closure_invariant rows seeds next.
+Proof.
+  intros Hinv Hstep. destruct st as [pending expanded discovered answer].
+  destruct pending as [|task rest]; [discriminate Hstep|].
+  destruct task as [v|v]; cbn [idf_step] in Hstep.
+  - pose proof (idf_closure_dispatch rows seeds (IdfSeed v) rest expanded
+      discovered answer v Hinv (or_introl eq_refl)
+      ltac:(intros x Heq; discriminate Heq)) as Hnext.
+    destruct (trie_get v expanded) as [[]|]; injection Hstep as <-; exact Hnext.
+  - destruct (trie_get v discovered) as [[]|] eqn:Hrecorded.
+    + pose proof (idf_closure_dispatch rows seeds (IdfTarget v) rest expanded
+        discovered answer v Hinv (or_intror eq_refl)
+        ltac:(intros x Heq; injection Heq as <-; exact Hrecorded)) as Hnext.
+      destruct (trie_get v expanded) as [[]|]; injection Hstep as <-; exact Hnext.
+    + pose proof (idf_closure_record rows seeds v rest expanded discovered answer
+        Hinv Hrecorded) as Hfresh.
+      pose proof (idf_closure_dispatch rows seeds (IdfTarget v) rest expanded
+        (PTrieCode.set v tt discovered) (v :: answer) v Hfresh (or_intror eq_refl)
+        ltac:(intros x Heq; injection Heq as <-; apply PTrie.get_set_same)) as Hnext.
+      destruct (trie_get v expanded) as [[]|]; injection Hstep as <-; exact Hnext.
+Qed.
+
+(** Advancing after termination leaves the already established invariant unchanged. *)
+Lemma idf_closure_advance rows seeds st :
+  idf_closure_invariant rows seeds st ->
+  idf_closure_invariant rows seeds (idf_advance rows st).
+Proof.
+  intro Hinv. unfold idf_advance. destruct (idf_step rows st) as [next|result] eqn:Hstep.
+  - eapply idf_closure_step; eassumption.
+  - exact Hinv.
+Qed.
+
+(** Every reachable private state has the closure and support invariant needed by its clients. *)
+Lemma idf_closure_reachable rows seeds st :
+  idf_reachable rows seeds st -> idf_closure_invariant rows seeds st.
+Proof.
+  intros [n <-]. induction n as [|n IH].
+  - apply idf_closure_initial.
+  - rewrite Nat.iter_succ. now apply idf_closure_advance.
+Qed.
+
+(** With no pending tasks, readiness means the vertex has actually been expanded. *)
+Lemma idf_ready_empty expanded discovered answer v :
+  idf_ready (IdfState [] expanded discovered answer) v ->
+  trie_get v expanded = Some tt.
+Proof.
+  unfold idf_ready. cbn [idf_expanded idf_pending In]. tauto.
+Qed.
+
+(** With no pending target tasks, every covered target has actually been recorded. *)
+Lemma idf_target_ready_empty expanded discovered answer v :
+  idf_target_ready (IdfState [] expanded discovered answer) v ->
+  trie_get v discovered = Some tt.
+Proof.
+  unfold idf_target_ready. cbn [idf_discovered idf_pending In]. tauto.
+Qed.
+
+(** An exhausted invariant state contains exactly the least row closure of the seeds. *)
+Lemma idf_closure_complete rows seeds expanded discovered answer :
+  idf_closure_invariant rows seeds (IdfState [] expanded discovered answer) ->
+  forall y, In y answer <-> in_row_closure rows seeds y.
+Proof.
+  intros Hinv y.
+  destruct Hinv as [[Hunique Hmarks] Hsound Hexpanded Htasks Hseeds Hdiscovered Hrows].
+  split; [now apply Hsound|]. intro Hclosure.
+  induction Hclosure as [x target Hseed Hrow|x target Hclosure IH Hrow].
+  - apply (proj1 (Hmarks target)).
+    apply (idf_target_ready_empty expanded discovered answer target). apply (Hrows x target).
+    + apply (idf_ready_empty expanded discovered answer x). now apply Hseeds.
+    + exact Hrow.
+  - apply (proj1 (Hmarks target)).
+    apply (idf_target_ready_empty expanded discovered answer target). apply (Hrows x target).
+    + apply (idf_ready_empty expanded discovered answer x). apply Hdiscovered.
+      now apply (proj2 (Hmarks x)).
+    + exact Hrow.
+Qed.
+
+(** The raw lazy worklist computes the least row closure on every row map and seed list. *)
+Lemma idf_rows_correct rows seeds y :
+  In y (idf rows seeds) <-> in_row_closure rows seeds y.
+Proof.
+  destruct (idf_result_trace rows seeds) as [st [Hreachable Hstop]].
+  pose proof (idf_closure_reachable rows seeds st Hreachable) as Hinv.
+  destruct st as [pending expanded discovered answer].
+  destruct pending as [|task rest].
+  - cbn [idf_step] in Hstop. injection Hstop as Hresult.
+    rewrite <- Hresult, rev_append_rev, app_nil_r, <- (in_rev answer y).
+    exact (idf_closure_complete rows seeds expanded discovered answer Hinv y).
+  - destruct task as [v|v]; cbn [idf_step] in Hstop;
+      [|destruct (trie_get v discovered) as [[]|]];
+      destruct (trie_get v expanded) as [[]|]; discriminate Hstop.
+Qed.
+
 (** Graph node observations agree with the underlying vertex list. *)
 Lemma frontier_nodes_verts : forall g, nodes g = verts (base g).
 Proof.
@@ -1464,7 +1703,20 @@ Module Frontier <: FRONTIER.
   Lemma idf_spec : forall g t r seeds y,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     In y (idf (df g t) seeds) <-> in_iterated_frontier (base g) r seeds y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r seeds y Hgraph Hprepared Htree. unfold idf. rewrite idf_rows_correct.
+    split; intro Hclosure.
+    - induction Hclosure as [x y Hseed Hrow|x y Hprevious IH Hrow].
+      + apply frontier_seed with x; [exact Hseed|].
+        now apply (proj1 (df_spec g t r x y Hgraph Hprepared Htree)).
+      + apply frontier_step with x; [exact IH|].
+        now apply (proj1 (df_spec g t r x y Hgraph Hprepared Htree)).
+    - induction Hclosure as [x y Hseed Hfrontier|x y Hprevious IH Hfrontier].
+      + apply row_seed with x; [exact Hseed|].
+        now apply (proj2 (df_spec g t r x y Hgraph Hprepared Htree)).
+      + apply row_step with x; [exact IH|].
+        now apply (proj2 (df_spec g t r x y Hgraph Hprepared Htree)).
+  Qed.
 
   Lemma idf_unique : forall rows seeds, NoDup (idf rows seeds).
   Proof.
@@ -2497,11 +2749,16 @@ Module FrontierT <: FRONTIER_ALL.
     exists n st result,
       Nat.iter n (idf_advance rows) (idf_initial seeds) = st /\
       idf_step rows st = inr result /\ result = idf_walk rows seeds.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. destruct (idf_result_trace rows seeds) as [st [[n Hreach] Hstop]].
+    exists n, st, (idf rows seeds). split; [exact Hreach|]. split; [exact Hstop|reflexivity].
+  Qed.
 
   Lemma F3_idf_closure : forall rows seeds y,
     In y (idf_walk rows seeds) <-> in_row_closure rows seeds y.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact idf_rows_correct.
+  Qed.
 
   Lemma F4_idf_equation : forall rows seeds, idf rows seeds = idf_walk rows seeds.
   Proof.
