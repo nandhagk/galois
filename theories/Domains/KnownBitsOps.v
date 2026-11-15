@@ -433,6 +433,123 @@ Module KnownBitsForwardClockProof (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
       time_simpl; nia
     end.
   Qed.
+  (** Binary dispatch combines supplied clocks with bounded primitive approximations. *)
+  Lemma forward_two_time : forall o w v rw a b,
+    (Raw.T_tnum_forward_raw o [(w, a); (v, b)] rw <= (K.c_tnum + 1048576) *
+      N.of_nat ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1) ^ 2 +
+        tnum_bits a + tnum_bits b))%N.
+  Proof.
+    intros o w v rw a b.
+    pose proof (WordTime.time_square_floor
+      (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1)
+      (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    assert (Hmulwidth : (N.of_nat ((Pos.to_nat rw + 1) ^ 2) <=
+      N.of_nat ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1) ^ 2))%N).
+    { apply time_of_nat_le, Nat.pow_le_mono_l. lia. }
+    assert (Hcatwidth : (N.of_nat ((Pos.to_nat w + Pos.to_nat v + 1) ^ 2) <=
+      N.of_nat ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1) ^ 2))%N).
+    { apply time_of_nat_le, Nat.pow_le_mono_l. lia. }
+    pose proof (tnum_positive_bits w) as Hwbits.
+    pose proof (tnum_positive_bits v) as Hvbits.
+    pose proof (tnum_positive_bits rw) as Hrwbits.
+    pose proof (K.T_tnum_add_le rw a b) as Hadd.
+    pose proof (K.T_tnum_sub_le rw a b) as Hsub.
+    pose proof (K.T_tnum_and_le rw a b) as Hand.
+    pose proof (K.T_tnum_or_le rw a b) as Hor.
+    pose proof (K.T_tnum_xor_le rw a b) as Hxor.
+    pose proof (K.T_tnum_mul_le rw a b) as Hmul.
+    pose proof (K.T_tnum_variable_le o rw a b) as Hvariable.
+    pose proof (tnum_mul_time rw a b) as Hfallback.
+    pose proof (table_udiv_time rw a b) as Hdivide.
+    pose proof (table_urem_time rw a) as Hremainder.
+    pose proof (table_srem_time rw a) as Hsigned.
+    pose proof (table_compare_time o w a b) as Hcompare.
+    pose proof (table_concat_time w v a b) as Hconcat.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1) ^ 2)) in *.
+    clearbody square.
+    destruct o; time_unfold Raw.T_tnum_forward_raw; cbn beta iota zeta;
+      try solve [clear - Hlinear; time_simpl; nia].
+    all: try solve [match goal with
+    | |- context [K.T_tnum_add _ _ _] => clear - Hlinear Hadd
+    | |- context [K.T_tnum_sub _ _ _] => clear - Hlinear Hsub
+    | |- context [K.T_tnum_and _ _ _] => clear - Hlinear Hand
+    | |- context [K.T_tnum_or _ _ _] => clear - Hlinear Hor
+    | |- context [K.T_tnum_xor _ _ _] => clear - Hlinear Hxor
+    | |- context [K.T_tnum_variable _ _ _ _] => clear - Hlinear Hmulwidth Hvariable
+    | |- context [T_tnum_udiv _ _ _] => clear - Hlinear Hdivide
+    | |- context [T_tnum_urem _ _] => clear - Hlinear Hremainder
+    | |- context [T_tnum_srem _ _] => clear - Hlinear Hsigned
+    | |- context [T_tnum_compare _ _ _ _] => clear - Hlinear Hcompare
+    | |- context [T_tnum_concat _ _ _ _] => clear - Hlinear Hcatwidth Hconcat
+    end; time_simpl; nia].
+    clear - Hlinear Hmulwidth Hmul Hfallback Hwbits Hvbits Hrwbits.
+    destruct (Pos.eqb w rw && Pos.eqb v rw); time_simpl; time_pose;
+      rewrite ?Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Ternary dispatch is either conditional selection or a constant top result. *)
+  Lemma forward_three_time : forall o w v u rw a b c,
+    (Raw.T_tnum_forward_raw o [(w, a); (v, b); (u, c)] rw <=
+      (K.c_tnum + 1048576) * N.of_nat
+        ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1) ^ 2 +
+          tnum_bits a + tnum_bits b + tnum_bits c))%N.
+  Proof.
+    intros o w v u rw a b c.
+    pose proof (WordTime.time_square_floor (Pos.to_nat rw + 1)
+      (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1)
+      ltac:(lia) ltac:(lia)) as Hlinear.
+    pose proof (table_ite_time rw a b c) as Hite.
+    rewrite ?Nat2N.inj_add in *.
+    set (square := N.of_nat
+      ((Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1) ^ 2)) in *.
+    clearbody square.
+    destruct o; time_unfold Raw.T_tnum_forward_raw; cbn beta iota zeta;
+      time_simpl; nia.
+  Qed.
+  (** A checked offset makes every raw forward shape fit its shared width budget. *)
+  Lemma forward_raw_time : forall o rw (xs : list (positive * tnum)),
+    (forall hi lo w a, o = bvextract hi lo -> xs = [(w, a)] ->
+      (lo < Pos.to_nat w)%nat) ->
+    (Raw.T_tnum_forward_raw o xs rw <= (K.c_tnum + 1048576) * N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0%nat (map (fun x => tnum_bits (snd x)) xs)))%N.
+  Proof.
+    intros o rw xs Hbounded.
+    destruct xs as [|[w a] [|[v b] [|[u c] [|[s d] xs]]]].
+    - cbn [map fold_right]. rewrite !Nat.add_0_r.
+      pose proof (WordTime.time_square_floor 1 (Pos.to_nat rw + 1)
+        ltac:(lia) ltac:(lia)) as Hpositive.
+      set (square := N.of_nat ((Pos.to_nat rw + 1) ^ 2)) in *.
+      clearbody square. destruct o; time_unfold Raw.T_tnum_forward_raw;
+        cbn beta iota zeta; time_simpl; nia.
+    - cbn [map fold_right fst snd]. rewrite !Nat.add_0_r.
+      replace (Pos.to_nat rw + Pos.to_nat w + 1)%nat with
+        (Pos.to_nat w + Pos.to_nat rw + 1)%nat by lia.
+      apply forward_one_time. intros hi lo Hop.
+      exact (Hbounded hi lo w a Hop eq_refl).
+    - cbn [map fold_right fst snd]. rewrite !Nat.add_0_r.
+      replace (Pos.to_nat rw + (Pos.to_nat w + Pos.to_nat v) + 1)%nat with
+        (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + 1)%nat by lia.
+      rewrite Nat.add_assoc. apply forward_two_time.
+    - cbn [map fold_right fst snd]. rewrite !Nat.add_0_r.
+      replace (Pos.to_nat rw + (Pos.to_nat w + (Pos.to_nat v + Pos.to_nat u)) + 1)%nat with
+        (Pos.to_nat rw + Pos.to_nat w + Pos.to_nat v + Pos.to_nat u + 1)%nat by lia.
+      rewrite !Nat.add_assoc. apply forward_three_time.
+    - set (budget := N.of_nat
+        ((Pos.to_nat rw + fold_right Nat.add 0%nat
+          (map (fun x : positive * tnum => Pos.to_nat (fst x))
+            ((w, a) :: (v, b) :: (u, c) :: (s, d) :: xs)) + 1) ^ 2 +
+          fold_right Nat.add 0%nat (map (fun x : positive * tnum => tnum_bits (snd x))
+            ((w, a) :: (v, b) :: (u, c) :: (s, d) :: xs)))).
+      assert (Hpositive : (1 <= budget)%N).
+      { unfold budget. change 1%N with (N.of_nat 1%nat). apply time_of_nat_le. clear Hbounded. cbn [Nat.pow]. nia. }
+      clearbody budget. destruct o; time_unfold Raw.T_tnum_forward_raw;
+        cbn beta iota zeta; time_simpl; nia.
+  Qed.
 End KnownBitsForwardClockProof.
 
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
