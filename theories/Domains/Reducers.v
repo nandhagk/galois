@@ -4,7 +4,7 @@
     For example, a known-bit payload can refine an interval endpoint.
     Builds on: ReducersSig and Tagged. *)
 
-From Stdlib Require Import NArith ZArith Lia Bool.
+From Stdlib Require Import NArith ZArith Zpow_facts Lia Bool.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Bits Require Import Word Testbit.
 From Galois.Domains Require Import ValueSig BitsLang WordSig KnownBitsSig WrappedSig
@@ -207,6 +207,305 @@ Proof.
       * apply reducer_arc_bounds; [exact Hword|now apply Z.leb_le|exact Harc].
     + change (Z.land z (Word.wrap w 0) = 0 /\ Z.land (Word.wrap w 0) (Z.lnot z) = 0).
       rewrite Word.wrap_0, Z.land_0_r, Z.land_0_l; split; reflexivity.
+Qed.
+
+(** The counter potential pays for carries while a bit count is incremented. *)
+Fixpoint reducer_counter_ones (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => reducer_counter_ones q
+  | xI q => (1 + reducer_counter_ones q)%N
+  end.
+
+(** Binary increment has constant amortized cost under the one-bit potential. *)
+Lemma reducer_succ_credit : forall p,
+  (Std.Pos.T_succ p + reducer_counter_ones (Pos.succ p) <=
+    2 + reducer_counter_ones p)%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Std.Pos.T_succ; time_cbn; lia.
+Qed.
+
+(** Computing a positive bit count makes only linearly many amortized increments. *)
+Lemma reducer_size_credit : forall p,
+  (Fun.Pos.T_size p + reducer_counter_ones (Pos.size p) <=
+    3 * N.of_nat (Pos.size_nat p))%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Fun.Pos.T_size; time_cbn.
+  all: try pose proof (reducer_succ_credit (Pos.size p)) as Hsucc.
+  all: lia.
+Qed.
+
+(** Integer logarithm scans its input bits with a binary counter. *)
+Lemma reducer_log2_time : forall z,
+  (Fun.Z.T_log2 z <= 4 * N.of_nat (Z.size_nat z + 1))%N.
+Proof.
+  intros [|[p|p|]|p]; time_unfold Fun.Z.T_log2; time_cbn.
+  all: try pose proof (reducer_size_credit p) as Hsize.
+  all: rewrite ?Nat2N.inj_add, ?Nat2N.inj_succ; lia.
+Qed.
+
+(** Unsigned word membership bounds the stored integer bits. *)
+Lemma reducer_word_bits : forall w z, Word.is_word w z ->
+  (Z.size_nat z <= Pos.to_nat w)%nat.
+Proof.
+  intros w [|z|z] Hword; unfold Word.is_word, Word.modulus in Hword;
+    cbn [Z.size_nat]; try lia.
+  apply Zpower2_Psize; rewrite positive_nat_Z; exact (proj2 Hword).
+Qed.
+
+(** Positive bit counts fit within the value of the positive integer. *)
+Lemma reducer_positive_bits : forall p, (Pos.size_nat p <= Pos.to_nat p)%nat.
+Proof.
+  induction p as [p IH|p IH|]; cbn [Pos.size_nat];
+    rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1; lia.
+Qed.
+
+(** A nonnegative integer has no more bits than its value. *)
+Lemma reducer_nonnegative_bits : forall z, 0 <= z -> (Z.size_nat z <= Z.to_nat z)%nat.
+Proof.
+  intros [|p|p] Hnonnegative; cbn [Z.size_nat Z.to_nat]; try lia.
+  apply reducer_positive_bits.
+Qed.
+
+(** A word's common-prefix cutoff is a positive index no greater than its width. *)
+Lemma reducer_log2_width : forall w z, Word.is_word w z ->
+  0 <= Z.log2 z + 1 <= Zpos w.
+Proof.
+  intros w z Hword; pose proof (Z.log2_nonneg z).
+  destruct (Z.eq_dec z 0) as [->|Hnonzero]; [cbn [Z.log2]; lia|].
+  unfold Word.is_word, Word.modulus in Hword.
+  destruct Hword as [Hnonnegative Hupper].
+  apply Z.log2_lt_pow2 in Hupper as Hlog; [lia|lia].
+Qed.
+
+(** The magnitude bit count is unchanged by negation. *)
+Lemma reducer_opp_bits : forall z, Z.size_nat (- z) = Z.size_nat z.
+Proof.
+  intros []; reflexivity.
+Qed.
+
+(** A power of two needs its exponent and one additional stored bit. *)
+Lemma reducer_pow2_bits : forall n, 0 <= n ->
+  (Z.size_nat (2 ^ n) <= Z.to_nat n + 1)%nat.
+Proof.
+  intros n Hn.
+  destruct (2 ^ n) as [|p|p] eqn:Hpower; cbn [Z.size_nat]; try lia.
+  - apply Zpower2_Psize.
+    rewrite Nat2Z.inj_add, Z2Nat.id by exact Hn.
+    rewrite <- Hpower; apply Z.pow_lt_mono_r; lia.
+Qed.
+
+(** An all-ones mask is a normalized word of the requested width. *)
+Lemma reducer_ones_word : forall w, Word.is_word w (Z.ones (Zpos w)).
+Proof.
+  intro w; unfold Word.is_word, Word.modulus; rewrite Z.ones_equiv.
+  pose proof (Word.modulus_pos w); unfold Word.modulus in *; lia.
+Qed.
+
+(** Making an all-ones mask performs linearly many bit operations. *)
+Lemma reducer_ones_time : forall n, 0 <= n ->
+  (Word.Z.T_ones n <= 16 * N.of_nat (Z.to_nat n + 1))%N.
+Proof.
+  intros n Hn.
+  pose proof (Std.Z.T_shiftl_le 1 n) as Hshift.
+  pose proof (Std.Z.T_pred_le (Z.shiftl 1 n)) as Hpred.
+  pose proof (reducer_pow2_bits n Hn) as Hbits; rewrite <- Z.shiftl_1_l in Hbits.
+  change (Std.Z.T_shiftl 1 n <= 6 * Z.abs_N n + 1)%N in Hshift.
+  assert (Habs : Z.abs_N n = N.of_nat (Z.to_nat n)).
+  { destruct n; cbn [Z.abs_N Z.to_nat]; try reflexivity; lia. }
+  rewrite Habs in Hshift.
+  time_unfold Word.Z.T_ones; rewrite Nat2N.inj_add; nia.
+Qed.
+
+(** The masked normalization clock is linear in width and raw integer bits. *)
+Lemma reducer_wrap_time : forall w z,
+  (T_tnum_wrap w z <= 32 * N.of_nat (Pos.to_nat w + Z.size_nat z + 1))%N.
+Proof.
+  intros w z.
+  pose proof (reducer_ones_time (Zpos w) ltac:(lia)) as Hones.
+  pose proof (reducer_word_bits w _ (reducer_ones_word w)) as Hbits.
+  pose proof (Std.Z.T_land_le z (Z.ones (Zpos w))) as Hland.
+  time_unfold T_tnum_wrap; time_cbn.
+  change (Word.Z.T_ones (Zpos w) <= 16 * N.of_nat (Pos.to_nat w + 1))%N in Hones.
+  rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Masked normalization produces an unsigned word. *)
+Lemma reducer_wrap_word : forall w z, Word.is_word w (tnum_wrap w z).
+Proof.
+  intros w z; rewrite reducer_tnum_wrap; apply Word.wrap_is_word.
+Qed.
+
+(** The xor of two unsigned words has no bits beyond their shared width. *)
+Lemma reducer_xor_word : forall w a b,
+  Word.is_word w a -> Word.is_word w b -> Word.is_word w (Z.lxor a b).
+Proof.
+  intros w a b Ha Hb; apply word_of_bits; intros i Hi.
+  rewrite Z.lxor_spec, (word_bits_high w a i Ha Hi), (word_bits_high w b i Hb Hi).
+  reflexivity.
+Qed.
+
+(** The union of two unsigned masks remains an unsigned mask. *)
+Lemma reducer_or_word : forall w a b,
+  Word.is_word w a -> Word.is_word w b -> Word.is_word w (Z.lor a b).
+Proof.
+  intros w a b Ha Hb; apply word_of_bits; intros i Hi.
+  rewrite Z.lor_spec, (word_bits_high w a i Ha Hi), (word_bits_high w b i Hb Hi).
+  reflexivity.
+Qed.
+
+(** Conjunction with an unsigned mask preserves its finite width. *)
+Lemma reducer_and_word : forall w a b,
+  Word.is_word w a -> Word.is_word w (Z.land a b).
+Proof.
+  intros w a b Ha; apply word_of_bits; intros i Hi.
+  rewrite Z.land_spec, (word_bits_high w a i Ha Hi); reflexivity.
+Qed.
+
+(** A prefix mask whose cutoff is below the width fits within that word. *)
+Lemma reducer_mask_word : forall w n, 0 <= n <= Zpos w -> Word.is_word w (Z.ones n).
+Proof.
+  intros w n Hn; apply word_of_bits; intros i Hi.
+  apply Z.ones_spec_high; lia.
+Qed.
+
+(** Complementing a word needs at most one additional magnitude bit. *)
+Lemma reducer_complement_bits : forall w z, Word.is_word w z ->
+  (Z.size_nat (Z.lnot z) <= Pos.to_nat w + 1)%nat.
+Proof.
+  intros w z Hword.
+  replace (Z.lnot z) with (- (z + 1)) by (unfold Z.lnot; lia).
+  rewrite reducer_opp_bits.
+  pose proof (reducer_pow2_bits (Zpos w) ltac:(lia)) as Hpower.
+  eapply Nat.le_trans; [apply Std.Z.size_nat_mono|exact Hpower].
+  unfold Word.is_word, Word.modulus in Hword; lia.
+Qed.
+
+(** Bitwise complement has linear cost in the input magnitude bits. *)
+Lemma reducer_complement_time : forall z,
+  (Z.T_lnot z <= 8 * N.of_nat (Z.size_nat z + 1))%N.
+Proof.
+  intro z; pose proof (Std.Z.T_pred_le (- z)) as Hpred.
+  rewrite reducer_opp_bits in Hpred.
+  time_unfold Z.T_lnot; time_unfold Std.Z.T_opp; time_cbn.
+  rewrite Nat2N.inj_add; nia.
+Qed.
+
+(** Both endpoints emitted by the known-bit hull fit within the word width. *)
+Lemma reducer_hull_bits : forall w b,
+  (wrapped_bits (bits_hull w b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w b.
+  pose proof (reducer_word_bits w _ (reducer_wrap_word w (ones b))) as Hlo.
+  pose proof (reducer_word_bits w _ (reducer_bits_upper_word w b)) as Hhi.
+  unfold bits_hull; destruct (Z.leb _ _); cbn [wrapped_bits]; lia.
+Qed.
+
+(** Common-prefix extraction emits two normalized word masks. *)
+Lemma reducer_arc_prefix_words : forall w a,
+  Word.is_word w (zeros (arc_prefix w a)) /\
+  Word.is_word w (ones (arc_prefix w a)).
+Proof.
+  intros w [| |lo hi]; cbn [arc_prefix zeros ones];
+    try (split; apply Word.zero_is_word).
+  destruct (Z.leb _ _); cbn [zeros ones];
+    [|split; apply Word.zero_is_word].
+  split.
+  - rewrite Z.land_comm; apply reducer_and_word, reducer_ones_word.
+  - apply reducer_and_word, reducer_wrap_word.
+Qed.
+
+(** The two common-prefix masks occupy at most twice the word width. *)
+Lemma reducer_arc_prefix_bits : forall w a,
+  (tnum_bits (arc_prefix w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a; destruct (reducer_arc_prefix_words w a) as [Hzero Hone].
+  pose proof (reducer_word_bits w _ Hzero); pose proof (reducer_word_bits w _ Hone).
+  unfold tnum_bits; lia.
+Qed.
+
+(** Constructing the known-bit hull is linear in width and the two raw masks. *)
+Lemma reducer_hull_time : forall w b,
+  (T_bits_hull w b <= 128 * N.of_nat (Pos.to_nat w + tnum_bits b + 1))%N.
+Proof.
+  intros w b.
+  pose proof (reducer_wrap_time w (zeros b)) as Hzero.
+  pose proof (reducer_wrap_time w (ones b)) as Hone.
+  pose proof (reducer_ones_time (Zpos w) ltac:(lia)) as Hmask.
+  pose proof (reducer_word_bits w _ (reducer_wrap_word w (zeros b))) as Hzerobits.
+  pose proof (reducer_word_bits w _ (reducer_wrap_word w (ones b))) as Honebits.
+  pose proof (reducer_word_bits w _ (reducer_ones_word w)) as Hmaskbits.
+  pose proof (Std.Z.T_lxor_le (tnum_wrap w (zeros b)) (Z.ones (Zpos w))) as Hxor.
+  pose proof (Std.Z.T_leb_le (tnum_wrap w (ones b))
+    (Z.lxor (tnum_wrap w (zeros b)) (Z.ones (Zpos w)))) as Hcompare.
+  time_unfold T_bits_hull; time_unfold T_zeros; time_unfold T_ones; time_cbn.
+  unfold tnum_bits; change (Z.to_nat (Zpos w)) with (Pos.to_nat w) in Hmask.
+  rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** A nonnegative bit index bounded by the width also has bounded storage. *)
+Lemma reducer_index_bits : forall w n, 0 <= n <= Zpos w ->
+  (Z.to_nat n <= Pos.to_nat w /\ Z.size_nat n <= Pos.to_nat w)%nat.
+Proof.
+  intros w n [Hnonnegative Hupper].
+  pose proof (reducer_nonnegative_bits n Hnonnegative).
+  pose proof (Z2Nat.id n Hnonnegative); pose proof (positive_nat_Z w); lia.
+Qed.
+
+(** Extracting the common prefix is linear in width and the raw arc endpoint bits. *)
+Lemma reducer_arc_prefix_time : forall w a,
+  (T_arc_prefix w a <= 512 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi]; time_unfold T_arc_prefix; time_cbn;
+    cbn [wrapped_bits]; try (rewrite Nat2N.inj_add; nia).
+  set (l := tnum_wrap w lo); set (h := tnum_wrap w hi).
+  pose proof (reducer_wrap_time w lo) as Hwraplo.
+  pose proof (reducer_wrap_time w hi) as Hwraphi.
+  pose proof (reducer_wrap_word w lo) as Hlword; fold l in Hlword.
+  pose proof (reducer_wrap_word w hi) as Hhword; fold h in Hhword.
+  pose proof (reducer_word_bits w l Hlword) as Hlbits.
+  pose proof (reducer_word_bits w h Hhword) as Hhbits.
+  pose proof (Std.Z.T_leb_le l h) as Hcompare.
+  destruct (Z.leb l h); [|rewrite !Nat2N.inj_add in *; nia].
+  set (d := Z.lxor l h).
+  pose proof (reducer_xor_word w l h Hlword Hhword) as Hdword; fold d in Hdword.
+  pose proof (reducer_word_bits w d Hdword) as Hdbits.
+  pose proof (reducer_log2_width w d Hdword) as Hcutoff.
+  pose proof (Z.log2_nonneg d) as Hlog0.
+  pose proof (reducer_index_bits w (Z.log2 d) ltac:(lia)) as [_ Hlogbits].
+  pose proof (reducer_index_bits w (Z.log2 d + 1) Hcutoff) as [Hindex _].
+  set (m := Z.ones (Z.log2 d + 1)).
+  pose proof (reducer_mask_word w (Z.log2 d + 1) Hcutoff) as Hmword.
+  fold m in Hmword.
+  pose proof (reducer_word_bits w m Hmword) as Hmbits.
+  pose proof (reducer_or_word w l m Hlword Hmword) as Hunionword.
+  pose proof (reducer_word_bits w _ Hunionword) as Hunionbits.
+  pose proof (reducer_complement_bits w m Hmword) as Hnotmbits.
+  pose proof (reducer_complement_bits w _ Hunionword) as Hnotunionbits.
+  pose proof (reducer_word_bits w _ (reducer_ones_word w)) as Hmaskbits.
+  pose proof (Std.Z.T_lxor_le l h) as Hxor.
+  pose proof (reducer_log2_time d) as Hlog.
+  pose proof (Std.Z.T_add_le (Z.log2 d) 1) as Hsucc.
+  pose proof (reducer_ones_time (Z.log2 d + 1) (proj1 Hcutoff)) as Hprefixmask.
+  pose proof (Std.Z.T_lor_le l m) as Hunion.
+  pose proof (reducer_complement_time m) as Hnotm.
+  pose proof (reducer_complement_time (Z.lor l m)) as Hnotunion.
+  pose proof (reducer_ones_time (Zpos w) ltac:(lia)) as Hmask.
+  pose proof (Std.Z.T_land_le (Z.lnot (Z.lor l m)) (Z.ones (Zpos w))) as Hzeros.
+  pose proof (Std.Z.T_land_le l (Z.lnot m)) as Hones.
+  fold d m.
+  change (Std.Z.T_add (Z.log2 d) 1 <=
+    3 * N.of_nat (Z.size_nat (Z.log2 d) + 1) + 1)%N in Hsucc.
+  change (Z.to_nat (Zpos w)) with (Pos.to_nat w) in Hmask.
+  rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Width equality reads no more bits than the numeric value of the left width. *)
+Lemma reducer_width_time : forall w v,
+  (Std.Pos.T_eqb w v <= N.of_nat (Pos.to_nat w))%N.
+Proof.
+  intros w v; eapply N.le_trans; [apply Std.Pos.T_eqb_le|].
+  apply time_of_nat_le, reducer_positive_bits.
 Qed.
 
 (** The order used by tagged word domains. *)
@@ -752,30 +1051,94 @@ Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   TimeFun to_left.
   TimeFun to_right.
   TimeFun reduce.
-  Definition c_exchange : N := 1. (* STUB *)
-  Definition c_reduce : N := 1. (* STUB *)
+  Definition c_exchange : N := 1024 * (A0.c_payload + B0.c_payload + 1).
+  Definition c_reduce : N := (c_exchange + 1) * (c_exchange + 1).
   Definition k_exchange : N := 1.
   Lemma T_to_left_le : forall a b, (T_to_left (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; time_unfold T_to_left; time_cbn;
+      unfold A.size, B.size, tagged_size, c_exchange;
+      rewrite ?A0.psize_bits, ?B0.psize_bits, ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (reducer_width_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_hull_time w b) as Hhull.
+    pose proof (reducer_hull_bits w b) as Hbits.
+    pose proof (A0.T_pmeet_le w a (bits_hull w b)) as Hmeet.
+    rewrite !A0.psize_bits in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_to_right_le : forall a b, (T_to_right (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; time_unfold T_to_right; time_cbn;
+      unfold A.size, B.size, tagged_size, c_exchange;
+      rewrite ?A0.psize_bits, ?B0.psize_bits, ?Nat2N.inj_add; time_cbn; try nia.
+    pose proof (reducer_width_time w v) as Hwidth.
+    destruct (Pos.eqb w v) eqn:Hsame; [|nia].
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_arc_prefix_time w a) as Hprefix.
+    pose proof (reducer_arc_prefix_bits w a) as Hbits.
+    pose proof (B0.T_pmeet_le w b (arc_prefix w a)) as Hmeet.
+    rewrite !B0.psize_bits in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma left_size : forall a b,
     (N.of_nat (A.size (fst (to_left (a, b))) + B.size b) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; unfold to_left; cbn [fst];
+      unfold A.size, B.size, tagged_size, c_exchange;
+      try (rewrite !Nat2N.inj_add; time_cbn; nia).
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?A0.psize_bits, ?B0.psize_bits, ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_hull_bits w b) as Hbits.
+    pose proof (A0.pmeet_size w a (bits_hull w b)) as Hmeet.
+    rewrite !A0.psize_bits in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma right_size : forall a b,
     (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|w a|] [|v b|]; unfold to_right; cbn [snd];
+      unfold A.size, B.size, tagged_size, c_exchange;
+      try (rewrite !Nat2N.inj_add; time_cbn; nia).
+    destruct (Pos.eqb w v) eqn:Hsame; time_cbn;
+      rewrite ?A0.psize_bits, ?B0.psize_bits, ?Nat2N.inj_add; try nia.
+    apply Pos.eqb_eq in Hsame; subst v.
+    pose proof (reducer_arc_prefix_bits w a) as Hbits.
+    pose proof (B0.pmeet_size w b (arc_prefix w a)) as Hmeet.
+    rewrite !B0.psize_bits in Hmeet.
+    rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_reduce_le : forall a b,
     (T_reduce (a, b) <= c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b.
+    pose proof (T_to_left_le a b) as Hleft.
+    pose proof (left_size a b) as Hsize.
+    pose proof (left_frame (a, b)) as Hframe.
+    destruct (to_left (a, b)) as [a' b'] eqn:Hstep.
+    cbn [fst snd] in Hsize, Hframe; subst b'.
+    pose proof (T_to_right_le a' b) as Hright.
+    time_unfold T_reduce; cbn beta iota zeta; rewrite Hstep.
+    unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma reduce_size_le : forall a b,
     (N.of_nat (A.size (fst (reduce (a, b))) + B.size (snd (reduce (a, b)))) <=
       c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; unfold reduce; rewrite right_frame.
+    pose proof (left_size a b) as Hleft.
+    pose proof (left_frame (a, b)) as Hframe.
+    destruct (to_left (a, b)) as [a' b'] eqn:Hstep.
+    cbn [fst snd] in Hleft, Hframe; subst b'.
+    pose proof (right_size a' b) as Hright.
+    cbn [fst]; unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
@@ -795,7 +1158,10 @@ Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Qed.
   Lemma reduce_bigO : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_reduce; intros [a b] _; cbn [fst snd].
+    pose proof (T_reduce_le a b); nia.
+  Qed.
 End WrappedBitsT.
 
 Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
