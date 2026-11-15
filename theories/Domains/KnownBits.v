@@ -1208,7 +1208,29 @@ Qed.
 Theorem tnum_map_sound : forall sw rw f a x,
   tnum_bit_copy sw rw f -> is_word sw x -> tnum_gamma sw a x ->
   tnum_gamma rw (tnum_map sw rw f a) (f x).
-Proof. Admitted. (* CONVERT: tnum_map_sound: Found no subterm matching "Z.testbit (wnot ?M1535 ?M1536) ?M1537" *)
+Proof.
+  intros sw rw f a x Hcopy Hx Ha. apply tnum_gamma_bits in Ha.
+  destruct Ha as [Hz Ho].
+  assert (Hmin : is_word sw (tnum_min sw a)).
+  { unfold tnum_min. rewrite tnum_wrap_agrees. apply wrap_is_word. }
+  assert (Hmax : is_word sw (tnum_max sw a)).
+  { unfold tnum_max. rewrite tnum_wnot_agrees. apply wnot_is_word. }
+  apply tnum_gamma_bits. split; intros i Hi Hbit;
+    cbn [tnum_map zeros ones] in Hbit.
+  - rewrite tnum_wnot_agrees, tnum_not_bit in Hbit by exact Hi.
+    apply negb_true_iff in Hbit.
+    destruct (Hcopy i Hi) as [Hclear|[j [Hj Hsource]]]; [now apply Hclear|].
+    rewrite (Hsource _ Hmax) in Hbit. rewrite (Hsource _ Hx).
+    unfold tnum_max in Hbit.
+    rewrite tnum_wnot_agrees, tnum_not_bit in Hbit by exact Hj.
+    apply negb_false_iff in Hbit. now apply Hz.
+  - rewrite tnum_wrap_agrees, tnum_wrap_bit in Hbit by exact Hi.
+    destruct (Hcopy i Hi) as [Hclear|[j [Hj Hsource]]].
+    + rewrite (Hclear _ Hmin) in Hbit. discriminate.
+    + rewrite (Hsource _ Hmin) in Hbit. rewrite (Hsource _ Hx).
+      unfold tnum_min in Hbit.
+      rewrite tnum_wrap_agrees, tnum_wrap_bit in Hbit by exact Hj. now apply Ho.
+Qed.
 
 Theorem tnum_shl_copy : forall w k, is_word w k ->
   tnum_bit_copy w w (fun x => wshl w x k).
@@ -2013,11 +2035,17 @@ Local Open Scope nat_scope.
 Theorem tnum_unknown_from_equation : forall n i m,
   tnum_unknown_from n i m =
   length (filter (fun j => negb (Z.testbit m (Z.of_nat j))) (seq i n)).
-Proof. Admitted. (* CONVERT: tnum_unknown_from_equation: The reference tnum_unknown_from_c was not found in the current *)
+Proof.
+  intro n. induction n as [|n IH]; intros i m; cbn [tnum_unknown_from seq filter length].
+  - reflexivity.
+  - rewrite IH. destruct (Z.testbit m (Z.of_nat i)); reflexivity.
+Qed.
 
 Theorem tnum_rank_equation : forall w a,
   tnum_rank w a = tnum_unknown w (zeros a) + tnum_unknown w (ones a).
-Proof. Admitted. (* CONVERT: tnum_rank_equation: The reference tnum_rank_c was not found in the current environment. *)
+Proof.
+  reflexivity.
+Qed.
 
 Lemma tnum_filter_count_monotone : forall (A : Type) (f g : A -> bool) xs,
   (forall x, In x xs -> f x = true -> g x = true) ->
@@ -2034,28 +2062,88 @@ Lemma tnum_filter_count_equal : forall (A : Type) (f g : A -> bool) xs,
   (forall x, In x xs -> f x = true -> g x = true) ->
   length (filter f xs) = length (filter g xs) ->
   forall x, In x xs -> f x = g x.
-Proof. Admitted. (* CONVERT: tnum_filter_count_equal: The variable tnum_filter_count_monotone was not found in the current *)
+Proof.
+  intros A f g xs. induction xs as [|y xs IH]; intros Hsub Hcount x Hin.
+  - contradiction.
+  - assert (Htailsub : forall a, In a xs -> f a = true -> g a = true).
+    { intros a Ha. apply Hsub. now right. }
+    pose proof (tnum_filter_count_monotone A f g xs Htailsub) as Htail.
+    pose proof (Hsub y (or_introl eq_refl)) as Hhead.
+    cbn [filter] in Hcount.
+    destruct (f y) eqn:Hf, (g y) eqn:Hg; cbn in Hcount; try discriminate; try lia.
+    + destruct Hin as [->|Hin]; [now rewrite Hf, Hg|].
+      apply IH; [exact Htailsub|lia|exact Hin].
+    + destruct Hin as [->|Hin]; [now rewrite Hf, Hg|].
+      apply IH; [exact Htailsub|exact Hcount|exact Hin].
+Qed.
 
 Lemma tnum_unknown_monotone : forall w a b,
   tnum_subset w b a = true -> tnum_unknown w a <= tnum_unknown w b.
-Proof. Admitted. (* CONVERT: tnum_unknown_monotone: The variable tnum_unknown_from_equation was not found in the current environment. *)
+Proof.
+  intros w a b Hsub. rewrite tnum_subset_bits in Hsub.
+  unfold tnum_unknown.
+  apply tnum_filter_count_monotone. intros i Hi Hbit. apply in_seq in Hi.
+  apply negb_true_iff in Hbit. apply negb_true_iff.
+  destruct (Z.testbit b (Z.of_nat i)) eqn:Hb; [|reflexivity].
+  specialize (Hsub (Z.of_nat i) ltac:(rewrite <- positive_nat_Z; lia) Hb). congruence.
+Qed.
 
 Lemma tnum_unknown_equal : forall w a b,
   tnum_subset w b a = true -> tnum_unknown w a = tnum_unknown w b ->
   tnum_subset w a b = true.
-Proof. Admitted. (* CONVERT: tnum_unknown_equal: The variable tnum_unknown_from_equation was not found in the current *)
+Proof.
+  intros w a b Hsub Hcount. apply tnum_subset_bits. intros i Hi Hbit.
+  assert (Himp : forall j, In j (seq 0 (Pos.to_nat w)) ->
+    negb (Z.testbit a (Z.of_nat j)) = true ->
+    negb (Z.testbit b (Z.of_nat j)) = true).
+  { intros j Hj Hzero. apply in_seq in Hj. apply negb_true_iff in Hzero.
+    apply negb_true_iff. rewrite tnum_subset_bits in Hsub.
+    destruct (Z.testbit b (Z.of_nat j)) eqn:Hb; [|reflexivity].
+    specialize (Hsub (Z.of_nat j) ltac:(rewrite <- positive_nat_Z; lia) Hb). congruence. }
+  unfold tnum_unknown in Hcount.
+  pose proof (tnum_filter_count_equal nat _ _ _ Himp Hcount (Z.to_nat i)
+    ltac:(apply in_seq; cbn [Nat.add]; split; [lia|]; apply Nat2Z.inj_lt;
+      rewrite Z2Nat.id, positive_nat_Z by lia; lia)) as Heq.
+  cbn beta in Heq. rewrite Z2Nat.id in Heq by lia. rewrite Hbit in Heq.
+  destruct (Z.testbit b i); cbn in Heq; congruence.
+Qed.
 
 Theorem tnum_rank_monotone : forall w a b,
   tnum_leb w a b = true -> tnum_rank w a <= tnum_rank w b.
-Proof. Admitted. (* CONVERT: tnum_rank_monotone: The variable tnum_unknown_monotone was not found in the current *)
+Proof.
+  intros w a b Hle.
+  change (tnum_subset w (zeros b) (zeros a) &&
+    tnum_subset w (ones b) (ones a) = true) in Hle.
+  apply andb_true_iff in Hle as [Hz Ho].
+  apply tnum_unknown_monotone in Hz, Ho. rewrite !tnum_rank_equation. lia.
+Qed.
 
 Theorem tnum_rank_equal : forall w a b,
   tnum_leb w a b = true -> tnum_rank w a = tnum_rank w b ->
   tnum_leb w b a = true.
-Proof. Admitted. (* CONVERT: tnum_rank_equal: The variable tnum_unknown_monotone was not found in the current *)
+Proof.
+  intros w a b Hle Heq.
+  change (tnum_subset w (zeros b) (zeros a) &&
+    tnum_subset w (ones b) (ones a) = true) in Hle.
+  apply andb_true_iff in Hle as [Hz Ho].
+  pose proof (tnum_unknown_monotone w _ _ Hz) as Hzero.
+  pose proof (tnum_unknown_monotone w _ _ Ho) as Hone.
+  rewrite !tnum_rank_equation in Heq.
+  change (tnum_subset w (zeros a) (zeros b) &&
+    tnum_subset w (ones a) (ones b) = true).
+  apply andb_true_iff. split; apply tnum_unknown_equal; try assumption; lia.
+Qed.
 
 Theorem tnum_rank_bounded : forall w a, tnum_rank w a <= 2 * Pos.to_nat w.
-Proof. Admitted. (* CONVERT: tnum_rank_bounded: The variable tnum_unknown_from_equation was not found in the current *)
+Proof.
+  intros w a. rewrite tnum_rank_equation. unfold tnum_unknown.
+ 
+  pose proof (filter_length_le (fun i => negb (Z.testbit (zeros a) (Z.of_nat i)))
+    (seq 0 (Pos.to_nat w))) as Hz.
+  pose proof (filter_length_le (fun i => negb (Z.testbit (ones a) (Z.of_nat i)))
+    (seq 0 (Pos.to_nat w))) as Ho.
+  rewrite length_seq in Hz, Ho. lia.
+Qed.
 
 Local Open Scope Z_scope.
 
