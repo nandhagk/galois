@@ -3942,6 +3942,171 @@ Module WtoT <: WTO_ALL.
 
   Local Transparent loopN.
 
+  (** Sibling reversal preserves every emitted vertex occurrence. *)
+  Lemma reverse_into_length : forall w tail,
+    length (wto_order (wto_reverse_into w tail)) =
+      length (wto_order w) + length (wto_order tail).
+  Proof.
+    intro w. unfold wto_reverse_into. induction w as
+      [|v rest IH|h body IHbody rest IHrest]; intro tail.
+    - reflexivity.
+    - cbn [Galois.Graph.Wto.wto_reverse_into]. rewrite IH.
+      cbn [wto_order length]. lia.
+    - cbn [Galois.Graph.Wto.wto_reverse_into]. rewrite IHrest.
+      cbn [wto_order length]. rewrite !length_app. lia.
+  Qed.
+
+  (** Suspended output can be charged only at its current depth or an outer one. *)
+  Fixpoint suspended_credit level depth parents :=
+    match parents with
+    | [] => 0
+    | parent :: rest =>
+      (if Nat.leb level depth then length (wto_order parent) else 0) +
+        suspended_credit level (Nat.pred depth) rest
+    end.
+
+  Definition partial_stack_credit level depth partial parents :=
+    (if Nat.leb level depth then length (wto_order partial) else 0) +
+      suspended_credit level (Nat.pred depth) parents.
+
+  (** Pending component vertices may still reach any level; a close head only moves outward. *)
+  Fixpoint partial_tasks_credit level depth tasks :=
+    match tasks with
+    | [] => 0
+    | WtoExpand _ _ _ c :: tasks => length c + partial_tasks_credit level depth tasks
+    | WtoClose _ :: tasks =>
+      (if Nat.leb level (Nat.pred depth) then 1 else 0) +
+        partial_tasks_credit level (Nat.pred depth) tasks
+    end.
+
+  Definition partial_credit level st :=
+    partial_tasks_credit level (length (wto_parents st)) (wto_tasks st) +
+      partial_stack_credit level (length (wto_parents st))
+        (wto_partial st) (wto_parents st).
+
+  Definition partial_entry level st :=
+    if Nat.eqb (length (wto_parents st)) level then
+      match wto_tasks st with
+      | [] | WtoClose _ :: _ => length (wto_order (wto_partial st))
+      | _ => 0
+      end
+    else 0.
+
+  Definition partial_mass level states :=
+    fold_right (fun st n =>
+      if Nat.eqb (length (wto_parents st)) level then
+        match wto_tasks st with
+        | [] | WtoClose _ :: _ => length (wto_order (wto_partial st)) + n
+        | _ => n
+        end
+      else n) 0 states.
+
+  Lemma partial_mass_cons : forall level st states,
+    partial_mass level (st :: states) = partial_entry level st + partial_mass level states.
+  Proof.
+    intros level st states. unfold partial_mass, partial_entry. cbn [fold_right].
+    destruct (Nat.eqb (length (wto_parents st)) level); [|reflexivity].
+    destruct (wto_tasks st) as [|task tasks]; [reflexivity|]. destruct task; reflexivity.
+  Qed.
+
+  Lemma partial_entry_credit : forall level st, partial_entry level st <= partial_credit level st.
+  Proof.
+    intros level st. unfold partial_entry, partial_credit, partial_stack_credit.
+    destruct (Nat.eqb (length (wto_parents st)) level) eqn:Hlevel; [|lia].
+    apply Nat.eqb_eq in Hlevel. subst level. rewrite Nat.leb_refl.
+    destruct (wto_tasks st) as [|task tasks]; [lia|]. destruct task; lia.
+  Qed.
+
+  Lemma partial_tasks_expands : forall level depth within entries owners cs tasks,
+    partial_tasks_credit level depth (wto_expand_tasks within entries owners cs ++ tasks) =
+      length (concat cs) + partial_tasks_credit level depth tasks.
+  Proof.
+    intros level depth within entries owners cs tasks.
+    change (wto_expand_tasks within entries owners cs) with
+      (map (fun c => WtoExpand within entries owners c) cs).
+    induction cs as [|c rest IH]; cbn [map app concat partial_tasks_credit]; [reflexivity|].
+    rewrite IH, length_app. lia.
+  Qed.
+
+  Local Opaque loopN Galois.Graph.Wto.wto_components.
+
+  (** A close at the chosen depth spends exactly the partial output it moves outward. *)
+  Lemma partial_credit_step : forall g level st next,
+    frames_balanced st -> wto_step g st = inl next ->
+      partial_entry level st + partial_credit level next <= partial_credit level st.
+  Proof.
+    intros g level [tasks partial parents] next Hbalance Hstep.
+    destruct tasks as [|task tasks]; [discriminate Hstep|].
+    destruct task as [within entries owners c|h].
+    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      destruct (Galois.Graph.Wto.wto_select
+        (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+      + pose proof (Permutation_length (wto_select_spec _ _ _ _ Hselect)) as Hlength.
+        destruct body as [|v body].
+        * inversion Hstep; subst next. cbn [length] in Hlength.
+          unfold partial_entry, partial_credit, partial_stack_credit.
+          cbn [wto_tasks wto_parents wto_partial partial_tasks_credit].
+          destruct (Galois.Graph.Wto.wto_member h (succs (base g) h));
+            cbn [wto_order length app];
+            destruct (Nat.eqb (length parents) level), (Nat.leb level (length parents)); lia.
+        * inversion Hstep; subst next.
+          pose proof (wto_components_size (Galois.Graph.Wto.wto_scoped g (Some (v :: body)))
+            (rev (v :: body))) as Hchild.
+          rewrite !rev_append_rev, !app_nil_r.
+          set (cs := comps (Galois.Graph.Wto.wto_components
+            (Galois.Graph.Wto.wto_scoped g (Some (v :: body)))
+            (rev (v :: body)))) in *.
+          change (length (concat cs) <= length (v :: body)) in Hchild.
+          clear Hstep Hselect.
+          unfold partial_entry, partial_credit, partial_stack_credit.
+          cbn [wto_tasks wto_parents wto_partial length].
+          rewrite partial_tasks_expands. cbn [partial_tasks_credit suspended_credit Nat.pred].
+          change ((if Nat.eqb (length parents) level then 0 else 0) +
+            (length (concat (rev cs)) +
+              ((if Nat.leb level (length parents) then 1 else 0) +
+                partial_tasks_credit level (length parents) tasks) +
+              ((if Nat.leb level (S (length parents)) then 0 else 0) +
+                ((if Nat.leb level (length parents) then length (wto_order partial) else 0) +
+                  suspended_credit level (Nat.pred (length parents)) parents))) <=
+            length c + partial_tasks_credit level (length parents) tasks +
+              ((if Nat.leb level (length parents) then length (wto_order partial) else 0) +
+                suspended_credit level (Nat.pred (length parents)) parents)).
+          clearbody cs.
+          rewrite <- (Permutation_length (wto_components_reverse cs)).
+          cbn [wto_order length] in Hlength, Hchild |- *.
+          destruct (Nat.eqb (length parents) level), (Nat.leb level (length parents)),
+            (Nat.leb level (S (length parents))); lia.
+      + apply wto_select_empty in Hselect. subst c. inversion Hstep; subst next.
+        unfold partial_entry, partial_credit, partial_stack_credit.
+        cbn [wto_tasks wto_parents wto_partial partial_tasks_credit length].
+        destruct (Nat.eqb (length parents) level); lia.
+    - unfold frames_balanced in Hbalance.
+      cbn [wto_tasks wto_parents filter length] in Hbalance.
+      destruct parents as [|parent parents]; [cbn [length] in Hbalance; lia|].
+      inversion Hstep; subst next.
+      unfold partial_entry, partial_credit, partial_stack_credit.
+      cbn [wto_tasks wto_parents wto_partial length partial_tasks_credit suspended_credit Nat.pred].
+      cbn [wto_order length]. rewrite length_app, reverse_into_length.
+      cbn [wto_order length].
+      destruct (Nat.eqb_spec (S (length parents)) level);
+        destruct (Nat.leb_spec0 level (S (length parents)));
+        destruct (Nat.leb_spec0 level (length parents)); lia.
+  Qed.
+
+  Lemma history_partial_credit : forall g level fuel st,
+    frames_balanced st -> partial_mass level (history_from g fuel st) <= partial_credit level st.
+  Proof.
+    intros g level fuel. induction fuel as [|fuel IH]; intros st Hbalance.
+    - cbn [history_from]. destruct (wto_step g st); rewrite partial_mass_cons;
+        cbn [partial_mass fold_right]; pose proof (partial_entry_credit level st); lia.
+    - cbn [history_from]. destruct (wto_step g st) as [next|result] eqn:Hstep.
+      + rewrite partial_mass_cons.
+        specialize (IH next (frames_balanced_step g st next Hbalance Hstep)).
+        pose proof (partial_credit_step g level st next Hbalance Hstep). lia.
+      + rewrite partial_mass_cons. cbn [partial_mass fold_right].
+        pose proof (partial_entry_credit level st). lia.
+  Qed.
+
   (** Close and terminal steps at one depth reverse disjoint partial outputs. *)
   Lemma F21_partial_mass : forall g roots level,
     fold_right (fun st n =>
@@ -3952,7 +4117,23 @@ Module WtoT <: WTO_ALL.
         end
       else n) 0 (history g roots) <=
     length (concat (comps (wto_components g roots))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots level. change (partial_mass level (history g roots) <=
+      length (concat (comps (wto_components g roots)))).
+    unfold history. eapply Nat.le_trans.
+    - apply history_partial_credit, frames_balanced_initial.
+    - unfold initial, partial_credit, partial_stack_credit.
+      cbn [wto_parents wto_tasks wto_partial length wto_order suspended_credit].
+      pose proof (partial_tasks_expands level 0 None
+        (wto_entries g roots (wto_components g roots)) (comp (wto_components g roots))
+        (rev (comps (wto_components g roots))) []) as Hcredit.
+      rewrite app_nil_r in Hcredit. rewrite Hcredit. cbn [partial_tasks_credit].
+      rewrite <- (Permutation_length (wto_components_reverse _)).
+      destruct (Nat.leb level 0); lia.
+  Qed.
+
+  Local Transparent loopN Galois.Graph.Wto.wto_components.
+
 
   Local Opaque loopN.
 
