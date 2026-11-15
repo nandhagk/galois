@@ -8329,6 +8329,37 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** Every continuing reachable step spends the internal credit at the public row allowance. *)
+  Lemma extraction_step_amort : forall cs db s next,
+    D.wf db -> D.canonical db -> ctor_inventory cs db -> reachable cs db s ->
+    step cs db s = inl next ->
+    (T_step cs db s + extraction_potential db next <= extraction_potential db s + k_step *
+      N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
+      N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db s next Hwf Hcanonical Hinventory Hreachable Hstep.
+    assert (Hnext : reachable cs db next).
+    { unfold reachable in *. eapply rt_trans; [exact Hreachable |]. now apply rt_step. }
+    assert (Hgeneric : (ResourceClocks.T_search_step s +
+      ResourceClocks.search_potential (R db) (D.unit db + cost_width db) next <=
+      ResourceClocks.search_potential (R db) (D.unit db + cost_width db) s +
+      64 * (PTrieT.c_trie + Q.c_pq + 1) *
+        N.of_nat (Q.unit_pq (R db) (D.unit db + cost_width db)))%N).
+    { apply (ResourceClocks.T_search_step_amort D.t (Enumeration.enumerated_rows cs db)
+        (R db) (D.unit db + cost_width db) s next).
+      - exact (proj1 (reachable_verified cs db s Hreachable)).
+      - now apply inventory_source_width.
+      - now apply reachable_queue_fits with cs.
+      - now apply reachable_search_load with cs.
+      - intros f k i Hsource Hknown.
+        exact (reachable_row_width cs db next f k i Hwf Hcanonical Hinventory
+          Hnext Hsource Hknown).
+      - exact Hstep. }
+    pose proof (extraction_step_allowance db) as Hallowance.
+    unfold extraction_potential. rewrite extraction_step_clock.
+    clear - Hgeneric Hallowance. lia.
+  Qed.
+
   Lemma T1_step_amort : forall cs db s s', D.wf db -> D.canonical db -> ctor_inventory cs db ->
     reachable cs db s -> knuth_inv db s ->
     step cs db s = inl s' ->
