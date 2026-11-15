@@ -1669,6 +1669,150 @@ Proof.
   lia.
 Qed.
 
+(** Circular inclusion uses a fixed number of linear offset computations. *)
+Lemma wrapped_leb_time : forall w a b,
+  (T_wrapped_leb w a b <=
+    1024 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intro w.
+  pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  intros [| |la ha] [| |lb hb]; time_unfold T_wrapped_leb; cbn [wrapped_bits].
+  all: try (rewrite !Nat2N.inj_add in *; time_cbn_all; lia).
+  - pose proof (wrapped_offset_bits w lb hb) as Hbits.
+    time_pose. rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
+  - pose proof (wrapped_offset_bits w lb hb) as Hcoverbits.
+    pose proof (wrapped_offset_bits w lb la) as Hstartbits.
+    pose proof (wrapped_offset_bits w la ha) as Hlengthbits.
+    pose proof (WordTime.integer_add_size (wrapped_offset w lb la)
+      (wrapped_offset w la ha)) as Hsumbits.
+    time_pose. rewrite !Nat2N.inj_add in *. time_cbn_all. lia.
+Qed.
+TimeBound wrapped_leb_time.
+
+(** Checking a cover charges the two circular inclusion queries. *)
+Lemma wrapped_cover_time : forall w a b candidate,
+  (T_wrapped_cover w a b candidate <= 4096 * N.of_nat
+    (Pos.to_nat w + wrapped_bits a + wrapped_bits b + wrapped_bits candidate + 1))%N.
+Proof.
+  intros w a b candidate. time_unfold T_wrapped_cover. time_cbn. time_pose.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_cover_time.
+
+(** Cover selection returns one of the candidates or full. *)
+Lemma wrapped_choose_bits : forall w a b first second,
+  (wrapped_bits (wrapped_choose w a b first second) <=
+    wrapped_bits first + wrapped_bits second)%nat.
+Proof.
+  intros w a b first second. unfold wrapped_choose.
+  destruct (wrapped_cover w a b first), (wrapped_cover w a b second),
+    (wrapped_size w first <=? wrapped_size w second); cbn [wrapped_bits]; lia.
+Qed.
+
+(** Selecting a circular cover charges both candidates and the two inputs. *)
+Lemma wrapped_choose_time : forall w a b first second,
+  (T_wrapped_choose w a b first second <= 16384 * N.of_nat
+    (Pos.to_nat w + wrapped_bits a + wrapped_bits b +
+      wrapped_bits first + wrapped_bits second + 1))%N.
+Proof.
+  intros w a b first second.
+  pose proof (wrapped_size_bits w first) as Hfirstbits.
+  time_unfold T_wrapped_choose. time_cbn. time_pose.
+  destruct (wrapped_cover w a b first), (wrapped_cover w a b second),
+    (wrapped_size w first <=? wrapped_size w second);
+    rewrite !Nat2N.inj_add in *; time_cbn_all; lia.
+Qed.
+TimeBound wrapped_choose_time.
+
+(** The join candidate only combines endpoint magnitudes from its two inputs. *)
+Lemma wrapped_join_candidate_bits : forall w a b,
+  (wrapped_bits
+    (if wrapped_leb w a b then b else
+     if wrapped_leb w b a then a else
+     match a, b with
+     | WItv lo hi, WItv lo' hi' =>
+       wrapped_choose w a b (WItv lo hi') (WItv lo' hi)
+     | _, _ => WFull
+     end) <= wrapped_bits a + wrapped_bits b)%nat.
+Proof.
+  intros w a b. destruct (wrapped_leb w a b), (wrapped_leb w b a); try lia.
+  destruct a as [| |lo hi], b as [| |lo' hi']; cbn [wrapped_bits]; try lia.
+  pose proof (wrapped_choose_bits w (WItv lo hi) (WItv lo' hi')
+    (WItv lo hi') (WItv lo' hi)) as Hbits. cbn [wrapped_bits] in Hbits. lia.
+Qed.
+
+(** Circular joining charges two inclusion queries, cover selection and normalization. *)
+Lemma wrapped_join_time : forall w a b,
+  (T_wrapped_join w a b <=
+    65536 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intros w a b. pose proof (wrapped_join_candidate_bits w a b) as Hcandidate.
+  time_unfold T_wrapped_join.
+  destruct (wrapped_leb w a b).
+  - time_cbn. time_pose. rewrite !Nat2N.inj_add in *. lia.
+  - destruct (wrapped_leb w b a).
+    + time_cbn. time_pose. rewrite !Nat2N.inj_add in *. lia.
+    + destruct a as [| |lo hi], b as [| |lo' hi'];
+        time_cbn; time_pose; cbn [wrapped_bits] in *;
+        rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_join_time.
+
+(** Expanding an arc charges cardinality, endpoint shifts and normalization. *)
+Lemma wrapped_double_time : forall w a,
+  (T_wrapped_double w a <=
+    4096 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi].
+  - time_unfold T_wrapped_double. cbn [wrapped_bits]. rewrite Nat2N.inj_add. lia.
+  - time_unfold T_wrapped_double. cbn [wrapped_bits]. rewrite Nat2N.inj_add. lia.
+  - pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+    pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+    pose proof (wrapped_size_bits w (WItv lo hi)) as Hsizebits.
+    pose proof (WordTime.integer_sub_size lo (wrapped_size w (WItv lo hi))) as Hlobits.
+    pose proof (WordTime.integer_add_size hi (wrapped_size w (WItv lo hi))) as Hhibits.
+    time_unfold T_wrapped_double. cbn beta iota zeta. time_pose.
+    destruct (modulus w <=? 3 * wrapped_size w (WItv lo hi));
+      cbn [wrapped_bits] in *; rewrite !Nat2N.inj_add in *; time_cbn_all; lia.
+Qed.
+TimeBound wrapped_double_time.
+
+(** Narrowing returns one of the two normalized input arcs. *)
+Lemma wrapped_narrow_bits : forall w a b,
+  (wrapped_bits (wrapped_narrow w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b.
+  pose proof (wrapped_norm_bits w a) as Ha.
+  pose proof (wrapped_norm_bits w b) as Hb.
+  unfold wrapped_narrow. destruct (wrapped_norm w a); assumption.
+Qed.
+
+(** Narrowing performs a bounded number of normalizations. *)
+Lemma wrapped_narrow_time : forall w a b,
+  (T_wrapped_narrow w a b <=
+    2048 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intros w a b. time_unfold T_wrapped_narrow. time_cbn. time_pose.
+  destruct (wrapped_norm w a); rewrite !Nat2N.inj_add in *; time_cbn_all; lia.
+Qed.
+TimeBound wrapped_narrow_time.
+
+(** Point recognition compares the normalized endpoints. *)
+Lemma wrapped_point_time : forall w a,
+  (T_wrapped_point w a <=
+    2048 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w a. pose proof (wrapped_norm_time w a) as Hnorm.
+  time_unfold T_wrapped_point. destruct (wrapped_norm w a) as [| |lo hi] eqn:Hshape.
+  - rewrite !Nat2N.inj_add in *. lia.
+  - rewrite !Nat2N.inj_add in *. lia.
+  - destruct (wrapped_norm_endpoints w a lo hi Hshape) as [Hlo Hhi].
+    pose proof (WordTime.word_size_bound w lo Hlo) as Hlobits.
+    time_cbn. time_pose. destruct (lo =? hi); rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_point_time.
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
