@@ -2262,7 +2262,19 @@ Module Scc <: SCC.
   Lemma comps_partition : forall g, wf_graph (base g) ->
     NoDup (concat (comps (run g))) /\
     (forall v, In v (concat (comps (run g))) <-> In v (nodes g)).
-  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
+  Proof.
+    intros g Hwf. unfold run. cbn [comps].
+    rewrite rev_append_rev, app_nil_r.
+    pose proof (tarjan_complete_components (scc_trace g)
+      (scc_trace_unique g) (scc_trace_nested g)) as Hcomponents.
+    split.
+    - eapply Permutation_NoDup; [apply Permutation_sym; exact Hcomponents|].
+      apply scc_trace_unique.
+    - intro v. rewrite <- (scc_trace_entered g v).
+      split; intro Hin.
+      + eapply Permutation_in; [exact Hcomponents|exact Hin].
+      + eapply Permutation_in; [apply Permutation_sym; exact Hcomponents|exact Hin].
+  Qed.
 
   Lemma comps_nonempty : forall g, wf_graph (base g) ->
     Forall (fun vs => vs <> []) (comps (run g)).
