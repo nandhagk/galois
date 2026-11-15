@@ -8,7 +8,7 @@
     Builds on: RunSig, Sorts, the binary trie, the self-delimiting codes and the binary-fuel
     loop. *)
 
-From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
+From Stdlib Require Import List PArith NArith Arith Bool Relations.Relation_Operators.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
@@ -1112,12 +1112,225 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     reflexivity.
   Qed.
 
+  (** A binding can add only the variable that its term names. *)
+  Lemma run_binds_scope : forall g (t : term V.t) s g',
+    binds g t s g' -> forall x u, g' x = Some u -> g x = Some u \/ t = Var x.
+  Proof.
+    intros g t s g' Hbind. destruct Hbind as [y s Hsort|y s Hnone|v];
+      intros x u H; try (left; exact H).
+    unfold ctx_set in H. destruct (Pos.eqb y x) eqn:Hyx.
+    - apply Pos.eqb_eq in Hyx. subst x. right. reflexivity.
+    - left. exact H.
+  Qed.
+
+  (** Binding arguments adds only variables appearing among those arguments. *)
+  Lemma run_binds_list_scope : forall g ts ss g',
+    @binds_list V.t g ts ss g' -> forall x u,
+    g' x = Some u -> g x = Some u \/ In (Var x) ts.
+  Proof.
+    intros g ts ss g' Hbind. induction Hbind as [g|g g1 g2 t ts s ss Hhead Htail IH];
+      intros x u Hsort.
+    - left. exact Hsort.
+    - destruct (IH x u Hsort) as [Hbound|Hin].
+      + destruct (run_binds_scope g t s g1 Hhead x u Hbound) as [Hold|Heq].
+        * left. exact Hold.
+        * right. left. exact Heq.
+      + right. right. exact Hin.
+  Qed.
+
+  (** Binding a result adds only its result variable. *)
+  Lemma run_binds_result_scope : forall g out res g',
+    @binds_result V.t g out res g' -> forall x u,
+    g' x = Some u -> g x = Some u \/ In (Var x) (option_list res).
+  Proof.
+    intros g out [t|] g' Hbind; destruct out;
+      cbn [binds_result out_sort] in Hbind; try contradiction;
+      intros x u Hsort.
+    - destruct (run_binds_scope g t SId g' Hbind x u Hsort) as [Hold|Heq];
+        [left; exact Hold|right; left; exact Heq].
+    - destruct (run_binds_scope g t SVal g' Hbind x u Hsort) as [Hold|Heq];
+        [left; exact Hold|right; left; exact Heq].
+    - subst g'. left. exact Hsort.
+  Qed.
+
+  (** Every variable added by a query occurs in one of that query's atoms. *)
+  Lemma run_query_scope : forall sorts kinds g q g',
+    @query_ok V.t sorts kinds g q g' -> forall x s,
+    g' x = Some s -> g x = Some s \/
+      exists a, In a q /\ In (Var x) (atom_terms a).
+  Proof.
+    intros sorts kinds g q g' Hquery.
+    induction Hquery as
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hreads Hargs Hres Hrest IH|
+       g g1 op args res rest Hargs Hres Hrest IH]; intros x s Hbound.
+    - left. exact Hbound.
+    - destruct (IH x s Hbound) as [Hnew|[a [Hin Hvar]]].
+      + destruct (run_binds_result_scope g1 out res g2 Hres x s Hnew) as [Harg|Hvar].
+        * destruct (run_binds_list_scope g args ss g1 Hargs x s Harg) as [Hold|Hvar].
+          -- left. exact Hold.
+          -- right. exists (Fun V.t f args res). split; [left; reflexivity|].
+             cbn [atom_terms]. apply in_or_app. left. exact Hvar.
+        * right. exists (Fun V.t f args res). split; [left; reflexivity|].
+          cbn [atom_terms]. apply in_or_app. right. exact Hvar.
+      + right. exists a. split; [right; exact Hin|exact Hvar].
+    - destruct (IH x s Hbound) as [Hold|[a [Hin Hvar]]].
+      + left. exact Hold.
+      + right. exists a. split; [right; exact Hin|exact Hvar].
+  Qed.
+
+  (** The variable list of an atom is the concatenation of its term variable lists. *)
+  Lemma run_atom_vars_terms : forall a : atom V.t,
+    atom_vars a = flat_map term_vars (atom_terms a).
+  Proof.
+    intros [f args res|f args res]; cbn [atom_vars atom_terms]; rewrite flat_map_app.
+    - reflexivity.
+    - cbn. now rewrite app_nil_r.
+  Qed.
+
+  (** A typed term gives a context binding for each variable that it reads. *)
+  Lemma run_has_scope : forall g (t : term V.t) s x,
+    has g t s -> In x (term_vars t) -> exists u, g x = Some u.
+  Proof.
+    intros g [y|v] s x Hhas Hin; cbn [has term_vars] in *.
+    - destruct Hin as [<-|Hin]; [exists s; exact Hhas|contradiction].
+    - contradiction.
+  Qed.
+
+  (** A list of typed arguments reads only variables bound in its context. *)
+  Lemma run_has_list_scope : forall g ts ss,
+    Forall2 (@has V.t g) ts ss -> forall x,
+    In x (flat_map term_vars ts) -> exists u, g x = Some u.
+  Proof.
+    intros g ts ss Htyped. induction Htyped as [|t s ts ss Hhead Htail IH]; intros x Hin.
+    - contradiction.
+    - cbn [flat_map] in Hin. apply in_app_or in Hin. destruct Hin as [Hin|Hin].
+      + eapply run_has_scope; eassumption.
+      + apply IH. exact Hin.
+  Qed.
+
+  (** A sorted action reads only variables already bound in its starting context. *)
+  Lemma run_action_scope : forall sorts kinds g a rest,
+    @actions_ok V.t sorts kinds g (a :: rest) -> forall x,
+    In x (flat_map term_vars (action_terms a)) -> exists u, g x = Some u.
+  Proof.
+    intros sorts kinds g [y f args|f args res|t u|y op args] rest Hok x Hin;
+      cbn [actions_ok action_terms] in Hok, Hin.
+    - destruct Hok as [ss [Hsort [Hkind [Hargs Hrest]]]].
+      eapply run_has_list_scope; eassumption.
+    - destruct Hok as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+      rewrite flat_map_app in Hin. apply in_app_or in Hin. destruct Hin as [Hin|Hin].
+      + eapply run_has_list_scope; eassumption.
+      + destruct res as [t|]; [|contradiction].
+        cbn [option_list flat_map] in Hin. rewrite app_nil_r in Hin.
+        destruct out; cbn [has_result out_sort] in Hres; try contradiction;
+          eapply run_has_scope; eassumption.
+    - destruct Hok as [Ht [Hu Hrest]]. cbn [flat_map] in Hin.
+      rewrite app_nil_r in Hin. apply in_app_or in Hin. destruct Hin as [Hin|Hin].
+      + eapply run_has_scope; [exact Ht|exact Hin].
+      + eapply run_has_scope; [exact Hu|exact Hin].
+    - destruct Hok as [Hargs Hrest]. apply in_flat_map in Hin.
+      destruct Hin as [t [Hterm Hvar]]. rewrite Forall_forall in Hargs.
+      eapply run_has_scope; [apply Hargs; exact Hterm|exact Hvar].
+  Qed.
+
+  (** An action prefix makes available only its explicit bindings. *)
+  Lemma run_actions_prefix_scope : forall sorts kinds pre g a rest x,
+    @actions_ok V.t sorts kinds g (pre ++ a :: rest) ->
+    In x (flat_map term_vars (action_terms a)) ->
+    (exists u, g x = Some u) \/ In x (flat_map action_binds pre).
+  Proof.
+    intros sorts kinds pre. induction pre as [|h pre IH]; intros g a rest x Hok Hin.
+    - left. eapply run_action_scope; eassumption.
+    - destruct h as [y f args|f args res|t u|y op args];
+        cbn [app actions_ok flat_map action_binds] in Hok |- *.
+      + destruct Hok as [ss [Hsort [Hkind [Hargs Hrest]]]].
+        destruct (IH _ _ _ _ Hrest Hin) as [[s Hbound]|Hbound].
+        * unfold ctx_set in Hbound. destruct (Pos.eqb y x) eqn:Heq.
+          -- apply Pos.eqb_eq in Heq. right. left. exact Heq.
+          -- left. exists s. exact Hbound.
+        * right. right. exact Hbound.
+      + destruct Hok as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+        exact (IH _ _ _ _ Hrest Hin).
+      + destruct Hok as [Ht [Hu Hrest]]. exact (IH _ _ _ _ Hrest Hin).
+      + destruct Hok as [Hargs Hrest].
+        destruct (IH _ _ _ _ Hrest Hin) as [[s Hbound]|Hbound].
+        * unfold ctx_set in Hbound. destruct (Pos.eqb y x) eqn:Heq.
+          -- apply Pos.eqb_eq in Heq. right. left. exact Heq.
+          -- left. exists s. exact Hbound.
+        * right. right. exact Hbound.
+  Qed.
+
+  (** Checked actions read only variables bound by the query or earlier actions. *)
   Lemma check_plan_scope : forall p cp r pre a rest x, plans_ok p cp ->
     In r (rules V.t p) -> actions V.t r = pre ++ a :: rest ->
     In x (flat_map term_vars (action_terms a)) ->
     In x (flat_map atom_vars (query V.t r) ++ flat_map action_binds pre).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp r pre a rest x Hchecked Hrule Hacts Hvar.
+    unfold plans_ok, check_plan in Hchecked. apply andb_true_iff in Hchecked.
+    pose proof (proj1 (check_program_spec V.t p) (proj1 Hchecked)) as Hprogram.
+    unfold program_ok in Hprogram. rewrite Forall_forall in Hprogram.
+    destruct (Hprogram r Hrule) as [g [Hquery Hactions]].
+    rewrite Hacts in Hactions.
+    destruct (run_actions_prefix_scope _ _ pre g a rest x Hactions Hvar)
+      as [[s Hbound]|Hbound]; apply in_or_app.
+    - left. destruct (run_query_scope _ _ _ _ _ Hquery x s Hbound)
+        as [Hempty|[b [Hatom Hterm]]]; [discriminate|].
+      apply in_flat_map. exists b. split; [exact Hatom|].
+      rewrite run_atom_vars_terms. apply in_flat_map. exists (Var x).
+      split; [exact Hterm|left; reflexivity].
+    - right. exact Hbound.
+  Qed.
 
+  (** A declaration found by name has the same sorts and kind as both program lookups. *)
+  Lemma run_find_decl_fields : forall ds f d,
+    find (fun d => Pos.eqb (name d) f) ds = Some d ->
+    lookup_sorts ds f = Some (arg_sorts d) /\ lookup_kind ds f = Some (out d).
+  Proof.
+    intros ds. induction ds as [|h ds IH]; intros f d Hfind; [discriminate|].
+    cbn [find lookup_sorts lookup_kind] in *.
+    destruct (Pos.eqb (name h) f) eqn:Heq.
+    - injection Hfind as <-. split; reflexivity.
+    - apply IH. exact Hfind.
+  Qed.
+
+  (** A successful sort lookup names the first matching declaration. *)
+  Lemma run_lookup_sorts_decl : forall ds f ss,
+    lookup_sorts ds f = Some ss ->
+    exists d, find (fun d => Pos.eqb (name d) f) ds = Some d /\ arg_sorts d = ss.
+  Proof.
+    intros ds. induction ds as [|h ds IH]; intros f ss Hsort; [discriminate|].
+    cbn [lookup_sorts find] in *. destruct (Pos.eqb (name h) f) eqn:Heq.
+    - exists h. split; [reflexivity|]. injection Hsort as Hsort. exact Hsort.
+    - apply IH. exact Hsort.
+  Qed.
+
+  (** Every sorted action that writes a row has the declared number of arguments. *)
+  Lemma run_actions_arities : forall sorts kinds acts g a,
+    @actions_ok V.t sorts kinds g acts -> In a acts ->
+    match a with
+    | Make _ f args | Put f args _ => exists ss, sorts f = Some ss /\ length args = length ss
+    | _ => True
+    end.
+  Proof.
+    intros sorts kinds acts. induction acts as [|h acts IH]; intros g a Hok Hin;
+      [contradiction|].
+    destruct h as [x f args|f args res|t u|x op args]; cbn [actions_ok] in Hok.
+    - destruct Hok as [ss [Hsort [Hkind [Hargs Hrest]]]].
+      destruct Hin as [<-|Hin].
+      + exists ss. split; [exact Hsort|]. eapply Forall2_length. exact Hargs.
+      + eapply IH; eassumption.
+    - destruct Hok as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+      destruct Hin as [<-|Hin].
+      + exists ss. split; [exact Hsort|]. eapply Forall2_length. exact Hargs.
+      + eapply IH; eassumption.
+    - destruct Hok as [Ht [Hu Hrest]]. destruct Hin as [<-|Hin]; [exact I|].
+      eapply IH; eassumption.
+    - destruct Hok as [Hargs Hrest]. destruct Hin as [<-|Hin]; [exact I|].
+      eapply IH; eassumption.
+  Qed.
+
+  (** Checked row-writing actions have their declared argument count. *)
   Lemma check_plan_arities : forall p cp r a, plans_ok p cp ->
     In r (rules V.t p) -> In a (actions V.t r) ->
     match a with
@@ -1126,17 +1339,119 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
         length args = length (arg_sorts d)
     | _ => True
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp r a Hchecked Hrule Haction.
+    unfold plans_ok, check_plan in Hchecked. apply andb_true_iff in Hchecked.
+    pose proof (proj1 (check_program_spec V.t p) (proj1 Hchecked)) as Hprogram.
+    unfold program_ok in Hprogram. rewrite Forall_forall in Hprogram.
+    destruct (Hprogram r Hrule) as [g [Hquery Hactions]].
+    pose proof (run_actions_arities _ _ _ g a Hactions Haction) as Harity.
+    destruct a as [x f args|f args res|t u|x op args]; try exact I.
+    all: destruct Harity as [ss [Hsort Hlength]].
+    all: destruct (run_lookup_sorts_decl _ _ _ Hsort) as [d [Hfind Hargs]].
+    all: exists d; split; [exact Hfind|now rewrite Hargs].
+  Qed.
 
+  (** Declaration widths preserve existing entries and otherwise use the first declaration. *)
+  Lemma decl_widths_get : forall ds t f,
+    trie_get f (decl_widths ds t) =
+      match trie_get f t with
+      | Some width => Some width
+      | None =>
+          match find (fun d => Pos.eqb (name d) f) ds with
+          | Some d => Some (length (arg_sorts d) + match out d with ORel => 0 | _ => 1 end)
+          | None => None
+          end
+      end.
+  Proof.
+    intros ds. induction ds as [|[h ss o] ds IH]; intros t f.
+    - cbn [decl_widths find]. destruct (trie_get f t); reflexivity.
+    - cbn [decl_widths find name arg_sorts out].
+      destruct (Pos.eqb_spec h f) as [->|Hneq].
+      + destruct (trie_get f t) as [width|] eqn:Hget; rewrite IH.
+        * now rewrite Hget.
+        * rewrite PTrie.get_set_same. destruct o; cbn [arg_sorts out];
+            now rewrite ?Nat.add_0_r, ?Nat.add_1_r.
+      + destruct (trie_get h t) as [width|] eqn:Hget; rewrite IH.
+        * reflexivity.
+        * rewrite PTrie.get_set_other by congruence. reflexivity.
+  Qed.
+
+  (** An absent entry after an insertion was absent before it and has a different key. *)
+  Lemma run_get_set_none : forall (t : ptrie unit) k x,
+    trie_get x (PTrieCode.set k tt t) = None -> trie_get x t = None /\ x <> k.
+  Proof.
+    intros t k x Hnone. destruct (Pos.eq_dec x k) as [->|Hneq].
+    - rewrite PTrie.get_set_same in Hnone. discriminate.
+    - rewrite PTrie.get_set_other in Hnone by congruence. split; assumption.
+  Qed.
+
+  (** An accepted permutation has distinct in-range positions that were initially unseen. *)
+  Lemma perm_ok_sound : forall perm width seen,
+    perm_ok width perm seen = true ->
+    NoDup perm /\ Forall (fun i => i < width) perm /\
+      forall i, In i perm -> trie_get (nat_code i) seen = None.
+  Proof.
+    intros perm. induction perm as [|i perm IH]; intros width seen Hok.
+    - split; [constructor|]. split; [constructor|]. intros j Hin. contradiction.
+    - cbn [perm_ok] in Hok. destruct (trie_get (nat_code i) seen) eqn:Hget;
+        [discriminate|].
+      destruct (Nat.leb (S i) width) eqn:Hbound; [|discriminate].
+      destruct (IH _ _ Hok) as [Hnodup [Hrange Hfresh]].
+      split.
+      + constructor; [|exact Hnodup]. intro Hin.
+        pose proof (Hfresh i Hin) as Hnone. rewrite PTrie.get_set_same in Hnone.
+        discriminate.
+      + split.
+        * constructor; [now apply Nat.leb_le in Hbound|exact Hrange].
+        * intros j [<-|Hin]; [exact Hget|].
+          destruct (run_get_set_none _ _ _ (Hfresh j Hin)) as [Hnone Hneq]. exact Hnone.
+  Qed.
+
+  (** Every slot traversed successfully has a declared width and an accepted permutation. *)
+  Lemma slot_table_member : forall sl widths next table result f perm,
+    slot_table widths sl next table = Some result -> In (f, perm) sl ->
+    exists width, trie_get f widths = Some width /\ perm_ok width perm Empty = true.
+  Proof.
+    intros sl. induction sl as [|[g ps] sl IH];
+      intros widths next table result f perm Htable Hin; [contradiction|].
+    cbn [slot_table] in Htable. destruct (trie_get g widths) as [width|] eqn:Hwidth;
+      [|discriminate].
+    destruct (perm_ok width ps Empty) eqn:Hperm; [|discriminate].
+    destruct Hin as [Heq|Hin].
+    - injection Heq as <- <-. exists width. split; assumption.
+    - destruct (trie_get (slot_code g ps) table); eapply IH; eassumption.
+  Qed.
+
+  (** Each accepted slot contains distinct positions within its declared row width. *)
   Lemma check_plan_slots : forall p cp f perm, plans_ok p cp ->
     In (f, perm) (Syntax.slots V.t cp) ->
     exists d, find (fun d => Pos.eqb (name d) f) (decls V.t p) = Some d /\
       NoDup perm /\ Forall (fun i => i <
         length (arg_sorts d) + match out d with ORel => 0 | _ => 1 end) perm.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [ds rs] [sl naive semi] f perm Hchecked Hin.
+    unfold plans_ok, check_plan, check_shape, check_shape_with in Hchecked.
+    apply andb_true_iff in Hchecked. destruct Hchecked as [Hprogram Hshape].
+    cbn [decls Syntax.slots] in *.
+    destruct (slot_table (decl_widths ds Empty) sl 0 Empty) as [table|] eqn:Htable;
+      [|discriminate].
+    destruct (slot_table_member sl _ _ _ _ f perm Htable Hin) as [width [Hwidth Hperm]].
+    rewrite decl_widths_get, PTrie.get_empty in Hwidth.
+    destruct (find (fun d => Pos.eqb (name d) f) ds) as [d|] eqn:Hfind;
+      [|discriminate].
+    injection Hwidth as <-. exists d. split; [reflexivity|].
+    destruct (perm_ok_sound perm _ _ Hperm) as [Hnodup [Hrange Hfresh]].
+    split; assumption.
+  Qed.
 
+  (** Every accepted compiled plan belongs to a well-sorted program. *)
   Lemma plans_ok_sorted : forall p cp, plans_ok p cp -> program_ok p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp Hchecked. unfold plans_ok, check_plan in Hchecked.
+    apply (proj1 (check_program_spec V.t p)).
+    apply andb_true_iff in Hchecked. exact (proj1 Hchecked).
+  Qed.
 
   Lemma plan_checked : forall p, program_ok p -> plans_ok p (plan p).
   Proof. Admitted. (* STUB *)
@@ -1579,7 +1894,16 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         | Some _ => 1
         | None => 0
         end) perm.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp f perm Hplan Hslot.
+    destruct (check_plan_slots p cp f perm Hplan Hslot)
+      as [d [Hdecl [Hnodup Hbound]]].
+    destruct (run_find_decl_fields (decls V.t p) f d Hdecl) as [Hsort Hkind].
+    exists (arg_sorts d), (out d).
+    split; [exact Hsort|]. split; [exact Hkind|].
+    split; [exact Hnodup|]. destruct (out d); exact Hbound.
+  Qed.
+
 
   Lemma T4_check_plan_split : forall p cp,
     (T_check_plan p cp <= T_check_program p + T_check_shape p cp + k_check)%N.
