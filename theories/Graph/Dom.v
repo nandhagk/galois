@@ -627,6 +627,201 @@ Proof.
   intros [[vs adjacency] predecessors count_v count_e]. reflexivity.
 Qed.
 
+(** Writing back a size's default value leaves every size observation unchanged. *)
+Lemma dom_size_set_own : forall sizes v x,
+  dom_size_get (PTrieCode.set v (dom_size_get sizes v) sizes) x = dom_size_get sizes x.
+Proof.
+  intros sizes v x. unfold dom_size_get at 1.
+  destruct (Pos.eq_dec x v) as [->|Hne].
+  - rewrite PTrie.get_set_same. reflexivity.
+  - rewrite PTrie.get_set_other by exact Hne. reflexivity.
+Qed.
+
+(** One aggregation step only adds the current vertex's mass to its parent. *)
+Lemma dom_add_size_value : forall m sizes v x,
+  dom_size_get (dom_add_size m sizes v) x =
+    match trie_get v m with
+    | None => dom_size_get sizes x
+    | Some p => if Pos.eqb x p
+        then (dom_size_get sizes p + dom_size_get sizes v)%N
+        else dom_size_get sizes x
+    end.
+Proof.
+  intros m sizes v x. unfold dom_add_size.
+  destruct (trie_get v m) as [p|] eqn:Hparent.
+  - rewrite dom_size_set_own. unfold dom_size_get at 1.
+    destruct (Pos.eqb x p) eqn:Heq.
+    + apply Pos.eqb_eq in Heq. subst x. now rewrite PTrie.get_set_same.
+    + apply Pos.eqb_neq in Heq. rewrite PTrie.get_set_other by exact Heq.
+      apply dom_size_set_own.
+  - apply dom_size_set_own.
+Qed.
+
+(** Every aggregation cell is positive, including cells absent from the trie. *)
+Lemma dom_add_size_positive : forall m sizes v,
+  (forall x, (1 <= dom_size_get sizes x)%N) ->
+  forall x, (1 <= dom_size_get (dom_add_size m sizes v) x)%N.
+Proof.
+  intros m sizes v Hpositive x. rewrite dom_add_size_value.
+  destruct (trie_get v m) as [p|]; [destruct (Pos.eqb x p)|];
+    pose proof (Hpositive x); pose proof (Hpositive v); try lia.
+Qed.
+
+Lemma dom_sizes_positive : forall m o x, (1 <= dom_size_get (dom_sizes m o) x)%N.
+Proof.
+  intros m o. unfold dom_sizes.
+  assert (Hfold : forall xs sizes,
+    (forall x, (1 <= dom_size_get sizes x)%N) ->
+    forall x, (1 <= dom_size_get (fold_left (dom_add_size m) xs sizes) x)%N).
+  { intro xs. induction xs as [|v rest IH]; intros sizes Hpositive x.
+    - apply Hpositive.
+    - cbn [fold_left]. apply IH. now apply dom_add_size_positive. }
+  apply Hfold. intro x. unfold dom_size_get. rewrite PTrie.get_empty. lia.
+Qed.
+
+(** Weighted mass tracks the unprocessed cells without enumerating trie bindings. *)
+Definition dom_size_mass (weight : positive -> N) (xs : list positive) (sizes : ptrie N) : N :=
+  fold_right (fun x total => (weight x * dom_size_get sizes x + total)%N) 0%N xs.
+
+Lemma dom_size_mass_absent : forall weight xs m sizes v,
+  (forall p, trie_get v m = Some p -> ~ In p xs) ->
+  dom_size_mass weight xs (dom_add_size m sizes v) = dom_size_mass weight xs sizes.
+Proof.
+  intros weight xs. induction xs as [|x rest IH]; intros m sizes v Habsent.
+  - reflexivity.
+  - change ((weight x * dom_size_get (dom_add_size m sizes v) x +
+      dom_size_mass weight rest (dom_add_size m sizes v))%N =
+      (weight x * dom_size_get sizes x + dom_size_mass weight rest sizes)%N).
+    rewrite IH.
+    + rewrite dom_add_size_value. destruct (trie_get v m) as [p|] eqn:Hparent;
+        [|reflexivity].
+      destruct (Pos.eqb x p) eqn:Heq; [|reflexivity].
+      apply Pos.eqb_eq in Heq. subst x. exfalso. apply (Habsent p eq_refl). now left.
+    + intros p Hparent Hin. apply (Habsent p Hparent). now right.
+Qed.
+
+Lemma dom_size_mass_present : forall weight xs m sizes v p,
+  NoDup xs -> trie_get v m = Some p -> In p xs ->
+  dom_size_mass weight xs (dom_add_size m sizes v) =
+    (dom_size_mass weight xs sizes + weight p * dom_size_get sizes v)%N.
+Proof.
+  intros weight xs. induction xs as [|x rest IH]; intros m sizes v p Hunique Hparent Hin.
+  - contradiction.
+  - inversion Hunique as [|head tail Hfresh Hrest]; subst head tail.
+    change ((weight x * dom_size_get (dom_add_size m sizes v) x +
+      dom_size_mass weight rest (dom_add_size m sizes v))%N =
+      (weight x * dom_size_get sizes x + dom_size_mass weight rest sizes +
+        weight p * dom_size_get sizes v)%N).
+    destruct Hin as [<-|Hin].
+    + rewrite dom_size_mass_absent.
+      * rewrite dom_add_size_value, Hparent, Pos.eqb_refl, N.mul_add_distr_l. lia.
+      * intros p Hget. rewrite Hparent in Hget. injection Hget as <-. exact Hfresh.
+    + rewrite (IH m sizes v p Hrest Hparent Hin), dom_add_size_value, Hparent.
+      assert (Hne : x <> p) by (intro Heq; subst x; contradiction).
+      rewrite (proj2 (Pos.eqb_neq x p) Hne). lia.
+Qed.
+
+(** Moving a cell to its remaining parent preserves mass when both have the same weight. *)
+Lemma dom_size_mass_transfer : forall weight remaining m sizes v p,
+  NoDup remaining -> trie_get v m = Some p -> In p remaining -> weight v = weight p ->
+  dom_size_mass weight remaining (dom_add_size m sizes v) =
+    dom_size_mass weight (v :: remaining) sizes.
+Proof.
+  intros weight remaining m sizes v p Hunique Hparent Hin Heq.
+  rewrite (dom_size_mass_present weight remaining m sizes v p Hunique Hparent Hin).
+  change ((dom_size_mass weight remaining sizes + weight p * dom_size_get sizes v)%N =
+    (weight v * dom_size_get sizes v + dom_size_mass weight remaining sizes)%N).
+  rewrite Heq. apply N.add_comm.
+Qed.
+
+(** No later update can change a cell when no remaining vertex points to it. *)
+Lemma dom_size_fold_preserves : forall m xs sizes x,
+  (forall v, In v xs -> trie_get v m <> Some x) ->
+  dom_size_get (fold_left (dom_add_size m) xs sizes) x = dom_size_get sizes x.
+Proof.
+  intros m xs. induction xs as [|v rest IH]; intros sizes x Houtside.
+  - reflexivity.
+  - cbn [fold_left]. rewrite IH.
+    + rewrite dom_add_size_value. destruct (trie_get v m) as [p|] eqn:Hparent;
+        [|reflexivity].
+      destruct (Pos.eqb x p) eqn:Heq; [|reflexivity].
+      apply Pos.eqb_eq in Heq. subst p. exfalso. apply (Houtside v); [now left|exact Hparent].
+    + intros u Hin. apply Houtside. now right.
+Qed.
+
+Lemma dom_size_fold_mass : forall weight done remaining m sizes,
+  NoDup (done ++ remaining) ->
+  (forall before v after, done = before ++ v :: after ->
+    exists p, trie_get v m = Some p /\ In p (after ++ remaining) /\ weight v = weight p) ->
+  dom_size_mass weight remaining (fold_left (dom_add_size m) done sizes) =
+    dom_size_mass weight (done ++ remaining) sizes.
+Proof.
+  intros weight done. induction done as [|v rest IH]; intros remaining m sizes Hunique Hparents.
+  - reflexivity.
+  - cbn [app] in Hunique. inversion Hunique as [|head tail Hfresh Hrest]; subst head tail.
+    cbn [fold_left]. rewrite (IH remaining m (dom_add_size m sizes v) Hrest).
+    + destruct (Hparents [] v rest eq_refl) as [p [Hparent [Hin Heq]]].
+      exact (dom_size_mass_transfer weight (rest ++ remaining) m sizes v p Hrest Hparent Hin Heq).
+    + intros before u after Heq. apply (Hparents (v :: before) u after). cbn. now rewrite Heq.
+Qed.
+
+(** Nested half-open intervals compose transitively. *)
+Lemma dom_interval_trans : forall pos sizes u v w,
+  dom_interval pos sizes u v = true -> dom_interval pos sizes v w = true ->
+  dom_interval pos sizes u w = true.
+Proof.
+  intros pos sizes u v w Huv Hvw. unfold dom_interval in *.
+  destruct (trie_get u pos) as [pu|] eqn:Hu;
+    destruct (trie_get v pos) as [pv|] eqn:Hv;
+    destruct (trie_get w pos) as [pw|] eqn:Hw; try discriminate.
+  apply andb_true_iff in Huv as [Huv Hvu].
+  apply andb_true_iff in Hvw as [Hvw Hwv].
+  apply andb_true_iff. split; apply N.leb_le;
+    apply N.leb_le in Huv; apply N.leb_le in Hvu;
+    apply N.leb_le in Hvw; apply N.leb_le in Hwv; lia.
+Qed.
+
+Lemma dom_sizes_ok_parent : forall m pos sizes o v p,
+  dom_sizes_ok m pos sizes o = true -> In v o -> trie_get v m = Some p ->
+  dom_interval pos sizes p v = true.
+Proof.
+  intros m pos sizes o v p Hsizes Hin Hparent.
+  unfold dom_sizes_ok in Hsizes. apply forallb_forall with (x := v) in Hsizes;
+    [now rewrite Hparent in Hsizes|exact Hin].
+Qed.
+
+(** Parent interval checks imply interval inclusion along every ancestry chain. *)
+Lemma dom_interval_ancestors : forall m pos sizes o,
+  (forall v, In v o -> exists i, trie_get v pos = Some i) ->
+  (forall v p, trie_get v m = Some p -> In p o) ->
+  dom_sizes_ok m pos sizes o = true ->
+  forall u v, tree_anc m u v -> In v o -> dom_interval pos sizes u v = true.
+Proof.
+  intros m pos sizes o Hpositions Hparents Hsizes u v Hanc.
+  induction Hanc as [|p v Hparent Hanc IH]; intro Hin.
+  - destruct (Hpositions u Hin) as [position Hposition].
+    unfold dom_interval. rewrite Hposition, !N.leb_refl. reflexivity.
+  - eapply dom_interval_trans; [apply IH; eapply Hparents; exact Hparent|].
+    eapply dom_sizes_ok_parent; eassumption.
+Qed.
+
+(** A point at or beyond a subtree's upper endpoint cannot be its descendant. *)
+Lemma dom_interval_high_not_ancestor : forall m pos sizes o u v pu pv,
+  (forall x, In x o -> exists i, trie_get x pos = Some i) ->
+  (forall x p, trie_get x m = Some p -> In p o) ->
+  dom_sizes_ok m pos sizes o = true -> In v o ->
+  trie_get u pos = Some pu -> trie_get v pos = Some pv ->
+  (1 <= dom_size_get sizes v)%N -> (pu + dom_size_get sizes u <= pv)%N ->
+  ~ tree_anc m u v.
+Proof.
+  intros m pos sizes o u v pu pv Hpositions Hparents Hsizes Hv Huget Hvget Hpositive Hhigh Hanc.
+  pose proof (dom_interval_ancestors m pos sizes o Hpositions Hparents Hsizes u v Hanc Hv)
+    as Hinterval.
+  unfold dom_interval in Hinterval. rewrite Huget, Hvget in Hinterval.
+  apply andb_true_iff in Hinterval as [_ Hend]. apply N.leb_le in Hend. lia.
+Qed.
+
+
 Module DomCode <: DOM_OPS.
   Definition build := dom_build_candidate.
 
