@@ -3764,6 +3764,72 @@ Proof.
   - exists source, target. auto.
 Qed.
 
+(** Owner presence is exactly membership of an emitted component at every unique prefix. *)
+Lemma tarjan_owners_domain events v : NoDup (entered events) ->
+  let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial in
+  (exists i, trie_get v (tarjan_owners result) = Some i) <-> In v (concat (tarjan_emitted result)).
+Proof.
+  intro Hunique. cbn zeta. pose proof (tarjan_owners_indexed_fold events Hunique) as Hindexed.
+  set (result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial) in *.
+  assert (Hreverse : Permutation (tarjan_emitted result) (rev (tarjan_emitted result)))
+    by apply Permutation_rev.
+  split.
+  - intros [i Howner]. apply (Hindexed v i) in Howner.
+    destruct Howner as [block [Hnth Hin]]. apply in_concat. exists block. split; [|exact Hin].
+    eapply Permutation_in; [apply Permutation_sym; exact Hreverse|].
+    eapply nth_error_In; exact Hnth.
+  - intro Hin. apply in_concat in Hin. destruct Hin as [block [Hblock Hin]].
+    assert (Hreversed : In block (rev (tarjan_emitted result))).
+    { eapply Permutation_in; [exact Hreverse|exact Hblock]. }
+    apply In_nth_error in Hreversed. destruct Hreversed as [n Hnth].
+    exists (Pos.of_succ_nat n). apply (Hindexed v (Pos.of_succ_nat n)).
+    exists block. rewrite SuccNat2Pos.id_succ. cbn [Nat.pred]. auto.
+Qed.
+
+(** A decreasing owner assignment is monotone along every graph path. *)
+Lemma tarjan_owner_path g (owners : ptrie positive) :
+  (forall u v i, trie_get u owners = Some i -> edge g u v ->
+    exists j, trie_get v owners = Some j /\ (j <= i)%positive) ->
+  forall u vertices v i, path g u vertices v -> trie_get u owners = Some i ->
+    exists j, trie_get v owners = Some j /\ (j <= i)%positive.
+Proof.
+  intros Hrank u vertices v i Hpath. revert i. induction Hpath; intros i Howner.
+  - exists i. split; [exact Howner|apply Pos.le_refl].
+  - destruct (Hrank u v i Howner H) as [middle [Hmiddle Hbound]].
+    destruct (IHHpath middle Hmiddle) as [last [Hlast Hlast_bound]].
+    exists last. split; [exact Hlast|]. eapply Pos.le_trans; eassumption.
+Qed.
+
+Lemma tarjan_owner_mutual g (owners : ptrie positive) :
+  (forall u v i, trie_get u owners = Some i -> edge g u v ->
+    exists j, trie_get v owners = Some j /\ (j <= i)%positive) ->
+  forall u v i j, mutually_reachable g u v ->
+    trie_get u owners = Some i -> trie_get v owners = Some j -> i = j.
+Proof.
+  intros Hrank u v i j [[uv Huv] [vu Hvu]] Hu Hv.
+  destruct (tarjan_owner_path g owners Hrank u uv v i Huv Hu) as [j' [Hj' Hji]].
+  destruct (tarjan_owner_path g owners Hrank v vu u j Hvu Hv) as [i' [Hi' Hij]].
+  rewrite Hv in Hj'. injection Hj' as Heqj. subst j'.
+  rewrite Hu in Hi'. injection Hi' as Heqi. subst i'.
+  now apply Pos.le_antisym.
+Qed.
+
+(** Every assigned owner precedes the next chronological component index. *)
+Lemma tarjan_owner_before_next events v i : NoDup (entered events) ->
+  let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial in
+  trie_get v (tarjan_owners result) = Some i ->
+  Pos.to_nat i < Pos.to_nat (tarjan_next result).
+Proof.
+  intro Hunique. cbn zeta. intro Howner.
+  apply (tarjan_owners_indexed_fold events Hunique v i) in Howner.
+  destruct Howner as [block [Hnth Hin]].
+  assert (Hbound : Nat.pred (Pos.to_nat i) < length (rev (tarjan_emitted
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge events tarjan_initial)))).
+  { apply nth_error_Some. rewrite Hnth. discriminate. }
+  rewrite length_rev in Hbound. pose proof (tarjan_next_count events).
+  pose proof (Pos2Nat.is_pos i). cbn zeta. lia.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
