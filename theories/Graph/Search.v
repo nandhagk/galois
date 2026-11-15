@@ -1320,6 +1320,95 @@ Proof.
     + rewrite Nat.iter_succ_r in Hfirst, Hsecond. eapply IH; eassumption.
 Qed.
 
+(** Entering a vertex supplies its two boundary events and its complete row. *)
+Fixpoint search_event_supply g es : nat :=
+  match es with
+  | [] => 0
+  | Enter v :: rest => 2 + length (succs g v) + search_event_supply g rest
+  | _ :: rest => search_event_supply g rest
+  end.
+
+Lemma search_event_supply_app g first second :
+  search_event_supply g (first ++ second) =
+    search_event_supply g first + search_event_supply g second.
+Proof.
+  induction first as [|e rest IH]; [reflexivity|].
+  destruct e; cbn [app search_event_supply]; rewrite IH; lia.
+Qed.
+
+Lemma search_event_supply_entered g es :
+  search_event_supply g es = 2 * length (entered es) +
+    fold_right (fun u n => length (succs g u) + n) 0 (entered es).
+Proof.
+  induction es as [|e rest IH]; [reflexivity|].
+  destruct e; cbn [search_event_supply entered length fold_right]; lia.
+Qed.
+
+(** Pending rows and leaves account for every supplied event not yet emitted. *)
+Fixpoint search_event_pending tasks : nat :=
+  match tasks with
+  | [] => 0
+  | SearchRoot _ :: rest => search_event_pending rest
+  | SearchRow _ row :: rest => length row + search_event_pending rest
+  | SearchLeave _ :: rest => 1 + search_event_pending rest
+  end.
+
+Definition search_event_ledger g st : Prop :=
+  length (search_events st) + search_event_pending (search_tasks st) =
+    search_event_supply g (rev (search_events st)).
+
+Lemma search_event_ledger_initial g roots :
+  search_event_ledger g (SearchState (map SearchRoot roots) Empty []).
+Proof.
+  unfold search_event_ledger. cbn [search_events search_tasks length rev search_event_supply].
+  induction roots as [|v rest IH]; cbn [map search_event_pending]; exact IH || reflexivity.
+Qed.
+
+Lemma search_event_ledger_step g st next :
+  search_event_ledger g st -> search_step g st = inl next -> search_event_ledger g next.
+Proof.
+  intros Hledger Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  destruct task as [v|u vs|v]; cbn [search_step] in Hstep;
+    unfold search_event_ledger in *; cbn [search_events search_tasks] in *.
+  - destruct (trie_get v colours); inversion Hstep; subst next;
+      cbn [search_events search_tasks search_event_pending length rev] in *.
+    + exact Hledger.
+    + rewrite search_event_supply_app. cbn [search_event_supply]. lia.
+  - destruct vs as [|v vs].
+    + inversion Hstep; subst next. exact Hledger.
+    + destruct (trie_get v colours); inversion Hstep; subst next;
+        cbn [search_events search_tasks search_event_pending length rev] in *;
+        rewrite search_event_supply_app; cbn [search_event_supply]; lia.
+  - inversion Hstep; subst next.
+    cbn [search_events search_tasks search_event_pending length rev] in *.
+    rewrite search_event_supply_app. cbn [search_event_supply]. lia.
+Qed.
+
+Lemma search_event_ledger_stop g st es :
+  search_event_ledger g st -> search_step g st = inr es ->
+  length es = search_event_supply g es.
+Proof.
+  intros Hledger Hstop.
+  destruct (search_stop_events g st es Hstop) as [Hevents Htasks].
+  unfold search_event_ledger in Hledger. rewrite Htasks in Hledger.
+  cbn [search_event_pending] in Hledger. rewrite Hevents, length_rev. lia.
+Qed.
+
+(** Partial traces satisfy the event bound, while completed traces attain it. *)
+Lemma search_event_ledger_loop g fuel st : search_event_ledger g st ->
+  match loop_fuel (search_step g) fuel st with
+  | inl next => search_event_ledger g next
+  | inr es => length es = search_event_supply g es
+  end.
+Proof.
+  revert st. induction fuel as [|fuel IH]; intros st Hledger; cbn [loop_fuel].
+  - exact Hledger.
+  - destruct (search_step g st) as [next|es] eqn:Hstep.
+    + apply IH. eapply search_event_ledger_step; eassumption.
+    + eapply search_event_ledger_stop; eassumption.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -1603,14 +1692,56 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inl next ->
     invariant g roots next /\ (potential g roots next < potential g roots st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st next Hcounts Hgraph Hroots Hinv Hstep.
+    pose proof (proj1 Hinv) as Hreachable.
+    assert (Hnext : machine_reachable g roots next).
+    { destruct Hreachable as [n Hstate]. exists (S n).
+      rewrite Nat.iter_succ, Hstate. unfold advance. now rewrite Hstep. }
+    split.
+    - eapply machine_invariant; eassumption.
+    - change (N.of_nat (search_finite_credit (base g) (support g roots) next) <
+        N.of_nat (search_finite_credit (base g) (support g roots) st))%N.
+      assert (Hdecrease : search_finite_credit (base g) (support g roots) next <
+        search_finite_credit (base g) (support g roots) st).
+      { eapply search_finite_decreases; [|exact Hstep].
+      pose proof (proj1 (machine_reach g roots st Hreachable)) as Htasks.
+      assert (Hsupport : forall v, reach (base g) roots v -> In v (support g roots)).
+      { intros v Hreach. apply (proj2 (trace_reach g roots v Hcounts Hgraph Hroots)).
+        exact Hreach. }
+      eapply Forall_impl; [|exact Htasks]. intros task Htask.
+      destruct task as [v|u vs|v]; cbn [search_task_valid] in *.
+      + now apply Hsupport.
+      + destruct Htask as [Hu Hvs]. split; [now apply Hsupport|].
+        eapply Forall_impl; [exact Hsupport|exact Hvs].
+      + now apply Hsupport. }
+      lia.
+  Qed.
+
 
   Lemma F5_stop : forall g roots st es,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     invariant g roots st -> search_step (base g) st = inr es ->
     search_tasks st = [] /\ es = trace g roots.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots st es Hcounts Hgraph Hroots Hinv Hstop.
+    split; [exact (proj2 (search_stop_events (base g) st es Hstop))|].
+    destruct (prepared_search_complete_closed g roots Hcounts
+      (search_wf_closed g Hgraph) Hroots) as [result Hrun].
+    assert (Htrace : trace g roots = result).
+    { destruct (F2_trace g roots) as [Htrace Hmachine].
+      change (loopN (search_step (base g)) (search_budget g roots)
+        (initial roots) = inr result) in Hrun.
+      rewrite Htrace, Hmachine, Hrun. reflexivity. }
+    rewrite Htrace. destruct (proj1 Hinv) as [n Hstate].
+    change (Nat.iter n (search_advance (base g)) (initial roots) = st) in Hstate.
+    eapply (search_iter_terminal_unique (base g) (initial roots) n
+      (N.to_nat (search_budget g roots)) es result).
+    - rewrite Hstate. exact Hstop.
+    - apply search_completed_terminal. rewrite <- search_loopN_fuel. exact Hrun.
+  Qed.
+
 
   Lemma F6_width : forall g roots st,
     counts_ok g -> wf_graph (base g) ->
