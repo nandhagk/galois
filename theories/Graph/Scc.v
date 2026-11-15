@@ -4244,6 +4244,71 @@ Proof.
       Htrace Hpop w Hw kind target Hin).
 Qed.
 
+Lemma discovered_location prefix v i : NoDup (entered prefix) ->
+  trie_get v (tarjan_disc (prefix_state prefix)) = Some i ->
+  In v (tarjan_pending (prefix_state prefix) ++ concat (tarjan_emitted (prefix_state prefix))).
+Proof.
+  intros Hunique Hdisc.
+  apply (tarjan_discovery_rows_fold prefix Hunique v i) in Hdisc.
+  destruct Hdisc as [n [Hnth Hnumber]].
+  change (In v (tarjan_bag (prefix_state prefix))).
+  eapply Permutation_in; [apply Permutation_sym; exact (tarjan_bag_inventory prefix)|].
+  eapply nth_error_In; exact Hnth.
+Qed.
+
+(** A finished root cannot emit an edge into the older pending suffix. *)
+Lemma emission_closed g prefix root suffix members tail low active owners d :
+  wf_graph (base g) -> scc_trace g = prefix ++ Leave root :: suffix ->
+  trie_get root (tarjan_disc (prefix_state prefix)) = Some d ->
+  trie_get root (tarjan_low (prefix_state prefix)) = Some d ->
+  tarjan_pop root (tarjan_next (prefix_state prefix)) (tarjan_pending (prefix_state prefix))
+    (tarjan_low (prefix_state prefix)) (tarjan_active (prefix_state prefix))
+    (tarjan_owners (prefix_state prefix)) = (members, tail, low, active, owners) ->
+  forall w target, In w members -> edge (base g) w target ->
+    In target members \/ In target (concat (tarjan_emitted (prefix_state prefix))).
+Proof.
+  intros Hwf Htrace Hroot_disc Hroot_low Hpop w target Hw Hedge.
+  pose proof (scc_trace_prefix_unique g prefix (Leave root :: suffix) Htrace) as Hunique.
+  destruct (prefix_frames g prefix (Leave root :: suffix) Htrace) as [Hembed Hstack].
+  destruct (leave_shape _ root suffix [] Hstack) as [open [Hframes Hfuture]].
+  unfold tarjan_frames_embedded in Hembed. rewrite Hframes in Hembed.
+  pose proof (tarjan_ordered_fold prefix Hunique) as Horder.
+  pose proof (prefix_frontier g prefix (Leave root :: suffix) Htrace) as Hfrontier.
+  rewrite Hframes in Hfrontier.
+  pose proof (tarjan_pending_domains_fold prefix Hunique) as Hdomains.
+  pose proof (proj1 (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop)) as Hsplit.
+  assert (Hroot : In root (tarjan_pending (prefix_state prefix))) by
+    (apply (tarjan_embeds_incl _ _ Hembed); now left).
+  assert (Hpending_w : In w (tarjan_pending (prefix_state prefix))) by
+    (rewrite Hsplit; apply in_or_app; now left).
+  destruct (popped_edges_seen g prefix root suffix members tail low active owners
+    Hwf Htrace Hpop w target Hw Hedge) as [kind Hseen].
+  destruct (tarjan_leave_processed g prefix root suffix kind w target Htrace Hseen)
+    as [dw [dt [Hwd [Htarget Hbound]]]].
+  pose proof (discovered_location prefix target dt Hunique Htarget) as Hlocation.
+  apply in_app_iff in Hlocation. destruct Hlocation as [Hpending_target|Hblack]; [|now right].
+  rewrite Hsplit, in_app_iff in Hpending_target.
+  destruct Hpending_target as [Hmember|Htail]; [now left|]. exfalso.
+  destruct (proj2 (proj2 Hdomains w) Hpending_w) as [lw Hwl].
+  pose proof (tarjan_pop_number root (tarjan_next (prefix_state prefix))
+    (tarjan_pending (prefix_state prefix)) (tarjan_disc (prefix_state prefix))
+    (tarjan_low (prefix_state prefix)) (tarjan_active (prefix_state prefix))
+    (tarjan_owners (prefix_state prefix)) members tail low active owners w d dw
+    Horder Hroot Hroot_disc Hwd Hpop Hw) as Hsource_number.
+  pose proof (top_bound root open (prefix_state prefix) w d dw d lw
+    Hembed Horder Hfrontier Hpending_w Hroot_disc Hwd Hroot_low Hwl Hsource_number)
+    as Hroot_bound.
+  assert (Htarget_pending : In target (tarjan_pending (prefix_state prefix))) by
+    (rewrite Hsplit; apply in_or_app; now right).
+  specialize (Hbound Htarget_pending lw Hwl).
+  pose proof (tarjan_pop_root_member _ _ _ _ _ _ _ _ _ _ _ Hroot Hpop) as Hroot_member.
+  assert (Hsplit_order : tarjan_ordered (tarjan_disc (prefix_state prefix)) (members ++ tail)).
+  { rewrite <- Hsplit. exact Horder. }
+  pose proof (tarjan_ordered_cross (tarjan_disc (prefix_state prefix)) members tail
+    root target d dt Hsplit_order Hroot_member Htail Hroot_disc Htarget) as Htarget_number.
+  lia.
+Qed.
+
 End TarjanFrontierFacts.
 
 
