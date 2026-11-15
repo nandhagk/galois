@@ -866,18 +866,30 @@ Module GenKillMayDomainT (F : KEY_T) (S : SET_T F)
   Definition size := S.nodes.
   Lemma size_nodes : forall a, size a = S.nodes a.
   Proof. reflexivity. Qed.
-  Definition c_lat : N := 1%N. (* STUB *)
+  Definition c_lat : N := (S.c_set + 8)%N.
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat; lia.
+  Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof (S.T_subset_le a b) as Htime.
+    unfold size, c_lat; time_unfold @T_leb; nia.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; pose proof (S.T_union_le a b) as Htime.
+    unfold size, c_lat; time_unfold @T_join; nia.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a; pose proof (S.T_subset_le a S.empty) as Htime.
+    rewrite S.nodes_empty, Nat.add_0_r in Htime.
+    unfold size, c_lat; time_unfold @T_is_bot; nia.
+  Qed.
 End GenKillMayDomainT.
 
 Module GenKillMustDomainT (F : KEY_T) (S : SET_T F)
@@ -895,18 +907,32 @@ Module GenKillMustDomainT (F : KEY_T) (S : SET_T F)
   Lemma size_nodes : forall a,
     size a = match a with None => 0 | Some facts => S.nodes facts end.
   Proof. reflexivity. Qed.
-  Definition c_lat : N := 1%N. (* STUB *)
+  Definition c_lat : N := (S.c_set + 8)%N.
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat; lia.
+  Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|] [b|]; unfold size, c_lat.
+    all: time_unfold @T_leb; time_unfold @T_genkill_must_leb.
+    all: time_cbn; time_pose; time_cbn_all;
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|] [b|]; unfold size, c_lat.
+    all: time_unfold @T_join; time_unfold @T_genkill_must_join.
+    all: time_cbn; time_pose; time_cbn_all;
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [a|]; unfold size, c_lat; time_step.
+  Qed.
 End GenKillMustDomainT.
 
 Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
@@ -917,22 +943,47 @@ Module GenKillMayFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   TimeFun boundary.
   TimeFun transfer.
   Definition flow_work p s := N.of_nat (G.gk_work p + s).
-  Definition c_flow : N := 1%N. (* STUB *)
+  Definition c_flow : N := (8 * (G.c_gk + S.c_set + 1))%N.
   Lemma flow_work_mono : forall p s t, s <= t ->
     (flow_work p s <= flow_work p t)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s t Hst; unfold flow_work; apply time_of_nat_le; lia.
+  Qed.
   Lemma T_boundary_le : forall p n,
     (T_boundary p n <= c_flow * (flow_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n; unfold c_flow, flow_work; time_step.
+  Qed.
   Lemma T_transfer_le : forall p e a,
     (T_transfer p e a <= c_flow * (flow_work p (L.size a) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e a.
+    pose proof (G.gen_nodes p e) as Hgen_size.
+    pose proof (G.kill_nodes p e) as Hkill_size.
+    pose proof (S.nodes_diff a (G.kill p e)) as Hdiff_size.
+    apply time_of_nat_le in Hgen_size, Hkill_size, Hdiff_size.
+    pose proof (G.T_gen_le p e) as Hgen.
+    pose proof (G.T_kill_le p e) as Hkill.
+    pose proof (S.T_diff_le a (G.kill p e)) as Hdiff.
+    pose proof (S.T_union_le (G.gen p e) (S.diff a (G.kill p e))) as Hunion.
+    unfold c_flow, flow_work; rewrite L.size_nodes; time_unfold @T_transfer.
+    repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma boundary_size_le : forall p n,
     (N.of_nat (L.size (boundary p n)) <= flow_work p 0)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n; unfold boundary, flow_work; rewrite L.size_nodes.
+    apply time_of_nat_le; pose proof (G.init_nodes p) as Hinit; lia.
+  Qed.
   Lemma transfer_size_le : forall p e a,
     (N.of_nat (L.size (transfer p e a)) <= flow_work p (L.size a))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e a; unfold transfer, flow_work; rewrite !L.size_nodes.
+    apply time_of_nat_le.
+    pose proof (S.nodes_union (G.gen p e) (S.diff a (G.kill p e))) as Hunion.
+    pose proof (S.nodes_diff a (G.kill p e)) as Hdiff.
+    pose proof (G.gen_nodes p e) as Hgen; lia.
+  Qed.
 End GenKillMayFlowT.
 
 Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
@@ -943,22 +994,48 @@ Module GenKillMustFlowT (P : TYPE) (N : KEY_T) (E : TYPE)
   TimeFun boundary.
   TimeFun transfer.
   Definition flow_work p s := N.of_nat (G.gk_work p + s).
-  Definition c_flow : N := 1%N. (* STUB *)
+  Definition c_flow : N := (8 * (G.c_gk + S.c_set + 1))%N.
   Lemma flow_work_mono : forall p s t, s <= t ->
     (flow_work p s <= flow_work p t)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s t Hst; unfold flow_work; apply time_of_nat_le; lia.
+  Qed.
   Lemma T_boundary_le : forall p n,
     (T_boundary p n <= c_flow * (flow_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n; unfold c_flow, flow_work; time_step.
+  Qed.
   Lemma T_transfer_le : forall p e a,
     (T_transfer p e a <= c_flow * (flow_work p (L.size a) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e [a|].
+    - pose proof (G.gen_nodes p e) as Hgen_size.
+      pose proof (G.kill_nodes p e) as Hkill_size.
+      pose proof (S.nodes_diff a (G.kill p e)) as Hdiff_size.
+      apply time_of_nat_le in Hgen_size, Hkill_size, Hdiff_size.
+      pose proof (G.T_gen_le p e) as Hgen.
+      pose proof (G.T_kill_le p e) as Hkill.
+      pose proof (S.T_diff_le a (G.kill p e)) as Hdiff.
+      pose proof (S.T_union_le (G.gen p e) (S.diff a (G.kill p e))) as Hunion.
+      unfold c_flow, flow_work; rewrite L.size_nodes; time_unfold @T_transfer.
+      time_cbn; repeat rewrite Nat2N.inj_add in *; nia.
+    - unfold c_flow, flow_work; rewrite L.size_nodes; time_step.
+  Qed.
   Lemma boundary_size_le : forall p n,
     (N.of_nat (L.size (boundary p n)) <= flow_work p 0)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n; unfold boundary, flow_work; rewrite L.size_nodes.
+    apply time_of_nat_le; pose proof (G.init_nodes p) as Hinit; lia.
+  Qed.
   Lemma transfer_size_le : forall p e a,
     (N.of_nat (L.size (transfer p e a)) <= flow_work p (L.size a))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e [a|]; unfold transfer, flow_work; rewrite !L.size_nodes;
+      apply time_of_nat_le; [|lia].
+    pose proof (S.nodes_union (G.gen p e) (S.diff a (G.kill p e))) as Hunion.
+    pose proof (S.nodes_diff a (G.kill p e)) as Hdiff.
+    pose proof (G.gen_nodes p e) as Hgen; lia.
+  Qed.
 End GenKillMustFlowT.
 
 Module GenKillMayOperationalT (P : TYPE) (N : KEY_T) (E : TYPE)
