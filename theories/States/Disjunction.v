@@ -191,23 +191,186 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
     - apply S.top_greatest.
   Qed.
 
+  (** Replacing an alternative by an upper bound preserves raw coverage. *)
+  Lemma replace_first_covers : forall f xs,
+    (forall x, In x xs -> S.leb x (f x) = true) ->
+    forall x, In x xs ->
+    exists y, In y (replace_first S.is_bot f xs) /\ S.leb x y = true.
+  Proof.
+    intros f xs; induction xs as [|a xs IH]; intros Hupper x Hin; [contradiction |].
+    cbn [replace_first]; destruct (S.is_bot a).
+    - destruct Hin as [<- | Hin].
+      + exists a; split; [now left | apply S.leb_refl].
+      + destruct (IH (fun y Hy => Hupper y (or_intror Hy)) x Hin) as [y [Hy Hle]].
+        exists y; split; [now right | exact Hle].
+    - destruct Hin as [<- | Hin].
+      + exists (f a); split; [now left | apply Hupper; now left].
+      + exists x; split; [now right | apply S.leb_refl].
+  Qed.
+
+  (** A list with a nonbottom alternative contains the selected replacement. *)
+  Lemma replace_first_selected : forall f xs, forallb S.is_bot xs = false ->
+    exists x, In x xs /\ S.is_bot x = false /\ In (f x) (replace_first S.is_bot f xs).
+  Proof.
+    intros f xs; induction xs as [|a xs IH]; intro Hnonbottom; [discriminate |].
+    cbn [forallb] in Hnonbottom; cbn [replace_first]; destruct (S.is_bot a) eqn:Ha.
+    - cbn in Hnonbottom; destruct (IH Hnonbottom) as [x [Hin [Hx Hselected]]].
+      exists x; repeat split; auto; now right.
+    - exists a; repeat split; auto; now left.
+  Qed.
+
+  (** Each candidate is already covered or occurs in the uncovered list. *)
+  Lemma candidate_covered_or_new : forall old new y, In y new ->
+    (exists x, In x old /\ S.leb y x = true) \/ In y (uncovered S.leb old new).
+  Proof.
+    intros old new y Hin; destruct (existsb (S.leb y) old) eqn:Hcovered.
+    - left; now apply existsb_exists.
+    - right; apply filter_In; split; [exact Hin | now rewrite Hcovered].
+  Qed.
+
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b; apply P.leb_spec; intros x Hin; rewrite widen_raw.
+    destruct (leb b a); [exists x; split; [exact Hin | apply S.leb_refl] |].
+    destruct (is_bot a) eqn:Hempty.
+    - apply P.is_bot_spec in Hempty; rewrite Hempty in Hin; contradiction.
+    - destruct (forallb S.is_bot (proj1_sig a)).
+      + exists S.top; split; [now left | apply S.top_greatest].
+      + apply replace_first_covers; [intros; apply S.widen_ub_l | exact Hin].
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b; destruct (leb b a) eqn:Hstable.
+    - apply P.leb_spec; intros y Hin; rewrite widen_raw, Hstable.
+      exact (proj1 (P.leb_spec b a) Hstable y Hin).
+    - apply P.leb_spec; intros y Hin; rewrite widen_raw, Hstable.
+      destruct (is_bot a); [exists y; split; [exact Hin | apply S.leb_refl] |].
+      destruct (forallb S.is_bot (proj1_sig a)) eqn:Hnonbottom.
+      + exists S.top; split; [now left | apply S.top_greatest].
+      + destruct (candidate_covered_or_new (proj1_sig a) (proj1_sig b) y Hin)
+          as [[x [Hx Hle]] | Hnew].
+        * destruct (replace_first_covers
+            (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a)
+              (proj1_sig b)))) (proj1_sig a)
+            (fun x _ => S.widen_ub_l p x _) x Hx) as [z [Hz Hxz]].
+          exists z; split; [exact Hz | eapply S.leb_trans; eassumption].
+        * destruct (replace_first_selected
+            (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a)
+              (proj1_sig b)))) (proj1_sig a) Hnonbottom) as [x [Hx [Hbot Hselected]]].
+          eexists; split; [exact Hselected |].
+          eapply S.leb_trans; [|apply S.widen_ub_r].
+          apply collapse_upper; now right.
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
   Proof.
     intros p [xs Hbound] b Hstable; unfold widen; now rewrite Hstable.
   Qed.
+
+  (** A failed coverage scan exhibits a candidate with no covering old alternative. *)
+  Lemma uncovered_witness : forall a b, leb b a = false ->
+    exists y, In y (uncovered S.leb (proj1_sig a) (proj1_sig b)).
+  Proof.
+    intros a b Hstrict.
+    assert (Hscan : forallb (fun y => existsb (S.leb y) (proj1_sig a))
+      (proj1_sig b) = false).
+    { destruct (forallb (fun y => existsb (S.leb y) (proj1_sig a))
+        (proj1_sig b)) eqn:Hscan; [|reflexivity].
+      assert (Hcovered : leb b a = true).
+      { apply P.leb_spec; intros y Hin; apply existsb_exists.
+        apply forallb_forall with (x := y) in Hscan; assumption. }
+      congruence. }
+    revert Hscan; generalize (proj1_sig b); clear Hstrict b.
+    intros ys; induction ys as [|y ys IH]; intro Hscan; [discriminate |].
+    cbn [forallb] in Hscan.
+    destruct (existsb (S.leb y) (proj1_sig a)) eqn:Hy.
+    - cbn in Hscan; destruct (IH Hscan) as [z Hz].
+      exists z; apply filter_In in Hz; apply filter_In; destruct Hz as [Hz Hbad].
+      split; [now right | exact Hbad].
+    - exists y; apply filter_In; split; [now left | now rewrite Hy].
+  Qed.
+
+  (** Joining an uncovered candidate cannot stay below any old alternative. *)
+  Lemma collapse_strict : forall old new x,
+    In x old -> (exists y, In y (uncovered S.leb old new)) ->
+    S.leb (collapse (x :: uncovered S.leb old new)) x = false.
+  Proof.
+    intros old new x Hx [y Hy]; apply Bool.not_true_is_false; intro Hle.
+    pose proof Hy as Hfilter; apply filter_In in Hfilter; destruct Hfilter as [_ Hbad].
+    assert (Hcovered : existsb (S.leb y) old = true).
+    { apply existsb_exists; exists x; split; [exact Hx |].
+      eapply S.leb_trans; [|exact Hle].
+      apply collapse_upper; now right. }
+    rewrite Hcovered in Hbad; discriminate.
+  Qed.
+
+  (** A strict widening result cannot be recognized as bottom. *)
+  Lemma strict_widen_nonbottom : forall p x c, S.leb c x = false ->
+    S.is_bot (S.widen p x c) = false.
+  Proof.
+    intros p x c Hstrict; apply Bool.not_true_is_false; intro Hbottom.
+    assert (Hle : S.leb c x = true).
+    { eapply S.leb_trans with (b := S.widen p x c).
+      - apply S.widen_ub_r.
+      - apply S.is_bot_least; exact Hbottom. }
+    congruence.
+  Qed.
+
+  (** Changing the selected nonbottom lowers the sum and keeps a nonbottom alternative. *)
+  Lemma replace_first_rank : forall p f xs,
+    forallb S.is_bot xs = false ->
+    (forall x, In x xs -> S.is_bot x = false ->
+      S.wrank p (f x) < S.wrank p x /\ S.is_bot (f x) = false) ->
+    fold_right Nat.add 0 (map (S.wrank p) (replace_first S.is_bot f xs)) <
+      fold_right Nat.add 0 (map (S.wrank p) xs) /\
+    forallb S.is_bot (replace_first S.is_bot f xs) = false.
+  Proof.
+    intros p f xs; induction xs as [|a xs IH]; intros Hnonbottom Hstep;
+      [discriminate |].
+    cbn [forallb] in Hnonbottom; cbn [replace_first]; destruct (S.is_bot a) eqn:Ha.
+    - cbn in Hnonbottom.
+      destruct (IH Hnonbottom (fun x Hx => Hstep x (or_intror Hx))) as [Hrank Hbot].
+      cbn [map fold_right forallb]; rewrite Ha, Hbot; split; [lia | reflexivity].
+    - destruct (Hstep a (or_introl eq_refl) Ha) as [Hrank Hbot].
+      cbn [map fold_right forallb]; rewrite Hbot; split; [lia | reflexivity].
+  Qed.
+
+  (** A strict update of a nonempty list rules out a recognized bottom top. *)
+  Lemma strict_top_nonbottom : forall a b, is_bot a = false -> leb b a = false ->
+    S.is_bot S.top = false.
+  Proof.
+    intros a b Hnonempty Hstrict; apply Bool.not_true_is_false; intro Htop.
+    destruct (proj1_sig a) as [|x xs] eqn:Hxs.
+    - assert (Hempty : is_bot a = true) by (apply P.is_bot_spec; exact Hxs).
+      congruence.
+    - assert (Hcovered : leb b a = true).
+      { apply P.leb_spec; intros y Hy; exists x; split; [rewrite Hxs; now left |].
+        eapply S.leb_trans; [apply S.top_greatest | now apply S.is_bot_least]. }
+      congruence.
+  Qed.
+
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   (* F2-22 replaced the former twoStateDisj aligned-pair rank route with uncovered
      alternatives, and F2-30 supplies the size and widening-unit capabilities it needs. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hnonempty Hstrict; unfold wrank.
+    rewrite widen_raw, Hstrict, Hnonempty.
+    destruct (forallb S.is_bot (proj1_sig a)) eqn:Hbottom.
+    - pose proof (strict_top_nonbottom a b Hnonempty Hstrict) as Htop.
+      cbn [map fold_right forallb]; rewrite Htop; cbn; lia.
+    - pose proof (uncovered_witness a b Hstrict) as Huncovered.
+      destruct (replace_first_rank p
+        (fun x => S.widen p x (collapse (x :: uncovered S.leb (proj1_sig a)
+          (proj1_sig b)))) (proj1_sig a) Hbottom) as [Hrank Hbot].
+      + intros x Hx Hnotbot.
+        pose proof (collapse_strict (proj1_sig a) (proj1_sig b) x Hx Huncovered) as Hgrowth.
+        split; [now apply S.wrank_widen | now apply strict_widen_nonbottom].
+      + rewrite Hbot; lia.
+  Qed.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
   Proof.
@@ -279,7 +442,20 @@ Module StateDisjunction (X : KEY) (L : LANG) (V : VALUE_DOMAIN L)
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e [xs Hbound] st c Hgamma Heval; unfold eval; cbn [proj1_sig].
+    assert (Hfold : forall ys acc, V.gamma acc c \/ Exists (fun s => S.gamma s st) ys ->
+      V.gamma (fold_left (fun a s => V.join a (S.eval e s)) ys acc) c).
+    { induction ys as [|a ys IH]; intros acc Hcovered; cbn [fold_left].
+      - destruct Hcovered as [Hacc | Hnone]; [exact Hacc | inversion Hnone].
+      - apply IH; destruct Hcovered as [Hacc | Hsome].
+        + left; eapply V.gamma_mono; [apply V.join_ub_l | exact Hacc].
+        + inversion Hsome as [a' rest Ha | a' rest Hrest]; subst.
+          * left; eapply V.gamma_mono; [apply V.join_ub_r |].
+            eapply S.eval_sound; eassumption.
+          * right; exact Hrest. }
+    apply Hfold; right; exact Hgamma.
+  Qed.
   Lemma gamma_alternatives : forall d st,
     gamma d st <-> Exists (fun s => S.gamma s st) (proj1_sig d).
   Proof.
