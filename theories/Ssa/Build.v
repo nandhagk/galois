@@ -9,7 +9,7 @@ From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig FrontierSig.
 From Galois.Program Require Import CfgSig VarsSig SsaSig.
-From Galois.Ssa Require Import Lang LiveSig ValidateSig Validate BuildSig.
+From Galois.Ssa Require Import Lang LiveSig Live ValidateSig Validate BuildSig.
 Import List.ListNotations.
 
 Module BuildSig.
@@ -2453,6 +2453,33 @@ Module BuildT (O : OPS)
     destruct (build_blocks_unique (blocks _ _ _ p) Empty); [|lia].
     destruct (D.check g (entry _ _ _ p) (fst result) (snd result)); [|lia].
     destruct (placement_allowed p q frontier (L.live_in p) (U.universe q)); lia.
+  Qed.
+
+  Module UniverseClock := LiveT O P Q R BE E N BC C U SP PB.
+  Definition budget_universe_coefficient : N :=
+    (2048 * UniverseClock.live_clock_scale * UniverseClock.live_clock_scale *
+      UniverseClock.live_clock_scale * UniverseClock.live_clock_scale)%N.
+
+  (** Universe readers have the same syntax budget as the Live driver. *)
+  Lemma budget_universe_clock p :
+    (U.T_universe (R.prepare p) <= budget_universe_coefficient *
+      N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    pose proof (UniverseClock.live_graph_load_bound p) as Hload.
+    assert (Hloadpaid : (N.of_nat (UniverseClock.live_graph_load (R.prepare p)) <=
+      2 * UniverseClock.live_clock_scale * N.of_nat (build_work p))%N).
+    { eapply N.le_trans; [exact Hload|]. apply N.mul_le_mono_l.
+      apply time_of_nat_le. exact (proj2 (budget_size_lower p)). }
+    eapply N.le_trans; [apply UniverseClock.live_universe_atom|].
+    unfold budget_universe_coefficient, UniverseClock.live_clock_atom,
+      UniverseClock.live_clock_width.
+    replace (2048 * UniverseClock.live_clock_scale * UniverseClock.live_clock_scale *
+      UniverseClock.live_clock_scale * UniverseClock.live_clock_scale *
+      N.of_nat (build_work p) * N.of_nat (function_width p + 1))%N with
+      ((16 * (64 * UniverseClock.live_clock_scale * UniverseClock.live_clock_scale *
+        N.of_nat (function_width p + 1)) * UniverseClock.live_clock_scale) *
+        (2 * UniverseClock.live_clock_scale * N.of_nat (build_work p)))%N by ring.
+    apply N.mul_le_mono_l. exact Hloadpaid.
   Qed.
 
   (** The producer checks the graph before preparing it and stops at the first rejection. *)
