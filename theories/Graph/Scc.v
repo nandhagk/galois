@@ -2460,7 +2460,15 @@ Module SccT <: SCC_ALL.
     forall v i, trie_get v (tarjan_owners result) = Some i <->
       exists block, nth_error (rev (tarjan_emitted result))
         (Nat.pred (Pos.to_nat i)) = Some block /\ In v block.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g Hwf. cbn zeta.
+    unfold prefix_state, tarjan_trace, tarjan_initial,
+      tarjan_enter, tarjan_leave, tarjan_edge.
+    destruct (tarjan_complete_nested (scc_trace g)
+      (scc_trace_unique g) (scc_trace_nested g)) as [Hpending Hframes].
+    split; [exact Hpending|]. split; [exact Hframes|].
+    apply tarjan_owners_indexed_fold, scc_trace_unique.
+  Qed.
 
   Lemma F7_components : forall g, wf_graph (base g) -> forall u v,
     (exists i, trie_get u (comp (run g)) = Some i /\ trie_get v (comp (run g)) = Some i) <->
