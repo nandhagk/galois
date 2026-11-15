@@ -6123,6 +6123,164 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
   Qed.
 
 
+  (** Every detached frame wakes at the class that the finalization has just installed. *)
+  Lemma search_detached_awake : forall DB rs i n (s : extraction_state V.t DB Q.t),
+    Facts.search_waiters_valid rs (search_final_costs s) (search_waiters s) ->
+    Forall (search_frame_awake (PTrieCode.set i n (search_final_costs s)))
+      (search_detached i s).
+  Proof.
+    intros DB rs i n s Hwaiting. unfold search_detached.
+    destruct (trie_get i (search_waiters s)) as [frames|] eqn:Hget; [|constructor].
+    apply Forall_forall. intros frame Hin.
+    destruct (Hwaiting i frames frame Hget Hin) as [Hvalid [Hmissing [tail Hhead]]].
+    exists i, tail, n. split; [exact Hhead|apply PTrie.get_set_same].
+  Qed.
+
+  (** The successful pop leaves room for all detached frames before their registration. *)
+  Lemma search_detached_load : forall DB i n row queue (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.pop (search_queue s) = Some (n, i, queue) ->
+    length (search_detached i s) + Resources.search_load
+      (search_restate s (PTrieCode.set i n (search_final_costs s))
+        (PTrieCode.remove i (search_candidates s)) (PTrieCode.remove i (search_waiters s))
+        queue ((i, (n, row)) :: search_finalised s)) < Resources.search_load s.
+  Proof.
+    intros DB i n row queue s Hwf Hpop.
+    pose proof (Q.pending_pop (search_queue s) n i queue Hwf Hpop) as Hpending.
+    pose proof (search_trie_weight_remove _ (@length (extraction_frame V.t)) i
+      (search_waiters s)) as Hcount.
+    unfold search_detached, Resources.search_load, Resources.search_waiter_count.
+    cbn [search_restate search_waiters search_queue].
+    destruct (trie_get i (search_waiters s)); cbn [length] in Hcount |- *; lia.
+  Qed.
+
+  (** The fixed finalization update touches three trie bindings and one waiting-list pointer. *)
+  Lemma T_search_finish_overhead : forall DB i n row queue
+      (s : extraction_state V.t DB Q.t) w,
+    Pos.size_nat i <= w ->
+    (T_search_finish i n row queue s <=
+      T_search_resume_list (search_detached i s)
+        (search_restate s (PTrieCode.set i n (search_final_costs s))
+          (PTrieCode.remove i (search_candidates s)) (PTrieCode.remove i (search_waiters s))
+          queue ((i, (n, row)) :: search_finalised s)) +
+      32 * (PTrieT.c_trie + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros DB i n row queue s w Hwidth.
+    pose proof (PTrieT.T_set_le _ i n (search_final_costs s)) as Hset.
+    pose proof (PTrieT.T_remove_le _ i (search_candidates s)) as Hcandidate.
+    pose proof (PTrieT.T_remove_le _ i (search_waiters s)) as Hwaiting.
+    change (PTrieCode.T_set i n (search_final_costs s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
+    change (PTrieCode.T_remove i (search_candidates s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hcandidate.
+    change (PTrieCode.T_remove i (search_waiters s) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hwaiting.
+    time_unfold @T_search_finish. time_simpl. time_cbn.
+    time_unfold @T_search_restate. time_simpl. time_cbn.
+    unfold search_detached. rewrite PTrieT.trie_get_clock.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The waiting-list reserve pays every resumed row after a finalization. *)
+  Lemma T_search_finish_amort : forall DB rs P w i n f k queue
+      (s : extraction_state V.t DB Q.t),
+    Facts.search_invariant rs s -> search_syntax_width rs w ->
+    Q.fits w (search_queue s) -> Resources.search_load s <= P ->
+    Q.pop (search_queue s) = Some (n, i, queue) ->
+    trie_get i (search_candidates s) = Some (n, (f, k)) ->
+    Resources.search_rows_width rs (PTrieCode.set i n (search_final_costs s)) w ->
+    (T_search_finish i n (f, k) queue s +
+      search_potential P w (search_finish i n (f, k) queue s) +
+      Q.phi P w (search_queue s) <= search_potential P w s + Q.phi P w queue +
+      32 * (PTrieT.c_trie + 1) * N.of_nat (w + 1) + 1)%N.
+  Proof.
+    intros DB rs P w i n f k queue s [Hcandidates [Hwaiting [[Hwf Hqueue] Htracking]]]
+      Hsyntax Hfits Hload Hpop Hcandidate Hwidth.
+    destruct (Hcandidates i n f k Hcandidate) as [Hmissing [Hrow Hready]].
+    destruct (Hsyntax f k i Hrow) as [Houtput Hkeys].
+    set (base := search_restate s (PTrieCode.set i n (search_final_costs s))
+      (PTrieCode.remove i (search_candidates s)) (PTrieCode.remove i (search_waiters s))
+      queue ((i, (n, (f, k))) :: search_finalised s)).
+    pose proof (search_detached_load DB i n (f, k) queue s Hwf Hpop) as Hreleased.
+    change (length (search_detached i s) + Resources.search_load base <
+      Resources.search_load s) in Hreleased.
+    pose proof (Facts.search_detached_valid rs (search_final_costs s) (search_waiters s)
+      i n Hwaiting Hmissing) as Hframes.
+    pose proof (search_detached_awake DB rs i n s Hwaiting) as Hawake.
+    pose proof (T_search_resume_list_amort DB rs P w false (search_detached i s) base
+      (Q.wf_pop _ _ _ _ Hwf Hpop) (Q.fits_pop _ _ _ _ _ Hwf Hfits Hpop)
+      ltac:(lia) Hframes Hsyntax Hwidth (or_intror Hawake)) as Hregistered.
+    cbn beta iota zeta in Hregistered. rewrite N.mul_0_l, N.add_0_r in Hregistered.
+    change (T_search_resume_list (search_detached i s) base +
+      search_potential P w (search_finish i n (f, k) queue s) <=
+      search_potential P w base + search_frames_credit P w (search_detached i s) + 1)%N
+      in Hregistered.
+    pose proof (search_detached_potential DB P w i (PTrieCode.set i n (search_final_costs s))
+      (PTrieCode.remove i (search_candidates s)) queue
+      ((i, (n, (f, k))) :: search_finalised s) s) as Htransfer.
+    fold base in Htransfer.
+    pose proof (T_search_finish_overhead DB i n (f, k) queue s w Houtput) as Hoverhead.
+    change (T_search_finish i n (f, k) queue s <=
+      T_search_resume_list (search_detached i s) base +
+      32 * (PTrieT.c_trie + 1) * N.of_nat (w + 1))%N in Hoverhead.
+    clear - Hregistered Htransfer Hoverhead. lia.
+  Qed.
+
+  (** Fixed map work, cached-size lookup and one amortized pop share the heap envelope. *)
+  Lemma search_step_charge : forall P w output_width,
+    output_width <= w ->
+    (Q.c_pq + Q.c_pq * N.of_nat (Q.unit_pq P w) +
+      32 * (PTrieT.c_trie + 1) * N.of_nat (w + 1) + 4 * N.of_nat output_width + 6 <=
+      64 * (PTrieT.c_trie + Q.c_pq + 1) * N.of_nat (Q.unit_pq P w))%N.
+  Proof.
+    intros P w output_width Hwidth.
+    assert (Hunit : (N.of_nat (w + 1) <= N.of_nat (Q.unit_pq P w))%N).
+    { change (N.of_nat (w + 1) <= N.of_nat ((Nat.log2 P + 1) * (w + 1)))%N.
+      rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia. }
+    assert (Hmaps : (32 * (PTrieT.c_trie + 1) * N.of_nat (w + 1) <=
+      32 * (PTrieT.c_trie + 1) * N.of_nat (Q.unit_pq P w))%N)
+      by (now apply N.mul_le_mono_l).
+    assert (Hpositive : (1 <= N.of_nat (Q.unit_pq P w))%N) by lia.
+    assert (Hsize : (Q.c_pq <= Q.c_pq * N.of_nat (Q.unit_pq P w))%N).
+    { rewrite <- (N.mul_1_r Q.c_pq) at 1. now apply N.mul_le_mono_l. }
+    rewrite Nat2N.inj_add in Hunit. nia.
+  Qed.
+
+  (** A continuing search step spends row reserves and one public heap-operation allowance. *)
+  Lemma T_search_step_amort : forall DB rs P w (s next : extraction_state V.t DB Q.t),
+    Facts.search_invariant rs s -> search_syntax_width rs w ->
+    Q.fits w (search_queue s) -> Resources.search_load s <= P ->
+    Resources.search_rows_width rs (search_final_costs next) w ->
+    search_step s = inl next ->
+    (T_search_step s + search_potential P w next <= search_potential P w s +
+      64 * (PTrieT.c_trie + Q.c_pq + 1) * N.of_nat (Q.unit_pq P w))%N.
+  Proof.
+    intros DB rs P w s next Hinv Hsyntax Hfits Hload Hwidth Hstep.
+    destruct (Facts.search_step_cases DB rs s next Hinv Hstep)
+      as [i [n [f [k [queue [Hpop [Hcandidate ->]]]]]]].
+    change (T_search_step s + search_potential P w (search_finish i n (f, k) queue s) <=
+      search_potential P w s +
+      64 * (PTrieT.c_trie + Q.c_pq + 1) * N.of_nat (Q.unit_pq P w))%N.
+    destruct (Facts.search_finish_fields DB i n (f, k) queue s)
+      as [Hdb [Hrows [Hcount [Hcosts Hfinals]]]].
+    rewrite Hcosts in Hwidth.
+    pose proof (T_search_finish_amort DB rs P w i n f k queue s
+      Hinv Hsyntax Hfits Hload Hpop Hcandidate Hwidth) as Hfinish.
+    destruct Hinv as [Hcandidates [Hwaiting [[Hwf Hqueue] Htracking]]].
+    destruct (Hcandidates i n f k Hcandidate) as [Hmissing [Hrow Hready]].
+    destruct (Hsyntax f k i Hrow) as [Houtput Hkeys].
+    assert (Hpending : Q.pending (search_queue s) <= P)
+      by (unfold Resources.search_load in Hload; lia).
+    pose proof (Q.T_pop_amort P w (search_queue s) Hwf Hfits Hpending) as Hpop_time.
+    rewrite Hpop in Hpop_time. cbn beta iota zeta in Hpop_time.
+    pose proof (Q.T_size_le (search_queue s)) as Hsize_time.
+    pose proof (search_step_charge P w (Pos.size_nat i) Houtput) as Hcharge.
+    destruct (Q.size (search_queue s)) as [|size] eqn:Hsize.
+    - unfold search_step in Hstep. rewrite Hsize in Hstep. discriminate.
+    - time_unfold @T_search_step. time_simpl. time_cbn.
+      rewrite Hsize, Hpop, Hcandidate, Hmissing, !PTrieT.trie_get_clock. lia.
+  Qed.
+
+
 End SearchResourceT.
 
 (** A finite bound on distinct finalisations supplies a terminating unary loop. *)
