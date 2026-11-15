@@ -12318,6 +12318,522 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
       exact Hkinds|exact Hsorted|]. eapply Hderived. exact Hrow.
   Qed.
 
+  (** Constant sources consumed by a term scan come from its literal terms. *)
+  Lemma run_check_terms_constants : forall (P : V.t -> Prop) ts names pos seen copy inv
+      srcs columns copied copy' inv' srcs' columns' copied',
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    (forall v, In (Lit v) ts -> P v) ->
+    Forall (fun src => match src with Const _ c => exists v, c = Val v /\ P v
+      | _ => True end) srcs' ->
+    Forall (fun src => match src with Const _ c => exists v, c = Val v /\ P v
+      | _ => True end) srcs.
+  Proof.
+    intros P ts. induction ts as [|t ts IH]; intros names pos seen copy inv srcs columns
+      copied copy' inv' srcs' columns' copied' Hscan Hliterals Htail.
+    - cbn [check_terms] in Hscan. inversion Hscan; subst. exact Htail.
+    - assert (Hrest : forall v, In (Lit v) ts -> P v).
+      { intros v Hin. apply Hliterals. now right. }
+      destruct t as [x|v]; cbn [check_terms] in Hscan.
+      + destruct (trie_get x seen).
+        * eapply IH; eassumption.
+        * destruct (trie_get x names); [eapply IH; eassumption|discriminate].
+      + destruct srcs as [|src srcs]; [discriminate|].
+        destruct src as [s|s|c]; try discriminate.
+        destruct c as [i|w]; [discriminate|].
+        destruct columns as [|lv columns]; [discriminate|].
+        destruct lv as [|j lv]; [discriminate|]. destruct lv; [|discriminate].
+        destruct (V.eqb w v) eqn:Heq; [|discriminate].
+        destruct (V.eqb_spec w v) as [Hwv|Hwv]; [subst w|discriminate]. constructor.
+        * exists v. split; [reflexivity|]. apply Hliterals. now left.
+        * eapply IH; eassumption.
+  Qed.
+
+  (** Every constant source of an accepted query is one of that query's literals. *)
+  Lemma run_check_query_constants : forall (P : V.t -> Prop) q newok names n table ai
+      copy used count srcs columns post finalcount expected,
+    check_query V.eqb newok names n table q ai copy used count srcs columns post =
+      Some (finalcount, [], [], expected) ->
+    (forall a v, In a q -> In (Lit v) (atom_terms a) -> P v) ->
+    Forall (fun src => match src with Const _ c => exists v, c = Val v /\ P v
+      | _ => True end) srcs.
+  Proof.
+    intros P q. induction q as [|a q IH]; intros newok names n table ai copy used count
+      srcs columns post finalcount expected Hcheck Hliterals.
+    - cbn [check_query] in Hcheck. inversion Hcheck; subst. constructor.
+    - assert (Hrest : forall a v, In a q -> In (Lit v) (atom_terms a) -> P v).
+      { intros a' v Hin Hlit. eapply Hliterals; [right; exact Hin|exact Hlit]. }
+      destruct a as [f args res|op args res]; cbn [check_query] in Hcheck.
+      + destruct (check_atom V.eqb newok names n table f (args ++ option_list res)
+          copy used count srcs columns)
+          as [[[[[[nextcopy nextused] nextcount] nextsrcs] nextcols] copied]|]
+          eqn:Hatom; [|discriminate].
+        destruct (run_check_atom_parts newok names n table f (args ++ option_list res)
+          copy used count srcs columns nextcopy nextused nextcount nextsrcs nextcols
+          copied Hatom) as [src [src_tail [lv [col_tail [s [inv [perm
+          [Hsrcs [Hcols [Hsource [Hcolumn [Hlength [Hterms [Hperm Hslot]]]]]]]]]]]]]].
+        subst srcs columns. constructor.
+        * destruct src; try exact I. discriminate Hsource.
+        * eapply run_check_terms_constants; [exact Hterms| |].
+          -- intros v Hin. eapply Hliterals; [now left|exact Hin].
+          -- eapply IH; eassumption.
+      + eapply IH; eassumption.
+  Qed.
+
+  (** Literals in a rule's query belong to the program's term list. *)
+  Lemma run_program_query_literal : forall (p : program V.t) r a v,
+    In r (rules V.t p) -> In a (query V.t r) -> In (Lit v) (atom_terms a) ->
+    In (Lit v) (program_terms p).
+  Proof.
+    intros p [q acts] a v Hrule Hatom Hliteral.
+    unfold program_terms. apply in_flat_map. exists (Rule V.t q acts).
+    split; [exact Hrule|]. cbn. apply in_or_app. left. apply in_flat_map.
+    exists a. split; assumption.
+  Qed.
+
+  (** Checked plans contain only program literals in their constant sources. *)
+  Lemma run_plan_constants : forall p cp c, plans_ok p cp -> In c (all_plans cp) ->
+    Forall (fun src => match src with
+      | Const _ cell => exists v, cell = Val v /\ In (Lit v) (program_terms p)
+      | _ => True end) (sources V.t c).
+  Proof.
+    intros p cp c Hchecked Hin.
+    destruct (run_plan_member p cp c Hchecked Hin)
+      as [table [newok [r [Htable [Hrule Hcheck]]]]].
+    destruct (run_check_cplan_parts newok table (rule_ix V.t c) r c Hcheck)
+      as [_ [Hlength [names [expected [Hnames [Hlayout [Hquery Hpost]]]]]]].
+    eapply run_check_query_constants; [exact Hquery|]. intros a v Hatom Hliteral.
+    eapply run_program_query_literal; [eapply nth_error_In; exact Hrule|exact Hatom|exact Hliteral].
+  Qed.
+
+  (** Every value in a checked source is active in the source database. *)
+  Lemma run_source_mem_active : forall p db src u v,
+    D.wf db ->
+    (match src with Const _ c => exists w, c = Val w /\ In (Lit w) (program_terms p)
+      | _ => True end) ->
+    I.mem (source_index db src) u -> In (Val v) u -> active_value p db v.
+  Proof.
+    intros p db [s|s|c] u v Hwf Hsafe Hmem Hin; cbn [source_index] in Hmem.
+    - destruct (D.index_all db s false u Hwf Hmem)
+        as [f [perm [k [o [Hslot [Hrow Heq]]]]]].
+      right. exists s, u. split.
+      + unfold D.slot_of in Hslot. apply nth_error_Some. rewrite Hslot. discriminate.
+      + split; assumption.
+    - destruct (D.index_all db s true u Hwf Hmem)
+        as [f [perm [k [o [Hslot [Hrow Heq]]]]]].
+      right. exists s, u. split.
+      + unfold D.slot_of in Hslot. apply nth_error_Some. rewrite Hslot. discriminate.
+      + split; [subst u; eapply D.index_all_complete; eassumption|exact Hin].
+    - destruct Hsafe as [w [-> Hliteral]].
+      apply (proj1 (I.mem_insert 1 [Val w] I.empty u (I.wf_empty 1) eq_refl)) in Hmem.
+      destruct Hmem as [->|Hempty].
+      + cbn [In] in Hin. destruct Hin as [Heq|Hin]; [|contradiction].
+        injection Heq as <-. now left.
+      + exfalso. exact (I.mem_empty u Hempty).
+  Qed.
+
+  (** Every value selected from a checked join column is active in its source database. *)
+  Lemma run_source_columns_active : forall p db srcs columns b,
+    D.wf db ->
+    Forall (fun src => match src with
+      | Const _ c => exists v, c = Val v /\ In (Lit v) (program_terms p)
+      | _ => True end) srcs ->
+    Forall2 (fun lv ix => exists u, J.project lv b = Some u /\ I.mem ix u)
+      columns (map (source_index db) srcs) ->
+    forall lv j v, In lv columns -> In j lv -> nth_error b j = Some (Val v) ->
+      active_value p db v.
+  Proof.
+    intros p db srcs columns b Hwf Hsources. revert columns.
+    induction Hsources as [|src srcs Hhead Htail IH]; intros columns Hanswer lv j v
+      Hcol Hj Hnth.
+    - inversion Hanswer; subst. contradiction.
+    - destruct columns as [|col columns]; inversion Hanswer as
+        [|lv' ix columns' ixs Hsource Hrest]; subst.
+      destruct Hcol as [Heq|Hcol].
+      + subst lv. destruct Hsource as [u [Hproject Hmem]].
+        eapply run_source_mem_active; [exact Hwf|exact Hhead|exact Hmem|].
+        eapply run_project_selected; eassumption.
+      + eapply IH; eassumption.
+  Qed.
+
+  (** The environment of a checked binding contains only active values. *)
+  Lemma run_plan_bindings_active : forall p cp db c b,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> In c (all_plans cp) ->
+    In b (bindings cp c db) ->
+    forall x v, env_of c b x = Some (Val v) -> active_value p db v.
+  Proof.
+    intros p cp db c b Hchecked Hwf Hloaded Hin Hbinding x v Henv.
+    pose proof (run_plan_join_wf p cp db c Hchecked Hwf Hloaded Hin) as Hjoin.
+    destruct (J.run_sound (join V.t c) (map (source_index db) (sources V.t c)) b
+      Hjoin Hbinding) as [Hlength Hanswer].
+    destruct Hjoin as [_ [_ Hcover]]. apply run_binding_env_member in Henv.
+    apply In_nth_error in Henv. destruct Henv as [j Hnth].
+    assert (Hbound : j < nvars (join V.t c)).
+    { rewrite <- Hlength. apply nth_error_Some. rewrite Hnth. discriminate. }
+    destruct (Hcover j Hbound) as [lv [Hcol Hj]].
+    eapply run_source_columns_active; [exact Hwf| |exact Hanswer|exact Hcol|exact Hj|exact Hnth].
+    now apply run_plan_constants with (cp := cp).
+  Qed.
+
+  (** New rows use initially active values; existing rows retain their exact old keys. *)
+  Definition run_domain (p : program V.t) (initial current : D.t) : Prop :=
+    no_ids current /\ D.slots current = D.slots initial /\
+    forall f k o, row (D.view current) f k o -> row (D.view initial) f k o \/
+      Forall (fun c => exists v, c = Val v /\ active_value p initial v) k.
+
+  (** Every initial row satisfies the old-row branch of the domain invariant. *)
+  Lemma run_domain_initial : forall p db, no_ids db -> run_domain p db db.
+  Proof.
+    intros p db Hnoids. split; [exact Hnoids|]. split; [reflexivity|].
+    intros f k o Hrow. now left.
+  Qed.
+
+  (** The same slot layout witnesses every previously indexed value in the seed. *)
+  Lemma run_domain_active : forall p initial current,
+    D.wf initial -> D.wf current -> run_domain p initial current ->
+    forall v, active_value p current v -> active_value p initial v.
+  Proof.
+    intros p initial current Hinitial Hcurrent [Hnoids [Hslots Hrows]] v Hactive.
+    destruct Hactive as [Hliteral|[s [u [Hbound [Hmem Hin]]]]]; [now left|].
+    destruct (D.index_all current s false u Hcurrent Hmem)
+      as [f [perm [k [o [Hslot [Hrow Heq]]]]]].
+    destruct (Hrows f k o Hrow) as [Hold|Hkey].
+    - right. exists s, u. split; [now rewrite <- Hslots|]. split; [|exact Hin].
+      subst u. apply (D.index_all_complete initial s f perm k o Hinitial); [|exact Hold].
+      unfold D.slot_of in *. now rewrite <- Hslots.
+    - destruct ((proj2 Hnoids) f k o Hrow) as [-> Hvalues].
+      subst u. apply run_permute_member in Hin.
+      cbn [option_list] in Hin. rewrite app_nil_r in Hin.
+      apply Forall_forall with (x := Val v) in Hkey; [|exact Hin].
+      destruct Hkey as [w [Heq Hactive]]. injection Heq as ->. exact Hactive.
+  Qed.
+
+  (** Inserting one active relational key preserves the initial-domain invariant. *)
+  Lemma run_domain_put : forall p initial db f k,
+    D.wf db -> run_domain p initial db -> D.kind_ok db f k None ->
+    Forall (fun c => exists v, c = Val v /\ active_value p initial v) k ->
+    run_domain p initial (D.put f k None db).
+  Proof.
+    intros p initial db f k Hwf [Hnoids [Hslots Hrows]] Hallowed Hkey.
+    assert (Hvalues : Forall (fun c : cell V.t => exists v, c = Val v) k).
+    { eapply Forall_impl; [|exact Hkey]. intros c [v [Hcell Hactive]]. now exists v. }
+    split; [eapply run_put_no_ids; eassumption|]. split.
+    - rewrite (proj1 (proj2 (D.layout_put f k None db Hwf))). exact Hslots.
+    - intros g key output Hrow.
+      destruct (run_put_none_origin db f k Hwf Hnoids Hallowed Hvalues g key output Hrow)
+        as [Hold|[-> [-> ->]]]; [now apply Hrows|now right].
+  Qed.
+
+  (** Identifier-free rebuilding preserves every exact row and its initial-domain witness. *)
+  Lemma run_domain_rebuild : forall p initial db,
+    D.wf db -> run_domain p initial db -> run_domain p initial (D.rebuild db).
+  Proof.
+    intros p initial db Hwf [Hnoids [Hslots Hrows]].
+    split; [now apply run_no_ids_rebuild|]. split.
+    - rewrite (proj1 (proj2 (D.layout_rebuild db Hwf))). exact Hslots.
+    - intros f k o Hrow. apply Hrows.
+      apply (proj1 (run_no_ids_rebuild_rows db Hwf Hnoids f k o)). exact Hrow.
+  Qed.
+
+  (** Advancing keeps rows, slots and the absence of identifiers. *)
+  Lemma run_domain_advance : forall p initial db,
+    D.wf db -> run_domain p initial db -> run_domain p initial (D.advance db).
+  Proof.
+    intros p initial db Hwf [Hnoids [Hslots Hrows]].
+    split; [now apply run_no_ids_advance|]. split; [now rewrite D.layout_advance|].
+    intros f k o Hrow. apply Hrows.
+    now rewrite (proj1 (proj2 (D.wf_advance db Hwf))) in Hrow.
+  Qed.
+
+  (** Terms can select only environment values or literal values. *)
+  Lemma run_term_cells_active : forall p initial db s locals ts cs,
+    no_ids db -> env_allocated db (look s locals) ->
+    (forall x v, look s locals x = Some (Val v) -> active_value p initial v) ->
+    (forall v, In (Lit v) ts -> active_value p initial v) ->
+    term_cells s locals ts = Some cs ->
+    Forall (fun c => exists v, c = Val v /\ active_value p initial v) cs.
+  Proof.
+    intros p initial db s locals ts. induction ts as [|t rest IH]; intros cs Hnoids
+      Hallocated Henv Hliterals Hcells.
+    - cbn [term_cells] in Hcells. injection Hcells as <-. constructor.
+    - cbn [term_cells] in Hcells.
+      destruct (term_cell s locals t) as [c|] eqn:Hcell; [|discriminate].
+      destruct (term_cells s locals rest) as [more|] eqn:Hrest; [|discriminate].
+      injection Hcells as <-. constructor.
+      + destruct t as [x|v]; cbn [term_cell] in Hcell.
+        * destruct c as [i|v].
+          -- exfalso. pose proof (Hallocated x i Hcell) as Hi.
+             unfold D.allocated in Hi. rewrite (proj1 Hnoids) in Hi. lia.
+          -- exists v. split; [reflexivity|]. eapply Henv. exact Hcell.
+        * injection Hcell as <-. exists v. split; [reflexivity|].
+          apply Hliterals. now left.
+      + eapply IH; try eassumption; try reflexivity.
+        intros v Hin. apply Hliterals. now right.
+  Qed.
+
+  (** Program action literals belong to the seed's active domain. *)
+  Lemma run_program_action_literal : forall (p : program V.t) initial r a v,
+    In r (rules V.t p) -> In a (actions V.t r) -> In (Lit v) (action_terms a) ->
+    active_value p initial v.
+  Proof.
+    intros p initial [q acts] a v Hrule Haction Hliteral. left.
+    unfold program_terms. apply in_flat_map. exists (Rule V.t q acts).
+    split; [exact Hrule|]. cbn. apply in_or_app. right. apply in_flat_map.
+    exists a. split; assumption.
+  Qed.
+
+  (** Primitive-free rules have no action that computes a fresh value. *)
+  Lemma run_prim_free_actions : forall (p : program V.t) r, prim_free p = true ->
+    In r (rules V.t p) ->
+    forallb (fun a => match a with Let _ _ _ => false | _ => true end) (actions V.t r) = true.
+  Proof.
+    intros p [q acts] Hfree Hrule. unfold prim_free in Hfree.
+    apply forallb_forall with (x := Rule V.t q acts) in Hfree; [|exact Hrule].
+    apply andb_true_iff in Hfree as [_ Hactions]. exact Hactions.
+  Qed.
+
+  (** Typed primitive-free relational actions preserve the initial active domain. *)
+  Lemma run_apply_go_domain : forall p cp initial acts g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    forallb relational_action acts = true ->
+    forallb (fun a => match a with Let _ _ _ => false | _ => true end) acts = true ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    (forall x v, look s locals x = Some (Val v) -> active_value p initial v) ->
+    (forall a v, In a acts -> In (Lit v) (action_terms a) -> active_value p initial v) ->
+    run_domain p initial db -> run_domain p initial (apply_go acts s locals db).
+  Proof.
+    intros p cp initial acts. induction acts as [|a rest IH]; intros g s locals db
+      Hchecked Hwf Hloaded Hfragment Hrel Hfree Hacts Henv Hallocated Hactive Hliterals
+      Hdomain; [exact Hdomain|].
+    cbn [forallb] in Hrel, Hfree.
+    apply andb_true_iff in Hrel as [Haction Hrestrel].
+    apply andb_true_iff in Hfree as [Hnofresh Hrestfree].
+    destruct a as [x f args|f args res|t u|x op args]; try discriminate.
+    cbn [actions_ok] in Hacts.
+    destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+    pose proof (run_relational_kind p f out Hfragment Hkind) as Hout. subst out.
+    destruct res as [t|]; [contradiction|].
+    destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+      as [cells [Hcells Hsorts]].
+    assert (Hrowtyped : row_sorted (program_sorts p) (program_kind p) f cells None).
+    { exists ORel. rewrite Hsorts. repeat split; assumption. }
+    assert (Hids : forall i, In (Id i) (cells ++ option_list None) -> D.allocated db i).
+    { intros i Hin. rewrite app_nil_r in Hin.
+      eapply run_term_cells_allocated; eassumption. }
+    pose proof (run_put_allowed p cp db f cells None Hchecked Hloaded Hrowtyped Hids)
+      as Hallowed.
+    destruct (run_put_state p cp f cells None db Hchecked Hwf Hloaded Hrowtyped Hids)
+      as [Hwf' [Hloaded' [Hids' Hpending]]].
+    assert (Hkey : Forall (fun c => exists v, c = Val v /\ active_value p initial v) cells).
+    { eapply run_term_cells_active; [exact (proj1 Hdomain)|exact Hallocated|exact Hactive|
+        |exact Hcells].
+      intros v Hin. eapply Hliterals; [now left|]. cbn [action_terms option_list].
+      rewrite app_nil_r. exact Hin. }
+    pose proof (run_domain_put p initial db f cells Hwf Hdomain Hallowed Hkey) as Hdomain'.
+    assert (Hallocated' : env_allocated (D.put f cells None db) (look s locals)).
+    { eapply run_env_allocated_mono with (db := db);
+        [rewrite Hids'; reflexivity|exact Hallocated]. }
+    cbn [apply_go result_cell]. rewrite Hcells. eapply IH; try eassumption.
+    intros a v Hin Hliteral. eapply Hliterals; [right; exact Hin|exact Hliteral].
+  Qed.
+
+  (** Applying one checked rule preserves the seed domain when its bindings are active. *)
+  Lemma run_apply_domain : forall p cp initial r s db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    prim_free p = true -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s -> env_allocated db s ->
+    (forall x v, s x = Some (Val v) -> active_value p initial v) ->
+    run_domain p initial db -> run_domain p initial (apply (actions V.t r) s db).
+  Proof.
+    intros p cp initial r s db Hchecked Hwf Hloaded Hfragment Hfree Hrule Henv Hallocated
+      Hactive Hdomain.
+    destruct (run_rule_context p cp r s Hchecked Hrule Henv) as [g [_ [Hacts Hsorted]]].
+    unfold apply. eapply run_apply_go_domain; try eassumption.
+    - eapply run_relational_actions; eassumption.
+    - eapply run_prim_free_actions; eassumption.
+    - intros x ty Hbound. destruct (Hsorted x ty Hbound) as [c [Hc Hsort]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated; exact Hcell.
+    - intros x v Hcell. rewrite run_look_empty in Hcell. eapply Hactive; exact Hcell.
+    - intros a v Hin Hliteral. eapply run_program_action_literal; eassumption.
+  Qed.
+
+  (** Every saved job contains only values active in its binding snapshot. *)
+  Lemma run_jobs_active : forall p cp nv db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    Forall (fun cb => forall x v,
+      trie_get x (bind_trie (fst cb) (snd cb)) = Some (Val v) -> active_value p db v)
+      (jobs p cp nv db).
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded. apply Forall_forall.
+    intros [c b] Hin x v Hcell. cbn [fst snd] in Hcell.
+    rewrite F30_bind_trie in Hcell.
+    destruct (run_jobs_member p cp nv db c b Hin) as [Hplan [Hbinding Hkeep]].
+    eapply run_plan_bindings_active; eassumption.
+  Qed.
+
+  (** Applying saved active jobs preserves the new-row domain invariant. *)
+  Lemma run_apply_jobs_domain : forall p cp initial original js db,
+    plans_ok p cp -> relational_fragment p = true -> prim_free p = true ->
+    Forall (run_job_facts p original) js ->
+    Forall (fun cb => forall x v,
+      trie_get x (bind_trie (fst cb) (snd cb)) = Some (Val v) -> active_value p initial v) js ->
+    D.wf db -> loaded p cp db -> (D.ids original <= D.ids db)%N ->
+    run_domain p initial db -> run_domain p initial (apply_jobs p js db).
+  Proof.
+    intros p cp initial original js. induction js as [|[c b] rest IH]; intros db
+      Hchecked Hfragment Hfree Hjobs Hactive Hwf Hloaded Hids Hdomain; [exact Hdomain|].
+    inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+    inversion Hactive as [|job remaining Hvalues Htail]; subst job remaining.
+    destruct Hjob as [Hrule [Henv [Hallocated Hmatch]]].
+    destruct (run_job_environment p original db c b Hids Henv Hallocated)
+      as [Htyped Hallocated_now].
+    destruct (run_apply_state p cp (job_rule p c) (fun x => trie_get x (bind_trie c b)) db
+      Hchecked Hwf Hloaded Hrule Htyped Hallocated_now)
+      as [Hnext [Hloadnext [Hidnext Hpending]]].
+    pose proof (run_apply_domain p cp initial (job_rule p c)
+      (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hfragment Hfree
+      Hrule Htyped Hallocated_now Hvalues Hdomain) as Hdomain'.
+    cbn [apply_jobs]. eapply IH; try eassumption. eapply N.le_trans; eassumption.
+  Qed.
+
+  (** A primitive-free relational round creates no values outside the initial active domain. *)
+  Lemma run_round_domain : forall p cp initial nv current,
+    plans_ok p cp -> D.wf initial -> D.wf current -> loaded p cp current ->
+    relational_fragment p = true -> prim_free p = true -> run_domain p initial current ->
+    run_domain p initial (round p cp nv current).
+  Proof.
+    intros p cp initial nv current Hchecked Hinitial Hcurrent Hloaded Hfragment Hfree Hdomain.
+    pose proof (run_jobs_facts p cp nv current Hchecked Hcurrent Hloaded) as Hjobs.
+    pose proof (run_jobs_active p cp nv current Hchecked Hcurrent Hloaded) as Hvalues.
+    assert (Hactive : Forall (fun cb => forall x v,
+      trie_get x (bind_trie (fst cb) (snd cb)) = Some (Val v) -> active_value p initial v)
+      (jobs p cp nv current)).
+    { eapply Forall_impl; [|exact Hvalues]. intros cb Henv x v Hget.
+      eapply run_domain_active; [exact Hinitial|exact Hcurrent|exact Hdomain|].
+      eapply Henv. exact Hget. }
+    pose proof (run_apply_jobs_domain p cp initial current (jobs p cp nv current) current
+      Hchecked Hfragment Hfree Hjobs Hactive Hcurrent Hloaded (N.le_refl _) Hdomain)
+      as Hdomain'.
+    destruct (run_apply_jobs_state p cp current (jobs p cp nv current) current Hchecked Hjobs
+      Hcurrent Hloaded (N.le_refl _)) as [Hnext Hrest].
+    rewrite F32_round_jobs. now apply run_domain_rebuild.
+  Qed.
+
+  (** Inclusion of active values gives inclusion of the corresponding finite universes. *)
+  Lemma run_universe_active_incl : forall p before after,
+    D.wf before -> D.wf after ->
+    (forall v, active_value p after v -> active_value p before v) ->
+    incl (universe p after) (universe p before).
+  Proof.
+    intros p before after Hbefore Hafter Hactive [f k] Hin.
+    apply (proj1 (run_universe_member p after f k Hafter)) in Hin.
+    destruct Hin as [Hkind [Hdecl Hvalues]].
+    apply (proj2 (run_universe_member p before f k Hbefore)).
+    split; [exact Hkind|]. split; [exact Hdecl|].
+    eapply Forall_impl; [|exact Hvalues]. intros c [v [Hcell Hv]].
+    exists v. split; [exact Hcell|now apply Hactive].
+  Qed.
+
+  (** No new active values means no larger Herbrand budget. *)
+  Lemma run_herbrand_active_bound : forall p before after,
+    D.wf before -> D.wf after ->
+    (forall v, active_value p after v -> active_value p before v) ->
+    herbrand p after <= herbrand p before.
+  Proof.
+    intros p before after Hbefore Hafter Hactive. rewrite !herbrand_spec.
+    apply NoDup_incl_length; [apply run_universe_nodup|].
+    eapply run_universe_active_incl; eassumption.
+  Qed.
+
+  (** A sorted relational row over the initial active values belongs to its universe. *)
+  Lemma run_loaded_active_row_universe : forall p cp initial current f k o,
+    D.wf initial -> relational_fragment p = true -> loaded p cp current ->
+    row (D.view current) f k o ->
+    Forall (fun c => exists v, c = Val v /\ active_value p initial v) k ->
+    In (f, k) (universe p initial).
+  Proof.
+    intros p cp initial current f k o Hinitial Hfragment [Hkinds [Hslots Hsorted]]
+      Hrow Hactive.
+    destruct (Hsorted f k o Hrow) as [out [Hsort [Hkind Houtput]]].
+    rewrite Hkinds in Hkind.
+    pose proof (run_relational_kind p f out Hfragment Hkind) as Hout. subst out.
+    destruct (run_lookup_sorts_decl (decls V.t p) f (map cell_sort k) Hsort)
+      as [d [Hfind Hargs]].
+    apply (proj2 (run_universe_member p initial f k Hinitial)).
+    split; [exact Hkind|]. split; [|exact Hactive]. exists d. split; [exact Hfind|].
+    rewrite Hargs, length_map. reflexivity.
+  Qed.
+
+  (** A database invariant preserved by rounds and advancing holds throughout the trace. *)
+  Lemma run_trace_database_invariant : forall p cp lim (P : D.t -> Prop),
+    (forall nv db, P db -> P (round p cp nv db)) ->
+    (forall db, P db -> P (D.advance db)) ->
+    forall initial, P initial -> Forall (fun state => P (snd state)) (trace p cp lim initial).
+  Proof.
+    intros p cp lim P Hround Hadvance initial Hinitial.
+    apply run_trace_invariant; [exact Hinitial|].
+    intros [nv current] next Hcurrent Hstep.
+    pose proof (run_driver_database_invariant p cp lim P Hround Hadvance nv current Hcurrent)
+      as Hnext. rewrite Hstep in Hnext. exact Hnext.
+  Qed.
+
+  (** Every traced database remains loaded and draws new row values from the initial domain. *)
+  Lemma run_trace_domain : forall p cp lim initial,
+    plans_ok p cp -> D.wf initial -> loaded p cp initial ->
+    relational_fragment p = true -> prim_free p = true -> no_ids initial ->
+    Forall (fun state => D.wf (snd state) /\ loaded p cp (snd state) /\
+      run_domain p initial (snd state)) (trace p cp lim initial).
+  Proof.
+    intros p cp lim initial Hchecked Hinitial Hloaded Hfragment Hfree Hnoids.
+    refine (run_trace_database_invariant p cp lim
+      (fun current => D.wf current /\ loaded p cp current /\
+        run_domain p initial current) _ _ initial _).
+    - intros nv current [Hcurrent [Hloadcurrent Hdomain]].
+      destruct (run_round_state p cp nv current Hchecked Hcurrent Hloadcurrent)
+        as [Hnext [Hloadnext Hidnext]].
+      split; [exact Hnext|]. split; [exact Hloadnext|].
+      exact (run_round_domain p cp initial nv current Hchecked Hinitial Hcurrent
+        Hloadcurrent Hfragment Hfree Hdomain).
+    - intros current [Hcurrent [Hloadcurrent Hdomain]].
+      destruct (run_advance_state p cp current Hcurrent Hloadcurrent)
+        as [Hnext [Hloadnext Hidnext]].
+      split; [exact Hnext|]. split; [exact Hloadnext|].
+      now apply run_domain_advance.
+    - split; [exact Hinitial|]. split; [exact Hloaded|]. now apply run_domain_initial.
+  Qed.
+
+  Lemma F12_herbrand_bound : forall p cp db nv, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    relational_fragment p = true -> prim_free p = true -> no_ids db ->
+    herbrand p (round p cp nv db) <= herbrand p db.
+  Proof.
+    intros p cp db nv Hchecked Hwf Hloaded Hfragment Hfree Hnoids.
+    pose proof (run_round_domain p cp db nv db Hchecked Hwf Hwf Hloaded Hfragment Hfree
+      (run_domain_initial p db Hnoids)) as Hdomain.
+    destruct (run_round_state p cp nv db Hchecked Hwf Hloaded) as [Hnext Hrest].
+    eapply run_herbrand_active_bound; [exact Hwf|exact Hnext|].
+    eapply run_domain_active; eassumption.
+  Qed.
+
+  Lemma F14_universe_rows : forall p cp lim db nv current f k o,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    prim_free p = true -> no_ids db ->
+    In (nv, current) (trace p cp lim db) -> row (D.view current) f k o ->
+    ~ row (D.view db) f k o ->
+    In (f, k) (universe p db).
+  Proof.
+    intros p cp lim db nv current f k o Hchecked Hwf Hloaded Hfragment Hfree Hnoids
+      Hin Hrow Hnew.
+    pose proof (run_trace_domain p cp lim db Hchecked Hwf Hloaded Hfragment Hfree Hnoids)
+      as Htrace.
+    apply Forall_forall with (x := (nv, current)) in Htrace; [|exact Hin].
+    change (D.wf current /\ loaded p cp current /\ run_domain p db current) in Htrace.
+    destruct Htrace as [Hcurrent [Hloadcurrent Hdomain]].
+    destruct (proj2 (proj2 Hdomain) f k o Hrow) as [Hold|Hactive]; [contradiction|].
+    eapply run_loaded_active_row_universe; eassumption.
+  Qed.
+
   Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
     N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
@@ -12611,25 +13127,12 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     derived p initial (apply (actions V.t r) s db).
   Proof. Admitted. (* PLAN-DEFECT: result-bearing relational Put; see RunTest. *)
 
-  Lemma F12_herbrand_bound : forall p cp db nv, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    relational_fragment p = true -> prim_free p = true -> no_ids db ->
-    herbrand p (round p cp nv db) <= herbrand p db.
-  Proof. Admitted. (* STUB *)
-
   Lemma F13_herbrand_size : forall p db,
     relational_fragment p = true -> prim_free p = true ->
     herbrand p db = length (universe p db) /\ NoDup (universe p db).
   Proof.
     intros p db _ _. split; [reflexivity|apply run_universe_nodup].
   Qed.
-
-  Lemma F14_universe_rows : forall p cp lim db nv current f k o,
-    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
-    prim_free p = true -> no_ids db ->
-    In (nv, current) (trace p cp lim db) -> row (D.view current) f k o ->
-    ~ row (D.view db) f k o ->
-    In (f, k) (universe p db).
-  Proof. Admitted. (* STUB *)
 
   Lemma F15_unit_scale : forall (T C P P' : N) (u U : nat), 1 <= u -> u <= U ->
     (T + N.of_nat u * P' <= N.of_nat u * (C + P))%N ->
