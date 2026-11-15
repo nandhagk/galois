@@ -893,6 +893,259 @@ Proof.
   exact (proj2 Hshape).
 Qed.
 
+(** Every edge records the target colour at precisely its preceding event prefix. *)
+Definition search_event_kinds (es : list event) : Prop :=
+  forall prefix kind u v suffix, es = prefix ++ Edge kind u v :: suffix ->
+    event_kind_correct prefix kind v.
+
+Local Lemma search_event_kinds_snoc es e :
+  search_event_kinds es ->
+  (forall kind u v, e = Edge kind u v -> event_kind_correct es kind v) ->
+  search_event_kinds (es ++ [e]).
+Proof.
+  intros Hhistory Hlast prefix kind u v suffix Heq.
+  apply app_eq_app in Heq.
+  destruct Heq as [middle [[Hprefix Htail]|[Hprefix Htail]]].
+  - destruct middle as [|first middle].
+    + rewrite app_nil_r in Hprefix. subst es. cbn in Htail.
+      injection Htail as Hevent Hsuffix. apply (Hlast kind u v). now symmetry.
+    + cbn in Htail. injection Htail as Hevent Hsuffix. subst first.
+      eapply Hhistory. exact Hprefix.
+  - symmetry in Htail. apply elt_eq_unit in Htail as [Hevent [Hmiddle Hsuffix]].
+    subst middle suffix. rewrite app_nil_r in Hprefix. subst prefix.
+    apply (Hlast kind u v). now symmetry.
+Qed.
+
+(** The empty event history has no edge-kind obligations. *)
+Lemma search_event_kinds_nil : search_event_kinds [].
+Proof.
+  intros prefix kind u v suffix Heq. destruct prefix; discriminate Heq.
+Qed.
+
+(** The next edge kind can be read directly from the exact colour observations. *)
+Lemma search_shape_next_kind st v : search_shape st ->
+  event_kind_correct (rev (search_events st))
+    (match trie_get v (search_colours st) with
+     | None => Tree
+     | Some active => if active then Back else Done
+     end) v.
+Proof.
+  intros Hshape. destruct (trie_get v (search_colours st)) as [[|]|] eqn:Hcolour;
+    cbn [event_kind_correct].
+  - destruct (proj1 (search_shape_true st Hshape v) Hcolour) as [Henter Hleave].
+    split.
+    + now apply (proj1 (in_rev (search_events st) (Enter v))).
+    + intros Hin. apply Hleave. now apply (proj2 (in_rev (search_events st) (Leave v))).
+  - apply (proj1 (in_rev (search_events st) (Leave v))).
+    exact (proj1 (search_shape_false st Hshape v) Hcolour).
+  - intros Hin. apply (proj1 (search_shape_none st Hshape v) Hcolour).
+    now apply (proj2 (in_rev (search_events st) (Enter v))).
+Qed.
+
+(** Each continuing step retains old edge facts and gives a correct new edge kind. *)
+Lemma search_event_kinds_step g st next :
+  search_shape st -> search_event_kinds (rev (search_events st)) ->
+  search_step g st = inl next -> search_event_kinds (rev (search_events next)).
+Proof.
+  intros Hshape Hhistory Hstep.
+  destruct st as [[|task tasks] colours es]; [discriminate Hstep|].
+  cbn [search_events] in Hhistory. destruct task as [v|u row|v].
+  - cbn [search_step] in Hstep.
+    destruct (trie_get v colours) as [active|] eqn:Hcolour;
+      injection Hstep as Hnext; subst next; cbn [search_events rev].
+    + exact Hhistory.
+    + apply search_event_kinds_snoc; [exact Hhistory|].
+      intros kind u w Hevent. discriminate Hevent.
+  - destruct row as [|v row].
+    + cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+      exact Hhistory.
+    + pose proof (search_shape_next_kind _ v Hshape) as Hkind.
+      cbn [search_colours search_events] in Hkind.
+      cbn [search_step] in Hstep.
+      destruct (trie_get v colours) as [active|] eqn:Hcolour;
+        injection Hstep as Hnext; subst next; cbn [search_events rev].
+      * apply search_event_kinds_snoc; [exact Hhistory|].
+        intros kind source target Hevent. injection Hevent as Hkind' Hsource Htarget.
+        now subst kind source target.
+      * apply search_event_kinds_snoc; [exact Hhistory|].
+        intros kind source target Hevent. injection Hevent as Hkind' Hsource Htarget.
+        now subst kind source target.
+  - cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+    cbn [search_events rev]. apply search_event_kinds_snoc; [exact Hhistory|].
+    intros kind u w Hevent. discriminate Hevent.
+Qed.
+
+(** Correct edge kinds survive every finite run, including fuel exhaustion. *)
+Lemma search_event_kinds_loop_fuel g fuel st :
+  search_shape st -> search_event_kinds (rev (search_events st)) ->
+  match loop_fuel (search_step g) fuel st with
+  | inl next => search_event_kinds (rev (search_events next))
+  | inr es => search_event_kinds es
+  end.
+Proof.
+  revert st. induction fuel as [|fuel IH]; intros st Hshape Hhistory; cbn [loop_fuel].
+  - exact Hhistory.
+  - destruct (search_step g st) as [next|es] eqn:Hstep.
+    + apply IH.
+      * now apply (search_shape_step g st).
+      * now apply (search_event_kinds_step g st).
+    + destruct (search_stop_events g st es Hstep) as [Heq Htasks].
+      now rewrite Heq.
+Qed.
+
+(** Pending rows retain their remaining successor occurrences for each source. *)
+Fixpoint search_pending_targets (u : positive) (tasks : list search_task) : list positive :=
+  match tasks with
+  | [] => []
+  | SearchRow v row :: rest =>
+      if Pos.eqb u v then row ++ search_pending_targets u rest
+      else search_pending_targets u rest
+  | _ :: rest => search_pending_targets u rest
+  end.
+
+(** Emitted and pending targets partition the adjacency row of every entered source. *)
+Definition search_row_ledger (g : digraph) (st : search_state) : Prop :=
+  forall u, edge_targets u (rev (search_events st)) ++
+      search_pending_targets u (search_tasks st) =
+    match trie_get u (search_colours st) with
+    | None => []
+    | Some _ => succs g u
+    end.
+
+(** Collecting edge targets commutes with chronological concatenation. *)
+Lemma search_edge_targets_app u first last :
+  edge_targets u (first ++ last) = edge_targets u first ++ edge_targets u last.
+Proof.
+  induction first as [|e first IH]; [reflexivity|].
+  destruct e as [v|v|kind v w]; cbn [app edge_targets]; try now rewrite IH.
+  destruct (Pos.eqb u v); cbn [app]; now rewrite IH.
+Qed.
+
+(** Initial root tasks carry no pending adjacency rows. *)
+Lemma search_pending_targets_roots u roots :
+  search_pending_targets u (map SearchRoot roots) = [].
+Proof.
+  induction roots as [|v roots IH]; cbn; assumption || reflexivity.
+Qed.
+
+(** No row has been entered or emitted in the initial machine state. *)
+Lemma search_row_ledger_initial g roots :
+  search_row_ledger g (SearchState (map SearchRoot roots) Empty []).
+Proof.
+  intros u. cbn [search_events search_tasks search_colours rev edge_targets app].
+  now rewrite search_pending_targets_roots, PTrie.get_empty.
+Qed.
+
+Local Lemma search_row_ledger_enter g tasks colours es v :
+  search_row_ledger g (SearchState tasks colours es) -> trie_get v colours = None ->
+  search_row_ledger g (SearchState (SearchRow v (succs g v) :: SearchLeave v :: tasks)
+    (PTrieCode.set v true colours) (Enter v :: es)).
+Proof.
+  intros Hledger Hwhite u. specialize (Hledger u).
+  cbn [search_events search_tasks search_colours] in *.
+  cbn [rev]. rewrite search_edge_targets_app. cbn [edge_targets]. rewrite app_nil_r.
+  cbn [search_pending_targets]. destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite Pos.eqb_refl, PTrie.get_set_same.
+    rewrite Hwhite in Hledger. apply app_eq_nil in Hledger as [Hdone Hpending].
+    now rewrite Hdone, Hpending, app_nil_r.
+  - assert (Hdifferent : Pos.eqb u v = false) by now apply Pos.eqb_neq.
+    rewrite Hdifferent, PTrie.get_set_other by exact Hneq. exact Hledger.
+Qed.
+
+Local Lemma search_row_ledger_edge g tasks colours es kind u v row :
+  search_row_ledger g (SearchState (SearchRow u (v :: row) :: tasks) colours es) ->
+  search_row_ledger g (SearchState (SearchRow u row :: tasks) colours (Edge kind u v :: es)).
+Proof.
+  intros Hledger source. specialize (Hledger source).
+  cbn [search_events search_tasks search_colours] in *.
+  cbn [rev]. rewrite search_edge_targets_app.
+  cbn [edge_targets search_pending_targets] in *.
+  destruct (Pos.eqb source u); cbn [app] in *.
+  - rewrite <- app_assoc. exact Hledger.
+  - now rewrite app_nil_r.
+Qed.
+
+Local Lemma search_row_ledger_leave g tasks colours es v :
+  search_row_ledger g (SearchState (SearchLeave v :: tasks) colours es) ->
+  trie_get v colours = Some true ->
+  search_row_ledger g (SearchState tasks (PTrieCode.set v false colours) (Leave v :: es)).
+Proof.
+  intros Hledger Hactive u. specialize (Hledger u).
+  cbn [search_events search_tasks search_colours search_pending_targets] in *.
+  cbn [rev]. rewrite search_edge_targets_app. cbn [edge_targets]. rewrite app_nil_r.
+  destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. rewrite PTrie.get_set_same. now rewrite Hactive in Hledger.
+  - rewrite PTrie.get_set_other by exact Hneq. exact Hledger.
+Qed.
+
+(** Each continuing transition preserves the exact row-occurrence accounting. *)
+Lemma search_row_ledger_step g st next : search_shape st -> search_row_ledger g st ->
+  search_step g st = inl next -> search_row_ledger g next.
+Proof.
+  intros Hshape Hledger Hstep. destruct st as [[|task tasks] colours es];
+    [discriminate Hstep|].
+  destruct task as [v|u row|v].
+  - cbn [search_step] in Hstep.
+    destruct (trie_get v colours) as [active|] eqn:Hcolour;
+      injection Hstep as Hnext; subst next.
+    + exact Hledger.
+    + apply search_row_ledger_enter; [exact Hledger|exact Hcolour].
+  - destruct row as [|v row].
+    + cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+      intros source. specialize (Hledger source).
+      cbn [search_events search_tasks search_colours search_pending_targets] in *.
+      destruct (Pos.eqb source u); exact Hledger.
+    + cbn [search_step] in Hstep.
+      destruct (trie_get v colours) as [active|] eqn:Hcolour;
+        injection Hstep as Hnext; subst next; now apply search_row_ledger_edge.
+  - cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+    apply search_row_ledger_leave; [exact Hledger|].
+    apply (proj2 (search_shape_active _ Hshape v)). now left.
+Qed.
+
+(** Completed traces enumerate every entered row and no unentered row. *)
+Definition search_trace_rows (g : digraph) (es : list event) : Prop :=
+  forall u,
+    (In u (entered es) -> edge_targets u es = succs g u) /\
+    (~ In u (entered es) -> edge_targets u es = []).
+
+(** At a terminal state all pending targets have been emitted. *)
+Lemma search_row_ledger_stop g st es :
+  search_shape st -> search_row_ledger g st -> search_step g st = inr es ->
+  search_trace_rows g es.
+Proof.
+  intros Hshape Hledger Hstop.
+  destruct (search_stop_events g st es Hstop) as [Hevents Htasks].
+  intros u. specialize (Hledger u). rewrite Htasks in Hledger.
+  cbn [search_pending_targets] in Hledger. rewrite app_nil_r in Hledger. split.
+  - intros Hin. apply search_entered_member in Hin. rewrite Hevents in Hin.
+    apply (proj2 (in_rev (search_events st) (Enter u))) in Hin.
+    apply (proj2 (search_shape_seen st Hshape u)) in Hin.
+    destruct (trie_get u (search_colours st)); [now rewrite Hevents|contradiction].
+  - intros Hnot. assert (Hwhite : trie_get u (search_colours st) = None).
+    { apply (proj2 (search_shape_none st Hshape u)). intros Hin. apply Hnot.
+      apply search_entered_member. rewrite Hevents.
+      now apply (proj1 (in_rev (search_events st) (Enter u))). }
+    rewrite Hwhite in Hledger. now rewrite Hevents.
+Qed.
+
+(** Every finite run retains its pending ledger or returns exact completed rows. *)
+Lemma search_row_ledger_loop_fuel g fuel st :
+  search_shape st -> search_row_ledger g st ->
+  match loop_fuel (search_step g) fuel st with
+  | inl next => search_row_ledger g next
+  | inr es => search_trace_rows g es
+  end.
+Proof.
+  revert st. induction fuel as [|fuel IH]; intros st Hshape Hledger; cbn [loop_fuel].
+  - exact Hledger.
+  - destruct (search_step g st) as [next|es] eqn:Hstep.
+    + apply IH.
+      * now apply (search_shape_step g st).
+      * now apply (search_row_ledger_step g st).
+    + now apply (search_row_ledger_stop g st).
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
