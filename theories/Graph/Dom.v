@@ -1621,6 +1621,36 @@ Module DomCode <: DOM_OPS.
     end.
 End DomCode.
 
+(** All accepted phases combine into the semantic low-high certificate. *)
+Local Lemma dom_check_certificate : forall g r m o,
+  DomCode.check g r m o = true -> dom_cert (base g) r m o.
+Proof.
+  intros g r m o Hcheck. unfold DomCode.check in Hcheck.
+  destruct (dom_read_known (dom_scan g) r o) as [pos |] eqn:Hread;
+    [| discriminate Hcheck].
+  destruct (dom_map_check_known (dom_scan g) r m o) eqn:Hmap;
+    [| discriminate Hcheck].
+  apply andb_true_iff in Hcheck as [Hsizes Hedges].
+  pose proof (dom_read_known_positions (dom_scan g) r o pos Hread) as Hpositions.
+  subst pos.
+  destruct (dom_map_check_structure g r m o Hmap) as
+    [Hunique [Hhead [Hroot [Hparents Hdomain]]]].
+  assert (Hordered : forall v p, trie_get v m = Some p -> order_before o p v).
+  { intros v p Hparent. pose proof (Hdomain v p Hparent) as Hv.
+    assert (Hneq : v <> r) by (intro Heq; subst v; congruence).
+    destruct (Hparents v Hv Hneq) as [q [Hq Hbefore]].
+    rewrite Hparent in Hq. injection Hq as Heq. now subst q. }
+  split.
+  - eapply dom_sizes_preorder; eassumption.
+  - apply (dom_edges_certificate g r m o (dom_sizes m o) Hunique Hroot
+      (dom_map_check_domain g r m o Hmap)).
+    + intros v _. apply dom_sizes_positive.
+    + exact Hsizes.
+    + intros u v Hu Hv Hinterval.
+      exact (proj1 (dom_sizes_interval_anc m o u v Hunique Hordered Hsizes Hu Hv) Hinterval).
+    + exact Hedges.
+Qed.
+
 (** Child grouping is stable filtering by the parent map. *)
 Local Definition dom_child_matches (m : ptrie positive) (p v : positive) : bool :=
   match trie_get v m with Some parent => Pos.eqb p parent | None => false end.
@@ -1754,7 +1784,10 @@ Module Dom <: DOM.
   Include DOM_SPEC.
 
   Lemma check_sound : forall g r m o, check g r m o = true -> dom_exact g r m.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck.
+    exact (dom_cert_exact g r m o (dom_check_certificate g r m o Hcheck)).
+  Qed.
 
   Lemma tree_idom : forall g r m o, check g r m o = true -> idom (tree g r m o) = m.
   Proof.
@@ -1794,10 +1827,13 @@ Module Dom <: DOM.
     StronglySorted (preorder_before (tree g r m o)) (children (tree g r m o) u).
   Proof.
     intros g r m o Hcheck u.
-    destruct (tree_exact g r m o Hcheck) as [_ [_ [_ [Hchildren [Hsorted _]]]]].
+    pose proof (dom_check_certificate g r m o Hcheck) as Hcert.
+    destruct Hcert as [[Hunique [_ [_ [_ [Hdomain _]]]]] _].
     split.
-    - intro v. rewrite Hchildren, (tree_idom g r m o Hcheck). reflexivity.
-    - exact (Hsorted u).
+    - intro v. rewrite dom_tree_children_member. split.
+      + intros [_ Hparent]. exact Hparent.
+      + intro Hparent. split; [eapply Hdomain; exact Hparent | exact Hparent].
+    - now apply dom_tree_children_sorted.
   Qed.
 End Dom.
 
@@ -1886,7 +1922,9 @@ Module DomT <: DOM_ALL.
   Qed.
 
   Lemma F2_check_cert : forall g r m o, check g r m o = true -> dom_cert (base g) r m o.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o Hcheck. exact (dom_check_certificate g r m o Hcheck).
+  Qed.
 
   (** An accepted order holds listed vertices only. *)
   Lemma F2b_check_listed : forall g r m o, check g r m o = true ->
