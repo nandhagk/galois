@@ -9,6 +9,7 @@
     loop. *)
 
 From Stdlib Require Import List PArith NArith Bool Relations.Relation_Operators.
+From Stdlib Require Import PeanoNat.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
@@ -2219,6 +2220,1030 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     cbn [fst snd] in Hloop. unfold c_loopN in Hloop |- *.
     rewrite Nat2N.inj_add. lia.
   Qed.
+  (** Primitive arguments observe values but do not distinguish class identifiers. *)
+  Definition run_value_view (s : Model.env (V := V.t)) (x : positive) : option V.t :=
+    match s x with
+    | Some (Val v) => Some v
+    | _ => None
+    end.
+
+  Lemma run_value_terms_agree : forall ts s t,
+    (forall x, run_value_view s x = run_value_view t x) ->
+    value_terms s ts = value_terms t ts.
+  Proof.
+    intro ts. induction ts as [|a ts IH]; intros s t Hagree.
+    - reflexivity.
+    - cbn [value_terms]. rewrite (IH s t Hagree).
+      destruct a as [x | v]; [|reflexivity].
+      specialize (Hagree x). unfold run_value_view in Hagree.
+      destruct (s x) as [[i | u] |]; destruct (t x) as [[j | v] |];
+        cbn in Hagree; destruct (value_terms t ts); congruence.
+  Qed.
+
+  Lemma run_value_update_agree : forall s t x c d,
+    (forall y, run_value_view s y = run_value_view t y) ->
+    (match c with Val v => Some v | _ => None end) =
+      (match d with Val v => Some v | _ => None end) ->
+    forall y, run_value_view (update s x c) y = run_value_view (update t x d) y.
+  Proof.
+    intros s t x c d Hagree Hvalue y. unfold run_value_view, update.
+    destruct (Pos.eqb x y); [exact Hvalue | exact (Hagree y)].
+  Qed.
+
+  (** The primitive-work specification depends only on the available values. *)
+  Lemma run_action_prim_work_agree : forall kinds acts s t,
+    (forall x, run_value_view s x = run_value_view t x) ->
+    action_prim_work V.prim V.prim_work kinds acts s =
+      action_prim_work V.prim V.prim_work kinds acts t.
+  Proof.
+    intros kinds acts. induction acts as [|a acts IH]; intros s t Hagree.
+    - reflexivity.
+    - destruct a as [x f args | f args res | a b | x op args];
+        cbn [action_prim_work].
+      + destruct (kinds f) as [kind |]; [destruct kind |];
+          apply IH; try exact Hagree.
+        apply run_value_update_agree; [exact Hagree | reflexivity].
+      + apply IH. exact Hagree.
+      + apply IH. exact Hagree.
+      + rewrite (run_value_terms_agree args s t Hagree).
+        destruct (value_terms t args) as [vs |]; [|reflexivity].
+        destruct (V.prim op vs) as [v |]; [|reflexivity].
+        f_equal. apply IH. apply run_value_update_agree; [exact Hagree | reflexivity].
+  Qed.
+
+  (** Empty local bindings leave the original environment visible. *)
+  Lemma run_look_empty : forall s x, @look V.t s Empty x = s x.
+  Proof.
+    intros s x. unfold look. rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
+  (** A new local binding has the same shadowing order as the specification update. *)
+  Lemma run_look_set : forall s locals x c y,
+    @look V.t s (PTrieCode.set x c locals) y = update (look s locals) x c y.
+  Proof.
+    intros s locals x c y. unfold look, update.
+    destruct (Pos.eqb x y) eqn:Hxy.
+    - apply Pos.eqb_eq in Hxy. subst y. rewrite PTrie.get_set_same. reflexivity.
+    - apply Pos.eqb_neq in Hxy. rewrite PTrie.get_set_other by congruence. reflexivity.
+  Qed.
+
+  (** Local lookup charges one trie walk and at most one external environment call. *)
+  Lemma run_look_clock : forall s Ts locals x,
+    (@T_look V.t s Ts locals x <= 2 * N.of_nat (Pos.size_nat x) + Ts x + 1)%N.
+  Proof.
+    intros s Ts locals x. time_unfold @T_look.
+    rewrite PTrieT.trie_get_clock. destruct (trie_get x locals); lia.
+  Qed.
+
+  (** Reading a term pays its variable width and its external callback once. *)
+  Lemma run_term_clock : forall s Ts locals t W,
+    (forall x, In x (term_vars t) -> Pos.size_nat x <= W) ->
+    (@T_term_cell V.t s Ts locals t <= 2 * N.of_nat (W + 1) +
+      fold_right N.add 0%N (map Ts (term_vars t)))%N.
+  Proof.
+    intros s Ts locals [x | v] W Hwidth.
+    - pose proof (Hwidth x (or_introl eq_refl)) as Hx.
+      pose proof (run_look_clock s Ts locals x) as Hlook.
+      time_unfold @T_term_cell. cbn [term_vars map fold_right].
+      rewrite Nat2N.inj_add. nia.
+    - time_unfold @T_term_cell. cbn [term_vars map fold_right].
+      rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  Lemma run_sum_app : forall xs ys : list N,
+    fold_right N.add 0%N (xs ++ ys) = (fold_right N.add 0%N xs + fold_right N.add 0%N ys)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro ys; cbn [fold_right app]; [reflexivity|].
+    rewrite IH. lia.
+  Qed.
+
+  (** A short-circuiting list read charges at most every listed variable once. *)
+  Lemma run_terms_clock : forall ts s Ts locals W,
+    Forall (fun t => forall x, In x (term_vars t) -> Pos.size_nat x <= W) ts ->
+    (@T_term_cells V.t s Ts locals ts <= 4 * N.of_nat ((length ts + 1) * (W + 1)) +
+      fold_right N.add 0%N (map Ts (flat_map term_vars ts)))%N.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros s Ts locals W Hwidth.
+    - time_unfold @T_term_cells. cbn [length flat_map map fold_right].
+      rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia.
+    - inversion Hwidth as [|t' ts' Hhead Htail]; subst t' ts'.
+      pose proof (run_term_clock s Ts locals t W Hhead) as Hterm.
+      pose proof (IH s Ts locals W Htail) as Hrest.
+      time_unfold @T_term_cells.
+      destruct (term_cell s locals t); [destruct (term_cells s locals ts)|];
+        cbn [length flat_map]; rewrite map_app, run_sum_app;
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
+  Qed.
+
+  (** Value arguments obey the same callback budget as cell arguments. *)
+  Lemma run_values_clock : forall ts s Ts locals W,
+    Forall (fun t => forall x, In x (term_vars t) -> Pos.size_nat x <= W) ts ->
+    (@T_term_values V.t s Ts locals ts <= 4 * N.of_nat ((length ts + 1) * (W + 1)) +
+      fold_right N.add 0%N (map Ts (flat_map term_vars ts)))%N.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros s Ts locals W Hwidth.
+    - time_unfold @T_term_values. cbn [length flat_map map fold_right].
+      rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia.
+    - inversion Hwidth as [|t' ts' Hhead Htail]; subst t' ts'.
+      pose proof (run_term_clock s Ts locals t W Hhead) as Hterm.
+      pose proof (IH s Ts locals W Htail) as Hrest.
+      time_unfold @T_term_values.
+      destruct (term_cell s locals t) as [[i | v] |];
+        try destruct (term_values s locals ts);
+        cbn [length flat_map]; rewrite map_app, run_sum_app;
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
+  Qed.
+  (** Query typing determines its final context pointwise. *)
+  Lemma run_query_context_agree : forall (p : program V.t) (q : list (atom V.t)) g h,
+    query_ok (program_sorts p) (program_kind p) ctx_empty q g ->
+    query_ok (program_sorts p) (program_kind p) ctx_empty q h -> forall x, g x = h x.
+  Proof.
+    intros p q g h Hg Hh x.
+    assert (Hempty : forall y, trie_get y (@Empty sort) = ctx_empty y).
+    { intro y. rewrite PTrie.get_empty. reflexivity. }
+    destruct (bind_query_b_complete V.t (decls V.t p) Empty ctx_empty q g Hempty Hg)
+      as [tg [Htg Hrg]].
+    destruct (bind_query_b_complete V.t (decls V.t p) Empty ctx_empty q h Hempty Hh)
+      as [th [Hth Hrh]].
+    rewrite Htg in Hth. inversion Hth; subst th. rewrite <- Hrg, <- Hrh. reflexivity.
+  Qed.
+
+  (** The rule environment supplies the context used to type its actions. *)
+  Lemma run_rule_actions_env : forall p cp r s, plans_ok p cp -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s ->
+    exists g, actions_ok (program_sorts p) (program_kind p) g (actions V.t r) /\
+      env_sorted g s.
+  Proof.
+    intros p cp r s Hplans Hr [h [Hqh Henv]].
+    pose proof (plans_ok_sorted p cp Hplans) as Hok.
+    unfold program_ok in Hok. rewrite Forall_forall in Hok.
+    destruct (Hok r Hr) as [g [Hqg Hacts]]. exists g. split; [exact Hacts|].
+    intros x ty Hx. apply Henv. rewrite <- (run_query_context_agree p _ g h Hqg Hqh x).
+    exact Hx.
+  Qed.
+
+  (** A typed term resolves to a cell of its declared sort. *)
+  Lemma run_term_sorted : forall g (s : Model.env (V := V.t)) locals t ty,
+    env_sorted g (look s locals) -> has g t ty ->
+    exists c, term_cell s locals t = Some c /\ cell_sort c = ty.
+  Proof.
+    intros g s locals [x | v] ty Henv Hhas.
+    - exact (Henv x ty Hhas).
+    - exists (Val v). cbn [term_cell cell_sort]. split; [reflexivity|symmetry; exact Hhas].
+  Qed.
+
+  (** A term cannot manufacture an unallocated class identifier. *)
+  Lemma run_term_allocated : forall db s locals t i,
+    env_allocated db (look s locals) -> term_cell s locals t = Some (Id i) ->
+    D.allocated db i.
+  Proof.
+    intros db s locals [x | v] i Halloc Hterm.
+    - exact (Halloc x i Hterm).
+    - discriminate Hterm.
+  Qed.
+
+  (** Reading typed arguments preserves their list of sorts and their length. *)
+  Lemma run_cells_sorted : forall (ts : list (term V.t)) ss g s locals,
+    Forall2 (has g) ts ss -> env_sorted g (look s locals) ->
+    exists cells, term_cells s locals ts = Some cells /\ map cell_sort cells = ss /\
+      length cells = length ts.
+  Proof.
+    intros ts ss g s locals Htyped Henv. induction Htyped as [|t ty ts ss Ht Hts IH].
+    - exists []. repeat split; reflexivity.
+    - destruct (run_term_sorted g s locals t ty Henv Ht) as [c [Hc Hsort]].
+      destruct IH as [cells [Hcells [Hsorts Hlen]]]. exists (c :: cells).
+      cbn [term_cells map length]. rewrite Hc, Hcells, Hsort, Hsorts, Hlen.
+      repeat split; reflexivity.
+  Qed.
+
+  (** Every identifier returned by an argument read came from its environment. *)
+  Lemma run_cells_allocated : forall ts db s locals cells,
+    env_allocated db (look s locals) -> term_cells s locals ts = Some cells ->
+    forall i, In (Id i) cells -> D.allocated db i.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros db s locals cells Halloc Hcells i Hi.
+    - cbn [term_cells] in Hcells. inversion Hcells; subst cells. contradiction.
+    - cbn [term_cells] in Hcells.
+      destruct (term_cell s locals t) as [c |] eqn:Hc; [|discriminate].
+      destruct (term_cells s locals ts) as [cs |] eqn:Hcs; [|discriminate].
+      inversion Hcells; subst cells. destruct Hi as [Hi | Hi].
+      + subst c. eapply run_term_allocated; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  (** An optional output agrees with the function's output kind. *)
+  Lemma run_result_sorted : forall g (s : Model.env (V := V.t)) locals out res,
+    env_sorted g (look s locals) -> has_result g out res ->
+    exists o, result_cell s locals res = Some o /\ option_map cell_sort o = out_sort out.
+  Proof.
+    intros g s locals out res Henv Htyped.
+    destruct out as [| |m]; destruct res as [t |];
+      cbn [has_result out_sort] in Htyped; try contradiction.
+    - exists None. split; reflexivity.
+    - destruct (run_term_sorted g s locals t SId Henv Htyped) as [c [Hc Hsort]].
+      exists (Some c). cbn [result_cell]. rewrite Hc. split; [reflexivity|].
+      cbn [option_map out_sort]. now rewrite Hsort.
+    - destruct (run_term_sorted g s locals t SVal Henv Htyped) as [c [Hc Hsort]].
+      exists (Some c). cbn [result_cell]. rewrite Hc. split; [reflexivity|].
+      cbn [option_map out_sort]. now rewrite Hsort.
+  Qed.
+
+  Lemma run_result_allocated : forall db s locals res o,
+    env_allocated db (look s locals) -> result_cell s locals res = Some o ->
+    forall i, In (Id i) (option_list o) -> D.allocated db i.
+  Proof.
+    intros db s locals [t |] o Halloc Hres i Hi; cbn [result_cell] in Hres.
+    - destruct (term_cell s locals t) as [c |] eqn:Hc; [|discriminate].
+      inversion Hres; subst o. destruct Hi as [Hi | Hi]; [|contradiction].
+      subst c. eapply run_term_allocated; eauto.
+    - inversion Hres; subst o. contradiction.
+  Qed.
+
+  (** The executable value reader agrees with the work specification. *)
+  Lemma run_values_spec : forall (ts : list (term V.t)) s locals,
+    term_values s locals ts = value_terms (look s locals) ts.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros s locals; cbn [term_values value_terms].
+    - reflexivity.
+    - rewrite IH. destruct t as [x |v]; cbn [term_cell]; [|reflexivity].
+      destruct (look s locals x) as [[i | v] |]; reflexivity.
+  Qed.
+
+  (** A checked slot fits every tuple with its declared argument and output sorts. *)
+  Lemma run_typed_slots : forall p cp db f (k : list (cell V.t)) o out,
+    plans_ok p cp -> loaded p cp db -> program_sorts p f = Some (map cell_sort k) ->
+    program_kind p f = Some out -> option_map cell_sort o = out_sort out ->
+    D.slots_fit db f (length (k ++ option_list o)).
+  Proof.
+    intros p cp db f k o out Hplans [_ [Hslots _]] Hsort Hkind Hout perm Hin.
+    rewrite Hslots in Hin.
+    destruct (F29_shape_slots p cp f perm Hplans Hin)
+      as [ss [out' [Hss [Hout' [Hnodup Hbound]]]]].
+    rewrite Hsort in Hss. inversion Hss; subst ss.
+    rewrite Hkind in Hout'. inversion Hout'; subst out'.
+    split; [exact Hnodup|]. rewrite length_map in Hbound. rewrite length_app.
+    destruct out as [| |m]; destruct o as [[i |v] |];
+      cbn [option_map out_sort] in Hout; try discriminate;
+      cbn [option_list length]; exact Hbound.
+  Qed.
+
+  Lemma run_make_slots : forall p cp db f (k : list (cell V.t)),
+    plans_ok p cp -> loaded p cp db -> program_sorts p f = Some (map cell_sort k) ->
+    program_kind p f = Some OId -> D.slots_fit db f (S (length k)).
+  Proof.
+    intros p cp db f k Hplans Hloaded Hsort Hkind.
+    pose proof (run_typed_slots p cp db f k (Some (Id 1)) OId
+      Hplans Hloaded Hsort Hkind eq_refl) as Hslots.
+    rewrite length_app in Hslots. cbn [option_list length] in Hslots.
+    replace (length k + 1) with (S (length k)) in Hslots by lia. exact Hslots.
+  Qed.
+
+  Lemma run_put_kind : forall p cp db f k o out,
+    plans_ok p cp -> loaded p cp db ->
+    (forall i, In (Id i) (k ++ option_list o) -> D.allocated db i) ->
+    program_sorts p f = Some (map cell_sort k) -> program_kind p f = Some out ->
+    option_map cell_sort o = out_sort out -> D.kind_ok db f k o.
+  Proof.
+    intros p cp db f k o out Hplans Hloaded Halloc Hsort Hkind Hout.
+    split; [exact Halloc|]. split.
+    - eapply run_typed_slots; eauto.
+    - destruct Hloaded as [Hkinds _]. rewrite Hkinds, Hkind.
+      destruct out as [| |m]; destruct o as [[i |v] |];
+        cbn [option_map out_sort] in Hout; try discriminate; exact I.
+  Qed.
+
+  (** Allocation remains valid when the identifier counter grows. *)
+  Lemma run_env_allocated_mono : forall db db' s,
+    (D.ids db <= D.ids db')%N -> env_allocated db s -> env_allocated db' s.
+  Proof.
+    intros db db' s Hids Henv x i Hx.
+    specialize (Henv x i Hx). unfold D.allocated in *. lia.
+  Qed.
+
+  (** Local updates preserve the typing and allocation conditions of an action environment. *)
+  Lemma run_local_sorted : forall g s locals x (c : cell V.t),
+    env_sorted g (look s locals) ->
+    env_sorted (ctx_set g x (cell_sort c)) (look s (PTrieCode.set x c locals)).
+  Proof.
+    intros g s locals x c Henv y ty Hy. rewrite run_look_set. unfold ctx_set in Hy.
+    unfold update. destruct (Pos.eqb x y) eqn:Hxy.
+    - inversion Hy; subst ty. exists c. split; reflexivity.
+    - exact (Henv y ty Hy).
+  Qed.
+
+  Lemma run_local_allocated : forall db s locals x c,
+    env_allocated db (look s locals) ->
+    (forall i, c = Id i -> D.allocated db i) ->
+    env_allocated db (look s (PTrieCode.set x c locals)).
+  Proof.
+    intros db s locals x c Henv Hnew y i Hy. rewrite run_look_set in Hy.
+    unfold update in Hy. destruct (Pos.eqb x y).
+    - apply Hnew. now inversion Hy.
+    - exact (Henv y i Hy).
+  Qed.
+
+  (** A constructor either reuses its input database or advances its identifier counter. *)
+  Lemma run_make_ids : forall f k db, D.wf db -> kind (D.view db) f = Some OId ->
+    (D.ids db <= D.ids (snd (D.make f k db)))%N.
+  Proof.
+    intros f k db Hwf Hkind. pose proof (D.make_spec f k db Hwf Hkind) as Hmake.
+    destruct (D.make f k db) as [i db'] eqn:Hresult. cbn [snd] in *.
+    destruct Hmake as [[j [_ [_ Hsame]]] | [Hfresh [_ Hextends]]].
+    - subst db'. lia.
+    - destruct Hextends as [Hids _]. unfold D.fresh_id in Hfresh.
+      rewrite Hids, Hfresh, N.succ_pos_spec. lia.
+  Qed.
+
+  Lemma run_loaded_put : forall p cp db f k o, D.wf db -> loaded p cp db ->
+    D.kind_ok db f k o -> row_sorted (program_sorts p) (kind (D.view db)) f k o ->
+    loaded p cp (D.put f k o db).
+  Proof.
+    intros p cp db f k o Hwf [Hkinds [Hslots Hsorted]] Hkind Hrow.
+    destruct (D.layout_put f k o db Hwf) as [Hkinds' [Hslots' _]].
+    split.
+    - intro x. rewrite Hkinds'. apply Hkinds.
+    - split; [now rewrite Hslots'|]. eapply F21_put_sorted; eauto.
+  Qed.
+
+  Lemma run_loaded_make : forall p cp db f k, D.wf db -> loaded p cp db ->
+    program_kind p f = Some OId -> program_sorts p f = Some (map cell_sort k) ->
+    loaded p cp (snd (D.make f k db)).
+  Proof.
+    intros p cp db f k Hwf [Hkinds [Hslots Hsorted]] Hkind Hsort.
+    destruct (D.layout_make f k db Hwf) as [Hkinds' [Hslots' _]].
+    split.
+    - intro x. rewrite Hkinds'. apply Hkinds.
+    - split; [now rewrite Hslots'|]. eapply F22_make_sorted; eauto.
+      rewrite Hkinds. exact Hkind.
+  Qed.
+
+  Lemma run_loaded_union : forall p cp db i j, D.wf db -> loaded p cp db ->
+    loaded p cp (D.union i j db).
+  Proof.
+    intros p cp db i j Hwf [Hkinds [Hslots Hsorted]].
+    destruct (D.layout_union i j db Hwf) as [Hkinds' [Hslots' _]].
+    split.
+    - intro x. rewrite Hkinds'. apply Hkinds.
+    - split; [now rewrite Hslots'|]. eapply F23_union_sorted; eauto.
+  Qed.
+
+  (** Every suffix of an action application keeps its typing and monotone budgets. *)
+  Lemma run_apply_go_state : forall acts p cp g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    D.wf (apply_go acts s locals db) /\ loaded p cp (apply_go acts s locals db) /\
+    (D.ids db <= D.ids (apply_go acts s locals db))%N /\
+    D.unit db <= D.unit (apply_go acts s locals db).
+  Proof.
+    intro acts. induction acts as [|a acts IH];
+      intros p cp g s locals db Hplans Hwf Hloaded Hacts Henv Halloc.
+    - cbn [apply_go]. split; [assumption|]. split; [assumption|]. split; lia.
+    - destruct a as [x f args |f args res |a b |x op args]; cbn [apply_go].
+      + destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]]. rewrite Hcells.
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        pose proof (run_cells_allocated args db s locals cells Halloc Hcells) as Hcells_alloc.
+        pose proof (run_make_slots p cp db f cells Hplans Hloaded Hsort_cells Hkind) as Hslots.
+        assert (Hkind_db : kind (D.view db) f = Some OId).
+        { rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_make f cells db Hwf Hcells_alloc Hslots) as Hwf_next.
+        pose proof (run_loaded_make p cp db f cells Hwf Hloaded Hkind Hsort_cells)
+          as Hloaded_next.
+        pose proof (run_make_ids f cells db Hwf Hkind_db) as Hids.
+        pose proof (D.unit_mono_make f cells db Hwf) as Hunit.
+        pose proof (D.layout_make f cells db Hwf) as Hlayout.
+        destruct (D.make f cells db) as [i next] eqn:Hmake in *.
+        cbn [fst snd] in *. destruct Hlayout as [_ [_ [_ [Hi _]]]].
+        assert (Henv_next : env_sorted (ctx_set g x SId)
+          (look s (PTrieCode.set x (Id i) locals))).
+        { exact (run_local_sorted g s locals x (Id i) Henv). }
+        assert (Halloc_next : env_allocated next (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_local_allocated.
+          - eapply run_env_allocated_mono; eauto.
+          - intros j Heq. inversion Heq; subst j. exact Hi. }
+        destruct (IH p cp (ctx_set g x SId) s (PTrieCode.set x (Id i) locals) next
+          Hplans Hwf_next Hloaded_next Hrest Henv_next Halloc_next)
+          as [Hwf_final [Hloaded_final [Hids_final Hunit_final]]].
+        split; [assumption|]. split; [assumption|]. split; lia.
+      + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]].
+        destruct (run_result_sorted g s locals out res Henv Hres) as [o [Ho Hout]].
+        rewrite Hcells, Ho.
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        assert (Htuple : forall i, In (Id i) (cells ++ option_list o) -> D.allocated db i).
+        { intros i Hi. apply in_app_iff in Hi. destruct Hi as [Hi |Hi].
+          - eapply run_cells_allocated; eauto.
+          - eapply run_result_allocated; eauto. }
+        pose proof (run_put_kind p cp db f cells o out Hplans Hloaded Htuple
+          Hsort_cells Hkind Hout) as Hkind_ok.
+        assert (Hrow : row_sorted (program_sorts p) (kind (D.view db)) f cells o).
+        { exists out. split; [exact Hsort_cells|]. split; [|exact Hout].
+          rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_put f cells o db Hwf Hkind_ok) as Hwf_next.
+        pose proof (run_loaded_put p cp db f cells o Hwf Hloaded Hkind_ok Hrow)
+          as Hloaded_next.
+        destruct (D.layout_put f cells o db Hwf) as [_ [_ [Hids _]]].
+        pose proof (D.unit_mono_put f cells o db Hwf) as Hunit.
+        assert (Halloc_next : env_allocated (D.put f cells o db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        destruct (IH p cp g s locals (D.put f cells o db) Hplans Hwf_next Hloaded_next
+          Hrest Henv Halloc_next) as [Hwf_final [Hloaded_final [Hids_final Hunit_final]]].
+        split; [assumption|]. split; [assumption|]. split; lia.
+      + destruct Hacts as [Ha [Hb Hrest]].
+        destruct (run_term_sorted g s locals a SId Henv Ha) as [c [Hc Hcsort]].
+        destruct c as [i |v]; [|discriminate Hcsort].
+        destruct (run_term_sorted g s locals b SId Henv Hb) as [d [Hd Hdsort]].
+        destruct d as [j |v]; [|discriminate Hdsort]. rewrite Hc, Hd.
+        pose proof (run_term_allocated db s locals a i Halloc Hc) as Hi.
+        pose proof (run_term_allocated db s locals b j Halloc Hd) as Hj.
+        pose proof (D.wf_union i j db Hwf Hi Hj) as Hwf_next.
+        pose proof (run_loaded_union p cp db i j Hwf Hloaded) as Hloaded_next.
+        destruct (D.layout_union i j db Hwf) as [_ [_ [Hids _]]].
+        pose proof (D.unit_mono_union i j db Hwf) as Hunit.
+        assert (Halloc_next : env_allocated (D.union i j db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        destruct (IH p cp g s locals (D.union i j db) Hplans Hwf_next Hloaded_next
+          Hrest Henv Halloc_next) as [Hwf_final [Hloaded_final [Hids_final Hunit_final]]].
+        split; [assumption|]. split; [assumption|]. split; lia.
+      + destruct Hacts as [Hargs Hrest].
+        destruct (term_values s locals args) as [vs |] eqn:Hvs.
+        * destruct (V.prim op vs) as [v |] eqn:Hprim.
+          -- apply (IH p cp (ctx_set g x SVal)); try assumption.
+             ++ exact (run_local_sorted g s locals x (Val v) Henv).
+             ++ apply run_local_allocated; [exact Halloc|]. intros i Heq. discriminate Heq.
+          -- split; [assumption|]. split; [assumption|]. split; lia.
+        * split; [assumption|]. split; [assumption|]. split; lia.
+  Qed.
+
+  Definition run_term_width (W : nat) (t : term V.t) : Prop :=
+    forall x, In x (term_vars t) -> Pos.size_nat x <= W.
+
+  Definition run_action_width (W : nat) (a : action V.t) : Prop :=
+    Forall (fun x => Pos.size_nat x <= W) (action_binds a) /\
+    Forall (run_term_width W) (action_terms a).
+
+  (** The maximum word width covers every member of the program's encoded words. *)
+  Lemma run_word_width : forall p x, In x (program_words V.encode p) ->
+    Pos.size_nat x <= wbits p.
+  Proof.
+    intros p x Hx. unfold wbits. revert Hx.
+    generalize (program_words V.encode p) as xs. intro xs.
+    induction xs as [|y xs IH]; intro Hx; [contradiction|].
+    cbn [fold_right] in *. destruct Hx as [Hx |Hx].
+    - subst y. apply Nat.le_max_l.
+    - specialize (IH Hx). eapply Nat.le_trans; [exact IH|apply Nat.le_max_r].
+  Qed.
+
+  Lemma run_action_words_in : forall p r a x, In r (rules V.t p) -> In a (actions V.t r) ->
+    In x (action_words V.encode a) -> In x (program_words V.encode p).
+  Proof.
+    intros p r a x Hr Ha Hx. unfold program_words.
+    apply in_or_app. right. apply in_flat_map. exists r. split; [exact Hr|].
+    destruct r as [q acts]. apply in_or_app. right. apply in_flat_map.
+    exists a. split; assumption.
+  Qed.
+
+  Lemma run_term_words_in : forall t x, In x (term_vars t) -> In x (term_words V.encode t).
+  Proof.
+    intros [y |v] x Hx; exact Hx || contradiction.
+  Qed.
+
+  Lemma run_action_term_words : forall a t x, In t (action_terms a) ->
+    In x (term_words V.encode t) -> In x (action_words V.encode a).
+  Proof.
+    intros [y f args |f args res |a b |y op args] t x Ht Hx;
+      cbn [action_terms action_words] in *.
+    - right. right. apply in_flat_map. exists t. split; assumption.
+    - right. apply in_flat_map. exists t. split; assumption.
+    - destruct Ht as [Ht |[Ht |Ht]]; try contradiction; subst t;
+        apply in_or_app; [left|right]; exact Hx.
+    - right. right. apply in_flat_map. exists t. split; assumption.
+  Qed.
+
+  Lemma run_action_bind_words : forall a x, In x (action_binds a) ->
+    In x (action_words V.encode a).
+  Proof.
+    intros [y f args |f args res |a b |y op args] x Hx;
+      cbn [action_binds action_words] in *.
+    - destruct Hx as [<-|[]]. now left.
+    - contradiction.
+    - contradiction.
+    - destruct Hx as [<-|[]]. now left.
+  Qed.
+
+  (** Every action name read by the engine has the program's maximum word width. *)
+  Lemma run_rule_width : forall p r, In r (rules V.t p) ->
+    Forall (run_action_width (wbits p)) (actions V.t r).
+  Proof.
+    intros p r Hr. rewrite Forall_forall. intros a Ha. split.
+    - rewrite Forall_forall. intros x Hx. apply run_word_width.
+      eapply run_action_words_in; eauto using run_action_bind_words.
+    - rewrite Forall_forall. intros t Ht x Hx. apply run_word_width.
+      eapply run_action_words_in; eauto.
+      eapply run_action_term_words; [exact Ht|now apply run_term_words_in].
+  Qed.
+
+  Definition run_action_weight (cp : compiled V.t) (a : action V.t) : nat :=
+    match a with
+    | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
+        (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1)
+    | Union _ _ => 1
+    | Let _ _ args => length args + 1
+    end.
+
+  Definition run_actions_weight (cp : compiled V.t) (acts : list (action V.t)) : nat :=
+    fold_right (fun a n => match a with
+      | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
+          (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n
+      | Union _ _ => 1 + n
+      | Let _ _ args => length args + 1 + n
+      end) 0 acts.
+
+  Definition run_term_calls (Ts : positive -> N) (ts : list (term V.t)) : N :=
+    fold_right N.add 0%N (map Ts (flat_map term_vars ts)).
+
+  Lemma run_term_calls_app : forall Ts xs ys,
+    run_term_calls Ts (xs ++ ys) = (run_term_calls Ts xs + run_term_calls Ts ys)%N.
+  Proof.
+    intros Ts xs ys. unfold run_term_calls. rewrite flat_map_app, map_app, run_sum_app.
+    reflexivity.
+  Qed.
+
+  Lemma run_action_weight_pos : forall cp a, 1 <= run_action_weight cp a.
+  Proof.
+    intros cp [x f args |f args res |a b |x op args]; unfold run_action_weight; nia.
+  Qed.
+
+  Lemma run_result_clock : forall res s Ts locals W,
+    Forall (run_term_width W) (option_list res) ->
+    (T_result_cell s Ts locals res <= 4 * N.of_nat (W + 1) +
+      run_term_calls Ts (option_list res))%N.
+  Proof.
+    intros [t |] s Ts locals W Hwidth.
+    - inversion Hwidth as [|t' ts Hhead Htail]; subst t' ts.
+      pose proof (run_term_clock s Ts locals t W Hhead) as Hterm.
+      time_unfold @T_result_cell. destruct (term_cell s locals t);
+        cbn [option_list run_term_calls flat_map app map fold_right];
+        rewrite ?app_nil_r; rewrite Nat2N.inj_add in *; lia.
+    - time_unfold @T_result_cell. cbn [option_list run_term_calls flat_map map fold_right].
+      rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  (** Every nonzero final unit dominates the syntax and identifier factors separately. *)
+  Lemma run_spending_factors : forall U L W,
+    1 <= U -> 1 <= L ->
+    (1 <= N.of_nat U * N.of_nat L * N.of_nat (W + 1))%N /\
+    (N.of_nat (W + 1) <= N.of_nat U * N.of_nat L * N.of_nat (W + 1))%N /\
+    (N.of_nat U * N.of_nat L <= N.of_nat U * N.of_nat L * N.of_nat (W + 1))%N.
+  Proof.
+    intros U L W HU HL.
+    assert (Hu : (1 <= N.of_nat U)%N) by lia.
+    assert (Hl : (1 <= N.of_nat L)%N) by lia.
+    assert (Hw : (1 <= N.of_nat (W + 1))%N) by lia.
+    assert (Hul : (1 <= N.of_nat U * N.of_nat L)%N) by nia.
+    repeat split; nia.
+  Qed.
+
+  Definition run_apply_factor : N := (128 * (D.c_db + V.c_val + 1))%N.
+
+  Lemma run_apply_factor_le : (2 * run_apply_factor + 8 <= k_driver)%N.
+  Proof.
+    unfold run_apply_factor, k_driver. nia.
+  Qed.
+
+  Definition run_action_budget (B : N) (U W : nat) : N :=
+    (run_apply_factor * (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+      N.of_nat (W + 1)))%N.
+
+  (** The action coefficient covers syntax, database operations and a primitive call. *)
+  Lemma run_action_budget_covers : forall B U W, 1 <= U ->
+    (32 * N.of_nat (W + 1) +
+      D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) + V.c_val + 8 <=
+      run_action_budget B U W)%N.
+  Proof.
+    intros B U W HU.
+    destruct (run_spending_factors U (N.to_nat (N.log2 B) + 1) W HU ltac:(lia))
+      as [Hpos [Hwidth Hdb]].
+    set (E := (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (W + 1))%N)
+      in Hpos, Hwidth, Hdb.
+    assert (Hsyntax : (32 * N.of_nat (W + 1) <= 32 * E)%N) by nia.
+    assert (Hdatabase : (D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) <=
+      D.c_db * E)%N) by nia.
+    assert (Hvalue : (V.c_val + 8 <= (V.c_val + 8) * E)%N) by nia.
+    change (32 * N.of_nat (W + 1) +
+      D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) + V.c_val + 8 <=
+      run_apply_factor * E)%N.
+    unfold run_apply_factor. nia.
+  Qed.
+
+  Lemma run_set_clock : forall x (c : cell V.t) locals,
+    (PTrieCode.T_set x c locals <= 8 * N.of_nat (Pos.size_nat x) + 1)%N.
+  Proof.
+    intros x c locals. pose proof (PTrieT.replace_clock_bound (cell V.t) x (Some c) locals).
+    unfold PTrieCode.T_set. lia.
+  Qed.
+
+  (** Binding actions read their terms and insert a local result within one syntax charge. *)
+  Lemma run_binding_charge : forall args s Ts locals x c W weight,
+    Forall (run_term_width W) args -> Pos.size_nat x <= W -> length args + 1 <= weight ->
+    (T_term_cells s Ts locals args + PTrieCode.T_set x c locals + 8 <=
+      32 * N.of_nat (W + 1) * N.of_nat weight + run_term_calls Ts args)%N.
+  Proof.
+    intros args s Ts locals x c W weight Hterms Hx Hweight.
+    pose proof (run_terms_clock args s Ts locals W Hterms) as Hread.
+    pose proof (run_set_clock x c locals) as Hset.
+    unfold run_term_calls. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    assert (Hwidth : (1 <= N.of_nat W + 1)%N) by lia.
+    assert (Hcount : (N.of_nat (length args) + 1 <= N.of_nat weight)%N) by lia.
+    assert (Hname : (N.of_nat (Pos.size_nat x) <= N.of_nat W)%N) by lia.
+    clear -Hread Hset Hwidth Hcount Hname. nia.
+  Qed.
+
+  Lemma run_value_binding_charge : forall args s Ts locals x c W weight,
+    Forall (run_term_width W) args -> Pos.size_nat x <= W -> length args + 1 <= weight ->
+    (T_term_values s Ts locals args + PTrieCode.T_set x c locals + 8 <=
+      32 * N.of_nat (W + 1) * N.of_nat weight + run_term_calls Ts args)%N.
+  Proof.
+    intros args s Ts locals x c W weight Hterms Hx Hweight.
+    pose proof (run_values_clock args s Ts locals W Hterms) as Hread.
+    pose proof (run_set_clock x c locals) as Hset.
+    unfold run_term_calls. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    assert (Hwidth : (1 <= N.of_nat W + 1)%N) by lia.
+    assert (Hcount : (N.of_nat (length args) + 1 <= N.of_nat weight)%N) by lia.
+    assert (Hname : (N.of_nat (Pos.size_nat x) <= N.of_nat W)%N) by lia.
+    clear -Hread Hset Hwidth Hcount Hname. nia.
+  Qed.
+
+  (** Put reads its arguments and optional output within the same tuple charge. *)
+  Lemma run_put_charge : forall args res s Ts locals W weight,
+    Forall (run_term_width W) (args ++ option_list res) -> length args + 2 <= weight ->
+    (T_term_cells s Ts locals args + T_result_cell s Ts locals res + 8 <=
+      32 * N.of_nat (W + 1) * N.of_nat weight +
+        run_term_calls Ts (args ++ option_list res))%N.
+  Proof.
+    intros args res s Ts locals W weight Hterms Hweight.
+    apply Forall_app in Hterms. destruct Hterms as [Hargs Hres].
+    pose proof (run_terms_clock args s Ts locals W Hargs) as Hread.
+    pose proof (run_result_clock res s Ts locals W Hres) as Hout.
+    rewrite run_term_calls_app. unfold run_term_calls in *.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    assert (Hwidth : (1 <= N.of_nat W + 1)%N) by lia.
+    assert (Hcount : (N.of_nat (length args) + 2 <= N.of_nat weight)%N) by lia.
+    clear -Hread Hout Hwidth Hcount. nia.
+  Qed.
+
+  Lemma run_union_charge : forall a b s Ts locals W,
+    Forall (run_term_width W) [a; b] ->
+    (T_term_cell s Ts locals a + T_term_cell s Ts locals b + 8 <=
+      32 * N.of_nat (W + 1) + run_term_calls Ts [a; b])%N.
+  Proof.
+    intros a b s Ts locals W Hterms.
+    inversion Hterms as [|a' ts Ha Htail]; subst a' ts.
+    inversion Htail as [|b' ts Hb Hnil]; subst b' ts.
+    pose proof (run_term_clock s Ts locals a W Ha) as Hleft.
+    pose proof (run_term_clock s Ts locals b W Hb) as Hright.
+    unfold run_term_calls. cbn [flat_map]. rewrite app_nil_r, map_app, run_sum_app.
+    assert (Hwidth : (1 <= N.of_nat (W + 1))%N) by lia.
+    lia.
+  Qed.
+
+  (** A database operation can be charged at any later, larger spending unit. *)
+  Lemma run_operation_scale : forall B U old next T C,
+    D.unit next <= U ->
+    (T + N.of_nat (D.unit next) * D.potential B next <=
+      N.of_nat (D.unit next) * (C + D.potential B old))%N ->
+    (T + N.of_nat U * D.potential B next <=
+      N.of_nat U * C + N.of_nat U * D.potential B old)%N.
+  Proof.
+    intros B U old next T C Hunit Htime.
+    pose proof (F15_unit_scale T C (D.potential B old) (D.potential B next)
+      (D.unit next) U (F16_unit_pos next) Hunit Htime) as Hscaled.
+    rewrite N.mul_add_distr_l in Hscaled. exact Hscaled.
+  Qed.
+
+  Lemma run_make_clock_split : forall x f args acts s Ts locals db cells i next,
+    term_cells s locals args = Some cells -> D.make f cells db = (i, next) ->
+    (T_apply_go (Make x f args :: acts) s Ts locals db <=
+      T_term_cells s Ts locals args + D.T_make f cells db +
+      PTrieCode.T_set x (Id i) locals +
+      T_apply_go acts s Ts (PTrieCode.set x (Id i) locals) next + 8)%N.
+  Proof.
+    intros x f args acts s Ts locals db cells i next Hcells Hmake.
+    time_unfold T_apply_go. rewrite Hcells, Hmake. lia.
+  Qed.
+
+  Lemma run_put_clock_split : forall f args res acts s Ts locals db cells o,
+    term_cells s locals args = Some cells -> result_cell s locals res = Some o ->
+    (T_apply_go (Put f args res :: acts) s Ts locals db <=
+      T_term_cells s Ts locals args + T_result_cell s Ts locals res + D.T_put f cells o db +
+      T_apply_go acts s Ts locals (D.put f cells o db) + 8)%N.
+  Proof.
+    intros f args res acts s Ts locals db cells o Hcells Ho.
+    time_unfold T_apply_go. rewrite Hcells, Ho. lia.
+  Qed.
+
+  Lemma run_union_clock_split : forall a b acts s Ts locals db i j,
+    term_cell s locals a = Some (Id i) -> term_cell s locals b = Some (Id j) ->
+    (T_apply_go (Union a b :: acts) s Ts locals db <=
+      T_term_cell s Ts locals a + T_term_cell s Ts locals b + D.T_union i j db +
+      T_apply_go acts s Ts locals (D.union i j db) + 8)%N.
+  Proof.
+    intros a b acts s Ts locals db i j Ha Hb.
+    time_unfold T_apply_go. rewrite Ha, Hb. lia.
+  Qed.
+
+  Lemma run_let_clock_split : forall x op args acts s Ts locals db vs v,
+    term_values s locals args = Some vs -> V.prim op vs = Some v ->
+    (T_apply_go (Let x op args :: acts) s Ts locals db <=
+      T_term_values s Ts locals args + V.T_prim op vs +
+      PTrieCode.T_set x (Val v) locals +
+      T_apply_go acts s Ts (PTrieCode.set x (Val v) locals) db + 8)%N.
+  Proof.
+    intros x op args acts s Ts locals db vs v Hvs Hv.
+    time_unfold T_apply_go. rewrite Hvs, Hv. lia.
+  Qed.
+
+  (** Typed actions telescope their database potential at the final spending unit. *)
+  Lemma run_apply_go_amort : forall acts p cp g s Ts locals db W B U,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    Forall (run_action_width W) acts ->
+    (D.ids (apply_go acts s locals db) <= B)%N -> D.unit (apply_go acts s locals db) <= U ->
+    (T_apply_go acts s Ts locals db + N.of_nat U * D.potential B (apply_go acts s locals db) <=
+      run_action_budget B U W * N.of_nat (run_actions_weight cp acts + 1) +
+      run_term_calls Ts (flat_map action_terms acts) +
+      run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p) acts
+        (look s locals) + N.of_nat U * D.potential B db)%N.
+  Proof.
+    intro acts. induction acts as [|a acts IH];
+      intros p cp g s Ts locals db W B U Hplans Hwf Hloaded Hacts Henv Halloc Hwidth HB HU.
+    - assert (Hunit : 1 <= U) by (pose proof (F16_unit_pos db); cbn [apply_go] in HU; lia).
+      pose proof (run_action_budget_covers B U W Hunit) as Hcover.
+      time_unfold T_apply_go.
+      cbn [apply_go run_actions_weight run_term_calls flat_map map fold_right action_prim_work].
+      lia.
+    - assert (Hunit : 1 <= U).
+      { pose proof (F16_unit_pos (apply_go (a :: acts) s locals db)). lia. }
+      pose proof (run_action_budget_covers B U W Hunit) as Hcover.
+      inversion Hwidth as [|a' acts' Hhead Htail]; subst a' acts'.
+      pose proof (run_action_weight_pos cp a) as Hweight_pos.
+      pose proof (N.mul_le_mono_r
+        (32 * N.of_nat (W + 1) +
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) + V.c_val + 8)%N
+        (run_action_budget B U W) (N.of_nat (run_action_weight cp a)) Hcover) as Hcharge.
+      destruct a as [x f args |f args res |a b |x op args].
+      + destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+        destruct Hhead as [Hbind Hterms]. cbn [action_binds action_terms] in Hbind, Hterms.
+        inversion Hbind as [|x' xs Hx Hnil]; subst x' xs.
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]].
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        pose proof (run_cells_allocated args db s locals cells Halloc Hcells) as Hcells_alloc.
+        pose proof (run_make_slots p cp db f cells Hplans Hloaded Hsort_cells Hkind) as Hslots.
+        assert (Hkind_db : kind (D.view db) f = Some OId).
+        { rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_make f cells db Hwf Hcells_alloc Hslots) as Hwf_next.
+        pose proof (run_loaded_make p cp db f cells Hwf Hloaded Hkind Hsort_cells)
+          as Hloaded_next.
+        pose proof (run_make_ids f cells db Hwf Hkind_db) as Hids.
+        pose proof (D.layout_make f cells db Hwf) as Hlayout.
+        destruct (D.make f cells db) as [i next] eqn:Hmake in *.
+        cbn [fst snd] in *. destruct Hlayout as [_ [_ [_ [Hi _]]]].
+        assert (Henv_next : env_sorted (ctx_set g x SId)
+          (look s (PTrieCode.set x (Id i) locals))).
+        { exact (run_local_sorted g s locals x (Id i) Henv). }
+        assert (Halloc_next : env_allocated next (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_local_allocated.
+          - eapply run_env_allocated_mono; eauto.
+          - intros j Heq. inversion Heq; subst j. exact Hi. }
+        cbn [apply_go] in HB, HU |- *. rewrite Hcells, Hmake in HB, HU |- *.
+        destruct (run_apply_go_state acts p cp (ctx_set g x SId) s
+          (PTrieCode.set x (Id i) locals) next Hplans Hwf_next Hloaded_next Hrest
+          Henv_next Halloc_next) as [_ [_ [Hids_final Hunit_final]]].
+        assert (HBnext : (D.ids next <= B)%N) by lia.
+        assert (HUnext : D.unit next <= U) by lia.
+        pose proof (D.T_make_amort B f cells db Hwf Hslots) as Hdatabase.
+        rewrite Hmake in Hdatabase. cbn [snd] in Hdatabase.
+        specialize (Hdatabase HBnext).
+        pose proof (run_operation_scale B U db next (D.T_make f cells db) _
+          HUnext Hdatabase) as Hscaled.
+        assert (Hdbcharge : (D.T_make f cells db + N.of_nat U * D.potential B next <=
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+            N.of_nat (run_action_weight cp (Make x f args)) +
+          N.of_nat U * D.potential B db)%N).
+        { unfold D.slots_of in Hscaled. rewrite (proj1 (proj2 Hloaded)), Hlen in Hscaled.
+          unfold run_action_weight. rewrite !Nat2N.inj_mul in *. clear -Hscaled. nia. }
+        pose proof (IH p cp (ctx_set g x SId) s Ts (PTrieCode.set x (Id i) locals) next
+          W B U Hplans Hwf_next Hloaded_next Hrest Henv_next Halloc_next Htail HB HU)
+          as Hremaining.
+        assert (Hprim : action_prim_work V.prim V.prim_work (program_kind p) acts
+          (look s (PTrieCode.set x (Id i) locals)) =
+          action_prim_work V.prim V.prim_work (program_kind p) acts
+            (update (look s locals) x (Id 1))).
+        { apply run_action_prim_work_agree. intro y. unfold run_value_view.
+          rewrite run_look_set. unfold update. destruct (Pos.eqb x y); reflexivity. }
+        rewrite Hprim in Hremaining.
+        pose proof (run_binding_charge args s Ts locals x (Id i) W
+          (run_action_weight cp (Make x f args)) Hterms Hx ltac:(unfold run_action_weight; nia))
+          as Hsyntax.
+        pose proof (run_make_clock_split x f args acts s Ts locals db cells i next
+          Hcells Hmake) as Hclock.
+        change (T_apply_go (Make x f args :: acts) s Ts locals db +
+          N.of_nat U * D.potential B (apply_go acts s (PTrieCode.set x (Id i) locals) next) <=
+          run_action_budget B U W *
+            N.of_nat (run_action_weight cp (Make x f args) + run_actions_weight cp acts + 1) +
+          run_term_calls Ts (args ++ flat_map action_terms acts) +
+          run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+            (Make x f args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+        rewrite run_term_calls_app. cbn [action_prim_work]. rewrite Hkind.
+        rewrite !Nat2N.inj_add in Hremaining |- *.
+        clear -Hsyntax Hclock Hremaining Hdbcharge Hcharge. nia.
+      + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+        destruct Hhead as [_ Hterms]. cbn [action_terms] in Hterms.
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]].
+        destruct (run_result_sorted g s locals out res Henv Hres) as [o [Ho Hout]].
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        assert (Htuple : forall i, In (Id i) (cells ++ option_list o) -> D.allocated db i).
+        { intros i Hi. apply in_app_iff in Hi. destruct Hi as [Hi |Hi].
+          - eapply run_cells_allocated; eauto.
+          - eapply run_result_allocated; eauto. }
+        pose proof (run_put_kind p cp db f cells o out Hplans Hloaded Htuple
+          Hsort_cells Hkind Hout) as Hkind_ok.
+        assert (Hrow : row_sorted (program_sorts p) (kind (D.view db)) f cells o).
+        { exists out. split; [exact Hsort_cells|]. split; [|exact Hout].
+          rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_put f cells o db Hwf Hkind_ok) as Hwf_next.
+        pose proof (run_loaded_put p cp db f cells o Hwf Hloaded Hkind_ok Hrow)
+          as Hloaded_next.
+        destruct (D.layout_put f cells o db Hwf) as [_ [_ [Hids _]]].
+        assert (Halloc_next : env_allocated (D.put f cells o db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        cbn [apply_go] in HB, HU |- *. rewrite Hcells, Ho in HB, HU |- *.
+        destruct (run_apply_go_state acts p cp g s locals (D.put f cells o db)
+          Hplans Hwf_next Hloaded_next Hrest Henv Halloc_next)
+          as [_ [_ [Hids_final Hunit_final]]].
+        assert (HBnext : (D.ids (D.put f cells o db) <= B)%N) by lia.
+        assert (HUnext : D.unit (D.put f cells o db) <= U) by lia.
+        pose proof (D.T_put_amort B f cells o db Hwf (proj1 (proj2 Hkind_ok)) HBnext)
+          as Hdatabase.
+        pose proof (run_operation_scale B U db (D.put f cells o db) (D.T_put f cells o db) _
+          HUnext Hdatabase) as Hscaled.
+        assert (Hdbcharge : (D.T_put f cells o db +
+          N.of_nat U * D.potential B (D.put f cells o db) <=
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+            N.of_nat (run_action_weight cp (Put f args res)) +
+          N.of_nat U * D.potential B db)%N).
+        { unfold D.slots_of in Hscaled. rewrite (proj1 (proj2 Hloaded)), Hlen in Hscaled.
+          unfold run_action_weight. rewrite !Nat2N.inj_mul in *. clear -Hscaled. nia. }
+        pose proof (IH p cp g s Ts locals (D.put f cells o db) W B U Hplans Hwf_next
+          Hloaded_next Hrest Henv Halloc_next Htail HB HU) as Hremaining.
+        pose proof (run_put_charge args res s Ts locals W
+          (run_action_weight cp (Put f args res)) Hterms
+          ltac:(unfold run_action_weight; nia)) as Hsyntax.
+        pose proof (run_put_clock_split f args res acts s Ts locals db cells o Hcells Ho)
+          as Hclock.
+        change (T_apply_go (Put f args res :: acts) s Ts locals db +
+          N.of_nat U * D.potential B (apply_go acts s locals (D.put f cells o db)) <=
+          run_action_budget B U W *
+            N.of_nat (run_action_weight cp (Put f args res) + run_actions_weight cp acts + 1) +
+          run_term_calls Ts ((args ++ option_list res) ++ flat_map action_terms acts) +
+          run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p) acts
+            (look s locals) + N.of_nat U * D.potential B db)%N.
+        rewrite run_term_calls_app. rewrite !Nat2N.inj_add in Hremaining |- *.
+        clear -Hsyntax Hclock Hremaining Hdbcharge Hcharge. nia.
+      + destruct Hacts as [Ha [Hb Hrest]].
+        destruct Hhead as [_ Hterms]. cbn [action_terms] in Hterms.
+        destruct (run_term_sorted g s locals a SId Henv Ha) as [c [Hc Hcsort]].
+        destruct c as [i |v]; [|discriminate Hcsort].
+        destruct (run_term_sorted g s locals b SId Henv Hb) as [d [Hd Hdsort]].
+        destruct d as [j |v]; [|discriminate Hdsort].
+        pose proof (run_term_allocated db s locals a i Halloc Hc) as Hi.
+        pose proof (run_term_allocated db s locals b j Halloc Hd) as Hj.
+        pose proof (D.wf_union i j db Hwf Hi Hj) as Hwf_next.
+        pose proof (run_loaded_union p cp db i j Hwf Hloaded) as Hloaded_next.
+        destruct (D.layout_union i j db Hwf) as [_ [_ [Hids _]]].
+        assert (Halloc_next : env_allocated (D.union i j db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        cbn [apply_go] in HB, HU |- *. rewrite Hc, Hd in HB, HU |- *.
+        destruct (run_apply_go_state acts p cp g s locals (D.union i j db)
+          Hplans Hwf_next Hloaded_next Hrest Henv Halloc_next)
+          as [_ [_ [Hids_final Hunit_final]]].
+        assert (HBold : (D.ids db <= B)%N) by lia.
+        assert (HUnext : D.unit (D.union i j db) <= U) by lia.
+        pose proof (D.T_union_amort B i j db Hwf Hi Hj HBold) as Hdatabase.
+        pose proof (run_operation_scale B U db (D.union i j db) (D.T_union i j db) D.c_db
+          HUnext Hdatabase) as Hscaled.
+        pose proof (IH p cp g s Ts locals (D.union i j db) W B U Hplans Hwf_next
+          Hloaded_next Hrest Henv Halloc_next Htail HB HU) as Hremaining.
+        pose proof (run_union_charge a b s Ts locals W Hterms) as Hsyntax.
+        pose proof (run_union_clock_split a b acts s Ts locals db i j Hc Hd) as Hclock.
+        change (T_apply_go (Union a b :: acts) s Ts locals db +
+          N.of_nat U * D.potential B (apply_go acts s locals (D.union i j db)) <=
+          run_action_budget B U W * N.of_nat (1 + run_actions_weight cp acts + 1) +
+          run_term_calls Ts ([a; b] ++ flat_map action_terms acts) +
+          run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p) acts
+            (look s locals) + N.of_nat U * D.potential B db)%N.
+        rewrite run_term_calls_app. rewrite !Nat2N.inj_add in Hremaining |- *.
+        cbn [run_action_weight N.of_nat] in Hcharge.
+        assert (Hlog : (1 <= N.of_nat (N.to_nat (N.log2 B) + 1))%N) by lia.
+        assert (Hdb : (N.of_nat U * D.c_db <=
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1))%N) by nia.
+        clear -Hsyntax Hclock Hremaining Hscaled Hcharge Hdb. nia.
+      + destruct Hacts as [Hargs Hrest].
+        destruct Hhead as [Hbind Hterms]. cbn [action_binds action_terms] in Hbind, Hterms.
+        inversion Hbind as [|x' xs Hx Hnil]; subst x' xs.
+        pose proof (run_values_spec args s locals) as Hvalues.
+        assert (Hfactor : (V.c_val <= run_apply_factor)%N) by (unfold run_apply_factor; lia).
+        destruct (term_values s locals args) as [vs |] eqn:Hvs.
+        * try rewrite Hvs in Hvalues. pose proof (V.T_prim_le op vs) as Hprimitive.
+          destruct (V.prim op vs) as [v |] eqn:Hprim.
+          -- assert (Henv_next : env_sorted (ctx_set g x SVal)
+               (look s (PTrieCode.set x (Val v) locals))).
+             { exact (run_local_sorted g s locals x (Val v) Henv). }
+             assert (Halloc_next : env_allocated db (look s (PTrieCode.set x (Val v) locals))).
+             { apply run_local_allocated; [exact Halloc|]. intros i Heq. discriminate Heq. }
+             cbn [apply_go] in HB, HU |- *. rewrite Hvs, Hprim in HB, HU |- *.
+             pose proof (IH p cp (ctx_set g x SVal) s Ts (PTrieCode.set x (Val v) locals) db
+               W B U Hplans Hwf Hloaded Hrest Henv_next Halloc_next Htail HB HU)
+               as Hremaining.
+             assert (Hprim_rest : action_prim_work V.prim V.prim_work (program_kind p) acts
+               (look s (PTrieCode.set x (Val v) locals)) =
+               action_prim_work V.prim V.prim_work (program_kind p) acts
+                 (update (look s locals) x (Val v))).
+             { apply run_action_prim_work_agree. intro y. unfold run_value_view.
+               rewrite run_look_set. reflexivity. }
+             rewrite Hprim_rest in Hremaining.
+             pose proof (run_value_binding_charge args s Ts locals x (Val v) W
+               (run_action_weight cp (Let x op args)) Hterms Hx ltac:(cbn; lia)) as Hsyntax.
+             pose proof (run_let_clock_split x op args acts s Ts locals db vs v Hvs Hprim)
+               as Hclock.
+             change (T_apply_go (Let x op args :: acts) s Ts locals db +
+               N.of_nat U * D.potential B (apply_go acts s (PTrieCode.set x (Val v) locals) db) <=
+               run_action_budget B U W *
+                 N.of_nat (run_action_weight cp (Let x op args) + run_actions_weight cp acts + 1) +
+               run_term_calls Ts (args ++ flat_map action_terms acts) +
+               run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+                 (Let x op args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+             rewrite run_term_calls_app. cbn [action_prim_work]. rewrite <- Hvalues, Hprim.
+             rewrite !Nat2N.inj_add in Hremaining |- *.
+             assert (Hpositive : (1 <= N.of_nat (run_action_weight cp (Let x op args)))%N)
+               by lia.
+             clear -Hsyntax Hclock Hremaining Hprimitive Hfactor Hcharge Hpositive. nia.
+          -- pose proof (run_value_binding_charge args s Ts locals x (Id 1) W
+               (run_action_weight cp (Let x op args)) Hterms Hx ltac:(cbn; lia)) as Hsyntax.
+             assert (Hclock : (T_apply_go (Let x op args :: acts) s Ts locals db <=
+               T_term_values s Ts locals args + V.T_prim op vs + 8)%N).
+             { time_unfold T_apply_go. rewrite Hvs, Hprim. lia. }
+             cbn [apply_go]. rewrite Hvs, Hprim.
+             change (T_apply_go (Let x op args :: acts) s Ts locals db +
+               N.of_nat U * D.potential B db <=
+               run_action_budget B U W *
+                 N.of_nat (run_action_weight cp (Let x op args) + run_actions_weight cp acts + 1) +
+               run_term_calls Ts (args ++ flat_map action_terms acts) +
+               run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+                 (Let x op args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+             rewrite run_term_calls_app. cbn [action_prim_work]. rewrite <- Hvalues, Hprim.
+             rewrite !Nat2N.inj_add.
+             assert (Hpositive : (1 <= N.of_nat (run_action_weight cp (Let x op args)))%N)
+               by lia.
+             clear -Hsyntax Hclock Hprimitive Hfactor Hcharge Hpositive. nia.
+        * try rewrite Hvs in Hvalues.
+          pose proof (run_value_binding_charge args s Ts locals x (Id 1) W
+            (run_action_weight cp (Let x op args)) Hterms Hx ltac:(cbn; lia)) as Hsyntax.
+          assert (Hclock : (T_apply_go (Let x op args :: acts) s Ts locals db <=
+            T_term_values s Ts locals args + 8)%N).
+          { time_unfold T_apply_go. rewrite Hvs. lia. }
+          cbn [apply_go]. rewrite Hvs.
+          change (T_apply_go (Let x op args :: acts) s Ts locals db +
+            N.of_nat U * D.potential B db <=
+            run_action_budget B U W *
+              N.of_nat (run_action_weight cp (Let x op args) + run_actions_weight cp acts + 1) +
+            run_term_calls Ts (args ++ flat_map action_terms acts) +
+            run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+              (Let x op args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+          rewrite run_term_calls_app. cbn [action_prim_work]. rewrite <- Hvalues.
+          rewrite !Nat2N.inj_add. clear -Hsyntax Hclock Hcharge. nia.
+  Qed.
+
+  Lemma run_apply_wrapper_clock : forall acts s Ts db,
+    (T_apply acts s Ts db <= T_apply_go acts s Ts Empty db + 2)%N.
+  Proof.
+    intros acts s Ts db. time_unfold T_apply. lia.
+  Qed.
+
   (** Applying a rule pays for its actions, referenced bindings and transferred potential. *)
   Lemma T2c_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
@@ -2237,5 +3262,35 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       fold_right N.add 0 (map Ts (flat_map term_vars (flat_map action_terms (actions V.t r)))) +
       k_driver * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B U p cp r s Ts db Hplans Hwf Hloaded Hr Hrule Halloc HB HU.
+    destruct (run_rule_actions_env p cp r s Hplans Hr Hrule) as [g [Hacts Henv]].
+    assert (Henv_empty : env_sorted g (look s Empty)).
+    { intros x ty Hx. rewrite run_look_empty. exact (Henv x ty Hx). }
+    assert (Halloc_empty : env_allocated db (look s Empty)).
+    { intros x i Hx. rewrite run_look_empty in Hx. exact (Halloc x i Hx). }
+    pose proof (run_apply_go_amort (actions V.t r) p cp g s Ts Empty db (wbits p) B U
+      Hplans Hwf Hloaded Hacts Henv_empty Halloc_empty (run_rule_width p r Hr) HB HU)
+      as Hcost.
+    assert (Hprim : action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r)
+      (look s Empty) = action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s).
+    { apply run_action_prim_work_agree. intro x. unfold run_value_view.
+      rewrite run_look_empty. reflexivity. }
+    rewrite Hprim in Hcost.
+    pose proof (run_apply_wrapper_clock (actions V.t r) s Ts db) as Hwrapper.
+    pose proof run_apply_factor_le as Hfactor.
+    assert (Hunit : 1 <= U) by (pose proof (F16_unit_pos (apply (actions V.t r) s db)); lia).
+    destruct (run_spending_factors U (N.to_nat (N.log2 B) + 1) (wbits p) Hunit ltac:(lia))
+      as [Hpositive _].
+    assert (Hweight : (1 <= N.of_nat (run_actions_weight cp (actions V.t r) + 1))%N) by lia.
+    change (T_apply (actions V.t r) s Ts db +
+      N.of_nat U * D.potential B (apply_go (actions V.t r) s Empty db) <=
+      k_driver * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (run_actions_weight cp (actions V.t r) + 1) +
+      run_term_calls Ts (flat_map action_terms (actions V.t r)) +
+      k_driver * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
+      N.of_nat U * D.potential B db)%N.
+    unfold run_action_budget in Hcost. rewrite Nat2N.inj_mul.
+    clear -Hcost Hwrapper Hfactor Hpositive Hweight. nia.
+  Qed.
 End RunT.
