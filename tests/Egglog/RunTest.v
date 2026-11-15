@@ -410,3 +410,111 @@ Example literals_alias_loses_match :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** * A missing premise in the derivation plan law *)
+
+(** The relational-fragment flag does not reject a result-bearing put. The database below
+    makes that put a valid lattice insertion, while the program's relational derivation
+    rules cannot derive any row from it. No unfinished Run law is used in this example. *)
+Module DerivationPlanCounterexample (V : VALUE) (I : IndexSig.INDEX V)
+    (J : JoinSig.JOIN V I) (D : DatabaseSig.DATABASE V I).
+  Module R := Run V I J D.
+
+  Definition counter_rule (v : V.t) : rule V.t :=
+    Rule V.t [] [Put 1%positive [] (Some (Lit v))].
+  Definition counter_program (v : V.t) : program V.t :=
+    Program V.t [Decl 1%positive [] ORel] [counter_rule v].
+  Definition counter_db : D.t := D.init [Decl 1%positive [] (OLat 1%positive)] [].
+  Definition counter_derived (v : V.t) (current : D.t) : Prop :=
+    forall f k o, row (D.view current) f k o ->
+      derives V.prim (counter_program v) (D.view counter_db) f k.
+
+  Lemma counter_empty : forall f k o, ~ row (D.view counter_db) f k o.
+  Proof.
+    intros f k o Hrow. unfold counter_db in Hrow.
+    exact (proj1 (proj1 (D.init_view [Decl 1%positive [] (OLat 1%positive)] []
+      f k o 1%positive 1%positive)) Hrow).
+  Qed.
+
+  Lemma counter_no_ids : R.no_ids counter_db.
+  Proof.
+    destruct (D.init_view [Decl 1%positive [] (OLat 1%positive)] []
+      1%positive [] None 1%positive 1%positive) as [_ [_ [_ [_ [Hids _]]]]].
+    split; [exact Hids|]. intros f k o Hrow. exfalso. eapply counter_empty. exact Hrow.
+  Qed.
+
+  Lemma counter_put_allowed : forall v, D.kind_ok counter_db 1%positive [] (Some (Val v)).
+  Proof.
+    intro v.
+    destruct (D.init_view [Decl 1%positive [] (OLat 1%positive)] []
+      1%positive [] None 1%positive 1%positive) as [_ [_ [Hkind [Hslots _]]]].
+    split.
+    - intros i Hin. destruct Hin as [Hbad|[]]. discriminate Hbad.
+    - split.
+      + intros perm Hin. unfold counter_db in Hin. rewrite Hslots in Hin. contradiction.
+      + change (kind (D.view counter_db) 1%positive = Some (OLat 1%positive)) in Hkind.
+        now rewrite Hkind.
+  Qed.
+
+  Lemma counter_old_empty : D.old counter_db 1%positive [] = None.
+  Proof.
+    destruct (D.old counter_db 1%positive []) as [o|] eqn:Hold; [|reflexivity].
+    exfalso. apply (counter_empty 1%positive [] o).
+    apply (proj1 (D.old_row counter_db 1%positive [] o
+      (D.wf_init [Decl 1%positive [] (OLat 1%positive)] []))). exact Hold.
+  Qed.
+
+  Lemma counter_inserted : forall v,
+    row (D.view (R.apply (actions V.t (counter_rule v)) (fun _ => None) counter_db))
+      1%positive [] (Some (Val v)).
+  Proof.
+    intro v. change (row (D.view (D.put 1%positive [] (Some (Val v)) counter_db))
+      1%positive [] (Some (Val v))).
+    apply (proj2 (D.put_rows 1%positive [] (Some (Val v)) counter_db
+      (D.wf_init [Decl 1%positive [] (OLat 1%positive)] []) (counter_put_allowed v)
+      1%positive [] (Some (Val v)))).
+    right. split; [reflexivity|]. split; [reflexivity|].
+    change (D.combine counter_db 1%positive (D.old counter_db 1%positive [])
+      (Some (Val v)) = Some (Val v)).
+    rewrite counter_old_empty. reflexivity.
+  Qed.
+
+  Lemma counter_not_derivable : forall v f k,
+    ~ derives V.prim (counter_program v) (D.view counter_db) f k.
+  Proof.
+    intros v f k Hderive. destruct Hderive as [f k Hrow|r s f k Hin Hbody Hactions].
+    - eapply counter_empty. exact Hrow.
+    - destruct Hin as [<-|[]]. cbn [counter_rule actions] in Hactions. inversion Hactions.
+  Qed.
+
+  (** All premises of F7 hold, but applying the rule produces an underivable row. *)
+  Lemma F7_plan_counterexample : forall v,
+    relational_fragment (counter_program v) = true /\ R.no_ids counter_db /\
+    D.wf counter_db /\ counter_derived v counter_db /\
+    In (counter_rule v) (rules V.t (counter_program v)) /\
+    derivation_body V.prim (counter_program v) (D.view counter_db) (fun _ => None)
+      (query V.t (counter_rule v)) /\
+    ~ counter_derived v
+      (R.apply (actions V.t (counter_rule v)) (fun _ => None) counter_db).
+  Proof.
+    intro v. split; [reflexivity|]. split; [exact counter_no_ids|].
+    split; [apply D.wf_init|]. split.
+    - intros f k o Hrow. exfalso. eapply counter_empty. exact Hrow.
+    - split; [now left|]. split; [constructor|].
+      intro Hderived. apply (counter_not_derivable v 1%positive []).
+      eapply Hderived. apply counter_inserted.
+  Qed.
+End DerivationPlanCounterexample.
+
+(** The same insertion is visible in the operations-only positive-value implementation. *)
+Example derivation_plan_result_put :
+  let p := Program positive [Decl 1 [] ORel]
+    [Rule positive [] [Put 1 [] (Some (Lit 1%positive))]] in
+  let db := PlanDatabase.init [Decl 1 [] (OLat 1)] [] in
+  (relational_fragment p,
+   fst (PlanDatabase.lookup 1 []
+     (PlanRun.apply [Put 1 [] (Some (Lit 1%positive))] (fun _ => None) db))) =
+  (true, Some (Some (val 1))).
+Proof.
+  vm_compute. reflexivity.
+Qed.

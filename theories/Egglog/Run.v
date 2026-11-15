@@ -7948,7 +7948,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     no_ids initial -> D.wf db -> derived p initial db -> In r (rules V.t p) ->
     derivation_body V.prim p (D.view initial) s (query V.t r) ->
     derived p initial (apply (actions V.t r) s db).
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: result-bearing relational Put; see RunTest. *)
 
   Lemma F8_naive_quiet_closed : forall p cp db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.canonical db -> D.changed db = false -> D.changed (round p cp true db) = false ->
