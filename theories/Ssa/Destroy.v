@@ -2015,6 +2015,687 @@ Module Destroy (O : OPS)
           apply Pos.size_nat_least. lia.
   Qed.
 
+  (** * Preservation of SSA under edge splitting *)
+
+  (** Distinct block labels make a membership witness agree with block lookup. *)
+  Lemma split_lookup_member (bs : list (positive * block positive O.K O.G)) id body :
+    NoDup (map fst bs) ->
+    In (id, body) bs -> find_block id bs = Some body.
+  Proof.
+    induction bs as [|[key found] rest IH]; intros Hunique Hin; [contradiction|].
+    inversion Hunique as [|head tail Hfresh Htail]; subst.
+    cbn [find_block]. destruct Hin as [Hequal|Hin].
+    - inversion Hequal; subst; now rewrite Pos.eqb_refl.
+    - destruct (Pos.eqb id key) eqn:Hequal.
+      + apply Pos.eqb_eq in Hequal; subst id. exfalso. apply Hfresh.
+        apply in_map_iff. exists (key, body). auto.
+      + apply IH; assumption.
+  Qed.
+
+  (** The bridge blocks allocated for one exit introduce no definitions. *)
+  Lemma split_exit_definitions fresh e next ending extra :
+    split_exit fresh e = (next, (ending, extra)) ->
+    concat (map (fun item => block_defs (snd item)) extra) = [].
+  Proof.
+    destruct e as [target actuals|guard operands yes ys no ns|values].
+    - cbn [split_exit]. intros Hsplit. inversion Hsplit. reflexivity.
+    - destruct ys, ns; cbn [split_exit split_edge]; intros Hsplit;
+        inversion Hsplit; reflexivity.
+    - cbn [split_exit]. intros Hsplit. inversion Hsplit. reflexivity.
+  Qed.
+
+  (** Splitting preserves the complete ordered list of block definitions. *)
+  Lemma split_blocks_definitions bs : forall fresh last out,
+    split_blocks fresh bs = (last, out) ->
+    concat (map (fun item => block_defs (snd item)) out) =
+    concat (map (fun item => block_defs (snd item)) bs).
+  Proof.
+    induction bs as [|[id body] rest IH]; intros fresh last out Hsplit.
+    - inversion Hsplit. reflexivity.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      pose proof (split_exit_definitions _ _ _ _ _ Hexit) as Hextra.
+      specialize (IH _ _ _ Htail).
+      change (block_defs body ++ concat (map (fun item => block_defs (snd item))
+        (extra ++ tail)) = block_defs body ++
+        concat (map (fun item => block_defs (snd item)) rest)).
+      now rewrite map_app, concat_app, Hextra, IH.
+  Qed.
+
+  (** Every split block label is original or belongs to the allocated interval. *)
+  Lemma split_blocks_original_ids bs : forall fresh last out,
+    split_blocks fresh bs = (last, out) ->
+    (fresh <= last)%positive /\ forall id body, In (id, body) out ->
+      In id (map fst bs) \/ (fresh <= id < last)%positive.
+  Proof.
+    induction bs as [|[key body] rest IH]; intros fresh last out Hsplit.
+    - inversion Hsplit; subst. split; [apply Pos.le_refl|].
+      intros id found Hin. contradiction.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      destruct (split_exit_spec _ _ _ _ _ Hexit) as [Hnext [Hextra Hexpands]].
+      destruct (IH _ _ _ Htail) as [Hfinal Htail_ids].
+      split; [lia|]. intros id found [Hequal|Hin].
+      + inversion Hequal; subst id found. left. now left.
+      + apply in_app_or in Hin as [Hin|Hin].
+        * right. specialize (Hextra _ _ Hin). lia.
+        * destruct (Htail_ids _ _ Hin) as [Hold|Hnew].
+          -- left. now right.
+          -- right. lia.
+  Qed.
+
+  (** The bridges allocated for one exit have distinct labels. *)
+  Lemma split_exit_unique fresh e next ending extra :
+    split_exit fresh e = (next, (ending, extra)) -> NoDup (map fst extra).
+  Proof.
+    destruct e as [target actuals|guard operands yes ys no ns|values].
+    - cbn [split_exit]. intros Hsplit. inversion Hsplit. constructor.
+    - destruct ys, ns; cbn [split_exit split_edge]; intros Hsplit;
+        inversion Hsplit; subst; cbn [map fst]; repeat constructor;
+        cbn [In]; intuition lia.
+    - cbn [split_exit]. intros Hsplit. inversion Hsplit. constructor.
+  Qed.
+
+  (** Fresh allocation preserves the uniqueness of source block labels. *)
+  Lemma split_blocks_unique boundary bs : NoDup (map fst bs) ->
+    (forall id body, In (id, body) bs -> (id < boundary)%positive) ->
+    forall fresh last out, (boundary <= fresh)%positive ->
+      split_blocks fresh bs = (last, out) -> NoDup (map fst out).
+  Proof.
+    induction bs as [|[key body] rest IH]; intros Hunique Hsmall fresh last out Hbound Hsplit.
+    - inversion Hsplit; subst. constructor.
+    - inversion Hunique as [|head tail Hfresh Hrest]; subst.
+      cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      destruct (split_exit_spec _ _ _ _ _ Hexit) as [Hnext [Hextra Hexpands]].
+      destruct (split_blocks_original_ids _ _ _ _ Htail) as [Hfinal Htail_ids].
+      assert (Hkey : (key < boundary)%positive) by (apply (Hsmall key body); now left).
+      assert (Htail_unique : NoDup (map fst tail)).
+      { eapply IH with (fresh := next) (last := final); [exact Hrest| |lia|exact Htail].
+        intros id found Hin. apply (Hsmall id found). now right. }
+      cbn [map fst]. constructor.
+      + rewrite map_app. intros Hin. apply in_app_or in Hin as [Hin|Hin];
+          apply in_map_iff in Hin as [[id found] [Hequal Hin]]; cbn in Hequal; subst id.
+        * specialize (Hextra _ _ Hin). lia.
+        * destruct (Htail_ids _ _ Hin) as [Hold|Hnew]; [contradiction|lia].
+      + rewrite map_app. apply NoDup_app; [now apply (split_exit_unique _ _ _ _ _ Hexit)|
+          exact Htail_unique|].
+        intros id Hin1 Hin2.
+        apply in_map_iff in Hin1 as [[key1 body1] [Heq1 Hin1]]; cbn in Heq1; subst key1.
+        apply in_map_iff in Hin2 as [[key2 body2] [Heq2 Hin2]]; cbn in Heq2; subst key2.
+        specialize (Hextra _ _ Hin1).
+        destruct (Htail_ids _ _ Hin2) as [Hold|Hnew]; [|lia].
+        apply in_map_iff in Hold as [[key2 found] [Hequal Hold]]; cbn in Hequal; subst key2.
+        specialize (Hsmall id found (or_intror Hold)). lia.
+  Qed.
+  (** Each transformed successor is direct or crosses one fresh bridge. *)
+  Lemma split_exit_successor lower bs ending ending' next :
+    exit_expands lower bs ending ending' ->
+    (forall target, successor ending target -> (target < lower)%positive) ->
+    successor ending' next ->
+    (successor ending next /\ (next < lower)%positive) \/
+    exists target args, successor ending target /\ (target < lower)%positive /\
+      (lower <= next)%positive /\
+      find_block next bs = Some (Block _ _ _ [] [] (Jump target args)).
+  Proof.
+    intros [Hequal|Hbranch] Hsmall Hnext.
+    - subst ending'. left. split; [exact Hnext|now apply Hsmall].
+    - destruct Hbranch as [guard [operands [yes [ys [no [ns [yes' [no'
+        [Hold [Hnew [Hyes Hno]]]]]]]]]]].
+      subst ending ending'. cbn [successor] in Hsmall, Hnext.
+      destruct Hnext as [Hequal|Hequal]; subst next.
+      + destruct Hyes as [[Hequal Hempty]|[Hlarge Hbridge]].
+        * subst yes'. left. split; [now left|apply Hsmall; now left].
+        * right. exists yes, ys. repeat split; try assumption.
+          -- now left.
+          -- apply Hsmall. now left.
+      + destruct Hno as [[Hequal Hempty]|[Hlarge Hbridge]].
+        * subst no'. left. split; [now right|apply Hsmall; now right].
+        * right. exists no, ns. repeat split; try assumption.
+          -- now right.
+          -- apply Hsmall. now right.
+  Qed.
+
+  (** A split path between original labels contracts to a source path within it. *)
+  Lemma split_path_contract (source target : P.t) lower :
+    NoDup (map fst (blocks _ _ _ target)) ->
+    (forall id body, In (id, body) (blocks _ _ _ target) -> (id < lower)%positive ->
+      exists original, In (id, original) (blocks _ _ _ source) /\
+        exit_expands lower (blocks _ _ _ target)
+          (term _ _ _ original) (term _ _ _ body)) ->
+    (forall id body next, In (id, body) (blocks _ _ _ source) ->
+      successor (term _ _ _ body) next -> (next < lower)%positive) ->
+    forall route first last, path target first route last ->
+      (first < lower)%positive -> (last < lower)%positive ->
+      exists old_route, path source first old_route last /\ incl old_route route.
+  Proof.
+    intros Hunique Horiginal Htargets.
+    assert (Hbounded : forall n route first last, length route <= n ->
+      path target first route last -> (first < lower)%positive -> (last < lower)%positive ->
+      exists old_route, path source first old_route last /\ incl old_route route).
+    { induction n as [|n IH]; intros route first last Hlength Hpath Hfirst Hlast.
+      - inversion Hpath; subst; cbn [length] in Hlength; lia.
+      - destruct Hpath as [id|id body next rest last Hbody Hedge Hpath].
+        + exists [id]. split; [constructor|apply incl_refl].
+        + destruct (Horiginal id body Hbody Hfirst) as [original [Hold Hexpands]].
+          destruct (split_exit_successor _ _ _ _ _ Hexpands
+            (fun next Hnext => Htargets id original next Hold Hnext) Hedge)
+            as [[Hedge_old Hnext]|Hbridge].
+          * destruct (IH rest next last ltac:(cbn [length] in Hlength; lia)
+              Hpath Hnext Hlast) as [old_route [Hroute Hin]].
+            exists (id :: old_route). split.
+            -- econstructor; eassumption.
+            -- intros x [Hequal|Hx]; [now left|right; now apply Hin].
+          * destruct Hbridge as [dest [args [Hedge_old [Hdest [Hlarge Hfind]]]]].
+            destruct Hpath as [id'|id' bridge next' rest' last' Hbridge Hedge' Hpath'].
+            -- lia.
+            -- pose proof (split_lookup_member _ _ _ Hunique Hbridge) as Hselected.
+               rewrite Hfind in Hselected. inversion Hselected; subst bridge.
+               cbn [term successor] in Hedge'. subst next'.
+               destruct (IH rest' dest last' ltac:(cbn [length] in Hlength; lia)
+                 Hpath' Hdest Hlast) as [old_route [Hroute Hin]].
+               exists (id :: old_route). split.
+               ++ econstructor; eassumption.
+               ++ intros x [Hequal|Hx]; [now left|right; right; now apply Hin]. }
+    intros route first last Hpath Hfirst Hlast.
+    eapply Hbounded; [apply Nat.le_refl|eassumption|eassumption|eassumption].
+  Qed.
+
+  (** Original blocks retain their parameters, instructions and expanded exits. *)
+  Lemma split_block_data s p : NoDup (map fst (blocks _ _ _ s)) -> split s = Some p ->
+    NoDup (map fst (blocks _ _ _ p)) /\
+    concat (map (fun item => block_defs (snd item)) (blocks _ _ _ p)) =
+      concat (map (fun item => block_defs (snd item)) (blocks _ _ _ s)) /\
+    (forall id body, In (id, body) (blocks _ _ _ s) ->
+      exists body', In (id, body') (blocks _ _ _ p) /\
+        block_expands (fresh_after (function_ids s)) (blocks _ _ _ p) body body') /\
+    (forall id body', In (id, body') (blocks _ _ _ p) ->
+      (id < fresh_after (function_ids s))%positive ->
+      exists body, In (id, body) (blocks _ _ _ s) /\
+        block_expands (fresh_after (function_ids s)) (blocks _ _ _ p) body body').
+  Proof.
+    intros Hsource_unique Hsplit. unfold split in Hsplit.
+    destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s))
+      as [last out] eqn:Hblocks. inversion Hsplit; subst p.
+    cbn [blocks].
+    assert (Hsmall : forall id body, In (id, body) (blocks _ _ _ s) ->
+      (id < fresh_after (function_ids s))%positive).
+    { intros id body Hin. apply fresh_after_gt. now apply (split_block_id_in s id body). }
+    assert (Hunique : NoDup (map fst out)).
+    { eapply split_blocks_unique; [exact Hsource_unique|exact Hsmall|
+        apply Pos.le_refl|exact Hblocks]. }
+    destruct (split_blocks_spec (fresh_after (function_ids s)) (blocks _ _ _ s)
+      _ _ _ (Pos.le_refl _) Hsmall Hblocks) as [Hlast [Hids Hlookup]].
+    split; [exact Hunique|]. split; [now apply (split_blocks_definitions _ _ _ _ Hblocks)|].
+    split.
+    - intros id body Hin. specialize (Hlookup id (Hsmall id body Hin)).
+      rewrite (split_lookup_member _ _ _ Hsource_unique Hin) in Hlookup.
+      destruct Hlookup as [body' [Hfind Hexpand]]. exists body'. split; [|exact Hexpand].
+      now apply (find_source_block out id body').
+    - intros id body' Hin Hbound. specialize (Hlookup id Hbound).
+      pose proof (split_lookup_member _ _ _ Hunique Hin) as Hfind.
+      destruct (find_block id (blocks _ _ _ s)) as [body|] eqn:Hsource.
+      + destruct Hlookup as [found [Hfound Hexpand]].
+        rewrite Hfind in Hfound. inversion Hfound; subst found.
+        exists body. split; [|exact Hexpand]. now apply (find_source_block _ _ _ Hsource).
+      + rewrite Hfind in Hlookup. discriminate.
+  Qed.
+
+  (** Every successor occurs in the exit target list. *)
+  Lemma split_successor_listed (ending : exit positive O.G) target :
+    successor ending target -> In target (exit_targets ending).
+  Proof.
+    destruct ending; cbn [successor exit_targets In]; intuition congruence.
+  Qed.
+
+  (** Splitting preserves domination of original block labels. *)
+  Lemma split_dominates_old s p : NoDup (map fst (blocks _ _ _ s)) ->
+    split s = Some p -> forall d b, (b < fresh_after (function_ids s))%positive ->
+      dominates s d b -> dominates p d b.
+  Proof.
+    intros Hunique Hsplit d b Hb Hdom route Hpath.
+    destruct (split_block_data s p Hunique Hsplit) as [Hout [_ [_ Hback]]].
+    destruct (split_shape s p Hsplit) as [_ Hentry].
+    assert (Htargets : forall id body next, In (id, body) (blocks _ _ _ s) ->
+      successor (term _ _ _ body) next -> (next < fresh_after (function_ids s))%positive).
+    { intros id body next Hin Hnext. apply fresh_after_gt.
+      apply (split_target_id_in s id body next Hin). now apply split_successor_listed. }
+    assert (Hentered : (entry _ _ _ p < fresh_after (function_ids s))%positive).
+    { rewrite Hentry. apply fresh_after_gt. now left. }
+    destruct (split_path_contract s p (fresh_after (function_ids s)) Hout
+      ltac:(intros id body Hin Hsmall; destruct (Hback id body Hin Hsmall)
+        as [original [Hold [_ [_ Hexit]]]]; exists original; now split)
+      Htargets route (entry _ _ _ p) b Hpath Hentered Hb) as [old_route [Hold Hincl]].
+    rewrite Hentry in Hold. apply Hincl. now apply Hdom.
+  Qed.
+
+  (** A visited path label has a prefix path whose labels occur in the whole route. *)
+  Lemma split_path_prefix (p : P.t) first route last : path p first route last ->
+    forall middle, In middle route ->
+      exists prefix, path p first prefix middle /\ incl prefix route.
+  Proof.
+    intro Hpath. induction Hpath as [id|id body next rest last Hbody Hedge Hpath IH];
+      intros middle Hin.
+    - destruct Hin as [Hequal|Hin]; [subst middle|contradiction].
+      exists [id]. split; [constructor|apply incl_refl].
+    - destruct Hin as [Hequal|Hin].
+      + subst middle. exists [id]. split; [constructor|].
+        intros x [Hequal|Hx]; [now left|contradiction].
+      + destruct (IH middle Hin) as [prefix [Hprefix Hincl]].
+        exists (id :: prefix). split; [econstructor; eassumption|].
+        intros x [Hequal|Hx]; [now left|right; now apply Hincl].
+  Qed.
+
+  (** Block domination composes through an intermediate block. *)
+  Lemma split_dominates_trans (p : P.t) a b c :
+    dominates p a b -> dominates p b c -> dominates p a c.
+  Proof.
+    intros Hab Hbc route Hpath.
+    destruct (split_path_prefix _ _ _ _ Hpath b (Hbc route Hpath))
+      as [prefix [Hprefix Hincl]].
+    apply Hincl. now apply Hab.
+  Qed.
+
+  (** A private bridge is dominated by its unique predecessor. *)
+  Lemma split_private_predecessor (p : P.t) owner bridge : entry _ _ _ p <> bridge ->
+    (forall id body, In (id, body) (blocks _ _ _ p) ->
+      successor (term _ _ _ body) bridge -> id = owner) -> dominates p owner bridge.
+  Proof.
+    intros Hentry Hpredecessor.
+    assert (Htrace : forall first route last, path p first route last -> last = bridge ->
+      first = bridge \/ In owner route).
+    { intros first route last Hpath. induction Hpath as
+        [id|id body next rest last Hbody Hedge Hpath IH]; intro Hlast.
+      - now left.
+      - destruct (IH Hlast) as [Hequal|Hin].
+        + subst next. right. left. now apply (Hpredecessor id body).
+        + right. now right. }
+    intros route Hpath. destruct (Htrace _ _ _ Hpath eq_refl) as [Hequal|Hin];
+      [contradiction|exact Hin].
+  Qed.
+  (** Each allocated bridge jumps with operands from its original exit. *)
+  Lemma split_exit_auxiliary fresh e next ending extra id body :
+    split_exit fresh e = (next, (ending, extra)) -> In (id, body) extra ->
+    exists target args, body = Block _ _ _ [] [] (Jump target args) /\
+      incl args (exit_uses e) /\ successor e target.
+  Proof.
+    destruct e as [target actuals|guard operands yes ys no ns|values].
+    - cbn [split_exit]. intros Hsplit. inversion Hsplit; subst. contradiction.
+    - destruct ys as [|y ys], ns as [|n ns]; cbn [split_exit split_edge];
+        intros Hsplit Hin; inversion Hsplit; subst next ending extra.
+      + contradiction.
+      + destruct Hin as [Hequal|Hin]; [inversion Hequal; subst id body|contradiction].
+        exists no, (n :: ns). split; [reflexivity|]. split; [|now right].
+        intros x Hx. cbn [exit_uses]. apply in_or_app. now right.
+      + destruct Hin as [Hequal|Hin]; [inversion Hequal; subst id body|contradiction].
+        exists yes, (y :: ys). split; [reflexivity|]. split; [|now left].
+        intros x Hx. cbn [exit_uses]. apply in_or_app. right. apply in_or_app. now left.
+      + destruct Hin as [Hequal|[Hequal|Hin]]; try contradiction;
+          inversion Hequal; subst id body.
+        * exists yes, (y :: ys). split; [reflexivity|]. split; [|now left].
+          intros x Hx. cbn [exit_uses]. apply in_or_app. right. apply in_or_app. now left.
+        * exists no, (n :: ns). split; [reflexivity|]. split; [|now right].
+          intros x Hx. cbn [exit_uses]. apply in_or_app. right. apply in_or_app. now right.
+    - cbn [split_exit]. intros Hsplit. inversion Hsplit; subst. contradiction.
+  Qed.
+
+  (** Exit splitting uses original targets and labels in its fresh interval. *)
+  Lemma split_exit_target_range fresh e next ending extra x :
+    split_exit fresh e = (next, (ending, extra)) ->
+    In x (exit_targets ending ++ block_labels extra) ->
+    In x (exit_targets e) \/ (fresh <= x < next)%positive.
+  Proof.
+    intros Hsplit Hin. destruct (split_exit_labels _ _ _ _ _ Hsplit x Hin) as [Hold|Hnew].
+    - now left.
+    - right. split; [apply Pos2Nat.inj_le|apply Pos2Nat.inj_lt]; lia.
+  Qed.
+
+  (** Split-program targets are original or freshly allocated. *)
+  Lemma split_blocks_target_range boundary bs :
+    (forall x, In x (block_labels bs) -> (x < boundary)%positive) ->
+    forall fresh last out x, split_blocks fresh bs = (last, out) ->
+      In x (block_labels out) -> (x < boundary)%positive \/ (fresh <= x < last)%positive.
+  Proof.
+    intros Hsmall fresh last out x Hsplit Hin.
+    destruct (split_blocks_labels _ _ _ _ Hsplit x Hin) as [Hold|Hnew].
+    - left. now apply Hsmall.
+    - right. split; [apply Pos2Nat.inj_le|apply Pos2Nat.inj_lt]; lia.
+  Qed.
+
+  (** The block-label inventory contains every listed outgoing target. *)
+  Lemma split_block_target_labels bs id body next : In (id, body) bs ->
+    successor (term _ _ _ body) next -> In next (block_labels bs).
+  Proof.
+    intros Hin Hnext. unfold block_labels. apply in_flat_map.
+    exists (id, body). split; [exact Hin|]. cbn [fst snd].
+    right. now apply split_successor_listed.
+  Qed.
+
+  (** Every allocated bridge has one original predecessor identifier. *)
+  Lemma split_blocks_bridge_owner boundary bs :
+    (forall x, In x (block_labels bs) -> (x < boundary)%positive) ->
+    forall fresh last out, (boundary <= fresh)%positive ->
+      split_blocks fresh bs = (last, out) ->
+      forall id bridge, In (id, bridge) out -> (fresh <= id)%positive ->
+      exists owner original target args,
+        In (owner, original) bs /\ bridge = Block _ _ _ [] [] (Jump target args) /\
+        incl args (exit_uses (term _ _ _ original)) /\
+        successor (term _ _ _ original) target /\
+        forall predecessor body, In (predecessor, body) out ->
+          successor (term _ _ _ body) id -> predecessor = owner.
+  Proof.
+    induction bs as [|[key original] rest IH]; intros Hsmall fresh last out Hlower Hsplit
+      id bridge Hin Hlarge.
+    - inversion Hsplit; subst. contradiction.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ original)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      destruct (split_exit_spec _ _ _ _ _ Hexit) as [Hnext [Hextra Hexpands]].
+      assert (Hkey : (key < boundary)%positive).
+      { apply Hsmall. unfold block_labels. cbn [flat_map fst snd]. now left. }
+      assert (Htargets : forall target, successor (term _ _ _ original) target ->
+        (target < boundary)%positive).
+      { intros target Htarget. apply Hsmall.
+        apply (split_block_target_labels ((key, original) :: rest) key original target);
+          [now left|exact Htarget]. }
+      assert (Hrest : forall x, In x (block_labels rest) -> (x < boundary)%positive).
+      { intros x Hx. apply Hsmall. change (In x
+          ((key :: exit_targets (term _ _ _ original)) ++ block_labels rest)).
+        apply in_or_app. now right. }
+      destruct Hin as [Hequal|Hin].
+      + inversion Hequal; subst id bridge. lia.
+      + apply in_app_or in Hin as [Hin|Hin].
+        * destruct (split_exit_auxiliary _ _ _ _ _ _ _ Hexit Hin)
+            as [target [args [Hbridge [Huses Htarget]]]].
+          pose proof (Hextra id bridge Hin) as Hidrange.
+          exists key, original, target, args. split; [now left|].
+          split; [exact Hbridge|]. split; [exact Huses|]. split; [exact Htarget|].
+          intros predecessor body [Hequal|Hpredecessor] Hedge.
+          -- now inversion Hequal.
+          -- apply in_app_or in Hpredecessor as [Hpredecessor|Hpredecessor].
+             ++ destruct (split_exit_auxiliary _ _ _ _ _ _ _ Hexit Hpredecessor)
+                  as [dest [passed [Hbody [_ Hdest]]]].
+                subst body. cbn [term successor] in Hedge. subst id.
+                specialize (Htargets dest Hdest). lia.
+             ++ pose proof (split_block_target_labels _ _ _ _ Hpredecessor Hedge) as Hlabel.
+                destruct (split_blocks_target_range boundary rest Hrest _ _ _ _ Htail Hlabel)
+                  as [Hold|Hnew]; lia.
+        * destruct (split_blocks_original_ids _ _ _ _ Htail) as [Hfinal Htail_ids].
+          assert (Hid : (next <= id)%positive).
+          { destruct (Htail_ids id bridge Hin) as [Hold|Hnew]; [|lia].
+            apply in_map_iff in Hold as [[old found] [Hequal Hold]]; cbn in Hequal; subst old.
+            assert (Hid_old : (id < boundary)%positive).
+            { apply Hrest. unfold block_labels. apply in_flat_map.
+              exists (id, found). split; [exact Hold|]. cbn [fst snd]. now left. }
+            lia. }
+          destruct (IH Hrest next final tail ltac:(lia) Htail id bridge Hin Hid)
+            as [owner [old [target [args [Howner [Hbridge [Huses [Htarget Hparents]]]]]]]].
+          exists owner, old, target, args. split; [now right|].
+          split; [exact Hbridge|]. split; [exact Huses|]. split; [exact Htarget|].
+          intros predecessor body [Hequal|Hpredecessor] Hedge.
+          -- inversion Hequal; subst predecessor body.
+             cbn [term] in Hedge.
+             assert (Hlabel : In id (exit_targets ending ++ block_labels extra)).
+             { apply in_or_app. left. now apply split_successor_listed. }
+             destruct (split_exit_target_range _ _ _ _ _ _ Hexit Hlabel) as [Hold|Hnew].
+             ++ assert (Hid_old : (id < boundary)%positive).
+                { apply Hsmall. change (In id
+                    ((key :: exit_targets (term _ _ _ original)) ++ block_labels rest)).
+                  apply in_or_app. left. now right. }
+                lia.
+             ++ lia.
+          -- apply in_app_or in Hpredecessor as [Hpredecessor|Hpredecessor].
+             ++ destruct (split_exit_auxiliary _ _ _ _ _ _ _ Hexit Hpredecessor)
+                  as [dest [passed [Hbody [_ Hdest]]]].
+                subst body. cbn [term successor] in Hedge. subst id.
+                specialize (Htargets dest Hdest). lia.
+             ++ now apply (Hparents predecessor body).
+  Qed.
+
+  (** A fresh split block retains its original owner, operands and private predecessor. *)
+  Lemma split_bridge_owner s p : split s = Some p ->
+    forall id bridge, In (id, bridge) (blocks _ _ _ p) ->
+      (fresh_after (function_ids s) <= id)%positive ->
+      exists owner original target args,
+        In (owner, original) (blocks _ _ _ s) /\
+        bridge = Block _ _ _ [] [] (Jump target args) /\
+        incl args (exit_uses (term _ _ _ original)) /\
+        successor (term _ _ _ original) target /\
+        forall predecessor body, In (predecessor, body) (blocks _ _ _ p) ->
+          successor (term _ _ _ body) id -> predecessor = owner.
+  Proof.
+    unfold split. destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s))
+      as [last out] eqn:Hblocks. intros Hsplit. inversion Hsplit; subst p.
+    cbn [blocks]. eapply split_blocks_bridge_owner; [|apply Pos.le_refl|exact Hblocks].
+    intros x Hx. apply fresh_after_gt. unfold function_ids.
+    right. apply in_or_app. now right.
+  Qed.
+
+  (** A transformed original exit uses only operands of its source exit. *)
+  Lemma split_exit_uses_subset lower bs ending ending' :
+    exit_expands lower bs ending ending' -> incl (exit_uses ending') (exit_uses ending).
+  Proof.
+    intros [Hequal|Hbranch]; [subst ending'; apply incl_refl|].
+    destruct Hbranch as [guard [operands [yes [ys [no [ns [yes' [no'
+      [Hold [Hnew Hedges]]]]]]]]]].
+    subst ending ending'. intros x Hx. cbn [exit_uses] in *.
+    rewrite app_nil_r in Hx. apply in_or_app. now left.
+  Qed.
+
+  (** Uses retained in an original block remain source uses at the same instruction index. *)
+  Lemma split_block_use lower bs body body' : block_expands lower bs body body' ->
+    forall x i, use_at body' x i -> use_at body x i.
+  Proof.
+    intros [Hparams [Hcode Hexit]] x i Huse.
+    destruct Huse as [[op [args [dst [Hnth Hin]]]]|[Hlength Hin]].
+    - left. exists op, args, dst. now rewrite Hcode in Hnth.
+    - right. rewrite Hcode in Hlength. split; [exact Hlength|].
+      now apply (split_exit_uses_subset _ _ _ _ Hexit).
+  Qed.
+
+  (** Definitions before a retained use stay before that use after splitting. *)
+  Lemma split_block_before lower bs body body' : block_expands lower bs body body' ->
+    forall x i, def_before body x i -> def_before body' x i.
+  Proof.
+    intros [Hparams [Hcode Hexit]] x i Hbefore.
+    unfold def_before. rewrite Hparams, Hcode. exact Hbefore.
+  Qed.
+
+  (** An original block retains exactly its parameter and instruction definitions. *)
+  Lemma split_block_definitions lower bs body body' : block_expands lower bs body body' ->
+    block_defs body' = block_defs body.
+  Proof.
+    intros [Hparams [Hcode Hexit]]. unfold block_defs. now rewrite Hparams, Hcode.
+  Qed.
+
+  (** A definition before a use belongs to the block definition list. *)
+  Lemma split_before_definition (body : block positive O.K O.G) x i :
+    def_before body x i -> In x (block_defs body).
+  Proof.
+    intros [Hin|[j [op [args [Hlt Hnth]]]]]; unfold block_defs; apply in_or_app.
+    - now left.
+    - right. apply in_map_iff. exists (x, op, args). split; [reflexivity|].
+      now apply nth_error_In in Hnth.
+  Qed.
+
+  (** An edge split preserves target arities and gives its bridge empty parameters. *)
+  Lemma split_edge_shapes (source target : P.t) fresh dest args next dest' extra :
+    (forall b xs, edge_shape source b xs -> edge_shape target b xs) ->
+    split_edge fresh dest args = (next, (dest', extra)) ->
+    incl extra (blocks _ _ _ target) -> edge_shape source dest args ->
+    edge_shape target dest' [] /\ forall id body, In (id, body) extra ->
+      exit_shape target (term _ _ _ body).
+  Proof.
+    intros Htargets Hsplit Hin Hshape. destruct args as [|x xs].
+    - cbn [split_edge] in Hsplit. inversion Hsplit; subst.
+      split; [now apply Htargets|]. intros id body Hbody. contradiction.
+    - cbn [split_edge] in Hsplit. inversion Hsplit; subst.
+      split.
+      + exists (Block _ _ _ [] [] (Jump dest (x :: xs))). split.
+        * apply Hin. now left.
+        * reflexivity.
+      + intros id body [Hequal|Hbody]; [inversion Hequal; subst|contradiction].
+        cbn [term exit_shape]. now apply Htargets.
+  Qed.
+
+  (** Exit splitting preserves the arity of every direct and bridge edge. *)
+  Lemma split_exit_shapes (source target : P.t) fresh ending next ending' extra :
+    (forall b xs, edge_shape source b xs -> edge_shape target b xs) ->
+    split_exit fresh ending = (next, (ending', extra)) ->
+    incl extra (blocks _ _ _ target) -> exit_shape source ending ->
+    exit_shape target ending' /\ forall id body, In (id, body) extra ->
+      exit_shape target (term _ _ _ body).
+  Proof.
+    intros Htargets Hsplit Hin Hshape.
+    destruct ending as [dest args|guard operands yes ys no ns|values].
+    - cbn [split_exit] in Hsplit. inversion Hsplit; subst.
+      split; [now apply Htargets|]. intros id body Hbody. contradiction.
+    - cbn [split_exit] in Hsplit.
+      destruct (split_edge fresh yes ys) as [middle [yes' yes_blocks]] eqn:Hyes.
+      destruct (split_edge middle no ns) as [last [no' no_blocks]] eqn:Hno.
+      inversion Hsplit; subst next ending' extra.
+      destruct Hshape as [Hshape_yes Hshape_no].
+      destruct (split_edge_shapes source target _ _ _ _ _ _ Htargets Hyes
+        ltac:(intros row Hrow; apply Hin; apply in_or_app; now left) Hshape_yes)
+        as [Hyes_target Hyes_extra].
+      destruct (split_edge_shapes source target _ _ _ _ _ _ Htargets Hno
+        ltac:(intros row Hrow; apply Hin; apply in_or_app; now right) Hshape_no)
+        as [Hno_target Hno_extra].
+      split; [now split|]. intros id body Hbody. apply in_app_or in Hbody as [Hbody|Hbody].
+      + now apply (Hyes_extra id body).
+      + now apply (Hno_extra id body).
+    - cbn [split_exit] in Hsplit. inversion Hsplit; subst.
+      split; [exact I|]. intros id body Hbody. contradiction.
+  Qed.
+
+  (** Splitting preserves every exit shape when original target parameters agree. *)
+  Lemma split_blocks_shapes (source target : P.t) bs :
+    (forall b xs, edge_shape source b xs -> edge_shape target b xs) ->
+    (forall id body, In (id, body) bs -> exit_shape source (term _ _ _ body)) ->
+    forall fresh last out, split_blocks fresh bs = (last, out) ->
+      incl out (blocks _ _ _ target) ->
+      forall id body, In (id, body) out -> exit_shape target (term _ _ _ body).
+  Proof.
+    intros Htargets. induction bs as [|[key original] rest IH];
+      intros Hshapes fresh last out Hsplit Hin id body Hbody.
+    - inversion Hsplit; subst. contradiction.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ original)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      destruct (split_exit_shapes source target _ _ _ _ _ Htargets Hexit
+        ltac:(intros row Hrow; apply Hin; right; apply in_or_app; now left)
+        (Hshapes key original (or_introl eq_refl))) as [Hending Hextra].
+      destruct Hbody as [Hequal|Hbody].
+      + inversion Hequal; subst id body. exact Hending.
+      + apply in_app_or in Hbody as [Hbody|Hbody].
+        * now apply (Hextra id body).
+        * eapply IH; [|exact Htail| |exact Hbody].
+          -- intros label found Hfound. apply (Hshapes label found). now right.
+          -- intros row Hrow. apply Hin. right. apply in_or_app. now right.
+  Qed.
+
+  (** Splitting preserves listed targets and argument arities throughout the program. *)
+  Lemma split_shapes s p : NoDup (map fst (blocks _ _ _ s)) ->
+    (forall id body, In (id, body) (blocks _ _ _ s) -> exit_shape s (term _ _ _ body)) ->
+    split s = Some p ->
+    forall id body, In (id, body) (blocks _ _ _ p) -> exit_shape p (term _ _ _ body).
+  Proof.
+    intros Hunique Hshapes Hsplit.
+    destruct (split_block_data s p Hunique Hsplit) as [_ [_ [Hforward _]]].
+    assert (Htargets : forall b xs, edge_shape s b xs -> edge_shape p b xs).
+    { intros b xs [body [Hin Hlength]].
+      destruct (Hforward b body Hin) as [body' [Hin' [Hparams Hrest]]].
+      exists body'. split; [exact Hin'|]. now rewrite Hparams. }
+    unfold split in Hsplit.
+    destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s))
+      as [last out] eqn:Hblocks. inversion Hsplit; subst p.
+    eapply split_blocks_shapes; [exact Htargets|exact Hshapes|exact Hblocks|apply incl_refl].
+  Qed.
+
+  (** Splitting preserves unique definitions, dominating uses, entry membership and exit arities. *)
+  Lemma split_ssa_wf s p : ssa_wf s -> split s = Some p -> ssa_wf p.
+  Proof.
+    intros [Hunique [Hdefinitions [Huses [Hentry Hshapes]]]] Hsplit.
+    destruct (split_block_data s p Hunique Hsplit)
+      as [Hout [Hdefinitions_eq [Hforward Hback]]].
+    destruct (split_shape s p Hsplit) as [Hinputs Hentry_eq].
+    split; [exact Hout|]. split.
+    - now rewrite Hinputs, Hdefinitions_eq.
+    - split.
+      + intros id body x i Hin Huse.
+        destruct (Nat.lt_ge_cases (Pos.to_nat id)
+          (Pos.to_nat (fresh_after (function_ids s)))) as [Hsmall|Hlarge].
+        * apply Pos2Nat.inj_lt in Hsmall.
+          destruct (Hback id body Hin Hsmall) as [original [Hold Hexpand]].
+          destruct (Huses id original x i Hold (split_block_use _ _ _ _ Hexpand x i Huse))
+            as [Hinput|[Hbefore|[def_id [def_body [Hdef [Hdifferent [Hdefined Hdom]]]]]]].
+          -- left. now rewrite Hinputs.
+          -- right. left. now apply (split_block_before _ _ _ _ Hexpand).
+          -- right. right. destruct (Hforward def_id def_body Hdef)
+               as [new_def [Hnew_def Hdef_expand]].
+             exists def_id, new_def. split; [exact Hnew_def|].
+             split; [exact Hdifferent|]. split.
+             ++ now rewrite (split_block_definitions _ _ _ _ Hdef_expand).
+             ++ exact (split_dominates_old s p Hunique Hsplit def_id id Hsmall Hdom).
+        * apply Pos2Nat.inj_le in Hlarge.
+          destruct (split_bridge_owner s p Hsplit id body Hin Hlarge)
+            as [owner [original [target [args [Howner [Hbody [Hargs [Htarget Hparents]]]]]]]].
+          subst body.
+          assert (Howner_small : (owner < fresh_after (function_ids s))%positive).
+          { apply fresh_after_gt. now apply (split_block_id_in s owner original). }
+          assert (Howner_dom : dominates p owner id).
+          { apply split_private_predecessor; [|exact Hparents].
+            rewrite Hentry_eq. pose proof (fresh_after_gt (function_ids s)
+              (entry _ _ _ s) (or_introl eq_refl)) as Hentry_small. lia. }
+          assert (Hx : In x args).
+          { destruct Huse as [[op [passed [dst [Hnth Hoperand]]]]|[Hlength Hoperand]].
+            - cbn [code] in Hnth. destruct i; discriminate.
+            - exact Hoperand. }
+          assert (Horiginal_use : use_at original x (length (code _ _ _ original))).
+          { right. split; [reflexivity|now apply Hargs]. }
+          destruct (Huses owner original x (length (code _ _ _ original)) Howner Horiginal_use)
+            as [Hinput|[Hbefore|[def_id [def_body [Hdef [Hdifferent [Hdefined Hdom]]]]]]].
+          -- left. now rewrite Hinputs.
+          -- right. right. destruct (Hforward owner original Howner)
+               as [new_owner [Hnew_owner Howner_expand]].
+             exists owner, new_owner. split; [exact Hnew_owner|].
+             split; [lia|]. split; [|exact Howner_dom].
+             rewrite (split_block_definitions _ _ _ _ Howner_expand).
+             now apply (split_before_definition original x (length (code _ _ _ original))).
+          -- right. right. destruct (Hforward def_id def_body Hdef)
+               as [new_def [Hnew_def Hdef_expand]].
+             exists def_id, new_def. split; [exact Hnew_def|]. split.
+             ++ pose proof (fresh_after_gt (function_ids s) def_id
+                  (split_block_id_in s def_id def_body Hdef)) as Hdef_small. lia.
+             ++ split.
+                ** now rewrite (split_block_definitions _ _ _ _ Hdef_expand).
+                ** exact (split_dominates_trans p def_id owner id
+                     (split_dominates_old s p Hunique Hsplit def_id owner Howner_small Hdom)
+                     Howner_dom).
+      + split.
+        * destruct Hentry as [body Hin]. destruct (Hforward (entry _ _ _ s) body Hin)
+            as [body' [Hin' Hexpand]]. exists body'. now rewrite Hentry_eq.
+        * now apply (split_shapes s p Hunique Hshapes Hsplit).
+  Qed.
+
+  (** Splitting preserves SSA and finite observations with at most one extra step per block. *)
+  Lemma split_preserves_complete : forall s split_s, ssa_wf s -> split s = Some split_s ->
+    ssa_wf split_s /\ forall n ins r, r <> Timeout ->
+      (run_with O.eval O.test n s ins = r -> run_with O.eval O.test (2 * n) split_s ins = r) /\
+      (run_with O.eval O.test n split_s ins = r -> run_with O.eval O.test n s ins = r).
+  Proof.
+    intros s split_s Hwf Hsplit. split.
+    - now apply (split_ssa_wf s split_s Hwf Hsplit).
+    - now apply (split_run s split_s Hsplit).
+  Qed.
 End Destroy.
 
 (** Flattening charges list cells, output cells and the callback budget. *)
@@ -2831,11 +3512,14 @@ Module DestroyT (O : OPS)
   Proof.
     reflexivity.
   Qed.
+  (** Splitting preserves SSA and the stated finite-observation fuel bounds. *)
   Lemma F2_split_preserves : forall s split_s, ssa_wf s -> split s = Some split_s ->
     ssa_wf split_s /\ forall n ins r, r <> Timeout ->
       (run_with O.eval O.test n s ins = r -> run_with O.eval O.test (2 * n) split_s ins = r) /\
       (run_with O.eval O.test n split_s ins = r -> run_with O.eval O.test n s ins = r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact split_preserves_complete.
+  Qed.
   Lemma F3_moves_checked : forall s p par tmp sq, copies s = Some p ->
     In (par, tmp, sq) (checked_moves s) ->
     NoDup (map fst par) /\ ~ In tmp (map fst par ++ map snd par) /\
