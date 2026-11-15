@@ -433,3 +433,30 @@ Module GhostDatabaseClockProbe (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I
   Definition old_probe (db : D.t) f k := D.old db f k.
   TimeFunFails "E_OPAQUE" old_probe.
 End GhostDatabaseClockProbe.
+
+(** Row numbers preserve child occurrences without querying ghost database observations. *)
+Definition coded_source_rows : list (search_row positive) :=
+  [(3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive);
+   (4%positive, [Val 7%positive], 10%positive);
+   (6%positive, [], 11%positive)].
+
+Definition coded_observer_state : extraction_state positive unit unit :=
+  ExtractionState tt coded_source_rows 3 Empty Empty Empty tt [].
+
+Example coded_children_keep_repeated_identifiers :
+  extraction_row_children (extraction_row_code (fun p : positive => p)
+    (3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive)) =
+    [2%positive; 2%positive; 5%positive].
+Proof. vm_compute. reflexivity. Qed.
+
+Example coded_counter_counts_unfinished_occurrences :
+  extraction_row_counter coded_observer_state (extraction_row_code (fun p : positive => p)
+    (3%positive, [Id 2%positive; Val 7%positive; Id 2%positive; Id 5%positive], 9%positive)) = 3.
+Proof. vm_compute. reflexivity. Qed.
+
+Example coded_ready_rows_include_literal_and_nullary_rows :
+  extraction_ready_rows (fun p : positive => p) InventoryCost.fn_cost InventoryCost.val_cost
+    coded_observer_state =
+    [(extraction_row_code (fun p : positive => p) (4%positive, [Val 7%positive], 10%positive), 2%N);
+     (extraction_row_code (fun p : positive => p) (6%positive, [], 11%positive), 1%N)].
+Proof. vm_compute. reflexivity. Qed.

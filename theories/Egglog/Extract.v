@@ -6151,6 +6151,215 @@ Proof.
 Qed.
 
 (** Row-number observations describe the plan without adding row-number runtime maps. *)
+(** Self-delimiting pair and list encodings use only binary constructors. *)
+Fixpoint extraction_glue (first last : positive) : positive :=
+  match first with
+  | xH => xO last
+  | xO rest => xI (xO (extraction_glue rest last))
+  | xI rest => xI (xI (extraction_glue rest last))
+  end.
+TimeFun extraction_glue.
+
+Fixpoint extraction_list_code {A} (encode : A -> positive) (items : list A) : positive :=
+  match items with
+  | [] => xH
+  | item :: rest => extraction_glue (encode item) (extraction_list_code encode rest)
+  end.
+TimeFun extraction_list_code.
+
+(** Equal pair encodings identify both original components. *)
+Lemma extraction_glue_inj : forall first last first' last',
+  extraction_glue first last = extraction_glue first' last' -> first = first' /\ last = last'.
+Proof.
+  intro first. induction first as [first IH|first IH|]; intros last [first'|first'|] last' Heq;
+    cbn [extraction_glue] in Heq; try discriminate.
+  - injection Heq as Htail. destruct (IH last first' last' Htail) as [Hfirst Hlast].
+    split; [now f_equal|exact Hlast].
+  - injection Heq as Htail. destruct (IH last first' last' Htail) as [Hfirst Hlast].
+    split; [now f_equal|exact Hlast].
+  - injection Heq as Hlast. split; [reflexivity|exact Hlast].
+Qed.
+
+(** Pair encoding leaves enough bits for the complete second component. *)
+Lemma extraction_glue_bits : forall first last,
+  Pos.size_nat (extraction_glue first last) = 2 * Pos.size_nat first + Pos.size_nat last - 1.
+Proof.
+  induction first as [first IH|first IH|]; intro last; cbn [extraction_glue Pos.size_nat];
+    rewrite ?IH; pose proof (Pos.size_nat_pos last); lia.
+Qed.
+
+(** Self-delimiting row codes keep specification row identifiers independent of database observations. *)
+Fixpoint extraction_unglue (code : positive) : option (positive * positive) :=
+  match code with
+  | xH => None
+  | xO rest => Some (xH, rest)
+  | xI (xO rest) =>
+    match extraction_unglue rest with
+    | Some (first, last) => Some (xO first, last)
+    | None => None
+    end
+  | xI (xI rest) =>
+    match extraction_unglue rest with
+    | Some (first, last) => Some (xI first, last)
+    | None => None
+    end
+  | xI xH => None
+  end.
+TimeFun extraction_unglue.
+
+Fixpoint extraction_identifier_children {V} (key : list (cell V)) : list positive :=
+  match key with
+  | [] => []
+  | Id i :: rest => i :: extraction_identifier_children rest
+  | Val _ :: rest => extraction_identifier_children rest
+  end.
+TimeFun extraction_identifier_children.
+
+Definition extraction_cell_code {V} (encode : V -> positive) (item : cell V) : positive :=
+  match item with Id i => xO i | Val v => xI (encode v) end.
+TimeFun extraction_cell_code.
+
+Fixpoint extraction_decode_identifiers (fuel : nat) (code : positive) : list positive :=
+  match fuel with
+  | O => []
+  | S remaining =>
+    match extraction_unglue code with
+    | None => []
+    | Some (item, rest) =>
+      let children := extraction_decode_identifiers remaining rest in
+      match item with xO i => i :: children | _ => children end
+    end
+  end.
+TimeFun extraction_decode_identifiers.
+
+Definition extraction_row_code {V} (encode : V -> positive) (row : search_row V) : positive :=
+  extraction_glue (fst (fst row)) (extraction_glue (snd row) (extraction_list_code (extraction_cell_code encode) (snd (fst row)))).
+TimeFun extraction_row_code.
+
+Definition extraction_row_children (number : positive) : list positive :=
+  match extraction_unglue number with
+  | Some (_, rest) =>
+    match extraction_unglue rest with
+    | Some (_, key) => extraction_decode_identifiers (Pos.size_nat key) key
+    | None => []
+    end
+  | None => []
+  end.
+TimeFun extraction_row_children.
+
+Definition extraction_row_counter {V DB H} (s : extraction_state V DB H)
+    (number : positive) : nat :=
+  length (filter (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry))
+    (search_finalised s))) (extraction_row_children number)).
+TimeFun extraction_row_counter.
+
+Definition extraction_ready_rows {V DB H} (encode : V -> positive)
+    (fn_cost : positive -> list N -> N) (val_cost : V -> N)
+    (s : extraction_state V DB H) : list (positive * N) :=
+  map (fun row => (extraction_row_code encode row,
+    fn_cost (fst (fst row)) (dag_cost_cells val_cost (search_final_costs s) (snd (fst row)))))
+    (filter (fun row => Nat.eqb (extraction_row_counter s (extraction_row_code encode row)) 0 &&
+      negb (existsb (fun entry => Pos.eqb (snd row) (fst entry)) (search_finalised s)))
+      (search_rows s)).
+TimeFun extraction_ready_rows.
+
+(** The structural decoder exactly inverts a glued pair. *)
+Lemma extraction_unglue_glue : forall first last,
+  extraction_unglue (extraction_glue first last) = Some (first, last).
+Proof.
+  induction first as [first IH|first IH|]; intro last; cbn [extraction_glue extraction_unglue];
+    now rewrite ?IH.
+Qed.
+
+(** A pair encoding is never the empty-list delimiter. *)
+Lemma extraction_glue_nonempty : forall first last, extraction_glue first last <> xH.
+Proof. intros [first|first|] last; discriminate. Qed.
+
+(** Every coded list has enough bits to fuel one decoding step per cell. *)
+Lemma extraction_list_code_fuel : forall V (encode : V -> positive) key,
+  length key <= Pos.size_nat (extraction_list_code (extraction_cell_code encode) key).
+Proof.
+  intros V encode key. induction key as [|item rest IH]; cbn [length extraction_list_code].
+  - cbn [Pos.size_nat]. lia.
+  - rewrite extraction_glue_bits. pose proof (Pos.size_nat_pos (extraction_cell_code encode item)).
+    pose proof (Pos.size_nat_pos (extraction_list_code (extraction_cell_code encode) rest)). lia.
+Qed.
+
+(** Decoding preserves identifier order and multiplicity while ignoring literal cells. *)
+Lemma extraction_decode_identifiers_code : forall V (encode : V -> positive) key fuel,
+  length key <= fuel ->
+  extraction_decode_identifiers fuel (extraction_list_code (extraction_cell_code encode) key) =
+    extraction_identifier_children key.
+Proof.
+  intros V encode key. induction key as [|item rest IH]; intros [|fuel] Hfuel;
+    cbn [length] in Hfuel; try lia.
+  - reflexivity.
+  - reflexivity.
+  - cbn [extraction_list_code extraction_decode_identifiers]. rewrite extraction_unglue_glue.
+    rewrite IH by lia. destruct item; reflexivity.
+Qed.
+
+(** An encoded source row exposes exactly its identifier child occurrences. *)
+Lemma extraction_row_children_code : forall V (encode : V -> positive) f key output,
+  extraction_row_children (extraction_row_code encode (f, key, output)) =
+    extraction_identifier_children key.
+Proof.
+  intros V encode f key output. unfold extraction_row_children, extraction_row_code.
+  cbn [fst snd]. rewrite !extraction_unglue_glue.
+  apply extraction_decode_identifiers_code, extraction_list_code_fuel.
+Qed.
+
+(** Injective value encodings give injective tagged cell encodings. *)
+Lemma extraction_cell_code_inj : forall V (encode : V -> positive),
+  (forall a b, encode a = encode b -> a = b) ->
+  forall a b, extraction_cell_code encode a = extraction_cell_code encode b -> a = b.
+Proof.
+  intros V encode Hinj [i|v] [j|w] Heq; cbn [extraction_cell_code] in Heq;
+    try discriminate; injection Heq as Heq; f_equal; auto.
+Qed.
+
+(** List coding preserves injectivity of its component encoding. *)
+Lemma extraction_list_code_inj : forall A (encode : A -> positive),
+  (forall a b, encode a = encode b -> a = b) ->
+  forall first last, extraction_list_code encode first = extraction_list_code encode last -> first = last.
+Proof.
+  intros A encode Hinj first. induction first as [|a first IH]; intros [|b last] Heq;
+    cbn [extraction_list_code] in Heq.
+  - reflexivity.
+  - exfalso. apply (extraction_glue_nonempty (encode b) (extraction_list_code encode last)).
+    symmetry. exact Heq.
+  - exfalso. exact (extraction_glue_nonempty (encode a) (extraction_list_code encode first) Heq).
+  - destruct (extraction_glue_inj _ _ _ _ Heq) as [Hhead Htail]. f_equal.
+    + exact (Hinj a b Hhead).
+    + exact (IH last Htail).
+Qed.
+
+(** Row codes distinguish constructors, complete keys and output classes. *)
+Lemma extraction_row_code_inj : forall V (encode : V -> positive),
+  (forall a b, encode a = encode b -> a = b) ->
+  forall first last, extraction_row_code encode first = extraction_row_code encode last -> first = last.
+Proof.
+  intros V encode Hinj [[f key] output] [[g args] target] Heq.
+  unfold extraction_row_code in Heq. cbn [fst snd] in Heq.
+  destruct (extraction_glue_inj _ _ _ _ Heq) as [Hfunction Hrest].
+  destruct (extraction_glue_inj _ _ _ _ Hrest) as [Houtput Hkey].
+  pose proof (extraction_list_code_inj _ _ (extraction_cell_code_inj V encode Hinj)
+    key args Hkey) as Hargs. now subst.
+Qed.
+
+(** Ready entries are encoded source rows with no unfinished identifier occurrence. *)
+Lemma extraction_ready_rows_counter : forall V DB H encode fn_cost val_cost
+    (s : extraction_state V DB H) number cost,
+  In (number, cost) (extraction_ready_rows encode fn_cost val_cost s) ->
+  extraction_row_counter s number = 0.
+Proof.
+  intros V DB H encode fn_cost val_cost s number cost Hin.
+  unfold extraction_ready_rows in Hin.
+  apply in_map_iff in Hin as [row [Heq Hin]]. injection Heq as <- Hcost.
+  apply filter_In in Hin as [_ Hready]. apply Bool.andb_true_iff in Hready as [Hcounter _].
+  now apply Nat.eqb_eq in Hcounter.
+Qed.
+
 Module SearchGhosts (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V).
   Module Rows := ConstructorRows V I D.
 
@@ -7218,12 +7427,12 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Definition step (_ : list (positive * (N * nat))) (_ : D.t) (s : state)
       : state + extraction_best V.t := search_step s.
   Definition finalised (s : state) : extraction_best V.t := search_finalised s.
-  (* STUB-CODE *)
-  Definition counter (_ : state) (_ : positive) : nat := 0.
-  (* STUB-CODE *)
-  Definition children (_ : D.t) (_ : positive) : list positive := [].
-  (* STUB-CODE *)
-  Definition ready (_ : state) : list (positive * N) := [].
+  (** Specification row numbers encode full source rows and never enter the runtime queue. *)
+  Definition counter (s : state) (number : positive) : nat := extraction_row_counter s number.
+  Definition children (_ : D.t) (number : positive) : list positive :=
+    extraction_row_children number.
+  Definition ready (s : state) : list (positive * N) :=
+    extraction_ready_rows V.encode C.fn_cost C.val_cost s.
   (* STUB-CODE *)
   Definition heap_potential (_ : state) : N := 0%N.
   TimeFun initial.
@@ -7322,11 +7531,14 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     counter s c = length (filter
       (fun i => negb (existsb (fun entry => Pos.eqb i (fst entry)) (finalised s)))
       (children db c)).
-  Proof. Admitted. (* STUB *)
+  Proof. intros cs db s c Hwf Hcanonical Hinventory Hreach. reflexivity. Qed.
 
   Lemma F3_ready : forall cs db s c n, reachable cs db s ->
     In (c, n) (ready s) -> counter s c = 0.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db s c n Hreach Hin.
+    exact (extraction_ready_rows_counter V.t D.t Q.t V.encode C.fn_cost C.val_cost s c n Hin).
+  Qed.
 
   (** Every continuing reachable state retains queue coverage and attained optimal finals. *)
   Lemma reachable_verified : forall cs db s, reachable cs db s ->
