@@ -355,7 +355,233 @@ Definition program_bits {V} (p : program V) : nat :=
 (** The checker decides well-sortedness. *)
 Lemma check_program_spec : forall V (p : program V),
   check_program p = true <-> program_ok p.
-Proof. Admitted. (* STUB *)
+Proof.
+  intros V p.
+  pose (rep := fun (tr : ptrie sort) (g : ctx) => forall x, trie_get x tr = g x).
+  assert (Hempty : rep Empty ctx_empty).
+  { intro x. apply PTrie.get_empty. }
+  assert (Hset : forall tr g x ty, rep tr g ->
+    rep (PTrieCode.set x ty tr) (ctx_set g x ty)).
+  {
+    intros tr g x ty Hrep y. unfold ctx_set.
+    destruct (Pos.eqb x y) eqn:Hxy.
+    - apply Pos.eqb_eq in Hxy. subst y. apply PTrie.get_set_same.
+    - rewrite PTrie.get_set_other; [apply Hrep|].
+      apply Pos.eqb_neq in Hxy. congruence.
+  }
+  assert (Heqb : forall a b, sort_eqb a b = true <-> a = b).
+  { intros [] []; cbn [sort_eqb]; split; congruence. }
+  assert (Hhas : forall tr g (t : term V) ty, rep tr g ->
+    has_b tr t ty = true <-> has g t ty).
+  {
+    intros tr g [x|v] ty Hrep; cbn [has_b has].
+    - rewrite Hrep. destruct (g x) as [ty'|]; [rewrite Heqb|]; split; congruence.
+    - apply Heqb.
+  }
+  assert (Hhas_list : forall tr g (ts : list (term V)) ss, rep tr g ->
+    has_list_b tr ts ss = true <-> Forall2 (has g) ts ss).
+  {
+    intros tr g ts. induction ts as [|t ts IH]; intros [|ty ss] Hrep;
+      cbn [has_list_b]; try (split; [discriminate|intro H; inversion H]).
+    - split; [intro; constructor|intro; reflexivity].
+    - rewrite andb_true_iff, (Hhas tr g t ty Hrep), (IH ss Hrep).
+      split.
+      + intros [Ht Hts]. constructor; assumption.
+      + intro H. inversion H; subst. split; assumption.
+  }
+  assert (Hhas_vals : forall tr g (ts : list (term V)), rep tr g ->
+    has_vals_b tr ts = true <-> Forall (fun t => has g t SVal) ts).
+  {
+    intros tr g ts. induction ts as [|t ts IH]; intro Hrep; cbn [has_vals_b].
+    - split; [intro; constructor|intro; reflexivity].
+    - rewrite andb_true_iff, (Hhas tr g t SVal Hrep), (IH Hrep).
+      split.
+      + intros [Ht Hts]. constructor; assumption.
+      + intro H. inversion H; subst. split; assumption.
+  }
+  assert (Hhas_result : forall tr g out (res : option (term V)), rep tr g ->
+    has_result_b tr out res = true <-> has_result g out res).
+  {
+    intros tr g out [t|] Hrep; destruct out;
+      cbn [has_result_b has_result out_sort]; try (split; tauto || discriminate).
+    all: apply Hhas; exact Hrep.
+  }
+  assert (Hbind_sound : forall tr g (t : term V) ty tr', rep tr g ->
+    bind_b tr t ty = Some tr' -> exists g', binds g t ty g' /\ rep tr' g').
+  {
+    intros tr g [x|v] ty tr' Hrep Hcheck; cbn [bind_b] in Hcheck.
+    - destruct (trie_get x tr) as [ty'|] eqn:Hlookup.
+      + destruct (sort_eqb ty' ty) eqn:Hty; [|discriminate].
+        apply Heqb in Hty. subst ty'. inversion Hcheck; subst tr'.
+        exists g. split; [apply binds_old; rewrite <- Hrep; exact Hlookup|exact Hrep].
+      + inversion Hcheck; subst tr'. exists (ctx_set g x ty). split.
+        * apply binds_new. rewrite <- Hrep. exact Hlookup.
+        * apply Hset. exact Hrep.
+    - destruct (sort_eqb ty SVal) eqn:Hty; [|discriminate].
+      apply Heqb in Hty. subst ty. inversion Hcheck; subst tr'.
+      exists g. split; [constructor|exact Hrep].
+  }
+  assert (Hbind_complete : forall tr g (t : term V) ty g', rep tr g ->
+    binds g t ty g' -> exists tr', bind_b tr t ty = Some tr' /\ rep tr' g').
+  {
+    intros tr g t ty g' Hrep Hb. destruct Hb as [x ty Hlookup | x ty Hlookup | v].
+    - exists tr. split; [|exact Hrep]. cbn [bind_b]. rewrite Hrep, Hlookup.
+      rewrite (proj2 (Heqb ty ty) eq_refl). reflexivity.
+    - exists (PTrieCode.set x ty tr). split.
+      + cbn [bind_b]. rewrite Hrep, Hlookup. reflexivity.
+      + apply Hset. exact Hrep.
+    - exists tr. split; [reflexivity|exact Hrep].
+  }
+  assert (Hbind_list_sound : forall ts ss tr g tr', rep tr g ->
+    @bind_list_b V tr ts ss = Some tr' ->
+    exists g', binds_list g ts ss g' /\ rep tr' g').
+  {
+    induction ts as [|t ts IH]; intros [|ty ss] tr g tr' Hrep Hcheck;
+      cbn [bind_list_b] in Hcheck; try discriminate.
+    - inversion Hcheck; subst tr'. exists g. split; [constructor|exact Hrep].
+    - destruct (bind_b tr t ty) as [tr1|] eqn:Hhead; [|discriminate].
+      destruct (Hbind_sound tr g t ty tr1 Hrep Hhead) as [g1 [Hb Hrep1]].
+      destruct (IH ss tr1 g1 tr' Hrep1 Hcheck) as [g' [Hbs Hrep']].
+      exists g'. split; [econstructor; eauto|exact Hrep'].
+  }
+  assert (Hbind_list_complete : forall tr g ts ss g', rep tr g ->
+    @binds_list V g ts ss g' ->
+    exists tr', bind_list_b tr ts ss = Some tr' /\ rep tr' g').
+  {
+    intros tr g ts ss g' Hrep Hb. revert tr Hrep.
+    induction Hb as [g | g g1 g2 t ts ty ss Hhead Htail IH]; intros tr Hrep.
+    - exists tr. split; [reflexivity|exact Hrep].
+    - destruct (Hbind_complete tr g t ty g1 Hrep Hhead) as [tr1 [Hcheck1 Hrep1]].
+      destruct (IH tr1 Hrep1) as [tr2 [Hcheck2 Hrep2]].
+      exists tr2. split; [cbn [bind_list_b]; rewrite Hcheck1; exact Hcheck2|exact Hrep2].
+  }
+  assert (Hbind_result_sound : forall tr g out res tr', rep tr g ->
+    @bind_result_b V tr out res = Some tr' ->
+    exists g', binds_result g out res g' /\ rep tr' g').
+  {
+    intros tr g out [t|] tr' Hrep Hcheck; destruct out;
+      cbn [bind_result_b binds_result out_sort] in *; try discriminate.
+    - eapply Hbind_sound; eauto.
+    - eapply Hbind_sound; eauto.
+    - inversion Hcheck; subst tr'. exists g. split; [reflexivity|exact Hrep].
+  }
+  assert (Hbind_result_complete : forall tr g out res g', rep tr g ->
+    @binds_result V g out res g' ->
+    exists tr', bind_result_b tr out res = Some tr' /\ rep tr' g').
+  {
+    intros tr g out [t|] g' Hrep Hb; destruct out;
+      cbn [bind_result_b binds_result out_sort] in *; try contradiction.
+    - eapply Hbind_complete; eauto.
+    - eapply Hbind_complete; eauto.
+    - subst g'. exists tr. split; [reflexivity|exact Hrep].
+  }
+  assert (Htable : forall f ss out,
+    trie_get f (decl_table (decls V p)) = Some (ss, out) <->
+    program_sorts p f = Some ss /\ program_kind p f = Some out).
+  {
+    unfold program_sorts, program_kind. generalize (decls V p). intro ds.
+    induction ds as [|d ds IH]; intros f ss out; cbn [decl_table lookup_sorts lookup_kind].
+    - rewrite PTrie.get_empty. split; [discriminate|intros [H _]; discriminate].
+    - destruct (Pos.eqb (name d) f) eqn:Hname.
+      + apply Pos.eqb_eq in Hname. subst f. rewrite PTrie.get_set_same.
+        split; [intro H; inversion H; subst; split; reflexivity|intros [Hss Hout]; congruence].
+      + rewrite PTrie.get_set_other.
+        * apply IH.
+        * apply Pos.eqb_neq in Hname. congruence.
+  }
+  assert (Hactions : forall acts tr g, rep tr g ->
+    @check_actions_b V (decl_table (decls V p)) tr acts = true <->
+    actions_ok (program_sorts p) (program_kind p) g acts).
+  {
+    induction acts as [|a acts IH]; intros tr g Hrep; cbn [check_actions_b actions_ok].
+    - split; [intro; exact I|intro; reflexivity].
+    - destruct a as [x f args | f args res | t u | x op args].
+      + destruct (trie_get f (decl_table (decls V p))) as [[ss out]|] eqn:Hlookup.
+        * destruct (proj1 (Htable f ss out) Hlookup) as [Hss Hout].
+          destruct out; try (split; [discriminate|intros [ss' [_ [Hbad _]]]; congruence]).
+          rewrite andb_true_iff, (Hhas_list tr g args ss Hrep),
+            (IH _ _ (Hset tr g x SId Hrep)).
+          split.
+          -- intros [Hargs Hrest]. exists ss. repeat split; assumption.
+          -- intros [ss' [Hss' [_ [Hargs Hrest]]]]. assert (ss' = ss) by congruence.
+             subst ss'. split; assumption.
+        * split; [discriminate|]. intros [ss [Hss [Hout _]]].
+          pose proof (proj2 (Htable f ss OId) (conj Hss Hout)). congruence.
+      + destruct (trie_get f (decl_table (decls V p))) as [[ss out]|] eqn:Hlookup.
+        * destruct (proj1 (Htable f ss out) Hlookup) as [Hss Hout].
+          rewrite !andb_true_iff, (Hhas_list tr g args ss Hrep),
+            (Hhas_result tr g out res Hrep), (IH tr g Hrep).
+          split.
+          -- intros [[Hargs Hres] Hrest]. exists ss, out. repeat split; assumption.
+          -- intros [ss' [out' [Hss' [Hout' [Hargs [Hres Hrest]]]]]].
+             assert (ss' = ss) by congruence. assert (out' = out) by congruence.
+             subst ss' out'. repeat split; assumption.
+        * split; [discriminate|]. intros [ss [out [Hss [Hout _]]]].
+          pose proof (proj2 (Htable f ss out) (conj Hss Hout)). congruence.
+      + rewrite !andb_true_iff, (Hhas tr g t SId Hrep), (Hhas tr g u SId Hrep),
+          (IH tr g Hrep). tauto.
+      + rewrite andb_true_iff, (Hhas_vals tr g args Hrep),
+          (IH _ _ (Hset tr g x SVal Hrep)). tauto.
+  }
+  assert (Hquery_sound : forall q tr g tr', rep tr g ->
+    @bind_query_b V (decl_table (decls V p)) tr q = Some tr' ->
+    exists g', query_ok (program_sorts p) (program_kind p) g q g' /\ rep tr' g').
+  {
+    induction q as [|a q IH]; intros tr g tr' Hrep Hcheck; cbn [bind_query_b] in Hcheck.
+    - inversion Hcheck; subst tr'. exists g. split; [constructor|exact Hrep].
+    - destruct a as [f args res | op args res].
+      + destruct (trie_get f (decl_table (decls V p))) as [[ss out]|] eqn:Hlookup;
+          [|discriminate].
+        destruct (bind_list_b tr args ss) as [tr1|] eqn:Hargs; [|discriminate].
+        destruct (bind_result_b tr1 out res) as [tr2|] eqn:Hres; [|discriminate].
+        destruct (proj1 (Htable f ss out) Hlookup) as [Hss Hout].
+        destruct (Hbind_list_sound args ss tr g tr1 Hrep Hargs) as [g1 [Hb Hrep1]].
+        destruct (Hbind_result_sound tr1 g1 out res tr2 Hrep1 Hres) as [g2 [Hr Hrep2]].
+        destruct (IH tr2 g2 tr' Hrep2 Hcheck) as [g' [Hq Hrep']].
+        exists g'. split; [econstructor; eauto|exact Hrep'].
+      + destruct (has_vals_b tr args && has_b tr res SVal) eqn:Hargs; [|discriminate].
+        apply andb_true_iff in Hargs. destruct Hargs as [Hargs Hres].
+        apply (Hhas_vals tr g args Hrep) in Hargs. apply (Hhas tr g res SVal Hrep) in Hres.
+        destruct (IH tr g tr' Hrep Hcheck) as [g' [Hq Hrep']].
+        exists g'. split; [econstructor; eauto|exact Hrep'].
+  }
+  assert (Hquery_complete : forall tr g q g', rep tr g ->
+    @query_ok V (program_sorts p) (program_kind p) g q g' ->
+    exists tr', bind_query_b (decl_table (decls V p)) tr q = Some tr' /\ rep tr' g').
+  {
+    intros tr g q g' Hrep Hq. revert tr Hrep.
+    induction Hq as
+      [g | g g1 g2 g3 f args res ss out rest Hss Hout Hargs Hres Hrest IH
+         | g g1 op args res rest Hargs Hres Hrest IH]; intros tr Hrep.
+    - exists tr. split; [reflexivity|exact Hrep].
+    - destruct (Hbind_list_complete tr g args ss g1 Hrep Hargs) as [tr1 [Hb Hrep1]].
+      destruct (Hbind_result_complete tr1 g1 out res g2 Hrep1 Hres) as [tr2 [Hr Hrep2]].
+      destruct (IH tr2 Hrep2) as [tr3 [Hq Hrep3]]. exists tr3. split; [|exact Hrep3].
+      cbn [bind_query_b]. rewrite (proj2 (Htable f ss out) (conj Hss Hout)), Hb, Hr.
+      exact Hq.
+    - destruct (IH tr Hrep) as [tr' [Hq Hrep']]. exists tr'. split; [|exact Hrep'].
+      cbn [bind_query_b]. rewrite (proj2 (Hhas_vals tr g args Hrep) Hargs),
+        (proj2 (Hhas tr g res SVal Hrep) Hres). exact Hq.
+  }
+  assert (Hrule : forall r : rule V, check_rule (decl_table (decls V p)) r = true <->
+    rule_ok (program_sorts p) (program_kind p) r).
+  {
+    intros [q acts]. cbn [check_rule rule_ok query actions]. split.
+    - destruct (bind_query_b (decl_table (decls V p)) Empty q) as [tr|] eqn:Hq;
+        [|discriminate]. intro Hacts.
+      destruct (Hquery_sound q Empty ctx_empty tr Hempty Hq) as [g [Htyped Hrep]].
+      exists g. split; [exact Htyped|]. apply (Hactions acts tr g Hrep). exact Hacts.
+    - intros [g [Htyped Hacts]].
+      destruct (Hquery_complete Empty ctx_empty q g Hempty Htyped) as [tr [Hq Hrep]].
+      rewrite Hq. apply (Hactions acts tr g Hrep). exact Hacts.
+  }
+  unfold check_program, program_ok. generalize (rules V p). intro rs.
+  induction rs as [|r rs IH]; cbn [check_rules].
+  - split; [intro; constructor|intro; reflexivity].
+  - rewrite andb_true_iff, Hrule, IH. split.
+    + intros [Hr Hrs]. constructor; assumption.
+    + intro H. inversion H; subst. split; assumption.
+Qed.
 
 Definition c_sorts : N := 1. (* STUB *)
 
