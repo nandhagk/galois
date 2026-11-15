@@ -20,6 +20,8 @@ Deliverable: a git format-patch series and one handoff file. Nothing else is rea
 Source galois-env.sh in every new shell. Run one build at a time, always in the background
 with a log. If a build's process disappears, run the same command again; dune resumes.
 Single file: just vo theories/<Pkg>/<File>.v
+If a compiler runs out of memory under an address-space limit, set OCAMLRUNPARAM=d=4, as
+batch-1 sessions did.
 
 ## 2. Rules
 - You own only: {PATHS}. Do not touch anything else: no *Sig.v, dune, just/, docs/, AGENTS.md.
@@ -27,12 +29,22 @@ Single file: just vo theories/<Pkg>/<File>.v
 - The released source and signatures govern interfaces that differ from the design copies.
 - Code functors take operations-only dependencies. `BoundedSetCode` alone takes `SET` laws
   to construct its Boolean subtype proof, which extraction erases.
-- No Axiom, admit, give_up, Abort. Admitted only with a tag from section 5.
+- No Axiom, admit, give_up, Abort or hand-written clock (TimePrim). Admitted only with a tag
+  from section 5.
+- Never import Psatz, Lra, Reals, FunctionalExtensionality or MathComp. They bring axioms that
+  `just audit --admitted-ok` rejects. Use lia and nia, or lra from Lqa for rationals.
 - Do not change a definition fixed by a Sig. Replace code bodies only where marked STUB-CODE.
 - The Sig wins when a definition in your files contradicts a statement of the Sig. Replace the
   body, even without a STUB-CODE mark, and record the change in the handoff. Use SIG-QUESTION
   when no body can satisfy the statement.
 - Extra lemmas, helper definitions and internal modules in your own files are free.
+- A lemma of your files that is no field of a module type is a helper. A helper may gain
+  premises, change or go when every field that used it is proved again. Name each changed
+  helper in the handoff.
+- A constant c_* or k_* that no law of its Sig fixes may take a new value, also when it already
+  has one. The value is a closed expression over the public constants of the functor
+  parameters, and every field that uses it is proved again. Never unfold a constant of a
+  parameter. Record the old and the new value in the handoff.
 - Follow AGENTS.md and docs/design/rules.md (R1-R13; patterns V1-V11 work, F1-F6 fail).
 - Read the landed sources for proofs at commit 87192fe: git show 87192fe:<path>.
 
@@ -51,6 +63,9 @@ Single file: just vo theories/<Pkg>/<File>.v
 - Time proofs use `time_step`, `time_cbn` and `time_pose` (Argent), then `lia` or `nia`.
   Plain `cbn` and `simpl` unfold binary arithmetic on numerals. Read the archival design's time
   statements through `docs/design/rules.md` section 8.
+- Write a large nat literal as a product, such as 8 * 4096, because a large numeral is an
+  error under the build flags. Split nonlinear arithmetic into small lemmas, because broad
+  nia and ring calls over large contexts ran out of time and memory in batch 1.
 
 ## 4. Order of work
 Chain: {CHAIN}
@@ -82,13 +97,15 @@ Save ~/{ID}-checkpoint-<n>.tar.gz with the library skill after each checkpoint. 
 fetches the latest archive if the session ends early.
 Every 90 minutes, and before the final deliverable, run the full check as well.
   just session-check                     # fmt, build, tests, lint, frozen
+  just audit --admitted-ok               # no new axiom
   just admits > /tmp/admits.txt
   just owned {ID} {BASE_SHA}..HEAD       # must print nothing
 The last checkpoint after a passing full check supplies the deliverable.
 
 ## 7. Final deliverable
 ~/out/patches/*.patch (series from {BASE_SHA}) and ~/out/HANDOFF-{ID}.md, filled in:
-items closed, items open with tags, PLAN-DEFECT and SIG-QUESTION list,
+items closed, items open with tags, PLAN-DEFECT and SIG-QUESTION list, changed helpers,
+changed constants with old and new values,
 just admits before/after from /tmp/admits-before.txt and /tmp/admits.txt.
 Commit messages: "<File>: close <lemma names>".
 No build outputs, logs, reports or other files. If the full check fails at the end,

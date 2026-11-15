@@ -1,0 +1,10 @@
+theories/Relational/Keys.v
+tests/Relational/KeysTest.v
+theories/Fixpoint/SystemKey.v
+tests/Fixpoint/SystemKeyTest.v
+theories/Egglog/Syntax.v
+tests/Egglog/SyntaxTest.v
+theories/Program/Cfg.v
+tests/Program/CfgTest.v
+theories/Program/Ssa.v
+tests/Program/SsaTest.v
