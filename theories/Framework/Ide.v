@@ -116,6 +116,61 @@ Proof.
   now rewrite Hidentity in Hpath.
 Qed.
 
+(** The fixed cubic budget is an ordinary product of three factors. *)
+Lemma ide_cube : forall x : N, (x ^ 3 = x * (x * x))%N.
+Proof.
+  intro x; change (x ^ (N.succ 2) = x * (x * x))%N.
+  rewrite N.pow_succ_r', N.pow_2_r; reflexivity.
+Qed.
+
+(** Three successive linear size increases fit the released cubic coefficient. *)
+Lemma ide_three_sizes : forall c budget first second third : N,
+  (first <= c * budget)%N ->
+  (second <= c * (budget + first))%N ->
+  (third <= c * (budget + second))%N ->
+  (third <= 3 * (c + 1) ^ 3 * budget)%N.
+Proof.
+  intros c budget first second third Hfirst Hsecond Hthird.
+  pose proof (N.mul_le_mono_l _ _ c Hfirst) as Hfirst_scaled.
+  assert (Hsecond_bound : (second <= c * (1 + c) * budget)%N) by nia.
+  pose proof (N.mul_le_mono_l _ _ c Hsecond_bound) as Hsecond_scaled.
+  assert (Hthird_bound : (third <= c * (1 + c * (1 + c)) * budget)%N) by nia.
+  eapply N.le_trans; [exact Hthird_bound|].
+  apply N.mul_le_mono_r; rewrite ide_cube; nia.
+Qed.
+
+(** The three composition clocks follow the same two intermediate size bounds. *)
+Lemma ide_three_clocks : forall c budget first second t1 t2 t3 : N,
+  (first <= c * budget)%N -> (second <= c * (budget + first))%N ->
+  (t1 <= c * (c * budget + 1))%N ->
+  (t2 <= c * (c * (budget + first) + 1))%N ->
+  (t3 <= c * (c * (budget + second) + 1))%N ->
+  (t1 + t2 + t3 <= c * c * (3 + 2 * c + c * c) * budget + 3 * c)%N.
+Proof.
+  intros c budget first second t1 t2 t3 Hfirst Hsecond Ht1 Ht2 Ht3.
+  pose proof (N.mul_le_mono_l _ _ c Hfirst) as Hfirst_scaled.
+  assert (Hsecond_bound : (second <= c * (1 + c) * budget)%N) by nia.
+  pose proof (N.mul_le_mono_l _ _ (c * c) Hfirst) as Hfirst_clock.
+  pose proof (N.mul_le_mono_l _ _ (c * c) Hsecond_bound) as Hsecond_clock.
+  nia.
+Qed.
+
+(** Weight reads and composition clocks fit a constant multiple of the cubic budget. *)
+Lemma ide_finish_budget : forall c budget cost : N,
+  (1 <= budget)%N ->
+  (cost <= (c * c * (3 + 2 * c + c * c) + 2 * c) * budget + 3 * c + 8)%N ->
+  (cost <= 32 * (c + 1) * (3 * (c + 1) ^ 3 * budget + 1))%N.
+Proof.
+  intros c budget cost Hbudget Hcost.
+  assert (Hfixed : (3 * c + 8 <= (3 * c + 8) * budget)%N) by nia.
+  assert (Htotal :
+    (cost <= (c * c * (3 + 2 * c + c * c) + 5 * c + 8) * budget)%N) by nia.
+  assert (Hcoefficient : (c * c * (3 + 2 * c + c * c) + 5 * c + 8 <=
+    96 * (c + 1) * (c + 1) * (c + 1) * (c + 1))%N) by nia.
+  pose proof (N.mul_le_mono_r _ _ budget Hcoefficient) as Hscaled.
+  rewrite ide_cube; nia.
+Qed.
+
 Module IdeCode (P : TYPE) (N : KEY_OPS) (E : TYPE) (C : CFG_OPS P N E)
     (Site : KEY_OPS) (I : ICFG_OPS P N E C Site) (F : KEY_OPS)
     (V : LATTICE_OPS) (M : MICRO_OPS V) (FL : IDE_FLOW_OPS P N E F V M)
@@ -309,47 +364,395 @@ Module IdeT (P : TYPE) (N : KEY_T) (E : KEY_T) (C : CFG_T P N E)
   Definition path_kw (p : prog) : nat := fold_right Nat.max 0
     (flat_map (fun r => map key_bits (writes p r ++ deps p r)) (rows p)).
   Definition kw := path_kw.
-  Definition c_sys : N := 1%N. (* STUB *)
+  Definition c_sys : N :=
+    (128 * (N.c_key + F.c_key + C.c_cfg + R.c_rules + M.c_micro + 1))%N.
   Lemma row_work_mono : forall p s t, s <= t ->
     (row_work p s <= row_work p t)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s t Hst; unfold row_work.
+    apply N.add_le_mono_r, N.mul_le_mono_l; lia.
+  Qed.
+
+  (** A maximum bounds every width that occurs in its inventory. *)
+  Lemma path_width_member : forall widths width, In width widths ->
+    width <= fold_right Nat.max 0 widths.
+  Proof.
+    induction widths as [|head widths IH]; intros width Hin.
+    - contradiction.
+    - destruct Hin as [<-|Hin]; cbn [fold_right].
+      + apply Nat.le_max_l.
+      + eapply Nat.le_trans; [exact (IH width Hin)|apply Nat.le_max_r].
+  Qed.
   Lemma key_bits_le : forall p r x, wf p -> In r (rows p) ->
     In x (writes p r ++ deps p r) -> key_bits x <= kw p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r x _ Hr Hx; unfold kw, path_kw.
+    apply path_width_member, in_flat_map.
+    exists r; split; [exact Hr|now apply in_map].
+  Qed.
+
+  (** A path-edge code contains the widths of all three key components. *)
+  Lemma path_key_bits : forall d n x,
+    key_bits (d, (n, x)) + 2 = 2 * F.bits d + 2 * N.bits n + F.bits x.
+  Proof.
+    intros d n x; unfold key_bits, key_code, path_edge_code, pair_code.
+    cbn [fst snd]; rewrite !glue_bits.
+    unfold F.bits, N.bits.
+    pose proof (Pos.size_nat_pos (F.encode d)).
+    pose proof (Pos.size_nat_pos (N.encode n)).
+    pose proof (Pos.size_nat_pos (F.encode x)); lia.
+  Qed.
+
+  (** Each component fits the code's common bit budget. *)
+  Lemma path_key_widths : forall d n x,
+    F.bits d <= key_bits (d, (n, x)) /\ N.bits n <= key_bits (d, (n, x)) /\
+      F.bits x <= key_bits (d, (n, x)).
+  Proof.
+    intros d n x; pose proof (path_key_bits d n x) as Hbits.
+    unfold F.bits, N.bits in *.
+    pose proof (Pos.size_nat_pos (F.encode d)).
+    pose proof (Pos.size_nat_pos (N.encode n)).
+    pose proof (Pos.size_nat_pos (F.encode x)); lia.
+  Qed.
   Lemma T_key_code_le : forall x,
     (T_key_code x <= c_sys * N.of_nat (key_bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [d [n x]].
+    pose proof (F.T_encode_le d) as Hd.
+    pose proof (N.T_encode_le n) as Hn.
+    pose proof (F.T_encode_le x) as Hx.
+    pose proof (T_glue_le (N.encode n) (F.encode x)) as Hinner.
+    pose proof (T_glue_le (F.encode d) (glue (N.encode n) (F.encode x))) as Houter.
+    destruct (path_key_widths d n x) as [Hd_width [Hn_width Hx_width]].
+    set (budget := N.of_nat (key_bits (d, (n, x)) + 1)).
+    set (scale := (N.c_key + F.c_key + C.c_cfg + R.c_rules + M.c_micro + 1)%N).
+    assert (Hd_cost : (F.T_encode d <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hd|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hn_cost : (N.T_encode n <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hn|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hx_cost : (F.T_encode x <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hx|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hinner_cost : (T_glue (N.encode n) (F.encode x) <= budget)%N).
+    { unfold c_glue in Hinner; unfold N.bits in Hn_width; unfold budget; lia. }
+    assert (Houter_cost :
+      (T_glue (F.encode d) (glue (N.encode n) (F.encode x)) <= budget)%N).
+    { unfold c_glue in Houter; unfold F.bits in Hd_width; unfold budget; lia. }
+    assert (Hscale : (1 <= scale)%N) by (unfold scale; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; lia).
+    clear Hd Hn Hx Hinner Houter Hd_width Hn_width Hx_width.
+    unfold c_sys; fold scale; fold budget.
+    time_unfold T_key_code; time_unfold @T_path_edge_code; time_unfold @T_pair_code.
+    time_simpl; time_cbn; time_unfold @T_pair_code.
+    time_simpl; time_cbn; unfold pair_code; cbn [fst snd].
+    fold scale; fold budget; clearbody scale budget; nia.
+  Qed.
   Lemma T_key_eqb_le : forall a b,
     (T_key_eqb a b <= c_sys * N.of_nat (key_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [d [n x]] [d' [n' x']].
+    pose proof (F.T_eqb_le d d') as Hd.
+    pose proof (N.T_eqb_le n n') as Hn.
+    pose proof (F.T_eqb_le x x') as Hx.
+    destruct (path_key_widths d n x) as [Hd_width [Hn_width Hx_width]].
+    set (budget := N.of_nat (key_bits (d, (n, x)) + 1)).
+    set (scale := (N.c_key + F.c_key + C.c_cfg + R.c_rules + M.c_micro + 1)%N).
+    assert (Hd_cost : (F.T_eqb d d' <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hd|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hn_cost : (N.T_eqb n n' <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hn|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hx_cost : (F.T_eqb x x' <= scale * budget)%N).
+    { eapply N.le_trans; [exact Hx|]. apply N.mul_le_mono; unfold scale, budget; lia. }
+    assert (Hscale : (1 <= scale)%N) by (unfold scale; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; lia).
+    clear Hd Hn Hx Hd_width Hn_width Hx_width.
+    unfold c_sys; fold scale; fold budget.
+    time_unfold T_key_eqb; time_simpl; time_cbn.
+    fold scale; fold budget; clearbody scale budget; nia.
+  Qed.
   Lemma T_rows_le : forall p, wf p ->
     (T_rows p <= c_sys * N.of_nat (length (rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p _.
+    pose proof (R.T_rules_le p) as Hrules.
+    pose proof (T_path_number_le 1%positive (R.rules p)) as Hnumber.
+    change (T_rows p <= c_sys *
+      N.of_nat (length (path_number 1%positive (R.rules p)) + 1))%N.
+    rewrite path_number_length; unfold c_sys.
+    time_unfold T_rows; time_cbn_all; nia.
+  Qed.
+
+  (** Target selection performs at most one bounded destination projection. *)
+  Lemma target_clock : forall p r, (T_target p r <= C.c_cfg + 4)%N.
+  Proof.
+    intros p [code rule]; destruct rule; time_step.
+  Qed.
+
+  (** Starting a row reads at most two bounded source projections. *)
+  Lemma start_clock : forall p r, (T_start p r <= 2 * C.c_cfg + 16)%N.
+  Proof.
+    intros p [code rule].
+    pose proof (List.T_rev_append_le (@nil M.t) (@nil M.t)) as Hreverse.
+    destruct rule.
+    all: time_unfold T_start; time_unfold T_deps; time_unfold @T_path_query.
+    all: time_simpl; time_cbn; try time_unfold T_finish.
+    all: time_simpl; time_cbn_all; time_pose; nia.
+  Qed.
+
+  (** A supplied operand budget also bounds the size of their composition. *)
+  Lemma compose_size_budget : forall f g budget,
+    (N.of_nat (M.size f + M.size g + 1) <= budget)%N ->
+    (N.of_nat (M.size (M.compose f g)) <= M.c_micro * budget)%N.
+  Proof.
+    intros f g budget Hbudget; eapply N.le_trans; [apply M.compose_size|].
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** A supplied operand budget bounds the work oracle and its composition clock. *)
+  Lemma compose_clock_budget : forall f g budget,
+    (N.of_nat (M.size f + M.size g + 1) <= budget)%N ->
+    (M.T_compose f g <= M.c_micro * (M.c_micro * budget + 1))%N.
+  Proof.
+    intros f g budget Hbudget; eapply N.le_trans; [apply M.T_compose_le|].
+    apply N.mul_le_mono_l, N.add_le_mono_r.
+    eapply N.le_trans; [apply M.compose_work_le|].
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** One composition fits the same cubic budget used for a matched return. *)
+  Lemma step_size_budget : forall weight value w s,
+    M.size weight <= w -> M.size value <= s ->
+    (N.of_nat (M.size (M.compose weight value)) <=
+      3 * (M.c_micro + 1) ^ 3 * N.of_nat (w + s + 1))%N.
+  Proof.
+    intros weight value w s Hweight Hvalue.
+    assert (Hsize : (N.of_nat (M.size (M.compose weight value)) <=
+      M.c_micro * N.of_nat (w + s + 1))%N).
+    { apply compose_size_budget; lia. }
+    eapply N.le_trans; [exact Hsize|].
+    apply N.mul_le_mono_r; rewrite ide_cube; nia.
+  Qed.
+
+  (** The call, callee and return compositions fit the three-stage size budget. *)
+  Lemma return_size_budget : forall call_weight ret_weight caller callee w s,
+    M.size call_weight <= w -> M.size ret_weight <= w ->
+    M.size caller <= s -> M.size callee <= s ->
+    (N.of_nat (M.size
+      (M.compose ret_weight (M.compose callee (M.compose call_weight caller)))) <=
+      3 * (M.c_micro + 1) ^ 3 * N.of_nat (w + s + 1))%N.
+  Proof.
+    intros call_weight ret_weight caller callee w s Hcall Hret Hcaller Hcallee.
+    assert (Hfirst : (N.of_nat (M.size (M.compose call_weight caller)) <=
+      M.c_micro * N.of_nat (w + s + 1))%N).
+    { apply compose_size_budget; lia. }
+    assert (Hsecond : (N.of_nat (M.size (M.compose callee (M.compose call_weight caller))) <=
+      M.c_micro * (N.of_nat (w + s + 1) +
+        N.of_nat (M.size (M.compose call_weight caller))))%N).
+    { apply compose_size_budget; lia. }
+    assert (Hthird : (N.of_nat (M.size
+      (M.compose ret_weight (M.compose callee (M.compose call_weight caller)))) <=
+      M.c_micro * (N.of_nat (w + s + 1) +
+        N.of_nat (M.size (M.compose callee (M.compose call_weight caller)))))%N).
+    { apply compose_size_budget; lia. }
+    exact (ide_three_sizes M.c_micro (N.of_nat (w + s + 1)) _ _ _
+      Hfirst Hsecond Hthird).
+  Qed.
+
+  (** The three return compositions have one common polynomial clock bound. *)
+  Lemma return_clock_budget : forall call_weight ret_weight caller callee w s,
+    M.size call_weight <= w -> M.size ret_weight <= w ->
+    M.size caller <= s -> M.size callee <= s ->
+    (M.T_compose call_weight caller +
+      M.T_compose callee (M.compose call_weight caller) +
+      M.T_compose ret_weight (M.compose callee (M.compose call_weight caller)) <=
+      M.c_micro * M.c_micro * (3 + 2 * M.c_micro + M.c_micro * M.c_micro) *
+        N.of_nat (w + s + 1) + 3 * M.c_micro)%N.
+  Proof.
+    intros call_weight ret_weight caller callee w s Hcall Hret Hcaller Hcallee.
+    assert (Hfirst : (N.of_nat (M.size (M.compose call_weight caller)) <=
+      M.c_micro * N.of_nat (w + s + 1))%N).
+    { apply compose_size_budget; lia. }
+    assert (Hsecond : (N.of_nat (M.size (M.compose callee (M.compose call_weight caller))) <=
+      M.c_micro * (N.of_nat (w + s + 1) +
+        N.of_nat (M.size (M.compose call_weight caller))))%N).
+    { apply compose_size_budget; lia. }
+    eapply ide_three_clocks; [exact Hfirst|exact Hsecond| | |].
+    - apply compose_clock_budget; lia.
+    - apply compose_clock_budget; lia.
+    - apply compose_clock_budget; lia.
+  Qed.
+
+  (** Finishing an enabled rule respects the budget for its supplied values. *)
+  Lemma finish_size_le : forall p rule xs s, enabled p rule ->
+    (forall value, In value xs -> M.size value <= s) ->
+    (N.of_nat (M.size (finish p rule xs)) <= row_work p s)%N.
+  Proof.
+    intros p rule xs s Henabled Hxs; destruct rule as [n d|d0 e x y|d0 call ret x a b y].
+    - cbn [finish]; unfold row_work; lia.
+    - destruct xs as [|value xs]; [cbn [finish]; unfold row_work; lia|].
+      destruct Henabled as [_ [He [_ [Hx Hy]]]].
+      pose proof (FL.weight_size p e x y He Hx Hy) as Hweight.
+      pose proof (Hxs value (or_introl eq_refl)) as Hvalue.
+      pose proof (step_size_budget _ _ _ _ Hweight Hvalue) as Hsize.
+      cbn [finish]; unfold row_work; lia.
+    - destruct xs as [|caller [|callee xs]];
+        try solve [cbn [finish]; unfold row_work; lia].
+      destruct Henabled as [_ [Hcall [Hret [_ [Hx [Ha [Hb Hy]]]]]]].
+      pose proof (FL.weight_size p call x a Hcall Hx Ha) as Hcall_weight.
+      pose proof (FL.weight_size p ret b y Hret Hb Hy) as Hret_weight.
+      pose proof (Hxs caller (or_introl eq_refl)) as Hcaller.
+      pose proof (Hxs callee (or_intror (or_introl eq_refl))) as Hcallee.
+      pose proof (return_size_budget _ _ _ _ _ _ Hcall_weight Hret_weight Hcaller Hcallee)
+        as Hsize.
+      cbn [finish]; unfold row_work; lia.
+  Qed.
+
+  (** The enabled rule's finish clock is charged to its weights and supplied values. *)
+  Lemma finish_clock : forall p rule xs s, enabled p rule ->
+    (forall value, In value xs -> M.size value <= s) ->
+    (T_finish p rule xs <= 32 * (M.c_micro + 1) * (row_work p s + 1))%N.
+  Proof.
+    intros p rule xs s Henabled Hxs; destruct rule as [n d|d0 e x y|d0 call ret x a b y].
+    - time_step.
+    - destruct xs as [|value xs]; [time_step|].
+      destruct Henabled as [_ [He [_ [Hx Hy]]]].
+      pose proof (FL.weight_size p e x y He Hx Hy) as Hweight.
+      pose proof (Hxs value (or_introl eq_refl)) as Hvalue.
+      assert (Hweight_clock : (FL.T_weight p e x y <=
+        M.c_micro * N.of_nat (FL.weight_work p + s + 1))%N).
+      { eapply N.le_trans; [apply FL.T_weight_le; eassumption|].
+        apply N.mul_le_mono_l; lia. }
+      pose proof (compose_clock_budget (FL.weight p e x y) value
+        (N.of_nat (FL.weight_work p + s + 1)) ltac:(lia)) as Hcompose.
+      eapply N.le_trans with (m := (32 * (M.c_micro + 1) *
+        (3 * (M.c_micro + 1) ^ 3 * N.of_nat (FL.weight_work p + s + 1) + 1))%N).
+      + apply ide_finish_budget; [lia|].
+        time_unfold T_finish; time_simpl; time_cbn; nia.
+      + apply N.mul_le_mono_l, N.add_le_mono_r; unfold row_work; lia.
+    - destruct xs as [|caller [|callee xs]]; try solve [time_step].
+      destruct Henabled as [_ [Hcall [Hret [_ [Hx [Ha [Hb Hy]]]]]]].
+      pose proof (FL.weight_size p call x a Hcall Hx Ha) as Hcall_weight.
+      pose proof (FL.weight_size p ret b y Hret Hb Hy) as Hret_weight.
+      pose proof (Hxs caller (or_introl eq_refl)) as Hcaller.
+      pose proof (Hxs callee (or_intror (or_introl eq_refl))) as Hcallee.
+      pose proof (return_clock_budget _ _ _ _ _ _ Hcall_weight Hret_weight Hcaller Hcallee)
+        as Hcompose.
+      assert (Hcall_clock : (FL.T_weight p call x a <=
+        M.c_micro * N.of_nat (FL.weight_work p + s + 1))%N).
+      { eapply N.le_trans; [apply FL.T_weight_le; eassumption|].
+        apply N.mul_le_mono_l; lia. }
+      assert (Hret_clock : (FL.T_weight p ret b y <=
+        M.c_micro * N.of_nat (FL.weight_work p + s + 1))%N).
+      { eapply N.le_trans; [apply FL.T_weight_le; eassumption|].
+        apply N.mul_le_mono_l; lia. }
+      eapply N.le_trans with (m := (32 * (M.c_micro + 1) *
+        (3 * (M.c_micro + 1) ^ 3 * N.of_nat (FL.weight_work p + s + 1) + 1))%N).
+      + apply ide_finish_budget; [lia|].
+        time_unfold T_finish; time_simpl; time_cbn; nia.
+      + apply N.mul_le_mono_l, N.add_le_mono_r; unfold row_work; lia.
+  Qed.
+
+  (** Every listed row carries one of the rule provider's enabled rules. *)
+  Lemma listed_rule_enabled : forall p r, wf p -> In r (rows p) ->
+    enabled p (path_row_rule r).
+  Proof.
+    intros p r Hwf Hr; apply (proj1 (rows_spec p (path_row_rule r) Hwf)).
+    exists r; now split.
+  Qed.
+
+  (** Evaluation supplies the dependency values to the rule in their declared order. *)
+  Lemma eval_finish : forall p r look,
+    eval p r look = Some (finish p (path_row_rule r) (map look (deps p r)), nil).
+  Proof.
+    intros p [code rule] look; destruct rule; reflexivity.
+  Qed.
+
+  (** Finishing a frame reverses only its received values before evaluating the rule. *)
+  Lemma resume_done_clock : forall p rule received value,
+    (T_resume p (PathFrame _ _ _ _ rule nil received) value <=
+      T_finish p rule (rev_append (value :: received) nil) +
+        N.of_nat (length received) + 4)%N.
+  Proof.
+    intros p rule received value.
+    pose proof (List.T_rev_append_le (value :: received) nil) as Hreverse.
+    time_unfold T_resume; time_unfold @T_path_query.
+    time_simpl; time_cbn_all; lia.
+  Qed.
+
+  (** A frame with at most one earlier answer fits the enabled rule's resume budget. *)
+  Lemma resume_clock_le : forall p rule pending received value s,
+    enabled p rule -> length received <= 1 ->
+    (forall a, In a (value :: received) -> M.size a <= s) ->
+    (T_resume p (PathFrame _ _ _ _ rule pending received) value <=
+      c_sys * (row_work p s + 1))%N.
+  Proof.
+    intros p rule pending received value s Henabled Hreceived Hvalues.
+    assert (Hscale : (64 * (M.c_micro + 1) <= c_sys)%N) by (unfold c_sys; lia).
+    destruct pending as [|x pending].
+    - pose proof (resume_done_clock p rule received value) as Hresume.
+      assert (Hfinish : (T_finish p rule (rev_append (value :: received) nil) <=
+        32 * (M.c_micro + 1) * (row_work p s + 1))%N).
+      { apply finish_clock; [exact Henabled|].
+        intros a Hin; rewrite rev_append_rev, app_nil_r in Hin.
+        rewrite <- (in_rev (value :: received) a) in Hin; now apply Hvalues. }
+      nia.
+    - time_unfold T_resume; time_unfold @T_path_query.
+      time_simpl; time_cbn; nia.
+  Qed.
   Lemma T_target_le : forall p r, wf p -> In r (rows p) ->
     (T_target p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r _ _; pose proof (target_clock p r) as Hclock.
+    assert (Hscale : (C.c_cfg + 4 <= c_sys)%N) by (unfold c_sys; lia).
+    nia.
+  Qed.
   Lemma T_start_le : forall p r, wf p -> In r (rows p) ->
     (T_start p r <= c_sys * (row_work p 0 + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r _ _; pose proof (start_clock p r) as Hclock.
+    assert (Hscale : (2 * C.c_cfg + 16 <= c_sys)%N) by (unfold c_sys; lia).
+    nia.
+  Qed.
   Lemma T_resume_le : forall p r look s n q acc x f, wf p -> In r (rows p) ->
     (forall y, M.size (look y) <= s) ->
     loop_fuel (eval_step (resume p) look) n (start p r, nil) = inl (q, acc) ->
     fst (peel q acc) = inr (x, f) ->
     (T_resume p f (look x) <= c_sys * (row_work p s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [code rule] look s n q acc x f Hwf Hr Hlook Hloop Hpeel.
+    pose proof (listed_rule_enabled p (PathRow code rule) Hwf Hr) as Henabled.
+    destruct rule; destruct n as [|[|[|n]]];
+      cbn [start deps path_row_rule path_query loop_fuel eval_step peel resume fst snd]
+        in Hloop; try discriminate;
+      injection Hloop as <- <-;
+      cbn [peel fst snd] in Hpeel; try discriminate;
+      injection Hpeel as <- <-.
+    all: eapply resume_clock_le; [exact Henabled|cbn [length]; lia|].
+    all: intros value Hin; repeat destruct Hin as [<-|Hin]; try contradiction; apply Hlook.
+  Qed.
   Lemma T_deps_le : forall p r, wf p -> In r (rows p) ->
     (T_deps p r <= c_sys * N.of_nat (length (deps p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [code rule] _ _; destruct rule; unfold c_sys; time_step.
+  Qed.
   Lemma T_sides_le : forall p r, wf p -> In r (rows p) ->
     (T_sides p r <= c_sys * N.of_nat (length (sides p r) + 1) *
       N.of_nat (kw p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r _ _; unfold c_sys; time_step.
+  Qed.
   Lemma eval_size_le : forall p r look s a ss, wf p -> In r (rows p) ->
     (forall x, M.size (look x) <= s) -> eval p r look = Some (a, ss) ->
     (N.of_nat (M.size a) <= row_work p s)%N /\
     Forall (fun xb => (N.of_nat (M.size (snd xb)) <= row_work p s)%N) ss.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p r look s a ss Hwf Hr Hlook Heval.
+    rewrite eval_finish in Heval; injection Heval as <- <-.
+    split; [|constructor].
+    apply finish_size_le; [exact (listed_rule_enabled p r Hwf Hr)|].
+    intros value Hin; apply in_map_iff in Hin; destruct Hin as [x [<- Hx]].
+    apply Hlook.
+  Qed.
 End IdeT.
 
 Module IdeSound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
