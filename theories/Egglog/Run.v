@@ -6816,12 +6816,907 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       exists x. rewrite Hcopies. repeat split; assumption.
   Qed.
 
+  (** A scan step adds only its current position to the possible inverse-table values. *)
+  Lemma run_inverse_origin_step : forall inv result key pos len,
+    (forall k value, trie_get k result = Some value ->
+      trie_get k (PTrieCode.set key pos inv) = Some value \/
+        S pos <= value < S pos + len) ->
+    forall k value, trie_get k result = Some value ->
+      trie_get k inv = Some value \/ pos <= value < pos + S len.
+  Proof.
+    intros inv result key pos len Hlater k value Hget.
+    destruct (Hlater k value Hget) as [Hset|Hrange]; [|right; lia].
+    destruct (Pos.eq_dec k key) as [Heq|Hneq].
+    - subst k. rewrite PTrie.get_set_same in Hset. injection Hset as <-. right. lia.
+    - left. rewrite PTrie.get_set_other in Hset by exact Hneq. exact Hset.
+  Qed.
+
+  (** Every inverse entry comes from the initial table or a position actually scanned. *)
+  Lemma run_check_terms_origin : forall ts names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied',
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') -> forall key value,
+    trie_get key inv' = Some value ->
+      trie_get key inv = Some value \/ pos <= value < pos + length ts.
+  Proof.
+    induction ts as [|t ts IH]; intros names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' Hscan.
+    - cbn [check_terms] in Hscan. inversion Hscan; subst. intros key value Hget. now left.
+    - destruct t as [x|v]; cbn [check_terms] in Hscan; cbn [length].
+      + destruct (trie_get x seen).
+        * eapply run_inverse_origin_step. intros key value Hget. eapply IH; eassumption.
+        * destruct (trie_get x names); [|discriminate].
+          eapply run_inverse_origin_step. intros key value Hget. eapply IH; eassumption.
+      + destruct srcs as [|[slot|slot|[i|w]] srcs]; try discriminate.
+        destruct columns as [|[|j [|k column]] columns]; try discriminate.
+        destruct (V.eqb w v); [|discriminate].
+        eapply run_inverse_origin_step. intros key value Hget. eapply IH; eassumption.
+  Qed.
+
+  (** Scanning later positions cannot create a new entry at an earlier position. *)
+  Lemma run_check_terms_before : forall ts names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied',
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') -> forall key value,
+    value < pos -> trie_get key inv' = Some value -> trie_get key inv = Some value.
+  Proof.
+    intros ts names pos seen copy inv srcs columns copied copy' inv' srcs' columns' copied'
+      Hscan key value Hbefore Hget.
+    destruct (run_check_terms_origin ts names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' Hscan key value Hget) as [Hold|Hrange];
+      [exact Hold|lia].
+  Qed.
+
+  (** Inserting the current position preserves strict bounds for the next scan position. *)
+  Lemma run_inverse_before_set : forall inv key pos,
+    (forall k value, trie_get k inv = Some value -> value < pos) ->
+    forall k value, trie_get k (PTrieCode.set key pos inv) = Some value -> value < S pos.
+  Proof.
+    intros inv key pos Hbefore k value Hget.
+    destruct (Pos.eq_dec k key) as [Heq|Hneq].
+    - subst k. rewrite PTrie.get_set_same in Hget. injection Hget as <-. lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq.
+      specialize (Hbefore k value Hget). lia.
+  Qed.
+
+  (** Every tuple position is witnessed by an inverse entry reading that binding cell. *)
+  Definition run_inverse_positions (b cells : list (cell V.t)) (inv : ptrie nat)
+      (pos : nat) : Prop :=
+    forall k c, nth_error cells k = Some c -> exists j,
+      trie_get (N.succ_pos j) inv = Some (pos + k) /\
+      nth_error b (N.to_nat j) = Some c.
+
+  (** Removing a tuple head advances the position witnessed by its inverse. *)
+  Lemma run_inverse_positions_tail : forall b c cells inv pos,
+    run_inverse_positions b (c :: cells) inv pos ->
+    run_inverse_positions b cells inv (S pos).
+  Proof.
+    intros b c cells inv pos Hpositions k d Hnth.
+    destruct (Hpositions (S k) d Hnth) as [j [Hget Hbinding]].
+    exists j. split; [|exact Hbinding].
+    replace (S pos + k) with (pos + S k) by lia. exact Hget.
+  Qed.
+
+  (** A witnessed head position must read the key assigned at that scan step. *)
+  Lemma run_check_terms_head_cell : forall ts names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' idx b c cells,
+    check_terms V.eqb names ts (S pos) seen copy
+      (PTrieCode.set (N.succ_pos idx) pos inv) srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    (forall key value, trie_get key inv = Some value -> value < pos) ->
+    run_inverse_positions b (c :: cells) inv' pos -> nth_error b (N.to_nat idx) = Some c.
+  Proof.
+    intros ts names pos seen copy inv srcs columns copied copy' inv' srcs' columns' copied'
+      idx b c cells Hscan Hbefore Hpositions.
+    destruct (Hpositions 0 c eq_refl) as [j [Hget Hbinding]]. rewrite Nat.add_0_r in Hget.
+    pose proof (run_check_terms_before ts names (S pos) seen copy
+      (PTrieCode.set (N.succ_pos idx) pos inv) srcs columns copied
+      copy' inv' srcs' columns' copied' Hscan (N.succ_pos j) pos ltac:(lia) Hget) as Hset.
+    assert (Hkey : N.succ_pos j = N.succ_pos idx).
+    { destruct (Pos.eq_dec (N.succ_pos j) (N.succ_pos idx)) as [Heq|Hneq]; [exact Heq|].
+      rewrite PTrie.get_set_other in Hset by exact Hneq.
+      specialize (Hbefore (N.succ_pos j) pos Hset). lia. }
+    apply run_succ_pos_inj in Hkey. now subst j.
+  Qed.
+
+  (** A successful term scan advances its copy counter by exactly its repeated variables. *)
+  Lemma run_check_terms_count : forall ts names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied',
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    copy' = (copy + N.of_nat (length (run_term_duplicates seen ts)))%N.
+  Proof.
+    induction ts as [|[x|v] ts IH]; intros names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' Hscan; cbn [check_terms] in Hscan.
+    - inversion Hscan; subst. now rewrite N.add_0_r.
+    - cbn [run_term_duplicates]. destruct (trie_get x seen) eqn:Hseen.
+      + pose proof (IH names (S pos) seen (N.succ copy)
+          (PTrieCode.set (N.succ_pos copy) pos inv) srcs columns true
+          copy' inv' srcs' columns' copied' Hscan) as Hcount.
+        cbn [length]. rewrite Nat2N.inj_succ. lia.
+      + destruct (trie_get x names); [eapply IH; exact Hscan|discriminate].
+    - destruct srcs as [|[slot|slot|[i|w]] srcs]; try discriminate.
+      destruct columns as [|[|j [|k column]] columns]; try discriminate.
+      destruct (V.eqb w v); [eapply IH; exact Hscan|discriminate].
+  Qed.
+
+  (** A distinct bounded permutation of full length visits every position. *)
+  Lemma run_perm_covers : forall perm width,
+    NoDup perm -> Forall (fun p => p < width) perm -> length perm = width ->
+    forall p, p < width -> In p perm.
+  Proof.
+    intros perm width Hnodup Hfits Hlength.
+    assert (Hsubset : incl perm (seq 0 width)).
+    { intros p Hin. apply in_seq. split; [lia|].
+      now apply Forall_forall with (x := p) in Hfits. }
+    assert (Hcover : incl (seq 0 width) perm).
+    { apply NoDup_length_incl; [exact Hnodup| |exact Hsubset].
+      rewrite length_seq, Hlength. lia. }
+    intros p Hbound. apply Hcover. apply in_seq. lia.
+  Qed.
+
+  (** Equal full projections pair the selected binding and tuple cells. *)
+  Lemma run_project_permute_cells : forall perm lv b cells,
+    length lv = length perm -> Forall (fun pos => pos < length cells) perm ->
+    J.project lv b = Some (D.permute perm cells) ->
+    Forall2 (fun j pos => exists c,
+      nth_error b j = Some c /\ nth_error cells pos = Some c) lv perm.
+  Proof.
+    induction perm as [|pos perm IH]; intros [|j lv] b cells Hlength Hfits Hproject;
+      cbn [length] in Hlength; try discriminate; [constructor|].
+    inversion Hfits as [|p ps Hbound Htail]; subst p ps.
+    assert (Hexists : nth_error cells pos <> None) by (now apply nth_error_Some).
+    destruct (nth_error cells pos) as [c|] eqn:Hcell; [|contradiction].
+    change (match nth_error b j, J.project lv b with
+      | Some d, Some ds => Some (d :: ds) | _, _ => None end =
+      Some (option_list (nth_error cells pos) ++ D.permute perm cells)) in Hproject.
+    rewrite Hcell in Hproject. cbn [option_list app] in Hproject.
+    destruct (nth_error b j) as [d|] eqn:Hbinding; [|discriminate].
+    destruct (J.project lv b) as [ds|] eqn:Hrest; [|discriminate].
+    injection Hproject as Heq Hds. subst d ds. constructor.
+    - exists c. split; assumption.
+    - apply IH; [lia|exact Htail|exact Hrest].
+  Qed.
+
+  (** A listed permutation position has its recorded inverse key and tuple cell. *)
+  Lemma run_column_position : forall lv perm inv (b : list (cell V.t)) cells,
+    Forall2 (fun j pos => trie_get (N.succ_pos (nat_n j)) inv = Some pos) lv perm ->
+    Forall2 (fun j pos => exists c,
+      nth_error b j = Some c /\ nth_error cells pos = Some c) lv perm ->
+    forall pos c, In pos perm -> nth_error cells pos = Some c -> exists j,
+      trie_get (N.succ_pos (nat_n j)) inv = Some pos /\ nth_error b j = Some c.
+  Proof.
+    intros lv perm inv b cells Hlookups.
+    induction Hlookups as [|j p lv perm Hlookup Htail IH];
+      intros Hvalues pos c Hin Hcell; [contradiction|].
+    inversion Hvalues as [|j' p' lv' perm' Hvalue Hrest]; subst j' p' lv' perm'.
+    destruct Hin as [Heq|Hin].
+    - subst pos. destruct Hvalue as [d [Hbinding Hd]]. rewrite Hcell in Hd.
+      injection Hd as <-. exists j. split; assumption.
+    - eapply IH; eassumption.
+  Qed.
+
+  (** A complete checked permutation witnesses every original tuple position in its inverse. *)
+  Lemma run_column_inverse_positions : forall lv inv used count perm used' count' b cells,
+    column_perm inv lv used count = Some (perm, used', count') -> NoDup perm ->
+    length cells = length lv ->
+    (forall j pos, trie_get (N.succ_pos j) inv = Some pos -> pos < length cells) ->
+    J.project lv b = Some (D.permute perm cells) -> run_inverse_positions b cells inv 0.
+  Proof.
+    intros lv inv used count perm used' count' b cells Hscan Hnodup Hlength Hrange Hproject.
+    destruct (run_column_perm_sound lv inv used count perm used' count' Hscan)
+      as [Hperm_length [Hlookups _]].
+    assert (Hfits : Forall (fun pos => pos < length cells) perm).
+    { clear -Hlookups Hrange.
+      induction Hlookups as [|j pos lv perm Hlookup Htail IH].
+      - constructor.
+      - constructor; [eapply Hrange; exact Hlookup|exact IH]. }
+    pose proof (run_project_permute_cells perm lv b cells ltac:(lia) Hfits Hproject)
+      as Hvalues.
+    intros pos c Hcell.
+    assert (Hbound : pos < length cells).
+    { apply nth_error_Some. rewrite Hcell. discriminate. }
+    assert (Hin : In pos perm).
+    { apply (run_perm_covers perm (length cells) Hnodup Hfits); lia. }
+    destruct (run_column_position lv perm inv b cells Hlookups Hvalues pos c Hin Hcell)
+      as [j [Hget Hbinding]].
+    exists (nat_n j). split; [exact Hget|].
+    now rewrite planner_nat_n_spec, Nat2N.id.
+  Qed.
+
+
+  (** Binding two argument segments composes their successive contexts. *)
+  Lemma run_binds_list_app : forall g (args : list (term V.t)) ss g1,
+    binds_list g args ss g1 -> forall rest tt g2,
+    binds_list g1 rest tt g2 -> binds_list g (args ++ rest) (ss ++ tt) g2.
+  Proof.
+    intros g args ss g1 Hargs. induction Hargs as [g|g h g1 t ts ty tys Ht Hts IH];
+      intros rest tt g2 Hrest; cbn [app].
+    - exact Hrest.
+    - econstructor; [exact Ht|now apply IH].
+  Qed.
+
+  (** Binding a typed optional result is binding its optional output-cell list. *)
+  Lemma run_binds_result_list : forall g out (res : option (term V.t)) g'
+      (o : option (cell V.t)),
+    binds_result g out res g' -> option_map cell_sort o = out_sort out ->
+    binds_list g (option_list res) (map cell_sort (option_list o)) g'.
+  Proof.
+    intros g out res g' o Hresult Hsort.
+    destruct out as [| |m]; destruct res as [t|]; destruct o as [c|];
+      cbn [binds_result out_sort option_map] in Hresult, Hsort;
+      try contradiction; try discriminate.
+    - subst g'. constructor.
+    - injection Hsort as Hsort. cbn [option_list map]. rewrite Hsort.
+      econstructor; [exact Hresult|constructor].
+    - injection Hsort as Hsort. cbn [option_list map]. rewrite Hsort.
+      econstructor; [exact Hresult|constructor].
+  Qed.
+
+  (** Function arguments and result bind exactly the row's concatenated cell sorts. *)
+  Lemma run_binds_atom_row : forall g (args : list (term V.t)) ss g1 out res g2
+      (k : list (cell V.t)) o,
+    binds_list g args ss g1 -> binds_result g1 out res g2 ->
+    map cell_sort k = ss -> option_map cell_sort o = out_sort out ->
+    binds_list g (args ++ option_list res) (map cell_sort (k ++ option_list o)) g2.
+  Proof.
+    intros g args ss g1 out res g2 k o Hargs Hresult Hsort Hout.
+    rewrite map_app, Hsort. eapply run_binds_list_app; [exact Hargs|].
+    eapply run_binds_result_list; eassumption.
+  Qed.
+
+  (** A bound argument list and a row with its declared sorts have equal lengths. *)
+  Lemma run_binds_row_length : forall g (args : list (term V.t)) ss g' (k : list (cell V.t)),
+    binds_list g args ss g' -> map cell_sort k = ss -> length args = length k.
+  Proof.
+    intros g args ss g' k Hargs Hsort.
+    pose proof (planner_binds_length _ _ _ _ Hargs) as Hlength.
+    rewrite <- Hsort, length_map in Hlength. exact Hlength.
+  Qed.
+
+  (** A successful constant-source projection fixes its one binding cell. *)
+  Lemma run_constant_source_cell : forall db b v j srcs columns,
+    run_sources_satisfied db b (Const V.t (Val v) :: srcs) ([j] :: columns) ->
+    nth_error b j = Some (Val v) /\ run_sources_satisfied db b srcs columns.
+  Proof.
+    intros db b v j srcs columns Hsources.
+    inversion Hsources as [|src col rest cols Hhead Htail]; subst src col rest cols.
+    destruct Hhead as [u [Hproject Hmem]].
+    apply (proj1 (I.mem_insert 1 [Val v] I.empty u (I.wf_empty 1) eq_refl)) in Hmem.
+    destruct Hmem as [Heq|Hempty]; [subst u|exfalso; exact (I.mem_empty u Hempty)].
+    cbn [J.project project_cells fold_right] in Hproject.
+    destruct (nth_error b j) as [c|] eqn:Hcell; [|discriminate].
+    injection Hproject as <-. split; [reflexivity|exact Htail].
+  Qed.
+
+  (** Checked names read existing binding cells through the binding environment. *)
+  Lemma run_checked_names_cells : forall vars names (b : list (cell V.t)),
+    var_table vars 0 Empty = Some names -> length b = length vars ->
+    forall x j, trie_get x names = Some j -> exists c,
+      nth_error b (N.to_nat j) = Some c /\ binding_env vars b x = Some c.
+  Proof.
+    intros vars names b Htable Hlength x j Hget.
+    destruct (run_var_table_spec vars names Htable) as [Hnodup Hindices].
+    apply Hindices in Hget.
+    assert (Hbound : N.to_nat j < length b).
+    { rewrite Hlength. apply nth_error_Some. rewrite Hget. discriminate. }
+    assert (Hexists : nth_error b (N.to_nat j) <> None) by (now apply nth_error_Some).
+    destruct (nth_error b (N.to_nat j)) as [c|] eqn:Hcell; [|contradiction].
+    exists c. split; [reflexivity|].
+    rewrite (run_binding_env_position vars b (N.to_nat j) x Hnodup Hget). exact Hcell.
+  Qed.
+
+  (** A relation on two lists supplies the paired element at any right-hand position. *)
+  Lemma run_Forall2_nth_right : forall A B (R : A -> B -> Prop) xs ys,
+    Forall2 R xs ys -> forall j y, nth_error ys j = Some y ->
+    exists x, nth_error xs j = Some x /\ R x y.
+  Proof.
+    intros A B R xs ys Hrelated.
+    induction Hrelated as [|x y xs ys Hhead Htail IH]; intros [|j] z Hnth;
+      try discriminate.
+    - injection Hnth as <-. exists x. split; [reflexivity|exact Hhead].
+    - apply IH. exact Hnth.
+  Qed.
+
+  (** Successful copy comparisons identify each copy-position cell with its variable. *)
+  Lemma run_binding_copies_sound : forall vars (b : list (cell V.t)) copies,
+    NoDup vars ->
+    Forall2 (fun z x => exists c,
+      trie_get z (bind_cells vars b Empty) = Some c /\
+      trie_get x (bind_cells vars b Empty) = Some c)
+      (firstn (length copies) vars) copies ->
+    forall j x, nth_error copies j = Some x -> exists c,
+      nth_error b j = Some c /\ binding_env vars b x = Some c.
+  Proof.
+    intros vars b copies Hnodup Hcopies j x Hnth.
+    destruct (run_Forall2_nth_right _ _ _ _ _ Hcopies j x Hnth)
+      as [z [Hz [c [Hzcell Hxcell]]]].
+    assert (Hbound : j < length copies).
+    { apply nth_error_Some. rewrite Hnth. discriminate. }
+    assert (Htest : Nat.ltb j (length copies) = true) by (now apply Nat.ltb_lt).
+    rewrite nth_error_firstn, Htest in Hz.
+    rewrite !run_binding_trie_get in Hzcell, Hxcell.
+    exists c. split; [|exact Hxcell].
+    rewrite (run_binding_env_position vars b j z Hnodup Hz) in Hzcell. exact Hzcell.
+  Qed.
+
+  (** Complete inverse positions and checked copies interpret every scanned term. *)
+  Lemma run_check_terms_values : forall ts names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' s b cells db,
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    length ts = length cells ->
+    (forall key value, trie_get key inv = Some value -> value < pos) ->
+    run_inverse_positions b cells inv' pos ->
+    (forall x j, trie_get x names = Some j -> exists c,
+      nth_error b (N.to_nat j) = Some c /\ s x = Some c) ->
+    (forall k x, nth_error (run_term_duplicates seen ts) k = Some x -> exists c,
+      nth_error b (N.to_nat copy + k) = Some c /\ s x = Some c) ->
+    run_sources_satisfied db b srcs columns ->
+    terms_value s ts cells /\ run_sources_satisfied db b srcs' columns'.
+  Proof.
+    induction ts as [|t ts IH]; intros names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' s b cells db Hscan Hlength Hbefore Hpositions
+      Hnames Hcopies Hsources.
+    - destruct cells; [|discriminate]. cbn [check_terms] in Hscan.
+      inversion Hscan; subst. split; [constructor|exact Hsources].
+    - destruct cells as [|c cells]; [discriminate|].
+      assert (Hrest_length : length ts = length cells) by (cbn in Hlength; lia).
+      pose proof (run_inverse_positions_tail b c cells inv' pos Hpositions) as Hrest_positions.
+      destruct t as [x|v]; cbn [check_terms] in Hscan.
+      + destruct (trie_get x seen) eqn:Hseen.
+        * pose proof (run_check_terms_head_cell ts names pos seen (N.succ copy) inv
+            srcs columns true copy' inv' srcs' columns' copied' copy b c cells
+            Hscan Hbefore Hpositions) as Hcell.
+          cbn [run_term_duplicates] in Hcopies. rewrite Hseen in Hcopies.
+          destruct (Hcopies 0 x eq_refl) as [d [Hd Hvalue]]. rewrite Nat.add_0_r in Hd.
+          rewrite Hcell in Hd. injection Hd as <-.
+          assert (Hrest_copies : forall k y,
+              nth_error (run_term_duplicates seen ts) k = Some y -> exists d,
+              nth_error b (N.to_nat (N.succ copy) + k) = Some d /\ s y = Some d).
+          { intros k y Hnth. rewrite N2Nat.inj_succ.
+            replace (S (N.to_nat copy) + k) with (N.to_nat copy + S k) by lia.
+            exact (Hcopies (S k) y Hnth). }
+          destruct (IH names (S pos) seen (N.succ copy)
+            (PTrieCode.set (N.succ_pos copy) pos inv) srcs columns true
+            copy' inv' srcs' columns' copied' s b cells db Hscan Hrest_length
+            (run_inverse_before_set inv (N.succ_pos copy) pos Hbefore)
+            Hrest_positions Hnames Hrest_copies Hsources) as [Hvalues Hremaining].
+          split; [constructor; [exact Hvalue|exact Hvalues]|exact Hremaining].
+        * destruct (trie_get x names) as [j|] eqn:Hname; [|discriminate].
+          pose proof (run_check_terms_head_cell ts names pos (PTrieCode.set x tt seen)
+            copy inv srcs columns copied copy' inv' srcs' columns' copied' j b c cells
+            Hscan Hbefore Hpositions) as Hcell.
+          destruct (Hnames x j Hname) as [d [Hd Hvalue]]. rewrite Hcell in Hd.
+          injection Hd as <-. cbn [run_term_duplicates] in Hcopies. rewrite Hseen in Hcopies.
+          destruct (IH names (S pos) (PTrieCode.set x tt seen) copy
+            (PTrieCode.set (N.succ_pos j) pos inv) srcs columns copied
+            copy' inv' srcs' columns' copied' s b cells db Hscan Hrest_length
+            (run_inverse_before_set inv (N.succ_pos j) pos Hbefore)
+            Hrest_positions Hnames Hcopies Hsources) as [Hvalues Hremaining].
+          split; [constructor; [exact Hvalue|exact Hvalues]|exact Hremaining].
+      + destruct srcs as [|[slot|slot|[i|w]] srcs]; try discriminate.
+        destruct columns as [|[|j [|k column]] columns]; try discriminate.
+        destruct (V.eqb_spec w v) as [Heq|Hneq]; [subst w|discriminate].
+        pose proof (run_check_terms_head_cell ts names pos seen copy inv srcs columns
+          copied copy' inv' srcs' columns' copied' (nat_n j) b c cells
+          Hscan Hbefore Hpositions) as Hcell.
+        rewrite planner_nat_n_spec, Nat2N.id in Hcell.
+        destruct (run_constant_source_cell db b v j srcs columns Hsources)
+          as [Hliteral Htail].
+        rewrite Hliteral in Hcell. injection Hcell as <-.
+        destruct (IH names (S pos) seen copy
+          (PTrieCode.set (N.succ_pos (nat_n j)) pos inv) srcs columns copied
+          copy' inv' srcs' columns' copied' s b cells db Hscan Hrest_length
+          (run_inverse_before_set inv (N.succ_pos (nat_n j)) pos Hbefore)
+          Hrest_positions Hnames Hcopies Htail) as [Hvalues Hremaining].
+        split; [constructor; [reflexivity|exact Hvalues]|exact Hremaining].
+  Qed.
+
+
+  (** Matching a slot from a successful table gives a distinct permutation. *)
+  Lemma run_slot_matches_nodup : forall widths sl table f perm slot,
+    slot_table widths sl 0 Empty = Some table -> slot_matches table f perm slot = true ->
+    NoDup perm.
+  Proof.
+    intros widths sl table f perm slot Htable Hmatch.
+    pose proof (run_slot_matches_index widths sl table f perm slot Htable Hmatch) as Hnth.
+    apply nth_error_In in Hnth.
+    destruct (slot_table_member sl widths 0 Empty table f perm Htable Hnth)
+      as [width [_ Hperm]].
+    exact (proj1 (perm_ok_sound perm width Empty Hperm)).
+  Qed.
+
+  (** An indexed tuple at a known slot comes from a row of exactly that slot's function. *)
+  Lemma run_index_row : forall db slot new f perm tuple,
+    D.wf db -> D.slot_of db slot = Some (f, perm) ->
+    I.mem (D.index slot new db) tuple -> exists k o,
+      row (D.view db) f k o /\ tuple = D.permute perm (k ++ option_list o).
+  Proof.
+    intros db slot new f perm tuple Hwf Hslot Hmem.
+    destruct (D.index_all db slot new tuple Hwf Hmem)
+      as [g [other [k [o [Hfound [Hrow Htuple]]]]]].
+    rewrite Hslot in Hfound. injection Hfound as <- <-. exists k, o. split; assumption.
+  Qed.
+
+  (** An accepted slot source returns a row projected through its checked permutation. *)
+  Lemma run_source_row : forall db widths sl table newok src slot f perm tuple,
+    D.wf db -> D.slots db = sl -> slot_table widths sl 0 Empty = Some table ->
+    source_slot newok src = Some slot -> slot_matches table f perm slot = true ->
+    I.mem (source_index db src) tuple -> exists k o,
+      row (D.view db) f k o /\ tuple = D.permute perm (k ++ option_list o).
+  Proof.
+    intros db widths sl table newok src slot f perm tuple Hwf Hslots Htable Hsource Hmatch
+      Hmem.
+    assert (Hslot : D.slot_of db slot = Some (f, perm)).
+    { unfold D.slot_of. rewrite Hslots.
+      exact (run_slot_matches_index widths sl table f perm slot Htable Hmatch). }
+    destruct src as [s|s|c]; cbn [source_slot source_index] in *; try discriminate.
+    - injection Hsource as <-. eapply run_index_row; eassumption.
+    - destruct newok; [|discriminate]. injection Hsource as <-.
+      eapply run_index_row; eassumption.
+  Qed.
+
+  (** A loaded row has precisely the argument and output sorts selected by its program. *)
+  Lemma run_loaded_row_sorts : forall p cp db f ss kindout k o,
+    loaded p cp db -> program_sorts p f = Some ss -> program_kind p f = Some kindout ->
+    row (D.view db) f k o -> map cell_sort k = ss /\ option_map cell_sort o = out_sort kindout.
+  Proof.
+    intros p cp db f ss kindout k o [Hkinds [_ Hsorted]] Hsort Hkind Hrow.
+    destruct (Hsorted f k o Hrow) as [out [Hargs [Hout Hresult]]].
+    rewrite Hkinds, Hkind in Hout. injection Hout as <-.
+    split; [congruence|exact Hresult].
+  Qed.
+
+  (** The typing of a function atom binds exactly the cells and sorts of any loaded row. *)
+  Lemma run_atom_row_bindings : forall p cp db f (args : list (term V.t)) res
+      g g1 g2 ss kindout k o,
+    loaded p cp db -> program_sorts p f = Some ss -> program_kind p f = Some kindout ->
+    binds_list g args ss g1 -> binds_result g1 kindout res g2 -> row (D.view db) f k o ->
+    binds_list g (args ++ option_list res) (map cell_sort (k ++ option_list o)) g2 /\
+    length args = length k /\ length (args ++ option_list res) = length (k ++ option_list o).
+  Proof.
+    intros p cp db f args res g g1 g2 ss kindout k o Hloaded Hsort Hkind Hargs Hres Hrow.
+    destruct (run_loaded_row_sorts p cp db f ss kindout k o Hloaded Hsort Hkind Hrow)
+      as [Harg_sorts Hout_sort].
+    pose proof (run_binds_atom_row g args ss g1 kindout res g2 k o Hargs Hres
+      Harg_sorts Hout_sort) as Hbinds.
+    split; [exact Hbinds|]. split.
+    - exact (run_binds_row_length g args ss g1 k Hargs Harg_sorts).
+    - pose proof (planner_binds_length _ _ _ _ Hbinds) as Hlength.
+      now rewrite length_map in Hlength.
+  Qed.
+
+  (** An accepted atom exposes its row and witnesses every term's original tuple position. *)
+  Lemma run_check_atom_tuple : forall db widths sl table newok names n f ts copy used count
+      srcs columns copy' used' count' srcs' columns' copied b,
+    D.wf db -> D.slots db = sl -> slot_table widths sl 0 Empty = Some table ->
+    check_atom V.eqb newok names n table f ts copy used count srcs columns =
+      Some (copy', used', count', srcs', columns', copied) ->
+    run_sources_satisfied db b srcs columns ->
+    (forall k o, row (D.view db) f k o -> length (k ++ option_list o) = length ts) ->
+    exists k o inv before_srcs before_cols,
+      row (D.view db) f k o /\
+      check_terms V.eqb names ts 0 Empty copy Empty before_srcs before_cols false =
+        Some (copy', inv, srcs', columns', copied) /\
+      run_inverse_positions b (k ++ option_list o) inv 0 /\
+      length ts = length (k ++ option_list o) /\
+      run_sources_satisfied db b before_srcs before_cols.
+  Proof.
+    intros db widths sl table newok names n f ts copy used count srcs columns copy' used'
+      count' srcs' columns' copied b Hwf Hslots Htable Hcheck Hsources Hwidth.
+    destruct (run_check_atom_parts newok names n table f ts copy used count srcs columns
+      copy' used' count' srcs' columns' copied Hcheck)
+      as [src [src_tail [lv [col_tail [slot [inv [perm
+        [Hsrcs [Hcols [Hsource [Hcolumn [Hlength [Hterms [Hperm Hmatch]]]]]]]]]]]]]].
+    subst srcs columns.
+    inversion Hsources as [|src' lv' src_tail' col_tail' Hhead Htail];
+      subst src' lv' src_tail' col_tail'.
+    destruct Hhead as [tuple [Hproject Hmem]].
+    destruct (run_source_row db widths sl table newok src slot f perm tuple Hwf Hslots
+      Htable Hsource Hmatch Hmem) as [k [o [Hrow Htuple]]].
+    subst tuple.
+    pose proof (Hwidth k o Hrow) as Hrow_length.
+    assert (Hrange : forall j pos,
+        trie_get (N.succ_pos j) inv = Some pos -> pos < length (k ++ option_list o)).
+    { intros j pos Hget.
+      destruct (run_check_terms_origin ts names 0 Empty copy Empty src_tail col_tail false
+        copy' inv srcs' columns' copied Hterms (N.succ_pos j) pos Hget)
+        as [Hempty|Hbound].
+      - rewrite PTrie.get_empty in Hempty. discriminate.
+      - rewrite Hrow_length. lia. }
+    exists k, o, inv, src_tail, col_tail. split; [exact Hrow|]. split; [exact Hterms|].
+    split.
+    - eapply run_column_inverse_positions; [exact Hperm| |lia|exact Hrange|exact Hproject].
+      exact (run_slot_matches_nodup widths sl table f perm slot Htable Hmatch).
+    - split; [symmetry; exact Hrow_length|exact Htail].
+  Qed.
+
+
+  (** Binding a term preserves every previously bound context entry. *)
+  Lemma run_binds_preserves : forall g (term : term V.t) ty g',
+    binds g term ty g' -> forall x other, g x = Some other -> g' x = Some other.
+  Proof.
+    intros g term ty g' Hbind. destruct Hbind as [y ty Hget|y ty Hnone|v];
+      intros x other Hold; try exact Hold.
+    unfold ctx_set. destruct (Pos.eqb_spec y x) as [Heq|Hneq]; [subst x; congruence|].
+    exact Hold.
+  Qed.
+
+  (** A bound variable is present in the resulting context at the requested sort. *)
+  Lemma run_binds_var_bound : forall g x ty g',
+    @binds V.t g (Var x) ty g' -> g' x = Some ty.
+  Proof.
+    intros g x ty g' Hbind. inversion Hbind; subst.
+    - assumption.
+    - unfold ctx_set. now rewrite Pos.eqb_refl.
+  Qed.
+
+  (** A term binding keeps an already sorted environment when its new cell has that sort. *)
+  Lemma run_binds_env_value : forall g (term : term V.t) ty g' s c,
+    binds g term ty g' -> env_sorted g s -> term_value s term c -> cell_sort c = ty ->
+    env_sorted g' s.
+  Proof.
+    intros g term ty g' s c Hbind Henv Hvalue Hsort.
+    destruct Hbind as [x ty Hget|x ty Hnone|v]; try exact Henv.
+    intros y other Hctx. unfold ctx_set in Hctx.
+    destruct (Pos.eqb_spec x y) as [Heq|Hneq].
+    - subst y. injection Hctx as <-. exists c. split; assumption.
+    - now apply Henv.
+  Qed.
+
+  (** A repeated variable cannot allocate a new context entry. *)
+  Lemma run_binds_env_existing : forall g x ty g' (s : Model.env (V := V.t)),
+    @binds V.t g (Var x) ty g' -> (exists other, g x = Some other) -> env_sorted g s ->
+    env_sorted g' s.
+  Proof.
+    intros g x ty g' s Hbind [other Hbound] Henv. inversion Hbind; subst.
+    - exact Henv.
+    - congruence.
+  Qed.
+
+  (** A complete checked inverse gives a sorted environment for all newly bound term names. *)
+  Lemma run_check_terms_sorted : forall ts cells g g' names pos seen copy inv srcs columns
+      copied copy' inv' srcs' columns' copied' b s,
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    binds_list g ts (map cell_sort cells) g' ->
+    (forall key value, trie_get key inv = Some value -> value < pos) ->
+    run_inverse_positions b cells inv' pos ->
+    (forall x j, trie_get x names = Some j -> exists c,
+      nth_error b (N.to_nat j) = Some c /\ s x = Some c) ->
+    (forall x, trie_get x seen = Some tt -> exists ty, g x = Some ty) ->
+    env_sorted g s -> env_sorted g' s.
+  Proof.
+    induction ts as [|term rest IH]; intros cells g g' names pos seen copy inv srcs columns
+      copied copy' inv' srcs' columns' copied' b s Hcheck Hbinds Hbefore Hpositions Hnames
+      Hseen Henv.
+    - inversion Hbinds; subst. exact Henv.
+    - destruct cells as [|c cells]; [inversion Hbinds|].
+      inversion Hbinds as [|g0 middle g2 term' rest' ty types Hhead Htail];
+        subst g0 g2 term' rest' ty types.
+      assert (Hseen_keep : forall x, trie_get x seen = Some tt ->
+          exists ty, middle x = Some ty).
+      { intros x Hget. destruct (Hseen x Hget) as [ty Hbound]. exists ty.
+        eapply run_binds_preserves; eassumption. }
+      pose proof (run_inverse_positions_tail b c cells inv' pos Hpositions) as Hpositions_tail.
+      destruct term as [x|v]; cbn [check_terms] in Hcheck.
+      + destruct (trie_get x seen) as [[]|] eqn:Hget.
+        * eapply (IH cells middle g' names (S pos) seen (N.succ copy)
+            (PTrieCode.set (N.succ_pos copy) pos inv) srcs columns true
+            copy' inv' srcs' columns' copied' b s Hcheck Htail).
+          -- now apply run_inverse_before_set.
+          -- exact Hpositions_tail.
+          -- exact Hnames.
+          -- exact Hseen_keep.
+          -- eapply run_binds_env_existing; [exact Hhead|now apply Hseen|exact Henv].
+        * destruct (trie_get x names) as [j|] eqn:Hname; [|discriminate].
+          pose proof (run_check_terms_head_cell rest names pos (PTrieCode.set x tt seen)
+            copy inv srcs columns copied copy' inv' srcs' columns' copied' j b c cells
+            Hcheck Hbefore Hpositions) as Hcell.
+          destruct (Hnames x j Hname) as [d [Hbinding Hvalue]].
+          rewrite Hcell in Hbinding. injection Hbinding as <-.
+          eapply (IH cells middle g' names (S pos) (PTrieCode.set x tt seen) copy
+            (PTrieCode.set (N.succ_pos j) pos inv) srcs columns copied
+            copy' inv' srcs' columns' copied' b s Hcheck Htail).
+          -- now apply run_inverse_before_set.
+          -- exact Hpositions_tail.
+          -- exact Hnames.
+          -- intros y Hlookup. destruct (Pos.eq_dec y x) as [Heq|Hneq].
+             ++ subst y. exists (cell_sort c). now apply run_binds_var_bound with (g := g).
+             ++ rewrite PTrie.get_set_other in Hlookup by exact Hneq. now apply Hseen_keep.
+          -- eapply run_binds_env_value; [exact Hhead|exact Henv|exact Hvalue|reflexivity].
+      + destruct srcs as [|[slot|slot|[i|w]] srcs]; try discriminate.
+        destruct columns as [|[|j [|k column]] columns]; try discriminate.
+        destruct (V.eqb w v); [|discriminate].
+        eapply (IH cells middle g' names (S pos) seen copy
+          (PTrieCode.set (N.succ_pos (nat_n j)) pos inv) srcs columns copied
+          copy' inv' srcs' columns' copied' b s Hcheck Htail).
+        * now apply run_inverse_before_set.
+        * exact Hpositions_tail.
+        * exact Hnames.
+        * exact Hseen_keep.
+        * inversion Hhead; subst. exact Henv.
+  Qed.
+
+  (** Removing the literal prefix consumed by a term check preserves source satisfaction. *)
+  Lemma run_check_terms_satisfied_tail : forall ts names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' db b,
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    run_sources_satisfied db b srcs columns -> run_sources_satisfied db b srcs' columns'.
+  Proof.
+    induction ts as [|[x|v] rest IH]; intros names pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied' db b Hcheck Hsources;
+      cbn [check_terms] in Hcheck.
+    - injection Hcheck as <- <- <- <- <-. exact Hsources.
+    - destruct (trie_get x seen).
+      + eapply IH; eassumption.
+      + destruct (trie_get x names); [eapply IH; eassumption|discriminate].
+    - destruct srcs as [|[slot|slot|[i|w]] srcs]; try discriminate.
+      destruct columns as [|[|j [|k column]] columns]; try discriminate.
+      destruct (V.eqb w v); [|discriminate].
+      inversion Hsources as [|src lv restSrc restCols Hhead Htail]; subst.
+      eapply IH; eassumption.
+  Qed.
+
+  (** A join answer satisfies the original sources paired with their columns. *)
+  Lemma run_join_answer_sources : forall db b j srcs,
+    J.answer j (map (source_index db) srcs) b ->
+    run_sources_satisfied db b srcs (cols j).
+  Proof.
+    intros db b [n columns] srcs [_ Hanswer]. cbn [cols] in *.
+    revert columns Hanswer. induction srcs as [|src srcs IH]; intros [|lv columns] Hanswer;
+      inversion Hanswer as [|lv' ix columns' indexes Hhead Htail]; subst; [constructor|].
+    constructor; [exact Hhead|now apply IH].
+  Qed.
+
+  (** Raw checked query bindings type every context produced by the query's function atoms. *)
+  Lemma run_check_query_sorted : forall p cp db table,
+    D.wf db -> loaded p cp db ->
+    slot_table (decl_widths (decls V.t p) Empty) (Syntax.slots V.t cp) 0 Empty = Some table ->
+    forall g q g', query_ok (program_sorts p) (program_kind p) g q g' ->
+    forall newok names n ai copy used count srcs columns post
+      finalcount srcs' columns' expected b s,
+    check_query V.eqb newok names n table q ai copy used count srcs columns post =
+      Some (finalcount, srcs', columns', expected) ->
+    run_sources_satisfied db b srcs columns ->
+    (forall x j, trie_get x names = Some j -> exists c,
+      nth_error b (N.to_nat j) = Some c /\ s x = Some c) ->
+    env_sorted g s -> env_sorted g' s.
+  Proof.
+    intros p cp db table Hwf Hloaded Htable g q g' Htyped.
+    induction Htyped as [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hread Hargs Hres
+      Htyped IH|g g1 primitive args res rest Hargs Hres Htyped IH];
+      intros newok names n ai copy used count srcs columns post finalcount srcs' columns'
+      expected b s Hcheck Hsources Hnames Henv.
+    - exact Henv.
+    - cbn [check_query] in Hcheck.
+      destruct (check_atom V.eqb newok names n table f (args ++ option_list res)
+        copy used count srcs columns) as [[[[[[nextcopy nextused] nextcount]
+        nextsrcs] nextcols] copied]|] eqn:Hatom; [|discriminate].
+      assert (Hwidth : forall k o, row (D.view db) f k o ->
+          length (k ++ option_list o) = length (args ++ option_list res)).
+      { intros k o Hrow.
+        destruct (run_atom_row_bindings p cp db f args res g g1 g2 ss out k o
+          Hloaded Hsort Hkind Hargs Hres Hrow) as [_ [_ Hlength]]. now symmetry. }
+      destruct (run_check_atom_tuple db (decl_widths (decls V.t p) Empty)
+        (Syntax.slots V.t cp) table newok names n f (args ++ option_list res)
+        copy used count srcs columns nextcopy nextused nextcount nextsrcs nextcols copied b
+        Hwf (proj1 (proj2 Hloaded)) Htable Hatom Hsources Hwidth)
+        as [k [o [inv [before_srcs [before_cols [Hrow [Hterms [Hpositions
+          [Hlength Hbefore]]]]]]]]].
+      destruct (run_atom_row_bindings p cp db f args res g g1 g2 ss out k o
+        Hloaded Hsort Hkind Hargs Hres Hrow) as [Hbinds _].
+      assert (Hsorted : env_sorted g2 s).
+      { eapply (run_check_terms_sorted (args ++ option_list res) (k ++ option_list o)
+          g g2 names 0 Empty copy Empty before_srcs before_cols false nextcopy inv
+          nextsrcs nextcols copied b s Hterms Hbinds).
+        - intros key value Hget. rewrite PTrie.get_empty in Hget. discriminate.
+        - exact Hpositions.
+        - exact Hnames.
+        - intros x Hget. rewrite PTrie.get_empty in Hget. discriminate.
+        - exact Henv. }
+      assert (Hremaining : run_sources_satisfied db b nextsrcs nextcols).
+      { eapply run_check_terms_satisfied_tail; eassumption. }
+      exact (IH newok names n (S ai) nextcopy nextused nextcount nextsrcs nextcols
+        (if copied then ai :: post else post) finalcount srcs' columns' expected b s
+        Hcheck Hremaining Hnames Hsorted).
+    - exact (IH newok names n (S ai) copy used count srcs columns (ai :: post)
+        finalcount srcs' columns' expected b s Hcheck Hsources Hnames Henv).
+  Qed.
+
+  (** Equal prefix lengths split pointwise interpretation at the same list boundary. *)
+  Lemma run_terms_value_append_inv : forall (args : list (term V.t)) tail k output s,
+    length args = length k -> terms_value s (args ++ tail) (k ++ output) ->
+    terms_value s args k /\ terms_value s tail output.
+  Proof.
+    induction args as [|t args IH]; intros tail [|c k] output s Hlength Hvalues;
+      cbn [length] in Hlength; try discriminate.
+    - split; [constructor|exact Hvalues].
+    - inversion Hvalues as [|t' c' ts cs Hhead Htail]; subst t' c' ts cs.
+      destruct (IH tail k output s ltac:(lia) Htail) as [Hargs Houtput].
+      split; [constructor; assumption|exact Houtput].
+  Qed.
+
+  (** A row whose concatenated positions interpret the terms satisfies its function atom. *)
+  Lemma run_fun_from_values : forall w s f args res k o,
+    length args = length k ->
+    terms_value s (args ++ option_list res) (k ++ option_list o) ->
+    row w f k o -> atom_holds V.prim w s (Fun V.t f args res).
+  Proof.
+    intros w s f args res k o Hlength Hvalues Hrow.
+    destruct (run_terms_value_append_inv args (option_list res) k (option_list o) s
+      Hlength Hvalues) as [Hargs Hresult].
+    exists k, o. split; [exact Hargs|]. split; [|exact Hrow].
+    destruct res as [t|], o as [c|]; cbn [option_list] in Hresult.
+    - inversion Hresult as [|t' c' ts cs Hvalue Hnil]; subst. exact Hvalue.
+    - inversion Hresult.
+    - inversion Hresult.
+    - exact I.
+  Qed.
+
+  (** A true primitive post check holds in any pointwise identical binding environment. *)
+  Lemma run_primitive_check_sound : forall w t p args res s,
+    prim_holds V.prim V.eqb t p args res = true ->
+    (forall x, s x = trie_get x t) -> atom_holds V.prim w s (Prim V.t p args res).
+  Proof.
+    intros w t p args res s Hcheck Henv.
+    destruct (proj1 (run_prim_holds_spec w t p args res) Hcheck)
+      as [cells [values [v [Hargs [Hvalues [Hprim Hres]]]]]].
+    exists cells, values, v. split.
+    - eapply run_terms_value_agree; [exact Hargs|]. intros x _. apply Henv.
+    - split; [exact Hvalues|]. split; [exact Hprim|].
+      destruct res as [x|value]; cbn [term_value] in *; [|exact Hres].
+      rewrite Henv. exact Hres.
+  Qed.
+
+  (** A well-sorted checked query interprets each matched row after its copy comparisons. *)
+  Lemma run_check_query_values : forall p cp db q g g',
+    query_ok (program_sorts p) (program_kind p) g q g' ->
+    forall table newok names n ai copy used count srcs columns post finalcount srcs'
+      columns' expected s b,
+    D.wf db -> loaded p cp db ->
+    slot_table (decl_widths (decls V.t p) Empty) (Syntax.slots V.t cp) 0 Empty = Some table ->
+    check_query V.eqb newok names n table q ai copy used count srcs columns post =
+      Some (finalcount, srcs', columns', expected) ->
+    (forall x j, trie_get x names = Some j -> exists c,
+      nth_error b (N.to_nat j) = Some c /\ s x = Some c) ->
+    (forall k x, nth_error (run_query_duplicates q) k = Some x -> exists c,
+      nth_error b (N.to_nat copy + k) = Some c /\ s x = Some c) ->
+    run_sources_satisfied db b srcs columns ->
+    Forall (fun a => match a with
+      | Prim _ _ _ _ => atom_holds V.prim (D.view db) s a | Fun _ _ _ _ => True end) q ->
+    matches V.prim (D.view db) q s /\ run_sources_satisfied db b srcs' columns'.
+  Proof.
+    intros p cp db q g g' Htyped.
+    induction Htyped as [g|g g1 g2 g3 f args res ss kindout rest Hsort Hkind Hreads
+      Hargs Hres Hrest IH|g g1 prim args res rest Hargs Hres Hrest IH];
+      intros table newok names n ai copy used count srcs columns post finalcount srcs'
+      columns' expected s b Hwf Hloaded Htable Hcheck Hnames Hcopies Hsources Hprimitives.
+    - cbn [check_query] in Hcheck. inversion Hcheck; subst.
+      split; [constructor|exact Hsources].
+    - cbn [check_query] in Hcheck.
+      destruct (check_atom V.eqb newok names n table f (args ++ option_list res)
+        copy used count srcs columns)
+        as [[[[[[nextcopy nextused] nextcount] nextsrcs] nextcols] copied]|]
+        eqn:Hatom; [|discriminate].
+      assert (Hwidth : forall k o, row (D.view db) f k o ->
+          length (k ++ option_list o) = length (args ++ option_list res)).
+      { intros k o Hrow. destruct (run_atom_row_bindings p cp db f args res g g1 g2 ss
+          kindout k o Hloaded Hsort Hkind Hargs Hres Hrow) as [_ [_ Hlength]].
+        symmetry. exact Hlength. }
+      destruct (run_check_atom_tuple db (decl_widths (decls V.t p) Empty)
+        (Syntax.slots V.t cp) table newok names n f (args ++ option_list res)
+        copy used count srcs columns nextcopy nextused nextcount nextsrcs nextcols copied b
+        Hwf (proj1 (proj2 Hloaded)) Htable Hatom Hsources Hwidth)
+        as [k [o [inv [before_srcs [before_cols
+          [Hrow [Hterms [Hpositions [Hlength Hbefore_sources]]]]]]]]].
+      assert (Hatom_copies : forall j x,
+          nth_error (run_term_duplicates Empty (args ++ option_list res)) j = Some x ->
+          exists c, nth_error b (N.to_nat copy + j) = Some c /\ s x = Some c).
+      { intros j x Hnth. apply Hcopies. cbn [run_query_duplicates].
+        rewrite nth_error_app1; [exact Hnth|].
+        apply nth_error_Some. rewrite Hnth. discriminate. }
+      destruct (run_check_terms_values (args ++ option_list res) names 0 Empty copy Empty
+        before_srcs before_cols false nextcopy inv nextsrcs nextcols copied s b
+        (k ++ option_list o) db Hterms Hlength)
+        as [Hvalues Hremaining].
+      + intros key value Hempty. rewrite PTrie.get_empty in Hempty. discriminate.
+      + exact Hpositions.
+      + exact Hnames.
+      + exact Hatom_copies.
+      + exact Hbefore_sources.
+      + pose proof (run_check_terms_count (args ++ option_list res) names 0 Empty copy Empty
+          before_srcs before_cols false nextcopy inv nextsrcs nextcols copied Hterms)
+          as Hnextcopy.
+        assert (Hrest_copies : forall j x, nth_error (run_query_duplicates rest) j = Some x ->
+            exists c, nth_error b (N.to_nat nextcopy + j) = Some c /\ s x = Some c).
+        { intros j x Hnth. rewrite Hnextcopy, N2Nat.inj_add, Nat2N.id.
+          replace (N.to_nat copy + length (run_term_duplicates Empty
+              (args ++ option_list res)) + j) with
+            (N.to_nat copy + (length (run_term_duplicates Empty
+              (args ++ option_list res)) + j)) by lia.
+          apply Hcopies. cbn [run_query_duplicates]. rewrite nth_error_app2 by lia.
+          replace (length (run_term_duplicates Empty (args ++ option_list res)) + j -
+            length (run_term_duplicates Empty (args ++ option_list res))) with j by lia.
+          exact Hnth. }
+        inversion Hprimitives as [|a rest' Hprimitive Hprimitive_tail]; subst a rest'.
+        destruct (IH table newok names n (S ai) nextcopy nextused nextcount nextsrcs nextcols
+          (if copied then ai :: post else post) finalcount srcs' columns' expected s b
+          Hwf Hloaded Htable Hcheck Hnames Hrest_copies Hremaining Hprimitive_tail)
+          as [Hmatches Hsources_final].
+        split; [|exact Hsources_final]. constructor; [|exact Hmatches].
+        destruct (run_atom_row_bindings p cp db f args res g g1 g2 ss kindout k o Hloaded
+          Hsort Hkind Hargs Hres Hrow) as [_ [Hargs_length _]].
+        exact (run_fun_from_values (D.view db) s f args res k o Hargs_length Hvalues Hrow).
+    - cbn [check_query] in Hcheck.
+      inversion Hprimitives as [|a rest' Hprimitive Hprimitive_tail]; subst a rest'.
+      destruct (IH table newok names n (S ai) copy used count srcs columns (ai :: post)
+        finalcount srcs' columns' expected s b Hwf Hloaded Htable Hcheck Hnames Hcopies
+        Hsources Hprimitive_tail) as [Hmatches Hsources_final].
+      split; [constructor; assumption|exact Hsources_final].
+  Qed.
+
   Lemma F1_plan_match_sound : forall p cp db c b r, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In c (all_plans cp) ->
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r ->
     In b (bindings cp c db) -> keep p c (bind_trie c b) = true ->
     matches V.prim (D.view db) (query V.t r) (env_of c b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp db c b [q acts] Hplan Hwf Hloaded Hin Hrule Hbinding Hkeep.
+    pose proof (plans_ok_sorted p cp Hplan) as Hprogram. unfold program_ok in Hprogram.
+    apply Forall_forall with (x := Rule V.t q acts) in Hprogram;
+      [|now apply nth_error_In in Hrule].
+    destruct Hprogram as [g [Htyped Hactions]].
+    destruct (run_plan_member p cp c Hplan Hin)
+      as [table [newok [r [Htable [Hfound Hcheck]]]]].
+    rewrite Hrule in Hfound. injection Hfound as <-.
+    destruct (run_check_cplan_parts newok table (rule_ix V.t c) (Rule V.t q acts) c Hcheck)
+      as [_ [Hvar_length [names [expected [Hnames [Hlayout [Hquery Hpost]]]]]]].
+    pose proof (run_plan_join_wf p cp db c Hplan Hwf Hloaded Hin) as Hjoin.
+    pose proof (J.run_sound (join V.t c) (map (source_index db) (sources V.t c)) b
+      Hjoin Hbinding) as Hanswer.
+    pose proof (proj1 Hanswer) as Hbinding_length.
+    pose proof (run_join_answer_sources db b (join V.t c) (sources V.t c) Hanswer) as Hsources.
+    destruct (run_var_table_spec (var_of V.t c) names Hnames) as [Hdistinct Hindices].
+    assert (Hname_cells : forall x j, trie_get x names = Some j -> exists cell,
+        nth_error b (N.to_nat j) = Some cell /\ env_of c b x = Some cell).
+    { apply run_checked_names_cells; [exact Hnames|lia]. }
+    assert (Hpost_correct : post V.t c = run_query_post q 0).
+    { pose proof (run_check_query_post q newok names (nvars (join V.t c)) table 0 0 Empty 0
+        (sources V.t c) (cols (join V.t c)) [] (nat_n (nvars (join V.t c))) [] [] expected
+        Hquery) as Hexpected.
+      rewrite Hpost, Hexpected, !rev_append_rev, !app_nil_r, rev_involutive. reflexivity. }
+    unfold keep in Hkeep. rewrite rule_at_nth in Hkeep.
+    change (plan_rule_ix c) with (rule_ix V.t c) in Hkeep.
+    rewrite (@nth_error_nth (rule V.t) (rules V.t p) (N.to_nat (rule_ix V.t c))
+      (Rule V.t q acts) (Rule V.t [] []) Hrule) in Hkeep.
+    change (keep_post V.prim V.eqb q (bind_trie c b) (post V.t c) (var_of V.t c) = true)
+      in Hkeep.
+    rewrite Hpost_correct in Hkeep.
+    destruct (run_keep_post_sound q (bind_trie c b) (var_of V.t c) Hkeep)
+      as [Hprimitive_checks Hcopy_checks].
+    rewrite run_query_duplicates_count, Nat.add_0_r in Hcopy_checks.
+    assert (Hcopies : forall j x, nth_error (run_query_duplicates q) j = Some x -> exists cell,
+        nth_error b j = Some cell /\ env_of c b x = Some cell).
+    { apply run_binding_copies_sound; [exact Hdistinct|exact Hcopy_checks]. }
+    assert (Hprimitives : Forall (fun a => match a with
+        | Prim _ _ _ _ => atom_holds V.prim (D.view db) (env_of c b) a
+        | Fun _ _ _ _ => True end) q).
+    { apply Forall_forall. intros a Ha.
+      apply Forall_forall with (x := a) in Hprimitive_checks; [|exact Ha].
+      destruct a as [f args res|prim args res]; [exact I|].
+      eapply run_primitive_check_sound; [exact Hprimitive_checks|].
+      intro x. unfold bind_trie. rewrite run_binding_trie_get. reflexivity. }
+    exact (proj1 (run_check_query_values p cp db q ctx_empty g Htyped table newok names
+      (nvars (join V.t c)) 0 0 Empty 0 (sources V.t c) (cols (join V.t c)) []
+      (nat_n (nvars (join V.t c))) [] [] expected (env_of c b) b Hwf Hloaded Htable Hquery
+      Hname_cells Hcopies Hsources Hprimitives)).
+  Qed.
+
+
+
 
   Lemma F2_naive_plans_complete : forall p cp db r s, plans_ok p cp -> D.wf db ->
     loaded p cp db -> D.canonical db -> In r (rules V.t p) ->
@@ -8429,7 +9324,37 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     loaded p cp db -> In c (all_plans cp) ->
     nth_error (rules V.t p) (N.to_nat (rule_ix V.t c)) = Some r -> In b (bindings cp c db) ->
     rule_env (program_sorts p) (program_kind p) r (env_of c b) /\ env_allocated db (env_of c b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp db c b r Hplans Hwf Hloaded Hin Hrule Hbinding. split.
+    - pose proof (plans_ok_sorted p cp Hplans) as Hprogram.
+      unfold program_ok in Hprogram.
+      assert (Hmember : In r (rules V.t p)) by (eapply nth_error_In; exact Hrule).
+      apply Forall_forall with (x := r) in Hprogram; [|exact Hmember].
+      destruct Hprogram as [g [Htyped Hactions]]. exists g. split; [exact Htyped|].
+      destruct (run_plan_member p cp c Hplans Hin)
+        as [table [newok [checked_r [Htable [Hchecked_rule Hcheck]]]]].
+      rewrite Hrule in Hchecked_rule. injection Hchecked_rule as <-.
+      destruct (run_check_cplan_parts newok table (rule_ix V.t c) r c Hcheck)
+        as [_ [Hlength [names [expected [Hnames [Hlayout [Hquery Hpost]]]]]]].
+      pose proof (run_plan_join_wf p cp db c Hplans Hwf Hloaded Hin) as Hjoin.
+      pose proof (J.run_sound (join V.t c) (map (source_index db) (sources V.t c)) b
+        Hjoin Hbinding) as Hanswer.
+      destruct Hanswer as [Hbinding_length Hprojections].
+      assert (Hsources : run_sources_satisfied db b (sources V.t c) (cols (join V.t c))).
+      { apply (run_join_answer_sources db b (join V.t c) (sources V.t c)).
+        split; assumption. }
+      assert (Hname_cells : forall x j, trie_get x names = Some j -> exists cell,
+          nth_error b (N.to_nat j) = Some cell /\ env_of c b x = Some cell).
+      { intros x j Hget. unfold env_of.
+        eapply run_checked_names_cells; [exact Hnames|lia|exact Hget]. }
+      eapply (run_check_query_sorted p cp db table Hwf Hloaded Htable ctx_empty
+        (query V.t r) g Htyped newok names (nvars (join V.t c)) 0 0 Empty 0
+        (sources V.t c) (cols (join V.t c)) [] (nat_n (nvars (join V.t c))) [] [] expected
+        b (env_of c b) Hquery Hsources Hname_cells).
+      intros x ty Hempty. discriminate.
+    - eapply run_plan_bindings_allocated; eassumption.
+  Qed.
+
 
   Lemma F27_check_plan_split : forall p cp,
     check_plan p cp = check_program p && check_shape p cp.
