@@ -445,3 +445,70 @@ Proof.
   destruct g as [[vs adjacency] predecessors count_v count_e]. intro Hin.
   exact (proj1 (dom_time_graph_width (Digraph vs adjacency) v Hin)).
 Qed.
+
+(** * Binary counter cost helpers *)
+
+(** Set bits pay for carries in the reader's binary position counter. *)
+Fixpoint dom_positive_credit (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => dom_positive_credit q
+  | xI q => (1 + dom_positive_credit q)%N
+  end.
+
+Definition dom_counter_credit (n : N) : N :=
+  match n with N0 => 0%N | Npos p => dom_positive_credit p end.
+
+(** Each positive increment releases the credit attached to its carry chain. *)
+Lemma dom_time_positive_succ p :
+  (Pos.T_succ p + dom_positive_credit (Pos.succ p) <=
+    2 + dom_positive_credit p)%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Pos.T_succ;
+    cbn [Pos.succ dom_positive_credit]; lia.
+Qed.
+
+(** The natural-number wrapper costs one further call per increment. *)
+Lemma dom_time_counter_succ n :
+  (N.T_succ n + dom_counter_credit (N.succ n) <=
+    3 + dom_counter_credit n)%N.
+Proof.
+  destruct n as [|p]; time_unfold N.T_succ; cbn [N.succ dom_counter_credit].
+  - cbn [dom_positive_credit]. lia.
+  - pose proof (dom_time_positive_succ p). lia.
+Qed.
+
+(** Building a positive from unary input amortizes its successive binary carries. *)
+Lemma dom_time_of_succ_nat n :
+  (Key.Pos.T_of_succ_nat n + dom_positive_credit (Pos.of_succ_nat n) <=
+    3 * N.of_nat n + 2)%N.
+Proof.
+  induction n as [|n IH]; time_unfold Key.Pos.T_of_succ_nat.
+  - reflexivity.
+  - pose proof (dom_time_positive_succ (Pos.of_succ_nat n)) as Hcarry.
+    cbn [Pos.of_succ_nat]. lia.
+Qed.
+
+(** Reading the unary count once has linear total conversion cost. *)
+Lemma dom_time_of_nat n : (TimeHelpers.N.T_of_nat n <= 3 * N.of_nat n + 2)%N.
+Proof.
+  destruct n as [|n]; time_unfold TimeHelpers.N.T_of_nat; [lia|].
+  pose proof (dom_time_of_succ_nat n). lia.
+Qed.
+
+(** A positive's bit count never exceeds its numeric value. *)
+Lemma dom_positive_size_value p : (N.of_nat (Pos.size_nat p) <= N.pos p)%N.
+Proof.
+  induction p as [p IH|p IH|]; cbn [Pos.size_nat].
+  - change (N.of_nat (S (Pos.size_nat p)) <= 2 * N.pos p + 1)%N.
+    rewrite Nat2N.inj_succ. lia.
+  - change (N.of_nat (S (Pos.size_nat p)) <= 2 * N.pos p)%N.
+    rewrite Nat2N.inj_succ. lia.
+  - reflexivity.
+Qed.
+
+(** Natural bit counts are bounded by the values they represent. *)
+Lemma dom_size_value n : (N.of_nat (N.size_nat n) <= n)%N.
+Proof.
+  destruct n as [|p]; [reflexivity|apply dom_positive_size_value].
+Qed.
