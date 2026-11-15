@@ -71,6 +71,81 @@ Definition wto_components g roots :=
   Scc (tarjan_owners s) (rev_append (tarjan_emitted s) []).
 TimeFun wto_components.
 
+(** Reversing the component list preserves its multiset of vertices. *)
+Lemma wto_components_reverse : forall (cs : list (list positive)),
+  Permutation (concat cs) (concat (rev cs)).
+Proof.
+  intro cs. change (Permutation (flat_map (fun c : list positive => c) cs)
+    (flat_map (fun c : list positive => c) (rev cs))).
+  apply Permutation_flat_map. apply Permutation_rev.
+Qed.
+
+(** The rebuilt graph has a row exactly at its listed source vertices. *)
+Lemma wto_scc_root_test : forall g v,
+  (match trie_get v (succ (base (scc_graph g))) with Some _ => true | None => false end) =
+    wto_member v (nodes g).
+Proof.
+  intros g v. unfold scc_graph. cbn [base succ].
+  rewrite scc_rows_lookup, PTrie.get_empty. unfold wto_member.
+  destruct (existsb (Pos.eqb v) (nodes g)); reflexivity.
+Qed.
+
+Local Opaque loopN.
+
+(** Every component supplied to the builder contains a vertex, for any graph and roots. *)
+Lemma wto_components_nonempty : forall g roots,
+  Forall (fun c => c <> []) (comps (wto_components g roots)).
+Proof.
+  intros g roots. unfold wto_components. cbn [comps].
+  rewrite rev_append_rev, app_nil_r. apply Forall_rev. apply tarjan_emitted_nonempty.
+Qed.
+
+(** A component collection never repeats an entered vertex, even on malformed raw graphs. *)
+Lemma wto_components_unique : forall g roots,
+  NoDup (concat (comps (wto_components g roots))).
+Proof.
+  intros g roots. unfold wto_components. cbn [comps].
+  rewrite rev_append_rev, app_nil_r.
+  apply (Permutation_NoDup (wto_components_reverse _)).
+  apply tarjan_emitted_unique. apply prepared_search_unique_raw.
+Qed.
+
+(** Component production cannot emit more vertices than its listed input domain. *)
+Lemma wto_components_size : forall g roots,
+  length (concat (comps (wto_components g roots))) <= length (nodes g).
+Proof.
+  intros g roots. set (ready := scc_graph g).
+  set (listed_roots := filter (fun v =>
+    match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots).
+  change (length (concat (rev_append
+    (tarjan_emitted (TarjanSearch.dfs ready listed_roots tarjan_initial)) [])) <=
+      length (nodes g)).
+  rewrite rev_append_rev, app_nil_r.
+  rewrite <- (Permutation_length (wto_components_reverse _)).
+  eapply Nat.le_trans; [apply tarjan_emitted_length|].
+  apply NoDup_incl_length; [apply prepared_search_unique_raw|].
+  assert (Hroots : forall r, In r listed_roots -> In r (nodes g)).
+  { intros r Hin. unfold listed_roots in Hin. apply filter_In in Hin.
+    destruct Hin as [Hin Hlisted]. unfold ready in Hlisted.
+    rewrite wto_scc_root_test in Hlisted. now apply wto_member_spec in Hlisted. }
+  assert (Hclosed : forall u v,
+    In u (nodes ready) -> edge (base ready) u v -> In v (nodes ready)).
+  { intros u v Hu Hedge. unfold ready. rewrite scc_graph_nodes.
+    now apply (scc_graph_closed g u). }
+  assert (Hroots_ready : forall r, In r listed_roots -> In r (nodes ready)).
+  { intros r Hin. unfold ready. rewrite scc_graph_nodes. now apply Hroots. }
+  intros v Hin.
+  apply (proj1 (prepared_search_reach_closed ready listed_roots (scc_graph_counts g)
+    Hclosed Hroots_ready v)) in Hin.
+  destruct Hin as [r [vertices [Hroot Hpath]]].
+  pose proof (Hroots r Hroot) as Hlisted. clear Hroot. revert Hlisted.
+  induction Hpath as [v|u v vertices z Hedge Hpath IH]; intro Hlisted.
+  - exact Hlisted.
+  - apply IH. now apply (scc_graph_closed g u).
+Qed.
+
+Local Transparent loopN.
+
 Definition wto_offer i v (entries : ptrie positive) :=
   match trie_get i entries with Some _ => entries | None => PTrieCode.set i v entries end.
 TimeFun wto_offer.
@@ -234,6 +309,132 @@ Proof.
   rewrite !rev_append_rev, !app_nil_r. fold members scoped r entries'.
   time_simpl. nia.
 Qed.
+
+Local Opaque loopN wto_components.
+
+(** Pending expansions always represent nonempty components. *)
+Definition wto_expansions_nonempty (tasks : list wto_task) : Prop :=
+  Forall (fun task => match task with
+    | WtoExpand _ _ _ c => c <> []
+    | WtoClose _ => True
+    end) tasks.
+
+(** Nonempty components produce only nonempty expansion tasks. *)
+Lemma wto_expand_nonempty : forall within entries owners cs,
+  Forall (fun c => c <> []) cs ->
+  wto_expansions_nonempty (wto_expand_tasks within entries owners cs).
+Proof.
+  intros within entries owners cs Hcomponents.
+  unfold wto_expansions_nonempty, wto_expand_tasks.
+  induction Hcomponents; cbn [map]; constructor; assumption.
+Qed.
+
+(** Every continuing builder transition preserves nonempty pending components. *)
+Lemma wto_step_nonempty : forall g st next,
+  wto_expansions_nonempty (wto_tasks st) -> wto_step g st = inl next ->
+  wto_expansions_nonempty (wto_tasks next).
+Proof.
+  intros g [tasks partial parents] next Htasks Hstep.
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Htasks as [|task' tasks' Hhead Htail]; subst task' tasks'.
+  destruct task as [within entries owners c|h].
+  - cbn [wto_step] in Hstep.
+    destruct (wto_select (wto_preferred owners entries c) c) as [[h body]|].
+    + destruct body as [|first body].
+      * inversion Hstep; subst next. exact Htail.
+      * inversion Hstep; subst next. cbn [wto_tasks].
+        unfold wto_expansions_nonempty. apply Forall_app. split.
+        -- apply wto_expand_nonempty.
+           rewrite rev_append_rev, app_nil_r. apply Forall_rev.
+           apply wto_components_nonempty.
+        -- constructor; [exact I|exact Htail].
+    + inversion Hstep; subst next. exact Htail.
+  - destruct parents as [|parent parents]; inversion Hstep; subst next; exact Htail.
+Qed.
+
+(** Selection can fail only for an empty component. *)
+Lemma wto_select_empty : forall preferred c,
+  wto_select preferred c = None -> c = [].
+Proof.
+  intros preferred [|v rest] Hselect; [reflexivity|].
+  cbn [wto_select] in Hselect.
+  destruct (match preferred with None => false | Some h => Pos.eqb v h end);
+    [discriminate|].
+  destruct (wto_select preferred rest) as [[h body]|]; discriminate.
+Qed.
+
+(** Pending components reserve three transitions per vertex and one per close task. *)
+Definition wto_pending_credit (tasks : list wto_task) : nat :=
+  fold_right (fun task n =>
+    (match task with WtoExpand _ _ _ c => 3 * length c | WtoClose _ => 1 end) + n)
+    0 tasks.
+
+(** Appending task lists adds their pending termination credit. *)
+Lemma wto_credit_app : forall first rest,
+  wto_pending_credit (first ++ rest) = wto_pending_credit first + wto_pending_credit rest.
+Proof.
+  intros first rest. unfold wto_pending_credit.
+  induction first as [|task first IH]; cbn [app fold_right]; [reflexivity|].
+  rewrite IH. lia.
+Qed.
+
+(** A component expansion list has exactly three credits per component vertex. *)
+Lemma wto_expand_credit : forall within entries owners cs,
+  wto_pending_credit (wto_expand_tasks within entries owners cs) = 3 * length (concat cs).
+Proof.
+  intros within entries owners cs. unfold wto_pending_credit, wto_expand_tasks.
+  induction cs as [|c rest IH]; cbn [map fold_right concat]; [reflexivity|].
+  rewrite IH, length_app. lia.
+Qed.
+
+(** Every continuing transition spends positive credit when pending components are nonempty. *)
+Lemma wto_step_credit : forall g st next,
+  wto_expansions_nonempty (wto_tasks st) -> wto_step g st = inl next ->
+  wto_pending_credit (wto_tasks next) < wto_pending_credit (wto_tasks st).
+Proof.
+  intros g [tasks partial parents] next Htasks Hstep.
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Htasks as [|task' tasks' Hhead Htail]; subst task' tasks'.
+  destruct task as [within entries owners c|h].
+  - cbn [wto_step] in Hstep.
+    destruct (wto_select (wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+    + pose proof (Permutation_length (wto_select_spec _ _ _ _ Hselect)) as Hlength.
+      cbn [length] in Hlength. destruct body as [|first body].
+      * inversion Hstep; subst next. cbn [wto_tasks wto_pending_credit fold_right].
+        cbn [length] in Hlength. lia.
+      * inversion Hstep; subst next. cbn [wto_tasks].
+        rewrite wto_credit_app, wto_expand_credit.
+        rewrite rev_append_rev, app_nil_r.
+        rewrite <- (Permutation_length (wto_components_reverse _)).
+        pose proof (wto_components_size (wto_scoped g (Some (first :: body)))
+          (rev_append (first :: body) [])) as Hsize.
+        change (length (concat (comps (wto_components
+          (wto_scoped g (Some (first :: body))) (rev_append (first :: body) [])))) <=
+          length (first :: body)) in Hsize.
+        change (3 * length (concat (comps (wto_components
+          (wto_scoped g (Some (first :: body))) (rev_append (first :: body) [])))) +
+          (1 + wto_pending_credit tasks) < 3 * length c + wto_pending_credit tasks).
+        cbn [length] in Hsize, Hlength. lia.
+    + apply wto_select_empty in Hselect. subst c. contradiction.
+  - destruct parents as [|parent parents]; inversion Hstep; subst next;
+      cbn [wto_tasks wto_pending_credit fold_right]; lia.
+Qed.
+
+(** Credit bounds termination independently of the stronger inventory invariant. *)
+Lemma wto_fuel_complete : forall g fuel st,
+  wto_expansions_nonempty (wto_tasks st) ->
+  wto_pending_credit (wto_tasks st) < fuel ->
+  exists w, loop_fuel (wto_step g) fuel st = inr w.
+Proof.
+  intros g fuel. induction fuel as [|fuel IH]; intros st Htasks Hcredit; [lia|].
+  cbn [loop_fuel]. destruct (wto_step g st) as [next|w] eqn:Hstep.
+  - apply IH.
+    + eapply wto_step_nonempty; eassumption.
+    + pose proof (wto_step_credit g st next Htasks Hstep). lia.
+  - now exists w.
+Qed.
+
+Local Transparent loopN wto_components.
 
 Fixpoint wto_unique (xs : list positive) :=
   match xs with
@@ -1896,11 +2097,23 @@ Module WtoT <: WTO_ALL.
     invariant g roots next /\ potential g next < potential g st.
   Proof. Admitted. (* STUB *)
 
+  Local Opaque loopN.
+
   Lemma F16_done : forall g roots,
     exists w, loopN (wto_step g)
       (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
       (initial g roots) = inr w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots. rewrite search_loopN_fuel, Nat2N.id.
+    apply wto_fuel_complete.
+    - unfold initial. cbn [wto_tasks]. apply wto_expand_nonempty.
+      apply Forall_rev. apply wto_components_nonempty.
+    - change (potential g (initial g roots) <
+        3 * length (concat (comps (wto_components g roots))) + 1).
+      rewrite (proj2 (F14_initial g roots)). lia.
+  Qed.
+
+  Local Transparent loopN.
 
   Lemma F17_history : forall g roots,
     exists terminal prefix, history g roots = prefix ++ [terminal] /\
