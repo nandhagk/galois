@@ -183,6 +183,171 @@ Definition df_step (g : prepared) (t : domtree) (y : positive) (st : df_state) :
   end.
 TimeFun df_step.
 
+(** A runner pushes its immediate parent when one is present. *)
+Definition df_follow (t : domtree) (x : positive) (rest : list positive) : list positive :=
+  match trie_get x (idom t) with Some q => q :: rest | None => rest end.
+TimeFun df_follow.
+
+Lemma df_follow_member : forall t x rest u,
+  In u (df_follow t x rest) <-> In u rest \/ trie_get x (idom t) = Some u.
+Proof.
+  intros t x rest u. unfold df_follow.
+  destruct (trie_get x (idom t)) as [q|] eqn:Hget; cbn [In]; intuition congruence.
+Qed.
+
+Lemma df_follow_length : forall t x rest, length (df_follow t x rest) <= S (length rest).
+Proof.
+  intros t x rest. unfold df_follow. destruct (trie_get x (idom t)); cbn [length]; lia.
+Qed.
+
+Definition df_ready (st : df_state) (x : positive) : Prop :=
+  In x (df_column_answer st) \/ In x (df_pending st).
+
+(** Every enabled seed or parent of an emitted vertex is already recorded or pending. *)
+Record df_valid (g : prepared) (t : domtree) (y : positive) (st : df_state) : Prop := {
+  df_valid_unique : NoDup (df_column_answer st);
+  df_valid_marks : forall x, trie_get x (df_seen st) = Some tt <-> In x (df_column_answer st);
+  df_valid_answer_nodes : incl (df_column_answer st) (nodes g);
+  df_valid_pending_nodes : incl (df_pending st) (nodes g);
+  df_valid_answer_routes : forall x, In x (df_column_answer st) -> df_route g t y x;
+  df_valid_pending_routes : forall x, In x (df_pending st) ->
+    df_enabled t y x -> df_route g t y x;
+  df_valid_seeds_covered : forall x, In x (preds g y) -> df_enabled t y x -> df_ready st x;
+  df_valid_parents_covered : forall x q, In x (df_column_answer st) ->
+    trie_get x (idom t) = Some q -> df_enabled t y q -> df_ready st q
+}.
+
+Lemma df_valid_initial : forall g t y,
+  prepared_ok g -> df_valid g t y (DfState (preds g y) Empty []).
+Proof.
+  intros g t y Hprepared. constructor; cbn [df_column_answer df_pending df_seen].
+  - constructor.
+  - intro x. rewrite PTrie.get_empty. cbn [In]. split; [discriminate|contradiction].
+  - apply incl_nil_l.
+  - intros x Hx. exact (proj1 (proj1 (frontier_preds_member g y x Hprepared) Hx)).
+  - intros x Hx. contradiction.
+  - intros x Hx Henabled. now apply df_route_seed.
+  - intros x Hx Henabled. right. exact Hx.
+  - intros x q Hx. contradiction.
+Qed.
+
+Lemma df_valid_retire : forall g t y x rest seen answer,
+  df_valid g t y (DfState (x :: rest) seen answer) ->
+  (df_enabled t y x -> In x answer) ->
+  df_valid g t y (DfState rest seen answer).
+Proof.
+  intros g t y x rest seen answer Hvalid Hretire.
+  destruct Hvalid as [Hunique Hmarks Hansnodes Hpendingnodes Hansroute Hpendingroute Hseeds Hparents].
+  cbn [df_column_answer df_pending df_seen] in *.
+  assert (Hready : forall u, df_enabled t y u ->
+    df_ready (DfState (x :: rest) seen answer) u -> df_ready (DfState rest seen answer) u).
+  { intros u Hu [Hanswer|[Heq|Hrest]].
+    - left. exact Hanswer.
+    - subst u. left. now apply Hretire.
+    - right. exact Hrest. }
+  constructor; cbn [df_column_answer df_pending df_seen]; try assumption.
+  - intros u Hu. apply Hpendingnodes. now right.
+  - intros u Hu Henabled. apply Hpendingroute; [now right|exact Henabled].
+  - intros u Hu Henabled. apply Hready; [exact Henabled|now apply Hseeds].
+  - intros u q Hu Hparent Henabled. apply Hready; [exact Henabled|].
+    eapply Hparents; eassumption.
+Qed.
+
+Lemma df_valid_emit : forall g t r y x rest seen answer,
+  wf_graph (base g) -> domtree_exact g r t ->
+  df_valid g t y (DfState (x :: rest) seen answer) ->
+  df_enabled t y x -> trie_get x seen = None ->
+  df_valid g t y
+    (DfState (df_follow t x rest) (PTrieCode.set x tt seen) (x :: answer)).
+Proof.
+  intros g t r y x rest seen answer Hgraph Htree Hvalid Henabled Hfresh.
+  destruct Htree as [Hr [Hexact Htree]].
+  destruct Hvalid as [Hunique Hmarks Hansnodes Hpendingnodes Hansroute Hpendingroute Hseeds Hparents].
+  cbn [df_column_answer df_pending df_seen] in *.
+  assert (Hxroute : df_route g t y x) by (apply Hpendingroute; [now left|exact Henabled]).
+  assert (Hready : forall u,
+    df_ready (DfState (x :: rest) seen answer) u ->
+    df_ready (DfState (df_follow t x rest) (PTrieCode.set x tt seen) (x :: answer)) u).
+  { intros u [Hanswer|[Heq|Hrest]].
+    - left. now right.
+    - left. now left.
+    - right. apply df_follow_member. now left. }
+  constructor; cbn [df_column_answer df_pending df_seen].
+  - constructor; [|exact Hunique]. intro Hin. apply (proj2 (Hmarks x)) in Hin. congruence.
+  - intro u. destruct (Pos.eq_dec u x) as [->|Hne].
+    + rewrite PTrie.get_set_same. cbn [In]. tauto.
+    + rewrite PTrie.get_set_other by exact Hne. rewrite Hmarks. cbn [In]. intuition congruence.
+  - intros u [<-|Hu]; [apply Hpendingnodes; now left|now apply Hansnodes].
+  - intros u Hu. apply df_follow_member in Hu. destruct Hu as [Hu|Hparent].
+    + apply Hpendingnodes. now right.
+    + apply (frontier_reach_listed g r u Hgraph Hr).
+      exact (proj1 (proj1 Hexact x u Hparent)).
+  - intros u [<-|Hu]; [exact Hxroute|now apply Hansroute].
+  - intros u Hu Hallowed. apply df_follow_member in Hu. destruct Hu as [Hu|Hparent].
+    + apply Hpendingroute; [now right|exact Hallowed].
+    + eapply df_route_parent; eassumption.
+  - intros u Hu Hallowed. apply Hready. now apply Hseeds.
+  - intros u q [<-|Hu] Hparent Hallowed.
+    + right. apply df_follow_member. now right.
+    + apply Hready. eapply Hparents; eassumption.
+Qed.
+
+(** The raw callback either retires a disabled/seen runner or records one enabled vertex. *)
+Lemma df_step_behavior : forall g t y x rest seen answer next,
+  df_step g t y (DfState (x :: rest) seen answer) = inl next ->
+  (next = DfState rest seen answer /\
+    (trie_get x seen = Some tt \/ ~ df_enabled t y x)) \/
+  (next = DfState (df_follow t x rest) (PTrieCode.set x tt seen) (x :: answer) /\
+    trie_get x seen = None /\ df_enabled t y x).
+Proof.
+  intros g t y x rest seen answer next Hstep. cbn [df_step] in Hstep.
+  destruct (trie_get x (pre t)) as [a|] eqn:Hpre;
+    destruct (trie_get x seen) as [[]|] eqn:Hseen.
+  - injection Hstep as <-. left. split; [reflexivity|now left].
+  - destruct (trie_get y (idom t)) as [b|] eqn:Hparent.
+    + destruct (Pos.eqb x b) eqn:Heq.
+      * injection Hstep as <-. left. split; [reflexivity|]. right.
+        intros [_ Hboundary]. apply (Hboundary b Hparent). now apply Pos.eqb_eq.
+      * right. split.
+        -- unfold df_follow. destruct (trie_get x (idom t)); now injection Hstep as <-.
+        -- split; [reflexivity|]. split; [now exists a|].
+           intros q Hq. rewrite Hparent in Hq. injection Hq as <-. now apply Pos.eqb_neq.
+    + right. split.
+      * unfold df_follow. destruct (trie_get x (idom t)); now injection Hstep as <-.
+      * split; [reflexivity|]. split; [now exists a|].
+        intros q Hq. rewrite Hparent in Hq. discriminate.
+  - injection Hstep as <-. left. split; [reflexivity|now left].
+  - injection Hstep as <-. left. split; [reflexivity|]. right.
+    intros [[a Ha] _]. congruence.
+Qed.
+
+Lemma df_valid_step : forall g t r y st next,
+  wf_graph (base g) -> domtree_exact g r t -> df_valid g t y st ->
+  df_step g t y st = inl next -> df_valid g t y next.
+Proof.
+  intros g t r y [pending seen answer] next Hgraph Htree Hvalid Hstep.
+  destruct pending as [|x rest]; [discriminate Hstep|].
+  destruct (df_step_behavior g t y x rest seen answer next Hstep)
+    as [[-> [Hseen|Hdisabled]]|[-> [Hfresh Henabled]]].
+  - apply df_valid_retire with (x := x); [exact Hvalid|]. intro Henabled.
+    now apply (proj1 (df_valid_marks _ _ _ _ Hvalid x)).
+  - apply df_valid_retire with (x := x); [exact Hvalid|]. intro Henabled. contradiction.
+  - eapply df_valid_emit; eassumption.
+Qed.
+
+(** At exhaustion of the worklist, its local coverage conditions close every enabled route. *)
+Lemma df_valid_closed : forall g t y seen answer,
+  df_valid g t y (DfState [] seen answer) ->
+  forall x, In x answer <-> df_route g t y x.
+Proof.
+  intros g t y seen answer Hvalid x. split.
+  - exact (df_valid_answer_routes _ _ _ _ Hvalid x).
+  - intro Hroute. induction Hroute as [x Hpred Henabled|x q Hroute IH Hparent Henabled].
+    + destruct (df_valid_seeds_covered _ _ _ _ Hvalid x Hpred Henabled) as [Hx|[]]. exact Hx.
+    + destruct (df_valid_parents_covered _ _ _ _ Hvalid x q IH Hparent Henabled) as [Hq|[]]. exact Hq.
+Qed.
+
+
 Definition df_column (g : prepared) (t : domtree) (y : positive) : list positive :=
   let initial := DfState (preds g y) Empty [] in
   match loopN (df_step g t y) (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N initial with
