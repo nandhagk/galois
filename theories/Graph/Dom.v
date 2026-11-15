@@ -1779,6 +1779,109 @@ Proof.
     intros x y Hbefore. now apply dom_tree_preorder_order.
 Qed.
 
+(** Endpoint installation assigns a fixed inclusive endpoint to each positioned key. *)
+Local Definition dom_end_push (pos sizes ends : ptrie N) (v : positive) : ptrie N :=
+  match trie_get v pos with
+  | None => ends
+  | Some pv => PTrieCode.set v (N.pred (pv + dom_size_get sizes v)) ends
+  end.
+TimeFun dom_end_push.
+
+Local Definition dom_end_map pos sizes o := fold_left (dom_end_push pos sizes) o Empty.
+TimeFun dom_end_map.
+
+Local Lemma dom_end_fold_keeps : forall pos sizes vs ends v pv,
+  trie_get v pos = Some pv -> trie_get v ends = Some (N.pred (pv + dom_size_get sizes v)) ->
+  trie_get v (fold_left (dom_end_push pos sizes) vs ends) =
+    Some (N.pred (pv + dom_size_get sizes v)).
+Proof.
+  intros pos sizes vs. induction vs as [| x rest IH]; intros ends v pv Hpos Hend.
+  - exact Hend.
+  - cbn [fold_left]. apply IH; [exact Hpos |]. unfold dom_end_push.
+    destruct (trie_get x pos) as [px |] eqn:Hx; [| exact Hend].
+    destruct (Pos.eq_dec v x) as [Heq | Hneq].
+    + subst x. rewrite Hpos in Hx. injection Hx as Heq. subst px.
+      apply PTrie.get_set_same.
+    + rewrite PTrie.get_set_other by exact Hneq. exact Hend.
+Qed.
+
+Local Lemma dom_end_fold_member : forall pos sizes vs ends v pv,
+  In v vs -> trie_get v pos = Some pv ->
+  trie_get v (fold_left (dom_end_push pos sizes) vs ends) =
+    Some (N.pred (pv + dom_size_get sizes v)).
+Proof.
+  intros pos sizes vs. induction vs as [| x rest IH]; intros ends v pv Hin Hpos.
+  - contradiction.
+  - cbn [fold_left]. destruct Hin as [Heq | Hin].
+    + subst x. unfold dom_end_push. rewrite Hpos.
+      apply dom_end_fold_keeps; [exact Hpos | apply PTrie.get_set_same].
+    + now apply IH.
+Qed.
+
+Local Lemma dom_end_fold_domain : forall pos sizes vs ends v value,
+  trie_get v (fold_left (dom_end_push pos sizes) vs ends) = Some value ->
+  In v vs \/ trie_get v ends = Some value.
+Proof.
+  intros pos sizes vs. induction vs as [| x rest IH]; intros ends v value Hget.
+  - right. exact Hget.
+  - cbn [fold_left] in Hget. apply IH in Hget as [Hin | Hget].
+    + left. now right.
+    + unfold dom_end_push in Hget.
+      destruct (trie_get x pos) as [px |]; [| now right].
+      destruct (Pos.eq_dec v x) as [Heq | Hneq].
+      * left. now left.
+      * rewrite PTrie.get_set_other in Hget by exact Hneq. now right.
+Qed.
+
+Local Lemma dom_tree_post : forall g r m o,
+  post (DomCode.tree g r m o) = dom_end_map (dom_positions o) (dom_sizes m o) o.
+Proof. reflexivity. Qed.
+
+Local Lemma dom_tree_post_number : forall g r m o v pv,
+  trie_get v (dom_positions o) = Some pv ->
+  trie_get v (post (DomCode.tree g r m o)) =
+    Some (N.pred (pv + dom_size_get (dom_sizes m o) v)).
+Proof.
+  intros g r m o v pv Hpos. rewrite dom_tree_post. unfold dom_end_map.
+  apply dom_end_fold_member; [| exact Hpos].
+  apply (proj1 (dom_positions_domain o v)). now exists pv.
+Qed.
+
+Local Lemma dom_tree_post_domain : forall g r m o v,
+  (exists value, trie_get v (post (DomCode.tree g r m o)) = Some value) <-> In v o.
+Proof.
+  intros g r m o v. split.
+  - intros [value Hget]. rewrite dom_tree_post in Hget. unfold dom_end_map in Hget.
+    apply dom_end_fold_domain in Hget as [Hin | Hget]; [exact Hin |].
+    rewrite PTrie.get_empty in Hget. discriminate Hget.
+  - intro Hin. destruct (proj2 (dom_positions_domain o v) Hin) as [pv Hpos].
+    exists (N.pred (pv + dom_size_get (dom_sizes m o) v)).
+    now apply dom_tree_post_number.
+Qed.
+
+Local Lemma dom_tree_post_value : forall g r m o v value,
+  trie_get v (post (DomCode.tree g r m o)) = Some value ->
+  exists pv, trie_get v (dom_positions o) = Some pv /\
+    value = N.pred (pv + dom_size_get (dom_sizes m o) v).
+Proof.
+  intros g r m o v value Hget.
+  assert (Hin : In v o) by (apply (proj1 (dom_tree_post_domain g r m o v)); now exists value).
+  destruct (proj2 (dom_positions_domain o v) Hin) as [pv Hpos].
+  pose proof (dom_tree_post_number g r m o v pv Hpos) as Hend.
+  exists pv. split; [exact Hpos | congruence].
+Qed.
+
+Local Lemma dom_positions_bound : forall o v value,
+  NoDup o -> trie_get v (dom_positions o) = Some value ->
+  (value < N.of_nat (length o))%N.
+Proof.
+  intros o v value Hunique Hget.
+  destruct (dom_positions_value o v value Hunique Hget) as [i [Hi Heq]]. subst value.
+  assert (Hindex : i < length o).
+  { apply nth_error_Some. rewrite Hi. discriminate. }
+  now apply dom_nat_N_lt.
+Qed.
+
 Module Dom <: DOM.
   Include DomCode.
   Include DOM_SPEC.
