@@ -442,6 +442,22 @@ Fixpoint wto_order_into (w : wto) (acc : list positive) : list positive :=
   end.
 TimeFun wto_order_into.
 
+(** Head accumulation charges one visit per constructor. *)
+Lemma wto_heads_into_clock : forall w acc,
+  (T_wto_heads_into w acc <= N.of_nat (2 * length (wto_order w) + 1))%N.
+Proof.
+  induction w as [|v rest IH|h body IHbody rest IHrest]; intro acc;
+    cbn [wto_order length]; rewrite ?length_app; time_step.
+Qed.
+
+(** Order accumulation charges one visit per constructor. *)
+Lemma wto_order_into_clock : forall w acc,
+  (T_wto_order_into w acc <= N.of_nat (2 * length (wto_order w) + 1))%N.
+Proof.
+  induction w as [|v rest IH|h body IHbody rest IHrest]; intro acc;
+    cbn [wto_order length]; rewrite ?length_app; time_step.
+Qed.
+
 (** Accumulation appends the caller's suffix to each structural traversal. *)
 Lemma wto_into_spec : forall w acc,
   wto_heads_into w acc = wto_heads w ++ acc /\
@@ -1405,7 +1421,7 @@ Module WtoT <: WTO_ALL.
   TimeFun check.
   TimeFun heads.
   TimeFun ranks.
-  Definition c_wto : N := 1%N. (* STUB *)
+  Definition c_wto : N := 4%N.
 
   Lemma T_check_le : forall g roots w,
     (T_check g roots w <= c_wto *
@@ -1421,7 +1437,10 @@ Module WtoT <: WTO_ALL.
 
   Lemma T_heads_le : forall w,
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. pose proof (wto_heads_into_clock w []) as Hheads.
+    unfold c_wto. time_step.
+  Qed.
 
   Lemma T_ranks_le : forall w,
     (T_ranks w <= c_wto * N.of_nat (length (wto_order w) + 1) *
@@ -1482,7 +1501,7 @@ Module WtoT <: WTO_ALL.
   Definition k_scope : N := 1%N. (* STUB *)
   Definition k_expand : N := 1%N. (* STUB *)
   Definition k_build : N := 1%N. (* STUB *)
-  Definition k_heads : N := 1%N. (* STUB *)
+  Definition k_heads : N := 1%N.
   Definition k_ranks : N := 1%N. (* STUB *)
 
   Definition live (g : prepared) roots := entered (search_trace (base g) roots).
@@ -1836,11 +1855,16 @@ Module WtoT <: WTO_ALL.
 
   Lemma T8_heads_source : forall w,
     (T_heads w <= k_heads * (T_wto_heads_into w [] + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. unfold k_heads. time_step.
+    time_unfold @T_wto_heads_into. time_cbn. lia.
+  Qed.
 
   Lemma T9_heads_public : forall w,
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply T_heads_le.
+  Qed.
 
   Lemma T10_ranks_source : forall w,
     (T_ranks w <= k_ranks *
@@ -1863,12 +1887,18 @@ Module WtoT <: WTO_ALL.
   (** An accumulating traversal visits each constructor once. *)
   Lemma T8b_heads_into : forall w acc,
       (T_wto_heads_into w acc <= k_heads * N.of_nat (2 * length (wto_order w) + 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w acc. pose proof (wto_heads_into_clock w acc) as Hheads.
+    unfold k_heads. time_step.
+  Qed.
 
   (** Flattening by accumulation visits each constructor once. *)
   Lemma T10b_order_into : forall w acc,
       (T_wto_order_into w acc <= k_ranks * N.of_nat (2 * length (wto_order w) + 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w acc. pose proof (wto_order_into_clock w acc) as Horder.
+    unfold k_ranks. time_step.
+  Qed.
 
   (** Rank insertion pays each key and an amortised binary successor. *)
   Lemma T10c_rank_rows : forall vs,
