@@ -1,10 +1,10 @@
-(** * Placeholder SSA construction
+(** * Checked SSA construction
 
     This module supplies a checked construction interface.
-    For example, its placeholder produces no candidate.
+    Every candidate passes both translation and SSA validation before it is returned.
     Builds on: BuildSig. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig FrontierSig.
@@ -25,8 +25,11 @@ Module BuildCode (O : OPS)
     (Va : VALIDATE_OPS O K G P Q R BE BC S DG D) <: BUILD_OPS O K G P Q R BE E N BC C U SP S DG D F L Va.
   (* STUB-CODE *)
   Definition produce (_ : P.t) : option (P.t * cert) := None.
-  (* STUB-CODE *)
-  Definition build (_ : P.t) : option P.t := None.
+  Definition build (p : P.t) : option P.t :=
+    match produce p with
+    | None => None
+    | Some (s, c) => if andb (Va.check p s c) (Va.check_ssa s) then Some s else None
+    end.
 End BuildCode.
 
 Module Build (O : OPS)
@@ -47,10 +50,21 @@ Module Build (O : OPS)
     | None => None
     | Some (s, c) => if andb (Va.check p s c) (Va.check_ssa s) then Some s else None
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma build_correct : forall p s, imp_form p -> build p = Some s ->
     ssa_wf s /\ forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s Himp Hbuild. rewrite build_checked in Hbuild.
+    destruct (produce p) as [[candidate certificate]|] eqn:Hproduce; [|discriminate].
+    destruct (andb (Va.check p candidate certificate) (Va.check_ssa candidate))
+      eqn:Hchecked; [|discriminate].
+    inversion Hbuild; subst candidate.
+    apply andb_true_iff in Hchecked as [Htranslation Hssa].
+    split; [now apply Va.check_ssa_sound|].
+    intros n ins. now apply (Va.check_sound p s certificate Himp Htranslation).
+  Qed.
 End Build.
 
 Module BuildT (O : OPS)
