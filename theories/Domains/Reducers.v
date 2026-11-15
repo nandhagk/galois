@@ -1797,7 +1797,7 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   TimeFun to_right.
   TimeFun reduce.
   Definition c_exchange : N := 1024 * (A0.c_payload + B0.c_payload + 1).
-  Definition c_reduce : N := 1. (* STUB *)
+  Definition c_reduce : N := (c_exchange + 1) * (c_exchange + 1).
   Definition k_exchange : N := 1.
   Lemma T_to_left_le : forall a b, (T_to_left (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
@@ -1861,11 +1861,29 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   Qed.
   Lemma T_reduce_le : forall a b,
     (T_reduce (a, b) <= c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b.
+    pose proof (T_to_left_le a b) as Hleft.
+    pose proof (left_size a b) as Hsize.
+    pose proof (left_frame (a, b)) as Hframe.
+    destruct (to_left (a, b)) as [a' b'] eqn:Hstep.
+    cbn [fst snd] in Hsize, Hframe; subst b'.
+    pose proof (T_to_right_le a' b) as Hright.
+    time_unfold T_reduce; cbn beta iota zeta; rewrite Hstep.
+    unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma reduce_size_le : forall a b,
     (N.of_nat (A.size (fst (reduce (a, b))) + B.size (snd (reduce (a, b)))) <=
       c_reduce * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; unfold reduce; rewrite right_frame.
+    pose proof (left_size a b) as Hleft.
+    pose proof (left_frame (a, b)) as Hframe.
+    destruct (to_left (a, b)) as [a' b'] eqn:Hstep.
+    cbn [fst snd] in Hleft, Hframe; subst b'.
+    pose proof (right_size a' b) as Hright.
+    cbn [fst]; unfold c_reduce; rewrite !Nat2N.inj_add in *; nia.
+  Qed.
   Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
@@ -1885,5 +1903,8 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   Qed.
   Lemma reduce_bigO : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_reduce; intros [a b] _; cbn [fst snd].
+    pose proof (T_reduce_le a b); nia.
+  Qed.
 End IntervalBitsT.
