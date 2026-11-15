@@ -1157,6 +1157,319 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     - reflexivity.
   Qed.
 
+  Definition table_allocated (db : D.t) (t : cell_table (cell V.t)) : Prop :=
+    Forall (fun c => forall i, c = Id i -> D.allocated db i) (table_list t).
+
+  (** Every typed child index returns an allocated cell of its specified sort. *)
+  Lemma table_get_typed : forall db t j s, table_valid t -> table_allocated db t ->
+    nth_error (map cell_sort (table_list t)) j = Some s ->
+    cell_sort (table_get (Id 1%positive) j t) = s /\
+    (forall i, table_get (Id 1%positive) j t = Id i -> D.allocated db i).
+  Proof.
+    intros db t j s Hvalid Hallocated Hsort.
+    rewrite nth_error_map in Hsort.
+    destruct (nth_error (table_list t) j) as [c |] eqn:Hnth; [| discriminate].
+    cbn in Hsort. inversion Hsort; subst s. rewrite table_get_list by exact Hvalid.
+    rewrite Hnth. split; [reflexivity |].
+    apply Forall_forall with (x := c) in Hallocated.
+    - exact Hallocated.
+    - now apply nth_error_In in Hnth.
+  Qed.
+
+  (** A complete child tuple has the expected sorts and only allocated identifiers. *)
+  Lemma table_children_typed : forall db t children ss, table_valid t -> table_allocated db t ->
+    Forall2 (fun j s => nth_error (map cell_sort (table_list t)) j = Some s) children ss ->
+    map cell_sort (map (fun j => table_get (Id 1%positive) j t) children) = ss /\
+    (forall i, In (Id i) (map (fun j => table_get (Id 1%positive) j t) children) ->
+      D.allocated db i).
+  Proof.
+    intros db t children ss Hvalid Hallocated Htyped.
+    induction Htyped as [| j s children ss Hsort Htyped IH]; cbn [map].
+    - split; [reflexivity | intros i Hin; contradiction].
+    - destruct (table_get_typed db t j s Hvalid Hallocated Hsort) as [Hhead Halloc].
+      destruct IH as [Htail Hall]. split.
+      + now rewrite Hhead, Htail.
+      + intros i [Heq | Hin]; [exact (Halloc i Heq) | exact (Hall i Hin)].
+  Qed.
+
+  (** Adding one prepared node preserves sorted rows, layout, allocation and exact growth. *)
+  Lemma add_node_properties : forall ds node cells db, D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    (forall i, In (Id i) cells -> D.allocated db i) ->
+    (match node with
+     | EApp f _ => lookup_kind ds f = Some OId /\
+         lookup_sorts ds f = Some (map cell_sort cells) /\ D.slots_fit db f (S (length cells))
+     | ELit _ => cells = []
+     end) ->
+    D.wf (snd (add_node node cells db)) /\
+    view_sorted (lookup_sorts ds) (D.view (snd (add_node node cells db))) /\
+    kind (D.view (snd (add_node node cells db))) = kind (D.view db) /\
+    D.slots (snd (add_node node cells db)) = D.slots db /\
+    (forall i, fst (add_node node cells db) = Id i ->
+      D.allocated (snd (add_node node cells db)) i) /\
+    (D.ids db <= D.ids (snd (add_node node cells db)))%N /\
+    (forall f k o, row (D.view db) f k o ->
+      row (D.view (snd (add_node node cells db))) f k o) /\
+    (forall i j, same (D.view db) i j -> same (D.view (snd (add_node node cells db))) i j).
+  Proof.
+    intros ds [f children | v] cells db Hwf Hsorted Hkind Hallocated Hnode.
+    - destruct Hnode as [Hf [Hcells Hslots]].
+      pose proof (D.wf_make f cells db Hwf Hallocated Hslots) as Hwf'.
+      pose proof (D.layout_make f cells db Hwf) as Hlayout.
+      pose proof (make_sorted ds f cells db Hwf Hsorted Hkind Hf Hcells) as Hsorted'.
+      pose proof (make_grows f cells db Hwf (eq_trans (Hkind f) Hf)) as Hgrowth.
+      cbn [add_node]. destruct (D.make f cells db) as [i next] eqn:Hmake.
+      cbn in Hwf', Hlayout, Hsorted', Hgrowth |- *.
+      destruct Hlayout as [Hkind' [Hslots' [Hupper [Hnew Hpending]]]].
+      split; [exact Hwf' |]. split; [exact Hsorted' |].
+      split; [exact Hkind' |]. split; [exact Hslots' |]. split.
+      + intros j Heq. inversion Heq; subst j. exact Hnew.
+      + exact Hgrowth.
+    - cbn [add_node]. split; [exact Hwf |]. split; [exact Hsorted |].
+      split; [reflexivity |]. split; [reflexivity |]. split.
+      + intros i Heq. discriminate.
+      + split; [apply N.le_refl |]. split; auto.
+  Qed.
+
+  (** The prepared node fold preserves database invariants and its typed cell prefix. *)
+  Lemma build_nodes_preserves : forall ds ns t db, D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) ns ->
+    Forall (fun n => match n with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) ns ->
+    let out := build_nodes ns t db in
+    D.wf (snd out) /\ view_sorted (lookup_sorts ds) (D.view (snd out)) /\
+    kind (D.view (snd out)) = kind (D.view db) /\ D.slots (snd out) = D.slots db /\
+    (D.ids db <= D.ids (snd out))%N /\ table_valid (fst out) /\
+    table_allocated (snd out) (fst out) /\
+    map cell_sort (table_list (fst out)) = map cell_sort (table_list t) ++ map enode_sort ns /\
+    (forall f k o, row (D.view db) f k o -> row (D.view (snd out)) f k o) /\
+    (forall i j, same (D.view db) i j -> same (D.view (snd out)) i j).
+  Proof.
+    intros ds ns. induction ns as [| n rest IH]; intros t db Hwf Hsorted Hkind Hvalid
+      Hallocated Htyped Hslots.
+    - cbn [build_nodes fst snd]. split; [exact Hwf |]. split; [exact Hsorted |].
+      split; [reflexivity |]. split; [reflexivity |]. split; [apply N.le_refl |].
+      split; [exact Hvalid |]. split; [exact Hallocated |]. split.
+      + now rewrite app_nil_r.
+      + split; auto.
+    - destruct Htyped as [Hnode Htail].
+      apply Forall_cons_iff in Hslots. destruct Hslots as [Hslot Hslots].
+      set (cells := match n with
+        | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+        | ELit _ => []
+        end).
+      assert (Hready : (forall i, In (Id i) cells -> D.allocated db i) /\
+        match n with
+        | EApp f _ => lookup_kind ds f = Some OId /\
+            lookup_sorts ds f = Some (map cell_sort cells) /\
+            D.slots_fit db f (S (length cells))
+        | ELit _ => cells = []
+        end).
+      { destruct n as [f children | v]; unfold cells; cbn in *.
+        - destruct Hnode as [Hf [ss [Hsort Hchildren]]].
+          destruct (table_children_typed db t children ss Hvalid Hallocated Hchildren)
+            as [Hcells Hids].
+          split; [exact Hids |]. split; [exact Hf |]. split.
+          + now rewrite Hcells.
+          + now rewrite length_map.
+        - split; [intros i Hin; contradiction | reflexivity]. }
+      destruct Hready as [Hcells Hready].
+      pose proof (add_node_properties ds n cells db Hwf Hsorted Hkind Hcells Hready)
+        as Hstep.
+      pose proof (add_node_sort n cells db) as Hsort.
+      cbn [build_nodes]. fold cells.
+      destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+      cbn in Hstep, Hsort |- *.
+      destruct Hstep as [Hwf' [Hsorted' [Hkind' [Hslots' [Hnew [Hids' [Hrows' Hsame']]]]]]].
+      assert (Hkind_next : forall f, kind (D.view next) f = lookup_kind ds f).
+      { intro f. now rewrite Hkind'. }
+      assert (Hvalid_next : table_valid (table_push c t)).
+      { now apply table_push_valid. }
+      assert (Hallocated_next : table_allocated next (table_push c t)).
+      { unfold table_allocated in *. rewrite table_push_list. apply Forall_app. split.
+        - eapply Forall_impl; [| exact Hallocated].
+          intros old Hold i Heq. specialize (Hold i Heq).
+          unfold D.allocated in *. exact (N.le_trans _ _ _ Hold Hids').
+        - constructor; [exact Hnew | constructor]. }
+      assert (Htyped_next : nodes_typed ds (map cell_sort (table_list (table_push c t))) rest).
+      { rewrite table_push_list, map_app. cbn [map]. now rewrite Hsort. }
+      assert (Hslots_next : Forall (fun node => match node with
+        | EApp f children => D.slots_fit next f (S (length children))
+        | ELit _ => True
+        end) rest).
+      { eapply Forall_impl; [| exact Hslots]. intros [f children | v] Hfits; [| exact I].
+        unfold D.slots_fit in *. now rewrite Hslots'. }
+      pose proof (IH (table_push c t) next Hwf' Hsorted' Hkind_next Hvalid_next
+        Hallocated_next Htyped_next Hslots_next) as Hfinal.
+      cbv zeta in Hfinal.
+      destruct (build_nodes rest (table_push c t) next) as [result final] eqn:Hrest.
+      cbn in Hfinal |- *.
+      destruct Hfinal as [Hwf_final [Hsorted_final [Hkind_final [Hslots_final
+        [Hids_final [Hvalid_final [Hallocated_final [Hsort_final [Hrows_final Hsame_final]]]]]]]]].
+      split; [exact Hwf_final |]. split; [exact Hsorted_final |]. split.
+      + now rewrite Hkind_final, Hkind'.
+      + split; [now rewrite Hslots_final, Hslots' |]. split.
+        * exact (N.le_trans _ _ _ Hids' Hids_final).
+        * split; [exact Hvalid_final |]. split; [exact Hallocated_final |]. split.
+          -- rewrite Hsort_final, table_push_list, map_app. cbn [map].
+             rewrite Hsort. now rewrite <- app_assoc.
+          -- split.
+             ++ intros f k o Hrow. apply Hrows_final. now apply Hrows'.
+             ++ intros i j Heq. apply Hsame_final. now apply Hsame'.
+  Qed.
+
+  (** A complete input preserves the database invariants and returns an allocated root. *)
+  Lemma add_expr_properties : forall ds e db, D.wf db -> expr_ok ds db e ->
+    view_sorted (lookup_sorts ds) (D.view db) ->
+    D.wf (snd (add_expr e db)) /\
+    view_sorted (lookup_sorts ds) (D.view (snd (add_expr e db))) /\
+    kind (D.view (snd (add_expr e db))) = kind (D.view db) /\
+    D.slots (snd (add_expr e db)) = D.slots db /\
+    D.allocated (snd (add_expr e db)) (fst (add_expr e db)) /\
+    (D.ids db <= D.ids (snd (add_expr e db)))%N /\
+    (forall f k o, row (D.view db) f k o ->
+      row (D.view (snd (add_expr e db))) f k o) /\
+    (forall i j, same (D.view db) i j ->
+      same (D.view (snd (add_expr e db))) i j).
+  Proof.
+    intros ds [ns root_index] db Hwf [Hexpr [Hkind Hslots]] Hsorted.
+    pose proof (expr_nodes_typed V.t ds (FExpr V.t ns root_index) Hexpr) as Htyped.
+    assert (Hallocated : table_allocated db (@table_empty (cell V.t))).
+    { constructor. }
+    pose proof (build_nodes_preserves ds ns table_empty db Hwf Hsorted Hkind
+      (table_empty_valid (cell V.t)) Hallocated Htyped Hslots) as Hbuild.
+    cbv zeta in Hbuild. unfold add_expr.
+    destruct (build_nodes ns table_empty db) as [t final] eqn:Hresult.
+    cbn [fst snd table_list table_empty app map] in Hbuild.
+    destruct Hbuild as [Hwf' [Hsorted' [Hkind' [Hslots' [Hids'
+      [Hvalid [Hallocated' [Hsorts [Hrows Hsame]]]]]]]]].
+    change (map cell_sort (table_list t) = map enode_sort ns) in Hsorts.
+    destruct Hexpr as [[f [children Hroot]] Hnodes].
+    assert (Hroot_sort : nth_error (map cell_sort (table_list t)) root_index = Some SId).
+    { rewrite Hsorts, nth_error_map. cbn [expr_nodes expr_root] in Hroot.
+      rewrite Hroot. reflexivity. }
+    destruct (table_get_typed final t root_index SId Hvalid Hallocated' Hroot_sort)
+      as [Hsort Hroot_allocated].
+    destruct (table_get (Id 1%positive) root_index t) as [i | v] eqn:Hget;
+      [| discriminate Hsort].
+    cbn [fst snd]. split; [exact Hwf' |]. split; [exact Hsorted' |].
+    split; [exact Hkind' |]. split; [exact Hslots' |]. split.
+    - exact (Hroot_allocated i eq_refl).
+    - split; [exact Hids' |]. split; assumption.
+  Qed.
+
+  (** Finding a declaration gives both of its public lookup fields. *)
+  Lemma found_decl_fields : forall ds f d,
+    find (fun d => Pos.eqb (name d) f) ds = Some d ->
+    lookup_sorts ds f = Some (arg_sorts d) /\ lookup_kind ds f = Some (out d).
+  Proof.
+    induction ds as [| head rest IH]; intros f d Hfind; [discriminate |].
+    cbn [find lookup_sorts lookup_kind] in Hfind |- *.
+    destruct (Pos.eqb (name head) f).
+    - inversion Hfind; subst d. split; reflexivity.
+    - exact (IH f d Hfind).
+  Qed.
+
+  (** A checked loaded plan provides enough slots for each well-sorted input node. *)
+  Lemma loaded_expr_ok : forall p cp ds db e, decls V.t p = ds ->
+    E.plans_ok p cp -> E.loaded p cp db ->
+    expr_sorted (lookup_sorts ds) (lookup_kind ds) e -> expr_ok ds db e.
+  Proof.
+    intros p cp ds db e Hdecls Hplan [Hkind [Hslots Hsorted]] Hexpr.
+    split; [exact Hexpr |]. split.
+    - intro f. rewrite Hkind. unfold program_kind. now rewrite Hdecls.
+    - apply Forall_forall. intros [f children | v] Hin; [| exact I].
+      apply In_nth_error in Hin. destruct Hin as [i Hnth].
+      destruct Hexpr as [Hroot Hnodes].
+      destruct (Hnodes i f children Hnth) as [Hf [ss [Hss Hchildren]]].
+      unfold D.slots_fit. intros perm Hin. rewrite Hslots in Hin.
+      destruct (E.check_plan_slots p cp f perm Hplan Hin)
+        as [d [Hfind [Hdistinct Hbounds]]].
+      rewrite Hdecls in Hfind.
+      destruct (found_decl_fields ds f d Hfind) as [Hsorts Hout].
+      assert (Hout' : out d = OId) by congruence.
+      assert (Hsorts' : arg_sorts d = ss) by congruence.
+      pose proof (Forall2_length Hchildren) as Hlength.
+      split; [exact Hdistinct |].
+      rewrite Hout', Hsorts' in Hbounds. cbn in Hbounds.
+      replace (S (length children)) with (length ss + 1) by lia.
+      exact Hbounds.
+  Qed.
+
+  (** Loading any program initializes its declared kinds, planned slots and empty rows. *)
+  Lemma load_properties : forall p cp, D.wf (E.load p cp) /\ E.loaded p cp (E.load p cp).
+  Proof.
+    intros p cp. rewrite E.load_spec. split; [apply D.wf_init |].
+    unfold E.loaded, program_kind, program_sorts. split.
+    - intro f.
+      exact (proj1 (proj2 (proj2
+        (D.init_view (decls V.t p) (Egglog.Syntax.slots V.t cp) f [] None 1 1)))).
+    - split.
+      + exact (proj1 (proj2 (proj2 (proj2
+          (D.init_view (decls V.t p) (Egglog.Syntax.slots V.t cp) 1 [] None 1 1))))).
+      + intros f k o Hrow.
+        apply (proj1 (proj1
+          (D.init_view (decls V.t p) (Egglog.Syntax.slots V.t cp) f k o 1 1))) in Hrow.
+        contradiction.
+  Qed.
+
+  (** Input admissibility depends on the database kinds and slot layout only. *)
+  Lemma expr_ok_layout : forall ds db db' e,
+    kind (D.view db') = kind (D.view db) -> D.slots db' = D.slots db ->
+    expr_ok ds db e -> expr_ok ds db' e.
+  Proof.
+    intros ds db db' e Hkind Hslots [Hexpr [Hkinds Hfits]].
+    split; [exact Hexpr |]. split.
+    - intro f. now rewrite Hkind.
+    - eapply Forall_impl; [| exact Hfits]. intros [f children | v] Hfit; [| exact I].
+      unfold D.slots_fit in *. now rewrite Hslots.
+  Qed.
+
+  (** Adding all inputs preserves the database layout and every old row and equality. *)
+  Lemma add_inputs_properties : forall ds es db, D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
+    D.wf (snd (add_inputs es db)) /\
+    view_sorted (lookup_sorts ds) (D.view (snd (add_inputs es db))) /\
+    kind (D.view (snd (add_inputs es db))) = kind (D.view db) /\
+    D.slots (snd (add_inputs es db)) = D.slots db /\
+    (D.ids db <= D.ids (snd (add_inputs es db)))%N /\
+    (forall f k o, row (D.view db) f k o ->
+      row (D.view (snd (add_inputs es db))) f k o) /\
+    (forall i j, same (D.view db) i j ->
+      same (D.view (snd (add_inputs es db))) i j).
+  Proof.
+    intros ds es. induction es as [| e rest IH]; intros db Hwf Hsorted Hexprs.
+    - cbn [add_inputs snd]. split; [exact Hwf |]. split; [exact Hsorted |].
+      split; [reflexivity |]. split; [reflexivity |]. split; [apply N.le_refl |].
+      split; auto.
+    - apply Forall_cons_iff in Hexprs. destruct Hexprs as [Hexpr Hrest].
+      destruct (add_expr_properties ds e db Hwf Hexpr Hsorted)
+        as [Hwf' [Hsorted' [Hkind [Hslots [Hnew [Hids [Hrows Hsame]]]]]]].
+      assert (Hrest' : Forall (expr_ok ds (snd (add_expr e db))) rest).
+      { eapply Forall_impl; [| exact Hrest]. intros x Hx.
+        exact (expr_ok_layout ds db (snd (add_expr e db)) x Hkind Hslots Hx). }
+      pose proof (IH (snd (add_expr e db)) Hwf' Hsorted' Hrest') as Hfinal.
+      cbn [add_inputs]. destruct (add_expr e db) as [i next] eqn:Hexpr_result.
+      cbn [snd] in *.
+      destruct (add_inputs rest next) as [cs final] eqn:Hrest_result.
+      cbn [snd] in *.
+      destruct Hfinal as [Hwf_final [Hsorted_final [Hkind_final [Hslots_final
+        [Hids_final [Hrows_final Hsame_final]]]]]].
+      split; [exact Hwf_final |]. split; [exact Hsorted_final |]. split.
+      + now rewrite Hkind_final, Hkind.
+      + split; [now rewrite Hslots_final, Hslots |]. split.
+        * exact (N.le_trans _ _ _ Hids Hids_final).
+        * split.
+          -- intros f k o Hrow. apply Hrows_final. now apply Hrows.
+          -- intros i' j' Heq. apply Hsame_final. now apply Hsame.
+  Qed.
+
   Lemma add_expr_represents : forall ds e db t, D.wf db -> expr_ok ds db e ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_expr e db))) (Id (fst (add_expr e db))) t.
@@ -1167,7 +1480,27 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     let p := C.compile ds rws ans in
     let cp := E.plan p in
     D.wf (inputs_db es (E.load p cp)) /\ E.loaded p cp (inputs_db es (E.load p cp)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans es [Hrules Hexprs]. cbv zeta.
+    set (p := C.compile ds rws ans). set (cp := E.plan p).
+    assert (Hdecls : decls V.t p = ds) by apply C.compile_program.
+    assert (Hplan : E.plans_ok p cp).
+    { apply E.plan_checked. now apply C.compile_sorted. }
+    destruct (load_properties p cp) as [Hwf Hloaded].
+    destruct Hloaded as [Hkind [Hslots Hsorted]].
+    assert (Hsorted' : view_sorted (lookup_sorts ds) (D.view (E.load p cp))).
+    { unfold program_sorts in Hsorted. now rewrite Hdecls in Hsorted. }
+    assert (Hinputs : Forall (expr_ok ds (E.load p cp)) es).
+    { eapply Forall_impl; [| exact Hexprs]. intros e Hexpr.
+      eapply loaded_expr_ok; [exact Hdecls | exact Hplan | | exact Hexpr].
+      split; [exact Hkind |]. split; assumption. }
+    destruct (add_inputs_properties ds es (E.load p cp) Hwf Hsorted' Hinputs)
+      as [Hwf' [Hsorted_final [Hkind_final [Hslots_final Hgrowth]]]].
+    rewrite <- add_inputs_db. split; [exact Hwf' |]. unfold E.loaded. split.
+    - intro f. now rewrite Hkind_final.
+    - split; [now rewrite Hslots_final |].
+      unfold program_sorts. now rewrite Hdecls.
+  Qed.
 
   (** An accepted result is precisely the run on the loaded input fold. *)
   Lemma saturate_execution : forall ds rws ans lim es st db cs,
