@@ -443,7 +443,25 @@ Lemma tnum_sign_project_sound : forall sw rw n q x z,
   0 <= n -> tnum_gamma rw q z ->
   (forall j, n <= j < Zpos rw -> Z.testbit z j = Z.testbit x (Zpos sw - 1)) ->
   tnum_gamma sw (tnum_sign_project sw rw n q) x.
-Proof. Admitted. (* CONVERT: tnum_sign_project_sound: Found no subterm matching "Z.testbit 0 ?M1536" in Hbit. *)
+Proof.
+  intros sw rw n q x z Hn Hq Hfill. apply tnum_gamma_bits in Hq.
+  destruct Hq as [Hz Ho]. apply tnum_gamma_bits. split; intros i Hi Hbit;
+    cbn [tnum_sign_project zeros ones] in Hbit; rewrite tnum_wrap_agrees in Hbit.
+  - destruct (Z.shiftr (wrap rw (zeros q)) n =? 0) eqn:Hnone;
+      [rewrite Z.bits_0 in Hbit; discriminate|].
+    apply Z.eqb_neq in Hnone.
+    destruct (tnum_high_set_bit rw _ n (wrap_is_word rw _) Hn Hnone) as [j [Hj Hset]].
+    rewrite tnum_half_value, Z.pow2_bits_eqb in Hbit by lia.
+    apply Z.eqb_eq in Hbit. subst i. rewrite <- (Hfill j Hj). apply Hz; [lia|].
+    rewrite <- (tnum_wrap_bit rw (zeros q) j ltac:(lia)). exact Hset.
+  - destruct (Z.shiftr (wrap rw (ones q)) n =? 0) eqn:Hnone;
+      [rewrite Z.bits_0 in Hbit; discriminate|].
+    apply Z.eqb_neq in Hnone.
+    destruct (tnum_high_set_bit rw _ n (wrap_is_word rw _) Hn Hnone) as [j [Hj Hset]].
+    rewrite tnum_half_value, Z.pow2_bits_eqb in Hbit by lia.
+    apply Z.eqb_eq in Hbit. subst i. rewrite <- (Hfill j Hj). apply Ho; [lia|].
+    rewrite <- (tnum_wrap_bit rw (ones q) j ltac:(lia)). exact Hset.
+Qed.
 
 Theorem tnum_back_shift_sound : forall o w f k q x,
   tnum_shift_op o -> word_fun2 o = Some f -> is_word w k -> is_word w x ->
@@ -511,19 +529,70 @@ Theorem tnum_order_back_sound : forall (strict : bool) w q a b x y,
   tnum_gamma 1%positive q (if (if strict then x <? y else x <=? y) then 1 else 0) ->
   tnum_gamma w (fst (tnum_order_back strict w q a b)) x /\
   tnum_gamma w (snd (tnum_order_back strict w q a b)) y.
-Proof. Admitted. (* CONVERT: tnum_order_back_sound: Not convertible. *)
+Proof.
+  intros strict w q a b x y Hx Hy Ha Hb Hq.
+  pose proof (tnum_unsigned_bounds w a x Hx Ha) as Hax.
+  pose proof (tnum_unsigned_bounds w b y Hy Hb) as Hby.
+  assert (Hamin : 0 <= tnum_min w a).
+  { unfold tnum_min. rewrite tnum_wrap_agrees. apply wrap_is_word. }
+  assert (Hbmin : 0 <= tnum_min w b).
+  { unfold tnum_min. rewrite tnum_wrap_agrees. apply wrap_is_word. }
+  destruct (tnum_boolean_sound q _ Hq) as [Htrue Hfalse]. unfold tnum_order_back.
+  destruct (Z.testbit (ones q) 0) eqn:Hone.
+  - specialize (Htrue eq_refl). destruct strict; cbn in Htrue |- *;
+      [apply Z.ltb_lt in Htrue|apply Z.leb_le in Htrue]; split;
+      first [apply tnum_upper_sound; unfold is_word in Hx; lia|
+        apply tnum_lower_sound; [exact Hy|lia]].
+  - destruct (Z.testbit (zeros q) 0) eqn:Hzero; [|split; apply tnum_top_sound].
+    specialize (Hfalse eq_refl). destruct strict; cbn in Hfalse |- *;
+      [apply Z.ltb_ge in Hfalse|apply Z.leb_gt in Hfalse]; split;
+      first [apply tnum_lower_sound; [exact Hx|lia]|
+        apply tnum_upper_sound; unfold is_word in Hy; lia].
+Qed.
 
 Lemma tnum_project_variable_sound : forall o w b q x k,
   tnum_shift_op o -> is_word w x -> is_word w k -> tnum_gamma w b k ->
   tnum_gamma w q (tnum_scalar_value o w k x) ->
   tnum_gamma w (tnum_project_variable o w b q) x.
-Proof. Admitted. (* CONVERT: tnum_project_variable_sound: The reference tnum_project_variable_c was not found in the current *)
+Proof.
+  intros o w b q x k Ho Hx Hk Hb Hq.
+  apply (tnum_gamma_monotone w
+    (tnum_project w w (tnum_scalar_value (tnum_inverse_shift o) w k) q)).
+  - pose proof (tnum_variable_raw_amount_bound (tnum_inverse_shift o) w
+      (Tnum 0 (zeros q)) b k Hk Hb) as Hz.
+    pose proof (tnum_variable_raw_amount_bound (tnum_inverse_shift o) w
+      (Tnum 0 (ones q)) b k Hk Hb) as Hone.
+    apply tnum_leb_bits in Hz, Hone. destruct Hz as [_ Hz], Hone as [_ Hone].
+    unfold tnum_project_variable.
+    apply tnum_leb_bits. split; intros i Hi Hbit;
+      cbn [tnum_project zeros ones]; rewrite tnum_wrap_agrees, tnum_wrap_bit by exact Hi.
+    + specialize (Hz i Hi Hbit). unfold tnum_scalar, tnum_map, tnum_min in Hz.
+      cbn [ones] in Hz. rewrite tnum_wrap_agrees, tnum_wrap_bit in Hz by exact Hi.
+      exact Hz.
+    + specialize (Hone i Hi Hbit). unfold tnum_scalar, tnum_map, tnum_min in Hone.
+      cbn [ones] in Hone. rewrite tnum_wrap_agrees, tnum_wrap_bit in Hone by exact Hi.
+      exact Hone.
+  - eapply tnum_project_sound; [apply tnum_projects_shift; [exact Ho|exact (proj1 Hk)]|
+      exact Hx|exact Hq].
+Qed.
 
 Theorem tnum_back_variable_shift_sound : forall o w f b q x k,
   tnum_shift_op o -> word_fun2 o = Some f -> is_word w x -> is_word w k ->
   tnum_gamma w b k -> tnum_gamma w q (eval_binary_tag f w x k) ->
   tnum_gamma w (tnum_back_variable_shift o w b q) x.
-Proof. Admitted. (* CONVERT: tnum_back_variable_shift_sound: The reference tnum_back_variable_shift_c was not found in the current *)
+Proof.
+  intros o w f b q x k Ho Hf Hx Hk Hb Hq.
+  rewrite <- (tnum_scalar_agrees o w f k x Ho Hf Hk Hx) in Hq.
+  pose proof (tnum_project_variable_sound o w b q x k Ho Hx Hk Hb Hq) as Hcopied.
+  unfold tnum_back_variable_shift. destruct o; try exact Hcopied.
+  apply tnum_meet_sound; [exact Hcopied|].
+  pose proof (tnum_unsigned_bounds w b k Hk Hb) as Hbounds.
+  apply (tnum_sign_project_sound w w (Z.max 0 (Zpos w - 1 - tnum_min w b)) q x
+    (tnum_scalar_value bvashr w k x)); [lia|exact Hq|].
+  intros j Hj. rewrite tnum_scalar_bits by (try assumption; unfold is_word in Hk; lia).
+  change (Z.testbit x (Z.min (j + k) (Zpos w - 1)) = Z.testbit x (Zpos w - 1)).
+  f_equal. lia.
+Qed.
 
 Theorem tnum_concat_back_sound : forall w v q x y,
   is_word w x -> is_word v y ->
@@ -551,13 +620,42 @@ Lemma tnum_backward_one_sound : forall o w a x rw z q,
   is_word w x -> tnum_gamma w a x -> eval_op o [(w, x)] = Some (rw, z) ->
   tnum_gamma rw q z ->
   Forall2 (fun p v => tnum_gamma w p v) (tnum_backward_raw o [(w, a)] rw q) [x].
-Proof. Admitted. (* CONVERT: tnum_backward_one_sound: The reference tnum_backward_raw_c was not found in the current *)
+Proof.
+  intros o w a x rw z q Hx Ha Heval Hq. destruct o.
+  all: unfold tnum_backward_raw; constructor; [|constructor].
+  all: try exact Ha.
+  - rewrite (eval_op_fun1 bvnot w x UNot eq_refl) in Heval. injection Heval as <- <-.
+    rewrite <- (wnot_involutive w x Hx). now apply tnum_not_sound.
+  - rewrite eval_op_zext in Heval. injection Heval as <- <-.
+    rewrite (wrap_id w x Hx) in Hq.
+    eapply tnum_project_sound; [apply tnum_projects_resize|exact Hx|exact Hq].
+  - rewrite eval_op_sext in Heval. injection Heval as <- <-. now apply tnum_back_sext_sound.
+  - rewrite eval_op_trunc in Heval. destruct (Pos.leb target w); [|discriminate].
+    injection Heval as <- <-. rewrite (wrap_id w x Hx) in Hq.
+    eapply tnum_project_sound; [apply tnum_projects_resize|exact Hx|exact Hq].
+  - rewrite eval_op_extract in Heval.
+    destruct (Nat.leb lo hi && Nat.ltb hi (Pos.to_nat w)); [|discriminate].
+    injection Heval as <- <-. rewrite (wrap_id w x Hx) in Hq.
+    eapply tnum_project_sound; [apply tnum_projects_extract; lia|exact Hx|exact Hq].
+Qed.
 
 Lemma tnum_backward_shift_sound : forall o w f a b x y q,
   tnum_shift_op o -> word_fun2 o = Some f -> is_word w x -> is_word w y ->
   tnum_gamma w a x -> tnum_gamma w b y -> tnum_gamma w q (eval_binary_tag f w x y) ->
   Forall2 (fun p v => tnum_gamma w p v) (tnum_backward_raw o [(w, a); (w, b)] w q) [x; y].
-Proof. Admitted. (* CONVERT: tnum_backward_shift_sound: The reference tnum_backward_raw_c was not found in the current *)
+Proof.
+  intros o w f a b x y q Ho Hf Hx Hy Ha Hb Hq.
+  assert (Hknown : forall k, tnum_constant w b = Some k ->
+    tnum_gamma w (tnum_back_shift o w k q) x).
+  { intros k Hconstant. pose proof (tnum_constant_value w b y k Hy Hb Hconstant) as Hyk.
+    subst k. now apply (tnum_back_shift_sound o w f). }
+  assert (Hvariable : tnum_gamma w (tnum_back_variable_shift o w b q) x).
+  { now apply (tnum_back_variable_shift_sound o w f b q x y). }
+  destruct Ho as [Ho|[Ho|[Ho|[Ho|Ho]]]]; subst o;
+    unfold tnum_backward_raw; destruct (tnum_constant w b) as [k|] eqn:Hconstant.
+  all: constructor; [first [now apply Hknown|exact Hvariable]|
+    constructor; [exact Hb|constructor]].
+Qed.
 
 Lemma tnum_backward_fun2_sound : forall o w f a b x y q,
   word_fun2 o = Some f -> is_word w x -> is_word w y ->
