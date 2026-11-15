@@ -703,6 +703,60 @@ Proof.
     now rewrite Heq.
 Qed.
 
+(** Prepending a vertex creates precedence from that vertex and preserves later precedence. *)
+Lemma wto_before_cons : forall x u v rest,
+  graph_before (x :: rest) u v <->
+    (x = u /\ In v rest) \/ graph_before rest u v.
+Proof.
+  intros x u v rest. unfold graph_before. split.
+  - intros [[|y prefix] [middle [suffix Heq]]].
+    + cbn in Heq. injection Heq as Hx Hrest. left. split; [exact Hx|].
+      rewrite Hrest. apply in_app_iff. right. now left.
+    + cbn in Heq. injection Heq as Hx Hrest.
+      right. exists prefix, middle, suffix. exact Hrest.
+  - intros [[Heq Hin]|[prefix [middle [suffix Heq]]]].
+    + subst x. apply in_split in Hin. destruct Hin as [middle [suffix Heq]].
+      exists [], middle, suffix. now rewrite Heq.
+    + exists (x :: prefix), middle, suffix. now cbn; rewrite Heq.
+Qed.
+
+(** Every predecessor occurs in its list. *)
+Lemma wto_before_member : forall vs u v,
+  graph_before vs u v -> In u vs.
+Proof.
+  intros vs u v [prefix [middle [suffix Heq]]]. rewrite Heq.
+  apply in_app_iff. right. now left.
+Qed.
+
+(** Position rows contain exactly each key's strict suffix and supplied stack. *)
+Lemma wto_positions_spec : forall rows,
+  NoDup (map fst rows) -> forall u,
+  (trie_get u (wto_positions rows) = None <-> ~ In u (map fst rows)) /\
+  forall after stack, trie_get u (wto_positions rows) = Some (after, stack) ->
+    In (u, stack) rows /\
+    forall v, In v after <-> graph_before (map fst rows) u v.
+Proof.
+  induction rows as [|[head stored] rest IH]; intros Hunique u.
+  - cbn [wto_positions map]. rewrite PTrie.get_empty. split.
+    + split; [intros H Hin; contradiction|intro H; reflexivity].
+    + intros after stack Hget. discriminate.
+  - cbn [map fst] in Hunique. inversion Hunique as [|v vs Hfresh Hrest]; subst.
+    cbn [wto_positions map fst].
+    destruct (Pos.eq_dec u head) as [Heq|Hneq].
+    + subst u. rewrite PTrie.get_set_same. split.
+      * split; [discriminate|intro H; exfalso; apply H; now left].
+      * intros after stack Hget. injection Hget as Hafter Hstack. subst after stack.
+        split; [now left|]. intro v. rewrite wto_before_cons. split.
+        -- intro Hin. left. auto.
+        -- intros [[Heq Hin]|Hbefore]; [exact Hin|].
+           exfalso. apply Hfresh. eapply wto_before_member; eassumption.
+    + rewrite PTrie.get_set_other by exact Hneq.
+      destruct (IH Hrest u) as [Habsent Hpresent]. split.
+      * rewrite Habsent. cbn [In]. intuition congruence.
+      * intros after stack Hget. destruct (Hpresent after stack Hget) as [Hin Hafter].
+        split; [now right|]. intro v. rewrite wto_before_cons, <- Hafter. intuition congruence.
+Qed.
+
 (** A path contains its initial vertex. *)
 Lemma wto_path_first : forall g u vs v, path g u vs v -> In u vs.
 Proof.
@@ -1529,7 +1583,18 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   Lemma F3_index : forall w, NoDup (wto_order w) -> index_correct w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w Hunique u. unfold checked_index.
+    destruct (wto_positions_spec (wto_annotate [] w)
+      ltac:(rewrite wto_annotation_order; exact Hunique) u) as [Habsent Hpresent].
+    rewrite wto_annotation_order in Habsent. split; [exact Habsent|].
+    intros after stack Hget. destruct (Hpresent after stack Hget) as [Hin Hafter].
+    split.
+    - rewrite <- (wto_annotation_order w []). exact (in_map fst _ _ Hin).
+    - split.
+      + now rewrite wto_annotation_order in Hafter.
+      + now apply wto_annotation_spec.
+  Qed.
 
   Lemma F4_check : forall g roots w, check g roots w = true <-> checked g roots w.
   Proof. Admitted. (* STUB *)
