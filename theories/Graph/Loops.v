@@ -4,7 +4,7 @@
     For example, a self-edge produces a one-vertex natural loop.
     Builds on: prepared graphs, dominator trees and depth-first traces. *)
 
-From Stdlib Require Import PArith NArith List Bool.
+From Stdlib Require Import PArith NArith Arith List Bool.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig LoopsSig.
@@ -489,6 +489,38 @@ Proof.
   destruct (Hmembers x Hin) as [Hfirst|Hsecond]; [now apply Havoid|now apply Hlastavoid].
 Qed.
 
+Local Lemma loop_order_cons : forall xs u v x,
+  order_before xs u v -> order_before (x :: xs) u v.
+Proof.
+  intros xs u v x [i [j [Hi [Hj Hij]]]].
+  exists (S i), (S j). split; [exact Hi|]. split; [exact Hj|].
+  exact (proj1 (Nat.succ_lt_mono i j) Hij).
+Qed.
+
+Local Lemma loop_order_first : forall xs u v,
+  In v xs -> order_before (u :: xs) u v.
+Proof.
+  intros xs u v Hin. apply In_nth_error in Hin. destruct Hin as [j Hj].
+  exists 0, (S j). split; [reflexivity|]. split; [exact Hj|apply Nat.lt_0_succ].
+Qed.
+
+Local Lemma loop_order_filter : forall (p : positive -> bool) xs u v,
+  order_before xs u v -> p u = true -> p v = true ->
+  order_before (filter p xs) u v.
+Proof.
+  intros p xs. induction xs as [|x xs IH]; intros u v [i [j [Hi [Hj Hij]]]] Hu Hv.
+  - destruct i; discriminate.
+  - destruct i as [|i], j as [|j].
+    + inversion Hij.
+    + cbn in Hi, Hj. injection Hi as <-. cbn. rewrite Hu.
+      apply loop_order_first, filter_In. split; [now apply nth_error_In in Hj|exact Hv].
+    + inversion Hij.
+    + cbn in Hi, Hj. apply (proj2 (Nat.succ_lt_mono i j)) in Hij.
+      assert (Htail : order_before (filter p xs) u v).
+      { apply IH; [now exists i, j|exact Hu|exact Hv]. }
+      cbn. destruct (p x); [now apply loop_order_cons|exact Htail].
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -899,7 +931,28 @@ Module LoopsT <: LOOPS_ALL.
   Lemma F12_header_order : forall g t r inner outer,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     loop_inside (base g) r inner outer -> order_before (headers g t) outer inner.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r inner outer Hgraph Hprepared Htree
+      [Hne [Hinner [Houter Hcontained]]].
+    assert (Hselected : forall h, natural_header (base g) r h ->
+      match loop_latches_at (classify g t) h with [] => false | _ => true end = true).
+    { intros h [latch [Hreach [Hedge Hdom]]].
+      destruct (F5_back_edges g t r latch h Hgraph Hprepared Htree) as [Hback Hlatch].
+      assert (Hin : In latch (latches (classify g t) h)).
+      { apply (proj2 Hlatch), (proj2 Hback). repeat split; assumption. }
+      change (In latch (loop_latches_at (classify g t) h)) in Hin.
+      destruct (loop_latches_at (classify g t) h); [contradiction|reflexivity]. }
+    assert (Hmember : natural_loop (base g) r outer inner).
+    { apply Hcontained. split; [exact Hinner|now left]. }
+    pose proof (loop_header_dominates (base g) r outer inner Hmember) as Hdom.
+    destruct (F4_tree_order g t r Hgraph Hprepared Htree) as [_ [_ [_ Horder]]].
+    cbv beta delta [headers loop_headers_of]. apply loop_order_filter.
+    - apply Horder.
+      + now apply loop_header_reachable.
+      + split; [exact Hdom|congruence].
+    - now apply Hselected.
+    - now apply Hselected.
+  Qed.
 
   Lemma F13_install : forall l h vs,
     body (install l (h, vs)) = PTrieCode.set h vs (body l) /\
