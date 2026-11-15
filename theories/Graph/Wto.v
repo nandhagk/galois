@@ -2485,10 +2485,215 @@ Module WtoT <: WTO_ALL.
 
   Local Transparent loopN.
 
+  Local Opaque loopN.
+
+  (** Source mass adds across concatenated vertex lists. *)
+  Lemma source_mass_app : forall g first rest,
+    source_mass g (first ++ rest) = source_mass g first + source_mass g rest.
+  Proof.
+    intros g first rest. unfold source_mass.
+    induction first as [|v first IH]; cbn [app fold_right]; [reflexivity|].
+    rewrite IH. lia.
+  Qed.
+
+  (** Reordering vertices preserves their total source mass. *)
+  Lemma source_mass_permutation : forall g first rest,
+    Permutation first rest -> source_mass g first = source_mass g rest.
+  Proof.
+    intros g first rest Hpermutation. unfold source_mass.
+    induction Hpermutation; cbn [fold_right]; lia.
+  Qed.
+
+  (** Summing component source masses counts their concatenated vertex list. *)
+  Lemma components_source_mass : forall g cs,
+    fold_right (fun c n => source_mass g c + n) 0 cs = source_mass g (concat cs).
+  Proof.
+    intros g cs. induction cs as [|c rest IH]; cbn [fold_right concat].
+    - reflexivity.
+    - rewrite source_mass_app, IH. reflexivity.
+  Qed.
+
+  (** A duplicate-free subdomain cannot have more source mass than its containing list. *)
+  Lemma source_mass_subdomain : forall g first rest,
+    NoDup first -> incl first rest -> source_mass g first <= source_mass g rest.
+  Proof.
+    intros g first. induction first as [|v first IH]; intros rest Hunique Hincl.
+    - cbn [source_mass fold_right]. lia.
+    - inversion Hunique as [|? ? Habsent Htail]; subst.
+      destruct (in_split v rest (Hincl v (or_introl eq_refl))) as [before [after Heq]].
+      subst rest.
+      assert (Hin : incl first (before ++ after)).
+      { intros u Hu. specialize (Hincl u (or_intror Hu)).
+        apply in_app_iff in Hincl. apply in_app_iff. destruct Hincl as [Hin|[Heq|Hin]].
+        - now left.
+        - subst u. contradiction.
+        - now right. }
+      specialize (IH (before ++ after) Htail Hin).
+      rewrite (source_mass_app g before after) in IH.
+      rewrite (source_mass_app g before (v :: after)).
+      change (1 + length (succs (base g) v) + source_mass g first <=
+        source_mass g before + (1 + length (succs (base g) v) + source_mass g after)).
+      lia.
+  Qed.
+
+  (** Scoped component output is a duplicate-free subdomain of the requested body. *)
+  Lemma scoped_components_source_mass : forall g body roots,
+    source_mass g (concat (comps (wto_components (wto_scoped g (Some body)) roots))) <=
+      source_mass g body.
+  Proof.
+    intros g body roots. apply source_mass_subdomain.
+    - apply wto_components_unique.
+    - intros v Hin. exact (wto_components_listed (wto_scoped g (Some body)) roots v Hin).
+  Qed.
+
+  (** Pending expansions below one level reserve the source mass that can reach that level. *)
+  Fixpoint level_credit (g : prepared) (level depth : nat) (tasks : list wto_task) : nat :=
+    match tasks with
+    | [] => 0
+    | WtoExpand _ _ _ c :: tasks =>
+      (if Nat.leb depth level then source_mass g c else 0) +
+        level_credit g level depth tasks
+    | WtoClose _ :: tasks => level_credit g level (Nat.pred depth) tasks
+    end.
+
+  (** A block of expansions contributes its combined source mass at the current depth. *)
+  Lemma level_credit_expands : forall g level depth within entries owners cs tasks,
+    level_credit g level depth (wto_expand_tasks within entries owners cs ++ tasks) =
+      (if Nat.leb depth level then source_mass g (concat cs) else 0) +
+        level_credit g level depth tasks.
+  Proof.
+    intros g level depth within entries owners cs tasks.
+    change (wto_expand_tasks within entries owners cs) with
+      (map (fun c => WtoExpand within entries owners c) cs).
+    induction cs as [|c rest IH].
+    - cbn [map app concat source_mass fold_right].
+      destruct (Nat.leb depth level); reflexivity.
+    - cbn [map app concat level_credit]. rewrite IH, source_mass_app.
+      destruct (Nat.leb depth level); lia.
+  Qed.
+
+  (** One expansion is the only source-mass charge made by a state at its own depth. *)
+  Definition level_entry g level st :=
+    if Nat.eqb (length (wto_parents st)) level then
+      match wto_tasks st with WtoExpand _ _ _ c :: _ => source_mass g c | _ => 0 end
+    else 0.
+
+  Lemma level_mass_cons : forall g level st states,
+    level_mass g level (st :: states) = level_entry g level st + level_mass g level states.
+  Proof.
+    intros g level st states. unfold level_mass, level_entry. cbn [fold_right].
+    destruct (Nat.eqb (length (wto_parents st)) level); [|reflexivity].
+    destruct (wto_tasks st) as [|task tasks]; [reflexivity|].
+    destruct task; reflexivity.
+  Qed.
+
+  (** A possible charge at the current head is already present in the pending credit. *)
+  Lemma level_entry_credit : forall g level st,
+    level_entry g level st <=
+      level_credit g level (length (wto_parents st)) (wto_tasks st).
+  Proof.
+    intros g level [tasks partial parents]. unfold level_entry.
+    cbn [wto_tasks wto_parents].
+    destruct (Nat.eqb (length parents) level) eqn:Hlevel; [|lia].
+    apply Nat.eqb_eq in Hlevel. subst level.
+    destruct tasks as [|task tasks]; [reflexivity|].
+    destruct task; cbn [level_credit]; rewrite ?Nat.leb_refl; lia.
+  Qed.
+
+  (** A step spends its level charge and preserves enough credit for every child expansion. *)
+  Local Opaque Galois.Graph.Wto.wto_components.
+
+  Lemma level_credit_step : forall g level st next,
+    wto_step g st = inl next ->
+    level_entry g level st +
+      level_credit g level (length (wto_parents next)) (wto_tasks next) <=
+      level_credit g level (length (wto_parents st)) (wto_tasks st).
+  Proof.
+    intros g level [tasks partial parents] next Hstep.
+    destruct tasks as [|task tasks]; [discriminate Hstep|].
+    destruct task as [within entries owners c|h].
+    - cbn [wto_step Galois.Graph.Wto.wto_step] in Hstep.
+      destruct (Galois.Graph.Wto.wto_select
+        (Galois.Graph.Wto.wto_preferred owners entries c) c) as [[h body]|] eqn:Hselect.
+      + pose proof (source_mass_permutation g _ _ (wto_select_spec _ _ _ _ Hselect))
+          as Hmass.
+        change (source_mass g c =
+          1 + length (succs (base g) h) + source_mass g body) in Hmass.
+        destruct body as [|v body].
+        * inversion Hstep; subst next.
+          clear Hstep Hselect Hmass.
+          change ((if Nat.eqb (length parents) level then source_mass g c else 0) +
+            level_credit g level (length parents) tasks <=
+            (if Nat.leb (length parents) level then source_mass g c else 0) +
+            level_credit g level (length parents) tasks).
+          destruct (Nat.eqb_spec (length parents) level) as [Heq|Hdifferent].
+          -- subst level. rewrite Nat.leb_refl. reflexivity.
+          -- destruct (Nat.leb (length parents) level); lia.
+        * inversion Hstep; subst next.
+          pose proof (scoped_components_source_mass g (v :: body)
+            (rev (v :: body))) as Hchild.
+          rewrite !rev_append_rev, !app_nil_r.
+          set (cs := comps (Galois.Graph.Wto.wto_components
+            (Galois.Graph.Wto.wto_scoped g (Some (v :: body)))
+            (rev (v :: body)))) in *.
+          change (source_mass g (concat cs) <= source_mass g (v :: body)) in Hchild.
+          clear Hstep Hselect.
+          cbn [wto_tasks wto_parents length]. rewrite level_credit_expands.
+          cbn [level_credit Nat.pred].
+          change ((if Nat.eqb (length parents) level then source_mass g c else 0) +
+            ((if Nat.leb (S (length parents)) level then source_mass g (concat (rev cs)) else 0) +
+              level_credit g level (length parents) tasks) <=
+            (if Nat.leb (length parents) level then source_mass g c else 0) +
+              level_credit g level (length parents) tasks).
+          rewrite <- (source_mass_permutation g _ _ (wto_components_reverse cs)).
+          assert (Hsub : source_mass g (concat cs) <= source_mass g c) by lia.
+          clear Hmass Hchild.
+          destruct (Nat.eqb_spec (length parents) level);
+            destruct (Nat.leb_spec0 (length parents) level);
+            destruct (Nat.leb_spec0 (S (length parents)) level); lia.
+      + apply wto_select_empty in Hselect. subst c. inversion Hstep; subst next.
+        unfold level_entry. cbn [wto_tasks wto_parents level_credit source_mass fold_right].
+        destruct (Nat.eqb (length parents) level), (Nat.leb (length parents) level); lia.
+    - destruct parents as [|parent parents]; inversion Hstep; subst next;
+        unfold level_entry; cbn [wto_tasks wto_parents length level_credit Nat.pred].
+      + destruct (Nat.eqb 0 level); lia.
+      + destruct (Nat.eqb (S (length parents)) level); lia.
+  Qed.
+
+  Local Transparent Galois.Graph.Wto.wto_components.
+
+  (** Summing a finite history cannot spend more source mass than its pending credit. *)
+  Lemma history_level_credit : forall g level fuel st,
+    level_mass g level (history_from g fuel st) <=
+      level_credit g level (length (wto_parents st)) (wto_tasks st).
+  Proof.
+    intros g level fuel. induction fuel as [|fuel IH]; intro st.
+    - cbn [history_from]. destruct (wto_step g st); rewrite level_mass_cons;
+        cbn [level_mass fold_right]; pose proof (level_entry_credit g level st); lia.
+    - cbn [history_from]. destruct (wto_step g st) as [next|result] eqn:Hstep.
+      + rewrite level_mass_cons. specialize (IH next).
+        pose proof (level_credit_step g level st next Hstep). lia.
+      + rewrite level_mass_cons. cbn [level_mass fold_right].
+        pose proof (level_entry_credit g level st). lia.
+  Qed.
+
   Lemma F18_level_mass : forall g roots level,
     level_mass g level (history g roots) <=
       source_mass g (concat (comps (wto_components g roots))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots level. unfold history.
+    eapply Nat.le_trans; [apply history_level_credit|].
+    unfold initial. cbn [wto_parents wto_tasks length].
+    pose proof (level_credit_expands g level 0 None
+      (wto_entries g roots (wto_components g roots)) (comp (wto_components g roots))
+      (rev (comps (wto_components g roots))) []) as Hcredit.
+    rewrite app_nil_r in Hcredit. rewrite Hcredit.
+    cbn [Nat.leb level_credit].
+    rewrite <- (source_mass_permutation g _ _ (wto_components_reverse _)). lia.
+  Qed.
+
+  Local Transparent loopN.
+
 
   Lemma F19_depth : forall g roots st within entries owners c tasks,
     In st (history g roots) ->
