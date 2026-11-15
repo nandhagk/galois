@@ -2182,7 +2182,9 @@ Module WtoT <: WTO_ALL.
   Proof. Admitted. (* STUB *)
 
   Lemma F5_live : forall g roots v, In v (live g roots) <-> reach (base g) roots v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots v. unfold live, search_trace. apply search_trace_reach_raw.
+  Qed.
 
   Lemma F6_sound : forall g roots w, check g roots w = true -> is_wto g roots w.
   Proof.
