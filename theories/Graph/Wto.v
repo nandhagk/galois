@@ -3870,6 +3870,373 @@ Module WtoT <: WTO_ALL.
     unfold k_ranks. time_step.
   Qed.
 
+  (** Offering an entry reads and, at most once, writes its bounded component key. *)
+  Local Lemma scope_offer_time i v entries width : Pos.size_nat i <= width + 1 ->
+    (T_wto_offer i v entries <= 8 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+  Proof.
+    intro Hwidth. pose proof (PTrieT.T_set_le positive i v entries) as Hset.
+    time_unfold @T_wto_offer. rewrite (PTrieT.trie_get_clock positive i entries).
+    destruct (trie_get i entries); rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Root seeding reads the supplied root key and its bounded owner, if present. *)
+  Local Lemma scope_root_entry_time owners entries v width :
+    Pos.size_nat v <= width ->
+    (forall u i, trie_get u owners = Some i -> Pos.size_nat i <= width + 1) ->
+    (T_wto_root_entry owners entries v + 1 <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+  Proof.
+    intros Hv Howners. time_unfold @T_wto_root_entry.
+    rewrite (PTrieT.trie_get_clock positive v owners).
+    destruct (trie_get v owners) as [i|] eqn:Hlookup.
+    - pose proof (scope_offer_time i v entries width (Howners v i Hlookup)) as Hoffer.
+      rewrite !Nat2N.inj_add in *. nia.
+    - rewrite !Nat2N.inj_add. nia.
+  Qed.
+
+  (** An edge entry compares bounded owner identifiers and offers its target at most once. *)
+  Local Lemma scope_edge_entry_time owners u entries v width :
+    Pos.size_nat v <= width ->
+    (forall x i, trie_get x owners = Some i -> Pos.size_nat i <= width + 1) ->
+    (T_wto_edge_entry owners (trie_get u owners) entries v + 1 <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+  Proof.
+    intros Hv Howners. time_unfold @T_wto_edge_entry.
+    destruct (trie_get u owners) as [i|] eqn:Hsource.
+    - rewrite (PTrieT.trie_get_clock positive v owners).
+      destruct (trie_get v owners) as [j|] eqn:Htarget.
+      + pose proof (Howners u i Hsource) as Hi.
+        pose proof (scope_offer_time j v entries width (Howners v j Htarget)) as Hoffer.
+        pose proof (Pos.T_eqb_le i j) as Heq.
+        destruct (Pos.eqb i j); rewrite !Nat2N.inj_add in *; nia.
+      + rewrite !Nat2N.inj_add. nia.
+    - rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** A row scan charges one bounded owner operation per target occurrence. *)
+  Local Lemma scope_edge_fold_time owners u row entries width :
+    Forall (fun v => Pos.size_nat v <= width) row ->
+    (forall x i, trie_get x owners = Some i -> Pos.size_nat i <= width + 1) ->
+    (List.T_fold_left (wto_edge_entry owners (trie_get u owners))
+      (fun acc v => T_wto_edge_entry owners (trie_get u owners) acc v) row entries <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (length row) * N.of_nat (width + 1) + 1)%N.
+  Proof.
+    intros Hwidth Howners.
+    pose proof (scope_fold_left_budget (wto_edge_entry owners (trie_get u owners))
+      (fun acc v => T_wto_edge_entry owners (trie_get u owners) acc v)
+      (fun _ => 1) row entries (16 * (PTrieT.c_trie + 1))%N width) as Hfold.
+    rewrite scope_unit_mass in Hfold. apply Hfold. intros acc v Hin.
+    cbn [N.of_nat]. rewrite N.mul_1_r. apply scope_edge_entry_time; [|exact Howners].
+    rewrite Forall_forall in Hwidth. now apply Hwidth.
+  Qed.
+
+  (** Component rows consume their original source and edge occurrence mass. *)
+  Local Lemma scope_entry_rows_time g owners vs entries width :
+    Forall (fun u => Pos.size_nat u <= width /\
+      Forall (fun v => Pos.size_nat v <= width) (succs (base g) u)) vs ->
+    (forall x i, trie_get x owners = Some i -> Pos.size_nat i <= width + 1) ->
+    (List.T_fold_left
+      (fun acc u => fold_left (wto_edge_entry owners (trie_get u owners))
+        (succs (base g) u) acc)
+      (fun acc u => 1 + ((T_trie_get u owners + (T_base g + T_succs (base g) u)) +
+        List.T_fold_left (wto_edge_entry owners (trie_get u owners))
+          (fun state v => T_wto_edge_entry owners (trie_get u owners) state v)
+          (succs (base g) u) acc))%N vs entries <=
+      64 * (PTrieT.c_trie + 1) * N.of_nat (source_mass g vs) * N.of_nat (width + 1) + 1)%N.
+  Proof.
+    intros Hwidth Howners. unfold source_mass.
+    apply scope_fold_left_budget. intros acc u Hin.
+    rewrite Forall_forall in Hwidth. destruct (Hwidth u Hin) as [Hu Hrow].
+    pose proof (scope_edge_fold_time owners u (succs (base g) u) acc width Hrow Howners) as Hfold.
+    pose proof (search_succs_clock (base g) u) as Hread.
+    rewrite (PTrieT.trie_get_clock positive u owners). unfold T_base.
+    rewrite !Nat2N.inj_add in *. clear - Hu Hfold Hread. nia.
+  Qed.
+
+  Local Lemma scope_mass_app g first last :
+    source_mass g (first ++ last) = source_mass g first + source_mass g last.
+  Proof.
+    unfold source_mass. induction first; cbn [app fold_right]; lia.
+  Qed.
+
+  Local Lemma scope_component_mass g cs :
+    fold_right (fun c n => source_mass g c + 1 + n) 0 cs =
+      source_mass g (concat cs) + length cs.
+  Proof.
+    induction cs; cbn [fold_right concat length]; [reflexivity|].
+    rewrite scope_mass_app. lia.
+  Qed.
+
+  (** Entry construction charges roots, component headers and original row occurrences. *)
+  Lemma scope_entries_time g roots r width :
+    Forall (fun v => Pos.size_nat v <= width) roots ->
+    Forall (fun u => Pos.size_nat u <= width /\
+      Forall (fun v => Pos.size_nat v <= width) (succs (base g) u)) (concat (comps r)) ->
+    (forall u i, trie_get u (comp r) = Some i -> Pos.size_nat i <= width + 1) ->
+    (T_wto_entries g roots r <=
+      256 * (PTrieT.c_trie + 1) *
+        N.of_nat (length roots + length (comps r) + source_mass g (concat (comps r)) + 1) *
+        N.of_nat (width + 1))%N.
+  Proof.
+    intros Hroots Hrows Howners. set (owners := comp r).
+    assert (Hrootcost : forall acc v, In v roots ->
+      (T_wto_root_entry owners acc v + 1 <=
+        16 * (PTrieT.c_trie + 1) * N.of_nat 1 * N.of_nat (width + 1))%N).
+    { intros acc v Hin. cbn [N.of_nat]. rewrite N.mul_1_r.
+      apply scope_root_entry_time; [|exact Howners].
+      rewrite Forall_forall in Hroots. now apply Hroots. }
+    pose proof (scope_fold_left_budget (wto_root_entry owners)
+      (fun acc v => T_wto_root_entry owners acc v) (fun _ => 1) roots Empty
+      (16 * (PTrieT.c_trie + 1))%N width Hrootcost) as Hseed.
+    rewrite scope_unit_mass in Hseed.
+    set (seeded := fold_left (wto_root_entry owners) roots Empty).
+    assert (Hcomponent : forall acc c, In c (comps r) ->
+      (1 + List.T_fold_left
+        (fun state u => fold_left (wto_edge_entry owners (trie_get u owners))
+          (succs (base g) u) state)
+        (fun state u => 1 + ((T_trie_get u owners + (T_base g + T_succs (base g) u)) +
+          List.T_fold_left (wto_edge_entry owners (trie_get u owners))
+            (fun entries v => T_wto_edge_entry owners (trie_get u owners) entries v)
+            (succs (base g) u) state))%N c acc + 1 <=
+        128 * (PTrieT.c_trie + 1) * N.of_nat (source_mass g c + 1) *
+          N.of_nat (width + 1))%N).
+    { intros acc c Hin.
+      assert (Hc : Forall (fun u => Pos.size_nat u <= width /\
+        Forall (fun v => Pos.size_nat v <= width) (succs (base g) u)) c).
+      { apply Forall_forall. intros u Hu. rewrite Forall_forall in Hrows.
+        apply Hrows. apply in_concat. exists c. auto. }
+      pose proof (scope_entry_rows_time g owners c acc width Hc Howners) as Hcost.
+      rewrite !Nat2N.inj_add in *. clear - Hcost. nia. }
+    pose proof (scope_fold_left_budget
+      (fun acc c => fold_left (fun state u => fold_left
+        (wto_edge_entry owners (trie_get u owners)) (succs (base g) u) state) c acc)
+      (fun acc c => (1 + List.T_fold_left
+        (fun state u => fold_left (wto_edge_entry owners (trie_get u owners))
+          (succs (base g) u) state)
+        (fun state u => (1 + ((T_trie_get u owners + (T_base g + T_succs (base g) u)) +
+          List.T_fold_left (wto_edge_entry owners (trie_get u owners))
+            (fun entries v => T_wto_edge_entry owners (trie_get u owners) entries v)
+            (succs (base g) u) state))%N) c acc)%N)
+      (fun c => source_mass g c + 1) (comps r) seeded
+      (128 * (PTrieT.c_trie + 1))%N width Hcomponent) as Hcomponents.
+    cbn beta in Hcomponents. rewrite scope_component_mass in Hcomponents.
+    time_unfold @T_wto_entries. time_unfold @Galois.Graph.Wto.T_wto_entries.
+    fold owners. fold seeded. unfold T_comp, T_comps.
+    rewrite !Nat2N.inj_add in *. clear - Hseed Hcomponents. nia.
+  Qed.
+
+  Local Opaque loopN prepared_search_trace.
+
+  Local Lemma scope_phase_product coefficient first last width bound :
+    first <= last -> width <= bound ->
+    (coefficient * N.of_nat first * N.of_nat width <=
+      coefficient * N.of_nat last * N.of_nat bound)%N.
+  Proof.
+    intros Hcount Hwidth. apply N.mul_le_mono.
+    - apply N.mul_le_mono_l. now apply time_of_nat_le.
+    - now apply time_of_nat_le.
+  Qed.
+
+  Local Lemma scope_double_coefficient (coefficient : N) (count width : nat) :
+    ((2 * coefficient) * N.of_nat count * N.of_nat width =
+      coefficient * N.of_nat (2 * count) * N.of_nat width)%N.
+  Proof. rewrite Nat2N.inj_mul. nia. Qed.
+
+  Local Lemma scope_entry_coefficient (coefficient : N) (count : nat) :
+    (512 * (coefficient + 1) * N.of_nat count =
+      256 * (coefficient + 1) * N.of_nat (2 * count))%N.
+  Proof. rewrite Nat2N.inj_mul. nia. Qed.
+
+  Local Lemma scope_sum_product (first last count width : N) :
+    (first * count * width + last * count * width =
+      (first + last) * count * width)%N.
+  Proof. nia. Qed.
+
+  (** Filtering arbitrary supplied roots pays their own key widths. *)
+  Local Lemma scope_root_filter_time g roots width :
+    Forall (fun v => Pos.size_nat v <= width) roots ->
+    (List.T_filter (fun v =>
+      match trie_get v (succ (base (scc_graph g))) with Some _ => true | None => false end)
+      (fun v => 1 + ((T_base (scc_graph g) + T_succ (base (scc_graph g))) +
+        T_trie_get v (succ (base (scc_graph g)))))%N roots <=
+      16 * N.of_nat (length roots + 1) * N.of_nat (width + 1))%N.
+  Proof.
+    intro Hwidth.
+    assert (Hpredicate : forall v, In v roots ->
+      (1 + ((T_base (scc_graph g) + T_succ (base (scc_graph g))) +
+        T_trie_get v (succ (base (scc_graph g)))) <= 8 * N.of_nat (width + 1))%N).
+    { intros v Hin. rewrite Forall_forall in Hwidth. specialize (Hwidth v Hin).
+      rewrite PTrieT.trie_get_clock. unfold T_base, T_succ.
+      rewrite Nat2N.inj_add. nia. }
+    pose proof (scope_filter_members_time
+      (fun v => match trie_get v (succ (base (scc_graph g))) with
+        Some _ => true | None => false end)
+      (fun v => (1 + ((T_base (scc_graph g) + T_succ (base (scc_graph g))) +
+        T_trie_get v (succ (base (scc_graph g)))))%N)
+      roots (8 * N.of_nat (width + 1))%N Hpredicate) as Hfilter.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Rebuilding, searching and folding a component phase each fit the input occurrence budget. *)
+  Lemma scope_components_time g roots :
+    (T_wto_components g roots <=
+      8 * (16384 + SccT.k_callback + search_trace_coefficient + 1) *
+        N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+        N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof.
+    set (ready := scc_graph g).
+    set (chosen := filter (fun v => match trie_get v (succ (base ready)) with
+      Some _ => true | None => false end) roots).
+    set (events := prepared_search_trace ready chosen).
+    set (state := TarjanSearch.dfs ready chosen tarjan_initial).
+    assert (Hchosen : forall v, In v chosen -> In v (nodes g)).
+    { intros v Hin. unfold chosen in Hin. apply filter_In in Hin.
+      destruct Hin as [_ Hlisted]. unfold ready in Hlisted.
+      rewrite wto_scc_root_test in Hlisted. now apply wto_member_spec in Hlisted. }
+    assert (Hchosen_length : length chosen <= length roots).
+    { unfold chosen. apply filter_length_le. }
+    assert (Hgraph_width : graph_width (base g) <=
+      graph_max (graph_width (base g)) (vertex_width roots)).
+    { rewrite wto_graph_max_nat. apply Nat.le_max_l. }
+    assert (Hroot_width : Forall (fun v => Pos.size_nat v <=
+      graph_max (graph_width (base g)) (vertex_width roots)) roots).
+    { apply Forall_forall. intros v Hin. eapply Nat.le_trans.
+      - exact (search_vertex_width_member roots v Hin).
+      - rewrite wto_graph_max_nat. apply Nat.le_max_r. }
+    pose proof (scope_root_filter_time g roots _ Hroot_width) as Hfilter.
+    fold ready in Hfilter.
+    pose proof (scc_graph_time g) as Hprepare.
+    pose proof (scc_search_time g chosen Hchosen) as Hsearch. fold ready in Hsearch.
+    destruct (scc_search_sizes g chosen Hchosen) as [Hvertices Hrows].
+    fold ready in Hvertices, Hrows. fold events in Hvertices, Hrows.
+    pose proof (prepared_search_event_bound ready chosen) as Hlength.
+    fold events in Hlength. rewrite search_event_supply_entered in Hlength.
+    assert (Hwidth : Forall (SccT.event_domain (graph_width (base g))) events).
+    { unfold events, ready. now apply scc_search_event_width. }
+    assert (Hunique : NoDup (entered events)).
+    { unfold events. apply prepared_search_unique_raw. }
+    pose proof (SccT.visitor_fold_time (graph_width (base g)) events Hunique Hwidth) as Hfold.
+    change (T_fold_events TarjanVisitor.enter (fun v s => TarjanVisitor.T_enter v s)
+      TarjanVisitor.leave (fun v s => TarjanVisitor.T_leave v s)
+      TarjanVisitor.edge (fun kind u v s => TarjanVisitor.T_edge kind u v s)
+      events tarjan_initial <= SccT.k_callback * N.of_nat (length events + 1) *
+        N.of_nat (graph_width (base g) + 1))%N in Hfold.
+    pose proof (tarjan_emitted_count events) as Hemitted.
+    change (length (tarjan_emitted state) <= length (entered events)) in Hemitted.
+    set (count := graph_n (base g) + graph_e (base g) + length roots + 1) in *.
+    set (width := graph_max (graph_width (base g)) (vertex_width roots)) in *.
+    assert (Hprepare_budget : (T_scc_graph g <=
+      16384 * N.of_nat count * N.of_nat (width + 1))%N).
+    { eapply N.le_trans; [exact Hprepare|]. apply scope_phase_product.
+      - unfold count. lia.
+      - lia. }
+    assert (Hfilter_scale : (16 * N.of_nat (length roots + 1) * N.of_nat (width + 1) <=
+      16 * N.of_nat count * N.of_nat (width + 1))%N).
+    { apply scope_phase_product; [unfold count; lia|reflexivity]. }
+    pose proof (N.le_trans _ _ _ Hfilter Hfilter_scale) as Hfilter_budget.
+    assert (Hsearch_budget : (1 + T_prepared_search_trace ready chosen <=
+      (2 * search_trace_coefficient) * N.of_nat count * N.of_nat (width + 1))%N).
+    { eapply N.le_trans; [exact Hsearch|]. apply scope_phase_product.
+      - unfold count. lia.
+      - lia. }
+    assert (Hfold_scale : (SccT.k_callback * N.of_nat (length events + 1) *
+        N.of_nat (graph_width (base g) + 1) <=
+      (2 * SccT.k_callback) * N.of_nat count * N.of_nat (width + 1))%N).
+    { replace ((2 * SccT.k_callback) * N.of_nat count * N.of_nat (width + 1))%N with
+        (SccT.k_callback * N.of_nat (2 * count) * N.of_nat (width + 1))%N
+        by first [apply scope_double_coefficient | symmetry; apply scope_double_coefficient].
+      apply scope_phase_product; [unfold count; lia|lia]. }
+    pose proof (N.le_trans _ _ _ Hfold Hfold_scale) as Hfold_budget.
+    assert (Hreturned : length (tarjan_emitted state) + 1 <= count).
+    { unfold count. lia. }
+    pose proof (time_of_nat_le _ _ Hreturned) as Hreturned_budget.
+    assert (Hcount_positive : (1 <= N.of_nat count)%N).
+    { apply (time_of_nat_le 1 count). unfold count. lia. }
+    assert (Hwidth_positive : (1 <= N.of_nat (width + 1))%N).
+    { apply (time_of_nat_le 1 (width + 1)). lia. }
+    clearbody count width.
+    time_unfold @T_wto_components. time_unfold @Galois.Graph.Wto.T_wto_components.
+    fold ready. fold chosen. fold state.
+    time_unfold @TarjanSearch.T_dfs. fold events.
+    unfold T_tarjan_owners, T_tarjan_emitted. rewrite wto_rev_append_clock.
+    rewrite !Nat2N.inj_add in *.
+    clear - Hfilter_budget Hprepare_budget Hsearch_budget Hfold_budget Hreturned_budget
+      Hcount_positive Hwidth_positive. nia.
+  Qed.
+
+  Local Lemma scope_nonempty_count (cs : list (list positive)) :
+    Forall (fun c => c <> []) cs -> length cs <= length (concat cs).
+  Proof.
+    intro Hnonempty. induction Hnonempty as [|c cs Hc Hcs IH]; [reflexivity|].
+    destruct c; [contradiction|]. cbn [concat length]. rewrite length_app. cbn [length]. lia.
+  Qed.
+
+  Local Lemma scope_whole_mass g :
+    source_mass g (nodes g) = graph_n (base g) + graph_e (base g).
+  Proof.
+    rewrite scope_mass_decompose.
+    destruct g as [[vertices adjacency] predecessors n e]. reflexivity.
+  Qed.
+
+  Local Opaque Galois.Graph.Wto.wto_components.
+
+  (** Distinct listed components consume only original source and edge occurrences. *)
+  Lemma scope_actual_entries_time g roots :
+    (T_wto_entries g roots (wto_components g roots) <=
+      512 * (PTrieT.c_trie + 1) *
+        N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+        N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof.
+    set (r := wto_components g roots).
+    set (width := graph_max (graph_width (base g)) (vertex_width roots)).
+    assert (Hgraph_width : graph_width (base g) <= width).
+    { unfold width. rewrite wto_graph_max_nat. apply Nat.le_max_l. }
+    assert (Hroot_width : Forall (fun v => Pos.size_nat v <= width) roots).
+    { apply Forall_forall. intros v Hin. eapply Nat.le_trans.
+      - exact (search_vertex_width_member roots v Hin).
+      - unfold width. rewrite wto_graph_max_nat. apply Nat.le_max_r. }
+    assert (Hlisted : forall v, In v (concat (comps r)) -> In v (nodes g)).
+    { intros v Hin. unfold r in Hin. now apply (wto_components_listed g roots v). }
+    assert (Hrows : Forall (fun u => Pos.size_nat u <= width /\
+      Forall (fun v => Pos.size_nat v <= width) (succs (base g) u)) (concat (comps r))).
+    { apply Forall_forall. intros u Hin. split.
+      - eapply Nat.le_trans; [exact (scc_node_width g u (Hlisted u Hin))|exact Hgraph_width].
+      - apply Forall_forall. intros v Hv. eapply Nat.le_trans; [|exact Hgraph_width].
+        exact (scope_row_key_width g u v (Hlisted u Hin) Hv). }
+    assert (Howners : forall u i, trie_get u (comp r) = Some i -> Pos.size_nat i <= width + 1).
+    { intros u i Hlookup. unfold r in Hlookup.
+      pose proof (wto_components_owner_width g roots u i Hlookup) as Howner.
+      eapply Nat.le_trans; [exact Howner|]. now apply Nat.add_le_mono_r. }
+    pose proof (scope_entries_time g roots r width Hroot_width Hrows Howners) as Htime.
+    pose proof (wto_components_unique g roots) as Hunique. fold r in Hunique.
+    pose proof (scc_weight_incl (fun v => 1 + length (succs (base g) v))
+      (concat (comps r)) (nodes g) Hunique Hlisted) as Hmass.
+    change (source_mass g (concat (comps r)) <= source_mass g (nodes g)) in Hmass.
+    rewrite scope_whole_mass in Hmass.
+    pose proof (scope_nonempty_count (comps r) (wto_components_nonempty g roots)) as Hcount.
+    pose proof (wto_components_size g roots) as Hsize.
+    change (length (concat (comps r)) <= length (nodes g)) in Hsize.
+    assert (Hnodes : length (nodes g) = graph_n (base g)).
+    { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+    rewrite Hnodes in Hsize. eapply N.le_trans; [exact Htime|].
+    clear Htime Hroot_width Hrows Howners Hunique Hlisted. clearbody r.
+    apply N.mul_le_mono_r.
+    replace (512 * (PTrieT.c_trie + 1) *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1))%N with
+      (256 * (PTrieT.c_trie + 1) *
+        N.of_nat (2 * (graph_n (base g) + graph_e (base g) + length roots + 1)))%N
+      by first [apply scope_entry_coefficient | symmetry; apply scope_entry_coefficient].
+    apply N.mul_le_mono_l. apply time_of_nat_le. clear - Hmass Hcount Hsize. lia.
+  Qed.
+
+  Local Transparent Galois.Graph.Wto.wto_components.
+
+  Local Lemma scope_initial_coefficient :
+    (8 * (16384 + SccT.k_callback + search_trace_coefficient + 1) +
+      512 * (PTrieT.c_trie + 1) <= k_build)%N.
+  Proof. unfold k_build. lia. Qed.
+
+
   (** Initial components and entries pay the listed graph and the supplied roots. *)
   Local Opaque loopN prepared_search_trace.
 
@@ -3877,7 +4244,22 @@ Module WtoT <: WTO_ALL.
       (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
         k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
         N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots.
+    pose proof (scope_components_time g roots) as Hcomponents.
+    pose proof (scope_actual_entries_time g roots) as Hentries.
+    eapply N.le_trans.
+    - apply N.add_le_mono; [exact Hcomponents|exact Hentries].
+    - clear Hcomponents Hentries.
+      set (count := N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1)).
+      set (width := N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1)).
+      replace (8 * (16384 + SccT.k_callback + search_trace_coefficient + 1) * count * width +
+        512 * (PTrieT.c_trie + 1) * count * width)%N with
+        ((8 * (16384 + SccT.k_callback + search_trace_coefficient + 1) +
+          512 * (PTrieT.c_trie + 1)) * count * width)%N
+        by first [apply scope_sum_product | symmetry; apply scope_sum_product].
+      apply N.mul_le_mono_r. apply N.mul_le_mono_r. exact scope_initial_coefficient.
+  Qed.
 
   Local Lemma scope_scale_algebra (b x y : N) :
     ((2 * b) * (x * y) = b * (2 * x) * y)%N.
