@@ -849,6 +849,87 @@ Module Build (O : OPS)
   Qed.
 End Build.
 
+(** A weighted fold charges one structural step to each positive row weight. *)
+Lemma build_place_fold_clock {A B} : forall (f : A -> B -> B) Tf weight xs c w,
+  (1 <= w)%N -> (forall x, In x xs -> 1 <= weight x) ->
+  (forall x acc, In x xs -> (Tf x acc <= c * N.of_nat (weight x) * w)%N) ->
+  forall initial, (List.T_fold_right f Tf initial xs <=
+    (c + 2) * N.of_nat (fold_right (fun x n => (weight x + n)%nat) 0%nat xs) * w + 1)%N.
+Proof.
+  intros f Tf weight xs; induction xs as [|x rest IH]; intros c w Hw Hpositive Hcost initial.
+  - time_step.
+  - pose proof (Hcost x (fold_right f initial rest) (or_introl eq_refl)) as Hhead.
+    pose proof (Hpositive x (or_introl eq_refl)) as Hweight.
+    specialize (IH c w Hw ltac:(intros y Hin; apply Hpositive; now right)
+      ltac:(intros y acc Hin; apply Hcost; now right) initial).
+    time_unfold @List.T_fold_right; cbn [fold_right]; rewrite Nat2N.inj_add.
+    time_simpl; nia.
+Qed.
+
+(** Deduplication retains no more elements than its input inventory. *)
+Lemma build_place_unique_length xs seen : length (build_unique xs seen) <= length xs.
+Proof.
+  apply NoDup_incl_length; [apply build_unique_nodup|].
+  intros x Hin; apply build_unique_spec in Hin; tauto.
+Qed.
+
+(** Deduplication inspects each variable at the supplied identifier width. *)
+Lemma build_place_unique_clock : forall xs seen w,
+  (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (T_build_unique xs seen <= (PTrieT.c_trie + 8) *
+    N.of_nat (length xs) * N.of_nat (w + 1) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros seen w Hwidth; [time_step|].
+  pose proof (Hwidth x (or_introl eq_refl)) as Hx.
+  pose proof (val_mem_time seen x w Hx) as Hmem.
+  pose proof (PTrieT.T_set_le unit x tt seen) as Hset.
+  assert (Htail : forall y, In y rest -> Pos.size_nat y <= w)
+    by (intros y Hin; apply Hwidth; now right).
+  time_unfold T_build_unique; time_simpl; cbn [length]; rewrite Nat2N.inj_succ.
+  destruct (val_mem seen x).
+  - specialize (IH seen w Htail); nia.
+  - specialize (IH (PTrieCode.set x tt seen) w Htail).
+    rewrite Nat2N.inj_add in Hset; change (N.of_nat 1) with 1%N in Hset.
+    nia.
+Qed.
+
+(** A definition row deduplicates its variables and inserts each retained binding once. *)
+Lemma build_place_def_rows_clock b xs rows w :
+  (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (T_build_def_rows b xs rows <= (4 * PTrieT.c_trie + 32) *
+    N.of_nat (length xs + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intro Hwidth; pose proof (build_place_unique_clock xs Empty w Hwidth) as Hunique.
+  pose proof (build_place_unique_length xs Empty) as Hlength.
+  assert (Hw : (1 <= N.of_nat (w + 1))%N) by lia.
+  time_unfold T_build_def_rows; time_simpl.
+  lazymatch goal with
+  | |- context [List.T_fold_right ?f ?Tf ?initial ?keys] =>
+    pose proof (val_fold_right_uniform f Tf keys
+      ((PTrieT.c_trie + 8) * N.of_nat (w + 1))%N
+      ltac:(intros x acc Hin;
+        apply build_unique_spec in Hin as [Hin _];
+        pose proof (Hwidth x Hin) as Hx;
+        pose proof (val_row_time acc x w Hx) as Hrow;
+        pose proof (PTrieT.T_set_le (list positive) x (b :: index_row acc x) acc) as Hset;
+        time_simpl; rewrite Nat2N.inj_add in Hset;
+        change (N.of_nat 1) with 1%N in Hset;
+        unfold PTrieT.c_trie in *; nia) initial) as Hfold
+  end.
+  rewrite Nat2N.inj_add; change (N.of_nat 1) with 1%N.
+  unfold PTrieT.c_trie in *; nia.
+Qed.
+
+(** Definition occurrences and block headers fit the source syntax inventory. *)
+Lemma build_place_defs_weight {K G} (p : func positive K G) :
+  fold_right (fun item n => length (block_defs (snd item)) + 1 + n) 0
+    (blocks _ _ _ p) <= function_size p.
+Proof.
+  eapply Nat.le_trans; [|apply val_function_units].
+  apply val_sum_mono; intros [b body] Hin; cbn [snd].
+  pose proof (val_block_defs_count body); unfold val_body_units; lia.
+Qed.
+
 Module BuildT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
     (P : TYPE with Definition t := func positive O.K O.G)
@@ -2134,6 +2215,120 @@ Module BuildT (O : OPS)
       eapply rename_result_width; eassumption.
   Qed.
 
+
+  (** Definition indexing charges source variable occurrences at source width. *)
+  Lemma place_def_index_clock p :
+    (T_def_index p <= (16 * PTrieT.c_trie + 256) *
+      N.of_nat (function_size p + 1) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    set (w := function_width p).
+    set (width := N.of_nat (w + 1)).
+    set (budget := (N.of_nat (function_size p + 1) * width)%N).
+    assert (Hw : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; nia).
+    assert (Hinput : forall x, In x (inputs _ _ _ p) -> Pos.size_nat x <= w)
+      by (intros x Hin; exact (val_input_width p x Hin)).
+    assert (Hinputlen : length (inputs _ _ _ p) + 1 <= function_size p + 1)
+      by (unfold function_size, function_vars; rewrite length_app; lia).
+    assert (Hinputclock : forall rows, (T_build_def_rows (entry _ _ _ p)
+      (inputs _ _ _ p) rows <= (4 * PTrieT.c_trie + 32) * budget)%N).
+    { intro rows; eapply N.le_trans; [apply build_place_def_rows_clock; exact Hinput|].
+      unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r;
+        apply N.mul_le_mono_l; apply val_nat_mono; exact Hinputlen. }
+    pose proof (build_place_defs_weight p) as Hweight.
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with ((16 * PTrieT.c_trie + 256) * budget)%N
+        by (unfold budget, width, w; ring) end.
+    time_unfold T_def_index; time_simpl.
+    lazymatch goal with
+    | |- context [List.T_fold_right ?f ?Tf ?initial ?xs] =>
+      pose proof (build_place_fold_clock f Tf
+        (fun item => length (block_defs (snd item)) + 1) xs
+        (4 * PTrieT.c_trie + 48)%N width Hw ltac:(intros; cbn beta; lia)
+        ltac:(intros [b body] acc Hin; cbn [fst snd];
+          pose proof (val_block_defs_clock body) as Hdefs;
+          pose proof (build_place_def_rows_clock b (block_defs body) acc w
+            ltac:(intros x Hx; eapply val_body_var_width; [exact Hin|];
+              apply val_block_defs_vars; exact Hx)) as Hrows;
+          time_simpl; unfold width in *; unfold PTrieT.c_trie in *; nia)
+        initial) as Hfold
+    end.
+    assert (Hfold' : (List.T_fold_right
+      (fun item rows => build_def_rows (fst item) (block_defs (snd item)) rows)
+      (fun item rows => (1 + (Datatypes.T_fst item + (Datatypes.T_snd item +
+        T_block_defs (snd item)) + T_build_def_rows (fst item) (block_defs (snd item)) rows))%N)
+      Empty (blocks _ _ _ p) <= (4 * PTrieT.c_trie + 51) * budget)%N).
+    { replace ((4 * PTrieT.c_trie + 51) * budget)%N with
+        ((4 * PTrieT.c_trie + 48 + 2 + 1) *
+          (N.of_nat (function_size p + 1) * width))%N by (unfold budget; ring).
+      exact (val_common_cost _ _ _ _ _ _ Hfold Hweight Hw). }
+    lazymatch goal with |- context [T_build_def_rows ?b ?xs ?rows] =>
+      pose proof (Hinputclock rows) as Hstart end.
+    clear Hfold Hinputclock Hinput Hinputlen Hweight.
+    revert Hfold'; time_simpl; intro Hfold'.
+    clearbody budget width w; unfold PTrieT.c_trie in *; lia.
+  Qed.
+
+  (** Live-set indexing charges every row header and variable occurrence once. *)
+  Lemma place_live_sets_clock rows w :
+    (forall b xs, In (b, xs) rows -> Pos.size_nat b <= w /\
+      forall x, In x xs -> Pos.size_nat x <= w) ->
+    (T_live_sets rows <= (4 * PTrieT.c_trie + 32) *
+      N.of_nat (build_live_rows_size rows + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intro Hwidth; assert (Hw : (1 <= N.of_nat (w + 1))%N) by lia.
+    time_unfold T_live_sets; time_simpl.
+    lazymatch goal with
+    | |- context [List.T_fold_right ?f ?Tf ?initial ?xs] =>
+      pose proof (build_place_fold_clock f Tf (fun row => 1 + length (snd row)) xs
+        (2 * PTrieT.c_trie + 16)%N (N.of_nat (w + 1)) Hw ltac:(intros; cbn beta; lia)
+        ltac:(intros [b values] acc Hin; destruct (Hwidth b values Hin) as [Hb Hvalues];
+          pose proof (val_set_time values w Hvalues) as Hvalues_clock;
+          pose proof (PTrieT.T_set_le (ptrie unit) b (val_set values) acc) as Hset;
+          time_simpl; cbn [fst snd]; rewrite !Nat2N.inj_add in *;
+          change (N.of_nat 1) with 1%N in *;
+          unfold PTrieT.c_trie in *; nia) initial) as Hfold
+    end.
+    lazymatch type of Hfold with (?clock <= _)%N =>
+      change (clock <= (2 * PTrieT.c_trie + 16 + 2) *
+        N.of_nat (build_live_rows_size rows) * N.of_nat (w + 1) + 1)%N in Hfold
+    end.
+    eapply N.le_trans;
+      [apply N.add_le_mono; [apply N.le_refl|exact Hfold]|].
+    rewrite Nat2N.inj_add; change (N.of_nat 1) with 1%N.
+    unfold PTrieT.c_trie; nia.
+  Qed.
+
+  Definition place_index_coefficient : N := 64 * (PTrieT.c_trie + 32).
+
+  (** Both indexes fit the source and emitted-live-row inventory. *)
+  Lemma place_indexes_clock p :
+    (T_def_index p + T_live_sets (L.live_in p) <= place_index_coefficient *
+      N.of_nat (function_size p + L.live_size p + 1) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    pose proof (place_def_index_clock p) as Hdefs.
+    pose proof (place_live_sets_clock (L.live_in p) (function_width p)
+      ltac:(intros b xs Hin; destruct (L.live_in_ids p (b, xs) Hin) as [Hb Hxs];
+        split; [apply PB.block_bits_le; now left|
+          intros x Hx; apply universe_width, Hxs; exact Hx])) as Hlive.
+    pose proof (L.live_in_size p) as Hrows.
+    change (build_live_rows_size (L.live_in p) <= length (blocks _ _ _ p) + L.live_size p)
+      in Hrows.
+    assert (Hblocks : length (blocks _ _ _ p) <= function_size p)
+      by (unfold function_size; lia).
+    set (budget := (N.of_nat (function_size p + L.live_size p + 1) *
+      N.of_nat (function_width p + 1))%N).
+    assert (Hdefs' : (T_def_index p <= (16 * PTrieT.c_trie + 256) * budget)%N).
+    { eapply N.le_trans; [exact Hdefs|]. unfold budget; rewrite N.mul_assoc;
+        apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply val_nat_mono; lia. }
+    assert (Hlive' : (T_live_sets (L.live_in p) <= (4 * PTrieT.c_trie + 32) * budget)%N).
+    { eapply N.le_trans; [exact Hlive|]. unfold budget; rewrite N.mul_assoc;
+        apply N.mul_le_mono_r; apply N.mul_le_mono_l; apply val_nat_mono; lia. }
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (place_index_coefficient * budget)%N by (unfold budget; ring) end.
+    clear Hdefs Hlive Hrows Hblocks; clearbody budget.
+    unfold place_index_coefficient, PTrieT.c_trie in *; lia.
+  Qed.
 
   (** The two indexes charge syntax and emitted live rows once. *)
   Lemma T0_indexes : forall p,
