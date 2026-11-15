@@ -63,6 +63,95 @@ Proof.
     eapply Hstore; [exact Hin | apply Hcovered; exact Hx | apply Hcovered; exact Hy].
 Qed.
 
+(** A relation atom reads the two values named by its source constraint. *)
+Lemma andersen_model_pair : forall prim q rho f u v,
+  program_kind andersen_program f = Some ORel ->
+  model_atom prim (andersen_model q) (program_kind andersen_program) rho
+    (Fun positive f [Var u; Var v] None) ->
+  exists x y, rho u = Some (inr x) /\ rho v = Some (inr y) /\ pointer_relation q f x y.
+Proof.
+  intros prim q rho f u v Hkind [k [Hterms Hrelation]].
+  rewrite Hkind in Hrelation; cbn [andersen_model rel] in Hrelation.
+  destruct Hrelation as [x [y [Hk Hrelation]]]; subst k.
+  inversion Hterms as [|term terms value values Hu Htail]; subst.
+  inversion Htail as [|term terms value values Hv Hnil]; subst.
+  exists x, y; exact (conj Hu (conj Hv Hrelation)).
+Qed.
+
+(** A justified source pointer satisfies the generated points-to action. *)
+Lemma andersen_model_put : forall prim q rho u v x a,
+  rho u = Some (inr x) -> rho v = Some (inr a) -> may_points q x a ->
+  model_actions prim (andersen_model q) (program_kind andersen_program) rho
+    [Put 5 [Var u; Var v] None].
+Proof.
+  intros prim q rho u v x a Hx Ha Hpoints.
+  exists [inr x; inr a]; split.
+  - constructor; [exact Hx | constructor; [exact Ha | constructor]].
+  - split; [|exact I].
+    exists x, a; split; [reflexivity |].
+    unfold pointer_relation; right; right; right; right; auto.
+Qed.
+
+(** Each fixed inclusion rule implements the matching source closure constructor. *)
+Lemma andersen_rule_valid : forall prim q r rho,
+  In r (rules positive andersen_program) ->
+  Forall (model_atom prim (andersen_model q) (program_kind andersen_program) rho)
+    (query positive r) ->
+  model_actions prim (andersen_model q) (program_kind andersen_program) rho
+    (actions positive r).
+Proof.
+  intros prim q r rho Hin Hquery.
+  destruct Hin as [Hr | [Hr | [Hr | [Hr | Hnone]]]]; [subst r | subst r | subst r | subst r |].
+  - destruct (andersen_model_pair prim q rho 1 1 2 eq_refl (Forall_inv Hquery))
+      as [x [a [Hx [Ha Hsource]]]].
+    apply (andersen_model_put prim q rho 1 2 x a Hx Ha).
+    apply May_addr; unfold pointer_relation in Hsource; intuition discriminate.
+  - pose proof (Forall_inv Hquery) as Hcopy.
+    pose proof (Forall_inv (Forall_inv_tail Hquery)) as Hpoints.
+    destruct (andersen_model_pair prim q rho 2 1 2 eq_refl Hcopy)
+      as [x [y [Hx [Hy Hsource]]]].
+    destruct (andersen_model_pair prim q rho 5 2 3 eq_refl Hpoints)
+      as [y' [a [Hy' [Ha Htarget]]]].
+    assert (Heq : y' = y) by congruence; subst y'.
+    apply (andersen_model_put prim q rho 1 3 x a Hx Ha).
+    eapply May_copy with (y := y).
+    + unfold pointer_relation in Hsource; intuition discriminate.
+    + unfold pointer_relation in Htarget; intuition discriminate.
+  - pose proof (Forall_inv Hquery) as Hload.
+    pose proof (Forall_inv (Forall_inv_tail Hquery)) as Hlocatom.
+    pose proof (Forall_inv (Forall_inv_tail (Forall_inv_tail Hquery))) as Hpoints.
+    destruct (andersen_model_pair prim q rho 3 1 2 eq_refl Hload)
+      as [x [y [Hx [Hy Hsource]]]].
+    destruct (andersen_model_pair prim q rho 5 2 3 eq_refl Hlocatom)
+      as [y' [location [Hy' [Hlocation Hfirst]]]].
+    destruct (andersen_model_pair prim q rho 5 3 4 eq_refl Hpoints)
+      as [location' [a [Hlocation' [Ha Hsecond]]]].
+    assert (Hy_eq : y' = y) by congruence; subst y'.
+    assert (Hl_eq : location' = location) by congruence; subst location'.
+    apply (andersen_model_put prim q rho 1 4 x a Hx Ha).
+    eapply May_load with (y := y) (location := location).
+    + unfold pointer_relation in Hsource; intuition discriminate.
+    + unfold pointer_relation in Hfirst; intuition discriminate.
+    + unfold pointer_relation in Hsecond; intuition discriminate.
+  - pose proof (Forall_inv Hquery) as Hstore.
+    pose proof (Forall_inv (Forall_inv_tail Hquery)) as Hlocatom.
+    pose proof (Forall_inv (Forall_inv_tail (Forall_inv_tail Hquery))) as Hpoints.
+    destruct (andersen_model_pair prim q rho 4 1 2 eq_refl Hstore)
+      as [x [y [Hx [Hy Hsource]]]].
+    destruct (andersen_model_pair prim q rho 5 1 3 eq_refl Hlocatom)
+      as [x' [location [Hx' [Hlocation Hfirst]]]].
+    destruct (andersen_model_pair prim q rho 5 2 4 eq_refl Hpoints)
+      as [y' [a [Hy' [Ha Hsecond]]]].
+    assert (Hx_eq : x' = x) by congruence; subst x'.
+    assert (Hy_eq : y' = y) by congruence; subst y'.
+    apply (andersen_model_put prim q rho 3 4 location a Hlocation Ha).
+    eapply May_store with (x := x) (y := y).
+    + unfold pointer_relation in Hsource; intuition discriminate.
+    + unfold pointer_relation in Hfirst; intuition discriminate.
+    + unfold pointer_relation in Hsecond; intuition discriminate.
+  - contradiction.
+Qed.
+
 Module AndersenCode (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
     (R : RUN_OPS V I J D) <: ANDERSEN_OPS V I J D R.
@@ -85,7 +174,11 @@ Module Andersen (V : VALUE with Definition t := positive)
   Qed.
 
   Lemma rules_valid : forall q, valid V.prim V.merge (andersen_model q) (compile q).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro q; split.
+    - exact (andersen_rule_valid V.prim q).
+    - intros f m k a b Hkind Hlat Hlat'; exact Hlat.
+  Qed.
 
   Lemma seed_rows : forall q f k o, row (D.view (seed q)) f k o <-> pointer_seed_row q f k o.
   Proof. Admitted. (* STUB *)
@@ -163,7 +256,9 @@ Module AndersenT (V : VALUE_T with Definition t := positive)
     Forall (model_atom V.prim (andersen_model q) (program_kind (compile q)) rho)
       (query V.t r) ->
     model_actions V.prim (andersen_model q) (program_kind (compile q)) rho (actions V.t r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact (andersen_rule_valid V.prim).
+  Qed.
 
   Lemma F4_seed_sat : forall q,
     sat V.merge (andersen_model q) (fun _ => tt) (D.view (seed q)).
