@@ -129,64 +129,6 @@ Module KnownBitsTableCode (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG)
     else None.
 End KnownBitsTableCode.
 
-Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
-    <: KNOWN_BITS_TABLE L C K.
-  Include KnownBitsTableCode L C K.
-  Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
-    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
-      K.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
-    L.eval_op o cs = Some (rw, z) -> K.pgamma rw r z.
-  (* The former signature question is resolved by K's arithmetic laws and multiplier selection. *)
-  Proof. Admitted. (* STUB *)
-  Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
-    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
-      K.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
-    L.eval_op o cs = Some (rw, z) -> K.pgamma rw q z ->
-    Forall2 (fun wp c => K.pgamma (fst wp) (snd wp) (snd c))
-      (combine (map fst wps) ys) cs.
-  (* The former signature question is resolved by K.gamma_tnum. *)
-  Proof. Admitted. (* STUB *)
-End KnownBitsTable.
-
-Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BITS_T L C).
-  Include KnownBitsTable L C K.
-  TimeFun tnum_forward_raw.
-  TimeFun wfwd.
-  TimeFun wbwd.
-  Definition c_word_table : N := 1. (* STUB *)
-  Lemma T_wbwd_le : forall o rw q xs,
-    (T_wbwd o rw q xs <= c_word_table * N.of_nat
-      (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-        K.psize rw q + fold_right Nat.add 0 (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
-    (N.of_nat ((length ys + fold_right Nat.add 0
-      (map (fun wy => K.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
-      c_word_table * N.of_nat
-        (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-          K.psize rw q + fold_right Nat.add 0
-            (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-End KnownBitsTableClock.
-
-Module KnownBitsTableT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
-    (K : KNOWN_BITS_T L C) <: KNOWN_BITS_TABLE_T L C K.
-  Include KnownBitsTableClock L C K.
-  Lemma T_wfwd_le : forall o rw xs,
-    (T_wfwd o rw xs <= c_word_table * N.of_nat
-      (((Pos.to_nat rw + fold_right Nat.add 0
-          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-        fold_right Nat.add 0
-          (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
-    (N.of_nat (K.psize rw r) <= c_word_table * N.of_nat
-      (((Pos.to_nat rw + fold_right Nat.add 0
-          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-        fold_right Nat.add 0
-          (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-End KnownBitsTableT.
 
 Theorem tnum_refine_equation : forall wps qs,
   tnum_refine wps qs =
@@ -787,3 +729,90 @@ Proof.
     + apply tnum_meet_sound; assumption.
     + now apply IH.
 Qed.
+
+Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
+    <: KNOWN_BITS_TABLE L C K.
+  Include KnownBitsTableCode L C K.
+  Module ForwardSound := KnownBitsSuppliedForwardProof L C K.
+  Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      K.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> K.pgamma rw r z.
+  Proof.
+    intros o rw wps cs z r Hforward Hgamma Heval.
+    unfold wfwd in Hforward.
+    destruct (Nat.eqb (length wps) (arity o)); [|discriminate].
+    injection Hforward as <-.
+    apply (proj2 (K.gamma_tnum _ _ _)).
+    eapply ForwardSound.tnum_forward_raw_sound; [|exact Heval].
+    eapply Forall2_impl; [|exact Hgamma].
+    intros wp c [Hw [Hx Ha]]. unfold tnum_payload_sound.
+    split; [exact Hw|]. split; [exact Hx|].
+    now apply (proj1 (K.gamma_tnum _ _ _)).
+  Qed.
+  Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      K.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> K.pgamma rw q z ->
+    Forall2 (fun wp c => K.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst wps) ys) cs.
+  Proof.
+    intros o rw q wps ys cs z Hback Hgamma Heval Hq.
+    unfold wbwd in Hback.
+    destruct (Nat.eqb (length wps) (arity o)); [|discriminate].
+    injection Hback as <-.
+    assert (Hpayload : Forall2 kb_payload_sound wps cs).
+    { clear Heval Hq.
+      induction Hgamma as [|wp c wps cs Hhead Htail IH]; constructor.
+      - destruct Hhead as [Hw [Hx Ha]].
+        unfold kb_payload_sound. split; [exact Hw|]. split; [exact Hx|].
+        now apply (proj1 (K.gamma_tnum _ _ _)).
+      - exact IH. }
+    apply (proj1 (K.gamma_tnum rw q z)) in Hq.
+    pose proof (tnum_backward_raw_sound o wps cs rw z q Hpayload Heval Hq) as Hraw.
+    pose proof (tnum_refine_sound wps cs _ Hpayload Hraw) as Hresult.
+    eapply Forall2_impl; [|exact Hresult].
+    intros wp c Hhead. now apply (proj2 (K.gamma_tnum _ _ _)).
+  Qed.
+
+End KnownBitsTable.
+
+Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BITS_T L C).
+  Include KnownBitsTable L C K.
+  TimeFun tnum_forward_raw.
+  TimeFun wfwd.
+  TimeFun wbwd.
+  Definition c_word_table : N := 1. (* STUB *)
+  Lemma T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        K.psize rw q + fold_right Nat.add 0 (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
+    (N.of_nat ((length ys + fold_right Nat.add 0
+      (map (fun wy => K.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + fold_right Nat.add 0 (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+          K.psize rw q + fold_right Nat.add 0
+            (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End KnownBitsTableClock.
+
+Module KnownBitsTableT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS_T L C) <: KNOWN_BITS_TABLE_T L C K.
+  Include KnownBitsTableClock L C K.
+  Lemma T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
+    (N.of_nat (K.psize rw r) <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => K.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End KnownBitsTableT.

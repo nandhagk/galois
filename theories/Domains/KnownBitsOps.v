@@ -7,7 +7,7 @@
 From Stdlib Require Import ZArith List Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op Fun Arith.
-From Galois.Domains Require Import WordSig KnownBitsSig KnownBits.
+From Galois.Domains Require Import ValueSig WordSig KnownBitsSig KnownBits BitsLang Tagged.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -236,8 +236,8 @@ Proof.
 Qed.
 
 (* The landed shape, table and word-law bundles used removed closure-bearing records.
-   WORD_TABLE now states the corresponding operation-level contracts; Q2 records the
-   missing arithmetic pin for a generic supplied payload.
+   WORD_TABLE now states the corresponding operation-level contracts, which the supplied
+   payload proof below derives from the arithmetic and gamma laws of KNOWN_BITS.
 Lemma known_bits_shape_laws :
   transfer_sem known_bits_shape (payload_sound tnum_gamma) (word_output tnum_gamma)
     word_context.
@@ -263,3 +263,118 @@ Theorem known_bits_nonmultiplication_agrees : forall opts opts' o, o <> bvmul ->
   pforward_c (known_bits_word_domain opts) o =
     pforward_c (known_bits_word_domain opts') o.
 *)
+
+(** Supplied payload operations are used only through their public soundness laws. *)
+Module KnownBitsSuppliedForwardProof (L : WORD_LANGUAGE) (C : TNUM_CONFIG)
+    (K : KNOWN_BITS L C).
+  Module F := KnownBitsOpsCode L C K.
+  Module Base := ForwardClaims L C.
+
+  Lemma tnum_forward_one_sound : forall o w a x rw z,
+    is_word w x -> tnum_gamma w a x -> eval_op o [(w, x)] = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o [(w, a)] rw) z.
+  Proof.
+    intros o w a x rw z Hx Ha Heval.
+    pose proof (Base.tnum_forward_one_sound o w a x rw z Hx Ha Heval) as Hbase.
+    pose proof (proj2 (K.gamma_tnum w a x) Ha) as Hpayload.
+    destruct o; try exact Hbase.
+    - pose proof (eval_op_fun1 bvnot w x UNot eq_refl) as Hop.
+      rewrite Hop in Heval. injection Heval as <- <-.
+      apply (proj1 (K.gamma_tnum _ _ _)).
+      eapply K.tnum_not_sound; eassumption.
+    - pose proof (eval_op_fun1 bvneg w x UNeg eq_refl) as Hop.
+      rewrite Hop in Heval. injection Heval as <- <-.
+      apply (proj1 (K.gamma_tnum _ _ _)).
+      eapply K.tnum_neg_sound; eassumption.
+  Qed.
+
+  Lemma tnum_binary_transfer_sound : forall o w f a b x y,
+    word_fun2 o = Some f -> is_word w x -> is_word w y ->
+    tnum_gamma w a x -> tnum_gamma w b y ->
+    tnum_gamma w (F.tnum_forward_raw o [(w, a); (w, b)] w)
+      (eval_binary_tag f w x y).
+  Proof.
+    intros o w f a b x y Hf Hx Hy Ha Hb.
+    pose proof (Base.tnum_binary_transfer_sound o w f a b x y Hf Hx Hy Ha Hb) as Hbase.
+    pose proof (proj2 (K.gamma_tnum w a x) Ha) as Hleft.
+    pose proof (proj2 (K.gamma_tnum w b y) Hb) as Hright.
+    pose proof (eval_op_fun2 o w x y f Hf) as Heval.
+    destruct o; try discriminate Hf; try exact Hbase.
+    all: cbn [F.tnum_forward_raw]; try rewrite !Pos.eqb_refl;
+      cbn [andb]; try rewrite K.multiplier_selected;
+      apply (proj1 (K.gamma_tnum _ _ _)).
+    all: first [eapply (K.tnum_add_sound w a b x y); eassumption
+      | eapply (K.tnum_sub_sound w a b x y); eassumption
+      | eapply (K.tnum_and_sound w a b x y); eassumption
+      | eapply (K.tnum_or_sound w a b x y); eassumption
+      | eapply (K.tnum_xor_sound w a b x y); eassumption
+      | eapply (K.tnum_mul_with_sound C.multiplier w a b x y); eassumption
+      | eapply (K.tnum_variable_sound _ w a b x y); [cbn; tauto|eassumption|eassumption|
+          eassumption|eassumption|eassumption]].
+  Qed.
+
+  Lemma tnum_forward_fun2_sound : forall o w v f a b x y rw z,
+    word_fun2 o = Some f -> is_word w x -> is_word v y ->
+    tnum_gamma w a x -> tnum_gamma v b y ->
+    eval_op o [(w, x); (v, y)] = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o [(w, a); (v, b)] rw) z.
+  Proof.
+    intros o w v f a b x y rw z Hf Hx Hy Ha Hb Heval.
+    pose proof (eval_op_fun2_width o f w v x y (rw, z) Hf Heval) as ->.
+    rewrite (eval_op_fun2 o v x y f Hf) in Heval.
+    injection Heval as <- <-. now apply (tnum_binary_transfer_sound o v f).
+  Qed.
+
+  Lemma tnum_forward_two_sound : forall o w v a b x y rw z,
+    is_word w x -> is_word v y -> tnum_gamma w a x -> tnum_gamma v b y ->
+    eval_op o [(w, x); (v, y)] = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o [(w, a); (v, b)] rw) z.
+  Proof.
+    intros o w v a b x y rw z Hx Hy Ha Hb Heval.
+    pose proof (Base.tnum_forward_two_sound o w v a b x y rw z Hx Hy Ha Hb Heval)
+      as Hbase.
+    destruct o; try exact Hbase;
+      eapply tnum_forward_fun2_sound; try eassumption; reflexivity.
+  Qed.
+
+  Lemma tnum_forward_three_sound : forall o w v u c a b k x y rw z,
+    is_word w k -> is_word v x -> is_word u y ->
+    tnum_gamma w c k -> tnum_gamma v a x -> tnum_gamma u b y ->
+    eval_op o [(w, k); (v, x); (u, y)] = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o [(w, c); (v, a); (u, b)] rw) z.
+  Proof.
+    intros o w v u c a b k x y rw z Hk Hx Hy Hc Ha Hb Heval.
+    pose proof (Base.tnum_forward_three_sound o w v u c a b k x y rw z
+      Hk Hx Hy Hc Ha Hb Heval) as Hbase.
+    destruct o; exact Hbase.
+  Qed.
+
+  (** Successful evaluation is retained by any payload satisfying KNOWN_BITS. *)
+  Theorem tnum_forward_raw_sound : forall o wps ys rw z,
+    Forall2 tnum_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
+    tnum_gamma rw (F.tnum_forward_raw o wps rw) z.
+  Proof.
+    intros o wps ys rw z Hgamma Heval.
+    destruct wps as [|[w a] [|[v b] [|[u c] [|wp rest]]]].
+    - destruct o; apply tnum_top_sound.
+    - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst. inversion Htail; subst.
+      destruct y as [wy x]. destruct Hhead as [Hwx [Hx Ha]]. cbn in Hwx, Hx, Ha. subst wy.
+      exact (tnum_forward_one_sound o w a x rw z Hx Ha Heval).
+    - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst.
+      inversion Htail as [|wp y' wps' tail' Hhead' Htail']; subst. inversion Htail'; subst.
+      destruct y as [wy x], y' as [vy y].
+      destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]].
+      cbn in Hwx, Hvy, Hx, Hy, Ha, Hb. subst wy vy.
+      exact (tnum_forward_two_sound o w v a b x y rw z Hx Hy Ha Hb Heval).
+    - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst.
+      inversion Htail as [|wp y' wps' tail' Hhead' Htail']; subst.
+      inversion Htail' as [|wp y'' wps' tail'' Hhead'' Htail'']; subst.
+      inversion Htail''; subst. destruct y as [wy x], y' as [vy y], y'' as [uy t].
+      destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]], Hhead'' as [Hut [Ht Hc]].
+      cbn in Hwx, Hvy, Hut, Hx, Hy, Ht, Ha, Hb, Hc. subst wy vy uy.
+      exact (tnum_forward_three_sound o w v u a b c x y t rw z
+        Hx Hy Ht Ha Hb Hc Heval).
+    - destruct o; apply tnum_top_sound.
+  Qed.
+End KnownBitsSuppliedForwardProof.
+
