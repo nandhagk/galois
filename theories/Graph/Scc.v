@@ -33,6 +33,47 @@ Fixpoint tarjan_pop (root index : positive) (pending : list positive)
   end.
 TimeFun tarjan_pop.
 
+(** Popping updates precisely the consumed prefix, even when pending keys repeat. *)
+Lemma tarjan_pop_lookup root index pending low active owners
+    members tail low' active' owners' :
+  tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
+  pending = members ++ tail /\ forall v,
+    trie_get v low' =
+      (if existsb (Pos.eqb v) members then None else trie_get v low) /\
+    trie_get v active' =
+      (if existsb (Pos.eqb v) members then None else trie_get v active) /\
+    trie_get v owners' =
+      (if existsb (Pos.eqb v) members then Some index else trie_get v owners).
+Proof.
+  revert low active owners members tail low' active' owners'.
+  induction pending as [|u rest IH];
+    intros low active owners members tail low' active' owners' Hpop.
+  - cbn [tarjan_pop] in Hpop. inversion Hpop; subst.
+    split; [reflexivity|]. intros v. cbn. repeat split; reflexivity.
+  - cbn [tarjan_pop] in Hpop. destruct (Pos.eqb u root) eqn:Hroot.
+    + inversion Hpop; subst. split; [reflexivity|]. intros v. cbn [existsb].
+      destruct (Pos.eqb v u) eqn:Hsame; cbn.
+      * apply Pos.eqb_eq in Hsame. subst v.
+        rewrite !PTrie.get_remove_same, PTrie.get_set_same. repeat split; reflexivity.
+      * apply Pos.eqb_neq in Hsame.
+        rewrite !PTrie.get_remove_other, PTrie.get_set_other by exact Hsame.
+        repeat split; reflexivity.
+    + destruct (tarjan_pop root index rest (PTrieCode.remove u low)
+        (PTrieCode.remove u active) (PTrieCode.set u index owners))
+        as [[[[popped remaining] lows] actives] assigned] eqn:Hrest.
+      inversion Hpop; subst members tail low' active' owners'.
+      destruct (IH _ _ _ _ _ _ _ _ Hrest) as [Hprefix Hlookup].
+      split; [cbn; now rewrite Hprefix|]. intros v.
+      specialize (Hlookup v). cbn [existsb].
+      destruct (Pos.eqb v u) eqn:Hsame; cbn.
+      * apply Pos.eqb_eq in Hsame. subst v.
+        rewrite !PTrie.get_remove_same, PTrie.get_set_same in Hlookup.
+        destruct (existsb (Pos.eqb u) popped); exact Hlookup.
+      * apply Pos.eqb_neq in Hsame.
+        rewrite !PTrie.get_remove_other, PTrie.get_set_other in Hlookup by exact Hsame.
+        exact Hlookup.
+Qed.
+
 Module TarjanVisitor <: VISITOR_OPS.
   Definition state := tarjan_state.
 
@@ -375,7 +416,15 @@ Module SccT <: SCC_ALL.
     pending = members ++ tail /\
     (forall v, In v members -> trie_get v low' = None /\
       trie_get v active' = None /\ trie_get v owners' = Some index).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros root index pending low active owners members tail low' active' owners' Hpop.
+    unfold tarjan_pop in Hpop.
+    destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hprefix Hlookup].
+    split; [exact Hprefix|]. intros v Hin. specialize (Hlookup v).
+    assert (Hmember : existsb (Pos.eqb v) members = true).
+    { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+    now rewrite Hmember in Hlookup.
+  Qed.
 
   Lemma F6_final : forall g, wf_graph (base g) ->
     let result := prefix_state (tarjan_trace g) in
