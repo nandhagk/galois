@@ -604,6 +604,298 @@ Qed.
 
 
 
+(** A path starting at a listed vertex stays within a well-formed graph. *)
+Lemma build_path_listed g start vertices finish : wf_graph g ->
+  Spec.path g start vertices finish -> In start (verts g) -> In finish (verts g).
+Proof.
+  intros Hwf Hpath; induction Hpath as [v|u v vs target Hedge Hpath IH]; intro Hstart.
+  - exact Hstart.
+  - apply IH. exact (proj2 Hwf u v Hstart Hedge).
+Qed.
+
+(** Reachability from listed roots stays within a well-formed graph. *)
+Lemma build_reach_listed g roots v : wf_graph g -> incl roots (verts g) ->
+  reach g roots v -> In v (verts g).
+Proof.
+  intros Hwf Hroots [root [vertices [Hroot Hpath]]].
+  eapply build_path_listed; [exact Hwf|exact Hpath|now apply Hroots].
+Qed.
+
+(** Distinct parent rows cannot contain the same child of a functional parent map. *)
+Lemma build_child_rows_unique (rows : positive -> list positive) parents ids :
+  NoDup ids -> (forall b, NoDup (rows b)) ->
+  (forall b child, In child (rows b) -> trie_get child parents = Some b) ->
+  NoDup (flat_map rows ids).
+Proof.
+  intros Hids Hrows Hparent; induction Hids as [|b rest Hfresh Hids IH]; [constructor|].
+  cbn [flat_map]. apply NoDup_app; [apply Hrows|exact IH|].
+  intros child Hhead Htail; apply in_flat_map in Htail as [other [Hother Hchild]].
+  pose proof (Hparent b child Hhead) as Hleft.
+  pose proof (Hparent other child Hchild) as Hright.
+  assert (b = other) by congruence. subst other; contradiction.
+Qed.
+
+(** Every successful rewritten operand came from the supplied environment domain. *)
+Lemma build_values_domain xs rho ys domain :
+  (forall x y, trie_get x rho = Some y -> In x domain) ->
+  build_values rho xs = Some ys -> incl xs domain.
+Proof.
+  revert ys; induction xs as [|x rest IH]; intros ys Hdomain Hrun value Hin;
+    [contradiction|].
+  cbn [build_values] in Hrun.
+  destruct (trie_get x rho) as [y|] eqn:Hget; [|discriminate].
+  destruct (build_values rho rest) as [tail|] eqn:Htail; [|discriminate].
+  destruct Hin as [Heq|Hin]; [subst value; now apply (Hdomain x y)|].
+  exact (IH tail Hdomain eq_refl value Hin).
+Qed.
+
+(** An index contains only keys present in its source list. *)
+Lemma build_index_domain {A} (rows : list (positive * A)) x value :
+  trie_get x (val_index rows) = Some value -> In x (map fst rows).
+Proof.
+  rewrite val_index_lookup; intro Hget; apply val_lookup_in in Hget.
+  apply in_map with (f := fst) in Hget; exact Hget.
+Qed.
+
+(** Rewriting operands scans their keys once at the common identifier width. *)
+Lemma build_values_time : forall xs rho w,
+  (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (T_build_values rho xs <= 8 * N.of_nat (length xs + 1) * N.of_nat (w + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intros rho w Hwidth.
+  - time_step.
+  - assert (Hx : Pos.size_nat x <= w) by (apply Hwidth; now left).
+    specialize (IH rho w ltac:(intros y Hin; apply Hwidth; now right)).
+    time_unfold T_build_values; rewrite PTrieT.trie_get_clock.
+    destruct (trie_get x rho), (build_values rho rest); time_cbn; nia.
+Qed.
+
+(** A tagged input is formed in constant time. *)
+Lemma build_input_time x : (T_build_input_name x <= 2)%N.
+Proof.
+  time_step.
+Qed.
+
+(** A phi name traverses only its block identifier. *)
+Lemma build_phi_time b x w : Pos.size_nat b <= w ->
+  (T_build_phi_name b x <= (c_glue + 2) * N.of_nat (w + 1))%N.
+Proof.
+  intro Hwidth; pose proof (T_glue_le b x) as Hglue.
+  time_unfold T_build_phi_name; time_cbn; nia.
+Qed.
+
+(** Projection scans each requested live key and creates at most one phi name. *)
+Lemma build_project_time : forall xs b phis rho inputs w,
+  Pos.size_nat b <= w -> (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (T_build_project b phis xs rho inputs <=
+    16 * (c_glue + 1) * N.of_nat (length xs + 1) * N.of_nat (w + 1))%N.
+Proof.
+  induction xs as [|x rest IH]; intros b phis rho inputs w Hb Hwidth.
+  - time_step.
+  - assert (Hx : Pos.size_nat x <= w) by (apply Hwidth; now left).
+    specialize (IH b phis rho inputs w Hb
+      ltac:(intros y Hin; apply Hwidth; now right)).
+    pose proof (val_mem_time phis x w Hx) as Hmem.
+    pose proof (build_phi_time b x w Hb) as Hphi.
+    time_unfold T_build_project; rewrite !PTrieT.trie_get_clock.
+    destruct (val_mem phis x), (trie_get x rho), (trie_get x inputs),
+      (build_project b phis rest rho inputs); time_cbn; nia.
+Qed.
+
+(** Materialization scans each requested source block identifier once. *)
+Lemma build_materialize_time {K G} : forall
+    (original : list (positive * block positive K G)) bodies w,
+  (forall b body, In (b, body) original -> Pos.size_nat b <= w) ->
+  (T_build_materialize original bodies <=
+    8 * N.of_nat (length original + 1) * N.of_nat (w + 1))%N.
+Proof.
+  induction original as [|[b body] rest IH]; intros bodies w Hwidth.
+  - time_step.
+  - assert (Hb : Pos.size_nat b <= w) by (apply (Hwidth b body); now left).
+    specialize (IH bodies w ltac:(intros key value Hin; apply (Hwidth key value); now right)).
+    time_unfold @T_build_materialize; rewrite PTrieT.trie_get_clock.
+    destruct (trie_get b bodies), (build_materialize rest bodies); time_cbn; nia.
+Qed.
+
+(** The remaining cache budget sums only bodies that can still be emitted. *)
+Definition build_remaining {A} (weight : positive -> nat) ids (bodies : ptrie A) : nat :=
+  build_sum (fun b => match trie_get b bodies with Some _ => weight b | None => 0 end) ids.
+
+(** Removing a key outside the inventory leaves the remaining budget unchanged. *)
+Lemma build_remaining_remove_absent {A} weight ids (bodies : ptrie A) b :
+  ~ In b ids -> build_remaining weight ids (PTrieCode.remove b bodies) =
+    build_remaining weight ids bodies.
+Proof.
+  intro Habsent; unfold build_remaining; apply build_sum_ext; intros a Hin.
+  rewrite PTrie.get_remove_other; [reflexivity|].
+  intro Heq; subst a; contradiction.
+Qed.
+
+(** Removing a present distinct inventory key spends exactly its cached body budget. *)
+Lemma build_remaining_remove {A} weight ids (bodies : ptrie A) b body :
+  NoDup ids -> In b ids -> trie_get b bodies = Some body ->
+  build_remaining weight ids bodies =
+    weight b + build_remaining weight ids (PTrieCode.remove b bodies).
+Proof.
+  intros Hunique; induction Hunique as [|a rest Hfresh Hunique IH]; intros Hin Hget;
+    [contradiction|].
+  destruct Hin as [Heq|Hin].
+  - subst a. unfold build_remaining at 1 2; cbn [build_sum fold_right].
+    rewrite Hget, PTrie.get_remove_same.
+    change (weight b + build_remaining weight rest bodies =
+      weight b + (0 + build_remaining weight rest (PTrieCode.remove b bodies))).
+    rewrite build_remaining_remove_absent by exact Hfresh; lia.
+  - unfold build_remaining at 1 2; cbn [build_sum fold_right].
+    assert (Hneq : a <> b) by (intro Heq; subst a; contradiction).
+    rewrite PTrie.get_remove_other by exact Hneq.
+    change ((match trie_get a bodies with Some _ => weight a | None => 0 end) +
+      build_remaining weight rest bodies = weight b +
+      ((match trie_get a bodies with Some _ => weight a | None => 0 end) +
+        build_remaining weight rest (PTrieCode.remove b bodies))).
+    rewrite (IH Hin Hget). destruct (trie_get a bodies); lia.
+Qed.
+
+(** Cached bodies never carry more work than the complete source inventory. *)
+Lemma build_remaining_bound {A} weight ids (bodies : ptrie A) :
+  build_remaining weight ids bodies <= build_sum weight ids.
+Proof.
+  unfold build_remaining, build_sum; apply val_sum_mono; intros b Hin.
+  destruct (trie_get b bodies); lia.
+Qed.
+
+(** A budget sum distributes over concatenated inventories. *)
+Lemma build_sum_app {A} (weight : A -> nat) left right :
+  build_sum weight (left ++ right) = build_sum weight left + build_sum weight right.
+Proof.
+  unfold build_sum; induction left as [|x rest IH]; cbn [fold_right app]; lia.
+Qed.
+
+(** Summing child rows is the same as summing their flattened inventory. *)
+Lemma build_sum_flat_map {A B} (rows : A -> list B) weight ids :
+  build_sum (fun b => build_sum weight (rows b)) ids =
+    build_sum weight (flat_map rows ids).
+Proof.
+  induction ids as [|b rest IH]; [reflexivity|].
+  change (build_sum weight (rows b) + build_sum (fun b => build_sum weight (rows b)) rest =
+    build_sum weight (rows b ++ flat_map rows rest)).
+  now rewrite build_sum_app, IH.
+Qed.
+
+(** A maintained potential pays continuation steps and reserves one terminal scan. *)
+Lemma build_loop_budget {State Result} (step : State -> State + Result) Tstep
+    (invariant : State -> Prop) (credit : State -> nat) k reserve :
+  (forall st next, invariant st -> step st = inl next -> invariant next /\
+    (Tstep st + k * N.of_nat (credit next) <= k * N.of_nat (credit st) + k)%N) ->
+  (forall st answer, invariant st -> step st = inr answer ->
+    (Tstep st <= k * N.of_nat (credit st + reserve + 1))%N) ->
+  forall fuel st, invariant st ->
+    (T_loop_fuel step Tstep fuel st <=
+      (k + 1) * N.of_nat fuel + k * N.of_nat (credit st + reserve) + 1)%N.
+Proof.
+  intros Hcontinue Hfinish fuel; induction fuel as [|fuel IH]; intros st Hinv.
+  - time_unfold @T_loop_fuel; nia.
+  - time_unfold @T_loop_fuel; destruct (step st) as [next|answer] eqn:Hstep.
+    + destruct (Hcontinue st next Hinv Hstep) as [Hnext Hcost].
+      specialize (IH next Hnext). rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+    + pose proof (Hfinish st answer Hinv Hstep) as Hcost.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+Qed.
+
+(** Allocating an instruction name traverses at most the current counter width. *)
+Lemma build_instruction_time fresh w : N.size_nat fresh <= w ->
+  (T_build_instruction_name fresh <= 4 * N.of_nat (w + 1))%N.
+Proof.
+  intro Hwidth; pose proof (N.T_succ_pos_le fresh) as Hsucc.
+  time_unfold T_build_instruction_name; time_cbn; nia.
+Qed.
+
+(** Reading a tree's child row traverses the queried block identifier. *)
+Lemma build_children_time t b w : Pos.size_nat b <= w ->
+  (T_children t b <= 4 * N.of_nat (w + 1))%N.
+Proof.
+  destruct t as [parents rows before after]; intro Hwidth.
+  time_unfold T_children; rewrite PTrieT.trie_get_clock.
+  destruct (trie_get b rows); time_cbn; nia.
+Qed.
+
+(** Forming input bindings takes constant time per original input. *)
+Lemma build_input_pairs_time xs :
+  (ListDef.T_map (fun x => (x, build_input_name x))
+    (fun x => 1 + T_build_input_name x)%N xs <= 4 * N.of_nat (length xs) + 1)%N.
+Proof.
+  apply (ListDef.T_map_le _ _ 3%N xs).
+  intro x; pose proof (build_input_time x); lia.
+Qed.
+
+(** Forming the returned input list takes constant time per original input. *)
+Lemma build_input_list_time xs :
+  (ListDef.T_map build_input_name T_build_input_name xs <=
+    3 * N.of_nat (length xs) + 1)%N.
+Proof.
+  apply (ListDef.T_map_le _ _ 2%N xs); apply build_input_time.
+Qed.
+
+(** A parameter row is mapped to tagged phi names at its block's width. *)
+Lemma build_phi_list_time b xs w : Pos.size_nat b <= w ->
+  (ListDef.T_map (build_phi_name b) (T_build_phi_name b) xs <=
+    (c_glue + 4) * N.of_nat (length xs + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intro Hb.
+  pose proof (ListDef.T_map_le (build_phi_name b) (T_build_phi_name b)
+    ((c_glue + 2) * N.of_nat (w + 1))%N xs
+    ltac:(intro x; apply build_phi_time; exact Hb)) as Hmap.
+  rewrite !Nat2N.inj_add; nia.
+Qed.
+
+(** A counted component can be charged to a larger positive common budget. *)
+Lemma build_component_budget time coefficient extra count total width common scale :
+  (time <= coefficient * N.of_nat count * width + extra)%N ->
+  count <= total -> 1 <= total -> (1 <= width)%N ->
+  (coefficient + extra <= scale * common)%N ->
+  (time <= scale * (common * (N.of_nat total * width)))%N.
+Proof.
+  intros Htime Hcount Htotal Hwidth Hcoefficient.
+  eapply N.le_trans; [eapply val_positive_cost; eassumption|].
+  replace (scale * (common * (N.of_nat total * width)))%N with
+    ((scale * common) * (N.of_nat total * width))%N by ring.
+  apply N.mul_le_mono_r; exact Hcoefficient.
+Qed.
+
+(** A trie observation traverses only the queried key. *)
+Lemma build_lookup_time {A} (rho : ptrie A) x w : Pos.size_nat x <= w ->
+  (T_trie_get x rho <= 3 * N.of_nat (w + 1))%N.
+Proof.
+  intro Hwidth; rewrite PTrieT.trie_get_clock; time_cbn; nia.
+Qed.
+
+(** One inventory member contributes no more than the complete nonnegative sum. *)
+Lemma build_sum_member {A} (weight : A -> nat) xs x : In x xs -> weight x <= build_sum weight xs.
+Proof.
+  induction xs as [|a rest IH]; [intro Hnone; contradiction|].
+  intros [Heq|Hin]; change (weight x <= weight a + build_sum weight rest).
+  - subst a; lia.
+  - specialize (IH Hin); lia.
+Qed.
+
+(** A linear unscaled scan can use the same positive common bit budget. *)
+Lemma build_unscaled_budget time coefficient extra count total width common scale :
+  (time <= coefficient * N.of_nat count + extra)%N ->
+  count <= total -> 1 <= total -> (1 <= width)%N ->
+  (coefficient + extra <= scale * common)%N ->
+  (time <= scale * (common * (N.of_nat total * width)))%N.
+Proof.
+  intros Htime Hcount Htotal Hwidth Hcoefficient.
+  eapply N.le_trans; [eapply val_unscaled_cost; eassumption|].
+  replace (scale * (common * (N.of_nat total * width)))%N with
+    ((scale * common) * (N.of_nat total * width))%N by ring.
+  apply N.mul_le_mono_r; exact Hcoefficient.
+Qed.
+
+(** Literal record-access clocks leave the surrounding budgets folded. *)
+Ltac build_projection_clocks :=
+  cbv beta iota zeta delta [T_blocks T_entry T_inputs T_params T_code T_term].
+
+
 Module BuildCode (O : OPS)
     (K : KEY_OPS with Definition t := O.K) (G : KEY_OPS with Definition t := O.G)
     (P : TYPE with Definition t := func positive O.K O.G)
@@ -929,6 +1221,391 @@ Proof.
   apply val_sum_mono; intros [b body] Hin; cbn [snd].
   pose proof (val_block_defs_count body); unfold val_body_units; lia.
 Qed.
+
+(** A duplicate-free subinventory has at most the weight of the inventory containing it. *)
+Lemma build_place_sum_incl {A} (weight : A -> nat) xs ys :
+  NoDup xs -> incl xs ys -> build_sum weight xs <= build_sum weight ys.
+Proof.
+  intro Hunique; revert ys.
+  induction Hunique as [|x xs Hnone Hunique IH]; intros ys Hincl.
+  - cbn [build_sum fold_right]; lia.
+  - destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [before [after Hys]].
+    subst ys.
+    assert (Htail : incl xs (before ++ after)).
+    { intros y Hy. specialize (Hincl y (or_intror Hy)).
+      apply in_app_iff in Hincl as [Hbefore|Hrest].
+      - apply in_or_app; now left.
+      - destruct Hrest as [Heq|Hafter].
+        + subst y; contradiction.
+        + apply in_or_app; now right. }
+    specialize (IH _ Htail). unfold build_sum in *.
+    rewrite val_sum_app in IH |- *; cbn [fold_right] in *; lia.
+Qed.
+
+(** Filtering keeps distinct mapped keys distinct. *)
+Lemma build_place_nodup_map_filter {A B} (f : A -> B) test xs :
+  NoDup (map f xs) -> NoDup (map f (filter test xs)).
+Proof.
+  induction xs as [|x rest IH]; intro Hunique; [constructor|].
+  inversion Hunique as [|? ? Hnone Htail]; subst.
+  cbn [filter]; destruct (test x); [|apply IH; exact Htail].
+  cbn [map]; constructor; [|apply IH; exact Htail].
+  intro Hin; apply Hnone. apply in_map_iff in Hin as [y [Heq Hin]].
+  apply filter_In in Hin as [Hin _]. apply in_map_iff; exists y; auto.
+Qed.
+
+(** A Boolean count is the length of the selected sublist. *)
+Lemma build_place_filter_count {A} (test : A -> bool) xs :
+  length (filter test xs) = build_sum (fun x => if test x then 1 else 0) xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  change (length (if test x then x :: filter test rest else filter test rest) =
+    (if test x then 1 else 0) + build_sum (fun y => if test y then 1 else 0) rest).
+  destruct (test x).
+  - change (S (length (filter test rest)) =
+      S (build_sum (fun y => if test y then 1 else 0) rest)).
+    now rewrite IH.
+  - exact IH.
+Qed.
+
+(** Distinct queried variables can match at most the supplied variable occurrences. *)
+Lemma build_place_exists_count ids values : NoDup ids ->
+  build_sum (fun x => if existsb (Pos.eqb x) values then 1 else 0) ids <= length values.
+Proof.
+  intro Hunique; rewrite <- build_place_filter_count.
+  apply NoDup_incl_length; [apply NoDup_filter; exact Hunique|].
+  intros x Hin; apply filter_In in Hin as [_ Hyes].
+  apply existsb_exists in Hyes as [y [Hin Heq]].
+  apply Pos.eqb_eq in Heq; now subst y.
+Qed.
+
+(** Finite sums may be exchanged without changing the occurrence count. *)
+Lemma build_place_sum_swap {A B} (weight : A -> B -> nat) xs ys :
+  build_sum (fun x => build_sum (weight x) ys) xs =
+    build_sum (fun y => build_sum (fun x => weight x y) xs) ys.
+Proof.
+  induction xs as [|x rest IH].
+  - change (0 = build_sum (fun _ : B => 0) ys).
+    rewrite build_sum_const; lia.
+  - change (build_sum (weight x) ys +
+      build_sum (fun x => build_sum (weight x) ys) rest =
+      build_sum (fun y => weight x y + build_sum (fun x => weight x y) rest) ys).
+    rewrite build_sum_add, IH; reflexivity.
+Qed.
+
+(** Concatenated row lengths equal the sum of the row lengths. *)
+Lemma build_place_flat_length {A B} (rows : A -> list B) xs :
+  length (flat_map rows xs) = build_sum (fun x => length (rows x)) xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [flat_map build_sum fold_right]; rewrite length_app, IH; reflexivity.
+Qed.
+
+(** Summing definition-block counts over distinct variables charges source occurrences once. *)
+Lemma build_place_definitions_count {K G} (p : func positive K G) vars : NoDup vars ->
+  build_sum (fun x => length (definition_blocks p x)) vars <= function_size p.
+Proof.
+  intro Hunique.
+  assert (Hcounts : build_sum (fun x => length (definition_blocks p x)) vars =
+    build_sum (fun x => if existsb (Pos.eqb x) (inputs _ _ _ p) then 1 else 0) vars +
+    build_sum (fun item => build_sum
+      (fun x => if existsb (Pos.eqb x) (block_defs (snd item)) then 1 else 0) vars)
+      (blocks _ _ _ p)).
+  { transitivity (build_sum (fun x =>
+      (if existsb (Pos.eqb x) (inputs _ _ _ p) then 1 else 0) +
+      build_sum (fun item => if existsb (Pos.eqb x) (block_defs (snd item))
+        then 1 else 0) (blocks _ _ _ p)) vars).
+    - apply build_sum_ext; intros x Hin; unfold definition_blocks.
+      rewrite length_app, length_map, build_place_filter_count.
+      destruct (existsb (Pos.eqb x) (inputs _ _ _ p)); reflexivity.
+    - rewrite build_sum_add, build_place_sum_swap; reflexivity. }
+  rewrite Hcounts.
+  pose proof (build_place_exists_count vars (inputs _ _ _ p) Hunique) as Hinputs.
+  assert (Hblocks : build_sum (fun item => build_sum
+    (fun x => if existsb (Pos.eqb x) (block_defs (snd item)) then 1 else 0) vars)
+      (blocks _ _ _ p) <= build_sum (fun item => length (block_defs (snd item)))
+      (blocks _ _ _ p)).
+  { apply val_sum_mono; intros item Hin; apply build_place_exists_count; exact Hunique. }
+  pose proof (val_function_defs_count p) as Hdefs.
+  rewrite length_app, build_place_flat_length in Hdefs.
+  unfold function_size; lia.
+Qed.
+
+(** A path from a listed vertex remains inside a well-formed graph. *)
+Lemma build_place_path_listed g u trace v : wf_graph g -> In u (verts g) ->
+  Spec.path g u trace v -> In v (verts g).
+Proof.
+  intros Hwf Hin Hpath; revert Hin.
+  induction Hpath as [v|u v trace w Hedge Hpath IH]; intro Hin; [exact Hin|].
+  apply IH; exact (proj2 Hwf u v Hin Hedge).
+Qed.
+
+(** Every semantic frontier target is listed when the root is listed. *)
+Lemma build_place_frontier_listed g root x y : wf_graph g -> In root (verts g) ->
+  in_frontier g root x y -> In y (verts g).
+Proof.
+  intros Hwf Hroot [[predecessor [Hreach [Hedge _]]] _].
+  destruct Hreach as [r [trace [[Heq|Hnone] Hpath]]]; [subst r|contradiction].
+  apply (proj2 Hwf predecessor y); [|exact Hedge].
+  eapply build_place_path_listed; eauto.
+Qed.
+
+(** Every target in the iterated frontier is a listed frontier target. *)
+Lemma build_place_iterated_listed g root seeds y : wf_graph g -> In root (verts g) ->
+  in_iterated_frontier g root seeds y -> In y (verts g).
+Proof.
+  intros Hwf Hroot Hiter; destruct Hiter;
+    eapply build_place_frontier_listed; eauto.
+Qed.
+
+(** Definition seeds retain the source identifier width. *)
+Lemma build_place_seed_width {K G} (p : func positive K G) x b :
+  In b (definition_blocks p x) -> Pos.size_nat b <= function_width p.
+Proof.
+  unfold definition_blocks; intro Hin; apply in_app_iff in Hin as [Hinput|Hbody].
+  - destruct (existsb (Pos.eqb x) (inputs _ _ _ p)); [|contradiction].
+    destruct Hinput as [Heq|Hnone]; [subst b; apply val_entry_width|contradiction].
+  - apply in_map_iff in Hbody as [[id body] [Heq Hin]].
+    cbn [fst] in Heq; subst id. apply filter_In in Hin as [Hin _].
+    exact (val_block_width p b body Hin).
+Qed.
+
+(** Filtering inspects each member once, using its member-specific predicate bound. *)
+Lemma build_place_filter_clock {A} (f : A -> bool) Tf xs bound :
+  (forall x, In x xs -> (Tf x <= bound)%N) ->
+  (List.T_filter f Tf xs <= (bound + 2) * N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intro Hcost; [time_step|].
+  pose proof (Hcost x (or_introl eq_refl)) as Hhead.
+  specialize (IH ltac:(intros y Hin; apply Hcost; now right)).
+  time_unfold @List.T_filter; cbn [length]; rewrite Nat2N.inj_succ.
+  destruct (f x); time_simpl; nia.
+Qed.
+
+(** Set bits release the credit needed by binary carries. *)
+Fixpoint build_place_positive_credit (p : positive) : N :=
+  match p with
+  | xH => 1%N
+  | xO q => build_place_positive_credit q
+  | xI q => (1 + build_place_positive_credit q)%N
+  end.
+
+(** Incrementing a binary counter spends constant amortized carry credit. *)
+Lemma build_place_positive_succ_credit p :
+  (Pos.T_succ p + build_place_positive_credit (Pos.succ p) <=
+    2 + build_place_positive_credit p)%N.
+Proof.
+  induction p as [p IH|p IH|]; time_unfold Pos.T_succ;
+    cbn [Pos.succ build_place_positive_credit]; lia.
+Qed.
+
+(** Unary conversion performs a sequence of amortized binary increments. *)
+Lemma build_place_succ_nat_credit n :
+  (Pos.T_of_succ_nat n + build_place_positive_credit (Pos.of_succ_nat n) <=
+    3 * N.of_nat n + 2)%N.
+Proof.
+  induction n as [|n IH]; time_unfold Pos.T_of_succ_nat.
+  - reflexivity.
+  - pose proof (build_place_positive_succ_credit (Pos.of_succ_nat n)) as Hcarry.
+    cbn [Pos.of_succ_nat]; lia.
+Qed.
+
+(** Binary conversion has linear cost in its unary input. *)
+Lemma build_place_of_nat_clock n :
+  (TimeHelpers.N.T_of_nat n <= 3 * N.of_nat n + 2)%N.
+Proof.
+  destruct n as [|n]; time_unfold TimeHelpers.N.T_of_nat; [lia|].
+  pose proof (build_place_succ_nat_credit n); lia.
+Qed.
+
+(** Multiplication retains the generated clock and charges both operand widths. *)
+Lemma build_place_mul_clock n m :
+  (Code.N.T_mul n m <= N.of_nat (N.size_nat n) *
+    (N.of_nat (N.size_nat n) + 2 * N.of_nat (N.size_nat m) + 2) + 1)%N.
+Proof.
+  destruct n as [|p], m as [|q]; time_unfold Code.N.T_mul; cbn [N.size_nat]; try lia.
+  pose proof (Pos.T_mul_le p q); lia.
+Qed.
+
+(** The number of positive bits is no larger than the represented positive value. *)
+Lemma build_place_positive_bits p : Pos.size_nat p <= Pos.to_nat p.
+Proof.
+  induction p as [p IH|p IH|]; cbn [Pos.size_nat];
+    rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1; lia.
+Qed.
+
+(** A converted natural's bit count is bounded by its unary value. *)
+Lemma build_place_nat_bits_value n : N.size_nat (N.of_nat n) <= n.
+Proof.
+  pose proof (Nat2N.id n) as Hvalue.
+  destruct (N.of_nat n) as [|p] eqn:Hn; cbn [N.size_nat] in *; [lia|].
+  change (Pos.to_nat p = n) in Hvalue.
+  rewrite <- Hvalue; apply build_place_positive_bits.
+Qed.
+
+(** A strict power-of-two bound controls the width of unary conversion. *)
+Lemma build_place_nat_bits_bound n w : n < 2 ^ w -> N.size_nat (N.of_nat n) <= w.
+Proof.
+  intro Hbound; pose proof (Nat2N.id n) as Hvalue.
+  destruct (N.of_nat n) as [|p] eqn:Hn; cbn [N.size_nat]; [lia|].
+  apply Pos.size_nat_least.
+  change (Pos.to_nat p = n) in Hvalue; lia.
+Qed.
+
+(** Product widths add even when either operand is zero. *)
+Lemma build_place_mul_bits n m : N.size_nat (n * m) <= N.size_nat n + N.size_nat m.
+Proof.
+  destruct n as [|p], m as [|q]; cbn [N.mul N.size_nat]; try lia.
+  apply Pos.size_nat_mul.
+Qed.
+
+(** Syntax inventory construction copies each variable occurrence a constant number of times. *)
+Lemma build_place_function_vars_clock {K G} (p : func positive K G) :
+  (T_function_vars p <= 128 * N.of_nat (function_size p + 1))%N.
+Proof.
+  pose proof (Datatypes.T_app_le (inputs _ _ _ p)
+    (flat_map (fun item => val_body_vars (snd item)) (blocks _ _ _ p))) as Hinputs.
+  time_unfold @T_function_vars; time_simpl.
+  lazymatch goal with |- context [Code.List.T_flat_map ?f ?Tf ?xs] =>
+    pose proof (val_flat_map_output_clock f Tf 64%N xs
+      ltac:(intros [b body] Hin; time_simpl; cbn [fst snd];
+        pose proof (val_exit_uses_clock (term _ _ _ body)) as Hexit;
+        pose proof (Datatypes.T_app_le (params _ _ _ body)
+          (flat_map (fun '(x, _, args) => x :: args) (code _ _ _ body) ++
+            exit_uses (term _ _ _ body))) as Hparams;
+        pose proof (Datatypes.T_app_le
+          (flat_map (fun '(x, _, args) => x :: args) (code _ _ _ body))
+          (exit_uses (term _ _ _ body))) as Hcodeapp;
+        lazymatch goal with |- context [Code.List.T_flat_map ?g ?Tg ?code] =>
+          pose proof (val_flat_map_output_clock g Tg 2%N code
+            ltac:(intros [[dst op] args] Hmember; time_simpl; cbn [length]; nia))
+            as Hcode
+        end;
+        pose proof (val_code_vars_length (code _ _ _ body)) as Hcodecount;
+        rewrite !length_app, !Nat2N.inj_add in *;
+        change (N.of_nat 1) with 1%N in *; nia)) as Houter
+  end.
+  unfold val_body_vars in Hinputs.
+  unfold function_size, function_vars; rewrite !length_app, !Nat2N.inj_add in *.
+  change (N.of_nat 1) with 1%N in *; lia.
+Qed.
+
+(** Counting syntax charges variable occurrences, blocks and instructions once. *)
+Lemma build_place_function_size_clock {K G} (p : func positive K G) :
+  (T_function_size p <= 512 * N.of_nat (function_size p + 1))%N.
+Proof.
+  pose proof (build_place_function_vars_clock p) as Hvars.
+  pose proof (Datatypes.T_length_le (function_vars p)) as Hvarslen.
+  pose proof (Datatypes.T_length_le (blocks _ _ _ p)) as Hblockslen.
+  pose proof (Nat.T_add_le (length (function_vars p)) (length (blocks _ _ _ p))) as Hadd1.
+  pose proof (Nat.T_add_le (length (function_vars p) + length (blocks _ _ _ p))
+    (fold_right (fun item n => length (code _ _ _ (snd item)) + n) 0 (blocks _ _ _ p)))
+    as Hadd2.
+  time_unfold @T_function_size; time_simpl.
+  lazymatch goal with |- context [List.T_fold_right ?f ?Tf ?initial ?xs] =>
+    pose proof (build_place_fold_clock f Tf
+      (fun item => length (code _ _ _ (snd item)) + 1) xs 8%N 1%N ltac:(lia)
+      ltac:(intros; cbn beta; lia)
+      ltac:(intros [b body] acc Hin;
+        pose proof (Datatypes.T_length_le (code _ _ _ body)) as Hlength;
+        pose proof (Nat.T_add_le (length (code _ _ _ body)) acc) as Hadd;
+        time_simpl; cbn [snd]; rewrite Nat2N.inj_add;
+        change (N.of_nat 1) with 1%N; nia) initial) as Hfold
+  end.
+  cbn beta in Hfold.
+  assert (Hweight : fold_right (fun item n => length (code _ _ _ (snd item)) + 1 + n)
+    0 (blocks _ _ _ p) <= function_size p).
+  { change (build_sum (fun item => length (code _ _ _ (snd item)) + 1)
+      (blocks _ _ _ p) <= function_size p).
+    rewrite build_sum_add, build_sum_const. unfold function_size, build_sum; lia. }
+  apply val_nat_mono in Hweight.
+  unfold function_size in Hvars, Hweight |- *; rewrite !Nat2N.inj_add in *.
+  change (N.of_nat 1) with 1%N in *; nia.
+Qed.
+
+(** Counting live rows charges each row header and each emitted variable once. *)
+Lemma build_place_live_rows_clock rows :
+  (T_build_live_rows_size rows <= 16 * N.of_nat (build_live_rows_size rows + 1))%N.
+Proof.
+  time_unfold T_build_live_rows_size; time_simpl.
+  lazymatch goal with |- context [List.T_fold_right ?f ?Tf ?initial ?xs] =>
+    pose proof (build_place_fold_clock f Tf (fun row => 1 + length (snd row)) xs
+      8%N 1%N ltac:(lia) ltac:(intros; cbn beta; lia)
+      ltac:(intros [b values] acc Hin;
+        pose proof (Datatypes.T_length_le values) as Hlength;
+        pose proof (Nat.T_add_le 1 (length values)) as Hadd1;
+        pose proof (Nat.T_add_le (1 + length values) acc) as Hadd2;
+        time_simpl; cbn [snd]; rewrite !Nat2N.inj_add in *;
+        change (N.of_nat 1) with 1%N in *; nia) initial) as Hfold
+  end.
+  lazymatch type of Hfold with (?clock <= _)%N =>
+    change (clock <= (8 + 2) * N.of_nat (build_live_rows_size rows) * 1 + 1)%N in Hfold
+  end.
+  eapply N.le_trans; [apply N.add_le_mono; [apply N.le_refl|exact Hfold]|].
+  rewrite Nat2N.inj_add; change (N.of_nat 1) with 1%N; lia.
+Qed.
+
+(** A small constant multiplier charges the value width at most linearly in the value. *)
+Lemma build_place_eight_mul_clock n :
+  (Code.N.T_mul 8 (N.of_nat n) <= 32 * N.of_nat (n + 1))%N.
+Proof.
+  pose proof (build_place_mul_clock 8 (N.of_nat n)) as Hclock.
+  change (Code.N.T_mul 8 (N.of_nat n) <= 4 *
+    (4 + 2 * N.of_nat (N.size_nat (N.of_nat n)) + 2) + 1)%N in Hclock.
+  pose proof (build_place_nat_bits_value n) as Hbits.
+  rewrite Nat2N.inj_add; change (N.of_nat 1) with 1%N; lia.
+Qed.
+
+(** Counting frontier entries scans every listed row header and row member once. *)
+Lemma build_place_frontier_entries_clock rows ids w :
+  (forall b, In b ids -> Pos.size_nat b <= w) ->
+  (T_frontier_entries rows ids <= 32 *
+    N.of_nat (length ids + frontier_entries rows ids + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intro Hwidth; assert (Hw : (1 <= N.of_nat (w + 1))%N) by lia.
+  time_unfold T_frontier_entries; time_simpl.
+  lazymatch goal with |- context [List.T_fold_right ?f ?Tf ?initial ?xs] =>
+    pose proof (build_place_fold_clock f Tf
+      (fun b => 1 + length (frontier_row rows b)) xs 16%N (N.of_nat (w + 1)) Hw
+      ltac:(intros; cbn beta; lia)
+      ltac:(intros b acc Hin;
+        assert (Hrow : (T_frontier_row rows b <= 3 * N.of_nat (w + 1))%N)
+          by (exact (val_row_time rows b w (Hwidth b Hin)));
+        pose proof (Datatypes.T_length_le (frontier_row rows b)) as Hlength;
+        pose proof (Nat.T_add_le (length (frontier_row rows b)) acc) as Hadd;
+        time_simpl; rewrite !Nat2N.inj_add;
+        change (N.of_nat 1) with 1%N; nia) initial) as Hfold
+  end.
+  assert (Hweight : fold_right (fun b n => 1 + length (frontier_row rows b) + n) 0 ids =
+    length ids + frontier_entries rows ids).
+  { rewrite val_sum_add, val_sum_one; reflexivity. }
+  cbn beta in Hfold; rewrite Hweight in Hfold.
+  rewrite !Nat2N.inj_add in *; change (N.of_nat 1) with 1%N in *; nia.
+Qed.
+
+(** Linear unary work lifts to the common positive size and bit-width budget. *)
+Lemma build_place_linear_charge clock count total coefficient extra factor width :
+  (clock <= coefficient * N.of_nat count + extra)%N -> count <= factor * total ->
+  1 <= total -> (1 <= width)%N ->
+  (clock <= (coefficient * N.of_nat factor + extra) * N.of_nat total * width)%N.
+Proof.
+  intros Hclock Hcount Htotal Hwidth.
+  apply val_nat_mono in Hcount; rewrite Nat2N.inj_mul in Hcount.
+  assert (Hunit : (1 <= N.of_nat total)%N) by lia.
+  assert (Hextra : (extra <= extra * N.of_nat total)%N).
+  { replace extra with (extra * 1)%N at 1 by ring.
+    apply N.mul_le_mono_l; exact Hunit. }
+  assert (Hflat : (clock <= (coefficient * N.of_nat factor + extra) * N.of_nat total)%N).
+  { eapply N.le_trans; [exact Hclock|].
+    replace ((coefficient * N.of_nat factor + extra) * N.of_nat total)%N with
+      (coefficient * (N.of_nat factor * N.of_nat total) + extra * N.of_nat total)%N by ring.
+    apply N.add_le_mono; [apply N.mul_le_mono_l; exact Hcount|exact Hextra]. }
+  eapply N.le_trans; [exact Hflat|].
+  replace ((coefficient * N.of_nat factor + extra) * N.of_nat total)%N with
+    (((coefficient * N.of_nat factor + extra) * N.of_nat total) * 1)%N at 1 by ring.
+  apply N.mul_le_mono_l; exact Hwidth.
+Qed.
+
 
 Module BuildT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G)
@@ -2386,6 +3063,1749 @@ Module BuildT (O : OPS)
   Proof.
     intros p s c Hproduce. unfold k_size. now apply produce_size_checked.
   Qed.
+  (** The prepared graph node list is the source graph vertex list. *)
+  Lemma place_nodes_base g : nodes g = verts (base g).
+  Proof. destruct g as [[vs outgoing] incoming vertices edges]; reflexivity. Qed.
+
+  (** The producer graph lists exactly the prepared block nodes. *)
+  Lemma place_graph_nodes p : nodes (graph p) = BC.nodes (R.prepare p).
+  Proof.
+    rewrite place_nodes_base.
+    unfold graph; rewrite DG.prepare_base; reflexivity.
+  Qed.
+
+  (** Every listed block node retains the source identifier width. *)
+  Lemma place_node_width p b : In b (nodes (graph p)) -> Pos.size_nat b <= function_width p.
+  Proof.
+    rewrite place_graph_nodes; intro Hin; apply PB.block_bits_le; now left.
+  Qed.
+
+  (** Distinct universe variables fit the presentation occurrence budget. *)
+  Lemma place_universe_inventory p :
+    (N.of_nat (length (U.universe (R.prepare p))) <=
+      PB.c_present * N.of_nat (function_size p + 1))%N.
+  Proof.
+    assert (Hlength : length (U.universe (R.prepare p)) <=
+      length (U.occurrences (R.prepare p))).
+    { apply NoDup_incl_length; [apply U.universe_nodup|].
+      intros x Hin; apply universe_occurs; exact Hin. }
+    eapply N.le_trans; [|apply PB.points_le].
+    apply val_nat_mono; lia.
+  Qed.
+
+  (** Every source block identifier occurs in the prepared producer graph. *)
+  Lemma place_source_listed p b : In b (map fst (blocks _ _ _ p)) ->
+    In b (nodes (graph p)).
+  Proof.
+    intro Hin; rewrite place_graph_nodes, B.nodes_agree.
+    now apply val_first_blocks_ids.
+  Qed.
+
+  (** An accepted dominator certificate lists the source entry. *)
+  Lemma place_root_listed p :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    In (entry _ _ _ p) (nodes (graph p)).
+  Proof.
+    intro Hcheck; rewrite place_nodes_base; exact (proj1 (D.tree_exact _ _ _ _ Hcheck)).
+  Qed.
+
+  (** A seed list contains one optional entry and a distinct subset of source blocks. *)
+  Lemma place_seed_rows p x : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    build_sum (fun b => length (frontier_row (frontiers p) b)) (definition_blocks p x)
+      <= 2 * df_size p.
+  Proof.
+    intros Hunique Hcheck.
+    set (tail := map fst (filter
+      (fun item => existsb (Pos.eqb x) (block_defs (snd item))) (blocks _ _ _ p))).
+    assert (Htail_unique : NoDup tail)
+      by (unfold tail; apply build_place_nodup_map_filter; exact Hunique).
+    assert (Htail_listed : incl tail (nodes (graph p))).
+    { intros b Hin; apply place_source_listed. unfold tail in Hin.
+      apply in_map_iff in Hin as [item [Heq Hin]]. apply filter_In in Hin as [Hin _].
+      apply in_map_iff; exists item; auto. }
+    pose proof (build_place_sum_incl (fun b => length (frontier_row (frontiers p) b))
+      tail (nodes (graph p)) Htail_unique Htail_listed) as Htail.
+    change (build_sum (fun b => length (frontier_row (frontiers p) b)) tail <= df_size p)
+      in Htail.
+    assert (Hentry : length (frontier_row (frontiers p) (entry _ _ _ p)) <= df_size p).
+    { pose proof (build_place_sum_incl (fun b => length (frontier_row (frontiers p) b))
+        [entry _ _ _ p] (nodes (graph p)) ltac:(constructor; [simpl; tauto|constructor])
+        ltac:(intros b [Heq|Hnone]; [subst b; apply place_root_listed; exact Hcheck|contradiction]))
+        as Hsingle.
+      change (length (frontier_row (frontiers p) (entry _ _ _ p)) + 0 <= df_size p) in Hsingle.
+      lia. }
+    unfold definition_blocks, build_sum; rewrite val_sum_app; fold tail.
+    destruct (existsb (Pos.eqb x) (inputs _ _ _ p)); cbn [fold_right].
+    - unfold build_sum in Htail; lia.
+    - unfold build_sum in Htail; lia.
+  Qed.
+
+  (** Checked frontier rows contain only listed graph vertices. *)
+  Lemma place_frontier_listed p x y :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    In y (frontier_row (frontiers p) x) -> In y (nodes (graph p)).
+  Proof.
+    intros Hcheck Hin.
+    assert (Hexact : domtree_exact (graph p) (entry _ _ _ p) (dom_tree p))
+      by (apply D.tree_exact; exact Hcheck).
+    apply (proj1 (F.df_spec (graph p) (dom_tree p) (entry _ _ _ p) x y
+      (F1_graph_wf p) (DG.prepare_correct _) Hexact)) in Hin.
+    rewrite place_nodes_base.
+    eapply build_place_frontier_listed; [apply F1_graph_wf|exact (proj1 Hexact)|].
+    exact Hin.
+  Qed.
+
+  (** Checked iterated frontiers contain only listed graph vertices. *)
+  Lemma place_phi_listed p x b :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    In b (phi_sites p x) -> In b (nodes (graph p)).
+  Proof.
+    intros Hcheck Hin.
+    assert (Hexact : domtree_exact (graph p) (entry _ _ _ p) (dom_tree p))
+      by (apply D.tree_exact; exact Hcheck).
+    apply (proj1 (F.idf_spec (graph p) (dom_tree p) (entry _ _ _ p)
+      (definition_blocks p x) b (F1_graph_wf p) (DG.prepare_correct _) Hexact)) in Hin.
+    rewrite place_nodes_base.
+    eapply build_place_iterated_listed; [apply F1_graph_wf|exact (proj1 Hexact)|].
+    exact Hin.
+  Qed.
+
+  (** Checked frontier targets retain the source identifier width. *)
+  Lemma place_frontier_width p x y :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    In y (frontier_row (frontiers p) x) -> Pos.size_nat y <= function_width p.
+  Proof.
+    intros Hcheck Hin; apply place_node_width; eapply place_frontier_listed; eauto.
+  Qed.
+
+  (** Checked placement candidates retain the source identifier width. *)
+  Lemma place_phi_width p x b :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    In b (phi_sites p x) -> Pos.size_nat b <= function_width p.
+  Proof.
+    intros Hcheck Hin; apply place_node_width; eapply place_phi_listed; eauto.
+  Qed.
+
+  (** Every key visited by an indexed IDF search fits the source width. *)
+  Lemma place_iteration_width p x :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    vertex_width (definition_blocks p x ++ flat_map (frontier_row (frontiers p))
+      (definition_blocks p x ++ phi_sites p x)) <= function_width p.
+  Proof.
+    intro Hcheck; apply val_cfg_vertex_width_le; intros b Hin.
+    apply in_app_iff in Hin as [Hseed|Hrow]; [exact (build_place_seed_width p x b Hseed)|].
+    apply in_flat_map in Hrow as [a [_ Hin]].
+    eapply place_frontier_width; eauto.
+  Qed.
+
+  (** A successful guard charges every variable's repeated seed scans to existing work. *)
+  Lemma place_allowed_charge p :
+    placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+      (U.universe (R.prepare p)) = true ->
+    (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p) <=
+      16 * N.of_nat (function_size p + L.live_size p + df_size p + 1))%N.
+  Proof.
+    unfold placement_allowed; rewrite <- place_graph_nodes.
+    change (N.leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p))
+      (8 * N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)) =
+      true -> (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p) <=
+        16 * N.of_nat (function_size p + L.live_size p + df_size p + 1))%N).
+    rewrite N.leb_le; intro Hguard.
+    pose proof (L.live_in_size p) as Hrows.
+    change (build_live_rows_size (L.live_in p) <= length (blocks _ _ _ p) + L.live_size p)
+      in Hrows.
+    assert (Hblocks : length (blocks _ _ _ p) <= function_size p)
+      by (unfold function_size; lia).
+    eapply N.le_trans; [exact Hguard|].
+    rewrite !Nat2N.inj_add; change (N.of_nat 1) with 1%N.
+    nia.
+  Qed.
+
+  Lemma place_universe_numeric_width p :
+    N.size_nat (N.of_nat (length (U.universe (R.prepare p)))) <= function_width p + 1.
+  Proof.
+    apply build_place_nat_bits_bound.
+    pose proof (universe_count p) as Hcount.
+    rewrite Nat.pow_add_r; cbn [Nat.pow].
+    pose proof (Nat.pow_nonzero 2 (function_width p) ltac:(lia)); nia.
+  Qed.
+
+  (** Guard multiplication charges one source width per variable and frontier entry. *)
+  Lemma place_guard_mul_clock p :
+    (Code.N.T_mul (N.of_nat (length (U.universe (R.prepare p)))) (N.of_nat (df_size p)) <=
+      8 * N.of_nat (length (U.universe (R.prepare p)) + df_size p + 1) *
+        N.of_nat (function_width p + 1))%N.
+  Proof.
+    pose proof (build_place_mul_clock (N.of_nat (length (U.universe (R.prepare p))))
+      (N.of_nat (df_size p))) as Hclock.
+    pose proof (place_universe_numeric_width p) as Hleft.
+    pose proof (build_place_nat_bits_value (df_size p)) as Hright.
+    pose proof (build_place_nat_bits_value (length (U.universe (R.prepare p)))) as Hvalue.
+    rewrite !Nat2N.inj_add; change (N.of_nat 1) with 1%N.
+    nia.
+  Qed.
+
+  Lemma place_guard_compare_clock p limit :
+    (N.T_leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p)) limit <=
+      8 * N.of_nat (df_size p + 1) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    pose proof (N.T_leb_le (N.of_nat (length (U.universe (R.prepare p))) *
+      N.of_nat (df_size p)) limit) as Hclock.
+    pose proof (build_place_mul_bits (N.of_nat (length (U.universe (R.prepare p))))
+      (N.of_nat (df_size p))) as Hbits.
+    pose proof (place_universe_numeric_width p) as Hleft.
+    pose proof (build_place_nat_bits_value (df_size p)) as Hright.
+    rewrite !Nat2N.inj_add; change (N.of_nat 1) with 1%N; nia.
+  Qed.
+
+  Definition place_guard_coefficient : N :=
+    1024 + 4 * BC.c_cfg_adj + 64 * PB.c_present.
+
+  (** The generated guard clock reads both inventories and evaluates its binary comparison. *)
+  Lemma place_guard_clock_parts p :
+    T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+      (U.universe (R.prepare p)) =
+    (BC.T_nodes (R.prepare p) + T_frontier_entries (frontiers p) (nodes (graph p)) +
+      Datatypes.T_length (U.universe (R.prepare p)) +
+      TimeHelpers.N.T_of_nat (length (U.universe (R.prepare p))) +
+      TimeHelpers.N.T_of_nat (df_size p) +
+      Code.N.T_mul (N.of_nat (length (U.universe (R.prepare p)))) (N.of_nat (df_size p)) +
+      T_function_size p + T_build_live_rows_size (L.live_in p) +
+      Nat.T_add (function_size p) (build_live_rows_size (L.live_in p)) +
+      Nat.T_add (function_size p + build_live_rows_size (L.live_in p)) (df_size p) +
+      Nat.T_add (function_size p + build_live_rows_size (L.live_in p) + df_size p) 1 +
+      TimeHelpers.N.T_of_nat
+        (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1) +
+      Code.N.T_mul 8
+        (N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)) +
+      N.T_leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p))
+        (8 * N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)))%N.
+  Proof.
+    time_unfold T_placement_allowed; unfold T_frontier_entries.
+    rewrite <- place_graph_nodes.
+    unfold df_size, F.df_size, frontiers.
+    cbv beta delta [PosKeyT.t PosKey.t PosKeyCode.t].
+    ring.
+  Qed.
+
+  (** The guard charges syntax, live rows and frontier entries on every outcome. *)
+  Lemma place_guard_clock p :
+    (T_placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+      (U.universe (R.prepare p)) <= place_guard_coefficient *
+      N.of_nat (function_size p + L.live_size p + df_size p + 1) *
+        N.of_nat (function_width p + 1))%N.
+  Proof.
+    set (total := function_size p + L.live_size p + df_size p + 1).
+    set (width := N.of_nat (function_width p + 1)).
+    set (budget := (N.of_nat total * width)%N).
+    assert (Htotal : 1 <= total) by (unfold total; lia).
+    assert (Hw : (1 <= width)%N) by (unfold width; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; nia).
+    assert (Hwidth : (width <= budget)%N) by (unfold budget; nia).
+    pose proof (L.live_in_size p) as Hlive_size.
+    change (build_live_rows_size (L.live_in p) <= length (blocks _ _ _ p) + L.live_size p)
+      in Hlive_size.
+    pose proof (PB.block_nodes_le p) as Hnodes_size.
+    assert (Hblocks_size : length (blocks _ _ _ p) <= function_size p)
+      by (unfold function_size; lia).
+    assert (Hsource : function_size p + 1 <= total) by (unfold total; lia).
+    assert (Hlive : build_live_rows_size (L.live_in p) + 1 <= total) by (unfold total; lia).
+    assert (Hnodes : length (BC.nodes (R.prepare p)) + 1 <= total) by (unfold total; lia).
+    assert (Hfrontier : df_size p + 1 <= total) by (unfold total; lia).
+    assert (Hcombined : function_size p + build_live_rows_size (L.live_in p) + df_size p + 1
+      <= 2 * total) by (unfold total; lia).
+    pose proof (place_universe_inventory p) as Hvars_size.
+    assert (Hvars : ((N.of_nat (length (U.universe (R.prepare p))) + 1) * width <=
+      (PB.c_present + 1) * budget)%N).
+    { unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r.
+      pose proof (val_nat_mono _ _ Hsource) as HsourceN.
+      assert (Hone : (1 <= N.of_nat total)%N) by lia. nia. }
+    assert (Hnative : (T_function_size p <= 512 * budget)%N).
+    { eapply N.le_trans; [apply build_place_function_size_clock|].
+      unfold budget; pose proof (val_nat_mono _ _ Hsource); nia. }
+    assert (Hlive_clock : (T_build_live_rows_size (L.live_in p) <= 16 * budget)%N).
+    { eapply N.le_trans; [apply build_place_live_rows_clock|].
+      unfold budget; pose proof (val_nat_mono _ _ Hlive); nia. }
+    assert (Hnode_clock : (BC.T_nodes (R.prepare p) <= BC.c_cfg_adj * budget)%N).
+    { eapply N.le_trans; [apply BC.T_nodes_le|].
+      unfold budget; apply N.mul_le_mono_l.
+      eapply N.le_trans; [apply val_nat_mono; exact Hnodes|].
+      replace (N.of_nat total) with (N.of_nat total * 1)%N at 1 by ring.
+      apply N.mul_le_mono_l; exact Hw. }
+    assert (Hscan : (T_frontier_entries (frontiers p) (nodes (graph p)) <= 32 * budget)%N).
+    { eapply N.le_trans; [apply build_place_frontier_entries_clock; apply place_node_width|].
+      change (32 * N.of_nat (length (nodes (graph p)) + df_size p + 1) * width <=
+        32 * budget)%N.
+      unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+      apply val_nat_mono; rewrite place_graph_nodes; unfold total.
+      apply Nat.add_le_mono_r; apply Nat.add_le_mono_r.
+      eapply Nat.le_trans; [exact Hnodes_size|]; lia. }
+    assert (Hvar_length : (Datatypes.T_length (U.universe (R.prepare p)) <=
+      (PB.c_present + 1) * budget)%N).
+    { eapply N.le_trans; [apply Datatypes.T_length_le|]. nia. }
+    assert (Hvar_convert : (TimeHelpers.N.T_of_nat (length (U.universe (R.prepare p))) <=
+      (3 * (PB.c_present + 1)) * budget)%N).
+    { eapply N.le_trans; [apply build_place_of_nat_clock|]. nia. }
+    assert (Hvar_product : (Code.N.T_mul (N.of_nat (length (U.universe (R.prepare p))))
+      (N.of_nat (df_size p)) <= (8 * (PB.c_present + 2)) * budget)%N).
+    { eapply N.le_trans; [apply place_guard_mul_clock|].
+      rewrite !Nat2N.inj_add; change (N.of_nat 1) with 1%N; fold width.
+      pose proof (val_nat_mono _ _ Hfrontier) as HfrontierN.
+      assert (Hdf : (N.of_nat (df_size p) * width <= budget)%N)
+        by (unfold budget; apply N.mul_le_mono_r; lia).
+      nia. }
+    assert (Hdf_convert : (TimeHelpers.N.T_of_nat (df_size p) <= 5 * budget)%N).
+    { unfold budget; rewrite N.mul_assoc. eapply build_place_linear_charge with (coefficient := 3%N)
+        (extra := 2%N) (factor := 1); [apply build_place_of_nat_clock|lia|exact Htotal|exact Hw]. }
+    assert (Hcombined_convert : (TimeHelpers.N.T_of_nat
+      (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1) <=
+      8 * budget)%N).
+    { unfold budget; rewrite N.mul_assoc. eapply build_place_linear_charge with (coefficient := 3%N)
+        (extra := 2%N) (factor := 2);
+        [apply build_place_of_nat_clock|exact Hcombined|exact Htotal|exact Hw]. }
+    assert (Hlimit_product : (Code.N.T_mul 8
+      (N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)) <=
+      96 * budget)%N).
+    { unfold budget; rewrite N.mul_assoc. eapply build_place_linear_charge with (coefficient := 32%N)
+        (extra := 0%N) (factor := 3)
+        (count := function_size p + build_live_rows_size (L.live_in p) + df_size p + 1 + 1).
+      - pose proof (build_place_eight_mul_clock
+          (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1)); lia.
+      - lia.
+      - exact Htotal.
+      - exact Hw. }
+    assert (Hcomparison : forall limit,
+      (N.T_leb (N.of_nat (length (U.universe (R.prepare p))) * N.of_nat (df_size p)) limit <=
+        8 * budget)%N).
+    { intro limit; eapply N.le_trans; [apply place_guard_compare_clock|].
+      unfold budget; rewrite N.mul_assoc; apply N.mul_le_mono_r; apply N.mul_le_mono_l.
+      apply val_nat_mono; exact Hfrontier. }
+    assert (Hadd : forall n m, n <= 2 * total -> (Nat.T_add n m <= 3 * budget)%N).
+    { intros n m Hcount; unfold budget; rewrite N.mul_assoc.
+      eapply build_place_linear_charge with (coefficient := 1%N) (extra := 1%N)
+        (factor := 2) (count := n);
+        [pose proof (Nat.T_add_le n m); lia|exact Hcount|exact Htotal|exact Hw]. }
+    pose proof (Hadd (function_size p) (build_live_rows_size (L.live_in p)) ltac:(lia)) as Hadd1.
+    pose proof (Hadd (function_size p + build_live_rows_size (L.live_in p)) (df_size p)
+      ltac:(lia)) as Hadd2.
+    pose proof (Hadd (function_size p + build_live_rows_size (L.live_in p) + df_size p) 1
+      ltac:(lia)) as Hadd3.
+    specialize (Hcomparison
+      (8 * N.of_nat (function_size p + build_live_rows_size (L.live_in p) + df_size p + 1))%N).
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (place_guard_coefficient * budget)%N by
+        (unfold budget, total, width; ring) end.
+    rewrite place_guard_clock_parts.
+    clear Hlive_size Hnodes_size Hblocks_size Hsource Hlive Hnodes Hfrontier Hcombined
+      Hvars_size Hvars Hadd.
+    clearbody budget width total. unfold place_guard_coefficient. nia.
+  Qed.
+
+  Definition place_variable_work p x :=
+    length (definition_blocks p x) +
+    build_sum (fun b => length (frontier_row (frontiers p) b)) (definition_blocks p x) +
+    build_sum (fun b => 1 + length (frontier_row (frontiers p) b)) (phi_sites p x) + 1.
+
+  Definition place_variable_coefficient : N := F.c_frontier + 32.
+
+  Lemma place_variable_positive p x : 1 <= place_variable_work p x.
+  Proof. unfold place_variable_work; lia. Qed.
+
+  Lemma place_variable_sites p x : length (phi_sites p x) + 1 <= place_variable_work p x.
+  Proof.
+    unfold place_variable_work.
+    assert (Hsites : length (phi_sites p x) <=
+      build_sum (fun b => 1 + length (frontier_row (frontiers p) b)) (phi_sites p x)).
+    { rewrite <- val_sum_one at 1; apply val_sum_mono; intros; lia. }
+    lia.
+  Qed.
+
+  Lemma place_idf_clock p x :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    (F.T_idf (frontiers p) (definition_blocks p x) <= F.c_frontier *
+      N.of_nat (place_variable_work p x) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    intro Hcheck; pose proof (place_iteration_width p x Hcheck) as Hwidth.
+    eapply N.le_trans; [apply F.T_idf_le|].
+    apply N.mul_le_mono.
+    - apply N.mul_le_mono_l; apply val_nat_mono.
+      unfold idf_work, place_variable_work; rewrite val_sum_app.
+      fold (phi_sites p x). unfold build_sum.
+      assert (Hrows : fold_right (fun b n => length (frontier_row (frontiers p) b) + n)
+        0 (phi_sites p x) <= fold_right
+        (fun b n => 1 + length (frontier_row (frontiers p) b) + n) 0 (phi_sites p x))
+        by (apply val_sum_mono; intros; lia).
+      lia.
+    - apply val_nat_mono; change (vertex_width
+        (definition_blocks p x ++ flat_map (frontier_row (frontiers p))
+          (definition_blocks p x ++ phi_sites p x)) + 1 <= function_width p + 1).
+      lia.
+  Qed.
+
+  (** A variable search charges all seed rows and all newly discovered rows. *)
+  Lemma place_variable_clock p x : In x (U.universe (R.prepare p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    (T_place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x <=
+      place_variable_coefficient * N.of_nat (place_variable_work p x) *
+        N.of_nat (function_width p + 1))%N.
+  Proof.
+    intros Hx Hcheck.
+    set (width := N.of_nat (function_width p + 1)).
+    set (work := place_variable_work p x).
+    set (budget := (N.of_nat work * width)%N).
+    assert (Hw : (1 <= width)%N) by (unfold width; lia).
+    assert (Hwork : 1 <= work) by apply place_variable_positive.
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; nia).
+    assert (Hxwidth : Pos.size_nat x <= function_width p) by (apply universe_width; exact Hx).
+    pose proof (place_idf_clock p x Hcheck) as Hidf.
+    rewrite <- N.mul_assoc in Hidf.
+    change (F.T_idf (frontiers p) (definition_blocks p x) <= F.c_frontier * budget)%N in Hidf.
+    assert (Hlookup : (T_frontier_row (def_index p) x <= 3 * width)%N).
+    { exact (val_row_time (def_index p) x (function_width p) Hxwidth). }
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (place_variable_coefficient * budget)%N by
+        (unfold budget, work, width; ring) end.
+    time_unfold T_place_var; time_simpl; rewrite F2a_def_index.
+    lazymatch goal with |- context [List.T_filter ?f ?Tf ?xs] =>
+      pose proof (build_place_filter_clock f Tf xs (8 * width)%N
+        ltac:(intros b Hin;
+          change (In b (phi_sites p x)) in Hin;
+          pose proof (place_phi_width p x b Hcheck Hin) as Hb;
+          time_simpl; rewrite PTrieT.trie_get_clock;
+          destruct (trie_get b (live_sets (L.live_in p))) as [values|];
+          [pose proof (val_mem_time values x (function_width p) Hxwidth)|];
+          unfold width; nia)) as Hfilter
+    end.
+    assert (Hfilter' : (List.T_filter
+      (fun b => match trie_get b (live_sets (L.live_in p)) with
+        | Some values => val_mem values x | None => false end)
+      (fun b => (1 + (T_trie_get b (live_sets (L.live_in p)) +
+        match trie_get b (live_sets (L.live_in p)) with
+        | Some values => T_val_mem values x | None => 0 end))%N)
+      (phi_sites p x) <= 11 * budget)%N).
+    { eapply val_exact_cost with (coefficient := 10%N) (extra := 1%N)
+        (count := length (phi_sites p x)); [| |exact Hwork|exact Hw].
+      - eapply N.le_trans; [exact Hfilter|].
+        replace (10 * N.of_nat (length (phi_sites p x)) * width + 1)%N with
+          ((10 * width) * N.of_nat (length (phi_sites p x)) + 1)%N by ring.
+        apply N.add_le_mono_r; apply N.mul_le_mono_r; nia.
+      - pose proof (place_variable_sites p x); unfold work; lia. }
+    clear Hfilter. fold (phi_sites p x).
+    assert (Hwidth_budget : (width <= budget)%N) by (unfold budget; nia).
+    clearbody budget width work.
+    unfold place_variable_coefficient; nia.
+  Qed.
+
+  (** The guarded total search work consists of source, live rows, frontiers and placements. *)
+  Lemma place_search_inventory p : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+      (U.universe (R.prepare p)) = true ->
+    (N.of_nat (build_sum (place_variable_work p) (U.universe (R.prepare p))) <=
+      (PB.c_present + 40) * N.of_nat
+        (function_size p + L.live_size p + df_size p + placement_work p + 1))%N.
+  Proof.
+    intros Hunique Hcheck Hguard.
+    pose proof (build_place_definitions_count p (U.universe (R.prepare p))
+      (U.universe_nodup _)) as Hseeds.
+    pose proof (place_allowed_charge p Hguard) as Hscan.
+    pose proof (place_universe_inventory p) as Hvars.
+    assert (Hrows : build_sum
+      (fun x => build_sum (fun b => length (frontier_row (frontiers p) b))
+        (definition_blocks p x)) (U.universe (R.prepare p)) <=
+      length (U.universe (R.prepare p)) * (2 * df_size p)).
+    { apply build_sum_bound; intros x Hin; apply place_seed_rows; assumption. }
+    assert (Hsplit : build_sum (place_variable_work p) (U.universe (R.prepare p)) =
+      build_sum (fun x => length (definition_blocks p x)) (U.universe (R.prepare p)) +
+      build_sum (fun x => build_sum (fun b => length (frontier_row (frontiers p) b))
+        (definition_blocks p x)) (U.universe (R.prepare p)) +
+      placement_work p + length (U.universe (R.prepare p))).
+    { unfold place_variable_work.
+      rewrite build_sum_add, build_sum_add, build_sum_add, build_sum_const.
+      unfold placement_work, build_sum.
+      cbv beta delta [PosKeyT.t PosKey.t PosKeyCode.t].
+      ring. }
+    rewrite Hsplit, !Nat2N.inj_add.
+    apply val_nat_mono in Hseeds; apply val_nat_mono in Hrows.
+    rewrite !Nat2N.inj_mul in Hrows; change (N.of_nat 2) with 2%N in Hrows.
+    rewrite !Nat2N.inj_add in Hscan, Hvars; change (N.of_nat 1) with 1%N in *.
+    set (source := N.of_nat (function_size p)).
+    set (live := N.of_nat (L.live_size p)).
+    set (frontier := N.of_nat (df_size p)).
+    set (placed := N.of_nat (placement_work p)).
+    fold source live frontier placed in Hscan, Hvars, Hseeds, Hrows.
+    nia.
+  Qed.
+
+  Definition place_driver_coefficient : N :=
+    128 * (place_variable_coefficient + PTrieT.c_trie + 32) * (PB.c_present + 1).
+
+  (** The outer placement fold charges each selected site once after its indexed search. *)
+  Lemma place_with_clock p : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    placement_allowed p (R.prepare p) (frontiers p) (L.live_in p)
+      (U.universe (R.prepare p)) = true ->
+    (T_placement_with (frontiers p) (def_index p) (live_sets (L.live_in p))
+      (U.universe (R.prepare p)) <= place_driver_coefficient *
+      N.of_nat (function_size p + L.live_size p + df_size p + placement_work p + 1) *
+        N.of_nat (function_width p + 1))%N.
+  Proof.
+    intros Hunique Hcheck Hguard.
+    set (width := N.of_nat (function_width p + 1)).
+    set (total := function_size p + L.live_size p + df_size p + placement_work p + 1).
+    set (budget := (N.of_nat total * width)%N).
+    assert (Hw : (1 <= width)%N) by (unfold width; lia).
+    assert (Htotal : 1 <= total) by (unfold total; lia).
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget; nia).
+    pose proof (place_search_inventory p Hunique Hcheck Hguard) as Hwork.
+    fold total in Hwork.
+    lazymatch goal with |- (_ <= ?rhs)%N =>
+      replace rhs with (place_driver_coefficient * budget)%N by
+        (unfold budget, total, width; ring) end.
+    time_unfold T_placement_with; time_simpl.
+    lazymatch goal with |- context [List.T_fold_right ?f ?Tf ?initial ?vars] =>
+      pose proof (build_place_fold_clock f Tf (place_variable_work p) vars
+        (place_variable_coefficient + PTrieT.c_trie + 32)%N width Hw
+        ltac:(intros x Hin; apply place_variable_positive)
+        ltac:(intros x rows Hin;
+          pose proof (place_variable_clock p x Hin Hcheck) as Hvar;
+          pose proof (place_variable_positive p x) as Hpositive;
+          pose proof (place_variable_sites p x) as Hsites;
+          assert (Hcount : length (place_var (frontiers p) (def_index p)
+            (live_sets (L.live_in p)) x) <= length (phi_sites p x))
+            by (unfold place_var; rewrite F2a_def_index; apply filter_length_le);
+          time_simpl;
+          lazymatch goal with |- context [List.T_fold_right ?g ?Tg ?state ?sites] =>
+            pose proof (val_fold_right_uniform g Tg sites
+              ((PTrieT.c_trie + 8) * width)%N
+              ltac:(intros b acc Hmember;
+                assert (Hb : Pos.size_nat b <= function_width p)
+                  by (eapply place_phi_width; [exact Hcheck|];
+                    exact (proj1 (F3_place_region p x b Hmember)));
+                pose proof (val_row_time acc b (function_width p) Hb) as Hrow;
+                pose proof (PTrieT.T_set_le (list positive) b (x :: index_row acc b) acc)
+                  as Hset;
+                time_simpl; rewrite Nat2N.inj_add in Hset;
+                change (N.of_nat 1) with 1%N in Hset;
+                unfold width; unfold PTrieT.c_trie in *; nia) state) as Hinsert
+          end;
+          fold width in Hvar;
+          unfold PTrieT.c_trie in *;
+          nia) initial) as Hfold
+    end.
+    set (coefficient := (place_variable_coefficient + PTrieT.c_trie + 32 + 2)%N).
+    lazymatch type of Hfold with (?clock <= _)%N =>
+      change (clock <= coefficient *
+        N.of_nat (build_sum (place_variable_work p) (U.universe (R.prepare p))) * width + 1)%N
+        in Hfold
+    end.
+    assert (Hscaled : (coefficient *
+      N.of_nat (build_sum (place_variable_work p) (U.universe (R.prepare p))) * width <=
+      coefficient * (PB.c_present + 40) * budget)%N).
+    { unfold budget; rewrite <- !N.mul_assoc.
+      apply N.mul_le_mono_l. rewrite !N.mul_assoc.
+      apply N.mul_le_mono_r; exact Hwork. }
+    assert (Hcoefficient : (coefficient * (PB.c_present + 40) + 2 <=
+      place_driver_coefficient)%N).
+    { unfold coefficient, place_driver_coefficient, place_variable_coefficient.
+      unfold PTrieT.c_trie; nia. }
+    clearbody coefficient budget width total.
+    clear Hwork. nia.
+  Qed.
+
+
+  (** Every child in the checked tree is a prepared block node. *)
+  Lemma rename_tree_children_in (p : P.t) b child :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    In child (children (dom_tree p) b) -> In child (BC.nodes (R.prepare p)).
+  Proof.
+    intros Hchecked Hin.
+    pose proof (D.kids_spec (graph p) (entry _ _ _ p) (fst (dom_result p))
+      (snd (dom_result p)) Hchecked b) as [Hparents Hrest].
+    apply Hparents in Hin.
+    pose proof (D.check_sound _ _ _ _ Hchecked) as [Hparent _].
+    pose proof (proj1 (proj2 (Hparent child b Hin))) as Hreach.
+    pose proof (proj1 (D.tree_exact _ _ _ _ Hchecked)) as Hentry.
+    assert (Hlisted : In child (verts (base (graph p)))).
+    { eapply build_reach_listed; [apply F1_graph_wf| |exact Hreach].
+      intros root [Heq|Hnone]; [now subst root|contradiction]. }
+    unfold graph in Hlisted; rewrite DG.prepare_base in Hlisted; exact Hlisted.
+  Qed.
+
+  (** Checked dominator children fit the source identifier width. *)
+  Lemma rename_tree_children_width (p : P.t) b child :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    In child (children (dom_tree p) b) -> Pos.size_nat child <= function_width p.
+  Proof.
+    intros Hchecked Hin. apply PB.block_bits_le; left.
+    eapply rename_tree_children_in; eassumption.
+  Qed.
+
+  (** Each child is charged at most once across distinct source parent identifiers. *)
+  Lemma rename_tree_children_unique (p : P.t) : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    NoDup (flat_map (children (dom_tree p)) (map fst (blocks _ _ _ p))).
+  Proof.
+    intros Hunique Hchecked.
+    apply build_child_rows_unique with (parents := fst (dom_result p)); [exact Hunique| |].
+    - intro b. exact (proj1 (proj2 (D.kids_spec _ _ _ _ Hchecked b))).
+    - intros b child Hin. exact (proj1 (proj1 (D.kids_spec _ _ _ _ Hchecked b) child) Hin).
+  Qed.
+
+  (** The total checked child inventory has at most one entry per source block. *)
+  Lemma rename_tree_children_count (p : P.t) : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    length (flat_map (children (dom_tree p)) (map fst (blocks _ _ _ p))) <=
+      length (blocks _ _ _ p).
+  Proof.
+    intros Hunique Hchecked. eapply Nat.le_trans; [|apply PB.block_nodes_le].
+    apply NoDup_incl_length; [now apply rename_tree_children_unique|].
+    intros child Hin; apply in_flat_map in Hin as [b [Hb Hchild]].
+    eapply rename_tree_children_in; eassumption.
+  Qed.
+
+  (** Instruction renaming extends its explicit environment by one binding per instruction. *)
+  Lemma rename_code_environment : forall cs names fresh out final final_names next,
+    rename_code cs (val_index names) names fresh = Some (out, final, final_names, next) ->
+    final = val_index final_names /\ length final_names = length names + length cs.
+  Proof.
+    induction cs as [|[[x op] xs] rest IH];
+      intros names fresh out final final_names next Hrun.
+    - cbn [rename_code] in Hrun; inversion Hrun; subst; auto.
+    - cbn [rename_code] in Hrun.
+      destruct (build_values (val_index names) xs) as [ys|]; [|discriminate].
+      destruct (rename_code rest
+        (PTrieCode.set x (build_instruction_name fresh) (val_index names))
+        ((x, build_instruction_name fresh) :: names) (N.succ fresh))
+        as [[[[tail final'] names'] next']|] eqn:Htail; [|discriminate].
+      inversion Hrun; subst out final final_names next.
+      destruct (IH ((x, build_instruction_name fresh) :: names) (N.succ fresh)
+        tail final' names' next' Htail) as [Hindex Hlength].
+      split; [exact Hindex|cbn [length] in Hlength |- *; lia].
+  Qed.
+
+  (** Every target row of a successful exit was completely rewritten. *)
+  Lemma rename_exit_values ending rows rho out : rename_exit ending rows rho = Some out ->
+    forall target, In target (exit_targets ending) ->
+      exists args, build_values rho (index_row rows target) = Some args.
+  Proof.
+    intro Hrun; destruct ending as [b old|g xs b old c old'|xs].
+    - destruct old as [|x rest]; [|discriminate]. cbn [rename_exit] in Hrun.
+      destruct (build_values rho (index_row rows b)) as [args|] eqn:Hargs;
+        [|discriminate].
+      intros target [Heq|Hnone]; [subst target; eauto|contradiction].
+    - destruct old as [|x rest], old' as [|y tail]; try discriminate.
+      cbn [rename_exit] in Hrun.
+      destruct (build_values rho xs); [|discriminate].
+      destruct (build_values rho (index_row rows b)) as [left_args|] eqn:Hleft;
+        [|discriminate].
+      destruct (build_values rho (index_row rows c)) as [right_args|] eqn:Hright;
+        [|discriminate].
+      intros target [Heq|[Heq|Hnone]]; [subst target; eauto|subst target; eauto|contradiction].
+    - intros target Hnone; contradiction.
+  Qed.
+
+  (** Distinct successful edge arguments fit the explicit environment's domain. *)
+  Lemma rename_exit_row_size ending rows names out :
+    (forall target, NoDup (index_row rows target)) ->
+    rename_exit ending rows (val_index names) = Some out ->
+    build_sum (fun target => length (index_row rows target)) (exit_targets ending) <=
+      2 * length names.
+  Proof.
+    intros Hunique Hrun.
+    eapply Nat.le_trans; [apply build_sum_bound with (amount := length names)|].
+    - intros target Hin.
+      destruct (rename_exit_values _ _ _ _ Hrun target Hin) as [args Hargs].
+      rewrite <- (length_map fst names).
+      apply NoDup_incl_length; [apply Hunique|].
+      eapply build_values_domain; [intros x y Hget; eapply build_index_domain; exact Hget|].
+      exact Hargs.
+    - pose proof (build_exit_target_count ending); nia.
+  Qed.
+
+  (** Each queued child receives precisely its requested live-row number of bindings. *)
+  Lemma rename_children_lengths rows live rho inputs : forall kids tasks,
+    rename_children kids rows live rho inputs = Some tasks ->
+    forall b names, In (b, names) tasks -> length names = length (index_row live b).
+  Proof.
+    induction kids as [|child rest IH]; intros tasks Hrun b names Hin.
+    - cbn [rename_children] in Hrun; inversion Hrun; subst tasks; contradiction.
+    - cbn [rename_children] in Hrun.
+      destruct (build_project child (val_set (index_row rows child))
+        (index_row live child) rho inputs) as [projected|] eqn:Hproject; [|discriminate].
+      destruct (rename_children rest rows live rho inputs) as [tail|] eqn:Htail;
+        [|discriminate].
+      inversion Hrun; subst tasks. destruct Hin as [Heq|Hin].
+      + inversion Heq; subst b names.
+        pose proof (build_project_keys _ _ _ _ _ _ Hproject) as Hkeys.
+        apply f_equal with (f := @length positive) in Hkeys.
+        now rewrite length_map in Hkeys.
+      + exact (IH tail eq_refl b names Hin).
+  Qed.
+
+  (** Child projection preserves the exact child identifier order. *)
+  Lemma rename_children_keys rows live rho inputs : forall kids tasks,
+    rename_children kids rows live rho inputs = Some tasks -> map fst tasks = kids.
+  Proof.
+    induction kids as [|child rest IH]; intros tasks Hrun.
+    - cbn [rename_children] in Hrun; inversion Hrun; subst tasks; reflexivity.
+    - cbn [rename_children] in Hrun.
+      destruct (build_project child (val_set (index_row rows child))
+        (index_row live child) rho inputs); [|discriminate].
+      destruct (rename_children rest rows live rho inputs) as [tail|] eqn:Htail;
+        [|discriminate].
+      inversion Hrun; subst tasks; cbn [map fst]; f_equal; apply IH; reflexivity.
+  Qed.
+
+  (** Distinct queried blocks charge their live rows at most once. *)
+  Lemma rename_live_rows_sum live ids : NoDup ids ->
+    build_sum (fun b => length (index_row (val_index live) b)) ids <=
+      build_live_rows_size live.
+  Proof.
+    intro Hunique.
+    assert (Hrows : build_sum (fun b => length (index_row (val_index live) b)) ids =
+      build_sum (fun b => match lookup b live with Some row => length row | None => 0 end)
+        ids).
+    { apply build_sum_ext; intros b Hin; unfold index_row; rewrite val_index_lookup.
+      destruct (lookup b live); reflexivity. }
+    rewrite Hrows. eapply Nat.le_trans; [apply val_lookup_sum; exact Hunique|].
+    unfold build_sum, build_live_rows_size; apply val_sum_mono; intros row Hin; lia.
+  Qed.
+
+  (** Distinct queried parameter rows charge the published placement work at most once. *)
+  Lemma rename_placement_rows_sum p ids : NoDup ids ->
+    build_sum (fun b => length (index_row (placement p) b)) ids <= placement_work p.
+  Proof.
+    intro Hunique; unfold placement.
+    eapply Nat.le_trans; [apply placement_rows_size; exact Hunique|].
+    unfold placement_work, build_sum; apply val_sum_mono; intros x Hin.
+    unfold place_var; rewrite F2a_def_index.
+    eapply Nat.le_trans; [apply filter_length_le|].
+    unfold phi_sites.
+    induction (F.idf (frontiers p) (definition_blocks p x)); cbn [length fold_right]; lia.
+  Qed.
+
+  (** A child projection pays for one child, its live row and its parameter row. *)
+  Definition rename_child_work (p : P.t) b : nat :=
+    1 + length (index_row (val_index (L.live_in p)) b) +
+      length (index_row (placement p) b).
+
+  (** Checked tree rows charge each child projection once across all source blocks. *)
+  Lemma rename_child_work_total p : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    build_sum (fun b => build_sum (rename_child_work p) (children (dom_tree p) b))
+      (map fst (blocks _ _ _ p)) <=
+      length (blocks _ _ _ p) + build_live_rows_size (L.live_in p) + placement_work p.
+  Proof.
+    intros Hunique Hchecked; rewrite build_sum_flat_map.
+    pose proof (rename_tree_children_unique p Hunique Hchecked) as Hchildren.
+    pose proof (rename_tree_children_count p Hunique Hchecked) as Hcount.
+    pose proof (rename_live_rows_sum (L.live_in p) _ Hchildren) as Hlive.
+    pose proof (rename_placement_rows_sum p _ Hchildren) as Hplaced.
+    unfold rename_child_work; rewrite !build_sum_add, build_sum_const; lia.
+  Qed.
+
+  (** One cached body pays for source syntax, entry bindings and its child projections. *)
+  Definition rename_body_work (p : P.t) b : nat :=
+    1 +
+    (match lookup b (blocks _ _ _ p) with Some body => build_core_size body | None => 0 end) +
+    (if Pos.eqb b (entry _ _ _ p) then length (inputs _ _ _ p) else 0) +
+    length (index_row (val_index (L.live_in p)) b) +
+    length (index_row (placement p) b) +
+    build_sum (rename_child_work p) (children (dom_tree p) b).
+
+  (** The initial body budget is bounded by source syntax, liveness and placement work. *)
+  Lemma rename_body_work_total p : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    build_sum (rename_body_work p) (map fst (blocks _ _ _ p)) <=
+      8 * (function_size p + L.live_size p + placement_work p + 1).
+  Proof.
+    intros Hunique Hchecked.
+    pose proof (val_lookup_sum (blocks _ _ _ p) (map fst (blocks _ _ _ p))
+      (@build_core_size O.K O.G) Hunique) as Hsyntax.
+    pose proof (val_sum_single (map fst (blocks _ _ _ p)) (entry _ _ _ p)
+      (length (inputs _ _ _ p)) Hunique) as Hinputs.
+    pose proof (rename_live_rows_sum (L.live_in p) _ Hunique) as Hlive.
+    pose proof (rename_placement_rows_sum p _ Hunique) as Hplaced.
+    pose proof (rename_child_work_total p Hunique Hchecked) as Hchildren.
+    pose proof (L.live_in_size p) as Hrows.
+    change (build_live_rows_size (L.live_in p) <= length (blocks _ _ _ p) + L.live_size p)
+      in Hrows.
+    pose proof (build_function_decompose p) as Hsource.
+    unfold rename_body_work; rewrite !build_sum_add, build_sum_const, length_map.
+    unfold build_sum in Hsyntax, Hinputs, Hlive, Hplaced, Hchildren, Hsource |- *; lia.
+  Qed.
+
+  (** Renaming code scans source operands and allocates each instruction exactly once. *)
+  Lemma rename_code_time : forall cs rho names fresh w limit,
+    (forall x, In x (flat_map (fun i => fst (fst i) :: snd i) cs) ->
+      Pos.size_nat x <= w) ->
+    N.to_nat fresh + length cs <= limit ->
+    (forall i, N.to_nat i < limit -> N.size_nat i <= w) ->
+    (T_rename_code cs rho names fresh <=
+      64 * (PTrieT.c_trie + 1) *
+        N.of_nat (build_code_vars cs + length cs + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    induction cs as [|[[x op] xs] rest IH]; intros rho names fresh w limit Hwidth Hlimit Hcounter.
+    - time_step.
+    - assert (Hx : Pos.size_nat x <= w).
+      { apply Hwidth; cbn [flat_map]; now left. }
+      assert (Hxs : forall y, In y xs -> Pos.size_nat y <= w).
+      { intros y Hin; apply Hwidth; cbn [flat_map]; right; apply in_or_app; now left. }
+      assert (Hrest : forall y, In y (flat_map (fun i => fst (fst i) :: snd i) rest) ->
+          Pos.size_nat y <= w).
+      { intros y Hin; apply Hwidth; cbn [flat_map]; right; apply in_or_app; now right. }
+      assert (Hfresh : N.size_nat fresh <= w) by (apply Hcounter; cbn [length] in Hlimit; lia).
+      assert (Hnext : N.to_nat (N.succ fresh) + length rest <= limit).
+      { rewrite N2Nat.inj_succ; cbn [length] in Hlimit; lia. }
+      pose proof (build_values_time xs rho w Hxs) as Hvalues.
+      pose proof (build_instruction_time fresh w Hfresh) as Hname.
+      pose proof (PTrieT.T_set_le positive x (build_instruction_name fresh) rho) as Hset.
+      pose proof (N.T_succ_le fresh) as Hsucc.
+      specialize (IH (PTrieCode.set x (build_instruction_name fresh) rho)
+        ((x, build_instruction_name fresh) :: names) (N.succ fresh) w limit
+        Hrest Hnext Hcounter).
+      assert (Hset' : (PTrieCode.T_set x (build_instruction_name fresh) rho <=
+          PTrieT.c_trie * N.of_nat (w + 1))%N).
+      { eapply N.le_trans; [exact Hset|]. apply N.mul_le_mono_l, time_of_nat_le; lia. }
+      assert (Hsucc' : (N.T_succ fresh <= N.of_nat (w + 1))%N).
+      { clear - Hsucc Hfresh. rewrite Nat2N.inj_add; lia. }
+      pose proof (N.add_le_mono _ _ _ _
+        (N.add_le_mono _ _ _ _ (N.add_le_mono _ _ _ _ Hvalues Hname) Hset') Hsucc')
+        as Hhead.
+      pose proof (N.add_le_mono _ _ _ _ Hhead IH) as Hall.
+      unfold build_code_vars at 1; cbn [flat_map]; rewrite length_app;
+        cbn [length]; fold (@build_code_vars O.K rest).
+      eapply N.le_trans with (m := (1 + T_build_values rho xs +
+        T_build_instruction_name fresh + PTrieCode.T_set x (build_instruction_name fresh) rho +
+        N.T_succ fresh + T_rename_code rest
+          (PTrieCode.set x (build_instruction_name fresh) rho)
+          ((x, build_instruction_name fresh) :: names) (N.succ fresh))%N).
+      + time_unfold T_rename_code; destruct (build_values rho xs); lia.
+      + clear - Hall. unfold PTrieT.c_trie in *.
+        rewrite !Nat2N.inj_add, !Nat2N.inj_succ in *; nia.
+  Qed.
+
+  (** Exit rewriting scans its original operands and the supplied target parameter rows. *)
+  Lemma rename_exit_time ending rows rho w :
+    (forall target, In target (exit_targets ending) -> Pos.size_nat target <= w) ->
+    (forall x, In x (exit_uses ending) -> Pos.size_nat x <= w) ->
+    (forall target x, In x (index_row rows target) -> Pos.size_nat x <= w) ->
+    (T_rename_exit ending rows rho <=
+      64 * N.of_nat (build_exit_base ending +
+        build_sum (fun target => length (index_row rows target)) (exit_targets ending) + 1) *
+        N.of_nat (w + 1))%N.
+  Proof.
+    intros Htargets Huses Hrows; destruct ending as [b old|g xs b old c old'|xs].
+    - pose proof (val_row_time rows b w ltac:(apply Htargets; now left)) as Hrow.
+      pose proof (build_values_time (index_row rows b) rho w (Hrows b)) as Hvalues.
+      time_unfold T_rename_exit; destruct old, (build_values rho (index_row rows b));
+        cbn [build_exit_base build_sum exit_targets fold_right]; time_cbn; nia.
+    - assert (Hxs : forall x, In x xs -> Pos.size_nat x <= w).
+      { intros x Hin; apply Huses; cbn [exit_uses]; apply in_or_app; now left. }
+      pose proof (build_values_time xs rho w Hxs) as Hguard.
+      pose proof (val_row_time rows b w ltac:(apply Htargets; now left)) as Hleft.
+      pose proof (val_row_time rows c w ltac:(apply Htargets; right; now left)) as Hright.
+      pose proof (build_values_time (index_row rows b) rho w (Hrows b)) as Hleft_values.
+      pose proof (build_values_time (index_row rows c) rho w (Hrows c)) as Hright_values.
+      time_unfold T_rename_exit;
+        destruct old, old', (build_values rho xs), (build_values rho (index_row rows b)),
+          (build_values rho (index_row rows c));
+        cbn [build_exit_base build_sum exit_targets fold_right]; time_cbn; nia.
+    - pose proof (build_values_time xs rho w Huses) as Hvalues.
+      time_unfold T_rename_exit; destruct (build_values rho xs);
+        cbn [build_exit_base build_sum exit_targets fold_right]; time_cbn; nia.
+  Qed.
+
+  (** Child projection scans each child's live and parameter row once. *)
+  Lemma rename_children_time p : forall kids rho inputs w,
+    function_width p <= w -> (forall b, In b kids -> Pos.size_nat b <= w) ->
+    (T_rename_children kids (placement p) (val_index (L.live_in p)) rho inputs <=
+      64 * (PTrieT.c_trie + c_glue + 1) *
+        N.of_nat (build_sum (rename_child_work p) kids + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    induction kids as [|b rest IH]; intros rho inputs w Hsource Hkids.
+    - time_step.
+    - assert (Hb : Pos.size_nat b <= w) by (apply Hkids; now left).
+      assert (Hphis : forall x, In x (index_row (placement p) b) -> Pos.size_nat x <= w).
+      { intros x Hin; pose proof (placement_row_width p b x Hin); lia. }
+      assert (Hlive : forall x, In x (index_row (val_index (L.live_in p)) b) ->
+          Pos.size_nat x <= w).
+      { intros x Hin; pose proof (live_row_width p b x Hin); lia. }
+      pose proof (val_row_time (placement p) b w Hb) as Hrow.
+      pose proof (val_row_time (val_index (L.live_in p)) b w Hb) as Hlive_row.
+      pose proof (val_set_time (index_row (placement p) b) w Hphis) as Hset.
+      pose proof (build_project_time (index_row (val_index (L.live_in p)) b) b
+        (val_set (index_row (placement p) b)) rho inputs w Hb Hlive) as Hproject.
+      specialize (IH rho inputs w Hsource ltac:(intros child Hin; apply Hkids; now right)).
+      set (unit := ((PTrieT.c_trie + c_glue + 1) *
+        (N.of_nat (rename_child_work p b) * N.of_nat (w + 1)))%N).
+      assert (Hcount : 1 <= rename_child_work p b) by (unfold rename_child_work; lia).
+      assert (Hunit : (1 <= unit)%N).
+      { unfold unit; clear - Hcount; nia. }
+      assert (Hrow' : (T_index_row (placement p) b <= 3 * unit)%N).
+      { eapply build_component_budget with (coefficient := 3%N) (extra := 0%N)
+          (count := 1).
+        - change (T_index_row (placement p) b <= (3 * 1) * N.of_nat (w + 1) + 0)%N.
+          rewrite N.mul_1_r, N.add_0_r; exact Hrow.
+        - exact Hcount.
+        - exact Hcount.
+        - lia.
+        - lia. }
+      assert (Hlive_row' :
+          (T_index_row (val_index (L.live_in p)) b <= 3 * unit)%N).
+      { eapply build_component_budget with (coefficient := 3%N) (extra := 0%N)
+          (count := 1).
+        - change (T_index_row (val_index (L.live_in p)) b <=
+            (3 * 1) * N.of_nat (w + 1) + 0)%N.
+          rewrite N.mul_1_r, N.add_0_r; exact Hlive_row.
+        - exact Hcount.
+        - exact Hcount.
+        - lia.
+        - lia. }
+      assert (Hset' : (T_val_set (index_row (placement p) b) <= 4 * unit)%N).
+      { eapply build_component_budget with (coefficient := (PTrieT.c_trie + 2)%N)
+          (extra := 1%N) (count := length (index_row (placement p) b)).
+        - exact Hset.
+        - unfold rename_child_work; lia.
+        - exact Hcount.
+        - lia.
+        - lia. }
+      assert (Hproject' : (T_build_project b (val_set (index_row (placement p) b))
+        (index_row (val_index (L.live_in p)) b) rho inputs <= 16 * unit)%N).
+      { eapply build_component_budget with (coefficient := (16 * (c_glue + 1))%N)
+          (extra := 0%N) (count := length (index_row (val_index (L.live_in p)) b) + 1).
+        - rewrite N.add_0_r; exact Hproject.
+        - unfold rename_child_work; lia.
+        - exact Hcount.
+        - lia.
+        - lia. }
+      assert (Hhead : (1 + T_index_row (placement p) b +
+        T_val_set (index_row (placement p) b) + T_index_row (val_index (L.live_in p)) b +
+        T_build_project b (val_set (index_row (placement p) b))
+          (index_row (val_index (L.live_in p)) b) rho inputs <= 64 * unit)%N) by lia.
+      eapply N.le_trans with (m := (1 + T_index_row (placement p) b +
+        T_val_set (index_row (placement p) b) + T_index_row (val_index (L.live_in p)) b +
+        T_build_project b (val_set (index_row (placement p) b))
+          (index_row (val_index (L.live_in p)) b) rho inputs +
+        T_rename_children rest (placement p) (val_index (L.live_in p)) rho inputs)%N).
+      + time_unfold T_rename_children.
+        destruct (build_project b (val_set (index_row (placement p) b))
+          (index_row (val_index (L.live_in p)) b) rho inputs); lia.
+      + eapply N.le_trans; [apply N.add_le_mono; [exact Hhead|exact IH]|].
+        unfold unit; cbn [build_sum fold_right]; fold (build_sum (rename_child_work p) rest).
+        rewrite !Nat2N.inj_add; ring_simplify; apply N.le_refl.
+  Qed.
+
+  (** Counters bounded by source syntax fit within the source's explicit size width. *)
+  Lemma rename_counter_width (p : P.t) i : N.to_nat i <= function_size p ->
+    N.size_nat i <= function_width p.
+  Proof.
+    destruct i as [|value]; intro Hlimit; [cbn [N.size_nat]; lia|].
+    cbn [N.size_nat]. eapply Nat.le_trans; [|apply build_function_size_bits].
+    apply Pos.size_nat_monotone, Pos2Nat.inj_lt.
+    rewrite SuccNat2Pos.id_succ; cbn [N.to_nat] in Hlimit; lia.
+  Qed.
+
+  (** Source block code variables are covered by the function's identifier width. *)
+  Lemma rename_source_code_width (p : P.t) b body x :
+    lookup b (blocks _ _ _ p) = Some body ->
+    In x (flat_map (fun i => fst (fst i) :: snd i) (code _ _ _ body)) ->
+    Pos.size_nat x <= function_width p.
+  Proof.
+    intros Hsource Hvar; apply val_lookup_in in Hsource.
+    eapply val_body_var_width; [exact Hsource|].
+    unfold val_body_vars; apply in_or_app; right; apply in_or_app; left.
+    apply in_flat_map in Hvar as [instruction [Hin Hvar]].
+    apply in_flat_map; exists instruction; split; [exact Hin|].
+    destruct instruction as [[y op] xs]; exact Hvar.
+  Qed.
+
+  (** Source block exit operands are covered by the function's identifier width. *)
+  Lemma rename_source_exit_width (p : P.t) b body x :
+    lookup b (blocks _ _ _ p) = Some body -> In x (exit_uses (term _ _ _ body)) ->
+    Pos.size_nat x <= function_width p.
+  Proof.
+    intros Hsource Hvar; apply val_lookup_in in Hsource.
+    eapply val_body_var_width; [exact Hsource|].
+    unfold val_body_vars; apply in_or_app; right; apply in_or_app; now right.
+  Qed.
+
+  (** A cached body's instruction scan fits its original payload and source width. *)
+  Lemma rename_cached_code_time p st b body names : rename_cache p st ->
+    trie_get b (rename_bodies _ _ st) = Some body ->
+    (T_rename_code (code _ _ _ body) (val_index names) names (next_value _ _ st) <=
+      64 * (PTrieT.c_trie + 1) *
+        N.of_nat (build_core_size body + 1) * N.of_nat (rename_value_width p + 1))%N.
+  Proof.
+    intros Hcache Hbody.
+    pose proof (proj1 (proj1 (proj2 Hcache) b body Hbody)) as Hsource.
+    assert (Hlimit : N.to_nat (next_value _ _ st) + length (code _ _ _ body) <=
+        function_size p).
+    { eapply Nat.le_trans; [eapply rename_cache_next; eassumption|apply build_function_code_size]. }
+    pose proof (rename_code_time (code _ _ _ body) (val_index names) names
+      (next_value _ _ st) (rename_value_width p) (function_size p)
+      ltac:(intros x Hin; pose proof (rename_source_code_width p b body x Hsource Hin);
+        unfold rename_value_width; lia) Hlimit
+      ltac:(intros i Hi; pose proof (rename_counter_width p i ltac:(lia));
+        unfold rename_value_width; lia)) as Hcode.
+    eapply N.le_trans; [exact Hcode|].
+    apply N.mul_le_mono_r, N.mul_le_mono_l, time_of_nat_le.
+    unfold build_core_size; lia.
+  Qed.
+
+  (** Initial indexing and task creation are linear in source syntax at source width. *)
+  Lemma rename_initial_time p :
+    (T_rename_init p <= 64 * (PTrieT.c_trie + 1) *
+      N.of_nat (function_size p + 1) * N.of_nat (function_width p + 1))%N.
+  Proof.
+    pose proof (val_index_time (blocks _ _ _ p) (function_width p)
+      ltac:(intros b body Hin; eapply val_block_width; exact Hin)) as Hindex.
+    pose proof (build_input_pairs_time (inputs _ _ _ p)) as Hinputs.
+    assert (Htask : forall item : positive * block positive O.K O.G,
+      (1 + Datatypes.T_fst item <= 2)%N).
+    { intro item; pose proof (Datatypes.T_fst_le item) as Hfst; lia. }
+    pose proof (ListDef.T_map_le
+      (fun item : positive * block positive O.K O.G => (fst item, @nil (positive * positive)))
+      (fun item => 1 + Datatypes.T_fst item)%N 2%N (blocks _ _ _ p)
+      Htask) as Htasks.
+    pose proof (build_function_decompose p) as Hsize.
+    time_unfold T_rename_init; build_projection_clocks; unfold PTrieT.c_trie in *.
+    rewrite !Nat2N.inj_add in *.
+    nia.
+  Qed.
+
+  (** Pending tasks carry source-width labels and only their requested live bindings. *)
+  Definition rename_task_budget (p : P.t) (st : rename_state O.K O.G) : Prop :=
+    forall b names, In (b, names) (rename_stack _ _ st) ->
+      Pos.size_nat b <= function_width p /\
+      length names <=
+        (if Pos.eqb b (entry _ _ _ p) then length (inputs _ _ _ p) else 0) +
+          length (index_row (val_index (L.live_in p)) b).
+
+  (** Initial tasks consist of one tagged input environment and empty fallback tasks. *)
+  Lemma rename_task_budget_init p : rename_task_budget p (rename_init p).
+  Proof.
+    intros b names Hin; cbn [rename_init rename_stack] in Hin.
+    destruct Hin as [Heq|Hin].
+    - inversion Heq; subst b names; split; [apply val_entry_width|].
+      rewrite Pos.eqb_refl, length_map; lia.
+    - apply in_map_iff in Hin as [[a body] [Heq Hin]].
+      inversion Heq; subst b names; split; [eapply val_block_width; exact Hin|cbn; lia].
+  Qed.
+
+  (** Successful child projection preserves the pending-task budget. *)
+  Lemma rename_task_budget_step p st next :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_task_budget p st ->
+    rename_step p (dom_tree p) (placement p) (L.live_in p) st = inl next ->
+    rename_task_budget p next.
+  Proof.
+    destruct st as [bodies tasks output envs fresh]; intros Hchecked Htasks Hstep.
+    unfold rename_step in Hstep; destruct tasks as [|[b inherited] tasks].
+    - cbn [rename_step_indexed] in Hstep.
+      destruct (build_materialize (blocks _ _ _ p) (val_index output)); discriminate.
+    - cbn [rename_step_indexed] in Hstep.
+      destruct (trie_get b bodies) as [body|] eqn:Hbody.
+      + destruct (params _ _ _ body) as [|x rest]; [|discriminate].
+        destruct (if Pos.eqb b (entry _ _ _ p) then
+          match index_row (placement p) b with [] => Some inherited | _ => None end
+          else build_project b (val_set (index_row (placement p) b))
+            (index_row (val_index (L.live_in p)) b) (val_index inherited)
+            (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))))
+          as [names|] eqn:Hnames; [|discriminate].
+        destruct (rename_code (code _ _ _ body) (val_index names) names fresh)
+          as [[[[cs final] final_names] last]|] eqn:Hcode; [|discriminate].
+        destruct (rename_exit (term _ _ _ body) (placement p) final) as [ending|];
+          [|discriminate].
+        destruct (rename_children (children (dom_tree p) b) (placement p)
+          (val_index (L.live_in p)) final
+          (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))))
+          as [kids|] eqn:Hkids; [|discriminate].
+        inversion Hstep; subst next; intros a row Hin; cbn [rename_stack] in Hin.
+        apply in_app_or in Hin as [Hin|Hin].
+        * pose proof (rename_children_lengths _ _ _ _ _ _ Hkids a row Hin) as Hlength.
+          assert (Hchild : In a (children (dom_tree p) b)).
+          { rewrite <- (rename_children_keys _ _ _ _ _ _ Hkids).
+            apply in_map with (f := fst) in Hin; exact Hin. }
+          split; [eapply rename_tree_children_width; eassumption|rewrite Hlength; lia].
+        * apply Htasks; right; exact Hin.
+      + inversion Hstep; subst next; intros a row Hin; apply Htasks; right; exact Hin.
+  Qed.
+
+  (** The cached runtime combines syntax, value widths and pending-task bounds. *)
+  Definition rename_runtime (p : P.t) (st : rename_state O.K O.G) : Prop :=
+    rename_info p (placement p) (L.live_in p) st /\
+      rename_width p st /\ rename_task_budget p st.
+
+  (** Initial renaming satisfies every runtime invariant. *)
+  Lemma rename_runtime_init p : rename_runtime p (rename_init p).
+  Proof.
+    split; [apply rename_info_init|].
+    split; [apply rename_width_init|apply rename_task_budget_init].
+  Qed.
+
+  (** Every continuing cached step preserves the runtime invariant. *)
+  Lemma rename_runtime_step p st next :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_runtime p st ->
+    rename_step p (dom_tree p) (placement p) (L.live_in p) st = inl next ->
+    rename_runtime p next.
+  Proof.
+    intros Hchecked [Hinfo [Hwidth Htasks]] Hstep; split.
+    - eapply rename_info_step; eassumption.
+    - split.
+      + eapply rename_width_step; eassumption.
+      + eapply rename_task_budget_step; eassumption.
+  Qed.
+
+  (** The actual cached entry-name expression is shared by the clock proof. *)
+  Definition rename_entry_names (p : P.t) b inherited : option renaming :=
+    if Pos.eqb b (entry _ _ _ p) then
+      match index_row (placement p) b with [] => Some inherited | _ => None end
+    else build_project b (val_set (index_row (placement p) b))
+      (index_row (val_index (L.live_in p)) b) (val_index inherited)
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))).
+
+  (** Successful active entry names have bounded keys and values. *)
+  Lemma rename_active_names_width p bodies b inherited tasks output envs fresh body names :
+    rename_runtime p
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) ->
+    trie_get b bodies = Some body -> rename_entry_names p b inherited = Some names ->
+    build_names_bounded names (rename_value_width p).
+  Proof.
+    intros [Hinfo [[Hout [Henv Htasks]] Hbudget]] Hget Hnames.
+    pose proof (proj1 (proj1 (proj2 (proj1 Hinfo)) b body Hget)) as Hsource.
+    assert (Hinherited : build_names_bounded inherited (rename_value_width p)).
+    { exact (Htasks b inherited body (or_introl eq_refl) Hsource). }
+    unfold rename_entry_names in Hnames; destruct (Pos.eqb b (entry _ _ _ p)).
+    - destruct (index_row (placement p) b); [inversion Hnames; now subst names|discriminate].
+    - eapply projected_names_bounded; eassumption.
+  Qed.
+
+  (** Successful active entry names fit the source input or this block's live row. *)
+  Lemma rename_active_names_length p bodies b inherited tasks output envs fresh body names :
+    rename_runtime p
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) ->
+    trie_get b bodies = Some body -> rename_entry_names p b inherited = Some names ->
+    length names <=
+      (if Pos.eqb b (entry _ _ _ p) then length (inputs _ _ _ p) else 0) +
+        length (index_row (val_index (L.live_in p)) b).
+  Proof.
+    intros [Hinfo Hrest] Hbody Hnames.
+    eapply (rename_names_length p bodies b inherited tasks output envs fresh body
+      (placement p) (L.live_in p) names).
+    - exact (proj2 (proj2 (proj2 (proj2 Hinfo)))).
+    - exact Hbody.
+    - exact Hnames.
+  Qed.
+
+  (** An exit's row work counts every supplied outgoing parameter occurrence. *)
+  Definition rename_exit_row_work (p : P.t) (body : block positive O.K O.G) : nat :=
+    build_sum (fun target => length (index_row (placement p) target))
+      (exit_targets (term _ _ _ body)).
+
+  (** A successful exit charges its rows to the entry bindings and fresh definitions. *)
+  Lemma rename_success_rows p body names fresh cs final final_names next ending :
+    rename_code (code _ _ _ body) (val_index names) names fresh =
+      Some (cs, final, final_names, next) ->
+    rename_exit (term _ _ _ body) (placement p) final = Some ending ->
+    rename_exit_row_work p body <= 2 * (length names + length (code _ _ _ body)).
+  Proof.
+    intros Hcode Hexit.
+    destruct (rename_code_environment _ _ _ _ _ _ _ Hcode) as [Hindex Hlength].
+    rewrite Hindex in Hexit.
+    pose proof (rename_exit_row_size _ _ _ _ (placement_row_unique p) Hexit) as Hrows.
+    unfold rename_exit_row_work; rewrite <- Hlength; exact Hrows.
+  Qed.
+
+  (** An arbitrary terminal exit can scan at most two complete placement rows. *)
+  Lemma rename_terminal_rows p body : rename_exit_row_work p body <= 2 * placement_work p.
+  Proof.
+    unfold rename_exit_row_work.
+    eapply Nat.le_trans; [apply build_sum_bound with (amount := placement_work p)|].
+    - intros target Hin.
+      pose proof (rename_placement_rows_sum p [target]
+        ltac:(constructor; [intro Hnone; contradiction|constructor])) as Hrow.
+      cbn [build_sum fold_right] in Hrow; lia.
+    - pose proof (build_exit_target_count (term _ _ _ body)); nia.
+  Qed.
+
+  (** The cached body budget absorbs all rows of a continuing successful exit. *)
+  Lemma rename_success_rows_paid p bodies b inherited tasks output envs fresh body names
+      cs final final_names next ending :
+    rename_runtime p
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) ->
+    trie_get b bodies = Some body -> rename_entry_names p b inherited = Some names ->
+    rename_code (code _ _ _ body) (val_index names) names fresh =
+      Some (cs, final, final_names, next) ->
+    rename_exit (term _ _ _ body) (placement p) final = Some ending ->
+    rename_exit_row_work p body <= 2 * rename_body_work p b.
+  Proof.
+    intros Hruntime Hbody Hnames Hcode Hexit.
+    pose proof (rename_success_rows _ _ _ _ _ _ _ _ _ Hcode Hexit) as Hrows.
+    pose proof (rename_active_names_length _ _ _ _ _ _ _ _ _ _
+      Hruntime Hbody Hnames) as Hlength.
+    pose proof (proj1 (proj1 (proj2 (proj1 (proj1 Hruntime))) b body Hbody)) as Hsource.
+    unfold rename_body_work; rewrite Hsource; unfold build_core_size; lia.
+  Qed.
+
+  (** Every emitted body keeps a source identifier and no source identifier is repeated. *)
+  Lemma rename_emitted_inventory p st :
+    rename_info p (placement p) (L.live_in p) st ->
+    length (renamed_blocks _ _ st) <= length (blocks _ _ _ p) /\
+    forall b body, In (b, body) (renamed_blocks _ _ st) -> Pos.size_nat b <= function_width p.
+  Proof.
+    intros [Hcache Hsyntax].
+    assert (Hsource : forall b body, In (b, body) (renamed_blocks _ _ st) ->
+        exists original, lookup b (blocks _ _ _ p) = Some original).
+    { intros b body Hin; destruct (proj1 Hsyntax b body Hin) as [original [Hlookup Hrest]].
+      now exists original. }
+    split.
+    - rewrite <- (length_map fst (renamed_blocks _ _ st)),
+        <- (length_map fst (blocks _ _ _ p)).
+      apply NoDup_incl_length; [exact (proj1 Hcache)|].
+      intros b Hin; apply in_map_iff in Hin as [[a body] [Heq Hin]]; cbn [fst] in Heq; subst a.
+      destruct (Hsource b body Hin) as [original Hlookup]; apply val_lookup_in in Hlookup.
+      apply in_map with (f := fst) in Hlookup; exact Hlookup.
+    - intros b body Hin; destruct (Hsource b body Hin) as [original Hlookup].
+      exact (source_lookup_width p b original Hlookup).
+  Qed.
+
+  (** Final materialization and indexing scan only the source block inventory. *)
+  Lemma rename_finish_time p bodies output envs fresh :
+    rename_info p (placement p) (L.live_in p)
+      (RenameState O.K O.G bodies [] output envs fresh) ->
+    (T_rename_step_indexed p (dom_tree p) (placement p) (val_index (L.live_in p))
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))) (L.live_in p)
+      (RenameState O.K O.G bodies [] output envs fresh) <=
+      64 * (PTrieT.c_trie + 1) *
+        N.of_nat (function_size p + 1) * N.of_nat (rename_value_width p + 1))%N.
+  Proof.
+    intro Hinfo; destruct (rename_emitted_inventory _ _ Hinfo) as [Hcount Hwidth].
+    cbn [renamed_blocks] in Hcount, Hwidth.
+    pose proof (build_function_decompose p) as Hsize.
+    set (unit := ((PTrieT.c_trie + 1) *
+      (N.of_nat (function_size p + 1) * N.of_nat (function_width p + 1)))%N).
+    assert (Hunit : (1 <= unit)%N) by (unfold unit; nia).
+    assert (Hindex : (T_val_index output <= 4 * unit)%N).
+    { eapply build_component_budget with (coefficient := (PTrieT.c_trie + 2)%N)
+        (extra := 1%N) (count := length output).
+      - apply val_index_time; exact Hwidth.
+      - lia.
+      - lia.
+      - lia.
+      - lia. }
+    assert (Hmaterialize : (T_build_materialize (blocks _ _ _ p) (val_index output) <=
+        8 * unit)%N).
+    { eapply build_component_budget with (coefficient := 8%N) (extra := 0%N)
+        (count := length (blocks _ _ _ p) + 1).
+      - rewrite N.add_0_r; apply build_materialize_time.
+        intros b body Hin; eapply val_block_width; exact Hin.
+      - lia.
+      - lia.
+      - lia.
+      - lia. }
+    assert (Hinputs : (ListDef.T_map build_input_name (fun x => T_build_input_name x)
+      (inputs _ _ _ p) <= 4 * unit)%N).
+    { eapply build_unscaled_budget with (coefficient := 3%N) (extra := 1%N)
+        (count := length (inputs _ _ _ p)).
+      - apply build_input_list_time.
+      - lia.
+      - lia.
+      - lia.
+      - lia. }
+    eapply N.le_trans with (m := (64 * unit)%N).
+    - time_unfold T_rename_step_indexed.
+      destruct (build_materialize (blocks _ _ _ p) (val_index output));
+        build_projection_clocks; lia.
+    - unfold unit; rewrite <- N.mul_assoc, <- N.mul_assoc.
+      apply N.mul_le_mono_l, N.mul_le_mono_l, N.mul_le_mono_l, time_of_nat_le.
+      unfold rename_value_width; lia.
+  Qed.
+
+  (** A task whose body has already been emitted pays only for its cache lookup. *)
+  Lemma rename_skip_time p bodies b inherited tasks output envs fresh :
+    rename_task_budget p
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) ->
+    trie_get b bodies = None ->
+    (T_rename_step_indexed p (dom_tree p) (placement p) (val_index (L.live_in p))
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))) (L.live_in p)
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) <=
+      4 * N.of_nat (function_width p + 1))%N.
+  Proof.
+    intros Htasks Hbody; pose proof (proj1 (Htasks b inherited (or_introl eq_refl))) as Hb.
+    time_unfold T_rename_step_indexed; rewrite Hbody, PTrieT.trie_get_clock.
+    build_projection_clocks; nia.
+  Qed.
+
+  (** The common bit unit dominates every fixed primitive coefficient in cached renaming. *)
+  Definition rename_clock_common : N := (PTrieT.c_trie + c_glue + 1)%N.
+
+  (** One active cached body is charged before successful-edge domain refinement. *)
+  Lemma rename_active_time p bodies b inherited tasks output envs fresh body :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_runtime p
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) ->
+    trie_get b bodies = Some body ->
+    (T_rename_step_indexed p (dom_tree p) (placement p) (val_index (L.live_in p))
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))) (L.live_in p)
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) <=
+      4096 * (rename_clock_common *
+        (N.of_nat (rename_body_work p b + rename_exit_row_work p body + 1) *
+          N.of_nat (rename_value_width p + 1))))%N.
+  Proof.
+    intros Hchecked Hruntime Hbody.
+    pose proof Hruntime as [Hinfo [Hwidth Htasks]].
+    pose proof (proj1 (proj1 (proj2 (proj1 Hinfo)) b body Hbody)) as Hsource.
+    destruct (Htasks b inherited (or_introl eq_refl)) as [Hb Hinherited_length].
+    pose proof (proj2 (proj2 Hwidth) b inherited body (or_introl eq_refl) Hsource)
+      as Hinherited_width.
+    set (w := rename_value_width p).
+    set (total := rename_body_work p b + rename_exit_row_work p body + 1).
+    set (budget := (rename_clock_common * (N.of_nat total * N.of_nat (w + 1)))%N).
+    assert (Hwidth_source : function_width p <= w) by (unfold w, rename_value_width; lia).
+    assert (Hb_width : Pos.size_nat b <= w) by lia.
+    assert (Htotal : 1 <= total) by (unfold total; lia).
+    assert (Hwidth_positive : (1 <= N.of_nat (w + 1))%N) by lia.
+    assert (Hbudget : (1 <= budget)%N).
+    { unfold budget, rename_clock_common; clear - Htotal Hwidth_positive; nia. }
+    assert (Hwork : 1 + build_core_size body +
+      (if Pos.eqb b (entry _ _ _ p) then length (inputs _ _ _ p) else 0) +
+      length (index_row (val_index (L.live_in p)) b) +
+      length (index_row (placement p) b) +
+      build_sum (rename_child_work p) (children (dom_tree p) b) = rename_body_work p b).
+    { unfold rename_body_work; now rewrite Hsource. }
+    assert (Hphis_width : forall x, In x (index_row (placement p) b) -> Pos.size_nat x <= w).
+    { intros x Hin; pose proof (placement_row_width p b x Hin); lia. }
+    assert (Hlive_width : forall x, In x (index_row (val_index (L.live_in p)) b) ->
+        Pos.size_nat x <= w).
+    { intros x Hin; pose proof (live_row_width p b x Hin); lia. }
+    assert (Hkids_width : forall child, In child (children (dom_tree p) b) ->
+        Pos.size_nat child <= w).
+    { intros child Hin; pose proof (rename_tree_children_width p b child Hchecked Hin); lia. }
+    assert (Hget : (T_trie_get b bodies <= 3 * budget)%N).
+    { eapply build_component_budget with (coefficient := 3%N) (extra := 0%N) (count := 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; exact (build_lookup_time bodies b w Hb_width). }
+    assert (Hrow : (T_index_row (placement p) b <= 3 * budget)%N).
+    { eapply build_component_budget with (coefficient := 3%N) (extra := 0%N) (count := 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; exact (val_row_time (placement p) b w Hb_width). }
+    assert (Hlive_row : (T_index_row (val_index (L.live_in p)) b <= 3 * budget)%N).
+    { eapply build_component_budget with (coefficient := 3%N) (extra := 0%N) (count := 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; exact (val_row_time (val_index (L.live_in p)) b w Hb_width). }
+    assert (Hset : (T_val_set (index_row (placement p) b) <= 4 * budget)%N).
+    { eapply build_component_budget with (coefficient := (PTrieT.c_trie + 2)%N)
+        (extra := 1%N) (count := length (index_row (placement p) b));
+        try exact Htotal; try exact Hwidth_positive; try (unfold total; lia);
+        try (unfold rename_clock_common; lia).
+      exact (val_set_time _ _ Hphis_width). }
+    assert (Hinherited : (T_val_index inherited <= 4 * budget)%N).
+    { eapply build_component_budget with (coefficient := (PTrieT.c_trie + 2)%N)
+        (extra := 1%N) (count := length inherited);
+        try exact Htotal; try exact Hwidth_positive; try (unfold total; lia);
+        try (unfold rename_clock_common; lia).
+      apply val_index_time; intros x y Hin; exact (proj1 (Hinherited_width x y Hin)). }
+    assert (Hproject : (T_build_project b (val_set (index_row (placement p) b))
+      (index_row (val_index (L.live_in p)) b) (val_index inherited)
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))) <=
+      16 * budget)%N).
+    { eapply build_component_budget with (coefficient := (16 * (c_glue + 1))%N)
+        (extra := 0%N) (count := length (index_row (val_index (L.live_in p)) b) + 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold total; lia);
+        try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; apply build_project_time; assumption. }
+    assert (Hcompare : (Pos.T_eqb b (entry _ _ _ p) <= budget)%N).
+    { pose proof (Pos.T_eqb_le b (entry _ _ _ p)) as Hcompare.
+      unfold budget, rename_clock_common; clear - Hcompare Hb_width Htotal; nia. }
+    time_unfold T_rename_step_indexed; cbn beta iota zeta; rewrite Hbody.
+    fold (rename_entry_names p b inherited).
+    destruct (params _ _ _ body) as [|first rest] eqn:Hparams;
+      [|destruct (Pos.eqb b (entry _ _ _ p)); build_projection_clocks; lia].
+    destruct (rename_entry_names p b inherited) as [names|] eqn:Hnames;
+      [|destruct (Pos.eqb b (entry _ _ _ p)); build_projection_clocks; lia].
+    pose proof (rename_active_names_width _ _ _ _ _ _ _ _ _ _ Hruntime Hbody Hnames)
+      as Hnames_width.
+    pose proof (rename_active_names_length _ _ _ _ _ _ _ _ _ _ Hruntime Hbody Hnames)
+      as Hnames_length.
+    assert (Hindex_names : (T_val_index names <= 4 * budget)%N).
+    { eapply build_component_budget with (coefficient := (PTrieT.c_trie + 2)%N)
+        (extra := 1%N) (count := length names);
+        try exact Htotal; try exact Hwidth_positive; try (unfold total; lia);
+        try (unfold rename_clock_common; lia).
+      apply val_index_time; intros x y Hin; exact (proj1 (Hnames_width x y Hin)). }
+    assert (Hcode : (T_rename_code (code _ _ _ body) (val_index names) names fresh <=
+        64 * budget)%N).
+    { eapply build_component_budget with (coefficient := (64 * (PTrieT.c_trie + 1))%N)
+        (extra := 0%N) (count := build_core_size body + 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold total; lia);
+        try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; exact (rename_cached_code_time p
+        (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh)
+        b body names (proj1 Hinfo) Hbody). }
+    destruct (rename_code (code _ _ _ body) (val_index names) names fresh)
+      as [[[[cs final] final_names] next]|] eqn:Hcode_run;
+      [|destruct (Pos.eqb b (entry _ _ _ p)); build_projection_clocks; lia].
+    assert (Hexit : (T_rename_exit (term _ _ _ body) (placement p) final <=
+        64 * budget)%N).
+    { eapply build_component_budget with (coefficient := 64%N) (extra := 0%N)
+        (count := build_exit_base (term _ _ _ body) + rename_exit_row_work p body + 1);
+        try exact Htotal; try exact Hwidth_positive;
+        try (unfold total; unfold build_core_size in Hwork; lia);
+        try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; apply rename_exit_time.
+      - intros target Hin; pose proof (val_target_width p b body target
+          (val_lookup_in _ _ _ Hsource) Hin); lia.
+      - intros x Hin; pose proof (rename_source_exit_width p b body x Hsource Hin); lia.
+      - intros target x Hin; pose proof (placement_row_width p target x Hin); lia. }
+    destruct (rename_exit (term _ _ _ body) (placement p) final) as [ending|] eqn:Hexit_run;
+      [|destruct (Pos.eqb b (entry _ _ _ p)); build_projection_clocks; lia].
+    assert (Hchildren : (T_children (dom_tree p) b <= 4 * budget)%N).
+    { eapply build_component_budget with (coefficient := 4%N) (extra := 0%N) (count := 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; apply build_children_time; exact Hb_width. }
+    assert (Hchildren_scan : (T_rename_children (children (dom_tree p) b) (placement p)
+      (val_index (L.live_in p)) final
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))) <=
+      64 * budget)%N).
+    { eapply build_component_budget with
+        (coefficient := (64 * (PTrieT.c_trie + c_glue + 1))%N) (extra := 0%N)
+        (count := build_sum (rename_child_work p) (children (dom_tree p) b) + 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold total; lia);
+        try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; apply rename_children_time; assumption. }
+    destruct (rename_children (children (dom_tree p) b) (placement p)
+      (val_index (L.live_in p)) final
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))))
+      as [kids|] eqn:Hkids;
+      [|destruct (Pos.eqb b (entry _ _ _ p)); build_projection_clocks; lia].
+    assert (Hremove : (PTrieCode.T_remove b bodies <= budget)%N).
+    { pose proof (PTrieT.T_remove_le _ b bodies) as Hremove.
+      unfold budget, rename_clock_common; clear - Hremove Hb_width Htotal; nia. }
+    assert (Hkids_count : length kids <= build_sum (rename_child_work p) (children (dom_tree p) b)).
+    { pose proof (rename_children_keys _ _ _ _ _ _ Hkids) as Hkeys.
+      apply f_equal with (f := @length positive) in Hkeys; rewrite length_map in Hkeys.
+      rewrite Hkeys; unfold build_sum; apply val_sum_ge_length.
+      intros child Hin; unfold rename_child_work; lia. }
+    assert (Happend : (Datatypes.T_app kids tasks <= 2 * budget)%N).
+    { eapply build_unscaled_budget with (coefficient := 1%N) (extra := 1%N)
+        (count := length kids).
+      - rewrite N.mul_1_l; apply Datatypes.T_app_le.
+      - unfold total; lia.
+      - exact Htotal.
+      - exact Hwidth_positive.
+      - unfold rename_clock_common; lia. }
+    assert (Hphi_names : (ListDef.T_map (build_phi_name b) (fun x => T_build_phi_name b x)
+      (index_row (placement p) b) <= 4 * budget)%N).
+    { eapply build_component_budget with (coefficient := (c_glue + 4)%N) (extra := 0%N)
+        (count := length (index_row (placement p) b) + 1);
+        try exact Htotal; try exact Hwidth_positive; try (unfold total; lia);
+        try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; apply build_phi_list_time; exact Hb_width. }
+    destruct (Pos.eqb b (entry _ _ _ p)); build_projection_clocks; lia.
+  Qed.
+
+  (** The clock used by the actual loop reads indexes that were constructed once. *)
+  Definition rename_cached_clock (p : P.t) st : N :=
+    T_rename_step_indexed p (dom_tree p) (placement p) (val_index (L.live_in p))
+      (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))) (L.live_in p) st.
+
+  (** Remaining cached source bodies hold the amortized continuation credit. *)
+  Definition rename_remaining (p : P.t) (st : rename_state O.K O.G) : nat :=
+    build_remaining (rename_body_work p) (map fst (blocks _ _ _ p)) (rename_bodies _ _ st).
+
+  (** The private runtime budget includes the requested liveness output. *)
+  Definition rename_total_work (p : P.t) : nat :=
+    function_size p + L.live_size p + placement_work p + 1.
+
+  (** Four active-body allowances absorb successful outgoing-row rewriting. *)
+  Definition rename_runtime_scale (p : P.t) : N :=
+    (16384 * rename_clock_common * N.of_nat (rename_value_width p + 1))%N.
+
+  (** A successful exit turns the active-body bound into one cached-body charge. *)
+  Lemma rename_active_charge p bodies b inherited tasks output envs fresh body names
+      cs final final_names next ending :
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_runtime p
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) ->
+    trie_get b bodies = Some body -> rename_entry_names p b inherited = Some names ->
+    rename_code (code _ _ _ body) (val_index names) names fresh =
+      Some (cs, final, final_names, next) ->
+    rename_exit (term _ _ _ body) (placement p) final = Some ending ->
+    (rename_cached_clock p
+      (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) <=
+      rename_runtime_scale p * N.of_nat (rename_body_work p b + 1))%N.
+  Proof.
+    intros Hchecked Hruntime Hbody Hnames Hcode Hexit.
+    pose proof (rename_success_rows_paid _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+      Hruntime Hbody Hnames Hcode Hexit) as Hrows.
+    eapply N.le_trans; [eapply rename_active_time; eassumption|].
+    unfold rename_runtime_scale.
+    replace (16384 * rename_clock_common * N.of_nat (rename_value_width p + 1) *
+      N.of_nat (rename_body_work p b + 1))%N with
+      (4096 * (rename_clock_common *
+        (N.of_nat (4 * (rename_body_work p b + 1)) *
+          N.of_nat (rename_value_width p + 1))))%N
+      by (rewrite Nat2N.inj_mul; change (N.of_nat 4) with 4%N; ring).
+    apply N.mul_le_mono_l, N.mul_le_mono_l, N.mul_le_mono_r.
+    apply time_of_nat_le; lia.
+  Qed.
+
+  (** A continuing cached step spends one body's credit or one failed-lookup allowance. *)
+  Lemma rename_continue_charge p st next : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_runtime p st ->
+    rename_step p (dom_tree p) (placement p) (L.live_in p) st = inl next ->
+    (rename_cached_clock p st + rename_runtime_scale p * N.of_nat (rename_remaining p next) <=
+      rename_runtime_scale p * N.of_nat (rename_remaining p st) + rename_runtime_scale p)%N.
+  Proof.
+    intros Hunique Hchecked Hruntime Hstep; destruct st as [bodies tasks output envs fresh].
+    destruct tasks as [|[b inherited] tasks].
+    - unfold rename_step in Hstep; cbn [rename_step_indexed] in Hstep.
+      destruct (build_materialize (blocks _ _ _ p) (val_index output)); discriminate.
+    - unfold rename_step in Hstep; cbn [rename_step_indexed] in Hstep.
+      destruct (trie_get b bodies) as [body|] eqn:Hbody.
+      + pose proof (proj1 (proj1 (proj2 (proj1 (proj1 Hruntime))) b body Hbody)) as Hsource.
+        assert (Hin : In b (map fst (blocks _ _ _ p))).
+        { apply val_lookup_in in Hsource; apply in_map with (f := fst) in Hsource; exact Hsource. }
+        destruct (params _ _ _ body) as [|x rest]; [|discriminate].
+        fold (rename_entry_names p b inherited) in Hstep.
+        destruct (rename_entry_names p b inherited) as [names|] eqn:Hnames; [|discriminate].
+        destruct (rename_code (code _ _ _ body) (val_index names) names fresh)
+          as [[[[cs final] final_names] last]|] eqn:Hcode; [|discriminate].
+        destruct (rename_exit (term _ _ _ body) (placement p) final) as [ending|] eqn:Hexit;
+          [|discriminate].
+        destruct (rename_children (children (dom_tree p) b) (placement p)
+          (val_index (L.live_in p)) final
+          (val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p))))
+          as [kids|] eqn:Hkids; [|discriminate].
+        pose proof (rename_active_charge _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+          Hchecked Hruntime Hbody Hnames Hcode Hexit) as Hcharge.
+        pose proof (build_remaining_remove (rename_body_work p) (map fst (blocks _ _ _ p))
+          bodies b body Hunique Hin Hbody) as Hspent.
+        inversion Hstep; subst next; unfold rename_remaining; cbn [rename_bodies].
+        rewrite Hspent, Nat2N.inj_add; rewrite Nat2N.inj_add in Hcharge; nia.
+      + pose proof (rename_skip_time _ _ _ _ _ _ _ _ (proj2 (proj2 Hruntime)) Hbody) as Hskip.
+        inversion Hstep; subst next; unfold rename_remaining; cbn [rename_bodies].
+        unfold rename_cached_clock in *; unfold rename_runtime_scale, rename_clock_common,
+          rename_value_width; rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *; nia.
+  Qed.
+
+  (** Every cached source body is bounded by the complete source/liveness/placement budget. *)
+  Lemma rename_body_work_bound p st b body : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_runtime p st -> trie_get b (rename_bodies _ _ st) = Some body ->
+    rename_body_work p b <= 8 * rename_total_work p.
+  Proof.
+    intros Hunique Hchecked Hruntime Hbody.
+    pose proof (proj1 (proj1 (proj2 (proj1 (proj1 Hruntime))) b body Hbody)) as Hsource.
+    assert (Hin : In b (map fst (blocks _ _ _ p))).
+    { apply val_lookup_in in Hsource; apply in_map with (f := fst) in Hsource; exact Hsource. }
+    eapply Nat.le_trans; [apply build_sum_member; exact Hin|].
+    exact (rename_body_work_total p Hunique Hchecked).
+  Qed.
+
+  (** One terminal failed attempt is charged once to the complete available row budget. *)
+  Lemma rename_terminal_charge p st answer : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_runtime p st ->
+    rename_step p (dom_tree p) (placement p) (L.live_in p) st = inr answer ->
+    (rename_cached_clock p st <=
+      rename_runtime_scale p * N.of_nat (rename_remaining p st + 16 * rename_total_work p + 1))%N.
+  Proof.
+    intros Hunique Hchecked Hruntime Hstep; destruct st as [bodies tasks output envs fresh].
+    destruct tasks as [|[b inherited] tasks].
+    - pose proof (rename_finish_time _ _ _ _ _ (proj1 Hruntime)) as Hfinish.
+      unfold rename_cached_clock; eapply N.le_trans; [exact Hfinish|].
+      unfold rename_runtime_scale, rename_clock_common, rename_total_work.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul; nia.
+    - destruct (trie_get b bodies) as [body|] eqn:Hbody.
+      + pose proof (rename_body_work_bound p
+          (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh)
+          b body Hunique Hchecked Hruntime Hbody) as Hwork.
+        pose proof (rename_terminal_rows p body) as Hrows.
+        eapply N.le_trans; [eapply rename_active_time; eassumption|].
+        unfold rename_runtime_scale.
+        replace (16384 * rename_clock_common * N.of_nat (rename_value_width p + 1) *
+          N.of_nat (rename_remaining p
+            (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) +
+              16 * rename_total_work p + 1))%N with
+          (4096 * (rename_clock_common *
+            (N.of_nat (4 * (rename_remaining p
+              (RenameState O.K O.G bodies ((b, inherited) :: tasks) output envs fresh) +
+                16 * rename_total_work p + 1)) * N.of_nat (rename_value_width p + 1))))%N
+          by (rewrite Nat2N.inj_mul; change (N.of_nat 4) with 4%N; ring).
+        apply N.mul_le_mono_l, N.mul_le_mono_l, N.mul_le_mono_r.
+        apply time_of_nat_le; unfold rename_total_work in *; lia.
+      + unfold rename_step in Hstep; cbn [rename_step_indexed] in Hstep.
+        rewrite Hbody in Hstep; discriminate.
+  Qed.
+
+  (** The initial cached-body credit fits the same total work budget. *)
+  Lemma rename_remaining_initial p : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    rename_remaining p (rename_init p) <= 8 * rename_total_work p.
+  Proof.
+    intros Hunique Hchecked; unfold rename_remaining.
+    eapply Nat.le_trans; [apply build_remaining_bound|].
+    exact (rename_body_work_total p Hunique Hchecked).
+  Qed.
+
+  (** Cached loop fuel and body credit bound the complete loop, including failure. *)
+  Lemma rename_cached_loop_time p : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    (T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
+      (rename_cached_clock p) (2 * length (blocks _ _ _ p) + 1) (rename_init p) <=
+      1500000 * (rename_clock_common *
+        (N.of_nat (rename_total_work p) * N.of_nat (function_width p + 1))))%N.
+  Proof.
+    intros Hunique Hchecked.
+    pose proof (build_loop_budget
+      (rename_step p (dom_tree p) (placement p) (L.live_in p)) (rename_cached_clock p)
+      (rename_runtime p) (rename_remaining p) (rename_runtime_scale p) (16 * rename_total_work p)
+      ltac:(intros st next Hinv Hstep; split;
+        [eapply rename_runtime_step; eassumption|eapply rename_continue_charge; eassumption])
+      ltac:(intros st answer Hinv Hstep; eapply rename_terminal_charge; eassumption)
+      (2 * length (blocks _ _ _ p) + 1) (rename_init p) (rename_runtime_init p)) as Hloop.
+    pose proof (rename_remaining_initial p Hunique Hchecked) as Hremaining.
+    pose proof (build_function_decompose p) as Hsource.
+    assert (Hfuel : 2 * length (blocks _ _ _ p) + 1 <= 3 * rename_total_work p).
+    { unfold rename_total_work; lia. }
+    assert (Htotal : 1 <= rename_total_work p) by (unfold rename_total_work; lia).
+    set (unit := (rename_clock_common * N.of_nat (function_width p + 1))%N).
+    assert (Hunit : (1 <= unit)%N) by (unfold unit, rename_clock_common; nia).
+    assert (Hscale : rename_runtime_scale p = (49152 * unit)%N).
+    { unfold rename_runtime_scale, unit, rename_value_width.
+      rewrite !Nat2N.inj_add, !Nat2N.inj_mul. cbn [N.of_nat]; ring. }
+    rewrite Hscale in Hloop.
+    assert (Hfuel_N : (N.of_nat (2 * length (blocks _ _ _ p) + 1) <=
+        3 * N.of_nat (rename_total_work p))%N).
+    { change (N.of_nat (2 * length (blocks _ _ _ p) + 1) <=
+        N.of_nat 3 * N.of_nat (rename_total_work p))%N.
+      rewrite <- Nat2N.inj_mul; now apply time_of_nat_le. }
+    assert (Hcredit_N : (N.of_nat (rename_remaining p (rename_init p) +
+        16 * rename_total_work p) <= 24 * N.of_nat (rename_total_work p))%N).
+    { change (N.of_nat (rename_remaining p (rename_init p) + 16 * rename_total_work p) <=
+        N.of_nat 24 * N.of_nat (rename_total_work p))%N.
+      rewrite <- Nat2N.inj_mul; apply time_of_nat_le; lia. }
+    pose proof (N.mul_le_mono_l _ _ (49152 * unit + 1)%N Hfuel_N) as Hfuel_cost.
+    pose proof (N.mul_le_mono_l _ _ (49152 * unit)%N Hcredit_N) as Hcredit_cost.
+    replace (1500000 * (rename_clock_common *
+      (N.of_nat (rename_total_work p) * N.of_nat (function_width p + 1))))%N with
+      (1500000 * unit * N.of_nat (rename_total_work p))%N by (unfold unit; ring).
+    nia.
+  Qed.
+
+  (** Preparing unary loop fuel is linear in the source block count. *)
+  Lemma rename_fuel_time p :
+    (T_blocks positive O.K O.G p + Datatypes.T_length (blocks _ _ _ p) +
+      Nat.T_mul 2 (length (blocks _ _ _ p)) +
+      Nat.T_add (2 * length (blocks _ _ _ p)) 1 <=
+      16 * N.of_nat (length (blocks _ _ _ p) + 1))%N.
+  Proof.
+    pose proof (Datatypes.T_length_le (blocks _ _ _ p)) as Hlength.
+    pose proof (Nat.T_mul_le 2 (length (blocks _ _ _ p))) as Hmul.
+    pose proof (Nat.T_add_le (2 * length (blocks _ _ _ p)) 1) as Hadd.
+    build_projection_clocks; rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *; nia.
+  Qed.
+
+  (** The cached live-row index is constructed once from the supplied liveness result. *)
+  Lemma rename_live_index_time p :
+    (T_val_index (L.live_in p) <= 4 * (rename_clock_common *
+      (N.of_nat (rename_total_work p) * N.of_nat (function_width p + 1))))%N.
+  Proof.
+    pose proof (L.live_in_size p) as Hlive.
+    unfold L.rows_size in Hlive.
+    pose proof (val_rows_length (L.live_in p)) as Hrows.
+    pose proof (build_function_decompose p) as Hsource.
+    assert (Hcount : length (L.live_in p) <= rename_total_work p).
+    { unfold rename_total_work; lia. }
+    eapply build_component_budget with (coefficient := (PTrieT.c_trie + 2)%N)
+      (extra := 1%N) (count := length (L.live_in p));
+      try exact Hcount; try (unfold rename_total_work; lia);
+      try (unfold rename_clock_common; lia).
+    apply val_index_time; intros b row Hin.
+    destruct (L.live_in_ids p (b, row) Hin) as [Hnode Hvars].
+    apply PB.block_bits_le; now left.
+  Qed.
+
+  (** The cached original-input index is constructed once at source-key width. *)
+  Lemma rename_input_index_time p :
+    (T_val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p)) <=
+      4 * (rename_clock_common *
+        (N.of_nat (rename_total_work p) * N.of_nat (function_width p + 1))))%N.
+  Proof.
+    pose proof (build_function_decompose p) as Hsource.
+    eapply build_component_budget with (coefficient := (PTrieT.c_trie + 2)%N)
+      (extra := 1%N)
+      (count := length (map (fun x => (x, build_input_name x)) (inputs _ _ _ p)));
+      try (rewrite length_map; unfold rename_total_work; lia);
+      try (unfold rename_total_work; lia); try (unfold rename_clock_common; lia).
+    apply val_index_time; intros x y Hin.
+    apply in_map_iff in Hin as [a [Heq Hin]]; inversion Heq; subst x y.
+    now apply val_input_width.
+  Qed.
+
+  (** The complete private cached-renamer coefficient includes fixed setup and loop costs. *)
+  Definition rename_cached_coefficient : N := (2097152 * rename_clock_common)%N.
+
+  (** The actual cached renamer uses source syntax, liveness and placement work even on failure. *)
+  Lemma rename_cached_time p : NoDup (map fst (blocks _ _ _ p)) ->
+    D.check (graph p) (entry _ _ _ p) (fst (dom_result p)) (snd (dom_result p)) = true ->
+    (T_rename p (dom_tree p) (placement p) (L.live_in p) <=
+      rename_cached_coefficient *
+        N.of_nat (function_size p + L.live_size p + placement_work p + 1) *
+        N.of_nat (function_width p + 1))%N.
+  Proof.
+    intros Hunique Hchecked.
+    pose proof (rename_live_index_time p) as Hlive.
+    pose proof (rename_input_index_time p) as Hinputs.
+    pose proof (rename_cached_loop_time p Hunique Hchecked) as Hloop.
+    pose proof (build_function_decompose p) as Hsource.
+    set (budget := (rename_clock_common *
+      (N.of_nat (rename_total_work p) * N.of_nat (function_width p + 1)))%N).
+    assert (Hunit : (1 <= budget)%N).
+    { unfold budget, rename_clock_common, rename_total_work; nia. }
+    assert (Hinput_map : (ListDef.T_map (fun x => (x, build_input_name x))
+      (fun x => 1 + T_build_input_name x)%N (inputs _ _ _ p) <= 5 * budget)%N).
+    { eapply build_unscaled_budget with (coefficient := 4%N) (extra := 1%N)
+        (count := length (inputs _ _ _ p));
+        try (unfold rename_total_work; lia); try (unfold rename_clock_common; lia).
+      apply build_input_pairs_time. }
+    assert (Hfuel : (T_blocks positive O.K O.G p + Datatypes.T_length (blocks _ _ _ p) +
+      Nat.T_mul 2 (length (blocks _ _ _ p)) +
+      Nat.T_add (2 * length (blocks _ _ _ p)) 1 <= 16 * budget)%N).
+    { eapply build_unscaled_budget with (coefficient := 16%N) (extra := 0%N)
+        (count := length (blocks _ _ _ p) + 1);
+        try (unfold rename_total_work; lia); try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; apply rename_fuel_time. }
+    assert (Hinit : (T_rename_init p <= 64 * budget)%N).
+    { eapply build_component_budget with (coefficient := (64 * (PTrieT.c_trie + 1))%N)
+        (extra := 0%N) (count := function_size p + 1);
+        try (unfold rename_total_work; lia); try (unfold rename_clock_common; lia).
+      rewrite N.add_0_r; apply rename_initial_time. }
+    fold budget in Hlive, Hinputs, Hloop.
+    time_unfold T_rename; build_projection_clocks.
+    fold (rename_cached_clock p).
+    change ((1 + (T_val_index (L.live_in p) +
+      (1 + ListDef.T_map (fun x => (x, build_input_name x))
+        (fun x => 1 + T_build_input_name x)%N (inputs _ _ _ p) +
+      T_val_index (map (fun x => (x, build_input_name x)) (inputs _ _ _ p)) +
+      (1 + Datatypes.T_length (blocks _ _ _ p) + Nat.T_mul 2 (length (blocks _ _ _ p)) +
+      Nat.T_add (2 * length (blocks _ _ _ p)) 1 + T_rename_init p +
+      T_loop_fuel (rename_step p (dom_tree p) (placement p) (L.live_in p))
+        (rename_cached_clock p) (2 * length (blocks _ _ _ p) + 1) (rename_init p)))) <=
+      rename_cached_coefficient * N.of_nat (rename_total_work p) *
+        N.of_nat (function_width p + 1))%N).
+    replace (rename_cached_coefficient * N.of_nat (rename_total_work p) *
+      N.of_nat (function_width p + 1))%N with (2097152 * budget)%N
+      by (unfold rename_cached_coefficient, budget; ring).
+    cbn [T_blocks] in Hfuel; clearbody budget; lia.
+  Qed.
+
   Module Clock := ValidateT O K G P Q R BE BC S DG D B.
 
   Lemma budget_graph_width p : graph_width (base (graph p)) <= function_width p.
