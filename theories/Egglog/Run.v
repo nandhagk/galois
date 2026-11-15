@@ -1190,8 +1190,8 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     fst (run p cp lim db) = Saturated.
   Proof. Admitted. (* STUB *)
 
-  Lemma run_limits : forall p cp lim db, fst (run p cp lim db) = IdLimit ->
-    (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
+  Lemma run_limits : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    fst (run p cp lim db) = IdLimit -> (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
   Proof. Admitted. (* STUB *)
 
 End Run.
@@ -1226,6 +1226,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       | Some a => length (atom_terms a)
       | None => 0
       end + n) 0 (post V.t c).
+  (** Finding the rule of a plan walks the rule list with a binary counter. *)
+  Definition rule_work (p : program V.t) (c : cplan V.t) : nat :=
+    (length (rules V.t p) + 1) * (N.size_nat (rule_ix V.t c) + 1).
   Definition round_work (p : program V.t) (cp : compiled V.t) (nv : bool) (db : D.t) : nat :=
     length (Syntax.slots V.t cp) +
       fold_right Nat.add 0 (map (fun c =>
@@ -1234,7 +1237,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
-           post_work p c + 1 +
+           post_work p c + rule_work p c + 1 +
            fold_right (fun a n => match a with
              | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
                  (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n
@@ -1512,7 +1515,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat (var_of V.t c) +
-           post_work p c + 1 +
+           post_work p c + rule_work p c + 1 +
            fold_right (fun a n => match a with
              | Make _ f args | Put f args _ =>
                  (length args + 2) * (length args + 2) *
@@ -1616,7 +1619,8 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma T7_keep_le : forall p c b,
     (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
-      k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b))%N.
+      k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
+      k_driver * N.of_nat (rule_work p c))%N.
   Proof. Admitted. (* STUB *)
 
   (** A round's jobs are the kept bindings of its plans, plan by plan. *)

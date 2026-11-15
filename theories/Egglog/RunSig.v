@@ -299,9 +299,10 @@ Module Type RUN_LAWS (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
     N.to_nat (max_iter lim) >= 2 * herbrand p db + 2 ->
     fst (run p cp lim db) = Saturated.
-  (** Identifier exhaustion reports allocation above the caller's identifier limit. *)
-  Parameter run_limits : forall p cp lim db, fst (run p cp lim db) = IdLimit ->
-    (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
+  (** Identifier exhaustion of a checked run reports allocation above the caller's identifier
+      limit. The final rebuild keeps the counter only on a well-formed database. *)
+  Parameter run_limits : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    fst (run p cp lim db) = IdLimit -> (D.ids (snd (run p cp lim db)) > max_ids lim)%N.
 End RUN_LAWS.
 
 Module Type RUN (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) :=
@@ -398,6 +399,9 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
       | Some a => length (atom_terms a)
       | None => 0
       end + n) 0 (post V.t c).
+  (** Finding the rule of a plan walks the rule list with a binary counter. *)
+  Definition rule_work (p : program V.t) (c : cplan V.t) : nat :=
+    (length (rules V.t p) + 1) * (N.size_nat (rule_ix V.t c) + 1).
   Fixpoint apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : D.t :=
     match js with
@@ -571,7 +575,7 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
           (nvars (join V.t c) + 1) * (nvars (join V.t c) + 1) +
         length (bindings cp c db) *
           (fold_right (fun x n => Pos.size_nat x + 1 + n) 0 (var_of V.t c) +
-           post_work p c + 1 +
+           post_work p c + rule_work p c + 1 +
            fold_right (fun a n => match a with
              | Make _ f args | Put f args _ =>
                  (length args + 2) * (length args + 2) *
@@ -620,12 +624,13 @@ Module Type RUN_PLAN (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I)
     (T_bind_trie c b <= k_driver *
       N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
         (var_of V.t c) + 1))%N.
-  (** The filter pays for its atoms at the widest program word or binding cell, and for the
-      primitive work of the query. *)
+  (** The filter pays for finding its rule, for its atoms at the widest program word or
+      binding cell, and for the primitive work of the query. *)
   Parameter T7_keep_le : forall p c b,
     (T_keep p c (bind_trie c b) <= k_driver * N.of_nat (post_work p c + 1) *
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
-      k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b))%N.
+      k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
+      k_driver * N.of_nat (rule_work p c))%N.
   (** A round's jobs are the kept bindings of its plans, plan by plan. *)
   Parameter F31_jobs : forall p cp nv db,
     jobs p cp nv db = flat_map (fun c => map (fun b => (c, b))
