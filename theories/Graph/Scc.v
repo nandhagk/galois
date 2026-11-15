@@ -3327,6 +3327,64 @@ Proof.
     tarjan_initial eq_refl Hfuture (tarjan_semantic_initial (base g)))).
 Qed.
 
+Lemma scc_final_owner_listed g v i :
+  trie_get v (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial)) = Some i -> In v (nodes g).
+Proof.
+  intro Howner.
+  apply (tarjan_owners_indexed_fold (scc_trace g) (scc_trace_unique g) v i) in Howner.
+  destruct Howner as [block [Hblock Hin]].
+  apply (proj1 (scc_trace_entered g v)).
+  eapply Permutation_in; [apply tarjan_complete_components;
+    [apply scc_trace_unique|apply scc_trace_nested]|].
+  apply in_concat. exists block. split; [eapply nth_error_In; exact Hblock|exact Hin].
+Qed.
+
+Lemma scc_final_owner_present g v : In v (nodes g) ->
+  exists i, trie_get v (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial)) = Some i.
+Proof.
+  intro Hin. apply (proj2 (scc_trace_entered g v)) in Hin.
+  pose proof (tarjan_complete_components (scc_trace g)
+    (scc_trace_unique g) (scc_trace_nested g)) as Hcomponents.
+  assert (Hmember : In v (concat (rev (tarjan_emitted
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial))))).
+  { eapply Permutation_in; [apply Permutation_sym; exact Hcomponents|exact Hin]. }
+  apply in_concat in Hmember. destruct Hmember as [block [Hblock Hinblock]].
+  apply In_nth_error in Hblock. destruct Hblock as [n Hnth].
+  exists (Pos.of_succ_nat n).
+  apply (tarjan_owners_indexed_fold (scc_trace g) (scc_trace_unique g) v (Pos.of_succ_nat n)).
+  exists block. rewrite SuccNat2Pos.id_succ. cbn [Nat.pred]. auto.
+Qed.
+
+Lemma scc_same_owner_strong g u v i :
+  trie_get u (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial)) = Some i ->
+  trie_get v (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial)) = Some i ->
+  mutually_reachable (base g) u v.
+Proof.
+  intros Hu Hv.
+  apply (tarjan_owners_indexed_fold (scc_trace g) (scc_trace_unique g) u i) in Hu.
+  apply (tarjan_owners_indexed_fold (scc_trace g) (scc_trace_unique g) v i) in Hv.
+  destruct Hu as [block [Hblock Hin_u]]. destruct Hv as [other [Hother Hin_v]].
+  rewrite Hblock in Hother. injection Hother as Heq. subst other.
+  pose proof (scc_prefix_semantic g (scc_trace g) [] ltac:(now rewrite app_nil_r)) as Hsem.
+  pose proof (tarjan_semantic_output _ _ Hsem) as Hstrong.
+  apply (Hstrong block); [|exact Hin_u|exact Hin_v].
+  assert (Hrev : Permutation
+    (rev (tarjan_emitted (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial)))
+    (tarjan_emitted (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+      (scc_trace g) tarjan_initial))) by (apply Permutation_sym; apply Permutation_rev).
+  eapply Permutation_in; [exact Hrev|]. eapply nth_error_In; exact Hblock.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
