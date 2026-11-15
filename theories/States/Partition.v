@@ -805,12 +805,129 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Definition eval_work (e : term L.op X.t) (a : t) : nat :=
     fold_right Nat.add 0%nat (map (fun q =>
       S.eval_work e (snd q) + V.size (S.eval e (snd q)) + 1) (proj1_sig a)).
-  Definition c_lat : N := 1%N. (* STUB *)
-  Definition c_state : N := 1%N. (* STUB *)
-  Definition c_partition : N := 1%N. (* STUB *)
+  (** One growth step reserves every public component rate and fixed boundary size. *)
+  Local Definition growth : N := (2 * (Tk.c_key + S.c_lat + S.c_state + V.c_val +
+    N.of_nat (C.k + S.size S.bot + S.wunits S.bot + V.size V.bot + 1) + 3))%N.
+  Local Definition scale : N := (growth ^ N.of_nat (2 * C.k + 4))%N.
+  Definition k_partition : N := (64 * (scale + 1) * (scale + 1) *
+    (scale + 1) * (scale + 1))%N.
+  Definition c_lat : N := (8 * (k_partition + 1) * (k_partition + 1) *
+    (k_partition + 1))%N.
+  Definition c_state : N := (k_partition * (S.c_state + k_partition + 1))%N.
+  Definition c_partition : N := (4 * (k_partition + 1) * (k_partition + 1))%N.
+
+  Local Lemma growth_positive : (2 <= growth)%N.
+  Proof.
+    unfold growth; lia.
+  Qed.
+
+  Local Lemma growth_lat : (2 * (S.c_lat + 1) <= growth)%N.
+  Proof.
+    unfold growth; lia.
+  Qed.
+
+  Local Lemma growth_cap : (N.of_nat (C.k + 1) <= growth)%N.
+  Proof.
+    unfold growth; repeat rewrite Nat2N.inj_add; lia.
+  Qed.
+
+  Local Lemma scale_power n : n <= 2 * C.k + 4 -> (growth ^ N.of_nat n <= scale)%N.
+  Proof.
+    intro Hn; unfold scale; apply N.pow_le_mono_r.
+    - pose proof growth_positive; lia.
+    - now apply time_of_nat_le.
+  Qed.
+
+  Local Lemma scale_growth : (growth <= scale)%N.
+  Proof.
+    pose proof (scale_power 1 ltac:(lia)); rewrite N.pow_1_r in H; exact H.
+  Qed.
+
+  Local Lemma k_partition_min : (64 <= k_partition)%N.
+  Proof.
+    unfold k_partition; nia.
+  Qed.
+
+  (** State-list size pays for each input cell as well as its stored value. *)
+  Local Definition states_size (xs : list S.t) :=
+    fold_right (fun a n => S.size a + 1 + n) 0 xs.
+
+  Local Lemma states_size_sum xs :
+    states_size xs = fold_right Nat.add 0 (map S.size xs) + length xs.
+  Proof.
+    induction xs as [|x xs IH]; [reflexivity|].
+    change (S.size x + 1 + states_size xs =
+      S.size x + fold_right Nat.add 0 (map S.size xs) + Datatypes.S (length xs)).
+    rewrite IH; lia.
+  Qed.
+
+  Local Lemma join_step_budget a b tail :
+    (1 + S.T_join a b + N.of_nat (S.size (S.join a b)) + tail + 1 <=
+      growth * (N.of_nat (S.size a) + N.of_nat (S.size b) + tail + 2))%N.
+  Proof.
+    pose proof (S.T_join_le a b); pose proof (JS.join_size a b).
+    pose proof growth_lat; repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** The join fold tracks both its clock and the size supplied to its next call. *)
+  Local Lemma fold_clock_size xs : forall a,
+    (List.T_fold_left S.join S.T_join xs a +
+      N.of_nat (S.size (fold_left S.join xs a)) + 1 <=
+      growth ^ N.of_nat (length xs + 1) * N.of_nat (S.size a + states_size xs + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro a.
+    - time_unfold @List.T_fold_left; cbn [fold_left length states_size fold_right].
+      rewrite N.pow_1_r; repeat rewrite Nat2N.inj_add.
+      pose proof growth_positive; nia.
+    - specialize (IH (S.join a x)).
+      pose proof (join_step_budget a x (N.of_nat (states_size xs))) as Hstep.
+      set (power := (growth ^ N.of_nat (length xs + 1))%N) in *.
+      assert (Hpower : (1 <= power)%N).
+      { unfold power; apply N.pow_lower_bound; pose proof growth_positive; lia. }
+      pose proof (N.mul_le_mono_l _ _ power Hstep) as Hscaled.
+      pose proof (N.mul_le_mono_r 1 power (1 + S.T_join a x)%N Hpower) as Hpaid.
+      time_unfold @List.T_fold_left; cbn [fold_left length].
+      replace (Datatypes.S (length xs) + 1) with (Datatypes.S (length xs + 1)) by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r'; fold power.
+      set (budget := (N.of_nat (S.size a) + N.of_nat (S.size x) +
+        N.of_nat (states_size xs) + 2)%N) in *.
+      assert (Hbudget : N.of_nat (S.size a + states_size (x :: xs) + 1) = budget).
+      { unfold budget, states_size; cbn [fold_right]; repeat rewrite Nat2N.inj_add; lia. }
+      rewrite Hbudget; fold budget in Hscaled.
+      replace (growth * power * budget)%N with (power * (growth * budget))%N by ring.
+      repeat rewrite Nat2N.inj_add in IH.
+      repeat rewrite N.mul_add_distr_l in IH, Hscaled, Hpaid.
+      rewrite N.mul_1_l in Hpaid; lia.
+  Qed.
+
+  (** The fixed cap pays for every join in a collapse, including the empty bottom case. *)
+  Local Lemma collapse_budget xs : length xs <= 2 * C.k + 1 ->
+    (T_collapse_with S.bot S.join S.T_join xs +
+      N.of_nat (S.size (collapse_with S.bot S.join xs)) + 1 <=
+      scale * N.of_nat (states_size xs + 1))%N.
+  Proof.
+    intro Hlength; destruct xs as [|x xs].
+    - assert (Hbot : (N.of_nat (S.size S.bot) + 2 <= growth)%N).
+      { unfold growth; repeat rewrite Nat2N.inj_add; lia. }
+      pose proof scale_growth; time_unfold @T_collapse_with.
+      cbn [collapse_with states_size fold_right]; lia.
+    - pose proof (fold_clock_size xs x) as Hfold.
+      pose proof growth_positive as Hgrowth.
+      assert (Hpower : (1 <= growth ^ N.of_nat (length xs + 1))%N).
+      { apply N.pow_lower_bound; lia. }
+      pose proof (scale_power (length (x :: xs) + 1) ltac:(cbn [length] in *; lia))
+        as Hscale.
+      time_unfold @T_collapse_with; cbn [collapse_with length] in *.
+      replace (Datatypes.S (length xs) + 1) with (Datatypes.S (length xs + 1)) in Hscale by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r' in Hscale.
+      unfold states_size in *; cbn [fold_right] in *; repeat rewrite Nat2N.inj_add in *.
+      nia.
+  Qed.
 
   Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    unfold c_lat; nia.
+  Qed.
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -891,7 +1008,6 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
   Proof. Admitted. (* STUB *)
 
-  Definition k_partition : N := 1%N. (* STUB *)
   Definition route_time (p : S.wparam) (old new : list (option Tk.t * S.t)) : N :=
     let fresh := fresh_parts S.leb S.bot old new in
     (T_fresh_parts S.leb S.T_leb S.bot old new +
@@ -948,7 +1064,12 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma F8_collapse_size : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.size (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros xs Hlength; pose proof (collapse_budget xs Hlength) as Hbound.
+    rewrite states_size_sum in Hbound.
+    assert (Hscale : (scale <= k_partition)%N) by (unfold k_partition; nia).
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hscale]; lia.
+  Qed.
   Lemma F9_collapse_units : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.wunits (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
@@ -1012,7 +1133,12 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T8_collapse : forall xs, length xs <= 2 * C.k + 1 ->
     (T_collapse_with S.bot S.join S.T_join xs <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros xs Hlength; pose proof (collapse_budget xs Hlength) as Hbound.
+    rewrite states_size_sum in Hbound.
+    assert (Hscale : (scale <= k_partition)%N) by (unfold k_partition; nia).
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hscale]; lia.
+  Qed.
   Lemma T9_merge : forall k a,
     (T_merge k a <= k_partition *
       (T_collapse_with S.bot S.join S.T_join (map snd (proj1_sig a)) +
