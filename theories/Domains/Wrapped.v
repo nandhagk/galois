@@ -1555,6 +1555,120 @@ Proof.
 Qed.
 TimeBound wrapped_norm_time.
 
+(** Converting a finite interval charges its endpoints and the output width. *)
+Lemma wrapped_range_time : forall w lo hi,
+  (T_wrapped_range w lo hi <=
+    1024 * N.of_nat (Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + 1))%N.
+Proof.
+  intros w lo hi.
+  pose proof (Std.Z.T_ltb_le hi lo) as Hempty.
+  pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  pose proof (wrapped_last_word_bits w) as Hlastbits.
+  pose proof (Std.Z.T_sub_le (modulus w) 1) as Hlast.
+  pose proof (Std.Z.T_sub_le hi lo) as Hdifference.
+  pose proof (Std.Z.T_leb_le (modulus w - 1) (hi - lo)) as Hfull.
+  pose proof (wrapped_norm_time w (WItv lo hi)) as Hnorm.
+  time_unfold T_wrapped_range. cbn [wrapped_bits] in Hnorm.
+  destruct (hi <? lo), (modulus w - 1 <=? hi - lo);
+    rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+TimeBound wrapped_range_time.
+
+(** Endpoint minimum selects one of the stored magnitudes. *)
+Lemma wrapped_min_bits : forall x y,
+  (Z.size_nat (Z.min x y) <= Z.size_nat x + Z.size_nat y)%nat.
+Proof.
+  intros x y. destruct (Z_le_dec x y) as [Hle|Hlt].
+  - rewrite Z.min_l by exact Hle. lia.
+  - rewrite Z.min_r by lia. lia.
+Qed.
+
+(** Endpoint maximum selects one of the stored magnitudes. *)
+Lemma wrapped_max_bits : forall x y,
+  (Z.size_nat (Z.max x y) <= Z.size_nat x + Z.size_nat y)%nat.
+Proof.
+  intros x y. destruct (Z_le_dec x y) as [Hle|Hlt].
+  - rewrite Z.max_r by exact Hle. lia.
+  - rewrite Z.max_l by lia. lia.
+Qed.
+
+(** A shared endpoint budget bounds one integer multiplication quadratically. *)
+Lemma wrapped_product_time_budget : forall x y n,
+  (Z.size_nat x + Z.size_nat y + 1 <= n)%nat ->
+  (Std.Z.T_mul x y <= 8 * N.of_nat (n ^ 2))%N.
+Proof.
+  intros x y n Hsize. pose proof (Std.Z.T_mul_le x y) as Hmul.
+  apply time_of_nat_le in Hsize. cbn [Nat.pow].
+  rewrite !Nat2N.inj_add in Hsize. rewrite !Nat2N.inj_mul. nia.
+Qed.
+
+(** A finite multiplication piece performs a fixed number of quadratic products. *)
+Lemma wrapped_mul_piece_finite_time : forall w lo hi lo' hi',
+  (T_wrapped_mul_piece w (I (Fin lo) (Fin hi)) (I (Fin lo') (Fin hi')) <=
+    32768 * N.of_nat
+      ((Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + Z.size_nat lo' + Z.size_nat hi' + 1)
+        ^ 2))%N.
+Proof.
+  intros w lo hi lo' hi'.
+  set (n := (Pos.to_nat w + Z.size_nat lo + Z.size_nat hi +
+    Z.size_nat lo' + Z.size_nat hi' + 1)%nat).
+  pose proof (WordTime.integer_mul_size lo lo') as Hll.
+  pose proof (WordTime.integer_mul_size lo hi') as Hlh.
+  pose proof (WordTime.integer_mul_size hi lo') as Hhl.
+  pose proof (WordTime.integer_mul_size hi hi') as Hhh.
+  pose proof (wrapped_min_bits (lo * lo') (lo * hi')) as Hminl.
+  pose proof (wrapped_min_bits (hi * lo') (hi * hi')) as Hminh.
+  pose proof (wrapped_min_bits (Z.min (lo * lo') (lo * hi'))
+    (Z.min (hi * lo') (hi * hi'))) as Hmin.
+  pose proof (wrapped_max_bits (lo * lo') (lo * hi')) as Hmaxl.
+  pose proof (wrapped_max_bits (hi * lo') (hi * hi')) as Hmaxh.
+  pose proof (wrapped_max_bits (Z.max (lo * lo') (lo * hi'))
+    (Z.max (hi * lo') (hi * hi'))) as Hmax.
+  pose proof (wrapped_product_time_budget lo lo' n ltac:(unfold n; lia)) as HTll.
+  pose proof (wrapped_product_time_budget lo hi' n ltac:(unfold n; lia)) as HTlh.
+  pose proof (wrapped_product_time_budget hi lo' n ltac:(unfold n; lia)) as HThl.
+  pose proof (wrapped_product_time_budget hi hi' n ltac:(unfold n; lia)) as HThh.
+  pose proof (wrapped_range_time w
+    (Z.min (Z.min (lo * lo') (lo * hi')) (Z.min (hi * lo') (hi * hi')))
+    (Z.max (Z.max (lo * lo') (lo * hi')) (Z.max (hi * lo') (hi * hi')))) as Hrange.
+  assert (Hrangebits : (Pos.to_nat w +
+    Z.size_nat (Z.min (Z.min (lo * lo') (lo * hi')) (Z.min (hi * lo') (hi * hi'))) +
+    Z.size_nat (Z.max (Z.max (lo * lo') (lo * hi')) (Z.max (hi * lo') (hi * hi'))) + 1
+    <= 5 * n)%nat) by (unfold n; lia).
+  assert (Hrangebudget : (T_wrapped_range w
+    (Z.min (Z.min (lo * lo') (lo * hi')) (Z.min (hi * lo') (hi * hi')))
+    (Z.max (Z.max (lo * lo') (lo * hi')) (Z.max (hi * lo') (hi * hi'))) <=
+    5120 * N.of_nat n)%N).
+  { apply time_of_nat_le in Hrangebits. rewrite Nat2N.inj_mul in Hrangebits. nia. }
+  assert (Hleftbits : (Z.size_nat (lo * lo') <= n)%nat) by (unfold n; lia).
+  assert (Hrightbits : (Z.size_nat (hi * lo') <= n)%nat) by (unfold n; lia).
+  assert (Hminimum : (Z.size_nat (Z.min (lo * lo') (lo * hi')) <= 2 * n)%nat)
+    by (unfold n; lia).
+  assert (Hmaximum : (Z.size_nat (Z.max (lo * lo') (lo * hi')) <= 2 * n)%nat)
+    by (unfold n; lia).
+  assert (Hnatpositive : (1 <= n)%nat) by (unfold n; lia).
+  pose proof (time_of_nat_le 1 n ltac:(unfold n; lia)) as Hpositive.
+  clear Hll Hlh Hhl Hhh Hminl Hminh Hmin Hmaxl Hmaxh Hmax Hrange Hrangebits.
+  clearbody n.
+  set (square := N.of_nat (n ^ 2)) in *.
+  assert (Hlinear : (N.of_nat n <= square)%N).
+  { unfold square. clear - Hnatpositive. apply time_of_nat_le. cbn [Nat.pow]. nia. }
+  clearbody square.
+  apply time_of_nat_le in Hleftbits, Hrightbits, Hminimum, Hmaximum.
+  rewrite Nat2N.inj_mul in Hminimum, Hmaximum.
+  pose proof (Std.Z.T_min_le (lo * lo') (lo * hi')) as HTminl.
+  pose proof (Std.Z.T_min_le (hi * lo') (hi * hi')) as HTminh.
+  pose proof (Std.Z.T_min_le (Z.min (lo * lo') (lo * hi'))
+    (Z.min (hi * lo') (hi * hi'))) as HTmin.
+  pose proof (Std.Z.T_max_le (lo * lo') (lo * hi')) as HTmaxl.
+  pose proof (Std.Z.T_max_le (hi * lo') (hi * hi')) as HTmaxh.
+  pose proof (Std.Z.T_max_le (Z.max (lo * lo') (lo * hi'))
+    (Z.max (hi * lo') (hi * hi'))) as HTmax.
+  time_unfold T_wrapped_mul_piece. time_cbn.
+  lia.
+Qed.
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
@@ -1947,7 +2061,7 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
       (I (Fin (fst b)) (Fin (snd b))).
   TimeFun mul_piece.
   Definition k_split : N := 1. (* STUB *)
-  Definition k_mul_piece : N := 1. (* STUB *)
+  Definition k_mul_piece : N := 65536.
 
   (* Gamma and multiplication laws now live in WRAPPED_LAWS. *)
   (** Arc cardinality lies between zero and the modulus. *)
@@ -2038,5 +2152,15 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
     (T_mul_piece w (lo, hi) (lo', hi') <= k_mul_piece * N.of_nat
       ((Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + Z.size_nat lo' + Z.size_nat hi' + 1)
         ^ 2))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w lo hi lo' hi'.
+    pose proof (wrapped_mul_piece_finite_time w lo hi lo' hi') as Hpiece.
+    set (budget := N.of_nat
+      ((Pos.to_nat w + Z.size_nat lo + Z.size_nat hi + Z.size_nat lo' + Z.size_nat hi' + 1)
+        ^ 2)) in *.
+    assert (Hpositive : (1 <= budget)%N).
+    { unfold budget. apply (time_of_nat_le 1). cbn [Nat.pow]. nia. }
+    clearbody budget.
+    time_unfold T_mul_piece. time_cbn. time_simpl. unfold k_mul_piece. lia.
+  Qed.
 End WrappedT.
