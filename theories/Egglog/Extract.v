@@ -8115,6 +8115,56 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     eapply N.le_trans; [|exact Hbudget]. clear - Hwalk Hregistration. lia.
   Qed.
 
+  (** Initial registration funds all stored frame and heap credit from its source rows. *)
+  Lemma initial_registration_potential : forall cs db,
+    D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    (T_search_initial db (Enumeration.enumerated_rows cs db) +
+      extraction_potential db (initial cs db) <=
+      N.of_nat (R db) *
+        (512 * (PTrieT.c_trie + C.c_cost + 1) *
+          N.of_nat (D.unit db + cost_width db + 1) * N.of_nat (2 * a db + 1) +
+         Q.c_pq * N.of_nat (Q.unit_pq (R db) (D.unit db + cost_width db))) +
+      512 * (PTrieT.c_trie + C.c_cost + 1) *
+        N.of_nat (D.unit db + cost_width db + 1) * N.of_nat (R db) +
+      16 * N.of_nat (R db + 1))%N.
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    set (rs := Enumeration.enumerated_rows cs db).
+    set (w := D.unit db + cost_width db).
+    pose proof (ResourceClocks.T_search_initial_amort D.t db rs w
+      (inventory_source_width cs db Hwf Hinventory)
+      (initial_rows_width cs db Hwf Hcanonical Hinventory)) as Hregistered.
+    assert (Harity : forall row, In row rs -> length (snd (fst row)) <= a db).
+    { intros [[f k] i] Hin. exact (inventory_source_arity cs db Hwf Hinventory f k i Hin). }
+    pose proof (ResourceClocks.search_initial_credit_bound rs (length rs) w (a db) Harity)
+      as Hframes.
+    pose proof (inventory_rows_count cs db Hwf Hinventory) as Hcount. fold rs in Hcount.
+    unfold search_row in Hregistered, Hframes.
+    rewrite Hcount in Hregistered, Hframes.
+    assert (Hwork : ResourceClocks.search_work_unit w =
+      (512 * (PTrieT.c_trie + C.c_cost + 1) * N.of_nat (w + 1))%N).
+    { unfold ResourceClocks.search_work_unit, ResourceClocks.search_cell_unit. ring. }
+    rewrite Hwork in Hregistered, Hframes.
+    unfold ResourceClocks.search_push_unit in Hframes.
+    change (T_search_initial db rs + extraction_potential db (initial cs db) <=
+      ResourceClocks.search_frames_credit (R db) w (map search_new_frame rs) +
+      512 * (PTrieT.c_trie + C.c_cost + 1) * N.of_nat (w + 1) * N.of_nat (R db) +
+      16 * N.of_nat (R db + 1))%N in Hregistered.
+    eapply N.le_trans; [exact Hregistered |].
+    apply N.add_le_mono_r, N.add_le_mono_r. exact Hframes.
+  Qed.
+
+  (** Initialization pays the exact inventory walk and its genuine suspended-work potential. *)
+  Lemma T_initial_potential : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    (T_initial cs db + extraction_potential db (initial cs db) <= k_step *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory. apply initial_credit_composition;
+      [exact Hwf |exact Hinventory |].
+    exact (initial_registration_potential cs db Hwf Hcanonical Hinventory).
+  Qed.
+
   Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_initial cs db + heap_potential (initial cs db) <= k_step *
       N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
