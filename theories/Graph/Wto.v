@@ -3614,4 +3614,152 @@ Module WtoT <: WTO_ALL.
     length (concat (comps (wto_components g roots))).
   Proof. Admitted. (* STUB *)
 
+  Local Opaque loopN.
+
+  (** A finite sum over nesting levels, including level zero. *)
+  Fixpoint sum_levels (top : nat) (charge : nat -> nat) : nat :=
+    match top with
+    | 0 => charge 0
+    | S rest => charge (S rest) + sum_levels rest charge
+    end.
+
+  Lemma sum_levels_ext : forall top first second,
+    (forall level, level <= top -> first level = second level) ->
+    sum_levels top first = sum_levels top second.
+  Proof.
+    intro top. induction top as [|top IH]; intros first second Heq.
+    - cbn [sum_levels]. apply Heq. reflexivity.
+    - cbn [sum_levels]. rewrite (Heq (S top) (Nat.le_refl _)).
+      f_equal. apply IH. intros level Hlevel. apply Heq. lia.
+  Qed.
+
+  Lemma sum_levels_add : forall top first second,
+    sum_levels top (fun level => first level + second level) =
+      sum_levels top first + sum_levels top second.
+  Proof.
+    intro top. induction top as [|top IH]; intros first second;
+      cbn [sum_levels]; [reflexivity|]. rewrite IH. lia.
+  Qed.
+
+  Lemma sum_levels_zero : forall top,
+    sum_levels top (fun _ => 0) = 0.
+  Proof.
+    intro top. induction top as [|top IH]; cbn [sum_levels]; [reflexivity|exact IH].
+  Qed.
+
+  Lemma sum_levels_above : forall top depth weight,
+    top < depth ->
+    sum_levels top (fun level => if Nat.eqb depth level then weight else 0) = 0.
+  Proof.
+    intro top. induction top as [|top IH]; intros depth weight Habove.
+    - cbn [sum_levels]. destruct (Nat.eqb_spec depth 0); lia.
+    - cbn [sum_levels]. destruct (Nat.eqb_spec depth (S top)); [lia|].
+      apply IH. lia.
+  Qed.
+
+  Lemma sum_levels_single : forall top depth weight,
+    depth <= top ->
+    sum_levels top (fun level => if Nat.eqb depth level then weight else 0) = weight.
+  Proof.
+    intro top. induction top as [|top IH]; intros depth weight Hdepth.
+    - assert (depth = 0) by lia. subst depth. reflexivity.
+    - cbn [sum_levels]. destruct (Nat.eqb_spec depth (S top)) as [Heq|Hneq].
+      + rewrite (sum_levels_above top depth weight) by lia. lia.
+      + apply IH. lia.
+  Qed.
+
+  Lemma sum_levels_bound : forall top charge budget,
+    (forall level, level <= top -> charge level <= budget) ->
+    sum_levels top charge <= (top + 1) * budget.
+  Proof.
+    intro top. induction top as [|top IH]; intros charge budget Hbound.
+    - cbn [sum_levels]. pose proof (Hbound 0 (Nat.le_refl 0)). lia.
+    - cbn [sum_levels]. pose proof (Hbound (S top) (Nat.le_refl _)) as Hlast.
+      assert (Hrest : sum_levels top charge <= (top + 1) * budget).
+      { apply IH. intros level Hlevel. apply Hbound. lia. }
+      nia.
+  Qed.
+
+  (** Summing each depth separately counts every state charge exactly once. *)
+  Lemma state_level_partition : forall (A : Type) (depth weight : A -> nat) states top,
+    Forall (fun st => depth st <= top) states ->
+    fold_right (fun st n => weight st + n) 0 states =
+      sum_levels top (fun level =>
+        fold_right (fun st n => if Nat.eqb (depth st) level then weight st + n else n)
+          0 states).
+  Proof.
+    intros A depth weight states. induction states as [|st states IH]; intros top Hdepth.
+    - cbn [fold_right]. symmetry. apply sum_levels_zero.
+    - inversion Hdepth as [|? ? Hhead Htail]; subst.
+      cbn [fold_right]. rewrite (IH top Htail).
+      transitivity (sum_levels top (fun level =>
+        (if Nat.eqb (depth st) level then weight st else 0) +
+        fold_right (fun current n =>
+          if Nat.eqb (depth current) level then weight current + n else n) 0 states)).
+      + rewrite sum_levels_add, (sum_levels_single top (depth st) (weight st) Hhead).
+        reflexivity.
+      + apply sum_levels_ext. intros level Hlevel.
+        destruct (Nat.eqb (depth st) level); reflexivity.
+  Qed.
+
+  Lemma state_level_bound : forall (A : Type) (depth weight : A -> nat) states top budget,
+    Forall (fun st => depth st <= top) states ->
+    (forall level,
+      fold_right (fun st n => if Nat.eqb (depth st) level then weight st + n else n)
+        0 states <= budget) ->
+    fold_right (fun st n => weight st + n) 0 states <= (top + 1) * budget.
+  Proof.
+    intros A depth weight states top budget Hdepth Hlevels.
+    rewrite (state_level_partition A depth weight states top Hdepth).
+    apply sum_levels_bound. intros level Hlevel. apply Hlevels.
+  Qed.
+
+  (** The recorded trace has at most one more state than its supplied fuel. *)
+  Lemma history_from_length : forall g fuel st,
+    length (history_from g fuel st) <= fuel + 1.
+  Proof.
+    intros g fuel. induction fuel as [|fuel IH]; intro st;
+      cbn [history_from]; destruct (wto_step g st) as [next|result]; cbn [length];
+      try lia. pose proof (IH next). lia.
+  Qed.
+
+  Definition state_expansion_mass (g : prepared) (st : wto_state) : nat :=
+    match wto_tasks st with WtoExpand _ _ _ c :: _ => source_mass g c | _ => 0 end.
+
+  Definition state_partial_mass (st : wto_state) : nat :=
+    match wto_tasks st with
+    | [] | WtoClose _ :: _ => length (wto_order (wto_partial st))
+    | _ => 0
+    end.
+
+  Lemma expansion_level_mass : forall g level states,
+    fold_right (fun st n =>
+      if Nat.eqb (length (wto_parents st)) level then state_expansion_mass g st + n else n)
+      0 states = level_mass g level states.
+  Proof.
+    intros g level states. induction states as [|st states IH]; [reflexivity|].
+    unfold level_mass in *. cbn [fold_right]. rewrite <- IH.
+    destruct (Nat.eqb (length (wto_parents st)) level); [|reflexivity].
+    unfold state_expansion_mass. destruct (wto_tasks st) as [|task tasks]; [reflexivity|].
+    destruct task; reflexivity.
+  Qed.
+
+  Lemma listed_graph_size : forall g,
+    length (nodes g) = graph_n (base g).
+  Proof. intros [[vs rows] predecessors n e]. reflexivity. Qed.
+
+  Lemma source_mass_nodes : forall g,
+    source_mass g (nodes g) = graph_n (base g) + graph_e (base g).
+  Proof.
+    assert (Hsum : forall (vs : list positive) (weight : positive -> nat),
+      fold_right (fun v n => 1 + weight v + n) 0 vs =
+        length vs + fold_right (fun v n => weight v + n) 0 vs).
+    { intro vs. induction vs as [|v vs IH]; intro weight;
+        cbn [fold_right length]; [reflexivity|]. rewrite IH. lia. }
+    intros [[vs rows] predecessors n e].
+    exact (Hsum vs (fun v => length (succs (Digraph vs rows) v))).
+  Qed.
+
+  Local Transparent loopN.
+
 End WtoT.
