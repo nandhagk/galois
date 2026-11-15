@@ -2156,6 +2156,51 @@ Module Dom <: DOM.
   Qed.
 End Dom.
 
+(** Scanning past keys other than the query preserves its recorded position. *)
+Local Lemma dom_position_fold_absent : forall vs v found next,
+  ~ In v vs ->
+  fst (fold_left (fun acc u => let '(found, next) := acc in
+    (if Pos.eqb u v then next else found, N.succ next)) vs (found, next)) = found.
+Proof.
+  intro vs. induction vs as [| u rest IH]; intros v found next Habsent.
+  - reflexivity.
+  - cbn [fold_left].
+    assert (Hneq : u <> v) by (intro Heq; subst u; apply Habsent; now left).
+    rewrite (proj2 (Pos.eqb_neq u v) Hneq). apply IH.
+    intro Hin. apply Habsent. now right.
+Qed.
+
+Local Lemma dom_position_fold_nth : forall vs v found next i,
+  NoDup vs -> nth_error vs i = Some v ->
+  fst (fold_left (fun acc u => let '(found, next) := acc in
+    (if Pos.eqb u v then next else found, N.succ next)) vs (found, next)) =
+      (next + N.of_nat i)%N.
+Proof.
+  intro vs. induction vs as [| u rest IH]; intros v found next i Hunique Hnth.
+  - destruct i; discriminate Hnth.
+  - inversion Hunique as [| head tail Hfresh Hrest]; subst head tail.
+    destruct i as [| i].
+    + cbn [nth_error] in Hnth. injection Hnth as Heq. subst u.
+      cbn [fold_left]. rewrite Pos.eqb_refl.
+      rewrite dom_position_fold_absent by exact Hfresh. lia.
+    + cbn [nth_error] in Hnth. cbn [fold_left].
+      assert (Hneq : u <> v).
+      { intro Heq. subst u. apply Hfresh. eapply nth_error_In. exact Hnth. }
+      rewrite (proj2 (Pos.eqb_neq u v) Hneq).
+      rewrite (IH v found (N.succ next) i Hrest Hnth), Nat2N.inj_succ. lia.
+Qed.
+
+Local Lemma dom_position_fold_rank : forall o v,
+  NoDup o -> In v o ->
+  fst (fold_left (fun acc u => let '(found, next) := acc in
+    (if Pos.eqb u v then next else found, N.succ next)) o (0%N, 0%N)) =
+      N.of_nat (dom_cert_position o v).
+Proof.
+  intros o v Hunique Hin. apply In_nth_error in Hin as [i Hi].
+  rewrite (dom_cert_position_nth o Hunique i v Hi).
+  exact (dom_position_fold_nth o v 0%N 0%N i Hunique Hi).
+Qed.
+
 Module DomT <: DOM_ALL.
   Include Dom.
   TimeFun build.
@@ -2328,7 +2373,20 @@ Module DomT <: DOM_ALL.
   Lemma F11_intervals : forall g r m o u v, dom_cert g r m o -> In u o -> In v o ->
   (tree_anc m u v <->
    (pos_of o u <= pos_of o v /\ pos_of o v + size_of m o v <= pos_of o u + size_of m o u)%N).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o u v Hcert Hu Hv.
+    pose proof (proj1 (proj1 Hcert)) as Hunique.
+    pose proof (dom_preorder_parent_before r m o (proj1 Hcert)) as Hordered.
+    pose proof (dom_cert_sizes_ok g r m o Hcert) as Hsizes.
+    pose proof (dom_sizes_interval_anc m o u v Hunique Hordered Hsizes Hu Hv) as Hinterval.
+    unfold dom_interval in Hinterval.
+    rewrite (dom_positions_rank o u Hunique Hu), (dom_positions_rank o v Hunique Hv)
+      in Hinterval.
+    rewrite andb_true_iff, !N.leb_le in Hinterval.
+    unfold pos_of, size_of.
+    rewrite (dom_position_fold_rank o u Hunique Hu), (dom_position_fold_rank o v Hunique Hv).
+    symmetry. exact Hinterval.
+  Qed.
 
   Lemma F12_tree_exact : forall g r m o, check g r m o = true ->
   domtree_exact g r (tree g r m o).
