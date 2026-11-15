@@ -4,8 +4,8 @@
     For example, an absent binding denotes an internal edge.
     Builds on: Program.IcfgSig and Base.Trie. *)
 
+From Stdlib Require Import NArith Lia.
 From Argent Require Import Time Tactics Std.
-From Stdlib Require Import NArith.
 From Galois.Base Require Import KeySig Trie.
 From Galois.Program Require Import CfgSig IcfgSig.
 
@@ -43,8 +43,15 @@ Module IcfgT (P : TYPE) (N : KEY_T) (E : KEY_T)
     (D : ICFG_DATA_T P S) <: ICFG_T P N E C S.
   Include Icfg P N E C S D.
   TimeFun kind.
-  Definition c_icfg : N := 1%N. (* STUB *)
+  Definition c_icfg : N := (E.c_key + D.c_kinds + 3)%N.
 
   Lemma T_kind_le : forall p e, (T_kind p e <= c_icfg * N.of_nat (E.bits e + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e.
+    pose proof (E.T_encode_le e) as Hencode.
+    pose proof (D.T_kinds_le p) as Hkinds.
+    pose proof (PTrieT.trie_get_clock _ (E.encode e) (D.kinds p)) as Hlookup.
+    unfold c_icfg; time_step.
+    unfold E.bits in *; time_cbn_all; nia.
+  Qed.
 End IcfgT.
