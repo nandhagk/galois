@@ -1772,6 +1772,292 @@ Proof.
 Qed.
 
 
+(** Every listed class has a successful first-match cost lookup. *)
+Lemma extraction_cost_lookup_present : forall V (entries : extraction_best V) c n ch,
+  In (c, (n, ch)) entries -> exists m, extraction_cost_lookup c entries = Some m.
+Proof.
+  intros V entries. induction entries as [|[i [value row]] entries IH];
+    intros c n ch Hin; [contradiction|].
+  cbn [extraction_cost_lookup]. destruct (Pos.eqb c i) eqn:Hci.
+  - exists value. reflexivity.
+  - destruct Hin as [Heq|Hin].
+    + injection Heq as <- <- <-. rewrite Pos.eqb_refl in Hci. discriminate.
+    + now apply IH with n ch.
+Qed.
+
+(** The public provisional cost is the first-match selected cost, or zero if absent. *)
+Lemma chosen_cost_extraction_lookup : forall V val_cost (entries : extraction_best V) i,
+  chosen_cost val_cost entries (Id i) =
+    match extraction_cost_lookup i entries with Some n => n | None => 0%N end.
+Proof.
+  intros V val_cost entries. induction entries as [|[j [n ch]] entries IH]; intro i.
+  - reflexivity.
+  - cbn [chosen_cost extraction_cost_lookup]. destruct (Pos.eqb i j); [reflexivity|apply IH].
+Qed.
+
+(** Finite trees over a row list use exact class identifiers. *)
+Inductive search_represents {V} (rs : list (positive * list (cell V) * positive))
+    : cell V -> @Model.expr V -> Prop :=
+  | search_rep_lit v : search_represents rs (Val v) (Model.ELit v)
+  | search_rep_app f k i args : In (f, k, i) rs ->
+      Forall2 (search_represents rs) k args ->
+      search_represents rs (Id i) (Model.EApp f args).
+
+(** Adding rows preserves every finite constructor witness. *)
+Lemma search_represents_mono : forall V (rs more : list (positive * list (cell V) * positive)),
+  (forall r, In r rs -> In r more) -> forall c e,
+  search_represents rs c e -> search_represents more c e.
+Proof.
+  intros V rs more Hin c e Hrep.
+  induction Hrep as [v|f k i args Hrow Hargs IHargs].
+  - constructor.
+  - eapply search_rep_app with (k := k); [exact (Hin (f, k, i) Hrow)|].
+    clear Hrow.
+    induction IHargs as [|c e ks es Hr Hhead Htail Hall IH].
+    + constructor.
+    + constructor; assumption.
+Qed.
+
+(** The frontier argument depends on cost laws and finite rows, independently of the queue. *)
+Module SearchSemantics (V : VALUE) (C : COST V).
+
+  Definition search_known (costs : ptrie N) (k : list (cell V.t)) : Prop :=
+    forall i, In (Id i) k -> exists n, trie_get i costs = Some n.
+
+  Definition search_knuth (rs : list (positive * list (cell V.t) * positive))
+      (costs : ptrie N) : Prop :=
+    forall i n, trie_get i costs = Some n -> forall e,
+      search_represents rs (Id i) e ->
+      (n <= expression_cost C.fn_cost C.val_cost e)%N.
+
+  Definition search_covered (rs : list (positive * list (cell V.t) * positive))
+      (costs : ptrie N) (prio : positive -> option N) : Prop :=
+    forall f k i, In (f, k, i) rs -> search_known costs k ->
+      trie_get i costs = None -> exists n, prio i = Some n /\
+        (n <= C.fn_cost f (dag_cost_cells C.val_cost costs k))%N.
+
+  Definition search_tree_bound (costs : ptrie N) (prio : positive -> option N)
+      (c : cell V.t) (e : @Model.expr V.t) : Prop :=
+    match c with
+    | Val v => C.val_cost v = expression_cost C.fn_cost C.val_cost e
+    | Id i =>
+      match trie_get i costs with
+      | Some n => (n <= expression_cost C.fn_cost C.val_cost e)%N
+      | None => exists j n, prio j = Some n /\
+          (n <= expression_cost C.fn_cost C.val_cost e)%N
+      end
+    end.
+
+  (** Children either all have bounded final costs, or expose a bounded queue candidate. *)
+  Lemma search_children_frontier : forall costs prio k es,
+    Forall2 (search_tree_bound costs prio) k es ->
+    (search_known costs k /\
+      Forall2 N.le (dag_cost_cells C.val_cost costs k)
+        (map (expression_cost C.fn_cost C.val_cost) es)) \/
+    exists i n child, prio i = Some n /\ In child es /\
+      (n <= expression_cost C.fn_cost C.val_cost child)%N.
+  Proof.
+    intros costs prio k es Hbounds.
+    induction Hbounds as [|c e k es Hhead Htail IH].
+    - left. split; [intros i Hin; contradiction |constructor].
+    - destruct c as [i|v].
+      + unfold search_tree_bound in Hhead.
+        destruct (trie_get i costs) as [n|] eqn:Hget.
+        * destruct IH as [[Hknown Hcosts]|[j [m [child [Hprio [Hin Hle]]]]]].
+          -- left. split.
+             ++ intros j [Heq|Hin].
+                ** injection Heq as <-. exists n. exact Hget.
+                ** now apply Hknown.
+             ++ cbn [dag_cost_cells map]. constructor.
+                ** unfold dag_get_cost. rewrite Hget. exact Hhead.
+                ** exact Hcosts.
+          -- right. exists j, m, child. split; [exact Hprio|].
+             split; [now right|exact Hle].
+        * destruct Hhead as [j [n [Hprio Hle]]].
+          right. exists j, n, e. split; [exact Hprio|].
+          split; [now left|exact Hle].
+      + unfold search_tree_bound in Hhead.
+        destruct IH as [[Hknown Hcosts]|[j [m [child [Hprio [Hin Hle]]]]]].
+        * left. split.
+          -- intros j [Heq|Hin]; [discriminate|now apply Hknown].
+          -- cbn [dag_cost_cells map]. constructor.
+             ++ rewrite Hhead. apply N.le_refl.
+             ++ exact Hcosts.
+        * right. exists j, m, child. split; [exact Hprio|].
+          split; [now right|exact Hle].
+  Qed.
+
+  (** Every represented tree is bounded by its final cost or by a live frontier candidate. *)
+  Lemma search_tree_bound_all : forall rs costs prio,
+    search_knuth rs costs -> search_covered rs costs prio ->
+    forall c e, search_represents rs c e -> search_tree_bound costs prio c e.
+  Proof.
+    intros rs costs prio Hoptimal Hcovered c e Hrep.
+    induction Hrep as [v|f k i args Hrow Hargs IHargs].
+    - reflexivity.
+    - unfold search_tree_bound. destruct (trie_get i costs) as [n|] eqn:Hget.
+      + apply (Hoptimal i n Hget). econstructor; eassumption.
+      + assert (Hbounds : Forall2 (search_tree_bound costs prio) k args).
+        { clear Hrow Hget.
+          induction IHargs as [|c e ks es Hr Hhead Htail Hall IH].
+          - constructor.
+          - constructor; assumption. }
+        destruct (search_children_frontier costs prio k args Hbounds)
+          as [[Hknown Hcosts]|[j [n [child [Hprio [Hin Hle]]]]]].
+        * destruct (Hcovered f k i Hrow Hknown Hget) as [n [Hprio Hle]].
+          exists i, n. split; [exact Hprio|].
+          eapply N.le_trans; [exact Hle|].
+          cbn [expression_cost]. now apply C.fn_cost_mono.
+        * exists j, n. split; [exact Hprio|].
+          eapply N.le_trans; [exact Hle|]. cbn [expression_cost].
+          apply C.fn_cost_super. now apply in_map.
+  Qed.
+
+  (** An unfinished finite tree always has a live candidate no more expensive than itself. *)
+  Lemma search_frontier : forall rs costs prio i e,
+    search_knuth rs costs -> search_covered rs costs prio ->
+    search_represents rs (Id i) e -> trie_get i costs = None ->
+    exists j n, prio j = Some n /\ (n <= expression_cost C.fn_cost C.val_cost e)%N.
+  Proof.
+    intros rs costs prio i e Hoptimal Hcovered Hrep Hmissing.
+    pose proof (search_tree_bound_all rs costs prio Hoptimal Hcovered (Id i) e Hrep)
+      as Hbound.
+    unfold search_tree_bound in Hbound. now rewrite Hmissing in Hbound.
+  Qed.
+
+  (** Finalising the least live candidate preserves all optimal-cost inequalities. *)
+  Lemma search_finalise_optimal : forall rs costs prio i n,
+    search_knuth rs costs -> search_covered rs costs prio ->
+    trie_get i costs = None -> prio i = Some n ->
+    (forall j m, prio j = Some m -> (n <= m)%N) ->
+    search_knuth rs (PTrieCode.set i n costs).
+  Proof.
+    intros rs costs prio i n Hoptimal Hcovered Hmissing Hprio Hminimum.
+    intros j m Hget e Hrep. destruct (Pos.eq_dec j i) as [->|Hneq].
+    - rewrite PTrie.get_set_same in Hget. injection Hget as <-.
+      destruct (search_frontier rs costs prio i e Hoptimal Hcovered Hrep Hmissing)
+        as [child [p [Hchild Hbound]]].
+      eapply N.le_trans; [exact (Hminimum child p Hchild)|exact Hbound].
+    - rewrite PTrie.get_set_other in Hget by exact Hneq.
+      exact (Hoptimal j m Hget e Hrep).
+  Qed.
+
+  Definition search_attained (rs : list (positive * list (cell V.t) * positive))
+      (costs : ptrie N) : Prop :=
+    forall i n, trie_get i costs = Some n -> exists e,
+      search_represents rs (Id i) e /\ expression_cost C.fn_cost C.val_cost e = n.
+
+  (** A known key has finite child witnesses with exactly its computed cost list. *)
+  Lemma search_cells_witness : forall rs costs k,
+    search_attained rs costs -> search_known costs k ->
+    exists es, Forall2 (search_represents rs) k es /\
+      map (expression_cost C.fn_cost C.val_cost) es = dag_cost_cells C.val_cost costs k.
+  Proof.
+    intros rs costs k Hattained. induction k as [|[i|v] k IH]; intro Hknown.
+    - exists []. split; [constructor|reflexivity].
+    - destruct (Hknown i (or_introl eq_refl)) as [n Hget].
+      destruct (Hattained i n Hget) as [e [Hrep Hcost]].
+      destruct (IH ltac:(intros j Hin; apply Hknown; now right)) as [es [Hreps Hcosts]].
+      exists (e :: es). split; [now constructor|].
+      cbn [map dag_cost_cells]. unfold dag_get_cost. now rewrite Hget, Hcost, Hcosts.
+    - destruct (IH ltac:(intros j Hin; apply Hknown; now right)) as [es [Hreps Hcosts]].
+      exists (Model.ELit v :: es). split.
+      + constructor; [constructor|exact Hreps].
+      + cbn [map dag_cost_cells expression_cost]. now rewrite Hcosts.
+  Qed.
+
+  (** A row becomes a finite witness once all of its identifier children are final. *)
+  Lemma search_row_witness : forall rs costs f k i,
+    In (f, k, i) rs -> search_attained rs costs -> search_known costs k ->
+    exists e, search_represents rs (Id i) e /\
+      expression_cost C.fn_cost C.val_cost e =
+        C.fn_cost f (dag_cost_cells C.val_cost costs k).
+  Proof.
+    intros rs costs f k i Hrow Hattained Hknown.
+    destruct (search_cells_witness rs costs k Hattained Hknown) as [es [Hreps Hcosts]].
+    exists (Model.EApp f es). split.
+    - econstructor; eassumption.
+    - cbn [expression_cost]. now rewrite Hcosts.
+  Qed.
+
+  (** Adding one attained final cost preserves all stored finite witnesses. *)
+  Lemma search_attained_set : forall rs costs i n,
+    search_attained rs costs ->
+    (exists e, search_represents rs (Id i) e /\ expression_cost C.fn_cost C.val_cost e = n) ->
+    search_attained rs (PTrieCode.set i n costs).
+  Proof.
+    intros rs costs i n Hattained Hnew j m Hget.
+    destruct (Pos.eq_dec j i) as [->|Hneq].
+    - rewrite PTrie.get_set_same in Hget. injection Hget as <-. exact Hnew.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq. exact (Hattained j m Hget).
+  Qed.
+
+  Definition search_best_attained (rs : list (positive * list (cell V.t) * positive))
+      (entries : extraction_best V.t) : Prop :=
+    forall i n ch, In (i, (n, ch)) entries -> exists e,
+      search_represents rs (Id i) e /\ expression_cost C.fn_cost C.val_cost e = n.
+
+  Definition search_best_optimal (rs : list (positive * list (cell V.t) * positive))
+      (entries : extraction_best V.t) : Prop :=
+    forall i n ch, In (i, (n, ch)) entries -> forall e,
+      search_represents rs (Id i) e -> (n <= expression_cost C.fn_cost C.val_cost e)%N.
+
+  Definition search_best_complete (rs : list (positive * list (cell V.t) * positive))
+      (entries : extraction_best V.t) : Prop :=
+    forall i e, search_represents rs (Id i) e ->
+      exists n ch, In (i, (n, ch)) entries.
+
+  (** Attained optimal results agree on every class cost independently of row order. *)
+  Lemma search_best_costs_agree : forall rs more left_entries right_entries,
+    (forall r, In r rs <-> In r more) ->
+    search_best_attained rs left_entries -> search_best_optimal rs left_entries ->
+    search_best_complete rs left_entries ->
+    search_best_attained more right_entries -> search_best_optimal more right_entries ->
+    search_best_complete more right_entries ->
+    forall c, chosen_cost C.val_cost left_entries c = chosen_cost C.val_cost right_entries c.
+  Proof.
+    intros rs more left_entries right_entries Hrows Hleft_att Hleft_opt Hleft_all
+      Hright_att Hright_opt Hright_all [i|v].
+    2: { destruct left_entries, right_entries; reflexivity. }
+    rewrite !chosen_cost_extraction_lookup.
+    destruct (extraction_cost_lookup i left_entries) as [n|] eqn:Hleft;
+      destruct (extraction_cost_lookup i right_entries) as [m|] eqn:Hright;
+      [| | |reflexivity].
+    - destruct (extraction_cost_lookup_sound V.t left_entries i n Hleft) as [ch Hch].
+      destruct (extraction_cost_lookup_sound V.t right_entries i m Hright) as [ch' Hch'].
+      destruct (Hleft_att i n ch Hch) as [e [Hrep Hcost]].
+      destruct (Hright_att i m ch' Hch') as [e' [Hrep' Hcost']].
+      assert (Hnm : (n <= m)%N).
+      { rewrite <- Hcost'. apply (Hleft_opt i n ch Hch e').
+        eapply search_represents_mono; [|exact Hrep'].
+        intros r Hin. now apply (proj2 (Hrows r)). }
+      assert (Hmn : (m <= n)%N).
+      { rewrite <- Hcost. apply (Hright_opt i m ch' Hch' e).
+        eapply search_represents_mono; [|exact Hrep].
+        intros r Hin. now apply (proj1 (Hrows r)). }
+      now apply N.le_antisymm.
+    - exfalso.
+      destruct (extraction_cost_lookup_sound V.t left_entries i n Hleft) as [ch Hch].
+      destruct (Hleft_att i n ch Hch) as [e [Hrep Hcost]].
+      assert (Hrep' : search_represents more (Id i) e).
+      { eapply search_represents_mono; [|exact Hrep].
+        intros r Hin. now apply (proj1 (Hrows r)). }
+      destruct (Hright_all i e Hrep') as [m [ch' Hch']].
+      destruct (extraction_cost_lookup_present V.t right_entries i m ch' Hch') as [p Hp].
+      congruence.
+    - exfalso.
+      destruct (extraction_cost_lookup_sound V.t right_entries i m Hright) as [ch Hch].
+      destruct (Hright_att i m ch Hch) as [e [Hrep Hcost]].
+      assert (Hrep' : search_represents rs (Id i) e).
+      { eapply search_represents_mono; [|exact Hrep].
+        intros r Hin. now apply (proj2 (Hrows r)). }
+      destruct (Hleft_all i e Hrep') as [n [ch' Hch']].
+      destruct (extraction_cost_lookup_present V.t left_entries i n ch' Hch') as [p Hp].
+      congruence.
+  Qed.
+
+End SearchSemantics.
+
 (** Ghost row enumeration uses declared slot depths and exact stored-row lookup. *)
 Module ConstructorRows (V : VALUE) (I : INDEX V) (D : DATABASE V I).
   Module Paths := IndexPaths V I.
@@ -2199,6 +2485,61 @@ Module EnumeratedRows (V : VALUE) (I : INDEX V) (D : DATABASE V I).
     apply Permutation_length. now apply enumerated_rows_permutation.
   Qed.
 End EnumeratedRows.
+(** Canonical database rows and exact finite-row witnesses have the same constructor trees. *)
+Module SearchDatabase (V : VALUE) (I : INDEX V) (D : DATABASE V I).
+
+  (** Every stored key cell is already its own canonical representative. *)
+  Lemma search_canonical_key : forall db f k o,
+    D.canonical db -> row (D.view db) f k o -> map (D.canon db) k = k.
+  Proof.
+    intros db f k o Hcanonical Hrow.
+    rewrite <- (map_id k) at 2. apply map_ext_in.
+    intros [i|v] Hin; [|reflexivity]. cbn [D.canon].
+    f_equal. apply (Hcanonical f k o Hrow i). apply in_or_app. now left.
+  Qed.
+
+  (** A represented database tree appears in every complete exact constructor-row list. *)
+  Lemma database_search_represents : forall db rs,
+    D.wf db -> D.canonical db ->
+    (forall f k i, row (D.view db) f k (Some (Id i)) -> In (f, k, i) rs) ->
+    forall c e, represents (D.view db) c e -> search_represents rs (D.canon db c) e.
+  Proof.
+    intros db rs Hwf Hcanonical Hrows c e Hrep.
+    induction Hrep as [v|f k i j args Hrow Hsame Hargs IHargs].
+    - constructor.
+    - assert (Hj : D.repr db j = j).
+      { apply (Hcanonical f k (Some (Id j)) Hrow j).
+        apply in_or_app. right. now left. }
+      pose proof (proj1 (D.same_repr db i j Hwf) Hsame) as Hij.
+      rewrite Hj in Hij. cbn [D.canon]. rewrite Hij.
+      eapply search_rep_app with (k := k); [exact (Hrows f k j Hrow)|].
+      assert (Hchildren : Forall2 (search_represents rs) (map (D.canon db) k) args).
+      { clear Hrow Hsame Hj Hij.
+        induction IHargs as [|c e ks es Hr Hhead Htail Hall IH]; cbn [map].
+        - constructor.
+        - constructor; assumption. }
+      now rewrite (search_canonical_key db f k (Some (Id j)) Hcanonical Hrow) in Hchildren.
+  Qed.
+
+  (** A finite tree over exact stored rows is represented by the database. *)
+  Lemma search_database_represents : forall db rs,
+    D.wf db ->
+    (forall f k i, In (f, k, i) rs -> row (D.view db) f k (Some (Id i))) ->
+    forall c e, search_represents rs c e -> represents (D.view db) c e.
+  Proof.
+    intros db rs Hwf Hrows c e Hrep.
+    induction Hrep as [v|f k i args Hrow Hargs IHargs].
+    - constructor.
+    - eapply rep_app with (k := k) (j := i).
+      + exact (Hrows f k i Hrow).
+      + apply (proj2 (D.same_repr db i i Hwf)). reflexivity.
+      + clear Hrow.
+        induction IHargs as [|c e ks es Hr Hhead Htail Hall IH].
+        * constructor.
+        * constructor; assumption.
+  Qed.
+
+End SearchDatabase.
 
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
