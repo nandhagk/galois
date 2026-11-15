@@ -229,6 +229,24 @@ End LoopTraceVisitor.
 
 Module LoopTrace := Search LoopTraceVisitor.
 
+Local Opaque Acc_intro_generator.
+
+Local Lemma loop_trace_valid : forall g roots,
+  counts_ok g -> wf_graph (base g) ->
+  (forall r, In r roots -> In r (nodes g)) ->
+  exists final, dfs_roots (base g) [] roots (prepared_search_trace g roots) final.
+Proof.
+  intros g roots Hcounts Hgraph Hlisted.
+  pose proof (LoopTrace.trace_depth_first g roots Hcounts Hgraph Hlisted) as Htrace.
+  cbv beta delta [LoopTrace.trace] in Htrace. exact Htrace.
+Qed.
+
+Local Lemma loop_tree_root_listed : forall g r t,
+  domtree_exact g r t -> In r (nodes g).
+Proof.
+  intros [[vertices successors] predecessors n e] r t Htree. exact (proj1 Htree).
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -434,6 +452,9 @@ Module LoopsT <: LOOPS_ALL.
   TimeFun retreat_trace.
   Definition test_back := test_back.
   TimeFun test_back.
+
+  (** Proof wrappers use the driver laws without expanding accessibility witnesses. *)
+  Local Opaque loopN Argent.Loop.loop.
 
   Definition k_tree_step : N := 1. (* STUB *)
   Definition k_tree_stop : N := 1. (* STUB *)
@@ -653,7 +674,10 @@ Module LoopsT <: LOOPS_ALL.
 
   Lemma F15_forest_equation : forall g t,
     forest g t = fold_left install (forest_rows g t) (Loops Empty Empty Empty).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t. unfold forest_rows, install, collect, classify, latches.
+    unfold forest. apply loop_assemble_equation.
+  Qed.
 
   Lemma F15a_assemble : forall rows,
     assemble rows = fold_left install rows (Loops Empty Empty Empty).
@@ -672,7 +696,20 @@ Module LoopsT <: LOOPS_ALL.
     exists final, dfs_roots (base g) []
       (firstn 1 (loop_order (classify g t)))
       (retreat_trace g (firstn 1 (loop_order (classify g t)))) final.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    destruct (F4_tree_order g t r Hgraph Hprepared Htree) as [_ [Hroot _]].
+    pose proof (loop_first_head (loop_order (classify g t)) r Hroot) as Hfirst.
+    assert (Hlisted : forall v,
+      In v (firstn 1 (loop_order (classify g t))) -> In v (nodes g)).
+    { intros v Hin. rewrite Hfirst in Hin.
+      destruct Hin as [<-|Hin]; [|contradiction].
+      exact (loop_tree_root_listed g r t Htree). }
+    apply loop_trace_valid.
+    - exact (conj (proj1 Hprepared) (proj1 (proj2 Hprepared))).
+    - exact Hgraph.
+    - exact Hlisted.
+  Qed.
 
   Lemma F18_test_back : forall scan es,
     test_back (loop_back_rows scan) es = true <->
