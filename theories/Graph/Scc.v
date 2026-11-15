@@ -1269,6 +1269,215 @@ Proof.
   pose proof (Pos2Nat.is_pos i). lia.
 Qed.
 
+(** Bounding every key also bounds the fold used to measure an identifier list. *)
+Lemma scc_vertex_width_bound w vertices :
+  Forall (fun v => Pos.size_nat v <= w) vertices -> vertex_width vertices <= w.
+Proof.
+  unfold vertex_width. intros Hwidth. induction Hwidth; cbn [fold_right]; [lia|].
+  rewrite search_graph_max. apply Nat.max_lub; assumption.
+Qed.
+
+(** Every filtered successor key belongs to the bounded input vertex list. *)
+Lemma scc_filtered_row_width g v :
+  vertex_width (succs (base (scc_graph g)) v) <= graph_width (base g).
+Proof.
+  apply scc_vertex_width_bound. apply Forall_forall. intros u Hin.
+  apply scc_node_width. now apply (scc_graph_closed g v u).
+Qed.
+
+(** Filtering preserves vertex occurrences and can only remove edge occurrences. *)
+Lemma scc_graph_size g :
+  graph_n (base (scc_graph g)) = graph_n (base g) /\
+  graph_e (base (scc_graph g)) <= graph_e (base g).
+Proof.
+  assert (Hnodes : forall h, graph_n (base h) = length (nodes h)).
+  { intros [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedges : forall h, graph_e (base h) =
+      fold_right (fun v n => length (succs (base h) v) + n) 0 (nodes h)).
+  { intros [[vertices adjacency] predecessors n e]. reflexivity. }
+  split.
+  - rewrite !Hnodes, scc_graph_nodes. reflexivity.
+  - rewrite !Hedges, scc_graph_nodes. induction (nodes g) as [|v vertices IH];
+      cbn [fold_right]; [lia|]. pose proof (scc_graph_row_length g v). lia.
+Qed.
+
+(** Rebuilt graph identifiers never exceed the input identifier width. *)
+Lemma scc_graph_width g : graph_width (base (scc_graph g)) <= graph_width (base g).
+Proof.
+  change (graph_max (vertex_width (nodes g))
+    (fold_right (fun v w => graph_max (vertex_width (succs (base (scc_graph g)) v)) w)
+      0 (nodes g)) <= graph_width (base g)).
+  rewrite search_graph_max. apply Nat.max_lub.
+  - apply scc_vertex_width_bound. apply Forall_forall. intros v Hin.
+    now apply scc_node_width.
+  - induction (nodes g) as [|v vertices IH]; cbn [fold_right]; [lia|].
+    rewrite search_graph_max. apply Nat.max_lub; [apply scc_filtered_row_width|exact IH].
+Qed.
+
+(** The actual filtered run width is bounded even with repeated roots. *)
+Lemma scc_trace_run_width g :
+  search_trace_width (base (scc_graph g)) (nodes (scc_graph g)) (scc_trace g) <=
+    graph_width (base g).
+Proof.
+  unfold search_trace_width. rewrite scc_graph_nodes, search_graph_max. apply Nat.max_lub.
+  - apply scc_vertex_width_bound. apply Forall_forall. intros v Hin.
+    now apply scc_node_width.
+  - induction (entered (scc_trace g)) as [|v vertices IH]; cbn [fold_right]; [lia|].
+    rewrite search_graph_max. apply Nat.max_lub; [apply scc_filtered_row_width|exact IH].
+Qed.
+
+Local Lemma scc_positive_size_value p : Pos.size_nat p <= Pos.to_nat p.
+Proof.
+  induction p; cbn [Pos.size_nat];
+    [rewrite Pos2Nat.inj_xI|rewrite Pos2Nat.inj_xO|reflexivity];
+    pose proof (Pos2Nat.is_pos p); lia.
+Qed.
+
+(** Recomputed cache bit lengths are bounded by their natural counts. *)
+Lemma scc_cache_size n : N.size_nat (N.of_nat n) <= n.
+Proof.
+  assert (Hbinary : forall count, N.size_nat count <= N.to_nat count).
+  { intros [|p]; [reflexivity|apply scc_positive_size_value]. }
+  specialize (Hbinary (N.of_nat n)). now rewrite Nat2N.id in Hbinary.
+Qed.
+
+(** The filtered search's raw work fits the original vertex-and-edge size budget. *)
+Lemma scc_trace_raw_work g :
+  (search_trace_raw_work (scc_graph g) (nodes (scc_graph g)) <=
+    4 * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  pose proof (scc_trace_size g) as Hsize.
+  pose proof (scc_trace_length g) as Hlength.
+  pose proof (scc_trace_run_width g) as Hwidth.
+  destruct (scc_graph_size g) as [Hvertices Hedges].
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hmass : search_trace_mass (scc_graph g) (nodes (scc_graph g)) <=
+      3 * graph_n (base g) + graph_e (base g) + 1).
+  { unfold search_trace_mass. fold (scc_trace g). rewrite scc_graph_nodes, Hnodes. lia. }
+  destruct (scc_graph_counts g) as [Hnv Hne].
+  pose proof (scc_cache_size (graph_n (base (scc_graph g)))) as Hvertex_bits.
+  pose proof (scc_cache_size (graph_e (base (scc_graph g)))) as Hedge_bits.
+  unfold search_trace_raw_work. fold (scc_trace g). rewrite Hnv, Hne.
+  assert (Hpositive : (1 <= N.of_nat (graph_width (base g) + 1))%N) by lia.
+  nia.
+Qed.
+
+(** Traversal from listed roots enters only listed vertices. *)
+Lemma scc_search_entered g roots :
+  (forall r, In r roots -> In r (nodes g)) ->
+  forall v, In v (entered (prepared_search_trace (scc_graph g) roots)) -> In v (nodes g).
+Proof.
+  intros Hroots v Hin.
+  assert (Hready_roots : forall r, In r roots -> In r (nodes (scc_graph g))).
+  { intros r Hr. rewrite scc_graph_nodes. now apply Hroots. }
+  apply (proj1 (prepared_search_reach_closed (scc_graph g) roots
+    (scc_graph_counts g) (scc_search_closed g) Hready_roots v)) in Hin.
+  apply search_reach_origin in Hin. destruct Hin as [Hroot|[u [Hreach Hedge]]].
+  - now apply Hroots.
+  - now apply (scc_graph_closed g u v).
+Qed.
+
+(** Entered vertices and their filtered rows fit the input occurrence budgets. *)
+Lemma scc_search_sizes g roots :
+  (forall r, In r roots -> In r (nodes g)) ->
+  length (entered (prepared_search_trace (scc_graph g) roots)) <= graph_n (base g) /\
+  fold_right (fun v n => length (succs (base (scc_graph g)) v) + n) 0
+    (entered (prepared_search_trace (scc_graph g) roots)) <= graph_e (base g).
+Proof.
+  intros Hroots. pose proof (scc_search_entered g roots Hroots) as Hincluded.
+  pose proof (prepared_search_unique_raw (scc_graph g) roots) as Hunique.
+  pose proof (NoDup_incl_length Hunique Hincluded) as Hvertices.
+  pose proof (scc_weight_incl (fun v => length (succs (base g) v))
+    _ _ Hunique Hincluded) as Hrows. cbn beta in Hrows.
+  assert (Hfiltered :
+    fold_right (fun v n => length (succs (base (scc_graph g)) v) + n) 0
+      (entered (prepared_search_trace (scc_graph g) roots)) <=
+    fold_right (fun v n => length (succs (base g) v) + n) 0
+      (entered (prepared_search_trace (scc_graph g) roots))).
+  { clear Hroots Hincluded Hunique Hvertices Hrows.
+    induction (entered (prepared_search_trace (scc_graph g) roots)) as [|v vs IH];
+      cbn [fold_right]; [lia|]. pose proof (scc_graph_row_length g v). lia. }
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedges : fold_right (fun v n => length (succs (base g) v) + n) 0 (nodes g) =
+      graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  rewrite Hnodes in Hvertices. rewrite Hedges in Hrows. split; lia.
+Qed.
+
+(** Any filtered row and every listed root obey the original key-width bound. *)
+Lemma scc_search_width g roots es :
+  (forall r, In r roots -> In r (nodes g)) ->
+  search_trace_width (base (scc_graph g)) roots es <= graph_width (base g).
+Proof.
+  intros Hroots. unfold search_trace_width. rewrite search_graph_max. apply Nat.max_lub.
+  - apply scc_vertex_width_bound. apply Forall_forall. intros v Hin.
+    apply scc_node_width. now apply Hroots.
+  - induction (entered es) as [|v vertices IH]; cbn [fold_right]; [lia|].
+    rewrite search_graph_max. apply Nat.max_lub; [apply scc_filtered_row_width|exact IH].
+Qed.
+
+(** Every key in a completed traversal from listed roots is an original listed key. *)
+Lemma scc_search_event_width g roots :
+  (forall r, In r roots -> In r (nodes g)) ->
+  Forall (fun e => match e with
+    | Enter v | Leave v => Pos.size_nat v <= graph_width (base g)
+    | Edge _ u v => Pos.size_nat u <= graph_width (base g) /\
+        Pos.size_nat v <= graph_width (base g)
+    end) (prepared_search_trace (scc_graph g) roots).
+Proof.
+  intros Hroots.
+  assert (Hready_roots : forall r, In r roots -> In r (nodes (scc_graph g))).
+  { intros r Hr. rewrite scc_graph_nodes. now apply Hroots. }
+  pose proof (prepared_search_nested_closed (scc_graph g) roots
+    (scc_graph_counts g) (scc_search_closed g) Hready_roots) as Hnested.
+  pose proof (prepared_search_rows_closed (scc_graph g) roots
+    (scc_graph_counts g) (scc_search_closed g) Hready_roots) as Hrows.
+  pose proof (scc_search_entered g roots Hroots) as Hentered.
+  apply Forall_forall. intros [v|v|kind u v] Hin.
+  - apply scc_node_width. apply Hentered. now apply search_entered_member.
+  - destruct (scc_stack_leave_member [] _ [] v Hnested Hin) as [Hnil|Henter];
+      [contradiction|].
+    apply scc_node_width. apply Hentered. now apply search_entered_member.
+  - destruct (search_trace_rows_edge _ _ kind u v Hrows Hin) as [Henter Hedge].
+    split; apply scc_node_width.
+    + now apply Hentered.
+    + now apply (scc_graph_closed g u v).
+Qed.
+
+(** Listed roots allow a raw work estimate without uniqueness assumptions on input nodes. *)
+Lemma scc_search_raw_work g roots :
+  (forall r, In r roots -> In r (nodes g)) ->
+  (search_trace_raw_work (scc_graph g) roots <=
+    2 * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros Hroots. destruct (scc_search_sizes g roots Hroots) as [Hvertices Hrows].
+  pose proof (scc_search_width g roots (prepared_search_trace (scc_graph g) roots) Hroots) as Hwidth.
+  destruct (scc_graph_size g) as [Hnode_count Hedge_count].
+  destruct (scc_graph_counts g) as [Hnv Hne].
+  pose proof (scc_cache_size (graph_n (base (scc_graph g)))) as Hvertex_bits.
+  pose proof (scc_cache_size (graph_e (base (scc_graph g)))) as Hedge_bits.
+  unfold search_trace_raw_work, search_trace_mass. rewrite Hnv, Hne.
+  assert (Hpositive : (1 <= N.of_nat (graph_width (base g) + 1))%N) by lia.
+  nia.
+Qed.
+
+(** The generic raw search clock specializes to any supplied listed roots. *)
+Lemma scc_search_time g roots :
+  (forall r, In r roots -> In r (nodes g)) ->
+  (1 + T_prepared_search_trace (scc_graph g) roots <=
+    (2 * search_trace_coefficient) *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros Hroots. pose proof (prepared_search_time (scc_graph g) roots) as Htime.
+  pose proof (scc_search_raw_work g roots Hroots) as Hwork. nia.
+Qed.
+
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
