@@ -4,9 +4,10 @@
     For example, a swap is copied on its taken edge using a fresh temporary.
     Builds on: Lang, positive-key tries, ParMoveSig and DestroySig. *)
 
-From Stdlib Require Import List PArith NArith Bool Lia.
+From Stdlib Require Import List Arith PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import KeySig Key Trie.
+From Galois.Graph Require Import DigraphSig.
 From Galois.Ssa Require Import Lang LiveSig ValidateSig ParMoveSig DestroySig.
 Import List.ListNotations.
 
@@ -1232,7 +1233,8 @@ Module Destroy (O : OPS)
         intros id Hsmall. cbn [find_block]. destruct (Pos.eqb id key) eqn:Hequal.
         * exists (Block _ _ _ (params _ _ _ body) (code _ _ _ body) ending).
           split; [reflexivity|]. split; [reflexivity|]. split; [reflexivity|].
-          eapply exit_expands_transport; [apply Pos.le_refl|exact Hextra_lookup|exact Hexit_expands].
+          eapply exit_expands_transport;
+            [apply Pos.le_refl|exact Hextra_lookup|exact Hexit_expands].
         * assert (Hmissing : find_block id extras = None).
           { apply split_find_missing. intros x xbody Hin.
             specialize (Hextra_ids x xbody Hin). lia. }
@@ -1472,6 +1474,382 @@ Module Destroy (O : OPS)
     - intro Hrun. apply Hbackward. rewrite (copies_run split_s p Hdestroy n ins).
       exact Hrun.
   Qed.
+  (** * Syntax inventories and checked-move budgets *)
+
+  Definition body_variables (body : block positive O.K O.G) :=
+    params _ _ _ body ++ flat_map (fun '(x, _, ys) => x :: ys) (code _ _ _ body) ++
+      exit_uses (term _ _ _ body).
+  Definition block_variables (bs : list (positive * block positive O.K O.G)) :=
+    flat_map (fun item => body_variables (snd item)) bs.
+  Definition block_sum (weight : block positive O.K O.G -> nat)
+      (bs : list (positive * block positive O.K O.G)) :=
+    fold_right (fun item n => weight (snd item) + n) 0 bs.
+  Definition exit_arg_count (e : exit positive O.G) :=
+    match e with
+    | Jump _ xs => length xs
+    | Branch _ _ _ xs _ ys => length xs + length ys
+    | Return _ => 0
+    end.
+  Definition exit_split_count (e : exit positive O.G) :=
+    match e with
+    | Branch _ _ _ xs _ ys =>
+      (match xs with [] => 0 | _ :: _ => 1 end) +
+      (match ys with [] => 0 | _ :: _ => 1 end)
+    | _ => 0
+    end.
+
+  (** Variable inventories distribute over concatenated block lists. *)
+  Lemma block_variables_append left right :
+    block_variables (left ++ right) = block_variables left ++ block_variables right.
+  Proof.
+    apply flat_map_app.
+  Qed.
+
+  (** Additive block weights distribute over concatenation. *)
+  Lemma block_sum_append weight left right :
+    block_sum weight (left ++ right) = block_sum weight left + block_sum weight right.
+  Proof.
+    induction left as [|item left IH]; cbn [block_sum fold_right app]; [reflexivity|].
+    unfold block_sum in IH. rewrite IH. unfold block_sum. lia.
+  Qed.
+
+  (** The public edge-argument budget is the sum of block argument weights. *)
+  Lemma destroy_args_sum (s : P.t) : destroy_edge_args s =
+    block_sum (fun b => exit_arg_count (term _ _ _ b)) (blocks _ _ _ s).
+  Proof.
+    unfold destroy_edge_args, block_sum.
+    induction (blocks _ _ _ s) as [|[id body] rest IH]; [reflexivity|].
+    cbn [fold_right snd]. destruct (term _ _ _ body); cbn [exit_arg_count];
+      rewrite IH; reflexivity.
+  Qed.
+
+  (** The public split count is the sum of branch-edge weights. *)
+  Lemma destroy_splits_sum (s : P.t) : split_count s =
+    block_sum (fun b => exit_split_count (term _ _ _ b)) (blocks _ _ _ s).
+  Proof.
+    unfold split_count, block_sum.
+    induction (blocks _ _ _ s) as [|[id body] rest IH]; [reflexivity|].
+    cbn [fold_right snd]. destruct (term _ _ _ body); cbn [exit_split_count];
+      rewrite IH; reflexivity.
+  Qed.
+
+  (** Splitting an exit preserves its variables and arguments and adds empty-code bridges. *)
+  Lemma split_exit_inventory fresh e next ending extra :
+    split_exit fresh e = (next, (ending, extra)) ->
+    exit_uses ending ++ block_variables extra = exit_uses e /\
+    length extra = exit_split_count e /\
+    block_sum (fun b => length (code _ _ _ b)) extra = 0 /\
+    exit_arg_count ending + block_sum (fun b => exit_arg_count (term _ _ _ b)) extra =
+      exit_arg_count e.
+  Proof.
+    destruct e as [target actuals|guard operands yes yes_args no no_args|values].
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      cbn [block_variables flat_map block_sum fold_right exit_split_count exit_arg_count].
+      rewrite app_nil_r. repeat split; try reflexivity; lia.
+    - destruct yes_args as [|y ys], no_args as [|n ns]; cbn [split_exit split_edge];
+        intro Hsplit; inversion Hsplit; subst;
+        cbn [exit_uses block_variables body_variables flat_map snd params code term
+          app exit_split_count exit_arg_count block_sum fold_right length];
+        repeat rewrite app_nil_r; repeat rewrite app_assoc; repeat split; try reflexivity; lia.
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      cbn [block_variables flat_map block_sum fold_right exit_split_count exit_arg_count].
+      rewrite app_nil_r. repeat split; try reflexivity; lia.
+  Qed.
+
+  (** Splitting preserves variables, instructions and arguments and counts all added bridges. *)
+  Lemma split_blocks_inventory bs : forall fresh last out,
+    split_blocks fresh bs = (last, out) ->
+    block_variables out = block_variables bs /\
+    length out = length bs + block_sum (fun b => exit_split_count (term _ _ _ b)) bs /\
+    block_sum (fun b => length (code _ _ _ b)) out =
+      block_sum (fun b => length (code _ _ _ b)) bs /\
+    block_sum (fun b => exit_arg_count (term _ _ _ b)) out =
+      block_sum (fun b => exit_arg_count (term _ _ _ b)) bs.
+  Proof.
+    induction bs as [|[id body] rest IH]; intros fresh last out Hsplit.
+    - inversion Hsplit; subst. repeat split; try reflexivity; lia.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extra]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst out last.
+      destruct (IH next final tail Htail) as [Hvars [Hlength [Hcode Hargs]]].
+      destruct (split_exit_inventory _ _ _ _ _ Hexit)
+        as [Hexit_vars [Hextra_length [Hextra_code Hexit_args]]].
+      split.
+      + change (body_variables (Block _ _ _ (params _ _ _ body) (code _ _ _ body) ending) ++
+          block_variables (extra ++ tail) = body_variables body ++ block_variables rest).
+        rewrite block_variables_append, Hvars.
+        pose proof (f_equal (fun row => params _ _ _ body ++
+          flat_map (fun '(x, _, ys) => x :: ys) (code _ _ _ body) ++
+          row ++ block_variables rest) Hexit_vars) as Hagree.
+        unfold body_variables. cbn [params code term].
+        cbn beta in Hagree. repeat rewrite app_assoc in Hagree.
+        repeat rewrite app_assoc. exact Hagree.
+      + split.
+        * cbn [length block_sum fold_right snd]. rewrite length_app, Hextra_length, Hlength.
+          unfold block_sum in *. lia.
+        * split.
+          -- change (length (code _ _ _ body) +
+              block_sum (fun b => length (code _ _ _ b)) (extra ++ tail) =
+              length (code _ _ _ body) + block_sum (fun b => length (code _ _ _ b)) rest).
+             rewrite block_sum_append, Hextra_code, Hcode. reflexivity.
+          -- change (exit_arg_count ending +
+              block_sum (fun b => exit_arg_count (term _ _ _ b)) (extra ++ tail) =
+              exit_arg_count (term _ _ _ body) +
+              block_sum (fun b => exit_arg_count (term _ _ _ b)) rest).
+             rewrite block_sum_append, Hargs. lia.
+  Qed.
+
+  (** Splitting changes syntax size only by the number of added bridge blocks. *)
+  Lemma split_inventory : forall s p, split s = Some p ->
+    function_vars p = function_vars s /\
+    function_size p = function_size s + split_count s /\
+    destroy_edge_args p = destroy_edge_args s /\
+    length (blocks _ _ _ p) = length (blocks _ _ _ s) + split_count s.
+  Proof.
+    intros s p Hsplit. unfold split in Hsplit.
+    destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s))
+      as [last out] eqn:Hblocks. inversion Hsplit; subst p.
+    destruct (split_blocks_inventory _ _ _ _ Hblocks) as [Hvars [Hlength [Hcode Hargs]]].
+    assert (Hvars' : function_vars (Func _ _ _ (entry _ _ _ s) (inputs _ _ _ s) out) =
+        function_vars s).
+    { change (inputs _ _ _ s ++ block_variables out =
+        inputs _ _ _ s ++ block_variables (blocks _ _ _ s)). now rewrite Hvars. }
+    assert (Hlength' : length out = length (blocks _ _ _ s) + split_count s).
+    { rewrite destroy_splits_sum. exact Hlength. }
+    split; [exact Hvars'|]. split.
+    - unfold function_size. rewrite Hvars'. cbn [blocks].
+      change (length (function_vars s) + length out +
+        block_sum (fun b => length (code _ _ _ b)) out =
+        length (function_vars s) + length (blocks _ _ _ s) +
+        block_sum (fun b => length (code _ _ _ b)) (blocks _ _ _ s) + split_count s).
+      rewrite Hlength', Hcode. lia.
+    - split; [|exact Hlength'].
+      rewrite !destroy_args_sum. exact Hargs.
+  Qed.
+
+  Definition checks_size (checked : list move_check) :=
+    fold_right (fun mc n => length (fst (fst mc)) + 1 + n) 0 checked.
+
+  (** A checked block contributes at most its edge arguments and one check record. *)
+  Lemma copy_block_check_size : forall table tmp body out one,
+    copy_block table tmp body = Some (out, one) ->
+    (match one with None => 0 | Some mc => length (fst (fst mc)) + 1 end) <=
+      exit_arg_count (term _ _ _ body) + 1.
+  Proof.
+    intros table tmp [formals instructions ending] out one Hcopy.
+    destruct ending as [target actuals|guard operands yes yes_args no no_args|values];
+      cbn [copy_block term code] in Hcopy.
+    - destruct (trie_get target table) as [target_formals|]; [|discriminate].
+      destruct (pair_moves target_formals actuals) as [[|first par]|] eqn:Hpair;
+        try discriminate.
+      + inversion Hcopy; subst. cbn [term exit_arg_count]. lia.
+      + destruct (andb (moves_ok (first :: par) tmp)
+          (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))); [|discriminate].
+        inversion Hcopy; subst. cbn [fst term exit_arg_count].
+        destruct (pair_moves_rows _ _ _ Hpair) as [Hleft Hright].
+        pose proof (f_equal (@length positive) Hright) as Hlength.
+        rewrite length_map in Hlength. lia.
+    - destruct yes_args as [|x xs]; [|discriminate].
+      destruct no_args as [|x xs]; [|discriminate].
+      destruct (andb (empty_params table yes) (empty_params table no)); [|discriminate].
+      inversion Hcopy; subst. cbn [term exit_arg_count]. lia.
+    - inversion Hcopy; subst. cbn [term exit_arg_count]. lia.
+  Qed.
+
+  (** The total size of checked problems is bounded by edge arguments and source blocks. *)
+  Lemma copy_blocks_check_size : forall table tmp bs out checked,
+    copy_blocks table tmp bs = Some (out, checked) ->
+    checks_size checked <= block_sum (fun b => exit_arg_count (term _ _ _ b)) bs + length bs.
+  Proof.
+    intros table tmp bs. induction bs as [|[id body] rest IH]; intros out checked Hcopy.
+    - inversion Hcopy; subst. reflexivity.
+    - cbn [copy_blocks] in Hcopy.
+      destruct (copy_block table tmp body) as [[body' one]|] eqn:Hbody; [|discriminate].
+      destruct (copy_blocks table tmp rest) as [[tail checks]|] eqn:Htail; [|discriminate].
+      inversion Hcopy; subst. specialize (IH tail checks eq_refl).
+      pose proof (copy_block_check_size _ _ _ _ _ Hbody) as Hhead.
+      destruct one as [mc|].
+      + change (length (fst (fst mc)) + 1 + checks_size checks <=
+          exit_arg_count (term _ _ _ body) +
+          block_sum (fun b => exit_arg_count (term _ _ _ b)) rest + S (length rest)).
+        change (length (fst (fst mc)) + 1 <= exit_arg_count (term _ _ _ body) + 1) in Hhead.
+        replace (exit_arg_count (term _ _ _ body) +
+          block_sum (fun b => exit_arg_count (term _ _ _ b)) rest + S (length rest))
+          with ((exit_arg_count (term _ _ _ body) + 1) +
+            (block_sum (fun b => exit_arg_count (term _ _ _ b)) rest + length rest)) by lia.
+        exact (Nat.add_le_mono _ _ _ _ Hhead IH).
+      + change (checks_size checks <= exit_arg_count (term _ _ _ body) +
+          block_sum (fun b => exit_arg_count (term _ _ _ b)) rest + S (length rest)).
+        lia.
+  Qed.
+
+  (** Returned checks fit the input edge-argument and block budget, including failure cases. *)
+  Lemma checked_moves_size : forall s,
+    checks_size (checked_moves s) <= destroy_edge_args s + length (blocks _ _ _ s).
+  Proof.
+    intro s. unfold checked_moves, copy_stage.
+    destruct (params_index (blocks _ _ _ s)) as [table|]; [|cbn [checks_size fold_right]; lia].
+    destruct (trie_get (entry _ _ _ s) table) as [[|x xs]|];
+      try (cbn [checks_size fold_right]; lia).
+    destruct (copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s))
+      as [[bs checked]|] eqn:Hblocks; [|cbn [checks_size fold_right]; lia].
+    rewrite destroy_args_sum. exact (copy_blocks_check_size _ _ _ _ _ Hblocks).
+  Qed.
+  (** Every checked sequence records the producer call for the indexed target parameter row. *)
+  Lemma copy_block_origin : forall table tmp body out par used sq,
+    copy_block table tmp body = Some (out, Some (par, used, sq)) ->
+    used = tmp /\ sq = PM.seq par tmp /\
+    exists target actuals formals, term _ _ _ body = Jump target actuals /\
+      trie_get target table = Some formals /\ pair_moves formals actuals = Some par.
+  Proof.
+    intros table tmp [params instructions ending] out par used sq Hcopy.
+    destruct ending as [target actuals|guard operands yes ys no ns|values];
+      cbn [copy_block term code] in Hcopy.
+    - destruct (trie_get target table) as [formals|] eqn:Hrow; [|discriminate].
+      destruct (pair_moves formals actuals) as [[|first rest]|] eqn:Hpair; try discriminate.
+      destruct (andb (moves_ok (first :: rest) tmp)
+        (PM.check_moves (first :: rest) tmp (PM.seq (first :: rest) tmp)));
+        [|discriminate].
+      inversion Hcopy; subst. split; [reflexivity|]. split; [reflexivity|].
+      exists target, actuals, formals. repeat split; assumption.
+    - destruct ys; [|discriminate]. destruct ns; [|discriminate].
+      destruct (andb (empty_params table yes) (empty_params table no)); discriminate.
+    - discriminate.
+  Qed.
+
+  (** Each recorded check originates in one listed source block. *)
+  Lemma copy_blocks_origin : forall table tmp bs out checked mc,
+    copy_blocks table tmp bs = Some (out, checked) -> In mc checked ->
+    exists id body body', In (id, body) bs /\ copy_block table tmp body = Some (body', Some mc).
+  Proof.
+    intros table tmp bs. induction bs as [|[id body] rest IH];
+      intros out checked mc Hcopy Hin.
+    - inversion Hcopy; subst. contradiction.
+    - cbn [copy_blocks] in Hcopy.
+      destruct (copy_block table tmp body) as [[body' one]|] eqn:Hbody; [|discriminate].
+      destruct (copy_blocks table tmp rest) as [[tail checks]|] eqn:Htail; [|discriminate].
+      inversion Hcopy; subst. destruct one as [head|].
+      + destruct Hin as [Heq|Hin].
+        * subst mc. exists id, body, body'. split; [now left|exact Hbody].
+        * destruct (IH tail checks mc eq_refl Hin) as [key [b [b' [Hmember Hrewrite]]]].
+          exists key, b, b'. split; [now right|exact Hrewrite].
+      + destruct (IH tail checks mc eq_refl Hin) as [key [b [b' [Hmember Hrewrite]]]].
+        exists key, b, b'. split; [now right|exact Hrewrite].
+  Qed.
+
+  (** Every listed parameter belongs to the function variable inventory. *)
+  Lemma listed_params : forall (s : P.t) id body, In (id, body) (blocks _ _ _ s) ->
+    incl (params _ _ _ body) (function_vars s).
+  Proof.
+    intros s id body Hbody x Hx. unfold function_vars.
+    apply in_or_app. right. apply in_flat_map. exists (id, body). split; [exact Hbody|].
+    cbn [snd]. apply in_or_app. now left.
+  Qed.
+
+  (** Recorded moves use source variables and the single temporary allocated by the copy stage. *)
+  Lemma checked_moves_origin : forall s par tmp sq, In (par, tmp, sq) (checked_moves s) ->
+    tmp = fresh_after (function_vars s) /\ sq = PM.seq par tmp /\
+    incl (map fst par ++ map snd par) (function_vars s).
+  Proof.
+    intros s par tmp sq Hin. unfold checked_moves, copy_stage in Hin.
+    destruct (params_index (blocks _ _ _ s)) as [table|] eqn:Hindex; [|contradiction].
+    destruct (trie_get (entry _ _ _ s) table) as [[|x xs]|] eqn:Hentry; try contradiction.
+    destruct (copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s))
+      as [[bs checked]|] eqn:Hblocks; [|contradiction].
+    destruct (copy_blocks_origin _ _ _ _ _ _ Hblocks Hin)
+      as [id [body [body' [Hbody Hcopy]]]].
+    destruct (copy_block_origin _ _ _ _ _ _ _ Hcopy)
+      as [Htmp [Hsq [target [actuals [formals [Hterm [Hrow Hpair]]]]]]].
+    split; [exact Htmp|]. split; [now rewrite Htmp|].
+    destruct (pair_moves_rows _ _ _ Hpair) as [Hformals Hactuals].
+    intros x Hx. apply in_app_or in Hx as [Hx|Hx].
+    - rewrite Hformals in Hx.
+      rewrite (params_index_find _ _ Hindex) in Hrow.
+      destruct (find_block target (blocks _ _ _ s)) as [target_body|] eqn:Hfind;
+        [|discriminate].
+      injection Hrow as Hrow. subst formals.
+      exact (listed_params s target target_body (find_source_block _ _ _ Hfind) x Hx).
+    - rewrite Hactuals in Hx.
+      apply (listed_exit_uses s id body Hbody x). now rewrite Hterm.
+  Qed.
+
+  (** The graph maximum agrees with the standard natural-number maximum. *)
+  Lemma destroy_graph_max_nat a b : graph_max a b = Nat.max a b.
+  Proof.
+    revert b. induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
+  Qed.
+
+  (** Each listed identifier fits the width of its list. *)
+  Lemma destroy_vertex_width_in xs x : In x xs -> Pos.size_nat x <= vertex_width xs.
+  Proof.
+    induction xs as [|head rest IH]; intro Hin; [contradiction|].
+    cbn [vertex_width fold_right]. rewrite destroy_graph_max_nat.
+    destruct Hin as [Heq|Hin].
+    - subst head. apply Nat.le_max_l.
+    - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+  Qed.
+
+  (** Every function identifier fits the published function width. *)
+  Lemma function_id_width : forall (s : P.t) x,
+    In x (function_ids s) -> Pos.size_nat x <= function_width s.
+  Proof.
+    intros s x Hin. unfold function_width. rewrite destroy_graph_max_nat.
+    eapply Nat.le_trans; [apply destroy_vertex_width_in; exact Hin|apply Nat.le_max_l].
+  Qed.
+
+  (** Every function variable fits the published function width. *)
+  Lemma function_var_width : forall (s : P.t) x,
+    In x (function_vars s) -> Pos.size_nat x <= function_width s.
+  Proof.
+    intros s x Hin. apply function_id_width. unfold function_ids. right.
+    apply in_or_app. now left.
+  Qed.
+
+  (** A function has positive width because its entry identifier is positive. *)
+  Lemma function_width_positive (s : P.t) : 1 <= function_width s.
+  Proof.
+    pose proof (function_id_width s (entry _ _ _ s) (or_introl eq_refl)) as Hentry.
+    destruct (entry _ _ _ s); cbn [Pos.size_nat] in Hentry; lia.
+  Qed.
+
+  (** Taking a positive maximum preserves a common width bound. *)
+  Lemma positive_max_width a b w :
+    Pos.size_nat a <= w -> Pos.size_nat b <= w -> Pos.size_nat (Pos.max a b) <= w.
+  Proof.
+    intros Ha Hb. unfold Pos.max. destruct (Pos.compare a b); assumption.
+  Qed.
+
+  (** Allocating just above a row maximum adds at most one identifier bit. *)
+  Lemma fresh_after_width xs w : 1 <= w ->
+    (forall x, In x xs -> Pos.size_nat x <= w) -> Pos.size_nat (fresh_after xs) <= w + 1.
+  Proof.
+    intros Hpositive Hwidth.
+    assert (Hmax : Pos.size_nat (fold_right Pos.max 1%positive xs) <= w).
+    { induction xs as [|x rest IH].
+      - exact Hpositive.
+      - cbn [fold_right]. apply positive_max_width.
+        + apply Hwidth. now left.
+        + apply IH. intros y Hy. apply Hwidth. now right. }
+    pose proof (Z.size_nat_succ (fold_right Pos.max 1%positive xs)) as Hsucc.
+    unfold fresh_after. lia.
+  Qed.
+
+  (** A common width bound for move operands bounds the parallel problem width. *)
+  Lemma par_bits_bound par w :
+    (forall x, In x (map fst par ++ map snd par) -> Pos.size_nat x <= w) -> bits_of par <= w.
+  Proof.
+    induction par as [|[dst src] rest IH]; intro Hwidth; [cbn [bits_of fold_right]; lia|].
+    cbn [bits_of fold_right fst snd]. apply Nat.max_lub.
+    - apply Hwidth. apply in_or_app. now left; left.
+    - apply Nat.max_lub.
+      + apply Hwidth. apply in_or_app. now right; left.
+      + apply IH. intros x Hx. apply Hwidth.
+        apply in_app_or in Hx as [Hx|Hx]; apply in_or_app.
+        * left. now right.
+        * right. now right.
+  Qed.
+
 End Destroy.
 
 Module DestroyT (O : OPS)
@@ -1508,7 +1886,7 @@ Module DestroyT (O : OPS)
   Proof. Admitted. (* STUB *)
   Definition k_split : N := 1. (* STUB *)
   Definition k_copies : N := 1. (* STUB *)
-  Definition k_wrap : N := 1. (* STUB *)
+  Definition k_wrap : N := 1.
   Lemma F1_destroy_phases : forall s, destroy s =
     match split s with None => None | Some split_s => copies split_s end.
   Proof.
@@ -1564,7 +1942,27 @@ Module DestroyT (O : OPS)
       destroy_work s /\
     forall par tmp sq, In (par, tmp, sq) (checked_moves split_s) ->
       sq = PM.seq par tmp /\ bits_of par + Pos.size_nat tmp <= 2 * (function_width s + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s split_s Hsplit.
+    destruct (split_inventory _ _ Hsplit) as [Hvars [Hsize [Hargs Hlength]]].
+    split.
+    - change (checks_size (checked_moves split_s) <= destroy_work s).
+      pose proof (checked_moves_size split_s) as Hchecks.
+      assert (Hblocks : length (blocks _ _ _ s) <= function_size s).
+      { unfold function_size. lia. }
+      rewrite Hargs, Hlength in Hchecks. unfold destroy_work. lia.
+    - intros par tmp sq Hin.
+      destruct (checked_moves_origin _ _ _ _ Hin) as [Htmp [Hseq Hids]].
+      split; [exact Hseq|].
+      assert (Hwidth : forall x, In x (function_vars split_s) ->
+          Pos.size_nat x <= function_width s).
+      { intros x Hx. rewrite Hvars in Hx. exact (function_var_width s x Hx). }
+      pose proof (par_bits_bound par (function_width s)
+        (fun x Hx => Hwidth x (Hids x Hx))) as Hpar.
+      pose proof (fresh_after_width (function_vars split_s) (function_width s)
+        (function_width_positive s) Hwidth) as Hfresh.
+      rewrite Htmp. lia.
+  Qed.
   Lemma T2_copies : forall s split_s, split s = Some split_s ->
     (T_copies split_s <= k_copies * N.of_nat (destroy_work s) *
       N.of_nat (function_width s + 1) +
@@ -1576,5 +1974,7 @@ Module DestroyT (O : OPS)
   Lemma T3_wrapper : forall s,
     (T_destroy s <= T_split s +
       match split s with None => k_wrap | Some split_s => T_copies split_s + k_wrap end)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro s. unfold k_wrap. time_unfold T_destroy. destruct (split s); time_cbn; lia.
+  Qed.
 End DestroyT.
