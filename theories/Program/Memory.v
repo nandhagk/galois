@@ -164,6 +164,7 @@ Module MemorySound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
     eapply trace_byte_covered; eassumption.
   Qed.
 
+  (** A region disjoint from every effect write retains its existing bytes. *)
   Lemma disjoint_region_frame :
     (forall x y : Val.t, {x = y} + {x <> y}) ->
     forall p s tr t e region l address,
@@ -173,8 +174,18 @@ Module MemorySound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
       (forall a r, In a (V.effects p e) -> In r (effect_writes A.all a) ->
         A.disjoint region r = true) ->
       B.effect_value (B.effect_snapshot t) l = B.effect_value (B.effect_snapshot s) l.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros eq p s tr t e region l address Hreach Hstep Htaken Hsite Hregion Hdisjoint.
+    destruct (eq (B.effect_value (B.effect_snapshot t) l)
+      (B.effect_value (B.effect_snapshot s) l)) as [Hequal|Hchanged].
+    - exact Hequal.
+    - destruct (transition_byte_covered eq p s tr t e l address
+        Hreach Hstep Htaken Hsite Hchanged) as [a [r [Ha [Hr Hcovered]]]].
+      exfalso; exact (B.memory_disjoint_sound region r address
+        (Hdisjoint a r Ha Hr) Hregion Hcovered).
+  Qed.
 
+  (** Every actual read retains its own incoming snapshot and covering effect. *)
   Lemma transition_read_covered : forall p s tr t e l,
     reachable (M.initial p) (M.step p) s -> T.lstep p s tr t -> L.taken p s t e ->
     B.transition_read p s tr t l -> exists states i b a,
@@ -183,8 +194,17 @@ Module MemorySound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
       nth_error (V.effects p e) i = Some a /\ B.effect_read b a l /\
       forall address, B.effect_address b l = Some address ->
         exists r, In r (effect_reads A.all a) /\ B.region_holds r address.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s tr t e l Hreach Hstep Htaken Hread.
+    destruct (B.effect_step_trace p s tr t e Hreach Hstep Htaken)
+      as [states [Htrace [Hreads Hwrites]]].
+    destruct (Hreads l Hread) as [i [b [a [Hstate [Heffect Hlocal]]]]].
+    exists states, i, b, a; split; [exact Htrace|].
+    split; [exact Hstate|]; split; [exact Heffect|]; split; [exact Hlocal|].
+    intros address Haddress; eapply B.effect_read_covered; eassumption.
+  Qed.
 
+  (** Every actual write is covered even when it leaves the stored byte unchanged. *)
   Lemma transition_write_covered : forall p s tr t e address,
     reachable (M.initial p) (M.step p) s -> T.lstep p s tr t -> L.taken p s t e ->
     B.transition_write p s tr t address -> exists states i b a r,
@@ -192,5 +212,12 @@ Module MemorySound (P : TYPE) (N : KEY) (E : TYPE) (C : CFG P N E)
         (B.effect_snapshot t) /\ nth_error states i = Some b /\
       nth_error (V.effects p e) i = Some a /\ B.effect_write b a address /\
       In r (effect_writes A.all a) /\ B.region_holds r address.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s tr t e address Hreach Hstep Htaken Hwrite.
+    destruct (B.effect_step_trace p s tr t e Hreach Hstep Htaken)
+      as [states [Htrace [Hreads Hwrites]]].
+    destruct (Hwrites address Hwrite) as [i [b [a [Hstate [Heffect Hlocal]]]]].
+    destruct (B.effect_write_covered b a address Hlocal) as [r [Hr Hcovered]].
+    exists states, i, b, a, r; repeat split; assumption.
+  Qed.
 End MemorySound.
