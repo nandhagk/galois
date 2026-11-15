@@ -592,6 +592,117 @@ Proof.
     apply (wto_before_prefix [u]). now apply wto_before_prefix.
 Qed.
 
+(** Annotation preserves the structural vertex order for every enclosing stack. *)
+Lemma wto_annotation_order : forall w stack,
+  map fst (wto_annotate stack w) = wto_order w.
+Proof.
+  induction w as [|v rest IH|h body IHbody rest IHrest]; intro stack;
+    cbn [wto_annotate wto_order map fst]; try reflexivity.
+  - now rewrite IH.
+  - rewrite map_app, IHbody, IHrest. reflexivity.
+Qed.
+
+(** Each annotated stack contains the stack inherited at the subtree root. *)
+Lemma wto_annotation_inherits : forall w stack u stored,
+  In (u, stored) (wto_annotate stack w) -> forall h, In h stack -> In h stored.
+Proof.
+  induction w as [|v rest IH|head body IHbody rest IHrest];
+    intros stack u stored Hin h Hstack; cbn [wto_annotate] in Hin.
+  - contradiction.
+  - destruct Hin as [Heq|Hin].
+    + inversion Heq; subst. exact Hstack.
+    + eapply IH; eassumption.
+  - destruct Hin as [Heq|Hin].
+    + inversion Heq; subst. now right.
+    + apply in_app_iff in Hin. destruct Hin as [Hin|Hin].
+      * eapply IHbody; [exact Hin|now right].
+      * eapply IHrest; eassumption.
+Qed.
+
+(** Heads added to an annotated stack enclose the corresponding occurrence. *)
+Lemma wto_annotation_sound : forall w stack u stored,
+  In (u, stored) (wto_annotate stack w) -> forall h,
+  In h stored -> In h stack \/ wto_encloses h u w.
+Proof.
+  induction w as [|v rest IH|head body IHbody rest IHrest];
+    intros stack u stored Hin h Hstored; cbn [wto_annotate] in Hin.
+  - contradiction.
+  - destruct Hin as [Heq|Hin].
+    + inversion Heq; subst. now left.
+    + destruct (IH stack u stored Hin h Hstored) as [Hstack|Hencloses].
+      * now left.
+      * right. now apply encloses_vertex.
+  - destruct Hin as [Heq|Hin].
+    + inversion Heq; subst. destruct Hstored as [Hhead|Hstack].
+      * subst h. right. apply encloses_here. now left.
+      * now left.
+    + apply in_app_iff in Hin. destruct Hin as [Hin|Hin].
+      * destruct (IHbody (head :: stack) u stored Hin h Hstored)
+          as [[Heq|Hstack]|Hencloses].
+        -- subst h. right. apply encloses_here. right.
+           rewrite <- (wto_annotation_order body (head :: stack)).
+           exact (in_map fst _ _ Hin).
+        -- now left.
+        -- right. now apply encloses_body.
+      * destruct (IHrest stack u stored Hin h Hstored) as [Hstack|Hencloses].
+        -- now left.
+        -- right. now apply encloses_rest.
+Qed.
+
+(** Every structural enclosure appears in an annotated row for its vertex. *)
+Lemma wto_annotation_complete : forall w h u,
+  wto_encloses h u w -> forall stack,
+  exists stored, In (u, stored) (wto_annotate stack w) /\ In h stored.
+Proof.
+  intros w h u Hencloses.
+  induction Hencloses as [inside rest Hmember|v rest Hencloses IH|
+    head inside rest Hencloses IH|head inside rest Hencloses IH];
+    intro stack; cbn [wto_annotate].
+  - destruct Hmember as [Heq|Hin].
+    + subst u. exists (h :: stack). split; now left.
+    + rewrite <- (wto_annotation_order inside (h :: stack)) in Hin.
+      apply in_map_iff in Hin. destruct Hin as [[v stored] [Heq Hin]].
+      cbn [fst] in Heq. subst v. exists stored. split.
+      * right. apply in_app_iff. now left.
+      * eapply wto_annotation_inherits; [exact Hin|now left].
+  - destruct (IH stack) as [stored [Hin Hhead]].
+    exists stored. split; [now right|exact Hhead].
+  - destruct (IH (head :: stack)) as [stored [Hin Hhead]].
+    exists stored. split; [right; apply in_app_iff; now left|exact Hhead].
+  - destruct (IH stack) as [stored [Hin Hhead]].
+    exists stored. split; [right; apply in_app_iff; now right|exact Hhead].
+Qed.
+
+(** Rows with distinct first projections have a unique value at every key. *)
+Lemma wto_rows_unique : forall (rows : list (positive * list positive)) u first second,
+  NoDup (map fst rows) -> In (u, first) rows -> In (u, second) rows -> first = second.
+Proof.
+  induction rows as [|[v stored] rest IH]; intros u first second Hunique Hfirst Hsecond.
+  - contradiction.
+  - cbn [map fst] in Hunique. inversion Hunique as [|v' rest' Hfresh Hrest]; subst.
+    destruct Hfirst as [Hfirst|Hfirst]; destruct Hsecond as [Hsecond|Hsecond].
+    + congruence.
+    + inversion Hfirst; subst. exfalso. apply Hfresh. exact (in_map fst _ _ Hsecond).
+    + inversion Hsecond; subst. exfalso. apply Hfresh. exact (in_map fst _ _ Hfirst).
+    + eapply IH; eassumption.
+Qed.
+
+(** Unique annotations store exactly the structural enclosing heads. *)
+Lemma wto_annotation_spec : forall w,
+  NoDup (wto_order w) -> forall u stored,
+  In (u, stored) (wto_annotate [] w) ->
+  forall h, In h stored <-> wto_encloses h u w.
+Proof.
+  intros w Hunique u stored Hin h. split.
+  - intro Hhead. destruct (wto_annotation_sound w [] u stored Hin h Hhead)
+      as [Hempty|Hencloses]; [contradiction|exact Hencloses].
+  - intro Hencloses.
+    destruct (wto_annotation_complete w h u Hencloses []) as [other [Hother Hhead]].
+    assert (Heq : stored = other).
+    { eapply wto_rows_unique; [rewrite wto_annotation_order; exact Hunique|exact Hin|exact Hother]. }
+    now rewrite Heq.
+Qed.
+
 (** A path contains its initial vertex. *)
 Lemma wto_path_first : forall g u vs v, path g u vs v -> In u vs.
 Proof.
@@ -1412,7 +1523,10 @@ Module WtoT <: WTO_ALL.
     map fst (wto_annotate [] w) = wto_order w /\
     forall u stack, In (u, stack) (wto_annotate [] w) ->
       forall h, In h stack <-> wto_encloses h u w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w Hunique. split; [apply wto_annotation_order|].
+    now apply wto_annotation_spec.
+  Qed.
 
   Lemma F3_index : forall w, NoDup (wto_order w) -> index_correct w.
   Proof. Admitted. (* STUB *)
