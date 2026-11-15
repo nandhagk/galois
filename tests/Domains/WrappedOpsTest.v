@@ -6,7 +6,7 @@
 
 From Stdlib Require Import ZArith List.
 From Galois.Bits Require Import Op.
-From Galois.Domains Require Import BitsLang WrappedSig Wrapped WrappedOps.
+From Galois.Domains Require Import BitsLang WordSig ValueSig WrappedSig Wrapped WrappedOps Tagged.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 Module W := WrappedCode WordLanguageCode.
@@ -38,4 +38,32 @@ Example assume_modular_add :
 Proof. vm_compute. reflexivity. Qed.
 Example assume_trunc_fitting :
   T.wbwd (bvtrunc w4) w4 (WItv 3 5) [(w8, WItv 0 10)] = Some [WItv 3 5].
+Proof. vm_compute. reflexivity. Qed.
+
+Module RangePayload := Wrapped WordLanguage.
+Module RangeTable := WrappedTable WordLanguage RangePayload.
+Module RangeDomain := WordDomain WordLanguage RangePayload RangeTable.
+Module Range := WrappedRange WordLanguage RangePayload RangeDomain.Domain.
+
+Example unsigned_range_normalizes_endpoints :
+  Range.range (TVal w8 (WItv 260 270)) = (Fin 4, Fin 14).
+Proof. vm_compute. reflexivity. Qed.
+
+Example unsigned_range_crosses_zero :
+  Range.range (TVal w8 (WItv 250 3)) = (Fin 0, Fin 255).
+Proof. vm_compute. reflexivity. Qed.
+
+Example unsigned_range_negative_singleton :
+  Range.range (TVal w8 (WItv (-1) (-1))) = (Fin 255, Fin 255).
+Proof. vm_compute. reflexivity. Qed.
+
+Example unsigned_range_full_arc :
+  Range.range (TVal w8 (WItv 10 9)) = (Fin 0, Fin 255).
+Proof. vm_compute. reflexivity. Qed.
+
+Example unsigned_range_empty_payload :
+  Range.range (TVal w8 WBot) = (PosInf, NegInf).
+Proof. vm_compute. reflexivity. Qed.
+
+Example unsigned_range_unknown_tag : Range.range TAny = (NegInf, PosInf).
 Proof. vm_compute. reflexivity. Qed.

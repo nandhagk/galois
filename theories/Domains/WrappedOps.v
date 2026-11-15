@@ -8,7 +8,7 @@ From Stdlib Require Import ZArith List Bool Lia.
 From Argent Require Import Time.
 From Galois.Bits Require Import Word Op Fun Testbit Arith Tactics.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig Wrapped IntervalSig IntervalBack
-  Thresholds BitsLang.
+  Thresholds BitsLang Tagged.
 Import List.ListNotations.
 Local Open Scope Z_scope.
 
@@ -893,6 +893,72 @@ Theorem wrapped_rewrap_sound target source q z :
 Proof.
   apply wrapped_project_sound.
 Qed.
+
+
+(** Unsigned bounds retain precise endpoints for arcs that do not cross zero. *)
+Definition wrapped_unsigned_range (w : width) (a : wrapped) : bnd * bnd :=
+  match a with
+  | WBot => (PosInf, NegInf)
+  | WFull => (Fin 0, Fin (modulus w - 1))
+  | WItv lo hi =>
+    let lo' := arc_wrap w lo in
+    let hi' := arc_wrap w hi in
+    if lo' <=? hi' then (Fin lo', Fin hi') else (Fin 0, Fin (modulus w - 1))
+  end.
+
+(** Every represented word lies between its circular payload's unsigned bounds. *)
+Lemma wrapped_unsigned_range_sound w a z : wrapped_gamma w a z ->
+  in_bnd (fst (wrapped_unsigned_range w a)) (snd (wrapped_unsigned_range w a)) z.
+Proof.
+  destruct a as [| |lo hi]; intro Ha; [exact (False_rect _ Ha)| |].
+  - change (0 <= z <= modulus w - 1). destruct Ha. lia.
+  - cbn [wrapped_unsigned_range]. rewrite !arc_wrap_agrees.
+    destruct (wrap w lo <=? wrap w hi) eqn:Hends.
+    + change (wrap w lo <= z <= wrap w hi).
+      destruct Ha as [Hz Hoffset].
+      pose proof (wrap_is_word w lo) as Hlo. pose proof (wrap_is_word w hi) as Hhi.
+      rewrite <- (wrapped_offset_origin w lo z), <- (wrapped_offset_wrap w lo hi) in Hoffset.
+      rewrite !wrapped_offset_word_cases in Hoffset by assumption.
+      rewrite Hends in Hoffset. apply Z.leb_le in Hends.
+      destruct (wrap w lo <=? z) eqn:Hzlo;
+        [apply Z.leb_le in Hzlo|apply Z.leb_gt in Hzlo];
+        destruct Hlo, Hhi, Hz; lia.
+    + change (0 <= z <= modulus w - 1). destruct Ha as [[Hzlo Hzhi] _]. lia.
+Qed.
+
+Module WrappedNumU <: NUM_VIEW BitsLang.
+  Definition num (c : word) : Z := snd c.
+End WrappedNumU.
+
+Module WrappedRangeCode
+    (D : VALUE_DOMAIN_OPS BitsLangCode with Definition t := tagged wrapped).
+  Definition range (a : D.t) : bnd * bnd :=
+    match a with
+    | TBot => (PosInf, NegInf)
+    | TVal w p => wrapped_unsigned_range w p
+    | TAny => (NegInf, PosInf)
+    end.
+End WrappedRangeCode.
+
+Module WrappedRange (L : WORD_LANGUAGE) (W : WRAPPED L)
+    (D : VALUE_DOMAIN BitsLang with Definition t := tagged W.p
+      with Definition gamma := tagged_gamma L.is_word W.pgamma)
+    <: RANGE_QUERY BitsLang WrappedNumU D.
+  Include WrappedRangeCode D.
+
+  (** The unsigned query covers every concrete word represented by the tagged domain. *)
+  Lemma range_sound : forall a c,
+    D.gamma a c -> in_bnd (fst (range a)) (snd (range a)) (WrappedNumU.num c).
+  Proof.
+    intros [|w p|] [v z] Hgamma.
+    - exact (False_rect _ Hgamma).
+    - destruct Hgamma as [Hwidth [Hword Hp]]. apply W.gamma_arc in Hp.
+      apply wrapped_unsigned_range_sound.
+      destruct p as [| |lo hi]; cbn [W.arc_gamma wrapped_gamma] in *; try exact Hp.
+      unfold W.offset in Hp. unfold wrapped_offset. rewrite !arc_wrap_agrees. exact Hp.
+    - split; constructor.
+  Qed.
+End WrappedRange.
 
 (* The landed transfer stack used closure-bearing shape/table/word records. The
    current WORD_TABLE interface takes the payload as a module and states its soundness
