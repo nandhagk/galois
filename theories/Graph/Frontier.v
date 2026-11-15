@@ -1489,6 +1489,135 @@ Proof.
   - now apply df_valid_initial.
 Qed.
 
+(** Separate the numeric loop estimate from its executable clock expression. *)
+Lemma frontier_column_arithmetic : forall overhead scale width degree output,
+  (1 <= scale -> 1 <= width ->
+   overhead * ((64 * scale * width + 1) * (2 * output + degree) +
+      16 * (output + 1) + width + degree + 3) + 16 * (width + degree + 1) <=
+    256 * (overhead + 1) * scale * (degree + output + 1) * width)%N.
+Proof.
+  intros overhead scale width degree output Hscale Hwidth.
+  assert (Hproduct : (width <= scale * width)%N) by nia.
+  assert (Hpositive : (1 <= scale * width)%N) by nia.
+  set (unit := (scale * width)%N) in *.
+  replace (64 * scale * width)%N with (64 * unit)%N by (unfold unit; nia).
+  replace (256 * (overhead + 1) * scale * (degree + output + 1) * width)%N with
+    (256 * (overhead + 1) * unit * (degree + output + 1))%N by (unfold unit; nia).
+  assert (Hinside : ((64 * unit + 1) * (2 * output + degree) +
+      16 * (output + 1) + width + degree + 3 <=
+      192 * unit * (degree + output + 1))%N) by nia.
+  assert (Hsetup : (16 * (width + degree + 1) <=
+    64 * unit * (degree + output + 1))%N) by nia.
+  assert (Hloop : (overhead * ((64 * unit + 1) * (2 * output + degree) +
+      16 * (output + 1) + width + degree + 3) <=
+    overhead * (192 * unit * (degree + output + 1)))%N).
+  { apply N.mul_le_mono_l. exact Hinside. }
+  nia.
+Qed.
+
+(** Setup includes key width even for an empty column, and each output member is charged once. *)
+Lemma frontier_df_column_time : forall g t r y,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+  (T_df_column g t y + 1 <= frontier_column_cost *
+    N.of_nat (length (preds g y) + length (df_column g t y) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros g t r y Hgraph Hprepared Htree Hy.
+  pose proof (dom_listed_key_width g y Hy) as Hywidth.
+  pose proof (frontier_nv_width g Hgraph Hprepared) as Hnvwidth.
+  pose proof (frontier_fuel_width (nv g) (length (preds g y)) _ Hnvwidth) as Hfuelwidth.
+  pose proof (frontier_add_width (nv g) (N.of_nat (length (preds g y)))) as Hsumwidth.
+  pose proof (dom_size_value (N.of_nat (length (preds g y)))) as Hdegreewidth.
+  pose proof (frontier_preds_time g y) as Hpreds.
+  pose proof (Datatypes.T_length_le (preds g y)) as Hlength.
+  pose proof (dom_time_of_nat (length (preds g y))) as Hconvert.
+  pose proof (N.T_add_le (nv g) (N.of_nat (length (preds g y)))) as Hsum.
+  pose proof (N.T_add_le (nv g + N.of_nat (length (preds g y))) 1) as Hlast.
+  pose proof (frontier_four_time (nv g + N.of_nat (length (preds g y)) + 1)) as Hfour.
+  pose proof (frontier_df_loop_time g t r y
+    (4 * (nv g + N.of_nat (length (preds g y)) + 1))%N
+    Hgraph Hprepared Htree Hy) as Hloop.
+  destruct (df_column_finished g t r y Hgraph Hprepared Htree)
+    as [st [result [Hvalid [Hstop [Hrun Hcolumn]]]]].
+  apply time_of_nat_le in Hywidth, Hnvwidth, Hfuelwidth, Hsumwidth.
+  change (N.size_nat 1) with 1 in Hlast.
+  repeat rewrite Nat2N.inj_add in Hfuelwidth.
+  repeat rewrite Nat2N.inj_add in Hsumwidth.
+  repeat rewrite Nat2N.inj_add in Hsum.
+  repeat rewrite Nat2N.inj_add in Hlast.
+  repeat rewrite Nat2N.inj_add in Hloop.
+  repeat rewrite Nat2N.inj_add.
+  repeat rewrite Nat2N.inj_mul in Hloop.
+  time_unfold T_df_column.
+  rewrite Hrun. time_unfold T_nv.
+  unfold frontier_column_cost, frontier_step_cost, frontier_unit_cost in Hloop |- *.
+  clear Hgraph Hprepared Htree Hy Hvalid Hstop Hrun Hcolumn.
+  remember (N.of_nat (graph_width (base g))) as width eqn:Hwidth in *.
+  remember (N.of_nat (length (preds g y))) as degree eqn:Hdegree in *.
+  remember (N.of_nat (length (df_column g t y))) as output eqn:Houtput in *.
+  clear Hwidth Hdegree Houtput.
+  match type of Hloop with
+  | (?runtime <= _)%N =>
+      assert (Hloop_upper : (runtime <= c_loopN *
+        ((64 * (PTrieT.c_trie + c_loopN + 1) * (width + 1) + 1) *
+          (2 * output + degree) + 16 * (output + 1) + (width + 1) + degree + 3))%N)
+  end.
+  { eapply N.le_trans; [exact Hloop|]. apply N.mul_le_mono_l.
+    clear Hloop Hpreds Hlength Hconvert Hsum Hlast Hfour Hdegreewidth Hywidth Hnvwidth Hsumwidth.
+    nia. }
+  clear Hloop.
+  eapply N.le_trans with (m := (c_loopN *
+    ((64 * (PTrieT.c_trie + c_loopN + 1) * (width + 1) + 1) *
+      (2 * output + degree) + 16 * (output + 1) + (width + 1) + degree + 3) +
+        16 * ((width + 1) + degree + 1))%N).
+  - lia.
+  - apply frontier_column_arithmetic; lia.
+Qed.
+
+(** Varying callback costs sum over precisely the entries passed to a left fold. *)
+Lemma frontier_fold_time_sum {A B : Type} (f : A -> B -> A) (T_f : A -> B -> N)
+    (cost : B -> N) : forall xs acc,
+  (forall x, In x xs -> forall state, (T_f state x <= cost x)%N) ->
+  (List.T_fold_left f T_f xs acc <=
+    N.of_nat (length xs + 1) + fold_right (fun x total => cost x + total)%N 0%N xs)%N.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros acc Hbound.
+  - time_unfold List.T_fold_left. cbn [length fold_right]. lia.
+  - pose proof (Hbound x (or_introl eq_refl) acc) as Hhead.
+    specialize (IH (f acc x) (fun y Hy => Hbound y (or_intror Hy))).
+    time_unfold List.T_fold_left. cbn [length fold_right]. try rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Mapping a clocked function pays its individual calls and one traversal. *)
+Lemma frontier_map_time_sum {A B : Type} (f : A -> B) (T_f : A -> N) : forall xs,
+  (ListDef.T_map f T_f xs =
+    N.of_nat (length xs + 1) + fold_right (fun x total => T_f x + total)%N 0%N xs)%N.
+Proof.
+  intro xs. induction xs as [|x rest IH].
+  - time_unfold ListDef.T_map. reflexivity.
+  - time_unfold ListDef.T_map. cbn [length fold_right]. rewrite IH.
+    try rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Lemma frontier_weighted_sum {A : Type} : forall (xs : list A) (size : A -> nat) (scale : N),
+  (fold_right (fun x total => scale * N.of_nat (size x) + total)%N 0%N xs =
+    scale * N.of_nat (fold_right (fun x total => (size x + total)%nat) 0%nat xs))%N.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros size scale.
+  - cbn [fold_right]. lia.
+  - cbn [fold_right]. rewrite IH, Nat2N.inj_add. nia.
+Qed.
+
+Lemma frontier_sum_le {A : Type} : forall (xs : list A) (f g : A -> N),
+  (forall x, In x xs -> (f x <= g x)%N) ->
+  (fold_right (fun x total => f x + total)%N 0%N xs <=
+    fold_right (fun x total => g x + total)%N 0%N xs)%N.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros f g Hbound; [reflexivity|].
+  pose proof (Hbound x (or_introl eq_refl)) as Hhead.
+  specialize (IH f g (fun y Hy => Hbound y (or_intror Hy))). cbn [fold_right]. lia.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
