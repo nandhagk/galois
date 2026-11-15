@@ -1087,6 +1087,305 @@ Proof.
            exact (Hpositive w Hw).
 Qed.
 
+(** Reversing the list reverses every strict position comparison. *)
+Lemma dom_order_reverse : forall o u v,
+  order_before o u v -> order_before (rev o) v u.
+Proof.
+  intros o u v [i [j [Hi [Hj Hij]]]].
+  assert (Hi_bound : i < length o) by (apply nth_error_Some; rewrite Hi; discriminate).
+  assert (Hj_bound : j < length o) by (apply nth_error_Some; rewrite Hj; discriminate).
+  exists (length o - S j), (length o - S i). split.
+  - rewrite nth_error_rev.
+    rewrite (proj2 (Nat.ltb_lt (length o - S j) (length o)) ltac:(lia)).
+    replace (length o - S (length o - S j)) with j by lia. exact Hj.
+  - split.
+    + rewrite nth_error_rev.
+      rewrite (proj2 (Nat.ltb_lt (length o - S i) (length o)) ltac:(lia)).
+      replace (length o - S (length o - S i)) with i by lia. exact Hi.
+    + lia.
+Qed.
+
+Lemma dom_order_cut_index : forall (before : list positive) v after,
+  nth_error (before ++ v :: after) (length before) = Some v.
+Proof.
+  intros before v after. rewrite nth_error_app2 by lia.
+  rewrite Nat.sub_diag. reflexivity.
+Qed.
+
+Lemma dom_order_before_cut : forall before v after u,
+  NoDup (before ++ v :: after) -> order_before (before ++ v :: after) u v -> In u before.
+Proof.
+  intros before v after u Hunique [i [j [Hi [Hj Hij]]]].
+  pose proof (dom_cert_position_nth _ Hunique j v Hj) as Hj_position.
+  pose proof (dom_cert_position_nth _ Hunique (length before) v
+    (dom_order_cut_index before v after)) as Hcut_position.
+  assert (Hi_bound : i < length before) by lia.
+  rewrite nth_error_app1 in Hi by exact Hi_bound. now apply nth_error_In in Hi.
+Qed.
+
+Lemma dom_order_after_cut : forall before v after u,
+  NoDup (before ++ v :: after) -> order_before (before ++ v :: after) v u -> In u after.
+Proof.
+  intros before v after u Hunique [i [j [Hi [Hj Hij]]]].
+  pose proof (dom_cert_position_nth _ Hunique i v Hi) as Hi_position.
+  pose proof (dom_cert_position_nth _ Hunique (length before) v
+    (dom_order_cut_index before v after)) as Hcut_position.
+  assert (Hj_bound : length before < j) by lia.
+  rewrite nth_error_app2 in Hj by lia.
+  replace (j - length before) with (S (j - S (length before))) in Hj by lia.
+  cbn [nth_error] in Hj. now apply nth_error_In in Hj.
+Qed.
+
+Lemma dom_order_cut_before : forall before v after u,
+  In u before -> order_before (before ++ v :: after) u v.
+Proof.
+  intros before v after u Hin. apply In_nth_error in Hin as [i Hi].
+  assert (Hbound : i < length before) by (apply nth_error_Some; rewrite Hi; discriminate).
+  exists i, (length before). split.
+  - now rewrite nth_error_app1.
+  - split; [apply dom_order_cut_index|exact Hbound].
+Qed.
+
+Lemma dom_order_parent_wf : forall m o,
+  NoDup o -> (forall v p, trie_get v m = Some p -> order_before o p v) ->
+  well_founded (fun u v => trie_get v m = Some u).
+Proof.
+  intros m o Hunique Hparents. apply (well_founded_lt_compat positive (dom_cert_position o)).
+  intros v p Hparent. apply dom_cert_before_positions; [exact Hunique|now apply Hparents].
+Qed.
+
+Lemma dom_order_anc_before : forall m o,
+  NoDup o -> (forall v p, trie_get v m = Some p -> order_before o p v) ->
+  forall u v, tree_anc m u v -> u <> v -> order_before o u v.
+Proof.
+  intros m o Hunique Hparents u v Hanc. induction Hanc as [|p v Hparent Hanc IH]; intro Hne.
+  - contradiction.
+  - pose proof (Hparents v p Hparent) as Hpv.
+    destruct (Pos.eq_dec u p) as [->|Hup]; [exact Hpv|].
+    eapply dom_cert_before_trans; [exact Hunique|now apply IH|exact Hpv].
+Qed.
+
+(** Ranked parent links decide ancestry constructively. *)
+Lemma dom_order_anc_dec : forall m o,
+  NoDup o -> (forall v p, trie_get v m = Some p -> order_before o p v) ->
+  forall u v, {tree_anc m u v} + {~ tree_anc m u v}.
+Proof.
+  intros m o Hunique Hparents u.
+  apply (well_founded_induction_type (dom_order_parent_wf m o Hunique Hparents)).
+  intros v IH. destruct (Pos.eq_dec u v) as [->|Hne].
+  - left. constructor.
+  - destruct (trie_get v m) as [p|] eqn:Hget.
+    + destruct (IH p eq_refl) as [Hanc|Hnot].
+      * left. eapply tree_anc_step; eassumption.
+      * right. intro Hanc. apply Hnot. eapply dom_cert_anc_parent; eassumption.
+    + right. intro Hanc. apply dom_cert_anc_cases in Hanc.
+      destruct Hanc as [Heq|[p [Hp Hanc]]]; congruence.
+Qed.
+
+Lemma dom_size_mass_app : forall weight xs ys sizes,
+  dom_size_mass weight (xs ++ ys) sizes =
+    (dom_size_mass weight xs sizes + dom_size_mass weight ys sizes)%N.
+Proof.
+  intros weight xs. induction xs as [|x rest IH]; intros ys sizes.
+  - reflexivity.
+  - change ((weight x * dom_size_get sizes x + dom_size_mass weight (rest ++ ys) sizes)%N =
+      (weight x * dom_size_get sizes x + dom_size_mass weight rest sizes +
+        dom_size_mass weight ys sizes)%N).
+    rewrite IH. lia.
+Qed.
+
+Lemma dom_size_mass_rev : forall weight xs sizes,
+  dom_size_mass weight (rev xs) sizes = dom_size_mass weight xs sizes.
+Proof.
+  intros weight xs. induction xs as [|x rest IH]; intro sizes; [reflexivity|].
+  cbn [rev]. rewrite dom_size_mass_app, IH.
+  change ((dom_size_mass weight rest sizes +
+    (weight x * dom_size_get sizes x + 0))%N =
+    (weight x * dom_size_get sizes x + dom_size_mass weight rest sizes)%N). lia.
+Qed.
+
+Lemma dom_size_mass_empty_count : forall (test : positive -> bool) xs,
+  dom_size_mass (fun x => if test x then 1%N else 0%N) xs Empty =
+    N.of_nat (length (filter test xs)).
+Proof.
+  intros test xs. induction xs as [|x rest IH]; [reflexivity|].
+  change (((if test x then 1 else 0) * dom_size_get Empty x +
+    dom_size_mass (fun y => if test y then 1 else 0) rest Empty)%N =
+    N.of_nat (length (filter test (x :: rest)))).
+  unfold dom_size_get. rewrite PTrie.get_empty, IH.
+  cbn [filter]. destruct (test x).
+  - change ((1 + N.of_nat (length (filter test rest)))%N =
+      N.of_nat (S (length (filter test rest)))).
+    rewrite Nat2N.inj_succ. lia.
+  - change ((0 + N.of_nat (length (filter test rest)))%N =
+      N.of_nat (length (filter test rest))). lia.
+Qed.
+
+Lemma dom_size_mass_zero : forall weight xs sizes,
+  (forall x, In x xs -> weight x = 0%N) -> dom_size_mass weight xs sizes = 0%N.
+Proof.
+  intros weight xs. induction xs as [|x rest IH]; intros sizes Hzero; [reflexivity|].
+  change ((weight x * dom_size_get sizes x + dom_size_mass weight rest sizes)%N = 0%N).
+  rewrite (Hzero x (or_introl eq_refl)), IH; [reflexivity|].
+  intros y Hin. apply Hzero. now right.
+Qed.
+
+(** A zero-weight root may be removed; every other processed cell transfers to its parent. *)
+Lemma dom_size_fold_mass_cases : forall weight done remaining m sizes,
+  NoDup (done ++ remaining) ->
+  (forall before v after, done = before ++ v :: after ->
+    match trie_get v m with
+    | None => weight v = 0%N
+    | Some p => In p (after ++ remaining) /\ weight v = weight p
+    end) ->
+  dom_size_mass weight remaining (fold_left (dom_add_size m) done sizes) =
+    dom_size_mass weight (done ++ remaining) sizes.
+Proof.
+  intros weight done. induction done as [|v rest IH]; intros remaining m sizes Hunique Hparents.
+  - reflexivity.
+  - cbn [app] in Hunique. inversion Hunique as [|head tail Hfresh Hrest]; subst head tail.
+    cbn [fold_left]. rewrite (IH remaining m (dom_add_size m sizes v) Hrest).
+    + pose proof (Hparents [] v rest eq_refl) as Hparent.
+      destruct (trie_get v m) as [p|] eqn:Hget.
+      * destruct Hparent as [Hin Heq].
+        exact (dom_size_mass_transfer weight (rest ++ remaining) m sizes v p Hrest Hget Hin Heq).
+      * rewrite dom_size_mass_absent by (intros p Hbad; rewrite Hget in Hbad; discriminate).
+        change (dom_size_mass weight (rest ++ remaining) sizes =
+          (weight v * dom_size_get sizes v + dom_size_mass weight (rest ++ remaining) sizes)%N).
+        now rewrite Hparent.
+    + intros before u after Heq. apply (Hparents (v :: before) u after). cbn. now rewrite Heq.
+Qed.
+
+Lemma dom_subtree_parent_weights : forall m o v test u p,
+  (forall x, In x o -> (test x = true <-> tree_anc m v x)) ->
+  In u o -> In p o -> v <> u -> trie_get u m = Some p ->
+  (if test u then 1%N else 0%N) = (if test p then 1%N else 0%N).
+Proof.
+  intros m o v test u p Hselected Hu Hp Hne Hparent.
+  destruct (test u) eqn:Hut; destruct (test p) eqn:Hpt; try reflexivity.
+  - assert (Hanc : tree_anc m v u) by (apply (proj1 (Hselected u Hu)); exact Hut).
+    pose proof (dom_cert_anc_parent m v u p Hparent Hanc Hne) as Hparanc.
+    apply (proj2 (Hselected p Hp)) in Hparanc. congruence.
+  - assert (Hanc : tree_anc m v p) by (apply (proj1 (Hselected p Hp)); exact Hpt).
+    assert (Hchild : tree_anc m v u) by (eapply tree_anc_step; eassumption).
+    apply (proj2 (Hselected u Hu)) in Hchild. congruence.
+Qed.
+
+Lemma dom_subtree_root_weight : forall m o v test u,
+  (forall x, In x o -> (test x = true <-> tree_anc m v x)) ->
+  In u o -> v <> u -> trie_get u m = None -> (if test u then 1%N else 0%N) = 0%N.
+Proof.
+  intros m o v test u Hselected Hu Hne Hnone. destruct (test u) eqn:Htest; [|reflexivity].
+  assert (Hanc : tree_anc m v u) by (apply (proj1 (Hselected u Hu)); exact Htest).
+  destruct (dom_cert_anc_cases m v u Hanc) as [Heq|[p [Hparent Hancp]]]; congruence.
+Qed.
+
+(** Before a vertex is processed, all descendant mass stays among the remaining cells. *)
+Lemma dom_subtree_suffix_parents : forall m o v test before after,
+  NoDup o -> (forall u p, trie_get u m = Some p -> order_before o p u) ->
+  o = before ++ v :: after ->
+  (forall x, In x o -> (test x = true <-> tree_anc m v x)) ->
+  forall prefix u suffix, rev after = prefix ++ u :: suffix ->
+    match trie_get u m with
+    | None => (if test u then 1%N else 0%N) = 0%N
+    | Some p => In p (suffix ++ v :: rev before) /\
+        (if test u then 1%N else 0%N) = (if test p then 1%N else 0%N)
+    end.
+Proof.
+  intros m o v test before after Hunique Hparents Ho Hselected prefix u suffix Hcut.
+  assert (Hafter : In u after).
+  { apply (proj2 (in_rev after u)). rewrite Hcut. apply in_or_app. now right; left. }
+  assert (Hu : In u o) by (rewrite Ho; apply in_or_app; right; now right).
+  assert (Hne : v <> u).
+  { intro Heq. subst u. apply (NoDup_remove_2 before after v).
+    - now rewrite <- Ho.
+    - apply in_or_app. now right. }
+  destruct (trie_get u m) as [p|] eqn:Hparent.
+  - pose proof (Hparents u p Hparent) as Hbefore.
+    pose proof (proj1 (dom_cert_before_members o p u Hbefore)) as Hp.
+    split.
+    + assert (Hwhole : rev o = prefix ++ u :: (suffix ++ v :: rev before)).
+      { rewrite Ho, rev_app_distr. cbn [rev]. rewrite <- app_assoc.
+        rewrite Hcut, <- app_assoc. reflexivity. }
+      apply (dom_order_after_cut prefix u (suffix ++ v :: rev before) p).
+      * rewrite <- Hwhole. now apply NoDup_rev.
+      * rewrite <- Hwhole. now apply dom_order_reverse.
+    + exact (dom_subtree_parent_weights m o v test u p Hselected Hu Hp Hne Hparent).
+  - exact (dom_subtree_root_weight m o v test u Hselected Hu Hne Hparent).
+Qed.
+
+Lemma dom_subtree_prefix_zero : forall m o v test before after,
+  NoDup o -> (forall u p, trie_get u m = Some p -> order_before o p u) ->
+  o = before ++ v :: after ->
+  (forall x, In x o -> (test x = true <-> tree_anc m v x)) ->
+  forall x, In x (rev before) -> (if test x then 1%N else 0%N) = 0%N.
+Proof.
+  intros m o v test before after Hunique Hparents Ho Hselected x Hin.
+  assert (Hx_before : order_before o x v).
+  { rewrite Ho. apply dom_order_cut_before. now apply (proj2 (in_rev before x)). }
+  assert (Hx : In x o) by (exact (proj1 (dom_cert_before_members o x v Hx_before))).
+  pose proof (dom_cert_before_positions o x v Hunique Hx_before) as Hx_position.
+  destruct (test x) eqn:Htest; [|reflexivity].
+  assert (Hanc : tree_anc m v x) by (apply (proj1 (Hselected x Hx)); exact Htest).
+  assert (Hne : v <> x) by (intro Heq; subst x; lia).
+  pose proof (dom_order_anc_before m o Hunique Hparents v x Hanc Hne) as Hv_before.
+  pose proof (dom_cert_before_positions o v x Hunique Hv_before). lia.
+Qed.
+
+(** A vertex's value is final once the reverse traversal reaches it. *)
+Lemma dom_sizes_at_cut : forall m o before v after,
+  NoDup o -> (forall u p, trie_get u m = Some p -> order_before o p u) ->
+  o = before ++ v :: after ->
+  dom_size_get (dom_sizes m o) v =
+    dom_size_get (fold_left (dom_add_size m) (rev after) Empty) v.
+Proof.
+  intros m o before v after Hunique Hparents Ho.
+  assert (Hrev : rev_append o [] = rev after ++ v :: rev before).
+  { rewrite rev_append_rev, app_nil_r, Ho, rev_app_distr. cbn [rev].
+    now rewrite <- app_assoc. }
+  unfold dom_sizes. rewrite Hrev, fold_left_app. cbn [fold_left].
+  rewrite dom_size_fold_preserves.
+  - rewrite dom_add_size_value. destruct (trie_get v m) as [p|] eqn:Hparent;
+      [|reflexivity].
+    destruct (Pos.eqb v p) eqn:Heq; [|reflexivity].
+    apply Pos.eqb_eq in Heq. subst p.
+    pose proof (dom_cert_before_positions o v v Hunique (Hparents v v Hparent)). lia.
+  - intros u Hin Hparent. apply (proj2 (in_rev before u)) in Hin.
+    assert (Hbefore : order_before o u v) by (rewrite Ho; now apply dom_order_cut_before).
+    pose proof (dom_cert_before_positions o u v Hunique Hbefore).
+    pose proof (dom_cert_before_positions o v u Hunique (Hparents u v Hparent)). lia.
+Qed.
+
+(** Reverse aggregation counts exactly the descendants selected from the original order. *)
+Lemma dom_sizes_cardinality : forall m o v (test : positive -> bool),
+  NoDup o -> (forall u p, trie_get u m = Some p -> order_before o p u) -> In v o ->
+  (forall x, In x o -> (test x = true <-> tree_anc m v x)) ->
+  dom_size_get (dom_sizes m o) v = N.of_nat (length (filter test o)).
+Proof.
+  intros m o v test Hunique Hparents Hv Hselected.
+  destruct (in_split v o Hv) as [before [after Ho]].
+  assert (Hrev : rev o = rev after ++ v :: rev before).
+  { rewrite Ho, rev_app_distr. cbn [rev]. now rewrite <- app_assoc. }
+  assert (Hrev_unique : NoDup (rev after ++ v :: rev before)).
+  { rewrite <- Hrev. now apply NoDup_rev. }
+  pose proof (dom_size_fold_mass_cases (fun x => if test x then 1%N else 0%N)
+    (rev after) (v :: rev before) m Empty Hrev_unique
+    (dom_subtree_suffix_parents m o v test before after Hunique Hparents Ho Hselected))
+    as Hmass.
+  rewrite <- Hrev, dom_size_mass_rev, dom_size_mass_empty_count in Hmass.
+  assert (Htest : test v = true) by (apply (proj2 (Hselected v Hv)); constructor).
+  rewrite (dom_sizes_at_cut m o before v after Hunique Hparents Ho).
+  change (((if test v then 1 else 0) *
+    dom_size_get (fold_left (dom_add_size m) (rev after) Empty) v +
+    dom_size_mass (fun x => if test x then 1 else 0) (rev before)
+      (fold_left (dom_add_size m) (rev after) Empty))%N =
+    N.of_nat (length (filter test o))) in Hmass.
+  rewrite Htest, dom_size_mass_zero in Hmass.
+  - now rewrite N.mul_1_l, N.add_0_r in Hmass.
+  - exact (dom_subtree_prefix_zero m o v test before after Hunique Hparents Ho Hselected).
+Qed.
+
+
 Module DomCode <: DOM_OPS.
   Definition build := dom_build_candidate.
 
