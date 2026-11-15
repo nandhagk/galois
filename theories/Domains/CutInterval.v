@@ -4,7 +4,7 @@
     For example, a large upper endpoint becomes positive infinity.
     Builds on: CutIntervalSig and the shared interval operations. *)
 
-From Stdlib Require Import List ZArith Bool Lia Eqdep_dec.
+From Stdlib Require Import List ZArith NArith Bool Lia Eqdep_dec.
 From Argent Require Import Time Tactics Std.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig Interval.
 
@@ -746,6 +746,210 @@ Module CutIntervalRaw (L : Z_LANGUAGE_T) (T : THRESHOLDS_T).
     End Link.
 End CutIntervalRaw.
 
+(** A positive bit-count scan pays exactly once for each binary digit. *)
+Lemma cut_positive_scan : forall p,
+  Std.Pos.T_size_nat p = N.of_nat (Pos.size_nat p).
+Proof.
+  induction p as [p IH|p IH|].
+  - change (1 + Std.Pos.T_size_nat p = N.of_nat (S (Pos.size_nat p)))%N.
+    rewrite IH, Nat2N.inj_succ. lia.
+  - change (1 + Std.Pos.T_size_nat p = N.of_nat (S (Pos.size_nat p)))%N.
+    rewrite IH, Nat2N.inj_succ. lia.
+  - reflexivity.
+Qed.
+
+(** Reading an integer size adds one sign-constructor inspection to its digit scan. *)
+Lemma cut_integer_scan : forall z,
+  Word.Z.T_size_nat z = (1 + N.of_nat (Z.size_nat z))%N.
+Proof.
+  intros [|p|p]; unfold Word.Z.T_size_nat; cbn beta iota zeta;
+    cbn [Z.size_nat]; rewrite ?cut_positive_scan; reflexivity.
+Qed.
+
+(** Checking an endpoint pays for all of its finite bits. *)
+Lemma cut_endpoint_scan_lower : forall bits b,
+  (N.of_nat (match b with Fin z => Z.size_nat z | _ => 0 end) <=
+    T_cut_endpoint_ok bits b)%N.
+Proof.
+  intros bits [|z|]; unfold T_cut_endpoint_ok; cbn beta iota zeta;
+    rewrite ?cut_integer_scan; lia.
+Qed.
+
+(** Unary comparison stops after at most the endpoint's own bit count. *)
+Lemma cut_endpoint_scan_upper : forall bits b,
+  (T_cut_endpoint_ok bits b <=
+    2 * N.of_nat (match b with Fin z => Z.size_nat z | _ => 0 end) + 3)%N.
+Proof.
+  intros bits [|z|]; unfold T_cut_endpoint_ok; cbn beta iota zeta; try lia.
+  pose proof (Std.Nat.T_leb_le (Z.size_nat z) bits) as Hcompare.
+  rewrite cut_integer_scan. lia.
+Qed.
+
+(** The only nonconstant shape test compares the two finite endpoints. *)
+Lemma cut_shape_scan_upper : forall a,
+  (T_cut_shape_ok a <= 8 * (N.of_nat (interval_bits a) + 1))%N.
+Proof.
+  intros [|[|lo|] [|hi|]]; unfold T_cut_shape_ok;
+    cbn beta iota zeta; cbn [interval_bits]; try lia.
+  pose proof (Std.Z.T_leb_le lo hi) as Hcompare.
+  pose proof (Nat.le_max_l (Z.size_nat lo) (Z.size_nat hi)) as Hlower.
+  lia.
+Qed.
+
+(** The carrier check scans two endpoints and tests their shape. *)
+Lemma cut_valid_scan_upper : forall bits a,
+  (T_cut_interval_ok bits a <= 24 * (N.of_nat (interval_bits a) + 1))%N.
+Proof.
+  intros bits [|lo hi]; [vm_compute; congruence|].
+  pose proof (cut_shape_scan_upper (I lo hi)) as Hshape.
+  pose proof (cut_endpoint_scan_upper bits lo) as Hlo.
+  pose proof (cut_endpoint_scan_upper bits hi) as Hhi.
+  assert (Hlower :
+    (match lo with Fin z => Z.size_nat z | _ => 0 end) <= interval_bits (I lo hi)).
+  { apply Nat.le_max_l. }
+  assert (Hupper :
+    (match hi with Fin z => Z.size_nat z | _ => 0 end) <= interval_bits (I lo hi)).
+  { apply Nat.le_max_r. }
+  unfold T_cut_interval_ok. cbn beta iota zeta. time_simpl. lia.
+Qed.
+
+(** Packing performs its Boolean check and adds constant constructor overhead. *)
+Lemma cut_pack_scan_upper : forall bits a,
+  (T_pack_cut bits a <= 32 * (N.of_nat (interval_bits a) + 1))%N.
+Proof.
+  intros bits a.
+  pose proof (cut_valid_scan_upper bits a) as Hcheck.
+  unfold T_pack_cut. cbn beta iota zeta.
+  destruct (cut_interval_ok bits a); cbn beta iota zeta; lia.
+Qed.
+
+(** Outward cutoff is linear in the inspected raw endpoints. *)
+Lemma cut_interval_scan_upper : forall bits a,
+  (T_cut_interval bits a <= 32 * (N.of_nat (interval_bits a) + 1))%N.
+Proof.
+  intros bits [|lo hi].
+  - vm_compute; congruence.
+  - pose proof (cut_shape_scan_upper (I lo hi)) as Hshape.
+    pose proof (cut_endpoint_scan_upper bits lo) as Hlo.
+    pose proof (cut_endpoint_scan_upper bits hi) as Hhi.
+    assert (Hlower :
+      (match lo with Fin z => Z.size_nat z | _ => 0 end) <= interval_bits (I lo hi)).
+    { apply Nat.le_max_l. }
+    assert (Hupper :
+      (match hi with Fin z => Z.size_nat z | _ => 0 end) <= interval_bits (I lo hi)).
+    { apply Nat.le_max_r. }
+    unfold T_cut_interval, T_cut_lower, T_cut_upper.
+    destruct (cut_shape_ok (I lo hi)); cbn beta iota zeta; lia.
+Qed.
+
+(** Inward cutoff reads the candidate endpoints and only selects old endpoints. *)
+Lemma cut_within_scan_upper : forall bits old a,
+  (T_cut_within bits old a <= 32 * (N.of_nat (interval_bits a) + 1))%N.
+Proof.
+  intros bits old [|lo hi].
+  - destruct old; vm_compute; congruence.
+  - pose proof (cut_shape_scan_upper (I lo hi)) as Hshape.
+    pose proof (cut_endpoint_scan_upper bits lo) as Hlo.
+    pose proof (cut_endpoint_scan_upper bits hi) as Hhi.
+    assert (Hlower :
+      (match lo with Fin z => Z.size_nat z | _ => 0 end) <= interval_bits (I lo hi)).
+    { apply Nat.le_max_l. }
+    assert (Hupper :
+      (match hi with Fin z => Z.size_nat z | _ => 0 end) <= interval_bits (I lo hi)).
+    { apply Nat.le_max_r. }
+    unfold T_cut_within.
+    destruct (cut_shape_ok (I lo hi)); destruct old;
+      cbn beta iota zeta; lia.
+Qed.
+
+(** The endpoint tests pay for every bit that survives an outward cutoff. *)
+Lemma cut_interval_result_scan : forall bits a,
+  (N.of_nat (interval_bits (cut_interval bits a)) <= T_cut_interval bits a)%N.
+Proof.
+  intros bits a. unfold cut_interval.
+  destruct (cut_shape_ok a) eqn:Hshape; [|apply N.le_0_l].
+  destruct a as [|lo hi]; [apply N.le_0_l|].
+  pose proof (cut_endpoint_scan_lower bits lo) as Hlo.
+  pose proof (cut_endpoint_scan_lower bits hi) as Hhi.
+  assert (Hlower :
+    (N.of_nat (match cut_lower bits lo with Fin z => Z.size_nat z | _ => 0 end) <=
+      T_cut_endpoint_ok bits lo)%N).
+  { unfold cut_lower. destruct (cut_endpoint_ok bits lo); [exact Hlo|apply N.le_0_l]. }
+  assert (Hupper :
+    (N.of_nat (match cut_upper bits hi with Fin z => Z.size_nat z | _ => 0 end) <=
+      T_cut_endpoint_ok bits hi)%N).
+  { unfold cut_upper. destruct (cut_endpoint_ok bits hi); [exact Hhi|apply N.le_0_l]. }
+  cbn [interval_bits]. rewrite Nat2N.inj_max.
+  unfold T_cut_interval, T_cut_lower, T_cut_upper.
+  rewrite Hshape. cbn beta iota zeta. apply N.max_lub; lia.
+Qed.
+
+(** A checked fallback is smaller than an endpoint that exceeds the same cutoff. *)
+Lemma cut_selected_endpoint_scan : forall bits old b,
+  cut_endpoint_ok bits old = true ->
+  (N.of_nat (match (if cut_endpoint_ok bits b then b else old) with
+             | Fin z => Z.size_nat z | _ => 0 end) <= T_cut_endpoint_ok bits b)%N.
+Proof.
+  intros bits old b Hold.
+  pose proof (cut_endpoint_scan_lower bits b) as Hscan.
+  destruct (cut_endpoint_ok bits b) eqn:Hnew; [exact Hscan|].
+  assert (Holdbits : (match old with Fin z => Z.size_nat z | _ => 0 end) <= bits).
+  { destruct old as [|z|]; cbn [cut_endpoint_ok] in Hold; try lia.
+    now apply Nat.leb_le in Hold. }
+  assert (Hnewbits : bits < (match b with Fin z => Z.size_nat z | _ => 0 end)).
+  { destruct b as [|z|]; cbn [cut_endpoint_ok] in Hnew; try discriminate.
+    now apply Nat.leb_gt in Hnew. }
+  lia.
+Qed.
+
+(** The candidate's endpoint scans pay for every selected refinement endpoint. *)
+Lemma cut_within_result_scan : forall bits old a,
+  cut_interval_ok bits old = true ->
+  (N.of_nat (interval_bits (cut_within bits old a)) <= T_cut_within bits old a)%N.
+Proof.
+  intros bits old a Hold. unfold cut_within.
+  destruct (cut_shape_ok a) eqn:Hshape; [|apply N.le_0_l].
+  destruct a as [|lo hi]; [destruct old; apply N.le_0_l|].
+  destruct old as [|olo ohi]; [apply N.le_0_l|].
+  apply andb_true_iff in Hold as [_ Hendpoints].
+  apply andb_true_iff in Hendpoints as [Holdlo Holdhi].
+  pose proof (cut_selected_endpoint_scan bits olo lo Holdlo) as Hlo.
+  pose proof (cut_selected_endpoint_scan bits ohi hi Holdhi) as Hhi.
+  cbn [interval_bits]. rewrite Nat2N.inj_max.
+  unfold T_cut_within. rewrite Hshape. cbn beta iota zeta.
+  apply N.max_lub; lia.
+Qed.
+
+(** Rechecking an outward result is paid by the original cutoff's scans. *)
+Lemma cut_pack_interval_scan : forall bits a,
+  (T_pack_cut bits (cut_interval bits a) <= 32 * (T_cut_interval bits a + 1))%N.
+Proof.
+  intros bits a.
+  pose proof (cut_pack_scan_upper bits (cut_interval bits a)) as Hpack.
+  pose proof (cut_interval_result_scan bits a) as Hbits.
+  lia.
+Qed.
+
+(** Rechecking an inward result is paid even when its shape is rejected. *)
+Lemma cut_pack_within_scan : forall bits old a,
+  cut_interval_ok bits old = true ->
+  (T_pack_cut bits (cut_within bits old a) <= 32 * (T_cut_within bits old a + 1))%N.
+Proof.
+  intros bits old a Hold.
+  pose proof (cut_pack_scan_upper bits (cut_within bits old a)) as Hpack.
+  pose proof (cut_within_result_scan bits old a Hold) as Hbits.
+  lia.
+Qed.
+
+(** Projecting a carrier list performs one projection and one list step per operand. *)
+Lemma cut_projection_scan : forall bits (xs : list (cut_itv bits)),
+  (Std.ListDef.T_map cut_raw (@T_cut_raw bits) xs <= 2 * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros bits xs.
+  apply (Std.ListDef.T_map_le (@cut_raw bits) (@T_cut_raw bits) 1 xs).
+  intro a. reflexivity.
+Qed.
+
 Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     (T : THRESHOLDS_T) (R : INTERVAL_ALL L T) (RL : CUT_RAW_LINK L T R)
     <: CUT_INTERVAL_ALL C L T R RL.
@@ -774,7 +978,7 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Definition c_val : N := 1%N. (* STUB *)
   Definition c_lat : N := c_val.
   Definition c_cut : N := 1%N. (* STUB *)
-  Definition k_cut : N := 1%N. (* STUB *)
+  Definition k_cut : N := 1024%N.
 
   (** The lattice constant pays for at least one call. *)
   Lemma c_lat_pos : (1 <= c_lat)%N.
@@ -981,17 +1185,25 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Qed.
   (** The total raw helper clock includes all endpoint inspections. *)
   Lemma T_cut_helper : forall a,
-    (T_cut_interval C.bits a <=
-      k_cut * N.of_nat (interval_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+    (T_cut_interval C.bits a <= k_cut * N.of_nat (interval_bits a + 1))%N.
+  Proof.
+    intro a. pose proof (cut_interval_scan_upper C.bits a) as Hscan.
+    unfold k_cut. rewrite Nat2N.inj_add. lia.
+  Qed.
   (** Inward cutting reads both intervals. *)
   Lemma T_cut_within_helper : forall old a,
     (T_cut_within C.bits old a <= k_cut * N.of_nat (interval_bits old + interval_bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros old a. pose proof (cut_within_scan_upper C.bits old a) as Hscan.
+    unfold k_cut. rewrite !Nat2N.inj_add. lia.
+  Qed.
   (** Packing the Boolean subtype adds constant overhead to the raw cutoff helper. *)
   Lemma T_cut_pack : forall a,
     (T_cut a <= k_cut * (T_cut_interval C.bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. pose proof (cut_pack_interval_scan C.bits a) as Hpack.
+    unfold T_cut, k_cut. cbn beta iota zeta. lia.
+  Qed.
   (** Forward timing includes projection traversal and cutting the actual raw result. *)
   Lemma T_forward_source : forall o xs,
     (T_forward o xs <= k_cut *
