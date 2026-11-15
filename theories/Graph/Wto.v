@@ -3851,7 +3851,7 @@ Module WtoT <: WTO_ALL.
   (** Summing each depth separately counts every state charge exactly once. *)
   Lemma state_level_partition : forall (A : Type) (depth weight : A -> nat) states top,
     Forall (fun st => depth st <= top) states ->
-    fold_right (fun st n => weight st + n) 0 states =
+    fold_right (fun st n => (weight st + n)%nat) 0%nat states =
       sum_levels top (fun level =>
         fold_right (fun st n => if Nat.eqb (depth st) level then weight st + n else n)
           0 states).
@@ -3875,7 +3875,7 @@ Module WtoT <: WTO_ALL.
     (forall level,
       fold_right (fun st n => if Nat.eqb (depth st) level then weight st + n else n)
         0 states <= budget) ->
-    fold_right (fun st n => weight st + n) 0 states <= (top + 1) * budget.
+    fold_right (fun st n => (weight st + n)%nat) 0%nat states <= (top + 1) * budget.
   Proof.
     intros A depth weight states top budget Hdepth Hlevels.
     rewrite (state_level_partition A depth weight states top Hdepth).
@@ -3929,5 +3929,114 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   Local Transparent loopN.
+
+  Local Opaque loopN Galois.Graph.Wto.wto_components.
+
+  Lemma partial_level_mass : forall level states,
+    fold_right (fun st n =>
+      if Nat.eqb (length (wto_parents st)) level then state_partial_mass st + n else n) 0 states =
+    fold_right (fun st n =>
+      if Nat.eqb (length (wto_parents st)) level then
+        match wto_tasks st with
+        | [] | WtoClose _ :: _ => length (wto_order (wto_partial st)) + n
+        | _ => n
+        end
+      else n) 0 states.
+  Proof.
+
+    intros level states. induction states as [|st states IH]; [reflexivity|].
+    cbn [fold_right]. rewrite IH.
+    destruct (Nat.eqb (length (wto_parents st)) level); [|reflexivity].
+    unfold state_partial_mass. destruct (wto_tasks st) as [|task tasks]; [reflexivity|].
+    destruct task; reflexivity.
+  Qed.
+
+  Lemma state_mass_sum : forall g states,
+    fold_right (fun st n => state_expansion_mass g st + state_partial_mass st + 1 + n) 0 states =
+      fold_right (fun st n => state_expansion_mass g st + n) 0 states +
+      fold_right (fun st n => state_partial_mass st + n) 0 states + length states.
+  Proof.
+
+    intros g states. induction states; cbn [fold_right length]; [reflexivity|]. rewrite IHstates. lia.
+  Qed.
+
+  Lemma initial_source_mass : forall g roots,
+    source_mass g (concat (comps (wto_components g roots))) <=
+      graph_n (base g) + graph_e (base g).
+  Proof.
+
+    intros g roots. rewrite <- source_mass_nodes. apply source_mass_subdomain.
+    - apply wto_components_unique.
+    - intros v Hin. now apply (wto_components_listed g roots).
+  Qed.
+
+  Lemma history_mass_arithmetic : forall n e roots depth mass size expansions partial count,
+    mass <= n + e -> size <= n ->
+    expansions <= (depth + 1) * mass -> partial <= (depth + 1) * size ->
+    count <= 3 * size + 1 + 1 ->
+    expansions + partial + count <= 5 * (n + e + roots + 1) * (depth + 1).
+  Proof. intros. nia. Qed.
+
+  (** Per-depth component and partial-output charges sum to graph size times output depth. *)
+  Lemma history_mass_bound_from_levels : forall g roots,
+    (forall level,
+      fold_right (fun st n =>
+        if Nat.eqb (length (wto_parents st)) level then state_partial_mass st + n else n)
+        0 (history g roots) <= length (concat (comps (wto_components g roots)))) ->
+    fold_right (fun st n => state_expansion_mass g st + state_partial_mass st + 1 + n) 0
+      (history g roots) <=
+    5 * (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      (wto_depth (build g roots) + 1).
+  Proof.
+
+    intros g roots Hpartial_levels.
+    assert (Hdepth : Forall (fun st => length (wto_parents st) <= wto_depth (build g roots))
+      (history g roots)).
+    { apply Forall_forall. intros st Hin. now apply (history_depth_bound g roots). }
+    assert (Hexpansions :
+      fold_right (fun st n => state_expansion_mass g st + n) 0 (history g roots) <=
+      (wto_depth (build g roots) + 1) * source_mass g (concat (comps (wto_components g roots)))).
+    { apply (state_level_bound wto_state (fun st => length (wto_parents st))
+        (state_expansion_mass g)); [exact Hdepth|].
+      intro level. rewrite expansion_level_mass. apply F18_level_mass. }
+    assert (Hpartials : fold_right (fun st n => state_partial_mass st + n) 0 (history g roots) <=
+      (wto_depth (build g roots) + 1) * length (concat (comps (wto_components g roots)))).
+    { apply (state_level_bound wto_state (fun st => length (wto_parents st))
+        state_partial_mass); [exact Hdepth|].
+      intro level. apply Hpartial_levels. }
+    pose proof (initial_source_mass g roots) as Hmass.
+    pose proof (wto_components_size g roots) as Hsize.
+    rewrite listed_graph_size in Hsize.
+    pose proof (history_from_length g
+      (3 * length (concat (comps (wto_components g roots))) + 1) (initial g roots)) as Hlength.
+    change (length (history g roots) <= 3 * length (concat (comps (wto_components g roots))) + 1 + 1)
+      in Hlength.
+    rewrite state_mass_sum.
+    eapply (history_mass_arithmetic (graph_n (base g)) (graph_e (base g)) (length roots)
+      (wto_depth (build g roots)) (source_mass g (concat (comps (wto_components g roots))))
+      (length (concat (comps (wto_components g roots))))).
+    - exact Hmass.
+    - exact Hsize.
+    - exact Hexpansions.
+    - exact Hpartials.
+    - exact Hlength.
+  Qed.
+
+  Lemma sum_clock_weight : forall (A : Type) (weight : A -> nat) (clock : A -> N) states rate,
+    (forall st, In st states -> (clock st <= rate * N.of_nat (weight st))%N) ->
+    (fold_right (fun st n => clock st + n)%N 0%N states <=
+      rate * N.of_nat (fold_right (fun st n => (weight st + n)%nat) 0%nat states))%N.
+  Proof.
+
+    intros A weight clock states. induction states as [|st states IH]; intros rate Hclock.
+    - cbn [fold_right]. lia.
+    - pose proof (Hclock st (or_introl eq_refl)) as Hhead.
+      assert (Htail : (fold_right (fun current n => clock current + n)%N 0%N states <=
+        rate * N.of_nat (fold_right (fun current n => (weight current + n)%nat) 0%nat states))%N).
+      { apply IH. intros current Hin. apply Hclock. now right. }
+      cbn [fold_right]. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  Local Transparent loopN Galois.Graph.Wto.wto_components.
 
 End WtoT.
