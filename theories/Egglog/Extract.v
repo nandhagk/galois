@@ -4509,6 +4509,18 @@ Module SearchCorrect (V : VALUE) (C : COST V) (Q : PQ).
     exact (search_verified_stopped DB rs last entries Hlast Hstop).
   Qed.
 End SearchCorrect.
+(** Increasing the clock supplied for each step increases the loop clock. *)
+Lemma extraction_loop_clock_mono {St Out} (run : St -> St + Out) (Ta Tb : St -> N) :
+  (forall s, (Ta s <= Tb s)%N) -> forall fuel s,
+  (T_loop_fuel run Ta fuel s <= T_loop_fuel run Tb fuel s)%N.
+Proof.
+  intros Hclock fuel. induction fuel as [|fuel IH]; intro s;
+    time_unfold @T_loop_fuel.
+  - lia.
+  - destruct (run s) as [next|out].
+    + specialize (IH next). specialize (Hclock s). lia.
+    + specialize (Hclock s). lia.
+Qed.
 
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) (Q : PQ_OPS) <: EXTRACT_OPS V I D C.
@@ -4824,6 +4836,18 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     - now apply Rows.rows_sound.
     - intro Hrow. apply Rows.rows_complete; [exact Hwf |exact Hrow |].
       eapply inventory_row_slot; eassumption.
+  Qed.
+
+  (** The executable inventory has the public constructor-row count. *)
+  Lemma inventory_rows_count : forall cs db, D.wf db -> ctor_inventory cs db ->
+    length (Enumeration.enumerated_rows cs db) = R db.
+  Proof.
+    intros cs db Hwf Hinventory.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [Hnodup [Hmembers _]].
+    destruct (R_spec cs db Hwf Hinventory) as [rows [Hrows_nodup [Hrows_count Hrows]]].
+    rewrite <- Hrows_count. apply Permutation_length, NoDup_Permutation;
+      [exact Hnodup |exact Hrows_nodup |].
+    intros [[f k] i]. rewrite Hmembers, Hrows. reflexivity.
   Qed.
 
   Lemma a_spec : forall cs db, D.wf db -> ctor_inventory cs db ->
@@ -5241,6 +5265,35 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     (T_best cs db <= T_initial cs db +
       T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db) +
       k_step * N.of_nat (R db + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory.
+    pose proof (inventory_rows_count cs db Hwf Hinventory) as Hlength.
+    destruct (SearchProof.search_initial_fields D.t db
+      (inventory_rows (fun slot => D.index slot false db) I.child I.children I.root cs))
+      as [_ [_ [Hcount _]]].
+    assert (Hcount' : search_row_count (initial cs db) = R db).
+    { transitivity (length (Enumeration.enumerated_rows cs db));
+        [exact Hcount |exact Hlength]. }
+    assert (Hfuel : S (search_row_count (initial cs db)) = R db + 1) by lia.
+    assert (Hloop : (T_loop_fuel (search_step (DB := D.t))
+      (T_search_step (DB := D.t)) (R db + 1) (initial cs db) <=
+      T_loop_fuel (step cs db) (T_step cs db) (R db + 1) (initial cs db))%N).
+    { unfold step. apply extraction_loop_clock_mono. intro s.
+      time_unfold @T_step. time_simpl. time_cbn. lia. }
+    assert (Hconstant : (3 <= k_step)%N) by (unfold k_step; nia).
+    assert (Hallowance : (3 <= k_step * N.of_nat (R db + 1))%N).
+    { eapply N.le_trans; [exact Hconstant |].
+      rewrite <- (N.mul_1_r k_step) at 1. apply N.mul_le_mono_l. lia. }
+    time_unfold @T_best. time_simpl. time_cbn.
+    time_unfold @T_initial. time_simpl. time_cbn.
+    time_unfold @T_best_rows. time_simpl. time_cbn.
+    fold (initial cs db).
+    change (fun H : extraction_state V.t D.t Q.t => T_search_step H)
+      with (T_search_step (DB := D.t)).
+    rewrite Hfuel.
+    destruct (search_step (initial cs db)) as [next|out];
+      [destruct (loop_fuel (search_step (DB := D.t))
+        (search_row_count (initial cs db)) next)|]; lia.
+  Qed.
 
 End ExtractT.
