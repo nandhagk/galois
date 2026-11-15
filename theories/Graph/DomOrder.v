@@ -1026,3 +1026,11 @@ Proof.
         exact (proj1 (dom_cert_parent_immediate (base g) r m o v p Hcert Hget)).
     + eapply dom_cert_parent_wf. exact Hcert.
 Qed.
+
+(** Sharing the producer result costs no more than the separate parent and order phases. *)
+Lemma T_dom_build_candidate_phases g r :
+  (T_dom_build_candidate g r <= T_dom_lt_parents g r + T_dom_build_order g r + 32)%N.
+Proof.
+  unfold T_dom_build_candidate, T_dom_lt_parents, T_dom_build_order, T_dom_lt_pipeline.
+  time_simpl. time_cbn. lia.
+Qed.
