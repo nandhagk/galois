@@ -4,8 +4,8 @@
     For example, a binary operation checks each piece at the signed pole.
     Builds on: Wrapped, IntervalBack and WordSig. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
-From Argent Require Import Time.
+From Stdlib Require Import ZArith NArith List Bool Lia.
+From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op Fun Testbit Arith Tactics.
 From Galois.Domains Require Import ValueSig WordSig WrappedSig Wrapped IntervalSig IntervalBack
   Thresholds BitsLang Tagged.
@@ -1031,6 +1031,193 @@ Module WrappedTableClock (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
   TimeFun backward_raw.
   TimeFun wbwd.
 End WrappedTableClock.
+
+(** Normalization stores at most two word-sized endpoints for table consumers. *)
+Lemma wrapped_norm_bits_bound : forall w a,
+  (wrapped_bits (wrapped_norm w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  exact Galois.Domains.Wrapped.wrapped_norm_bits.
+Qed.
+
+(** A circular join normalizes its stored endpoints before a table reads them. *)
+Lemma wrapped_join_bits_bound : forall w a b,
+  (wrapped_bits (wrapped_join w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  exact Galois.Domains.Wrapped.wrapped_join_bits.
+Qed.
+
+(** Concrete circular negation normalizes both output endpoints. *)
+Lemma wrapped_neg_bits_bound : forall w a,
+  (wrapped_bits (wrapped_neg w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  exact Galois.Domains.Wrapped.wrapped_neg_bits.
+Qed.
+
+(** Each signed-pole cut stores endpoints within its operand width. *)
+Lemma wrapped_pole_cut_bits_bound : forall w a,
+  (interval_bits (fst (wrapped_pole_cut w a)) <= Pos.to_nat w)%nat /\
+  (interval_bits (snd (wrapped_pole_cut w a)) <= Pos.to_nat w)%nat.
+Proof.
+  intros w a. destruct (Galois.Domains.Wrapped.wrapped_pole_cut_word_shape w a) as [Hl Hr].
+  split; apply wrapped_word_interval_bits; assumption.
+Qed.
+
+(** The concrete interval table supplies the same genuine clocks used by wrapped pieces. *)
+Module WrappedIntervalPayloadBounds :=
+  IntervalPayloadT WordLanguageT ThresholdsT WrappedScalar.
+Module WrappedIntervalTableBounds :=
+  IntervalWordTableT WordLanguageT ThresholdsT WrappedScalar WrappedIntervalPayloadBounds.
+
+(** The separately generated forward clocks agree with the certified interval table. *)
+Lemma wrapped_interval_forward_clock : forall o rw xs,
+  WrappedIntervalTable.T_wfwd o rw xs = WrappedIntervalTableBounds.T_wfwd o rw xs.
+Proof.
+  reflexivity.
+Qed.
+
+(** Interval-pair refinement uses the certified table's backward primitive clock. *)
+Lemma wrapped_interval_pair_clock : forall o w a b q,
+  WrappedIntervalBack.T_interval_assume_pair o w a b q =
+    WrappedIntervalTableBounds.T_interval_assume_pair o w a b q.
+Proof.
+  reflexivity.
+Qed.
+
+(** Circular projection finishes with a normalized join at the target width. *)
+Lemma wrapped_project_bits : forall target source q,
+  (wrapped_bits (wrapped_project target source q) <= 2 * Pos.to_nat target)%nat.
+Proof.
+  intros. unfold wrapped_project. apply wrapped_join_bits_bound.
+Qed.
+
+Module WrappedTableStorageProof (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
+  Module O := WrappedOpsCode L W.
+
+  (** Every one-operand path ends in supplied negation or a normalized concrete join. *)
+  Lemma forward_one_bits : forall o w rw a r,
+    O.forward_raw o rw [(w, a)] = Some r ->
+    (wrapped_bits r <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros o w rw a r Hresult.
+    pose proof (W.wrapped_result_bits rw a a) as [_ [_ [_ Hneg]]].
+    unfold O.forward_raw in Hresult. cbn beta iota zeta in Hresult.
+    injection Hresult as <-. destruct o.
+    all: lazymatch goal with
+    | |- context [O.forward_unary _ _ _ _] =>
+        unfold O.forward_unary; apply wrapped_join_bits_bound
+    | |- context [wrapped_project _ _ _] => apply wrapped_project_bits
+    | |- context [W.wrapped_neg _ _] => exact Hneg
+    end.
+  Qed.
+
+  (** Every two-operand path ends in supplied arithmetic or a normalized four-piece join. *)
+  Lemma forward_two_bits : forall o wa wb rw a b r,
+    O.forward_raw o rw [(wa, a); (wb, b)] = Some r ->
+    (wrapped_bits r <= 2 * Pos.to_nat rw)%nat.
+  Proof.
+    intros o wa wb rw a b r Hresult.
+    pose proof (W.wrapped_result_bits rw a b) as [Hadd [Hsub [Hmul _]]].
+    unfold O.forward_raw in Hresult. cbn beta iota zeta in Hresult.
+    injection Hresult as <-. destruct o.
+    all: lazymatch goal with
+    | |- context [O.forward_binary _ _ _ _ _ _] =>
+        unfold O.forward_binary; apply wrapped_join_four_bits
+    | |- context [W.wrapped_add _ _ _] => exact Hadd
+    | |- context [W.wrapped_sub _ _ _] => exact Hsub
+    | |- context [W.wrapped_mul _ _ _] => exact Hmul
+    end.
+  Qed.
+
+  (** Unary backward transfer normalizes or intersects the original operand. *)
+  Lemma assume_unary_bits : forall o w a rw q,
+    (wrapped_bits (O.assume_unary o w a rw q) <= 2 * Pos.to_nat w)%nat.
+  Proof.
+    intros o w a rw q. destruct o; cbn [O.assume_unary].
+    all: lazymatch goal with
+    | |- context [O.assume_trunc _ _ _ _] =>
+        unfold O.assume_trunc; apply wrapped_meet_bits
+    | |- context [wrapped_norm _ _] => apply wrapped_norm_bits_bound
+    | |- context [wrapped_meet _ _ _] => apply wrapped_meet_bits
+    end.
+  Qed.
+
+  (** Both backward binary results are normalized intersections at their operand widths. *)
+  Lemma assume_binary_bits : forall o wa wb a b rw q,
+    (wrapped_bits (fst (O.assume_binary o wa wb a b rw q)) <= 2 * Pos.to_nat wa)%nat /\
+    (wrapped_bits (snd (O.assume_binary o wa wb a b rw q)) <= 2 * Pos.to_nat wb)%nat.
+  Proof.
+    intros o wa wb a b rw q. destruct o;
+      cbn [O.assume_binary O.assume_binary_base fst snd];
+      split; apply wrapped_meet_bits.
+  Qed.
+  (** Normalized result storage fits a fixed part of the common width-square budget. *)
+  Lemma bounded_result_storage : forall rw (xs : list (width * wrapped)) r,
+    (wrapped_bits r <= 2 * Pos.to_nat rw)%nat ->
+    (N.of_nat (W.psize rw r) <= 4 * N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs)))%N.
+  Proof.
+    intros rw xs r Hbits. rewrite W.psize_bits.
+    rewrite <- (Nat2N.inj_mul 4). apply time_of_nat_le.
+    set (widths := fold_right Nat.add 0%nat
+      (map (fun x : width * wrapped => Pos.to_nat (fst x)) xs)).
+    set (inputs := fold_right Nat.add 0%nat
+      (map (fun x : width * wrapped => W.psize (fst x) (snd x)) xs)).
+    clearbody widths inputs. cbn [Nat.pow]. nia.
+  Qed.
+
+  (** Supplied selection uses its payload size law; other forward results are normalized. *)
+  Lemma forward_storage : forall o rw xs r, O.forward_raw o rw xs = Some r ->
+    (N.of_nat (W.psize rw r) <= (4 * W.c_payload + 4) * N.of_nat
+      ((Pos.to_nat rw + fold_right Nat.add 0%nat
+        (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs)))%N.
+  Proof.
+    intros o rw xs r Hresult.
+    destruct xs as [|[wa a] [|[wb b] [|[wc c] [|extra xs]]]];
+      try discriminate Hresult.
+    - pose proof (bounded_result_storage rw [(wa, a)] r
+        (forward_one_bits o wa rw a r Hresult)) as Hsize. nia.
+    - pose proof (bounded_result_storage rw [(wa, a); (wb, b)] r
+        (forward_two_bits o wa wb rw a b r Hresult)) as Hsize. nia.
+    - change (match o with bvite => Some (W.pjoin rw b c) | _ => None end = Some r)
+        in Hresult.
+      destruct o; try discriminate Hresult. injection Hresult as <-.
+      pose proof (W.pjoin_size rw b c) as Hjoin.
+      set (budget := ((Pos.to_nat rw + Pos.to_nat wa + Pos.to_nat wb +
+        Pos.to_nat wc + 1) ^ 2 + W.psize wa a + W.psize wb b + W.psize wc c)%nat).
+      assert (Hinput : (W.psize rw b + W.psize rw c + 1 <= 4 * budget)%nat).
+      { unfold budget. rewrite !W.psize_bits. cbn [Nat.pow]. nia. }
+      pose proof (time_of_nat_le _ _ Hinput) as Hbudget.
+      rewrite Nat2N.inj_mul in Hbudget.
+      cbn [map fold_right fst snd]. rewrite !Nat.add_0_r, !Nat.add_assoc.
+      fold budget. clearbody budget. nia.
+  Qed.
+
+  (** Backward outputs have one normalized payload for each retained operand. *)
+  Lemma backward_storage : forall o rw q xs ys, O.backward_raw o rw q xs = Some ys ->
+    (N.of_nat (length ys + fold_right Nat.add 0%nat
+      (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys))) <=
+      4 * N.of_nat
+        ((Pos.to_nat rw + fold_right Nat.add 0%nat
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 + W.psize rw q +
+          fold_right Nat.add 0%nat (map (fun x => W.psize (fst x) (snd x)) xs)))%N.
+  Proof.
+    intros o rw q xs ys Hresult.
+    destruct xs as [|[wa a] [|[wb b] [|extra xs]]]; try discriminate Hresult.
+    - injection Hresult as <-.
+      pose proof (assume_unary_bits o wa a rw q) as Hbits.
+      cbn [length map fold_right combine fst snd]. rewrite !Nat.add_0_r.
+      rewrite <- (Nat2N.inj_mul 4). apply time_of_nat_le.
+      rewrite !W.psize_bits. cbn [Nat.pow]. nia.
+    - injection Hresult as <-.
+      pose proof (assume_binary_bits o wa wb a b rw q) as [Ha Hb].
+      cbn [length map fold_right combine fst snd]. rewrite !Nat.add_0_r.
+      rewrite <- (Nat2N.inj_mul 4). apply time_of_nat_le.
+      rewrite !W.psize_bits. cbn [Nat.pow]. nia.
+  Qed.
+End WrappedTableStorageProof.
 
 Module WrappedTableT (L : WORD_LANGUAGE_T) (W : WRAPPED_T L)
     <: WRAPPED_TABLE_T L W.
