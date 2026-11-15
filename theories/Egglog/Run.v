@@ -10265,11 +10265,6 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     apply run_term_vars_member. exact Hvar.
   Qed.
 
-  Lemma F9_round_progress : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
-    relational_fragment p = true -> no_ids db -> D.changed db = false ->
-    D.changed (round p cp nv db) = true ->
-    exists f k, row (D.view (round p cp nv db)) f k None /\ ~ row (D.view db) f k None.
-  Proof. Admitted. (* STUB *)
 
   Lemma F10_run_loop : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     match loopN (driver p cp lim) (max_iter lim) (false, db) with
@@ -10791,6 +10786,413 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     - split; [exact Hwf|]. split; [exact Hloaded|lia].
   Qed.
 
+
+  (** Equal supported identifiers are literally the same stored identifier. *)
+  Lemma run_supported_related_equal : forall db (c d : cell V.t),
+    row_ids_unique (D.view db) -> run_supported db c -> run_supported db d ->
+    cell_rel (same (D.view db)) c d -> c = d.
+  Proof.
+    intros db c d Hunique Hc Hd Hrel. destruct Hrel as [i j Hij|v]; [|reflexivity].
+    destruct Hc as [f [k [o [Hrow Hin]]]]; destruct Hd as [g [key [out [Hother Hmem]]]].
+    f_equal. exact (Hunique f k o g key out i j Hrow Hother Hin Hmem Hij).
+  Qed.
+
+  (** Pointwise related supported keys are identical in a view with unique row identifiers. *)
+  Lemma run_supported_keys_equal : forall db k key, row_ids_unique (D.view db) ->
+    Forall (run_supported db) k -> Forall (run_supported db) key ->
+    Forall2 (cell_rel (same (D.view db))) k key -> k = key.
+  Proof.
+    intros db k key Hunique Hleft Hright Hrel. revert Hleft Hright.
+    induction Hrel as [|c d rest more Hcd Htail IH]; intros Hleft Hright; [reflexivity|].
+    inversion Hleft as [|c' rest' Hc Hrest]; subst c' rest'.
+    inversion Hright as [|d' more' Hd Hmore]; subst d' more'.
+    f_equal; [eapply run_supported_related_equal; eassumption|now apply IH].
+  Qed.
+
+  (** Every cell of a stored key is supported by that row. *)
+  Lemma run_row_key_supported : forall db f k o, row (D.view db) f k o ->
+    Forall (run_supported db) k.
+  Proof.
+    intros db f k o Hrow. apply Forall_forall. intros c Hin.
+    eapply run_row_supported; [exact Hrow|]. apply in_app_iff. now left.
+  Qed.
+
+  (** Unique stored identifiers make all constructor congruences redundant. *)
+  Lemma run_unique_congruent : forall db, D.wf db -> row_ids_unique (D.view db) ->
+    forall i j, D.cong db i j -> same (D.view db) i j.
+  Proof.
+    intros db Hwf Hunique i j Hcong.
+    induction Hcong as
+      [i j Hsame|f k key i j Hrow Hother Hcells IHcells|
+       i j Hcong IH|i j k Hleft IHleft Hright IHright].
+    - exact Hsame.
+    - assert (Hkeys : Forall2 (cell_rel (same (D.view db))) k key).
+      { clear Hrow Hother.
+        induction IHcells as [|c d rest more Hr Hhead Htail Hall IH]; constructor.
+        - destruct Hhead as [a b Hab Hsame|v]; constructor; assumption.
+        - exact IH. }
+      pose proof (run_supported_keys_equal db k key Hunique
+        (run_row_key_supported db f k (Some (Id i)) Hrow)
+        (run_row_key_supported db f key (Some (Id j)) Hother) Hkeys) as Heq. subst key.
+      pose proof (D.row_functional db f k (Some (Id i)) (Some (Id j)) Hwf Hrow Hother)
+        as Hout. injection Hout as <-. now apply run_same_refl.
+    - now apply run_same_sym.
+    - eapply run_same_trans; eassumption.
+  Qed.
+
+  (** Rebuilding a view with unique row identifiers adds no equality. *)
+  Lemma run_rebuild_unique_same : forall db, D.wf db -> row_ids_unique (D.view db) ->
+    forall i j, same (D.view (D.rebuild db)) i j <-> same (D.view db) i j.
+  Proof.
+    intros db Hwf Hunique i j. split.
+    - intro Hsame. apply (proj1 (D.rebuild_same db i j Hwf)) in Hsame.
+      eapply run_unique_congruent; eassumption.
+    - intro Hsame. now apply run_rebuild_same_incl.
+  Qed.
+
+  (** Canonicalization is injective on supported cells when no stored identifiers merge. *)
+  Lemma run_supported_canon_injective : forall db next (c d : cell V.t),
+    D.wf next -> row_ids_unique (D.view db) ->
+    (forall i j, same (D.view next) i j -> same (D.view db) i j) ->
+    run_supported db c -> run_supported db d -> D.canon next c = D.canon next d -> c = d.
+  Proof.
+    intros db next [i|v] [j|w] Hwf Hunique Hsame Hc Hd Heq;
+      cbn [D.canon] in Heq; try discriminate.
+    - injection Heq as Hrepr. eapply run_supported_related_equal; try eassumption.
+      constructor. apply Hsame. now apply (proj2 (D.same_repr next i j Hwf)).
+    - now injection Heq as <-.
+  Qed.
+
+  (** Canonicalization is injective on supported keys when no stored identifiers merge. *)
+  Lemma run_supported_canon_keys : forall db next k key,
+    D.wf next -> row_ids_unique (D.view db) ->
+    (forall i j, same (D.view next) i j -> same (D.view db) i j) ->
+    Forall (run_supported db) k -> Forall (run_supported db) key ->
+    map (D.canon next) k = map (D.canon next) key -> k = key.
+  Proof.
+    intros db next k key Hwf Hunique Hsame Hleft. revert key.
+    induction Hleft as [|c rest Hc Hrest IH]; intros [|d more] Hright Heq;
+      cbn [map] in Heq; try discriminate; [reflexivity|].
+    inversion Hright as [|d' more' Hd Hmore]; subst d' more'.
+    injection Heq as Hhead Htail. f_equal.
+    - eapply run_supported_canon_injective; eassumption.
+    - now apply IH.
+  Qed.
+
+  (** Combining an output with itself is idempotent for every database kind. *)
+  Lemma run_combine_idempotent : forall db f o, D.combine db f (Some o) o = o.
+  Proof.
+    intros db f [[i|v]|]; unfold D.combine;
+      destruct (kind (D.view db) f) as [[| |m]|]; try reflexivity.
+    now rewrite V.merge_idem.
+  Qed.
+
+  (** A fold of identical outputs retains the first output. *)
+  Lemma run_combine_identical : forall db f o os, Forall (fun other => other = o) os ->
+    fold_left (fun previous next => D.combine db f (Some previous) next) os o = o.
+  Proof.
+    intros db f o os Hsame. induction Hsame as [|other rest -> Hrest IH];
+      cbn [fold_left]; [reflexivity|]. now rewrite run_combine_idempotent.
+  Qed.
+
+  (** Merging a nonempty group of identical outputs only canonicalizes that output. *)
+  Lemma run_merged_identical : forall db f o os, os <> [] ->
+    Forall (fun other => other = o) os -> D.merged db f os = option_map (D.canon db) o.
+  Proof.
+    intros db f o [|first rest] Hnonempty Hsame; [contradiction|].
+    inversion Hsame as [|first' rest' Hfirst Hrest]; subst first' rest' first.
+    cbn [D.merged map]. apply run_combine_identical.
+    apply Forall_forall. intros output Hin. apply in_map_iff in Hin as [old [<- Hin]].
+    rewrite ((proj1 (Forall_forall _ _)) Hrest old Hin). reflexivity.
+  Qed.
+
+  (** A rebuilt row in a view with unique identifiers is one canonically renamed old row. *)
+  Lemma run_rebuild_unique_origin : forall db, D.wf db -> row_ids_unique (D.view db) ->
+    forall f key output, row (D.view (D.rebuild db)) f key output ->
+    exists k o, row (D.view db) f k o /\ key = map (D.canon (D.rebuild db)) k /\
+      output = option_map (D.canon (D.rebuild db)) o.
+  Proof.
+    intros db Hwf Hunique f key output Hrow.
+    destruct (D.rebuild_from db f key output Hwf Hrow)
+      as [srcs [Hnonempty [Hsources Houtput]]].
+    destruct srcs as [|[k o] rest]; [contradiction|].
+    pose proof Hsources as Hall.
+    inversion Hsources as [|first rest' [Hfirst Hkey] Hrest]; subst first rest'.
+    cbn [fst snd] in Hfirst, Hkey. exists k, o. split; [exact Hfirst|].
+    split; [symmetry; exact Hkey|]. rewrite Houtput.
+    apply run_merged_identical; [discriminate|].
+    apply Forall_forall. intros old Hin. apply in_map_iff in Hin as [[key' out] [Heq Hin]].
+    cbn [snd] in Heq. subst old.
+    destruct ((proj1 (Forall_forall _ _)) Hall (key', out) Hin) as [Hsource Hsourcekey].
+    cbn [fst snd] in Hsource, Hsourcekey.
+    assert (Hkeys : key' = k).
+    { eapply run_supported_canon_keys; [apply D.wf_rebuild; exact Hwf|exact Hunique| | | |].
+      - intros i j Hij. exact (proj1 (run_rebuild_unique_same db Hwf Hunique i j) Hij).
+      - exact (run_row_key_supported db f key' out Hsource).
+      - exact (run_row_key_supported db f k o Hfirst).
+      - now rewrite Hsourcekey, Hkey. }
+    subst key'. eapply D.row_functional; eassumption.
+  Qed.
+
+  (** Rebuilding a view with unique identifiers gives exactly its canonically renamed rows. *)
+  Lemma run_rebuild_unique_rows : forall db, D.wf db -> row_ids_unique (D.view db) ->
+    forall f key output, row (D.view (D.rebuild db)) f key output <->
+    exists k o, row (D.view db) f k o /\ key = map (D.canon (D.rebuild db)) k /\
+      output = option_map (D.canon (D.rebuild db)) o.
+  Proof.
+    intros db Hwf Hunique f key output. split.
+    - apply run_rebuild_unique_origin; assumption.
+    - intros [k [o [Hrow [-> ->]]]].
+      destruct (D.rebuild_keeps db f k o Hwf Hrow) as [out [Hkept Hle]].
+      destruct (run_rebuild_unique_origin db Hwf Hunique f
+        (map (D.canon (D.rebuild db)) k) out Hkept) as [key [output [Hsource [Hkey Hout]]]].
+      assert (Hkeys : key = k).
+      { eapply run_supported_canon_keys; [apply D.wf_rebuild; exact Hwf|exact Hunique| | | |].
+        - intros i j Hij. exact (proj1 (run_rebuild_unique_same db Hwf Hunique i j) Hij).
+        - exact (run_row_key_supported db f key output Hsource).
+        - exact (run_row_key_supported db f k o Hrow).
+        - symmetry. exact Hkey. }
+      subst key. pose proof (D.row_functional db f k output o Hwf Hsource Hrow) as ->.
+      now rewrite Hout in Hkept.
+  Qed.
+
+  (** An identifier-free stored tuple contains no identifier cell. *)
+  Lemma run_no_ids_row_identifier : forall db f k o i,
+    no_ids db -> row (D.view db) f k o -> In (Id i) (k ++ option_list o) -> False.
+  Proof.
+    intros db f k o i Hnoids Hrow Hin.
+    destruct ((proj2 Hnoids) f k o Hrow) as [-> Hvalues].
+    cbn [option_list] in Hin. rewrite app_nil_r in Hin.
+    apply Forall_forall with (x := Id i) in Hvalues; [|exact Hin].
+    destruct Hvalues as [v Heq]. discriminate.
+  Qed.
+
+  (** A database without identifier cells has unique stored identifiers. *)
+  Lemma run_no_ids_unique : forall db, no_ids db -> row_ids_unique (D.view db).
+  Proof.
+    intros db Hnoids f k o g key output i j Hrow Hother Hin Hmem Hsame.
+    exfalso. eapply run_no_ids_row_identifier; eassumption.
+  Qed.
+
+  (** A database without identifier cells is already canonical. *)
+  Lemma run_no_ids_canonical : forall db, no_ids db -> D.canonical db.
+  Proof.
+    intros db Hnoids f k o Hrow i Hin.
+    exfalso. eapply run_no_ids_row_identifier; eassumption.
+  Qed.
+
+  (** Rebuilding an identifier-free database preserves each row exactly. *)
+  Lemma run_no_ids_rebuild_rows : forall db, D.wf db -> no_ids db ->
+    forall f k o, row (D.view (D.rebuild db)) f k o <-> row (D.view db) f k o.
+  Proof.
+    intros db Hwf Hnoids f k o.
+    rewrite (run_rebuild_unique_rows db Hwf (run_no_ids_unique db Hnoids)). split.
+    - intros [key [output [Hrow [Hkey Houtput]]]].
+      destruct ((proj2 Hnoids) f key output Hrow) as [-> Hvalues].
+      rewrite (run_value_key_canon (D.rebuild db) key Hvalues) in Hkey.
+      cbn [option_map] in Houtput. subst k o. exact Hrow.
+    - intro Hrow. destruct ((proj2 Hnoids) f k o Hrow) as [-> Hvalues].
+      exists k, None. split; [exact Hrow|]. split; [|reflexivity].
+      now rewrite (run_value_key_canon (D.rebuild db) k Hvalues).
+  Qed.
+
+  (** Rebuilding cannot introduce identifiers into an identifier-free database. *)
+  Lemma run_no_ids_rebuild : forall db, D.wf db -> no_ids db -> no_ids (D.rebuild db).
+  Proof.
+    intros db Hwf Hnoids. split.
+    - rewrite (proj2 (proj2 (D.layout_rebuild db Hwf))). exact (proj1 Hnoids).
+    - intros f k o Hrow. apply (proj1 (run_no_ids_rebuild_rows db Hwf Hnoids f k o)) in Hrow.
+      exact ((proj2 Hnoids) f k o Hrow).
+  Qed.
+
+  (** An identifier-free rebuild cannot raise or clear the change flag. *)
+  Lemma run_no_ids_rebuild_changed : forall db, D.wf db -> no_ids db ->
+    D.changed (D.rebuild db) = D.changed db.
+  Proof.
+    intros db Hwf Hnoids. apply D.rebuild_quiet; [exact Hwf| |].
+    - now apply run_no_ids_canonical.
+    - apply run_unique_congruent; [exact Hwf|now apply run_no_ids_unique].
+  Qed.
+
+  (** Inserting a value-only relational key stores that exact key with no output. *)
+  Lemma run_put_none_row : forall db f k, D.wf db -> no_ids db ->
+    D.kind_ok db f k None -> Forall (fun c : cell V.t => exists v, c = Val v) k ->
+    row (D.view (D.put f k None db)) f k None.
+  Proof.
+    intros db f k Hwf Hnoids Hallowed Hvalues.
+    apply (proj2 (D.put_rows f k None db Hwf Hallowed f k None)).
+    rewrite (run_value_key_canon db k Hvalues). right.
+    split; [reflexivity|]. split; [reflexivity|].
+    destruct (D.old db f k) as [old|] eqn:Hold.
+    - apply (proj1 (D.old_row db f k old Hwf)) in Hold.
+      destruct ((proj2 Hnoids) f k old Hold) as [-> Hkey]. reflexivity.
+    - reflexivity.
+  Qed.
+
+  (** Inserting a value-only relation retains every earlier relational row exactly. *)
+  Lemma run_put_none_keeps : forall db f k, D.wf db -> no_ids db ->
+    D.kind_ok db f k None -> Forall (fun c : cell V.t => exists v, c = Val v) k ->
+    forall g key, row (D.view db) g key None ->
+      row (D.view (D.put f k None db)) g key None.
+  Proof.
+    intros db f k Hwf Hnoids Hallowed Hvalues g key Hrow.
+    destruct (Pos.eq_dec g f) as [->|Hfunction].
+    - destruct (list_eq_dec run_cell_eq_dec key k) as [->|Hkey].
+      + eapply run_put_none_row; eassumption.
+      + apply (proj2 (D.put_rows f k None db Hwf Hallowed f key None)).
+        rewrite (run_value_key_canon db k Hvalues). left. split; [exact Hrow|congruence].
+    - apply (proj2 (D.put_rows f k None db Hwf Hallowed g key None)).
+      rewrite (run_value_key_canon db k Hvalues). left. split; [exact Hrow|congruence].
+  Qed.
+
+  (** A raised relational change flag has a row absent from the round's initial snapshot. *)
+  Definition run_relational_progress (initial current : D.t) : Prop :=
+    no_ids current /\
+    (forall f k, row (D.view initial) f k None -> row (D.view current) f k None) /\
+    (D.changed current = true -> exists f k,
+      row (D.view current) f k None /\ ~ row (D.view initial) f k None).
+
+  (** A quiet initial snapshot starts the relational progress invariant. *)
+  Lemma run_progress_initial : forall db, no_ids db -> D.changed db = false ->
+    run_relational_progress db db.
+  Proof.
+    intros db Hnoids Hquiet. split; [exact Hnoids|]. split; [auto|].
+    intro Hchanged. congruence.
+  Qed.
+
+  (** A relational insertion either retains an earlier witness or adds a new absent key. *)
+  Lemma run_progress_put : forall initial db f k, D.wf db ->
+    run_relational_progress initial db -> D.kind_ok db f k None ->
+    Forall (fun c : cell V.t => exists v, c = Val v) k ->
+    run_relational_progress initial (D.put f k None db).
+  Proof.
+    intros initial db f k Hwf [Hnoids [Hincludes Hraised]] Hallowed Hvalues.
+    split; [eapply run_put_no_ids; eassumption|]. split.
+    - intros g key Hrow. eapply run_put_none_keeps; try eassumption. now apply Hincludes.
+    - intro Hchanged. destruct (D.changed db) eqn:Hflag.
+      + assert (Hfresh : exists g key, row (D.view db) g key None /\
+            ~ row (D.view initial) g key None) by (apply Hraised; congruence).
+        destruct Hfresh as [g [key [Hrow Habsent]]]. exists g, key.
+        split; [eapply run_put_none_keeps; eassumption|exact Habsent].
+      + exists f, k. split; [eapply run_put_none_row; eassumption|]. intro Hrow.
+        pose proof (D.put_changed f k None db Hwf Hallowed Hflag Hchanged) as Habsent.
+        rewrite (run_value_key_canon db k Hvalues) in Habsent.
+        apply Habsent. exists None. split; [now apply Hincludes|exact I].
+  Qed.
+
+  (** Rebuilding preserves the relational progress witness and initial row inclusion. *)
+  Lemma run_progress_rebuild : forall initial db, D.wf db ->
+    run_relational_progress initial db -> run_relational_progress initial (D.rebuild db).
+  Proof.
+    intros initial db Hwf [Hnoids [Hincludes Hraised]].
+    split; [now apply run_no_ids_rebuild|]. split.
+    - intros f k Hrow. apply (proj2 (run_no_ids_rebuild_rows db Hwf Hnoids f k None)).
+      now apply Hincludes.
+    - intro Hchanged. rewrite (run_no_ids_rebuild_changed db Hwf Hnoids) in Hchanged.
+      destruct (Hraised Hchanged) as [f [k [Hrow Habsent]]]. exists f, k.
+      split; [|exact Habsent].
+      now apply (proj2 (run_no_ids_rebuild_rows db Hwf Hnoids f k None)).
+  Qed.
+
+  (** Typed relational actions preserve the progress witness through their ordered mutations. *)
+  Lemma run_apply_go_progress : forall p cp initial acts g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    forallb relational_action acts = true ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    run_relational_progress initial db ->
+    run_relational_progress initial (apply_go acts s locals db).
+  Proof.
+    intros p cp initial acts. induction acts as [|a rest IH]; intros g s locals db
+      Hchecked Hwf Hloaded Hfragment Hrel Hacts Henv Hallocated Hprogress;
+      [exact Hprogress|].
+    cbn [forallb] in Hrel. apply andb_true_iff in Hrel as [Haction Hrestrel].
+    destruct a as [x f args|f args res|t u|x op args]; try discriminate.
+    - cbn [actions_ok] in Hacts.
+      destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hresult Hrest]]]]]].
+      pose proof (run_relational_kind p f out Hfragment Hkind) as Hout. subst out.
+      destruct res as [t|]; [contradiction|].
+      destruct (run_term_cells_typed g s locals args ss Henv Hargs)
+        as [cells [Hcells Hsorts]].
+      assert (Hrowtyped : row_sorted (program_sorts p) (program_kind p) f cells None).
+      { exists ORel. rewrite Hsorts. repeat split; assumption. }
+      assert (Hids : forall i, In (Id i) (cells ++ option_list None) -> D.allocated db i).
+      { intros i Hin. rewrite app_nil_r in Hin.
+        eapply run_term_cells_allocated; eassumption. }
+      pose proof (run_put_allowed p cp db f cells None Hchecked Hloaded Hrowtyped Hids)
+        as Hallowed.
+      destruct (run_put_state p cp f cells None db Hchecked Hwf Hloaded Hrowtyped Hids)
+        as [Hwf' [Hloaded' [Hids' Hpending]]].
+      pose proof (run_no_ids_terms db s locals args cells (proj1 Hprogress) Hallocated Hcells)
+        as Hvalues.
+      pose proof (run_progress_put initial db f cells Hwf Hprogress Hallowed Hvalues)
+        as Hprogress'.
+      assert (Hallocated' : env_allocated (D.put f cells None db) (look s locals)).
+      { eapply run_env_allocated_mono with (db := db);
+          [rewrite Hids'; reflexivity|exact Hallocated]. }
+      cbn [apply_go result_cell]. rewrite Hcells. eapply IH; eassumption.
+    - cbn [actions_ok] in Hacts. destruct Hacts as [Hargs Hrest].
+      destruct (run_term_values_typed g s locals args Henv Hargs) as [vs Hvalues].
+      cbn [apply_go]. rewrite Hvalues. destruct (V.prim op vs) as [v|] eqn:Hprim;
+        [|exact Hprogress].
+      eapply IH; try eassumption.
+      + apply run_env_sorted_set; [exact Henv|reflexivity].
+      + apply run_env_allocated_set; [exact Hallocated|]. intros i Heq. discriminate.
+  Qed.
+
+  (** Applying a typed relational rule retains the round's progress invariant. *)
+  Lemma run_apply_progress : forall p cp initial r s db,
+    plans_ok p cp -> D.wf db -> loaded p cp db -> relational_fragment p = true ->
+    In r (rules V.t p) -> rule_env (program_sorts p) (program_kind p) r s ->
+    env_allocated db s -> run_relational_progress initial db ->
+    run_relational_progress initial (apply (actions V.t r) s db).
+  Proof.
+    intros p cp initial r s db Hchecked Hwf Hloaded Hfragment Hin Henv Hallocated Hprogress.
+    destruct (run_rule_context p cp r s Hchecked Hin Henv) as [g [_ [Hacts Hsorted]]].
+    unfold apply. eapply run_apply_go_progress; try eassumption.
+    - eapply run_relational_actions; eassumption.
+    - intros x ty Hbound. destruct (Hsorted x ty Hbound) as [c [Hc Hsort]].
+      exists c. rewrite run_look_empty. split; assumption.
+    - intros x i Hcell. rewrite run_look_empty in Hcell. eapply Hallocated; exact Hcell.
+  Qed.
+
+  (** Saved relational jobs preserve initial rows and retain a witness for a raised flag. *)
+  Lemma run_apply_jobs_progress : forall p cp original js db,
+    plans_ok p cp -> relational_fragment p = true -> Forall (run_job_facts p original) js ->
+    D.wf db -> loaded p cp db -> (D.ids original <= D.ids db)%N ->
+    run_relational_progress original db ->
+    run_relational_progress original (apply_jobs p js db).
+  Proof.
+    intros p cp original js. induction js as [|[c b] rest IH]; intros db
+      Hchecked Hfragment Hjobs Hwf Hloaded Hids Hprogress; [exact Hprogress|].
+    inversion Hjobs as [|job remaining Hjob Hrest]; subst job remaining.
+    destruct Hjob as [Hrule [Henv [Hallocated Hmatch]]].
+    destruct (run_job_environment p original db c b Hids Henv Hallocated)
+      as [Htyped Hallocated_now].
+    destruct (run_apply_state p cp (job_rule p c) (fun x => trie_get x (bind_trie c b)) db
+      Hchecked Hwf Hloaded Hrule Htyped Hallocated_now)
+      as [Hnext [Hloadnext [Hidnext Hpending]]].
+    pose proof (run_apply_progress p cp original (job_rule p c)
+      (fun x => trie_get x (bind_trie c b)) db Hchecked Hwf Hloaded Hfragment
+      Hrule Htyped Hallocated_now Hprogress) as Hnextprogress.
+    cbn [apply_jobs]. eapply IH; try eassumption. eapply N.le_trans; eassumption.
+  Qed.
+
+  Lemma F9_round_progress : forall p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
+    relational_fragment p = true -> no_ids db -> D.changed db = false ->
+    D.changed (round p cp nv db) = true ->
+    exists f k, row (D.view (round p cp nv db)) f k None /\ ~ row (D.view db) f k None.
+  Proof.
+    intros p cp nv db Hchecked Hwf Hloaded Hfragment Hnoids Hquiet Hchanged.
+    pose proof (run_jobs_facts p cp nv db Hchecked Hwf Hloaded) as Hjobs.
+    pose proof (run_apply_jobs_progress p cp db (jobs p cp nv db) db Hchecked Hfragment
+      Hjobs Hwf Hloaded (N.le_refl _) (run_progress_initial db Hnoids Hquiet)) as Hprogress.
+    destruct (run_apply_jobs_state p cp db (jobs p cp nv db) db Hchecked Hjobs Hwf
+      Hloaded (N.le_refl _)) as [Hnext Hstate].
+    pose proof (run_progress_rebuild db (apply_jobs p (jobs p cp nv db) db) Hnext Hprogress)
+      as [_ [_ Hraised]].
+    rewrite F32_round_jobs in Hchanged |- *. now apply Hraised.
+  Qed.
 
   Lemma run_wf : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     D.wf (snd (run p cp lim db)) /\ D.canonical (snd (run p cp lim db)) /\
