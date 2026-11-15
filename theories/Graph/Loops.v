@@ -3117,6 +3117,48 @@ Proof.
   eapply Nat.le_trans; [exact Hsum|exact Hmass].
 Qed.
 
+(** The Boolean scan tests exactly the stored membership of back-edge events. *)
+Local Lemma loop_test_back_spec scan events :
+  test_back (loop_back_rows scan) events = true <->
+    forall u v, In (Edge Back u v) events -> loop_back_present scan u v.
+Proof.
+  unfold test_back. rewrite forallb_forall. split.
+  - intros Hall u v Hin. specialize (Hall (Edge Back u v) Hin).
+    cbn in Hall. unfold loop_back_present.
+    destruct (trie_get u (loop_back_rows scan)) as [row|] eqn:Hrow; [|discriminate].
+    destruct (trie_get v row) as [[]|] eqn:Hget; [reflexivity|discriminate].
+  - intros Hall event Hin. destruct event as [v|v|kind u v]; try reflexivity.
+    destruct kind; try reflexivity. specialize (Hall u v Hin).
+    unfold loop_back_present in Hall.
+    destruct (trie_get u (loop_back_rows scan)) as [row|] eqn:Hrow; [|contradiction].
+    now rewrite Hall.
+Qed.
+
+Local Lemma loop_reducible_test g t r :
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  (test_back (loop_back_rows (classify g t)) (prepared_search_trace g [r]) = true <->
+    reducible (base g) r).
+Proof.
+  intros Hgraph Hprepared Htree. rewrite loop_test_back_spec.
+  assert (Hcounts : counts_ok g) by (exact (conj (proj1 Hprepared) (proj1 (proj2 Hprepared)))).
+  assert (Hroots : forall x, In x [r] -> In x (nodes g)).
+  { intros x [<-|Hfalse]; [exact (loop_tree_root_listed g r t Htree)|contradiction]. }
+  destruct (loop_trace_valid g [r] Hcounts Hgraph Hroots) as [final Hdfs].
+  split.
+  - intros Htest u v [events [last [Hother Hin]]].
+    destruct (loop_dfs_roots_deterministic (base g) [] [r]
+      (prepared_search_trace g [r]) final Hdfs events last Hother) as [Hsame _].
+    subst events. specialize (Htest u v Hin).
+    destruct (loop_classify_backs g t r Hgraph Hprepared Htree u v) as [Hback Hlatches].
+    exact (proj2 (proj2 (proj1 Hback Htest))).
+  - intros Hreducible u v Hin.
+    destruct (LoopTrace.trace_edges_sound g [r] Back u v Hcounts Hgraph Hroots Hin)
+      as [Hreach Hedge].
+    destruct (loop_classify_backs g t r Hgraph Hprepared Htree u v) as [Hback Hlatches].
+    apply (proj2 Hback). split; [exact Hreach|]. split; [exact Hedge|].
+    apply Hreducible. now exists (prepared_search_trace g [r]), final.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -3265,7 +3307,16 @@ Module Loops <: LOOPS.
   Lemma reducible_b_spec : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     reflect (reducible (base g) r) (reducible_b g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    destruct (loop_classify_order g t r Hgraph Hprepared Htree) as [_ [Hroot _]].
+    unfold reducible_b. rewrite loop_first_equation.
+    rewrite (loop_first_head (loop_order (classify g t)) r Hroot).
+    pose proof (loop_reducible_test g t r Hgraph Hprepared Htree) as Hspec.
+    destruct (test_back (loop_back_rows (classify g t)) (prepared_search_trace g [r])) eqn:Htest.
+    - constructor. now apply (proj1 Hspec).
+    - constructor. intro Hreducible. apply (proj2 Hspec) in Hreducible. discriminate.
+  Qed.
 End Loops.
 
 Module LoopsT <: LOOPS_ALL.
