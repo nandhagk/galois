@@ -117,7 +117,9 @@ Module Run (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) <: RUN V 
     relational_fragment p = true -> no_ids db -> run p cp lim db = (Saturated, db') ->
     forall w, closed V.prim V.merge p w -> includes (D.view db) w ->
       includes (D.view db') w.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: closed permits a Put with no result to use a row with an
+    identifier result in the arbitrary comparison view. The nullary relation witness in
+    RunTest contradicts leastness together with run_wf, run_closed and run_terminates. *)
 
   Lemma run_terminates : forall p cp lim db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> relational_fragment p = true -> prim_free p = true -> no_ids db ->
@@ -390,7 +392,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma F11_derives_least : forall p db w f k, relational_fragment p = true ->
     no_ids db -> closed V.prim V.merge p w -> includes (D.view db) w ->
     derives V.prim p (D.view db) f k -> row w f k None.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: closed permits a Put with no result to be witnessed by
+    a row with an identifier result. RunTest gives a derived nullary relation missing as
+    a None-output row in such a closed comparison view. *)
 
   Lemma F12_herbrand_bound : forall p cp db nv, plans_ok p cp -> D.wf db -> loaded p cp db ->
     relational_fragment p = true -> prim_free p = true -> no_ids db ->
