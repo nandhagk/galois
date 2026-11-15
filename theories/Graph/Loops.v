@@ -639,6 +639,92 @@ Proof.
   unfold T_body_step. time_simpl. rewrite Nat2N.inj_add. lia.
 Qed.
 
+(** A present parentless vertex of an exact tree is its distinguished root. *)
+Local Lemma loop_exact_root_iff g t r v : domtree_exact g r t ->
+  ((exists n, trie_get v (pre t) = Some n) /\ trie_get v (idom t) = None <-> v = r).
+Proof.
+  intros [Hr [Hexact [Hwidth [Hchildren [Hunique [Hpre [Hpost Hinter]]]]]]].
+  assert (Hreach_root : reach (base g) [r] r).
+  { exists r, [r]. split; [now left|constructor]. }
+  destruct Hexact as [Hparents [Hnone Hwf]]. split.
+  - intros [Hpresent Hparent]. apply Hpre in Hpresent.
+    destruct (Pos.eq_dec v r) as [Heq|Hne]; [exact Heq|].
+    exfalso. apply (proj1 (Hnone v Hpresent) Hparent).
+    exists r. split; [apply loop_root_dominates|congruence].
+  - intros ->. split; [now apply Hpre|]. apply (proj2 (Hnone r Hreach_root)).
+    intros [u [Hdom Hne]]. specialize (Hdom [r] (path_refl (base g) r)).
+    destruct Hdom as [Heq|Hfalse]; [congruence|contradiction].
+Qed.
+
+(** Pending cursors describe a balanced sequence of child visits and ancestor returns. *)
+Inductive loop_tasks_wf (g : prepared) (t : domtree) (r : positive)
+    : list positive -> list loop_tree_task -> Prop :=
+| loop_tasks_nil : loop_tasks_wf g t r [] []
+| loop_tasks_root : forall v rest,
+    In v (nodes g) -> loop_tasks_wf g t r [] rest ->
+    loop_tasks_wf g t r [] (LoopTreeRoot v :: rest)
+| loop_tasks_enter : forall v stack rest,
+    (match stack with [] => v = r | p :: _ => trie_get v (idom t) = Some p end) ->
+    loop_tasks_wf g t r stack rest ->
+    loop_tasks_wf g t r stack (LoopTreeEnter v :: rest)
+| loop_tasks_children : forall p stack vs rest,
+    Forall (fun v => trie_get v (idom t) = Some p) vs ->
+    loop_tasks_wf g t r (p :: stack) rest ->
+    loop_tasks_wf g t r (p :: stack) (LoopTreeChildren vs :: rest)
+| loop_tasks_edges : forall u stack vs rest,
+    incl vs (succs (base g) u) -> loop_tasks_wf g t r (u :: stack) rest ->
+    loop_tasks_wf g t r (u :: stack) (LoopTreeEdges u vs :: rest)
+| loop_tasks_leave : forall v stack rest,
+    loop_tasks_wf g t r stack rest ->
+    loop_tasks_wf g t r (v :: stack) (LoopTreeLeave v :: rest).
+
+Local Lemma loop_tasks_initial g t r :
+  loop_tasks_wf g t r [] (map LoopTreeRoot (nodes g)).
+Proof.
+  assert (Hroots : forall xs, incl xs (nodes g) ->
+    loop_tasks_wf g t r [] (map LoopTreeRoot xs)).
+  { intro xs. induction xs as [|v xs IH]; intro Hincl; cbn [map]; [constructor|].
+    constructor; [apply Hincl; now left|]. apply IH. intros x Hx. apply Hincl. now right. }
+  apply Hroots. intros x Hx. exact Hx.
+Qed.
+
+Local Lemma loop_tasks_step g t r st next : domtree_exact g r t ->
+  loop_tasks_wf g t r (loop_tree_stack st) (loop_tree_pending st) ->
+  tree_step g t st = inl next ->
+  loop_tasks_wf g t r (loop_tree_stack next) (loop_tree_pending next).
+Proof.
+  intros Hexact Htasks Hstep. destruct st as [tasks stack active scan].
+  cbn [loop_tree_stack loop_tree_pending] in Htasks.
+  inversion Htasks as [|v rest Hv Hrest|v stk rest Hv Hrest|
+    p stk vs rest Hvs Hrest|u stk vs rest Hvs Hrest|v stk rest Hrest];
+    subst; cbn [tree_step] in Hstep.
+  - destruct scan. discriminate Hstep.
+  - destruct (trie_get v (pre t)) as [n|] eqn:Hpre;
+      destruct (trie_get v (idom t)) as [p|] eqn:Hparent;
+      injection Hstep as <-; cbn [loop_tree_stack loop_tree_pending]; try assumption.
+    constructor; [|assumption]. apply (proj1 (loop_exact_root_iff g t r v Hexact)).
+    split; [now exists n|exact Hparent].
+  - destruct scan as [order latches backs]. injection Hstep as <-.
+    cbn [loop_tree_stack loop_tree_pending].
+    apply loop_tasks_edges; [intros x Hx; exact Hx|].
+    apply loop_tasks_children.
+    + apply Forall_forall. intros x Hx. exact (proj1 (proj1 (proj2 (proj2 (proj2 Hexact))) v x) Hx).
+    + now apply loop_tasks_leave.
+  - destruct vs as [|v vs].
+    + injection Hstep as <-. cbn [loop_tree_stack loop_tree_pending]. assumption.
+    + inversion Hvs; subst. injection Hstep as <-. cbn [loop_tree_stack loop_tree_pending].
+      apply loop_tasks_enter; [assumption|]. now apply loop_tasks_children.
+  - destruct vs as [|v vs].
+    + injection Hstep as <-. cbn [loop_tree_stack loop_tree_pending]. assumption.
+    + destruct (trie_get v active) as [[]|].
+      * destruct scan as [order latches backs]. injection Hstep as <-.
+        cbn [loop_tree_stack loop_tree_pending]. apply loop_tasks_edges; [|assumption].
+        intros x Hx. apply Hvs. now right.
+      * injection Hstep as <-. cbn [loop_tree_stack loop_tree_pending].
+        apply loop_tasks_edges; [|assumption]. intros x Hx. apply Hvs. now right.
+  - injection Hstep as <-. cbn [loop_tail loop_tree_stack loop_tree_pending]. assumption.
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
