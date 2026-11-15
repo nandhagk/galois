@@ -1424,6 +1424,134 @@ Module DomCode <: DOM_OPS.
     end.
 End DomCode.
 
+(** Child grouping is stable filtering by the parent map. *)
+Local Definition dom_child_matches (m : ptrie positive) (p v : positive) : bool :=
+  match trie_get v m with Some parent => Pos.eqb p parent | None => false end.
+TimeFun dom_child_matches.
+
+Local Definition dom_child_row (rows : ptrie (list positive)) (p : positive)
+    : list positive :=
+  match trie_get p rows with Some row => row | None => [] end.
+TimeFun dom_child_row.
+
+Local Definition dom_child_push (m : ptrie positive) (rows : ptrie (list positive))
+    (v : positive) : ptrie (list positive) :=
+  match trie_get v m with
+  | None => rows
+  | Some p => PTrieCode.set p (v :: dom_child_row rows p) rows
+  end.
+TimeFun dom_child_push.
+
+Local Definition dom_child_rows m o := fold_left (dom_child_push m) o Empty.
+TimeFun dom_child_rows.
+
+Local Lemma dom_child_matches_spec : forall m p v,
+  dom_child_matches m p v = true <-> trie_get v m = Some p.
+Proof.
+  intros m p v. unfold dom_child_matches. destruct (trie_get v m) as [parent |].
+  - rewrite Pos.eqb_eq. split; intro H; congruence.
+  - split; discriminate.
+Qed.
+
+Local Lemma dom_child_fold_row : forall m vs rows p,
+  dom_child_row (fold_left (dom_child_push m) vs rows) p =
+    rev (filter (dom_child_matches m p) vs) ++ dom_child_row rows p.
+Proof.
+  intros m vs. induction vs as [| v rest IH]; intros rows p.
+  - reflexivity.
+  - cbn [fold_left]. rewrite IH. cbn [filter].
+    unfold dom_child_matches, dom_child_push.
+    destruct (trie_get v m) as [parent |] eqn:Hparent; [| reflexivity].
+    destruct (Pos.eq_dec p parent) as [Heq | Hneq].
+    + subst parent. rewrite Pos.eqb_refl.
+      unfold dom_child_row at 1. rewrite PTrie.get_set_same.
+      cbn [rev]. now rewrite <- app_assoc.
+    + rewrite (proj2 (Pos.eqb_neq p parent) Hneq).
+      unfold dom_child_row at 1. rewrite PTrie.get_set_other by exact Hneq. reflexivity.
+Qed.
+
+Local Lemma dom_child_row_reverse : forall rows p,
+  dom_child_row (PTrieCode.map (fun vs => rev_append vs []) rows) p =
+    rev (dom_child_row rows p).
+Proof.
+  intros rows p. unfold dom_child_row. rewrite PTrie.get_map.
+  change (PTrie.get p rows) with (trie_get p rows).
+  destruct (trie_get p rows) as [vs |]; [| reflexivity].
+  cbn [option_map]. symmetry. apply rev_alt.
+Qed.
+
+Local Lemma dom_tree_pre : forall g r m o,
+  pre (DomCode.tree g r m o) = dom_positions o.
+Proof. reflexivity. Qed.
+
+Local Lemma dom_tree_children : forall g r m o p,
+  children (DomCode.tree g r m o) p = filter (dom_child_matches m p) o.
+Proof.
+  intros g r m o p.
+  change (dom_child_row (PTrieCode.map (fun vs => rev_append vs [])
+    (dom_child_rows m o)) p = filter (dom_child_matches m p) o).
+  rewrite dom_child_row_reverse. unfold dom_child_rows. rewrite dom_child_fold_row.
+  unfold dom_child_row. rewrite PTrie.get_empty, app_nil_r, rev_involutive. reflexivity.
+Qed.
+
+Local Lemma dom_tree_children_member : forall g r m o p v,
+  In v (children (DomCode.tree g r m o) p) <-> In v o /\ trie_get v m = Some p.
+Proof.
+  intros g r m o p v. rewrite dom_tree_children, filter_In, dom_child_matches_spec.
+  reflexivity.
+Qed.
+
+Local Lemma dom_sorted_weaken {A : Type} (R S : A -> A -> Prop) :
+  (forall x y, R x y -> S x y) -> forall xs,
+  StronglySorted R xs -> StronglySorted S xs.
+Proof.
+  intros Hrel xs Hsorted. induction Hsorted as [| x rest Hsorted IH Hall].
+  - constructor.
+  - constructor; [exact IH |].
+    apply Forall_forall. intros y Hy. apply Hrel.
+    exact (proj1 (Forall_forall (R x) rest) Hall y Hy).
+Qed.
+
+Local Lemma dom_sorted_filter {A : Type} (R : A -> A -> Prop) (keep : A -> bool) :
+  forall xs, StronglySorted R xs -> StronglySorted R (filter keep xs).
+Proof.
+  intros xs Hsorted. induction Hsorted as [| x rest Hsorted IH Hall].
+  - constructor.
+  - cbn [filter]. destruct (keep x); [| exact IH]. constructor; [exact IH |].
+    apply Forall_forall. intros y Hy. apply filter_In in Hy as [Hy _].
+    exact (proj1 (Forall_forall (R x) rest) Hall y Hy).
+Qed.
+
+Local Lemma dom_order_sorted : forall o, StronglySorted (order_before o) o.
+Proof.
+  intro o. induction o as [| v rest IH]; [constructor |]. constructor.
+  - eapply dom_sorted_weaken; [| exact IH].
+    intros x y [i [j [Hi [Hj Hij]]]]. exists (S i), (S j).
+    cbn [nth_error]. split; [exact Hi |]. split; [exact Hj | lia].
+  - apply Forall_forall. intros x Hin. apply In_nth_error in Hin as [i Hi].
+    exists O, (S i). cbn [nth_error]. split; [reflexivity |]. split; [exact Hi | lia].
+Qed.
+
+Local Lemma dom_tree_preorder_order : forall g r m o x y,
+  NoDup o -> order_before o x y -> preorder_before (DomCode.tree g r m o) x y.
+Proof.
+  intros g r m o x y Hunique [i [j [Hi [Hj Hij]]]].
+  exists (N.of_nat i), (N.of_nat j). rewrite dom_tree_pre.
+  split; [now apply dom_positions_nth |].
+  split; [now apply dom_positions_nth | lia].
+Qed.
+
+Local Lemma dom_tree_children_sorted : forall g r m o p,
+  NoDup o -> NoDup (children (DomCode.tree g r m o) p) /\
+  StronglySorted (preorder_before (DomCode.tree g r m o))
+    (children (DomCode.tree g r m o) p).
+Proof.
+  intros g r m o p Hunique. rewrite dom_tree_children. split.
+  - now apply NoDup_filter.
+  - apply dom_sorted_filter. eapply dom_sorted_weaken; [| apply dom_order_sorted].
+    intros x y Hbefore. now apply dom_tree_preorder_order.
+Qed.
+
 Module Dom <: DOM.
   Include DomCode.
   Include DOM_SPEC.
