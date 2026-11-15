@@ -2235,10 +2235,44 @@ Module Search (V : VISITOR) <: SEARCH V.
   Qed.
 End Search.
 
+(** The width-and-cache budget absorbs each raw trace unit's constant overhead. *)
+Lemma search_public_trace_size (count width cache visitor : N) :
+  (count <= count * width + cache)%N ->
+  (count * (width + 1) + cache <= 2 * (count * (width + visitor) + cache))%N.
+Proof.
+  intro Hoverhead; nia.
+Qed.
+
+(** The same budget absorbs the callback fold's per-event dispatch overhead. *)
+Lemma search_public_fold_size (count width cache visitor events : N) :
+  (count <= count * width + cache)%N -> (events <= 2 * count)%N ->
+  (events * (visitor + 1) <= 2 * (count * (width + visitor) + cache))%N.
+Proof.
+  intros Hoverhead Hevents.
+  eapply N.le_trans; [apply N.mul_le_mono_r; exact Hevents|].
+  nia.
+Qed.
+
+(** Two phase envelopes and one wrapper unit fit the chosen public coefficient. *)
+Lemma search_public_wrapper_size (trace_cost fold_cost trace_factor fold_factor total : N) :
+  (1 <= total)%N -> (trace_cost <= trace_factor * (2 * total))%N ->
+  (fold_cost <= fold_factor * (2 * total))%N ->
+  (trace_factor * (trace_cost + fold_cost + 1) <=
+    trace_factor * (2 * trace_factor + 2 * fold_factor + 1) * total)%N.
+Proof.
+  intros Hpositive Htrace Hfold.
+  eapply N.le_trans with (m :=
+    (trace_factor * (trace_factor * (2 * total) + fold_factor * (2 * total) + total))%N).
+  - apply N.mul_le_mono_l; apply N.add_le_mono; [|exact Hpositive].
+    apply N.add_le_mono; assumption.
+  - nia.
+Qed.
+
 Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Include Search V.
   TimeFun dfs.
-  Definition c_dfs : N := 1%N. (* STUB *)
+  Definition c_dfs : N :=
+    (let k := 16384 * (c_loopN + 1) * (PTrieT.c_trie + 1) in k * (2 * k + 17))%N.
 
   Definition n_reach (g : prepared) (roots : list positive) : nat :=
     length (entered (trace g roots)).
@@ -2251,26 +2285,6 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   Definition work_bounded (g : prepared) (roots : list positive) (s : V.state) (B : nat) :=
     forall prefix suffix, trace g roots = prefix ++ suffix ->
       V.vwork (fold_events V.enter V.leave V.edge prefix s) <= B.
-
-  Lemma T_dfs_le : forall g roots s B, work_bounded g roots s B ->
-    (T_dfs g roots s <=
-      c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
-        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma dfs_bigO : bigO
-    (fun '(g, roots, s, B) => work_bounded g roots s B)
-    (fun '(g, roots, _, B) =>
-      (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-        (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
-          N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N)
-    (fun '(g, roots, s, _) => T_dfs g roots s).
-  Proof.
-    exists c_dfs; intros [[[g roots] s] B] Hwork.
-    eapply N.le_trans; [apply T_dfs_le; exact Hwork|].
-    apply N.mul_le_mono_l; lia.
-  Qed.
 
   Definition search_step := search_step.
   TimeFun search_step.
@@ -2704,18 +2718,110 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     unfold k_trace; nia.
   Qed.
 
-  Lemma T7_public : forall g roots s B, work_bounded g roots s B ->
-    (T_dfs g roots s <= c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
-      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
-        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
-
   (** Each entered vertex contributes at most two events and its row on every input. *)
   Lemma F7b_events_raw : forall g roots,
       length (trace g roots) <= 2 * n_reach g roots + e_reach g roots.
   Proof.
     intros g roots. pose proof (prepared_search_event_bound g roots) as Hevents.
     rewrite search_event_supply_entered in Hevents. exact Hevents.
+  Qed.
+
+  Local Transparent prepared_search_trace.
+
+  (** Empty roots produce no events, even if the binary fuel is exhausted. *)
+  Lemma empty_roots_trace g : trace g [] = [].
+  Proof.
+    unfold trace, prepared_search_trace; rewrite search_loopN_fuel; cbn [map].
+    match goal with |- context [loop_fuel _ ?fuel _] => destruct fuel end; reflexivity.
+  Qed.
+
+  Local Opaque prepared_search_trace.
+
+  (** Nonempty roots supply a positive key width; empty roots use the cache-width unit. *)
+  Lemma run_overhead_bound g roots :
+    (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) <=
+      N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+        N.of_nat (run_width g roots) +
+      N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N.
+  Proof.
+    destruct roots as [|v roots].
+    - unfold n_reach, e_reach, run_width; rewrite !empty_roots_trace.
+      cbn [entered length fold_right vertex_width graph_max].
+      apply (time_of_nat_le 1 (N.size_nat (nv g) + N.size_nat (ne g) + 1)); lia.
+    - assert (Hbits : 1 <= Pos.size_nat v)
+        by (destruct v; cbn [Pos.size_nat]; lia).
+      pose proof (search_vertex_width_member (v :: roots) v (or_introl eq_refl)) as Hmember.
+      assert (Hwidth : 1 <= run_width g (v :: roots)).
+      { unfold run_width; rewrite search_graph_max; clear - Hbits Hmember; lia. }
+      pose proof (time_of_nat_le _ _ Hwidth) as HwidthN.
+      clear - HwidthN; nia.
+  Qed.
+
+  (** The phase bounds retain the reachable-size, callback and cache-width charges. *)
+  Lemma T7_public : forall g roots s B, work_bounded g roots s B ->
+    (T_dfs g roots s <= c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
+  Proof.
+    intros g roots s B Hwork.
+    pose proof (T4_raw g roots) as Htrace.
+    pose proof (T5_fold g roots s B Hwork) as Hfold.
+    pose proof (T6_dfs g roots s) as Hwrapper.
+    pose proof (F7b_events_raw g roots) as Hevents.
+    pose proof (run_overhead_bound g roots) as Hoverhead.
+    set (count := N.of_nat (n_reach g roots + e_reach g roots + length roots + 1)) in *.
+    set (width := N.of_nat (run_width g roots)) in *.
+    set (cache := N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)) in *.
+    set (visitor := (V.c_vis * N.of_nat (B + 1))%N) in *.
+    set (total := (count * (width + visitor) + cache)%N).
+    rewrite (Nat2N.inj_add (run_width g roots) 1) in Htrace; fold width in Htrace.
+    assert (Hcount : (N.of_nat (length (trace g roots) + 1) <= 2 * count)%N).
+    { unfold count.
+      replace (2 * N.of_nat (n_reach g roots + e_reach g roots + length roots + 1))%N with
+        (N.of_nat (2 * (n_reach g roots + e_reach g roots + length roots + 1)))
+        by (rewrite Nat2N.inj_mul; reflexivity).
+      apply time_of_nat_le; clear - Hevents; lia. }
+    assert (Hcache : (1 <= cache)%N).
+    { unfold cache.
+      apply (time_of_nat_le 1 (N.size_nat (nv g) + N.size_nat (ne g) + 1));
+        clear - g; lia. }
+    assert (Hpositive : (1 <= total)%N).
+    { unfold total; eapply N.le_trans; [exact Hcache|apply N.le_add_l]. }
+    assert (Htrace_total : (T_search_trace g roots <= k_trace * (2 * total))%N).
+    { eapply N.le_trans; [exact Htrace|]; apply N.mul_le_mono_l.
+      apply search_public_trace_size; exact Hoverhead. }
+    assert (Hfold_total :
+      (T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
+        (trace g roots) s <= k_fold * (2 * total))%N).
+    { eapply N.le_trans; [exact Hfold|]; rewrite <- N.mul_assoc.
+      apply N.mul_le_mono_l; apply search_public_fold_size; assumption. }
+    change (T_dfs g roots s <= k_trace * (2 * k_trace + 2 * k_fold + 1) * total)%N.
+    eapply N.le_trans; [exact Hwrapper|].
+    apply search_public_wrapper_size; assumption.
+  Qed.
+
+  (** Search charges the reached graph, every callback, and binary cache widths. *)
+  Lemma T_dfs_le : forall g roots s B, work_bounded g roots s B ->
+    (T_dfs g roots s <=
+      c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+      (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
+  Proof.
+    exact T7_public.
+  Qed.
+
+  (** The public pointwise search bound gives the reachable-size family bound. *)
+  Lemma dfs_bigO : bigO
+    (fun '(g, roots, s, B) => work_bounded g roots s B)
+    (fun '(g, roots, _, B) =>
+      (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
+        (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
+          N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N)
+    (fun '(g, roots, s, _) => T_dfs g roots s).
+  Proof.
+    exists c_dfs; intros [[[g roots] s] B] Hwork.
+    eapply N.le_trans; [apply T_dfs_le; exact Hwork|].
+    apply N.mul_le_mono_l; lia.
   Qed.
 
 End SearchT.
