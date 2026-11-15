@@ -229,6 +229,82 @@ Proof.
       unfold inventory_slot_bits in IH. nia.
 Qed.
 
+(** A position comparison is charged to the position read from the layout. *)
+Lemma T_inventory_sequence_le : forall start count positions,
+  (T_inventory_sequence start count positions <=
+    8 * N.of_nat (fold_right (fun i m => (i + 1 + m)%nat) 0%nat positions + 1)%nat)%N.
+Proof.
+  intros start count. revert start.
+  induction count as [|count IH]; intros start [|i rest]; time_step.
+Qed.
+
+(** Preparing declaration metadata pays for every name and argument sort once. *)
+Lemma T_inventory_decl_table_le : forall ds,
+  (T_inventory_decl_table ds <= 16 * (PTrieT.c_trie + 1) *
+    N.of_nat (fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + 1)%nat)%N.
+Proof.
+  induction ds as [|d ds IH].
+  - time_step.
+  - pose proof (PTrieT.T_set_le (nat * output) (name d)
+      (length (arg_sorts d), out d) (inventory_decl_table ds)) as Hset.
+    change (PTrieCode.T_set (name d) (length (arg_sorts d), out d)
+      (inventory_decl_table ds) <= PTrieT.c_trie *
+        N.of_nat (Pos.size_nat (name d) + 1))%N in Hset.
+    pose proof (Datatypes.T_length_le (arg_sorts d)) as Hlength.
+    unfold decl_bits in *.
+    time_unfold @T_inventory_decl_table. time_simpl. time_cbn.
+    rewrite !Nat2N.inj_add in *.
+    unfold PTrieT.c_trie in *.
+    lia.
+Qed.
+
+(** Each slot check pays for the name and the positions that it reads. *)
+Lemma T_inventory_slot_le : forall tb f positions,
+  (T_inventory_slot tb f positions <= 16 * (PTrieT.c_trie + 1) *
+    N.of_nat (Pos.size_nat f +
+      fold_right (fun i m => (i + 1 + m)%nat) 0%nat positions + 1)%nat)%N.
+Proof.
+  intros tb f positions.
+  pose proof (PTrieT.trie_get_clock (nat * output) f tb) as Hget.
+  time_unfold @T_inventory_slot. time_simpl. time_cbn.
+  destruct (trie_get f tb) as [[arity o] |]; [destruct o |].
+  - rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. lia.
+  - pose proof (T_inventory_sequence_le 0 (S arity) positions) as Hsequence.
+    rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. lia.
+  - rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. lia.
+  - rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. lia.
+Qed.
+
+(** A scan visits every layout slot and advances a bounded binary counter. *)
+Lemma T_inventory_scan_le : forall sl tb offset bound,
+  N.to_nat offset + length sl <= bound ->
+  (T_inventory_scan tb sl offset <= 64 * (PTrieT.c_trie + 1) *
+    N.of_nat (inventory_slot_bits sl + 1) * N.of_nat (Nat.log2 bound + 1))%N.
+Proof.
+  induction sl as [|[f positions] sl IH]; intros tb offset bound Hbound.
+  - unfold inventory_slot_bits. time_unfold @T_inventory_scan.
+    time_simpl. time_cbn. rewrite Nat2N.inj_add. unfold PTrieT.c_trie. nia.
+  - assert (Hnext : N.to_nat (N.succ offset) + length sl <= bound).
+    { rewrite N2Nat.inj_succ. cbn [length] in Hbound. lia. }
+    pose proof (inventory_counter_width offset bound ltac:(cbn [length] in Hbound; lia))
+      as Hwidth.
+    pose proof (T_inventory_slot_le tb f positions) as Hslot.
+    pose proof (PTrieT.T_remove_le (nat * output) f tb) as Hremove.
+    change (PTrieCode.T_remove f tb <= PTrieT.c_trie *
+      N.of_nat (Pos.size_nat f + 1))%N in Hremove.
+    pose proof (IH (PTrieCode.remove f tb) (N.succ offset) bound Hnext) as Hselected.
+    pose proof (IH tb (N.succ offset) bound Hnext) as Hskipped.
+    pose proof (Std.N.T_succ_le offset) as Hsucc.
+    assert (HwidthN : (N.of_nat (N.size_nat offset) <=
+      N.of_nat (Nat.log2 bound + 1))%N) by lia.
+    time_unfold @T_inventory_scan. time_simpl. time_cbn.
+    destruct (inventory_slot tb f positions);
+      unfold inventory_slot_bits in *;
+      cbn [fold_right fst snd] in *;
+      rewrite !Nat2N.inj_add in *;
+      unfold PTrieT.c_trie in *; nia.
+Qed.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
   Definition inventory (ds : list decl) (sl : list (positive * list nat))
@@ -341,11 +417,19 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Definition a (_ : D.t) : nat := 0.
   (* STUB-CODE *)
   Definition cost_width (_ : D.t) : nat := 0.
-  Definition c_ex : N := 1. (* STUB *)
+  Definition c_ex : N := 128 * (PTrieT.c_trie + 1).
   Lemma T_inventory_le : forall ds sl,
     (T_inventory ds sl <= c_ex * N.of_nat (layout_bits ds sl + 1) *
       N.of_nat (Nat.log2 (length sl) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds sl.
+    pose proof (T_inventory_decl_table_le ds) as Hdecl.
+    pose proof (T_inventory_scan_le sl (inventory_decl_table ds) 0%N (length sl)
+      ltac:(cbn [N.to_nat]; lia)) as Hscan.
+    time_unfold @T_inventory. time_simpl. time_cbn.
+    unfold c_ex, layout_bits. unfold inventory_slot_bits in Hscan.
+    rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. nia.
+  Qed.
 
   Lemma inventory_size : forall ds sl,
     inventory_bits (inventory ds sl) <=
