@@ -664,6 +664,200 @@ Module Compile (V : VALUE) <: COMPILE V.
     pose proof (proj1 (root_var_bounds rw)) as Hroot. lia.
   Qed.
 
+  (** * Compiler table environments *)
+
+  (** A table environment uses the first variable occurrence and retains other bindings. *)
+  Fixpoint table_bind {A} (ts : list (term V.t)) (values : list A)
+      (base : positive -> option A) : positive -> option A :=
+    match ts, values with
+    | Var h :: rest, value :: tail => fun x =>
+        if Pos.eqb h x then Some value else table_bind rest tail base x
+    | Lit _ :: rest, _ :: tail => table_bind rest tail base
+    | _, _ => base
+    end.
+
+  (** Repeated variable terms have the same payload at every aligned table position. *)
+  Definition table_compatible {A} (ts : list (term V.t)) (values : list A) : Prop :=
+    forall i j x v w, nth_error ts i = Some (Var x) -> nth_error values i = Some v ->
+      nth_error ts j = Some (Var x) -> nth_error values j = Some w -> v = w.
+
+  (** Compatibility of an aligned table is inherited by its tail. *)
+  Lemma table_compatible_tail : forall A t (value : A) ts values,
+    table_compatible (t :: ts) (value :: values) -> table_compatible ts values.
+  Proof.
+    intros A t value ts values Hcompatible i j x v w Hti Hvi Htj Hvj.
+    exact (Hcompatible (S i) (S j) x v w Hti Hvi Htj Hvj).
+  Qed.
+
+  (** Every compatible variable entry has its assigned payload in the table environment. *)
+  Lemma table_bind_at : forall A ts (values : list A) base,
+    table_compatible ts values -> forall i x value,
+      nth_error ts i = Some (Var x) -> nth_error values i = Some value ->
+      table_bind ts values base x = Some value.
+  Proof.
+    intros A ts. induction ts as [|t ts IH]; intros [|v values] base Hcompatible
+      [|i] x value Hterm Hvalue; cbn [nth_error] in Hterm, Hvalue; try discriminate.
+    - injection Hterm as Ht. subst t. injection Hvalue as Hv. subst v.
+      cbn [table_bind]. now rewrite Pos.eqb_refl.
+    - pose proof (table_compatible_tail A t v ts values Hcompatible) as Htail.
+      destruct t as [h|literal]; cbn [table_bind].
+      + destruct (Pos.eqb h x) eqn:Heq.
+        * apply Pos.eqb_eq in Heq. subst h. f_equal.
+          exact (Hcompatible 0 (S i) x v value eq_refl eq_refl Hterm Hvalue).
+        * exact (IH values base Htail i x value Hterm Hvalue).
+      + exact (IH values base Htail i x value Hterm Hvalue).
+  Qed.
+
+  (** A table preserves any base binding with which all of its matching entries agree. *)
+  Lemma table_bind_agrees : forall A ts (values : list A) base x,
+    (forall i value, nth_error ts i = Some (Var x) -> nth_error values i = Some value ->
+      base x = Some value) -> table_bind ts values base x = base x.
+  Proof.
+    intros A ts. induction ts as [|t ts IH]; intros [|v values] base x Hagree;
+      try reflexivity; [destruct t; reflexivity |].
+    assert (Htail : forall i value, nth_error ts i = Some (Var x) ->
+      nth_error values i = Some value -> base x = Some value).
+    { intros i value Ht Hv. exact (Hagree (S i) value Ht Hv). }
+    destruct t as [h|literal]; cbn [table_bind].
+    - destruct (Pos.eqb h x) eqn:Heq.
+      + apply Pos.eqb_eq in Heq. subst h. symmetry. exact (Hagree 0 v eq_refl eq_refl).
+      + exact (IH values base x Htail).
+    - exact (IH values base x Htail).
+  Qed.
+
+  (** A table lookup either preserves the base or comes from an aligned variable entry. *)
+  Lemma table_bind_case : forall A ts (values : list A) base x,
+    table_bind ts values base x = base x \/ exists i value,
+      nth_error ts i = Some (Var x) /\ nth_error values i = Some value /\
+        table_bind ts values base x = Some value.
+  Proof.
+    intros A ts. induction ts as [|t ts IH]; intros [|v values] base x;
+      try (left; reflexivity); [destruct t; left; reflexivity |].
+    destruct t as [h|literal]; cbn [table_bind].
+    - destruct (Pos.eqb h x) eqn:Heq.
+      + apply Pos.eqb_eq in Heq. subst h. right. exists 0, v. repeat split; reflexivity.
+      + destruct (IH values base x) as [Hbase | [i [value [Ht [Hv Hlookup]]]]].
+        * now left.
+        * right. exists (S i), value. split; [exact Ht |]. split; assumption.
+    - destruct (IH values base x) as [Hbase | [i [value [Ht [Hv Hlookup]]]]].
+      + now left.
+      + right. exists (S i), value. split; [exact Ht |]. split; assumption.
+  Qed.
+
+  (** Equal-length lists are related when their entries are related at each common index. *)
+  Lemma forall2_at_indices : forall A B (R : A -> B -> Prop) xs ys,
+    length xs = length ys ->
+    (forall i x y, nth_error xs i = Some x -> nth_error ys i = Some y -> R x y) ->
+    Forall2 R xs ys.
+  Proof.
+    intros A B R xs. induction xs as [|x xs IH]; intros [|y ys] Hlength Hall;
+      cbn [length] in Hlength; try discriminate.
+    - constructor.
+    - constructor; [exact (Hall 0 x y eq_refl eq_refl) |].
+      apply IH; [lia |]. intros i a b Ha Hb. exact (Hall (S i) a b Ha Hb).
+  Qed.
+
+  (** The table environment realizes its whole term list when literals also agree. *)
+  Lemma table_bind_values : forall ts cells base,
+    length ts = length cells -> table_compatible ts cells ->
+    (forall i v c, nth_error ts i = Some (Lit v) -> nth_error cells i = Some c -> c = Val v) ->
+    terms_value (table_bind ts cells base) ts cells.
+  Proof.
+    intros ts cells base Hlength Hcompatible Hliterals.
+    apply forall2_at_indices; [exact Hlength |]. intros i [x|v] c Hterm Hcell.
+    - exact (table_bind_at _ ts cells base Hcompatible i x c Hterm Hcell).
+    - exact (Hliterals i v c Hterm Hcell).
+  Qed.
+
+
+  (** The table wrapper preserves forms, distinct constructor names and the fresh lower bound. *)
+  Lemma pattern_table_facts : forall (p : fpat V.t) rn,
+    Forall2 node_term (nodes V.t p) (fst (pattern_table p rn)) /\
+    NoDup (constructor_names (nodes V.t p) (fst (pattern_table p rn))) /\
+    forall i f children x, nth_error (nodes V.t p) i = Some (PApp f children) ->
+      nth_error (fst (pattern_table p rn)) i = Some (Var x) -> (rn <= x)%positive.
+  Proof.
+    intros [ns r] rn. cbn [pattern_table nodes].
+    pose proof (pattern_terms_info ns (Some r) rn (Pos.succ rn) ltac:(lia)) as Hinfo.
+    destruct (pattern_terms ns (Some r) rn (Pos.succ rn)) as [ts last] eqn:Hrun.
+    cbn [fst]. destruct Hinfo as [Hforms [Hlast [Hrange Hdistinct]]].
+    split; [exact Hforms |]. split; [exact Hdistinct |].
+    intros i f children x Hnode Hterm.
+    pose proof (Hrange x (constructor_name_at ns ts i f children x Hnode Hterm)) as Hname.
+    destruct Hname as [[-> Hr] | Hbounds]; lia.
+  Qed.
+
+  (** A preserved term position identifies its corresponding pattern node. *)
+  Lemma node_term_lookup : forall ns ts, Forall2 node_term ns ts -> forall i t,
+    nth_error ts i = Some t -> exists n, nth_error ns i = Some n /\ node_term n t.
+  Proof.
+    intros ns ts Hforms. induction Hforms as [|n t ns ts Hhead Htail IH];
+      intros [|i] t' Hterm; cbn [nth_error] in Hterm; try discriminate.
+    - injection Hterm as <-. exists n. split; [reflexivity | exact Hhead].
+    - exact (IH i t' Hterm).
+  Qed.
+
+  (** Variables below the fresh range can only come from original hole nodes. *)
+  Lemma pattern_table_small_var : forall (p : fpat V.t) rn i x,
+    (x < rn)%positive -> nth_error (fst (pattern_table p rn)) i = Some (Var x) ->
+    nth_error (nodes V.t p) i = Some (PHole x).
+  Proof.
+    intros p rn i x Hsmall Hterm.
+    destruct (pattern_table_facts p rn) as [Hforms [Hdistinct Hrange]].
+    destruct (node_term_lookup _ _ Hforms i (Var x) Hterm) as [n [Hnode Hform]].
+    destruct n as [h|f children|v]; cbn [node_term] in Hform.
+    - injection Hform as Heq. subst h. exact Hnode.
+    - pose proof (Hrange i f children x Hnode Hterm). lia.
+    - discriminate.
+  Qed.
+
+  (** Literal terms in a represented table carry exactly their literal cells. *)
+  Lemma pattern_table_literals : forall (p : fpat V.t) rn w tau cs,
+    (forall i c, nth_error cs i = Some c -> represents_node w tau (nodes V.t p) i c) ->
+    forall i v c, nth_error (fst (pattern_table p rn)) i = Some (Lit v) ->
+      nth_error cs i = Some c -> c = Val v.
+  Proof.
+    intros p rn w tau cs Hcells i v c Hterm Hcell.
+    destruct (node_term_lookup _ _ (proj1 (pattern_table_facts p rn)) i (Lit v) Hterm)
+      as [n [Hnode Hform]].
+    destruct n as [h|f children|literal]; cbn [node_term] in Hform; try discriminate.
+    - destruct Hform as [x Hbad]. discriminate.
+    - injection Hform as Heq. subst literal.
+      exact (represents_node_literal w tau _ i c v Hnode (Hcells i c Hcell)).
+  Qed.
+
+  (** Repeated terms in a fresh pattern table have the same canonical representing cells. *)
+  Lemma pattern_table_compatible : forall (p : fpat V.t) rn w tau cs,
+    canonical_view w ->
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    (forall i c, nth_error cs i = Some c -> represents_node w tau (nodes V.t p) i c) ->
+    table_compatible (fst (pattern_table p rn)) cs.
+  Proof.
+    intros p rn w tau cs Hcanonical Hholes Hcells.
+    destruct (pattern_table_facts p rn) as [Hforms [Hdistinct Hrange]].
+    intros i j x c d Hti Hci Htj Hdj.
+    destruct (node_term_lookup _ _ Hforms i (Var x) Hti) as [ni [Hni Hfi]].
+    destruct (node_term_lookup _ _ Hforms j (Var x) Htj) as [nj [Hnj Hfj]].
+    destruct ni as [hi|fi chi|vi]; destruct nj as [hj|fj chj|vj];
+      cbn [node_term] in Hfi, Hfj; try discriminate.
+    - injection Hfi as Heqi. subst hi. injection Hfj as Heqj. subst hj.
+      pose proof (Hcells i c Hci) as Hc. pose proof (Hcells j d Hdj) as Hd.
+      destruct (represents_node_hole w tau _ i c x Hni Hc) as [e [Htau Hr]].
+      destruct (represents_node_hole w tau _ j d x Hnj Hd) as [e' [Htau' Hr']].
+      assert (e = e') by congruence. subst e'.
+      apply (canonical_cell_unique w c d Hcanonical (proj1 Hc) (proj1 Hd)).
+      exact (represents_unique w c e Hcanonical Hr d Hr').
+    - injection Hfi as Heqi. subst hi.
+      pose proof (Hholes x (nth_error_In _ i Hni)) as Hsmall.
+      pose proof (Hrange j fj chj x Hnj Htj). lia.
+    - injection Hfj as Heqj. subst hj.
+      pose proof (Hholes x (nth_error_In _ j Hnj)) as Hsmall.
+      pose proof (Hrange i fi chi x Hni Hti). lia.
+    - assert (i = j).
+      { eapply constructor_names_injective; eassumption. }
+      subst j. congruence.
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
