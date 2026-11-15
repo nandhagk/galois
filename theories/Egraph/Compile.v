@@ -2088,6 +2088,293 @@ Module Compile (V : VALUE) <: COMPILE V.
   Qed.
 
 
+  (** Every unfolded pattern node has an existing list position. *)
+  Lemma unfolds_pat_index : forall tau ns j e, @unfolds_pat V.t tau ns j e ->
+    j < length ns.
+  Proof.
+    intros tau ns j e Hu. destruct Hu as [i h t Hnth Htau|i v Hnth|
+      i f children args Hnth Hbefore Hargs];
+      apply nth_error_Some; rewrite Hnth; discriminate.
+  Qed.
+
+  (** An existing pattern node has an explicit term in its generated table. *)
+  Lemma pattern_get_exists : forall (p : fpat V.t) rn j,
+    j < length (nodes V.t p) -> exists t,
+    nth_error (fst (pattern_table p rn)) j = Some t /\
+      pattern_get (Var 1%positive) j (fst (pattern_table p rn)) = t.
+  Proof.
+    intros p rn j Hindex.
+    destruct (pattern_table_facts p rn) as [Hforms Hrest].
+    assert (Hlength : length (nodes V.t p) = length (fst (pattern_table p rn))).
+    { eapply Forall2_length. exact Hforms. }
+    destruct (nth_error (fst (pattern_table p rn)) j) as [t|] eqn:Hterm.
+    - exists t. split; [reflexivity | unfold pattern_get; now rewrite Hterm].
+    - apply nth_error_None in Hterm. lia.
+  Qed.
+
+  (** Processed table positions hold cells representing all of their possible unfoldings. *)
+  Definition prefix_represents w tau ns ts s bound : Prop :=
+    forall j e, j < bound -> @unfolds_pat V.t tau ns j e -> exists c,
+      term_value s (pattern_get (Var 1%positive) j ts) c /\ represents w c e.
+
+  (** Inserting a fresh constructor keeps all earlier represented table positions. *)
+  Lemma prefix_represents_update : forall (p : fpat V.t) rn w tau s i f children x c,
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    nth_error (nodes V.t p) i = Some (PApp f children) ->
+    nth_error (fst (pattern_table p rn)) i = Some (Var x) ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s i ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) (update s x c) i.
+  Proof.
+    intros p rn w tau s i f children x c Hholes Hnode Hterm Hprefix j e Hbefore Hu.
+    destruct (Hprefix j e Hbefore Hu) as [d [Hvalue Hrep]]. exists d. split; [|exact Hrep].
+    apply term_value_update_other; [|exact Hvalue].
+    destruct (pattern_get_exists p rn j (unfolds_pat_index tau _ j e Hu))
+      as [t [Ht Hget]]. rewrite Hget. intro Heq. rewrite Heq in Ht.
+    pose proof (pattern_constructor_name_unique p rn i f children x j
+      Hholes Hnode Hterm Ht). lia.
+  Qed.
+
+  (** A newly represented position extends the represented prefix by one. *)
+  Lemma prefix_represents_step : forall w tau ns ts s i,
+    prefix_represents w tau ns ts s i ->
+    (forall e, @unfolds_pat V.t tau ns i e -> exists c,
+      term_value s (pattern_get (Var 1%positive) i ts) c /\ represents w c e) ->
+    prefix_represents w tau ns ts s (S i).
+  Proof.
+    intros w tau ns ts s i Hprefix Hhead j e Hbefore Hu.
+    destruct (Nat.eq_dec j i) as [->|Hneq]; [exact (Hhead e Hu)|].
+    apply Hprefix; [lia|exact Hu].
+  Qed.
+
+  (** A constructor row extends the represented prefix at its newly assigned variable. *)
+  Lemma prefix_represents_constructor : forall (p : fpat V.t) rn w tau s i f children x
+      cells c,
+    canonical_view w ->
+    (forall h, In (PHole h) (nodes V.t p) -> (h < rn)%positive) ->
+    nth_error (nodes V.t p) i = Some (PApp f children) ->
+    nth_error (fst (pattern_table p rn)) i = Some (Var x) ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s i ->
+    terms_value s
+      (map (fun j => pattern_get (Var 1%positive) j (fst (pattern_table p rn))) children) cells ->
+    row w f cells (Some (Id c)) ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn))
+      (update s x (Id c)) (S i).
+  Proof.
+    intros p rn w tau s i f children x cells c Hcanonical Hholes Hnode Hterm
+      Hprefix Hvalues Hrow. apply prefix_represents_step.
+    - eapply prefix_represents_update; eassumption.
+    - intros e Hu. inversion Hu as [j h r Hnth Htau|j v Hnth|
+        j g ch args Hnth Hbefore Hargs]; subst; try congruence.
+      assert (Hshape : g = f /\ ch = children) by (split; congruence).
+      destruct Hshape as [-> ->]. exists (Id c). split.
+      + unfold pattern_get. rewrite Hterm. apply term_value_update_same.
+      + econstructor; [exact Hrow |exact (proj1 Hcanonical c)|].
+        eapply pattern_arguments_represent; [exact Hargs|exact Hvalues|].
+        intros j r Hin Hr. apply Hprefix; [|exact Hr].
+        apply (proj1 (Forall_forall _ _) Hbefore j Hin).
+  Qed.
+
+  (** A hole takes its represented substitution value when its table position is visited. *)
+  Lemma prefix_represents_hole : forall sorts kinds g (p : fpat V.t) rn w tau s i h,
+    pat_ok sorts kinds g p -> nth_error (nodes V.t p) i = Some (PHole h) ->
+    nth_error (fst (pattern_table p rn)) i = Some (Var h) ->
+    represents_on g w tau s ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s i ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s (S i).
+  Proof.
+    intros sorts kinds g p rn w tau s i h Hpat Hnode Hterm Hsource Hprefix.
+    apply prefix_represents_step; [exact Hprefix|]. intros e Hu.
+    inversion Hu as [j h' r Hnth Htau|j v Hnth|
+      j f ch args Hnth Hbefore Hargs]; subst; try congruence.
+    assert (h' = h) by congruence. subst h'.
+    destruct (pat_hole_sorted sorts kinds g p h Hpat (nth_error_In _ _ Hnode))
+      as [ty Hsort].
+    destruct (Hsource h ty e Hsort Htau) as [c [Hvalue Hrep]]. exists c.
+    split; [unfold pattern_get; now rewrite Hterm|exact Hrep].
+  Qed.
+
+  (** A literal table position represents its literal tree. *)
+  Lemma prefix_represents_literal : forall (p : fpat V.t) rn w tau s i v,
+    nth_error (nodes V.t p) i = Some (PLit v) ->
+    nth_error (fst (pattern_table p rn)) i = Some (Lit v) ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s i ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s (S i).
+  Proof.
+    intros p rn w tau s i v Hnode Hterm Hprefix.
+    apply prefix_represents_step; [exact Hprefix|]. intros e Hu.
+    inversion Hu as [j h r Hnth Htau|j v' Hnth|
+      j f ch args Hnth Hbefore Hargs]; subst; try congruence.
+    assert (v' = v) by congruence. subst v'. exists (Val v). split.
+    - unfold pattern_get. rewrite Hterm. reflexivity.
+    - constructor.
+  Qed.
+
+  (** Updating a fresh variable preserves every lower source name. *)
+  Lemma update_below : forall s rn x (c : cell V.t), (rn <= x)%positive ->
+    forall y, (y < rn)%positive -> update s x c y = s y.
+  Proof.
+    intros s rn x c Hfresh y Hsmall. unfold update.
+    destruct (Pos.eqb x y) eqn:Hxy; [|reflexivity].
+    apply Pos.eqb_eq in Hxy. subst y. lia.
+  Qed.
+
+  (** Agreement on context names preserves represented substitutions. *)
+  Lemma represents_on_agrees : forall g w tau s s',
+    (forall h t, g h = Some t -> s' h = s h) -> represents_on g w tau s ->
+    represents_on g w tau s'.
+  Proof.
+    intros g w tau s s' Hagree Hsource h t e Hsort Htau.
+    destruct (Hsource h t e Hsort Htau) as [c [Hvalue Hrep]]. exists c.
+    split; [rewrite (Hagree h t Hsort); exact Hvalue|exact Hrep].
+  Qed.
+
+  (** Each present node action advances representation and preserves the source environment. *)
+  Lemma pattern_step_present : forall sorts kinds g (p : fpat V.t) rn w tau i n t s acts,
+    canonical_view w -> pat_ok sorts kinds g p ->
+    (forall h ty, g h = Some ty -> (h < rn)%positive) ->
+    nth_error (nodes V.t p) i = Some n ->
+    nth_error (fst (pattern_table p rn)) i = Some t -> represents_on g w tau s ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s i ->
+    present V.prim V.merge w s
+      (match n, t with
+       | PApp f children, Var x => Make x f
+           (map (fun j => pattern_get (Var 1%positive) j (fst (pattern_table p rn))) children)
+           :: acts
+       | _, _ => acts
+       end) ->
+    exists s', present V.prim V.merge w s' acts /\ represents_on g w tau s' /\
+      (forall x, (x < rn)%positive -> s' x = s x) /\
+      prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s' (S i).
+  Proof.
+    intros sorts kinds g p rn w tau i n t s acts Hcanonical Hpat Hsmall Hnode Hterm
+      Hsource Hprefix Hpresent.
+    destruct (pattern_table_facts p rn) as [Hforms [Hdistinct Hrange]].
+    pose proof (node_term_at _ _ Hforms i n t Hnode Hterm) as Hform.
+    destruct n as [h|f children|v]; cbn [node_term] in Hform.
+    - subst t. exists s. split; [exact Hpresent|]. split; [exact Hsource|].
+      split; [intros; reflexivity|]. eapply prefix_represents_hole; eassumption.
+    - destruct Hform as [x ->].
+      destruct Hpresent as [cells [c [Hvalues [Hrow Hrest]]]].
+      pose proof (update_below s rn x (Id c) (Hrange i f children x Hnode Hterm)) as Hkeep.
+      exists (update s x (Id c)). split; [exact Hrest|]. split.
+      + eapply represents_on_agrees; [|exact Hsource].
+        intros h ty Hsort. apply Hkeep. exact (Hsmall h ty Hsort).
+      + split; [exact Hkeep|]. eapply prefix_represents_constructor; try eassumption.
+        intros h Hin. destruct (pat_hole_sorted sorts kinds g p h Hpat Hin) as [ty Hsort].
+        exact (Hsmall h ty Hsort).
+    - subst t. exists s. split; [exact Hpresent|]. split; [exact Hsource|].
+      split; [intros; reflexivity|]. eapply prefix_represents_literal; eassumption.
+  Qed.
+
+  (** Present constructor actions advance representation through their ordered node suffix. *)
+  Lemma pattern_actions_present_fold : forall sorts kinds g (p : fpat V.t) rn w tau,
+    canonical_view w -> pat_ok sorts kinds g p ->
+    (forall h ty, g h = Some ty -> (h < rn)%positive) ->
+    forall ns ts, Forall2 node_term ns ts -> forall i s acts,
+    (forall j, nth_error ns j = nth_error (nodes V.t p) (i + j)) ->
+    (forall j, nth_error ts j = nth_error (fst (pattern_table p rn)) (i + j)) ->
+    represents_on g w tau s ->
+    prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s i ->
+    present V.prim V.merge w s (pattern_actions ns ts (fst (pattern_table p rn)) ++ acts) ->
+    exists s', present V.prim V.merge w s' acts /\
+      (forall x, (x < rn)%positive -> s' x = s x) /\
+      prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s' (i + length ns).
+  Proof.
+    intros sorts kinds g p rn w tau Hcanonical Hpat Hsmall ns ts Hforms.
+    induction Hforms as [|n t ns ts Hform Hforms IH];
+      intros i s acts Hnodes Hterms Hsource Hprefix Hpresent.
+    - exists s. split; [exact Hpresent|]. split; [intros; reflexivity|].
+      cbn [length]. rewrite Nat.add_0_r. exact Hprefix.
+    - assert (Hnode : nth_error (nodes V.t p) i = Some n).
+      { specialize (Hnodes 0). rewrite Nat.add_0_r in Hnodes. symmetry. exact Hnodes. }
+      assert (Hterm : nth_error (fst (pattern_table p rn)) i = Some t).
+      { specialize (Hterms 0). rewrite Nat.add_0_r in Hterms. symmetry. exact Hterms. }
+      rewrite pattern_actions_cons in Hpresent.
+      destruct (pattern_step_present sorts kinds g p rn w tau i n t s
+        (pattern_actions ns ts (fst (pattern_table p rn)) ++ acts)
+        Hcanonical Hpat Hsmall Hnode Hterm Hsource Hprefix Hpresent)
+        as [next [Hrest [Hsource' [Hkeep Hprefix']]]].
+      assert (Hnodes' : forall j, nth_error ns j = nth_error (nodes V.t p) (S i + j)).
+      { intro j. replace (S i + j) with (i + S j) by lia. exact (Hnodes (S j)). }
+      assert (Hterms' : forall j,
+        nth_error ts j = nth_error (fst (pattern_table p rn)) (S i + j)).
+      { intro j. replace (S i + j) with (i + S j) by lia. exact (Hterms (S j)). }
+      destruct (IH (S i) next acts Hnodes' Hterms' Hsource' Hprefix' Hrest)
+        as [final [Hfinish [Hsame Hcomplete]]].
+      exists final. split; [exact Hfinish|]. split.
+      + intros x Hx. rewrite Hsame by exact Hx. exact (Hkeep x Hx).
+      + replace (i + length (n :: ns)) with (S i + length ns) by (cbn [length]; lia).
+        exact Hcomplete.
+  Qed.
+
+  (** A complete present action list represents every node while preserving source names. *)
+  Lemma pattern_actions_represent : forall sorts kinds g (p : fpat V.t) rn w tau s acts,
+    canonical_view w -> pat_ok sorts kinds g p ->
+    (forall h ty, g h = Some ty -> (h < rn)%positive) -> represents_on g w tau s ->
+    present V.prim V.merge w s
+      (pattern_actions (nodes V.t p) (fst (pattern_table p rn))
+        (fst (pattern_table p rn)) ++ acts) ->
+    exists s', present V.prim V.merge w s' acts /\
+      (forall x, (x < rn)%positive -> s' x = s x) /\
+      prefix_represents w tau (nodes V.t p) (fst (pattern_table p rn)) s'
+        (length (nodes V.t p)).
+  Proof.
+    intros sorts kinds g p rn w tau s acts Hcanonical Hpat Hsmall Hsource Hpresent.
+    destruct (pattern_table_facts p rn) as [Hforms Hrest].
+    apply (pattern_actions_present_fold sorts kinds g p rn w tau Hcanonical Hpat Hsmall
+      _ _ Hforms 0 s acts (fun j => eq_refl) (fun j => eq_refl) Hsource);
+      [intros j e Hbefore; lia|exact Hpresent].
+  Qed.
+
+  (** Agreement on context names preserves sorted cell environments. *)
+  Lemma env_sorted_agrees : forall g s s',
+    (forall h t, g h = Some t -> s' h = s h) -> @env_sorted V.t g s -> env_sorted g s'.
+  Proof.
+    intros g s s' Hagree Hsorted h t Hsort.
+    destruct (Hsorted h t Hsort) as [c [Hvalue Hcell]]. exists c.
+    split; [rewrite (Hagree h t Hsort); exact Hvalue|exact Hcell].
+  Qed.
+
+  (** A constructor unfolding is represented only by identifier cells. *)
+  Lemma unfolded_app_id : forall tau ns i f children w c e,
+    nth_error ns i = Some (PApp f children) -> @unfolds_pat V.t tau ns i e ->
+    represents w c e -> exists j, c = Id j.
+  Proof.
+    intros tau ns i f children w c e Hnode Hu Hrep.
+    inversion Hu as [j h r Hnth Htau|j v Hnth|
+      j g ch args Hnth Hbefore Hargs]; subst; try congruence.
+    inversion Hrep. now eexists.
+  Qed.
+
+  (** A class-sorted root denotes an identifier in its represented, well-sorted environment. *)
+  Lemma pattern_result_id : forall (p : fpat V.t) rn g tau w s e c,
+    pat_sort g p (root V.t p) SId -> env_sorted g s ->
+    unfolds_pat tau (nodes V.t p) (root V.t p) e ->
+    term_value s (pattern_get (Var 1%positive) (root V.t p) (fst (pattern_table p rn))) c ->
+    represents w c e -> exists j, c = Id j.
+  Proof.
+    intros p rn g tau w s e c [n [Hnode Hsort]] Henv Hu Hvalue Hrep.
+    destruct n as [h|f children|v]; cbn [pnode_sort] in Hsort; [| |discriminate].
+    - destruct (pattern_table_facts p rn) as [Hforms Hrest].
+      destruct (term_for_node _ _ Hforms _ _ Hnode) as [t [Hterm Hform]].
+      cbn [node_term] in Hform. subst t. unfold pattern_get in Hvalue.
+      rewrite Hterm in Hvalue. cbn [term_value] in Hvalue.
+      destruct (Henv h SId Hsort) as [d [Hlookup Hcell]].
+      assert (c = d) by congruence. subst d. destruct c as [j|v];
+        [now exists j|discriminate Hcell].
+    - eapply unfolded_app_id; eassumption.
+  Qed.
+
+  (** Equal classes represent the same constructor expression. *)
+  Lemma represents_same_class : forall w i j e,
+    canonical_view w -> same w i j -> represents w (Id j) e -> represents w (Id i) e.
+  Proof.
+    intros w i j e Hcanonical Hij Hrep.
+    inversion Hrep as [v|f cells a b args Hrow Hab Hargs]; subst.
+    econstructor; [exact Hrow| |exact Hargs].
+    exact (proj1 (proj2 (proj2 Hcanonical)) i j b Hij Hab).
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
@@ -2177,7 +2464,55 @@ Module Compile (V : VALUE) <: COMPILE V.
     instantiates tau (rhs V.t rw) r ->
     present V.prim V.merge w s (actions V.t (compile_rule rw)) ->
     represents w (Id c) r.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds w rw g s tau c r Hrw Hsorted Hkinds Hcanonical Hmatch Hroot Hsource
+      Hunfold Hpresent.
+    assert (Henv : env_sorted g s).
+    { destruct (flatten_lhs_sorted ds rw g Hrw) as [h [Hquery [Hincludes Hrest]]].
+      pose proof (matches_rule_env V.t V.prim w (lookup_sorts ds) (lookup_kind ds)
+        (Rule V.t (flatten_lhs rw) []) h s Hsorted Hkinds Hquery Hmatch) as Htyped.
+      intros x ty Hsort. apply Htyped. exact (Hincludes x ty Hsort). }
+    set (rn := snd (pattern_table (lhs V.t rw) (root_var rw))).
+    assert (Hnext : (root_var rw < rn)%positive).
+    { destruct (pattern_table_sorted (lhs V.t rw) (root_var rw) g
+        (proj1 (root_var_bounds rw))) as [_ [_ Hnext]]. exact Hnext. }
+    assert (Hsmall : forall h ty, g h = Some ty -> (h < rn)%positive).
+    { intros h ty Hsort. pose proof (rewrite_context_bound ds rw g Hrw h ty Hsort). lia. }
+    assert (Hactions : actions V.t (compile_rule rw) =
+      pattern_actions (nodes V.t (rhs V.t rw)) (fst (pattern_table (rhs V.t rw) rn))
+        (fst (pattern_table (rhs V.t rw) rn)) ++
+      [Union (Var (root_var rw))
+        (pattern_get (Var rn) (root V.t (rhs V.t rw)) (fst (pattern_table (rhs V.t rw) rn))) ]).
+    { unfold rn. destruct rw as [lp [ns i] conditions]. reflexivity. }
+    rewrite Hactions in Hpresent.
+    destruct Hrw as [g0 [Hrooted [Hleft [Hscope [Hconditions Hright]]]]].
+    destruct (pattern_actions_represent (lookup_sorts ds) (lookup_kind ds) g
+      (rhs V.t rw) rn w tau s _ Hcanonical Hright Hsmall Hsource Hpresent)
+      as [final [Hfinish [Hkeep Hprefix]]].
+    assert (Hindex : root V.t (rhs V.t rw) < length (nodes V.t (rhs V.t rw))).
+    { pose proof (proj1 Hright). lia. }
+    destruct (Hprefix _ r Hindex Hunfold) as [d [Hvalue Hrep]].
+    assert (Henv_final : env_sorted g final).
+    { eapply env_sorted_agrees; [|exact Henv].
+      intros x ty Hsort. apply Hkeep. exact (Hsmall x ty Hsort). }
+    destruct (pattern_result_id (rhs V.t rw) rn g tau w final r d
+      (proj1 (proj2 Hright)) Henv_final Hunfold Hvalue Hrep) as [j ->].
+    cbn [present] in Hfinish.
+    destruct Hfinish as [left [right [Hleft_value [Hright_value [Hunion Hdone]]]]].
+    assert (Hold : final (root_var rw) = Some (Id c)).
+    { rewrite Hkeep by exact Hnext. exact Hroot. }
+    change (final (root_var rw) = Some left) in Hleft_value.
+    assert (left = Id c) by congruence. subst left.
+    destruct (pattern_get_exists (rhs V.t rw) rn _ Hindex) as [t [Hterm Hget]].
+    assert (Hdefault : pattern_get (Var rn) (root V.t (rhs V.t rw))
+      (fst (pattern_table (rhs V.t rw) rn)) =
+      pattern_get (Var 1%positive) (root V.t (rhs V.t rw))
+        (fst (pattern_table (rhs V.t rw) rn))).
+    { unfold pattern_get. now rewrite Hterm. }
+    rewrite Hdefault in Hright_value.
+    assert (right = Id j) by (eapply term_value_unique; eassumption). subst right.
+    exact (represents_same_class w c j r Hcanonical Hunion Hrep).
+  Qed.
 
 End Compile.
 
