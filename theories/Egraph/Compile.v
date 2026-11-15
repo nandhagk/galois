@@ -1762,6 +1762,188 @@ Module Compile (V : VALUE) <: COMPILE V.
       apply (query_ok_includes _ _ _ _ _ Hconditions). exact Hroot_sort.
   Qed.
 
+
+  (** Every hole occurring in a well-sorted pattern is assigned a sort. *)
+  Lemma pat_hole_sorted : forall sorts kinds g (p : fpat V.t) h,
+    pat_ok sorts kinds g p -> In (PHole h) (nodes V.t p) -> exists s, g h = Some s.
+  Proof.
+    intros sorts kinds g p h [Hlast [Hroot [Hcoverage Hnodes]]] Hin.
+    apply In_nth_error in Hin. destruct Hin as [j Hhole].
+    assert (Hindex : j < length (nodes V.t p)).
+    { apply nth_error_Some. rewrite Hhole. discriminate. }
+    destruct (Nat.eq_dec j (root V.t p)) as [->|Hneq].
+    - destruct Hroot as [n [Hnode Hsort]]. rewrite Hhole in Hnode.
+      injection Hnode as <-. exists SId. exact Hsort.
+    - assert (Hbefore : j < root V.t p) by lia.
+      destruct (Hcoverage j Hbefore) as [i [f [ch [_ [Hparent Hchild]]]]].
+      destruct (Hnodes i f ch Hparent) as [_ [ss [_ Hchildren]]].
+      assert (Hsome : exists s, pat_sort g p j s).
+      { clear Hcoverage Hnodes Hroot Hlast Hbefore Hindex Hneq Hparent.
+        induction Hchildren as [|k s ch ss [_ Hsort] Htail IH].
+        - contradiction.
+        - destruct Hchild as [<-|Hchild].
+          + exists s. exact Hsort.
+          + apply IH. exact Hchild. }
+      destruct Hsome as [s [n [Hnode Hsort]]]. rewrite Hhole in Hnode.
+      injection Hnode as <-. exists s. exact Hsort.
+  Qed.
+
+  (** * Typing the ordered constructor actions *)
+
+  (** Earlier positions in the pattern table are already available at their node sorts. *)
+  Definition prefix_terms_sorted (g h : ctx) (ns : list (pnode V.t))
+      (ts : list (term V.t)) (bound : nat) : Prop :=
+    forall j n t s, j < bound -> nth_error ns j = Some n -> nth_error ts j = Some t ->
+      pnode_sort g n = Some s -> has h t s.
+
+  (** Prefix typing supplies the compiled term for an earlier well-sorted child. *)
+  Lemma prefix_get_typed : forall g h ns ts bound j s default,
+    Forall2 node_term ns ts -> prefix_terms_sorted g h ns ts bound -> j < bound ->
+    (exists n, nth_error ns j = Some n /\ pnode_sort g n = Some s) ->
+    has h (pattern_get default j ts) s.
+  Proof.
+    intros g h ns ts bound j s default Hforms Hprefix Hbefore [n [Hnode Hsort]].
+    destruct (term_for_node ns ts Hforms j n Hnode) as [t [Hterm Hform]].
+    unfold pattern_get. rewrite Hterm. eapply Hprefix; eassumption.
+  Qed.
+
+  (** Extending a context and typing its next node advances the typed prefix by one. *)
+  Lemma prefix_terms_step : forall g h h' ns ts i n t,
+    prefix_terms_sorted g h ns ts i -> ctx_includes h h' ->
+    nth_error ns i = Some n -> nth_error ts i = Some t ->
+    (forall s, pnode_sort g n = Some s -> has h' t s) ->
+    prefix_terms_sorted g h' ns ts (S i).
+  Proof.
+    intros g h h' ns ts i n t Hprefix Hkeep Hnode Hterm Hhead j n' t' s
+      Hbefore Hnode' Hterm' Hsort.
+    destruct (Nat.eq_dec j i) as [->|Hneq].
+    - assert (n' = n) by congruence. assert (t' = t) by congruence.
+      subst n' t'. apply Hhead. exact Hsort.
+    - eapply has_includes; [exact Hkeep|]. eapply (Hprefix j n' t' s); [lia| | |]; eassumption.
+  Qed.
+
+  (** Constructor declarations require earlier children at their declared node sorts. *)
+  Definition pattern_node_sorts sorts kinds g (ns : list (pnode V.t)) : Prop :=
+    forall i f ch, nth_error ns i = Some (PApp f ch) ->
+      kinds f = Some OId /\ exists ss, sorts f = Some ss /\
+      Forall2 (fun j s => j < i /\ exists n,
+        nth_error ns j = Some n /\ pnode_sort g n = Some s) ch ss.
+
+  (** All children of the current constructor read their sorts from the typed prefix. *)
+  Lemma pattern_children_prefix_typed : forall g h ns ts i ch ss,
+    Forall2 node_term ns ts -> prefix_terms_sorted g h ns ts i ->
+    Forall2 (fun j s => j < i /\ exists n,
+      nth_error ns j = Some n /\ pnode_sort g n = Some s) ch ss ->
+    Forall2 (has h) (map (fun j => pattern_get (Var 1%positive) j ts) ch) ss.
+  Proof.
+    intros g h ns ts i ch ss Hforms Hprefix Hchildren.
+    induction Hchildren as [|j s ch ss [Hbefore Hsort] Htail IH]; cbn [map].
+    - constructor.
+    - constructor; [|exact IH]. eapply prefix_get_typed; eassumption.
+  Qed.
+
+  (** One pattern node may prepend its constructor action to a typed continuation. *)
+  Definition pattern_step_typed sorts kinds (h h' : ctx) (n : pnode V.t)
+      (t : term V.t) (all : list (term V.t)) : Prop :=
+    forall acts, actions_ok sorts kinds h' acts -> actions_ok sorts kinds h
+      (match n, t with
+       | PApp f ch, Var x =>
+           Make x f (map (fun j => pattern_get (Var 1%positive) j all) ch) :: acts
+       | _, _ => acts
+       end).
+
+  (** A node step preserves compatible assignments and makes its own term available. *)
+  Lemma pattern_step_sorted : forall sorts kinds g target ns ts i n t h,
+    Forall2 node_term ns ts -> sorted_pattern_table g target ns ts ->
+    pattern_node_sorts sorts kinds g ns ->
+    nth_error ns i = Some n -> nth_error ts i = Some t ->
+    ctx_includes g h -> ctx_includes h target -> prefix_terms_sorted g h ns ts i ->
+    exists h', ctx_includes h h' /\ ctx_includes h' target /\
+      (forall s, pnode_sort g n = Some s -> has h' t s) /\
+      pattern_step_typed sorts kinds h h' n t ts.
+  Proof.
+    intros sorts kinds g target ns ts i n t h Hforms Htable Hnodes Hnode Hterm
+      Hsource Hpart Hprefix.
+    pose proof (node_term_at ns ts Hforms i n t Hnode Hterm) as Hform.
+    destruct n as [x|f ch|v]; cbn [node_term] in Hform.
+    - subst t. exists h. split; [apply ctx_includes_refl|]. split; [exact Hpart|].
+      split.
+      + intros s Hsort. apply Hsource. exact Hsort.
+      + intros acts Hacts. exact Hacts.
+    - destruct Hform as [x ->].
+      assert (Hclass : target x = Some SId) by
+        (exact (Htable i (PApp f ch) (Var x) SId Hnode Hterm eq_refl)).
+      destruct (Hnodes i f ch Hnode) as [Hkind [ss [Hsort Hchildren]]].
+      pose proof (pattern_children_prefix_typed g h ns ts i ch ss Hforms Hprefix Hchildren)
+        as Hargs.
+      exists (ctx_set h x SId). split; [eapply ctx_set_includes; eassumption|].
+      split; [eapply ctx_set_target; eassumption|]. split.
+      + intros s Hs. cbn [pnode_sort] in Hs. injection Hs as <-.
+        cbn [has]. unfold ctx_set. now rewrite Pos.eqb_refl.
+      + intros acts Hacts. cbn [actions_ok]. exists ss. split; [exact Hsort|].
+        split; [exact Hkind|]. split; assumption.
+    - subst t. exists h. split; [apply ctx_includes_refl|]. split; [exact Hpart|].
+      split.
+      + intros s Hs. cbn [pnode_sort] in Hs. injection Hs as <-. reflexivity.
+      + intros acts Hacts. exact Hacts.
+  Qed.
+
+  (** Appending a continuation exposes exactly the current node's optional Make action. *)
+  Lemma pattern_actions_cons : forall (n : pnode V.t) ns t ts all acts,
+    pattern_actions (n :: ns) (t :: ts) all ++ acts =
+      match n, t with
+      | PApp f ch, Var x =>
+          Make x f (map (fun j => pattern_get (Var 1%positive) j all) ch) ::
+            (pattern_actions ns ts all ++ acts)
+      | _, _ => pattern_actions ns ts all ++ acts
+      end.
+  Proof.
+    intros n ns t ts all acts. destruct n, t; reflexivity.
+  Qed.
+
+  (** The action fold advances its sorted table prefix and types every continuation. *)
+  Lemma pattern_actions_sorted_fold : forall sorts kinds g target all_ns all_ts,
+    Forall2 node_term all_ns all_ts -> sorted_pattern_table g target all_ns all_ts ->
+    pattern_node_sorts sorts kinds g all_ns ->
+    forall ns ts, Forall2 node_term ns ts -> forall i h,
+    (forall j, nth_error ns j = nth_error all_ns (i + j)) ->
+    (forall j, nth_error ts j = nth_error all_ts (i + j)) ->
+    ctx_includes g h -> ctx_includes h target ->
+    prefix_terms_sorted g h all_ns all_ts i ->
+    exists h', ctx_includes h h' /\ ctx_includes h' target /\
+      prefix_terms_sorted g h' all_ns all_ts (i + length ns) /\
+      (forall acts, actions_ok sorts kinds h' acts ->
+        actions_ok sorts kinds h (pattern_actions ns ts all_ts ++ acts)).
+  Proof.
+    intros sorts kinds g target all_ns all_ts Hwhole Htable Hnodes ns ts Hforms.
+    induction Hforms as [|n t ns ts Hform Hforms IH];
+      intros i h Hnode_pos Hterm_pos Hsource Hpart Hprefix.
+    - exists h. split; [apply ctx_includes_refl|]. split; [exact Hpart|]. split.
+      + cbn [length]. rewrite Nat.add_0_r. exact Hprefix.
+      + intros acts Hacts. exact Hacts.
+    - assert (Hnode : nth_error all_ns i = Some n).
+      { specialize (Hnode_pos 0). rewrite Nat.add_0_r in Hnode_pos. symmetry. exact Hnode_pos. }
+      assert (Hterm : nth_error all_ts i = Some t).
+      { specialize (Hterm_pos 0). rewrite Nat.add_0_r in Hterm_pos. symmetry. exact Hterm_pos. }
+      destruct (pattern_step_sorted sorts kinds g target all_ns all_ts i n t h
+        Hwhole Htable Hnodes Hnode Hterm Hsource Hpart Hprefix)
+        as [h1 [Hkeep1 [Hpart1 [Hhead Hstep]]]].
+      assert (Hsource1 : ctx_includes g h1) by (eapply ctx_includes_trans; eassumption).
+      assert (Hprefix1 : prefix_terms_sorted g h1 all_ns all_ts (S i)).
+      { eapply prefix_terms_step; eassumption. }
+      assert (Hnode_pos1 : forall j, nth_error ns j = nth_error all_ns (S i + j)).
+      { intro j. replace (S i + j) with (i + S j) by lia. exact (Hnode_pos (S j)). }
+      assert (Hterm_pos1 : forall j, nth_error ts j = nth_error all_ts (S i + j)).
+      { intro j. replace (S i + j) with (i + S j) by lia. exact (Hterm_pos (S j)). }
+      destruct (IH (S i) h1 Hnode_pos1 Hterm_pos1 Hsource1 Hpart1 Hprefix1)
+        as [h2 [Hkeep2 [Hpart2 [Hprefix2 Hcontinue]]]].
+      exists h2. split; [eapply ctx_includes_trans; eassumption|].
+      split; [exact Hpart2|]. split.
+      + replace (i + length (n :: ns)) with (S i + length ns) by (cbn [length]; lia).
+        exact Hprefix2.
+      + intros acts Hacts. rewrite pattern_actions_cons. apply Hstep, Hcontinue. exact Hacts.
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
