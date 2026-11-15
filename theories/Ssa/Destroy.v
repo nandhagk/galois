@@ -910,6 +910,547 @@ Module Destroy (O : OPS)
     - rewrite Hrun. reflexivity.
   Qed.
 
+  (** Parameter-free branch arms preserve the chosen successor and entered environment. *)
+  Lemma empty_branch_sim : forall s p table checked guard operands yes no es ep,
+    params_index (blocks _ _ _ s) = Some table ->
+    copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s) =
+      Some (blocks _ _ _ p, checked) ->
+    empty_params table yes = true -> empty_params table no = true ->
+    incl operands (function_vars s) ->
+    (forall x, In x (function_vars s) -> lookup x es = lookup x ep) ->
+    copy_outcomes s p (finish_exit (Branch guard operands yes [] no []) es)
+      (finish_exit (Branch guard operands yes [] no []) ep).
+  Proof.
+    intros s p table checked guard operands yes no es ep Hindex Hblocks Hyes Hno Huses Hagree.
+    unfold finish_exit. rewrite (read_vars_agree operands es ep).
+    2: { intros x Hin. apply Hagree. now apply Huses. }
+    destruct (read_vars ep operands) as [values|]; [|reflexivity].
+    destruct (O.test guard values) as [[|]|]; try reflexivity;
+      cbn [read_vars copy_outcomes]; eapply entered_empty;
+      try eassumption; apply empty_params_sound; assumption.
+  Qed.
+
+  (** Copy insertion appends instructions after the original block body. *)
+  Lemma copy_block_prefix : forall table tmp body out one,
+    copy_block table tmp body = Some (out, one) ->
+    exists suffix, code _ _ _ out = code _ _ _ body ++ suffix.
+  Proof.
+    intros table tmp [formals instructions ending] out one Hcopy.
+    destruct ending as [target actuals|guard operands yes yes_args no no_args|values];
+      cbn [copy_block term code] in Hcopy.
+    - destruct (trie_get target table) as [target_formals|]; [|discriminate].
+      destruct (pair_moves target_formals actuals) as [[|first par]|]; try discriminate.
+      + inversion Hcopy; subst. exists []. symmetry. apply app_nil_r.
+      + destruct (andb (moves_ok (first :: par) tmp)
+          (PM.check_moves (first :: par) tmp (PM.seq (first :: par) tmp))); [|discriminate].
+        inversion Hcopy; subst. eexists. reflexivity.
+    - destruct yes_args as [|x xs]; [|discriminate].
+      destruct no_args as [|x xs]; [|discriminate].
+      destruct (andb (empty_params table yes) (empty_params table no)); [|discriminate].
+      inversion Hcopy; subst. exists []. symmetry. apply app_nil_r.
+    - inversion Hcopy; subst. exists []. symmetry. apply app_nil_r.
+  Qed.
+
+  (** Rewriting a block preserves its result or the relation after successor binding. *)
+  Lemma copy_body_sim : forall s p table checked id body body' one es ep,
+    params_index (blocks _ _ _ s) = Some table ->
+    copy_blocks table (fresh_after (function_vars s)) (blocks _ _ _ s) =
+      Some (blocks _ _ _ p, checked) -> In (id, body) (blocks _ _ _ s) ->
+    copy_block table (fresh_after (function_vars s)) body = Some (body', one) ->
+    (forall x, In x (function_vars s) -> lookup x es = lookup x ep) ->
+    copy_outcomes s p (execute_body body es) (execute_body body' ep).
+  Proof.
+    intros s p table checked id body body' one es ep Hindex Hblocks Hbody Hcopy Hagree.
+    pose proof (exec_code_agree O.eval (code _ _ _ body) (function_vars s) es ep
+      (fun dst op args Hin => listed_code_args s id body dst op args Hbody Hin) Hagree) as Hcode.
+    destruct (exec_code O.eval (code _ _ _ body) es) as [finished|] eqn:Hsource;
+      destruct (exec_code O.eval (code _ _ _ body) ep) as [finished'|] eqn:Htarget;
+      try contradiction.
+    - pose proof (listed_exit_uses s id body Hbody) as Huses.
+      destruct body as [formals instructions ending]. cbn [code term] in Hsource, Htarget, Huses.
+      unfold execute_body. cbn [code term]. rewrite Hsource.
+      destruct ending as [target actuals|guard operands yes yes_args no no_args|values];
+        cbn [copy_block term code] in Hcopy.
+      + destruct (trie_get target table) as [target_formals|] eqn:Hrow; [|discriminate].
+        destruct (pair_moves target_formals actuals) as [[|first par]|] eqn:Hpair;
+          try discriminate.
+        * destruct (pair_moves_rows _ _ _ Hpair) as [Hformals Hactuals].
+          cbn [map] in Hformals, Hactuals. subst target_formals actuals.
+          inversion Hcopy; subst. cbn [code term]. rewrite Htarget.
+          cbn [finish_exit read_vars copy_outcomes]. eapply entered_empty; eassumption.
+        * destruct (andb (moves_ok (first :: par) (fresh_after (function_vars s)))
+            (PM.check_moves (first :: par) (fresh_after (function_vars s))
+              (PM.seq (first :: par) (fresh_after (function_vars s))))) eqn:Hchecked;
+            [|discriminate].
+          apply andb_true_iff in Hchecked as [Hvalid Hchecked].
+          destruct (pair_moves_rows _ _ _ Hpair) as [Hformals Hactuals].
+          inversion Hcopy; subst. cbn [code term]. rewrite exec_code_append, Htarget.
+          eapply checked_jump_sim.
+          -- exact Hindex.
+          -- exact Hblocks.
+          -- exact Hrow.
+          -- discriminate.
+          -- exact Hvalid.
+          -- exact Hchecked.
+          -- exact Huses.
+          -- exact Hcode.
+      + destruct yes_args as [|x xs]; [|discriminate].
+        destruct no_args as [|x xs]; [|discriminate].
+        destruct (andb (empty_params table yes) (empty_params table no)) eqn:Hempty;
+          [|discriminate].
+        apply andb_true_iff in Hempty as [Hyes Hno].
+        inversion Hcopy; subst. cbn [code term]. rewrite Htarget.
+        eapply empty_branch_sim; try eassumption.
+        intros x Hin. apply Huses. apply in_or_app. now left.
+      + inversion Hcopy; subst. cbn [code term]. rewrite Htarget.
+        unfold finish_exit. rewrite (read_vars_agree values finished finished').
+        * destruct (read_vars finished' values); reflexivity.
+        * intros x Hin. apply Hcode. apply Huses. exact Hin.
+    - destruct (copy_block_prefix _ _ _ _ _ Hcopy) as [suffix Hprefix].
+      unfold execute_body. rewrite Hsource, Hprefix, exec_code_append, Htarget. reflexivity.
+  Qed.
+
+  (** Successful copy insertion simulates a block from every pair of related entered states. *)
+  Lemma copies_block_sim : forall s p ss sp, copies s = Some p ->
+    entered_agree s p ss sp ->
+    copy_outcomes s p (step O.eval O.test s ss) (step O.eval O.test p sp).
+  Proof.
+    intros s p [[id actuals] es] [[id' actuals'] ep] Hcopies Hagree.
+    destruct (copies_data s p Hcopies) as [table [checked [Hindex [Hentry [Hblocks Hheader]]]]].
+    unfold entered_agree in Hagree. destruct Hagree as [Hid Hagree]. subst id'.
+    pose proof (copy_blocks_find _ _ _ _ _ Hblocks id) as Hfind.
+    destruct (find_block id (blocks _ _ _ s)) as [body|] eqn:Hsource.
+    - destruct Hfind as [body' [one [Htarget Hcopy]]]. rewrite Htarget in Hagree.
+      unfold step. rewrite Hsource, Htarget.
+      destruct (bind_vars (params _ _ _ body) actuals es) as [entered|] eqn:Hbind;
+        destruct (bind_vars (params _ _ _ body') actuals' ep) as [entered'|] eqn:Hbind';
+        try contradiction; [|reflexivity].
+      change (copy_outcomes s p (execute_body body entered) (execute_body body' entered')).
+      eapply copy_body_sim; try eassumption. eapply find_source_block. exact Hsource.
+    - unfold step. rewrite Hsource, Hfind. reflexivity.
+  Qed.
+
+  (** Lockstep block simulation preserves every fuelled loop observation. *)
+  Lemma copies_loop_run : forall s p, copies s = Some p -> forall n ss sp,
+    entered_agree s p ss sp ->
+    (match loop_fuel (step O.eval O.test s) n ss with inl _ => Timeout | inr r => r end) =
+    (match loop_fuel (step O.eval O.test p) n sp with inl _ => Timeout | inr r => r end).
+  Proof.
+    intros s p Hcopies n. induction n as [|n IH]; intros ss sp Hagree; [reflexivity|].
+    pose proof (copies_block_sim s p ss sp Hcopies Hagree) as Hstep.
+    cbn [loop_fuel].
+    destruct (step O.eval O.test s ss) as [ss'|rs];
+      destruct (step O.eval O.test p sp) as [sp'|rp];
+      cbn [copy_outcomes] in Hstep; try contradiction.
+    - apply IH. exact Hstep.
+    - exact Hstep.
+  Qed.
+
+  (** Copy insertion preserves all fuelled observations, including errors and timeouts. *)
+  Lemma copies_run : forall s p, copies s = Some p ->
+    forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
+  Proof.
+    intros s p Hcopies n ins.
+    destruct (copies_data s p Hcopies) as [table [checked
+      [Hindex [Hentry [Hblocks [Hentry_eq Hinputs_eq]]]]]].
+    unfold run_with. rewrite Hentry_eq, Hinputs_eq.
+    destruct (bind_vars (inputs _ _ _ s) ins []) as [initial|]; [|reflexivity].
+    apply copies_loop_run; [exact Hcopies|].
+    eapply entered_empty; [exact Hindex|exact Hblocks|exact Hentry|].
+    intros x Hin. reflexivity.
+  Qed.
+
+  Definition edge_expands (lower : positive)
+      (bs : list (positive * block positive O.K O.G)) target actuals target' : Prop :=
+    (target' = target /\ actuals = []) \/
+    ((lower <= target')%positive /\
+      find_block target' bs = Some (Block _ _ _ [] [] (Jump target actuals))).
+
+  Definition exit_expands lower bs (e e' : exit positive O.G) : Prop :=
+    e = e' \/ exists guard operands yes yes_args no no_args yes' no',
+      e = Branch guard operands yes yes_args no no_args /\
+      e' = Branch guard operands yes' [] no' [] /\
+      edge_expands lower bs yes yes_args yes' /\
+      edge_expands lower bs no no_args no'.
+
+  Definition block_expands lower bs (body body' : block positive O.K O.G) : Prop :=
+    params _ _ _ body' = params _ _ _ body /\ code _ _ _ body' = code _ _ _ body /\
+    exit_expands lower bs (term _ _ _ body) (term _ _ _ body').
+
+  Lemma split_find_append id (left right : list (positive * block positive O.K O.G)) :
+    find_block id (left ++ right) =
+      match find_block id left with Some body => Some body | None => find_block id right end.
+  Proof.
+    induction left as [|[key body] left IH]; [reflexivity|].
+    cbn [app find_block]. destruct (Pos.eqb id key); [reflexivity|exact IH].
+  Qed.
+
+  Lemma split_find_missing id (bs : list (positive * block positive O.K O.G)) :
+    (forall key body, In (key, body) bs -> key <> id) -> find_block id bs = None.
+  Proof.
+    induction bs as [|[key body] bs IH]; intro Hmissing; [reflexivity|].
+    cbn [find_block]. destruct (Pos.eqb id key) eqn:Hequal.
+    - apply Pos.eqb_eq in Hequal. subst id. exfalso.
+      exact (Hmissing key body (or_introl eq_refl) eq_refl).
+    - apply IH. intros key' body' Hin. apply (Hmissing key' body'). now right.
+  Qed.
+
+  Lemma edge_expands_transport lower upper bs full target actuals target' :
+    (lower <= upper)%positive ->
+    (forall id body, (upper <= id)%positive -> find_block id bs = Some body ->
+      find_block id full = Some body) ->
+    edge_expands upper bs target actuals target' ->
+    edge_expands lower full target actuals target'.
+  Proof.
+    intros Hle Hlookup [Hdirect|[Hbound Hbridge]]; [now left|right].
+    split; [eapply Pos.le_trans; eassumption|eapply Hlookup; eassumption].
+  Qed.
+
+  Lemma exit_expands_transport lower upper bs full e e' :
+    (lower <= upper)%positive ->
+    (forall id body, (upper <= id)%positive -> find_block id bs = Some body ->
+      find_block id full = Some body) ->
+    exit_expands upper bs e e' -> exit_expands lower full e e'.
+  Proof.
+    intros Hle Hlookup [Hequal|Hbranch]; [now left|right].
+    destruct Hbranch as [guard [operands [yes [yes_args [no [no_args [yes' [no'
+      [Hsource [Htarget [Hyes Hno]]]]]]]]]]].
+    exists guard, operands, yes, yes_args, no, no_args, yes', no'.
+    repeat split; try assumption; eapply edge_expands_transport; eassumption.
+  Qed.
+
+  Lemma block_expands_transport lower upper bs full body body' :
+    (lower <= upper)%positive ->
+    (forall id found, (upper <= id)%positive -> find_block id bs = Some found ->
+      find_block id full = Some found) ->
+    block_expands upper bs body body' -> block_expands lower full body body'.
+  Proof.
+    intros Hle Hlookup [Hparams [Hcode Hexit]]. split; [exact Hparams|].
+    split; [exact Hcode|]. eapply exit_expands_transport; eassumption.
+  Qed.
+
+  Lemma split_exit_spec fresh e next e' extras :
+    split_exit fresh e = (next, (e', extras)) ->
+    (fresh <= next)%positive /\
+    (forall id body, In (id, body) extras -> (fresh <= id < next)%positive) /\
+    exit_expands fresh extras e e'.
+  Proof.
+    destruct e as [target actuals|guard operands yes yes_args no no_args|values].
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      split; [apply Pos.le_refl|]. split; [intros id body Hin; contradiction|now left].
+    - destruct yes_args as [|y ys], no_args as [|n ns]; cbn [split_exit split_edge];
+        intro Hsplit; inversion Hsplit; subst next e' extras.
+      + split; [apply Pos.le_refl|].
+        split; [intros id body Hin; contradiction|now left].
+      + split; [lia|]. split.
+        * intros id body [Hequal|Hin]; [|contradiction].
+          inversion Hequal; subst id body. split; lia.
+        * right. exists guard, operands, yes, [], no, (n :: ns), yes, fresh.
+          split; [reflexivity|]. split; [reflexivity|]. split.
+          -- left. split; reflexivity.
+          -- right. split; [apply Pos.le_refl|]. cbn [find_block].
+             now rewrite Pos.eqb_refl.
+      + split; [lia|]. split.
+        * intros id body [Hequal|Hin]; [|contradiction].
+          inversion Hequal; subst id body. split; lia.
+        * right. exists guard, operands, yes, (y :: ys), no, [], fresh, no.
+          split; [reflexivity|]. split; [reflexivity|]. split.
+          -- right. split; [apply Pos.le_refl|]. cbn [find_block].
+             now rewrite Pos.eqb_refl.
+          -- left. split; reflexivity.
+      + split; [lia|]. split.
+        * intros id body [Hequal|[Hequal|Hin]]; try contradiction;
+            inversion Hequal; subst id body; split; lia.
+        * right. exists guard, operands, yes, (y :: ys), no, (n :: ns), fresh, (Pos.succ fresh).
+          split; [reflexivity|]. split; [reflexivity|]. split.
+          -- right. split; [apply Pos.le_refl|]. cbn [find_block].
+             now rewrite Pos.eqb_refl.
+          -- right. split; [lia|]. cbn [find_block].
+             destruct (Pos.eqb (Pos.succ fresh) fresh) eqn:Hequal.
+             ++ apply Pos.eqb_eq in Hequal. lia.
+             ++ now rewrite Pos.eqb_refl.
+    - cbn [split_exit]. intro Hsplit. inversion Hsplit; subst.
+      split; [apply Pos.le_refl|]. split; [intros id body Hin; contradiction|now left].
+  Qed.
+
+  Lemma split_blocks_spec boundary bs : forall fresh last out,
+    (boundary <= fresh)%positive ->
+    (forall id body, In (id, body) bs -> (id < boundary)%positive) ->
+    split_blocks fresh bs = (last, out) ->
+    (fresh <= last)%positive /\
+    (forall id body, In (id, body) out ->
+      (id < boundary)%positive \/ (fresh <= id < last)%positive) /\
+    forall id, (id < boundary)%positive ->
+      match find_block id bs with
+      | None => find_block id out = None
+      | Some body => exists body', find_block id out = Some body' /\
+          block_expands fresh out body body'
+      end.
+  Proof.
+    induction bs as [|[key body] rest IH]; intros fresh last out Hlower Hids Hsplit.
+    - cbn [split_blocks] in Hsplit. inversion Hsplit; subst last out.
+      split; [apply Pos.le_refl|]. split; [intros id found Hin; contradiction|].
+      intros id Hsmall. reflexivity.
+    - cbn [split_blocks] in Hsplit.
+      destruct (split_exit fresh (term _ _ _ body)) as [next [ending extras]] eqn:Hexit.
+      destruct (split_blocks next rest) as [final tail] eqn:Htail.
+      inversion Hsplit; subst last out.
+      destruct (split_exit_spec fresh (term _ _ _ body) next ending extras Hexit)
+        as [Hnext [Hextra_ids Hexit_expands]].
+      assert (Hkey : (key < boundary)%positive).
+      { apply (Hids key body). now left. }
+      assert (Hrest_ids : forall id found, In (id, found) rest -> (id < boundary)%positive).
+      { intros id found Hin. apply (Hids id found). now right. }
+      destruct (IH next final tail ltac:(lia) Hrest_ids Htail)
+        as [Hfinal [Htail_ids Hlookup]].
+      split; [lia|]. split.
+      + intros id found [Hequal|Hin].
+        * inversion Hequal; subst id found. now left.
+        * apply in_app_or in Hin as [Hin|Hin].
+          -- right. specialize (Hextra_ids id found Hin). lia.
+          -- specialize (Htail_ids id found Hin). destruct Htail_ids; [now left|right; lia].
+      + assert (Hextra_lookup : forall id found,
+          (fresh <= id)%positive -> find_block id extras = Some found ->
+          find_block id ((key, Block _ _ _ (params _ _ _ body) (code _ _ _ body) ending)
+            :: extras ++ tail) = Some found).
+        { intros id found Hlarge Hfound. cbn [find_block].
+          destruct (Pos.eqb id key) eqn:Hequal.
+          - apply Pos.eqb_eq in Hequal. lia.
+          - rewrite split_find_append, Hfound. reflexivity. }
+        assert (Htail_lookup : forall id found,
+          (next <= id)%positive -> find_block id tail = Some found ->
+          find_block id ((key, Block _ _ _ (params _ _ _ body) (code _ _ _ body) ending)
+            :: extras ++ tail) = Some found).
+        { intros id found Hlarge Hfound. cbn [find_block].
+          destruct (Pos.eqb id key) eqn:Hequal.
+          - apply Pos.eqb_eq in Hequal. lia.
+          - rewrite split_find_append.
+            assert (Hmissing : find_block id extras = None).
+            { apply split_find_missing. intros x xbody Hin.
+              specialize (Hextra_ids x xbody Hin). lia. }
+            rewrite Hmissing. exact Hfound. }
+        intros id Hsmall. cbn [find_block]. destruct (Pos.eqb id key) eqn:Hequal.
+        * exists (Block _ _ _ (params _ _ _ body) (code _ _ _ body) ending).
+          split; [reflexivity|]. split; [reflexivity|]. split; [reflexivity|].
+          eapply exit_expands_transport; [apply Pos.le_refl|exact Hextra_lookup|exact Hexit_expands].
+        * assert (Hmissing : find_block id extras = None).
+          { apply split_find_missing. intros x xbody Hin.
+            specialize (Hextra_ids x xbody Hin). lia. }
+          rewrite split_find_append, Hmissing. specialize (Hlookup id Hsmall).
+          destruct (find_block id rest) as [found|]; [|exact Hlookup].
+          destruct Hlookup as [found' [Hfound Hexpands]].
+          exists found'. split; [exact Hfound|].
+          eapply block_expands_transport; [exact Hnext|exact Htail_lookup|exact Hexpands].
+  Qed.
+
+  Lemma split_loop_forward {A B} (source target : A -> A + B) (good : A -> Prop)
+      (Hpreserve : forall st next, good st -> source st = inl next -> good next)
+      (Hexpand : forall st, good st -> source st = target st \/
+        exists middle, target st = inl middle /\ target middle = source st) :
+    forall n st r, good st -> loop_fuel source n st = inr r ->
+      loop_fuel target (2 * n) st = inr r.
+  Proof.
+    induction n as [|n IH]; intros st r Hgood Hrun; [discriminate|].
+    pose proof (Hexpand st Hgood) as Hsteps.
+    cbn [loop_fuel] in Hrun.
+    replace (2 * S n) with (S (S (2 * n))) by lia.
+    destruct (source st) as [next|out] eqn:Hsource.
+    - pose proof (IH next r (Hpreserve st next Hgood Hsource) Hrun) as Htail.
+      destruct Hsteps as [Hsame|[middle [Hfirst Hsecond]]].
+      + cbn [loop_fuel]. rewrite <- Hsame.
+        change (loop_fuel target (S (2 * n)) next = inr r).
+        exact (loop_fuel_result_mono target (2 * n) (S (2 * n)) next r ltac:(lia) Htail).
+      + cbn [loop_fuel]. rewrite Hfirst. cbn [loop_fuel]. rewrite Hsecond. exact Htail.
+    - destruct Hsteps as [Hsame|[middle [Hfirst Hsecond]]].
+      + cbn [loop_fuel]. rewrite <- Hsame. exact Hrun.
+      + cbn [loop_fuel]. rewrite Hfirst. cbn [loop_fuel]. rewrite Hsecond. exact Hrun.
+  Qed.
+
+  Lemma split_loop_backward {A B} (source target : A -> A + B) (good : A -> Prop)
+      (Hpreserve : forall st next, good st -> source st = inl next -> good next)
+      (Hexpand : forall st, good st -> source st = target st \/
+        exists middle, target st = inl middle /\ target middle = source st) :
+    forall n st r, good st -> loop_fuel target n st = inr r ->
+      loop_fuel source n st = inr r.
+  Proof.
+    induction n as [|n IH]; intros st r Hgood Hrun; [discriminate|].
+    destruct (Hexpand st Hgood) as [Hsame|[middle [Hfirst Hsecond]]].
+    - cbn [loop_fuel] in Hrun |- *. rewrite <- Hsame in Hrun.
+      destruct (source st) as [next|out] eqn:Hsource; [|exact Hrun].
+      apply IH; [eapply Hpreserve; eassumption|exact Hrun].
+    - cbn [loop_fuel] in Hrun. rewrite Hfirst in Hrun.
+      destruct n as [|n]; [discriminate|].
+      cbn [loop_fuel] in Hrun. rewrite Hsecond in Hrun.
+      cbn [loop_fuel]. destruct (source st) as [next|out] eqn:Hsource; [|exact Hrun].
+      apply IH; [eapply Hpreserve; eassumption|].
+      exact (loop_fuel_result_mono target n (S n) next r ltac:(lia) Hrun).
+  Qed.
+
+  Lemma split_step_body p id actuals before body :
+    find_block id (blocks _ _ _ p) = Some body ->
+    step O.eval O.test p (id, actuals, before) =
+      match bind_vars (params _ _ _ body) actuals before with
+      | None => inr Wrong
+      | Some entered => execute_body body entered
+      end.
+  Proof.
+    intro Hfind. unfold step. rewrite Hfind. reflexivity.
+  Qed.
+
+  Lemma split_step_bridge p bridge target actuals finished :
+    find_block bridge (blocks _ _ _ p) = Some (Block _ _ _ [] [] (Jump target actuals)) ->
+    step O.eval O.test p (bridge, [], finished) = finish_exit (Jump target actuals) finished.
+  Proof.
+    intro Hfind. rewrite (split_step_body _ _ _ _ _ Hfind). reflexivity.
+  Qed.
+
+  Lemma split_exit_steps lower p ending ending' finished :
+    exit_expands lower (blocks _ _ _ p) ending ending' ->
+    finish_exit ending finished = finish_exit ending' finished \/
+    exists middle, finish_exit ending' finished = inl middle /\
+      step O.eval O.test p middle = finish_exit ending finished.
+  Proof.
+    intros [Hequal|Hbranch]; [subst ending'; now left|].
+    destruct Hbranch as [guard [operands [yes [yes_args [no [no_args [yes' [no'
+      [Hsource [Htarget [Hyes Hno]]]]]]]]]]].
+    subst ending ending'. cbn [finish_exit].
+    destruct (read_vars finished operands) as [values|]; [|now left].
+    destruct (O.test guard values) as [choice|]; [|now left].
+    destruct choice.
+    - destruct Hyes as [[Hequal Hempty]|[Hlower Hbridge]].
+      + subst yes' yes_args. now left.
+      + right. exists (yes', [], finished). split; [reflexivity|].
+        exact (split_step_bridge _ _ _ _ _ Hbridge).
+    - destruct Hno as [[Hequal Hempty]|[Hlower Hbridge]].
+      + subst no' no_args. now left.
+      + right. exists (no', [], finished). split; [reflexivity|].
+        exact (split_step_bridge _ _ _ _ _ Hbridge).
+  Qed.
+
+  Lemma split_block_steps lower source target id actuals before body body' :
+    find_block id (blocks _ _ _ source) = Some body ->
+    find_block id (blocks _ _ _ target) = Some body' ->
+    block_expands lower (blocks _ _ _ target) body body' ->
+    step O.eval O.test source (id, actuals, before) =
+      step O.eval O.test target (id, actuals, before) \/
+    exists middle, step O.eval O.test target (id, actuals, before) = inl middle /\
+      step O.eval O.test target middle = step O.eval O.test source (id, actuals, before).
+  Proof.
+    intros Hsource Htarget [Hparams [Hcode Hexit]].
+    rewrite (split_step_body _ _ _ _ _ Hsource), (split_step_body _ _ _ _ _ Htarget), Hparams.
+    destruct (bind_vars (params _ _ _ body) actuals before) as [entered|]; [|now left].
+    unfold execute_body. rewrite Hcode.
+    destruct (exec_code O.eval (code _ _ _ body) entered) as [finished|]; [|now left].
+    exact (split_exit_steps lower target _ _ finished Hexit).
+  Qed.
+
+  Lemma split_block_id_in (s : P.t) id body :
+    In (id, body) (blocks _ _ _ s) -> In id (function_ids s).
+  Proof.
+    intro Hin. unfold function_ids. right. apply in_or_app. right.
+    apply in_flat_map. exists (id, body). split; [exact Hin|]. cbn. now left.
+  Qed.
+
+  Lemma split_target_id_in (s : P.t) id body target :
+    In (id, body) (blocks _ _ _ s) -> In target (exit_targets (term _ _ _ body)) ->
+    In target (function_ids s).
+  Proof.
+    intros Hin Htarget. unfold function_ids. right. apply in_or_app. right.
+    apply in_flat_map. exists (id, body). split; [exact Hin|]. cbn. now right.
+  Qed.
+
+  Lemma split_step_target_bound s st next :
+    step O.eval O.test s st = inl next ->
+    (fst (fst next) < fresh_after (function_ids s))%positive.
+  Proof.
+    destruct st as [[id actuals] before].
+    unfold step. cbn [fst snd].
+    destruct (find_block id (blocks _ _ _ s)) as [body|] eqn:Hfind; [|discriminate].
+    pose proof (find_source_block _ id body Hfind) as Hin.
+    destruct (bind_vars (params _ _ _ body) actuals before) as [entered|]; [|discriminate].
+    destruct (exec_code O.eval (code _ _ _ body) entered) as [finished|]; [|discriminate].
+    destruct (term _ _ _ body) as [target args|guard operands yes yes_args no no_args|values]
+      eqn:Hterm.
+    - destruct (read_vars finished args) as [passed|]; [|discriminate].
+      intro Hstep. inversion Hstep; subst next. cbn [fst].
+      apply fresh_after_gt. apply (split_target_id_in s id body target Hin).
+      rewrite Hterm. cbn [exit_targets]. now left.
+    - destruct (read_vars finished operands) as [guard_values|]; [|discriminate].
+      destruct (O.test guard guard_values) as [choice|]; [|discriminate].
+      destruct choice.
+      + destruct (read_vars finished yes_args) as [passed|]; [|discriminate].
+        intro Hstep. inversion Hstep; subst next. cbn [fst].
+        apply fresh_after_gt. apply (split_target_id_in s id body yes Hin).
+        rewrite Hterm. cbn [exit_targets]. now left.
+      + destruct (read_vars finished no_args) as [passed|]; [|discriminate].
+        intro Hstep. inversion Hstep; subst next. cbn [fst].
+        apply fresh_after_gt. apply (split_target_id_in s id body no Hin).
+        rewrite Hterm. cbn [exit_targets]. right. now left.
+    - destruct (read_vars finished values); discriminate.
+  Qed.
+
+  Lemma split_semantic_steps s p : split s = Some p ->
+    forall st, (fst (fst st) < fresh_after (function_ids s))%positive ->
+      step O.eval O.test s st = step O.eval O.test p st \/
+      exists middle, step O.eval O.test p st = inl middle /\
+        step O.eval O.test p middle = step O.eval O.test s st.
+  Proof.
+    intro Hsplit. unfold split in Hsplit.
+    destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s))
+      as [last out] eqn:Hblocks. inversion Hsplit; subst p.
+    assert (Hids : forall id body, In (id, body) (blocks _ _ _ s) ->
+      (id < fresh_after (function_ids s))%positive).
+    { intros id body Hin. apply fresh_after_gt. exact (split_block_id_in s id body Hin). }
+    destruct (split_blocks_spec (fresh_after (function_ids s)) (blocks _ _ _ s)
+      (fresh_after (function_ids s)) last out (Pos.le_refl _) Hids Hblocks)
+      as [Hlast [Hout Hlookup]].
+    intros [[id actuals] before] Hsmall. cbn [fst] in Hsmall.
+    specialize (Hlookup id Hsmall).
+    destruct (find_block id (blocks _ _ _ s)) as [body|] eqn:Hfind.
+    - destruct Hlookup as [body' [Hfind' Hexpands]].
+      eapply split_block_steps; [exact Hfind|exact Hfind'|exact Hexpands].
+    - left. unfold step. cbn [blocks]. rewrite Hfind, Hlookup. reflexivity.
+  Qed.
+
+  Lemma split_shape s p : split s = Some p ->
+    inputs _ _ _ p = inputs _ _ _ s /\ entry _ _ _ p = entry _ _ _ s.
+  Proof.
+    unfold split. destruct (split_blocks (fresh_after (function_ids s)) (blocks _ _ _ s)).
+    intro Hsplit. inversion Hsplit. split; reflexivity.
+  Qed.
+
+  Lemma split_run : forall s split_s, split s = Some split_s -> forall n ins r, r <> Timeout ->
+    (run_with O.eval O.test n s ins = r ->
+      run_with O.eval O.test (2 * n) split_s ins = r) /\
+    (run_with O.eval O.test n split_s ins = r -> run_with O.eval O.test n s ins = r).
+  Proof.
+    intros s p Hsplit n ins r Hfinite.
+    destruct (split_shape s p Hsplit) as [Hinputs Hentry].
+    assert (Hpreserve : forall st next,
+      (fst (fst st) < fresh_after (function_ids s))%positive ->
+      step O.eval O.test s st = inl next ->
+      (fst (fst next) < fresh_after (function_ids s))%positive).
+    { intros st next _ Hstep. exact (split_step_target_bound s st next Hstep). }
+    assert (Hgood : (entry _ _ _ s < fresh_after (function_ids s))%positive).
+    { apply fresh_after_gt. now left. }
+    pose proof (split_semantic_steps s p Hsplit) as Hexpand.
+    split.
+    - intro Hrun. unfold run_with in Hrun |- *. rewrite Hinputs, Hentry.
+      destruct (bind_vars (inputs _ _ _ s) ins []) as [initial|]; [|exact Hrun].
+      destruct (loop_fuel (step O.eval O.test s) n (entry _ _ _ s, [], initial))
+        as [state|out] eqn:Hloop.
+      + exfalso. apply Hfinite. symmetry. exact Hrun.
+      + rewrite (split_loop_forward _ _ _ Hpreserve Hexpand n
+          (entry _ _ _ s, [], initial) out Hgood Hloop). exact Hrun.
+    - intro Hrun. unfold run_with in Hrun |- *. rewrite Hinputs, Hentry in Hrun.
+      destruct (bind_vars (inputs _ _ _ s) ins []) as [initial|]; [|exact Hrun].
+      destruct (loop_fuel (step O.eval O.test p) n (entry _ _ _ s, [], initial))
+        as [state|out] eqn:Hloop.
+      + exfalso. apply Hfinite. symmetry. exact Hrun.
+      + rewrite (split_loop_backward _ _ _ Hpreserve Hexpand n
+          (entry _ _ _ s, [], initial) out Hgood Hloop). exact Hrun.
+  Qed.
+
   (** Every successful destruction has imperative form. *)
   Lemma destroy_imp : forall s p, destroy s = Some p -> imp_form p.
   Proof.
@@ -921,7 +1462,16 @@ Module Destroy (O : OPS)
     forall n ins r, r <> Timeout ->
       (run_with O.eval O.test n s ins = r -> run_with O.eval O.test (2 * n) p ins = r) /\
       (run_with O.eval O.test n p ins = r -> run_with O.eval O.test n s ins = r).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s p Hssa Hdestroy n ins r Hfinite. unfold destroy in Hdestroy.
+    destruct (split s) as [split_s|] eqn:Hsplit; [|discriminate].
+    destruct (split_run s split_s Hsplit n ins r Hfinite) as [Hforward Hbackward].
+    split.
+    - intro Hrun. rewrite <- (copies_run split_s p Hdestroy (2 * n) ins).
+      apply Hforward. exact Hrun.
+    - intro Hrun. apply Hbackward. rewrite (copies_run split_s p Hdestroy n ins).
+      exact Hrun.
+  Qed.
 End Destroy.
 
 Module DestroyT (O : OPS)
@@ -989,10 +1539,14 @@ Module DestroyT (O : OPS)
   Lemma F5_block_sim : forall s p ss sp, ssa_wf s -> copies s = Some p ->
     entered_agree s p ss sp ->
     copy_outcomes s p (step O.eval O.test s ss) (step O.eval O.test p sp).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s p ss sp Hssa Hcopies Hagree. exact (copies_block_sim s p ss sp Hcopies Hagree).
+  Qed.
   Lemma F6_copies_run : forall s p, ssa_wf s -> copies s = Some p ->
     forall n ins, run_with O.eval O.test n s ins = run_with O.eval O.test n p ins.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros s p Hssa Hcopies. exact (copies_run s p Hcopies).
+  Qed.
   Lemma F7_copies_imp : forall s p, copies s = Some p -> imp_form p.
   Proof.
     intros s p Hcopies. exact (proj2 (proj2 (copies_shape s p Hcopies))).
