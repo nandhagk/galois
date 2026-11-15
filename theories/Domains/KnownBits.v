@@ -4,7 +4,7 @@
     For example, an eight-bit mask can record that the low nibble is zero.
     Builds on: KnownBitsSig, WordSig and the bit-vector operations. *)
 
-From Stdlib Require Import ZArith NArith List Bool Lia.
+From Stdlib Require Import ZArith NArith Zpow_facts List Bool Lia.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Loop.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
@@ -2760,6 +2760,361 @@ Proof.
   - apply tnum_join_sound. destruct (k =? 1); auto.
 Qed.
 
+(** * Stored mask size
+
+    Every newly computed mask is restricted to its declared word width. *)
+
+(** Word membership bounds the number of stored magnitude bits. *)
+Lemma tnum_word_bits : forall w z, is_word w z ->
+  (Z.size_nat z <= Pos.to_nat w)%nat.
+Proof.
+  intros w [|z|z] Hword; unfold is_word, modulus in Hword;
+    cbn [Z.size_nat]; try lia.
+  apply Zpower2_Psize. rewrite positive_nat_Z. exact (proj2 Hword).
+Qed.
+
+(** Two word-sized masks occupy at most twice the word width. *)
+Lemma tnum_bounded_bits : forall w a,
+  is_word w (zeros a) -> is_word w (ones a) ->
+  (tnum_bits a <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a Hz Ho. unfold tnum_bits.
+  pose proof (tnum_word_bits w _ Hz). pose proof (tnum_word_bits w _ Ho). lia.
+Qed.
+
+(** Normalization stores two masks within their declared width. *)
+Lemma tnum_normalise_bits : forall w a,
+  (tnum_bits (tnum_normalise w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a. apply tnum_bounded_bits; cbn [tnum_normalise zeros ones];
+    rewrite tnum_wrap_agrees; apply wrap_is_word.
+Qed.
+
+(** Joining masks restricts both output masks to the declared width. *)
+Lemma tnum_join_bits_bound : forall w a b,
+  (tnum_bits (tnum_join w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. apply tnum_bounded_bits; cbn [tnum_join zeros ones];
+    rewrite tnum_wand_agrees; apply wand_is_word.
+Qed.
+
+(** Meeting masks restricts both output masks to the declared width. *)
+Lemma tnum_meet_bits : forall w a b,
+  (tnum_bits (tnum_meet w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. apply tnum_bounded_bits; cbn [tnum_meet zeros ones];
+    rewrite tnum_wor_agrees; apply wor_is_word.
+Qed.
+
+(** A constant abstraction stores two normalized masks. *)
+Lemma tnum_const_bits : forall w z,
+  (tnum_bits (tnum_const w z) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w z. apply tnum_bounded_bits; cbn [tnum_const zeros ones].
+  - rewrite tnum_wnot_agrees. apply wnot_is_word.
+  - rewrite tnum_wrap_agrees. apply wrap_is_word.
+Qed.
+
+(** The unrestricted mask has no stored bits. *)
+Lemma tnum_top_bits : forall w, (tnum_bits tnum_top <= 2 * Pos.to_nat w)%nat.
+Proof. intro w. apply tnum_bounded_bits; apply zero_is_word. Qed.
+
+(** The contradictory bottom mask stores two words. *)
+Lemma tnum_bot_bits : forall w, (tnum_bits (tnum_bot w) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intro w. apply tnum_bounded_bits; cbn [tnum_bot zeros ones];
+    unfold is_word; pose proof (modulus_pos w); lia.
+Qed.
+
+(** Negating the known bits normalizes both output masks. *)
+Lemma tnum_not_bits : forall w a,
+  (tnum_bits (tnum_not w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a. apply tnum_bounded_bits; cbn [tnum_not zeros ones];
+    rewrite tnum_wrap_agrees; apply wrap_is_word.
+Qed.
+
+(** Carry addition normalizes both masks independently of its raw operands. *)
+Lemma tnum_adc_bits : forall w a b carry,
+  (tnum_bits (tnum_adc w a b carry) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b carry. apply tnum_bounded_bits; cbn [tnum_adc zeros ones];
+    rewrite tnum_wrap_agrees; apply wrap_is_word.
+Qed.
+
+(** Addition produces two normalized masks. *)
+Lemma tnum_add_bits : forall w a b,
+  (tnum_bits (tnum_add w a b) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_adc_bits. Qed.
+
+(** Subtraction produces two normalized masks. *)
+Lemma tnum_sub_bits : forall w a b,
+  (tnum_bits (tnum_sub w a b) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_adc_bits. Qed.
+
+(** Arithmetic negation produces two normalized masks. *)
+Lemma tnum_neg_bits : forall w a,
+  (tnum_bits (tnum_neg w a) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_sub_bits. Qed.
+
+(** Conjunction produces two normalized masks. *)
+Lemma tnum_and_bits : forall w a b,
+  (tnum_bits (tnum_and w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. apply tnum_bounded_bits; cbn [tnum_and zeros ones].
+  - rewrite tnum_wor_agrees. apply wor_is_word.
+  - rewrite tnum_wand_agrees. apply wand_is_word.
+Qed.
+
+(** Disjunction produces two normalized masks. *)
+Lemma tnum_or_bits : forall w a b,
+  (tnum_bits (tnum_or w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. apply tnum_bounded_bits; cbn [tnum_or zeros ones].
+  - rewrite tnum_wand_agrees. apply wand_is_word.
+  - rewrite tnum_wor_agrees. apply wor_is_word.
+Qed.
+
+(** Exclusive disjunction produces two normalized masks. *)
+Lemma tnum_xor_bits : forall w a b,
+  (tnum_bits (tnum_xor w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. apply tnum_bounded_bits; cbn [tnum_xor zeros ones];
+    rewrite tnum_wor_agrees; apply wor_is_word.
+Qed.
+
+(** Endpoint mapping normalizes the result even for an arbitrary mapping function. *)
+Lemma tnum_map_bits : forall sw rw f a,
+  (tnum_bits (tnum_map sw rw f a) <= 2 * Pos.to_nat rw)%nat.
+Proof.
+  intros sw rw f a. apply tnum_bounded_bits; cbn [tnum_map zeros ones].
+  - rewrite tnum_wnot_agrees. apply wnot_is_word.
+  - rewrite tnum_wrap_agrees. apply wrap_is_word.
+Qed.
+
+(** Scalar left shift produces two normalized masks. *)
+Lemma tnum_shl_scalar_bits : forall w k a,
+  (tnum_bits (tnum_shl_scalar w k a) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_map_bits. Qed.
+
+(** Every scalar shift or rotation produces two normalized masks. *)
+Lemma tnum_scalar_bits_bound : forall o w k a,
+  (tnum_bits (tnum_scalar o w k a) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_map_bits. Qed.
+
+(** The low-product approximation restricts its known zero mask to the width. *)
+Lemma tnum_mul_low_bits : forall w a b,
+  (tnum_bits (tnum_mul_low w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. apply tnum_bounded_bits; cbn [tnum_mul_low zeros ones].
+  - rewrite tnum_wrap_agrees. apply wrap_is_word.
+  - apply zero_is_word.
+Qed.
+
+(** The constant-or-low multiplier produces bounded masks. *)
+Lemma tnum_mul_bits : forall w a b,
+  (tnum_bits (tnum_mul w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. unfold tnum_mul.
+  destruct (tnum_constant w a), (tnum_constant w b);
+    first [apply tnum_const_bits|apply tnum_mul_low_bits].
+Qed.
+
+(** The upper-bound approximation stores a normalized zero mask. *)
+Lemma tnum_upper_bits : forall w h,
+  (tnum_bits (tnum_upper w h) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w h. apply tnum_bounded_bits; cbn [tnum_upper zeros ones].
+  - rewrite tnum_wnot_agrees. apply wnot_is_word.
+  - apply zero_is_word.
+Qed.
+
+(** Unsigned division produces masks within the result width. *)
+Lemma tnum_udiv_bits : forall w a b,
+  (tnum_bits (tnum_udiv w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. unfold tnum_udiv. destruct (tnum_wrap w (ones b) =? 0);
+    [apply tnum_top_bits|apply tnum_upper_bits].
+Qed.
+
+(** Unsigned remainder produces masks within the result width. *)
+Lemma tnum_urem_bits : forall w a,
+  (tnum_bits (tnum_urem w a) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_upper_bits. Qed.
+
+(** Signed remainder produces masks within the result width. *)
+Lemma tnum_srem_bits : forall w a,
+  (tnum_bits (tnum_srem w a) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a. apply tnum_bounded_bits; cbn [tnum_srem zeros ones].
+  - rewrite tnum_wand_agrees. apply wand_is_word.
+  - apply zero_is_word.
+Qed.
+
+(** Concatenation stores masks at the sum of the operand widths. *)
+Lemma tnum_concat_bits : forall w v a b,
+  (tnum_bits (tnum_concat w v a b) <= 2 * Pos.to_nat (w + v)%positive)%nat.
+Proof.
+  intros w v a b. apply tnum_bounded_bits; cbn [tnum_concat zeros ones];
+    rewrite tnum_wrap_agrees; apply wrap_is_word.
+Qed.
+
+(** Conditional selection normalizes the chosen or joined masks. *)
+Lemma tnum_ite_bits : forall w c a b,
+  (tnum_bits (tnum_ite w c a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w c a b. unfold tnum_ite. destruct (tnum_constant 1%positive c);
+    [apply tnum_normalise_bits|apply tnum_join_bits_bound].
+Qed.
+
+(** A trace preserves state and result invariants whenever each step does. *)
+Lemma tnum_runs_preserved : forall S R (step : S -> S + R)
+    (state_ok : S -> Prop) (result_ok : R -> Prop),
+  (forall s, state_ok s ->
+    match step s with inl next => state_ok next | inr r => result_ok r end) ->
+  forall n s result, tnum_runs step n s result -> state_ok s ->
+    match result with inl next => state_ok next | inr r => result_ok r end.
+Proof.
+  intros S R step state_ok result_ok Hstep n s result Hrun.
+  induction Hrun as [s|n s r Hstop|n s next result Hnext Hrun IH]; intro Hstate.
+  - exact Hstate.
+  - pose proof (Hstep s Hstate) as Hresult. now rewrite Hstop in Hresult.
+  - apply IH. pose proof (Hstep s Hstate) as Hresult. now rewrite Hnext in Hresult.
+Qed.
+
+(** A product stage preserves a bound on its accumulator's stored mask bits. *)
+Lemma tnum_mul_step_bits : forall w a b s,
+  (tnum_bits (snd s) <= 2 * Pos.to_nat w)%nat ->
+  match tnum_mul_stage_step w a b s with
+  | inl next => (tnum_bits (snd next) <= 2 * Pos.to_nat w)%nat
+  | inr r => (tnum_bits r <= 2 * Pos.to_nat w)%nat
+  end.
+Proof.
+  intros w a b [i r] Hr. cbn [tnum_mul_stage_step snd] in *.
+  destruct (Z.testbit (zeros b) i); [exact Hr|].
+  destruct (Z.testbit (ones b) i); [apply tnum_add_bits|apply tnum_join_bits_bound].
+Qed.
+
+(** Accumulator multiplication preserves its stored-mask bound on either exit. *)
+Lemma tnum_acc_step_bits : forall w a b s,
+  (tnum_bits (snd s) <= 2 * Pos.to_nat w)%nat ->
+  match tnum_mul_acc_step w a b s with
+  | inl next => (tnum_bits (snd next) <= 2 * Pos.to_nat w)%nat
+  | inr r => (tnum_bits r <= 2 * Pos.to_nat w)%nat
+  end.
+Proof.
+  intros w a b [i r] Hr. cbn [tnum_mul_acc_step snd] in *.
+  destruct (tnum_mul_acc_done w b i); [exact Hr|]. cbn [snd].
+  destruct (Z.testbit (zeros b) i); [exact Hr|apply tnum_add_bits].
+Qed.
+
+(** Every exhausted or completed stage loop returns masks within its width. *)
+Lemma tnum_mul_stages_bits : forall w a b,
+  (tnum_bits (tnum_mul_stages w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. unfold tnum_mul_stages.
+  set (a' := tnum_normalise w a). set (b' := tnum_normalise w b).
+  destruct (tnum_empty w a' || tnum_empty w b'); [apply tnum_bot_bits|].
+  pose proof (tnum_runs_preserved (Z * tnum)%type tnum (tnum_mul_stage_step w a' b')
+    (fun s => (tnum_bits (snd s) <= 2 * Pos.to_nat w)%nat)
+    (fun r => (tnum_bits r <= 2 * Pos.to_nat w)%nat)
+    (tnum_mul_step_bits w a' b') _ _ _
+    (tnum_loop_runs _ _ (tnum_mul_stage_step w a' b') (N.pos w) (0, tnum_const w 0))
+    (tnum_const_bits w 0)) as Hbound.
+  destruct (loopN (tnum_mul_stage_step w a' b') (N.pos w) (0, tnum_const w 0));
+    exact Hbound.
+Qed.
+
+(** The final addition of value and mask accumulators normalizes their masks. *)
+Lemma tnum_mul_acc_bits : forall w a b,
+  (tnum_bits (tnum_mul_acc w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w a b. unfold tnum_mul_acc.
+  destruct (tnum_empty w (tnum_normalise w a) || tnum_empty w (tnum_normalise w b));
+    [apply tnum_bot_bits|apply tnum_add_bits].
+Qed.
+
+(** Every selected multiplication algorithm returns bounded masks. *)
+Lemma tnum_mul_with_bits : forall choice w a b,
+  (tnum_bits (tnum_mul_with choice w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros choice w a b. destruct choice; cbn [tnum_mul_with].
+  - apply tnum_mul_bits.
+  - apply tnum_mul_stages_bits.
+  - apply tnum_mul_acc_bits.
+  - apply tnum_meet_bits.
+Qed.
+
+(** Positive-mask expansion always reaches a normalizing join. *)
+Lemma tnum_expand_bits : forall o w p d r,
+  (tnum_bits (tnum_expand o w p d r) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros o w p. induction p as [p IH|p IH|]; intros d r; cbn [tnum_expand];
+    first [apply IH|apply tnum_join_bits_bound].
+Qed.
+
+(** Expanding any integer mask produces bounded masks. *)
+Lemma tnum_expand_mask_bits : forall o w u r,
+  (tnum_bits (tnum_expand_mask o w u r) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros o w [|p|p] r; cbn [tnum_expand_mask];
+    first [apply tnum_normalise_bits|apply tnum_expand_bits].
+Qed.
+
+(** Every branch of factored shift expansion produces bounded masks. *)
+Lemma tnum_variable_raw_bits : forall o w a b,
+  (tnum_bits (tnum_variable_raw o w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros o w a b. unfold tnum_variable_raw.
+  destruct (tnum_rotation o); [apply tnum_expand_mask_bits|].
+  destruct (tnum_mask w b <? 2 ^ tnum_shift_cutoff w);
+    [apply tnum_expand_mask_bits|apply tnum_join_bits_bound].
+Qed.
+
+(** Variable shifts and rotations produce masks within the result width. *)
+Lemma tnum_variable_bits : forall o w a b,
+  (tnum_bits (tnum_variable o w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros o w a b. unfold tnum_variable.
+  destruct (tnum_empty w (tnum_normalise w a) || tnum_empty w (tnum_normalise w b));
+    [apply tnum_bot_bits|apply tnum_variable_raw_bits].
+Qed.
+
+(** Count abstractions store masks within their result width. *)
+Lemma tnum_count_bits : forall w,
+  (tnum_bits (tnum_count w) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_upper_bits. Qed.
+
+(** Endpoint comparison produces bounded one-bit masks. *)
+Lemma tnum_order_bits : forall strict w a b,
+  (tnum_bits (tnum_order strict w a b) <= 2)%nat.
+Proof.
+  intros strict w a b. unfold tnum_order.
+  destruct (if strict then tnum_max w a <? tnum_min w b
+    else tnum_max w a <=? tnum_min w b); [apply tnum_const_bits|].
+  destruct (if strict then tnum_max w b <=? tnum_min w a
+    else tnum_max w b <? tnum_min w a); [apply tnum_const_bits|apply (tnum_top_bits 1%positive)].
+Qed.
+
+(** Equality comparison produces bounded one-bit masks. *)
+Lemma tnum_equal_bits : forall w a b,
+  (tnum_bits (tnum_equal w a b) <= 2)%nat.
+Proof.
+  intros w a b. unfold tnum_equal.
+  destruct (tnum_empty w (tnum_meet w a b)); [apply tnum_const_bits|].
+  destruct (tnum_constant w a), (tnum_constant w b);
+    first [apply tnum_const_bits|apply (tnum_top_bits 1%positive)].
+Qed.
+
+(** Every comparison produces bounded one-bit masks. *)
+Lemma tnum_compare_bits : forall o w a b,
+  (tnum_bits (tnum_compare o w a b) <= 2)%nat.
+Proof.
+  intros o w a b. destruct o; cbn [tnum_compare];
+    first [apply tnum_equal_bits|apply tnum_not_bits|apply tnum_order_bits|
+      apply (tnum_top_bits 1%positive)].
+Qed.
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
@@ -3401,7 +3756,10 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (tnum_bits (tnum_not w a) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_neg w a) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_normalise w a) <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. repeat split;
+      first [apply tnum_not_bits|apply tnum_neg_bits|apply tnum_normalise_bits].
+  Qed.
   (** Binary transfer results store no more than two masks of the width. *)
   Lemma tnum_binary_bits : forall w a b,
     (tnum_bits (tnum_add w a b) <= 2 * Pos.to_nat w)%nat /\
@@ -3410,12 +3768,17 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (tnum_bits (tnum_or w a b) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_xor w a b) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_mul w a b) <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b. repeat split; first [apply tnum_add_bits|apply tnum_sub_bits|
+      apply tnum_and_bits|apply tnum_or_bits|apply tnum_xor_bits|apply tnum_mul_with_bits].
+  Qed.
   (** Configured stages and variable shifts keep masks within the width. *)
   Lemma tnum_stage_bits : forall choice o w a b,
     (tnum_bits (tnum_mul_with choice w a b) <= 2 * Pos.to_nat w)%nat /\
     (tnum_bits (tnum_variable o w a b) <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros choice o w a b. split; [apply tnum_mul_with_bits|apply tnum_variable_bits].
+  Qed.
   (** The bit mask agrees with modular word reduction. *)
   Lemma F0_tnum_wrap : forall w z, tnum_wrap w z = L.wrap w z.
   Proof. exact tnum_wrap_agrees. Qed.
@@ -3457,13 +3820,23 @@ Module KnownBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) <: KNOWN_BITS_ALL L C.
     (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
     mul_step w a b (i, r) = inl (j, s) ->
     (tnum_bits s <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b i r j q Hr Hstep.
+    pose proof (tnum_mul_step_bits w a b (i, r) Hr) as Hbound.
+    change (tnum_mul_stage_step w a b (i, r) = inl (j, q)) in Hstep.
+    now rewrite Hstep in Hbound.
+  Qed.
   (** An accumulating step keeps its output masks within the width. *)
   Lemma F9_acc_step_bits : forall w a b i r j s,
     (tnum_bits r <= 2 * Pos.to_nat w)%nat ->
     acc_step w a b (i, r) = inl (j, s) ->
     (tnum_bits s <= 2 * Pos.to_nat w)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b i r j q Hr Hstep.
+    pose proof (tnum_acc_step_bits w a b (i, r) Hr) as Hbound.
+    change (tnum_mul_acc_step w a b (i, r) = inl (j, q)) in Hstep.
+    now rewrite Hstep in Hbound.
+  Qed.
   (** Masking work is linear in the width and raw integer size. *)
   Lemma T0_tnum_wrap : forall w z,
     (T_tnum_wrap w z <= k_mul_step *
