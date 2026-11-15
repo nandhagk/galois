@@ -4,7 +4,7 @@
     For example, a target edge may pass the renamed value just defined in its source block.
     Builds on: Ssa.Validate and Ssa.Present. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Argent Require Import Loop.
 From Galois.Base Require Import Key.
 From Galois.Graph Require Import Digraph Dom.
@@ -129,4 +129,61 @@ Example weak_state_distinct_outcomes :
    loop_fuel (step Ops.eval Ops.test weak_target) 1 (1, [], []),
    loop_fuel (step Ops.eval Ops.test weak_source) 1 (1, [], [])) =
   (inr Wrong, inl (2, [], []), inr Wrong, inl (2, [], [])).
+Proof. vm_compute; reflexivity. Qed.
+
+Module WT := ValidateT Ops PosKeyT PosKeyT Source View.Q View.R BlockEdge
+  View.BC View.S DigraphT DomT View.Link.
+
+Definition empty_program : Source.t :=
+  Func positive positive positive 1 []
+    [(1, Block positive positive positive [] [] (Return []))].
+
+Definition padded_entry (n : nat) : cert := ([(1, repeat (1, 1) n)], []).
+
+(** Repeated unused mappings cost work even though the entry and block plan sizes are fixed. *)
+Example padded_entry_time_family :
+  let a := padded_entry 1 in let b := padded_entry 8 in
+  let ta := WT.tables empty_program empty_program a in
+  let tb := WT.tables empty_program empty_program b in
+  (WT.check empty_program empty_program a,
+   WT.check empty_program empty_program b,
+   Nat.eqb (WT.check_width empty_program empty_program a)
+     (WT.check_width empty_program empty_program b),
+   N.ltb (WT.T_check_entry empty_program empty_program a ta)
+     (WT.T_check_entry empty_program empty_program b tb),
+   N.ltb (WT.T_check_block ta 1) (WT.T_check_block tb 1)) =
+  (true, true, true, true, true).
+Proof. vm_compute; reflexivity. Qed.
+
+Definition padded_unused (n : nat) : cert := ([(2, repeat (1, 1) n)], []).
+
+(** The entry phase also accounts for inspecting rows unused by executable blocks. *)
+Example unused_row_time_family :
+  let a := padded_unused 1 in let b := padded_unused 8 in
+  let ta := WT.tables empty_program empty_program a in
+  let tb := WT.tables empty_program empty_program b in
+  (N.eqb (WT.T_tables empty_program empty_program a)
+     (WT.T_tables empty_program empty_program b),
+   N.ltb (WT.T_check_entry empty_program empty_program a ta)
+     (WT.T_check_entry empty_program empty_program b tb),
+   N.eqb (WT.T_check_block ta 1) (WT.T_check_block tb 1),
+   N.ltb (WT.T_check empty_program empty_program a)
+     (WT.T_check empty_program empty_program b)) =
+  (true, true, true, true).
+Proof. vm_compute; reflexivity. Qed.
+
+Definition empty_edge_program : Source.t :=
+  Func positive positive positive 1 []
+    [(1, Block positive positive positive [] [] (Jump 2 []));
+     (2, Block positive positive positive [] [] (Return []))].
+
+(** A target environment row is absent from the edge plan's size expression. *)
+Example padded_edge_time_family :
+  let a := padded_unused 1 in let b := padded_unused 8 in
+  let ta := WT.tables empty_edge_program empty_edge_program a in
+  let tb := WT.tables empty_edge_program empty_edge_program b in
+  (WT.check_edge ta 1 2 [], WT.check_edge tb 1 2 [],
+   N.ltb (WT.T_check_edge ta 1 2 []) (WT.T_check_edge tb 1 2 []),
+   WT.row_budget empty_edge_program a, WT.row_budget empty_edge_program b) =
+  (true, true, true, true, false).
 Proof. vm_compute; reflexivity. Qed.

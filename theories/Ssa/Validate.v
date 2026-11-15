@@ -4,7 +4,7 @@
     For example, it accepts a renamed return only when both returns read corresponding values.
     Builds on: ValidateSig. *)
 
-From Stdlib Require Import List PArith NArith Bool Lia.
+From Stdlib Require Import List PArith NArith Bool Arith Lia.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import KeySig Key Trie.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig.
@@ -480,6 +480,612 @@ Proof.
   intros bs b Hin; unfold first_blocks; rewrite rev_append_rev, app_nil_r, map_rev.
   apply (proj1 (in_rev _ b)); eapply Hfold; [|left; exact Hin].
   intros x Hpresent; rewrite PTrie.get_empty in Hpresent; contradiction.
+Qed.
+
+(** Cost accounting uses first-match indexes and charges each selected key once. *)
+
+Lemma val_max_nat a b : graph_max a b = Nat.max a b.
+Proof.
+  revert b; induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
+Qed.
+
+Lemma val_width_member xs x : In x xs -> Pos.size_nat x <= vertex_width xs.
+Proof.
+  induction xs as [|a rest IH]; cbn [vertex_width fold_right]; intro Hin.
+  - contradiction.
+  - rewrite val_max_nat; fold (vertex_width rest); destruct Hin as [Heq|Hin].
+    + subst x; apply Nat.le_max_l.
+    + specialize (IH Hin); pose proof (Nat.le_max_r (Pos.size_nat a) (vertex_width rest));
+        lia.
+Qed.
+
+Lemma val_function_width {K G} (p : func positive K G) x :
+  In x (function_ids p) -> Pos.size_nat x <= function_width p.
+Proof.
+  intro Hin; unfold function_width; rewrite val_max_nat.
+  eapply Nat.le_trans; [apply val_width_member; exact Hin|apply Nat.le_max_l].
+Qed.
+
+Lemma val_block_width {K G} (p : func positive K G) b body :
+  In (b, body) (blocks _ _ _ p) -> Pos.size_nat b <= function_width p.
+Proof.
+  intro Hin; apply val_function_width; unfold function_ids; right.
+  apply in_or_app; right; apply in_flat_map; exists (b, body); split; [exact Hin|].
+  cbn; left; reflexivity.
+Qed.
+
+Lemma val_cert_env_width c b row :
+  In (b, row) (fst c) -> Pos.size_nat b <= vertex_width (cert_ids c).
+Proof.
+  intro Hin; apply val_width_member; unfold cert_ids; apply in_or_app; left.
+  apply in_flat_map; exists (b, row); split; [exact Hin|]; cbn; left; reflexivity.
+Qed.
+
+Lemma val_cert_live_width c b row :
+  In (b, row) (snd c) -> Pos.size_nat b <= vertex_width (cert_ids c).
+Proof.
+  intro Hin; apply val_width_member; unfold cert_ids; apply in_or_app; right.
+  apply in_flat_map; exists (b, row); split; [exact Hin|]; cbn; left; reflexivity.
+Qed.
+
+Lemma val_cert_rows c : length (fst c) + length (snd c) <= cert_size c.
+Proof.
+  destruct c as [envs lives]; unfold cert_size; cbn [fst snd].
+  assert (Henv : length envs <=
+    fold_right (fun row n => 1 + 2 * length (snd row) + n) 0 envs).
+  { induction envs as [|[b row] rest IH]; cbn [length fold_right snd] in *; lia. }
+  assert (Hlive : length lives <=
+    fold_right (fun row n => 1 + length (snd row) + n) 0 lives).
+  { induction lives as [|[b row] rest IH]; cbn [length fold_right snd] in *; lia. }
+  lia.
+Qed.
+
+Lemma val_index_time {A} : forall (rows : list (positive * A)) w,
+  (forall x a, In (x, a) rows -> Pos.size_nat x <= w) ->
+  (T_val_index rows <=
+    (PTrieT.c_trie + 2) * N.of_nat (length rows) * N.of_nat (w + 1) + 1)%N.
+Proof.
+  induction rows as [|[x a] rest IH]; intros w Hwidth.
+  - time_step.
+  - assert (Hx : Pos.size_nat x <= w) by (apply (Hwidth x a); left; reflexivity).
+    specialize (IH w ltac:(intros y value Hin; apply (Hwidth y value); right; exact Hin)).
+    pose proof (PTrieT.T_set_le A x a (val_index rest)) as Hset.
+    time_unfold @T_val_index; cbn [length]; rewrite Nat2N.inj_succ.
+    rewrite !Nat2N.inj_add in Hset |- *; time_cbn; nia.
+Qed.
+
+Lemma val_set_time : forall xs w,
+  (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (T_val_set xs <=
+    (PTrieT.c_trie + 2) * N.of_nat (length xs) * N.of_nat (w + 1) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros w Hwidth.
+  - time_step.
+  - assert (Hx : Pos.size_nat x <= w) by (apply Hwidth; left; reflexivity).
+    specialize (IH w ltac:(intros y Hin; apply Hwidth; right; exact Hin)).
+    pose proof (PTrieT.T_set_le unit x tt (val_set rest)) as Hset.
+    time_unfold T_val_set; cbn [length]; rewrite Nat2N.inj_succ.
+    rewrite !Nat2N.inj_add in Hset |- *; time_cbn; nia.
+Qed.
+
+Lemma val_mem_time : forall known x w, Pos.size_nat x <= w ->
+  (T_val_mem known x <= 3 * N.of_nat (w + 1))%N.
+Proof.
+  intros known x w Hwidth; time_unfold T_val_mem.
+  rewrite PTrieT.trie_get_clock; destruct (trie_get x known); time_cbn; nia.
+Qed.
+
+Lemma val_maps_time : forall rho x y w, Pos.size_nat x <= w -> Pos.size_nat y <= w ->
+  (T_val_maps rho x y <= 4 * N.of_nat (w + 1))%N.
+Proof.
+  intros rho x y w Hx Hy; time_unfold T_val_maps; rewrite PTrieT.trie_get_clock.
+  destruct (trie_get x rho) as [z|]; [pose proof (Pos.T_eqb_le y z)|]; time_cbn; nia.
+Qed.
+
+Lemma val_nat_leb_right : forall n m,
+  (Nat.T_leb n m <= N.of_nat m + 1)%N.
+Proof.
+  intros n m; revert n; induction m as [|m IH]; intros [|n]; time_step.
+Qed.
+
+Lemma val_map_time {A B} : forall (f : A -> B) Tf xs,
+  (ListDef.T_map f Tf xs <= N.of_nat (length xs) + 1 +
+    fold_right N.add 0%N (map Tf xs))%N.
+Proof.
+  intros f Tf xs; induction xs; time_step.
+Qed.
+
+Lemma val_forallb_time {A} : forall (f : A -> bool) Tf xs,
+  (List.T_forallb f Tf xs <= 2 * N.of_nat (length xs) + 1 +
+    fold_right N.add 0%N (map Tf xs))%N.
+Proof.
+  intros f Tf xs; induction xs; time_step.
+Qed.
+
+Lemma val_forallb_uniform {A} : forall (f : A -> bool) Tf xs k,
+  (forall x, In x xs -> (Tf x <= k)%N) ->
+  (List.T_forallb f Tf xs <= (k + 2) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros f Tf xs; induction xs as [|x rest IH]; intros k Hbound.
+  - time_step.
+  - pose proof (Hbound x ltac:(left; reflexivity)) as Hhead.
+    specialize (IH k ltac:(intros y Hin; apply Hbound; right; exact Hin)); time_step.
+Qed.
+
+Lemma val_inverse_time : forall rho w,
+  (forall x y, In (x, y) rho -> Pos.size_nat x <= w /\ Pos.size_nat y <= w) ->
+  (T_val_inverse rho <=
+    (PTrieT.c_trie + 8) * N.of_nat (length rho) * N.of_nat (w + 1) + 3)%N.
+Proof.
+  intros rho w Hwidth.
+  pose proof (val_index_time (map (fun xy => (snd xy, fst xy)) rho) w
+    ltac:(intros y x Hin; apply in_map_iff in Hin as [[a b] [Heq Hin]];
+      cbn in Heq; injection Heq as Hb Ha; subst a b;
+      exact (proj2 (Hwidth x y Hin)))) as Hindex.
+  pose proof (ListDef.T_map_le (fun xy : positive * positive => (snd xy, fst xy))
+    (fun xy => (1 + (Datatypes.T_snd xy + Datatypes.T_fst xy))%N) 3%N rho
+    ltac:(intro xy; time_simpl; time_cbn; nia)) as Hmap.
+  time_unfold T_val_inverse; rewrite length_map in Hindex;
+    revert Hmap; time_simpl; intro Hmap;
+    rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+
+Lemma val_injective_time : forall rho w,
+  (forall x y, In (x, y) rho -> Pos.size_nat x <= w /\ Pos.size_nat y <= w) ->
+  (T_val_injective rho <=
+    (PTrieT.c_trie + 20) * N.of_nat (length rho) * N.of_nat (w + 1) + 5)%N.
+Proof.
+  intros rho w Hwidth; pose proof (val_inverse_time rho w Hwidth) as Hinv.
+  pose proof (val_forallb_uniform
+    (fun xy : positive * positive => val_maps (val_inverse rho) (snd xy) (fst xy))
+    (fun xy => (1 + (Datatypes.T_snd xy + Datatypes.T_fst xy +
+      T_val_maps (val_inverse rho) (snd xy) (fst xy)))%N) rho
+    (7 * N.of_nat (w + 1))%N ltac:(intros [x y] Hin;
+      destruct (Hwidth x y Hin) as [Hx Hy];
+      pose proof (val_maps_time (val_inverse rho) y x w Hy Hx);
+      time_simpl; time_cbn; nia)) as Hscan.
+  time_unfold T_val_injective; revert Hscan; time_simpl; intro Hscan;
+    rewrite !Nat2N.inj_add in *;
+    time_cbn_all; nia.
+Qed.
+
+Lemma val_args_time : forall xs ys rho known w,
+  (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (forall y, In y ys -> Pos.size_nat y <= w) ->
+  (T_val_args rho known xs ys <= 10 * N.of_nat (length xs) * N.of_nat (w + 1) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros ys rho known w Hxs Hys.
+  - time_step.
+  - destruct ys as [|y yr].
+    + time_step.
+    + assert (Hx : Pos.size_nat x <= w) by (apply Hxs; left; reflexivity).
+      assert (Hy : Pos.size_nat y <= w) by (apply Hys; left; reflexivity).
+      specialize (IH yr rho known w
+        ltac:(intros z Hin; apply Hxs; right; exact Hin)
+        ltac:(intros z Hin; apply Hys; right; exact Hin)).
+      pose proof (val_mem_time known x w Hx) as Hmem.
+      pose proof (val_maps_time rho x y w Hx Hy) as Hmaps; time_step.
+Qed.
+
+Lemma val_add_time : forall xs known w,
+  (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (T_val_add xs known <=
+    (PTrieT.c_trie + 2) * N.of_nat (length xs) * N.of_nat (w + 1) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros known w Hwidth.
+  - time_step.
+  - assert (Hx : Pos.size_nat x <= w) by (apply Hwidth; left; reflexivity).
+    specialize (IH known w ltac:(intros y Hin; apply Hwidth; right; exact Hin)).
+    pose proof (PTrieT.T_set_le unit x tt (val_add rest known)) as Hset.
+    time_unfold T_val_add; time_cbn; nia.
+Qed.
+
+Lemma val_sum_add {A} : forall (f g : A -> nat) xs,
+  fold_right (fun x n => f x + g x + n) 0 xs =
+    fold_right (fun x n => f x + n) 0 xs + fold_right (fun x n => g x + n) 0 xs.
+Proof.
+  intros f g xs; induction xs; cbn; lia.
+Qed.
+
+Lemma val_sum_mono {A} : forall (f g : A -> nat) xs,
+  (forall x, In x xs -> f x <= g x) ->
+  fold_right (fun x n => f x + n) 0 xs <= fold_right (fun x n => g x + n) 0 xs.
+Proof.
+  intros f g xs; induction xs as [|x rest IH]; intro Hbound; cbn; [lia|].
+  pose proof (Hbound x ltac:(left; reflexivity)) as Hhead.
+  specialize (IH ltac:(intros y Hin; apply Hbound; right; exact Hin)); lia.
+Qed.
+
+Lemma val_sum_absent : forall ids key amount, ~ In key ids ->
+  fold_right (fun b n => (if Pos.eqb b key then amount else 0) + n) 0 ids = 0.
+Proof.
+  induction ids as [|b rest IH]; intros key amount Hnone; cbn; [reflexivity|].
+  destruct (Pos.eqb b key) eqn:Hkey.
+  - apply Pos.eqb_eq in Hkey; subst b; exfalso; apply Hnone; left; reflexivity.
+  - apply IH; intro Hin; apply Hnone; right; exact Hin.
+Qed.
+
+Lemma val_sum_single : forall ids key amount, NoDup ids ->
+  fold_right (fun b n => (if Pos.eqb b key then amount else 0) + n) 0 ids <= amount.
+Proof.
+  induction ids as [|b rest IH]; intros key amount Hdistinct; cbn; [lia|].
+  inversion Hdistinct as [|? ? Hnone Htail]; subst.
+  destruct (Pos.eqb b key) eqn:Hkey.
+  - apply Pos.eqb_eq in Hkey; subst b; rewrite val_sum_absent by exact Hnone; lia.
+  - apply IH; exact Htail.
+Qed.
+
+Lemma val_lookup_sum {A} : forall (rows : list (positive * A)) ids (weight : A -> nat),
+  NoDup ids ->
+  fold_right (fun b n =>
+    (match lookup b rows with Some value => weight value | None => 0 end) + n) 0 ids <=
+      fold_right (fun item n => weight (snd item) + n) 0 rows.
+Proof.
+  induction rows as [|[key value] rest IH]; intros ids weight Hdistinct.
+  - clear Hdistinct; induction ids; cbn [lookup fold_right]; auto.
+  - specialize (IH ids weight Hdistinct).
+    pose proof (val_sum_single ids key (weight value) Hdistinct) as Hone.
+    pose proof (val_sum_mono
+      (fun b => match lookup b ((key, value) :: rest) with
+        Some a => weight a | None => 0 end)
+      (fun b => (if Pos.eqb b key then weight value else 0) +
+        match lookup b rest with Some a => weight a | None => 0 end) ids
+      ltac:(intros b Hin; cbn [lookup]; destruct (Pos.eqb b key); lia)) as Hstep.
+    cbn beta in Hstep.
+    rewrite (val_sum_add (fun b => if Pos.eqb b key then weight value else 0)
+      (fun b => match lookup b rest with Some a => weight a | None => 0 end) ids) in Hstep.
+    cbn beta in Hstep; cbn [fold_right snd]; lia.
+Qed.
+
+Lemma val_nat_sum {A} : forall (f : A -> nat) xs,
+  fold_right N.add 0%N (map (fun x => N.of_nat (f x)) xs) =
+    N.of_nat (fold_right (fun x n => f x + n) 0 xs).
+Proof.
+  intros f xs; induction xs; cbn [map fold_right]; [reflexivity|].
+  rewrite Nat2N.inj_add, IHxs; reflexivity.
+Qed.
+
+Lemma val_sum_time {A} : forall (f : A -> nat) (Tf : A -> N) xs c w,
+  (forall x, In x xs -> (Tf x <= c * N.of_nat (f x) * w)%N) ->
+  (fold_right N.add 0%N (map Tf xs) <=
+    c * N.of_nat (fold_right (fun x n => (f x + n)%nat) 0%nat xs) * w)%N.
+Proof.
+  intros f Tf xs; induction xs as [|x rest IH]; intros c w Hbound.
+  - time_cbn; nia.
+  - pose proof (Hbound x ltac:(left; reflexivity)) as Hhead.
+    specialize (IH c w ltac:(intros y Hin; apply Hbound; right; exact Hin));
+      cbn [map fold_right]; rewrite Nat2N.inj_add; nia.
+Qed.
+
+Lemma val_unique_time : forall xs seen w,
+  (forall x, In x xs -> Pos.size_nat x <= w) ->
+  (T_val_unique xs seen <=
+    (PTrieT.c_trie + 5) * N.of_nat (length xs) * N.of_nat (w + 1) + 1)%N.
+Proof.
+  induction xs as [|x rest IH]; intros seen w Hwidth.
+  - time_step.
+  - assert (Hx : Pos.size_nat x <= w) by (apply Hwidth; left; reflexivity).
+    specialize (IH (PTrieCode.set x tt seen) w
+      ltac:(intros y Hin; apply Hwidth; right; exact Hin)).
+    pose proof (val_mem_time seen x w Hx) as Hmem.
+    pose proof (PTrieT.T_set_le unit x tt seen) as Hset.
+    time_unfold T_val_unique; destruct (val_mem seen x); time_cbn; nia.
+Qed.
+
+Lemma val_bind_symbols_time : forall args ps m w,
+  (forall p, In p ps -> Pos.size_nat p <= w) ->
+  (T_val_bind_symbols ps args m <=
+    (PTrieT.c_trie + 2) * N.of_nat (length args) * N.of_nat (w + 1) + 1)%N.
+Proof.
+  induction args as [|x xr IH]; intros ps m w Hwidth; destruct ps as [|p pr].
+  - time_step.
+  - time_step.
+  - time_step.
+  - assert (Hp : Pos.size_nat p <= w) by (apply Hwidth; left; reflexivity).
+    specialize (IH pr (PTrieCode.set p x m) w
+      ltac:(intros y Hin; apply Hwidth; right; exact Hin)).
+    pose proof (PTrieT.T_set_le positive p x m) as Hset.
+    time_unfold T_val_bind_symbols; time_cbn; nia.
+Qed.
+
+Lemma val_same_length_time : forall xs ys,
+  (T_val_same_length xs ys <= N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x xr IH]; intros [|y yr]; time_step.
+Qed.
+
+Lemma val_symbol_time : forall m x w, Pos.size_nat x <= w ->
+  (T_val_symbol m x <= 3 * N.of_nat (w + 1))%N.
+Proof.
+  intros m x w Hx; time_unfold T_val_symbol; rewrite PTrieT.trie_get_clock.
+  destruct (trie_get x m); time_cbn; nia.
+Qed.
+
+Lemma val_size_time : forall m x w, Pos.size_nat x <= w ->
+  (T_val_size m x <= 3 * N.of_nat (w + 1))%N.
+Proof.
+  intros m x w Hx; time_unfold T_val_size; rewrite PTrieT.trie_get_clock.
+  destruct (trie_get x m); time_cbn; nia.
+Qed.
+
+Lemma val_row_time {A} : forall (m : ptrie (list A)) x w, Pos.size_nat x <= w ->
+  (T_index_row m x <= 3 * N.of_nat (w + 1))%N.
+Proof.
+  intros m x w Hx; time_unfold @T_index_row; rewrite PTrieT.trie_get_clock.
+  destruct (trie_get x m); time_cbn; nia.
+Qed.
+
+Lemma val_fold_left_uniform {A B} : forall (f : A -> B -> A) Tf xs k,
+  (forall acc x, In x xs -> (Tf acc x <= k)%N) -> forall acc,
+  (List.T_fold_left f Tf xs acc <= (k + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  intros f Tf xs; induction xs as [|x rest IH]; intros k Hbound acc.
+  - time_step.
+  - pose proof (Hbound acc x ltac:(left; reflexivity)) as Hhead.
+    specialize (IH k ltac:(intros state y Hin; apply Hbound; right; exact Hin) (f acc x));
+      time_step.
+Qed.
+
+Fixpoint val_selected {K G} (seen : ptrie unit)
+    (bs : list (positive * block positive K G)) : list (positive * block positive K G) :=
+  match bs with
+  | [] => []
+  | item :: rest =>
+    match trie_get (fst item) seen with
+    | Some _ => val_selected seen rest
+    | None => item :: val_selected (PTrieCode.set (fst item) tt seen) rest
+    end
+  end.
+
+Lemma val_selected_fold {K G} (bs : list (positive * block positive K G)) seen acc :
+  snd (fold_left (fun state item =>
+    match trie_get (fst item) (fst state) with
+    | Some _ => state
+    | None => (PTrieCode.set (fst item) tt (fst state), item :: snd state)
+    end) bs (seen, acc)) = rev (val_selected seen bs) ++ acc.
+Proof.
+  revert seen acc; induction bs as [|item rest IH]; intros seen acc.
+  - reflexivity.
+  - cbn [fold_left val_selected fst snd].
+    destruct (trie_get (fst item) seen) as [[]|].
+    + apply IH.
+    + rewrite IH; cbn [rev]; rewrite <- app_assoc; reflexivity.
+Qed.
+
+Lemma val_first_selected {K G} (bs : list (positive * block positive K G)) :
+  first_blocks bs = val_selected Empty bs.
+Proof.
+  unfold first_blocks; rewrite val_selected_fold, app_nil_r, rev_append_rev, app_nil_r.
+  apply rev_involutive.
+Qed.
+
+Lemma val_selected_in {K G} (bs : list (positive * block positive K G)) seen item :
+  In item (val_selected seen bs) -> In item bs /\ trie_get (fst item) seen = None.
+Proof.
+  revert seen; induction bs as [|a rest IH]; intros seen Hin.
+  - contradiction.
+  - cbn [val_selected] in Hin.
+    destruct (trie_get (fst a) seen) as [[]|] eqn:Hseen.
+    + destruct (IH seen Hin) as [Hrest Hnone]; split; [right; exact Hrest|exact Hnone].
+    + destruct Hin as [Heq|Hin].
+      * subst item; split; [left; reflexivity|exact Hseen].
+      * destruct (IH _ Hin) as [Hrest Hnone]; split; [right; exact Hrest|].
+        destruct (Pos.eq_dec (fst item) (fst a)) as [Heq|Hneq].
+        -- rewrite Heq, PTrie.get_set_same in Hnone; discriminate.
+        -- rewrite PTrie.get_set_other in Hnone by exact Hneq; exact Hnone.
+Qed.
+
+Lemma val_selected_nodup {K G} (bs : list (positive * block positive K G)) seen :
+  NoDup (map fst (val_selected seen bs)).
+Proof.
+  revert seen; induction bs as [|a rest IH]; intro seen.
+  - constructor.
+  - cbn [val_selected]; destruct (trie_get (fst a) seen) as [[]|].
+    + apply IH.
+    + cbn [map]; constructor; [|apply IH].
+      intros Hin; apply in_map_iff in Hin as [item [Heq Hin]].
+      apply val_selected_in in Hin as [_ Hnone].
+      rewrite Heq, PTrie.get_set_same in Hnone; discriminate.
+Qed.
+
+Lemma val_selected_sum {K G} : forall (bs : list (positive * block positive K G)) seen
+    (weight : positive * block positive K G -> nat),
+  fold_right (fun item n => weight item + n) 0 (val_selected seen bs) <=
+    fold_right (fun item n => weight item + n) 0 bs.
+Proof.
+  induction bs as [|a rest IH]; intros seen weight; cbn [val_selected fold_right]; [lia|].
+  destruct (trie_get (fst a) seen) as [[]|]; cbn [fold_right].
+  - specialize (IH seen weight); lia.
+  - specialize (IH (PTrieCode.set (fst a) tt seen) weight); lia.
+Qed.
+
+Lemma val_selected_length {K G} (bs : list (positive * block positive K G)) seen :
+  length (val_selected seen bs) <= length bs.
+Proof.
+  revert seen; induction bs as [|a rest IH]; intro seen; cbn [val_selected]; [lia|].
+  destruct (trie_get (fst a) seen) as [[]|]; cbn [length].
+  - specialize (IH seen); lia.
+  - specialize (IH (PTrieCode.set (fst a) tt seen)); lia.
+Qed.
+
+Lemma val_row_sizes_map_time {A} : forall (rows : list (positive * list A)),
+  (ListDef.T_map (fun item => (fst item, length (snd item)))
+    (fun item => (1 + (Datatypes.T_fst item + (Datatypes.T_snd item +
+      Datatypes.T_length (snd item))))%N) rows <=
+    6 * N.of_nat (length rows) +
+      N.of_nat (fold_right (fun item n => (length (snd item) + n)%nat) 0%nat rows) + 1)%N.
+Proof.
+  induction rows as [|[b row] rest IH].
+  - time_step.
+  - pose proof (Datatypes.T_length_le row) as Hlength;
+      revert IH; time_simpl; intro IH; time_step.
+Qed.
+
+Lemma val_row_sizes_time {A} : forall (rows : list (positive * list A)) w,
+  (forall b row, In (b, row) rows -> Pos.size_nat b <= w) ->
+  (T_val_row_sizes rows <= (PTrieT.c_trie + 10) *
+    N.of_nat (length rows + fold_right (fun item n => (length (snd item) + n)%nat) 0%nat rows) *
+    N.of_nat (w + 1) + 3)%N.
+Proof.
+  intros rows w Hwidth.
+  pose proof (val_index_time (map (fun item => (fst item, length (snd item))) rows) w
+    ltac:(intros b n Hin; apply in_map_iff in Hin as [[key row] [Heq Hin]];
+      cbn in Heq; injection Heq as Hkey Hn; subst key;
+      exact (Hwidth b row Hin))) as Hindex.
+  pose proof (val_row_sizes_map_time rows) as Hmap.
+  time_unfold @T_val_row_sizes; rewrite length_map in Hindex;
+    revert Hmap; time_simpl; intro Hmap; rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+
+Lemma val_forallb_extra {A} : forall (f : A -> bool) Tf work xs k,
+  (forall x, In x xs -> (Tf x <= work x + k)%N) ->
+  (List.T_forallb f Tf xs <= (k + 2) * N.of_nat (length xs) + 1 +
+    fold_right N.add 0%N (map work xs))%N.
+Proof.
+  intros f Tf work xs; induction xs as [|x rest IH]; intros k Hbound.
+  - time_step.
+  - pose proof (Hbound x ltac:(left; reflexivity)) as Hhead.
+    specialize (IH k ltac:(intros y Hin; apply Hbound; right; exact Hin)).
+    time_unfold List.T_forallb; time_simpl; time_cbn; nia.
+Qed.
+
+Lemma val_first_time {K G} : forall (bs : list (positive * block positive K G)) w,
+  (forall b body, In (b, body) bs -> Pos.size_nat b <= w) ->
+  (T_first_blocks bs <=
+    (PTrieT.c_trie + 16) * N.of_nat (length bs + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros bs w Hwidth; time_unfold @T_first_blocks; time_simpl.
+  lazymatch goal with
+  | |- context [List.T_fold_left ?f ?Tf bs (Empty, [])] =>
+    pose proof (val_fold_left_uniform f Tf bs
+      ((PTrieT.c_trie + 12) * N.of_nat (w + 1))%N
+      ltac:(intros [seen kept] [b body] Hin;
+        pose proof (Hwidth b body Hin) as Hb;
+        pose proof (PTrieT.T_set_le unit b tt seen) as Hset;
+        time_cbn; rewrite PTrieT.trie_get_clock;
+        destruct (trie_get b seen); time_simpl; time_cbn; nia) (Empty, [])) as Hfold
+  end.
+  lazymatch goal with
+  | |- context [List.T_rev_append ?items []] =>
+    assert (Hlength : length items <= length bs)
+      by (rewrite val_selected_fold, app_nil_r, length_rev; apply val_selected_length);
+    pose proof (List.T_rev_append_le items []) as Hrev
+  end.
+  rewrite !Nat2N.inj_add in *; time_cbn_all; nia.
+Qed.
+Definition val_cfg_row_count (vs : list positive) (rows : ptrie (list positive)) : nat :=
+  fold_right (fun v n => length (index_row rows v) + n) 0 vs.
+
+Lemma val_cfg_row_count_empty vs : val_cfg_row_count vs Empty = 0.
+Proof.
+  induction vs as [|v rest IH]; [reflexivity|].
+  unfold val_cfg_row_count at 1; cbn [fold_right].
+  unfold index_row at 1. rewrite PTrie.get_empty. exact IH.
+Qed.
+
+Lemma val_cfg_row_count_other vs rows id values : ~ In id vs ->
+  val_cfg_row_count vs (PTrieCode.set id values rows) = val_cfg_row_count vs rows.
+Proof.
+  induction vs as [|a rest IH]; intro Hfresh; [reflexivity|].
+  unfold val_cfg_row_count at 1 2; cbn [fold_right].
+  assert (Ha : a <> id) by (intro Heq; subst a; apply Hfresh; now left).
+  unfold index_row at 1. rewrite PTrie.get_set_other by exact Ha.
+  fold (val_cfg_row_count rest (PTrieCode.set id values rows)).
+  fold (val_cfg_row_count rest rows). rewrite IH; [reflexivity|].
+  intro Hin; apply Hfresh; now right.
+Qed.
+
+Lemma val_cfg_row_count_cons vs rows id value : NoDup vs -> In id vs ->
+  val_cfg_row_count vs (PTrieCode.set id (value :: index_row rows id) rows) =
+    S (val_cfg_row_count vs rows).
+Proof.
+  induction vs as [|a rest IH]; intros Hdistinct Hin; [contradiction|].
+  inversion Hdistinct as [|v vs' Hfresh Hrest]; subst.
+  unfold val_cfg_row_count at 1 2; cbn [fold_right].
+  fold (val_cfg_row_count rest (PTrieCode.set id (value :: index_row rows id) rows)).
+  fold (val_cfg_row_count rest rows).
+  destruct (Pos.eq_dec a id) as [Heq|Hneq].
+  - subst a. unfold index_row at 1. rewrite PTrie.get_set_same. cbn [length].
+    rewrite val_cfg_row_count_other by exact Hfresh. reflexivity.
+  - unfold index_row at 1. rewrite PTrie.get_set_other by exact Hneq.
+    rewrite IH by (first [exact Hrest|destruct Hin as [Heq|Hin]; [congruence|exact Hin]]).
+    change (length (index_row rows a) + S (val_cfg_row_count rest rows) =
+      S (length (index_row rows a) + val_cfg_row_count rest rows)). lia.
+Qed.
+
+(** Indexed CFG edge counts retain every supplied occurrence exactly once. *)
+Lemma val_cfg_edge_count {E} vs es (src dst : E -> positive) :
+  NoDup vs -> (forall e, In e es -> In (src e) vs) ->
+  graph_e (cfg_graph vs es src dst) = length es.
+Proof.
+  intro Hdistinct. induction es as [|a rest IH]; intro Hsources.
+  - apply val_cfg_row_count_empty.
+  - change (val_cfg_row_count vs (PTrieCode.set (src a)
+      (dst a :: index_row (succ (cfg_graph vs rest src dst)) (src a))
+      (succ (cfg_graph vs rest src dst))) = S (length rest)).
+    rewrite val_cfg_row_count_cons; [|exact Hdistinct|apply Hsources; now left].
+    f_equal. apply IH. intros e Hin; apply Hsources; now right.
+Qed.
+
+Lemma val_cfg_target {E} vs es (src dst : E -> positive) u v :
+  In v (succs (cfg_graph vs es src dst) u) -> exists e, In e es /\ dst e = v.
+Proof.
+  induction es as [|a rest IH].
+  - change (In v (index_row Empty u) -> exists e, In e [] /\ dst e = v).
+    unfold index_row; rewrite PTrie.get_empty; contradiction.
+  - change (In v (index_row (PTrieCode.set (src a)
+      (dst a :: succs (cfg_graph vs rest src dst) (src a))
+      (succ (cfg_graph vs rest src dst))) u) -> exists e, In e (a :: rest) /\ dst e = v).
+    unfold index_row at 1. destruct (Pos.eq_dec u (src a)) as [Heq|Hneq].
+    + rewrite Heq, PTrie.get_set_same. intros [Htarget|Hin].
+      * exists a; split; [now left|exact Htarget].
+      * rewrite <- Heq in Hin. destruct (IH Hin) as [e [Hedge Htarget]].
+        exists e; split; [now right|exact Htarget].
+    + rewrite PTrie.get_set_other by exact Hneq. intro Hin.
+      destruct (IH Hin) as [e [Hedge Htarget]]. exists e; split; [now right|exact Htarget].
+Qed.
+
+Lemma val_cfg_graph_max a b : graph_max a b = Nat.max a b.
+Proof.
+  revert b; induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
+Qed.
+
+Lemma val_cfg_fold_max_le {A} (xs : list A) (weight : A -> nat) width :
+  (forall x, In x xs -> weight x <= width) ->
+  fold_right (fun x n => graph_max (weight x) n) 0 xs <= width.
+Proof.
+  induction xs as [|x rest IH]; intro Hweight; [cbn [fold_right]; lia|].
+  cbn [fold_right]. rewrite val_cfg_graph_max. apply Nat.max_lub.
+  - apply Hweight; now left.
+  - apply IH. intros y Hin; apply Hweight; now right.
+Qed.
+
+Lemma val_cfg_vertex_width_le vs width :
+  (forall v, In v vs -> Pos.size_nat v <= width) -> vertex_width vs <= width.
+Proof.
+  induction vs as [|v rest IH]; intro Hwidth; [cbn [vertex_width fold_right]; lia|].
+  cbn [vertex_width fold_right]. rewrite val_cfg_graph_max.
+  fold (vertex_width rest). apply Nat.max_lub.
+  - apply Hwidth; now left.
+  - apply IH. intros x Hin; apply Hwidth; now right.
+Qed.
+
+(** CFG width is bounded by its listed vertices and supplied targets. *)
+Lemma val_cfg_width {E} vs es (src dst : E -> positive) width :
+  (forall v, In v vs -> Pos.size_nat v <= width) ->
+  (forall e, In e es -> Pos.size_nat (dst e) <= width) ->
+  graph_width (cfg_graph vs es src dst) <= width.
+Proof.
+  intros Hnodes Htargets. unfold graph_width, cfg_graph at 1.
+  rewrite val_cfg_graph_max. apply Nat.max_lub.
+  - now apply val_cfg_vertex_width_le.
+  - change (fold_right (fun v n => graph_max
+      (vertex_width (succs (cfg_graph vs es src dst) v)) n) 0 vs <= width).
+    assert (Hrow : forall v, vertex_width (succs (cfg_graph vs es src dst) v) <= width).
+    { intro v; apply val_cfg_vertex_width_le. intros target Hin.
+      destruct (val_cfg_target _ _ _ _ _ _ Hin) as [e [Hedge Heq]].
+      subst target; now apply Htargets. }
+    apply val_cfg_fold_max_le. intros v Hin; apply Hrow.
 Qed.
 
 Module ValidateCode (O : OPS)
@@ -1285,6 +1891,112 @@ Module ValidateT (O : OPS)
       | Branch g _ _ _ _ _ => G.bits g
       | _ => 0
       end + n) 0 (blocks _ _ _ p).
+
+  Lemma tables_time : forall p s c,
+    (T_tables p s c <= (8 * (PTrieT.c_trie + 2)) *
+      N.of_nat (function_size p + function_size s + cert_size c + 1) *
+      N.of_nat (check_width p s c + 1))%N.
+  Proof.
+    intros p s c.
+    pose proof (val_index_time (blocks _ _ _ p) (check_width p s c)
+      ltac:(intros b body Hin; pose proof (val_block_width p b body Hin);
+        unfold check_width; lia)) as Hp.
+    pose proof (val_index_time (blocks _ _ _ s) (check_width p s c)
+      ltac:(intros b body Hin; pose proof (val_block_width s b body Hin);
+        unfold check_width; lia)) as Hs.
+    pose proof (val_index_time (fst c) (check_width p s c)
+      ltac:(intros b row Hin; pose proof (val_cert_env_width c b row Hin);
+        unfold check_width; lia)) as He.
+    pose proof (val_index_time (snd c) (check_width p s c)
+      ltac:(intros b row Hin; pose proof (val_cert_live_width c b row Hin);
+        unfold check_width; lia)) as Hl.
+    pose proof (val_cert_rows c) as Hrows.
+    assert (Hbp : length (blocks _ _ _ p) <= function_size p)
+      by (unfold function_size; lia).
+    assert (Hbs : length (blocks _ _ _ s) <= function_size s)
+      by (unfold function_size; lia).
+    set (width := N.of_nat (check_width p s c + 1)).
+    set (count := (N.of_nat (length (blocks _ _ _ p)) +
+      N.of_nat (length (blocks _ _ _ s)) + N.of_nat (length (fst c)) +
+      N.of_nat (length (snd c)))%N).
+    assert (Hcount : (count + 1 <=
+      N.of_nat (function_size p + function_size s + cert_size c + 1))%N).
+    { unfold count; lia. }
+    assert (Hclock : (T_tables p s c <= (PTrieT.c_trie + 2) * count * width + 9)%N).
+    { pose proof (N.add_le_mono _ _ _ _ Hp Hs) as Hps.
+      pose proof (N.add_le_mono _ _ _ _ Hps He) as Hpse.
+      pose proof (N.add_le_mono _ _ _ _ Hpse Hl) as Hsum.
+      lazymatch type of Hsum with
+      | (_ <= ?rhs)%N => replace rhs with
+          ((PTrieT.c_trie + 2) * count * width + 4)%N in Hsum
+          by (unfold count, width; ring)
+      end.
+      clear Hp Hs He Hl Hps Hpse Hrows Hbp Hbs Hcount;
+        time_unfold T_tables; time_simpl; lia. }
+    assert (Hmono : ((PTrieT.c_trie + 2) * (count + 1) * width <=
+      (PTrieT.c_trie + 2) *
+        N.of_nat (function_size p + function_size s + cert_size c + 1) * width)%N).
+    { apply N.mul_le_mono_r; apply N.mul_le_mono_l; exact Hcount. }
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    clear Hp Hs He Hl Hrows Hbp Hbs Hcount; fold width; nia.
+  Qed.
+
+  Lemma checks_time : forall p s c,
+    (T_check p s c <= T_tables p s c +
+      (8 * (PTrieT.c_trie + 16)) * N.of_nat (function_size p + 1) *
+        N.of_nat (check_width p s c + 1) +
+      T_check_entry p s c (tables p s c) +
+      fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
+        (first_blocks (blocks _ _ _ p))))%N.
+  Proof.
+    intros p s c.
+    pose proof (val_first_time (blocks _ _ _ p) (check_width p s c)
+      ltac:(intros b body Hin; pose proof (val_block_width p b body Hin);
+        unfold check_width; lia)) as Hfirst.
+    assert (Hlength : length (first_blocks (blocks _ _ _ p)) <= length (blocks _ _ _ p)).
+    { rewrite val_first_selected; apply val_selected_length. }
+    assert (Hsource : length (blocks _ _ _ p) <= function_size p)
+      by (unfold function_size; lia).
+    assert (Hsize : (N.of_nat (length (blocks _ _ _ p) + 1) <=
+      N.of_nat (function_size p + 1))%N) by lia.
+    assert (Hfirst' : (T_first_blocks (blocks _ _ _ p) <= (PTrieT.c_trie + 16) *
+      N.of_nat (function_size p + 1) * N.of_nat (check_width p s c + 1))%N).
+    { eapply N.le_trans; [exact Hfirst|].
+      apply N.mul_le_mono_r; apply N.mul_le_mono_l; exact Hsize. }
+    clear Hfirst Hsize.
+    time_unfold T_check; time_simpl.
+    destruct (check_entry p s c (tables p s c)).
+    - lazymatch goal with
+      | |- context [List.T_forallb ?f ?Tf ?bs] =>
+        pose proof (val_forallb_extra f Tf
+          (fun item => T_check_block (tables p s c) (fst item)) bs 2%N
+          ltac:(intros item Hin; time_simpl; time_cbn; nia)) as Hscan
+      end.
+      assert (Hwidth : (1 <= N.of_nat (check_width p s c + 1))%N) by lia.
+      assert (Hsmall : (4 * N.of_nat (length (first_blocks (blocks _ _ _ p))) + 3 <=
+        (PTrieT.c_trie + 16) * N.of_nat (function_size p + 1) *
+          N.of_nat (check_width p s c + 1))%N).
+      { assert (Hbase : (4 * N.of_nat (length (first_blocks (blocks _ _ _ p))) + 3 <=
+          16 * N.of_nat (function_size p + 1))%N) by lia.
+        assert (Hcoeff : (16 <= (PTrieT.c_trie + 16) *
+          N.of_nat (check_width p s c + 1))%N) by nia.
+        eapply N.le_trans; [exact Hbase|].
+        replace ((PTrieT.c_trie + 16) * N.of_nat (function_size p + 1) *
+          N.of_nat (check_width p s c + 1))%N with
+          (((PTrieT.c_trie + 16) * N.of_nat (check_width p s c + 1)) *
+            N.of_nat (function_size p + 1))%N by ring.
+        apply N.mul_le_mono_r; exact Hcoeff. }
+      set (budget := ((PTrieT.c_trie + 16) * N.of_nat (function_size p + 1) *
+        N.of_nat (check_width p s c + 1))%N) in Hfirst', Hsmall.
+      replace ((8 * (PTrieT.c_trie + 16)) * N.of_nat (function_size p + 1) *
+        N.of_nat (check_width p s c + 1))%N with (8 * budget)%N by (unfold budget; ring).
+      clear Hlength Hsource Hwidth; lia.
+    - clear Hfirst' Hlength Hsource.
+      assert (Hsize : (1 <= N.of_nat (function_size p + 1))%N) by lia.
+      assert (Hwidth : (1 <= N.of_nat (check_width p s c + 1))%N) by lia.
+      nia.
+  Qed.
+
   (** Translation checking charges both functions and the supplied certificate. *)
   Lemma T_check_le : forall p s c,
     (T_check p s c <= c_val * N.of_nat (function_size p + function_size s + cert_size c + 1) *
@@ -1308,7 +2020,7 @@ Module ValidateT (O : OPS)
   Definition k_entry : N := 1. (* STUB *)
   Definition k_code : N := 1. (* STUB *)
   Definition k_edge : N := 1. (* STUB *)
-  Definition k_blocks : N := 1. (* STUB *)
+  Definition k_blocks : N := (8 * (PTrieT.c_trie + 16))%N.
   Definition k_ssa : N := 1. (* STUB *)
   Definition agrees (rho : renaming) (xs : list positive) (ss si : env O.C) :=
     forall x, In x xs -> exists y, lookup x rho = Some y /\ lookup y ss = lookup x si.
@@ -1439,7 +2151,9 @@ Module ValidateT (O : OPS)
       N.of_nat (length (inputs _ _ _ p) + length (inputs _ _ _ s) +
         length (cert_live c (entry _ _ _ p)) + 1) *
       N.of_nat (check_width p s c + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: a singleton empty return with entry row
+    repeat (1,1) n has constant input/live lengths and width, but indexing and scanning
+    the environment row takes unbounded work. The precheck also pays for other rows. *)
   (** Code checking indexes its initial renaming and reads both instruction streams once. *)
   Lemma T2c_code : forall ic sc rho live,
     (T_check_code ic sc rho live <= k_code *
@@ -1460,7 +2174,9 @@ Module ValidateT (O : OPS)
         length (exit_uses (term _ _ _ sb)) + length (cert_live c target) + 1) *
       N.of_nat (check_width p s c +
         vertex_width (flat_map (fun xy => [fst xy; snd xy]) rho) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: with empty Jump 2 exits, rho=[] and empty live rows,
+    a destination environment row repeat (1,1) n is indexed although n is absent from
+    this budget. The public check rejects oversized destination rows before block checks. *)
   (** Translation checking indexes the certificate, checks the entry and every source block. *)
   Lemma T2_checks : forall p s c,
     (T_check p s c <= T_tables p s c +
@@ -1468,7 +2184,9 @@ Module ValidateT (O : OPS)
       T_check_entry p s c (tables p s c) +
       fold_right N.add 0%N (map (fun item => T_check_block (tables p s c) (fst item))
         (first_blocks (blocks _ _ _ p))))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact checks_time.
+  Qed.
   (** One block check charges its two bodies, its operands, its live row, its exit and its
       operators. *)
   Lemma T2a_block : forall p s c b ib,
@@ -1485,7 +2203,9 @@ Module ValidateT (O : OPS)
         | Branch g _ _ _ _ _ => G.bits g
         | _ => 0
         end + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: an empty return block with entry environment row
+    repeat (1,1) n performs unbounded indexing work, while every listed size stays fixed.
+    The target body and outgoing environment rows are also absent from this local budget. *)
   (** SSA checking adds the strict local-order and dominance queries to the graph phase. *)
   Lemma T3_ssa : forall s,
     (T_check_ssa s <= T_graph s + T_dom_cert s +
@@ -1506,5 +2226,8 @@ Module ValidateT (O : OPS)
     (T_tables p s c <= k_blocks *
       N.of_nat (function_size p + function_size s + cert_size c + 1) *
       N.of_nat (check_width p s c + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s c; eapply N.le_trans; [exact (tables_time p s c)|].
+    unfold k_blocks; apply N.mul_le_mono_r; apply N.mul_le_mono_r; lia.
+  Qed.
 End ValidateT.
