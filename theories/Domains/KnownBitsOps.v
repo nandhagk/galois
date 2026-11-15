@@ -4,7 +4,7 @@
     For example, evaluating a zero-preserving operator keeps known zero bits.
     Builds on: KnownBits and the bit-vector operations. *)
 
-From Stdlib Require Import ZArith List Bool Lia.
+From Stdlib Require Import ZArith NArith List Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Bits Require Import Word Op Fun Arith.
 From Galois.Domains Require Import ValueSig WordSig KnownBitsSig KnownBits BitsLang Tagged.
@@ -55,6 +55,52 @@ Lemma tnum_map_ext : forall sw rw f g a,
   (forall x, f x = g x) -> tnum_map sw rw f a = tnum_map sw rw g a.
 Proof.
   intros sw rw f g a Hagree. unfold tnum_map. now rewrite !Hagree.
+Qed.
+
+(** A nonnegative endpoint needs at most its stored bit count as an upper-mask length. *)
+Lemma table_bitlen_size : forall h, 0 <= h ->
+  0 <= tnum_bitlen h /\ (Z.to_nat (tnum_bitlen h) <= Z.size_nat h)%nat.
+Proof.
+  intros h Hh. unfold tnum_bitlen.
+  destruct (h =? 0) eqn:Hzero; [split; [lia|cbn; lia]|].
+  apply Z.eqb_neq in Hzero.
+  pose proof (Z.log2_nonneg h) as Hlog.
+  pose proof (tnum_abs_bits_bound h) as Hbits.
+  rewrite Z.abs_eq in Hbits by exact Hh.
+  apply Z.log2_lt_pow2 in Hbits; [|lia].
+  split; [lia|]. apply Nat2Z.inj_le.
+  rewrite Z2Nat.id by lia. lia.
+Qed.
+
+(** Constructing an all-ones mask preserves its requested bit-length bound. *)
+Local Lemma table_ones_bits : forall n, 0 <= n ->
+  (Z.size_nat (Z.ones n) <= Z.to_nat n)%nat.
+Proof.
+  intros n Hn. apply tnum_bits_of_abs_bound.
+  rewrite Z.ones_equiv, Z2Nat.id by exact Hn.
+  pose proof (Z.pow_pos_nonneg 2 n ltac:(lia) Hn).
+  rewrite Z.abs_eq; lia.
+Qed.
+
+(** Determining the upper-mask length scans only the endpoint's stored bits. *)
+Lemma table_bitlen_time : forall h,
+  (T_tnum_bitlen h <= 32 * N.of_nat (Z.size_nat h + 1))%N.
+Proof.
+  intro h. pose proof (WordTime.integer_log2_size h) as Hsize.
+  time_unfold T_tnum_bitlen. time_cbn. time_pose.
+  destruct (h =? 0); rewrite ?Nat2N.inj_add in *; nia.
+Qed.
+TimeBound table_bitlen_time.
+
+(** An upper-mask transfer is linear in width and endpoint storage. *)
+Lemma table_upper_time : forall w h, 0 <= h ->
+  (T_tnum_upper w h <= 2048 * N.of_nat (Pos.to_nat w + Z.size_nat h + 1))%N.
+Proof.
+  intros w h Hh. destruct (table_bitlen_size h Hh) as [Hnonnegative Hlength].
+  pose proof (table_ones_bits _ Hnonnegative) as Hbits.
+  pose proof (tnum_ones_time _ Hnonnegative) as Hones.
+  time_unfold T_tnum_upper. time_cbn. time_pose.
+  rewrite ?Nat2N.inj_add in *. nia.
 Qed.
 
 Module ForwardClaims (L : WORD_LANGUAGE_OPS) (C : TNUM_CONFIG).
