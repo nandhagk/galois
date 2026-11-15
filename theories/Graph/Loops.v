@@ -3664,6 +3664,93 @@ Proof.
 Qed.
 
 
+(** Selected headers are distinct listed vertices. *)
+Local Lemma loop_classify_header_domain : forall g t r,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  NoDup (loop_headers_of (classify g t)) /\
+    incl (loop_headers_of (classify g t)) (nodes g).
+Proof.
+  intros g t r Hgraph Hprepared Htree.
+  destruct (loop_classify_order g t r Hgraph Hprepared Htree)
+    as [Hunique [_ [Hmembers Horder]]]. split.
+  - unfold loop_headers_of. now apply NoDup_filter.
+  - intros h Hin. unfold loop_headers_of in Hin. apply filter_In in Hin as [Hin _].
+    rewrite loop_nodes_verts. apply (loop_reachable_listed (base g) r h Hgraph (proj1 Htree)).
+    now apply Hmembers.
+Qed.
+
+(** The classified header order installs each strict containing loop first. *)
+Local Lemma loop_classify_header_order : forall g t r inner outer,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  loop_inside (base g) r inner outer ->
+    order_before (loop_headers_of (classify g t)) outer inner.
+Proof.
+  intros g t r inner outer Hgraph Hprepared Htree
+    [Hne [Hinner [Houter Hcontained]]].
+  assert (Hselected : forall h, natural_header (base g) r h ->
+    match loop_latches_at (classify g t) h with [] => false | _ => true end = true).
+  { intros h Hheader.
+    pose proof (proj2 (loop_classify_headers_exact g t r h Hgraph Hprepared Htree) Hheader)
+      as Hin. unfold loop_headers_of in Hin. now apply filter_In in Hin as [_ Hin]. }
+  assert (Hmember : natural_loop (base g) r outer inner).
+  { apply Hcontained. split; [exact Hinner|now left]. }
+  destruct (loop_classify_order g t r Hgraph Hprepared Htree) as [_ [_ [_ Horder]]].
+  unfold loop_headers_of. apply loop_order_filter.
+  - apply Horder.
+    + now apply loop_header_reachable.
+    + split; [exact (loop_header_dominates (base g) r outer inner Hmember)|congruence].
+  - now apply Hselected.
+  - now apply Hselected.
+Qed.
+
+(** The raw classified assembly has the public owner and parent semantics. *)
+Local Lemma loop_classify_assembly : forall g t r,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  let hs := loop_headers_of (classify g t) in
+  let rows := fun h => collect g t h (loop_latches_at (classify g t) h) in
+  (forall v h,
+    trie_get v (header (assemble (map (fun k => (k, rows k)) hs))) = Some h <->
+      innermost_header (base g) r v h) /\
+  forall inner outer,
+    trie_get inner (parent (assemble (map (fun k => (k, rows k)) hs))) = Some outer <->
+      immediate_outer (base g) r inner outer.
+Proof.
+  intros g t r Hgraph Hprepared Htree. cbn zeta. apply loop_assemble_semantic.
+  - exact (proj1 (loop_classify_header_domain g t r Hgraph Hprepared Htree)).
+  - intros h. now apply loop_classify_headers_exact.
+  - intros inner outer. now apply loop_classify_header_order.
+  - intros h Hin v. exact (proj2 (proj2
+      (loop_classify_collect_exact g t r h Hgraph Hprepared Htree Hin)) v).
+Qed.
+
+(** Every classified installation prefix retains only listed keys and vertices. *)
+Local Lemma loop_classify_prefix_within : forall g t r n,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  loop_forest_within (nodes g)
+    (fold_left install
+      (firstn n (map (fun h => (h, collect g t h (loop_latches_at (classify g t) h)))
+        (loop_headers_of (classify g t)))) (Loops Empty Empty Empty)).
+Proof.
+  intros g t r n Hgraph Hprepared Htree. apply loop_fold_within; [|apply loop_empty_within].
+  set (rows := map (fun h => (h, collect g t h (loop_latches_at (classify g t) h)))
+    (loop_headers_of (classify g t))).
+  assert (Hrows : Forall (fun entry => In (fst entry) (nodes g) /\
+    incl (snd entry) (nodes g)) rows).
+  { apply Forall_forall. intros [h vs] Hin. unfold rows in Hin.
+    apply in_map_iff in Hin. destruct Hin as [key [Heq Hkey]].
+    injection Heq as <- <-. split.
+    - exact (proj2 (loop_classify_header_domain g t r Hgraph Hprepared Htree) key Hkey).
+    - exact (proj1 (proj2 (loop_classify_collect_exact g t r key
+        Hgraph Hprepared Htree Hkey))). }
+  assert (Hparts : Forall (fun entry => In (fst entry) (nodes g) /\
+    incl (snd entry) (nodes g)) (firstn n rows) /\
+    Forall (fun entry => In (fst entry) (nodes g) /\
+    incl (snd entry) (nodes g)) (skipn n rows)).
+  { rewrite <- Forall_app, firstn_skipn. exact Hrows. }
+  exact (proj1 Hparts).
+Qed.
+
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -3824,13 +3911,19 @@ Module Loops <: LOOPS.
   Lemma header_spec : forall g t r v h,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     trie_get v (header (forest g t)) = Some h <-> innermost_header (base g) r v h.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r v h Hgraph Hprepared Htree.
+    exact (proj1 (loop_classify_assembly g t r Hgraph Hprepared Htree) v h).
+  Qed.
 
   Lemma parent_spec : forall g t r inner outer,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     trie_get inner (parent (forest g t)) = Some outer <->
     immediate_outer (base g) r inner outer.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r inner outer Hgraph Hprepared Htree.
+    exact (proj2 (loop_classify_assembly g t r Hgraph Hprepared Htree) inner outer).
+  Qed.
 
   Lemma reducible_b_spec : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
@@ -4354,7 +4447,17 @@ Module LoopsT <: LOOPS_ALL.
     forall h outer,
       trie_get h (parent (assembly_prefix g t (length (headers g t)))) = Some outer <->
         immediate_outer (base g) r h outer.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    assert (Hfull : assembly_prefix g t (length (headers g t)) = forest g t).
+    { unfold assembly_prefix, forest_rows, headers.
+      rewrite firstn_map, firstn_all. reflexivity. }
+    split.
+    - intro n. exact (loop_classify_prefix_within g t r n Hgraph Hprepared Htree).
+    - rewrite Hfull. split.
+      + intros v h. now apply header_spec.
+      + intros h outer. now apply parent_spec.
+  Qed.
 
   Lemma F15_forest_equation : forall g t,
     forest g t = fold_left install (forest_rows g t) (Loops Empty Empty Empty).
