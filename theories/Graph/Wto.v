@@ -2603,12 +2603,6 @@ Module WtoT <: WTO_ALL.
     apply N.mul_le_mono_r. exact c_wto_check_coefficient.
   Qed.
 
-  Lemma T_build_le : forall g roots,
-    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
-      N.of_nat (wto_depth (build g roots) + 1) *
-      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
   Lemma T_heads_le : forall w,
     (T_heads w <= c_wto * N.of_nat (length (wto_order w) + 1))%N.
   Proof.
@@ -2636,13 +2630,6 @@ Module WtoT <: WTO_ALL.
     eapply N.le_trans; [apply T_check_le|].
     rewrite Nat2N.inj_mul. nia.
   Qed.
-
-  Lemma build_bigO : bigO (fun _ : prepared * list positive => True)
-    (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
-      (wto_depth (build g roots) + 1) *
-      (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
-    (fun '(g, roots) => T_build g roots).
-  Proof. Admitted. (* STUB *)
 
   Definition wto_member := wto_member.
   TimeFun wto_member.
@@ -3801,12 +3788,6 @@ Module WtoT <: WTO_ALL.
     time_unfold @T_wto_entries. unfold wto_preferred, wto_scoped, wto_components.
     time_simpl. nia.
   Qed.
-
-  Lemma T7_build_public : forall g roots,
-    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
-      N.of_nat (wto_depth (build g roots) + 1) *
-      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
 
   Lemma T8_heads_source : forall w,
     (T_heads w <= k_heads * (T_wto_heads_into w [] + 1))%N.
@@ -5364,6 +5345,60 @@ Module WtoT <: WTO_ALL.
     - exact Hmargin.
     - exact Hexecution_full.
     - exact Hbuild.
+  Qed.
+
+  Local Transparent loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
+
+  Local Opaque loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
+
+  Lemma builder_scope_phase : forall g, builder_scope_bound g.
+  Proof.
+    intros g vs Hunique Hlisted.
+    pose proof (T3_scope_listed g vs Hlisted) as Hscoped.
+    pose proof (T12_scoped g vs Hunique Hlisted) as Hcomponents.
+    unfold k_scope in Hscoped, Hcomponents. nia.
+  Qed.
+
+  Lemma build_clock_envelope : forall g roots,
+    (T_build g roots <= 4096 * k_build * k_build *
+      N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof.
+    intros g roots. apply build_clock_from_bounds.
+    - exact (T13_initial g roots).
+    - apply builder_scope_phase.
+    - intro level. rewrite partial_level_mass. apply F21_partial_mass.
+  Qed.
+
+  Lemma c_wto_builder : (4096 * k_build * k_build <= c_wto)%N.
+  Proof. unfold c_wto. fold k_build. lia. Qed.
+
+  Lemma T_build_le : forall g roots,
+    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof.
+    intros g roots. eapply N.le_trans; [exact (build_clock_envelope g roots)|].
+    apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_r.
+    exact c_wto_builder.
+  Qed.
+
+  Lemma T7_build_public : forall g roots,
+    (T_build g roots <= c_wto * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+      N.of_nat (wto_depth (build g roots) + 1) *
+      N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof. apply T_build_le. Qed.
+
+  Lemma build_bigO : bigO (fun _ : prepared * list positive => True)
+    (fun '(g, roots) => N.of_nat ((graph_n (base g) + graph_e (base g) + length roots + 1) *
+      (wto_depth (build g roots) + 1) *
+      (graph_max (graph_width (base g)) (vertex_width roots) + 1)))
+    (fun '(g, roots) => T_build g roots).
+  Proof.
+    exists c_wto. intros [g roots] _.
+    pose proof (T_build_le g roots) as Hbuild.
+    rewrite !Nat2N.inj_mul. nia.
   Qed.
 
   Local Transparent loopN Galois.Graph.Wto.wto_components Galois.Graph.Wto.wto_scoped.
