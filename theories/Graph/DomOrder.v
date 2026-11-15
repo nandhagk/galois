@@ -1245,3 +1245,323 @@ Proof.
   cbn [N.to_nat] in Hnatural. apply Pos.size_nat_least.
   rewrite Nat.add_1_r, Nat.pow_succ_r'. nia.
 Qed.
+
+(** * Primitive numeric costs for the producer *)
+
+(** Encoding a numeric rank as a positive trie key adds at most one bit. *)
+Lemma dom_lt_key_width rank :
+  Pos.size_nat (dom_lt_key rank) <= N.size_nat rank + 1.
+Proof.
+  unfold dom_lt_key. destruct rank as [|p]; [reflexivity|].
+  cbn [N.succ_pos N.size_nat]. induction p as [p IH|p IH|];
+    cbn [Pos.succ Pos.size_nat] in *; lia.
+Qed.
+
+(** Numeric-key encoding costs at most its input width plus two calls. *)
+Lemma dom_lt_time_key rank :
+  (T_dom_lt_key rank <= N.of_nat (N.size_nat rank) + 2)%N.
+Proof.
+  pose proof (N.T_succ_pos_le rank) as Hsucc.
+  time_unfold T_dom_lt_key. lia.
+Qed.
+
+(** Identity-default lookup costs only the numeric key's bit width. *)
+Lemma dom_lt_time_identity table rank :
+  (T_dom_lt_identity table rank <= 8 * N.of_nat (N.size_nat rank + 1))%N.
+Proof.
+  pose proof (dom_lt_time_key rank) as Hkey.
+  pose proof (dom_lt_key_width rank) as Hwidth.
+  unfold T_dom_lt_identity. rewrite PTrieT.trie_get_clock.
+  destruct (trie_get (dom_lt_key rank) table); time_simpl;
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+(** Numeric comparison inspects at most the left operand's bit width. *)
+Lemma dom_lt_time_ltb left right :
+  (N.T_ltb left right <= N.of_nat (N.size_nat left) + 3)%N.
+Proof.
+  pose proof (N.T_compare_le left right) as Hcompare.
+  time_unfold N.T_ltb. destruct (N.compare left right); lia.
+Qed.
+
+(** Linking writes two cells whose keys share the child's bounded bit width. *)
+Lemma dom_lt_time_link width before child parent : N.size_nat child <= width ->
+  (T_dom_lt_link before child parent <=
+    64 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth.
+  pose proof (dom_lt_key_width child) as Hkey_width.
+  pose proof (dom_lt_time_key child) as Hkey_time.
+  pose proof (PTrieT.T_set_le N (dom_lt_key child) parent (lt_shortcut before)) as Hshort.
+  pose proof (PTrieT.T_set_le N (dom_lt_key child) child (lt_label before)) as Hlabel.
+  change (PTrieCode.T_set (dom_lt_key child) parent (lt_shortcut before) <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key child) + 1))%N in Hshort.
+  change (PTrieCode.T_set (dom_lt_key child) child (lt_label before) <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key child) + 1))%N in Hlabel.
+  unfold T_dom_lt_link. time_simpl.
+  clear -Hwidth Hkey_width Hkey_time Hshort Hlabel. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+(** * Generated fold clocks *)
+
+(** A fold telescopes credit while its invariant tracks the unprocessed operation suffix. *)
+Lemma dom_lt_fold_credit {A B : Type} (step : A -> B -> A) (T_step : A -> B -> N)
+    (Inv : list B -> A -> Prop) (credit : A -> N) (charge : N) ops :
+  (forall op rest st, Inv (op :: rest) st -> Inv rest (step st op)) ->
+  (forall op rest st, Inv (op :: rest) st ->
+    (T_step st op + credit (step st op) <= credit st + charge)%N) ->
+  forall st, Inv ops st ->
+  Inv [] (fold_left step ops st) /\
+    (List.T_fold_left step T_step ops st + credit (fold_left step ops st) <=
+      credit st + (charge + 1) * N.of_nat (length ops) + 1)%N.
+Proof.
+  intros Hpreserve Hcost. induction ops as [|op rest IH]; intros st Hinv.
+  - split; [exact Hinv|]. time_unfold @List.T_fold_left. cbn [fold_left length]. nia.
+  - pose proof (Hcost op rest st Hinv) as Hhead.
+    destruct (IH (step st op) (Hpreserve op rest st Hinv)) as [Hfinal Htail].
+    split; [exact Hfinal|]. time_unfold @List.T_fold_left.
+    cbn [fold_left length]. fold (List.T_fold_left step T_step).
+    rewrite Nat2N.inj_succ. clear -Hhead Htail. nia.
+Qed.
+
+(** The generated list clock counts the empty call once for each separately run segment. *)
+Lemma dom_lt_fold_clock_app {A B : Type} (step : A -> B -> A) (T_step : A -> B -> N)
+    xs ys : forall st,
+  (List.T_fold_left step T_step (xs ++ ys) st + 1 =
+    List.T_fold_left step T_step xs st +
+      List.T_fold_left step T_step ys (fold_left step xs st))%N.
+Proof.
+  induction xs as [|head tail IH]; intro st.
+  - cbn [app fold_left]. time_unfold @List.T_fold_left. nia.
+  - cbn [app]. time_unfold @List.T_fold_left. cbn [fold_left].
+    fold (List.T_fold_left step T_step).
+    pose proof (IH (step st head)) as Htail. lia.
+Qed.
+
+(** * Numeric ranges through semidominator settlement *)
+
+Definition dom_lt_links_bounded (bound : N) (links : dom_lt_links) : Prop :=
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_shortcut links) /\
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_label links).
+
+Definition dom_lt_walk_bounded (bound : N) (st : dom_lt_walk) : Prop :=
+  dom_lt_links_bounded bound (lt_walk_links st) /\
+  match lt_walk_phase st with
+  | DomLtDescend vertex stack =>
+      (vertex <= bound)%N /\ Forall (fun value => (value <= bound)%N) stack
+  | DomLtUnwind root part stack =>
+      (root <= bound)%N /\
+      (match part with None => True | Some value => (value <= bound)%N end) /\
+      Forall (fun value => (value <= bound)%N) stack
+  end.
+
+(** Selecting one of two labels preserves their common numeric bound. *)
+Lemma dom_lt_minimum_bounded bound semis left right :
+  (left <= bound)%N -> (right <= bound)%N -> (dom_lt_minimum semis left right <= bound)%N.
+Proof.
+  intros Hleft Hright. unfold dom_lt_minimum.
+  destruct (N.ltb (dom_lt_identity semis right) (dom_lt_identity semis left)); assumption.
+Qed.
+
+(** A link preserves payload bounds when its child and parent lie in the same range. *)
+Lemma dom_lt_link_bounded bound before vertex parent :
+  dom_lt_links_bounded bound before -> (vertex <= bound)%N -> (parent <= bound)%N ->
+  dom_lt_links_bounded bound (dom_lt_link before vertex parent).
+Proof.
+  intros [Hshort Hlabels] Hvertex Hparent.
+  unfold dom_lt_links_bounded, dom_lt_link. cbn [lt_shortcut lt_label]. split;
+    apply dom_lt_trie_all_set; assumption.
+Qed.
+
+(** Each compression transition preserves bounded frames, shortcuts and labels. *)
+Lemma dom_lt_compress_bounded bound semis st : dom_lt_walk_bounded bound st ->
+  match dom_lt_compress_step semis st with
+  | inl next => dom_lt_walk_bounded bound next
+  | inr result => dom_lt_links_bounded bound (fst result) /\ (snd result <= bound)%N
+  end.
+Proof.
+  destruct st as [links [vertex stack|root part stack]].
+  - cbn [dom_lt_walk_bounded lt_walk_phase lt_walk_links].
+    intros [[Hshort Hlabels] [Hvertex Hstack]].
+    cbn [dom_lt_compress_step lt_walk_phase lt_walk_links].
+    destruct (trie_get (dom_lt_key vertex) (lt_shortcut links)) as [parent|] eqn:Hget.
+    + pose proof (Hshort (dom_lt_key vertex) parent Hget) as Hparent.
+      destruct (N.ltb parent vertex).
+      * split; [split; assumption|]. split; [exact Hparent|]. now constructor.
+      * split; [split; assumption|]. repeat split; assumption.
+    + split; [split; assumption|]. repeat split; assumption.
+  - cbn [dom_lt_walk_bounded lt_walk_phase lt_walk_links].
+    intros [[Hshort Hlabels] [Hroot [Hpart Hstack]]].
+    destruct stack as [|vertex stack].
+    + cbn [dom_lt_compress_step lt_walk_phase lt_walk_links fst snd].
+      split; [split; assumption|]. destruct part; assumption.
+    + inversion Hstack as [|head tail Hvertex Htail]; subst head tail.
+      set (label := dom_lt_identity (lt_label links) vertex).
+      set (best := match part with None => label |
+        Some previous => dom_lt_minimum semis label previous end).
+      assert (Hlabel : (label <= bound)%N).
+      { unfold label. now apply dom_lt_identity_bounded. }
+      assert (Hbest : (best <= bound)%N).
+      { unfold best. destruct part as [previous|]; [|exact Hlabel].
+        now apply dom_lt_minimum_bounded. }
+      change (dom_lt_walk_bounded bound
+        (DomLtWalk (DomLtLinks
+          (PTrieCode.set (dom_lt_key vertex) root (lt_shortcut links))
+          (PTrieCode.set (dom_lt_key vertex) best (lt_label links)) (lt_operations links))
+          (DomLtUnwind root (Some best) stack))).
+      split.
+      * split; apply dom_lt_trie_all_set; assumption.
+      * repeat split; assumption.
+Qed.
+
+(** Evaluation preserves payload support even when the supplied binary fuel is exhausted. *)
+Lemma dom_lt_eval_bounded bound fuel semis before vertex :
+  dom_lt_links_bounded bound before -> (vertex <= bound)%N ->
+  dom_lt_links_bounded bound (fst (dom_lt_eval fuel semis before vertex)) /\
+    (snd (dom_lt_eval fuel semis before vertex) <= bound)%N.
+Proof.
+  intros Hlinks Hvertex.
+  set (initial := DomLtWalk
+    (DomLtLinks (lt_shortcut before) (lt_label before) (LtEval vertex :: lt_operations before))
+    (DomLtDescend vertex [])).
+  assert (Hinitial : dom_lt_walk_bounded bound initial).
+  { unfold initial. split; [exact Hlinks|]. split; [exact Hvertex|constructor]. }
+  pose proof (dom_lt_loop_invariant (dom_lt_compress_step semis)
+    (dom_lt_walk_bounded bound)
+    (fun result => dom_lt_links_bounded bound (fst result) /\ (snd result <= bound)%N)
+    (N.double fuel + 3)%N initial) as Hrun.
+  assert (Hgo : forall st next, dom_lt_walk_bounded bound st ->
+    dom_lt_compress_step semis st = inl next -> dom_lt_walk_bounded bound next).
+  { intros st next Hinv Hstep. pose proof (dom_lt_compress_bounded bound semis st Hinv) as Hnext.
+    now rewrite Hstep in Hnext. }
+  assert (Hstop : forall st result, dom_lt_walk_bounded bound st ->
+    dom_lt_compress_step semis st = inr result ->
+    dom_lt_links_bounded bound (fst result) /\ (snd result <= bound)%N).
+  { intros st result Hinv Hstep.
+    pose proof (dom_lt_compress_bounded bound semis st Hinv) as Hnext.
+    now rewrite Hstep in Hnext. }
+  specialize (Hrun Hgo Hstop Hinitial).
+  unfold dom_lt_eval. fold initial.
+  destruct (loopN (dom_lt_compress_step semis) (N.double fuel + 3)%N initial)
+    as [state|result].
+  - split; [exact (proj1 Hrun)|exact Hvertex].
+  - exact Hrun.
+Qed.
+
+(** A fold preserves its invariant when every input satisfies the callback's guard. *)
+Lemma dom_lt_fold_guarded {A B : Type} (step : A -> B -> A) (Inv : A -> Prop)
+    (Guard : B -> Prop) xs :
+  (forall state value, Inv state -> Guard value -> Inv (step state value)) ->
+  Forall Guard xs -> forall initial, Inv initial -> Inv (fold_left step xs initial).
+Proof.
+  intros Hstep Hxs. induction Hxs as [|value rest Hvalue Hrest IH]; intros initial Hinitial.
+  - exact Hinitial.
+  - cbn [fold_left]. apply IH. now apply Hstep.
+Qed.
+
+Definition dom_lt_predecessor_bounded (bound : N) (acc : dom_lt_links * N * N) : Prop :=
+  dom_lt_links_bounded bound (fst (fst acc)) /\
+    (snd (fst acc) <= bound)%N /\ (snd acc <= bound)%N.
+
+(** A predecessor evaluation keeps its forest, best score and witness in range. *)
+Lemma dom_lt_predecessor_range bound limit semis acc source :
+  dom_lt_trie_all (fun value => (value <= bound)%N) semis ->
+  dom_lt_predecessor_bounded bound acc -> (source <= bound)%N ->
+  dom_lt_predecessor_bounded bound (dom_lt_predecessor limit semis acc source).
+Proof.
+  intros Hsemis Hacc Hsource. destruct acc as [[links best] witness].
+  destruct Hacc as [Hlinks [Hbest Hwitness]].
+  pose proof (dom_lt_eval_bounded bound limit semis links source Hlinks Hsource) as Heval.
+  unfold dom_lt_predecessor. destruct (dom_lt_eval limit semis links source)
+    as [after chosen]. cbn [fst snd] in Heval.
+  destruct Heval as [Hafter Hchosen].
+  pose proof (dom_lt_identity_bounded bound semis chosen Hsemis Hchosen) as Hcandidate.
+  destruct (N.ltb (dom_lt_identity semis chosen) best);
+    (split; [exact Hafter|split; assumption]).
+Qed.
+
+Definition dom_lt_semi_bounded (bound : N) (st : dom_lt_semi_state) : Prop :=
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_semis st) /\
+  dom_lt_trie_all (fun value => (value <= bound)%N) (lt_minimizer st) /\
+  dom_lt_links_bounded bound (lt_semi_links st).
+
+(** Settling one bounded vertex preserves all semidominator-state payload bounds. *)
+Lemma dom_lt_settle_range bound numeric before vertex :
+  dom_lt_numeric_ranges bound numeric -> dom_lt_semi_bounded bound before ->
+  (vertex <= bound)%N -> dom_lt_semi_bounded bound (dom_lt_settle numeric before vertex).
+Proof.
+  intros [Horder Hparents Hpreds] [Hsemis [Hmin Hlinks]] Hvertex.
+  unfold dom_lt_settle.
+  destruct (trie_get (dom_lt_key vertex) (lt_numeric_parent numeric)) as [parent|] eqn:Hget.
+  2: { split; [exact Hsemis|]. split; assumption. }
+  pose proof (Hparents (dom_lt_key vertex) parent Hget) as Hparent.
+  set (incoming := match trie_get (dom_lt_key vertex) (lt_numeric_pred numeric) with
+    None => [] | Some row => row end).
+  assert (Hincoming : Forall (fun value => (value <= bound)%N) incoming).
+  { unfold incoming. destruct (trie_get (dom_lt_key vertex) (lt_numeric_pred numeric))
+      as [row|] eqn:Hrow; [now apply (Hpreds (dom_lt_key vertex))|constructor]. }
+  pose proof (dom_lt_fold_guarded (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis before))
+    (dom_lt_predecessor_bounded bound) (fun value => (value <= bound)%N) incoming
+    (fun state value Hstate Hvalue =>
+      dom_lt_predecessor_range bound (lt_numeric_limit numeric) (lt_semis before)
+        state value Hsemis Hstate Hvalue) Hincoming
+    (lt_semi_links before, parent, parent)) as Hfold.
+  assert (Hinitial : dom_lt_predecessor_bounded bound (lt_semi_links before, parent, parent)).
+  { split; [exact Hlinks|]. now split. }
+  specialize (Hfold Hinitial).
+  destruct (fold_left (dom_lt_predecessor (lt_numeric_limit numeric) (lt_semis before))
+    incoming (lt_semi_links before, parent, parent)) as [[after best] witness].
+  destruct Hfold as [Hafter [Hbest Hwitness]].
+  split; [apply dom_lt_trie_all_set; assumption|].
+  split; [apply dom_lt_trie_all_set; assumption|]. now apply dom_lt_link_bounded.
+Qed.
+
+(** A bounded numeric layout produces a bounded semidominator state. *)
+Lemma dom_lt_semidominators_range bound numeric : dom_lt_numeric_ranges bound numeric ->
+  dom_lt_semi_bounded bound (dom_lt_semidominators numeric).
+Proof.
+  intro Hnumeric. unfold dom_lt_semidominators.
+  apply (dom_lt_fold_guarded (dom_lt_settle numeric) (dom_lt_semi_bounded bound)
+    (fun value => (value <= bound)%N) (lt_numeric_order numeric)).
+  - intros state value Hstate Hvalue. now apply dom_lt_settle_range.
+  - exact (dom_lt_numeric_order_range bound numeric Hnumeric).
+  - repeat split; apply dom_lt_trie_all_empty.
+Qed.
+
+(** A fold preserves an accumulator invariant when each input satisfies its callback premise. *)
+Lemma dom_lt_fold_forall {A B : Type} (step : A -> B -> A) (Inv : A -> Prop)
+    (P : B -> Prop) xs st :
+  Forall P xs -> Inv st ->
+  (forall current x, Inv current -> P x -> Inv (step current x)) ->
+  Inv (fold_left step xs st).
+Proof.
+  intros Hinputs Hinitial Hstep.
+  exact (dom_lt_fold_guarded step Inv P xs Hstep Hinputs st Hinitial).
+Qed.
+
+(** Bucket insertion retains bounded row members regardless of its semidominator key. *)
+Lemma dom_lt_bucket_add_range bound semis buckets v :
+  dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) buckets -> (v <= bound)%N ->
+  dom_lt_trie_all (Forall (fun n => (n <= bound)%N)) (dom_lt_bucket_add semis buckets v).
+Proof.
+  intros Hrows Hv. unfold dom_lt_bucket_add.
+  destruct (trie_get (dom_lt_key v) semis) as [s|]; [|exact Hrows].
+  apply dom_lt_trie_all_set; [exact Hrows|]. constructor; [exact Hv|].
+  destruct (trie_get (dom_lt_key s) buckets) as [row|] eqn:Hrow;
+    [now apply (Hrows (dom_lt_key s))|constructor].
+Qed.
+
+(** Every bucket member comes from the bounded numeric traversal order. *)
+Lemma dom_lt_bucket_build_range bound semis order :
+  Forall (fun n => (n <= bound)%N) order ->
+  dom_lt_trie_all (Forall (fun n => (n <= bound)%N))
+    (fold_left (dom_lt_bucket_add semis) (rev_append order []) Empty).
+Proof.
+  intro Horder.
+  apply (dom_lt_fold_forall (dom_lt_bucket_add semis)
+    (dom_lt_trie_all (Forall (fun n => (n <= bound)%N))) (fun n => (n <= bound)%N)).
+  - apply Forall_forall. intros v Hv. rewrite rev_append_rev, app_nil_r, <- in_rev in Hv.
+    now apply (proj1 (Forall_forall _ _) Horder v).
+  - apply dom_lt_trie_all_empty.
+  - intros buckets v Hrows Hv. now apply dom_lt_bucket_add_range.
+Qed.
