@@ -228,6 +228,83 @@ Definition dom_positions (o : list positive) : ptrie N :=
     (N.succ next, PTrieCode.set v next pos)) o (0%N, Empty)).
 TimeFun dom_positions.
 
+(** Numbering preserves keys that occur outside the processed list. *)
+Local Lemma dom_number_preserves : forall vs next pos v,
+  ~ In v vs ->
+  trie_get v (snd (fold_left (fun acc u =>
+    let '(next, pos) := acc in (N.succ next, PTrieCode.set u next pos))
+    vs (next, pos))) = trie_get v pos.
+Proof.
+  intros vs. induction vs as [| u rest IH]; intros next pos v Habsent.
+  - reflexivity.
+  - cbn [fold_left]. rewrite IH.
+    + apply PTrie.get_set_other. intro Heq. subst u. apply Habsent. now left.
+    + intro Hin. apply Habsent. now right.
+Qed.
+
+(** Every numbered key was present initially or occurs in the processed list. *)
+Local Lemma dom_number_domain : forall vs next pos v,
+  (exists i, trie_get v (snd (fold_left (fun acc u =>
+    let '(next, pos) := acc in (N.succ next, PTrieCode.set u next pos))
+    vs (next, pos))) = Some i) <->
+  In v vs \/ exists i, trie_get v pos = Some i.
+Proof.
+  intros vs. induction vs as [| u rest IH]; intros next pos v; cbn [fold_left In].
+  - tauto.
+  - rewrite IH. destruct (Pos.eq_dec v u) as [Heq | Hneq].
+    + subst v. rewrite PTrie.get_set_same. split.
+      * intros _. left. now left.
+      * intros _. right. exists next. reflexivity.
+    + rewrite PTrie.get_set_other by exact Hneq. intuition congruence.
+Qed.
+
+(** Distinct input vertices receive their exact offset from the initial number. *)
+Local Lemma dom_number_nth : forall vs next pos i v,
+  NoDup vs -> nth_error vs i = Some v ->
+  trie_get v (snd (fold_left (fun acc u =>
+    let '(next, pos) := acc in (N.succ next, PTrieCode.set u next pos))
+    vs (next, pos))) = Some (N.add next (N.of_nat i)).
+Proof.
+  intros vs. induction vs as [| u rest IH]; intros next pos i v Hdistinct Hnth.
+  - destruct i; discriminate Hnth.
+  - inversion Hdistinct as [| u' rest' Hfresh Hrest]; subst u' rest'.
+    destruct i as [| i].
+    + cbn [nth_error] in Hnth. injection Hnth as Heq. subst v.
+      cbn [fold_left]. rewrite dom_number_preserves by exact Hfresh.
+      rewrite PTrie.get_set_same. f_equal. lia.
+    + cbn [nth_error] in Hnth. cbn [fold_left].
+      rewrite (IH (N.succ next) (PTrieCode.set u next pos) i v Hrest Hnth).
+      rewrite Nat2N.inj_succ. f_equal. lia.
+Qed.
+
+Local Lemma dom_positions_domain : forall o v,
+  (exists i, trie_get v (dom_positions o) = Some i) <-> In v o.
+Proof.
+  intros o v. unfold dom_positions. rewrite dom_number_domain.
+  split; [| intro Hin; now left].
+  intros [Hin | [i Hget]]; [exact Hin |].
+  rewrite PTrie.get_empty in Hget. discriminate Hget.
+Qed.
+
+Local Lemma dom_positions_nth : forall o i v,
+  NoDup o -> nth_error o i = Some v ->
+  trie_get v (dom_positions o) = Some (N.of_nat i).
+Proof.
+  intros o i v Hdistinct Hnth. unfold dom_positions.
+  exact (dom_number_nth o 0%N Empty i v Hdistinct Hnth).
+Qed.
+
+Local Lemma dom_positions_value : forall o v i,
+  NoDup o -> trie_get v (dom_positions o) = Some i ->
+  exists j, nth_error o j = Some v /\ i = N.of_nat j.
+Proof.
+  intros o v i Hdistinct Hget.
+  assert (Hin : In v o) by (apply dom_positions_domain; now exists i).
+  apply In_nth_error in Hin as [j Hnth].
+  pose proof (dom_positions_nth o j v Hdistinct Hnth) as Hnumber.
+  exists j. split; [exact Hnth |]. congruence.
+Qed.
+
 (** A vertex on a path has a prefix using only vertices of that path. *)
 Local Lemma dom_path_prefix : forall g a vs b, path g a vs b ->
   forall y, In y vs -> exists prefix, path g a prefix y /\ incl prefix vs.
@@ -273,7 +350,10 @@ Local Definition dom_read_success (listed : ptrie bool) (s : dom_read_state)
     (exists b, trie_get v listed = Some b) /\
     trie_get v (read_positions s) = None /\
     exists i, trie_get v result = Some i) /\
-  forall v i, trie_get v (read_positions s) = Some i -> trie_get v result = Some i.
+  (forall v i, trie_get v (read_positions s) = Some i -> trie_get v result = Some i) /\
+  result = snd (fold_left (fun acc v =>
+    let '(next, pos) := acc in (N.succ next, PTrieCode.set v next pos))
+    (read_remaining s) (read_next s, read_positions s)).
 
 Local Lemma dom_read_step_success : forall width listed s s1 result,
   dom_read_step width listed s = inl s1 ->
@@ -288,7 +368,7 @@ Proof.
   destruct (trie_get v pos) as [old |] eqn:Hnew; [discriminate Hstep |].
   injection Hstep as Hstate. subst s1.
   cbn [dom_read_success read_remaining read_budget read_positions] in Hrest |- *.
-  destruct Hrest as [Hdistinct [Hlength [Hmembers Hpreserved]]].
+  destruct Hrest as [Hdistinct [Hlength [Hmembers [Hpreserved Hnumber]]]].
   assert (Hfresh : ~ In v rest).
   { intro Hin. destruct (Hmembers v Hin) as [_ [Hnone _]].
     change (trie_get v (PTrieCode.set v next pos) = None) in Hnone.
@@ -306,10 +386,12 @@ Proof.
         change (trie_get q (PTrieCode.set v next pos) = None) in Hnone.
         rewrite PTrie.get_set_other in Hnone by exact Hneq.
         exact (conj Hlistedq (conj Hnone Hresult)).
-    + intros q i Hget. change (trie_get q pos = Some i) in Hget. apply Hpreserved.
-      change (trie_get q (PTrieCode.set v next pos) = Some i).
-      rewrite PTrie.get_set_other; [exact Hget |].
-      intro Heq. subst q. rewrite Hnew in Hget. discriminate Hget.
+    + split.
+      * intros q i Hget. change (trie_get q pos = Some i) in Hget. apply Hpreserved.
+        change (trie_get q (PTrieCode.set v next pos) = Some i).
+        rewrite PTrie.get_set_other; [exact Hget |].
+        intro Heq. subst q. rewrite Hnew in Hget. discriminate Hget.
+      * exact Hnumber.
 Qed.
 
 Local Lemma dom_read_stop_success : forall width listed s result,
@@ -320,7 +402,8 @@ Proof.
   - cbn [dom_read_step] in Hstep. injection Hstep as Hresult. subst result.
     cbn [dom_read_success read_remaining read_budget read_positions].
     split; [constructor |]. split; [change (0 <= budget)%N; lia |].
-    split; [intros v Hin; contradiction | intros v i Hget; exact Hget].
+    split; [intros v Hin; contradiction |].
+    split; [intros v i Hget; exact Hget | reflexivity].
   - cbn [dom_read_step] in Hstep.
     destruct (N.eqb budget 0); [discriminate Hstep |].
     destruct (dom_key_fits width v); [| discriminate Hstep].
@@ -406,11 +489,22 @@ Proof.
   apply dom_read_order_success in Hread.
   cbn [dom_read_success read_remaining read_budget read_positions dom_scan dom_count]
     in Hread.
-  destruct Hread as [Hdistinct [Hlength [Hmembers Hpreserved]]].
+  destruct Hread as [Hdistinct [Hlength [Hmembers [Hpreserved Hresult]]]].
   change (N.of_nat (length (r :: rest)) <= N.of_nat (graph_n (base g)))%N in Hlength.
   split; [exact Hdistinct |]. split; [lia |]. split; [reflexivity |]. split.
   - intros v Hin. apply dom_scan_listed. exact (proj1 (Hmembers v Hin)).
   - intros v Hin. exact (proj2 (proj2 (Hmembers v Hin))).
+Qed.
+
+Local Lemma dom_read_known_positions : forall info r o pos,
+  dom_read_known info r o = Some pos -> pos = dom_positions o.
+Proof.
+  intros info r [| h rest] pos Hread; [discriminate Hread |].
+  unfold dom_read_known in Hread.
+  destruct (dom_key_fits (dom_width info) r); [| discriminate Hread].
+  destruct (Pos.eqb h r); [| discriminate Hread].
+  apply dom_read_order_success in Hread.
+  destruct Hread as [_ [_ [_ [_ Hresult]]]]. exact Hresult.
 Qed.
 
 Local Lemma dom_nodes_verts : forall g, nodes g = verts (base g).
