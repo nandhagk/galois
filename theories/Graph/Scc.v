@@ -1332,6 +1332,140 @@ Module SccT <: SCC_ALL.
     unfold pop_unit, k_pop. time_unfold @T_tarjan_pop. nia.
   Qed.
 
+  (** The generic visitor width theorem applies to every actual raw prefix. *)
+  Lemma prefix_width : forall g prefix suffix,
+    tarjan_trace g = prefix ++ suffix ->
+    width_domain (graph_width (base g)) (prefix_state prefix).
+  Proof.
+    intros g prefix suffix Htrace. unfold width_domain, prefix_state,
+      tarjan_enter, tarjan_leave, tarjan_edge, tarjan_initial.
+    apply tarjan_fold_width.
+    - eapply scc_trace_prefix_unique; exact Htrace.
+    - apply Forall_forall. intros v Hin. apply search_entered_member in Hin.
+      pose proof (scc_trace_prefix_width g prefix suffix Htrace) as Hwidth.
+      rewrite Forall_forall in Hwidth. exact (Hwidth (Enter v) Hin).
+  Qed.
+
+  Local Lemma lower_potential w v n s :
+    potential w (TarjanVisitor.lower v n s) = potential w s.
+  Proof.
+    unfold TarjanVisitor.lower. destruct (trie_get v (tarjan_low s)); reflexivity.
+  Qed.
+
+  Local Lemma edge_potential w kind u v s :
+    potential w (TarjanVisitor.edge kind u v s) = potential w s.
+  Proof.
+    destruct kind; cbn [TarjanVisitor.edge]; try reflexivity.
+    all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try reflexivity.
+    all: destruct (trie_get v (tarjan_disc s)); try reflexivity.
+    all: apply lower_potential.
+  Qed.
+
+  (** Lowering charges the key lookup and update and the old value's comparison width. *)
+  Local Lemma lower_clock w v n s : Pos.size_nat v <= w ->
+    (forall u i, trie_get u (tarjan_low s) = Some i -> Pos.size_nat i <= w + 1) ->
+    (TarjanVisitor.T_lower v n s <= 4096 * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hv Hvalues. time_unfold @TarjanVisitor.T_lower. time_simpl.
+    rewrite PTrieT.trie_get_clock.
+    destruct (trie_get v (tarjan_low s)) as [old|] eqn:Hlookup; [|lia].
+    pose proof (Hvalues v old Hlookup) as Hold.
+    pose proof (PTrieT.T_set_le positive v (Pos.min old n) (tarjan_low s)) as Hset.
+    change (PTrieCode.T_set v (Pos.min old n) (tarjan_low s) <=
+      1024 * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+    pose proof (Std.Pos.T_compare_le old n) as Hcompare.
+    time_unfold @Pos.T_min. time_simpl. nia.
+  Qed.
+
+  Local Lemma enter_credit w v s : width_domain w s -> Pos.size_nat v <= w ->
+    (TarjanVisitor.T_enter v s + potential w (TarjanVisitor.enter v s) <=
+      16384 * N.of_nat (w + 1) + potential w s)%N.
+  Proof.
+    intros [_ [_ [Hclock _]]] Hv.
+    pose proof (PTrieT.T_set_le positive v (tarjan_clock s) (tarjan_disc s)) as Hdisc.
+    pose proof (PTrieT.T_set_le positive v (tarjan_clock s) (tarjan_low s)) as Hlow.
+    pose proof (PTrieT.T_set_le bool v true (tarjan_active s)) as Hactive.
+    change (PTrieCode.T_set v (tarjan_clock s) (tarjan_disc s) <=
+      1024 * N.of_nat (Pos.size_nat v + 1))%N in Hdisc.
+    change (PTrieCode.T_set v (tarjan_clock s) (tarjan_low s) <=
+      1024 * N.of_nat (Pos.size_nat v + 1))%N in Hlow.
+    change (PTrieCode.T_set v true (tarjan_active s) <=
+      1024 * N.of_nat (Pos.size_nat v + 1))%N in Hactive.
+    pose proof (Std.Pos.T_succ_le (tarjan_clock s)) as Hsucc.
+    time_unfold @TarjanVisitor.T_enter. time_simpl.
+    unfold potential, pop_unit, k_pop, k_result.
+    cbn [TarjanVisitor.enter tarjan_pending tarjan_emitted length].
+    rewrite Nat2N.inj_succ. nia.
+  Qed.
+
+  Local Lemma edge_clock w kind u v s : width_domain w s ->
+    Pos.size_nat u <= w -> Pos.size_nat v <= w ->
+    (TarjanVisitor.T_edge kind u v s <= 16384 * N.of_nat (w + 1))%N.
+  Proof.
+    intros [_ [_ [_ [_ [_ Hvalues]]]]] Hu Hv.
+    time_unfold @TarjanVisitor.T_edge. time_simpl.
+    destruct kind; [lia| |].
+    all: rewrite PTrieT.trie_get_clock;
+      destruct (trie_get v (tarjan_active s)) as [[|]|]; try lia.
+    all: rewrite PTrieT.trie_get_clock;
+      destruct (trie_get v (tarjan_disc s)) as [n|]; try lia.
+    all: pose proof (lower_clock w u n s Hu Hvalues); lia.
+  Qed.
+
+  Local Lemma leave_credit w v s : width_domain w s -> Pos.size_nat v <= w ->
+    (TarjanVisitor.T_leave v s + potential w (TarjanVisitor.leave v s) <=
+      16384 * N.of_nat (w + 1) + potential w s)%N.
+  Proof.
+    intros [Hpending [Hframes [Hclock [Hnext [Hdisc Hlow]]]]] Hv.
+    time_unfold @TarjanVisitor.T_leave. time_simpl. unfold TarjanVisitor.leave.
+    rewrite PTrieT.trie_get_clock.
+    destruct (trie_get v (tarjan_low s)) as [low|] eqn:Hlookup.
+    2: { unfold potential. cbn [tarjan_pending tarjan_emitted]. lia. }
+    pose proof (Hlow v low Hlookup) as Hlow_width.
+    rewrite PTrieT.trie_get_clock.
+    destruct (trie_get v (tarjan_disc s)) as [disc|] eqn:Hdiscovery.
+    2: { unfold potential. cbn [tarjan_pending tarjan_emitted]. lia. }
+    pose proof (Std.Pos.T_eqb_le low disc) as Hequal.
+    destruct (Pos.eqb low disc) eqn:Hroot.
+    - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+        (tarjan_active s) (tarjan_owners s))
+        as [[[[members tail] lows] actives] owners] eqn:Hpop.
+      unfold tarjan_pop in Hpop.
+      pose proof (tarjan_pop_credit _ _ _ _ _ _ _ _ _ _ _ _ Hpending Hpop) as Hpop_cost.
+      pose proof (Std.Pos.T_succ_le (tarjan_next s)) as Hsucc.
+      unfold potential, pop_unit, k_pop, k_result.
+      rewrite Hpop. cbn [tarjan_pending tarjan_emitted length].
+      rewrite Nat2N.inj_succ. nia.
+    - destruct (tarjan_frames s) as [|frame frames] eqn:Hstack.
+      + unfold potential. cbn [tarjan_pending tarjan_emitted]. lia.
+      + destruct frames as [|parent frames].
+        * unfold potential. cbn [tarjan_pending tarjan_emitted]. lia.
+        * assert (Hparent : Pos.size_nat parent <= w).
+          { inversion Hframes as [|frame' tail Hframe Htail]; subst frame' tail.
+            now inversion Htail. }
+          pose proof (lower_clock w parent low
+            (TarjanState (tarjan_disc s) (tarjan_low s) (tarjan_pending s)
+              (tarjan_active s) (parent :: frames) (tarjan_emitted s)
+              (tarjan_owners s) (tarjan_clock s) (tarjan_next s)) Hparent Hlow) as Hlower.
+          rewrite lower_potential. unfold potential. cbn [tarjan_pending tarjan_emitted]. lia.
+  Qed.
+
+  (** A callback leaves a strict constant margin for the event-fold driver. *)
+  Lemma callback_credit w e s : width_domain w s -> event_domain w e ->
+    (callback_cost e s + potential w (apply_event s e) <=
+      32768 * N.of_nat (w + 1) + potential w s)%N.
+  Proof.
+    intros Hwidth Hevent. destruct e as [v|v|kind u v];
+      cbn [callback_cost apply_event visit_event event_domain] in *.
+    - pose proof (enter_credit w v s Hwidth Hevent) as Hcredit.
+      time_unfold @T_tarjan_enter. unfold tarjan_enter. lia.
+    - pose proof (leave_credit w v s Hwidth Hevent) as Hcredit.
+      time_unfold @T_tarjan_leave. unfold tarjan_leave. lia.
+    - destruct Hevent as [Hu Hv]. pose proof (edge_clock w kind u v s Hwidth Hu Hv) as Hcost.
+      time_unfold @T_tarjan_edge. unfold tarjan_edge. rewrite edge_potential. lia.
+  Qed.
+
+
   Lemma T2_callback : forall g prefix e suffix,
     tarjan_trace g = prefix ++ e :: suffix ->
     let w := graph_width (base g) in
