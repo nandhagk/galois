@@ -356,3 +356,18 @@ Example range_certifies_an_empty_source_constant :
 Proof.
   vm_compute. reflexivity.
 Qed.
+
+(** Zero-width source rows cannot produce a nonzero hull equality. *)
+Example zero_width_hull_rows_are_discarded :
+  Equalities.affine_hull [LCons _ [] REq 0] [LCons _ [] REq 0] = [].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** A wider affine query can have an integral value on a rational source point. *)
+Example wide_query_of_a_rational_source_has_an_exact_endpoint :
+  Equalities.range_linear [LCons _ [(1%positive, 2)] REq 3]
+    (Lin _ [(1%positive, 1024)] 5) = (Fin 1541, Fin 1541).
+Proof.
+  vm_compute. reflexivity.
+Qed.
