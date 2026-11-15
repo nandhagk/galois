@@ -162,8 +162,60 @@ Proof.
 Qed.
 
 Module ReducerIntervalView (L : WORD_LANGUAGE) (T : THRESHOLDS)
-    (S : INTERVAL_SCALAR_OPS T) (P : INTERVAL_PAYLOAD_PINNED L T S).
-  Include P.
+    (S : INTERVAL_SCALAR_OPS T) (P : INTERVAL_PAYLOAD_PINNED L T S)
+    <: INTERVAL_PAYLOAD_PINNED L T S.
+  Definition p := P.p.
+  Definition pleb := P.pleb.
+  Definition pjoin := P.pjoin.
+  Definition pmeet := P.pmeet.
+  Definition pbot := P.pbot.
+  Definition ptop := P.ptop.
+  Definition pis_bot := P.pis_bot.
+  Definition pconst := P.pconst.
+  Definition ppoint := P.ppoint.
+  Definition pwparam := P.pwparam.
+  Definition pwiden := P.pwiden.
+  Definition pnarrow := P.pnarrow.
+  Definition pgamma := P.pgamma.
+  Definition pwrank := P.pwrank.
+  Definition pwiden_ub_l := P.pwiden_ub_l.
+  Definition pwiden_ub_r := P.pwiden_ub_r.
+  Definition pwiden_stable := P.pwiden_stable.
+  Definition pwrank_widen := P.pwrank_widen.
+  Definition pwrank_widen_le := P.pwrank_widen_le.
+  Definition pnarrow_between := P.pnarrow_between.
+  Definition pleb_refl := P.pleb_refl.
+  Definition pleb_trans := P.pleb_trans.
+  Definition pbot_least := P.pbot_least.
+  Definition ptop_greatest := P.ptop_greatest.
+  Definition pis_bot_bot := P.pis_bot_bot.
+  Definition pis_bot_least := P.pis_bot_least.
+  Definition pjoin_ub_l := P.pjoin_ub_l.
+  Definition pjoin_ub_r := P.pjoin_ub_r.
+  Definition pmeet_lb_l := P.pmeet_lb_l.
+  Definition pgamma_mono := P.pgamma_mono.
+  Definition pgamma_bot := P.pgamma_bot.
+  Definition ptop_full := P.ptop_full.
+  Definition pgamma_meet := P.pgamma_meet.
+  Definition pis_bot_sound := P.pis_bot_sound.
+  Definition pis_bot_below := P.pis_bot_below.
+  Definition pconst_sound := P.pconst_sound.
+  Definition ppoint_sound := P.ppoint_sound.
+  Definition count_gt := P.count_gt.
+  Definition count_lt := P.count_lt.
+  Definition payload_wrank := P.payload_wrank.
+  Definition F_pleb := P.F_pleb.
+  Definition F_pis_bot := P.F_pis_bot.
+  Definition F_pjoin := P.F_pjoin.
+  Definition F_pmeet := P.F_pmeet.
+  Definition F_pwiden := P.F_pwiden.
+  Definition F_pnarrow := P.F_pnarrow.
+  Definition F_pwrank := P.F_pwrank.
+  Definition F_pbot := P.F_pbot.
+  Definition F_ptop := P.F_ptop.
+  Definition F_pconst := P.F_pconst.
+  Definition F_ppoint := P.F_ppoint.
+  Definition F_pgamma := P.F_pgamma.
 End ReducerIntervalView.
 
 Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
@@ -316,6 +368,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w z; pose proof (P.pconst_size w z) as Hsize.
     pose proof (premium_le w (pconst w z)) as Hpremium.
+    unfold pconst in *.
     unfold psize, c_payload; rewrite !Nat.pow_2_r, !Nat2N.inj_mul, !Nat2N.inj_add in *;
       nia.
   Qed.
@@ -326,6 +379,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w a b; pose proof (P.pjoin_size w a b) as Hsize.
     pose proof (reducer_premium_binary w (pjoin w) (simple_join w) a b) as Hpremium.
+    unfold pjoin in *.
     unfold psize, c_payload; rewrite !Nat2N.inj_add in *; nia.
   Qed.
   (** Any premium in a meet result is already present in an operand. *)
@@ -335,6 +389,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w a b; pose proof (P.pmeet_size w a b) as Hsize.
     pose proof (reducer_premium_binary w (pmeet w) (simple_meet w) a b) as Hpremium.
+    unfold pmeet in *.
     unfold psize, c_payload; rewrite !Nat2N.inj_add in *; nia.
   Qed.
   (** Widening cannot create a premium from two simple operands. *)
@@ -344,6 +399,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros q w a b; pose proof (P.pwiden_size q w a b) as Hsize.
     pose proof (reducer_premium_binary w (pwiden q w) (simple_widen q w) a b) as Hpremium.
+    unfold pwiden in *.
     unfold psize, pwsize, c_payload; rewrite !Nat2N.inj_add in *; nia.
   Qed.
   (** Narrowing cannot create a premium from two simple operands. *)
@@ -353,6 +409,7 @@ Module ReducerInflatedInterval (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Proof.
     intros w a b; pose proof (P.pnarrow_size w a b) as Hsize.
     pose proof (reducer_premium_binary w (pnarrow w) (simple_narrow w) a b) as Hpremium.
+    unfold pnarrow in *.
     unfold psize, c_payload; rewrite !Nat2N.inj_add in *; nia.
   Qed.
   (** Enlarging operand sizes preserves the original widening time bound. *)
