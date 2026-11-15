@@ -2682,10 +2682,11 @@ Module WtoT <: WTO_ALL.
   Definition k_member : N := 4%N.
   Definition k_index : N := (4096 * (PTrieT.c_trie + 1))%N.
   Definition k_check : N := 512%N.
-  Definition k_scope : N := 1%N. (* STUB *)
-  Definition k_expand : N := 32%N.
   Definition k_build : N :=
-    (128 * (SccT.c_scc + DigraphT.c_prepare + PTrieT.c_trie + 1))%N.
+    (128 * (SccT.c_scc + DigraphT.c_prepare + SccT.k_callback +
+      search_trace_coefficient + 16384 + 8 * (PTrieT.c_trie + 1)))%N.
+  Definition k_scope : N := (2 * k_build)%N.
+  Definition k_expand : N := 32%N.
   Definition k_heads : N := 1%N.
   Definition k_ranks : N := (PTrieT.c_trie + 4)%N.
 
@@ -3437,6 +3438,290 @@ Module WtoT <: WTO_ALL.
     (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
   Proof. Admitted. (* PLAN-DEFECT: unlisted scope rows can contain unbounded-width successors. *)
 
+  (** A left fold charges a separate occurrence budget for every visited element. *)
+  Local Lemma scope_fold_left_budget {A X} (f : A -> X -> A) (clock : A -> X -> N)
+      (weight : X -> nat) xs initial coefficient width :
+    (forall state x, In x xs ->
+      (clock state x + 1 <= coefficient * N.of_nat (weight x) * N.of_nat (width + 1))%N) ->
+    (List.T_fold_left f clock xs initial <= coefficient *
+      N.of_nat (fold_right (fun x n => (weight x + n)%nat) 0%nat xs) *
+      N.of_nat (width + 1) + 1)%N.
+  Proof.
+    revert initial. induction xs as [|x xs IH]; intros initial Hcost.
+    - time_unfold @List.T_fold_left. cbn [fold_right]. nia.
+    - pose proof (Hcost initial x (or_introl eq_refl)) as Hhead.
+      pose proof (IH (f initial x) (fun state y Hin => Hcost state y (or_intror Hin))) as Htail.
+      time_unfold @List.T_fold_left. cbn [fold_right]. rewrite Nat2N.inj_add.
+      clear - Hhead Htail. nia.
+  Qed.
+
+  Local Lemma scope_unit_mass {A} (xs : list A) :
+    fold_right (fun _ n => 1 + n) 0 xs = length xs.
+  Proof.
+    induction xs; cbn [fold_right length]; lia.
+  Qed.
+
+  (** Filtering pays only predicate calls at members of the supplied row. *)
+  Local Lemma scope_filter_members_time {A} (predicate : A -> bool) clock xs coefficient :
+    (forall x, In x xs -> (clock x <= coefficient)%N) ->
+    (List.T_filter predicate clock xs <= (coefficient + 1) * N.of_nat (length xs) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hcost.
+    - time_unfold @List.T_filter. cbn [length]. nia.
+    - pose proof (Hcost x (or_introl eq_refl)) as Hhead.
+      specialize (IH (fun y Hin => Hcost y (or_intror Hin))).
+      time_unfold @List.T_filter. cbn [length]. rewrite Nat2N.inj_succ.
+      destruct (predicate x); nia.
+  Qed.
+
+  (** Listed source rows contribute every target key to the original graph width. *)
+  Local Lemma scope_row_key_width g u v : In u (nodes g) -> In v (succs (base g) u) ->
+    Pos.size_nat v <= graph_width (base g).
+  Proof.
+    destruct g as [[vertices adjacency] predecessors n e].
+    cbn [nodes base graph_width]. intros Hu Hv.
+    pose proof (search_row_width_member (Digraph vertices adjacency) vertices u v Hu Hv) as Hrow.
+    rewrite wto_graph_max_nat. eapply Nat.le_trans; [exact Hrow|apply Nat.le_max_r].
+  Qed.
+
+  Local Lemma scope_listed_key_widths g vs :
+    (forall v, In v vs -> In v (nodes g)) ->
+    Forall (fun u =>
+      Pos.size_nat u <= graph_max (graph_width (base g)) (vertex_width vs) /\
+      Forall (fun v => Pos.size_nat v <= graph_max (graph_width (base g)) (vertex_width vs))
+        (succs (base g) u)) vs.
+  Proof.
+    intros Hlisted. apply Forall_forall. intros u Hu. split.
+    - eapply Nat.le_trans; [exact (scc_node_width g u (Hlisted u Hu))|].
+      rewrite wto_graph_max_nat. apply Nat.le_max_l.
+    - apply Forall_forall. intros v Hv.
+      eapply Nat.le_trans; [exact (scope_row_key_width g u v (Hlisted u Hu) Hv)|].
+      rewrite wto_graph_max_nat. apply Nat.le_max_l.
+  Qed.
+
+  (** Building the membership trie pays one bounded insertion per selected occurrence. *)
+  Local Lemma scope_index_time vs width :
+    Forall (fun v => Pos.size_nat v <= width) vs ->
+    (List.T_fold_left (fun acc v => PTrieCode.set v true acc)
+      (fun acc v => 1 + PTrieCode.T_set v true acc)%N vs Empty <=
+      8 * (PTrieT.c_trie + 1) * N.of_nat (length vs + 1) * N.of_nat (width + 1))%N.
+  Proof.
+    intro Hwidth.
+    assert (Hcost : forall acc v, In v vs ->
+      (1 + PTrieCode.T_set v true acc + 1 <=
+        (4 * (PTrieT.c_trie + 1)) * N.of_nat 1 * N.of_nat (width + 1))%N).
+    { intros acc v Hin. rewrite Forall_forall in Hwidth. specialize (Hwidth v Hin).
+      pose proof (PTrieT.T_set_le bool v true acc) as Hset.
+      rewrite !Nat2N.inj_add in *. nia. }
+    pose proof (scope_fold_left_budget (fun acc v => PTrieCode.set v true acc)
+      (fun acc v => (1 + PTrieCode.T_set v true acc)%N) (fun _ => 1)
+      vs Empty (4 * (PTrieT.c_trie + 1))%N width Hcost) as Hfold.
+    rewrite scope_unit_mass in Hfold. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Testing row targets in the membership trie pays only their key widths. *)
+  Local Lemma scope_filter_time (listed : ptrie bool) row width :
+    Forall (fun v => Pos.size_nat v <= width) row ->
+    (List.T_filter (fun v => match trie_get v listed with Some _ => true | None => false end)
+      (fun v => 1 + T_trie_get v listed)%N row <=
+      8 * N.of_nat (length row + 1) * N.of_nat (width + 1))%N.
+  Proof.
+    intro Hwidth.
+    assert (Hcost : forall v, In v row ->
+      (1 + T_trie_get v listed <= 4 * N.of_nat (width + 1))%N).
+    { intros v Hin. rewrite Forall_forall in Hwidth. specialize (Hwidth v Hin).
+      rewrite (PTrieT.trie_get_clock bool v listed). rewrite Nat2N.inj_add. nia. }
+    pose proof (scope_filter_members_time
+      (fun v => match trie_get v listed with Some _ => true | None => false end)
+      (fun v => (1 + T_trie_get v listed)%N) row (4 * N.of_nat (width + 1))%N Hcost) as Hfilter.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Materializing rows charges each selected source and its outgoing occurrences once. *)
+  Local Lemma scope_rows_time g (listed : ptrie bool) vs width :
+    Forall (fun u => Pos.size_nat u <= width /\
+      Forall (fun v => Pos.size_nat v <= width) (succs (base g) u)) vs ->
+    (List.T_fold_left
+      (fun acc v => PTrieCode.set v (filter (fun u =>
+        match trie_get u listed with Some _ => true | None => false end) (succs (base g) v)) acc)
+      (fun acc v => 1 + (((T_base g + T_succs (base g) v) +
+        List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+          (fun u => 1 + T_trie_get u listed)%N (succs (base g) v)) +
+        PTrieCode.T_set v (filter (fun u =>
+          match trie_get u listed with Some _ => true | None => false end)
+          (succs (base g) v)) acc))%N
+      vs Empty <= 64 * (PTrieT.c_trie + 1) * N.of_nat (source_mass g vs + 1) *
+        N.of_nat (width + 1))%N.
+  Proof.
+    intro Hwidth.
+    assert (Hcost : forall acc v, In v vs ->
+      (1 + (((T_base g + T_succs (base g) v) +
+        List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+          (fun u => 1 + T_trie_get u listed)%N (succs (base g) v)) +
+        PTrieCode.T_set v (filter (fun u =>
+          match trie_get u listed with Some _ => true | None => false end)
+          (succs (base g) v)) acc) + 1 <=
+        (32 * (PTrieT.c_trie + 1)) * N.of_nat (1 + length (succs (base g) v)) *
+          N.of_nat (width + 1))%N).
+    { intros acc v Hin. rewrite Forall_forall in Hwidth.
+      destruct (Hwidth v Hin) as [Hv Hrow].
+      pose proof (search_succs_clock (base g) v) as Hread.
+      pose proof (scope_filter_time listed (succs (base g) v) width Hrow) as Hfilter.
+      pose proof (PTrieT.T_set_le (list positive) v
+        (filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+          (succs (base g) v)) acc) as Hset.
+      unfold T_base. rewrite !Nat2N.inj_add in *.
+      clear - Hv Hread Hfilter Hset. nia. }
+    pose proof (scope_fold_left_budget
+      (fun acc v => PTrieCode.set v (filter (fun u =>
+        match trie_get u listed with Some _ => true | None => false end) (succs (base g) v)) acc)
+      (fun acc v => (1 + (((T_base g + T_succs (base g) v) +
+        List.T_filter (fun u => match trie_get u listed with Some _ => true | None => false end)
+          (fun u => (1 + T_trie_get u listed)%N) (succs (base g) v)) +
+        PTrieCode.T_set v (filter (fun u =>
+          match trie_get u listed with Some _ => true | None => false end)
+          (succs (base g) v)) acc))%N)
+      (fun v => 1 + length (succs (base g) v)) vs Empty
+      (32 * (PTrieT.c_trie + 1))%N width Hcost) as Hfold.
+    match goal with
+    | |- (?clock <= _)%N =>
+      change (clock <= 32 * (PTrieT.c_trie + 1) * N.of_nat (source_mass g vs) *
+        N.of_nat (width + 1) + 1)%N in Hfold
+    end.
+    rewrite !Nat2N.inj_add in *. clear - Hfold. nia.
+  Qed.
+
+  Local Lemma scope_mass_length g vs : length vs <= source_mass g vs.
+  Proof.
+    unfold source_mass. induction vs; cbn [length fold_right]; lia.
+  Qed.
+
+  (** The materialization clock is linear in selected source mass at the supplied key width. *)
+  Lemma scope_materialization_time g vs width :
+    Forall (fun u => Pos.size_nat u <= width /\
+      Forall (fun v => Pos.size_nat v <= width) (succs (base g) u)) vs ->
+    (T_wto_scoped g (Some vs) <= 128 * (PTrieT.c_trie + 1) *
+      N.of_nat (source_mass g vs + 1) * N.of_nat (width + 1))%N.
+  Proof.
+    intro Hwidth.
+    assert (Hkeys : Forall (fun v => Pos.size_nat v <= width) vs).
+    { eapply Forall_impl; [|exact Hwidth]. intros v Hv. exact (proj1 Hv). }
+    pose proof (scope_index_time vs width Hkeys) as Hindex.
+    set (listed := fold_left (fun acc v => PTrieCode.set v true acc) vs Empty).
+    pose proof (scope_rows_time g listed vs width Hwidth) as Hrows.
+    pose proof (scope_mass_length g vs) as Hlength.
+    time_unfold @T_wto_scoped. time_unfold @Galois.Graph.Wto.T_wto_scoped.
+    fold listed. unfold T_nv, T_ne. time_cbn.
+    rewrite !Nat2N.inj_add in *. clear - Hindex Hrows Hlength. nia.
+  Qed.
+
+  (** Pointwise weight bounds extend to occurrence sums without distinctness premises. *)
+  Local Lemma scope_weight_mono {A} (first second : A -> nat) xs :
+    (forall x, In x xs -> first x <= second x) ->
+    fold_right (fun x n => first x + n) 0 xs <=
+      fold_right (fun x n => second x + n) 0 xs.
+  Proof.
+    induction xs as [|x xs IH]; intro Hweight; cbn [fold_right]; [lia|].
+    pose proof (Hweight x (or_introl eq_refl)) as Hhead.
+    specialize (IH (fun y Hin => Hweight y (or_intror Hin))). lia.
+  Qed.
+
+  (** The materialized graph contains only filtered occurrences of the selected rows. *)
+  Local Lemma scope_graph_edges g vs :
+    graph_e (base (wto_scoped g (Some vs))) <=
+      fold_right (fun v n => length (succs (base g) v) + n) 0 vs.
+  Proof.
+    change (fold_right (fun v n => length (succs (base (wto_scoped g (Some vs))) v) + n)
+      0 vs <= fold_right (fun v n => length (succs (base g) v) + n) 0 vs).
+    apply scope_weight_mono. intros v Hin.
+    change (length (succs (base (Galois.Graph.Wto.wto_scoped g (Some vs))) v) <=
+      length (succs (base g) v)).
+    rewrite (proj2 (wto_scoped_spec g vs) v Hin). apply filter_length_le.
+  Qed.
+
+  Local Lemma scope_mass_decompose g vs : source_mass g vs =
+    length vs + fold_right (fun v n => length (succs (base g) v) + n) 0 vs.
+  Proof.
+    unfold source_mass. induction vs; cbn [length fold_right]; lia.
+  Qed.
+
+  (** A scoped phase counts the selected vertices once as graph nodes and once as roots. *)
+  Local Lemma scope_graph_size g vs :
+    graph_n (base (wto_scoped g (Some vs))) +
+      graph_e (base (wto_scoped g (Some vs))) + length (rev vs) + 1 <=
+      2 * (source_mass g vs + 1).
+  Proof.
+    pose proof (scope_graph_edges g vs) as Hedges.
+    rewrite length_rev, scope_mass_decompose.
+    change (length vs + graph_e (base (wto_scoped g (Some vs))) + length vs + 1 <=
+      2 * (length vs + fold_right (fun v n => length (succs (base g) v) + n) 0 vs + 1)).
+    lia.
+  Qed.
+
+  (** A finite list's maximum width respects a common bound on all its keys. *)
+  Local Lemma scope_vertex_width_bound vs width :
+    Forall (fun v => Pos.size_nat v <= width) vs -> vertex_width vs <= width.
+  Proof.
+    intro Hwidth. unfold vertex_width. induction Hwidth; cbn [fold_right]; [lia|].
+    rewrite wto_graph_max_nat. apply Nat.max_lub; assumption.
+  Qed.
+
+  Local Lemma scope_max_bound {A} (weight : A -> nat) xs width :
+    (forall x, In x xs -> weight x <= width) ->
+    fold_right (fun x n => graph_max (weight x) n) 0 xs <= width.
+  Proof.
+    induction xs as [|x xs IH]; intro Hbound; cbn [fold_right]; [lia|].
+    rewrite wto_graph_max_nat. apply Nat.max_lub.
+    - apply Hbound. now left.
+    - apply IH. intros y Hin. apply Hbound. now right.
+  Qed.
+
+  (** Every materialized row targets keys in the selected domain. *)
+  Local Lemma scope_graph_width g vs :
+    graph_width (base (wto_scoped g (Some vs))) <= vertex_width vs.
+  Proof.
+    assert (Hrows : forall v, In v vs ->
+      vertex_width (succs (base (wto_scoped g (Some vs))) v) <= vertex_width vs).
+    { intros v Hin. apply scope_vertex_width_bound. apply Forall_forall. intros u Hu.
+      change (In u (succs (base (Galois.Graph.Wto.wto_scoped g (Some vs))) v)) in Hu.
+      rewrite (proj2 (wto_scoped_spec g vs) v Hin) in Hu.
+      apply filter_In in Hu. destruct Hu as [_ Hmember]. apply wto_member_spec in Hmember.
+      now apply search_vertex_width_member. }
+    change (graph_max (vertex_width vs)
+      (fold_right (fun v n => graph_max
+        (vertex_width (succs (base (wto_scoped g (Some vs))) v)) n) 0 vs) <= vertex_width vs).
+    rewrite wto_graph_max_nat. apply Nat.max_lub; [lia|].
+    now apply scope_max_bound.
+  Qed.
+
+  (** Reversed scoped roots and scoped rows obey the same original phase width. *)
+  Local Lemma scope_phase_width g vs :
+    graph_max (graph_width (base (wto_scoped g (Some vs)))) (vertex_width (rev vs)) <=
+      graph_max (graph_width (base g)) (vertex_width vs).
+  Proof.
+    pose proof (scope_graph_width g vs) as Hgraph.
+    assert (Hroots : vertex_width (rev vs) <= vertex_width vs).
+    { apply scope_vertex_width_bound. apply Forall_forall. intros v Hin.
+      apply search_vertex_width_member. now apply (proj2 (in_rev vs v)). }
+    rewrite !wto_graph_max_nat. apply Nat.max_lub.
+    - eapply Nat.le_trans; [exact Hgraph|apply Nat.le_max_r].
+    - eapply Nat.le_trans; [exact Hroots|apply Nat.le_max_r].
+  Qed.
+
+  (** Listed scopes pay their selected source rows at the original graph width. *)
+  Lemma T3_scope_listed : forall g vs,
+    (forall v, In v vs -> In v (nodes g)) ->
+    (T_wto_scoped g (Some vs) <= k_scope * N.of_nat (scope_work g vs))%N.
+  Proof.
+    intros g vs Hlisted.
+    pose proof (scope_materialization_time g vs
+      (graph_max (graph_width (base g)) (vertex_width vs))
+      (scope_listed_key_widths g vs Hlisted)) as Htime.
+    unfold scope_work. rewrite Nat2N.inj_mul, N.mul_assoc.
+    eapply N.le_trans; [exact Htime|].
+    apply N.mul_le_mono_r. apply N.mul_le_mono_r. unfold k_scope, k_build. lia.
+  Qed.
+
   (** The index loop checks each key's width and listing before it reads a trie. *)
   Lemma T4a_index : forall g w,
     (T_wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
@@ -3585,20 +3870,53 @@ Module WtoT <: WTO_ALL.
     unfold k_ranks. time_step.
   Qed.
 
+  (** Initial components and entries pay the listed graph and the supplied roots. *)
+  Local Opaque loopN prepared_search_trace.
+
+  Lemma T13_initial : forall g roots,
+      (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
+        k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
+        N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
+  Proof. Admitted. (* STUB *)
+
+  Local Lemma scope_scale_algebra (b x y : N) :
+    ((2 * b) * (x * y) = b * (2 * x) * y)%N.
+  Proof. nia. Qed.
+
+  Local Lemma scope_count_width_bound (coefficient : N) (size mass width bound : nat) :
+    size <= 2 * mass -> width <= bound ->
+    (coefficient * N.of_nat size * N.of_nat (width + 1) <=
+      (2 * coefficient) * N.of_nat (mass * (bound + 1)))%N.
+  Proof.
+    intros Hsize Hwidth. rewrite Nat2N.inj_mul.
+    rewrite (scope_scale_algebra coefficient (N.of_nat mass) (N.of_nat (bound + 1))).
+    apply N.mul_le_mono.
+    - apply N.mul_le_mono_l.
+      pose proof (time_of_nat_le size (2 * mass) Hsize) as Hcount.
+      rewrite Nat2N.inj_mul in Hcount. exact Hcount.
+    - apply time_of_nat_le. now apply Nat.add_le_mono_r.
+  Qed.
+
   (** Scoped components and entries read the materialized rows once. *)
   Lemma T12_scoped : forall g vs, NoDup vs -> (forall v, In v vs -> In v (nodes g)) ->
       (T_wto_components (wto_scoped g (Some vs)) (rev vs) +
         T_wto_entries (wto_scoped g (Some vs)) (rev vs)
           (wto_components (wto_scoped g (Some vs)) (rev vs)) <=
       k_scope * N.of_nat (scope_work g vs))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g vs Hunique Hlisted.
+    exact (N.le_trans _ _ _
+      (T13_initial (wto_scoped g (Some vs)) (rev vs))
+      (scope_count_width_bound k_build
+        (graph_n (base (wto_scoped g (Some vs))) +
+          graph_e (base (wto_scoped g (Some vs))) + length (rev vs) + 1)
+        (source_mass g vs + 1)
+        (graph_max (graph_width (base (wto_scoped g (Some vs)))) (vertex_width (rev vs)))
+        (graph_max (graph_width (base g)) (vertex_width vs))
+        (scope_graph_size g vs) (scope_phase_width g vs))).
+  Qed.
 
-  (** Initial components and entries pay the listed graph and the supplied roots. *)
-  Lemma T13_initial : forall g roots,
-      (T_wto_components g roots + T_wto_entries g roots (wto_components g roots) <=
-        k_build * N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
-        N.of_nat (graph_max (graph_width (base g)) (vertex_width roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Local Transparent loopN prepared_search_trace.
 
   Local Opaque loopN Galois.Graph.Wto.wto_components.
 
@@ -3904,8 +4222,10 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** Building pays the initial phases, the task list and each recorded step once. *)
-  Lemma T16_build : forall g roots,
-    (T_build g roots <= k_build * (T_wto_components g roots +
+  Local Opaque loopN prepared_search_trace Galois.Graph.Wto.wto_components.
+
+  Local Lemma build_constant_clock : forall g roots,
+    (T_build g roots <= 128 * (T_wto_components g roots +
       T_wto_entries g roots (wto_components g roots) +
       N.of_nat (length (concat (comps (wto_components g roots)))) +
       execution_cost g (history g roots) + 1))%N.
@@ -3936,9 +4256,22 @@ Module WtoT <: WTO_ALL.
     rewrite rev_append_rev, app_nil_r, length_rev in Htasks.
     time_unfold @T_build.
     rewrite rev_append_rev, app_nil_r, Hrun.
-    unfold T_wto_components, T_wto_entries, k_build. time_simpl.
-    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+    unfold T_wto_components, T_wto_entries. time_simpl.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. lia.
   Qed.
+
+  Lemma T16_build : forall g roots,
+    (T_build g roots <= k_build * (T_wto_components g roots +
+      T_wto_entries g roots (wto_components g roots) +
+      N.of_nat (length (concat (comps (wto_components g roots)))) +
+      execution_cost g (history g roots) + 1))%N.
+  Proof.
+    assert (Hcoefficient : (128 <= k_build)%N) by (unfold k_build; lia).
+    intros g roots. eapply N.le_trans; [exact (build_constant_clock g roots)|].
+    now apply N.mul_le_mono_r.
+  Qed.
+
+  Local Transparent prepared_search_trace Galois.Graph.Wto.wto_components.
 
   Local Transparent loopN.
 
