@@ -2015,10 +2015,375 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     apply load_sat. unfold program_kind. now rewrite Hdecls.
   Qed.
 
+  (** Equal identifiers represent the same expressions. *)
+  Lemma represents_same : forall db i j t, D.wf db -> same (D.view db) i j ->
+    represents (D.view db) (Id j) t -> represents (D.view db) (Id i) t.
+  Proof.
+    intros db i j t Hwf Hij Hrep.
+    inversion Hrep as [v | f k i' j' args Hrow Hsame Hargs]; subst.
+    eapply rep_app; [exact Hrow | | exact Hargs].
+    apply (proj2 (D.same_repr db i j' Hwf)).
+    transitivity (D.repr db j).
+    - exact (proj1 (D.same_repr db i j Hwf) Hij).
+    - exact (proj1 (D.same_repr db j j' Hwf) Hsame).
+  Qed.
+
+  (** Node insertion preserves allocation and layout without requiring old rows to be sorted. *)
+  Lemma add_node_ready : forall node cells db, D.wf db ->
+    (forall i, In (Id i) cells -> D.allocated db i) ->
+    (match node with
+      | EApp f _ => kind (D.view db) f = Some OId /\
+          D.slots_fit db f (S (length cells))
+      | ELit _ => True
+      end) ->
+    D.wf (snd (add_node node cells db)) /\
+    kind (D.view (snd (add_node node cells db))) = kind (D.view db) /\
+    D.slots (snd (add_node node cells db)) = D.slots db /\
+    (forall i, fst (add_node node cells db) = Id i ->
+      D.allocated (snd (add_node node cells db)) i) /\
+    (D.ids db <= D.ids (snd (add_node node cells db)))%N /\
+    (forall f k o, row (D.view db) f k o ->
+      row (D.view (snd (add_node node cells db))) f k o) /\
+    (forall i j, same (D.view db) i j ->
+      same (D.view (snd (add_node node cells db))) i j).
+  Proof.
+    intros [f children | v] cells db Hwf Hallocated Hnode.
+    - destruct Hnode as [Hkind Hfits].
+      pose proof (D.wf_make f cells db Hwf Hallocated Hfits) as Hwf'.
+      pose proof (D.layout_make f cells db Hwf) as Hlayout.
+      pose proof (make_grows f cells db Hwf Hkind) as Hgrowth.
+      cbn [add_node]. destruct (D.make f cells db) as [i next] eqn:Hmake.
+      cbn [fst snd] in Hwf', Hlayout, Hgrowth |- *.
+      destruct Hlayout as [Hkind' [Hslots [Hupper [Hnew Hpending]]]].
+      split; [exact Hwf' |]. split; [exact Hkind' |]. split; [exact Hslots |]. split.
+      + intros j Heq. inversion Heq; subst j. exact Hnew.
+      + exact Hgrowth.
+    - cbn [add_node fst snd]. split; [exact Hwf |]. split; [reflexivity |].
+      split; [reflexivity |]. split; [intros i Heq; discriminate |].
+      split; [apply N.le_refl |]. split; auto.
+  Qed.
+
+  (** The node fold transports invariants even when its preexisting rows lack sort evidence. *)
+  Lemma build_nodes_frame_ready : forall ds
+    (P : list (enode V.t) -> cell_table (cell V.t) -> D.t -> Prop),
+    (forall n rest t db, D.wf db ->
+      (forall f, kind (D.view db) f = lookup_kind ds f) ->
+      table_valid t -> table_allocated db t ->
+      nodes_typed ds (map cell_sort (table_list t)) (n :: rest) ->
+      Forall (fun node => match node with
+        | EApp f children => D.slots_fit db f (S (length children))
+        | ELit _ => True
+        end) (n :: rest) ->
+      P (n :: rest) t db ->
+      let cells := match n with
+        | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+        | ELit _ => []
+        end in
+      P rest (table_push (fst (add_node n cells db)) t) (snd (add_node n cells db))) ->
+    forall ns t db, D.wf db ->
+      (forall f, kind (D.view db) f = lookup_kind ds f) ->
+      table_valid t -> table_allocated db t ->
+      nodes_typed ds (map cell_sort (table_list t)) ns ->
+      Forall (fun node => match node with
+        | EApp f children => D.slots_fit db f (S (length children))
+        | ELit _ => True
+        end) ns -> P ns t db ->
+      P [] (fst (build_nodes ns t db)) (snd (build_nodes ns t db)).
+  Proof.
+    intros ds P Hstep ns. induction ns as [| n rest IH]; intros t db Hwf Hkind Hvalid
+      Hallocated Htyped Hslots HP; [exact HP |].
+    pose proof (Hstep n rest t db Hwf Hkind Hvalid Hallocated Htyped Hslots HP) as HPnext.
+    destruct Htyped as [Hnode Htail].
+    apply Forall_cons_iff in Hslots. destruct Hslots as [Hslot Hslots].
+    set (cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end) in *.
+    assert (Hready : (forall i, In (Id i) cells -> D.allocated db i) /\
+      match n with
+      | EApp f _ => kind (D.view db) f = Some OId /\
+          D.slots_fit db f (S (length cells))
+      | ELit _ => True
+      end).
+    { destruct n as [f children | v]; unfold cells; cbn in *.
+      - destruct Hnode as [Hf [ss [Hss Hchildren]]].
+        destruct (table_children_typed db t children ss Hvalid Hallocated Hchildren)
+          as [Hsorts Hids].
+        split; [exact Hids |]. split; [now rewrite Hkind | now rewrite length_map].
+      - split; [intros i Hin; contradiction | exact I]. }
+    destruct Hready as [Hcells Hready].
+    pose proof (add_node_ready n cells db Hwf Hcells Hready) as Hnext.
+    pose proof (add_node_sort n cells db) as Hsort.
+    cbv zeta in HPnext. fold cells in HPnext.
+    cbn [build_nodes]. fold cells.
+    destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+    cbn [fst snd] in Hnext, Hsort, HPnext |- *.
+    destruct Hnext as [Hwf' [Hkind' [Hslots' [Hnew [Hids' Hgrowth]]]]].
+    apply IH; try assumption.
+    - intro f. now rewrite Hkind'.
+    - now apply table_push_valid.
+    - unfold table_allocated in *. rewrite table_push_list. apply Forall_app. split.
+      + eapply Forall_impl; [| exact Hallocated]. intros old Hold i Heq.
+        specialize (Hold i Heq). unfold D.allocated in *.
+        exact (N.le_trans _ _ _ Hold Hids').
+      + constructor; [exact Hnew | constructor].
+    - rewrite table_push_list, map_app. cbn [map]. now rewrite Hsort.
+    - eapply Forall_impl; [| exact Hslots]. intros [f children | v] Hfits; [| exact I].
+      unfold D.slots_fit in *. now rewrite Hslots'.
+  Qed.
+
+  (** Replacing an identifier by its representative preserves its represented expression. *)
+  Lemma canon_represents : forall db c e, D.wf db -> represents (D.view db) c e ->
+    represents (D.view db) (D.canon db c) e.
+  Proof.
+    intros db [i | v] e Hwf Hrep; [| exact Hrep].
+    apply (represents_same db (D.repr db i) i e Hwf); [| exact Hrep].
+    apply (proj2 (D.same_repr db (D.repr db i) i Hwf)). now apply D.repr_idem.
+  Qed.
+
+  (** A constructor insertion represents the constructor applied to its represented children. *)
+  Lemma make_represents : forall db f cells args, D.wf db ->
+    kind (D.view db) f = Some OId -> D.wf (snd (D.make f cells db)) ->
+    Forall2 (represents (D.view db)) cells args ->
+    represents (D.view (snd (D.make f cells db))) (Id (fst (D.make f cells db)))
+      (Model.EApp f args).
+  Proof.
+    intros db f cells args Hwf Hkind Hwf' Hargs.
+    pose proof (D.make_spec f cells db Hwf Hkind) as Hmake.
+    pose proof (make_grows f cells db Hwf Hkind) as Hgrowth.
+    destruct (D.make f cells db) as [i next] eqn:Hresult.
+    cbn [fst snd] in Hwf', Hgrowth |- *.
+    destruct Hgrowth as [Hids [Hrows Hsame]].
+    assert (Hcanonical : Forall2 (represents (D.view next)) (map (D.canon db) cells) args).
+    { clear Hmake Hresult. induction Hargs as [| c e cs es Hrep Hargs IH]; cbn [map].
+      - constructor.
+      - constructor; [| exact IH].
+        eapply represents_mono; [exact Hrows | exact Hsame |].
+        now apply canon_represents. }
+    destruct Hmake as [[j [Hrow [Hi Heq]]] | [Hfresh [Hrow Hextends]]].
+    - subst next i. eapply rep_app; [exact Hrow | | exact Hcanonical].
+      apply (proj2 (D.same_repr db (D.repr db j) j Hwf)). now apply D.repr_idem.
+    - eapply rep_app; [exact Hrow | | exact Hcanonical].
+      apply (proj2 (D.same_repr next i i Hwf')). reflexivity.
+  Qed.
+
+  (** Extending a valid table does not change an earlier lookup. *)
+  Lemma table_get_push_old : forall (default x : cell V.t) t j, table_valid t ->
+    j < length (table_list t) -> table_get default j (table_push x t) = table_get default j t.
+  Proof.
+    intros default x t j Hvalid Hlt.
+    rewrite (table_get_list _ default j (table_push x t) (table_push_valid _ x t Hvalid)).
+    rewrite (table_get_list _ default j t Hvalid), table_push_list.
+    now rewrite nth_error_app1 by exact Hlt.
+  Qed.
+
+  (** The next lookup after a valid table's old prefix is the newly added cell. *)
+  Lemma table_get_push_last : forall (default x : cell V.t) t, table_valid t ->
+    table_get default (length (table_list t)) (table_push x t) = x.
+  Proof.
+    intros default x t Hvalid.
+    rewrite (table_get_list _ default _ (table_push x t) (table_push_valid _ x t Hvalid)).
+    rewrite table_push_list, nth_error_app2 by lia.
+    now rewrite Nat.sub_diag.
+  Qed.
+
+  (** Every recorded cell represents all unfoldings of its corresponding flat node. *)
+  Definition table_represents (full : list (enode V.t)) (db : D.t)
+      (t : cell_table (cell V.t)) : Prop :=
+    forall j e, j < length (table_list t) -> unfolds_expr full j e ->
+      represents (D.view db) (table_get (Id 1%positive) j t) e.
+
+  (** One prepared node extends the represented prefix of the complete flat expression. *)
+  Lemma table_represents_step : forall ds full prefix n rest t db,
+    full = prefix ++ n :: rest -> length prefix = length (table_list t) ->
+    D.wf db -> (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) (n :: rest) ->
+    (match n with EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True end) -> table_represents full db t ->
+    let cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end in
+    table_represents full (snd (add_node n cells db))
+      (table_push (fst (add_node n cells db)) t).
+  Proof.
+    intros ds full prefix n rest t db Hfull Hlength Hwf Hkind Hvalid Hallocated
+      [Hnode Htail] Hslot Htable.
+    set (cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end).
+    assert (Hready : (forall i, In (Id i) cells -> D.allocated db i) /\
+      match n with
+      | EApp f _ => kind (D.view db) f = Some OId /\
+          D.slots_fit db f (S (length cells))
+      | ELit _ => True
+      end).
+    { destruct n as [f children | v]; unfold cells; cbn in *.
+      - destruct Hnode as [Hf [ss [Hss Hchildren]]].
+        destruct (table_children_typed db t children ss Hvalid Hallocated Hchildren)
+          as [Hsorts Hids].
+        split; [exact Hids |]. split; [now rewrite Hkind | now rewrite length_map].
+      - split; [intros i Hin; contradiction | exact I]. }
+    destruct Hready as [Hcells Hready].
+    pose proof (add_node_ready n cells db Hwf Hcells Hready) as Hnext.
+    cbv zeta. fold cells.
+    destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+    cbn [fst snd] in Hnext |- *.
+    destruct Hnext as [Hwf' [Hkind' [Hslots' [Hnew [Hids' [Hrows Hsame]]]]]].
+    intros j e Hbound Hunfold.
+    rewrite table_push_list, length_app in Hbound. cbn [length] in Hbound.
+    destruct (Nat.lt_ge_cases j (length (table_list t))) as [Hlt | Hge].
+    - rewrite table_get_push_old by assumption.
+      eapply represents_mono; [exact Hrows | exact Hsame |].
+      exact (Htable j e Hlt Hunfold).
+    - assert (Hj : j = length (table_list t)) by lia. subst j.
+      rewrite table_get_push_last by exact Hvalid.
+      assert (Hnth_node : nth_error full (length (table_list t)) = Some n).
+      { rewrite Hfull, <- Hlength, nth_error_app2 by lia. now rewrite Nat.sub_diag. }
+      destruct n as [f children | v].
+      + inversion Hunfold as [i v Hnth | i f' children' args Hnth Hbefore Hargs];
+          subst; try congruence.
+        rewrite Hnth_node in Hnth. injection Hnth as <- <-.
+        assert (Hchildren_rep : Forall2 (represents (D.view db)) cells args).
+        { unfold cells. clear - Htable Hargs Hbefore. revert Hbefore.
+          induction Hargs as [| j e js es Hunfold Hargs IH]; intro Hbefore; cbn [map].
+          - constructor.
+          - apply Forall_cons_iff in Hbefore. destruct Hbefore as [Hlt Hbefore].
+            constructor; [exact (Htable j e Hlt Hunfold) | now apply IH]. }
+        cbn [add_node] in Hnode_result.
+        destruct (D.make f cells db) as [i final] eqn:Hmake.
+        inversion Hnode_result; subst c final.
+        pose proof (make_represents db f cells args Hwf (proj1 Hready)) as Hrep.
+        rewrite Hmake in Hrep. cbn [fst snd] in Hrep.
+        exact (Hrep Hwf' Hchildren_rep).
+      + inversion Hunfold as [i v' Hnth | i f children args Hnth Hbefore Hargs];
+          subst; try congruence.
+        rewrite Hnth_node in Hnth. injection Hnth as <-.
+        cbn [add_node] in Hnode_result. inversion Hnode_result; subst c next. constructor.
+  Qed.
+
+  (** The completed node fold represents every unfolding at every node in the input. *)
+  Lemma build_nodes_represents : forall ds full db, D.wf db ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) -> nodes_typed ds [] full ->
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) full ->
+    table_represents full (snd (build_nodes full table_empty db))
+      (fst (build_nodes full table_empty db)) /\
+    length (table_list (fst (build_nodes full table_empty db))) = length full.
+  Proof.
+    intros ds full db Hwf Hkind Htyped Hslots.
+    set (P := fun rest t current => exists prefix,
+      full = prefix ++ rest /\ length prefix = length (table_list t) /\
+      table_represents full current t).
+    assert (Hframe : P [] (fst (build_nodes full table_empty db))
+      (snd (build_nodes full table_empty db))).
+    { apply (build_nodes_frame_ready ds P) with (ns := full) (t := table_empty) (db := db).
+      - intros n rest t current Hwf' Hkind' Hvalid Hallocated Htyped' Hslots'
+          [prefix [Hfull [Hlength Htable]]]. cbv zeta.
+        exists (prefix ++ [n]). split.
+        + now rewrite <- app_assoc.
+        + split.
+          * rewrite table_push_list, !length_app. cbn [length]. now rewrite Hlength.
+          * apply Forall_cons_iff in Hslots'. destruct Hslots' as [Hslot Hslots'].
+            exact (table_represents_step ds full prefix n rest t current Hfull Hlength
+              Hwf' Hkind' Hvalid Hallocated Htyped' Hslot Htable).
+      - exact Hwf.
+      - exact Hkind.
+      - apply table_empty_valid.
+      - constructor.
+      - exact Htyped.
+      - exact Hslots.
+      - exists []. split; [reflexivity |]. split; [reflexivity |].
+        intros j e Hbound Hunfold. cbn in Hbound. lia. }
+    destruct Hframe as [prefix [Hfull [Hlength Htable]]].
+    split; [exact Htable |]. rewrite app_nil_r in Hfull. subst full. symmetry. exact Hlength.
+  Qed.
+
   Lemma add_expr_represents : forall ds e db t, D.wf db -> expr_ok ds db e ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_expr e db))) (Id (fst (add_expr e db))) t.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds [ns root_index] db expression Hwf [Hexpr [Hkind Hslots]] Hunfold.
+    pose proof (expr_nodes_typed V.t ds (FExpr V.t ns root_index) Hexpr) as Htyped.
+    destruct (build_nodes_represents ds ns db Hwf Hkind Htyped Hslots) as [Hreps Hlength].
+    pose proof (build_nodes_shape ns table_empty db (table_empty_valid (cell V.t))) as Hshape.
+    unfold add_expr. destruct (build_nodes ns table_empty db) as [t final] eqn:Hresult.
+    cbn [fst snd] in Hreps, Hlength, Hshape.
+    destruct Hshape as [Hvalid Hsorts].
+    change (map cell_sort (table_list t) = map enode_sort ns) in Hsorts.
+    destruct Hexpr as [[f [children Hroot]] Hnodes].
+    cbn [expr_nodes expr_root] in Hroot, Hunfold.
+    assert (Hbound : root_index < length (table_list t)).
+    { rewrite Hlength. apply nth_error_Some. rewrite Hroot. discriminate. }
+    assert (Hroot_sort : nth_error (map cell_sort (table_list t)) root_index = Some SId).
+    { rewrite Hsorts, nth_error_map, Hroot. reflexivity. }
+    specialize (Hreps root_index expression Hbound Hunfold).
+    rewrite nth_error_map in Hroot_sort.
+    destruct (nth_error (table_list t) root_index) as [[i |v] |] eqn:Hcell;
+      try discriminate Hroot_sort.
+    rewrite (table_get_list _ (Id 1%positive) root_index t Hvalid), Hcell in Hreps |- *.
+    exact Hreps.
+  Qed.
+
+  (** Every returned input class represents its input after the complete ordered input fold. *)
+  Lemma inputs_represented : forall ds es db n e c t, D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
+    nth_error es n = Some e -> nth_error (fst (add_inputs es db)) n = Some c ->
+    unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
+    represents (D.view (snd (add_inputs es db))) (Id c) t.
+  Proof.
+    intros ds es. induction es as [| head rest IH];
+      intros db n e c expression Hwf Hsorted Hexprs Hnth Hclass Hunfold;
+      [destruct n; discriminate |].
+    apply Forall_cons_iff in Hexprs. destruct Hexprs as [Hhead Hrest].
+    destruct (add_expr_properties ds head db Hwf Hhead Hsorted)
+      as [Hwf' [Hsorted' [Hkind [Hslots Hgrowth]]]].
+    assert (Hrest' : Forall (expr_ok ds (snd (add_expr head db))) rest).
+    { eapply Forall_impl; [| exact Hrest]. intros x Hx.
+      exact (expr_ok_layout ds db (snd (add_expr head db)) x Hkind Hslots Hx). }
+    cbn [add_inputs] in Hclass |- *.
+    destruct (add_expr head db) as [i next] eqn:Hhead_result.
+    cbn [snd] in Hwf', Hsorted', Hkind, Hslots, Hgrowth, Hrest'.
+    destruct (add_inputs rest next) as [cs final] eqn:Hrest_result.
+    cbn [fst snd] in Hclass |- *. destruct n as [| n].
+    - cbn [nth_error] in Hnth, Hclass. inversion Hnth; inversion Hclass; subst e c.
+      pose proof (add_expr_represents ds head db expression Hwf Hhead Hunfold)
+        as Hrep. rewrite Hhead_result in Hrep. cbn [fst snd] in Hrep.
+      destruct (add_inputs_properties ds rest next Hwf' Hsorted' Hrest')
+        as [Hfinal [Hsort_final [Hkind_final [Hslots_final [Hids [Hrows Hsame]]]]]].
+      rewrite Hrest_result in Hrows, Hsame. cbn [snd] in Hrows, Hsame.
+      exact (represents_mono _ _ _ _ Hrows Hsame Hrep).
+    - cbn [nth_error] in Hnth, Hclass.
+      assert (Hclass' : nth_error (fst (add_inputs rest next)) n = Some c).
+      { now rewrite Hrest_result. }
+      pose proof (IH next n e c expression Hwf' Hsorted' Hrest' Hnth Hclass' Hunfold)
+        as Hrep. now rewrite Hrest_result in Hrep.
+  Qed.
+
+  (** Engine growth preserves representation through row and identifier canonicalization. *)
+  Lemma represents_grows : forall db db' c e, D.wf db' -> E.grows db db' ->
+    represents (D.view db) c e -> represents (D.view db') c e.
+  Proof.
+    intros db db' c e Hwf [Hsame Hrows] Hrep.
+    induction Hrep as [v | f k i j args Hrow Heq Hargs IHargs]; [constructor |].
+    assert (Hcanonical : Forall2 (represents (D.view db')) (map (D.canon db') k) args).
+    { clear Hrow Heq. induction IHargs as [| c e cs es Hr Hhead Htail Hall IH]; cbn [map].
+      - constructor.
+      - constructor; [now apply canon_represents | exact IH]. }
+    destruct (Hrows f k (Some (Id j)) Hrow) as [output [Hrow' Hout]].
+    destruct output as [[j' | v] |]; cbn [D.out_le option_map D.canon cell_le] in Hout;
+      try contradiction.
+    eapply rep_app; [exact Hrow' | | exact Hcanonical].
+    apply (proj2 (D.same_repr db' i j' Hwf)).
+    transitivity (D.repr db' j).
+    - apply (proj1 (D.same_repr db' i j Hwf)). now apply Hsame.
+    - apply (proj1 (D.same_repr db' (D.repr db' j) j' Hwf)) in Hout.
+      now rewrite (D.repr_idem db' j Hwf) in Hout.
+  Qed.
 
   (** Accepted inputs load into a well-formed database of the planned program. *)
   Lemma inputs_loaded : forall ds rws ans es, front_ok ds rws ans es ->
@@ -2098,7 +2463,30 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     nth_error es n = Some e -> nth_error cs n = Some c ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view db) (Id c) t.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans lim es st db cs n e c expression Hresult Hnth Hclass Hunfold.
+    destruct (saturate_execution ds rws ans lim es st db cs Hresult)
+      as [initial [Hfront [Hplan [Hwf [Hloaded [Hinputs Hrun]]]]]].
+    set (p := C.compile ds rws ans) in *.
+    set (cp := E.plan p) in *.
+    assert (Hdecls : decls V.t p = ds) by apply C.compile_program.
+    destruct (load_properties p cp) as [Hwf_load Hloaded_load].
+    assert (Hsorted_load : view_sorted (lookup_sorts ds) (D.view (E.load p cp))).
+    { destruct Hloaded_load as [Hkind_load [Hslots_load Hsort]].
+      unfold program_sorts in Hsort. now rewrite Hdecls in Hsort. }
+    assert (Hexprs : Forall (expr_ok ds (E.load p cp)) es).
+    { eapply Forall_impl; [| exact (proj2 Hfront)]. intros x Hx.
+      exact (loaded_expr_ok p cp ds (E.load p cp) x Hdecls Hplan Hloaded_load Hx). }
+    assert (Hclass' : nth_error (fst (add_inputs es (E.load p cp))) n = Some c).
+    { now rewrite Hinputs. }
+    pose proof (inputs_represented ds es (E.load p cp) n e c expression Hwf_load
+      Hsorted_load Hexprs Hnth Hclass' Hunfold) as Hrep.
+    rewrite Hinputs in Hrep. cbn [snd] in Hrep.
+    pose proof (E.run_grows p cp lim initial Hplan Hwf Hloaded) as Hgrowth.
+    pose proof (E.run_wf p cp lim initial Hplan Hwf Hloaded) as Hfinal.
+    rewrite Hrun in Hgrowth, Hfinal. cbn [snd] in Hgrowth, Hfinal.
+    exact (represents_grows initial db (Id c) expression (proj1 Hfinal) Hgrowth Hrep).
+  Qed.
 
   (** Every accepted saturation outcome satisfies each model of its front-end rules. *)
   Lemma saturate_sat : forall (M : model (V := V.t)) ds rws ans lim es st db cs,
@@ -2183,18 +2571,6 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
                (Hcanonical f' k' o' Hrow' j Hin') in Heq. exact Heq.
   Qed.
 
-  (** Equal identifiers represent the same expressions. *)
-  Lemma represents_same : forall db i j t, D.wf db -> same (D.view db) i j ->
-    represents (D.view db) (Id j) t -> represents (D.view db) (Id i) t.
-  Proof.
-    intros db i j t Hwf Hij Hrep.
-    inversion Hrep as [v | f k i' j' args Hrow Hsame Hargs]; subst.
-    eapply rep_app; [exact Hrow | | exact Hargs].
-    apply (proj2 (D.same_repr db i j' Hwf)).
-    transitivity (D.repr db j).
-    - exact (proj1 (D.same_repr db i j Hwf) Hij).
-    - exact (proj1 (D.same_repr db j j' Hwf) Hsame).
-  Qed.
 
   Lemma ematch_complete : forall ds db rw g tau c e, D.wf db -> D.canonical db ->
     rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
