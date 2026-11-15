@@ -4,10 +4,10 @@
     For example, a join without a parent edge needs sibling sources on both sides.
     Builds on: the numeric Lengauer and Tarjan producer and binary-fuel loops. *)
 
-From Stdlib Require Import List Bool PArith NArith.
+From Stdlib Require Import List Bool PArith NArith Arith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data DomSig DomProducer.
+From Galois.Graph Require Import Data Spec DomSig DomProducer.
 Import List.ListNotations.
 
 Definition dom_order_row (rows : ptrie (list N)) (v : N) : list N :=
@@ -545,3 +545,664 @@ TimeFun dom_lt_replay_initial.
 Definition dom_lt_run_ops (ops : list lt_op) (st : dom_lt_replay) : dom_lt_replay :=
   fold_left dom_lt_replay_step ops st.
 TimeFun dom_lt_run_ops.
+
+(** * Semantic consequences of a low-high certificate *)
+
+(** The first occurrence supplies a natural measure for certificate proofs. *)
+Fixpoint dom_cert_position (o : list positive) (v : positive) : nat :=
+  match o with
+  | [] => 0
+  | u :: rest => if Pos.eqb v u then 0 else S (dom_cert_position rest v)
+  end.
+TimeFun dom_cert_position.
+
+Lemma dom_cert_position_nth o : NoDup o ->
+  forall i v, nth_error o i = Some v -> dom_cert_position o v = i.
+Proof.
+  intro Hunique. induction Hunique as [|u rest Hfresh Hunique IH]; intros i v Hnth.
+  - destruct i; discriminate.
+  - destruct i as [|i].
+    + cbn in Hnth. injection Hnth as <-. cbn [dom_cert_position].
+      now rewrite Pos.eqb_refl.
+    + cbn in Hnth. cbn [dom_cert_position].
+      destruct (Pos.eqb v u) eqn:Heq.
+      * apply Pos.eqb_eq in Heq. subst v. exfalso. apply Hfresh.
+        eapply nth_error_In. exact Hnth.
+      * f_equal. now apply IH.
+Qed.
+
+Lemma dom_cert_position_bound o v : NoDup o -> In v o ->
+  dom_cert_position o v < length o.
+Proof.
+  intros Hunique Hin. apply In_nth_error in Hin as [i Hnth].
+  rewrite (dom_cert_position_nth o Hunique i v Hnth).
+  apply nth_error_Some. rewrite Hnth. discriminate.
+Qed.
+
+Lemma dom_cert_before_positions o u v : NoDup o ->
+  order_before o u v -> dom_cert_position o u < dom_cert_position o v.
+Proof.
+  intros Hunique [i [j [Hi [Hj Hlt]]]].
+  rewrite (dom_cert_position_nth o Hunique i u Hi).
+  rewrite (dom_cert_position_nth o Hunique j v Hj). exact Hlt.
+Qed.
+
+Lemma dom_cert_positions_before o u v : NoDup o -> In u o -> In v o ->
+  dom_cert_position o u < dom_cert_position o v -> order_before o u v.
+Proof.
+  intros Hunique Hu Hv Hlt.
+  apply In_nth_error in Hu as [i Hi]. apply In_nth_error in Hv as [j Hj].
+  exists i, j. repeat split; try assumption.
+  rewrite (dom_cert_position_nth o Hunique i u Hi) in Hlt.
+  rewrite (dom_cert_position_nth o Hunique j v Hj) in Hlt. exact Hlt.
+Qed.
+
+Lemma dom_cert_before_members o u v : order_before o u v -> In u o /\ In v o.
+Proof.
+  intros [i [j [Hi [Hj Hlt]]]]. split; eapply nth_error_In; eassumption.
+Qed.
+
+Lemma dom_cert_before_trans o u v w : NoDup o ->
+  order_before o u v -> order_before o v w -> order_before o u w.
+Proof.
+  intros Hunique Huv Hvw.
+  destruct (dom_cert_before_members o u v Huv) as [Hu Hv].
+  destruct (dom_cert_before_members o v w Hvw) as [_ Hw].
+  apply dom_cert_positions_before; try assumption.
+  pose proof (dom_cert_before_positions o u v Hunique Huv).
+  pose proof (dom_cert_before_positions o v w Hunique Hvw). lia.
+Qed.
+
+Lemma dom_cert_parent_before g r m o v p : dom_cert g r m o ->
+  trie_get v m = Some p -> order_before o p v.
+Proof.
+  intros [Hpre Hremaining] Hget.
+  destruct Hpre as [Hunique [Hhead [Hroot [Hparent [Hdomain Hinterval]]]]].
+  assert (Hv : In v o) by (eapply Hdomain; exact Hget).
+  assert (Hne : v <> r) by (intro Heq; subst v; congruence).
+  destruct (Hparent v Hv Hne) as [q [Hq Hbefore]].
+  rewrite Hget in Hq. injection Hq as <-. exact Hbefore.
+Qed.
+
+Lemma dom_cert_anc_cases m u v : tree_anc m u v ->
+  u = v \/ exists p, trie_get v m = Some p /\ tree_anc m u p.
+Proof.
+  intro Hanc. destruct Hanc as [|p v Hparent Hanc].
+  - now left.
+  - right. exists p. auto.
+Qed.
+
+Lemma dom_cert_anc_trans m u v w : tree_anc m u v -> tree_anc m v w -> tree_anc m u w.
+Proof.
+  intros Huv Hvw. induction Hvw as [|p w Hparent Hanc IH].
+  - exact Huv.
+  - eapply tree_anc_step; eassumption.
+Qed.
+
+(** Every strict ancestor precedes its descendant in the certificate order. *)
+Lemma dom_cert_anc_before g r m o u v : dom_cert g r m o ->
+  tree_anc m u v -> u <> v -> order_before o u v.
+Proof.
+  intros Hcert Hanc. induction Hanc as [|p v Hparent Hanc IH]; intro Hne.
+  - contradiction.
+  - pose proof (dom_cert_parent_before g r m o v p Hcert Hparent) as Hpv.
+    destruct (Pos.eq_dec u p) as [Heq|Hup].
+    + now subst u.
+    + eapply dom_cert_before_trans; [exact (proj1 (proj1 Hcert))| |exact Hpv].
+      exact (IH Hup).
+Qed.
+
+Lemma dom_cert_anc_antisym g r m o u v : dom_cert g r m o ->
+  tree_anc m u v -> tree_anc m v u -> u = v.
+Proof.
+  intros Hcert Huv Hvu. destruct (Pos.eq_dec u v) as [Heq|Hne]; [exact Heq|].
+  pose proof (dom_cert_anc_before g r m o u v Hcert Huv Hne) as Hbefore.
+  pose proof (dom_cert_anc_before g r m o v u Hcert Hvu ltac:(congruence)) as Hafter.
+  apply (dom_cert_before_positions o u v (proj1 (proj1 Hcert))) in Hbefore.
+  apply (dom_cert_before_positions o v u (proj1 (proj1 Hcert))) in Hafter. lia.
+Qed.
+
+(** Following a parent always decreases the finite certificate position. *)
+Lemma dom_cert_parent_wf g r m o : dom_cert g r m o ->
+  well_founded (fun u v => trie_get v m = Some u).
+Proof.
+  intro Hcert. apply (well_founded_lt_compat positive (dom_cert_position o)).
+  intros v p Hparent. apply dom_cert_before_positions.
+  - exact (proj1 (proj1 Hcert)).
+  - eapply dom_cert_parent_before; eassumption.
+Qed.
+
+(** The root reaches every listed vertex through candidate parent links. *)
+Lemma dom_cert_root_anc g r m o v : dom_cert g r m o -> In v o -> tree_anc m r v.
+Proof.
+  intro Hcert. induction v as [v IH] using
+    (well_founded_induction (dom_cert_parent_wf g r m o Hcert)).
+  intro Hv. destruct (Pos.eq_dec v r) as [Heq|Hne].
+  - subst v. constructor.
+  - destruct Hcert as [Hpre Hremaining].
+    destruct Hpre as [Hunique [Hhead [Hroot [Hparent [Hdomain Hinterval]]]]].
+    destruct (Hparent v Hv Hne) as [p [Hget Hbefore]].
+    eapply tree_anc_step; [exact Hget|].
+    apply (IH p Hget). exact (proj1 (dom_cert_before_members o p v Hbefore)).
+Qed.
+
+Lemma dom_cert_root_listed g r m o : dom_cert g r m o -> In r o.
+Proof.
+  intros [[Hunique [Hhead Hrest]] Hmore].
+  destruct o as [|v rest]; [discriminate|]. cbn in Hhead.
+  injection Hhead as <-. now left.
+Qed.
+
+Lemma dom_cert_path_listed g r m o a vs b : dom_cert g r m o ->
+  In a o -> path g a vs b -> In b o.
+Proof.
+  intros Hcert Ha Hpath. revert Ha.
+  induction Hpath as [v|u v vs w Hedge Hpath IH]; intro Ha.
+  - exact Ha.
+  - apply IH. exact (proj1 (proj1 (proj2 Hcert) u v Ha Hedge)).
+Qed.
+
+(** The parent certificate keeps every root-reachable vertex in its order. *)
+Lemma dom_cert_reach_listed g r m o v : dom_cert g r m o ->
+  reach g [r] v -> In v o.
+Proof.
+  intros Hcert [a [vs [Ha Hpath]]]. destruct Ha as [<-|Ha]; [|contradiction].
+  eapply dom_cert_path_listed; [exact Hcert| |exact Hpath].
+  eapply dom_cert_root_listed. exact Hcert.
+Qed.
+
+Lemma dom_cert_path_start g a vs b : path g a vs b -> In a vs.
+Proof.
+  intro Hpath. destruct Hpath; now left.
+Qed.
+
+Lemma dom_cert_path_end g a vs b : path g a vs b -> In b vs.
+Proof.
+  intro Hpath. induction Hpath; [now left|now right].
+Qed.
+
+Lemma dom_cert_path_snoc g a vs b c : path g a vs b -> edge g b c ->
+  path g a (vs ++ [c]) c.
+Proof.
+  intros Hpath Hedge. induction Hpath as [v|u v vs w Hfirst Hpath IH].
+  - cbn. eapply path_step; [exact Hedge|constructor].
+  - cbn. eapply path_step; [exact Hfirst|now apply IH].
+Qed.
+
+Lemma dom_cert_path_join g a xs b ys c : path g a xs b -> path g b ys c ->
+  exists zs, path g a zs c /\ forall v, In v zs -> In v xs \/ In v ys.
+Proof.
+  intros Hleft Hright. revert ys c Hright.
+  induction Hleft as [b|a v xs b Hedge Hpath IH]; intros ys c Hright.
+  - exists ys. split; [exact Hright|]. intros v Hv. now right.
+  - destruct (IH ys c Hright) as [zs [Hz Hmembers]].
+    exists (a :: zs). split.
+    + eapply path_step; eassumption.
+    + intros y [<-|Hy]; [left; now left|].
+      destruct (Hmembers y Hy) as [Hin|Hin]; [left; now right|now right].
+Qed.
+
+Lemma dom_cert_positions_eq o u v : NoDup o -> In u o -> In v o ->
+  dom_cert_position o u = dom_cert_position o v -> u = v.
+Proof.
+  intros Hunique Hu Hv Heq.
+  apply In_nth_error in Hu as [i Hi]. apply In_nth_error in Hv as [j Hj].
+  rewrite (dom_cert_position_nth o Hunique i u Hi) in Heq.
+  rewrite (dom_cert_position_nth o Hunique j v Hj) in Heq. subst j. congruence.
+Qed.
+
+Lemma dom_cert_anc_listed g r m o u v : dom_cert g r m o ->
+  tree_anc m u v -> In v o -> In u o.
+Proof.
+  intros Hcert Hanc Hv. destruct (Pos.eq_dec u v) as [->|Hne]; [exact Hv|].
+  apply (dom_cert_anc_before g r m o u v Hcert Hanc) in Hne.
+  exact (proj1 (dom_cert_before_members o u v Hne)).
+Qed.
+
+Lemma dom_cert_anc_parent m u v p : trie_get v m = Some p -> tree_anc m u v ->
+  u <> v -> tree_anc m u p.
+Proof.
+  intros Hget Hanc Hne. apply dom_cert_anc_cases in Hanc.
+  destruct Hanc as [Heq|[q [Hq Hanc]]]; [contradiction|].
+  rewrite Hget in Hq. injection Hq as <-. exact Hanc.
+Qed.
+
+Lemma dom_cert_path_anc g r m o a vs b : dom_cert g r m o ->
+  In a o -> path g a vs b -> forall u, tree_anc m u b ->
+  tree_anc m u a \/ In u vs.
+Proof.
+  intros Hcert Ha Hpath. revert Ha.
+  induction Hpath as [v|a v vs b Hedge Hpath IH]; intros Ha u Hanc.
+  - now left.
+  - destruct (proj1 (proj2 Hcert) a v Ha Hedge) as [Hv Hparents].
+    destruct (IH Hv u Hanc) as [Huv|Hin]; [|right; now right].
+    destruct (Pos.eq_dec u v) as [Heq|Hne].
+    + subst u. right. right. eapply dom_cert_path_start. exact Hpath.
+    + destruct (dom_cert_anc_cases m u v Huv) as [Heq|[p [Hget Hup]]];
+        [contradiction|].
+      left. eapply dom_cert_anc_trans; [exact Hup|]. now apply Hparents.
+Qed.
+
+(** The parent property forces every candidate ancestor onto every root path. *)
+Lemma dom_cert_anc_dominates g r m o u v : dom_cert g r m o ->
+  In v o -> tree_anc m u v -> dominates g r u v.
+Proof.
+  intros Hcert Hv Hanc vs Hpath.
+  destruct (dom_cert_path_anc g r m o r vs v Hcert
+    (dom_cert_root_listed g r m o Hcert) Hpath u Hanc) as [Hur|Hin]; [|exact Hin].
+  destruct (dom_cert_anc_cases m u r Hur) as [Heq|[p [Hget Hup]]].
+  - subst u. eapply dom_cert_path_start. exact Hpath.
+  - pose proof (proj1 (proj2 (proj2 (proj1 Hcert)))) as Hroot. congruence.
+Qed.
+
+(** Well-founded parent links decide ancestry without an extra logical principle. *)
+Lemma dom_cert_anc_dec g r m o u v : dom_cert g r m o ->
+  tree_anc m u v \/ ~ tree_anc m u v.
+Proof.
+  intro Hcert. induction v as [v IH] using
+    (well_founded_induction (dom_cert_parent_wf g r m o Hcert)).
+  destruct (Pos.eq_dec u v) as [Heq|Hne].
+  - subst u. left. constructor.
+  - destruct (trie_get v m) as [p|] eqn:Hget.
+    + destruct (IH p eq_refl) as [Hanc|Hnot].
+      * left. eapply tree_anc_step; eassumption.
+      * right. intro Hanc. apply Hnot. eapply dom_cert_anc_parent; eassumption.
+    + right. intro Hanc. apply dom_cert_anc_cases in Hanc.
+      destruct Hanc as [Heq|[p [Hp Hanc]]]; congruence.
+Qed.
+
+(** A low predecessor yields a root path containing no later vertex. *)
+Lemma dom_cert_low_path g r m o v : dom_cert g r m o -> In v o ->
+  exists vs, path g r vs v /\ forall y, In y vs -> y = v \/ order_before o y v.
+Proof.
+  intro Hcert. induction v as [v IH] using
+    (well_founded_induction (well_founded_ltof positive (dom_cert_position o))).
+  intro Hv. destruct (Pos.eq_dec v r) as [Heq|Hne].
+  - subst v. exists [r]. split; [constructor|].
+    intros y [<-|Hy]; [now left|contradiction].
+  - pose proof (proj1 (proj1 Hcert)) as Hunique.
+    destruct (proj2 (proj2 (proj2 (proj1 Hcert)))) as [Hparent Hrest].
+    destruct (Hparent v Hv Hne) as [p [Hget Hpv]].
+    assert (Hpredecessor : exists u, edge g u v /\ order_before o u v).
+    { destruct (proj2 (proj2 Hcert) v p Hget) as [Hdirect|Hlow].
+      - exists p. auto.
+      - destruct Hlow as [u [w [Hu [Hw [Huv [Hwv [Hbefore Hafter]]]]]]].
+        exists u. auto. }
+    destruct Hpredecessor as [u [Hedge Hbefore]].
+    destruct (dom_cert_before_members o u v Hbefore) as [Hu _].
+    destruct (IH u (dom_cert_before_positions o u v Hunique Hbefore) Hu)
+      as [vs [Hpath Hmembers]].
+    exists (vs ++ [v]). split.
+    + eapply dom_cert_path_snoc; eassumption.
+    + intros y Hy. apply in_app_or in Hy. destruct Hy as [Hy|[<-|Hy]].
+      * right. destruct (Hmembers y Hy) as [->|Hyv]; [exact Hbefore|].
+        eapply dom_cert_before_trans; eassumption.
+      * now left.
+      * contradiction.
+Qed.
+
+(** Every listed vertex has a graph path from the root. *)
+Lemma dom_cert_listed_reach g r m o v : dom_cert g r m o -> In v o -> reach g [r] v.
+Proof.
+  intros Hcert Hv. destruct (dom_cert_low_path g r m o v Hcert Hv) as [vs [Hpath Hmembers]].
+  exists r, vs. split; [now left|exact Hpath].
+Qed.
+
+Lemma dom_cert_other_branch_after g r m o v p w x : dom_cert g r m o ->
+  trie_get v m = Some p -> order_before o v w -> ~ tree_anc m v w ->
+  tree_anc m p x -> tree_anc m x w -> x <> p -> order_before o v x.
+Proof.
+  intros Hcert Hget Hvw Hnot Hpx Hxw Hxp.
+  destruct (proj1 Hcert) as [Hunique [Hhead [Hroot [Hparent [Hdomain Hinterval]]]]].
+  destruct (dom_cert_before_members o v w Hvw) as [Hv Hw].
+  pose proof (dom_cert_anc_listed g r m o x w Hcert Hxw Hw) as Hx.
+  destruct (Nat.lt_trichotomy (dom_cert_position o x) (dom_cert_position o v))
+    as [Hlt|[Heq|Hgt]].
+  - assert (Hxv : order_before o x v) by (apply dom_cert_positions_before; assumption).
+    assert (Hanc : tree_anc m x v) by (eapply Hinterval; eassumption).
+    assert (Hxv_ne : x <> v).
+    { intro Heq. subst x. lia. }
+    pose proof (dom_cert_anc_parent m x v p Hget Hanc Hxv_ne) as Hxp_anc.
+    exfalso. apply Hxp. eapply dom_cert_anc_antisym; eassumption.
+  - assert (Heqv : x = v) by (eapply dom_cert_positions_eq; eassumption).
+    subst x. contradiction.
+  - apply dom_cert_positions_before; assumption.
+Qed.
+
+Lemma dom_cert_high_chain g r m o v p w : dom_cert g r m o ->
+  trie_get v m = Some p -> order_before o v w -> ~ tree_anc m v w ->
+  (forall x q, order_before o v x -> trie_get x m = Some q ->
+    exists vs, path g q vs x /\
+      forall y, In y vs -> y = q \/ y = x \/ order_before o x y) ->
+  forall x, tree_anc m p x -> tree_anc m x w ->
+    exists vs, path g p vs x /\ forall y, In y vs -> y = p \/ order_before o v y.
+Proof.
+  intros Hcert Hget Hvw Hnot Hlater x Hpx. induction Hpx as [|q x Hparent Hpq IH].
+  - intros Hpw. exists [p]. split; [constructor|].
+    intros y [<-|Hy]; [now left|contradiction].
+  - intro Hxw. destruct (Pos.eq_dec x p) as [Heq|Hxp].
+    + subst x. exists [p]. split; [constructor|].
+      intros y [<-|Hy]; [now left|contradiction].
+    + assert (Hpx : tree_anc m p x) by (eapply tree_anc_step; eassumption).
+      pose proof (dom_cert_other_branch_after g r m o v p w x Hcert Hget Hvw
+        Hnot Hpx Hxw Hxp) as Hvx.
+      assert (Hqw : tree_anc m q w).
+      { eapply dom_cert_anc_trans; [|exact Hxw].
+        eapply tree_anc_step; [exact Hparent|constructor]. }
+      destruct (IH Hqw) as [left [Hleft Hleft_members]].
+      destruct (Hlater x q Hvx Hparent) as [right [Hright Hright_members]].
+      destruct (dom_cert_path_join g p left q right x Hleft Hright)
+        as [vs [Hpath Hmembers]].
+      exists vs. split; [exact Hpath|]. intros y Hy.
+      destruct (Hmembers y Hy) as [Hin|Hin].
+      * exact (Hleft_members y Hin).
+      * destruct (Hright_members y Hin) as [->|[->|Hxy]].
+        -- apply Hleft_members. eapply dom_cert_path_end. exact Hleft.
+        -- now right.
+        -- right. eapply dom_cert_before_trans;
+             [exact (proj1 (proj1 Hcert))|exact Hvx|exact Hxy].
+Qed.
+
+(** A high predecessor yields a parent path whose internal vertices follow the child. *)
+Lemma dom_cert_high_path g r m o v p : dom_cert g r m o -> trie_get v m = Some p ->
+  exists vs, path g p vs v /\
+    forall y, In y vs -> y = p \/ y = v \/ order_before o v y.
+Proof.
+  intro Hcert. revert p. induction v as [v IH] using
+    (well_founded_induction (well_founded_ltof positive
+      (fun x => length o - dom_cert_position o x))).
+  intros p Hget. destruct (proj2 (proj2 Hcert) v p Hget) as [Hdirect|Hlow].
+  - exists [p; v]. split.
+    + eapply path_step; [exact Hdirect|constructor].
+    + intros y [<-|[<-|Hy]]; [now left|right; now left|contradiction].
+  - destruct Hlow as [u [w [Hu [Hw [Huv [Hwv [Hbefore [Hafter Hnot]]]]]]]].
+    assert (Hpw : tree_anc m p w).
+    { apply (proj2 (proj1 (proj2 Hcert) w v Hw Hwv) p Hget). }
+    assert (Hlater : forall x q, order_before o v x -> trie_get x m = Some q ->
+      exists vs, path g q vs x /\
+        forall y, In y vs -> y = q \/ y = x \/ order_before o x y).
+    { intros x q Hvx Hxq. apply IH; [|exact Hxq].
+      unfold ltof. pose proof (proj1 (proj1 Hcert)) as Hunique.
+      pose proof (dom_cert_before_positions o v x Hunique Hvx) as Hposition.
+      destruct (dom_cert_before_members o v x Hvx) as [Hv Hx].
+      pose proof (dom_cert_position_bound o x Hunique Hx). lia. }
+    destruct (dom_cert_high_chain g r m o v p w Hcert Hget Hafter Hnot Hlater
+      w Hpw (tree_anc_refl m w)) as [vs [Hpath Hmembers]].
+    exists (vs ++ [v]). split.
+    + eapply dom_cert_path_snoc; eassumption.
+    + intros y Hy. apply in_app_or in Hy. destruct Hy as [Hy|[<-|Hy]].
+      * destruct (Hmembers y Hy) as [->|Hyv]; [now left|right; now right].
+      * right. now left.
+      * contradiction.
+Qed.
+
+(** A nonancestor is avoided by a root path assembled from low and high paths. *)
+Lemma dom_cert_avoid g r m o x v : dom_cert g r m o -> In v o ->
+  ~ tree_anc m x v -> exists vs, path g r vs v /\ ~ In x vs.
+Proof.
+  intro Hcert. induction v as [v IH] using
+    (well_founded_induction (dom_cert_parent_wf g r m o Hcert)).
+  intros Hv Hnot. destruct (Pos.eq_dec v r) as [Heq|Hvr].
+  - subst v. exists [r]. split; [constructor|].
+    intros [Heq|Hfalse]; [subst x; apply Hnot; constructor|contradiction].
+  - pose proof (proj1 (proj1 Hcert)) as Hunique.
+    destruct (in_dec Pos.eq_dec x o) as [Hx|Houtside].
+    + assert (Hne : x <> v) by (intro Heq; subst x; apply Hnot; constructor).
+      destruct (Nat.lt_trichotomy (dom_cert_position o x) (dom_cert_position o v))
+        as [Hlt|[Heq|Hgt]].
+      * destruct (proj2 (proj2 (proj2 (proj1 Hcert)))) as [Hparent Hrest].
+        destruct (Hparent v Hv Hvr) as [p [Hget Hpv]].
+        destruct (dom_cert_before_members o p v Hpv) as [Hp _].
+        assert (Hnotp : ~ tree_anc m x p).
+        { intro Hanc. apply Hnot. eapply tree_anc_step; eassumption. }
+        destruct (IH p Hget Hp Hnotp) as [left [Hleft Havoid]].
+        destruct (dom_cert_high_path g r m o v p Hcert Hget)
+          as [right [Hright Hright_members]].
+        destruct (dom_cert_path_join g r left p right v Hleft Hright)
+          as [vs [Hpath Hmembers]].
+        exists vs. split; [exact Hpath|]. intro Hin.
+        destruct (Hmembers x Hin) as [Hinleft|Hinright]; [contradiction|].
+        destruct (Hright_members x Hinright) as [Heq|[Heq|Hbefore]].
+        -- subst x. apply Hnotp. constructor.
+        -- contradiction.
+        -- apply (dom_cert_before_positions o v x Hunique) in Hbefore. lia.
+      * exfalso. apply Hne. eapply dom_cert_positions_eq; eassumption.
+      * destruct (dom_cert_low_path g r m o v Hcert Hv) as [vs [Hpath Hmembers]].
+        exists vs. split; [exact Hpath|]. intro Hin.
+        destruct (Hmembers x Hin) as [Heq|Hbefore]; [contradiction|].
+        apply (dom_cert_before_positions o x v Hunique) in Hbefore. lia.
+    + destruct (dom_cert_low_path g r m o v Hcert Hv) as [vs [Hpath Hmembers]].
+      exists vs. split; [exact Hpath|]. intro Hin. apply Houtside.
+      destruct (Hmembers x Hin) as [->|Hbefore]; [exact Hv|].
+      exact (proj1 (dom_cert_before_members o x v Hbefore)).
+Qed.
+
+(** Low-high witnesses exclude every semantic dominator outside the candidate ancestry. *)
+Lemma dom_cert_dominates_anc g r m o x v : dom_cert g r m o ->
+  In v o -> dominates g r x v -> tree_anc m x v.
+Proof.
+  intros Hcert Hv Hdom. destruct (dom_cert_anc_dec g r m o x v Hcert) as [Hanc|Hnot];
+    [exact Hanc|].
+  destruct (dom_cert_avoid g r m o x v Hcert Hv Hnot) as [vs [Hpath Havoid]].
+  exfalso. apply Havoid. now apply Hdom.
+Qed.
+
+Lemma dom_cert_parent_immediate g r m o v p : dom_cert g r m o ->
+  trie_get v m = Some p -> immediately_dominates g r p v.
+Proof.
+  intros Hcert Hget.
+  pose proof (dom_cert_parent_before g r m o v p Hcert Hget) as Hpv.
+  destruct (dom_cert_before_members o p v Hpv) as [Hp Hv].
+  split.
+  - split.
+    + eapply dom_cert_anc_dominates; [exact Hcert|exact Hv|].
+      eapply tree_anc_step; [exact Hget|constructor].
+    + intro Heq. subst p.
+      apply (dom_cert_before_positions o v v (proj1 (proj1 Hcert))) in Hpv. lia.
+  - intros x [Hdom Hne].
+    pose proof (dom_cert_dominates_anc g r m o x v Hcert Hv Hdom) as Hanc.
+    eapply dom_cert_anc_dominates; [exact Hcert|exact Hp|].
+    eapply dom_cert_anc_parent; eassumption.
+Qed.
+
+(** A low-high certificate makes the complete candidate parent map semantically exact. *)
+Lemma dom_cert_exact g r m o : dom_cert (base g) r m o -> dom_exact g r m.
+Proof.
+  intro Hcert. split.
+  - intros v p Hget.
+    pose proof (dom_cert_parent_before (base g) r m o v p Hcert Hget) as Hpv.
+    destruct (dom_cert_before_members o p v Hpv) as [Hp Hv].
+    split; [eapply dom_cert_listed_reach; eassumption|].
+    split; [eapply dom_cert_listed_reach; eassumption|].
+    eapply dom_cert_parent_immediate; eassumption.
+  - split.
+    + intros v Hreach. pose proof (dom_cert_reach_listed (base g) r m o v Hcert Hreach)
+        as Hv. split.
+      * intros Hnone [x [Hdom Hne]].
+        pose proof (dom_cert_dominates_anc (base g) r m o x v Hcert Hv Hdom) as Hanc.
+        destruct (dom_cert_anc_cases m x v Hanc) as [Heq|[p [Hget Hxp]]]; congruence.
+      * intro Hnot. destruct (trie_get v m) as [p|] eqn:Hget; [|reflexivity].
+        exfalso. apply Hnot. exists p.
+        exact (proj1 (dom_cert_parent_immediate (base g) r m o v p Hcert Hget)).
+    + eapply dom_cert_parent_wf. exact Hcert.
+Qed.
+
+(** Sharing the producer result costs no more than the separate parent and order phases. *)
+Lemma T_dom_build_candidate_phases g r :
+  (T_dom_build_candidate g r <= T_dom_lt_parents g r + T_dom_build_order g r + 32)%N.
+Proof.
+  unfold T_dom_build_candidate, T_dom_lt_parents, T_dom_build_order, T_dom_lt_pipeline.
+  time_simpl. time_cbn. lia.
+Qed.
+
+Lemma dom_sem_path_prefix g a vs b : path g a vs b ->
+  forall y, In y vs -> exists prefix, path g a prefix y /\ incl prefix vs.
+Proof.
+  intro Hpath. induction Hpath as [v|u v vs w Huv Hpath IH]; intros y Hin.
+  - destruct Hin as [<-|Hin]; [|contradiction].
+    exists [v]. split; [constructor|intros z Hz; exact Hz].
+  - destruct Hin as [<-|Hin].
+    + exists [u]. split; [constructor|].
+      intros z [<-|Hz]; [now left|contradiction].
+    + destruct (IH y Hin) as [prefix [Hprefix Hincl]].
+      exists (u :: prefix). split.
+      * eapply path_step; eassumption.
+      * intros z [<-|Hz]; [now left|right; now apply Hincl].
+Qed.
+
+(** Dominance is transitive because a path prefix witnesses the intermediate target. *)
+Lemma dom_sem_dominates_trans g r x y v :
+  dominates g r x y -> dominates g r y v -> dominates g r x v.
+Proof.
+  intros Hxy Hyv vs Hpath.
+  destruct (dom_sem_path_prefix g r vs v Hpath y (Hyv vs Hpath)) as
+    [prefix [Hprefix Hincl]].
+  apply Hincl. exact (Hxy prefix Hprefix).
+Qed.
+
+Lemma dom_map_no_return m v : Acc (fun u v => trie_get v m = Some u) v ->
+  forall u, trie_get u m = Some v -> ~ tree_anc m u v.
+Proof.
+  intro Hacc. induction Hacc as [v Hacc IH]. intros u Huv Hanc.
+  destruct (dom_cert_anc_cases m u v Hanc) as [Heq|[p [Hvp Hup]]].
+  - subst u. apply (IH v Huv v Huv). constructor.
+  - apply (IH p Hvp v Hvp). eapply dom_cert_anc_trans; [|exact Hup].
+    eapply tree_anc_step; [exact Huv|constructor].
+Qed.
+
+(** Parent ancestry in any exact map implies semantic dominance. *)
+Lemma dom_exact_anc_dominates g r m x v : dom_exact g r m ->
+  tree_anc m x v -> dominates (base g) r x v.
+Proof.
+  intros Hexact Hanc. induction Hanc as [|p v Hparent Hanc IH].
+  - intros vs Hpath. eapply dom_cert_path_end. exact Hpath.
+  - destruct (proj1 Hexact v p Hparent) as [_ [_ [[Hdom Hne] Himmediate]]].
+    eapply dom_sem_dominates_trans; eassumption.
+Qed.
+
+(** A semantic dominator of a reachable vertex occurs in its exact parent ancestry. *)
+Lemma dom_exact_dominates_anc g r m x v : dom_exact g r m ->
+  reach (base g) [r] v -> dominates (base g) r x v -> tree_anc m x v.
+Proof.
+  intros [Hparents [Hnone Hwf]]. revert x.
+  induction v as [v IH] using (well_founded_induction Hwf).
+  intros x Hreach Hdom. destruct (Pos.eq_dec x v) as [Heq|Hne].
+  - subst x. constructor.
+  - destruct (trie_get v m) as [p|] eqn:Hget.
+    + destruct (Hparents v p Hget) as [Hp [_ [Hstrict Himmediate]]].
+      eapply tree_anc_step; [exact Hget|].
+      apply (IH p eq_refl x Hp). apply Himmediate. split; assumption.
+    + exfalso. apply (proj1 (Hnone v Hreach) Hget). exists x. split; assumption.
+Qed.
+
+(** An exact map identifies dominance with its parent ancestry on reachable targets. *)
+Lemma dom_exact_ancestry g r m x v : dom_exact g r m -> reach (base g) [r] v ->
+  (tree_anc m x v <-> dominates (base g) r x v).
+Proof.
+  intros Hexact Hreach. split.
+  - eapply dom_exact_anc_dominates. exact Hexact.
+  - eapply dom_exact_dominates_anc; eassumption.
+Qed.
+
+(** Strict dominators of a child are exactly the ancestors of its exact parent. *)
+Lemma dom_exact_parent_strict g r m x v p : dom_exact g r m ->
+  trie_get v m = Some p ->
+  (strictly_dominates (base g) r x v <-> tree_anc m x p).
+Proof.
+  intros Hexact Hget.
+  destruct (proj1 Hexact v p Hget) as [Hp [Hv [[Hpv Hpv_ne] Himmediate]]].
+  split.
+  - intros [Hdom Hne]. eapply dom_cert_anc_parent; [exact Hget| |exact Hne].
+    eapply dom_exact_dominates_anc; eassumption.
+  - intro Hanc. split.
+    + eapply dom_sem_dominates_trans; [|exact Hpv].
+      eapply dom_exact_anc_dominates; eassumption.
+    + intro Heq. subst x.
+      eapply (dom_map_no_return m p (proj2 (proj2 Hexact) p) v Hget). exact Hanc.
+Qed.
+
+(** Every reachable predecessor lies below the target's exact parent. *)
+Lemma dom_exact_edge_parent g r m p y b : dom_exact g r m -> reach (base g) [r] p ->
+  edge (base g) p y -> trie_get y m = Some b -> tree_anc m b p.
+Proof.
+  intros Hexact Hp Hedge Hget.
+  destruct (proj1 Hexact y b Hget) as [_ [_ [[Hdom Hne] Himmediate]]].
+  apply (dom_exact_dominates_anc g r m b p Hexact Hp).
+  intros vs Hpath.
+  pose proof (Hdom (vs ++ [y]) (dom_cert_path_snoc (base g) r vs p y Hpath Hedge)) as Hin.
+  apply in_app_or in Hin. destruct Hin as [Hin|[Heq|Hin]].
+  - exact Hin.
+  - congruence.
+  - contradiction.
+Qed.
+
+(** Two ancestors of one vertex are comparable along its unique parent chain. *)
+Lemma dom_anc_chain_comparable m a b v : tree_anc m a v -> tree_anc m b v ->
+  tree_anc m a b \/ tree_anc m b a.
+Proof.
+  intro Ha. induction Ha as [|p v Hvp Hap IH]; intro Hb.
+  - now right.
+  - destruct (dom_cert_anc_cases m b v Hb) as [Heq|[q [Hvq Hbq]]].
+    + subst b. left. eapply tree_anc_step; eassumption.
+    + rewrite Hvp in Hvq. injection Hvq as <-. now apply IH.
+Qed.
+
+(** An acyclic parent map has antisymmetric ancestry. *)
+Lemma dom_anc_wf_antisym m :
+  well_founded (fun u v => trie_get v m = Some u) ->
+  forall a b, tree_anc m a b -> tree_anc m b a -> a = b.
+Proof.
+  intros Hwf a b Hab Hba.
+  destruct (dom_cert_anc_cases m b a Hba) as [Heq|[p [Hparent Hbp]]].
+  - symmetry. exact Heq.
+  - exfalso. apply (dom_map_no_return m p (Hwf p) a Hparent).
+    eapply dom_cert_anc_trans; eassumption.
+Qed.
+
+(** Distinct positive keys fit strictly below the capacity of their maximum bit width. *)
+Lemma dom_distinct_keys_cardinality xs w : NoDup xs ->
+  (forall v, In v xs -> Pos.size_nat v <= w) -> length xs < Nat.pow 2 w.
+Proof.
+  intros Hunique Hwidth.
+  assert (Hcodes : NoDup (map Pos.to_nat xs)).
+  { clear Hwidth. induction Hunique as [|v xs Hfresh Hunique IH].
+    - constructor.
+    - cbn [map]. constructor; [|exact IH].
+      intro Hin. apply in_map_iff in Hin as [u [Heq Hin]].
+      apply Pos2Nat.inj in Heq. subst u. exact (Hfresh Hin). }
+  assert (Hrange : incl (map Pos.to_nat xs) (seq 1 (Nat.pow 2 w - 1))).
+  { intros code Hin. apply in_map_iff in Hin as [v [<- Hin]].
+    apply in_seq.
+    pose proof (Pos2Nat.is_pos v) as Hpositive.
+    pose proof (Pos.size_nat_upper v) as Hupper.
+    pose proof (Nat.pow_le_mono_r 2 _ _ ltac:(lia) (Hwidth v Hin)) as Hpow.
+    pose proof (Nat.pow_lower_bound 2 w ltac:(lia)) as Hnonzero. lia. }
+  pose proof (NoDup_incl_length Hcodes Hrange) as Hlength.
+  rewrite length_map, length_seq in Hlength.
+  pose proof (Nat.pow_lower_bound 2 w ltac:(lia)) as Hnonzero. lia.
+Qed.
+
+(** Values bounded by a distinct key count fit within those keys' width. *)
+Lemma dom_distinct_value_width xs w a : NoDup xs ->
+  (forall v, In v xs -> Pos.size_nat v <= w) ->
+  (a <= N.of_nat (length xs))%N -> N.size_nat a <= w.
+Proof.
+  intros Hunique Hwidth Hvalue.
+  pose proof (dom_distinct_keys_cardinality xs w Hunique Hwidth) as Hlength.
+  destruct a as [|p]; [cbn; lia|].
+  assert (Hnatural : N.to_nat (N.pos p) <= length xs) by lia.
+  cbn [N.to_nat] in Hnatural. apply Pos.size_nat_least. lia.
+Qed.
+
+(** Twice a distinct key count plus one needs at most one additional bit. *)
+Lemma dom_distinct_twice_width xs w a : NoDup xs ->
+  (forall v, In v xs -> Pos.size_nat v <= w) ->
+  (a <= 2 * N.of_nat (length xs) + 1)%N -> N.size_nat a <= w + 1.
+Proof.
+  intros Hunique Hwidth Hvalue.
+  pose proof (dom_distinct_keys_cardinality xs w Hunique Hwidth) as Hlength.
+  destruct a as [|p]; [cbn; lia|].
+  assert (Hnatural : N.to_nat (N.pos p) <= 2 * length xs + 1) by lia.
+  cbn [N.to_nat] in Hnatural. apply Pos.size_nat_least.
+  rewrite Nat.add_1_r, Nat.pow_succ_r'. nia.
+Qed.

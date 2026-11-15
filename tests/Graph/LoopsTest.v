@@ -4,7 +4,7 @@
     For example, the inner cycle assigns vertex 3 to header 2.
     Builds on: graph fixtures, dominator construction and loop code. *)
 
-From Stdlib Require Import List PArith.
+From Stdlib Require Import List PArith NArith.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Digraph Dom LoopsSig Loops.
 From Galois.Tests.Graph Require Import Fixtures.
@@ -88,3 +88,21 @@ Example unreachable_predecessor_excluded :
   let l := LoopsCode.forest g (fixture_tree g) in
   existsb (Pos.eqb 4) (loop_body l 2) = false.
 Proof. vm_compute. reflexivity. Qed.
+
+(** Duplicate raw roots may repeat classification, but their stored body stays distinct. *)
+Example duplicate_raw_vertices_body :
+  let g := DigraphCode.prepare (fixture_graph [1; 1] [(1, 1); (1, 1)]) in
+  let t := DomTree Empty Empty (PTrieCode.set 1 0%N Empty) (PTrieCode.set 1 1%N Empty) in
+  loop_body (LoopsCode.forest g t) 1 = [1].
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+(** Repeated latches and predecessor occurrences add each body vertex only once. *)
+Example repeated_latches_body :
+  let g := DigraphCode.prepare (fixture_graph [1; 2] [(1, 2); (2, 2); (2, 2)]) in
+  let t := DomTree Empty Empty (PTrieCode.set 1 0%N (PTrieCode.set 2 1%N Empty)) Empty in
+  collect g t 1 [2; 2; 2] = [1; 2].
+Proof.
+  vm_compute. reflexivity.
+Qed.
