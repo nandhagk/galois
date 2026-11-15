@@ -8721,3 +8721,660 @@ Proof.
   unfold dom_order_emit_coefficient.
   clearbody budget. clear -Hloop_paid Hsetup Hsetup_budget. nia.
 Qed.
+
+(** The explicit-fuel pass preserves numeric ranges even if it returns a partial removal list. *)
+Lemma dom_order_removal_records_range bound limit parents order sources :
+  dom_lt_trie_all (fun value => (value <= bound)%N) parents ->
+  Forall (fun value => (value <= bound)%N) order ->
+  dom_order_sources_range bound sources ->
+  Forall (fun entry => let '(v, a, w) := entry in (v <= bound /\ a <= bound /\ w <= bound)%N)
+    (dom_order_removal limit parents order sources).
+Proof.
+  intros Hparents Horder [Hblue Hred]. unfold dom_order_removal.
+  set (children := filter (fun v => match trie_get (dom_lt_key v) parents with
+    None => false | Some _ => true end) order).
+  assert (Hchildren : Forall (fun value => (value <= bound)%N) children).
+  { apply Forall_forall. intros value Hin. unfold children in Hin.
+    apply filter_In in Hin as [Hin Hkept].
+    now apply Forall_forall with (x := value) in Horder. }
+  set (initial := DomOrderRemovalState
+    (dom_source_initial parents (source_blue sources) children)
+    (dom_source_initial parents (source_red sources) children)
+    (fold_left (fun active v => PTrieCode.set (dom_lt_key v) true active) children Empty)
+    children children []).
+  assert (Hinitial : dom_order_removal_range bound initial).
+  { unfold initial. apply dom_order_removal_range_make.
+    - exact (dom_source_initial_range bound parents (source_blue sources) children Hblue Hchildren).
+    - exact (dom_source_initial_range bound parents (source_red sources) children Hred Hchildren).
+    - exact Hchildren.
+    - exact Hchildren.
+    - constructor. }
+  pose proof (dom_lt_loop_invariant (dom_order_remove_step parents)
+    (dom_order_removal_range bound)
+    (Forall (fun entry => let '(v, a, w) := entry in
+      (v <= bound /\ a <= bound /\ w <= bound)%N))
+    (N.double (N.double (N.double (N.double limit))) + 3)%N initial) as Hloop.
+  specialize (Hloop ltac:(intros st next Hst Hstep;
+    pose proof (dom_order_remove_step_range bound parents st Hparents Hst) as Hnext;
+    rewrite Hstep in Hnext; exact Hnext)).
+  specialize (Hloop ltac:(intros st result Hst Hstep;
+    pose proof (dom_order_remove_step_range bound parents st Hparents Hst) as Hresult;
+    rewrite Hstep in Hresult; exact Hresult) Hinitial).
+  destruct (loopN (dom_order_remove_step parents)
+    (N.double (N.double (N.double (N.double limit))) + 3)%N initial) as [st|result].
+  - exact (proj2 (proj2 (proj2 (proj2 Hloop)))).
+  - exact Hloop.
+Qed.
+
+(** * Sorting all child rows *)
+
+(** Pointwise callback bounds remain valid after summing a finite list. *)
+Lemma dom_order_sum_cost_le {A : Type} (cost budget : A -> N) items :
+  (forall item, (cost item <= budget item)%N) ->
+  (fold_right N.add 0 (map cost items) <=
+    fold_right N.add 0 (map budget items))%N.
+Proof.
+  intro Hcost. induction items as [|item rest IH]; cbn [map fold_right].
+  - apply N.le_refl.
+  - apply N.add_le_mono; [apply Hcost|exact IH].
+Qed.
+
+(** The public filter-sum contract can use any upper bound on each map callback. *)
+Lemma dom_order_map_time_bound {A B : Type} (f : A -> B) (T_f cost : A -> N) rows :
+  (forall item, (T_f item <= cost item)%N) ->
+  (PTrieT.T_map f T_f rows <= (PTrieT.k_filter + 1) *
+    (N.of_nat (PTrie.nodes rows + 1) +
+      N.of_nat (length (PTrieCode.elements rows)) +
+      fold_right N.add 0 (map (fun ka => cost (snd ka)) (PTrieCode.elements rows)) + 1))%N.
+Proof.
+  intro Hcost. eapply N.le_trans; [apply dom_order_map_time_sum|].
+  apply N.mul_le_mono_l.
+  pose proof (dom_order_sum_cost_le (fun ka => T_f (snd ka))
+    (fun ka => cost (snd ka)) (PTrieCode.elements rows)
+    (fun ka => Hcost (snd ka))) as Hsum. lia.
+Qed.
+
+(** The row map charges its actual inline callback by the named callback's summed bound. *)
+Lemma dom_order_sorted_rows_wrapper_clock order parents positions :
+  (T_dom_order_sorted_rows order parents positions <=
+    4 + List.T_fold_left (dom_order_child_add parents) (T_dom_order_child_add parents)
+      order Empty +
+    (PTrieT.k_filter + 1) *
+      (N.of_nat (PTrie.nodes (fold_left (dom_order_child_add parents) order Empty) + 1) +
+        N.of_nat (length (PTrieCode.elements (fold_left (dom_order_child_add parents) order Empty))) +
+        fold_right N.add 0 (map (fun ka => T_dom_order_sort_row positions (snd ka))
+          (PTrieCode.elements (fold_left (dom_order_child_add parents) order Empty))) + 1))%N.
+Proof.
+  unfold T_dom_order_sorted_rows. time_simpl.
+  lazymatch goal with
+  | |- context[@PTrieT.T_map ?A ?B ?f ?T_f ?rows] =>
+      pose proof (@dom_order_map_time_bound A B f T_f
+        (T_dom_order_sort_row positions) rows) as Hmap
+  end.
+  specialize (Hmap ltac:(intro row; unfold T_dom_order_sort_row; time_simpl; lia)).
+  change (fun (current : ptrie (list N)) (vertex : N) =>
+    T_dom_order_child_add parents current vertex) with (T_dom_order_child_add parents).
+  lia.
+Qed.
+
+(** Every binding of the child map has at most the original number of occurrences. *)
+Lemma dom_order_children_binding_length order parents key row :
+  trie_get key (fold_left (dom_order_child_add parents) order Empty) = Some row ->
+  length row <= length order.
+Proof.
+  intro Hget.
+  pose proof (dom_order_children_mass [key] parents order
+    ltac:(constructor; [intro Hbad; contradiction|constructor])) as Hmass.
+  unfold dom_lt_row_mass in Hmass. cbn [fold_right] in Hmass. rewrite Hget in Hmass. lia.
+Qed.
+
+(** Total row cells occupy at most the original occurrence budget. *)
+Lemma dom_order_rows_cell_budget count levels width mass :
+  mass <= count ->
+  (N.of_nat (levels * width) * N.of_nat mass <=
+    N.of_nat ((count + 1) * levels * width))%N.
+Proof.
+  intro Hmass. rewrite <- Nat2N.inj_mul. apply time_of_nat_le.
+  replace ((count + 1) * levels * width) with ((levels * width) * (count + 1)) by ring.
+  apply Nat.mul_le_mono_l. lia.
+Qed.
+
+(** Skeleton and per-binding costs fit alongside the per-cell sorting cost. *)
+Lemma dom_order_sorted_rows_budget filter_unit row_unit child_unit budget nodes bindings cells
+    callbacks map_clock child_clock total_clock :
+  (1 <= budget)%N -> (nodes <= budget)%N -> (bindings <= nodes)%N -> (cells <= budget)%N ->
+  (callbacks <= row_unit * cells + 16 * bindings)%N ->
+  (map_clock <= (filter_unit + 1) * ((nodes + 1) + bindings + callbacks + 1))%N ->
+  (child_clock <= child_unit * budget)%N ->
+  (total_clock <= 4 + child_clock + map_clock)%N ->
+  (total_clock <= ((filter_unit + 1) * (row_unit + 20) + child_unit + 4) * budget)%N.
+Proof.
+  intros Hpositive Hnodes Hbindings Hcells Hcallbacks Hmap Hchild Htotal.
+  assert (Hcallback_budget : (callbacks <= row_unit * budget + 16 * budget)%N).
+  { eapply N.le_trans; [exact Hcallbacks|]. apply N.add_le_mono.
+    - now apply N.mul_le_mono_l.
+    - apply N.mul_le_mono_l. lia. }
+  assert (Hinside : ((nodes + 1) + bindings + callbacks + 1 <=
+    (row_unit + 20) * budget)%N).
+  { rewrite N.mul_add_distr_r. lia. }
+  assert (Hmap_budget : (map_clock <= (filter_unit + 1) * ((row_unit + 20) * budget))%N).
+  { eapply N.le_trans; [exact Hmap|]. now apply N.mul_le_mono_l. }
+  replace (((filter_unit + 1) * (row_unit + 20) + child_unit + 4) * budget)%N with
+    ((filter_unit + 1) * ((row_unit + 20) * budget) + child_unit * budget + 4 * budget)%N by ring.
+  clear -Hpositive Hmap_budget Hchild Htotal. lia.
+Qed.
+
+Definition dom_order_sorted_rows_coefficient : N :=
+  ((PTrieT.k_filter + 1) * (dom_order_sort_row_coefficient + 20) +
+    128 * (PTrieT.c_trie + 1) + 4)%N.
+
+(** Sorting the child forest charges its total cells once per logarithmic recursion level. *)
+Lemma dom_order_sorted_rows_time width order parents positions :
+  Forall (dom_order_merge_operand width positions) order ->
+  dom_lt_trie_all (fun parent => N.size_nat parent <= width) parents ->
+  (T_dom_order_sorted_rows order parents positions <= dom_order_sorted_rows_coefficient *
+    N.of_nat ((length order + 1) * (Nat.log2 (length order) + 1) * (width + 1)))%N.
+Proof.
+  intros Horder Hparents.
+  set (rows := fold_left (dom_order_child_add parents) order Empty).
+  set (levels := Nat.log2 (length order) + 1).
+  set (budget := N.of_nat ((length order + 1) * levels * (width + 1))).
+  assert (Hvertices : Forall (fun vertex => N.size_nat vertex <= width) order).
+  { apply Forall_forall. intros vertex Hin.
+    apply Forall_forall with (x := vertex) in Horder; [exact (proj1 Horder)|exact Hin]. }
+  pose proof (dom_order_child_fold_clock width parents Empty order Hvertices Hparents) as Hchild.
+  pose proof (dom_order_child_fold_nodes parents order Empty (width + 1)) as Hnodes.
+  specialize (Hnodes ltac:(intros vertex parent Hin Hget;
+    pose proof (Hparents (dom_lt_key vertex) parent Hget) as Hparent;
+    change (N.size_nat parent <= width) in Hparent;
+    pose proof (dom_lt_key_width parent); lia)).
+  change (PTrie.nodes rows <= length order * (width + 1)) in Hnodes.
+  pose proof (PTrieT.F4_bindings (list N) rows) as Hbindings.
+  change (length (PTrieCode.elements rows) <= PTrie.nodes rows) in Hbindings.
+  pose proof (dom_order_children_elements_mass parents order) as Hmass. fold rows in Hmass.
+  assert (Hrow_predicate : dom_lt_trie_all (Forall (dom_order_merge_operand width positions)) rows).
+  { unfold rows. apply dom_order_child_fold_forall; [exact Horder|apply dom_lt_trie_all_empty]. }
+  pose proof (dom_order_sum_cells
+    (fun entry : positive * list N => T_dom_order_sort_row positions (snd entry))
+    (fun entry : positive * list N => length (snd entry)) (PTrieCode.elements rows)
+    (dom_order_sort_row_coefficient * N.of_nat (levels * (width + 1)))%N 16%N) as Hcallbacks.
+  specialize (Hcallbacks ltac:(intros [key row] Hin; cbn [snd];
+    apply PTrie.elements_spec in Hin;
+    apply dom_order_sort_row_time;
+    [exact (dom_order_children_binding_length order parents key row Hin)|
+     exact (Hrow_predicate key row Hin)])).
+  pose proof (dom_order_sorted_rows_wrapper_clock order parents positions) as Hraw.
+  fold rows in Hraw.
+  assert (Hpositive : (1 <= budget)%N).
+  { unfold budget, levels. clear -order width. rewrite !Nat2N.inj_mul.
+    change (1 * 1 * 1 <= N.of_nat (length order + 1) *
+      N.of_nat (Nat.log2 (length order) + 1) * N.of_nat (width + 1))%N.
+    apply N.mul_le_mono; [apply N.mul_le_mono; lia|lia]. }
+  assert (Hnodes_budget : (N.of_nat (PTrie.nodes rows) <= budget)%N).
+  { unfold budget. apply time_of_nat_le. eapply Nat.le_trans; [exact Hnodes|].
+    apply Nat.mul_le_mono_r.
+    replace (length order) with (length order * 1) at 1 by lia.
+    apply Nat.mul_le_mono; [lia|unfold levels; lia]. }
+  assert (Hcells_budget :
+    (N.of_nat (levels * (width + 1)) *
+      N.of_nat (fold_right (fun entry total => (length (snd entry) + total)%nat) 0%nat
+        (PTrieCode.elements rows)) <= budget)%N).
+  { unfold budget. now apply dom_order_rows_cell_budget. }
+  assert (Hchild_budget :
+    (List.T_fold_left (dom_order_child_add parents) (T_dom_order_child_add parents) order Empty <=
+      128 * (PTrieT.c_trie + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hchild|]. apply N.mul_le_mono_l.
+    unfold budget. apply time_of_nat_le. apply Nat.mul_le_mono_r.
+    replace (length order + 1) with ((length order + 1) * 1) at 1 by lia.
+    apply Nat.mul_le_mono_l. unfold levels. lia. }
+  fold levels. fold budget. unfold dom_order_sorted_rows_coefficient.
+  eapply dom_order_sorted_rows_budget with
+    (nodes := N.of_nat (PTrie.nodes rows))
+    (bindings := N.of_nat (length (PTrieCode.elements rows)))
+    (cells := (N.of_nat (levels * (width + 1)) *
+      N.of_nat (fold_right (fun entry total => (length (snd entry) + total)%nat) 0%nat
+        (PTrieCode.elements rows)))%N)
+    (map_clock := ((PTrieT.k_filter + 1) *
+      (N.of_nat (PTrie.nodes rows + 1) + N.of_nat (length (PTrieCode.elements rows)) +
+        fold_right N.add 0 (map (fun entry => T_dom_order_sort_row positions (snd entry))
+          (PTrieCode.elements rows)) + 1))%N).
+  - exact Hpositive.
+  - exact Hnodes_budget.
+  - now apply time_of_nat_le.
+  - exact Hcells_budget.
+  - rewrite N.mul_assoc. exact Hcallbacks.
+  - rewrite Nat2N.inj_add. change (N.of_nat 1) with 1%N. apply N.le_refl.
+  - exact Hchild_budget.
+  - exact Hraw.
+Qed.
+
+(** * Raw assembly of the ordering result *)
+
+(** The polynomial operand budget contains all linear counters and the two sentinel ranks. *)
+Lemma dom_order_linear_value_polynomial (bound value : N) :
+  (value <= 4 * bound + 4)%N -> (value <= 8 * (bound + 1) * (bound + 1))%N.
+Proof.
+  intro Hvalue. nia.
+Qed.
+
+(** A common polynomial width also covers every required linear counter. *)
+Lemma dom_order_linear_value_width bound width value :
+  (forall n, (n <= 8 * (bound + 1) * (bound + 1))%N -> N.size_nat n <= width) ->
+  (value <= 4 * bound + 4)%N -> N.size_nat value <= width.
+Proof.
+  intros Hwidth Hvalue. apply Hwidth. now apply dom_order_linear_value_polynomial.
+Qed.
+
+(** Bounded parent payloads inherit the common polynomial numeric width. *)
+Lemma dom_order_table_width bound width (table : ptrie N) :
+  (forall n, (n <= 8 * (bound + 1) * (bound + 1))%N -> N.size_nat n <= width) ->
+  dom_lt_trie_all (fun value => (value <= bound)%N) table ->
+  dom_lt_trie_all (fun value => N.size_nat value <= width) table.
+Proof.
+  intros Hwidth Htable key value Hget.
+  eapply dom_order_linear_value_width; [exact Hwidth|].
+  pose proof (Htable key value Hget) as Hbound.
+  change (value <= bound)%N in Hbound. lia.
+Qed.
+
+(** The result wrapper adds only fixed projections to its five unchanged ordering phases. *)
+Lemma dom_order_result_phase_clocks result :
+  let numeric := result_numeric result in
+  let semi := result_semi result in
+  let bucket := result_bucket result in
+  let parents := result_parent result in
+  let sources := dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi)
+    (lt_relative bucket) parents in
+  let removed := dom_order_removal (lt_numeric_limit numeric) parents
+    (lt_numeric_order numeric) sources in
+  let positions := dom_anchor_order parents removed in
+  let rows := dom_order_sorted_rows (lt_numeric_order numeric) parents positions in
+  (T_dom_order_of_result result <=
+    T_dom_order_source_maps numeric (lt_semis semi) (lt_minimizer semi) (lt_relative bucket) parents +
+    T_dom_order_removal (lt_numeric_limit numeric) parents (lt_numeric_order numeric) sources +
+    T_dom_anchor_order parents removed +
+    T_dom_order_sorted_rows (lt_numeric_order numeric) parents positions +
+    T_dom_order_emit numeric rows + 64)%N.
+Proof.
+  intros numeric semi bucket parents sources removed positions rows.
+  unfold T_dom_order_of_result. time_simpl.
+  fold numeric semi bucket parents sources removed positions rows. lia.
+Qed.
+
+Definition dom_order_body_budget (count predecessors width : nat) : nat :=
+  (count + predecessors + 1) * (Nat.log2 count + 1) * (width + 1).
+
+(** Every raw ordering budget reserves a unit for fixed wrapper work, even on empty inputs. *)
+Lemma dom_order_body_budget_positive count predecessors width :
+  1 <= dom_order_body_budget count predecessors width.
+Proof.
+  unfold dom_order_body_budget.
+  change (1 * 1 * 1 <= (count + predecessors + 1) * (Nat.log2 count + 1) * (width + 1)).
+  apply Nat.mul_le_mono; [apply Nat.mul_le_mono; lia|lia].
+Qed.
+
+(** A linear pass over the vertex inventory fits the complete raw ordering budget. *)
+Lemma dom_order_body_budget_linear count predecessors width :
+  (count + 1) * (width + 1) <= dom_order_body_budget count predecessors width.
+Proof.
+  unfold dom_order_body_budget. apply Nat.mul_le_mono_r.
+  replace (count + 1) with ((count + 1) * 1) at 1 by lia.
+  apply Nat.mul_le_mono; lia.
+Qed.
+
+(** The logarithmic child-sort budget fits after adding the predecessor-row allowance. *)
+Lemma dom_order_body_budget_rows count predecessors width :
+  (count + 1) * (Nat.log2 count + 1) * (width + 1) <=
+    dom_order_body_budget count predecessors width.
+Proof.
+  unfold dom_order_body_budget. apply Nat.mul_le_mono_r.
+  apply Nat.mul_le_mono_r. lia.
+Qed.
+
+(** A finite output universe with two sentinels costs at most three vertex allowances. *)
+Lemma dom_order_body_budget_emit count predecessors width row_mass :
+  row_mass <= count ->
+  (row_mass + (count + 2) + 1) * (width + 1) <=
+    3 * dom_order_body_budget count predecessors width.
+Proof.
+  intro Hmass.
+  eapply Nat.le_trans with (3 * ((count + 1) * (width + 1))).
+  - replace (3 * ((count + 1) * (width + 1))) with
+      ((3 * (count + 1)) * (width + 1)) by ring.
+    apply Nat.mul_le_mono_r. lia.
+  - apply Nat.mul_le_mono_l. apply dom_order_body_budget_linear.
+Qed.
+
+(** * Common budgets for the independent ordering passes *)
+
+(** Linear rows, numbering cells and logarithmic index work share one global product. *)
+Lemma dom_order_source_product_budgets (count predecessors levels width : N) :
+  (1 <= levels)%N -> (1 <= width)%N ->
+  let budget := ((count + predecessors + 1) * levels * width)%N in
+  ((count + 1) * width <= budget)%N /\
+  ((2 * count + 3) * width <= 3 * budget)%N /\
+  ((2 * count + 1) * (levels + 1) * width <= 4 * budget)%N /\
+  ((predecessors + (levels + 1) * count + 1) * width <= 2 * budget)%N.
+Proof.
+  intros Hlevels Hwidth budget.
+  set (span := (count + predecessors + 1)%N).
+  assert (Hspan : (count + 1 <= span)%N) by (unfold span; lia).
+  assert (Hspan_levels : (span <= span * levels)%N) by nia.
+  assert (Hlinear : ((count + 1) * width <= budget)%N).
+  { unfold budget. fold span. apply N.mul_le_mono_r. lia. }
+  split; [exact Hlinear|].
+  assert (Hnumber_factor : (2 * count + 3 <= 3 * (count + 1))%N) by lia.
+  assert (Hnumber : ((2 * count + 3) * width <= 3 * budget)%N).
+  { eapply N.le_trans with ((3 * (count + 1)) * width)%N;
+      [now apply N.mul_le_mono_r|].
+    replace (3 * (count + 1) * width)%N with (3 * ((count + 1) * width))%N by ring.
+    now apply N.mul_le_mono_l. }
+  split; [exact Hnumber|].
+  assert (Hindex_count : (2 * count + 1 <= 2 * span)%N) by lia.
+  assert (Hindex_levels : (levels + 1 <= 2 * levels)%N) by lia.
+  assert (Hindex_factor : ((2 * count + 1) * (levels + 1) <= 4 * (span * levels))%N).
+  { replace (4 * (span * levels))%N with ((2 * span) * (2 * levels))%N by ring.
+    now apply N.mul_le_mono. }
+  assert (Hindex : ((2 * count + 1) * (levels + 1) * width <= 4 * budget)%N).
+  { replace (4 * budget)%N with ((4 * (span * levels)) * width)%N
+      by (unfold budget, span; ring).
+    now apply N.mul_le_mono_r. }
+  split; [exact Hindex|].
+  assert (Hplain : (predecessors + 1 <= (predecessors + 1) * levels)%N) by nia.
+  assert (Hdouble : ((levels + 1) * count <= 2 * levels * count)%N) by nia.
+  assert (Hcolour_factor : (predecessors + (levels + 1) * count + 1 <=
+    2 * (span * levels))%N) by (unfold span; nia).
+  replace (2 * budget)%N with ((2 * (span * levels)) * width)%N
+    by (unfold budget, span; ring).
+  now apply N.mul_le_mono_r.
+Qed.
+
+(** Adding the five source-construction phases preserves the linear-logarithmic budget. *)
+Lemma dom_order_source_maps_budget (trie_coefficient number_coefficient count predecessors
+    levels width child_work number_work index_work colour_work setup_work total_work : N) :
+  (1 <= levels)%N -> (1 <= width)%N ->
+  (child_work <= 128 * (trie_coefficient + 1) * ((count + 1) * width))%N ->
+  (number_work <= number_coefficient * ((2 * count + 3) * width))%N ->
+  (index_work <= 2048 * (trie_coefficient + 1) *
+    ((2 * count + 1) * (levels + 1) * width))%N ->
+  (colour_work <= 2048 * (trie_coefficient + 1) *
+    ((predecessors + (levels + 1) * count + 1) * width))%N ->
+  (setup_work <= 64 * ((count + 1) * width))%N ->
+  (total_work <= child_work + number_work + index_work + colour_work + setup_work)%N ->
+  (total_work <= (3 * number_coefficient + 16384 * (trie_coefficient + 1) + 64) *
+    ((count + predecessors + 1) * levels * width))%N.
+Proof.
+  intros Hlevels Hwidth Hchild Hnumber Hindex Hcolour Hsetup Htotal.
+  pose proof (dom_order_source_product_budgets count predecessors levels width Hlevels Hwidth)
+    as [Hlinear [Hnumber_product [Hindex_product Hcolour_product]]].
+  set (budget := ((count + predecessors + 1) * levels * width)%N) in *.
+  assert (Hchild_paid : (child_work <= 128 * (trie_coefficient + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hchild|]. now apply N.mul_le_mono_l. }
+  assert (Hnumber_paid : (number_work <= 3 * number_coefficient * budget)%N).
+  { eapply N.le_trans; [exact Hnumber|].
+    replace (3 * number_coefficient * budget)%N with
+      (number_coefficient * (3 * budget))%N by ring. now apply N.mul_le_mono_l. }
+  assert (Hindex_paid : (index_work <= 8192 * (trie_coefficient + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hindex|].
+    replace (8192 * (trie_coefficient + 1) * budget)%N with
+      ((2048 * (trie_coefficient + 1)) * (4 * budget))%N by ring.
+    now apply N.mul_le_mono_l. }
+  assert (Hcolour_paid : (colour_work <= 4096 * (trie_coefficient + 1) * budget)%N).
+  { eapply N.le_trans; [exact Hcolour|].
+    replace (4096 * (trie_coefficient + 1) * budget)%N with
+      ((2048 * (trie_coefficient + 1)) * (2 * budget))%N by ring.
+    now apply N.mul_le_mono_l. }
+  assert (Hsetup_paid : (setup_work <= 64 * budget)%N).
+  { eapply N.le_trans; [exact Hsetup|]. now apply N.mul_le_mono_l. }
+  clearbody budget.
+  clear -Htotal Hchild_paid Hnumber_paid Hindex_paid Hcolour_paid Hsetup_paid. nia.
+Qed.
+
+(** A constant number of projection calls fits any positive common phase budget. *)
+Lemma dom_order_phase_sum_budget (budget source_coefficient removal_coefficient anchor_coefficient
+    rows_coefficient emit_coefficient source_work removal_work anchor_work rows_work emit_work
+    total_work : N) :
+  (1 <= budget)%N ->
+  (source_work <= source_coefficient * budget)%N ->
+  (removal_work <= removal_coefficient * budget)%N ->
+  (anchor_work <= anchor_coefficient * budget)%N ->
+  (rows_work <= rows_coefficient * budget)%N ->
+  (emit_work <= 3 * emit_coefficient * budget)%N ->
+  (total_work <= source_work + removal_work + anchor_work + rows_work + emit_work + 64)%N ->
+  (total_work <= (source_coefficient + removal_coefficient + anchor_coefficient + rows_coefficient +
+    3 * emit_coefficient + 64) * budget)%N.
+Proof.
+  intros Hbudget Hsource Hremove Hanchor Hrows Hemit Htotal.
+  assert (Hsetup : (64 <= 64 * budget)%N) by lia.
+  replace ((source_coefficient + removal_coefficient + anchor_coefficient + rows_coefficient +
+    3 * emit_coefficient + 64) * budget)%N with
+    (source_coefficient * budget + removal_coefficient * budget + anchor_coefficient * budget +
+      rows_coefficient * budget + 3 * emit_coefficient * budget + 64 * budget)%N by ring. lia.
+Qed.
+
+(** * Final removal initialization and loop clocks *)
+
+(** The child filter uses exactly the existing parent-membership predicate. *)
+Definition dom_order_removal_keep (parents : ptrie N) (vertex : N) : bool :=
+  match trie_get (dom_lt_key vertex) parents with None => false | Some _ => true end.
+TimeFun dom_order_removal_keep.
+
+(** The activation fold writes exactly the existing true flag. *)
+Definition dom_order_removal_activate (active : ptrie bool) (vertex : N) : ptrie bool :=
+  PTrieCode.set (dom_lt_key vertex) true active.
+TimeFun dom_order_removal_activate.
+
+Lemma dom_order_removal_filter_mono {A : Type} (predicate : A -> bool)
+    (left right : A -> N) xs :
+  (forall value, (left value <= right value)%N) ->
+  (List.T_filter predicate left xs <= List.T_filter predicate right xs)%N.
+Proof.
+  intro Hclock. induction xs as [|vertex rest IH].
+  - time_unfold List.T_filter. lia.
+  - time_unfold List.T_filter. specialize (Hclock vertex).
+    destruct (predicate vertex); lia.
+Qed.
+
+(** A filter only needs a callback bound on elements actually present in its input. *)
+Lemma dom_order_removal_filter_bound {A : Type} (predicate : A -> bool)
+    (clock : A -> N) xs coefficient :
+  (forall value, In value xs -> (clock value <= coefficient)%N) ->
+  (List.T_filter predicate clock xs <=
+    (coefficient + 1) * N.of_nat (length xs) + 1)%N.
+Proof.
+  revert coefficient. induction xs as [|vertex rest IH]; intros coefficient Hclock.
+  - time_unfold List.T_filter. cbn [length]. lia.
+  - pose proof (Hclock vertex (or_introl eq_refl)) as Hhead.
+    specialize (IH coefficient (fun value Hin => Hclock value (or_intror Hin))).
+    time_unfold List.T_filter. cbn [length]. rewrite Nat2N.inj_succ.
+    destruct (predicate vertex); lia.
+Qed.
+
+Lemma dom_order_removal_keep_clock width parents vertex :
+  N.size_nat vertex <= width ->
+  (T_dom_order_removal_keep parents vertex <= 8 * N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth. pose proof (dom_lt_time_key vertex) as Hkey.
+  pose proof (dom_lt_key_width vertex) as Hbits.
+  unfold T_dom_order_removal_keep. time_simpl. rewrite PTrieT.trie_get_clock.
+  destruct (trie_get (dom_lt_key vertex) parents); time_simpl;
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+
+(** Parent filtering is linear in the supplied order at the numeric operand width. *)
+Lemma dom_order_removal_filter_clock width parents order :
+  Forall (fun vertex => N.size_nat vertex <= width) order ->
+  (List.T_filter (dom_order_removal_keep parents) (T_dom_order_removal_keep parents) order <=
+    32 * N.of_nat ((length order + 1) * (width + 1)))%N.
+Proof.
+  intro Horder.
+  pose proof (dom_order_removal_filter_bound (dom_order_removal_keep parents)
+    (T_dom_order_removal_keep parents) order (8 * N.of_nat (width + 1))%N
+    ltac:(intros vertex Hin; apply dom_order_removal_keep_clock;
+      exact (proj1 (Forall_forall _ _) Horder vertex Hin))) as Hfilter.
+  rewrite Nat2N.inj_mul, !Nat2N.inj_add in *. change (N.of_nat 1) with 1%N in *.
+  set (count := N.of_nat (length order)) in *. set (w := N.of_nat width) in *.
+  clearbody count w. clear -Hfilter. nia.
+Qed.
+
+Lemma dom_order_removal_activate_clock width active vertex :
+  N.size_nat vertex <= width ->
+  (T_dom_order_removal_activate active vertex <=
+    32 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+Proof.
+  intro Hwidth. pose proof (dom_lt_time_key vertex) as Hkey.
+  pose proof (dom_lt_key_width vertex) as Hbits.
+  pose proof (PTrieT.T_set_le bool (dom_lt_key vertex) true active) as Hset.
+  change (PTrieCode.T_set (dom_lt_key vertex) true active <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hset.
+  unfold T_dom_order_removal_activate. time_simpl.
+  rewrite !Nat2N.inj_add in *. clear -Hwidth Hkey Hbits Hset. nia.
+Qed.
+
+(** Activating one child uses one bounded trie update. *)
+Lemma dom_order_removal_activation_clock width children active :
+  Forall (fun vertex => N.size_nat vertex <= width) children ->
+  (List.T_fold_left dom_order_removal_activate T_dom_order_removal_activate children active <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat ((length children + 1) * (width + 1)))%N.
+Proof.
+  intro Hchildren.
+  set (unit := (32 * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+  pose proof (dom_time_fold_credit dom_order_removal_activate T_dom_order_removal_activate
+    (fun _ => 0%N) unit children active
+    ltac:(intros vertex Hin state; cbn beta; rewrite !N.add_0_r;
+      apply dom_order_removal_activate_clock;
+      exact (proj1 (Forall_forall _ _) Hchildren vertex Hin))) as Hfold.
+  cbn beta in Hfold. rewrite !N.add_0_r in Hfold.
+  assert (Hunit : (1 <= unit)%N).
+  { unfold unit. rewrite Nat2N.inj_add. nia. }
+  rewrite Nat2N.inj_mul, Nat2N.inj_add.
+  change (N.of_nat 1) with 1%N.
+  replace (128 * (PTrieT.c_trie + 1) *
+      ((N.of_nat (length children) + 1) * N.of_nat (width + 1)))%N with
+    (4 * unit * (N.of_nat (length children) + 1))%N by (unfold unit; ring).
+  clearbody unit. clear -Hfold Hunit. nia.
+Qed.
+
+Local Opaque dom_order_derived T_dom_order_derived.
+Local Transparent dom_order_colour T_dom_order_colour.
+
+(** * Source colouring with separate predecessor and search charges *)
+
+(** Identity-default lookup preserves any predicate satisfied by its fallback and stored values. *)
+Lemma dom_order_identity_property (P : N -> Prop) table vertex :
+  P vertex -> dom_lt_trie_all P table -> P (dom_lt_identity table vertex).
+Proof.
+  intros Hvertex Htable. unfold dom_lt_identity.
+  destruct (trie_get (dom_lt_key vertex) table) as [value|] eqn:Hget;
+    [now apply (Htable (dom_lt_key vertex))|exact Hvertex].
+Qed.
+
+(** One colouring callback scans one predecessor row and performs at most two supplied searches. *)
+Lemma dom_order_colour_base_clock width search_work numeric semis minimizer relative
+    parents indexes walk st vertex :
+  N.size_nat vertex <= width ->
+  N.size_nat (dom_lt_identity relative vertex) <= width ->
+  N.size_nat (dom_lt_identity semis vertex) <= width ->
+  dom_lt_trie_all (fun parent => N.size_nat parent <= width) parents ->
+  (forall parent, trie_get (dom_lt_key vertex) parents = Some parent ->
+    (T_dom_order_derived indexes walk parent (dom_lt_identity (lt_numeric_parent numeric) vertex)
+      <= search_work)%N /\
+    (T_dom_order_derived indexes walk parent (dom_lt_identity minimizer vertex)
+      <= search_work)%N) ->
+  (T_dom_order_colour numeric semis minimizer relative parents indexes walk st vertex <=
+    256 * (PTrieT.c_trie + 1) * N.of_nat (width + 1) + 2 * search_work +
+      (N.of_nat (width + 1) + 2) *
+        N.of_nat (length (dom_order_row (lt_numeric_pred numeric) vertex)))%N.
+Proof.
+  intros Hvertex Hrelative Hsemi Hparents Hsearch.
+  pose proof (dom_lt_time_key vertex) as Hkey.
+  pose proof (dom_lt_key_width vertex) as Hkey_width.
+  unfold T_dom_order_colour. time_simpl. rewrite PTrieT.trie_get_clock.
+  destruct (trie_get (dom_lt_key vertex) parents) as [parent|] eqn:Hparent.
+  - pose proof (Hparents (dom_lt_key vertex) parent Hparent) as Hparent_width.
+    change (N.size_nat parent <= width) in Hparent_width.
+    destruct (Hsearch parent eq_refl) as [Hfirst Hsecond].
+    pose proof (dom_lt_time_identity relative vertex) as Hrelative_read.
+    pose proof (dom_lt_time_identity semis vertex) as Hsemi_read.
+    pose proof (dom_lt_time_identity (lt_numeric_parent numeric) vertex) as Hparent_read.
+    pose proof (dom_lt_time_identity minimizer vertex) as Hminimizer_read.
+    pose proof (dom_lt_time_key (dom_lt_identity relative vertex)) as Hrelative_key.
+    pose proof (dom_lt_key_width (dom_lt_identity relative vertex)) as Hrelative_bits.
+    pose proof (N.T_eqb_le (dom_lt_identity semis vertex) parent) as Hcompare.
+    pose proof (dom_order_row_clock (lt_numeric_pred numeric) vertex) as Hrow.
+    pose proof (List.T_existsb_le (N.eqb parent) (N.T_eqb parent)
+      (N.of_nat (N.size_nat parent) + 1)%N (dom_order_row (lt_numeric_pred numeric) vertex)
+      (fun other => N.T_eqb_le parent other)) as Hscan.
+    assert (Hscan_width : (List.T_existsb (N.eqb parent) (N.T_eqb parent)
+      (dom_order_row (lt_numeric_pred numeric) vertex) <=
+      (N.of_nat (width + 1) + 2) *
+        N.of_nat (length (dom_order_row (lt_numeric_pred numeric) vertex)) + 1)%N).
+    { eapply N.le_trans; [exact Hscan|]. apply N.add_le_mono_r.
+      apply N.mul_le_mono_r. rewrite Nat2N.inj_add. clear -Hparent_width. lia. }
+    clear Hscan. rename Hscan_width into Hscan.
+    set (is_blue := N.eqb (dom_lt_identity semis vertex) parent ||
+      match trie_get (dom_lt_key (dom_lt_identity relative vertex)) (source_colour st) with
+      | Some true => true | _ => false end).
+    set (direct := existsb (N.eqb parent) (dom_order_row (lt_numeric_pred numeric) vertex)).
+    set (blue_value := if direct then parent else dom_order_derived indexes walk parent
+      (if is_blue then dom_lt_identity minimizer vertex
+       else dom_lt_identity (lt_numeric_parent numeric) vertex)).
+    set (red_value := if direct then parent else dom_order_derived indexes walk parent
+      (if is_blue then dom_lt_identity (lt_numeric_parent numeric) vertex
+       else dom_lt_identity minimizer vertex)).
+    pose proof (PTrieT.T_set_le N (dom_lt_key vertex) blue_value (source_blue st)) as Hblue_set.
+    pose proof (PTrieT.T_set_le N (dom_lt_key vertex) red_value (source_red st)) as Hred_set.
+    pose proof (PTrieT.T_set_le bool (dom_lt_key vertex) (negb is_blue) (source_colour st))
+      as Hcolour_set.
+    change (PTrieCode.T_set (dom_lt_key vertex) blue_value (source_blue st) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hblue_set.
+    change (PTrieCode.T_set (dom_lt_key vertex) red_value (source_red st) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hred_set.
+    change (PTrieCode.T_set (dom_lt_key vertex) (negb is_blue) (source_colour st) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1))%N in Hcolour_set.
+    assert (Hkey_budget : (N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1) <=
+      2 * N.of_nat (width + 1))%N).
+    { rewrite !Nat2N.inj_add. clear -Hvertex Hkey_width. lia. }
+    assert (Hwrite_budget : (PTrieT.c_trie * N.of_nat (Pos.size_nat (dom_lt_key vertex) + 1) <=
+      2 * PTrieT.c_trie * N.of_nat (width + 1))%N).
+    { replace (2 * PTrieT.c_trie * N.of_nat (width + 1))%N with
+        (PTrieT.c_trie * (2 * N.of_nat (width + 1)))%N by ring.
+      now apply N.mul_le_mono_l. }
+    assert (Hblue_width : (PTrieCode.T_set (dom_lt_key vertex) blue_value (source_blue st) <=
+      2 * PTrieT.c_trie * N.of_nat (width + 1))%N)
+      by (eapply N.le_trans; [exact Hblue_set|exact Hwrite_budget]).
+    assert (Hred_width : (PTrieCode.T_set (dom_lt_key vertex) red_value (source_red st) <=
+      2 * PTrieT.c_trie * N.of_nat (width + 1))%N)
+      by (eapply N.le_trans; [exact Hred_set|exact Hwrite_budget]).
+    assert (Hcolour_width : (PTrieCode.T_set (dom_lt_key vertex) (negb is_blue) (source_colour st) <=
+      2 * PTrieT.c_trie * N.of_nat (width + 1))%N)
+      by (eapply N.le_trans; [exact Hcolour_set|exact Hwrite_budget]).
+    clear Hblue_set Hred_set Hcolour_set.
+    rename Hblue_width into Hblue_set, Hred_width into Hred_set, Hcolour_width into Hcolour_set.
+    rewrite PTrieT.trie_get_clock. fold is_blue direct.
+    unfold blue_value, red_value in Hblue_set, Hred_set.
+    destruct direct, is_blue;
+      destruct (trie_get (dom_lt_key (dom_lt_identity relative vertex)) (source_colour st))
+        as [[|]|]; time_simpl;
+      unfold blue_value, red_value;
+      change (fun other => N.T_eqb parent other) with (N.T_eqb parent);
+      rewrite !Nat2N.inj_add in *;
+      change (N.of_nat 1) with 1%N in *;
+      set (write_budget := (PTrieT.c_trie * (N.of_nat width + 1))%N);
+      set (scan_budget := ((N.of_nat width + 1 + 2) *
+        N.of_nat (length (dom_order_row (lt_numeric_pred numeric) vertex)))%N) in *;
+      replace (2 * PTrieT.c_trie * (N.of_nat width + 1))%N with
+        (2 * write_budget)%N in Hblue_set, Hred_set, Hcolour_set by (unfold write_budget; ring);
+      replace (256 * (PTrieT.c_trie + 1) * (N.of_nat width + 1))%N with
+        (256 * write_budget + 256 * (N.of_nat width + 1))%N by (unfold write_budget; ring);
+      clearbody write_budget scan_budget;
+      clear -Hvertex Hrelative Hsemi Hkey Hkey_width Hparent_width Hfirst Hsecond
+        Hrelative_read Hsemi_read Hparent_read Hminimizer_read Hrelative_key Hrelative_bits
+        Hcompare Hrow Hscan Hblue_set Hred_set Hcolour_set.
+    all: lia.
+  - time_simpl. rewrite !Nat2N.inj_add in *.
+    clear -Hvertex Hkey Hkey_width. nia.
+Qed.
+
+
+Local Transparent dom_order_derived T_dom_order_derived.
