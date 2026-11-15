@@ -2564,6 +2564,32 @@ Proof.
   - apply N.lt_le_incl. exact (dom_positions_bound o v i Hunique Hget).
 Qed.
 
+(** Every interval comparison reads bounded keys and adds bounded position and size values. *)
+Local Lemma dom_time_interval pos sizes u v width :
+  Pos.size_nat u <= width -> Pos.size_nat v <= width ->
+  (forall x n, trie_get x pos = Some n -> N.size_nat n <= width) ->
+  (forall x, N.size_nat (dom_size_get sizes x) <= width + 1) ->
+  (T_dom_interval pos sizes u v <= 64 * N.of_nat (width + 1))%N.
+Proof.
+  intros Hu Hv Hpositions Hsizes. unfold T_dom_interval.
+  destruct (trie_get u pos) as [pu|] eqn:Hpu;
+    destruct (trie_get v pos) as [pv|] eqn:Hpv.
+  - pose proof (Hpositions u pu Hpu) as Hpu_width.
+    pose proof (Hpositions v pv Hpv) as Hpv_width.
+    pose proof (Hsizes u) as Hsu_width. pose proof (Hsizes v) as Hsv_width.
+    pose proof (N.T_leb_le pu pv) as Hstarts.
+    pose proof (N.T_add_le pv (dom_size_get sizes v)) as Hendv.
+    pose proof (N.T_add_le pu (dom_size_get sizes u)) as Hendu.
+    pose proof (dom_add_width pv (dom_size_get sizes v)) as Hsum.
+    pose proof (N.T_leb_le (N.add pv (dom_size_get sizes v))
+      (N.add pu (dom_size_get sizes u))) as Hends.
+    unfold T_dom_size_get. rewrite !PTrieT.trie_get_clock.
+    time_simpl. rewrite !Nat2N.inj_add in *. nia.
+  - rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
+  - rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
+  - rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
+Qed.
+
 Module DomT <: DOM_ALL.
   Include Dom.
   TimeFun build.

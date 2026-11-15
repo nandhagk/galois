@@ -618,3 +618,21 @@ Proof.
   rewrite (Hshift left (weight x + fold_right (fun y total => weight y + total) 0 right)).
   lia.
 Qed.
+
+(** Sum widths are bounded by the total widths of their operands. *)
+Lemma dom_positive_add_width : forall p q,
+  Pos.size_nat (p + q) <= Pos.size_nat p + Pos.size_nat q.
+Proof.
+  intros p q. apply Pos.size_nat_least. rewrite Pos2Nat.inj_add, Nat.pow_add_r.
+  pose proof (Pos.size_nat_upper p) as Hp. pose proof (Pos.size_nat_upper q) as Hq.
+  pose proof (Nat.pow_le_mono_r 2 1 (Pos.size_nat p) ltac:(lia) (Pos.size_nat_pos p)) as Hp2.
+  pose proof (Nat.pow_le_mono_r 2 1 (Pos.size_nat q) ltac:(lia) (Pos.size_nat_pos q)) as Hq2.
+  change (2 <= Nat.pow 2 (Pos.size_nat p)) in Hp2.
+  change (2 <= Nat.pow 2 (Pos.size_nat q)) in Hq2. nia.
+Qed.
+
+Lemma dom_add_width : forall n m,
+  N.size_nat (n + m) <= N.size_nat n + N.size_nat m.
+Proof.
+  intros [|p] [|q]; cbn [N.add N.size_nat]; try lia. apply dom_positive_add_width.
+Qed.
