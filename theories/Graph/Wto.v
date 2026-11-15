@@ -1483,10 +1483,74 @@ Module WtoT <: WTO_ALL.
     fold_right (fun c n => source_mass g c + n) 0 (comps r) = source_mass g body.
   Proof. Admitted. (* STUB *)
 
+  (** Reversing component order preserves the multiset of all component vertices. *)
+  Lemma components_reverse : forall (cs : list (list positive)),
+    Permutation (concat cs) (concat (rev cs)).
+  Proof.
+    intro cs. change (Permutation (flat_map (fun c : list positive => c) cs)
+      (flat_map (fun c : list positive => c) (rev cs))).
+    apply Permutation_flat_map. apply Permutation_rev.
+  Qed.
+
+  (** Expansion tasks retain their component lists without creating close tasks. *)
+  Lemma expand_inventory : forall within entries owners cs,
+    concat (map task_members (wto_expand_tasks within entries owners cs)) = concat cs /\
+    fold_right (fun task hs =>
+      match task with WtoClose h => h :: hs | _ => hs end) []
+      (wto_expand_tasks within entries owners cs) = [] /\
+    filter (fun task => match task with WtoClose _ => true | _ => false end)
+      (wto_expand_tasks within entries owners cs) = [].
+  Proof.
+    intros within entries owners cs.
+    change (wto_expand_tasks within entries owners cs) with
+      (map (fun c => WtoExpand within entries owners c) cs).
+    induction cs as [|c rest IH].
+    - repeat split; reflexivity.
+    - destruct IH as [Hmembers [Hheads Hcloses]].
+      cbn [map task_members concat fold_right filter] in *.
+      now rewrite Hmembers, Hheads, Hcloses.
+  Qed.
+
+  (** Initial expansion tasks account for every vertex and suspend no parent. *)
+  Lemma expanded_initial_inventory : forall within entries owners cs,
+    inventory (concat cs)
+      (WtoState (wto_expand_tasks within entries owners (rev cs)) WNil []).
+  Proof.
+    intros within entries owners cs.
+    destruct (expand_inventory within entries owners (rev cs))
+      as [Hmembers [Hheads Hcloses]].
+    unfold inventory. cbn [wto_tasks wto_partial wto_parents wto_order].
+    rewrite Hmembers, Hheads, Hcloses. cbn [map concat app length]. rewrite app_nil_r.
+    split; [apply components_reverse|reflexivity].
+  Qed.
+
+  (** Pending expansion credit is three units per component vertex. *)
+  Lemma expand_potential : forall g within entries owners cs partial parents,
+    potential g (WtoState (wto_expand_tasks within entries owners cs) partial parents) =
+      3 * length (concat cs).
+  Proof.
+    intros g within entries owners cs partial parents.
+    unfold potential. cbn [wto_tasks].
+    change (wto_expand_tasks within entries owners cs) with
+      (map (fun c => WtoExpand within entries owners c) cs).
+    induction cs as [|c rest IH].
+    - reflexivity.
+    - cbn [map fold_right task_mass concat] in *.
+      rewrite IH, length_app. lia.
+  Qed.
+
   Lemma F14_initial : forall g roots,
     invariant g roots (initial g roots) /\
     potential g (initial g roots) = 3 * length (concat (comps (wto_components g roots))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots. split.
+    - split.
+      + exists 0. reflexivity.
+      + unfold initial. apply expanded_initial_inventory.
+    - unfold initial. rewrite expand_potential.
+      rewrite <- (Permutation_length (components_reverse (comps (wto_components g roots)))).
+      reflexivity.
+  Qed.
 
   Lemma F15_step : forall g roots st next,
     invariant g roots st -> wto_step g st = inl next ->
