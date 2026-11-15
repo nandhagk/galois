@@ -8,7 +8,7 @@ From Stdlib Require Import PArith NArith List Bool Arith Lia.
 From Stdlib.Sorting Require Import Permutation.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data Spec DigraphSig DomSig DomOrder FrontierSig.
+From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer DomOrder FrontierSig.
 Import List.ListNotations.
 
 (** A prepared predecessor occurrence is exactly an edge from a listed source. *)
@@ -1344,6 +1344,150 @@ Module Frontier <: FRONTIER.
     exact idf_result_unique.
   Qed.
 End Frontier.
+
+(** Closed scales reserve lookup, mutation, callback and binary-driver overhead. *)
+Definition frontier_unit_cost : N := (PTrieT.c_trie + c_loopN + 1)%N.
+Definition frontier_step_cost : N := (64 * frontier_unit_cost)%N.
+Definition frontier_column_cost : N := (256 * (c_loopN + 1) * frontier_unit_cost)%N.
+Definition frontier_transpose_cost : N := (64 * frontier_unit_cost)%N.
+Definition frontier_total_cost : N := (16 * 4096 * (c_loopN + 1) * frontier_unit_cost)%N.
+
+Lemma frontier_positive_add_width : forall p q,
+  Pos.size_nat (p + q) <= Pos.size_nat p + Pos.size_nat q.
+Proof.
+  intros p q. apply Pos.size_nat_least. rewrite Pos2Nat.inj_add, Nat.pow_add_r.
+  pose proof (Pos.size_nat_upper p) as Hp. pose proof (Pos.size_nat_upper q) as Hq.
+  pose proof (Nat.pow_le_mono_r 2 1 (Pos.size_nat p) ltac:(lia) (Pos.size_nat_pos p)) as Hp2.
+  pose proof (Nat.pow_le_mono_r 2 1 (Pos.size_nat q) ltac:(lia) (Pos.size_nat_pos q)) as Hq2.
+  change (2 <= Nat.pow 2 (Pos.size_nat p)) in Hp2.
+  change (2 <= Nat.pow 2 (Pos.size_nat q)) in Hq2. nia.
+Qed.
+
+Lemma frontier_add_width : forall n m,
+  N.size_nat (n + m) <= N.size_nat n + N.size_nat m.
+Proof.
+  intros [|p] [|q]; cbn [N.add N.size_nat]; try lia. apply frontier_positive_add_width.
+Qed.
+
+Lemma frontier_four_width : forall n, N.size_nat (4 * n) <= N.size_nat n + 2.
+Proof.
+  intros [|p]; cbn [N.mul Pos.mul N.size_nat Pos.size_nat]; lia.
+Qed.
+
+Lemma frontier_four_time : forall n, (Code.N.T_mul 4 n <= 4)%N.
+Proof.
+  intros [|p]; time_unfold Code.N.T_mul; try lia.
+  do 3 time_unfold Pos.T_mul. time_cbn. lia.
+Qed.
+
+Lemma frontier_fuel_width : forall n degree width,
+  N.size_nat n <= width ->
+  N.size_nat (4 * (n + N.of_nat degree + 1)) <= width + degree + 3.
+Proof.
+  intros n degree width Hwidth.
+  pose proof (frontier_four_width (n + N.of_nat degree + 1)) as Hfour.
+  pose proof (frontier_add_width n (N.of_nat degree)) as Hsum.
+  pose proof (frontier_add_width (n + N.of_nat degree) 1) as Hlast.
+  pose proof (dom_size_value (N.of_nat degree)) as Hdegree.
+  change (N.size_nat 1) with 1 in Hlast. lia.
+Qed.
+
+(** A nonempty runner performs only a bounded number of key operations. *)
+Lemma frontier_df_step_time : forall g t y x rest seen answer width,
+  Pos.size_nat x <= width -> Pos.size_nat y <= width ->
+  (T_df_step g t y (DfState (x :: rest) seen answer) + c_loopN + 1 <=
+    frontier_step_cost * N.of_nat (width + 1))%N.
+Proof.
+  intros g t y x rest seen answer width Hx Hy.
+  apply time_of_nat_le in Hx, Hy.
+  pose proof (PTrieT.T_set_le unit x tt seen) as Hset.
+  unfold frontier_step_cost, frontier_unit_cost.
+  time_unfold T_df_step. time_unfold T_pre. time_unfold T_idom.
+  rewrite !PTrieT.trie_get_clock.
+  rewrite !Nat2N.inj_add in Hset |- *.
+  destruct (trie_get x (pre t)) as [a|]; [|nia].
+  destruct (trie_get x seen) as [[]|]; [nia|].
+  destruct (trie_get y (idom t)) as [b|].
+  - pose proof (Pos.T_eqb_le x b) as Heq.
+    destruct (Pos.eqb x b); [nia|]. destruct (trie_get x (idom t)); nia.
+  - destruct (trie_get x (idom t)); nia.
+Qed.
+
+Lemma frontier_df_stop_time : forall g t y seen answer,
+  (T_df_step g t y (DfState [] seen answer) + 1 <= N.of_nat (length answer + 3))%N.
+Proof.
+  intros g t y seen answer. pose proof (List.T_rev_append_le answer []) as Hreverse.
+  time_unfold T_df_step. rewrite Nat2N.inj_add. lia.
+Qed.
+
+Lemma frontier_preds_time : forall g y,
+  (T_preds g y <= 2 * N.of_nat (Pos.size_nat y) + 1)%N.
+Proof.
+  intros [graph predecessors vertices_count edges_count] y.
+  unfold T_preds. time_simpl. rewrite PTrieT.trie_get_clock. lia.
+Qed.
+
+Lemma frontier_nv_width : forall g,
+  wf_graph (base g) -> prepared_ok g -> N.size_nat (nv g) <= graph_width (base g).
+Proof.
+  intros g Hgraph Hprepared.
+  apply (dom_distinct_value_width (nodes g) (graph_width (base g)) (nv g)).
+  - now apply frontier_nodes_unique.
+  - intros v Hv. now apply dom_listed_key_width.
+  - destruct Hprepared as [Hnv _]. rewrite Hnv.
+    replace (graph_n (base g)) with (length (nodes g)) by
+      (destruct g as [[vertices adjacency] predecessors vertices_count edges_count]; reflexivity).
+    reflexivity.
+Qed.
+
+Lemma df_valid_answer_subset : forall g t r y st,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> df_valid g t y st ->
+  incl (df_column_answer st) (df_column g t y).
+Proof.
+  intros g t r y st Hgraph Hprepared Htree Hvalid x Hx.
+  apply (proj2 (proj2 (proj2 (df_column_correct g t r y Hgraph Hprepared Htree)) x)).
+  apply (proj1 (df_route_spec g t r x y Hgraph Hprepared Htree)).
+  exact (df_valid_answer_routes _ _ _ _ Hvalid x Hx).
+Qed.
+
+(** The binary driver charges only actual output-column credit and its fuel width. *)
+Lemma frontier_df_loop_time : forall g t r y fuel,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t -> In y (nodes g) ->
+  (T_loopN (df_step g t y) (fun st => T_df_step g t y st) fuel
+      (DfState (preds g y) Empty []) <=
+    c_loopN *
+      ((frontier_step_cost * N.of_nat (graph_width (base g) + 1) + 1) *
+        N.of_nat (2 * length (df_column g t y) + length (preds g y)) +
+       16 * N.of_nat (length (df_column g t y) + 1) +
+       N.of_nat (N.size_nat fuel) + 1))%N.
+Proof.
+  intros g t r y fuel Hgraph Hprepared Htree Hy.
+  pose proof (dom_listed_key_width g y Hy) as Hywidth.
+  pose proof (T_loopN_le df_state (list positive) (df_step g t y)
+    (fun st => T_df_step g t y st) (df_valid g t y)
+    (fun st => ((frontier_step_cost * N.of_nat (graph_width (base g) + 1) + 1) *
+      N.of_nat (df_column_progress g t y st))%N)
+    (16 * N.of_nat (length (df_column g t y) + 1))%N fuel
+    (DfState (preds g y) Empty [])) as Hloop.
+  cbn beta in Hloop. rewrite df_column_progress_initial in Hloop. apply Hloop.
+  - intros [pending seen answer] next Hvalid Hstep.
+    split; [eapply df_valid_step; eassumption|].
+    pose proof (df_column_progress_step g t r y _ next Hgraph Hprepared Htree Hvalid Hstep)
+      as Hprogress.
+    destruct pending as [|x rest]; [discriminate Hstep|].
+    pose proof (dom_listed_key_width g x
+      (df_valid_pending_nodes _ _ _ _ Hvalid x (or_introl eq_refl))) as Hxwidth.
+    pose proof (frontier_df_step_time g t y x rest seen answer _ Hxwidth Hywidth) as Htime.
+    nia.
+  - intros [pending seen answer] result Hvalid Hstep.
+    destruct (df_step_stopping g t y _ result Hstep) as [Hpending Hanswer].
+    cbn [df_pending] in Hpending. subst pending.
+    pose proof (NoDup_incl_length (df_valid_unique _ _ _ _ Hvalid)
+      (df_valid_answer_subset g t r y _ Hgraph Hprepared Htree Hvalid)) as Hlength.
+    pose proof (frontier_df_stop_time g t y seen answer) as Htime.
+    cbn [df_column_answer] in Hlength. rewrite !Nat2N.inj_add in Htime |- *. lia.
+  - now apply df_valid_initial.
+Qed.
 
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
