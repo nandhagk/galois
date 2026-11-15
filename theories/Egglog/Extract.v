@@ -4,7 +4,8 @@
     For example, the placeholder extractor returns no certificate.
     Builds on: ExtractSig. *)
 
-From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators.
+From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
+  Sorting.Permutation.
 From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig IndexSig DatabaseSig Syntax Model Sorts ExtractSig.
@@ -1542,6 +1543,84 @@ Fixpoint index_paths {A} (child : positive -> cell A -> option positive)
   end.
 TimeFun index_paths.
 
+(** Splitting the final identifier uses two linear reverse traversals. *)
+Definition extraction_decode {V} (f : positive) (u : list (cell V))
+    : list (positive * list (cell V) * positive) :=
+  match rev_append u [] with
+  | Id i :: tail => [(f, rev_append tail [], i)]
+  | _ => []
+  end.
+TimeFun extraction_decode.
+
+(** An inventory entry supplies the depth of its full constructor index. *)
+Definition inventory_entry_rows {V Ix} (index : N -> Ix)
+    (child : Ix -> positive -> cell V -> option positive)
+    (children : Ix -> positive -> list (cell V)) (root : Ix -> positive)
+    (entry : positive * (N * nat)) : list (positive * list (cell V) * positive) :=
+  let '(f, (slot, arity)) := entry in
+  let ix := index slot in
+  flat_map (extraction_decode f)
+    (index_paths (child ix) (children ix) (S arity) (root ix)).
+TimeFun inventory_entry_rows.
+
+(** Constructor enumeration walks each named slot once in inventory order. *)
+Definition inventory_rows {V Ix} (index : N -> Ix)
+    (child : Ix -> positive -> cell V -> option positive)
+    (children : Ix -> positive -> list (cell V)) (root : Ix -> positive)
+    (cs : list (positive * (N * nat))) : list (positive * list (cell V) * positive) :=
+  flat_map (inventory_entry_rows index child children root) cs.
+TimeFun inventory_rows.
+
+(** A decoded tuple retains its constructor and splits exactly at its final identifier. *)
+Lemma extraction_decode_sound : forall V f (u : list (cell V)) g k i,
+  In (g, k, i) (extraction_decode f u) -> f = g /\ u = k ++ [Id i].
+Proof.
+  intros V f u g k i Hin. unfold extraction_decode in Hin.
+  destruct (rev_append u []) as [|[j|v] tail] eqn:Hreverse; try contradiction.
+  destruct Hin as [Heq |Hbad]; [|contradiction]. injection Heq as <- <- <-.
+  split; [reflexivity |]. rewrite <- rev_alt in Hreverse.
+  apply (f_equal (@rev (cell V))) in Hreverse. rewrite rev_involutive in Hreverse.
+  cbn [rev] in Hreverse. now rewrite rev_alt in Hreverse.
+Qed.
+
+(** A complete constructor tuple always decodes to its unique row. *)
+Lemma extraction_decode_complete : forall V f (k : list (cell V)) i,
+  extraction_decode f (k ++ [Id i]) = [(f, k, i)].
+Proof.
+  intros V f k i. unfold extraction_decode.
+  rewrite <- rev_alt, rev_app_distr. cbn [rev app].
+  rewrite <- rev_alt, rev_involutive. reflexivity.
+Qed.
+
+(** A tuple decoder emits at most one row. *)
+Lemma extraction_decode_nodup : forall V f (u : list (cell V)),
+  NoDup (extraction_decode f u).
+Proof.
+  intros V f u. unfold extraction_decode.
+  destruct (rev_append u []) as [|[i|v] tail].
+  - constructor.
+  - constructor; [intro Hin; contradiction |constructor].
+  - constructor.
+Qed.
+
+(** Duplicate-free branch keys and disjoint outputs give duplicate-free concatenation. *)
+Lemma extraction_flat_map_nodup : forall A B K (key : A -> K) (branch : A -> list B) xs,
+  NoDup (map key xs) ->
+  (forall x, In x xs -> NoDup (branch x)) ->
+  (forall x y b, In b (branch x) -> In b (branch y) -> key x = key y) ->
+  NoDup (flat_map branch xs).
+Proof.
+  intros A B K key branch xs. induction xs as [|x xs IH];
+    intros Hkeys Hbranches Hdisjoint; [constructor |].
+  inversion Hkeys as [|kx keys Hfresh Htail]; subst.
+  cbn [flat_map]. apply NoDup_app.
+  - apply Hbranches. now left.
+  - apply IH; [exact Htail | |exact Hdisjoint].
+    intros y Hy. apply Hbranches. now right.
+  - intros b Hhead Hrest. apply in_flat_map in Hrest as [y [Hy Hbranch]].
+    apply Hfresh. rewrite (Hdisjoint x y b Hhead Hbranch). now apply in_map.
+Qed.
+
 (** Every enumerated suffix has exactly the supplied walk depth. *)
 Lemma index_paths_length : forall A child children fuel n (u : list (cell A)),
   In u (index_paths child children fuel n) -> length u = fuel.
@@ -1588,6 +1667,49 @@ Module IndexPaths (V : VALUE) (I : INDEX V).
     - apply I.node_root with a. exact Hwf.
     - exact Hmem.
     - eapply I.mem_arity; eassumption.
+  Qed.
+
+  (** Every enumerated suffix reaches the node for the corresponding extended prefix. *)
+  Lemma index_paths_nodes : forall fuel a ix n pre u,
+    I.wf a ix -> I.node ix n pre ->
+    In u (index_paths (I.child ix) (I.children ix) fuel n) ->
+    exists m, I.node ix m (pre ++ u).
+  Proof.
+    induction fuel as [|fuel IH]; intros a ix n pre u Hwf Hnode Hin.
+    - cbn [index_paths] in Hin. destruct Hin as [<- |Hbad]; [|contradiction].
+      exists n. now rewrite app_nil_r.
+    - cbn [index_paths] in Hin. apply in_flat_map in Hin as [c [_ Hin]].
+      destruct (I.child ix n c) as [next|] eqn:Hchild; [|contradiction].
+      apply in_map_iff in Hin as [tail [<- Htail]].
+      assert (Hnext : I.node ix next (pre ++ [c])).
+      { apply (proj1 (proj1 (I.child_spec a ix n pre c Hwf Hnode) next)).
+        exact Hchild. }
+      destruct (IH a ix next (pre ++ [c]) tail Hwf Hnext Htail) as [last Hlast].
+      exists last. rewrite <- app_assoc in Hlast. exact Hlast.
+  Qed.
+
+  (** Distinct child labels make the bounded path enumeration duplicate free. *)
+  Lemma index_paths_nodup : forall fuel a ix n pre,
+    I.wf a ix -> I.node ix n pre ->
+    NoDup (index_paths (I.child ix) (I.children ix) fuel n).
+  Proof.
+    induction fuel as [|fuel IH]; intros a ix n pre Hwf Hnode.
+    - cbn [index_paths]. constructor; [intro Hin; contradiction |constructor].
+    - cbn [index_paths].
+      eapply extraction_flat_map_nodup with (key := fun c => c).
+      + rewrite map_id.
+        exact (proj2 (I.children_spec a ix n pre (Id 1%positive) Hwf Hnode)).
+      + intros c Hc. destruct (I.child ix n c) as [next|] eqn:Hchild; [|constructor].
+        apply NoDup_map_NoDup_ForallPairs.
+        * intros left right _ _ Heq. now injection Heq.
+        * eapply IH with (pre := pre ++ [c]); [exact Hwf |].
+          apply (proj1 (proj1 (I.child_spec a ix n pre c Hwf Hnode) next)).
+          exact Hchild.
+      + intros c d u Hc Hd.
+        destruct (I.child ix n c) as [left|] eqn:Hleft; [|contradiction].
+        destruct (I.child ix n d) as [right|] eqn:Hright; [|contradiction].
+        apply in_map_iff in Hc as [us [Hus _]].
+        apply in_map_iff in Hd as [vs [Hvs _]]. congruence.
   Qed.
 
 End IndexPaths.
@@ -1800,6 +1922,283 @@ Module ConstructorRows (V : VALUE) (I : INDEX V) (D : DATABASE V I).
       rewrite Nat.max_l by exact Hge. right. exists f, k, i. split; [now left |reflexivity].
   Qed.
 End ConstructorRows.
+
+(** Executable enumeration agrees with the finite constructor-row specification. *)
+Module EnumeratedRows (V : VALUE) (I : INDEX V) (D : DATABASE V I).
+  Module Paths := IndexPaths V I.
+  Module Rows := ConstructorRows V I D.
+
+  (** The inventory's slot clause fixes every tuple's arity, output and order. *)
+  Definition entry_ok (db : D.t) (f : positive) (slot : N) (arity : nat) : Prop :=
+    exists perm, D.slot_of db slot = Some (f, perm) /\
+      forall k o, row (D.view db) f k o ->
+        length k = arity /\ (exists i, o = Some (Id i)) /\
+        D.permute perm (k ++ option_list o) = k ++ option_list o.
+
+  Definition entry_rows (db : D.t) (entry : positive * (N * nat)) :=
+    inventory_entry_rows (fun slot => D.index slot false db) I.child I.children I.root entry.
+
+  Definition enumerated_rows (cs : list (positive * (N * nat))) (db : D.t) :=
+    inventory_rows (fun slot => D.index slot false db) I.child I.children I.root cs.
+
+  (** Every indexed member is a full tuple of the named constructor. *)
+  Lemma entry_member_sound : forall db f slot arity u,
+    D.wf db -> entry_ok db f slot arity -> I.mem (D.index slot false db) u ->
+    exists k i, row (D.view db) f k (Some (Id i)) /\
+      length k = arity /\ u = k ++ [Id i].
+  Proof.
+    intros db f slot arity u Hwf [perm [Hslot Hrows]] Hmember.
+    destruct (D.index_all db slot false u Hwf Hmember)
+      as [g [positions [k [o [Hslot' [Hrow Htuple]]]]]].
+    rewrite Hslot in Hslot'. injection Hslot' as <- <-.
+    destruct (Hrows k o Hrow) as [Hlength [[i Houtput] Hfull]]. subst o.
+    cbn [option_list] in Hfull, Htuple. rewrite Hfull in Htuple.
+    exists k, i. repeat split; assumption.
+  Qed.
+
+  (** The full inventory index contains every row of its constructor. *)
+  Lemma entry_member_complete : forall db f slot arity k i,
+    D.wf db -> entry_ok db f slot arity -> row (D.view db) f k (Some (Id i)) ->
+    I.mem (D.index slot false db) (k ++ [Id i]).
+  Proof.
+    intros db f slot arity k i Hwf [perm [Hslot Hrows]] Hrow.
+    pose proof (D.index_all_complete db slot f perm k (Some (Id i)) Hwf Hslot Hrow)
+      as Hmember.
+    destruct (Hrows k (Some (Id i)) Hrow) as [_ [_ Hfull]].
+    cbn [option_list] in Hfull, Hmember. now rewrite Hfull in Hmember.
+  Qed.
+
+  (** A nonempty live prefix extends to a tuple of exactly the inventory depth. *)
+  Lemma entry_node_extension : forall db f slot arity node pre,
+    D.wf db -> entry_ok db f slot arity ->
+    I.node (D.index slot false db) node pre -> pre <> [] ->
+    exists suffix, I.mem (D.index slot false db) (pre ++ suffix) /\
+      length pre + length suffix = S arity.
+  Proof.
+    intros db f slot arity node pre Hwf Hentry Hnode Hnonempty.
+    destruct Hentry as [perm [Hslot Hrows]].
+    pose proof (D.index_wf db slot false f perm Hwf Hslot) as Hindex.
+    destruct (I.node_live (length perm) _ node pre Hindex Hnode Hnonempty)
+      as [suffix Hmember].
+    assert (Hentry : entry_ok db f slot arity) by (exists perm; auto).
+    destruct (entry_member_sound db f slot arity _ Hwf Hentry Hmember)
+      as [k [i [_ [Hlength Htuple]]]].
+    exists suffix. split; [exact Hmember |].
+    apply (f_equal (@length (cell V.t))) in Htuple.
+    rewrite !length_app in Htuple. cbn [length] in Htuple. lia.
+  Qed.
+
+  (** Every child of a live prefix contributes a completed path at the remaining depth. *)
+  Lemma entry_child_paths_live : forall db f slot arity node pre c next remaining,
+    D.wf db -> entry_ok db f slot arity ->
+    I.node (D.index slot false db) node pre -> length pre + S remaining = S arity ->
+    I.child (D.index slot false db) node c = Some next ->
+    exists suffix, In suffix
+      (index_paths (I.child (D.index slot false db)) (I.children (D.index slot false db))
+        remaining next).
+  Proof.
+    intros db f slot arity node pre c next remaining Hwf Hentry Hnode Hdepth Hchild.
+    destruct Hentry as [perm [Hslot Hrows]].
+    pose proof (D.index_wf db slot false f perm Hwf Hslot) as Hindex.
+    assert (Hnext : I.node (D.index slot false db) next (pre ++ [c])).
+    { apply (proj1 (proj1 (I.child_spec (length perm) _ node pre c Hindex Hnode) next)).
+      exact Hchild. }
+    assert (Hentry : entry_ok db f slot arity) by (exists perm; auto).
+    assert (Hnonempty : pre ++ [c] <> []).
+    { intro Hempty. apply app_eq_nil in Hempty as [_ Hbad]. discriminate. }
+    destruct (entry_node_extension db f slot arity next (pre ++ [c])
+      Hwf Hentry Hnext Hnonempty) as [suffix [Hmember Hlength]].
+    exists suffix. eapply Paths.index_paths_complete with (pre := pre ++ [c]).
+    - exact Hindex.
+    - exact Hnext.
+    - exact Hmember.
+    - rewrite length_app in Hlength. cbn [length] in Hlength. lia.
+  Qed.
+
+  (** A full-depth root path is itself a complete constructor tuple. *)
+  Lemma entry_paths_sound : forall db f slot arity u,
+    D.wf db -> entry_ok db f slot arity ->
+    In u (index_paths (I.child (D.index slot false db))
+      (I.children (D.index slot false db)) (S arity) (I.root (D.index slot false db))) ->
+    exists k i, row (D.view db) f k (Some (Id i)) /\
+      length k = arity /\ u = k ++ [Id i].
+  Proof.
+    intros db f slot arity u Hwf Hentry Hpath.
+    destruct Hentry as [perm [Hslot Hrows]].
+    pose proof (D.index_wf db slot false f perm Hwf Hslot) as Hindex.
+    pose proof (index_paths_length V.t _ _ _ _ u Hpath) as Hlength.
+    destruct (Paths.index_paths_nodes (S arity) (length perm) _ _ [] u Hindex
+      (I.node_root _ _ Hindex) Hpath) as [node Hnode].
+    cbn [app] in Hnode.
+    assert (Hentry : entry_ok db f slot arity) by (exists perm; auto).
+    assert (Hnonempty : u <> []) by (intro Heq; subst u; discriminate).
+    destruct (entry_node_extension db f slot arity node u Hwf Hentry Hnode Hnonempty)
+      as [suffix [Hmember Htotal]].
+    assert (Hsuffix : suffix = []) by (apply length_zero_iff_nil; lia).
+    subst suffix. rewrite app_nil_r in Hmember.
+    exact (entry_member_sound db f slot arity u Hwf Hentry Hmember).
+  Qed.
+
+  (** Every constructor row is found with the inventory's supplied arity as fuel. *)
+  Lemma entry_paths_complete : forall db f slot arity k i,
+    D.wf db -> entry_ok db f slot arity -> row (D.view db) f k (Some (Id i)) ->
+    In (k ++ [Id i]) (index_paths (I.child (D.index slot false db))
+      (I.children (D.index slot false db)) (S arity) (I.root (D.index slot false db))).
+  Proof.
+    intros db f slot arity k i Hwf Hentry Hrow.
+    pose proof (entry_member_complete db f slot arity k i Hwf Hentry Hrow) as Hmember.
+    destruct Hentry as [perm [Hslot Hrows]].
+    pose proof (D.index_wf db slot false f perm Hwf Hslot) as Hindex.
+    destruct (Hrows k (Some (Id i)) Hrow) as [Hlength _].
+    eapply Paths.index_paths_complete with (pre := []) (a := length perm).
+    - exact Hindex.
+    - apply I.node_root with (length perm). exact Hindex.
+    - exact Hmember.
+    - rewrite length_app. cbn [length]. lia.
+  Qed.
+
+  (** Decoding an entry cannot change its constructor name. *)
+  Lemma entry_rows_name : forall db f slot arity g k i,
+    In (g, k, i) (entry_rows db (f, (slot, arity))) -> g = f.
+  Proof.
+    intros db f slot arity g k i Hin. unfold entry_rows, inventory_entry_rows in Hin.
+    apply in_flat_map in Hin as [u [_ Hdecode]].
+    symmetry. exact (proj1 (extraction_decode_sound V.t f u g k i Hdecode)).
+  Qed.
+
+  (** Every row emitted for an entry occurs in the database. *)
+  Lemma entry_rows_sound : forall db f slot arity g k i,
+    D.wf db -> entry_ok db f slot arity ->
+    In (g, k, i) (entry_rows db (f, (slot, arity))) ->
+    row (D.view db) g k (Some (Id i)).
+  Proof.
+    intros db f slot arity g k i Hwf Hentry Hin.
+    unfold entry_rows, inventory_entry_rows in Hin.
+    apply in_flat_map in Hin as [u [Hpath Hdecode]].
+    destruct (entry_paths_sound db f slot arity u Hwf Hentry Hpath)
+      as [key [outid [Hrow [_ Htuple]]]].
+    subst u. rewrite extraction_decode_complete in Hdecode.
+    destruct Hdecode as [Heq |Hbad]; [|contradiction]. now injection Heq as <- <- <-.
+  Qed.
+
+  (** Every database constructor row is emitted by its inventory entry. *)
+  Lemma entry_rows_complete : forall db f slot arity k i,
+    D.wf db -> entry_ok db f slot arity -> row (D.view db) f k (Some (Id i)) ->
+    In (f, k, i) (entry_rows db (f, (slot, arity))).
+  Proof.
+    intros db f slot arity k i Hwf Hentry Hrow.
+    unfold entry_rows, inventory_entry_rows. apply in_flat_map.
+    exists (k ++ [Id i]). split.
+    - exact (entry_paths_complete db f slot arity k i Hwf Hentry Hrow).
+    - rewrite extraction_decode_complete. now left.
+  Qed.
+
+  (** Duplicate-free paths decode to duplicate-free constructor rows. *)
+  Lemma entry_rows_nodup : forall db f slot arity,
+    D.wf db -> entry_ok db f slot arity -> NoDup (entry_rows db (f, (slot, arity))).
+  Proof.
+    intros db f slot arity Hwf [perm [Hslot Hrows]].
+    pose proof (D.index_wf db slot false f perm Hwf Hslot) as Hindex.
+    unfold entry_rows, inventory_entry_rows.
+    eapply extraction_flat_map_nodup with (key := fun u => u).
+    - rewrite map_id. eapply Paths.index_paths_nodup with (pre := []).
+      + exact Hindex.
+      + apply I.node_root with (length perm). exact Hindex.
+    - intros u _. apply extraction_decode_nodup.
+    - intros left right [[g k] i] Hleft Hright.
+      destruct (extraction_decode_sound V.t f left g k i Hleft) as [_ Hleft'].
+      destruct (extraction_decode_sound V.t f right g k i Hright) as [_ Hright']. congruence.
+  Qed.
+
+  (** Full inventory enumeration contains only exact constructor rows. *)
+  Lemma enumerated_rows_sound : forall cs db f k i,
+    D.wf db ->
+    (forall g slot arity, In (g, (slot, arity)) cs -> entry_ok db g slot arity) ->
+    In (f, k, i) (enumerated_rows cs db) -> row (D.view db) f k (Some (Id i)).
+  Proof.
+    intros cs db f k i Hwf Hentries Hin. unfold enumerated_rows, inventory_rows in Hin.
+    apply in_flat_map in Hin as [[g [slot arity]] [Hentry Hin]].
+    eapply entry_rows_sound; [exact Hwf |apply Hentries; exact Hentry |exact Hin].
+  Qed.
+
+  (** Coverage of constructor names makes inventory enumeration complete. *)
+  Lemma enumerated_rows_complete : forall cs db f k i,
+    D.wf db ->
+    (forall g slot arity, In (g, (slot, arity)) cs -> entry_ok db g slot arity) ->
+    (forall g key outid, row (D.view db) g key (Some (Id outid)) -> In g (map fst cs)) ->
+    row (D.view db) f k (Some (Id i)) -> In (f, k, i) (enumerated_rows cs db).
+  Proof.
+    intros cs db f k i Hwf Hentries Hcovers Hrow.
+    pose proof (Hcovers f k i Hrow) as Hname.
+    apply in_map_iff in Hname as [[g [slot arity]] [Hname Hentry]].
+    cbn [fst] in Hname. subst g.
+    unfold enumerated_rows, inventory_rows. apply in_flat_map.
+    exists (f, (slot, arity)). split; [exact Hentry |].
+    apply entry_rows_complete; [exact Hwf |apply Hentries; exact Hentry |exact Hrow].
+  Qed.
+
+  (** Distinct constructor names make the complete inventory row list duplicate free. *)
+  Lemma enumerated_rows_nodup : forall cs db,
+    D.wf db -> NoDup (map fst cs) ->
+    (forall g slot arity, In (g, (slot, arity)) cs -> entry_ok db g slot arity) ->
+    NoDup (enumerated_rows cs db).
+  Proof.
+    intros cs db Hwf Hnames Hentries.
+    change (NoDup (flat_map (entry_rows db) cs)).
+    eapply extraction_flat_map_nodup with (key := fst).
+    - exact Hnames.
+    - intros [f [slot arity]] Hin. apply entry_rows_nodup; [exact Hwf |now apply Hentries].
+    - intros [f [slot arity]] [g [other width]] [[name key] outid] Hleft Hright.
+      cbn [fst]. pose proof (entry_rows_name db f slot arity name key outid Hleft).
+      pose proof (entry_rows_name db g other width name key outid Hright). congruence.
+  Qed.
+
+  (** Every covered constructor row has a slot for the ghost enumeration. *)
+  Lemma inventory_full_slot : forall cs db f k i,
+    (forall g slot arity, In (g, (slot, arity)) cs -> entry_ok db g slot arity) ->
+    (forall g key outid, row (D.view db) g key (Some (Id outid)) -> In g (map fst cs)) ->
+    row (D.view db) f k (Some (Id i)) ->
+    exists slot perm, D.slot_of db slot = Some (f, perm) /\
+      D.permute perm (k ++ [Id i]) = k ++ [Id i].
+  Proof.
+    intros cs db f k i Hentries Hcovers Hrow.
+    pose proof (Hcovers f k i Hrow) as Hname.
+    apply in_map_iff in Hname as [[g [slot arity]] [Hname Hentry]].
+    cbn [fst] in Hname. subst g.
+    destruct (Hentries f slot arity Hentry) as [perm [Hslot Hrows]].
+    exists slot, perm. split; [exact Hslot |].
+    exact (proj2 (proj2 (Hrows k (Some (Id i)) Hrow))).
+  Qed.
+
+  (** Executable and ghost enumerations differ only in their order. *)
+  Lemma enumerated_rows_permutation : forall cs db,
+    D.wf db -> NoDup (map fst cs) ->
+    (forall g slot arity, In (g, (slot, arity)) cs -> entry_ok db g slot arity) ->
+    (forall g key outid, row (D.view db) g key (Some (Id outid)) -> In g (map fst cs)) ->
+    Permutation (enumerated_rows cs db) (Rows.rows db).
+  Proof.
+    intros cs db Hwf Hnames Hentries Hcovers. apply NoDup_Permutation.
+    - now apply enumerated_rows_nodup.
+    - apply Rows.rows_nodup.
+    - intros [[f k] i]. split.
+      + intro Hin. pose proof (enumerated_rows_sound cs db f k i Hwf Hentries Hin) as Hrow.
+        apply Rows.rows_complete; [exact Hwf |exact Hrow |].
+        eapply inventory_full_slot; eassumption.
+      + intro Hin. apply enumerated_rows_complete; [exact Hwf |exact Hentries |exact Hcovers |].
+        now apply Rows.rows_sound.
+  Qed.
+
+  (** The stored executable row count equals the specification row count. *)
+  Lemma enumerated_rows_length : forall cs db,
+    D.wf db -> NoDup (map fst cs) ->
+    (forall g slot arity, In (g, (slot, arity)) cs -> entry_ok db g slot arity) ->
+    (forall g key outid, row (D.view db) g key (Some (Id outid)) -> In g (map fst cs)) ->
+    length (enumerated_rows cs db) = length (Rows.rows db).
+  Proof.
+    intros cs db Hwf Hnames Hentries Hcovers.
+    apply Permutation_length. now apply enumerated_rows_permutation.
+  Qed.
+End EnumeratedRows.
 
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
