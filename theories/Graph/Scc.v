@@ -1098,6 +1098,177 @@ Proof.
   rewrite Heq, Forall_app in Hwidth. exact (proj1 Hwidth).
 Qed.
 
+(** Owner bindings identify the chronological position of their emitted component. *)
+Definition tarjan_owners_indexed (s : tarjan_state) : Prop :=
+  forall v i, trie_get v (tarjan_owners s) = Some i <->
+    exists block, nth_error (rev (tarjan_emitted s)) (Nat.pred (Pos.to_nat i)) = Some block /\
+      In v block.
+
+(** Appending a block adds exactly its next one-based output position. *)
+Local Lemma tarjan_append_position (blocks : list (list positive)) next v i members :
+  Pos.to_nat next = S (length blocks) ->
+  ((exists block, nth_error (blocks ++ [members]) (Nat.pred (Pos.to_nat i)) = Some block /\
+      In v block) <->
+    (i = next /\ In v members) \/
+    exists block, nth_error blocks (Nat.pred (Pos.to_nat i)) = Some block /\ In v block).
+Proof.
+  intro Hnext. set (n := Nat.pred (Pos.to_nat i)).
+  assert (Hi : Pos.to_nat i = S n) by (unfold n; pose proof (Pos2Nat.is_pos i); lia).
+  destruct (lt_dec n (length blocks)) as [Hlt|Hge].
+  - rewrite nth_error_app1 by exact Hlt. split; [auto|].
+    intros [[Heq _]|Hmember]; [subst i; lia|exact Hmember].
+  - rewrite nth_error_app2 by lia.
+    destruct (n - length blocks) as [|k] eqn:Hminus.
+    + assert (Heq : i = next) by (apply Pos2Nat.inj; lia).
+      cbn [nth_error]. split.
+      * intros [block [Hblock Hin]]. inversion Hblock; subst block. now left.
+      * intros [[_ Hin]|[block [Hnth _]]].
+        -- exists members. auto.
+        -- assert (Hlt : n < length blocks) by
+             (apply nth_error_Some; rewrite Hnth; discriminate). lia.
+    + cbn [nth_error]. rewrite nth_error_nil. split.
+      * intros [block [Hfalse _]]. discriminate.
+      * intros [[Heq _]|[block [Hnth _]]].
+        -- subst i. lia.
+        -- assert (Hlt : n < length blocks) by
+             (apply nth_error_Some; rewrite Hnth; discriminate). lia.
+Qed.
+
+(** Duplicate freedom separates pending vertices from previously emitted vertices. *)
+Local Lemma tarjan_nodup_disjoint {A} (first last : list A) :
+  NoDup (first ++ last) -> forall v, In v first -> ~ In v last.
+Proof.
+  intro Hunique. induction first as [|u first IH]; intros v Hin; [contradiction|].
+  inversion Hunique as [|u0 rest Hnot Htail]; subst u0 rest.
+  destruct Hin as [Heq|Hin].
+  - subst u. intro Hlast. apply Hnot. apply in_or_app. now right.
+  - now apply IH.
+Qed.
+
+(** A popped prefix receives the new index without overwriting any emitted component. *)
+Local Lemma tarjan_pop_owners_indexed root s members tail low active owners :
+  NoDup (tarjan_bag s) ->
+  Pos.to_nat (tarjan_next s) = S (length (tarjan_emitted s)) ->
+  tarjan_owners_indexed s ->
+  tarjan_pop root (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+    (tarjan_active s) (tarjan_owners s) = (members, tail, low, active, owners) ->
+  forall v i, trie_get v owners = Some i <->
+    exists block, nth_error (rev (members :: tarjan_emitted s))
+      (Nat.pred (Pos.to_nat i)) = Some block /\ In v block.
+Proof.
+  intros Hunique Hnext Hindex Hpop v i.
+  destruct (tarjan_pop_lookup _ _ _ _ _ _ _ _ _ _ _ Hpop) as [Hsplit Hlookup].
+  assert (Hfresh : forall x, In x members -> ~ In x (concat (tarjan_emitted s))).
+  { intros x Hin. apply (tarjan_nodup_disjoint _ _ Hunique x).
+    rewrite Hsplit. apply in_or_app. now left. }
+  destruct (Hlookup v) as [_ [_ Howners]]. cbn [rev].
+  rewrite (tarjan_append_position (rev (tarjan_emitted s)) (tarjan_next s))
+    by (rewrite length_rev; exact Hnext).
+  rewrite Howners. destruct (existsb (Pos.eqb v) members) eqn:Hmember.
+  - apply existsb_exists in Hmember. destruct Hmember as [x [Hin Heq]].
+    apply Pos.eqb_eq in Heq. subst x. split.
+    + intro Heq. injection Heq as Heq. subst i. now left.
+    + intros [[Heq _]|[block [Hnth Hv]]]; [subst i; reflexivity|].
+      exfalso. apply (Hfresh v Hin). apply in_concat. exists block. split; [|exact Hv].
+      apply (proj2 (in_rev _ _)). now apply nth_error_In in Hnth.
+  - rewrite (Hindex v i). split; [now right|].
+    intros [[_ Hin]|Hold]; [|exact Hold].
+    assert (Hyes : existsb (Pos.eqb v) members = true).
+    { apply existsb_exists. exists v. split; [exact Hin|apply Pos.eqb_refl]. }
+    congruence.
+Qed.
+
+(** Lowering a link leaves every owner and emitted block unchanged. *)
+Local Lemma tarjan_owners_lower v n s :
+  tarjan_owners_indexed s -> tarjan_owners_indexed (TarjanVisitor.lower v n s).
+Proof.
+  intro Hindex. unfold TarjanVisitor.lower.
+  destruct (trie_get v (tarjan_low s)); exact Hindex.
+Qed.
+
+Local Lemma tarjan_owners_edge kind u v s :
+  tarjan_owners_indexed s -> tarjan_owners_indexed (TarjanVisitor.edge kind u v s).
+Proof.
+  intro Hindex. destruct kind; cbn [TarjanVisitor.edge]; try exact Hindex.
+  all: destruct (trie_get v (tarjan_active s)) as [[|]|]; try exact Hindex.
+  all: destruct (trie_get v (tarjan_disc s)); try exact Hindex.
+  all: now apply tarjan_owners_lower.
+Qed.
+
+(** Leaving either retains the owner relation or appends the newly popped component. *)
+Local Lemma tarjan_owners_leave v s :
+  NoDup (tarjan_bag s) ->
+  Pos.to_nat (tarjan_next s) = S (length (tarjan_emitted s)) ->
+  tarjan_owners_indexed s -> tarjan_owners_indexed (TarjanVisitor.leave v s).
+Proof.
+  intros Hunique Hnext Hindex. unfold TarjanVisitor.leave.
+  destruct (trie_get v (tarjan_low s)) as [low|]; [|exact Hindex].
+  destruct (trie_get v (tarjan_disc s)) as [disc|]; [|exact Hindex].
+  destruct (Pos.eqb low disc).
+  - destruct (tarjan_pop v (tarjan_next s) (tarjan_pending s) (tarjan_low s)
+      (tarjan_active s) (tarjan_owners s))
+      as [[[[members tail] lows] actives] owners] eqn:Hpop.
+    unfold tarjan_owners_indexed. cbn [tarjan_owners tarjan_emitted].
+    eapply tarjan_pop_owners_indexed; eassumption.
+  - destruct (match tarjan_frames s with [] => [] | _ :: rest => rest end).
+    + exact Hindex.
+    + apply tarjan_owners_lower. exact Hindex.
+Qed.
+
+Local Lemma tarjan_owners_event e s :
+  NoDup (tarjan_bag s) ->
+  Pos.to_nat (tarjan_next s) = S (length (tarjan_emitted s)) ->
+  tarjan_owners_indexed s ->
+  tarjan_owners_indexed
+    (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge s e).
+Proof.
+  intros Hunique Hnext Hindex. destruct e; cbn [visit_event].
+  - exact Hindex.
+  - now apply tarjan_owners_leave.
+  - now apply tarjan_owners_edge.
+Qed.
+
+(** Unique entries make every emitted owner agree with its chronological block index. *)
+Lemma tarjan_owners_indexed_fold es : NoDup (entered es) ->
+  tarjan_owners_indexed
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial).
+Proof.
+  induction es as [|e es IH] using rev_ind; intro Hunique.
+  - unfold tarjan_owners_indexed. intros v i.
+    cbn [fold_events fold_left tarjan_initial tarjan_owners tarjan_emitted rev].
+    rewrite PTrie.get_empty. split; [discriminate|].
+    intros [block [Hnth _]]. rewrite nth_error_nil in Hnth. discriminate.
+  - assert (Hprefix : NoDup (entered es)).
+    { rewrite search_entered_app in Hunique. now apply NoDup_app_remove_r in Hunique. }
+    specialize (IH Hprefix).
+    pose proof (Permutation_NoDup (Permutation_sym (tarjan_bag_inventory es)) Hprefix) as Hbag.
+    unfold fold_events at 1. rewrite fold_left_app.
+    change (tarjan_owners_indexed
+      (visit_event TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+        (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
+          es tarjan_initial) e)).
+    apply tarjan_owners_event; [exact Hbag|apply tarjan_next_count|exact IH].
+Qed.
+
+(** Every present owner fits the width of the distinct entered keys plus one bit. *)
+Lemma tarjan_owner_width w es v i :
+  NoDup (entered es) -> Forall (fun u => Pos.size_nat u <= w) (entered es) ->
+  trie_get v (tarjan_owners
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)) =
+    Some i -> Pos.size_nat i <= w + 1.
+Proof.
+  intros Hunique Hwidth Howner.
+  apply (tarjan_owners_indexed_fold es Hunique v i) in Howner.
+  destruct Howner as [block [Hnth Hin]].
+  pose proof (tarjan_emitted_count es) as Hcount.
+  assert (Hposition : Nat.pred (Pos.to_nat i) < length (rev (tarjan_emitted
+    (fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)))).
+  { apply nth_error_Some. rewrite Hnth. discriminate. }
+  rewrite length_rev in Hposition.
+  eapply tarjan_counter_width; [exact Hunique|exact Hwidth|].
+  pose proof (Pos2Nat.is_pos i). lia.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
@@ -1132,7 +1303,11 @@ Module Scc <: SCC.
   Lemma owners_spec : forall g, wf_graph (base g) -> forall v i,
     trie_get v (comp (run g)) = Some i <->
     exists vs, nth_error (comps (run g)) (Nat.pred (Pos.to_nat i)) = Some vs /\ In v vs.
-  Proof. Admitted. (* CONVERT: GraphTarjan: filtered traversal requires the scoped proof. *)
+  Proof.
+    intros g Hgraph v i. unfold run. cbn [comp comps].
+    rewrite rev_append_rev, app_nil_r.
+    exact (tarjan_owners_indexed_fold (scc_trace g) (scc_trace_unique g) v i).
+  Qed.
 
   Lemma comps_order : forall g, wf_graph (base g) -> forall u v i j,
     edge (base g) u v -> trie_get u (comp (run g)) = Some i ->
