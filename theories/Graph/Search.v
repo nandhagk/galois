@@ -1982,6 +1982,45 @@ Proof.
       rewrite Hadvance. exact IH.
 Qed.
 
+(** Reading a graph row costs two key digits and fixed dispatch overhead. *)
+Lemma search_succs_clock g v :
+  (T_succs g v <= 4 * N.of_nat (Pos.size_nat v + 1))%N.
+Proof.
+  destruct g as [vertices adjacency].
+  pose proof (PTrieT.trie_get_clock (list positive) v adjacency) as Hlookup.
+  time_unfold @T_succs. time_cbn. rewrite Hlookup. lia.
+Qed.
+
+(** Every continuing step pays one key-width bound, including its loop allowance. *)
+Lemma search_step_clock g st next w :
+  Forall (search_task_valid (fun v => Pos.size_nat v <= w)) (search_tasks st) ->
+  search_step g st = inl next ->
+  (T_search_step g st + 1 <=
+    128 * (PTrieT.c_trie + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros Hvalid Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hvalid as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [v|u row|v]; cbn [search_step] in Hstep.
+  - pose proof (PTrieT.trie_get_clock bool v colours) as Hget.
+    pose proof (PTrieT.T_set_le bool v true colours) as Hset.
+    pose proof (search_succs_clock g v) as Hrow.
+    cbn [search_task_valid] in Htask.
+    destruct (trie_get v colours) eqn:Hcolour;
+      time_unfold @T_search_step; rewrite ?Hcolour; time_cbn; rewrite Hget;
+      rewrite !Nat2N.inj_add in *; nia.
+  - destruct row as [|v row].
+    + time_unfold @T_search_step. time_cbn. nia.
+    + destruct Htask as [Hu Hrow]. inversion Hrow as [|v0 row0 Hv Hrest]; subst v0 row0.
+      pose proof (PTrieT.trie_get_clock bool v colours) as Hget.
+      destruct (trie_get v colours) as [active|] eqn:Hcolour;
+        time_unfold @T_search_step; rewrite ?Hcolour; time_cbn; rewrite Hget;
+        rewrite !Nat2N.inj_add in *; nia.
+  - cbn [search_task_valid] in Htask.
+    pose proof (PTrieT.T_set_le bool v false colours) as Hset.
+    time_unfold @T_search_step. time_cbn. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
