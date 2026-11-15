@@ -1182,3 +1182,216 @@ Proof.
       (DomLtBucketState (DomLtLinks Empty Empty []) Empty)))) <= 2 * length order).
   clearbody buckets order. clear -Hsteps Hmass. lia.
 Qed.
+(** Repeated writes of the same key-dependent value retain exactly the listed keys. *)
+Lemma dom_lt_fold_set_lookup {A : Type} (value : positive -> A) xs initial key :
+  trie_get key (fold_left (fun rows v => PTrieCode.set v (value v) rows) xs initial) =
+    if existsb (Pos.eqb key) xs then Some (value key) else trie_get key initial.
+Proof.
+  revert initial. induction xs as [|v rest IH]; intro initial; [reflexivity|].
+  cbn [fold_left existsb]. rewrite IH.
+  destruct (Pos.eqb key v) eqn:Hkey.
+  - apply Pos.eqb_eq in Hkey. subst v. rewrite PTrie.get_set_same.
+    now destruct (existsb (Pos.eqb key) rest).
+  - apply Pos.eqb_neq in Hkey. rewrite PTrie.get_set_other by exact Hkey.
+    reflexivity.
+Qed.
+
+(** The membership test used by the filtering scan agrees with list membership. *)
+Lemma dom_lt_existsb_key key xs : existsb (Pos.eqb key) xs = true <-> In key xs.
+Proof.
+  rewrite existsb_exists. split.
+  - intros [v [Hin Heq]]. apply Pos.eqb_eq in Heq. now subst v.
+  - intro Hin. exists key. split; [exact Hin|apply Pos.eqb_refl].
+Qed.
+
+(** The producer's initial trie records exactly the listed vertex keys. *)
+Lemma dom_lt_listed_lookup nodes key :
+  trie_get key (fold_left (fun rows v => PTrieCode.set v true rows) nodes Empty) =
+    if existsb (Pos.eqb key) nodes then Some true else None.
+Proof.
+  rewrite (dom_lt_fold_set_lookup (fun _ => true) nodes Empty key), PTrie.get_empty.
+  reflexivity.
+Qed.
+
+(** A filtered search row is the listed source row with unlisted targets removed. *)
+Lemma dom_lt_filtered_row g u :
+  succs (base (scc_graph g)) u =
+    if existsb (Pos.eqb u) (nodes g) then
+      filter (fun v => existsb (Pos.eqb v) (nodes g)) (succs (base g) u)
+    else [].
+Proof.
+  unfold scc_graph. cbn [base succs]. rewrite dom_lt_fold_set_lookup, PTrie.get_empty.
+  destruct (existsb (Pos.eqb u) (nodes g)); [|reflexivity].
+  apply filter_ext. intro v. rewrite dom_lt_listed_lookup.
+  now destruct (existsb (Pos.eqb v) (nodes g)).
+Qed.
+
+(** Every filtered successor stays in the original listed-key domain. *)
+Lemma dom_lt_filtered_closed g u v :
+  In v (succs (base (scc_graph g)) u) -> In v (nodes g).
+Proof.
+  rewrite dom_lt_filtered_row.
+  destruct (existsb (Pos.eqb u) (nodes g)); [|contradiction].
+  intro Hin. apply filter_In in Hin as [_ Hkey]. now apply dom_lt_existsb_key.
+Qed.
+
+(** Filtering never increases the number of successor occurrences in a row. *)
+Lemma dom_lt_filtered_length g u :
+  length (succs (base (scc_graph g)) u) <= length (succs (base g) u).
+Proof.
+  rewrite dom_lt_filtered_row.
+  destruct (existsb (Pos.eqb u) (nodes g)); [apply filter_length_le|cbn; lia].
+Qed.
+
+(** Pointwise nonnegative weight bounds lift to a whole finite sum. *)
+Lemma dom_lt_sum_le {A : Type} (left right : A -> nat) xs :
+  (forall x, In x xs -> left x <= right x) ->
+  fold_right (fun x total => left x + total) 0 xs <=
+    fold_right (fun x total => right x + total) 0 xs.
+Proof.
+  induction xs as [|x rest IH]; intro Hbound; [reflexivity|].
+  cbn [fold_right]. specialize (IH (fun y Hy => Hbound y (or_intror Hy))).
+  pose proof (Hbound x (or_introl eq_refl)). lia.
+Qed.
+
+(** Distinct filtered source rows fit the input graph's occurrence count. *)
+Lemma dom_lt_filtered_rows g order :
+  NoDup order -> incl order (nodes g) ->
+  fold_right (fun v total => length (succs (base (scc_graph g)) v) + total) 0 order <=
+    graph_e (base g).
+Proof.
+  intros Hunique Hlisted.
+  pose proof (dom_lt_sum_le (fun v => length (succs (base (scc_graph g)) v))
+    (fun v => length (succs (base g) v)) order
+    (fun v _ => dom_lt_filtered_length g v)) as Hfiltered.
+  pose proof (dom_nodup_sum_incl (fun v => length (succs (base g) v))
+    order (nodes g) Hunique Hlisted) as Hrows.
+  replace (graph_e (base g)) with
+    (fold_right (fun v total => length (succs (base g) v) + total) 0 (nodes g)) by
+    (destruct g as [[vertices adjacency] predecessors count_v count_e]; reflexivity).
+  eapply Nat.le_trans; eassumption.
+Qed.
+
+(** The raw producer trace has distinct listed discoveries and at most one root beyond its edges. *)
+Lemma dom_lt_trace_inventory g r :
+  NoDup (entered (dom_lt_trace g r)) /\
+  incl (entered (dom_lt_trace g r)) (nodes g) /\
+  length (entered (dom_lt_trace g r)) <= graph_n (base g) /\
+  length (entered (dom_lt_trace g r)) <= graph_e (base g) + 1.
+Proof.
+  unfold dom_lt_trace. rewrite dom_lt_listed_lookup.
+  destruct (dom_lt_key_fits (graph_width (base g)) r); [|].
+  2: { cbn [entered length]. split; [constructor|]. split; [intros v Hv; contradiction|lia]. }
+  destruct (existsb (Pos.eqb r) (nodes g)) eqn:Hroot.
+  2: { cbn [entered length]. split; [constructor|]. split; [intros v Hv; contradiction|lia]. }
+  apply dom_lt_existsb_key in Hroot.
+  assert (Hroots : incl [r] (nodes g)).
+  { intros v [<-|Hv]; [exact Hroot|contradiction]. }
+  pose proof (dom_lt_search_trace_inventory (base (scc_graph g)) (nodes g) [r]
+    (search_budget (scc_graph g) [r]) Hroots
+    (fun u v _ => dom_lt_filtered_closed g u v)) as Htrace.
+  change (NoDup (entered (prepared_search_trace (scc_graph g) [r])) /\
+    incl (entered (prepared_search_trace (scc_graph g) [r])) (nodes g) /\
+    length (entered (prepared_search_trace (scc_graph g) [r])) <= length [r] +
+      fold_right (fun v total => length (succs (base (scc_graph g)) v) + total) 0
+        (entered (prepared_search_trace (scc_graph g) [r]))) in Htrace.
+  destruct Htrace as [Hunique [Hlisted Hbudget]].
+  pose proof (dom_lt_filtered_rows g _ Hunique Hlisted) as Hrows.
+  split; [exact Hunique|]. split; [exact Hlisted|]. split.
+  - replace (graph_n (base g)) with (length (nodes g)) by
+      (destruct g as [[vertices adjacency] predecessors count_v count_e]; reflexivity).
+    now apply NoDup_incl_length.
+  - cbn [length] in Hbudget. clear -Hbudget Hrows. lia.
+Qed.
+(** Pointwise equal weights have equal finite sums. *)
+Lemma dom_lt_sum_ext {A : Type} (left right : A -> nat) xs :
+  (forall x, In x xs -> left x = right x) ->
+  fold_right (fun x total => left x + total) 0 xs =
+    fold_right (fun x total => right x + total) 0 xs.
+Proof.
+  induction xs as [|x rest IH]; intro Hequal; [reflexivity|].
+  cbn [fold_right]. rewrite (Hequal x (or_introl eq_refl)), IH; [reflexivity|].
+  intros y Hy. apply Hequal. now right.
+Qed.
+
+(** A sum distributes over addition of its pointwise weights. *)
+Lemma dom_lt_sum_add {A : Type} (left right : A -> nat) xs :
+  fold_right (fun x total => left x + right x + total) 0 xs =
+    fold_right (fun x total => left x + total) 0 xs +
+      fold_right (fun x total => right x + total) 0 xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|]. cbn [fold_right]. rewrite IH. lia.
+Qed.
+
+(** The order of two finite nonnegative sums can be exchanged. *)
+Lemma dom_lt_sum_swap {A B : Type} (weight : A -> B -> nat) xs ys :
+  fold_right (fun x total =>
+    fold_right (fun y subtotal => weight x y + subtotal) 0 ys + total) 0 xs =
+  fold_right (fun y total =>
+    fold_right (fun x subtotal => weight x y + subtotal) 0 xs + total) 0 ys.
+Proof.
+  induction xs as [|x rest IH].
+  - cbn [fold_right]. induction ys; cbn [fold_right]; [reflexivity|assumption].
+  - cbn [fold_right]. rewrite IH. symmetry. apply dom_lt_sum_add.
+Qed.
+
+(** Concatenated row lengths are the sum of the individual row lengths. *)
+Lemma dom_lt_flat_map_length {A B : Type} (rows : A -> list B) xs :
+  length (flat_map rows xs) = fold_right (fun x total => length (rows x) + total) 0 xs.
+Proof.
+  induction xs as [|x rest IH]; [reflexivity|].
+  cbn [flat_map fold_right]. now rewrite length_app, IH.
+Qed.
+
+(** An extra successor contributes once for each matching target key. *)
+Lemma dom_lt_filter_sum_cons targets v row :
+  fold_right (fun y total => length (filter (Pos.eqb y) (v :: row)) + total) 0 targets =
+    count_occ Pos.eq_dec targets v +
+      fold_right (fun y total => length (filter (Pos.eqb y) row) + total) 0 targets.
+Proof.
+  induction targets as [|y rest IH]; [reflexivity|].
+  cbn [fold_right count_occ]. rewrite IH.
+  destruct (Pos.eq_dec y v) as [->|Hdifferent]; cbn [filter].
+  - rewrite Pos.eqb_refl. cbn [length]. lia.
+  - apply Pos.eqb_neq in Hdifferent. rewrite Hdifferent. lia.
+Qed.
+
+(** Distinct target keys can count any successor occurrence at most once. *)
+Lemma dom_lt_filter_sum_bound targets row :
+  NoDup targets ->
+  fold_right (fun y total => length (filter (Pos.eqb y) row) + total) 0 targets <= length row.
+Proof.
+  intro Hunique. induction row as [|v rest IH].
+  - clear Hunique. induction targets; cbn [fold_right filter length];
+      [reflexivity|assumption].
+  - rewrite dom_lt_filter_sum_cons. cbn [length].
+    pose proof (proj1 (NoDup_count_occ Pos.eq_dec targets) Hunique v) as Hcount.
+    lia.
+Qed.
+
+(** Prepared predecessor lengths count the exact original successor multiplicities. *)
+Lemma dom_lt_preds_length g y :
+  prepared_ok g -> length (preds g y) =
+    fold_right (fun x total =>
+      length (filter (Pos.eqb y) (succs (base g) x)) + total) 0 (nodes g).
+Proof.
+  intros [_ [_ Hpreds]]. rewrite (Permutation.Permutation_length (Hpreds y)).
+  rewrite dom_lt_flat_map_length. apply dom_lt_sum_ext. intros x Hx. apply length_map.
+Qed.
+
+(** Distinct predecessor columns fit the graph occurrence count without graph well-formedness. *)
+Lemma dom_lt_predecessor_total g targets :
+  prepared_ok g -> NoDup targets ->
+  fold_right (fun y total => length (preds g y) + total) 0 targets <= graph_e (base g).
+Proof.
+  intros Hprepared Hunique.
+  rewrite (dom_lt_sum_ext (fun y => length (preds g y))
+    (fun y => fold_right (fun x total =>
+      length (filter (Pos.eqb y) (succs (base g) x)) + total) 0 (nodes g)) targets)
+    by (intros y Hy; now apply dom_lt_preds_length).
+  rewrite dom_lt_sum_swap.
+  replace (graph_e (base g)) with
+    (fold_right (fun x total => length (succs (base g) x) + total) 0 (nodes g)) by
+    (destruct g as [[vertices adjacency] predecessors count_v count_e]; reflexivity).
+  apply dom_lt_sum_le. intros x Hx. now apply dom_lt_filter_sum_bound.
+Qed.
