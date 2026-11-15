@@ -2849,12 +2849,7 @@ Module WtoT <: WTO_ALL.
     apply wto_scoped_spec.
   Qed.
 
-  Lemma F13_partition : forall g body,
-    NoDup body ->
-    let r := wto_components (wto_scoped g (Some body)) (rev body) in
-    Permutation (concat (comps r)) body /\
-    fold_right (fun c n => source_mass g c + n) 0 (comps r) = source_mass g body.
-  Proof. Admitted. (* STUB *)
+
 
   (** Reversing component order preserves the multiset of all component vertices. *)
   Lemma components_reverse : forall (cs : list (list positive)),
@@ -3039,6 +3034,64 @@ Module WtoT <: WTO_ALL.
     - reflexivity.
     - rewrite source_mass_app, IH. reflexivity.
   Qed.
+
+  Local Opaque loopN prepared_search_trace Galois.Graph.Wto.wto_scoped.
+
+  (** Visiting a root for every listed source returns that source inventory exactly. *)
+  Lemma partition_components_total g roots :
+    NoDup (nodes g) -> (forall v, In v (nodes g) -> In v roots) ->
+    Permutation (concat (comps (wto_components g roots))) (nodes g).
+  Proof.
+    intros Hunique Hcover.
+    set (ready := scc_graph g).
+    set (chosen := filter (fun v => match trie_get v (succ (base ready)) with
+      Some _ => true | None => false end) roots).
+    assert (Hchosen : forall v, In v chosen -> In v (nodes ready)).
+    { intros v Hin. unfold chosen in Hin. apply filter_In in Hin.
+      destruct Hin as [_ Hlisted]. unfold ready in *.
+      rewrite wto_scc_root_test in Hlisted. rewrite scc_graph_nodes.
+      now apply wto_member_spec. }
+    assert (Hclosed : forall u v,
+      In u (nodes ready) -> edge (base ready) u v -> In v (nodes ready)).
+    { intros u v Hu Hedge. unfold ready. rewrite scc_graph_nodes.
+      now apply (scc_graph_closed g u). }
+    assert (Hnested : trace_stack [] (prepared_search_trace ready chosen) []).
+    { apply prepared_search_nested_closed; [apply scc_graph_counts|exact Hclosed|exact Hchosen]. }
+    pose proof (tarjan_complete_components (prepared_search_trace ready chosen)
+      (prepared_search_unique_raw ready chosen) Hnested) as Hcomponents.
+    change (Permutation (concat (rev_append
+      (tarjan_emitted (TarjanSearch.dfs ready chosen tarjan_initial)) [])) (nodes g)).
+    rewrite rev_append_rev, app_nil_r. eapply Permutation_trans; [exact Hcomponents|].
+    apply NoDup_Permutation; [apply prepared_search_unique_raw|exact Hunique|].
+    intro v. split.
+    - intro Hin. exact (wto_component_trace_listed g roots v Hin).
+    - intro Hin. apply (proj2 (prepared_search_reach_closed ready chosen
+        (scc_graph_counts g) Hclosed Hchosen v)).
+      exists v, [v]. split; [|constructor].
+      unfold chosen. apply filter_In. split; [now apply Hcover|].
+      unfold ready. rewrite wto_scc_root_test. now apply wto_member_spec.
+  Qed.
+
+  Lemma F13_partition : forall g body,
+    NoDup body ->
+    let r := wto_components (wto_scoped g (Some body)) (rev body) in
+    Permutation (concat (comps r)) body /\
+    fold_right (fun c n => source_mass g c + n) 0 (comps r) = source_mass g body.
+  Proof.
+    intros g body.
+    intro Hunique. cbn zeta.
+    pose proof (proj1 (F12_scope g body)) as Hnodes.
+    assert (Hready : NoDup (nodes (wto_scoped g (Some body)))) by (now rewrite Hnodes).
+    assert (Hroots : forall v, In v (nodes (wto_scoped g (Some body))) -> In v (rev body)).
+    { intros v Hin. rewrite Hnodes in Hin. now apply (proj1 (in_rev body v)). }
+    pose proof (partition_components_total (wto_scoped g (Some body)) (rev body)
+      Hready Hroots) as Hpartition.
+    rewrite Hnodes in Hpartition.
+    split; [exact Hpartition|].
+    rewrite components_source_mass. now apply source_mass_permutation.
+  Qed.
+
+  Local Transparent prepared_search_trace Galois.Graph.Wto.wto_scoped.
 
   (** A duplicate-free subdomain cannot have more source mass than its containing list. *)
   Lemma source_mass_subdomain : forall g first rest,
