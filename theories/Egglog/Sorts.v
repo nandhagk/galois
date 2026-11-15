@@ -583,12 +583,132 @@ Proof.
     + intro H. inversion H; subst. split; assumption.
 Qed.
 
-Definition c_sorts : N := 1. (* STUB *)
+Definition c_sorts : N := 2048.
 
 (** Checking pays for each bit of the program text once. *)
 Lemma T_check_program_le : forall V (p : program V),
   (T_check_program p <= c_sorts * N.of_nat (program_bits p + 1))%N.
-Proof. Admitted. (* STUB *)
+Proof.
+  Import Lia Tactics.
+  intros V p. unfold c_sorts.
+  assert (Hset : forall A x (a : A) tr,
+    (PTrieCode.T_set x a tr <= 9 * N.of_nat (Pos.size_nat x + 1))%N).
+  {
+    intros A x a tr. pose proof (PTrieT.replace_clock_bound A x (Some a) tr).
+    time_step.
+  }
+  assert (Hterm : forall t : term V, 1 <= term_bits t).
+  { intros [x|v]; cbn [term_bits]; lia. }
+  assert (Hhas : forall g (t : term V) s,
+    (T_has_b g t s <= 8 * N.of_nat (term_bits t))%N).
+  {
+    intros g [x|v] s; time_step;
+      unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock; time_cases; nia.
+  }
+  assert (Hhas_list : forall (ts : list (term V)) ss g,
+    (T_has_list_b g ts ss <= 16 * N.of_nat (terms_bits ts + 1))%N).
+  {
+    induction ts as [|t ts IH]; intros [|s ss] g; time_step.
+    pose proof (Hhas g t s). pose proof (IH ss g). pose proof (Hterm t).
+    unfold terms_bits in *. cbn [fold_right] in *. nia.
+  }
+  assert (Hhas_vals : forall (ts : list (term V)) g,
+    (T_has_vals_b g ts <= 16 * N.of_nat (terms_bits ts + 1))%N).
+  {
+    induction ts as [|t ts IH]; intro g; time_step.
+    pose proof (Hhas g t SVal). pose proof (IH g). pose proof (Hterm t).
+    unfold terms_bits in *. cbn [fold_right] in *. nia.
+  }
+  assert (Hhas_result : forall g out (res : option (term V)),
+    (T_has_result_b g out res <= 16 * N.of_nat (result_bits res + 1))%N).
+  {
+    intros g out [t|]; destruct out; time_step;
+      pose proof (Hhas g t SId); pose proof (Hhas g t SVal); unfold result_bits; nia.
+  }
+  assert (Hbind : forall g (t : term V) s,
+    (T_bind_b g t s <= 16 * N.of_nat (term_bits t))%N).
+  {
+    intros g [x|v] s; time_step;
+      unfold T_sort_eqb; time_cbn; rewrite ?PTrieT.trie_get_clock;
+      try pose proof (Hset sort x s g); time_cases; nia.
+  }
+  assert (Hbind_list : forall (ts : list (term V)) ss g,
+    (T_bind_list_b g ts ss <= 32 * N.of_nat (terms_bits ts + 1))%N).
+  {
+    induction ts as [|t ts IH]; intros [|s ss] g; time_step.
+    pose proof (Hbind g t s). pose proof (Hterm t).
+    destruct (bind_b g t s) as [g'|]; time_cbn.
+    - pose proof (IH ss g'). unfold terms_bits in *. cbn [fold_right] in *. nia.
+    - unfold terms_bits in *. cbn [fold_right] in *. nia.
+  }
+  assert (Hbind_result : forall g out (res : option (term V)),
+    (T_bind_result_b g out res <= 32 * N.of_nat (result_bits res + 1))%N).
+  {
+    intros g out [t|]; destruct out; time_step;
+      pose proof (Hbind g t SId); pose proof (Hbind g t SVal); unfold result_bits; nia.
+  }
+  assert (Hdecls : forall ds,
+    (T_decl_table ds <= 16 * N.of_nat
+      (S (fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds)))%N).
+  {
+    induction ds as [|d ds IH]; time_step.
+    pose proof (Hset (list sort * output)%type (name d) (arg_sorts d, out d)
+      (decl_table ds)).
+    unfold decl_bits in *. nia.
+  }
+  assert (Hquery : forall (q : list (atom V)) tb g,
+    (T_bind_query_b tb g q <= 128 * N.of_nat
+      (S (fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q)))%N).
+  {
+    induction q as [|a q IH]; intros tb g.
+    - time_step.
+    - destruct a as [f args res | op args res].
+      + time_step. rewrite PTrieT.trie_get_clock.
+        destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+        pose proof (Hbind_list args ss g).
+        destruct (bind_list_b g args ss) as [g1|]; time_cbn; [|nia].
+        pose proof (Hbind_result g1 out res).
+        destruct (bind_result_b g1 out res) as [g2|]; time_cbn; [|nia].
+        pose proof (IH tb g2). nia.
+      + time_step.
+  }
+  assert (Hactions : forall (acts : list (action V)) tb g,
+    (T_check_actions_b tb g acts <= 128 * N.of_nat
+      (S (fold_right (fun a n => (action_bits a + n)%nat) 0%nat acts)))%N).
+  {
+    induction acts as [|a acts IH]; intros tb g.
+    - time_step.
+    - destruct a as [x f args | f args res | t u | x op args].
+      + time_step. rewrite PTrieT.trie_get_clock.
+        destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+        destruct out; time_cbn; try nia.
+        pose proof (Hhas_list args ss g). pose proof (Hset sort x SId g).
+        pose proof (IH tb (PTrieCode.set x SId g)). nia.
+      + time_step. rewrite PTrieT.trie_get_clock.
+        destruct (trie_get f tb) as [[ss out]|]; time_cbn; [|nia].
+        pose proof (Hhas_list args ss g). pose proof (Hhas_result g out res).
+        pose proof (IH tb g). nia.
+      + time_step.
+      + time_step.
+  }
+  assert (Hrule : forall (r : rule V) tb,
+    (T_check_rule tb r <= 512 * N.of_nat (rule_bits r))%N).
+  {
+    intros [q acts] tb. pose proof (Hquery q tb Empty).
+    time_step.
+  }
+  assert (Hrules : forall (rs : list (rule V)) tb,
+    (T_check_rules tb rs <= 1024 * N.of_nat
+      (S (fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs)))%N).
+  {
+    induction rs as [|r rs IH]; intro tb; time_step.
+    pose proof (Hrule r tb). pose proof (IH tb).
+    assert (1 <= rule_bits r) by (unfold rule_bits; lia). nia.
+  }
+  pose proof (Hdecls (decls V p)).
+  pose proof (Hrules (rules V p) (decl_table (decls V p))).
+  time_step. unfold program_bits. nia.
+Qed.
 
 (** A match of a well-sorted query binds every variable of its context to a cell of its sort. *)
 Lemma matches_rule_env : forall V prim (w : view (V := V)) sorts kinds (r : rule V) g s,
@@ -737,7 +857,8 @@ Proof.
 Qed.
 
 (** The result checker reflects the declared output sort. *)
-Lemma has_result_b_spec : forall V tr g out (res : option (term V)), (forall x, trie_get x tr = g x) ->
+Lemma has_result_b_spec : forall V tr g out (res : option (term V)),
+  (forall x, trie_get x tr = g x) ->
   has_result_b tr out res = true <-> has_result g out res.
 Proof.
   intros V.
