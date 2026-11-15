@@ -153,6 +153,72 @@ End CompileCode.
 Module Compile (V : VALUE) <: COMPILE V.
   Include CompileCode V.
   Include COMPILE_SPEC V.
+
+  (** A cell occurs when some stored row contains it in its key or output. *)
+  Definition row_cell (w : Model.view (V := V.t)) (c : cell V.t) : Prop :=
+    exists f k o, row w f k o /\ In c (k ++ option_list o).
+
+  (** Equal identifiers occurring in canonical rows are the same stored cell. *)
+  Lemma canonical_cell_unique : forall w c d, canonical_view w ->
+    row_cell w c -> row_cell w d -> cell_rel (same w) c d -> c = d.
+  Proof.
+    intros w c d [_ [_ [_ [_ Hcanonical]]]] Hc Hd Hsame.
+    destruct Hsame as [i j Hij | v]; [| reflexivity].
+    destruct Hc as [f [k [o [Hrow Hin]]]].
+    destruct Hd as [f' [k' [o' [Hrow' Hin']]]].
+    f_equal. exact (Hcanonical f k o f' k' o' i j Hrow Hrow' Hin Hin' Hij).
+  Qed.
+
+  (** Every key cell occurs in the row that owns that key. *)
+  Lemma row_key_cells : forall w f k o, row w f k o -> Forall (row_cell w) k.
+  Proof.
+    intros w f k o Hrow. apply Forall_forall. intros c Hin.
+    exists f, k, o. split; [exact Hrow |]. apply in_or_app. now left.
+  Qed.
+
+  (** Related canonical keys agree cell by cell. *)
+  Lemma canonical_keys_unique : forall w k k', canonical_view w ->
+    Forall (row_cell w) k -> Forall (row_cell w) k' ->
+    Forall2 (cell_rel (same w)) k k' -> k = k'.
+  Proof.
+    intros w k k' Hcanonical Hleft Hright Hrelated.
+    induction Hrelated as [| c d cs ds Hcd Htail IH].
+    - reflexivity.
+    - inversion Hleft as [| c' cs' Hc Hcs]; subst.
+      inversion Hright as [| d' ds' Hd Hds]; subst.
+      f_equal.
+      + exact (canonical_cell_unique w c d Hcanonical Hc Hd Hcd).
+      + exact (IH Hcs Hds).
+  Qed.
+
+  (** A represented expression determines its cell up to identifier equality. *)
+  Lemma represents_unique : forall w c e, canonical_view w -> represents w c e ->
+    forall d, represents w d e -> cell_rel (same w) c d.
+  Proof.
+    intros w c e Hcanonical Hrep.
+    destruct Hcanonical as [Hrefl [Hsym [Htrans [Hfunctional Hstored]]]].
+    assert (Hcanonical : canonical_view w) by (repeat split; assumption).
+    induction Hrep as [v | f k i j args Hrow Hsame Hargs IHargs].
+    - intros d Hother. inversion Hother; subst. constructor.
+    - intros d Hother.
+      inversion Hother as [v | f' k' i' j' args' Hrow' Hsame' Hargs']; subst.
+      assert (Hrelated : Forall2 (cell_rel (same w)) k k').
+      { clear Hrow Hsame Hrow' Hsame' Hother. revert k' Hargs'.
+        induction IHargs as [| c0 e0 cs es Hrep0 IHhead Hrest IHrest IH];
+          intros k' Hargs'.
+        - inversion Hargs'; constructor.
+        - inversion Hargs' as [| d0 e1 ds es' Hhead Htail]; subst.
+          constructor; [exact (IHhead d0 Hhead) | exact (IH ds Htail)]. }
+      assert (Hkeys : k = k').
+      { eapply canonical_keys_unique; [exact Hcanonical | | | exact Hrelated];
+          eapply row_key_cells; eassumption. }
+      subst k'.
+      assert (Houtput : j = j').
+      { pose proof (Hfunctional f k _ _ Hrow Hrow') as Heq. congruence. }
+      subst j'. constructor. eapply Htrans; [exact Hsame |].
+      exact (Hsym i' j Hsame').
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
