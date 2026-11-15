@@ -5982,6 +5982,147 @@ Module SearchResourceT (V : VALUE_T) (C : COST_T V) (Q : PQ_T).
   Qed.
 
 
+  (** One registration consumes one active frame's reserve and preserves the stored potential. *)
+  Lemma T_search_resume_amort : forall DB rs P w fresh frame
+      (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.fits w (search_queue s) -> Resources.search_load s < P ->
+    Facts.search_frame_valid rs (search_final_costs s) frame ->
+    search_syntax_width rs w -> Resources.search_rows_width rs (search_final_costs s) w ->
+    (fresh = true \/ search_frame_awake (search_final_costs s) frame) ->
+    (T_search_resume frame s + 1 + search_potential P w (search_resume frame s) <=
+      search_potential P w s + search_frame_credit P w frame +
+      if fresh then search_work_unit w else 0)%N.
+  Proof.
+    intros DB rs P w fresh [[[f k] i] todo acc] s
+      Hwf Hfits Hload Hframe Hsyntax Hwidth Hfresh.
+    destruct (search_frame_syntax rs (search_final_costs s) _ w Hframe Hsyntax)
+      as [Houtput Hbound].
+    destruct (trie_get i (search_final_costs s)) as [n|] eqn:Hget.
+    - assert (Hsame : search_resume (ExtractionFrame (f, k, i) todo acc) s = s).
+      { unfold search_resume. cbn [frame_row]. now rewrite Hget. }
+      rewrite Hsame.
+      pose proof (T_search_resume_final_credit DB P w f k i todo acc n s Hget Houtput)
+        as Hcredit. lia.
+    - destruct (search_scan (search_final_costs s) acc todo)
+        as [[child [rest values]]|values] eqn:Hscan.
+      + destruct (Facts.search_frame_wait rs (search_final_costs s) _ child rest values
+          Hframe Hscan) as [Hparked [Hmissing [tail Hhead]]].
+        pose proof (search_frame_head_width rs (search_final_costs s) _ w child tail
+          Hparked Hsyntax Hhead) as Hchild.
+        assert (Hprogress : fresh = true \/ length rest < length todo).
+        { destruct Hfresh as [Htrue|Hawake]; [now left|right].
+          exact (search_frame_awake_progress _ _ _ _ _ Hawake Hscan). }
+        pose proof (T_search_resume_wait_credit DB P w fresh f k i todo acc child rest values
+          s Hget Hscan Hbound Houtput Hchild Hprogress) as Hcredit.
+        rewrite (search_resume_wait_state DB f k i todo acc child rest values s Hget Hscan),
+          search_park_potential. lia.
+      + destruct (Facts.search_frame_ready rs (search_final_costs s) _ values Hframe Hscan)
+          as [Hknown Hvalues].
+        cbn [frame_row fst snd] in Hknown, Hvalues.
+        pose proof (Hwidth f k i (proj1 Hframe) Hknown) as Hentry.
+        rewrite <- Hvalues in Hentry.
+        assert (Hpending : Q.pending (search_queue s) < P)
+          by (unfold Resources.search_load in Hload; lia).
+        pose proof (search_frame_length rs (search_final_costs s) _ Hframe) as Hlength.
+        pose proof (T_search_resume_ready_credit DB P w f k i todo acc values s
+          Hwf Hfits Hpending Hget Hscan Hbound Hlength Hentry) as Hcredit.
+        rewrite (search_resume_ready_state DB f k i todo acc values s Hget Hscan).
+        unfold search_potential. rewrite Facts.search_offer_waiters. lia.
+  Qed.
+
+  (** Registering an active list telescopes its frame reserves and heap credit. *)
+  Lemma T_search_resume_list_amort : forall DB rs P w fresh frames
+      (s : extraction_state V.t DB Q.t),
+    Q.wf (search_queue s) -> Q.fits w (search_queue s) ->
+    length frames + Resources.search_load s <= P ->
+    Forall (Facts.search_frame_valid rs (search_final_costs s)) frames ->
+    search_syntax_width rs w -> Resources.search_rows_width rs (search_final_costs s) w ->
+    (fresh = true \/ Forall (search_frame_awake (search_final_costs s)) frames) ->
+    (T_search_resume_list frames s + search_potential P w (search_resume_list frames s) <=
+      search_potential P w s + search_frames_credit P w frames +
+      (if fresh then search_work_unit w else 0) * N.of_nat (length frames) + 1)%N.
+  Proof.
+    intros DB rs P w fresh frames. induction frames as [|frame frames IH];
+      intros s Hwf Hfits Hcap Hframes Hsyntax Hwidth Hfresh.
+    - time_unfold @T_search_resume_list. time_simpl. time_cbn.
+      cbn [search_resume_list length]. rewrite search_frames_credit_nil. nia.
+    - inversion Hframes as [|entry tail Hframe Hrest]; subst entry tail.
+      assert (Hhead : fresh = true \/ search_frame_awake (search_final_costs s) frame).
+      { destruct Hfresh as [Htrue|Hawake]; [now left|right].
+        inversion Hawake; assumption. }
+      assert (Htail : fresh = true \/
+        Forall (search_frame_awake (search_final_costs s)) frames).
+      { destruct Hfresh as [Htrue|Hawake]; [now left|right].
+        inversion Hawake; assumption. }
+      pose proof (T_search_resume_amort DB rs P w fresh frame s Hwf Hfits ltac:(cbn in Hcap; lia)
+        Hframe Hsyntax Hwidth Hhead) as Hhead_time.
+      pose proof (Resources.search_resume_load DB frame s Hwf) as Hload.
+      change (Resources.search_load (search_resume frame s) <= S (Resources.search_load s))
+        in Hload.
+      destruct (Facts.search_resume_stable DB frame s)
+        as [Hdb [Hrows [Hcount [Hcosts Hfinals]]]].
+      change (search_final_costs (search_resume frame s) = search_final_costs s) in Hcosts.
+      assert (Hnext_frames : Forall
+        (Facts.search_frame_valid rs (search_final_costs (search_resume frame s))) frames)
+        by (now rewrite Hcosts).
+      assert (Hnext_width : Resources.search_rows_width rs
+        (search_final_costs (search_resume frame s)) w) by (now rewrite Hcosts).
+      assert (Hnext_fresh : fresh = true \/
+        Forall (search_frame_awake (search_final_costs (search_resume frame s))) frames)
+        by (now rewrite Hcosts).
+      specialize (IH (search_resume frame s) (Resources.search_resume_wf DB frame s Hwf)
+        (Resources.search_resume_fits DB rs w frame s Hwf Hfits Hframe Hwidth)
+        ltac:(cbn in Hcap; lia) Hnext_frames Hsyntax Hnext_width Hnext_fresh).
+      time_unfold @T_search_resume_list. time_simpl. time_cbn.
+      cbn [search_resume_list length].
+      rewrite search_frames_credit_cons. rewrite ?Nat2N.inj_succ. nia.
+  Qed.
+
+  (** Initial state construction and frame mapping add only a linear driver overhead. *)
+  Lemma T_search_initial_overhead : forall DB (db : DB) rs,
+    (T_search_initial db rs <=
+      T_search_resume_list (map search_new_frame rs) (search_start db rs) +
+      8 * N.of_nat (length rs + 1))%N.
+  Proof.
+    intros DB db rs.
+    assert (Hnew : forall row : search_row V.t, (T_search_new_frame row <= 3)%N).
+    { intros [[f k] i]. time_unfold @T_search_new_frame. time_simpl. time_cbn. lia. }
+    pose proof (Argent.Std.ListDef.T_map_le (@search_new_frame V.t)
+      (fun row : search_row V.t => T_search_new_frame row) 3%N rs Hnew) as Hmap.
+    pose proof (Argent.Std.Datatypes.T_length_le rs) as Hlength.
+    time_unfold @T_search_initial. time_simpl. time_cbn.
+    time_unfold @T_search_start. time_simpl. time_cbn.
+    rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** Initialization funds every parked frame and the queue from one reserve per source row. *)
+  Lemma T_search_initial_amort : forall DB (db : DB) rs w,
+    search_syntax_width rs w -> Resources.search_rows_width rs Empty w ->
+    (T_search_initial db rs +
+      search_potential (length rs) w (search_initial db rs) <=
+      search_frames_credit (length rs) w (map search_new_frame rs) +
+      search_work_unit w * N.of_nat (length rs) + 16 * N.of_nat (length rs + 1))%N.
+  Proof.
+    intros DB db rs w Hsyntax Hwidth.
+    assert (Hstart : Resources.search_load (search_start db rs) = 0).
+    { unfold Resources.search_load, Resources.search_waiter_count, search_trie_weight,
+        search_entries_weight, search_start.
+      cbn [search_waiters search_queue PTrieCode.elements PTrieCode.fold PTrieCode.fold_path
+        rev_append fold_right]. now rewrite Q.pending_empty. }
+    assert (Hframes : Forall (Facts.search_frame_valid rs Empty) (map search_new_frame rs)).
+    { apply Forall_forall. intros frame Hin. apply in_map_iff in Hin.
+      destruct Hin as [row [<- Hrow]]. now apply Facts.search_frame_new. }
+    pose proof (T_search_resume_list_amort DB rs (length rs) w true
+      (map search_new_frame rs) (search_start db rs) Q.wf_empty (Q.fits_empty w)
+      ltac:(rewrite length_map, Hstart; lia) Hframes Hsyntax Hwidth (or_introl eq_refl))
+      as Hregistered.
+    rewrite length_map, search_start_potential in Hregistered.
+    pose proof (T_search_initial_overhead DB db rs) as Hoverhead.
+    unfold search_initial. cbn beta iota zeta in Hregistered.
+    rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+
 End SearchResourceT.
 
 (** A finite bound on distinct finalisations supplies a terminating unary loop. *)
