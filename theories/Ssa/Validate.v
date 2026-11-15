@@ -167,6 +167,13 @@ Proof.
   - cbn [lookup find_block]; destruct (Pos.eqb b id); auto.
 Qed.
 
+Lemma val_row_lookup {A} : forall (m : ptrie (list (positive * A))) b x,
+  lookup x (index_row m b) =
+    match trie_get b m with Some row => lookup x row | None => None end.
+Proof.
+  intros m b x; unfold index_row; destruct (trie_get b m); reflexivity.
+Qed.
+
 Lemma val_set_member : forall xs x, val_mem (val_set xs) x = true <-> In x xs.
 Proof.
   induction xs as [|y rest IH]; intro x; cbn [val_set].
@@ -1305,7 +1312,45 @@ Module ValidateT (O : OPS)
     read_vars ss sx = Some sa -> read_vars si ix = Some ia ->
     agrees rho (cert_live c target) ss si ->
     state_sim p s c (target, sa, ss) (target, ia, si).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s c b target rho ss si sa ia sb ib sx ix choice _ Hedge Hsb Hib
+      Hse Hie Hreads Hreadi Hagree.
+    unfold check_edge in Hedge; pose proof (tables_agree p s c b) as [Hsource [Htarget _]].
+    rewrite Hsource, Htarget, Hib, Hsb in Hedge.
+    apply andb_true_iff in Hedge as [Hyes Hno].
+    assert (Harm : check_arm (tables p s c) target rho
+      (val_set (map (fun i => fst (fst i)) (code _ _ _ ib) ++
+        index_row (cert_rows (tables p s c)) b)) (term _ _ _ ib) (term _ _ _ sb) choice = true).
+    { destruct choice; assumption. }
+    unfold check_arm in Harm; rewrite Hie, Hse in Harm; destruct ix; [|discriminate].
+    cbn [read_vars] in Hreadi; injection Hreadi as Heq; subst ia.
+    rewrite !Pos.eqb_refl in Harm; cbn in Harm; unfold check_target in Harm.
+    destruct (trie_get target (source_bodies (tables p s c))) as [it|] eqn:Hit;
+      [|discriminate].
+    destruct (trie_get target (target_bodies (tables p s c))) as [st|] eqn:Hst;
+      [|discriminate].
+    destruct (params _ _ _ it) eqn:Hip; [|discriminate].
+    destruct (val_bind_symbols (params _ _ _ st) sx Empty) as [bound|] eqn:Hbound;
+      [|discriminate].
+    apply andb_true_iff in Harm as [_ Hlive].
+    destruct (val_bind_symbols_sound _ _ _ _ ss ss sa Hbound Hreads)
+      as [entered [Hbind Hvalues]].
+    { intro y; unfold val_symbol; rewrite PTrie.get_empty; reflexivity. }
+    unfold state_sim; split; [reflexivity|].
+    pose proof (tables_agree p s c target) as [Hsrc [Htgt [Henv Hrow]]].
+    rewrite Hsrc in Hit; rewrite Htgt in Hst; rewrite Hit, Hst, Hbind, Hip.
+    cbn [bind_vars]; intros x Hin; rewrite forallb_forall in Hlive.
+    assert (Hmember : In x (index_row (cert_rows (tables p s c)) target)).
+    { rewrite Hrow; exact Hin. }
+    specialize (Hlive x Hmember); apply andb_true_iff in Hlive as [_ Hmap].
+    rewrite !val_index_lookup in Hmap.
+    destruct (lookup x (index_row (cert_envs (tables p s c)) target)) as [y|] eqn:Hnext;
+      [|discriminate]; destruct (lookup x rho) as [z|] eqn:Hcurrent; [|discriminate].
+    apply Pos.eqb_eq in Hmap; destruct (Hagree x Hin) as [v [Hv Heq]].
+    rewrite Hcurrent in Hv; injection Hv as Heqv; subst v; exists y; split.
+    - rewrite val_row_lookup in Hnext; unfold cert_env; rewrite <- Henv; exact Hnext.
+    - rewrite Hvalues, Hmap; exact Heq.
+  Qed.
   Lemma F4_block_sim : forall p s c ss si,
     imp_form p -> check p s c = true -> state_sim p s c ss si ->
     outcome_sim p s c (step O.eval O.test s ss) (step O.eval O.test p si).
@@ -1317,7 +1362,19 @@ Module ValidateT (O : OPS)
     bind_vars (inputs _ _ _ s) ins [] = Some ss ->
     bind_vars (inputs _ _ _ p) ins [] = Some si ->
     state_sim p s c (entry _ _ _ s, [], ss) (entry _ _ _ p, [], si).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p s c ins ss si _ Hcheck Hss Hsi.
+    destruct (entry_ready p s c ins si Hcheck Hsi) as [entered [Hentered Hready]].
+    rewrite Hss in Hentered; injection Hentered as Heq; subst entered.
+    destruct Hready as [Hid Hready]; unfold state_sim; split; [exact Hid|]; cbn in Hready.
+    destruct (find_block (entry _ _ _ s) (blocks _ _ _ s)) as [sb|]; [|contradiction].
+    destruct (find_block (entry _ _ _ p) (blocks _ _ _ p)) as [ib|]; [|contradiction].
+    destruct Hready as [es [ei [Hbs [Hbi [Hagree _]]]]]; rewrite Hbs, Hbi.
+    intros x Hin; pose proof (tables_agree p s c (entry _ _ _ p)) as [_ [_ [Henv Hrow]]].
+    rewrite <- Hrow in Hin; destruct (Hagree x Hin) as [y [Hmap Hvalue]].
+    exists y; split; [|exact Hvalue]; unfold cert_env; rewrite <- Henv.
+    rewrite val_row_lookup in Hmap; exact Hmap.
+  Qed.
   Lemma F6_input_arity : forall p s c, check p s c = true ->
     length (inputs _ _ _ s) = length (inputs _ _ _ p).
   Proof.
