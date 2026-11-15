@@ -1146,3 +1146,15 @@ Proof.
     + subst b. left. eapply tree_anc_step; eassumption.
     + rewrite Hvp in Hvq. injection Hvq as <-. now apply IH.
 Qed.
+
+(** An acyclic parent map has antisymmetric ancestry. *)
+Lemma dom_anc_wf_antisym m :
+  well_founded (fun u v => trie_get v m = Some u) ->
+  forall a b, tree_anc m a b -> tree_anc m b a -> a = b.
+Proof.
+  intros Hwf a b Hab Hba.
+  destruct (dom_cert_anc_cases m b a Hba) as [Heq|[p [Hparent Hbp]]].
+  - symmetry. exact Heq.
+  - exfalso. apply (dom_map_no_return m p (Hwf p) a Hparent).
+    eapply dom_cert_anc_trans; eassumption.
+Qed.
