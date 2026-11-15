@@ -7,7 +7,7 @@
 From Stdlib Require Import List NArith PArith Lia Arith Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data Spec DigraphSig SearchSig.
+From Galois.Graph Require Import Data Spec DigraphSig Digraph SearchSig.
 Import List.ListNotations.
 
 Definition search_step (g : digraph) (s : search_state) : search_state + (list event) :=
@@ -2138,6 +2138,245 @@ Proof.
     rewrite rev_append_rev, app_nil_r, length_rev.
     unfold T_base, T_search_events. time_cbn. nia.
   - unfold T_base. time_cbn. nia.
+Qed.
+
+(** A machine path ends at the corresponding iterate of the absorbing transition. *)
+Lemma search_path_last_state g st states last :
+  search_machine_path (search_step g) st states last ->
+  Nat.iter (length states) (search_advance g) st = last.
+Proof.
+  intro Hpath. induction Hpath as [st|st next states last Hstep Hpath IH]; [reflexivity|].
+  cbn [length]. rewrite Nat.iter_succ_r.
+  assert (Hadvance : search_advance g st = next) by (unfold search_advance; now rewrite Hstep).
+  now rewrite Hadvance.
+Qed.
+
+(** Every indexed position before the end of a path is a continuing step. *)
+Lemma search_path_continues g st states last :
+  search_machine_path (search_step g) st states last ->
+  forall i, i < length states -> exists next,
+    search_step g (Nat.iter i (search_advance g) st) = inl next.
+Proof.
+  intro Hpath. induction Hpath as [st|st next states last Hstep Hpath IH]; intros i Hi.
+  - cbn [length] in Hi. lia.
+  - destruct i as [|i].
+    + exists next. exact Hstep.
+    + rewrite Nat.iter_succ_r.
+      assert (Hadvance : search_advance g st = next) by (unfold search_advance; now rewrite Hstep).
+      rewrite Hadvance. apply IH. cbn [length] in Hi. lia.
+Qed.
+
+(** Position lookup in a machine path agrees with iteration from its initial state. *)
+Lemma search_path_nth_state g st states last :
+  search_machine_path (search_step g) st states last ->
+  forall i current, nth_error states i = Some current ->
+    current = Nat.iter i (search_advance g) st.
+Proof.
+  intro Hpath. induction Hpath as [st|st next states last Hstep Hpath IH]; intros i current Hnth.
+  - destruct i; discriminate Hnth.
+  - destruct i as [|i].
+    + cbn [nth_error] in Hnth. injection Hnth as Heq. subst current. reflexivity.
+    + cbn [nth_error] in Hnth. rewrite Nat.iter_succ_r.
+      assert (Hadvance : search_advance g st = next) by (unfold search_advance; now rewrite Hstep).
+      rewrite Hadvance. now apply IH.
+Qed.
+
+(** A pointwise clock bound sums linearly along a finite path. *)
+Lemma search_sum_clock_bound {St : Type} (T_step : St -> N) states K :
+  Forall (fun st => (T_step st <= K)%N) states ->
+  (fold_right N.add 0%N (map T_step states) <= K * N.of_nat (length states))%N.
+Proof.
+  intro Hbound. induction Hbound as [|st states Hstep Hbound IH].
+  - cbn [map fold_right length]. lia.
+  - cbn [map fold_right length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
+(** Search path length is bounded by its returned trace and its administrative tasks. *)
+Lemma prepared_search_path_length g roots states last :
+  search_machine_path (search_step (base g))
+    (SearchState (map SearchRoot roots) Empty []) states last ->
+  length states <= N.to_nat (search_budget g roots) ->
+  length states <= length (prepared_search_trace g roots) + length roots +
+    length (entered (prepared_search_trace g roots)).
+Proof.
+  intros Hpath Hfuel.
+  pose proof (search_path_continues (base g) _ states last Hpath) as Hgo.
+  pose proof (search_iter_steps_bound (base g) roots (length states) Hgo) as Hcount.
+  destruct (prepared_search_iter_prefix g roots (length states) Hfuel) as [suffix Hprefix].
+  rewrite Hprefix, search_entered_app, !length_app, length_rev. lia.
+Qed.
+
+(** Stopping anywhere in the allowed prefix pays at most one returned-trace reversal. *)
+Lemma prepared_search_stop_clock g roots n st es :
+  n <= N.to_nat (search_budget g roots) ->
+  Nat.iter n (search_advance (base g)) (SearchState (map SearchRoot roots) Empty []) = st ->
+  search_step (base g) st = inr es ->
+  (1 + T_search_step (base g) st <=
+    8 * N.of_nat (length (prepared_search_trace g roots) + 1))%N.
+Proof.
+  intros Hfuel Hstate Hstop.
+  destruct (prepared_search_iter_prefix g roots n Hfuel) as [suffix Hprefix].
+  rewrite Hstate in Hprefix.
+  pose proof (search_stop_clock (base g) st es Hstop) as Hclock.
+  destruct (search_stop_events (base g) st es Hstop) as [Hevents Htasks].
+  rewrite Hprefix, length_app, length_rev.
+  rewrite Hevents, length_rev in Hclock. lia.
+Qed.
+
+(** Accessibility-loop clocks are monotone in their callback clocks. *)
+Lemma search_accessibility_clock_mono {St Out : Type} (lt : St -> St -> Prop)
+    (step : forall st, {next : St | lt next st} + Out) T_first T_second :
+  (forall st, (T_first st <= T_second st)%N) -> forall st (Hacc : Acc lt st),
+  (T_loop lt step T_first st Hacc <= T_loop lt step T_second st Hacc)%N.
+Proof.
+  intros Hmono st Hacc. induction Hacc as [st Hacc IH] using Acc_ind_dep.
+  time_unfold @T_loop. cbn [Acc_inv]. destruct (step st) as [[next Hlt]|result].
+  - specialize (IH next Hlt). specialize (Hmono st). lia.
+  - specialize (Hmono st). lia.
+Qed.
+
+Lemma search_binary_step_clock_mono {St Out : Type} (step : St -> St + Out)
+    T_first T_second : (forall st, (T_first st <= T_second st)%N) -> forall fs,
+  (T_loopN_step step T_first fs <= T_loopN_step step T_second fs)%N.
+Proof.
+  intros Hmono [[|p] st]; time_unfold @T_loopN_step; [lia|].
+  specialize (Hmono st). destruct (step st); lia.
+Qed.
+
+(** Raising callback costs raises the complete binary-fuel loop cost. *)
+Lemma search_binary_clock_mono {St Out : Type} (step : St -> St + Out)
+    T_first T_second : (forall st, (T_first st <= T_second st)%N) -> forall fuel st,
+  (T_loopN step T_first fuel st <= T_loopN step T_second fuel st)%N.
+Proof.
+  intros Hmono fuel st. time_unfold @T_loopN. apply N.add_le_mono_l.
+  apply search_accessibility_clock_mono. now apply search_binary_step_clock_mono.
+Qed.
+
+(** The chosen per-step rate pays trie operations and all local dispatch overhead. *)
+Definition search_step_rate w : N :=
+  (128 * (PTrieT.c_trie + 1) * N.of_nat (w + 1))%N.
+
+Lemma search_step_rate_positive w : (1 <= search_step_rate w)%N.
+Proof.
+  unfold search_step_rate. rewrite Nat2N.inj_add. nia.
+Qed.
+
+(** The actual binary run costs only its trace-sized path, one reversal and fuel bits. *)
+Lemma prepared_search_loop_clock g roots :
+  (T_loopN (search_step (base g)) (fun st => 1 + T_search_step (base g) st)%N
+      (search_budget g roots) (SearchState (map SearchRoot roots) Empty []) <=
+    c_loopN * (search_step_rate
+        (search_trace_width (base g) roots (prepared_search_trace g roots)) *
+      N.of_nat (length (prepared_search_trace g roots) + length roots +
+        length (entered (prepared_search_trace g roots)) + 1) +
+      8 * N.of_nat (length (prepared_search_trace g roots) + 1) +
+      N.of_nat (N.size_nat (search_budget g roots)) + 1))%N.
+Proof.
+  destruct (search_loop_trace_clock (search_step (base g))
+    (fun st => (1 + T_search_step (base g) st)%N) (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty []))
+    as [states [last [Hpath [Hfuel Hclock]]]].
+  pose proof (prepared_search_path_length g roots states last Hpath Hfuel) as Hlength.
+  assert (Hcost : Forall (fun st => (1 + T_search_step (base g) st <=
+      search_step_rate (search_trace_width (base g) roots (prepared_search_trace g roots)))%N)
+    states).
+  { apply Forall_forall. intros st Hin. apply In_nth_error in Hin.
+    destruct Hin as [i Hnth].
+    assert (Hi : i < length states).
+    { apply nth_error_Some. rewrite Hnth. discriminate. }
+    pose proof (search_path_nth_state (base g) _ states last Hpath i st Hnth) as Hstate.
+    destruct (search_path_continues (base g) _ states last Hpath i Hi) as [next Hstep].
+    rewrite <- Hstate in Hstep.
+    assert (Hindex : i <= N.to_nat (search_budget g roots)) by lia.
+    pose proof (prepared_search_tasks_width g roots i Hindex) as Hwidth.
+    rewrite <- Hstate in Hwidth.
+    pose proof (search_step_clock (base g) st next
+      (search_trace_width (base g) roots (prepared_search_trace g roots)) Hwidth Hstep) as Hstepcost.
+    unfold search_step_rate. lia. }
+  pose proof (search_sum_clock_bound (fun st => (1 + T_search_step (base g) st)%N)
+    states _ Hcost) as Hsum.
+  assert (Hstop : (match search_step (base g) last with
+      | inl _ => 0 | inr _ => 1 + T_search_step (base g) last end <=
+      8 * N.of_nat (length (prepared_search_trace g roots) + 1))%N).
+  { destruct (search_step (base g) last) as [next|es] eqn:Hlast; [lia|].
+    eapply prepared_search_stop_clock; [exact Hfuel| |exact Hlast].
+    eapply search_path_last_state. exact Hpath. }
+  pose proof (search_step_rate_positive
+    (search_trace_width (base g) roots (prepared_search_trace g roots))) as Hpositive.
+  clear Hcost Hpath Hfuel. unfold c_loopN. rewrite !Nat2N.inj_add in *.
+  nia.
+Qed.
+
+(** Adding two positive values needs at most the sum of their bit widths. *)
+Lemma search_positive_add_size p q :
+  Pos.size_nat (p + q) <= Pos.size_nat p + Pos.size_nat q.
+Proof.
+  apply Pos.size_nat_least. rewrite Pos2Nat.inj_add, Nat.pow_add_r.
+  pose proof (Pos.size_nat_upper p) as Hp. pose proof (Pos.size_nat_upper q) as Hq.
+  pose proof (Pos2Nat.is_pos p) as Hpp. pose proof (Pos2Nat.is_pos q) as Hqp. nia.
+Qed.
+
+Lemma search_N_add_size a b : N.size_nat (a + b) <= N.size_nat a + N.size_nat b.
+Proof.
+  destruct a as [|p], b as [|q]; cbn [N.add N.size_nat]; try lia.
+  apply search_positive_add_size.
+Qed.
+
+Lemma search_positive_size_value p : Pos.size_nat p <= Pos.to_nat p.
+Proof.
+  induction p as [p IH|p IH|]; cbn [Pos.size_nat];
+    rewrite ?Pos2Nat.inj_xI, ?Pos2Nat.inj_xO, ?Pos2Nat.inj_1;
+    try pose proof (Pos2Nat.is_pos p); lia.
+Qed.
+
+Lemma search_N_size_value n : N.size_nat n <= N.to_nat n.
+Proof.
+  destruct n as [|p]; [reflexivity|]. apply search_positive_size_value.
+Qed.
+
+Lemma search_N_double_size n : N.size_nat (N.double n) <= N.size_nat n + 1.
+Proof.
+  destruct n; cbn [N.double N.size_nat Pos.size_nat]; lia.
+Qed.
+
+(** The binary budget's bit width charges the caches and the supplied root count once. *)
+Lemma search_budget_size g roots :
+  N.size_nat (search_budget g roots) <=
+    N.size_nat (nv g) + N.size_nat (ne g) + length roots + 3.
+Proof.
+  pose proof (search_N_add_size (nv g) (ne g)) as Hab.
+  pose proof (search_N_add_size (nv g + ne g) (N.of_nat (length roots))) as Hroots.
+  pose proof (search_N_add_size (nv g + ne g + N.of_nat (length roots)) 1) as Hone.
+  pose proof (search_N_size_value (N.of_nat (length roots))) as Hrootbits.
+  pose proof (search_N_double_size (nv g + ne g + N.of_nat (length roots) + 1)) as Hdouble.
+  pose proof (search_N_double_size (N.double
+    (nv g + ne g + N.of_nat (length roots) + 1))) as Htwice.
+  unfold search_budget. cbn [N.size_nat Pos.size_nat] in Hone. lia.
+Qed.
+
+Lemma search_double_clock n : (N.T_double n <= 1)%N.
+Proof.
+  destruct n; time_step.
+Qed.
+
+(** Building the binary budget is linear in root count and cached bit widths. *)
+Lemma search_budget_clock g roots :
+  (T_search_budget g roots <=
+    32 * N.of_nat (length roots + N.size_nat (nv g) + N.size_nat (ne g) + 1))%N.
+Proof.
+  pose proof (Datatypes.T_length_le roots) as Hlength.
+  pose proof (graph_of_nat_time (length roots)) as Hcount.
+  pose proof (N.T_add_le (nv g) (ne g)) as Hfirst.
+  pose proof (N.T_add_le (nv g + ne g) (N.of_nat (length roots))) as Hsecond.
+  pose proof (N.T_add_le (nv g + ne g + N.of_nat (length roots)) 1) as Hthird.
+  pose proof (search_N_add_size (nv g) (ne g)) as Hsizefirst.
+  pose proof (search_N_add_size (nv g + ne g) (N.of_nat (length roots))) as Hsizesecond.
+  pose proof (search_N_size_value (N.of_nat (length roots))) as Hrootbits.
+  pose proof (search_double_clock (nv g + ne g + N.of_nat (length roots) + 1)) as Hdouble.
+  pose proof (search_double_clock (N.double
+    (nv g + ne g + N.of_nat (length roots) + 1))) as Htwice.
+  time_unfold @T_search_budget. unfold T_nv, T_ne.
+  cbn [N.size_nat Pos.size_nat] in Hthird. rewrite !Nat2N.inj_add in *. nia.
 Qed.
 
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
