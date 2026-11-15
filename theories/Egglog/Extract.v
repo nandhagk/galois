@@ -1009,6 +1009,507 @@ Proof.
   apply dag_unfold_complete; [exact (proj1 (dag_ordered_names V [] g Hordered)) |exact Hrep].
 Qed.
 
+(** Key syntax charges each cell's encoded width and its list cell. *)
+Definition dag_key_bits {V} (encode : V -> positive) (k : list (cell V)) : nat :=
+  fold_right (fun c n => cell_bits encode c + 1 + n) 0 k.
+
+(** Key syntax always pays for the key's length. *)
+Lemma dag_key_length : forall V encode (k : list (cell V)),
+  length k <= dag_key_bits encode k.
+Proof.
+  intros V encode k. induction k as [|c k IH]; unfold dag_key_bits in *;
+    cbn [length fold_right] in *; lia.
+Qed.
+
+(** Membership checks follow one trie path for the queried identifier. *)
+Lemma T_dag_seen_le : forall seen i,
+  (T_dag_seen seen i <= 8 * N.of_nat (Pos.size_nat i + 1))%N.
+Proof.
+  intros seen i. pose proof (PTrieT.trie_get_clock unit i seen) as Hget.
+  time_unfold @T_dag_seen. time_simpl. time_cbn.
+  destruct (trie_get i seen); rewrite !Nat2N.inj_add; lia.
+Qed.
+
+(** Cost lookup follows one trie path without inspecting the stored number. *)
+Lemma T_dag_get_cost_le : forall costs i,
+  (T_dag_get_cost costs i <= 8 * N.of_nat (Pos.size_nat i + 1))%N.
+Proof.
+  intros costs i. pose proof (PTrieT.trie_get_clock N i costs) as Hget.
+  time_unfold @T_dag_get_cost. time_simpl. time_cbn.
+  destruct (trie_get i costs); rewrite !Nat2N.inj_add; lia.
+Qed.
+
+(** Child membership checks pay only for the identifier cells that they read. *)
+Lemma T_dag_children_seen_le : forall V encode (k : list (cell V)) seen,
+  (T_dag_children_seen seen k <= 32 * N.of_nat (dag_key_bits encode k + 1))%N.
+Proof.
+  intros V encode k. induction k as [|[i|v] k IH]; intro seen.
+  - unfold dag_key_bits. time_step.
+  - pose proof (T_dag_seen_le seen i) as Hseen. specialize (IH seen).
+    unfold dag_key_bits in *. time_unfold @T_dag_children_seen. time_simpl. time_cbn.
+    cbn [fold_right cell_bits Pos.size_nat]. rewrite !Nat2N.inj_add in *. lia.
+  - specialize (IH seen). unfold dag_key_bits in *.
+    time_unfold @T_dag_children_seen. time_simpl. time_cbn.
+    cbn [fold_right cell_bits Pos.size_nat]. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+(** Marking a key pays for each inserted identifier's encoded width. *)
+Lemma T_dag_mark_cells_le : forall V encode (k : list (cell V)) needed,
+  (T_dag_mark_cells needed k <= 16 * (PTrieT.c_trie + 1) *
+    N.of_nat (dag_key_bits encode k + 1))%N.
+Proof.
+  intros V encode k. induction k as [|[i|v] k IH]; intro needed.
+  - unfold dag_key_bits. time_step.
+  - pose proof (PTrieT.T_set_le unit i tt needed) as Hset.
+    change (PTrieCode.T_set i tt needed <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
+    specialize (IH (PTrieCode.set i tt needed)). unfold dag_key_bits in *.
+    time_unfold @T_dag_mark_cells. time_simpl. time_cbn.
+    cbn [fold_right cell_bits Pos.size_nat]. rewrite !Nat2N.inj_add in *.
+    unfold PTrieT.c_trie in *. lia.
+  - specialize (IH needed). unfold dag_key_bits in *.
+    time_unfold @T_dag_mark_cells. time_simpl. time_cbn.
+    cbn [fold_right cell_bits Pos.size_nat]. rewrite !Nat2N.inj_add in *.
+    unfold PTrieT.c_trie in *. lia.
+Qed.
+
+(** The backward ancestor pass is linear in the certificate's encoded syntax. *)
+Lemma T_dag_needed_le : forall V encode (g : extraction_dag V) needed,
+  (T_dag_needed g needed <= 32 * (PTrieT.c_trie + 1) *
+    N.of_nat (cert_size encode g + 1))%N.
+Proof.
+  intros V encode g. induction g as [|[i [f k]] g IH]; intro needed.
+  - unfold cert_size. time_step.
+  - specialize (IH needed).
+    pose proof (T_dag_seen_le (dag_needed g needed) i) as Hseen.
+    pose proof (T_dag_mark_cells_le V encode k (dag_needed g needed)) as Hmark.
+    time_unfold @T_dag_needed. time_simpl. time_cbn.
+    destruct (dag_seen (dag_needed g needed) i);
+      unfold cert_size, dag_key_bits in *;
+      cbn [fold_right fst snd] in *; rewrite !Nat2N.inj_add in *;
+      unfold PTrieT.c_trie in *; lia.
+Qed.
+
+(** Canonical-key checking charges comparisons to the supplied identifiers. *)
+Lemma T_dag_check_key_le : forall V encode ids repr T_repr (k : list (cell V)) b,
+  (forall i, (Npos i <= ids)%N -> (T_repr i <= b)%N) ->
+  (T_dag_check_key ids repr T_repr k <=
+    32 * (b + 1) * N.of_nat (dag_key_bits encode k + 1))%N.
+Proof.
+  intros V encode ids repr T_repr k. induction k as [|[i|v] k IH]; intros b Hrepr.
+  - unfold dag_key_bits. time_step.
+  - specialize (IH b Hrepr).
+    pose proof (N.T_leb_le (Npos i) ids) as Hleb.
+    pose proof (Pos.T_eqb_le i (repr i)) as Heqb.
+    time_unfold @T_dag_check_key. time_simpl. time_cbn.
+    destruct (N.leb (Npos i) ids) eqn:Halloc.
+    + pose proof (Hrepr i (proj1 (N.leb_le _ _) Halloc)) as Hfind.
+      destruct (Pos.eqb i (repr i)); unfold dag_key_bits in *;
+        cbn [fold_right cell_bits Pos.size_nat N.size_nat] in *;
+        rewrite !Nat2N.inj_add in *; nia.
+    + unfold dag_key_bits in *.
+      cbn [fold_right cell_bits Pos.size_nat N.size_nat] in *;
+        rewrite !Nat2N.inj_add in *; nia.
+  - specialize (IH b Hrepr). unfold dag_key_bits in *.
+    time_unfold @T_dag_check_key. time_simpl. time_cbn.
+    cbn [fold_right cell_bits Pos.size_nat] in *; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** A cost-key traversal is the pointwise map of identifier and literal costs. *)
+Lemma dag_cost_cells_map : forall V val_cost costs (k : list (cell V)),
+  dag_cost_cells val_cost costs k =
+    map (fun c => match c with Id i => dag_get_cost costs i | Val v => val_cost v end) k.
+Proof.
+  intros V val_cost costs k. induction k as [|[i|v] k IH];
+    cbn [dag_cost_cells map]; now try rewrite IH.
+Qed.
+
+(** Every key cell contributes its cost to the constructor's child-cost list. *)
+Lemma dag_cost_cells_member : forall V val_cost costs (k : list (cell V)) c,
+  In c k ->
+  In (match c with Id i => dag_get_cost costs i | Val v => val_cost v end)
+    (dag_cost_cells val_cost costs k).
+Proof.
+  intros V val_cost costs k c Hin. rewrite dag_cost_cells_map.
+  apply in_map_iff. exists c. now split.
+Qed.
+
+(** Equal identifier costs give equal key-cost lists. *)
+Lemma dag_cost_cells_ext : forall V val_cost left right (k : list (cell V)),
+  (forall i, In (Id i) k -> dag_get_cost left i = dag_get_cost right i) ->
+  dag_cost_cells val_cost left k = dag_cost_cells val_cost right k.
+Proof.
+  intros V val_cost left right k Hsame. rewrite !dag_cost_cells_map.
+  apply map_ext_in. intros [i|v] Hin; [now apply Hsame |reflexivity].
+Qed.
+
+(** Forward cost traversal composes across a certificate split. *)
+Lemma dag_cost_table_app : forall V fn_cost val_cost needed (g more : extraction_dag V) costs,
+  dag_cost_table fn_cost val_cost needed (g ++ more) costs =
+  dag_cost_table fn_cost val_cost needed more
+    (dag_cost_table fn_cost val_cost needed g costs).
+Proof.
+  intros V fn_cost val_cost needed g. induction g as [|entry g IH]; intros more costs.
+  - reflexivity.
+  - cbn [dag_cost_table app]. now rewrite IH.
+Qed.
+
+(** Traversing rows with other names preserves an existing class cost. *)
+Lemma dag_cost_table_fresh : forall V fn_cost val_cost needed (g : extraction_dag V) costs i,
+  ~ In i (map fst g) ->
+  dag_get_cost (dag_cost_table fn_cost val_cost needed g costs) i = dag_get_cost costs i.
+Proof.
+  intros V fn_cost val_cost needed g. induction g as [|[j [f k]] g IH]; intros costs i Hfresh.
+  - reflexivity.
+  - cbn [dag_cost_table]. rewrite IH by (intro Hin; apply Hfresh; now right).
+    unfold dag_cost_step. destruct (dag_seen needed j); [|reflexivity].
+    apply dag_get_cost_other. intro Heq. subst i. apply Hfresh. now left.
+Qed.
+
+(** Distinct names in concatenated lists cannot occur on both sides of the split. *)
+Lemma dag_nodup_disjoint : forall A (left right : list A), NoDup (left ++ right) ->
+  forall i, In i left -> ~ In i right.
+Proof.
+  intros A left right Hnodup i Hleft Hright.
+  apply in_split in Hleft as [pre [post Heq]]. subst left.
+  rewrite <- app_assoc in Hnodup.
+  pose proof (NoDup_remove_2 pre (post ++ right) i Hnodup) as Hfresh.
+  apply Hfresh. apply in_or_app. right. apply in_or_app. now right.
+Qed.
+
+(** All key costs are final when an ordered row is evaluated. *)
+Lemma dag_cost_table_key_stable : forall V fn_cost val_cost needed
+    (pre : extraction_dag V) i f k post costs,
+  dag_ordered_from [] (pre ++ (i, (f, k)) :: post) ->
+  dag_cost_cells val_cost
+    (dag_cost_table fn_cost val_cost needed (pre ++ (i, (f, k)) :: post) costs) k =
+  dag_cost_cells val_cost (dag_cost_table fn_cost val_cost needed pre costs) k.
+Proof.
+  intros V fn_cost val_cost needed pre i f k post costs Hordered.
+  pose proof (proj1 (dag_ordered_names V [] _ Hordered)) as Hnodup.
+  rewrite map_app in Hnodup. rewrite dag_cost_table_app.
+  apply dag_cost_cells_ext. intros child Hchild. apply dag_cost_table_fresh.
+  apply (dag_nodup_disjoint positive _ _ Hnodup child).
+  exact (dag_ordered_prefix V [] _ Hordered pre i f k post eq_refl child Hchild).
+Qed.
+
+(** Every selected row satisfies its constructor-cost equation in the final table. *)
+Lemma dag_cost_table_row : forall V fn_cost val_cost needed (g : extraction_dag V) costs i f k,
+  dag_ordered_from [] g -> In (i, (f, k)) g -> dag_seen needed i = true ->
+  dag_get_cost (dag_cost_table fn_cost val_cost needed g costs) i =
+  fn_cost f (dag_cost_cells val_cost (dag_cost_table fn_cost val_cost needed g costs) k).
+Proof.
+  intros V fn_cost val_cost needed g costs i f k Hordered Hin Hmarked.
+  apply in_split in Hin as [pre [post Heq]]. subst g.
+  pose proof (proj1 (dag_ordered_names V [] _ Hordered)) as Hnodup.
+  rewrite map_app in Hnodup. cbn [map fst] in Hnodup.
+  pose proof (NoDup_remove_2 (map fst pre) (map fst post) i Hnodup) as Hfresh.
+  pose proof (dag_cost_table_key_stable V fn_cost val_cost needed pre i f k post costs Hordered)
+    as Hstable.
+  transitivity (fn_cost f
+    (dag_cost_cells val_cost (dag_cost_table fn_cost val_cost needed pre costs) k)).
+  - rewrite dag_cost_table_app. cbn [dag_cost_table].
+    rewrite dag_cost_table_fresh by (intro Hin; apply Hfresh; apply in_or_app; now right).
+    unfold dag_cost_step. now rewrite Hmarked, dag_get_cost_same.
+  - f_equal. symmetry. exact Hstable.
+Qed.
+
+(** Every marked class costs at most the requested root when constructors bound their children. *)
+Lemma dag_cost_root_bound : forall V fn_cost val_cost,
+  (forall f cs n, In n cs -> (n <= fn_cost f cs)%N) ->
+  forall (g : extraction_dag V) c, dag_ordered_from [] g ->
+  let needed := dag_needed g (PTrieCode.set c tt Empty) in
+  let costs := dag_cost_table fn_cost val_cost needed g Empty in
+  forall i, dag_seen needed i = true -> (dag_get_cost costs i <= dag_get_cost costs c)%N.
+Proof.
+  intros V fn_cost val_cost Hsuper g c Hordered needed costs i Hmarked.
+  assert (Hroot : dag_seen needed c = true).
+  { unfold needed. apply dag_needed_monotone. rewrite dag_seen_set, Pos.eqb_refl.
+    reflexivity. }
+  set (P := fun j => dag_seen needed j = true /\
+    (dag_get_cost costs j <= dag_get_cost costs c)%N).
+  assert (Hedges : forall j f k, In (j, (f, k)) g -> P j ->
+    forall child, In (Id child) k -> P child).
+  { intros j f k Hin [Hj Hbound] child Hchild. split.
+    - exact (dag_needed_closed V g _ Hordered j f k Hin Hj child Hchild).
+    - eapply N.le_trans; [|exact Hbound]. unfold costs.
+      rewrite (dag_cost_table_row V fn_cost val_cost needed g Empty j f k Hordered Hin Hj).
+      apply Hsuper. exact (dag_cost_cells_member V val_cost _ k (Id child) Hchild). }
+  assert (Hinitial : forall j, dag_seen (PTrieCode.set c tt Empty) j = true -> P j).
+  { intros j Hj. rewrite dag_seen_set in Hj. destruct (Pos.eqb j c) eqn:Hjc.
+    - apply Pos.eqb_eq in Hjc. subst j. split; [exact Hroot |apply N.le_refl].
+    - unfold dag_seen in Hj. rewrite PTrie.get_empty in Hj. discriminate. }
+  exact (proj2 (dag_needed_preserves V g _ P Hedges Hinitial i Hmarked)).
+Qed.
+
+(** Literal and identifier child costs of selected rows are bounded by the root cost. *)
+Lemma dag_cost_root_cell_bound : forall V fn_cost val_cost,
+  (forall f cs n, In n cs -> (n <= fn_cost f cs)%N) ->
+  forall (g : extraction_dag V) c, dag_ordered_from [] g ->
+  let needed := dag_needed g (PTrieCode.set c tt Empty) in
+  let costs := dag_cost_table fn_cost val_cost needed g Empty in
+  forall i f k, In (i, (f, k)) g -> dag_seen needed i = true ->
+  forall cell, In cell k ->
+  (match cell with Id child => dag_get_cost costs child | Val v => val_cost v end <=
+    dag_get_cost costs c)%N.
+Proof.
+  intros V fn_cost val_cost Hsuper g c Hordered needed costs i f k Hin Hmarked cell Hcell.
+  eapply N.le_trans; [|exact (dag_cost_root_bound V fn_cost val_cost Hsuper g c Hordered i Hmarked)].
+  change (match cell with Id child => dag_get_cost costs child | Val v => val_cost v end <=
+    dag_get_cost costs i)%N.
+  unfold costs. rewrite (dag_cost_table_row V fn_cost val_cost needed g Empty i f k
+    Hordered Hin Hmarked).
+  apply Hsuper. exact (dag_cost_cells_member V val_cost _ k cell Hcell).
+Qed.
+
+(** Binary natural width is monotone in the represented number. *)
+Lemma dag_cost_size_mono : forall a b, (a <= b)%N -> N.size_nat a <= N.size_nat b.
+Proof.
+  intros [|a] [|b] Hle; cbn [N.size_nat]; try lia.
+  rewrite !inventory_positive_width. apply Nat.add_le_mono_r, Nat.log2_le_mono. lia.
+Qed.
+
+(** A pointwise numerical bound also bounds the largest child-cost width. *)
+Lemma dag_cost_width_le : forall cs n,
+  (forall c, In c cs -> (c <= n)%N) ->
+  fold_right (fun c w => Nat.max (N.size_nat c) w) 0 cs <= N.size_nat n.
+Proof.
+  induction cs as [|c cs IH]; intros n Hbound; [cbn; lia |].
+  cbn [fold_right]. apply Nat.max_lub.
+  - apply dag_cost_size_mono, Hbound. now left.
+  - apply IH. intros value Hin. apply Hbound. now right.
+Qed.
+
+(** At each selected row, the live child-cost widths fit the final root's width. *)
+Lemma dag_cost_prefix_width : forall V fn_cost val_cost,
+  (forall f cs n, In n cs -> (n <= fn_cost f cs)%N) ->
+  forall (g pre : extraction_dag V) c i f k post,
+  dag_ordered_from [] g -> g = pre ++ (i, (f, k)) :: post ->
+  let needed := dag_needed g (PTrieCode.set c tt Empty) in
+  dag_seen needed i = true ->
+  fold_right (fun n w => Nat.max (N.size_nat n) w) 0
+    (dag_cost_cells val_cost (dag_cost_table fn_cost val_cost needed pre Empty) k) <=
+  N.size_nat (dag_get_cost (dag_cost_table fn_cost val_cost needed g Empty) c).
+Proof.
+  intros V fn_cost val_cost Hsuper g pre c i f k post Hordered Heq needed Hmarked.
+  assert (Hstable :
+    dag_cost_cells val_cost (dag_cost_table fn_cost val_cost needed pre Empty) k =
+    dag_cost_cells val_cost (dag_cost_table fn_cost val_cost needed g Empty) k).
+  { symmetry. subst g. now apply dag_cost_table_key_stable. }
+  apply dag_cost_width_le. intros n Hin. rewrite Hstable, dag_cost_cells_map in Hin.
+  apply in_map_iff in Hin as [cell [Hvalue Hcell]]. subst n.
+  apply (dag_cost_root_cell_bound V fn_cost val_cost Hsuper g c Hordered i f k);
+    [rewrite Heq; apply in_or_app; right; now left |exact Hmarked |exact Hcell].
+Qed.
+
+(** Row validation adds one key check, one lookup and one exact output comparison. *)
+Lemma T_dag_check_row_le : forall V encode ids repr T_repr lookup T_lookup
+    i f (k : list (cell V)) b,
+  (forall j, (Npos j <= ids)%N -> (T_repr j <= b)%N) ->
+  (T_lookup f k <= b * N.of_nat (dag_key_bits encode k + 1))%N ->
+  (T_dag_check_row ids repr T_repr lookup T_lookup i f k <=
+    64 * (b + 1) * N.of_nat (Pos.size_nat i + dag_key_bits encode k + 1))%N.
+Proof.
+  intros V encode ids repr T_repr lookup T_lookup i f k b Hrepr Hlookup.
+  pose proof (T_dag_check_key_le V encode ids repr T_repr k b Hrepr) as Hkey.
+  time_unfold @T_dag_check_row. time_simpl. time_cbn.
+  destruct (dag_check_key ids repr k); [destruct (lookup f k) as [[[j|v]|]|] |];
+    try pose proof (Pos.T_eqb_le i j);
+    rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** Full validation is linear in syntax when each row check has a linear bound. *)
+Lemma T_dag_validate_le : forall V encode check_row T_check_row b,
+  (forall i f (k : list (cell V)),
+    (T_check_row i f k <= b *
+      N.of_nat (Pos.size_nat i + Pos.size_nat f + dag_key_bits encode k + 1))%N) ->
+  forall g seen root,
+  (T_dag_validate check_row T_check_row seen g root <=
+    64 * (PTrieT.c_trie + b + 1) *
+    N.of_nat (cert_size encode g + Pos.size_nat root + 1))%N.
+Proof.
+  intros V encode check_row T_check_row b Hrow g.
+  induction g as [|[i [f k]] g IH]; intros seen root.
+  - pose proof (T_dag_seen_le seen root) as Hseen. unfold cert_size.
+    time_unfold @T_dag_validate. time_simpl. time_cbn.
+    rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. nia.
+  - pose proof (T_dag_seen_le seen i) as Hseen.
+    pose proof (T_dag_children_seen_le V encode k seen) as Hchildren.
+    pose proof (Hrow i f k) as Hcheck.
+    pose proof (PTrieT.T_set_le unit i tt seen) as Hset.
+    change (PTrieCode.T_set i tt seen <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
+    specialize (IH (PTrieCode.set i tt seen) root).
+    time_unfold @T_dag_validate. time_simpl. time_cbn.
+    destruct (dag_seen seen i); [|destruct (dag_children_seen seen k);
+      [destruct (check_row i f k) |]];
+      unfold cert_size, dag_key_bits in *; cbn [fold_right fst snd] in *;
+      rewrite !Nat2N.inj_add in *; unfold PTrieT.c_trie in *; nia.
+Qed.
+
+(** Reading child costs pays for their identifiers and the encoded literals. *)
+Lemma T_dag_cost_cells_le : forall V encode val_cost T_val_cost b,
+  (forall v, (T_val_cost v <= b * N.of_nat (Pos.size_nat (encode v) + 1))%N) ->
+  forall (k : list (cell V)) costs,
+  (T_dag_cost_cells val_cost T_val_cost costs k <=
+    32 * (b + 1) * N.of_nat (dag_key_bits encode k + 1))%N.
+Proof.
+  intros V encode val_cost T_val_cost b Hval k. induction k as [|[i|v] k IH]; intro costs.
+  - unfold dag_key_bits. time_step.
+  - pose proof (T_dag_get_cost_le costs i) as Hget. specialize (IH costs).
+    time_unfold @T_dag_cost_cells. time_simpl. time_cbn.
+    unfold dag_key_bits in *; cbn [fold_right cell_bits Pos.size_nat] in *;
+      rewrite !Nat2N.inj_add in *; nia.
+  - pose proof (Hval v) as Hliteral. specialize (IH costs).
+    time_unfold @T_dag_cost_cells. time_simpl. time_cbn.
+    unfold dag_key_bits in *; cbn [fold_right cell_bits Pos.size_nat] in *;
+      rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** A selected constructor step pays for syntax and the bound on its child-cost widths. *)
+Lemma T_dag_cost_step_le : forall V encode fn_cost T_fn_cost val_cost T_val_cost b,
+  (forall f cs, (T_fn_cost f cs <= b * N.of_nat (length cs + 1) *
+    N.of_nat (fold_right (fun n w => Nat.max (N.size_nat n) w) 0%nat cs + 1))%N) ->
+  (forall v, (T_val_cost v <= b * N.of_nat (Pos.size_nat (encode v) + 1))%N) ->
+  forall needed costs i f (k : list (cell V)) w,
+  (dag_seen needed i = true ->
+    fold_right (fun n width => Nat.max (N.size_nat n) width) 0
+      (dag_cost_cells val_cost costs k) <= w) ->
+  (T_dag_cost_step fn_cost T_fn_cost val_cost T_val_cost needed costs (i, (f, k)) <=
+    128 * (PTrieT.c_trie + b + 1) *
+    N.of_nat (Pos.size_nat i + Pos.size_nat f + dag_key_bits encode k + 1) *
+    N.of_nat (w + 1))%N.
+Proof.
+  intros V encode fn_cost T_fn_cost val_cost T_val_cost b Hfn Hval
+    needed costs i f k w Hwidth.
+  pose proof (T_dag_cost_cells_le V encode val_cost T_val_cost b Hval k costs) as Hcells.
+  pose proof (T_dag_seen_le needed i) as Hseen.
+  pose proof (PTrieT.T_set_le N i (fn_cost f (dag_cost_cells val_cost costs k)) costs) as Hset.
+  change (PTrieCode.T_set i (fn_cost f (dag_cost_cells val_cost costs k)) costs <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
+  time_unfold @T_dag_cost_step. time_simpl. time_cbn.
+  destruct (dag_seen needed i) eqn:Hmarked.
+  - specialize (Hwidth eq_refl).
+    pose proof (Hfn f (dag_cost_cells val_cost costs k)) as Hfunction.
+    assert (Hlength : length (dag_cost_cells val_cost costs k) = length k).
+    { rewrite dag_cost_cells_map, length_map. reflexivity. }
+    rewrite Hlength in Hfunction.
+    pose proof (dag_key_length V encode k) as Hkey.
+    assert (Hfunction' : (T_fn_cost f (dag_cost_cells val_cost costs k) <=
+      b * N.of_nat (dag_key_bits encode k + 1) * N.of_nat (w + 1))%N).
+    { eapply N.le_trans; [exact Hfunction |]. apply N.mul_le_mono.
+      - apply N.mul_le_mono_l. lia.
+      - lia. }
+    rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. nia.
+  - rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. nia.
+Qed.
+
+(** Every suffix of the selective cost pass is funded by syntax and the final root width. *)
+Lemma T_dag_cost_table_prefix_le : forall V encode fn_cost T_fn_cost val_cost T_val_cost b,
+  (forall f cs n, In n cs -> (n <= fn_cost f cs)%N) ->
+  (forall f cs, (T_fn_cost f cs <= b * N.of_nat (length cs + 1) *
+    N.of_nat (fold_right (fun n w => Nat.max (N.size_nat n) w) 0%nat cs + 1))%N) ->
+  (forall v, (T_val_cost v <= b * N.of_nat (Pos.size_nat (encode v) + 1))%N) ->
+  forall (g : extraction_dag V) c, dag_ordered_from [] g ->
+  let needed := dag_needed g (PTrieCode.set c tt Empty) in
+  let w := N.size_nat (dag_get_cost (dag_cost_table fn_cost val_cost needed g Empty) c) in
+  forall remaining pre, g = pre ++ remaining ->
+  (T_dag_cost_table fn_cost T_fn_cost val_cost T_val_cost needed remaining
+      (dag_cost_table fn_cost val_cost needed pre Empty) <=
+    256 * (PTrieT.c_trie + b + 1) *
+    N.of_nat (cert_size encode remaining + 1) * N.of_nat (w + 1))%N.
+Proof.
+  intros V encode fn_cost T_fn_cost val_cost T_val_cost b Hsuper Hfn Hval
+    g c Hordered needed w remaining.
+  induction remaining as [|[i [f k]] remaining IH]; intros pre Heq.
+  - time_unfold @T_dag_cost_table. time_simpl. time_cbn. unfold cert_size.
+    rewrite !Nat2N.inj_add. unfold PTrieT.c_trie. nia.
+  - pose proof (T_dag_cost_step_le V encode fn_cost T_fn_cost val_cost T_val_cost b Hfn Hval
+      needed (dag_cost_table fn_cost val_cost needed pre Empty) i f k w
+      (dag_cost_prefix_width V fn_cost val_cost Hsuper g pre c i f k remaining Hordered Heq))
+      as Hstep.
+    assert (Heq' : g = (pre ++ [(i, (f, k))]) ++ remaining).
+    { rewrite <- app_assoc. exact Heq. }
+    pose proof (IH (pre ++ [(i, (f, k))]) Heq') as Hrest.
+    rewrite dag_cost_table_app in Hrest. cbn [dag_cost_table] in Hrest.
+    unfold dag_cost_step in Hrest.
+    time_unfold @T_dag_cost_table. time_simpl. time_cbn.
+    eapply N.le_trans with (m := (1 +
+      (128 * (PTrieT.c_trie + b + 1) *
+        N.of_nat (Pos.size_nat i + Pos.size_nat f + dag_key_bits encode k + 1) *
+        N.of_nat (w + 1) +
+       256 * (PTrieT.c_trie + b + 1) *
+        N.of_nat (cert_size encode remaining + 1) * N.of_nat (w + 1)))%N).
+    + apply N.add_le_mono_l. apply N.add_le_mono; [exact Hstep |exact Hrest].
+    +
+    unfold cert_size, dag_key_bits in *; cbn [fold_right fst snd] in *;
+      rewrite !Nat2N.inj_add in *; unfold PTrieT.c_trie in *; nia.
+Qed.
+
+(** Key syntax covers the sum of all encoded cell widths. *)
+Lemma dag_key_cells : forall V encode (k : list (cell V)),
+  fold_right (fun c n => cell_bits encode c + n) 0 k <= dag_key_bits encode k.
+Proof.
+  intros V encode k. induction k as [|c k IH]; unfold dag_key_bits in *;
+    cbn [fold_right] in *; lia.
+Qed.
+
+(** Multiplication by a positive budget never decreases a charge. *)
+Lemma dag_budget_scale : forall x factor : N, (1 <= factor)%N -> (x <= x * factor)%N.
+Proof.
+  intros x factor Hfactor. nia.
+Qed.
+
+(** The composed checker budgets fit one common syntax, database and cost-width product. *)
+Lemma dag_check_budget : forall t d a m s r u w : N,
+  (1 <= m)%N -> (1 <= u)%N -> (1 <= w)%N -> (s <= m)%N -> (r <= m)%N ->
+  (1 + (d + (1 +
+    (64 * (t + 64 * (4 * (d + 1) * u + 1) + 1) * m +
+      (t * r + 32 * (t + 1) * s + (256 * (t + a + 1) * s * w + 8 * r))))) <=
+    (64 * 1024) * (t + d + a + 1) * m * u * w)%N.
+Proof.
+  intros t d a m s r u w Hm Hu Hw Hs Hr.
+  set (b := (t + d + a + 1)%N). set (q := (m * u * w)%N).
+  fold b. replace ((64 * 1024) * b * m * u * w)%N with ((64 * 1024) * b * q)%N
+    by (unfold q; ring).
+  assert (Hb1 : (1 <= b)%N) by (unfold b; lia).
+  assert (Hbt : (t + 1 <= b)%N) by (unfold b; lia).
+  assert (Hbd : (d + 1 <= b)%N) by (unfold b; lia).
+  assert (Hba : (t + a + 1 <= b)%N) by (unfold b; lia).
+  assert (Hmu : (m <= m * u)%N) by (apply dag_budget_scale; exact Hu).
+  assert (Hmuq : (m * u <= q)%N) by (unfold q; apply dag_budget_scale; exact Hw).
+  assert (Hmq : (m <= q)%N) by lia.
+  assert (Hmwq : (m * w <= q)%N).
+  { unfold q. now apply N.mul_le_mono_r. }
+  assert (Hsq : (s <= q)%N) by lia.
+  assert (Hrq : (r <= q)%N) by lia.
+  assert (Hswq : (s * w <= q)%N).
+  { eapply N.le_trans; [apply N.mul_le_mono_r; exact Hs |exact Hmwq]. }
+  assert (Hq1 : (1 <= q)%N) by lia.
+  clearbody b q.
+  assert (Hcoefficient :
+    (64 * (t + 64 * (4 * (d + 1) * u + 1) + 1) <= 32768 * b * u)%N).
+  { clear - Hbt Hbd Hb1 Hu. nia. }
+  assert (Hvalidation :
+    (64 * (t + 64 * (4 * (d + 1) * u + 1) + 1) * m <= 32768 * b * q)%N).
+  { eapply N.le_trans; [apply N.mul_le_mono_r; exact Hcoefficient |].
+    replace (32768 * b * u * m)%N with (32768 * b * (m * u))%N by ring.
+    now apply N.mul_le_mono_l. }
+  assert (Hseed : (t * r <= b * q)%N).
+  { apply N.mul_le_mono; [lia |exact Hrq]. }
+  assert (Hneeded : (32 * (t + 1) * s <= 32 * b * q)%N).
+  { apply N.mul_le_mono; [now apply N.mul_le_mono_l |exact Hsq]. }
+  assert (Hcosts : (256 * (t + a + 1) * s * w <= 256 * b * q)%N).
+  { eapply N.le_trans with (m := (256 * b * s * w)%N).
+    - apply N.mul_le_mono_r, N.mul_le_mono_r, N.mul_le_mono_l. exact Hba.
+    - replace (256 * b * s * w)%N with (256 * b * (s * w))%N by ring.
+      now apply N.mul_le_mono_l. }
+  assert (Hget : (8 * r <= 8 * b * q)%N) by (clear - Hrq Hb1; nia).
+  assert (Hfixed : (2 + d <= 3 * b * q)%N) by (clear - Hbd Hq1 Hb1; nia).
+  clear Hm Hu Hw Hs Hr Hb1 Hbt Hbd Hba Hmu Hmuq Hmq Hmwq Hsq Hrq Hswq Hq1 Hcoefficient.
+  nia.
+Qed.
+
 Module ExtractCode (V : VALUE_OPS) (I : INDEX_OPS V) (D : DATABASE_OPS V I)
     (C : COST_OPS V) <: EXTRACT_OPS V I D C.
   Definition inventory (ds : list decl) (sl : list (positive * list nat))
@@ -1172,18 +1673,23 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Definition a (_ : D.t) : nat := 0.
   (* STUB-CODE *)
   Definition cost_width (_ : D.t) : nat := 0.
-  Definition c_ex : N := 128 * (PTrieT.c_trie + 1).
+  Definition c_ex : N :=
+    (64 * 1024) * (PTrieT.c_trie + D.c_db + C.c_cost + 1).
   Lemma T_inventory_le : forall ds sl,
     (T_inventory ds sl <= c_ex * N.of_nat (layout_bits ds sl + 1) *
       N.of_nat (Nat.log2 (length sl) + 1))%N.
   Proof.
     intros ds sl.
-    pose proof (T_inventory_decl_table_le ds) as Hdecl.
-    pose proof (T_inventory_scan_le sl (inventory_decl_table ds) 0%N (length sl)
-      ltac:(cbn [N.to_nat]; lia)) as Hscan.
-    time_unfold @T_inventory. time_simpl. time_cbn.
-    unfold c_ex, layout_bits. unfold inventory_slot_bits in Hscan.
-    rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. nia.
+    eapply N.le_trans with (m := (128 * (PTrieT.c_trie + 1) *
+      N.of_nat (layout_bits ds sl + 1) * N.of_nat (Nat.log2 (length sl) + 1))%N).
+    - pose proof (T_inventory_decl_table_le ds) as Hdecl.
+      pose proof (T_inventory_scan_le sl (inventory_decl_table ds) 0%N (length sl)
+        ltac:(cbn [N.to_nat]; lia)) as Hscan.
+      time_unfold @T_inventory. time_simpl. time_cbn.
+      unfold layout_bits. unfold inventory_slot_bits in Hscan.
+      rewrite !Nat2N.inj_add in *. unfold PTrieT.c_trie in *. nia.
+    - apply N.mul_le_mono_r, N.mul_le_mono_r.
+      unfold c_ex. nia.
   Qed.
 
   Lemma inventory_size : forall ds sl,
@@ -1226,6 +1732,45 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
       N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  Definition checker_row_budget (db : D.t) : N :=
+    4 * (D.c_db + 1) * N.of_nat (D.unit db + 1).
+
+  (** The guarded representative callback pays for one allocated find. *)
+  Lemma checked_repr_clock : forall db i, D.wf db -> (Npos i <= D.ids db)%N ->
+    (1 + (D.T_find i db + 1) <= checker_row_budget db)%N.
+  Proof.
+    intros db i Hwf Halloc. pose proof (D.T_find_le i db Hwf Halloc) as Hfind.
+    unfold checker_row_budget. rewrite Nat2N.inj_add. nia.
+  Qed.
+
+  (** The lookup callback pays for key syntax at the fixed database spending unit. *)
+  Lemma checked_lookup_clock : forall db f k, D.wf db ->
+    (1 + (D.T_lookup f k db + 1) <= checker_row_budget db *
+      N.of_nat (dag_key_bits V.encode k + 1))%N.
+  Proof.
+    intros db f k Hwf. pose proof (D.T_lookup_le f k db Hwf) as Hlookup.
+    pose proof (dag_key_length V.t V.encode k) as Hlength.
+    pose proof (dag_key_cells V.t V.encode k) as Hcells.
+    unfold checker_row_budget. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** A database row check has a uniform syntax-linear callback bound. *)
+  Lemma checked_row_clock : forall db i f k, D.wf db ->
+    (T_dag_check_row (D.ids db) (fun j => fst (D.find j db))
+      (fun j => 1 + (D.T_find j db + 1))
+      (fun f k => fst (D.lookup f k db))
+      (fun f k => 1 + (D.T_lookup f k db + 1)) i f k <=
+    64 * (checker_row_budget db + 1) *
+      N.of_nat (Pos.size_nat i + Pos.size_nat f + dag_key_bits V.encode k + 1))%N.
+  Proof.
+    intros db i f k Hwf.
+    eapply N.le_trans.
+    - apply (T_dag_check_row_le V.t V.encode (D.ids db) _ _ _ _ i f k
+        (checker_row_budget db)); [intros j Hj; now apply checked_repr_clock |].
+      now apply checked_lookup_clock.
+    - apply N.mul_le_mono_l. lia.
+  Qed.
+
   Lemma T_check_dag_le : forall db c g, D.wf db ->
     (T_check_dag db c g <= c_ex * N.of_nat (cert_size V.encode g + Pos.size_nat c + 1) *
       N.of_nat (D.unit db + 1) *
@@ -1233,7 +1778,67 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         | Some n => N.size_nat n
         | None => 0
         end + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros db c g Hwf.
+    time_unfold @T_check_dag. time_simpl. time_cbn.
+    time_unfold @T_dag_check. time_simpl. time_cbn.
+    unfold check_dag, dag_check.
+    set (row_check := dag_check_row (D.ids db) (fun i => fst (D.find i db))
+      (fun f k => fst (D.lookup f k db))) in *.
+    set (row_clock := fun i f k => T_dag_check_row (D.ids db)
+      (fun j => fst (D.find j db)) (fun j => (1 + (D.T_find j db + 1))%N)
+      (fun f k => fst (D.lookup f k db))
+      (fun f k => (1 + (D.T_lookup f k db + 1))%N) i f k) in *.
+    pose proof (T_dag_validate_le V.t V.encode row_check row_clock
+      (64 * (checker_row_budget db + 1))%N
+      ltac:(intros i f k; apply checked_row_clock; exact Hwf) g Empty c) as Hvalidate.
+    pose proof (D.T_ids_le db) as Hids.
+    destruct (dag_validate row_check Empty g c) eqn:Hvalid.
+    - destruct (dag_validate_sound V.t row_check g Empty c []
+        ltac:(intro i; unfold dag_seen; rewrite PTrie.get_empty; cbn;
+          split; [discriminate |contradiction]) Hvalid) as [Hordered _].
+      pose proof (PTrieT.T_set_le unit c tt Empty) as Hset.
+      change (PTrieCode.T_set c tt Empty <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1))%N in Hset.
+      pose proof (T_dag_needed_le V.t V.encode g (PTrieCode.set c tt Empty)) as Hneeded.
+      pose proof (T_dag_get_cost_le
+        (dag_cost_table C.fn_cost C.val_cost (dag_needed g (PTrieCode.set c tt Empty)) g Empty)
+        c) as Hget.
+      pose proof (T_dag_cost_table_prefix_le V.t V.encode C.fn_cost
+        (fun f cs => C.T_fn_cost f cs) C.val_cost (fun v => C.T_val_cost v) C.c_cost
+        C.fn_cost_super C.T_fn_cost_le C.T_val_cost_le g c Hordered g [] eq_refl) as Hcosts.
+      cbn [dag_cost_table] in Hcosts. time_cbn.
+      eapply N.le_trans with (m := (1 + (D.c_db + (1 +
+        (64 * (PTrieT.c_trie + 64 * (checker_row_budget db + 1) + 1) *
+          N.of_nat (cert_size V.encode g + Pos.size_nat c + 1) +
+         (PTrieT.c_trie * N.of_nat (Pos.size_nat c + 1) +
+          32 * (PTrieT.c_trie + 1) * N.of_nat (cert_size V.encode g + 1) +
+          (256 * (PTrieT.c_trie + C.c_cost + 1) * N.of_nat (cert_size V.encode g + 1) *
+             N.of_nat (N.size_nat (dag_get_cost (dag_cost_table C.fn_cost C.val_cost
+               (dag_needed g (PTrieCode.set c tt Empty)) g Empty) c) + 1) +
+           8 * N.of_nat (Pos.size_nat c + 1)))))))%N).
+      + apply N.add_le_mono_l. apply N.add_le_mono; [exact Hids |].
+        apply N.add_le_mono_l. apply N.add_le_mono; [exact Hvalidate |].
+        apply N.add_le_mono.
+        * apply N.add_le_mono; [exact Hset |exact Hneeded].
+        * apply N.add_le_mono; [exact Hcosts |exact Hget].
+      + clear Hvalidate Hids Hset Hneeded Hget Hcosts Hordered Hvalid.
+        unfold c_ex, checker_row_budget.
+        apply dag_check_budget; lia.
+    - time_cbn.
+      eapply N.le_trans with (m := (1 + (D.c_db + (1 +
+        (64 * (PTrieT.c_trie + 64 * (checker_row_budget db + 1) + 1) *
+          N.of_nat (cert_size V.encode g + Pos.size_nat c + 1) + 0))))%N).
+      + apply N.add_le_mono_l. apply N.add_le_mono; [exact Hids |].
+        apply N.add_le_mono_l. apply N.add_le_mono; [exact Hvalidate |apply N.le_refl].
+      + pose proof (dag_check_budget PTrieT.c_trie D.c_db C.c_cost
+          (N.of_nat (cert_size V.encode g + Pos.size_nat c + 1)) 0 0
+          (N.of_nat (D.unit db + 1)) 1 ltac:(lia) ltac:(lia) ltac:(lia)
+          ltac:(lia) ltac:(lia)) as Hbudget.
+        rewrite !N.mul_0_r, !N.mul_0_l, !N.add_0_r, !N.mul_1_r in Hbudget.
+        unfold c_ex, checker_row_budget. rewrite N.mul_1_r, N.add_0_r.
+        exact Hbudget.
+  Qed.
 
   Lemma T_extract_le : forall cs db c, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_extract cs db c <= T_best cs db + c_ex * N.of_nat (R db + 1) *
