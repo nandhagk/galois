@@ -859,6 +859,137 @@ Module KnownBitsTable (L : WORD_LANGUAGE) (C : TNUM_CONFIG) (K : KNOWN_BITS L C)
 
 End KnownBitsTable.
 
+(** Projection normalizes each output mask to its source width. *)
+Lemma back_project_bits : forall sw rw f q,
+  (tnum_bits (tnum_project sw rw f q) <= 2 * Pos.to_nat sw)%nat.
+Proof.
+  intros sw rw f q. apply tnum_bounded_bits; cbn [tnum_project zeros ones];
+    rewrite tnum_wrap_agrees; apply wrap_is_word.
+Qed.
+
+(** A backward conjunction returns two bounded masks. *)
+Lemma back_and_bits : forall w q b,
+  (tnum_bits (tnum_and_back w q b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w q b. apply tnum_bounded_bits; cbn [tnum_and_back zeros ones].
+  - rewrite tnum_wand_agrees. apply wand_is_word.
+  - rewrite tnum_wrap_agrees. apply wrap_is_word.
+Qed.
+
+(** A backward disjunction returns two bounded masks. *)
+Lemma back_or_bits : forall w q b,
+  (tnum_bits (tnum_or_back w q b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w q b. apply tnum_bounded_bits; cbn [tnum_or_back zeros ones].
+  - rewrite tnum_wrap_agrees. apply wrap_is_word.
+  - rewrite tnum_wand_agrees. apply wand_is_word.
+Qed.
+
+(** Sign projection stores either zero or the single source sign bit. *)
+Lemma back_sign_bits : forall sw rw n q,
+  (tnum_bits (tnum_sign_project sw rw n q) <= 2 * Pos.to_nat sw)%nat.
+Proof.
+  intros sw rw n q. pose proof (WordTime.word_half_size_bound sw) as Hhalf.
+  unfold tnum_sign_project, tnum_bits; cbn [zeros ones].
+  destruct (Z.shiftr (tnum_wrap rw (zeros q)) n =? 0),
+    (Z.shiftr (tnum_wrap rw (ones q)) n =? 0);
+    try change (Z.size_nat 0) with 0%nat in *; lia.
+Qed.
+
+(** A fixed inverse shift finishes with bounded projection or bounded meet. *)
+Lemma back_shift_bits : forall o w k q,
+  (tnum_bits (tnum_back_shift o w k q) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros o w k q. destruct o; cbn [tnum_back_shift];
+    first [apply back_project_bits|apply tnum_meet_bits].
+Qed.
+
+(** Backward sign extension finishes with a normalized meet. *)
+Lemma back_sext_bits : forall sw rw q,
+  (tnum_bits (tnum_back_sext sw rw q) <= 2 * Pos.to_nat sw)%nat.
+Proof. intros. apply tnum_meet_bits. Qed.
+
+(** A lower-bound mask is normalized by its final negation. *)
+Lemma back_lower_bits : forall w l,
+  (tnum_bits (tnum_lower w l) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. apply tnum_not_bits. Qed.
+
+(** Two variable projections retain at most the combined bounded result masks. *)
+Lemma back_project_variable_bits : forall o w b q,
+  (tnum_bits (tnum_project_variable o w b q) <= 4 * Pos.to_nat w)%nat.
+Proof.
+  intros o w b q.
+  pose proof (tnum_variable_raw_bits (tnum_inverse_shift o) w
+    (Tnum 0 (zeros q)) b) as Hzero.
+  pose proof (tnum_variable_raw_bits (tnum_inverse_shift o) w
+    (Tnum 0 (ones q)) b) as Hone.
+  unfold tnum_project_variable, tnum_bits in *; cbn [zeros ones] in *; lia.
+Qed.
+
+(** Variable inverse shifts retain their projection bound through optional meet. *)
+Lemma back_variable_bits : forall o w b q,
+  (tnum_bits (tnum_back_variable_shift o w b q) <= 4 * Pos.to_nat w)%nat.
+Proof.
+  intros o w b q. destruct o; cbn [tnum_back_variable_shift];
+    try apply back_project_variable_bits.
+  eapply Nat.le_trans; [apply tnum_meet_bits|lia].
+Qed.
+
+(** Projection pays for two callbacks, two output masks and linear input reads. *)
+Lemma back_project_time : forall sw rw f Tf q,
+  (T_tnum_project sw rw f Tf q <=
+    Tf (tnum_wrap rw (zeros q)) +
+    T_tnum_wrap sw (f (tnum_wrap rw (zeros q))) +
+    Tf (tnum_wrap rw (ones q)) +
+    T_tnum_wrap sw (f (tnum_wrap rw (ones q))) +
+    128 * N.of_nat (Pos.to_nat rw + tnum_bits q + 1))%N.
+Proof.
+  intros sw rw f Tf q.
+  pose proof (tnum_wrap_time rw (zeros q)) as Hzero.
+  pose proof (tnum_wrap_time rw (ones q)) as Hone.
+  pose proof (tnum_zeros_time q) as Hz.
+  pose proof (tnum_ones_projection_time q) as Ho.
+  time_unfold T_tnum_project; cbn beta iota zeta.
+  unfold tnum_bits. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+
+(** Backward conjunction reads the result and the other operand once. *)
+Lemma back_and_time : forall w q b,
+  (T_tnum_and_back w q b <=
+    512 * N.of_nat (Pos.to_nat w + tnum_bits q + tnum_bits b + 1))%N.
+Proof.
+  intros w q b. time_unfold T_tnum_and_back; time_cbn; time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound back_and_time.
+
+(** Backward disjunction reads the result and the other operand once. *)
+Lemma back_or_time : forall w q b,
+  (T_tnum_or_back w q b <=
+    512 * N.of_nat (Pos.to_nat w + tnum_bits q + tnum_bits b + 1))%N.
+Proof.
+  intros w q b. time_unfold T_tnum_or_back; time_cbn; time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound back_or_time.
+
+(** A lower-bound mask constructs one bounded upper mask and negates it. *)
+Lemma back_lower_time : forall w l,
+  (T_tnum_lower w l <= 8192 * N.of_nat (Pos.to_nat w + Z.size_nat l + 1))%N.
+Proof.
+  intros w l.
+  assert (Hword : is_word w (tnum_wnot w l)).
+  { rewrite tnum_wnot_agrees. apply wnot_is_word. }
+  pose proof (tnum_word_bits w _ Hword) as Hbits.
+  pose proof (table_upper_time w (tnum_wnot w l) (proj1 Hword)) as Hupper.
+  pose proof (tnum_upper_bits w (tnum_wnot w l)) as Hupperbits.
+  pose proof (tnum_not_time w (tnum_upper w (tnum_wnot w l))) as Hnot.
+  pose proof (tnum_wnot_time w l) as Hcomplement.
+  time_unfold T_tnum_lower; cbn beta iota zeta.
+  rewrite ?Nat2N.inj_add in *. lia.
+Qed.
+TimeBound back_lower_time.
+
 Module KnownBitsTableClock (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (K : KNOWN_BITS_T L C).
   Include KnownBitsTable L C K.
   TimeFun tnum_forward_raw.
