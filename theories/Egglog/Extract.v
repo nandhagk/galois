@@ -3243,6 +3243,7 @@ End SearchCode.
 (** Search bookkeeping relates class maps to the finite row source. *)
 Module SearchFacts (V : VALUE) (C : COST V) (Q : PQ).
   Include SearchCode V C Q.
+  Module Semantics := SearchSemantics V C.
 
   (** Registering rows changes neither the source nor the finalized table. *)
   Definition search_stable {DB} (s t : extraction_state V.t DB Q.t) : Prop :=
@@ -3561,6 +3562,236 @@ Module SearchFacts (V : VALUE) (C : COST V) (Q : PQ).
       apply IH; [exact Hextend|]. intros j Hin. apply Hknown. now right.
     - cbn [dag_cost_cells]. f_equal. apply IH; [exact Hextend|].
       intros i Hin. apply Hknown. now right.
+  Qed.
+
+  (** A frame's cached costs describe exactly a consumed prefix of its original row. *)
+  Definition search_frame_valid (rs : list (search_row V.t)) (costs : ptrie N)
+      (frame : extraction_frame V.t) : Prop :=
+    In (frame_row frame) rs /\
+    exists pre, snd (fst (frame_row frame)) = pre ++ frame_rest frame /\
+      Semantics.search_known costs pre /\
+      frame_costs frame = rev (dag_cost_cells C.val_cost costs pre).
+
+  Lemma search_frame_new : forall rs costs row, In row rs ->
+    search_frame_valid rs costs (search_new_frame row).
+  Proof.
+    intros rs costs [[f k] i] Hin. split; [exact Hin|].
+    exists []. split; [reflexivity|]. split; [|reflexivity].
+    intros j Hmember. contradiction.
+  Qed.
+
+  Lemma search_known_extend : forall key old new,
+    search_costs_extend old new -> Semantics.search_known old key ->
+    Semantics.search_known new key.
+  Proof.
+    intros key old new Hextend Hknown i Hin.
+    destruct (Hknown i Hin) as [n Hget]. exists n. now apply Hextend.
+  Qed.
+
+  Lemma search_frame_extend : forall rs old new frame,
+    search_costs_extend old new -> search_frame_valid rs old frame ->
+    search_frame_valid rs new frame.
+  Proof.
+    intros rs old new frame Hextend [Hrow [pre [Hkey [Hknown Hcosts]]]].
+    split; [exact Hrow|]. exists pre. split; [exact Hkey|]. split.
+    - eapply search_known_extend; eassumption.
+    - rewrite Hcosts. f_equal. symmetry. eapply search_cells_extend; eassumption.
+  Qed.
+
+  (** The evaluator distributes over a key split. *)
+  Lemma search_cells_app : forall costs left right,
+    dag_cost_cells C.val_cost costs (left ++ right) =
+      dag_cost_cells C.val_cost costs left ++ dag_cost_cells C.val_cost costs right.
+  Proof.
+    intros costs left. induction left as [|[i|v] left IH]; intro right;
+      cbn [app dag_cost_cells]; now rewrite ?IH.
+  Qed.
+
+  Lemma search_known_app : forall costs left right,
+    Semantics.search_known costs left -> Semantics.search_known costs right ->
+    Semantics.search_known costs (left ++ right).
+  Proof.
+    intros costs left right Hleft Hright i Hin. apply in_app_iff in Hin.
+    destruct Hin as [Hin|Hin]; [now apply Hleft|now apply Hright].
+  Qed.
+
+  (** A completed valid frame yields exactly the evaluated costs of its full row key. *)
+  Lemma search_frame_ready : forall rs costs frame values,
+    search_frame_valid rs costs frame ->
+    search_scan costs (frame_costs frame) (frame_rest frame) = inr values ->
+    Semantics.search_known costs (snd (fst (frame_row frame))) /\
+    values = dag_cost_cells C.val_cost costs (snd (fst (frame_row frame))).
+  Proof.
+    intros rs costs frame values [Hrow [pre [Hkey [Hknown Hcosts]]]] Hscan.
+    destruct (search_scan_ready _ _ _ _ Hscan) as [Hrest Hvalues].
+    rewrite Hkey. split.
+    - now apply search_known_app.
+    - rewrite Hvalues, Hcosts, rev_involutive, search_cells_app. reflexivity.
+  Qed.
+
+  (** A suspended valid frame remains valid at the precise missing child it reports. *)
+  Lemma search_frame_wait : forall rs costs frame child rest values,
+    search_frame_valid rs costs frame ->
+    search_scan costs (frame_costs frame) (frame_rest frame) =
+      inl (child, (rest, values)) ->
+    search_frame_valid rs costs (ExtractionFrame (frame_row frame) rest values) /\
+    trie_get child costs = None /\ exists tail, rest = Id child :: tail.
+  Proof.
+    intros rs costs frame child rest values [Hrow [pre [Hkey [Hknown Hcosts]]]] Hscan.
+    destruct (search_scan_wait _ _ _ _ _ _ Hscan)
+      as [more [tail [Hrest [Hsuffix [Hmore [Hmissing Hvalues]]]]]].
+    split.
+    - split; [exact Hrow|]. exists (pre ++ more). split.
+      + cbn [frame_row frame_rest]. rewrite Hkey, Hrest, Hsuffix. now rewrite app_assoc.
+      + split; [now apply search_known_app|]. cbn [frame_costs].
+        rewrite Hvalues, Hcosts, search_cells_app, rev_app_distr. reflexivity.
+    - split; [exact Hmissing|]. now exists tail.
+  Qed.
+
+  (** Every parked frame waits at its first still absent identifier. *)
+  Definition search_waiters_valid (rs : list (search_row V.t)) (costs : ptrie N)
+      (waiters : ptrie (list (extraction_frame V.t))) : Prop :=
+    forall i frames frame, trie_get i waiters = Some frames -> In frame frames ->
+      search_frame_valid rs costs frame /\ trie_get i costs = None /\
+      exists rest, frame_rest frame = Id i :: rest.
+
+  (** Every live candidate is a ready original row for an unfinalized class. *)
+  Definition search_candidates_valid (rs : list (search_row V.t)) (costs : ptrie N)
+      (candidates : ptrie (N * extraction_row V.t)) : Prop :=
+    forall i n f k, trie_get i candidates = Some (n, (f, k)) ->
+      trie_get i costs = None /\ In (f, k, i) rs /\
+      Semantics.search_known costs k /\ n = C.fn_cost f (dag_cost_cells C.val_cost costs k).
+
+  (** A processed row has a final output or a ready candidate no dearer than that row. *)
+  Definition search_row_covered (costs : ptrie N)
+      (candidates : ptrie (N * extraction_row V.t)) (row : search_row V.t) : Prop :=
+    (exists n, trie_get (snd row) costs = Some n) \/
+    (Semantics.search_known costs (snd (fst row)) /\
+      exists n choice, trie_get (snd row) candidates = Some (n, choice) /\
+        (n <= C.fn_cost (fst (fst row))
+          (dag_cost_cells C.val_cost costs (snd (fst row))))%N).
+
+  (** An unfinished row remains in a waiting list or in the detached active list. *)
+  Definition search_row_pending (waiters : ptrie (list (extraction_frame V.t)))
+      (active : list (extraction_frame V.t)) (row : search_row V.t) : Prop :=
+    (exists i frames frame, trie_get i waiters = Some frames /\
+      In frame frames /\ frame_row frame = row) \/
+    exists frame, In frame active /\ frame_row frame = row.
+
+  Definition search_tracking (rs : list (search_row V.t)) (costs : ptrie N)
+      (candidates : ptrie (N * extraction_row V.t))
+      (waiters : ptrie (list (extraction_frame V.t)))
+      (active : list (extraction_frame V.t)) : Prop :=
+    forall row, In row rs -> search_row_covered costs candidates row \/
+      search_row_pending waiters active row.
+
+  (** Search bookkeeping accounts for every source row without counting rows in executable maps. *)
+  Definition search_invariant {DB} (rs : list (search_row V.t))
+      (s : extraction_state V.t DB Q.t) : Prop :=
+    search_candidates_valid rs (search_final_costs s) (search_candidates s) /\
+    search_waiters_valid rs (search_final_costs s) (search_waiters s) /\
+    search_queue_agrees (search_candidates s) (search_queue s) /\
+    search_tracking rs (search_final_costs s) (search_candidates s) (search_waiters s) [].
+
+  (** A ready row cannot still be parked at an absent identifier. *)
+  Lemma search_ready_not_waiting : forall rs costs waiters row,
+    search_waiters_valid rs costs waiters ->
+    Semantics.search_known costs (snd (fst row)) ->
+    ~ search_row_pending waiters [] row.
+  Proof.
+    intros rs costs waiters row Hwaiters Hknown [Hwaiting|Hactive].
+    - destruct Hwaiting as [i [frames [frame [Hget [Hin Hrow]]]]].
+      destruct (Hwaiters i frames frame Hget Hin)
+        as [[Hsource [pre [Hkey [Hprefix Hcosts]]]] [Hmissing [rest Hrest]]].
+      rewrite Hrow, Hrest in Hkey.
+      destruct (Hknown i ltac:(rewrite Hkey; apply in_or_app; right; now left)) as [n Hn].
+      congruence.
+    - destruct Hactive as [frame [Hin _]]. contradiction.
+  Qed.
+
+  (** Accounted ready rows provide precisely the frontier condition used by Knuth's argument. *)
+  Lemma search_invariant_covered : forall DB rs (s : extraction_state V.t DB Q.t),
+    search_invariant rs s ->
+    Semantics.search_covered rs (search_final_costs s) (Q.prio (search_queue s)).
+  Proof.
+    intros DB rs s [Hcandidates [Hwaiters [[Hwf [Hprio Hsize]] Htracking]]]
+      f k i Hrow Hknown Hmissing.
+    destruct (Htracking (f, k, i) Hrow) as [Hcovered|Hpending].
+    - destruct Hcovered as [[n Hget]|[_ [n [choice [Hget Hle]]]]].
+      + cbn [snd] in Hget. congruence.
+      + cbn [fst snd] in Hget, Hle. exists n. split; [|exact Hle].
+        rewrite Hprio, Hget. reflexivity.
+    - exfalso. exact (search_ready_not_waiting rs (search_final_costs s)
+        (search_waiters s) (f, k, i) Hwaiters Hknown Hpending).
+  Qed.
+
+  (** A continuing invariant state performs a real pop and finalizes its recorded candidate. *)
+  Lemma search_step_cases : forall DB rs (s next : extraction_state V.t DB Q.t),
+    search_invariant rs s -> search_step s = inl next ->
+    exists i n f k queue,
+      Q.pop (search_queue s) = Some (n, i, queue) /\
+      trie_get i (search_candidates s) = Some (n, (f, k)) /\
+      next = search_finish i n (f, k) queue s.
+  Proof.
+    intros DB rs s next [Hcandidates [Hwaiters [Hqueue Htracking]]] Hstep.
+    destruct (Q.size (search_queue s)) as [|size] eqn:Hsize.
+    - unfold search_step in Hstep. rewrite Hsize in Hstep. discriminate.
+    - destruct (search_queue_positive _ _ Hqueue ltac:(rewrite Hsize; discriminate))
+        as [n [i [queue Hpop]]].
+      destruct (search_queue_remove _ _ _ _ _ Hqueue Hpop)
+        as [[f k] [Hcandidate Hremaining]].
+      destruct (Hcandidates i n f k Hcandidate) as [Hmissing Hrow].
+      unfold search_step in Hstep. rewrite Hsize, Hpop, Hcandidate, Hmissing in Hstep.
+      injection Hstep as <-. exists i, n, f, k, queue. auto.
+  Qed.
+
+  (** The newly finalized row is an original ready row with the least live priority. *)
+  Lemma search_step_choice : forall DB rs (s next : extraction_state V.t DB Q.t),
+    search_invariant rs s -> search_step s = inl next ->
+    exists i n f k,
+      trie_get i (search_final_costs s) = None /\ In (f, k, i) rs /\
+      Semantics.search_known (search_final_costs s) k /\
+      n = C.fn_cost f (dag_cost_cells C.val_cost (search_final_costs s) k) /\
+      Q.prio (search_queue s) i = Some n /\
+      (forall j m, Q.prio (search_queue s) j = Some m -> (n <= m)%N) /\
+      search_final_costs next = PTrieCode.set i n (search_final_costs s) /\
+      search_finalised next = (i, (n, (f, k))) :: search_finalised s.
+  Proof.
+    intros DB rs s next Hinv Hstep.
+    destruct (search_step_cases DB rs s next Hinv Hstep)
+      as [i [n [f [k [queue [Hpop [Hcandidate ->]]]]]]].
+    destruct Hinv as [Hcandidates [Hwaiters [[Hwf [Hprio Hsize]] Htracking]]].
+    destruct (Hcandidates i n f k Hcandidate) as [Hmissing [Hrow [Hknown Hcost]]].
+    destruct (Q.pop_min (search_queue s) n i queue Hwf Hpop)
+      as [Hpriority [Hminimum Hrest]].
+    destruct (search_finish_fields DB i n (f, k) queue s)
+      as [Hdb [Hrows [Hcount [Hcosts Hfinals]]]].
+    exists i, n, f, k. repeat split; assumption.
+  Qed.
+
+  (** Every continuing step retains the immutable source fields. *)
+  Lemma search_step_source : forall DB rs (s next : extraction_state V.t DB Q.t),
+    search_invariant rs s -> search_step s = inl next ->
+    search_database next = search_database s /\
+    search_rows next = search_rows s /\ search_row_count next = search_row_count s.
+  Proof.
+    intros DB rs s next Hinv Hstep.
+    destruct (search_step_cases DB rs s next Hinv Hstep)
+      as [i [n [f [k [queue [Hpop [Hcandidate ->]]]]]]].
+    destruct (search_finish_fields DB i n (f, k) queue s) as [Hdb [Hrows [Hcount Hrest]]].
+    repeat split; assumption.
+  Qed.
+
+  (** Stopping exposes the finalized table and a zero cached queue size. *)
+  Lemma search_step_stopped : forall DB (s : extraction_state V.t DB Q.t) out,
+    search_step s = inr out -> out = search_finalised s /\ Q.size (search_queue s) = 0%N.
+  Proof.
+    intros DB s out Hstep. unfold search_step in Hstep.
+    destruct (Q.size (search_queue s)) as [|size] eqn:Hsize.
+    - injection Hstep as <-. now split.
+    - destruct (Q.pop (search_queue s)) as [[[n i] queue]|]; [|discriminate].
+      destruct (trie_get i (search_candidates s)) as [[value row]|];
+        destruct (trie_get i (search_final_costs s)); discriminate.
   Qed.
 
 End SearchFacts.
