@@ -110,6 +110,89 @@ Proof.
   apply tarjan_emitted_unique. apply prepared_search_unique_raw.
 Qed.
 
+(** The component search visits only sources listed by the original graph. *)
+Lemma wto_component_trace_listed : forall g roots v,
+  In v (entered (prepared_search_trace (scc_graph g)
+    (filter (fun r => match trie_get r (succ (base (scc_graph g))) with
+      Some _ => true | None => false end) roots))) -> In v (nodes g).
+Proof.
+  intros g roots v Hentered. set (ready := scc_graph g) in *.
+  set (listed_roots := filter (fun r =>
+    match trie_get r (succ (base ready)) with Some _ => true | None => false end) roots) in *.
+  assert (Hroots : forall r, In r listed_roots -> In r (nodes g)).
+  { intros r Hr. unfold listed_roots in Hr. apply filter_In in Hr.
+    destruct Hr as [Hr Hlisted]. unfold ready in Hlisted.
+    rewrite wto_scc_root_test in Hlisted. now apply wto_member_spec in Hlisted. }
+  assert (Hclosed : forall u v,
+    In u (nodes ready) -> edge (base ready) u v -> In v (nodes ready)).
+  { intros u z Hu Hedge. unfold ready. rewrite scc_graph_nodes.
+    now apply (scc_graph_closed g u). }
+  assert (Hroots_ready : forall r, In r listed_roots -> In r (nodes ready)).
+  { intros r Hr. unfold ready. rewrite scc_graph_nodes. now apply Hroots. }
+  apply (proj1 (prepared_search_reach_closed ready listed_roots (scc_graph_counts g)
+    Hclosed Hroots_ready v)) in Hentered.
+  destruct Hentered as [r [vertices [Hroot Hpath]]].
+  pose proof (Hroots r Hroot) as Hlisted. clear Hroot. revert Hlisted.
+  induction Hpath as [v|u v vertices z Hedge Hpath IH]; intro Hlisted.
+  - exact Hlisted.
+  - apply IH. now apply (scc_graph_closed g u).
+Qed.
+
+(** Every emitted component vertex belongs to the listed source domain. *)
+Lemma wto_components_listed : forall g roots v,
+  In v (concat (comps (wto_components g roots))) -> In v (nodes g).
+Proof.
+  intros g roots v Hin. set (ready := scc_graph g).
+  set (listed_roots := filter (fun v =>
+    match trie_get v (succ (base ready)) with Some _ => true | None => false end) roots).
+  change (In v (concat (rev_append
+    (tarjan_emitted (TarjanSearch.dfs ready listed_roots tarjan_initial)) []))) in Hin.
+  rewrite rev_append_rev, app_nil_r in Hin.
+  apply (wto_component_trace_listed g roots v).
+  change (In v (entered (prepared_search_trace ready listed_roots))).
+  eapply Permutation_in.
+  - apply tarjan_bag_inventory.
+  - unfold tarjan_bag. apply in_or_app. right.
+    eapply Permutation_in; [apply Permutation_sym, wto_components_reverse|exact Hin].
+Qed.
+
+(** Every listed key fits the raw graph's source-width envelope. *)
+Lemma wto_listed_width : forall g v,
+  In v (nodes g) -> Pos.size_nat v <= graph_width (base g).
+Proof.
+  intros [[vs rows] predecessors n e] v Hin. change (In v vs) in Hin.
+  cbn [base graph_width]. rewrite search_graph_max.
+  eapply Nat.le_trans; [exact (search_vertex_width_member vs v Hin)|apply Nat.le_max_l].
+Qed.
+
+(** Component identifiers fit the width of any envelope for the listed source keys. *)
+Lemma wto_components_owner_bound : forall g roots width,
+  Forall (fun v => Pos.size_nat v <= width) (nodes g) -> forall v i,
+  trie_get v (comp (wto_components g roots)) = Some i -> Pos.size_nat i <= width + 1.
+Proof.
+  intros g roots width Hwidth v i Howner. unfold wto_components in Howner. cbn [comp] in Howner.
+  set (es := prepared_search_trace (scc_graph g)
+    (filter (fun r => match trie_get r (succ (base (scc_graph g))) with
+      Some _ => true | None => false end) roots)).
+  change (trie_get v (tarjan_owners (fold_events TarjanVisitor.enter
+    TarjanVisitor.leave TarjanVisitor.edge es tarjan_initial)) = Some i) in Howner.
+  apply (tarjan_owner_width width es v i).
+  - apply prepared_search_unique_raw.
+  - apply Forall_forall. intros u Hu. rewrite Forall_forall in Hwidth.
+    apply Hwidth. exact (wto_component_trace_listed g roots u Hu).
+  - exact Howner.
+Qed.
+
+(** Every component identifier needs at most one bit beyond a listed graph key. *)
+Lemma wto_components_owner_width : forall g roots v i,
+  trie_get v (comp (wto_components g roots)) = Some i ->
+    Pos.size_nat i <= graph_width (base g) + 1.
+Proof.
+  intros g roots v i Howner. eapply (wto_components_owner_bound g roots).
+  - apply Forall_forall. intros u Hu. now apply wto_listed_width.
+  - exact Howner.
+Qed.
+
 (** Component production cannot emit more vertices than its listed input domain. *)
 Lemma wto_components_size : forall g roots,
   length (concat (comps (wto_components g roots))) <= length (nodes g).
