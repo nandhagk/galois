@@ -3376,6 +3376,294 @@ Proof.
   - split; [contradiction|]. intros [vs [Hget' Hin]]. discriminate Hget'.
 Qed.
 
+(** A partial family chooses a containing loop inside every other installed container. *)
+Local Definition loop_family_choice g r hs v h : Prop :=
+  In h hs /\ natural_loop g r h v /\
+  forall outer, In outer hs -> natural_loop g r outer v ->
+    h = outer \/ loop_inside g r h outer.
+
+(** Immediate containment is restricted to the already installed family. *)
+Local Definition loop_family_outer g r hs inner outer : Prop :=
+  In inner hs /\ In outer hs /\ loop_inside g r inner outer /\
+  forall middle, In middle hs -> loop_inside g r inner middle ->
+    ~ loop_inside g r middle outer.
+
+Local Lemma loop_family_choice_unique : forall g r hs v h k,
+  loop_family_choice g r hs v h -> loop_family_choice g r hs v k -> h = k.
+Proof.
+  intros g r hs v h k [Hh [Hhv Hleast]] [Hk [Hkv Hother]].
+  destruct (Hleast k Hk Hkv) as [Heq|Hhk]; [exact Heq|].
+  destruct (Hother h Hh Hhv) as [Heq|Hkh]; [congruence|].
+  exfalso. exact (loop_inside_asym g r h k Hhk Hkh).
+Qed.
+
+Local Lemma loop_family_choice_new : forall g r hs h v,
+  (forall old, In old hs -> ~ loop_inside g r old h) ->
+  natural_loop g r h v -> loop_family_choice g r (hs ++ [h]) v h.
+Proof.
+  intros g r hs h v Hforward Hbody. split; [apply in_or_app; right; now left|].
+  split; [exact Hbody|]. intros outer Hin Houter.
+  destruct (Pos.eq_dec h outer) as [Heq|Hne]; [now left|].
+  apply in_app_or in Hin. destruct Hin as [Hin|[Heq|Hfalse]]; [|congruence|contradiction].
+  destruct (loop_family_laminar g r h outer v Hbody Houter Hne) as [Hinside|Hreverse].
+  - now right.
+  - exfalso. exact (Hforward outer Hin Hreverse).
+Qed.
+
+Local Lemma loop_family_choice_absent : forall g r hs added v h,
+  ~ natural_loop g r added v ->
+  (loop_family_choice g r (hs ++ [added]) v h <-> loop_family_choice g r hs v h).
+Proof.
+  intros g r hs added v h Habsent. split.
+  - intros [Hin [Hbody Hleast]]. split.
+    + apply in_app_or in Hin. destruct Hin as [Hin|[Heq|Hfalse]];
+        [exact Hin|subst h; contradiction|contradiction].
+    + split; [exact Hbody|]. intros outer Houter Hmember.
+      apply Hleast; [apply in_or_app; now left|exact Hmember].
+  - intros [Hin [Hbody Hleast]]. split; [apply in_or_app; now left|].
+    split; [exact Hbody|]. intros outer Houter Hmember.
+    apply in_app_or in Houter. destruct Houter as [Houter|[Heq|Hfalse]].
+    + now apply Hleast.
+    + subst outer. contradiction.
+    + contradiction.
+Qed.
+
+Local Lemma loop_family_outer_new : forall g r hs added outer,
+  ~ In added hs -> natural_header g r added ->
+  (loop_family_outer g r (hs ++ [added]) added outer <->
+    loop_family_choice g r hs added outer).
+Proof.
+  intros g r hs added outer Hfresh Hheader. split.
+  - intros [_ [Houter [Hinside Himmediate]]].
+    assert (Houterold : In outer hs).
+    { apply in_app_or in Houter. destruct Houter as [Hin|[Heq|Hfalse]];
+        [exact Hin|subst outer; exact (False_ind _ (proj1 Hinside eq_refl))|contradiction]. }
+    assert (Hbody : natural_loop g r outer added).
+    { apply (proj2 (loop_header_containment g r added outer Hheader (proj1 Hinside))).
+      exact Hinside. }
+    split; [exact Houterold|]. split; [exact Hbody|].
+    intros other Hother Hmember. destruct (Pos.eq_dec outer other) as [Heq|Hne]; [now left|].
+    destruct (loop_family_laminar g r outer other added Hbody Hmember Hne)
+      as [Hbelow|Habove]; [now right|].
+    exfalso. apply (Himmediate other); [apply in_or_app; now left| |exact Habove].
+    assert (Hdifferent : added <> other) by (intro Heq; subst other; contradiction).
+    exact (proj1 (loop_header_containment g r added other Hheader Hdifferent) Hmember).
+  - intros [Houter [Hbody Hleast]].
+    assert (Hne : added <> outer) by (intro Heq; subst outer; contradiction).
+    split; [apply in_or_app; right; now left|].
+    split; [apply in_or_app; now left|].
+    split; [now apply (proj1 (loop_header_containment g r added outer Hheader Hne))|].
+    intros middle Hmiddle Hfirst Hsecond.
+    apply in_app_or in Hmiddle. destruct Hmiddle as [Hmiddle|[Heq|Hfalse]];
+      [|subst middle; exact (proj1 Hfirst eq_refl)|contradiction].
+    assert (Hmember : natural_loop g r middle added).
+    { apply (proj2 (loop_header_containment g r added middle Hheader (proj1 Hfirst))).
+      exact Hfirst. }
+    destruct (Hleast middle Hmiddle Hmember) as [Heq|Hreverse].
+    + subst middle. exact (proj1 Hsecond eq_refl).
+    + exact (loop_inside_asym g r outer middle Hreverse Hsecond).
+Qed.
+
+Local Lemma loop_family_outer_old : forall g r hs added inner outer,
+  inner <> added ->
+  (forall old, In old hs -> ~ loop_inside g r old added) ->
+  (loop_family_outer g r (hs ++ [added]) inner outer <->
+    loop_family_outer g r hs inner outer).
+Proof.
+  intros g r hs added inner outer Hne Hforward. split.
+  - intros [Hinner [Houter [Hinside Himmediate]]].
+    assert (Hinnerold : In inner hs).
+    { apply in_app_or in Hinner. destruct Hinner as [Hin|[Heq|Hfalse]];
+        [exact Hin|congruence|contradiction]. }
+    split; [exact Hinnerold|]. split.
+    + apply in_app_or in Houter. destruct Houter as [Hin|[Heq|Hfalse]]; [exact Hin| |contradiction].
+      subst outer. exfalso. exact (Hforward inner Hinnerold Hinside).
+    + split; [exact Hinside|]. intros middle Hmiddle Hfirst Hsecond.
+      apply (Himmediate middle); [apply in_or_app; now left|exact Hfirst|exact Hsecond].
+  - intros [Hinner [Houter [Hinside Himmediate]]].
+    split; [apply in_or_app; now left|]. split; [apply in_or_app; now left|].
+    split; [exact Hinside|]. intros middle Hmiddle Hfirst Hsecond.
+    apply in_app_or in Hmiddle. destruct Hmiddle as [Hmiddle|[Heq|Hfalse]].
+    + exact (Himmediate middle Hmiddle Hfirst Hsecond).
+    + subst middle. exact (Hforward inner Hinner Hfirst).
+    + contradiction.
+Qed.
+
+(** The owner and parent maps represent minimum containment within an installed prefix. *)
+Local Definition loop_family_exact g r hs l : Prop :=
+  (forall v h, trie_get v (header l) = Some h <-> loop_family_choice g r hs v h) /\
+  forall inner outer, trie_get inner (parent l) = Some outer <->
+    loop_family_outer g r hs inner outer.
+
+Local Lemma loop_family_empty : forall g r,
+  loop_family_exact g r [] (Loops Empty Empty Empty).
+Proof.
+  intros g r. split.
+  - intros x y. cbn [header]. rewrite PTrie.get_empty.
+    split; [discriminate|intros [Hfalse _]; contradiction].
+  - intros x y. cbn [parent]. rewrite PTrie.get_empty.
+    split; [discriminate|intros [Hfalse _]; contradiction].
+Qed.
+
+Local Lemma loop_family_install : forall g r hs l added vs,
+  loop_family_exact g r hs l -> ~ In added hs -> natural_header g r added ->
+  (forall old, In old hs -> ~ loop_inside g r old added) ->
+  (forall v, In v vs <-> natural_loop g r added v) ->
+  loop_family_exact g r (hs ++ [added]) (install l (added, vs)).
+Proof.
+  intros g r hs l added vs [Howners Hparents] Hfresh Hheader Hforward Hrow.
+  destruct (loop_install_maps l added vs) as [_ [Hp Ho]]. split.
+  - intros v h. rewrite Ho, loop_assign_lookup.
+    destruct (in_dec Pos.eq_dec v vs) as [Hin|Hnot].
+    + pose proof (loop_family_choice_new g r hs added v Hforward (proj1 (Hrow v) Hin))
+        as Hchoice.
+      split.
+      * intro Heq. injection Heq as <-. exact Hchoice.
+      * intro Hother. f_equal. now apply (loop_family_choice_unique g r (hs ++ [added]) v).
+    + rewrite Howners. symmetry. apply loop_family_choice_absent.
+      intro Hmember. apply Hnot, (proj2 (Hrow v)), Hmember.
+  - intros inner outer. rewrite Hp.
+    destruct (Pos.eq_dec inner added) as [->|Hne].
+    + assert (Hnone : trie_get added (parent l) = None).
+      { destruct (trie_get added (parent l)) as [previous|] eqn:Hget; [|reflexivity].
+        exfalso. apply Hparents in Hget. exact (Hfresh (proj1 Hget)). }
+      rewrite (loop_family_outer_new g r hs added outer Hfresh Hheader).
+      rewrite <- Howners. destruct (trie_get added (header l)) as [previous|].
+      * rewrite PTrie.get_set_same. reflexivity.
+      * now rewrite Hnone.
+    + rewrite (loop_family_outer_old g r hs added inner outer Hne Hforward).
+      rewrite <- Hparents. destruct (trie_get added (header l)) as [previous|];
+        [now rewrite PTrie.get_set_other by exact Hne|reflexivity].
+Qed.
+
+(** A forward order never installs an outer loop after one of its strict inner loops. *)
+Local Definition loop_family_forward g r hs : Prop :=
+  forall before added after, hs = before ++ added :: after ->
+    forall old, In old before -> ~ loop_inside g r old added.
+
+Local Lemma loop_family_forward_prefix : forall g r hs added,
+  loop_family_forward g r (hs ++ [added]) -> loop_family_forward g r hs.
+Proof.
+  intros g r hs added Hforward before next after Heq old Hold.
+  apply (Hforward before next (after ++ [added])); [|exact Hold].
+  rewrite Heq, <- app_assoc. reflexivity.
+Qed.
+
+(** Any distinct forward family is represented exactly by its ordered installation fold. *)
+Local Lemma loop_family_assemble : forall g r hs rows,
+  NoDup hs -> Forall (natural_header g r) hs -> loop_family_forward g r hs ->
+  (forall h, In h hs -> forall v, In v (rows h) <-> natural_loop g r h v) ->
+  loop_family_exact g r hs (assemble (map (fun h => (h, rows h)) hs)).
+Proof.
+  intros g r hs. induction hs as [|added hs IH] using rev_ind;
+    intros rows Hunique Hheaders Hforward Hrows.
+  - apply loop_family_empty.
+  - assert (Holdunique : NoDup hs) by (now apply NoDup_app_remove_r in Hunique).
+    assert (Hfresh : ~ In added hs).
+    { intro Hin. exact (loop_nodup_disjoint hs [added] Hunique added Hin (or_introl eq_refl)). }
+    assert (Holdheaders : Forall (natural_header g r) hs).
+    { rewrite Forall_forall in *. intros h Hin. apply Hheaders, in_or_app. now left. }
+    assert (Hadded : natural_header g r added).
+    { rewrite Forall_forall in Hheaders. apply Hheaders, in_or_app. right. now left. }
+    assert (Holdrows : forall h, In h hs -> forall v,
+      In v (rows h) <-> natural_loop g r h v).
+    { intros h Hin. apply Hrows, in_or_app. now left. }
+    rewrite map_app. unfold assemble at 1. rewrite fold_left_app.
+    cbn [map fold_left]. apply loop_family_install.
+    + apply IH; try assumption. now apply loop_family_forward_prefix with added.
+    + exact Hfresh.
+    + exact Hadded.
+    + intros old Hold. apply (Hforward hs added []); [reflexivity|exact Hold].
+    + apply Hrows, in_or_app. right. now left.
+Qed.
+
+(** Every member of a prefix occurs before the following selected header. *)
+Local Lemma loop_order_across : forall before added after old,
+  In old before -> order_before (before ++ added :: after) old added.
+Proof.
+  intros before added after old Hin. apply In_nth_error in Hin as [i Hi].
+  assert (Hbound : i < length before).
+  { apply nth_error_Some. rewrite Hi. discriminate. }
+  exists i, (length before). split.
+  - now rewrite nth_error_app1 by exact Hbound.
+  - split; [|exact Hbound]. rewrite nth_error_app2 by lia.
+    now rewrite Nat.sub_diag.
+Qed.
+
+Local Lemma loop_family_forward_order : forall g r hs,
+  NoDup hs ->
+  (forall inner outer, loop_inside g r inner outer -> order_before hs outer inner) ->
+  loop_family_forward g r hs.
+Proof.
+  intros g r hs Hunique Horder before added after Heq old Hold Hinside.
+  pose proof (Horder old added Hinside) as Hreverse.
+  assert (Hbefore : order_before hs old added).
+  { rewrite Heq. now apply loop_order_across. }
+  pose proof (dom_cert_before_positions hs old added Hunique Hbefore).
+  pose proof (dom_cert_before_positions hs added old Hunique Hreverse). lia.
+Qed.
+
+(** Minimum containment within the complete family is semantic innermost containment. *)
+Local Lemma loop_family_choice_semantic : forall g r hs v h,
+  (forall k, In k hs <-> natural_header g r k) ->
+  (loop_family_choice g r hs v h <-> innermost_header g r v h).
+Proof.
+  intros g r hs v h Hheaders. split.
+  - intros [_ [Hbody Hleast]]. split; [exact Hbody|].
+    intros [inner [Hinner Hinside]].
+    destruct (Hleast inner (proj2 (Hheaders inner) (proj1 Hinner)) Hinner)
+      as [Heq|Hreverse].
+    + subst inner. exact (proj1 Hinside eq_refl).
+    + exact (loop_inside_asym g r h inner Hreverse Hinside).
+  - intros [Hbody Hminimal].
+    split; [exact (proj2 (Hheaders h) (proj1 Hbody))|]. split; [exact Hbody|].
+    intros outer Houter Hmember. destruct (Pos.eq_dec h outer) as [Heq|Hne]; [now left|].
+    destruct (loop_family_laminar g r h outer v Hbody Hmember Hne) as [Hinside|Hinside].
+    + now right.
+    + exfalso. apply Hminimal. exists outer. now split.
+Qed.
+
+(** Immediate containment within the complete family is semantic immediate containment. *)
+Local Lemma loop_family_outer_semantic : forall g r hs inner outer,
+  (forall k, In k hs <-> natural_header g r k) ->
+  (loop_family_outer g r hs inner outer <-> immediate_outer g r inner outer).
+Proof.
+  intros g r hs inner outer Hheaders. split.
+  - intros [_ [_ [Hinside Himmediate]]]. split; [exact Hinside|].
+    intros [middle [Hfirst Hsecond]].
+    apply (Himmediate middle); [|exact Hfirst|exact Hsecond].
+    apply (proj2 (Hheaders middle)). exact (proj1 (proj2 Hsecond)).
+  - intros [Hinside Himmediate].
+    split; [apply (proj2 (Hheaders inner)); exact (proj1 (proj2 Hinside))|].
+    split; [apply (proj2 (Hheaders outer)); exact (proj1 (proj2 (proj2 Hinside)))|].
+    split; [exact Hinside|]. intros middle Hmiddle Hfirst Hsecond.
+    apply Himmediate. exists middle. now split.
+Qed.
+
+(** Complete, ordered natural-loop rows determine the owner and parent semantics. *)
+Local Lemma loop_assemble_semantic : forall g r hs rows,
+  NoDup hs ->
+  (forall h, In h hs <-> natural_header g r h) ->
+  (forall inner outer, loop_inside g r inner outer -> order_before hs outer inner) ->
+  (forall h, In h hs -> forall v, In v (rows h) <-> natural_loop g r h v) ->
+  (forall v h,
+    trie_get v (header (assemble (map (fun k => (k, rows k)) hs))) = Some h <->
+      innermost_header g r v h) /\
+  forall inner outer,
+    trie_get inner (parent (assemble (map (fun k => (k, rows k)) hs))) = Some outer <->
+      immediate_outer g r inner outer.
+Proof.
+  intros g r hs rows Hunique Hheaders Horder Hrows.
+  assert (Hnatural : Forall (natural_header g r) hs).
+  { apply Forall_forall. intros h Hin. now apply (proj1 (Hheaders h)). }
+  destruct (loop_family_assemble g r hs rows Hunique Hnatural
+    (loop_family_forward_order g r hs Hunique Horder) Hrows) as [Howners Hparents].
+  split.
+  - intros v h. rewrite Howners. now apply loop_family_choice_semantic.
+  - intros inner outer. rewrite Hparents. now apply loop_family_outer_semantic.
+Qed.
+
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
