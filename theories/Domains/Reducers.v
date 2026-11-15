@@ -754,7 +754,7 @@ Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   TimeFun reduce.
   Definition c_exchange : N := 1. (* STUB *)
   Definition c_reduce : N := 1. (* STUB *)
-  Definition k_exchange : N := 1. (* STUB *)
+  Definition k_exchange : N := 1.
   Lemma T_to_left_le : forall a b, (T_to_left (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -779,14 +779,20 @@ Module WrappedBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG)
   Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact reduce_sound.
+  Qed.
   Lemma F2_steps_lower : forall a b,
     A.leb (fst (to_right (to_left (a, b)))) a = true /\
     B.leb (snd (to_right (to_left (a, b)))) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact reduce_lower.
+  Qed.
   Lemma T1_steps : forall x, (T_reduce x <=
     k_exchange * (T_to_left x + T_to_right (to_left x) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro x; unfold k_exchange; time_step.
+  Qed.
   Lemma reduce_bigO : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
   Proof. Admitted. (* STUB *)
@@ -811,7 +817,7 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   TimeFun reduce.
   Definition c_exchange : N := 1. (* STUB *)
   Definition c_reduce : N := 1. (* STUB *)
-  Definition k_exchange : N := 1. (* STUB *)
+  Definition k_exchange : N := 1.
   Lemma T_to_left_le : forall a b, (T_to_left (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -836,14 +842,20 @@ Module IntervalCongrT (L : WORD_LANGUAGE_T) (T : THRESHOLDS_T)
   Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact reduce_sound.
+  Qed.
   Lemma F2_steps_lower : forall a b,
     A.leb (fst (to_right (to_left (a, b)))) a = true /\
     B.leb (snd (to_right (to_left (a, b)))) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact reduce_lower.
+  Qed.
   Lemma T1_steps : forall x, (T_reduce x <=
     k_exchange * (T_to_left x + T_to_right (to_left x) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro x; unfold k_exchange; time_step.
+  Qed.
   Lemma reduce_bigO : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
   Proof. Admitted. (* STUB *)
@@ -867,7 +879,7 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   TimeFun reduce.
   Definition c_exchange : N := 1. (* STUB *)
   Definition c_reduce : N := 1. (* STUB *)
-  Definition k_exchange : N := 1. (* STUB *)
+  Definition k_exchange : N := 1.
   Lemma T_to_left_le : forall a b, (T_to_left (a, b) <=
     c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
   Proof. Admitted. (* STUB *)
@@ -892,14 +904,20 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   Lemma F1_steps_sound : forall a b c, A.gamma a c -> B.gamma b c ->
     A.gamma (fst (to_right (to_left (a, b)))) c /\
     B.gamma (snd (to_right (to_left (a, b)))) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact reduce_sound.
+  Qed.
   Lemma F2_steps_lower : forall a b,
     A.leb (fst (to_right (to_left (a, b)))) a = true /\
     B.leb (snd (to_right (to_left (a, b)))) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact reduce_lower.
+  Qed.
   Lemma T1_steps : forall x, (T_reduce x <=
     k_exchange * (T_to_left x + T_to_right (to_left x) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro x; unfold k_exchange; time_step.
+  Qed.
   Lemma reduce_bigO : bigO (fun _ => True)
     (fun x => N.of_nat (A.size (fst x) + B.size (snd x) + 1)) T_reduce.
   Proof. Admitted. (* STUB *)
