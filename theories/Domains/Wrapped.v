@@ -1975,6 +1975,188 @@ Proof.
     [cbn [wrapped_bits]; lia|apply wrapped_norm_bits].
 Qed.
 
+(** Negation charges endpoint sign changes and one normalization. *)
+Lemma wrapped_neg_time : forall w a,
+  (T_wrapped_neg w a <=
+    2048 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w [| |lo hi]; time_unfold T_wrapped_neg;
+    cbn beta iota zeta; time_simpl; time_pose; cbn [wrapped_bits] in *;
+    rewrite ?WordTime.integer_opp_size in *; rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_neg_time.
+
+(** Addition charges cardinalities and linear endpoint sums. *)
+Lemma wrapped_add_time : forall w a b,
+  (T_wrapped_add w a b <=
+    4096 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intros w [| |lo hi] [| |lo' hi'];
+    try (time_unfold T_wrapped_add; cbn [wrapped_bits]; rewrite !Nat2N.inj_add; lia).
+  pose proof (WordTime.word_modulus_time_bound w) as Hmodulus.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  pose proof (wrapped_size_bits w (WItv lo hi)) as Habits.
+  pose proof (wrapped_size_bits w (WItv lo' hi')) as Hbbits.
+  pose proof (WordTime.integer_add_size lo lo') as Hlobits.
+  pose proof (WordTime.integer_add_size hi hi') as Hhibits.
+  time_unfold T_wrapped_add. cbn beta iota zeta. time_simpl. time_pose.
+  destruct (modulus w <? wrapped_size w (WItv lo hi) + wrapped_size w (WItv lo' hi'));
+    cbn [wrapped_bits] in *; rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_add_time.
+
+(** Subtraction composes normalized negation and addition. *)
+Lemma wrapped_sub_time : forall w a b,
+  (T_wrapped_sub w a b <=
+    16384 * N.of_nat (Pos.to_nat w + wrapped_bits a + wrapped_bits b + 1))%N.
+Proof.
+  intros w a b. pose proof (wrapped_neg_bits w b) as Hbits.
+  time_unfold T_wrapped_sub. cbn beta iota zeta. time_simpl. time_pose.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_sub_time.
+
+(** Shifting an interval adds the displacement bits and one carry bit. *)
+Lemma wrapped_shift_interval_bits : forall delta a,
+  (interval_bits (wrapped_shift_interval delta a) <=
+    interval_bits a + Z.size_nat delta + 1)%nat.
+Proof.
+  intros delta [|lower upper].
+  - cbn [wrapped_shift_interval interval_bits]. lia.
+  - pose proof (WrappedScalar.scalar_endpoint_bits lower upper) as [Hlo Hhi].
+    destruct lower as [|lo|], upper as [|hi|];
+      cbn [wrapped_shift_interval interval_bits WrappedScalar.scalar_bnd_bits] in *;
+      try (pose proof (WordTime.integer_add_size lo delta));
+      try (pose proof (WordTime.integer_add_size hi delta)); lia.
+Qed.
+
+(** Shifting an interval charges at most two integer additions. *)
+Lemma wrapped_shift_interval_time : forall delta a,
+  (T_wrapped_shift_interval delta a <=
+    32 * N.of_nat (interval_bits a + Z.size_nat delta + 1))%N.
+Proof.
+  intros delta [|lower upper].
+  - time_unfold T_wrapped_shift_interval. cbn [interval_bits].
+    rewrite Nat2N.inj_add. lia.
+  - pose proof (WrappedScalar.scalar_endpoint_bits lower upper) as [Hlo Hhi].
+    destruct lower as [|lo|], upper as [|hi|];
+      time_unfold T_wrapped_shift_interval; cbn beta iota zeta; time_simpl; time_pose;
+      cbn [interval_bits WrappedScalar.scalar_bnd_bits] in *;
+      rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_shift_interval_time.
+
+(** Signed parts shift width-bounded unsigned endpoints by half a modulus. *)
+Lemma wrapped_signed_parts_bits : forall w a,
+  (interval_bits (fst (wrapped_signed_parts w a)) <= 2 * Pos.to_nat w + 1)%nat /\
+  (interval_bits (snd (wrapped_signed_parts w a)) <= 2 * Pos.to_nat w + 1)%nat.
+Proof.
+  intros w a.
+  pose proof (WordTime.word_half_size_bound w) as Hhalf.
+  pose proof (wrapped_parts_bits w (wrapped_add w a (WItv (half w) (half w)))) as [Hl Hr].
+  pose proof (wrapped_shift_interval_bits (- half w)
+    (fst (wrapped_parts w (wrapped_add w a (WItv (half w) (half w)))))) as Hleft.
+  pose proof (wrapped_shift_interval_bits (- half w)
+    (snd (wrapped_parts w (wrapped_add w a (WItv (half w) (half w)))))) as Hright.
+  unfold wrapped_signed_parts. cbn [fst snd]. rewrite WordTime.integer_opp_size in *. lia.
+Qed.
+
+(** Signed splitting composes linear addition, splitting and endpoint shifts. *)
+Lemma wrapped_signed_parts_time : forall w a,
+  (T_wrapped_signed_parts w a <=
+    65536 * N.of_nat (Pos.to_nat w + wrapped_bits a + 1))%N.
+Proof.
+  intros w a.
+  pose proof (WordTime.word_half_time_bound w) as Hhalftime.
+  pose proof (WordTime.word_half_size_bound w) as Hhalfbits.
+  pose proof (wrapped_add_bits w a (WItv (half w) (half w))) as Haddedbits.
+  pose proof (wrapped_parts_bits w (wrapped_add w a (WItv (half w) (half w)))) as [Hl Hr].
+  time_unfold T_wrapped_signed_parts. cbn beta iota zeta. time_simpl. time_pose.
+  cbn [wrapped_bits] in *. rewrite WordTime.integer_opp_size in *.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_signed_parts_time.
+
+(** The predecessor of the signed pole is an unsigned word. *)
+Lemma wrapped_half_last_bits : forall w,
+  (Z.size_nat (half w - 1) <= Pos.to_nat w)%nat.
+Proof.
+  intro w. apply WordTime.word_size_bound. unfold is_word.
+  pose proof (half_pos w). pose proof (modulus_half w). lia.
+Qed.
+
+(** Cutting at the signed pole charges two scalar intersections. *)
+Lemma wrapped_pole_cut_time : forall w a,
+  (T_wrapped_pole_cut w a <=
+    1048576 * N.of_nat (Pos.to_nat w + interval_bits a + 1))%N.
+Proof.
+  intros w a.
+  pose proof (WordTime.word_half_time_bound w) as Hhalftime.
+  pose proof (WordTime.word_modulus_time_bound w) as Hmodulustime.
+  pose proof (WordTime.word_half_size_bound w) as Hhalfbits.
+  pose proof (WordTime.word_modulus_size_bound w) as Hmodulusbits.
+  pose proof (wrapped_half_last_bits w) as Hhalflastbits.
+  pose proof (wrapped_last_word_bits w) as Hlastbits.
+  pose proof (WrappedScalar.T_interval_meet_le a (I (Fin 0) (Fin (half w - 1)))) as Hleft.
+  pose proof (WrappedScalar.T_interval_meet_le a (I (Fin (half w)) (Fin (modulus w - 1))))
+    as Hright.
+  set (hp := half w) in *.
+  set (mp := modulus w) in *.
+  set (hlast := hp - 1) in *.
+  set (mlast := mp - 1) in *.
+  time_unfold T_wrapped_pole_cut. cbn beta iota zeta.
+  fold hp mp hlast mlast. clearbody hp mp hlast mlast.
+  time_simpl. time_pose.
+  unfold WrappedScalar.c_scalar, ThresholdsT.c_thresholds in *.
+  cbn [interval_bits] in *.
+  try change (Z.size_nat 0) with 0%nat in *.
+  try change (Z.size_nat 1) with 1%nat in *.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_pole_cut_time.
+
+(** A numeric pole adds only its own magnitude bits to clipped intervals. *)
+Lemma wrapped_mul_cut_bits : forall pole a,
+  (interval_bits (fst (wrapped_mul_cut pole a)) <=
+    interval_bits a + Z.size_nat pole + 2)%nat /\
+  (interval_bits (snd (wrapped_mul_cut pole a)) <=
+    interval_bits a + Z.size_nat pole + 2)%nat.
+Proof.
+  intros pole a.
+  pose proof (WrappedScalar.interval_meet_bits a (I NegInf (Fin (pole - 1)))) as Hl.
+  pose proof (WrappedScalar.interval_meet_bits a (I (Fin pole) PosInf)) as Hr.
+  pose proof (WordTime.integer_sub_size pole 1) as Hpred.
+  change ((interval_bits (WrappedScalar.interval_meet a (I NegInf (Fin (pole - 1)))) <=
+    interval_bits a + Z.size_nat pole + 2)%nat /\
+    (interval_bits (WrappedScalar.interval_meet a (I (Fin pole) PosInf)) <=
+    interval_bits a + Z.size_nat pole + 2)%nat).
+  change (interval_bits (WrappedScalar.interval_meet a (I NegInf (Fin (pole - 1)))) <=
+    interval_bits a + Z.size_nat (pole - 1))%nat in Hl.
+  change (interval_bits (WrappedScalar.interval_meet a (I (Fin pole) PosInf)) <=
+    interval_bits a + Nat.max (Z.size_nat pole) 0)%nat in Hr.
+  rewrite Nat.max_0_r in Hr.
+  change (Z.size_nat 1) with 1%nat in Hpred. lia.
+Qed.
+
+(** Cutting at an arbitrary numeric pole has linear endpoint cost. *)
+Lemma wrapped_mul_cut_time : forall pole a,
+  (T_wrapped_mul_cut pole a <=
+    1048576 * N.of_nat (interval_bits a + Z.size_nat pole + 1))%N.
+Proof.
+  intros pole a.
+  pose proof (WrappedScalar.T_interval_meet_le a (I NegInf (Fin (pole - 1)))) as Hl.
+  pose proof (WrappedScalar.T_interval_meet_le a (I (Fin pole) PosInf)) as Hr.
+  pose proof (WordTime.integer_sub_size pole 1) as Hpred.
+  set (last := pole - 1) in *.
+  time_unfold T_wrapped_mul_cut. cbn beta iota zeta. fold last. clearbody last.
+  time_simpl. time_pose.
+  unfold WrappedScalar.c_scalar, ThresholdsT.c_thresholds in *.
+  cbn [interval_bits] in *. rewrite ?Nat.max_0_r in *. try change (Z.size_nat 1) with 1%nat in *.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_mul_cut_time.
+
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
