@@ -4,7 +4,7 @@
     For example, an absent definition is arbitrary.
     Builds on: Program.SsaSig and Base.Trie. *)
 
-From Stdlib Require Import List Bool NArith PArith.
+From Stdlib Require Import List Bool NArith PArith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import KeySig Trie Loop Code.
 From Galois.Graph Require Import Data SearchSig Search Dom.
@@ -415,35 +415,81 @@ Module SsaT (P : TYPE) (N : KEY_T) (E : KEY_T)
   TimeFun guards.
   TimeFun edge_uses.
   TimeFun operands.
-  Definition c_ssa : N := 1%N. (* STUB *)
+  Definition c_ssa : N := 8 * (D.c_tables + N.c_key + E.c_key + V.c_key + 1).
+
+  (** Reading the stored entry inventory pays for its table and projection. *)
   Lemma T_entry_params_le : forall p,
     (T_entry_params p <= c_ssa * N.of_nat (length (entry_params p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (D.T_tables_le p) as Htables.
+    unfold c_ssa. time_unfold T_entry_params. time_simpl; time_cbn; nia.
+  Qed.
+
+  (** Reading the stored operand inventory pays for its table and projection. *)
   Lemma T_arg_rows_le : forall p,
     (T_arg_rows p <= c_ssa * N.of_nat (length (arg_rows p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (D.T_tables_le p) as Htables.
+    unfold c_ssa. time_unfold T_arg_rows. time_simpl; time_cbn; nia.
+  Qed.
+
+  (** Reading the stored value inventory pays for its table and projection. *)
   Lemma T_values_le : forall p,
     (T_values p <= c_ssa * N.of_nat (length (values p) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (D.T_tables_le p) as Htables.
+    unfold c_ssa. time_unfold T_values. time_simpl; time_cbn; nia.
+  Qed.
 
+  (** Definition lookup traverses the encoded value key. *)
   Lemma T_def_le : forall p x,
     (T_def p x <= c_ssa * N.of_nat (V.bits x + length (operands p x) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x. pose proof (D.T_tables_le p) as Htables.
+    pose proof (V.T_encode_le x) as Hencode.
+    unfold c_ssa. time_unfold T_def. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold V.bits in *; nia.
+  Qed.
 
+  (** Home lookup also pays for the default table read when its key is absent. *)
   Lemma T_home_le : forall p x, (T_home p x <= c_ssa * N.of_nat (V.bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x. pose proof (D.T_tables_le p) as Htables.
+    pose proof (V.T_encode_le x) as Hencode.
+    unfold c_ssa. time_unfold T_home. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (V.encode x) (ssa_homes (D.tables p)));
+      time_simpl; time_cbn; unfold V.bits in *; nia.
+  Qed.
 
+  (** Parameter lookup traverses the encoded node key. *)
   Lemma T_params_le : forall p n,
     (T_params p n <= c_ssa * N.of_nat (N.bits n + length (params p n) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. pose proof (D.T_tables_le p) as Htables.
+    pose proof (N.T_encode_le n) as Hencode.
+    unfold c_ssa. time_unfold T_params. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold N.bits in *; nia.
+  Qed.
 
+  (** Incoming operand lookup traverses the encoded edge key. *)
   Lemma T_args_le : forall p e,
     (T_args p e <= c_ssa * N.of_nat (E.bits e + length (args p e) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. pose proof (D.T_tables_le p) as Htables.
+    pose proof (E.T_encode_le e) as Hencode.
+    unfold c_ssa. time_unfold T_args. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold E.bits in *; nia.
+  Qed.
 
+  (** Guard lookup traverses the encoded edge key. *)
   Lemma T_guards_le : forall p e,
     (T_guards p e <= c_ssa * N.of_nat (E.bits e + length (guards p e) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. pose proof (D.T_tables_le p) as Htables.
+    pose proof (E.T_encode_le e) as Hencode.
+    unfold c_ssa. time_unfold T_guards. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold E.bits in *; nia.
+  Qed.
 End SsaT.
 
 Module SsaPoints (P : TYPE) (B : KEY) (BE : KEY)
