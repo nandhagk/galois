@@ -4,7 +4,7 @@
     For example, two arms aimed at the same block remain distinct.
     Builds on: Ssa.Lang. *)
 
-From Stdlib Require Import List PArith NArith Bool.
+From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Code KeySig Key Trie.
 From Galois.Program Require Import CfgSig VarsSig Vars SsaSig Ssa.
@@ -41,20 +41,28 @@ Module ArmKey <: KEY.
   Include ArmKeyCode.
   Include KEY_SPEC.
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [] []; cbn [encode]; congruence.
+  Qed.
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [] []; cbn [eqb]; constructor; congruence.
+  Qed.
 End ArmKey.
 
 Module ArmKeyT <: KEY_T.
   Include ArmKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 1.
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros []; unfold c_key, bits, encode; time_step.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [] []; unfold c_key, bits, encode; time_step.
+  Qed.
 End ArmKeyT.
 
 Module EdgeArmTargetKey := PairKeyT ArmKeyT PosKeyT.
@@ -73,20 +81,55 @@ Module BlockEdgeKey <: KEY.
   Include BlockEdgeCode.
   Include KEY_SPEC.
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [s a t] [s' a' t'] Heq.
+    apply EdgeTupleKey.encode_inj in Heq.
+    unfold block_edge_tuple in Heq; cbn in Heq.
+    inversion Heq; reflexivity.
+  Qed.
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [s a t] [s' a' t']; unfold eqb.
+    destruct (EdgeTupleKey.eqb_spec (block_edge_tuple (BlockEdge s a t))
+      (block_edge_tuple (BlockEdge s' a' t'))) as [Heq | Hneq].
+    - constructor. unfold block_edge_tuple in Heq; cbn in Heq.
+      inversion Heq; reflexivity.
+    - constructor. intro Heq; apply Hneq; now rewrite Heq.
+  Qed.
 End BlockEdgeKey.
 
 Module BlockEdge <: KEY_T.
   Include BlockEdgeKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 8 * (EdgeTupleKey.c_key + 1).
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro k. pose proof (EdgeTupleKey.T_encode_le (block_edge_tuple k)) as Hcall.
+    change (EdgeTupleKey.T_encode (block_edge_tuple k) <=
+      EdgeTupleKey.c_key * N.of_nat (bits k + 1))%N in Hcall.
+    unfold c_key. time_unfold T_encode. time_unfold T_block_edge_tuple.
+    time_unfold T_edge_source. time_unfold T_edge_arm. time_unfold T_edge_target.
+    time_simpl; time_cbn.
+    change (1 + (4 + EdgeTupleKey.T_encode (block_edge_tuple k)) <=
+      8 * (EdgeTupleKey.c_key + 1) * N.of_nat (bits k + 1))%N.
+    rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b.
+    pose proof (EdgeTupleKey.T_eqb_le (block_edge_tuple a) (block_edge_tuple b)) as Hcall.
+    change (EdgeTupleKey.T_eqb (block_edge_tuple a) (block_edge_tuple b) <=
+      EdgeTupleKey.c_key * N.of_nat (bits a + 1))%N in Hcall.
+    unfold c_key. time_unfold T_eqb. time_unfold T_block_edge_tuple.
+    time_unfold T_edge_source. time_unfold T_edge_arm. time_unfold T_edge_target.
+    time_simpl; time_cbn.
+    change (1 + (4 + 4 + EdgeTupleKey.T_eqb (block_edge_tuple a) (block_edge_tuple b)) <=
+      8 * (EdgeTupleKey.c_key + 1) * N.of_nat (bits a + 1))%N.
+    pose proof (Pos.size_nat_pos (encode a)) as Hwidth.
+    assert (Hbits : 1 <= bits a) by exact Hwidth. apply time_of_nat_le in Hbits.
+    rewrite Nat2N.inj_add in *; nia.
+  Qed.
 End BlockEdge.
 
 Module PointKey := PairKeyT PosKeyT NKeyT.
@@ -118,20 +161,55 @@ Module PointEdgeKey <: KEY.
   Include PointEdgeCode.
   Include KEY_SPEC.
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [s t e] [s' t' e'] Heq.
+    apply PointEdgeTupleKey.encode_inj in Heq.
+    unfold point_edge_tuple in Heq; cbn in Heq.
+    inversion Heq; reflexivity.
+  Qed.
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [s t e] [s' t' e']; unfold eqb.
+    destruct (PointEdgeTupleKey.eqb_spec (point_edge_tuple (PointEdge s t e))
+      (point_edge_tuple (PointEdge s' t' e'))) as [Heq | Hneq].
+    - constructor. unfold point_edge_tuple in Heq; cbn in Heq.
+      inversion Heq; reflexivity.
+    - constructor. intro Heq; apply Hneq; now rewrite Heq.
+  Qed.
 End PointEdgeKey.
 
 Module PointEdge <: KEY_T.
   Include PointEdgeKey.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 1. (* STUB *)
+  Definition c_key : N := 8 * (PointEdgeTupleKey.c_key + 1).
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro k. pose proof (PointEdgeTupleKey.T_encode_le (point_edge_tuple k)) as Hcall.
+    change (PointEdgeTupleKey.T_encode (point_edge_tuple k) <=
+      PointEdgeTupleKey.c_key * N.of_nat (bits k + 1))%N in Hcall.
+    unfold c_key. time_unfold T_encode. time_unfold T_point_edge_tuple.
+    time_unfold T_point_src. time_unfold T_point_dst. time_unfold T_point_block_edge.
+    time_simpl; time_cbn.
+    change (1 + (4 + PointEdgeTupleKey.T_encode (point_edge_tuple k)) <=
+      8 * (PointEdgeTupleKey.c_key + 1) * N.of_nat (bits k + 1))%N.
+    rewrite Nat2N.inj_add in *; nia.
+  Qed.
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b.
+    pose proof (PointEdgeTupleKey.T_eqb_le (point_edge_tuple a) (point_edge_tuple b)) as Hcall.
+    change (PointEdgeTupleKey.T_eqb (point_edge_tuple a) (point_edge_tuple b) <=
+      PointEdgeTupleKey.c_key * N.of_nat (bits a + 1))%N in Hcall.
+    unfold c_key. time_unfold T_eqb. time_unfold T_point_edge_tuple.
+    time_unfold T_point_src. time_unfold T_point_dst. time_unfold T_point_block_edge.
+    time_simpl; time_cbn.
+    change (1 + (4 + 4 + PointEdgeTupleKey.T_eqb (point_edge_tuple a) (point_edge_tuple b)) <=
+      8 * (PointEdgeTupleKey.c_key + 1) * N.of_nat (bits a + 1))%N.
+    pose proof (Pos.size_nat_pos (encode a)) as Hwidth.
+    assert (Hbits : 1 <= bits a) by exact Hwidth. apply time_of_nat_le in Hbits.
+    rewrite Nat2N.inj_add in *; nia.
+  Qed.
 End PointEdge.
 
 Definition point_row := (point_edge * list positive * list positive)%type.
@@ -273,6 +351,105 @@ TimeFun first_table.
 Definition multi_table {A} (key : A -> positive) (rows : list A) : ptrie (list A) :=
   fold_right (fun r m => PTrieCode.set (key r) (r :: index_row m (key r)) m) Empty rows.
 TimeFun multi_table.
+
+(** A multi-table contains precisely the rows whose key matches its lookup key. *)
+Lemma multi_table_spec {A} (key : A -> positive) (rows : list A) x y :
+  In y (index_row (multi_table key rows) x) <-> In y rows /\ key y = x.
+Proof.
+  induction rows as [|a rest IH].
+  - unfold multi_table, index_row; cbn [fold_right].
+    rewrite PTrie.get_empty. cbn; tauto.
+  - change (In y (index_row
+      (PTrieCode.set (key a) (a :: index_row (multi_table key rest) (key a))
+        (multi_table key rest)) x) <-> In y (a :: rest) /\ key y = x).
+    unfold index_row at 1.
+    destruct (Pos.eq_dec x (key a)) as [Heq | Hneq].
+    + subst x. rewrite PTrie.get_set_same. cbn. rewrite IH; intuition congruence.
+    + rewrite PTrie.get_set_other by exact Hneq.
+      change (In y (index_row (multi_table key rest) x) <->
+        In y (a :: rest) /\ key y = x).
+      rewrite IH; cbn; intuition congruence.
+Qed.
+
+(** This recursive view records the first unvisited block in encounter order. *)
+Fixpoint selected_blocks {K G} (seen : ptrie unit)
+    (bs : list (positive * block positive K G)) : list (positive * block positive K G) :=
+  match bs with
+  | [] => []
+  | item :: rest =>
+    match trie_get (fst item) seen with
+    | Some _ => selected_blocks seen rest
+    | None => item :: selected_blocks (PTrieCode.set (fst item) tt seen) rest
+    end
+  end.
+
+(** The tail-recursive selection accumulator is the reverse of the recursive view. *)
+Lemma first_blocks_fold {K G} (bs : list (positive * block positive K G)) seen acc :
+  snd (fold_left (fun state item =>
+    match trie_get (fst item) (fst state) with
+    | Some _ => state
+    | None => (PTrieCode.set (fst item) tt (fst state), item :: snd state)
+    end) bs (seen, acc)) = rev (selected_blocks seen bs) ++ acc.
+Proof.
+  revert seen acc; induction bs as [|item rest IH]; intros seen acc.
+  - reflexivity.
+  - cbn [fold_left selected_blocks fst snd].
+    destruct (trie_get (fst item) seen) as [[]|].
+    + apply IH.
+    + rewrite IH. cbn [rev]. rewrite <- app_assoc. reflexivity.
+Qed.
+
+(** The public first-block selection agrees with its recursive view. *)
+Lemma first_blocks_selected {K G} (bs : list (positive * block positive K G)) :
+  first_blocks bs = selected_blocks Empty bs.
+Proof.
+  unfold first_blocks. rewrite first_blocks_fold, app_nil_r, rev_append_rev, app_nil_r.
+  apply rev_involutive.
+Qed.
+
+(** Selection only removes blocks and excludes identifiers already in the table. *)
+Lemma selected_blocks_in {K G} (bs : list (positive * block positive K G)) seen item :
+  In item (selected_blocks seen bs) ->
+    In item bs /\ trie_get (fst item) seen = None.
+Proof.
+  revert seen; induction bs as [|a rest IH]; intros seen Hin.
+  - contradiction.
+  - cbn [selected_blocks] in Hin.
+    destruct (trie_get (fst a) seen) as [[]|] eqn:Hseen.
+    + destruct (IH seen Hin) as [Hrest Hnone]. split; [now right|exact Hnone].
+    + destruct Hin as [Heq | Hin].
+      * subst item. split; [now left|exact Hseen].
+      * destruct (IH _ Hin) as [Hrest Hnone]. split; [now right|].
+        destruct (Pos.eq_dec (fst item) (fst a)) as [Heq | Hneq].
+        -- rewrite Heq, PTrie.get_set_same in Hnone; discriminate.
+        -- rewrite PTrie.get_set_other in Hnone by exact Hneq; exact Hnone.
+Qed.
+
+(** Selection emits each block identifier at most once. *)
+Lemma selected_blocks_nodup {K G} (bs : list (positive * block positive K G)) seen :
+  NoDup (map fst (selected_blocks seen bs)).
+Proof.
+  revert seen; induction bs as [|a rest IH]; intro seen.
+  - constructor.
+  - cbn [selected_blocks]. destruct (trie_get (fst a) seen) as [[]|].
+    + apply IH.
+    + cbn [map]. constructor; [|apply IH].
+      intros Hin. apply in_map_iff in Hin.
+      destruct Hin as [item [Heq Hin]].
+      apply selected_blocks_in in Hin. destruct Hin as [_ Hnone].
+      rewrite Heq, PTrie.get_set_same in Hnone; discriminate.
+Qed.
+
+(** Selection cannot increase the number of blocks. *)
+Lemma selected_blocks_length {K G} (bs : list (positive * block positive K G)) seen :
+  length (selected_blocks seen bs) <= length bs.
+Proof.
+  revert seen; induction bs as [|a rest IH]; intro seen.
+  - reflexivity.
+  - cbn [selected_blocks]. destruct (trie_get (fst a) seen) as [[]|]; cbn [length].
+    + specialize (IH seen); lia.
+    + specialize (IH (PTrieCode.set (fst a) tt seen)); lia.
+Qed.
 
 Record lang_prepared (K G : Type) := LangPrepared {
   lang_source : func positive K G;
