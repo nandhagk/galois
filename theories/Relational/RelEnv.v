@@ -4,9 +4,8 @@
     For example, a numeric range query can refine an interval value.
     Builds on: RelEnvSig, NumStateSig, StateSig and ValueSig. *)
 
-From Stdlib Require Import NArith List.
+From Stdlib Require Import NArith List Bool Lia.
 From Argent Require Import Time Tactics Std.
-From Argent Require Import Time.
 From Galois.Base Require Import KeySig.
 From Galois.Lattice Require Import LatticeSig.
 From Galois.Domains Require Import LangSig ValueSig Product.
@@ -48,78 +47,190 @@ Module RelEnv (X : KEY) (L : LANG) (N : NUM_VIEW L) (V : VALUE_DOMAIN L)
     R.wrank (fst p) (fst s) + E.wrank (snd p) (snd s).
   Definition gamma (s : t) (st : X.t -> L.val) : Prop :=
     R.ngamma (fst s) (fun x => N.num (st x)) /\ E.gamma (snd s) st.
+
+  (** Componentwise inclusion implies inclusion of the paired states. *)
+  Lemma components_below : forall a b,
+    R.leb (fst a) (fst b) = true -> E.leb (snd a) (snd b) = true -> leb a b = true.
+  Proof.
+    intros a b Hr He. unfold leb. rewrite PL.leb_pair, Hr, He.
+    now rewrite orb_true_r.
+  Qed.
+
+  (** Inclusion from a nonbottom pair holds in both components. *)
+  Lemma nonbottom_components : forall a b, is_bot a = false -> leb a b = true ->
+    R.leb (fst a) (fst b) = true /\ E.leb (snd a) (snd b) = true.
+  Proof.
+    intros a b Hbot Hle. unfold leb in Hle. rewrite PL.leb_pair in Hle.
+    change (P.is_bot a = false) in Hbot. rewrite Hbot in Hle.
+    now apply andb_true_iff in Hle.
+  Qed.
+
+  (** A recognized bottom component makes the intersection empty. *)
+  Lemma bottom_empty : forall a st, is_bot a = true -> ~ gamma a st.
+  Proof.
+    intros a st Hbot [Hr He]. unfold is_bot in Hbot.
+    rewrite PL.is_bot_pair in Hbot. apply orb_true_iff in Hbot as [Hbot|Hbot].
+    - apply (R.ngamma_bot (fun x => N.num (st x))).
+      eapply R.ngamma_mono; [apply R.is_bot_least; exact Hbot|exact Hr].
+    - apply (E.gamma_bot st).
+      eapply E.gamma_mono; [apply E.is_bot_least; exact Hbot|exact He].
+  Qed.
+
+  (** Every paired state is below itself. *)
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.leb_refl.
+  Qed.
   (** The order composes through an intermediate value. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.leb_trans.
+  Qed.
   (** Bottom is below every value. *)
   Lemma bot_least : forall a, leb bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.bot_least.
+  Qed.
   (** The bottom test recognizes bottom. *)
   Lemma is_bot_bot : is_bot bot = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_bot.
+  Qed.
   (** Every recognized bottom is below every value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.is_bot_least.
+  Qed.
   (** Join is above its left operand. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.join_ub_l.
+  Qed.
   (** Join is above its right operand. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact P.join_ub_r.
+  Qed.
 
+  (** The pair of component tops describes every paired state. *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. apply components_below; [apply R.top_greatest|apply E.top_greatest].
+  Qed.
 
   (** Widening is above its previous value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (is_bot b); [apply leb_refl|].
+    apply components_below; [apply R.widen_ub_l|apply E.widen_ub_l].
+  Qed.
   (** Widening is above its candidate value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold widen. destruct (is_bot b) eqn:Hbot.
+    - apply is_bot_least. exact Hbot.
+    - apply components_below; [apply R.widen_ub_r|apply E.widen_ub_r].
+  Qed.
   (** A candidate below the previous value leaves widening unchanged. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [pr pe] [ar ae] [br be] Hle. unfold widen.
+    destruct (is_bot (br, be)) eqn:Hbot; [reflexivity|].
+    destruct (nonbottom_components (br, be) (ar, ae) Hbot Hle) as [Hr He].
+    cbn [fst snd] in Hr, He |- *.
+    rewrite (R.widen_stable pr ar br Hr), (E.widen_stable pe ae be He).
+    reflexivity.
+  Qed.
   (** An unstable widening from a nonbottom strictly decreases rank. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [pr pe] [ar ae] [br be] Hbot Hle.
+    unfold is_bot in Hbot. rewrite PL.is_bot_pair in Hbot.
+    apply orb_false_iff in Hbot as [Hr He]. cbn [fst snd] in Hr, He.
+    unfold leb in Hle. rewrite PL.leb_pair in Hle.
+    apply orb_false_iff in Hle as [Hcandidate Hle].
+    unfold widen, is_bot. rewrite Hcandidate. unfold wrank. cbn [fst snd] in Hle |- *.
+    pose proof (R.wrank_widen_le pr ar br Hr) as Hleft.
+    pose proof (E.wrank_widen_le pe ae be He) as Hright.
+    apply andb_false_iff in Hle as [Hle|Hle].
+    - pose proof (R.wrank_widen pr ar br Hr Hle). lia.
+    - pose proof (E.wrank_widen pe ae be He Hle). lia.
+  Qed.
   (** Widening from a nonbottom does not increase rank. *)
   Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hbot. destruct (leb b a) eqn:Hle.
+    - rewrite (widen_stable p a b Hle). lia.
+    - pose proof (wrank_widen p a b Hbot Hle). lia.
+  Qed.
   (** Narrowing stays between an ordered candidate and previous value. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hle. unfold narrow, product_narrow, product_is_bot.
+    rewrite <- PL.is_bot_pair. destruct (P.is_bot b) eqn:Hbot.
+    - split; [apply leb_refl|exact Hle].
+    - destruct (nonbottom_components b a Hbot Hle) as [Hr He].
+      destruct (R.narrow_between (fst a) (fst b) Hr) as [Hr1 Hr2].
+      destruct (E.narrow_between (snd a) (snd b) He) as [He1 He2].
+      split; apply components_below; assumption.
+  Qed.
 
   (** Abstract inclusion entails inclusion of concrete environments. *)
   Lemma gamma_mono : forall a b st, leb a b = true -> gamma a st -> gamma b st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b st Hle Hgamma. destruct (is_bot a) eqn:Hbot.
+    - exfalso. exact (bottom_empty a st Hbot Hgamma).
+    - destruct (nonbottom_components a b Hbot Hle) as [Hr He].
+      destruct Hgamma as [Hnum Hstate]. split.
+      + eapply R.ngamma_mono; eassumption.
+      + eapply E.gamma_mono; eassumption.
+  Qed.
   (** Bottom describes no concrete environment. *)
   Lemma gamma_bot : forall st, ~ gamma bot st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro st. apply bottom_empty. apply is_bot_bot.
+  Qed.
   (** Top describes every concrete environment. *)
   Lemma gamma_top : forall st, gamma top st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro st. split; [apply R.ngamma_top|apply E.gamma_top].
+  Qed.
   (** Assignment contains each successful concrete update. *)
   Lemma assign_sound : forall x e s st c,
     gamma s st -> eval_term L.eval st e = Some c ->
     gamma (assign x e s) (upd X.eqb st x c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x e s st c [Hr He] Heval. split.
+    - eapply R.assign_sound; eassumption.
+    - eapply E.assign_sound; eassumption.
+  Qed.
   (** Havoc contains every concrete update of the selected variable. *)
   Lemma havoc_sound : forall x s st c,
     gamma s st -> gamma (havoc x s) (upd X.eqb st x c).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros x s st c [Hr He]. split.
+    - apply R.havoc_sound. exact Hr.
+    - apply E.havoc_sound. exact He.
+  Qed.
   (** Assuming a true guard retains its concrete environment. *)
   Lemma assume_sound : forall g es s st cs,
     gamma s st -> eval_terms L.eval st es = Some cs -> L.holds g cs ->
     gamma (assume g es s) st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g es s st cs [Hr He] Heval Hholds. split.
+    - eapply R.assume_sound; eassumption.
+    - eapply E.assume_sound; eassumption.
+  Qed.
   (** Abstract evaluation describes every successful concrete result. *)
   Lemma eval_sound : forall e s st c,
     gamma s st -> eval_term L.eval st e = Some c -> V.gamma (eval e s) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e s st c [Hr He] Heval. apply RR.refine_range_sound.
+    - eapply E.eval_sound; eassumption.
+    - eapply R.range_sound; eassumption.
+  Qed.
 
 End RelEnv.
 
@@ -206,49 +317,76 @@ Module RelEnvT (X : KEY_T) (L : LANG_T) (N : NUM_VIEW L) (V : VALUE_DOMAIN_T L)
   (** Assignment work adds the work of both components. *)
   Lemma assign_work_components : forall x e r s,
     assign_work x e (r, s) = R.assign_work x e r + E.assign_work x e s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Havoc work adds the work of both components. *)
   Lemma havoc_work_components : forall x r s,
     havoc_work x (r, s) = R.havoc_work x r + E.havoc_work x s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Assumption work adds the work of both components. *)
   Lemma assume_work_components : forall g es r s,
     assume_work g es (r, s) = R.assume_work g es r + E.assume_work g es s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** Widening visits the units of both components. *)
   Lemma wunits_components : forall r s, wunits (r, s) = R.wunits r + E.wunits s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   (** The widening parameter is measured by its two component parameters. *)
   Lemma wsize_components : forall p, wsize p = R.wsize (fst p) + E.wsize (snd p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma c_lat_pair : (P.c_lat <= c_lat)%N.
   Proof. Admitted. (* STUB *)
   Lemma size_pair : forall a, P.size a = R.size (fst a) + E.size (snd a).
   Proof. reflexivity. Qed.
   Lemma F1_gamma : forall r s st,
     gamma (r, s) st <-> R.ngamma r (fun x => N.num (st x)) /\ E.gamma s st.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F2_eval : forall e r s, eval e (r, s) =
     RR.refine_range (fst (R.range e r)) (snd (R.range e r)) (E.eval e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F3_assign : forall x e r s, assign x e (r, s) =
     (R.assign x e r, E.assign x e s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F4_havoc : forall x r s, havoc x (r, s) = (R.havoc x r, E.havoc x s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F5_assume : forall g es r s,
     assume g es (r, s) = (R.assume g es r, E.assume g es s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F6_widen : forall p r s r' s', widen p (r, s) (r', s') =
     if is_bot (r', s') then (r, s)
     else (R.widen (fst p) r r', E.widen (snd p) s s').
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F6a_narrow : forall a b, narrow a b =
     if is_bot b then b else (R.narrow (fst a) (fst b), E.narrow (snd a) (snd b)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold narrow, product_narrow, product_is_bot, is_bot.
+    rewrite PL.is_bot_pair. reflexivity.
+  Qed.
   Lemma F7_rank : forall p r s,
     wrank p (r, s) = R.wrank (fst p) r + E.wrank (snd p) s.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
   Lemma F8_size : forall r s, size (r, s) = R.size r + E.size s.
   Proof. reflexivity. Qed.
 End RelEnvT.
