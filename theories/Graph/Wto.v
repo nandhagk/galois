@@ -1971,6 +1971,145 @@ Qed.
 
 Local Transparent loopN.
 
+(** Binary comparison stops at the shorter operand, so either operand bounds its cost. *)
+Lemma wto_positive_compare_right p q :
+  (Pos.T_compare p q <= N.of_nat (Pos.size_nat q) + 1)%N.
+Proof.
+  assert (Hcont : forall q p order,
+    (Pos.T_compare_cont order p q <= N.of_nat (Pos.size_nat q))%N).
+  { intro q0. induction q0 as [q0 IH|q0 IH|]; intros p0 order; destruct p0; time_step. }
+  pose proof (Hcont q p Eq) as Htime. time_unfold @Pos.T_compare. lia.
+Qed.
+
+Lemma wto_N_leb_right a b : (N.T_leb a b <= N.of_nat (N.size_nat b) + 4)%N.
+Proof.
+  assert (Hcompare : (N.T_compare a b <= N.of_nat (N.size_nat b) + 2)%N).
+  { destruct a as [|p], b as [|q]; time_unfold @N.T_compare; time_cbn; try lia.
+    pose proof (wto_positive_compare_right p q) as Htime. lia. }
+  time_unfold @N.T_leb. time_cbn. lia.
+Qed.
+
+Lemma wto_N_ltb_clock a b : (N.T_ltb a b <= N.of_nat (N.size_nat a) + 4)%N.
+Proof.
+  pose proof (N.T_compare_le a b) as Hcompare. time_unfold @N.T_ltb. time_cbn. lia.
+Qed.
+
+(** Comparing interval endpoints can be charged to the bounded source rank. *)
+Lemma wto_interval_edge_clock width ranks intervals u v :
+  Pos.size_nat u <= width -> Pos.size_nat v <= width ->
+  (forall r, trie_get u ranks = Some r -> N.size_nat r <= width + 1) ->
+  (T_wto_interval_edge ranks intervals u v <= 64 * N.of_nat (width + 1))%N.
+Proof.
+  intros Hu Hv Hrank.
+  pose proof (PTrieT.trie_get_clock N u ranks) as Hgetu.
+  pose proof (PTrieT.trie_get_clock N v ranks) as Hgetv.
+  pose proof (PTrieT.trie_get_clock (N * N) v intervals) as Hgetinterval.
+  destruct (trie_get u ranks) as [ru|] eqn:Hru.
+  - destruct (trie_get v ranks) as [rv|] eqn:Hrv.
+    + pose proof (Hrank ru eq_refl) as Hrwidth.
+      pose proof (wto_N_ltb_clock ru rv) as Hforward.
+      destruct (trie_get v intervals) as [[lo hi]|] eqn:Hinterval.
+      * pose proof (wto_N_leb_right lo ru) as Hlower.
+        pose proof (wto_N_ltb_clock ru hi) as Hupper.
+        time_unfold @T_wto_interval_edge. rewrite ?Hru, ?Hrv, ?Hinterval. time_cbn.
+        rewrite ?Hgetu, ?Hgetv, ?Hgetinterval. rewrite !Nat2N.inj_add in *.
+        destruct (N.ltb ru rv), (N.leb lo ru);
+          unfold Datatypes.T_andb, Datatypes.T_orb; time_cbn; lia.
+      * time_unfold @T_wto_interval_edge. rewrite ?Hru, ?Hrv, ?Hinterval. time_cbn.
+        rewrite ?Hgetu, ?Hgetv, ?Hgetinterval. rewrite !Nat2N.inj_add in *.
+        destruct (N.ltb ru rv); unfold Datatypes.T_orb; time_cbn; lia.
+    + time_unfold @T_wto_interval_edge. rewrite ?Hru, ?Hrv. time_cbn.
+      rewrite ?Hgetu, ?Hgetv. rewrite !Nat2N.inj_add in *. lia.
+  - time_unfold @T_wto_interval_edge. rewrite ?Hru. time_cbn.
+    rewrite ?Hgetu, ?Hgetv. rewrite !Nat2N.inj_add in *. lia.
+Qed.
+
+(** A list scan needs callback bounds only for its actual elements. *)
+Lemma wto_forallb_clock {A} (f : A -> bool) T_f xs rate :
+  Forall (fun x => (T_f x <= rate)%N) xs ->
+  (List.T_forallb f T_f xs <= (rate + 2) * N.of_nat (length xs) + 1)%N.
+Proof.
+  induction xs as [|x xs IH]; intro Hbound.
+  - time_unfold @List.T_forallb. cbn [length]. lia.
+  - inversion Hbound as [|x0 xs0 Hx Hrest]; subst x0 xs0. specialize (IH Hrest).
+    time_unfold @List.T_forallb. time_cbn. destruct (f x); unfold Datatypes.T_andb; time_cbn;
+      cbn [length]; rewrite ?Nat2N.inj_succ; nia.
+Qed.
+
+Lemma wto_listed_target_width g u v :
+  In u (nodes g) -> In v (succs (base g) u) -> Pos.size_nat v <= graph_width (base g).
+Proof.
+  intros Hu Hv. eapply Nat.le_trans.
+  - apply (search_row_width_member (base g) (nodes g) u v Hu Hv).
+  - destruct g as [[vertices adjacency] predecessors n e].
+    cbn [nodes base graph_width]. rewrite search_graph_max. apply Nat.le_max_r.
+Qed.
+
+(** The edge scan pays each selected source and each occurrence in its row once. *)
+Lemma wto_edge_rows_clock g ranks intervals vs :
+  Forall (fun u => In u (nodes g)) vs ->
+  (forall u r, trie_get u ranks = Some r -> N.size_nat r <= graph_width (base g) + 1) ->
+  (List.T_forallb (fun u => forallb (wto_interval_edge ranks intervals u) (succs (base g) u))
+    (fun u => 1 + (T_succs (base g) u +
+      List.T_forallb (wto_interval_edge ranks intervals u)
+        (fun v => T_wto_interval_edge ranks intervals u v) (succs (base g) u)))%N vs <=
+    256 * N.of_nat (length vs +
+      fold_right (fun u n => (length (succs (base g) u) + n)%nat) 0%nat vs + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intros Hlisted Hrank. induction Hlisted as [|u vs Hu Hlisted IH].
+  - time_unfold @List.T_forallb. cbn [length fold_right]. nia.
+  - assert (Hrow : Forall (fun v =>
+        (T_wto_interval_edge ranks intervals u v <=
+          64 * N.of_nat (graph_width (base g) + 1))%N) (succs (base g) u)).
+    { apply Forall_forall. intros v Hv. apply wto_interval_edge_clock.
+      - now apply scc_node_width.
+      - now apply (wto_listed_target_width g u v).
+      - intros r Hr. now apply (Hrank u r). }
+    pose proof (wto_forallb_clock (wto_interval_edge ranks intervals u)
+      (fun v => T_wto_interval_edge ranks intervals u v) (succs (base g) u)
+      (64 * N.of_nat (graph_width (base g) + 1))%N Hrow) as Hinner.
+    pose proof (search_succs_clock (base g) u) as Hread.
+    pose proof (scc_node_width g u Hu) as Hwidth.
+    time_unfold @List.T_forallb. cbn beta. time_cbn.
+    destruct (forallb (wto_interval_edge ranks intervals u) (succs (base g) u));
+      unfold Datatypes.T_andb; time_cbn; cbn [length fold_right];
+      rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
+Qed.
+
+(** Successful indexing limits the final scan to distinct listed rows and bounded source ranks. *)
+Lemma wto_checked_edges_clock g w ranks intervals vs :
+  wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
+    [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
+  (1 + T_wto_edges_ok (base g) ranks intervals vs <=
+    512 * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+Proof.
+  intro Hindex.
+  destruct (wto_check_index_seen _ _ _ _ _ _ _ Hindex) as [Hunique Hlisted].
+  assert (Hincl : incl vs (nodes g)).
+  { intros v Hin. apply (proj1 (scc_listed_lookup (nodes g) v)). now apply Hlisted. }
+  destruct (wto_check_index_result _ _ _ _ _ _ _ Hindex)
+    as [st [Hinv [Htasks [Hranks [Hintervals Hvs]]]]].
+  assert (Hrank : forall u r, trie_get u ranks = Some r ->
+      N.size_nat r <= graph_width (base g) + 1).
+  { intros u r Hget. apply (wto_index_rank_width g w st u r Hinv).
+    now rewrite Hranks. }
+  assert (Hlistedall : Forall (fun u => In u (nodes g)) vs).
+  { apply Forall_forall. exact Hincl. }
+  pose proof (wto_edge_rows_clock g ranks intervals vs Hlistedall Hrank) as Hscan.
+  pose proof (NoDup_incl_length Hunique Hincl) as Hvertices.
+  pose proof (scc_weight_incl (fun u => length (succs (base g) u))
+    vs (nodes g) Hunique Hincl) as Hrows.
+  assert (Hnodecount : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedgecount : fold_right (fun u n => length (succs (base g) u) + n)
+      0 (nodes g) = graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  rewrite Hnodecount in Hvertices. cbn beta in Hrows. rewrite Hedgecount in Hrows.
+  time_unfold @T_wto_edges_ok. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
 Module WtoCode <: WTO_OPS.
   Definition build (g : prepared) (roots : list positive) : wto :=
     let r := wto_components g roots in
@@ -2108,6 +2247,8 @@ Module WtoT <: WTO_ALL.
   TimeFun ranks.
   Definition c_wto : N := (PTrieT.c_trie + 8)%N.
 
+  Local Opaque loopN.
+
   Lemma T_check_le : forall g roots w,
     (T_check g roots w <= c_wto *
       N.of_nat (graph_n (base g) + graph_e (base g) + length roots + 1) *
@@ -2188,7 +2329,7 @@ Module WtoT <: WTO_ALL.
 
   Definition k_member : N := 4%N.
   Definition k_index : N := (4096 * (PTrieT.c_trie + 1))%N.
-  Definition k_check : N := 1%N. (* STUB *)
+  Definition k_check : N := 512%N.
   Definition k_scope : N := 1%N. (* STUB *)
   Definition k_expand : N := 32%N.
   Definition k_build : N :=
@@ -2797,13 +2938,22 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   (** The edge scan reads the rows of distinct listed vertices once each. *)
+  Local Opaque loopN.
+
   Lemma T4b_edges : forall g w ranks intervals vs,
     wto_check_index (check_fuel g) (graph_width (base g)) (listed_of g)
       [WtoCheckVisit w] 0 Empty Empty [] = Some (ranks, intervals, vs) ->
     (T_wto_edges_ok (base g) ranks intervals vs <=
      k_check * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
        N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g w ranks intervals vs Hindex.
+    unfold wto_check_index in Hindex.
+    pose proof (wto_checked_edges_clock g w ranks intervals vs Hindex) as Htime.
+    unfold k_check. time_unfold @T_wto_edges_ok. exact Htime.
+  Qed.
+
+  Local Transparent loopN.
 
   Lemma T5_check_public : forall g roots w,
     (T_check g roots w <= c_wto *
