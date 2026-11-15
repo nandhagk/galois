@@ -6732,6 +6732,99 @@ Module Extract (V : VALUE) (I : INDEX V) (D : DATABASE V I) (C : COST V) (Q : PQ
 
 End Extract.
 
+(** The combined identifier and cost width fits the public product of positive widths. *)
+Lemma extraction_initial_width : forall identifier_width cost_width,
+  identifier_width + cost_width + 1 <= (identifier_width + 1) * (cost_width + 1).
+Proof.
+  intros identifier_width cost_width. nia.
+Qed.
+
+(** The initialization syntax allowance covers row work, queue depth and one empty scan. *)
+Lemma extraction_initial_mass : forall syntax rows arity depth : N,
+  (syntax + (arity + 1) * rows + 1 <=
+    syntax + (rows + 1) * (arity + depth + 2))%N /\
+  (rows * (arity + 1) <= syntax + (rows + 1) * (arity + depth + 2))%N /\
+  (rows * (depth + 1) <= syntax + (rows + 1) * (arity + depth + 2))%N /\
+  (rows + 1 <= syntax + (rows + 1) * (arity + depth + 2))%N.
+Proof.
+  intros syntax rows arity depth.
+  assert (Hrow : (rows * (arity + 1) <= rows * (arity + depth + 2))%N).
+  { apply N.mul_le_mono_l. lia. }
+  assert (Hqueue : (rows * (depth + 1) <= (rows + 1) * (arity + depth + 2))%N).
+  { apply N.mul_le_mono; lia. }
+  assert (Hcount : (rows + 1 <= (rows + 1) * (arity + depth + 2))%N).
+  { apply dag_budget_scale. lia. }
+  replace ((rows + 1) * (arity + depth + 2))%N with
+    (rows * (arity + depth + 2) + (arity + depth + 2))%N in * by ring.
+  replace ((arity + 1) * rows)%N with (rows * (arity + 1))%N by ring.
+  repeat split; lia.
+Qed.
+
+(** Inventory traversal and initial row credits fit the approved common step coefficient. *)
+Lemma extraction_initial_budget : forall trie index database cost queue
+    syntax rows arity depth unit width combined : N,
+  (1 <= unit)%N -> (1 <= width)%N -> (combined <= unit * width)%N ->
+  (1 + 1024 * (index + database + 1) * (syntax + (arity + 1) * rows + 1) * unit +
+    rows * (512 * (trie + cost + 1) * combined * (2 * arity + 1) +
+      queue * (depth + 1) * combined) +
+    512 * (trie + cost + 1) * combined * rows + 16 * (rows + 1) <=
+    (256 * 1024) * (trie + index + database + cost + queue + 1) *
+      (syntax + (rows + 1) * (arity + depth + 2)) * unit * width)%N.
+Proof.
+  intros trie index database cost queue syntax rows arity depth unit width combined
+    Hunit Hwidth Hcombined.
+  set (coefficient := (trie + index + database + cost + queue + 1)%N).
+  set (mass := (syntax + (rows + 1) * (arity + depth + 2))%N).
+  set (budget := (coefficient * mass * unit * width)%N).
+  assert (Hcoefficient : (1 <= coefficient)%N) by (unfold coefficient; lia).
+  assert (Hindex : (index + database + 1 <= coefficient)%N) by (unfold coefficient; lia).
+  assert (Hcost : (trie + cost + 1 <= coefficient)%N) by (unfold coefficient; lia).
+  assert (Hqueue : (queue <= coefficient)%N) by (unfold coefficient; lia).
+  destruct (extraction_initial_mass syntax rows arity depth)
+    as [Hsyntax [Hrowmass [Hqueuemass Hcount]]].
+  fold mass in Hsyntax, Hrowmass, Hqueuemass, Hcount.
+  assert (Hmass : (mass <= budget)%N).
+  { unfold budget. eapply N.le_trans.
+    - apply enumeration_scale; [exact Hcoefficient |exact Hunit].
+    - apply dag_budget_scale. exact Hwidth. }
+  assert (Hone : (1 <= budget)%N) by lia.
+  assert (Hwalk : (1024 * (index + database + 1) *
+    (syntax + (arity + 1) * rows + 1) * unit <= 1024 * budget)%N).
+  { replace (1024 * (index + database + 1) *
+      (syntax + (arity + 1) * rows + 1) * unit)%N with
+      (1024 * ((index + database + 1) * (syntax + (arity + 1) * rows + 1) * unit))%N
+      by ring.
+    apply N.mul_le_mono_l. unfold budget. eapply N.le_trans.
+    - apply N.mul_le_mono_r, N.mul_le_mono; [exact Hindex |exact Hsyntax].
+    - apply dag_budget_scale. exact Hwidth. }
+  assert (Hwork : (rows * (512 * (trie + cost + 1) * combined * (2 * arity + 1)) +
+    512 * (trie + cost + 1) * combined * rows <= 1024 * budget)%N).
+  { replace (rows * (512 * (trie + cost + 1) * combined * (2 * arity + 1)) +
+      512 * (trie + cost + 1) * combined * rows)%N with
+      (1024 * ((trie + cost + 1) * (rows * (arity + 1)) * combined))%N by ring.
+    apply N.mul_le_mono_l. unfold budget.
+    replace (coefficient * mass * unit * width)%N with
+      ((coefficient * mass) * (unit * width))%N by ring.
+    apply N.mul_le_mono; [apply N.mul_le_mono; [exact Hcost |exact Hrowmass] |exact Hcombined]. }
+  assert (Hpush : (rows * (queue * (depth + 1) * combined) <= budget)%N).
+  { replace (rows * (queue * (depth + 1) * combined))%N with
+      (queue * (rows * (depth + 1)) * combined)%N by ring.
+    unfold budget. replace (coefficient * mass * unit * width)%N with
+      ((coefficient * mass) * (unit * width))%N by ring.
+    apply N.mul_le_mono;
+      [apply N.mul_le_mono; [exact Hqueue |exact Hqueuemass] |exact Hcombined]. }
+  assert (Hsetup : (16 * (rows + 1) <= 16 * budget)%N).
+  { apply N.mul_le_mono_l. lia. }
+  replace ((256 * 1024) * (trie + index + database + cost + queue + 1) *
+    (syntax + (rows + 1) * (arity + depth + 2)) * unit * width)%N with
+    (262144 * budget)%N by (unfold budget, coefficient, mass; ring).
+  replace (rows * (512 * (trie + cost + 1) * combined * (2 * arity + 1) +
+    queue * (depth + 1) * combined))%N with
+    (rows * (512 * (trie + cost + 1) * combined * (2 * arity + 1)) +
+      rows * (queue * (depth + 1) * combined))%N by ring.
+  clear - Hone Hwalk Hwork Hpush Hsetup. lia.
+Qed.
+
 Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V)
     (Q : PQ_T)
     <: EXTRACT_ALL V I D C.
@@ -7752,6 +7845,133 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         pose proof (reachable_row_width cs db (initial cs db) f k i Hwf Hcanonical Hinventory
           Hinitial Hsource) as Hwidth. rewrite Hcosts in Hwidth. now apply Hwidth. }
     exact (proj2 Hboth).
+  Qed.
+
+  Module EnumerationTime := EnumeratedRowsT V I D.
+
+  (** Source output identifiers and key cells fit the database's spending unit. *)
+  Lemma inventory_source_syntax : forall cs db f k i, D.wf db -> ctor_inventory cs db ->
+    In (f, k, i) (Enumeration.enumerated_rows cs db) ->
+    Pos.size_nat i <= D.unit db /\
+    (forall j, In (Id j) k -> Pos.size_nat j <= D.unit db) /\
+    (forall v, In (Val v) k -> V.bits v <= D.unit db).
+  Proof.
+    intros cs db f k i Hwf Hinventory Hsource.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    pose proof (proj1 (Hrows f k i) Hsource) as Hrow.
+    assert (Hcell : forall item, In item (k ++ [Id i]) -> cell_bits V.encode item <= D.unit db).
+    { intros item Hin. exact (stored_cell_unit db f k (Some (Id i)) item Hwf Hrow Hin). }
+    split.
+    - pose proof (Hcell (Id i) ltac:(apply in_or_app; right; now left)) as Hwidth.
+      cbn [cell_bits Pos.size_nat] in Hwidth. lia.
+    - split.
+      + intros j Hin. pose proof (Hcell (Id j) ltac:(apply in_or_app; now left)) as Hwidth.
+        cbn [cell_bits Pos.size_nat] in Hwidth. lia.
+      + intros v Hin. pose proof (Hcell (Val v) ltac:(apply in_or_app; now left)) as Hwidth.
+        unfold V.bits. cbn [cell_bits Pos.size_nat] in Hwidth. lia.
+  Qed.
+
+  (** Registered source syntax fits the fixed combined identifier and cost width. *)
+  Lemma inventory_source_width : forall cs db, D.wf db -> ctor_inventory cs db ->
+    ResourceClocks.search_syntax_width (Enumeration.enumerated_rows cs db)
+      (D.unit db + cost_width db).
+  Proof.
+    intros cs db Hwf Hinventory f k i Hsource.
+    destruct (inventory_source_syntax cs db f k i Hwf Hinventory Hsource)
+      as [Houtput [Hids Hvalues]].
+    split; [lia |]. split.
+    - intros j Hin. pose proof (Hids j Hin). lia.
+    - intros v Hin. pose proof (Hvalues v Hin). lia.
+  Qed.
+
+  (** Every registered source row uses at most the public maximum constructor arity. *)
+  Lemma inventory_source_arity : forall cs db, D.wf db -> ctor_inventory cs db ->
+    forall f k i, In (f, k, i) (Enumeration.enumerated_rows cs db) -> length k <= a db.
+  Proof.
+    intros cs db Hwf Hinventory f k i Hsource.
+    destruct (inventory_rows_spec cs db Hwf Hinventory) as [_ [Hrows _]].
+    exact (proj1 (a_spec cs db Hwf Hinventory) f k i (proj1 (Hrows f k i) Hsource)).
+  Qed.
+
+  (** Rows ready before any finalization fit the combined identifier and optimal-cost width. *)
+  Lemma initial_rows_width : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
+    Resources.search_rows_width (Enumeration.enumerated_rows cs db) Empty
+      (D.unit db + cost_width db).
+  Proof.
+    intros cs db Hwf Hcanonical Hinventory f k i Hsource Hknown.
+    assert (Hreach : reachable cs db (initial cs db)) by (unfold reachable; apply rt_refl).
+    assert (Hcosts : search_final_costs (initial cs db) = Empty).
+    { destruct (SearchProof.search_initial_fields D.t db (Enumeration.enumerated_rows cs db))
+        as [_ [_ [_ [Hcosts _]]]]. exact Hcosts. }
+    pose proof (reachable_row_width cs db (initial cs db) f k i Hwf Hcanonical Hinventory
+      Hreach Hsource) as Hwidth. rewrite Hcosts in Hwidth. now apply Hwidth.
+  Qed.
+
+  (** Initialization's inventory phase has an additive syntax and constructor-row budget. *)
+  Lemma initial_inventory_clock : forall cs db, D.wf db -> ctor_inventory cs db ->
+    (T_inventory_rows (fun slot => D.index slot false db)
+      (fun slot => (1 + D.T_index slot false db)%N) I.child I.T_child I.children I.T_children
+      I.root I.T_root cs <=
+      1024 * (I.c_ix + D.c_db + 1) *
+        N.of_nat (inventory_bits cs + (a db + 1) * R db + 1) *
+        N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros cs db Hwf Hinventory.
+    eapply EnumerationTime.inventory_rows_clock_bounded.
+    - exact Hwf.
+    - exact (proj2 (proj2 (proj2 Hinventory))).
+    - exact (proj1 (a_spec cs db Hwf Hinventory)).
+    - change (length (Enumeration.enumerated_rows cs db) <= R db).
+      rewrite (inventory_rows_count cs db Hwf Hinventory). lia.
+  Qed.
+
+  (** An initial registration allowance composes with the checked inventory walk. *)
+  Lemma initial_credit_composition : forall cs db credit,
+    D.wf db -> ctor_inventory cs db ->
+    (T_search_initial db (Enumeration.enumerated_rows cs db) + credit <=
+      N.of_nat (R db) *
+        (512 * (PTrieT.c_trie + C.c_cost + 1) *
+          N.of_nat (D.unit db + cost_width db + 1) * N.of_nat (2 * a db + 1) +
+         Q.c_pq * N.of_nat (Q.unit_pq (R db) (D.unit db + cost_width db))) +
+      512 * (PTrieT.c_trie + C.c_cost + 1) *
+        N.of_nat (D.unit db + cost_width db + 1) * N.of_nat (R db) +
+      16 * N.of_nat (R db + 1))%N ->
+    (T_initial cs db + credit <= k_step *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+  Proof.
+    intros cs db credit Hwf Hinventory Hregistration.
+    pose proof (initial_inventory_clock cs db Hwf Hinventory) as Hwalk.
+    set (rows := Enumeration.enumerated_rows cs db) in *.
+    set (walk := T_inventory_rows (fun slot => D.index slot false db)
+      (fun slot => (1 + D.T_index slot false db)%N) I.child I.T_child I.children I.T_children
+      I.root I.T_root cs) in *.
+    set (registration := T_search_initial db rows) in *.
+    change (1 + (walk + registration) + credit <= k_step *
+      N.of_nat (inventory_bits cs + (R db + 1) * (a db + Nat.log2 (R db) + 2)) *
+      N.of_nat (D.unit db + 1) * N.of_nat (cost_width db + 1))%N.
+    unfold Q.unit_pq in Hregistration. unfold k_step.
+    set (syntax := inventory_bits cs) in *.
+    set (count := R db) in *.
+    set (arity := a db) in *.
+    set (depth := Nat.log2 count) in *.
+    set (unit := D.unit db) in *.
+    set (width := cost_width db) in *.
+    clearbody syntax count arity depth unit width.
+    assert (Hcombined : (N.of_nat (unit + width + 1) <=
+      N.of_nat (unit + 1) * N.of_nat (width + 1))%N).
+    { rewrite <- Nat2N.inj_mul.
+      pose proof (extraction_initial_width unit width) as Hwidth. lia. }
+    pose proof (extraction_initial_budget PTrieT.c_trie I.c_ix D.c_db C.c_cost Q.c_pq
+      (N.of_nat syntax) (N.of_nat count) (N.of_nat arity) (N.of_nat depth)
+      (N.of_nat (unit + 1)) (N.of_nat (width + 1))
+      (N.of_nat (unit + width + 1)) ltac:(lia) ltac:(lia) Hcombined) as Hbudget.
+    repeat first [rewrite Nat2N.inj_add in Hwalk |rewrite Nat2N.inj_mul in Hwalk].
+    repeat first [rewrite Nat2N.inj_add in Hregistration |rewrite Nat2N.inj_mul in Hregistration].
+    repeat first [rewrite Nat2N.inj_add in Hbudget |rewrite Nat2N.inj_mul in Hbudget].
+    repeat first [rewrite Nat2N.inj_add |rewrite Nat2N.inj_mul].
+    cbn [N.of_nat] in Hwalk, Hregistration, Hbudget |- *.
+    eapply N.le_trans; [|exact Hbudget]. clear - Hwalk Hregistration. lia.
   Qed.
 
   Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
