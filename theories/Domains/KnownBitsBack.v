@@ -218,12 +218,6 @@ Qed.
 Definition kb_payload_sound (wp : width * tnum) (y : word) : Prop :=
   fst wp = fst y /\ is_word (fst y) (snd y) /\ tnum_gamma (fst wp) (snd wp) (snd y).
 
-Theorem tnum_backward_raw_sound : forall o wps ys rw z q,
-  Forall2 kb_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
-  tnum_gamma rw q z ->
-  Forall2 (fun wp_y p => tnum_gamma (fst (fst wp_y)) p (snd (snd wp_y)))
-    (combine wps ys) (tnum_backward_raw o wps rw q).
-Proof. Admitted. (* CONVERT: tnum_backward_raw_sound: The variable tnum_backward_one_sound was not found in the current environment. *)
 Theorem tnum_refine_sound : forall wps ys qs,
   Forall2 kb_payload_sound wps ys ->
   Forall2 (fun wp_y q => tnum_gamma (fst (fst wp_y)) q (snd (snd wp_y)))
@@ -684,13 +678,65 @@ Proof.
     now apply (tnum_xor_back_sound w q a y x).
 Qed.
 
+
+Lemma tnum_backward_cmp_sound : forall o w f a b x y q,
+  word_cmp o = Some f -> is_word w x -> is_word w y ->
+  tnum_gamma w a x -> tnum_gamma w b y ->
+  tnum_gamma 1%positive q (if eval_comparison_tag f w x y then 1 else 0) ->
+  Forall2 (fun p v => tnum_gamma w p v)
+    (tnum_backward_raw o [(w, a); (w, b)] 1%positive q) [x; y].
+Proof.
+  intros o w f a b x y q Hf Hx Hy Ha Hb Hq.
+  destruct o; try discriminate Hf; injection Hf as <-; cbn [eval_comparison_tag] in Hq.
+  - unfold tnum_backward_raw.
+    destruct (Z.testbit (ones q) 0) eqn:Htrue.
+    + apply tnum_boolean_sound in Hq. destruct Hq as [Hq _]. specialize (Hq Htrue).
+      apply Z.eqb_eq in Hq. rewrite (wrap_id w x Hx), (wrap_id w y Hy) in Hq.
+      subst y. constructor; [exact Hb|constructor; [exact Ha|constructor]].
+    + constructor; [exact Ha|constructor; [exact Hb|constructor]].
+  - constructor; [exact Ha|constructor; [exact Hb|constructor]].
+  - rewrite wult_value, (wrap_id w x Hx), (wrap_id w y Hy) in Hq.
+    destruct (tnum_order_back_sound true w q a b x y Hx Hy Ha Hb Hq) as [Hl Hr].
+    constructor; [exact Hl|constructor; [exact Hr|constructor]].
+  - rewrite wule_value, (wrap_id w x Hx), (wrap_id w y Hy) in Hq.
+    destruct (tnum_order_back_sound false w q a b x y Hx Hy Ha Hb Hq) as [Hl Hr].
+    constructor; [exact Hl|constructor; [exact Hr|constructor]].
+  - constructor; [exact Ha|constructor; [exact Hb|constructor]].
+  - constructor; [exact Ha|constructor; [exact Hb|constructor]].
+Qed.
+
 Lemma tnum_backward_two_sound : forall o w v a b x y rw z q,
   is_word w x -> is_word v y -> tnum_gamma w a x -> tnum_gamma v b y ->
   eval_op o [(w, x); (v, y)] = Some (rw, z) -> tnum_gamma rw q z ->
   Forall2 (fun wp_y p => tnum_gamma (fst (fst wp_y)) p (snd (snd wp_y)))
     (combine [(w, a); (v, b)] [(w, x); (v, y)])
     (tnum_backward_raw o [(w, a); (v, b)] rw q).
-Proof. Admitted. (* CONVERT: tnum_backward_two_sound: The variable tnum_backward_cmp_sound was not found in the current *)
+Proof.
+  intros o w v a b x y rw z q Hx Hy Ha Hb Heval Hq.
+  destruct (word_fun2 o) as [f|] eqn:Hf.
+  - pose proof (eval_op_fun2_width o f w v x y (rw, z) Hf Heval) as ->.
+    rewrite (eval_op_fun2 o v x y f Hf) in Heval. injection Heval as <- <-.
+    pose proof (tnum_backward_fun2_sound o v f a b x y q Hf Hx Hy Ha Hb Hq) as Hback.
+    inversion Hback as [|p x' ps xs Hl Htail]; subst.
+    inversion Htail as [|p' y' ps' xs' Hr Hnil]; subst.
+    inversion Hnil; subst.
+    constructor; [exact Hl|constructor; [exact Hr|constructor]].
+  - destruct (word_cmp o) as [f|] eqn:Hcmp.
+    + pose proof (eval_op_cmp_width o f w v x y (rw, z) Hcmp Heval) as ->.
+      rewrite (eval_op_cmp o v x y f Hcmp) in Heval. injection Heval as <- <-.
+      pose proof (tnum_backward_cmp_sound o v f a b x y q Hcmp Hx Hy Ha Hb Hq) as Hback.
+      inversion Hback as [|p x' ps xs Hl Htail]; subst.
+      inversion Htail as [|p' y' ps' xs' Hr Hnil]; subst.
+      inversion Hnil; subst.
+      constructor; [exact Hl|constructor; [exact Hr|constructor]].
+    + destruct o; try discriminate Hf; try discriminate Hcmp;
+        try (constructor; [exact Ha|constructor; [exact Hb|constructor]]).
+      rewrite eval_op_concat in Heval. injection Heval as <- <-.
+      rewrite (wrap_id w x Hx), (wrap_id v y Hy) in Hq.
+      apply (proj1 (tnum_gamma_wrap (w + v)%positive q (x * modulus v + y))) in Hq.
+      destruct (tnum_concat_back_sound w v q x y Hx Hy Hq) as [Hl Hr].
+      constructor; [exact Hl|constructor; [exact Hr|constructor]].
+Qed.
 
 Lemma tnum_backward_identity_sound : forall wps ys,
   Forall2 kb_payload_sound wps ys ->
@@ -702,13 +748,30 @@ Proof.
   - exact (proj2 (proj2 Hhead)).
   - exact IH.
 Qed.
-Lemma tnum_backward_cmp_sound : forall o w f a b x y q,
-  word_cmp o = Some f -> is_word w x -> is_word w y ->
-  tnum_gamma w a x -> tnum_gamma w b y ->
-  tnum_gamma 1%positive q (if eval_comparison_tag f w x y then 1 else 0) ->
-  Forall2 (fun p v => tnum_gamma w p v)
-    (tnum_backward_raw o [(w, a); (w, b)] 1%positive q) [x; y].
-Proof. Admitted. (* CONVERT: tnum_backward_cmp_sound: The reference tnum_backward_raw_c was not found in the current environment. *)
+Theorem tnum_backward_raw_sound : forall o wps ys rw z q,
+  Forall2 kb_payload_sound wps ys -> eval_op o ys = Some (rw, z) ->
+  tnum_gamma rw q z ->
+  Forall2 (fun wp_y p => tnum_gamma (fst (fst wp_y)) p (snd (snd wp_y)))
+    (combine wps ys) (tnum_backward_raw o wps rw q).
+Proof.
+  intros o wps ys rw z q Hgamma Heval Hq.
+  destruct wps as [|[w a] [|[v b] [|wp rest]]].
+  - destruct o; constructor.
+  - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst. inversion Htail; subst.
+    destruct y as [wy x]. destruct Hhead as [Hwx [Hx Ha]]. cbn in Hwx, Hx, Ha. subst wy.
+    pose proof (tnum_backward_one_sound o w a x rw z q Hx Ha Heval Hq) as Hback.
+    inversion Hback as [|p x' ps xs Hl Hnil]; subst. inversion Hnil; subst.
+    constructor; [exact Hl|constructor].
+  - inversion Hgamma as [|wp y wps' tail Hhead Htail]; subst.
+    inversion Htail as [|wp y' wps' tail' Hhead' Htail']; subst. inversion Htail'; subst.
+    destruct y as [wy x], y' as [vy y].
+    destruct Hhead as [Hwx [Hx Ha]], Hhead' as [Hvy [Hy Hb]].
+    cbn in Hwx, Hvy, Hx, Hy, Ha, Hb. subst wy vy.
+    exact (tnum_backward_two_sound o w v a b x y rw z q Hx Hy Ha Hb Heval Hq).
+  - destruct o; unfold tnum_backward_raw;
+      apply tnum_backward_identity_sound; exact Hgamma.
+Qed.
+
 Lemma tnum_refine_word_sound : forall xs cs qs,
   Forall2 kb_payload_sound xs cs ->
   Forall2 (fun wp_y q => tnum_gamma (fst (fst wp_y)) q (snd (snd wp_y)))
