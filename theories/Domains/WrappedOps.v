@@ -437,6 +437,147 @@ Proof.
     + exact IH.
 Qed.
 
+
+Module WrappedIntervalRefineSound.
+  Include WrappedIntervalBack.
+  Module Sound := WrappedIntervalSound.
+  Local Abbreviation interval_pgamma := Sound.interval_pgamma.
+
+  (** A successful point test identifies the represented concrete value. *)
+Local Lemma interval_is_point_sound (w : width) i z value :
+    interval_pgamma w i value -> interval_is_point i z = true -> value = z.
+  Proof.
+    intros Hi Hpoint. unfold interval_is_point in Hpoint.
+    destruct (interval_finite_helper i) as [[lo hi]|] eqn:Hfinite; [|discriminate].
+    apply andb_true_iff in Hpoint as [Hlo Hhi]. apply Z.eqb_eq in Hlo. apply Z.eqb_eq in Hhi.
+    pose proof (Sound.interval_finite_sound w i lo hi value Hi Hfinite). lia.
+  Qed.
+
+  (** Scalar backward refinement retains each operand satisfying the result fact. *)
+Lemma interval_assume_pair_sound o (w v : width) a b q x y (rw : width) z :
+    interval_pgamma w a x -> interval_pgamma v b y -> interval_pgamma rw q z ->
+    eval_op o [(w, x); (v, y)] = Some (rw, z) ->
+    interval_pgamma w (fst (interval_assume_pair o w a b q)) x /\
+    interval_pgamma v (snd (interval_assume_pair o w a b q)) y.
+  Proof.
+    intros Ha Hb Hq Heval. destruct o; try (solve [split; assumption]).
+    all: assert (Hwv : w = v) by
+      (match type of Heval with
+       | eval_op ?o _ = _ =>
+         first
+           [ eapply (eval_op_fun2_width o); [reflexivity|exact Heval]
+           | eapply (eval_op_cmp_width o); [reflexivity|exact Heval] ]
+       end); subst v.
+    - rewrite (eval_op_fun2 bvadd w x y BAdd eq_refl) in Heval.
+      cbn [eval_binary_tag] in Heval.
+      inversion Heval; subst rw z. rewrite Fun.wadd_value in Hq.
+      now apply Sound.interval_assume_add_sound.
+    - rewrite (eval_op_fun2 bvsub w x y BSub eq_refl) in Heval.
+      cbn [eval_binary_tag] in Heval.
+      inversion Heval; subst rw z. rewrite Fun.wsub_value in Hq.
+      now apply Sound.interval_assume_sub_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bveq w x y CEq eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [|discriminate].
+        apply Z.eqb_eq in Heq. subst y. now apply Sound.interval_assume_equal_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [discriminate|].
+        apply Z.eqb_neq in Heq. now apply Sound.interval_assume_neq_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvne w x y CNe eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 0) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 0 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [|discriminate].
+        apply Z.eqb_eq in Heq. subst y. now apply Sound.interval_assume_equal_sound.
+      + destruct (interval_is_point q 1) eqn:Hpoint1; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 1 z Hq Hpoint1) as Hz.
+        inversion Heval; subst rw z. destruct (Z.eqb x y) eqn:Heq; [discriminate|].
+        apply Z.eqb_neq in Heq. now apply Sound.interval_assume_neq_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvult w x y CUlt eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wult_value in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb x y) eqn:Hlt; [|discriminate].
+        apply Z.ltb_lt in Hlt. now apply Sound.interval_assume_ult_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb x y) eqn:Hlt; [discriminate|].
+        apply Z.ltb_ge in Hlt.
+        destruct (Sound.interval_assume_ule_sound w w b a y x Hb Ha Hlt) as [Hfirst Hsecond].
+        split; assumption.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvule w x y CUle eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wule_value in Heval.
+      rewrite (wrap_id w x (proj1 Ha)), (wrap_id w y (proj1 Hb)) in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb x y) eqn:Hle; [|discriminate].
+        apply Z.leb_le in Hle. now apply Sound.interval_assume_ule_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb x y) eqn:Hle; [discriminate|].
+        apply Z.leb_gt in Hle.
+        destruct (Sound.interval_assume_ult_sound w w b a y x Hb Ha Hle) as [Hfirst Hsecond].
+        split; assumption.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvslt w x y CSlt eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wslt_value in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb (signed w x) (signed w y)) eqn:Hlt;
+          [|discriminate]. now apply Sound.interval_assume_signed_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.ltb (signed w x) (signed w y)) eqn:Hlt;
+          [discriminate|]. now apply Sound.interval_assume_signed_sound.
+    - unfold interval_assume_pair.
+      rewrite (eval_op_cmp bvsle w x y CSle eq_refl) in Heval.
+      cbn [eval_comparison_tag] in Heval. rewrite Fun.wsle_value in Heval.
+      destruct (interval_is_point q 1) eqn:Hpoint.
+      + pose proof (interval_is_point_sound rw q 1 z Hq Hpoint) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb (signed w x) (signed w y)) eqn:Hle;
+          [|discriminate]. now apply Sound.interval_assume_signed_sound.
+      + destruct (interval_is_point q 0) eqn:Hpoint0; [|split; assumption].
+        pose proof (interval_is_point_sound rw q 0 z Hq Hpoint0) as Hz.
+        inversion Heval; subst rw z. destruct (Z.leb (signed w x) (signed w y)) eqn:Hle;
+          [discriminate|]. now apply Sound.interval_assume_signed_sound.
+  Qed.
+End WrappedIntervalRefineSound.
+
+(** The scalar refinement result also satisfies the endpoint-based interval meaning. *)
+Local Lemma wrapped_interval_assume_pair_sound o wa wb a b q x y rw z :
+  interval_pgamma wa a x -> interval_pgamma wb b y -> interval_pgamma rw q z ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  interval_pgamma wa (fst (WrappedIntervalBack.interval_assume_pair o wa a b q)) x /\
+  interval_pgamma wb (snd (WrappedIntervalBack.interval_assume_pair o wa a b q)) y.
+Proof.
+  intros Ha Hb Hq Heval.
+  pose proof (WrappedIntervalRefineSound.interval_assume_pair_sound o wa wb a b q x y rw z
+    (proj2 (WrappedIntervalSound.interval_pgamma_spec wa a x) Ha)
+    (proj2 (WrappedIntervalSound.interval_pgamma_spec wb b y) Hb)
+    (proj2 (WrappedIntervalSound.interval_pgamma_spec rw q z) Hq) Heval) as [Hleft Hright].
+  split; now apply WrappedIntervalSound.interval_pgamma_spec.
+Qed.
+
+(** Rewrapping refinement retains operands whose projected value satisfies the result. *)
+Local Lemma wrapped_interval_assume_rewrap_sound rw w a q x :
+  interval_pgamma w a x -> interval_pgamma rw q (wrap rw x) ->
+  interval_pgamma w (WrappedIntervalBack.interval_assume_rewrap rw a q) x.
+Proof.
+  intros Ha Hq. apply WrappedIntervalSound.interval_pgamma_spec.
+  apply (WrappedIntervalSound.interval_assume_rewrap_sound rw w a q x);
+    now apply WrappedIntervalSound.interval_pgamma_spec.
+Qed.
+
 Module WrappedTransferClaims (L : WORD_LANGUAGE_OPS).
   Module P := WrappedCode L.
   Module O := WrappedOpsCode L P.
@@ -466,11 +607,81 @@ Proof.
   - reflexivity.
 Qed.
 
+
+(** A consistent nonempty piece retains both satisfying operands. *)
+Local Lemma wrapped_assume_piece_raw_sound o wa wb a b q x y rw z :
+  interval_pgamma wa a x -> interval_pgamma wb b y -> interval_pgamma rw q z ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_pair_gamma wa wb (O.assume_piece_raw o wa wb a b q) x y.
+Proof.
+  intros Ha Hb Hq Heval.
+  destruct (wrapped_interval_assume_pair_sound o wa wb a b q x y rw z Ha Hb Hq Heval)
+    as [Hleft Hright].
+  pose proof (wrapped_assume_consistent_sound o wa wb a b q x y rw z Ha Hb Hq Heval) as Hcheck.
+  destruct a as [|la ha]; [exact (False_rect _ (proj2 Ha))|].
+  destruct b as [|lb hb]; [exact (False_rect _ (proj2 Hb))|].
+  destruct q as [|lq hq]; [exact (False_rect _ (proj2 Hq))|].
+  unfold O.assume_piece_raw. rewrite Hcheck.
+  split; now apply wrapped_interval_value_sound.
+Qed.
+
+(** The four pole combinations cover every satisfying operand pair. *)
+Local Lemma wrapped_assume_piece_sound o wa wb a b q x y rw z :
+  interval_pgamma wa a x -> interval_pgamma wb b y -> interval_pgamma rw q z ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_pair_gamma wa wb (O.assume_piece o wa wb a b q) x y.
+Proof.
+  intros Ha Hb Hq Heval.
+  apply wrapped_pole_cut_sound in Ha. apply wrapped_pole_cut_sound in Hb.
+  unfold O.assume_piece. apply wrapped_pair_join_sound.
+  destruct Ha as [Ha|Ha]; destruct Hb as [Hb|Hb].
+  - left. apply wrapped_pair_join_sound. left.
+    eapply wrapped_assume_piece_raw_sound; eassumption.
+  - left. apply wrapped_pair_join_sound. right.
+    eapply wrapped_assume_piece_raw_sound; eassumption.
+  - right. apply wrapped_pair_join_sound. left.
+    eapply wrapped_assume_piece_raw_sound; eassumption.
+  - right. apply wrapped_pair_join_sound. right.
+    eapply wrapped_assume_piece_raw_sound; eassumption.
+Qed.
+
+(** Splitting the result fact retains every concrete satisfying result. *)
+Local Lemma wrapped_assume_result_sound o wa wb a b rw q x y z :
+  interval_pgamma wa a x -> interval_pgamma wb b y -> wrapped_gamma rw q z ->
+  eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
+  wrapped_pair_gamma wa wb (O.assume_result o wa wb a b rw q) x y.
+Proof.
+  intros Ha Hb Hq Heval. apply wrapped_parts_spec in Hq.
+  unfold O.assume_result. apply wrapped_pair_join_sound.
+  destruct Hq as [Hq|Hq].
+  - left. eapply wrapped_assume_piece_sound; eassumption.
+  - right. eapply wrapped_assume_piece_sound; eassumption.
+Qed.
+
 Theorem wrapped_assume_binary_base_sound o wa wb a b rw q x y z :
   wrapped_gamma wa a x -> wrapped_gamma wb b y -> wrapped_gamma rw q z ->
   eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
   wrapped_pair_gamma wa wb (O.assume_binary_base o wa wb a b rw q) x y.
-Proof. Admitted. (* CONVERT: wrapped_assume_binary_base_sound: The reference wrapped_assume_binary_base_c was not found *)
+Proof.
+  intros Ha Hb Hq Heval.
+  pose proof (proj1 (wrapped_parts_spec wa a x) Ha) as Hpa.
+  pose proof (proj1 (wrapped_parts_spec wb b y) Hb) as Hpb.
+  unfold O.assume_binary_base.
+  match goal with |- wrapped_pair_gamma _ _
+    (wrapped_meet _ _ (fst ?candidates), _) _ _ =>
+    assert (Hcandidates : wrapped_pair_gamma wa wb candidates x y)
+  end.
+  { apply wrapped_pair_join_sound. destruct Hpa as [Hpa|Hpa]; destruct Hpb as [Hpb|Hpb].
+    - left. apply wrapped_pair_join_sound. left.
+      eapply wrapped_assume_result_sound; eassumption.
+    - left. apply wrapped_pair_join_sound. right.
+      eapply wrapped_assume_result_sound; eassumption.
+    - right. apply wrapped_pair_join_sound. left.
+      eapply wrapped_assume_result_sound; eassumption.
+    - right. apply wrapped_pair_join_sound. right.
+      eapply wrapped_assume_result_sound; eassumption. }
+  destruct Hcandidates as [Hleft Hright]. split; now apply wrapped_meet_sound.
+Qed.
 
 Theorem wrapped_assume_binary_base_lower o wa wb a b rw q :
   wrapped_leb wa (fst (O.assume_binary_base o wa wb a b rw q)) a = true /\
@@ -482,13 +693,82 @@ Qed.
 Theorem wrapped_assume_trunc_sound w a rw q x :
   wrapped_gamma w a x -> wrapped_gamma rw q (wrap rw x) ->
   wrapped_gamma w (O.assume_trunc w a rw q) x.
-Proof. Admitted. (* CONVERT: wrapped_assume_trunc_sound: The variable wrapped_interval_value_sound was not found in the current *)
+Proof.
+  intros Ha Hq. unfold O.assume_trunc. apply wrapped_meet_sound; [exact Ha|].
+  apply wrapped_parts_spec in Ha. apply wrapped_parts_spec in Hq.
+  apply wrapped_join_four_sound.
+  destruct Ha as [Ha|Ha]; destruct Hq as [Hq|Hq].
+  - left. apply wrapped_interval_value_sound.
+    now apply (wrapped_interval_assume_rewrap_sound rw).
+  - right; left. apply wrapped_interval_value_sound.
+    now apply (wrapped_interval_assume_rewrap_sound rw).
+  - right; right; left. apply wrapped_interval_value_sound.
+    now apply (wrapped_interval_assume_rewrap_sound rw).
+  - right; right; right. apply wrapped_interval_value_sound.
+    now apply (wrapped_interval_assume_rewrap_sound rw).
+Qed.
+
+Local Lemma wrapped_add_cancel w x y : wrap w (wrap w (x + y) - y) = wrap w x.
+Proof.
+  rewrite (wrap_sub w (wrap w (x + y)) y), wrap_wrap, <- wrap_sub.
+  replace (x + y - y) with x by lia. reflexivity.
+Qed.
+
+Local Lemma wrapped_sub_cancel_left w x y : wrap w (wrap w (x - y) + y) = wrap w x.
+Proof.
+  rewrite (wrap_add w (wrap w (x - y)) y), wrap_wrap, <- wrap_add.
+  replace (x - y + y) with x by lia. reflexivity.
+Qed.
+
+Local Lemma wrapped_sub_cancel_right w x y : wrap w (x - wrap w (x - y)) = wrap w y.
+Proof.
+  rewrite (wrap_sub w x (wrap w (x - y))), wrap_wrap, <- wrap_sub.
+  replace (x - (x - y)) with y by lia. reflexivity.
+Qed.
+
+Local Lemma wrapped_assume_add_sound w a b q x y :
+  wrapped_gamma w a x -> wrapped_gamma w b y -> wrapped_gamma w q (wadd w x y) ->
+  wrapped_pair_gamma w w (O.assume_binary bvadd w w a b w q) x y.
+Proof.
+  intros Ha Hb Hq. split; apply wrapped_meet_sound; try assumption.
+  - pose proof (wrapped_sub_sound w q b (wadd w x y) y Hq Hb) as Hleft.
+    rewrite wadd_value, wrapped_add_cancel, (wrap_id w x (wrapped_gamma_word _ _ _ Ha))
+      in Hleft. exact Hleft.
+  - pose proof (wrapped_sub_sound w q a (wadd w x y) x Hq Ha) as Hright.
+    rewrite wadd_value in Hright. replace (x + y) with (y + x) in Hright by lia.
+    rewrite wrapped_add_cancel, (wrap_id w y (wrapped_gamma_word _ _ _ Hb)) in Hright.
+    exact Hright.
+Qed.
+
+Local Lemma wrapped_assume_sub_sound w a b q x y :
+  wrapped_gamma w a x -> wrapped_gamma w b y -> wrapped_gamma w q (wsub w x y) ->
+  wrapped_pair_gamma w w (O.assume_binary bvsub w w a b w q) x y.
+Proof.
+  intros Ha Hb Hq. split; apply wrapped_meet_sound; try assumption.
+  - pose proof (wrapped_add_sound w q b (wsub w x y) y Hq Hb) as Hleft.
+    rewrite wsub_value, wrapped_sub_cancel_left, (wrap_id w x (wrapped_gamma_word _ _ _ Ha))
+      in Hleft. exact Hleft.
+  - pose proof (wrapped_sub_sound w a q x (wsub w x y) Ha Hq) as Hright.
+    rewrite wsub_value, wrapped_sub_cancel_right, (wrap_id w y (wrapped_gamma_word _ _ _ Hb))
+      in Hright. exact Hright.
+Qed.
 
 Theorem wrapped_assume_binary_sound o wa wb a b rw q x y z :
   wrapped_gamma wa a x -> wrapped_gamma wb b y -> wrapped_gamma rw q z ->
   eval_op o [(wa, x); (wb, y)] = Some (rw, z) ->
   wrapped_pair_gamma wa wb (O.assume_binary o wa wb a b rw q) x y.
-Proof. Admitted. (* CONVERT: wrapped_assume_binary_sound: Syntax error after tactic. *)
+Proof.
+  intros Ha Hb Hq Heval.
+  op_cases o by (eapply wrapped_assume_binary_base_sound; eassumption).
+  - pose proof (eval_op_fun2_width bvadd BAdd wa wb x y (rw, z) eq_refl Heval) as ->.
+    rewrite (eval_op_fun2 bvadd wb x y BAdd eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst rw z.
+    now apply wrapped_assume_add_sound.
+  - pose proof (eval_op_fun2_width bvsub BSub wa wb x y (rw, z) eq_refl Heval) as ->.
+    rewrite (eval_op_fun2 bvsub wb x y BSub eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst rw z.
+    now apply wrapped_assume_sub_sound.
+Qed.
 
 Theorem wrapped_assume_binary_lower o wa wb a b rw q :
   wrapped_leb wa (fst (O.assume_binary o wa wb a b rw q)) a = true /\
@@ -501,7 +781,25 @@ Qed.
 Theorem wrapped_assume_unary_sound o w a rw q x z :
   wrapped_gamma w a x -> wrapped_gamma rw q z -> eval_op o [(w, x)] = Some (rw, z) ->
   wrapped_gamma w (O.assume_unary o w a rw q) x.
-Proof. Admitted. (* CONVERT: wrapped_assume_unary_sound: Syntax error after tactic. *)
+Proof.
+  intros Ha Hq Heval. pose proof (wrapped_gamma_word w a x Ha) as Hword.
+  op_cases o by exact (proj2 (wrapped_norm_gamma w a x) Ha).
+  - rewrite eval_op_zext in Heval. inversion Heval; subst rw z.
+    apply wrapped_meet_sound; [exact Ha|].
+    pose proof (wrapped_project_sound w (w + extra)%positive q _ Hq) as Hproject.
+    rewrite wrap_narrow, wrap_wrap, (wrap_id w x Hword) in Hproject.
+    + exact Hproject.
+    + apply width_add_le.
+  - rewrite eval_op_sext in Heval. inversion Heval; subst rw z.
+    apply wrapped_meet_sound; [exact Ha|].
+    pose proof (wrapped_project_sound w (w + extra)%positive q _ Hq) as Hproject.
+    rewrite wrap_narrow, wrap_signed, (wrap_id w x Hword) in Hproject.
+    + exact Hproject.
+    + apply width_add_le.
+  - rewrite eval_op_trunc in Heval. destruct (Pos.leb target w); [|discriminate].
+    rewrite (wrap_id w x Hword) in Heval. inversion Heval; subst rw z.
+    now apply wrapped_assume_trunc_sound.
+Qed.
 
 Theorem wrapped_assume_unary_lower o w a rw q :
   wrapped_leb w (O.assume_unary o w a rw q) a = true.
