@@ -1376,6 +1376,595 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       repeat rewrite Nat2N.inj_add in IH, Hscaled |- *; nia.
   Qed.
 
+  (** Uniform bounds with membership hypotheses suffice for filtered sublists. *)
+  Local Lemma route_filter_uniform {A} (f : A -> bool) (T_f : A -> N) xs budget :
+    (forall x, In x xs -> (T_f x <= budget)%N) ->
+    (List.T_filter f T_f xs <= N.of_nat (length xs) * (budget + 1) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hbound.
+    - time_unfold @List.T_filter; cbn [length]; lia.
+    - specialize (IH (fun y Hy => Hbound y (or_intror Hy))).
+      pose proof (Hbound x (or_introl eq_refl)) as Hx.
+      time_unfold @List.T_filter; cbn [length]; rewrite Nat2N.inj_succ.
+      destruct (f x); nia.
+  Qed.
+
+  Local Lemma route_exists_uniform {A} (f : A -> bool) (T_f : A -> N) xs budget :
+    (forall x, In x xs -> (T_f x <= budget)%N) ->
+    (List.T_existsb f T_f xs <= N.of_nat (length xs) * (budget + 2) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hbound.
+    - time_unfold @List.T_existsb; cbn [length]; lia.
+    - specialize (IH (fun y Hy => Hbound y (or_intror Hy))).
+      pose proof (Hbound x (or_introl eq_refl)) as Hx.
+      time_unfold @List.T_existsb; time_simpl; cbn [length].
+      rewrite Nat2N.inj_succ; nia.
+  Qed.
+  (** Routing reserves a positive fixed rate and the complete input measure. *)
+  Local Definition route_scale : N := (scale + 1)%N.
+  Local Definition route_measure p (old new : list (option Tk.t * S.t)) : nat :=
+    ((parts_units S.wunits old + parts_units S.wunits new + 1) * S.wsize p +
+      (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + S.wsize p + 1))%nat.
+
+  Local Lemma route_rates :
+    (2 <= route_scale /\ S.c_lat + 1 <= route_scale /\ Tk.c_key + 1 <= route_scale /\
+      N.of_nat (C.k + 1) <= route_scale /\
+      N.of_nat (S.size S.bot + 1) <= route_scale)%N.
+  Proof.
+    pose proof growth_positive; pose proof growth_lat; pose proof growth_cap.
+    pose proof scale_growth.
+    assert (Hkey : (Tk.c_key + 1 <= growth)%N) by (unfold growth; lia).
+    assert (Hbot : (N.of_nat (S.size S.bot + 1) <= growth)%N).
+    { unfold growth; repeat rewrite Nat2N.inj_add; lia. }
+    unfold route_scale; repeat split; lia.
+  Qed.
+
+  (** A filter never increases the stored state-and-label mass or widening units. *)
+  Local Lemma route_filter_measures pred ps :
+    parts_size Tk.bits S.size (filter pred ps) <= parts_size Tk.bits S.size ps /\
+    parts_units S.wunits (filter pred ps) <= parts_units S.wunits ps.
+  Proof.
+    induction ps as [|q ps [IHsize IHunits]]; cbn [filter]; [split; reflexivity|].
+    destruct (pred q); rewrite ?parts_size_cons, ?parts_units_cons; split; lia.
+  Qed.
+
+  Local Lemma route_app_measures ps qs :
+    parts_size Tk.bits S.size (ps ++ qs) <=
+      parts_size Tk.bits S.size ps + parts_size Tk.bits S.size qs /\
+    parts_units S.wunits (ps ++ qs) = parts_units S.wunits ps + parts_units S.wunits qs.
+  Proof.
+    induction ps as [|q ps [IHsize IHunits]]; cbn [app].
+    - cbn [parts_size parts_units fold_right]; split; lia.
+    - rewrite !parts_size_cons, !parts_units_cons; split; lia.
+  Qed.
+
+  Local Lemma route_member_measures q ps : In q ps ->
+    S.size (snd q) + 1 <= parts_size Tk.bits S.size ps /\
+    label_bits Tk.bits (fst q) + 1 <= parts_size Tk.bits S.size ps /\
+    S.wunits (snd q) <= parts_units S.wunits ps.
+  Proof.
+    induction ps as [|r ps IH]; intro Hin; [contradiction|].
+    rewrite parts_size_cons, parts_units_cons.
+    destruct Hin as [<-|Hin]; [repeat split; lia|].
+    destruct (IH Hin) as [Hs [Hl Hu]]; repeat split; lia.
+  Qed.
+
+  (** A receiver may see two candidate sublists, each within the new input's budget. *)
+  Local Lemma route_receiver_measures old new r fresh strays :
+    In r old -> length fresh <= C.k -> length strays <= C.k ->
+    parts_size Tk.bits S.size fresh <= parts_size Tk.bits S.size new ->
+    parts_size Tk.bits S.size strays <= parts_size Tk.bits S.size new ->
+    parts_units S.wunits fresh <= parts_units S.wunits new ->
+    parts_units S.wunits strays <= parts_units S.wunits new ->
+    let own := filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh ++ strays in
+    let xs := snd r :: map snd own in
+    length xs <= 2 * C.k + 1 /\
+    states_size xs + 1 <=
+      2 * (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + 1) /\
+    fold_right Nat.add 0%nat (map S.wunits xs) + 1 <=
+      2 * (parts_units S.wunits old + parts_units S.wunits new + 1).
+  Proof.
+    intros Hr Hfresh Hstrays Hsf Hss Huf Hus.
+    set (selected := filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh).
+    destruct (route_filter_measures
+      (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh) as [Hsel_size Hsel_units].
+    fold selected in Hsel_size, Hsel_units.
+    pose proof (filter_length_le (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh)
+      as Hsel_length; fold selected in Hsel_length.
+    destruct (route_app_measures selected strays) as [Hown_size Hown_units].
+    destruct (route_member_measures r old Hr) as [Hrsize [Hrlabel Hrunits]].
+    pose proof (states_size_parts (selected ++ strays)) as Hstates.
+    change (length (snd r :: map snd (selected ++ strays)) <= 2 * C.k + 1 /\
+      states_size (snd r :: map snd (selected ++ strays)) + 1 <=
+        2 * (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + 1) /\
+      fold_right Nat.add 0%nat (map S.wunits (snd r :: map snd (selected ++ strays))) + 1 <=
+        2 * (parts_units S.wunits old + parts_units S.wunits new + 1)).
+    cbn [length map fold_right]; rewrite length_map, length_app, parts_units_map.
+    change (Datatypes.S (length selected + length strays) <= 2 * C.k + 1 /\
+      S.size (snd r) + 1 + states_size (map snd (selected ++ strays)) + 1 <=
+        2 * (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + 1) /\
+      S.wunits (snd r) + parts_units S.wunits (selected ++ strays) + 1 <=
+        2 * (parts_units S.wunits old + parts_units S.wunits new + 1)).
+    repeat split; lia.
+  Qed.
+
+  (** The collapsed candidate's size and units pay for the component widening. *)
+  Local Lemma route_receiver_join_clock p old new r fresh strays :
+    In r old -> length fresh <= C.k -> length strays <= C.k ->
+    parts_size Tk.bits S.size fresh <= parts_size Tk.bits S.size new ->
+    parts_size Tk.bits S.size strays <= parts_size Tk.bits S.size new ->
+    parts_units S.wunits fresh <= parts_units S.wunits new ->
+    parts_units S.wunits strays <= parts_units S.wunits new ->
+    let own := filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh ++ strays in
+    let xs := snd r :: map snd own in
+    (T_collapse_with S.bot S.join S.T_join xs +
+      S.T_widen p (snd r) (collapse_with S.bot S.join xs) <=
+      12 * route_scale * route_scale * N.of_nat (route_measure p old new))%N.
+  Proof.
+    intros Hr Hfresh Hstrays Hsf Hss Huf Hus.
+    pose proof (route_receiver_measures old new r fresh strays
+      Hr Hfresh Hstrays Hsf Hss Huf Hus) as Hmeasures.
+    cbv zeta in Hmeasures |- *.
+    set (xs := snd r :: map snd
+      (filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh ++ strays)) in *.
+    destruct Hmeasures as [Hlength [Hsize Hunits]].
+    destruct (route_member_measures r old Hr) as [Hrsize [Hrlabel Hrunits]].
+    destruct route_rates as [Hpositive [Hlat Hrest]].
+    pose proof (collapse_budget xs Hlength) as Hcollapse.
+    pose proof (collapse_units_budget xs Hlength) as Hcollapse_units.
+    set (budget := N.of_nat (route_measure p old new)).
+    assert (Hmass : (N.of_nat (parts_size Tk.bits S.size old +
+      parts_size Tk.bits S.size new + 1) <= budget)%N) by
+      (unfold budget, route_measure; lia).
+    assert (Hparam : (N.of_nat (S.wsize p + 1) <= budget)%N) by
+      (unfold budget, route_measure; lia).
+    assert (Hunit_budget : (N.of_nat
+      (parts_units S.wunits old + parts_units S.wunits new + 1) *
+      N.of_nat (S.wsize p) <= budget)%N).
+    { clear -budget; unfold budget, route_measure;
+      repeat rewrite Nat2N.inj_add; repeat rewrite Nat2N.inj_mul; nia. }
+    assert (Hcollapse_bound : (T_collapse_with S.bot S.join S.T_join xs +
+      N.of_nat (S.size (collapse_with S.bot S.join xs)) + 1 <=
+      2 * route_scale * budget)%N).
+    { eapply N.le_trans; [exact Hcollapse|].
+      assert (Hinput : (N.of_nat (states_size xs + 1) <= 2 * budget)%N).
+      { clear -Hsize Hmass; apply time_of_nat_le in Hsize;
+        rewrite Nat2N.inj_mul in Hsize; nia. }
+      eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinput|].
+      clear -budget; unfold route_scale; nia. }
+    assert (Hunits_bound : (N.of_nat (S.wunits (collapse_with S.bot S.join xs)) <=
+      2 * route_scale * N.of_nat
+        (parts_units S.wunits old + parts_units S.wunits new + 1))%N).
+    { eapply N.le_trans; [exact Hcollapse_units|].
+      eapply N.le_trans; [apply N.mul_le_mono_l; apply time_of_nat_le; exact Hunits|].
+      clear -old new; rewrite Nat2N.inj_mul; unfold route_scale; nia. }
+    assert (Hunit_sum : (N.of_nat
+      (S.wunits (snd r) + S.wunits (collapse_with S.bot S.join xs)) <=
+      (2 * route_scale + 1) * N.of_nat
+        (parts_units S.wunits old + parts_units S.wunits new + 1))%N).
+    { clear -Hunits_bound Hrunits; repeat rewrite Nat2N.inj_add in *; nia. }
+    pose proof (N.mul_le_mono_r _ _ (N.of_nat (S.wsize p)) Hunit_sum) as Hproduct.
+    pose proof (N.mul_le_mono_l _ _ (2 * route_scale + 1)%N Hunit_budget) as Hpaid.
+    assert (Hinput : (N.of_nat
+      ((S.wunits (snd r) + S.wunits (collapse_with S.bot S.join xs)) * S.wsize p +
+       (S.size (snd r) + S.size (collapse_with S.bot S.join xs) + S.wsize p + 1)) <=
+      8 * route_scale * budget)%N).
+    { clear -Hproduct Hpaid Hrsize Hcollapse_bound Hmass Hparam Hpositive;
+      repeat rewrite Nat2N.inj_add in *; repeat rewrite Nat2N.inj_mul; nia. }
+    pose proof (S.T_widen_le p (snd r) (collapse_with S.bot S.join xs)) as Hwiden.
+    pose proof (N.mul_le_mono_l _ _ S.c_lat Hinput) as Hscaled.
+    clear -Hcollapse_bound Hwiden Hscaled Hlat Hpositive.
+    nia.
+  Qed.
+
+  (** The previous part's bottom test is charged to its size and the fixed bottom size. *)
+  Local Lemma route_receiver_bottom_clock p old new r : In r old ->
+    (S.T_leb (snd r) S.bot <= route_scale * route_scale *
+      N.of_nat (route_measure p old new))%N.
+  Proof.
+    intro Hr; destruct (route_member_measures r old Hr) as [Hsize Hrest].
+    destruct route_rates as [Hpositive [Hlat [Hkey [Hcap Hbot]]]].
+    assert (Hinput : (N.of_nat (S.size (snd r) + S.size S.bot + 1) <=
+      N.of_nat (S.size S.bot + 1) * N.of_nat (route_measure p old new))%N).
+    { clear -Hsize; unfold route_measure; repeat rewrite Nat2N.inj_add;
+      repeat rewrite Nat2N.inj_mul; nia. }
+    eapply N.le_trans; [apply S.T_leb_le|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinput|].
+    rewrite N.mul_assoc; apply N.mul_le_mono_r, N.mul_le_mono; lia.
+  Qed.
+
+  (** A label comparison charges the stored label of its previous receiver. *)
+  Local Lemma route_receiver_label_clock p old new r (q : option Tk.t * S.t) : In r old ->
+    (T_label_eqb Tk.eqb Tk.T_eqb (fst r) (fst q) <=
+      route_scale * N.of_nat (route_measure p old new))%N.
+  Proof.
+    intro Hr; destruct (route_member_measures r old Hr) as [Hsize [Hlabel Hunits]].
+    destruct route_rates as [Hpositive [Hlat [Hkey Hrest]]].
+    eapply N.le_trans; [apply label_clock|].
+    apply N.mul_le_mono; [exact Hkey|].
+    unfold route_measure; lia.
+  Qed.
+
+  Local Lemma route_app_clock {A} (xs ys : list A) :
+    Datatypes.T_app xs ys = (N.of_nat (length xs) + 1)%N.
+  Proof.
+    induction xs as [|x xs IH]; time_unfold @Datatypes.T_app; cbn [length];
+      rewrite ?IH, ?Nat2N.inj_succ; lia.
+  Qed.
+
+  (** One absorption step pays for routing, copying, collapse and component widening. *)
+  Local Lemma route_absorb_step_clock p old new r fresh strays :
+    In r old -> length fresh <= C.k -> length strays <= C.k ->
+    parts_size Tk.bits S.size fresh <= parts_size Tk.bits S.size new ->
+    parts_size Tk.bits S.size strays <= parts_size Tk.bits S.size new ->
+    parts_units S.wunits fresh <= parts_units S.wunits new ->
+    parts_units S.wunits strays <= parts_units S.wunits new ->
+    let selected := filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh in
+    let own := selected ++ strays in
+    let xs := snd r :: map snd own in
+    (S.T_leb (snd r) S.bot +
+      List.T_filter (fun q => label_eqb Tk.eqb (fst r) (fst q))
+        (fun q => 1 + (Datatypes.T_fst r + Datatypes.T_fst q +
+          T_label_eqb Tk.eqb Tk.T_eqb (fst r) (fst q)))%N fresh +
+      Datatypes.T_app selected strays +
+      ListDef.T_map snd (fun q => Datatypes.T_snd q) own +
+      T_collapse_with S.bot S.join S.T_join xs +
+      S.T_widen p (snd r) (collapse_with S.bot S.join xs) + 6 <=
+      24 * route_scale * route_scale * N.of_nat (route_measure p old new))%N.
+  Proof.
+    intros Hr Hfresh Hstrays Hsf Hss Huf Hus.
+    pose proof (route_receiver_join_clock p old new r fresh strays
+      Hr Hfresh Hstrays Hsf Hss Huf Hus) as Hjoin.
+    pose proof (route_receiver_bottom_clock p old new r Hr) as Hbottom.
+    cbv zeta in Hjoin |- *.
+    set (selected := filter (fun q => label_eqb Tk.eqb (fst r) (fst q)) fresh) in *.
+    set (own := selected ++ strays) in *.
+    set (xs := snd r :: map snd own) in *.
+    set (budget := N.of_nat (route_measure p old new)) in *.
+    destruct route_rates as [Hpositive [Hlat [Hkey [Hcap Hbot]]]].
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget, route_measure; lia).
+    assert (Hcalls : forall q, In q fresh ->
+      (1 + (Datatypes.T_fst r + Datatypes.T_fst q +
+        T_label_eqb Tk.eqb Tk.T_eqb (fst r) (fst q)) <= route_scale * budget + 3)%N).
+    { intros q Hq; pose proof (route_receiver_label_clock p old new r q Hr) as Hlabel.
+      time_simpl; fold budget in Hlabel; lia. }
+    pose proof (route_filter_uniform (fun q => label_eqb Tk.eqb (fst r) (fst q))
+      (fun q => 1 + (Datatypes.T_fst r + Datatypes.T_fst q +
+        T_label_eqb Tk.eqb Tk.T_eqb (fst r) (fst q)))%N fresh
+      (route_scale * budget + 3)%N Hcalls) as Hfilter.
+    assert (Hfilter_bound : (List.T_filter
+      (fun q => label_eqb Tk.eqb (fst r) (fst q))
+      (fun q => 1 + (Datatypes.T_fst r + Datatypes.T_fst q +
+        T_label_eqb Tk.eqb Tk.T_eqb (fst r) (fst q)))%N fresh <=
+      4 * route_scale * route_scale * budget)%N).
+    { clear -Hfilter Hfresh Hcap Hpositive Hbudget.
+      assert (Hlen : (N.of_nat (length fresh) <= route_scale)%N) by lia.
+      eapply N.le_trans; [exact Hfilter|].
+      pose proof (N.mul_le_mono_r _ _ (route_scale * budget + 3 + 1)%N Hlen).
+      nia. }
+    assert (Hselected : length selected <= length fresh) by
+      (unfold selected; apply filter_length_le).
+    assert (Hown : length own <= 2 * C.k) by
+      (unfold own; rewrite length_app; lia).
+    assert (Happend : (Datatypes.T_app selected strays <= route_scale)%N).
+    { rewrite route_app_clock; lia. }
+    pose proof (map_snd_clock own) as Hmap.
+    assert (Hmap_bound : (ListDef.T_map snd (fun q => Datatypes.T_snd q) own <=
+      4 * route_scale)%N).
+    { clear -Hmap Hown Hcap; lia. }
+    clear -Hjoin Hbottom Hfilter_bound Happend Hmap_bound Hpositive Hbudget.
+    nia.
+  Qed.
+
+  (** Absorption visits each previous part once and clears strays after its first receiver. *)
+  Local Lemma route_absorb_clock p old new fresh strays :
+    length old <= C.k -> length fresh <= C.k -> length strays <= C.k ->
+    parts_size Tk.bits S.size fresh <= parts_size Tk.bits S.size new ->
+    parts_size Tk.bits S.size strays <= parts_size Tk.bits S.size new ->
+    parts_units S.wunits fresh <= parts_units S.wunits new ->
+    parts_units S.wunits strays <= parts_units S.wunits new ->
+    (T_absorb Tk.eqb Tk.T_eqb S.leb S.T_leb S.bot S.join S.T_join
+      (S.widen p) (S.T_widen p) strays fresh old <=
+      32 * route_scale * route_scale * route_scale * route_scale *
+        N.of_nat (route_measure p old new))%N.
+  Proof.
+    intros Hold Hfresh Hstrays Hsf Hss Huf Hus.
+    set (budget := N.of_nat (route_measure p old new)).
+    assert (Hwalk : forall remaining, incl remaining old -> forall extras,
+      length extras <= C.k ->
+      parts_size Tk.bits S.size extras <= parts_size Tk.bits S.size new ->
+      parts_units S.wunits extras <= parts_units S.wunits new ->
+      (T_absorb Tk.eqb Tk.T_eqb S.leb S.T_leb S.bot S.join S.T_join
+        (S.widen p) (S.T_widen p) extras fresh remaining <=
+        24 * route_scale * route_scale * budget * N.of_nat (length remaining) + 1)%N).
+    { induction remaining as [|r remaining IH]; intros Hincl extras Hextra Hse Hue.
+      - time_unfold @T_absorb; cbn [length]; lia.
+      - assert (Hr : In r old) by (apply Hincl; now left).
+        assert (Hremaining : incl remaining old) by
+          (intros q Hq; apply Hincl; now right).
+        pose proof (route_absorb_step_clock p old new r fresh extras
+          Hr Hfresh Hextra Hsf Hse Huf Hue) as Hstep.
+        cbv zeta in Hstep; fold budget in Hstep.
+        pose proof (IH Hremaining extras Hextra Hse Hue) as Hsame.
+        assert (Hempty_size : parts_size Tk.bits S.size [] <=
+          parts_size Tk.bits S.size new).
+        { cbn [parts_size fold_right]; pose proof (parts_size_length new); lia. }
+        pose proof (IH Hremaining [] ltac:(cbn; lia) Hempty_size
+          ltac:(cbn [parts_units fold_right]; lia)) as Hcleared.
+        revert Hstep; time_simpl; intro Hstep.
+        time_unfold @T_absorb; time_simpl; cbn [length]; rewrite Nat2N.inj_succ.
+        clear -Hstep Hsame Hcleared.
+        destruct (S.leb (snd r) S.bot); cbv zeta; nia. }
+    pose proof (Hwalk old (fun q Hq => Hq) strays Hstrays Hss Hus) as Htotal.
+    destruct route_rates as [Hpositive [Hlat [Hkey [Hcap Hbot]]]].
+    assert (Hbudget : (1 <= budget)%N) by (unfold budget, route_measure; lia).
+    assert (Hlength : (N.of_nat (length old) <= route_scale)%N) by lia.
+    pose proof (N.mul_le_mono_l _ _ (24 * route_scale * route_scale * budget)%N
+      Hlength) as Hscaled.
+    clear -Htotal Hscaled Hpositive Hbudget.
+    nia.
+  Qed.
+
+  (** Finding fresh parts and then strays removes entries without increasing either mass. *)
+  Local Lemma route_fresh_measures old new :
+    length (fresh_parts S.leb S.bot old new) <= length new /\
+    parts_size Tk.bits S.size (fresh_parts S.leb S.bot old new) <=
+      parts_size Tk.bits S.size new /\
+    parts_units S.wunits (fresh_parts S.leb S.bot old new) <=
+      parts_units S.wunits new.
+  Proof.
+    set (nonbottom := filter (fun q => negb (S.leb (snd q) S.bot)) new).
+    set (uncovered_part := fun (q : option Tk.t * S.t) => negb
+      (existsb (fun r => S.leb (snd q) (snd r)) old)).
+    destruct (route_filter_measures
+      (fun q => negb (S.leb (snd q) S.bot)) new) as [Hs1 Hu1].
+    destruct (route_filter_measures uncovered_part nonbottom) as [Hs2 Hu2].
+    pose proof (filter_length_le (fun q => negb (S.leb (snd q) S.bot)) new) as Hl1.
+    pose proof (filter_length_le uncovered_part nonbottom) as Hl2.
+    unfold fresh_parts, uncovered; fold nonbottom; fold uncovered_part.
+    fold nonbottom in Hs1, Hu1, Hl1; repeat split; lia.
+  Qed.
+
+  Local Lemma route_stray_measures old fresh :
+    length (stray_parts Tk.eqb S.leb S.bot old fresh) <= length fresh /\
+    parts_size Tk.bits S.size (stray_parts Tk.eqb S.leb S.bot old fresh) <=
+      parts_size Tk.bits S.size fresh /\
+    parts_units S.wunits (stray_parts Tk.eqb S.leb S.bot old fresh) <=
+      parts_units S.wunits fresh.
+  Proof.
+    unfold stray_parts; split; [apply filter_length_le|apply route_filter_measures].
+  Qed.
+
+  Local Lemma route_length_bound {A} (xs : list A) : length xs <= C.k ->
+    (N.of_nat (length xs) <= route_scale)%N.
+  Proof.
+    intro Hlen; apply time_of_nat_le in Hlen.
+    destruct route_rates as [_ [_ [_ [Hcap _]]]]; lia.
+  Qed.
+
+  Local Lemma route_measure_mass p old new :
+    (N.of_nat (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + 1) <=
+      N.of_nat (route_measure p old new))%N.
+  Proof.
+    apply time_of_nat_le; unfold route_measure; lia.
+  Qed.
+
+  Local Lemma route_measure_positive p old new :
+    (1 <= N.of_nat (route_measure p old new))%N.
+  Proof.
+    pose proof (route_measure_mass p old new); lia.
+  Qed.
+
+  Local Lemma route_part_mass p old new q : In q old \/ In q new ->
+    (N.of_nat (S.size (snd q) + 1) <= N.of_nat (route_measure p old new) /\
+      N.of_nat (label_bits Tk.bits (fst q) + 1) <=
+        N.of_nat (route_measure p old new))%N.
+  Proof.
+    intro Hin; pose proof (route_measure_mass p old new) as Hmass.
+    assert (Hq : S.size (snd q) + 1 <=
+      parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + 1 /\
+      label_bits Tk.bits (fst q) + 1 <=
+        parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + 1).
+    { destruct Hin as [Hin|Hin];
+        destruct (route_member_measures q _ Hin) as [Hs [Hl Hu]]; split; lia. }
+    destruct Hq as [Hs Hl]; apply time_of_nat_le in Hs; apply time_of_nat_le in Hl.
+    split; lia.
+  Qed.
+
+  Local Lemma route_bot_clock p old new q : In q old \/ In q new ->
+    (S.T_leb (snd q) S.bot <=
+      route_scale * route_scale * N.of_nat (route_measure p old new))%N.
+  Proof.
+    intro Hin; destruct (route_part_mass p old new q Hin) as [Hsize _].
+    destruct route_rates as [Hpositive [Hlat [_ [_ Hbot]]]].
+    pose proof (route_measure_positive p old new) as Hbudget.
+    pose proof (S.T_leb_le (snd q) S.bot) as Hclock.
+    assert (Hinput : (N.of_nat (S.size (snd q) + S.size S.bot + 1) <=
+      route_scale * N.of_nat (route_measure p old new))%N).
+    { repeat rewrite Nat2N.inj_add in *; nia. }
+    pose proof (N.mul_le_mono_l _ _ S.c_lat Hinput) as Hscaled.
+    clear -Hclock Hscaled Hlat; nia.
+  Qed.
+
+  Local Lemma route_pair_clock p old new q r : In q new -> In r old ->
+    (S.T_leb (snd q) (snd r) <=
+      route_scale * N.of_nat (route_measure p old new))%N.
+  Proof.
+    intros Hq Hr.
+    destruct (route_member_measures q new Hq) as [Hqsize _].
+    destruct (route_member_measures r old Hr) as [Hrsize _].
+    pose proof (route_measure_mass p old new) as Hmass.
+    destruct route_rates as [_ [Hlat _]].
+    pose proof (S.T_leb_le (snd q) (snd r)) as Hclock.
+    assert (Hinput : (N.of_nat (S.size (snd q) + S.size (snd r) + 1) <=
+      N.of_nat (route_measure p old new))%N).
+    { eapply N.le_trans with (m := N.of_nat
+        (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + 1));
+        [apply time_of_nat_le; lia|exact Hmass]. }
+    eapply N.le_trans; [exact Hclock|].
+    apply N.mul_le_mono; [lia|exact Hinput].
+  Qed.
+
+  Local Lemma route_label_clock p old new q label : In q old \/ In q new ->
+    (T_label_eqb Tk.eqb Tk.T_eqb (fst q) label <=
+      route_scale * N.of_nat (route_measure p old new))%N.
+  Proof.
+    intro Hin; destruct (route_part_mass p old new q Hin) as [_ Hlabel].
+    destruct route_rates as [_ [_ [Hkey _]]].
+    eapply N.le_trans; [apply label_clock|].
+    now apply N.mul_le_mono.
+  Qed.
+
+  Local Lemma route_filter_cap {A} (f : A -> bool) (T_f : A -> N) xs budget :
+    length xs <= C.k -> (forall x, In x xs -> (T_f x <= budget)%N) ->
+    (List.T_filter f T_f xs <= route_scale * (budget + 1) + 1)%N.
+  Proof.
+    intros Hlen Hbound.
+    eapply N.le_trans; [apply route_filter_uniform; exact Hbound|].
+    apply N.add_le_mono_r, N.mul_le_mono_r; now apply route_length_bound.
+  Qed.
+
+  Local Lemma route_exists_cap {A} (f : A -> bool) (T_f : A -> N) xs budget :
+    length xs <= C.k -> (forall x, In x xs -> (T_f x <= budget)%N) ->
+    (List.T_existsb f T_f xs <= route_scale * (budget + 2) + 1)%N.
+  Proof.
+    intros Hlen Hbound.
+    eapply N.le_trans; [apply route_exists_uniform; exact Hbound|].
+    apply N.add_le_mono_r, N.mul_le_mono_r; now apply route_length_bound.
+  Qed.
+
+  Local Lemma route_uncovered_uniform {A} (leb : A -> A -> bool)
+      (T_leb : A -> A -> N) old new budget :
+    (forall q, In q new -> forall r, In r old -> (T_leb q r <= budget)%N) ->
+    (T_uncovered leb T_leb old new <=
+      1 + (N.of_nat (length new) * (N.of_nat (length old) * (budget + 2) + 4) + 1))%N.
+  Proof.
+    intro Hbound; time_unfold @T_uncovered.
+    replace (N.of_nat (length old) * (budget + 2) + 4)%N with
+      ((N.of_nat (length old) * (budget + 2) + 3) + 1)%N by lia.
+    apply N.add_le_mono_l, route_filter_uniform.
+    intros q Hq; time_simpl.
+    pose proof (route_exists_uniform (leb q) (fun r => T_leb q r)
+      old budget (fun r Hr => Hbound q Hq r Hr)) as Hexists.
+    nia.
+  Qed.
+
+  Local Lemma route_uncovered_cap {A} (leb : A -> A -> bool)
+      (T_leb : A -> A -> N) old new budget :
+    length old <= C.k -> length new <= C.k ->
+    (forall q, In q new -> forall r, In r old -> (T_leb q r <= budget)%N) ->
+    (T_uncovered leb T_leb old new <=
+      route_scale * (route_scale * (budget + 2) + 4) + 2)%N.
+  Proof.
+    intros Hold Hnew Hbound.
+    pose proof (route_uncovered_uniform leb T_leb old new budget Hbound) as Hclock.
+    pose proof (route_length_bound old Hold) as Hno.
+    pose proof (route_length_bound new Hnew) as Hnn.
+    assert (Hproduct : (N.of_nat (length new) *
+      (N.of_nat (length old) * (budget + 2) + 4) <=
+      route_scale * (route_scale * (budget + 2) + 4))%N).
+    { apply N.mul_le_mono; [exact Hnn|].
+      apply N.add_le_mono_r, N.mul_le_mono_r; exact Hno. }
+    lia.
+  Qed.
+
+  Local Lemma route_fresh_arithmetic m budget :
+    (2 <= m)%N -> (1 <= budget)%N ->
+    (1 + (m * ((m * m * budget + 3) + 1) + 1 +
+      (m * (m * ((m * budget + 3) + 2) + 4) + 2)) <=
+      8 * m * m * m * budget)%N.
+  Proof.
+    intros Hm Hbudget.
+    pose proof (N.mul_le_mono _ _ _ _ Hm Hm) as Hsquare.
+    pose proof (N.mul_le_mono_r _ _ (m * m)%N Hm) as Hcube_square.
+    pose proof (N.mul_le_mono_l _ _ m Hsquare) as Hcube_linear.
+    pose proof (N.mul_le_mono _ _ _ _ Hm Hsquare) as Hcube_positive.
+    pose proof (N.mul_le_mono_l _ _ (m * m * m)%N Hbudget) as Hscaled.
+    nia.
+  Qed.
+
+  Local Lemma route_stray_arithmetic m budget :
+    (2 <= m)%N -> (1 <= budget)%N ->
+    (1 + (m * ((m * ((m * m * budget + m * budget + 6) + 2) + 3) + 1) + 1) <=
+      16 * m * m * m * m * budget)%N.
+  Proof.
+    intros Hm Hbudget; assert (Hmone : (1 <= m)%N) by lia.
+    pose proof (N.mul_le_mono_l _ _ m Hmone) as Hsquare.
+    pose proof (N.mul_le_mono_l _ _ (m * m)%N Hmone) as Hcube.
+    pose proof (N.mul_le_mono_l _ _ (m * m * m)%N Hmone) as Hfourth.
+    pose proof (N.mul_le_mono_l _ _ (m * m * m * m)%N Hbudget) as Htotal.
+    pose proof (N.mul_le_mono_r _ _ budget Hfourth) as Hcube_scaled.
+    nia.
+  Qed.
+
+  (** The two filters for fresh candidates fit a cubic rate in the cap reserve. *)
+  Local Lemma route_fresh_clock p old new :
+    length old <= C.k -> length new <= C.k ->
+    (T_fresh_parts S.leb S.T_leb S.bot old new <=
+      8 * route_scale * route_scale * route_scale *
+        N.of_nat (route_measure p old new))%N.
+  Proof.
+    intros Hold Hnew.
+    set (budget := N.of_nat (route_measure p old new)).
+    set (live := filter (fun q => negb (S.leb (snd q) S.bot)) new).
+    assert (Hlive_length : length live <= C.k).
+    { unfold live; eapply Nat.le_trans; [apply filter_length_le|exact Hnew]. }
+    assert (Hlive_member : forall q, In q live -> In q new).
+    { intros q Hq; unfold live in Hq; now apply filter_In in Hq as [Hq _]. }
+    assert (Hlive : (List.T_filter (fun q => negb (S.leb (snd q) S.bot))
+      (fun q => 1 + (Datatypes.T_snd q + S.T_leb (snd q) S.bot +
+        Datatypes.T_negb (S.leb (snd q) S.bot)))%N new <=
+      route_scale * ((route_scale * route_scale * budget + 3) + 1) + 1)%N).
+    { apply route_filter_cap; [exact Hnew|].
+      intros q Hq; pose proof (route_bot_clock p old new q (or_intror Hq)) as Hbot.
+      fold budget in Hbot; time_simpl; nia. }
+    assert (Hfresh : (T_uncovered (fun q r => S.leb (snd q) (snd r))
+      (fun q r => 1 + (Datatypes.T_snd q + Datatypes.T_snd r +
+        S.T_leb (snd q) (snd r)))%N old live <=
+      route_scale * (route_scale * ((route_scale * budget + 3) + 2) + 4) + 2)%N).
+    { apply route_uncovered_cap; [exact Hold|exact Hlive_length|].
+      intros q Hq r Hr.
+      pose proof (route_pair_clock p old new q r (Hlive_member q Hq) Hr) as Hpair.
+      fold budget in Hpair; time_simpl; nia. }
+    pose proof (route_measure_positive p old new) as Hbudget; fold budget in Hbudget.
+    destruct route_rates as [Hpositive _].
+    time_unfold @T_fresh_parts; fold live; fold budget.
+    pose proof (route_fresh_arithmetic route_scale budget Hpositive Hbudget) as Htotal.
+    clear -Hlive Hfresh Htotal; lia.
+  Qed.
+
+  (** Label absence scans need only the old input's state and label measures. *)
+  Local Lemma route_stray_clock p old new fresh :
+    length old <= C.k -> length fresh <= C.k ->
+    (T_stray_parts Tk.eqb Tk.T_eqb S.leb S.T_leb S.bot old fresh <=
+      16 * route_scale * route_scale * route_scale * route_scale *
+        N.of_nat (route_measure p old new))%N.
+  Proof.
+    intros Hold Hfresh.
+    set (budget := N.of_nat (route_measure p old new)).
+    time_unfold @T_stray_parts.
+    eapply N.le_trans with (m := (1 +
+      (route_scale * ((route_scale *
+        ((route_scale * route_scale * budget + route_scale * budget + 6) + 2) + 3) + 1) + 1))%N).
+    - apply N.add_le_mono_l, route_filter_cap; [exact Hfresh|].
+      intros q Hq; time_simpl.
+      match goal with
+      | |- context [List.T_existsb ?f ?T_f old] =>
+        assert (Hexists : (List.T_existsb f T_f old <=
+          route_scale * ((route_scale * route_scale * budget +
+            route_scale * budget + 6) + 2) + 1)%N)
+      end.
+      { apply route_exists_cap; [exact Hold|].
+        intros r Hr.
+        pose proof (route_bot_clock p old new r (or_introl Hr)) as Hbot.
+        pose proof (route_label_clock p old new r (fst q) (or_introl Hr)) as Hlabel.
+        fold budget in Hbot, Hlabel; time_simpl; nia. }
+      nia.
+    - pose proof (route_measure_positive p old new) as Hbudget; fold budget in Hbudget.
+      destruct route_rates as [Hpositive _].
+      fold budget; now apply route_stray_arithmetic.
+  Qed.
+
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
     unfold c_lat; nia.
@@ -1659,7 +2248,26 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     (route_time p old new <= k_partition * N.of_nat
       ((parts_units S.wunits old + parts_units S.wunits new + 1) * S.wsize p +
        (parts_size Tk.bits S.size old + parts_size Tk.bits S.size new + S.wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p old new Hold Hnew.
+    change (route_time p old new <= k_partition * N.of_nat (route_measure p old new))%N.
+    pose proof (route_fresh_clock p old new Hold Hnew) as Hfresh_clock.
+    destruct (route_fresh_measures old new) as [Hfresh_length [Hfresh_size Hfresh_units]].
+    set (fresh := fresh_parts S.leb S.bot old new) in *.
+    assert (Hfresh_cap : length fresh <= C.k) by lia.
+    pose proof (route_stray_clock p old new fresh Hold Hfresh_cap) as Hstray_clock.
+    destruct (route_stray_measures old fresh) as [Hstray_length [Hstray_size Hstray_units]].
+    set (strays := stray_parts Tk.eqb S.leb S.bot old fresh) in *.
+    assert (Hstray_cap : length strays <= C.k) by lia.
+    pose proof (route_absorb_clock p old new fresh strays Hold Hfresh_cap Hstray_cap
+      Hfresh_size ltac:(lia) Hfresh_units ltac:(lia)) as Habsorb.
+    destruct route_rates as [Hpositive _].
+    unfold route_time; fold fresh; fold strays.
+    change k_partition with
+      (64 * route_scale * route_scale * route_scale * route_scale)%N.
+    clear -Hfresh_clock Hstray_clock Habsorb Hpositive.
+    nia.
+  Qed.
   Lemma T8_collapse : forall xs, length xs <= 2 * C.k + 1 ->
     (T_collapse_with S.bot S.join S.T_join xs <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
