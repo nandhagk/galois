@@ -2291,6 +2291,55 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros a b; pose proof k_partition_min; time_step.
   Qed.
 
+  (** The intermediate label merge fits both the cap-restoration and size budgets. *)
+  Local Lemma join_input_budget (a b : t) :
+    length (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) <= 2 * C.k /\
+    (N.of_nat (parts_size Tk.bits S.size
+      (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) + 1) <=
+      (k_partition + 1) * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    pose proof (proj1 (Nat.leb_le _ _) (proj2_sig a)) as Ha.
+    pose proof (proj1 (Nat.leb_le _ _) (proj2_sig b)) as Hb.
+    pose proof (F7_merge_parts_length (proj1_sig a) (proj1_sig b)) as Hlength.
+    pose proof (F10_merge_parts_size (proj1_sig a) (proj1_sig b) Ha Hb) as Hsize.
+    split; [lia|]; unfold size; repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Collapsing an actual partition is paid by its complete stored representation. *)
+  Local Lemma collapse_parts_budget (a : t) :
+    (T_collapse_with S.bot S.join S.T_join (map snd (proj1_sig a)) +
+      N.of_nat (S.size (collapse_with S.bot S.join (map snd (proj1_sig a)))) + 1 <=
+      k_partition * N.of_nat (size a))%N.
+  Proof.
+    pose proof (proj1 (Nat.leb_le _ _) (proj2_sig a)) as Ha.
+    pose proof (collapse_budget (map snd (proj1_sig a))
+      ltac:(rewrite length_map; lia)) as Hcollapse.
+    eapply N.le_trans; [exact Hcollapse|]; apply N.mul_le_mono.
+    - unfold k_partition; nia.
+    - unfold size; apply time_of_nat_le, states_size_parts.
+  Qed.
+
+  (** The strict merge budget leaves one tick for the retagging wrapper. *)
+  Local Lemma merge_clock_budget k a :
+    (T_merge k a + 1 <= (k_partition + 1) * (k_partition + 1) *
+      N.of_nat (Tk.bits k + size a + 1))%N.
+  Proof.
+    pose proof (T9_merge k a) as Hclock.
+    pose proof (T11_inject k
+      (collapse_with S.bot S.join (map snd (proj1_sig a)))) as Hinject.
+    pose proof (collapse_parts_budget a) as Hcollapse.
+    set (mass := N.of_nat (Tk.bits k + size a + 1)) in *.
+    assert (Hmass : (1 <= mass)%N) by (unfold mass; lia).
+    assert (Hinput : (N.of_nat (size a) + 1 <= mass)%N) by
+      (unfold mass; repeat rewrite Nat2N.inj_add; lia).
+    pose proof (N.mul_le_mono_l _ _ k_partition Hinput) as Hinput_paid.
+    assert (Hinner : (T_collapse_with S.bot S.join S.T_join (map snd (proj1_sig a)) +
+      T_inject k (collapse_with S.bot S.join (map snd (proj1_sig a))) + 1 <=
+      (k_partition + 1) * mass)%N) by nia.
+    pose proof (N.mul_le_mono_l _ _ k_partition Hinner) as Hscaled.
+    nia.
+  Qed.
+
   (** Public contracts compose the bounded plan steps above. *)
 
   Lemma c_lat_pos : (1 <= c_lat)%N.
@@ -2305,7 +2354,29 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
   Lemma T_join_le : forall a b,
     (T_join a b <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; destruct (join_input_budget a b) as [Hlength Hinput].
+    pose proof (proj1 (Nat.leb_le _ _) (proj2_sig a)) as Ha.
+    pose proof (proj1 (Nat.leb_le _ _) (proj2_sig b)) as Hb.
+    pose proof (T3_join a b) as Hclock.
+    pose proof (T4_merge_parts (proj1_sig a) (proj1_sig b) Ha Hb) as Hmerge.
+    pose proof (T5_fit_parts
+      (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) Hlength) as Hfit.
+    fold (size a) (size b) in Hmerge.
+    set (mass := N.of_nat (size a + size b + 1)) in *.
+    assert (Hmass : (1 <= mass)%N) by (unfold mass; lia).
+    assert (Hfitted : (T_fit_parts S.bot S.join S.T_join C.k
+      (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) <=
+      k_partition * ((k_partition + 1) * mass))%N).
+    { eapply N.le_trans; [exact Hfit|]; now apply N.mul_le_mono_l. }
+    assert (Hinner : (T_merge_parts Tk.eqb Tk.T_eqb S.join S.T_join
+      (proj1_sig a) (proj1_sig b) + T_fit_parts S.bot S.join S.T_join C.k
+        (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) + 1 <=
+      (k_partition + 1) * (k_partition + 1) * mass)%N) by nia.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinner|].
+    rewrite N.mul_assoc; apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
   Lemma T_is_bot_le : forall a,
     (T_is_bot a <= c_lat * N.of_nat (size a + 1))%N.
   Proof.
@@ -2315,7 +2386,40 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b; pose proof (T6_widen p a b) as Hclock.
+    pose proof (leb_budget b a) as Hcompare; pose proof (is_bot_budget a) as Hbottom.
+    pose proof (T7_route p (proj1_sig a) (proj1_sig b)
+      (proj1 (Nat.leb_le _ _) (proj2_sig a))
+      (proj1 (Nat.leb_le _ _) (proj2_sig b))) as Hroute.
+    set (mass := N.of_nat ((wunits a + wunits b) * wsize p +
+      (size a + size b + wsize p + 1))) in *.
+    assert (Hmass : (1 <= mass)%N) by (unfold mass; lia).
+    assert (Hcomp_input : (N.of_nat (size b + size a + 1) <= mass)%N).
+    { unfold mass; apply time_of_nat_le; lia. }
+    assert (Hbottom_input : (N.of_nat (size a + 1) <= mass)%N).
+    { unfold mass; apply time_of_nat_le; lia. }
+    assert (Hroute_input : (N.of_nat (route_measure p (proj1_sig a) (proj1_sig b)) <=
+      2 * mass)%N).
+    { assert (Hnat : route_measure p (proj1_sig a) (proj1_sig b) <=
+        2 * ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1))).
+      { unfold route_measure, wunits, wsize, size; nia. }
+      apply time_of_nat_le in Hnat; rewrite Nat2N.inj_mul in Hnat; exact Hnat. }
+    assert (Hcomp : (T_leb b a <= k_partition * mass)%N).
+    { eapply N.le_trans; [exact Hcompare|]; now apply N.mul_le_mono_l. }
+    assert (Hbot : (T_is_bot a <= k_partition * mass)%N).
+    { eapply N.le_trans; [exact Hbottom|]; now apply N.mul_le_mono_l. }
+    assert (Hrouted : (route_time p (proj1_sig a) (proj1_sig b) <=
+      k_partition * (2 * mass))%N).
+    { eapply N.le_trans; [exact Hroute|].
+      apply N.mul_le_mono_l; exact Hroute_input. }
+    assert (Hinner : (T_leb b a + T_is_bot a +
+      route_time p (proj1_sig a) (proj1_sig b) + 1 <= (4 * k_partition + 1) * mass)%N)
+      by nia.
+    eapply N.le_trans; [exact Hclock|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinner|].
+    rewrite N.mul_assoc; apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -2412,18 +2516,61 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Qed.
   Lemma T_merge_le : forall k a,
     (T_merge k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k a; pose proof (merge_clock_budget k a) as Hclock.
+    assert (Hcoefficient : ((k_partition + 1) * (k_partition + 1) <= c_partition)%N)
+      by (unfold c_partition; nia).
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hcoefficient]; lia.
+  Qed.
   Lemma T_retag_le : forall k a,
     (T_retag k a <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k a; pose proof (merge_clock_budget k a) as Hclock.
+    assert (Hcoefficient : ((k_partition + 1) * (k_partition + 1) <= c_partition)%N)
+      by (unfold c_partition; nia).
+    time_unfold @T_retag.
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hcoefficient]; lia.
+  Qed.
   Lemma join_size : forall a b,
     (N.of_nat (size (join a b)) <= c_lat * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; destruct (join_input_budget a b) as [Hlength Hinput].
+    pose proof (F12_fit_size
+      (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) Hlength) as Hfit.
+    unfold size at 1; rewrite join_parts.
+    eapply N.le_trans; [exact Hfit|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinput|].
+    rewrite N.mul_assoc; apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
   Lemma join_wunits : forall a b,
     (N.of_nat (wunits (join a b)) <= c_lat * N.of_nat (wunits a + wunits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b; destruct (join_input_budget a b) as [Hlength _].
+    pose proof (proj1 (Nat.leb_le _ _) (proj2_sig a)) as Ha.
+    pose proof (proj1 (Nat.leb_le _ _) (proj2_sig b)) as Hb.
+    pose proof (F11_merge_parts_units (proj1_sig a) (proj1_sig b) Ha Hb) as Hunits.
+    pose proof (F13_fit_units
+      (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) Hlength) as Hfit.
+    fold (wunits a) (wunits b) in Hunits.
+    assert (Hinput : (N.of_nat (parts_units S.wunits
+      (merge_parts Tk.eqb S.join (proj1_sig a) (proj1_sig b)) + 1) <=
+      (k_partition + 1) * N.of_nat (wunits a + wunits b + 1))%N).
+    { repeat rewrite Nat2N.inj_add in *; nia. }
+    unfold wunits at 1; rewrite join_parts.
+    eapply N.le_trans; [exact Hfit|].
+    eapply N.le_trans; [apply N.mul_le_mono_l; exact Hinput|].
+    rewrite N.mul_assoc; apply N.mul_le_mono_r; unfold c_lat; nia.
+  Qed.
   Lemma merge_size : forall k a,
     (N.of_nat (size (merge k a)) <= c_partition * N.of_nat (Tk.bits k + size a + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros k a; pose proof (collapse_parts_budget a) as Hcollapse.
+    assert (Hcoefficient : (k_partition + 1 <= c_partition)%N) by
+      (unfold c_partition; nia).
+    unfold size at 1; rewrite merge_eq, inject_raw.
+    cbn [parts_size fold_right label_bits fst snd].
+    eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hcoefficient].
+    repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
 
 End PartitionT.
