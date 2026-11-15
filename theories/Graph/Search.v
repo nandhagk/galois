@@ -504,6 +504,313 @@ Proof.
   - exists st. auto.
 Qed.
 
+
+(** The pending leave tasks, from innermost to outermost, form the active stack. *)
+Fixpoint search_active_tasks (tasks : list search_task) : list positive :=
+  match tasks with
+  | [] => []
+  | SearchLeave v :: rest => v :: search_active_tasks rest
+  | _ :: rest => search_active_tasks rest
+  end.
+
+(** Every pending row belongs to the innermost leave task following that row. *)
+Fixpoint search_tasks_nested (tasks : list search_task) : Prop :=
+  match tasks with
+  | [] => True
+  | SearchRow u _ :: rest =>
+      (exists outer, search_active_tasks rest = u :: outer) /\ search_tasks_nested rest
+  | _ :: rest => search_tasks_nested rest
+  end.
+
+(** Colours describe exactly the entering and leaving events already emitted. *)
+Definition search_colours_ok (colours : ptrie bool) (es : list event) : Prop :=
+  forall v,
+    (trie_get v colours = None <-> ~ In (Enter v) es) /\
+    (trie_get v colours = Some true <-> In (Enter v) es /\ ~ In (Leave v) es) /\
+    (trie_get v colours = Some false <-> In (Leave v) es).
+
+(** Structural search invariants hold even for truncated runs and malformed graphs. *)
+Record search_shape (st : search_state) : Prop := {
+  search_shape_tasks : search_tasks_nested (search_tasks st);
+  search_shape_active_unique : NoDup (search_active_tasks (search_tasks st));
+  search_shape_stack :
+    trace_stack [] (rev (search_events st)) (search_active_tasks (search_tasks st));
+  search_shape_entered_unique : NoDup (entered (rev (search_events st)));
+  search_shape_colours : search_colours_ok (search_colours st) (search_events st);
+  search_shape_active : forall v,
+    trie_get v (search_colours st) = Some true <->
+    In v (search_active_tasks (search_tasks st))
+}.
+
+(** Absent colours identify precisely the vertices not yet entered. *)
+Lemma search_shape_none st : search_shape st -> forall v,
+  trie_get v (search_colours st) = None <-> ~ In (Enter v) (search_events st).
+Proof.
+  intros Hshape v. exact (proj1 (search_shape_colours st Hshape v)).
+Qed.
+
+(** True colours identify entries whose matching leave has not yet occurred. *)
+Lemma search_shape_true st : search_shape st -> forall v,
+  trie_get v (search_colours st) = Some true <->
+  In (Enter v) (search_events st) /\ ~ In (Leave v) (search_events st).
+Proof.
+  intros Hshape v. exact (proj1 (proj2 (search_shape_colours st Hshape v))).
+Qed.
+
+(** False colours identify precisely the vertices already left. *)
+Lemma search_shape_false st : search_shape st -> forall v,
+  trie_get v (search_colours st) = Some false <-> In (Leave v) (search_events st).
+Proof.
+  intros Hshape v. exact (proj2 (proj2 (search_shape_colours st Hshape v))).
+Qed.
+
+(** Filtering entering events commutes with concatenation. *)
+Lemma search_entered_app first last :
+  entered (first ++ last) = entered first ++ entered last.
+Proof.
+  induction first as [|e first IH]; [reflexivity|].
+  destruct e; cbn [app entered]; now rewrite IH.
+Qed.
+
+(** Entered vertices and entering events have the same membership relation. *)
+Lemma search_entered_member es v : In v (entered es) <-> In (Enter v) es.
+Proof.
+  induction es as [|e es IH]; [reflexivity|].
+  destruct e; cbn [entered In]; intuition congruence.
+Qed.
+
+(** A present colour identifies precisely an entry already recorded in the trace. *)
+Lemma search_shape_seen st : search_shape st -> forall v,
+  trie_get v (search_colours st) <> None <-> In (Enter v) (search_events st).
+Proof.
+  intros Hshape v. pose proof (search_shape_none st Hshape v) as Hnone. split.
+  - intros Hseen.
+    destruct (in_dec Pos.eq_dec v (entered (search_events st))) as [Hin|Hnot].
+    + now apply search_entered_member in Hin.
+    + exfalso. apply Hseen. apply Hnone. intros Hin. apply Hnot.
+      now apply search_entered_member.
+  - intros Hin Hwhite. exact (proj1 Hnone Hwhite Hin).
+Qed.
+
+(** Stack derivations compose at a common intermediate stack. *)
+Lemma search_trace_stack_app initial first middle last final :
+  trace_stack initial first middle -> trace_stack middle last final ->
+  trace_stack initial (first ++ last) final.
+Proof.
+  intros Hfirst Hlast. induction Hfirst; cbn; eauto using trace_stack.
+Qed.
+
+Local Lemma search_colours_enter colours es v :
+  search_colours_ok colours es -> trie_get v colours = None ->
+  search_colours_ok (PTrieCode.set v true colours) (Enter v :: es).
+Proof.
+  intros Hcolours Hwhite u. destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. destruct (Hcolours v) as [Hnone [Htrue Hfalse]].
+    assert (Henter : ~ In (Enter v) es) by now apply Hnone.
+    assert (Hleave : ~ In (Leave v) es).
+    { intro Hin. apply Hfalse in Hin. congruence. }
+    rewrite PTrie.get_set_same. cbn. intuition congruence.
+  - rewrite PTrie.get_set_other by exact Hneq.
+    destruct (Hcolours u) as [Hnone [Htrue Hfalse]]. cbn. intuition congruence.
+Qed.
+
+Local Lemma search_colours_leave colours es v :
+  search_colours_ok colours es -> trie_get v colours = Some true ->
+  search_colours_ok (PTrieCode.set v false colours) (Leave v :: es).
+Proof.
+  intros Hcolours Hactive u. destruct (Pos.eq_dec u v) as [Heq|Hneq].
+  - subst u. destruct (Hcolours v) as [Hnone [Htrue Hfalse]].
+    destruct (proj1 Htrue Hactive) as [Henter Hleave].
+    rewrite PTrie.get_set_same. cbn. intuition congruence.
+  - rewrite PTrie.get_set_other by exact Hneq.
+    destruct (Hcolours u) as [Hnone [Htrue Hfalse]]. cbn. intuition congruence.
+Qed.
+
+Local Lemma search_colours_edge colours es kind u v :
+  search_colours_ok colours es -> search_colours_ok colours (Edge kind u v :: es).
+Proof.
+  intros Hcolours w. destruct (Hcolours w) as [Hnone [Htrue Hfalse]].
+  cbn. intuition congruence.
+Qed.
+
+(** Appending one fresh entry preserves uniqueness of the chronological entries. *)
+Local Lemma search_entered_new es v :
+  NoDup (entered (rev es)) -> ~ In (Enter v) es ->
+  NoDup (entered (rev (Enter v :: es))).
+Proof.
+  intros Hunique Hfresh. cbn [rev]. rewrite search_entered_app. cbn [entered].
+  apply NoDup_app; [exact Hunique|constructor; [tauto|constructor]|].
+  intros u Hu [Heq|Hfalse]; [subst u|contradiction].
+  apply Hfresh. apply (proj2 (in_rev es (Enter v))).
+  now apply search_entered_member in Hu.
+Qed.
+
+(** Initial root tasks have no active vertices or events. *)
+Lemma search_shape_initial roots :
+  search_shape (SearchState (map SearchRoot roots) Empty []).
+Proof.
+  assert (Hactive : search_active_tasks (map SearchRoot roots) = []).
+  { induction roots as [|r roots IH]; cbn; assumption || reflexivity. }
+  assert (Hnested : search_tasks_nested (map SearchRoot roots)).
+  { clear Hactive. induction roots as [|r roots IH]; cbn; assumption || exact I. }
+  constructor; cbn [search_tasks search_events search_colours]; rewrite ?Hactive.
+  - exact Hnested.
+  - constructor.
+  - constructor.
+  - constructor.
+  - intros v. rewrite PTrie.get_empty. cbn. intuition congruence.
+  - intros v. rewrite PTrie.get_empty. cbn. intuition congruence.
+Qed.
+
+(** Replacing pending tasks preserves shape when their active stack is unchanged. *)
+Local Lemma search_shape_retask tasks next colours es :
+  search_shape (SearchState tasks colours es) -> search_tasks_nested next ->
+  search_active_tasks next = search_active_tasks tasks ->
+  search_shape (SearchState next colours es).
+Proof.
+  intros Hshape Hnested Hsame.
+  destruct Hshape as [Htasks Hunique Hstack Hentered Hcolours Hactive].
+  constructor; cbn [search_tasks search_colours search_events] in *;
+    rewrite ?Hsame; assumption.
+Qed.
+
+(** Entering a fresh vertex pushes its row and leave task together. *)
+Local Lemma search_shape_enter tasks colours es v row :
+  search_shape (SearchState tasks colours es) -> trie_get v colours = None ->
+  search_shape (SearchState (SearchRow v row :: SearchLeave v :: tasks)
+    (PTrieCode.set v true colours) (Enter v :: es)).
+Proof.
+  intros Hshape Hwhite.
+  destruct Hshape as [Htasks Hunique Hstack Hentered Hcolours Hactive].
+  cbn [search_tasks search_colours search_events] in *.
+  assert (Hfresh : ~ In (Enter v) es) by now apply (proj1 (Hcolours v)).
+  assert (Hfresh_active : ~ In v (search_active_tasks tasks)).
+  { intro Hin. apply Hactive in Hin. congruence. }
+  constructor; cbn [search_tasks search_colours search_events
+    search_tasks_nested search_active_tasks].
+  - split; [eexists; reflexivity|exact Htasks].
+  - now constructor.
+  - cbn [rev]. eapply search_trace_stack_app; [exact Hstack|].
+    constructor. constructor.
+  - now apply search_entered_new.
+  - now apply search_colours_enter.
+  - intros u. destruct (Pos.eq_dec u v) as [Heq|Hneq].
+    + subst u. rewrite PTrie.get_set_same. cbn. intuition congruence.
+    + rewrite PTrie.get_set_other by exact Hneq.
+      specialize (Hactive u). cbn. intuition congruence.
+Qed.
+
+(** An edge event leaves the active stack and all vertex colours unchanged. *)
+Local Lemma search_shape_edge tasks colours es kind u v outer :
+  search_shape (SearchState tasks colours es) ->
+  search_active_tasks tasks = u :: outer ->
+  search_shape (SearchState tasks colours (Edge kind u v :: es)).
+Proof.
+  intros Hshape Hhead.
+  destruct Hshape as [Htasks Hunique Hstack Hentered Hcolours Hactive].
+  cbn [search_tasks search_colours search_events] in *.
+  constructor; cbn [search_tasks search_colours search_events].
+  - exact Htasks.
+  - exact Hunique.
+  - cbn [rev]. eapply search_trace_stack_app; [exact Hstack|].
+    rewrite Hhead. constructor. constructor.
+  - cbn [rev]. rewrite search_entered_app. cbn [entered].
+    now rewrite app_nil_r.
+  - now apply search_colours_edge.
+  - exact Hactive.
+Qed.
+
+(** Leaving a vertex pops its unique active occurrence and records its final colour. *)
+Local Lemma search_shape_leave tasks colours es v :
+  search_shape (SearchState (SearchLeave v :: tasks) colours es) ->
+  search_shape (SearchState tasks (PTrieCode.set v false colours) (Leave v :: es)).
+Proof.
+  intros Hshape.
+  destruct Hshape as [Htasks Hunique Hstack Hentered Hcolours Hactive].
+  cbn [search_tasks search_colours search_events
+    search_tasks_nested search_active_tasks] in *.
+  apply NoDup_cons_iff in Hunique. destruct Hunique as [Hfresh Hunique].
+  assert (Htrue : trie_get v colours = Some true).
+  { apply Hactive. now left. }
+  constructor; cbn [search_tasks search_colours search_events].
+  - exact Htasks.
+  - exact Hunique.
+  - cbn [rev]. eapply search_trace_stack_app; [exact Hstack|].
+    constructor. constructor.
+  - cbn [rev]. rewrite search_entered_app. cbn [entered].
+    now rewrite app_nil_r.
+  - now apply search_colours_leave.
+  - intros u. destruct (Pos.eq_dec u v) as [Heq|Hneq].
+    + subst u. rewrite PTrie.get_set_same. intuition congruence.
+    + rewrite PTrie.get_set_other by exact Hneq.
+      specialize (Hactive u). cbn in Hactive. intuition congruence.
+Qed.
+
+(** Every continuing machine step preserves the complete structural invariant. *)
+Lemma search_shape_step g st next :
+  search_shape st -> search_step g st = inl next -> search_shape next.
+Proof.
+  intros Hshape Hstep. destruct st as [[|task tasks] colours es];
+    [discriminate Hstep|].
+  destruct task as [v|u row|v].
+  - cbn [search_step] in Hstep.
+    destruct (trie_get v colours) as [active|] eqn:Hget;
+      injection Hstep as Hnext; subst next.
+    + eapply search_shape_retask; [exact Hshape| |reflexivity].
+      exact (search_shape_tasks _ Hshape).
+    + apply search_shape_enter; [|exact Hget].
+      eapply search_shape_retask; [exact Hshape| |reflexivity].
+      exact (search_shape_tasks _ Hshape).
+  - pose proof (search_shape_tasks _ Hshape) as Hnested.
+    cbn [search_tasks search_tasks_nested] in Hnested.
+    destruct Hnested as [[outer Hhead] Htail].
+    destruct row as [|v row].
+    + cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+      eapply search_shape_retask; [exact Hshape|exact Htail|reflexivity].
+    + cbn [search_step] in Hstep.
+      destruct (trie_get v colours) as [active|] eqn:Hget;
+        injection Hstep as Hnext; subst next.
+      * eapply search_shape_edge with (outer := outer); [|exact Hhead].
+        eapply search_shape_retask; [exact Hshape| |reflexivity].
+        cbn [search_tasks_nested]. split; [now exists outer|exact Htail].
+      * eapply search_shape_edge with (outer := outer); [|exact Hhead].
+        eapply search_shape_retask; [exact Hshape| |reflexivity].
+        cbn [search_tasks_nested]. split; [now exists outer|exact Htail].
+  - cbn [search_step] in Hstep. injection Hstep as Hnext. subst next.
+    now apply search_shape_leave.
+Qed.
+
+(** Stopping with an empty task list closes the stack and retains unique entries. *)
+Lemma search_shape_stop g st es :
+  search_shape st -> search_step g st = inr es ->
+  NoDup (entered es) /\ trace_stack [] es [].
+Proof.
+  intros Hshape Hstop. destruct st as [[|task tasks] colours events].
+  - cbn [search_step] in Hstop. injection Hstop as Hevents. subst es.
+    rewrite rev_append_rev, app_nil_r. split.
+    + exact (search_shape_entered_unique _ Hshape).
+    + exact (search_shape_stack _ Hshape).
+  - destruct task as [v|u row|v]; cbn [search_step] in Hstop.
+    + destruct (trie_get v colours); discriminate Hstop.
+    + destruct row as [|v row]; [discriminate Hstop|].
+      destruct (trie_get v colours); discriminate Hstop.
+    + discriminate Hstop.
+Qed.
+
+(** Every finite run either preserves a prefix shape or returns a complete nested trace. *)
+Lemma search_shape_loop_fuel g fuel st : search_shape st ->
+  match loop_fuel (search_step g) fuel st with
+  | inl next => search_shape next
+  | inr es => NoDup (entered es) /\ trace_stack [] es []
+  end.
+Proof.
+  revert st. induction fuel as [|fuel IH]; intros st Hshape; cbn [loop_fuel].
+  - exact Hshape.
+  - destruct (search_step g st) as [next|es] eqn:Hstep.
+    + apply IH. now apply (search_shape_step g st).
+    + now apply (search_shape_stop g st).
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
