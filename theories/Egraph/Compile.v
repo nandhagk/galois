@@ -1227,6 +1227,363 @@ Module Compile (V : VALUE) <: COMPILE V.
       + split; assumption.
   Qed.
 
+
+  (** * Fresh constructor sort contexts *)
+
+  (** Fresh compiler variables denote classes, while earlier source names keep their sorts. *)
+  Definition fresh_context (g : ctx) (fresh : positive) : ctx :=
+    fun x => if Pos.leb fresh x then Some SId else g x.
+
+  (** Names below the fresh threshold retain their source assignment. *)
+  Lemma fresh_context_low : forall g fresh x, (x < fresh)%positive ->
+    fresh_context g fresh x = g x.
+  Proof.
+    intros g fresh x Hlt. unfold fresh_context. destruct (Pos.leb fresh x) eqn:Htest.
+    - apply Pos.leb_le in Htest. lia.
+    - reflexivity.
+  Qed.
+
+  (** Names at or above the fresh threshold have the class sort. *)
+  Lemma fresh_context_high : forall g fresh x, (fresh <= x)%positive ->
+    fresh_context g fresh x = Some SId.
+  Proof.
+    intros g fresh x Hle. unfold fresh_context. destruct (Pos.leb fresh x) eqn:Htest.
+    - reflexivity.
+    - apply Pos.leb_gt in Htest. lia.
+  Qed.
+
+  (** A bounded source context is included by its fresh-variable extension. *)
+  Lemma fresh_context_includes : forall g fresh,
+    (forall x s, g x = Some s -> (x < fresh)%positive) ->
+    ctx_includes g (fresh_context g fresh).
+  Proof.
+    intros g fresh Hbound x s Hsort. rewrite fresh_context_low; [exact Hsort|].
+    apply Hbound with s. exact Hsort.
+  Qed.
+
+  (** Extending the source context also extends its fresh-variable context. *)
+  Lemma fresh_context_mono : forall g h fresh, ctx_includes g h ->
+    ctx_includes (fresh_context g fresh) (fresh_context h fresh).
+  Proof.
+    intros g h fresh Hinc x s Hsort. unfold fresh_context in *.
+    destruct (Pos.leb fresh x); [exact Hsort|apply Hinc; exact Hsort].
+  Qed.
+
+  (** Assigning a target-compatible sort preserves all older assignments. *)
+  Lemma ctx_set_includes : forall g target x s,
+    ctx_includes g target -> target x = Some s -> ctx_includes g (ctx_set g x s).
+  Proof.
+    intros g target x s Hpart Htarget y u Hsort.
+    unfold ctx_set. destruct (Pos.eqb x y) eqn:Hxy; [|exact Hsort].
+    apply Pos.eqb_eq in Hxy. subst y. pose proof (Hpart x u Hsort). congruence.
+  Qed.
+
+  (** Assigning a target-compatible sort keeps the resulting context compatible. *)
+  Lemma ctx_set_target : forall g target x s,
+    ctx_includes g target -> target x = Some s -> ctx_includes (ctx_set g x s) target.
+  Proof.
+    intros g target x s Hpart Htarget y u Hsort. unfold ctx_set in Hsort.
+    destruct (Pos.eqb x y) eqn:Hxy.
+    - apply Pos.eqb_eq in Hxy. subst y. injection Hsort as <-. exact Htarget.
+    - apply Hpart. exact Hsort.
+  Qed.
+
+  (** A node-form table supplies a term at every existing node position. *)
+  Lemma term_for_node : forall ns ts, Forall2 node_term ns ts ->
+    forall j n, nth_error ns j = Some n ->
+    exists t, nth_error ts j = Some t /\ node_term n t.
+  Proof.
+    intros ns ts Hforms. induction Hforms as [|n t ns ts Hhead Htail IH];
+      intros [|j] n' Hnth; cbn [nth_error] in Hnth; try discriminate.
+    - injection Hnth as <-. exists t. split; [reflexivity|exact Hhead].
+    - exact (IH j n' Hnth).
+  Qed.
+
+  (** Table interpretation transfers the declared sort of each node to its compiled term. *)
+  Definition sorted_pattern_table (g target : ctx) (ns : list (pnode V.t))
+      (ts : list (term V.t)) : Prop :=
+    forall j n t s, nth_error ns j = Some n -> nth_error ts j = Some t ->
+      pnode_sort g n = Some s -> has target t s.
+
+  (** Fresh constructor names and unchanged holes make the generated table well sorted. *)
+  Lemma fresh_table_sorted : forall g ns ts fresh,
+    Forall2 node_term ns ts ->
+    (forall h, In (PHole h) ns -> (h < fresh)%positive) ->
+    (forall x, In x (constructor_names ns ts) -> (fresh <= x)%positive) ->
+    sorted_pattern_table g (fresh_context g fresh) ns ts.
+  Proof.
+    intros g ns ts fresh Hforms Hholes Hnames j n t s Hnode Hterm Hsort.
+    pose proof (node_term_at ns ts Hforms j n t Hnode Hterm) as Hform.
+    destruct n as [h|f ch|v]; cbn [node_term pnode_sort] in Hform, Hsort.
+    - subst t. cbn [has]. rewrite fresh_context_low; [exact Hsort|].
+      apply Hholes. apply nth_error_In with j. exact Hnode.
+    - destruct Hform as [x ->]. injection Hsort as <-. cbn [has].
+      apply fresh_context_high, Hnames. eapply constructor_name_at; eassumption.
+    - subst t. injection Hsort as <-. reflexivity.
+  Qed.
+
+  (** Pattern tables preserve forms, assign usable sorts, and advance beyond their root name. *)
+  Lemma pattern_table_sorted : forall (p : fpat V.t) root_name g,
+    (pattern_max (nodes V.t p) < root_name)%positive ->
+    let ts := fst (pattern_table p root_name) in
+    Forall2 node_term (nodes V.t p) ts /\
+    sorted_pattern_table g (fresh_context g root_name) (nodes V.t p) ts /\
+    (root_name < snd (pattern_table p root_name))%positive.
+  Proof.
+    intros [ns r] rn g Hfresh. cbn [pattern_table nodes].
+    pose proof (pattern_terms_info ns (Some r) rn (Pos.succ rn) ltac:(lia)) as Hinfo.
+    destruct (pattern_terms ns (Some r) rn (Pos.succ rn)) as [ts last].
+    destruct Hinfo as [Hforms [Hlast [Hrange Hdistinct]]]. cbn [fst snd].
+    split; [exact Hforms|]. split; [|lia]. apply fresh_table_sorted; [exact Hforms| |].
+    - intros h Hin. pose proof (pattern_max_hole ns h Hin). cbn [nodes] in Hfresh. lia.
+    - intros x Hin. destruct (Hrange x Hin) as [[-> _]|Hrange']; lia.
+  Qed.
+
+  (** A well-sorted node lookup returns a term of the same sort. *)
+  Lemma pattern_get_typed : forall g target ns ts j s default,
+    Forall2 node_term ns ts -> sorted_pattern_table g target ns ts ->
+    (exists n, nth_error ns j = Some n /\ pnode_sort g n = Some s) ->
+    has target (pattern_get default j ts) s.
+  Proof.
+    intros g target ns ts j s default Hforms Htable [n [Hnode Hsort]].
+    destruct (term_for_node ns ts Hforms j n Hnode) as [t [Hterm Hform]].
+    unfold pattern_get. rewrite Hterm. exact (Htable j n t s Hnode Hterm Hsort).
+  Qed.
+
+  (** A constructor contributes its own atom to the generated query. *)
+  Lemma pattern_atom_at : forall ns ts all j f ch t,
+    nth_error ns j = Some (PApp f ch) -> nth_error ts j = Some t ->
+    In (Fun V.t f (map (fun k => pattern_get (Var 1%positive) k all) ch) (Some t))
+      (pattern_atoms ns ts all).
+  Proof.
+    induction ns as [|n ns IH]; intros [|u ts] all [|j] f ch t Hnode Hterm;
+      cbn [nth_error] in Hnode, Hterm; try discriminate.
+    - injection Hnode as Hn. subst n. injection Hterm as Ht. subst u.
+      left. reflexivity.
+    - specialize (IH ts all j f ch t Hnode Hterm).
+      destruct n; cbn [pattern_atoms]; try exact IH. right. exact IH.
+  Qed.
+  (** A term has at most one sort in any fixed context. *)
+  Lemma has_unique : forall g (t : term V.t) s u, has g t s -> has g t u -> s = u.
+  Proof.
+    intros g [x|v] s u Hs Hu; cbn [has] in *; congruence.
+  Qed.
+
+  (** A compatible partial context agrees with the target sort of every typed term. *)
+  Lemma has_target_sort : forall g target (t : term V.t) s u,
+    ctx_includes g target -> has g t u -> has target t s -> has g t s.
+  Proof.
+    intros g target t s u Hinc Hu Hs.
+    assert (u = s) by (eapply has_unique; [eapply has_includes; eassumption|exact Hs]).
+    subst u. exact Hu.
+  Qed.
+
+  (** An argument in a typed list has some sort in that context. *)
+  Lemma has_list_member : forall g ts ss, Forall2 (@has V.t g) ts ss ->
+    forall t, In t ts -> exists s, has g t s.
+  Proof.
+    intros g ts ss Htyped. induction Htyped as [|t s ts ss Hhead Htail IH];
+      intros u Hin; [contradiction|].
+    destruct Hin as [<-|Hin]; [exists s; exact Hhead|apply IH; exact Hin].
+  Qed.
+
+  (** A constructor atom is well sorted in a complete target context. *)
+  Definition constructor_atom_typed sorts kinds target (a : atom V.t) : Prop :=
+    match a with
+    | Fun _ f args (Some t) => exists ss,
+        sorts f = Some ss /\ kinds f = Some OId /\
+        Forall2 (has target) args ss /\ has target t SId
+    | _ => False
+    end.
+
+  (** A sorted constructor-only query can bind all of its terms from a partial context. *)
+  Lemma constructor_query_complete : forall sorts kinds target q,
+    Forall (constructor_atom_typed sorts kinds target) q ->
+    forall g, ctx_includes g target -> exists g',
+      query_ok sorts kinds g q g' /\ ctx_includes g' target /\
+      (forall a t s, In a q -> In t (atom_terms a) -> has target t s -> has g' t s).
+  Proof.
+    intros sorts kinds target q Htyped.
+    induction Htyped as [|a q Hhead Htail IH]; intros g Hpart.
+    - exists g. split; [constructor|]. split; [exact Hpart|].
+      intros a t s Hin. contradiction.
+    - destruct a as [f args [result|]|op args result];
+        cbn [constructor_atom_typed] in Hhead; try contradiction.
+      destruct Hhead as [ss [Hsort [Hkind [Hargs Hresult]]]].
+      destruct (binds_list_complete_target target args ss Hargs g Hpart)
+        as [g1 [Hbargs Hpart1]].
+      destruct (binds_complete_target g1 target result SId Hpart1 Hresult)
+        as [g2 [Hbresult Hpart2]].
+      destruct (IH g2 Hpart2) as [g3 [Hquery [Hpart3 Hcovered]]].
+      assert (Hkeep2 : ctx_includes g2 g3) by (eapply query_ok_includes; exact Hquery).
+      assert (Hkeep1 : ctx_includes g1 g3).
+      { eapply ctx_includes_trans; [eapply binds_includes; exact Hbresult|exact Hkeep2]. }
+      exists g3. split.
+      + eapply query_fun; [exact Hsort|exact Hkind|exact Hbargs|exact Hbresult|exact Hquery].
+      + split; [exact Hpart3|]. intros a t s [Heq|Hin] Hterm Htyped.
+        * subst a. cbn [atom_terms option_list] in Hterm. apply in_app_or in Hterm.
+          destruct Hterm as [Harg|[Heq|Hbad]]; [|subst t|contradiction].
+          -- destruct (has_list_member g1 args ss (binds_list_has _ _ _ _ Hbargs) t Harg)
+               as [u Hu].
+             eapply has_target_sort; [exact Hpart3| |exact Htyped].
+             eapply has_includes; [exact Hkeep1|exact Hu].
+          -- eapply has_target_sort; [exact Hpart3| |exact Htyped].
+             eapply has_includes; [exact Hkeep2|]. eapply binds_has; exact Hbresult.
+        * exact (Hcovered a t s Hin Hterm Htyped).
+  Qed.
+
+  (** Concatenating two sorted queries composes their intermediate contexts. *)
+  Lemma query_ok_app : forall sorts kinds g q g1 rest g2,
+    @query_ok V.t sorts kinds g q g1 -> query_ok sorts kinds g1 rest g2 ->
+    query_ok sorts kinds g (q ++ rest) g2.
+  Proof.
+    intros sorts kinds g q g1 rest g2 Hfirst. induction Hfirst;
+      intro Hrest; cbn [app]; [exact Hrest| |]; econstructor; eauto.
+  Qed.
+
+  (** Node-wise constructor typing induces typing of the emitted atom list. *)
+  Lemma pattern_atoms_from_typed_nodes : forall sorts kinds target ns ts all,
+    Forall2 (fun n t => match n with
+      | PApp f ch => constructor_atom_typed sorts kinds target
+          (Fun V.t f (map (fun j => pattern_get (Var 1%positive) j all) ch) (Some t))
+      | _ => True
+      end) ns ts ->
+    Forall (constructor_atom_typed sorts kinds target) (pattern_atoms ns ts all).
+  Proof.
+    intros sorts kinds target ns ts all Htyped.
+    induction Htyped as [|n t ns ts Hhead Htail IH]; [constructor|].
+    destruct n; cbn [pattern_atoms]; try exact IH. constructor; assumption.
+  Qed.
+
+  (** A compatible term table turns each well-sorted pattern constructor into a sorted atom. *)
+  Lemma pattern_atoms_typed : forall sorts kinds g target (p : fpat V.t) ts,
+    pat_ok sorts kinds g p -> Forall2 node_term (nodes V.t p) ts ->
+    sorted_pattern_table g target (nodes V.t p) ts ->
+    Forall (constructor_atom_typed sorts kinds target)
+      (pattern_atoms (nodes V.t p) ts ts).
+  Proof.
+    intros sorts kinds g target [ns r] ts [_ [_ [_ Hnodes]]] Hforms Htable.
+    apply pattern_atoms_from_typed_nodes.
+    apply (forall2_at_indices (pnode V.t) (term V.t)); [eapply Forall2_length; exact Hforms|].
+    intros i n t Hnode Hterm. destruct n as [h|f ch|v]; [exact I| |exact I].
+    destruct (Hnodes i f ch Hnode) as [Hkind [ss [Hsort Hchildren]]].
+    exists ss. split; [exact Hsort|]. split; [exact Hkind|]. split.
+    - clear Hnode Hterm Hsort Hkind. induction Hchildren as [|j s ch ss Hhead Htail IH];
+        cbn [map]; [constructor|].
+      constructor; [|exact IH].
+      eapply pattern_get_typed; [exact Hforms|exact Htable|exact (proj2 Hhead)].
+    - exact (Htable i (PApp f ch) t SId Hnode Hterm eq_refl).
+  Qed.
+
+  (** Every left-side hole occurs in the argument list of a generated constructor atom. *)
+  Lemma pattern_hole_occurs : forall sorts kinds g ns r ts h,
+    pat_ok sorts kinds g (FPat V.t ns r) -> app_rooted (FPat V.t ns r) ->
+    Forall2 node_term ns ts -> In (PHole h) ns ->
+    exists a, In a (pattern_atoms ns ts ts) /\ In (Var h) (atom_terms a).
+  Proof.
+    intros sorts kinds g ns r ts h [Hlast [_ [Hcoverage _]]] [rf [rc Hroot]] Hforms Hin.
+    cbn [nodes root] in Hlast, Hcoverage, Hroot.
+    apply In_nth_error in Hin. destruct Hin as [j Hhole].
+    assert (Hindex : j < length ns).
+    { apply nth_error_Some. rewrite Hhole. discriminate. }
+    assert (Hbefore : j < r).
+    { destruct (Nat.eq_dec j r) as [->|Hneq]; [congruence|lia]. }
+    destruct (Hcoverage j Hbefore) as [i [f [ch [_ [Hparent Hchild]]]]].
+    destruct (term_for_node ns ts Hforms j (PHole h) Hhole) as [ht [Hht Hform]].
+    cbn [node_term] in Hform. subst ht.
+    destruct (term_for_node ns ts Hforms i (PApp f ch) Hparent) as [t [Ht Hform]].
+    exists (Fun V.t f (map (fun k => pattern_get (Var 1%positive) k ts) ch) (Some t)).
+    split; [eapply pattern_atom_at; eassumption|].
+    cbn [atom_terms]. apply in_or_app. left. apply in_map_iff.
+    exists j. split; [unfold pattern_get; rewrite Hht; reflexivity|exact Hchild].
+  Qed.
+  (** Every constructor's result term occurs in its emitted atom. *)
+  Lemma pattern_constructor_occurs : forall ns ts i f ch t,
+    nth_error ns i = Some (PApp f ch) -> nth_error ts i = Some t ->
+    exists a, In a (pattern_atoms ns ts ts) /\ In t (atom_terms a).
+  Proof.
+    intros ns ts i f ch t Hnode Hterm.
+    exists (Fun V.t f (map (fun j => pattern_get (Var 1%positive) j ts) ch) (Some t)).
+    split; [eapply pattern_atom_at; eassumption|].
+    cbn [atom_terms option_list]. apply in_or_app. right. left. reflexivity.
+  Qed.
+
+  (** Covering every generated atom also covers the scoped source hole context. *)
+  Lemma pattern_query_covers_context : forall sorts kinds g target h ns r ts,
+    pat_ok sorts kinds g (FPat V.t ns r) -> app_rooted (FPat V.t ns r) ->
+    Forall2 node_term ns ts -> ctx_includes g target ->
+    (forall x s, g x = Some s -> In (PHole x) ns) ->
+    (forall a t s, In a (pattern_atoms ns ts ts) -> In t (atom_terms a) ->
+      has target t s -> has h t s) -> ctx_includes g h.
+  Proof.
+    intros sorts kinds g target h ns r ts Hpat Hroot Hforms Htarget Hscope Hcovers x s Hsort.
+    destruct (pattern_hole_occurs sorts kinds g ns r ts x Hpat Hroot Hforms
+      (Hscope x s Hsort)) as [a [Hin Hterm]].
+    apply (Hcovers a (Var x) s Hin Hterm). apply Htarget. exact Hsort.
+  Qed.
+
+  (** A flattened constructor-rooted pattern binds its source holes and its fresh root. *)
+  Lemma flatten_pat_sorted : forall sorts kinds g (p : fpat V.t) rn,
+    pat_ok sorts kinds g p -> app_rooted p ->
+    (forall x s, g x = Some s -> In (PHole x) (nodes V.t p)) ->
+    (pattern_max (nodes V.t p) < rn)%positive ->
+    exists h, query_ok sorts kinds ctx_empty (flatten_pat p rn) h /\
+      ctx_includes g h /\ ctx_includes h (fresh_context g rn) /\ h rn = Some SId.
+  Proof.
+    intros sorts kinds g [ns r] rn Hpat Hroot Hscope Hfresh.
+    set (ts := fst (pattern_table (FPat V.t ns r) rn)).
+    destruct (pattern_table_sorted (FPat V.t ns r) rn g Hfresh)
+      as [Hforms [Htable Hlast]].
+    assert (Hsource : ctx_includes g (fresh_context g rn)).
+    { apply fresh_context_includes. intros x s Hsort.
+      pose proof (pattern_max_hole ns x (Hscope x s Hsort)). cbn [nodes] in Hfresh. lia. }
+    pose proof (pattern_atoms_typed sorts kinds g (fresh_context g rn)
+      (FPat V.t ns r) ts Hpat Hforms Htable) as Htyped.
+    destruct (constructor_query_complete sorts kinds (fresh_context g rn)
+      (pattern_atoms ns ts ts) Htyped ctx_empty ltac:(intros x s H; discriminate H))
+      as [h [Hquery [Hpart Hcovers]]].
+    exists h. split; [exact Hquery|]. split.
+    - eapply pattern_query_covers_context; eassumption.
+    - split; [exact Hpart|]. destruct Hroot as [f [ch Hroot]].
+      assert (Hterm : nth_error ts r = Some (Var rn)).
+      { unfold ts, pattern_table. eapply pattern_terms_root. exact Hroot. }
+      destruct (pattern_constructor_occurs ns ts r f ch (Var rn) Hroot Hterm)
+        as [a [Hin Hterm_in]].
+      apply (Hcovers a (Var rn) SId Hin Hterm_in).
+      cbn [has]. apply fresh_context_high. lia.
+  Qed.
+
+  (** The complete flattened left side types the condition while retaining its class root. *)
+  Lemma flatten_lhs_sorted : forall ds rw g,
+    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
+    exists h, query_ok (lookup_sorts ds) (lookup_kind ds) ctx_empty (flatten_lhs rw) h /\
+      ctx_includes g h /\ ctx_includes h (fresh_context g (root_var rw)) /\
+      h (root_var rw) = Some SId.
+  Proof.
+    intros ds rw g Hrw. destruct Hrw as [g0 [Hroot [Hleft [Hscope [Hquery Hright]]]]].
+    destruct (flatten_pat_sorted (lookup_sorts ds) (lookup_kind ds) g0
+      (lhs V.t rw) (root_var rw) Hleft Hroot Hscope (proj1 (root_var_bounds rw)))
+      as [h0 [Hflat [Hincludes [Hpart Hroot_sort]]]].
+    assert (Hgrow : ctx_includes g0 g) by (eapply query_ok_includes; exact Hquery).
+    assert (Hpart' : ctx_includes h0 (fresh_context g (root_var rw))).
+    { eapply ctx_includes_trans; [exact Hpart|apply fresh_context_mono; exact Hgrow]. }
+    assert (Htarget : ctx_includes g (fresh_context g (root_var rw))).
+    { apply fresh_context_includes. intros x s Hsort.
+      eapply rewrite_context_bound; [|exact Hsort].
+      exists g0. split; [exact Hroot|]. split; [exact Hleft|].
+      split; [exact Hscope|]. split; assumption. }
+    destruct (query_ok_extend _ _ g0 (cond V.t rw) g Hquery h0
+      (fresh_context g (root_var rw)) Hincludes Hpart' Htarget)
+      as [h [Hconditions [Hsource Hpart_final]]].
+    exists h. split.
+    - assert (Hflatten : flatten_lhs rw =
+        flatten_pat (lhs V.t rw) (root_var rw) ++ cond V.t rw).
+      { destruct rw. reflexivity. }
+      rewrite Hflatten. eapply query_ok_app; eassumption.
+    - split; [exact Hsource|]. split; [exact Hpart_final|].
+      apply (query_ok_includes _ _ _ _ _ Hconditions). exact Hroot_sort.
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
