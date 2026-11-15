@@ -517,6 +517,117 @@ Definition scc_trace (g : prepared) : list event :=
   prepared_search_trace ready (nodes ready).
 TimeFun scc_trace.
 
+Local Opaque prepared_search_trace.
+
+(** Filtering gives successor closure with respect to its own listed vertices. *)
+Lemma scc_search_closed g u v :
+  In u (nodes (scc_graph g)) -> edge (base (scc_graph g)) u v ->
+  In v (nodes (scc_graph g)).
+Proof.
+  intros Hu Hedge. rewrite scc_graph_nodes. now apply (scc_graph_closed g u v).
+Qed.
+
+(** Filtered traversal enters each key at most once, including duplicate input rows. *)
+Lemma scc_trace_unique g : NoDup (entered (scc_trace g)).
+Proof.
+  unfold scc_trace. apply prepared_search_unique_raw.
+Qed.
+
+(** Recomputed counts complete the filtered traversal and close its active stack. *)
+Lemma scc_trace_nested g : trace_stack [] (scc_trace g) [].
+Proof.
+  unfold scc_trace. apply prepared_search_nested_closed.
+  - apply scc_graph_counts.
+  - apply scc_search_closed.
+  - auto.
+Qed.
+
+(** Every listed vertex is a root, and filtering prevents any unlisted entry. *)
+Lemma scc_trace_entered g v : In v (entered (scc_trace g)) <-> In v (nodes g).
+Proof.
+  unfold scc_trace.
+  rewrite (prepared_search_reach_closed (scc_graph g) (nodes (scc_graph g))
+    (scc_graph_counts g) (scc_search_closed g) (fun r Hin => Hin) v).
+  split.
+  - intros Hreach. apply search_reach_origin in Hreach.
+    destruct Hreach as [Hroot|[u [Hreach Hedge]]].
+    + now rewrite scc_graph_nodes in Hroot.
+    + now apply (scc_graph_closed g u v).
+  - intros Hin. exists v, [v]. split; [now rewrite scc_graph_nodes|constructor].
+Qed.
+
+(** Filtered traversal emits precisely two vertex events and each visited row occurrence. *)
+Lemma scc_trace_length g :
+  length (scc_trace g) = 2 * length (entered (scc_trace g)) +
+    fold_right (fun v n => length (succs (base (scc_graph g)) v) + n) 0
+      (entered (scc_trace g)).
+Proof.
+  pose proof (prepared_search_event_exact (scc_graph g) (nodes (scc_graph g))
+    (scc_graph_counts g) (scc_search_closed g) (fun r Hin => Hin)) as Hlength.
+  rewrite search_event_supply_entered in Hlength. exact Hlength.
+Qed.
+
+Local Lemma scc_weight_app {A} (weight : A -> nat) first last :
+  fold_right (fun v n => weight v + n) 0 (first ++ last) =
+    fold_right (fun v n => weight v + n) 0 first +
+    fold_right (fun v n => weight v + n) 0 last.
+Proof.
+  induction first as [|v first IH]; cbn [app fold_right]; lia.
+Qed.
+
+(** Distinct included keys consume at most the weighted occurrences of the containing list. *)
+Lemma scc_weight_incl {A} (weight : A -> nat) first last :
+  NoDup first -> incl first last ->
+  fold_right (fun v n => weight v + n) 0 first <=
+    fold_right (fun v n => weight v + n) 0 last.
+Proof.
+  intros Hunique. revert last. induction Hunique as [|v first Hfresh Hunique IH];
+    intros last Hincl; [cbn; lia|].
+  destruct (in_split v last (Hincl v (or_introl eq_refl))) as [before [after Heq]].
+  subst last. assert (Hrest : incl first (before ++ after)).
+  { intros u Hu. specialize (Hincl u (or_intror Hu)). apply in_app_or in Hincl.
+    apply in_or_app. destruct Hincl as [Hbefore|[Heq|Hafter]].
+    - now left.
+    - subst u. contradiction.
+    - now right. }
+  specialize (IH (before ++ after) Hrest).
+  rewrite scc_weight_app in IH. rewrite scc_weight_app. cbn [fold_right]. lia.
+Qed.
+
+(** Filtering a successor row never increases its occurrence count. *)
+Lemma scc_graph_row_length g v :
+  length (succs (base (scc_graph g)) v) <= length (succs (base g) v).
+Proof.
+  rewrite scc_graph_succs. destruct (existsb (Pos.eqb v) (nodes g));
+    [apply filter_length_le|cbn; lia].
+Qed.
+
+(** Duplicate listed vertices and filtered edges can only enlarge the input size budget. *)
+Lemma scc_trace_size g :
+  length (scc_trace g) <= 2 * graph_n (base g) + graph_e (base g).
+Proof.
+  assert (Hincluded : incl (entered (scc_trace g)) (nodes g)).
+  { intros v Hin. now apply scc_trace_entered in Hin. }
+  pose proof (scc_trace_unique g) as Hunique.
+  pose proof (NoDup_incl_length Hunique Hincluded) as Hvertices.
+  pose proof (scc_weight_incl (fun v => length (succs (base g) v))
+    _ _ Hunique Hincluded) as Hrows.
+  cbn beta in Hrows.
+  assert (Hfiltered :
+    fold_right (fun v n => length (succs (base (scc_graph g)) v) + n) 0
+      (entered (scc_trace g)) <=
+    fold_right (fun v n => length (succs (base g) v) + n) 0 (entered (scc_trace g))).
+  { clear Hvertices Hrows Hunique Hincluded.
+    induction (entered (scc_trace g)) as [|v rest IH]; cbn [fold_right]; [lia|].
+    pose proof (scc_graph_row_length g v). lia. }
+  assert (Hnodes : length (nodes g) = graph_n (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  assert (Hedges : fold_right (fun v n => length (succs (base g) v) + n) 0 (nodes g) =
+      graph_e (base g)).
+  { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
+  rewrite Hnodes in Hvertices. rewrite Hedges in Hrows. rewrite scc_trace_length. lia.
+Qed.
+
 Module SccCode <: SCC_OPS.
   Definition run (g : prepared) : scc :=
     let result := fold_events TarjanVisitor.enter TarjanVisitor.leave TarjanVisitor.edge
@@ -651,7 +762,11 @@ Module SccT <: SCC_ALL.
     (forall v, In v (entered (tarjan_trace g)) -> In v (nodes g)) /\
     trace_stack [] (tarjan_trace g) [] /\
     length (tarjan_trace g) <= 2 * graph_n (base g) + graph_e (base g).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g. split; [apply scc_trace_unique|]. split.
+    - intros v Hin. now apply scc_trace_entered in Hin.
+    - split; [apply scc_trace_nested|apply scc_trace_size].
+  Qed.
 
   Lemma F2_run : forall g,
     run g = let result := prefix_state (tarjan_trace g) in
