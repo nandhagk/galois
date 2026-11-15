@@ -1,11 +1,12 @@
-(** * Constructor inventory examples
+(** * Constructor inventories and checked certificates
 
-    Inventory construction selects one unpermuted full slot per declared constructor.
-    For example, repeated full slots produce one entry, and an earlier relation declaration
-    prevents a later declaration of the same name from turning it into a constructor.
+    Inventories select full constructor slots, and certificates unfold through earlier entries.
+    For example, shared children contribute their tree cost each time they occur, while a
+    forward reference is rejected before costing.
     Builds on: Extract, Database and Index code towers. *)
 
 From Stdlib Require Import List PArith NArith.
+From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import ValueSig Syntax Index Database ExtractSig Extract.
 
 Import List.ListNotations.
@@ -95,6 +96,80 @@ Qed.
 
 Example unfold_missing_root :
   @dag_unfold positive [(1%positive, (10%positive, []))] 2%positive = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Definition checker_database : InventoryDatabase.t :=
+  let db := InventoryDatabase.init
+    [Decl 10%positive [SVal] OId; Decl 20%positive [SId; SId] OId;
+     Decl 30%positive [] OId]
+    [(10%positive, [0; 1]); (20%positive, [0; 1; 2]); (30%positive, [0])] in
+  let db := snd (InventoryDatabase.make 10%positive [Val 7%positive] db) in
+  let db := snd (InventoryDatabase.make 20%positive [Id 1%positive; Id 1%positive] db) in
+  snd (InventoryDatabase.make 30%positive [] db).
+
+Definition checker_graph : extraction_dag positive :=
+  [(1%positive, (10%positive, [Val 7%positive]));
+   (2%positive, (20%positive, [Id 1%positive; Id 1%positive]));
+   (3%positive, (30%positive, []))].
+
+Example check_dag_shared_children :
+  InventoryExtract.check_dag checker_database 2%positive checker_graph = Some 5%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example check_dag_root_before_unrelated_rows :
+  InventoryExtract.check_dag checker_database 1%positive checker_graph = Some 2%N.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example check_dag_unrelated_invalid_row :
+  InventoryExtract.check_dag checker_database 2%positive
+    (checker_graph ++ [(4%positive, (99%positive, []))]) = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example check_dag_forward_child :
+  InventoryExtract.check_dag checker_database 2%positive
+    [(2%positive, (20%positive, [Id 1%positive; Id 1%positive]));
+     (1%positive, (10%positive, [Val 7%positive]))] = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example check_dag_duplicate_name :
+  InventoryExtract.check_dag checker_database 1%positive
+    [(1%positive, (10%positive, [Val 7%positive]));
+     (1%positive, (10%positive, [Val 7%positive]))] = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example check_dag_wrong_output :
+  InventoryExtract.check_dag checker_database 2%positive
+    [(2%positive, (10%positive, [Val 7%positive]))] = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example check_dag_missing_root :
+  InventoryExtract.check_dag checker_database 4%positive checker_graph = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example check_dag_empty :
+  InventoryExtract.check_dag checker_database 1%positive [] = None.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
+Example dag_needed_excludes_unrelated_rows :
+  dag_seen (dag_needed checker_graph (PTrieCode.set 1%positive tt Empty)) 2%positive = false.
 Proof.
   vm_compute. reflexivity.
 Qed.
