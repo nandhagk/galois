@@ -688,6 +688,101 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     intros e xs; induction xs as [|x xs IH]; cbn [map fold_right]; lia.
   Qed.
 
+  (** Raw alternative size includes one cell for every stored state. *)
+  Local Definition state_mass (xs : list S.t) : nat :=
+    fold_right (fun x rest => S.size x + 1 + rest)%nat 0%nat xs.
+
+  (** The raw size is the sum of state sizes and the alternative count. *)
+  Local Lemma state_mass_values : forall xs, state_mass xs =
+    fold_right Nat.add 0%nat (map S.size xs) + length xs.
+  Proof.
+    intro xs; induction xs as [|x xs IH]; unfold state_mass in *;
+      cbn [map fold_right length]; lia.
+  Qed.
+
+  (** One state join accounts for both computation and the resulting representation. *)
+  Local Lemma state_join_step a b tail :
+    (1 + S.T_join a b + N.of_nat (S.size (S.join a b)) + tail + 1 <=
+      state_growth * (N.of_nat (S.size a) + N.of_nat (S.size b) + tail + 2))%N.
+  Proof.
+    pose proof (S.T_join_le a b) as Hclock; pose proof (JS.join_size a b) as Hsize.
+    unfold state_growth; repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** A state fold controls its clock and output size by a fixed growth factor. *)
+  Local Lemma state_fold_budget xs : forall a,
+    (List.T_fold_left S.join S.T_join xs a +
+      N.of_nat (S.size (fold_left S.join xs a)) + 1 <=
+      state_growth ^ N.of_nat (length xs + 1) *
+        N.of_nat (S.size a + state_mass xs + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro a.
+    - time_unfold @List.T_fold_left; cbn [fold_left length state_mass fold_right].
+      rewrite N.pow_1_r; repeat rewrite Nat2N.inj_add; unfold state_growth; nia.
+    - specialize (IH (S.join a x)).
+      pose proof (state_join_step a x (N.of_nat (state_mass xs))) as Hstep.
+      set (scale := (state_growth ^ N.of_nat (length xs + 1))%N) in *.
+      assert (Hpositive : (1 <= scale)%N).
+      { unfold scale; assert (Hnonzero : state_growth <> 0%N) by
+          (unfold state_growth; lia).
+        pose proof (N.pow_nonzero state_growth (N.of_nat (length xs + 1)) Hnonzero); lia. }
+      pose proof (N.mul_le_mono_l _ _ scale Hstep) as Hscaled.
+      pose proof (N.mul_le_mono_r 1 scale (1 + S.T_join a x)%N Hpositive) as Hpaid.
+      time_unfold @List.T_fold_left; cbn [fold_left length].
+      replace (Datatypes.S (length xs) + 1) with (Datatypes.S (length xs + 1)) by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r'; fold scale.
+      change (state_mass (x :: xs)) with (S.size x + 1 + state_mass xs).
+      repeat rewrite Nat2N.inj_add in IH |- *.
+      replace (state_growth * scale)%N with (scale * state_growth)%N by ring.
+      repeat rewrite N.mul_add_distr_l in IH, Hscaled, Hpaid.
+      rewrite N.mul_1_l in Hpaid; nia.
+  Qed.
+
+  (** A capped collapse pays for its clock and output size together. *)
+  Local Lemma collapse_budget xs : length xs <= C.k + 1 ->
+    (T_collapse xs + N.of_nat (S.size (collapse xs)) <= c_disjunction *
+      N.of_nat (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  Proof.
+    intro Hcap; destruct xs as [|x xs].
+    - time_unfold @T_collapse; cbn [collapse map fold_right length].
+      unfold c_disjunction; rewrite Nat2N.inj_add; nia.
+    - pose proof (state_fold_budget xs x) as Hfold.
+      change (List.T_fold_left S.join S.T_join xs x) with
+        (List.T_fold_left S.join (fun a b => S.T_join a b) xs x) in Hfold.
+      assert (Hpower : (state_growth ^ N.of_nat (length xs + 1) <= state_scale)%N).
+      { unfold state_scale; apply N.pow_le_mono_r.
+        - unfold state_growth; lia.
+        - cbn [length] in Hcap; lia. }
+      assert (Hcoefficient : (state_scale <= c_disjunction)%N) by
+        (unfold c_disjunction; nia).
+      pose proof (N.mul_le_mono_r _ _ (N.of_nat (S.size x + state_mass xs + 1))
+        (N.le_trans _ _ _ Hpower Hcoefficient)) as Hscaled.
+      time_unfold @T_collapse; cbn [collapse map fold_right length].
+      rewrite state_mass_values in Hfold, Hscaled.
+      repeat rewrite Nat2N.inj_add in *; rewrite ?Nat2N.inj_succ in *; nia.
+  Qed.
+
+  (** A join fold increases widening units by at most the same fixed growth factor. *)
+  Local Lemma state_fold_units xs : forall a,
+    (N.of_nat (S.wunits (fold_left S.join xs a)) + 1 <=
+      state_growth ^ N.of_nat (length xs) *
+      N.of_nat (S.wunits a + fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro a.
+    - cbn [fold_left length map fold_right]; rewrite N.pow_0_r;
+        repeat rewrite Nat2N.inj_add; nia.
+    - specialize (IH (S.join a x)); pose proof (JU.join_wunits a x) as Hjoin.
+      assert (Hstep : (N.of_nat (S.wunits (S.join a x) +
+          fold_right Nat.add 0%nat (map S.wunits xs) + 1) <=
+        state_growth * N.of_nat (S.wunits a + S.wunits x +
+          fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N).
+      { unfold state_growth; repeat rewrite Nat2N.inj_add in *; nia. }
+      pose proof (N.mul_le_mono_l _ _ (state_growth ^ N.of_nat (length xs)) Hstep)
+        as Hscaled.
+      cbn [fold_left length map fold_right]; rewrite Nat2N.inj_succ, N.pow_succ_r'.
+      repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
   (** Assignment work is the component work of every alternative. *)
   Lemma assign_work_alternatives : forall x e d, assign_work x e d =
     fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
@@ -842,15 +937,33 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T_collapse_le : forall xs, length xs <= C.k + 1 ->
     (T_collapse xs <= c_disjunction * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros xs Hcap; pose proof (collapse_budget xs Hcap); lia.
+  Qed.
   Lemma collapse_size : forall xs, length xs <= C.k + 1 ->
     (N.of_nat (S.size (collapse xs)) <= c_disjunction * N.of_nat
       (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros xs Hcap; pose proof (collapse_budget xs Hcap); lia.
+  Qed.
   Lemma collapse_wunits : forall xs, length xs <= C.k + 1 ->
     (N.of_nat (S.wunits (collapse xs)) <= c_disjunction * N.of_nat
       (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [|x xs] Hcap.
+    - cbn [collapse map fold_right]; unfold c_disjunction; rewrite Nat2N.inj_add; nia.
+    - pose proof (state_fold_units xs x) as Hfold.
+      assert (Hpower : (state_growth ^ N.of_nat (length xs) <= state_scale)%N).
+      { unfold state_scale; apply N.pow_le_mono_r.
+        - unfold state_growth; lia.
+        - cbn [length] in Hcap; lia. }
+      assert (Hcoefficient : (state_scale <= c_disjunction)%N) by
+        (unfold c_disjunction; nia).
+      pose proof (N.mul_le_mono_r _ _
+        (N.of_nat (S.wunits x + fold_right Nat.add 0%nat (map S.wunits xs) + 1))
+        (N.le_trans _ _ _ Hpower Hcoefficient)) as Hscaled.
+      cbn [collapse map fold_right]; nia.
+  Qed.
 
   Lemma F2_widen : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
