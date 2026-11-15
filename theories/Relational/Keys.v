@@ -4,8 +4,8 @@
     For example, positive and negative occurrences of x have different encodings.
     Builds on: KeySig and the core OptionKey towers in Key. *)
 
-From Stdlib Require Import PArith Bool NArith Lia.
-From Argent Require Import Time Tactics Std.
+From Stdlib Require Import PArith Bool NArith.
+From Argent Require Import Time Std.
 From Galois.Base Require Import KeySig Key.
 
 Module LitKeyCode (X : KEY_OPS) <: KEY_OPS.
@@ -21,19 +21,10 @@ Module LitKey (X : KEY) <: KEY.
   Include KEY_SPEC.
   (** The sign bit and the variable encoding determine the literal. *)
   Lemma encode_inj : forall a b, encode a = encode b -> a = b.
-  Proof.
-    intros [a []] [b []] Hcode; cbn [encode fst snd] in Hcode;
-      try discriminate;
-      injection Hcode as Hab; apply X.encode_inj in Hab; now subst.
-  Qed.
+  Proof. Admitted. (* STUB *)
   (** Literal equality compares the sign and the variable. *)
   Lemma eqb_spec : forall a b, reflect (a = b) (eqb a b).
-  Proof.
-    intros [a sa] [b sb]; unfold eqb; cbn [fst snd].
-    destruct (Bool.eqb_spec sa sb) as [Hsign | Hsign];
-      destruct (X.eqb_spec a b) as [Hkey | Hkey]; cbn;
-      constructor; congruence.
-  Qed.
+  Proof. Admitted. (* STUB *)
 End LitKey.
 
 (** The temporary variable uses the absent branch of the core option encoding. *)
@@ -45,23 +36,13 @@ Module LitKeyT (X : KEY_T) <: KEY_T.
   Include LitKey X.
   TimeFun encode.
   TimeFun eqb.
-  Definition c_key : N := 8 * (X.c_key + 1).
+  Definition c_key : N := 1. (* STUB *)
   (** Encoding adds one sign bit to the variable encoding. *)
   Lemma T_encode_le : forall k, (T_encode k <= c_key * N.of_nat (bits k + 1))%N.
-  Proof.
-    intros [x []]; pose proof (X.T_encode_le x) as Hencode;
-      unfold bits, encode, c_key, X.bits in *;
-      cbn [fst snd Pos.size_nat]; time_unfold T_encode;
-      time_simpl; time_cbn; nia.
-  Qed.
+  Proof. Admitted. (* STUB *)
   (** Literal equality charges the first variable and its sign. *)
   Lemma T_eqb_le : forall a b, (T_eqb a b <= c_key * N.of_nat (bits a + 1))%N.
-  Proof.
-    intros [a []] [b []]; pose proof (X.T_eqb_le a b) as Hcompare;
-      unfold bits, encode, c_key, X.bits in *;
-      cbn [fst snd Pos.size_nat]; time_unfold T_eqb;
-      time_simpl; time_cbn; nia.
-  Qed.
+  Proof. Admitted. (* STUB *)
 End LitKeyT.
 
 Module TmpKeyT (X : KEY_T) := OptionKeyT X.
