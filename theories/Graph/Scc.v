@@ -74,6 +74,44 @@ Proof.
         exact Hlookup.
 Qed.
 
+(** Each consumed pending cell pays its trie updates and equality test. *)
+Lemma tarjan_pop_credit w root index pending low active owners
+    members tail low' active' owners' :
+  Forall (fun v => Pos.size_nat v <= w) pending ->
+  tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
+  (T_tarjan_pop root index pending low active owners +
+      4096 * N.of_nat (w + 1) * N.of_nat (length tail) <=
+    4096 * N.of_nat (w + 1) * N.of_nat (length pending) + 1)%N.
+Proof.
+  revert low active owners members tail low' active' owners'.
+  induction pending as [|v pending IH];
+    intros low active owners members tail low' active' owners' Hwidth Hpop.
+  - cbn [tarjan_pop] in Hpop. inversion Hpop; subst.
+    time_unfold @T_tarjan_pop. cbn [length]. nia.
+  - inversion Hwidth as [|v' pending' Hv Hrest]; subst v' pending'.
+    pose proof (PTrieT.T_remove_le positive v low) as Hlow.
+    pose proof (PTrieT.T_remove_le bool v active) as Hactive.
+    pose proof (PTrieT.T_set_le positive v index owners) as Howners.
+    change (PTrieCode.T_remove v low <= 1024 * N.of_nat (Pos.size_nat v + 1))%N in Hlow.
+    change (PTrieCode.T_remove v active <= 1024 * N.of_nat (Pos.size_nat v + 1))%N in Hactive.
+    change (PTrieCode.T_set v index owners <=
+      1024 * N.of_nat (Pos.size_nat v + 1))%N in Howners.
+    pose proof (Std.Pos.T_eqb_le v root) as Hcompare.
+    assert (Hbits : (N.of_nat (Pos.size_nat v + 1) <= N.of_nat (w + 1))%N) by lia.
+    assert (Hcell : (1 + PTrieCode.T_remove v low + PTrieCode.T_remove v active +
+      PTrieCode.T_set v index owners + Std.Pos.T_eqb v root <=
+      4096 * N.of_nat (w + 1))%N) by nia.
+    cbn [tarjan_pop] in Hpop. time_unfold @T_tarjan_pop.
+    destruct (Pos.eqb v root) eqn:Hroot.
+    + inversion Hpop; subst. cbn [length]. rewrite Nat2N.inj_succ. nia.
+    + destruct (tarjan_pop root index pending (PTrieCode.remove v low)
+        (PTrieCode.remove v active) (PTrieCode.set v index owners))
+        as [[[[popped remaining] lows] actives] assigned] eqn:Hrec.
+      inversion Hpop; subst members tail low' active' owners'.
+      specialize (IH _ _ _ _ _ _ _ _ Hrest Hrec).
+      cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
 Module TarjanVisitor <: VISITOR_OPS.
   Definition state := tarjan_state.
 
@@ -549,7 +587,7 @@ Module SccT <: SCC_ALL.
   TimeFun tarjan_pop.
   Definition tarjan_trace := scc_trace.
   TimeFun tarjan_trace.
-  Definition k_pop : N := 1%N. (* STUB *)
+  Definition k_pop : N := 4096%N.
   Definition k_callback : N := 1%N. (* STUB *)
   Definition k_result : N := 8%N.
   Definition k_search : N := 1%N. (* STUB *)
@@ -697,7 +735,13 @@ Module SccT <: SCC_ALL.
     tarjan_pop root index pending low active owners = (members, tail, low', active', owners') ->
     (T_tarjan_pop root index pending low active owners + pop_unit w * N.of_nat (length tail) <=
       pop_unit w * N.of_nat (length pending) + k_pop * N.of_nat (w + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w root index pending low active owners members tail low' active' owners'
+      Hwidth Hroot Hindex Hpop.
+    unfold tarjan_pop in Hpop.
+    pose proof (tarjan_pop_credit _ _ _ _ _ _ _ _ _ _ _ _ Hwidth Hpop) as Hcredit.
+    unfold pop_unit, k_pop. time_unfold @T_tarjan_pop. nia.
+  Qed.
 
   Lemma T2_callback : forall g prefix e suffix,
     tarjan_trace g = prefix ++ e :: suffix ->
