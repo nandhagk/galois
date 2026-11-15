@@ -2450,6 +2450,70 @@ Proof.
   - rewrite <- length_rev. apply dom_size_budget_empty.
 Qed.
 
+(** A size observation traverses one key and adds its default-value branch. *)
+Local Lemma dom_time_size_get sizes v :
+  T_dom_size_get sizes v = (1 + 2 * N.of_nat (Pos.size_nat v))%N.
+Proof.
+  unfold T_dom_size_get. rewrite PTrieT.trie_get_clock. reflexivity.
+Qed.
+
+(** A size transfer charges two bounded keys and the bits of two bounded values. *)
+Local Lemma dom_time_add_size m sizes v width :
+  Pos.size_nat v <= width ->
+  (forall p, trie_get v m = Some p -> Pos.size_nat p <= width) ->
+  (forall x, N.size_nat (dom_size_get sizes x) <= width + 1) ->
+  (T_dom_add_size m sizes v <=
+    (4 * PTrieT.c_trie + 64) * N.of_nat (width + 1))%N.
+Proof.
+  intros Hv Hparents Hvalues.
+  pose proof (PTrieT.T_set_le N v (dom_size_get sizes v) sizes) as Hset.
+  change (PTrieCode.T_set v (dom_size_get sizes v) sizes <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+  unfold T_dom_add_size. time_simpl.
+  rewrite dom_time_size_get, PTrieT.trie_get_clock.
+  destruct (trie_get v m) as [p|] eqn:Hparent.
+  - specialize (Hparents p eq_refl).
+    rewrite dom_time_size_get, dom_size_set_own.
+    pose proof (PTrieT.T_set_le N p
+      (dom_size_get sizes p + dom_size_get sizes v)%N
+      (PTrieCode.set v (dom_size_get sizes v) sizes)) as Hsetp.
+    change (PTrieCode.T_set p (dom_size_get sizes p + dom_size_get sizes v)%N
+      (PTrieCode.set v (dom_size_get sizes v) sizes) <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat p + 1))%N in Hsetp.
+    pose proof (N.T_add_le (dom_size_get sizes p) (dom_size_get sizes v)) as Hadd.
+    pose proof (Hvalues p) as Hp. pose proof (Hvalues v) as Hown.
+    rewrite !Nat2N.inj_add in *. clear -Hv Hparents Hp Hown Hset Hsetp Hadd. nia.
+  - rewrite !Nat2N.inj_add in *. clear -Hv Hset. nia.
+Qed.
+
+(** Distinct reverse processing keeps intermediate values within the original size budget. *)
+Local Lemma dom_time_size_fold m whole width :
+  NoDup whole ->
+  (forall v, In v whole -> Pos.size_nat v <= width) ->
+  (forall v p, In v whole -> trie_get v m = Some p -> In p whole) ->
+  forall remaining sizes,
+  NoDup remaining -> incl remaining whole ->
+  dom_size_budget (N.of_nat (length whole)) remaining sizes ->
+  (List.T_fold_left (dom_add_size m) (T_dom_add_size m) remaining sizes <=
+    ((4 * PTrieT.c_trie + 64) * N.of_nat (width + 1) + 1) *
+      N.of_nat (length remaining) + 1)%N.
+Proof.
+  intros Hwhole Hkeys Hparents remaining.
+  induction remaining as [|v rest IH]; intros sizes Hunique Hincl Hbudget.
+  - time_step.
+  - inversion Hunique as [|head tail Hfresh Hrest]; subst head tail.
+    assert (Hv : In v whole) by (apply Hincl; now left).
+    assert (Hvalues : forall x, N.size_nat (dom_size_get sizes x) <= width + 1).
+    { intro x. eapply dom_distinct_twice_width; [exact Hwhole|exact Hkeys|].
+      now apply (dom_size_budget_value (N.of_nat (length whole)) (v :: rest)). }
+    pose proof (dom_time_add_size m sizes v width (Hkeys v Hv)
+      (fun p Hp => Hkeys p (Hparents v p Hv Hp)) Hvalues) as Hstep.
+    specialize (IH (dom_add_size m sizes v) Hrest
+      (fun x Hx => Hincl x (or_intror Hx))
+      (dom_size_budget_step (N.of_nat (length whole)) rest m sizes v Hunique Hbudget)).
+    time_unfold @List.T_fold_left. cbn [length]. rewrite Nat2N.inj_succ. nia.
+Qed.
+
 (** A structural equality check spends the expected trie's reconstruction credit. *)
 Local Lemma dom_time_map_eq_ne expected candidate :
   (T_dom_map_eq_ne expected candidate <=
@@ -2590,6 +2654,37 @@ Proof.
   - rewrite !PTrieT.trie_get_clock. time_simpl. rewrite Nat2N.inj_add. nia.
 Qed.
 
+(** Containment checks spend one bounded parent lookup and interval test per entry. *)
+Local Lemma dom_time_sizes_ok m pos sizes o width :
+  (forall v, In v o -> Pos.size_nat v <= width) ->
+  (forall v p, In v o -> trie_get v m = Some p -> Pos.size_nat p <= width) ->
+  (forall x n, trie_get x pos = Some n -> N.size_nat n <= width) ->
+  (forall x, N.size_nat (dom_size_get sizes x) <= width + 1) ->
+  (T_dom_sizes_ok m pos sizes o <=
+    96 * N.of_nat ((length o + 1) * (width + 1)))%N.
+Proof.
+  intros Hkeys Hparents Hpositions Hsizes.
+  unfold T_dom_sizes_ok. time_simpl.
+  lazymatch goal with
+  | |- context [List.T_forallb ?f ?T_f o] =>
+    assert (Hcallback : forall v, In v o ->
+      (T_f v <= 80 * N.of_nat (width + 1))%N)
+  end.
+  { intros v Hv. cbn beta iota zeta.
+    pose proof (Hkeys v Hv) as Hwidth.
+    destruct (trie_get v m) as [p|] eqn:Hparent.
+    - pose proof (dom_time_interval pos sizes p v width
+        (Hparents v p Hv Hparent) Hwidth Hpositions Hsizes) as Hinterval.
+      rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add in *. nia.
+    - rewrite PTrieT.trie_get_clock. rewrite Nat2N.inj_add. nia. }
+  lazymatch goal with
+  | |- context [List.T_forallb ?f ?T_f o] =>
+    pose proof (@dom_time_forallb positive f T_f
+      (80 * N.of_nat (width + 1))%N o Hcallback) as Hfold
+  end.
+  rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+Qed.
+
 Module DomT <: DOM_ALL.
   Include Dom.
   TimeFun build.
@@ -2637,7 +2732,7 @@ Module DomT <: DOM_ALL.
   Definition k_read : N :=
     (32 * (PTrieT.c_trie + c_loopN + 16) + 64 * c_loopN + 128)%N.
   Definition k_map : N := (2 * k_read + 16 * PTrieT.c_trie + 512)%N.
-  Definition k_size : N := 1%N. (* STUB *)
+  Definition k_size : N := (16 * PTrieT.c_trie + 256)%N.
   Definition k_edge : N := 1%N. (* STUB *)
   Definition k_tree : N := 1%N. (* STUB *)
   Definition k_dfs : N := 1%N. (* STUB *)
@@ -2905,7 +3000,24 @@ Module DomT <: DOM_ALL.
     (forall v p, In v o -> trie_get v m = Some p -> In p o) ->
     (T_sizes m o <= k_size * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g m o Hunique Hlength Hlisted Hparents.
+    assert (Hkeys : forall v, In v o -> Pos.size_nat v <= graph_width (base g)).
+    { intros v Hv. apply dom_listed_key_width. now apply Hlisted. }
+    pose proof (dom_time_size_fold m o (graph_width (base g))
+      Hunique Hkeys Hparents (rev o) Empty (@NoDup_rev positive o Hunique)
+      (fun x Hx => proj2 (in_rev o x) Hx)
+      ltac:(rewrite <- length_rev; apply dom_size_budget_empty)) as Hfold.
+    pose proof (List.T_rev_append_le o []) as Hreverse.
+    unfold T_sizes, T_dom_sizes. time_simpl.
+    rewrite rev_append_rev, app_nil_r.
+    change (fun (H : ptrie N) (H0 : positive) => T_dom_add_size m H H0)
+      with (T_dom_add_size m).
+    rewrite length_rev in Hfold. unfold k_size.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    set (running := List.T_fold_left (dom_add_size m) (T_dom_add_size m) (rev o) Empty) in *.
+    clearbody running. clear -Hlength Hfold Hreverse. nia.
+  Qed.
 
   Lemma T5_edges : forall g m o, length o <= graph_n (base g) ->
     (forall v, In v o -> In v (verts (base g))) ->
@@ -2950,7 +3062,26 @@ Module DomT <: DOM_ALL.
       read (scan g) r o = Some pos -> map_check (scan g) r m o = true ->
       (T_sizes_ok m pos (sizes m o) o <= k_size * N.of_nat ((graph_n (base g) + 1) *
         (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o pos Hread Hmap.
+    change (dom_read_known (dom_scan g) r o = Some pos) in Hread.
+    change (dom_map_check_known (dom_scan g) r m o = true) in Hmap.
+    destruct (dom_read_known_success g r o pos Hread)
+      as [Hunique [Hlength [_ [Hlisted _]]]].
+    assert (Hkeys : forall v, In v o -> Pos.size_nat v <= graph_width (base g)).
+    { intros v Hv. apply dom_listed_key_width. now apply Hlisted. }
+    pose proof (dom_map_check_domain g r m o Hmap) as Hdomain.
+    pose proof (dom_read_positions_width g r o pos Hread) as Hpositions.
+    assert (Hvalues : forall x,
+      N.size_nat (dom_size_get (dom_sizes m o) x) <= graph_width (base g) + 1).
+    { intro x. eapply dom_distinct_twice_width; [exact Hunique|exact Hkeys|].
+      now apply dom_sizes_value_bound. }
+    pose proof (dom_time_sizes_ok m pos (dom_sizes m o) o (graph_width (base g))
+      Hkeys (fun v p Hv Hp => Hkeys p (proj2 (Hdomain v p Hp)))
+      Hpositions Hvalues) as Htime.
+    unfold T_sizes_ok, sizes. unfold k_size.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
 
   (** The checker runs its phases in order and stops at the first rejection. *)
   Lemma T11_check : forall g r m o,
