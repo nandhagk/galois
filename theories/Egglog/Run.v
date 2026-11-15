@@ -9,11 +9,12 @@
     loop. *)
 
 From Stdlib Require Import List PArith NArith Arith Bool Lia Relations.Relation_Operators
-  Sorting.Sorted Sorting.Permutation.
+  Sorting.Sorted Sorting.Permutation PeanoNat.
 From Argent Require Import Time Tactics Std Loop.
 From Galois.Base Require Import Code Loop Trie.
 From Galois.Egglog Require Import ValueSig IndexSig JoinSig DatabaseSig Syntax Model Sorts RunSig.
 
+Import Lia.
 Import List.ListNotations.
 
 (** * Record readers *)
@@ -12949,7 +12950,9 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Definition wbits (p : program V.t) : nat :=
     fold_right (fun x n => Nat.max (Pos.size_nat x) n)
       0 (program_words V.encode p).
-  Definition c_run : N := 1. (* STUB *)
+  Definition c_run : N :=
+    (1024 * 4096 * (D.c_db + I.c_ix + J.c_join + V.c_val + V.c_key +
+      PTrieT.c_trie + 1))%N.
   Lemma size_compiled_spec : forall cp,
     size_compiled cp =
       fold_right (fun sl n => Pos.size_nat (fst sl) +
@@ -12964,17 +12967,1621 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
         fold_right (fun x m => Pos.size_nat x + 1 + m) 0 (var_of V.t c) +
         fold_right (fun i m => i + 1 + m) 0 (post V.t c) + 1 + n)
         0 (naive V.t cp ++ seminaive V.t cp).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma wbits_spec : forall p,
     wbits p = fold_right (fun x n => Nat.max (Pos.size_nat x) n)
       0 (program_words V.encode p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
+  (** Stored slots charge the bits of their name and the number of their positions. *)
+  Definition run_slots_size (sl : list (positive * list nat)) : nat :=
+    fold_right (fun s n => Pos.size_nat (fst s) + length (snd s) + 1 + n) 0 sl.
+
+  Definition run_slot_state_size (st : slot_state) : nat :=
+    match st with
+    | SlotState _ _ rows => run_slots_size rows
+    end.
+
+  (** Accumulating a reversed list preserves the sum of its slot charges. *)
+  Lemma run_slots_size_rev_append : forall xs ys,
+    run_slots_size (rev_append xs ys) = run_slots_size xs + run_slots_size ys.
+  Proof.
+    induction xs as [| [f perm] xs IH]; intro ys.
+    - reflexivity.
+    - cbn [rev_append]. rewrite IH.
+      change (run_slots_size xs +
+        (Pos.size_nat f + length perm + 1 + run_slots_size ys) =
+        Pos.size_nat f + length perm + 1 + run_slots_size xs + run_slots_size ys).
+      lia.
+  Qed.
+
+  (** Registering a slot either reuses it or adds exactly its own charge. *)
+  Lemma run_add_slot_size : forall f perm st,
+    run_slot_state_size (snd (add_slot f perm st)) <=
+      run_slot_state_size st + Pos.size_nat f + length perm + 1.
+  Proof.
+    intros f perm [table next rows]. unfold add_slot.
+    destruct (trie_get (slot_code f perm) table).
+    - change (run_slots_size rows <=
+        run_slots_size rows + Pos.size_nat f + length perm + 1). lia.
+    - change (Pos.size_nat f + length perm + 1 + run_slots_size rows <=
+        run_slots_size rows + Pos.size_nat f + length perm + 1). lia.
+  Qed.
+
+  (** Counting consecutive positions allocates exactly the requested number of positions. *)
+  Lemma run_count_from_length : forall len start,
+    length (count_from start len) = len.
+  Proof.
+    induction len as [| len IH]; intro start; cbn [count_from length].
+    - reflexivity.
+    - rewrite IH. reflexivity.
+  Qed.
+
+  (** Insertion adds one position to a sorted list of pairs. *)
+  Lemma run_insert_pair_length : forall pairs j pos,
+    length (insert_pair j pos pairs) = S (length pairs).
+  Proof.
+    induction pairs as [| [k q] pairs IH]; intros j pos; cbn [insert_pair length].
+    - reflexivity.
+    - destruct (Nat.leb j k); cbn [length]; [reflexivity|].
+      rewrite IH. reflexivity.
+  Qed.
+
+  (** Sorting positions preserves their number. *)
+  Lemma run_sort_pairs_length : forall pairs,
+    length (sort_pairs pairs) = length pairs.
+  Proof.
+    induction pairs as [| [j pos] pairs IH]; cbn [sort_pairs length].
+    - reflexivity.
+    - rewrite run_insert_pair_length, IH. reflexivity.
+  Qed.
+
+  (** Every term contributes one position pair to the layout. *)
+  Lemma run_place_terms_length : forall base ts pos seen lay pairs lits copied,
+    length (snd (fst (fst (@place_terms V.t base ts pos seen lay pairs lits copied)))) =
+      length ts + length pairs.
+  Proof.
+    intros base ts. induction ts as [| [x | v] ts IH];
+      intros pos seen [names nc nm fresh cn mn] pairs lits copied.
+    - reflexivity.
+    - cbn [place_terms]. destruct (trie_get x seen).
+      + rewrite IH. cbn [length]. lia.
+      + destruct (trie_get x names); rewrite IH; cbn [length]; lia.
+    - cbn [place_terms]. rewrite IH. cbn [length]. lia.
+  Qed.
+
+  (** The number of term positions is bounded by their syntax charge. *)
+  Lemma run_terms_length_bits : forall ts : list (term V.t),
+    length ts <= terms_bits ts.
+  Proof.
+    induction ts as [| t ts IH].
+    - change (0 <= 0). lia.
+    - change (S (length ts) <= term_bits t + terms_bits ts).
+      destruct t as [x | v]; unfold term_bits; lia.
+  Qed.
+
+  (** An optional result contributes at most its syntax charge. *)
+  Lemma run_result_length_bits : forall res : option (term V.t),
+    length (option_list res) <= result_bits res.
+  Proof.
+    intros [[x | v] |]; cbn [option_list length result_bits term_bits]; lia.
+  Qed.
+
+  (** Planning a query adds at most its syntax charge to the stored slots. *)
+  Lemma run_plan_atoms_size : forall base q ai lay st outs post,
+    run_slot_state_size
+      (snd (fst (fst (@plan_atoms V.t base q ai lay st outs post)))) <=
+      run_slot_state_size st + fold_right (fun a n => atom_bits a + n) 0 q.
+  Proof.
+    intros base q. induction q as [| [f args res | op args res] q IH];
+      intros ai lay st outs post.
+    - cbn [plan_atoms fst snd fold_right]. lia.
+    - cbn [plan_atoms].
+      destruct (place_terms base (args ++ option_list res) 0 Empty lay [] [] false)
+        as [[[lay' pairs] lits] copied] eqn:Hterms.
+      destruct (add_slot f (map snd (sort_pairs pairs)) st) as [s st'] eqn:Hslot.
+      pose proof (run_place_terms_length base (args ++ option_list res) 0 Empty
+        lay [] [] false) as Hlength.
+      rewrite Hterms in Hlength. cbn [fst snd length] in Hlength.
+      pose proof (run_add_slot_size f (map snd (sort_pairs pairs)) st) as Hsize.
+      rewrite Hslot in Hsize. cbn [snd] in Hsize.
+      rewrite length_map, run_sort_pairs_length, Hlength, length_app in Hsize.
+      pose proof (IH (S ai) lay' st' (AtomPlan s (map fst (sort_pairs pairs))
+        (rev_append lits []) :: outs) (if copied then ai :: post else post)) as Htail.
+      pose proof (run_terms_length_bits args) as Hargs.
+      pose proof (run_result_length_bits res) as Hres.
+      cbn [fold_right atom_bits]. lia.
+    - cbn [plan_atoms fold_right atom_bits].
+      pose proof (IH (S ai) lay st outs (ai :: post)). lia.
+  Qed.
+
+  (** Planning one rule adds at most the charge of that rule. *)
+  Lemma run_plan_rule_size : forall i r st,
+    run_slot_state_size (fst (fst (@plan_rule V.t i r st))) <=
+      run_slot_state_size st + rule_bits r.
+  Proof.
+    intros i [q acts] st. unfold plan_rule.
+    pose proof (run_plan_atoms_size (query_copies q 0) q 0
+      (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] []) st [] []) as Hsize.
+    destruct (plan_atoms (query_copies q 0) q 0
+      (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] []) st [] [])
+      as [[[lay st'] outs] post] eqn:Hplan.
+    cbn [fst snd] in Hsize.
+    destruct lay as [names nc nm fresh cn mn].
+    change (run_slot_state_size st' <= run_slot_state_size st +
+      (fold_right (fun a n => atom_bits a + n) 0 q +
+       fold_right (fun a n => action_bits a + n) 0 acts + 1)).
+    lia.
+  Qed.
+
+  (** The rule traversal sums the charge of its rules. *)
+  Lemma run_plan_rules_size : forall rs i st naive semi,
+    run_slot_state_size (fst (fst (@plan_rules V.t rs i st naive semi))) <=
+      run_slot_state_size st + fold_right (fun r n => rule_bits r + n) 0 rs.
+  Proof.
+    induction rs as [| r rs IH]; intros i st naive semi.
+    - cbn [plan_rules fst run_slot_state_size fold_right]. lia.
+    - cbn [plan_rules].
+      pose proof (run_plan_rule_size i r st) as Hsize.
+      destruct (plan_rule i r st) as [[st' c] cs] eqn:Hrule.
+      cbn [fst] in Hsize.
+      pose proof (IH (N.succ i) st' (c :: naive) (rev_append cs semi)) as Htail.
+      cbn [fold_right]. lia.
+  Qed.
+
+  (** Declared full slots cost at most twice the charge of their declarations. *)
+  Lemma run_full_slots_size : forall ds seen st,
+    run_slot_state_size (full_slots ds seen st) <=
+      run_slot_state_size st + 2 * fold_right (fun d n => decl_bits d + n) 0 ds.
+  Proof.
+    induction ds as [| [f ss out] ds IH]; intros seen st.
+    - cbn [full_slots fold_right]. lia.
+    - cbn [full_slots]. destruct (trie_get f seen).
+      + pose proof (IH seen st). cbn [fold_right decl_bits name arg_sorts]. lia.
+      + destruct out.
+        * pose proof (IH (PTrieCode.set f tt seen) st).
+          cbn [fold_right decl_bits name arg_sorts]. lia.
+        * pose proof (IH (PTrieCode.set f tt seen)
+            (snd (add_slot f (count_from 0 (S (length ss))) st))) as Htail.
+          pose proof (run_add_slot_size f (count_from 0 (S (length ss))) st) as Hsize.
+          rewrite run_count_from_length in Hsize.
+          cbn [fold_right decl_bits name arg_sorts].
+          change (decl_bits (Decl f ss OId)) with (Pos.size_nat f + length ss + 1).
+          lia.
+        * pose proof (IH (PTrieCode.set f tt seen) st).
+          cbn [fold_right decl_bits name arg_sorts]. lia.
+  Qed.
+
+  (** The planner's stored slot charge is linear in the program syntax. *)
+  Lemma run_plan_slots_size : forall p,
+    run_slots_size (Syntax.slots V.t (plan p)) <= 2 * (size_program p + 1).
+  Proof.
+    intros [ds rs]. unfold plan, plan_program.
+    pose proof (run_full_slots_size ds Empty (SlotState Empty 0 [])) as Hfull.
+    pose proof (run_plan_rules_size rs 0
+      (full_slots ds Empty (SlotState Empty 0 [])) [] []) as Hrules.
+    destruct (plan_rules rs 0 (full_slots ds Empty (SlotState Empty 0 [])) [] [])
+      as [[[table next rows] nv] sn] eqn:Hplan.
+    change (run_slots_size rows <=
+      run_slot_state_size (full_slots ds Empty (SlotState Empty 0 [])) +
+      fold_right (fun r n => rule_bits r + n) 0 rs) in Hrules.
+    change (run_slot_state_size (full_slots ds Empty (SlotState Empty 0 [])) <=
+      2 * fold_right (fun d n => decl_bits d + n) 0 ds) in Hfull.
+    cbn [Syntax.slots]. rewrite run_slots_size_rev_append.
+    change (run_slots_size rows + 0 <=
+      2 * (fold_right (fun d n => decl_bits d + n) 0 ds +
+        fold_right (fun r n => rule_bits r + n) 0 rs + 1 + 1)).
+    lia.
+  Qed.
+
+  (** A position list charges the unary size of each stored position. *)
+  Definition run_positions_size (positions : list nat) : nat :=
+    fold_right (fun i n => i + 1 + n) 0 positions.
+
+  (** A unary position code has one bit beyond its position. *)
+  Lemma run_nat_code_bits : forall n, Pos.size_nat (nat_code n) = n + 1.
+  Proof.
+    induction n as [| n IH]; cbn [nat_code Pos.size_nat]; lia.
+  Qed.
+
+  (** Constructing a position code visits each unary constructor once. *)
+  Lemma run_nat_code_time : forall n,
+    (T_nat_code n <= N.of_nat (n + 1))%N.
+  Proof.
+    induction n as [| n IH]; time_unfold T_nat_code; lia.
+  Qed.
+
+  (** The self-delimiting position list has at most twice its unary input charge. *)
+  Lemma run_nat_codes_bits : forall positions,
+    Pos.size_nat (list_code nat_code positions) <= 2 * run_positions_size positions + 1.
+  Proof.
+    induction positions as [| i positions IH].
+    - cbn [list_code Pos.size_nat run_positions_size fold_right]. lia.
+    - cbn [list_code]. rewrite glue_bits, run_nat_code_bits.
+      change (run_positions_size (i :: positions)) with (i + 1 + run_positions_size positions).
+      lia.
+  Qed.
+
+  (** Encoding a list of positions is linear in their unary input charge. *)
+  Lemma run_nat_codes_time : forall positions,
+    (T_list_code nat_code T_nat_code positions <=
+      4 * N.of_nat (run_positions_size positions) + 1)%N.
+  Proof.
+    induction positions as [| i positions IH].
+    - time_unfold @T_list_code. cbn [run_positions_size fold_right]. lia.
+    - pose proof (run_nat_code_time i) as Hcode.
+      pose proof (T_glue_le (nat_code i) (list_code nat_code positions)) as Hglue.
+      unfold c_glue in Hglue. rewrite run_nat_code_bits in Hglue.
+      time_unfold @T_list_code.
+      change (run_positions_size (i :: positions)) with (i + 1 + run_positions_size positions).
+      lia.
+  Qed.
+
+  (** A slot code charges the name's bits and its unary position list. *)
+  Lemma run_slot_code_bits : forall f positions,
+    Pos.size_nat (slot_code f positions) <=
+      2 * (Pos.size_nat f + run_positions_size positions + 1).
+  Proof.
+    intros f positions. unfold slot_code. rewrite glue_bits.
+    pose proof (run_nat_codes_bits positions). lia.
+  Qed.
+
+  (** Constructing a slot code is linear in the same charge. *)
+  Lemma run_slot_code_time : forall f positions,
+    (T_slot_code f positions <=
+      8 * N.of_nat (Pos.size_nat f + run_positions_size positions + 1))%N.
+  Proof.
+    intros f positions.
+    pose proof (run_nat_codes_time positions) as Hpositions.
+    pose proof (T_glue_le f (list_code nat_code positions)) as Hglue.
+    unfold c_glue in Hglue. time_unfold T_slot_code.
+    change (T_list_code nat_code (fun n => T_nat_code n) positions) with
+      (T_list_code nat_code T_nat_code positions).
+    lia.
+  Qed.
+
+  (** Replacing one trie entry has a fixed cost per bit of its key. *)
+  Lemma run_planner_set_clock : forall A x (v : A) t,
+    (PTrieCode.T_set x v t <= 9 * N.of_nat (Pos.size_nat x + 1))%N.
+  Proof.
+    intros A x v t. pose proof (PTrieT.replace_clock_bound A x (Some v) t).
+    time_step.
+  Qed.
+
+  (** Term charges add across concatenation. *)
+  Lemma run_terms_bits_app : forall xs ys : list (term V.t),
+    terms_bits (xs ++ ys) = terms_bits xs + terms_bits ys.
+  Proof.
+    induction xs as [|x xs IH]; intro ys.
+    - reflexivity.
+    - change (term_bits x + terms_bits (xs ++ ys) =
+        term_bits x + terms_bits xs + terms_bits ys).
+      rewrite IH. lia.
+  Qed.
+
+  (** The option-list representation retains exactly the result's syntax charge. *)
+  Lemma run_terms_bits_result : forall res : option (term V.t),
+    terms_bits (option_list res) = result_bits res.
+  Proof.
+    intros [r|]; cbn [option_list terms_bits fold_right result_bits]; lia.
+  Qed.
+
+  (** Every atom has a positive syntax charge. *)
+  Lemma run_atom_bits_pos : forall a : atom V.t, 1 <= atom_bits a.
+  Proof.
+    intros [f args res|p args res]; cbn [atom_bits]; lia.
+  Qed.
+
+  (** A query has no more atoms than its syntax charge. *)
+  Lemma run_query_length_bits : forall q : list (atom V.t),
+    length q <= fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q.
+  Proof.
+    induction q as [|a q IH]; cbn [length fold_right].
+    - lia.
+    - pose proof (run_atom_bits_pos a). lia.
+  Qed.
+
+  (** Taking a maximum chooses one of its two inputs. *)
+  Lemma run_pos_max_bits : forall x y,
+    Pos.size_nat (pos_max x y) <= Pos.size_nat x + Pos.size_nat y.
+  Proof.
+    intros x y. unfold pos_max. destruct (Pos.compare x y); lia.
+  Qed.
+
+  (** The maximum scan pays only for the variable that each comparison reads first. *)
+  Lemma run_term_max_clock : forall (t : term V.t) m,
+    (T_term_max t m <= 4 * N.of_nat (term_bits t))%N.
+  Proof.
+    intros [x|v] m.
+    - pose proof (Pos.T_compare_le x m) as Hcompare.
+      time_unfold @T_term_max. time_unfold T_pos_max. time_simpl.
+      cbn [term_bits]. nia.
+    - time_unfold @T_term_max. cbn [term_bits]. nia.
+  Qed.
+
+  (** The width of a term maximum grows by at most the term's charge. *)
+  Lemma run_term_max_bits : forall (t : term V.t) m,
+    Pos.size_nat (term_max t m) <= Pos.size_nat m + term_bits t.
+  Proof.
+    intros [x|v] m; cbn [term_max term_bits].
+    - pose proof (run_pos_max_bits x m). lia.
+    - lia.
+  Qed.
+
+  (** Scanning term maxima is linear in their syntax charge. *)
+  Lemma run_terms_max_clock : forall (ts : list (term V.t)) m,
+    (T_terms_max ts m <= 8 * N.of_nat (terms_bits ts + 1))%N.
+  Proof.
+    induction ts as [|t ts IH]; intro m.
+    - time_unfold @T_terms_max. time_cbn. nia.
+    - pose proof (run_term_max_clock t m).
+      pose proof (IH (term_max t m)).
+      assert (Hpositive : 1 <= term_bits t) by (destruct t; cbn [term_bits]; lia).
+      time_unfold @T_terms_max.
+      change (terms_bits (t :: ts)) with (term_bits t + terms_bits ts).
+      rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The maximum scan's output width is bounded by its seed and input charge. *)
+  Lemma run_terms_max_bits : forall (ts : list (term V.t)) m,
+    Pos.size_nat (terms_max ts m) <= Pos.size_nat m + terms_bits ts.
+  Proof.
+    induction ts as [|t ts IH]; intro m; cbn [terms_max terms_bits fold_right].
+    - lia.
+    - pose proof (run_term_max_bits t m).
+      pose proof (IH (term_max t m)). unfold terms_bits in *. lia.
+  Qed.
+
+  (** Query maxima pay once for every atom and its term list. *)
+  Lemma run_query_max_clock : forall (q : list (atom V.t)) m,
+    (T_query_max q m <=
+      32 * N.of_nat (fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q + 1))%N.
+  Proof.
+    induction q as [|[f args res|p args res] q IH]; intro m.
+    - time_unfold @T_query_max. time_cbn. nia.
+    - pose proof (run_terms_max_clock (args ++ option_list res) m).
+      pose proof (IH (terms_max (args ++ option_list res) m)).
+      pose proof (Datatypes.T_app_le args (option_list res)).
+      pose proof (run_terms_length_bits args).
+      time_unfold @T_query_max. time_simpl.
+      rewrite run_terms_bits_app, run_terms_bits_result in *.
+      cbn [fold_right atom_bits]. nia.
+    - pose proof (run_terms_max_clock (res :: args) m).
+      pose proof (IH (terms_max (res :: args) m)).
+      time_unfold @T_query_max. time_simpl.
+      cbn [fold_right atom_bits terms_bits] in *. unfold terms_bits in *. nia.
+  Qed.
+
+  (** Query scanning cannot add more width than the query's syntax charge. *)
+  Lemma run_query_max_bits : forall (q : list (atom V.t)) m,
+    Pos.size_nat (query_max q m) <= Pos.size_nat m +
+      fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q.
+  Proof.
+    induction q as [|[f args res|p args res] q IH]; intro m.
+    - cbn [query_max fold_right]. lia.
+    - cbn [query_max fold_right atom_bits].
+      pose proof (IH (terms_max (args ++ option_list res) m)).
+      pose proof (run_terms_max_bits (args ++ option_list res) m).
+      rewrite run_terms_bits_app, run_terms_bits_result in *. lia.
+    - cbn [query_max fold_right atom_bits].
+      pose proof (IH (terms_max (res :: args) m)).
+      pose proof (run_terms_max_bits (res :: args) m).
+      cbn [terms_bits fold_right] in *. unfold terms_bits in *. lia.
+  Qed.
+
+  (** Counting duplicate positions adds at most one copy for each term. *)
+  Lemma run_term_copies_count : forall (ts : list (term V.t)) seen n,
+    term_copies seen ts n <= n + length ts.
+  Proof.
+    induction ts as [|[x|v] ts IH]; intros seen n; cbn [term_copies length].
+    - lia.
+    - destruct (trie_get x seen).
+      + pose proof (IH seen (S n)). lia.
+      + pose proof (IH (PTrieCode.set x tt seen) n). lia.
+    - pose proof (IH seen n). lia.
+  Qed.
+
+  (** Duplicate counting charges one lookup and at most one insertion per variable. *)
+  Lemma run_term_copies_clock : forall (ts : list (term V.t)) seen n,
+    (T_term_copies seen ts n <= 16 * N.of_nat (terms_bits ts + 1))%N.
+  Proof.
+    induction ts as [|[x|v] ts IH]; intros seen n.
+    - time_unfold @T_term_copies. time_cbn. nia.
+    - pose proof (run_planner_set_clock unit x tt seen).
+      pose proof (IH seen (S n)).
+      pose proof (IH (PTrieCode.set x tt seen) n).
+      time_unfold @T_term_copies. rewrite PTrieT.trie_get_clock.
+      destruct (trie_get x seen); cbn [terms_bits term_bits fold_right] in *;
+        unfold terms_bits in *; nia.
+    - pose proof (IH seen n).
+      time_unfold @T_term_copies. cbn [terms_bits term_bits fold_right] in *.
+      unfold terms_bits in *. nia.
+  Qed.
+
+  (** The number of copies in a query is bounded by its syntax charge. *)
+  Lemma run_query_copies_count : forall (q : list (atom V.t)) n,
+    query_copies q n <= n + fold_right (fun a k => (atom_bits a + k)%nat) 0%nat q.
+  Proof.
+    induction q as [|[f args res|p args res] q IH]; intro n;
+      cbn [query_copies fold_right atom_bits].
+    - lia.
+    - pose proof (IH (term_copies Empty (args ++ option_list res) n)).
+      pose proof (run_term_copies_count (args ++ option_list res) Empty n).
+      rewrite length_app in *.
+      pose proof (run_terms_length_bits args).
+      pose proof (run_result_length_bits res). lia.
+    - pose proof (IH n). lia.
+  Qed.
+
+  (** Counting query copies is linear in the syntax charge. *)
+  Lemma run_query_copies_clock : forall (q : list (atom V.t)) n,
+    (T_query_copies q n <=
+      32 * N.of_nat (fold_right (fun a k => (atom_bits a + k)%nat) 0%nat q + 1))%N.
+  Proof.
+    induction q as [|[f args res|p args res] q IH]; intro n.
+    - time_unfold @T_query_copies. time_cbn. nia.
+    - pose proof (run_term_copies_clock (args ++ option_list res) Empty n).
+      pose proof (IH (term_copies Empty (args ++ option_list res) n)).
+      pose proof (Datatypes.T_app_le args (option_list res)).
+      pose proof (run_terms_length_bits args).
+      time_unfold @T_query_copies. time_simpl.
+      rewrite run_terms_bits_app, run_terms_bits_result in *.
+      cbn [fold_right atom_bits]. nia.
+    - pose proof (IH n). time_unfold @T_query_copies.
+      cbn [fold_right atom_bits]. nia.
+  Qed.
+
+  (** Insertion preserves any property of the position pairs. *)
+  Lemma run_insert_pair_Forall : forall (P : nat * nat -> Prop) ps j pos,
+    P (j, pos) -> Forall P ps -> Forall P (insert_pair j pos ps).
+  Proof.
+    intros P ps. induction ps as [|[k q] ps IH]; intros j pos Hnew Hall.
+    - cbn [insert_pair]. constructor; [exact Hnew|constructor].
+    - inversion Hall as [|entry rest Hentry Hrest]; subst.
+      cbn [insert_pair]. destruct (Nat.leb j k).
+      + constructor; assumption.
+      + constructor; [exact Hentry|apply IH; assumption].
+  Qed.
+
+  (** Sorting preserves any property of the position pairs. *)
+  Lemma run_sort_pairs_Forall : forall (P : nat * nat -> Prop) ps,
+    Forall P ps -> Forall P (sort_pairs ps).
+  Proof.
+    intros P ps Hall. induction Hall as [|[j pos] ps Hentry Hrest IH].
+    - constructor.
+    - cbn [sort_pairs]. apply run_insert_pair_Forall; assumption.
+  Qed.
+
+  (** One insertion pays for each comparison at the inserted variable's unary size. *)
+  Lemma run_insert_pair_clock : forall ps j pos,
+    (T_insert_pair j pos ps <=
+      4 * N.of_nat (j + 1) * N.of_nat (length ps + 1))%N.
+  Proof.
+    induction ps as [|[k q] ps IH]; intros j pos.
+    - time_unfold T_insert_pair. time_cbn. nia.
+    - pose proof (Nat.T_leb_le j k).
+      pose proof (IH j pos).
+      time_unfold T_insert_pair. destruct (Nat.leb j k);
+        cbn [length]; rewrite ?Nat2N.inj_succ, ?Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** Sorting is quadratic in the list length and linear in the largest variable number. *)
+  Lemma run_sort_pairs_clock : forall ps bound,
+    Forall (fun entry => fst entry <= bound) ps ->
+    (T_sort_pairs ps <= 8 * N.of_nat (bound + 1) *
+      N.of_nat (length ps + 1) * N.of_nat (length ps + 1))%N.
+  Proof.
+    induction ps as [|[j pos] ps IH]; intros bound Hall.
+    - time_unfold T_sort_pairs. time_cbn. nia.
+    - inversion Hall as [|entry rest Hentry Hrest]; subst.
+      pose proof (IH bound Hrest).
+      pose proof (run_insert_pair_clock (sort_pairs ps) j pos).
+      rewrite run_sort_pairs_length in *.
+      time_unfold T_sort_pairs. cbn [length fst] in *.
+      rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *. nia.
+  Qed.
+
+  (** Bounded positions bound the total unary charge of a permutation. *)
+  Lemma run_pairs_positions_size : forall (ps : list (nat * nat)) cap,
+    Forall (fun entry => snd entry < cap) ps ->
+    run_positions_size (map snd ps) <= cap * length ps.
+  Proof.
+    induction ps as [|[j pos] ps IH]; intros cap Hall.
+    - cbn [map length run_positions_size fold_right]. lia.
+    - inversion Hall as [|entry rest Hentry Hrest]; subst.
+      pose proof (IH cap Hrest).
+      cbn [map length run_positions_size fold_right snd] in *.
+      unfold run_positions_size in *. nia.
+  Qed.
+
+  (** Incrementing a positive word increases its width by at most one. *)
+  Lemma run_pos_succ_bits : forall p,
+    Pos.size_nat (Pos.succ p) <= Pos.size_nat p + 1.
+  Proof.
+    induction p as [p IH|p IH|]; cbn [Pos.succ Pos.size_nat]; lia.
+  Qed.
+
+  (** The same width bound includes the zero binary counter. *)
+  Lemma run_N_succ_bits : forall n,
+    N.size_nat (N.succ n) <= N.size_nat n + 1.
+  Proof.
+    intros [|p]; cbn [N.succ N.size_nat Pos.size_nat].
+    - lia.
+    - apply run_pos_succ_bits.
+  Qed.
+
+  Definition run_slot_counter_bits (st : slot_state) : nat :=
+    match st with SlotState _ next _ => N.size_nat next end.
+
+  (** Registering one slot increments its counter at most once. *)
+  Lemma run_add_slot_counter_bits : forall f positions st,
+    run_slot_counter_bits (snd (add_slot f positions st)) <= run_slot_counter_bits st + 1.
+  Proof.
+    intros f positions [table next rows]. unfold add_slot.
+    destruct (trie_get (slot_code f positions) table);
+      cbn [snd run_slot_counter_bits]; [lia|apply run_N_succ_bits].
+  Qed.
+
+  (** Registering a slot pays for its encoded key and its binary counter. *)
+  Lemma run_add_slot_clock : forall f positions st,
+    (T_add_slot f positions st <= 64 *
+      N.of_nat (Pos.size_nat f + run_positions_size positions + run_slot_counter_bits st + 1))%N.
+  Proof.
+    intros f positions [table next rows].
+    pose proof (run_slot_code_time f positions).
+    pose proof (run_slot_code_bits f positions).
+    pose proof (run_planner_set_clock N (slot_code f positions) next table).
+    pose proof (N.T_succ_le next).
+    time_unfold T_add_slot. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (slot_code f positions) table);
+      cbn [run_slot_counter_bits]; nia.
+  Qed.
+
+  (** A consecutive-position list has a quadratic unary charge. *)
+  Lemma run_count_from_positions_size : forall len start,
+    run_positions_size (count_from start len) <= len * (start + len + 1).
+  Proof.
+    induction len as [|len IH]; intro start.
+    - reflexivity.
+    - cbn [count_from run_positions_size fold_right].
+      pose proof (IH (S start)). unfold run_positions_size in *. nia.
+  Qed.
+
+  (** Enumerating positions allocates one list cell per requested position. *)
+  Lemma run_count_from_clock : forall len start,
+    (T_count_from start len <= N.of_nat (len + 1))%N.
+  Proof.
+    induction len as [|len IH]; intro start; time_step.
+  Qed.
+
+  (** Full-slot initialization increases the counter at most once per declaration. *)
+  Lemma run_full_slots_counter_bits : forall ds seen st,
+    run_slot_counter_bits (full_slots ds seen st) <= run_slot_counter_bits st + length ds.
+  Proof.
+    induction ds as [|[f ss out] ds IH]; intros seen st.
+    - cbn [full_slots length]. lia.
+    - cbn [full_slots length]. destruct (trie_get f seen).
+      + pose proof (IH seen st). lia.
+      + destruct out.
+        * pose proof (IH (PTrieCode.set f tt seen) st). lia.
+        * pose proof (IH (PTrieCode.set f tt seen)
+            (snd (add_slot f (count_from 0 (S (length ss))) st))).
+          pose proof (run_add_slot_counter_bits f (count_from 0 (S (length ss))) st). lia.
+        * pose proof (IH (PTrieCode.set f tt seen) st). lia.
+  Qed.
+  (** A layout budget bounds its counters, fresh-name width and accumulated name lists.
+      Stored real-variable numbers stay below the current main-variable frontier. *)
+  Definition run_layout_ok (base budget : nat) (lay : var_layout) : Prop :=
+    match lay with
+    | VarLayout names nc nm fresh cn mn =>
+        nc <= budget /\ nm <= budget /\ Pos.size_nat fresh <= budget /\
+        length cn <= budget /\ length mn <= budget /\
+        forall x j, trie_get x names = Some j -> j <= base + nm
+    end.
+
+  (** Enlarging a budget preserves a prepared layout. *)
+  Lemma run_layout_ok_mono : forall base small large lay,
+    small <= large -> run_layout_ok base small lay -> run_layout_ok base large lay.
+  Proof.
+    intros base small large [names nc nm fresh cn mn] Hle Hready.
+    destruct Hready as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+    cbn [run_layout_ok]. repeat split; try lia. exact Hnames.
+  Qed.
+
+  (** A literal allocates one main variable and advances the fresh name. *)
+  Lemma run_layout_literal : forall base budget names nc nm fresh cn mn,
+    run_layout_ok base budget (VarLayout names nc nm fresh cn mn) ->
+    run_layout_ok base (S budget)
+      (VarLayout names nc (S nm) (Pos.succ fresh) cn (fresh :: mn)).
+  Proof.
+    intros base budget names nc nm fresh cn mn Hready.
+    destruct Hready as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+    pose proof (run_pos_succ_bits fresh).
+    cbn [run_layout_ok length]. repeat split; try lia.
+    intros x j Hget. specialize (Hnames x j Hget). lia.
+  Qed.
+
+  (** A repeated variable allocates one copy and advances the fresh name. *)
+  Lemma run_layout_copy : forall base budget names nc nm fresh cn mn,
+    run_layout_ok base budget (VarLayout names nc nm fresh cn mn) ->
+    run_layout_ok base (S budget)
+      (VarLayout names (S nc) nm (Pos.succ fresh) (fresh :: cn) mn).
+  Proof.
+    intros base budget names nc nm fresh cn mn Hready.
+    destruct Hready as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+    pose proof (run_pos_succ_bits fresh).
+    cbn [run_layout_ok length]. repeat split; try lia. exact Hnames.
+  Qed.
+
+  (** A new real variable is stored at the former main-variable frontier. *)
+  Lemma run_layout_variable : forall base budget names nc nm fresh cn mn x,
+    run_layout_ok base budget (VarLayout names nc nm fresh cn mn) ->
+    run_layout_ok base (S budget)
+      (VarLayout (PTrieCode.set x (base + nm) names) nc (S nm) fresh cn (x :: mn)).
+  Proof.
+    intros base budget names nc nm fresh cn mn x Hready.
+    destruct Hready as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+    cbn [run_layout_ok length]. repeat split; try lia.
+    intros y j Hget. destruct (Pos.eq_dec y x) as [Heq|Hneq].
+    - subst y. rewrite PTrie.get_set_same in Hget. inversion Hget. lia.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq.
+      specialize (Hnames y j Hget). lia.
+  Qed.
+
+  (** The empty layout needs only the width of its initial fresh name. *)
+  Lemma run_layout_initial : forall base budget fresh,
+    Pos.size_nat fresh <= budget ->
+    run_layout_ok base budget (VarLayout Empty 0 0 fresh [] []).
+  Proof.
+    intros base budget fresh Hfresh. cbn [run_layout_ok length].
+    repeat split; try lia. intros x j Hget.
+    rewrite PTrie.get_empty in Hget. discriminate.
+  Qed.
+
+  (** Each processed term grows the layout budget by at most one. *)
+  Lemma run_place_terms_layout : forall base (ts : list (term V.t)) pos seen lay pairs lits
+      copied budget,
+    run_layout_ok base budget lay ->
+    run_layout_ok base (budget + length ts)
+      (fst (fst (fst (place_terms base ts pos seen lay pairs lits copied)))).
+  Proof.
+    intros base ts. induction ts as [|[x|v] ts IH];
+      intros pos seen [names nc nm fresh cn mn] pairs lits copied budget Hready.
+    - cbn [place_terms fst length]. replace (budget + 0) with budget by lia. exact Hready.
+    - cbn [place_terms length].
+      replace (budget + S (length ts)) with (S budget + length ts) by lia.
+      destruct (trie_get x seen).
+      + apply IH. now apply run_layout_copy.
+      + destruct (trie_get x names).
+        * apply IH. eapply run_layout_ok_mono with (small := budget); [lia|exact Hready].
+        * apply IH. now apply run_layout_variable.
+    - cbn [place_terms length].
+      replace (budget + S (length ts)) with (S budget + length ts) by lia.
+      apply IH. now apply run_layout_literal.
+  Qed.
+
+  (** The term layout creates at most one literal entry per term. *)
+  Lemma run_place_terms_literals_length : forall base (ts : list (term V.t)) pos seen lay
+      pairs lits copied,
+    length (snd (fst (place_terms base ts pos seen lay pairs lits copied))) <=
+      length ts + length lits.
+  Proof.
+    intros base ts. induction ts as [|[x|v] ts IH];
+      intros pos seen [names nc nm fresh cn mn] pairs lits copied;
+      cbn [place_terms fst snd length].
+    - lia.
+    - destruct (trie_get x seen).
+      + pose proof (IH (S pos) seen
+          (VarLayout names (S nc) nm (Pos.succ fresh) (fresh :: cn) mn)
+          ((nc, pos) :: pairs) lits true). lia.
+      + destruct (trie_get x names) as [j|].
+        * pose proof (IH (S pos) (PTrieCode.set x tt seen)
+            (VarLayout names nc nm fresh cn mn) ((j, pos) :: pairs) lits copied). lia.
+        * pose proof (IH (S pos) (PTrieCode.set x tt seen)
+            (VarLayout (PTrieCode.set x (base + nm) names) nc (S nm) fresh cn (x :: mn))
+            ((base + nm, pos) :: pairs) lits copied). lia.
+    - pose proof (IH (S pos) seen
+        (VarLayout names nc (S nm) (Pos.succ fresh) cn (fresh :: mn))
+        ((base + nm, pos) :: pairs) ((base + nm, v) :: lits) copied).
+      cbn [length] in *. lia.
+  Qed.
+
+  (** Every generated pair stays within the variable and position frontiers. *)
+  Lemma run_place_terms_pairs : forall base (ts : list (term V.t)) pos seen lay pairs lits
+      copied budget variables positions,
+    run_layout_ok base budget lay ->
+    base + budget + length ts <= variables -> pos + length ts <= positions ->
+    Forall (fun pair => fst pair <= variables /\ snd pair < positions) pairs ->
+    Forall (fun pair => fst pair <= variables /\ snd pair < positions)
+      (snd (fst (fst (place_terms base ts pos seen lay pairs lits copied)))).
+  Proof.
+    intros base ts. induction ts as [|[x|v] ts IH];
+      intros pos seen [names nc nm fresh cn mn] pairs lits copied budget variables positions
+        Hready Hvariables Hpositions Hpairs; cbn [length] in Hvariables, Hpositions.
+    - exact Hpairs.
+    - pose proof Hready as Hparts.
+      destruct Hparts as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+      cbn [place_terms]. destruct (trie_get x seen).
+      + eapply IH with (budget := S budget).
+        * now apply run_layout_copy.
+        * cbn [length] in Hvariables. lia.
+        * cbn [length] in Hpositions. lia.
+        * constructor; [cbn [fst snd]; split; lia|exact Hpairs].
+      + destruct (trie_get x names) as [j|] eqn:Hname.
+        * eapply IH with (budget := S budget).
+          -- eapply run_layout_ok_mono with (small := budget); [lia|exact Hready].
+          -- cbn [length] in Hvariables. lia.
+          -- cbn [length] in Hpositions. lia.
+          -- constructor; [|exact Hpairs].
+             specialize (Hnames x j Hname). cbn [fst snd]. split; lia.
+        * eapply IH with (budget := S budget).
+          -- now apply run_layout_variable.
+          -- cbn [length] in Hvariables. lia.
+          -- cbn [length] in Hpositions. lia.
+          -- constructor; [cbn [fst snd]; split; lia|exact Hpairs].
+    - pose proof Hready as Hparts.
+      destruct Hparts as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+      cbn [place_terms]. eapply IH with (budget := S budget).
+      + now apply run_layout_literal.
+      + cbn [length] in Hvariables. lia.
+      + cbn [length] in Hpositions. lia.
+      + constructor; [cbn [fst snd]; split; lia|exact Hpairs].
+  Qed.
+
+  (** Term placement pays its syntax charge at the bounded layout frontier. *)
+  Lemma run_place_terms_clock : forall base (ts : list (term V.t)) pos seen lay pairs lits
+      copied budget cap,
+    run_layout_ok base budget lay -> budget + terms_bits ts <= cap ->
+    (T_place_terms base ts pos seen lay pairs lits copied <=
+      64 * N.of_nat (terms_bits ts + 1) * N.of_nat (base + cap + 1))%N.
+  Proof.
+    intros base ts. induction ts as [|[x|v] ts IH];
+      intros pos seen [names nc nm fresh cn mn] pairs lits copied budget cap Hready Hcap.
+    - time_unfold @T_place_terms. time_cbn. nia.
+    - pose proof Hready as Hparts.
+      destruct Hparts as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+      assert (Htail : S budget + terms_bits ts <= cap)
+        by (cbn [terms_bits fold_right term_bits] in Hcap; unfold terms_bits in *; lia).
+      pose proof (run_planner_set_clock unit x tt seen) as Hseen.
+      pose proof (run_planner_set_clock nat x (base + nm) names) as Hset.
+      pose proof (Pos.T_succ_le fresh) as Hsucc.
+      pose proof (Nat.T_add_le base nm) as Hadd.
+      time_unfold @T_place_terms. time_simpl.
+      destruct (trie_get x seen).
+      + pose proof (IH (S pos) seen
+          (VarLayout names (S nc) nm (Pos.succ fresh) (fresh :: cn) mn)
+          ((nc, pos) :: pairs) lits true (S budget) cap
+          (run_layout_copy base budget names nc nm fresh cn mn Hready) Htail) as Hrest.
+        rewrite !PTrieT.trie_get_clock.
+        cbn [terms_bits fold_right term_bits] in *. unfold terms_bits in *. nia.
+      + destruct (trie_get x names) as [j|].
+        * assert (Hnext : run_layout_ok base (S budget)
+            (VarLayout names nc nm fresh cn mn))
+            by (eapply run_layout_ok_mono with (small := budget); [lia|exact Hready]).
+          pose proof (IH (S pos) (PTrieCode.set x tt seen)
+            (VarLayout names nc nm fresh cn mn) ((j, pos) :: pairs) lits copied
+            (S budget) cap Hnext Htail) as Hrest.
+          rewrite !PTrieT.trie_get_clock.
+          cbn [terms_bits fold_right term_bits] in *. unfold terms_bits in *. nia.
+        * pose proof (IH (S pos) (PTrieCode.set x tt seen)
+            (VarLayout (PTrieCode.set x (base + nm) names) nc (S nm) fresh cn (x :: mn))
+            ((base + nm, pos) :: pairs) lits copied (S budget) cap
+            (run_layout_variable base budget names nc nm fresh cn mn x Hready) Htail) as Hrest.
+          rewrite !PTrieT.trie_get_clock.
+          cbn [terms_bits fold_right term_bits] in *. unfold terms_bits in *. nia.
+    - assert (Htail : S budget + terms_bits ts <= cap)
+        by (cbn [terms_bits fold_right term_bits] in Hcap; unfold terms_bits in *; lia).
+      pose proof (IH (S pos) seen
+        (VarLayout names nc (S nm) (Pos.succ fresh) cn (fresh :: mn))
+        ((base + nm, pos) :: pairs) ((base + nm, v) :: lits) copied (S budget) cap
+        (run_layout_literal base budget names nc nm fresh cn mn Hready) Htail) as Hrest.
+      pose proof Hready as Hparts.
+      destruct Hparts as [Hnc [Hnm [Hfresh [Hcn [Hmn Hnames]]]]].
+      pose proof (Pos.T_succ_le fresh) as Hsucc.
+      pose proof (Nat.T_add_le base nm) as Hadd.
+      time_unfold @T_place_terms. time_simpl.
+      cbn [terms_bits fold_right term_bits] in *. unfold terms_bits in *. nia.
+  Qed.
+  (** Declaration syntax bounds both the number of declarations and their argument lists. *)
+  Lemma run_decls_length_bits : forall ds,
+    length ds <= fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds.
+  Proof.
+    induction ds as [|[f ss out] ds IH].
+    - cbn [length fold_right]. lia.
+    - change (S (length ds) <= Pos.size_nat f + length ss + 1 +
+        fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds). lia.
+  Qed.
+
+  (** Full-slot preparation is quadratic in the enclosing syntax budget. *)
+  Lemma run_full_slots_clock : forall ds seen st cap,
+    fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + run_slot_counter_bits st <= cap ->
+    (T_full_slots ds seen st <= 512 *
+      N.of_nat (fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + 1) * N.of_nat (cap + 1))%N.
+  Proof.
+    induction ds as [|[f ss out] ds IH]; intros seen st cap Hcap.
+    - time_unfold T_full_slots. time_cbn. nia.
+    - cbn [fold_right] in Hcap |- *.
+      change (decl_bits (Decl f ss out)) with (Pos.size_nat f + length ss + 1) in *.
+      assert (Htail : fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds +
+        run_slot_counter_bits st <= cap)
+        by (cbn [fold_right] in Hcap; lia).
+      pose proof (run_planner_set_clock unit f tt seen) as Hset.
+      time_unfold T_full_slots. time_simpl.
+      destruct (trie_get f seen).
+      + pose proof (IH seen st cap Htail) as Hrest.
+        rewrite PTrieT.trie_get_clock.
+        cbn [fold_right decl_bits name arg_sorts] in *. nia.
+      + destruct out.
+        * pose proof (IH (PTrieCode.set f tt seen) st cap Htail) as Hrest.
+          rewrite PTrieT.trie_get_clock.
+          cbn [fold_right decl_bits name arg_sorts] in *. nia.
+        * set (st' := snd (add_slot f (count_from 0 (S (length ss))) st)).
+          pose proof (run_add_slot_counter_bits f (count_from 0 (S (length ss))) st) as Hwidth.
+          change (run_slot_counter_bits st' <= run_slot_counter_bits st + 1) in Hwidth.
+          assert (Hnext : fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds +
+              run_slot_counter_bits st' <= cap)
+            by (cbn [fold_right decl_bits name arg_sorts] in Hcap; lia).
+          pose proof (IH (PTrieCode.set f tt seen) st' cap Hnext) as Hrest.
+          pose proof (run_add_slot_clock f (count_from 0 (S (length ss))) st) as Hslot.
+          pose proof (run_count_from_positions_size (S (length ss)) 0) as Hpositions.
+          pose proof (run_count_from_clock (S (length ss)) 0) as Hcount.
+          pose proof (Datatypes.T_length_le ss) as Hlength.
+          assert (Hpositions_cap : run_positions_size (count_from 0 (S (length ss))) <=
+              S (length ss) * (cap + 1)) by (clear -Hpositions Hcap; nia).
+          assert (HpositionsN : (N.of_nat (run_positions_size (count_from 0 (S (length ss)))) <=
+              N.of_nat (S (length ss) * (cap + 1)))%N) by lia.
+          rewrite Nat2N.inj_mul in HpositionsN.
+          assert (Hslot' : (T_add_slot f (count_from 0 (S (length ss))) st <=
+              128 * N.of_nat (Pos.size_nat f + length ss + 1) * N.of_nat (cap + 1))%N).
+          { clear -Hslot HpositionsN Hcap. rewrite !Nat2N.inj_add in Hslot.
+            assert (Hlarge : (N.of_nat (Pos.size_nat f + length ss + 1) <=
+                N.of_nat (Pos.size_nat f + length ss + 1) * N.of_nat (cap + 1))%N)
+              by nia.
+            assert (Hpositive : (N.of_nat (cap + 1) <=
+                N.of_nat (Pos.size_nat f + length ss + 1) * N.of_nat (cap + 1))%N)
+              by nia.
+            nia. }
+          clear Hslot Hpositions Hpositions_cap HpositionsN IH Hwidth Hnext.
+          assert (Hcredit : (N.of_nat (Pos.size_nat f + length ss + 1) <=
+              N.of_nat (Pos.size_nat f + length ss + 1) * N.of_nat (cap + 1))%N)
+            by (clear; nia).
+          clear Hcap Htail.
+          rewrite PTrieT.trie_get_clock.
+          time_simpl. cbn [fold_right decl_bits name arg_sorts] in *.
+          rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *.
+          nia.
+        * pose proof (IH (PTrieCode.set f tt seen) st cap Htail) as Hrest.
+          rewrite PTrieT.trie_get_clock.
+          cbn [fold_right decl_bits name arg_sorts] in *. nia.
+  Qed.
+
+  (** Reversal onto an accumulator preserves the total number of list cells. *)
+  Lemma run_rev_append_length : forall A (xs ys : list A),
+    length (rev_append xs ys) = length xs + length ys.
+  Proof.
+    intros A xs. induction xs as [|x xs IH]; intro ys; cbn [rev_append length].
+    - reflexivity.
+    - rewrite IH. cbn [length]. lia.
+  Qed.
+
+  (** Source and column construction visit each atom and each literal once. *)
+  Definition run_atoms_charge (atoms : list (atom_plan V.t)) : nat :=
+    fold_right (fun a n => match a with AtomPlan _ _ lits => length lits + 1 + n end) 0 atoms.
+
+  Lemma run_atoms_charge_rev_append : forall xs ys,
+    run_atoms_charge (rev_append xs ys) = run_atoms_charge xs + run_atoms_charge ys.
+  Proof.
+    induction xs as [|[slot col lits] xs IH]; intro ys.
+    - reflexivity.
+    - cbn [rev_append]. rewrite IH. cbn [run_atoms_charge fold_right].
+      unfold run_atoms_charge in *. lia.
+  Qed.
+
+  Lemma run_atoms_charge_length : forall atoms,
+    length atoms <= run_atoms_charge atoms.
+  Proof.
+    induction atoms as [|[slot col lits] atoms IH];
+      cbn [length run_atoms_charge fold_right] in *; unfold run_atoms_charge in *; lia.
+  Qed.
+
+  (** Each function atom contributes exactly one planned atom. *)
+  Lemma run_plan_atoms_out_length : forall base (q : list (atom V.t)) ai lay st outs post,
+    length (snd (fst (plan_atoms base q ai lay st outs post))) = fun_count q + length outs.
+  Proof.
+    intros base q. induction q as [|[f args res|p args res] q IH];
+      intros ai lay st outs post.
+    - reflexivity.
+    - cbn [plan_atoms fun_count].
+      destruct (place_terms base (args ++ option_list res) 0 Empty lay [] [] false)
+        as [[[lay' pairs] lits] copied].
+      destruct (add_slot f (map snd (sort_pairs pairs)) st) as [slot st'].
+      rewrite IH. cbn [length]. lia.
+    - cbn [plan_atoms fun_count]. apply IH.
+  Qed.
+
+  (** An atom contributes at most one entry to the post filter. *)
+  Lemma run_plan_atoms_post_length : forall base (q : list (atom V.t)) ai lay st outs post,
+    length (snd (plan_atoms base q ai lay st outs post)) <= length q + length post.
+  Proof.
+    intros base q. induction q as [|[f args res|p args res] q IH];
+      intros ai lay st outs post.
+    - cbn [plan_atoms length snd]. lia.
+    - cbn [plan_atoms length].
+      destruct (place_terms base (args ++ option_list res) 0 Empty lay [] [] false)
+        as [[[lay' pairs] lits] copied].
+      destruct (add_slot f (map snd (sort_pairs pairs)) st) as [slot st'].
+      pose proof (IH (S ai) lay' st'
+        (AtomPlan slot (map fst (sort_pairs pairs)) (rev_append lits []) :: outs)
+        (if copied then ai :: post else post)).
+      destruct copied; cbn [length] in *; lia.
+    - cbn [plan_atoms length].
+      pose proof (IH (S ai) lay st outs (ai :: post)). cbn [length] in *. lia.
+  Qed.
+
+  (** Planning function atoms increments the slot counter at most once per atom. *)
+  Lemma run_plan_atoms_counter_bits : forall base (q : list (atom V.t)) ai lay st outs post,
+    run_slot_counter_bits (snd (fst (fst (plan_atoms base q ai lay st outs post)))) <=
+      run_slot_counter_bits st + length q.
+  Proof.
+    intros base q. induction q as [|[f args res|p args res] q IH];
+      intros ai lay st outs post.
+    - cbn [plan_atoms fst snd length]. lia.
+    - cbn [plan_atoms length].
+      destruct (place_terms base (args ++ option_list res) 0 Empty lay [] [] false)
+        as [[[lay' pairs] lits] copied].
+      pose proof (run_add_slot_counter_bits f (map snd (sort_pairs pairs)) st) as Hslot.
+      destruct (add_slot f (map snd (sort_pairs pairs)) st) as [slot st'] eqn:Hadd.
+      try rewrite Hadd in Hslot. cbn [snd] in Hslot.
+      pose proof (IH (S ai) lay' st'
+        (AtomPlan slot (map fst (sort_pairs pairs)) (rev_append lits []) :: outs)
+        (if copied then ai :: post else post)). lia.
+    - cbn [plan_atoms length]. pose proof (IH (S ai) lay st outs (ai :: post)). lia.
+  Qed.
+
+  (** Planning a query grows its layout by no more than its syntax charge. *)
+  Lemma run_plan_atoms_layout : forall base (q : list (atom V.t)) ai lay st outs post budget,
+    run_layout_ok base budget lay ->
+    run_layout_ok base (budget + fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q)
+      (fst (fst (fst (plan_atoms base q ai lay st outs post)))).
+  Proof.
+    intros base q. induction q as [|[f args res|p args res] q IH];
+      intros ai lay st outs post budget Hready.
+    - cbn [plan_atoms fst fold_right]. replace (budget + 0) with budget by lia. exact Hready.
+    - cbn [plan_atoms].
+      pose proof (run_place_terms_layout base (args ++ option_list res) 0 Empty
+        lay [] [] false budget Hready) as Hlayout.
+      destruct (place_terms base (args ++ option_list res) 0 Empty lay [] [] false)
+        as [[[lay' pairs] lits] copied] eqn:Hterms.
+      try rewrite Hterms in Hlayout. cbn [fst] in Hlayout.
+      destruct (add_slot f (map snd (sort_pairs pairs)) st) as [slot st'].
+      pose proof (IH (S ai) lay' st'
+        (AtomPlan slot (map fst (sort_pairs pairs)) (rev_append lits []) :: outs)
+        (if copied then ai :: post else post) (budget + length (args ++ option_list res))
+        Hlayout) as Htail.
+      eapply run_layout_ok_mono; [|exact Htail].
+      pose proof (run_terms_length_bits args).
+      pose proof (run_result_length_bits res).
+      rewrite length_app. cbn [fold_right atom_bits]. lia.
+    - cbn [plan_atoms].
+      pose proof (IH (S ai) lay st outs (ai :: post) budget Hready) as Htail.
+      eapply run_layout_ok_mono; [|exact Htail]. cbn [fold_right atom_bits]. lia.
+  Qed.
+
+  (** Planned atoms and their literal entries are bounded by the query's syntax charge. *)
+  Lemma run_plan_atoms_charge : forall base (q : list (atom V.t)) ai lay st outs post,
+    run_atoms_charge (snd (fst (plan_atoms base q ai lay st outs post))) <=
+      run_atoms_charge outs + fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q.
+  Proof.
+    intros base q. induction q as [|[f args res|p args res] q IH];
+      intros ai lay st outs post.
+    - cbn [plan_atoms fst snd fold_right]. lia.
+    - cbn [plan_atoms].
+      pose proof (run_place_terms_literals_length base (args ++ option_list res) 0 Empty
+        lay [] [] false) as Hlits.
+      destruct (place_terms base (args ++ option_list res) 0 Empty lay [] [] false)
+        as [[[lay' pairs] lits] copied] eqn:Hterms.
+      try rewrite Hterms in Hlits. cbn [fst snd length] in Hlits.
+      destruct (add_slot f (map snd (sort_pairs pairs)) st) as [slot st'].
+      pose proof (IH (S ai) lay' st'
+        (AtomPlan slot (map fst (sort_pairs pairs)) (rev_append lits []) :: outs)
+        (if copied then ai :: post else post)) as Htail.
+      cbn [run_atoms_charge fold_right] in Htail.
+      rewrite run_rev_append_length in Htail. cbn [length] in Htail.
+      pose proof (run_terms_length_bits args).
+      pose proof (run_result_length_bits res).
+      rewrite length_app in Hlits. cbn [fold_right atom_bits].
+      unfold run_atoms_charge in *. lia.
+    - cbn [plan_atoms].
+      pose proof (IH (S ai) lay st outs (ai :: post)). cbn [fold_right atom_bits]. lia.
+  Qed.
+
+  (** Literal-column construction is linear in the literal list. *)
+  Lemma run_literal_cols_clock : forall (lits : list (nat * V.t)) tail,
+    (T_literal_cols lits tail <= 2 * N.of_nat (length lits + 1))%N.
+  Proof.
+    induction lits as [|[j v] lits IH]; intro tail; time_step.
+  Qed.
+
+  (** Building all join columns visits each atom and literal once. *)
+  Lemma run_plan_cols_clock : forall atoms : list (atom_plan V.t),
+    (T_plan_cols atoms <= 4 * N.of_nat (run_atoms_charge atoms + 1))%N.
+  Proof.
+    induction atoms as [|[slot col lits] atoms IH].
+    - time_unfold @T_plan_cols. time_cbn. nia.
+    - pose proof (run_literal_cols_clock lits (plan_cols atoms)).
+      time_unfold @T_plan_cols. cbn [run_atoms_charge fold_right] in *.
+      unfold run_atoms_charge in *. nia.
+  Qed.
+
+  (** Literal sources have the same linear construction bound. *)
+  Lemma run_literal_sources_clock : forall (lits : list (nat * V.t)) tail,
+    (T_literal_sources lits tail <= 2 * N.of_nat (length lits + 1))%N.
+  Proof.
+    induction lits as [|[j v] lits IH]; intro tail; time_step.
+  Qed.
+
+  (** Building a source list additionally performs constant-time pivot tests. *)
+  Lemma run_plan_srcs_clock : forall (atoms : list (atom_plan V.t)) pivot,
+    (T_plan_srcs atoms pivot <= 8 * N.of_nat (run_atoms_charge atoms + 1))%N.
+  Proof.
+    induction atoms as [|[slot col lits] atoms IH]; intro pivot.
+    - time_unfold @T_plan_srcs. time_cbn. nia.
+    - pose proof (IH (pivot_next pivot)).
+      pose proof (run_literal_sources_clock lits (plan_srcs atoms (pivot_next pivot))).
+      time_unfold @T_plan_srcs. time_simpl.
+      cbn [run_atoms_charge fold_right] in *. unfold run_atoms_charge in *. nia.
+  Qed.
+
+  (** There is one semi-naive plan for every remaining pivot atom. *)
+  Lemma run_semi_plans_length : forall i j vars post atoms m todo,
+    length (@semi_plans V.t i j vars post atoms m todo) = length todo.
+  Proof.
+    intros i j vars post atoms m todo. revert m.
+    induction todo as [|a todo IH]; intro m; cbn [semi_plans length].
+    - reflexivity.
+    - rewrite IH. reflexivity.
+  Qed.
+
+  (** Semi-naive construction pays once for the source list of each pivot. *)
+  Lemma run_semi_plans_clock : forall i j vars post atoms m todo,
+    (T_semi_plans i j vars post atoms m todo <=
+      16 * N.of_nat (length todo + 1) * N.of_nat (run_atoms_charge atoms + 1))%N.
+  Proof.
+    intros i j vars post atoms m todo. revert m.
+    induction todo as [|a todo IH]; intro m.
+    - time_unfold @T_semi_plans. time_cbn. nia.
+    - pose proof (run_plan_srcs_clock atoms (Some m)).
+      pose proof (IH (S m)).
+      time_unfold @T_semi_plans. cbn [length].
+      rewrite ?Nat2N.inj_succ, !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** The function-atom count is bounded by the query's syntax charge. *)
+  Lemma run_fun_count_bits : forall q : list (atom V.t),
+    fun_count q <= fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q.
+  Proof.
+    induction q as [|[f args res|p args res] q IH]; cbn [fun_count fold_right atom_bits]; lia.
+  Qed.
+
+  (** A rule produces exactly its function-atom count of semi-naive plans. *)
+  Lemma run_plan_rule_semis_length : forall i r st,
+    length (snd (@plan_rule V.t i r st)) = fun_count (query V.t r).
+  Proof.
+    intros i [q acts] st. unfold plan_rule.
+    pose proof (run_plan_atoms_out_length (query_copies q 0) q 0
+      (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] []) st [] []) as Houts.
+    destruct (plan_atoms (query_copies q 0) q 0
+      (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] []) st [] [])
+      as [[[lay st'] outs] post] eqn:Hplan.
+    try rewrite Hplan in Houts. cbn [fst snd length] in Houts.
+    destruct lay. cbn [snd query].
+    rewrite run_semi_plans_length, run_rev_append_length. cbn [length]. lia.
+  Qed.
+  (** A freshly placed atom has bounded columns and positions and no extra literals. *)
+  Lemma run_placed_atom_bounds : forall base (ts : list (term V.t))
+      lay budget cap lay' pairs lits copied,
+    run_layout_ok base budget lay -> budget + terms_bits ts <= cap ->
+    place_terms base ts 0 Empty lay [] [] false = (((lay', pairs), lits), copied) ->
+    length pairs = length ts /\ length lits <= length ts /\
+    Forall (fun pair => fst pair <= base + cap) pairs /\
+    Forall (fun pair => snd pair < length ts) pairs.
+  Proof.
+    intros base ts lay budget cap lay' pairs lits copied Hready Hcap Hterms.
+    pose proof (run_place_terms_length base ts 0 Empty lay [] [] false) as Hlength.
+    pose proof (run_place_terms_literals_length base ts 0 Empty lay [] [] false) as Hlits.
+    pose proof (run_terms_length_bits ts) as Hts.
+    pose proof (run_place_terms_pairs base ts 0 Empty lay [] [] false budget
+      (base + cap) (length ts) Hready ltac:(lia) ltac:(lia) (Forall_nil _)) as Hpairs.
+    try rewrite Hterms in Hlength, Hlits, Hpairs. cbn [fst snd length] in *.
+    split; [lia|]. split; [lia|]. split.
+    - eapply Forall_impl; [|exact Hpairs]. intros [j pos] [Hj Hpos]. exact Hj.
+    - eapply Forall_impl; [|exact Hpairs]. intros [j pos] [Hj Hpos]. exact Hpos.
+  Qed.
+
+  (** One atom pays for term placement, sorting and registration within the common budget. *)
+  Lemma run_planned_atom_clock : forall base (ts : list (term V.t))
+      lay st budget cap f lay' pairs lits copied,
+    run_layout_ok base budget lay -> budget + terms_bits ts <= cap ->
+    run_slot_counter_bits st <= cap ->
+    place_terms base ts 0 Empty lay [] [] false = (((lay', pairs), lits), copied) ->
+    (T_place_terms base ts 0 Empty lay [] [] false + T_sort_pairs pairs +
+      ListDef.T_map (@snd nat nat) (fun pair => Datatypes.T_snd pair) (sort_pairs pairs) +
+      T_add_slot f (map snd (sort_pairs pairs)) st +
+      ListDef.T_map (@fst nat nat) (fun pair => Datatypes.T_fst pair) (sort_pairs pairs) +
+      List.T_rev_append lits [] <=
+      512 * N.of_nat (Pos.size_nat f + terms_bits ts + 1) *
+        N.of_nat (base + cap + 1) * N.of_nat (base + cap + 1))%N.
+  Proof.
+    intros base ts lay st budget cap f lay' pairs lits copied Hready Hcap Hcounter Hterms.
+    destruct (run_placed_atom_bounds base ts lay budget cap lay' pairs lits copied
+      Hready Hcap Hterms) as [Hlength [Hlits [Hvars Hpositions]]].
+    pose proof (run_place_terms_clock base ts 0 Empty lay [] [] false budget cap Hready Hcap)
+      as Hplace.
+    pose proof (run_sort_pairs_clock pairs (base + cap) Hvars) as Hsort.
+    pose proof (run_add_slot_clock f (map snd (sort_pairs pairs)) st) as Hslot.
+    pose proof (ListDef.T_map_le (@snd nat nat) (fun pair => Datatypes.T_snd pair)
+      1%N (sort_pairs pairs) (fun pair => Datatypes.T_snd_le pair)) as Hmap_snd.
+    pose proof (ListDef.T_map_le (@fst nat nat) (fun pair => Datatypes.T_fst pair)
+      1%N (sort_pairs pairs) (fun pair => Datatypes.T_fst_le pair)) as Hmap_fst.
+    pose proof (List.T_rev_append_le lits []) as Hreverse.
+    pose proof (run_pairs_positions_size (sort_pairs pairs) (length ts)
+      (run_sort_pairs_Forall _ _ Hpositions)) as Hpermutation.
+    rewrite run_sort_pairs_length in Hpermutation, Hmap_snd, Hmap_fst.
+    rewrite Hlength in Hpermutation, Hsort, Hmap_snd, Hmap_fst.
+    pose proof (run_terms_length_bits ts) as Hts.
+    set (h := N.of_nat (Pos.size_nat f + terms_bits ts + 1)).
+    set (g := N.of_nat (base + cap + 1)).
+    set (k := N.of_nat (length ts + 1)).
+    assert (Hh : (1 <= h)%N) by (unfold h; lia).
+    assert (Hg : (1 <= g)%N) by (unfold g; lia).
+    assert (Hkh : (k <= h)%N) by (unfold k, h; lia).
+    assert (Hkg : (k <= g)%N) by (unfold k, g; lia).
+    assert (Hsquare : (k * k <= h * g)%N) by (apply N.mul_le_mono; assumption).
+    pose proof (N.mul_le_mono_l _ _ g Hsquare) as Hcube.
+    assert (Hcredit : (h <= h * g * g /\ g <= h * g * g /\ h * g <= h * g * g)%N)
+      by (clear -Hh Hg;
+        pose proof (N.mul_le_mono_l 1 g h Hg);
+        pose proof (N.mul_le_mono_r 1 h g Hh);
+        pose proof (N.mul_le_mono_l 1 g (h * g) Hg);
+        repeat split; nia).
+    destruct Hcredit as [Hcredit_h [Hcredit_g Hcredit_hg]].
+    assert (Hperm : (N.of_nat (run_positions_size (map snd (sort_pairs pairs))) <= h * g)%N).
+    { assert (HpermutationN : (N.of_nat (run_positions_size (map snd (sort_pairs pairs))) <=
+          N.of_nat (length ts * length ts))%N) by lia.
+      rewrite Nat2N.inj_mul in HpermutationN.
+      clear -HpermutationN Hsquare. unfold k in Hsquare. nia. }
+    assert (Hterm : (N.of_nat (terms_bits ts + 1) <= h)%N) by (unfold h; lia).
+    assert (Hword : (N.of_nat (Pos.size_nat f) + 1 <= h)%N) by (unfold h; lia).
+    assert (HcounterN : (N.of_nat (run_slot_counter_bits st) <= g)%N)
+      by (unfold g; lia).
+    assert (Hplace' : (T_place_terms base ts 0 Empty lay [] [] false <=
+        64 * (h * g * g))%N).
+    { change (T_place_terms base ts 0 Empty lay [] [] false <=
+        64 * N.of_nat (terms_bits ts + 1) * g)%N in Hplace.
+      pose proof (N.mul_le_mono_r _ _ g Hterm) as Hterm_product.
+      clear -Hplace Hterm_product Hcredit_hg. nia. }
+    assert (Hsort' : (T_sort_pairs pairs <= 8 * (h * g * g))%N).
+    { change (T_sort_pairs pairs <= 8 * g * k * k)%N in Hsort.
+      clear -Hsort Hcube. nia. }
+    assert (Hslot' : (T_add_slot f (map snd (sort_pairs pairs)) st <=
+        256 * (h * g * g))%N).
+    { rewrite !Nat2N.inj_add in Hslot.
+      clear -Hslot Hperm Hword HcounterN Hcredit_h Hcredit_g Hcredit_hg. nia. }
+    assert (Hmaps : (ListDef.T_map (@snd nat nat) (fun pair => Datatypes.T_snd pair)
+        (sort_pairs pairs) +
+        ListDef.T_map (@fst nat nat) (fun pair => Datatypes.T_fst pair) (sort_pairs pairs) +
+        List.T_rev_append lits [] <= 8 * (h * g * g))%N).
+    { clear -Hmap_snd Hmap_fst Hreverse Hlits Hkh Hcredit_h.
+      unfold k in Hkh. nia. }
+    clear -Hplace' Hsort' Hslot' Hmaps. fold h g. nia.
+  Qed.
+
+  (** Query planning spends each atom's charge at the square of the common frontier. *)
+  (** The atom's cubic allowance covers its list-traversal overhead.
+      This arithmetic lemma keeps program expressions out of the solver context. *)
+  Lemma run_plan_atom_overhead_credit : forall words terms result frontier,
+    (1 <= frontier)%N ->
+    (terms + 3 <= 512 * (words + terms + result + 1) * frontier * frontier)%N.
+  Proof.
+    intros words terms result frontier Hfrontier.
+    assert (Hsyntax : (terms + 3 <= 512 * (words + terms + result + 1))%N) by lia.
+    pose proof (N.mul_le_mono_l 1 frontier
+      (512 * (words + terms + result + 1)) Hfrontier) as Hfirst.
+    pose proof (N.mul_le_mono_l 1 frontier
+      (512 * (words + terms + result + 1) * frontier) Hfrontier) as Hsecond.
+    rewrite N.mul_1_r in Hfirst, Hsecond.
+    eapply N.le_trans; [exact Hsyntax |].
+    eapply N.le_trans; [exact Hfirst | exact Hsecond].
+  Qed.
+
+  Lemma run_plan_atoms_clock : forall base (q : list (atom V.t)) ai lay st outs post budget cap,
+    run_layout_ok base budget lay ->
+    budget + fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <= cap ->
+    run_slot_counter_bits st + fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <= cap ->
+    (T_plan_atoms base q ai lay st outs post <=
+      1024 * N.of_nat (fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q + 1) *
+        N.of_nat (base + cap + 1) * N.of_nat (base + cap + 1))%N.
+  Proof.
+    intros base q. induction q as [|[f args res|p args res] q IH];
+      intros ai lay st outs post budget cap Hready Hbudget Hcounter.
+    - time_unfold @T_plan_atoms. time_cbn. nia.
+    - set (ts := args ++ option_list res).
+      assert (Hts : terms_bits ts = terms_bits args + result_bits res)
+        by (unfold ts; rewrite run_terms_bits_app, run_terms_bits_result; reflexivity).
+      assert (Hlength : length ts <= terms_bits ts) by apply run_terms_length_bits.
+      assert (Hplace_budget : budget + terms_bits ts <= cap)
+        by (cbn [fold_right atom_bits] in Hbudget; lia).
+      assert (Hslot_budget : run_slot_counter_bits st <= cap)
+        by (cbn [fold_right atom_bits] in Hcounter; lia).
+      pose proof (run_place_terms_layout base ts 0 Empty lay [] [] false budget Hready)
+        as Hlayout.
+      pose proof (run_add_slot_counter_bits f
+        (map snd (sort_pairs (snd (fst (fst (place_terms base ts 0 Empty lay [] [] false))))))
+        st) as Hwidth.
+      time_unfold @T_plan_atoms. time_simpl. fold ts.
+      destruct (place_terms base ts 0 Empty lay [] [] false)
+        as [[[lay' pairs] lits] copied] eqn:Hterms.
+      try rewrite Hterms in Hlayout, Hwidth. cbn [fst snd] in Hlayout, Hwidth.
+      pose proof (run_planned_atom_clock base ts lay st budget cap f lay' pairs lits copied
+        Hready Hplace_budget Hslot_budget Hterms) as Hhead.
+      destruct (add_slot f (map snd (sort_pairs pairs)) st) as [slot st'] eqn:Hslot.
+      try rewrite Hslot in Hwidth. cbn [snd] in Hwidth.
+      assert (Hnext_budget : budget + length ts +
+          fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <= cap)
+        by (cbn [fold_right atom_bits] in Hbudget; lia).
+      assert (Hnext_counter : run_slot_counter_bits st' +
+          fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <= cap)
+        by (cbn [fold_right atom_bits] in Hcounter; lia).
+      pose proof (IH (S ai) lay' st'
+        (AtomPlan slot (map fst (sort_pairs pairs)) (rev_append lits []) :: outs)
+        (if copied then ai :: post else post) (budget + length ts) cap
+        Hlayout Hnext_budget Hnext_counter) as Htail.
+      pose proof (Datatypes.T_app_le args (option_list res)) as Happend.
+      pose proof (run_terms_length_bits args) as Hargs.
+      assert (Hcredit : (N.of_nat (terms_bits args) + 3 <=
+          512 * N.of_nat (Pos.size_nat f + terms_bits args + result_bits res + 1) *
+            N.of_nat (base + cap + 1) * N.of_nat (base + cap + 1))%N).
+      { clear. rewrite !Nat2N.inj_add.
+        apply run_plan_atom_overhead_credit. lia. }
+      cbn [fold_right atom_bits]. rewrite Hts in Hhead.
+      cbn [Datatypes.T_snd Datatypes.T_fst] in Hhead.
+      change (fun pair : nat * nat => Datatypes.T_snd pair) with
+        (fun _ : nat * nat => 1%N) in Hhead.
+      change (fun pair : nat * nat => Datatypes.T_fst pair) with
+        (fun _ : nat * nat => 1%N) in Hhead.
+      rewrite !Nat2N.inj_add in *.
+      clear -Hhead Htail Happend Hargs Hcredit.
+      assert (Hextra : (Datatypes.T_app args (option_list res) + 2 <=
+          512 * (N.of_nat (Pos.size_nat f) + N.of_nat (terms_bits args) +
+            N.of_nat (result_bits res) + N.of_nat 1) *
+            (N.of_nat base + N.of_nat cap + N.of_nat 1) *
+            (N.of_nat base + N.of_nat cap + N.of_nat 1))%N) by lia.
+      pose proof (N.add_le_mono _ _ _ _ Hhead Htail) as Hjoined.
+      pose proof (N.add_le_mono _ _ _ _ Hjoined Hextra) as Htotal.
+      clear -Htotal.
+      nia.
+    - assert (Hnext_budget : budget + fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <= cap)
+        by (cbn [fold_right atom_bits] in Hbudget; lia).
+      assert (Hnext_counter : run_slot_counter_bits st +
+          fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <= cap)
+        by (cbn [fold_right atom_bits] in Hcounter; lia).
+      pose proof (IH (S ai) lay st outs (ai :: post) budget cap Hready
+        Hnext_budget Hnext_counter) as Htail.
+      time_unfold @T_plan_atoms. cbn [fold_right atom_bits].
+      rewrite !Nat2N.inj_add in *.
+      clear IH Hready Hbudget Hcounter Hnext_budget Hnext_counter.
+      nia.
+  Qed.
+  (** A completed rule can increase the slot counter only at its function atoms. *)
+  Lemma run_plan_rule_counter_bits : forall i r st,
+    run_slot_counter_bits (fst (fst (@plan_rule V.t i r st))) <=
+      run_slot_counter_bits st + rule_bits r.
+  Proof.
+    intros i [q acts] st. unfold plan_rule.
+    pose proof (run_plan_atoms_counter_bits (query_copies q 0) q 0
+      (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] []) st [] []) as Hcounter.
+    pose proof (run_query_length_bits q) as Hquery.
+    assert (Hsyntax : fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <=
+        rule_bits (Rule V.t q acts))
+      by (unfold rule_bits; cbn [query actions]; lia).
+    destruct (plan_atoms (query_copies q 0) q 0
+      (VarLayout Empty 0 0 (Pos.succ (query_max q 1%positive)) [] []) st [] [])
+      as [[[lay st'] outs] post] eqn:Hplan.
+    try rewrite Hplan in Hcounter. cbn [fst snd] in Hcounter.
+    destruct lay. cbn [fst]. lia.
+  Qed.
+
+  (** A rule's construction is bounded by its syntax charge and the enclosing counter budget. *)
+  Lemma run_plan_rule_clock : forall i (r : rule V.t) st cap,
+    rule_bits r + run_slot_counter_bits st <= cap ->
+    (T_plan_rule i r st <= 16384 * N.of_nat (rule_bits r) *
+      N.of_nat (cap + 1) * N.of_nat (cap + 1))%N.
+  Proof.
+    intros i [q acts] st cap Hcap.
+    set (Q := fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q).
+    set (base := query_copies q 0).
+    set (fresh := Pos.succ (query_max q 1%positive)).
+    set (initial := VarLayout Empty 0 0 fresh [] []).
+    assert (HQ : Q + 1 <= rule_bits (Rule V.t q acts))
+      by (unfold rule_bits, Q; cbn [query actions]; lia).
+    assert (Hbase : base <= Q).
+    { pose proof (run_query_copies_count q 0). unfold base, Q. lia. }
+    assert (Hfresh : Pos.size_nat fresh <= Q + 2).
+    { pose proof (run_query_max_bits q 1%positive).
+      pose proof (run_pos_succ_bits (query_max q 1%positive)).
+      unfold fresh, Q. cbn [Pos.size_nat] in *. lia. }
+    assert (Hinitial : run_layout_ok base (Q + 2) initial)
+      by (unfold initial; now apply run_layout_initial).
+    assert (Hbudget : Q + 2 + Q <= 2 * cap + 2) by lia.
+    assert (Hcounter : run_slot_counter_bits st + Q <= 2 * cap + 2) by lia.
+    pose proof (run_plan_atoms_clock base q 0 initial st [] [] (Q + 2) (2 * cap + 2)
+      Hinitial Hbudget Hcounter) as Hmain.
+    pose proof (run_plan_atoms_layout base q 0 initial st [] [] (Q + 2) Hinitial)
+      as Hlayout.
+    pose proof (run_plan_atoms_out_length base q 0 initial st [] []) as Houts.
+    pose proof (run_plan_atoms_post_length base q 0 initial st [] []) as Hpost.
+    pose proof (run_plan_atoms_charge base q 0 initial st [] []) as Hcharge.
+    pose proof (run_query_length_bits q) as Hqlength.
+    pose proof (run_fun_count_bits q) as Hfunctions.
+    pose proof (run_query_copies_clock q 0) as Hcopies.
+    pose proof (run_query_max_clock q 1%positive) as Hmaximum.
+    pose proof (Pos.T_succ_le (query_max q 1%positive)) as Hsuccessor.
+    pose proof (run_query_max_bits q 1%positive) as Hmaxbits.
+    time_unfold @T_plan_rule. time_simpl. fold base fresh initial.
+    destruct (plan_atoms base q 0 initial st [] [])
+      as [[[[names nc nm fresh' cn mn] st'] outs] post] eqn:Hplan.
+    try rewrite Hplan in Hlayout, Houts, Hpost, Hcharge.
+    cbn [fst snd length run_layout_ok run_atoms_charge fold_right] in
+      Hlayout, Houts, Hpost, Hcharge.
+    destruct Hlayout as [Hnc [Hnm [Hfresh' [Hcn [Hmn Hnames]]]]].
+    pose proof (List.T_rev_append_le outs []) as Hrevouts.
+    pose proof (List.T_rev_append_le cn (rev_append mn [])) as Hrevcn.
+    pose proof (List.T_rev_append_le mn []) as Hrevmn.
+    pose proof (List.T_rev_append_le post []) as Hrevpost.
+    pose proof (Nat.T_add_le base nm) as Hadd.
+    pose proof (run_plan_cols_clock (rev_append outs [])) as Hcols.
+    pose proof (run_plan_srcs_clock (rev_append outs []) None) as Hsources.
+    pose proof (run_semi_plans_clock i
+      (JPlan (base + nm) (plan_cols (rev_append outs [])))
+      (rev_append cn (rev_append mn [])) (rev_append post [])
+      (rev_append outs []) 0 (rev_append outs [])) as Hsemis.
+    rewrite run_atoms_charge_rev_append in Hcols, Hsources, Hsemis.
+    rewrite run_rev_append_length in Hsemis.
+    cbn [run_atoms_charge fold_right length] in Hcols, Hsources, Hsemis.
+    unfold run_atoms_charge in Hcharge, Hcols, Hsources, Hsemis.
+    fold Q in Hmain, Hnc, Hnm, Hfresh', Hcn, Hmn, Hcharge, Hqlength, Hfunctions,
+      Hcopies, Hmaximum, Hmaxbits.
+    assert (Hfrontier : (N.of_nat (base + (2 * cap + 2) + 1) <=
+        3 * N.of_nat (cap + 1))%N) by lia.
+    assert (Hmain' : (T_plan_atoms base q 0 initial st [] [] <=
+        9216 * N.of_nat (rule_bits (Rule V.t q acts)) *
+          N.of_nat (cap + 1) * N.of_nat (cap + 1))%N).
+    { assert (HqueryN : (N.of_nat (Q + 1) <=
+          N.of_nat (rule_bits (Rule V.t q acts)))%N) by lia.
+      pose proof (N.mul_le_mono _ _ _ _ Hfrontier Hfrontier) as Hsquare.
+      pose proof (N.mul_le_mono _ _ _ _ HqueryN Hsquare) as Hproduct.
+      clear -Hmain Hproduct. nia. }
+    assert (Hlinear_credit : (N.of_nat (Q + 1) <=
+        N.of_nat (rule_bits (Rule V.t q acts)) * N.of_nat (cap + 1) *
+          N.of_nat (cap + 1))%N) by (clear -HQ; nia).
+    assert (Hquadratic_credit : (N.of_nat (Q + 1) * N.of_nat (Q + 1) <=
+        N.of_nat (rule_bits (Rule V.t q acts)) * N.of_nat (cap + 1) *
+          N.of_nat (cap + 1))%N) by (clear -HQ Hcap; nia).
+    assert (Hsemis' : (T_semi_plans i
+        (JPlan (base + nm) (plan_cols (rev_append outs [])))
+        (rev_append cn (rev_append mn [])) (rev_append post [])
+        (rev_append outs []) 0 (rev_append outs []) <=
+        16 * N.of_nat (Q + 1) * N.of_nat (Q + 1))%N).
+    { clear -Hsemis Houts Hfunctions Hcharge. nia. }
+    cbn [Pos.size_nat] in Hmaxbits.
+    assert (Hoverhead_linear :
+      (1 + T_query_copies q 0 + T_query_max q 1%positive +
+        Pos.T_succ (query_max q 1%positive) +
+        List.T_rev_append outs [] +
+        List.T_rev_append cn (rev_append mn []) + List.T_rev_append mn [] +
+        List.T_rev_append post [] + Nat.T_add base nm +
+        T_plan_cols (rev_append outs []) + T_plan_srcs (rev_append outs []) None <=
+        256 * N.of_nat (Q + 1))%N).
+    { clear -Hcopies Hmaximum Hsuccessor Hmaxbits Hrevouts Hrevcn Hrevmn
+        Hrevpost Hadd Hcols Hsources Hcn Hmn Houts Hpost Hcharge Hqlength
+        Hfunctions Hbase.
+      lia. }
+    assert (Hoverhead_cubic :
+      (1 + T_query_copies q 0 + T_query_max q 1%positive +
+        Pos.T_succ (query_max q 1%positive) +
+        List.T_rev_append outs [] +
+        List.T_rev_append cn (rev_append mn []) + List.T_rev_append mn [] +
+        List.T_rev_append post [] + Nat.T_add base nm +
+        T_plan_cols (rev_append outs []) + T_plan_srcs (rev_append outs []) None <=
+        256 * N.of_nat (rule_bits (Rule V.t q acts)) *
+          N.of_nat (cap + 1) * N.of_nat (cap + 1))%N).
+    { pose proof (N.mul_le_mono_l _ _ 256 Hlinear_credit) as Hscaled.
+      clear -Hoverhead_linear Hscaled. nia. }
+    assert (Hsemis_cubic :
+      (T_semi_plans i
+        (JPlan (base + nm) (plan_cols (rev_append outs [])))
+        (rev_append cn (rev_append mn [])) (rev_append post [])
+        (rev_append outs []) 0 (rev_append outs []) <=
+        16 * N.of_nat (rule_bits (Rule V.t q acts)) *
+          N.of_nat (cap + 1) * N.of_nat (cap + 1))%N).
+    { pose proof (N.mul_le_mono_l _ _ 16 Hquadratic_credit) as Hscaled.
+      clear -Hsemis' Hscaled. nia. }
+    pose proof (N.add_le_mono _ _ _ _ Hmain' Hoverhead_cubic) as Hjoined.
+    pose proof (N.add_le_mono _ _ _ _ Hjoined Hsemis_cubic) as Htotal.
+    clear -Htotal. nia.
+  Qed.
+
+  (** Every rule contributes at least one unit to program syntax. *)
+  Lemma run_rules_length_bits : forall rs : list (rule V.t),
+    length rs <= fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs.
+  Proof.
+    induction rs as [|r rs IH]; cbn [length fold_right].
+    - lia.
+    - assert (Hpositive : 1 <= rule_bits r) by (unfold rule_bits; lia). lia.
+  Qed.
+
+  (** The naive-plan accumulator receives one element per rule. *)
+  Lemma run_plan_rules_naive_length : forall rs i st naive semi,
+    length (snd (fst (@plan_rules V.t rs i st naive semi))) = length rs + length naive.
+  Proof.
+    induction rs as [|r rs IH]; intros i st naive semi.
+    - reflexivity.
+    - cbn [plan_rules]. destruct (plan_rule i r st) as [[st' c] cs].
+      rewrite IH. cbn [length]. lia.
+  Qed.
+
+  (** Semi-naive plans add at most the remaining rules' syntax charge. *)
+  Lemma run_plan_rules_semis_length : forall rs i st naive semi,
+    length (snd (@plan_rules V.t rs i st naive semi)) <=
+      fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs + length semi.
+  Proof.
+    induction rs as [|[q acts] rs IH]; intros i st naive semi.
+    - cbn [plan_rules snd fold_right]. lia.
+    - pose proof (run_plan_rule_semis_length i (Rule V.t q acts) st) as Hsemis.
+      pose proof (run_fun_count_bits q) as Hfun.
+      assert (Hsyntax : fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q <=
+          rule_bits (Rule V.t q acts))
+        by (unfold rule_bits; cbn [query actions]; lia).
+      cbn [plan_rules]. destruct (plan_rule i (Rule V.t q acts) st)
+        as [[st' c] cs] eqn:Hrule.
+      try rewrite Hrule in Hsemis. cbn [snd query] in Hsemis.
+      pose proof (IH (N.succ i) st' (c :: naive) (rev_append cs semi)) as Hrest.
+      rewrite run_rev_append_length in Hrest. cbn [fold_right]. lia.
+  Qed.
+
+  (** A fixed budget covers both the growing slot counter and rule index. *)
+  Lemma run_plan_rules_clock : forall (rs : list (rule V.t)) i st naive semi cap,
+    fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs + run_slot_counter_bits st <= cap ->
+    fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs + N.size_nat i <= cap ->
+    (T_plan_rules rs i st naive semi <= 32768 *
+      N.of_nat (fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs + 1) *
+      N.of_nat (cap + 1) * N.of_nat (cap + 1))%N.
+  Proof.
+    induction rs as [|[q acts] rs IH]; intros i st naive semi cap Hslots Hindex.
+    - time_unfold @T_plan_rules. time_cbn. nia.
+    - assert (HQ : fold_right (fun a n => (atom_bits a + n)%nat) 0%nat q + 1 <=
+          rule_bits (Rule V.t q acts))
+        by (unfold rule_bits; cbn [query actions]; lia).
+      pose proof (run_plan_rule_clock i (Rule V.t q acts) st cap
+        ltac:(cbn [fold_right] in Hslots; lia)) as Hhead.
+      pose proof (run_plan_rule_counter_bits i (Rule V.t q acts) st) as Hcounter.
+      pose proof (run_plan_rule_semis_length i (Rule V.t q acts) st) as Hsemis.
+      pose proof (run_fun_count_bits q) as Hfun.
+      pose proof (N.T_succ_le i) as Hsucc.
+      pose proof (run_N_succ_bits i) as Hwidth.
+      time_unfold @T_plan_rules.
+      destruct (plan_rule i (Rule V.t q acts) st) as [[st' c] cs] eqn:Hrule.
+      try rewrite Hrule in Hcounter, Hsemis. cbn [fst snd query] in Hcounter, Hsemis.
+      assert (Hnext_slots : fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs +
+          run_slot_counter_bits st' <= cap)
+        by (cbn [fold_right] in Hslots; lia).
+      assert (Hnext_index : fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs +
+          N.size_nat (N.succ i) <= cap)
+        by (cbn [fold_right] in Hindex; lia).
+      pose proof (IH (N.succ i) st' (c :: naive) (rev_append cs semi)
+        cap Hnext_slots Hnext_index) as Htail.
+      pose proof (List.T_rev_append_le cs semi) as Hreverse.
+      assert (Hsucc' : (N.T_succ i <= N.of_nat (cap + 1))%N)
+        by (cbn [fold_right] in Hindex; lia).
+      assert (Hcredit : (N.of_nat (cap + 1) + N.of_nat (rule_bits (Rule V.t q acts)) + 1 <=
+          4 * N.of_nat (rule_bits (Rule V.t q acts)) *
+            N.of_nat (cap + 1) * N.of_nat (cap + 1))%N)
+        by (clear -HQ; nia).
+      cbn [fold_right].
+      assert (Hextra : (N.T_succ i + List.T_rev_append cs semi + 1 <=
+          16384 * N.of_nat (rule_bits (Rule V.t q acts)) *
+            N.of_nat (cap + 1) * N.of_nat (cap + 1))%N).
+      { clear -Hreverse Hsemis Hfun HQ Hsucc' Hcredit. nia. }
+      pose proof (N.add_le_mono _ _ _ _ Hhead Htail) as Hjoined.
+      pose proof (N.add_le_mono _ _ _ _ Hjoined Hextra) as Htotal.
+      clear -Htotal. rewrite !Nat2N.inj_add. nia.
+  Qed.
+
+  (** The row list is bounded by its positive slot charge. *)
+  Lemma run_slots_length_size : forall rows,
+    length rows <= run_slots_size rows.
+  Proof.
+    induction rows as [|[f positions] rows IH]; cbn [length run_slots_size fold_right] in *;
+      unfold run_slots_size in *;
+      lia.
+  Qed.
+
+  (** Program planning has one cubic charge for all declarations, rules and output reversals. *)
+  Lemma run_plan_program_clock : forall p : program V.t,
+    (T_plan_program p <= 65536 * N.of_nat (size_program p + 1) *
+      N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1))%N.
+  Proof.
+    intros [ds rs].
+    set (S := size_program (Program V.t ds rs)).
+    assert (Hsyntax : fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds +
+        fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs + 1 = S)
+      by reflexivity.
+    set (st0 := full_slots ds Empty (SlotState Empty 0%N [])).
+    pose proof (run_full_slots_counter_bits ds Empty (SlotState Empty 0%N [])) as Hwidth.
+    pose proof (run_decls_length_bits ds) as Hdecls.
+    pose proof (run_rules_length_bits rs) as Hrules.
+    pose proof (run_full_slots_clock ds Empty (SlotState Empty 0%N []) S) as Hfull.
+    assert (Hfullcap : fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds +
+        run_slot_counter_bits (SlotState Empty 0%N []) <= S)
+      by (cbn [run_slot_counter_bits N.size_nat]; lia).
+    specialize (Hfull Hfullcap).
+    assert (Hslots : fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs +
+        run_slot_counter_bits st0 <= S).
+    { unfold st0. cbn [run_slot_counter_bits N.size_nat] in Hwidth.
+      lia. }
+    assert (Hindex : fold_right (fun r n => (rule_bits r + n)%nat) 0%nat rs + N.size_nat 0 <= S)
+      by (cbn [N.size_nat]; lia).
+    pose proof (run_plan_rules_clock rs 0 st0 [] [] S Hslots Hindex) as Hmain.
+    pose proof (run_plan_rules_naive_length rs 0 st0 [] []) as Hnaive.
+    pose proof (run_plan_rules_semis_length rs 0 st0 [] []) as Hsemi.
+    pose proof (run_plan_rules_size rs 0 st0 [] []) as Hrows.
+    pose proof (run_full_slots_size ds Empty (SlotState Empty 0%N [])) as Hinitial.
+    fold st0 in Hinitial.
+    time_unfold @T_plan_program. fold st0.
+    destruct (plan_rules rs 0 st0 [] []) as [[[table next rows] naive] semi] eqn:Hplan.
+    try rewrite Hplan in Hnaive, Hsemi, Hrows.
+    cbn [fst snd length run_slot_state_size] in Hnaive, Hsemi, Hrows.
+    pose proof (run_slots_length_size rows) as Hrowlength.
+    pose proof (List.T_rev_append_le rows []) as Hrevrows.
+    pose proof (List.T_rev_append_le naive []) as Hrevnaive.
+    pose proof (List.T_rev_append_le semi []) as Hrevsemi.
+    change (run_slot_state_size st0 <=
+      0 + 2 * fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds) in Hinitial.
+    assert (Hmain' : (T_plan_rules rs 0 st0 [] [] <= 32768 *
+        N.of_nat (S + 1) * N.of_nat (S + 1) * N.of_nat (S + 1))%N).
+    { assert (Hquery : (N.of_nat (fold_right (fun r n => (rule_bits r + n)%nat)
+          0%nat rs + 1) <= N.of_nat (S + 1))%N) by lia.
+      pose proof (N.mul_le_mono_r _ _ (N.of_nat (S + 1) * N.of_nat (S + 1)) Hquery)
+        as Hproduct.
+      clear -Hmain Hproduct. nia. }
+    assert (Hfull' : (T_full_slots ds Empty (SlotState Empty 0%N []) <= 512 *
+        N.of_nat (S + 1) * N.of_nat (S + 1) * N.of_nat (S + 1))%N).
+    { assert (Hdecl : (N.of_nat (fold_right (fun d n => (decl_bits d + n)%nat)
+          0%nat ds + 1) <= N.of_nat (S + 1))%N) by lia.
+      pose proof (N.mul_le_mono_r _ _ (N.of_nat (S + 1)) Hdecl) as Hproduct.
+      assert (Hsquare : (N.of_nat (S + 1) * N.of_nat (S + 1) <=
+          N.of_nat (S + 1) * N.of_nat (S + 1) * N.of_nat (S + 1))%N)
+        by (clear; nia).
+      clear -Hfull Hproduct Hsquare. nia. }
+    assert (Hcredit : (N.of_nat (S + 1) <= N.of_nat (S + 1) *
+        N.of_nat (S + 1) * N.of_nat (S + 1))%N) by (clear; nia).
+    fold S.
+    clear -Hmain' Hfull' Hnaive Hsemi Hrows Hinitial Hrules Hrowlength
+      Hrevrows Hrevnaive Hrevsemi Hsyntax Hcredit. nia.
+  Qed.
 
   Lemma T_plan_le : forall p,
     (T_plan p <= c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
       N.of_nat (size_program p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (run_plan_program_clock p) as Hprogram.
+    time_unfold T_plan. unfold c_run. nia.
+  Qed.
 
   Lemma plan_slots_le : forall p,
     (N.of_nat (fold_right (fun s n =>
@@ -12982,11 +14589,28 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       (Syntax.slots V.t (plan p))) <=
       c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
         N.of_nat (size_program p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (run_plan_slots_size p) as Hslots.
+    assert (HslotsN : (N.of_nat (run_slots_size (Syntax.slots V.t (plan p))) <=
+      N.of_nat (2 * (size_program p + 1)))%N) by lia.
+    rewrite Nat2N.inj_mul in HslotsN.
+    change (N.of_nat (run_slots_size (Syntax.slots V.t (plan p))) <=
+      c_run * N.of_nat (size_program p + 1) * N.of_nat (size_program p + 1) *
+        N.of_nat (size_program p + 1))%N.
+    assert (Hconstant : (2 <= c_run)%N) by (unfold c_run; lia).
+    assert (Hpositive : (1 <= N.of_nat (size_program p + 1))%N) by lia.
+    nia.
+  Qed.
 
   Lemma T_load_le : forall p cp,
     (T_load p cp <= D.T_init (decls V.t p) (Syntax.slots V.t cp) + c_run)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [ds rs] [sl nv sn].
+    assert (Hconstant : (3 <= c_run)%N) by (unfold c_run; lia).
+    time_unfold T_load.
+    unfold T_decls, T_compiled_slots, decls, compiled_slots, Syntax.slots.
+    time_cbn. lia.
+  Qed.
 
   Lemma T_run_le : forall B U p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (D.ids (snd (run p cp lim db)) <= B)%N -> D.unit (snd (run p cp lim db)) <= U ->
@@ -12997,12 +14621,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
          N.of_nat (D.pending db + 1)) +
       c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_check_plan_le : forall p cp,
-    (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
-      N.of_nat (wbits p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: DATABASE_T permits uncharged wide source slots. *)
 
   Fixpoint T_apply_jobs (p : program V.t) (js : list (cplan V.t * list (cell V.t)))
       (db : D.t) : N :=
@@ -13015,8 +14634,10 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
             (apply (actions V.t (job_rule p c)) (fun x => trie_get x (bind_trie c b)) db))%N
     end.
 
-  Definition k_driver : N := 1. (* STUB *)
-  Definition k_check : N := 1. (* STUB *)
+  Definition k_driver : N :=
+    (64 * 1024 * (D.c_db + I.c_ix + J.c_join + V.c_val + V.c_key +
+      PTrieT.c_trie + 1))%N.
+  Definition k_check : N := (64 * 1024 * (V.c_key + PTrieT.c_trie + 1))%N.
   (** A well-sorted action list has well-sorted prefixes in its initial context. *)
   Lemma run_actions_ok_prefix : forall sorts kinds (pre suffix : list (action V.t)) g,
     actions_ok sorts kinds g (pre ++ suffix) -> actions_ok sorts kinds g pre.
@@ -13138,10 +14759,20 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
   Lemma F15_unit_scale : forall (T C P P' : N) (u U : nat), 1 <= u -> u <= U ->
     (T + N.of_nat u * P' <= N.of_nat u * (C + P))%N ->
     (T + N.of_nat U * P' <= N.of_nat U * (C + P))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros T C P P' u U Hu HuU Hbound.
+    assert (HuN : (1 <= N.of_nat u)%N) by lia.
+    assert (HuUN : (N.of_nat u <= N.of_nat U)%N) by lia.
+    assert (Hpotential : (P' <= C + P)%N) by nia.
+    pose proof (N.mul_le_mono_l P' (C + P) (N.of_nat U - N.of_nat u) Hpotential)
+      as Hextra.
+    nia.
+  Qed.
 
   Lemma F16_unit_pos : forall db, 1 <= D.unit db.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro db. unfold D.unit. nia.
+  Qed.
 
   (** Applying saved typed jobs never lowers the database's spending unit. *)
   Lemma run_apply_jobs_unit : forall p cp original js db,
@@ -13207,24 +14838,2266 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
               (env_of c binding))%N)
           (bindings cp c db)))
         (if nv then naive V.t cp else seminaive V.t cp)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma T4_check_plan_split : forall p cp,
     (T_check_plan p cp <= T_check_program p + T_check_shape p cp + k_check)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp.
+    assert (Hconstant : (2 <= k_check)%N) by (unfold k_check; lia).
+    time_unfold T_check_plan.
+    pose proof (Datatypes.T_andb_le (check_program p) (check_shape p cp)) as Hand.
+    lia.
+  Qed.
+
+  (** Set bits pay for carry propagation in a binary counter. *)
+  Fixpoint run_positive_credit (p : positive) : N :=
+    match p with
+    | xH => 1%N
+    | xO q => run_positive_credit q
+    | xI q => (1 + run_positive_credit q)%N
+    end.
+
+  Definition run_counter_credit (n : N) : N :=
+    match n with
+    | N0 => 0%N
+    | Npos p => run_positive_credit p
+    end.
+
+  Lemma run_positive_succ_amort : forall p,
+    (Pos.T_succ p + run_positive_credit (Pos.succ p) <=
+      2 + run_positive_credit p)%N.
+  Proof.
+    intro p. induction p as [p IH | p IH |]; time_unfold Pos.T_succ;
+      cbn [Pos.succ run_positive_credit]; lia.
+  Qed.
+
+  Lemma run_counter_succ_amort : forall n,
+    (N.T_succ n + run_counter_credit (N.succ n) <=
+      3 + run_counter_credit n)%N.
+  Proof.
+    intros [| p]; time_unfold N.T_succ; cbn [N.succ run_counter_credit].
+    - cbn [run_positive_credit]. lia.
+    - pose proof (run_positive_succ_amort p). lia.
+  Qed.
+
+  (** The checker converts unary positions to their binary values. *)
+  Lemma run_nat_n_spec : forall n, nat_n n = N.of_nat n.
+  Proof.
+    induction n as [| n IH].
+    - reflexivity.
+    - cbn [nat_n]. rewrite IH, Nat2N.inj_succ. reflexivity.
+  Qed.
+
+  (** The carries of unary-to-binary conversion have a linear total charge. *)
+  Lemma run_nat_n_amort : forall n,
+    (T_nat_n n + run_counter_credit (nat_n n) <= 4 * N.of_nat n + 1)%N.
+  Proof.
+    induction n as [| n IH].
+    - time_unfold T_nat_n. cbn [nat_n run_counter_credit]. lia.
+    - pose proof (run_counter_succ_amort (nat_n n)) as Hstep.
+      time_unfold T_nat_n. cbn [nat_n]. lia.
+  Qed.
+
+  Lemma run_nat_n_time : forall n, (T_nat_n n <= 4 * N.of_nat n + 1)%N.
+  Proof.
+    intro n. pose proof (run_nat_n_amort n). lia.
+  Qed.
+
+  (** Unary comparisons stop when their right operand stops. *)
+  Lemma run_nat_eqb_right : forall i j,
+    (Nat.T_eqb i j <= N.of_nat j + 1)%N.
+  Proof.
+    intro i. induction i as [| i IH]; intros [| j]; time_step.
+  Qed.
+
+  Lemma run_nat_leb_right : forall i j,
+    (Nat.T_leb i j <= N.of_nat j + 1)%N.
+  Proof.
+    intro i. induction i as [| i IH]; intros [| j]; time_step.
+  Qed.
+
+  Lemma run_positive_eqb_right : forall p q,
+    (Pos.T_eqb p q <= N.of_nat (Pos.size_nat q))%N.
+  Proof.
+    intro p. induction p as [p IH | p IH |]; intros [q | q |]; time_step.
+  Qed.
+
+  Lemma run_counter_eqb_right : forall n m,
+    (N.T_eqb n m <= N.of_nat (N.size_nat m) + 1)%N.
+  Proof.
+    intros [| p] [| q]; time_unfold N.T_eqb; cbn [N.size_nat]; try lia.
+    pose proof (run_positive_eqb_right p q). lia.
+  Qed.
+
+  (** Comparing position lists can be charged to the right list alone. *)
+  Lemma run_nats_eqb_time : forall a b,
+    (T_nats_eqb a b <= 2 * N.of_nat (run_positions_size b) + 1)%N.
+  Proof.
+    induction a as [| i a IH]; intros [| j b].
+    - time_unfold T_nats_eqb. change (1 <= 2 * N.of_nat 0 + 1)%N. lia.
+    - time_unfold T_nats_eqb. lia.
+    - time_unfold T_nats_eqb. change (1 <= 2 * N.of_nat 0 + 1)%N. lia.
+    - pose proof (run_nat_eqb_right i j) as Hcompare.
+      pose proof (IH b) as Htail. time_unfold T_nats_eqb.
+      destruct (Nat.eqb i j); time_cbn;
+        change (run_positions_size (j :: b)) with (j + 1 + run_positions_size b);
+        fold (run_positions_size b); lia.
+  Qed.
+
+  (** A slot check charges its input key and the supplied source number. *)
+  Lemma run_slot_matches_time : forall table f positions slot,
+    (T_slot_matches table f positions slot <=
+      32 * N.of_nat (Pos.size_nat f + run_positions_size positions + N.size_nat slot + 1))%N.
+  Proof.
+    intros table f positions slot.
+    pose proof (run_slot_code_time f positions) as Hcode.
+    pose proof (run_slot_code_bits f positions) as Hbits.
+    time_unfold T_slot_matches. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (slot_code f positions) table) as [[slot' [f' positions']] |].
+    - pose proof (run_counter_eqb_right slot' slot) as Hslot.
+      pose proof (run_positive_eqb_right f' f) as Hname.
+      pose proof (run_nats_eqb_time positions' positions) as Hpositions.
+      destruct (N.eqb slot' slot); destruct (Pos.eqb f' f); time_cbn; lia.
+    - time_cbn. lia.
+  Qed.
+
+  Lemma run_source_slot_time : forall newok (src : source V.t),
+    (T_source_slot newok src <= 3)%N.
+  Proof.
+    intros newok src. destruct src; destruct newok; time_unfold @T_source_slot; time_cbn; lia.
+  Qed.
+
+  (** Column ordering and range tests charge each unary position a constant number of times. *)
+  Lemma run_column_ok_time : forall n positions prev,
+    (T_column_ok n positions prev <=
+      8 * N.of_nat (run_positions_size positions) + 1)%N.
+  Proof.
+    intros n positions. induction positions as [| i positions IH]; intro prev.
+    - destruct prev; time_unfold T_column_ok; change (1 <= 8 * N.of_nat 0 + 1)%N; lia.
+    - pose proof (Nat.T_leb_le (S i) n) as Hrange.
+      pose proof (IH (Some i)) as Htail.
+      time_unfold T_column_ok.
+      change (run_positions_size (i :: positions)) with
+        (i + 1 + run_positions_size positions).
+      destruct prev as [p |].
+      + pose proof (run_nat_leb_right (S p) i) as Habove.
+        destruct (Nat.leb (S p) i); destruct (Nat.leb (S i) n); time_cbn; lia.
+      + destruct (Nat.leb (S i) n); time_cbn; lia.
+  Qed.
+
+  (** Validating a permutation charges its stored unary positions. *)
+  Lemma run_perm_ok_time : forall width positions seen,
+    (T_perm_ok width positions seen <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (run_positions_size positions + 1))%N.
+  Proof.
+    intros width positions. induction positions as [| i positions IH]; intro seen.
+    - time_unfold T_perm_ok.
+      change (1 <= 16 * (PTrieT.c_trie + 1) * N.of_nat (0 + 1))%N. nia.
+    - pose proof (run_nat_code_time i) as Hcode.
+      pose proof (Nat.T_leb_le (S i) width) as Hrange.
+      pose proof (PTrieT.T_set_le unit (nat_code i) tt seen) as Hset.
+      rewrite run_nat_code_bits in Hset.
+      pose proof (IH (PTrieCode.set (nat_code i) tt seen)) as Htail.
+      time_unfold T_perm_ok. rewrite PTrieT.trie_get_clock, run_nat_code_bits.
+      change (run_positions_size (i :: positions)) with
+        (i + 1 + run_positions_size positions).
+      destruct (trie_get (nat_code i) seen); destruct (Nat.leb (S i) width);
+        time_cbn; nia.
+  Qed.
+
+  Definition run_vars_size (vars : list positive) : nat :=
+    fold_right (fun x n => Pos.size_nat x + 1 + n) 0 vars.
+
+  (** Name validation pays the name bits and amortized ordinal increments. *)
+  Lemma run_var_table_time : forall vars j table,
+    (T_var_table vars j table <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (run_vars_size vars + 1) +
+      run_counter_credit j)%N.
+  Proof.
+    induction vars as [| x vars IH]; intros j table.
+    - time_unfold T_var_table.
+      change (1 <= 16 * (PTrieT.c_trie + 1) * N.of_nat (0 + 1) +
+        run_counter_credit j)%N. nia.
+    - pose proof (run_counter_succ_amort j) as Hstep.
+      pose proof (PTrieT.T_set_le N x j table) as Hset.
+      pose proof (IH (N.succ j) (PTrieCode.set x j table)) as Htail.
+      time_unfold T_var_table. rewrite PTrieT.trie_get_clock.
+      change (run_vars_size (x :: vars)) with (Pos.size_nat x + 1 + run_vars_size vars).
+      destruct (trie_get x table); time_cbn; nia.
+  Qed.
+
+  (** Declaration widths read each name and its list of argument sorts once. *)
+  Lemma run_decl_widths_time : forall ds table,
+    (T_decl_widths ds table <= 16 * (PTrieT.c_trie + 1) *
+      N.of_nat (fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + 1))%N.
+  Proof.
+    induction ds as [| [f ss out] ds IH]; intro table.
+    - time_unfold T_decl_widths. cbn [fold_right]. nia.
+    - pose proof (Datatypes.T_length_le ss) as Hlength.
+      pose proof (PTrieT.T_set_le nat f (length ss) table) as Hrelset.
+      pose proof (PTrieT.T_set_le nat f (S (length ss)) table) as Hfunset.
+      pose proof (IH table) as Hkeep.
+      pose proof (IH (PTrieCode.set f (length ss) table)) as Hrel.
+      pose proof (IH (PTrieCode.set f (S (length ss)) table)) as Hfun.
+      change (fold_right (fun d n => decl_bits d + n) 0 (Decl f ss out :: ds)) with
+        (Pos.size_nat f + length ss + 1 + fold_right (fun d n => decl_bits d + n) 0 ds).
+      time_unfold T_decl_widths. rewrite PTrieT.trie_get_clock.
+      destruct (trie_get f table); destruct out; time_cbn; nia.
+  Qed.
+
+  Definition run_slot_syntax_size (sl : list (positive * list nat)) : nat :=
+    fold_right (fun slot n =>
+      Pos.size_nat (fst slot) + run_positions_size (snd slot) + 1 + n) 0 sl.
+
+  (** Slot validation pays the stored names and unary permutation positions. *)
+  Lemma run_slot_table_time : forall widths sl next table,
+    (T_slot_table widths sl next table <= 128 * (PTrieT.c_trie + 1) *
+      N.of_nat (run_slot_syntax_size sl + 1) + run_counter_credit next)%N.
+  Proof.
+    intros widths sl. induction sl as [| [f perm] sl IH]; intros next table.
+    - time_unfold T_slot_table. change
+        (1 <= 128 * (PTrieT.c_trie + 1) * N.of_nat (0 + 1) +
+          run_counter_credit next)%N. nia.
+    - pose proof (run_counter_succ_amort next) as Hnext.
+      pose proof (run_slot_code_time f perm) as Hcode.
+      pose proof (run_slot_code_bits f perm) as Hbits.
+      pose proof (PTrieT.T_set_le (N * (positive * list nat))
+        (slot_code f perm) (next, (f, perm)) table) as Hset.
+      change (PTrieCode.T_set (slot_code f perm) (next, (f, perm)) table <=
+        PTrieT.c_trie * N.of_nat (Pos.size_nat (slot_code f perm) + 1))%N in Hset.
+      assert (Hset_bound : (PTrieCode.T_set (slot_code f perm) (next, (f, perm)) table <=
+        3 * (PTrieT.c_trie + 1) *
+          N.of_nat (Pos.size_nat f + run_positions_size perm + 1))%N).
+      { clear -Hbits Hset. nia. }
+      clear Hset.
+      assert (Hbudget :
+        (1 + 2 * N.of_nat (Pos.size_nat f) +
+          16 * (PTrieT.c_trie + 1) * N.of_nat (run_positions_size perm + 1) +
+          8 * N.of_nat (Pos.size_nat f + run_positions_size perm + 1) +
+          2 * N.of_nat (Pos.size_nat (slot_code f perm)) + 3 +
+          3 * (PTrieT.c_trie + 1) * N.of_nat (Pos.size_nat f + run_positions_size perm + 1) +
+          128 * (PTrieT.c_trie + 1) * N.of_nat (run_slot_syntax_size sl + 1) <=
+          128 * (PTrieT.c_trie + 1) *
+            N.of_nat (Pos.size_nat f + run_positions_size perm + 1 + run_slot_syntax_size sl + 1))%N).
+      { clear -Hbits. nia. }
+      pose proof (IH (N.succ next) table) as Hkeep.
+      pose proof (IH (N.succ next)
+        (PTrieCode.set (slot_code f perm) (next, (f, perm)) table)) as Hnew.
+      change (run_slot_syntax_size ((f, perm) :: sl)) with
+        (Pos.size_nat f + run_positions_size perm + 1 + run_slot_syntax_size sl).
+      time_unfold T_slot_table. rewrite !PTrieT.trie_get_clock.
+      destruct (trie_get f widths) as [width |].
+      + pose proof (run_perm_ok_time width perm Empty) as Hperm.
+        destruct (perm_ok width perm Empty);
+          destruct (trie_get (slot_code f perm) table); time_cbn;
+          fold (run_slot_syntax_size sl) (run_positions_size perm); lia.
+      + time_cbn. fold (run_slot_syntax_size sl) (run_positions_size perm). lia.
+  Qed.
+
+  (** Binary widths have a quadratic bound in their unary values. *)
+  Lemma run_positive_bits_value : forall p, Pos.size_nat p <= Pos.to_nat p.
+  Proof.
+    intro p. induction p as [p IH | p IH |]; cbn [Pos.size_nat].
+    - rewrite Pos2Nat.inj_xI. lia.
+    - rewrite Pos2Nat.inj_xO. pose proof (Pos2Nat.is_pos p). lia.
+    - reflexivity.
+  Qed.
+
+  Lemma run_positive_bits_square : forall p,
+    Pos.size_nat p * Pos.size_nat p <= 3 * Pos.to_nat p.
+  Proof.
+    intro p. induction p as [p IH | p IH |]; cbn [Pos.size_nat].
+    - rewrite Pos2Nat.inj_xI. pose proof (run_positive_bits_value p).
+      pose proof (Pos2Nat.is_pos p). nia.
+    - rewrite Pos2Nat.inj_xO. pose proof (run_positive_bits_value p).
+      pose proof (Pos2Nat.is_pos p). nia.
+    - cbn [Pos.to_nat]. lia.
+  Qed.
+
+  Lemma run_counter_bits_value : forall n, N.size_nat n <= N.to_nat n.
+  Proof.
+    intros [| p]; [reflexivity | apply run_positive_bits_value].
+  Qed.
+
+  Lemma run_positive_succ_bits : forall p,
+    Pos.size_nat p <= Pos.size_nat (Pos.succ p).
+  Proof.
+    intro p. induction p as [p IH | p IH |]; cbn [Pos.size_nat Pos.succ]; lia.
+  Qed.
+
+  Lemma run_counter_key_bits_lower : forall n,
+    N.size_nat n <= Pos.size_nat (N.succ_pos n).
+  Proof.
+    intros [| p]; [cbn; lia | apply run_positive_succ_bits].
+  Qed.
+
+  Lemma run_counter_key_value : forall n,
+    Pos.to_nat (N.succ_pos n) = N.to_nat n + 1.
+  Proof.
+    intro n. pose proof (f_equal N.to_nat (N.succ_pos_spec n)) as H.
+    rewrite N2Nat.inj_succ in H. cbn [N.to_nat] in H. lia.
+  Qed.
+
+  Lemma run_position_key_value : forall n,
+    Pos.to_nat (N.succ_pos (nat_n n)) = n + 1.
+  Proof.
+    intro n. rewrite run_counter_key_value, run_nat_n_spec, Nat2N.id. reflexivity.
+  Qed.
+
+  Lemma run_position_key_inj : forall n m,
+    N.succ_pos (nat_n n) = N.succ_pos (nat_n m) -> n = m.
+  Proof.
+    intros n m H. apply (f_equal Pos.to_nat) in H.
+    rewrite !run_position_key_value in H. lia.
+  Qed.
+
+  (** The distinct-variable counter retains the credit released by its carries. *)
+  Lemma run_column_perm_time : forall inv positions used count,
+    (T_column_perm inv positions used count +
+      match column_perm inv positions used count with
+      | Some (_, _, count') => run_counter_credit count'
+      | None => 0
+      end <=
+      64 * (PTrieT.c_trie + 1) * N.of_nat (run_positions_size positions + 1) +
+      run_counter_credit count)%N.
+  Proof.
+    intros inv positions. induction positions as [| i positions IH]; intros used count.
+    - time_unfold T_column_perm. cbn [column_perm].
+      change (1 + run_counter_credit count <=
+        64 * (PTrieT.c_trie + 1) * N.of_nat (0 + 1) + run_counter_credit count)%N.
+      nia.
+    - pose proof (run_nat_n_time i) as Hnat.
+      pose proof (N.T_succ_pos_le (nat_n i)) as Hcode.
+      pose proof (run_counter_bits_value (nat_n i)) as Hvalue.
+      assert (Hnatvalue : N.to_nat (nat_n i) = i) by
+        (rewrite run_nat_n_spec, Nat2N.id; reflexivity).
+      rewrite Hnatvalue in Hvalue.
+      pose proof (run_positive_bits_value (N.succ_pos (nat_n i))) as Hbits.
+      rewrite run_position_key_value in Hbits.
+      pose proof (PTrieT.T_set_le unit (N.succ_pos (nat_n i)) tt used) as Hset.
+      assert (Hset_bound : (PTrieCode.T_set (N.succ_pos (nat_n i)) tt used <=
+        PTrieT.c_trie * N.of_nat (i + 2))%N).
+      { change (PTrieCode.T_set (N.succ_pos (nat_n i)) tt used <=
+          PTrieT.c_trie * N.of_nat (Pos.size_nat (N.succ_pos (nat_n i)) + 1))%N in Hset.
+        clear -Hset Hbits. nia. }
+      clear Hset.
+      assert (Hbudget :
+        (1 + (4 * N.of_nat i + 1) + (N.of_nat i + 1) + 4 * N.of_nat (i + 1) +
+          PTrieT.c_trie * N.of_nat (i + 2) + 3 +
+          64 * (PTrieT.c_trie + 1) * N.of_nat (run_positions_size positions + 1) <=
+          64 * (PTrieT.c_trie + 1) * N.of_nat (i + 1 + run_positions_size positions + 1))%N).
+      { clear. nia. }
+      pose proof (run_counter_succ_amort count) as Hcount.
+      pose proof (IH (PTrieCode.set (N.succ_pos (nat_n i)) tt used) count) as Hkeep.
+      pose proof (IH (PTrieCode.set (N.succ_pos (nat_n i)) tt used) (N.succ count)) as Hnew.
+      change (run_positions_size (i :: positions)) with
+        (i + 1 + run_positions_size positions).
+      time_unfold T_column_perm. rewrite !PTrieT.trie_get_clock.
+      cbn [column_perm].
+      destruct (trie_get (N.succ_pos (nat_n i)) inv) as [pos |];
+        [| time_cbn; fold (run_positions_size positions); lia].
+      destruct (trie_get (N.succ_pos (nat_n i)) used).
+      + clear Hnew Hcount. destruct (column_perm inv positions
+          (PTrieCode.set (N.succ_pos (nat_n i)) tt used) count)
+          as [[ [perm used'] count'] |]; time_cbn;
+          fold (run_positions_size positions); lia.
+      + clear Hkeep. destruct (column_perm inv positions
+          (PTrieCode.set (N.succ_pos (nat_n i)) tt used) (N.succ count))
+          as [[ [perm used'] count'] |]; time_cbn;
+          fold (run_positions_size positions); lia.
+  Qed.
+
+  Lemma run_width_product : forall m p,
+    m * Pos.size_nat p <= m * m + 3 * Pos.to_nat p.
+  Proof.
+    intros m p. pose proof (run_positive_bits_square p) as Hsquare.
+    assert (Horder : m <= Pos.size_nat p \/ Pos.size_nat p <= m) by lia.
+    destruct Horder; nia.
+  Qed.
+
+  (** A rising column gives the lower bound for its next position. *)
+  Fixpoint run_rising (lower : nat) (positions : list nat) : Prop :=
+    match positions with
+    | [] => True
+    | i :: rest => lower <= i /\ run_rising (S i) rest
+    end.
+
+  Lemma run_rising_lower : forall positions lower i,
+    run_rising lower positions -> In i positions -> lower <= i.
+  Proof.
+    induction positions as [| j positions IH]; intros lower i Hrise Hin.
+    - contradiction.
+    - cbn [run_rising] in Hrise. destruct Hrise as [Hlower Htail].
+      destruct Hin as [<- | Hin]; [exact Hlower |].
+      pose proof (IH (S j) i Htail Hin). lia.
+  Qed.
+
+  Lemma run_rising_nodup : forall positions lower,
+    run_rising lower positions -> NoDup positions.
+  Proof.
+    induction positions as [| i positions IH]; intros lower Hrise.
+    - constructor.
+    - cbn [run_rising] in Hrise. destruct Hrise as [Hlower Htail].
+      constructor.
+      + intro Hin. pose proof (run_rising_lower positions (S i) i Htail Hin). lia.
+      + now apply (IH (S i)).
+  Qed.
+
+  Lemma run_rising_size : forall positions lower,
+    run_rising lower positions ->
+    length positions * (length positions + 2 * lower + 1) <=
+      2 * run_positions_size positions.
+  Proof.
+    induction positions as [| i positions IH]; intros lower Hrise.
+    - change (0 <= 0). lia.
+    - cbn [run_rising] in Hrise. destruct Hrise as [Hlower Htail].
+      pose proof (IH (S i) Htail) as Hsize.
+      change (run_positions_size (i :: positions)) with
+        (i + 1 + run_positions_size positions).
+      cbn [length]. nia.
+  Qed.
+
+  Lemma run_column_ok_rising : forall n positions prev,
+    column_ok n positions prev = true ->
+    run_rising (match prev with None => 0 | Some p => S p end) positions.
+  Proof.
+    intros n positions. induction positions as [| i positions IH]; intros prev Hcheck.
+    - exact I.
+    - destruct prev as [p |]; cbn [column_ok] in Hcheck.
+      + destruct (Nat.leb (S p) i) eqn:Habove; [| discriminate].
+        destruct (Nat.leb (S i) n) eqn:Hrange; [| discriminate].
+        cbn [run_rising]. split.
+        * now apply Nat.leb_le.
+        * now apply (IH (Some i)).
+      + destruct (Nat.leb (S i) n) eqn:Hrange; [| discriminate].
+        cbn [run_rising]. split; [lia |]. now apply (IH (Some i)).
+  Qed.
+
+  Lemma run_column_ok_nodup : forall n positions,
+    column_ok n positions None = true -> NoDup positions.
+  Proof.
+    intros n positions H. apply (run_rising_nodup positions 0).
+    exact (run_column_ok_rising n positions None H).
+  Qed.
+
+  Lemma run_column_ok_quadratic : forall n positions,
+    column_ok n positions None = true ->
+    length positions * length positions <= 2 * run_positions_size positions.
+  Proof.
+    intros n positions H. pose proof (run_column_ok_rising n positions None H) as Hrising.
+    pose proof (run_rising_size positions 0 Hrising). nia.
+  Qed.
+
+  (** Every accepted column key was found in the inverse table. *)
+  Lemma run_column_perm_domain : forall inv positions used count perm used' count',
+    column_perm inv positions used count = Some (perm, used', count') ->
+    forall i, In i positions -> exists pos,
+      trie_get (N.succ_pos (nat_n i)) inv = Some pos.
+  Proof.
+    intros inv positions. induction positions as [| i positions IH];
+      intros used count perm used' count' Hcheck j Hin.
+    - contradiction.
+    - cbn [column_perm] in Hcheck.
+      destruct (trie_get (N.succ_pos (nat_n i)) inv) as [pos |] eqn:Hget;
+        [| discriminate].
+      destruct (column_perm inv positions
+        (PTrieCode.set (N.succ_pos (nat_n i)) tt used)
+        (match trie_get (N.succ_pos (nat_n i)) used with
+         | Some _ => count | None => N.succ count end))
+        as [[ [perm1 used1] count1] |] eqn:Htail; [| discriminate].
+      destruct Hin as [<- | Hin].
+      + now exists pos.
+      + eapply IH; eauto.
+  Qed.
+
+  Lemma run_trie_set_domain : forall A (inv : ptrie A) key value q result,
+    trie_get q (PTrieCode.set key value inv) = Some result ->
+    q = key \/ trie_get q inv = Some result.
+  Proof.
+    intros A inv key value q result Hget. destruct (Pos.eq_dec q key) as [Heq | Hneq].
+    - now left.
+    - right. rewrite PTrie.get_set_other in Hget by exact Hneq. exact Hget.
+  Qed.
+
+  Lemma run_trie_domain_cons : forall (inv inv' : ptrie nat) key value keys,
+    (forall q pos, trie_get q inv' = Some pos ->
+      In q keys \/ exists old, trie_get q (PTrieCode.set key value inv) = Some old) ->
+    forall q pos, trie_get q inv' = Some pos ->
+      In q (key :: keys) \/ exists old, trie_get q inv = Some old.
+  Proof.
+    intros inv inv' key value keys Hdomain q pos Hget.
+    destruct (Hdomain q pos Hget) as [Hin | [old Hold]].
+    - left. now right.
+    - destruct (run_trie_set_domain nat inv key value q old Hold) as [Heq | Hprevious].
+      + left. now left.
+      + right. now exists old.
+  Qed.
+
+  Lemma run_position_keys_nodup : forall positions,
+    NoDup positions -> NoDup (map (fun i => N.succ_pos (nat_n i)) positions).
+  Proof.
+    intros positions Hnodup. induction Hnodup as [| i positions Hnotin Hnodup IH].
+    - constructor.
+    - cbn [map]. constructor; [| exact IH].
+      intro Hin. apply in_map_iff in Hin. destruct Hin as [j [Heq Hin]].
+      apply run_position_key_inj in Heq. subst j. contradiction.
+  Qed.
+
+  (** Equal-length distinct column keys account for the complete insertion list. *)
+  Lemma run_inverse_keys_permutation : forall inv positions keys n used count perm used' count',
+    column_ok n positions None = true ->
+    length keys = length positions ->
+    (forall key pos, trie_get key inv = Some pos -> In key keys) ->
+    column_perm inv positions used count = Some (perm, used', count') ->
+    Permutation keys (map (fun i => N.succ_pos (nat_n i)) positions).
+  Proof.
+    intros inv positions keys n used count perm used' count'
+      Hcolumn Hlength Hdomain Hperm.
+    apply Permutation_sym. apply NoDup_Permutation_bis.
+    - apply run_position_keys_nodup. now apply (run_column_ok_nodup n).
+    - rewrite length_map. lia.
+    - intros key Hin. apply in_map_iff in Hin. destruct Hin as [i [<- Hin]].
+      destruct (run_column_perm_domain inv positions used count perm used' count'
+        Hperm i Hin) as [pos Hget].
+      exact (Hdomain _ _ Hget).
+  Qed.
+
+  Definition run_key_size (keys : list positive) : nat :=
+    fold_right (fun key n => Pos.size_nat key + 1 + n) 0 keys.
+
+  Lemma run_key_size_permutation : forall keys keys',
+    Permutation keys keys' -> run_key_size keys = run_key_size keys'.
+  Proof.
+    intros keys keys' Hperm. induction Hperm.
+    - reflexivity.
+    - change (run_key_size (x :: l)) with (Pos.size_nat x + 1 + run_key_size l).
+      change (run_key_size (x :: l')) with (Pos.size_nat x + 1 + run_key_size l').
+      lia.
+    - change (run_key_size (y :: x :: l)) with
+        (Pos.size_nat y + 1 + (Pos.size_nat x + 1 + run_key_size l)).
+      change (run_key_size (x :: y :: l)) with
+        (Pos.size_nat x + 1 + (Pos.size_nat y + 1 + run_key_size l)).
+      lia.
+    - lia.
+  Qed.
+
+  Lemma run_position_keys_size : forall positions,
+    run_key_size (map (fun i => N.succ_pos (nat_n i)) positions) <=
+      2 * run_positions_size positions.
+  Proof.
+    induction positions as [| i positions IH].
+    - change (0 <= 0). lia.
+    - pose proof (run_positive_bits_value (N.succ_pos (nat_n i))) as Hbits.
+      rewrite run_position_key_value in Hbits.
+      change (run_key_size (map (fun j => N.succ_pos (nat_n j)) (i :: positions))) with
+        (Pos.size_nat (N.succ_pos (nat_n i)) + 1 +
+          run_key_size (map (fun j => N.succ_pos (nat_n j)) positions)).
+      change (run_positions_size (i :: positions)) with
+        (i + 1 + run_positions_size positions). lia.
+  Qed.
+
+  Lemma run_inverse_keys_size : forall inv positions keys n used count perm used' count',
+    column_ok n positions None = true ->
+    length keys = length positions ->
+    (forall key pos, trie_get key inv = Some pos -> In key keys) ->
+    column_perm inv positions used count = Some (perm, used', count') ->
+    run_key_size keys <= 2 * run_positions_size positions.
+  Proof.
+    intros inv positions keys n used count perm used' count' Hcolumn Hlength Hdomain Hperm.
+    pose proof (run_inverse_keys_permutation inv positions keys n used count perm used' count'
+      Hcolumn Hlength Hdomain Hperm) as Hkeys.
+    rewrite (run_key_size_permutation keys _ Hkeys). apply run_position_keys_size.
+  Qed.
+
+  (** The public checker clock follows from a proved shape clock. *)
+  Lemma run_check_plan_from_shape : forall p cp,
+    (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
+      N.of_nat (wbits p + 1))%N ->
+    (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
+      N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros p cp Hshape.
+    pose proof (T4_check_plan_split p cp) as Hsplit.
+    pose proof (Sorts.T_check_program_le V.t p) as Hprogram.
+    change (T_check_program p <= c_sorts * N.of_nat (size_program p + 1))%N in Hprogram.
+    assert (Hcoefficient : (c_sorts + 2 * k_check <= c_run)%N).
+    { unfold c_sorts, k_check, c_run. lia. }
+    set (text := N.of_nat (size_program p + size_compiled cp + 1)).
+    set (width := N.of_nat (wbits p + 1)).
+    assert (Htext : (1 <= text)%N) by (unfold text; lia).
+    assert (Hwidth : (1 <= width)%N) by (unfold width; lia).
+    assert (Hprogram_text : (N.of_nat (size_program p + 1) <= text)%N)
+      by (unfold text; lia).
+    assert (Hprogram_budget : (N.of_nat (size_program p + 1) <= text * width)%N) by nia.
+    assert (Hone : (1 <= text * width)%N) by nia.
+    assert (Htotal : (T_check_plan p cp <= (c_sorts + 2 * k_check) * (text * width))%N).
+    { fold text width in Hshape. nia. }
+    fold text width. nia.
+  Qed.
+  Definition run_sources_size (srcs : list (source V.t)) : nat :=
+    fold_right (fun src m => match src with
+      | All _ i | New _ i => N.size_nat i + 1 + m
+      | Const _ value => cell_bits V.encode value + 1 + m
+      end) 0 srcs.
+
+  Definition run_columns_size (columns : list (list nat)) : nat :=
+    fold_right (fun col m => run_positions_size col + 1 + m) 0 columns.
+
+  Definition run_payload_size (srcs : list (source V.t)) (columns : list (list nat)) : nat :=
+    run_sources_size srcs + run_columns_size columns.
+
+  Definition run_check_term_width (width : nat) (t : term V.t) : Prop :=
+    match t with
+    | Var x => Pos.size_nat x <= width
+    | Lit _ => True
+    end.
+
+  Lemma run_trie_set_time : forall A key (value : A) table,
+    (PTrieCode.T_set key value table <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat key + 1))%N.
+  Proof.
+    intros A key value table. apply PTrieT.T_set_le.
+  Qed.
+
+  (** Successful term checks retain the unused literal-source and column resources. *)
+  Lemma run_check_terms_success_time : forall names ts width pos seen copy inv srcs columns
+      copied copy' inv' srcs' columns' copied',
+    Forall (run_check_term_width width) ts ->
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    exists keys,
+      length keys = length ts /\
+      (forall key position, trie_get key inv' = Some position ->
+        In key keys \/ exists old, trie_get key inv = Some old) /\
+      (T_check_terms V.eqb V.T_eqb names ts pos seen copy inv srcs columns copied +
+        64 * (V.c_key + PTrieT.c_trie + 1) *
+          N.of_nat ((width + 1) * run_payload_size srcs' columns') <=
+       64 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat (length ts * (width + 1) + run_key_size keys +
+          (width + 1) * run_payload_size srcs columns + 1))%N.
+  Proof.
+    intros names ts. induction ts as [| t ts IH];
+      intros width pos seen copy inv srcs columns copied copy' inv' srcs' columns' copied'
+        Hwidth Hcheck.
+    - cbn [check_terms] in Hcheck. inversion Hcheck; subst.
+      exists []. split; [reflexivity |]. split.
+      + intros key position Hget. right. now exists position.
+      + time_unfold @T_check_terms. change (run_key_size []) with 0.
+        cbn [length]. nia.
+    - inversion Hwidth as [| t0 ts0 Hterm Htail]; subst.
+      destruct t as [x | value]; cbn [check_terms] in Hcheck.
+      + cbn [run_check_term_width] in Hterm.
+        destruct (trie_get x seen) as [present |] eqn:Hseen.
+        * destruct (IH width (S pos) seen (N.succ copy)
+            (PTrieCode.set (N.succ_pos copy) pos inv) srcs columns true
+            copy' inv' srcs' columns' copied' Htail Hcheck)
+            as [keys [Hlength [Hdomain Hclock]]].
+          exists (N.succ_pos copy :: keys). split.
+          -- cbn [length]. lia.
+          -- split.
+             ++ eapply run_trie_domain_cons. exact Hdomain.
+             ++ assert (Hlocal :
+                  (1 + 2 * N.of_nat (Pos.size_nat x) + N.T_succ copy +
+                    N.T_succ_pos copy + PTrieCode.T_set (N.succ_pos copy) pos inv <=
+                    64 * (V.c_key + PTrieT.c_trie + 1) *
+                      N.of_nat (width + 1 + (Pos.size_nat (N.succ_pos copy) + 1)))%N).
+                { pose proof (run_trie_set_time nat (N.succ_pos copy) pos inv) as Hset.
+                  pose proof (N.T_succ_le copy) as Hsucc.
+                  pose proof (N.T_succ_pos_le copy) as Hcode.
+                  pose proof (run_counter_key_bits_lower copy) as Hbits.
+                  clear -Hterm Hset Hsucc Hcode Hbits. nia. }
+                time_unfold @T_check_terms. rewrite Hseen, PTrieT.trie_get_clock.
+                change (run_key_size (N.succ_pos copy :: keys)) with
+                  (Pos.size_nat (N.succ_pos copy) + 1 + run_key_size keys).
+                cbn [length]. clear -Hclock Hlocal. nia.
+        * destruct (trie_get x names) as [ordinal |] eqn:Hname; [| discriminate].
+          destruct (IH width (S pos) (PTrieCode.set x tt seen) copy
+            (PTrieCode.set (N.succ_pos ordinal) pos inv) srcs columns copied
+            copy' inv' srcs' columns' copied' Htail Hcheck)
+            as [keys [Hlength [Hdomain Hclock]]].
+          exists (N.succ_pos ordinal :: keys). split.
+          -- cbn [length]. lia.
+          -- split.
+             ++ eapply run_trie_domain_cons. exact Hdomain.
+             ++ assert (Hlocal :
+                  (1 + 4 * N.of_nat (Pos.size_nat x) + PTrieCode.T_set x tt seen +
+                    N.T_succ_pos ordinal + PTrieCode.T_set (N.succ_pos ordinal) pos inv <=
+                    64 * (V.c_key + PTrieT.c_trie + 1) *
+                      N.of_nat (width + 1 + (Pos.size_nat (N.succ_pos ordinal) + 1)))%N).
+                { pose proof (run_trie_set_time unit x tt seen) as Hseen_set.
+                  pose proof (run_trie_set_time nat (N.succ_pos ordinal) pos inv) as Hset.
+                  pose proof (N.T_succ_pos_le ordinal) as Hcode.
+                  pose proof (run_counter_key_bits_lower ordinal) as Hbits.
+                  clear -Hterm Hseen_set Hset Hcode Hbits. nia. }
+                time_unfold @T_check_terms. rewrite Hseen, Hname, !PTrieT.trie_get_clock.
+                change (run_key_size (N.succ_pos ordinal :: keys)) with
+                  (Pos.size_nat (N.succ_pos ordinal) + 1 + run_key_size keys).
+                cbn [length]. clear -Hclock Hlocal. nia.
+      + destruct srcs as [| src srcs]; [discriminate |].
+        destruct src as [slot | slot | cell]; [discriminate | discriminate |].
+        destruct cell as [identifier | stored]; [discriminate |].
+        destruct columns as [| column columns]; [discriminate |].
+        destruct column as [| i [| j rest]]; try discriminate.
+        destruct (V.eqb stored value) eqn:Hvalue; [| discriminate].
+        destruct (IH width (S pos) seen copy
+          (PTrieCode.set (N.succ_pos (nat_n i)) pos inv) srcs columns copied
+          copy' inv' srcs' columns' copied' Htail Hcheck)
+          as [keys [Hlength [Hdomain Hclock]]].
+        exists (N.succ_pos (nat_n i) :: keys). split.
+        * cbn [length]. lia.
+        * split.
+          -- eapply run_trie_domain_cons. exact Hdomain.
+          -- assert (Hlocal :
+               (1 + V.T_eqb stored value + T_nat_n i + N.T_succ_pos (nat_n i) +
+                 PTrieCode.T_set (N.succ_pos (nat_n i)) pos inv <=
+                 64 * (V.c_key + PTrieT.c_trie + 1) *
+                   N.of_nat (width + 1 + (Pos.size_nat (N.succ_pos (nat_n i)) + 1) +
+                     (S (V.bits stored) + 1) + (i + 1 + 1)))%N).
+             { pose proof (V.T_eqb_le stored value) as Hcompare.
+               pose proof (run_nat_n_time i) as Hnat.
+               pose proof (N.T_succ_pos_le (nat_n i)) as Hcode.
+               pose proof (run_counter_key_bits_lower (nat_n i)) as Hbits.
+               pose proof (run_trie_set_time nat (N.succ_pos (nat_n i)) pos inv) as Hset.
+               clear -Hcompare Hnat Hcode Hbits Hset. nia. }
+             time_unfold @T_check_terms. rewrite Hvalue.
+             change (run_key_size (N.succ_pos (nat_n i) :: keys)) with
+               (Pos.size_nat (N.succ_pos (nat_n i)) + 1 + run_key_size keys).
+             unfold run_payload_size in Hclock |- *.
+             change (run_sources_size (Const V.t (Val stored) :: srcs)) with
+               (S (V.bits stored) + 1 + run_sources_size srcs).
+             change (run_columns_size ([i] :: columns)) with
+               (i + 1 + 0 + 1 + run_columns_size columns).
+             cbn [length]. clear -Hclock Hlocal. lia.
+  Qed.
+
+  Definition run_key_width (upper : nat) : nat :=
+    Pos.size_nat (N.succ_pos (N.of_nat upper)).
+
+  Lemma run_counter_key_monotone : forall n m,
+    N.to_nat n <= N.to_nat m ->
+    Pos.size_nat (N.succ_pos n) <= Pos.size_nat (N.succ_pos m).
+  Proof.
+    intros n m Hle.
+    destruct (Pos.eq_dec (N.succ_pos n) (N.succ_pos m)) as [Heq | Hneq].
+    - now rewrite Heq.
+    - apply Pos.size_nat_monotone. apply Pos2Nat.inj_lt.
+      assert (Hvalues : Pos.to_nat (N.succ_pos n) <> Pos.to_nat (N.succ_pos m)).
+      { intro H. apply Hneq. now apply Pos2Nat.inj. }
+      rewrite !run_counter_key_value in *. lia.
+  Qed.
+
+  Lemma run_counter_key_bound : forall n upper,
+    N.to_nat n <= upper ->
+    N.size_nat n <= run_key_width upper /\
+    Pos.size_nat (N.succ_pos n) <= run_key_width upper.
+  Proof.
+    intros n upper Hbound.
+    assert (Hkey : Pos.size_nat (N.succ_pos n) <= run_key_width upper).
+    { unfold run_key_width. apply run_counter_key_monotone. now rewrite Nat2N.id. }
+    pose proof (run_counter_key_bits_lower n). lia.
+  Qed.
+
+  Lemma run_key_width_product : forall m upper,
+    m * run_key_width upper <= m * m + 3 * (upper + 1).
+  Proof.
+    intros m upper. pose proof (run_width_product m (N.succ_pos (N.of_nat upper))) as H.
+    rewrite run_counter_key_value, Nat2N.id in H. exact H.
+  Qed.
+
+  (** A first failing term traversal may use the variable-count allowance once. *)
+  Lemma run_check_terms_bounded_time : forall names ts width upper pos seen copy inv srcs columns copied,
+    Forall (run_check_term_width width) ts ->
+    (forall x ordinal, trie_get x names = Some ordinal -> N.to_nat ordinal <= upper) ->
+    N.to_nat copy + length ts <= upper ->
+    (T_check_terms V.eqb V.T_eqb names ts pos seen copy inv srcs columns copied <=
+      64 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat (length ts * (width + run_key_width upper + 1) +
+          run_payload_size srcs columns + 1))%N.
+  Proof.
+    intros names ts. induction ts as [| t ts IH];
+      intros width upper pos seen copy inv srcs columns copied Hwidth Hnames Hcopy.
+    - time_unfold @T_check_terms. cbn [length]. nia.
+    - inversion Hwidth as [| t0 ts0 Hterm Htail]; subst.
+      assert (Hcopy_tail : N.to_nat copy + length ts <= upper) by (cbn [length] in Hcopy; lia).
+      assert (Hcopy_value : N.to_nat copy <= upper) by lia.
+      destruct (run_counter_key_bound copy upper Hcopy_value) as [Hcopy_bits Hcopy_key].
+      destruct t as [x | value].
+      + cbn [run_check_term_width] in Hterm.
+        pose proof (N.T_succ_le copy) as Hsucc.
+        pose proof (N.T_succ_pos_le copy) as Hcode.
+        pose proof (run_trie_set_time nat (N.succ_pos copy) pos inv) as Hset.
+        assert (Hduplicate :
+          (1 + 2 * N.of_nat (Pos.size_nat x) + N.T_succ copy +
+            N.T_succ_pos copy + PTrieCode.T_set (N.succ_pos copy) pos inv <=
+            64 * (V.c_key + PTrieT.c_trie + 1) *
+              N.of_nat (width + run_key_width upper + 1))%N).
+        { clear -Hterm Hsucc Hcode Hset Hcopy_bits Hcopy_key. nia. }
+        time_unfold @T_check_terms. rewrite !PTrieT.trie_get_clock.
+        destruct (trie_get x seen) as [present |] eqn:Hseen.
+        * assert (Hcopy_step : N.to_nat (N.succ copy) + length ts <= upper).
+          { rewrite N2Nat.inj_succ. cbn [length] in Hcopy. lia. }
+          pose proof (IH width upper (S pos) seen (N.succ copy)
+            (PTrieCode.set (N.succ_pos copy) pos inv) srcs columns true
+            Htail Hnames Hcopy_step) as Hclock.
+          cbn [length]. clear -Hduplicate Hclock. nia.
+        * destruct (trie_get x names) as [ordinal |] eqn:Hname.
+          -- destruct (run_counter_key_bound ordinal upper (Hnames x ordinal Hname))
+               as [Hordinal_bits Hordinal_key].
+             pose proof (N.T_succ_pos_le ordinal) as Hordinal_code.
+             pose proof (run_trie_set_time unit x tt seen) as Hseen_set.
+             pose proof (run_trie_set_time nat (N.succ_pos ordinal) pos inv) as Hordinal_set.
+             assert (Hlocal :
+               (1 + 4 * N.of_nat (Pos.size_nat x) + PTrieCode.T_set x tt seen +
+                 N.T_succ_pos ordinal + PTrieCode.T_set (N.succ_pos ordinal) pos inv <=
+                 64 * (V.c_key + PTrieT.c_trie + 1) *
+                   N.of_nat (width + run_key_width upper + 1))%N).
+             { clear -Hterm Hordinal_bits Hordinal_key Hordinal_code Hseen_set Hordinal_set. nia. }
+             pose proof (IH width upper (S pos) (PTrieCode.set x tt seen) copy
+               (PTrieCode.set (N.succ_pos ordinal) pos inv) srcs columns copied
+               Htail Hnames Hcopy_tail) as Hclock.
+             cbn [length]. clear -Hlocal Hclock. nia.
+          -- cbn [length]. clear -Hterm. nia.
+      + destruct srcs as [| src srcs].
+        * time_unfold @T_check_terms. cbn [length]. nia.
+        * destruct columns as [| column columns].
+          -- destruct src as [slot | slot | [identifier | stored]];
+               time_unfold @T_check_terms; cbn [length]; nia.
+          -- destruct src as [slot | slot | cell].
+             ++ time_unfold @T_check_terms. cbn [length]. nia.
+             ++ time_unfold @T_check_terms. cbn [length]. nia.
+             ++ destruct cell as [identifier | stored].
+                ** time_unfold @T_check_terms. cbn [length]. nia.
+                ** destruct column as [| i column].
+                   --- time_unfold @T_check_terms. cbn [length]. nia.
+                   --- destruct column as [| j rest].
+                       +++ pose proof (V.T_eqb_le stored value) as Hcompare.
+                           pose proof (run_nat_n_time i) as Hnat.
+                           pose proof (N.T_succ_pos_le (nat_n i)) as Hcode.
+                           pose proof (run_positive_bits_value (N.succ_pos (nat_n i))) as Hkey.
+                           rewrite run_position_key_value in Hkey.
+                           pose proof (run_counter_key_bits_lower (nat_n i)) as Hbits.
+                           pose proof (run_trie_set_time nat (N.succ_pos (nat_n i)) pos inv) as Hset.
+                           assert (Hlocal :
+                             (1 + V.T_eqb stored value + T_nat_n i +
+                               N.T_succ_pos (nat_n i) +
+                               PTrieCode.T_set (N.succ_pos (nat_n i)) pos inv <=
+                               64 * (V.c_key + PTrieT.c_trie + 1) *
+                                 N.of_nat (width + run_key_width upper + 1 +
+                                   (S (V.bits stored) + 1) + (i + 1 + 1)))%N).
+                           { clear -Hcompare Hnat Hcode Hkey Hbits Hset. nia. }
+                           pose proof (IH width upper (S pos) seen copy
+                             (PTrieCode.set (N.succ_pos (nat_n i)) pos inv) srcs columns copied
+                             Htail Hnames Hcopy_tail) as Hclock.
+                           time_unfold @T_check_terms.
+                           unfold run_payload_size in Hclock |- *.
+                           change (run_sources_size (Const V.t (Val stored) :: srcs)) with
+                             (S (V.bits stored) + 1 + run_sources_size srcs).
+                           change (run_columns_size ([i] :: columns)) with
+                             (i + 1 + 0 + 1 + run_columns_size columns).
+                           destruct (V.eqb stored value); cbn [length]; clear -Hlocal Hclock; nia.
+                       +++ time_unfold @T_check_terms. cbn [length]. nia.
+  Qed.
+
+  Lemma run_trie_set_present : forall A (table : ptrie A) key value query old,
+    trie_get query table = Some old ->
+    exists result, trie_get query (PTrieCode.set key value table) = Some result.
+  Proof.
+    intros A table key value query old Hget. destruct (Pos.eq_dec query key) as [-> | Hneq].
+    - exists value. apply PTrie.get_set_same.
+    - exists old. rewrite PTrie.get_set_other by exact Hneq. exact Hget.
+  Qed.
+
+  (** Successful term checks preserve keys and record every allocated copy ordinal. *)
+  Lemma run_check_terms_state : forall names ts pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied',
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    (copy <= copy' <= copy + N.of_nat (length ts))%N /\
+    (forall key old, trie_get key inv = Some old ->
+      exists result, trie_get key inv' = Some result) /\
+    (forall ordinal, (copy <= ordinal < copy')%N ->
+      exists position, trie_get (N.succ_pos ordinal) inv' = Some position) /\
+    run_payload_size srcs' columns' <= run_payload_size srcs columns.
+  Proof.
+    intros names ts. induction ts as [| t ts IH];
+      intros pos seen copy inv srcs columns copied copy' inv' srcs' columns' copied' Hcheck.
+    - cbn [check_terms] in Hcheck. inversion Hcheck; subst.
+      split; [cbn [length]; lia |]. split.
+      + intros key old Hget. now exists old.
+      + split; [intros ordinal Hrange; lia | lia].
+    - destruct t as [x | value]; cbn [check_terms] in Hcheck.
+      + destruct (trie_get x seen) as [present |] eqn:Hseen.
+        * destruct (IH (S pos) seen (N.succ copy)
+            (PTrieCode.set (N.succ_pos copy) pos inv) srcs columns true
+            copy' inv' srcs' columns' copied' Hcheck) as [Hrange [Hpreserve [Hcopies Hpayload]]].
+          split; [cbn [length]; lia |]. split.
+          -- intros key old Hget.
+             destruct (run_trie_set_present nat inv (N.succ_pos copy) pos key old Hget)
+               as [value Hvalue]. now apply (Hpreserve key value).
+          -- split; [| exact Hpayload].
+             intros ordinal Hordinal. destruct (N.eq_dec ordinal copy) as [-> | Hneq].
+             ++ apply (Hpreserve (N.succ_pos copy) pos). apply PTrie.get_set_same.
+             ++ apply Hcopies. lia.
+        * destruct (trie_get x names) as [ordinal |] eqn:Hname; [| discriminate].
+          destruct (IH (S pos) (PTrieCode.set x tt seen) copy
+            (PTrieCode.set (N.succ_pos ordinal) pos inv) srcs columns copied
+            copy' inv' srcs' columns' copied' Hcheck) as [Hrange [Hpreserve [Hcopies Hpayload]]].
+          split; [cbn [length]; lia |]. split; [| now split].
+          intros key old Hget.
+          destruct (run_trie_set_present nat inv (N.succ_pos ordinal) pos key old Hget)
+            as [value Hvalue]. now apply (Hpreserve key value).
+      + destruct srcs as [| src srcs]; [discriminate |].
+        destruct src as [slot | slot | cell]; [discriminate | discriminate |].
+        destruct cell as [identifier | stored]; [discriminate |].
+        destruct columns as [| column columns]; [discriminate |].
+        destruct column as [| i [| j rest]]; try discriminate.
+        destruct (V.eqb stored value) eqn:Hvalue; [| discriminate].
+        destruct (IH (S pos) seen copy
+          (PTrieCode.set (N.succ_pos (nat_n i)) pos inv) srcs columns copied
+          copy' inv' srcs' columns' copied' Hcheck) as [Hrange [Hpreserve [Hcopies Hpayload]]].
+        split; [cbn [length]; lia |]. split.
+        * intros key old Hget.
+          destruct (run_trie_set_present nat inv (N.succ_pos (nat_n i)) pos key old Hget)
+            as [found Hfound]. now apply (Hpreserve key found).
+        * split; [exact Hcopies |]. unfold run_payload_size in Hpayload |- *.
+          change (run_sources_size (Const V.t (Val stored) :: srcs)) with
+            (S (V.bits stored) + 1 + run_sources_size srcs).
+          change (run_columns_size ([i] :: columns)) with
+            (i + 1 + 0 + 1 + run_columns_size columns). lia.
+  Qed.
+
+  Lemma run_trie_set_values_bound : forall table key value bound,
+    value < bound ->
+    (forall query old, trie_get query table = Some old -> old < bound) ->
+    forall query result, trie_get query (PTrieCode.set key value table) = Some result ->
+      result < bound.
+  Proof.
+    intros table key value bound Hvalue Htable query result Hget.
+    destruct (Pos.eq_dec query key) as [-> | Hneq].
+    - rewrite PTrie.get_set_same in Hget. inversion Hget; subst. exact Hvalue.
+    - rewrite PTrie.get_set_other in Hget by exact Hneq. now apply (Htable query result).
+  Qed.
+
+  (** Every generated permutation position names one term of the atom. *)
+  Lemma run_check_terms_values_bound : forall names ts bound pos seen copy inv srcs columns copied
+      copy' inv' srcs' columns' copied',
+    pos + length ts <= bound ->
+    (forall key old, trie_get key inv = Some old -> old < bound) ->
+    check_terms V.eqb names ts pos seen copy inv srcs columns copied =
+      Some (copy', inv', srcs', columns', copied') ->
+    forall key position, trie_get key inv' = Some position -> position < bound.
+  Proof.
+    intros names ts. induction ts as [| t ts IH];
+      intros bound pos seen copy inv srcs columns copied copy' inv' srcs' columns' copied'
+        Hlength Hinv Hcheck.
+    - cbn [check_terms] in Hcheck. inversion Hcheck; subst. exact Hinv.
+    - assert (Hposition : pos < bound) by (cbn [length] in Hlength; lia).
+      assert (Hrest : S pos + length ts <= bound) by (cbn [length] in Hlength; lia).
+      destruct t as [x | value]; cbn [check_terms] in Hcheck.
+      + destruct (trie_get x seen) as [present |].
+        * eapply IH; [exact Hrest | | exact Hcheck].
+          now apply run_trie_set_values_bound.
+        * destruct (trie_get x names) as [ordinal |]; [| discriminate].
+          eapply IH; [exact Hrest | | exact Hcheck].
+          now apply run_trie_set_values_bound.
+      + destruct srcs as [| src srcs]; [discriminate |].
+        destruct src as [slot | slot | cell]; [discriminate | discriminate |].
+        destruct cell as [identifier | stored]; [discriminate |].
+        destruct columns as [| column columns]; [discriminate |].
+        destruct column as [| i [| j rest]]; try discriminate.
+        destruct (V.eqb stored value); [| discriminate].
+        eapply IH; [exact Hrest | | exact Hcheck].
+        now apply run_trie_set_values_bound.
+  Qed.
+
+  Lemma run_column_perm_size : forall inv positions used count perm used' count' bound,
+    (forall key position, trie_get key inv = Some position -> position < bound) ->
+    column_perm inv positions used count = Some (perm, used', count') ->
+    run_positions_size perm <= bound * length positions.
+  Proof.
+    intros inv positions. induction positions as [| i positions IH];
+      intros used count perm used' count' bound Hbound Hcheck.
+    - cbn [column_perm] in Hcheck. inversion Hcheck; subst.
+      change (0 <= bound * 0). lia.
+    - cbn [column_perm] in Hcheck.
+      destruct (trie_get (N.succ_pos (nat_n i)) inv) as [pos |] eqn:Hget;
+        [| discriminate].
+      destruct (column_perm inv positions
+        (PTrieCode.set (N.succ_pos (nat_n i)) tt used)
+        (match trie_get (N.succ_pos (nat_n i)) used with
+         | Some _ => count | None => N.succ count end))
+        as [[ [perm1 used1] count1] |] eqn:Htail; [| discriminate].
+      inversion Hcheck; subst. pose proof (IH _ _ _ _ _ bound Hbound Htail) as Hrest.
+      pose proof (Hbound _ _ Hget) as Hpos.
+      change (run_positions_size (pos :: perm1)) with (pos + 1 + run_positions_size perm1).
+      cbn [length]. nia.
+  Qed.
+
+  Lemma run_column_ok_range : forall n positions prev,
+    column_ok n positions prev = true -> Forall (fun i => i < n) positions.
+  Proof.
+    intros n positions. induction positions as [| i positions IH]; intros prev Hcheck.
+    - constructor.
+    - destruct prev as [p |]; cbn [column_ok] in Hcheck.
+      + destruct (Nat.leb (S p) i); [| discriminate].
+        destruct (Nat.leb (S i) n) eqn:Hrange; [| discriminate].
+        constructor; [apply Nat.leb_le in Hrange; lia |]. now apply (IH (Some i)).
+      + destruct (Nat.leb (S i) n) eqn:Hrange; [| discriminate].
+        constructor; [apply Nat.leb_le in Hrange; lia |]. now apply (IH (Some i)).
+  Qed.
+
+  Lemma run_positions_length : forall positions,
+    length positions <= run_positions_size positions.
+  Proof.
+    induction positions as [| i positions IH].
+    - reflexivity.
+    - change (run_positions_size (i :: positions)) with
+        (i + 1 + run_positions_size positions). cbn [length]. lia.
+  Qed.
+
+  Lemma run_column_ok_mass : forall n positions,
+    column_ok n positions None = true -> 1 <= run_positions_size positions.
+  Proof.
+    intros n [| i positions] Hcheck; [discriminate |].
+    change (run_positions_size (i :: positions)) with
+      (i + 1 + run_positions_size positions). lia.
+  Qed.
+
+  Lemma run_column_copies_bounded : forall n positions keys inv used count perm used' count'
+      copy copy',
+    column_ok n positions None = true ->
+    length keys = length positions ->
+    (forall key pos, trie_get key inv = Some pos -> In key keys) ->
+    column_perm inv positions used count = Some (perm, used', count') ->
+    (copy <= N.of_nat n)%N ->
+    (forall ordinal, (copy <= ordinal < copy')%N ->
+      exists pos, trie_get (N.succ_pos ordinal) inv = Some pos) ->
+    (copy' <= N.of_nat n)%N.
+  Proof.
+    intros n positions keys inv used count perm used' count' copy copy'
+      Hcolumn Hlength Hdomain Hperm Hcopy Hcopies.
+    pose proof (run_inverse_keys_permutation inv positions keys n used count perm used' count'
+      Hcolumn Hlength Hdomain Hperm) as Hkeys.
+    pose proof (run_column_ok_range n positions None Hcolumn) as Hrange.
+    assert (Horder : (copy' <= N.of_nat n \/ N.of_nat n < copy')%N) by lia.
+    destruct Horder as [Hdone | Hlarge]; [exact Hdone |].
+    destruct (Hcopies (N.of_nat n) (conj Hcopy Hlarge)) as [pos Hget].
+    pose proof (Hdomain _ _ Hget) as Hin.
+    apply (Permutation_in _ Hkeys) in Hin.
+    apply in_map_iff in Hin. destruct Hin as [i [Heq Hin]].
+    apply (f_equal Pos.to_nat) in Heq.
+    rewrite run_position_key_value, run_counter_key_value, Nat2N.id in Heq.
+    apply Forall_forall with (x := i) in Hrange; [lia | exact Hin].
+  Qed.
+
+  Definition run_source_bits (src : source V.t) : nat :=
+    match src with
+    | All _ i | New _ i => N.size_nat i + 1
+    | Const _ value => cell_bits V.encode value + 1
+    end.
+
+  Lemma run_sources_size_cons : forall src srcs,
+    run_sources_size (src :: srcs) = run_source_bits src + run_sources_size srcs.
+  Proof.
+    intros src srcs. destruct src; reflexivity.
+  Qed.
+
+  Lemma run_payload_size_cons : forall src srcs col columns,
+    run_payload_size (src :: srcs) (col :: columns) =
+      run_source_bits src + run_positions_size col + 1 + run_payload_size srcs columns.
+  Proof.
+    intros src srcs col columns. unfold run_payload_size. rewrite run_sources_size_cons.
+    change (run_columns_size (col :: columns)) with
+      (run_positions_size col + 1 + run_columns_size columns). lia.
+  Qed.
+
+  Lemma run_source_slot_bits : forall newok src slot,
+    source_slot newok src = Some slot -> N.size_nat slot + 1 <= run_source_bits src.
+  Proof.
+    intros newok src slot H. destruct src; destruct newok; cbn [source_slot] in H;
+      inversion H; subst; cbn [run_source_bits]; lia.
+  Qed.
+
+  (** A larger residual-resource coefficient leaves the processing charge unchanged. *)
+  Lemma run_clock_raise_resource : forall clock small large before after extra,
+    (small <= large)%N -> (after <= before)%N ->
+    (clock + small * after <= small * (before + extra))%N ->
+    (clock + large * after <= large * before + small * extra)%N.
+  Proof.
+    intros clock small large before after extra Hcoeff Hmono Hclock.
+    assert (Hgap : (small * (before - after) <= large * (before - after))%N).
+    { now apply N.mul_le_mono_r. }
+    assert (Hbefore : (before = (before - after) + after)%N) by lia.
+    rewrite Hbefore in Hclock |- *. nia.
+  Qed.
+
+  Lemma run_check_terms_column_budget : forall names ts width n column pos seen copy inv srcs columns copied,
+    Forall (run_check_term_width width) ts ->
+    (forall x ordinal, trie_get x names = Some ordinal -> N.to_nat ordinal <= n) ->
+    (copy <= N.of_nat n)%N ->
+    column_ok n column None = true -> length column = length ts ->
+    (T_check_terms V.eqb V.T_eqb names ts pos seen copy inv srcs columns copied <=
+      512 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * (run_positions_size column + run_payload_size srcs columns + 1) + n))%N.
+  Proof.
+    intros names ts width n column pos seen copy inv srcs columns copied
+      Hwidth Hnames Hcopy Hcolumn Hlength.
+    assert (Hnames_upper : forall x ordinal, trie_get x names = Some ordinal ->
+      N.to_nat ordinal <= n + length ts) by (intros; specialize (Hnames _ _ H); lia).
+    assert (Hcopy_upper : N.to_nat copy + length ts <= n + length ts) by lia.
+    pose proof (run_check_terms_bounded_time names ts width (n + length ts) pos seen copy inv
+      srcs columns copied Hwidth Hnames_upper Hcopy_upper) as Hclock.
+    pose proof (run_positions_length column) as Hlen.
+    pose proof (run_column_ok_quadratic n column Hcolumn) as Hsquare.
+    pose proof (run_key_width_product (length ts) (n + length ts)) as Hwidth_product.
+    assert (Hcharge :
+      length ts * (width + run_key_width (n + length ts) + 1) +
+        run_payload_size srcs columns + 1 <=
+      8 * ((width + 1) * (run_positions_size column + run_payload_size srcs columns + 1) + n)).
+    { clear -Hlength Hlen Hsquare Hwidth_product. nia. }
+    clear -Hclock Hcharge. nia.
+  Qed.
+
+  (** A complete atom column pays for every term insertion and generated permutation position. *)
+  Lemma run_check_atom_core : forall names ts width n column copy srcs columns
+      copy' inv' srcs' columns' copied used count perm used' count',
+    Forall (run_check_term_width width) ts ->
+    (copy <= N.of_nat n)%N ->
+    column_ok n column None = true -> length column = length ts ->
+    check_terms V.eqb names ts 0 Empty copy Empty srcs columns false =
+      Some (copy', inv', srcs', columns', copied) ->
+    column_perm inv' column used count = Some (perm, used', count') ->
+    (copy' <= N.of_nat n)%N /\
+    run_payload_size srcs' columns' <= run_payload_size srcs columns /\
+    run_positions_size perm <= 2 * run_positions_size column /\
+    (T_check_terms V.eqb V.T_eqb names ts 0 Empty copy Empty srcs columns false +
+      1024 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * run_payload_size srcs' columns') <=
+     1024 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * run_payload_size srcs columns) +
+      256 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * run_positions_size column))%N.
+  Proof.
+    intros names ts width n column copy srcs columns copy' inv' srcs' columns' copied
+      used count perm used' count' Hwidth Hcopy Hcolumn Hlength Hterms Hperm.
+    destruct (run_check_terms_success_time names ts width 0 Empty copy Empty srcs columns false
+      copy' inv' srcs' columns' copied Hwidth Hterms)
+      as [keys [Hkey_length [Hdomain Hclock]]].
+    assert (Hkeys : forall key position, trie_get key inv' = Some position -> In key keys).
+    { intros key position Hget. destruct (Hdomain key position Hget) as [Hin | [old Hold]].
+      - exact Hin.
+      - rewrite PTrie.get_empty in Hold. discriminate. }
+    assert (Hkey_column : length keys = length column) by lia.
+    pose proof (run_inverse_keys_size inv' column keys n used count perm used' count'
+      Hcolumn Hkey_column Hkeys Hperm) as Hkey_mass.
+    destruct (run_check_terms_state names ts 0 Empty copy Empty srcs columns false
+      copy' inv' srcs' columns' copied Hterms)
+      as [Hcopy_range [Hpreserve [Hcopies Hpayload]]].
+    split.
+    - eapply run_column_copies_bounded; eauto.
+    - split; [exact Hpayload |].
+      assert (Hvalues : forall key position, trie_get key inv' = Some position -> position < length ts).
+      { eapply (run_check_terms_values_bound names ts (length ts) 0 Empty copy Empty srcs columns false
+          copy' inv' srcs' columns' copied); [lia | | exact Hterms].
+        intros key old Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+      pose proof (run_column_perm_size inv' column used count perm used' count' (length ts)
+        Hvalues Hperm) as Hperm_size.
+      pose proof (run_column_ok_quadratic n column Hcolumn) as Hcolumn_square.
+      pose proof (run_positions_length column) as Hcolumn_length.
+      pose proof (run_column_ok_mass n column Hcolumn) as Hcolumn_mass.
+      split; [nia |].
+      assert (Hprocessing : length ts * (width + 1) + run_key_size keys + 1 <=
+        4 * ((width + 1) * run_positions_size column)).
+      { clear -Hkey_mass Hcolumn_mass Hcolumn_length Hlength. nia. }
+      assert (Hsmall :
+        (T_check_terms V.eqb V.T_eqb names ts 0 Empty copy Empty srcs columns false +
+          64 * (V.c_key + PTrieT.c_trie + 1) *
+            N.of_nat ((width + 1) * run_payload_size srcs' columns') <=
+          64 * (V.c_key + PTrieT.c_trie + 1) *
+            (N.of_nat ((width + 1) * run_payload_size srcs columns) +
+             4 * N.of_nat ((width + 1) * run_positions_size column)))%N).
+      { clear -Hclock Hprocessing. nia. }
+      assert (Hmono : (N.of_nat ((width + 1) * run_payload_size srcs' columns') <=
+        N.of_nat ((width + 1) * run_payload_size srcs columns))%N).
+      { clear -Hpayload. nia. }
+      pose proof (run_clock_raise_resource
+        (T_check_terms V.eqb V.T_eqb names ts 0 Empty copy Empty srcs columns false)
+        (64 * (V.c_key + PTrieT.c_trie + 1))%N
+        (1024 * (V.c_key + PTrieT.c_trie + 1))%N
+        (N.of_nat ((width + 1) * run_payload_size srcs columns))
+        (N.of_nat ((width + 1) * run_payload_size srcs' columns'))
+        (4 * N.of_nat ((width + 1) * run_positions_size column))%N) as Hraise.
+      assert (Hcoeff : (64 * (V.c_key + PTrieT.c_trie + 1) <=
+        1024 * (V.c_key + PTrieT.c_trie + 1))%N) by (clear; nia).
+      specialize (Hraise Hcoeff Hmono Hsmall). clear -Hraise. nia.
+  Qed.
+
+  Lemma run_check_atom_success_time : forall newok names n table f ts width copy used count
+      srcs columns copy' used' count' srcs' columns' copied,
+    Pos.size_nat f <= width -> Forall (run_check_term_width width) ts ->
+    (copy <= N.of_nat n)%N ->
+    check_atom V.eqb newok names n table f ts copy used count srcs columns =
+      Some (copy', used', count', srcs', columns', copied) ->
+    (copy' <= N.of_nat n)%N /\
+    run_payload_size srcs' columns' + length ts + 2 <= run_payload_size srcs columns /\
+    (T_check_atom V.eqb V.T_eqb newok names n table f ts copy used count srcs columns +
+      1024 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * run_payload_size srcs' columns') + run_counter_credit count' <=
+     1024 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * run_payload_size srcs columns) + run_counter_credit count)%N.
+  Proof.
+    intros newok names n table f ts width copy used count srcs columns
+      copy' used' count' srcs' columns' copied Hname Hwidth Hcopy Hcheck.
+    unfold check_atom in Hcheck.
+    destruct srcs as [| src srcs]; [discriminate |].
+    destruct columns as [| column columns]; [discriminate |].
+    destruct (source_slot newok src) as [slot |] eqn:Hsource; [| discriminate].
+    destruct (column_ok n column None) eqn:Hcolumn; [| discriminate].
+    destruct (Nat.eqb (length column) (length ts)) eqn:Hlength_bool; [| discriminate].
+    pose proof Hlength_bool as Hlength. apply Nat.eqb_eq in Hlength.
+    destruct (check_terms V.eqb names ts 0 Empty copy Empty srcs columns false)
+      as [[[[[copy1 inv1] srcs1] columns1] copied1] |] eqn:Hterms; [| discriminate].
+    destruct (column_perm inv1 column used count) as [[[perm used1] count1] |] eqn:Hperm;
+      [| discriminate].
+    destruct (slot_matches table f perm slot) eqn:Hslot; [| discriminate].
+    inversion Hcheck. subst copy' used' count' srcs' columns' copied.
+    destruct (run_check_atom_core names ts width n column copy srcs columns
+      copy1 inv1 srcs1 columns1 copied1 used count perm used1 count1
+      Hwidth Hcopy Hcolumn Hlength Hterms Hperm)
+      as [Hcopy1 [Hpayload [Hperm_size Hterms_clock]]].
+    split; [exact Hcopy1 |]. split.
+    - rewrite run_payload_size_cons.
+      pose proof (run_positions_length column).
+      pose proof (run_source_slot_bits newok src slot Hsource). lia.
+    - pose proof (run_column_perm_time inv1 column used count) as Hcolumn_clock.
+      rewrite Hperm in Hcolumn_clock.
+      pose proof (run_source_slot_time newok src) as Hsource_clock.
+      pose proof (run_column_ok_time n column None) as Hvalid_clock.
+      pose proof (Datatypes.T_length_le column) as Hcolumn_length_clock.
+      pose proof (Datatypes.T_length_le ts) as Hterms_length_clock.
+      pose proof (Nat.T_eqb_le (length column) (length ts)) as Hlength_clock.
+      pose proof (run_slot_matches_time table f perm slot) as Hslot_clock.
+      pose proof (run_positions_length column) as Hcolumn_length.
+      pose proof (run_column_ok_mass n column Hcolumn) as Hcolumn_mass.
+      pose proof (run_source_slot_bits newok src slot Hsource) as Hsource_bits.
+      assert (Hbudget :
+        (1 + 3 + (8 * N.of_nat (run_positions_size column) + 1) +
+          (N.of_nat (length column) + 1) + (N.of_nat (length ts) + 1) +
+          (N.of_nat (length column) + 1) +
+          64 * (PTrieT.c_trie + 1) * N.of_nat (run_positions_size column + 1) +
+          32 * N.of_nat (Pos.size_nat f + run_positions_size perm + N.size_nat slot + 1) +
+          256 * (V.c_key + PTrieT.c_trie + 1) *
+            N.of_nat ((width + 1) * run_positions_size column) <=
+          1024 * (V.c_key + PTrieT.c_trie + 1) *
+            N.of_nat ((width + 1) * (run_source_bits src + run_positions_size column + 1)))%N).
+      { clear -Hname Hperm_size Hcolumn_length Hcolumn_mass Hsource_bits Hlength. nia. }
+      time_unfold @T_check_atom.
+      rewrite Hsource, Hcolumn, Hlength_bool, Hterms, Hperm.
+      rewrite ?Hslot, run_payload_size_cons.
+      replace (N.of_nat ((width + 1) *
+        (run_source_bits src + run_positions_size column + 1 + run_payload_size srcs columns))) with
+        (N.of_nat ((width + 1) * (run_source_bits src + run_positions_size column + 1)) +
+         N.of_nat ((width + 1) * run_payload_size srcs columns))%N
+        by (rewrite !Nat2N.inj_mul, !Nat2N.inj_add; ring).
+      rewrite N.mul_add_distr_l.
+      clear -Hterms_clock Hcolumn_clock Hsource_clock Hvalid_clock Hcolumn_length_clock
+        Hterms_length_clock Hlength_clock Hslot_clock Hbudget. lia.
+  Qed.
+
+  Lemma run_check_atom_bounded_time : forall newok names n table f ts width copy used count
+      srcs columns,
+    Pos.size_nat f <= width -> Forall (run_check_term_width width) ts ->
+    (forall x ordinal, trie_get x names = Some ordinal -> N.to_nat ordinal <= n) ->
+    (copy <= N.of_nat n)%N ->
+    (T_check_atom V.eqb V.T_eqb newok names n table f ts copy used count srcs columns <=
+      1024 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * (run_payload_size srcs columns + terms_bits ts + 1) + n) +
+      run_counter_credit count)%N.
+  Proof.
+    intros newok names n table f ts width copy used count srcs columns
+      Hname Hwidth Hnames Hcopy.
+    destruct srcs as [| src srcs].
+    - time_unfold @T_check_atom. nia.
+    - destruct columns as [| column columns].
+      + time_unfold @T_check_atom. nia.
+      + time_unfold @T_check_atom. rewrite run_payload_size_cons.
+        pose proof (run_source_slot_time newok src) as Hsource_clock.
+        destruct (source_slot newok src) as [slot |] eqn:Hsource.
+        * pose proof (run_column_ok_time n column None) as Hvalid_clock.
+          pose proof (run_positions_length column) as Hcolumn_length.
+          destruct (column_ok n column None) eqn:Hcolumn.
+          -- pose proof (Datatypes.T_length_le column) as Hcolumn_length_clock.
+             pose proof (Datatypes.T_length_le ts) as Hterms_length_clock.
+             pose proof (Nat.T_eqb_le (length column) (length ts)) as Hlength_clock.
+             pose proof (run_terms_length_bits ts) as Hterms_length.
+             destruct (Nat.eqb (length column) (length ts)) eqn:Hlength_bool.
+             ++ pose proof Hlength_bool as Hlength. apply Nat.eqb_eq in Hlength.
+                pose proof (run_column_ok_mass n column Hcolumn) as Hcolumn_mass.
+                pose proof (run_source_slot_bits newok src slot Hsource) as Hsource_bits.
+                pose proof (run_check_terms_column_budget names ts width n column 0 Empty copy Empty
+                  srcs columns false Hwidth Hnames Hcopy Hcolumn Hlength) as Hterms_clock.
+                assert (Hbudget :
+                  (1 + 3 + (8 * N.of_nat (run_positions_size column) + 1) +
+                    (N.of_nat (length column) + 1) + (N.of_nat (length ts) + 1) +
+                    (N.of_nat (length column) + 1) +
+                    512 * (V.c_key + PTrieT.c_trie + 1) *
+                      N.of_nat ((width + 1) *
+                        (run_positions_size column + run_payload_size srcs columns + 1) + n) +
+                    64 * (PTrieT.c_trie + 1) * N.of_nat (run_positions_size column + 1) +
+                    32 * N.of_nat (width + 2 * run_positions_size column + N.size_nat slot + 1) <=
+                    1024 * (V.c_key + PTrieT.c_trie + 1) *
+                      N.of_nat ((width + 1) *
+                        (run_source_bits src + run_positions_size column + 1 +
+                          run_payload_size srcs columns + terms_bits ts + 1) + n))%N).
+                { assert (Hfront :
+                    (1 + 3 + (8 * N.of_nat (run_positions_size column) + 1) +
+                      (N.of_nat (length column) + 1) + (N.of_nat (length ts) + 1) +
+                      (N.of_nat (length column) + 1) +
+                      64 * (PTrieT.c_trie + 1) * N.of_nat (run_positions_size column + 1) +
+                      32 * N.of_nat (width + 2 * run_positions_size column + N.size_nat slot + 1) <=
+                      512 * (V.c_key + PTrieT.c_trie + 1) *
+                        N.of_nat ((width + 1) *
+                          (run_source_bits src + run_positions_size column + 1)))%N).
+                  { clear -Hcolumn_length Hsource_bits Hlength. nia. }
+                  assert (Hcharge :
+                    (N.of_nat ((width + 1) *
+                        (run_positions_size column + run_payload_size srcs columns + 1) + n) +
+                      N.of_nat ((width + 1) *
+                        (run_source_bits src + run_positions_size column + 1)) <=
+                      2 * N.of_nat ((width + 1) *
+                        (run_source_bits src + run_positions_size column + 1 +
+                          run_payload_size srcs columns + terms_bits ts + 1) + n))%N).
+                  { clear. nia. }
+                  pose proof (N.mul_le_mono_l _ _
+                    (512 * (V.c_key + PTrieT.c_trie + 1))%N Hcharge) as Hscaled.
+                  rewrite N.mul_add_distr_l in Hscaled.
+                  replace (512 * (V.c_key + PTrieT.c_trie + 1) *
+                    (2 * N.of_nat ((width + 1) *
+                      (run_source_bits src + run_positions_size column + 1 +
+                        run_payload_size srcs columns + terms_bits ts + 1) + n)))%N
+                    with (1024 * (V.c_key + PTrieT.c_trie + 1) *
+                      N.of_nat ((width + 1) *
+                        (run_source_bits src + run_positions_size column + 1 +
+                          run_payload_size srcs columns + terms_bits ts + 1) + n))%N
+                    in Hscaled by ring.
+                  clear -Hfront Hscaled. lia. }
+                destruct (check_terms V.eqb names ts 0 Empty copy Empty srcs columns false)
+                  as [[[[[copy1 inv1] srcs1] columns1] copied1] |] eqn:Hterms.
+                ** pose proof (run_column_perm_time inv1 column used count) as Hcolumn_clock.
+                   destruct (column_perm inv1 column used count)
+                     as [[[perm used1] count1] |] eqn:Hperm.
+                   --- assert (Hvalues : forall key position,
+                         trie_get key inv1 = Some position -> position < length ts).
+                       { eapply (run_check_terms_values_bound names ts (length ts) 0 Empty copy Empty
+                           srcs columns false copy1 inv1 srcs1 columns1 copied1); [lia | | exact Hterms].
+                         intros key old Hget. rewrite PTrie.get_empty in Hget. discriminate. }
+                       pose proof (run_column_perm_size inv1 column used count perm used1 count1
+                         (length ts) Hvalues Hperm) as Hperm_length.
+                       pose proof (run_column_ok_quadratic n column Hcolumn) as Hcolumn_square.
+                       assert (Hperm_size : run_positions_size perm <= 2 * run_positions_size column).
+                       { clear -Hperm_length Hcolumn_square Hlength. nia. }
+                       pose proof (run_slot_matches_time table f perm slot) as Hslot_clock.
+                       assert (Hslot_bound : (T_slot_matches table f perm slot <=
+                         32 * N.of_nat (width + 2 * run_positions_size column + N.size_nat slot + 1))%N).
+                       { clear -Hslot_clock Hname Hperm_size. nia. }
+                       destruct (slot_matches table f perm slot);
+                         clear -Hsource_clock Hvalid_clock Hcolumn_length_clock Hterms_length_clock
+                           Hlength_clock Hterms_clock Hcolumn_clock Hslot_bound Hbudget; lia.
+                   --- clear -Hsource_clock Hvalid_clock Hcolumn_length_clock Hterms_length_clock
+                         Hlength_clock Hterms_clock Hcolumn_clock Hbudget. lia.
+                ** clear -Hsource_clock Hvalid_clock Hcolumn_length_clock Hterms_length_clock
+                     Hlength_clock Hterms_clock Hbudget. lia.
+             ++ clear -Hsource_clock Hvalid_clock Hcolumn_length_clock Hterms_length_clock
+                  Hlength_clock Hcolumn_length Hterms_length. nia.
+          -- clear -Hsource_clock Hvalid_clock. nia.
+        * clear -Hsource_clock. nia.
+  Qed.
+
+  Lemma run_clock_reserve_gap : forall clock coefficient before after gap extra allowance,
+    (2 <= coefficient)%N -> (after + gap <= before)%N -> (extra <= 2 * gap)%N ->
+    (clock + coefficient * after <= coefficient * before + allowance)%N ->
+    (extra + clock + 2 * coefficient * after <= 2 * coefficient * before + allowance)%N.
+  Proof.
+    intros clock coefficient before after gap extra allowance Hcoefficient Hgap Hextra Hclock.
+    assert (Hreserve : (extra + coefficient * after <= coefficient * before)%N) by nia.
+    nia.
+  Qed.
+
+  Lemma run_check_query_head_time : forall newok names n table f args res width copy used count
+      srcs columns copy' used' count' srcs' columns' copied,
+    Pos.size_nat f <= width ->
+    Forall (run_check_term_width width) (args ++ option_list res) ->
+    (copy <= N.of_nat n)%N ->
+    check_atom V.eqb newok names n table f (args ++ option_list res) copy used count srcs columns =
+      Some (copy', used', count', srcs', columns', copied) ->
+    (copy' <= N.of_nat n)%N /\
+    (2 + Datatypes.T_app args (option_list res) +
+      T_check_atom V.eqb V.T_eqb newok names n table f (args ++ option_list res)
+        copy used count srcs columns +
+      2048 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * run_payload_size srcs' columns') + run_counter_credit count' <=
+     2048 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat ((width + 1) * run_payload_size srcs columns) + run_counter_credit count)%N.
+  Proof.
+    intros newok names n table f args res width copy used count srcs columns copy' used' count'
+      srcs' columns' copied Hname Hwidth Hcopy Hcheck.
+    destruct (run_check_atom_success_time newok names n table f (args ++ option_list res) width
+      copy used count srcs columns copy' used' count' srcs' columns' copied
+      Hname Hwidth Hcopy Hcheck) as [Hcopy' [Hgap Hclock]].
+    split; [exact Hcopy' |].
+    pose proof (Datatypes.T_app_le args (option_list res)) as Happend.
+    set (coefficient := (1024 * (V.c_key + PTrieT.c_trie + 1) * N.of_nat (width + 1))%N).
+    assert (Hcoefficient : (2 <= coefficient)%N).
+    { unfold coefficient. clear. assert (1 <= N.of_nat (width + 1))%N by lia. nia. }
+    assert (Hgap' : (N.of_nat (run_payload_size srcs' columns') +
+      N.of_nat (length args + 2) <= N.of_nat (run_payload_size srcs columns))%N).
+    { rewrite length_app in Hgap. clear -Hgap. lia. }
+    assert (Hextra : (2 + Datatypes.T_app args (option_list res) <=
+      2 * N.of_nat (length args + 2))%N) by (clear -Happend; lia).
+    assert (Hclock' :
+      (T_check_atom V.eqb V.T_eqb newok names n table f (args ++ option_list res)
+        copy used count srcs columns + run_counter_credit count' +
+        coefficient * N.of_nat (run_payload_size srcs' columns') <=
+        coefficient * N.of_nat (run_payload_size srcs columns) + run_counter_credit count)%N).
+    { unfold coefficient. rewrite !Nat2N.inj_mul in Hclock. clear -Hclock. nia. }
+    pose proof (run_clock_reserve_gap
+      (T_check_atom V.eqb V.T_eqb newok names n table f (args ++ option_list res)
+        copy used count srcs columns + run_counter_credit count')%N coefficient
+      (N.of_nat (run_payload_size srcs columns)) (N.of_nat (run_payload_size srcs' columns'))
+      (N.of_nat (length args + 2)) (2 + Datatypes.T_app args (option_list res))%N
+      (run_counter_credit count) Hcoefficient Hgap' Hextra Hclock') as Hreserved.
+    unfold coefficient in Hreserved. rewrite !Nat2N.inj_mul. clear -Hreserved. nia.
+  Qed.
+
+  (** Query and compiled-plan sizes used in the checker bounds. *)
+  Definition run_query_size (q : list (atom V.t)) : nat :=
+    fold_right (fun a n => atom_bits a + n) 0 q.
+
+  Definition run_query_width (width : nat) (q : list (atom V.t)) : Prop :=
+    Forall (fun a => Forall (fun word => Pos.size_nat word <= width)
+      (atom_words V.encode a)) q.
+
+  Definition run_cplan_size (c : cplan V.t) : nat :=
+    N.size_nat (rule_ix V.t c) + nvars (join V.t c) + run_columns_size (cols (join V.t c)) +
+      run_sources_size (sources V.t c) + run_vars_size (var_of V.t c) +
+      run_positions_size (post V.t c) + 1.
+
+  Definition run_check_inner (width : nat) : N :=
+    ((4 * 1024) * (V.c_key + PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+
+  Lemma run_check_terms_words_width : forall ts width,
+    Forall (fun word => Pos.size_nat word <= width) (flat_map (term_words V.encode) ts) ->
+    Forall (run_check_term_width width) ts.
+  Proof.
+    induction ts as [| [x | value] ts IH]; intros width Hwords.
+    - constructor.
+    - cbn [flat_map term_words app] in Hwords.
+      inversion Hwords as [| word words Hhead Htail]; subst.
+      constructor; [exact Hhead | now apply IH].
+    - cbn [flat_map term_words app] in Hwords.
+      inversion Hwords as [| word words Hhead Htail]; subst.
+      constructor; [exact I | now apply IH].
+  Qed.
+
+  Lemma run_check_fun_width : forall width f args res,
+    Forall (fun word => Pos.size_nat word <= width) (atom_words V.encode (Fun V.t f args res)) ->
+    Pos.size_nat f <= width /\ Forall (run_check_term_width width) (args ++ option_list res).
+  Proof.
+    intros width f args res H. cbn [atom_words] in H.
+    inversion H as [| word words Hhead Htail]; subst.
+    split; [exact Hhead | now apply run_check_terms_words_width].
+  Qed.
+
+  Lemma run_check_option_time : forall res : option (term V.t), (T_option_list res <= 1)%N.
+  Proof.
+    intros [t |]; time_unfold @T_option_list; lia.
+  Qed.
+
+  Definition run_query_coefficient (width : nat) : N :=
+    ((2 * 1024) * (V.c_key + PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+
+  Lemma run_query_coefficient_pos : forall width, (1 <= run_query_coefficient width)%N.
+  Proof.
+    intro width. unfold run_query_coefficient.
+    assert (1 <= N.of_nat (width + 1))%N by lia. nia.
+  Qed.
+
+  (** Successful primitive steps are paid by the growth of the required post list. *)
+  Lemma run_check_query_success_time : forall newok names n table q width ai copy used count
+      srcs columns post count' srcs' columns' expected,
+    run_query_width width q -> (copy <= N.of_nat n)%N ->
+    check_query V.eqb newok names n table q ai copy used count srcs columns post =
+      Some (count', srcs', columns', expected) ->
+    (T_check_query V.eqb V.T_eqb newok names n table q ai copy used count srcs columns post +
+      run_query_coefficient width * N.of_nat (run_payload_size srcs' columns' + length post) +
+      run_counter_credit count' <=
+     run_query_coefficient width * N.of_nat (run_payload_size srcs columns + length expected + 1) +
+      run_counter_credit count)%N.
+  Proof.
+    intros newok names n table q. induction q as [| a q IH];
+      intros width ai copy used count srcs columns post count' srcs' columns' expected
+        Hwidth Hcopy Hcheck.
+    - cbn [check_query] in Hcheck. inversion Hcheck. subst count' srcs' columns' expected.
+      pose proof (run_query_coefficient_pos width) as Hcoefficient.
+      time_unfold @T_check_query. nia.
+    - inversion Hwidth as [| a0 q0 Hhead Htail]; subst.
+      destruct a as [f args res | primitive args res]; cbn [check_query] in Hcheck.
+      + destruct (check_atom V.eqb newok names n table f (args ++ option_list res)
+          copy used count srcs columns)
+          as [[[[[[copy1 used1] count1] srcs1] columns1] copied] |] eqn:Hatom;
+          [| discriminate].
+        destruct (run_check_fun_width width f args res Hhead) as [Hname Hterms_width].
+        destruct (run_check_query_head_time newok names n table f args res width copy used count
+          srcs columns copy1 used1 count1 srcs1 columns1 copied Hname Hterms_width Hcopy Hatom)
+          as [Hcopy1 Hhead_clock].
+        pose proof (IH width (S ai) copy1 used1 count1 srcs1 columns1
+          (if copied then ai :: post else post) count' srcs' columns' expected
+          Htail Hcopy1 Hcheck) as Htail_clock.
+        assert (Hhead_scaled :
+          (2 + Datatypes.T_app args (option_list res) +
+            T_check_atom V.eqb V.T_eqb newok names n table f (args ++ option_list res)
+              copy used count srcs columns +
+            run_query_coefficient width * N.of_nat (run_payload_size srcs1 columns1) +
+            run_counter_credit count1 <=
+            run_query_coefficient width * N.of_nat (run_payload_size srcs columns) +
+            run_counter_credit count)%N).
+        { unfold run_query_coefficient. rewrite !Nat2N.inj_mul in Hhead_clock.
+          clear -Hhead_clock. nia. }
+        pose proof (run_check_option_time res) as Hoption.
+        time_unfold @T_check_query. rewrite Hatom.
+        destruct copied; cbn [length] in Htail_clock;
+          rewrite !Nat2N.inj_add in Htail_clock |- *;
+          rewrite ?time_of_nat_succ in Htail_clock |- *;
+          rewrite !N.mul_add_distr_l in Htail_clock |- *;
+          clear -Hhead_scaled Htail_clock Hoption; lia.
+      + pose proof (IH width (S ai) copy used count srcs columns (ai :: post)
+          count' srcs' columns' expected Htail Hcopy Hcheck) as Htail_clock.
+        pose proof (run_query_coefficient_pos width) as Hcoefficient.
+        time_unfold @T_check_query. cbn [length] in Htail_clock.
+        rewrite !Nat2N.inj_add in Htail_clock |- *.
+        rewrite ?time_of_nat_succ in Htail_clock |- *.
+        rewrite !N.mul_add_distr_l in Htail_clock |- *.
+        clear -Htail_clock Hcoefficient. lia.
+  Qed.
+
+  Lemma run_check_query_post_length : forall newok names n table q ai copy used count
+      srcs columns post count' srcs' columns' expected,
+    check_query V.eqb newok names n table q ai copy used count srcs columns post =
+      Some (count', srcs', columns', expected) ->
+    length expected <= length post + length q.
+  Proof.
+    intros newok names n table q. induction q as [| a q IH];
+      intros ai copy used count srcs columns post count' srcs' columns' expected Hcheck.
+    - cbn [check_query] in Hcheck. inversion Hcheck. subst expected. cbn [length]. lia.
+    - destruct a as [f args res | primitive args res]; cbn [check_query] in Hcheck.
+      + destruct (check_atom V.eqb newok names n table f (args ++ option_list res)
+          copy used count srcs columns)
+          as [[[[[[copy1 used1] count1] srcs1] columns1] copied] |] eqn:Hatom;
+          [| discriminate].
+        pose proof (IH (S ai) copy1 used1 count1 srcs1 columns1
+          (if copied then ai :: post else post) count' srcs' columns' expected Hcheck) as Hlength.
+        destruct copied; cbn [length] in *; lia.
+      + pose proof (IH (S ai) copy used count srcs columns (ai :: post)
+          count' srcs' columns' expected Hcheck) as Hlength.
+        cbn [length] in *. lia.
+  Qed.
+
+
+
+
+
+
+
+
+
+  Lemma run_check_fun_charge : forall f args res,
+    terms_bits (args ++ option_list res) + 1 <= atom_bits (Fun V.t f args res).
+  Proof.
+    intros f args res. rewrite run_terms_bits_app, run_terms_bits_result. cbn [atom_bits]. lia.
+  Qed.
+
+  (** A rejected query pays its program text once, after any accepted compiled prefix. *)
+  Lemma run_check_query_failure_time : forall newok names n table q width ai copy used count
+      srcs columns post,
+    run_query_width width q ->
+    (forall x ordinal, trie_get x names = Some ordinal -> N.to_nat ordinal <= n) ->
+    (copy <= N.of_nat n)%N ->
+    check_query V.eqb newok names n table q ai copy used count srcs columns post = None ->
+    (T_check_query V.eqb V.T_eqb newok names n table q ai copy used count srcs columns post <=
+      run_query_coefficient width * N.of_nat (run_payload_size srcs columns + run_query_size q + 1) +
+      2048 * (V.c_key + PTrieT.c_trie + 1) * N.of_nat n + run_counter_credit count)%N.
+  Proof.
+    intros newok names n table q. induction q as [| a q IH];
+      intros width ai copy used count srcs columns post Hwidth Hnames Hcopy Hcheck.
+    - discriminate.
+    - inversion Hwidth as [| a0 q0 Hhead Htail]; subst.
+      destruct a as [f args res | primitive args res]; cbn [check_query] in Hcheck.
+      + destruct (run_check_fun_width width f args res Hhead) as [Hname Hterms_width].
+        destruct (check_atom V.eqb newok names n table f (args ++ option_list res)
+          copy used count srcs columns)
+          as [[[[[[copy1 used1] count1] srcs1] columns1] copied] |] eqn:Hatom.
+        * destruct (run_check_query_head_time newok names n table f args res width copy used count
+            srcs columns copy1 used1 count1 srcs1 columns1 copied Hname Hterms_width Hcopy Hatom)
+            as [Hcopy1 Hhead_clock].
+          pose proof (IH width (S ai) copy1 used1 count1 srcs1 columns1
+            (if copied then ai :: post else post) Htail Hnames Hcopy1 Hcheck) as Htail_clock.
+          assert (Hhead_scaled :
+            (2 + Datatypes.T_app args (option_list res) +
+              T_check_atom V.eqb V.T_eqb newok names n table f (args ++ option_list res)
+                copy used count srcs columns +
+              run_query_coefficient width * N.of_nat (run_payload_size srcs1 columns1) +
+              run_counter_credit count1 <=
+              run_query_coefficient width * N.of_nat (run_payload_size srcs columns) +
+              run_counter_credit count)%N).
+          { unfold run_query_coefficient. rewrite !Nat2N.inj_mul in Hhead_clock.
+            clear -Hhead_clock. nia. }
+          pose proof (run_check_option_time res) as Hoption.
+          time_unfold @T_check_query. rewrite Hatom.
+          change (run_query_size (Fun V.t f args res :: q)) with
+            (atom_bits (Fun V.t f args res) + run_query_size q).
+          rewrite !Nat2N.inj_add in Htail_clock |- *.
+          rewrite !N.mul_add_distr_l in Htail_clock |- *.
+          clear -Hhead_scaled Htail_clock Hoption. lia.
+        * pose proof (run_check_atom_bounded_time newok names n table f (args ++ option_list res)
+            width copy used count srcs columns Hname Hterms_width Hnames Hcopy) as Hatom_clock.
+          pose proof (Datatypes.T_app_le args (option_list res)) as Happend.
+          pose proof (run_check_option_time res) as Hoption.
+          pose proof (run_check_fun_charge f args res) as Hcharge.
+          pose proof (run_terms_length_bits (args ++ option_list res)) as Hlength.
+          rewrite length_app in Hlength.
+          assert (Hbudget :
+            (2 + (N.of_nat (length args) + 1) +
+              1024 * (V.c_key + PTrieT.c_trie + 1) *
+                N.of_nat ((width + 1) *
+                  (run_payload_size srcs columns + terms_bits (args ++ option_list res) + 1) + n) <=
+              run_query_coefficient width *
+                N.of_nat (run_payload_size srcs columns +
+                  atom_bits (Fun V.t f args res) + run_query_size q + 1) +
+              2048 * (V.c_key + PTrieT.c_trie + 1) * N.of_nat n)%N).
+          { unfold run_query_coefficient. clear -Hcharge Hlength. nia. }
+          time_unfold @T_check_query. rewrite Hatom.
+          change (run_query_size (Fun V.t f args res :: q)) with
+            (atom_bits (Fun V.t f args res) + run_query_size q).
+          clear -Hatom_clock Happend Hoption Hbudget. lia.
+      + pose proof (IH width (S ai) copy used count srcs columns (ai :: post)
+          Htail Hnames Hcopy Hcheck) as Htail_clock.
+        pose proof (run_atom_bits_pos (Prim V.t primitive args res)) as Hcharge.
+        pose proof (run_query_coefficient_pos width) as Hcoefficient.
+        time_unfold @T_check_query.
+        change (run_query_size (Prim V.t primitive args res :: q)) with
+          (atom_bits (Prim V.t primitive args res) + run_query_size q).
+        rewrite !Nat2N.inj_add in Htail_clock |- *.
+        rewrite !N.mul_add_distr_l in Htail_clock |- *.
+        clear -Htail_clock Hcharge Hcoefficient. nia.
+  Qed.
+
+  Lemma run_vars_length : forall vars, length vars <= run_vars_size vars.
+  Proof.
+    induction vars as [| x vars IH].
+    - reflexivity.
+    - change (run_vars_size (x :: vars)) with (Pos.size_nat x + 1 + run_vars_size vars).
+      cbn [length]. lia.
+  Qed.
+
+  Lemma run_nats_eqb_length : forall xs ys,
+    nats_eqb xs ys = true -> length xs = length ys.
+  Proof.
+    induction xs as [| x xs IH]; intros [| y ys] H; try discriminate; [reflexivity |].
+    cbn [nats_eqb] in H. destruct (Nat.eqb x y); [| discriminate].
+    cbn [length]. now rewrite (IH ys H).
+  Qed.
+
+  (** The non-query checks read each stored plan field once. *)
+  Lemma run_check_cplan_overhead : forall ix i n vars stored_post expected count,
+    (1 + N.T_eqb ix i + Datatypes.T_length vars + Nat.T_eqb (length vars) n +
+      T_var_table vars 0 Empty + T_nat_n n + N.T_eqb count (nat_n n) +
+      List.T_rev_append expected [] + T_nats_eqb (rev_append expected []) stored_post <=
+      64 * (V.c_key + PTrieT.c_trie + 1) *
+        N.of_nat (N.size_nat ix + run_vars_size vars + n + run_positions_size stored_post +
+          length expected + 1))%N.
+  Proof.
+    intros ix i n vars stored_post expected count.
+    pose proof (N.T_eqb_le ix i) as Hrule.
+    pose proof (Datatypes.T_length_le vars) as Hlength.
+    pose proof (Nat.T_eqb_le (length vars) n) as Hvars.
+    pose proof (run_var_table_time vars 0 Empty) as Htable.
+    cbn [run_counter_credit] in Htable.
+    pose proof (run_nat_n_time n) as Hnat.
+    pose proof (run_counter_eqb_right count (nat_n n)) as Hcount.
+    pose proof (run_counter_bits_value (nat_n n)) as Hbits.
+    assert (Hvalue : N.to_nat (nat_n n) = n) by
+      (rewrite run_nat_n_spec, Nat2N.id; reflexivity).
+    rewrite Hvalue in Hbits.
+    pose proof (List.T_rev_append_le expected []) as Hreverse.
+    pose proof (run_nats_eqb_time (rev_append expected []) stored_post) as Hpost.
+    pose proof (run_vars_length vars) as Hvars_length.
+    nia.
+  Qed.
+
+  Lemma run_check_cplan_accepted_time : forall newok table i q acts c width,
+    run_query_width width q ->
+    check_cplan V.eqb newok table i (Rule V.t q acts) c = true ->
+    (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+      run_check_inner width * N.of_nat (run_cplan_size c))%N.
+  Proof.
+    intros newok table i q acts [ix [n columns] srcs vars stored_post] width Hwidth Hcheck.
+    cbn [check_cplan] in Hcheck.
+    destruct (N.eqb ix i) eqn:Hrule; [| discriminate].
+    destruct (Nat.eqb (length vars) n) eqn:Hvars; [| discriminate].
+    destruct (var_table vars 0 Empty) as [names |] eqn:Htable; [| discriminate].
+    destruct (check_query V.eqb newok names n table q 0 0 Empty 0 srcs columns [])
+      as [[[[count rest_srcs] rest_columns] expected] |] eqn:Hquery; [| discriminate].
+    destruct rest_srcs as [| src rest_srcs]; [| discriminate].
+    destruct rest_columns as [| col rest_columns]; [| discriminate].
+    destruct (N.eqb count (nat_n n)) eqn:Hcount; [| discriminate].
+    pose proof (run_nats_eqb_length (rev_append expected []) stored_post Hcheck) as Hpost_length.
+    rewrite rev_append_rev, length_app, length_rev in Hpost_length.
+    cbn [length] in Hpost_length.
+    pose proof (run_positions_length stored_post) as Hpost_mass.
+    assert (Hcopy : (0 <= N.of_nat n)%N) by lia.
+    pose proof (run_check_query_success_time newok names n table q width 0 0 Empty 0
+      srcs columns [] count [] [] expected Hwidth Hcopy Hquery) as Hquery_clock.
+    change (run_payload_size [] []) with 0 in Hquery_clock.
+    cbn [length run_counter_credit] in Hquery_clock.
+    pose proof (run_check_cplan_overhead ix i n vars stored_post expected count) as Hoverhead.
+    assert (Hbudget :
+      (run_query_coefficient width * N.of_nat (run_payload_size srcs columns + length expected + 1) +
+        64 * (V.c_key + PTrieT.c_trie + 1) *
+          N.of_nat (N.size_nat ix + run_vars_size vars + n + run_positions_size stored_post +
+            length expected + 1) <=
+        run_check_inner width *
+          N.of_nat (run_cplan_size (CPlan V.t ix (JPlan n columns) srcs vars stored_post)))%N).
+    { unfold run_query_coefficient, run_check_inner, run_cplan_size, run_payload_size.
+      cbn [rule_ix join nvars cols sources var_of Syntax.post].
+      clear -Hpost_length Hpost_mass. nia. }
+    time_unfold @T_check_cplan. rewrite Hrule, Hvars, Htable, Hquery, Hcount.
+    clear -Hquery_clock Hoverhead Hbudget. lia.
+  Qed.
+
+  (** Successful name-table construction tracks old entries and bounds new ordinals. *)
+  Lemma run_var_table_lookup_range : forall vars start table names,
+    var_table vars start table = Some names ->
+    forall x ordinal, trie_get x names = Some ordinal ->
+      trie_get x table = Some ordinal \/
+      (start <= ordinal < start + N.of_nat (length vars))%N.
+  Proof.
+    intro vars. induction vars as [| key vars IH];
+      intros start table names Htable x ordinal Hget.
+    - cbn [var_table] in Htable. injection Htable as Hsame. subst names.
+      left. exact Hget.
+    - cbn [var_table] in Htable.
+      destruct (trie_get key table) as [old |] eqn:Hkey; [discriminate |].
+      destruct (IH (N.succ start) (PTrieCode.set key start table) names Htable
+        x ordinal Hget) as [Hprevious | Hnew].
+      + destruct (Pos.eq_dec x key) as [Heq | Hneq].
+        * subst x. rewrite PTrie.get_set_same in Hprevious.
+          injection Hprevious as Hsame. subst ordinal.
+          right. cbn [length]. rewrite Nat2N.inj_succ. lia.
+        * left. rewrite PTrie.get_set_other in Hprevious by exact Hneq.
+          exact Hprevious.
+      + right. cbn [length]. rewrite Nat2N.inj_succ. lia.
+  Qed.
+
+  Lemma run_var_table_index_strict : forall vars names,
+    var_table vars 0%N Empty = Some names ->
+    forall x ordinal, trie_get x names = Some ordinal -> N.to_nat ordinal < length vars.
+  Proof.
+    intros vars names Htable x ordinal Hget.
+    destruct (run_var_table_lookup_range vars 0%N Empty names Htable x ordinal Hget)
+      as [Hempty | Hrange].
+    - rewrite PTrie.get_empty in Hempty. discriminate.
+    - lia.
+  Qed.
+
+  Lemma run_var_table_index_bound : forall vars names,
+    var_table vars 0%N Empty = Some names ->
+    forall x ordinal, trie_get x names = Some ordinal -> N.to_nat ordinal <= length vars.
+  Proof.
+    intros vars names Htable x ordinal Hget.
+    pose proof (run_var_table_index_strict vars names Htable x ordinal Hget). lia.
+  Qed.
+
+  Lemma run_check_cplan_general_time : forall newok table i q acts c width,
+    run_query_width width q ->
+    (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+      run_check_inner width * N.of_nat (run_cplan_size c + run_query_size q))%N.
+  Proof.
+    intros newok table i q acts [ix [n columns] srcs vars stored_post] width Hwidth.
+    assert (Hbudget : forall expected_length, expected_length <= run_query_size q ->
+      (run_query_coefficient width * N.of_nat (run_payload_size srcs columns + run_query_size q + 1) +
+        2048 * (V.c_key + PTrieT.c_trie + 1) * N.of_nat n +
+        64 * (V.c_key + PTrieT.c_trie + 1) *
+          N.of_nat (N.size_nat ix + run_vars_size vars + n + run_positions_size stored_post +
+            expected_length + 1) <=
+        run_check_inner width *
+          N.of_nat (run_cplan_size (CPlan V.t ix (JPlan n columns) srcs vars stored_post) +
+            run_query_size q))%N).
+    { intros expected_length Hexpected.
+      unfold run_query_coefficient, run_check_inner, run_cplan_size, run_payload_size.
+      cbn [rule_ix join nvars cols sources var_of Syntax.post].
+      clear -Hexpected. nia. }
+    pose proof (Hbudget 0 (Nat.le_0_l _)) as Hbudget0.
+    pose proof (run_check_cplan_overhead ix i n vars stored_post [] 0) as Hbase.
+    cbn [length] in Hbase.
+    time_unfold @T_check_cplan.
+    destruct (N.eqb ix i) eqn:Hrule.
+    - destruct (Nat.eqb (length vars) n) eqn:Hvars.
+      + destruct (var_table vars 0 Empty) as [names |] eqn:Htable.
+        * assert (Hnames : forall x ordinal, trie_get x names = Some ordinal ->
+            N.to_nat ordinal <= n).
+          { intros x ordinal Hget.
+            pose proof (run_var_table_index_bound vars names Htable x ordinal Hget).
+            apply Nat.eqb_eq in Hvars. lia. }
+          assert (Hcopy : (0 <= N.of_nat n)%N) by lia.
+          destruct (check_query V.eqb newok names n table q 0 0 Empty 0 srcs columns [])
+            as [[[[count rest_srcs] rest_columns] expected] |] eqn:Hquery.
+          -- pose proof (run_check_query_success_time newok names n table q width 0 0 Empty 0
+               srcs columns [] count rest_srcs rest_columns expected Hwidth Hcopy Hquery)
+               as Hquery_success.
+             cbn [length run_counter_credit] in Hquery_success.
+             pose proof (run_check_query_post_length newok names n table q 0 0 Empty 0
+               srcs columns [] count rest_srcs rest_columns expected Hquery) as Hpost_length.
+             cbn [length] in Hpost_length.
+             pose proof (run_query_length_bits q) as Hquery_length.
+             change (length q <= run_query_size q) in Hquery_length.
+             assert (Hexpected : length expected <= run_query_size q).
+             { clear -Hpost_length Hquery_length. lia. }
+             pose proof (Hbudget (length expected) Hexpected) as Hbudget_expected.
+             pose proof (run_check_cplan_overhead ix i n vars stored_post expected count) as Hoverhead.
+             assert (Hquery_clock :
+               (T_check_query V.eqb V.T_eqb newok names n table q 0 0 Empty 0 srcs columns [] <=
+                run_query_coefficient width *
+                  N.of_nat (run_payload_size srcs columns + run_query_size q + 1) +
+                2048 * (V.c_key + PTrieT.c_trie + 1) * N.of_nat n)%N).
+             { clear -Hquery_success Hexpected. nia. }
+             destruct rest_srcs; destruct rest_columns; destruct (N.eqb count (nat_n n));
+               clear -Hquery_clock Hoverhead Hbudget_expected; lia.
+          -- pose proof (run_check_query_failure_time newok names n table q width 0 0 Empty 0
+               srcs columns [] Hwidth Hnames Hcopy Hquery) as Hquery_clock.
+             cbn [run_counter_credit] in Hquery_clock.
+             clear -Hquery_clock Hbase Hbudget0. lia.
+        * clear -Hbase Hbudget0. lia.
+      + clear -Hbase Hbudget0. lia.
+    - clear -Hbase Hbudget0. lia.
+  Qed.
+
+  (** Accepted plans pay their own compiled representation; only a rejected plan pays its query text. *)
+  Lemma run_check_cplan_time : forall newok table i q acts c width,
+    run_query_width width q ->
+    (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+      run_check_inner width * N.of_nat (run_cplan_size c +
+        if check_cplan V.eqb newok table i (Rule V.t q acts) c then 0 else run_query_size q))%N.
+  Proof.
+    intros newok table i q acts c width Hwidth.
+    destruct (check_cplan V.eqb newok table i (Rule V.t q acts) c) eqn:Hcheck.
+    - rewrite Nat.add_0_r. now apply run_check_cplan_accepted_time.
+    - now apply run_check_cplan_general_time.
+  Qed.
+  (** The maximum word width covers every member of the program's encoded words. *)
+  Lemma run_word_width : forall p x, In x (program_words V.encode p) ->
+    Pos.size_nat x <= wbits p.
+  Proof.
+    intros p x Hx. unfold wbits. revert Hx.
+    generalize (program_words V.encode p) as xs. intro xs.
+    induction xs as [|y xs IH]; intro Hx; [contradiction|].
+    cbn [fold_right] in *. destruct Hx as [Hx |Hx].
+    - subst y. apply Nat.le_max_l.
+    - specialize (IH Hx). eapply Nat.le_trans; [exact IH|apply Nat.le_max_r].
+  Qed.
+
+
+
+
+
+
+  Definition run_cplan_list_size (cs : list (cplan V.t)) : nat :=
+    fold_right (fun c n => run_cplan_size c + n) 0 cs.
+
+  Definition run_rules_size (rs : list (rule V.t)) : nat :=
+    fold_right (fun r n => rule_bits r + n) 0 rs.
+
+
+  Lemma run_check_inner_large : forall width, (16 <= run_check_inner width)%N.
+  Proof.
+    intro width. unfold run_check_inner.
+    assert (Hwidth : (1 <= N.of_nat (width + 1))%N) by lia. nia.
+  Qed.
+
+  Lemma run_cplan_size_pos : forall c, 1 <= run_cplan_size c.
+  Proof.
+    intro c. unfold run_cplan_size. lia.
+  Qed.
+
+  Lemma run_cplan_list_size_app : forall cs ds,
+    run_cplan_list_size (cs ++ ds) = run_cplan_list_size cs + run_cplan_list_size ds.
+  Proof.
+    intro cs. induction cs as [|c cs IH]; intro ds.
+    - reflexivity.
+    - change (run_cplan_size c + run_cplan_list_size (cs ++ ds) =
+        (run_cplan_size c + run_cplan_list_size cs) + run_cplan_list_size ds).
+      rewrite IH. lia.
+  Qed.
+
+  Lemma run_compiled_size_breakdown : forall cp,
+    size_compiled cp = run_slot_syntax_size (Syntax.slots V.t cp) +
+      run_cplan_list_size (naive V.t cp ++ seminaive V.t cp).
+  Proof.
+    intro cp. unfold size_compiled, run_slot_syntax_size, run_cplan_list_size, run_cplan_size,
+      run_columns_size, run_sources_size, run_vars_size, run_positions_size. reflexivity.
+  Qed.
+
+  Lemma run_program_size_breakdown : forall p,
+    size_program p = fold_right (fun d n => decl_bits d + n) 0 (decls V.t p) +
+      run_rules_size (rules V.t p) + 1.
+  Proof.
+    intro p. reflexivity.
+  Qed.
+
+  Lemma run_query_rule_size : forall r,
+    run_query_size (query V.t r) + 1 <= rule_bits r.
+  Proof.
+    intros [q acts]. unfold run_query_size, rule_bits. cbn [query actions]. lia.
+  Qed.
+
+  (** Every program query obeys its maximum encoded word width. *)
+  Lemma run_program_query_width : forall p,
+    Forall (fun r => run_query_width (wbits p) (query V.t r)) (rules V.t p).
+  Proof.
+    intro p. rewrite Forall_forall. intros r Hr. unfold run_query_width.
+    rewrite Forall_forall. intros a Ha. rewrite Forall_forall. intros word Hword.
+    apply run_word_width. unfold program_words. apply in_or_app. right.
+    apply in_flat_map. exists r. split; [exact Hr|].
+    destruct r as [q acts]. apply in_or_app. left. apply in_flat_map.
+    exists a. split; assumption.
+  Qed.
+
+  Lemma run_fun_count_clock : forall q : list (atom V.t),
+    (T_fun_count q <= N.of_nat (run_query_size q + 1))%N.
+  Proof.
+    intro q. induction q as [|a q IH].
+    - time_unfold @T_fun_count. cbn [run_query_size fold_right]. lia.
+    - time_unfold @T_fun_count.
+      change (run_query_size (a :: q)) with (atom_bits a + run_query_size q).
+      destruct a as [f args res |op args res]; cbn [atom_bits]; lia.
+  Qed.
+
+  (** A semi-naive prefix retains the budget of the plans it leaves unread. *)
+  Lemma run_check_semis_outer : forall q acts table i C, (16 <= C)%N ->
+    (forall c,
+      (T_check_cplan V.eqb V.T_eqb true table i (Rule V.t q acts) c <=
+        C * N.of_nat (run_cplan_size c +
+          if check_cplan V.eqb true table i (Rule V.t q acts) c then 0
+          else run_query_size q))%N) ->
+    forall k cs,
+    (T_check_semis V.eqb V.T_eqb table i (Rule V.t q acts) k cs +
+      4 * C * N.of_nat (match check_semis V.eqb table i (Rule V.t q acts) k cs with
+        | Some tail => run_cplan_list_size tail | None => 0 end) <=
+      4 * C * N.of_nat (run_cplan_list_size cs) +
+      C * N.of_nat (match check_semis V.eqb table i (Rule V.t q acts) k cs with
+        | Some _ => 0 | None => run_query_size q end) + 4 * C)%N.
+  Proof.
+    intros q acts table i C HC Hplan k. induction k as [|k IH]; intro cs.
+    - change (1 + 4 * C * N.of_nat (run_cplan_list_size cs) <=
+        4 * C * N.of_nat (run_cplan_list_size cs) + C * N.of_nat 0 + 4 * C)%N.
+      lia.
+    - destruct cs as [|c cs].
+      + change (1 + 4 * C * N.of_nat 0 <=
+          4 * C * N.of_nat 0 + C * N.of_nat (run_query_size q) + 4 * C)%N.
+        nia.
+      + pose proof (Hplan c) as Hhead.
+        pose proof (IH cs) as Htail.
+        pose proof (run_cplan_size_pos c) as Hsize.
+        (* These conversions expose one recursive step only. In particular,
+           check_cplan and N arithmetic remain as named applications. *)
+        change (T_check_semis V.eqb V.T_eqb table i (Rule V.t q acts) (S k) (c :: cs))
+          with (1 + (T_check_cplan V.eqb V.T_eqb true table i (Rule V.t q acts) c +
+            (if check_cplan V.eqb true table i (Rule V.t q acts) c
+             then T_check_semis V.eqb V.T_eqb table i (Rule V.t q acts) k cs
+             else 0)))%N.
+        change (check_semis V.eqb table i (Rule V.t q acts) (S k) (c :: cs))
+          with (if check_cplan V.eqb true table i (Rule V.t q acts) c
+            then check_semis V.eqb table i (Rule V.t q acts) k cs else None).
+        change (run_cplan_list_size (c :: cs))
+          with (run_cplan_size c + run_cplan_list_size cs).
+        destruct (check_cplan V.eqb true table i (Rule V.t q acts) c) eqn:Hcheck.
+        * rewrite ?Hcheck in Hhead. rewrite Nat.add_0_r in Hhead.
+          destruct (check_semis V.eqb table i (Rule V.t q acts) k cs) as [tail |]
+            eqn:Hresult in Htail |- *;
+            cbv beta iota zeta in Htail |- *;
+            rewrite !Nat2N.inj_add;
+            clear -HC Hhead Htail Hsize; nia.
+        * rewrite ?Hcheck in Hhead.
+          cbv beta iota zeta in Hhead |- *.
+          rewrite !Nat2N.inj_add in Hhead |- *.
+          clear -HC Hhead Hsize. nia.
+  Qed.
+
+  Definition run_rule_cplan_bound (C : N) (table : ptrie (N * (positive * list nat)))
+      (r : rule V.t) : Prop :=
+    forall newok i c,
+      (T_check_cplan V.eqb V.T_eqb newok table i r c <=
+        C * N.of_nat (run_cplan_size c +
+          if check_cplan V.eqb newok table i r c then 0
+          else run_query_size (query V.t r)))%N.
+
+  (** Rule checking charges its first rejected plan's query only once. *)
+  Lemma run_check_rule_plans_outer : forall C table, (16 <= C)%N ->
+    forall rs i nv sn, Forall (run_rule_cplan_bound C table) rs ->
+    (T_check_rule_plans V.eqb V.T_eqb table rs i nv sn <=
+      4 * C * N.of_nat (run_rules_size rs + run_cplan_list_size nv +
+        run_cplan_list_size sn + 1) + run_counter_credit i)%N.
+  Proof.
+    intros C table HC rs. induction rs as [|[q acts] rs IH]; intros i nv sn Hbounds.
+    - destruct nv as [|c nv]; destruct sn as [|c' sn];
+        time_unfold @T_check_rule_plans;
+        change (run_rules_size []) with 0%nat;
+        cbv beta iota zeta; nia.
+    - destruct nv as [|c nv].
+      + time_unfold @T_check_rule_plans. cbv beta iota zeta. nia.
+      + inversion Hbounds as [|r rs' Hbound Hrest]; subst r rs'.
+        pose proof (Hbound false i c) as Hhead.
+        pose proof (run_check_semis_outer q acts table i C HC (Hbound true i)
+          (fun_count q) sn) as Hsemis.
+        pose proof (run_fun_count_clock q) as Hfun.
+        pose proof (run_counter_succ_amort i) as Hsucc.
+        pose proof (run_query_rule_size (Rule V.t q acts)) as Hqsize.
+        pose proof (run_cplan_size_pos c) as Hcsize.
+        change (run_query_size q + 1 <= rule_bits (Rule V.t q acts)) in Hqsize.
+        time_unfold @T_check_rule_plans.
+        change (run_rules_size (Rule V.t q acts :: rs)) with
+          (rule_bits (Rule V.t q acts) + run_rules_size rs).
+        change (run_cplan_list_size (c :: nv)) with
+          (run_cplan_size c + run_cplan_list_size nv).
+        destruct (check_cplan V.eqb false table i (Rule V.t q acts) c) eqn:Hcheck.
+        * rewrite ?Hcheck in Hhead. rewrite Nat.add_0_r in Hhead.
+          destruct (check_semis V.eqb table i (Rule V.t q acts) (fun_count q) sn)
+            as [tail |] eqn:Hsemi in Hsemis |- *.
+          -- pose proof (IH (N.succ i) nv tail Hrest) as Htail.
+             cbv beta iota zeta in Hsemis |- *.
+             rewrite !Nat2N.inj_add in Htail |- *.
+             clear -HC Hhead Hsemis Hfun Hsucc Hqsize Hcsize Htail. nia.
+          -- cbv beta iota zeta in Hsemis |- *.
+             rewrite !Nat2N.inj_add.
+             clear -HC Hhead Hsemis Hfun Hqsize Hcsize. nia.
+        * rewrite ?Hcheck in Hhead.
+          change (T_check_cplan V.eqb V.T_eqb false table i (Rule V.t q acts) c <=
+            C * N.of_nat (run_cplan_size c + run_query_size q))%N in Hhead.
+          cbv beta iota zeta.
+          rewrite !Nat2N.inj_add in Hhead |- *.
+          clear -HC Hhead Hqsize Hcsize. nia.
+  Qed.
+
+  (** The outer checker needs only the per-plan bound and the already checked prefix clocks. *)
+  Lemma run_check_shape_from_cplans :
+    (forall newok table i q acts c width, run_query_width width q ->
+      (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+        (4 * 1024) * (V.c_key + PTrieT.c_trie + 1) *
+          N.of_nat (run_cplan_size c +
+            if check_cplan V.eqb newok table i (Rule V.t q acts) c then 0
+            else run_query_size q) * N.of_nat (width + 1))%N) ->
+    forall p cp,
+    (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
+      N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros Hinner [ds rs] [sl nv sn].
+    set (p := Program V.t ds rs). set (cp := Compiled V.t sl nv sn).
+    set (width := wbits p). set (C := run_check_inner width).
+    assert (HC : (16 <= C)%N) by apply run_check_inner_large.
+    assert (Hfront : (128 * (PTrieT.c_trie + 1) <= C)%N).
+    { unfold C, run_check_inner.
+      assert (Hw : (1 <= N.of_nat (width + 1))%N) by lia. nia. }
+    assert (Hconstant : (k_check * N.of_nat (width + 1) = 16 * C)%N).
+    { unfold C, run_check_inner, k_check. nia. }
+    assert (Hbudget : forall n,
+      (k_check * N.of_nat n * N.of_nat (width + 1) = 16 * C * N.of_nat n)%N).
+    { intro n. clear -Hconstant. nia. }
+    assert (Hrules : forall table, Forall (run_rule_cplan_bound C table) rs).
+    { intro table. pose proof (run_program_query_width p) as Hwidth.
+      change (Forall (fun r => run_query_width width (query V.t r)) rs) in Hwidth.
+      rewrite Forall_forall in Hwidth |- *. intros [q acts] Hr newok i c.
+      pose proof (Hinner newok table i q acts c width (Hwidth (Rule V.t q acts) Hr)) as Hc.
+      change (T_check_cplan V.eqb V.T_eqb newok table i (Rule V.t q acts) c <=
+        C * N.of_nat (run_cplan_size c +
+          if check_cplan V.eqb newok table i (Rule V.t q acts) c then 0
+          else run_query_size q))%N.
+      unfold C, run_check_inner. clear -Hc. nia. }
+    assert (Hsize : size_program p + size_compiled cp + 1 =
+      fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + run_rules_size rs +
+        run_slot_syntax_size sl + run_cplan_list_size nv + run_cplan_list_size sn + 2).
+    { unfold p, cp.
+      rewrite run_program_size_breakdown, run_compiled_size_breakdown,
+        run_cplan_list_size_app.
+      change ((fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + run_rules_size rs + 1) +
+        (run_slot_syntax_size sl + (run_cplan_list_size nv + run_cplan_list_size sn)) + 1 =
+        fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + run_rules_size rs +
+          run_slot_syntax_size sl + run_cplan_list_size nv + run_cplan_list_size sn + 2).
+      lia. }
+    pose proof (run_decl_widths_time ds Empty) as Hdecls.
+    pose proof (run_slot_table_time (decl_widths ds Empty) sl 0 Empty) as Hslots.
+    change (run_counter_credit 0%N) with 0%N in Hslots.
+    rewrite N.add_0_r in Hslots.
+    change (T_check_shape p cp <= k_check *
+      N.of_nat (size_program p + size_compiled cp + 1) * N.of_nat (width + 1))%N.
+    rewrite Hbudget, Hsize.
+    clearbody C.
+    assert (Hdecls_scaled : (T_decl_widths ds Empty <= C *
+      N.of_nat (fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds + 1))%N).
+    { eapply N.le_trans; [exact Hdecls|].
+      apply N.mul_le_mono_r. clear -Hfront. lia. }
+    assert (Hslots_scaled : (T_slot_table (decl_widths ds Empty) sl 0 Empty <=
+      C * N.of_nat (run_slot_syntax_size sl + 1))%N).
+    { eapply N.le_trans; [exact Hslots|].
+      apply N.mul_le_mono_r. exact Hfront. }
+    pose proof (N.add_le_mono _ _ _ _ Hdecls_scaled Hslots_scaled) as Hprefix.
+    change (T_check_shape (Program V.t ds rs) (Compiled V.t sl nv sn) <=
+      16 * C * N.of_nat (fold_right (fun d n => (decl_bits d + n)%nat) 0%nat ds +
+        run_rules_size rs + run_slot_syntax_size sl + run_cplan_list_size nv +
+        run_cplan_list_size sn + 2))%N.
+    time_unfold T_check_shape. time_unfold @T_check_shape_with.
+    change (fun a b : V.t => V.T_eqb a b) with V.T_eqb.
+    destruct (slot_table (decl_widths ds Empty) sl 0 Empty) as [table |] eqn:Htable.
+    - pose proof (run_check_rule_plans_outer C table HC rs 0 nv sn (Hrules table)) as Hplans.
+      change (run_counter_credit 0%N) with 0%N in Hplans.
+      rewrite N.add_0_r in Hplans.
+      pose proof (N.add_le_mono _ _ _ _ Hprefix Hplans) as Htotal.
+      cbv beta iota zeta.
+      rewrite !Nat2N.inj_add in Htotal |- *.
+      rewrite !N.mul_add_distr_l in Htotal |- *.
+      clear -HC Htotal. nia.
+    - cbv beta iota zeta.
+      rewrite !Nat2N.inj_add in Hprefix |- *.
+      rewrite !N.mul_add_distr_l in Hprefix |- *.
+      clear -HC Hprefix. nia.
+  Qed.
 
   Lemma T5_check_shape_le : forall p cp,
     (T_check_shape p cp <= k_check * N.of_nat (size_program p + size_compiled cp + 1) *
       N.of_nat (wbits p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp. apply run_check_shape_from_cplans.
+    intros newok table i q acts c width Hwidth.
+    pose proof (run_check_cplan_time newok table i q acts c width Hwidth) as Hplan.
+    unfold run_check_inner in Hplan. clear -Hplan. nia.
+  Qed.
+
+  Lemma T_check_plan_le : forall p cp,
+    (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
+      N.of_nat (wbits p + 1))%N.
+  Proof.
+    intros p cp. apply run_check_plan_from_shape. apply T5_check_shape_le.
+  Qed.
+
+  (** A binding traversal pays for each variable's lookup and optional insertion once. *)
+  Lemma bind_cells_clock_le : forall vars (cells : list (cell V.t)) t,
+    (T_bind_cells vars cells t <= 16 *
+      N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat vars + 1))%N.
+  Proof.
+    intro vars. induction vars as [|x xs IH]; intros cells t.
+    - time_unfold @T_bind_cells. time_simpl. time_cbn. nia.
+    - destruct cells as [|c cs].
+      + time_unfold @T_bind_cells. time_simpl. time_cbn.
+        rewrite !Nat2N.inj_add. nia.
+      + pose proof (IH cs t) as Hkeep.
+        pose proof (IH cs (PTrieCode.set x c t)) as Hnew.
+        pose proof (PTrieT.replace_clock_bound (cell V.t) x (Some c) t) as Hset.
+        time_unfold @T_bind_cells. time_simpl. time_cbn.
+        unfold PTrieCode.T_set. rewrite PTrieT.trie_get_clock.
+        destruct (trie_get x t); cbn [fold_right];
+          rewrite !Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** The wrapper adds only its own call and the variable-field reader. *)
+  Lemma bind_trie_clock_le : forall c b,
+    (T_bind_trie c b <= 32 *
+      N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
+        (var_of V.t c) + 1))%N.
+  Proof.
+    intros c b. pose proof (bind_cells_clock_le (plan_vars c) b Empty) as Hcells.
+    destruct c as [ix j srcs vars post].
+    time_unfold T_bind_trie. time_simpl. time_cbn.
+    cbn [plan_vars] in Hcells. nia.
+  Qed.
 
   (** Building the trie of a binding pays for the bits of the plan's variables. *)
   Lemma T6_bind_trie_le : forall c b,
     (T_bind_trie c b <= k_driver *
       N.of_nat (fold_right (fun x n => (Pos.size_nat x + 1 + n)%nat) 0%nat
         (var_of V.t c) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros c b.
+    pose proof (bind_trie_clock_le c b) as Hbind.
+    unfold k_driver. nia.
+  Qed.
 
+  Definition keep_width_program : program V.t :=
+    Program V.t [] [Rule V.t [Fun V.t 1%positive [Var 1%positive; Var 1%positive] None] []].
+
+  Definition keep_width_plan (z : positive) : cplan V.t :=
+    CPlan V.t 0%N (JPlan 0 []) [] [z] [0].
+
+  (** Even an empty binding pays the full width of the first copy-name lookup. *)
+  Lemma keep_width_clock_lower : forall z,
+    (2 * N.of_nat (Pos.size_nat z) <=
+      T_keep keep_width_program (keep_width_plan z) (bind_trie (keep_width_plan z) []))%N.
+  Proof.
+    intro z.
+    unfold T_keep, keep_width_program, keep_width_plan, bind_trie.
+    cbn [plan_rule_ix rules rule_at plan_post plan_vars bind_cells].
+    time_unfold @T_rule_at. time_unfold @T_keep_post.
+    time_simpl. time_cbn.
+    time_unfold @T_copies_ok. time_simpl. time_cbn.
+    time_unfold @T_copies_ok. time_simpl. time_cbn.
+    time_simpl. time_cbn.
+    rewrite ?PTrie.get_empty. time_cbn.
+    rewrite ?PTrieT.trie_get_clock. nia.
+  Qed.
+
+  (** Every charged measure stays fixed while the copy name grows. *)
+  Lemma keep_width_work_fixed : forall z,
+    post_work keep_width_program (keep_width_plan z) = 3%nat /\
+    rule_work keep_width_program (keep_width_plan z) = 2%nat /\
+    wbits keep_width_program = 1%nat /\
+    query_prim_work V.prim_work (query V.t (job_rule keep_width_program
+      (keep_width_plan z))) (env_of (keep_width_plan z) []) = 0%N.
+  Proof.
+    intro z. repeat split; reflexivity.
+  Qed.
+
+  (** Positive keys can have any nonzero width. *)
+  Lemma keep_width_key_exists : forall n, exists z, Pos.size_nat z = S n.
+  Proof.
+    induction n as [|n [z Hz]].
+    - exists 1%positive. reflexivity.
+    - exists (xO z). cbn [Pos.size_nat]. now rewrite Hz.
+  Qed.
+
+  (** No fixed constant can bound the filter by the measures charged in [T7_keep_le]. *)
+  Lemma keep_width_unbounded : forall k : N, exists z,
+    (10 * k < T_keep keep_width_program (keep_width_plan z)
+      (bind_trie (keep_width_plan z) []))%N.
+  Proof.
+    intro k.
+    destruct (keep_width_key_exists (N.to_nat (5 * k)%N)) as [z Hz].
+    exists z. pose proof (keep_width_clock_lower z) as Hclock.
+    rewrite Hz, Nat2N.inj_succ, N2Nat.id in Hclock. nia.
+  Qed.
+
+  (** The proposed filter contract fails for every replacement of its constant. *)
+  Lemma keep_bound_counterexample : forall k : N, exists p c b,
+    ~ (T_keep p c (bind_trie c b) <= k * N.of_nat (post_work p c + 1) *
+      N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
+      k * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
+      k * N.of_nat (rule_work p c))%N.
+  Proof.
+    intro k. destruct (keep_width_unbounded k) as [z Hlarge].
+    exists keep_width_program, (keep_width_plan z), [].
+    destruct (keep_width_work_fixed z) as [Hpost [Hrule [Hwidth Hprim]]].
+    rewrite Hpost, Hrule, Hwidth, Hprim. cbn [fold_right].
+    intro Hbound. nia.
+  Qed.
   (** The filter pays for its atoms at the widest program word or binding cell, and for the
       primitive work of the query. *)
   Lemma T7_keep_le : forall p c b,
@@ -13232,7 +17105,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       N.of_nat (wbits p + fold_right (fun x n => Nat.max (cell_bits V.encode x) n) 0%nat b + 1) +
       k_driver * query_prim_work V.prim_work (query V.t (job_rule p c)) (env_of c b) +
       k_driver * N.of_nat (rule_work p c))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: copy-name widths are uncharged; keep_bound_counterexample. *)
 
   (** A round's time is bounded by its joins, job applications, rebuild and driver overhead. *)
   Lemma T1a_round_split : forall p cp nv db, plans_ok p cp -> D.wf db ->
@@ -13248,7 +17121,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       T_apply_jobs p (jobs p cp nv db) db +
       D.T_rebuild (apply_jobs p (jobs p cp nv db) db) +
       k_driver * N.of_nat (round_work p cp nv db + 1) * N.of_nat (wbits p + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* PLAN-DEFECT: repeated source lookups omit the slot-number width. *)
 
   Lemma T1_round_le : forall B U p cp nv db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (D.ids (round p cp nv db) <= B)%N -> D.unit (round p cp nv db) <= U ->
@@ -13256,7 +17129,13 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
         N.of_nat (round_work p cp nv db + D.pending db + 1) +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: DATABASE_T permits uncharged wide source slots. *)
+
+  (** The driver constant covers the stored fields and binary comparison. *)
+  Lemma driver_constant_fields : (32 * (D.c_db + 1) <= k_driver)%N.
+  Proof.
+    unfold k_driver. nia.
+  Qed.
 
   Lemma T3_driver_wrapper : forall p cp lim db, plans_ok p cp -> D.wf db -> loaded p cp db ->
     (T_run p cp lim db <=
@@ -13265,7 +17144,36 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       | inl (_, final) => D.T_rebuild final
       | inr (_, final) => D.T_rebuild final
       end + k_driver)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db Hplans Hwf Hloaded.
+    pose proof driver_constant_fields as Hconstant.
+    time_unfold T_run. time_unfold T_limits_iter.
+    change (limits_iter lim) with (max_iter lim).
+    change (fun st : bool * D.t => T_driver p cp lim st) with (T_driver p cp lim).
+    destruct (loopN (driver p cp lim) (max_iter lim) (false, db))
+      as [[nv final] | [st final]]; lia.
+  Qed.
+
+  (** Positive comparison stops when either operand ends. *)
+  Lemma compare_cont_right_clock : forall order p q,
+    (Pos.T_compare_cont order p q <= N.of_nat (Pos.size_nat q))%N.
+  Proof.
+    intros order p q. revert order p.
+    induction q as [q IH | q IH |]; intros order [p | p |];
+      time_unfold Pos.T_compare_cont; cbn [Pos.size_nat];
+      rewrite ?Nat2N.inj_succ;
+      try pose proof (IH order p); try pose proof (IH Lt p);
+      try pose proof (IH Gt p); lia.
+  Qed.
+
+  (** Natural comparison can be charged to the second operand. *)
+  Lemma compare_right_clock : forall a b,
+    (N.T_compare a b <= N.of_nat (N.size_nat b) + 2)%N.
+  Proof.
+    intros [|a] [|b]; time_unfold N.T_compare; cbn [N.size_nat]; try lia.
+    pose proof (compare_cont_right_clock Eq a b) as Hcompare.
+    time_unfold Pos.T_compare. lia.
+  Qed.
 
   (** A driver call pays for its round, limit test, flag test and advance. *)
   Lemma T2a_driver_le : forall p cp lim nv db, plans_ok p cp -> D.wf db ->
@@ -13273,14 +17181,1091 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
     (T_driver p cp lim (nv, db) <= T_round p cp nv db + k_driver *
       N.of_nat (length (Syntax.slots V.t cp) +
         N.size_nat (D.ids (round p cp nv db)) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim nv db Hplans Hwf Hloaded.
+    destruct (F17_round_mono p cp nv db Hplans Hwf Hloaded)
+      as [Hwf_next [Hloaded_next Hmono]].
+    destruct Hloaded_next as [Hkinds [Hslots Hsorted]].
+    pose proof (D.T_advance_le (round p cp nv db)) as Hadvance.
+    unfold D.num_slots in Hadvance. rewrite Hslots in Hadvance.
+    pose proof (D.T_ids_le (round p cp nv db)) as Hids.
+    pose proof (D.T_changed_le (round p cp nv db)) as Hchanged.
+    pose proof (compare_right_clock (max_ids lim) (D.ids (round p cp nv db))) as Hcompare.
+    pose proof driver_constant_fields as Hconstant.
+    clear Hplans Hwf Hloaded Hwf_next Hkinds Hslots Hsorted Hmono.
+    time_unfold T_driver. time_unfold T_limits_ids. time_unfold N.T_ltb.
+    change (limits_ids lim) with (max_ids lim).
+    destruct (N.ltb (max_ids lim) (D.ids (round p cp nv db)));
+      [| destruct (andb nv (negb (D.changed (round p cp nv db))))];
+      rewrite ?Nat2N.inj_add in *; time_simpl; nia.
+  Qed.
+
+  (** A loop pays each visited callback and amortised binary decrement once. *)
+  Lemma loop_trace_clock_acc : forall (St Out : Type) (step : St -> St + Out)
+      (T_step : St -> N) fs (Hacc : Acc loopN_lt fs),
+    (Loop.T_loop loopN_lt (loopN_step step) (fun fs => T_loopN_step step T_step fs) fs Hacc <=
+      fold_right N.add 0 (map (fun st => T_step st + c_loopN)
+        (firstn (N.to_nat (fst fs))
+          (driver_trace step (N.to_nat (fst fs)) (snd fs)))) +
+      loopN_zero_bits (fst fs) + 2)%N.
+  Proof.
+    intros St Out step T_step fs Hacc.
+    induction Hacc as [[fuel state] Hnext IH] using Loop.Acc_ind_dep.
+    cbn [fst snd]. destruct fuel as [|p].
+    - time_unfold @Loop.T_loop. cbn [loopN_step Acc_inv].
+      unfold T_loopN_step at 1.
+      cbn [loopN_step loopN_zero_bits N.to_nat firstn map fold_right]. lia.
+    - assert (Hfuel : N.to_nat (Npos p) = S (N.to_nat (N.pred (Npos p)))).
+      { rewrite N2Nat.inj_pred.
+        change (Pos.to_nat p = S (Nat.pred (Pos.to_nat p))).
+        pose proof (Pos2Nat.is_pos p). lia. }
+      time_unfold @Loop.T_loop.
+      cbn [loopN_step Acc_inv].
+      destruct (step state) as [next | result] eqn:Hstep.
+      + match goal with
+        | |- context [Loop.T_loop _ _ _ ?fs (Hnext _ ?Hlt)] =>
+            pose proof (IH fs Hlt) as Htail
+        end.
+        cbn [fst snd] in Htail.
+        pose proof (loopN_pred_credit (Npos p)) as Hcredit.
+        unfold T_loopN_step at 1. cbn beta iota zeta. rewrite Hstep.
+        rewrite Hfuel. cbn [driver_trace firstn map fold_right]. rewrite Hstep.
+        unfold c_loopN in Htail |- *. lia.
+      + unfold T_loopN_step at 1. cbn beta iota zeta. rewrite Hstep.
+        rewrite Hfuel. cbn [driver_trace firstn map fold_right]. rewrite Hstep.
+        rewrite ?firstn_nil. cbn [map fold_right]. unfold c_loopN. lia.
+  Qed.
+
   (** The loop pays for every driver call in the trace prefix and its fuel. *)
   Lemma T2b_loop_trace : forall p cp lim db,
     (T_loopN (driver p cp lim) (T_driver p cp lim) (max_iter lim) (false, db) <=
       fold_right N.add 0 (map (fun st => T_driver p cp lim st + c_loopN)
         (firstn (N.to_nat (max_iter lim)) (trace p cp lim db))) +
       c_loopN * N.of_nat (N.size_nat (max_iter lim) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p cp lim db. unfold trace.
+    time_unfold @T_loopN.
+    match goal with
+    | |- context [Loop.T_loop _ _ _ _ ?Hacc] =>
+        pose proof (loop_trace_clock_acc _ _ (driver p cp lim) (T_driver p cp lim)
+          (max_iter lim, (false, db)) Hacc) as Hloop
+    end.
+    pose proof (loopN_zero_bits_le_size (max_iter lim)) as Hbits.
+    cbn [fst snd] in Hloop. unfold c_loopN in Hloop |- *.
+    rewrite Nat2N.inj_add. lia.
+  Qed.
+  (** Primitive arguments observe values but do not distinguish class identifiers. *)
+  Definition run_value_view (s : Model.env (V := V.t)) (x : positive) : option V.t :=
+    match s x with
+    | Some (Val v) => Some v
+    | _ => None
+    end.
+
+  Lemma run_value_terms_agree : forall ts s t,
+    (forall x, run_value_view s x = run_value_view t x) ->
+    value_terms s ts = value_terms t ts.
+  Proof.
+    intro ts. induction ts as [|a ts IH]; intros s t Hagree.
+    - reflexivity.
+    - cbn [value_terms]. rewrite (IH s t Hagree).
+      destruct a as [x | v]; [|reflexivity].
+      specialize (Hagree x). unfold run_value_view in Hagree.
+      destruct (s x) as [[i | u] |]; destruct (t x) as [[j | v] |];
+        cbn in Hagree; destruct (value_terms t ts); congruence.
+  Qed.
+
+  Lemma run_value_update_agree : forall s t x c d,
+    (forall y, run_value_view s y = run_value_view t y) ->
+    (match c with Val v => Some v | _ => None end) =
+      (match d with Val v => Some v | _ => None end) ->
+    forall y, run_value_view (update s x c) y = run_value_view (update t x d) y.
+  Proof.
+    intros s t x c d Hagree Hvalue y. unfold run_value_view, update.
+    destruct (Pos.eqb x y); [exact Hvalue | exact (Hagree y)].
+  Qed.
+
+  (** The primitive-work specification depends only on the available values. *)
+  Lemma run_action_prim_work_agree : forall kinds acts s t,
+    (forall x, run_value_view s x = run_value_view t x) ->
+    action_prim_work V.prim V.prim_work kinds acts s =
+      action_prim_work V.prim V.prim_work kinds acts t.
+  Proof.
+    intros kinds acts. induction acts as [|a acts IH]; intros s t Hagree.
+    - reflexivity.
+    - destruct a as [x f args | f args res | a b | x op args];
+        cbn [action_prim_work].
+      + destruct (kinds f) as [kind |]; [destruct kind |];
+          apply IH; try exact Hagree.
+        apply run_value_update_agree; [exact Hagree | reflexivity].
+      + apply IH. exact Hagree.
+      + apply IH. exact Hagree.
+      + rewrite (run_value_terms_agree args s t Hagree).
+        destruct (value_terms t args) as [vs |]; [|reflexivity].
+        destruct (V.prim op vs) as [v |]; [|reflexivity].
+        f_equal. apply IH. apply run_value_update_agree; [exact Hagree | reflexivity].
+  Qed.
+
+  (** Empty local bindings leave the original environment visible. *)
+  Lemma run_look_empty : forall s x, @look V.t s Empty x = s x.
+  Proof.
+    intros s x. unfold look. rewrite PTrie.get_empty. reflexivity.
+  Qed.
+
+  (** A new local binding has the same shadowing order as the specification update. *)
+  Lemma run_look_set : forall s locals x c y,
+    @look V.t s (PTrieCode.set x c locals) y = update (look s locals) x c y.
+  Proof.
+    intros s locals x c y. unfold look, update.
+    destruct (Pos.eqb x y) eqn:Hxy.
+    - apply Pos.eqb_eq in Hxy. subst y. rewrite PTrie.get_set_same. reflexivity.
+    - apply Pos.eqb_neq in Hxy. rewrite PTrie.get_set_other by congruence. reflexivity.
+  Qed.
+
+  (** Local lookup charges one trie walk and at most one external environment call. *)
+  Lemma run_look_clock : forall s Ts locals x,
+    (@T_look V.t s Ts locals x <= 2 * N.of_nat (Pos.size_nat x) + Ts x + 1)%N.
+  Proof.
+    intros s Ts locals x. time_unfold @T_look.
+    rewrite PTrieT.trie_get_clock. destruct (trie_get x locals); lia.
+  Qed.
+
+  (** Reading a term pays its variable width and its external callback once. *)
+  Lemma run_term_clock : forall s Ts locals t W,
+    (forall x, In x (term_vars t) -> Pos.size_nat x <= W) ->
+    (@T_term_cell V.t s Ts locals t <= 2 * N.of_nat (W + 1) +
+      fold_right N.add 0%N (map Ts (term_vars t)))%N.
+  Proof.
+    intros s Ts locals [x | v] W Hwidth.
+    - pose proof (Hwidth x (or_introl eq_refl)) as Hx.
+      pose proof (run_look_clock s Ts locals x) as Hlook.
+      time_unfold @T_term_cell. cbn [term_vars map fold_right].
+      rewrite Nat2N.inj_add. nia.
+    - time_unfold @T_term_cell. cbn [term_vars map fold_right].
+      rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  Lemma run_sum_app : forall xs ys : list N,
+    fold_right N.add 0%N (xs ++ ys) = (fold_right N.add 0%N xs + fold_right N.add 0%N ys)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro ys; cbn [fold_right app]; [reflexivity|].
+    rewrite IH. lia.
+  Qed.
+
+  (** A short-circuiting list read charges at most every listed variable once. *)
+  Lemma run_terms_clock : forall ts s Ts locals W,
+    Forall (fun t => forall x, In x (term_vars t) -> Pos.size_nat x <= W) ts ->
+    (@T_term_cells V.t s Ts locals ts <= 4 * N.of_nat ((length ts + 1) * (W + 1)) +
+      fold_right N.add 0%N (map Ts (flat_map term_vars ts)))%N.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros s Ts locals W Hwidth.
+    - time_unfold @T_term_cells. cbn [length flat_map map fold_right].
+      rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia.
+    - inversion Hwidth as [|t' ts' Hhead Htail]; subst t' ts'.
+      pose proof (run_term_clock s Ts locals t W Hhead) as Hterm.
+      pose proof (IH s Ts locals W Htail) as Hrest.
+      time_unfold @T_term_cells.
+      destruct (term_cell s locals t); [destruct (term_cells s locals ts)|];
+        cbn [length flat_map]; rewrite map_app, run_sum_app;
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
+  Qed.
+
+  (** Value arguments obey the same callback budget as cell arguments. *)
+  Lemma run_values_clock : forall ts s Ts locals W,
+    Forall (fun t => forall x, In x (term_vars t) -> Pos.size_nat x <= W) ts ->
+    (@T_term_values V.t s Ts locals ts <= 4 * N.of_nat ((length ts + 1) * (W + 1)) +
+      fold_right N.add 0%N (map Ts (flat_map term_vars ts)))%N.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros s Ts locals W Hwidth.
+    - time_unfold @T_term_values. cbn [length flat_map map fold_right].
+      rewrite Nat2N.inj_mul, !Nat2N.inj_add. nia.
+    - inversion Hwidth as [|t' ts' Hhead Htail]; subst t' ts'.
+      pose proof (run_term_clock s Ts locals t W Hhead) as Hterm.
+      pose proof (IH s Ts locals W Htail) as Hrest.
+      time_unfold @T_term_values.
+      destruct (term_cell s locals t) as [[i | v] |];
+        try destruct (term_values s locals ts);
+        cbn [length flat_map]; rewrite map_app, run_sum_app;
+        rewrite !Nat2N.inj_mul, !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
+  Qed.
+  (** Query typing determines its final context pointwise. *)
+  Lemma run_query_context_agree : forall (p : program V.t) (q : list (atom V.t)) g h,
+    query_ok (program_sorts p) (program_kind p) ctx_empty q g ->
+    query_ok (program_sorts p) (program_kind p) ctx_empty q h -> forall x, g x = h x.
+  Proof.
+    intros p q g h Hg Hh x.
+    assert (Hempty : forall y, trie_get y (@Empty sort) = ctx_empty y).
+    { intro y. rewrite PTrie.get_empty. reflexivity. }
+    destruct (bind_query_b_complete V.t (decls V.t p) Empty ctx_empty q g Hempty Hg)
+      as [tg [Htg Hrg]].
+    destruct (bind_query_b_complete V.t (decls V.t p) Empty ctx_empty q h Hempty Hh)
+      as [th [Hth Hrh]].
+    rewrite Htg in Hth. inversion Hth; subst th. rewrite <- Hrg, <- Hrh. reflexivity.
+  Qed.
+
+  (** The rule environment supplies the context used to type its actions. *)
+  Lemma run_rule_actions_env : forall p cp r s, plans_ok p cp -> In r (rules V.t p) ->
+    rule_env (program_sorts p) (program_kind p) r s ->
+    exists g, actions_ok (program_sorts p) (program_kind p) g (actions V.t r) /\
+      env_sorted g s.
+  Proof.
+    intros p cp r s Hplans Hr [h [Hqh Henv]].
+    pose proof (plans_ok_sorted p cp Hplans) as Hok.
+    unfold program_ok in Hok. rewrite Forall_forall in Hok.
+    destruct (Hok r Hr) as [g [Hqg Hacts]]. exists g. split; [exact Hacts|].
+    intros x ty Hx. apply Henv. rewrite <- (run_query_context_agree p _ g h Hqg Hqh x).
+    exact Hx.
+  Qed.
+
+  (** A typed term resolves to a cell of its declared sort. *)
+  Lemma run_term_sorted : forall g (s : Model.env (V := V.t)) locals t ty,
+    env_sorted g (look s locals) -> has g t ty ->
+    exists c, term_cell s locals t = Some c /\ cell_sort c = ty.
+  Proof.
+    intros g s locals [x | v] ty Henv Hhas.
+    - exact (Henv x ty Hhas).
+    - exists (Val v). cbn [term_cell cell_sort]. split; [reflexivity|symmetry; exact Hhas].
+  Qed.
+
+  (** A term cannot manufacture an unallocated class identifier. *)
+  Lemma run_term_allocated : forall db s locals t i,
+    env_allocated db (look s locals) -> term_cell s locals t = Some (Id i) ->
+    D.allocated db i.
+  Proof.
+    intros db s locals [x | v] i Halloc Hterm.
+    - exact (Halloc x i Hterm).
+    - discriminate Hterm.
+  Qed.
+
+  (** Reading typed arguments preserves their list of sorts and their length. *)
+  Lemma run_cells_sorted : forall (ts : list (term V.t)) ss g s locals,
+    Forall2 (has g) ts ss -> env_sorted g (look s locals) ->
+    exists cells, term_cells s locals ts = Some cells /\ map cell_sort cells = ss /\
+      length cells = length ts.
+  Proof.
+    intros ts ss g s locals Htyped Henv. induction Htyped as [|t ty ts ss Ht Hts IH].
+    - exists []. repeat split; reflexivity.
+    - destruct (run_term_sorted g s locals t ty Henv Ht) as [c [Hc Hsort]].
+      destruct IH as [cells [Hcells [Hsorts Hlen]]]. exists (c :: cells).
+      cbn [term_cells map length]. rewrite Hc, Hcells, Hsort, Hsorts, Hlen.
+      repeat split; reflexivity.
+  Qed.
+
+  (** Every identifier returned by an argument read came from its environment. *)
+  Lemma run_cells_allocated : forall ts db s locals cells,
+    env_allocated db (look s locals) -> term_cells s locals ts = Some cells ->
+    forall i, In (Id i) cells -> D.allocated db i.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros db s locals cells Halloc Hcells i Hi.
+    - cbn [term_cells] in Hcells. inversion Hcells; subst cells. contradiction.
+    - cbn [term_cells] in Hcells.
+      destruct (term_cell s locals t) as [c |] eqn:Hc; [|discriminate].
+      destruct (term_cells s locals ts) as [cs |] eqn:Hcs; [|discriminate].
+      inversion Hcells; subst cells. destruct Hi as [Hi | Hi].
+      + subst c. eapply run_term_allocated; eauto.
+      + eapply IH; eauto.
+  Qed.
+
+  (** An optional output agrees with the function's output kind. *)
+  Lemma run_result_sorted : forall g (s : Model.env (V := V.t)) locals out res,
+    env_sorted g (look s locals) -> has_result g out res ->
+    exists o, result_cell s locals res = Some o /\ option_map cell_sort o = out_sort out.
+  Proof.
+    intros g s locals out res Henv Htyped.
+    destruct out as [| |m]; destruct res as [t |];
+      cbn [has_result out_sort] in Htyped; try contradiction.
+    - exists None. split; reflexivity.
+    - destruct (run_term_sorted g s locals t SId Henv Htyped) as [c [Hc Hsort]].
+      exists (Some c). cbn [result_cell]. rewrite Hc. split; [reflexivity|].
+      cbn [option_map out_sort]. now rewrite Hsort.
+    - destruct (run_term_sorted g s locals t SVal Henv Htyped) as [c [Hc Hsort]].
+      exists (Some c). cbn [result_cell]. rewrite Hc. split; [reflexivity|].
+      cbn [option_map out_sort]. now rewrite Hsort.
+  Qed.
+
+  Lemma run_result_allocated : forall db s locals res o,
+    env_allocated db (look s locals) -> result_cell s locals res = Some o ->
+    forall i, In (Id i) (option_list o) -> D.allocated db i.
+  Proof.
+    intros db s locals [t |] o Halloc Hres i Hi; cbn [result_cell] in Hres.
+    - destruct (term_cell s locals t) as [c |] eqn:Hc; [|discriminate].
+      inversion Hres; subst o. destruct Hi as [Hi | Hi]; [|contradiction].
+      subst c. eapply run_term_allocated; eauto.
+    - inversion Hres; subst o. contradiction.
+  Qed.
+
+  (** The executable value reader agrees with the work specification. *)
+  Lemma run_values_spec : forall (ts : list (term V.t)) s locals,
+    term_values s locals ts = value_terms (look s locals) ts.
+  Proof.
+    intro ts. induction ts as [|t ts IH]; intros s locals; cbn [term_values value_terms].
+    - reflexivity.
+    - rewrite IH. destruct t as [x |v]; cbn [term_cell]; [|reflexivity].
+      destruct (look s locals x) as [[i | v] |]; reflexivity.
+  Qed.
+
+  (** A checked slot fits every tuple with its declared argument and output sorts. *)
+  Lemma run_typed_slots : forall p cp db f (k : list (cell V.t)) o out,
+    plans_ok p cp -> loaded p cp db -> program_sorts p f = Some (map cell_sort k) ->
+    program_kind p f = Some out -> option_map cell_sort o = out_sort out ->
+    D.slots_fit db f (length (k ++ option_list o)).
+  Proof.
+    intros p cp db f k o out Hplans [_ [Hslots _]] Hsort Hkind Hout perm Hin.
+    rewrite Hslots in Hin.
+    destruct (F29_shape_slots p cp f perm Hplans Hin)
+      as [ss [out' [Hss [Hout' [Hnodup Hbound]]]]].
+    rewrite Hsort in Hss. inversion Hss; subst ss.
+    rewrite Hkind in Hout'. inversion Hout'; subst out'.
+    split; [exact Hnodup|]. rewrite length_map in Hbound. rewrite length_app.
+    destruct out as [| |m]; destruct o as [[i |v] |];
+      cbn [option_map out_sort] in Hout; try discriminate;
+      cbn [option_list length]; exact Hbound.
+  Qed.
+
+  Lemma run_make_slots : forall p cp db f (k : list (cell V.t)),
+    plans_ok p cp -> loaded p cp db -> program_sorts p f = Some (map cell_sort k) ->
+    program_kind p f = Some OId -> D.slots_fit db f (S (length k)).
+  Proof.
+    intros p cp db f k Hplans Hloaded Hsort Hkind.
+    pose proof (run_typed_slots p cp db f k (Some (Id 1)) OId
+      Hplans Hloaded Hsort Hkind eq_refl) as Hslots.
+    rewrite length_app in Hslots. cbn [option_list length] in Hslots.
+    replace (length k + 1) with (S (length k)) in Hslots by lia. exact Hslots.
+  Qed.
+
+  Lemma run_put_kind : forall p cp db f k o out,
+    plans_ok p cp -> loaded p cp db ->
+    (forall i, In (Id i) (k ++ option_list o) -> D.allocated db i) ->
+    program_sorts p f = Some (map cell_sort k) -> program_kind p f = Some out ->
+    option_map cell_sort o = out_sort out -> D.kind_ok db f k o.
+  Proof.
+    intros p cp db f k o out Hplans Hloaded Halloc Hsort Hkind Hout.
+    split; [exact Halloc|]. split.
+    - eapply run_typed_slots; eauto.
+    - destruct Hloaded as [Hkinds _]. rewrite Hkinds, Hkind.
+      destruct out as [| |m]; destruct o as [[i |v] |];
+        cbn [option_map out_sort] in Hout; try discriminate; exact I.
+  Qed.
+
+  (** Allocation remains valid when the identifier counter grows. *)
+  Lemma run_env_allocated_mono : forall db db' s,
+    (D.ids db <= D.ids db')%N -> env_allocated db s -> env_allocated db' s.
+  Proof.
+    intros db db' s Hids Henv x i Hx.
+    specialize (Henv x i Hx). unfold D.allocated in *. lia.
+  Qed.
+
+  (** Local updates preserve the typing and allocation conditions of an action environment. *)
+  Lemma run_local_sorted : forall g s locals x (c : cell V.t),
+    env_sorted g (look s locals) ->
+    env_sorted (ctx_set g x (cell_sort c)) (look s (PTrieCode.set x c locals)).
+  Proof.
+    intros g s locals x c Henv y ty Hy. rewrite run_look_set. unfold ctx_set in Hy.
+    unfold update. destruct (Pos.eqb x y) eqn:Hxy.
+    - inversion Hy; subst ty. exists c. split; reflexivity.
+    - exact (Henv y ty Hy).
+  Qed.
+
+  Lemma run_local_allocated : forall db s locals x c,
+    env_allocated db (look s locals) ->
+    (forall i, c = Id i -> D.allocated db i) ->
+    env_allocated db (look s (PTrieCode.set x c locals)).
+  Proof.
+    intros db s locals x c Henv Hnew y i Hy. rewrite run_look_set in Hy.
+    unfold update in Hy. destruct (Pos.eqb x y).
+    - apply Hnew. now inversion Hy.
+    - exact (Henv y i Hy).
+  Qed.
+
+  (** A constructor either reuses its input database or advances its identifier counter. *)
+  Lemma run_make_ids : forall f k db, D.wf db -> kind (D.view db) f = Some OId ->
+    (D.ids db <= D.ids (snd (D.make f k db)))%N.
+  Proof.
+    intros f k db Hwf Hkind. pose proof (D.make_spec f k db Hwf Hkind) as Hmake.
+    destruct (D.make f k db) as [i db'] eqn:Hresult. cbn [snd] in *.
+    destruct Hmake as [[j [_ [_ Hsame]]] | [Hfresh [_ Hextends]]].
+    - subst db'. lia.
+    - destruct Hextends as [Hids _]. unfold D.fresh_id in Hfresh.
+      rewrite Hids, Hfresh, N.succ_pos_spec. lia.
+  Qed.
+
+  Lemma run_loaded_put : forall p cp db f k o, D.wf db -> loaded p cp db ->
+    D.kind_ok db f k o -> row_sorted (program_sorts p) (kind (D.view db)) f k o ->
+    loaded p cp (D.put f k o db).
+  Proof.
+    intros p cp db f k o Hwf [Hkinds [Hslots Hsorted]] Hkind Hrow.
+    destruct (D.layout_put f k o db Hwf) as [Hkinds' [Hslots' _]].
+    split.
+    - intro x. rewrite Hkinds'. apply Hkinds.
+    - split; [now rewrite Hslots'|]. eapply F21_put_sorted; eauto.
+  Qed.
+
+  Lemma run_loaded_make : forall p cp db f k, D.wf db -> loaded p cp db ->
+    program_kind p f = Some OId -> program_sorts p f = Some (map cell_sort k) ->
+    loaded p cp (snd (D.make f k db)).
+  Proof.
+    intros p cp db f k Hwf [Hkinds [Hslots Hsorted]] Hkind Hsort.
+    destruct (D.layout_make f k db Hwf) as [Hkinds' [Hslots' _]].
+    split.
+    - intro x. rewrite Hkinds'. apply Hkinds.
+    - split; [now rewrite Hslots'|]. eapply F22_make_sorted; eauto.
+      rewrite Hkinds. exact Hkind.
+  Qed.
+
+  Lemma run_loaded_union : forall p cp db i j, D.wf db -> loaded p cp db ->
+    loaded p cp (D.union i j db).
+  Proof.
+    intros p cp db i j Hwf [Hkinds [Hslots Hsorted]].
+    destruct (D.layout_union i j db Hwf) as [Hkinds' [Hslots' _]].
+    split.
+    - intro x. rewrite Hkinds'. apply Hkinds.
+    - split; [now rewrite Hslots'|]. eapply F23_union_sorted; eauto.
+  Qed.
+
+  (** Every suffix of an action application keeps its typing and monotone budgets. *)
+  Lemma run_apply_go_state : forall acts p cp g s locals db,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    D.wf (apply_go acts s locals db) /\ loaded p cp (apply_go acts s locals db) /\
+    (D.ids db <= D.ids (apply_go acts s locals db))%N /\
+    D.unit db <= D.unit (apply_go acts s locals db).
+  Proof.
+    intro acts. induction acts as [|a acts IH];
+      intros p cp g s locals db Hplans Hwf Hloaded Hacts Henv Halloc.
+    - cbn [apply_go]. split; [assumption|]. split; [assumption|]. split; lia.
+    - destruct a as [x f args |f args res |a b |x op args]; cbn [apply_go].
+      + destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]]. rewrite Hcells.
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        pose proof (run_cells_allocated args db s locals cells Halloc Hcells) as Hcells_alloc.
+        pose proof (run_make_slots p cp db f cells Hplans Hloaded Hsort_cells Hkind) as Hslots.
+        assert (Hkind_db : kind (D.view db) f = Some OId).
+        { rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_make f cells db Hwf Hcells_alloc Hslots) as Hwf_next.
+        pose proof (run_loaded_make p cp db f cells Hwf Hloaded Hkind Hsort_cells)
+          as Hloaded_next.
+        pose proof (run_make_ids f cells db Hwf Hkind_db) as Hids.
+        pose proof (D.unit_mono_make f cells db Hwf) as Hunit.
+        pose proof (D.layout_make f cells db Hwf) as Hlayout.
+        destruct (D.make f cells db) as [i next] eqn:Hmake in *.
+        cbn [fst snd] in *. destruct Hlayout as [_ [_ [_ [Hi _]]]].
+        assert (Henv_next : env_sorted (ctx_set g x SId)
+          (look s (PTrieCode.set x (Id i) locals))).
+        { exact (run_local_sorted g s locals x (Id i) Henv). }
+        assert (Halloc_next : env_allocated next (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_local_allocated.
+          - eapply run_env_allocated_mono; eauto.
+          - intros j Heq. inversion Heq; subst j. exact Hi. }
+        destruct (IH p cp (ctx_set g x SId) s (PTrieCode.set x (Id i) locals) next
+          Hplans Hwf_next Hloaded_next Hrest Henv_next Halloc_next)
+          as [Hwf_final [Hloaded_final [Hids_final Hunit_final]]].
+        split; [assumption|]. split; [assumption|]. split; lia.
+      + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]].
+        destruct (run_result_sorted g s locals out res Henv Hres) as [o [Ho Hout]].
+        rewrite Hcells, Ho.
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        assert (Htuple : forall i, In (Id i) (cells ++ option_list o) -> D.allocated db i).
+        { intros i Hi. apply in_app_iff in Hi. destruct Hi as [Hi |Hi].
+          - eapply run_cells_allocated; eauto.
+          - eapply run_result_allocated; eauto. }
+        pose proof (run_put_kind p cp db f cells o out Hplans Hloaded Htuple
+          Hsort_cells Hkind Hout) as Hkind_ok.
+        assert (Hrow : row_sorted (program_sorts p) (kind (D.view db)) f cells o).
+        { exists out. split; [exact Hsort_cells|]. split; [|exact Hout].
+          rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_put f cells o db Hwf Hkind_ok) as Hwf_next.
+        pose proof (run_loaded_put p cp db f cells o Hwf Hloaded Hkind_ok Hrow)
+          as Hloaded_next.
+        destruct (D.layout_put f cells o db Hwf) as [_ [_ [Hids _]]].
+        pose proof (D.unit_mono_put f cells o db Hwf) as Hunit.
+        assert (Halloc_next : env_allocated (D.put f cells o db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        destruct (IH p cp g s locals (D.put f cells o db) Hplans Hwf_next Hloaded_next
+          Hrest Henv Halloc_next) as [Hwf_final [Hloaded_final [Hids_final Hunit_final]]].
+        split; [assumption|]. split; [assumption|]. split; lia.
+      + destruct Hacts as [Ha [Hb Hrest]].
+        destruct (run_term_sorted g s locals a SId Henv Ha) as [c [Hc Hcsort]].
+        destruct c as [i |v]; [|discriminate Hcsort].
+        destruct (run_term_sorted g s locals b SId Henv Hb) as [d [Hd Hdsort]].
+        destruct d as [j |v]; [|discriminate Hdsort]. rewrite Hc, Hd.
+        pose proof (run_term_allocated db s locals a i Halloc Hc) as Hi.
+        pose proof (run_term_allocated db s locals b j Halloc Hd) as Hj.
+        pose proof (D.wf_union i j db Hwf Hi Hj) as Hwf_next.
+        pose proof (run_loaded_union p cp db i j Hwf Hloaded) as Hloaded_next.
+        destruct (D.layout_union i j db Hwf) as [_ [_ [Hids _]]].
+        pose proof (D.unit_mono_union i j db Hwf) as Hunit.
+        assert (Halloc_next : env_allocated (D.union i j db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        destruct (IH p cp g s locals (D.union i j db) Hplans Hwf_next Hloaded_next
+          Hrest Henv Halloc_next) as [Hwf_final [Hloaded_final [Hids_final Hunit_final]]].
+        split; [assumption|]. split; [assumption|]. split; lia.
+      + destruct Hacts as [Hargs Hrest].
+        destruct (term_values s locals args) as [vs |] eqn:Hvs.
+        * destruct (V.prim op vs) as [v |] eqn:Hprim.
+          -- apply (IH p cp (ctx_set g x SVal)); try assumption.
+             ++ exact (run_local_sorted g s locals x (Val v) Henv).
+             ++ apply run_local_allocated; [exact Halloc|]. intros i Heq. discriminate Heq.
+          -- split; [assumption|]. split; [assumption|]. split; lia.
+        * split; [assumption|]. split; [assumption|]. split; lia.
+  Qed.
+
+  Definition run_term_width (W : nat) (t : term V.t) : Prop :=
+    forall x, In x (term_vars t) -> Pos.size_nat x <= W.
+
+  Definition run_action_width (W : nat) (a : action V.t) : Prop :=
+    Forall (fun x => Pos.size_nat x <= W) (action_binds a) /\
+    Forall (run_term_width W) (action_terms a).
+
+  Lemma run_action_words_in : forall p r a x, In r (rules V.t p) -> In a (actions V.t r) ->
+    In x (action_words V.encode a) -> In x (program_words V.encode p).
+  Proof.
+    intros p r a x Hr Ha Hx. unfold program_words.
+    apply in_or_app. right. apply in_flat_map. exists r. split; [exact Hr|].
+    destruct r as [q acts]. apply in_or_app. right. apply in_flat_map.
+    exists a. split; assumption.
+  Qed.
+
+  Lemma run_term_words_in : forall t x, In x (term_vars t) -> In x (term_words V.encode t).
+  Proof.
+    intros [y |v] x Hx; exact Hx || contradiction.
+  Qed.
+
+  Lemma run_action_term_words : forall a t x, In t (action_terms a) ->
+    In x (term_words V.encode t) -> In x (action_words V.encode a).
+  Proof.
+    intros [y f args |f args res |a b |y op args] t x Ht Hx;
+      cbn [action_terms action_words] in *.
+    - right. right. apply in_flat_map. exists t. split; assumption.
+    - right. apply in_flat_map. exists t. split; assumption.
+    - destruct Ht as [Ht |[Ht |Ht]]; try contradiction; subst t;
+        apply in_or_app; [left|right]; exact Hx.
+    - right. right. apply in_flat_map. exists t. split; assumption.
+  Qed.
+
+  Lemma run_action_bind_words : forall a x, In x (action_binds a) ->
+    In x (action_words V.encode a).
+  Proof.
+    intros [y f args |f args res |a b |y op args] x Hx;
+      cbn [action_binds action_words] in *.
+    - destruct Hx as [<-|[]]. now left.
+    - contradiction.
+    - contradiction.
+    - destruct Hx as [<-|[]]. now left.
+  Qed.
+
+  (** Every action name read by the engine has the program's maximum word width. *)
+  Lemma run_rule_width : forall p r, In r (rules V.t p) ->
+    Forall (run_action_width (wbits p)) (actions V.t r).
+  Proof.
+    intros p r Hr. rewrite Forall_forall. intros a Ha. split.
+    - rewrite Forall_forall. intros x Hx. apply run_word_width.
+      eapply run_action_words_in; eauto using run_action_bind_words.
+    - rewrite Forall_forall. intros t Ht x Hx. apply run_word_width.
+      eapply run_action_words_in; eauto.
+      eapply run_action_term_words; [exact Ht|now apply run_term_words_in].
+  Qed.
+
+  Definition run_action_weight (cp : compiled V.t) (a : action V.t) : nat :=
+    match a with
+    | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
+        (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1)
+    | Union _ _ => 1
+    | Let _ _ args => length args + 1
+    end.
+
+  Definition run_actions_weight (cp : compiled V.t) (acts : list (action V.t)) : nat :=
+    fold_right (fun a n => match a with
+      | Make _ f args | Put f args _ => (length args + 2) * (length args + 2) *
+          (length (filter (fun sl => Pos.eqb (fst sl) f) (Syntax.slots V.t cp)) + 1) + n
+      | Union _ _ => 1 + n
+      | Let _ _ args => length args + 1 + n
+      end) 0 acts.
+
+  Definition run_term_calls (Ts : positive -> N) (ts : list (term V.t)) : N :=
+    fold_right N.add 0%N (map Ts (flat_map term_vars ts)).
+
+  Lemma run_term_calls_app : forall Ts xs ys,
+    run_term_calls Ts (xs ++ ys) = (run_term_calls Ts xs + run_term_calls Ts ys)%N.
+  Proof.
+    intros Ts xs ys. unfold run_term_calls. rewrite flat_map_app, map_app, run_sum_app.
+    reflexivity.
+  Qed.
+
+  Lemma run_action_weight_pos : forall cp a, 1 <= run_action_weight cp a.
+  Proof.
+    intros cp [x f args |f args res |a b |x op args]; unfold run_action_weight; nia.
+  Qed.
+
+  Lemma run_result_clock : forall res s Ts locals W,
+    Forall (run_term_width W) (option_list res) ->
+    (T_result_cell s Ts locals res <= 4 * N.of_nat (W + 1) +
+      run_term_calls Ts (option_list res))%N.
+  Proof.
+    intros [t |] s Ts locals W Hwidth.
+    - inversion Hwidth as [|t' ts Hhead Htail]; subst t' ts.
+      pose proof (run_term_clock s Ts locals t W Hhead) as Hterm.
+      time_unfold @T_result_cell. destruct (term_cell s locals t);
+        cbn [option_list run_term_calls flat_map app map fold_right];
+        rewrite ?app_nil_r; rewrite Nat2N.inj_add in *; lia.
+    - time_unfold @T_result_cell. cbn [option_list run_term_calls flat_map map fold_right].
+      rewrite Nat2N.inj_add. lia.
+  Qed.
+
+  (** Every nonzero final unit dominates the syntax and identifier factors separately. *)
+  Lemma run_spending_factors : forall U L W,
+    1 <= U -> 1 <= L ->
+    (1 <= N.of_nat U * N.of_nat L * N.of_nat (W + 1))%N /\
+    (N.of_nat (W + 1) <= N.of_nat U * N.of_nat L * N.of_nat (W + 1))%N /\
+    (N.of_nat U * N.of_nat L <= N.of_nat U * N.of_nat L * N.of_nat (W + 1))%N.
+  Proof.
+    intros U L W HU HL.
+    assert (Hu : (1 <= N.of_nat U)%N) by lia.
+    assert (Hl : (1 <= N.of_nat L)%N) by lia.
+    assert (Hw : (1 <= N.of_nat (W + 1))%N) by lia.
+    assert (Hul : (1 <= N.of_nat U * N.of_nat L)%N) by nia.
+    repeat split; nia.
+  Qed.
+
+  Definition run_apply_factor : N := (128 * (D.c_db + V.c_val + 1))%N.
+
+  Lemma run_apply_factor_le : (2 * run_apply_factor + 8 <= k_driver)%N.
+  Proof.
+    unfold run_apply_factor, k_driver. nia.
+  Qed.
+
+  Definition run_action_budget (B : N) (U W : nat) : N :=
+    (run_apply_factor * (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+      N.of_nat (W + 1)))%N.
+
+  (** The action coefficient covers syntax, database operations and a primitive call. *)
+  Lemma run_action_budget_covers : forall B U W, 1 <= U ->
+    (32 * N.of_nat (W + 1) +
+      D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) + V.c_val + 8 <=
+      run_action_budget B U W)%N.
+  Proof.
+    intros B U W HU.
+    destruct (run_spending_factors U (N.to_nat (N.log2 B) + 1) W HU ltac:(lia))
+      as [Hpos [Hwidth Hdb]].
+    set (E := (N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (W + 1))%N)
+      in Hpos, Hwidth, Hdb.
+    assert (Hsyntax : (32 * N.of_nat (W + 1) <= 32 * E)%N) by nia.
+    assert (Hdatabase : (D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) <=
+      D.c_db * E)%N) by nia.
+    assert (Hvalue : (V.c_val + 8 <= (V.c_val + 8) * E)%N) by nia.
+    change (32 * N.of_nat (W + 1) +
+      D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) + V.c_val + 8 <=
+      run_apply_factor * E)%N.
+    unfold run_apply_factor. nia.
+  Qed.
+
+  Lemma run_set_clock : forall x (c : cell V.t) locals,
+    (PTrieCode.T_set x c locals <= 8 * N.of_nat (Pos.size_nat x) + 1)%N.
+  Proof.
+    intros x c locals. pose proof (PTrieT.replace_clock_bound (cell V.t) x (Some c) locals).
+    unfold PTrieCode.T_set. lia.
+  Qed.
+
+  (** Binding actions read their terms and insert a local result within one syntax charge. *)
+  Lemma run_binding_charge : forall args s Ts locals x c W weight,
+    Forall (run_term_width W) args -> Pos.size_nat x <= W -> length args + 1 <= weight ->
+    (T_term_cells s Ts locals args + PTrieCode.T_set x c locals + 8 <=
+      32 * N.of_nat (W + 1) * N.of_nat weight + run_term_calls Ts args)%N.
+  Proof.
+    intros args s Ts locals x c W weight Hterms Hx Hweight.
+    pose proof (run_terms_clock args s Ts locals W Hterms) as Hread.
+    pose proof (run_set_clock x c locals) as Hset.
+    unfold run_term_calls. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    assert (Hwidth : (1 <= N.of_nat W + 1)%N) by lia.
+    assert (Hcount : (N.of_nat (length args) + 1 <= N.of_nat weight)%N) by lia.
+    assert (Hname : (N.of_nat (Pos.size_nat x) <= N.of_nat W)%N) by lia.
+    clear -Hread Hset Hwidth Hcount Hname. nia.
+  Qed.
+
+  Lemma run_value_binding_charge : forall args s Ts locals x c W weight,
+    Forall (run_term_width W) args -> Pos.size_nat x <= W -> length args + 1 <= weight ->
+    (T_term_values s Ts locals args + PTrieCode.T_set x c locals + 8 <=
+      32 * N.of_nat (W + 1) * N.of_nat weight + run_term_calls Ts args)%N.
+  Proof.
+    intros args s Ts locals x c W weight Hterms Hx Hweight.
+    pose proof (run_values_clock args s Ts locals W Hterms) as Hread.
+    pose proof (run_set_clock x c locals) as Hset.
+    unfold run_term_calls. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    assert (Hwidth : (1 <= N.of_nat W + 1)%N) by lia.
+    assert (Hcount : (N.of_nat (length args) + 1 <= N.of_nat weight)%N) by lia.
+    assert (Hname : (N.of_nat (Pos.size_nat x) <= N.of_nat W)%N) by lia.
+    clear -Hread Hset Hwidth Hcount Hname. nia.
+  Qed.
+
+  (** Put reads its arguments and optional output within the same tuple charge. *)
+  Lemma run_put_charge : forall args res s Ts locals W weight,
+    Forall (run_term_width W) (args ++ option_list res) -> length args + 2 <= weight ->
+    (T_term_cells s Ts locals args + T_result_cell s Ts locals res + 8 <=
+      32 * N.of_nat (W + 1) * N.of_nat weight +
+        run_term_calls Ts (args ++ option_list res))%N.
+  Proof.
+    intros args res s Ts locals W weight Hterms Hweight.
+    apply Forall_app in Hterms. destruct Hterms as [Hargs Hres].
+    pose proof (run_terms_clock args s Ts locals W Hargs) as Hread.
+    pose proof (run_result_clock res s Ts locals W Hres) as Hout.
+    rewrite run_term_calls_app. unfold run_term_calls in *.
+    rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *.
+    assert (Hwidth : (1 <= N.of_nat W + 1)%N) by lia.
+    assert (Hcount : (N.of_nat (length args) + 2 <= N.of_nat weight)%N) by lia.
+    clear -Hread Hout Hwidth Hcount. nia.
+  Qed.
+
+  Lemma run_union_charge : forall a b s Ts locals W,
+    Forall (run_term_width W) [a; b] ->
+    (T_term_cell s Ts locals a + T_term_cell s Ts locals b + 8 <=
+      32 * N.of_nat (W + 1) + run_term_calls Ts [a; b])%N.
+  Proof.
+    intros a b s Ts locals W Hterms.
+    inversion Hterms as [|a' ts Ha Htail]; subst a' ts.
+    inversion Htail as [|b' ts Hb Hnil]; subst b' ts.
+    pose proof (run_term_clock s Ts locals a W Ha) as Hleft.
+    pose proof (run_term_clock s Ts locals b W Hb) as Hright.
+    unfold run_term_calls. cbn [flat_map]. rewrite app_nil_r, map_app, run_sum_app.
+    assert (Hwidth : (1 <= N.of_nat (W + 1))%N) by lia.
+    lia.
+  Qed.
+
+  (** A database operation can be charged at any later, larger spending unit. *)
+  Lemma run_operation_scale : forall B U old next T C,
+    D.unit next <= U ->
+    (T + N.of_nat (D.unit next) * D.potential B next <=
+      N.of_nat (D.unit next) * (C + D.potential B old))%N ->
+    (T + N.of_nat U * D.potential B next <=
+      N.of_nat U * C + N.of_nat U * D.potential B old)%N.
+  Proof.
+    intros B U old next T C Hunit Htime.
+    pose proof (F15_unit_scale T C (D.potential B old) (D.potential B next)
+      (D.unit next) U (F16_unit_pos next) Hunit Htime) as Hscaled.
+    rewrite N.mul_add_distr_l in Hscaled. exact Hscaled.
+  Qed.
+
+  Lemma run_make_clock_split : forall x f args acts s Ts locals db cells i next,
+    term_cells s locals args = Some cells -> D.make f cells db = (i, next) ->
+    (T_apply_go (Make x f args :: acts) s Ts locals db <=
+      T_term_cells s Ts locals args + D.T_make f cells db +
+      PTrieCode.T_set x (Id i) locals +
+      T_apply_go acts s Ts (PTrieCode.set x (Id i) locals) next + 8)%N.
+  Proof.
+    intros x f args acts s Ts locals db cells i next Hcells Hmake.
+    time_unfold T_apply_go. rewrite Hcells, Hmake. lia.
+  Qed.
+
+  Lemma run_put_clock_split : forall f args res acts s Ts locals db cells o,
+    term_cells s locals args = Some cells -> result_cell s locals res = Some o ->
+    (T_apply_go (Put f args res :: acts) s Ts locals db <=
+      T_term_cells s Ts locals args + T_result_cell s Ts locals res + D.T_put f cells o db +
+      T_apply_go acts s Ts locals (D.put f cells o db) + 8)%N.
+  Proof.
+    intros f args res acts s Ts locals db cells o Hcells Ho.
+    time_unfold T_apply_go. rewrite Hcells, Ho. lia.
+  Qed.
+
+  Lemma run_union_clock_split : forall a b acts s Ts locals db i j,
+    term_cell s locals a = Some (Id i) -> term_cell s locals b = Some (Id j) ->
+    (T_apply_go (Union a b :: acts) s Ts locals db <=
+      T_term_cell s Ts locals a + T_term_cell s Ts locals b + D.T_union i j db +
+      T_apply_go acts s Ts locals (D.union i j db) + 8)%N.
+  Proof.
+    intros a b acts s Ts locals db i j Ha Hb.
+    time_unfold T_apply_go. rewrite Ha, Hb. lia.
+  Qed.
+
+  Lemma run_let_clock_split : forall x op args acts s Ts locals db vs v,
+    term_values s locals args = Some vs -> V.prim op vs = Some v ->
+    (T_apply_go (Let x op args :: acts) s Ts locals db <=
+      T_term_values s Ts locals args + V.T_prim op vs +
+      PTrieCode.T_set x (Val v) locals +
+      T_apply_go acts s Ts (PTrieCode.set x (Val v) locals) db + 8)%N.
+  Proof.
+    intros x op args acts s Ts locals db vs v Hvs Hv.
+    time_unfold T_apply_go. rewrite Hvs, Hv. lia.
+  Qed.
+
+  (** Typed actions telescope their database potential at the final spending unit. *)
+  Lemma run_apply_go_amort : forall acts p cp g s Ts locals db W B U,
+    plans_ok p cp -> D.wf db -> loaded p cp db ->
+    actions_ok (program_sorts p) (program_kind p) g acts ->
+    env_sorted g (look s locals) -> env_allocated db (look s locals) ->
+    Forall (run_action_width W) acts ->
+    (D.ids (apply_go acts s locals db) <= B)%N -> D.unit (apply_go acts s locals db) <= U ->
+    (T_apply_go acts s Ts locals db + N.of_nat U * D.potential B (apply_go acts s locals db) <=
+      run_action_budget B U W * N.of_nat (run_actions_weight cp acts + 1) +
+      run_term_calls Ts (flat_map action_terms acts) +
+      run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p) acts
+        (look s locals) + N.of_nat U * D.potential B db)%N.
+  Proof.
+    intro acts. induction acts as [|a acts IH];
+      intros p cp g s Ts locals db W B U Hplans Hwf Hloaded Hacts Henv Halloc Hwidth HB HU.
+    - assert (Hunit : 1 <= U) by (pose proof (F16_unit_pos db); cbn [apply_go] in HU; lia).
+      pose proof (run_action_budget_covers B U W Hunit) as Hcover.
+      time_unfold T_apply_go.
+      cbn [apply_go run_actions_weight run_term_calls flat_map map fold_right action_prim_work].
+      lia.
+    - assert (Hunit : 1 <= U).
+      { pose proof (F16_unit_pos (apply_go (a :: acts) s locals db)). lia. }
+      pose proof (run_action_budget_covers B U W Hunit) as Hcover.
+      inversion Hwidth as [|a' acts' Hhead Htail]; subst a' acts'.
+      pose proof (run_action_weight_pos cp a) as Hweight_pos.
+      pose proof (N.mul_le_mono_r
+        (32 * N.of_nat (W + 1) +
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) + V.c_val + 8)%N
+        (run_action_budget B U W) (N.of_nat (run_action_weight cp a)) Hcover) as Hcharge.
+      destruct a as [x f args |f args res |a b |x op args].
+      + destruct Hacts as [ss [Hsort [Hkind [Hargs Hrest]]]].
+        destruct Hhead as [Hbind Hterms]. cbn [action_binds action_terms] in Hbind, Hterms.
+        inversion Hbind as [|x' xs Hx Hnil]; subst x' xs.
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]].
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        pose proof (run_cells_allocated args db s locals cells Halloc Hcells) as Hcells_alloc.
+        pose proof (run_make_slots p cp db f cells Hplans Hloaded Hsort_cells Hkind) as Hslots.
+        assert (Hkind_db : kind (D.view db) f = Some OId).
+        { rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_make f cells db Hwf Hcells_alloc Hslots) as Hwf_next.
+        pose proof (run_loaded_make p cp db f cells Hwf Hloaded Hkind Hsort_cells)
+          as Hloaded_next.
+        pose proof (run_make_ids f cells db Hwf Hkind_db) as Hids.
+        pose proof (D.layout_make f cells db Hwf) as Hlayout.
+        destruct (D.make f cells db) as [i next] eqn:Hmake in *.
+        cbn [fst snd] in *. destruct Hlayout as [_ [_ [_ [Hi _]]]].
+        assert (Henv_next : env_sorted (ctx_set g x SId)
+          (look s (PTrieCode.set x (Id i) locals))).
+        { exact (run_local_sorted g s locals x (Id i) Henv). }
+        assert (Halloc_next : env_allocated next (look s (PTrieCode.set x (Id i) locals))).
+        { apply run_local_allocated.
+          - eapply run_env_allocated_mono; eauto.
+          - intros j Heq. inversion Heq; subst j. exact Hi. }
+        cbn [apply_go] in HB, HU |- *. rewrite Hcells, Hmake in HB, HU |- *.
+        destruct (run_apply_go_state acts p cp (ctx_set g x SId) s
+          (PTrieCode.set x (Id i) locals) next Hplans Hwf_next Hloaded_next Hrest
+          Henv_next Halloc_next) as [_ [_ [Hids_final Hunit_final]]].
+        assert (HBnext : (D.ids next <= B)%N) by lia.
+        assert (HUnext : D.unit next <= U) by lia.
+        pose proof (D.T_make_amort B f cells db Hwf Hslots) as Hdatabase.
+        rewrite Hmake in Hdatabase. cbn [snd] in Hdatabase.
+        specialize (Hdatabase HBnext).
+        pose proof (run_operation_scale B U db next (D.T_make f cells db) _
+          HUnext Hdatabase) as Hscaled.
+        assert (Hdbcharge : (D.T_make f cells db + N.of_nat U * D.potential B next <=
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+            N.of_nat (run_action_weight cp (Make x f args)) +
+          N.of_nat U * D.potential B db)%N).
+        { unfold D.slots_of in Hscaled. rewrite (proj1 (proj2 Hloaded)), Hlen in Hscaled.
+          unfold run_action_weight. rewrite !Nat2N.inj_mul in *. clear -Hscaled. nia. }
+        pose proof (IH p cp (ctx_set g x SId) s Ts (PTrieCode.set x (Id i) locals) next
+          W B U Hplans Hwf_next Hloaded_next Hrest Henv_next Halloc_next Htail HB HU)
+          as Hremaining.
+        assert (Hprim : action_prim_work V.prim V.prim_work (program_kind p) acts
+          (look s (PTrieCode.set x (Id i) locals)) =
+          action_prim_work V.prim V.prim_work (program_kind p) acts
+            (update (look s locals) x (Id 1))).
+        { apply run_action_prim_work_agree. intro y. unfold run_value_view.
+          rewrite run_look_set. unfold update. destruct (Pos.eqb x y); reflexivity. }
+        rewrite Hprim in Hremaining.
+        pose proof (run_binding_charge args s Ts locals x (Id i) W
+          (run_action_weight cp (Make x f args)) Hterms Hx ltac:(unfold run_action_weight; nia))
+          as Hsyntax.
+        pose proof (run_make_clock_split x f args acts s Ts locals db cells i next
+          Hcells Hmake) as Hclock.
+        change (T_apply_go (Make x f args :: acts) s Ts locals db +
+          N.of_nat U * D.potential B (apply_go acts s (PTrieCode.set x (Id i) locals) next) <=
+          run_action_budget B U W *
+            N.of_nat (run_action_weight cp (Make x f args) + run_actions_weight cp acts + 1) +
+          run_term_calls Ts (args ++ flat_map action_terms acts) +
+          run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+            (Make x f args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+        rewrite run_term_calls_app. cbn [action_prim_work]. rewrite Hkind.
+        rewrite !Nat2N.inj_add in Hremaining |- *.
+        clear -Hsyntax Hclock Hremaining Hdbcharge Hcharge. nia.
+      + destruct Hacts as [ss [out [Hsort [Hkind [Hargs [Hres Hrest]]]]]].
+        destruct Hhead as [_ Hterms]. cbn [action_terms] in Hterms.
+        destruct (run_cells_sorted args ss g s locals Hargs Henv)
+          as [cells [Hcells [Hsorts Hlen]]].
+        destruct (run_result_sorted g s locals out res Henv Hres) as [o [Ho Hout]].
+        assert (Hsort_cells : program_sorts p f = Some (map cell_sort cells)).
+        { now rewrite Hsorts. }
+        assert (Htuple : forall i, In (Id i) (cells ++ option_list o) -> D.allocated db i).
+        { intros i Hi. apply in_app_iff in Hi. destruct Hi as [Hi |Hi].
+          - eapply run_cells_allocated; eauto.
+          - eapply run_result_allocated; eauto. }
+        pose proof (run_put_kind p cp db f cells o out Hplans Hloaded Htuple
+          Hsort_cells Hkind Hout) as Hkind_ok.
+        assert (Hrow : row_sorted (program_sorts p) (kind (D.view db)) f cells o).
+        { exists out. split; [exact Hsort_cells|]. split; [|exact Hout].
+          rewrite (proj1 Hloaded). exact Hkind. }
+        pose proof (D.wf_put f cells o db Hwf Hkind_ok) as Hwf_next.
+        pose proof (run_loaded_put p cp db f cells o Hwf Hloaded Hkind_ok Hrow)
+          as Hloaded_next.
+        destruct (D.layout_put f cells o db Hwf) as [_ [_ [Hids _]]].
+        assert (Halloc_next : env_allocated (D.put f cells o db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        cbn [apply_go] in HB, HU |- *. rewrite Hcells, Ho in HB, HU |- *.
+        destruct (run_apply_go_state acts p cp g s locals (D.put f cells o db)
+          Hplans Hwf_next Hloaded_next Hrest Henv Halloc_next)
+          as [_ [_ [Hids_final Hunit_final]]].
+        assert (HBnext : (D.ids (D.put f cells o db) <= B)%N) by lia.
+        assert (HUnext : D.unit (D.put f cells o db) <= U) by lia.
+        pose proof (D.T_put_amort B f cells o db Hwf (proj1 (proj2 Hkind_ok)) HBnext)
+          as Hdatabase.
+        pose proof (run_operation_scale B U db (D.put f cells o db) (D.T_put f cells o db) _
+          HUnext Hdatabase) as Hscaled.
+        assert (Hdbcharge : (D.T_put f cells o db +
+          N.of_nat U * D.potential B (D.put f cells o db) <=
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+            N.of_nat (run_action_weight cp (Put f args res)) +
+          N.of_nat U * D.potential B db)%N).
+        { unfold D.slots_of in Hscaled. rewrite (proj1 (proj2 Hloaded)), Hlen in Hscaled.
+          unfold run_action_weight. rewrite !Nat2N.inj_mul in *. clear -Hscaled. nia. }
+        pose proof (IH p cp g s Ts locals (D.put f cells o db) W B U Hplans Hwf_next
+          Hloaded_next Hrest Henv Halloc_next Htail HB HU) as Hremaining.
+        pose proof (run_put_charge args res s Ts locals W
+          (run_action_weight cp (Put f args res)) Hterms
+          ltac:(unfold run_action_weight; nia)) as Hsyntax.
+        pose proof (run_put_clock_split f args res acts s Ts locals db cells o Hcells Ho)
+          as Hclock.
+        change (T_apply_go (Put f args res :: acts) s Ts locals db +
+          N.of_nat U * D.potential B (apply_go acts s locals (D.put f cells o db)) <=
+          run_action_budget B U W *
+            N.of_nat (run_action_weight cp (Put f args res) + run_actions_weight cp acts + 1) +
+          run_term_calls Ts ((args ++ option_list res) ++ flat_map action_terms acts) +
+          run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p) acts
+            (look s locals) + N.of_nat U * D.potential B db)%N.
+        rewrite run_term_calls_app. rewrite !Nat2N.inj_add in Hremaining |- *.
+        clear -Hsyntax Hclock Hremaining Hdbcharge Hcharge. nia.
+      + destruct Hacts as [Ha [Hb Hrest]].
+        destruct Hhead as [_ Hterms]. cbn [action_terms] in Hterms.
+        destruct (run_term_sorted g s locals a SId Henv Ha) as [c [Hc Hcsort]].
+        destruct c as [i |v]; [|discriminate Hcsort].
+        destruct (run_term_sorted g s locals b SId Henv Hb) as [d [Hd Hdsort]].
+        destruct d as [j |v]; [|discriminate Hdsort].
+        pose proof (run_term_allocated db s locals a i Halloc Hc) as Hi.
+        pose proof (run_term_allocated db s locals b j Halloc Hd) as Hj.
+        pose proof (D.wf_union i j db Hwf Hi Hj) as Hwf_next.
+        pose proof (run_loaded_union p cp db i j Hwf Hloaded) as Hloaded_next.
+        destruct (D.layout_union i j db Hwf) as [_ [_ [Hids _]]].
+        assert (Halloc_next : env_allocated (D.union i j db) (look s locals)).
+        { apply (run_env_allocated_mono db _ (look s locals));
+          [rewrite Hids; lia|exact Halloc]. }
+        cbn [apply_go] in HB, HU |- *. rewrite Hc, Hd in HB, HU |- *.
+        destruct (run_apply_go_state acts p cp g s locals (D.union i j db)
+          Hplans Hwf_next Hloaded_next Hrest Henv Halloc_next)
+          as [_ [_ [Hids_final Hunit_final]]].
+        assert (HBold : (D.ids db <= B)%N) by lia.
+        assert (HUnext : D.unit (D.union i j db) <= U) by lia.
+        pose proof (D.T_union_amort B i j db Hwf Hi Hj HBold) as Hdatabase.
+        pose proof (run_operation_scale B U db (D.union i j db) (D.T_union i j db) D.c_db
+          HUnext Hdatabase) as Hscaled.
+        pose proof (IH p cp g s Ts locals (D.union i j db) W B U Hplans Hwf_next
+          Hloaded_next Hrest Henv Halloc_next Htail HB HU) as Hremaining.
+        pose proof (run_union_charge a b s Ts locals W Hterms) as Hsyntax.
+        pose proof (run_union_clock_split a b acts s Ts locals db i j Hc Hd) as Hclock.
+        change (T_apply_go (Union a b :: acts) s Ts locals db +
+          N.of_nat U * D.potential B (apply_go acts s locals (D.union i j db)) <=
+          run_action_budget B U W * N.of_nat (1 + run_actions_weight cp acts + 1) +
+          run_term_calls Ts ([a; b] ++ flat_map action_terms acts) +
+          run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p) acts
+            (look s locals) + N.of_nat U * D.potential B db)%N.
+        rewrite run_term_calls_app. rewrite !Nat2N.inj_add in Hremaining |- *.
+        cbn [run_action_weight N.of_nat] in Hcharge.
+        assert (Hlog : (1 <= N.of_nat (N.to_nat (N.log2 B) + 1))%N) by lia.
+        assert (Hdb : (N.of_nat U * D.c_db <=
+          D.c_db * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1))%N) by nia.
+        clear -Hsyntax Hclock Hremaining Hscaled Hcharge Hdb. nia.
+      + destruct Hacts as [Hargs Hrest].
+        destruct Hhead as [Hbind Hterms]. cbn [action_binds action_terms] in Hbind, Hterms.
+        inversion Hbind as [|x' xs Hx Hnil]; subst x' xs.
+        pose proof (run_values_spec args s locals) as Hvalues.
+        assert (Hfactor : (V.c_val <= run_apply_factor)%N) by (unfold run_apply_factor; lia).
+        destruct (term_values s locals args) as [vs |] eqn:Hvs.
+        * try rewrite Hvs in Hvalues. pose proof (V.T_prim_le op vs) as Hprimitive.
+          destruct (V.prim op vs) as [v |] eqn:Hprim.
+          -- assert (Henv_next : env_sorted (ctx_set g x SVal)
+               (look s (PTrieCode.set x (Val v) locals))).
+             { exact (run_local_sorted g s locals x (Val v) Henv). }
+             assert (Halloc_next : env_allocated db (look s (PTrieCode.set x (Val v) locals))).
+             { apply run_local_allocated; [exact Halloc|]. intros i Heq. discriminate Heq. }
+             cbn [apply_go] in HB, HU |- *. rewrite Hvs, Hprim in HB, HU |- *.
+             pose proof (IH p cp (ctx_set g x SVal) s Ts (PTrieCode.set x (Val v) locals) db
+               W B U Hplans Hwf Hloaded Hrest Henv_next Halloc_next Htail HB HU)
+               as Hremaining.
+             assert (Hprim_rest : action_prim_work V.prim V.prim_work (program_kind p) acts
+               (look s (PTrieCode.set x (Val v) locals)) =
+               action_prim_work V.prim V.prim_work (program_kind p) acts
+                 (update (look s locals) x (Val v))).
+             { apply run_action_prim_work_agree. intro y. unfold run_value_view.
+               rewrite run_look_set. reflexivity. }
+             rewrite Hprim_rest in Hremaining.
+             pose proof (run_value_binding_charge args s Ts locals x (Val v) W
+               (run_action_weight cp (Let x op args)) Hterms Hx ltac:(cbn; lia)) as Hsyntax.
+             pose proof (run_let_clock_split x op args acts s Ts locals db vs v Hvs Hprim)
+               as Hclock.
+             change (T_apply_go (Let x op args :: acts) s Ts locals db +
+               N.of_nat U * D.potential B (apply_go acts s (PTrieCode.set x (Val v) locals) db) <=
+               run_action_budget B U W *
+                 N.of_nat (run_action_weight cp (Let x op args) + run_actions_weight cp acts + 1) +
+               run_term_calls Ts (args ++ flat_map action_terms acts) +
+               run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+                 (Let x op args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+             rewrite run_term_calls_app. cbn [action_prim_work]. rewrite <- Hvalues, Hprim.
+             rewrite !Nat2N.inj_add in Hremaining |- *.
+             assert (Hpositive : (1 <= N.of_nat (run_action_weight cp (Let x op args)))%N)
+               by lia.
+             clear -Hsyntax Hclock Hremaining Hprimitive Hfactor Hcharge Hpositive. nia.
+          -- pose proof (run_value_binding_charge args s Ts locals x (Id 1) W
+               (run_action_weight cp (Let x op args)) Hterms Hx ltac:(cbn; lia)) as Hsyntax.
+             assert (Hclock : (T_apply_go (Let x op args :: acts) s Ts locals db <=
+               T_term_values s Ts locals args + V.T_prim op vs + 8)%N).
+             { time_unfold T_apply_go. rewrite Hvs, Hprim. lia. }
+             cbn [apply_go]. rewrite Hvs, Hprim.
+             change (T_apply_go (Let x op args :: acts) s Ts locals db +
+               N.of_nat U * D.potential B db <=
+               run_action_budget B U W *
+                 N.of_nat (run_action_weight cp (Let x op args) + run_actions_weight cp acts + 1) +
+               run_term_calls Ts (args ++ flat_map action_terms acts) +
+               run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+                 (Let x op args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+             rewrite run_term_calls_app. cbn [action_prim_work]. rewrite <- Hvalues, Hprim.
+             rewrite !Nat2N.inj_add.
+             assert (Hpositive : (1 <= N.of_nat (run_action_weight cp (Let x op args)))%N)
+               by lia.
+             clear -Hsyntax Hclock Hprimitive Hfactor Hcharge Hpositive. nia.
+        * try rewrite Hvs in Hvalues.
+          pose proof (run_value_binding_charge args s Ts locals x (Id 1) W
+            (run_action_weight cp (Let x op args)) Hterms Hx ltac:(cbn; lia)) as Hsyntax.
+          assert (Hclock : (T_apply_go (Let x op args :: acts) s Ts locals db <=
+            T_term_values s Ts locals args + 8)%N).
+          { time_unfold T_apply_go. rewrite Hvs. lia. }
+          cbn [apply_go]. rewrite Hvs.
+          change (T_apply_go (Let x op args :: acts) s Ts locals db +
+            N.of_nat U * D.potential B db <=
+            run_action_budget B U W *
+              N.of_nat (run_action_weight cp (Let x op args) + run_actions_weight cp acts + 1) +
+            run_term_calls Ts (args ++ flat_map action_terms acts) +
+            run_apply_factor * action_prim_work V.prim V.prim_work (program_kind p)
+              (Let x op args :: acts) (look s locals) + N.of_nat U * D.potential B db)%N.
+          rewrite run_term_calls_app. cbn [action_prim_work]. rewrite <- Hvalues.
+          rewrite !Nat2N.inj_add. clear -Hsyntax Hclock Hcharge. nia.
+  Qed.
+
+  Lemma run_apply_wrapper_clock : forall acts s Ts db,
+    (T_apply acts s Ts db <= T_apply_go acts s Ts Empty db + 2)%N.
+  Proof.
+    intros acts s Ts db. time_unfold T_apply. lia.
+  Qed.
+
   (** Applying a rule pays for its actions, referenced bindings and transferred potential. *)
   Lemma T2c_apply_amort : forall B U p cp r s Ts db, plans_ok p cp -> D.wf db ->
     loaded p cp db -> In r (rules V.t p) ->
@@ -13299,5 +18284,35 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       fold_right N.add 0 (map Ts (flat_map term_vars (flat_map action_terms (actions V.t r)))) +
       k_driver * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros B U p cp r s Ts db Hplans Hwf Hloaded Hr Hrule Halloc HB HU.
+    destruct (run_rule_actions_env p cp r s Hplans Hr Hrule) as [g [Hacts Henv]].
+    assert (Henv_empty : env_sorted g (look s Empty)).
+    { intros x ty Hx. rewrite run_look_empty. exact (Henv x ty Hx). }
+    assert (Halloc_empty : env_allocated db (look s Empty)).
+    { intros x i Hx. rewrite run_look_empty in Hx. exact (Halloc x i Hx). }
+    pose proof (run_apply_go_amort (actions V.t r) p cp g s Ts Empty db (wbits p) B U
+      Hplans Hwf Hloaded Hacts Henv_empty Halloc_empty (run_rule_width p r Hr) HB HU)
+      as Hcost.
+    assert (Hprim : action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r)
+      (look s Empty) = action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s).
+    { apply run_action_prim_work_agree. intro x. unfold run_value_view.
+      rewrite run_look_empty. reflexivity. }
+    rewrite Hprim in Hcost.
+    pose proof (run_apply_wrapper_clock (actions V.t r) s Ts db) as Hwrapper.
+    pose proof run_apply_factor_le as Hfactor.
+    assert (Hunit : 1 <= U) by (pose proof (F16_unit_pos (apply (actions V.t r) s db)); lia).
+    destruct (run_spending_factors U (N.to_nat (N.log2 B) + 1) (wbits p) Hunit ltac:(lia))
+      as [Hpositive _].
+    assert (Hweight : (1 <= N.of_nat (run_actions_weight cp (actions V.t r) + 1))%N) by lia.
+    change (T_apply (actions V.t r) s Ts db +
+      N.of_nat U * D.potential B (apply_go (actions V.t r) s Empty db) <=
+      k_driver * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
+        N.of_nat (run_actions_weight cp (actions V.t r) + 1) +
+      run_term_calls Ts (flat_map action_terms (actions V.t r)) +
+      k_driver * action_prim_work V.prim V.prim_work (program_kind p) (actions V.t r) s +
+      N.of_nat U * D.potential B db)%N.
+    unfold run_action_budget in Hcost. rewrite Nat2N.inj_mul.
+    clear -Hcost Hwrapper Hfactor Hpositive Hweight. nia.
+  Qed.
 End RunT.
