@@ -1096,6 +1096,50 @@ Proof.
     cbn [length fold_right] in *; lia.
 Qed.
 
+(** Uniformly bounded cells turn encoded key size into a length bound. *)
+Lemma dag_key_uniform : forall V encode (k : list (cell V)) w,
+  (forall c, In c k -> cell_bits encode c <= w) ->
+  dag_key_bits encode k <= length k * (w + 1).
+Proof.
+  intros V encode k. induction k as [|c k IH]; intros w Hwidth.
+  - reflexivity.
+  - pose proof (Hwidth c (or_introl eq_refl)) as Hhead.
+    specialize (IH w (fun d Hd => Hwidth d (or_intror Hd))).
+    unfold dag_key_bits in *. cbn [fold_right length]. nia.
+Qed.
+
+(** Row work counts one constructor and its argument occurrences per certificate entry. *)
+Definition dag_row_work {V} (g : extraction_dag V) : nat :=
+  fold_right (fun entry n => length (snd (snd entry)) + 1 + n) 0 g.
+
+(** A uniform key-length bound controls the complete certificate's row work. *)
+Lemma dag_row_work_length : forall V (g : extraction_dag V) a,
+  (forall i f k, In (i, (f, k)) g -> length k <= a) ->
+  dag_row_work g <= length g * (a + 1).
+Proof.
+  intros V g. induction g as [|[i [f k]] g IH]; intros a Harity.
+  - reflexivity.
+  - pose proof (Harity i f k (or_introl eq_refl)) as Hhead.
+    specialize (IH a (fun j h l Hl => Harity j h l (or_intror Hl))).
+    unfold dag_row_work in *. cbn [fold_right fst snd length]. nia.
+Qed.
+
+(** Row work pays for encoded certificate syntax once at a uniform stored width. *)
+Lemma dag_certificate_uniform : forall V encode (g : extraction_dag V) w,
+  (forall i f k, In (i, (f, k)) g ->
+    Pos.size_nat i <= w /\ Pos.size_nat f <= w /\
+    forall c, In c k -> cell_bits encode c <= w) ->
+  cert_size encode g <= 3 * dag_row_work g * (w + 1).
+Proof.
+  intros V encode g. induction g as [|[i [f k]] g IH]; intros w Hwidth.
+  - reflexivity.
+  - destruct (Hwidth i f k (or_introl eq_refl)) as [Hi [Hf Hcells]].
+    pose proof (dag_key_uniform V encode k w Hcells) as Hkey.
+    specialize (IH w (fun j h l Hl => Hwidth j h l (or_intror Hl))).
+    unfold cert_size, dag_row_work, dag_key_bits in *.
+    cbn [fold_right fst snd]. nia.
+Qed.
+
 (** Membership checks follow one trie path for the queried identifier. *)
 Lemma T_dag_seen_le : forall seen i,
   (T_dag_seen seen i <= 8 * N.of_nat (Pos.size_nat i + 1))%N.
@@ -1188,6 +1232,32 @@ Proof.
   - specialize (IH b Hrepr). unfold dag_key_bits in *.
     time_unfold @T_dag_check_key. time_simpl. time_cbn.
     cbn [fold_right cell_bits Pos.size_nat] in *; rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
+(** A stored key pays once per identifier for its callback and its encoded width. *)
+Lemma T_dag_check_key_additive : forall V ids repr T_repr (k : list (cell V)) b w,
+  (forall i, (Npos i <= ids)%N -> (T_repr i <= b)%N) ->
+  (forall i, In (Id i) k -> Pos.size_nat i <= w) ->
+  (T_dag_check_key ids repr T_repr k <=
+    32 * (b + N.of_nat (w + 1)) * N.of_nat (length k + 1))%N.
+Proof.
+  intros V ids repr T_repr k. induction k as [|[i|v] k IH]; intros b w Hrepr Hwidth.
+  - time_unfold @T_dag_check_key. time_simpl. time_cbn. cbn [length].
+    rewrite Nat2N.inj_add. nia.
+  - pose proof (Hwidth i (or_introl eq_refl)) as Hbit.
+    specialize (IH b w Hrepr (fun j Hj => Hwidth j (or_intror Hj))).
+    pose proof (N.T_leb_le (Npos i) ids) as Hleb.
+    pose proof (Pos.T_eqb_le i (repr i)) as Heqb.
+    time_unfold @T_dag_check_key. time_simpl. time_cbn.
+    destruct (N.leb (Npos i) ids) eqn:Halloc.
+    + pose proof (Hrepr i (proj1 (N.leb_le _ _) Halloc)) as Hfind.
+      destruct (Pos.eqb i (repr i)); cbn [length N.size_nat] in *;
+        rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *; nia.
+    + cbn [length N.size_nat] in *.
+      rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *. nia.
+  - specialize (IH b w Hrepr (fun j Hj => Hwidth j (or_intror Hj))).
+    time_unfold @T_dag_check_key. time_simpl. time_cbn.
+    cbn [length]. rewrite !Nat2N.inj_add, ?Nat2N.inj_succ in *. nia.
 Qed.
 
 (** A cost-key traversal is the pointwise map of identifier and literal costs. *)
@@ -1394,6 +1464,24 @@ Proof.
     rewrite !Nat2N.inj_add in *; nia.
 Qed.
 
+(** Stored-row validation adds callback and identifier budgets without multiplying them. *)
+Lemma T_dag_check_row_additive : forall V ids repr T_repr lookup T_lookup
+    i f (k : list (cell V)) b w,
+  (forall j, (Npos j <= ids)%N -> (T_repr j <= b)%N) ->
+  (T_lookup f k <= b * N.of_nat (length k + 1))%N ->
+  Pos.size_nat i <= w ->
+  (forall j, In (Id j) k -> Pos.size_nat j <= w) ->
+  (T_dag_check_row ids repr T_repr lookup T_lookup i f k <=
+    64 * (b + N.of_nat (w + 1)) * N.of_nat (length k + 1))%N.
+Proof.
+  intros V ids repr T_repr lookup T_lookup i f k b w Hrepr Hlookup Hi Hwidth.
+  pose proof (T_dag_check_key_additive V ids repr T_repr k b w Hrepr Hwidth) as Hkey.
+  time_unfold @T_dag_check_row. time_simpl. time_cbn.
+  destruct (dag_check_key ids repr k); [destruct (lookup f k) as [[[j|v]|]|] |];
+    try pose proof (Pos.T_eqb_le i j);
+    rewrite !Nat2N.inj_add in *; nia.
+Qed.
+
 (** Full validation is linear in syntax when each row check has a linear bound. *)
 Lemma T_dag_validate_le : forall V encode check_row T_check_row b,
   (forall i f (k : list (cell V)),
@@ -1421,6 +1509,82 @@ Proof.
       [destruct (check_row i f k) |]];
       unfold cert_size, dag_key_bits in *; cbn [fold_right fst snd] in *;
       rewrite !Nat2N.inj_add in *; unfold PTrieT.c_trie in *; nia.
+Qed.
+
+(** Stored-row validation sums row work and charges the common identifier width once. *)
+
+(** One row's scalar charges fit the additive validation allowance. *)
+Lemma dag_validate_row_budget : forall t b u l seen children checked inserted : N,
+  (1 <= u)%N -> (1 <= l)%N -> (seen <= 8 * u)%N ->
+  (children <= 32 * l * u)%N -> (checked <= b * l)%N -> (inserted <= t * u)%N ->
+  (1 + seen + children + checked + inserted <= 128 * (t * u + b + u) * l)%N.
+Proof.
+  intros t b u l seen children checked inserted Hu Hl Hseen Hchildren Hchecked Hinserted.
+  assert (Hscale : (t * u + 9 * u <= (t * u + 9 * u) * l)%N).
+  { rewrite <- (N.mul_1_r (t * u + 9 * u)) at 1.
+    apply N.mul_le_mono_l. exact Hl. }
+  eapply N.le_trans with (m := ((t * u + 9 * u) * l + 32 * l * u + b * l)%N).
+  - lia.
+  - replace ((t * u + 9 * u) * l + 32 * l * u + b * l)%N with
+      ((t * u + b + 41 * u) * l)%N by ring.
+    apply N.mul_le_mono_r. lia.
+Qed.
+
+(** Uniform row clocks add over the certificate without a second identifier-width factor. *)
+Lemma T_dag_validate_rows_le : forall V encode check_row T_check_row b w
+    (g : extraction_dag V) seen root,
+  (forall i f k, In (i, (f, k)) g ->
+    (T_check_row i f k <= b * N.of_nat (length k + 1))%N) ->
+  (forall i f k, In (i, (f, k)) g -> Pos.size_nat i <= w /\
+    forall c, In c k -> cell_bits encode c <= w) ->
+  (T_dag_validate check_row T_check_row seen g root <=
+    128 * (PTrieT.c_trie * N.of_nat (w + 1) + b + N.of_nat (w + 1)) *
+      N.of_nat (dag_row_work g + 1) + 8 * N.of_nat (Pos.size_nat root + 1))%N.
+Proof.
+  intros V encode check_row T_check_row b w g.
+  induction g as [|[i [f k]] g IH]; intros seen root Hrow Hwidth.
+  - pose proof (T_dag_seen_le seen root) as Hseen.
+    time_unfold @T_dag_validate. time_simpl. time_cbn.
+    unfold dag_row_work. cbn [fold_right]. rewrite Nat2N.inj_add. nia.
+  - pose proof (Hrow i f k (or_introl eq_refl)) as Hcheck.
+    destruct (Hwidth i f k (or_introl eq_refl)) as [Hi Hcells].
+    pose proof (T_dag_seen_le seen i) as Hseen.
+    pose proof (T_dag_children_seen_le V encode k seen) as Hchildren.
+    pose proof (dag_key_uniform V encode k w Hcells) as Hkey.
+    assert (Hsyntax : (N.of_nat (dag_key_bits encode k + 1) <=
+      N.of_nat (length k + 1) * N.of_nat (w + 1))%N).
+    { rewrite <- Nat2N.inj_mul. clear - Hkey. nia. }
+    pose proof (PTrieT.T_set_le unit i tt seen) as Hset.
+    change (PTrieCode.T_set i tt seen <=
+      PTrieT.c_trie * N.of_nat (Pos.size_nat i + 1))%N in Hset.
+    specialize (IH (PTrieCode.set i tt seen) root
+      (fun j h l Hl => Hrow j h l (or_intror Hl))
+      (fun j h l Hl => Hwidth j h l (or_intror Hl))).
+    assert (Hseen' : (T_dag_seen seen i <= 8 * N.of_nat (w + 1))%N).
+    { eapply N.le_trans; [exact Hseen |]. apply N.mul_le_mono_l. lia. }
+    assert (Hchildren' : (T_dag_children_seen seen k <=
+      32 * N.of_nat (length k + 1) * N.of_nat (w + 1))%N).
+    { eapply N.le_trans; [exact Hchildren |]. rewrite <- N.mul_assoc.
+      apply N.mul_le_mono_l. exact Hsyntax. }
+    assert (Hset' : (PTrieCode.T_set i tt seen <=
+      PTrieT.c_trie * N.of_nat (w + 1))%N).
+    { eapply N.le_trans; [exact Hset |]. apply N.mul_le_mono_l. lia. }
+    pose proof (dag_validate_row_budget PTrieT.c_trie b (N.of_nat (w + 1))
+      (N.of_nat (length k + 1)) _ _ _ _ ltac:(lia) ltac:(lia)
+      Hseen' Hchildren' Hcheck Hset') as Hbudget.
+    clear Hrow Hwidth Hi Hcells Hkey Hsyntax Hseen Hchildren Hset Hcheck
+      Hseen' Hchildren' Hset'.
+    set (budget := (128 * (PTrieT.c_trie * N.of_nat (w + 1) + b +
+      N.of_nat (w + 1)))%N) in *. clearbody budget.
+    replace (dag_row_work ((i, (f, k)) :: g) + 1) with
+      ((length k + 1) + (dag_row_work g + 1)) by
+      (unfold dag_row_work; cbn [fold_right fst snd]; lia).
+    rewrite Nat2N.inj_add, N.mul_add_distr_l.
+    time_unfold @T_dag_validate. time_simpl. time_cbn.
+    destruct (dag_seen seen i); [|destruct (dag_children_seen seen k);
+      [destruct (check_row i f k) |]];
+      unfold dag_row_work in *; rewrite !Nat2N.inj_add in *;
+      rewrite !N.mul_add_distr_l in *; lia.
 Qed.
 
 (** Reading child costs pays for their identifiers and the encoded literals. *)
@@ -1831,6 +1995,108 @@ Proof.
   destruct (extraction_cost_lookup_sound V entries target budget Hbudget) as [ch Hin].
   exists cost, budget, ch. split; [exact Hcheck|]. split; [exact Hin|].
   now apply N.leb_le.
+Qed.
+
+(** Literal width observations omit identifier cells. *)
+Definition extraction_literal_widths {V} (val_cost : V -> N) (k : list (cell V)) : list nat :=
+  flat_map (fun c => match c with
+    | Id _ => []
+    | Val v => [N.size_nat (val_cost v)]
+    end) k.
+
+(** A row contributes its constructor-cost width followed by its literal widths. *)
+Definition extraction_row_widths {V} (fn_cost : positive -> list N -> N) (val_cost : V -> N)
+    (best : extraction_best V) (entry : positive * list (cell V) * positive) : list nat :=
+  let '((f, k), _) := entry in
+  N.size_nat (fn_cost f (map (chosen_cost val_cost best) k)) ::
+    extraction_literal_widths val_cost k.
+
+(** The finite row-width maximum observes all constructor costs and their literal leaves. *)
+Definition extraction_rows_width {V} (fn_cost : positive -> list N -> N) (val_cost : V -> N)
+    (best : extraction_best V) (rs : list (positive * list (cell V) * positive)) : nat :=
+  list_max (flat_map (extraction_row_widths fn_cost val_cost best) rs).
+
+(** A finite maximum is zero or is one of its observations. *)
+Lemma extraction_max_attained : forall widths,
+  list_max widths = 0 \/ In (list_max widths) widths.
+Proof.
+  induction widths as [|w widths IH]; [now left |].
+  change (Nat.max w (list_max widths) = 0 \/
+    In (Nat.max w (list_max widths)) (w :: widths)).
+  destruct (Nat.le_ge_cases w (list_max widths)) as [Hle |Hge].
+  - rewrite Nat.max_r by exact Hle. destruct IH as [Hzero |Hin].
+    + now left.
+    + right. now right.
+  - rewrite Nat.max_l by exact Hge. right. now left.
+Qed.
+
+(** Every finite observation is below its maximum. *)
+Lemma extraction_max_member : forall widths w, In w widths -> w <= list_max widths.
+Proof.
+  intros widths w Hin.
+  pose proof (proj1 (list_max_le widths (list_max widths)) (Nat.le_refl _)) as Hbound.
+  exact (proj1 (Forall_forall _ _) Hbound w Hin).
+Qed.
+
+(** Every row's constructor-cost width is included in the finite maximum. *)
+Lemma extraction_rows_width_constructor : forall V fn_cost val_cost best rs f k i,
+  In (f, k, i) rs ->
+  N.size_nat (fn_cost f (map (chosen_cost val_cost best) k)) <=
+    @extraction_rows_width V fn_cost val_cost best rs.
+Proof.
+  intros V fn_cost val_cost best rs f k i Hin.
+  apply extraction_max_member. apply in_flat_map.
+  exists (f, k, i). split; [exact Hin |]. now left.
+Qed.
+
+(** Every literal cost appearing in a row is included in the finite maximum. *)
+Lemma extraction_rows_width_literal : forall V fn_cost val_cost best rs f k i v,
+  In (f, k, i) rs -> In (Val v) k ->
+  N.size_nat (val_cost v) <= @extraction_rows_width V fn_cost val_cost best rs.
+Proof.
+  intros V fn_cost val_cost best rs f k i v Hrow Hliteral.
+  apply extraction_max_member. apply in_flat_map.
+  exists (f, k, i). split; [exact Hrow |].
+  right. apply in_flat_map. exists (Val v). split; [exact Hliteral |]. now left.
+Qed.
+
+(** A nonzero row-width maximum is attained by a row cost or one of its literals. *)
+Lemma extraction_rows_width_attained : forall V fn_cost val_cost best rs,
+  @extraction_rows_width V fn_cost val_cost best rs = 0 \/
+  (exists f k i, In (f, k, i) rs /\
+    N.size_nat (fn_cost f (map (chosen_cost val_cost best) k)) =
+      extraction_rows_width fn_cost val_cost best rs) \/
+  (exists f k i v, In (f, k, i) rs /\ In (Val v) k /\
+    N.size_nat (val_cost v) = extraction_rows_width fn_cost val_cost best rs).
+Proof.
+  intros V fn_cost val_cost best rs.
+  destruct (extraction_max_attained
+    (flat_map (extraction_row_widths fn_cost val_cost best) rs)) as [Hzero |Hin].
+  - now left.
+  - right. apply in_flat_map in Hin as [[[f k] i] [Hrow Hin]].
+    cbn [extraction_row_widths] in Hin. destruct Hin as [Hcost |Hliteral].
+    + left. exists f, k, i. now split.
+    + right. apply in_flat_map in Hliteral as [c [Hcell Hwidth]].
+      destruct c as [j|v]; [contradiction |].
+      destruct Hwidth as [Hcost |Hbad]; [|contradiction].
+      exists f, k, i, v. split; [exact Hrow |]. now split.
+Qed.
+
+(** Equal costs on all row keys leave the row-width maximum unchanged. *)
+Lemma extraction_rows_width_agrees : forall V fn_cost val_cost left right rs,
+  (forall f k i, In (f, k, i) rs -> forall c, In c k ->
+    chosen_cost val_cost left c = chosen_cost val_cost right c) ->
+  @extraction_rows_width V fn_cost val_cost left rs =
+    extraction_rows_width fn_cost val_cost right rs.
+Proof.
+  intros V fn_cost val_cost left right rs Hagree.
+  unfold extraction_rows_width. f_equal. revert Hagree.
+  induction rs as [|[[f k] i] rs IH]; intro Hagree; [reflexivity |].
+  assert (Hkey : map (chosen_cost val_cost left) k = map (chosen_cost val_cost right) k).
+  { apply map_ext_in. intros c Hc. exact (Hagree f k i (or_introl eq_refl) c Hc). }
+  cbn [flat_map extraction_row_widths]. rewrite Hkey.
+  rewrite IH; [reflexivity |].
+  intros h l j Hj c Hc. exact (Hagree h l j (or_intror Hj) c Hc).
 Qed.
 
 
@@ -3665,6 +3931,110 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
         (checker_row_budget db)); [intros j Hj; now apply checked_repr_clock |].
       now apply checked_lookup_clock.
     - apply N.mul_le_mono_l. lia.
+  Qed.
+
+  (** Every stored cell fits within the database's spending unit. *)
+  Lemma stored_cell_unit : forall db f k o c, D.wf db ->
+    Model.row (D.view db) f k o -> In c (k ++ option_list o) ->
+    cell_bits V.encode c <= D.unit db.
+  Proof.
+    intros db f k o c Hwf Hrow Hin.
+    pose proof (D.wmark_cells db f k o c Hwf Hrow Hin) as Hwidth.
+    unfold D.unit. nia.
+  Qed.
+
+  (** Exact lookup of a stored row pays for its arity at one database unit. *)
+  Lemma checked_lookup_row_clock : forall db f k o, D.wf db ->
+    Model.row (D.view db) f k o ->
+    (1 + (D.T_lookup f k db + 1) <=
+      checker_row_budget db * N.of_nat (length k + 1))%N.
+  Proof.
+    intros db f k o Hwf Hrow.
+    pose proof (D.T_lookup_le f k db Hwf) as Hlookup.
+    pose proof (dag_key_cells V.t V.encode k) as Hcells.
+    assert (Hkey : dag_key_bits V.encode k <= length k * (D.unit db + 1)).
+    { apply dag_key_uniform. intros c Hin. eapply stored_cell_unit; try eassumption.
+      apply in_or_app. now left. }
+    unfold checker_row_budget. rewrite !Nat2N.inj_add in *.
+    assert (Hmass : (N.of_nat
+      (fold_right (fun c n => (cell_bits V.encode c + n)%nat) 0%nat k) <=
+      N.of_nat (length k) * N.of_nat (D.unit db + 1))%N).
+    { rewrite <- Nat2N.inj_mul. clear - Hcells Hkey. lia. }
+    rewrite Nat2N.inj_add in Hmass. nia.
+  Qed.
+
+  (** Valid stored rows avoid multiplying their identifier syntax by the database unit. *)
+  Lemma checked_row_stored_clock : forall db i f k, D.wf db ->
+    Model.row (D.view db) f k (Some (Id i)) ->
+    (T_dag_check_row (D.ids db) (fun j => fst (D.find j db))
+      (fun j => 1 + (D.T_find j db + 1))
+      (fun f k => fst (D.lookup f k db))
+      (fun f k => 1 + (D.T_lookup f k db + 1)) i f k <=
+      512 * (D.c_db + 1) * N.of_nat (length k + 1) *
+        N.of_nat (D.unit db + 1))%N.
+  Proof.
+    intros db i f k Hwf Hrow.
+    assert (Hout : Pos.size_nat i <= D.unit db).
+    { pose proof (stored_cell_unit db f k (Some (Id i)) (Id i) Hwf Hrow
+        ltac:(apply in_or_app; right; now left)) as Hwidth.
+      cbn [cell_bits Pos.size_nat] in Hwidth. lia. }
+    assert (Hkey : forall j, In (Id j) k -> Pos.size_nat j <= D.unit db).
+    { intros j Hin. pose proof (stored_cell_unit db f k (Some (Id i)) (Id j) Hwf Hrow
+        ltac:(apply in_or_app; now left)) as Hwidth.
+      cbn [cell_bits Pos.size_nat] in Hwidth. lia. }
+    eapply N.le_trans.
+    - apply (T_dag_check_row_additive V.t (D.ids db) _ _ _ _ i f k
+        (checker_row_budget db) (D.unit db)).
+      + intros j Hj. now apply checked_repr_clock.
+      + eapply checked_lookup_row_clock; eassumption.
+      + exact Hout.
+      + exact Hkey.
+    - unfold checker_row_budget.
+      replace (64 * (4 * (D.c_db + 1) * N.of_nat (D.unit db + 1) +
+        N.of_nat (D.unit db + 1)) * N.of_nat (length k + 1))%N with
+        ((64 * (4 * (D.c_db + 1) + 1)) * N.of_nat (length k + 1) *
+          N.of_nat (D.unit db + 1))%N by ring.
+      apply N.mul_le_mono_r, N.mul_le_mono_r. nia.
+  Qed.
+
+  (** Validation of database rows sums arities before applying the common spending unit. *)
+  Lemma checked_validate_stored_clock : forall db g seen root, D.wf db ->
+    (forall i f k, In (i, (f, k)) g -> Model.row (D.view db) f k (Some (Id i))) ->
+    (T_dag_validate
+      (dag_check_row (D.ids db) (fun j => fst (D.find j db))
+        (fun f k => fst (D.lookup f k db)))
+      (fun i f k => T_dag_check_row (D.ids db) (fun j => fst (D.find j db))
+        (fun j => 1 + (D.T_find j db + 1))
+        (fun f k => fst (D.lookup f k db))
+        (fun f k => 1 + (D.T_lookup f k db + 1)) i f k) seen g root <=
+      (128 * 1024) * (PTrieT.c_trie + D.c_db + 1) *
+        N.of_nat (dag_row_work g + 1) * N.of_nat (D.unit db + 1) +
+        8 * N.of_nat (Pos.size_nat root + 1))%N.
+  Proof.
+    intros db g seen root Hwf Hrows.
+    eapply N.le_trans.
+    - apply (T_dag_validate_rows_le V.t V.encode _ _
+        (512 * (D.c_db + 1) * N.of_nat (D.unit db + 1))%N (D.unit db)).
+      + intros i f k Hin. pose proof (checked_row_stored_clock db i f k Hwf
+          (Hrows i f k Hin)) as Hclock.
+        replace (512 * (D.c_db + 1) * N.of_nat (D.unit db + 1) *
+          N.of_nat (length k + 1))%N with
+          (512 * (D.c_db + 1) * N.of_nat (length k + 1) *
+            N.of_nat (D.unit db + 1))%N by ring.
+        exact Hclock.
+      + intros i f k Hin. pose proof (Hrows i f k Hin) as Hrow. split.
+        * pose proof (stored_cell_unit db f k (Some (Id i)) (Id i) Hwf Hrow
+            ltac:(apply in_or_app; right; now left)) as Hwidth.
+          cbn [cell_bits Pos.size_nat] in Hwidth. lia.
+        * intros c Hc. eapply stored_cell_unit; try eassumption.
+          apply in_or_app. now left.
+    - apply N.add_le_mono_r.
+      replace (128 * (PTrieT.c_trie * N.of_nat (D.unit db + 1) +
+        512 * (D.c_db + 1) * N.of_nat (D.unit db + 1) +
+        N.of_nat (D.unit db + 1)) * N.of_nat (dag_row_work g + 1))%N with
+        ((128 * (PTrieT.c_trie + 512 * (D.c_db + 1) + 1)) *
+          N.of_nat (dag_row_work g + 1) * N.of_nat (D.unit db + 1))%N by ring.
+      apply N.mul_le_mono_r, N.mul_le_mono_r. nia.
   Qed.
 
   Lemma T_check_dag_le : forall db c g, D.wf db ->
