@@ -2157,6 +2157,205 @@ Qed.
 TimeBound wrapped_mul_cut_time.
 
 
+(** Finite interval conversion always normalizes its stored circular endpoints. *)
+Lemma wrapped_range_bits : forall w lo hi,
+  (wrapped_bits (wrapped_range w lo hi) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w lo hi. unfold wrapped_range.
+  destruct (hi <? lo), (modulus w - 1 <=? hi - lo);
+    try (cbn [wrapped_bits]; lia). apply wrapped_norm_bits.
+Qed.
+
+(** Every multiplication piece stores at most two normalized words. *)
+Lemma wrapped_mul_piece_bits : forall w a b,
+  (wrapped_bits (wrapped_mul_piece w a b) <= 2 * Pos.to_nat w)%nat.
+Proof.
+  intros w [|[|lo|] [|hi|]] [|[|lo'|] [|hi'|]];
+    cbn [wrapped_mul_piece wrapped_bits]; try lia. apply wrapped_range_bits.
+Qed.
+
+(** Arbitrary interval pieces charge their endpoint maxima quadratically. *)
+Lemma wrapped_mul_piece_time : forall w a b,
+  (T_wrapped_mul_piece w a b <= 131072 * N.of_nat
+    ((Pos.to_nat w + interval_bits a + interval_bits b + 1) ^ 2))%N.
+Proof.
+  intros w a b.
+  pose proof (WordTime.time_square_floor 1
+    (Pos.to_nat w + interval_bits a + interval_bits b + 1) ltac:(lia) ltac:(lia)) as Hpositive.
+  destruct a as [|[|lo|] [|hi|]], b as [|[|lo'|] [|hi'|]];
+    try (time_unfold T_wrapped_mul_piece; cbn beta iota zeta; lia).
+  pose proof (wrapped_mul_piece_finite_time w lo hi lo' hi') as Hfinite.
+  pose proof (WordTime.time_square_scale _ _ _
+    (Pos.to_nat w + interval_bits (I (Fin lo) (Fin hi)) +
+      interval_bits (I (Fin lo') (Fin hi')) + 1) 2 Hfinite
+    ltac:(cbn [interval_bits]; lia)) as Hscaled.
+  exact Hscaled.
+Qed.
+TimeBound wrapped_mul_piece_time.
+
+(** Combining four multiplication pieces ends in a normalized join. *)
+Lemma wrapped_mul_parts_bits : forall w a b,
+  (wrapped_bits (wrapped_mul_parts w a b) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. unfold wrapped_mul_parts. apply wrapped_join_four_bits. Qed.
+
+(** Four multiplication pieces share one quadratic endpoint budget. *)
+Lemma wrapped_mul_parts_time : forall w a b,
+  (T_wrapped_mul_parts w a b <= 16777216 * N.of_nat
+    ((Pos.to_nat w + interval_bits (fst a) + interval_bits (snd a) +
+      interval_bits (fst b) + interval_bits (snd b) + 1) ^ 2))%N.
+Proof.
+  intros w [a0 a1] [b0 b1].
+  set (n := (Pos.to_nat w + interval_bits a0 + interval_bits a1 +
+    interval_bits b0 + interval_bits b1 + 1)%nat).
+  change (T_wrapped_mul_parts w (a0, a1) (b0, b1) <=
+    16777216 * N.of_nat (n ^ 2))%N.
+  assert (HT00 : (T_wrapped_mul_piece w a0 b0 <= 131072 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_mul_piece_time|unfold n; lia]. }
+  assert (HT01 : (T_wrapped_mul_piece w a0 b1 <= 131072 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_mul_piece_time|unfold n; lia]. }
+  assert (HT10 : (T_wrapped_mul_piece w a1 b0 <= 131072 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_mul_piece_time|unfold n; lia]. }
+  assert (HT11 : (T_wrapped_mul_piece w a1 b1 <= 131072 * N.of_nat (n ^ 2))%N).
+  { eapply WordTime.time_square_weaken; [apply wrapped_mul_piece_time|unfold n; lia]. }
+  pose proof (wrapped_mul_piece_bits w a0 b0) as H00.
+  pose proof (wrapped_mul_piece_bits w a0 b1) as H01.
+  pose proof (wrapped_mul_piece_bits w a1 b0) as H10.
+  pose proof (wrapped_mul_piece_bits w a1 b1) as H11.
+  pose proof (wrapped_join_four_time w (wrapped_mul_piece w a0 b0)
+    (wrapped_mul_piece w a0 b1) (wrapped_mul_piece w a1 b0) (wrapped_mul_piece w a1 b1))
+    as Hjoin.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) n
+    ltac:(unfold n; lia) ltac:(unfold n; lia)) as Hwidth.
+  set (square := N.of_nat (n ^ 2)) in *.
+  clearbody n square.
+  apply time_of_nat_le in H00, H01, H10, H11.
+  rewrite Nat2N.inj_mul in H00, H01, H10, H11.
+  time_unfold T_wrapped_mul_parts. cbn [fst snd]. time_simpl.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_mul_parts_time.
+
+(** Multiplication after cutting both poles ends in a normalized join. *)
+Lemma wrapped_mul_both_parts_bits : forall w pole a b,
+  (wrapped_bits (wrapped_mul_both_parts w pole a b) <= 2 * Pos.to_nat w)%nat.
+Proof. intros. unfold wrapped_mul_both_parts. apply wrapped_join_four_bits. Qed.
+
+(** Cutting both inputs and combining the sixteen products has quadratic work. *)
+Lemma wrapped_mul_both_parts_time : forall w pole a b,
+  (T_wrapped_mul_both_parts w pole a b <= 17179869184 * N.of_nat
+    ((Pos.to_nat w + Z.size_nat pole + interval_bits (fst a) + interval_bits (snd a) +
+      interval_bits (fst b) + interval_bits (snd b) + 1) ^ 2))%N.
+Proof.
+  intros w pole [a0 a1] [b0 b1].
+  set (n := (Pos.to_nat w + Z.size_nat pole + interval_bits a0 + interval_bits a1 +
+    interval_bits b0 + interval_bits b1 + 1)%nat).
+  change (T_wrapped_mul_both_parts w pole (a0, a1) (b0, b1) <=
+    17179869184 * N.of_nat (n ^ 2))%N.
+  pose proof (wrapped_mul_cut_bits pole a0) as [Ha00 Ha01].
+  pose proof (wrapped_mul_cut_bits pole a1) as [Ha10 Ha11].
+  pose proof (wrapped_mul_cut_bits pole b0) as [Hb00 Hb01].
+  pose proof (wrapped_mul_cut_bits pole b1) as [Hb10 Hb11].
+  assert (HTa0 : (T_wrapped_mul_cut pole a0 <= 1048576 * N.of_nat n)%N).
+  { eapply N.le_trans; [apply wrapped_mul_cut_time|].
+    apply N.mul_le_mono_l, time_of_nat_le. unfold n. lia. }
+  assert (HTa1 : (T_wrapped_mul_cut pole a1 <= 1048576 * N.of_nat n)%N).
+  { eapply N.le_trans; [apply wrapped_mul_cut_time|].
+    apply N.mul_le_mono_l, time_of_nat_le. unfold n. lia. }
+  assert (HTb0 : (T_wrapped_mul_cut pole b0 <= 1048576 * N.of_nat n)%N).
+  { eapply N.le_trans; [apply wrapped_mul_cut_time|].
+    apply N.mul_le_mono_l, time_of_nat_le. unfold n. lia. }
+  assert (HTb1 : (T_wrapped_mul_cut pole b1 <= 1048576 * N.of_nat n)%N).
+  { eapply N.le_trans; [apply wrapped_mul_cut_time|].
+    apply N.mul_le_mono_l, time_of_nat_le. unfold n. lia. }
+  set (ca0 := wrapped_mul_cut pole a0) in *.
+  set (ca1 := wrapped_mul_cut pole a1) in *.
+  set (cb0 := wrapped_mul_cut pole b0) in *.
+  set (cb1 := wrapped_mul_cut pole b1) in *.
+  assert (HT00 : (T_wrapped_mul_parts w ca0 cb0 <= 1358954496 * N.of_nat (n ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ n 9 (wrapped_mul_parts_time w ca0 cb0)
+      ltac:(unfold n; lia)). }
+  assert (HT01 : (T_wrapped_mul_parts w ca0 cb1 <= 1358954496 * N.of_nat (n ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ n 9 (wrapped_mul_parts_time w ca0 cb1)
+      ltac:(unfold n; lia)). }
+  assert (HT10 : (T_wrapped_mul_parts w ca1 cb0 <= 1358954496 * N.of_nat (n ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ n 9 (wrapped_mul_parts_time w ca1 cb0)
+      ltac:(unfold n; lia)). }
+  assert (HT11 : (T_wrapped_mul_parts w ca1 cb1 <= 1358954496 * N.of_nat (n ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ n 9 (wrapped_mul_parts_time w ca1 cb1)
+      ltac:(unfold n; lia)). }
+  pose proof (wrapped_mul_parts_bits w ca0 cb0) as H00.
+  pose proof (wrapped_mul_parts_bits w ca0 cb1) as H01.
+  pose proof (wrapped_mul_parts_bits w ca1 cb0) as H10.
+  pose proof (wrapped_mul_parts_bits w ca1 cb1) as H11.
+  pose proof (wrapped_join_four_time w (wrapped_mul_parts w ca0 cb0)
+    (wrapped_mul_parts w ca0 cb1) (wrapped_mul_parts w ca1 cb0) (wrapped_mul_parts w ca1 cb1))
+    as Hjoin.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) n
+    ltac:(unfold n; lia) ltac:(unfold n; lia)) as Hwidth.
+  pose proof (WordTime.time_square_floor n n ltac:(lia) ltac:(unfold n; lia)) as Hlinear.
+  set (square := N.of_nat (n ^ 2)) in *.
+  clearbody n square.
+  apply time_of_nat_le in H00, H01, H10, H11.
+  rewrite Nat2N.inj_mul in H00, H01, H10, H11.
+  time_unfold T_wrapped_mul_both_parts. cbn [fst snd]. time_simpl. fold ca0 ca1 cb0 cb1.
+  clearbody ca0 ca1 cb0 cb1.
+  rewrite !Nat2N.inj_add in *. lia.
+Qed.
+TimeBound wrapped_mul_both_parts_time.
+
+(** Circular multiplication normalizes raw inputs before its quadratic word arithmetic. *)
+Lemma wrapped_mul_time : forall w a b,
+  (T_wrapped_mul w a b <= 17592186044416 * N.of_nat
+    ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (wrapped_parts_bits w a) as [Ha0 Ha1].
+  pose proof (wrapped_parts_bits w b) as [Hb0 Hb1].
+  pose proof (wrapped_signed_parts_bits w a) as [Hsa0 Hsa1].
+  pose proof (wrapped_signed_parts_bits w b) as [Hsb0 Hsb1].
+  pose proof (WordTime.word_half_size_bound w) as Hhalfbits.
+  pose proof (WordTime.word_half_time_bound w) as Hhalftime.
+  pose proof (wrapped_parts_time w a) as Hpartsa.
+  pose proof (wrapped_parts_time w b) as Hpartsb.
+  pose proof (wrapped_signed_parts_time w a) as Hsigneda.
+  pose proof (wrapped_signed_parts_time w b) as Hsignedb.
+  set (pa := wrapped_parts w a) in *.
+  set (pb := wrapped_parts w b) in *.
+  set (sa := wrapped_signed_parts w a) in *.
+  set (sb := wrapped_signed_parts w b) in *.
+  assert (Hunsigned : (T_wrapped_mul_both_parts w (half w) pa pb <=
+    618475290624 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ (Pos.to_nat w + 1) 6
+      (wrapped_mul_both_parts_time w (half w) pa pb) ltac:(lia)). }
+  assert (Hsigned : (T_wrapped_mul_both_parts w 0 sa sb <=
+    1391569403904 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N).
+  { exact (WordTime.time_square_scale _ _ _ (Pos.to_nat w + 1) 9
+      (wrapped_mul_both_parts_time w 0 sa sb) ltac:(cbn [Z.size_nat]; lia)). }
+  pose proof (wrapped_mul_both_parts_bits w (half w) pa pb) as Hubits.
+  pose proof (wrapped_mul_both_parts_bits w 0 sa sb) as Hvbits.
+  set (u := wrapped_mul_both_parts w (half w) pa pb) in *.
+  set (v := wrapped_mul_both_parts w 0 sa sb) in *.
+  pose proof (wrapped_size_time w u) as Hucard.
+  pose proof (wrapped_size_time w v) as Hvcard.
+  pose proof (wrapped_size_bits w u) as Hucardbits.
+  pose proof (Std.Z.T_leb_le (wrapped_size w u) (wrapped_size w v)) as Hcompare.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1) (Pos.to_nat w + 1)
+    ltac:(lia) ltac:(lia)) as Hwidth.
+  set (square := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b)).
+  change (T_wrapped_mul w a b <= 17592186044416 * budget)%N.
+  assert (Hbudget : (square + N.of_nat (wrapped_bits a) + N.of_nat (wrapped_bits b) = budget)%N).
+  { unfold square, budget. rewrite !Nat2N.inj_add. reflexivity. }
+  apply time_of_nat_le in Hubits, Hvbits, Hucardbits.
+  rewrite Nat2N.inj_mul in Hubits, Hvbits.
+  time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl. fold pa pb sa sb u v.
+  clearbody pa pb sa sb u v square budget.
+  destruct (wrapped_size w u <=? wrapped_size w v);
+    rewrite !Nat2N.inj_add in *; lia.
+Qed.
+TimeBound wrapped_mul_time.
+
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
@@ -2590,7 +2789,15 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
       ((Pos.to_nat (fst x) + 1) ^ 2 + wrapped_bits (fst (snd x)) +
         wrapped_bits (snd (snd x))))
     (fun x => T_wrapped_mul (fst x) (fst (snd x)) (snd (snd x))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists 17592186044416%N. intros [w [a b]] _.
+    change (T_wrapped_mul w a b <= 17592186044416 *
+      (N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b) + 1))%N.
+    pose proof (wrapped_mul_time w a b) as Htime.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2 + wrapped_bits a + wrapped_bits b)) in *.
+    clearbody budget.
+    time_unfold T_wrapped_mul. cbn beta iota zeta. time_simpl. lia.
+  Qed.
 
   Definition mul_piece (w : positive) (a b : Z * Z) : wrapped :=
     wrapped_mul_piece w
