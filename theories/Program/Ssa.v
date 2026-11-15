@@ -691,42 +691,94 @@ Module SsaPointsT (P : TYPE) (B : KEY_T) (BE : KEY_T)
   TimeFun block_params.
   TimeFun block_edge_args.
   TimeFun point_definition.
-  Definition c_points : N := 1%N. (* STUB *)
+  Definition c_points : N :=
+    8 * (D.c_tables + B.c_key + BE.c_key + N.c_key + E.c_key + V.c_key + 1).
+
+  (** Block point lookup traverses the encoded block key. *)
   Lemma T_points_in_block_le : forall p b,
     (T_points_in_block p b <=
       c_points * N.of_nat (B.bits b + length (points_in_block p b) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_points_in_block. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Instruction edge lookup traverses the encoded block key. *)
   Lemma T_instruction_edges_le : forall p b,
     (T_instruction_edges p b <=
       c_points * N.of_nat (B.bits b + length (instruction_edges p b) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_instruction_edges. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Parameter edge lookup includes the default table read when its key is absent. *)
   Lemma T_parameter_edge_le : forall p b,
     (T_parameter_edge p b <= c_points * N.of_nat (B.bits b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_parameter_edge. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (B.encode b) (parameter_edges (D.tables p)));
+      time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Owner lookup includes the default table read when its key is absent. *)
   Lemma T_block_of_point_le : forall p n,
     (T_block_of_point p n <= c_points * N.of_nat (N.bits n + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n. pose proof (D.T_tables_le p) as Htables.
+    pose proof (N.T_encode_le n) as Hencode.
+    unfold c_points. time_unfold T_block_of_point. rewrite PTrieT.trie_get_clock.
+    destruct (trie_get (N.encode n) (point_blocks (D.tables p)));
+      time_simpl; time_cbn; unfold N.bits in *; nia.
+  Qed.
 
+  (** Edge projection traverses the encoded point-edge key. *)
   Lemma T_block_edge_of_le : forall p e,
     (T_block_edge_of p e <= c_points * N.of_nat (E.bits e + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p e. pose proof (D.T_tables_le p) as Htables.
+    pose proof (E.T_encode_le e) as Hencode.
+    unfold c_points. time_unfold T_block_edge_of. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold E.bits in *; nia.
+  Qed.
 
+  (** Block parameter lookup traverses the encoded block key. *)
   Lemma T_block_params_le : forall p b,
     (T_block_params p b <=
       c_points * N.of_nat (B.bits b + length (block_params p b) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p b. pose proof (D.T_tables_le p) as Htables.
+    pose proof (B.T_encode_le b) as Hencode.
+    unfold c_points. time_unfold T_block_params. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold B.bits in *; nia.
+  Qed.
 
+  (** Phi operand lookup traverses the encoded block-edge key. *)
   Lemma T_block_edge_args_le : forall p be,
     (T_block_edge_args p be <=
       c_points * N.of_nat (BE.bits be + length (block_edge_args p be) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p be. pose proof (D.T_tables_le p) as Htables.
+    pose proof (BE.T_encode_le be) as Hencode.
+    unfold c_points. time_unfold T_block_edge_args. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold BE.bits in *; nia.
+  Qed.
 
+  (** Definition point lookup traverses the encoded value key. *)
   Lemma T_point_definition_le : forall p x,
     (T_point_definition p x <= c_points * N.of_nat (V.bits x + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p x. pose proof (D.T_tables_le p) as Htables.
+    pose proof (V.T_encode_le x) as Hencode.
+    unfold c_points. time_unfold T_point_definition. rewrite PTrieT.trie_get_clock.
+    time_simpl; time_cbn; unfold V.bits in *; nia.
+  Qed.
 End SsaPointsT.
 
 Module Type SSA_POINTS_STRICT_WITNESS (P : TYPE) (B : KEY) (BE : TYPE)
