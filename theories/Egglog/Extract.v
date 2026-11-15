@@ -460,8 +460,12 @@ Definition dag_seen (seen : ptrie unit) (i : positive) : bool :=
 TimeFun dag_seen.
 
 (** Every identifier child must have an earlier validated entry. *)
-Definition dag_children_seen {V} (seen : ptrie unit) (k : list (cell V)) : bool :=
-  forallb (fun c => match c with Id i => dag_seen seen i | Val _ => true end) k.
+Fixpoint dag_children_seen {V} (seen : ptrie unit) (k : list (cell V)) : bool :=
+  match k with
+  | [] => true
+  | Val _ :: rest => dag_children_seen seen rest
+  | Id i :: rest => dag_seen seen i && dag_children_seen seen rest
+  end.
 TimeFun dag_children_seen.
 
 (** Validation checks every row and then confirms that the requested root was present. *)
@@ -506,9 +510,17 @@ Lemma dag_children_seen_spec : forall V seen (k : list (cell V)),
   dag_children_seen seen k = true <->
     forall i, In (Id i) k -> dag_seen seen i = true.
 Proof.
-  intros V seen k. unfold dag_children_seen. rewrite forallb_forall. split.
-  - intros H i Hin. exact (H (Id i) Hin).
-  - intros H [i|v] Hin; [apply H; exact Hin |reflexivity].
+  intros V seen k. induction k as [|[j|v] k IH]; cbn [dag_children_seen].
+  - split; [intros _ i Hin; contradiction |intros; reflexivity].
+  - rewrite andb_true_iff, IH. split.
+    + intros [Hj Hrest] i [Heq|Hin].
+      * injection Heq as Heq. subst i. exact Hj.
+      * now apply Hrest.
+    + intro H. split; [apply H; now left |].
+      intros i Hin. apply H. now right.
+  - rewrite IH. split.
+    + intros H i [Heq|Hin]; [discriminate |now apply H].
+    + intros H i Hin. apply H. now right.
 Qed.
 
 (** Validation establishes order, successful row checks and the root's membership. *)
@@ -830,9 +842,13 @@ Definition dag_get_cost (costs : ptrie N) (i : positive) : N :=
 TimeFun dag_get_cost.
 
 (** A constructor reads stored identifier costs and evaluates its literal costs. *)
-Definition dag_cost_cells {V} (val_cost : V -> N) (costs : ptrie N)
+Fixpoint dag_cost_cells {V} (val_cost : V -> N) (costs : ptrie N)
     (k : list (cell V)) : list N :=
-  map (fun c => match c with Id i => dag_get_cost costs i | Val v => val_cost v end) k.
+  match k with
+  | [] => []
+  | Val v :: rest => val_cost v :: dag_cost_cells val_cost costs rest
+  | Id i :: rest => dag_get_cost costs i :: dag_cost_cells val_cost costs rest
+  end.
 TimeFun dag_cost_cells.
 
 (** A selected row records its constructor cost after all its children are available. *)
