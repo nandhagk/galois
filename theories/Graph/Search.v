@@ -811,6 +811,88 @@ Proof.
     + now apply (search_shape_stop g st).
 Qed.
 
+Local Opaque loopN.
+
+(** A terminal search result reverses the stored chronology and has no tasks left. *)
+Lemma search_stop_events g st es : search_step g st = inr es ->
+  es = rev (search_events st) /\ search_tasks st = [].
+Proof.
+  intros Hstop. destruct st as [[|task tasks] colours events].
+  - cbn [search_step] in Hstop. injection Hstop as Hevents. subst es.
+    rewrite rev_append_rev, app_nil_r. split; reflexivity.
+  - destruct task as [v|u row|v]; cbn [search_step] in Hstop.
+    + destruct (trie_get v colours); discriminate Hstop.
+    + destruct row as [|v row]; [discriminate Hstop|].
+      destruct (trie_get v colours); discriminate Hstop.
+    + discriminate Hstop.
+Qed.
+
+(** Every completed search visits exactly the rooted reachable vertices on any graph. *)
+Lemma search_finished_reach g roots fuel es :
+  loopN (search_step g) fuel (SearchState (map SearchRoot roots) Empty []) = inr es ->
+  forall v, In v (entered es) <-> reach g roots v.
+Proof.
+  intro Hdone.
+  pose proof (search_loop_fuel_invariant (search_step g)
+    (fun st => search_reach_invariant g roots st /\ search_shape st)) as Hrun.
+  assert (Hstep : forall st next,
+      search_reach_invariant g roots st /\ search_shape st ->
+      search_step g st = inl next ->
+      search_reach_invariant g roots next /\ search_shape next).
+  { intros st next [Hreach Hshape] Hnext. split.
+    - eapply search_reach_preserved; eassumption.
+    - eapply search_shape_step; eassumption. }
+  specialize (Hrun Hstep (N.to_nat fuel) (SearchState (map SearchRoot roots) Empty [])
+    (conj (search_reach_initial g roots) (search_shape_initial roots))).
+  rewrite <- search_loopN_fuel, Hdone in Hrun.
+  destruct Hrun as [last [[Hreach Hshape] Hstop]].
+  destruct (search_stop_events g last es Hstop) as [Hes Htasks].
+  intro v. rewrite Hes, search_entered_member, <- in_rev.
+  rewrite <- (search_shape_seen last Hshape v).
+  apply (search_reach_finished g roots last Hreach Htasks v).
+Qed.
+
+(** Count-correct successor-closed listed graphs need no distinctness assumption for reach. *)
+Lemma prepared_search_reach_closed g roots :
+  counts_ok g ->
+  (forall u v, In u (nodes g) -> edge (base g) u v -> In v (nodes g)) ->
+  (forall r, In r roots -> In r (nodes g)) ->
+  forall v, In v (entered (prepared_search_trace g roots)) <-> reach (base g) roots v.
+Proof.
+  intros Hcounts Hclosed Hroots.
+  destruct (prepared_search_complete_closed g roots Hcounts Hclosed Hroots) as [es Hdone].
+  unfold prepared_search_trace. rewrite Hdone.
+  apply (search_finished_reach (base g) roots (search_budget g roots) es Hdone).
+Qed.
+
+(** Even a truncated search never enters a vertex twice. *)
+Lemma prepared_search_unique_raw g roots :
+  NoDup (entered (prepared_search_trace g roots)).
+Proof.
+  pose proof (search_shape_loop_fuel (base g) (N.to_nat (search_budget g roots))
+    (SearchState (map SearchRoot roots) Empty []) (search_shape_initial roots)) as Hshape.
+  rewrite <- search_loopN_fuel in Hshape. unfold prepared_search_trace.
+  destruct (loopN (search_step (base g)) (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty [])) as [st|es].
+  - rewrite rev_append_rev, app_nil_r. exact (search_shape_entered_unique st Hshape).
+  - exact (proj1 Hshape).
+Qed.
+
+(** Completion closes every active DFS frame, including on duplicate listed vertices. *)
+Lemma prepared_search_nested_closed g roots :
+  counts_ok g ->
+  (forall u v, In u (nodes g) -> edge (base g) u v -> In v (nodes g)) ->
+  (forall r, In r roots -> In r (nodes g)) ->
+  trace_stack [] (prepared_search_trace g roots) [].
+Proof.
+  intros Hcounts Hclosed Hroots.
+  destruct (prepared_search_complete_closed g roots Hcounts Hclosed Hroots) as [es Hdone].
+  pose proof (search_shape_loop_fuel (base g) (N.to_nat (search_budget g roots))
+    (SearchState (map SearchRoot roots) Empty []) (search_shape_initial roots)) as Hshape.
+  rewrite <- search_loopN_fuel, Hdone in Hshape. unfold prepared_search_trace. rewrite Hdone.
+  exact (proj2 Hshape).
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -844,17 +926,27 @@ Module Search (V : VISITOR) <: SEARCH V.
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) ->
     In v (entered (trace g roots)) <-> reach (base g) roots v.
-  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
+  Proof.
+    intros [[vertices adjacency] predecessors n e] roots v Hcounts Hgraph Hroots.
+    unfold trace. apply prepared_search_reach_closed; [exact Hcounts| |exact Hroots].
+    exact (proj2 Hgraph).
+  Qed.
 
   Lemma trace_unique : forall g roots,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) -> NoDup (entered (trace g roots)).
-  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
+  Proof.
+    intros g roots Hcounts Hgraph Hroots. apply prepared_search_unique_raw.
+  Qed.
 
   Lemma trace_nested : forall g roots,
     counts_ok g -> wf_graph (base g) ->
     (forall r, In r roots -> In r (nodes g)) -> trace_stack [] (trace g roots) [].
-  Proof. Admitted. (* CONVERT: GraphSearch: validity premises require the prepared machine proof. *)
+  Proof.
+    intros [[vertices adjacency] predecessors n e] roots Hcounts Hgraph Hroots.
+    unfold trace. apply prepared_search_nested_closed; [exact Hcounts| |exact Hroots].
+    exact (proj2 Hgraph).
+  Qed.
 
   Lemma trace_edges : forall g roots u,
     counts_ok g -> wf_graph (base g) ->
