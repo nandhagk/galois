@@ -308,6 +308,110 @@ Module Compile (V : VALUE) <: COMPILE V.
     intros j Hj. apply (Hdown r j); lia.
   Qed.
 
+  (** A canonical row occurrence represents the unfolding of a named pattern node. *)
+  Definition represents_node (w : Model.view (V := V.t)) tau ns j c : Prop :=
+    row_cell w c /\ exists e, unfolds_pat tau ns j e /\ represents w c e.
+
+  (** Finite pointwise witnesses can be collected without a choice axiom. *)
+  Lemma finite_cell_witnesses : forall n (P : nat -> cell V.t -> Prop),
+    (forall j, j < n -> exists c, P j c) ->
+    exists cs, length cs = n /\ forall j c, nth_error cs j = Some c -> P j c.
+  Proof.
+    induction n as [| n IH]; intros P Hexists.
+    - exists []. split; [reflexivity |]. intros [|j] c Hnth; discriminate.
+    - destruct (Hexists 0 ltac:(lia)) as [c Hc].
+      destruct (IH (fun j => P (S j)) ltac:(intros j Hj; apply Hexists; lia))
+        as [cs [Hlength Hall]].
+      exists (c :: cs). split; [cbn [length]; congruence |].
+      intros [|j] d Hnth; cbn [nth_error] in Hnth.
+      + injection Hnth as <-. exact Hc.
+      + exact (Hall j d Hnth).
+  Qed.
+
+  (** Every covered pattern has a complete table of represented cells. *)
+  Lemma pattern_cell_table : forall sorts kinds g (p : fpat V.t) tau w c e,
+    canonical_view w -> pat_ok sorts kinds g p ->
+    unfolds_pat tau (nodes V.t p) (root V.t p) e -> represents w (Id c) e ->
+    exists cs, length cs = length (nodes V.t p) /\
+      forall j d, nth_error cs j = Some d -> represents_node w tau (nodes V.t p) j d.
+  Proof.
+    intros sorts kinds g p tau w c e Hcanonical Hpat Hunfold Hrep.
+    apply finite_cell_witnesses. intros j Hj.
+    destruct (represented_pattern_nodes sorts kinds g p tau w c e
+      Hcanonical Hpat Hunfold Hrep j Hj) as [d [t [Hcell [Hu Hr]]]].
+    exists d. split; [exact Hcell |]. exists t. split; assumption.
+  Qed.
+
+  (** A node's canonical representing cell is unique. *)
+  Lemma represents_node_unique : forall w tau ns j c d,
+    canonical_view w -> represents_node w tau ns j c -> represents_node w tau ns j d ->
+    c = d.
+  Proof.
+    intros w tau ns j c d Hcanonical [Hc [e [Hu Hr]]] [Hd [e' [Hu' Hr']]].
+    assert (e = e') by (eapply unfolds_pat_unique; eassumption). subst e'.
+    apply (canonical_cell_unique w c d Hcanonical Hc Hd).
+    exact (represents_unique w c e Hcanonical Hr d Hr').
+  Qed.
+
+  (** Literal nodes are represented by their literal cell. *)
+  Lemma represents_node_literal : forall w tau ns j c v,
+    nth_error ns j = Some (PLit v) -> represents_node w tau ns j c -> c = Val v.
+  Proof.
+    intros w tau ns j c v Hnth [_ [e [Hu Hr]]].
+    inversion Hu as [i h t Hnth' Htau | i v' Hnth' |
+      i f ch args Hnth' Hbefore Hargs]; subst; try congruence.
+    assert (v' = v) by congruence. subst v'. inversion Hr. reflexivity.
+  Qed.
+
+  (** Hole nodes keep the tree assigned by the supplied substitution. *)
+  Lemma represents_node_hole : forall w tau ns j c h,
+    nth_error ns j = Some (PHole h) -> represents_node w tau ns j c ->
+    exists e, tau h = Some e /\ represents w c e.
+  Proof.
+    intros w tau ns j c h Hnth [_ [e [Hu Hr]]].
+    inversion Hu as [i h' t Hnth' Htau | i v Hnth' |
+      i f ch args Hnth' Hbefore Hargs]; subst; try congruence.
+    assert (h' = h) by congruence. subst h'. exists e. split; assumption.
+  Qed.
+
+  (** A constructor's aligned child lists give represented cells at all child positions. *)
+  Lemma represented_children_nodes : forall tau ns w children args,
+    Forall2 (@unfolds_pat V.t tau ns) children args ->
+    forall cells, Forall (row_cell w) cells -> Forall2 (represents w) cells args ->
+      Forall2 (represents_node w tau ns) children cells.
+  Proof.
+    intros tau ns w children args Hunfold.
+    induction Hunfold as [|j e js es Hchild Htail IH]; intros cells Hcells Hrep.
+    - inversion Hrep; constructor.
+    - inversion Hrep as [|c e' cs es' Hhead Hrest]; subst.
+      inversion Hcells as [|c' cs' Hc Hcs]; subst. constructor.
+      + split; [exact Hc |]. exists e. split; assumption.
+      + exact (IH cs Hcs Hrest).
+  Qed.
+
+  (** A constructor node's cell is the output of a row representing all its children. *)
+  Lemma represents_node_constructor : forall w tau ns j c f children,
+    canonical_view w -> nth_error ns j = Some (PApp f children) ->
+    represents_node w tau ns j c ->
+    exists cells, row w f cells (Some c) /\
+      Forall2 (represents_node w tau ns) children cells.
+  Proof.
+    intros w tau ns j c f children Hcanonical Hnth [Hc [e [Hu Hr]]].
+    inversion Hu as [i h t Hnth' Htau | i v Hnth' |
+      i f' ch args Hnth' Hbefore Hargs]; subst; try congruence.
+    assert (f' = f /\ ch = children) as [-> ->] by (split; congruence).
+    inversion Hr as [v | f' cells a b args' Hrow Hsame Hreps]; subst.
+    assert (Hb : row_cell w (Id b)).
+    { exists f, cells, (Some (Id b)). split; [exact Hrow |].
+      apply in_or_app. right. now left. }
+    assert (Hab : @Id V.t a = Id b).
+    { eapply canonical_cell_unique; [exact Hcanonical | exact Hc | exact Hb |].
+      constructor. exact Hsame. }
+    injection Hab as <-. exists cells. split; [exact Hrow |].
+    eapply represented_children_nodes; [exact Hargs | | exact Hreps].
+    exact (row_key_cells w f cells (Some (Id a)) Hrow).
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
