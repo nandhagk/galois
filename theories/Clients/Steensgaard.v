@@ -8,8 +8,35 @@ From Stdlib Require Import List PArith NArith Bool.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
 From Galois.Egglog Require Import Syntax Model ValueSig IndexSig JoinSig DatabaseSig RunSig.
-From Galois.Clients Require Import AndersenSig SteensgaardSig.
+From Galois.Clients Require Import AndersenSig Andersen SteensgaardSig.
 Import List.ListNotations.
+
+(** The unary congruence covers every source pointer instruction. *)
+Lemma pointer_congruence_closed : forall q,
+  pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
+Proof.
+  intro q; unfold pointer_closed; repeat split.
+  - intros x a Hinitial; apply Cong_initial; exact Hinitial.
+  - intros x a Haddr; apply Cong_addr; exact Haddr.
+  - intros x y a Hcopy Hpoints; eapply Cong_trans; [apply Cong_copy; exact Hcopy | exact Hpoints].
+  - intros x y location a Hload Hlocation Hpoints.
+    eapply Cong_trans; [apply Cong_load; exact Hload |].
+    eapply Cong_trans; [apply Cong_deref; exact Hlocation | exact Hpoints].
+  - intros x y location a Hstore Hlocation Hpoints.
+    eapply Cong_trans; [apply Cong_sym; apply Cong_deref; exact Hlocation |].
+    eapply Cong_trans; [apply Cong_store; exact Hstore | exact Hpoints].
+Qed.
+
+(** Every inclusion derivation is also a congruence derivation. *)
+Lemma pointer_inclusion_unifies : forall q x a, may_points q x a ->
+  pointer_congruence q (Deref (Cell x)) (Cell a).
+Proof.
+  intros q x a Hpoints.
+  eapply (pointer_source_least q
+    (fun y b => pointer_congruence q (Deref (Cell y)) (Cell b))).
+  - apply pointer_congruence_closed.
+  - exact Hpoints.
+Qed.
 
 Module SteensgaardCode (V : VALUE_OPS with Definition t := positive)
     (I : INDEX_OPS V) (J : JOIN_OPS V I) (D : DATABASE_OPS V I)
@@ -28,7 +55,9 @@ Module Steensgaard (V : VALUE with Definition t := positive)
     (I : INDEX V) (J : JOIN V I) (D : DATABASE V I) (R : RUN V I J D) <: STEENSGAARD V I J D R.
   Include SteensgaardCode V I J D R.
   Lemma compile_rules : forall q, compile q = steensgaard_program.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
 
   Lemma seed_rows : forall q f k o,
     row (D.view (seed q)) f k o <-> steensgaard_seed_row q f k o.
@@ -91,11 +120,15 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
 
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact pointer_congruence_closed.
+  Qed.
 
   Lemma F2_inclusion_unifies : forall q x a, may_points q x a ->
     pointer_congruence q (Deref (Cell x)) (Cell a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact pointer_inclusion_unifies.
+  Qed.
 
   Lemma F3_saturated_equations : forall q lim db, solve q lim = (Saturated, db) ->
     forall t u, pointer_congruence q t u ->
@@ -114,7 +147,14 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
     pointer_exec instruction before = Some after ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) after.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q instruction before after Hin Hcovered Hexec.
+    eapply pointer_step_covered.
+    - apply pointer_congruence_closed.
+    - exact Hin.
+    - exact Hcovered.
+    - exact Hexec.
+  Qed.
 
   Lemma T1_wrapper : forall q lim, let p := compile q in let cp := R.plan p in
     (T_solve q lim <= T_compile q + T_seed q + R.T_plan p +
@@ -129,12 +169,16 @@ Module SteensgaardSound (V : VALUE with Definition t := positive)
   (** The source congruence contains every seed and is closed under its pointer rules. *)
   Lemma F1_source_closed : forall q,
     pointer_closed q (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact pointer_congruence_closed.
+  Qed.
 
   (** Every inclusion-derived pointer belongs to the source congruence. *)
   Lemma F2_inclusion_unifies : forall q x a, may_points q x a ->
     pointer_congruence q (Deref (Cell x)) (Cell a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact pointer_inclusion_unifies.
+  Qed.
 
   (** Each concrete instruction preserves coverage by the source congruence. *)
   Lemma F6_step_covered : forall q instruction before after,
@@ -142,13 +186,30 @@ Module SteensgaardSound (V : VALUE with Definition t := positive)
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) before ->
     pointer_exec instruction before = Some after ->
     memory_covered (fun x a => pointer_congruence q (Deref (Cell x)) (Cell a)) after.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q instruction before after Hin Hcovered Hexec.
+    eapply pointer_step_covered.
+    - apply F1_source_closed.
+    - exact Hin.
+    - exact Hcovered.
+    - exact Hexec.
+  Qed.
 
   (** Every reachable concrete pointer is included in every saturated unification result. *)
   Lemma concrete_sound : forall q lim db s, A.solve q lim = (Saturated, db) ->
     pointer_reachable (L.initial q) (L.step q) s -> forall x a,
       trie_get x (L.memory s) = Some a -> A.points db x a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q lim db s Hsolve Hreach.
+    assert (Hcovered : memory_covered
+      (fun y b => pointer_congruence q (Deref (Cell y)) (Cell b)) (L.memory s)).
+    { induction Hreach as [s Hinitial | s t Hreach IH Hstep].
+      - intros y b Hy; apply Cong_initial; eapply L.initial_coverage; eassumption.
+      - destruct (L.step_update q s t Hstep) as [instruction [Hin Hexec]].
+        eapply F6_step_covered; [exact Hin | exact IH | exact Hexec]. }
+    intros x a Hget; apply (A.solve_covers q lim db Hsolve x a).
+    apply Hcovered; exact Hget.
+  Qed.
 End SteensgaardSound.
 
 Module SteensgaardExact (V : VALUE with Definition t := positive)
@@ -174,19 +235,37 @@ Module SteensgaardExact (V : VALUE with Definition t := positive)
   Lemma addr_equation : forall q x a,
     In (Addr x a) (constraints q) \/ In (x, a) (initial_pointers q) ->
     Q.deref q (Q.cell q x) = Q.cell q a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q x a Hsource.
+    apply (proj2 (Q.source_exact q (Deref (Cell x)) (Cell a))).
+    destruct Hsource as [Haddr | Hinitial].
+    - apply Cong_addr; exact Haddr.
+    - apply Cong_initial; exact Hinitial.
+  Qed.
   (** Copy constraints equate their two dereference terms. *)
   Lemma copy_equation : forall q x y, In (Copy x y) (constraints q) ->
     Q.deref q (Q.cell q x) = Q.deref q (Q.cell q y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q x y Hcopy.
+    apply (proj2 (Q.source_exact q (Deref (Cell x)) (Deref (Cell y)))).
+    apply Cong_copy; exact Hcopy.
+  Qed.
   (** Load constraints equate a result's dereference with the operand's second dereference. *)
   Lemma load_equation : forall q x y, In (Load x y) (constraints q) ->
     Q.deref q (Q.cell q x) = Q.deref q (Q.deref q (Q.cell q y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q x y Hload.
+    apply (proj2 (Q.source_exact q (Deref (Cell x)) (Deref (Deref (Cell y))))).
+    apply Cong_load; exact Hload.
+  Qed.
   (** Store constraints equate the destination's second dereference with the stored pointer. *)
   Lemma store_equation : forall q x y, In (Store x y) (constraints q) ->
     Q.deref q (Q.deref q (Q.cell q x)) = Q.deref q (Q.cell q y).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q x y Hstore.
+    apply (proj2 (Q.source_exact q (Deref (Deref (Cell x))) (Deref (Cell y)))).
+    apply Cong_store; exact Hstore.
+  Qed.
   (** Source equations establish validity of all generated union rules. *)
   Lemma rules_valid : forall q, valid V.prim V.merge (concrete_model q) (A.compile q).
   Proof. Admitted. (* STUB *)
