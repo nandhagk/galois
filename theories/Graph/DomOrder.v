@@ -5983,3 +5983,799 @@ Proof.
           unit * N.of_nat (length (x :: y :: rest)))%N by (rewrite <- N.add_1_r; ring).
       clear -Hraw Hrecursive Hoverhead. lia.
 Qed.
+
+(** * Child-row inventories *)
+
+
+(** A child insertion adds at most one occurrence over any distinct key inventory. *)
+Lemma dom_order_child_add_mass keys parents rows vertex :
+  NoDup keys ->
+  dom_lt_row_mass keys (dom_order_child_add parents rows vertex) <=
+    S (dom_lt_row_mass keys rows).
+Proof.
+  intro Hunique. unfold dom_order_child_add.
+  destruct (trie_get (dom_lt_key vertex) parents) as [parent|]; [|lia].
+  unfold dom_order_row. now apply dom_lt_row_mass_push.
+Qed.
+
+(** Building child rows adds at most one occurrence per supplied vertex. *)
+Lemma dom_order_child_fold_mass keys parents order rows :
+  NoDup keys ->
+  dom_lt_row_mass keys (fold_left (dom_order_child_add parents) order rows) <=
+    length order + dom_lt_row_mass keys rows.
+Proof.
+  intro Hunique. revert rows. induction order as [|vertex rest IH]; intro rows.
+  - cbn [fold_left length]. reflexivity.
+  - pose proof (dom_order_child_add_mass keys parents rows vertex Hunique) as Hhead.
+    specialize (IH (dom_order_child_add parents rows vertex)).
+    cbn [fold_left length]. clear -Hhead IH. lia.
+Qed.
+
+(** Child rows built from empty storage contain at most the input's total number of vertices. *)
+Lemma dom_order_children_mass keys parents order :
+  NoDup keys ->
+  dom_lt_row_mass keys (fold_left (dom_order_child_add parents) order Empty) <= length order.
+Proof.
+  intro Hunique. pose proof (dom_order_child_fold_mass keys parents order Empty Hunique) as Hmass.
+  now rewrite dom_lt_row_mass_empty, Nat.add_0_r in Hmass.
+Qed.
+
+(** Reading a row preserves a payload property, including the empty default. *)
+Lemma dom_order_row_forall (P : N -> Prop) rows vertex :
+  dom_lt_trie_all (Forall P) rows -> Forall P (dom_order_row rows vertex).
+Proof.
+  intro Hrows. unfold dom_order_row.
+  destruct (trie_get (dom_lt_key vertex) rows) as [row|] eqn:Hget.
+  - now apply (Hrows (dom_lt_key vertex)).
+  - constructor.
+Qed.
+
+(** A child insertion retains the row predicate when its new vertex satisfies it. *)
+Lemma dom_order_child_add_forall (P : N -> Prop) parents rows vertex :
+  dom_lt_trie_all (Forall P) rows -> P vertex ->
+  dom_lt_trie_all (Forall P) (dom_order_child_add parents rows vertex).
+Proof.
+  intros Hrows Hvertex. unfold dom_order_child_add.
+  destruct (trie_get (dom_lt_key vertex) parents) as [parent|]; [|exact Hrows].
+  apply dom_lt_trie_all_set; [exact Hrows|].
+  constructor; [exact Hvertex|now apply dom_order_row_forall].
+Qed.
+
+(** Every child-row member comes from an input satisfying the same predicate. *)
+Lemma dom_order_child_fold_forall (P : N -> Prop) parents order rows :
+  Forall P order -> dom_lt_trie_all (Forall P) rows ->
+  dom_lt_trie_all (Forall P) (fold_left (dom_order_child_add parents) order rows).
+Proof.
+  intro Horder. revert rows.
+  induction Horder as [|vertex rest Hvertex Hrest IH]; intros rows Hrows.
+  - exact Hrows.
+  - cbn [fold_left]. apply IH. now apply dom_order_child_add_forall.
+Qed.
+
+(** Child-row skeleton allocation charges one bounded parent key per original input. *)
+Lemma dom_order_child_fold_nodes parents order rows width :
+  (forall vertex parent, In vertex order ->
+    trie_get (dom_lt_key vertex) parents = Some parent ->
+    Pos.size_nat (dom_lt_key parent) <= width) ->
+  PTrie.nodes (fold_left (dom_order_child_add parents) order rows) <=
+    PTrie.nodes rows + length order * width.
+Proof.
+  revert rows. induction order as [|vertex rest IH]; intros rows Hwidth.
+  - cbn [fold_left length]. lia.
+  - pose proof (IH (dom_order_child_add parents rows vertex)
+      (fun v p Hv => Hwidth v p (or_intror Hv))) as Hrest.
+    assert (Hhead : PTrie.nodes (dom_order_child_add parents rows vertex) <=
+      PTrie.nodes rows + width).
+    { unfold dom_order_child_add.
+      destruct (trie_get (dom_lt_key vertex) parents) as [parent|] eqn:Hparent; [|lia].
+      pose proof (PTrie.nodes_set (list N) (dom_lt_key parent)
+        (vertex :: dom_order_row rows parent) rows) as Hset.
+      pose proof (Hwidth vertex parent (or_introl eq_refl) Hparent) as Hparent_width. lia. }
+    cbn [fold_left length]. clear -Hhead Hrest. lia.
+Qed.
+
+(** Any individual child row is bounded by the original order's length. *)
+Lemma dom_order_children_row_length parents order vertex :
+  length (dom_order_row (fold_left (dom_order_child_add parents) order Empty) vertex) <=
+    length order.
+Proof.
+  pose proof (dom_order_children_mass [dom_lt_key vertex] parents order
+    ltac:(constructor; [intro Hbad; contradiction|constructor])) as Hmass.
+  unfold dom_lt_row_mass in Hmass. cbn [fold_right] in Hmass.
+  unfold dom_order_row. lia.
+Qed.
+
+(** Summing actual row bindings agrees with reading those same distinct keys from the trie. *)
+Lemma dom_order_elements_row_mass (rows : ptrie (list N)) :
+  fold_right (fun entry total => length (snd entry) + total) 0 (PTrieCode.elements rows) =
+    dom_lt_row_mass (map fst (PTrieCode.elements rows)) rows.
+Proof.
+  assert (Hread : forall entries,
+    Forall (fun entry => trie_get (fst entry) rows = Some (snd entry)) entries ->
+    fold_right (fun entry total => length (snd entry) + total) 0 entries =
+      dom_lt_row_mass (map fst entries) rows).
+  { intros entries Hall. induction Hall as [|[key row] rest Hget Hrest IH].
+    - reflexivity.
+    - unfold dom_lt_row_mass in *. cbn [map fold_right fst snd] in *.
+      now rewrite Hget, IH. }
+  apply Hread. apply Forall_forall. intros [key row] Hin. cbn [fst snd].
+  now apply PTrie.elements_spec in Hin.
+Qed.
+
+(** All stored child rows together contain at most one occurrence per input vertex. *)
+Lemma dom_order_children_elements_mass parents order :
+  fold_right (fun entry total => length (snd entry) + total) 0
+    (PTrieCode.elements (fold_left (dom_order_child_add parents) order Empty)) <= length order.
+Proof.
+  rewrite dom_order_elements_row_mass. apply dom_order_children_mass.
+  apply PTrie.elements_nodup.
+Qed.
+
+(** Mapping a length-preserving row transformation retains every finite row-mass bound. *)
+Lemma dom_order_row_mass_map_length keys rows (f : list N -> list N) :
+  (forall row, length (f row) = length row) ->
+  dom_lt_row_mass keys (PTrieCode.map f rows) = dom_lt_row_mass keys rows.
+Proof.
+  intro Hlength. unfold dom_lt_row_mass.
+  induction keys as [|key rest IH]; cbn [fold_right]; [reflexivity|].
+  rewrite PTrie.get_map. change (PTrie.get key rows) with (trie_get key rows).
+  destruct (trie_get key rows); cbn [option_map];
+    rewrite ?Hlength, IH; reflexivity.
+Qed.
+
+(** * Row-sensitive fold clocks *)
+
+(** A stateful fold pays each callback's input-dependent upper bound once. *)
+Lemma dom_order_fold_sum_clock {A B : Type} (step : A -> B -> A) (T_step : A -> B -> N)
+    (weight : B -> N) xs st :
+  (forall item, In item xs -> forall current, (T_step current item <= weight item)%N) ->
+  (List.T_fold_left step T_step xs st <=
+    N.of_nat (length xs) + fold_right N.add 0 (map weight xs) + 1)%N.
+Proof.
+  revert st. induction xs as [|item rest IH]; intros st Hstep.
+  - time_unfold @List.T_fold_left. cbn [length map fold_right]. lia.
+  - pose proof (Hstep item (or_introl eq_refl) st) as Hhead.
+    specialize (IH (step st item) (fun x Hx => Hstep x (or_intror Hx))).
+    time_unfold @List.T_fold_left. cbn [length map fold_right].
+    rewrite Nat2N.inj_succ. clear -IH Hhead. lia.
+Qed.
+
+(** A uniform multiplier factors out of the finite sum of natural input weights. *)
+Lemma dom_order_sum_scaled {A : Type} (weight : A -> nat) xs coefficient :
+  fold_right N.add 0%N (map (fun item => coefficient * N.of_nat (weight item))%N xs) =
+    (coefficient * N.of_nat (fold_right (fun item total => (weight item + total)%nat) 0%nat xs))%N.
+Proof.
+  induction xs as [|item rest IH]; cbn [map fold_right].
+  - change (0 = coefficient * 0)%N. now rewrite N.mul_0_r.
+  - rewrite IH, Nat2N.inj_add, N.mul_add_distr_l. reflexivity.
+Qed.
+
+(** Adding a fixed per-element natural allowance contributes exactly the list length. *)
+Lemma dom_order_sum_allowance {A : Type} (weight : A -> nat) xs allowance :
+  fold_right (fun item total => weight item + allowance + total) 0 xs =
+    fold_right (fun item total => weight item + total) 0 xs + allowance * length xs.
+Proof.
+  induction xs as [|item rest IH]; cbn [fold_right length]; [ring|].
+  rewrite IH. ring.
+Qed.
+
+(** Reading numeric child rows over an order is the row mass of the encoded order keys. *)
+Lemma dom_order_rows_sum order rows :
+  fold_right (fun vertex total => length (dom_order_row rows vertex) + total) 0 order =
+    dom_lt_row_mass (map dom_lt_key order) rows.
+Proof.
+  unfold dom_lt_row_mass, dom_order_row.
+  induction order as [|vertex rest IH]; cbn [fold_right map]; [reflexivity|].
+  now rewrite IH.
+Qed.
+
+(** * Summed child-row callback costs *)
+
+(** One administrative unit per callback contributes exactly the number of stored bindings. *)
+Lemma dom_order_sum_unit {A : Type} (weight : A -> N) xs :
+  fold_right N.add 0%N (map (fun x => (1 + weight x)%N) xs) =
+    (N.of_nat (length xs) + fold_right N.add 0 (map weight xs))%N.
+Proof.
+  induction xs as [|x rest IH]; cbn [map fold_right length]; [reflexivity|].
+  rewrite IH, Nat2N.inj_succ. lia.
+Qed.
+
+(** Trie mapping pays each present callback once, allowing rows to have different lengths. *)
+Lemma dom_order_map_time_sum {A B : Type} (f : A -> B) (T_f : A -> N) rows :
+  (PTrieT.T_map f T_f rows <= (PTrieT.k_filter + 1) *
+    (N.of_nat (PTrie.nodes rows + 1) +
+      N.of_nat (length (PTrieCode.elements rows)) +
+      fold_right N.add 0 (map (fun ka => T_f (snd ka)) (PTrieCode.elements rows)) + 1))%N.
+Proof.
+  pose proof (@PTrieT.T3_filter_sum A B (fun a => Some (f a))
+    (fun a => (1 + T_f a)%N) rows) as Hfilter.
+  cbn beta in Hfilter. rewrite dom_order_sum_unit in Hfilter.
+  time_unfold @PTrieT.T_map. time_simpl. nia.
+Qed.
+
+(** Quadratic values in a distinct key count need at most twice the original width plus four. *)
+Lemma dom_distinct_quadratic_width xs width value :
+  NoDup xs -> (forall key, In key xs -> Pos.size_nat key <= width) ->
+  (value <= 8 * (N.of_nat (length xs) + 1) * (N.of_nat (length xs) + 1))%N ->
+  N.size_nat value <= 2 * width + 4.
+Proof.
+  intros Hunique Hwidth Hvalue.
+  pose proof (dom_distinct_keys_cardinality xs width Hunique Hwidth) as Hlength.
+  assert (Hcapacity : length xs + 1 <= Nat.pow 2 width) by lia.
+  destruct value as [|p]; [cbn; lia|].
+  assert (Hnatural : N.to_nat (N.pos p) <=
+    N.to_nat (8 * (N.of_nat (length xs) + 1) * (N.of_nat (length xs) + 1))%N).
+  { apply Nat.compare_le_iff. rewrite <- N2Nat.inj_compare. exact Hvalue. }
+  rewrite !N2Nat.inj_mul, !N2Nat.inj_add, !Nat2N.id in Hnatural.
+  cbn [N.to_nat] in Hnatural. cbn [N.size_nat]. apply Pos.size_nat_least.
+  replace (2 * width + 4) with (width + width + 4) by lia.
+  rewrite !Nat.pow_add_r. cbn [Nat.pow]. nia.
+Qed.
+
+(** The explicit index and sorting fuel fits the logarithm of any containing size bound. *)
+Lemma dom_order_value_log_width value bound :
+  (value <= N.of_nat bound)%N -> N.size_nat value <= Nat.log2 bound + 1.
+Proof.
+  intro Hbound. destruct value as [|p]; [cbn; lia|].
+  cbn [N.size_nat]. apply Pos.size_nat_least.
+  assert (Hnatural : Pos.to_nat p <= bound) by lia.
+  pose proof (Pos2Nat.is_pos p) as Hpositive.
+  pose proof (Nat.log2_spec bound ltac:(lia)) as Hlog.
+  replace (Nat.log2 bound + 1) with (S (Nat.log2 bound)) by lia. lia.
+Qed.
+
+(** * Amortized replay composition *)
+
+Local Opaque Argent.Loop.loop T_loopN.
+
+Definition dom_lt_replay_selected (st : dom_lt_replay) : dom_lt_links :=
+  if N.eqb (replay_index st) (replay_boundary st)
+  then DomLtLinks Empty Empty [] else replay_links st.
+
+Definition dom_lt_replay_credit (bound width : nat) (st : dom_lt_replay) : N :=
+  (dom_lt_eval_unit width * dom_lt_forest_credit bound (replay_links st) +
+    dom_eqb_credit (replay_boundary st) (replay_index st) +
+    dom_counter_credit (replay_index st))%N.
+
+Definition dom_lt_replay_no_reset (boundary index : N) (count : nat) : Prop :=
+  (boundary < index \/ index + N.of_nat count <= boundary)%N.
+
+Lemma dom_lt_replay_no_reset_head boundary index count :
+  dom_lt_replay_no_reset boundary index (S count) -> N.eqb index boundary = false.
+Proof.
+  intros Hphase. apply N.eqb_neq. unfold dom_lt_replay_no_reset in Hphase. lia.
+Qed.
+
+Lemma dom_lt_replay_no_reset_tail boundary index count :
+  dom_lt_replay_no_reset boundary index (S count) ->
+  dom_lt_replay_no_reset boundary (N.succ index) count.
+Proof.
+  unfold dom_lt_replay_no_reset. intros [Hafter|Hbefore]; [left|right]; lia.
+Qed.
+
+Lemma dom_lt_replay_selected_no_reset st count :
+  dom_lt_replay_no_reset (replay_boundary st) (replay_index st) (S count) ->
+  dom_lt_replay_selected st = replay_links st.
+Proof.
+  intro Hphase. unfold dom_lt_replay_selected.
+  now rewrite (dom_lt_replay_no_reset_head _ _ _ Hphase).
+Qed.
+
+Lemma dom_lt_empty_bounded bound : dom_lt_links_bounded bound (DomLtLinks Empty Empty []).
+Proof.
+  split; apply dom_lt_trie_all_empty.
+Qed.
+
+Lemma dom_lt_replay_step_links st op :
+  replay_links (dom_lt_replay_step st op) =
+    match op with
+    | LtLink child parent => dom_lt_link (dom_lt_replay_selected st) child parent
+    | LtEval vertex =>
+        fst (dom_lt_eval (replay_fuel st) (replay_semis st) (dom_lt_replay_selected st) vertex)
+    end.
+Proof.
+  destruct op; reflexivity.
+Qed.
+
+Lemma dom_lt_replay_fold_fields ops : forall st,
+  replay_semis (fold_left dom_lt_replay_step ops st) = replay_semis st /\
+  replay_fuel (fold_left dom_lt_replay_step ops st) = replay_fuel st /\
+  replay_boundary (fold_left dom_lt_replay_step ops st) = replay_boundary st.
+Proof.
+  induction ops as [|op rest IH]; intro st; [repeat split; reflexivity|].
+  cbn [fold_left]. destruct (IH (dom_lt_replay_step st op)) as [Hsemis [Hfuel Hboundary]].
+  destruct (dom_lt_replay_fields st op) as [Hsemis_step [Hfuel_step [Hboundary_step Hindex]]].
+  repeat split; congruence.
+Qed.
+
+Lemma dom_lt_replay_step_range bound st op :
+  dom_lt_links_bounded bound (dom_lt_replay_selected st) -> dom_lt_op_bounded bound op ->
+  dom_lt_links_bounded bound (replay_links (dom_lt_replay_step st op)).
+Proof.
+  intros Hlinks Hop. rewrite dom_lt_replay_step_links.
+  destruct op as [child parent|vertex].
+  - destruct Hop as [Hchild Hparent]. now apply dom_lt_link_bounded.
+  - exact (proj1 (dom_lt_eval_bounded bound (replay_fuel st) (replay_semis st)
+      (dom_lt_replay_selected st) vertex Hlinks Hop)).
+Qed.
+
+Lemma dom_lt_replay_step_fresh st op ops :
+  NoDup (dom_lt_link_children (op :: ops)) ->
+  dom_lt_links_fresh (dom_lt_replay_selected st) (dom_lt_link_children (op :: ops)) ->
+  dom_lt_links_fresh (replay_links (dom_lt_replay_step st op)) (dom_lt_link_children ops).
+Proof.
+  intros Hunique Hfresh. rewrite dom_lt_replay_step_links.
+  destruct op as [child parent|vertex].
+  - cbn [dom_lt_link_children] in Hunique, Hfresh.
+    inversion Hunique as [|head tail Hnew Htail]; subst head tail.
+    apply dom_lt_link_fresh; [exact Hnew|].
+    intros key Hin. apply Hfresh. now right.
+  - now apply dom_lt_eval_fresh.
+Qed.
+
+Lemma dom_lt_link_children_tail_unique op ops :
+  NoDup (dom_lt_link_children (op :: ops)) -> NoDup (dom_lt_link_children ops).
+Proof.
+  destruct op; cbn [dom_lt_link_children]; intro Hunique; [now inversion Hunique|exact Hunique].
+Qed.
+
+Definition dom_lt_replay_fresh_op (links : dom_lt_links) (op : lt_op) : Prop :=
+  match op with
+  | LtLink child _ => trie_get (dom_lt_key child) (lt_shortcut links) = None
+  | LtEval _ => True
+  end.
+
+(** The link branch adds only its comparison, increment, and fixed record overhead. *)
+Lemma dom_lt_time_replay_link st child parent :
+  (T_dom_lt_replay_step st (LtLink child parent) <=
+    T_dom_lt_link (dom_lt_replay_selected st) child parent +
+      N.T_eqb (replay_index st) (replay_boundary st) +
+      N.T_succ (replay_index st) + 16)%N.
+Proof.
+  destruct st as [before semis fuel boundary index].
+  unfold T_dom_lt_replay_step, dom_lt_replay_selected.
+  cbn [replay_links replay_semis replay_fuel replay_boundary replay_index].
+  destruct (N.eqb index boundary); time_simpl; lia.
+Qed.
+
+(** The evaluation branch adds only its comparison, increment, and fixed record overhead. *)
+Lemma dom_lt_time_replay_eval st vertex :
+  (T_dom_lt_replay_step st (LtEval vertex) <=
+    T_dom_lt_eval (replay_fuel st) (replay_semis st) (dom_lt_replay_selected st) vertex +
+      N.T_eqb (replay_index st) (replay_boundary st) +
+      N.T_succ (replay_index st) + 16)%N.
+Proof.
+  destruct st as [before semis fuel boundary index].
+  unfold T_dom_lt_replay_step, dom_lt_replay_selected.
+  cbn [replay_links replay_semis replay_fuel replay_boundary replay_index].
+  destruct (N.eqb index boundary); time_simpl; lia.
+Qed.
+
+(** The fixed evaluation coefficient is positive independently of the graph and its clocks. *)
+Lemma dom_lt_eval_coefficient_positive :
+  (1 <= 1024 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
+Proof.
+  change (1 * 1 * 1 <= 1024 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
+  apply N.mul_le_mono; [|lia].
+  apply N.mul_le_mono; lia.
+Qed.
+
+(** The evaluation unit contains enough constant slack for the replay bookkeeping. *)
+Lemma dom_lt_eval_unit_positive width : (16 <= dom_lt_eval_unit width)%N.
+Proof.
+  unfold dom_lt_eval_unit.
+  change (16 * 1 * 1 * 1 <=
+    1024 * (c_loopN + 1) * (PTrieT.c_trie + 1) * N.of_nat (width + 1))%N.
+  apply N.mul_le_mono; [|lia].
+  apply N.mul_le_mono; [|lia].
+  apply N.mul_le_mono; lia.
+Qed.
+
+(** One link fits within one evaluation unit at the same key width. *)
+Lemma dom_lt_time_link_unit width before child parent :
+  N.size_nat child <= width ->
+  (T_dom_lt_link before child parent <= dom_lt_eval_unit width)%N.
+Proof.
+  intro Hwidth. eapply N.le_trans;
+    [exact (dom_lt_time_link width before child parent Hwidth)|].
+  unfold dom_lt_eval_unit. apply N.mul_le_mono_r. apply N.mul_le_mono_r. lia.
+Qed.
+
+(** Two further units pay the comparison, carry, and fixed callback overhead. *)
+Lemma dom_lt_replay_charge width level :
+  (dom_lt_eval_unit width * N.of_nat (level + 2) + 27 <=
+    dom_lt_eval_unit width * N.of_nat (level + 4))%N.
+Proof.
+  pose proof (dom_lt_eval_unit_positive width) as Hunit.
+  rewrite !Nat2N.inj_add, !N.mul_add_distr_l. lia.
+Qed.
+
+(** Weighted forest, comparison, and counter credits compose by linear accounting. *)
+Lemma dom_lt_replay_step_accounting
+    (step_work operation_work comparison_work increment_work
+      forest_before forest_after eq_before eq_after carry_before carry_after
+      operation_charge total_charge : N) :
+  (step_work <= operation_work + comparison_work + increment_work + 16)%N ->
+  (operation_work + forest_after <= forest_before + operation_charge)%N ->
+  (comparison_work + eq_after <= eq_before + 8)%N ->
+  (increment_work + carry_after <= 3 + carry_before)%N ->
+  (operation_charge + 27 <= total_charge)%N ->
+  (step_work + (forest_after + eq_after + carry_after) <=
+    forest_before + eq_before + carry_before + total_charge)%N.
+Proof.
+  intros Hstep Hoperation Hequality Hcounter Hcharge. lia.
+Qed.
+
+(** A reset is charged separately by exposing the selected input forest in this estimate. *)
+Lemma dom_lt_time_replay_step bound width st op :
+  dom_lt_trie_all (fun value => (value <= N.of_nat bound)%N) (replay_semis st) ->
+  (forall value, (value <= N.of_nat bound)%N -> N.size_nat value <= width) ->
+  (N.of_nat bound <= replay_fuel st)%N -> N.size_nat (replay_fuel st) <= width + 1 ->
+  dom_lt_links_bounded (N.of_nat bound) (dom_lt_replay_selected st) ->
+  dom_lt_op_bounded (N.of_nat bound) op ->
+  dom_lt_replay_fresh_op (dom_lt_replay_selected st) op ->
+  (T_dom_lt_replay_step st op + dom_lt_replay_credit bound width (dom_lt_replay_step st op) <=
+    dom_lt_eval_unit width * dom_lt_forest_credit bound (dom_lt_replay_selected st) +
+      dom_eqb_credit (replay_boundary st) (replay_index st) +
+      dom_counter_credit (replay_index st) +
+      dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 4))%N.
+Proof.
+  intros Hsemis Hwidth Hfuel Hfuel_width Hlinks Hop Hfresh.
+  pose proof (dom_time_eqb_credit (replay_index st) (replay_boundary st)) as Heq.
+  pose proof (dom_time_counter_succ (replay_index st)) as Hsucc.
+  destruct (dom_lt_replay_fields st op) as [_ [_ [Hboundary Hindex]]].
+  unfold dom_lt_replay_credit.
+  rewrite Hboundary, Hindex, dom_lt_replay_step_links.
+  destruct op as [child parent|vertex].
+  - destruct Hop as [Hchild Hparent].
+    pose proof (dom_lt_time_link_unit width (dom_lt_replay_selected st) child parent
+      (Hwidth child Hchild)) as Hwork.
+    pose proof (dom_lt_link_credit bound (dom_lt_replay_selected st) child parent Hfresh)
+      as Hcredit.
+    assert (Hscaled : (dom_lt_eval_unit width * dom_lt_forest_credit bound
+        (dom_lt_link (dom_lt_replay_selected st) child parent) <=
+      dom_lt_eval_unit width * dom_lt_forest_credit bound (dom_lt_replay_selected st))%N).
+    { now apply N.mul_le_mono_l. }
+    assert (Hcharge : (dom_lt_eval_unit width * 1 <=
+      dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 2))%N).
+    { apply N.mul_le_mono_l. lia. }
+    rewrite N.mul_1_r in Hcharge.
+    assert (Hoperation : (T_dom_lt_link (dom_lt_replay_selected st) child parent +
+      dom_lt_eval_unit width * dom_lt_forest_credit bound
+        (dom_lt_link (dom_lt_replay_selected st) child parent) <=
+      dom_lt_eval_unit width * dom_lt_forest_credit bound (dom_lt_replay_selected st) +
+        dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 2))%N).
+    { clear -Hwork Hscaled Hcharge. lia. }
+    eapply dom_lt_replay_step_accounting with
+      (operation_work := T_dom_lt_link (dom_lt_replay_selected st) child parent)
+      (comparison_work := N.T_eqb (replay_index st) (replay_boundary st))
+      (increment_work := N.T_succ (replay_index st))
+      (operation_charge := (dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 2))%N).
+    + exact (dom_lt_time_replay_link st child parent).
+    + exact Hoperation.
+    + exact Heq.
+    + exact Hsucc.
+    + exact (dom_lt_replay_charge width (Nat.log2 bound)).
+  - assert (Hvertex_fuel : (vertex <= replay_fuel st)%N).
+    { eapply N.le_trans; [exact Hop|exact Hfuel]. }
+    pose proof (dom_lt_time_eval_credit bound width (replay_fuel st) (replay_semis st)
+      (dom_lt_replay_selected st) vertex
+      Hsemis Hwidth Hlinks Hop Hvertex_fuel Hfuel_width) as Htime.
+    eapply dom_lt_replay_step_accounting with
+      (operation_work := T_dom_lt_eval (replay_fuel st) (replay_semis st)
+        (dom_lt_replay_selected st) vertex)
+      (comparison_work := N.T_eqb (replay_index st) (replay_boundary st))
+      (increment_work := N.T_succ (replay_index st))
+      (operation_charge := (dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 2))%N).
+    + exact (dom_lt_time_replay_eval st vertex).
+    + exact Htime.
+    + exact Heq.
+    + exact Hsucc.
+    + exact (dom_lt_replay_charge width (Nat.log2 bound)).
+Qed.
+
+(** A segment retains its numeric bounds, fresh link children, and distance from the reset. *)
+Record dom_lt_replay_phase (bound width : nat) (ops : list lt_op) (st : dom_lt_replay) : Prop := {
+  dom_lt_replay_phase_semis :
+    dom_lt_trie_all (fun value => (value <= N.of_nat bound)%N) (replay_semis st);
+  dom_lt_replay_phase_fuel : (N.of_nat bound <= replay_fuel st)%N;
+  dom_lt_replay_phase_fuel_width : N.size_nat (replay_fuel st) <= width + 1;
+  dom_lt_replay_phase_links : dom_lt_links_bounded (N.of_nat bound) (replay_links st);
+  dom_lt_replay_phase_operations : Forall (dom_lt_op_bounded (N.of_nat bound)) ops;
+  dom_lt_replay_phase_unique : NoDup (dom_lt_link_children ops);
+  dom_lt_replay_phase_fresh : dom_lt_links_fresh (replay_links st) (dom_lt_link_children ops);
+  dom_lt_replay_phase_no_reset :
+    dom_lt_replay_no_reset (replay_boundary st) (replay_index st) (length ops)
+}.
+
+Lemma dom_lt_replay_phase_step bound width op rest st :
+  dom_lt_replay_phase bound width (op :: rest) st ->
+  dom_lt_replay_phase bound width rest (dom_lt_replay_step st op).
+Proof.
+  intros [Hsemis Hfuel Hfuel_width Hlinks Hops Hunique Hfresh Hphase].
+  inversion Hops as [|head tail Hop Hrest]; subst head tail.
+  pose proof (dom_lt_replay_selected_no_reset st (length rest) Hphase) as Hselected.
+  destruct (dom_lt_replay_fields st op) as [Hsemis_eq [Hfuel_eq [Hboundary Hindex]]].
+  constructor.
+  - now rewrite Hsemis_eq.
+  - now rewrite Hfuel_eq.
+  - now rewrite Hfuel_eq.
+  - apply dom_lt_replay_step_range; [now rewrite Hselected|exact Hop].
+  - exact Hrest.
+  - now apply (dom_lt_link_children_tail_unique op rest).
+  - apply dom_lt_replay_step_fresh; [exact Hunique|now rewrite Hselected].
+  - rewrite Hboundary, Hindex. now apply dom_lt_replay_no_reset_tail.
+Qed.
+
+Lemma dom_lt_replay_phase_time bound width ops st :
+  (forall value, (value <= N.of_nat bound)%N -> N.size_nat value <= width) ->
+  dom_lt_replay_phase bound width ops st ->
+  dom_lt_replay_phase bound width [] (fold_left dom_lt_replay_step ops st) /\
+    (List.T_fold_left dom_lt_replay_step T_dom_lt_replay_step ops st +
+      dom_lt_replay_credit bound width (fold_left dom_lt_replay_step ops st) <=
+    dom_lt_replay_credit bound width st +
+      (dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 4) + 1) *
+        N.of_nat (length ops) + 1)%N.
+Proof.
+  intros Hwidth Hphase.
+  apply (dom_lt_fold_credit dom_lt_replay_step T_dom_lt_replay_step
+    (dom_lt_replay_phase bound width) (dom_lt_replay_credit bound width)
+    (dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 4))%N ops).
+  - intros op rest before Hbefore. now apply dom_lt_replay_phase_step.
+  - intros op rest before Hbefore.
+    destruct Hbefore as [Hsemis Hfuel Hfuel_width Hlinks Hops Hunique Hfresh Hphase_before].
+    inversion Hops as [|head tail Hop Hrest]; subst head tail.
+    pose proof (dom_lt_replay_selected_no_reset before (length rest) Hphase_before) as Hselected.
+    assert (Hnew : dom_lt_replay_fresh_op (dom_lt_replay_selected before) op).
+    { rewrite Hselected. destruct op; [apply Hfresh; now left|exact I]. }
+    pose proof (dom_lt_time_replay_step bound width before op Hsemis Hwidth Hfuel Hfuel_width
+      ltac:(now rewrite Hselected) Hop Hnew) as Htime.
+    rewrite Hselected in Htime. exact Htime.
+  - exact Hphase.
+Qed.
+
+(** The first bucket operation resets the forest once; its counter credits remain continuous. *)
+Lemma dom_lt_replay_reset_time bound width ops st :
+  (forall value, (value <= N.of_nat bound)%N -> N.size_nat value <= width) ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat bound)%N) (replay_semis st) ->
+  (N.of_nat bound <= replay_fuel st)%N -> N.size_nat (replay_fuel st) <= width + 1 ->
+  Forall (dom_lt_op_bounded (N.of_nat bound)) ops -> NoDup (dom_lt_link_children ops) ->
+  replay_index st = replay_boundary st ->
+  (List.T_fold_left dom_lt_replay_step T_dom_lt_replay_step ops st +
+      dom_lt_replay_credit bound width (fold_left dom_lt_replay_step ops st) <=
+    dom_lt_eval_unit width * N.of_nat ((bound + 1) * Nat.log2 bound) +
+      dom_eqb_credit (replay_boundary st) (replay_index st) +
+      dom_counter_credit (replay_index st) +
+      (dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 4) + 1) *
+        N.of_nat (length ops) + 1)%N.
+Proof.
+  intros Hwidth Hsemis Hfuel Hfuel_width Hops Hunique Hboundary.
+  destruct ops as [|op rest].
+  - pose proof (dom_lt_forest_credit_bound bound (replay_links st)) as Hcredit.
+    assert (Hscaled : (dom_lt_eval_unit width * dom_lt_forest_credit bound (replay_links st) <=
+      dom_lt_eval_unit width * N.of_nat ((bound + 1) * Nat.log2 bound))%N).
+    { now apply N.mul_le_mono_l. }
+    time_unfold @List.T_fold_left. cbn [fold_left length]. unfold dom_lt_replay_credit.
+    clear -Hscaled. lia.
+  - assert (Hselected : dom_lt_replay_selected st = DomLtLinks Empty Empty []).
+    { unfold dom_lt_replay_selected. now rewrite Hboundary, N.eqb_refl. }
+    inversion Hops as [|head tail Hop Hrest]; subst head tail.
+    assert (Hnew : dom_lt_replay_fresh_op (dom_lt_replay_selected st) op).
+    { rewrite Hselected. destruct op; [apply PTrie.get_empty|exact I]. }
+    pose proof (dom_lt_time_replay_step bound width st op Hsemis Hwidth Hfuel Hfuel_width
+      ltac:(rewrite Hselected; apply dom_lt_empty_bounded) Hop Hnew) as Hhead.
+    rewrite Hselected, dom_lt_empty_credit in Hhead.
+    destruct (dom_lt_replay_fields st op) as [Hsemis_eq [Hfuel_eq [Hboundary_eq Hindex]]].
+    assert (Hafter : dom_lt_replay_phase bound width rest (dom_lt_replay_step st op)).
+    { constructor.
+      - now rewrite Hsemis_eq.
+      - now rewrite Hfuel_eq.
+      - now rewrite Hfuel_eq.
+      - apply dom_lt_replay_step_range;
+          [rewrite Hselected; apply dom_lt_empty_bounded|exact Hop].
+      - exact Hrest.
+      - now apply (dom_lt_link_children_tail_unique op rest).
+      - apply dom_lt_replay_step_fresh; [exact Hunique|].
+        rewrite Hselected. apply dom_lt_empty_fresh.
+      - rewrite Hboundary_eq, Hindex. unfold dom_lt_replay_no_reset. left. lia. }
+    pose proof (proj2 (dom_lt_replay_phase_time bound width rest
+      (dom_lt_replay_step st op) Hwidth Hafter)) as Htail.
+    time_unfold @List.T_fold_left. cbn [fold_left length].
+    fold (List.T_fold_left dom_lt_replay_step T_dom_lt_replay_step).
+    rewrite Nat2N.inj_succ, N.mul_succ_r.
+    clear -Hhead Htail. lia.
+Qed.
+
+(** Exactly two forest-capacity charges suffice for the two logged phases. *)
+Lemma dom_lt_replay_two_phases bound width semis fuel first second :
+  (forall value, (value <= N.of_nat bound)%N -> N.size_nat value <= width) ->
+  dom_lt_trie_all (fun value => (value <= N.of_nat bound)%N) semis ->
+  (N.of_nat bound <= fuel)%N -> N.size_nat fuel <= width + 1 ->
+  Forall (dom_lt_op_bounded (N.of_nat bound)) first ->
+  Forall (dom_lt_op_bounded (N.of_nat bound)) second ->
+  NoDup (dom_lt_link_children first) -> NoDup (dom_lt_link_children second) ->
+  let initial := DomLtReplay (DomLtLinks Empty Empty []) semis fuel
+    (N.of_nat (length first)) 0%N in
+  (List.T_fold_left dom_lt_replay_step T_dom_lt_replay_step (first ++ second) initial <=
+    2 * dom_lt_eval_unit width * N.of_nat ((bound + 1) * Nat.log2 bound) +
+      dom_eqb_credit (N.of_nat (length first)) 0 +
+      (dom_lt_eval_unit width * N.of_nat (Nat.log2 bound + 4) + 1) *
+        N.of_nat (length (first ++ second)) + 1)%N.
+Proof.
+  intros Hwidth Hsemis Hfuel Hfuel_width Hfirst Hsecond Hfirst_unique Hsecond_unique initial.
+  assert (Hinitial : dom_lt_replay_phase bound width first initial).
+  { constructor; try assumption.
+    - apply dom_lt_empty_bounded.
+    - apply dom_lt_empty_fresh.
+    - unfold initial, dom_lt_replay_no_reset. right.
+      cbn [replay_index replay_boundary]. apply N.le_refl. }
+  destruct (dom_lt_replay_phase_time bound width first initial Hwidth Hinitial)
+    as [Hmiddle Hfirst_time].
+  set (middle := fold_left dom_lt_replay_step first initial) in *.
+  destruct Hmiddle as [Hmiddle_semis Hmiddle_fuel Hmiddle_width Hmiddle_links
+    Hmiddle_ops Hmiddle_unique Hmiddle_fresh Hmiddle_phase].
+  assert (Hmiddle_index : replay_index middle = N.of_nat (length first)).
+  { unfold middle. change (replay_index (dom_lt_run_ops first initial) =
+      N.of_nat (length first)).
+    rewrite dom_lt_replay_index. unfold initial. cbn [replay_index]. reflexivity. }
+  assert (Hmiddle_boundary : replay_boundary middle = N.of_nat (length first)).
+  { unfold middle. rewrite (proj2 (proj2 (dom_lt_replay_fold_fields first initial))).
+    reflexivity. }
+  assert (Hreset : replay_index middle = replay_boundary middle).
+  { now rewrite Hmiddle_index, Hmiddle_boundary. }
+  pose proof (dom_lt_replay_reset_time bound width second middle Hwidth Hmiddle_semis
+    Hmiddle_fuel Hmiddle_width Hsecond Hsecond_unique Hreset) as Hsecond_time.
+  pose proof (dom_lt_fold_clock_app dom_lt_replay_step T_dom_lt_replay_step
+    first second initial) as Hjoin. fold middle in Hjoin.
+  unfold dom_lt_replay_credit in Hfirst_time.
+  unfold initial in Hfirst_time.
+  cbn [replay_links replay_boundary replay_index dom_counter_credit] in Hfirst_time.
+  rewrite dom_lt_empty_credit in Hfirst_time.
+  fold initial in Hfirst_time. clearbody middle.
+  rewrite length_app, Nat2N.inj_add, N.mul_add_distr_l.
+  replace (2 * dom_lt_eval_unit width * N.of_nat ((bound + 1) * Nat.log2 bound))%N with
+    (dom_lt_eval_unit width * N.of_nat ((bound + 1) * Nat.log2 bound) +
+      dom_lt_eval_unit width * N.of_nat ((bound + 1) * Nat.log2 bound))%N by ring.
+  clear -Hfirst_time Hsecond_time Hjoin. lia.
+Qed.
+
+(** The two phase capacities and the linear counter reserve fit the published product budget. *)
+Lemma dom_lt_replay_budget_coefficient coefficient width discovered vertices
+    level maximum ops prefix :
+  (1 <= coefficient)%N -> discovered <= vertices -> level <= maximum -> prefix <= ops ->
+  (2 * (coefficient * N.of_nat (width + 1)) * N.of_nat ((discovered + 1) * level) +
+      (2 * N.of_nat prefix + 1) +
+      (coefficient * N.of_nat (width + 1) * N.of_nat (level + 4) + 1) * N.of_nat ops + 3 <=
+    32 * coefficient * N.of_nat ((ops + vertices + 1) * (maximum + 1) * (width + 1)))%N.
+Proof.
+  intros Hcoefficient Hvertices Hlevel Hprefix.
+  set (budget := (ops + vertices + 1) * (maximum + 1)).
+  set (weighted := 2 * (discovered + 1) * level + (level + 4) * ops).
+  set (reserve := 2 * prefix + ops + 4).
+  assert (Hweighted : weighted <= 4 * budget) by (unfold weighted, budget; nia).
+  assert (Hreserve : reserve <= 4 * budget) by (unfold reserve, budget; nia).
+  set (unit := (coefficient * N.of_nat (width + 1))%N).
+  assert (Hpositive : (1 <= unit)%N).
+  { unfold unit. clear -Hcoefficient.
+    change (1 * 1 <= coefficient * N.of_nat (width + 1))%N.
+    apply N.mul_le_mono; [exact Hcoefficient|lia]. }
+  assert (HweightedN : (N.of_nat weighted <= 4 * N.of_nat budget)%N) by lia.
+  assert (HreserveN : (N.of_nat reserve <= 4 * N.of_nat budget)%N) by lia.
+  assert (Hscaled : (unit * N.of_nat weighted + N.of_nat reserve <=
+    32 * unit * N.of_nat budget)%N).
+  { assert (Hweighted_scaled : (unit * N.of_nat weighted <=
+        unit * (4 * N.of_nat budget))%N) by now apply N.mul_le_mono_l.
+    assert (Hreserve_scaled : (N.of_nat reserve <= unit * (4 * N.of_nat budget))%N).
+    { eapply N.le_trans; [exact HreserveN|].
+      replace (4 * N.of_nat budget)%N with (1 * (4 * N.of_nat budget))%N at 1 by ring.
+      now apply N.mul_le_mono_r. }
+    eapply N.le_trans with
+      (unit * (4 * N.of_nat budget) + unit * (4 * N.of_nat budget))%N.
+    - now apply N.add_le_mono.
+    - replace (unit * (4 * N.of_nat budget) + unit * (4 * N.of_nat budget))%N with
+        (8 * (unit * N.of_nat budget))%N by ring.
+      replace (32 * unit * N.of_nat budget)%N with
+        (32 * (unit * N.of_nat budget))%N by ring.
+      apply N.mul_le_mono_r. lia. }
+  unfold unit, weighted, reserve, budget in Hscaled.
+  rewrite !Nat2N.inj_add, !Nat2N.inj_mul, !Nat2N.inj_add in Hscaled |- *.
+  clear -Hscaled. nia.
+Qed.
+
+(** The final wrapper uses two calls beyond the fold and its three aggregate reserves. *)
+Lemma dom_lt_replay_finish_budget
+    (work capacity comparison phase boundary_width prefix target : N) :
+  (work <= capacity + comparison + phase + 1)%N ->
+  (comparison <= 2 * boundary_width + 1)%N ->
+  (boundary_width <= prefix)%N ->
+  (capacity + (2 * prefix + 1) + phase + 3 <= target)%N ->
+  (work + 2 <= target)%N.
+Proof.
+  intros Hwork Hcomparison Hwidth Hbudget. lia.
+Qed.
+
+(** The actual producer replay admits duplicate input vertices and edge occurrences. *)
+Lemma dom_lt_replay_time g r :
+  (T_dom_lt_run_ops (dom_lt_ops g r) (dom_lt_replay_initial g r) + 1 <=
+    (32 * 1024 * (c_loopN + 1) * (PTrieT.c_trie + 1)) *
+      N.of_nat ((length (dom_lt_ops g r) + graph_n (base g) + 1) *
+        (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
+Proof.
+  set (discovered := dom_lt_dfs g r).
+  set (bound := length discovered).
+  set (width := graph_width (base g)).
+  set (numeric := dom_lt_numeric_of g r).
+  set (semi := dom_lt_semidominators numeric).
+  set (bucket := dom_lt_buckets numeric (lt_semis semi)).
+  set (first := rev (lt_operations (lt_semi_links semi))).
+  set (second := rev (lt_operations (lt_bucket_links bucket))).
+  assert (Hops : dom_lt_ops g r = first ++ second).
+  { unfold dom_lt_ops, dom_lt_pipeline. fold numeric. fold semi. fold bucket.
+    cbn [result_semi result_bucket].
+    change (rev_append (lt_operations (lt_semi_links semi))
+      (rev_append (lt_operations (lt_bucket_links bucket)) []) = first ++ second).
+    now rewrite !rev_append_rev, app_nil_r. }
+  assert (Hinitial : dom_lt_replay_initial g r =
+    DomLtReplay (DomLtLinks Empty Empty []) (lt_semis semi) (lt_numeric_limit numeric)
+      (N.of_nat (length first)) 0%N).
+  { unfold dom_lt_replay_initial, dom_lt_pipeline. fold numeric. fold semi. fold bucket.
+    cbn [result_semi result_numeric].
+    unfold first. rewrite length_rev. reflexivity. }
+  destruct (dom_lt_dfs_inventory g r) as [Hunique [Hlisted [Hvertices Hedges]]].
+  fold discovered in Hunique, Hlisted, Hvertices, Hedges.
+  assert (Hkey_width : forall vertex, In vertex discovered -> Pos.size_nat vertex <= width).
+  { intros vertex Hin. unfold width. apply dom_listed_key_width. now apply Hlisted. }
+  assert (Hwidth : forall value, (value <= N.of_nat bound)%N -> N.size_nat value <= width).
+  { intros value Hvalue. now apply (dom_distinct_value_width discovered width). }
+  pose proof (dom_lt_numeric_of_ranges g r) as Hranges. fold numeric discovered bound in Hranges.
+  pose proof (dom_lt_semidominators_range (N.of_nat bound) numeric Hranges) as Hsemis.
+  change (dom_lt_semi_bounded (N.of_nat bound) semi) in Hsemis.
+  destruct Hsemis as [Hsemis [Hminimizers Hsemi_links]].
+  pose proof (dom_lt_numeric_limit_count g r) as Hlimit. fold numeric discovered bound in Hlimit.
+  assert (Hfuel : (N.of_nat bound <= lt_numeric_limit numeric)%N).
+  { rewrite Hlimit, Nat2N.inj_add. apply N.le_add_r. }
+  assert (Hfuel_width : N.size_nat (lt_numeric_limit numeric) <= width + 1).
+  { apply (dom_distinct_twice_width discovered width); [exact Hunique|exact Hkey_width|].
+    rewrite Hlimit. unfold bound. rewrite Nat2N.inj_add.
+    clearbody discovered. clear -discovered. lia. }
+  pose proof (dom_lt_semidominators_op_range (N.of_nat bound) numeric Hranges) as Hfirst.
+  pose proof (dom_lt_buckets_op_range (N.of_nat bound) numeric (lt_semis semi) Hranges)
+    as Hsecond.
+  fold semi in Hfirst. fold bucket in Hsecond.
+  assert (Hfirst_range : Forall (dom_lt_op_bounded (N.of_nat bound)) first).
+  { unfold first. now apply Forall_rev. }
+  assert (Hsecond_range : Forall (dom_lt_op_bounded (N.of_nat bound)) second).
+  { unfold second. now apply Forall_rev. }
+  pose proof (dom_lt_numeric_order_unique g r) as Horder. fold numeric in Horder.
+  assert (Hfirst_unique : NoDup (dom_lt_link_children first)).
+  { unfold first. rewrite dom_lt_link_children_rev. apply NoDup_rev.
+    now apply dom_lt_semidominators_link_unique. }
+  assert (Hsecond_unique : NoDup (dom_lt_link_children second)).
+  { unfold second. rewrite dom_lt_link_children_rev. apply NoDup_rev.
+    now apply dom_lt_buckets_link_unique. }
+  pose proof (dom_lt_replay_two_phases bound width (lt_semis semi) (lt_numeric_limit numeric)
+    first second Hwidth Hsemis Hfuel Hfuel_width Hfirst_range Hsecond_range
+    Hfirst_unique Hsecond_unique) as Htime.
+  cbn zeta in Htime. rewrite <- Hinitial, <- Hops in Htime.
+  pose proof (dom_eqb_credit_initial (N.of_nat (length first))) as Hcounter.
+  pose proof (dom_size_value (N.of_nat (length first))) as Hcounter_width.
+  assert (Hprefix : length first <= length (dom_lt_ops g r)).
+  { rewrite Hops, length_app. apply Nat.le_add_r. }
+  pose proof (Nat.log2_le_mono bound (graph_n (base g)) Hvertices) as Hlog.
+  pose proof (dom_lt_replay_budget_coefficient
+    (1024 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N width bound (graph_n (base g))
+    (Nat.log2 bound) (Nat.log2 (graph_n (base g))) (length (dom_lt_ops g r)) (length first)
+    dom_lt_eval_coefficient_positive Hvertices Hlog Hprefix) as Hbudget.
+  unfold dom_lt_eval_unit in Htime.
+  pose proof (dom_lt_replay_finish_budget _ _ _ _ _ _ _
+    Htime Hcounter Hcounter_width Hbudget) as Hcomplete.
+  unfold T_dom_lt_run_ops. time_simpl.
+  change (List.T_fold_left dom_lt_replay_step
+    (fun st op => T_dom_lt_replay_step st op) (dom_lt_ops g r) (dom_lt_replay_initial g r))
+    with (List.T_fold_left dom_lt_replay_step T_dom_lt_replay_step
+      (dom_lt_ops g r) (dom_lt_replay_initial g r)).
+  fold width.
+  replace (32 * 1024 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N with
+    (32 * (1024 * (c_loopN + 1) * (PTrieT.c_trie + 1)))%N by ring.
+  clear -Hcomplete. lia.
+Qed.
