@@ -4176,6 +4176,394 @@ Proof.
   unfold budget in *. nia.
 Qed.
 
+(** An absent owner means no installed body has contained the queried vertex. *)
+Local Lemma loop_fold_owner_none : forall rows l v,
+  trie_get v (header (fold_left install rows l)) = None <->
+  trie_get v (header l) = None /\
+    forall h vs, In (h, vs) rows -> ~ In v vs.
+Proof.
+  intro rows. induction rows as [|[h vs] rest IH]; intros l v.
+  - cbn [fold_left]. split.
+    + intro Hnone. split; [exact Hnone|intros k xs Hfalse; contradiction].
+    + tauto.
+  - cbn [fold_left]. rewrite IH, (proj2 (proj2 (loop_install_maps l h vs))),
+      loop_assign_lookup.
+    destruct (in_dec Pos.eq_dec v vs) as [Hin|Hnot].
+    + split.
+      * intros [Hnone _]. discriminate.
+      * intros [_ Hall]. exfalso. exact (Hall h vs (or_introl eq_refl) Hin).
+    + split.
+      * intros [Hnone Hrest]. split; [exact Hnone|].
+        intros key row [Heq|Hin]; [injection Heq as <- <-; exact Hnot|now apply (Hrest key row)].
+      * intros [Hnone Hall]. split; [exact Hnone|].
+        intros key row Hin. apply (Hall key row). now right.
+Qed.
+
+Local Lemma loop_assemble_owner_none : forall hs rows v,
+  trie_get v (header (assemble (map (fun h => (h, rows h)) hs))) = None <->
+    forall h, In h hs -> ~ In v (rows h).
+Proof.
+  intros hs rows v. unfold assemble. rewrite loop_fold_owner_none.
+  cbn [header]. rewrite PTrie.get_empty. split.
+  - intros [_ Hall] h Hin. apply (Hall h (rows h)), in_map_iff. exists h. now split.
+  - intro Hall. split; [reflexivity|]. intros h vs Hin.
+    apply in_map_iff in Hin. destruct Hin as [key [Heq Hkey]].
+    injection Heq as <- <-. now apply Hall.
+Qed.
+
+(** The containment count charges a vertex once for each installed row containing it. *)
+Local Definition loop_family_count (rows : positive -> list positive)
+    (hs : list positive) (v : positive) : nat :=
+  fold_right (fun h total => (if in_dec Pos.eq_dec v (rows h) then 1 else 0) + total) 0 hs.
+
+Local Lemma loop_family_count_absent : forall rows hs v,
+  (forall h, In h hs -> ~ In v (rows h)) -> loop_family_count rows hs v = 0.
+Proof.
+  intros rows hs. induction hs as [|h rest IH]; intros v Habsent; [reflexivity|].
+  cbn [loop_family_count fold_right]. destruct (in_dec Pos.eq_dec v (rows h)) as [Hin|Hnot].
+  - exfalso. exact (Habsent h (or_introl eq_refl) Hin).
+  - apply IH. intros k Hk. apply Habsent. now right.
+Qed.
+
+Local Lemma loop_family_count_bound : forall rows hs v,
+  loop_family_count rows hs v <= length hs.
+Proof.
+  intros rows hs. induction hs as [|h rest IH]; intro v; [reflexivity|].
+  cbn [loop_family_count fold_right]. specialize (IH v).
+  unfold loop_family_count in IH. destruct (in_dec Pos.eq_dec v (rows h)); cbn; lia.
+Qed.
+
+Local Lemma loop_family_count_snoc : forall rows hs added v,
+  loop_family_count rows (hs ++ [added]) v =
+    loop_family_count rows hs v + if in_dec Pos.eq_dec v (rows added) then 1 else 0.
+Proof.
+  intros rows hs. induction hs as [|h rest IH]; intros added v.
+  - unfold loop_family_count. cbn [app fold_right].
+    destruct (in_dec Pos.eq_dec v (rows added)); reflexivity.
+  - cbn [loop_family_count app fold_right]. specialize (IH added v).
+    unfold loop_family_count in IH. rewrite IH. lia.
+Qed.
+
+Local Lemma loop_family_count_snoc_absent : forall rows hs added v,
+  ~ In v (rows added) -> loop_family_count rows (hs ++ [added]) v = loop_family_count rows hs v.
+Proof.
+  intros rows hs added v Hnot. rewrite loop_family_count_snoc.
+  destruct (in_dec Pos.eq_dec v (rows added)); [contradiction|lia].
+Qed.
+
+(** A chosen innermost header and its vertex have the same installed containers. *)
+Local Lemma loop_family_choice_containers : forall g r hs v h,
+  loop_family_choice g r hs v h ->
+  forall outer, In outer hs ->
+    (natural_loop g r outer v <-> natural_loop g r outer h).
+Proof.
+  intros g r hs v h [Hh [Hbody Hleast]] outer Houter. split.
+  - intro Hmember. destruct (Hleast outer Houter Hmember) as [Heq|Hinside].
+    + subst outer. split; [exact (proj1 Hbody)|now left].
+    + destruct Hinside as [_ [Hheader [_ Hcontains]]].
+      apply Hcontains. split; [exact Hheader|now left].
+  - intro Hmember. destruct (Pos.eq_dec h outer) as [->|Hne]; [exact Hbody|].
+    pose proof (proj1 (loop_header_containment g r h outer (proj1 Hbody) Hne) Hmember)
+      as Hinside. exact (proj2 (proj2 (proj2 Hinside)) v Hbody).
+Qed.
+
+Local Lemma loop_family_count_choice : forall g r hs rows v h,
+  (forall k, In k hs -> forall x, In x (rows k) <-> natural_loop g r k x) ->
+  loop_family_choice g r hs v h ->
+  loop_family_count rows hs v = loop_family_count rows hs h.
+Proof.
+  intros g r hs rows v h Hrows Hchoice. apply loop_sum_ext.
+  intros outer Houter.
+  assert (Hsame : In v (rows outer) <-> In h (rows outer)).
+  { rewrite (Hrows outer Houter v), (Hrows outer Houter h).
+    exact (loop_family_choice_containers g r hs v h Hchoice outer Houter). }
+  destruct (in_dec Pos.eq_dec v (rows outer)), (in_dec Pos.eq_dec h (rows outer));
+    try reflexivity; exfalso; tauto.
+Qed.
+
+(** A later installed header cannot contain any earlier natural header. *)
+Local Lemma loop_family_later_absent : forall g r hs added rows,
+  ~ In added hs -> Forall (natural_header g r) hs ->
+  (forall old, In old hs -> ~ loop_inside g r old added) ->
+  (forall v, In v (rows added) <-> natural_loop g r added v) ->
+  forall old, In old hs -> ~ In old (rows added).
+Proof.
+  intros g r hs added rows Hfresh Hheaders Hforward Hrow old Hold Hmember.
+  apply (Hforward old Hold). rewrite Forall_forall in Hheaders.
+  assert (Hne : old <> added) by (intro Heq; subst old; contradiction).
+  exact (proj1 (loop_header_containment g r old added (Hheaders old Hold) Hne)
+    (proj1 (Hrow old) Hmember)).
+Qed.
+
+(** Every header's count is one plus its parent's count, or one at a forest root. *)
+Local Definition loop_family_rank rows hs l : Prop :=
+  forall h, In h hs ->
+  match trie_get h (parent l) with
+  | None => loop_family_count rows hs h = 1
+  | Some outer => In outer hs /\
+      loop_family_count rows hs h = S (loop_family_count rows hs outer)
+  end.
+
+Local Lemma loop_family_rank_install : forall g r hs rows added,
+  let l := assemble (map (fun h => (h, rows h)) hs) in
+  loop_family_exact g r hs l -> loop_family_rank rows hs l ->
+  ~ In added hs -> Forall (natural_header g r) hs -> natural_header g r added ->
+  (forall old, In old hs -> ~ loop_inside g r old added) ->
+  (forall h, In h hs -> forall v, In v (rows h) <-> natural_loop g r h v) ->
+  (forall v, In v (rows added) <-> natural_loop g r added v) ->
+  loop_family_rank rows (hs ++ [added]) (install l (added, rows added)).
+Proof.
+  intros g r hs rows added l [Howners Hparents] Hrank Hfresh Hheaders Hheader
+    Hforward Hrows Hrow h Hin.
+  pose proof (loop_family_later_absent g r hs added rows Hfresh Hheaders Hforward Hrow)
+    as Habsent.
+  rewrite (proj1 (proj2 (loop_install_maps l added (rows added)))).
+  apply in_app_or in Hin. destruct Hin as [Hh|[Heq|Hfalse]]; [|subst h|contradiction].
+  - assert (Hne : h <> added) by (intro Heq; subst h; contradiction).
+    assert (Hparent : trie_get h
+      (match trie_get added (header l) with
+      | Some outer => PTrieCode.set added outer (parent l)
+      | None => parent l end) = trie_get h (parent l)).
+    { destruct (trie_get added (header l));
+        [now rewrite PTrie.get_set_other by exact Hne|reflexivity]. }
+    rewrite Hparent. specialize (Hrank h Hh).
+    rewrite (loop_family_count_snoc_absent rows hs added h (Habsent h Hh)).
+    destruct (trie_get h (parent l)) as [outer|]; [|exact Hrank].
+    destruct Hrank as [Houter Hcount]. split; [apply in_or_app; now left|].
+    now rewrite (loop_family_count_snoc_absent rows hs added outer (Habsent outer Houter)).
+  - assert (Hnone : trie_get added (parent l) = None).
+    { destruct (trie_get added (parent l)) as [outer|] eqn:Hget; [|reflexivity].
+      apply Hparents in Hget. exfalso. exact (Hfresh (proj1 Hget)). }
+    assert (Hself : In added (rows added)).
+    { apply (proj2 (Hrow added)). split; [exact Hheader|now left]. }
+    rewrite loop_family_count_snoc.
+    destruct (in_dec Pos.eq_dec added (rows added)) as [Hmember|Hnot]; [|contradiction].
+    destruct (trie_get added (header l)) as [outer|] eqn:Hget.
+    + rewrite PTrie.get_set_same. apply Howners in Hget.
+      pose proof (proj1 Hget) as Houter. split; [apply in_or_app; now left|].
+      rewrite (loop_family_count_snoc_absent rows hs added outer (Habsent outer Houter)).
+      rewrite (loop_family_count_choice g r hs rows added outer Hrows Hget). lia.
+    + rewrite Hnone.
+      assert (Hzero : loop_family_count rows hs added = 0).
+      { apply loop_family_count_absent. apply (proj1 (loop_assemble_owner_none hs rows added)).
+        exact Hget. }
+      lia.
+Qed.
+
+(** Ordered assembly maintains the exact parent-count recurrence. *)
+Local Lemma loop_family_rank_assemble : forall g r hs rows,
+  NoDup hs -> Forall (natural_header g r) hs -> loop_family_forward g r hs ->
+  (forall h, In h hs -> forall v, In v (rows h) <-> natural_loop g r h v) ->
+  loop_family_rank rows hs (assemble (map (fun h => (h, rows h)) hs)).
+Proof.
+  intros g r hs. induction hs as [|added hs IH] using rev_ind;
+    intros rows Hunique Hheaders Hforward Hrows.
+  - intros h Hfalse. contradiction.
+  - assert (Holdunique : NoDup hs) by (now apply NoDup_app_remove_r in Hunique).
+    assert (Hfresh : ~ In added hs).
+    { intro Hin. exact (loop_nodup_disjoint hs [added] Hunique added Hin (or_introl eq_refl)). }
+    assert (Holdheaders : Forall (natural_header g r) hs).
+    { rewrite Forall_forall in *. intros h Hin. apply Hheaders, in_or_app. now left. }
+    assert (Hadded : natural_header g r added).
+    { rewrite Forall_forall in Hheaders. apply Hheaders, in_or_app. right. now left. }
+    assert (Holdrows : forall h, In h hs -> forall v,
+      In v (rows h) <-> natural_loop g r h v).
+    { intros h Hin. apply Hrows, in_or_app. now left. }
+    assert (Holdforward : loop_family_forward g r hs).
+    { now apply loop_family_forward_prefix with added. }
+    rewrite map_app. unfold assemble at 1. rewrite fold_left_app.
+    cbn [map fold_left]. apply (loop_family_rank_install g r hs rows added).
+    + exact (loop_family_assemble g r hs rows Holdunique Holdheaders Holdforward Holdrows).
+    + now apply IH.
+    + exact Hfresh.
+    + exact Holdheaders.
+    + exact Hadded.
+    + intros old Hold. apply (Hforward hs added []); [reflexivity|exact Hold].
+    + exact Holdrows.
+    + apply Hrows, in_or_app. right. now left.
+Qed.
+
+(** Sufficient bounded fuel exposes every parent needed by the containment count. *)
+Local Lemma loop_family_rank_depth : forall rows hs l,
+  loop_family_rank rows hs l -> forall fuel h,
+  In h hs -> loop_family_count rows hs h <= S fuel ->
+  loop_family_count rows hs h <= S (loop_parent_depth fuel (parent l) h).
+Proof.
+  intros rows hs l Hrank fuel. induction fuel as [|fuel IH]; intros h Hh Hbound.
+  - cbn [loop_parent_depth]. exact Hbound.
+  - pose proof (Hrank h Hh) as Hstep. cbn [loop_parent_depth].
+    destruct (trie_get h (parent l)) as [outer|] eqn:Hget.
+    + destruct Hstep as [Houter Hcount].
+      assert (Houterbound : loop_family_count rows hs outer <= S fuel) by lia.
+      pose proof (IH outer Houter Houterbound) as Hdepth. lia.
+    + lia.
+Qed.
+
+Local Lemma loop_depth_fold_member : forall vertices parents
+    (bodies : ptrie (list positive)) fuel h row,
+  In h vertices -> trie_get h bodies = Some row ->
+  S (loop_parent_depth fuel parents h) <=
+    fold_right (fun key depth => match trie_get key bodies with
+      | None => depth
+      | Some _ => graph_max (S (loop_parent_depth fuel parents key)) depth
+      end) 0 vertices.
+Proof.
+  intro vertices. induction vertices as [|v rest IH]; intros parents bodies fuel h row Hin Hrow.
+  - contradiction.
+  - cbn [fold_right]. destruct Hin as [Heq|Hin].
+    + subst v. rewrite Hrow. change graph_max with Nat.max. apply Nat.le_max_l.
+    + pose proof (IH parents bodies fuel h row Hin Hrow) as Htail.
+      destruct (trie_get v bodies); [|exact Htail].
+      change graph_max with Nat.max. eapply Nat.le_trans; [exact Htail|apply Nat.le_max_r].
+Qed.
+
+(** The published depth is at least the complete chain height of every stored body header. *)
+Local Lemma loop_depth_member : forall g l h row,
+  In h (nodes g) -> trie_get h (body l) = Some row ->
+  S (loop_parent_depth (length (nodes g)) (parent l) h) <= loop_depth g l.
+Proof.
+  intros g [owners parents bodies] h row Hh Hrow.
+  cbn [parent body loop_depth] in *.
+  exact (loop_depth_fold_member (nodes g) parents bodies (length (nodes g)) h row Hh Hrow).
+Qed.
+
+(** Every vertex is charged no more times than the depth of the assembled loop forest. *)
+Local Lemma loop_family_count_depth : forall g r hs rows,
+  NoDup hs -> Forall (natural_header (base g) r) hs ->
+  loop_family_forward (base g) r hs -> incl hs (nodes g) ->
+  (forall h, In h hs -> forall v, In v (rows h) <-> natural_loop (base g) r h v) ->
+  forall v, loop_family_count rows hs v <=
+    loop_depth g (assemble (map (fun h => (h, rows h)) hs)).
+Proof.
+  intros g r hs rows Hunique Hheaders Hforward Hwithin Hrows v.
+  pose proof (loop_family_assemble (base g) r hs rows Hunique Hheaders Hforward Hrows)
+    as Hexact.
+  pose proof (loop_family_rank_assemble (base g) r hs rows Hunique Hheaders Hforward Hrows)
+    as Hrank.
+  set (l := assemble (map (fun h => (h, rows h)) hs)) in *.
+  destruct (trie_get v (header l)) as [h|] eqn:Hget.
+  - pose proof (proj1 (proj1 Hexact v h) Hget) as Hchoice.
+    rewrite (loop_family_count_choice (base g) r hs rows v h Hrows Hchoice).
+    assert (Hlength : length hs <= length (nodes g)).
+    { now apply NoDup_incl_length. }
+    assert (Hbound : loop_family_count rows hs h <= S (length (nodes g))).
+    { pose proof (loop_family_count_bound rows hs h). lia. }
+    eapply Nat.le_trans.
+    + exact (loop_family_rank_depth rows hs l Hrank (length (nodes g)) h (proj1 Hchoice) Hbound).
+    + apply (loop_depth_member g l h (rows h)).
+      * exact (Hwithin h (proj1 Hchoice)).
+      * apply (proj2 (loop_assemble_body_lookup hs rows h (rows h))).
+        exact (conj (proj1 Hchoice) eq_refl).
+  - assert (Hzero : loop_family_count rows hs v = 0).
+    { apply loop_family_count_absent. apply (proj1 (loop_assemble_owner_none hs rows v)).
+      exact Hget. }
+    rewrite Hzero. lia.
+Qed.
+
+Local Lemma loop_weighted_sum_le {A : Type} : forall xs (f g : A -> nat),
+  (forall x, In x xs -> f x <= g x) ->
+  fold_right (fun x total => f x + total) 0 xs <=
+    fold_right (fun x total => g x + total) 0 xs.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros f g Hbound; [reflexivity|].
+  cbn [fold_right]. apply Nat.add_le_mono; [apply Hbound; now left|].
+  apply IH. intros y Hy. apply Hbound. now right.
+Qed.
+
+Local Lemma loop_weighted_sum_scale {A : Type} : forall xs (weight : A -> nat) factor,
+  fold_right (fun x total => weight x * factor + total) 0 xs =
+    fold_right (fun x total => weight x + total) 0 xs * factor.
+Proof.
+  intro xs. induction xs as [|x rest IH]; intros weight factor; [reflexivity|].
+  cbn [fold_right]. rewrite IH. nia.
+Qed.
+
+(** A distinct supported row can be charged through its membership indicator on the domain. *)
+Local Lemma loop_row_weight_domain : forall vertices row (weight : positive -> nat),
+  NoDup row -> incl row vertices ->
+  fold_right (fun v total => weight v + total) 0 row <=
+    fold_right (fun v total => (if in_dec Pos.eq_dec v row then weight v else 0) + total)
+      0 vertices.
+Proof.
+  intros vertices row weight Hunique Hwithin.
+  pose proof (DomProducer.dom_nodup_sum_incl
+    (fun v => if in_dec Pos.eq_dec v row then weight v else 0) row vertices Hunique Hwithin)
+    as Hsum.
+  assert (Heq : fold_right
+    (fun v total => (if in_dec Pos.eq_dec v row then weight v else 0) + total) 0 row =
+    fold_right (fun v total => weight v + total) 0 row).
+  { apply loop_sum_ext. intros v Hin.
+    destruct (in_dec Pos.eq_dec v row); [reflexivity|contradiction]. }
+  rewrite <- Heq. exact Hsum.
+Qed.
+
+Local Lemma loop_family_count_weight : forall hs rows v weight,
+  fold_right (fun h total =>
+    (if in_dec Pos.eq_dec v (rows h) then weight else 0) + total) 0 hs =
+      weight * loop_family_count rows hs v.
+Proof.
+  intro hs. induction hs as [|h rest IH]; intros rows v weight.
+  - cbn [loop_family_count fold_right]. lia.
+  - cbn [loop_family_count fold_right]. rewrite IH.
+    unfold loop_family_count. destruct (in_dec Pos.eq_dec v (rows h)); cbn; nia.
+Qed.
+
+(** Exchanging the row and vertex sums charges each vertex by its container count. *)
+Local Lemma loop_family_weighted_charge : forall vertices hs rows weight depth,
+  (forall h, In h hs -> NoDup (rows h) /\ incl (rows h) vertices) ->
+  (forall v, In v vertices -> loop_family_count rows hs v <= depth) ->
+  fold_right (fun h total =>
+    fold_right (fun v subtotal => weight v + subtotal) 0 (rows h) + total) 0 hs <=
+    fold_right (fun v total => weight v + total) 0 vertices * depth.
+Proof.
+  intros vertices hs rows weight depth Hrows Hdepth.
+  eapply Nat.le_trans with (m := fold_right (fun h total =>
+    fold_right (fun v subtotal =>
+      (if in_dec Pos.eq_dec v (rows h) then weight v else 0) + subtotal) 0 vertices + total) 0 hs).
+  - apply loop_weighted_sum_le. intros h Hh. destruct (Hrows h Hh) as [Hunique Hwithin].
+    now apply loop_row_weight_domain.
+  - rewrite loop_sum_swap, <- loop_weighted_sum_scale. apply loop_weighted_sum_le.
+    intros v Hv. rewrite loop_family_count_weight. apply Nat.mul_le_mono_l. now apply Hdepth.
+Qed.
+
+Local Lemma loop_graph_row_weight : forall g,
+  wf_graph (base g) -> prepared_ok g ->
+  fold_right (fun v total => 1 + length (preds g v) + total) 0 (nodes g) =
+    graph_n (base g) + graph_e (base g).
+Proof.
+  intros g Hgraph Hprepared. rewrite loop_sum_add, (loop_predecessor_sum g Hgraph Hprepared).
+  assert (Hones : fold_right (fun _ total => 1 + total) 0 (nodes g) = length (nodes g)).
+  { induction (nodes g) as [|v rest IH]; cbn [fold_right length]; [reflexivity|now rewrite IH]. }
+  rewrite Hones, loop_nodes_verts. destruct (base g). reflexivity.
+Qed.
+
+(** Classified body work is bounded by graph occurrence work at the actual forest depth. *)
+Local Lemma loop_classify_nesting_charge : forall g t r,
+  wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
+  let hs := loop_headers_of (classify g t) in
+  let rows := fun h => collect g t h (loop_latches_at (classify g t) h) in
+  fold_right (fun h total =>
+    fold_right (fun v subtotal => 1 + length (preds g v) + subtotal) 0 (rows h) + total) 0 hs <=
+    (graph_n (base g) + graph_e (base g)) *
+      loop_depth g (assemble (map (fun h => (h, rows h)) hs)).
+Proof.
+  intros g t r Hgraph Hprepared Htree hs rows.
+  rewrite <- (loop_graph_row_weight g Hgraph Hprepared). apply loop_family_weighted_charge.
+  - intros h Hh. exact (conj
+      (proj1 (loop_classify_collect_exact g t r h Hgraph Hprepared Htree Hh))
+      (proj1 (proj2 (loop_classify_collect_exact g t r h Hgraph Hprepared Htree Hh)))).
+  - intros v Hv. apply (loop_family_count_depth g r hs rows).
+    + exact (proj1 (loop_classify_header_domain g t r Hgraph Hprepared Htree)).
+    + apply Forall_forall. intros h Hh.
+      exact (proj1 (loop_classify_headers_exact g t r h Hgraph Hprepared Htree) Hh).
+    + apply loop_family_forward_order.
+      * exact (proj1 (loop_classify_header_domain g t r Hgraph Hprepared Htree)).
+      * intros inner outer. now apply loop_classify_header_order.
+    + exact (proj2 (loop_classify_header_domain g t r Hgraph Hprepared Htree)).
+    + intros h Hh x. exact (proj2 (proj2
+        (loop_classify_collect_exact g t r h Hgraph Hprepared Htree Hh)) x).
+Qed.
+
 Module LoopsCode <: LOOPS_OPS.
   Definition forest (g : prepared) (t : domtree) :=
     let scan := classify g t in
@@ -4901,7 +5289,10 @@ Module LoopsT <: LOOPS_ALL.
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
     fold_right (fun h n => body_work g (collected g t h) + n) 0 (headers g t) <=
       (graph_n (base g) + graph_e (base g)) * loop_depth g (forest g t).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g t r Hgraph Hprepared Htree.
+    exact (loop_classify_nesting_charge g t r Hgraph Hprepared Htree).
+  Qed.
 
   Lemma F17_retreat_trace : forall g t r,
     wf_graph (base g) -> prepared_ok g -> domtree_exact g r t ->
