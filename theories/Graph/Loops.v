@@ -8,7 +8,7 @@ From Stdlib Require Import PArith NArith Arith Lia List Bool.
 From Stdlib.Sorting Require Import Permutation.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig LoopsSig.
+From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search DomSig DomOrder LoopsSig.
 Import List.ListNotations.
 
 Definition loop_tail {A : Type} (xs : list A) : list A :=
@@ -1454,6 +1454,133 @@ Proof.
       * injection Hstep as <-. cbn [loop_tree_stack loop_tree_pending].
         apply loop_tasks_edges; [|assumption]. intros x Hx. apply Hvs. now right.
   - injection Hstep as <-. cbn [loop_tail loop_tree_stack loop_tree_pending]. assumption.
+Qed.
+
+(** Exact-root discovery supplies the absent parent at the bottom of every stack. *)
+Local Lemma loop_exact_root_none g t r : domtree_exact g r t ->
+  trie_get r (idom t) = None.
+Proof.
+  intro Htree. exact (proj2 (proj2 (loop_exact_root_iff g t r r Htree) eq_refl)).
+Qed.
+
+(** A nonempty active stack is the parent chain from its head down to the root. *)
+Inductive loop_stack_chain (m : ptrie positive) (r : positive) : list positive -> Prop :=
+| loop_stack_empty : loop_stack_chain m r []
+| loop_stack_root : loop_stack_chain m r [r]
+| loop_stack_push : forall v p stack, trie_get v m = Some p ->
+    loop_stack_chain m r (p :: stack) -> loop_stack_chain m r (v :: p :: stack).
+
+Local Lemma loop_stack_tail m r stack : loop_stack_chain m r stack ->
+  loop_stack_chain m r (loop_tail stack).
+Proof.
+  intro Hchain. destruct Hchain; cbn [loop_tail]; constructor || assumption.
+Qed.
+
+Local Lemma loop_stack_links m r stack : loop_stack_chain m r stack ->
+  Forall (fun uv => trie_get (fst uv) m = Some (snd uv)) (combine stack (tl stack)).
+Proof.
+  intro Hchain. induction Hchain; cbn [combine tl fst snd] in *;
+    constructor; assumption.
+Qed.
+
+Local Lemma loop_stack_ancestors m r stack : trie_get r m = None ->
+  loop_stack_chain m r stack -> forall v, hd_error stack = Some v ->
+  forall x, In x stack <-> tree_anc m x v.
+Proof.
+  intros Hroot Hchain. induction Hchain as [| |v p stack Hparent Hchain IH];
+    intros head Hhead x.
+  - discriminate Hhead.
+  - cbn [hd_error] in Hhead. injection Hhead as <-. cbn [In]. split.
+    + intros [Heq|Hfalse]; [subst x; constructor|contradiction].
+    + intro Hanc. destruct (dom_cert_anc_cases m x r Hanc) as [Heq|[q [Hq Hancq]]].
+      * now left.
+      * rewrite Hroot in Hq. discriminate Hq.
+  - cbn [hd_error] in Hhead. injection Hhead as <-.
+    specialize (IH p eq_refl x). change (v = x \/ In x (p :: stack) <-> tree_anc m x v).
+    split.
+    + intros [Heq|Hin]; [subst x; constructor|].
+      eapply tree_anc_step; [exact Hparent|now apply IH].
+    + intro Hanc. destruct (dom_cert_anc_cases m x v Hanc) as [Heq|[q [Hq Hancq]]].
+      * now left.
+      * rewrite Hparent in Hq. injection Hq as <-. right. now apply IH.
+Qed.
+
+Local Lemma loop_stack_unique m r stack :
+  well_founded (fun u v => trie_get v m = Some u) -> trie_get r m = None ->
+  loop_stack_chain m r stack -> NoDup stack.
+Proof.
+  intros Hwf Hroot Hchain. induction Hchain as [| |v p stack Hparent Hchain IH].
+  - constructor.
+  - constructor; [intro H; contradiction|constructor].
+  - constructor; [|exact IH]. intro Hin.
+    pose proof (proj1 (loop_stack_ancestors m r (p :: stack) Hroot Hchain p eq_refl v) Hin)
+      as Hanc.
+    exact (dom_map_no_return m p (Hwf p) v Hparent Hanc).
+Qed.
+
+Local Lemma loop_stack_reachable g r m stack : dom_exact g r m ->
+  loop_stack_chain m r stack -> Forall (reach (base g) [r]) stack.
+Proof.
+  intros Hexact Hchain. induction Hchain as [| |v p stack Hparent Hchain IH].
+  - constructor.
+  - constructor; [exists r, [r]; split; [now left|constructor]|constructor].
+  - constructor; [exact (proj1 (proj2 (proj1 Hexact v p Hparent)))|exact IH].
+Qed.
+
+Local Lemma loop_active_push active stack v :
+  (forall x, trie_get x active = Some tt <-> In x stack) ->
+  forall x, trie_get x (PTrieCode.set v tt active) = Some tt <-> In x (v :: stack).
+Proof.
+  intros Hagree x. destruct (Pos.eq_dec x v) as [->|Hne].
+  - rewrite PTrie.get_set_same. cbn [In]. tauto.
+  - rewrite PTrie.get_set_other by exact Hne. rewrite Hagree. cbn [In].
+    split; [now right|]. intros [Heq|Hin]; [congruence|exact Hin].
+Qed.
+
+Local Lemma loop_active_pop active stack v : ~ In v stack ->
+  (forall x, trie_get x active = Some tt <-> In x (v :: stack)) ->
+  forall x, trie_get x (PTrieCode.remove v active) = Some tt <-> In x stack.
+Proof.
+  intros Hfresh Hagree x. destruct (Pos.eq_dec x v) as [->|Hne].
+  - rewrite PTrie.get_remove_same. split; [discriminate|intro Hin; contradiction].
+  - rewrite PTrie.get_remove_other by exact Hne. rewrite Hagree. cbn [In].
+    split; [|now right]. intros [Heq|Hin]; [congruence|exact Hin].
+Qed.
+
+Local Definition loop_stack_state t r st : Prop :=
+  loop_stack_chain (idom t) r (loop_tree_stack st) /\
+  forall x, trie_get x (loop_tree_active st) = Some tt <-> In x (loop_tree_stack st).
+
+Local Lemma loop_stack_state_step g t r st next : domtree_exact g r t ->
+  loop_tasks_wf g t r (loop_tree_stack st) (loop_tree_pending st) ->
+  loop_stack_state t r st -> tree_step g t st = inl next -> loop_stack_state t r next.
+Proof.
+  intros Htree Htasks [Hchain Hagree] Hstep. destruct st as [tasks stack active scan].
+  cbn [loop_tree_stack loop_tree_pending loop_tree_active] in Htasks, Hchain, Hagree.
+  pose proof (loop_exact_root_none g t r Htree) as Hroot.
+  pose proof (proj2 (proj2 (proj1 (proj2 Htree)))) as Hwf.
+  inversion Htasks as [|v rest Hv Hrest|v stk rest Hv Hrest|
+    p stk vs rest Hvs Hrest|u stk vs rest Hvs Hrest|v stk rest Hrest];
+    subst; cbn [tree_step] in Hstep.
+  - destruct scan. discriminate Hstep.
+  - destruct (trie_get v (pre t)) as [n|]; destruct (trie_get v (idom t)) as [p|];
+      injection Hstep as <-; split; cbn [loop_tree_stack loop_tree_active]; assumption.
+  - destruct scan as [order latches backs]. injection Hstep as <-. split.
+    + cbn [loop_tree_stack]. destruct stack as [|p stack].
+      * cbn in Hv. subst v. constructor.
+      * cbn in Hv. now apply loop_stack_push.
+    + cbn [loop_tree_stack loop_tree_active]. now apply loop_active_push.
+  - destruct vs as [|v vs]; injection Hstep as <-;
+      split; cbn [loop_tree_stack loop_tree_active]; assumption.
+  - destruct vs as [|v vs].
+    + injection Hstep as <-. split; cbn [loop_tree_stack loop_tree_active]; assumption.
+    + destruct (trie_get v active) as [[]|]; [destruct scan as [order latches backs]|];
+        injection Hstep as <-; split; cbn [loop_tree_stack loop_tree_active]; assumption.
+  - injection Hstep as <-. split.
+    + cbn [loop_tree_stack]. exact (loop_stack_tail (idom t) r (v :: stk) Hchain).
+    + cbn [loop_tree_stack loop_tree_active loop_tail]. apply loop_active_pop; [|exact Hagree].
+      pose proof (loop_stack_unique (idom t) r (v :: stk) Hwf Hroot Hchain) as Hunique.
+      now inversion Hunique.
 Qed.
 
 Module LoopsCode <: LOOPS_OPS.
