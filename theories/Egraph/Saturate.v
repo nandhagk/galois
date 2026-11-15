@@ -1804,6 +1804,185 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
           -- intros i' j' Heq. apply Hsame_final. now apply Hsame.
   Qed.
 
+  (** Any invariant kept by one prepared node is kept by the complete node fold. *)
+  Lemma build_nodes_frame : forall ds
+    (P : list (enode V.t) -> cell_table (cell V.t) -> D.t -> Prop),
+    (forall n rest t db, D.wf db -> view_sorted (lookup_sorts ds) (D.view db) ->
+      (forall f, kind (D.view db) f = lookup_kind ds f) ->
+      table_valid t -> table_allocated db t ->
+      nodes_typed ds (map cell_sort (table_list t)) (n :: rest) ->
+      Forall (fun node => match node with
+        | EApp f children => D.slots_fit db f (S (length children))
+        | ELit _ => True
+        end) (n :: rest) ->
+      P (n :: rest) t db ->
+      let cells := match n with
+        | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+        | ELit _ => []
+        end in
+      P rest (table_push (fst (add_node n cells db)) t) (snd (add_node n cells db))) ->
+    forall ns t db, D.wf db -> view_sorted (lookup_sorts ds) (D.view db) ->
+      (forall f, kind (D.view db) f = lookup_kind ds f) ->
+      table_valid t -> table_allocated db t ->
+      nodes_typed ds (map cell_sort (table_list t)) ns ->
+      Forall (fun node => match node with
+        | EApp f children => D.slots_fit db f (S (length children))
+        | ELit _ => True
+        end) ns -> P ns t db ->
+      P [] (fst (build_nodes ns t db)) (snd (build_nodes ns t db)).
+  Proof.
+    intros ds P Hstep ns. induction ns as [| n rest IH]; intros t db Hwf Hsorted Hkind
+      Hvalid Hallocated Htyped Hslots HP; [exact HP |].
+    pose proof (Hstep n rest t db Hwf Hsorted Hkind Hvalid Hallocated Htyped Hslots HP)
+      as HPnext.
+    destruct Htyped as [Hnode Htail].
+    apply Forall_cons_iff in Hslots. destruct Hslots as [Hslot Hslots].
+    assert (Hsingle : nodes_typed ds (map cell_sort (table_list t)) [n]).
+    { split; [exact Hnode | exact I]. }
+    assert (Hslot_single : Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) [n]) by (constructor; [exact Hslot | constructor]).
+    pose proof (build_nodes_preserves ds [n] t db Hwf Hsorted Hkind Hvalid Hallocated
+      Hsingle Hslot_single) as Hnext.
+    set (cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end) in *.
+    cbv zeta in HPnext. fold cells in HPnext.
+    cbn [build_nodes] in Hnext |- *. fold cells in Hnext |- *.
+    destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+    cbn [build_nodes fst snd] in Hnext, HPnext |- *.
+    destruct Hnext as [Hwf' [Hsorted' [Hkind' [Hslots' [Hids'
+      [Hvalid' [Hallocated' [Hsorts Hgrowth]]]]]]]].
+    apply IH; try assumption.
+    - intro f. now rewrite Hkind'.
+    - rewrite Hsorts. exact Htail.
+    - eapply Forall_impl; [| exact Hslots]. intros [f children | v] Hfits; [| exact I].
+      unfold D.slots_fit in *. now rewrite Hslots'.
+  Qed.
+
+  (** Adding a constructor or a literal preserves satisfaction by some valuation. *)
+  Lemma add_node_sat : forall (M : model (V := V.t)) nu node cells db, D.wf db ->
+    (match node with EApp f _ => kind (D.view db) f = Some OId | ELit _ => True end) ->
+    (forall i, In (Id i) cells -> D.allocated db i) -> sat V.merge M nu (D.view db) ->
+    exists nu', sat V.merge M nu' (D.view (snd (add_node node cells db))).
+  Proof.
+    intros M nu [f children | v] cells db Hwf Hkind Hallocated Hsat.
+    - pose proof (D.make_sat M nu db f cells Hwf Hkind Hallocated Hsat) as Hmake.
+      cbn [add_node]. destruct (D.make f cells db) as [i next]. cbn [snd].
+      destruct Hmake as [nu' [Hstable [Hvalue Hsat']]]. now exists nu'.
+    - exists nu. exact Hsat.
+  Qed.
+
+  (** The node fold preserves satisfaction while giving new constructors their meanings. *)
+  Lemma build_nodes_sat : forall ds ns t db (M : model (V := V.t)), D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) ns ->
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) ns ->
+    (exists nu, sat V.merge M nu (D.view db)) ->
+    exists nu, sat V.merge M nu (D.view (snd (build_nodes ns t db))).
+  Proof.
+    intros ds ns t db M Hwf Hsorted Hkind Hvalid Hallocated Htyped Hslots Hsat.
+    apply (build_nodes_frame ds
+      (fun _ _ next => exists nu, sat V.merge M nu (D.view next)))
+      with (ns := ns) (t := t) (db := db); try assumption.
+    intros [f children | v] rest cells_db current Hwf' Hsorted' Hkind' Hvalid'
+      Hallocated' Htyped' Hslots' [nu Hsat']; cbv zeta.
+    - destruct Htyped' as [[Hf [ss [Hss Hchildren]]] Htail].
+      destruct (table_children_typed current cells_db children ss Hvalid' Hallocated'
+        Hchildren) as [Hsorts Hids].
+      eapply add_node_sat; [exact Hwf' | | exact Hids | exact Hsat'].
+      now rewrite Hkind'.
+    - eapply add_node_sat; [exact Hwf' | exact I | | exact Hsat'].
+      intros i Hin. contradiction.
+  Qed.
+
+  (** Adding one well-sorted expression preserves satisfaction by some valuation. *)
+  Lemma add_expr_sat : forall ds e db (M : model (V := V.t)), D.wf db ->
+    expr_ok ds db e -> view_sorted (lookup_sorts ds) (D.view db) ->
+    (exists nu, sat V.merge M nu (D.view db)) ->
+    exists nu, sat V.merge M nu (D.view (snd (add_expr e db))).
+  Proof.
+    intros ds [ns root_index] db M Hwf [Hexpr [Hkind Hslots]] Hsorted Hsat.
+    pose proof (expr_nodes_typed V.t ds (FExpr V.t ns root_index) Hexpr) as Htyped.
+    assert (Hallocated : table_allocated db (@table_empty (cell V.t))) by constructor.
+    pose proof (build_nodes_sat ds ns table_empty db M Hwf Hsorted Hkind
+      (table_empty_valid (cell V.t)) Hallocated Htyped Hslots Hsat) as Hfinal.
+    unfold add_expr. destruct (build_nodes ns table_empty db) as [t final].
+    destruct (table_get (Id 1%positive) root_index t); exact Hfinal.
+  Qed.
+
+  (** Adding an ordered list of admissible inputs preserves model satisfaction. *)
+  Lemma add_inputs_sat : forall ds es db (M : model (V := V.t)), D.wf db ->
+    view_sorted (lookup_sorts ds) (D.view db) -> Forall (expr_ok ds db) es ->
+    (exists nu, sat V.merge M nu (D.view db)) ->
+    exists nu, sat V.merge M nu (D.view (snd (add_inputs es db))).
+  Proof.
+    intros ds es. induction es as [| e rest IH]; intros db M Hwf Hsorted Hexprs Hsat.
+    - exact Hsat.
+    - apply Forall_cons_iff in Hexprs. destruct Hexprs as [Hexpr Hrest].
+      pose proof (add_expr_sat ds e db M Hwf Hexpr Hsorted Hsat) as Hsat'.
+      destruct (add_expr_properties ds e db Hwf Hexpr Hsorted)
+        as [Hwf' [Hsorted' [Hkind [Hslots Hgrowth]]]].
+      assert (Hrest' : Forall (expr_ok ds (snd (add_expr e db))) rest).
+      { eapply Forall_impl; [| exact Hrest]. intros x Hx.
+        exact (expr_ok_layout ds db (snd (add_expr e db)) x Hkind Hslots Hx). }
+      pose proof (IH (snd (add_expr e db)) M Hwf' Hsorted' Hrest' Hsat') as Hfinal.
+      cbn [add_inputs]. destruct (add_expr e db) as [i next] eqn:Hexpr_result.
+      cbn [snd] in Hfinal. destruct (add_inputs rest next) as [cs final]. exact Hfinal.
+  Qed.
+
+  (** Empty loaded rows satisfy every model closed under the declared lattice merges. *)
+  Lemma load_sat : forall (M : model (V := V.t)) p cp,
+    (forall f m k a b, program_kind p f = Some (OLat m) ->
+      lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
+    exists nu, sat V.merge M nu (D.view (E.load p cp)).
+  Proof.
+    intros M p cp Hmerge. rewrite E.load_spec.
+    exists (fun _ => con M 1%positive []). split.
+    - intros f k o Hrow.
+      apply (proj1 (proj1
+        (D.init_view (decls V.t p) (Egglog.Syntax.slots V.t cp) f k o 1 1))) in Hrow.
+      contradiction.
+    - split.
+      + intros i j Heq. reflexivity.
+      + intros f m k a b Hkind Ha Hb. apply (Hmerge f m k a b); try assumption.
+        unfold program_kind. rewrite <- Hkind. symmetry.
+        exact (proj1 (proj2 (proj2
+          (D.init_view (decls V.t p) (Egglog.Syntax.slots V.t cp) f [] None 1 1)))).
+  Qed.
+
+  (** Accepted inputs admit a satisfying valuation in every merge-closed model. *)
+  Lemma inputs_sat : forall (M : model (V := V.t)) ds rws ans es,
+    front_ok ds rws ans es ->
+    (forall f m k a b, lookup_kind ds f = Some (OLat m) ->
+      lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
+    let p := C.compile ds rws ans in
+    exists nu, sat V.merge M nu (D.view (snd (add_inputs es (E.load p (E.plan p))))).
+  Proof.
+    intros M ds rws ans es [Hrules Hexprs] Hmerge. cbv zeta.
+    set (p := C.compile ds rws ans). set (cp := E.plan p).
+    assert (Hdecls : decls V.t p = ds) by apply C.compile_program.
+    assert (Hplan : E.plans_ok p cp).
+    { apply E.plan_checked. now apply C.compile_sorted. }
+    destruct (load_properties p cp) as [Hwf Hloaded].
+    destruct Hloaded as [Hkind [Hslots Hsorted]].
+    assert (Hsorted' : view_sorted (lookup_sorts ds) (D.view (E.load p cp))).
+    { unfold program_sorts in Hsorted. now rewrite Hdecls in Hsorted. }
+    assert (Hinputs : Forall (expr_ok ds (E.load p cp)) es).
+    { eapply Forall_impl; [| exact Hexprs]. intros e Hexpr.
+      eapply loaded_expr_ok; [exact Hdecls | exact Hplan | | exact Hexpr].
+      split; [exact Hkind |]. split; assumption. }
+    apply (add_inputs_sat ds es (E.load p cp) M Hwf Hsorted' Hinputs).
+    apply load_sat. unfold program_kind. now rewrite Hdecls.
+  Qed.
+
   Lemma add_expr_represents : forall ds e db t, D.wf db -> expr_ok ds db e ->
     unfolds_expr (expr_nodes V.t e) (expr_root V.t e) t ->
     represents (D.view (snd (add_expr e db))) (Id (fst (add_expr e db))) t.
@@ -1889,12 +2068,35 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
     represents (D.view db) (Id c) t.
   Proof. Admitted. (* STUB *)
 
+  (** Every accepted saturation outcome satisfies each model of its front-end rules. *)
+  Lemma saturate_sat : forall (M : model (V := V.t)) ds rws ans lim es st db cs,
+    model_ok M ds rws ans -> saturate ds rws ans lim es = inr (st, db, cs) ->
+    exists nu, sat V.merge M nu (D.view db).
+  Proof.
+    intros M ds rws ans lim es st db cs [Hrewrites [Hanalyses Hmerge]] Hresult.
+    destruct (saturate_execution ds rws ans lim es st db cs Hresult)
+      as [initial [Hfront [Hplan [Hwf [Hloaded [Hinputs Hrun]]]]]].
+    destruct (inputs_sat M ds rws ans es Hfront Hmerge) as [nu Hsat].
+    rewrite Hinputs in Hsat. cbn [snd] in Hsat.
+    pose proof (C.compile_valid M ds rws ans (proj1 Hfront) Hrewrites Hanalyses Hmerge)
+      as Hvalid.
+    destruct (E.run_sat _ _ lim initial M nu Hplan Hwf Hloaded Hvalid Hsat)
+      as [nu' [Hstable Hsat']].
+    rewrite Hrun in Hsat'. now exists nu'.
+  Qed.
+
   Lemma saturate_sound : forall (M : model (V := V.t)) ds rws ans lim es st db cs
       i j e1 e2,
     model_ok M ds rws ans -> saturate ds rws ans lim es = inr (st, db, cs) ->
     represents (D.view db) (Id i) e1 -> represents (D.view db) (Id j) e2 ->
     same (D.view db) i j -> denote M e1 = denote M e2.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M ds rws ans lim es st db cs i j e1 e2 Hmodel Hresult Hfirst Hsecond Heq.
+    destruct (saturate_sat M ds rws ans lim es st db cs Hmodel Hresult) as [nu Hsat].
+    rewrite <- (represents_den V.merge M nu (D.view db) (Id i) e1 Hsat Hfirst).
+    rewrite <- (represents_den V.merge M nu (D.view db) (Id j) e2 Hsat Hsecond).
+    cbn [den]. f_equal. exact (sat_same V.merge M nu (D.view db) i j Hsat Heq).
+  Qed.
 
   Lemma saturate_facts : forall (M : model (V := V.t)) ds rws ans lim es st db cs
       f k o ts,
@@ -1907,7 +2109,24 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
         inl (con M f (map (denote M) ts)) = denote M e
     | _, _ => False
     end.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros M ds rws ans lim es st db cs f k o ts Hmodel Hresult Hrow Hargs.
+    destruct (saturate_sat M ds rws ans lim es st db cs Hmodel Hresult) as [nu Hsat].
+    destruct (saturate_wf ds rws ans lim es st db cs Hresult)
+      as [Hwf [Hcanonical [Hkind Hrest]]].
+    assert (Hden : map (den nu) k = map (denote M) ts).
+    { clear Hrow. induction Hargs as [| c e cells exprs Hrep Hargs IH]; cbn [map].
+      - reflexivity.
+      - rewrite (represents_den V.merge M nu (D.view db) c e Hsat Hrep), IH.
+        reflexivity. }
+    pose proof (proj1 Hsat f k o Hrow) as Hholds.
+    unfold holds in Hholds. rewrite Hkind, Hden in Hholds.
+    destruct (lookup_kind ds f) as [[| |m] |]; destruct o as [[i |v] |];
+      cbn in Hholds |- *; try contradiction; try assumption.
+    intros e Hrep.
+    rewrite <- (represents_den V.merge M nu (D.view db) (Id i) e Hsat Hrep).
+    cbn [den]. now rewrite Hholds.
+  Qed.
 
   (** Canonical database rows provide the compiler's canonical view. *)
   Lemma canonical_view_db : forall db, D.wf db -> D.canonical db ->
@@ -2141,7 +2360,9 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
       lat M f k a -> lat M f k b -> lat M f k (V.merge m a b)) ->
     let p := C.compile ds rws ans in
     exists nu, sat V.merge M nu (D.view (snd (add_inputs es (E.load p (E.plan p))))).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact inputs_sat.
+  Qed.
 
   Lemma F5_saturate_run : forall ds rws ans lim es out,
     saturate ds rws ans lim es = inr out ->
