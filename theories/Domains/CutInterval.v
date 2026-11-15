@@ -976,9 +976,9 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Definition gwork := guard_work.
 
   Definition k_cut : N := 1024%N.
-  Definition c_val : N := 1%N. (* STUB *)
+  Definition c_val : N := (4 * (k_cut + 1)^2 * (R.c_val + 1))%N.
   Definition c_lat : N := c_val.
-  Definition c_cut : N := 1%N. (* STUB *)
+  Definition c_cut : N := (k_cut * (k_cut + 1))%N.
 
   (** Projecting packed refinements preserves every paired inward result. *)
   Lemma refinement_projections : forall (xs : list t) (ys : list itv),
@@ -1232,9 +1232,6 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
     unfold T_widen, T_cut, T_cut_raw, k_cut. cbn beta iota zeta. lia.
   Qed.
 
-  (** The lattice constant pays for at least one call. *)
-  Lemma c_lat_pos : (1 <= c_lat)%N.
-  Proof. Admitted. (* STUB *)
   (** Inclusion testing costs at most the combined abstract sizes. *)
   Lemma T_leb_le : forall a b,
     (T_leb a b <= c_val * N.of_nat (size a + size b + 1))%N.
@@ -1271,63 +1268,310 @@ Module CutIntervalT (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_T)
   Lemma T_guard_le : forall g xs,
     (T_guard g xs <= c_val * N.of_nat (gwork g xs + 1))%N.
   Proof. Admitted. (* STUB *)
-  (** Forward results fit within the charged operator work. *)
-  Lemma forward_size : forall o xs,
-    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Meet results fit within the combined operand sizes. *)
-  Lemma meet_size : forall a b,
-    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Join results fit within the combined operand sizes. *)
-  Lemma join_size : forall a b,
-    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Widening results fit within operand and parameter sizes. *)
-  Lemma widen_size : forall q a b,
-    (N.of_nat (size (widen q a b)) <=
-      c_val * N.of_nat (size a + size b + wsize q + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Backward results fit within charged work and request size. *)
-  Lemma backward_size : forall o r xs,
-    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
-      c_val * N.of_nat (work o xs + size r + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Guard results fit within the charged guard work. *)
-  Lemma guard_size : forall g xs,
-    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
-      c_val * N.of_nat (gwork g xs + 1))%N.
-  Proof. Admitted. (* STUB *)
-  (** Operator work accounts for every operand size. *)
-  Lemma work_sizes : forall o xs,
-    fold_right Nat.add 0%nat (map size xs) <= work o xs.
-  Proof. Admitted. (* STUB *)
-  (** Guard work accounts for every operand size. *)
-  Lemma gwork_sizes : forall g xs,
-    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
-  Proof. Admitted. (* STUB *)
 
   (** The cutoff pays for shape comparisons and endpoint bit scans. *)
   Lemma T_cut_le : forall a,
     (T_cut a <= c_cut * N.of_nat (interval_bits a + 1))%N.
   Proof. Admitted. (* STUB *)
+  (** The wrapper constant covers the raw constant and its fixed call overhead. *)
+  Lemma c_val_dominates : (R.c_val + 4 <= c_val)%N.
+  Proof.
+    unfold c_val.
+    nia.
+  Qed.
+
+  (** Rejecting an invalid packed value can only reduce its endpoint storage. *)
+  Lemma pack_cut_bits_le : forall a,
+    interval_bits (cut_raw (pack_cut C.bits a)) <= interval_bits a.
+  Proof.
+    intro a.
+    rewrite pack_cut_choice.
+    destruct (cut_interval_ok C.bits a); cbn [interval_bits]; lia.
+  Qed.
+
+  (** Outward cutoff replaces finite endpoints by zero-storage infinities. *)
+  Lemma cut_interval_bits_le : forall a,
+    interval_bits (cut_interval C.bits a) <= interval_bits a.
+  Proof.
+    intro a.
+    unfold cut_interval.
+    destruct (cut_shape_ok a); [|cbn [interval_bits]; lia].
+    destruct a as [|lo hi]; [cbn [interval_bits]; lia|].
+    unfold cut_lower, cut_upper.
+    destruct (cut_endpoint_ok C.bits lo), (cut_endpoint_ok C.bits hi);
+      cbn [interval_bits]; lia.
+  Qed.
+
+  (** The bounded carrier stores no more endpoint bits than its raw source. *)
+  Lemma cut_bits_le : forall a, size (cut a) <= interval_bits a.
+  Proof.
+    intro a.
+    unfold size.
+    rewrite cut_agrees.
+    apply cut_interval_bits_le.
+  Qed.
+
+  (** An inward cutoff chooses every endpoint from one of its two operands. *)
+  Lemma cut_within_bits_le : forall old a,
+    interval_bits (cut_within C.bits old a) <= interval_bits old + interval_bits a.
+  Proof.
+    intros old a.
+    unfold cut_within.
+    destruct (cut_shape_ok a); [|cbn [interval_bits]; lia].
+    destruct old as [|olo ohi], a as [|lo hi]; cbn [interval_bits]; try lia.
+    destruct (cut_endpoint_ok C.bits lo), (cut_endpoint_ok C.bits hi);
+      cbn [interval_bits]; lia.
+  Qed.
+
+  (** The combined exchange list uses at most the storage of both input lists. *)
+  Lemma within_list_bits_le : forall ys olds,
+    fold_right Nat.add 0
+      (map (fun yx => interval_bits
+        (cut_raw (pack_cut C.bits (cut_within C.bits (snd yx) (fst yx)))))
+        (combine ys olds)) <=
+      fold_right Nat.add 0 (map interval_bits ys) +
+      fold_right Nat.add 0 (map interval_bits olds).
+  Proof.
+    induction ys as [|y ys IH]; intros [|old olds]; cbn [combine map fold_right]; try lia.
+    pose proof (pack_cut_bits_le (cut_within C.bits old y)) as Hpack.
+    pose proof (cut_within_bits_le old y) as Hwithin.
+    specialize (IH olds).
+    cbn [fst snd].
+    lia.
+  Qed.
+
+  (** The raw domain's public storage pin agrees with endpoint bit length. *)
+  Lemma raw_size_agrees : forall a, R.size a = interval_bits a.
+  Proof.
+    intro a.
+    rewrite R.size_bits.
+    reflexivity.
+  Qed.
+
+  (** Summing raw sizes preserves the endpoint-storage view. *)
+  Lemma raw_sizes_agree : forall xs,
+    fold_right Nat.add 0 (map R.size xs) =
+    fold_right Nat.add 0 (map interval_bits xs).
+  Proof.
+    induction xs as [|a xs IH]; cbn [map fold_right].
+    - reflexivity.
+    - rewrite raw_size_agrees, IH. reflexivity.
+  Qed.
+
+  (** Projecting carrier operands preserves their total endpoint storage. *)
+  Lemma projected_bits_agree : forall xs,
+    fold_right Nat.add 0 (map interval_bits (map cut_raw xs)) = operand_bits xs.
+  Proof.
+    intro xs.
+    unfold operand_bits.
+    rewrite map_map.
+    reflexivity.
+  Qed.
+
+  (** The bounded work budget adds only its fixed cutoff to the raw work budget. *)
+  Lemma raw_work_agrees : forall o xs,
+    R.work o (map cut_raw xs) + C.bits = work o xs.
+  Proof.
+    intros o xs.
+    unfold work, transfer_work, operand_bits.
+    rewrite RL.raw_work, length_map, map_map.
+    unfold t in *.
+    lia.
+  Qed.
+
+  (** The guard budget extends raw guard work by the fixed cutoff. *)
+  Lemma raw_gwork_agrees : forall g xs,
+    R.gwork g (map cut_raw xs) + C.bits = gwork g xs.
+  Proof.
+    intros g xs.
+    unfold gwork, guard_work, operand_bits.
+    rewrite RL.raw_gwork, length_map, map_map.
+    reflexivity.
+  Qed.
+
+  (** The bounded widening budget adds its cutoff to the raw threshold budget. *)
+  Lemma raw_wsize_agrees : forall q, R.wsize q + C.bits = wsize q.
+  Proof.
+    intro q.
+    rewrite R.F_wsize.
+    reflexivity.
+  Qed.
+
+  (** Operator work pays for traversing the operand list. *)
+  Lemma work_length : forall o xs, length xs <= work o xs.
+  Proof.
+    intros o xs.
+    unfold work, transfer_work, t in *.
+    lia.
+  Qed.
+
+  (** Guard work pays for traversing the operand list. *)
+  Lemma gwork_length : forall g xs, length xs <= gwork g xs.
+  Proof.
+    intros g xs.
+    unfold gwork, guard_work, t in *.
+    lia.
+  Qed.
+
+  (** The lattice constant pays for at least one call. *)
+  Lemma c_lat_pos : (1 <= c_lat)%N.
+  Proof.
+    pose proof c_val_dominates.
+    unfold c_lat.
+    lia.
+  Qed.
+
   (** The representation measure counts the largest finite endpoint. *)
   Lemma size_raw : forall a, size a = interval_bits (cut_raw a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
   (** The fixed cutoff bounds every value independently of operations and thresholds. *)
   Lemma size_bound : forall a, size a <= C.bits.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a.
+    exact (proj2 (carrier_invariant a)).
+  Qed.
+
   (** Forward and backward work includes literals, list traversal and cutoff scans. *)
   Lemma work_agrees : forall o xs, work o xs = transfer_work o xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
   (** Guard work includes operand traversal and cutoff scans. *)
   Lemma gwork_agrees : forall g xs, gwork g xs = guard_work g xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
   (** Widening pays for unrestricted threshold values and their search paths. *)
   Lemma wsize_agrees : forall q,
     wsize q = (T.depth q + 1) * (T.tree_bits q + 1) + C.bits.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    reflexivity.
+  Qed.
+
   (** Each finite side contributes at most one plus the threshold count. *)
   Lemma rank_bound : forall q a, wrank q a <= 2 * (length (T.vals q) + 1).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q a.
+    unfold wrank.
+    rewrite <- RL.raw_wrank.
+    apply R.F3_wrank_le.
+  Qed.
+
+  (** Operator work accounts for every operand size. *)
+  Lemma work_sizes : forall o xs,
+    fold_right Nat.add 0%nat (map size xs) <= work o xs.
+  Proof.
+    intros o xs.
+    unfold work, transfer_work, operand_bits, size, t in *.
+    lia.
+  Qed.
+
+  (** Guard work accounts for every operand size. *)
+  Lemma gwork_sizes : forall g xs,
+    fold_right Nat.add 0%nat (map size xs) <= gwork g xs.
+  Proof.
+    intros g xs.
+    unfold gwork, guard_work, operand_bits, size, t in *.
+    lia.
+  Qed.
+
+  (** Forward results fit within the charged operator work. *)
+  Lemma forward_size : forall o xs,
+    (N.of_nat (size (forward o xs)) <= c_val * N.of_nat (work o xs + 1))%N.
+  Proof.
+    intros o xs.
+    pose proof (size_bound (forward o xs)) as Hbits.
+    assert (Hcutoff : C.bits <= work o xs) by (unfold work, transfer_work; lia).
+    pose proof c_val_dominates.
+    nia.
+  Qed.
+
+  (** Meet results fit within the combined operand sizes. *)
+  Lemma meet_size : forall a b,
+    (N.of_nat (size (meet a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (R.meet_size (cut_raw a) (cut_raw b)) as Hraw.
+    rewrite !raw_size_agrees in Hraw.
+    pose proof (cut_bits_le (R.meet (cut_raw a) (cut_raw b))) as Hcut.
+    change (size (meet a b) <= interval_bits (R.meet (cut_raw a) (cut_raw b))) in Hcut.
+    change (N.of_nat (interval_bits (R.meet (cut_raw a) (cut_raw b))) <=
+      R.c_val * N.of_nat (size a + size b + 1))%N in Hraw.
+    pose proof c_val_dominates.
+    nia.
+  Qed.
+
+  (** Join results fit within the combined operand sizes. *)
+  Lemma join_size : forall a b,
+    (N.of_nat (size (join a b)) <= c_val * N.of_nat (size a + size b + 1))%N.
+  Proof.
+    intros a b.
+    pose proof (R.join_size (cut_raw a) (cut_raw b)) as Hraw.
+    rewrite !raw_size_agrees in Hraw.
+    pose proof (cut_bits_le (R.join (cut_raw a) (cut_raw b))) as Hcut.
+    change (size (join a b) <= interval_bits (R.join (cut_raw a) (cut_raw b))) in Hcut.
+    change (N.of_nat (interval_bits (R.join (cut_raw a) (cut_raw b))) <=
+      R.c_val * N.of_nat (size a + size b + 1))%N in Hraw.
+    pose proof c_val_dominates.
+    nia.
+  Qed.
+
+  (** Widening results fit within operand and parameter sizes. *)
+  Lemma widen_size : forall q a b,
+    (N.of_nat (size (widen q a b)) <=
+      c_val * N.of_nat (size a + size b + wsize q + 1))%N.
+  Proof.
+    intros q a b.
+    pose proof (size_bound (widen q a b)) as Hbits.
+    assert (Hcutoff : C.bits <= wsize q) by (unfold wsize; lia).
+    pose proof c_val_dominates.
+    nia.
+  Qed.
+
+  (** Backward results fit within charged work and request size. *)
+  Lemma backward_size : forall o r xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (backward o r xs))) <=
+      c_val * N.of_nat (work o xs + size r + 1))%N.
+  Proof.
+    intros o r xs.
+    assert (Hbits : fold_right Nat.add 0 (map size (backward o r xs)) <=
+      fold_right Nat.add 0
+        (map interval_bits (R.backward o (cut_raw r) (map cut_raw xs))) +
+      fold_right Nat.add 0 (map interval_bits (map cut_raw xs))).
+    { unfold backward. rewrite map_map. apply within_list_bits_le. }
+    rewrite projected_bits_agree in Hbits.
+    pose proof (R.backward_size o (cut_raw r) (map cut_raw xs)) as Hraw.
+    rewrite raw_sizes_agree, raw_size_agrees in Hraw.
+    pose proof (raw_work_agrees o xs) as Hwork.
+    assert (Hinput : operand_bits xs <= work o xs) by (unfold work, transfer_work; lia).
+    pose proof c_val_dominates.
+    unfold size, t in *.
+    nia.
+  Qed.
+
+  (** Guard results fit within the charged guard work. *)
+  Lemma guard_size : forall g xs,
+    (N.of_nat (fold_right Nat.add 0%nat (map size (guard g xs))) <=
+      c_val * N.of_nat (gwork g xs + 1))%N.
+  Proof.
+    intros g xs.
+    assert (Hbits : fold_right Nat.add 0 (map size (guard g xs)) <=
+      fold_right Nat.add 0 (map interval_bits (R.guard g (map cut_raw xs))) +
+      fold_right Nat.add 0 (map interval_bits (map cut_raw xs))).
+    { unfold guard. rewrite map_map. apply within_list_bits_le. }
+    rewrite projected_bits_agree in Hbits.
+    pose proof (R.guard_size g (map cut_raw xs)) as Hraw.
+    rewrite raw_sizes_agree in Hraw.
+    pose proof (raw_gwork_agrees g xs) as Hwork.
+    assert (Hinput : operand_bits xs <= gwork g xs) by (unfold gwork, guard_work; lia).
+    pose proof c_val_dominates.
+    unfold t in *.
+    nia.
+  Qed.
+
 End CutIntervalT.
