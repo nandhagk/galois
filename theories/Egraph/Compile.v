@@ -4,7 +4,7 @@
     For example, the rewrite [f(x) = x] queries [f] and joins its result with [x].
     Builds on: CompileSig. *)
 
-From Stdlib Require Import List PArith NArith.
+From Stdlib Require Import List PArith NArith Arith Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Egglog Require Import ValueSig DatabaseSig Syntax Model Sorts.
 From Galois.Egraph Require Import Syntax CompileSig.
@@ -217,6 +217,95 @@ Module Compile (V : VALUE) <: COMPILE V.
       { pose proof (Hfunctional f k _ _ Hrow Hrow') as Heq. congruence. }
       subst j'. constructor. eapply Htrans; [exact Hsame |].
       exact (Hsym i' j Hsame').
+  Qed.
+
+  (** A fixed substitution gives each flat pattern node at most one unfolding. *)
+  Lemma unfolds_pat_unique : forall tau ns i e,
+    @unfolds_pat V.t tau ns i e ->
+    forall e', unfolds_pat tau ns i e' -> e = e'.
+  Proof.
+    intros tau ns i e Hunfold.
+    induction Hunfold as [i h e Hnth Htau | i v Hnth |
+      i f children args Hnth Hbefore Hargs IHargs]; intros e' Hother.
+    - inversion Hother as [i' h' e'' Hnth' Htau' | i' v' Hnth' |
+        i' f' children' args' Hnth' Hbefore' Hargs']; subst; try congruence.
+    - inversion Hother as [i' h' e'' Hnth' Htau' | i' v' Hnth' |
+        i' f' children' args' Hnth' Hbefore' Hargs']; subst; try congruence.
+    - inversion Hother as [i' h' e'' Hnth' Htau' | i' v' Hnth' |
+        i' f' children' args' Hnth' Hbefore' Hargs']; subst; try congruence.
+      assert (f' = f /\ children' = children) as [-> ->] by (split; congruence).
+      f_equal. clear Hnth Hnth' Hbefore Hbefore' Hother.
+      revert args' Hargs'.
+      induction IHargs as [| j e0 js es Hchild IHchild Htail IHtail IH];
+        intros args' Hargs'.
+      + inversion Hargs'; reflexivity.
+      + inversion Hargs' as [| j' e1 js' es' Hhead Hrest]; subst.
+        f_equal; [exact (IHchild e1 Hhead) | exact (IH es' Hrest)].
+  Qed.
+
+  (** Aligned unfolding and representation lists supply each referenced child. *)
+  Lemma represented_children : forall tau ns w children args,
+    Forall2 (@unfolds_pat V.t tau ns) children args ->
+    forall cells, Forall2 (represents w) cells args -> forall j, In j children ->
+      exists c e, In c cells /\ unfolds_pat tau ns j e /\ represents w c e.
+  Proof.
+    intros tau ns w children args Hunfold.
+    induction Hunfold as [| j e js es Hchild Htail IH]; intros cells Hrep k Hin.
+    - contradiction.
+    - inversion Hrep as [| c e' cs es' Hhead Hrest]; subst.
+      destruct Hin as [<- | Hin].
+      + exists c, e. split; [now left |]. split; assumption.
+      + destruct (IH cs Hrest k Hin) as [d [t [Hmember [Hu Hr]]]].
+        exists d, t. split; [now right |]. split; assumption.
+  Qed.
+
+  (** A represented constructor supplies a row occurrence for every child node. *)
+  Lemma represented_pattern_child : forall tau ns w i f children c e,
+    nth_error ns i = Some (PApp f children) -> unfolds_pat tau ns i e ->
+    represents w c e -> forall j, In j children ->
+      exists d t, row_cell w d /\ unfolds_pat tau ns j t /\ represents w d t.
+  Proof.
+    intros tau ns w i f children c e Hnth Hunfold Hrep j Hin.
+    inversion Hunfold as [i' h e' Hnth' Htau | i' v Hnth' |
+      i' f' children' args Hnth' Hbefore Hargs]; subst; try congruence.
+    assert (f' = f /\ children' = children) as [-> ->] by (split; congruence).
+    inversion Hrep as [v | f' cells a b args' Hrow Hsame Hreps]; subst.
+    destruct (represented_children tau ns w children args Hargs cells Hreps j Hin)
+      as [d [t [Hmember [Hu Hr]]]].
+    exists d, t. split.
+    - exists f, cells, (Some (Id b)). split; [exact Hrow |].
+      apply in_or_app. now left.
+    - split; assumption.
+  Qed.
+
+  (** The pattern's coverage condition carries root representation to every stored node. *)
+  Lemma represented_pattern_nodes : forall sorts kinds g (p : fpat V.t) tau w c e,
+    canonical_view w -> pat_ok sorts kinds g p ->
+    unfolds_pat tau (nodes V.t p) (root V.t p) e -> represents w (Id c) e ->
+    forall j, j < length (nodes V.t p) -> exists d t,
+      row_cell w d /\ unfolds_pat tau (nodes V.t p) j t /\ represents w d t.
+  Proof.
+    intros sorts kinds g [ns r] tau w c e Hcanonical
+      [Hlength [Hsort [Hcovered Hnodes]]] Hunfold Hrep.
+    cbn [nodes root] in *.
+    assert (Hroot : exists d t, row_cell w d /\ unfolds_pat tau ns r t /\ represents w d t).
+    { inversion Hrep as [v | f k i b args Hrow Hsame Hargs]; subst.
+      exists (Id b), (Model.EApp f args). split.
+      - exists f, k, (Some (Id b)). split; [exact Hrow |].
+        apply in_or_app. right. now left.
+      - split; [exact Hunfold |]. eapply rep_app; [exact Hrow | | exact Hargs].
+        exact (proj1 Hcanonical b). }
+    assert (Hdown : forall fuel j, r - j <= fuel -> j <= r -> exists d t,
+      row_cell w d /\ unfolds_pat tau ns j t /\ represents w d t).
+    { induction fuel as [| fuel IH]; intros j Hgap Hj.
+      - assert (j = r) by lia. subst j. exact Hroot.
+      - destruct (Nat.eq_dec j r) as [-> | Hneq]; [exact Hroot |].
+        destruct (Hcovered j ltac:(lia)) as [i [f [children [Hji [Hnth Hin]]]]].
+        assert (Hi : i < length ns).
+        { apply nth_error_Some. rewrite Hnth. discriminate. }
+        destruct (IH i ltac:(lia) ltac:(lia)) as [d [t [Hcell [Hu Hr]]]].
+        exact (represented_pattern_child tau ns w i f children d t Hnth Hu Hr j Hin). }
+    intros j Hj. apply (Hdown r j); lia.
   Qed.
 
   Lemma compile_program : forall ds rws ans,
