@@ -495,7 +495,7 @@ Module BuildT (O : OPS)
   Definition k_graph : N := 1. (* STUB *)
   Definition k_place : N := 1. (* STUB *)
   Definition k_rename : N := 1. (* STUB *)
-  Definition k_wrap : N := 1. (* STUB *)
+  Definition k_wrap : N := 16.
   Definition k_size : N := 1. (* STUB *)
   Definition placed p x :=
     place_var (frontiers p) (def_index p) (live_sets (L.live_in p)) x.
@@ -660,5 +660,10 @@ Module BuildT (O : OPS)
       | None => k_wrap
       | Some (s, c) => Va.T_check p s c + Va.T_check_ssa s + k_wrap
       end)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold k_wrap. time_unfold T_build.
+    destruct (produce p) as [[s c]|]; time_simpl; time_cbn.
+    - destruct (andb (Va.check p s c) (Va.check_ssa s)); lia.
+    - lia.
+  Qed.
 End BuildT.
