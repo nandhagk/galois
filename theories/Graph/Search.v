@@ -5,7 +5,7 @@
     Builds on: graph data, binary-fuel loops and the search signature. *)
 
 From Stdlib Require Import List NArith PArith Lia Arith Sorting.Permutation.
-From Argent Require Import Time Tactics Std BigO.
+From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig.
 Import List.ListNotations.
@@ -58,6 +58,187 @@ Definition prepared_search_trace (g : prepared) (roots : list positive) : list e
   | inr es => es
   end.
 TimeFun prepared_search_trace.
+
+(** Binary fuel and unary fuel describe the same sequence of task transitions. *)
+Lemma search_loopN_fuel {St Out} (step : St -> St + Out) fuel st :
+  loopN step fuel st = loop_fuel step (N.to_nat fuel) st.
+Proof.
+  assert (Hloop : forall fs (Hacc : Acc loopN_lt fs),
+      loop loopN_lt (loopN_step step) fs Hacc =
+      loop_fuel step (N.to_nat (fst fs)) (snd fs)).
+  { intros fs Hacc. induction Hacc as [[n state] Hacc IH] using Acc_ind_dep.
+    cbn [fst snd]. destruct n as [|p]; [reflexivity|].
+    assert (Hpos : 0 < N.to_nat (N.pos p)) by lia.
+    destruct (N.to_nat (N.pos p)) as [|n] eqn:Hn; [lia|].
+    cbn [loop loopN_step loop_fuel Acc_inv].
+    destruct (step state) as [next|result]; [|reflexivity].
+    rewrite IH. cbn [fst snd]. rewrite N2Nat.inj_pred, Hn. reflexivity. }
+  unfold loopN. apply Hloop.
+Qed.
+
+(** Task validity includes the source and every remaining target of an adjacency row. *)
+Definition search_task_valid (domain : positive -> Prop) (task : search_task) : Prop :=
+  match task with
+  | SearchRoot v | SearchLeave v => domain v
+  | SearchRow u vs => domain u /\ Forall domain vs
+  end.
+
+(** A successor-closed domain is retained by every continuing task transition. *)
+Lemma search_tasks_preserved g domain st next :
+  (forall u v, domain u -> edge g u v -> domain v) ->
+  Forall (search_task_valid domain) (search_tasks st) ->
+  search_step g st = inl next ->
+  Forall (search_task_valid domain) (search_tasks next).
+Proof.
+  intros Hclosed Hvalid Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hvalid as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [v|u vs|v].
+  - cbn [search_step] in Hstep. destruct (trie_get v colours).
+    + inversion Hstep; subst next. exact Htail.
+    + inversion Hstep; subst next. constructor.
+      * split; [exact Htask|]. apply Forall_forall. intros w Hin.
+        apply (Hclosed v w Htask). exact Hin.
+      * constructor; [exact Htask|exact Htail].
+  - destruct vs as [|v vs].
+    + inversion Hstep; subst next. exact Htail.
+    + destruct Htask as [Hu Hvs]. inversion Hvs as [|v0 vs0 Hv Hrest]; subst v0 vs0.
+      cbn [search_step] in Hstep. destruct (trie_get v colours).
+      * inversion Hstep; subst next. constructor; [split; assumption|exact Htail].
+      * inversion Hstep; subst next. constructor; [exact Hv|].
+        constructor; [split; assumption|exact Htail].
+  - inversion Hstep; subst next. exact Htail.
+Qed.
+
+(** Lookup after one colour update distinguishes its key from all other vertices. *)
+Local Lemma search_colour_set x y (b : bool) colours :
+  trie_get x (PTrieCode.set y b colours) =
+    if Pos.eqb x y then Some b else trie_get x colours.
+Proof.
+  destruct (Pos.eqb_spec x y) as [Heq|Hneq].
+  - subst x. apply PTrie.get_set_same.
+  - apply PTrie.get_set_other. exact Hneq.
+Qed.
+
+Local Lemma search_colour_empty v : trie_get v (@Empty bool) = None.
+Proof.
+  apply PTrie.get_empty.
+Qed.
+
+(** White work counts two vertex tasks and the outgoing row for each listed occurrence. *)
+Definition search_white g vertices (colours : ptrie bool) : nat :=
+  fold_right (fun v n =>
+    match trie_get v colours with
+    | None => 2 + length (succs g v) + n
+    | Some _ => n
+    end) 0 vertices.
+
+(** Updating any colour can only remove white work. *)
+Lemma search_white_set_le g vertices colours v b :
+  search_white g vertices (PTrieCode.set v b colours) <= search_white g vertices colours.
+Proof.
+  induction vertices as [|u rest IH]; [reflexivity|].
+  unfold search_white in *. cbn [fold_right]. rewrite search_colour_set.
+  destruct (Pos.eqb u v); destruct (trie_get u colours); lia.
+Qed.
+
+(** Discovering a listed white vertex transfers at least one copy of its row credit. *)
+Lemma search_white_discover g vertices colours v b :
+  In v vertices -> trie_get v colours = None ->
+  search_white g vertices (PTrieCode.set v b colours) + 2 + length (succs g v) <=
+    search_white g vertices colours.
+Proof.
+  intros Hin Hwhite. induction vertices as [|u rest IH]; [contradiction|].
+  destruct Hin as [Heq|Hin].
+  - subst u. unfold search_white. cbn [fold_right].
+    rewrite search_colour_set, Pos.eqb_refl, Hwhite.
+    pose proof (search_white_set_le g rest colours v b) as Hle.
+    unfold search_white in Hle. lia.
+  - specialize (IH Hin). unfold search_white in *. cbn [fold_right].
+    rewrite search_colour_set. destruct (Pos.eqb u v); destruct (trie_get u colours); lia.
+Qed.
+
+(** Pending rows charge their targets and the administrative empty-row step. *)
+Definition search_task_credit tasks : nat :=
+  fold_right (fun task n =>
+    match task with
+    | SearchRoot _ => 1 + n
+    | SearchRow _ vs => 2 * length vs + 1 + n
+    | SearchLeave _ => 1 + n
+    end) 0 tasks.
+
+Definition search_finite_credit g vertices st :=
+  2 * search_white g vertices (search_colours st) +
+    search_task_credit (search_tasks st).
+
+(** Every continuing task consumes finite-domain credit, including administrative tasks. *)
+Lemma search_finite_decreases g vertices st next :
+  Forall (search_task_valid (fun v => In v vertices)) (search_tasks st) ->
+  search_step g st = inl next ->
+  search_finite_credit g vertices next < search_finite_credit g vertices st.
+Proof.
+  intros Hvalid Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hvalid as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [v|u vs|v].
+  - cbn [search_step] in Hstep. destruct (trie_get v colours) eqn:Hcolour.
+    + inversion Hstep; subst next. unfold search_finite_credit, search_task_credit.
+      cbn [search_colours search_tasks fold_right]. lia.
+    + inversion Hstep; subst next.
+      pose proof (search_white_discover g vertices colours v true Htask Hcolour) as Hwhite.
+      unfold search_finite_credit, search_task_credit.
+      cbn [search_colours search_tasks fold_right]. lia.
+  - destruct vs as [|v vs]; cbn [search_step] in Hstep.
+    + inversion Hstep; subst next. unfold search_finite_credit, search_task_credit.
+      cbn [search_colours search_tasks fold_right length]. lia.
+    + destruct (trie_get v colours); inversion Hstep; subst next;
+        unfold search_finite_credit, search_task_credit;
+        cbn [search_colours search_tasks fold_right length]; lia.
+  - inversion Hstep; subst next.
+    pose proof (search_white_set_le g vertices colours v false) as Hwhite.
+    unfold search_finite_credit, search_task_credit.
+    cbn [search_colours search_tasks fold_right]. lia.
+Qed.
+
+(** Initial credit charges every listed occurrence, allowing duplicate vertices. *)
+Lemma search_finite_initial g vertices roots :
+  search_finite_credit g vertices (SearchState (map SearchRoot roots) Empty []) =
+    4 * length vertices +
+    2 * fold_right (fun v n => length (succs g v) + n) 0 vertices + length roots.
+Proof.
+  unfold search_finite_credit. cbn [search_colours search_tasks].
+  assert (Htasks : search_task_credit (map SearchRoot roots) = length roots).
+  { induction roots as [|v rest IH].
+    - reflexivity.
+    - change (1 + search_task_credit (map SearchRoot rest) = S (length rest)).
+      rewrite IH. lia. }
+  rewrite Htasks. unfold search_white.
+  induction vertices as [|v rest IH]; cbn [fold_right length] in *;
+    rewrite ?search_colour_empty in *; lia.
+Qed.
+
+(** Correct count caches suffice for completion on any successor-closed listed graph. *)
+Lemma prepared_search_complete_closed g roots :
+  counts_ok g ->
+  (forall u v, In u (nodes g) -> edge (base g) u v -> In v (nodes g)) ->
+  (forall r, In r roots -> In r (nodes g)) ->
+  exists es, loopN (search_step (base g)) (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty []) = inr es.
+Proof.
+  intros Hcounts Hclosed Hroots.
+  eapply (loopN_done search_state (list event) (search_step (base g))
+    (fun st => Forall (search_task_valid (fun v => In v (nodes g))) (search_tasks st))
+    (search_finite_credit (base g) (nodes g))).
+  - intros st next Hvalid Hstep. split.
+    + eapply search_tasks_preserved; eassumption.
+    + eapply search_finite_decreases; eassumption.
+  - cbn [search_tasks]. apply Forall_forall. intros task Hin.
+    apply in_map_iff in Hin. destruct Hin as [v [Heq Hin]]. subst task. apply Hroots. exact Hin.
+  - rewrite search_finite_initial. unfold search_budget. rewrite !N.double_spec.
+    destruct Hcounts as [Hnv Hne]. rewrite Hnv, Hne.
+    destruct g as [[vertices adjacency] predecessors n e].
+    cbn [nodes base graph_n graph_e]. lia.
+Qed.
 
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
@@ -280,7 +461,11 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     (forall r, In r roots -> In r (nodes g)) ->
     exists es, loopN (search_step (base g)) (search_budget g roots)
       (initial roots) = inr es.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [[vertices adjacency] predecessors n e] roots Hcounts Hgraph Hroots.
+    apply prepared_search_complete_closed; [exact Hcounts| |exact Hroots].
+    exact (proj2 Hgraph).
+  Qed.
 
   Lemma T1_step : forall g roots st next w,
     counts_ok g -> wf_graph (base g) ->
