@@ -4,7 +4,7 @@
     For example, parallel edges contribute repeated predecessors.
     Builds on: graph data and the public preparation signature. *)
 
-From Stdlib Require Import List NArith PArith Lia Sorting.Permutation.
+From Stdlib Require Import List NArith PArith Lia Arith Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Key Trie.
 From Galois.Graph Require Import Data DigraphSig.
@@ -113,18 +113,189 @@ Proof.
     time_unfold TimeHelpers.N.T_of_nat. rewrite Nat2N.inj_succ. time_cbn_all. nia.
 Qed.
 
+(** The structural maximum agrees with the standard natural-number maximum. *)
+Local Lemma digraph_max_nat a b : graph_max a b = Nat.max a b.
+Proof.
+  revert b. induction a as [|a IH]; intros [|b]; cbn [graph_max Nat.max]; auto.
+Qed.
+
+(** A vertex occurrence is bounded by the width of its containing list. *)
+Local Lemma digraph_vertex_width_member vs v : In v vs -> Pos.size_nat v <= vertex_width vs.
+Proof.
+  induction vs as [|u vs IH]; [contradiction|].
+  intros [Heq|Hin]; cbn [vertex_width fold_right]; rewrite digraph_max_nat.
+  - subst u. apply Nat.le_max_l.
+  - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** Every listed successor row contributes its width to the graph's row maximum. *)
+Local Lemma digraph_row_width_member g vs u : In u vs ->
+  vertex_width (succs g u) <=
+    fold_right (fun v w => graph_max (vertex_width (succs g v)) w) 0 vs.
+Proof.
+  induction vs as [|v vs IH]; [contradiction|].
+  intros [Heq|Hin]; cbn [fold_right]; rewrite digraph_max_nat.
+  - subst v. apply Nat.le_max_l.
+  - eapply Nat.le_trans; [apply IH; exact Hin|apply Nat.le_max_r].
+Qed.
+
+(** Graph width covers all source and target occurrences, including repetitions. *)
+Local Lemma digraph_width_occurrences g :
+  Forall (fun u => Pos.size_nat u <= graph_width g /\
+    Forall (fun v => Pos.size_nat v <= graph_width g) (succs g u)) (verts g).
+Proof.
+  destruct g as [vs rows]. cbn [verts]. apply Forall_forall. intros u Hin. split.
+  - eapply Nat.le_trans; [apply digraph_vertex_width_member; exact Hin|].
+    cbn [graph_width]. rewrite digraph_max_nat. apply Nat.le_max_l.
+  - apply Forall_forall. intros v Hv.
+    eapply Nat.le_trans; [apply digraph_vertex_width_member; exact Hv|].
+    eapply Nat.le_trans; [apply digraph_row_width_member; exact Hin|].
+    cbn [graph_width]. rewrite digraph_max_nat. apply Nat.le_max_r.
+Qed.
+
+(** Reading one successor row pays only the source key's digits. *)
+Local Lemma digraph_succs_time g u w : Pos.size_nat u <= w ->
+  (T_succs g u <= 4 * N.of_nat (w + 1))%N.
+Proof.
+  intro Hwidth. destruct g as [vs rows].
+  pose proof (PTrieT.trie_get_clock (list positive) u rows) as Hget.
+  time_unfold @T_succs. time_cbn. rewrite Hget. rewrite Nat2N.inj_add. nia.
+Qed.
+
+(** Counting edges adds each row length once, so repeated rows are charged explicitly. *)
+Local Lemma edge_count_fold_time g vs w :
+  Forall (fun u => Pos.size_nat u <= w) vs ->
+  (1 + List.T_fold_right (fun u n => (length (succs g u) + n)%nat)
+    (fun u n => 1 + ((T_succs g u + Datatypes.T_length (succs g u)) +
+      Nat.T_add (length (succs g u)) n))%N 0%nat vs <=
+    16 * N.of_nat (length vs +
+      fold_right (fun u n => (length (succs g u) + n)%nat) 0%nat vs + 1) *
+      N.of_nat (w + 1))%N.
+Proof.
+  induction vs as [|u vs IH]; intro Hwidth.
+  - time_unfold @List.T_fold_right. cbn [length fold_right].
+    rewrite Nat2N.inj_add. nia.
+  - inversion Hwidth as [|u0 vs0 Hu Hvs]; subst u0 vs0.
+    specialize (IH Hvs).
+    pose proof (digraph_succs_time g u w Hu) as Hread.
+    pose proof (Datatypes.T_length_le (succs g u)) as Hlength.
+    pose proof (Nat.T_add_le (length (succs g u))
+      (fold_right (fun v n => length (succs g v) + n) 0 vs)) as Hadd.
+    time_unfold @List.T_fold_right. cbn beta iota zeta.
+    cbn [length fold_right]. rewrite !Nat2N.inj_add, ?time_of_nat_succ in *.
+    clear - IH Hread Hlength Hadd. nia.
+Qed.
+
+(** The edge cache's unary count obeys the same graph-size and key-width envelope. *)
+Lemma digraph_edge_count_time g :
+  (T_graph_e g <= 16 * N.of_nat (graph_n g + graph_e g + 1) *
+    N.of_nat (graph_width g + 1))%N.
+Proof.
+  destruct g as [vs rows].
+  assert (Hwidth : Forall (fun u => Pos.size_nat u <= graph_width (Digraph vs rows)) vs).
+  { eapply Forall_impl; [|exact (digraph_width_occurrences (Digraph vs rows))].
+    intros u Hu. exact (proj1 Hu). }
+  pose proof (edge_count_fold_time (Digraph vs rows) vs
+    (graph_width (Digraph vs rows)) Hwidth) as Hclock.
+  time_unfold @T_graph_e. exact Hclock.
+Qed.
+
+(** Computing the source count traverses each listed vertex occurrence once. *)
+Lemma digraph_vertex_count_time g :
+  (T_graph_n g <= 2 * N.of_nat (graph_n g + 1))%N.
+Proof.
+  destruct g as [vs rows].
+  pose proof (Datatypes.T_length_le vs) as Hlength.
+  time_unfold @T_graph_n. cbn [graph_n]. rewrite Nat2N.inj_add. lia.
+Qed.
+
 Module DigraphT <: DIGRAPH_T.
   Include Digraph.
   TimeFun add_pred.
   TimeFun prepare.
-  Definition c_prepare : N := 1%N. (* STUB *)
+  Definition c_prepare : N := (128 * (PTrieT.c_trie + 1))%N.
+
+  (** One predecessor insertion pays one lookup and one update at the target key. *)
+  Local Lemma add_pred_time u v p :
+    (T_add_pred u v p <= 8 * (PTrieT.c_trie + 1) * N.of_nat (Pos.size_nat v + 1))%N.
+  Proof.
+    pose proof (PTrieT.trie_get_clock (list positive) v p) as Hget.
+    pose proof (PTrieT.T_set_le (list positive) v
+      (u :: match trie_get v p with Some vs => vs | None => nil end) p) as Hset.
+    time_unfold @T_add_pred. rewrite Hget. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** Each successor occurrence pays one insertion, independently of its accumulator. *)
+  Local Lemma predecessor_row_time u vs p w :
+    Forall (fun v => Pos.size_nat v <= w) vs ->
+    (List.T_fold_right (add_pred u) (fun v acc => T_add_pred u v acc) p vs <=
+      16 * (PTrieT.c_trie + 1) * N.of_nat (length vs + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    induction vs as [|v vs IH]; intro Hwidth.
+    - time_unfold @List.T_fold_right. cbn [length]. rewrite Nat2N.inj_add. nia.
+    - inversion Hwidth as [|v0 vs0 Hv Hvs]; subst v0 vs0.
+      specialize (IH Hvs).
+      pose proof (add_pred_time u v (fold_right (add_pred u) p vs)) as Hhead.
+      time_unfold @List.T_fold_right. cbn beta iota zeta.
+      cbn [length]. rewrite !Nat2N.inj_add, ?time_of_nat_succ in *.
+      clear - IH Hhead Hv. nia.
+  Qed.
+
+  (** The outer fold charges source occurrences and every occurrence in their rows. *)
+  Local Lemma predecessor_rows_time g vs p w :
+    Forall (fun u => Pos.size_nat u <= w /\
+      Forall (fun v => Pos.size_nat v <= w) (succs g u)) vs ->
+    (List.T_fold_right (fun u acc => fold_right (add_pred u) acc (succs g u))
+      (fun u acc => 1 + (T_succs g u +
+        List.T_fold_right (add_pred u) (fun v row => T_add_pred u v row) acc (succs g u)))%N
+      p vs <= 32 * (PTrieT.c_trie + 1) *
+        N.of_nat (length vs +
+          fold_right (fun u n => (length (succs g u) + n)%nat) 0%nat vs + 1) *
+        N.of_nat (w + 1))%N.
+  Proof.
+    induction vs as [|u vs IH]; intro Hwidth.
+    - time_unfold @List.T_fold_right. cbn [length fold_right].
+      rewrite Nat2N.inj_add. nia.
+    - inversion Hwidth as [|u0 vs0 [Hu Hrow] Hvs]; subst u0 vs0.
+      specialize (IH Hvs).
+      pose proof (digraph_succs_time g u w Hu) as Hread.
+      pose proof (predecessor_row_time u (succs g u)
+        (fold_right (fun v acc => fold_right (add_pred v) acc (succs g v)) p vs)
+        w Hrow) as Hhead.
+      time_unfold @List.T_fold_right. cbn beta iota zeta.
+      cbn [length fold_right]. rewrite !Nat2N.inj_add, ?time_of_nat_succ in *.
+      clear - IH Hread Hhead. nia.
+  Qed.
 
   Lemma T_prepare_le : forall g,
     (T_prepare g <= c_prepare * N.of_nat (graph_n g + graph_e g + 1) *
       N.of_nat (graph_width g + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros [vs rows].
+    pose proof (predecessor_rows_time (Digraph vs rows) vs Empty
+      (graph_width (Digraph vs rows)) (digraph_width_occurrences (Digraph vs rows))) as Hpred.
+    pose proof (digraph_edge_count_time (Digraph vs rows)) as Hedges.
+    pose proof (Datatypes.T_length_le vs) as Hlength.
+    pose proof (graph_of_nat_time (length vs)) as Hnv.
+    pose proof (graph_of_nat_time (graph_e (Digraph vs rows))) as Hne.
+    unfold c_prepare. time_unfold @T_prepare. unfold T_verts.
+    cbn [verts graph_n] in *. rewrite !Nat2N.inj_add in *.
+    change (List.T_fold_right (fun u acc => fold_right (add_pred u) acc
+        (succs (Digraph vs rows) u))
+      (fun u acc => 1 + (T_succs (Digraph vs rows) u +
+        List.T_fold_right (add_pred u) (fun v row => T_add_pred u v row)
+          acc (succs (Digraph vs rows) u)))%N Empty vs <=
+      32 * (PTrieT.c_trie + 1) * (N.of_nat (length vs) +
+        N.of_nat (graph_e (Digraph vs rows)) + 1) *
+        (N.of_nat (graph_width (Digraph vs rows)) + 1))%N in Hpred.
+    nia.
+  Qed.
 
   Lemma prepare_bigO : bigO (fun _ => True)
     (fun g => N.of_nat ((graph_n g + graph_e g + 1) * (graph_width g + 1))) T_prepare.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_prepare. intros g _.
+    eapply N.le_trans; [apply T_prepare_le|].
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
 End DigraphT.
