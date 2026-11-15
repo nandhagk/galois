@@ -8,7 +8,7 @@ From Stdlib Require Import List Bool Arith PArith NArith Lia Sorting.Permutation
   Wellfounded.Inverse_Image.
 From Argent Require Import Time Tactics Std Loop BigO.
 From Galois.Base Require Import Trie Loop.
-From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search SccSig Scc WtoSig.
+From Galois.Graph Require Import Data Spec DigraphSig Digraph SearchSig Search SccSig Scc WtoSig.
 Import List.ListNotations.
 
 Module TimeHelpers.
@@ -1842,7 +1842,8 @@ Module WtoT <: WTO_ALL.
   Definition k_check : N := 1%N. (* STUB *)
   Definition k_scope : N := 1%N. (* STUB *)
   Definition k_expand : N := 32%N.
-  Definition k_build : N := 1%N. (* STUB *)
+  Definition k_build : N :=
+    (128 * (SccT.c_scc + DigraphT.c_prepare + PTrieT.c_trie + 1))%N.
   Definition k_heads : N := 1%N.
   Definition k_ranks : N := (PTrieT.c_trie + 4)%N.
 
@@ -2372,13 +2373,103 @@ Module WtoT <: WTO_ALL.
         N.of_nat (graph_width (base g) + 1))%N.
   Proof. Admitted. (* STUB *)
 
+  (** Concatenation visits each component cell and each of its vertices once. *)
+  Lemma components_concat_clock : forall (cs : list (list positive)),
+    (TimeHelpers.List.T_concat cs <=
+      N.of_nat (length (concat cs) + 2 * length cs + 1))%N.
+  Proof.
+    intro cs. induction cs as [|c cs IH].
+    - time_step.
+    - pose proof (Datatypes.T_app_le c (concat cs)) as Happ.
+      time_unfold @TimeHelpers.List.T_concat. time_cbn.
+      rewrite length_app, !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
+
+  (** Every driver callback on a completed path appears in the recorded history. *)
+  Lemma history_path_cost : forall g st states last,
+    search_machine_path (wto_step g) st states last -> forall fuel w,
+    loop_fuel (wto_step g) fuel st = inr w ->
+    (fold_right N.add 0%N (map (T_wto_step g) states) +
+      match wto_step g last with inl _ => 0 | inr _ => T_wto_step g last end <=
+      execution_cost g (history_from g fuel st))%N.
+  Proof.
+    intros g st states last Hpath. induction Hpath as
+      [st|st next states last Hstep Hpath IH]; intros fuel w Hrun.
+    - cbn [map fold_right]. destruct (wto_step g st) as [next|result] eqn:Hstep.
+      + apply N.le_0_l.
+      + destruct fuel; cbn [history_from]; rewrite Hstep; unfold execution_cost;
+          cbn [fold_right]; lia.
+    - destruct fuel as [|fuel]; [discriminate|]. cbn [loop_fuel] in Hrun.
+      rewrite Hstep in Hrun. specialize (IH fuel w Hrun).
+      cbn [history_from]. rewrite Hstep. unfold execution_cost in *.
+      cbn [map fold_right]. lia.
+  Qed.
+
+  Local Opaque loopN.
+
+  (** The loop's administrative cost is linear in the initial component inventory. *)
+  Lemma build_loop_clock : forall g roots,
+    (T_loopN (wto_step g) (fun st => T_wto_step g st)
+      (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
+      (initial g roots) <= execution_cost g (history g roots) +
+      18 * N.of_nat (length (concat (comps (wto_components g roots)))) + 9)%N.
+  Proof.
+    intros g roots. destruct (F16_done g roots) as [w Hrun].
+    rewrite search_loopN_fuel, Nat2N.id in Hrun.
+    destruct (search_loop_trace_clock (wto_step g) (fun st => T_wto_step g st)
+      (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
+      (initial g roots)) as [states [last [Hpath [Hlength Hclock]]]].
+    pose proof (history_path_cost g _ _ _ Hpath _ w Hrun) as Hhistory.
+    change (fold_right N.add 0%N (map (fun st => T_wto_step g st) states) +
+      match wto_step g last with inl _ => 0 | inr _ => T_wto_step g last end <=
+      execution_cost g (history_from g
+        (3 * length (concat (comps (wto_components g roots))) + 1) (initial g roots)))%N
+      in Hhistory.
+    pose proof (search_N_size_value
+      (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))) as Hbits.
+    rewrite Nat2N.id in Hlength, Hbits. unfold history.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *.
+    nia.
+  Qed.
+
   (** Building pays the initial phases, the task list and each recorded step once. *)
   Lemma T16_build : forall g roots,
     (T_build g roots <= k_build * (T_wto_components g roots +
       T_wto_entries g roots (wto_components g roots) +
       N.of_nat (length (concat (comps (wto_components g roots)))) +
       execution_cost g (history g roots) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots.
+    pose proof (build_loop_clock g roots) as Hloop.
+    pose proof (components_concat_clock (comps (wto_components g roots))) as Hconcat.
+    pose proof (wto_components_output_clock g roots) as Hcomponents.
+    pose proof (Datatypes.T_length_le (concat (comps (wto_components g roots)))) as Hlength.
+    pose proof (List.T_rev_append_le (comps (wto_components g roots)) []) as Hrev.
+    pose proof (wto_expand_tasks_clock None
+      (wto_entries g roots (wto_components g roots)) (comp (wto_components g roots))
+      (rev_append (comps (wto_components g roots)) [])) as Htasks.
+    pose proof (Nat.T_mul_le 3 (length (concat (comps (wto_components g roots))))) as Hmultiply.
+    pose proof (Nat.T_add_le (3 * length (concat (comps (wto_components g roots)))) 1) as Hadd.
+    pose proof (graph_of_nat_time
+      (3 * length (concat (comps (wto_components g roots))) + 1)) as Hfuel.
+    assert (Hcallback : forall st,
+      (Galois.Graph.Wto.T_wto_step g st <= T_wto_step g st)%N).
+    { intro st. time_unfold @T_wto_step. lia. }
+    pose proof (search_binary_clock_mono (wto_step g)
+      (fun st => Galois.Graph.Wto.T_wto_step g st) (fun st => T_wto_step g st)
+      Hcallback (N.of_nat (3 * length (concat (comps (wto_components g roots))) + 1))
+      (initial g roots)) as Hmono.
+    destruct (F16_done g roots) as [w Hrun].
+    unfold initial in Hloop, Hmono, Hrun.
+    unfold wto_components, wto_entries, wto_expand_tasks, wto_step in *.
+    rewrite rev_append_rev, app_nil_r, length_rev in Htasks.
+    time_unfold @T_build.
+    rewrite rev_append_rev, app_nil_r, Hrun.
+    unfold T_wto_components, T_wto_entries, k_build. time_simpl.
+    rewrite !Nat2N.inj_add, !Nat2N.inj_mul in *. nia.
+  Qed.
+
+  Local Transparent loopN.
 
   (** Close and terminal steps at one depth reverse disjoint partial outputs. *)
   Lemma F21_partial_mass : forall g roots level,
