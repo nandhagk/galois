@@ -2386,6 +2386,78 @@ Module SearchSemantics (V : VALUE) (C : COST V).
 
 End SearchSemantics.
 
+(** Resolving a key computes the fixed class costs whenever every resolved child does. *)
+Lemma dag_resolve_cells_costs : forall V fn_cost val_cost resolve costs,
+  (forall i e, resolve i = Some e ->
+    expression_cost fn_cost val_cost e = dag_get_cost costs i) ->
+  forall (k : list (cell V)) es, dag_resolve_cells resolve k = Some es ->
+    map (expression_cost fn_cost val_cost) es = dag_cost_cells val_cost costs k.
+Proof.
+  intros V fn_cost val_cost resolve costs Hresolve k.
+  induction k as [|[i|v] k IH]; intros es Hrun; cbn [dag_resolve_cells] in Hrun.
+  - injection Hrun as <-. reflexivity.
+  - destruct (resolve i) as [e|] eqn:Hhead; [|discriminate].
+    destruct (dag_resolve_cells resolve k) as [tail|] eqn:Htail; [|discriminate].
+    injection Hrun as <-. cbn [map dag_cost_cells].
+    rewrite (Hresolve i e Hhead), (IH tail eq_refl). reflexivity.
+  - destruct (dag_resolve_cells resolve k) as [tail|] eqn:Htail; [|discriminate].
+    injection Hrun as <-. cbn [map dag_cost_cells expression_cost].
+    now rewrite (IH tail eq_refl).
+Qed.
+
+(** Reverse unfolding respects every constructor equation of a fixed cost table. *)
+Lemma dag_unfold_reverse_costs : forall V fn_cost val_cost costs (g : extraction_dag V),
+  (forall i f k, In (i, (f, k)) g ->
+    dag_get_cost costs i = fn_cost f (dag_cost_cells val_cost costs k)) ->
+  forall i e, dag_unfold_reverse g i = Some e ->
+    expression_cost fn_cost val_cost e = dag_get_cost costs i.
+Proof.
+  intros V fn_cost val_cost costs g. induction g as [|[j [f k]] g IH];
+    intros Hrows i e Hrun; [discriminate |].
+  assert (Htail : forall child name key, In (child, (name, key)) g ->
+    dag_get_cost costs child = fn_cost name (dag_cost_cells val_cost costs key)).
+  { intros child name key Hin. apply Hrows. now right. }
+  cbn [dag_unfold_reverse] in Hrun. destruct (Pos.eqb i j) eqn:Hij.
+  - apply Pos.eqb_eq in Hij. subst i.
+    destruct (dag_resolve_cells (dag_unfold_reverse g) k) as [es|] eqn:Hcells;
+      [|discriminate].
+    injection Hrun as <-. cbn [expression_cost].
+    rewrite (dag_resolve_cells_costs V fn_cost val_cost (dag_unfold_reverse g) costs
+      (IH Htail) k es Hcells).
+    symmetry. apply Hrows. now left.
+  - exact (IH Htail i e Hrun).
+Qed.
+
+(** Finite certificate unfolding has the cost fixed by all of its row equations. *)
+Lemma dag_unfold_costs : forall V fn_cost val_cost costs (g : extraction_dag V),
+  (forall i f k, In (i, (f, k)) g ->
+    dag_get_cost costs i = fn_cost f (dag_cost_cells val_cost costs k)) ->
+  forall i e, dag_unfold g i = Some e ->
+    expression_cost fn_cost val_cost e = dag_get_cost costs i.
+Proof.
+  intros V fn_cost val_cost costs g Hrows i e Hrun.
+  unfold dag_unfold in Hrun. eapply dag_unfold_reverse_costs; [|exact Hrun].
+  intros child f k Hin. apply Hrows. exact (proj2 (in_rev g (child, (f, k))) Hin).
+Qed.
+
+(** Selective evaluation agrees with a fixed cost table at every marked output. *)
+Lemma dag_cost_table_agrees : forall V fn_cost val_cost needed (g : extraction_dag V) costs,
+  dag_ordered_from [] g ->
+  (forall i f k, In (i, (f, k)) g -> dag_seen needed i = true ->
+    forall child, In (Id child) k -> dag_seen needed child = true) ->
+  (forall i f k, In (i, (f, k)) g ->
+    dag_get_cost costs i = fn_cost f (dag_cost_cells val_cost costs k)) ->
+  forall i, In i (map fst g) -> dag_seen needed i = true ->
+    dag_get_cost (dag_cost_table fn_cost val_cost needed g Empty) i = dag_get_cost costs i.
+Proof.
+  intros V fn_cost val_cost needed g costs Hordered Hclosed Hrows i Hin Hmarked.
+  pose proof (dag_cost_table_witness V fn_cost val_cost needed g Empty [] []
+    Hordered Hclosed ltac:(intros child Hchild; contradiction)) as Htable.
+  destruct (Htable i Hin Hmarked) as [e [Hrep Hvalue]]. rewrite Hvalue.
+  eapply dag_unfold_costs; [exact Hrows |].
+  apply dag_unfold_complete; [exact (proj1 (dag_ordered_names V [] g Hordered)) |exact Hrep].
+Qed.
+
 (** Finalized rows preserve their source, finite witnesses and exact class costs. *)
 Module SearchFinals (V : VALUE) (C : COST V).
   Module Semantics := SearchSemantics V C.
@@ -2643,6 +2715,95 @@ Module SearchFinals (V : VALUE) (C : COST V).
     pose proof (NoDup_incl_length (selected_rows_nodup costs entries Hagrees)
       (selected_rows_source rs costs entries Hrows)) as Hlength.
     unfold selected_rows in Hlength. now rewrite length_map in Hlength.
+  Qed.
+
+  (** Certificate entries are exactly selected rows with their recorded costs forgotten. *)
+  Lemma certificate_entry : forall (entries : extraction_best V.t) i f k,
+    In (i, (f, k)) (extraction_certificate entries) <->
+      exists n, In (i, (n, (f, k))) entries.
+  Proof.
+    intros entries i f k. unfold extraction_certificate. rewrite <- rev_alt, <- in_rev.
+    rewrite in_map_iff. split.
+    - intros [[j [n [g key]]] [Heq Hin]]. cbn [fst snd] in Heq.
+      injection Heq as <- <- <-. exists n. exact Hin.
+    - intros [n Hin]. exists (i, (n, (f, k))). split; [reflexivity |exact Hin].
+  Qed.
+
+  (** Every selected certificate row satisfies the finalized class-cost equation. *)
+  Lemma certificate_row_costs : forall rs costs entries,
+    finalised_valid rs costs entries -> forall i f k,
+    In (i, (f, k)) (extraction_certificate entries) ->
+    dag_get_cost costs i = C.fn_cost f (dag_cost_cells C.val_cost costs k).
+  Proof.
+    intros rs costs entries [[_ Hlookup] [Hrows _]] i f k Hin.
+    apply certificate_entry in Hin as [n Hentry].
+    destruct (Hrows i n f k Hentry) as [_ [_ Hcost]].
+    pose proof (proj2 (Hlookup i n) (ex_intro _ (f, k) Hentry)) as Hget.
+    unfold dag_get_cost. now rewrite Hget.
+  Qed.
+
+  (** Selective certificate evaluation agrees with the final trie at every marked output. *)
+  Lemma certificate_cost_table_agrees : forall rs costs entries seed,
+    finalised_valid rs costs entries -> dag_ordered_from [] (extraction_certificate entries) ->
+    let g := extraction_certificate entries in
+    let needed := dag_needed g seed in
+    forall i, In i (map fst g) -> dag_seen needed i = true ->
+    dag_get_cost (dag_cost_table C.fn_cost C.val_cost needed g Empty) i = dag_get_cost costs i.
+  Proof.
+    intros rs costs entries seed Hvalid Hordered g needed i Hin Hmarked.
+    apply dag_cost_table_agrees; [exact Hordered | | |exact Hin |exact Hmarked].
+    - exact (dag_needed_closed V.t g seed Hordered).
+    - exact (certificate_row_costs rs costs entries Hvalid).
+  Qed.
+
+  (** An accepted selected certificate reports exactly the finalized root cost. *)
+  Lemma certificate_check_cost : forall rs costs entries check_row c n,
+    finalised_valid rs costs entries ->
+    dag_check check_row C.fn_cost C.val_cost (extraction_certificate entries) c = Some n ->
+    n = dag_get_cost costs c.
+  Proof.
+    intros rs costs entries check_row c n Hvalid Hcheck.
+    destruct (dag_check_correct V.t check_row C.fn_cost C.val_cost
+      (extraction_certificate entries) c n Hcheck) as [_ [_ [e [_ [Hunfold Hcost]]]]].
+    rewrite Hcost. eapply dag_unfold_costs; [|exact Hunfold].
+    exact (certificate_row_costs rs costs entries Hvalid).
+  Qed.
+
+  (** An accepted selected root has the same exact cost in the final output list. *)
+  Lemma certificate_check_lookup : forall rs costs entries check_row c n,
+    finalised_valid rs costs entries ->
+    dag_check check_row C.fn_cost C.val_cost (extraction_certificate entries) c = Some n ->
+    extraction_cost_lookup c entries = Some n.
+  Proof.
+    intros rs costs entries check_row c n Hvalid Hcheck.
+    pose proof (certificate_check_cost rs costs entries check_row c n Hvalid Hcheck) as Hcost.
+    destruct (dag_check_correct V.t check_row C.fn_cost C.val_cost
+      (extraction_certificate entries) c n Hcheck) as [_ [_ [e [Hrep _]]]].
+    pose proof (dag_represents_name V.t (extraction_certificate entries) c e Hrep) as Hname.
+    apply in_map_iff in Hname as [[i [f k]] [Hic Hin]]. cbn [fst] in Hic. subst i.
+    apply certificate_entry in Hin as [m Hentry].
+    pose proof (proj2 (finalised_lookup_spec rs costs entries c m Hvalid)
+      (ex_intro _ (f, k) Hentry)) as Hget.
+    unfold dag_get_cost in Hcost. rewrite Hget in Hcost. subst n.
+    rewrite (finalised_lookup_agrees costs entries (proj1 Hvalid) c). exact Hget.
+  Qed.
+
+  (** A uniform selected-cost width bounds every accepted selected certificate root. *)
+  Lemma certificate_check_width : forall rs costs entries check_row c width,
+    finalised_valid rs costs entries ->
+    (forall i n ch, In (i, (n, ch)) entries -> N.size_nat n <= width) ->
+    match dag_check check_row C.fn_cost C.val_cost (extraction_certificate entries) c with
+    | Some n => N.size_nat n
+    | None => 0
+    end <= width.
+  Proof.
+    intros rs costs entries check_row c width Hvalid Hwidth.
+    destruct (dag_check check_row C.fn_cost C.val_cost (extraction_certificate entries) c)
+      as [n|] eqn:Hcheck; [|lia].
+    pose proof (certificate_check_lookup rs costs entries check_row c n Hvalid Hcheck)
+      as Hlookup.
+    destruct (extraction_cost_lookup_sound V.t entries c n Hlookup) as [ch Hin].
+    exact (Hwidth c n ch Hin).
   Qed.
 End SearchFinals.
 
