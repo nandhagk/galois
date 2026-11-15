@@ -924,6 +924,50 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       nia.
   Qed.
 
+  (** Each join's unit budget composes with the units of the unvisited suffix. *)
+  Local Lemma join_units_step a b tail :
+    (N.of_nat (S.wunits (S.join a b)) + tail + 1 <=
+      growth * (N.of_nat (S.wunits a) + N.of_nat (S.wunits b) + tail + 1))%N.
+  Proof.
+    pose proof (JU.join_wunits a b); pose proof growth_lat.
+    repeat rewrite Nat2N.inj_add in *; nia.
+  Qed.
+
+  (** A bounded join fold has a fixed multiplicative widening-unit budget. *)
+  Local Lemma fold_units xs : forall a,
+    (N.of_nat (S.wunits (fold_left S.join xs a)) + 1 <=
+      growth ^ N.of_nat (length xs + 1) *
+        N.of_nat (S.wunits a + fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
+  Proof.
+    induction xs as [|x xs IH]; intro a.
+    - cbn [fold_left length map fold_right]; rewrite N.pow_1_r.
+      repeat rewrite Nat2N.inj_add; pose proof growth_positive; nia.
+    - specialize (IH (S.join a x)).
+      pose proof (join_units_step a x
+        (N.of_nat (fold_right Nat.add 0 (map S.wunits xs)))) as Hstep.
+      pose proof (N.mul_le_mono_l _ _ (growth ^ N.of_nat (length xs + 1))%N Hstep)
+        as Hscaled.
+      cbn [fold_left length map fold_right].
+      replace (Datatypes.S (length xs) + 1) with (Datatypes.S (length xs + 1)) by lia.
+      rewrite Nat2N.inj_succ, N.pow_succ_r'.
+      repeat rewrite Nat2N.inj_add in IH |- *.
+      nia.
+  Qed.
+
+  Local Lemma collapse_units_budget xs : length xs <= 2 * C.k + 1 ->
+    (N.of_nat (S.wunits (collapse_with S.bot S.join xs)) <=
+      scale * N.of_nat (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
+  Proof.
+    intro Hlength; destruct xs as [|x xs].
+    - assert (Hbot : (N.of_nat (S.wunits S.bot) <= growth)%N).
+      { unfold growth; repeat rewrite Nat2N.inj_add; lia. }
+      pose proof scale_growth; cbn [collapse_with map fold_right]; lia.
+    - pose proof (fold_units xs x) as Hfold.
+      pose proof (scale_power (length xs + 1) ltac:(cbn [length] in Hlength; lia)) as Hscale.
+      cbn [collapse_with map fold_right].
+      eapply N.le_trans; [|apply N.mul_le_mono_r; exact Hscale]; lia.
+  Qed.
+
   Lemma c_lat_pos : (1 <= c_lat)%N.
   Proof.
     unfold c_lat; nia.
@@ -1073,7 +1117,10 @@ Module PartitionT (X Tk : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma F9_collapse_units : forall xs, length xs <= 2 * C.k + 1 ->
     (N.of_nat (S.wunits (collapse_with S.bot S.join xs)) <= k_partition * N.of_nat
       (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros xs Hlength; eapply N.le_trans; [now apply collapse_units_budget|].
+    apply N.mul_le_mono_r; unfold k_partition; nia.
+  Qed.
   Lemma F10_merge_parts_size : forall ps qs,
     length ps <= C.k -> length qs <= C.k ->
     (N.of_nat (parts_size Tk.bits S.size
