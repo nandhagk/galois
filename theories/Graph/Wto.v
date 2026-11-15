@@ -3511,7 +3511,15 @@ Module WtoT <: WTO_ALL.
   Qed.
 
   Lemma F4_check : forall g roots w, check g roots w = true <-> checked g roots w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots w. split.
+    - exact (wto_checked_from_acceptance g roots w).
+    - intro Hchecked. apply (wto_checked_acceptance_from_intervals g roots w).
+      + intros ranks intervals vs Hindex h u Hencloses.
+        eapply wto_check_index_complete_intervals; eassumption.
+      + exact Hchecked.
+  Qed.
+
 
   Lemma F5_live : forall g roots v, In v (live g roots) <-> reach (base g) roots v.
   Proof.
