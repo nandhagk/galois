@@ -522,6 +522,18 @@ Proof.
   - exact (proj1 (wrapped_norm_gamma w a z) Hz).
 Qed.
 
+(** Narrowing remains between its contained argument and its previous value. *)
+Lemma wrapped_narrow_between w a b : wrapped_leb w b a = true ->
+  wrapped_leb w b (wrapped_narrow w a b) = true /\
+  wrapped_leb w (wrapped_narrow w a b) a = true.
+Proof.
+  intro Hcontained.
+  destruct (wrapped_norm_leb w a) as [Han Hna].
+  destruct (wrapped_norm_leb w b) as [Hbn Hnb].
+  unfold wrapped_narrow. destruct (wrapped_norm w a);
+    split; eauto using wrapped_leb_trans.
+Qed.
+
 Theorem wrapped_size_monotone w left right :
   wrapped_leb w left right = true -> wrapped_size w left <= wrapped_size w right.
 Proof.
@@ -1195,85 +1207,268 @@ Proof.
       now apply wrapped_signed_parts_sound.
 Qed.
 
+Local Lemma wrapped_size_rank_bounds w size :
+  0 <= size <= modulus w -> 0 <= wrapped_size_rank w size <= Zpos w + 2.
+Proof.
+  intro Hsize. unfold wrapped_size_rank.
+  destruct (size =? 0) eqn:Hzero; [lia|].
+  destruct (size =? modulus w) eqn:Hfull; [lia|].
+  pose proof (Z.log2_nonneg size) as Hnonneg.
+  pose proof (Z.log2_le_mono size (modulus w) ltac:(lia)) as Hlog.
+  rewrite modulus_log2 in Hlog. lia.
+Qed.
+
+Local Lemma wrapped_size_rank_positive w size :
+  0 <= size < modulus w -> 0 < wrapped_size_rank w size.
+Proof.
+  intro Hsize. unfold wrapped_size_rank.
+  destruct (size =? 0) eqn:Hzero; [lia|].
+  destruct (size =? modulus w) eqn:Hfull; [apply Z.eqb_eq in Hfull; lia|].
+  pose proof (Z.log2_le_mono size (modulus w) ltac:(lia)) as Hlog.
+  rewrite modulus_log2 in Hlog. lia.
+Qed.
+
+Local Lemma wrapped_size_rank_progress w old next :
+  0 <= old < modulus w -> 0 < next <= modulus w ->
+  Z.min (modulus w) (3 * old) <= next ->
+  wrapped_size_rank w next < wrapped_size_rank w old.
+Proof.
+  intros Hold Hnext Hgrow.
+  pose proof (wrapped_size_rank_positive w old Hold) as Hpositive.
+  unfold wrapped_size_rank.
+  destruct (next =? 0) eqn:Hnext_zero; [apply Z.eqb_eq in Hnext_zero; lia|].
+  destruct (next =? modulus w) eqn:Hnext_full.
+  - unfold wrapped_size_rank in Hpositive. exact Hpositive.
+  - apply Z.eqb_neq in Hnext_full.
+    destruct (old =? 0) eqn:Hold_zero.
+    + pose proof (Z.log2_nonneg next). lia.
+    + apply Z.eqb_neq in Hold_zero.
+      destruct (old =? modulus w) eqn:Hold_full; [apply Z.eqb_eq in Hold_full; lia|].
+      assert (Hdouble : 2 * old <= next) by lia.
+      pose proof (Z.log2_le_mono (2 * old) next Hdouble) as Hlog.
+      rewrite Z.log2_double in Hlog by lia. lia.
+Qed.
+
+Local Lemma wrapped_widen_size_progress w a b :
+  wrapped_leb w b a = false ->
+  0 < wrapped_size w (wrapped_widen w a b) <= modulus w /\
+  Z.min (modulus w) (3 * wrapped_size w a) <= wrapped_size w (wrapped_widen w a b).
+Proof.
+  intro Hescape. unfold wrapped_widen. rewrite Hescape.
+  pose proof (wrapped_join_cover w (wrapped_double w a) b) as Hcover.
+  apply Bool.andb_true_iff in Hcover as [Hleft Hright].
+  pose proof (wrapped_size_monotone w _ _ Hleft) as Hsize.
+  rewrite wrapped_double_size in Hsize.
+  pose proof (wrapped_size_bounds w (wrapped_join w (wrapped_double w a) b)) as Hbounds.
+  split; [split; [|lia]|exact Hsize].
+  destruct (Z.eq_dec (wrapped_size w (wrapped_join w (wrapped_double w a) b)) 0)
+    as [Hzero|Hnonzero]; [|lia].
+  apply wrapped_size_zero in Hzero. rewrite Hzero in Hright.
+  destruct b; cbn [wrapped_leb] in Hright; try discriminate.
+Qed.
+
 Module Wrapped (L : WORD_LANGUAGE) <: WRAPPED L.
   Include WrappedCode L.
   Include WRAPPED_SPEC L.
   Definition pgamma := arc_gamma.
   Definition pwrank (_ : pwparam) (w : positive) (a : p) : nat := size_rank w (card w a).
+  (** The public arc meaning agrees with the checked circular helpers. *)
+  Lemma pgamma_wrapped : forall w a z, pgamma w a z <-> wrapped_gamma w a z.
+  Proof.
+    intros w [| |lo hi] z; cbn [pgamma arc_gamma wrapped_gamma]; try reflexivity.
+    unfold offset, wrapped_offset. rewrite !arc_wrap_agrees. reflexivity.
+  Qed.
+
+  (** Public cardinality is the size used by circular expansion. *)
+  Lemma card_wrapped_size : forall w a, card w a = wrapped_size w a.
+  Proof.
+    intros w [| |lo hi]; cbn [card wrapped_size]; try reflexivity.
+    unfold offset, wrapped_offset. rewrite arc_wrap_agrees. reflexivity.
+  Qed.
+
+  (** Natural widening credit is the nonnegative logarithmic size rank. *)
+  Lemma pwrank_wrapped : forall q w a,
+    pwrank q w a = Z.to_nat (wrapped_size_rank w (wrapped_size w a)).
+  Proof.
+    intros q w a. unfold pwrank. rewrite card_wrapped_size. reflexivity.
+  Qed.
+
   Lemma pwiden_ub_l : forall q w a b, pleb w a (pwiden q w a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Hcontained.
+    - apply wrapped_leb_refl.
+    - eapply wrapped_leb_trans; [apply wrapped_double_upper|].
+      exact (proj1 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w _ b))).
+  Qed.
   Lemma pwiden_ub_r : forall q w a b, pleb w b (pwiden q w a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. unfold pwiden. destruct (pleb w b a) eqn:Hcontained.
+    - exact Hcontained.
+    - exact (proj2 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w _ b))).
+  Qed.
   Lemma pwiden_stable : forall q w a b, pleb w b a = true -> pwiden q w a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b Hcontained. unfold pwiden. now rewrite Hcontained.
+  Qed.
   Lemma pwrank_widen : forall q w a b, pis_bot w a = false -> pleb w b a = false ->
     (pwrank q w (pwiden q w a b) < pwrank q w a)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b Hnonbottom Hescape.
+    change (wrapped_leb w b a = false) in Hescape.
+    rewrite !pwrank_wrapped. unfold pwiden, pleb, pjoin. rewrite Hescape.
+    pose proof (wrapped_size_bounds w a) as Hold.
+    assert (Hproper : wrapped_size w a < modulus w).
+    { destruct (Z.eq_dec (wrapped_size w a) (modulus w)) as [Hfull|Hproper]; [|lia].
+      pose proof (wrapped_full_contains w a b Hfull). congruence. }
+    destruct (wrapped_widen_size_progress w a b Hescape) as [Hnext Hgrow].
+    unfold wrapped_widen in Hnext, Hgrow. rewrite Hescape in Hnext, Hgrow.
+    pose proof (wrapped_size_rank_progress w (wrapped_size w a)
+      (wrapped_size w (wrapped_join w (wrapped_double w a) b))
+      ltac:(lia) Hnext Hgrow) as Hrank.
+    pose proof (wrapped_size_rank_bounds w (wrapped_size w a) Hold) as Hrank_old.
+    pose proof (wrapped_size_rank_bounds w
+      (wrapped_size w (wrapped_join w (wrapped_double w a) b))
+      (wrapped_size_bounds w (wrapped_join w (wrapped_double w a) b))) as Hrank_next.
+    change (Z.to_nat (wrapped_size_rank w
+      (wrapped_size w (wrapped_join w (wrapped_double w a) b))) <
+      Z.to_nat (wrapped_size_rank w (wrapped_size w a)))%nat.
+    apply Z2Nat.inj_lt; lia.
+  Qed.
   Lemma pwrank_widen_le : forall q w a b, pis_bot w a = false ->
     (pwrank q w (pwiden q w a b) <= pwrank q w a)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b Hnonbottom. destruct (pleb w b a) eqn:Hcontained.
+    - rewrite pwiden_stable by exact Hcontained. lia.
+    - pose proof (pwrank_widen q w a b Hnonbottom Hcontained). lia.
+  Qed.
   Lemma pnarrow_between : forall w a b, pleb w b a = true ->
     pleb w b (pnarrow w a b) = true /\ pleb w (pnarrow w a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wrapped_narrow_between.
+  Qed.
   Lemma pleb_refl : forall w a, pleb w a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wrapped_leb_refl.
+  Qed.
   Lemma pleb_trans : forall w a b c,
     pleb w a b = true -> pleb w b c = true -> pleb w a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wrapped_leb_trans.
+  Qed.
   Lemma pbot_least : forall w a, pleb w (pbot w) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. reflexivity.
+  Qed.
   Lemma ptop_greatest : forall w a, pleb w a (ptop w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [| |lo hi]; reflexivity.
+  Qed.
   Lemma pis_bot_bot : forall w, pis_bot w (pbot w) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro w. reflexivity.
+  Qed.
   Lemma pis_bot_least : forall w a b, pis_bot w a = true -> pleb w a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [| |lo hi] b Hbottom; try discriminate. reflexivity.
+  Qed.
   Lemma pjoin_ub_l : forall w a b, pleb w a (pjoin w a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    exact (proj1 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w a b))).
+  Qed.
   Lemma pjoin_ub_r : forall w a b, pleb w b (pjoin w a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b.
+    exact (proj2 (proj1 (Bool.andb_true_iff _ _) (wrapped_join_cover w a b))).
+  Qed.
   Lemma pmeet_lb_l : forall w a b, pleb w (pmeet w a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wrapped_meet_lower_left.
+  Qed.
   Lemma pgamma_mono : forall w a b z,
     pleb w a b = true -> pgamma w a z -> pgamma w b z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b z Hle. rewrite !pgamma_wrapped.
+    exact (proj1 (wrapped_leb_spec w a b) Hle z).
+  Qed.
   Lemma pgamma_bot : forall w z, ~ pgamma w (pbot w) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z Hempty. exact Hempty.
+  Qed.
   Lemma ptop_full : forall w z, L.is_word w z -> pgamma w (ptop w) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z Hword. exact Hword.
+  Qed.
   Lemma pgamma_meet : forall w a b z,
     pgamma w a z -> pgamma w b z -> pgamma w (pmeet w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b z. rewrite !pgamma_wrapped. apply wrapped_meet_sound.
+  Qed.
   Lemma pis_bot_sound : forall w a z, pis_bot w a = true -> ~ pgamma w a z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [| |lo hi] z Hbottom; try discriminate. intro Hempty. exact Hempty.
+  Qed.
   Lemma pis_bot_below : forall w a b,
     pleb w a b = true -> pis_bot w b = true -> pis_bot w a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w [| |la ha] [| |lb hb] Hle Hbottom; try discriminate. reflexivity.
+  Qed.
   Lemma pconst_sound : forall w z, pgamma w (pconst w z) (L.wrap w z).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w z. rewrite pgamma_wrapped. unfold pconst.
+    apply wrapped_norm_gamma. split; [apply wrap_is_word|].
+    rewrite wrapped_offset_word, wrapped_offset_self. lia.
+  Qed.
   Lemma ppoint_sound : forall w a z v,
     ppoint w a = Some v -> L.is_word w z -> pgamma w a z -> z = v.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a z v Hpoint Hword Hgamma. apply pgamma_wrapped in Hgamma.
+    exact (wrapped_point_sound w a z v Hgamma Hpoint).
+  Qed.
   Lemma gamma_arc : forall w a z, pgamma w a z <-> arc_gamma w a z.
   Proof. intros; reflexivity. Qed.
   Lemma wrapped_neg_sound : forall w a x z, L.is_word w x -> pgamma w a x ->
     L.eval_op Op.bvneg ((w, x) :: nil) = Some (w, z) -> pgamma w (wrapped_neg w a) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a x z Hword Hgamma Heval.
+    change (eval_op bvneg [(w, x)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun1 bvneg w x UNeg eq_refl) in Heval.
+    cbn [eval_unary_tag] in Heval. inversion Heval; subst z.
+    rewrite pgamma_wrapped in *. rewrite wneg_value. now apply wrapped_neg_sound.
+  Qed.
   Lemma wrapped_add_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvadd ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (wrapped_add w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvadd [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvadd w x y BAdd eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst z.
+    rewrite !pgamma_wrapped in *. rewrite wadd_value. now apply wrapped_add_sound.
+  Qed.
   Lemma wrapped_sub_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvsub ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (wrapped_sub w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvsub [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvsub w x y BSub eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst z.
+    rewrite !pgamma_wrapped in *. rewrite wsub_value. now apply wrapped_sub_sound.
+  Qed.
   Lemma wrapped_mul_sound : forall w a b x y z,
     L.is_word w x -> L.is_word w y -> pgamma w a x -> pgamma w b y ->
     L.eval_op Op.bvmul ((w, x) :: (w, y) :: nil) = Some (w, z) ->
     pgamma w (wrapped_mul w a b) z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b x y z Hx Hy Ha Hb Heval.
+    change (eval_op bvmul [(w, x); (w, y)] = Some (w, z)) in Heval.
+    rewrite (eval_op_fun2 bvmul w x y BMul eq_refl) in Heval.
+    cbn [eval_binary_tag] in Heval. inversion Heval; subst z.
+    rewrite !pgamma_wrapped in *. now apply wrapped_mul_sound.
+  Qed.
 End Wrapped.
 
 Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
@@ -1449,7 +1644,9 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   (* Gamma and multiplication laws now live in WRAPPED_LAWS. *)
   (** Arc cardinality lies between zero and the modulus. *)
   Lemma F2_card : forall w a, (0 <= card w a <= Word.modulus w)%Z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. rewrite card_wrapped_size. apply wrapped_size_bounds.
+  Qed.
   (** Pole splitting returns at most four pieces. *)
   Lemma F3_split_len : forall w a, (length (wrapped_split w a) <= 4)%nat.
   Proof. Admitted. (* STUB *)
@@ -1461,32 +1658,53 @@ Module WrappedT (L : WORD_LANGUAGE_T) <: WRAPPED_ALL L.
   Lemma F5_mul_piece : forall w lo hi lo' hi' x y,
     (lo <= x <= hi)%Z -> (lo' <= y <= hi')%Z ->
     pgamma w (mul_piece w (lo, hi) (lo', hi')) (L.wrap w (x * y)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w lo hi lo' hi' x y Hx Hy. rewrite pgamma_wrapped.
+    apply wrapped_mul_piece_sound; assumption.
+  Qed.
   (** Widening retains a contained candidate and otherwise expands first. *)
   Lemma F7_widen : forall q w a b,
     pwiden q w a b = if pleb w b a then a else pjoin w (wrapped_double w a) b.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a b. reflexivity.
+  Qed.
   (** Expansion triples cardinality until it reaches the modulus. *)
   Lemma F8_double_card : forall w a,
     card w (wrapped_double w a) = Z.min (Word.modulus w) (3 * card w a)%Z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. rewrite !card_wrapped_size. apply wrapped_double_size.
+  Qed.
   (** Expansion contains the old arc. *)
   Lemma F8a_double_contains : forall w a, pleb w a (wrapped_double w a) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    apply wrapped_double_upper.
+  Qed.
   (** Cardinality is monotone in the payload order. *)
   Lemma F8b_card_mono : forall w a b,
     pleb w a b = true -> (card w a <= card w b)%Z.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a b Hle. rewrite !card_wrapped_size. now apply wrapped_size_monotone.
+  Qed.
   (** Widening rank is determined by arc cardinality. *)
   Lemma F9_rank : forall q w a, pwrank q w a = size_rank w (card w a).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a. reflexivity.
+  Qed.
   (** Arc widening credit is at most width plus two. *)
   Lemma F10_rank_bound : forall q w a, (pwrank q w a <= Pos.to_nat w + 2)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros q w a. rewrite pwrank_wrapped.
+    pose proof (wrapped_size_rank_bounds w (wrapped_size w a) (wrapped_size_bounds w a))
+      as Hbounds.
+    replace (Pos.to_nat w + 2)%nat with (Z.to_nat (Zpos w + 2)) by lia.
+    apply Z2Nat.inj_le; lia.
+  Qed.
   (** Payload storage charges width and endpoint bit lengths. *)
   Lemma psize_bits : forall w a,
     psize w a = (Pos.to_nat w + wrapped_bits a + 1)%nat.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros w a. reflexivity.
+  Qed.
   (** Arithmetic transfer results have endpoints within the word width. *)
   Lemma wrapped_result_bits : forall w a b,
     (wrapped_bits (wrapped_add w a b) <= 2 * Pos.to_nat w)%nat /\
