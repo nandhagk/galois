@@ -384,6 +384,79 @@ Proof.
   unfold tarjan_bag in Hlength. rewrite length_app in Hlength. lia.
 Qed.
 
+(** A proof-only maximum bounds the values of all keys in an entered list. *)
+Definition tarjan_max_key (xs : list positive) : positive := fold_right Pos.max 1%positive xs.
+
+Local Lemma tarjan_max_key_member xs v : In v xs ->
+  Pos.to_nat v <= Pos.to_nat (tarjan_max_key xs).
+Proof.
+  unfold tarjan_max_key. induction xs as [|u xs IH]; [contradiction|].
+  intros [Heq|Hin]; cbn [fold_right]; rewrite Pos2Nat.inj_max.
+  - subst u. apply Nat.le_max_l.
+  - eapply Nat.le_trans; [now apply IH|apply Nat.le_max_r].
+Qed.
+
+Local Lemma tarjan_max_key_width w xs :
+  Forall (fun v => Pos.size_nat v <= w) xs ->
+  Pos.size_nat (tarjan_max_key xs) <= Nat.max 1 w.
+Proof.
+  unfold tarjan_max_key. intros Hwidth.
+  induction Hwidth as [|v xs Hv Hwidth IH].
+  - cbn [fold_right Pos.size_nat]. apply Nat.le_max_l.
+  - cbn [fold_right]. unfold Pos.max at 1.
+    destruct (Pos.compare v (fold_right Pos.max 1%positive xs)); try exact IH;
+      eapply Nat.le_trans; [exact Hv|apply Nat.le_max_r].
+Qed.
+
+(** Distinct positive identifiers bounded by an integer have at most that many members. *)
+Lemma tarjan_positive_cardinality xs upper : NoDup xs ->
+  (forall v, In v xs -> Pos.to_nat v <= upper) -> length xs <= upper.
+Proof.
+  intros Hunique Hupper.
+  assert (Hmap : NoDup (map Pos.to_nat xs)).
+  { clear Hupper. induction Hunique as [|v xs Hfresh Hunique IH]; [constructor|].
+    constructor; [|exact IH]. intros Hin. apply in_map_iff in Hin.
+    destruct Hin as [u [Heq Hu]]. apply Pos2Nat.inj in Heq. subst u. contradiction. }
+  assert (Hrange : incl (map Pos.to_nat xs) (seq 1 upper)).
+  { intros value Hin. apply in_map_iff in Hin. destruct Hin as [v [Heq Hv]].
+    subst value. apply in_seq. specialize (Hupper v Hv).
+    pose proof (Pos2Nat.is_pos v). lia. }
+  pose proof (NoDup_incl_length Hmap Hrange) as Hlength.
+  now rewrite length_map, length_seq in Hlength.
+Qed.
+
+Local Lemma tarjan_size_nat_le p q : Pos.to_nat p <= Pos.to_nat q ->
+  Pos.size_nat p <= Pos.size_nat q.
+Proof.
+  intros Hle. destruct (Nat.eq_dec (Pos.to_nat p) (Pos.to_nat q)) as [Heq|Hneq].
+  - apply Pos2Nat.inj in Heq. now subst q.
+  - apply Pos.size_nat_monotone. apply Pos2Nat.inj_lt. lia.
+Qed.
+
+(** A counter bounded by one plus a distinct-key count needs at most one extra key bit. *)
+Lemma tarjan_counter_width w xs p :
+  NoDup xs -> Forall (fun v => Pos.size_nat v <= w) xs ->
+  Pos.to_nat p <= S (length xs) -> Pos.size_nat p <= w + 1.
+Proof.
+  intros Hunique Hwidth Hcount. destruct xs as [|v xs].
+  - cbn [length] in Hcount. assert (Heq : p = 1%positive).
+    { apply Pos2Nat.inj. change (Pos.to_nat p = 1). pose proof (Pos2Nat.is_pos p). lia. }
+    subst p. cbn [Pos.size_nat]. lia.
+  - pose proof (tarjan_max_key_width w (v :: xs) Hwidth) as Hmaximum.
+    assert (Hw : 1 <= w).
+    { inversion Hwidth as [|v' xs' Hv Hrest]; subst v' xs'.
+      destruct v; cbn [Pos.size_nat] in Hv; lia. }
+    rewrite Nat.max_r in Hmaximum by exact Hw.
+    pose proof (tarjan_positive_cardinality (v :: xs)
+      (Pos.to_nat (tarjan_max_key (v :: xs))) Hunique
+      (fun u Hin => tarjan_max_key_member (v :: xs) u Hin)) as Hvertices.
+    assert (Hnumeric : Pos.to_nat p <= Pos.to_nat (xO (tarjan_max_key (v :: xs)))).
+    { rewrite Pos2Nat.inj_xO. pose proof (Pos2Nat.is_pos (tarjan_max_key (v :: xs))). lia. }
+    eapply Nat.le_trans; [apply tarjan_size_nat_le; exact Hnumeric|].
+    cbn [Pos.size_nat]. lia.
+Qed.
+
+
 Module TarjanSearchCode := SearchCode TarjanVisitor.
 Module TarjanSearch.
   Include TarjanSearchCode.
