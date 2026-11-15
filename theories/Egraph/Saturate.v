@@ -3544,10 +3544,390 @@ Module SaturateT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T 
     rewrite table_get_list by exact Hvalid. rewrite Hcell. split; reflexivity.
   Qed.
   (** Adding an expression separates node insertion cost from child-index work. *)
+  (** Unary table subtraction reads at most its first argument. *)
+  Lemma table_sub_clock : forall n m, (T_table_sub n m <= N.of_nat (n + 1))%N.
+  Proof.
+    induction n as [| n IH]; intros [| m]; time_step.
+  Qed.
+
+  (** Table pushes pay for occasional copying from credit on the accumulated suffix. *)
+  Lemma table_push_clock : forall A (x : A) t, table_valid t ->
+    (T_table_push x t + 16 * N.of_nat (table_back_size (table_push x t)) <=
+      32 + 16 * N.of_nat (table_back_size t))%N.
+  Proof.
+    intros A x [front back nf nb room] [Hfront [Hback Hroom]].
+    cbn [table_front table_back table_front_size table_back_size table_room] in *.
+    destruct room as [| room].
+    - pose proof (Nat.T_add_le nf nb) as Hplus.
+      pose proof (Datatypes.T_app_le front (rev_append (x :: back) [])) as Happ.
+      pose proof (List.T_rev_append_le (x :: back) []) as Hreverse.
+      time_unfold @T_table_push. time_simpl.
+      unfold table_push. cbn [table_room table_front table_back table_front_size table_back_size].
+      cbn [length] in Hreverse. rewrite Nat2N.inj_succ in Hreverse. lia.
+    - time_unfold @T_table_push. time_simpl.
+      unfold table_push. cbn [table_room table_front table_back table_front_size table_back_size].
+      rewrite Nat2N.inj_succ. lia.
+  Qed.
+
+  (** Indexed table reads cost at most a constant times the requested index. *)
+  Lemma table_get_clock : forall A (default : A) j t, table_valid t ->
+    (T_table_get default j t <= 32 * N.of_nat (j + 1))%N.
+  Proof.
+    intros A default j [front back nf nb room] [Hfront [Hback Hroom]].
+    cbn [table_front table_back table_front_size table_back_size table_room] in *.
+    pose proof (List.T_nth_error_le front j) as Hfront_cost.
+    time_unfold @T_table_get. time_simpl.
+    cbn [table_front table_back table_front_size table_back_size table_room].
+    destruct (nth_error front j) as [x |] eqn:Hget; time_simpl; [lia |].
+    apply nth_error_None in Hget.
+    assert (Hnb : nb <= j) by lia.
+    pose proof (table_sub_clock j nf) as Hsub.
+    set (k := table_sub j nf) in *.
+    assert (Hk : k <= j) by (unfold k; rewrite table_sub_eq; lia).
+    pose proof (Nat.T_leb_le (S k) nb) as Hcompare.
+    destruct (Nat.leb (S k) nb); time_simpl; [| lia].
+    pose proof (table_sub_clock nb (S k)) as Hreverse.
+    set (r := table_sub nb (S k)) in *.
+    assert (Hr : r <= nb) by (unfold r; rewrite table_sub_eq; lia).
+    pose proof (List.T_nth_error_le back r) as Hback_cost.
+    destruct (nth_error back r); time_simpl; lia.
+  Qed.
+  (** Reading all children pays for the sum of their indices. *)
+  Lemma table_children_clock : forall (default : cell V.t) children t, table_valid t ->
+    (ListDef.T_map (fun j => table_get default j t) (fun j => 1 + T_table_get default j t) children <=
+      64 * N.of_nat ((fold_right (fun (j n : nat) => (j + 1 + n)%nat) 0%nat children + 1)%nat))%N.
+  Proof.
+    intros default children. induction children as [| j rest IH]; intros t Hvalid.
+    - time_unfold ListDef.T_map. time_cbn. lia.
+    - pose proof (table_get_clock _ default j t Hvalid) as Hhead.
+      specialize (IH t Hvalid). time_unfold ListDef.T_map. time_simpl.
+      cbn [fold_right]. rewrite !Nat2N.inj_add in *. nia.
+  Qed.
+
+  (** One fold step pays its child reads, insertion, table push and recursive call. *)
+  Lemma T_build_nodes_step : forall n rest t db,
+    let cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end in
+    let out := add_node n cells db in
+    (T_build_nodes (n :: rest) t db <=
+      (match n with
+       | EApp _ children => ListDef.T_map (fun j => table_get (Id 1%positive) j t)
+           (fun j => 1 + T_table_get (Id 1%positive) j t) children
+       | ELit _ => 0
+       end) + T_add_node n cells db + T_table_push (fst out) t +
+      T_build_nodes rest (table_push (fst out) t) (snd out) + 16)%N.
+  Proof.
+    intros [f children | v] rest t db; cbv zeta; time_unfold T_build_nodes; time_simpl.
+    - destruct (add_node (EApp f children)
+        (map (fun j => table_get (Id 1%positive) j t) children) db).
+      time_cbn. lia.
+    - time_cbn. lia.
+  Qed.
+
+  (** Expression insertion pays for its node fold, root lookup and fixed wrapper work. *)
+  Lemma T_add_expr_overhead : forall e db,
+    (T_add_expr e db <= T_build_nodes (expr_nodes V.t e) table_empty db +
+      T_table_get (Id 1%positive) (expr_root V.t e)
+        (fst (build_nodes (expr_nodes V.t e) table_empty db)) + 16)%N.
+  Proof.
+    intros [ns root_index] db. time_unfold T_add_expr. time_simpl.
+    cbn [expr_nodes expr_root].
+    destruct (build_nodes ns table_empty db) as [t final].
+    destruct (table_get (Id 1%positive) root_index t); time_cbn; lia.
+  Qed.
+  (** Every node contributes at least one unit of insertion work. *)
+  Lemma enode_work_positive : forall (n : enode V.t), 1 <= enode_work n.
+  Proof.
+    intros [f children | v]; cbn [enode_work]; nia.
+  Qed.
+
+  (** The optimized fold pays node costs and linear table maintenance with suffix credit. *)
+  Lemma T_build_nodes_split : forall ns t db, table_valid t ->
+    (T_build_nodes ns t db + 16 *
+      N.of_nat (table_back_size (fst (build_nodes ns t db))) <=
+      T_add_nodes ns (table_list t) db +
+      256 * N.of_nat ((fold_right (fun n m => (enode_work n + m)%nat) 0%nat ns + 1)%nat) +
+      16 * N.of_nat (table_back_size t))%N.
+  Proof.
+    induction ns as [| n rest IH]; intros t db Hvalid.
+    - time_unfold T_build_nodes. cbn [T_add_nodes build_nodes fst fold_right].
+      time_simpl. lia.
+    - set (cells := match n with
+        | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+        | ELit _ => []
+        end).
+      assert (Hargs : node_args n (table_list t) = cells).
+      { destruct n as [f children | v]; [| reflexivity]. unfold cells, node_args.
+        apply map_ext. intro j. symmetry. now apply table_get_nth. }
+      pose proof (T_build_nodes_step n rest t db) as Hstep. cbv zeta in Hstep.
+      fold cells in Hstep.
+      assert (Hreads : ((match n with
+        | EApp _ children => ListDef.T_map (fun j => table_get (Id 1%positive) j t)
+            (fun j => 1 + T_table_get (Id 1%positive) j t) children
+        | ELit _ => 0
+        end) <= 64 * N.of_nat (enode_work n))%N).
+      { destruct n as [f children | v]; [| cbn [enode_work]; lia].
+        pose proof (table_children_clock (Id 1%positive) children t Hvalid) as Hchildren.
+        unfold enode_work. rewrite Nat2N.inj_add. nia. }
+      pose proof (enode_work_positive n) as Hpositive.
+      cbn [T_add_nodes]. rewrite Hargs. cbn [build_nodes]. fold cells.
+      destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+      cbn [fst snd] in Hstep |- *.
+      pose proof (table_push_clock _ c t Hvalid) as Hpush.
+      specialize (IH (table_push c t) next (table_push_valid _ c t Hvalid)).
+      rewrite table_push_list in IH.
+      cbn [fold_right]. rewrite !Nat2N.inj_add in IH |- *. lia.
+  Qed.
+
+  (** Changing the terminal accumulator adds exactly that amount to the node-work sum. *)
+  Lemma nodes_work_offset : forall ns base,
+    fold_right (fun (n : enode V.t) m => enode_work n + m) base ns =
+    fold_right (fun n m => enode_work n + m) 0 ns + base.
+  Proof.
+    induction ns as [| n rest IH]; intro base; cbn [fold_right]; [reflexivity |].
+    rewrite IH. lia.
+  Qed.
+
+  (** Expression insertion has at most a fixed linear overhead over the plan's node costs. *)
+  Lemma T_add_expr_bound : forall e db,
+    (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
+      512 * N.of_nat (expr_work e))%N.
+  Proof.
+    intros [ns root_index] db.
+    pose proof (T_add_expr_overhead (FExpr V.t ns root_index) db) as Hwrapper.
+    pose proof (T_build_nodes_split ns table_empty db (table_empty_valid (cell V.t)))
+      as Hnodes.
+    pose proof (build_nodes_shape ns table_empty db (table_empty_valid (cell V.t))) as Hshape.
+    cbn [expr_nodes expr_root] in Hwrapper.
+    destruct (build_nodes ns table_empty db) as [t final] eqn:Hresult.
+    cbn [fst snd expr_nodes expr_root] in Hwrapper, Hnodes, Hshape |- *.
+    pose proof (table_get_clock _ (Id 1%positive) root_index t (proj1 Hshape)) as Hroot.
+    change (T_build_nodes ns table_empty db + 16 * N.of_nat (table_back_size t) <=
+      T_add_nodes ns [] db +
+      256 * N.of_nat ((fold_right (fun n m => (enode_work n + m)%nat) 0%nat ns + 1)%nat) +
+      16 * 0)%N
+      in Hnodes.
+    unfold expr_work. cbn [expr_nodes expr_root]. rewrite nodes_work_offset.
+    rewrite !Nat2N.inj_add in Hnodes, Hroot |- *. lia.
+  Qed.
+  (** One node preserves the prepared prefix, layout and monotone budgets needed by cost folds. *)
+  Lemma node_prefix_ready : forall ds n rest t db, D.wf db ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) (n :: rest) ->
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) (n :: rest) ->
+    let cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end in
+    let out := add_node n cells db in
+    let t' := table_push (fst out) t in
+    D.wf (snd out) /\ kind (D.view (snd out)) = kind (D.view db) /\
+    D.slots (snd out) = D.slots db /\ (D.ids db <= D.ids (snd out))%N /\
+    D.unit db <= D.unit (snd out) /\ table_valid t' /\ table_allocated (snd out) t' /\
+    nodes_typed ds (map cell_sort (table_list t')) rest /\
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit (snd out) f (S (length children))
+      | ELit _ => True
+      end) rest.
+  Proof.
+    intros ds n rest t db Hwf Hkind Hvalid Hallocated [Hnode Htail] Hslots.
+    apply Forall_cons_iff in Hslots. destruct Hslots as [Hslot Hslots].
+    set (cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end).
+    assert (Hready : (forall i, In (Id i) cells -> D.allocated db i) /\
+      match n with
+      | EApp f _ => kind (D.view db) f = Some OId /\
+          D.slots_fit db f (S (length cells))
+      | ELit _ => True
+      end).
+    { destruct n as [f children | v]; unfold cells; cbn in *.
+      - destruct Hnode as [Hf [ss [Hss Hchildren]]].
+        destruct (table_children_typed db t children ss Hvalid Hallocated Hchildren)
+          as [Hsorts Hids].
+        split; [exact Hids |]. split; [now rewrite Hkind | now rewrite length_map].
+      - split; [intros i Hin; contradiction | exact I]. }
+    destruct Hready as [Hcells Hready].
+    pose proof (add_node_ready n cells db Hwf Hcells Hready) as Hnext.
+    pose proof (add_node_sort n cells db) as Hsort.
+    pose proof (add_node_unit n cells db Hwf) as Hunit.
+    cbv zeta. fold cells.
+    destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+    cbn [fst snd] in Hnext, Hsort, Hunit |- *.
+    destruct Hnext as [Hwf' [Hkind' [Hslots' [Hnew [Hids Hgrowth]]]]].
+    split; [exact Hwf' |]. split; [exact Hkind' |]. split; [exact Hslots' |].
+    split; [exact Hids |]. split; [exact Hunit |]. split.
+    - now apply table_push_valid.
+    - split.
+      + unfold table_allocated in *. rewrite table_push_list. apply Forall_app. split.
+        * eapply Forall_impl; [| exact Hallocated]. intros old Hold i Heq.
+          specialize (Hold i Heq). unfold D.allocated in *.
+          exact (N.le_trans _ _ _ Hold Hids).
+        * constructor; [exact Hnew | constructor].
+      + split.
+        * rewrite table_push_list, map_app. cbn [map]. now rewrite Hsort.
+        * eapply Forall_impl; [| exact Hslots]. intros [f children | v] Hfits; [| exact I].
+          unfold D.slots_fit in *. now rewrite Hslots'.
+  Qed.
+
+  (** The node fold retains its slot layout and never reduces either spending budget. *)
+  Lemma build_nodes_economy : forall ds ns t db, D.wf db ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) ns ->
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) ns ->
+    D.wf (snd (build_nodes ns t db)) /\
+    D.slots (snd (build_nodes ns t db)) = D.slots db /\
+    (D.ids db <= D.ids (snd (build_nodes ns t db)))%N /\
+    D.unit db <= D.unit (snd (build_nodes ns t db)).
+  Proof.
+    intros ds ns. induction ns as [| n rest IH]; intros t db Hwf Hkind Hvalid Hallocated
+      Htyped Hslots.
+    - cbn [build_nodes snd]. split; [exact Hwf |]. split; [reflexivity |].
+      split; [apply N.le_refl | apply Nat.le_refl].
+    - pose proof (node_prefix_ready ds n rest t db Hwf Hkind Hvalid Hallocated Htyped Hslots)
+        as Hstep.
+      set (cells := match n with
+        | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+        | ELit _ => []
+        end).
+      cbv zeta in Hstep. fold cells in Hstep. cbn [build_nodes]. fold cells.
+      destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+      cbn [fst snd] in Hstep |- *.
+      destruct Hstep as [Hwf' [Hkind' [Hslots' [Hids [Hunit [Hvalid'
+        [Hallocated' [Htyped' Hfits']]]]]]]].
+      assert (Hkind_next : forall f, kind (D.view next) f = lookup_kind ds f).
+      { intro f. now rewrite Hkind'. }
+      destruct (IH (table_push c t) next Hwf' Hkind_next Hvalid' Hallocated' Htyped' Hfits')
+        as [Hfinal [Hlayout [Hids_final Hunit_final]]].
+      split; [exact Hfinal |]. split; [now rewrite Hlayout, Hslots' |]. split.
+      + exact (N.le_trans _ _ _ Hids Hids_final).
+      + exact (Nat.le_trans _ _ _ Hunit Hunit_final).
+  Qed.
+  (** A prepared node spends at most its own work in the common final budget. *)
+  Lemma prepared_node_amort : forall B U ds n rest t db, D.wf db ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) (n :: rest) ->
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) (n :: rest) ->
+    let cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end in
+    (D.ids (snd (add_node n cells db)) <= B)%N ->
+    D.unit (snd (add_node n cells db)) <= U ->
+    (T_add_node n cells db + N.of_nat U * D.potential B (snd (add_node n cells db)) <=
+      128 * (D.c_db + 1) * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) * N.of_nat (enode_work n) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U ds n rest t db Hwf Hkind Hvalid Hallocated [Hnode Htail] Hslots.
+    apply Forall_cons_iff in Hslots. destruct Hslots as [Hslot Hslots].
+    set (cells := match n with
+      | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+      | ELit _ => []
+      end). cbv zeta. fold cells. intros Hids HU.
+    assert (Hready : (forall i, In (Id i) cells -> D.allocated db i) /\
+      match n with
+      | EApp f _ => kind (D.view db) f = Some OId /\
+          D.slots_fit db f (S (length cells))
+      | ELit _ => cells = []
+      end).
+    { destruct n as [f children | v]; unfold cells; cbn in *.
+      - destruct Hnode as [Hf [ss [Hss Hchildren]]].
+        destruct (table_children_typed db t children ss Hvalid Hallocated Hchildren)
+          as [Hsorts Hids'].
+        split; [exact Hids' |]. split; [now rewrite Hkind | now rewrite length_map].
+      - split; [intros i Hin; contradiction | reflexivity]. }
+    destruct Hready as [Hcells Hready].
+    pose proof (add_node_amort_bound B U n cells db Hwf Hcells Hready Hids HU) as Hcost.
+    assert (Hwidth : (N.of_nat ((length cells + 2) * (length cells + 2)) <=
+      4 * N.of_nat (enode_work n))%N).
+    { destruct n as [f children | v]; unfold cells, enode_work.
+      - rewrite length_map, Nat2N.inj_add. nia.
+      - reflexivity. }
+    eapply N.le_trans; [exact Hcost |]. apply N.add_le_mono_r.
+    replace (128 * (D.c_db + 1) * N.of_nat U *
+      N.of_nat (N.to_nat (N.log2 B) + 1) * N.of_nat (D.num_slots db + 1) *
+      N.of_nat (enode_work n))%N with
+      ((32 * (D.c_db + 1) * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1)) * (4 * N.of_nat (enode_work n)))%N by ring.
+    now apply N.mul_le_mono_l.
+  Qed.
+
+  (** The node fold telescopes insertion potential at its final identifier and unit budgets. *)
+  Lemma T_add_nodes_amort : forall B U ds ns t db, D.wf db ->
+    (forall f, kind (D.view db) f = lookup_kind ds f) ->
+    table_valid t -> table_allocated db t ->
+    nodes_typed ds (map cell_sort (table_list t)) ns ->
+    Forall (fun node => match node with
+      | EApp f children => D.slots_fit db f (S (length children))
+      | ELit _ => True
+      end) ns ->
+    (D.ids (snd (build_nodes ns t db)) <= B)%N ->
+    D.unit (snd (build_nodes ns t db)) <= U ->
+    (T_add_nodes ns (table_list t) db +
+      N.of_nat U * D.potential B (snd (build_nodes ns t db)) <=
+      128 * (D.c_db + 1) * N.of_nat U * N.of_nat (N.to_nat (N.log2 B) + 1) *
+        N.of_nat (D.num_slots db + 1) *
+        N.of_nat (fold_right (fun n m => (enode_work n + m)%nat) 0%nat ns) +
+      N.of_nat U * D.potential B db)%N.
+  Proof.
+    intros B U ds ns. induction ns as [| n rest IH]; intros t db Hwf Hkind Hvalid Hallocated
+      Htyped Hslots Hids HU.
+    - cbn [T_add_nodes build_nodes snd fold_right]. nia.
+    - pose proof (node_prefix_ready ds n rest t db Hwf Hkind Hvalid Hallocated Htyped Hslots)
+        as Hstep.
+      pose proof (prepared_node_amort B U ds n rest t db Hwf Hkind Hvalid Hallocated
+        Htyped Hslots) as Hcost.
+      set (cells := match n with
+        | EApp _ children => map (fun j => table_get (Id 1%positive) j t) children
+        | ELit _ => []
+        end).
+      assert (Hargs : node_args n (table_list t) = cells).
+      { destruct n as [f children | v]; [| reflexivity]. unfold cells, node_args.
+        apply map_ext. intro j. symmetry. now apply table_get_nth. }
+      cbv zeta in Hstep, Hcost. fold cells in Hstep, Hcost.
+      cbn [T_add_nodes]. rewrite Hargs.
+      cbn [build_nodes] in Hids, HU |- *. fold cells in Hids, HU |- *.
+      destruct (add_node n cells db) as [c next] eqn:Hnode_result.
+      cbn [fst snd] in Hstep, Hcost, Hids, HU |- *.
+      destruct Hstep as [Hwf' [Hkind' [Hslots' [Hids' [Hunit' [Hvalid'
+        [Hallocated' [Htyped' Hfits']]]]]]]].
+      assert (Hkind_next : forall f, kind (D.view next) f = lookup_kind ds f).
+      { intro f. now rewrite Hkind'. }
+      destruct (build_nodes_economy ds rest (table_push c t) next Hwf' Hkind_next
+        Hvalid' Hallocated' Htyped' Hfits') as [Hfinal [Hlayout [Hids_final Hunit_final]]].
+      specialize (Hcost (N.le_trans _ _ _ Hids_final Hids)
+        (Nat.le_trans _ _ _ Hunit_final HU)).
+      specialize (IH (table_push c t) next Hwf' Hkind_next Hvalid' Hallocated' Htyped' Hfits'
+        Hids HU).
+      rewrite table_push_list in IH.
+      assert (Hnum_slots : D.num_slots next = D.num_slots db).
+      { unfold D.num_slots. now rewrite Hslots'. }
+      rewrite Hnum_slots in IH. cbn [fold_right]. rewrite Nat2N.inj_add.
+      rewrite N.mul_add_distr_l. lia.
+  Qed.
   Lemma T3_add_expr_split : forall e db,
     (T_add_expr e db <= T_add_nodes (expr_nodes V.t e) [] db +
       k_sat * N.of_nat (expr_work e))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros e db. eapply N.le_trans; [apply T_add_expr_bound |].
+    apply N.add_le_mono_l. apply N.mul_le_mono_r. unfold k_sat. nia.
+  Qed.
   (** Adding a node pays its insertion cost and transfers the database potential. *)
   Lemma T4_add_node_amort : forall B U node cells db, D.wf db ->
     (forall i, In (Id i) cells -> D.allocated db i) ->
