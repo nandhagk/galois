@@ -858,6 +858,91 @@ Module Compile (V : VALUE) <: COMPILE V.
       subst j. congruence.
   Qed.
 
+  (** A represented node has an actual position in the pattern list. *)
+  Lemma represents_node_index : forall w tau ns j c,
+    represents_node w tau ns j c -> j < length ns.
+  Proof.
+    intros w tau ns j c [_ [e [Hu Hr]]].
+    destruct Hu as [i h t Hnth Htau|i v Hnth|i f children args Hnth Hbefore Hargs];
+      apply nth_error_Some; rewrite Hnth; discriminate.
+  Qed.
+
+  (** Reading an aligned term table gives the value at the corresponding cell position. *)
+  Lemma pattern_get_value : forall s ts cs, @terms_value V.t s ts cs ->
+    forall default j c, nth_error cs j = Some c ->
+      term_value s (pattern_get default j ts) c.
+  Proof.
+    intros s ts cs Hvalues.
+    induction Hvalues as [|t d ts cs Hhead Htail IH]; intros default [|j] c Hcell;
+      cbn [nth_error] in Hcell; try discriminate.
+    - injection Hcell as <-. exact Hhead.
+    - exact (IH default j c Hcell).
+  Qed.
+
+  (** A constructor's represented children agree with the cells selected by its term indices. *)
+  Lemma pattern_children_values : forall w tau ns cs ts s children cells,
+    canonical_view w -> length cs = length ns -> terms_value s ts cs ->
+    (forall j c, nth_error cs j = Some c -> represents_node w tau ns j c) ->
+    Forall2 (represents_node w tau ns) children cells ->
+    terms_value s (map (fun j => pattern_get (Var 1%positive) j ts) children) cells.
+  Proof.
+    intros w tau ns cs ts s children cells Hcanonical Hlength Hvalues Hall Hchildren.
+    induction Hchildren as [|j d js ds Hnode Htail IH]; cbn [map].
+    - constructor.
+    - constructor; [|exact IH].
+      assert (Hindex : j < length cs).
+      { rewrite Hlength. exact (represents_node_index w tau ns j d Hnode). }
+      destruct (nth_error cs j) as [c|] eqn:Hcell.
+      + assert (c = d).
+        { exact (represents_node_unique w tau ns j c d Hcanonical (Hall j c Hcell) Hnode). }
+        subst c. exact (pattern_get_value s ts cs Hvalues (Var 1%positive) j d Hcell).
+      + apply nth_error_None in Hcell. lia.
+  Qed.
+
+  (** Every constructor atom in the flat table is witnessed by its represented row. *)
+  Lemma pattern_atom_holds : forall (p : fpat V.t) rn w tau cs s,
+    canonical_view w -> length cs = length (nodes V.t p) ->
+    terms_value s (fst (pattern_table p rn)) cs ->
+    (forall j c, nth_error cs j = Some c -> represents_node w tau (nodes V.t p) j c) ->
+    forall i f children t, nth_error (nodes V.t p) i = Some (PApp f children) ->
+      nth_error (fst (pattern_table p rn)) i = Some t ->
+      atom_holds V.prim w s (Fun V.t f
+        (map (fun j => pattern_get (Var 1%positive) j (fst (pattern_table p rn))) children)
+        (Some t)).
+  Proof.
+    intros p rn w tau cs s Hcanonical Hlength Hvalues Hall i f children t Hnode Hterm.
+    assert (Hindex : i < length cs).
+    { rewrite Hlength. apply nth_error_Some. rewrite Hnode. discriminate. }
+    destruct (nth_error cs i) as [c|] eqn:Hcell; [|apply nth_error_None in Hcell; lia].
+    destruct (represents_node_constructor w tau _ i c f children Hcanonical Hnode
+      (Hall i c Hcell)) as [cells [Hrow Hchildren]].
+    exists cells, (Some c). split.
+    - exact (pattern_children_values w tau _ cs _ s children cells Hcanonical Hlength
+        Hvalues Hall Hchildren).
+    - split; [|exact Hrow].
+      pose proof (pattern_get_value s _ cs Hvalues (Var 1%positive) i c Hcell) as Hvalue.
+      unfold pattern_get in Hvalue. now rewrite Hterm in Hvalue.
+  Qed.
+
+  (** Pointwise constructor witnesses assemble into a match of the complete atom list. *)
+  Lemma pattern_atoms_match : forall ns ts all w s,
+    (forall i f children t, nth_error ns i = Some (PApp f children) ->
+      nth_error ts i = Some t -> atom_holds V.prim w s
+        (Fun V.t f (map (fun j => pattern_get (Var 1%positive) j all) children) (Some t))) ->
+    matches V.prim w (pattern_atoms ns ts all) s.
+  Proof.
+    induction ns as [|n ns IH]; intros [|t ts] all w s Hnodes; try constructor.
+    assert (Htail : forall i f children u, nth_error ns i = Some (PApp f children) ->
+      nth_error ts i = Some u -> atom_holds V.prim w s
+        (Fun V.t f (map (fun j => pattern_get (Var 1%positive) j all) children) (Some u))).
+    { intros i f children u Hn Ht. exact (Hnodes (S i) f children u Hn Ht). }
+    destruct n as [h|f children|v]; cbn [pattern_atoms].
+    - exact (IH ts all w s Htail).
+    - constructor; [exact (Hnodes 0 f children t eq_refl eq_refl) |].
+      exact (IH ts all w s Htail).
+    - exact (IH ts all w s Htail).
+  Qed.
+
   (** * Sorting compiled patterns *)
 
   (** A context includes another when it preserves every existing sort assignment. *)
