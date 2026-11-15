@@ -2109,6 +2109,37 @@ Proof.
   pose proof (loopN_zero_bits_le_size fuel) as Hbits. cbn [fst snd] in Hclock. lia.
 Qed.
 
+(** Stopping reverses the accumulated trace once. *)
+Lemma search_stop_clock g st es : search_step g st = inr es ->
+  (T_search_step g st <= 4 * N.of_nat (length es + 1))%N.
+Proof.
+  intro Hstop. destruct (search_stop_events g st es Hstop) as [Hevents Htasks].
+  destruct st as [tasks colours events]. cbn [search_tasks] in Htasks. subst tasks.
+  cbn [search_events] in Hevents. rewrite Hevents, length_rev.
+  pose proof (List.T_rev_append_le events []) as Hrev.
+  time_unfold @T_search_step. time_cbn. lia.
+Qed.
+
+(** Preparing and collecting a trace adds a root scan and at most one final reversal. *)
+Lemma prepared_search_trace_clock g roots :
+  (T_prepared_search_trace g roots <= 8 *
+    (T_search_budget g roots + N.of_nat (length roots) +
+      T_loopN (search_step (base g)) (fun st => T_search_step (base g) st)
+        (search_budget g roots) (SearchState (map SearchRoot roots) Empty []) +
+      N.of_nat (length (prepared_search_trace g roots)) + 1))%N.
+Proof.
+  pose proof (ListDef.T_map_le SearchRoot (fun _ => 1%N) 1%N roots
+    (fun _ => N.le_refl 1)) as Hmap.
+  time_unfold @T_prepared_search_trace.
+  unfold prepared_search_trace.
+  destruct (loopN (search_step (base g)) (search_budget g roots)
+    (SearchState (map SearchRoot roots) Empty [])) as [st|es] eqn:Hrun.
+  - pose proof (List.T_rev_append_le (search_events st) []) as Hrev.
+    rewrite rev_append_rev, app_nil_r, length_rev.
+    unfold T_base, T_search_events. time_cbn. nia.
+  - unfold T_base. time_cbn. nia.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
@@ -2235,7 +2266,11 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
         (N.of_nat (run_width g roots) + V.c_vis * N.of_nat (B + 1)) +
           N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1))%N)
     (fun '(g, roots, s, _) => T_dfs g roots s).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exists c_dfs; intros [[[g roots] s] B] Hwork.
+    eapply N.le_trans; [apply T_dfs_le; exact Hwork|].
+    apply N.mul_le_mono_l; lia.
+  Qed.
 
   Definition search_step := search_step.
   TimeFun search_step.
@@ -2243,9 +2278,9 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
   TimeFun search_budget.
   Definition search_trace := prepared_search_trace.
   TimeFun search_trace.
-  Definition k_step : N := 1%N. (* STUB *)
-  Definition k_trace : N := 1%N. (* STUB *)
-  Definition k_fold : N := 1%N. (* STUB *)
+  Definition k_step : N := (128 * (PTrieT.c_trie + 1))%N.
+  Definition k_trace : N := (16384 * (c_loopN + 1) * (PTrieT.c_trie + 1))%N.
+  Definition k_fold : N := 8%N.
   Definition k_budget : N := 1%N. (* STUB *)
 
   Definition initial (roots : list positive) : search_state :=
@@ -2558,7 +2593,17 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
     Nat.iter n (advance (base g)) (initial roots) = st ->
     search_step (base g) st = inl next ->
     (T_search_step (base g) st <= k_step * N.of_nat (run_width g roots + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots n st next Hfuel Hstate Hstep.
+    assert (Hnat : n <= N.to_nat (search_budget g roots)) by lia.
+    pose proof (prepared_search_tasks_width g roots n Hnat) as Hwidth.
+    change (Forall (search_task_valid (fun v => Pos.size_nat v <= run_width g roots))
+      (search_tasks (Nat.iter n (advance (base g)) (initial roots)))) in Hwidth.
+    rewrite Hstate in Hwidth.
+    pose proof (search_step_clock (base g) st next (run_width g roots) Hwidth Hstep) as Hclock.
+    unfold k_step. time_unfold @T_search_step. lia.
+  Qed.
+
 
   (** Steps taken within the fuel emit an event, retire a root or finish a row. *)
   Lemma F9_raw_count : forall g roots n,
@@ -2594,19 +2639,70 @@ Module SearchT (V : VISITOR_T) <: SEARCH_ALL V.
        N.of_nat (N.size_nat (nv g) + N.size_nat (ne g) + 1)))%N.
   Proof. Admitted. (* STUB *)
 
+  (** Event dispatch charges the callback selected by the event at the current state. *)
+  Lemma event_time_bound s e B : V.vwork s <= B ->
+    (T_visit_event V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge s e <=
+      V.c_vis * N.of_nat (B + 1) + 1)%N.
+  Proof.
+    intro Hwork; destruct e as [v|v|kind u v].
+    - pose proof (V.T_enter_le v s) as Htime.
+      unfold T_visit_event; time_cbn; nia.
+    - pose proof (V.T_leave_le v s) as Htime.
+      unfold T_visit_event; time_cbn; nia.
+    - pose proof (V.T_edge_le kind u v s) as Htime.
+      unfold T_visit_event; time_cbn; nia.
+  Qed.
+
+  (** Bounding each prefix state bounds the complete event fold. *)
+  Lemma fold_events_time_bound es s B :
+    (forall prefix suffix, es = prefix ++ suffix ->
+      V.vwork (fold_events V.enter V.leave V.edge prefix s) <= B) ->
+    (T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge es s <=
+      8 * N.of_nat (length es + 1) * (V.c_vis * N.of_nat (B + 1) + 1))%N.
+  Proof.
+    revert s; induction es as [|e es IH]; intros s Hwork.
+    - unfold T_fold_events, List.T_fold_left; cbn beta iota zeta.
+      cbn [length]; rewrite ?Nat2N.inj_add, ?time_of_nat_succ; nia.
+    - assert (Hstate : V.vwork s <= B).
+      { exact (Hwork nil (e :: es) eq_refl). }
+      assert (Hrest : forall prefix suffix, es = prefix ++ suffix ->
+        V.vwork (fold_events V.enter V.leave V.edge prefix
+          (visit_event V.enter V.leave V.edge s e)) <= B).
+      { intros prefix suffix Hsplit.
+        change (V.vwork (fold_events V.enter V.leave V.edge (e :: prefix) s) <= B).
+        apply (Hwork (e :: prefix) suffix); cbn [app]; now rewrite Hsplit. }
+      pose proof (IH (visit_event V.enter V.leave V.edge s e) Hrest) as Htail.
+      pose proof (event_time_bound s e B Hstate) as Hhead.
+      unfold T_fold_events, List.T_fold_left in Htail |- *.
+      cbn beta iota zeta in Htail |- *; clear - Hhead Htail; cbn [length].
+      rewrite ?Nat2N.inj_add, ?time_of_nat_succ in *; nia.
+  Qed.
+
   Lemma T5_fold : forall g roots s B,
     work_bounded g roots s B ->
     (T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
       (trace g roots) s <=
     k_fold * N.of_nat (length (trace g roots) + 1) *
       (V.c_vis * N.of_nat (B + 1) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots s B Hwork; unfold k_fold.
+    apply fold_events_time_bound; exact Hwork.
+  Qed.
 
   Lemma T6_dfs : forall g roots s,
     (T_dfs g roots s <= k_trace * (T_search_trace g roots +
       T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
         (trace g roots) s + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g roots s; unfold T_dfs, T_search_trace, trace; cbn beta iota zeta.
+    change (1 + (T_prepared_search_trace g roots +
+      T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
+        (prepared_search_trace g roots) s) <= k_trace *
+      (1 + T_prepared_search_trace g roots +
+        T_fold_events V.enter V.T_enter V.leave V.T_leave V.edge V.T_edge
+          (prepared_search_trace g roots) s + 1))%N.
+    unfold k_trace; nia.
+  Qed.
 
   Lemma T7_public : forall g roots s B, work_bounded g roots s B ->
     (T_dfs g roots s <= c_dfs * (N.of_nat (n_reach g roots + e_reach g roots + length roots + 1) *
