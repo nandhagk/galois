@@ -1255,7 +1255,9 @@ Module IntervalBitsT (L : WORD_LANGUAGE_T) (C : TNUM_CONFIG) (T : THRESHOLDS_T)
   Lemma left_size : forall a b,
     (N.of_nat (A.size (fst (to_left (a, b))) + B.size b) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: INTERVAL_PAYLOAD_PINNED_T has no interval size
+    pin. A lawful quadratic premium violates this linear bound for every step
+    preserving F_to_left; see ReducerIntervalSizeCounterexample.no_linear_precision_left_size. *)
   Lemma right_size : forall a b,
     (N.of_nat (A.size a + B.size (snd (to_right (a, b)))) <=
       c_exchange * N.of_nat (A.size a + B.size b + 1))%N.
