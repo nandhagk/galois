@@ -4,7 +4,7 @@
     For example, every assignment writes a declared variable.
     Builds on: EnvIntBudgetSig and SystemSig. *)
 
-From Stdlib Require Import List PArith Bool Lia.
+From Stdlib Require Import List PArith Arith Bool Lia.
 From Stdlib.Sorting Require Import Permutation.
 From Galois.Base Require Import KeySig MapSig.
 From Galois.Domains Require Import LangSig ValueSig IntervalSig ThresholdsSig CutIntervalSig.
@@ -214,13 +214,163 @@ Module EnvIntBudget (X : KEY_T) (M : MAP_T X) (C : INTERVAL_CUTOFF)
     - apply inv_top.
   Qed.
 
+  (** Summing concatenated lists adds their separate sums. *)
+  Lemma budget_sum_app : forall {A} (f : A -> nat) xs ys,
+    fold_right Nat.add 0 (map f (xs ++ ys)) =
+      fold_right Nat.add 0 (map f xs) + fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs ys. induction xs; cbn; lia.
+  Qed.
+
+  (** Permuting entries preserves their sum. *)
+  Lemma budget_sum_permutation : forall {A} (f : A -> nat) xs ys,
+    Permutation xs ys ->
+    fold_right Nat.add 0 (map f xs) = fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs ys Hperm. induction Hperm; cbn [map fold_right]; lia.
+  Qed.
+
+  (** Pointwise bounds give a bound on the corresponding list sums. *)
+  Lemma budget_sum_mono : forall {A} (f g : A -> nat) xs,
+    (forall x, In x xs -> f x <= g x) ->
+    fold_right Nat.add 0 (map f xs) <= fold_right Nat.add 0 (map g xs).
+  Proof.
+    intros A f g xs. induction xs as [|x xs IH]; intros H; cbn; [lia|].
+    pose proof (H x (or_introl eq_refl)) as Hhead.
+    assert (Htail : forall y, In y xs -> f y <= g y).
+    { intros y Hy. apply H. now right. }
+    specialize (IH Htail). lia.
+  Qed.
+
+  (** Distinct included entries contribute no more than the containing list. *)
+  Lemma budget_sum_incl : forall {A} (f : A -> nat) xs ys,
+    NoDup xs -> incl xs ys ->
+    fold_right Nat.add 0 (map f xs) <= fold_right Nat.add 0 (map f ys).
+  Proof.
+    intros A f xs. induction xs as [|x xs IH]; intros ys Hnd Hincl; [cbn; lia|].
+    inversion Hnd as [|x1 xs1 Hnot Hndtail]; subst x1 xs1.
+    destruct (in_split x ys (Hincl x (or_introl eq_refl))) as [ys1 [ys2 Hys]].
+    subst ys.
+    assert (Htail : incl xs (ys1 ++ ys2)).
+    { intros y Hy. specialize (Hincl y (or_intror Hy)).
+      apply in_app_iff in Hincl. apply in_app_iff.
+      destruct Hincl as [Hin|[Heq|Hin]]; [now left| |now right].
+      subst y. contradiction. }
+    specialize (IH (ys1 ++ ys2) Hndtail Htail).
+    rewrite budget_sum_app in IH. rewrite budget_sum_app. cbn. lia.
+  Qed.
+
+  (** The size measure's initial accumulator contributes one to the sum. *)
+  Lemma budget_sum_seed : forall xs,
+    fold_right Nat.add 1 xs = fold_right Nat.add 0 xs + 1.
+  Proof.
+    induction xs; cbn; lia.
+  Qed.
+
+  (** A sum of pointwise additions separates into its two contributions. *)
+  Lemma budget_sum_pair : forall {A} (f g : A -> nat) xs,
+    fold_right Nat.add 0 (map (fun x => f x + g x) xs) =
+      fold_right Nat.add 0 (map f xs) + fold_right Nat.add 0 (map g xs).
+  Proof.
+    intros A f g xs. induction xs; cbn; lia.
+  Qed.
+
+  (** Injective key encodings retain the absence of duplicate keys. *)
+  Lemma budget_encode_nodup : forall xs,
+    NoDup xs -> NoDup (map X.encode xs).
+  Proof.
+    intros xs Hnd. induction Hnd; cbn; constructor; [|assumption].
+    intros Hin. apply in_map_iff in Hin. destruct Hin as [y [Heq Hy]].
+    apply X.encode_inj in Heq. subst y. contradiction.
+  Qed.
+
+  (** Stored codes permute the encodings of the enumerated consistent bindings. *)
+  Lemma budget_codes_elements : forall (m : M.t V.t), M.wf m ->
+    Permutation (M.codes m) (map (fun xa => X.encode (fst xa)) (M.elements m)).
+  Proof.
+    intros m Hwf. apply NoDup_Permutation.
+    - apply M.codes_nodup.
+    - rewrite <- map_map. apply budget_encode_nodup. now apply M.elements_nodup.
+    - intro code. rewrite M.codes_spec, in_map_iff. split.
+      + intros Hbound. destruct (M.find code m) as [a|] eqn:Hfind; [|contradiction].
+        destruct (M.wf_find V.t m code a Hwf Hfind) as [x Hcode].
+        exists (x, a). split; [exact Hcode|].
+        apply (proj2 (M.elements_spec V.t m x a Hwf)).
+        rewrite M.get_find, Hcode. exact Hfind.
+      + intros [[x a] [Hcode Hin]]. cbn in Hcode.
+        rewrite <- Hcode, <- M.get_find.
+        rewrite (proj1 (M.elements_spec V.t m x a Hwf) Hin). discriminate.
+  Qed.
+
+  (** Summing successful code lookups agrees with summing enumerated values. *)
+  Lemma budget_codes_sum : forall (m : M.t V.t) (f : V.t -> nat), M.wf m ->
+    fold_right Nat.add 0 (map (fun code =>
+      match M.find code m with Some a => f a | None => 0 end) (M.codes m)) =
+    fold_right Nat.add 0 (map (fun xa => f (snd xa)) (M.elements m)).
+  Proof.
+    intros m f Hwf.
+    rewrite (budget_sum_permutation _ _ _ (budget_codes_elements m Hwf)), map_map.
+    f_equal. apply map_ext_in. intros [x a] Hin. cbn.
+    rewrite <- M.get_find, (proj1 (M.elements_spec V.t m x a Hwf) Hin). reflexivity.
+  Qed.
+
+  (** Stored variables fit the program sum even if the declaration list repeats keys. *)
+  Lemma budget_declared_sum : forall p m (f : X.t * V.t -> nat) (g : X.t -> nat),
+    inv p (Reached m) ->
+    (forall x a, In (x, a) (M.elements m) -> f (x, a) <= g x) ->
+    fold_right Nat.add 0 (map f (M.elements m)) <=
+      fold_right Nat.add 0 (map g (P.variables p)).
+  Proof.
+    intros p m f g [Hwf Hinv] Hbound.
+    eapply Nat.le_trans with
+      (m := fold_right Nat.add 0 (map (fun xa => g (fst xa)) (M.elements m))).
+    - apply budget_sum_mono. intros [x a] Hin. now apply Hbound.
+    - rewrite <- map_map. apply budget_sum_incl.
+      + now apply M.elements_nodup.
+      + intros x Hx. apply in_map_iff in Hx. destruct Hx as [[y a] [Heq Hin]].
+        cbn in Heq. subst y. rewrite Forall_forall in Hinv.
+        exact (Hinv (x, a) Hin).
+  Qed.
+
   (** The declared variables bound the size of a scoped environment. *)
   Lemma size_le : forall p a, inv p a -> E.size a <= vsize p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|m] Hinv.
+    - rewrite P.size_unreached. lia.
+    - destruct Hinv as [Hwf Hsupport]. rewrite P.size_environment, budget_sum_seed.
+      rewrite (budget_codes_sum m (fun a => V.size a + 1) Hwf).
+      pose proof (M.nodes_le_weight V.t m Hwf) as Hnodes. unfold M.weight in Hnodes.
+      assert (Hsum : fold_right Nat.add 0
+        (map (fun xa => (X.bits (fst xa) + 1) + (V.size (snd xa) + 1)) (M.elements m)) <=
+        fold_right Nat.add 0 (map (fun x => X.bits x + C.bits + 3) (P.variables p))).
+      { apply budget_declared_sum; [split; assumption|].
+        intros x a Hin. pose proof (V.size_bound a) as Hsize. cbn. lia. }
+      rewrite budget_sum_pair in Hsum.
+      unfold vsize. rewrite budget_sum_seed. unfold X.bits in *. lia.
+  Qed.
+
   (** The declared variables bound the number of widening units. *)
   Lemma wunits_le : forall p a, inv p a -> E.wunits a <= wunits p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p [|m] Hinv.
+    - rewrite E.F_wunits_unreached. lia.
+    - rewrite E.F_wunits_reached. unfold wunits. destruct Hinv as [Hwf Hsupport].
+      pose proof (Permutation_length (budget_codes_elements m Hwf)) as Hlength.
+      rewrite length_map in Hlength. rewrite Hlength.
+      rewrite <- (length_map fst (M.elements m)). apply NoDup_incl_length.
+      + now apply M.elements_nodup.
+      + intros x Hx. apply in_map_iff in Hx. destruct Hx as [[y a] [Heq Hin]].
+        cbn in Heq. subst y. rewrite Forall_forall in Hsupport.
+        exact (Hsupport (x, a) Hin).
+  Qed.
+
   (** The declared variables and thresholds bound widening rank. *)
   Lemma wrank_le : forall p w a, inv p a -> E.wrank w a <= wmax p w.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p w [|m] Hinv.
+    - rewrite P.rank_unreached. lia.
+    - rewrite E.wrank_env by exact (proj1 Hinv). unfold wmax.
+      apply budget_declared_sum; [exact Hinv|].
+      intros x a Hin. pose proof (V.rank_bound w a) as Hrank. cbn. lia.
+  Qed.
 End EnvIntBudget.
