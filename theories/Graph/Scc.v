@@ -1659,13 +1659,102 @@ Module SccT <: SCC_ALL.
     unfold k_callback. lia.
   Qed.
 
+  (** A state-dependent callback credit telescopes through the generated list-fold clock. *)
+  Local Lemma fold_left_amortized {A B} (f : A -> B -> A) (T_f : A -> B -> N)
+      (credit : A -> N) (budget : N) es s :
+    (forall prefix e suffix, es = prefix ++ e :: suffix ->
+      (T_f (fold_left f prefix s) e + credit (f (fold_left f prefix s) e) <=
+        budget + credit (fold_left f prefix s))%N) ->
+    (List.T_fold_left f T_f es s + credit (fold_left f es s) <=
+      (budget + 1) * N.of_nat (length es) + 1 + credit s)%N.
+  Proof.
+    revert s. induction es as [|e es IH]; intros s Hcredit.
+    - time_unfold @List.T_fold_left. cbn [fold_left length]. lia.
+    - assert (Htail : forall prefix next suffix, es = prefix ++ next :: suffix ->
+        (T_f (fold_left f prefix (f s e)) next +
+          credit (f (fold_left f prefix (f s e)) next) <=
+          budget + credit (fold_left f prefix (f s e)))%N).
+      { intros prefix next suffix Hsplit.
+        apply (Hcredit (e :: prefix) next suffix). cbn [app]. now rewrite Hsplit. }
+      specialize (IH (f s e) Htail).
+      specialize (Hcredit [] e es eq_refl). cbn [fold_left] in Hcredit.
+      time_unfold @List.T_fold_left. cbn [fold_left length]. rewrite Nat2N.inj_succ. nia.
+  Qed.
+
+  Local Lemma fold_events_credit w es s :
+    (forall prefix e suffix, es = prefix ++ e :: suffix ->
+      let current := fold_events tarjan_enter tarjan_leave tarjan_edge prefix s in
+      (callback_cost e current + potential w (apply_event current e) <=
+        32768 * N.of_nat (w + 1) + potential w current)%N) ->
+    (T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
+        tarjan_edge T_tarjan_edge es s +
+      potential w (fold_events tarjan_enter tarjan_leave tarjan_edge es s) <=
+      (32768 * N.of_nat (w + 1) + 2) * N.of_nat (length es) + 2 + potential w s)%N.
+  Proof.
+    intros Hcredit.
+    assert (Hfold :
+      (List.T_fold_left (visit_event tarjan_enter tarjan_leave tarjan_edge)
+        (fun state e => T_visit_event tarjan_enter T_tarjan_enter
+          tarjan_leave T_tarjan_leave tarjan_edge T_tarjan_edge state e)
+        es s + potential w
+          (fold_left (visit_event tarjan_enter tarjan_leave tarjan_edge) es s) <=
+        (32768 * N.of_nat (w + 1) + 2) * N.of_nat (length es) + 1 + potential w s)%N).
+    { replace (32768 * N.of_nat (w + 1) + 2)%N with
+        ((32768 * N.of_nat (w + 1) + 1) + 1)%N by lia.
+      apply fold_left_amortized. intros prefix e suffix Hsplit.
+      specialize (Hcredit prefix e suffix Hsplit). unfold fold_events in Hcredit.
+      destruct e; cbn [callback_cost apply_event visit_event] in Hcredit;
+        time_unfold @T_visit_event; cbn [visit_event]; lia. }
+    time_unfold @T_fold_events. unfold fold_events. lia.
+  Qed.
+
+  (** A unique bounded event list has bounded operational state after its fold. *)
+  Lemma event_fold_width w es : NoDup (entered es) -> Forall (event_domain w) es ->
+    width_domain w (prefix_state es).
+  Proof.
+    intros Hunique Hwidth. unfold width_domain, prefix_state,
+      tarjan_enter, tarjan_leave, tarjan_edge, tarjan_initial.
+    apply tarjan_fold_width; [exact Hunique|].
+    apply Forall_forall. intros v Hin. apply search_entered_member in Hin.
+    rewrite Forall_forall in Hwidth. exact (Hwidth (Enter v) Hin).
+  Qed.
+
+  (** Every unique bounded event list pays the complete generated fold, including driver calls. *)
+  Lemma fold_events_time w es : NoDup (entered es) -> Forall (event_domain w) es ->
+    (T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
+        tarjan_edge T_tarjan_edge es tarjan_initial + potential w (prefix_state es) <=
+      k_callback * N.of_nat (length es + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hunique Hwidth.
+    assert (Hcredit : forall prefix e suffix, es = prefix ++ e :: suffix ->
+      let current := fold_events tarjan_enter tarjan_leave tarjan_edge prefix tarjan_initial in
+      (callback_cost e current + potential w (apply_event current e) <=
+        32768 * N.of_nat (w + 1) + potential w current)%N).
+    { intros prefix e suffix Hsplit. cbn zeta. apply callback_credit.
+      - apply event_fold_width.
+        + rewrite Hsplit, search_entered_app in Hunique.
+          now apply NoDup_app_remove_r in Hunique.
+        + rewrite Hsplit, Forall_app in Hwidth. exact (proj1 Hwidth).
+      - rewrite Forall_forall in Hwidth. apply Hwidth.
+        rewrite Hsplit. apply in_or_app. right. now left. }
+    pose proof (fold_events_credit w es tarjan_initial Hcredit) as Hfold.
+    assert (Hzero : potential w tarjan_initial = 0%N).
+    { change ((pop_unit w * 0 + k_result * 0)%N = 0%N). now rewrite !N.mul_0_r. }
+    rewrite Hzero in Hfold. unfold prefix_state. unfold k_callback. nia.
+  Qed.
+
+
   Lemma T3_fold : forall g,
     (T_fold_events tarjan_enter T_tarjan_enter tarjan_leave T_tarjan_leave
       tarjan_edge T_tarjan_edge (tarjan_trace g) tarjan_initial +
       potential (graph_width (base g)) (prefix_state (tarjan_trace g)) <=
     k_callback * N.of_nat (length (tarjan_trace g) + 1) *
       N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g. apply fold_events_time.
+    - apply scc_trace_unique.
+    - apply scc_trace_event_width.
+  Qed.
 
   Lemma T4_trace : forall g,
     (T_tarjan_trace g <= k_search * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
@@ -1696,6 +1785,18 @@ Module SccT <: SCC_ALL.
       time_unfold @T_visit_event;
       try time_unfold @T_tarjan_enter; try time_unfold @T_tarjan_leave;
       try time_unfold @T_tarjan_edge; lia.
+  Qed.
+
+  (** Direct visitor clocks inherit the amortized fold bound used by raw SCC clients. *)
+  Lemma visitor_fold_time w es : NoDup (entered es) -> Forall (event_domain w) es ->
+    (T_fold_events TarjanVisitor.enter (fun v s => TarjanVisitor.T_enter v s)
+      TarjanVisitor.leave (fun v s => TarjanVisitor.T_leave v s)
+      TarjanVisitor.edge (fun kind u v s => TarjanVisitor.T_edge kind u v s)
+      es tarjan_initial <=
+      k_callback * N.of_nat (length es + 1) * N.of_nat (w + 1))%N.
+  Proof.
+    intros Hunique Hwidth. pose proof (fold_events_time w es Hunique Hwidth) as Hfold.
+    pose proof (fold_events_alias_time es tarjan_initial) as Halias. lia.
   Qed.
 
   Lemma T5_wrapper : forall g,
