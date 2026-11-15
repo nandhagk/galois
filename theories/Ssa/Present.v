@@ -597,7 +597,11 @@ Module BlockCfg (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   Include BlockCfgCode O Q.
   Definition wf (p : Q.t) := p = lang_prepare (lang_source p).
   Lemma nodes_nodup : forall p, wf p -> NoDup (nodes p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold nodes; cbn [lang_prepare lang_blocks].
+    rewrite first_blocks_selected. apply selected_blocks_nodup.
+  Qed.
   Lemma entries_nodes : forall p n, wf p -> In n (entries p) -> In n (nodes p).
   Proof. Admitted. (* STUB *)
   Lemma edges_nodes : forall p e, wf p -> In e (edges p) ->
@@ -605,10 +609,18 @@ Module BlockCfg (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   Proof. Admitted. (* STUB *)
   Lemma out_spec : forall p n e, wf p ->
     (In e (out p n) <-> In e (edges p) /\ src p e = n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n e Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold out, edges, src; cbn [lang_prepare lang_out lang_edges].
+    apply multi_table_spec.
+  Qed.
   Lemma inc_spec : forall p n e, wf p ->
     (In e (inc p n) <-> In e (edges p) /\ dst p e = n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n e Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold inc, edges, dst; cbn [lang_prepare lang_inc lang_edges].
+    apply multi_table_spec.
+  Qed.
 End BlockCfg.
 
 (* F2-100 retires the former edge, adjacency and parameter scan SIG-QUESTIONs. *)
@@ -670,10 +682,24 @@ Module PointCfg (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
   Proof. Admitted. (* STUB *)
   Lemma out_spec : forall p n e, wf p ->
     (In e (out p n) <-> In e (edges p) /\ src p e = n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n e Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold out, edges, src; cbn [lang_prepare lang_point_out lang_point_edges].
+    rewrite multi_table_spec.
+    split; intros [Hin Heq]; split; try exact Hin.
+    - now apply PointKey.encode_inj in Heq.
+    - now rewrite Heq.
+  Qed.
   Lemma inc_spec : forall p n e, wf p ->
     (In e (inc p n) <-> In e (edges p) /\ dst p e = n).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p n e Hwf. unfold wf in Hwf. rewrite Hwf.
+    unfold inc, edges, dst; cbn [lang_prepare lang_point_inc lang_point_edges].
+    rewrite multi_table_spec.
+    split; intros [Hin Heq]; split; try exact Hin.
+    - now apply PointKey.encode_inj in Heq.
+    - now rewrite Heq.
+  Qed.
 End PointCfg.
 
 Module PointCfgT (O : OPS) (Q : TYPE with Definition t := lang_prepared O.K O.G)
@@ -757,7 +783,9 @@ Module PresentT (O : OPS)
     Proof. Admitted. (* STUB *)
     Lemma nodes_agree : forall p,
       BC.nodes (R.prepare p) = map fst (first_blocks (blocks _ _ _ p)).
-    Proof. Admitted. (* STUB *)
+    Proof.
+      reflexivity.
+    Qed.
     (** Each presented edge targets an exit of a listed source block. *)
     Lemma edges_syntax : forall p e, In e (BC.edges (R.prepare p)) ->
       exists body, In (BC.src (R.prepare p) e, body) (blocks _ _ _ p) /\
@@ -783,14 +811,19 @@ Module PresentT (O : OPS)
 
   (** Both prepared graphs are well formed for every raw function. *)
   Lemma prepared_wf : forall p, BC.wf (R.prepare p) /\ C.wf (R.prepare p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p; split; reflexivity.
+  Qed.
   (** The point laws hold on the prepared form of an SSA function. *)
   Lemma points_wf : forall p, ssa_wf p -> SP.wf (R.prepare p).
   Proof. Admitted. (* STUB *)
   (** The block presentation lists each block identifier at most once per listed block. *)
   Lemma block_nodes_le : forall p,
     length (BC.nodes (R.prepare p)) <= length (blocks _ _ _ p).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. rewrite Link.nodes_agree, length_map, first_blocks_selected.
+    apply selected_blocks_length.
+  Qed.
   (** Each listed block contributes at most its two exit edges. *)
   Lemma block_edges_le : forall p,
     length (BC.edges (R.prepare p)) <= 2 * length (BC.nodes (R.prepare p)).
