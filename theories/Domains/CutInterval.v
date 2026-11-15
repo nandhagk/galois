@@ -4,7 +4,7 @@
     For example, a large upper endpoint becomes positive infinity.
     Builds on: CutIntervalSig and the shared interval operations. *)
 
-From Stdlib Require Import List ZArith Bool Lia.
+From Stdlib Require Import List ZArith Bool Lia Eqdep_dec.
 From Argent Require Import Time Tactics Std.
 From Galois.Domains Require Import ValueSig IntervalSig ThresholdsSig CutIntervalSig Interval.
 
@@ -14,6 +14,342 @@ Definition pack_cut (bits : nat) (raw : itv) : cut_itv bits :=
   | false => fun _ => exist _ IBot eq_refl
   end eq_refl.
 TimeFun pack_cut.
+
+(** Endpoint membership is shared by raw and bounded intervals. *)
+Definition cut_member (a : itv) (z : Z) : Prop :=
+  match a with IBot => False | I lo hi => in_bnd lo hi z end.
+
+(** Reflected endpoint order is reflexive. *)
+Lemma cut_bound_refl : forall b, cut_bound_leb b b = true.
+Proof.
+  intros [|z|]; cbn [cut_bound_leb]; try reflexivity; apply Z.leb_refl.
+Qed.
+
+(** Reflected endpoint order is transitive. *)
+Lemma cut_bound_trans : forall a b c,
+  cut_bound_leb a b = true -> cut_bound_leb b c = true ->
+  cut_bound_leb a c = true.
+Proof.
+  intros [|a|] [|b|] [|c|]; cbn [cut_bound_leb];
+    intros Hab Hbc; try discriminate; try reflexivity.
+  apply Z.leb_le in Hab, Hbc. apply Z.leb_le. lia.
+Qed.
+
+(** Finite endpoint comparisons express inclusive interval membership. *)
+Lemma cut_bound_order : forall lo hi z,
+  in_bnd lo hi z <->
+    cut_bound_leb lo (Fin z) = true /\ cut_bound_leb (Fin z) hi = true.
+Proof.
+  intros [|lo|] [|hi|] z; unfold in_bnd; cbn [cut_bound_leb];
+    rewrite ?Z.leb_le; intuition congruence.
+Qed.
+
+(** Raw endpoint inclusion retains every represented integer. *)
+Lemma cut_member_mono : forall a b z,
+  cut_leb a b = true -> cut_member a z -> cut_member b z.
+Proof.
+  intros [|lo hi] [|lo' hi'] z Hle Hmember;
+    cbn [cut_leb cut_member] in *; try contradiction; try discriminate.
+  apply andb_true_iff in Hle as [Hlo Hhi].
+  apply cut_bound_order in Hmember as [Hlower Hupper].
+  apply cut_bound_order. split; eapply cut_bound_trans; eassumption.
+Qed.
+
+(** An interval with a represented integer has a normalized nonempty shape. *)
+Lemma cut_member_shape : forall a z, cut_member a z -> cut_shape_ok a = true.
+Proof.
+  intros [|[|lo|] [|hi|]] z Hmember;
+    cbv [cut_member cut_shape_ok in_bnd] in *; intuition try congruence.
+  apply Z.leb_le. lia.
+Qed.
+
+(** Every normalized nonbottom interval contains an integer. *)
+Lemma cut_shape_member : forall lo hi,
+  cut_shape_ok (I lo hi) = true -> exists z, in_bnd lo hi z.
+Proof.
+  intros [|lo|] [|hi|] Hshape; cbn [cut_shape_ok] in Hshape;
+    try discriminate.
+  - exists hi. unfold in_bnd. intuition lia.
+  - exists 0%Z. unfold in_bnd. intuition.
+  - exists lo. apply Z.leb_le in Hshape. unfold in_bnd. intuition lia.
+  - exists lo. unfold in_bnd. intuition lia.
+Qed.
+
+(** A normalized interval has ordered endpoints. *)
+Lemma cut_shape_order : forall lo hi,
+  cut_shape_ok (I lo hi) = true -> cut_bound_leb lo hi = true.
+Proof.
+  intros [|lo|] [|hi|]; cbn [cut_shape_ok cut_bound_leb];
+    intros Hshape; try discriminate; try reflexivity; exact Hshape.
+Qed.
+
+(** The Boolean carrier check is exactly shape validity and the endpoint budget. *)
+Lemma cut_valid_parts : forall bits a,
+  cut_interval_ok bits a = true <->
+    cut_shape_ok a = true /\ interval_bits a <= bits.
+Proof.
+  intros bits [|[|lo|] [|hi|]];
+    cbn [cut_interval_ok cut_shape_ok cut_endpoint_ok interval_bits];
+    rewrite ?andb_true_iff, ?Nat.leb_le, ?Nat.max_lub_iff; intuition (try congruence; lia).
+Qed.
+
+(** A finite greatest lower endpoint comes from one of the two checked endpoints. *)
+Lemma cut_lower_endpoint_valid : forall bits a b z,
+  cut_endpoint_ok bits a = true -> cut_endpoint_ok bits b = true ->
+  cut_bound_leb a (Fin z) = true -> cut_bound_leb b (Fin z) = true ->
+  (forall x, cut_bound_leb a (Fin x) = true -> cut_bound_leb b (Fin x) = true ->
+    (x <= z)%Z -> (z <= x)%Z) -> cut_endpoint_ok bits (Fin z) = true.
+Proof.
+  intros bits [|a|] [|b|] z Ha Hb Haz Hbz Hgreatest;
+    cbn [cut_endpoint_ok cut_bound_leb] in *; try discriminate.
+  - assert (Hminus : (z - 1 <= z)%Z) by lia.
+    specialize (Hgreatest (z - 1)%Z eq_refl eq_refl Hminus). lia.
+  - apply Z.leb_le in Hbz.
+    specialize (Hgreatest b eq_refl (Z.leb_refl b) Hbz).
+    assert (z = b) by lia. now subst z.
+  - apply Z.leb_le in Haz.
+    specialize (Hgreatest a (Z.leb_refl a) eq_refl Haz).
+    assert (z = a) by lia. now subst z.
+  - apply Z.leb_le in Haz, Hbz. destruct (Z_le_dec a b) as [Hab | Hba].
+    + assert (Hab' : (a <=? b)%Z = true) by (apply Z.leb_le; exact Hab).
+      specialize (Hgreatest b Hab' (Z.leb_refl b) Hbz).
+      assert (z = b) by lia. now subst z.
+    + assert (Hba' : (b <=? a)%Z = true) by (apply Z.leb_le; lia).
+      specialize (Hgreatest a (Z.leb_refl a) Hba' Haz).
+      assert (z = a) by lia. now subst z.
+Qed.
+
+(** A finite least upper endpoint comes from one of the two checked endpoints. *)
+Lemma cut_upper_endpoint_valid : forall bits a b z,
+  cut_endpoint_ok bits a = true -> cut_endpoint_ok bits b = true ->
+  cut_bound_leb (Fin z) a = true -> cut_bound_leb (Fin z) b = true ->
+  (forall x, cut_bound_leb (Fin x) a = true -> cut_bound_leb (Fin x) b = true ->
+    (z <= x)%Z -> (x <= z)%Z) -> cut_endpoint_ok bits (Fin z) = true.
+Proof.
+  intros bits [|a|] [|b|] z Ha Hb Hza Hzb Hleast;
+    cbn [cut_endpoint_ok cut_bound_leb] in *; try discriminate.
+  - apply Z.leb_le in Hza, Hzb. destruct (Z_le_dec a b) as [Hab | Hba].
+    + assert (Hab' : (a <=? b)%Z = true) by (apply Z.leb_le; exact Hab).
+      specialize (Hleast a (Z.leb_refl a) Hab' Hza).
+      assert (z = a) by lia. now subst z.
+    + assert (Hba' : (b <=? a)%Z = true) by (apply Z.leb_le; lia).
+      specialize (Hleast b Hba' (Z.leb_refl b) Hzb).
+      assert (z = b) by lia. now subst z.
+  - apply Z.leb_le in Hza.
+    specialize (Hleast a (Z.leb_refl a) eq_refl Hza).
+    assert (z = a) by lia. now subst z.
+  - apply Z.leb_le in Hzb.
+    specialize (Hleast b eq_refl (Z.leb_refl b) Hzb).
+    assert (z = b) by lia. now subst z.
+  - assert (Hplus : (z <= z + 1)%Z) by lia.
+    specialize (Hleast (z + 1)%Z eq_refl eq_refl Hplus). lia.
+Qed.
+
+(** Any nonempty interval denoting the exact intersection retains the endpoint budget. *)
+Lemma cut_meet_valid : forall bits a b m,
+  cut_interval_ok bits a = true -> cut_interval_ok bits b = true ->
+  cut_leb m a = true -> cut_leb m b = true ->
+  (forall z, cut_member a z -> cut_member b z -> cut_member m z) ->
+  cut_shape_ok m = true -> cut_interval_ok bits m = true.
+Proof.
+  intros bits [|alo ahi] [|blo bhi] [|lo hi] Ha Hb Hma Hmb Hmeet Hshape;
+    try reflexivity; try discriminate.
+  apply andb_true_iff in Hma as [HloA HhiA].
+  apply andb_true_iff in Hmb as [HloB HhiB].
+  unfold cut_interval_ok in Ha, Hb |- *.
+  apply andb_true_iff in Ha as [_ Ha]. apply andb_true_iff in Ha as [Halo Hahi].
+  apply andb_true_iff in Hb as [_ Hb]. apply andb_true_iff in Hb as [Hblo Hbhi].
+  rewrite Hshape. cbn [andb]. apply andb_true_iff.
+  pose proof (cut_shape_order lo hi Hshape) as Horder. split.
+  - destruct lo as [|z|]; [reflexivity | | discriminate].
+    eapply cut_lower_endpoint_valid; [exact Halo | exact Hblo | exact HloA | exact HloB |].
+    intros x Hax Hbx Hxz.
+    assert (Hxh : cut_bound_leb (Fin x) hi = true).
+    { eapply cut_bound_trans with (b := Fin z);
+        [change ((x <=? z)%Z = true); apply Z.leb_le; exact Hxz |].
+      exact Horder. }
+    assert (Hxa : cut_member (I alo ahi) x).
+    { apply cut_bound_order. split; [exact Hax |].
+      eapply cut_bound_trans; eassumption. }
+    assert (Hxb : cut_member (I blo bhi) x).
+    { apply cut_bound_order. split; [exact Hbx |].
+      eapply cut_bound_trans; eassumption. }
+    specialize (Hmeet x Hxa Hxb). apply cut_bound_order in Hmeet as [Hzx _].
+    now apply Z.leb_le in Hzx.
+  - destruct hi as [|z|]; [destruct lo; discriminate | | reflexivity].
+    eapply cut_upper_endpoint_valid; [exact Hahi | exact Hbhi | exact HhiA | exact HhiB |].
+    intros x Hxa Hxb Hzx.
+    assert (Hlx : cut_bound_leb lo (Fin x) = true).
+    { eapply cut_bound_trans; [exact Horder |].
+      change ((z <=? x)%Z = true). now apply Z.leb_le. }
+    assert (Hax : cut_member (I alo ahi) x).
+    { apply cut_bound_order. split; [|exact Hxa].
+      eapply cut_bound_trans; eassumption. }
+    assert (Hbx : cut_member (I blo bhi) x).
+    { apply cut_bound_order. split; [|exact Hxb].
+      eapply cut_bound_trans; eassumption. }
+    specialize (Hmeet x Hax Hbx). apply cut_bound_order in Hmeet as [_ Hxz].
+    now apply Z.leb_le in Hxz.
+Qed.
+
+(** The projected value retains its Boolean subtype invariant. *)
+Lemma cut_raw_valid : forall bits (a : cut_itv bits),
+  cut_interval_ok bits (cut_raw a) = true.
+Proof.
+  intros bits [a Hvalid]. exact Hvalid.
+Qed.
+
+(** Packing chooses the checked representation or the canonical empty interval. *)
+Lemma pack_cut_choice : forall bits a,
+  cut_raw (pack_cut bits a) = if cut_interval_ok bits a then a else IBot.
+Proof.
+  intros bits a.
+  assert (Hchoice : forall (ok : bool) (Hok : cut_interval_ok bits a = ok),
+    cut_raw
+      ((match ok as checked return cut_interval_ok bits a = checked -> cut_itv bits with
+        | true => fun proof => exist _ a proof
+        | false => fun _ => exist _ IBot eq_refl
+        end) Hok) = if ok then a else IBot).
+  { intros [] Hok; reflexivity. }
+  exact (Hchoice (cut_interval_ok bits a) eq_refl).
+Qed.
+
+(** Packing a checked representation keeps that representation. *)
+Lemma pack_cut_agrees : forall bits a,
+  cut_interval_ok bits a = true -> cut_raw (pack_cut bits a) = a.
+Proof.
+  intros bits a Hvalid. now rewrite pack_cut_choice, Hvalid.
+Qed.
+
+(** Boolean proof fields do not distinguish two copies of the same interval. *)
+Lemma cut_raw_injective : forall bits (a b : cut_itv bits),
+  cut_raw a = cut_raw b -> a = b.
+Proof.
+  intros bits [a Ha] [b Hb] Heq. cbn [cut_raw] in Heq. subst b.
+  f_equal. apply UIP_dec. decide equality.
+Qed.
+
+(** Outward cutting preserves every integer in the raw interval. *)
+Lemma cut_interval_sound : forall bits a z,
+  cut_member a z -> cut_member (cut_interval bits a) z.
+Proof.
+  intros bits a z Hmember.
+  pose proof (cut_member_shape a z Hmember) as Hshape.
+  unfold cut_interval. rewrite Hshape.
+  destruct a as [|lo hi]; [contradiction |].
+  cbn [cut_member] in *. apply cut_bound_order in Hmember as [Hlo Hhi].
+  apply cut_bound_order. unfold cut_lower, cut_upper. split.
+  - destruct (cut_endpoint_ok bits lo); [exact Hlo | reflexivity].
+  - destruct (cut_endpoint_ok bits hi); [exact Hhi | reflexivity].
+Qed.
+
+(** Every outward-cut interval passes its carrier check. *)
+Lemma cut_interval_valid : forall bits a,
+  cut_interval_ok bits (cut_interval bits a) = true.
+Proof.
+  intros bits a. unfold cut_interval.
+  destruct (cut_shape_ok a) eqn:Hshape; [|reflexivity].
+  destruct a as [|lo hi]; [reflexivity |].
+  assert (Hnew : cut_shape_ok (I (cut_lower bits lo) (cut_upper bits hi)) = true).
+  { destruct (cut_shape_member lo hi Hshape) as [z Hz].
+    pose proof (cut_interval_sound bits (I lo hi) z Hz) as Hmember.
+    unfold cut_interval in Hmember. rewrite Hshape in Hmember.
+    exact (cut_member_shape _ z Hmember). }
+  unfold cut_interval_ok. rewrite Hnew. cbn [andb]. apply andb_true_iff. split.
+  - unfold cut_lower. destruct (cut_endpoint_ok bits lo) eqn:Hlo;
+      [exact Hlo | reflexivity].
+  - unfold cut_upper. destruct (cut_endpoint_ok bits hi) eqn:Hhi;
+      [exact Hhi | reflexivity].
+Qed.
+
+(** Cutting a checked interval is the identity. *)
+Lemma cut_interval_fixed : forall bits a,
+  cut_interval_ok bits a = true -> cut_interval bits a = a.
+Proof.
+  intros bits [|lo hi] Hvalid; [reflexivity |].
+  unfold cut_interval_ok in Hvalid.
+  apply andb_true_iff in Hvalid as [Hshape Hendpoints].
+  apply andb_true_iff in Hendpoints as [Hlo Hhi].
+  unfold cut_interval, cut_lower, cut_upper. now rewrite Hshape, Hlo, Hhi.
+Qed.
+
+(** A small raw interval is changed only when its shape is empty. *)
+Lemma cut_interval_small : forall bits a,
+  interval_bits a <= bits ->
+  cut_interval bits a = if cut_shape_ok a then a else IBot.
+Proof.
+  intros bits a Hbits. destruct (cut_shape_ok a) eqn:Hshape.
+  - apply cut_interval_fixed, cut_valid_parts. split; assumption.
+  - unfold cut_interval. now rewrite Hshape.
+Qed.
+
+(** A normalized lower operand remains below an outward-cut upper operand. *)
+Lemma cut_interval_upper : forall bits old a,
+  cut_shape_ok old = true -> cut_leb old a = true ->
+  cut_leb old (cut_interval bits a) = true.
+Proof.
+  intros bits [|lo hi] a Hshape Hle; [reflexivity |].
+  destruct (cut_shape_member lo hi Hshape) as [z Hz].
+  pose proof (cut_member_mono (I lo hi) a z Hle Hz) as Ha.
+  pose proof (cut_member_shape a z Ha) as Hshapea.
+  unfold cut_interval. rewrite Hshapea.
+  destruct a as [|alo ahi]; [discriminate |].
+  cbn [cut_leb] in Hle |- *. apply andb_true_iff in Hle as [Hlo Hhi].
+  apply andb_true_iff. unfold cut_lower, cut_upper. split.
+  - destruct (cut_endpoint_ok bits alo); [exact Hlo | reflexivity].
+  - destruct (cut_endpoint_ok bits ahi); [exact Hhi | destruct hi; reflexivity].
+Qed.
+
+(** Inward cutoff remains below the original operand. *)
+Lemma cut_within_refines : forall bits old a,
+  cut_leb a old = true -> cut_leb (cut_within bits old a) old = true.
+Proof.
+  intros bits old a Hle. unfold cut_within.
+  destruct (cut_shape_ok a); [|reflexivity].
+  destruct a as [|lo hi], old as [|olo ohi]; cbn [cut_leb] in *;
+    try discriminate; try reflexivity.
+  apply andb_true_iff in Hle as [Hlo Hhi]. apply andb_true_iff. split.
+  - destruct (cut_endpoint_ok bits lo); [exact Hlo | apply cut_bound_refl].
+  - destruct (cut_endpoint_ok bits hi); [exact Hhi | apply cut_bound_refl].
+Qed.
+
+(** Inward cutoff preserves integers represented by both its arguments. *)
+Lemma cut_within_sound : forall bits old a z,
+  cut_member old z -> cut_member a z -> cut_member (cut_within bits old a) z.
+Proof.
+  intros bits old a z Hold Ha.
+  pose proof (cut_member_shape a z Ha) as Hshape.
+  unfold cut_within. rewrite Hshape.
+  destruct old as [|olo ohi], a as [|lo hi]; try contradiction.
+  cbn [cut_member] in *. apply cut_bound_order in Hold as [Holo Hohi].
+  apply cut_bound_order in Ha as [Hlo Hhi]. apply cut_bound_order. split.
+  - destruct (cut_endpoint_ok bits lo); assumption.
+  - destruct (cut_endpoint_ok bits hi); assumption.
+Qed.
+
+(** Inward cutoff produces a checked interval when refining a checked operand. *)
+Lemma cut_within_valid : forall bits old a,
+  cut_interval_ok bits old = true -> cut_leb a old = true ->
+  cut_interval_ok bits (cut_within bits old a) = true.
+Proof.
+  intros bits old a Hvalid Hle. unfold cut_within.
+  destruct (cut_shape_ok a) eqn:Hshape; [|reflexivity].
+  destruct a as [|lo hi], old as [|olo ohi]; try reflexivity.
+  assert (Hnew : cut_shape_ok
+    (I (if cut_endpoint_ok bits lo then lo else olo)
+       (if cut_endpoint_ok bits hi then hi else ohi)) = true).
+  { destruct (cut_shape_member lo hi Hshape) as [z Hz].
+    pose proof (cut_member_mono (I lo hi) (I olo ohi) z Hle Hz) as Hold.
+    pose proof (cut_within_sound bits (I olo ohi) (I lo hi) z Hold Hz) as Hmember.
+    unfold cut_within in Hmember. rewrite Hshape in Hmember.
+    exact (cut_member_shape _ z Hmember). }
+  unfold cut_interval_ok in Hvalid |- *.
+  apply andb_true_iff in Hvalid as [_ Hendpoints].
+  apply andb_true_iff in Hendpoints as [Holo Hohi].
+  rewrite Hnew. cbn [andb]. apply andb_true_iff. split.
+  - destruct (cut_endpoint_ok bits lo) eqn:Hlo; assumption.
+  - destruct (cut_endpoint_ok bits hi) eqn:Hhi; assumption.
+Qed.
 
 Module CutIntervalCode (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE_OPS)
     (T : THRESHOLDS_OPS) (R : INTERVAL_OPS L T) <: CUT_INTERVAL_OPS C L.
@@ -46,10 +382,74 @@ Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
   Include CUT_INTERVAL_SPEC C L.
   Definition gamma := in_cut.
   Definition wrank q (a : t) := R.interval_wrank q (cut_raw a).
+
+  (** Cutting stores exactly the total outward-cut representation. *)
+  Lemma cut_agrees : forall a, cut_raw (cut a) = cut_interval C.bits a.
+  Proof.
+    intro a. apply pack_cut_agrees, cut_interval_valid.
+  Qed.
+
+  (** Every carrier value has a normalized shape and bounded endpoints. *)
+  Lemma carrier_invariant : forall (a : t),
+    cut_shape_ok (cut_raw a) = true /\ interval_bits (cut_raw a) <= C.bits.
+  Proof.
+    intro a. apply cut_valid_parts, cut_raw_valid.
+  Qed.
+
+  (** Cutting an existing carrier value preserves its projection. *)
+  Lemma cut_fixed : forall (a : t), cut_raw (cut (cut_raw a)) = cut_raw a.
+  Proof.
+    intro a. rewrite cut_agrees. apply cut_interval_fixed, cut_raw_valid.
+  Qed.
+
+  (** Cutting preserves every represented integer. *)
+  Lemma cut_sound : forall a z,
+    (match a with IBot => False | I lo hi => in_bnd lo hi z end) ->
+    (match cut_raw (cut a) with IBot => False | I lo hi => in_bnd lo hi z end).
+  Proof.
+    intros a z. rewrite cut_agrees. apply cut_interval_sound.
+  Qed.
+
+  (** The raw-domain link identifies the bounded concretization. *)
+  Lemma gamma_raw : forall a z, gamma a z <-> R.gamma (cut_raw a) z.
+  Proof.
+    intros a z. rewrite RL.raw_gamma. reflexivity.
+  Qed.
+
+  (** Raw-domain membership survives the outward wrapper. *)
+  Lemma raw_cut_sound : forall a z, R.gamma a z -> gamma (cut a) z.
+  Proof.
+    intros a z Ha. apply RL.raw_gamma in Ha.
+    unfold gamma, in_cut. apply cut_sound. exact Ha.
+  Qed.
+
+  (** Normalization and outward endpoints never increase threshold rank. *)
+  Lemma cut_rank_nonincreasing : forall q a,
+    R.interval_wrank q (cut_interval C.bits a) <= R.interval_wrank q a.
+  Proof.
+    intros q a. unfold cut_interval.
+    destruct (cut_shape_ok a); [|destruct a; cbn [R.interval_wrank]; lia].
+    destruct a as [|lo hi]; [reflexivity |].
+    unfold cut_lower, cut_upper.
+    destruct lo as [|lo|], hi as [|hi|]; cbn [cut_endpoint_ok];
+      repeat match goal with
+      | |- context [Nat.leb ?n ?m] => destruct (Nat.leb n m)
+      end;
+      cbn [R.interval_wrank]; lia.
+  Qed.
+
+  (** Every value is below itself in the supplied raw order. *)
   Lemma leb_refl : forall a, leb a a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. apply R.leb_refl.
+  Qed.
+
+  (** The supplied raw order composes through the projections. *)
   Lemma leb_trans : forall a b c, leb a b = true -> leb b c = true -> leb a c = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c. apply R.leb_trans.
+  Qed.
+
   Lemma bot_least : forall a, leb bot a = true.
   Proof.
     intro a.
@@ -57,6 +457,7 @@ Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
     rewrite RL.raw_leb.
     reflexivity.
   Qed.
+
   Lemma is_bot_bot : is_bot bot = true.
   Proof.
     change (R.is_bot IBot = true).
@@ -67,71 +468,255 @@ Module CutInterval (C : INTERVAL_CUTOFF) (L : Z_LANGUAGE)
     rewrite <- Hbot.
     exact R.is_bot_bot.
   Qed.
+
+  (** A recognized bottom is below every bounded value. *)
   Lemma is_bot_least : forall a b, is_bot a = true -> leb a b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. apply R.is_bot_least.
+  Qed.
+
+  (** The outward wrapper retains the raw join's left upper bound. *)
   Lemma join_ub_l : forall a b, leb a (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold leb, join. rewrite RL.raw_leb, cut_agrees.
+    apply cut_interval_upper; [exact (proj1 (carrier_invariant a)) |].
+    rewrite <- RL.raw_leb. apply R.join_ub_l.
+  Qed.
+
+  (** The outward wrapper retains the raw join's right upper bound. *)
   Lemma join_ub_r : forall a b, leb b (join a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. unfold leb, join. rewrite RL.raw_leb, cut_agrees.
+    apply cut_interval_upper; [exact (proj1 (carrier_invariant b)) |].
+    rewrite <- RL.raw_leb. apply R.join_ub_r.
+  Qed.
+
+  (** Two infinite endpoints contain every bounded interval. *)
   Lemma top_greatest : forall a, leb a top = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro a. unfold leb. rewrite RL.raw_leb.
+    destruct (cut_raw a) as [|lo [|hi|]]; reflexivity.
+  Qed.
+
+  (** The raw meet's semantics force every retained endpoint into the carrier budget. *)
+  Lemma meet_refines_both : forall a b,
+    leb (meet a b) a = true /\ leb (meet a b) b = true.
+  Proof.
+    intros a b.
+    pose proof (R.meet_lb_l (cut_raw a) (cut_raw b)) as Hleft.
+    pose proof (R.meet_lb_r (cut_raw a) (cut_raw b)) as Hright.
+    rewrite RL.raw_leb in Hleft, Hright.
+    unfold leb, meet. rewrite !RL.raw_leb, !cut_agrees.
+    destruct (cut_shape_ok (R.meet (cut_raw a) (cut_raw b))) eqn:Hshape.
+    - assert (Hvalid : cut_interval_ok C.bits (R.meet (cut_raw a) (cut_raw b)) = true).
+      { eapply cut_meet_valid with (a := cut_raw a) (b := cut_raw b);
+          [apply cut_raw_valid | apply cut_raw_valid | exact Hleft | exact Hright | |exact Hshape].
+        intros z Ha Hb. apply RL.raw_gamma. apply R.gamma_meet;
+          apply RL.raw_gamma; assumption. }
+      rewrite (cut_interval_fixed _ _ Hvalid). split; assumption.
+    - unfold cut_interval. rewrite Hshape. split; reflexivity.
+  Qed.
+
+  (** Meeting stays below its left bounded operand. *)
   Lemma meet_lb_l : forall a b, leb (meet a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. exact (proj1 (meet_refines_both a b)).
+  Qed.
+
+  (** Meeting stays below its right bounded operand. *)
   Lemma meet_lb_r : forall a b, leb (meet a b) b = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. exact (proj2 (meet_refines_both a b)).
+  Qed.
+
+  (** The outward wrapper retains the previous widening value. *)
   Lemma widen_ub_l : forall p a b, leb a (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold leb, widen. rewrite RL.raw_leb, cut_agrees.
+    apply cut_interval_upper; [exact (proj1 (carrier_invariant a)) |].
+    rewrite <- RL.raw_leb. apply R.widen_ub_l.
+  Qed.
+
+  (** The outward wrapper retains the candidate widening value. *)
   Lemma widen_ub_r : forall p a b, leb b (widen p a b) = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b. unfold leb, widen. rewrite RL.raw_leb, cut_agrees.
+    apply cut_interval_upper; [exact (proj1 (carrier_invariant b)) |].
+    rewrite <- RL.raw_leb. apply R.widen_ub_r.
+  Qed.
+
+  (** A stable raw widening is unchanged by the carrier projection. *)
   Lemma widen_stable : forall p a b, leb b a = true -> widen p a b = a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hle. unfold widen. rewrite R.widen_stable by exact Hle.
+    apply cut_raw_injective, cut_fixed.
+  Qed.
+
+  (** An unstable raw widening decreases rank before the outward cutoff. *)
   Lemma wrank_widen : forall p a b, is_bot a = false -> leb b a = false ->
     wrank p (widen p a b) < wrank p a.
-  Proof. Admitted. (* STUB *)
-  Lemma wrank_widen_le : forall p a b, is_bot a = false -> wrank p (widen p a b) <= wrank p a.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b Hbot Hle.
+    pose proof (R.wrank_widen p (cut_raw a) (cut_raw b) Hbot Hle) as Hrank.
+    rewrite !RL.raw_wrank in Hrank.
+    unfold wrank, widen. rewrite cut_agrees.
+    eapply Nat.le_lt_trans; [apply cut_rank_nonincreasing | exact Hrank].
+  Qed.
+
+  (** Outward cutoff preserves the raw widening's nonincrease of rank. *)
+  Lemma wrank_widen_le : forall p a b,
+    is_bot a = false -> wrank p (widen p a b) <= wrank p a.
+  Proof.
+    intros p a b Hbot.
+    pose proof (R.wrank_widen_le p (cut_raw a) (cut_raw b) Hbot) as Hrank.
+    rewrite !RL.raw_wrank in Hrank.
+    unfold wrank, widen. rewrite cut_agrees.
+    eapply Nat.le_trans; [apply cut_rank_nonincreasing | exact Hrank].
+  Qed.
+
+  (** The raw narrowing already fits the endpoint budget and stays between its operands. *)
   Lemma narrow_between : forall a b, leb b a = true ->
     leb b (narrow a b) = true /\ leb (narrow a b) a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b Hle.
+    destruct (R.narrow_between (cut_raw a) (cut_raw b) Hle) as [Hlower Hupper].
+    rewrite RL.raw_leb in Hlower, Hupper.
+    assert (Hbits : interval_bits (R.narrow (cut_raw a) (cut_raw b)) <= C.bits).
+    { eapply Nat.le_trans; [apply RL.raw_narrow_bits |].
+      apply Nat.max_lub;
+        [exact (proj2 (carrier_invariant a)) | exact (proj2 (carrier_invariant b))]. }
+    unfold leb, narrow. rewrite !RL.raw_leb, !cut_agrees. split.
+    - apply cut_interval_upper; [exact (proj1 (carrier_invariant b)) | exact Hlower].
+    - rewrite (cut_interval_small _ _ Hbits).
+      destruct (cut_shape_ok (R.narrow (cut_raw a) (cut_raw b)));
+        [exact Hupper | reflexivity].
+  Qed.
+
+  (** Raw inclusion preserves the same concrete integer interpretation. *)
   Lemma gamma_mono : forall a b c, leb a b = true -> gamma a c -> gamma b c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c Hle Ha. apply gamma_raw.
+    eapply R.gamma_mono; [exact Hle | apply gamma_raw; exact Ha].
+  Qed.
+
+  (** The bounded bottom contains no integer. *)
   Lemma gamma_bot : forall c, ~ gamma bot c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros c Hmember. exact Hmember.
+  Qed.
+
+  (** The bounded top contains every integer. *)
   Lemma gamma_top : forall c, gamma top c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro c. split; trivial.
+  Qed.
+
+  (** Raw meet soundness survives the outward wrapper. *)
   Lemma gamma_meet : forall a b c, gamma a c -> gamma b c -> gamma (meet a b) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b c Ha Hb. unfold meet. apply raw_cut_sound, R.gamma_meet;
+      apply gamma_raw; assumption.
+  Qed.
+
+  (** Raw bottom recognition excludes every represented integer. *)
   Lemma is_bot_sound : forall a c, is_bot a = true -> ~ gamma a c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a c Hbot Ha. eapply R.is_bot_sound; [exact Hbot |].
+    apply gamma_raw. exact Ha.
+  Qed.
+
+  (** Bottom recognition is downward closed in the raw order. *)
   Lemma is_bot_below : forall a b, leb a b = true -> is_bot b = true -> is_bot a = true.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros a b. apply R.is_bot_below.
+  Qed.
+
+  (** Pointwise membership transfers to the projected operand list. *)
+  Lemma gamma_raw_list : forall xs cs,
+    Forall2 gamma xs cs -> Forall2 R.gamma (map cut_raw xs) cs.
+  Proof.
+    intros xs cs Hmembers. induction Hmembers as [|x c xs cs Hx Hxs IH];
+      cbn [map]; constructor; [now apply gamma_raw | exact IH].
+  Qed.
+
+  (** The forward raw-domain result contains every successful evaluation. *)
   Lemma forward_sound : forall o xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma (forward o xs) c.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o xs cs c Hmembers Heval. unfold forward. apply raw_cut_sound.
+    eapply R.forward_sound; [apply gamma_raw_list; exact Hmembers | exact Heval].
+  Qed.
+
+  (** Packing inward-cut results preserves their original operand positions and order. *)
+  Lemma cut_list_refines : forall xs ys,
+    Forall2 (fun y x => R.leb y x = true) ys (map cut_raw xs) ->
+    Forall2 (fun y x => leb y x = true)
+      (map (fun yx => pack_cut C.bits (cut_within C.bits (snd yx) (fst yx)))
+        (combine ys (map cut_raw xs))) xs.
+  Proof.
+    induction xs as [|x xs IH]; intros ys Hrefines; destruct ys as [|y ys];
+      inversion Hrefines as [|y' x' ys' xs' Hle Htail]; subst;
+      cbn [map combine]; constructor.
+    - unfold leb. rewrite RL.raw_leb.
+      rewrite pack_cut_agrees.
+      + apply cut_within_refines. now rewrite <- RL.raw_leb.
+      + apply cut_within_valid; [apply cut_raw_valid | now rewrite <- RL.raw_leb].
+    - apply IH. exact Htail.
+  Qed.
+
+  (** Packing inward-cut results preserves every compatible concrete operand. *)
+  Lemma cut_list_sound : forall xs ys cs,
+    Forall2 (fun y x => R.leb y x = true) ys (map cut_raw xs) ->
+    Forall2 gamma xs cs -> Forall2 R.gamma ys cs ->
+    Forall2 gamma
+      (map (fun yx => pack_cut C.bits (cut_within C.bits (snd yx) (fst yx)))
+        (combine ys (map cut_raw xs))) cs.
+  Proof.
+    intros xs ys cs Hrefines Hmembers Hraw. revert ys Hrefines Hraw.
+    induction Hmembers as [|x z xs cs Hx Hxs IH]; intros ys Hrefines Hraw;
+      destruct ys as [|y ys]; inversion Hrefines as [|y' x' ys' xs' Hle Htail]; subst;
+      inversion Hraw as [|y' z' ys' cs' Hy Hys]; subst;
+      cbn [map combine]; constructor.
+    - change (cut_member (cut_raw (pack_cut C.bits (cut_within C.bits (cut_raw x) y))) z).
+      rewrite pack_cut_agrees.
+      + apply cut_within_sound; [exact Hx | apply RL.raw_gamma; exact Hy].
+      + apply cut_within_valid; [apply cut_raw_valid | now rewrite <- RL.raw_leb].
+    - eapply IH; eassumption.
+  Qed.
+
+  (** Raw backward soundness and inward cutoff retain compatible operands. *)
   Lemma backward_sound : forall o r xs cs c,
     Forall2 gamma xs cs -> L.eval o cs = Some c -> gamma r c ->
     Forall2 gamma (backward o r xs) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs cs c Hmembers Heval Hr. unfold backward.
+    apply cut_list_sound; [apply R.backward_refines | exact Hmembers |].
+    eapply R.backward_sound; [apply gamma_raw_list; exact Hmembers | exact Heval |].
+    apply gamma_raw. exact Hr.
+  Qed.
+
+  (** Backward results refine each bounded operand in its original position. *)
   Lemma backward_refines : forall o r xs,
     Forall2 (fun y x => leb y x = true) (backward o r xs) xs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros o r xs. unfold backward. apply cut_list_refines, R.backward_refines.
+  Qed.
+
+  (** Raw guard soundness and inward cutoff retain satisfying operands. *)
   Lemma guard_sound : forall g xs cs,
     Forall2 gamma xs cs -> L.holds g cs -> Forall2 gamma (guard g xs) cs.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs cs Hmembers Hholds. unfold guard.
+    apply cut_list_sound; [apply R.guard_refines | exact Hmembers |].
+    apply R.guard_sound; [apply gamma_raw_list; exact Hmembers | exact Hholds].
+  Qed.
+
+  (** Guard results refine each bounded operand in its original position. *)
   Lemma guard_refines : forall g xs,
     Forall2 (fun y x => leb y x = true) (guard g xs) xs.
-  Proof. Admitted. (* STUB *)
-  Lemma cut_agrees : forall a, cut_raw (cut a) = cut_interval C.bits a.
-  Proof. Admitted. (* STUB *)
-  Lemma carrier_invariant : forall (a : t),
-    cut_shape_ok (cut_raw a) = true /\ interval_bits (cut_raw a) <= C.bits.
-  Proof. Admitted. (* STUB *)
-  Lemma cut_fixed : forall (a : t), cut_raw (cut (cut_raw a)) = cut_raw a.
-  Proof. Admitted. (* STUB *)
-  Lemma cut_sound : forall a z,
-    (match a with IBot => False | I lo hi => in_bnd lo hi z end) ->
-    (match cut_raw (cut a) with IBot => False | I lo hi => in_bnd lo hi z end).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g xs. unfold guard. apply cut_list_refines, R.guard_refines.
+  Qed.
 End CutInterval.
 
 Module CutIntervalRaw (L : Z_LANGUAGE_T) (T : THRESHOLDS_T).
