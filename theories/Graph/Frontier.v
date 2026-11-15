@@ -1532,20 +1532,32 @@ Proof.
     + exact Hrow.
 Qed.
 
+(** A stopped raw transition has no pending work and returns the reversed accumulated answer. *)
+Lemma idf_step_stop rows st result :
+  idf_step rows st = inr result ->
+  idf_pending st = [] /\ result = rev (idf_answer st).
+Proof.
+  destruct st as [pending expanded discovered answer]. intro Hstop.
+  destruct pending as [|task rest].
+  - cbn [idf_step] in Hstop. injection Hstop as <-.
+    split; [reflexivity|]. cbn [idf_answer].
+    now rewrite rev_append_rev, app_nil_r.
+  - destruct task as [v|v]; cbn [idf_step] in Hstop;
+      [|destruct (trie_get v discovered) as [[]|]];
+      destruct (trie_get v expanded) as [[]|]; discriminate Hstop.
+Qed.
+
 (** The raw lazy worklist computes the least row closure on every row map and seed list. *)
 Lemma idf_rows_correct rows seeds y :
   In y (idf rows seeds) <-> in_row_closure rows seeds y.
 Proof.
   destruct (idf_result_trace rows seeds) as [st [Hreachable Hstop]].
   pose proof (idf_closure_reachable rows seeds st Hreachable) as Hinv.
+  destruct (idf_step_stop rows st (idf rows seeds) Hstop) as [Hpending Hresult].
   destruct st as [pending expanded discovered answer].
-  destruct pending as [|task rest].
-  - cbn [idf_step] in Hstop. injection Hstop as Hresult.
-    rewrite <- Hresult, rev_append_rev, app_nil_r, <- (in_rev answer y).
-    exact (idf_closure_complete rows seeds expanded discovered answer Hinv y).
-  - destruct task as [v|v]; cbn [idf_step] in Hstop;
-      [|destruct (trie_get v discovered) as [[]|]];
-      destruct (trie_get v expanded) as [[]|]; discriminate Hstop.
+  cbn [idf_pending idf_answer] in Hpending, Hresult. subst pending.
+  rewrite Hresult, <- (in_rev answer y).
+  exact (idf_closure_complete rows seeds expanded discovered answer Hinv y).
 Qed.
 
 (** Graph node observations agree with the underlying vertex list. *)
@@ -2388,6 +2400,137 @@ Proof.
   intro seeds. time_unfold T_idf_initial. rewrite frontier_map_unit_clock. lia.
 Qed.
 
+(** Only seeds and actually discovered targets contribute reusable expansion credit. *)
+Definition frontier_idf_support rows seeds : list positive :=
+  nodup Pos.eq_dec (seeds ++ idf rows seeds).
+
+Definition frontier_idf_width rows seeds : nat :=
+  vertex_width (seeds ++ flat_map (frontier_row rows) (seeds ++ idf rows seeds)).
+
+Definition frontier_idf_credit rows seeds st : N :=
+  ((frontier_step_cost * N.of_nat (frontier_idf_width rows seeds + 1) + 1) *
+    N.of_nat (frontier_idf_progress rows (frontier_idf_support rows seeds) st))%N.
+
+(** Every returned target occurs in a row whose source is a seed or another returned target. *)
+Lemma frontier_idf_output_rows : forall rows seeds,
+  incl (idf rows seeds) (flat_map (frontier_row rows) (seeds ++ idf rows seeds)).
+Proof.
+  intros rows seeds y Hy. apply (proj1 (idf_rows_correct rows seeds y)) in Hy.
+  destruct Hy as [x target Hseed Hrow|x target Hprevious Hrow];
+    apply in_flat_map; exists x; split; try exact Hrow.
+  - apply in_or_app. now left.
+  - apply in_or_app. right. now apply (proj2 (idf_rows_correct rows seeds x)).
+Qed.
+
+(** Duplicate-free output is no longer than the row occurrences reached from seeds and output. *)
+Lemma frontier_idf_output_size : forall rows seeds,
+  length (idf rows seeds) <= idf_work idf rows seeds.
+Proof.
+  intros rows seeds. unfold idf_work.
+  rewrite <- (frontier_flat_map_length (frontier_row rows) (seeds ++ idf rows seeds)).
+  apply NoDup_incl_length; [apply idf_result_unique|apply frontier_idf_output_rows].
+Qed.
+
+Lemma frontier_idf_support_member : forall rows seeds v,
+  In v (frontier_idf_support rows seeds) <->
+    In v seeds \/ in_row_closure rows seeds v.
+Proof.
+  intros rows seeds v. unfold frontier_idf_support.
+  rewrite nodup_In, in_app_iff, idf_rows_correct. reflexivity.
+Qed.
+
+(** The published key-width list covers every vertex in the actual expansion support. *)
+Lemma frontier_idf_support_width : forall rows seeds v,
+  In v (frontier_idf_support rows seeds) -> Pos.size_nat v <= frontier_idf_width rows seeds.
+Proof.
+  intros rows seeds v Hin. unfold frontier_idf_width. apply dom_time_width_member. apply in_or_app.
+  apply (proj1 (frontier_idf_support_member rows seeds v)) in Hin.
+  destruct Hin as [Hseed|Hclosure]; [now left|right].
+  apply frontier_idf_output_rows. now apply (proj2 (idf_rows_correct rows seeds v)).
+Qed.
+
+(** Typed pending tasks are contained in the actual seed-and-output support. *)
+Lemma frontier_idf_tasks_within : forall rows seeds st,
+  Forall (idf_supported_task rows seeds) (idf_pending st) ->
+  idf_tasks_within (frontier_idf_support rows seeds) st.
+Proof.
+  intros rows seeds st Htasks. unfold idf_tasks_within.
+  rewrite Forall_forall in Htasks. apply Forall_forall. intros task Hin.
+  specialize (Htasks task Hin). destruct task as [v|v];
+    apply (proj2 (frontier_idf_support_member rows seeds v)); [now left|now right].
+Qed.
+
+(** Every continuing raw callback fits the decrease of the actual-support credit. *)
+Lemma frontier_idf_step_credit : forall rows seeds st next,
+  idf_tasks_within (frontier_idf_support rows seeds) st ->
+  idf_step rows st = inl next ->
+  (T_idf_step rows st + 1 + frontier_idf_credit rows seeds next <
+    frontier_idf_credit rows seeds st)%N.
+Proof.
+  intros rows seeds st next Hwithin Hstep.
+  assert (Hunique : NoDup (frontier_idf_support rows seeds))
+    by (unfold frontier_idf_support; apply NoDup_nodup).
+  pose proof (frontier_idf_step_progress rows (frontier_idf_support rows seeds)
+    st next Hunique Hwithin Hstep) as Hprogress.
+  destruct st as [pending expanded discovered answer].
+  destruct pending as [|task rest]; [discriminate Hstep|].
+  assert (Hwidth : (match task with IdfSeed v | IdfTarget v => Pos.size_nat v end) <=
+    frontier_idf_width rows seeds).
+  { pose proof (Forall_inv Hwithin) as Hhead.
+    destruct task as [v|v]; apply frontier_idf_support_width; exact Hhead. }
+  pose proof (frontier_idf_step_time rows task rest expanded discovered answer
+    (frontier_idf_width rows seeds) Hwidth) as Htime.
+  unfold frontier_idf_credit. eapply frontier_credit_spend with
+    (work := N.of_nat (1 + frontier_idf_expansion rows
+      (IdfState (task :: rest) expanded discovered answer))).
+  - rewrite Nat2N.inj_add. lia.
+  - apply time_of_nat_le in Hprogress. repeat rewrite Nat2N.inj_add in Hprogress.
+    repeat rewrite Nat2N.inj_add. lia.
+  - exact Htime.
+Qed.
+
+(** A justified duplicate-free partial answer is included in the eventual raw result. *)
+Lemma frontier_idf_answer_size : forall rows seeds st,
+  idf_closure_invariant rows seeds st ->
+  length (idf_answer st) <= length (idf rows seeds).
+Proof.
+  intros rows seeds st Hinv. apply NoDup_incl_length.
+  - exact (proj1 (idf_closure_distinct rows seeds st Hinv)).
+  - intros v Hin. apply (proj2 (idf_rows_correct rows seeds v)).
+    exact (idf_closure_answer_sound rows seeds st Hinv v Hin).
+Qed.
+
+(** The empty expansion table reserves two units per supported vertex and its row length. *)
+Lemma frontier_idf_unexpanded_empty : forall rows vertices,
+  idf_unexpanded rows vertices Empty = 2 * length vertices + frontier_entries rows vertices.
+Proof.
+  intros rows vertices. unfold idf_unexpanded, frontier_entries.
+  induction vertices as [|v rest IH]; cbn [fold_right length]; [reflexivity|].
+  rewrite PTrie.get_empty, IH. lia.
+Qed.
+
+(** Actual-support initialization is bounded by seed and visited-row occurrence counts. *)
+Lemma frontier_idf_initial_progress : forall rows seeds,
+  frontier_idf_progress rows (frontier_idf_support rows seeds) (idf_initial seeds) <=
+    7 * (length seeds + idf_work idf rows seeds + 1).
+Proof.
+  intros rows seeds.
+  assert (Hunique : NoDup (frontier_idf_support rows seeds))
+    by (unfold frontier_idf_support; apply NoDup_nodup).
+  assert (Hwithin : incl (frontier_idf_support rows seeds) (seeds ++ idf rows seeds)).
+  { intros v Hin. unfold frontier_idf_support in Hin. now apply nodup_In in Hin. }
+  assert (Hlength : length (frontier_idf_support rows seeds) <=
+    length seeds + length (idf rows seeds)).
+  { rewrite <- length_app. now apply NoDup_incl_length. }
+  assert (Hentries : frontier_entries rows (frontier_idf_support rows seeds) <=
+    idf_work idf rows seeds).
+  { exact (dom_nodup_sum_incl (fun v => length (frontier_row rows v))
+      (frontier_idf_support rows seeds) (seeds ++ idf rows seeds) Hunique Hwithin). }
+  pose proof (frontier_idf_output_size rows seeds) as Houtput.
+  unfold frontier_idf_progress. cbn [idf_initial idf_expanded idf_pending].
+  rewrite frontier_idf_unexpanded_empty, length_map. lia.
+Qed.
+
 Module FrontierT <: FRONTIER_ALL.
   Include Frontier.
 
@@ -2799,7 +2942,26 @@ Module FrontierT <: FRONTIER_ALL.
     idf_invariant rows seeds st -> idf_step rows st = inl next ->
     idf_invariant rows seeds next /\
       (idf_potential rows seeds next < idf_potential rows seeds st)%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st next [Hreach [Hunique [Hmarks [Hsound [Hexpanded Htasks]]]]] Hstep.
+    pose proof (idf_reachable_step rows seeds st next Hreach Hstep) as Hreachnext.
+    pose proof (idf_closure_reachable rows seeds next Hreachnext) as Hnext.
+    pose proof (frontier_idf_tasks_within rows seeds st Htasks) as Hwithin.
+    assert (Hsupport : NoDup (frontier_idf_support rows seeds))
+      by (unfold frontier_idf_support; apply NoDup_nodup).
+    pose proof (frontier_idf_step_progress rows (frontier_idf_support rows seeds)
+      st next Hsupport Hwithin Hstep) as Hprogress.
+    split.
+    - refine (conj Hreachnext
+        (conj (proj1 (idf_closure_distinct rows seeds next Hnext))
+          (conj (proj2 (idf_closure_distinct rows seeds next Hnext))
+            (conj (idf_closure_answer_sound rows seeds next Hnext)
+              (conj (idf_closure_expanded_supported rows seeds next Hnext)
+                (idf_closure_pending_supported rows seeds next Hnext)))))).
+    - change (N.of_nat (frontier_idf_progress rows (frontier_idf_support rows seeds) next) <
+        N.of_nat (frontier_idf_progress rows (frontier_idf_support rows seeds) st))%N.
+      lia.
+  Qed.
 
   Definition idf_checked_step rows seeds (st : idf_guard rows seeds) :
       { next : idf_guard rows seeds | idf_decreases rows seeds next st } + list positive :=
@@ -2818,7 +2980,14 @@ Module FrontierT <: FRONTIER_ALL.
   Lemma F8_idf_stop : forall rows seeds st result,
     idf_invariant rows seeds st -> idf_step rows st = inr result ->
     idf_pending st = [] /\ result = rev (idf_answer st) /\ result = idf rows seeds.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds st result [[n Hreach] Hrest] Hstep.
+    destruct (idf_step_stop rows st result Hstep) as [Hpending Hresult].
+    split; [exact Hpending|]. split; [exact Hresult|].
+    destruct (idf_result_trace rows seeds) as [finished [[m Hreach'] Hstop]].
+    exact (frontier_trace_result (idf_step rows) (idf_initial seeds)
+      n m st finished result (idf rows seeds) Hreach Hreach' Hstep Hstop).
+  Qed.
 
   Lemma F8a_idf_checked : forall rows seeds st,
     match idf_checked_step rows seeds st with
@@ -2844,12 +3013,21 @@ Module FrontierT <: FRONTIER_ALL.
 
   Lemma F9_idf_output : forall rows seeds,
     length (idf rows seeds) <= idf_work idf rows seeds.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    exact frontier_idf_output_size.
+  Qed.
 
   Lemma F10_idf_credit : forall rows seeds,
     (idf_potential rows seeds (idf_initial seeds) <=
       7 * N.of_nat (length seeds + idf_work idf rows seeds + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros rows seeds. pose proof (frontier_idf_initial_progress rows seeds) as Hbound.
+    change (frontier_idf_progress rows (frontier_idf_support rows seeds) (idf_initial seeds) <=
+      7 * (length seeds + idf_work idf rows seeds + 1)) in Hbound.
+    change (N.of_nat (frontier_idf_progress rows (frontier_idf_support rows seeds)
+      (idf_initial seeds)) <= 7 * N.of_nat (length seeds + idf_work idf rows seeds + 1))%N.
+    apply time_of_nat_le in Hbound. rewrite Nat2N.inj_mul in Hbound. exact Hbound.
+  Qed.
 
   Lemma T1_idf_step : forall rows seeds st next,
     idf_invariant rows seeds st -> idf_step rows st = inl next ->
