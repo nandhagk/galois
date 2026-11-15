@@ -4161,6 +4161,79 @@ Qed.
 TimeBound tnum_rotl_value_time.
 
 
+(** Clamping a negative amount to zero never increases its stored bits. *)
+Lemma tnum_max_zero_bits : forall k,
+  (Z.size_nat (Z.max 0 k) <= Z.size_nat k)%nat.
+Proof. intros [|p|p]; cbn [Z.max Z.compare Z.size_nat]; lia. Qed.
+
+(** Scalar shifts charge an arbitrary amount only through its magnitude bits. *)
+Lemma tnum_scalar_value_time : forall o w k x,
+  (T_tnum_scalar_value o w k x <= 4096 * N.of_nat
+    (Pos.to_nat w + Z.size_nat x + (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.
+Proof.
+  intros o w k x.
+  set (B := N.of_nat (Pos.to_nat w + Z.size_nat x +
+    (Z.size_nat k + 1) * (Pos.size_nat w + 1))).
+  assert (Hvalue : (N.of_nat (Pos.to_nat w + Z.size_nat x + 1) <= B)%N).
+  { unfold B. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add. nia. }
+  assert (Hamount : (N.of_nat (Z.size_nat k) + 1 <= B)%N).
+  { unfold B. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add. nia. }
+  assert (Hdivision :
+    ((N.of_nat (Z.size_nat k) + 1) * (N.of_nat (Pos.size_nat w) + 1) <= B)%N).
+  { unfold B. rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add. nia. }
+  assert (HB : (1 <= B)%N) by lia.
+  clearbody B.
+  pose proof (tnum_wrap_time w x) as Hwrap.
+  pose proof (tnum_max_zero_bits k) as Hmaxbits.
+  pose proof (Std.Z.T_max_le 0 k) as Hmaximum.
+  pose proof (Std.Z.T_min_le (Z.max 0 k) (Zpos w)) as Hminimum.
+  change (Std.Z.T_max 0 k <= 4)%N in Hmaximum.
+  assert (Hclamp : 0 <= Z.min (Z.max 0 k) (Zpos w) <= Zpos w) by lia.
+  destruct o; time_unfold T_tnum_scalar_value; cbn beta iota zeta;
+    try change (match k with
+      | Z0 => 0
+      | Zpos p => Zpos p
+      | Zneg _ => 0
+      end) with (Z.max 0 k) in *;
+    try solve [clear Hclamp; lia].
+  - pose proof (tnum_shl_value_time w (Z.min (Z.max 0 k) (Zpos w)) x Hclamp) as Hshift.
+    clear Hclamp. lia.
+  - pose proof (tnum_lshr_value_time w (Z.min (Z.max 0 k) (Zpos w)) x Hclamp) as Hshift.
+    clear Hclamp. lia.
+  - pose proof (tnum_ashr_value_time w (Z.min (Z.max 0 k) (Zpos w)) x Hclamp) as Hshift.
+    clear Hclamp. lia.
+  - pose proof (Z.mod_pos_bound k (Zpos w) ltac:(lia)) as Hrange.
+    pose proof (tnum_rotl_value_time w (k mod Zpos w) x ltac:(lia)) as Hrotation.
+    pose proof (tnum_positive_modulo_time k w) as Hmodulo.
+    clear Hrange Hclamp Hmaxbits Hmaximum Hminimum. nia.
+  - pose proof (Z.mod_pos_bound (-k) (Zpos w) ltac:(lia)) as Hrange.
+    pose proof (tnum_rotl_value_time w ((-k) mod Zpos w) x ltac:(lia)) as Hrotation.
+    pose proof (tnum_positive_modulo_time (-k) w) as Hmodulo.
+    pose proof (Std.Z.T_opp_le k) as Hnegate.
+    rewrite tnum_opp_bits in Hmodulo.
+    clear Hrange Hclamp Hmaxbits Hmaximum Hminimum. nia.
+Qed.
+TimeBound tnum_scalar_value_time.
+
+
+(** Scalar transfer maps two bounded endpoints. *)
+Lemma tnum_scalar_time : forall o w k a,
+  (T_tnum_scalar o w k a <= 32768 * N.of_nat
+    (Pos.to_nat w + tnum_bits a + (Z.size_nat k + 1) * (Pos.size_nat w + 1)))%N.
+Proof.
+  intros o w k a.
+  pose proof (tnum_map_time w w (tnum_scalar_value o w k)
+    (fun x => T_tnum_scalar_value o w k x) a
+    (fun x _ => tnum_scalar_word o w k x)) as Hmap.
+  pose proof (tnum_scalar_value_time o w k (tnum_max w a)) as Hmax.
+  pose proof (tnum_scalar_value_time o w k (tnum_min w a)) as Hmin.
+  pose proof (tnum_max_bits w a). pose proof (tnum_min_bits w a).
+  time_unfold T_tnum_scalar. cbn beta iota zeta.
+  rewrite ?Nat2N.inj_add, ?Nat2N.inj_mul, ?Nat2N.inj_add in *. nia.
+Qed.
+TimeBound tnum_scalar_time.
+
+
 Local Open Scope nat_scope.
 
 Theorem tnum_unknown_from_equation : forall n i m,
