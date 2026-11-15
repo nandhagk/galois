@@ -253,79 +253,7 @@ Module WrappedTableCode (L : WORD_LANGUAGE_OPS) (W : WRAPPED_OPS L) <: WORD_TABL
   Definition wbwd := backward_raw.
 End WrappedTableCode.
 
-Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
-  Include WrappedTableCode L W.
-  Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
-    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
-      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
-    L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
-  Proof. Admitted. (* STUB: F2-6 adds public arithmetic soundness laws to WRAPPED. *)
-  Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
-    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
-      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
-    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
-    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
-      (combine (map fst wps) ys) cs.
-  Proof. Admitted. (* STUB: F2-6 adds gamma_arc to WRAPPED. *)
-End WrappedTable.
 
-Module WrappedTableClock (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
-  Include WrappedTable L W.
-  TimeFun piece_forward.
-  TimeFun forward_unary.
-  TimeFun piece_binary.
-  TimeFun piece_cut.
-  TimeFun forward_binary.
-  TimeFun forward_raw.
-  TimeFun wfwd.
-  TimeFun assume_consistent.
-  TimeFun assume_piece_raw.
-  TimeFun assume_piece.
-  TimeFun assume_result.
-  TimeFun assume_binary_base.
-  TimeFun assume_binary.
-  TimeFun assume_trunc.
-  TimeFun assume_unary.
-  TimeFun backward_raw.
-  TimeFun wbwd.
-End WrappedTableClock.
-
-Module WrappedTableT (L : WORD_LANGUAGE_T) (W : WRAPPED_T L)
-    <: WRAPPED_TABLE_T L W.
-  Include WrappedTableClock L W.
-  Definition c_word_table : N := 1. (* STUB *)
-  Lemma T_wfwd_le : forall o rw xs,
-    (T_wfwd o rw xs <= c_word_table * N.of_nat
-      (((Pos.to_nat rw + fold_right Nat.add 0
-          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-        fold_right Nat.add 0
-          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma T_wbwd_le : forall o rw q xs,
-    (T_wbwd o rw q xs <= c_word_table * N.of_nat
-      (((Pos.to_nat rw + fold_right Nat.add 0
-          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-        W.psize rw q +
-        fold_right Nat.add 0
-          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
-    (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
-      (((Pos.to_nat rw + fold_right Nat.add 0
-          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-        fold_right Nat.add 0
-          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
-    (N.of_nat ((length ys + fold_right Nat.add 0
-      (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
-      c_word_table * N.of_nat
-        (((Pos.to_nat rw + fold_right Nat.add 0
-            (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
-          W.psize rw q + fold_right Nat.add 0
-            (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
-  Proof. Admitted. (* STUB *)
-End WrappedTableT.
 
 Theorem wrapped_project_sound target source q z :
   wrapped_gamma source q z ->
@@ -578,8 +506,7 @@ Proof.
     now apply WrappedIntervalSound.interval_pgamma_spec.
 Qed.
 
-Module WrappedTransferClaims (L : WORD_LANGUAGE_OPS).
-  Module P := WrappedCode L.
+Module WrappedTransferSound (L : WORD_LANGUAGE_OPS) (P : WRAPPED_OPS L).
   Module O := WrappedOpsCode L P.
 Theorem wrapped_assume_consistent_sound o wa wb a b q x y rw z :
   interval_pgamma wa a x -> interval_pgamma wb b y -> interval_pgamma rw q z ->
@@ -883,6 +810,11 @@ Proof.
   - right; right; left. eapply wrapped_piece_forward_cut_sound; eassumption.
   - right; right; right. eapply wrapped_piece_forward_cut_sound; eassumption.
 Qed.
+End WrappedTransferSound.
+
+Module WrappedTransferClaims (L : WORD_LANGUAGE_OPS).
+  Module P := WrappedCode L.
+  Include WrappedTransferSound L P.
 End WrappedTransferClaims.
 
 Definition wrapped_rewrap (target source : width) (q : wrapped) : wrapped :=
@@ -894,6 +826,114 @@ Proof.
   apply wrapped_project_sound.
 Qed.
 
+
+Module WrappedTable (L : WORD_LANGUAGE) (W : WRAPPED L) <: WRAPPED_TABLE L W.
+  Include WrappedTableCode L W.
+  Module Claims := WrappedTransferSound L W.
+
+  (** The public payload semantics agrees with the checked circular helpers. *)
+  Local Lemma gamma_wrapped w a z : W.pgamma w a z <-> wrapped_gamma w a z.
+  Proof.
+    rewrite W.gamma_arc. destruct a as [| |lo hi];
+      cbn [W.arc_gamma wrapped_gamma]; try reflexivity.
+    unfold W.offset, wrapped_offset. rewrite !arc_wrap_agrees. reflexivity.
+  Qed.
+
+  Lemma wfwd_sound : forall o rw wps cs z r, wfwd o rw wps = Some r ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw r z.
+  Proof. Admitted. (* OPEN: supplied-payload forward integration needs smaller conversion lemmas. *)
+  Lemma wbwd_sound : forall o rw q wps ys cs z, wbwd o rw q wps = Some ys ->
+    Forall2 (fun wp c => fst wp = fst c /\ L.is_word (fst c) (snd c) /\
+      W.pgamma (fst wp) (snd wp) (snd c)) wps cs ->
+    L.eval_op o cs = Some (rw, z) -> W.pgamma rw q z ->
+    Forall2 (fun wp c => W.pgamma (fst wp) (snd wp) (snd c))
+      (combine (map fst wps) ys) cs.
+  Proof.
+    intros o rw q wps ys cs z Hentry Hinputs Heval Hq.
+    change (eval_op o cs = Some (rw, z)) in Heval.
+    destruct wps as [|[w1 a1] [|[w2 a2] [|extra rest]]]; try discriminate Hentry.
+    - change (Some [Claims.O.assume_unary o w1 a1 rw q] = Some ys) in Hentry.
+      injection Hentry as <-.
+      inversion Hinputs as [|wp [v1 x1] tail values [Hwidth [Hword Ha]] Htail]; subst.
+      inversion Htail; subst. change (w1 = v1) in Hwidth. subst v1.
+      constructor; [|constructor]. apply (proj2 (gamma_wrapped _ _ _)).
+      exact (Claims.wrapped_assume_unary_sound o w1 a1 rw q x1 z
+        (proj1 (gamma_wrapped w1 a1 x1) Ha) (proj1 (gamma_wrapped rw q z) Hq) Heval).
+    - change (Some [fst (Claims.O.assume_binary o w1 w2 a1 a2 rw q);
+        snd (Claims.O.assume_binary o w1 w2 a1 a2 rw q)] = Some ys) in Hentry.
+      injection Hentry as <-.
+      inversion Hinputs as [|wp [v1 x1] tail values [Hwidth1 [Hword1 Ha]] Htail]; subst.
+      inversion Htail as [|wp [v2 x2] tail' values' [Hwidth2 [Hword2 Hb]] Hlast]; subst.
+      inversion Hlast; subst.
+      change (w1 = v1) in Hwidth1. change (w2 = v2) in Hwidth2. subst v1 v2.
+      pose proof (Claims.wrapped_assume_binary_sound o w1 w2 a1 a2 rw q x1 x2 z
+        (proj1 (gamma_wrapped w1 a1 x1) Ha) (proj1 (gamma_wrapped w2 a2 x2) Hb)
+        (proj1 (gamma_wrapped rw q z) Hq) Heval) as [Hleft Hright].
+      constructor.
+      + apply (proj2 (gamma_wrapped _ _ _)). exact Hleft.
+      + constructor; [|constructor]. apply (proj2 (gamma_wrapped _ _ _)). exact Hright.
+  Qed.
+End WrappedTable.
+
+Module WrappedTableClock (L : WORD_LANGUAGE_T) (W : WRAPPED_T L).
+  Include WrappedTable L W.
+  TimeFun piece_forward.
+  TimeFun forward_unary.
+  TimeFun piece_binary.
+  TimeFun piece_cut.
+  TimeFun forward_binary.
+  TimeFun forward_raw.
+  TimeFun wfwd.
+  TimeFun assume_consistent.
+  TimeFun assume_piece_raw.
+  TimeFun assume_piece.
+  TimeFun assume_result.
+  TimeFun assume_binary_base.
+  TimeFun assume_binary.
+  TimeFun assume_trunc.
+  TimeFun assume_unary.
+  TimeFun backward_raw.
+  TimeFun wbwd.
+End WrappedTableClock.
+
+Module WrappedTableT (L : WORD_LANGUAGE_T) (W : WRAPPED_T L)
+    <: WRAPPED_TABLE_T L W.
+  Include WrappedTableClock L W.
+  Definition c_word_table : N := 1. (* STUB *)
+  Lemma T_wfwd_le : forall o rw xs,
+    (T_wfwd o rw xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma T_wbwd_le : forall o rw q xs,
+    (T_wbwd o rw q xs <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        W.psize rw q +
+        fold_right Nat.add 0
+          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wfwd_size_le : forall o rw xs r, wfwd o rw xs = Some r ->
+    (N.of_nat (W.psize rw r) <= c_word_table * N.of_nat
+      (((Pos.to_nat rw + fold_right Nat.add 0
+          (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+        fold_right Nat.add 0
+          (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+  Lemma wbwd_size_le : forall o rw q xs ys, wbwd o rw q xs = Some ys ->
+    (N.of_nat ((length ys + fold_right Nat.add 0
+      (map (fun wy => W.psize (fst wy) (snd wy)) (combine (map fst xs) ys)))%nat) <=
+      c_word_table * N.of_nat
+        (((Pos.to_nat rw + fold_right Nat.add 0
+            (map (fun x => Pos.to_nat (fst x)) xs) + 1) ^ 2 +
+          W.psize rw q + fold_right Nat.add 0
+            (map (fun x => W.psize (fst x) (snd x)) xs))%nat))%N.
+  Proof. Admitted. (* STUB *)
+End WrappedTableT.
 
 (** Unsigned bounds retain precise endpoints for arcs that do not cross zero. *)
 Definition wrapped_unsigned_range (w : width) (a : wrapped) : bnd * bnd :=
