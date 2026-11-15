@@ -858,6 +858,290 @@ Module Compile (V : VALUE) <: COMPILE V.
       subst j. congruence.
   Qed.
 
+  (** * Sorting compiled patterns *)
+
+  (** A context includes another when it preserves every existing sort assignment. *)
+  Definition ctx_includes (g h : ctx) : Prop :=
+    forall x s, g x = Some s -> h x = Some s.
+
+  (** Every context includes itself. *)
+  Lemma ctx_includes_refl : forall g, ctx_includes g g.
+  Proof.
+    intros g x s H. exact H.
+  Qed.
+
+  (** Inclusion composes pointwise. *)
+  Lemma ctx_includes_trans : forall g h k,
+    ctx_includes g h -> ctx_includes h k -> ctx_includes g k.
+  Proof.
+    intros g h k Hgh Hhk x s H. apply Hhk, Hgh. exact H.
+  Qed.
+
+  (** A term keeps its sort when the context includes its assignments. *)
+  Lemma has_includes : forall g h (t : term V.t) s,
+    ctx_includes g h -> has g t s -> has h t s.
+  Proof.
+    intros g h [x|v] s Hinc Hhas; cbn [has] in *; [apply Hinc|]; exact Hhas.
+  Qed.
+
+  (** Term binding preserves every previously assigned variable. *)
+  Lemma binds_includes : forall g (t : term V.t) s g',
+    binds g t s g' -> ctx_includes g g'.
+  Proof.
+    intros g t s g' Hbind. destruct Hbind as [x s Hsort|x s Hnone|v];
+      try apply ctx_includes_refl.
+    intros y u Hsort. unfold ctx_set. destruct (Pos.eqb x y) eqn:Hxy.
+    - apply Pos.eqb_eq in Hxy. subst y. congruence.
+    - exact Hsort.
+  Qed.
+
+  (** A bound term has the sort required by that binding. *)
+  Lemma binds_has : forall g (t : term V.t) s g',
+    binds g t s g' -> has g' t s.
+  Proof.
+    intros g t s g' Hbind. destruct Hbind as [x s Hsort|x s Hnone|v];
+      cbn [has]; try assumption; try reflexivity.
+    unfold ctx_set. now rewrite Pos.eqb_refl.
+  Qed.
+
+  (** A binding can add only the variable term that it visits. *)
+  Lemma binds_scope : forall g (t : term V.t) s g',
+    binds g t s g' -> forall x u, g' x = Some u -> g x = Some u \/ t = Var x.
+  Proof.
+    intros g t s g' Hbind. destruct Hbind as [y s Hsort|y s Hnone|v];
+      intros x u H; try (left; exact H).
+    unfold ctx_set in H. destruct (Pos.eqb y x) eqn:Hyx.
+    - apply Pos.eqb_eq in Hyx. subst x. right. reflexivity.
+    - left. exact H.
+  Qed.
+
+  (** A partially assigned context can bind a term compatible with a complete target. *)
+  Lemma binds_complete_target : forall g target (t : term V.t) s,
+    ctx_includes g target -> has target t s ->
+    exists g', binds g t s g' /\ ctx_includes g' target.
+  Proof.
+    intros g target [x|v] s Hinc Hhas; cbn [has] in Hhas.
+    - destruct (g x) as [u|] eqn:Hlookup.
+      + pose proof (Hinc x u Hlookup) as Hu. assert (u = s) by congruence. subst u.
+        exists g. split; [apply binds_old; exact Hlookup|exact Hinc].
+      + exists (ctx_set g x s). split; [apply binds_new; exact Hlookup|].
+        intros y u H. unfold ctx_set in H. destruct (Pos.eqb x y) eqn:Hxy.
+        * apply Pos.eqb_eq in Hxy. subst y. injection H as <-. exact Hhas.
+        * apply Hinc. exact H.
+    - subst s. exists g. split; [constructor|exact Hinc].
+  Qed.
+
+  (** Argument binding preserves previously assigned variables. *)
+  Lemma binds_list_includes : forall g ts ss g',
+    @binds_list V.t g ts ss g' -> ctx_includes g g'.
+  Proof.
+    intros g ts ss g' Hbind. induction Hbind as [g|g g1 g2 t ts s ss Hhead Htail IH].
+    - apply ctx_includes_refl.
+    - eapply ctx_includes_trans; [eapply binds_includes; exact Hhead|exact IH].
+  Qed.
+
+  (** Argument binding can add only variables appearing in its argument list. *)
+  Lemma binds_list_scope : forall g ts ss g',
+    @binds_list V.t g ts ss g' -> forall x u,
+    g' x = Some u -> g x = Some u \/ In (Var x) ts.
+  Proof.
+    intros g ts ss g' Hbind. induction Hbind as [g|g g1 g2 t ts s ss Hhead Htail IH];
+      intros x u Hsort.
+    - left. exact Hsort.
+    - destruct (IH x u Hsort) as [Hbound|Hin].
+      + destruct (binds_scope g t s g1 Hhead x u Hbound) as [Hold|Heq].
+        * left. exact Hold.
+        * right. left. exact Heq.
+      + right. right. exact Hin.
+  Qed.
+
+  (** Every bound argument retains its requested sort at the end of the binding list. *)
+  Lemma binds_list_has : forall g ts ss g',
+    @binds_list V.t g ts ss g' -> Forall2 (has g') ts ss.
+  Proof.
+    intros g ts ss g' Hbind. induction Hbind as [g|g g1 g2 t ts s ss Hhead Htail IH].
+    - constructor.
+    - constructor; [|exact IH]. eapply has_includes.
+      + eapply binds_list_includes. exact Htail.
+      + apply binds_has in Hhead. exact Hhead.
+  Qed.
+
+  (** A list of target-sorted arguments can be bound from any compatible partial context. *)
+  Lemma binds_list_complete_target : forall target ts ss,
+    Forall2 (@has V.t target) ts ss -> forall g, ctx_includes g target ->
+    exists g', binds_list g ts ss g' /\ ctx_includes g' target.
+  Proof.
+    intros target ts ss Htyped.
+    induction Htyped as [|t s ts ss Hhead Htail IH]; intros g Hinc.
+    - exists g. split; [constructor|exact Hinc].
+    - destruct (binds_complete_target g target t s Hinc Hhead) as [g1 [Hb Hinc1]].
+      destruct (IH g1 Hinc1) as [g2 [Hbs Hinc2]].
+      exists g2. split; [econstructor; eassumption|exact Hinc2].
+  Qed.
+
+  (** Result binding preserves previously assigned variables. *)
+  Lemma binds_result_includes : forall g out res g',
+    @binds_result V.t g out res g' -> ctx_includes g g'.
+  Proof.
+    intros g out [t|] g' Hbind; destruct out;
+      cbn [binds_result out_sort] in Hbind; try contradiction.
+    - apply binds_includes in Hbind. exact Hbind.
+    - apply binds_includes in Hbind. exact Hbind.
+    - subst g'. apply ctx_includes_refl.
+  Qed.
+
+  (** A result binding can add only its result variable. *)
+  Lemma binds_result_scope : forall g out res g',
+    @binds_result V.t g out res g' -> forall x u,
+    g' x = Some u -> g x = Some u \/ In (Var x) (option_list res).
+  Proof.
+    intros g out [t|] g' Hbind; destruct out;
+      cbn [binds_result out_sort] in Hbind; try contradiction;
+      intros x u Hsort.
+    - destruct (binds_scope g t SId g' Hbind x u Hsort) as [Hold|Heq];
+        [left; exact Hold|right; left; exact Heq].
+    - destruct (binds_scope g t SVal g' Hbind x u Hsort) as [Hold|Heq];
+        [left; exact Hold|right; left; exact Heq].
+    - subst g'. left. exact Hsort.
+  Qed.
+
+  (** The output context of a well-sorted query includes its starting context. *)
+  Lemma query_ok_includes : forall sorts kinds g q g',
+    @query_ok V.t sorts kinds g q g' -> ctx_includes g g'.
+  Proof.
+    intros sorts kinds g q g' Hquery.
+    induction Hquery as
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+       g g1 op args res rest Hargs Hres Hrest IH].
+    - apply ctx_includes_refl.
+    - eapply ctx_includes_trans; [eapply binds_list_includes; exact Hargs|].
+      eapply ctx_includes_trans; [eapply binds_result_includes; exact Hres|exact IH].
+    - exact IH.
+  Qed.
+  (** A query can add only variables appearing in one of its atoms. *)
+  Lemma query_ok_scope : forall sorts kinds g q g',
+    @query_ok V.t sorts kinds g q g' -> forall x s,
+    g' x = Some s -> g x = Some s \/
+      exists a, In a q /\ In (Var x) (atom_terms a).
+  Proof.
+    intros sorts kinds g q g' Hquery.
+    induction Hquery as
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+       g g1 op args res rest Hargs Hres Hrest IH]; intros x s Hbound.
+    - left. exact Hbound.
+    - destruct (IH x s Hbound) as [Hnew|[a [Hin Hvar]]].
+      + destruct (binds_result_scope g1 out res g2 Hres x s Hnew) as [Harg|Hvar].
+        * destruct (binds_list_scope g args ss g1 Hargs x s Harg) as [Hold|Hvar].
+          -- left. exact Hold.
+          -- right. exists (Fun V.t f args res). split; [left; reflexivity|].
+             cbn [atom_terms]. apply in_or_app. left. exact Hvar.
+        * right. exists (Fun V.t f args res). split; [left; reflexivity|].
+          cbn [atom_terms]. apply in_or_app. right. exact Hvar.
+      + right. exists a. split; [right; exact Hin|exact Hvar].
+    - destruct (IH x s Hbound) as [Hold|[a [Hin Hvar]]].
+      + left. exact Hold.
+      + right. exists a. split; [right; exact Hin|exact Hvar].
+  Qed.
+
+  (** Every source variable in a sorted rewrite is below its generated root name. *)
+  Lemma rewrite_context_bound : forall ds rw g,
+    rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g ->
+    forall x s, g x = Some s -> (x < root_var rw)%positive.
+  Proof.
+    intros ds rw g [g0 [Hroot [Hleft [Hscope [Hquery Hright]]]]] x s Hbound.
+    destruct (query_ok_scope _ _ g0 (cond V.t rw) g Hquery x s Hbound)
+      as [Hold|[a [Hin Hvar]]].
+    - apply root_var_hole. apply Hscope with s. exact Hold.
+    - exact (proj2 (proj2 (root_var_bounds rw)) a x Hin Hvar).
+  Qed.
+
+  (** Binding can be replayed from a larger context compatible with the final target. *)
+  Lemma binds_extend : forall g (t : term V.t) s g', binds g t s g' ->
+    forall h target, ctx_includes g h -> ctx_includes h target ->
+    ctx_includes g' target ->
+    exists h', binds h t s h' /\ ctx_includes g' h' /\ ctx_includes h' target.
+  Proof.
+    intros g t s g' Hbind. destruct Hbind as [x s Hsort|x s Hnone|v];
+      intros h target Hstart Hpart Htarget.
+    - exists h. split; [apply binds_old; apply Hstart; exact Hsort|].
+      split; assumption.
+    - assert (Hsort : @has V.t target (Var x) s).
+      { apply Htarget. unfold ctx_set. now rewrite Pos.eqb_refl. }
+      destruct (binds_complete_target h target (Var x) s Hpart Hsort)
+        as [h' [Hbind Hpart']]. exists h'. split; [exact Hbind|].
+      split; [|exact Hpart']. intros y u Hnew. unfold ctx_set in Hnew.
+      destruct (Pos.eqb x y) eqn:Hxy.
+      + apply Pos.eqb_eq in Hxy. subst y. injection Hnew as <-.
+        exact (binds_has h (Var x) s h' Hbind).
+      + apply (binds_includes h (Var x) s h' Hbind), Hstart. exact Hnew.
+    - exists h. split; [constructor|]. split; assumption.
+  Qed.
+
+  (** Argument binding can be replayed while preserving a compatible context extension. *)
+  Lemma binds_list_extend : forall g ts ss g', @binds_list V.t g ts ss g' ->
+    forall h target, ctx_includes g h -> ctx_includes h target ->
+    ctx_includes g' target ->
+    exists h', binds_list h ts ss h' /\ ctx_includes g' h' /\ ctx_includes h' target.
+  Proof.
+    intros g ts ss g' Hbind.
+    induction Hbind as [g|g g1 g2 t ts s ss Hhead Htail IH];
+      intros h target Hstart Hpart Htarget.
+    - exists h. split; [constructor|]. split; assumption.
+    - assert (Htarget1 : ctx_includes g1 target).
+      { eapply ctx_includes_trans; [eapply binds_list_includes; exact Htail|exact Htarget]. }
+      destruct (binds_extend g t s g1 Hhead h target Hstart Hpart Htarget1)
+        as [h1 [Hb [Hstart1 Hpart1]]].
+      destruct (IH h1 target Hstart1 Hpart1 Htarget) as [h2 [Hbs [Hstart2 Hpart2]]].
+      exists h2. split; [econstructor; eassumption|]. split; assumption.
+  Qed.
+
+  (** Result binding can be replayed from a compatible context extension. *)
+  Lemma binds_result_extend : forall g out res g', @binds_result V.t g out res g' ->
+    forall h target, ctx_includes g h -> ctx_includes h target ->
+    ctx_includes g' target ->
+    exists h', binds_result h out res h' /\ ctx_includes g' h' /\ ctx_includes h' target.
+  Proof.
+    intros g out [t|] g' Hbind; destruct out;
+      cbn [binds_result out_sort] in Hbind |- *; try contradiction.
+    - apply binds_extend. exact Hbind.
+    - apply binds_extend. exact Hbind.
+    - subst g'. intros h target Hstart Hpart Htarget.
+      exists h. split; [reflexivity|]. split; assumption.
+  Qed.
+
+  (** Query typing survives compatible extra assignments of fresh compiler variables. *)
+  Lemma query_ok_extend : forall sorts kinds g q g',
+    @query_ok V.t sorts kinds g q g' ->
+    forall h target, ctx_includes g h -> ctx_includes h target ->
+    ctx_includes g' target ->
+    exists h', query_ok sorts kinds h q h' /\
+      ctx_includes g' h' /\ ctx_includes h' target.
+  Proof.
+    intros sorts kinds g q g' Hquery.
+    induction Hquery as
+      [g|g g1 g2 g3 f args res ss out rest Hsort Hkind Hargs Hres Hrest IH|
+       g g1 op args res rest Hargs Hres Hrest IH];
+      intros h target Hstart Hpart Htarget.
+    - exists h. split; [constructor|]. split; assumption.
+    - assert (Htarget2 : ctx_includes g2 target).
+      { eapply ctx_includes_trans; [eapply query_ok_includes; exact Hrest|exact Htarget]. }
+      assert (Htarget1 : ctx_includes g1 target).
+      { eapply ctx_includes_trans; [eapply binds_result_includes; exact Hres|exact Htarget2]. }
+      destruct (binds_list_extend g args ss g1 Hargs h target Hstart Hpart Htarget1)
+        as [h1 [Hargs' [Hstart1 Hpart1]]].
+      destruct (binds_result_extend g1 out res g2 Hres h1 target Hstart1 Hpart1 Htarget2)
+        as [h2 [Hres' [Hstart2 Hpart2]]].
+      destruct (IH h2 target Hstart2 Hpart2 Htarget) as [h3 [Hrest' [Hstart3 Hpart3]]].
+      exists h3. split; [econstructor; eassumption|]. split; assumption.
+    - destruct (IH h target Hstart Hpart Htarget) as [h' [Hrest' [Hstart' Hpart']]].
+      exists h'. split.
+      + eapply query_prim; [| |exact Hrest'].
+        * eapply Forall_impl; [|exact Hargs]. intros t Hhas.
+          eapply has_includes; eassumption.
+        * eapply has_includes; eassumption.
+      + split; assumption.
+  Qed.
+
   Lemma compile_program : forall ds rws ans,
     decls V.t (compile ds rws ans) = ds /\
     rules V.t (compile ds rws ans) = map compile_rule rws ++ ans.
