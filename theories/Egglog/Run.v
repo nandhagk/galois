@@ -2943,7 +2943,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
          N.of_nat (D.pending db + 1)) +
       c_run * N.of_nat (N.size_nat (max_iter lim) + 1) +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: DATABASE_T permits uncharged wide source slots. *)
 
   Lemma T_check_plan_le : forall p cp,
     (T_check_plan p cp <= c_run * N.of_nat (size_program p + size_compiled cp + 1) *
@@ -3429,7 +3429,7 @@ Module RunT (V : VALUE_T) (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I)
       c_run * N.of_nat U * N.of_nat ((N.to_nat (N.log2 B) + 1) * (wbits p + 1)) *
         N.of_nat (round_work p cp nv db + D.pending db + 1) +
       N.of_nat U * D.potential B db)%N.
-  Proof. Admitted. (* STUB *)
+  Proof. Admitted. (* SIG-QUESTION: DATABASE_T permits uncharged wide source slots. *)
 
   (** The driver constant covers the stored fields and binary comparison. *)
   Lemma driver_constant_fields : (32 * (D.c_db + 1) <= k_driver)%N.
