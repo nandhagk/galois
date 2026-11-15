@@ -1909,6 +1909,268 @@ Proof.
 Qed.
 
 
+Lemma present_row_count_map {A B} (key : A -> positive) xs (rows : ptrie (list B)) :
+  present_row_count (map key xs) rows =
+    present_weight (fun x => length (index_row rows (key x))) xs.
+Proof.
+  rewrite <- (present_reader_length key xs rows). apply present_flat_length.
+Qed.
+
+Lemma listed_edge_args_nodup {A G} (kept : ptrie A) b (e : exit positive G) :
+  NoDup (map fst (listed_edge_args kept b e)).
+Proof.
+  destruct e; cbn [listed_edge_args exit_edge_args filter edge_target fst map];
+    repeat match goal with |- context [if ?flag then _ else _] => destruct flag end;
+    repeat constructor; cbn; intuition discriminate.
+Qed.
+
+Lemma listed_edge_args_source {A G} (kept : ptrie A) b (e : exit positive G) row :
+  In row (listed_edge_args kept b e) -> edge_source (fst row) = b.
+Proof.
+  intro Hin. apply filter_In in Hin as [Hin _].
+  destruct row as [be args]. now apply exit_edge_args_shape in Hin as [Hin _].
+Qed.
+
+Lemma block_rows_nodup {A K G} (kept : ptrie A)
+    (bs : list (positive * block positive K G)) : NoDup (map fst bs) ->
+  NoDup (map fst (flat_map (fun item =>
+    listed_edge_args kept (fst item) (term _ _ _ (snd item))) bs)).
+Proof.
+  induction bs as [|item rest IH]; intro Hdistinct; [constructor|].
+  inversion Hdistinct as [|id ids Hfresh Hrest]; subst.
+  cbn [flat_map]. rewrite map_app. apply NoDup_app.
+  - apply listed_edge_args_nodup.
+  - now apply IH.
+  - intros edge Hitem Hin. apply in_map_iff in Hitem as [ri [Hei Hi]].
+    apply in_map_iff in Hin as [ro [Heo Ho]].
+    apply in_flat_map in Ho as [other [Hother Ho]].
+    apply listed_edge_args_source in Hi. apply listed_edge_args_source in Ho.
+    rewrite Hei in Hi. rewrite Heo in Ho.
+    apply Hfresh. rewrite <- Hi, Ho. now apply in_map.
+Qed.
+
+Lemma lang_block_edges_nodup {K G} (p : func positive K G) :
+  NoDup (lang_edges (lang_prepare p)).
+Proof.
+  change (NoDup (map fst (flat_map (fun item =>
+    listed_edge_args (first_table PosKeyCode.encode
+      (map (fun item => (fst item, params _ _ _ (snd item)))
+        (first_blocks (blocks _ _ _ p)))) (fst item) (term _ _ _ (snd item)))
+    (first_blocks (blocks _ _ _ p))))).
+  apply block_rows_nodup. rewrite first_blocks_selected; apply selected_blocks_nodup.
+Qed.
+
+Lemma listed_edge_args_length {A G} (kept : ptrie A) b (e : exit positive G) :
+  present_weight (fun row => length (snd row)) (listed_edge_args kept b e) <=
+    length (exit_uses e).
+Proof.
+  destruct e; cbn [listed_edge_args exit_edge_args filter edge_target fst];
+    repeat match goal with |- context [if ?flag then _ else _] => destruct flag end;
+    unfold present_weight; cbn [fold_right snd exit_uses length];
+    repeat rewrite length_app; lia.
+Qed.
+
+Lemma lang_block_rows_length {K G} (p : func positive K G) :
+  present_row_count (map PosKeyCode.encode (lang_blocks (lang_prepare p)))
+    (point_params (lang_point_tables (lang_prepare p))) +
+  present_row_count (map BlockEdge.encode (lang_edges (lang_prepare p)))
+    (point_args (lang_point_tables (lang_prepare p))) <= function_size p.
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  set (rows := flat_map (fun item => listed_edge_args kept (fst item)
+    (term _ _ _ (snd item))) bs).
+  assert (Hblocks : NoDup (map PosKeyCode.encode (map fst bs))).
+  { apply present_map_injective_nodup; [intros x y H; exact H|].
+    unfold bs; rewrite first_blocks_selected; apply selected_blocks_nodup. }
+  assert (Hedges : NoDup (map BlockEdge.encode (map fst rows))).
+  { apply present_map_injective_nodup; [apply BlockEdge.encode_inj|].
+    apply (lang_block_edges_nodup p). }
+  pose proof (present_first_table_count PosKeyCode.encode (map PosKeyCode.encode (map fst bs))
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs) Hblocks) as Hparams.
+  pose proof (present_first_table_count BlockEdge.encode (map BlockEdge.encode (map fst rows))
+    rows Hedges) as Hargs.
+  change (present_row_count (map PosKeyCode.encode (map fst bs)) kept <=
+    present_weight (fun row => length (snd row))
+      (map (fun item => (fst item, params _ _ _ (snd item))) bs)) in Hparams.
+  rewrite present_weight_map in Hparams; cbn [snd] in Hparams.
+  change (present_row_count (map BlockEdge.encode (map fst rows)) (first_table BlockEdge.encode rows) <=
+    present_weight (fun row => length (snd row)) rows) in Hargs.
+  assert (Hsource : present_weight (fun item => length (params _ _ _ (snd item))) bs +
+    present_weight (fun row => length (snd row)) rows <=
+    length (flat_map (fun item => present_body_vars (snd item)) bs)).
+  { unfold rows. rewrite present_weight_flat_map, <- present_weight_plus, present_flat_length.
+    apply present_weight_mono. intros item Hin.
+    pose proof (listed_edge_args_length kept (fst item) (term _ _ _ (snd item))) as Hexit.
+    unfold present_body_vars; rewrite !length_app; lia. }
+  assert (Hkept : length (flat_map (fun item => present_body_vars (snd item)) bs) <=
+    function_size p).
+  { unfold bs, function_size, function_vars. rewrite length_app, !present_flat_length,
+      first_blocks_selected.
+    pose proof (selected_blocks_weight (fun item => length (present_body_vars (snd item)))
+      (blocks _ _ _ p) Empty) as Hselected.
+    unfold present_body_vars in Hselected. unfold present_body_vars; lia. }
+  change (present_row_count (map PosKeyCode.encode (map fst bs)) kept +
+    present_row_count (map BlockEdge.encode (map fst rows)) (first_table BlockEdge.encode rows) <=
+    function_size p).
+  eapply Nat.le_trans; [apply Nat.add_le_mono; [exact Hparams|exact Hargs]|].
+  eapply Nat.le_trans; [exact Hsource|exact Hkept].
+Qed.
+
+
+Lemma present_first_table_get {A B} (key : A -> positive) (rows : list (A * B)) k value :
+  trie_get k (first_table key rows) = Some value ->
+    exists a, In (a, value) rows /\ key a = k.
+Proof.
+  induction rows as [|[a v] rest IH]; intro Hget.
+  - change (trie_get k Empty = Some value) in Hget. rewrite PTrie.get_empty in Hget; discriminate.
+  - change (trie_get k (PTrieCode.set (key a) v (first_table key rest)) = Some value) in Hget.
+    destruct (Pos.eq_dec k (key a)) as [Heq|Hneq].
+    + subst k. rewrite PTrie.get_set_same in Hget. inversion Hget; subst v.
+      exists a; split; [now left|reflexivity].
+    + rewrite PTrie.get_set_other in Hget by exact Hneq.
+      destruct (IH Hget) as [other [Hin Hkey]]. exists other; split; [now right|exact Hkey].
+Qed.
+
+Lemma present_first_table_in {A B} (key : A -> positive) (rows : list (A * list B)) k x :
+  In x (index_row (first_table key rows) k) ->
+    exists a values, In (a, values) rows /\ In x values.
+Proof.
+  unfold index_row. destruct (trie_get k (first_table key rows)) as [values|] eqn:Hget;
+    intro Hin; [|contradiction].
+  destruct (present_first_table_get _ _ _ _ Hget) as [a [Hrow Hkey]].
+  exists a, values; auto.
+Qed.
+
+Lemma code_rows_vars_in {K} b i (cs : list (positive * K * list positive)) row x :
+  In row (fst (code_rows b i cs)) -> In x (snd (fst row) ++ snd row) ->
+    In x (flat_map (fun '(x, _, ys) => x :: ys) cs).
+Proof.
+  revert i; induction cs as [|[[y op] ys] rest IH]; intros i Hrow Hx; [contradiction|].
+  cbn [code_rows fst] in Hrow. destruct Hrow as [Heq|Hrow].
+  - subst row. cbn [fst snd] in Hx. apply in_app_or in Hx as [Hys|Hy].
+    + change (In x ((y :: ys) ++ flat_map (fun '(x, _, ys) => x :: ys) rest)).
+      apply in_or_app; left; now right.
+    + cbn in Hy. destruct Hy as [Heq|Hfalse]; [subst x|contradiction]. now left.
+  - change (In x ((y :: ys) ++ flat_map (fun '(x, _, ys) => x :: ys) rest)).
+    apply in_or_app; right. now apply (IH (N.succ i)).
+Qed.
+
+Lemma exit_edge_args_vars {G} b (e : exit positive G) be args x :
+  In (be, args) (exit_edge_args b e) ->
+  In x (guard_uses e ++ args) -> In x (exit_uses e).
+Proof.
+  destruct e as [target ys|guard xs yes yes_args no no_args|returns].
+  - cbn [exit_edge_args]. intros [Heq|Hfalse] Hx; [|contradiction].
+    inversion Heq; subst. cbn [guard_uses app] in Hx. exact Hx.
+  - cbn [exit_edge_args]. intros [Heq|[Heq|Hfalse]] Hx; try contradiction;
+      inversion Heq; subst; cbn [guard_uses] in Hx; cbn [exit_uses].
+    + apply in_app_or in Hx as [Hg|Ha].
+      * apply in_or_app; left; exact Hg.
+      * apply in_or_app; right; apply in_or_app; left; exact Ha.
+    + apply in_app_or in Hx as [Hg|Ha].
+      * apply in_or_app; left; exact Hg.
+      * apply in_or_app; right; apply in_or_app; right; exact Ha.
+  - cbn [exit_edge_args]; contradiction.
+
+Qed.
+
+Lemma summary_vars_in {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) row x :
+  In row (summary_internal (summarize kept item) ++ summary_outgoing (summarize kept item)) ->
+  In x (snd (fst row) ++ snd row) -> In x (present_body_vars (snd item)).
+Proof.
+  intros Hrow Hx. apply in_app_or in Hrow as [Hi|Ho].
+  - change (In row ((PointEdge (fst item, 0%N) (fst item, 1%N) None,
+      [], params _ _ _ (snd item)) :: fst (code_rows (fst item) 1%N (code _ _ _ (snd item))))) in Hi.
+    destruct Hi as [Heq|Hi].
+    + subst row. cbn [fst snd app] in Hx. unfold present_body_vars.
+      apply in_or_app; left; exact Hx.
+    + pose proof (code_rows_vars_in _ _ _ _ x Hi Hx) as Hvars. unfold present_body_vars.
+      apply in_or_app; right; apply in_or_app; left; exact Hvars.
+  - change (In row (map (fun ea =>
+      (PointEdge (summary_exit (summarize kept item)) (edge_target (fst ea), 0%N)
+        (Some (fst ea)), guard_uses (term _ _ _ (snd item)) ++ snd ea, ([] : list positive)))
+      (listed_edge_args kept (fst item) (term _ _ _ (snd item))))) in Ho.
+    apply in_map_iff in Ho as [[be args] [Heq Hin]]. subst row.
+    cbn [fst snd] in Hx; rewrite app_nil_r in Hx.
+    apply filter_In in Hin as [Hin _].
+    pose proof (exit_edge_args_vars _ _ _ _ _ Hin Hx) as Hexit.
+    unfold present_body_vars. apply in_or_app; right; apply in_or_app; right; exact Hexit.
+Qed.
+
+Lemma summary_returns_in {A K G} (kept : ptrie A)
+    (item : positive * block positive K G) x :
+  In x (summary_returns (summarize kept item)) -> In x (present_body_vars (snd item)).
+Proof.
+  change (In x (exit_returns (term _ _ _ (snd item))) -> In x (present_body_vars (snd item))).
+  intro Hin. unfold present_body_vars. apply in_or_app; right; apply in_or_app; right.
+  destruct (term _ _ _ (snd item)); cbn [exit_returns exit_uses] in *;
+    first [contradiction|exact Hin].
+Qed.
+
+Lemma kept_body_vars_in_function {K G} (p : func positive K G) item x :
+  In item (first_blocks (blocks _ _ _ p)) -> In x (present_body_vars (snd item)) ->
+    In x (function_vars p).
+Proof.
+  intros Hitem Hx. rewrite first_blocks_selected in Hitem.
+  apply selected_blocks_in in Hitem as [Hitem _].
+  unfold function_vars. apply in_or_app; right. apply in_flat_map.
+  exists item; split; [exact Hitem|exact Hx].
+Qed.
+
+Lemma lang_occurrences_vars {K G} (p : func positive K G) x :
+  In x (flat_map (fun e =>
+    index_row (edge_uses (lang_vars (lang_prepare p))) (PointEdge.encode e) ++
+    index_row (edge_defs (lang_vars (lang_prepare p))) (PointEdge.encode e))
+      (lang_point_edges (lang_prepare p)) ++
+    flat_map (fun n => index_row (node_exits (lang_vars (lang_prepare p))) (PointKey.encode n))
+      (lang_points (lang_prepare p))) -> In x (function_vars p).
+Proof.
+  set (bs := first_blocks (blocks _ _ _ p)).
+  set (kept := first_table PosKeyCode.encode
+    (map (fun item => (fst item, params _ _ _ (snd item))) bs)).
+  set (ss := map (summarize kept) bs).
+  set (rows := flat_map (fun s => summary_internal s ++ summary_outgoing s) ss).
+  assert (Hrow : forall row, In row rows ->
+    In x (snd (fst row) ++ snd row) -> In x (function_vars p)).
+  { intros row Hin Hx. unfold rows in Hin. apply in_flat_map in Hin as [s [Hs Hin]].
+    unfold ss in Hs. apply in_map_iff in Hs as [item [Heq Hitem]]. subst s.
+    eapply kept_body_vars_in_function; [exact Hitem|]. now apply (summary_vars_in kept item row). }
+  assert (Hret : forall s, In s ss -> In x (summary_returns s) -> In x (function_vars p)).
+  { intros s Hs Hx. unfold ss in Hs. apply in_map_iff in Hs as [item [Heq Hitem]]. subst s.
+    eapply kept_body_vars_in_function; [exact Hitem|]. now apply (summary_returns_in kept item). }
+  intro Hin. apply in_app_or in Hin as [Hedge|Hnode].
+  - apply in_flat_map in Hedge as [e [He Hx]]. apply in_app_or in Hx as [Hu|Hd].
+    + change (In x (index_row (first_table PointEdge.encode
+        (map (fun row => (fst (fst row), snd (fst row))) rows)) (PointEdge.encode e))) in Hu.
+      apply present_first_table_in in Hu as [key [values [Hstored Hx]]].
+      apply in_map_iff in Hstored as [row [Heq Hin]]. inversion Heq; subst values.
+      apply (Hrow row Hin). apply in_or_app; left; exact Hx.
+    + change (In x (index_row (first_table PointEdge.encode
+        (map (fun row => (fst (fst row), snd row)) rows)) (PointEdge.encode e))) in Hd.
+      apply present_first_table_in in Hd as [key [values [Hstored Hx]]].
+      apply in_map_iff in Hstored as [row [Heq Hin]]. inversion Heq; subst values.
+      apply (Hrow row Hin). apply in_or_app; right; exact Hx.
+  - apply in_flat_map in Hnode as [n [Hn Hx]].
+    change (In x (index_row (first_table PointKey.encode
+      (map (fun s => (summary_exit s, summary_returns s)) ss)) (PointKey.encode n))) in Hx.
+    apply present_first_table_in in Hx as [key [values [Hstored Hx]]].
+    apply in_map_iff in Hstored as [s [Heq Hin]]. inversion Heq; subst values.
+    now apply (Hret s Hin).
+Qed.
+
+Lemma present_max_bound {A} (weight : A -> nat) xs bound :
+  (forall x, In x xs -> weight x <= bound) ->
+  fold_right Nat.max 0 (map weight xs) <= bound.
+Proof.
+  induction xs as [|x rest IH]; intro Hbound; [cbn; lia|].
+  cbn [map fold_right]. apply Nat.max_lub; [apply Hbound; now left|].
+  apply IH. intros y Hin. apply Hbound; now right.
+Qed.
+
+
 Module PresentT (O : OPS)
     (K : KEY_T with Definition t := O.K) (G : KEY_T with Definition t := O.G).
   Module Q := Prepared O.
@@ -2040,7 +2302,10 @@ Module PresentT (O : OPS)
       (BC.nodes (R.prepare p)) +
     fold_right (fun be n => length (SP.block_edge_args (R.prepare p) be) + n) 0
       (BC.edges (R.prepare p)) <= function_size p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. pose proof (lang_block_rows_length p) as Hrows.
+    rewrite !present_row_count_map in Hrows. exact Hrows.
+  Qed.
   (** Points, point edges and variable occurrences are linear in the syntax. *)
   Lemma points_le : forall p,
     (N.of_nat (length (C.nodes (R.prepare p)) + length (C.edges (R.prepare p)) +
@@ -2062,7 +2327,12 @@ Module PresentT (O : OPS)
   (** Occurring variables are identifiers of the syntax. *)
   Lemma occurrence_width_le : forall p,
     U.occurrence_width (R.prepare p) <= function_width p.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intro p. unfold U.occurrence_width. apply present_max_bound.
+    intros x Hin. change (Pos.size_nat x <= function_width p).
+    apply function_id_width. unfold function_ids. right.
+    apply in_or_app; left. apply (lang_occurrences_vars p x). exact Hin.
+  Qed.
   (** Listed point keys are within a constant factor of the syntax width. *)
   Lemma point_bits_le : forall p n, In n (C.nodes (R.prepare p)) ->
     (N.of_nat (PointKey.bits n) <= c_present * N.of_nat (function_width p + 1))%N.
