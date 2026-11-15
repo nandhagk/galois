@@ -391,7 +391,10 @@ Module SccT <: SCC_ALL.
   Lemma F2_run : forall g,
     run g = let result := prefix_state (tarjan_trace g) in
       Scc (tarjan_owners result) (rev (tarjan_emitted result)).
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g. unfold run, prefix_state, tarjan_trace.
+    rewrite rev_append_rev, app_nil_r. reflexivity.
+  Qed.
 
   Lemma F3_initial : forall g,
     invariant g [] tarjan_initial /\
