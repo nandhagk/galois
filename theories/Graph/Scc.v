@@ -4,7 +4,7 @@
     For example, closing a cycle root emits its pending vertices together.
     Builds on: depth-first search and the SCC signature. *)
 
-From Stdlib Require Import List NArith PArith Lia Sorting.Permutation.
+From Stdlib Require Import List NArith PArith Arith Lia Sorting.Permutation.
 From Argent Require Import Time Tactics Std BigO.
 From Galois.Base Require Import Trie.
 From Galois.Graph Require Import Data Spec DigraphSig SearchSig Search SccSig.
@@ -677,6 +677,97 @@ Proof.
   { destruct g as [[vertices adjacency] predecessors n e]. reflexivity. }
   rewrite Hnodes in Hvertices. rewrite Hedges in Hrows.
   now rewrite scc_trace_length, Hfiltered, Hvertices, Hrows.
+Qed.
+
+(** A leave event refers either to an initially active vertex or to an earlier entry. *)
+Lemma scc_stack_leave_member stack es final v :
+  trace_stack stack es final -> In (Leave v) es -> In v stack \/ In (Enter v) es.
+Proof.
+  intros Hstack. induction Hstack as
+    [stack|stack u rest final Hrest IH|stack u rest final Hrest IH|
+      stack kind u target rest final Hrest IH]; intros Hin.
+  - contradiction.
+  - cbn [In] in Hin |- *. destruct Hin as [Hbad|Hin]; [discriminate Hbad|].
+    destruct (IH Hin) as [[Heq|Hactive]|Henter].
+    + right. left. now subst u.
+    + now left.
+    + right. now right.
+  - cbn [In] in Hin |- *. destruct Hin as [Heq|Hin].
+    + injection Heq as Heq. left. now left.
+    + destruct (IH Hin) as [Hactive|Henter].
+      * left. now right.
+      * right. now right.
+  - cbn [In] in Hin |- *. destruct Hin as [Hbad|Hin]; [discriminate Hbad|].
+    destruct (IH Hin) as [Hactive|Henter].
+    + now left.
+    + right. now right.
+Qed.
+
+(** Completed filtered traversal retains exactly the filtered successor rows. *)
+Lemma scc_trace_rows g : search_trace_rows (base (scc_graph g)) (scc_trace g).
+Proof.
+  unfold scc_trace. apply prepared_search_rows_closed.
+  - apply scc_graph_counts.
+  - apply scc_search_closed.
+  - auto.
+Qed.
+
+(** Every key mentioned by an actual Tarjan event is a listed input vertex. *)
+Lemma scc_trace_listed g :
+  Forall (fun e => match e with
+    | Enter v | Leave v => In v (nodes g)
+    | Edge _ u v => In u (nodes g) /\ In v (nodes g)
+    end) (scc_trace g).
+Proof.
+  apply Forall_forall. intros [v|v|kind u v] Hin.
+  - apply scc_trace_entered. now apply search_entered_member.
+  - destruct (scc_stack_leave_member [] _ [] v (scc_trace_nested g) Hin)
+      as [Hnil|Henter]; [contradiction|].
+    apply scc_trace_entered. now apply search_entered_member.
+  - destruct (search_trace_rows_edge _ _ kind u v (scc_trace_rows g) Hin) as [Henter Hedge].
+    split; [now apply scc_trace_entered in Henter|now apply (scc_graph_closed g u v)].
+Qed.
+
+(** The input graph width bounds every listed vertex key. *)
+Lemma scc_node_width g v : In v (nodes g) -> Pos.size_nat v <= graph_width (base g).
+Proof.
+  destruct g as [[vertices adjacency] predecessors n e].
+  cbn [nodes base graph_width]. intros Hin. rewrite search_graph_max.
+  eapply Nat.le_trans; [apply search_vertex_width_member; exact Hin|apply Nat.le_max_l].
+Qed.
+
+(** All actual Tarjan callback keys have the input graph's identifier width. *)
+Lemma scc_trace_event_width g :
+  Forall (fun e => match e with
+    | Enter v | Leave v => Pos.size_nat v <= graph_width (base g)
+    | Edge _ u v => Pos.size_nat u <= graph_width (base g) /\
+        Pos.size_nat v <= graph_width (base g)
+    end) (scc_trace g).
+Proof.
+  pose proof (scc_trace_listed g) as Hlisted. rewrite Forall_forall in Hlisted.
+  apply Forall_forall. intros e Hin. specialize (Hlisted e Hin).
+  destruct e; cbn in *; [now apply scc_node_width|now apply scc_node_width|].
+  destruct Hlisted as [Hu Hv]. split; now apply scc_node_width.
+Qed.
+
+(** Every actual prefix retains unique entering events. *)
+Lemma scc_trace_prefix_unique g prefix suffix : scc_trace g = prefix ++ suffix ->
+  NoDup (entered prefix).
+Proof.
+  intros Heq. pose proof (scc_trace_unique g) as Hunique.
+  rewrite Heq, search_entered_app in Hunique. now apply NoDup_app_remove_r in Hunique.
+Qed.
+
+(** Every actual prefix retains the callback key-width domain. *)
+Lemma scc_trace_prefix_width g prefix suffix : scc_trace g = prefix ++ suffix ->
+  Forall (fun e => match e with
+    | Enter v | Leave v => Pos.size_nat v <= graph_width (base g)
+    | Edge _ u v => Pos.size_nat u <= graph_width (base g) /\
+        Pos.size_nat v <= graph_width (base g)
+    end) prefix.
+Proof.
+  intros Heq. pose proof (scc_trace_event_width g) as Hwidth.
+  rewrite Heq, Forall_app in Hwidth. exact (proj1 Hwidth).
 Qed.
 
 Module SccCode <: SCC_OPS.
