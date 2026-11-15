@@ -7820,15 +7820,14 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     extraction_row_children number.
   Definition ready (s : state) : list (positive * N) :=
     extraction_ready_rows V.encode C.fn_cost C.val_cost s.
-  (* STUB-CODE *)
-  Definition heap_potential (_ : state) : N := 0%N.
+  Definition heap_potential (s : state) : N :=
+    extraction_potential (search_database s) s.
   TimeFun initial.
   TimeFun step.
   TimeFun finalised.
   TimeFun counter.
   TimeFun children.
   TimeFun ready.
-  TimeFun heap_potential.
   Definition k_step : N :=
     (256 * 1024) * (PTrieT.c_trie + I.c_ix + D.c_db + C.c_cost + Q.c_pq + 1).
   (** The public step adds one wrapper call to the generic derived search-step clock. *)
@@ -8528,7 +8527,10 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     (T_step cs db s + heap_potential s' <= heap_potential s + k_step *
       N.of_nat (a db + Nat.log2 (R db) + 2) * N.of_nat (D.unit db + 1) *
       N.of_nat (cost_width db + 1))%N.
-  Proof. Admitted. (* OPEN: genuine observer bound is proved; its required TimeFun needs an owner ruling. *)
+  Proof.
+    intros cs db s next Hwf Hcanonical Hinventory Hreach Hknuth Hstep.
+    exact (T_step_observer_potential cs db s next Hwf Hcanonical Hinventory Hreach Hstep).
+  Qed.
 
   Lemma T_best_le : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     (T_best cs db <= c_ex *
