@@ -9,7 +9,7 @@ From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Loop.
 From Galois.Bits Require Import Word Op Fun Testbit Arith.
 From Galois.Lattice Require Import LatticeSig.
-From Galois.Domains Require Import WordSig KnownBitsSig.
+From Galois.Domains Require Import WordSig KnownBitsSig BitsLang.
 Import List.ListNotations.
 
 
@@ -4233,6 +4233,125 @@ Proof.
 Qed.
 TimeBound tnum_scalar_time.
 
+
+(** Integer multiplication adds the stored magnitude bit counts. *)
+Lemma tnum_product_bits : forall x y,
+  (Z.size_nat (x * y) <= Z.size_nat x + Z.size_nat y)%nat.
+Proof.
+  exact WordTime.integer_mul_size.
+Qed.
+
+(** The original modular word wrapper has a quadratic bit-operation bound. *)
+Lemma tnum_word_wrap_time : forall w z,
+  (T_wrap w z <=
+    256 * N.of_nat ((Pos.to_nat w + Z.size_nat z + 1) ^ 2))%N.
+Proof.
+  intros w z. eapply N.le_trans; [apply WordTime.word_wrap_time_bound|].
+  apply N.mul_le_mono_r. lia.
+Qed.
+TimeBound tnum_word_wrap_time.
+
+(** Word multiplication on bounded operands has quadratic cost in the width. *)
+Lemma tnum_word_mul_time : forall w x y,
+  is_word w x -> is_word w y ->
+  (T_wmul w x y <= 4096 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w x y Hx Hy.
+  pose proof (WordTime.word_binary_width_bound T_wmul 128 w x y
+    WordTime.word_mul_time_bound Hx Hy) as Htime.
+  eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_r. lia.
+Qed.
+TimeBound tnum_word_mul_time.
+
+(** Trailing-zero counting wraps a bounded word a constant number of times. *)
+Lemma tnum_word_ctz_time : forall w x, is_word w x ->
+  (T_wctz w x <= 8192 * N.of_nat ((Pos.to_nat w + 1) ^ 2))%N.
+Proof.
+  intros w x Hx.
+  pose proof (WordTime.word_unary_width_bound T_wctz 256 w x
+    WordTime.word_ctz_time_bound Hx) as Htime.
+  eapply N.le_trans; [exact Htime|]. apply N.mul_le_mono_r. lia.
+Qed.
+TimeBound tnum_word_ctz_time.
+
+(** The trailing-zero abstraction pays for its raw mask once. *)
+Lemma tnum_trailing_time : forall w a,
+  (T_tnum_trailing w a <=
+    16384 * N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a))%N.
+Proof.
+  intros w a.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_word_ctz_time w (tnum_wnot w (zeros a))
+    ltac:(rewrite tnum_wnot_agrees; apply wnot_is_word)) as Hctz.
+  time_unfold T_tnum_trailing. cbn beta iota zeta. time_pose.
+  unfold tnum_bits in *. rewrite ?Nat2N.inj_add in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody budget. lia.
+Qed.
+TimeBound tnum_trailing_time.
+
+(** The low-product approximation performs two trailing-zero counts. *)
+Lemma tnum_mul_low_time : forall w a b,
+  (T_tnum_mul_low w a b <=
+    65536 * N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  pose proof (tnum_ctz_range w (tnum_wnot w (zeros a))) as Ha.
+  pose proof (tnum_ctz_range w (tnum_wnot w (zeros b))) as Hb.
+  fold (tnum_trailing w a) in Ha. fold (tnum_trailing w b) in Hb.
+  destruct (tnum_count_bits_width w (tnum_trailing w a) Ha) as [Habits Hanat].
+  destruct (tnum_count_bits_width w (tnum_trailing w b) Hb) as [Hbbits Hbnat].
+  pose proof (tnum_ones_time (tnum_trailing w a + tnum_trailing w b) ltac:(lia)) as Hones.
+  pose proof (tnum_ones_bits (tnum_trailing w a + tnum_trailing w b) ltac:(lia)) as Honesbits.
+  rewrite Z2Nat.inj_add in Hones, Honesbits by lia.
+  time_unfold T_tnum_mul_low. cbn beta iota zeta. time_pose.
+  rewrite ?Nat2N.inj_add in *.
+  set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+  clearbody budget. lia.
+Qed.
+TimeBound tnum_mul_low_time.
+
+(** Recognizing a constant returns a normalized endpoint. *)
+Lemma tnum_constant_result_word : forall w a z,
+  tnum_constant w a = Some z -> is_word w z.
+Proof.
+  intros w a z Hconstant. unfold tnum_constant in Hconstant.
+  destruct (tnum_wrap w (zeros a) =? tnum_wnot w (ones a)); [|discriminate].
+  injection Hconstant as <-. apply tnum_min_word.
+Qed.
+
+(** The constant-or-low multiplier pays raw mask sizes only in its initial checks. *)
+Lemma tnum_mul_time : forall w a b,
+  (T_tnum_mul w a b <=
+    131072 * N.of_nat ((Pos.to_nat w + 1) ^ 2 + tnum_bits a + tnum_bits b))%N.
+Proof.
+  intros w a b.
+  pose proof (WordTime.time_square_floor (Pos.to_nat w + 1)
+    (Pos.to_nat w + 1) ltac:(lia) ltac:(lia)) as Hlinear.
+  time_unfold T_tnum_mul. cbn beta iota zeta.
+  destruct (tnum_constant w a) as [x|] eqn:Ha,
+    (tnum_constant w b) as [y|] eqn:Hb.
+  - pose proof (tnum_word_mul_time w x y
+      (tnum_constant_result_word w a x Ha) (tnum_constant_result_word w b y Hb)) as Hmul.
+    assert (Hproduct : (Z.size_nat (wmul w x y) <= Pos.to_nat w)%nat).
+    { apply tnum_word_bits. unfold wmul. apply wrap_is_word. }
+    time_pose. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - time_pose. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - time_pose. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+  - time_pose. rewrite ?Nat2N.inj_add in *.
+    set (budget := N.of_nat ((Pos.to_nat w + 1) ^ 2)) in *.
+    clearbody budget. lia.
+Qed.
+TimeBound tnum_mul_time.
 
 Local Open Scope nat_scope.
 
