@@ -105,6 +105,129 @@ Definition dom_read (g : prepared) (r : positive) (o : list positive) :=
   dom_read_known (dom_scan g) r o.
 TimeFun dom_read.
 
+(** Positive equality may be charged to either of its operands. *)
+Local Lemma dom_time_pos_eqb_right p q :
+  (Pos.T_eqb p q <= N.of_nat (Pos.size_nat q))%N.
+Proof.
+  revert p. induction q as [q IH|q IH|]; intros [p|p|]; time_step.
+Qed.
+
+(** Width checking stops after the supplied width even on an oversized key. *)
+Local Lemma dom_time_key_fits width v :
+  (T_dom_key_fits width v <= N.of_nat width + 1)%N.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|]; time_step.
+Qed.
+
+(** A successful width check bounds every subsequent trie traversal of that key. *)
+Local Lemma dom_key_fits_width width v : dom_key_fits width v = true ->
+  Pos.size_nat v <= width.
+Proof.
+  revert v. induction width as [|width IH]; intros [v|v|];
+    cbn [dom_key_fits Pos.size_nat]; try discriminate; intros Hfits;
+    try specialize (IH v Hfits); lia.
+Qed.
+
+(** Each remaining entry carries its callback charge and both counter potentials. *)
+Local Definition dom_read_credit width (s : dom_read_state) : N :=
+  (8 * (PTrieT.c_trie + c_loopN + 16) * N.of_nat (width + 1) * (read_budget s + 1) +
+    loopN_zero_bits (read_budget s) + dom_counter_credit (read_next s))%N.
+
+(** A successful reader step consumes one entry charge and amortizes both counters. *)
+Local Lemma dom_time_read_step_go width listed s s1 :
+  dom_read_step width listed s = inl s1 ->
+  (T_dom_read_step width listed s + c_loopN + dom_read_credit width s1 <=
+    dom_read_credit width s)%N.
+Proof.
+  destruct s as [remaining budget next pos]. intros Hstep.
+  destruct remaining as [|v rest]; [discriminate Hstep|].
+  destruct budget as [|budget]; [discriminate Hstep|].
+  cbn [dom_read_step N.eqb] in Hstep.
+  destruct (dom_key_fits width v) eqn:Hfits; [|discriminate Hstep].
+  destruct (trie_get v listed) as [flag|] eqn:Hlisted; [|discriminate Hstep].
+  destruct (trie_get v pos) as [old|] eqn:Hfresh; [discriminate Hstep|].
+  injection Hstep as Hstate. subst s1.
+  pose proof (dom_key_fits_width width v Hfits) as Hwidth.
+  pose proof (dom_time_key_fits width v) as Hfits_time.
+  pose proof (PTrieT.T_set_le N v next pos) as Hset.
+  change (PTrieCode.T_set v next pos <=
+    PTrieT.c_trie * N.of_nat (Pos.size_nat v + 1))%N in Hset.
+  pose proof (loopN_pred_credit (N.pos budget)) as Hpred.
+  pose proof (dom_time_counter_succ next) as Hsucc.
+  unfold T_dom_read_step. cbn beta iota zeta.
+  time_unfold N.T_eqb. cbn [N.eqb]. rewrite Hfits, Hlisted, Hfresh.
+  rewrite !PTrieT.trie_get_clock. time_simpl.
+  unfold dom_read_credit. cbn [read_budget read_next].
+  fold (N.pred (N.pos budget)).
+  rewrite !Nat2N.inj_add in *.
+  set (charge := (8 * (PTrieT.c_trie + c_loopN + 16) *
+    (N.of_nat width + N.of_nat 1))%N).
+  assert (Hcharge : (T_dom_key_fits width v + 4 * N.of_nat (Pos.size_nat v) +
+    PTrieCode.T_set v next pos + c_loopN + 8 <= charge)%N).
+  { unfold charge. clear -Hwidth Hfits_time Hset. nia. }
+  assert (Hpay : (charge * (N.pos budget + 1) =
+    charge * (N.pred (N.pos budget) + 1) + charge)%N) by nia.
+  rewrite Hpay. clearbody charge.
+  lia.
+Qed.
+
+(** Early rejection pays only the bounded prefix of a reader step. *)
+Local Lemma dom_time_read_step_stop width listed s answer :
+  dom_read_step width listed s = inr answer ->
+  (T_dom_read_step width listed s + c_loopN <= dom_read_credit width s)%N.
+Proof.
+  destruct s as [remaining budget next pos]. intro Hstep.
+  unfold T_dom_read_step, dom_read_credit. cbn [read_budget read_next].
+  destruct remaining as [|v rest].
+  - time_simpl. nia.
+  - destruct budget as [|budget].
+    + time_unfold N.T_eqb. cbn [N.eqb]. time_simpl. nia.
+    + pose proof (dom_time_key_fits width v) as Hfits_time.
+      time_unfold N.T_eqb. cbn [N.eqb]. cbn [dom_read_step N.eqb] in Hstep.
+      destruct (dom_key_fits width v) eqn:Hfits.
+      * pose proof (dom_key_fits_width width v Hfits) as Hwidth.
+        destruct (trie_get v listed) as [flag|] eqn:Hlisted;
+          destruct (trie_get v pos) as [old|] eqn:Hfresh;
+          try discriminate Hstep;
+          rewrite !PTrieT.trie_get_clock; time_simpl;
+          rewrite !Nat2N.inj_add in *; nia.
+      * time_simpl. rewrite !Nat2N.inj_add in *. nia.
+Qed.
+
+Local Opaque loop Acc_intro_generator T_loopN.
+
+(** Carry and borrow credits make the budgeted reader linear in count and key width. *)
+Local Lemma dom_time_read_order count width listed o :
+  (T_dom_read_order count width listed o 0 Empty <=
+    (16 * (PTrieT.c_trie + c_loopN + 16) + 32 * c_loopN + 32) *
+      N.of_nat ((count + 1) * (width + 1)))%N.
+Proof.
+  pose proof (@T_loopN_amort dom_read_state (option (ptrie N))
+    (dom_read_step width listed) (T_dom_read_step width listed) (fun _ => True)
+    (dom_read_credit width) (fun _ => 0%N) (N.succ (N.of_nat count))
+    (DomReadState o (N.of_nat count) 0 Empty)
+    ltac:(intros s s1 _ Hstep; split; [exact I|now apply dom_time_read_step_go])
+    ltac:(intros s result _ Hstep; cbn beta; rewrite N.add_0_r;
+      eapply dom_time_read_step_stop; exact Hstep) I) as Hloop.
+  destruct (loopN (dom_read_step width listed) (N.succ (N.of_nat count))
+    (DomReadState o (N.of_nat count) 0 Empty)) as [state|answer] eqn:Hresult;
+    cbn beta iota zeta in Hloop.
+  all: pose proof (dom_time_of_nat count) as Hconvert;
+    pose proof (N.T_succ_le (N.of_nat count)) as Hsucc;
+    pose proof (loopN_zero_bits_le_size (N.of_nat count)) as Hzeros;
+    pose proof (dom_size_value (N.of_nat count)) as Hbits;
+    pose proof (dom_size_value (N.succ (N.of_nat count))) as Hfuel.
+  all: unfold T_dom_read_order; rewrite ?Hresult; time_simpl;
+    unfold dom_read_credit in Hloop; cbn [read_budget read_next dom_counter_credit] in Hloop;
+    rewrite Nat2N.inj_mul, !Nat2N.inj_add in *.
+  all: change (fun H : dom_read_state => T_dom_read_step width listed H)
+    with (T_dom_read_step width listed).
+  all: set (running := T_loopN (dom_read_step width listed)
+    (T_dom_read_step width listed) (N.succ (N.of_nat count))
+    (DomReadState o (N.of_nat count) 0 Empty)) in *; clearbody running.
+  all: clear -Hloop Hconvert Hsucc Hzeros Hbits Hfuel; nia.
+Qed.
+
 Definition dom_rebuild (width : nat) (r : positive) (m : ptrie positive)
     (pos : ptrie N) (acc : option (ptrie positive)) (v : positive)
     : option (ptrie positive) :=
@@ -2371,7 +2494,8 @@ Module DomT <: DOM_ALL.
   Definition run_ops := dom_lt_run_ops.
   TimeFun run_ops.
   Definition k_scan : N := (8 * PTrieT.c_trie + 512)%N.
-  Definition k_read : N := 1%N. (* STUB *)
+  Definition k_read : N :=
+    (32 * (PTrieT.c_trie + c_loopN + 16) + 64 * c_loopN + 128)%N.
   Definition k_map : N := 1%N. (* STUB *)
   Definition k_size : N := 1%N. (* STUB *)
   Definition k_edge : N := 1%N. (* STUB *)
@@ -2570,7 +2694,23 @@ Module DomT <: DOM_ALL.
   Lemma T2_read : forall g r o,
     (T_read (scan g) r o <= k_read * N.of_nat ((graph_n (base g) + 1) *
       (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r o. unfold T_read, read, T_dom_read_known.
+    destruct o as [|h rest].
+    - time_simpl. unfold k_read. nia.
+    - pose proof (dom_time_key_fits (graph_width (base g)) r) as Hfits_time.
+      cbn [scan dom_scan dom_width dom_count dom_listed].
+      destruct (dom_key_fits (graph_width (base g)) r) eqn:Hfits.
+      + pose proof (dom_key_fits_width (graph_width (base g)) r Hfits) as Hwidth.
+        pose proof (dom_time_pos_eqb_right h r) as Hcompare.
+        destruct (Pos.eqb h r) eqn:Hroot.
+        * pose proof (dom_time_read_order (graph_n (base g)) (graph_width (base g))
+            (fold_left (fun acc v => PTrieCode.set v true acc) (nodes g) Empty)
+            (h :: rest)) as Horder.
+          time_simpl. unfold k_read. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+        * time_simpl. unfold k_read. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+      + time_simpl. unfold k_read. rewrite !Nat2N.inj_mul, !Nat2N.inj_add in *. nia.
+  Qed.
 
   Lemma T3_map : forall g r m o,
     (T_map_check (scan g) r m o <= k_map * N.of_nat ((graph_n (base g) + 1) *
