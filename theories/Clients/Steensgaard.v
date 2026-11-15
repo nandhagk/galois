@@ -7,7 +7,8 @@
 From Stdlib Require Import List PArith NArith Bool Lia.
 From Argent Require Import Time Tactics Std.
 From Galois.Base Require Import Trie.
-From Galois.Egglog Require Import Syntax Model ModelFacts Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
+From Galois.Egglog Require Import
+  Syntax Model ModelFacts Sorts ValueSig IndexSig JoinSig DatabaseSig RunSig.
 From Galois.Clients Require Import AndersenSig Andersen SteensgaardSig.
 Import List.ListNotations.
 
@@ -109,7 +110,8 @@ Module Steensgaard (V : VALUE with Definition t := positive)
   Proof.
     intros [instructions initial]; cbn [pointer_seed_entries]; apply Forall_app; split.
     - apply Forall_forall; intros entry Hin; apply in_map_iff in Hin.
-      destruct Hin as [instruction [Heq Hin]]; subst entry; destruct instruction; split; reflexivity.
+      destruct Hin as [instruction [Heq Hin]]; subst entry;
+        destruct instruction; split; reflexivity.
     - apply Forall_forall; intros entry Hin; apply in_map_iff in Hin.
       destruct Hin as [[x y] [Heq Hin]]; subst entry; split; reflexivity.
   Qed.
@@ -251,7 +253,10 @@ Module Steensgaard (V : VALUE with Definition t := positive)
     intros db x a Hwf Hcanonical.
     change ((match lookup_id 6 [Val x] db, lookup_id 6 [Val a] db with
       | Some pointer, Some address =>
-        match lookup_id 7 [Id pointer] db with Some target => Pos.eqb target address | None => false end
+        match lookup_id 7 [Id pointer] db with
+        | Some target => Pos.eqb target address
+        | None => false
+        end
       | _, _ => false end) = true ->
       exists i j, represents (D.view db) (Id i) (pointer_expression (Deref (Cell x))) /\
         represents (D.view db) (Id j) (pointer_expression (Cell a)) /\ same (D.view db) i j).
@@ -299,7 +304,10 @@ Module Steensgaard (V : VALUE with Definition t := positive)
       rewrite (canonical_output db 6 [Val x] pointer Hcanonical Hx); exact Ht. }
     change ((match lookup_id 6 [Val x] db, lookup_id 6 [Val a] db with
       | Some pointer, Some address =>
-        match lookup_id 7 [Id pointer] db with Some target => Pos.eqb target address | None => false end
+        match lookup_id 7 [Id pointer] db with
+        | Some target => Pos.eqb target address
+        | None => false
+        end
       | _, _ => false end) = true).
     rewrite Hlookup_x, Hlookup_a, Hlookup_t; apply Pos.eqb_refl.
   Qed.
@@ -376,7 +384,9 @@ Module Steensgaard (V : VALUE with Definition t := positive)
     change (normal_deref db (normal_term db t) = PointerKnown j).
     rewrite Hnormal.
     change ((match lookup_id 7 [Id i] db with
-      Some target => PointerKnown target | None => PointerDeref (PointerKnown i) end) = PointerKnown j).
+      | Some target => PointerKnown target
+      | None => PointerDeref (PointerKnown i)
+      end) = PointerKnown j).
     rewrite Hlookup; reflexivity.
   Qed.
 
@@ -413,7 +423,10 @@ Module Steensgaard (V : VALUE with Definition t := positive)
     unfold normal_cell, normal_deref in Hnormal.
     change ((match lookup_id 6 [Val x] db, lookup_id 6 [Val a] db with
       | Some pointer, Some address =>
-        match lookup_id 7 [Id pointer] db with Some target => Pos.eqb target address | None => false end
+        match lookup_id 7 [Id pointer] db with
+        | Some target => Pos.eqb target address
+        | None => false
+        end
       | _, _ => false end) = true).
     destruct (lookup_id 6 [Val x] db) as [pointer |] eqn:Hx;
       destruct (lookup_id 6 [Val a] db) as [address |] eqn:Ha; try discriminate.
@@ -610,15 +623,20 @@ Module Steensgaard (V : VALUE with Definition t := positive)
     - transitivity (normal_term db u); assumption.
     - cbn [normal_term]; rewrite IHHcong; reflexivity.
     - apply normal_addr; try assumption; apply Hseed.
-      split; [reflexivity | exists x, a; split; [reflexivity | left; split; [reflexivity | right; assumption]]].
+      split; [reflexivity | exists x, a; split;
+        [reflexivity | left; split; [reflexivity | right; assumption]]].
     - apply normal_addr; try assumption; apply Hseed.
-      split; [reflexivity | exists x, a; split; [reflexivity | left; split; [reflexivity | left; assumption]]].
+      split; [reflexivity | exists x, a; split;
+        [reflexivity | left; split; [reflexivity | left; assumption]]].
     - apply normal_copy; try assumption; apply Hseed.
-      split; [reflexivity | exists x, y; split; [reflexivity | right; left; split; [reflexivity | assumption]]].
+      split; [reflexivity | exists x, y; split;
+        [reflexivity | right; left; split; [reflexivity | assumption]]].
     - apply normal_load; try assumption; apply Hseed.
-      split; [reflexivity | exists x, y; split; [reflexivity | right; right; left; split; [reflexivity | assumption]]].
+      split; [reflexivity | exists x, y; split;
+        [reflexivity | right; right; left; split; [reflexivity | assumption]]].
     - apply normal_store; try assumption; apply Hseed.
-      split; [reflexivity | exists x, y; split; [reflexivity | right; right; right; split; [reflexivity | assumption]]].
+      split; [reflexivity | exists x, y; split;
+        [reflexivity | right; right; right; split; [reflexivity | assumption]]].
   Qed.
 
   (** Every source equation holds in the total algebra of a saturated result. *)
@@ -647,7 +665,8 @@ Module Steensgaard (V : VALUE with Definition t := positive)
 End Steensgaard.
 
 Module SteensgaardT (V : VALUE_T with Definition t := positive)
-    (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D) <: STEENSGAARD_ALL V I J D R.
+    (I : INDEX_T V) (J : JOIN_T V I) (D : DATABASE_T V I) (R : RUN_T V I J D)
+    <: STEENSGAARD_ALL V I J D R.
   Include Steensgaard V I J D R.
   Module SeedTime := PointerSeedTime V I J D R.
   TimeFun compile.
@@ -722,7 +741,8 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
       pose proof (proj1 (pointer_layout_size_bounds (Syntax.slots V.t (R.plan (compile q)))))
         as Hlength; lia. }
     pose proof (SeedTime.fold_time (compile q) (pointer_seed_entries 1 q) T_seed_put (k_rules + 1)
-      (R.plan_checked (compile q) (program_sorted q)) Hslots seed_put_time (seed_entries_ok q)) as Hfold.
+      (R.plan_checked (compile q) (program_sorted q)) Hslots seed_put_time (seed_entries_ok q))
+      as Hfold.
     rewrite pointer_seed_entries_length in Hfold; exact Hfold.
   Qed.
 
@@ -757,7 +777,8 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     { exact (proj1 (pointer_seed_budget D.c_db k_rules)). }
     assert (Hfixed : (D.T_init (decls V.t (compile q)) (Syntax.slots V.t (R.plan (compile q))) +
       R.T_plan (compile q) + 16 <= k_seed)%N).
-    { eapply N.le_trans; [apply N.add_le_mono_r; apply N.add_le_mono; [exact Hinit | exact Hplan] |].
+    { eapply N.le_trans;
+        [apply N.add_le_mono_r; apply N.add_le_mono; [exact Hinit | exact Hplan] |].
       exact (proj2 (pointer_seed_budget D.c_db k_rules)). }
     clear Hinit Hplan.
     pose proof (N.mul_le_mono_l _ _ (N.of_nat (D.unit (seed q))) Hcharge) as Hscaled.
@@ -775,9 +796,10 @@ Module SteensgaardT (V : VALUE_T with Definition t := positive)
     time_unfold T_seed; time_simpl.
     change (pointer_plan_slots (R.plan (compile q))) with
       (Syntax.slots V.t (R.plan (compile q))).
-    rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1) in Hentries |- *.
-    pose proof (pointer_seed_composition _ _ _ _ D.c_db k_seed _ _ Hunit Hentries Hfixed Hfold_bound)
-      as Htotal.
+    rewrite (Nat2N.inj_add (length (constraints q) + length (initial_pointers q)) 1)
+      in Hentries |- *.
+    pose proof (pointer_seed_composition _ _ _ _ D.c_db k_seed _ _
+      Hunit Hentries Hfixed Hfold_bound) as Htotal.
     unfold c_steensgaard, k_wrap.
     change (fun db entry => T_seed_put db entry) with T_seed_put.
     replace (k_seed + D.c_db + 32 + 32)%N with (k_seed + D.c_db + 64)%N by lia.
