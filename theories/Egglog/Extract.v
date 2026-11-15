@@ -6267,6 +6267,35 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
   Definition knuth_inv (db : D.t) (s : state) : Prop :=
     forall c n ch, In (c, (n, ch)) (finalised s) ->
       forall e, represents (D.view db) (Id c) e -> (n <= tree_cost e)%N.
+  Module Resources := SearchResources V C Q.
+
+  (** Every continuing state keeps its database, constructor source and cached source count. *)
+  Lemma reachable_source : forall cs db s, reachable cs db s ->
+    search_database s = db /\ search_rows s = Enumeration.enumerated_rows cs db /\
+      search_row_count s = length (Enumeration.enumerated_rows cs db).
+  Proof.
+    intros cs db s Hreach.
+    assert (Hboth : SearchProof.search_invariant (Enumeration.enumerated_rows cs db) s /\
+      (search_database s = db /\ search_rows s = Enumeration.enumerated_rows cs db /\
+        search_row_count s = length (Enumeration.enumerated_rows cs db))).
+    { eapply (extraction_reachable_invariant (step cs db)
+        (fun state => SearchProof.search_invariant (Enumeration.enumerated_rows cs db) state /\
+          (search_database state = db /\ search_rows state = Enumeration.enumerated_rows cs db /\
+            search_row_count state = length (Enumeration.enumerated_rows cs db)))).
+      - intros before after [Hinv [Hdb [Hrows Hcount]]] Hstep. split.
+        + eapply SearchProof.search_step_invariant; eassumption.
+        + destruct (SearchProof.search_step_source D.t (Enumeration.enumerated_rows cs db)
+            before after Hinv Hstep) as [Hdb' [Hrows' Hcount']].
+          now rewrite Hdb', Hrows', Hcount'.
+      - exact Hreach.
+      - split; [apply SearchProof.search_initial_invariant|].
+        destruct (SearchProof.search_initial_fields D.t db (Enumeration.enumerated_rows cs db))
+          as [Hdb [Hrows [Hcount Hrest]]].
+        split; [exact Hdb|]. split; assumption. }
+    exact (proj2 Hboth).
+  Qed.
+
+
   Lemma F1_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
     finalised (initial cs db) = [] /\ knuth_inv db (initial cs db).
   Proof.
@@ -6437,6 +6466,57 @@ Module ExtractT (V : VALUE_T) (I : INDEX_T V) (D : DATABASE_T V I) (C : COST_T V
     rewrite (reachable_key_costs cs db s k Hreach Hknown).
     pose proof (proj1 (cost_width_spec cs db Hwf Hcanonical Hinventory) f k i Hrow) as Hcost.
     lia.
+  Qed.
+
+  (** The queue's pending entries never exceed the exact constructor-row count. *)
+  Lemma reachable_queue_pending : forall cs db s, D.wf db -> ctor_inventory cs db ->
+    reachable cs db s -> Q.pending (search_queue s) <= R db.
+  Proof.
+    intros cs db s Hwf Hinventory Hreach.
+    rewrite <- (inventory_rows_count cs db Hwf Hinventory).
+    exact (Resources.search_reachable_pending D.t db (Enumeration.enumerated_rows cs db) s Hreach).
+  Qed.
+
+  (** Reachable queue entries obey the combined stored-identifier and optimal-cost width. *)
+  Lemma reachable_queue_fits : forall cs db s, D.wf db -> D.canonical db ->
+    ctor_inventory cs db -> reachable cs db s ->
+    Q.fits (D.unit db + cost_width db) (search_queue s).
+  Proof.
+    intros cs db s Hwf Hcanonical Hinventory Hreach.
+    assert (Hboth : reachable cs db s /\ Q.fits (D.unit db + cost_width db) (search_queue s)).
+    { eapply (extraction_reachable_invariant (step cs db)
+        (fun state => reachable cs db state /\
+          Q.fits (D.unit db + cost_width db) (search_queue state))).
+      - intros before after [Hbefore Hfits] Hstep.
+        assert (Hafter : reachable cs db after).
+        { unfold reachable in *. eapply rt_trans; [exact Hbefore|]. now apply rt_step. }
+        split; [exact Hafter|].
+        pose proof (proj1 (reachable_verified cs db before Hbefore)) as Hinv.
+        destruct (SearchProof.search_step_cases D.t (Enumeration.enumerated_rows cs db)
+          before after Hinv Hstep) as [i [n [f [k [queue [Hpop [Hcandidate Hfinish]]]]]]].
+        assert (Hcosts : search_final_costs after = PTrieCode.set i n (search_final_costs before)).
+        { rewrite Hfinish.
+          destruct (SearchProof.search_finish_fields D.t i n (f, k) queue before)
+            as [_ [_ [_ [Hcosts _]]]]. exact Hcosts. }
+        rewrite Hfinish. eapply Resources.search_finish_fits.
+        + exact Hinv.
+        + exact Hfits.
+        + exact Hpop.
+        + exact Hcandidate.
+        + intros g key j Hsource Hknown.
+          pose proof (reachable_row_width cs db after g key j Hwf Hcanonical Hinventory
+            Hafter Hsource) as Hwidth. rewrite Hcosts in Hwidth. now apply Hwidth.
+      - exact Hreach.
+      - assert (Hinitial : reachable cs db (initial cs db)).
+        { unfold reachable. apply rt_refl. }
+        split; [exact Hinitial|]. apply Resources.search_initial_fits.
+        assert (Hcosts : search_final_costs (initial cs db) = Empty).
+        { destruct (SearchProof.search_initial_fields D.t db (Enumeration.enumerated_rows cs db))
+            as [_ [_ [_ [Hcosts _]]]]. exact Hcosts. }
+        intros f k i Hsource Hknown.
+        pose proof (reachable_row_width cs db (initial cs db) f k i Hwf Hcanonical Hinventory
+          Hinitial Hsource) as Hwidth. rewrite Hcosts in Hwidth. now apply Hwidth. }
+    exact (proj2 Hboth).
   Qed.
 
   Lemma T0_initial : forall cs db, D.wf db -> D.canonical db -> ctor_inventory cs db ->
