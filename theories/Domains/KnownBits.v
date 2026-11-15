@@ -94,6 +94,24 @@ TimeFun tnum_max.
 Definition tnum_mask (w : width) (a : tnum) : Z := tnum_wnot w (tnum_wor w (zeros a) (ones a)).
 TimeFun tnum_mask.
 
+(** The minimum endpoint lies within its word width. *)
+Lemma tnum_min_word : forall w a, is_word w (tnum_min w a).
+Proof.
+  intros w a. unfold tnum_min. rewrite tnum_wrap_agrees. apply wrap_is_word.
+Qed.
+
+(** The maximum endpoint lies within its word width. *)
+Lemma tnum_max_word : forall w a, is_word w (tnum_max w a).
+Proof.
+  intros w a. unfold tnum_max. rewrite tnum_wnot_agrees. apply wnot_is_word.
+Qed.
+
+(** The uncertainty mask lies within its word width. *)
+Lemma tnum_mask_word : forall w a, is_word w (tnum_mask w a).
+Proof.
+  intros w a. unfold tnum_mask. rewrite tnum_wnot_agrees. apply wnot_is_word.
+Qed.
+
 Definition tnum_constant (w : width) (a : tnum) : option Z :=
   if tnum_wrap w (zeros a) =? tnum_wnot w (ones a) then Some (tnum_min w a) else None.
 TimeFun tnum_constant.
@@ -1872,19 +1890,70 @@ Qed.
 Lemma tnum_join_leb : forall w a b c,
   tnum_leb w (tnum_join w a b) c = true <->
   tnum_leb w a c = true /\ tnum_leb w b c = true.
-Proof. Admitted. (* CONVERT: tnum_join_leb: The variable leb_trans was not found in the current environment. *)
+Proof.
+  intros w a b c. rewrite !tnum_leb_bits. split.
+  - intros [Hz Ho]. split; split; intros i Hi Hbit.
+    + specialize (Hz i Hi Hbit).
+      rewrite (proj1 (tnum_join_bits w a b i Hi)) in Hz.
+      now apply andb_true_iff in Hz as [Hz _].
+    + specialize (Ho i Hi Hbit).
+      rewrite (proj2 (tnum_join_bits w a b i Hi)) in Ho.
+      now apply andb_true_iff in Ho as [Ho _].
+    + specialize (Hz i Hi Hbit).
+      rewrite (proj1 (tnum_join_bits w a b i Hi)) in Hz.
+      now apply andb_true_iff in Hz as [_ Hz].
+    + specialize (Ho i Hi Hbit).
+      rewrite (proj2 (tnum_join_bits w a b i Hi)) in Ho.
+      now apply andb_true_iff in Ho as [_ Ho].
+  - intros [[Haz Hao] [Hbz Hbo]]. split; intros i Hi Hbit.
+    + rewrite (proj1 (tnum_join_bits w a b i Hi)). apply andb_true_iff. auto.
+    + rewrite (proj2 (tnum_join_bits w a b i Hi)). apply andb_true_iff. auto.
+Qed.
 
 Lemma tnum_map_join : forall sw rw f a b,
   tnum_bit_copy sw rw f ->
   tnum_equiv rw (tnum_map sw rw f (tnum_join sw a b))
     (tnum_join rw (tnum_map sw rw f a) (tnum_map sw rw f b)).
-Proof. Admitted. (* CONVERT: tnum_map_join: Found no subterm matching "Z.testbit (wnot ?M1538 ?M1539) ?M1540" *)
+Proof.
+  intros sw rw f a b Hcopy. apply tnum_equiv_bits. intros i Hi.
+  destruct (Hcopy i Hi) as [Hclear|[j [Hj Hsource]]];
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, (proj1 (tnum_join_bits rw _ _ i Hi)),
+      (proj2 (tnum_join_bits rw _ _ i Hi));
+    cbn [tnum_map zeros ones]; rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !tnum_not_bit, !tnum_wrap_bit by exact Hi.
+  - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !Hclear by first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word]. auto.
+  - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !Hsource by first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word].
+    unfold tnum_min, tnum_max. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !tnum_not_bit, !tnum_wrap_bit by exact Hj.
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, (proj1 (tnum_join_bits sw a b j Hj)),
+      (proj2 (tnum_join_bits sw a b j Hj)), !negb_involutive. auto.
+Qed.
 
 Lemma tnum_map_composition : forall sw mw rw f g a,
   tnum_bit_copy mw rw g -> (forall x, is_word sw x -> is_word mw (f x)) ->
   tnum_equiv rw (tnum_map mw rw g (tnum_map sw mw f a))
     (tnum_map sw rw (fun x => g (f x)) a).
-Proof. Admitted. (* CONVERT: tnum_map_composition: Found no subterm matching "Z.testbit (wnot ?M1514 ?M1515) ?M1516" *)
+Proof.
+  intros sw mw rw f g a Hcopy Hword. apply tnum_equiv_bits. intros i Hi.
+  destruct (Hcopy i Hi) as [Hclear|[j [Hj Hsource]]];
+    cbn [tnum_map zeros ones]; rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !tnum_not_bit, !tnum_wrap_bit by exact Hi.
+  - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !Hclear by first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word|apply Hword;
+      first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word]]. auto.
+  - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !Hsource by first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word|apply Hword;
+      first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word]].
+    unfold tnum_min, tnum_max, tnum_map. cbn [zeros ones].
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !tnum_not_bit, !tnum_wrap_bit by exact Hj. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, negb_involutive.
+    unfold tnum_min, tnum_max. rewrite ?tnum_wrap_agrees, ?tnum_wnot_agrees. auto.
+Qed.
 
 Lemma tnum_source_composition : forall o w h k i,
   0 <= h -> 0 <= k -> 0 <= i < Zpos w ->
@@ -1934,10 +2003,48 @@ Lemma tnum_scalar_composition : forall o w h k a,
   0 <= h -> 0 <= k ->
   tnum_equiv w (tnum_scalar o w k (tnum_scalar o w h a))
     (tnum_scalar o w (h + k) a).
-Proof. Admitted. (* CONVERT: tnum_scalar_composition: No applicable tactic. *)
+Proof.
+  intros o w h k a Hh Hk.
+  pose proof (tnum_map_composition w w w (tnum_scalar_value o w h)
+    (tnum_scalar_value o w k) a (tnum_scalar_copy o w k Hk)
+    (fun x _ => tnum_scalar_word o w h x)) as Hcomp.
+  assert (Hmap : tnum_map w w
+    (fun x => tnum_scalar_value o w k (tnum_scalar_value o w h x)) a =
+      tnum_scalar o w (h + k) a).
+  { unfold tnum_scalar, tnum_map.
+    rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !tnum_scalar_value_composition by
+      (try assumption; first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word]). reflexivity. }
+  now rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Hmap in Hcomp.
+Qed.
 
 Lemma tnum_scalar_zero : forall o w a, tnum_equiv w (tnum_scalar o w 0 a) a.
-Proof. Admitted. (* CONVERT: tnum_scalar_zero: Found no subterm matching "Z.testbit (wnot ?M1648 ?M1649) ?M1650" *)
+Proof.
+  intros o w a. apply tnum_equiv_bits. intros i Hi.
+  assert (Hsource : tnum_source o w 0 i = Some i).
+  { destruct o; cbn [tnum_source]; try reflexivity.
+    - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, (proj2 (Z.leb_le 0 i)) by lia. now rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Z.sub_0_r.
+    - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Z.add_0_r, (proj2 (Z.ltb_lt i (Zpos w))) by lia. reflexivity.
+    - change (Some (Z.min (i + 0) (Zpos w - 1)) = Some i). f_equal. lia.
+    - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Z.sub_0_r, Z.mod_small by exact Hi. reflexivity.
+    - rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, Z.add_0_r, Z.mod_small by exact Hi. reflexivity. }
+  unfold tnum_scalar, tnum_map. cbn [zeros ones].
+  rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, tnum_not_bit, tnum_wrap_bit by exact Hi.
+  rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, !tnum_scalar_bits, Hsource by
+    (try lia; try exact Hi; first [apply tnum_max_word|apply tnum_min_word|apply wnot_is_word|apply wrap_is_word]).
+  unfold tnum_min, tnum_max. rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, tnum_not_bit, tnum_wrap_bit by exact Hi.
+  now rewrite ?tnum_wrap_agrees, ?tnum_wand_agrees,
+      ?tnum_wor_agrees, ?tnum_wnot_agrees, negb_involutive.
+Qed.
 
 Lemma tnum_scalar_period : forall o w h k a,
   tnum_rotation o = true -> h mod Zpos w = k mod Zpos w ->
