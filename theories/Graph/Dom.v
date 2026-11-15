@@ -4,7 +4,7 @@
     For example, a direct parent edge supplies the low-high witness of its child.
     Builds on: first-order graphs, canonical tries and dominator certificate signatures. *)
 
-From Stdlib Require Import List Bool PArith NArith Lia Sorting.Sorted Wellfounded.Inverse_Image.
+From Stdlib Require Import List Bool PArith NArith Arith Lia Sorting.Sorted Wellfounded.Inverse_Image.
 From Argent Require Import Time Tactics Std BigO Loop.
 From Galois.Base Require Import Trie Loop.
 From Galois.Graph Require Import Data Spec DigraphSig DomSig DomProducer DomOrder.
@@ -514,8 +514,6 @@ Module DomT <: DOM_ALL.
   TimeFun check.
   TimeFun tree.
   TimeFun dominates_b.
-  Definition c_dom : N := 1%N. (* STUB *)
-
   Definition scan := dom_scan.
   TimeFun scan.
   Definition read := dom_read_known.
@@ -563,8 +561,12 @@ Module DomT <: DOM_ALL.
   Definition k_semi : N := 1%N. (* STUB *)
   Definition k_le : N := 1%N. (* STUB *)
   Definition k_order : N := 1%N. (* STUB *)
-  Definition k_build : N := 1%N. (* STUB *)
-  Definition k_check : N := 1%N. (* STUB *)
+  Definition k_build : N := 32%N.
+  Definition k_check : N := 32%N.
+
+  Definition c_dom : N :=
+    (64 + k_tree + k_check * (k_scan + k_read + k_map + 2 * k_size + k_edge + 1) +
+      k_dfs + k_semi + 4 * k_le + k_order + k_build)%N.
 
   Lemma F0_path_last : forall g a vs b, path g a vs b ->
   (vs = [b] /\ a = b) \/
@@ -756,56 +758,11 @@ Module DomT <: DOM_ALL.
         (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))%N.
   Proof. Admitted. (* STUB *)
 
-  Lemma T_check_le : forall g r m o,
-    (T_check g r m o <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_tree_le : forall g r m o, check g r m o = true ->
-    (T_tree g r m o <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_dominates_b_le : forall t u v,
-    (T_dominates_b t u v <= c_dom * N.of_nat (query_width t u v + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma T_build_le : forall g r, prepared_ok g ->
-    (T_build g r <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
-      N.of_nat (Nat.log2 (graph_n (base g)) + 1) * N.of_nat (graph_width (base g) + 1))%N.
-  Proof. Admitted. (* STUB *)
-
-  Lemma check_bigO : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_check g r m o).
-  Proof. Admitted. (* STUB *)
-
-  Lemma tree_bigO : bigO (fun '(g, r, m, o) => check g r m o = true)
-    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_tree g r m o).
-  Proof. Admitted. (* STUB *)
-
-  Lemma dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
-    (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
-    (fun '(t, u, v) => T_dominates_b t u v).
-  Proof. Admitted. (* STUB *)
-
-  Lemma build_bigO : bigO (fun '(g, _) => prepared_ok g)
-    (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
-      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
-    (fun '(g, r) => T_build g r).
-  Proof. Admitted. (* STUB *)
-
   (** Parent containment tests charge each accepted order entry. *)
   Lemma T4b_sizes_ok : forall g r m o pos,
       read (scan g) r o = Some pos -> map_check (scan g) r m o = true ->
       (T_sizes_ok m pos (sizes m o) o <= k_size * N.of_nat ((graph_n (base g) + 1) *
         (graph_width (base g) + 1)))%N.
-  Proof. Admitted. (* STUB *)
-
-  (** Building runs the search, the semidominator phases and the order phase. *)
-  Lemma T11b_build : forall g r, prepared_ok g ->
-      (T_build g r <= T_lt_dfs g r + T_lt_semi g r + T_lt_order g r + k_build)%N.
   Proof. Admitted. (* STUB *)
 
   (** The checker runs its phases in order and stops at the first rejection. *)
@@ -817,6 +774,173 @@ Module DomT <: DOM_ALL.
             then T_sizes m o + T_sizes_ok m pos (sizes m o) o + T_edges g m o else 0
         | None => 0
         end + 1))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros g r m o.
+    unfold T_check, T_scan, T_read, T_map_check, T_sizes, T_sizes_ok, T_edges.
+    unfold scan, read, map_check, sizes, sizes_ok, k_check.
+    time_simpl.
+    destruct (dom_read_known (dom_scan g) r o) as [pos|] eqn:Hread.
+    - pose proof (F2c_read g r o pos Hread) as [_ [_ [Hhead Hrest]]].
+      destruct o as [|h rest]; [discriminate|]. cbn in Hhead. injection Hhead as Hhead.
+      subst h.
+      unfold dom_read. cbn beta iota zeta.
+      rewrite Hread.
+      destruct (dom_map_check_known (dom_scan g) r m (r :: rest)) eqn:Hmap.
+      all: time_simpl; nia.
+    - time_simpl. nia.
+  Qed.
+
+  Lemma T_check_le : forall g r m o,
+    (T_check g r m o <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof.
+    intros g r m o.
+    set (budget := N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))).
+    assert (Hsmall_nat : (graph_n (base g) + 1) * (graph_width (base g) + 1) <=
+      (graph_n (base g) + graph_e (base g) + 1) * (graph_width (base g) + 1)).
+    { apply Nat.mul_le_mono_r. lia. }
+    assert (Hsmall : (N.of_nat ((graph_n (base g) + 1) * (graph_width (base g) + 1))
+      <= budget)%N) by (unfold budget; lia).
+    assert (Hpositive : (1 <= budget)%N) by (unfold budget; nia).
+    pose proof (T1_scan g) as Hscan. fold budget in Hscan.
+    assert (Hread : (T_read (scan g) r o <= k_read * budget)%N).
+    { eapply N.le_trans; [apply T2_read|]. now apply N.mul_le_mono_l. }
+    assert (Hmap : (T_map_check (scan g) r m o <= k_map * budget)%N).
+    { eapply N.le_trans; [apply T3_map|]. now apply N.mul_le_mono_l. }
+    assert (Hextras :
+      (match read (scan g) r o with
+       | Some pos => if map_check (scan g) r m o then
+           T_sizes m o + T_sizes_ok m pos (sizes m o) o + T_edges g m o else 0
+       | None => 0
+       end <= (2 * k_size + k_edge) * budget)%N).
+    { destruct (read (scan g) r o) as [pos|] eqn:Hpositions; [|nia].
+      destruct (map_check (scan g) r m o) eqn:Hparents; [|nia].
+      destruct (F2c_read g r o pos Hpositions) as
+        [Hunique [Hlength [Hhead [Hlisted Hpositioned]]]].
+      pose proof (F2d_map g r m o Hparents) as Hclosed.
+      assert (Hsizes : (T_sizes m o <= k_size * budget)%N).
+      { eapply N.le_trans; [eapply T4_sizes; eassumption|].
+        now apply N.mul_le_mono_l. }
+      assert (Hintervals : (T_sizes_ok m pos (sizes m o) o <= k_size * budget)%N).
+      { eapply N.le_trans; [eapply T4b_sizes_ok; eassumption|].
+        now apply N.mul_le_mono_l. }
+      assert (Hnodes : nodes g = verts (base g)).
+      { destruct g as [[vertices adjacency] predecessors count_v count_e]. reflexivity. }
+      rewrite Hnodes in Hlisted.
+      pose proof (T5_edges g m o Hlength Hlisted Hclosed) as Hedges.
+      fold budget in Hedges. nia. }
+    pose proof (T11_check g r m o) as Hcheck.
+    assert (Hconstant :
+      (k_check * (k_scan + k_read + k_map + 2 * k_size + k_edge + 1) <= c_dom)%N).
+    { unfold c_dom. nia. }
+    rewrite <- N.mul_assoc, <- Nat2N.inj_mul. fold budget.
+    nia.
+  Qed.
+
+  Lemma T_tree_le : forall g r m o, check g r m o = true ->
+    (T_tree g r m o <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (graph_width (base g) + 1))%N.
+  Proof.
+    intros g r m o Hcheck.
+    pose proof (T6_tree g r m o Hcheck) as Htree.
+    rewrite Nat2N.inj_mul in Htree.
+    assert (Hconstant : (k_tree <= c_dom)%N) by (unfold c_dom; nia).
+    assert (Hsize : (N.of_nat (graph_n (base g) + 1) <=
+      N.of_nat (graph_n (base g) + graph_e (base g) + 1))%N) by lia.
+    eapply N.le_trans; [exact Htree|].
+    rewrite <- N.mul_assoc. apply N.mul_le_mono; [exact Hconstant|].
+    apply N.mul_le_mono_r. exact Hsize.
+  Qed.
+
+  Lemma T_dominates_b_le : forall t u v,
+    (T_dominates_b t u v <= c_dom * N.of_nat (query_width t u v + 1))%N.
+  Proof.
+    assert (Hconstant : (64 <= c_dom)%N) by (unfold c_dom; nia).
+    intros [parents rows positions ends] u v.
+    unfold T_dominates_b, query_width. time_simpl.
+    change graph_max with Nat.max.
+    cbn [pre post]. rewrite !PTrieT.trie_get_clock.
+    destruct (trie_get u positions) as [a|] eqn:Ha;
+      destruct (trie_get u ends) as [b|] eqn:Hb;
+      destruct (trie_get v positions) as [c|] eqn:Hc;
+      destruct (trie_get v ends) as [d|] eqn:Hd.
+    all: cbn beta iota zeta; time_simpl; time_pose; time_cbn_all; nia.
+  Qed.
+
+  (** Building runs the search, the semidominator phases and the order phase. *)
+  Lemma T11b_build : forall g r, prepared_ok g ->
+      (T_build g r <= T_lt_dfs g r + T_lt_semi g r + T_lt_order g r + k_build)%N.
+  Proof.
+    intros g r Hready.
+    pose proof (T_dom_build_candidate_phases g r) as Hphases.
+    unfold T_build, T_lt_semi, T_lt_order, k_build.
+    time_simpl. lia.
+  Qed.
+
+  Lemma T_build_le : forall g r, prepared_ok g ->
+    (T_build g r <= c_dom * N.of_nat (graph_n (base g) + graph_e (base g) + 1) *
+      N.of_nat (Nat.log2 (graph_n (base g)) + 1) * N.of_nat (graph_width (base g) + 1))%N.
+  Proof.
+    intros g r Hready.
+    pose proof (T11b_build g r Hready) as Hbuild.
+    pose proof (T7_dfs g r Hready) as Hdfs.
+    pose proof (T9_semi g r Hready) as Hsemi.
+    pose proof (T8_link_eval g r Hready) as Heval.
+    pose proof (F13_ops_length g r Hready) as Hlength.
+    pose proof (T10_order g r Hready) as Horder.
+    rewrite !Nat2N.inj_mul in Hdfs, Hsemi, Heval, Horder.
+    set (a := N.of_nat (graph_n (base g) + graph_e (base g) + 1)) in *.
+    set (w := N.of_nat (graph_width (base g) + 1)) in *.
+    set (l := N.of_nat (Nat.log2 (graph_n (base g)) + 1)) in *.
+    assert (Ha : (1 <= a)%N) by (unfold a; lia).
+    assert (Hw : (1 <= w)%N) by (unfold w; lia).
+    assert (Hl : (1 <= l)%N) by (unfold l; lia).
+    assert (Hoperations : (N.of_nat (length (lt_ops g r) + graph_n (base g) + 1)
+      <= 4 * a)%N) by (unfold a; lia).
+    assert (Heval_bound : (T_run_ops (lt_ops g r) (lt_init g r) <=
+      4 * k_le * (a * l * w))%N) by nia.
+    assert (Hbase : (a * w <= a * l * w)%N) by nia.
+    assert (Hunit : (1 <= a * l * w)%N) by nia.
+    assert (Hconstant : (k_dfs + k_semi + 4 * k_le + k_order + k_build <= c_dom)%N).
+    { unfold c_dom. nia. }
+    nia.
+  Qed.
+
+  Lemma check_bigO : bigO (fun _ : prepared * positive * ptrie positive * list positive => True)
+    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_check g r m o).
+  Proof.
+    exists c_dom. intros [[[g r] m] o] Htrue.
+    pose proof (T_check_le g r m o) as Hbound.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+  Lemma tree_bigO : bigO (fun '(g, r, m, o) => check g r m o = true)
+    (fun '(g, _, _, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (graph_width (base g) + 1))) (fun '(g, r, m, o) => T_tree g r m o).
+  Proof.
+    exists c_dom. intros [[[g r] m] o] Hcheck.
+    pose proof (T_tree_le g r m o Hcheck) as Hbound.
+    rewrite Nat2N.inj_mul. nia.
+  Qed.
+
+  Lemma dominates_b_bigO : bigO (fun _ : domtree * positive * positive => True)
+    (fun '(t, u, v) => N.of_nat (query_width t u v + 1))
+    (fun '(t, u, v) => T_dominates_b t u v).
+  Proof.
+    exists c_dom. intros [[t u] v] Htrue.
+    pose proof (T_dominates_b_le t u v) as Hbound. nia.
+  Qed.
+
+  Lemma build_bigO : bigO (fun '(g, _) => prepared_ok g)
+    (fun '(g, _) => N.of_nat ((graph_n (base g) + graph_e (base g) + 1) *
+      (Nat.log2 (graph_n (base g)) + 1) * (graph_width (base g) + 1)))
+    (fun '(g, r) => T_build g r).
+  Proof.
+    exists c_dom. intros [g r] Hready.
+    pose proof (T_build_le g r Hready) as Hbound.
+    rewrite !Nat2N.inj_mul. nia.
+  Qed.
 
 End DomT.
