@@ -783,6 +783,37 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
       repeat rewrite Nat2N.inj_add in *; nia.
   Qed.
 
+  Lemma T_collapse_le : forall xs, length xs <= C.k + 1 ->
+    (T_collapse xs <= c_disjunction * N.of_nat
+      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  Proof.
+    intros xs Hcap; pose proof (collapse_budget xs Hcap); lia.
+  Qed.
+  Lemma collapse_size : forall xs, length xs <= C.k + 1 ->
+    (N.of_nat (S.size (collapse xs)) <= c_disjunction * N.of_nat
+      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
+  Proof.
+    intros xs Hcap; pose proof (collapse_budget xs Hcap); lia.
+  Qed.
+  Lemma collapse_wunits : forall xs, length xs <= C.k + 1 ->
+    (N.of_nat (S.wunits (collapse xs)) <= c_disjunction * N.of_nat
+      (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
+  Proof.
+    intros [|x xs] Hcap.
+    - cbn [collapse map fold_right]; unfold c_disjunction; rewrite Nat2N.inj_add; nia.
+    - pose proof (state_fold_units xs x) as Hfold.
+      assert (Hpower : (state_growth ^ N.of_nat (length xs) <= state_scale)%N).
+      { unfold state_scale; apply N.pow_le_mono_r.
+        - unfold state_growth; lia.
+        - cbn [length] in Hcap; lia. }
+      assert (Hcoefficient : (state_scale <= c_disjunction)%N) by
+        (unfold c_disjunction; nia).
+      pose proof (N.mul_le_mono_r _ _
+        (N.of_nat (S.wunits x + fold_right Nat.add 0%nat (map S.wunits xs) + 1))
+        (N.le_trans _ _ _ Hpower Hcoefficient)) as Hscaled.
+      cbn [collapse map fold_right]; nia.
+  Qed.
+
   (** Boolean existential traversal charges each callback and two scalar steps. *)
   Local Lemma exists_clock {A} (f : A -> bool) (T_f : A -> N) xs :
     (List.T_existsb f T_f xs <=
@@ -899,6 +930,259 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
     nia.
   Qed.
 
+  (** A uniform member budget bounds a complete sum of callback costs. *)
+  Local Lemma sum_uniform {A} (f : A -> N) xs budget :
+    (forall x, In x xs -> (f x <= budget)%N) ->
+    (fold_right N.add 0%N (map f xs) <= N.of_nat (length xs) * budget)%N.
+  Proof.
+    induction xs as [|x xs IH]; intro Hcalls; cbn [map fold_right length]; [lia |].
+    specialize (IH (fun y Hy => Hcalls y (or_intror Hy))).
+    pose proof (Hcalls x (or_introl eq_refl)); rewrite Nat2N.inj_succ; nia.
+  Qed.
+
+  (** Every member's nonnegative weight fits in the entire list sum. *)
+  Local Lemma sum_member {A} (f : A -> nat) xs x : In x xs ->
+    f x <= fold_right Nat.add 0%nat (map f xs).
+  Proof.
+    induction xs as [|y xs IH]; intro Hin; [contradiction |].
+    cbn [map fold_right]; destruct Hin as [<- | Hin]; [lia | specialize (IH Hin); lia].
+  Qed.
+
+  (** Removing alternatives cannot increase the sum of their nonnegative weights. *)
+  Local Lemma sum_filter {A} (f : A -> nat) pred xs :
+    fold_right Nat.add 0%nat (map f (filter pred xs)) <=
+      fold_right Nat.add 0%nat (map f xs).
+  Proof.
+    induction xs as [|x xs IH]; cbn [filter map fold_right]; [lia |].
+    destruct (pred x); cbn [map fold_right]; lia.
+  Qed.
+
+  (** The shared disjunction size is its raw alternative mass plus a terminal unit. *)
+  Local Lemma size_mass : forall d, size d = state_mass (proj1_sig d) + 1.
+  Proof.
+    intros [xs Hbound]; change
+      (fold_right (fun x rest => S.size x + 1 + rest)%nat 1%nat xs = state_mass xs + 1).
+    clear Hbound; unfold state_mass; induction xs as [|x xs IH]; cbn [fold_right]; lia.
+  Qed.
+
+  (** Every member's size and units fit the disjunction's corresponding measure. *)
+  Local Lemma member_measures : forall d x, In x (proj1_sig d) ->
+    S.size x <= size d /\ S.wunits x <= wunits d.
+  Proof.
+    intros d x Hin; split.
+    - pose proof (sum_member S.size (proj1_sig d) x Hin).
+      rewrite size_mass, state_mass_values; lia.
+    - exact (sum_member S.wunits (proj1_sig d) x Hin).
+  Qed.
+
+  (** A receiver and its uncovered candidates fit the combined state-size budget. *)
+  Local Lemma receiver_budget : forall a b x, In x (proj1_sig a) ->
+    let xs := x :: uncovered S.leb (proj1_sig a) (proj1_sig b) in
+    length xs <= C.k + 1 /\
+    fold_right Nat.add 0%nat (map S.size xs) + length xs + 1 <= size a + size b + 1 /\
+    fold_right Nat.add 0%nat (map S.wunits xs) + 1 <= wunits a + wunits b + 1.
+  Proof.
+    intros a b x Hin; cbn [map fold_right length].
+    pose proof (member_measures a x Hin) as [Hsize Hunits].
+    pose proof (filter_length (fun y => negb (existsb (S.leb y) (proj1_sig a)))
+      (proj1_sig b)) as Hlength.
+    pose proof (sum_filter S.size
+      (fun y => negb (existsb (S.leb y) (proj1_sig a))) (proj1_sig b)) as Hsizes.
+    pose proof (sum_filter S.wunits
+      (fun y => negb (existsb (S.leb y) (proj1_sig a))) (proj1_sig b)) as Hunit_sum.
+    assert (Hcap : length (proj1_sig b) <= C.k) by (apply Nat.leb_le; exact (proj2_sig b)).
+    rewrite (size_mass b), state_mass_values; unfold uncovered, wunits in *; split; [lia |].
+    split; lia.
+  Qed.
+
+  (** This coefficient accounts for cap bounds, joins and the fixed top representation. *)
+  Local Definition lattice_factor : N :=
+    ((P.c_lat + S.c_lat + 1) * (c_disjunction + 1) *
+      N.of_nat ((C.k + 1) * (C.k + 1)) * (N.of_nat (S.size S.top) + 1))%N.
+
+  (** The shared lattice factor dominates each scan and receiver coefficient. *)
+  Local Lemma lattice_factors :
+    (1 <= lattice_factor /\ P.c_lat <= lattice_factor /\
+     S.c_lat * N.of_nat (C.k + 1) <= lattice_factor /\
+     (S.c_lat + 1) * N.of_nat (C.k + 1) * N.of_nat (C.k + 1) <= lattice_factor /\
+     (S.c_lat + 1) * (c_disjunction + 1) * N.of_nat (C.k + 1) <= lattice_factor /\
+     P.c_lat * (N.of_nat (S.size S.top) + 1) <= lattice_factor)%N.
+  Proof.
+    assert (Hcap : (1 <= N.of_nat (C.k + 1))%N) by lia.
+    unfold lattice_factor; rewrite Nat2N.inj_mul.
+    set (cap := N.of_nat (C.k + 1)) in *.
+    assert (Hsquare : (cap <= cap * cap)%N) by nia.
+    repeat split.
+    - change (1 * 1 * 1 * 1 <=
+        (P.c_lat + S.c_lat + 1) * (c_disjunction + 1) * (cap * cap) *
+          (N.of_nat (S.size S.top) + 1))%N.
+      apply N.mul_le_mono; [apply N.mul_le_mono; [apply N.mul_le_mono; lia | lia] | lia].
+    - replace P.c_lat with (P.c_lat * 1 * 1 * 1)%N at 1 by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono; [apply N.mul_le_mono; lia | lia] | lia].
+    - replace (S.c_lat * cap)%N with (S.c_lat * 1 * cap * 1)%N by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono; [apply N.mul_le_mono; lia | lia] | lia].
+    - replace ((S.c_lat + 1) * cap * cap)%N with
+        ((S.c_lat + 1) * 1 * (cap * cap) * 1)%N by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono; [apply N.mul_le_mono; lia | lia] | lia].
+    - replace ((S.c_lat + 1) * (c_disjunction + 1) * cap)%N with
+        ((S.c_lat + 1) * (c_disjunction + 1) * cap * 1)%N at 1 by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono; [apply N.mul_le_mono; lia | lia] | lia].
+    - replace (P.c_lat * (N.of_nat (S.size S.top) + 1))%N with
+        (P.c_lat * 1 * 1 * (N.of_nat (S.size S.top) + 1))%N at 1 by ring.
+      apply N.mul_le_mono; [apply N.mul_le_mono; [apply N.mul_le_mono; lia | lia] | lia].
+  Qed.
+
+  (** The published widening measure includes all state and parameter work. *)
+  Local Definition widen_measure p (a b : t) : nat :=
+    ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1))%nat.
+
+  (** One potential receiver's collapse and widening fit the combined input measure. *)
+  Local Lemma receiver_clock : forall p a b x, In x (proj1_sig a) ->
+    (T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) +
+      S.T_widen p x (collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b))) <=
+      6 * (S.c_lat + 1) * (c_disjunction + 1) * N.of_nat (widen_measure p a b))%N.
+  Proof.
+    intros p a b x Hin.
+    destruct (receiver_budget a b x Hin) as [Hcap [Hsize Hunits]].
+    destruct (member_measures a x Hin) as [Hxsize Hxunits].
+    set (xs := x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in *.
+    pose proof (T_collapse_le xs Hcap) as Hcollapse.
+    pose proof (collapse_size xs Hcap) as Hresult_size.
+    pose proof (collapse_wunits xs Hcap) as Hresult_units.
+    set (budget := N.of_nat (widen_measure p a b)).
+    assert (Hsize_budget : (N.of_nat (size a + size b + 1) <= budget)%N) by
+      (unfold budget, widen_measure; lia).
+    assert (Hparam : (N.of_nat (wsize p) <= budget)%N) by
+      (unfold budget, widen_measure; lia).
+    assert (Hpositive : (1 <= budget)%N) by (unfold budget, widen_measure; lia).
+    assert (Hunit_budget : (N.of_nat (wunits a + wunits b + 1) *
+      N.of_nat (wsize p) <= budget)%N).
+    { clear -budget; unfold budget, widen_measure; repeat rewrite Nat2N.inj_add;
+        repeat rewrite Nat2N.inj_mul; nia. }
+    assert (Hcollapse_bound : (T_collapse xs <= c_disjunction * budget)%N).
+    { eapply N.le_trans; [exact Hcollapse | apply N.mul_le_mono_l].
+      eapply N.le_trans; [|exact Hsize_budget]; lia. }
+    assert (Hsize_bound : (N.of_nat (S.size (collapse xs)) <= c_disjunction * budget)%N).
+    { eapply N.le_trans; [exact Hresult_size | apply N.mul_le_mono_l].
+      eapply N.le_trans; [|exact Hsize_budget]; lia. }
+    assert (Hunits_bound : (N.of_nat (S.wunits (collapse xs)) <=
+      c_disjunction * N.of_nat (wunits a + wunits b + 1))%N).
+    { eapply N.le_trans; [exact Hresult_units | apply N.mul_le_mono_l]; lia. }
+    assert (Hunit_sum : (N.of_nat (S.wunits x + S.wunits (collapse xs)) <=
+      (c_disjunction + 1) * N.of_nat (wunits a + wunits b + 1))%N).
+    { clear -Hunits_bound Hxunits; repeat rewrite Nat2N.inj_add in *; nia. }
+    pose proof (N.mul_le_mono_r _ _ (N.of_nat (wsize p)) Hunit_sum) as Hunit_product.
+    pose proof (N.mul_le_mono_l _ _ (c_disjunction + 1)%N Hunit_budget) as Hunit_paid.
+    assert (Hinput : (N.of_nat ((S.wunits x + S.wunits (collapse xs)) * wsize p +
+      (S.size x + S.size (collapse xs) + wsize p + 1)) <=
+      4 * (c_disjunction + 1) * budget)%N).
+    { clear -Hunit_product Hunit_paid Hxsize Hsize_bound Hsize_budget Hparam Hpositive;
+      repeat rewrite Nat2N.inj_add in *; repeat rewrite Nat2N.inj_mul; nia. }
+    pose proof (S.T_widen_le p x (collapse xs)) as Hwiden.
+    pose proof (N.mul_le_mono_l _ _ S.c_lat Hinput) as Hscaled.
+    change (S.wsize p) with (wsize p) in Hwiden.
+    clear -Hcollapse_bound Hwiden Hscaled.
+    nia.
+  Qed.
+
+  (** The cap turns all nested scans and receiver updates into a fixed factor. *)
+  Local Lemma widen_budget_bound : forall p a b,
+    (widen_budget p a b <= 16 * lattice_factor * N.of_nat (widen_measure p a b))%N.
+  Proof.
+    intros p a b.
+    destruct lattice_factors as [Hfactor [Hshared [Hcomponent [Hscan [Hreceiver Htop]]]]].
+    set (budget := N.of_nat (widen_measure p a b)).
+    assert (Hpositive : (1 <= budget)%N) by (unfold budget, widen_measure; lia).
+    assert (Hsizes : (N.of_nat (size a + size b + 1) <= budget)%N) by
+      (unfold budget, widen_measure; lia).
+    assert (Hcap_a : length (proj1_sig a) <= C.k) by
+      (apply Nat.leb_le; exact (proj2_sig a)).
+    assert (Hcap_b : length (proj1_sig b) <= C.k) by
+      (apply Nat.leb_le; exact (proj2_sig b)).
+    assert (Hcompare : (T_leb b a <= lattice_factor * budget)%N).
+    { eapply N.le_trans; [apply P.T_leb_le |].
+      apply N.mul_le_mono; [exact Hshared |].
+      change (N.of_nat (size b + size a + 1) <= budget)%N.
+      eapply N.le_trans; [|exact Hsizes]; lia. }
+    assert (Hempty : (T_is_bot a <= lattice_factor * budget)%N).
+    { eapply N.le_trans; [apply P.T_is_bot_le |].
+      apply N.mul_le_mono; [exact Hshared |].
+      change (N.of_nat (size a + 1) <= budget)%N.
+      eapply N.le_trans; [|exact Hsizes]; lia. }
+    assert (Hclip : (P.T_clip [S.top] <= 2 * lattice_factor * budget)%N).
+    { assert (Hcap : length [S.top] <= 2 * C.k) by
+        (cbn [length]; pose proof C.k_pos; lia).
+      pose proof (P.T_clip_le [S.top] Hcap) as Hclock.
+      cbn [length fold_right] in Hclock.
+      assert (Hbase : (P.T_clip [S.top] <=
+        2 * (P.c_lat * (N.of_nat (S.size S.top) + 1)))%N).
+      { clear -Hclock; repeat rewrite Nat2N.inj_add in Hclock; nia. }
+      clear -Hbase Htop Hpositive; nia. }
+    assert (Hlength : (N.of_nat (length (proj1_sig a) + 1) <=
+      lattice_factor * budget)%N).
+    { assert (Hlen : (N.of_nat (length (proj1_sig a) + 1) <= budget)%N).
+      { eapply N.le_trans; [|exact Hsizes].
+        rewrite (size_mass a), state_mass_values; lia. }
+      clear -Hlen Hfactor; nia. }
+    assert (Hbottoms : (fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) <=
+      lattice_factor * budget)%N).
+    { pose proof (sum_uniform S.T_is_bot (proj1_sig a) (S.c_lat * budget)%N) as Hsum.
+      assert (Hcalls : forall x, In x (proj1_sig a) ->
+        (S.T_is_bot x <= S.c_lat * budget)%N).
+      { intros x Hin; pose proof (proj1 (member_measures a x Hin)) as Hsize.
+        eapply N.le_trans; [apply S.T_is_bot_le | apply N.mul_le_mono_l].
+        eapply N.le_trans; [|exact Hsizes]; lia. }
+      specialize (Hsum Hcalls).
+      assert (Hcap_sum : (fold_right N.add 0%N (map S.T_is_bot (proj1_sig a)) <=
+        N.of_nat (C.k + 1) * (S.c_lat * budget))%N).
+      { eapply N.le_trans; [exact Hsum | apply N.mul_le_mono_r]; lia. }
+      clear -Hcap_sum Hcomponent; nia. }
+    assert (Hscans : (scan_work (proj1_sig a) (proj1_sig b) <=
+      lattice_factor * budget)%N).
+    { assert (Hcells : forall y x, In y (proj1_sig b) -> In x (proj1_sig a) ->
+        (S.T_leb y x + 1 <= (S.c_lat + 1) * budget)%N).
+      { intros y x Hy Hx.
+        pose proof (proj1 (member_measures a x Hx)) as Hxsize.
+        pose proof (proj1 (member_measures b y Hy)) as Hysize.
+        assert (Hclock : (S.T_leb y x <= S.c_lat * budget)%N).
+        { eapply N.le_trans; [apply S.T_leb_le | apply N.mul_le_mono_l].
+          eapply N.le_trans; [|exact Hsizes]; lia. }
+        clear -Hclock Hpositive; nia. }
+      assert (Hrows : forall y, In y (proj1_sig b) ->
+        (fold_right N.add 0%N (map (fun x => S.T_leb y x + 1)%N (proj1_sig a)) <=
+          N.of_nat (C.k + 1) * ((S.c_lat + 1) * budget))%N).
+      { intros y Hy; eapply N.le_trans.
+        - apply sum_uniform; intros x Hx; exact (Hcells y x Hy Hx).
+        - apply N.mul_le_mono_r; lia. }
+      pose proof (sum_uniform
+        (fun y => fold_right N.add 0%N (map (fun x => S.T_leb y x + 1)%N (proj1_sig a)))
+        (proj1_sig b) (N.of_nat (C.k + 1) * ((S.c_lat + 1) * budget))%N Hrows) as Hsum.
+      assert (Hcap_sum : (scan_work (proj1_sig a) (proj1_sig b) <=
+        N.of_nat (C.k + 1) * (N.of_nat (C.k + 1) * ((S.c_lat + 1) * budget)))%N).
+      { eapply N.le_trans; [exact Hsum | apply N.mul_le_mono_r]; lia. }
+      clear -Hcap_sum Hscan; nia. }
+    assert (Hreceivers : (fold_right N.add 0%N (map (fun x =>
+      let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
+      T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
+      (proj1_sig a)) <= 6 * lattice_factor * budget)%N).
+    { pose proof (sum_uniform (fun x =>
+        let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
+        T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)%N
+        (proj1_sig a) (6 * (S.c_lat + 1) * (c_disjunction + 1) * budget)%N
+        (receiver_clock p a b)) as Hsum.
+      assert (Hcap_sum : (fold_right N.add 0%N (map (fun x =>
+        let c := collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) in
+        T_collapse (x :: uncovered S.leb (proj1_sig a) (proj1_sig b)) + S.T_widen p x c)
+        (proj1_sig a)) <= N.of_nat (C.k + 1) *
+        (6 * (S.c_lat + 1) * (c_disjunction + 1) * budget))%N).
+      { eapply N.le_trans; [exact Hsum | apply N.mul_le_mono_r]; lia. }
+      clear -Hcap_sum Hreceiver; nia. }
+    unfold widen_budget.
+    clear -Hcompare Hempty Hclip Hlength Hbottoms Hscans Hreceivers.
+    cbv zeta in Hreceivers.
+    nia.
+  Qed.
+
   (** Assignment work is the component work of every alternative. *)
   Lemma assign_work_alternatives : forall x e d, assign_work x e d =
     fold_right Nat.add 0%nat (map (fun s => S.assign_work x e s + 1) (proj1_sig d)).
@@ -949,7 +1233,17 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Lemma T_widen_le : forall p a b,
     (T_widen p a b <= c_lat * N.of_nat
       ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1)))%N.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros p a b; pose proof (widen_clock p a b) as Hclock.
+    pose proof (widen_budget_bound p a b) as Hbudget.
+    pose proof (N.mul_le_mono_l _ _ k_disjunction Hbudget) as Hscaled.
+    assert (Hcoefficient : c_lat = (64 * lattice_factor * (k_disjunction + 1))%N).
+    { unfold c_lat, lattice_factor; ring. }
+    rewrite Hcoefficient; change (N.of_nat
+      ((wunits a + wunits b) * wsize p + (size a + size b + wsize p + 1))) with
+      (N.of_nat (widen_measure p a b)).
+    nia.
+  Qed.
   Lemma T_narrow_le : forall a b,
     (T_narrow a b <= c_lat * N.of_nat (size a + size b + 1))%N.
   Proof.
@@ -1050,37 +1344,6 @@ Module StateDisjunctionT (X : KEY_T) (L : LANG_T) (V : VALUE_DOMAIN_T L)
   Proof.
     reflexivity.
   Qed.
-  Lemma T_collapse_le : forall xs, length xs <= C.k + 1 ->
-    (T_collapse xs <= c_disjunction * N.of_nat
-      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
-  Proof.
-    intros xs Hcap; pose proof (collapse_budget xs Hcap); lia.
-  Qed.
-  Lemma collapse_size : forall xs, length xs <= C.k + 1 ->
-    (N.of_nat (S.size (collapse xs)) <= c_disjunction * N.of_nat
-      (fold_right Nat.add 0%nat (map S.size xs) + length xs + 1))%N.
-  Proof.
-    intros xs Hcap; pose proof (collapse_budget xs Hcap); lia.
-  Qed.
-  Lemma collapse_wunits : forall xs, length xs <= C.k + 1 ->
-    (N.of_nat (S.wunits (collapse xs)) <= c_disjunction * N.of_nat
-      (fold_right Nat.add 0%nat (map S.wunits xs) + 1))%N.
-  Proof.
-    intros [|x xs] Hcap.
-    - cbn [collapse map fold_right]; unfold c_disjunction; rewrite Nat2N.inj_add; nia.
-    - pose proof (state_fold_units xs x) as Hfold.
-      assert (Hpower : (state_growth ^ N.of_nat (length xs) <= state_scale)%N).
-      { unfold state_scale; apply N.pow_le_mono_r.
-        - unfold state_growth; lia.
-        - cbn [length] in Hcap; lia. }
-      assert (Hcoefficient : (state_scale <= c_disjunction)%N) by
-        (unfold c_disjunction; nia).
-      pose proof (N.mul_le_mono_r _ _
-        (N.of_nat (S.wunits x + fold_right Nat.add 0%nat (map S.wunits xs) + 1))
-        (N.le_trans _ _ _ Hpower Hcoefficient)) as Hscaled.
-      cbn [collapse map fold_right]; nia.
-  Qed.
-
   Lemma F2_widen : forall p a b, proj1_sig (widen p a b) =
     if leb b a then proj1_sig a else
     if is_bot a then proj1_sig b else
