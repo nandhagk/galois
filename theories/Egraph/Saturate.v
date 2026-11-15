@@ -621,6 +621,303 @@ Proof.
 Qed.
 
 
+(** * Pattern hole contexts *)
+
+(** Binding one hole preserves old bindings and adds exactly its required sort. *)
+Lemma front_bind_var : forall V tr h s tr',
+  @bind_b V tr (Var h) s = Some tr' ->
+  trie_get h tr' = Some s /\
+  (forall x u, trie_get x tr' = Some u <->
+    trie_get x tr = Some u \/ (x = h /\ u = s)).
+Proof.
+  intros V tr h s tr' Hrun. cbn [bind_b] in Hrun.
+  destruct (trie_get h tr) as [t|] eqn:Hlookup.
+  - destruct (sort_eqb t s) eqn:Hsort; [|discriminate].
+    apply sort_eqb_spec in Hsort. subst t. injection Hrun as <-.
+    split; [exact Hlookup|]. intros x u. split; [intro H; left; exact H|].
+    intros [H|[-> ->]]; assumption.
+  - injection Hrun as <-. split; [apply PTrie.get_set_same|].
+    intros x u. destruct (Pos.eq_dec x h) as [->|Hneq].
+    + rewrite PTrie.get_set_same, Hlookup. split.
+      * intro H. injection H as <-. right. split; reflexivity.
+      * intros [H|[_ ->]]; [discriminate|reflexivity].
+    + rewrite PTrie.get_set_other by exact Hneq. split.
+      * intro H. left. exact H.
+      * intros [H|[Heq _]]; [exact H|contradiction].
+Qed.
+
+(** A successful binding pass sorts every node and extends only the listed holes. *)
+Lemma front_holes_bind_sound : forall V (ns : list (pnode V)) sh tr tr',
+  front_holes true ns sh tr = Some tr' ->
+  front_shape_sat (fun x => trie_get x tr') ns sh /\ front_ready sh /\
+  (forall x s, trie_get x tr = Some s -> trie_get x tr' = Some s) /\
+  (forall x s, trie_get x tr' = Some s ->
+    trie_get x tr = Some s \/ In (PHole x) ns).
+Proof.
+  intros V ns. induction ns as [|n ns IH]; intros sh tr tr' Hrun.
+  - destruct sh; cbn [front_holes] in Hrun; [|discriminate].
+    injection Hrun as <-. split; [constructor|]. split; [constructor|].
+    split; [intros; assumption|intros x s H; left; exact H].
+  - destruct sh as [|[old used] sh]; [discriminate|].
+    destruct old as [s|]; [|discriminate]. destruct used; [|discriminate].
+    destruct n as [h|f ch|v]; cbn [front_holes] in Hrun.
+    + destruct (bind_b tr (Var h) s) as [tr1|] eqn:Hbind; [|discriminate].
+      destruct (front_bind_var V tr h s tr1 Hbind) as [Hhead Hbindings].
+      destruct (IH sh tr1 tr' Hrun) as [Hsat [Hready [Hkeep Hscope]]].
+      split.
+      * constructor; [cbn [fst pnode_sort]; apply Hkeep; exact Hhead|exact Hsat].
+      * split; [constructor; [exists s; reflexivity|exact Hready]|]. split.
+        -- intros x u H. apply Hkeep. apply Hbindings. left. exact H.
+        -- intros x u H. destruct (Hscope x u H) as [Hbound|Hin].
+           ++ apply Hbindings in Hbound. destruct Hbound as [Hold|[-> _]].
+              ** left. exact Hold.
+              ** right. left. reflexivity.
+           ++ right. right. exact Hin.
+    + destruct (sort_eqb s SId) eqn:Hsort; [|discriminate].
+      apply sort_eqb_spec in Hsort. subst s.
+      destruct (IH sh tr tr' Hrun) as [Hsat [Hready [Hkeep Hscope]]].
+      split; [constructor; [reflexivity|exact Hsat]|].
+      split; [constructor; [exists SId; reflexivity|exact Hready]|].
+      split; [exact Hkeep|]. intros x s H. destruct (Hscope x s H) as [Hold|Hin].
+      * left. exact Hold.
+      * right. right. exact Hin.
+    + destruct (sort_eqb s SVal) eqn:Hsort; [|discriminate].
+      apply sort_eqb_spec in Hsort. subst s.
+      destruct (IH sh tr tr' Hrun) as [Hsat [Hready [Hkeep Hscope]]].
+      split; [constructor; [reflexivity|exact Hsat]|].
+      split; [constructor; [exists SVal; reflexivity|exact Hready]|].
+      split; [exact Hkeep|]. intros x s H. destruct (Hscope x s H) as [Hold|Hin].
+      * left. exact Hold.
+      * right. right. exact Hin.
+Qed.
+
+(** A checking pass preserves its context and is also a successful binding pass. *)
+Lemma front_holes_check_bind : forall V (ns : list (pnode V)) sh tr tr',
+  front_holes false ns sh tr = Some tr' ->
+  tr' = tr /\ front_holes true ns sh tr = Some tr.
+Proof.
+  intros V ns. induction ns as [|n ns IH]; intros sh tr tr' Hrun.
+  - destruct sh; cbn [front_holes] in Hrun; [|discriminate].
+    injection Hrun as <-. split; reflexivity.
+  - destruct sh as [|[old used] sh]; [discriminate|].
+    destruct old as [s|]; [|discriminate]. destruct used; [|discriminate].
+    destruct n as [h|f ch|v]; cbn [front_holes] in Hrun |- *.
+    + destruct (has_b tr (Var h) s) eqn:Hhas; [|discriminate].
+      destruct (IH sh tr tr' Hrun) as [-> Htail]. split; [reflexivity|].
+      apply (has_b_spec V tr (fun x => trie_get x tr) (Var h) s) in Hhas;
+        [|intro; reflexivity].
+      cbn [has] in Hhas. cbn [bind_b]. rewrite Hhas.
+      rewrite (proj2 (sort_eqb_spec s s) eq_refl). exact Htail.
+    + destruct (sort_eqb s SId) eqn:Hsort; [|discriminate].
+      destruct (IH sh tr tr' Hrun) as [-> Htail]. split; [reflexivity|].
+      exact Htail.
+    + destruct (sort_eqb s SVal) eqn:Hsort; [|discriminate].
+      destruct (IH sh tr tr' Hrun) as [-> Htail]. split; [reflexivity|].
+      exact Htail.
+Qed.
+
+(** A ready shape list whose sorts agree with the context passes without changing it. *)
+Lemma front_holes_check_complete : forall V (ns : list (pnode V)) sh tr g,
+  (forall x, trie_get x tr = g x) ->
+  front_shape_sat g ns sh -> front_ready sh ->
+  front_holes false ns sh tr = Some tr.
+Proof.
+  intros V ns sh tr g Hrep Hsat. revert tr Hrep.
+  induction Hsat as [|n shape ns sh Hhead Hsat IH]; intros tr Hrep Hready.
+  - reflexivity.
+  - inversion Hready as [|shape' sh' Hshape Hready']; subst.
+    destruct Hshape as [s ->]. cbn [fst] in Hhead.
+    destruct n as [h|f ch|v]; cbn [front_holes].
+    + rewrite (proj2 (has_b_spec V tr g (Var h) s Hrep) Hhead).
+      apply IH; assumption.
+    + cbn [pnode_sort] in Hhead. injection Hhead as <-.
+      apply IH; assumption.
+    + cbn [pnode_sort] in Hhead. injection Hhead as <-.
+      apply IH; assumption.
+Qed.
+
+(** A compatible partial context can accept one required hole binding. *)
+Lemma front_bind_var_complete : forall V tr g h s,
+  (forall x u, trie_get x tr = Some u -> g x = Some u) -> g h = Some s ->
+  exists tr', @bind_b V tr (Var h) s = Some tr' /\
+    (forall x u, trie_get x tr' = Some u -> g x = Some u).
+Proof.
+  intros V tr g h s Hpart Hhead. destruct (trie_get h tr) as [t|] eqn:Hlookup.
+  - pose proof (Hpart h t Hlookup) as Hsort. assert (t = s) by congruence. subst t.
+    exists tr. split; [|exact Hpart]. cbn [bind_b]. rewrite Hlookup.
+    rewrite (proj2 (sort_eqb_spec s s) eq_refl). reflexivity.
+  - exists (PTrieCode.set h s tr).
+    assert (Hrun : @bind_b V tr (Var h) s = Some (PTrieCode.set h s tr)).
+    { cbn [bind_b]. rewrite Hlookup. reflexivity. }
+    split; [exact Hrun|]. intros x u Hnew.
+    apply (proj2 (front_bind_var V tr h s _ Hrun) x u) in Hnew.
+    destruct Hnew as [Hold|[-> ->]]; [apply Hpart; exact Hold|exact Hhead].
+Qed.
+
+(** Binding a ready, compatible shape list installs all of its holes. *)
+Lemma front_holes_bind_complete : forall V (ns : list (pnode V)) sh tr g,
+  (forall x u, trie_get x tr = Some u -> g x = Some u) ->
+  front_shape_sat g ns sh -> front_ready sh ->
+  exists tr', front_holes true ns sh tr = Some tr' /\
+    (forall x u, trie_get x tr' = Some u -> g x = Some u) /\
+    (forall h s, In (PHole h) ns -> g h = Some s -> trie_get h tr' = Some s).
+Proof.
+  intros V ns sh tr g Hpart Hsat. revert tr Hpart.
+  induction Hsat as [|n shape ns sh Hhead Hsat IH]; intros tr Hpart Hready.
+  - exists tr. split; [reflexivity|]. split; [exact Hpart|].
+    intros h s Hin. contradiction.
+  - inversion Hready as [|shape' sh' Hshape Hready']; subst.
+    destruct Hshape as [s ->]. cbn [fst] in Hhead.
+    destruct n as [h|f ch|v].
+    + cbn [pnode_sort] in Hhead.
+      destruct (front_bind_var_complete V tr g h s Hpart Hhead)
+        as [tr1 [Hbind Hpart1]].
+      destruct (IH tr1 Hpart1 Hready') as [tr' [Htail [Hpart' Hholes]]].
+      exists tr'. split; [cbn [front_holes]; rewrite Hbind; exact Htail|].
+      split; [exact Hpart'|]. intros x u [Heq|Hin] Hsort.
+      * injection Heq as <-. assert (u = s) by congruence. subst u.
+        destruct (front_holes_bind_sound V ns sh tr1 tr' Htail)
+          as [_ [_ [Hkeep _]]].
+        apply Hkeep. exact (proj1 (front_bind_var V tr h s tr1 Hbind)).
+      * apply Hholes; assumption.
+    + cbn [pnode_sort] in Hhead. injection Hhead as <-.
+      destruct (IH tr Hpart Hready') as [tr' [Htail [Hpart' Hholes]]].
+      exists tr'. split; [exact Htail|]. split; [exact Hpart'|].
+      intros x u [Heq|Hin] Hsort; [discriminate|]. apply Hholes; assumption.
+    + cbn [pnode_sort] in Hhead. injection Hhead as <-.
+      destruct (IH tr Hpart Hready') as [tr' [Htail [Hpart' Hholes]]].
+      exists tr'. split; [exact Htail|]. split; [exact Hpart'|].
+      intros x u [Heq|Hin] Hsort; [discriminate|]. apply Hholes; assumption.
+Qed.
+
+
+(** * Pattern and rewrite reflection *)
+
+(** Pointwise context agreement preserves the interpretation of each shape. *)
+Lemma front_shape_sat_agrees : forall V g g' (ns : list (pnode V)) sh,
+  (forall x, g x = g' x) -> front_shape_sat g ns sh -> front_shape_sat g' ns sh.
+Proof.
+  intros V g g' ns sh Hagree Hsat. induction Hsat as [|n shape ns sh Hhead Hsat IH].
+  - constructor.
+  - constructor; [|exact IH]. destruct shape as [[s|] used]; cbn [fst] in *;
+      [|exact I].
+    destruct n as [h|f ch|v]; cbn [pnode_sort] in *; [rewrite <- Hagree| |];
+      exact Hhead.
+Qed.
+
+(** Binding a pattern from an empty context infers precisely its scoped hole sorts. *)
+Lemma front_pattern_bind_sound : forall V ds (p : fpat V) tr,
+  front_pattern true (decl_table ds) Empty p = Some tr ->
+  pat_ok (lookup_sorts ds) (lookup_kind ds) (fun x => trie_get x tr) p /\
+  (forall h s, trie_get h tr = Some s -> In (PHole h) (nodes V p)).
+Proof.
+  intros V ds [ns r] tr Hrun. cbn [front_pattern] in Hrun.
+  destruct (Nat.eqb (S r) (length ns)) eqn:Hlast; [|discriminate].
+  apply Nat.eqb_eq in Hlast.
+  destruct (front_require r SId (map front_initial ns)) as [sh|] eqn:Hroot;
+    [|discriminate].
+  destruct (front_require_nodes (decl_table ds) 0 ns sh) as [sh'|] eqn:Hnodes;
+    [|discriminate].
+  destruct (front_holes_bind_sound V ns sh' Empty tr Hrun)
+    as [Hsat [Hready [_ Hscope]]]. split.
+  - apply front_pattern_shapes. split; [exact Hlast|]. exists sh, sh'.
+    split; [exact Hroot|]. split; [exact Hnodes|]. split; assumption.
+  - intros h s Hbound. destruct (Hscope h s Hbound) as [Hold|Hin]; [|exact Hin].
+    rewrite PTrie.get_empty in Hold. discriminate.
+Qed.
+
+(** Every scoped pattern context is inferred by the binding pass. *)
+Lemma front_pattern_bind_complete : forall V ds (p : fpat V) g,
+  pat_ok (lookup_sorts ds) (lookup_kind ds) g p ->
+  (forall h s, g h = Some s -> In (PHole h) (nodes V p)) ->
+  exists tr, front_pattern true (decl_table ds) Empty p = Some tr /\
+    (forall x, trie_get x tr = g x).
+Proof.
+  intros V ds [ns r] g Hpat Hscope.
+  apply front_pattern_shapes in Hpat.
+  destruct Hpat as [Hlast [sh [sh' [Hroot [Hnodes [Hsat Hready]]]]]].
+  assert (Hempty : forall x u, trie_get x (@Empty sort) = Some u -> g x = Some u).
+  { intros x u H. rewrite PTrie.get_empty in H. discriminate. }
+  destruct (front_holes_bind_complete V ns sh' Empty g Hempty Hsat Hready)
+    as [tr [Hholes [Hpart Hbound]]]. exists tr. split.
+  - cbn [front_pattern]. apply Nat.eqb_eq in Hlast. rewrite Hlast, Hroot, Hnodes.
+    exact Hholes.
+  - intro x. destruct (g x) as [s|] eqn:Hget.
+    + apply Hbound; [apply Hscope with s|]; exact Hget.
+    + destruct (trie_get x tr) as [s|] eqn:Hlookup; [|reflexivity].
+      pose proof (Hpart x s Hlookup) as Hsort. congruence.
+Qed.
+
+(** Checking a pattern accepts only shapes sorted in the supplied context. *)
+Lemma front_pattern_check_sound : forall V ds (p : fpat V) tr tr' g,
+  (forall x, trie_get x tr = g x) ->
+  front_pattern false (decl_table ds) tr p = Some tr' ->
+  pat_ok (lookup_sorts ds) (lookup_kind ds) g p.
+Proof.
+  intros V ds [ns r] tr tr' g Hrep Hrun. cbn [front_pattern] in Hrun.
+  destruct (Nat.eqb (S r) (length ns)) eqn:Hlast; [|discriminate].
+  apply Nat.eqb_eq in Hlast.
+  destruct (front_require r SId (map front_initial ns)) as [sh|] eqn:Hroot;
+    [|discriminate].
+  destruct (front_require_nodes (decl_table ds) 0 ns sh) as [sh'|] eqn:Hnodes;
+    [|discriminate].
+  destruct (front_holes_check_bind V ns sh' tr tr' Hrun) as [_ Hbind].
+  destruct (front_holes_bind_sound V ns sh' tr tr Hbind) as [Hsat [Hready _]].
+  apply front_pattern_shapes. split; [exact Hlast|]. exists sh, sh'.
+  split; [exact Hroot|]. split; [exact Hnodes|]. split; [|exact Hready].
+  eapply front_shape_sat_agrees; [exact Hrep|exact Hsat].
+Qed.
+
+(** A sorted pattern passes the checking mode without altering its context. *)
+Lemma front_pattern_check_complete : forall V ds (p : fpat V) tr g,
+  (forall x, trie_get x tr = g x) ->
+  pat_ok (lookup_sorts ds) (lookup_kind ds) g p ->
+  front_pattern false (decl_table ds) tr p = Some tr.
+Proof.
+  intros V ds [ns r] tr g Hrep Hpat. apply front_pattern_shapes in Hpat.
+  destruct Hpat as [Hlast [sh [sh' [Hroot [Hnodes [Hsat Hready]]]]]].
+  cbn [front_pattern]. apply Nat.eqb_eq in Hlast. rewrite Hlast, Hroot, Hnodes.
+  apply (front_holes_check_complete V ns sh' tr g); assumption.
+Qed.
+
+(** The executable rewrite check reflects the complete scoped sorting judgment. *)
+Lemma front_rewrite_spec : forall V ds (rw : rewrite V),
+  front_rewrite (decl_table ds) rw = true <->
+  exists g, rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g.
+Proof.
+  intros V ds [[ns r] rhs_pat conditions]. split.
+  - intro Hrun. cbn [front_rewrite] in Hrun.
+    destruct (nth_error ns r) as [n|] eqn:Hroot; [|discriminate].
+    destruct n as [h|f ch|v]; try discriminate.
+    destruct (front_pattern true (decl_table ds) Empty (FPat V ns r))
+      as [tr0|] eqn:Hleft; [|discriminate].
+    destruct (bind_query_b (decl_table ds) tr0 conditions)
+      as [tr|] eqn:Hquery; [|discriminate].
+    destruct (front_pattern false (decl_table ds) tr rhs_pat)
+      as [tr'|] eqn:Hright; [|discriminate].
+    destruct (front_pattern_bind_sound V ds (FPat V ns r) tr0 Hleft)
+      as [Hleft_sorted Hscope].
+    destruct (bind_query_b_sound V ds conditions tr0 (fun x => trie_get x tr0) tr
+      ltac:(intro; reflexivity) Hquery) as [g [Htyped Hrep]].
+    pose proof (front_pattern_check_sound V ds rhs_pat tr tr' g Hrep Hright)
+      as Hright_sorted.
+    exists g. exists (fun x => trie_get x tr0). cbn [lhs rhs cond].
+    split; [exists f, ch; exact Hroot|]. split; [exact Hleft_sorted|].
+    split; [exact Hscope|]. split; assumption.
+  - intros [g [g0 [Hroot [Hleft [Hscope [Hquery Hright]]]]]].
+    cbn [lhs rhs cond] in Hroot, Hleft, Hscope, Hquery, Hright.
+    destruct (front_pattern_bind_complete V ds (FPat V ns r) g0 Hleft Hscope)
+      as [tr0 [Hleft_run Hrep0]].
+    destruct (bind_query_b_complete V ds tr0 g0 conditions g Hrep0 Hquery)
+      as [tr [Hquery_run Hrep]].
+    pose proof (front_pattern_check_complete V ds rhs_pat tr g Hrep Hright)
+      as Hright_run.
+    destruct Hroot as [f [ch Hroot]]. cbn [nodes root] in Hroot.
+    cbn [front_rewrite]. rewrite Hroot, Hleft_run, Hquery_run, Hright_run.
+    reflexivity.
+Qed.
+
+
 (** The first-error traversal succeeds exactly when every item passes. *)
 Lemma front_first_bad_none : forall A (check : A -> bool) xs,
   front_first_bad check xs = None <-> Forall (fun x => check x = true) xs.
@@ -1062,11 +1359,48 @@ Module Saturate (V : VALUE) (I : INDEX V) (J : JOIN V I) (D : DATABASE V I)
   Qed.
   Lemma check_front_spec : forall ds rws ans es,
     check_front ds rws ans es = None <-> front_ok ds rws ans es.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans es.
+    assert (Hrewrites : Forall (fun rw => front_rewrite (decl_table ds) rw = true) rws <->
+      Forall (fun rw => exists g, rewrite_ok (lookup_sorts ds) (lookup_kind ds) rw g) rws).
+    { rewrite !Forall_forall. split; intros H rw Hin; apply front_rewrite_spec;
+        exact (H rw Hin). }
+    assert (Hanalyses : Forall (fun r => front_analysis (decl_table ds) r = true) ans <->
+      Forall (analysis_ok (lookup_sorts ds) (lookup_kind ds)) ans).
+    { rewrite !Forall_forall. split; intros H r Hin; apply front_analysis_spec;
+        exact (H r Hin). }
+    assert (Hexprs : Forall (fun e => front_expr (decl_table ds) e = true) es <->
+      Forall (expr_sorted (lookup_sorts ds) (lookup_kind ds)) es).
+    { rewrite !Forall_forall. split; intros H e Hin; apply front_expr_spec;
+        exact (H e Hin). }
+    unfold check_front, front_check, front_ok, rules_ok.
+    rewrite <- Hrewrites, <- Hanalyses, <- Hexprs, <- !front_first_bad_none.
+    destruct (front_first_bad (front_rewrite (decl_table ds)) rws);
+      destruct (front_first_bad (front_analysis (decl_table ds)) ans);
+      destruct (front_first_bad (front_expr (decl_table ds)) es); intuition discriminate.
+  Qed.
 
   Lemma check_front_report : forall ds rws ans es e,
     check_front ds rws ans es = Some e -> rejected ds rws ans es e.
-  Proof. Admitted. (* STUB *)
+  Proof.
+    intros ds rws ans es e Hcheck. unfold check_front, front_check in Hcheck.
+    destruct (front_first_bad (front_rewrite (decl_table ds)) rws) as [n |] eqn:Hrw.
+    - injection Hcheck as <-. cbn [rejected].
+      destruct (front_first_bad_some _ _ _ _ Hrw) as [rw [Hnth Hfalse]].
+      exists rw. split; [exact Hnth |]. intro Hvalid.
+      apply front_rewrite_spec in Hvalid. congruence.
+    - destruct (front_first_bad (front_analysis (decl_table ds)) ans) as [n |] eqn:Hans.
+      + injection Hcheck as <-. cbn [rejected].
+        destruct (front_first_bad_some _ _ _ _ Hans) as [r [Hnth Hfalse]].
+        exists r. split; [exact Hnth |]. intro Hvalid.
+        apply front_analysis_spec in Hvalid. congruence.
+      + destruct (front_first_bad (front_expr (decl_table ds)) es) as [n |] eqn:Hes;
+          [| discriminate].
+        injection Hcheck as <-. cbn [rejected].
+        destruct (front_first_bad_some _ _ _ _ Hes) as [x [Hnth Hfalse]].
+        exists x. split; [exact Hnth |]. intro Hvalid.
+        apply front_expr_spec in Hvalid. congruence.
+  Qed.
 
   Lemma saturate_rejects : forall ds rws ans lim es e,
     saturate ds rws ans lim es = inl e <-> check_front ds rws ans es = Some e.
