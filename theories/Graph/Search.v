@@ -240,6 +240,270 @@ Proof.
     cbn [nodes base graph_n graph_e]. lia.
 Qed.
 
+(** Seen vertices are exactly the keys with a stored search colour. *)
+Definition search_seen (colours : ptrie bool) v := trie_get v colours <> None.
+
+Local Lemma search_seen_set colours v b x :
+  search_seen (PTrieCode.set v b colours) x <-> x = v \/ search_seen colours x.
+Proof.
+  unfold search_seen. rewrite search_colour_set.
+  destruct (Pos.eqb_spec x v) as [Heq|Hneq].
+  - subst x. split; [intros _; now left|intros _; discriminate].
+  - split; [intro Hseen; now right|]. intros [Heq|Hseen]; [contradiction|exact Hseen].
+Qed.
+
+Local Lemma search_seen_set_keeps colours v b x :
+  search_seen colours x -> search_seen (PTrieCode.set v b colours) x.
+Proof.
+  intro Hseen. apply search_seen_set. now right.
+Qed.
+
+(** Pending roots and unread row targets form the current search frontier. *)
+Fixpoint search_frontier tasks : list positive :=
+  match tasks with
+  | [] => []
+  | SearchRoot v :: rest => v :: search_frontier rest
+  | SearchRow _ vs :: rest => vs ++ search_frontier rest
+  | SearchLeave _ :: rest => search_frontier rest
+  end.
+
+Definition search_started colours task :=
+  match task with
+  | SearchRoot _ => True
+  | SearchRow u _ | SearchLeave u => search_seen colours u
+  end.
+
+Local Lemma search_started_set colours v b tasks :
+  Forall (search_started colours) tasks ->
+  Forall (search_started (PTrieCode.set v b colours)) tasks.
+Proof.
+  apply Forall_impl. intros task Hstarted. destruct task; cbn [search_started] in *;
+    auto using search_seen_set_keeps.
+Qed.
+
+(** Row and leaving tasks retain evidence that their source was entered. *)
+Lemma search_started_preserved g st next :
+  Forall (search_started (search_colours st)) (search_tasks st) ->
+  search_step g st = inl next ->
+  Forall (search_started (search_colours next)) (search_tasks next).
+Proof.
+  intros Hstarted Hstep. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hstarted as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [v|u vs|v].
+  - cbn [search_step] in Hstep. destruct (trie_get v colours).
+    + inversion Hstep; subst next. exact Htail.
+    + inversion Hstep; subst next. constructor.
+      * cbn [search_started]. apply search_seen_set. now left.
+      * constructor.
+        -- cbn [search_started]. apply search_seen_set. now left.
+        -- apply search_started_set. exact Htail.
+  - destruct vs as [|v vs]; cbn [search_step] in Hstep.
+    + inversion Hstep; subst next. exact Htail.
+    + destruct (trie_get v colours); inversion Hstep; subst next.
+      * constructor; assumption.
+      * constructor; [exact I|]. constructor; assumption.
+  - inversion Hstep; subst next. apply search_started_set. exact Htail.
+Qed.
+
+(** Once a vertex is seen, every later task state still has its colour. *)
+Lemma search_seen_preserved g st next v :
+  search_step g st = inl next ->
+  search_seen (search_colours st) v -> search_seen (search_colours next) v.
+Proof.
+  intros Hstep Hseen. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  destruct task as [u|u vs|u]; cbn [search_step] in Hstep.
+  - destruct (trie_get u colours); inversion Hstep; subst next;
+      cbn [search_colours] in *; auto using search_seen_set_keeps.
+  - destruct vs as [|x xs]; [inversion Hstep; subst next; exact Hseen|].
+    destruct (trie_get x colours); inversion Hstep; subst next; exact Hseen.
+  - inversion Hstep; subst next. apply search_seen_set_keeps. exact Hseen.
+Qed.
+
+(** A pending target is either retained in the frontier or has become seen. *)
+Lemma search_frontier_preserved g st next x :
+  search_step g st = inl next -> In x (search_frontier (search_tasks st)) ->
+  search_seen (search_colours next) x \/ In x (search_frontier (search_tasks next)).
+Proof.
+  intros Hstep Hin. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  destruct task as [v|u vs|v]; cbn [search_step] in Hstep.
+  - cbn [search_tasks search_frontier] in Hin.
+    destruct (trie_get v colours) eqn:Hcolour; inversion Hstep; subst next.
+    + destruct Hin as [Heq|Hin].
+      * subst x. left. unfold search_seen. cbn [search_colours]. rewrite Hcolour. discriminate.
+      * now right.
+    + destruct Hin as [Heq|Hin].
+      * subst x. left. apply search_seen_set. now left.
+      * right. cbn [search_tasks search_frontier]. apply in_or_app. now right.
+  - destruct vs as [|v vs].
+    + inversion Hstep; subst next. now right.
+    + cbn [search_tasks search_frontier app] in Hin.
+      destruct (trie_get v colours) eqn:Hcolour; inversion Hstep; subst next.
+      * destruct Hin as [Heq|Hin].
+        -- subst x. left. unfold search_seen. cbn [search_colours]. rewrite Hcolour.
+           discriminate.
+        -- now right.
+      * now right.
+  - inversion Hstep; subst next. now right.
+Qed.
+
+(** A newly seen vertex immediately contributes its whole successor row to the frontier. *)
+Lemma search_new_successors g st next u v :
+  Forall (search_started (search_colours st)) (search_tasks st) ->
+  search_step g st = inl next ->
+  search_seen (search_colours next) u -> ~ search_seen (search_colours st) u ->
+  edge g u v -> In v (search_frontier (search_tasks next)).
+Proof.
+  intros Hstarted Hstep Hnew Hold Hedge. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hstarted as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [x|x vs|x]; cbn [search_step] in Hstep.
+  - destruct (trie_get x colours); inversion Hstep; subst next.
+    + contradiction.
+    + apply search_seen_set in Hnew. destruct Hnew as [Heq|Hnew]; [subst u|contradiction].
+      cbn [search_tasks search_frontier]. apply in_or_app. now left.
+  - destruct vs as [|y vs]; [inversion Hstep; subst next; contradiction|].
+    destruct (trie_get y colours); inversion Hstep; subst next; contradiction.
+  - inversion Hstep; subst next. apply search_seen_set in Hnew.
+    destruct Hnew as [Heq|Hnew]; [subst u; contradiction|contradiction].
+Qed.
+
+Definition search_cover g roots st : Prop :=
+  (forall v, In v roots -> search_seen (search_colours st) v \/
+    In v (search_frontier (search_tasks st))) /\
+  (forall u v, search_seen (search_colours st) u -> edge g u v ->
+    search_seen (search_colours st) v \/ In v (search_frontier (search_tasks st))).
+
+(** The frontier always covers roots and successors not yet seen. *)
+Lemma search_cover_preserved g roots st next :
+  Forall (search_started (search_colours st)) (search_tasks st) ->
+  search_cover g roots st -> search_step g st = inl next -> search_cover g roots next.
+Proof.
+  intros Hstarted [Hroots Hedges] Hstep. split.
+  - intros v Hin. destruct (Hroots v Hin) as [Hseen|Hpending].
+    + left. eapply search_seen_preserved; eassumption.
+    + eapply search_frontier_preserved; eassumption.
+  - intros u v Hseen Hedge. destruct (trie_get u (search_colours st)) eqn:Hcolour.
+    + assert (Hold : search_seen (search_colours st) u).
+      { unfold search_seen. rewrite Hcolour. discriminate. }
+      destruct (Hedges u v Hold Hedge) as [Htarget|Hpending].
+      * left. eapply search_seen_preserved; eassumption.
+      * eapply search_frontier_preserved; eassumption.
+    + right. eapply search_new_successors; try eassumption.
+      unfold search_seen. rewrite Hcolour. tauto.
+Qed.
+
+Local Lemma search_colours_domain g domain st next :
+  Forall (search_task_valid domain) (search_tasks st) ->
+  (forall v, search_seen (search_colours st) v -> domain v) ->
+  search_step g st = inl next ->
+  forall v, search_seen (search_colours next) v -> domain v.
+Proof.
+  intros Hvalid Hdomain Hstep v Hseen. destruct st as [tasks colours es].
+  destruct tasks as [|task tasks]; [discriminate Hstep|].
+  inversion Hvalid as [|task0 tasks0 Htask Htail]; subst task0 tasks0.
+  destruct task as [u|u vs|u]; cbn [search_step] in Hstep.
+  - destruct (trie_get u colours); inversion Hstep; subst next.
+    + apply Hdomain. exact Hseen.
+    + apply search_seen_set in Hseen. destruct Hseen as [Heq|Hseen].
+      * subst v. exact Htask.
+      * apply Hdomain. exact Hseen.
+  - destruct vs as [|x xs]; [inversion Hstep; subst next; apply Hdomain; exact Hseen|].
+    destruct (trie_get x colours); inversion Hstep; subst next; apply Hdomain; exact Hseen.
+  - inversion Hstep; subst next. apply search_seen_set in Hseen.
+    destruct Hseen as [Heq|Hseen]; [subst v; exact Htask|apply Hdomain; exact Hseen].
+Qed.
+
+Local Lemma search_path_extend g u vs v w :
+  path g u vs v -> edge g v w -> path g u (vs ++ [w]) w.
+Proof.
+  intro Hpath. induction Hpath as [u|u v vs x Huv Hpath IH]; intro Hedge.
+  - cbn [app]. econstructor; [exact Hedge|constructor].
+  - cbn [app]. econstructor; [exact Huv|]. apply IH. exact Hedge.
+Qed.
+
+Lemma search_reach_edge g roots u v : reach g roots u -> edge g u v -> reach g roots v.
+Proof.
+  intros [r [vs [Hroot Hpath]]] Hedge. exists r, (vs ++ [v]). split; [exact Hroot|].
+  eapply search_path_extend; eassumption.
+Qed.
+
+Definition search_reach_invariant g roots st : Prop :=
+  Forall (search_task_valid (reach g roots)) (search_tasks st) /\
+  Forall (search_started (search_colours st)) (search_tasks st) /\
+  (forall v, search_seen (search_colours st) v -> reach g roots v) /\
+  search_cover g roots st.
+
+Local Lemma search_frontier_roots roots : search_frontier (map SearchRoot roots) = roots.
+Proof.
+  induction roots as [|v rest IH]; cbn [map search_frontier]; [reflexivity|].
+  now rewrite IH.
+Qed.
+
+(** Initially the frontier is exactly the supplied root list and no vertex is seen. *)
+Lemma search_reach_initial g roots :
+  search_reach_invariant g roots (SearchState (map SearchRoot roots) Empty []).
+Proof.
+  unfold search_reach_invariant. cbn [search_tasks search_colours]. split.
+  - apply Forall_forall. intros task Hin. apply in_map_iff in Hin.
+    destruct Hin as [v [Heq Hin]]. subst task. exists v, [v]. split; [exact Hin|constructor].
+  - split.
+    + induction roots as [|v rest IH]; cbn [map]; constructor; [exact I|exact IH].
+    + split.
+      * intros v Hseen. unfold search_seen in Hseen. rewrite search_colour_empty in Hseen.
+        contradiction.
+      * split.
+        -- intros v Hin. right. cbn [search_tasks]. now rewrite search_frontier_roots.
+        -- intros u v Hseen Hedge. unfold search_seen in Hseen.
+           cbn [search_colours] in Hseen. rewrite search_colour_empty in Hseen. contradiction.
+Qed.
+
+(** Continuing search preserves reachability and complete frontier coverage. *)
+Lemma search_reach_preserved g roots st next :
+  search_reach_invariant g roots st -> search_step g st = inl next ->
+  search_reach_invariant g roots next.
+Proof.
+  intros [Hvalid [Hstarted [Hdomain Hcover]]] Hstep. split.
+  - eapply search_tasks_preserved; [|exact Hvalid|exact Hstep].
+    intros u v Hu Hedge. eapply search_reach_edge; eassumption.
+  - split; [eapply search_started_preserved; eassumption|]. split.
+    + eapply search_colours_domain; eassumption.
+    + eapply search_cover_preserved; eassumption.
+Qed.
+
+(** With an empty frontier, the seen set is exactly the rooted reachable set. *)
+Lemma search_reach_finished g roots st :
+  search_reach_invariant g roots st -> search_tasks st = [] ->
+  forall v, search_seen (search_colours st) v <-> reach g roots v.
+Proof.
+  intros [Hvalid [Hstarted [Hsound [Hroots Hedges]]]] Htasks v. split; [apply Hsound|].
+  intros [r [vs [Hroot Hpath]]].
+  assert (Hfirst : search_seen (search_colours st) r).
+  { destruct (Hroots r Hroot) as [Hseen|Hin]; [exact Hseen|].
+    rewrite Htasks in Hin. contradiction. }
+  clear Hroot. revert Hfirst.
+  induction Hpath as [u|u v vs w Huv Hpath IH]; intro Hfirst; [exact Hfirst|].
+  apply IH. destruct (Hedges u v Hfirst Huv) as [Hseen|Hin]; [exact Hseen|].
+  rewrite Htasks in Hin. contradiction.
+Qed.
+
+(** Any loop result retains its invariant or is produced by an invariant terminal state. *)
+Lemma search_loop_fuel_invariant {St Out} (step : St -> St + Out) (Inv : St -> Prop) :
+  (forall st next, Inv st -> step st = inl next -> Inv next) ->
+  forall fuel st, Inv st ->
+  match loop_fuel step fuel st with
+  | inl next => Inv next
+  | inr result => exists last, Inv last /\ step last = inr result
+  end.
+Proof.
+  intros Hstep fuel. induction fuel as [|fuel IH]; intros st Hinv; [exact Hinv|].
+  cbn [loop_fuel]. destruct (step st) as [next|result] eqn:Hnext.
+  - apply IH. eapply Hstep; eassumption.
+  - exists st. auto.
+Qed.
+
 Module SearchCode (V : VISITOR_OPS) <: SEARCH_OPS V.
   Definition dfs (g : prepared) (roots : list positive) (s : V.state) : V.state :=
     fold_events V.enter V.leave V.edge (prepared_search_trace g roots) s.
